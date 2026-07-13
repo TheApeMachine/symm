@@ -6,6 +6,36 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+func UnmarshalSlice[T any](raw []byte) []T {
+	var v []T
+
+	err := sonic.Unmarshal(raw, &v)
+
+	if err != nil {
+		return nil
+	}
+
+	return v
+}
+
+func Unmarshal[T any](raw []byte) T {
+	var v T
+
+	err := sonic.Unmarshal(raw, &v)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"json: unmarshal failed",
+			err,
+		))
+
+		return v
+	}
+
+	return v
+}
+
 func GetString(raw []byte, path ...any) string {
 	node, err := sonic.Get(raw, path...)
 

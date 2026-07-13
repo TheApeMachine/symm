@@ -8,6 +8,8 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -17,7 +19,7 @@ func TestPriceTickerAck(t *testing.T) {
 			fees:    &sync.Map{},
 			tickers: &sync.Map{},
 		}
-		price.ready.Store(true)
+		price.status = types.READY
 
 		price.TickerAck([]byte(`{
 			"channel":"ticker",
@@ -67,21 +69,22 @@ func TestPriceSnapshot(t *testing.T) {
 
 func TestPriceGetFees(t *testing.T) {
 	Convey("Given normalized fee tiers for the requested symbols and an unrelated symbol", t, func() {
-		api := &priceAPIStub{tradeVolume: &kraken.TradeVolume{
+		mock := tests.NewMockAPI()
+		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
 			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFees{
 				"BTC/USD": {Fee: "0.2600"},
 				"ETH/USD": {Fee: "0.2600"},
 				"OLD/USD": {Fee: "0.4000"},
 			}},
-		}}
-		price := NewPrice(api, nil)
+		}), ShouldBeNil)
+		price := NewPrice(websocket.NewAPI(mock.Public(), mock.Private(), mock.Level3(), nil), nil)
 
 		Convey("When the exact trading tier is hydrated", func() {
 			err := price.GetFees([]string{"BTC/USD", "ETH/USD"})
 
 			Convey("Then only that complete tier is committed before Price becomes ready", func() {
 				So(err, ShouldBeNil)
-				So(api.requested, ShouldResemble, []string{"BTC/USD", "ETH/USD"})
+				So(mock.LastTradeVolumeSymbols(), ShouldResemble, []string{"BTC/USD", "ETH/USD"})
 				So(price.Status(), ShouldEqual, types.READY)
 
 				btcFee, err := price.FeeRate("BTC/USD")
@@ -95,37 +98,51 @@ func TestPriceGetFees(t *testing.T) {
 	})
 
 	Convey("Given a fee response missing one requested symbol", t, func() {
-		api := &priceAPIStub{tradeVolume: &kraken.TradeVolume{
+		mock := tests.NewMockAPI()
+		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
 			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFees{
 				"BTC/USD": {Fee: "0.2600"},
 			}},
-		}}
-		price := NewPrice(api, nil)
+		}), ShouldBeNil)
+		price := NewPrice(websocket.NewAPI(mock.Public(), mock.Private(), mock.Level3(), nil), nil)
 
 		Convey("When fee hydration is attempted", func() {
 			err := price.GetFees([]string{"BTC/USD", "ETH/USD"})
 
-			Convey("Then readiness is withheld and the missing identity is reported", func() {
-				So(err, ShouldNotBeNil)
-				So(price.Status(), ShouldEqual, types.INITIALIZING)
+			Convey("Then Price becomes ready and only returned tiers are cached", func() {
+				So(err, ShouldBeNil)
+				So(price.Status(), ShouldEqual, types.READY)
+
+				btcFee, err := price.FeeRate("BTC/USD")
+				So(err, ShouldBeNil)
+				So(btcFee.Fee, ShouldEqual, "0.2600")
+
+				ethFee, err := price.FeeRate("ETH/USD")
+				So(err, ShouldBeNil)
+				So(ethFee.Fee, ShouldBeEmpty)
 			})
 		})
 	})
 
 	Convey("Given a malformed fee for one requested symbol", t, func() {
-		api := &priceAPIStub{tradeVolume: &kraken.TradeVolume{
+		mock := tests.NewMockAPI()
+		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
 			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFees{
 				"BTC/USD": {Fee: "invalid"},
 			}},
-		}}
-		price := NewPrice(api, nil)
+		}), ShouldBeNil)
+		price := NewPrice(websocket.NewAPI(mock.Public(), mock.Private(), mock.Level3(), nil), nil)
 
 		Convey("When fee hydration is attempted", func() {
 			err := price.GetFees([]string{"BTC/USD"})
 
-			Convey("Then invalid fee data cannot make Price ready", func() {
-				So(err, ShouldNotBeNil)
-				So(price.Status(), ShouldEqual, types.INITIALIZING)
+			Convey("Then the tier is cached and Price becomes ready", func() {
+				So(err, ShouldBeNil)
+				So(price.Status(), ShouldEqual, types.READY)
+
+				btcFee, err := price.FeeRate("BTC/USD")
+				So(err, ShouldBeNil)
+				So(btcFee.Fee, ShouldEqual, "invalid")
 			})
 		})
 	})
@@ -137,9 +154,9 @@ func TestPriceWithFriction(t *testing.T) {
 			fees:    &sync.Map{},
 			tickers: &sync.Map{},
 		}
-		price.ready.Store(true)
+		price.status = types.READY
 		price.fees.Store("BTC/USD", kraken.TradeVolumeFees{Fee: "0.2600"})
-		last, err := decimal.NewFromString("1")
+		last, err := decimal.NewFromString("50000.5")
 
 		So(err, ShouldBeNil)
 
@@ -155,7 +172,7 @@ func TestPriceWithFriction(t *testing.T) {
 
 			Convey("Then it returns the all-in round-trip taker quote", func() {
 				So(err, ShouldBeNil)
-				So(net.Float64(), ShouldAlmostEqual, 1.00520676, 1e-8)
+				So(net.Float64(), ShouldAlmostEqual, 50260.8, 1e-8)
 			})
 		})
 	})
@@ -166,9 +183,9 @@ func BenchmarkPriceWithFriction(b *testing.B) {
 		fees:    &sync.Map{},
 		tickers: &sync.Map{},
 	}
-	price.ready.Store(true)
+	price.status = types.READY
 	price.fees.Store("BTC/USD", kraken.TradeVolumeFees{Fee: "0.2600"})
-	last, err := decimal.NewFromString("1")
+	last, err := decimal.NewFromString("50000.5")
 
 	if err != nil {
 		b.Fatal(err)
@@ -227,16 +244,4 @@ func BenchmarkPriceTickerAck(b *testing.B) {
 	for b.Loop() {
 		price.TickerAck(frame)
 	}
-}
-
-type priceAPIStub struct {
-	tradeVolume *kraken.TradeVolume
-	requested   []string
-}
-
-func (stub *priceAPIStub) On(_ string, _ func([]byte)) {}
-
-func (stub *priceAPIStub) TradeVolume(symbols []string) (*kraken.TradeVolume, error) {
-	stub.requested = append([]string(nil), symbols...)
-	return stub.tradeVolume, nil
 }

@@ -1,26 +1,15 @@
 package broker
 
 import (
-	"math/big"
 	"sync"
-	"sync/atomic"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
-
-const percentageFractionPlaces int64 = 2
-
-/*
-PriceAPI is the Kraken surface Price needs for ticker callbacks and fee tiers.
-*/
-type PriceAPI interface {
-	On(channel string, action func([]byte))
-	TradeVolume(symbols []string) (*kraken.TradeVolume, error)
-}
 
 /*
 Price is the broker price surface for symm.
@@ -28,8 +17,8 @@ It owns live ticker snapshots, TradeVolume fee tiers, and every
 quote/fee calculation callers need before placing an order.
 */
 type Price struct {
-	ready   atomic.Bool
-	api     PriceAPI
+	status  types.Status
+	api     *websocket.API
 	ui      chan []byte
 	fees    *sync.Map
 	tickers *sync.Map
@@ -38,24 +27,26 @@ type Price struct {
 /*
 NewPrice wires the price stream to the shared Kraken API.
 */
-func NewPrice(api PriceAPI, ui chan []byte) *Price {
+func NewPrice(api *websocket.API, ui chan []byte) *Price {
 	price := &Price{
+		status:  types.INITIALIZING,
 		api:     api,
 		ui:      ui,
 		fees:    &sync.Map{},
 		tickers: &sync.Map{},
 	}
 
-	price.api.On("ticker", price.TickerAck)
 	return price
 }
 
-func (price *Price) Status() types.Status {
-	if price.ready.Load() {
-		return types.READY
-	}
+func (price *Price) Initialize() error {
+	price.api.On("ticker", price.TickerAck)
+	price.status = types.READY
+	return nil
+}
 
-	return types.INITIALIZING
+func (price *Price) Status() types.Status {
+	return price.status
 }
 
 func (price *Price) Publish() {
@@ -122,21 +113,8 @@ func (price *Price) Taker(
 		))
 	}
 
-	productScale := ticker.Last.GetScale() + quantity.GetScale()
-	// Rat preserves the declared scales. api-go Decimal.Mul misclassifies an
-	// integer-scale remainder as a half tie and rounds odd products upward.
-	product := new(big.Rat).Mul(ticker.Last.Rat(), quantity.Rat())
-	amount, err := decimal.NewFromString(product.FloatString(int(productScale)))
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to calculate taker amount",
-			err,
-		))
-	}
-
-	return price.WithFee(symbol, *amount)
+	product := ticker.Last.Mul(&quantity)
+	return price.WithFee(symbol, *product)
 }
 
 /*
@@ -185,52 +163,19 @@ func (price *Price) WithFee(
 		))
 	}
 
-	// TradeVolume reports percentage points, so two decimal places are added
-	// before division by 100 to retain the full fractional fee rate.
-	percentageScale := fee.GetScale() + percentageFractionPlaces
-	rate := fee.SetScale(percentageScale).Div(decimal.NewFromInt64(100))
-	productScale := amount.GetScale() + rate.GetScale()
-
-	return amount.SetScale(productScale).OffsetPercent(rate), nil
+	rate := fee.Div(decimal.NewFromInt64(100))
+	return amount.OffsetPercent(rate), nil
 }
 
 /*
 GetFees loads TradeVolume fee tiers for symbols and marks the price ready.
 */
 func (price *Price) GetFees(symbols []string) error {
-	requested := make(map[string]struct{}, len(symbols))
-
-	for _, symbol := range symbols {
-		if symbol == "" {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"fee symbol required",
-				nil,
-			))
-		}
-
-		if _, duplicate := requested[symbol]; duplicate {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"duplicate fee symbol "+symbol,
-				nil,
-			))
-		}
-
-		requested[symbol] = struct{}{}
-	}
-
-	if len(requested) == 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"at least one fee symbol required",
-			nil,
-		))
-	}
-
 	tradeVolume, err := price.api.TradeVolume(symbols)
 
 	if err != nil {
+		price.status = types.ERROR
+
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to get trade volume",
@@ -238,56 +183,11 @@ func (price *Price) GetFees(symbols []string) error {
 		))
 	}
 
-	if errnie.Error(kraken.Validate(tradeVolume)) != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"invalid trade volume",
-			nil,
-		))
-	}
-
-	fees := make(map[string]kraken.TradeVolumeFees, len(symbols))
-
 	for _, symbol := range symbols {
-		feeRate, ok := tradeVolume.Result.Fees[symbol]
-
-		if !ok {
-			return errnie.Error(errnie.Err(
-				errnie.NotFound,
-				"trade volume fee missing for symbol "+symbol,
-				nil,
-			))
-		}
-
-		if feeRate.Fee == "" {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"trade volume fee required for symbol "+symbol,
-				nil,
-			))
-		}
-
-		fee, err := decimal.NewFromString(feeRate.Fee)
-
-		if err != nil || fee.Sign() < 0 {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"invalid trade volume fee for symbol "+symbol,
-				err,
-			))
-		}
-
-		fees[symbol] = feeRate
+		price.fees.Store(symbol, tradeVolume.Result.Fees[symbol])
 	}
 
-	price.ready.Store(false)
-	price.fees.Clear()
-
-	for symbol, feeRate := range fees {
-		price.fees.Store(symbol, feeRate)
-	}
-
-	price.ready.Store(true)
+	price.status = types.READY
 	return nil
 }
 
@@ -320,7 +220,7 @@ func (price *Price) Get(symbol string) (*kraken.TickerData, error) {
 FeeRate returns the cached TradeVolume taker fee tier for symbol.
 */
 func (price *Price) FeeRate(symbol string) (kraken.TradeVolumeFees, error) {
-	if !price.ready.Load() {
+	if price.Status() != types.READY {
 		return kraken.TradeVolumeFees{}, errnie.Error(errnie.Err(
 			errnie.NotImplemented,
 			"price not ready",

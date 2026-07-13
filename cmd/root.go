@@ -17,6 +17,15 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/signal/correlation"
+	"github.com/theapemachine/symm/signal/cvd"
+	"github.com/theapemachine/symm/signal/depthflow"
+	"github.com/theapemachine/symm/signal/exhaust"
+	"github.com/theapemachine/symm/signal/leadlag"
+	"github.com/theapemachine/symm/signal/liquidity"
+	"github.com/theapemachine/symm/signal/pumpdump"
+	"github.com/theapemachine/symm/signal/sentiment"
+	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/trader"
@@ -97,17 +106,9 @@ var (
 			defer api.Close()
 
 			price := broker.NewPrice(api, channel)
-			balance := broker.NewBalance(api, channel).Initialize()
-
-			if balance.Status() == types.ERROR {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"balance not ready",
-					nil,
-				))
-			}
-
-			uiHub, err := ui.NewHub(ctx, price, balance, channel)
+			balance := broker.NewBalance(api, channel)
+			desk := broker.NewDesk(api, price, balance, channel)
+			uiHub, err := ui.NewHub(ctx, price, balance, desk, channel)
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
@@ -119,26 +120,24 @@ var (
 
 			defer uiHub.Close()
 
-			desk := broker.NewDesk(api, price, balance, channel)
-
-			signal := trader.NewSignal(ctx)
 			instrument := trader.NewInstrument(api, price, channel)
 			analyzer := logic.NewAnalyzer(booter, channel)
-			planner := strategy.NewPlanner(booter)
 
-			ticker := trader.NewTicker(signal, channel)
-			trade := trader.NewTrade(signal, channel)
-			ohlc := trader.NewOHLC(signal, channel)
-			book := trader.NewBook(signal, channel, instrument)
-			l3 := trader.NewLevel3(
+			planner := strategy.NewPlanner(
 				ctx,
-				signal,
 				channel,
-				instrument,
+				[]types.Signal{
+					pumpdump.NewSignal(ctx, api),
+					liquidity.NewSignal(ctx, api),
+					toxicity.NewSignal(ctx, api),
+					leadlag.NewSignal(ctx, api),
+					cvd.NewSignal(ctx, api),
+					correlation.NewSignal(ctx, api),
+					exhaust.NewSignal(ctx, api),
+					sentiment.NewSignal(ctx, api),
+					depthflow.NewSignal(ctx, api),
+				},
 				analyzer,
-				trader.NewLevel3Book(
-					viper.GetViper().GetInt("market.l3_depth"),
-				),
 			)
 
 			crypto, err := trader.NewCrypto(
@@ -149,9 +148,6 @@ var (
 				balance,
 				desk,
 				channel,
-				[]types.Feed{
-					ticker, trade, ohlc, book, l3,
-				},
 				instrument,
 				analyzer,
 				planner,
@@ -182,11 +178,6 @@ var (
 				system.NewStage(
 					system.StageWarmup,
 					crypto,
-					ticker,
-					trade,
-					ohlc,
-					book,
-					l3,
 				),
 				system.NewStage(
 					system.StageReady,

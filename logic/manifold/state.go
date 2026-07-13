@@ -102,26 +102,6 @@ func (state State) SpreadReturn() float64 {
 	return (state.BestAsk - state.BestBid) / state.MidPrice
 }
 
-func ReadingFromEvidence(snapshot any) (pmanifold.Reading, bool) {
-	state, ok := StateFromEvidence(snapshot)
-
-	if !ok || !state.IsFinite() {
-		return pmanifold.Reading{}, false
-	}
-
-	return state.Reading, true
-}
-
-func StateFromEvidence(snapshot any) (State, bool) {
-	state, ok := snapshot.(State)
-
-	if !ok {
-		return State{}, false
-	}
-
-	return state, true
-}
-
 func stressAnisotropy(tensor PressureTensor) float64 {
 	mean := tensor.IsotropicScalar()
 

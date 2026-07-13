@@ -3,92 +3,126 @@ package toxicity
 import (
 	"context"
 
-	"github.com/theapemachine/symm/kraken"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
-Toxicity is the Quality perspective, analyzing the honesty of the book by
-tracking per-order liquidity behavior near touch.
-
-Cancel-to-fill asymmetry is an L3-plus-tape story: level3 add/delete/modify
-events provide order identity and price level, while the trade tape provides
-near-price execution evidence. Public data does not expose an exact order-to-
-trade match, so deletes are fill-classified only when the trade tape supports
-the price; otherwise they are cancel-classified. L2 book quantity deltas are not
-used as a fallback for cancel/fill labels.
-
-1. Liquidity Vacuum
-
-One side is retreating and creating a void.
-Indicators: High cancel/fill asymmetry with one side retracting.
-Semantic Meaning: Vacuum surcharge - the void itself drives price.
-
-2. Toxic Bluff
-
-Near-touch blocks disappear rather than fill.
-Indicators: High cancel/fill ratio at near-touch levels.
-Semantic Meaning: Manipulated/fake - a bluff wall about to crumble.
-
-3. Hard Support
-
-Liquidity fills rather than cancels on approach.
-Indicators: Low cancel/fill ratio, high fill rate, no side retracting.
-Semantic Meaning: Robust/sincere - the wall will hold on contact.
-
-# Summary of Toxicity Categories
-
-| Category         | Cancel/Fill Ratio | Side Retracting | Market "Feel"          |
-|:-----------------|:------------------|:----------------|:-----------------------|
-| Liquidity Vacuum | High Asymmetry    | One Side        | Vacuum Surcharge       |
-| Toxic Bluff      | High              | Near-Touch      | Manipulated / Fake     |
-| Hard Support     | Low (High Fill)   | None            | Robust / Sincere       |
+Toxicity tracks whether near-touch liquidity is sincere, retreating, or bluffing
+from level3 order events corroborated by the public trade tape.
 */
-type Signal[T any] struct {
+type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	err    error
+	trades *Trade
 	level3 *Level3
-	trade  *Trade
 }
 
-func NewSignal[T any](ctx context.Context) *Signal[T] {
+func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
-	engine := NewEngine()
 
-	return &Signal[T]{
+	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		level3: NewLevel3(engine),
-		trade:  NewTrade(engine),
+		trades: NewTrade(ctx, api),
+		level3: NewLevel3(ctx, api),
 	}
 }
 
-func (signal *Signal[T]) IngestRoles() []string {
-	return []string{"level3", "trade"}
-}
+func (signal *Signal) Measure(
+	thesis *types.Thesis,
+) *types.Thesis {
+	trades := signal.trades.cache
+	books := signal.level3.cache
+	out := datura.Map[datura.Map[*decimal.Decimal]]{}
 
-func (signal *Signal[T]) Measure(
-	input T,
-	crossSection *types.CrossSection,
-) ([]*types.Measurement, error) {
-	switch row := any(input).(type) {
-	case kraken.Level3Data:
-		return signal.level3.Measure(row)
-	case kraken.TradeData:
-		return signal.trade.Measure(row)
+	for _, trade := range trades {
+		if trade.Price.Sign() <= 0 {
+			continue
+		}
+
+		for _, book := range books {
+			if book.Name == trade.Pair {
+				if out[trade.Pair] == nil {
+					out[trade.Pair] = datura.Map[*decimal.Decimal]{
+						"touch":   decimal.NewFromFloat64(0),
+						"bestBid": decimal.NewFromFloat64(0),
+						"bestAsk": decimal.NewFromFloat64(0),
+						"volume":  decimal.NewFromFloat64(0),
+						"fillBid": decimal.NewFromFloat64(0),
+						"fillAsk": decimal.NewFromFloat64(0),
+					}
+				}
+
+				out = utils.Add(out, trade.Volume, trade.Pair, "volume")
+
+				if trade.Price.Cmp(book.BestBid().Price) == 0 {
+					out = utils.Add(out, book.BestBid().Price.Mul(trade.Volume), trade.Pair, "fillBid")
+				}
+
+				if trade.Price.Cmp(book.BestAsk().Price) == 0 {
+					out = utils.Add(out, book.BestAsk().Price.Mul(trade.Volume), trade.Pair, "fillAsk")
+				}
+			}
+		}
 	}
 
-	return nil, nil
+	for _, book := range books {
+		out[book.Name]["touch"] = book.BestBid().Quantity
+		out[book.Name]["bestBid"] = book.BestBid().Price
+		out[book.Name]["bestAsk"] = book.BestAsk().Price
+		out[book.Name]["touchBid"] = book.BestBid().Quantity
+		out[book.Name]["touchAsk"] = book.BestAsk().Quantity
+
+		for _, side := range []string{"Bid", "Ask"} {
+			if prev, ok := out[book.Name]["prev"+side]; ok && prev.Cmp(
+				out[book.Name]["touch"+side],
+			) > 0 {
+				out[book.Name]["retreating"+side] = prev.Sub(
+					out[book.Name]["touch"+side],
+				)
+
+				matched := false
+
+				for _, trade := range trades {
+					if trade.Pair == book.Name && trade.Price.Cmp(out[book.Name]["best"+side]) == 0 {
+						matched = true
+					}
+				}
+
+				if !matched {
+					out = utils.Add(
+						out, out[book.Name]["retreating"+side], book.Name, "cancel"+side,
+					)
+				}
+			}
+		}
+
+		out[book.Name]["prevBid"] = book.BestBid().Quantity
+		out[book.Name]["prevAsk"] = book.BestAsk().Quantity
+	}
+
+	signal.trades.cache = signal.trades.cache[:0]
+	signal.level3.cache = signal.level3.cache[:0]
+
+	thesis.Signals.Store("trades", trades)
+	thesis.Signals.Store("books", books)
+	thesis.Measurements.Store("toxicity", out)
+
+	return thesis
 }
 
-func (signal *Signal[T]) Error() error {
-	return signal.err
-}
+func (signal *Signal) Close() (err error) {
+	err = errnie.Error(errnie.Err(
+		errnie.Internal,
+		"signal: close failed",
+		nil,
+	))
 
-func (signal *Signal[T]) Close() (err error) {
-	err = signal.err
 	signal.cancel()
-
 	return err
 }

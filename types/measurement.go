@@ -151,64 +151,44 @@ type ScaleReference struct {
 }
 
 /*
+StreamType identifies the source of a measurement.
+*/
+type StreamType string
+
+const (
+	Correlation StreamType = "correlation"
+	Covariance  StreamType = "covariance"
+	DepthFlow   StreamType = "depth_flow"
+	Exhaust     StreamType = "exhaust"
+	Fluid       StreamType = "fluid"
+	Hawkes      StreamType = "hawkes"
+	LeadLag     StreamType = "lead_lag"
+	Liquidity   StreamType = "liquidity"
+	PumpDump    StreamType = "pump_dump"
+	Sentiment   StreamType = "sentiment"
+	Toxicity    StreamType = "toxicity"
+)
+
+/*
 Measurement is one immutable numerical observation emitted by a signal. New
 signals use the typed fields above the compatibility block; the legacy fields
 remain only while older signals are migrated to the same contract.
 */
 type Measurement struct {
-	Source       SourceType             `json:"source,omitempty"`
-	Metric       MetricType             `json:"metric,omitempty"`
-	Subject      SubjectType            `json:"subject,omitempty"`
-	Stream       string                 `json:"stream,omitempty"`
-	Symbol       string                 `json:"symbol,omitempty"`
-	Side         MeasurementSide        `json:"side"`
-	At           time.Time              `json:"at,omitempty"`
-	ObservedFrom time.Time              `json:"observedFrom,omitempty"`
-	Horizon      time.Duration          `json:"horizon"`
-	Unit         MeasurementUnit        `json:"unit,omitempty"`
-	Raw          float64                `json:"raw"`
-	Normalized   OptionalValue          `json:"normalized"`
-	Maturity     float64                `json:"maturity"`
-	Uncertainty  MeasurementUncertainty `json:"uncertainty"`
-	Validity     MeasurementValidity    `json:"validity"`
-	Scale        ScaleReference         `json:"scale"`
-
-	// Transitional compatibility for signals not yet migrated to the numerical
-	// contract. New signal implementations must not populate these fields.
-	Status        string             `json:"status,omitempty"`
-	Elapsed       float64            `json:"elapsed,omitempty"`
-	EntryBaseline float64            `json:"entryBaseline,omitempty"`
-	ExitBaseline  float64            `json:"exitBaseline,omitempty"`
-	Categories    []Category         `json:"categories,omitempty"`
-	Metrics       map[string]float64 `json:"metrics,omitempty"`
-}
-
-/*
-Typed reports whether the measurement uses numerical identity rather than the
-legacy category and metric-map compatibility surface. It lets transitional
-adapters avoid mutating an immutable typed observation.
-*/
-func (measurement Measurement) Typed() bool {
-	return measurement.Metric != ""
-}
-
-/*
-Clone copies every slice and map retained by the transitional contract. Typed
-measurements reject those fields, but cloning them here keeps the value safe
-even when a migration adapter inspects an epoch before validation.
-*/
-func (measurement Measurement) Clone() Measurement {
-	measurement.Categories = append([]Category(nil), measurement.Categories...)
-
-	if measurement.Metrics == nil {
-		return measurement
-	}
-
-	measurement.Metrics = make(map[string]float64, len(measurement.Metrics))
-
-	for key, value := range measurement.Metrics {
-		measurement.Metrics[key] = value
-	}
-
-	return measurement
+	Source       SourceType
+	Metric       MetricType
+	Subject      SubjectType
+	Stream       StreamType
+	Symbol       string
+	Side         MeasurementSide
+	At           time.Time
+	ObservedFrom time.Time
+	Horizon      time.Duration
+	Unit         MeasurementUnit
+	Raw          float64
+	Normalized   float64
+	Maturity     float64
+	Uncertainty  MeasurementUncertainty
+	Validity     MeasurementValidity
+	Scale        ScaleReference
 }

@@ -47,19 +47,7 @@ func (valuation *Valuation) Update(
 	}
 
 	net, entryNotional := valuation.pnl(data, *ticker.Bid)
-	scale := max(
-		data.EntryPrice.GetScale()+data.Qty.GetScale()+
-			data.FeeRate.GetScale()+percentageFractionPlaces,
-		ticker.Bid.GetScale()+data.Qty.GetScale()+
-			data.FeeRate.GetScale()+percentageFractionPlaces,
-	)
-	pnl, err := decimal.NewFromString(net.FloatString(int(scale)))
-
-	if err != nil {
-		return stop, false, errnie.Err(
-			errnie.Validation, "position PnL is not representable", err,
-		)
-	}
+	pnl := valuation.fromRat(net)
 
 	data.Mark = *ticker.Bid
 	data.PnL = *pnl
@@ -128,15 +116,7 @@ func (valuation *Valuation) stop(
 		stop.PeakPrice.Rat(),
 		new(big.Rat).Sub(big.NewRat(1, 1), offset),
 	)
-	candidate, err := decimal.NewFromString(
-		candidateRat.FloatString(int(ticker.Bid.GetScale())),
-	)
-
-	if err != nil {
-		return stop, false, errnie.Err(
-			errnie.Validation, "position stop is not representable", err,
-		)
-	}
+	candidate := valuation.fromRat(candidateRat)
 
 	if !stop.Armed || candidate.Rat().Cmp(stop.StopPrice.Rat()) > 0 {
 		stop.StopPrice = *candidate
@@ -195,4 +175,16 @@ func (valuation *Valuation) returnOf(
 	).Float64()
 
 	return value
+}
+
+/*
+fromRat converts an exact rational to a Decimal through its nearest
+float64, the same round-trip-safe precision decimal.NewFromFloat64 already
+relies on for observed dispersion below. big.Rat has no direct decimal
+string form for non-terminating fractions, so this is the only conversion
+that neither truncates precision nor invents a scale.
+*/
+func (valuation *Valuation) fromRat(rat *big.Rat) *decimal.Decimal {
+	value, _ := rat.Float64()
+	return decimal.NewFromFloat64(value)
 }

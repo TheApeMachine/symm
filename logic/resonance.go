@@ -9,7 +9,7 @@ import (
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/logic/manifold"
-	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -34,7 +34,6 @@ var resonanceObservableKeys = []string{
 
 type Resonance struct {
 	symbol      string
-	thesis      *strategy.Thesis
 	ui          chan []byte
 	manifold    *learning.ResonanceManifold
 	baselines   map[string]*adaptive.TimeElastic
@@ -42,7 +41,7 @@ type Resonance struct {
 	samples     uint64
 }
 
-func NewResonance(symbol string, thesis *strategy.Thesis, ui chan []byte) *Resonance {
+func NewResonance(symbol string, ui chan []byte) *Resonance {
 	arch := []int{resonanceObservables, resonanceObservables, resonanceObservables}
 	manifold, err := learning.NewResonanceManifold(arch, 0, resonanceAlpha)
 
@@ -56,7 +55,6 @@ func NewResonance(symbol string, thesis *strategy.Thesis, ui chan []byte) *Reson
 
 	resonance := &Resonance{
 		symbol:    symbol,
-		thesis:    thesis,
 		ui:        ui,
 		manifold:  manifold,
 		baselines: map[string]*adaptive.TimeElastic{},
@@ -67,21 +65,21 @@ func NewResonance(symbol string, thesis *strategy.Thesis, ui chan []byte) *Reson
 
 func (resonance *Resonance) Close() {}
 
-func (resonance *Resonance) Update() *strategy.Thesis {
+func (resonance *Resonance) Update(thesis *types.Thesis) {
 	if resonance.manifold == nil {
-		return resonance.thesis
+		return
 	}
 
-	snapshot, ok := resonance.thesis.Evidence(resonance.symbol, "manifold")
+	stored, ok := thesis.Measurements.Load(resonance.symbol + ":manifold")
 
 	if !ok {
-		return resonance.thesis
+		return
 	}
 
-	state, ok := manifold.StateFromEvidence(snapshot)
+	state := stored.(manifold.State)
 
-	if !ok || !state.IsFinite() {
-		return resonance.thesis
+	if !state.IsFinite() {
+		return
 	}
 
 	reading := state.Reading
@@ -97,17 +95,17 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 	stepAt := state.At
 
 	if stepAt.IsZero() {
-		return resonance.thesis
+		return
 	}
 
 	if resonance.eventStale(stepAt) {
-		return resonance.thesis
+		return
 	}
 
 	observables, ready := resonance.normalize(raw, stepAt)
 
 	if !ready {
-		return resonance.thesis
+		return
 	}
 
 	resonance.advanceEventAt(stepAt)
@@ -119,7 +117,7 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 			err,
 		))
 
-		return resonance.thesis
+		return
 	}
 
 	resonance.manifold.Learn(nil)
@@ -147,10 +145,10 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 			nil,
 		))
 
-		return resonance.thesis
+		return
 	}
 
-	resonance.thesis.AddEvidence(resonance.symbol, "resonance", outcome)
+	thesis.Measurements.Store(resonance.symbol+":resonance", outcome)
 
 	if resonance.ui != nil {
 		select {
@@ -163,8 +161,6 @@ func (resonance *Resonance) Update() *strategy.Thesis {
 			))
 		}
 	}
-
-	return resonance.thesis
 }
 
 func (resonance *Resonance) normalize(

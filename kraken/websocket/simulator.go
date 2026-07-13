@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -67,7 +68,9 @@ func (simulator *Simulator) Status() types.Status {
 Initialize seeds websocket and REST rings with bootstrap values until
 real public/private measurements arrive. Fill stays random only.
 */
-func (simulator *Simulator) Initialize() {
+func (simulator *Simulator) Initialize() error {
+	errnie.Info("initializing simulator")
+
 	simulator.wsLatencies.Do(func(item any) {
 		simulator.wsLatencies.Value = time.Duration(30+rand.Intn(90)) * time.Millisecond
 		simulator.wsLatencies = simulator.wsLatencies.Next()
@@ -84,6 +87,7 @@ func (simulator *Simulator) Initialize() {
 	})
 
 	simulator.status = types.READY
+	return nil
 }
 
 func (simulator *Simulator) Do(latencyType LatencyType, fn func()) {

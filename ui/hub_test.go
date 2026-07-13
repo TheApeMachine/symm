@@ -38,7 +38,7 @@ func (stub *hubStubConn) Post(path string, params json.Marshaler) ([]byte, error
 	return nil, nil
 }
 
-func testHubDeps(ui chan []byte) (*broker.Price, *broker.Balance) {
+func testHubDeps(ui chan []byte) (*broker.Price, *broker.Balance, *broker.Desk) {
 	api := krakenws.NewAPI(
 		&hubStubConn{},
 		&hubStubConn{},
@@ -48,7 +48,11 @@ func testHubDeps(ui chan []byte) (*broker.Price, *broker.Balance) {
 		),
 	)
 
-	return broker.NewPrice(api, ui), nil
+	price := broker.NewPrice(api, ui)
+	balance := broker.NewBalance(api, ui)
+	desk := broker.NewDesk(api, price, balance, ui)
+
+	return price, balance, desk
 }
 
 func findFreePort() (string, error) {
@@ -80,8 +84,8 @@ func startTestHub(t *testing.T) (context.Context, context.CancelFunc, *Hub, stri
 	viper.Set("system.websocket.channel.buffer", 10)
 
 	uiChannel := make(chan []byte, 10)
-	price, balance := testHubDeps(uiChannel)
-	hub, err := NewHub(ctx, price, balance, uiChannel)
+	price, balance, desk := testHubDeps(uiChannel)
+	hub, err := NewHub(ctx, price, balance, desk, uiChannel)
 	So(err, ShouldBeNil)
 
 	go func() {
@@ -182,8 +186,8 @@ func BenchmarkHubBroadcast(b *testing.B) {
 	viper.Set("system.websocket.channel.buffer", 1000)
 
 	uiChannel := make(chan []byte, 1000)
-	price, balance := testHubDeps(uiChannel)
-	hub, err := NewHub(ctx, price, balance, uiChannel)
+	price, balance, desk := testHubDeps(uiChannel)
+	hub, err := NewHub(ctx, price, balance, desk, uiChannel)
 
 	if err != nil {
 		b.Fatal(err)

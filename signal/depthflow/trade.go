@@ -1,123 +1,46 @@
 package depthflow
 
 import (
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/algorithm/book/flow"
-	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
+	"context"
+
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/kraken/websocket"
 )
 
+/*
+Trade ingests public trade rows into the shared depth-flow sample.
+*/
 type Trade struct {
-	sample     *flow.Sample
-	bookflow   *equation.Bookflow
-	classifier *probability.ScoreClassifier
+	ctx    context.Context
+	cancel context.CancelFunc
+	api    *websocket.API
+	cache  []kraken.TradeData
 }
 
-func NewTrade(
-	sample *flow.Sample,
-	bookflow *equation.Bookflow,
-	classifier *probability.ScoreClassifier,
-) *Trade {
-	return &Trade{
-		sample:     sample,
-		bookflow:   bookflow,
-		classifier: classifier,
+func NewTrade(ctx context.Context, api *websocket.API) *Trade {
+	ctx, cancel := context.WithCancel(ctx)
+
+	trade := &Trade{
+		ctx:    ctx,
+		cancel: cancel,
+		api:    api,
+		cache:  []kraken.TradeData{},
 	}
+
+	trade.api.On("trade", trade.On)
+	return trade
 }
 
-func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) {
-	input, ready, maturity, err := trade.sample.MeasureTrade(flow.TradeInput{
-		Symbol:   row.Symbol,
-		Price:    row.Price.Float64(),
-		Quantity: row.Qty,
-		Side:     row.Side,
-	})
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+func (trade *Trade) On(data []byte) {
+	if len(data) == 0 {
+		return
 	}
 
-	if !ready {
-		return nil, nil
+	frame := kraken.NewTrade(data)
+
+	if len(frame.Data) == 0 {
+		return
 	}
 
-	output, err := trade.bookflow.Measure(input)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
-	}
-
-	if !output.Ready {
-		return nil, nil
-	}
-
-	result, err := trade.classifier.Classify(map[string]float64{
-		"loadedScore":  output.LoadedScore,
-		"spoofScore":   output.SpoofScore,
-		"thinScore":    output.ThinScore,
-		"neutralScore": output.NeutralScore,
-		"strength":     output.Strength,
-	})
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
-	}
-
-	categories := []types.CategoryType{
-		types.LoadedImbalance,
-		types.SpoofTrap,
-		types.BookThinning,
-		types.DenseNeutrality,
-	}
-	strengths := []float64{
-		output.LoadedScore,
-		output.SpoofScore,
-		output.ThinScore,
-		output.NeutralScore,
-	}
-	categoryRows := make([]types.Category, 0, len(categories))
-
-	for index, category := range categories {
-		confidence := 0.0
-
-		if index < len(result.Probabilities) {
-			confidence = result.Probabilities[index]
-		}
-
-		categoryRows = append(categoryRows, types.Category{
-			Type:       category,
-			Confidence: confidence,
-			Strength:   strengths[index],
-		})
-	}
-
-	measurement := &types.Measurement{
-		Source:        types.SourceDepthFlow,
-		Stream:        "trades",
-		Symbol:        row.Symbol,
-		At:            row.Timestamp,
-		EntryBaseline: result.EntryBaseline,
-		ExitBaseline:  result.ExitBaseline,
-		Maturity:      maturity,
-		Categories:    categoryRows,
-		Metrics: map[string]float64{
-			"loadedScore":  output.LoadedScore,
-			"spoofScore":   output.SpoofScore,
-			"thinScore":    output.ThinScore,
-			"neutralScore": output.NeutralScore,
-			"strength":     output.Strength,
-			"value":        output.Value,
-			"category":     output.Category,
-		},
-	}
-
-	return []*types.Measurement{measurement}, nil
+	trade.cache = append(trade.cache, frame.Data...)
 }

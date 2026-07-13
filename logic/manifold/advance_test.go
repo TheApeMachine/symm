@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/types"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -19,7 +19,8 @@ func TestSlotAdvance(t *testing.T) {
 		viper.Set("market.forecast.rls.forgetting_factor", 1.0)
 		engine := NewEngine()
 		defer engine.Close()
-		slot, err := engine.Admit("BTC/USD", strategy.NewThesis())
+		thesis := types.NewThesis(nil)
+		slot, err := engine.Admit("BTC/USD")
 		So(err, ShouldBeNil)
 		book := &observationBook{bestBid: 99, bestAsk: 101}
 		snapshot := kraken.Level3Data{
@@ -39,12 +40,12 @@ func TestSlotAdvance(t *testing.T) {
 			}},
 		}
 
-		first := slot.Observe(snapshot, 1, 8, book)
-		second := slot.Observe(update, 1, 8, book)
+		first := slot.Observe(thesis, snapshot, 1, 8, book)
+		second := slot.Observe(thesis, update, 1, 8, book)
 		orders := slot.population.Orders()
 
 		Convey("When the field advances once", func() {
-			result := slot.Advance()
+			result := slot.Advance(thesis)
 
 			Convey("Then it advances the latest accumulated population and consumes readiness", func() {
 				So(first.AdvanceReady, ShouldBeTrue)
@@ -57,7 +58,7 @@ func TestSlotAdvance(t *testing.T) {
 				So(result.OrderCount, ShouldEqual, 2)
 				So(result.State.Epoch, ShouldEqual, uint64(1))
 				So(slot.advanceReady, ShouldBeFalse)
-				So(slot.Advance().StateProduced, ShouldBeFalse)
+				So(slot.Advance(thesis).StateProduced, ShouldBeFalse)
 			})
 		})
 	})

@@ -8,6 +8,22 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+func TestUnmarshal(t *testing.T) {
+	Convey("Given a Kraken ticker channel frame", t, func() {
+		raw := []byte(`{"channel":"ticker","type":"snapshot","data":[{"symbol":"BTC/USD","bid":99,"ask":101,"last":100,"volume":12.5,"timestamp":"2026-07-04T12:00:00Z"}]}`)
+
+		Convey("When it is unmarshaled into the typed envelope", func() {
+			frame := Unmarshal[kraken.Ticker](raw)
+
+			Convey("Then the data rows are decoded", func() {
+				So(frame.Data, ShouldHaveLength, 1)
+				So(frame.Data[0].Symbol, ShouldEqual, "BTC/USD")
+				So(frame.Data[0].Last.Float64(), ShouldEqual, 100)
+			})
+		})
+	})
+}
+
 func TestGetBytes(t *testing.T) {
 	Convey("Given a Kraken ticker channel frame", t, func() {
 		raw := []byte(`{"channel":"ticker","type":"snapshot","data":[{"symbol":"BTC/USD","bid":99,"ask":101,"last":100,"volume":12.5,"timestamp":"2026-07-04T12:00:00Z"}]}`)
@@ -75,4 +91,12 @@ func TestGetString(t *testing.T) {
 			})
 		})
 	})
+}
+
+func BenchmarkUnmarshal(b *testing.B) {
+	raw := []byte(`{"channel":"ticker","type":"snapshot","data":[{"symbol":"BTC/USD","bid":99,"ask":101,"last":100,"volume":12.5,"timestamp":"2026-07-04T12:00:00Z"}]}`)
+
+	for b.Loop() {
+		_ = Unmarshal[kraken.Ticker](raw)
+	}
 }

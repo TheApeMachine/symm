@@ -28,4 +28,5 @@ const (
 
 type StatusReporter interface {
 	Status() Status
+	Initialize() error
 }

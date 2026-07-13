@@ -6,10 +6,28 @@ import (
 )
 
 /*
+Handlers maps Kraken channel names to production On callbacks.
+*/
+type Handlers map[string]func([]byte)
+
+/*
+Replay drives registered handlers from a frame sequence.
+*/
+func Replay(handlers Handlers, frames iter.Seq[Frame]) {
+	for frame := range frames {
+		handler, ok := handlers[frame.Channel]
+
+		if !ok {
+			continue
+		}
+
+		handler(frame.Payload)
+	}
+}
+
+/*
 ReplayFixture serves a recorded jsonl slice of raw Kraken frames as a Fixture,
-so a real historical capture (one frame per line) drives the exact same pipeline
-as the synthetic fixtures, and composes with the scenario operators for
-controllable-but-realistic conditions.
+so a real historical capture drives the same pipeline as synthetic fixtures.
 */
 type ReplayFixture struct {
 	frames [][]byte

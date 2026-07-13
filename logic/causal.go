@@ -8,7 +8,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/logic/manifold"
-	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/types"
 )
 
 const (
@@ -21,7 +21,6 @@ var causalControls = []int{1, 2, 3, 4, 5}
 
 type Causal struct {
 	symbol  string
-	thesis  *strategy.Thesis
 	ui      chan []byte
 	pearl   *algorithm.Pearl
 	pending *causalObservation
@@ -35,12 +34,11 @@ type causalObservation struct {
 	at       time.Time
 }
 
-func NewCausal(symbol string, thesis *strategy.Thesis, ui chan []byte) *Causal {
+func NewCausal(symbol string, ui chan []byte) *Causal {
 	minimumHistory := len(causalControls) + 3
 
 	return &Causal{
 		symbol: symbol,
-		thesis: thesis,
 		ui:     ui,
 		pearl: algorithm.NewPearl(algorithm.PearlConfig{
 			Target:     causalTargetIndex,
@@ -57,25 +55,23 @@ Update aligns one manifold observation with the next observed mid return. The
 named treatment and controls are recorded on every output so the result is not
 mistaken for a causal claim about anonymous latent columns.
 */
-func (causal *Causal) Update() *strategy.Thesis {
-	snapshot, ok := causal.thesis.Evidence(causal.symbol, "manifold")
+func (causal *Causal) Update(thesis *types.Thesis) {
+	stored, ok := thesis.Measurements.Load(causal.symbol + ":manifold")
 
 	if !ok {
-		return causal.thesis
+		return
 	}
 
-	state, ok := manifold.StateFromEvidence(snapshot)
+	state := stored.(manifold.State)
 	features, ready := causal.features(state)
 
-	if !ok || !ready {
-		return causal.thesis
+	if !ready {
+		return
 	}
 
 	outcome := causal.observe(state, features)
-	causal.thesis.AddEvidence(causal.symbol, "causal", outcome)
+	thesis.Measurements.Store(causal.symbol+":causal", outcome)
 	causal.publish(outcome)
-
-	return causal.thesis
 }
 
 func (causal *Causal) observe(

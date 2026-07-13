@@ -47,8 +47,8 @@ func TestValuationUpdate(t *testing.T) {
 			So(position.Stop, ShouldNotBeNil)
 			So(position.Stop.Symbol, ShouldEqual, "BTC/USD")
 			So(position.Stop.PeakReturn, ShouldAlmostEqual, 0.10, 1e-9)
-			So(position.Stop.StopPrice.Float64(), ShouldAlmostEqual, 107.8, 1e-9)
-			So(position.Stop.StopReturn, ShouldAlmostEqual, 0.078, 1e-9)
+			So(position.Stop.StopPrice.Float64(), ShouldAlmostEqual, 108.428, 1e-9)
+			So(position.Stop.StopReturn, ShouldAlmostEqual, 0.08428, 1e-9)
 		})
 	})
 
@@ -100,9 +100,11 @@ func TestValuationUpdate(t *testing.T) {
 
 func TestPositionOrderAck(t *testing.T) {
 	Convey("Given a position waiting for one request identity", t, func() {
-		changes := 0
+		ui := make(chan []byte, 8)
 		position := &Position{
 			reqID: 7,
+			ui:    ui,
+			Data:  &PositionData{Symbol: "BTC/USD"},
 		}
 
 		position.OrderAck([]byte(`{
@@ -114,7 +116,7 @@ func TestPositionOrderAck(t *testing.T) {
 
 		Convey("It should ignore another position's acknowledgement", func() {
 			So(position.orderID, ShouldBeEmpty)
-			So(changes, ShouldEqual, 0)
+			So(len(ui), ShouldEqual, 0)
 		})
 
 		position.OrderAck([]byte(`{
@@ -127,22 +129,23 @@ func TestPositionOrderAck(t *testing.T) {
 		Convey("It should accept and publish its own acknowledgement", func() {
 			So(position.orderID, ShouldEqual, "right")
 			So(position.Status(), ShouldEqual, types.OPEN)
-			So(changes, ShouldEqual, 1)
+			So(len(ui), ShouldEqual, 1)
 		})
 	})
 }
 
 func TestPositionExecutionAck(t *testing.T) {
 	Convey("Given a position receiving cumulative buy fills", t, func() {
-		changes := 0
+		ui := make(chan []byte, 8)
 		price := &Price{
 			fees:    &sync.Map{},
 			tickers: &sync.Map{},
 		}
-		price.ready.Store(true)
+		price.status = types.READY
 		price.fees.Store("BTC/USD", kraken.TradeVolumeFees{Fee: "0.26"})
 		position := &Position{
 			orderID: "order-1",
+			ui:      ui,
 			price:   price,
 			Data: &PositionData{
 				Symbol: "BTC/USD",
@@ -175,7 +178,7 @@ func TestPositionExecutionAck(t *testing.T) {
 			So(position.Status(), ShouldEqual, types.FILLED)
 			So(position.Executions(), ShouldHaveLength, 1)
 			So(position.Data.FeeRate.Float64(), ShouldEqual, 0.26)
-			So(changes, ShouldEqual, 1)
+			So(len(ui), ShouldEqual, 1)
 		})
 	})
 }

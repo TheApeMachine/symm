@@ -1,28 +1,43 @@
 package toxicity
 
 import (
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
+	"context"
+
+	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/utils"
 )
 
+/*
+Level3 ingests level3 order events into the shared toxicity sample.
+*/
 type Level3 struct {
-	engine *Engine
+	ctx    context.Context
+	cancel context.CancelFunc
+	api    *websocket.API
+	cache  []book.Book
 }
 
-func NewLevel3(engine *Engine) *Level3 {
-	return &Level3{
-		engine: engine,
+func NewLevel3(ctx context.Context, api *websocket.API) *Level3 {
+	ctx, cancel := context.WithCancel(ctx)
+
+	level3 := &Level3{
+		ctx:    ctx,
+		cancel: cancel,
+		api:    api,
+		cache:  []book.Book{},
 	}
+
+	level3.api.On("level3", level3.On)
+	return level3
 }
 
-func (level3 *Level3) Measure(
-	row kraken.Level3Data,
-) ([]*types.Measurement, error) {
-	measurement, err := level3.engine.MeasureLevel3(row)
-
-	if err != nil || measurement == nil {
-		return nil, err
+func (level3 *Level3) On(data []byte) {
+	if len(data) == 0 {
+		return
 	}
 
-	return []*types.Measurement{measurement}, nil
+	level3.cache = append(
+		level3.cache, utils.Unmarshal[book.Book](data),
+	)
 }

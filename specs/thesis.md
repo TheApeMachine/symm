@@ -170,7 +170,7 @@ Signals must not emit:
 
 ## Logic composition
 
-Logic receives measurements and constructs time-aligned evidence epochs for one
+Logic receives the Thesis and constructs time-aligned evidence epochs for one
 symbol. An epoch must preserve the exact measurements that contributed to it.
 
 Conceptually:
@@ -178,10 +178,9 @@ Conceptually:
 ```go
 type LogicEpoch struct {
     At            time.Time
-    Measurements  MeasurementSet
-    Relationships []Relationship
-    Conflicts     []Conflict
-    Categories    []CategoryState
+    Measurements  *sync.Map        // Measurement
+    Graph         []Graph
+    Categories    []Category
     Hypotheses    []Hypothesis
     Readiness     Readiness
 }
@@ -244,38 +243,22 @@ portfolio action.
 
 ## Thesis ownership and structure
 
-The Thesis is the complete in-memory causal record for one symbol and one
-continuous opportunity lifecycle.
-
-It should compose focused journals rather than become one large unstructured
-object:
+The Thesis is the complete in-memory causal record for one tick lifecycle.
+It is deliberately kept relatively simple and flat, to prevent an explosion
+of complex types.
 
 ```go
+/*
+Thesis is essentially the "state" of a tick. It travels across the
+entire lifecycle of a tick, picking up all data along the way.
+*/
 type Thesis struct {
-    State      Lifecycle
-    Evidence   EvidenceJournal
-    Reasoning  ReasoningJournal
-    Forecasts  ForecastJournal
-    Decisions  DecisionJournal
-    Trade      TradeJournal
-    Evaluation EvaluationJournal
+	uiHub        chan<- []byte
+	Signals      *sync.Map
+	CrossSection *CrossSection
+	Measurements *sync.Map
 }
 ```
-
-The exact types should be designed around existing project contracts. String
-keys and `any` snapshots are not an acceptable final representation.
-
-### Thesis invariants
-
-- One Thesis belongs to one symbol.
-- Its journal is chronological.
-- Appended historical observations are immutable.
-- Every category, hypothesis, forecast, and decision retains provenance.
-- A Thesis can exist without producing a trade.
-- A Thesis remains active while its resulting position remains open.
-- A closed traded Thesis cannot accept new trading decisions.
-- PostMortem begins only after execution reconciliation and the required
-  post-exit observation tail.
 
 ## Entry, continuation, exit, and reversal theses
 

@@ -3,86 +3,108 @@ package cvd
 import (
 	"context"
 
-	"github.com/theapemachine/symm/kraken"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Signal: The Absorption Perspective
-
-What it measures exactly (in isolation)
-
-The CVD signal measures signed aggressor-buy versus aggressor-sell notional in
-the current trade-flow window. The window is derived from observed notional
-history by the shared trade-flow sampler, not from a fixed wall-clock horizon.
-
-* Net Fraction: The ratio of net notional (buys minus sells) to gross notional.
-The directional gate is derived from the active trade count.
-* Price Suppression: It compares price drift against the median absolute move
-inside the active flow window.
-* Tick Integrity: It reads the executed trade tape rather than L2 book shape, so
-it does not infer spoof/cancel intent from aggregate book deltas.
-
-Semantically, what story does it tell?
-
-* The "Iceberg" Story: It identifies when a massive participant is "hidden" in the book, absorbing every market order without letting the price move.
-It tells us that what looks like a range-bound market is actually a site of heavy accumulation or distribution.
-* The "Authentic Move" Story: It verifies price trends. If price is rising but CVD is flat or negative, the move is a "trap" or "low-conviction."
-If price and CVD move together, the trend is **structurally supported**.
-
-#### **Probability Visualization Categories**
-
-| Category               | Net Volume | Price Drift | Market "Feel"                    |
-|:-----------------------|:-----------|:------------|:---------------------------------|
-| **Hidden Absorption**  | High       | Flat        | **Bullish/Bearish Iceberg**      |
-| **Aggressive Drive**   | High       | High        | **Strong Trend Support**         |
-| **Stochastic Balance** | Low        | Variable    | **Equilibrium/Choppy**           |
-| **Volume Starvation**  | Very Low   | Flat        | **Dying Interest**               |
+Signal is the Absorption perspective, measuring signed aggressor flow against
+price response. Categories belong in logic; this signal emits numerical scores
+only.
 */
-type Signal[T any] struct {
+type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	err    error
 	trade  *Trade
+	sample *algorithm.TradeFlowSample
+	flow   *equation.Flow
 }
 
-/*
-NewSignal constructs the CVD signal. The tree is held for the shared signal
-constructor contract; the trade role owns its rolling artifact clock.
-*/
-func NewSignal[T any](ctx context.Context) *Signal[T] {
+func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	return &Signal[T]{
+	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		trade:  NewTrade(),
+		trade:  NewTrade(ctx, api),
+		sample: algorithm.NewTradeFlowSample(),
+		flow:   equation.NewFlow(),
 	}
 }
 
-func (signal *Signal[T]) IngestRoles() []string {
-	return []string{"trade"}
-}
+func (signal *Signal) Measure(
+	thesis *types.Thesis,
+) *types.Thesis {
+	trades := signal.trade.cache
+	out := datura.Map[datura.Map[*decimal.Decimal]]{}
 
-func (signal *Signal[T]) Measure(
-	input T,
-	crossSection *types.CrossSection,
-) ([]*types.Measurement, error) {
-	switch row := any(input).(type) {
-	case kraken.TradeData:
-		return signal.trade.Measure(row)
+	for _, row := range trades {
+		if row.Symbol == "" || row.Price.Sign() <= 0 || row.Qty <= 0 {
+			continue
+		}
+
+		input, ready, maturity, err := signal.sample.Measure(algorithm.TradeFlowInput{
+			Symbol:   row.Symbol,
+			Price:    row.Price.Float64(),
+			Quantity: row.Qty,
+			Side:     row.Side,
+		})
+
+		if err != nil {
+			panic(errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				err.Error(),
+				err,
+			)))
+		}
+
+		if !ready {
+			continue
+		}
+
+		output, err := signal.flow.Measure(input)
+
+		if err != nil {
+			panic(errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				err.Error(),
+				err,
+			)))
+		}
+
+		out[row.Symbol] = datura.Map[*decimal.Decimal]{
+			"absorption":  decimal.NewFromFloat64(output.Absorption),
+			"drive":       decimal.NewFromFloat64(output.Drive),
+			"balance":     decimal.NewFromFloat64(output.Balance),
+			"starvation":  decimal.NewFromFloat64(output.Starvation),
+			"strength":    decimal.NewFromFloat64(output.Value),
+			"net":         decimal.NewFromFloat64(output.Net),
+			"netFraction": decimal.NewFromFloat64(output.NetFraction),
+			"category":    decimal.NewFromFloat64(output.Category),
+			"maturity":    decimal.NewFromFloat64(maturity),
+		}
 	}
 
-	return nil, nil
+	signal.trade.cache = signal.trade.cache[:0]
+
+	thesis.Signals.Store("trades", trades)
+	thesis.Measurements.Store("cvd", out)
+
+	return thesis
 }
 
-func (signal *Signal[T]) Error() error {
-	return signal.err
-}
+func (signal *Signal) Close() (err error) {
+	err = errnie.Error(errnie.Err(
+		errnie.Internal,
+		"signal: close failed",
+		nil,
+	))
 
-func (signal *Signal[T]) Close() (err error) {
-	err = signal.err
 	signal.cancel()
-
 	return err
 }

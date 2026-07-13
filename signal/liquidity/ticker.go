@@ -1,135 +1,47 @@
 package liquidity
 
 import (
-	"math"
+	"context"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/utils"
 )
 
+/*
+Ticker ingests public ticker rows into the shared liquidity sample.
+*/
 type Ticker struct {
-	classifier *probability.ScoreClassifier
+	ctx    context.Context
+	cancel context.CancelFunc
+	api    *websocket.API
+	cache  []kraken.TickerData
 }
 
-func NewTicker() *Ticker {
-	return &Ticker{
-		classifier: probability.NewScoreClassifier(
-			[]string{"scarcityScore", "medianScore", "depthScore"},
-			[]float64{
-				float64(types.CategoryIndex(types.CategoryExtremeScarcity)),
-				float64(types.CategoryIndex(types.CategoryMedianDepth)),
-				float64(types.CategoryIndex(types.CategoryRobustLiquidity)),
-			},
-		),
+func NewTicker(ctx context.Context, api *websocket.API) *Ticker {
+	ctx, cancel := context.WithCancel(ctx)
+
+	ticker := &Ticker{
+		ctx:    ctx,
+		cancel: cancel,
+		api:    api,
+		cache:  []kraken.TickerData{},
 	}
+
+	ticker.api.On("ticker", ticker.On)
+	return ticker
 }
 
-func (ticker *Ticker) Measure(
-	row kraken.TickerData,
-	crossSection *types.CrossSection,
-) ([]*types.Measurement, error) {
-	if crossSection == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation, "liquidity: cross-section required", nil,
-		))
+func (ticker *Ticker) On(data []byte) {
+	if len(data) == 0 {
+		return
 	}
 
-	notionalPeers := crossSection.QuoteNotionals()
-	depthPeers := crossSection.ExecutableDepths()
+	frame := utils.Unmarshal[kraken.Ticker](data)
 
-	if len(notionalPeers) < 2 || len(depthPeers) < 2 {
-		return nil, nil
+	if len(frame.Data) == 0 {
+		return
 	}
 
-	notionalMedian, ok := statistic.MedianOf(notionalPeers)
-
-	if !ok || notionalMedian <= 0 {
-		return nil, nil
-	}
-
-	depthMedian, ok := statistic.MedianOf(depthPeers)
-
-	if !ok || depthMedian <= 0 {
-		return nil, nil
-	}
-
-	notional := types.QuoteNotional(row)
-	executableDepth := types.ExecutableDepth(row)
-
-	if notional <= 0 || executableDepth <= 0 {
-		return nil, nil
-	}
-
-	// Geometric mean of the two ratios, not an arithmetic mean: it is the
-	// scale-symmetric combinator for ratios (a 2x-notional/0.5x-depth
-	// symbol nets to the peer median, not to a false 1.25x), so no side
-	// dominates the other through a hand-picked weight.
-	relative := math.Sqrt((notional / notionalMedian) * (executableDepth / depthMedian))
-	scarcity := math.Max(0, 1-relative)
-	depth := math.Max(0, relative-1)
-	balance := 1 / (1 + math.Abs(relative-1))
-	strength := max(scarcity, max(balance, depth))
-
-	result, err := ticker.classifier.Classify(map[string]float64{
-		"scarcityScore": scarcity,
-		"medianScore":   balance,
-		"depthScore":    depth,
-		"strength":      strength,
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	categories := []types.CategoryType{
-		types.ExtremeScarcity,
-		types.MedianDepth,
-		types.RobustLiquidity,
-	}
-	strengths := []float64{
-		scarcity,
-		balance,
-		depth,
-	}
-	categoryRows := make([]types.Category, 0, len(categories))
-
-	for index, category := range categories {
-		confidence := 0.0
-
-		if index < len(result.Probabilities) {
-			confidence = result.Probabilities[index]
-		}
-
-		categoryRows = append(categoryRows, types.Category{
-			Type:       category,
-			Confidence: confidence,
-			Strength:   strengths[index],
-		})
-	}
-
-	measurement := &types.Measurement{
-		Source:        types.SourceLiquidity,
-		Stream:        "ticker",
-		Symbol:        row.Symbol,
-		At:            row.Timestamp,
-		EntryBaseline: result.EntryBaseline,
-		ExitBaseline:  result.ExitBaseline,
-		Categories:    categoryRows,
-		Metrics: map[string]float64{
-			"rvol":                  relative,
-			"scarcityScore":         scarcity,
-			"medianScore":           balance,
-			"depthScore":            depth,
-			"strength":              strength,
-			"quoteNotional":         notional,
-			"quoteNotionalMedian":   notionalMedian,
-			"executableDepth":       executableDepth,
-			"executableDepthMedian": depthMedian,
-		},
-	}
-
-	return []*types.Measurement{measurement}, nil
+	ticker.cache = append(ticker.cache, frame.Data...)
 }

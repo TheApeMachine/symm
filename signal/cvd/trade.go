@@ -1,123 +1,46 @@
 package cvd
 
 import (
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
+	"context"
+
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/kraken/websocket"
 )
 
+/*
+Trade ingests public trade rows into the shared CVD sample.
+*/
 type Trade struct {
-	sample     *algorithm.TradeFlowSample
-	flow       *equation.Flow
-	classifier *probability.ScoreClassifier
+	ctx    context.Context
+	cancel context.CancelFunc
+	api    *websocket.API
+	cache  []kraken.TradeData
 }
 
-func NewTrade() *Trade {
-	return &Trade{
-		sample: algorithm.NewTradeFlowSample(),
-		flow:   equation.NewFlow(),
-		classifier: probability.NewScoreClassifier(
-			[]string{"absorption", "drive", "balance", "starvation"},
-			[]float64{
-				float64(types.CategoryIndex(types.CategoryHiddenAbsorption)),
-				float64(types.CategoryIndex(types.CategoryAggressiveDrive)),
-				float64(types.CategoryIndex(types.CategoryStochasticBalance)),
-				float64(types.CategoryIndex(types.CategoryVolumeStarvation)),
-			},
-		),
+func NewTrade(ctx context.Context, api *websocket.API) *Trade {
+	ctx, cancel := context.WithCancel(ctx)
+
+	trade := &Trade{
+		ctx:    ctx,
+		cancel: cancel,
+		api:    api,
+		cache:  []kraken.TradeData{},
 	}
+
+	trade.api.On("trade", trade.On)
+	return trade
 }
 
-func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) {
-	input, ready, maturity, err := trade.sample.Measure(algorithm.TradeFlowInput{
-		Symbol:   row.Symbol,
-		Price:    row.Price.Float64(),
-		Quantity: row.Qty,
-		Side:     row.Side,
-	})
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+func (trade *Trade) On(data []byte) {
+	if len(data) == 0 {
+		return
 	}
 
-	if !ready {
-		return nil, nil
+	frame := kraken.NewTrade(data)
+
+	if len(frame.Data) == 0 {
+		return
 	}
 
-	output, err := trade.flow.Measure(input)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
-	}
-
-	result, err := trade.classifier.Classify(map[string]float64{
-		"absorption": output.Absorption,
-		"drive":      output.Drive,
-		"balance":    output.Balance,
-		"starvation": output.Starvation,
-		"strength":   output.Value,
-	})
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
-	}
-
-	categories := []types.CategoryType{
-		types.HiddenAbsorption,
-		types.AggressiveDrive,
-		types.StochasticBalance,
-		types.VolumeStarvation,
-	}
-	strengths := []float64{
-		output.Absorption,
-		output.Drive,
-		output.Balance,
-		output.Starvation,
-	}
-	categoryRows := make([]types.Category, 0, len(categories))
-
-	for index, category := range categories {
-		confidence := 0.0
-
-		if index < len(result.Probabilities) {
-			confidence = result.Probabilities[index]
-		}
-
-		categoryRows = append(categoryRows, types.Category{
-			Type:       category,
-			Confidence: confidence,
-			Strength:   strengths[index],
-		})
-	}
-
-	measurement := &types.Measurement{
-		Source:        types.SourceCVD,
-		Stream:        "trades",
-		Symbol:        row.Symbol,
-		At:            row.Timestamp,
-		EntryBaseline: result.EntryBaseline,
-		ExitBaseline:  result.ExitBaseline,
-		Maturity:      maturity,
-		Categories:    categoryRows,
-		Metrics: map[string]float64{
-			"absorption":  output.Absorption,
-			"drive":       output.Drive,
-			"balance":     output.Balance,
-			"starvation":  output.Starvation,
-			"strength":    output.Value,
-			"net":         output.Net,
-			"netFraction": output.NetFraction,
-		},
-	}
-
-	return []*types.Measurement{measurement}, nil
+	trade.cache = append(trade.cache, frame.Data...)
 }

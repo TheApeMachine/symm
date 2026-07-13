@@ -1,8 +1,6 @@
 package broker
 
 import (
-	"strings"
-
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
@@ -18,12 +16,11 @@ type SpotHolding struct {
 }
 
 type Balance struct {
-	status    types.Status
-	api       *websocket.API
-	ui        chan []byte
-	model     *kraken.Balance
-	quote     string
-	observers []func()
+	status types.Status
+	api    *websocket.API
+	ui     chan []byte
+	model  *kraken.Balance
+	quote  string
 }
 
 func NewBalance(api *websocket.API, ui chan []byte) *Balance {
@@ -34,8 +31,26 @@ func NewBalance(api *websocket.API, ui chan []byte) *Balance {
 		quote:  viper.GetString("market.quote_currency"),
 	}
 
-	balance.api.On("balances", balance.BalanceAck)
 	return balance
+}
+
+func (balance *Balance) Initialize() error {
+	errnie.Info("initializing balance")
+
+	balance.api.On("balances", balance.BalanceAck)
+
+	if errnie.Error(balance.api.SubscribeBalance()) != nil {
+		balance.status = types.ERROR
+
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to subscribe to balance",
+			nil,
+		))
+	}
+
+	balance.status = types.READY
+	return nil
 }
 
 func (balance *Balance) Status() types.Status {
@@ -58,6 +73,10 @@ Snapshot returns the quote-currency accounting row.
 func (balance *Balance) Snapshot() []datura.Map[any] {
 	balances := make([]datura.Map[any], 0, 1)
 
+	if balance.model == nil {
+		return balances
+	}
+
 	for _, balanceData := range balance.model.Data {
 		if balanceData.Asset != balance.quote {
 			continue
@@ -72,15 +91,6 @@ func (balance *Balance) Snapshot() []datura.Map[any] {
 	}
 
 	return balances
-}
-
-func (balance *Balance) Initialize() *Balance {
-	if errnie.Error(balance.api.SubscribeBalance()) != nil {
-		balance.status = types.ERROR
-		return balance
-	}
-
-	return balance
 }
 
 func (balance *Balance) BalanceAck(buf []byte) {
@@ -111,7 +121,7 @@ func (balance *Balance) Get(symbol string) (*kraken.BalanceData, error) {
 /*
 Holdings returns non-quote spot wallet balances that represent open inventory.
 */
-func (balance *Balance) Holdings(quote string) []SpotHolding {
+func (balance *Balance) Holdings() []SpotHolding {
 	if balance.model == nil {
 		return nil
 	}
@@ -119,22 +129,6 @@ func (balance *Balance) Holdings(quote string) []SpotHolding {
 	holdings := make([]SpotHolding, 0)
 
 	for _, balanceData := range balance.model.Data {
-		if balanceData.Asset == quote {
-			continue
-		}
-
-		if strings.Contains(balanceData.Asset, ".") {
-			continue
-		}
-
-		if balanceData.WalletType != "" && balanceData.WalletType != "spot" {
-			continue
-		}
-
-		if balanceData.Balance.Sign() <= 0 {
-			continue
-		}
-
 		holdings = append(holdings, SpotHolding{
 			Asset: balanceData.Asset,
 			Qty:   balanceData.Balance,

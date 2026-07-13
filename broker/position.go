@@ -96,6 +96,52 @@ func (position *Position) Publish() {
 	}.Marshal()
 }
 
+func (position *Position) Hydrate(history *kraken.TradesHistory) *Position {
+	if errnie.Error(kraken.Validate(history)) != nil {
+		return position
+	}
+
+	if position.balance == nil || position.api == nil {
+		return position
+	}
+
+	symbol := position.api.PairName(position.Data.Symbol)
+	position.Data.Symbol = symbol
+
+	for _, holding := range position.balance.Holdings() {
+		if holding.Asset == position.balance.quote || holding.Qty.Sign() <= 0 {
+			continue
+		}
+
+		holdingSymbol, err := position.api.SymbolForAsset(
+			holding.Asset, position.balance.quote,
+		)
+
+		if err != nil || holdingSymbol != symbol {
+			continue
+		}
+
+		for _, trade := range history.Result.Trades {
+			if position.api.PairName(trade.Pair) != symbol || trade.Type != "buy" {
+				continue
+			}
+
+			if trade.Price == nil {
+				continue
+			}
+
+			position.Data.Qty = holding.Qty
+			position.Data.EntryPrice = *trade.Price
+			position.status = types.OPEN
+			position.Publish()
+
+			return position
+		}
+	}
+
+	return position
+}
+
 func (position *Position) OrderAck(buf []byte) {
 	orderAck := kraken.NewOrderResponse(buf)
 
@@ -274,6 +320,15 @@ func (position *Position) TickerAck(buf []byte) {
 	for _, tickerData := range ticker.Data {
 		if tickerData.Symbol != position.Data.Symbol {
 			continue
+		}
+
+		if position.Data.FeeRate == nil && position.price != nil &&
+			position.price.Status() == types.READY {
+			feeRate, err := position.price.FeeRate(tickerData.Symbol)
+
+			if err == nil {
+				position.Data.FeeRate, _ = decimal.NewFromString(feeRate.Fee)
+			}
 		}
 
 		stop, triggered, err := position.valuation.Update(

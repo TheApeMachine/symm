@@ -9,7 +9,6 @@ import (
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/signal/compute"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -88,7 +87,7 @@ func (engine *Engine) Close() {
 	})
 }
 
-func (engine *Engine) Admit(symbol string, thesis *strategy.Thesis) (*Slot, error) {
+func (engine *Engine) Admit(symbol string) (*Slot, error) {
 	if found, ok := engine.slots.Load(symbol); ok {
 		return found.(*Slot), nil
 	}
@@ -110,7 +109,6 @@ func (engine *Engine) Admit(symbol string, thesis *strategy.Thesis) (*Slot, erro
 
 	slot, err := newSlot(
 		symbol,
-		thesis,
 		engine.config,
 		engine.forecastConfig,
 		engine.lifetimeCapacity,
@@ -145,7 +143,6 @@ func (engine *Engine) Slot(symbol string) (*Slot, bool) {
 ProcessResult carries replay metadata from one L3 ingest step.
 */
 type ProcessResult struct {
-	Thesis        *strategy.Thesis
 	State         State
 	Observation   ObservationMetadata
 	Accounting    PopulationAccounting
@@ -162,7 +159,6 @@ Slot is one symbol's population, coordinate, cohort, and solver state.
 */
 type Slot struct {
 	symbol         string
-	thesis         *strategy.Thesis
 	config         *pmanifold.Config
 	population     *Population
 	coordinates    *CoordinateMapper
@@ -179,7 +175,6 @@ type Slot struct {
 
 func newSlot(
 	symbol string,
-	thesis *strategy.Thesis,
 	config *pmanifold.Config,
 	forecastConfig ForecastConfig,
 	lifetimeCapacity int,
@@ -195,7 +190,6 @@ func newSlot(
 
 	return &Slot{
 		symbol:      symbol,
-		thesis:      thesis,
 		config:      config,
 		population:  NewPopulation(symbol, lifetime, int(config.GridX)),
 		coordinates: NewCoordinateMapper(halflife, epsilon, lifetime),
@@ -213,8 +207,41 @@ func (slot *Slot) Close() {
 	}
 }
 
-func (slot *Slot) Thesis() *strategy.Thesis {
-	return slot.thesis
+func (slot *Slot) Process(
+	thesis *types.Thesis,
+	row kraken.Level3Data,
+	pricePrecision int,
+	qtyPrecision int,
+	book Level3Book,
+) ProcessResult {
+	result := slot.Observe(thesis, row, pricePrecision, qtyPrecision, book)
+
+	if !result.AdvanceReady {
+		return result
+	}
+
+	return slot.Advance(thesis)
+}
+
+func (slot *Slot) failedResult(
+	thesis *types.Thesis,
+	observation ObservationMetadata,
+	reason InvalidReason,
+) ProcessResult {
+	outcome := slot.markFailed(
+		thesis,
+		observation.At,
+		reason,
+		slot.population.Epoch(),
+		slot.coordinates.ScaleVersion(),
+	)
+
+	return ProcessResult{
+		State:         outcome.State,
+		Observation:   observation,
+		Accounting:    slot.population.Accounting(),
+		StateProduced: true,
+	}
 }
 
 func (slot *Slot) open() error {
@@ -237,41 +264,6 @@ func (slot *Slot) open() error {
 
 		return nil
 	})
-}
-
-func (slot *Slot) Process(
-	row kraken.Level3Data,
-	pricePrecision int,
-	qtyPrecision int,
-	book Level3Book,
-) ProcessResult {
-	result := slot.Observe(row, pricePrecision, qtyPrecision, book)
-
-	if !result.AdvanceReady {
-		return result
-	}
-
-	return slot.Advance()
-}
-
-func (slot *Slot) failedResult(
-	observation ObservationMetadata,
-	reason InvalidReason,
-) ProcessResult {
-	outcome := slot.markFailed(
-		observation.At,
-		reason,
-		slot.population.Epoch(),
-		slot.coordinates.ScaleVersion(),
-	)
-
-	return ProcessResult{
-		Thesis:        outcome.Thesis,
-		State:         outcome.State,
-		Observation:   observation,
-		Accounting:    slot.population.Accounting(),
-		StateProduced: true,
-	}
 }
 
 func (slot *Slot) eventDeltaT(at time.Time) float64 {
@@ -316,13 +308,13 @@ func (slot *Slot) mapCarriers(
 }
 
 type stepOutcome struct {
-	Thesis       *strategy.Thesis
 	State        State
 	GasReady     bool
 	DepositCount int
 }
 
 func (slot *Slot) step(
+	thesis *types.Thesis,
 	cohorts []Cohort,
 	orders []*PhysicalOrder,
 	bestBid float64,
@@ -351,7 +343,7 @@ func (slot *Slot) step(
 
 	if err := slot.solver.ResetSources(); err != nil {
 		errnie.Error(errnie.Err(errnie.UnprocessableContent, "logic manifold: reset sources failed", err))
-		return slot.markFailed(at, SolverFailed, epoch, transform.Version)
+		return slot.markFailed(thesis, at, SolverFailed, epoch, transform.Version)
 	}
 
 	deposits := slot.depositor.Deposits(cohorts)
@@ -368,7 +360,7 @@ func (slot *Slot) step(
 			deposit.EInt,
 		); err != nil {
 			errnie.Error(errnie.Err(errnie.UnprocessableContent, "logic manifold: source failed", err))
-			return slot.markFailed(at, SolverFailed, epoch, transform.Version)
+			return slot.markFailed(thesis, at, SolverFailed, epoch, transform.Version)
 		}
 	}
 
@@ -380,12 +372,12 @@ func (slot *Slot) step(
 	}
 
 	if len(oscillators) == 0 {
-		return slot.markFailed(at, SolverFailed, epoch, transform.Version)
+		return slot.markFailed(thesis, at, SolverFailed, epoch, transform.Version)
 	}
 
 	if err := slot.solver.SetOscillators(oscillators); err != nil {
 		errnie.Error(errnie.Err(errnie.UnprocessableContent, "logic manifold: set oscillators failed", err))
-		return slot.markFailed(at, SolverFailed, epoch, transform.Version)
+		return slot.markFailed(thesis, at, SolverFailed, epoch, transform.Version)
 	}
 
 	controls := slot.config.RuntimeControls()
@@ -394,7 +386,7 @@ func (slot *Slot) step(
 
 	if err := slot.solver.SetControls(controls); err != nil {
 		errnie.Error(errnie.Err(errnie.UnprocessableContent, "logic manifold: set controls failed", err))
-		return slot.markFailed(at, SolverFailed, epoch, transform.Version)
+		return slot.markFailed(thesis, at, SolverFailed, epoch, transform.Version)
 	}
 
 	var reading pmanifold.Reading
@@ -409,11 +401,11 @@ func (slot *Slot) step(
 				"logic manifold: step failed: "+err.Error(),
 				err,
 			))
-			return slot.markFailed(at, SolverFailed, epoch, transform.Version)
+			return slot.markFailed(thesis, at, SolverFailed, epoch, transform.Version)
 		}
 
 		if !reading.IsFinite() {
-			return slot.markFailed(at, SolverFailed, epoch, transform.Version)
+			return slot.markFailed(thesis, at, SolverFailed, epoch, transform.Version)
 		}
 	}
 
@@ -423,7 +415,7 @@ func (slot *Slot) step(
 			"logic manifold: field read failed",
 			err,
 		))
-		return slot.markFailed(at, SolverFailed, epoch, transform.Version)
+		return slot.markFailed(thesis, at, SolverFailed, epoch, transform.Version)
 	}
 
 	conservation := slot.depositor.Conservation(accounting, cohorts)
@@ -443,23 +435,28 @@ func (slot *Slot) step(
 	state.StressAnisotropy = stressAnisotropy(pressureTensor)
 	state.OscillatorCount = len(oscillators)
 
-	slot.thesis.AddEvidence(slot.symbol, "manifold", state)
-	slot.thesis.AddEvidence(slot.symbol, "step_at", at)
+	thesis.Measurements.Store(slot.symbol+":manifold", state)
+	thesis.Measurements.Store(slot.symbol+":step_at", at)
 
 	gasReady := state.GasReady()
 
 	if gasReady {
-		if err := slot.forecaster.Attach(slot.symbol, slot.thesis, state); err != nil {
+		forecast, ready, err := slot.forecaster.Update(state)
+
+		if err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
 				"logic manifold: forecast update failed",
 				err,
 			))
 		}
+
+		if ready {
+			thesis.Measurements.Store(slot.symbol+":manifold_forecasts", forecast)
+		}
 	}
 
 	return stepOutcome{
-		Thesis:       slot.thesis,
 		State:        state,
 		GasReady:     gasReady,
 		DepositCount: len(deposits),
@@ -467,6 +464,7 @@ func (slot *Slot) step(
 }
 
 func (slot *Slot) markFailed(
+	thesis *types.Thesis,
 	at time.Time,
 	reason InvalidReason,
 	epoch uint64,
@@ -482,12 +480,11 @@ func (slot *Slot) markFailed(
 		InvalidReason: reason,
 	}
 
-	slot.thesis.AddEvidence(slot.symbol, "manifold_invalid", string(reason))
-	slot.thesis.AddEvidence(slot.symbol, "manifold", state)
-	slot.thesis.RemoveEvidence(slot.symbol, "manifold_forecasts")
+	thesis.Measurements.Store(slot.symbol+":manifold_invalid", string(reason))
+	thesis.Measurements.Store(slot.symbol+":manifold", state)
+	thesis.Measurements.Delete(slot.symbol + ":manifold_forecasts")
 
 	return stepOutcome{
-		Thesis:   slot.thesis,
 		State:    state,
 		GasReady: false,
 	}

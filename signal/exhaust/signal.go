@@ -3,104 +3,201 @@ package exhaust
 import (
 	"context"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Exhaust is the "Exit Thesis" perspective, tracking microstructure decay to
-advise on the urgency of closing an open position.
-
-1. What it measures exactly (in isolation)
-
-The Exhaust signal tracks microstructure decay to advise on the urgency of
-closing an open position. Unlike entry signals that look for momentum ignition,
-Exhaust looks for momentum rot.
-
-Book Thinning: Measures the trend of bid/ask depth; if depth is disappearing
-as price moves, the move is "hollow".
-
-Pressure Fade: Tracks the decay in trade pressure; it signals when the
-aggressive "hitters" have run out of ammunition.
-
-Spread Widening: Monitors the bid/ask spread; widening spreads during a trend
-indicate increasing mechanical resistance and risk.
-
-Imbalance Flip: Detects when the "weight" of the book flips from the support
-side to the resistance side.
-
----
-
-2. Semantically, what story does it tell?
-
-The Exhaust signal tells the story of when to leave: momentum rot and thesis
-decay.
-
-1. Mechanical Collapse - book thinning dominates.
-2. Thermal Exhaustion - trade pressure fade dominates.
-3. Fragile Expansion - spread widening dominates.
-4. Active Reversal - book imbalance flip dominates.
-
-# Summary of Exhaust Categories
-
-| Category            | Primary Metric  | Urgency  | Market "Feel"                    |
-|:--------------------|:----------------|:---------|:---------------------------------|
-| Mechanical Collapse | Book Thinning   | High     | Crumbling Walls / Flash-Risk     |
-| Thermal Exhaustion  | Pressure Fade   | Moderate | Dying Momentum / Topping Out     |
-| Fragile Expansion   | Spread Widen    | Moderate | Increasing Friction / Risky Hold |
-| Active Reversal     | Imbalance Flip  | High     | Sentiment Flip / Counter-Attack  |
-
-Current implementation consumes book and trade artifacts and uses nomagique's
-decay primitive. L3 can improve per-order delete/fill attribution, but this
-signal does not claim order-event truth from L2.
+Exhaust is the Exit Thesis perspective, tracking microstructure decay to advise
+on the urgency of closing an open position. Categories belong in logic; this
+signal emits numerical scores only.
 */
-
-/*
-Signal routes book and trade rows into the shared exhaust decay pipeline.
-*/
-type Signal[T any] struct {
+type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	err    error
 	book   *Book
 	trade  *Trade
+	sample *algorithm.DecaySample
+	decay  *equation.Decay
 }
 
-func NewSignal[T any](ctx context.Context) *Signal[T] {
+func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
-	engine := NewEngine()
 
-	return &Signal[T]{
+	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		book:   NewBook(engine),
-		trade:  NewTrade(engine),
+		book:   NewBook(ctx, api),
+		trade:  NewTrade(ctx, api),
+		sample: algorithm.NewDecaySample(),
+		decay:  equation.NewDecay(),
 	}
 }
 
-func (signal *Signal[T]) IngestRoles() []string {
-	return []string{"book", "trade"}
-}
+func (signal *Signal) Measure(
+	thesis *types.Thesis,
+) *types.Thesis {
+	books := signal.book.cache
+	trades := signal.trade.cache
+	out := datura.Map[datura.Map[*decimal.Decimal]]{}
 
-func (signal *Signal[T]) Measure(
-	input T,
-	crossSection *types.CrossSection,
-) ([]*types.Measurement, error) {
-	switch row := any(input).(type) {
-	case kraken.BookData:
-		return signal.book.Measure(row)
-	case kraken.TradeData:
-		return signal.trade.Measure(row)
+	for _, row := range books {
+		if row.Symbol == "" || row.PriceIncrement.Sign() <= 0 {
+			continue
+		}
+
+		bids := make([]flow.BookLevel, 0, len(row.Bids))
+		asks := make([]flow.BookLevel, 0, len(row.Asks))
+
+		for _, level := range row.Bids {
+			tick, err := kraken.PriceTick(level.Price, row.PriceIncrement)
+
+			if err != nil {
+				panic(errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					err.Error(),
+					err,
+				)))
+			}
+
+			bids = append(bids, flow.BookLevel{
+				Price:    level.Price.Float64(),
+				Ticks:    tick,
+				Quantity: level.Qty,
+			})
+		}
+
+		for _, level := range row.Asks {
+			tick, err := kraken.PriceTick(level.Price, row.PriceIncrement)
+
+			if err != nil {
+				panic(errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					err.Error(),
+					err,
+				)))
+			}
+
+			asks = append(asks, flow.BookLevel{
+				Price:    level.Price.Float64(),
+				Ticks:    tick,
+				Quantity: level.Qty,
+			})
+		}
+
+		input, ready, maturity, err := signal.sample.MeasureBook(flow.BookInput{
+			Symbol:   row.Symbol,
+			TickSize: row.PriceIncrement.Float64(),
+			Bids:     bids,
+			Asks:     asks,
+		})
+
+		if err != nil {
+			panic(errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				err.Error(),
+				err,
+			)))
+		}
+
+		if !ready {
+			continue
+		}
+
+		output, err := signal.decay.Measure(input)
+
+		if err != nil {
+			panic(errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				err.Error(),
+				err,
+			)))
+		}
+
+		out[row.Symbol] = datura.Map[*decimal.Decimal]{
+			"mechanical": decimal.NewFromFloat64(output.Mechanical),
+			"thermal":    decimal.NewFromFloat64(output.Thermal),
+			"fragile":    decimal.NewFromFloat64(output.Fragile),
+			"reversal":   decimal.NewFromFloat64(output.Reversal),
+			"urgency":    decimal.NewFromFloat64(output.Urgency),
+			"strength":   decimal.NewFromFloat64(output.Strength),
+			"value":      decimal.NewFromFloat64(output.Value),
+			"category":   decimal.NewFromFloat64(output.Category),
+			"maturity":   decimal.NewFromFloat64(maturity),
+		}
 	}
 
-	return nil, nil
+	for _, row := range trades {
+		if row.Symbol == "" || row.Price.Sign() <= 0 || row.Qty <= 0 {
+			continue
+		}
+
+		input, ready, maturity, err := signal.sample.MeasureTrade(flow.TradeInput{
+			Symbol:   row.Symbol,
+			Price:    row.Price.Float64(),
+			Quantity: row.Qty,
+			Side:     row.Side,
+		})
+
+		if err != nil {
+			panic(errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				err.Error(),
+				err,
+			)))
+		}
+
+		if !ready {
+			continue
+		}
+
+		output, err := signal.decay.Measure(input)
+
+		if err != nil {
+			panic(errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				err.Error(),
+				err,
+			)))
+		}
+
+		out[row.Symbol] = datura.Map[*decimal.Decimal]{
+			"mechanical": decimal.NewFromFloat64(output.Mechanical),
+			"thermal":    decimal.NewFromFloat64(output.Thermal),
+			"fragile":    decimal.NewFromFloat64(output.Fragile),
+			"reversal":   decimal.NewFromFloat64(output.Reversal),
+			"urgency":    decimal.NewFromFloat64(output.Urgency),
+			"strength":   decimal.NewFromFloat64(output.Strength),
+			"value":      decimal.NewFromFloat64(output.Value),
+			"category":   decimal.NewFromFloat64(output.Category),
+			"maturity":   decimal.NewFromFloat64(maturity),
+		}
+	}
+
+	signal.book.cache = signal.book.cache[:0]
+	signal.trade.cache = signal.trade.cache[:0]
+
+	thesis.Signals.Store("books", books)
+	thesis.Signals.Store("trades", trades)
+	thesis.Measurements.Store("exhaust", out)
+
+	return thesis
 }
 
-func (signal *Signal[T]) Error() error {
-	return signal.err
-}
+func (signal *Signal) Close() (err error) {
+	err = errnie.Error(errnie.Err(
+		errnie.Internal,
+		"signal: close failed",
+		nil,
+	))
 
-func (signal *Signal[T]) Close() error {
 	signal.cancel()
-	return nil
+	return err
 }

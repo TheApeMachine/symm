@@ -52,6 +52,11 @@ func NewPaper(
 	return paper
 }
 
+func (paper *Paper) Initialize() error {
+	paper.status = types.READY
+	return nil
+}
+
 func (paper *Paper) Status() types.Status {
 	return paper.simulator.Status()
 }
@@ -135,7 +140,7 @@ func (paper *Paper) TradesHistory() (*kraken.TradesHistory, error) {
 	)
 
 	paper.simulator.Do(REST, func() {
-		model, err = paper.execute("history")
+		model, err = paper.execute("history", "history")
 	})
 
 	if err != nil {

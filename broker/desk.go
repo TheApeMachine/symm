@@ -40,17 +40,40 @@ func NewDesk(
 		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
 	}
 
-	// Desk carries no persisted position state to hydrate: open positions
-	// live only in this in-memory map, populated going forward by Buy and
-	// Sell. There is nothing further to wait on, so Desk is ready as soon
-	// as it is constructed.
-	desk.status = types.READY
-
 	return desk
 }
 
-func (desk *Desk) Balance() *Balance {
-	return desk.balance
+/*
+Initialize waits for the wallet to report holdings, then loads open spot
+inventory from trade history. The booter calls this once per boot.
+*/
+func (desk *Desk) Initialize() error {
+	errnie.Info("initializing desk")
+
+	history, err := desk.api.TradesHistory()
+
+	if err != nil {
+		desk.status = types.ERROR
+
+		return errnie.Error(errnie.Err(
+			errnie.Internal, "failed to get trades history", err,
+		))
+	}
+
+	for _, trade := range history.Result.Trades {
+		desk.positions.Store(trade.Pair, NewPosition(
+			desk.api,
+			desk.ui,
+			desk.price,
+			desk.balance,
+			&PositionData{Symbol: trade.Pair},
+		).Hydrate(history))
+	}
+
+	desk.status = types.READY
+	desk.Publish()
+
+	return nil
 }
 
 func (desk *Desk) Status() types.Status {
@@ -187,7 +210,7 @@ func (desk *Desk) Publish() {
 		"executions": executions,
 	}
 
-	if desk.balance != nil {
+	if desk.balance != nil && desk.balance.Status() == types.READY {
 		frame["balances"] = desk.balance.Snapshot()
 	}
 

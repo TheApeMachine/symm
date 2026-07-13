@@ -4,149 +4,147 @@ import (
 	"context"
 	"iter"
 	"testing"
+	"time"
 
-	"github.com/bytedance/sonic"
+	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/tests"
 	tickerfixture "github.com/theapemachine/symm/tests/fixtures/ticker"
 	"github.com/theapemachine/symm/types"
 )
 
-func TestSignalIngestRoles(t *testing.T) {
-	Convey("Given a pumpdump signal", t, func() {
-		signal := NewSignal[any](context.Background())
-		defer func() { _ = signal.Close() }()
+func TestSignal_MeasureFromMarket(testingTB *testing.T) {
+	Convey("Given a pumpdump signal fed by a market replay", testingTB, func() {
+		signal := &Signal{
+			ctx: context.Background(),
+			ticker: &Ticker{
+				cache: []kraken.TickerData{},
+			},
+			ignition: equation.NewIgnition(),
+		}
+		handlers := tests.Handlers{
+			"ticker": signal.ticker.On,
+		}
+		market := tests.NewMarket().
+			Feed(tickerfixture.NewFixture(tickerfixture.UPDATE, 32))
 
-		Convey("When ingest roles are requested", func() {
-			roles := signal.IngestRoles()
+		Convey("When calm and pumped ticker timelines are measured", func() {
+			calm := measureField(signal, handlers, market.Frames(), "rvol")
+			pumped := measureField(
+				signal,
+				handlers,
+				tests.Spike(market.Frames(), 16, 1.25, 8),
+				"rvol",
+			)
 
-			Convey("Then it should consume only ticker data", func() {
-				So(roles, ShouldResemble, []string{"ticker"})
+			Convey("Then the pumped stream should lift relative volume", func() {
+				So(len(signal.ticker.cache), ShouldEqual, 0)
+				So(pumped, ShouldBeGreaterThan, calm)
 			})
 		})
 	})
 }
 
-func TestSignalMeasure(t *testing.T) {
-	Convey("Given a pumpdump signal", t, func() {
-		signal := NewSignal[any](context.Background())
-		defer func() { _ = signal.Close() }()
+func TestSignal_MeasureSkipsIncompleteRow(testingTB *testing.T) {
+	Convey("Given a partial Kraken ticker row", testingTB, func() {
+		signal := &Signal{
+			ctx:      context.Background(),
+			ticker:   &Ticker{cache: []kraken.TickerData{}},
+			ignition: equation.NewIgnition(),
+		}
 
-		Convey("When a mid-stream volume+price pump is injected", func() {
-			calm := replay(t, signal, shapedTickerRows(nil))
-
-			pumped := NewSignal[any](context.Background())
-			defer func() { _ = pumped.Close() }()
-
-			spiked := replay(t, pumped, shapedTickerRows(
-				func(frames iter.Seq[tests.Frame]) iter.Seq[tests.Frame] {
-					return tests.Spike(frames, 16, 1.25, 8)
-				},
-			))
-
-			Convey("Then the signal's volume lift exceeds the calm baseline", func() {
-				So(len(spiked), ShouldBeGreaterThan, 0)
-				So(spiked[len(spiked)-1].Source, ShouldEqual, types.SourcePumpDump)
-				So(peakMetric(spiked, "rvol"), ShouldBeGreaterThan, peakMetric(calm, "rvol"))
-			})
+		signal.ticker.cache = append(signal.ticker.cache, kraken.TickerData{
+			Symbol:    "BTC/USD",
+			Timestamp: time.Now(),
 		})
 
-		Convey("When a non-ticker row is received", func() {
-			measurements, err := signal.Measure(struct{}{}, nil)
+		Convey("When measure runs", func() {
+			result := signal.Measure(types.NewThesis(nil))
 
-			Convey("Then it should leave the row to its owning signal", func() {
-				So(err, ShouldBeNil)
-				So(measurements, ShouldBeNil)
+			Convey("Then it should wait without publishing metrics", func() {
+				_, ok := result.Measurements.Load("pumpdump")
+				So(ok, ShouldBeFalse)
 			})
 		})
 	})
 }
 
-func BenchmarkSignalMeasure(b *testing.B) {
-	inputs := tickerInputs()
+func TestSignal_Measure(testingTB *testing.T) {
+	Convey("Given cached ticker rows", testingTB, func() {
+		signal := &Signal{
+			ctx: context.Background(),
+			ticker: &Ticker{
+				cache: []kraken.TickerData{},
+			},
+			ignition: equation.NewIgnition(),
+		}
+		fixture := tickerfixture.NewFixture(tickerfixture.UPDATE, 32)
 
-	b.ReportAllocs()
+		tests.Replay(tests.Handlers{"ticker": signal.ticker.On}, fixture.Frames())
 
-	for b.Loop() {
-		signal := NewSignal[any](context.Background())
-		_ = replay(b, signal, inputs)
-		_ = signal.Close()
-	}
+		result := signal.Measure(types.NewThesis(nil))
+
+		Convey("It should publish ignition metrics without categories", func() {
+			raw, ok := result.Measurements.Load("pumpdump")
+			So(ok, ShouldBeTrue)
+
+			out, ok := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])
+			So(ok, ShouldBeTrue)
+			So(out["ALGO/USD"]["ignition"].Float64(), ShouldBeGreaterThan, 0)
+			So(len(signal.ticker.cache), ShouldEqual, 0)
+		})
+	})
 }
 
-func replay(
-	t testing.TB,
-	signal *Signal[any],
-	inputs []any,
-) []*types.Measurement {
-	t.Helper()
+func measureField(
+	signal *Signal,
+	handlers tests.Handlers,
+	frames iter.Seq[tests.Frame],
+	key string,
+) float64 {
+	signal.ticker.cache = signal.ticker.cache[:0]
+	tests.Replay(handlers, frames)
 
-	measurements := make([]*types.Measurement, 0)
-	for _, input := range inputs {
-		out, err := signal.Measure(input, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+	thesis := types.NewThesis(nil)
+	result := signal.Measure(thesis)
 
-		measurements = append(measurements, out...)
+	raw, ok := result.Measurements.Load("pumpdump")
+
+	if !ok {
+		return 0
 	}
 
-	return measurements
+	out, ok := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])
+
+	if !ok || out["ALGO/USD"] == nil || out["ALGO/USD"][key] == nil {
+		return 0
+	}
+
+	return out["ALGO/USD"][key].Float64()
 }
 
-func shapedTickerRows(shape func(iter.Seq[tests.Frame]) iter.Seq[tests.Frame]) []any {
-	fixture := tickerfixture.NewFixture(tickerfixture.UPDATE, 32)
-	frames := fixture.Frames()
-
-	if shape != nil {
-		frames = shape(frames)
+func BenchmarkSignal_Measure(benchmark *testing.B) {
+	signal := &Signal{
+		ctx: context.Background(),
+		ticker: &Ticker{
+			cache: []kraken.TickerData{},
+		},
+		ignition: equation.NewIgnition(),
 	}
-
-	inputs := make([]any, 0, 32)
-
-	for frame := range frames {
-		ticker := kraken.Ticker{}
-
-		if err := sonic.Unmarshal(frame.Payload, &ticker); err != nil {
-			panic(err)
-		}
-
-		for _, row := range ticker.Data {
-			inputs = append(inputs, row)
-		}
+	handlers := tests.Handlers{
+		"ticker": signal.ticker.On,
 	}
+	market := tests.NewMarket().
+		Feed(tickerfixture.NewFixture(tickerfixture.UPDATE, 32))
 
-	return inputs
-}
+	benchmark.ReportAllocs()
 
-func peakMetric(measurements []*types.Measurement, key string) float64 {
-	peak := 0.0
-
-	for _, measurement := range measurements {
-		if value := measurement.Metrics[key]; value > peak {
-			peak = value
-		}
+	for benchmark.Loop() {
+		signal.ticker.cache = signal.ticker.cache[:0]
+		tests.Replay(handlers, market.Frames())
+		_ = signal.Measure(types.NewThesis(nil))
 	}
-
-	return peak
-}
-
-func tickerInputs() []any {
-	fixture := tickerfixture.NewFixture(tickerfixture.UPDATE, 32)
-	inputs := make([]any, 0, 32)
-
-	for payload := range fixture.Generate() {
-		frame := kraken.Ticker{}
-
-		if err := sonic.Unmarshal(payload, &frame); err != nil {
-			panic(err)
-		}
-
-		for _, row := range frame.Data {
-			inputs = append(inputs, row)
-		}
-	}
-
-	return inputs
 }

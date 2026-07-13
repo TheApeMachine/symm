@@ -268,7 +268,7 @@ func (evidence *Evidence) measurement(
 		Horizon:      outcome.Horizon,
 		Unit:         unit,
 		Raw:          raw,
-		Normalized:   types.OptionalValue{Available: false},
+		Normalized:   0,
 		Maturity:     outcome.Maturity,
 		Uncertainty: types.MeasurementUncertainty{
 			Available: false,

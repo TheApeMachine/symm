@@ -96,16 +96,23 @@ func New(
 		})
 	}
 
-	if errnie.Error(live.client.Connect()) != nil {
-		live.status = types.ERROR
-		return live
-	}
-
-	if !live.auth {
-		live.status = types.READY
-	}
-
 	return live
+}
+
+func (live *Live) Initialize() error {
+	errnie.Info("initializing live")
+
+	if err := live.client.Connect(); err != nil {
+		live.status = types.ERROR
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"websocket: connect failed",
+			err,
+		))
+	}
+
+	live.status = types.READY
+	return nil
 }
 
 func (live *Live) route(raw []byte) {

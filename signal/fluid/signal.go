@@ -131,10 +131,6 @@ func NewSignal[T any](ctx context.Context) *Signal[T] {
 	}
 }
 
-func (signal *Signal[T]) IngestRoles() []string {
-	return []string{"book", "trade", "ticker"}
-}
-
 /*
 Measure feeds each scoped ticker, book, or trade row through the per-symbol
 fluid solver and yields a measurement only after the book lattice has integrated.

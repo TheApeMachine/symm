@@ -1,11 +1,15 @@
 package manifold
 
+import (
+	"github.com/theapemachine/symm/types"
+)
+
 /*
 Advance evolves the field once from every valid population mutation accumulated
 since the previous advance.
 */
-func (slot *Slot) Advance() ProcessResult {
-	result := ProcessResult{Thesis: slot.thesis}
+func (slot *Slot) Advance(thesis *types.Thesis) ProcessResult {
+	result := ProcessResult{}
 
 	if !slot.advanceReady {
 		return result
@@ -18,13 +22,13 @@ func (slot *Slot) Advance() ProcessResult {
 	result.Accounting = slot.population.Accounting()
 
 	if !slot.population.Ready() {
-		return slot.failedResult(pending.metadata, slot.population.InvalidReason())
+		return slot.failedResult(thesis, pending.metadata, slot.population.InvalidReason())
 	}
 
 	at := pending.metadata.At
 
 	if !slot.lastEventAt.IsZero() && at.Before(slot.lastEventAt) {
-		return slot.invalidate(pending.metadata, TimestampRegress)
+		return slot.invalidate(thesis, pending.metadata, TimestampRegress)
 	}
 
 	epoch := slot.population.BeginEpoch()
@@ -32,13 +36,13 @@ func (slot *Slot) Advance() ProcessResult {
 	transform, epochReady := slot.coordinates.BeginEpoch(orders, pending.midPrice, at)
 
 	if !epochReady {
-		return slot.failedResult(pending.metadata, UnmappedCarriers)
+		return slot.failedResult(thesis, pending.metadata, UnmappedCarriers)
 	}
 
 	mapped, mapReady := slot.mapCarriers(orders, pending.midPrice, at, transform)
 
 	if !mapReady {
-		return slot.failedResult(pending.metadata, UnmappedCarriers)
+		return slot.failedResult(thesis, pending.metadata, UnmappedCarriers)
 	}
 
 	cohorts := slot.cohorts.Build(mapped)
@@ -46,10 +50,11 @@ func (slot *Slot) Advance() ProcessResult {
 	subdivisions := EventSubdivisions(slot.config, eventDeltaT, cohorts)
 
 	if subdivisions <= 0 {
-		return slot.failedResult(pending.metadata, StabilityFailed)
+		return slot.failedResult(thesis, pending.metadata, StabilityFailed)
 	}
 
 	outcome := slot.step(
+		thesis,
 		cohorts,
 		mapped,
 		pending.bestBid,
@@ -67,7 +72,6 @@ func (slot *Slot) Advance() ProcessResult {
 		slot.lastEventAt = at
 	}
 
-	result.Thesis = outcome.Thesis
 	result.State = outcome.State
 	result.GasReady = outcome.GasReady
 	result.StateProduced = true

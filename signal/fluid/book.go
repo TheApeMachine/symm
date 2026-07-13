@@ -72,6 +72,7 @@ func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 	}
 
 	eventAt := row.Timestamp.UTC()
+
 	if err := state.FeedBook(row, eventAt); errnie.Error(err) != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent, err.Error(), err,
@@ -88,19 +89,21 @@ func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 		return nil, nil
 	}
 
-	measurement, err := book.measurementFromReading(reading, eventAt)
+	measurements, err := book.measurementsFromReading(reading, eventAt)
 
-	if err != nil || measurement == nil {
-		return nil, err
+	if err != nil || len(measurements) == 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
-	return []*types.Measurement{measurement}, nil
+	return measurements, nil
 }
 
-func (book *Book) measurementFromReading(
+func (book *Book) measurementsFromReading(
 	reading fluidReading,
 	eventAt time.Time,
-) (*types.Measurement, error) {
+) ([]*types.Measurement, error) {
 	output, err := book.fluidflow.Measure(book.fluidflowInput(reading))
 
 	if err != nil {
@@ -151,38 +154,73 @@ func (book *Book) measurementFromReading(
 		})
 	}
 
-	measurement := &types.Measurement{
-		Source:        types.SourceFluid,
-		Stream:        "book",
-		Symbol:        reading.symbol,
-		At:            eventAt,
-		EntryBaseline: result.EntryBaseline,
-		ExitBaseline:  result.ExitBaseline,
-		Maturity:      float64(reading.gridSteps) / float64(reading.gridSteps+1),
-		Categories:    categoryRows,
-		Metrics: map[string]float64{
-			"laminarScore":         output.LaminarScore,
-			"turbulentScore":       output.TurbulentScore,
-			"inertialScore":        output.InertialScore,
-			"viscousScore":         output.ViscousScore,
-			"strength":             output.Strength,
-			"viscosity":            reading.viscosity,
-			"reynolds":             reading.reynolds,
-			"divergence_v2":        reading.divergence,
-			"velocityCurvature_v2": reading.velocityCurvature,
-			"turbulence":           reading.turbulence,
-			"sourceBalance":        reading.sourceBalance,
-			"memory":               reading.memory,
-			"midAddRate":           reading.midAddRate,
-			"midExecuteRate":       reading.midExecuteRate,
-			"laminar":              output.LaminarScore,
-			"turbulent":            output.TurbulentScore,
-			"inertial":             output.InertialScore,
-			"viscous":              output.ViscousScore,
-		},
+	confidenceByCategory := make(map[types.CategoryType]float64, len(categoryRows))
+
+	for _, categoryRow := range categoryRows {
+		confidenceByCategory[categoryRow.Type] = categoryRow.Confidence
 	}
 
-	return measurement, nil
+	maturity := float64(reading.gridSteps) / float64(reading.gridSteps+1)
+	validity := types.MeasurementValidity{
+		State:     types.ValidityValid,
+		Readiness: types.ReadinessObservation,
+	}
+	scale := types.ScaleReference{
+		Kind:    types.ScaleObservationWindow,
+		From:    eventAt,
+		Through: eventAt,
+	}
+	uncertainty := types.MeasurementUncertainty{Available: false}
+	subject := types.SubjectType("order_book")
+
+	specs := []struct {
+		metric     types.MetricType
+		raw        float64
+		normalized float64
+	}{
+		{types.MetricType("laminar_score"), output.LaminarScore, confidenceByCategory[types.Laminar]},
+		{types.MetricType("turbulent_score"), output.TurbulentScore, confidenceByCategory[types.Turbulent]},
+		{types.MetricType("inertial_score"), output.InertialScore, confidenceByCategory[types.Inertial]},
+		{types.MetricType("viscous_score"), output.ViscousScore, confidenceByCategory[types.Viscous]},
+		{types.MetricType("strength"), output.Strength, 0},
+		{types.MetricType("viscosity"), reading.viscosity, 0},
+		{types.MetricType("reynolds"), reading.reynolds, 0},
+		{types.MetricType("divergence_v2"), reading.divergence, 0},
+		{types.MetricType("velocity_curvature_v2"), reading.velocityCurvature, 0},
+		{types.MetricType("turbulence"), reading.turbulence, 0},
+		{types.MetricType("source_balance"), reading.sourceBalance, 0},
+		{types.MetricType("memory"), reading.memory, 0},
+		{types.MetricType("mid_add_rate"), reading.midAddRate, 0},
+		{types.MetricType("mid_execute_rate"), reading.midExecuteRate, 0},
+		{types.MetricType("laminar"), output.LaminarScore, confidenceByCategory[types.Laminar]},
+		{types.MetricType("turbulent"), output.TurbulentScore, confidenceByCategory[types.Turbulent]},
+		{types.MetricType("inertial"), output.InertialScore, confidenceByCategory[types.Inertial]},
+		{types.MetricType("viscous"), output.ViscousScore, confidenceByCategory[types.Viscous]},
+	}
+
+	measurements := make([]*types.Measurement, 0, len(specs))
+
+	for _, spec := range specs {
+		measurements = append(measurements, &types.Measurement{
+			Source:       types.SourceFluid,
+			Metric:       spec.metric,
+			Subject:      subject,
+			Stream:       types.Fluid,
+			Symbol:       reading.symbol,
+			Side:         types.SideNone,
+			At:           eventAt,
+			ObservedFrom: eventAt,
+			Unit:         types.UnitDimensionless,
+			Raw:          spec.raw,
+			Normalized:   spec.normalized,
+			Maturity:     maturity,
+			Uncertainty:  uncertainty,
+			Validity:     validity,
+			Scale:        scale,
+		})
+	}
+
+	return measurements, nil
 }
 
 func (book *Book) fluidflowInput(reading fluidReading) equation.FluidflowInput {
@@ -208,14 +246,18 @@ func (book *Book) fluidflowInput(reading fluidReading) equation.FluidflowInput {
 		TurbulentFloor: book.finitePositive(turbulentFloor),
 		TurbulentReady: turbulentReady > 0,
 		DivergenceEdge: book.finitePositive(divergenceEdge),
-		IcebergScore:   book.finitePositive(reading.dynamics.icebergScore(reading.midAddRate, reading.midExecuteRate)),
-		Vorticity:      book.finitePositive(velocityCurvature),
-		Turbulence:     book.finitePositive(turbulence),
-		Memory:         book.finitePositive(reading.memory),
-		Price:          book.finitePositive(reading.price),
-		SpreadBPS:      book.finitePositive(reading.spreadBPS),
-		ChangePct:      book.finite(reading.changePct),
-		Volume:         book.finitePositive(reading.volume),
+		IcebergScore: book.finitePositive(
+			reading.dynamics.icebergScore(
+				reading.midAddRate, reading.midExecuteRate,
+			),
+		),
+		Vorticity:  book.finitePositive(velocityCurvature),
+		Turbulence: book.finitePositive(turbulence),
+		Memory:     book.finitePositive(reading.memory),
+		Price:      book.finitePositive(reading.price),
+		SpreadBPS:  book.finitePositive(reading.spreadBPS),
+		ChangePct:  book.finite(reading.changePct),
+		Volume:     book.finitePositive(reading.volume),
 	}
 }
 

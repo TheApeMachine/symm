@@ -8,79 +8,70 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
-func TestSignalIngestRoles(t *testing.T) {
-	Convey("Given a CVD signal", t, func() {
-		signal := NewSignal[any](context.Background())
-		defer signal.Close()
+func TestTradeOn(testingTB *testing.T) {
+	Convey("Given a CVD trade ingestor", testingTB, func() {
+		trade := &Trade{cache: []kraken.TradeData{}}
+		payload := []byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"buy","price":100.5,"qty":1.25,"ord_type":"market","trade_id":1,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
 
-		Convey("When ingest roles are requested", func() {
-			So(signal.IngestRoles(), ShouldResemble, []string{"trade"})
+		Convey("When a trade frame arrives", func() {
+			trade.On(payload)
+
+			Convey("Then trade rows should accumulate in cache", func() {
+				So(len(trade.cache), ShouldEqual, 1)
+				So(trade.cache[0].Symbol, ShouldEqual, "BTC/USD")
+			})
 		})
 	})
 }
 
-func TestSignalMeasure(t *testing.T) {
-	Convey("Given a CVD signal", t, func() {
-		signal := NewSignal[any](context.Background())
-		defer signal.Close()
-
-		type ignoredCase struct {
-			name  string
-			input any
+func TestSignal_Measure(testingTB *testing.T) {
+	Convey("Given a CVD signal", testingTB, func() {
+		signal := &Signal{
+			ctx:    context.Background(),
+			trade:  &Trade{cache: []kraken.TradeData{}},
+			sample: algorithm.NewTradeFlowSample(),
+			flow:   equation.NewFlow(),
 		}
 
-		cases := []ignoredCase{
-			{name: "ticker rows", input: kraken.TickerData{}},
-			{name: "book rows", input: kraken.BookData{}},
-		}
-
-		for _, testCase := range cases {
-			testCase := testCase
-
-			Convey(fmt.Sprintf("When measuring %s", testCase.name), func() {
-				measurements, err := signal.Measure(testCase.input, nil)
-
-				Convey("Then no CVD measurements should be emitted", func() {
-					So(err, ShouldBeNil)
-					So(measurements, ShouldHaveLength, 0)
-				})
-			})
-		}
-
-		Convey("When measuring trade rows", func() {
-			measurements := make([]*types.Measurement, 0)
+		Convey("When measuring repeated buy trades with rising price", func() {
+			var result *types.Thesis
 
 			for _, row := range trades("MATIC/USD", "buy", 100, 1, 30, time.Now().UTC()) {
-				out, err := signal.Measure(row, nil)
-				So(err, ShouldBeNil)
-				measurements = append(measurements, out...)
+				signal.trade.cache = []kraken.TradeData{row}
+				result = signal.Measure(types.NewThesis(nil))
 			}
 
 			Convey("Then CVD measurements should be emitted", func() {
-				So(len(measurements), ShouldBeGreaterThan, 0)
+				raw, ok := result.Measurements.Load("cvd")
+				So(ok, ShouldBeTrue)
 
-				for _, measurement := range measurements {
-					assertMeasurement(measurement, "MATIC/USD")
-				}
+				metrics := raw.(datura.Map[datura.Map[*decimal.Decimal]])["MATIC/USD"]
+				So(metrics, ShouldNotBeNil)
+				So(metrics["strength"].Float64(), ShouldBeGreaterThan, 0)
+				So(metrics["drive"].Float64(), ShouldBeGreaterThan, 0)
+				So(len(signal.trade.cache), ShouldEqual, 0)
 			})
 		})
 	})
 }
 
-func TestTradeMeasure(t *testing.T) {
-	Convey("Given a CVD trade role", t, func() {
-		type tradeCase struct {
-			name         string
-			rows         []kraken.TradeData
-			wantCategory types.CategoryType
+func TestSignal_MeasureFlowProfiles(testingTB *testing.T) {
+	Convey("Given controlled trade-flow sequences", testingTB, func() {
+		type flowCase struct {
+			name      string
+			rows      []kraken.TradeData
+			wantScore string
 		}
 
 		start := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		cases := []tradeCase{
+		cases := []flowCase{
 			{
 				name: "hidden absorption",
 				rows: []kraken.TradeData{
@@ -90,7 +81,7 @@ func TestTradeMeasure(t *testing.T) {
 					tradeRow("BTC/USD", "buy", 100, 10, start.Add(3*time.Second)),
 					tradeRow("BTC/USD", "buy", 100, 10, start.Add(4*time.Second)),
 				},
-				wantCategory: types.CategoryHiddenAbsorption,
+				wantScore: "absorption",
 			},
 			{
 				name: "aggressive drive",
@@ -101,7 +92,7 @@ func TestTradeMeasure(t *testing.T) {
 					tradeRow("BTC/USD", "buy", 103, 2, start.Add(3*time.Second)),
 					tradeRow("BTC/USD", "buy", 104, 2, start.Add(4*time.Second)),
 				},
-				wantCategory: types.CategoryAggressiveDrive,
+				wantScore: "drive",
 			},
 			{
 				name: "stochastic balance",
@@ -111,7 +102,7 @@ func TestTradeMeasure(t *testing.T) {
 					tradeRow("BTC/USD", "buy", 100.1, 2, start.Add(2*time.Second)),
 					tradeRow("BTC/USD", "sell", 100.1, 2, start.Add(3*time.Second)),
 				},
-				wantCategory: types.CategoryStochasticBalance,
+				wantScore: "balance",
 			},
 			{
 				name: "volume starvation",
@@ -130,7 +121,7 @@ func TestTradeMeasure(t *testing.T) {
 					tradeRow("BTC/USD", "sell", 100.04, 0.001, start.Add(11*time.Second)),
 					tradeRow("BTC/USD", "buy", 100.04, 0.001, start.Add(12*time.Second)),
 				},
-				wantCategory: types.CategoryVolumeStarvation,
+				wantScore: "starvation",
 			},
 		}
 
@@ -138,79 +129,76 @@ func TestTradeMeasure(t *testing.T) {
 			testCase := testCase
 
 			Convey(fmt.Sprintf("When measuring %s", testCase.name), func() {
-				role := NewTrade()
-				var result *types.Measurement
+				signal := &Signal{
+					ctx:    context.Background(),
+					trade:  &Trade{cache: []kraken.TradeData{}},
+					sample: algorithm.NewTradeFlowSample(),
+					flow:   equation.NewFlow(),
+				}
+				var metrics datura.Map[*decimal.Decimal]
 
 				for _, row := range testCase.rows {
-					measurements, err := role.Measure(row)
-					So(err, ShouldBeNil)
+					signal.trade.cache = []kraken.TradeData{row}
+					result := signal.Measure(types.NewThesis(nil))
 
-					if len(measurements) > 0 {
-						result = measurements[len(measurements)-1]
+					raw, ok := result.Measurements.Load("cvd")
+
+					if !ok {
+						continue
 					}
+
+					symbolMetrics := raw.(datura.Map[datura.Map[*decimal.Decimal]])["BTC/USD"]
+
+					if symbolMetrics == nil {
+						continue
+					}
+
+					metrics = symbolMetrics
 				}
 
-				Convey(fmt.Sprintf("Then CVD should classify %s", testCase.name), func() {
-					So(result, ShouldNotBeNil)
-					So(result.Source, ShouldEqual, types.SourceCVD)
-					So(result.Symbol, ShouldEqual, "BTC/USD")
+				Convey(fmt.Sprintf("Then CVD should emphasize %s", testCase.wantScore), func() {
+					So(metrics, ShouldNotBeNil)
 
-					category := types.CategoryTypeNone
-					confidence := 0.0
-
-					for _, categoryRow := range result.Categories {
-						if categoryRow.Confidence <= confidence {
+					selected := metrics[testCase.wantScore].Float64()
+					for key, value := range metrics {
+						if key == "net" || key == "netFraction" || key == "category" || key == "maturity" || key == "strength" {
 							continue
 						}
 
-						category = categoryRow.Type
-						confidence = categoryRow.Confidence
+						if key == testCase.wantScore {
+							continue
+						}
+
+						So(selected, ShouldBeGreaterThanOrEqualTo, value.Float64())
 					}
 
-					So(category, ShouldEqual, testCase.wantCategory)
-					So(confidence, ShouldBeGreaterThan, 0)
+					So(metrics["strength"].Float64(), ShouldBeGreaterThan, 0)
 				})
 			})
 		}
 	})
 }
 
-func BenchmarkSignalMeasure(b *testing.B) {
+func BenchmarkSignal_Measure(benchmark *testing.B) {
 	rows := trades("MATIC/USD", "buy", 100, 1, 8, time.Now().UTC())
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		signal := NewSignal[any](context.Background())
-
-		for _, row := range rows {
-			_, _ = signal.Measure(row, nil)
-		}
-
-		_ = signal.Close()
-	}
-}
-
-func assertMeasurement(measurement *types.Measurement, symbol string) {
-	So(measurement.Source, ShouldEqual, types.SourceCVD)
-	So(measurement.Symbol, ShouldEqual, symbol)
-	So(measurement.At.IsZero(), ShouldBeFalse)
-	So(measurement.Metrics["strength"], ShouldBeGreaterThanOrEqualTo, 0)
-
-	category := types.CategoryTypeNone
-	confidence := 0.0
-
-	for _, categoryRow := range measurement.Categories {
-		if categoryRow.Confidence <= confidence {
-			continue
-		}
-
-		category = categoryRow.Type
-		confidence = categoryRow.Confidence
+	signal := &Signal{
+		ctx:    context.Background(),
+		trade:  &Trade{cache: []kraken.TradeData{}},
+		sample: algorithm.NewTradeFlowSample(),
+		flow:   equation.NewFlow(),
 	}
 
-	So(confidence, ShouldBeGreaterThan, 0)
-	So(cvdCategory(category), ShouldBeTrue)
+	for _, row := range rows {
+		signal.trade.cache = []kraken.TradeData{row}
+		_ = signal.Measure(types.NewThesis(nil))
+	}
+
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		signal.trade.cache = append([]kraken.TradeData(nil), rows[len(rows)-1])
+		_ = signal.Measure(types.NewThesis(nil))
+	}
 }
 
 func trades(
@@ -249,17 +237,5 @@ func tradeRow(
 		Price:     *decimal.NewFromFloat64(price),
 		Qty:       quantity,
 		Timestamp: at,
-	}
-}
-
-func cvdCategory(category types.CategoryType) bool {
-	switch category {
-	case types.CategoryHiddenAbsorption,
-		types.CategoryAggressiveDrive,
-		types.CategoryStochasticBalance,
-		types.CategoryVolumeStarvation:
-		return true
-	default:
-		return false
 	}
 }

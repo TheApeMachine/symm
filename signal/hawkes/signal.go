@@ -32,10 +32,6 @@ func NewSignal[T any](_ context.Context) *Signal[T] {
 	}
 }
 
-func (signal *Signal[T]) IngestRoles() []string {
-	return []string{"trade"}
-}
-
 func (signal *Signal[T]) Measure(
 	input T,
 	crossSection *types.CrossSection,

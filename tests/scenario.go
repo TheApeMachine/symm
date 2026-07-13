@@ -8,20 +8,6 @@ import (
 )
 
 /*
-priceFields and volumeFields name the row fields each channel exposes so a
-scenario can warp price and size without knowing channel internals.
-*/
-var priceFields = map[string][]string{
-	"ticker": {"last", "bid", "ask", "high", "low"},
-	"trade":  {"price"},
-}
-
-var volumeFields = map[string][]string{
-	"ticker": {"volume"},
-	"trade":  {"qty"},
-}
-
-/*
 Shape rewrites the price and volume fields of every ticker and trade row using
 per-frame multipliers. The base stream keeps its realistic microstructure while
 the multipliers impose a controllable macro trajectory on top, which is how a
@@ -115,44 +101,11 @@ func shapeFrame(frame Frame, priceMul, volumeMul float64) Frame {
 		panic(err)
 	}
 
-	data, ok := payload["data"].([]any)
+	scaleFrameFields(payload, priceMul, volumeMul, 0, 0)
 
-	if !ok {
-		return frame
-	}
-
-	for _, item := range data {
-		row, ok := item.(map[string]any)
-
-		if !ok {
-			continue
-		}
-
-		scaleFields(row, priceMul, priceFields[frame.Channel])
-		scaleFields(row, volumeMul, volumeFields[frame.Channel])
-	}
-
-	out, err := sonic.Marshal(payload)
-
-	if err != nil {
-		panic(err)
-	}
-
-	return Frame{Channel: frame.Channel, Type: frame.Type, Payload: out}
-}
-
-func scaleFields(row map[string]any, factor float64, keys []string) {
-	if factor == 1 {
-		return
-	}
-
-	for _, key := range keys {
-		value, ok := row[key].(float64)
-
-		if !ok {
-			continue
-		}
-
-		row[key] = value * factor
+	return Frame{
+		Channel: frame.Channel,
+		Type:    frame.Type,
+		Payload: marshalFrame(payload),
 	}
 }

@@ -12,14 +12,14 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/types"
 )
-
-var cacheKeys = []string{"balances", "executions", "instruments", "positions", "tick"}
 
 /*
 Hub owns the dashboard websocket and forwards typed backend frames to clients.
 */
 type Hub struct {
+	status      types.Status
 	ctx         context.Context
 	cancel      context.CancelFunc
 	app         *fiber.App
@@ -27,6 +27,7 @@ type Hub struct {
 	Messages    chan []byte
 	price       *broker.Price
 	balance     *broker.Balance
+	desk        *broker.Desk
 	subscribers *sync.Map
 }
 
@@ -34,11 +35,13 @@ func NewHub(
 	ctx context.Context,
 	price *broker.Price,
 	balance *broker.Balance,
+	desk *broker.Desk,
 	channel chan []byte,
 ) (*Hub, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	hub := &Hub{
+		status:     types.INITIALIZING,
 		ctx:        ctx,
 		cancel:     cancel,
 		listenAddr: viper.GetString("ui.addr"),
@@ -52,6 +55,7 @@ func NewHub(
 		}),
 		price:       price,
 		balance:     balance,
+		desk:        desk,
 		subscribers: &sync.Map{},
 	}
 
@@ -69,6 +73,10 @@ func NewHub(
 
 		hub.price.Publish()
 		hub.balance.Publish()
+
+		if hub.desk != nil {
+			hub.desk.Publish()
+		}
 
 		for {
 			select {
@@ -96,6 +104,12 @@ func NewHub(
 	}))
 
 	return hub, nil
+}
+
+func (hub *Hub) Initialize() error {
+	errnie.Info("initializing UI hub")
+	hub.status = types.READY
+	return nil
 }
 
 func (hub *Hub) Serve() error {

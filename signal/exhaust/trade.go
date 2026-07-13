@@ -1,26 +1,46 @@
 package exhaust
 
 import (
+	"context"
+
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/kraken/websocket"
 )
 
+/*
+Trade ingests public trade rows into the shared exhaust sample.
+*/
 type Trade struct {
-	engine *Engine
+	ctx    context.Context
+	cancel context.CancelFunc
+	api    *websocket.API
+	cache  []kraken.TradeData
 }
 
-func NewTrade(engine *Engine) *Trade {
-	return &Trade{
-		engine: engine,
+func NewTrade(ctx context.Context, api *websocket.API) *Trade {
+	ctx, cancel := context.WithCancel(ctx)
+
+	trade := &Trade{
+		ctx:    ctx,
+		cancel: cancel,
+		api:    api,
+		cache:  []kraken.TradeData{},
 	}
+
+	trade.api.On("trade", trade.On)
+	return trade
 }
 
-func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) {
-	measurement, err := trade.engine.MeasureTrade(row)
-
-	if err != nil || measurement == nil {
-		return nil, err
+func (trade *Trade) On(data []byte) {
+	if len(data) == 0 {
+		return
 	}
 
-	return []*types.Measurement{measurement}, nil
+	frame := kraken.NewTrade(data)
+
+	if len(frame.Data) == 0 {
+		return
+	}
+
+	trade.cache = append(trade.cache, frame.Data...)
 }

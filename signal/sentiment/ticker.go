@@ -1,127 +1,50 @@
 package sentiment
 
 import (
-	"math"
+	"context"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/utils"
 )
 
+/*
+Ticker ingests public ticker rows into the shared sentiment sample.
+*/
 type Ticker struct {
-	classifier *probability.ScoreClassifier
+	ctx    context.Context
+	cancel context.CancelFunc
+	api    *websocket.API
+	cache  []kraken.TickerData
 }
 
-func NewTicker() *Ticker {
-	return &Ticker{
-		classifier: probability.NewScoreClassifier(
-			[]string{"surgeScore", "divergentScore", "slumpScore"},
-			[]float64{
-				float64(types.CategoryIndex(types.CategoryRiskOnSurge)),
-				float64(types.CategoryIndex(types.CategoryDivergentMove)),
-				float64(types.CategoryIndex(types.CategorySystemicSlump)),
-			},
-		),
+/*
+NewTicker binds one shared sample and measurement stage for ticker rows.
+*/
+func NewTicker(ctx context.Context, api *websocket.API) *Ticker {
+	ctx, cancel := context.WithCancel(ctx)
+
+	ticker := &Ticker{
+		ctx:    ctx,
+		cancel: cancel,
+		api:    api,
+		cache:  []kraken.TickerData{},
 	}
+
+	ticker.api.On("ticker", ticker.On)
+	return ticker
 }
 
-func (ticker *Ticker) Measure(
-	row kraken.TickerData,
-	crossSection *types.CrossSection,
-) ([]*types.Measurement, error) {
-	if crossSection == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation, "sentiment: cross-section required", nil,
-		))
+func (ticker *Ticker) On(data []byte) {
+	if len(data) == 0 {
+		return
 	}
 
-	change := row.ChangePct / 100
-	breadth := crossSection.Breadth()
+	frame := utils.Unmarshal[kraken.Ticker](data)
 
-	leaderStrength := 0.0
-	leaderEvidence := 0.0
-	relativeLead := 0.0
-
-	if crossSection.IsLeader(row.Symbol, change) {
-		leaderStrength = math.Abs(change)
-		threshold := crossSection.LeadershipThreshold()
-
-		if threshold <= 0 {
-			return nil, nil
-		}
-
-		leaderEvidence = leaderStrength / threshold
-		relativeLead = 1
+	if len(frame.Data) == 0 {
+		return
 	}
 
-	leaderMass := leaderEvidence / (1 + leaderEvidence)
-	surgeScore := breadth * leaderEvidence * math.Max(relativeLead, 1/(1+leaderEvidence))
-	divergentScore := (1 - breadth) * relativeLead * leaderEvidence
-	slumpScore := (1 - breadth) * (1 - relativeLead) / (1 + leaderMass)
-	strength := max(surgeScore, max(divergentScore, slumpScore))
-
-	if strength <= 0 {
-		return nil, nil
-	}
-
-	result, err := ticker.classifier.Classify(map[string]float64{
-		"surgeScore":     surgeScore,
-		"divergentScore": divergentScore,
-		"slumpScore":     slumpScore,
-		"strength":       strength,
-	})
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
-	}
-
-	categories := []types.CategoryType{
-		types.RiskOnSurge,
-		types.DivergentMove,
-		types.SystemicSlump,
-	}
-	strengths := []float64{
-		surgeScore,
-		divergentScore,
-		slumpScore,
-	}
-	categoryRows := make([]types.Category, 0, len(categories))
-
-	for index, category := range categories {
-		confidence := 0.0
-
-		if index < len(result.Probabilities) {
-			confidence = result.Probabilities[index]
-		}
-
-		categoryRows = append(categoryRows, types.Category{
-			Type:       category,
-			Confidence: confidence,
-			Strength:   strengths[index],
-		})
-	}
-
-	measurement := &types.Measurement{
-		Source:        types.SourceSentiment,
-		Stream:        "ticker",
-		Symbol:        row.Symbol,
-		At:            row.Timestamp,
-		EntryBaseline: result.EntryBaseline,
-		ExitBaseline:  result.ExitBaseline,
-		Categories:    categoryRows,
-		Metrics: map[string]float64{
-			"breadth":        breadth,
-			"leaderStrength": leaderStrength,
-			"leaderEvidence": leaderEvidence,
-			"surgeScore":     surgeScore,
-			"divergentScore": divergentScore,
-			"slumpScore":     slumpScore,
-			"strength":       strength,
-		},
-	}
-
-	return []*types.Measurement{measurement}, nil
+	ticker.cache = append(ticker.cache, frame.Data...)
 }

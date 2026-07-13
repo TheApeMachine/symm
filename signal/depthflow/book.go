@@ -1,163 +1,46 @@
 package depthflow
 
 import (
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/algorithm/book/flow"
-	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
+	"context"
+
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/kraken/websocket"
 )
 
+/*
+Book ingests public book rows into the shared depth-flow sample.
+*/
 type Book struct {
-	sample     *flow.Sample
-	bookflow   *equation.Bookflow
-	classifier *probability.ScoreClassifier
+	ctx    context.Context
+	cancel context.CancelFunc
+	api    *websocket.API
+	cache  []kraken.BookData
 }
 
-func NewBook(
-	sample *flow.Sample,
-	bookflow *equation.Bookflow,
-	classifier *probability.ScoreClassifier,
-) *Book {
-	return &Book{
-		sample:     sample,
-		bookflow:   bookflow,
-		classifier: classifier,
+func NewBook(ctx context.Context, api *websocket.API) *Book {
+	ctx, cancel := context.WithCancel(ctx)
+
+	book := &Book{
+		ctx:    ctx,
+		cancel: cancel,
+		api:    api,
+		cache:  []kraken.BookData{},
 	}
+
+	book.api.On("book", book.On)
+	return book
 }
 
-func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
-	bids, err := book.levels(row.Bids, row.PriceIncrement)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+func (book *Book) On(data []byte) {
+	if len(data) == 0 {
+		return
 	}
 
-	asks, err := book.levels(row.Asks, row.PriceIncrement)
+	frame := kraken.NewBook(data)
 
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+	if len(frame.Data) == 0 {
+		return
 	}
 
-	input, ready, maturity, err := book.sample.MeasureBook(flow.BookInput{
-		Symbol:   row.Symbol,
-		TickSize: row.PriceIncrement.Float64(),
-		Bids:     bids,
-		Asks:     asks,
-	})
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
-	}
-
-	if !ready {
-		return nil, nil
-	}
-
-	output, err := book.bookflow.Measure(input)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
-	}
-
-	if !output.Ready {
-		return nil, nil
-	}
-
-	result, err := book.classifier.Classify(map[string]float64{
-		"loadedScore":  output.LoadedScore,
-		"spoofScore":   output.SpoofScore,
-		"thinScore":    output.ThinScore,
-		"neutralScore": output.NeutralScore,
-		"strength":     output.Strength,
-	})
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
-	}
-
-	categories := []types.CategoryType{
-		types.LoadedImbalance,
-		types.SpoofTrap,
-		types.BookThinning,
-		types.DenseNeutrality,
-	}
-	strengths := []float64{
-		output.LoadedScore,
-		output.SpoofScore,
-		output.ThinScore,
-		output.NeutralScore,
-	}
-	categoryRows := make([]types.Category, 0, len(categories))
-
-	for index, category := range categories {
-		confidence := 0.0
-
-		if index < len(result.Probabilities) {
-			confidence = result.Probabilities[index]
-		}
-
-		categoryRows = append(categoryRows, types.Category{
-			Type:       category,
-			Confidence: confidence,
-			Strength:   strengths[index],
-		})
-	}
-
-	measurement := &types.Measurement{
-		Source:        types.SourceDepthFlow,
-		Stream:        "book",
-		Symbol:        row.Symbol,
-		At:            row.Timestamp,
-		EntryBaseline: result.EntryBaseline,
-		ExitBaseline:  result.ExitBaseline,
-		Maturity:      maturity,
-		Categories:    categoryRows,
-		Metrics: map[string]float64{
-			"loadedScore":  output.LoadedScore,
-			"spoofScore":   output.SpoofScore,
-			"thinScore":    output.ThinScore,
-			"neutralScore": output.NeutralScore,
-			"strength":     output.Strength,
-			"value":        output.Value,
-			"category":     output.Category,
-		},
-	}
-
-	return []*types.Measurement{measurement}, nil
-}
-
-func (book *Book) levels(
-	rows []kraken.BookLevel,
-	increment decimal.Decimal,
-) ([]flow.BookLevel, error) {
-	levels := make([]flow.BookLevel, 0, len(rows))
-
-	for _, row := range rows {
-		tick, err := kraken.PriceTick(row.Price, increment)
-
-		if err != nil {
-			return nil, err
-		}
-
-		levels = append(levels, flow.BookLevel{
-			Price:    row.Price.Float64(),
-			Ticks:    tick,
-			Quantity: row.Qty,
-		})
-	}
-
-	return levels, nil
+	book.cache = append(book.cache, frame.Data...)
 }

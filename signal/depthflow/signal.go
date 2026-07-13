@@ -3,94 +3,206 @@ package depthflow
 import (
 	"context"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
 DepthFlow is the "Weight of the Book" perspective, measuring touch-level book
-imbalance with trade-pressure confirmation. Multi-level distance weighting is
-owned by nomagique's bookflow primitive.
-
-Spoof Trap is currently scored from L2 book shape contradicted by touch pressure.
-A faithful spoof read from add/delete order behavior still needs L3 per-order
-events; this implementation does not pretend L2 can prove cancel/fill intent.
-
-1. Loaded Imbalance - book weight agrees with trade pressure.
-2. Spoof Trap - deep-book shape contradicts touch pressure.
-3. Book Thinning - defensive depth disappears relative to the weighted book.
-4. Dense Neutrality - balanced thick depth with low pressure.
-
-# Summary of DepthFlow Categories
-
-| Category         | WBI (Weighted Imbalance) | Trade Pressure    | Market "Feel"        |
-|:-----------------|:-------------------------|:------------------|:---------------------|
-| Loaded Imbalance | High                     | High (Agrees)     | Structural Gravity   |
-| Spoof Trap       | High                     | Low (Contradicts) | Manipulated/Fake     |
-| Book Thinning    | Rapidly Falling          | Variable          | Exhaustion/Crumbling |
-| Dense Neutrality | Balanced                 | Low               | Robust Stability     |
+imbalance with trade-pressure confirmation. Categories belong in logic; this
+signal emits numerical scores only.
 */
-
-/*
-Signal routes book and trade rows into the shared depth-flow pipeline.
-*/
-type Signal[T any] struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	book   *Book
-	trade  *Trade
+type Signal struct {
+	ctx      context.Context
+	cancel   context.CancelFunc
+	book     *Book
+	trade    *Trade
+	sample   *flow.Sample
+	bookflow *equation.Bookflow
 }
 
-func NewSignal[T any](ctx context.Context) *Signal[T] {
+func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
-	sample := flow.NewSample()
-	bookflow := equation.NewBookflow()
-	classifier := probability.NewScoreClassifier(
-		[]string{"loadedScore", "spoofScore", "thinScore", "neutralScore"},
-		[]float64{
-			float64(types.CategoryIndex(types.CategoryLoadedImbalance)),
-			float64(types.CategoryIndex(types.CategorySpoofTrap)),
-			float64(types.CategoryIndex(types.CategoryBookThinning)),
-			float64(types.CategoryIndex(types.CategoryDenseNeutrality)),
-		},
-	)
 
-	return &Signal[T]{
-		ctx:    ctx,
-		cancel: cancel,
-		book:   NewBook(sample, bookflow, classifier),
-		trade:  NewTrade(sample, bookflow, classifier),
+	return &Signal{
+		ctx:      ctx,
+		cancel:   cancel,
+		book:     NewBook(ctx, api),
+		trade:    NewTrade(ctx, api),
+		sample:   flow.NewSample(),
+		bookflow: equation.NewBookflow(),
 	}
 }
 
-func (signal *Signal[T]) IngestRoles() []string {
-	return []string{"book", "trade"}
-}
+func (signal *Signal) Measure(
+	thesis *types.Thesis,
+) *types.Thesis {
+	books := signal.book.cache
+	trades := signal.trade.cache
+	out := datura.Map[datura.Map[*decimal.Decimal]]{}
 
-func (signal *Signal[T]) Measure(
-	input T,
-	crossSection *types.CrossSection,
-) ([]*types.Measurement, error) {
-	switch row := any(input).(type) {
-	case kraken.BookData:
-		return signal.book.Measure(row)
-	case kraken.TradeData:
-		return signal.trade.Measure(row)
+	for _, row := range books {
+		if row.Symbol == "" || row.PriceIncrement.Sign() <= 0 {
+			continue
+		}
+
+		bids := make([]flow.BookLevel, 0, len(row.Bids))
+		asks := make([]flow.BookLevel, 0, len(row.Asks))
+
+		for _, level := range row.Bids {
+			tick, err := kraken.PriceTick(level.Price, row.PriceIncrement)
+
+			if err != nil {
+				panic(errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					err.Error(),
+					err,
+				)))
+			}
+
+			bids = append(bids, flow.BookLevel{
+				Price:    level.Price.Float64(),
+				Ticks:    tick,
+				Quantity: level.Qty,
+			})
+		}
+
+		for _, level := range row.Asks {
+			tick, err := kraken.PriceTick(level.Price, row.PriceIncrement)
+
+			if err != nil {
+				panic(errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					err.Error(),
+					err,
+				)))
+			}
+
+			asks = append(asks, flow.BookLevel{
+				Price:    level.Price.Float64(),
+				Ticks:    tick,
+				Quantity: level.Qty,
+			})
+		}
+
+		input, ready, maturity, err := signal.sample.MeasureBook(flow.BookInput{
+			Symbol:   row.Symbol,
+			TickSize: row.PriceIncrement.Float64(),
+			Bids:     bids,
+			Asks:     asks,
+		})
+
+		if err != nil {
+			panic(errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				err.Error(),
+				err,
+			)))
+		}
+
+		if !ready {
+			continue
+		}
+
+		output, err := signal.bookflow.Measure(input)
+
+		if err != nil {
+			panic(errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				err.Error(),
+				err,
+			)))
+		}
+
+		if !output.Ready {
+			continue
+		}
+
+		out[row.Symbol] = datura.Map[*decimal.Decimal]{
+			"loadedScore":  decimal.NewFromFloat64(output.LoadedScore),
+			"spoofScore":   decimal.NewFromFloat64(output.SpoofScore),
+			"thinScore":    decimal.NewFromFloat64(output.ThinScore),
+			"neutralScore": decimal.NewFromFloat64(output.NeutralScore),
+			"strength":     decimal.NewFromFloat64(output.Strength),
+			"value":        decimal.NewFromFloat64(output.Value),
+			"category":     decimal.NewFromFloat64(output.Category),
+			"maturity":     decimal.NewFromFloat64(maturity),
+		}
 	}
 
-	return nil, nil
+	for _, row := range trades {
+		if row.Symbol == "" || row.Price.Sign() <= 0 || row.Qty <= 0 {
+			continue
+		}
+
+		input, ready, maturity, err := signal.sample.MeasureTrade(flow.TradeInput{
+			Symbol:   row.Symbol,
+			Price:    row.Price.Float64(),
+			Quantity: row.Qty,
+			Side:     row.Side,
+		})
+
+		if err != nil {
+			panic(errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				err.Error(),
+				err,
+			)))
+		}
+
+		if !ready {
+			continue
+		}
+
+		output, err := signal.bookflow.Measure(input)
+
+		if err != nil {
+			panic(errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				err.Error(),
+				err,
+			)))
+		}
+
+		if !output.Ready {
+			continue
+		}
+
+		out[row.Symbol] = datura.Map[*decimal.Decimal]{
+			"loadedScore":  decimal.NewFromFloat64(output.LoadedScore),
+			"spoofScore":   decimal.NewFromFloat64(output.SpoofScore),
+			"thinScore":    decimal.NewFromFloat64(output.ThinScore),
+			"neutralScore": decimal.NewFromFloat64(output.NeutralScore),
+			"strength":     decimal.NewFromFloat64(output.Strength),
+			"value":        decimal.NewFromFloat64(output.Value),
+			"category":     decimal.NewFromFloat64(output.Category),
+			"maturity":     decimal.NewFromFloat64(maturity),
+		}
+	}
+
+	signal.book.cache = signal.book.cache[:0]
+	signal.trade.cache = signal.trade.cache[:0]
+
+	thesis.Signals.Store("books", books)
+	thesis.Signals.Store("trades", trades)
+	thesis.Measurements.Store("depthflow", out)
+
+	return thesis
 }
 
-func (signal *Signal[T]) Error() error {
-	return signal.err
-}
+func (signal *Signal) Close() (err error) {
+	err = errnie.Error(errnie.Err(
+		errnie.Internal,
+		"signal: close failed",
+		nil,
+	))
 
-func (signal *Signal[T]) Close() error {
 	signal.cancel()
-
-	return nil
+	return err
 }

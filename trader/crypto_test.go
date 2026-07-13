@@ -3,6 +3,7 @@ package trader
 import (
 	"context"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/logic"
@@ -11,28 +12,14 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-type cryptoFeedStub struct {
-	status types.Status
-}
-
-func (feed *cryptoFeedStub) Status() types.Status {
-	return feed.status
-}
-
-func (feed *cryptoFeedStub) On([]byte) {}
-
-func (feed *cryptoFeedStub) Measure() ([]*types.Measurement, error) {
-	return nil, nil
-}
-
 func TestNewCrypto(t *testing.T) {
-	Convey("Given NewCrypto feed wiring", t, func() {
+	Convey("Given NewCrypto wiring", t, func() {
 		ctx := context.Background()
 		booter := system.NewBooter(ctx, nil)
 		analyzer := logic.NewAnalyzer(booter, nil)
-		planner := strategy.NewPlanner(booter)
+		planner := strategy.NewPlanner(ctx, nil, nil, analyzer)
 
-		Convey("When fewer than five feeds are supplied", func() {
+		Convey("When the runtime is constructed", func() {
 			crypto, err := NewCrypto(
 				ctx,
 				booter,
@@ -41,45 +28,62 @@ func TestNewCrypto(t *testing.T) {
 				nil,
 				nil,
 				nil,
-				[]types.Feed{
-					&cryptoFeedStub{},
-					&cryptoFeedStub{},
-				},
 				nil,
 				analyzer,
 				planner,
 			)
 
-			Convey("Then construction is rejected", func() {
-				So(crypto, ShouldBeNil)
-				So(err, ShouldNotBeNil)
+			Convey("Then it is ready to start", func() {
+				So(err, ShouldBeNil)
+				So(crypto, ShouldNotBeNil)
+				So(crypto.tickBudget, ShouldEqual, 10*time.Millisecond)
 			})
 		})
+	})
+}
 
-		Convey("When the level3 slot is not a *Level3", func() {
-			crypto, err := NewCrypto(
-				ctx,
-				booter,
-				nil,
-				nil,
-				nil,
-				nil,
-				nil,
-				[]types.Feed{
-					&cryptoFeedStub{},
-					&cryptoFeedStub{},
-					&cryptoFeedStub{},
-					&cryptoFeedStub{},
-					&cryptoFeedStub{},
-				},
-				nil,
-				analyzer,
-				planner,
-			)
+func TestCryptoRun(t *testing.T) {
+	Convey("Given a started crypto runtime", t, func() {
+		ctx := context.Background()
+		channel := make(chan []byte, 8)
+		booter := system.NewBooter(ctx, channel)
+		analyzer := logic.NewAnalyzer(booter, channel)
+		planner := strategy.NewPlanner(ctx, channel, nil, analyzer)
 
-			Convey("Then construction is rejected", func() {
-				So(crypto, ShouldBeNil)
-				So(err, ShouldNotBeNil)
+		crypto, err := NewCrypto(
+			ctx,
+			booter,
+			nil,
+			nil,
+			nil,
+			nil,
+			channel,
+			nil,
+			analyzer,
+			planner,
+		)
+		So(err, ShouldBeNil)
+
+		booter.AddStages(
+			system.NewStage(system.StagePreflight),
+			system.NewStage(system.StageWarmup, crypto),
+		)
+
+		So(crypto.Run(), ShouldBeNil)
+
+		Convey("When one tick elapses", func() {
+			time.Sleep(15 * time.Millisecond)
+
+			Convey("Then the runtime reports ready and publishes a tick", func() {
+				So(crypto.Status(), ShouldEqual, types.READY)
+				So(crypto.tick.Load(), ShouldBeGreaterThan, 0)
+
+				select {
+				case frame := <-channel:
+					So(string(frame), ShouldContainSubstring, `"tick"`)
+				default:
+					So("tick frame", ShouldEqual, "published")
+				}
 			})
 		})
 	})

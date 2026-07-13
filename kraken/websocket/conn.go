@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 const TradeVolumeEndpoint = "/0/private/TradeVolume"
@@ -29,6 +30,7 @@ API is the single Kraken transport surface for symm.
 Callers subscribe, order, and listen through named methods only.
 */
 type API struct {
+	status         types.Status
 	public         Conn
 	private        Conn
 	level3         Conn
@@ -41,6 +43,7 @@ type API struct {
 
 func NewAPI(public, private, level3 Conn, paper *Paper) *API {
 	api := &API{
+		status:     types.INITIALIZING,
 		public:     public,
 		private:    private,
 		level3:     level3,
@@ -50,6 +53,12 @@ func NewAPI(public, private, level3 Conn, paper *Paper) *API {
 	}
 
 	return api
+}
+
+func (api *API) Initialize() error {
+	errnie.Info("initializing API")
+	api.status = types.READY
+	return nil
 }
 
 func (api *API) Close() {

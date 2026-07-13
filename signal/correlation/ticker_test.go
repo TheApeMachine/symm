@@ -1,17 +1,18 @@
 package correlation
 
 import (
+	"context"
 	"math"
 	"math/rand"
 	"testing"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
 	nomcorrelation "github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
-
-	. "github.com/smartystreets/goconvey/convey"
 )
 
 /*
@@ -77,21 +78,37 @@ func rescaledSamples(
 // either leg should move it.
 var rescaleFactors = []float64{0.0001, 0.001, 0.5, 2, 1000, 1_000_000}
 
-func TestTickerCorrelationScaleInvariant(t *testing.T) {
+func TestTickerOn(t *testing.T) {
+	Convey("Given a correlation ticker ingestor", t, func() {
+		ticker := &Ticker{cache: []kraken.TickerData{}}
+		payload := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"ALGO/USD","bid":0.10025,"bid_qty":740,"ask":0.10035,"ask_qty":740,"last":0.10035,"volume":997038.98,"vwap":0.10148,"low":0.09979,"high":0.10285,"change_pct":-0.17,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
+
+		Convey("When a ticker frame arrives", func() {
+			ticker.On(payload)
+
+			Convey("Then ticker rows should accumulate in cache", func() {
+				So(len(ticker.cache), ShouldEqual, 1)
+				So(ticker.cache[0].Symbol, ShouldEqual, "ALGO/USD")
+			})
+		})
+	})
+}
+
+func TestSectionCorrelationScaleInvariant(t *testing.T) {
 	Convey("Given two genuinely correlated, non-proportional price paths", t, func() {
 		start := time.Unix(1_700_000_000, 0)
 		leftPrices, rightPrices := correlatedPricePaths(7, 128)
 		leftSamples := samplesFromPrices(leftPrices, start, time.Second)
 		rightSamples := samplesFromPrices(rightPrices, start, time.Second)
 
-		ticker := NewTicker()
-		baseline, baselineOK := ticker.correlation(leftSamples, rightSamples)
+		section := NewSection()
+		baseline, baselineOK := section.correlation(leftSamples, rightSamples)
 		So(baselineOK, ShouldBeTrue)
 		So(baseline, ShouldBeGreaterThan, 0)
 
 		Convey("When the left leg is rescaled by sub-unit and arbitrarily large positive factors", func() {
 			for _, factor := range rescaleFactors {
-				value, ok := ticker.correlation(rescaledSamples(leftSamples, factor), rightSamples)
+				value, ok := section.correlation(rescaledSamples(leftSamples, factor), rightSamples)
 
 				So(ok, ShouldBeTrue)
 				So(value, ShouldAlmostEqual, baseline, 1e-9)
@@ -100,7 +117,7 @@ func TestTickerCorrelationScaleInvariant(t *testing.T) {
 
 		Convey("When the right leg is rescaled by sub-unit and arbitrarily large positive factors", func() {
 			for _, factor := range rescaleFactors {
-				value, ok := ticker.correlation(leftSamples, rescaledSamples(rightSamples, factor))
+				value, ok := section.correlation(leftSamples, rescaledSamples(rightSamples, factor))
 
 				So(ok, ShouldBeTrue)
 				So(value, ShouldAlmostEqual, baseline, 1e-9)
@@ -109,7 +126,7 @@ func TestTickerCorrelationScaleInvariant(t *testing.T) {
 
 		Convey("When both legs are rescaled independently by different positive factors", func() {
 			for _, factor := range rescaleFactors {
-				value, ok := ticker.correlation(
+				value, ok := section.correlation(
 					rescaledSamples(leftSamples, factor),
 					rescaledSamples(rightSamples, 1/factor),
 				)
@@ -129,60 +146,116 @@ func denominationRow(symbol string, price float64, at time.Time) kraken.TickerDa
 	}
 }
 
-func TestTickerMeasureDenominationInvariant(t *testing.T) {
+func TestSignal_MeasureDenominationInvariant(t *testing.T) {
 	Convey("Given a subject and a peer with genuinely correlated, non-proportional price paths", t, func() {
 		start := time.Unix(1_700_000_000, 0)
 		subjectPrices, peerPrices := correlatedPricePaths(11, 96)
 
-		buildCrossSection := func(subjectFactor float64) *types.CrossSection {
-			crossSection, err := types.NewCrossSection(types.DefaultCrossSectionConfig())
-			So(err, ShouldBeNil)
+		signal := &Signal{
+			ctx:     context.Background(),
+			ticker:  &Ticker{cache: []kraken.TickerData{}},
+			section: NewSection(),
+		}
 
-			rows := make([]kraken.TickerData, 0, len(subjectPrices)+len(peerPrices))
+		buildThesis := func(subjectFactor float64) *types.Thesis {
+			thesis := types.NewThesis(nil)
+			history := make([]kraken.TickerData, 0, len(subjectPrices)*2)
 
 			for index := range subjectPrices {
 				at := start.Add(time.Duration(index) * time.Second)
-				rows = append(rows,
+				history = append(history,
 					denominationRow("BTC/USD", subjectPrices[index]*subjectFactor, at),
 					denominationRow("ETH/USD", peerPrices[index], at),
 				)
 			}
 
-			So(crossSection.Observe(rows), ShouldBeNil)
+			So(thesis.CrossSection.Observe(history), ShouldBeNil)
 
-			return crossSection
+			signal.ticker.cache = []kraken.TickerData{
+				denominationRow(
+					"BTC/USD",
+					subjectPrices[len(subjectPrices)-1]*subjectFactor,
+					start.Add(time.Duration(len(subjectPrices)-1)*time.Second),
+				),
+			}
+
+			return thesis
 		}
 
-		ticker := NewTicker()
-		baselineCrossSection := buildCrossSection(1)
-		baselineRow := denominationRow(
-			"BTC/USD",
-			subjectPrices[len(subjectPrices)-1],
-			start.Add(time.Duration(len(subjectPrices)-1)*time.Second),
-		)
-		baseline, err := ticker.Measure(baselineRow, baselineCrossSection)
-		So(err, ShouldBeNil)
-		So(baseline, ShouldHaveLength, 1)
+		baselineResult := signal.Measure(buildThesis(1))
+		baselineRaw, ok := baselineResult.Measurements.Load("correlation")
+		So(ok, ShouldBeTrue)
+
+		baselineMetrics := baselineRaw.(datura.Map[datura.Map[*decimal.Decimal]])["BTC/USD"]
+		So(baselineMetrics, ShouldNotBeNil)
 
 		Convey("When the subject's entire history is requoted in a different denomination", func() {
 			for _, factor := range rescaleFactors {
-				rescaledCrossSection := buildCrossSection(factor)
-				rescaledRow := denominationRow(
-					"BTC/USD",
-					subjectPrices[len(subjectPrices)-1]*factor,
-					start.Add(time.Duration(len(subjectPrices)-1)*time.Second),
-				)
-				result, measureErr := ticker.Measure(rescaledRow, rescaledCrossSection)
+				result := signal.Measure(buildThesis(factor))
+				raw, hasCorrelation := result.Measurements.Load("correlation")
+				So(hasCorrelation, ShouldBeTrue)
 
-				So(measureErr, ShouldBeNil)
-				So(result, ShouldHaveLength, 1)
+				metrics := raw.(datura.Map[datura.Map[*decimal.Decimal]])["BTC/USD"]
+				So(metrics, ShouldNotBeNil)
 
-				// Every exported metric is unchanged, since all of them
-				// derive from log-returns.
-				for key, value := range baseline[0].Metrics {
-					So(result[0].Metrics[key], ShouldAlmostEqual, value, 1e-9)
+				for key, value := range baselineMetrics {
+					So(metrics[key].Float64(), ShouldAlmostEqual, value.Float64(), 1e-9)
 				}
 			}
 		})
 	})
+}
+
+func TestSignal_MeasureRequiresCrossSection(t *testing.T) {
+	Convey("Given a lone ticker row with no peer history", t, func() {
+		signal := &Signal{
+			ctx:     context.Background(),
+			ticker:  &Ticker{cache: []kraken.TickerData{denominationRow("BTC/USD", 100, time.Now())}},
+			section: NewSection(),
+		}
+
+		result := signal.Measure(types.NewThesis(nil))
+
+		Convey("Then correlation emits nothing for that symbol", func() {
+			raw, ok := result.Measurements.Load("correlation")
+			So(ok, ShouldBeTrue)
+
+			out := raw.(datura.Map[datura.Map[*decimal.Decimal]])
+			_, hasSymbol := out["BTC/USD"]
+			So(hasSymbol, ShouldBeFalse)
+		})
+	})
+}
+
+func BenchmarkSignal_Measure(b *testing.B) {
+	start := time.Unix(1_700_000_000, 0)
+	subjectPrices, peerPrices := correlatedPricePaths(13, 64)
+	signal := &Signal{
+		ctx:     context.Background(),
+		ticker:  &Ticker{cache: []kraken.TickerData{}},
+		section: NewSection(),
+	}
+	thesis := types.NewThesis(nil)
+	history := make([]kraken.TickerData, 0, len(subjectPrices)*2)
+
+	for index := range subjectPrices {
+		at := start.Add(time.Duration(index) * time.Second)
+		history = append(history,
+			denominationRow("BTC/USD", subjectPrices[index], at),
+			denominationRow("ETH/USD", peerPrices[index], at),
+		)
+	}
+
+	_ = thesis.CrossSection.Observe(history)
+
+	rows := []kraken.TickerData{
+		denominationRow("BTC/USD", subjectPrices[len(subjectPrices)-1], start.Add(time.Duration(len(subjectPrices)-1)*time.Second)),
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		signal.ticker.cache = append([]kraken.TickerData(nil), rows...)
+		_ = signal.Measure(thesis)
+	}
 }

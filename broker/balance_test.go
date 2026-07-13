@@ -43,7 +43,6 @@ func TestBalancePublish(t *testing.T) {
 		reserved, err := decimal.NewFromString("10")
 		So(err, ShouldBeNil)
 		messages := make(chan []byte, 1)
-		observed := 0
 		balance := &Balance{
 			status: types.READY,
 			quote:  "USD",
@@ -59,8 +58,8 @@ func TestBalancePublish(t *testing.T) {
 		balance.Publish()
 
 		Convey("It should emit and notify the portfolio owner", func() {
+			So(len(messages), ShouldEqual, 1)
 			So(<-messages, ShouldNotBeEmpty)
-			So(observed, ShouldEqual, 1)
 			So(balance.Snapshot(), ShouldHaveLength, 1)
 		})
 	})

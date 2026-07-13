@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -34,6 +35,7 @@ Observe validates and applies one authoritative L3 row without advancing the
 GPU field. Every accepted row updates the exact population ledger.
 */
 func (slot *Slot) Observe(
+	thesis *types.Thesis,
 	row kraken.Level3Data,
 	pricePrecision int,
 	qtyPrecision int,
@@ -47,11 +49,11 @@ func (slot *Slot) Observe(
 	}
 
 	if slot.timestampRegressed(row.Timestamp) {
-		return slot.invalidate(observation, TimestampRegress)
+		return slot.invalidate(thesis, observation, TimestampRegress)
 	}
 
 	if book == nil {
-		return slot.invalidate(observation, BookInvalid)
+		return slot.invalidate(thesis, observation, BookInvalid)
 	}
 
 	if !book.Apply(row, pricePrecision, qtyPrecision) {
@@ -61,20 +63,20 @@ func (slot *Slot) Observe(
 			reason = BookInvalid
 		}
 
-		return slot.invalidate(observation, reason)
+		return slot.invalidate(thesis, observation, reason)
 	}
 
 	bestBid, bestAsk, ok := book.TopOfBook(slot.symbol)
 
 	if !ok {
-		return slot.invalidate(observation, NonPositiveMid)
+		return slot.invalidate(thesis, observation, NonPositiveMid)
 	}
 
 	midPrice := (bestBid + bestAsk) / 2
 	slot.population.Apply(row, midPrice)
 
 	if !slot.population.Ready() {
-		return slot.invalidate(observation, slot.population.InvalidReason())
+		return slot.invalidate(thesis, observation, slot.population.InvalidReason())
 	}
 
 	if observation.At.IsZero() {
@@ -82,7 +84,7 @@ func (slot *Slot) Observe(
 	}
 
 	if slot.timestampRegressed(observation.At) {
-		return slot.invalidate(observation, TimestampRegress)
+		return slot.invalidate(thesis, observation, TimestampRegress)
 	}
 
 	if slot.advanceReady && !strings.EqualFold(row.Type, "snapshot") {
@@ -102,7 +104,6 @@ func (slot *Slot) Observe(
 	}
 
 	return ProcessResult{
-		Thesis:       slot.thesis,
 		Observation:  observation,
 		Accounting:   slot.population.Accounting(),
 		AdvanceReady: true,
@@ -114,6 +115,7 @@ func (slot *Slot) timestampRegressed(at time.Time) bool {
 }
 
 func (slot *Slot) invalidate(
+	thesis *types.Thesis,
 	observation ObservationMetadata,
 	reason InvalidReason,
 ) ProcessResult {
@@ -121,5 +123,5 @@ func (slot *Slot) invalidate(
 	slot.advanceReady = false
 	slot.population.invalidate(reason)
 
-	return slot.failedResult(observation, reason)
+	return slot.failedResult(thesis, observation, reason)
 }

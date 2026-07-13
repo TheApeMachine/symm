@@ -254,8 +254,8 @@ func TestMomentDepositor(t *testing.T) {
 	})
 }
 
-func TestStateFromEvidence(t *testing.T) {
-	Convey("Given typed state evidence", t, func() {
+func TestManifoldStateRoundTrip(t *testing.T) {
+	Convey("Given typed manifold state stored on a thesis", t, func() {
 		state := State{
 			Ready:                true,
 			VisibleMass:          1,
@@ -272,11 +272,13 @@ func TestStateFromEvidence(t *testing.T) {
 				ViscosityProxy:   0.5,
 			},
 		}
+		thesis := types.NewThesis(nil)
+		thesis.Measurements.Store("BTC/USD:manifold", state)
 
-		Convey("It should decode for downstream resonance", func() {
-			decoded, ok := StateFromEvidence(state)
+		Convey("It should remain readable for downstream resonance", func() {
+			stored, ok := thesis.Measurements.Load("BTC/USD:manifold")
 			So(ok, ShouldBeTrue)
-			So(decoded.IsFinite(), ShouldBeTrue)
+			So(stored.(State).IsFinite(), ShouldBeTrue)
 		})
 	})
 }

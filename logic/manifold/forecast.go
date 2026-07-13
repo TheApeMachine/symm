@@ -5,7 +5,6 @@ import (
 	"math"
 
 	"github.com/theapemachine/nomagique/learning"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -118,21 +117,6 @@ func (model *ForecastModel) Update(state State) (types.Forecasts, bool, error) {
 	}
 
 	return forecast, true, nil
-}
-
-func (model *ForecastModel) Attach(
-	symbol string,
-	thesis *strategy.Thesis,
-	state State,
-) error {
-	forecast, ready, err := model.Update(state)
-
-	if err != nil || !ready {
-		return err
-	}
-
-	thesis.AddEvidence(symbol, "manifold_forecasts", forecast)
-	return nil
 }
 
 func (model *ForecastModel) features(state State) ([]float64, bool) {

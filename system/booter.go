@@ -78,6 +78,11 @@ func (booter *Booter) CurrentPhase() string {
 
 func (booter *Booter) AddStages(stages ...*Stage) {
 	booter.stages = append(booter.stages, stages...)
+
+	for _, stage := range stages {
+		errnie.Error(stage.Initialize())
+	}
+
 	booter.publishPhase(booter.CurrentPhase())
 }
 

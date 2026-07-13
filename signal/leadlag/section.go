@@ -5,8 +5,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/statistic"
 )
+
+const sampleFloor = 2
 
 /*
 priceSample is one observed price point on a symbol path.
@@ -31,7 +35,8 @@ by `measurement/{symbol}/leadlag/` when cross-replica state is required.
 type Section struct {
 	universe     sync.Map
 	anchorSymbol string
-	moveHistory  []float64
+	moveBaseline *algorithm.MoveBaseline
+	lastMove     algorithm.MoveBaselineOutput
 }
 
 type symbolState struct {
@@ -66,7 +71,7 @@ config anchor and no fixed major to seed.
 */
 func NewSection() *Section {
 	return &Section{
-		moveHistory: make([]float64, 0, pearsonFloor*2),
+		moveBaseline: newMoveBaseline(),
 	}
 }
 
@@ -84,10 +89,9 @@ func (section *Section) SetAnchor(symbol string) {
 		return
 	}
 
-	// Reset only on genuine rotation (a prior anchor existed). The first
-	// assignment keeps any move history already buffered for the new anchor.
 	if section.anchorSymbol != "" {
-		section.moveHistory = section.moveHistory[:0]
+		section.moveBaseline = newMoveBaseline()
+		section.lastMove = algorithm.MoveBaselineOutput{}
 	}
 
 	section.anchorSymbol = symbol
@@ -143,7 +147,7 @@ func (section *Section) ObservePrice(symbol string, price float64, at time.Time)
 	state.observedCount++
 	state.prices = append(state.prices, priceSample{at: at, value: price})
 
-	capacity := priceHistoryCapacity(state.observedCount)
+	capacity := priceRetentionCount(state.observedCount)
 
 	if len(state.prices) > capacity {
 		state.prices = state.prices[len(state.prices)-capacity:]
@@ -172,7 +176,7 @@ func (section *Section) Features(scope string) LagFeatures {
 		price = anchor.last
 	}
 
-	move := section.anchorMove(anchor.prices)
+	move := section.anchorMove()
 	features := LagFeatures{
 		IsAnchor:    scope == section.anchorSymbol,
 		Price:       price,
@@ -196,16 +200,22 @@ func (section *Section) Features(scope string) LagFeatures {
 
 	features.SampleCount = sampleCount
 
-	contempCorr, contempOK := pairCorrelation(anchorSeries, followerSeries, 0)
+	anchorSamples := correlationSamples(anchorSeries)
+	followerSamples := correlationSamples(followerSeries)
+	sampleSpacing := seriesSampleSpacing(anchorSeries, followerSeries)
+
+	contempCorr, contempOK := algorithm.HayashiPairCorrelation(
+		anchorSamples,
+		followerSamples,
+		0,
+	)
 	features.ContempOK = contempOK
 	features.ContempCorr = contempCorr
 
-	sampleSpacing := seriesSampleSpacing(anchorSeries, followerSeries)
-	lagBars, lagCorr, lagOK := crossLagScore(
-		anchorSeries,
-		followerSeries,
+	lagBars, lagCorr, lagOK := algorithm.CrossLagScore(
+		anchorSamples,
+		followerSamples,
 		sampleSpacing,
-		section.maxLagBars(sampleCount),
 	)
 	features.LagOK = lagOK
 	features.LagBars = lagBars
@@ -225,7 +235,7 @@ type anchorMove struct {
 }
 
 func (section *Section) recordAnchorMove(samples []priceSample) {
-	if len(samples) < 2 {
+	if len(samples) < sampleFloor {
 		return
 	}
 
@@ -236,62 +246,213 @@ func (section *Section) recordAnchorMove(samples []priceSample) {
 		return
 	}
 
-	section.moveHistory = append(section.moveHistory, recentMove)
+	output, err := section.moveBaseline.Measure(recentMove)
 
-	moveCap := priceHistoryCapacity(len(section.moveHistory))
-
-	if len(section.moveHistory) > moveCap {
-		section.moveHistory = section.moveHistory[len(section.moveHistory)-moveCap:]
+	if err != nil {
+		return
 	}
+
+	section.lastMove = output
 }
 
-func (section *Section) anchorMove(samples []priceSample) anchorMove {
-	if len(samples) < 2 {
-		return anchorMove{}
-	}
-
-	window := samples[len(samples)-1].at.Sub(samples[0].at)
-	recentMove, ok := recentPathMove(samples, window)
-
-	if !ok {
-		return anchorMove{}
-	}
-
-	threshold := section.moveThreshold(recentMove)
-	// First observation is already ready: a single recorded move seeds the
-	// baseline (moveThreshold returns the sample itself, so moved=false at low
-	// confidence) rather than gating behind a fixed warmup count.
-	ready := len(section.moveHistory) > 0
-	moved := ready && recentMove > threshold
-
-	stallMargin := 0.0
-
-	if threshold > 0 {
-		stallMargin = math.Max(0, threshold-recentMove) / threshold
-	}
-
+func (section *Section) anchorMove() anchorMove {
 	return anchorMove{
-		moved:       moved,
-		stallMargin: stallMargin,
-		ready:       ready,
+		moved:       section.lastMove.Moved > 0,
+		stallMargin: section.lastMove.StallMargin,
+		ready:       section.lastMove.Ready > 0,
 	}
-}
-
-func (section *Section) moveThreshold(sample float64) float64 {
-	minSamples := minCorrelationSamples(len(section.moveHistory) + 1)
-
-	if len(section.moveHistory) < minSamples {
-		return sample
-	}
-
-	median, _ := statistic.MedianOf(section.moveHistory)
-	mean, std := meanStdDev(section.moveHistory)
-
-	_ = mean
-
-	return median + std
 }
 
 func (section *Section) maxLagBars(sampleCount int) int {
-	return maxLagBarsForCount(sampleCount)
+	return resolvedMaxLagBars(sampleCount)
+}
+
+func correlationSamples(samples []priceSample) []correlation.Sample {
+	converted := make([]correlation.Sample, len(samples))
+
+	for index, sample := range samples {
+		converted[index] = correlation.Sample{
+			At:    sample.at,
+			Value: sample.value,
+		}
+	}
+
+	return converted
+}
+
+func newMoveBaseline() *algorithm.MoveBaseline {
+	shortWindow, longWindow, err := statistic.ResolveWindows(
+		[]float64{1, 1},
+		0,
+		0,
+	)
+
+	if err != nil {
+		shortWindow = sampleFloor
+		longWindow = sampleFloor + 1
+	}
+
+	return algorithm.NewMoveBaseline(algorithm.MoveBaselineConfig{
+		MinObs:  max(shortWindow, sampleFloor),
+		PathCap: max(longWindow+shortWindow+1, 64),
+	})
+}
+
+func priceRetentionCount(observedCount int) int {
+	if observedCount <= 1 {
+		return observedCount
+	}
+
+	windows, err := statistic.ResolveWindowSet(
+		make([]float64, observedCount),
+		statistic.WindowsConfig{},
+	)
+
+	if err != nil {
+		return observedCount
+	}
+
+	retention := windows.LongWindow + windows.ReturnLag + 1
+
+	if retention > observedCount {
+		return observedCount
+	}
+
+	return retention
+}
+
+func resolvedMaxLagBars(sampleCount int) int {
+	if sampleCount <= 0 {
+		return 1
+	}
+
+	_, longWindow, err := statistic.ResolveWindows(
+		make([]float64, sampleCount),
+		0,
+		0,
+	)
+
+	if err != nil {
+		return 1
+	}
+
+	halfSeries := sampleCount / 2
+
+	if longWindow > halfSeries {
+		longWindow = halfSeries
+	}
+
+	if longWindow < 1 {
+		longWindow = 1
+	}
+
+	return longWindow
+}
+
+func resolvedShortWindow(sampleCount int) int {
+	if sampleCount <= 0 {
+		return sampleFloor
+	}
+
+	shortWindow, _, err := statistic.ResolveWindows(
+		make([]float64, sampleCount),
+		0,
+		0,
+	)
+
+	if err != nil {
+		return sampleFloor
+	}
+
+	return max(shortWindow, sampleFloor)
+}
+
+func recentPathMove(samples []priceSample, window time.Duration) (float64, bool) {
+	minSamples := resolvedShortWindow(len(samples))
+
+	if len(samples) < minSamples || window <= 0 {
+		return 0, false
+	}
+
+	latest := samples[len(samples)-1]
+	cutoff := latest.at.Add(-window)
+	startIndex := -1
+
+	for index, sample := range samples {
+		if !sample.at.Before(cutoff) {
+			startIndex = index
+
+			break
+		}
+	}
+
+	if startIndex < 0 {
+		return 0, false
+	}
+
+	start := samples[startIndex]
+
+	if start.value <= 0 || latest.value <= 0 {
+		return 0, false
+	}
+
+	if start.value == latest.value {
+		return 0, true
+	}
+
+	spacing := seriesSampleSpacing(samples, nil)
+
+	if spacing <= 0 || minSamples < sampleFloor {
+		return 0, false
+	}
+
+	minimumSpan := spacing * time.Duration(minSamples-1)
+
+	if latest.at.Sub(start.at) < minimumSpan {
+		return 0, false
+	}
+
+	return math.Abs(math.Log(latest.value / start.value)), true
+}
+
+func seriesSampleSpacing(primary, secondary []priceSample) time.Duration {
+	spacing := medianSampleSpacing(primary)
+
+	if len(secondary) > 1 {
+		alternate := medianSampleSpacing(secondary)
+
+		if alternate > 0 && (spacing <= 0 || alternate < spacing) {
+			spacing = alternate
+		}
+	}
+
+	if spacing <= 0 {
+		return 0
+	}
+
+	return spacing
+}
+
+func medianSampleSpacing(samples []priceSample) time.Duration {
+	if len(samples) < sampleFloor {
+		return 0
+	}
+
+	gaps := make([]float64, 0, len(samples)-1)
+
+	for index := 1; index < len(samples); index++ {
+		gap := samples[index].at.Sub(samples[index-1].at).Seconds()
+
+		if gap > 0 {
+			gaps = append(gaps, gap)
+		}
+	}
+
+	if len(gaps) == 0 {
+		return 0
+	}
+
+	median, _ := statistic.MedianOf(gaps)
+
+	return time.Duration(median * float64(time.Second))
 }
