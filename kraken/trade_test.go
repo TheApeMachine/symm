@@ -38,14 +38,14 @@ func TestNewTradeVolumeRequest(t *testing.T) {
 			err = sonic.Unmarshal(encoded, &body)
 			So(err, ShouldBeNil)
 
-			Convey("Then spot pairs use Kraken's forex asset class and nonce remains transport-owned", func() {
+			Convey("Then pairs stay plain websocket v2 symbols and nonce remains transport-owned", func() {
 				_, hasNonce := body["nonce"]
 				So(hasNonce, ShouldBeFalse)
 
 				pairs := body["pair"].([]any)
 				So(pairs, ShouldHaveLength, 2)
-				So(pairs[0].(map[string]any)["asset"], ShouldEqual, "BTC/USD")
-				So(pairs[0].(map[string]any)["aclass"], ShouldEqual, "forex")
+				So(pairs[0], ShouldEqual, "BTC/USD")
+				So(pairs[1], ShouldEqual, "ETH/USD")
 			})
 		})
 

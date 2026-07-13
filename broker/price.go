@@ -291,12 +291,19 @@ For example:
 	Price:    50,000 USD per BTC
 	Quantity: 0.1 BTC
 	Notional: 5,000 USD
+
+Decimal.Mul rescales its argument down to the receiver's own scale
+before multiplying, which silently rounds a fine-grained quantity (e.g.
+0.0001 BTC, scale 4) to zero whenever the coarser-scaled price (e.g.
+64129.9, scale 1) is the receiver. Widening the receiver's scale to
+whichever operand needs more decimal places first keeps that rescale
+lossless in both directions.
 */
 func (price *Price) Notional(
 	unitPrice decimal.Decimal,
 	quantity decimal.Decimal,
 ) *decimal.Decimal {
-	return unitPrice.Mul(&quantity)
+	return unitPrice.SetScale(decimal.DefaultScale).Mul(&quantity)
 }
 
 /*
@@ -581,7 +588,7 @@ func (price *Price) PositionQuoteAt(
 
 	returnPct := netPnL.
 		Div(entryNotional).
-		Float64() * 100
+		Mul(decimal.NewFromInt64(100))
 
 	return &PositionQuote{
 		Mark:          mark,
@@ -590,6 +597,6 @@ func (price *Price) PositionQuoteAt(
 		EntryFee:      *entryFee,
 		ExitFee:       *exitFee,
 		PnL:           *netPnL,
-		ReturnPct:     returnPct,
+		ReturnPct:     returnPct.Float64(),
 	}, nil
 }

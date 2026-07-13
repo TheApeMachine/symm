@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -28,13 +29,15 @@ type Signal struct {
 	decay  *equation.Decay
 }
 
-func NewSignal(ctx context.Context, api *websocket.API) *Signal {
+func NewSignal(
+	ctx context.Context, api *websocket.API, instrument *trader.Instrument,
+) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		book:   NewBook(ctx, api),
+		book:   NewBook(ctx, api, instrument),
 		trade:  NewTrade(ctx, api),
 		sample: algorithm.NewDecaySample(),
 		decay:  equation.NewDecay(),

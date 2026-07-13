@@ -293,9 +293,7 @@ const PositionGauge = ({
 						? ` / stop ${fixed(stop.stop_price)}`
 						: ""}
 				</span>
-				<span className={pnlTone}>
-					{(position.return_pct * 100).toFixed(2)}%
-				</span>
+				<span className={pnlTone}>{position.return_pct.toFixed(4)}%</span>
 			</div>
 
 			{/* momentum-decay meter: remaining driving energy before a momentum exit */}

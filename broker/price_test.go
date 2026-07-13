@@ -171,8 +171,10 @@ func TestPriceWithFriction(t *testing.T) {
 			)
 
 			Convey("Then it returns the all-in round-trip taker quote", func() {
+				// 50000.5 notional + two 0.26% taker fees:
+				// fee = 50000.5 * 0.0026 = 130.0013, total = 260.0026.
 				So(err, ShouldBeNil)
-				So(net.Float64(), ShouldAlmostEqual, 50260.8, 1e-8)
+				So(net.Float64(), ShouldAlmostEqual, 50260.5026, 1e-8)
 			})
 		})
 	})

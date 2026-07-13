@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -106,17 +107,13 @@ func New(
 
 	live.client.OnSent.Recurring(func(event *callback.Event[*kraken.WebSocketMessage]) {
 		if live.isLevel3 {
-			if err := live.books.Update(event); err != nil {
-				errnie.Error(errnie.Err(errnie.Validation, err.Error(), err))
-			}
+			live.updateBooks(event)
 		}
 	})
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*kraken.WebSocketMessage]) {
 		if live.isLevel3 {
-			if err := live.books.Update(event); err != nil {
-				errnie.Error(errnie.Err(errnie.Validation, err.Error(), err))
-			}
+			live.updateBooks(event)
 		}
 
 		live.route(event.Data.Bytes())
@@ -140,6 +137,50 @@ func New(
 	}
 
 	return live
+}
+
+/*
+updateBooks feeds a websocket event to the level3 book manager.
+
+The vendored SDK's Book.Update enforces max depth after every single
+order record within a batch, which can delete a price level mid-batch
+and leave a later record in the same (or a subsequent) message
+referencing an order on a level that no longer exists. Side.update
+then calls update on a nil *Level and panics. That is a bug inside the
+vendored book package we do not control, so it is contained here, at
+the boundary where we hand events to it, rather than letting a single
+bad update take down the whole process.
+*/
+func (live *Live) updateBooks(event *callback.Event[*kraken.WebSocketMessage]) {
+	defer live.recoverBookUpdate()
+
+	if err := live.books.Update(event); err != nil {
+		errnie.Error(errnie.Err(errnie.Validation, err.Error(), err))
+	}
+}
+
+/*
+recoverBookUpdate stops a panic raised by the vendored book manager
+from propagating past updateBooks.
+*/
+func (live *Live) recoverBookUpdate() {
+	recovered := recover()
+
+	if recovered == nil {
+		return
+	}
+
+	cause, ok := recovered.(error)
+
+	if !ok {
+		cause = fmt.Errorf("%v", recovered)
+	}
+
+	errnie.Error(errnie.Err(
+		errnie.Internal,
+		"level3 book update panicked, dropping this update",
+		cause,
+	))
 }
 
 func (live *Live) Initialize() error {
@@ -170,6 +211,12 @@ func (live *Live) route(raw []byte) {
 	}
 
 	if channel == "status" || channel == "heartbeat" {
+		return
+	}
+
+	// The BookManager owns level3 lifecycle entirely (see OnSent/OnReceived
+	// above); nothing registers a per-channel callback for it.
+	if channel == "level3" {
 		return
 	}
 

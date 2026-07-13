@@ -65,8 +65,11 @@ func TestSignal_MeasureSkipsIncompleteRow(testingTB *testing.T) {
 			result := signal.Measure(types.NewThesis(nil))
 
 			Convey("Then it should wait without publishing metrics", func() {
-				_, ok := result.Measurements.Load("pumpdump")
-				So(ok, ShouldBeFalse)
+				raw, ok := result.Measurements.Load("pumpdump")
+				So(ok, ShouldBeTrue)
+
+				out := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])
+				So(out, ShouldBeEmpty)
 			})
 		})
 	})

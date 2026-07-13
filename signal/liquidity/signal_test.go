@@ -42,8 +42,11 @@ func TestSignal_MeasureRequiresTwoExecutablePeers(testingTB *testing.T) {
 		result := signal.Measure(types.NewThesis(nil))
 
 		Convey("Then it emits nothing rather than dividing by an unsupported median", func() {
-			_, ok := result.Measurements.Load("liquidity")
-			So(ok, ShouldBeFalse)
+			raw, ok := result.Measurements.Load("liquidity")
+			So(ok, ShouldBeTrue)
+
+			out := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])
+			So(out, ShouldBeEmpty)
 		})
 	})
 }

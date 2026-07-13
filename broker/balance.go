@@ -1,6 +1,8 @@
 package broker
 
 import (
+	"strings"
+
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
@@ -136,6 +138,29 @@ func (balance *Balance) Holdings() []SpotHolding {
 	}
 
 	return holdings
+}
+
+/*
+Symbol normalizes a compact trade-history pair (e.g. "BTCUSD") into the
+slash-delimited symbol form (e.g. "BTC/USD") used everywhere else in
+symm: WS v2 ticker/book/instrument symbols, and Price's cache keys.
+
+It trims the quote currency as a suffix rather than replacing every
+occurrence, since an asset code that itself contains the quote code
+(USDC, USDT, PYUSD, ... against a USD quote) would otherwise lose its
+own quote substring too.
+
+If pair already carries a slash, it is assumed to be normalized and is
+returned unchanged.
+*/
+func (balance *Balance) Symbol(pair string) string {
+	if strings.Contains(pair, "/") {
+		return pair
+	}
+
+	base := strings.TrimSuffix(pair, balance.quote)
+
+	return base + "/" + balance.quote
 }
 
 func (balance *Balance) Available(amount decimal.Decimal) bool {

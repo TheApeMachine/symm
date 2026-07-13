@@ -133,9 +133,9 @@ var (
 					leadlag.NewSignal(ctx, api),
 					cvd.NewSignal(ctx, api),
 					correlation.NewSignal(ctx, api),
-					exhaust.NewSignal(ctx, api),
+					exhaust.NewSignal(ctx, api, instrument),
 					sentiment.NewSignal(ctx, api),
-					depthflow.NewSignal(ctx, api),
+					depthflow.NewSignal(ctx, api, instrument),
 				},
 				analyzer,
 			)

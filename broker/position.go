@@ -56,6 +56,7 @@ type Position struct {
 	Data         *PositionData
 	Stop         *StopData
 	tickers      []*kraken.TickerData
+	snapshot     func() []PositionData
 }
 
 func NewPosition(
@@ -64,6 +65,7 @@ func NewPosition(
 	price *Price,
 	balance *Balance,
 	data *PositionData,
+	snapshot func() []PositionData,
 ) *Position {
 	position := &Position{
 		status:     types.INITIALIZING,
@@ -72,6 +74,7 @@ func NewPosition(
 		price:      price,
 		balance:    balance,
 		Data:       data,
+		snapshot:   snapshot,
 		executions: make([]*kraken.Execution, 0),
 		tickers:    make([]*kraken.TickerData, 0),
 	}
@@ -87,11 +90,26 @@ func (position *Position) Status() types.Status {
 	return position.status
 }
 
+/*
+Publish broadcasts the full current position set, not just this one.
+
+The frontend treats every "positions" message as the complete
+authoritative state and replaces its store with it wholesale. Sending
+only this position here would mean any single position's own update
+(a fill, an order ack, its next ticker) wipes every other open
+position off the dashboard. snapshot is nil for positions built
+directly, such as in tests that construct a Position without a Desk,
+in which case this position is all there is to report.
+*/
 func (position *Position) Publish() {
+	positions := []PositionData{*position.Data}
+
+	if position.snapshot != nil {
+		positions = position.snapshot()
+	}
+
 	position.ui <- datura.Map[any]{
-		"positions": []PositionData{
-			*position.Data,
-		},
+		"positions": positions,
 	}.Marshal()
 }
 
@@ -100,6 +118,13 @@ Hydrate connects a position to an existing wallet holding and its
 corresponding buy trade.
 
 Price owns the valuation calculation. Position only stores the result.
+
+The current ticker may not have arrived yet this early in boot, since
+ticker subscriptions for the whole tradable universe are still in
+flight. A missing quote does not mean the holding is not real, so the
+position still opens on its confirmed quantity and entry price; Mark,
+PnL and ReturnPct stay at whatever Price already computed (or zero) and
+self-correct the moment TickerAck sees this symbol.
 */
 func (position *Position) Hydrate(
 	symbol string,
@@ -123,7 +148,9 @@ func (position *Position) Hydrate(
 		}
 
 		for _, trade := range history.Result.Trades {
-			if trade.Pair != symbol || trade.Type != "buy" || trade.Price == nil {
+			if position.balance.Symbol(trade.Pair) != symbol ||
+				trade.Type != "buy" ||
+				trade.Price == nil {
 				continue
 			}
 
@@ -137,13 +164,14 @@ func (position *Position) Hydrate(
 			)
 
 			if err != nil {
-				errnie.Warn(err.Error())
-				return position
+				errnie.Warn(
+					"position quote pending for " + position.Data.Symbol + ": " + err.Error(),
+				)
+			} else {
+				position.Data.Mark = quote.Mark
+				position.Data.PnL = quote.PnL
+				position.Data.ReturnPct = quote.ReturnPct
 			}
-
-			position.Data.Mark = quote.Mark
-			position.Data.PnL = quote.PnL
-			position.Data.ReturnPct = quote.ReturnPct
 
 			position.status = types.OPEN
 			position.Publish()

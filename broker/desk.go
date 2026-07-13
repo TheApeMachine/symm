@@ -1,7 +1,6 @@
 package broker
 
 import (
-	"strings"
 	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -61,11 +60,15 @@ func (desk *Desk) Initialize() error {
 	}
 
 	for _, trade := range history.Result.Trades {
-		fixed := strings.ReplaceAll(
-			trade.Pair,
-			desk.balance.quote,
-			"",
-		) + "/" + desk.balance.quote
+		fixed := desk.balance.Symbol(trade.Pair)
+
+		data := &PositionData{
+			Symbol:     fixed,
+			Qty:        *trade.Volume,
+			EntryPrice: *trade.Price,
+			Mark:       *decimal.NewFromInt64(0),
+			PnL:        *decimal.NewFromInt64(0),
+		}
 
 		/*
 			Ask Price to calculate the complete current position value.
@@ -75,6 +78,12 @@ func (desk *Desk) Initialize() error {
 			  - fees
 			  - PnL
 			  - return percentage
+
+			The ticker universe subscribes hundreds of symbols on boot, so
+			this symbol's own ticker may not have arrived yet. That is not
+			a reason to drop the holding: Hydrate below still confirms it
+			against the wallet, and Position.TickerAck fills in Mark, PnL,
+			and ReturnPct the moment this symbol's next ticker arrives.
 		*/
 		quote, err := desk.price.PositionQuote(
 			fixed,
@@ -83,13 +92,11 @@ func (desk *Desk) Initialize() error {
 		)
 
 		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"failed to quote position "+fixed,
-				err,
-			))
-
-			continue
+			errnie.Warn("position quote pending for " + fixed + ": " + err.Error())
+		} else {
+			data.Mark = quote.Mark
+			data.PnL = quote.PnL
+			data.ReturnPct = quote.ReturnPct
 		}
 
 		position := NewPosition(
@@ -97,23 +104,34 @@ func (desk *Desk) Initialize() error {
 			desk.ui,
 			desk.price,
 			desk.balance,
-			&PositionData{
-				Symbol:     fixed,
-				Qty:        *trade.Volume,
-				EntryPrice: *trade.Price,
-				Mark:       quote.Mark,
-				PnL:        quote.PnL,
-				ReturnPct:  quote.ReturnPct,
-			},
-		).Hydrate(fixed, history)
+			data,
+			desk.snapshot,
+		)
 
 		desk.positions.Store(fixed, position)
+		position.Hydrate(fixed, history)
 	}
 
 	desk.status = types.READY
 	desk.Publish()
 
 	return nil
+}
+
+/*
+snapshot returns the current data for every position desk holds, so a
+single position's own publish can report the full open set instead of
+just itself.
+*/
+func (desk *Desk) snapshot() []PositionData {
+	positions := make([]PositionData, 0)
+
+	desk.positions.Range(func(_, value any) bool {
+		positions = append(positions, *value.(*Position).Data)
+		return true
+	})
+
+	return positions
 }
 
 func (desk *Desk) Publish() {
@@ -195,6 +213,7 @@ func (desk *Desk) Buy(
 			Qty:        *decimal.NewFromFloat64(fraction),
 			EntryPrice: price,
 		},
+		desk.snapshot,
 	)
 
 	/*

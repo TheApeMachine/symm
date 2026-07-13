@@ -13,6 +13,16 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+newLevel3Event wraps a raw websocket frame the same way the SDK does
+before handing it to callback.Recurring subscribers.
+*/
+func newLevel3Event(raw []byte) *callback.Event[*kraken.WebSocketMessage] {
+	return &callback.Event[*kraken.WebSocketMessage]{
+		Data: kraken.NewWebSocketMessage(raw),
+	}
+}
+
 func TestNewSetsAuthURL(t *testing.T) {
 	Convey("Given an authenticated live transport", t, func() {
 		live := &Live{
@@ -73,6 +83,46 @@ func TestLiveRoute(t *testing.T) {
 
 			So(level3Frames, ShouldBeEmpty)
 			So(tickerFrames, ShouldBeEmpty)
+		})
+	})
+}
+
+func TestUpdateBooksRecoversFromLevel3DepthPanic(t *testing.T) {
+	Convey("Given a level3 book whose depth enforcement trims a price level mid-batch", t, func() {
+		live := &Live{isLevel3: true, books: spot.NewBookManager()}
+
+		subscribe := newLevel3Event([]byte(
+			`{"method":"subscribe","params":{"channel":"level3","symbol":["TEST/USD"],"depth":1}}`,
+		))
+		live.updateBooks(subscribe)
+
+		// Depth 1 means inserting order B (99) trims order B's own level
+		// right back out via a synthetic zero-quantity update with no
+		// order ID, orphaning B's per-order tracking. The trailing
+		// explicit delete for order B then finds no level to update on,
+		// which is exactly what crashes the vendored book package.
+		update := newLevel3Event([]byte(`{
+			"channel": "level3",
+			"type": "update",
+			"data": [{
+				"symbol": "TEST/USD",
+				"bids": [
+					{"order_id": "A", "limit_price": 100, "order_qty": 1, "timestamp": "2024-01-01T00:00:00Z"},
+					{"order_id": "B", "limit_price": 99, "order_qty": 1, "timestamp": "2024-01-01T00:00:01Z"},
+					{"order_id": "B", "limit_price": 99, "event": "delete", "timestamp": "2024-01-01T00:00:02Z"}
+				],
+				"asks": [],
+				"checksum": 0
+			}]
+		}`))
+
+		Convey("It should not crash the process when a later record targets the trimmed level", func() {
+			So(func() { live.updateBooks(update) }, ShouldNotPanic)
+
+			survivor := live.books.GetBook("TEST/USD").BestBid()
+
+			So(survivor, ShouldNotBeNil)
+			So(survivor.Price.String(), ShouldEqual, "100")
 		})
 	})
 }
