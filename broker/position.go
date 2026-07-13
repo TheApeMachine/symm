@@ -24,13 +24,12 @@ var orderStatuses = map[string]types.Status{
 }
 
 type PositionData struct {
-	Symbol     string           `json:"symbol"`
-	Qty        decimal.Decimal  `json:"qty"`
-	EntryPrice decimal.Decimal  `json:"entry_price"`
-	Mark       decimal.Decimal  `json:"mark"`
-	PnL        decimal.Decimal  `json:"pnl"`
-	ReturnPct  float64          `json:"return_pct"`
-	FeeRate    *decimal.Decimal `json:"fee_rate,omitempty"`
+	Symbol     string          `json:"symbol"`
+	Qty        decimal.Decimal `json:"qty"`
+	EntryPrice decimal.Decimal `json:"entry_price"`
+	Mark       decimal.Decimal `json:"mark"`
+	PnL        decimal.Decimal `json:"pnl"`
+	ReturnPct  float64         `json:"return_pct"`
 }
 
 type StopData struct {
@@ -57,7 +56,6 @@ type Position struct {
 	Data         *PositionData
 	Stop         *StopData
 	tickers      []*kraken.TickerData
-	valuation    *Valuation
 }
 
 func NewPosition(
@@ -76,7 +74,6 @@ func NewPosition(
 		Data:       data,
 		executions: make([]*kraken.Execution, 0),
 		tickers:    make([]*kraken.TickerData, 0),
-		valuation:  &Valuation{},
 	}
 
 	position.api.On("add_order", position.OrderAck)
@@ -92,20 +89,32 @@ func (position *Position) Status() types.Status {
 
 func (position *Position) Publish() {
 	position.ui <- datura.Map[any]{
-		"positions": []PositionData{*position.Data},
+		"positions": []PositionData{
+			*position.Data,
+		},
 	}.Marshal()
 }
 
-func (position *Position) Hydrate(history *kraken.TradesHistory) *Position {
+/*
+Hydrate connects a position to an existing wallet holding and its
+corresponding buy trade.
+
+Price owns the valuation calculation. Position only stores the result.
+*/
+func (position *Position) Hydrate(
+	symbol string,
+	history *kraken.TradesHistory,
+) *Position {
 	if errnie.Error(kraken.Validate(history)) != nil {
 		return position
 	}
 
-	if position.balance == nil || position.api == nil {
+	if position.balance == nil ||
+		position.api == nil ||
+		position.price == nil {
 		return position
 	}
 
-	symbol := position.api.PairName(position.Data.Symbol)
 	position.Data.Symbol = symbol
 
 	for _, holding := range position.balance.Holdings() {
@@ -113,25 +122,29 @@ func (position *Position) Hydrate(history *kraken.TradesHistory) *Position {
 			continue
 		}
 
-		holdingSymbol, err := position.api.SymbolForAsset(
-			holding.Asset, position.balance.quote,
-		)
-
-		if err != nil || holdingSymbol != symbol {
-			continue
-		}
-
 		for _, trade := range history.Result.Trades {
-			if position.api.PairName(trade.Pair) != symbol || trade.Type != "buy" {
-				continue
-			}
-
-			if trade.Price == nil {
+			if trade.Pair != symbol || trade.Type != "buy" || trade.Price == nil {
 				continue
 			}
 
 			position.Data.Qty = holding.Qty
 			position.Data.EntryPrice = *trade.Price
+
+			quote, err := position.price.PositionQuote(
+				position.Data.Symbol,
+				position.Data.EntryPrice,
+				position.Data.Qty,
+			)
+
+			if err != nil {
+				errnie.Warn(err.Error())
+				return position
+			}
+
+			position.Data.Mark = quote.Mark
+			position.Data.PnL = quote.PnL
+			position.Data.ReturnPct = quote.ReturnPct
+
 			position.status = types.OPEN
 			position.Publish()
 
@@ -157,6 +170,7 @@ func (position *Position) OrderAck(buf []byte) {
 	position.orderID = orderAck.Result.OrderID
 	position.clientID = orderAck.Result.OrderUserref
 	position.status = types.OPEN
+
 	position.Publish()
 }
 
@@ -175,19 +189,27 @@ func (position *Position) ExecutionAck(buf []byte) {
 			continue
 		}
 
-		cumulativeQuantity := decimal.NewFromFloat64(executionData.CumQty)
+		cumulativeQuantity := decimal.NewFromFloat64(
+			executionData.CumQty,
+		)
 
-		if executionData.Side == "buy" {
+		switch executionData.Side {
+		case "buy":
 			position.Data.Qty = *cumulativeQuantity
 			position.Data.EntryPrice = executionData.AvgPrice
-		}
 
-		if executionData.Side == "sell" {
-			position.Data.Qty = *position.requestedQty.Sub(cumulativeQuantity)
+		case "sell":
+			position.Data.Qty = *position.requestedQty.Sub(
+				cumulativeQuantity,
+			)
 		}
 
 		position.Data.Mark = executionData.LastPrice
-		position.status = orderStatuses[executionData.OrderStatus]
+
+		if status, ok := orderStatuses[executionData.OrderStatus]; ok {
+			position.status = status
+		}
+
 		matched = true
 	}
 
@@ -197,39 +219,49 @@ func (position *Position) ExecutionAck(buf []byte) {
 			return
 		}
 
-		position.executions = append(position.executions, execution)
+		position.executions = append(
+			position.executions,
+			execution,
+		)
+
+		//Refresh the PnL after the execution changes quantity
+		//or average entry price.
+		if position.Data.Qty.Sign() > 0 &&
+			position.Data.EntryPrice.Sign() > 0 {
+			quote, err := position.price.PositionQuote(
+				position.Data.Symbol,
+				position.Data.EntryPrice,
+				position.Data.Qty,
+			)
+
+			if err == nil {
+				position.Data.Mark = quote.Mark
+				position.Data.PnL = quote.PnL
+				position.Data.ReturnPct = quote.ReturnPct
+			} else {
+				errnie.Error(err)
+			}
+		}
 	}
 
 	position.Publish()
 }
 
-func (position *Position) Execution(execution *kraken.Execution) error {
+/*
+Execution validates an execution belonging to this position.
+Fee and PnL calculations do not belong here. Price owns those
+calculations centrally.
+*/
+func (position *Position) Execution(
+	execution *kraken.Execution,
+) error {
 	if errnie.Error(kraken.Validate(execution)) != nil {
 		position.status = types.ERROR
+
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"invalid execution",
 			nil,
-		))
-	}
-
-	feeRate, err := position.price.FeeRate(position.Data.Symbol)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to get fee rate",
-			err,
-		))
-	}
-
-	position.Data.FeeRate, err = decimal.NewFromString(feeRate.Fee)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to parse fee rate: "+err.Error(),
-			err,
 		))
 	}
 
@@ -238,8 +270,14 @@ func (position *Position) Execution(execution *kraken.Execution) error {
 
 func (position *Position) Enter() error {
 	position.requestedQty = position.Data.Qty
+
+	/*
+		Taker returns the estimated quote-currency cost of buying
+		the requested quantity, including one taker fee.
+	*/
 	amount, err := position.price.Taker(
-		position.Data.Symbol, position.requestedQty,
+		position.Data.Symbol,
+		position.requestedQty,
 	)
 
 	if err != nil {
@@ -263,6 +301,7 @@ func (position *Position) Enter() error {
 		position.requestedQty.Float64(),
 		position.Data.Symbol,
 	)
+
 	position.reqID = order.ReqID
 	position.status = types.PENDING
 
@@ -277,21 +316,33 @@ func (position *Position) Enter() error {
 	}
 
 	position.Publish()
+
 	return nil
 }
 
 func (position *Position) Exit() error {
+	if position.Data.Qty.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"position has no quantity to sell",
+			nil,
+		))
+	}
+
 	position.requestedQty = position.Data.Qty
+
 	order := kraken.NewMarketOrder(
 		"sell",
 		position.requestedQty.Float64(),
 		position.Data.Symbol,
 	)
+
 	position.reqID = order.ReqID
 	position.status = types.PENDING
 
 	if err := position.api.AddOrder(order); err != nil {
 		position.status = types.ERROR
+
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to place market order",
@@ -300,6 +351,7 @@ func (position *Position) Exit() error {
 	}
 
 	position.Publish()
+
 	return nil
 }
 
@@ -308,42 +360,55 @@ func (position *Position) Executions() []*kraken.Execution {
 }
 
 /*
-TickerAck applies executable public quotes directly to this position.
+TickerAck updates this position from its own ticker only.
+
+Position does not perform fee, notional, PnL, or return calculations.
+It delegates the entire valuation to Price.
 */
 func (position *Position) TickerAck(buf []byte) {
 	ticker := kraken.NewTicker(buf)
 
 	if errnie.Error(kraken.Validate(ticker)) != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"invalid ticker",
+			nil,
+		))
+
 		return
 	}
 
 	for _, tickerData := range ticker.Data {
-		if tickerData.Symbol != position.Data.Symbol {
+		if tickerData.Symbol != position.Data.Symbol ||
+			tickerData.Last == nil ||
+			position.Data.EntryPrice.Sign() <= 0 ||
+			position.Data.Qty.Sign() <= 0 {
 			continue
 		}
 
-		if position.Data.FeeRate == nil && position.price != nil &&
-			position.price.Status() == types.READY {
-			feeRate, err := position.price.FeeRate(tickerData.Symbol)
-
-			if err == nil {
-				position.Data.FeeRate, _ = decimal.NewFromString(feeRate.Fee)
-			}
-		}
-
-		stop, triggered, err := position.valuation.Update(
-			position.Data, position.Stop, tickerData,
+		quote, err := position.price.PositionQuoteAt(
+			position.Data.Symbol,
+			position.Data.EntryPrice,
+			*tickerData.Last,
+			position.Data.Qty,
 		)
 
-		if errnie.Error(err) != nil {
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"failed to get position quote",
+				err,
+			))
+
 			return
 		}
 
-		position.Stop = stop
+		position.Data.Mark = quote.Mark
+		position.Data.PnL = quote.PnL
+		position.Data.ReturnPct = quote.ReturnPct
+
 		position.Publish()
 
-		if triggered && position.Status() != types.PENDING {
-			errnie.Error(position.Exit())
-		}
+		return
 	}
 }

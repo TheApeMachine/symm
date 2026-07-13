@@ -2,7 +2,6 @@ package websocket
 
 import (
 	"encoding/json"
-	"fmt"
 	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -23,6 +22,7 @@ type Conn interface {
 	Write(params json.Marshaler) error
 	Close()
 	Post(path string, params json.Marshaler) ([]byte, error)
+	Books() *spot.BookManager
 }
 
 /*
@@ -87,14 +87,6 @@ func (api *API) On(channel string, action func([]byte)) {
 }
 
 func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolume, error) {
-	if err := api.useNormalizer(); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to initialize Kraken symbol normalizer",
-			err,
-		))
-	}
-
 	response, err := api.private.Post(
 		TradeVolumeEndpoint,
 		kraken.NewTradeVolumeRequest(symbols),
@@ -108,62 +100,7 @@ func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolume, error) {
 		))
 	}
 
-	tradeVolume := kraken.NewTradeVolume(response)
-
-	if err := kraken.Validate(tradeVolume); err != nil {
-		return nil, err
-	}
-
-	fees := make(map[string]kraken.TradeVolumeFees, len(tradeVolume.Result.Fees))
-
-	for canonical, fee := range tradeVolume.Result.Fees {
-		symbol := api.normalizer.Name(canonical)
-
-		if _, duplicate := fees[symbol]; duplicate {
-			return nil, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"duplicate normalized trade volume symbol "+symbol,
-				nil,
-			))
-		}
-
-		fees[symbol] = fee
-	}
-
-	makerFees := make(map[string]kraken.TradeVolumeFees, len(tradeVolume.Result.FeesMaker))
-
-	for canonical, fee := range tradeVolume.Result.FeesMaker {
-		symbol := api.normalizer.Name(canonical)
-
-		if _, duplicate := makerFees[symbol]; duplicate {
-			return nil, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"duplicate normalized maker fee symbol "+symbol,
-				nil,
-			))
-		}
-
-		makerFees[symbol] = fee
-	}
-
-	tradeVolume.Result.Fees = fees
-	tradeVolume.Result.FeesMaker = makerFees
-	return tradeVolume, nil
-}
-
-func (api *API) useNormalizer() error {
-	api.normalizerOnce.Do(func() {
-		client := api.public.Client()
-
-		if client == nil || client.REST == nil {
-			api.normalizerErr = fmt.Errorf("Kraken public REST client required")
-			return
-		}
-
-		api.normalizerErr = api.normalizer.Use(client.REST)
-	})
-
-	return api.normalizerErr
+	return kraken.NewTradeVolume(response), nil
 }
 
 func (api *API) TradesHistory() (*kraken.TradesHistory, error) {
@@ -193,46 +130,6 @@ func (api *API) TradesHistory() (*kraken.TradesHistory, error) {
 	}, nil
 }
 
-func (api *API) SymbolForAsset(asset string, quote string) (string, error) {
-	if err := api.useNormalizer(); err != nil {
-		return "", errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to initialize Kraken symbol normalizer",
-			err,
-		))
-	}
-
-	base, ok := api.normalizer.AssetName(asset)
-
-	if !ok {
-		return "", errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"asset not found for "+asset,
-			nil,
-		))
-	}
-
-	quoteAsset, ok := api.normalizer.AssetName(quote)
-
-	if !ok {
-		return "", errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"quote asset not found for "+quote,
-			nil,
-		))
-	}
-
-	return base.Name + "/" + quoteAsset.Name, nil
-}
-
-func (api *API) PairName(pair string) string {
-	if err := api.useNormalizer(); err != nil {
-		return pair
-	}
-
-	return api.normalizer.Name(pair)
-}
-
 func (api *API) SubscribeInstruments() error {
 	return errnie.Error(api.public.Client().SubInstruments())
 }
@@ -245,37 +142,26 @@ func (api *API) SubscribeTrade(pairs []string) error {
 	return errnie.Error(api.public.Client().SubTrades(pairs))
 }
 
+func (api *API) Books() *spot.BookManager {
+	return api.level3.Books()
+}
+
 func (api *API) SubscribeBook(pairs []string) error {
 	return errnie.Error(api.public.Client().SubBook(
 		pairs, viper.GetInt("market.book.depth"), nil,
 	))
 }
 
-func (api *API) SubscribeOHLC(pairs []string) error {
-	return errnie.Error(api.public.Client().SubCandles(pairs, map[string]any{
-		"params": map[string]any{
-			"interval": viper.GetInt("market.ohlc.interval"),
-		},
-	}))
-}
-
 func (api *API) SubscribeLevel3(pairs []string) error {
-	return errnie.Error(api.level3.Client().SubPrivate("level3", map[string]any{
-		"params": map[string]any{
-			"symbol": pairs,
-			"depth":  viper.GetInt("market.l3_depth"),
-		},
-	}))
-}
+	depth := viper.GetInt("market.l3_depth")
 
-func (api *API) UnsubscribeLevel3(pairs []string) error {
-	return errnie.Error(api.level3.Client().SendPrivate(map[string]any{
-		"method": "unsubscribe",
-		"params": map[string]any{
-			"channel": "level3",
-			"symbol":  pairs,
+	// SubL3 accepts depth but does not place it on the wire, so the
+	// BookManager would otherwise fall back to its own default depth.
+	return errnie.Error(api.level3.Client().SubL3(
+		pairs, depth, map[string]any{
+			"params": map[string]any{"depth": depth},
 		},
-	}))
+	))
 }
 
 func (api *API) SubscribeBalance() error {

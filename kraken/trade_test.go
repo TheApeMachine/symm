@@ -10,6 +10,22 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+func TestTradeVolumeFeesEqual(t *testing.T) {
+	Convey("Given two TradeVolume fee tiers", t, func() {
+		left := TradeVolumeFees{Fee: "0.2600", MinFee: "0.1000", TierVolume: "0.0000"}
+		right := TradeVolumeFees{Fee: "0.2600", MinFee: "0.1000", TierVolume: "0.0000"}
+		different := TradeVolumeFees{Fee: "0.1800", MinFee: "0.1000", TierVolume: "0.0000"}
+
+		Convey("When the tiers match", func() {
+			So(left.Equal(right), ShouldBeTrue)
+		})
+
+		Convey("When the tiers differ", func() {
+			So(left.Equal(different), ShouldBeFalse)
+		})
+	})
+}
+
 func TestNewTradeVolumeRequest(t *testing.T) {
 	Convey("Given websocket v2 symbols", t, func() {
 		request := NewTradeVolumeRequest([]string{"BTC/USD", "ETH/USD"})

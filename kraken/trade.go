@@ -89,6 +89,13 @@ type TradeVolumeFees struct {
 	NextVolume string `json:"next_volume"`
 }
 
+/*
+Equal reports whether two TradeVolume fee tiers carry identical values.
+*/
+func (fees TradeVolumeFees) Equal(other TradeVolumeFees) bool {
+	return fees == other
+}
+
 func NewTradeVolume(buf []byte) *TradeVolume {
 	var tradeVolume TradeVolume
 
@@ -114,36 +121,14 @@ func (tradeVolume *TradeVolume) IsSuccess() bool {
 }
 
 type TradeVolumeRequest struct {
-	Pair             []TradeVolumeRequestPair `json:"pair"`
-	FeeInfo          bool                     `json:"fee-info"`
-	RebaseMultiplier string                   `json:"rebase_multiplier"`
-}
-
-type TradeVolumeRequestPair struct {
-	Asset  string `json:"asset"`
-	Aclass string `json:"aclass"`
-}
-
-type TradeVolumeRequestPairs []TradeVolumeRequestPair
-
-func NewTradeVolumeRequestPairs(symbols []string) TradeVolumeRequestPairs {
-	pairs := make(TradeVolumeRequestPairs, len(symbols))
-
-	for i, symbol := range symbols {
-		pairs[i] = TradeVolumeRequestPair{
-			Asset:  symbol,
-			Aclass: "forex",
-		}
-	}
-
-	return pairs
+	Pair    []string `json:"pair"`
+	FeeInfo bool     `json:"fee-info"`
 }
 
 func NewTradeVolumeRequest(symbols []string) *TradeVolumeRequest {
 	return &TradeVolumeRequest{
-		Pair:             NewTradeVolumeRequestPairs(symbols),
-		FeeInfo:          true,
-		RebaseMultiplier: "rebased",
+		Pair:    symbols,
+		FeeInfo: true,
 	}
 }
 

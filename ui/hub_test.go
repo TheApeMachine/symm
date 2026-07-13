@@ -22,6 +22,8 @@ type hubStubConn struct {
 
 func (stub *hubStubConn) Client() *spot.WebSocket { return nil }
 
+func (stub *hubStubConn) Books() *spot.BookManager { return nil }
+
 func (stub *hubStubConn) On(channel string, action func([]byte)) {
 	if stub.channels == nil {
 		stub.channels = map[string][]func([]byte){}

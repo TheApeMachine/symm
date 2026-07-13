@@ -73,10 +73,7 @@ func NewHub(
 
 		hub.price.Publish()
 		hub.balance.Publish()
-
-		if hub.desk != nil {
-			hub.desk.Publish()
-		}
+		hub.desk.Publish()
 
 		for {
 			select {

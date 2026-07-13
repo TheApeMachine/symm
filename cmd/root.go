@@ -170,10 +170,10 @@ var (
 					public,
 					level3,
 					paper,
+					instrument,
 					balance,
 					price,
 					desk,
-					instrument,
 				),
 				system.NewStage(
 					system.StageWarmup,

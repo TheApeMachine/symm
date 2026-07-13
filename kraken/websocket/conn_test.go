@@ -19,7 +19,7 @@ import (
 )
 
 func TestAPITradeVolume(t *testing.T) {
-	Convey("Given a private TradeVolume response with a canonical REST pair key", t, func() {
+	Convey("Given a private TradeVolume response keyed by the requested pair", t, func() {
 		viper.Set("trading.model", "live")
 		public := &stubConn{client: normalizerClient()}
 		private := &stubConn{postResponse: []byte(`{
@@ -34,16 +34,16 @@ func TestAPITradeVolume(t *testing.T) {
 		Convey("When the fee tier is requested", func() {
 			tradeVolume, err := api.TradeVolume([]string{"BTC/USD"})
 
-			Convey("Then the private endpoint is used and response identities match websocket v2", func() {
+			Convey("Then the private endpoint is used and the response passes through unmodified", func() {
 				So(err, ShouldBeNil)
 				So(private.postPath, ShouldEqual, TradeVolumeEndpoint)
 				So(tradeVolume.Result.Fees, ShouldResemble, map[string]kraken.TradeVolumeFees{
-					"BTC/USD": {
+					"XXBTZUSD": {
 						Fee: "0.2600", MinFee: "0.1000", TierVolume: "0.0000",
 					},
 				})
 				So(tradeVolume.Result.FeesMaker, ShouldResemble, map[string]kraken.TradeVolumeFees{
-					"BTC/USD": {Fee: "0.1600"},
+					"XXBTZUSD": {Fee: "0.1600"},
 				})
 			})
 		})
@@ -236,71 +236,6 @@ func TestAPISubscribeLevel3(t *testing.T) {
 	})
 }
 
-func TestAPIUnsubscribeLevel3(t *testing.T) {
-	Convey("Given a connected authenticated level3 transport", t, func() {
-		requests := make(chan []byte, 1)
-		errors := make(chan error, 1)
-		upgrader := gorillawebsocket.Upgrader{}
-		server := httptest.NewServer(http.HandlerFunc(func(
-			writer http.ResponseWriter,
-			request *http.Request,
-		) {
-			connection, err := upgrader.Upgrade(writer, request, nil)
-
-			if err != nil {
-				errors <- err
-				return
-			}
-
-			defer connection.Close()
-			_, raw, err := connection.ReadMessage()
-
-			if err != nil {
-				errors <- err
-				return
-			}
-
-			requests <- raw
-			_, _, _ = connection.ReadMessage()
-		}))
-		defer server.Close()
-
-		client := spot.NewWebSocket()
-		client.URL = "ws" + strings.TrimPrefix(server.URL, "http")
-		client.Token = "level3-token"
-		So(client.Connect(), ShouldBeNil)
-		api := NewAPI(&stubConn{}, &stubConn{}, &stubConn{client: client}, nil)
-
-		Convey("When one symbol is unsubscribed", func() {
-			So(api.UnsubscribeLevel3([]string{"BTC/USD"}), ShouldBeNil)
-
-			select {
-			case err := <-errors:
-				So(err, ShouldBeNil)
-			case raw := <-requests:
-				request := struct {
-					Method string `json:"method"`
-					Params struct {
-						Channel string   `json:"channel"`
-						Symbols []string `json:"symbol"`
-						Token   string   `json:"token"`
-					} `json:"params"`
-				}{}
-
-				So(json.Unmarshal(raw, &request), ShouldBeNil)
-				So(request.Method, ShouldEqual, "unsubscribe")
-				So(request.Params.Channel, ShouldEqual, "level3")
-				So(request.Params.Symbols, ShouldResemble, []string{"BTC/USD"})
-				So(request.Params.Token, ShouldEqual, "level3-token")
-			case <-time.After(time.Second):
-				So("level3 unsubscription", ShouldEqual, "received")
-			}
-		})
-
-		So(client.Disconnect(), ShouldBeNil)
-	})
-}
-
 func TestAPICloseSharedLevel3(t *testing.T) {
 	Convey("Given a paper API sharing its authenticated and level3 transport", t, func() {
 		public := &stubConn{}
@@ -327,6 +262,7 @@ func newTestSimulator() *Simulator {
 type stubConn struct {
 	channels     map[string][]func([]byte)
 	client       *spot.WebSocket
+	books        *spot.BookManager
 	postResponse []byte
 	postPath     string
 	postParams   json.Marshaler
@@ -334,6 +270,8 @@ type stubConn struct {
 }
 
 func (stub *stubConn) Client() *spot.WebSocket { return stub.client }
+
+func (stub *stubConn) Books() *spot.BookManager { return stub.books }
 
 func (stub *stubConn) On(channel string, action func([]byte)) {
 	if stub.channels == nil {

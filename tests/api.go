@@ -19,6 +19,7 @@ MockConn is a controllable Kraken websocket transport.
 type MockConn struct {
 	channels     map[string][]func([]byte)
 	client       *spot.WebSocket
+	books        *spot.BookManager
 	postResponse []byte
 	postPath     string
 	postParams   json.Marshaler
@@ -36,6 +37,10 @@ type MockPostCall struct {
 
 func (conn *MockConn) Client() *spot.WebSocket {
 	return conn.client
+}
+
+func (conn *MockConn) Books() *spot.BookManager {
+	return conn.books
 }
 
 func (conn *MockConn) On(channel string, action func([]byte)) {
@@ -189,13 +194,7 @@ func tradeVolumeSymbols(params json.Marshaler) ([]string, error) {
 		))
 	}
 
-	symbols := make([]string, 0, len(request.Pair))
-
-	for _, pair := range request.Pair {
-		symbols = append(symbols, pair.Asset)
-	}
-
-	return symbols, nil
+	return request.Pair, nil
 }
 
 func mockNormalizerClient() *spot.WebSocket {

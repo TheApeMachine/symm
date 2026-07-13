@@ -1,11 +1,11 @@
 package broker
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -29,7 +29,7 @@ func NewDesk(
 	balance *Balance,
 	messages chan []byte,
 ) *Desk {
-	desk := &Desk{
+	return &Desk{
 		status:       types.INITIALIZING,
 		api:          api,
 		ui:           messages,
@@ -39,8 +39,6 @@ func NewDesk(
 		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
 		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
 	}
-
-	return desk
 }
 
 /*
@@ -56,24 +54,77 @@ func (desk *Desk) Initialize() error {
 		desk.status = types.ERROR
 
 		return errnie.Error(errnie.Err(
-			errnie.Internal, "failed to get trades history", err,
+			errnie.Internal,
+			"failed to get trades history",
+			err,
 		))
 	}
 
 	for _, trade := range history.Result.Trades {
-		desk.positions.Store(trade.Pair, NewPosition(
+		fixed := strings.ReplaceAll(
+			trade.Pair,
+			desk.balance.quote,
+			"",
+		) + "/" + desk.balance.quote
+
+		/*
+			Ask Price to calculate the complete current position value.
+
+			Desk does not calculate:
+			  - notionals
+			  - fees
+			  - PnL
+			  - return percentage
+		*/
+		quote, err := desk.price.PositionQuote(
+			fixed,
+			*trade.Price,
+			*trade.Volume,
+		)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"failed to quote position "+fixed,
+				err,
+			))
+
+			continue
+		}
+
+		position := NewPosition(
 			desk.api,
 			desk.ui,
 			desk.price,
 			desk.balance,
-			&PositionData{Symbol: trade.Pair},
-		).Hydrate(history))
+			&PositionData{
+				Symbol:     fixed,
+				Qty:        *trade.Volume,
+				EntryPrice: *trade.Price,
+				Mark:       quote.Mark,
+				PnL:        quote.PnL,
+				ReturnPct:  quote.ReturnPct,
+			},
+		).Hydrate(fixed, history)
+
+		desk.positions.Store(fixed, position)
 	}
 
 	desk.status = types.READY
 	desk.Publish()
 
 	return nil
+}
+
+func (desk *Desk) Publish() {
+	desk.positions.Range(func(_, value any) bool {
+		position := value.(*Position)
+		position.Publish()
+		return true
+	})
+
+	desk.balance.Publish()
+	desk.price.Publish()
 }
 
 func (desk *Desk) Status() types.Status {
@@ -110,7 +161,9 @@ func (desk *Desk) Buy(
 ) error {
 	if desk.status != types.READY {
 		return errnie.Error(errnie.Err(
-			errnie.Forbidden, "desk not ready to buy", nil,
+			errnie.Forbidden,
+			"desk not ready to buy",
+			nil,
 		))
 	}
 
@@ -118,13 +171,17 @@ func (desk *Desk) Buy(
 
 	if openPositions >= desk.maxPositions+desk.maxReserved {
 		return errnie.Error(errnie.Err(
-			errnie.Forbidden, "desk at max positions and reserved", nil,
+			errnie.Forbidden,
+			"desk at max positions and reserved",
+			nil,
 		))
 	}
 
 	if openPositions >= desk.maxPositions && !opportunity {
 		return errnie.Error(errnie.Err(
-			errnie.Forbidden, "desk at max positions", nil,
+			errnie.Forbidden,
+			"desk at max positions",
+			nil,
 		))
 	}
 
@@ -140,26 +197,25 @@ func (desk *Desk) Buy(
 		},
 	)
 
-	// Store the position for now, so we make a claim on the slot. In case
-	// of any errors, or other issues, we can release the slot. This is not
-	// a guarantee that the position will be opened, it just reserves the
-	// slot, so we don't end up with multiple positions racing to open.
+	/*
+		Store the position immediately to reserve its slot.
+
+		If Position.Enter fails, Position.Enter should release the slot
+		or notify Desk so the reservation can be removed.
+	*/
 	desk.positions.Store(symbol, position)
+
 	return position.Enter()
 }
 
 func (desk *Desk) Sell(symbol string) error {
 	position, ok := desk.positions.Load(symbol)
 
-	if !ok {
+	if !ok || position == nil {
 		return errnie.Error(errnie.Err(
-			errnie.NotFound, "position not found for "+symbol, nil,
-		))
-	}
-
-	if position == nil {
-		return errnie.Error(errnie.Err(
-			errnie.NotFound, "position not found for "+symbol, nil,
+			errnie.NotFound,
+			"position not found for "+symbol,
+			nil,
 		))
 	}
 
@@ -174,45 +230,15 @@ func (desk *Desk) Executions() []*kraken.Execution {
 	executions := make([]*kraken.Execution, 0)
 
 	desk.positions.Range(func(_, value any) bool {
-		executions = append(executions, value.(*Position).Executions()...)
+		position := value.(*Position)
+
+		executions = append(
+			executions,
+			position.Executions()...,
+		)
+
 		return true
 	})
 
 	return executions
-}
-
-/*
-Publish emits one complete deterministic portfolio snapshot.
-*/
-func (desk *Desk) Publish() {
-	positions := make([]PositionData, 0, desk.OpenPositions())
-	stops := make(map[string]*StopData)
-	executions := make([]kraken.ExecutionData, 0)
-
-	desk.positions.Range(func(_, value any) bool {
-		position := value.(*Position)
-		positions = append(positions, *position.Data)
-
-		if position.Stop != nil {
-			stops[position.Data.Symbol] = position.Stop
-		}
-
-		for _, execution := range position.Executions() {
-			executions = append(executions, execution.Data...)
-		}
-
-		return true
-	})
-
-	frame := datura.Map[any]{
-		"positions":  positions,
-		"stops":      stops,
-		"executions": executions,
-	}
-
-	if desk.balance != nil && desk.balance.Status() == types.READY {
-		frame["balances"] = desk.balance.Snapshot()
-	}
-
-	desk.ui <- frame.Marshal()
 }

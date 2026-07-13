@@ -51,7 +51,7 @@ func (instrument *Instrument) Initialize() error {
 		errnie.Error(err)
 	}
 
-	instrument.status = types.READY
+	instrument.status = types.PENDING
 	return nil
 }
 
@@ -122,7 +122,6 @@ func (instrument *Instrument) Subscribe() error {
 
 	errnie.Info("subscribing to instruments")
 
-	instrument.status = types.PENDING
 	symbols := make([]string, 0)
 	seen := make(map[string]struct{})
 
@@ -141,18 +140,7 @@ func (instrument *Instrument) Subscribe() error {
 
 	if len(symbols) == 0 {
 		instrument.status = types.INITIALIZING
-
 		return nil
-	}
-
-	tierSize := viper.GetInt("market.universe.trading_tier_size")
-
-	if tierSize > 0 && len(symbols) > tierSize {
-		symbols = symbols[:tierSize]
-	}
-
-	if err := instrument.price.GetFees(symbols); err != nil {
-		return errnie.Error(err)
 	}
 
 	subscribers := []func([]string) error{
@@ -171,8 +159,12 @@ func (instrument *Instrument) Subscribe() error {
 	for batch := range slices.Chunk(symbols, batchSize) {
 		for _, subscribe := range subscribers {
 			if err := subscribe(batch); err != nil {
-				return errnie.Error(err)
+				errnie.Error(err)
 			}
+		}
+
+		if err := instrument.price.GetFees(batch); err != nil {
+			errnie.Error(err)
 		}
 
 		time.Sleep(pace)

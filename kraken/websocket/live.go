@@ -9,6 +9,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	gorillawebsocket "github.com/gorilla/websocket"
+	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	"github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -35,6 +36,8 @@ type Live struct {
 	paper     *Paper
 	simulator *Simulator
 	auth      bool
+	books     *spot.BookManager
+	isLevel3  bool
 }
 
 /*
@@ -57,7 +60,12 @@ func New(
 		sync:      &sync.Map{},
 		auth:      auth,
 	}
+
 	live.client.URL = endpoint
+
+	if endpoint == Level3WebSocketURL {
+		live.isLevel3 = true
+	}
 
 	if live.auth {
 		live.client.REST.PublicKey = os.Getenv("KRAKEN_API_KEY")
@@ -75,7 +83,42 @@ func New(
 		live.client.REST.Nonce = nonceCounter.Get
 	}
 
+	if live.isLevel3 {
+		live.books = spot.NewBookManager()
+		live.books.OnCreateBook.Recurring(func(e *callback.Event[*book.Book]) {
+			manager := e.Data
+
+			manager.OnUpdated.Recurring(func(e *callback.Event[*book.UpdateOptions]) {
+			})
+
+			manager.OnBookCrossed.Recurring(func(e *callback.Event[*book.CrossedResult]) {
+			})
+
+			manager.OnMaxDepthExceeded.Recurring(func(e *callback.Event[*book.MaxDepthExceededResult]) {
+			})
+
+			manager.OnChecksummed.Recurring(func(e *callback.Event[*book.ChecksumResult]) {
+				if !e.Data.Match {
+				}
+			})
+		})
+	}
+
+	live.client.OnSent.Recurring(func(event *callback.Event[*kraken.WebSocketMessage]) {
+		if live.isLevel3 {
+			if err := live.books.Update(event); err != nil {
+				errnie.Error(errnie.Err(errnie.Validation, err.Error(), err))
+			}
+		}
+	})
+
 	live.client.OnReceived.Recurring(func(event *callback.Event[*kraken.WebSocketMessage]) {
+		if live.isLevel3 {
+			if err := live.books.Update(event); err != nil {
+				errnie.Error(errnie.Err(errnie.Validation, err.Error(), err))
+			}
+		}
+
 		live.route(event.Data.Bytes())
 	})
 
@@ -155,6 +198,14 @@ func (live *Live) Status() types.Status {
 
 func (live *Live) Client() *spot.WebSocket {
 	return live.client
+}
+
+/*
+Books returns the managed SDK order books for this transport, if any.
+Only the level3 transport maintains book state.
+*/
+func (live *Live) Books() *spot.BookManager {
+	return live.books
 }
 
 func (live *Live) On(
