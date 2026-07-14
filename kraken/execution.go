@@ -179,9 +179,11 @@ func NewExecutionFromMap(model datura.Map[any]) *Execution {
 	volume, _ := model["volume"].(float64)
 	price, _ := model["price"].(float64)
 	cost, _ := model["cost"].(float64)
+	fee, _ := model["fee"].(float64)
 
 	lastPrice := *decimal.NewFromFloat64(price)
 	orderCost := *decimal.NewFromFloat64(cost)
+	orderFee := *decimal.NewFromFloat64(fee)
 	timestamp := time.Now()
 
 	if timeRaw, ok := model["time"].(string); ok {
@@ -206,6 +208,7 @@ func NewExecutionFromMap(model datura.Map[any]) *Execution {
 			CumQty:      volume,
 			CumCost:     orderCost,
 			AvgPrice:    lastPrice,
+			FeeUsdEquiv: orderFee,
 			Timestamp:   timestamp,
 		}},
 	}

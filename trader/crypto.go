@@ -136,6 +136,13 @@ func (crypto *Crypto) trade(thesis *types.Thesis) {
 		if err := crypto.postMortem.Evaluate(lifecycle, symbol); err != nil {
 			errnie.Error(err)
 
+			if checkpointErr := crypto.desk.Checkpoint(symbol, lifecycle); checkpointErr != nil {
+				crypto.status = types.ERROR
+				errnie.Error(checkpointErr)
+
+				return
+			}
+
 			continue
 		}
 
@@ -170,13 +177,33 @@ func (crypto *Crypto) trade(thesis *types.Thesis) {
 		available = 0
 	}
 
+	positions := crypto.desk.Exposures()
+	decisionCounts := make(map[string]int, len(positions))
+
+	for symbol, exposure := range positions {
+		decisionCounts[symbol] = len(exposure.Thesis.Decisions)
+	}
+
 	intents := crypto.planner.Decide(
 		thesis,
-		crypto.desk.Exposures(),
+		positions,
 		fees,
 		available,
 		crypto.desk.Slots(),
 	)
+
+	for symbol, exposure := range positions {
+		if len(exposure.Thesis.Decisions) == decisionCounts[symbol] {
+			continue
+		}
+
+		if err := crypto.desk.Checkpoint(symbol, exposure.Thesis); err != nil {
+			crypto.status = types.ERROR
+			errnie.Error(err)
+
+			return
+		}
+	}
 
 	for _, intent := range intents {
 		decision := intent.Selected()

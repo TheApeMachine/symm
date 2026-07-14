@@ -3,6 +3,7 @@ export type CircularBuffer<T> = {
 	replaceTail: (value: T) => void;
 	values: () => T[];
 	length: () => number;
+	capacity: () => number;
 };
 
 export const Circular = <T>(positions: number): CircularBuffer<T> => {
@@ -51,5 +52,5 @@ export const Circular = <T>(positions: number): CircularBuffer<T> => {
 		return result;
 	};
 
-	return { push, replaceTail, values, length };
+	return { push, replaceTail, values, length, capacity: () => positions };
 };

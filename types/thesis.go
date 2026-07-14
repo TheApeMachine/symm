@@ -1,7 +1,9 @@
 package types
 
 import (
+	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -33,6 +35,8 @@ Thesis is essentially the "state" of a tick. It travels across the
 entire lifecycle of a tick, picking up all data along the way.
 */
 type Thesis struct {
+	mu           sync.RWMutex
+	checkpoint   atomic.Int64
 	uiHub        chan<- []byte
 	Tick         int64
 	Signals      *sync.Map
@@ -78,6 +82,9 @@ func NewThesis(uiHub chan<- []byte) *Thesis {
 LifecycleState returns one symbol's state, defaulting to observation before a boundary is crossed.
 */
 func (thesis *Thesis) LifecycleState(symbol string) string {
+	thesis.mu.RLock()
+	defer thesis.mu.RUnlock()
+
 	state := thesis.Lifecycle[symbol]
 
 	if state == "" {
@@ -91,7 +98,14 @@ func (thesis *Thesis) LifecycleState(symbol string) string {
 Transition advances one symbol through the trade lifecycle and rejects invalid edges.
 */
 func (thesis *Thesis) Transition(symbol, next string, at time.Time) error {
-	current := thesis.LifecycleState(symbol)
+	thesis.mu.Lock()
+	defer thesis.mu.Unlock()
+
+	current := thesis.Lifecycle[symbol]
+
+	if current == "" {
+		current = LifecycleObserving
+	}
 
 	if current == next {
 		return nil
@@ -146,7 +160,7 @@ func (thesis *Thesis) Transition(symbol, next string, at time.Time) error {
 	}
 
 	thesis.Lifecycle[symbol] = next
-	thesis.RecordTrade(TradeObservation{
+	thesis.TradeJournal = append(thesis.TradeJournal, TradeObservation{
 		Kind: "lifecycle_transition", Symbol: symbol, Status: next, At: at,
 	})
 
@@ -157,7 +171,24 @@ func (thesis *Thesis) Transition(symbol, next string, at time.Time) error {
 RecordTrade appends an immutable broker or position fact in lifecycle order.
 */
 func (thesis *Thesis) RecordTrade(observation TradeObservation) {
+	thesis.mu.Lock()
+	defer thesis.mu.Unlock()
+
 	thesis.TradeJournal = append(thesis.TradeJournal, observation)
+}
+
+/*
+RecordDecision appends one immutable strategy choice and returns its journal
+index so an Intent remains attached to the exact persisted decision.
+*/
+func (thesis *Thesis) RecordDecision(decision Decision) int {
+	thesis.mu.Lock()
+	defer thesis.mu.Unlock()
+
+	index := len(thesis.Decisions)
+	thesis.Decisions = append(thesis.Decisions, decision)
+
+	return index
 }
 
 /*
@@ -169,6 +200,9 @@ func (thesis *Thesis) AbsorbFindings(evaluated *Thesis) {
 		return
 	}
 
+	thesis.mu.Lock()
+	defer thesis.mu.Unlock()
+
 	thesis.Findings = append(thesis.Findings, evaluated.Findings...)
 }
 
@@ -176,6 +210,9 @@ func (thesis *Thesis) AbsorbFindings(evaluated *Thesis) {
 Absorb idempotently retains the current tick evidence used to manage one open position.
 */
 func (thesis *Thesis) Absorb(current *Thesis, symbol string) {
+	thesis.mu.Lock()
+	defer thesis.mu.Unlock()
+
 	absorbedMeasurements := make(map[*Measurement]struct{})
 
 	for _, measurement := range thesis.Measurements {
@@ -374,6 +411,9 @@ func (thesis *Thesis) ObservePostExit(current *Thesis, symbol string) error {
 Publish exposes the non-empty evidence accumulated by this tick without delaying trading.
 */
 func (thesis *Thesis) Publish() {
+	thesis.mu.RLock()
+	defer thesis.mu.RUnlock()
+
 	if thesis.uiHub == nil {
 		return
 	}
@@ -419,10 +459,17 @@ func (thesis *Thesis) Publish() {
 	}
 
 	if len(thesis.Graphs) > 0 {
-		graphs := make([]GraphFrame, 0, len(thesis.Graphs))
+		symbols := make([]string, 0, len(thesis.Graphs))
 
-		for _, graph := range thesis.Graphs {
-			graphs = append(graphs, graph.Frame())
+		for symbol := range thesis.Graphs {
+			symbols = append(symbols, symbol)
+		}
+
+		slices.Sort(symbols)
+		graphs := make([]GraphFrame, 0, len(symbols))
+
+		for _, symbol := range symbols {
+			graphs = append(graphs, thesis.Graphs[symbol].Frame())
 		}
 
 		frame["graphs"] = graphs

@@ -2,7 +2,7 @@ import { createStore } from "@tanstack/react-store";
 import type { StrategyDecision } from "#/types/thesis";
 import { Circular, type CircularBuffer } from "./circular";
 
-const DECISION_HISTORY_LIMIT = 50;
+export const DECISION_HISTORY_LIMIT = 50;
 
 const asDecisions = (frame: unknown): StrategyDecision[] => {
 	if (!Array.isArray(frame)) {

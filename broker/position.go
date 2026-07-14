@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"errors"
 	"sort"
 	"strconv"
 	"time"
@@ -39,6 +40,26 @@ type PositionData struct {
 	ReturnPct  float64         `json:"return_pct"`
 }
 
+/*
+ValidateStruct rejects restored positions whose quantity or entry price are not
+strictly positive so OPEN positions cannot survive with zero or negative marks.
+*/
+func (data PositionData) ValidateStruct() error {
+	if !strictPositiveDecimal(data.Qty) {
+		return errors.New("qty must be positive")
+	}
+
+	if !strictPositiveDecimal(data.EntryPrice) {
+		return errors.New("entry price must be positive")
+	}
+
+	return nil
+}
+
+func strictPositiveDecimal(value decimal.Decimal) bool {
+	return value.Rat().Sign() > 0
+}
+
 type StopData struct {
 	Symbol     string          `json:"symbol"`
 	Armed      bool            `json:"-"`
@@ -54,6 +75,7 @@ type Position struct {
 	ui            chan []byte
 	price         *Price
 	balance       *Balance
+	theses        *Theses
 	orderID       string
 	clientID      int
 	reqID         int
@@ -77,6 +99,7 @@ func NewPosition(
 	data *PositionData,
 	thesis *types.Thesis,
 	snapshot func() []PositionData,
+	theses *Theses,
 ) *Position {
 	position := &Position{
 		status:     types.INITIALIZING,
@@ -84,6 +107,7 @@ func NewPosition(
 		ui:         ui,
 		price:      price,
 		balance:    balance,
+		theses:     theses,
 		Data:       data,
 		thesis:     thesis,
 		snapshot:   snapshot,
@@ -207,12 +231,43 @@ func (position *Position) Hydrate(
 	}
 
 	position.status = types.OPEN
+	state := position.thesis.LifecycleState(symbol)
 
-	if err := position.thesis.Transition(
-		symbol, types.LifecycleManaging, time.Now(),
-	); err != nil {
+	if state == types.LifecycleEntered {
+		if err := position.thesis.Transition(
+			symbol, types.LifecycleManaging, time.Now(),
+		); err != nil {
+			position.status = types.ERROR
+			errnie.Error(err)
+
+			return position
+		}
+	}
+
+	if state == types.LifecycleExitSelected {
+		if err := position.thesis.Transition(
+			symbol, types.LifecycleManaging, time.Now(),
+		); err != nil {
+			position.status = types.ERROR
+			errnie.Error(err)
+
+			return position
+		}
+	}
+
+	if state != types.LifecycleEntered && state != types.LifecycleManaging &&
+		state != types.LifecycleExitSelected && state != types.LifecycleInvalid {
 		position.status = types.ERROR
-		errnie.Error(err)
+		position.record(types.TradeObservation{
+			Kind: "thesis_recovery_error", Symbol: symbol, Status: state,
+			Error: "lifecycle cannot safely resume without open-order reconciliation",
+			At:    time.Now(),
+		})
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"unsafe recovered lifecycle for "+symbol+": "+state,
+			nil,
+		))
 
 		return position
 	}
@@ -232,6 +287,28 @@ func (position *Position) reconcile(
 	symbol string,
 	holding SpotHolding,
 ) error {
+	knownExecutions := make(map[string]struct{})
+	knownOrders := make(map[string]struct{})
+	verifyIdentity := position.thesis != nil &&
+		position.thesis.LifecycleState(symbol) != types.LifecycleInvalid
+
+	if verifyIdentity {
+		for _, observation := range position.thesis.TradeJournal {
+			if observation.Symbol != symbol {
+				continue
+			}
+
+			if observation.ExecutionID != "" &&
+				(observation.Side == "buy" || observation.Kind == "position_reconciliation") {
+				knownExecutions[observation.ExecutionID] = struct{}{}
+			}
+
+			if observation.OrderID != "" {
+				knownOrders[observation.OrderID] = struct{}{}
+			}
+		}
+	}
+
 	trades := make([]struct {
 		id    string
 		trade spot.Trade
@@ -325,6 +402,19 @@ func (position *Position) reconcile(
 			continue
 		}
 
+		if verifyIdentity {
+			_, executionKnown := knownExecutions[lot.id]
+			_, orderKnown := knownOrders[lot.trade.OrderID]
+
+			if !executionKnown && !orderKnown {
+				return errnie.Err(
+					errnie.Validation,
+					"persisted Thesis does not own remaining buy lot for "+symbol,
+					nil,
+				)
+			}
+		}
+
 		ratio := lot.remaining.Div(lot.trade.Volume)
 		cost := lot.trade.Cost.Mul(ratio)
 		fee := lot.trade.Fee.Mul(ratio)
@@ -402,6 +492,17 @@ func (position *Position) OrderAck(buf []byte) {
 		Kind: "order_acknowledgement", Symbol: position.Data.Symbol,
 		Status: string(position.status), OrderID: position.orderID, At: orderAck.TimeOut,
 	})
+
+	if position.theses != nil {
+		if err := position.theses.Save(position.Data.Symbol, position.thesis); err != nil {
+			position.status = types.ERROR
+			errnie.Error(err)
+
+			return
+		}
+
+		position.thesis.Publish()
+	}
 
 	position.Publish()
 }
@@ -576,6 +677,17 @@ func (position *Position) ExecutionAck(buf []byte) {
 		}
 	}
 
+	if position.theses != nil && position.thesis != nil {
+		if err := position.theses.Save(position.Data.Symbol, position.thesis); err != nil {
+			position.status = types.ERROR
+			errnie.Error(err)
+
+			return
+		}
+
+		position.thesis.Publish()
+	}
+
 	position.Publish()
 }
 
@@ -654,6 +766,16 @@ func (position *Position) Enter() error {
 		Quantity: position.requestedQty.String(), At: time.Now(),
 	})
 
+	if position.theses != nil && position.thesis != nil {
+		if err := position.theses.Save(position.Data.Symbol, position.thesis); err != nil {
+			position.status = types.ERROR
+
+			return errnie.Error(err)
+		}
+
+		position.thesis.Publish()
+	}
+
 	if err := position.api.AddOrder(order); err != nil {
 		position.status = types.ERROR
 
@@ -668,6 +790,14 @@ func (position *Position) Enter() error {
 			Side: "buy", Status: string(position.status), Error: err.Error(), At: time.Now(),
 		})
 
+		if position.theses != nil && position.thesis != nil {
+			if persistErr := position.theses.Save(
+				position.Data.Symbol, position.thesis,
+			); persistErr != nil {
+				return errnie.Error(errors.Join(err, persistErr))
+			}
+		}
+
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to place market order",
@@ -681,6 +811,15 @@ func (position *Position) Enter() error {
 }
 
 func (position *Position) Exit(action string, quantity decimal.Decimal) error {
+	if position.thesis != nil &&
+		position.thesis.LifecycleState(position.Data.Symbol) == types.LifecycleInvalid {
+		return errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"position has no recoverable Thesis for automatic exit",
+			nil,
+		))
+	}
+
 	if quantity.Sign() <= 0 || quantity.Cmp(&position.Data.Qty) > 0 {
 		return errnie.Error(errnie.Err(
 			errnie.Forbidden,
@@ -718,6 +857,16 @@ func (position *Position) Exit(action string, quantity decimal.Decimal) error {
 		Quantity: position.requestedQty.String(), At: time.Now(),
 	})
 
+	if position.theses != nil && position.thesis != nil {
+		if err := position.theses.Save(position.Data.Symbol, position.thesis); err != nil {
+			position.status = types.ERROR
+
+			return errnie.Error(err)
+		}
+
+		position.thesis.Publish()
+	}
+
 	if err := position.api.AddOrder(order); err != nil {
 		position.status = types.ERROR
 
@@ -730,6 +879,14 @@ func (position *Position) Exit(action string, quantity decimal.Decimal) error {
 			Kind: "execution_error", Action: action, Symbol: position.Data.Symbol,
 			Side: "sell", Status: string(position.status), Error: err.Error(), At: time.Now(),
 		})
+
+		if position.theses != nil && position.thesis != nil {
+			if persistErr := position.theses.Save(
+				position.Data.Symbol, position.thesis,
+			); persistErr != nil {
+				return errnie.Error(errors.Join(err, persistErr))
+			}
+		}
 
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -754,8 +911,8 @@ Position does not perform fee, notional, PnL, or return calculations.
 It delegates the entire valuation to Price.
 */
 func (position *Position) TickerAck(buf []byte) {
-	if position.status == types.INITIALIZING ||
-		position.status == types.ERROR {
+	if position.status != types.OPEN && position.status != types.PARTIAL_FILLED &&
+		position.status != types.FILLED {
 		return
 	}
 

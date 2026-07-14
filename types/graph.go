@@ -114,6 +114,10 @@ AddNode validates and retains one immutable measurement as a Gonum node when it
 belongs to this graph's symbol. Repeated evidence is an idempotent no-op.
 */
 func (evidenceGraph *Graph) AddNode(measurement *Measurement) error {
+	if measurement == nil {
+		return graphMeasurementValidator.Validate((*Measurement)(nil))
+	}
+
 	if err := graphMeasurementValidator.Validate(measurement); err != nil {
 		return err
 	}

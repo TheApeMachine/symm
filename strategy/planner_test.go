@@ -184,6 +184,39 @@ func TestPlannerDecideReducesToVisibleCapacity(t *testing.T) {
 	})
 }
 
+/*
+TestPlannerDecideRejectsInvalidRecovery verifies that strategy cannot invent
+continuation reasoning for a holding whose originating Thesis was lost.
+*/
+func TestPlannerDecideRejectsInvalidRecovery(t *testing.T) {
+	Convey("Given an orphan position with no recoverable Thesis", t, func() {
+		planner := NewPlanner(context.Background(), nil, nil, nil)
+		current := types.NewThesis(nil)
+		current.Forecasts = []types.Forecasts{strategyForecast("BTC/USD", -0.02)}
+		current.Forecasts[0].SellCapacity = 10
+		orphan := types.NewThesis(nil)
+		So(orphan.Transition(
+			"BTC/USD", types.LifecycleInvalid, time.Unix(1, 0),
+		), ShouldBeNil)
+
+		intents := planner.Decide(
+			current,
+			map[string]types.Exposure{"BTC/USD": {
+				Thesis: orphan, Quantity: 1, Mark: 1000, Notional: 1000,
+			}},
+			map[string]float64{"BTC/USD": 0.002},
+			0,
+			1,
+		)
+
+		Convey("Then no hold, reduction, or exit is manufactured", func() {
+			So(intents, ShouldBeEmpty)
+			So(orphan.Decisions, ShouldBeEmpty)
+			So(orphan.LifecycleState("BTC/USD"), ShouldEqual, types.LifecycleInvalid)
+		})
+	})
+}
+
 func TestPlannerDecideDistinguishesExitCauses(t *testing.T) {
 	Convey("Given separate weakening, expiry, and opposing-hypothesis lifecycles", t, func() {
 		planner := NewPlanner(context.Background(), nil, nil, nil)

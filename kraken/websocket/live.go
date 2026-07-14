@@ -240,8 +240,8 @@ func (live *Live) dispatch(channel string, raw []byte, logIfMissing bool) {
 		return
 	}
 
-	for _, callback := range callbacks.([]func([]byte)) {
-		callback(raw)
+	for _, cb := range callbacks.([]func([]byte)) {
+		cb(raw)
 	}
 }
 

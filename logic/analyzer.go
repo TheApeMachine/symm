@@ -10,7 +10,7 @@ import (
 
 /*
 Analyzer coordinates the composed analysis responsibilities after every signal
-has measured the current Thesis. Level3 owns book-derived analysis while the
+has measured the current Thesis. Level3 owns book-derived analysis, while the
 Analyzer builds each symbol's evidence topology with Gonum.
 */
 type Analyzer struct {
@@ -70,7 +70,7 @@ func (analyzer *Analyzer) Close() {
 }
 
 /*
-Update delegates book analysis after signals measure, then composes every
+Update delegates book analysis after signal measure, then composes every
 measurement—including Level3 resonance evidence—into its symbol Gonum graph.
 */
 func (analyzer *Analyzer) Update(thesis *types.Thesis) {

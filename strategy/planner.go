@@ -56,6 +56,11 @@ func (planner *Planner) Decide(
 
 		if exposure, exists := positions[forecast.Symbol]; exists {
 			lifecycle := exposure.Thesis
+
+			if lifecycle.LifecycleState(forecast.Symbol) == types.LifecycleInvalid {
+				continue
+			}
+
 			lifecycle.Absorb(thesis, forecast.Symbol)
 
 			if lifecycle.LifecycleState(forecast.Symbol) == types.LifecycleEntered {
@@ -67,7 +72,6 @@ func (planner *Planner) Decide(
 				}
 			}
 
-			index := len(lifecycle.Decisions)
 			decision := planner.continuation(forecast, fee, exposure)
 			decision.Cause = planner.cause(lifecycle, forecast, decision.Action)
 			planner.context(&decision, forecast, available, len(positions), slots)
@@ -81,7 +85,7 @@ func (planner *Planner) Decide(
 				}
 			}
 
-			lifecycle.Decisions = append(lifecycle.Decisions, decision)
+			index := lifecycle.RecordDecision(decision)
 
 			if decision.Action == "exit" || decision.Action == "reduce" {
 				intents = append(intents, Intent{Thesis: lifecycle, Decision: index})
@@ -95,7 +99,7 @@ func (planner *Planner) Decide(
 				forecast, "portfolio capacity makes entry infeasible",
 			)
 			planner.context(&decision, forecast, available, len(positions), slots)
-			thesis.Decisions = append(thesis.Decisions, decision)
+			thesis.RecordDecision(decision)
 
 			continue
 		}
@@ -108,7 +112,7 @@ func (planner *Planner) Decide(
 		planner.context(&decision, forecast, available, len(positions), slots)
 
 		if decision.Action == "nothing" {
-			thesis.Decisions = append(thesis.Decisions, decision)
+			thesis.RecordDecision(decision)
 
 			continue
 		}
@@ -127,7 +131,7 @@ func (planner *Planner) Decide(
 			decision.Action = "nothing"
 			decision.Utility = 0
 			decision.Reason = "higher-utility entries consumed available slots"
-			thesis.Decisions = append(thesis.Decisions, decision)
+			thesis.RecordDecision(decision)
 
 			continue
 		}
@@ -139,8 +143,7 @@ func (planner *Planner) Decide(
 			continue
 		}
 
-		index := len(thesis.Decisions)
-		thesis.Decisions = append(thesis.Decisions, decision)
+		index := thesis.RecordDecision(decision)
 		intents = append(intents, Intent{Thesis: thesis, Decision: index})
 	}
 

@@ -69,6 +69,16 @@ func TestGraphAddNode(t *testing.T) {
 			})
 		})
 
+		Convey("When a nil measurement is added", func() {
+			err := graph.AddNode(nil)
+
+			Convey("Then validation rejects it before insertion", func() {
+				So(err, ShouldNotBeNil)
+				So(errnie.IsValidation(err), ShouldBeTrue)
+				So(graph.Nodes().Len(), ShouldEqual, 0)
+			})
+		})
+
 		Convey("When a foreign symbol measurement is added", func() {
 			foreign := &Measurement{
 				Stream:  Hawkes,

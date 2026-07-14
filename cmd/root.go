@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -63,6 +64,25 @@ var (
 
 			channel := make(chan []byte, viper.GetInt("system.websocket.channel.buffer"))
 			booter := system.NewBooter(ctx, channel)
+			persistDir := strings.TrimSpace(viper.GetString("cognitive.persist_dir"))
+
+			if persistDir == "" {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"cognitive.persist_dir is required for position recovery",
+					nil,
+				))
+			}
+
+			tree := dmt.NewTree(persistDir)
+			defer func() {
+				errnie.Error(tree.Close())
+			}()
+			theses, err := broker.NewTheses(tree, channel)
+
+			if err != nil {
+				return errnie.Error(err)
+			}
 
 			simulator := websocket.NewLatencySimulator(booter)
 
@@ -91,7 +111,7 @@ var (
 
 			price := broker.NewPrice(api)
 			balance := broker.NewBalance(api, channel)
-			desk := broker.NewDesk(api, price, balance, channel)
+			desk := broker.NewDesk(api, price, balance, channel, theses)
 			uiHub, err := ui.NewHub(ctx, price, balance, desk, channel)
 
 			if err != nil {

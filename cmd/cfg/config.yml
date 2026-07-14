@@ -9,7 +9,7 @@ system:
       buffer: 16384
 
 cognitive:
-  persist_dir: ""
+  persist_dir: runs/cognitive
   tick_budget: 10ms
 
 market:

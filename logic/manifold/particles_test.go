@@ -36,8 +36,9 @@ func TestParticlesFromOscillators(t *testing.T) {
 		}
 
 		Convey("It should publish whale carriers for amplitude standouts", func() {
-			particles := particlesFromOscillators(config, oscillators)
+			particles, err := particlesFromOscillators(config, oscillators)
 
+			So(err, ShouldBeNil)
 			So(len(particles), ShouldEqual, 3)
 			So(particles[0].Role, ShouldEqual, "carrier")
 			So(particles[1].Role, ShouldEqual, "carrier")
@@ -47,4 +48,45 @@ func TestParticlesFromOscillators(t *testing.T) {
 			So(particles[2].Speed, ShouldBeGreaterThan, 0)
 		})
 	})
+
+	Convey("Given an invalid manifold domain mapping", t, func() {
+		config := &pmanifold.Config{
+			GridX:   64,
+			DomainX: 0,
+		}
+
+		Convey("It should reject domain cell projection", func() {
+			_, err := domainCell(8, config.DomainX, config.GridX)
+
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
+func BenchmarkParticlesFromOscillators(b *testing.B) {
+	config := &pmanifold.Config{
+		GridX:   64,
+		GridY:   3,
+		GridZ:   38,
+		DomainX: 64,
+		DomainY: 3,
+		DomainZ: 38,
+	}
+	oscillators := make([]pmanifold.Oscillator, 128)
+
+	for index := range oscillators {
+		oscillators[index] = pmanifold.Oscillator{
+			Phase: 0.1, Omega: 1.2, Amplitude: float64(index) / 128,
+			PosX: float64(index), PosY: 1, PosZ: float64(index % 38),
+			Heat: 0.4, VelX: 0.1, VelY: 0.2, VelZ: 0.3,
+		}
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if _, err := particlesFromOscillators(config, oscillators); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

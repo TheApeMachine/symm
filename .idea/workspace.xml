@@ -4,27 +4,12 @@
     <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="222fb375-f277-43aa-975e-7757d7d88eae" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/broker/position.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/position.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/broker/position_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/position_test.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/collections/findings.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/findings.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/collections/frames.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/frames.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/collections/lifecycle.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/lifecycle.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/collections/measurements.test.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/measurements.test.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/collections/terminal.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/terminal.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/collections/thesis.bench.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/thesis.bench.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/collections/thesis.test.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/thesis.test.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/collections/trade-journal.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/trade-journal.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/dashboard-rail.test.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/dashboard-rail.test.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/dashboard-rail.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/dashboard-rail.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/journal-surface.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/journal-surface.tsx" afterDir="false" />
+    <list default="true" id="222fb375-f277-43aa-975e-7757d7d88eae" name="Changes" comment="Add support for thesis graphs, forecasts, and hypotheses in frame serialization logic&#10;&#10;- Updated `frame` logic in the `Thesis` struct to include `Graphs`, `Forecasts`, `Hypotheses`, and `Categories` for enhanced data representation.&#10;- Improved test coverage in `thesis_test.go` to validate new serialization fields.&#10;- Enhanced `JournalSurface` in the frontend to utilize `tradeJournalValues` and `findingsList` for better state extraction.&#10;- Introduced `CircularBuffer` in collections for bounded buffer management, improving memory efficiency.&#10;- Refactored lifecycle and findings stores to integrate circular buffers for retaining snapshots.&#10;- Improved `Audit trail` in `dashboard-rail` to filter and format trade observations for clarity.&#10;- Added benchmark and unit tests in broker position logic to validate ticker acknowledgment.&#10;- Extended Thesis types with new data structures for forecasts, hypotheses, and categories to support detailed analytics.">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/position-gauge.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/position-gauge.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/scoped-frame.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/scoped-frame.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/providers/ws-stores.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/providers/ws-stores.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/routes/index.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/routes/index.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/types/thesis.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/types/thesis.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/types/thesis.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/thesis.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/types/thesis_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/thesis_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/websocket/live.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/websocket/live.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/analyzer.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/resonance.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/resonance.go" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -49,65 +34,65 @@
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.000007020532435" />
-      <entry key="MS500" value="1.1023408808706918" />
-      <entry key="S2" value="1.9995995310415522" />
-      <entry key="S5" value="3.1804805636732434" />
-      <entry key="S10" value="4.464834580019096" />
-      <entry key="S30" value="7.0250074187839004" />
-      <entry key="S60" value="8.81568261135073" />
-      <entry key="M2" value="10.947604945784292" />
-      <entry key="M5" value="13.953108201205783" />
-      <entry key="M10" value="15.665438214920732" />
-      <entry key="M15" value="16.36304918754326" />
-      <entry key="M30" value="17.13790446077749" />
-      <entry key="H1" value="17.557371643803307" />
-      <entry key="H2" value="17.775701462317098" />
-      <entry key="H4" value="17.887093176942027" />
-      <entry key="D1" value="17.98107599233604" />
-      <entry key="W1" value="17.997293956439332" />
+      <entry key="MS100" value="1.0000000000000002" />
+      <entry key="MS500" value="1.0007514683692191" />
+      <entry key="S2" value="1.1655685582011637" />
+      <entry key="S5" value="1.4890359120044279" />
+      <entry key="S10" value="1.759749917681206" />
+      <entry key="S30" value="2.512790429993475" />
+      <entry key="S60" value="3.0600965656983665" />
+      <entry key="M2" value="3.4658369678090293" />
+      <entry key="M5" value="3.768437075860394" />
+      <entry key="M10" value="3.8810000232063024" />
+      <entry key="M15" value="3.9199366970948764" />
+      <entry key="M30" value="3.9678697456284975" />
+      <entry key="H1" value="4.36550482046579" />
+      <entry key="H2" value="6.624817236272566" />
+      <entry key="H4" value="10.881681709966243" />
+      <entry key="D1" value="19.335724326937928" />
+      <entry key="W1" value="21.592785020274246" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
-      <entry key="MS500" value="9.75720875956236E-216" />
-      <entry key="S2" value="1.767385954247826E-54" />
-      <entry key="S5" value="3.1545147301178395E-22" />
-      <entry key="S10" value="1.7760953606487018E-11" />
-      <entry key="S30" value="2.609088195881194E-4" />
-      <entry key="S60" value="0.016152672211993884" />
-      <entry key="M2" value="0.1270931635139904" />
-      <entry key="M5" value="0.43817629210607273" />
-      <entry key="M10" value="0.6619488591319371" />
-      <entry key="M15" value="0.7595382075192276" />
-      <entry key="M30" value="0.8715148923106406" />
-      <entry key="H1" value="0.9335496196296376" />
-      <entry key="H2" value="0.9662037153880318" />
-      <entry key="H4" value="0.9829566192808472" />
-      <entry key="D1" value="0.9971390518755177" />
-      <entry key="W1" value="0.9995907911118055" />
+      <entry key="MS500" value="0.0" />
+      <entry key="S2" value="0.0" />
+      <entry key="S5" value="0.0" />
+      <entry key="S10" value="0.0" />
+      <entry key="S30" value="2.786015457009095E-203" />
+      <entry key="S60" value="5.278271930290344E-102" />
+      <entry key="M2" value="2.2974490049379438E-51" />
+      <entry key="M5" value="5.55262510286394E-21" />
+      <entry key="M10" value="7.451593858272165E-11" />
+      <entry key="M15" value="1.770786153468049E-7" />
+      <entry key="M30" value="4.2080709992442484E-4" />
+      <entry key="H1" value="0.02051358330288555" />
+      <entry key="H2" value="0.14322563772902372" />
+      <entry key="H4" value="0.3784516319544993" />
+      <entry key="D1" value="0.8504884049074138" />
+      <entry key="W1" value="0.9771306319674237" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="0.012779719727800226" />
-      <entry key="MS500" value="0.4289666532394061" />
-      <entry key="S2" value="1.349539134236269" />
-      <entry key="S5" value="2.5691664550499214" />
-      <entry key="S10" value="3.9793937183136476" />
-      <entry key="S30" value="6.776785869181164" />
-      <entry key="S60" value="8.684019778386688" />
-      <entry key="M2" value="10.985730164184238" />
-      <entry key="M5" value="14.346473184472629" />
-      <entry key="M10" value="16.30226180218213" />
-      <entry key="M15" value="17.105090750842596" />
-      <entry key="M30" value="18.000254346767875" />
-      <entry key="H1" value="18.486225558054873" />
-      <entry key="H2" value="18.739527811099173" />
-      <entry key="H4" value="18.868853577163286" />
-      <entry key="D1" value="18.978014614117274" />
-      <entry key="W1" value="18.996856088535782" />
+      <entry key="MS100" value="0.006661210091937383" />
+      <entry key="MS500" value="0.3677798098173156" />
+      <entry key="S2" value="0.9434077978895214" />
+      <entry key="S5" value="1.3928994765439637" />
+      <entry key="S10" value="1.708150602942714" />
+      <entry key="S30" value="2.48889753273145" />
+      <entry key="S60" value="3.045430624932482" />
+      <entry key="M2" value="3.4574844240944684" />
+      <entry key="M5" value="3.764791169267917" />
+      <entry key="M10" value="3.879120340178081" />
+      <entry key="M15" value="3.9186706668258284" />
+      <entry key="M30" value="3.9676463628289285" />
+      <entry key="H1" value="4.385593650165915" />
+      <entry key="H2" value="6.767529253116752" />
+      <entry key="H4" value="11.259592069240261" />
+      <entry key="D1" value="20.18602831242131" />
+      <entry key="W1" value="22.569885712973793" />
     </decayedShown>
   </component>
   <component name="ProblemsViewState">
-    <option name="selectedTabId" value="AISelfReview" />
+    <option name="selectedTabId" value="CurrentFile" />
   </component>
   <component name="ProjectColorInfo"><![CDATA[{
   "associatedIndex": 7,
@@ -148,18 +133,6 @@
     "ts.external.directory.path": "/Users/theapemachine/go/src/github.com/theapemachine/symm/.pnpm-store/v10/projects/fe23cbc9f508f93c645d0baca457da49/node_modules/typescript/lib"
   }
 }]]></component>
-  <component name="QodanaHighlightedReportService">
-    <option name="localRunNotPublishedPersistedInfo">
-      <LocalReportPersistedInfo>
-        <option name="path" value="/private/var/folders/30/bdbpd0hj5wddgkxyx8pbc0mc0000gn/T/qodana_output/qodana.sarif.json" />
-        <option name="reportGuid" value="72e66224-8a8e-42da-b1da-f21932a8a1e6" />
-        <option name="reportName" value="symm/qodana/2026-07-14" />
-      </LocalReportPersistedInfo>
-    </option>
-  </component>
-  <component name="QodanaIsSelectedPersistenceService">
-    <option name="selectedOrLoading" value="true" />
-  </component>
   <component name="QodanaReportsService">
     <option name="descriptions">
       <ReportDescription localRun="true" path="/private/var/folders/30/bdbpd0hj5wddgkxyx8pbc0mc0000gn/T/qodana_output/qodana.sarif.json" reportGuid="72e66224-8a8e-42da-b1da-f21932a8a1e6" reportId="symm/qodana/2026-07-14" />
@@ -212,5 +185,9 @@
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="Add support for thesis graphs, forecasts, and hypotheses in frame serialization logic&#10;&#10;- Updated `frame` logic in the `Thesis` struct to include `Graphs`, `Forecasts`, `Hypotheses`, and `Categories` for enhanced data representation.&#10;- Improved test coverage in `thesis_test.go` to validate new serialization fields.&#10;- Enhanced `JournalSurface` in the frontend to utilize `tradeJournalValues` and `findingsList` for better state extraction.&#10;- Introduced `CircularBuffer` in collections for bounded buffer management, improving memory efficiency.&#10;- Refactored lifecycle and findings stores to integrate circular buffers for retaining snapshots.&#10;- Improved `Audit trail` in `dashboard-rail` to filter and format trade observations for clarity.&#10;- Added benchmark and unit tests in broker position logic to validate ticker acknowledgment.&#10;- Extended Thesis types with new data structures for forecasts, hypotheses, and categories to support detailed analytics." />
+    <option name="LAST_COMMIT_MESSAGE" value="Add support for thesis graphs, forecasts, and hypotheses in frame serialization logic&#10;&#10;- Updated `frame` logic in the `Thesis` struct to include `Graphs`, `Forecasts`, `Hypotheses`, and `Categories` for enhanced data representation.&#10;- Improved test coverage in `thesis_test.go` to validate new serialization fields.&#10;- Enhanced `JournalSurface` in the frontend to utilize `tradeJournalValues` and `findingsList` for better state extraction.&#10;- Introduced `CircularBuffer` in collections for bounded buffer management, improving memory efficiency.&#10;- Refactored lifecycle and findings stores to integrate circular buffers for retaining snapshots.&#10;- Improved `Audit trail` in `dashboard-rail` to filter and format trade observations for clarity.&#10;- Added benchmark and unit tests in broker position logic to validate ticker acknowledgment.&#10;- Extended Thesis types with new data structures for forecasts, hypotheses, and categories to support detailed analytics." />
   </component>
 </project>

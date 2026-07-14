@@ -41,6 +41,9 @@ const ingestFrame = (
 	frame: DashboardFrame,
 	limit: number,
 ): void => {
+	// ponytail: frames, bySymbol, and bySource keep stable references while rows
+	// mutate in place; consumers must not memoize on those references alone, and a
+	// version counter is the upgrade path when finer-grained change detection is needed.
 	state.frames.push(frame);
 	state.frame = frame;
 	pushByKey(state.bySymbol, frame.symbol, frame, limit);

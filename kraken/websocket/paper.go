@@ -1,7 +1,6 @@
 package websocket
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -184,6 +183,8 @@ func (paper *Paper) AddOrder(order *kraken.MarketOrder) error {
 		))
 	}
 
+	model["pair"] = order.Params.Symbol
+
 	return paper.lifecycle.Place(model, order.ReqID)
 }
 
@@ -204,45 +205,9 @@ func (paper *Paper) execute(entity string, command ...string) (datura.Map[any], 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
-	stdout, err := cmd.StdoutPipe()
+	stdout, err := cmd.Output()
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to subscribe to "+entity,
-			err,
-		))
-	}
-
-	buffer := bytes.NewBuffer([]byte{})
-
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-
-		if err := scanner.Err(); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"failed to subscribe to "+entity,
-				err,
-			))
-
-			return
-		}
-
-		for scanner.Scan() {
-			buffer.Write(scanner.Bytes())
-		}
-	}()
-
-	if err := cmd.Start(); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to subscribe to "+entity,
-			err,
-		))
-	}
-
-	if err := cmd.Wait(); err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to subscribe to "+entity+": "+stderr.String(),
@@ -252,7 +217,7 @@ func (paper *Paper) execute(entity string, command ...string) (datura.Map[any], 
 
 	model := datura.Map[any]{}
 
-	err = sonic.Unmarshal(buffer.Bytes(), &model)
+	err = sonic.Unmarshal(stdout, &model)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(

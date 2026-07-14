@@ -19,9 +19,10 @@ The package boundaries are:
 5. `PostMortem` evaluates the completed causal record and emits findings and
    candidate adjustments. It does not directly mutate the running system.
 
-The Thesis is the in-memory causal case record shared by these stages. No
-persistence identifier or parallel record is required while the lifecycle is
-in-process.
+The Thesis is the causal case record shared by these stages. No parallel record
+or persistence identifier is required while the lifecycle is in-process. Once
+broker state can outlive the process, the originating Thesis must be persisted
+before order submission and restored before the Position is hydrated.
 
 ## Non-negotiable distinctions
 
@@ -419,7 +420,8 @@ strategy. It must not be inferred only because normal slots are full.
 ## Decision journal
 
 Decisions are stored directly on the Thesis. No Thesis identifier is required
-for the in-memory relationship.
+for the in-memory relationship; durable recovery uses the active Position's
+canonical symbol until an immutable exchange execution identity is available.
 
 A lifecycle may contain entry, hold, reduce, protection, exit, and rotation
 decisions, so the Thesis owns a chronological decision journal rather than one
@@ -482,6 +484,24 @@ When an Intent opens a position:
 
 This corrects the current behavior where closed positions can be deleted before
 their complete history is transferred to a durable in-memory case record.
+
+### Process recovery
+
+The broker must persist the originating Thesis before it submits an entry order.
+On restart, Desk loads that record before Position reconciles wallet holdings and
+trade history. Reconciliation verifies that the remaining buy lots belong to the
+persisted case; it does not create a replacement Thesis.
+
+A wallet holding without a durable Thesis is an explicit orphan. It may remain
+visible for operator action, but it is invalid for automatic continuation or
+exit decisions because its original evidence and decision conditions are gone.
+Missing records, corrupt records, and unsafe submitted or partial order states
+must be observable and must not be coerced to `managing`.
+
+Recovery retains the entry decision and every subsequent continuation, reduce,
+and exit decision on the same case record. It does not freeze a static exit
+price at entry: continuation and exit utility remain derived from current
+evidence, as specified above.
 
 ## Market observations during a trade
 
@@ -865,4 +885,3 @@ The architecture is complete only when:
 8. PostMortem attributes errors to the correct system layer.
 9. Candidate improvements require aggregate replay and walk-forward validation.
 10. No hidden fallback retains the previous category-score decision path.
-

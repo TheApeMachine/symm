@@ -66,12 +66,13 @@ export const causalStore = createStore(
 
 				const causal = prev.causal;
 
-				for (const frame of frames) {
-					if (!causal[frame.symbol]) {
-						causal[frame.symbol] = Circular<CausalFrame>(CAUSAL_HISTORY_LIMIT);
+				for (const causalFrame of frames) {
+					if (!causal[causalFrame.symbol]) {
+						causal[causalFrame.symbol] =
+							Circular<CausalFrame>(CAUSAL_HISTORY_LIMIT);
 					}
 
-					causal[frame.symbol].push(frame);
+					causal[causalFrame.symbol].push(causalFrame);
 				}
 
 				return {

@@ -188,6 +188,7 @@ func TestPostMortemEvaluate(t *testing.T) {
 
 		Convey("Then the out-of-order journal is rejected", func() {
 			So(err, ShouldNotBeNil)
+			So(thesis.LifecycleState("BTC/USD"), ShouldEqual, types.LifecycleInvalid)
 		})
 	})
 }

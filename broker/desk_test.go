@@ -11,6 +11,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/strategy"
@@ -21,7 +22,7 @@ import (
 
 func TestNewDesk(t *testing.T) {
 	Convey("Given a newly constructed Desk", t, func() {
-		desk := NewDesk(nil, nil, nil, make(chan []byte, 1))
+		desk := NewDesk(nil, nil, nil, make(chan []byte, 1), nil)
 
 		Convey("Then it waits for balance and price before hydrating", func() {
 			So(desk.Status(), ShouldEqual, types.INITIALIZING)
@@ -76,7 +77,7 @@ func BenchmarkDeskQuantity(b *testing.B) {
 func TestDeskPublish(t *testing.T) {
 	Convey("Given a desk holding one open position", t, func() {
 		ui := make(chan []byte, 1)
-		desk := NewDesk(nil, nil, &Balance{}, ui)
+		desk := NewDesk(nil, nil, &Balance{}, ui, nil)
 		desk.positions.Store("BTC/USD", &Position{
 			Data: &PositionData{
 				Symbol:     "BTC/USD",
@@ -124,7 +125,7 @@ func TestDeskPublish(t *testing.T) {
 				Available: *decimal.NewFromInt64(900),
 				Reserved:  *decimal.NewFromInt64(100),
 			}}},
-		}, ui)
+		}, ui, nil)
 		desk.positions.Store("BTC/USD", &Position{
 			Data: &PositionData{
 				Symbol:     "BTC/USD",
@@ -267,7 +268,9 @@ func TestDeskExecute(t *testing.T) {
 			}}},
 			quote: "USD",
 		}
-		desk := NewDesk(api, price, balance, make(chan []byte, 64))
+		theses, err := NewTheses(dmt.NewTree(""), nil)
+		So(err, ShouldBeNil)
+		desk := NewDesk(api, price, balance, make(chan []byte, 64), theses)
 		desk.status = types.READY
 		desk.maxPositions = 2
 		planner := strategy.NewPlanner(ctx, nil, nil, nil)

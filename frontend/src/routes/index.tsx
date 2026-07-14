@@ -19,6 +19,8 @@ import {
 	LiveResonanceTitle,
 } from "#/components/terminal/live-chart-meta";
 import { ThesisModal } from "#/components/terminal/thesis-modal";
+import { Flex } from "@/components/ui/flex";
+import { Grid } from "@/components/ui/grid";
 
 const RouteComponent = () => {
 	const kernels = useSelector(appStore, (state) => state.kernels);
@@ -26,12 +28,15 @@ const RouteComponent = () => {
 	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
 
 	return (
-		<div className="flex h-full min-w-[1120px] flex-col">
+		<Flex.Column className="h-full min-w-[1120px]">
 			<Pulse />
-			<div className="relative min-h-0 flex-1">
+			<Flex className="relative min-h-0 flex-1">
 				<KernelInspector />
 				<ThesisModal />
-				<div className="grid h-full min-h-0 grid-cols-[282px_minmax(360px,1fr)_332px]">
+				<Grid
+					responsive={false}
+					className="h-full min-h-0 grid-cols-[282px_minmax(360px,1fr)_332px]"
+				>
 					<div className="min-h-0 overflow-auto border-(--line) border-r bg-(--surface)">
 						<ColumnHeader
 							title="Signal kernels"
@@ -40,51 +45,51 @@ const RouteComponent = () => {
 						<KernelList sources={kernels} />
 					</div>
 
-					<div className="flex min-h-0 flex-col border-(--line) border-r bg-(--sunken)">
-					<Canvas
-						title="Fluid density field"
-						meta="navier–stokes · vol-rank × Δ · whale carriers"
-						topRight={<LiveManifoldMeta focusSymbol={focusSymbol} />}
-						legend={<FluidLegend />}
-						className="flex-[1.45]"
-					>
-						<TerminalFluidChart contour={fieldStyle === "Contour"} />
-					</Canvas>
-					<Canvas
-						title={
-							<>
-								Predictive coding ·{" "}
-								<LiveResonanceTitle focusSymbol={focusSymbol} />
-							</>
-						}
-						meta="online hierarchy · sensory reconstruction"
-						footer={<LiveResonanceFooter focusSymbol={focusSymbol} />}
-						topRight={
-							<div className="flex gap-3 text-left">
-								<span className="inline-flex items-center gap-1.5">
-									<span className="inline-block h-px w-3 bg-(--f1)" />
-									actual
-								</span>
-								<span className="inline-flex items-center gap-1.5">
-									<span className="inline-block h-px w-3 bg-info" />
-									prediction
-								</span>
-								<span className="inline-flex items-center gap-1.5">
-									<span className="size-2 bg-[color-mix(in_srgb,var(--acc)_30%,transparent)]" />
-									error
-								</span>
-							</div>
-						}
-						className="flex-1 border-(--line) border-t"
-					>
-						<TerminalPredictionChart />
-					</Canvas>
-					</div>
+					<Flex.Column className="min-h-0 border-(--line) border-r bg-(--sunken)">
+						<Canvas
+							title="Fluid density field"
+							meta="navier–stokes · vol-rank × Δ · whale carriers"
+							topRight={<LiveManifoldMeta focusSymbol={focusSymbol} />}
+							legend={<FluidLegend />}
+							className="flex-[1.45]"
+						>
+							<TerminalFluidChart contour={fieldStyle === "Contour"} />
+						</Canvas>
+						<Canvas
+							title={
+								<>
+									Predictive coding ·{" "}
+									<LiveResonanceTitle focusSymbol={focusSymbol} />
+								</>
+							}
+							meta="online hierarchy · sensory reconstruction"
+							footer={<LiveResonanceFooter focusSymbol={focusSymbol} />}
+							topRight={
+								<div className="flex gap-3 text-left">
+									<span className="inline-flex items-center gap-1.5">
+										<span className="inline-block h-px w-3 bg-(--f1)" />
+										actual
+									</span>
+									<span className="inline-flex items-center gap-1.5">
+										<span className="inline-block h-px w-3 bg-info" />
+										prediction
+									</span>
+									<span className="inline-flex items-center gap-1.5">
+										<span className="size-2 bg-[color-mix(in_srgb,var(--acc)_30%,transparent)]" />
+										error
+									</span>
+								</div>
+							}
+							className="flex-1 border-(--line) border-t"
+						>
+							<TerminalPredictionChart />
+						</Canvas>
+					</Flex.Column>
 
 					<DashboardRail />
-				</div>
-			</div>
-		</div>
+				</Grid>
+			</Flex>
+		</Flex.Column>
 	);
 };
 

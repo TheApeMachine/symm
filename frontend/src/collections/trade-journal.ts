@@ -34,13 +34,13 @@ and coalesced websocket batches cannot replace history with a shorter replay.
 export const pushJournalObservations = (
 	buffer: CircularBuffer<TradeObservation>,
 	incoming: TradeObservation[],
-): boolean => {
+): { journal: CircularBuffer<TradeObservation>; appended: boolean } => {
 	if (incoming.length === 0) {
-		return false;
+		return { journal: buffer, appended: false };
 	}
 
 	const knownKeys = new Set(buffer.values().map(tradeObservationKey));
-	let appended = false;
+	const appendedRows: TradeObservation[] = [];
 
 	for (const observation of incoming) {
 		const key = tradeObservationKey(observation);
@@ -49,12 +49,25 @@ export const pushJournalObservations = (
 			continue;
 		}
 
-		buffer.push(observation);
+		appendedRows.push(observation);
 		knownKeys.add(key);
-		appended = true;
 	}
 
-	return appended;
+	if (appendedRows.length === 0) {
+		return { journal: buffer, appended: false };
+	}
+
+	const journal = Circular<TradeObservation>(buffer.capacity());
+
+	for (const observation of buffer.values()) {
+		journal.push(observation);
+	}
+
+	for (const observation of appendedRows) {
+		journal.push(observation);
+	}
+
+	return { journal, appended: true };
 };
 
 /*
@@ -73,10 +86,16 @@ export const tradeJournalStore = createStore(
 				const incoming = asJournal(frame);
 
 				if (incoming.length === 0) {
-					return prev;
+					return {
+						...prev,
+						observed: true,
+					};
 				}
 
-				const appended = pushJournalObservations(prev.journal, incoming);
+				const { journal, appended } = pushJournalObservations(
+					prev.journal,
+					incoming,
+				);
 
 				if (!appended) {
 					return {
@@ -86,7 +105,7 @@ export const tradeJournalStore = createStore(
 				}
 
 				return {
-					journal: prev.journal,
+					journal,
 					version: prev.version + 1,
 					observed: true,
 				};

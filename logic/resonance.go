@@ -60,7 +60,7 @@ func NewResonance(
 	}
 
 	arch := []int{resonanceObservables, resonanceObservables, resonanceObservables}
-	manifold, err := learning.NewResonanceManifold(arch, 0, resonanceAlpha)
+	manifoldOut, err := learning.NewResonanceManifold(arch, 0, resonanceAlpha)
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -72,7 +72,7 @@ func NewResonance(
 
 	resonance := &Resonance{
 		symbol:    symbol,
-		manifold:  manifold,
+		manifold:  manifoldOut,
 		baselines: map[string]*adaptive.TimeElastic{},
 		halflife:  halflife,
 	}

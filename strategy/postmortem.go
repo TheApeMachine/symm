@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"errors"
 	"strconv"
 	"time"
 
@@ -18,15 +19,27 @@ type PostMortem struct{}
 
 /*
 Evaluate verifies the complete round trip and records evidence-backed findings.
-It refuses incomplete lifecycles and advances only PostMortem-ready Theses.
+It advances valid PostMortem-ready Theses to evaluated and marks immutable,
+incomplete journals invalid so the runtime cannot retry them indefinitely.
 */
 func (postMortem *PostMortem) Evaluate(
 	thesis *types.Thesis,
 	symbol string,
-) error {
+) (err error) {
 	if thesis.LifecycleState(symbol) != types.LifecyclePostMortemReady {
 		return errnie.Err(errnie.Validation, "Thesis is not PostMortem-ready for "+symbol, nil)
 	}
+
+	defer func() {
+		if err == nil {
+			return
+		}
+
+		err = errors.Join(
+			err,
+			thesis.Transition(symbol, types.LifecycleInvalid, time.Now()),
+		)
+	}()
 
 	var entry, exit *types.Decision
 

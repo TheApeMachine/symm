@@ -165,14 +165,14 @@ const paintPositionGauge = (
 			? upTone
 			: downTone;
 
-	const hasMomentum = stop?.momentum_active === true;
+	const hasMomentum = stop?.momentum_active;
 	const health = hasMomentum
 		? Math.max(0, Math.min(1, stop.momentum_health))
 		: 0;
 	const momentumTone =
 		health > 0.5 ? upTone : health > 0.2 ? warnTone : downTone;
 
-	const hasStagnation = stop?.stagnation_active === true;
+	const hasStagnation = stop?.stagnation_active;
 	const showGauge = geometry !== null;
 
 	if (refs.track) {

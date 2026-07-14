@@ -176,7 +176,7 @@ export const terminalFluidParticlesFromFrame = (
 		return particle === null ? [] : [particle];
 	});
 
-const fluidGridDimensions = (
+export const fluidGridDimensions = (
 	frame: Record<string, unknown> | null | undefined,
 	matrix: number[][],
 ): { columns: number; rows: number } => {

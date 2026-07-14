@@ -1,11 +1,16 @@
 package manifold
 
 import (
+	"errors"
 	"math"
 
+	"github.com/theapemachine/errnie"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 )
 
+// ponytail: whaleStandoutMAD is a naive median-plus-MAD 1.5 multiplier for whale
+// carrier classification; upgrade to a robust tail/outlier model once oscillator
+// cohort statistics are tracked across epochs instead of one post-step snapshot.
 const whaleStandoutMAD = 1.5
 
 type oscillatorReader interface {
@@ -20,9 +25,9 @@ pack, not a fixed mass cutoff.
 func particlesFromOscillators(
 	config *pmanifold.Config,
 	oscillators []pmanifold.Oscillator,
-) []pmanifold.Particle {
+) ([]pmanifold.Particle, error) {
 	if config == nil || len(oscillators) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	amplitudes := make([]float64, len(oscillators))
@@ -48,11 +53,29 @@ func particlesFromOscillators(
 			math.Hypot(oscillator.VelY, oscillator.VelZ),
 		)
 
+		cellX, err := domainCell(oscillator.PosX, config.DomainX, config.GridX)
+
+		if err != nil {
+			return nil, err
+		}
+
+		cellY, err := domainCell(oscillator.PosY, config.DomainY, config.GridY)
+
+		if err != nil {
+			return nil, err
+		}
+
+		cellZ, err := domainCell(oscillator.PosZ, config.DomainZ, config.GridZ)
+
+		if err != nil {
+			return nil, err
+		}
+
 		particles = append(particles, pmanifold.Particle{
 			Role:      role,
-			CellX:     domainCell(oscillator.PosX, config.DomainX, config.GridX),
-			CellY:     domainCell(oscillator.PosY, config.DomainY, config.GridY),
-			CellZ:     domainCell(oscillator.PosZ, config.DomainZ, config.GridZ),
+			CellX:     cellX,
+			CellY:     cellY,
+			CellZ:     cellZ,
 			Phase:     oscillator.Phase,
 			Omega:     oscillator.Omega,
 			Amplitude: oscillator.Amplitude,
@@ -64,7 +87,7 @@ func particlesFromOscillators(
 		})
 	}
 
-	return particles
+	return particles, nil
 }
 
 /*
@@ -85,12 +108,16 @@ func readParticles(
 		return nil, err
 	}
 
-	return particlesFromOscillators(config, oscillators), nil
+	return particlesFromOscillators(config, oscillators)
 }
 
-func domainCell(position float64, domain float64, grid uint32) float64 {
+func domainCell(position float64, domain float64, grid uint32) (float64, error) {
 	if domain <= 0 || grid == 0 {
-		return 0
+		return 0, errnie.Err(
+			errnie.Validation,
+			"logic manifold: invalid domain cell mapping",
+			errors.New("domain and grid must be positive"),
+		).With("domain", domain, "grid", grid)
 	}
 
 	normalized := position / domain
@@ -109,7 +136,7 @@ func domainCell(position float64, domain float64, grid uint32) float64 {
 		cell = grid - 1
 	}
 
-	return float64(cell)
+	return float64(cell), nil
 }
 
 func medianAbsoluteDeviation(values []float64, center float64) float64 {

@@ -2,7 +2,10 @@ import { useRef } from "react";
 import { manifoldStore } from "#/collections/manifold";
 import { resonanceStore } from "#/collections/resonance";
 import { terminalStore } from "#/collections/terminal";
-import { terminalFluidMatrixFromFrame } from "#/components/terminal/charts";
+import {
+	fluidGridDimensions,
+	terminalFluidMatrixFromFrame,
+} from "#/components/terminal/charts";
 import {
 	isFluidFieldMatrix,
 	terminalFluidFieldStats,
@@ -25,6 +28,10 @@ export const LiveManifoldMeta = ({ focusSymbol }: { focusSymbol: string }) => {
 			const contour = terminalStore.state.fieldStyle === "Contour";
 			const waiting = manifold === null;
 			const matrix = terminalFluidMatrixFromFrame(manifold);
+			const { columns, rows } = fluidGridDimensions(
+				manifold,
+				isFluidFieldMatrix(matrix) ? matrix : [],
+			);
 			const stats = terminalFluidFieldStats(
 				isFluidFieldMatrix(matrix) ? matrix : [],
 				contour,
@@ -38,7 +45,7 @@ export const LiveManifoldMeta = ({ focusSymbol }: { focusSymbol: string }) => {
 				gridRef.current.style.display = waiting ? "none" : "";
 				gridRef.current.textContent = waiting
 					? ""
-					: `grid ${String(stats.columns)}×${String(stats.rows)}`;
+					: `grid ${String(columns)}×${String(rows)}`;
 			}
 
 			if (outliersRef.current !== null) {

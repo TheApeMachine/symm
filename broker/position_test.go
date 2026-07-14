@@ -8,6 +8,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -61,8 +62,10 @@ func TestPositionTickerAck(t *testing.T) {
 	}`)
 
 	Convey("Given a restored position without a reconciled entry price", t, func() {
+		ui := make(chan []byte, 1)
 		position := &Position{
 			status: types.OPEN,
+			ui:     ui,
 			Data: &PositionData{
 				Symbol: "NPC/USD",
 				Qty:    *decimal.NewFromInt64(1),
@@ -74,7 +77,73 @@ func TestPositionTickerAck(t *testing.T) {
 		Convey("Then validation rejects it without publishing or panicking", func() {
 			So(position.Status(), ShouldEqual, types.ERROR)
 			So(position.Data.Mark.Rat().Sign(), ShouldEqual, 0)
+			So(len(ui), ShouldEqual, 0)
 		})
+	})
+
+	Convey("Given position data with non-positive quantity or entry price", t, func() {
+		Convey("When quantity is zero", func() {
+			err := positionDataValidator.Validate(&PositionData{
+				Symbol:     "BTC/USD",
+				Qty:        *decimal.NewFromInt64(0),
+				EntryPrice: *decimal.NewFromInt64(100),
+			})
+
+			So(err, ShouldNotBeNil)
+			So(errnie.IsValidation(err), ShouldBeTrue)
+		})
+
+		Convey("When quantity is negative", func() {
+			err := positionDataValidator.Validate(&PositionData{
+				Symbol:     "BTC/USD",
+				Qty:        *decimal.NewFromInt64(-1),
+				EntryPrice: *decimal.NewFromInt64(100),
+			})
+
+			So(err, ShouldNotBeNil)
+			So(errnie.IsValidation(err), ShouldBeTrue)
+		})
+
+		Convey("When entry price is zero", func() {
+			err := positionDataValidator.Validate(&PositionData{
+				Symbol:     "BTC/USD",
+				Qty:        *decimal.NewFromInt64(1),
+				EntryPrice: *decimal.NewFromInt64(0),
+			})
+
+			So(err, ShouldNotBeNil)
+			So(errnie.IsValidation(err), ShouldBeTrue)
+		})
+
+		Convey("When entry price is negative", func() {
+			err := positionDataValidator.Validate(&PositionData{
+				Symbol:     "BTC/USD",
+				Qty:        *decimal.NewFromInt64(1),
+				EntryPrice: *decimal.NewFromInt64(-1),
+			})
+
+			So(err, ShouldNotBeNil)
+			So(errnie.IsValidation(err), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given a pending or closed position", t, func() {
+		for _, status := range []types.Status{types.PENDING, types.CLOSED} {
+			ui := make(chan []byte, 1)
+			position := &Position{
+				status: status,
+				ui:     ui,
+				Data: &PositionData{
+					Symbol: "NPC/USD", Qty: *decimal.NewFromInt64(1),
+					EntryPrice: *decimal.NewFromInt64(100),
+				},
+			}
+
+			position.TickerAck(frame)
+
+			So(position.Status(), ShouldEqual, status)
+			So(len(ui), ShouldEqual, 0)
+		}
 	})
 
 	Convey("Given a reconciled position with a fee schedule", t, func() {
@@ -98,6 +167,34 @@ func TestPositionTickerAck(t *testing.T) {
 			So(position.Data.Mark.Float64(), ShouldEqual, 110.0)
 			So(position.Data.PnL.Float64(), ShouldAlmostEqual, 9.454)
 			So(len(ui), ShouldEqual, 1)
+		})
+	})
+}
+
+/*
+TestPositionExit verifies that broker also refuses to automate an orphan even
+if a caller bypasses Planner and submits a reduction directly.
+*/
+func TestPositionExit(t *testing.T) {
+	Convey("Given a position whose originating Thesis is unrecoverable", t, func() {
+		thesis := types.NewThesis(nil)
+		So(thesis.Transition(
+			"BTC/USD", types.LifecycleInvalid, time.Unix(1, 0),
+		), ShouldBeNil)
+		position := &Position{
+			status: types.OPEN,
+			thesis: thesis,
+			Data: &PositionData{
+				Symbol: "BTC/USD", Qty: *decimal.NewFromInt64(1),
+			},
+		}
+
+		err := position.Exit("reduce", *decimal.NewFromFloat64(0.5))
+
+		Convey("Then no automatic sell reaches the exchange boundary", func() {
+			So(err, ShouldNotBeNil)
+			So(position.Status(), ShouldEqual, types.OPEN)
+			So(thesis.LifecycleState("BTC/USD"), ShouldEqual, types.LifecycleInvalid)
 		})
 	})
 }
@@ -337,12 +434,14 @@ func TestPositionHydrate(t *testing.T) {
 			},
 		}
 
+		thesis := types.NewThesis(nil)
+		thesis.Lifecycle["BTC/USD"] = types.LifecycleInvalid
 		position := &Position{
 			api:     &websocket.API{},
 			ui:      ui,
 			price:   price,
 			balance: balance,
-			thesis:  types.NewThesis(nil),
+			thesis:  thesis,
 			Data:    &PositionData{},
 		}
 

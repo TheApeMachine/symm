@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	DECISION_HISTORY_LIMIT,
 	decisionStore,
 	decisionSymbols,
 	latestStrategyDecisions,
@@ -54,5 +55,23 @@ describe("decisionStore", () => {
 			expect.objectContaining({ symbol: "BTC/USD", action: "hold" }),
 			expect.objectContaining({ symbol: "ETH/USD", action: "exit" }),
 		]);
+	});
+
+	it("caps per-symbol history at DECISION_HISTORY_LIMIT", () => {
+		decisionStore.actions.reset();
+
+		for (let index = 0; index < 60; index += 1) {
+			decisionStore.actions.updateFrame([
+				sampleDecision(
+					"BTC/USD",
+					"hold",
+					`2026-07-14T12:00:${String(index).padStart(2, "0")}Z`,
+				),
+			]);
+		}
+
+		expect(decisionStore.state.decisions["BTC/USD"]?.values()).toHaveLength(
+			DECISION_HISTORY_LIMIT,
+		);
 	});
 });

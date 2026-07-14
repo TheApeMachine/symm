@@ -50,7 +50,7 @@ func TestCryptoRun(t *testing.T) {
 		booter := system.NewBooter(ctx, channel)
 		analyzer := logic.NewAnalyzer(ctx, booter, nil)
 		planner := strategy.NewPlanner(ctx, channel, nil, analyzer)
-		desk := broker.NewDesk(nil, nil, nil, channel)
+		desk := broker.NewDesk(nil, nil, nil, channel, nil)
 
 		crypto, err := NewCrypto(
 			ctx,

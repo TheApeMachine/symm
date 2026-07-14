@@ -383,7 +383,7 @@ const LiveDecisionMeta = () => {
 
 	return (
 		<span>
-			<span ref={allowRef} /> allow · <span ref={denyRef} /> deny
+			<span ref={allowRef} /> active · <span ref={denyRef} /> passive
 		</span>
 	);
 };
