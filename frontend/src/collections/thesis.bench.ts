@@ -1,6 +1,7 @@
 import { bench, describe } from "vitest";
 import { decisionStore } from "./decisions";
 import { findingsStore } from "./findings";
+import { graphsStore } from "./graphs";
 import { lifecycleStore } from "./lifecycle";
 import { tradeJournalStore } from "./trade-journal";
 
@@ -59,6 +60,27 @@ describe("thesis frame stores", () => {
 				estimatedEffect: -0.004,
 				uncertainty: 0.001,
 				requiredValidation: "replay on next cohort",
+			},
+		]);
+		graphsStore.actions.updateFrame([
+			{
+				symbol: "BTC/USD",
+				at: "2026-07-14T12:00:00Z",
+				nodes: Array.from({ length: 12 }, (_, index) => ({
+					key: `node-${index}`,
+					measurement: {
+						source: "hawkes",
+						metric: "arrival_rate",
+						symbol: "BTC/USD",
+					},
+				})),
+				edges: Array.from({ length: 11 }, (_, index) => ({
+					from: `node-${index}`,
+					to: `node-${index + 1}`,
+					type: "supports",
+					at: "2026-07-14T12:00:00Z",
+					observedFrom: "2026-07-14T11:59:00Z",
+				})),
 			},
 		]);
 	});

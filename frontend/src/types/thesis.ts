@@ -74,6 +74,85 @@ export type Finding = {
 
 export type LifecycleState = string;
 
+export type ThesisForecast = {
+	source: string;
+	symbol: string;
+	at: string;
+	observedInterval?: number;
+	sourceEpoch: number;
+	horizonEvents: number;
+	expiresEpoch: number;
+	target: string;
+	modelVersion: string;
+	ready: boolean;
+	calibrated: boolean;
+	frictionReady: boolean;
+	calibrationSamples: number;
+	incrementalMSE: number;
+	incrementalMSELowerBound: number;
+	expectedReturn: number;
+	referencePrice: number;
+	buyCapacity: number;
+	sellCapacity: number;
+	expectedFees: number;
+	expectedSpread: number;
+	expectedImpact: number;
+	expectedAdverseSelection: number;
+	uncertainty: number;
+	confidence: number;
+};
+
+export type ThesisHypothesis = {
+	source: string;
+	symbol: string;
+	at: string;
+	samples: number;
+	ready: boolean;
+	claim: string;
+	treatment: string;
+	controls: string[];
+	outcome: string;
+	association: number;
+	intervention: number;
+	doExpectation: number;
+	uplift: number;
+	counterfactual: number;
+	confidence: number;
+	strength: number;
+};
+
+export type ThesisCategory = {
+	symbol?: string;
+	type: string;
+	confidence: number;
+	surprisal: number;
+	strength: number;
+	maturity: number;
+	supporting?: string[];
+	opposing?: string[];
+	missing?: string[];
+};
+
+export type GraphNodeWire = {
+	key: string;
+	measurement: Record<string, unknown>;
+};
+
+export type GraphEdgeWire = {
+	from: string;
+	to: string;
+	type: string;
+	at: string;
+	observedFrom: string;
+};
+
+export type GraphFrame = {
+	symbol: string;
+	at: string;
+	nodes: GraphNodeWire[];
+	edges: GraphEdgeWire[];
+};
+
 /*
 LIFECYCLE_STAGES preserves the backend transition order so the journal surface
 can render one symbol's progress without inventing a fixed temporal window.

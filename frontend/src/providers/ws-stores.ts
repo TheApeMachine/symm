@@ -1,11 +1,15 @@
 import { batch } from "@tanstack/store";
 import { balancesStore } from "#/collections/balances";
+import { categoriesStore } from "#/collections/categories";
 import { causalStore } from "#/collections/causal";
 import { cognitiveStore } from "#/collections/cognitive";
 import { decisionStore } from "#/collections/decisions";
 import { diagnosticsStore } from "#/collections/diagnostics";
 import { executionsStore } from "#/collections/executions";
 import { findingsStore } from "#/collections/findings";
+import { forecastsStore } from "#/collections/forecasts";
+import { graphsStore } from "#/collections/graphs";
+import { hypothesesStore } from "#/collections/hypotheses";
 import { instrumentsStore } from "#/collections/instruments";
 import { lifecycleStore } from "#/collections/lifecycle";
 import { manifoldStore } from "#/collections/manifold";
@@ -26,11 +30,15 @@ type FrameStore = {
 
 export const frameStores = {
 	balances: balancesStore,
+	categories: categoriesStore,
 	causal: causalStore,
 	cognitive: cognitiveStore,
 	decisions: decisionStore,
 	diagnostics: diagnosticsStore,
 	findings: findingsStore,
+	forecasts: forecastsStore,
+	graphs: graphsStore,
+	hypotheses: hypothesesStore,
 	lifecycle: lifecycleStore,
 	tradeJournal: tradeJournalStore,
 	positions: positionsStore,

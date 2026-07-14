@@ -28,10 +28,12 @@ var orderStatuses = map[string]types.Status{
 	"partial_expired":   types.PARTIAL_EXPIRED,
 }
 
+var positionDataValidator = errnie.New()
+
 type PositionData struct {
-	Symbol     string          `json:"symbol"`
-	Qty        decimal.Decimal `json:"qty"`
-	EntryPrice decimal.Decimal `json:"entry_price"`
+	Symbol     string          `json:"symbol" validate:"required"`
+	Qty        decimal.Decimal `json:"qty" validate:"required"`
+	EntryPrice decimal.Decimal `json:"entry_price" validate:"required"`
 	Mark       decimal.Decimal `json:"mark"`
 	PnL        decimal.Decimal `json:"pnl"`
 	ReturnPct  float64         `json:"return_pct"`
@@ -752,15 +754,20 @@ Position does not perform fee, notional, PnL, or return calculations.
 It delegates the entire valuation to Price.
 */
 func (position *Position) TickerAck(buf []byte) {
+	if position.status == types.INITIALIZING ||
+		position.status == types.ERROR {
+		return
+	}
+
+	if errnie.Error(positionDataValidator.Validate(position.Data)) != nil {
+		position.status = types.ERROR
+
+		return
+	}
+
 	ticker := kraken.NewTicker(buf)
 
 	if errnie.Error(kraken.Validate(ticker)) != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"invalid ticker",
-			nil,
-		))
-
 		return
 	}
 

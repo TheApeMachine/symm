@@ -5,30 +5,26 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="222fb375-f277-43aa-975e-7757d7d88eae" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cmd/root.go" beforeDir="false" afterPath="$PROJECT_DIR$/cmd/root.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/collections/measurements.bench.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/measurements.bench.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/position.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/position.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/position_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/position_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/collections/findings.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/findings.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/collections/frames.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/frames.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/collections/lifecycle.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/lifecycle.ts" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/collections/measurements.test.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/measurements.test.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/collections/measurements.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/measurements.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/kernel/heatmap.test.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/kernel/heatmap.test.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/cross-section-panel.test.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/cross-section-panel.test.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/cross-section-panel.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/cross-section-panel.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/health.test.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/health.test.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/kernel-list-row.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/kernel-list-row.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/kernel-list.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/kernel-list.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/collections/terminal.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/terminal.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/collections/thesis.bench.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/thesis.bench.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/collections/thesis.test.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/thesis.test.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/collections/trade-journal.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/trade-journal.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/dashboard-rail.test.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/dashboard-rail.test.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/dashboard-rail.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/dashboard-rail.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/journal-surface.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/journal-surface.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/position-gauge.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/position-gauge.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/scoped-frame.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/scoped-frame.ts" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/providers/ws-stores.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/providers/ws-stores.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/routes/-xray.test.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/routes/-xray.test.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/routes/xray.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/routes/xray.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kraken/trades_history.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/trades_history.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kraken/websocket/conn_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/websocket/conn_test.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kraken/websocket/live.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/websocket/live.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kraken/websocket/simulator.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/websocket/simulator.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/logic/analyzer.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/logic/analyzer_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer_test.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/toxicity/level3.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/toxicity/level3.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/toxicity/level3_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/toxicity/level3_test.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/toxicity/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/toxicity/signal.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/ui/hub.go" beforeDir="false" afterPath="$PROJECT_DIR$/ui/hub.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/routes/index.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/routes/index.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/types/thesis.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/types/thesis.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/thesis.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/thesis.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/thesis_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/thesis_test.go" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -111,7 +107,7 @@
     </decayedShown>
   </component>
   <component name="ProblemsViewState">
-    <option name="selectedTabId" value="CurrentFile" />
+    <option name="selectedTabId" value="AISelfReview" />
   </component>
   <component name="ProjectColorInfo"><![CDATA[{
   "associatedIndex": 7,
@@ -124,6 +120,7 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
+    "ASKED_SHARE_PROJECT_CONFIGURATION_FILES": "true",
     "Go Build.go build github.com/theapemachine/symm.executor": "Profiler#5",
     "Go Test.go test symm.executor": "Run",
     "ModuleVcsDetector.initialDetectionPerformed": "true",

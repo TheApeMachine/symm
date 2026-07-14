@@ -18,6 +18,7 @@ import {
 	LiveResonanceFooter,
 	LiveResonanceTitle,
 } from "#/components/terminal/live-chart-meta";
+import { ThesisModal } from "#/components/terminal/thesis-modal";
 
 const RouteComponent = () => {
 	const kernels = useSelector(appStore, (state) => state.kernels);
@@ -27,18 +28,19 @@ const RouteComponent = () => {
 	return (
 		<div className="flex h-full min-w-[1120px] flex-col">
 			<Pulse />
-			<div className="relative grid min-h-0 flex-1 grid-cols-[282px_minmax(360px,1fr)_332px]">
+			<div className="relative min-h-0 flex-1">
 				<KernelInspector />
+				<ThesisModal />
+				<div className="grid h-full min-h-0 grid-cols-[282px_minmax(360px,1fr)_332px]">
+					<div className="min-h-0 overflow-auto border-(--line) border-r bg-(--surface)">
+						<ColumnHeader
+							title="Signal kernels"
+							meta={`${kernels.length} kernels`}
+						/>
+						<KernelList sources={kernels} />
+					</div>
 
-				<div className="min-h-0 overflow-auto border-(--line) border-r bg-(--surface)">
-					<ColumnHeader
-						title="Signal kernels"
-						meta={`${kernels.length} kernels`}
-					/>
-					<KernelList sources={kernels} />
-				</div>
-
-				<div className="flex min-h-0 flex-col border-(--line) border-r bg-(--sunken)">
+					<div className="flex min-h-0 flex-col border-(--line) border-r bg-(--sunken)">
 					<Canvas
 						title="Fluid density field"
 						meta="navier–stokes · vol-rank × Δ · whale carriers"
@@ -77,9 +79,10 @@ const RouteComponent = () => {
 					>
 						<TerminalPredictionChart />
 					</Canvas>
-				</div>
+					</div>
 
-				<DashboardRail />
+					<DashboardRail />
+				</div>
 			</div>
 		</div>
 	);

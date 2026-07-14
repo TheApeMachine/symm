@@ -1,6 +1,7 @@
 import { memo, useRef } from "react";
 import { type Position, positionsStore } from "#/collections/positions";
 import { type Stop, stopsStore } from "#/collections/stops";
+import { terminalStore } from "#/collections/terminal";
 import { fixed } from "#/components/terminal/decision-format";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 
@@ -304,7 +305,17 @@ export const PositionGauge = memo(
 			<Panel
 				data-symbol={symbol}
 				size="s"
-				className="mb-[5px] font-mono text-[11px]"
+				className="mb-[5px] cursor-pointer font-mono text-[11px] transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]"
+				onClick={() => terminalStore.actions.openThesis(symbol)}
+				onKeyDown={(event) => {
+					if (event.key === "Enter" || event.key === " ") {
+						event.preventDefault();
+						terminalStore.actions.openThesis(symbol);
+					}
+				}}
+				role="button"
+				tabIndex={0}
+				aria-label={`Open thesis for ${symbol}`}
 			>
 				<div className="flex items-start justify-between gap-3">
 					<span className="font-semibold text-(--f1)">{symbol}</span>

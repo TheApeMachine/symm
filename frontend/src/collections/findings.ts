@@ -1,5 +1,8 @@
 import { createStore } from "@tanstack/react-store";
 import type { Finding } from "#/types/thesis";
+import { Circular, type CircularBuffer } from "./circular";
+
+const FINDINGS_HISTORY_LIMIT = 256;
 
 const findingKey = (finding: Finding): string =>
 	`${finding.symbol}:${finding.component}:${finding.condition}:${finding.estimatedEffect}`;
@@ -20,12 +23,18 @@ const asFindings = (frame: unknown): Finding[] => {
 };
 
 /*
-findingsStore retains the backend thesis.Findings snapshot so PostMortem
-evidence can be inspected without mutating or replaying the live model state.
+findingsList expands the retained postmortem findings buffer oldest first.
+*/
+export const findingsList = (buffer: CircularBuffer<Finding>): Finding[] =>
+	buffer.values();
+
+/*
+findingsStore retains backend thesis findings in a bounded circular buffer so
+PostMortem evidence can accumulate without growing the live model unbounded.
 */
 export const findingsStore = createStore(
 	{
-		findings: [] as Finding[],
+		findings: Circular<Finding>(FINDINGS_HISTORY_LIMIT),
 	},
 	({ setState }) => ({
 		updateFrame: (frame: unknown) =>
@@ -36,8 +45,7 @@ export const findingsStore = createStore(
 					return state;
 				}
 
-				const seen = new Set(state.findings.map(findingKey));
-				const findings = [...state.findings];
+				const seen = new Set(state.findings.values().map(findingKey));
 
 				for (const finding of incoming) {
 					const key = findingKey(finding);
@@ -47,14 +55,14 @@ export const findingsStore = createStore(
 					}
 
 					seen.add(key);
-					findings.push(finding);
+					state.findings.push(finding);
 				}
 
-				return { findings };
+				return { findings: state.findings };
 			}),
 		reset: () =>
 			setState(() => ({
-				findings: [],
+				findings: Circular<Finding>(FINDINGS_HISTORY_LIMIT),
 			})),
 	}),
 );

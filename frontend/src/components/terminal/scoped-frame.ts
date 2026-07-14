@@ -1,3 +1,4 @@
+import type { CircularBuffer } from "#/collections/circular";
 import type { DashboardFrame } from "#/collections/frames";
 
 export type ScopedFrameMode = "concrete" | "stream_preview" | "missing";
@@ -12,14 +13,26 @@ export type ScopedFrameResult = {
 export type ScopedFrameSource =
 	| DashboardFrame
 	| DashboardFrame[]
+	| CircularBuffer<DashboardFrame>
 	| {
 			frame?: DashboardFrame | null;
-			frames?: DashboardFrame[];
-			bySymbol?: Record<string, DashboardFrame[]>;
+			frames?: DashboardFrame[] | CircularBuffer<DashboardFrame>;
+			bySymbol?: Record<
+				string,
+				DashboardFrame[] | CircularBuffer<DashboardFrame>
+			>;
 	  }
 	| Record<string, DashboardFrame>
 	| null
 	| undefined;
+
+const isCircularBuffer = (
+	value: unknown,
+): value is CircularBuffer<DashboardFrame> =>
+	typeof value === "object" &&
+	value !== null &&
+	"values" in value &&
+	typeof (value as CircularBuffer<DashboardFrame>).values === "function";
 
 export const isConcreteSymbol = (symbol: unknown): symbol is string =>
 	typeof symbol === "string" && symbol.trim() !== "" && symbol !== "stream";
@@ -106,6 +119,10 @@ const collectFrames = (source: ScopedFrameSource): DashboardFrame[] => {
 		return source.flatMap((item) => collectFrames(item));
 	}
 
+	if (isCircularBuffer(source)) {
+		return source.values().flatMap((item) => collectFrames(item));
+	}
+
 	const record = asRecord(source);
 
 	if (record === null) {
@@ -118,10 +135,21 @@ const collectFrames = (source: ScopedFrameSource): DashboardFrame[] => {
 		frames.push(...record.frames.flatMap((item) => collectFrames(item)));
 	}
 
+	if (isCircularBuffer(record.frames)) {
+		frames.push(
+			...record.frames.values().flatMap((item) => collectFrames(item)),
+		);
+	}
+
 	const bySymbol = asRecord(record.bySymbol);
 
 	if (bySymbol !== null) {
 		for (const value of Object.values(bySymbol)) {
+			if (isCircularBuffer(value)) {
+				frames.push(...value.values().flatMap((item) => collectFrames(item)));
+				continue;
+			}
+
 			frames.push(...collectFrames(value as ScopedFrameSource));
 		}
 	}

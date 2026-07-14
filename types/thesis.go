@@ -418,6 +418,28 @@ func (thesis *Thesis) Publish() {
 		frame["findings"] = thesis.Findings
 	}
 
+	if len(thesis.Graphs) > 0 {
+		graphs := make([]GraphFrame, 0, len(thesis.Graphs))
+
+		for _, graph := range thesis.Graphs {
+			graphs = append(graphs, graph.Frame())
+		}
+
+		frame["graphs"] = graphs
+	}
+
+	if len(thesis.Forecasts) > 0 {
+		frame["forecasts"] = thesis.Forecasts
+	}
+
+	if len(thesis.Hypotheses) > 0 {
+		frame["hypotheses"] = thesis.Hypotheses
+	}
+
+	if len(thesis.Categories) > 0 {
+		frame["categories"] = thesis.Categories
+	}
+
 	if len(thesis.Manifold) > 0 {
 		frame["manifold"] = thesis.Manifold
 	}

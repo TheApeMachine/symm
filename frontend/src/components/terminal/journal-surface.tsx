@@ -1,9 +1,12 @@
 import { useSelector } from "@tanstack/react-store";
 import { useMemo, useState } from "react";
 import { appStore } from "#/collections/app";
-import { findingsStore } from "#/collections/findings";
+import { findingsList, findingsStore } from "#/collections/findings";
 import { lifecycleStore } from "#/collections/lifecycle";
-import { tradeJournalStore } from "#/collections/trade-journal";
+import {
+	tradeJournalStore,
+	tradeJournalValues,
+} from "#/collections/trade-journal";
 import { LifecycleTrack } from "#/components/terminal/lifecycle-track";
 import { TerminalSection } from "#/components/terminal/panels";
 import { cn } from "#/lib/utils";
@@ -91,11 +94,12 @@ and PostMortem findings as three linked rails so backend-only data is inspectabl
 export const JournalSurface = () => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
 	const lifecycle = useSelector(lifecycleStore, (state) => state.lifecycle);
-	const observations = useSelector(
-		tradeJournalStore,
-		(state) => state.observations,
+	const observations = useSelector(tradeJournalStore, (state) =>
+		tradeJournalValues(state.journal),
 	);
-	const findings = useSelector(findingsStore, (state) => state.findings);
+	const findings = useSelector(findingsStore, (state) =>
+		findingsList(state.findings),
+	);
 	const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
 
 	const symbols = useMemo(() => {

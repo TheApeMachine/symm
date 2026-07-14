@@ -4,14 +4,18 @@ import {
 	decisionStore,
 	latestStrategyDecisions,
 } from "#/collections/decisions";
-import { type Execution, executionsStore } from "#/collections/executions";
 import { positionsStore } from "#/collections/positions";
+import { tradeObservationKey } from "#/collections/snapshot-retain";
+import {
+	tradeJournalStore,
+	tradeJournalValues,
+} from "#/collections/trade-journal";
 import { ColumnHeader } from "#/components/dashboard/header";
 import { fixed } from "#/components/terminal/decision-format";
 import { PositionGauge } from "#/components/terminal/position-gauge";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { cn } from "#/lib/utils";
-import type { StrategyDecision } from "#/types/thesis";
+import type { StrategyDecision, TradeObservation } from "#/types/thesis";
 
 const sameSymbols = (left: string[], right: string[]): boolean =>
 	left.length === right.length &&
@@ -157,44 +161,138 @@ const LiveDecisionRows = ({ symbols }: { symbols: string[] }) => (
 	</div>
 );
 
-type ExecutionAuditRow = {
+type AuditRow = {
 	reason: string;
 	reference: string;
 	meta: string;
 };
 
-export const executionAuditRow = (execution: Execution): ExecutionAuditRow => {
-	const reason = execution.order_status ?? execution.exec_type;
+const auditEntryLifecycle = new Set(["partially_entered", "entered"]);
 
-	if (typeof reason !== "string" || reason.length === 0) {
-		throw new TypeError("execution requires order_status or exec_type");
+const auditExitLifecycle = new Set(["partially_exited", "closed"]);
+
+const isEntryObservation = (observation: TradeObservation): boolean => {
+	if (
+		(observation.kind === "execution_error" ||
+			observation.kind === "broker_rejection") &&
+		observation.action === "enter"
+	) {
+		return true;
 	}
 
+	if (observation.kind === "execution" && observation.side === "buy") {
+		return true;
+	}
+
+	if (
+		observation.kind === "lifecycle_transition" &&
+		typeof observation.status === "string"
+	) {
+		return auditEntryLifecycle.has(observation.status);
+	}
+
+	return false;
+};
+
+const isExitObservation = (observation: TradeObservation): boolean => {
+	if (
+		(observation.kind === "execution_error" ||
+			observation.kind === "broker_rejection") &&
+		(observation.action === "exit" || observation.action === "reduce")
+	) {
+		return true;
+	}
+
+	if (observation.kind === "final_outcome") {
+		return true;
+	}
+
+	if (observation.kind === "execution" && observation.side === "sell") {
+		return true;
+	}
+
+	if (
+		observation.kind === "lifecycle_transition" &&
+		typeof observation.status === "string"
+	) {
+		return auditExitLifecycle.has(observation.status);
+	}
+
+	return false;
+};
+
+/*
+isAuditObservation keeps dashboard audit rows limited to entry and exit events so
+the right rail can explain opens and closes without broker noise.
+*/
+export const isAuditObservation = (observation: TradeObservation): boolean =>
+	isEntryObservation(observation) || isExitObservation(observation);
+
+const auditReason = (observation: TradeObservation): string => {
+	if (
+		(observation.kind === "execution_error" ||
+			observation.kind === "broker_rejection") &&
+		typeof observation.error === "string" &&
+		observation.error.length > 0
+	) {
+		return observation.error;
+	}
+
+	if (typeof observation.status === "string" && observation.status.length > 0) {
+		return observation.status;
+	}
+
+	if (isExitObservation(observation)) {
+		return "exit";
+	}
+
+	if (isEntryObservation(observation)) {
+		return "enter";
+	}
+
+	return observation.kind.replaceAll("_", " ");
+};
+
+/*
+tradeObservationAuditRow formats one immutable thesis trade journal row for the
+dashboard audit rail using the same broker facts published by the backend.
+*/
+export const tradeObservationAuditRow = (
+	observation: TradeObservation,
+): AuditRow => {
 	const timestamp =
-		typeof execution.timestamp === "string"
-			? execution.timestamp.slice(11, 19)
-			: "";
+		observation.at.length >= 19 ? observation.at.slice(11, 19) : observation.at;
 	const identifier =
-		typeof execution.sequence === "number"
-			? String(execution.sequence)
-			: (execution.exec_id ?? execution.order_id ?? "");
+		observation.executionId ??
+		observation.orderId ??
+		String(observation.decision);
 	const trade =
-		execution.last_qty !== undefined && execution.last_price !== undefined
-			? `${execution.last_qty} @ ${fixed(Number(execution.last_price))}`
+		observation.quantity && observation.price
+			? `${observation.quantity} @ ${fixed(Number(observation.price))}`
 			: "";
 	const meta = [
-		execution.exec_type,
-		execution.side,
-		execution.symbol,
+		observation.kind,
+		observation.action,
+		observation.side,
+		observation.symbol,
 		trade,
+		observation.error,
 	].filter((value) => typeof value === "string" && value.length > 0);
 
 	return {
-		reason,
+		reason: auditReason(observation),
 		reference: [`#${identifier}`, timestamp].filter(Boolean).join(" · "),
 		meta: meta.join(" · "),
 	};
 };
+
+/*
+auditObservations retains only entry and exit journal rows for the dashboard
+audit trail, in publication order.
+ */
+export const auditObservations = (
+	observations: TradeObservation[],
+): TradeObservation[] => observations.filter(isAuditObservation);
 
 const PositionRows = ({
 	symbols,
@@ -217,19 +315,27 @@ const PositionRows = ({
 	</div>
 );
 
-const AuditRows = ({ executions }: { executions: Execution[] }) => (
+const AuditRows = ({
+	observations,
+	observed,
+}: {
+	observations: TradeObservation[];
+	observed: boolean;
+}) => (
 	<div className="min-h-0 flex-1 overflow-auto py-0.5">
-		{executions.length === 0 ? (
+		{observations.length === 0 ? (
 			<div className="px-4 py-5 font-mono text-[11px] text-(--f4)">
-				waiting for execution frames
+				{observed
+					? "no trade activity yet"
+					: "waiting for trade journal frames"}
 			</div>
 		) : null}
-		{executions.map((execution) => {
-			const row = executionAuditRow(execution);
+		{observations.map((observation) => {
+			const row = tradeObservationAuditRow(observation);
 
 			return (
 				<div
-					key={`${execution.exec_id ?? execution.order_id ?? "exec"}:${execution.order_status ?? ""}:${execution.timestamp ?? ""}:${execution.symbol ?? ""}:${execution.side ?? ""}`}
+					key={tradeObservationKey(observation)}
 					className="border-(--line) border-b px-3 py-1.5"
 				>
 					<div className="flex items-start justify-between gap-2">
@@ -345,7 +451,13 @@ export const DashboardRail = () => {
 		(state) => state.positions[0]?.symbol,
 	);
 	const quote = quoteSymbol?.split("/")[1] ?? "USD";
-	const executions = useSelector(executionsStore, (state) => state.executions);
+	const auditRows = useSelector(tradeJournalStore, (state) =>
+		auditObservations(tradeJournalValues(state.journal)),
+	);
+	const journalObserved = useSelector(
+		tradeJournalStore,
+		(state) => state.observed,
+	);
 
 	return (
 		<div className="flex min-h-0 flex-col bg-(--surface)">
@@ -362,7 +474,10 @@ export const DashboardRail = () => {
 			</div>
 			<div className="flex min-h-0 flex-1 flex-col">
 				<ColumnHeader title="Audit trail" />
-				<AuditRows executions={[...executions].reverse()} />
+				<AuditRows
+					observations={[...auditRows].reverse()}
+					observed={journalObserved}
+				/>
 			</div>
 		</div>
 	);

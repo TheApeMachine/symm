@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { Circular } from "#/collections/circular";
 import { tickStore } from "#/collections/tick";
 import { applyFramePayload } from "#/providers/ws-stores";
 import type { Measurement } from "#/types/measurement";
@@ -31,13 +32,17 @@ describe("measurementsStore", () => {
 			measurements: {},
 			version: 0,
 		}));
-		tickStore.setState(() => ({
-			frame: null,
-			frames: [],
-			history: [],
-			bySymbol: {},
-			bySource: {},
-		}));
+		tickStore.setState(() => {
+			const frames = Circular<Record<string, unknown>>(256);
+
+			return {
+				frame: null,
+				frames,
+				history: frames,
+				bySymbol: {},
+				bySource: {},
+			};
+		});
 	});
 
 	it("retains one circular-buffer slot per observation tick", () => {

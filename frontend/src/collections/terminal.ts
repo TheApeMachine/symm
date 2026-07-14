@@ -21,6 +21,7 @@ export const terminalStore = createStore(
 		paletteQuery: "",
 		paletteIndex: 0,
 		focusSymbol: DEFAULT_FOCUS_SYMBOL,
+		thesisSymbol: null as string | null,
 	},
 	({ setState }) => ({
 		toggleScanlines: () =>
@@ -76,6 +77,16 @@ export const terminalStore = createStore(
 			setState((prev) => ({
 				...prev,
 				focusSymbol,
+			})),
+		openThesis: (thesisSymbol: string) =>
+			setState((prev) => ({
+				...prev,
+				thesisSymbol,
+			})),
+		closeThesis: () =>
+			setState((prev) => ({
+				...prev,
+				thesisSymbol: null,
 			})),
 	}),
 );

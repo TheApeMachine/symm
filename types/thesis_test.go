@@ -41,13 +41,16 @@ func TestThesisPublish(t *testing.T) {
 		Convey("When published", func() {
 			thesis.Publish()
 
-			Convey("Then only the measurement slice reaches the wire", func() {
+			Convey("Then the thesis evidence reaches the wire", func() {
 				payload := <-uiHub
 
 				var frame struct {
 					Measurements []Measurement      `json:"measurements"`
 					TradeJournal []TradeObservation `json:"tradeJournal"`
 					Lifecycle    map[string]string  `json:"lifecycle"`
+					Graphs       []GraphFrame       `json:"graphs"`
+					Forecasts    []Forecasts        `json:"forecasts"`
+					Hypotheses   []Hypothesis       `json:"hypotheses"`
 				}
 
 				So(json.Unmarshal(payload, &frame), ShouldBeNil)
@@ -56,6 +59,10 @@ func TestThesisPublish(t *testing.T) {
 				So(frame.Measurements[0].Source, ShouldEqual, SourcePumpDump)
 				So(frame.TradeJournal, ShouldHaveLength, 1)
 				So(frame.Lifecycle["BTC/USD"], ShouldEqual, LifecycleShaped)
+				So(frame.Graphs, ShouldHaveLength, 1)
+				So(frame.Graphs[0].Symbol, ShouldEqual, "BTC/USD")
+				So(frame.Forecasts, ShouldHaveLength, 1)
+				So(frame.Hypotheses, ShouldHaveLength, 1)
 			})
 		})
 	})

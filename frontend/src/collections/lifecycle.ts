@@ -1,4 +1,5 @@
 import { createStore } from "@tanstack/react-store";
+import { retainLifecycleMap } from "#/collections/snapshot-retain";
 import type { LifecycleState } from "#/types/thesis";
 
 /*
@@ -12,10 +13,7 @@ export const lifecycleStore = createStore(
 	({ setState }) => ({
 		updateFrame: (frame: Record<string, LifecycleState>) =>
 			setState((prev) => ({
-				lifecycle: {
-					...prev.lifecycle,
-					...frame,
-				},
+				lifecycle: retainLifecycleMap(frame, prev.lifecycle),
 			})),
 		reset: () =>
 			setState(() => ({

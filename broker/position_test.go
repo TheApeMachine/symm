@@ -49,6 +49,59 @@ func TestPositionOrderAck(t *testing.T) {
 	})
 }
 
+/*
+TestPositionTickerAck verifies that ticker delivery cannot dereference an
+uninitialized SDK decimal while a restored position is still reconciling.
+*/
+func TestPositionTickerAck(t *testing.T) {
+	frame := []byte(`{
+		"channel":"ticker",
+		"type":"update",
+		"data":[{"symbol":"NPC/USD","last":"110"}]
+	}`)
+
+	Convey("Given a restored position without a reconciled entry price", t, func() {
+		position := &Position{
+			status: types.OPEN,
+			Data: &PositionData{
+				Symbol: "NPC/USD",
+				Qty:    *decimal.NewFromInt64(1),
+			},
+		}
+
+		position.TickerAck(frame)
+
+		Convey("Then validation rejects it without publishing or panicking", func() {
+			So(position.Status(), ShouldEqual, types.ERROR)
+			So(position.Data.Mark.Rat().Sign(), ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given a reconciled position with a fee schedule", t, func() {
+		price := &Price{status: types.READY, fees: &sync.Map{}}
+		price.fees.Store("NPC/USD", kraken.TradeVolumeFees{Fee: "0.2600"})
+		ui := make(chan []byte, 1)
+		position := &Position{
+			status: types.OPEN,
+			price:  price,
+			ui:     ui,
+			Data: &PositionData{
+				Symbol:     "NPC/USD",
+				Qty:        *decimal.NewFromInt64(1),
+				EntryPrice: *decimal.NewFromInt64(100),
+			},
+		}
+
+		position.TickerAck(frame)
+
+		Convey("Then the ticker updates and publishes the current valuation", func() {
+			So(position.Data.Mark.Float64(), ShouldEqual, 110.0)
+			So(position.Data.PnL.Float64(), ShouldAlmostEqual, 9.454)
+			So(len(ui), ShouldEqual, 1)
+		})
+	})
+}
+
 func TestPositionExecutionAck(t *testing.T) {
 	Convey("Given a position receiving cumulative buy fills", t, func() {
 		ui := make(chan []byte, 8)
@@ -384,5 +437,31 @@ func BenchmarkPositionReconcile(b *testing.B) {
 		if err := position.reconcile(history, "BTC/USD", holding); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+/*
+BenchmarkPositionTickerAck measures cached validation and symbol filtering on
+the position ticker path.
+*/
+func BenchmarkPositionTickerAck(b *testing.B) {
+	position := &Position{
+		status: types.OPEN,
+		Data: &PositionData{
+			Symbol:     "NPC/USD",
+			Qty:        *decimal.NewFromInt64(1),
+			EntryPrice: *decimal.NewFromInt64(100),
+		},
+	}
+	frame := []byte(`{
+		"channel":"ticker",
+		"type":"update",
+		"data":[{"symbol":"BTC/USD","last":"110"}]
+	}`)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		position.TickerAck(frame)
 	}
 }
