@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -87,9 +88,10 @@ func TestAnalyzerIngestLevel3(t *testing.T) {
 		viper.Set("market.forecast.rls.initial_variance", 1.0)
 		viper.Set("market.forecast.rls.forgetting_factor", 1.0)
 		viper.Set("market.manifold.lifetime_capacity", 256)
-		analyzer := NewAnalyzer(readyStageGate{}, nil)
+		uiHub := make(chan []byte, 4)
+		analyzer := NewAnalyzer(readyStageGate{})
 		defer analyzer.Close()
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(uiHub)
 		thesis.Signals.Store("level3", []kraken.Level3Data{
 			{
 				Symbol: "BTC/USD", Type: "snapshot", Timestamp: time.Unix(1, 0),
@@ -102,6 +104,13 @@ func TestAnalyzerIngestLevel3(t *testing.T) {
 					Timestamp: time.Unix(1, 0),
 				}},
 			},
+			{
+				Symbol: "BTC/USD", Type: "update", Timestamp: time.Unix(2, 0),
+				Bids: []kraken.Level3Order{{
+					Event: "modify", OrderID: "bid-1", LimitPrice: 99,
+					OrderQty: 4, Timestamp: time.Unix(2, 0),
+				}},
+			},
 		})
 
 		analyzer.Update(thesis)
@@ -110,6 +119,18 @@ func TestAnalyzerIngestLevel3(t *testing.T) {
 			slot, exists := analyzer.engine.Slot("BTC/USD")
 			So(exists, ShouldBeTrue)
 			So(slot.Advance().StateProduced, ShouldBeFalse)
+			So(len(uiHub), ShouldEqual, 0)
+			So(thesis.Manifold, ShouldHaveLength, 1)
+
+			thesis.Publish()
+			So(len(uiHub), ShouldEqual, 1)
+
+			var frame struct {
+				Manifold []manifold.State `json:"manifold"`
+			}
+
+			So(json.Unmarshal(<-uiHub, &frame), ShouldBeNil)
+			So(frame.Manifold, ShouldHaveLength, 1)
 		})
 	})
 }
@@ -138,11 +159,11 @@ func TestAnalyzerHandleRetainsLogicEvidence(t *testing.T) {
 		analyzer := &Analyzer{
 			resonances: map[string]*Resonance{
 				"BTC/USD": NewResonance(
-					"BTC/USD", nil, manifold.DefaultBaselineHalflife,
+					"BTC/USD", manifold.DefaultBaselineHalflife,
 				),
 			},
 			causals: map[string]*Causal{
-				"BTC/USD": NewCausal("BTC/USD", nil),
+				"BTC/USD": NewCausal("BTC/USD"),
 			},
 			replay: manifold.NewReplayRecorder(),
 		}

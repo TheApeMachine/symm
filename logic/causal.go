@@ -4,7 +4,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/logic/manifold"
@@ -21,7 +20,6 @@ var causalControls = []int{1, 2, 3, 4, 5}
 
 type Causal struct {
 	symbol  string
-	ui      chan []byte
 	pearl   *algorithm.Pearl
 	pending *causalObservation
 	samples uint64
@@ -34,12 +32,15 @@ type causalObservation struct {
 	at       time.Time
 }
 
-func NewCausal(symbol string, ui chan []byte) *Causal {
+/*
+NewCausal creates the symbol-local Pearl model whose outcomes are returned to
+Analyzer for accumulation on the current Thesis alongside durable Hypotheses.
+*/
+func NewCausal(symbol string) *Causal {
 	minimumHistory := len(causalControls) + 3
 
 	return &Causal{
 		symbol: symbol,
-		ui:     ui,
 		pearl: algorithm.NewPearl(algorithm.PearlConfig{
 			Target:     causalTargetIndex,
 			Treatment:  causalTreatmentIndex,
@@ -51,15 +52,14 @@ func NewCausal(symbol string, ui chan []byte) *Causal {
 }
 
 /*
-Update aligns one manifold observation with the next observed mid return. The
-named treatment and controls are recorded on every output so the result is not
-mistaken for a causal claim about anonymous latent columns.
+Update aligns one manifold observation with the next observed mid return and
+returns both its durable Hypothesis and causal outcome for the current Thesis.
 */
 func (causal *Causal) Update(
 	state manifold.State,
-) (types.Hypothesis, bool, error) {
+) (types.Hypothesis, *CausalOutcome, error) {
 	if state.At.IsZero() || state.Epoch == 0 {
-		return types.Hypothesis{}, false, errnie.Error(errnie.Err(
+		return types.Hypothesis{}, nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"logic causal: manifold chronology required",
 			nil,
@@ -68,7 +68,7 @@ func (causal *Causal) Update(
 
 	if causal.pending != nil &&
 		(state.Epoch <= causal.pending.epoch || state.At.Before(causal.pending.at)) {
-		return types.Hypothesis{}, false, errnie.Error(errnie.Err(
+		return types.Hypothesis{}, nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"logic causal: manifold chronology regressed",
 			nil,
@@ -78,11 +78,10 @@ func (causal *Causal) Update(
 	features, ready := causal.features(state)
 
 	if !ready {
-		return types.Hypothesis{}, false, nil
+		return types.Hypothesis{}, nil, nil
 	}
 
 	outcome := causal.observe(state, features)
-	causal.publish(outcome)
 
 	return types.Hypothesis{
 		Source:         types.SourceCausal,
@@ -101,7 +100,7 @@ func (causal *Causal) Update(
 		Counterfactual: outcome.Reading.Counterfactual,
 		Confidence:     outcome.Reading.Confidence,
 		Strength:       outcome.Reading.Strength,
-	}, true, nil
+	}, &outcome, nil
 }
 
 func (causal *Causal) observe(
@@ -174,22 +173,6 @@ func (causal *Causal) features(state manifold.State) ([]float64, bool) {
 	}
 
 	return features, finiteSlice(features)
-}
-
-func (causal *Causal) publish(outcome CausalOutcome) {
-	if causal.ui == nil {
-		return
-	}
-
-	select {
-	case causal.ui <- datura.Map[any]{"causal": outcome}.Marshal():
-	default:
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"logic causal: UI channel full while publishing outcome",
-			nil,
-		))
-	}
 }
 
 /*

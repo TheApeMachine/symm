@@ -4,7 +4,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
@@ -34,7 +33,6 @@ var resonanceObservableKeys = []string{
 
 type Resonance struct {
 	symbol      string
-	ui          chan []byte
 	manifold    *learning.ResonanceManifold
 	baselines   map[string]*adaptive.TimeElastic
 	halflife    time.Duration
@@ -43,9 +41,12 @@ type Resonance struct {
 	samples     uint64
 }
 
+/*
+NewResonance creates the symbol-local predictive-coding model whose outputs
+Analyzer accumulates on the current Thesis.
+*/
 func NewResonance(
 	symbol string,
-	ui chan []byte,
 	halflife time.Duration,
 ) *Resonance {
 	if halflife <= 0 {
@@ -71,7 +72,6 @@ func NewResonance(
 
 	resonance := &Resonance{
 		symbol:    symbol,
-		ui:        ui,
 		manifold:  manifold,
 		baselines: map[string]*adaptive.TimeElastic{},
 		halflife:  halflife,
@@ -82,13 +82,19 @@ func NewResonance(
 
 func (resonance *Resonance) Close() {}
 
-func (resonance *Resonance) Update(state manifold.State) []*types.Measurement {
+/*
+Update advances predictive coding from one coherent manifold state and returns
+both durable measurements and its outcome for the current Thesis.
+*/
+func (resonance *Resonance) Update(
+	state manifold.State,
+) ([]*types.Measurement, *ResonanceOutcome) {
 	if resonance.manifold == nil {
-		return nil
+		return nil, nil
 	}
 
 	if !state.IsFinite() {
-		return nil
+		return nil, nil
 	}
 
 	reading := state.Reading
@@ -104,17 +110,17 @@ func (resonance *Resonance) Update(state manifold.State) []*types.Measurement {
 	stepAt := state.At
 
 	if stepAt.IsZero() {
-		return nil
+		return nil, nil
 	}
 
 	if resonance.eventStale(stepAt) {
-		return nil
+		return nil, nil
 	}
 
 	observables, ready := resonance.normalize(raw, stepAt)
 
 	if !ready {
-		return nil
+		return nil, nil
 	}
 
 	resonance.advanceEventAt(stepAt)
@@ -126,7 +132,7 @@ func (resonance *Resonance) Update(state manifold.State) []*types.Measurement {
 			err,
 		))
 
-		return nil
+		return nil, nil
 	}
 
 	resonance.manifold.Learn(nil)
@@ -154,19 +160,7 @@ func (resonance *Resonance) Update(state manifold.State) []*types.Measurement {
 			nil,
 		))
 
-		return nil
-	}
-
-	if resonance.ui != nil {
-		select {
-		case resonance.ui <- datura.Map[any]{"resonance": outcome}.Marshal():
-		default:
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"logic resonance: UI channel full while publishing outcome",
-				nil,
-			))
-		}
+		return nil, nil
 	}
 
 	observedFrom := stepAt.Add(-state.Duration())
@@ -197,7 +191,7 @@ func (resonance *Resonance) Update(state manifold.State) []*types.Measurement {
 			Horizon: state.Duration(), Unit: types.UnitNat,
 			Raw: outcome.Surprise, Maturity: maturity, Validity: validity, Scale: scale,
 		},
-	}
+	}, &outcome
 }
 
 func (resonance *Resonance) normalize(

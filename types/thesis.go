@@ -34,6 +34,7 @@ entire lifecycle of a tick, picking up all data along the way.
 */
 type Thesis struct {
 	uiHub        chan<- []byte
+	Tick         int64
 	Signals      *sync.Map
 	CrossSection *CrossSection
 	Measurements []*Measurement
@@ -45,6 +46,9 @@ type Thesis struct {
 	Findings     []Finding
 	Hypotheses   []Hypothesis
 	Categories   []Category
+	Manifold     []any
+	Resonance    []any
+	Causal       []any
 }
 
 /*
@@ -64,12 +68,14 @@ func NewThesis(uiHub chan<- []byte) *Thesis {
 		Findings:     make([]Finding, 0),
 		Hypotheses:   make([]Hypothesis, 0),
 		Categories:   make([]Category, 0),
+		Manifold:     make([]any, 0),
+		Resonance:    make([]any, 0),
+		Causal:       make([]any, 0),
 	}
 }
 
 /*
-LifecycleState returns one symbol's current trade state. Absence means the
-Thesis is still observing that symbol and has not crossed another boundary.
+LifecycleState returns one symbol's state, defaulting to observation before a boundary is crossed.
 */
 func (thesis *Thesis) LifecycleState(symbol string) string {
 	state := thesis.Lifecycle[symbol]
@@ -82,8 +88,7 @@ func (thesis *Thesis) LifecycleState(symbol string) string {
 }
 
 /*
-Transition advances one symbol through the explicit trade lifecycle. Invalid
-edges fail visibly rather than coercing a Position or Thesis into another state.
+Transition advances one symbol through the trade lifecycle and rejects invalid edges.
 */
 func (thesis *Thesis) Transition(symbol, next string, at time.Time) error {
 	current := thesis.LifecycleState(symbol)
@@ -150,16 +155,13 @@ func (thesis *Thesis) Transition(symbol, next string, at time.Time) error {
 
 /*
 RecordTrade appends an immutable broker or position fact in lifecycle order.
-The trading path owns this sequence, so the Thesis needs no journal wrapper.
 */
 func (thesis *Thesis) RecordTrade(observation TradeObservation) {
 	thesis.TradeJournal = append(thesis.TradeJournal, observation)
 }
 
 /*
-Absorb retains the current tick evidence used to manage one open position.
-It copies only symbol-relevant derived state rather than raw transport frames.
-Repeated calls with the same current tick remain idempotent for that symbol.
+Absorb idempotently retains the current tick evidence used to manage one open position.
 */
 func (thesis *Thesis) Absorb(current *Thesis, symbol string) {
 	absorbedMeasurements := make(map[*Measurement]struct{})
@@ -281,10 +283,8 @@ type hypothesisAbsorbKey struct {
 }
 
 /*
-ObservePostExit retains the forecast epochs required to judge a completed
-trade. The tail length comes from the traded Thesis's forecast horizons; the
-current RLS forecast consumes only the current field state and has no recurrent
-inference memory beyond that explicit horizon.
+ObservePostExit retains enough forecast epochs to judge a completed trade.
+The traded Thesis's forecast horizons determine the required tail length.
 */
 func (thesis *Thesis) ObservePostExit(current *Thesis, symbol string) error {
 	state := thesis.LifecycleState(symbol)
@@ -359,14 +359,25 @@ func (thesis *Thesis) ObservePostExit(current *Thesis, symbol string) error {
 }
 
 /*
-Publish exposes the measurements and current cross-sectional state accumulated
-by this tick without delaying the trading path when no UI consumer is ready.
+Publish exposes the non-empty evidence accumulated by this tick without delaying trading.
 */
 func (thesis *Thesis) Publish() {
+	if thesis.uiHub == nil {
+		return
+	}
+
+	if len(thesis.Measurements) == 0 && len(thesis.Decisions) == 0 &&
+		len(thesis.TradeJournal) == 0 && len(thesis.Lifecycle) == 0 &&
+		len(thesis.Findings) == 0 && len(thesis.CrossSection.Metrics) == 0 &&
+		len(thesis.Manifold) == 0 && len(thesis.Resonance) == 0 && len(thesis.Causal) == 0 && thesis.Tick == 0 {
+		return
+	}
+
 	leader, leadershipThreshold := thesis.CrossSection.Leadership()
 
 	select {
 	case thesis.uiHub <- datura.Map[any]{
+		"tick": datura.Map[any]{"count": thesis.Tick},
 		"diagnostics": []datura.Map[any]{
 			{
 				"metrics":             thesis.CrossSection.Metrics,
@@ -380,6 +391,9 @@ func (thesis *Thesis) Publish() {
 		"tradeJournal": thesis.TradeJournal,
 		"lifecycle":    thesis.Lifecycle,
 		"findings":     thesis.Findings,
+		"manifold":     thesis.Manifold,
+		"resonance":    thesis.Resonance,
+		"causal":       thesis.Causal,
 	}.Marshal():
 	default:
 	}

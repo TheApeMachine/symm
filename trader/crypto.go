@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -26,7 +25,6 @@ type Crypto struct {
 	status     types.Status
 	ctx        context.Context
 	cancel     context.CancelFunc
-	uiHub      chan []byte
 	desk       *broker.Desk
 	price      *broker.Price
 	balance    *broker.Balance
@@ -49,7 +47,6 @@ func NewCrypto(
 	price *broker.Price,
 	balance *broker.Balance,
 	desk *broker.Desk,
-	uiHub chan []byte,
 	instrument *Instrument,
 	analyzer *logic.Analyzer,
 	planner *strategy.Planner,
@@ -72,7 +69,6 @@ func NewCrypto(
 		price:      price,
 		balance:    balance,
 		instrument: instrument,
-		uiHub:      uiHub,
 		tick:       &atomic.Int64{},
 		tickBudget: tickBudget,
 		analyzer:   analyzer,
@@ -119,15 +115,10 @@ func (crypto *Crypto) Run() error {
 				}
 
 				thesis := crypto.planner.Update()
+				thesis.Tick = crypto.tick.Add(1)
 				crypto.trade(thesis)
 				thesis.Publish()
 			}
-
-			crypto.publish(datura.Map[any]{
-				"tick": datura.Map[any]{
-					"count": crypto.tick.Add(1),
-				},
-			})
 
 			time.Sleep(crypto.tickBudget)
 		}
@@ -197,13 +188,6 @@ func (crypto *Crypto) trade(thesis *types.Thesis) {
 		if err := crypto.desk.Execute(intent, pair); err != nil {
 			errnie.Error(err)
 		}
-	}
-}
-
-func (crypto *Crypto) publish(mapping datura.Map[any]) {
-	select {
-	case crypto.uiHub <- mapping.Marshal():
-	default:
 	}
 }
 

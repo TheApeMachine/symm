@@ -12,7 +12,7 @@ import (
 func TestResonanceUpdate(t *testing.T) {
 	Convey("Given a chronological sequence of finite manifold states", t, func() {
 		resonance := NewResonance(
-			"BTC/USD", nil, manifold.DefaultBaselineHalflife,
+			"BTC/USD", manifold.DefaultBaselineHalflife,
 		)
 		var measurements []*types.Measurement
 		producedAt := 0
@@ -24,7 +24,7 @@ func TestResonanceUpdate(t *testing.T) {
 				uint64(index),
 			)
 			state.PressureGradX += float64(index) / 100
-			measurements = resonance.Update(state)
+			measurements, _ = resonance.Update(state)
 			producedAt = index
 		}
 
@@ -44,9 +44,10 @@ func TestResonanceUpdate(t *testing.T) {
 				uint64(nextIndex),
 			)
 			state.PressureGradX += float64(nextIndex) / 100
-			next := resonance.Update(state)
+			next, outcome := resonance.Update(state)
 
 			So(next, ShouldHaveLength, 2)
+			So(outcome, ShouldNotBeNil)
 			So(next[0].Maturity, ShouldBeGreaterThan, measurements[0].Maturity)
 			So(next[0].Maturity, ShouldBeLessThan, 1)
 		})
@@ -55,10 +56,10 @@ func TestResonanceUpdate(t *testing.T) {
 
 func TestResonanceUpdateUsesConfiguredHalflife(t *testing.T) {
 	Convey("Given a resonance model with a two-second baseline halflife", t, func() {
-		resonance := NewResonance("BTC/USD", nil, 2*time.Second)
+		resonance := NewResonance("BTC/USD", 2*time.Second)
 		resonance.Update(causalState(time.Unix(1, 0), 100, 1))
 
-		measurements := resonance.Update(
+		measurements, _ := resonance.Update(
 			causalState(time.Unix(3, 0), 101, 2),
 		)
 
@@ -71,7 +72,7 @@ func TestResonanceUpdateUsesConfiguredHalflife(t *testing.T) {
 
 func BenchmarkResonanceUpdate(b *testing.B) {
 	resonance := NewResonance(
-		"BTC/USD", nil, manifold.DefaultBaselineHalflife,
+		"BTC/USD", manifold.DefaultBaselineHalflife,
 	)
 	b.ReportAllocs()
 

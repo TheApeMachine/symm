@@ -11,14 +11,14 @@ import (
 
 func TestCausalUpdate(t *testing.T) {
 	Convey("Given a finite manifold state for a named causal model", t, func() {
-		causal := NewCausal("BTC/USD", nil)
+		causal := NewCausal("BTC/USD")
 		state := causalState(time.Unix(1, 0), 100, 1)
 
-		hypothesis, produced, err := causal.Update(state)
+		hypothesis, outcome, err := causal.Update(state)
 
 		Convey("It should return a durable hypothesis with discriminating provenance", func() {
 			So(err, ShouldBeNil)
-			So(produced, ShouldBeTrue)
+			So(outcome, ShouldNotBeNil)
 			So(hypothesis.Source, ShouldEqual, types.SourceCausal)
 			So(hypothesis.Symbol, ShouldEqual, "BTC/USD")
 			So(hypothesis.Claim, ShouldEqual, causalHypothesis)
@@ -31,32 +31,32 @@ func TestCausalUpdate(t *testing.T) {
 
 func TestCausalUpdateRejectsRegressions(t *testing.T) {
 	Convey("Given a causal model holding a pending manifold state", t, func() {
-		causal := NewCausal("BTC/USD", nil)
-		_, produced, err := causal.Update(causalState(time.Unix(2, 0), 100, 2))
+		causal := NewCausal("BTC/USD")
+		_, outcome, err := causal.Update(causalState(time.Unix(2, 0), 100, 2))
 		So(err, ShouldBeNil)
-		So(produced, ShouldBeTrue)
+		So(outcome, ShouldNotBeNil)
 
-		_, duplicateProduced, err := causal.Update(
+		_, duplicateOutcome, err := causal.Update(
 			causalState(time.Unix(2, 0), 100, 2),
 		)
 		So(err, ShouldNotBeNil)
 
-		_, sameTimeProduced, err := causal.Update(
+		_, sameTimeOutcome, err := causal.Update(
 			causalState(time.Unix(2, 0), 101, 3),
 		)
 		So(err, ShouldBeNil)
 
-		var regressedProduced bool
+		var regressedOutcome *CausalOutcome
 
-		_, regressedProduced, err = causal.Update(
+		_, regressedOutcome, err = causal.Update(
 			causalState(time.Unix(1, 0), 99, 1),
 		)
 
 		Convey("It should accept equal-time progress and reject duplicate or backward epochs", func() {
 			So(err, ShouldNotBeNil)
-			So(duplicateProduced, ShouldBeFalse)
-			So(sameTimeProduced, ShouldBeTrue)
-			So(regressedProduced, ShouldBeFalse)
+			So(duplicateOutcome, ShouldBeNil)
+			So(sameTimeOutcome, ShouldNotBeNil)
+			So(regressedOutcome, ShouldBeNil)
 			So(causal.pending.epoch, ShouldEqual, uint64(3))
 			So(causal.pending.at, ShouldEqual, time.Unix(2, 0))
 		})
@@ -64,7 +64,7 @@ func TestCausalUpdateRejectsRegressions(t *testing.T) {
 }
 
 func BenchmarkCausalUpdate(b *testing.B) {
-	causal := NewCausal("BTC/USD", nil)
+	causal := NewCausal("BTC/USD")
 	b.ReportAllocs()
 
 	for index := 1; b.Loop(); index++ {

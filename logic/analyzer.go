@@ -4,7 +4,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/manifold"
@@ -25,7 +24,6 @@ type Analyzer struct {
 	resonances map[string]*Resonance
 	causals    map[string]*Causal
 	replay     *manifold.ReplayRecorder
-	uiHub      chan []byte
 }
 
 /*
@@ -40,9 +38,7 @@ type stageGate interface {
 NewAnalyzer constructs every synchronous analysis dependency. The analyzer is
 ready immediately because no component performs deferred initialization.
 */
-func NewAnalyzer(
-	gate stageGate, uiHub chan []byte,
-) *Analyzer {
+func NewAnalyzer(gate stageGate) *Analyzer {
 	return &Analyzer{
 		gate:       gate,
 		engine:     manifold.NewEngine(),
@@ -50,7 +46,6 @@ func NewAnalyzer(
 		resonances: map[string]*Resonance{},
 		causals:    map[string]*Causal{},
 		replay:     manifold.NewReplayRecorder(),
-		uiHub:      uiHub,
 	}
 }
 
@@ -152,7 +147,10 @@ func (analyzer *Analyzer) IngestLevel3(
 		}
 
 		result := slot.Observe(row)
-		analyzer.handle(symbol, thesis, result)
+
+		if result.StateProduced {
+			thesis.Manifold = append(thesis.Manifold, result.State)
+		}
 
 		if result.AdvanceReady {
 			mutated[symbol] = slot
@@ -168,7 +166,20 @@ func (analyzer *Analyzer) IngestLevel3(
 	sort.Strings(symbols)
 
 	for _, symbol := range symbols {
-		analyzer.handle(symbol, thesis, mutated[symbol].Advance())
+		result := mutated[symbol].Advance()
+		resonance, causal := analyzer.handle(symbol, thesis, result)
+
+		if result.StateProduced {
+			thesis.Manifold = append(thesis.Manifold, result.State)
+		}
+
+		if resonance != nil {
+			thesis.Resonance = append(thesis.Resonance, *resonance)
+		}
+
+		if causal != nil {
+			thesis.Causal = append(thesis.Causal, *causal)
+		}
 	}
 }
 
@@ -186,12 +197,12 @@ func (analyzer *Analyzer) admit(symbol string) (*manifold.Slot, bool) {
 
 	if analyzer.resonances[symbol] == nil {
 		analyzer.resonances[symbol] = NewResonance(
-			symbol, analyzer.uiHub, analyzer.engine.Halflife(),
+			symbol, analyzer.engine.Halflife(),
 		)
 	}
 
 	if analyzer.causals[symbol] == nil {
-		analyzer.causals[symbol] = NewCausal(symbol, analyzer.uiHub)
+		analyzer.causals[symbol] = NewCausal(symbol)
 	}
 
 	return slot, true
@@ -205,10 +216,9 @@ func (analyzer *Analyzer) handle(
 	symbol string,
 	thesis *types.Thesis,
 	result manifold.ProcessResult,
-) {
-	if result.StateProduced {
-		analyzer.publish(result.State)
-	}
+) (*ResonanceOutcome, *CausalOutcome) {
+	var resonanceOutcome *ResonanceOutcome
+	var causalOutcome *CausalOutcome
 
 	if result.Forecast != nil {
 		thesis.Forecasts = append(thesis.Forecasts, *result.Forecast)
@@ -221,7 +231,7 @@ func (analyzer *Analyzer) handle(
 	}
 
 	if !result.GasReady {
-		return
+		return nil, nil
 	}
 
 	if !analyzer.replay.Record(
@@ -241,42 +251,29 @@ func (analyzer *Analyzer) handle(
 	}
 
 	if resonance := analyzer.resonances[symbol]; resonance != nil {
+		measurements, outcome := resonance.Update(result.State)
 		thesis.Measurements = append(
 			thesis.Measurements,
-			resonance.Update(result.State)...,
+			measurements...,
 		)
+
+		resonanceOutcome = outcome
 	}
 
 	if causal := analyzer.causals[symbol]; causal != nil {
-		hypothesis, produced, err := causal.Update(result.State)
+		hypothesis, outcome, err := causal.Update(result.State)
 
 		if err != nil {
 			errnie.Error(err)
-			return
+			return resonanceOutcome, nil
 		}
 
-		if produced {
+		if outcome != nil {
 			thesis.Hypotheses = append(thesis.Hypotheses, hypothesis)
 		}
-	}
-}
 
-/*
-publish emits the typed manifold state without remapping it into a UI DTO.
-The top-level key is only the websocket route used by the frontend store.
-*/
-func (analyzer *Analyzer) publish(state manifold.State) {
-	if analyzer.uiHub == nil {
-		return
+		causalOutcome = outcome
 	}
 
-	select {
-	case analyzer.uiHub <- datura.Map[any]{"manifold": state}.Marshal():
-	default:
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"logic analyzer: UI channel full while publishing manifold state",
-			nil,
-		))
-	}
+	return resonanceOutcome, causalOutcome
 }

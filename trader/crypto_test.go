@@ -18,14 +18,13 @@ func TestNewCrypto(t *testing.T) {
 	Convey("Given NewCrypto wiring", t, func() {
 		ctx := context.Background()
 		booter := system.NewBooter(ctx, nil)
-		analyzer := logic.NewAnalyzer(booter, nil)
+		analyzer := logic.NewAnalyzer(booter)
 		planner := strategy.NewPlanner(ctx, nil, nil, analyzer)
 
 		Convey("When the runtime is constructed", func() {
 			crypto, err := NewCrypto(
 				ctx,
 				booter,
-				nil,
 				nil,
 				nil,
 				nil,
@@ -49,7 +48,7 @@ func TestCryptoRun(t *testing.T) {
 		ctx := context.Background()
 		channel := make(chan []byte, 8)
 		booter := system.NewBooter(ctx, channel)
-		analyzer := logic.NewAnalyzer(booter, channel)
+		analyzer := logic.NewAnalyzer(booter)
 		planner := strategy.NewPlanner(ctx, channel, nil, analyzer)
 		desk := broker.NewDesk(nil, nil, nil, channel)
 
@@ -60,7 +59,6 @@ func TestCryptoRun(t *testing.T) {
 			nil,
 			nil,
 			desk,
-			channel,
 			nil,
 			analyzer,
 			planner,

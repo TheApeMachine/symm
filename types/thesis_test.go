@@ -9,6 +9,17 @@ import (
 )
 
 func TestThesisPublish(t *testing.T) {
+	Convey("Given a thesis without publishable tick evidence", t, func() {
+		uiHub := make(chan []byte, 1)
+		thesis := NewThesis(uiHub)
+
+		thesis.Publish()
+
+		Convey("Then it does not consume UI capacity with an empty frame", func() {
+			So(len(uiHub), ShouldEqual, 0)
+		})
+	})
+
 	Convey("Given a thesis carrying signal measurements and logic results", t, func() {
 		uiHub := make(chan []byte, 1)
 		thesis := NewThesis(uiHub)
@@ -48,6 +59,22 @@ func TestThesisPublish(t *testing.T) {
 			})
 		})
 	})
+}
+
+func BenchmarkThesisPublish(b *testing.B) {
+	uiHub := make(chan []byte, 1)
+	thesis := NewThesis(uiHub)
+	thesis.Measurements = append(thesis.Measurements, &Measurement{
+		Source: SourcePumpDump, Metric: MetricStrength,
+		Symbol: "BTC/USD", At: time.Unix(1, 0), Raw: 0.7,
+	})
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		thesis.Publish()
+		<-uiHub
+	}
 }
 
 func BenchmarkThesisAbsorb(b *testing.B) {
