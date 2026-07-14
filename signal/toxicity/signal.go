@@ -30,7 +30,7 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 		ctx:        ctx,
 		cancel:     cancel,
 		trades:     NewTrade(ctx, api),
-		level3:     NewLevel3(ctx, api),
+		level3:     NewLevel3(api),
 		priorTouch: map[string]touchSnapshot{},
 	}
 }
@@ -95,7 +95,6 @@ func (signal *Signal) Measure(
 ) *types.Thesis {
 	trades := signal.trades.cache
 	books := signal.level3.Books()
-	level3Rows := signal.level3.Rows()
 	evidence := map[string]*symbolEvidence{}
 
 	for _, trade := range trades {
@@ -301,10 +300,6 @@ func (signal *Signal) Measure(
 	thesis.Signals.Store("trades", trades)
 	thesis.Signals.Store("books", books)
 
-	if len(level3Rows) > 0 {
-		thesis.Signals.Store("level3", level3Rows)
-	}
-
 	thesis.Measurements = append(thesis.Measurements, out...)
 
 	return thesis
@@ -466,6 +461,5 @@ active market-data producers.
 */
 func (signal *Signal) Close() error {
 	signal.cancel()
-
 	return nil
 }

@@ -2,11 +2,7 @@ package manifold
 
 import (
 	"sort"
-	"strings"
 	"time"
-
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
 )
 
 /*
@@ -16,13 +12,7 @@ type InvalidReason string
 
 const (
 	Valid            InvalidReason = ""
-	ChecksumFailed   InvalidReason = "checksum_failed"
-	SequenceGap      InvalidReason = "sequence_gap"
-	UnknownEvent     InvalidReason = "unknown_event"
-	MissingOrder     InvalidReason = "missing_order"
-	DuplicateOrder   InvalidReason = "duplicate_order"
 	NonPositiveMid   InvalidReason = "non_positive_mid"
-	StaleSnapshot    InvalidReason = "stale_snapshot"
 	UnmappedCarriers InvalidReason = "unmapped_carriers"
 	SolverFailed     InvalidReason = "solver_failed"
 	BookInvalid      InvalidReason = "book_invalid"
@@ -31,66 +21,87 @@ const (
 )
 
 /*
-Population owns the per-symbol order registry and exact quantity accounting.
+Population owns the persistent solver carriers derived from one SDK book. It
+retains only state the SDK book does not provide: prior coordinates, lifetime
+history, and quantity accounting across observations.
 */
 type Population struct {
 	symbol      string
-	depth       int
+	initialized bool
 	orders      map[string]*PhysicalOrder
 	accounting  PopulationAccounting
 	lifetime    *LifetimeEstimator
-	priceLevels []float64
-	seenPrices  map[float64]struct{}
 	epoch       uint64
 	invalid     InvalidReason
 	lastAt      time.Time
 }
 
-func NewPopulation(symbol string, lifetime *LifetimeEstimator, depth int) *Population {
+/*
+NewPopulation creates the carrier population for one market symbol.
+*/
+func NewPopulation(symbol string, lifetime *LifetimeEstimator) *Population {
 	return &Population{
-		symbol:      symbol,
-		depth:       depth,
-		orders:      map[string]*PhysicalOrder{},
-		lifetime:    lifetime,
-		priceLevels: make([]float64, 0, depth+1),
-		seenPrices:  make(map[float64]struct{}, depth+1),
+		symbol:   symbol,
+		orders:   make(map[string]*PhysicalOrder),
+		lifetime: lifetime,
 	}
 }
 
+/*
+Symbol returns the market owned by this population.
+*/
 func (population *Population) Symbol() string {
 	return population.symbol
 }
 
+/*
+Epoch returns the last field epoch begun from this population.
+*/
 func (population *Population) Epoch() uint64 {
 	return population.epoch
 }
 
 /*
-BeginEpoch freezes the latest fully applied population for one field advance.
-Multiple L3 rows may be coalesced before this boundary, but every produced
-manifold state receives exactly one new population epoch.
+BeginEpoch identifies one immutable field advance from the current carriers.
 */
 func (population *Population) BeginEpoch() uint64 {
 	population.epoch++
+
 	return population.epoch
 }
 
+/*
+InvalidReason returns the current reason field advancement is blocked.
+*/
 func (population *Population) InvalidReason() InvalidReason {
 	return population.invalid
 }
 
+/*
+LastAt returns the latest event time retained from the SDK book.
+*/
 func (population *Population) LastAt() time.Time {
 	return population.lastAt
 }
 
+/*
+Ready reports whether the current carriers are valid for field advancement.
+*/
 func (population *Population) Ready() bool {
-	return population.invalid == ""
+	return population.invalid == Valid
 }
 
+/*
+Accounting returns the exact visible-quantity ledger for the current carriers.
+*/
 func (population *Population) Accounting() PopulationAccounting {
 	return population.accounting
 }
 
+/*
+Orders returns carriers in stable identity order so repeated field advances are
+deterministic even though the SDK stores price levels in maps.
+*/
 func (population *Population) Orders() []*PhysicalOrder {
 	orderIDs := make([]string, 0, len(population.orders))
 
@@ -99,7 +110,6 @@ func (population *Population) Orders() []*PhysicalOrder {
 	}
 
 	sort.Strings(orderIDs)
-
 	orders := make([]*PhysicalOrder, 0, len(orderIDs))
 
 	for _, orderID := range orderIDs {
@@ -109,253 +119,9 @@ func (population *Population) Orders() []*PhysicalOrder {
 	return orders
 }
 
-func (population *Population) Apply(row kraken.Level3Data) {
-	snapshot := strings.EqualFold(row.Type, "snapshot")
-
-	if snapshot {
-		population.resetSnapshot(row.Timestamp)
-	}
-
-	if population.invalid != "" {
-		return
-	}
-
-	if !row.Timestamp.IsZero() {
-		population.lastAt = row.Timestamp
-	}
-
-	valid := population.applySide(row.Bids, OrderSideBid, row.Type) &&
-		population.applySide(row.Asks, OrderSideAsk, row.Type)
-
-	if !valid {
-		if population.invalid == "" {
-			population.invalidate(MissingOrder)
-		}
-
-		return
-	}
-
-	population.truncate()
-
-	if snapshot && population.lifetime != nil &&
-		!population.lifetime.Ready() {
-		for _, order := range population.orders {
-			population.lifetime.Censor(row.Timestamp.Sub(order.AddedAt))
-		}
-	}
-
-}
-
 /*
-TopOfBook derives the executable boundary from the exact visible order
-population so field coordinates use the same orders they evolve.
+invalidate prevents field advancement until a valid SDK book is observed.
 */
-func (population *Population) TopOfBook() (float64, float64, float64, float64, bool) {
-	bestBid := 0.0
-	bestAsk := 0.0
-	bestBidQuantity := 0.0
-	bestAskQuantity := 0.0
-
-	for _, order := range population.orders {
-		if order.LimitPrice <= 0 || order.Quantity <= 0 {
-			continue
-		}
-
-		switch {
-		case order.Side == OrderSideBid && order.LimitPrice > bestBid:
-			bestBid = order.LimitPrice
-			bestBidQuantity = order.Quantity
-		case order.Side == OrderSideBid && order.LimitPrice == bestBid:
-			bestBidQuantity += order.Quantity
-		case order.Side == OrderSideAsk && (bestAsk == 0 || order.LimitPrice < bestAsk):
-			bestAsk = order.LimitPrice
-			bestAskQuantity = order.Quantity
-		case order.Side == OrderSideAsk && order.LimitPrice == bestAsk:
-			bestAskQuantity += order.Quantity
-		}
-	}
-
-	return bestBid, bestAsk, bestBidQuantity, bestAskQuantity,
-		bestBid > 0 && bestAsk > bestBid
-}
-
-/*
-truncate mirrors Kraken's subscribed price-level boundary after a complete row.
-Orders leaving visibility are not cancellations or fills; ScopedOut records the
-quantity boundary needed to reconcile the visible population ledger.
-*/
-func (population *Population) truncate() {
-	population.truncateSide(OrderSideBid)
-	population.truncateSide(OrderSideAsk)
-}
-
-func (population *Population) truncateSide(side OrderSide) {
-	prices := population.priceLevels[:0]
-	clear(population.seenPrices)
-
-	for _, order := range population.orders {
-		if order.Side != side {
-			continue
-		}
-
-		if _, exists := population.seenPrices[order.LimitPrice]; exists {
-			continue
-		}
-
-		population.seenPrices[order.LimitPrice] = struct{}{}
-		prices = append(prices, order.LimitPrice)
-	}
-
-	population.priceLevels = prices
-
-	if population.depth <= 0 || len(prices) <= population.depth {
-		return
-	}
-
-	sort.Float64s(prices)
-	boundary := prices[population.depth-1]
-
-	if side == OrderSideBid {
-		boundary = prices[len(prices)-population.depth]
-	}
-
-	for orderID, order := range population.orders {
-		outside := side == OrderSideBid && order.Side == side && order.LimitPrice < boundary
-		outside = outside || side == OrderSideAsk && order.Side == side && order.LimitPrice > boundary
-
-		if !outside {
-			continue
-		}
-
-		population.accounting.recordScopedOut(order.Quantity)
-		delete(population.orders, orderID)
-	}
-}
-
-func (population *Population) resetSnapshot(at time.Time) {
-	if population.lifetime != nil && !at.IsZero() {
-		for _, order := range population.orders {
-			population.lifetime.Censor(at.Sub(order.AddedAt))
-		}
-	}
-
-	population.orders = map[string]*PhysicalOrder{}
-	population.accounting = PopulationAccounting{}
-	population.invalid = ""
-}
-
-func (population *Population) applySide(
-	orders []kraken.Level3Order,
-	side OrderSide,
-	frameType string,
-) bool {
-	if strings.EqualFold(frameType, "snapshot") {
-		for _, wire := range orders {
-			if !population.insert(side, wire, wire.OrderQty) {
-				return false
-			}
-
-			population.accounting.recordInitial(wire.OrderQty)
-		}
-
-		return true
-	}
-
-	for _, wire := range orders {
-		if !population.applyEvent(side, wire) {
-			return false
-		}
-	}
-
-	return true
-}
-
-func (population *Population) applyEvent(side OrderSide, wire kraken.Level3Order) bool {
-	switch wire.Event {
-	case "add":
-		if _, exists := population.orders[wire.OrderID]; exists {
-			population.invalidate(DuplicateOrder)
-			return false
-		}
-
-		if !population.insert(side, wire, wire.OrderQty) {
-			return false
-		}
-
-		population.accounting.recordAdded(wire.OrderQty)
-		return true
-	case "modify":
-		existing, ok := population.orders[wire.OrderID]
-
-		if !ok {
-			return false
-		}
-
-		population.accounting.recordAmended(existing.Quantity, wire.OrderQty)
-		existing.LimitPrice = wire.LimitPrice
-		existing.Quantity = wire.OrderQty
-		existing.UpdatedAt = wire.Timestamp
-		population.orders[wire.OrderID] = existing
-
-		return true
-	case "delete":
-		existing, ok := population.orders[wire.OrderID]
-
-		if !ok {
-			return false
-		}
-
-		if population.lifetime != nil {
-			at := wire.Timestamp
-
-			if at.IsZero() {
-				at = population.lastAt
-			}
-
-			population.lifetime.RecordCompleted(at.Sub(existing.AddedAt))
-		}
-
-		population.accounting.recordCancelled(existing.Quantity)
-		delete(population.orders, wire.OrderID)
-
-		return true
-	default:
-		population.invalidate(UnknownEvent)
-
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"logic manifold population: unknown level3 event",
-			nil,
-		))
-
-		return false
-	}
-}
-
-func (population *Population) insert(side OrderSide, wire kraken.Level3Order, quantity float64) bool {
-	if _, exists := population.orders[wire.OrderID]; exists {
-		population.invalidate(DuplicateOrder)
-		return false
-	}
-
-	at := wire.Timestamp
-
-	if at.IsZero() {
-		at = population.lastAt
-	}
-
-	population.orders[wire.OrderID] = &PhysicalOrder{
-		OrderID:    wire.OrderID,
-		Side:       side,
-		LimitPrice: wire.LimitPrice,
-		Quantity:   quantity,
-		AddedAt:    at,
-		UpdatedAt:  at,
-	}
-
-	return true
-}
-
 func (population *Population) invalidate(reason InvalidReason) {
 	population.invalid = reason
 }

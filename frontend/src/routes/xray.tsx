@@ -8,6 +8,7 @@ import {
 	useRef,
 } from "react";
 import { appStore } from "#/collections/app";
+import type { CircularBuffer } from "#/collections/circular";
 import {
 	type CognitiveReading,
 	cognitiveScopes,
@@ -16,11 +17,12 @@ import {
 import { instrumentsStore } from "#/collections/instruments";
 import { manifoldStore } from "#/collections/manifold";
 import {
-	flattenMeasurementBuffer,
 	type Measurement,
+	type MeasurementEpoch,
 	measurementEpochs,
 	measurementRaw,
 	measurementsStore,
+	measurementTickCount,
 } from "#/collections/measurements";
 import { resonanceStore } from "#/collections/resonance";
 import { terminalStore } from "#/collections/terminal";
@@ -30,6 +32,11 @@ import {
 	resizeCanvas,
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
+import {
+	hawkesCurveFromBuffer,
+	hawkesIntensityAt,
+	latestHawkesRaw,
+} from "#/components/terminal/hawkes-curve";
 import { XrayLayerRows } from "#/components/terminal/xray-layers";
 import { Meter } from "@/components/ui/meter";
 
@@ -249,6 +256,38 @@ export const hawkesSamplesFromFrames = (
 		})
 		.slice(-limit);
 
+/*
+hawkesSamplesFromBuffer maps one intensity sample per retained observation
+epoch so distinct market events remain distinct chart samples.
+*/
+export const hawkesSamplesFromBuffer = (
+	buffer: CircularBuffer<MeasurementEpoch> | undefined,
+	symbol: string,
+	limit = 220,
+): HawkesSample[] => {
+	if (buffer === undefined) {
+		return [];
+	}
+
+	return buffer
+		.values()
+		.flatMap((epoch, index) => {
+			const sample = hawkesSample(epoch.readings, symbol);
+
+			if (sample === null) {
+				return [];
+			}
+
+			return [
+				{
+					...sample,
+					key: `${sample.key}:${epoch.publishedAt}:${index}`,
+				},
+			];
+		})
+		.slice(-limit);
+};
+
 export const hawkesMetricsFromFrames = (
 	frames: Measurement[],
 ): HawkesMetrics => {
@@ -257,6 +296,33 @@ export const hawkesMetricsFromFrames = (
 	return epoch === undefined
 		? legacyHawkesMetrics(undefined)
 		: hawkesMetrics(epoch);
+};
+
+/*
+hawkesMetricsFromBuffer reads current intensity while retaining the fitted
+parameters emitted at the start of the active model epoch.
+*/
+export const hawkesMetricsFromBuffer = (
+	buffer: CircularBuffer<MeasurementEpoch> | undefined,
+): HawkesMetrics => {
+	const readings = buffer?.values().at(-1)?.readings;
+
+	if (readings === undefined) {
+		return legacyHawkesMetrics(undefined);
+	}
+
+	const current = hawkesMetrics(readings);
+	const radius = latestHawkesRaw(buffer, "spectral_radius");
+
+	return {
+		...current,
+		branching: radius,
+		radius,
+		exo: sumValues(
+			latestHawkesRaw(buffer, "baseline_intensity", "buy"),
+			latestHawkesRaw(buffer, "baseline_intensity", "sell"),
+		),
+	};
 };
 
 export const latentPointsFromFrame = (
@@ -691,24 +757,26 @@ const LatentScatter = ({
 };
 
 const HawkesIntensityPanel = ({
-	frames,
-	activeSymbol,
+	buffer,
 	metrics,
 	cascade,
 }: {
-	frames: Measurement[];
-	activeSymbol: string;
+	buffer: CircularBuffer<MeasurementEpoch> | undefined;
 	metrics: HawkesMetrics;
 	cascade: { label: string; color: string };
 }) => {
-	const samples = useMemo(
-		() => hawkesSamplesFromFrames(frames, activeSymbol),
-		[activeSymbol, frames],
-	);
+	const version = useSelector(measurementsStore, (state) => state.version);
+	void version;
+	const segments = hawkesCurveFromBuffer(buffer);
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
-			if (samples.length === 0) {
-				drawWaiting(context, width, height, "waiting for hawkes intensity");
+			if (segments.length === 0) {
+				drawWaiting(
+					context,
+					width,
+					height,
+					"waiting for fitted hawkes intensity",
+				);
 				return;
 			}
 
@@ -720,62 +788,93 @@ const HawkesIntensityPanel = ({
 			const padBottom = 28;
 			const innerWidth = Math.max(1, width - padX * 2);
 			const innerHeight = Math.max(1, height - padTop - padBottom);
+			const first = segments[0];
+			const latest = segments.at(-1);
+
+			if (first === undefined || latest === undefined) {
+				return;
+			}
+
+			const fromAt = first.fromAt;
+			const throughAt = latest.throughAt;
+			const duration = throughAt - fromAt;
 			const maxIntensity = Math.max(
-				1,
-				...samples.map((sample) => sample.intensity),
+				...segments.flatMap((segment) => [
+					segment.beforeArrival,
+					segment.afterArrival,
+					segment.throughIntensity,
+				]),
 			);
-			const xFor = (index: number): number =>
-				padX +
-				(samples.length <= 1
-					? innerWidth
-					: (index / (samples.length - 1)) * innerWidth);
+			const xFor = (at: number): number =>
+				padX + ((at - fromAt) / duration) * innerWidth;
 			const yFor = (intensity: number): number =>
 				padTop + (1 - intensity / maxIntensity) * innerHeight;
+			const trace = (): void => {
+				for (const segment of segments) {
+					const fromX = xFor(segment.fromAt);
+					const throughX = xFor(segment.throughAt);
+					context.lineTo(fromX, yFor(segment.beforeArrival));
+					context.lineTo(fromX, yFor(segment.afterArrival));
+
+					for (
+						let pixel = Math.floor(fromX) + 1;
+						pixel < throughX;
+						pixel += 1
+					) {
+						const at =
+							segment.fromAt +
+							((pixel - fromX) / (throughX - fromX)) *
+								(segment.throughAt - segment.fromAt);
+						context.lineTo(pixel, yFor(hawkesIntensityAt(segment, at)));
+					}
+
+					context.lineTo(throughX, yFor(segment.throughIntensity));
+				}
+			};
 
 			context.fillStyle = "rgba(232, 163, 61, 0.18)";
 			context.beginPath();
 			context.moveTo(padX, height - padBottom);
-			samples.forEach((sample, index) => {
-				context.lineTo(xFor(index), yFor(sample.intensity));
-			});
+			context.lineTo(xFor(first.fromAt), yFor(first.beforeArrival));
+			trace();
 			context.lineTo(width - padX, height - padBottom);
 			context.closePath();
 			context.fill();
 
+			context.strokeStyle = "rgba(232, 163, 61, 0.28)";
+			context.setLineDash([4, 5]);
+			context.beginPath();
+			context.moveTo(padX, yFor(latest.baseline));
+			context.lineTo(width - padX, yFor(latest.baseline));
+			context.stroke();
+			context.setLineDash([]);
+
 			context.strokeStyle = TERMINAL_COLORS.amber;
 			context.lineWidth = 1.8;
 			context.beginPath();
-			samples.forEach((sample, index) => {
-				const x = xFor(index);
-				const y = yFor(sample.intensity);
-
-				if (index === 0) {
-					context.moveTo(x, y);
-					return;
-				}
-
-				context.lineTo(x, y);
-			});
+			context.moveTo(xFor(first.fromAt), yFor(first.beforeArrival));
+			trace();
 			context.stroke();
 
-			const latest = samples[samples.length - 1];
-			if (latest !== undefined) {
-				const x = xFor(samples.length - 1);
-				const y = yFor(latest.intensity);
+			const x = xFor(latest.throughAt);
+			const y = yFor(latest.throughIntensity);
 
-				context.fillStyle = TERMINAL_COLORS.amber;
-				context.shadowBlur = 10;
-				context.shadowColor = TERMINAL_COLORS.amber;
-				context.beginPath();
-				context.arc(x, y, 3.5, 0, Math.PI * 2);
-				context.fill();
-				context.shadowBlur = 0;
-				context.fillStyle = TERMINAL_COLORS.muted;
-				context.font = "10px JetBrains Mono, monospace";
-				context.fillText(`λ ${latest.intensity.toFixed(2)}`, 18, height - 9);
-			}
+			context.fillStyle = TERMINAL_COLORS.amber;
+			context.shadowBlur = 10;
+			context.shadowColor = TERMINAL_COLORS.amber;
+			context.beginPath();
+			context.arc(x, y, 3.5, 0, Math.PI * 2);
+			context.fill();
+			context.shadowBlur = 0;
+			context.fillStyle = TERMINAL_COLORS.muted;
+			context.font = "10px JetBrains Mono, monospace";
+			context.fillText(
+				`λ ${latest.throughIntensity.toFixed(2)}`,
+				18,
+				height - 9,
+			);
 		},
-		[samples],
+		[segments],
 	);
 
 	return (
@@ -848,9 +947,7 @@ const RouteComponent = () => {
 	const resonance = resonanceState[activeSymbol]?.values().at(-1) ?? null;
 	const manifold = manifoldState[activeSymbol]?.values().at(-1) ?? null;
 	const layers = xrayLayersFromManifold(manifold, resonance);
-	const hawkesHistory = flattenMeasurementBuffer(
-		readings.measurements[activeSymbol]?.hawkes,
-	);
+	const hawkesBuffer = readings.measurements[activeSymbol]?.hawkes;
 	const symbols = [
 		...new Set([
 			activeSymbol,
@@ -867,7 +964,7 @@ const RouteComponent = () => {
 		[resonanceState],
 	);
 	const cognitive = cognitiveForSymbol(cognitiveReadings, activeSymbol);
-	const hawkesNow = hawkesMetricsFromFrames(hawkesHistory);
+	const hawkesNow = hawkesMetricsFromBuffer(hawkesBuffer);
 	const cascade = cascadeLabel(hawkesNow.branching);
 	const reading = manifold;
 	const coherenceMag2 = finite(reading?.coherenceMag2);
@@ -954,8 +1051,7 @@ const RouteComponent = () => {
 						</div>
 					</div>
 					<HawkesIntensityPanel
-						frames={hawkesHistory}
-						activeSymbol={activeSymbol}
+						buffer={hawkesBuffer}
 						metrics={hawkesNow}
 						cascade={cascade}
 					/>
@@ -996,7 +1092,11 @@ const RouteComponent = () => {
 						/>
 						<RowFact
 							label="flow events"
-							value={hawkesHistory.length === 0 ? "—" : hawkesHistory.length}
+							value={
+								measurementTickCount(hawkesBuffer) === 0
+									? "—"
+									: measurementTickCount(hawkesBuffer)
+							}
 						/>
 						<RowFact
 							label="branching η"

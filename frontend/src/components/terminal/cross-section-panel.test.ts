@@ -2,18 +2,35 @@ import { describe, expect, it } from "vitest";
 import {
 	compactNumber,
 	crossSectionReadoutFromFrame,
+	retainCrossSectionReadout,
 } from "./cross-section-panel";
 
 describe("crossSectionReadoutFromFrame", () => {
 	it("reduces a backend CrossSectionSummary frame into display-ready fields", () => {
 		const readout = crossSectionReadoutFromFrame({
-			symbols: ["BTC/USD", "ETH/USD", "SOL/USD"],
+			metrics: [
+				{
+					symbol: "BTC/USD",
+					volume: 10,
+					quoteNotional: 1000,
+					executableDepth: 5,
+				},
+				{
+					symbol: "ETH/USD",
+					volume: 20,
+					quoteNotional: 3000,
+					executableDepth: 15,
+				},
+				{
+					symbol: "SOL/USD",
+					volume: 30,
+					quoteNotional: 2000,
+					executableDepth: 10,
+				},
+			],
 			leader: "BTC/USD",
 			leadershipThreshold: 0.018,
 			breadth: 0.6667,
-			volumes: [10, 20, 30],
-			quoteNotionals: [1000, 3000, 2000],
-			executableDepths: [5, 15, 10],
 		});
 
 		expect(readout.leader).toBe("BTC/USD");
@@ -35,14 +52,72 @@ describe("crossSectionReadoutFromFrame", () => {
 		expect(readout.medianVolume).toBe(0);
 	});
 
-	it("ignores non-numeric entries mixed into the arrays", () => {
+	it("ignores malformed metric rows while keeping valid peers", () => {
 		const readout = crossSectionReadoutFromFrame({
-			symbols: ["BTC/USD", 42, null],
-			volumes: [10, Number.NaN, "20", 30],
+			metrics: [
+				{ symbol: "BTC/USD", volume: 10 },
+				{ symbol: "", volume: 99 },
+				{ volume: 40 },
+				{ symbol: "ETH/USD", volume: 30 },
+			],
 		});
 
-		expect(readout.symbolCount).toBe(1);
+		expect(readout.symbolCount).toBe(2);
 		expect(readout.medianVolume).toBe(20);
+	});
+
+	it("still supports legacy flat-array diagnostics frames", () => {
+		const readout = crossSectionReadoutFromFrame({
+			symbols: ["BTC/USD", "ETH/USD"],
+			volumes: [10, 30],
+			quoteNotionals: [1000, 3000],
+			executableDepths: [5, 15],
+		});
+
+		expect(readout.symbolCount).toBe(2);
+		expect(readout.medianVolume).toBe(20);
+		expect(readout.medianQuoteNotional).toBe(2000);
+		expect(readout.medianExecutableDepth).toBe(10);
+	});
+});
+
+describe("retainCrossSectionReadout", () => {
+	const populated = crossSectionReadoutFromFrame({
+		metrics: [
+			{
+				symbol: "BTC/USD",
+				volume: 10,
+				quoteNotional: 1000,
+				executableDepth: 5,
+			},
+			{
+				symbol: "ETH/USD",
+				volume: 30,
+				quoteNotional: 3000,
+				executableDepth: 15,
+			},
+		],
+		leader: "BTC/USD",
+		leadershipThreshold: 0.02,
+		breadth: 0.5,
+	});
+
+	it("keeps the previous snapshot when the next frame has no peer metrics", () => {
+		const empty = crossSectionReadoutFromFrame({
+			metrics: [],
+			leader: "",
+			leadershipThreshold: 0,
+			breadth: 0,
+		});
+
+		expect(retainCrossSectionReadout(populated, empty)).toEqual(populated);
+	});
+
+	it("accepts the first populated frame after an empty startup frame", () => {
+		const empty = crossSectionReadoutFromFrame(null);
+
+		expect(retainCrossSectionReadout(null, empty).symbolCount).toBe(0);
+		expect(retainCrossSectionReadout(empty, populated)).toEqual(populated);
 	});
 });
 

@@ -74,12 +74,12 @@ Metric and side alone are insufficient because cross-section signals can emit
 the same metric twice per tick from different subjects or streams.
 */
 export const measurementIdentity = (measurement: Measurement): string =>
-	[
-		measurement.metric ?? "",
-		measurement.side ?? "",
-		measurement.subject ?? "",
-		measurement.stream ?? "",
-	].join(":");
+	JSON.stringify([
+		measurement.metric ?? null,
+		measurement.side ?? null,
+		measurement.subject ?? null,
+		measurement.stream ?? null,
+	]);
 
 /*
 dedupeEpoch keeps the last record for each measurement identity within one

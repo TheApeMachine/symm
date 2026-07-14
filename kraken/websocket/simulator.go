@@ -26,22 +26,26 @@ var (
 )
 
 /*
-LatencySimulator is the shared latency pool for public and private transports.
+NewLatencySimulator is the shared latency pool for public and private transports.
 */
 func NewLatencySimulator(booter *system.Booter) *Simulator {
 	latencySimulatorOnce.Do(func() {
 		latencySimulator = NewSimulator()
-		latencySimulator.Initialize()
+		if err := latencySimulator.Initialize(); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal, err.Error(), err,
+			))
+		}
 	})
 
 	return latencySimulator
 }
 
 /*
-Simulator adds more realistic behavior to the paper emulation,
+Simulator adds more realistic behavior to the paper emulation
 by recording real latencies and replaying them when the paper
 emulation is used. This allows for a much more realistic
-simulation of the market, and avoids the optimism bias.
+simulation of the market and avoids the optimism bias.
 */
 type Simulator struct {
 	booter        *system.Booter
@@ -104,17 +108,17 @@ func (simulator *Simulator) Do(latencyType LatencyType, fn func()) {
 
 	var wait time.Duration
 
-	if latencyRing.Value != nil {
+	if latencyRing != nil && latencyRing.Value != nil {
 		wait = latencyRing.Value.(time.Duration)
-	}
 
-	switch latencyType {
-	case WEBSOCKET:
-		simulator.wsLatencies = latencyRing.Next()
-	case REST:
-		simulator.restLatencies = latencyRing.Next()
-	case FILL:
-		simulator.fillLatencies = latencyRing.Next()
+		switch latencyType {
+		case WEBSOCKET:
+			simulator.wsLatencies = latencyRing.Next()
+		case REST:
+			simulator.restLatencies = latencyRing.Next()
+		case FILL:
+			simulator.fillLatencies = latencyRing.Next()
+		}
 	}
 
 	time.Sleep(wait)

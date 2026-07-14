@@ -139,6 +139,8 @@ func (crypto *Crypto) trade(thesis *types.Thesis) {
 			continue
 		}
 
+		thesis.AbsorbFindings(lifecycle)
+
 		if err := crypto.desk.Finalize(symbol, lifecycle); err != nil {
 			errnie.Error(err)
 		}

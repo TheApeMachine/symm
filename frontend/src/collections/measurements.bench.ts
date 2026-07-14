@@ -6,6 +6,7 @@ import {
 	headlineSeriesFromBuffer,
 	measurementEpochs,
 	measurementRaw,
+	measurementsStore,
 } from "./measurements";
 
 const identities = [
@@ -63,14 +64,16 @@ describe("measurement epoch readout", () => {
 		measurementRaw(epochs.at(-1) ?? [], "conditional_intensity", "buy");
 	});
 
-	bench("builds one headline sample per retained publish tick", () => {
+	bench("builds one headline sample per retained observation epoch", () => {
 		const buffer = Circular<MeasurementEpoch>(50);
+		const baseAt = Date.parse("2026-07-12T10:00:00Z");
 
 		for (let tick = 0; tick < 50; tick += 1) {
-			const at = "2026-07-12T10:00:00Z";
+			const at = new Date(baseAt + tick * 1000).toISOString();
 
 			buffer.push({
 				at,
+				publishedAt: at,
 				readings: [
 					{
 						source: "leadlag",
@@ -90,4 +93,28 @@ describe("measurement epoch readout", () => {
 
 		headlineSeriesFromBuffer(buffer, "strength");
 	});
+
+	bench(
+		"ingests one cross-section publish batch without cloning the symbol map",
+		() => {
+			const at = "2026-07-14T16:25:24Z";
+			const batch = Array.from({ length: 339 }, (_, index) => ({
+				source: "liquidity",
+				metric: "strength",
+				symbol: `SYM${index}/USD`,
+				stream: "liquidity",
+				at,
+				raw: index / 339,
+				normalized: index / 339,
+				uncertainty: null,
+				validity: {
+					state: "valid" as const,
+					readiness: "observation" as const,
+				},
+				scale: { kind: "observation_window" as const, from: at, through: at },
+			}));
+
+			measurementsStore.actions.updateFrame(batch);
+		},
+	);
 });

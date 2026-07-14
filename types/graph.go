@@ -1,12 +1,11 @@
 package types
 
 import (
-	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"gonum.org/v1/gonum/graph"
 	"gonum.org/v1/gonum/graph/multi"
 )
 
@@ -28,76 +27,97 @@ const (
 )
 
 /*
-Node is one typed measurement reference retained for graph provenance.
+Node is a Gonum node carrying one immutable measurement as graph evidence.
 */
 type Node struct {
+	id          int64
 	Key         string
 	Measurement Measurement
 }
 
 /*
-Edge records a directed relationship with the evaluation time and the evidence
-interval that justified it.
+ID returns the Gonum identity allocated by the graph that owns the node.
+*/
+func (node *Node) ID() int64 {
+	return node.id
+}
+
+/*
+Edge is a Gonum line carrying the relationship and temporal provenance that
+connect two measurement nodes.
 */
 type Edge struct {
+	line         graph.Line
 	Type         EdgeType
-	From         string
-	To           string
 	At           time.Time
 	ObservedFrom time.Time
 }
 
 /*
-Graph holds measurement nodes and their relationships for one symbol epoch.
+From returns the source evidence node for this directed relationship.
+*/
+func (edge *Edge) From() graph.Node {
+	return edge.line.From()
+}
+
+/*
+To returns the destination evidence node for this directed relationship.
+*/
+func (edge *Edge) To() graph.Node {
+	return edge.line.To()
+}
+
+/*
+ReversedLine returns the same evidence relationship with its direction reversed.
+*/
+func (edge *Edge) ReversedLine() graph.Line {
+	reversed := *edge
+	reversed.line = edge.line.ReversedLine()
+
+	return &reversed
+}
+
+/*
+ID returns the Gonum identity allocated for this line between its endpoints.
+*/
+func (edge *Edge) ID() int64 {
+	return edge.line.ID()
+}
+
+/*
+Graph embeds Gonum's directed multigraph as the sole topology for one symbol.
+The wrapper only supplies the domain operations used to compose evidence.
 */
 type Graph struct {
-	Symbol string
-	At     time.Time
-	Nodes  []Node
-	Edges  []Edge
-	graph  *multi.DirectedGraph
-	nodes  map[string]int64
-	lines  map[[3]int64]Edge
+	*multi.DirectedGraph
+	Symbol  string
+	At      time.Time
+	nodeIDs map[string]int64
 }
 
 /*
-edgeEqual reports whether two edges carry the same relationship and temporal
-provenance. time.Time fields use Equal so duplicate detection survives
-monotonic-clock differences between stored and incoming timestamps.
-*/
-func edgeEqual(left, right Edge) bool {
-	return left.Type == right.Type &&
-		left.From == right.From &&
-		left.To == right.To &&
-		left.At.Equal(right.At) &&
-		left.ObservedFrom.Equal(right.ObservedFrom)
-}
-
-/*
-NewGraph starts an empty relationship graph for one symbol.
+NewGraph starts an empty Gonum relationship graph for one symbol.
 */
 func NewGraph(symbol string) *Graph {
 	return &Graph{
-		Symbol: symbol,
-		Nodes:  []Node{},
-		Edges:  []Edge{},
-		graph:  multi.NewDirectedGraph(),
-		nodes:  map[string]int64{},
-		lines:  map[[3]int64]Edge{},
+		DirectedGraph: multi.NewDirectedGraph(),
+		Symbol:        symbol,
+		nodeIDs:       make(map[string]int64),
 	}
 }
 
 /*
-AddNode retains one measurement when it belongs to this graph's symbol.
+AddNode retains one immutable measurement as a Gonum node when it belongs to
+this graph's symbol and is not already present.
 */
-func (graph *Graph) AddNode(measurement *Measurement) bool {
-	if measurement == nil || measurement.Symbol != graph.Symbol {
+func (evidenceGraph *Graph) AddNode(measurement *Measurement) bool {
+	if measurement == nil || measurement.Symbol != evidenceGraph.Symbol {
 		return false
 	}
 
-	key := measurementKey(measurement)
+	key := MeasurementKey(measurement)
 
-	if _, exists := graph.nodes[key]; exists {
+	if _, exists := evidenceGraph.nodeIDs[key]; exists {
 		return false
 	}
 
@@ -113,25 +133,24 @@ func (graph *Graph) AddNode(measurement *Measurement) bool {
 		retained.Uncertainty = &uncertainty
 	}
 
-	graph.Nodes = append(graph.Nodes, Node{
-		Key:         key,
-		Measurement: retained,
+	identity := evidenceGraph.NewNode().ID()
+	evidenceGraph.DirectedGraph.AddNode(&Node{
+		id: identity, Key: key, Measurement: retained,
 	})
-	topologyNode := graph.graph.NewNode()
-	graph.graph.AddNode(topologyNode)
-	graph.nodes[key] = topologyNode.ID()
+	evidenceGraph.nodeIDs[key] = identity
 
-	if graph.At.IsZero() || measurement.At.After(graph.At) {
-		graph.At = measurement.At
+	if evidenceGraph.At.IsZero() || measurement.At.After(evidenceGraph.At) {
+		evidenceGraph.At = measurement.At
 	}
 
 	return true
 }
 
 /*
-Relate appends one directed edge between existing node keys.
+Relate adds one typed Gonum line between existing measurement node keys while
+rejecting an equivalent relationship already present between those nodes.
 */
-func (graph *Graph) Relate(
+func (evidenceGraph *Graph) Relate(
 	fromKey string,
 	toKey string,
 	edgeType EdgeType,
@@ -142,228 +161,48 @@ func (graph *Graph) Relate(
 		return false
 	}
 
-	fromID, fromExists := graph.nodes[fromKey]
-	toID, toExists := graph.nodes[toKey]
+	from := evidenceGraph.node(fromKey)
+	to := evidenceGraph.node(toKey)
 
-	if !fromExists || !toExists {
+	if from == nil || to == nil {
 		return false
 	}
 
-	edge := Edge{
-		Type:         edgeType,
-		From:         fromKey,
-		To:           toKey,
-		At:           at,
-		ObservedFrom: observedFrom,
-	}
-
-	lines := graph.graph.Lines(fromID, toID)
+	lines := evidenceGraph.Lines(from.ID(), to.ID())
 
 	for lines.Next() {
-		if edgeEqual(graph.lines[[3]int64{fromID, toID, lines.Line().ID()}], edge) {
+		existing := lines.Line().(*Edge)
+
+		if existing.Type == edgeType && existing.At.Equal(at) &&
+			existing.ObservedFrom.Equal(observedFrom) {
 			return false
 		}
 	}
 
-	line := graph.graph.NewLine(graph.graph.Node(fromID), graph.graph.Node(toID))
-	graph.graph.SetLine(line)
-	graph.lines[[3]int64{fromID, toID, line.ID()}] = edge
-	graph.Edges = append(graph.Edges, edge)
+	line := evidenceGraph.NewLine(from, to)
+	evidenceGraph.SetLine(&Edge{
+		line: line, Type: edgeType, At: at, ObservedFrom: observedFrom,
+	})
 
-	if graph.At.IsZero() || at.After(graph.At) {
-		graph.At = at
+	if evidenceGraph.At.IsZero() || at.After(evidenceGraph.At) {
+		evidenceGraph.At = at
 	}
 
 	return true
 }
 
 /*
-Compose derives relationships between chronological neighbors of each shared
-observable. A neighbor chain preserves temporal order and conflict without
-materializing the redundant transitive closure of a busy event stream.
+node resolves one key through its Gonum node ID. The index contains identities
+only; Gonum remains the sole owner of node values and graph topology.
 */
-func (graph *Graph) Compose() {
-	observables := map[string][]Node{}
+func (evidenceGraph *Graph) node(key string) *Node {
+	identity, exists := evidenceGraph.nodeIDs[key]
 
-	for _, node := range graph.Nodes {
-		measurement := node.Measurement
-
-		if measurement.Metric == "" || measurement.Subject == "" {
-			continue
-		}
-
-		key := string(measurement.Metric) + "\x00" +
-			string(measurement.Subject) + "\x00" + string(measurement.Side)
-		observables[key] = append(observables[key], node)
+	if !exists {
+		return nil
 	}
 
-	for _, nodes := range observables {
-		sort.Slice(nodes, func(leftIndex, rightIndex int) bool {
-			left := nodes[leftIndex]
-			right := nodes[rightIndex]
-
-			if left.Measurement.At.Equal(right.Measurement.At) {
-				return left.Key < right.Key
-			}
-
-			return left.Measurement.At.Before(right.Measurement.At)
-		})
-
-		for index := 1; index < len(nodes); index++ {
-			graph.compose(nodes[index-1], nodes[index])
-		}
-	}
-}
-
-/*
-compose derives every direct relationship justified between two neighboring
-observations of the same metric, subject, and side.
-*/
-func (graph *Graph) compose(left, right Node) {
-	if left.Measurement.Validity.State != ValidityValid ||
-		right.Measurement.Validity.State != ValidityValid {
-		return
-	}
-
-	if !sameObservable(left.Measurement, right.Measurement) {
-		return
-	}
-
-	at, observedFrom := relationshipInterval(left.Measurement, right.Measurement)
-
-	if left.Measurement.Unit != right.Measurement.Unit ||
-		left.Measurement.Scale.Kind != right.Measurement.Scale.Kind {
-		graph.Relate(left.Key, right.Key, Incomparable, at, observedFrom)
-		return
-	}
-
-	graph.composeDirection(left, right, at, observedFrom)
-	graph.composeTime(left, right, at, observedFrom)
-}
-
-/*
-composeDirection preserves signed agreement or contradiction independently of
-the temporal relationship between the same observations.
-*/
-func (graph *Graph) composeDirection(
-	left, right Node, at, observedFrom time.Time,
-) {
-	leftValue := left.Measurement.Normalized
-	rightValue := right.Measurement.Normalized
-
-	if leftValue == nil || rightValue == nil || *leftValue == 0 || *rightValue == 0 {
-		return
-	}
-
-	if math.IsNaN(*leftValue) || math.IsInf(*leftValue, 0) ||
-		math.IsNaN(*rightValue) || math.IsInf(*rightValue, 0) {
-		return
-	}
-
-	from, to := chronologicalNodes(left, right)
-
-	if (*leftValue > 0) != (*rightValue > 0) {
-		graph.Relate(from.Key, to.Key, Contradicts, at, observedFrom)
-		return
-	}
-
-	graph.Relate(from.Key, to.Key, Supports, at, observedFrom)
-}
-
-/*
-composeTime records direct lead and lag edges when neighboring evidence
-intervals do not overlap.
-*/
-func (graph *Graph) composeTime(
-	left, right Node, at, observedFrom time.Time,
-) {
-	leftStart, leftEnd := evidenceInterval(left.Measurement)
-	rightStart, rightEnd := evidenceInterval(right.Measurement)
-
-	if leftEnd.Before(rightStart) {
-		graph.Relate(left.Key, right.Key, Leads, at, observedFrom)
-		graph.Relate(right.Key, left.Key, Lags, at, observedFrom)
-		graph.composeStale(left, right, at, observedFrom)
-		return
-	}
-
-	if rightEnd.Before(leftStart) {
-		graph.Relate(right.Key, left.Key, Leads, at, observedFrom)
-		graph.Relate(left.Key, right.Key, Lags, at, observedFrom)
-		graph.composeStale(right, left, at, observedFrom)
-	}
-}
-
-/*
-composeStale marks an older observation when its own horizon expired before
-the neighboring observation arrived.
-*/
-func (graph *Graph) composeStale(
-	older, newer Node, at, observedFrom time.Time,
-) {
-	horizon := older.Measurement.Horizon
-
-	if horizon > 0 && older.Measurement.At.Add(horizon).Before(newer.Measurement.At) {
-		graph.Relate(older.Key, newer.Key, Stale, at, observedFrom)
-	}
-}
-
-func sameObservable(left, right Measurement) bool {
-	return left.Metric != "" &&
-		left.Subject != "" &&
-		left.Metric == right.Metric &&
-		left.Subject == right.Subject &&
-		left.Side == right.Side
-}
-
-func chronologicalNodes(left, right Node) (Node, Node) {
-	if left.Measurement.At.Before(right.Measurement.At) {
-		return left, right
-	}
-
-	if right.Measurement.At.Before(left.Measurement.At) || right.Key < left.Key {
-		return right, left
-	}
-
-	return left, right
-}
-
-func relationshipInterval(left, right Measurement) (time.Time, time.Time) {
-	at := left.At
-
-	if right.At.After(at) {
-		at = right.At
-	}
-
-	leftStart, _ := evidenceInterval(left)
-	rightStart, _ := evidenceInterval(right)
-	observedFrom := leftStart
-
-	if rightStart.Before(observedFrom) {
-		observedFrom = rightStart
-	}
-
-	return at, observedFrom
-}
-
-func evidenceInterval(measurement Measurement) (time.Time, time.Time) {
-	start := measurement.ObservedFrom
-
-	if start.IsZero() {
-		start = measurement.Scale.From
-	}
-
-	if start.IsZero() {
-		start = measurement.At
-	}
-
-	end := measurement.Scale.Through
-
-	if end.IsZero() {
-		end = measurement.At
-	}
-
-	return start, end
+	return evidenceGraph.Node(identity).(*Node)
 }
 
 /*
@@ -371,10 +210,6 @@ MeasurementKey returns the stable identity used by graph nodes and category
 evidence references.
 */
 func MeasurementKey(measurement *Measurement) string {
-	return measurementKey(measurement)
-}
-
-func measurementKey(measurement *Measurement) string {
 	var key strings.Builder
 
 	writeText := func(value string) {

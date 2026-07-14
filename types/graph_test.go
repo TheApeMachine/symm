@@ -1,11 +1,11 @@
 package types
 
 import (
-	"math"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	gonumgraph "gonum.org/v1/gonum/graph"
 )
 
 func TestGraphAddNode(t *testing.T) {
@@ -28,7 +28,7 @@ func TestGraphAddNode(t *testing.T) {
 			Convey("Then only one node is retained", func() {
 				So(first, ShouldBeTrue)
 				So(second, ShouldBeFalse)
-				So(graph.Nodes, ShouldHaveLength, 1)
+				So(graph.Nodes().Len(), ShouldEqual, 1)
 				So(graph.At, ShouldEqual, at)
 			})
 		})
@@ -43,7 +43,7 @@ func TestGraphAddNode(t *testing.T) {
 			Convey("Then both evidence instances are retained", func() {
 				So(first, ShouldBeTrue)
 				So(second, ShouldBeTrue)
-				So(graph.Nodes, ShouldHaveLength, 2)
+				So(graph.Nodes().Len(), ShouldEqual, 2)
 			})
 		})
 
@@ -59,8 +59,11 @@ func TestGraphAddNode(t *testing.T) {
 			measurement.Uncertainty.Lower = 0.8
 
 			Convey("Then retained evidence remains immutable", func() {
-				So(*graph.Nodes[0].Measurement.Normalized, ShouldEqual, 0.5)
-				So(graph.Nodes[0].Measurement.Uncertainty.Lower, ShouldEqual, 0.4)
+				nodes := graph.Nodes()
+				So(nodes.Next(), ShouldBeTrue)
+				retained := nodes.Node().(*Node)
+				So(*retained.Measurement.Normalized, ShouldEqual, 0.5)
+				So(retained.Measurement.Uncertainty.Lower, ShouldEqual, 0.4)
 			})
 		})
 
@@ -76,7 +79,7 @@ func TestGraphAddNode(t *testing.T) {
 
 			Convey("Then it is rejected", func() {
 				So(added, ShouldBeFalse)
-				So(graph.Nodes, ShouldBeEmpty)
+				So(graph.Nodes().Len(), ShouldEqual, 0)
 			})
 		})
 	})
@@ -108,8 +111,8 @@ func TestGraphRelate(t *testing.T) {
 
 		Convey("When they are linked with temporal context", func() {
 			linked := graph.Relate(
-				measurementKey(from),
-				measurementKey(to),
+				MeasurementKey(from),
+				MeasurementKey(to),
 				Supports,
 				at,
 				at.Add(-time.Second),
@@ -117,17 +120,18 @@ func TestGraphRelate(t *testing.T) {
 
 			Convey("Then the edge retains provenance", func() {
 				So(linked, ShouldBeTrue)
-				So(graph.Edges, ShouldHaveLength, 1)
-				So(graph.Edges[0].Type, ShouldEqual, Supports)
-				So(graph.Edges[0].ObservedFrom, ShouldEqual, at.Add(-time.Second))
+				edges := graphEdges(graph)
+				So(edges, ShouldHaveLength, 1)
+				So(edges[0].Type, ShouldEqual, Supports)
+				So(edges[0].ObservedFrom, ShouldEqual, at.Add(-time.Second))
 			})
 		})
 
 		Convey("When the same edge is related again with equivalent timestamps", func() {
 			wallAt := time.Now().Truncate(time.Second)
 			observedFrom := wallAt.Add(-time.Second)
-			fromKey := measurementKey(from)
-			toKey := measurementKey(to)
+			fromKey := MeasurementKey(from)
+			toKey := MeasurementKey(to)
 
 			So(graph.Relate(fromKey, toKey, Supports, wallAt, observedFrom), ShouldBeTrue)
 
@@ -143,158 +147,31 @@ func TestGraphRelate(t *testing.T) {
 
 			Convey("Then duplicate edges are rejected", func() {
 				So(graph.Relate(fromKey, toKey, Supports, equivalentAt, equivalentObservedFrom), ShouldBeFalse)
-				So(graph.Edges, ShouldHaveLength, 1)
+				So(graphEdges(graph), ShouldHaveLength, 1)
 			})
 		})
 	})
 }
 
-func TestGraphCompose(t *testing.T) {
-	Convey("Given comparable observations from disjoint evidence intervals", t, func() {
-		graph := NewGraph("BTC/USD")
-		positive := 0.5
-		negative := -0.4
-		older := &Measurement{
-			Source: SourceHawkes, Stream: Hawkes, Metric: MetricStrength,
-			Subject: SubjectTradeArrivals, Symbol: "BTC/USD",
-			At: time.Unix(2, 0), ObservedFrom: time.Unix(1, 0),
-			Horizon: time.Second, Unit: UnitDimensionless,
-			Normalized: &positive,
-			Validity:   MeasurementValidity{State: ValidityValid},
-			Scale:      ScaleReference{Kind: ScaleObservationWindow},
+func graphEdges(evidenceGraph *Graph) []*Edge {
+	edges := evidenceGraph.Edges()
+	relations := make([]*Edge, 0)
+
+	for edges.Next() {
+		edge := edges.Edge()
+		lines := evidenceGraph.Lines(edge.From().ID(), edge.To().ID())
+
+		for lines.Next() {
+			relations = append(relations, lines.Line().(*Edge))
 		}
-		newer := &Measurement{
-			Source: SourcePumpDump, Stream: PumpDump, Metric: MetricStrength,
-			Subject: SubjectTradeArrivals, Symbol: "BTC/USD",
-			At: time.Unix(4, 0), ObservedFrom: time.Unix(3, 0),
-			Horizon: time.Second, Unit: UnitDimensionless,
-			Normalized: &negative,
-			Validity:   MeasurementValidity{State: ValidityValid},
-			Scale:      ScaleReference{Kind: ScaleObservationWindow},
-		}
-		graph.AddNode(older)
-		graph.AddNode(newer)
-
-		graph.Compose()
-
-		Convey("It should preserve contradiction, lead, lag, and staleness separately", func() {
-			So(graph.Edges, ShouldHaveLength, 4)
-			So(edgeTypes(graph.Edges), ShouldResemble, []EdgeType{
-				Contradicts, Leads, Lags, Stale,
-			})
-			So(graph.Edges[0].At, ShouldEqual, newer.At)
-			So(graph.Edges[0].ObservedFrom, ShouldEqual, older.ObservedFrom)
-		})
-	})
-
-	Convey("Given simultaneous same-direction observations", t, func() {
-		graph := NewGraph("BTC/USD")
-		firstValue := 0.2
-		secondValue := 0.8
-		first := &Measurement{
-			Source: SourceHawkes, Stream: Hawkes, Metric: MetricStrength,
-			Subject: SubjectTradeArrivals, Symbol: "BTC/USD",
-			At: time.Unix(2, 0), ObservedFrom: time.Unix(1, 0),
-			Unit: UnitDimensionless, Normalized: &firstValue,
-			Validity: MeasurementValidity{State: ValidityValid},
-			Scale:    ScaleReference{Kind: ScaleObservationWindow},
-		}
-		second := *first
-		second.Source = SourcePumpDump
-		second.Stream = PumpDump
-		second.Normalized = &secondValue
-		graph.AddNode(first)
-		graph.AddNode(&second)
-
-		graph.Compose()
-
-		Convey("It should record support without inventing temporal order", func() {
-			So(edgeTypes(graph.Edges), ShouldResemble, []EdgeType{Supports})
-		})
-	})
-
-	Convey("Given measurements without a typed subject", t, func() {
-		graph := NewGraph("BTC/USD")
-		normalized := 0.5
-		first := &Measurement{
-			Source: SourceHawkes, Stream: Hawkes, Metric: MetricStrength,
-			Symbol: "BTC/USD", At: time.Unix(1, 0),
-			Unit: UnitDimensionless, Normalized: &normalized,
-			Validity: MeasurementValidity{State: ValidityValid},
-		}
-		second := *first
-		second.Source = SourcePumpDump
-		second.Stream = PumpDump
-		graph.AddNode(first)
-		graph.AddNode(&second)
-
-		graph.Compose()
-
-		Convey("It should not equate unnamed observables", func() {
-			So(graph.Edges, ShouldBeEmpty)
-		})
-	})
-
-	Convey("Given non-finite normalized evidence", t, func() {
-		graph := NewGraph("BTC/USD")
-		finite := 0.5
-		nonFinite := math.NaN()
-		first := &Measurement{
-			Source: SourceHawkes, Stream: Hawkes, Metric: MetricStrength,
-			Subject: SubjectTradeArrivals, Symbol: "BTC/USD",
-			At: time.Unix(1, 0), Unit: UnitDimensionless,
-			Normalized: &finite,
-			Validity:   MeasurementValidity{State: ValidityValid},
-		}
-		second := *first
-		second.Source = SourcePumpDump
-		second.Stream = PumpDump
-		second.Normalized = &nonFinite
-		graph.AddNode(first)
-		graph.AddNode(&second)
-
-		graph.Compose()
-
-		Convey("It should not claim directional agreement", func() {
-			So(graph.Edges, ShouldBeEmpty)
-		})
-	})
-
-	Convey("Given a busy chronological stream of one observable", t, func() {
-		graph := NewGraph("BTC/USD")
-		normalized := 0.5
-
-		for index := range 1_000 {
-			at := time.Unix(int64(index+1), 0)
-			graph.AddNode(&Measurement{
-				Source: SourceHawkes, Stream: Hawkes, Metric: MetricStrength,
-				Subject: SubjectTradeArrivals, Symbol: "BTC/USD",
-				At: at, ObservedFrom: at.Add(-time.Second),
-				Horizon: time.Second, Unit: UnitDimensionless,
-				Normalized: &normalized,
-				Validity:   MeasurementValidity{State: ValidityValid},
-				Scale:      ScaleReference{Kind: ScaleObservationWindow},
-			})
-		}
-
-		graph.Compose()
-
-		Convey("Then direct evidence remains connected without a transitive closure", func() {
-			So(graph.Nodes, ShouldHaveLength, 1_000)
-			So(graph.Edges, ShouldHaveLength, 999)
-		})
-	})
-}
-
-func edgeTypes(edges []Edge) []EdgeType {
-	types := make([]EdgeType, 0, len(edges))
-
-	for _, edge := range edges {
-		types = append(types, edge.Type)
 	}
 
-	return types
+	return relations
 }
+
+var _ gonumgraph.Node = (*Node)(nil)
+var _ gonumgraph.Line = (*Edge)(nil)
+var _ gonumgraph.DirectedMultigraph = (*Graph)(nil)
 
 func BenchmarkGraphAddNode(b *testing.B) {
 	graph := NewGraph("BTC/USD")
@@ -309,33 +186,5 @@ func BenchmarkGraphAddNode(b *testing.B) {
 
 	for b.Loop() {
 		graph.AddNode(measurement)
-	}
-}
-
-func BenchmarkGraphCompose(b *testing.B) {
-	normalized := 0.5
-	measurements := make([]*Measurement, 1_000)
-
-	for index := range measurements {
-		measurements[index] = &Measurement{
-			Source: SourceHawkes, Stream: Hawkes, Metric: MetricStrength,
-			Subject: SubjectTradeArrivals, Symbol: "BTC/USD",
-			At:           time.Unix(int64(index+1), 0),
-			ObservedFrom: time.Unix(int64(index), 0),
-			Horizon:      time.Second, Unit: UnitDimensionless,
-			Normalized: &normalized,
-			Validity:   MeasurementValidity{State: ValidityValid},
-			Scale:      ScaleReference{Kind: ScaleObservationWindow},
-		}
-	}
-
-	for b.Loop() {
-		graph := NewGraph("BTC/USD")
-
-		for _, measurement := range measurements {
-			graph.AddNode(measurement)
-		}
-
-		graph.Compose()
 	}
 }

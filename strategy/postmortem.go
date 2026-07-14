@@ -134,6 +134,7 @@ func (postMortem *PostMortem) Evaluate(
 
 	if reconciledEntry && entry == nil {
 		thesis.Findings = append(thesis.Findings, types.Finding{
+			Symbol:    symbol,
 			Component: "reconciliation",
 			Condition: "position existed before the strategy decision journal",
 			Evidence:  executionIDs, EstimatedEffect: final.ReturnPct,
@@ -149,6 +150,7 @@ func (postMortem *PostMortem) Evaluate(
 
 	thesis.Findings = append(thesis.Findings,
 		types.Finding{
+			Symbol:    symbol,
 			Component: "forecast",
 			Condition: "entry forecast selected for execution",
 			Evidence: []string{
@@ -162,6 +164,7 @@ func (postMortem *PostMortem) Evaluate(
 			CurrentModel:       entry.ForecastModel,
 		},
 		types.Finding{
+			Symbol:    symbol,
 			Component: "decision",
 			Condition: entry.Reason,
 			Evidence: []string{
@@ -172,6 +175,7 @@ func (postMortem *PostMortem) Evaluate(
 			RequiredValidation: validation,
 		},
 		types.Finding{
+			Symbol:             symbol,
 			Component:          "execution",
 			Condition:          "entry and exit fills reconciled with reported fees",
 			Evidence:           executionIDs,

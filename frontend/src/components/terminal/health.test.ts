@@ -9,6 +9,7 @@ describe("terminalHealthSummary", () => {
 
 		history.push({
 			at: "2026-07-06T10:00:00Z",
+			publishedAt: "2026-07-06T10:00:00Z",
 			readings: [
 				{
 					source: "depthflow",
@@ -31,6 +32,7 @@ describe("terminalHealthSummary", () => {
 						depthflow: history,
 					},
 				},
+				version: 1,
 			},
 			"BTC/USD",
 			["depthflow", "fluid"],

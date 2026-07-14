@@ -165,6 +165,7 @@ const frame = {
 	],
 	findings: [
 		{
+			symbol: "BTC/USD",
 			component: "forecast",
 			condition: "expected return overstated",
 			evidence: ["BTC/USD realized below forecast"],

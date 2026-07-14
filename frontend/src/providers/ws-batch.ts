@@ -3,8 +3,11 @@ import { mergeFramePayload } from "#/providers/ws-frame-merge";
 export const FRAME_INTERVAL_MS = 16;
 
 /*
-FrameBatcher coalesces websocket payloads on a 60Hz window before handing them
-to the main thread, matching display refresh without dropping the newest frame.
+FrameBatcher coalesces websocket payloads before handing them to consumers.
+Scheduling uses setTimeout because production batching runs in ws-worker.ts,
+where requestAnimationFrame is unavailable. The 16ms window approximates 60Hz
+but does not synchronize with display refresh; vsync-aligned delivery would
+require requestAnimationFrame on the main thread when applying worker payloads.
 */
 export class FrameBatcher {
 	private queue: Record<string, unknown> = {};
@@ -35,11 +38,13 @@ export class FrameBatcher {
 	}
 
 	private flushQueue() {
-		if (Object.keys(this.queue).length > 0) {
-			this.flush(this.queue);
+		try {
+			if (Object.keys(this.queue).length > 0) {
+				this.flush(this.queue);
+			}
+		} finally {
 			this.queue = {};
+			this.nextTick = null;
 		}
-
-		this.nextTick = null;
 	}
 }

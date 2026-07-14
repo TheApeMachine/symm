@@ -17,6 +17,7 @@ import { resonanceStore } from "#/collections/resonance";
 import { stopsStore } from "#/collections/stops";
 import { tickStore } from "#/collections/tick";
 import { tradeJournalStore } from "#/collections/trade-journal";
+import type { Measurement } from "#/types/measurement";
 
 type FrameStore = {
 	actions: {
@@ -46,18 +47,35 @@ export const frameStores = {
 	tick: tickStore,
 } as Record<string, FrameStore>;
 
+const isMeasurementFrame = (value: unknown): value is Measurement[] =>
+	Array.isArray(value);
+
 /*
 applyFramePayload routes one coalesced worker payload into the TanStack stores
-that already own each backend frame key.
+that already own each backend frame key. Tick updates first so the counter never
+waits behind a large measurements ingest.
 */
 export const applyFramePayload = (parsedData: Record<string, unknown>) => {
 	batch(() => {
+		if (parsedData.tick !== undefined) {
+			frameStores.tick.actions.updateFrame(parsedData.tick);
+		}
+
+		if (isMeasurementFrame(parsedData.measurements)) {
+			measurementsStore.actions.updateFrame(parsedData.measurements);
+		}
+
 		for (const [key, data] of Object.entries(parsedData)) {
+			if (key === "measurements" || key === "tick") {
+				continue;
+			}
+
 			if (frameStores[key]?.actions) {
 				frameStores[key].actions.updateFrame(data);
-			} else {
-				console.warn(`No store found matching frame key: "${key}"`);
+				continue;
 			}
+
+			console.warn(`No store found matching frame key: "${key}"`);
 		}
 	});
 };

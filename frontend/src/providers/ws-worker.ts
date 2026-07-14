@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 import { FrameBatcher } from "#/providers/ws-batch";
+import { isPlainObject } from "#/providers/ws-frame-merge";
 
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 5000;
@@ -33,8 +34,13 @@ const scheduleReconnect = () => {
 		return;
 	}
 
-	const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** attempt);
+	const cappedDelay = Math.min(
+		RECONNECT_MAX_MS,
+		RECONNECT_BASE_MS * 2 ** attempt,
+	);
 	attempt += 1;
+
+	const delay = Math.floor(Math.random() * cappedDelay);
 
 	reconnectTimer = setTimeout(() => {
 		reconnectTimer = null;
@@ -43,6 +49,11 @@ const scheduleReconnect = () => {
 };
 
 const connect = (url: string) => {
+	if (reconnectTimer !== null) {
+		clearTimeout(reconnectTimer);
+		reconnectTimer = null;
+	}
+
 	activeUrl = url;
 
 	if (socket) {
@@ -101,10 +112,11 @@ const connect = (url: string) => {
 		}
 
 		try {
-			const parsedData = JSON.parse(String(event.data)) as Record<
-				string,
-				unknown
-			>;
+			const parsedData: unknown = JSON.parse(String(event.data));
+
+			if (!isPlainObject(parsedData)) {
+				throw new Error("websocket frame must be a non-null object");
+			}
 
 			batcher.enqueue(parsedData);
 		} catch (err) {

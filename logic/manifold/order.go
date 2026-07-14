@@ -42,26 +42,23 @@ type Coordinate struct {
 }
 
 /*
-PopulationAccounting reconciles the subscribed visible population. ScopedOut is
-quantity that left the price-level boundary without an exchange lifecycle event.
+PopulationAccounting reconciles quantities across complete SDK book reads.
+Removed is deliberately neutral because a book cannot prove whether an absent
+order was cancelled, executed, or moved outside the subscribed depth.
 */
 type PopulationAccounting struct {
-	Initial   float64
-	Added     float64
-	Cancelled float64
-	Filled    float64
-	Amended   float64
-	ScopedOut float64
-	roundoff  populationRoundoff
+	Initial  float64
+	Added    float64
+	Removed  float64
+	Amended  float64
+	roundoff populationRoundoff
 }
 
 type populationRoundoff struct {
-	Initial   float64
-	Added     float64
-	Cancelled float64
-	Filled    float64
-	Amended   float64
-	ScopedOut float64
+	Initial float64
+	Added   float64
+	Removed float64
+	Amended float64
 }
 
 func (accounting *PopulationAccounting) recordInitial(quantity float64) {
@@ -72,21 +69,17 @@ func (accounting *PopulationAccounting) recordAdded(quantity float64) {
 	accounting.record(&accounting.Added, &accounting.roundoff.Added, roundedQuantity{value: quantity})
 }
 
-func (accounting *PopulationAccounting) recordCancelled(quantity float64) {
-	accounting.record(&accounting.Cancelled, &accounting.roundoff.Cancelled, roundedQuantity{value: quantity})
-}
-
-func (accounting *PopulationAccounting) recordFilled(quantity float64) {
-	accounting.record(&accounting.Filled, &accounting.roundoff.Filled, roundedQuantity{value: quantity})
+/*
+recordRemoved retains quantity absent from a complete book when the book alone
+cannot distinguish cancellation from execution.
+*/
+func (accounting *PopulationAccounting) recordRemoved(quantity float64) {
+	accounting.record(&accounting.Removed, &accounting.roundoff.Removed, roundedQuantity{value: quantity})
 }
 
 func (accounting *PopulationAccounting) recordAmended(previous, current float64) {
 	change := roundedQuantity{value: current}.Subtract(roundedQuantity{value: previous})
 	accounting.record(&accounting.Amended, &accounting.roundoff.Amended, change)
-}
-
-func (accounting *PopulationAccounting) recordScopedOut(quantity float64) {
-	accounting.record(&accounting.ScopedOut, &accounting.roundoff.ScopedOut, roundedQuantity{value: quantity})
 }
 
 func (accounting *PopulationAccounting) record(
@@ -102,12 +95,8 @@ func (accounting *PopulationAccounting) record(
 func (accounting PopulationAccounting) roundedFinal() roundedQuantity {
 	quantity := roundedQuantity{value: accounting.Initial, roundoff: accounting.roundoff.Initial}
 	quantity = quantity.Add(roundedQuantity{value: accounting.Added, roundoff: accounting.roundoff.Added})
-	quantity = quantity.Subtract(roundedQuantity{
-		value: accounting.Cancelled, roundoff: accounting.roundoff.Cancelled,
-	})
-	quantity = quantity.Subtract(roundedQuantity{value: accounting.Filled, roundoff: accounting.roundoff.Filled})
+	quantity = quantity.Subtract(roundedQuantity{value: accounting.Removed, roundoff: accounting.roundoff.Removed})
 	quantity = quantity.Add(roundedQuantity{value: accounting.Amended, roundoff: accounting.roundoff.Amended})
-	quantity = quantity.Subtract(roundedQuantity{value: accounting.ScopedOut, roundoff: accounting.roundoff.ScopedOut})
 
 	return quantity
 }

@@ -6,7 +6,6 @@ import (
 
 	"github.com/spf13/viper"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -14,102 +13,8 @@ import (
 
 const testBookDepth = 10
 
-type testLevel3Book struct {
-	bid float64
-	ask float64
-}
-
-func (book testLevel3Book) Apply(kraken.Level3Data, int, int) bool { return true }
-
-func (book testLevel3Book) InvalidReason(string) InvalidReason { return Valid }
-
-func (book testLevel3Book) TopOfBook(string) (float64, float64, bool) {
-	if book.bid <= 0 || book.ask <= 0 {
-		return 0, 0, false
-	}
-
-	return book.bid, book.ask, true
-}
-
 func init() {
 	viper.Set("market.l3_depth", testBookDepth)
-}
-
-func TestPopulationApplySnapshot(t *testing.T) {
-	Convey("Given a population ledger", t, func() {
-		population := NewPopulation("BTC/USD", NewLifetimeEstimator(256), testBookDepth)
-		row := kraken.Level3Data{
-			Symbol:    "BTC/USD",
-			Type:      "snapshot",
-			Timestamp: time.Unix(1, 0),
-			Checksum:  1063832831,
-			Bids: []kraken.Level3Order{{
-				OrderID: "bid-1", LimitPrice: 99, OrderQty: 2,
-				Timestamp: time.Unix(1, 0),
-			}},
-			Asks: []kraken.Level3Order{{
-				OrderID: "ask-1", LimitPrice: 101, OrderQty: 3,
-				Timestamp: time.Unix(1, 0),
-			}},
-		}
-
-		population.Apply(row)
-
-		Convey("It should retain exact order carriers", func() {
-			So(population.Ready(), ShouldBeTrue)
-			So(population.Orders(), ShouldHaveLength, 2)
-			So(population.Accounting().Added, ShouldEqual, 0)
-		})
-	})
-}
-
-func TestPopulationApplyDepthBoundary(t *testing.T) {
-	Convey("Given a population limited to two visible price levels per side", t, func() {
-		at := time.Unix(1, 0)
-		wire := func(event, orderID string, price, quantity float64) kraken.Level3Order {
-			return kraken.Level3Order{
-				Event: event, OrderID: orderID, LimitPrice: price,
-				OrderQty: quantity, Timestamp: at,
-			}
-		}
-		population := NewPopulation("BTC/USD", NewLifetimeEstimator(256), 2)
-		population.Apply(kraken.Level3Data{
-			Type: "snapshot", Timestamp: at,
-			Bids: []kraken.Level3Order{
-				wire("", "bid-1a", 100, 1), wire("", "bid-1b", 100, 1), wire("", "bid-2", 99, 2),
-			},
-			Asks: []kraken.Level3Order{
-				wire("", "ask-1a", 110, 1), wire("", "ask-1b", 110, 1), wire("", "ask-2", 111, 2),
-			},
-		})
-
-		Convey("When new best levels push the old boundary out and it later returns", func() {
-			population.Apply(kraken.Level3Data{
-				Type: "update", Timestamp: at,
-				Bids: []kraken.Level3Order{wire("add", "bid-new", 101, 3)},
-				Asks: []kraken.Level3Order{wire("add", "ask-new", 109, 3)},
-			})
-			accounting := population.Accounting()
-			So(population.Orders(), ShouldHaveLength, 6)
-			So(accounting.Initial, ShouldEqual, 8)
-			So(accounting.Added, ShouldEqual, 6)
-			So(accounting.ScopedOut, ShouldEqual, 4)
-			So(accounting.Final(), ShouldEqual, 10)
-
-			population.Apply(kraken.Level3Data{
-				Type: "update", Timestamp: at,
-				Bids: []kraken.Level3Order{wire("delete", "bid-new", 101, 3), wire("add", "bid-2", 99, 2)},
-				Asks: []kraken.Level3Order{wire("delete", "ask-new", 109, 3), wire("add", "ask-2", 111, 2)},
-			})
-			accounting = population.Accounting()
-			So(population.Ready(), ShouldBeTrue)
-			So(population.Orders(), ShouldHaveLength, 6)
-			So(accounting.Added, ShouldEqual, 10)
-			So(accounting.Cancelled, ShouldEqual, 6)
-			So(accounting.ScopedOut, ShouldEqual, 4)
-			So(accounting.Final(), ShouldEqual, 8)
-		})
-	})
 }
 
 func TestCoordinateMapper(t *testing.T) {
@@ -306,90 +211,6 @@ func TestCoordinateVelocity(t *testing.T) {
 			So(ready, ShouldBeTrue)
 			mapper.UpdateVelocity(order, first, second, time.Unix(3, 0), transform, 100)
 			So(order.Velocity.Age, ShouldNotEqual, 0)
-		})
-	})
-}
-
-func TestPopulationTopOfBook(t *testing.T) {
-	Convey("Given a population made one-sided by an update", t, func() {
-		population := NewPopulation("BTC/USD", NewLifetimeEstimator(256), testBookDepth)
-
-		population.Apply(kraken.Level3Data{
-			Symbol: "BTC/USD", Type: "snapshot", Timestamp: time.Unix(1, 0),
-			Bids: []kraken.Level3Order{{
-				OrderID: "bid-1", LimitPrice: 99, OrderQty: 1, Timestamp: time.Unix(1, 0),
-			}},
-			Asks: []kraken.Level3Order{{
-				OrderID: "ask-1", LimitPrice: 101, OrderQty: 1, Timestamp: time.Unix(1, 0),
-			}},
-		})
-
-		population.Apply(kraken.Level3Data{
-			Symbol: "BTC/USD", Type: "update", Timestamp: time.Unix(2, 0),
-			Bids: []kraken.Level3Order{{
-				OrderID: "bid-1", Event: "delete", LimitPrice: 99, OrderQty: 1,
-				Timestamp: time.Unix(2, 0),
-			}},
-		})
-
-		Convey("A fresh snapshot should restore an executable top of book", func() {
-			_, _, _, _, ready := population.TopOfBook()
-			So(ready, ShouldBeFalse)
-
-			population.Apply(kraken.Level3Data{
-				Symbol: "BTC/USD", Type: "snapshot", Timestamp: time.Unix(3, 0),
-				Bids: []kraken.Level3Order{{
-					OrderID: "bid-2", LimitPrice: 98, OrderQty: 2, Timestamp: time.Unix(3, 0),
-				}},
-				Asks: []kraken.Level3Order{{
-					OrderID: "ask-2", LimitPrice: 102, OrderQty: 2, Timestamp: time.Unix(3, 0),
-				}},
-			})
-
-			bid, ask, bidQuantity, askQuantity, ready := population.TopOfBook()
-			So(ready, ShouldBeTrue)
-			So(bid, ShouldEqual, 98.0)
-			So(ask, ShouldEqual, 102.0)
-			So(bidQuantity, ShouldEqual, 2.0)
-			So(askQuantity, ShouldEqual, 2.0)
-		})
-	})
-}
-
-func TestPopulationAccountingIdentity(t *testing.T) {
-	Convey("Given a population with lifecycle events", t, func() {
-		population := NewPopulation("ETH/USD", NewLifetimeEstimator(256), testBookDepth)
-
-		population.Apply(kraken.Level3Data{
-			Symbol: "ETH/USD", Type: "snapshot", Timestamp: time.Unix(1, 0),
-			Bids: []kraken.Level3Order{{
-				OrderID: "bid-1", LimitPrice: 100, OrderQty: 5, Timestamp: time.Unix(1, 0),
-			}},
-		})
-
-		population.Apply(kraken.Level3Data{
-			Symbol: "ETH/USD", Type: "update", Timestamp: time.Unix(2, 0),
-			Bids: []kraken.Level3Order{{
-				OrderID: "bid-1", Event: "modify", LimitPrice: 101, OrderQty: 3,
-				Timestamp: time.Unix(2, 0),
-			}},
-		})
-
-		population.Apply(kraken.Level3Data{
-			Symbol: "ETH/USD", Type: "update", Timestamp: time.Unix(3, 0),
-			Bids: []kraken.Level3Order{{
-				OrderID: "bid-1", Event: "delete", LimitPrice: 101, OrderQty: 3,
-				Timestamp: time.Unix(3, 0),
-			}},
-		})
-
-		accounting := population.Accounting()
-
-		Convey("It should satisfy the accounting identity", func() {
-			So(accounting.Final(), ShouldEqual, 0)
-			So(accounting.Amended, ShouldEqual, -2)
-			So(accounting.Cancelled, ShouldEqual, 3)
-			So(accounting.Filled, ShouldEqual, 0)
 		})
 	})
 }

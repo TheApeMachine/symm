@@ -52,6 +52,7 @@ describe("thesis frame stores", () => {
 		tradeJournalStore.actions.updateFrame(observations);
 		findingsStore.actions.updateFrame([
 			{
+				symbol: "BTC/USD",
 				component: "forecast",
 				condition: "expected return overstated",
 				evidence: ["BTC/USD realized below forecast"],

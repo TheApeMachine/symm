@@ -122,11 +122,13 @@ export const JournalSurface = () => {
 		return [...rows].sort((left, right) => left.at.localeCompare(right.at));
 	}, [activeSymbol, observations]);
 
-	const activeFindings = activeSymbol
-		? findings.filter((finding) =>
-				finding.evidence.some((line) => line.includes(activeSymbol)),
-			)
-		: findings;
+	const activeFindings = useMemo(() => {
+		if (!activeSymbol) {
+			return findings;
+		}
+
+		return findings.filter((finding) => finding.symbol === activeSymbol);
+	}, [activeSymbol, findings]);
 
 	return (
 		<div className="grid h-full min-h-0 min-w-[1040px] grid-cols-[minmax(280px,320px)_minmax(420px,1fr)_minmax(280px,320px)]">
@@ -188,9 +190,9 @@ export const JournalSurface = () => {
 							waiting for trade journal frames
 						</Panel>
 					) : null}
-					{filteredObservations.map((observation, index) => (
+					{filteredObservations.map((observation) => (
 						<Panel
-							key={`${observation.symbol}:${observation.kind}:${observation.at}:${index}`}
+							key={`${observation.symbol}:${observation.kind}:${observation.at}:${observation.orderId ?? ""}:${observation.executionId ?? ""}:${observation.decision}`}
 							variant="surface"
 							size="bare"
 							className="grid grid-cols-[64px_1fr_auto] items-start gap-3 px-3 py-2.5"

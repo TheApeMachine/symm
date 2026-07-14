@@ -21,12 +21,7 @@ export const KernelList = ({
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
 	const storeSources = useSelector(
 		measurementsStore,
-		(state) =>
-			backendMeasurementSources({
-				measurements: {
-					[focusSymbol]: state.measurements[focusSymbol] ?? {},
-				},
-			}),
+		backendMeasurementSources,
 		{ compare: sameSources },
 	);
 	const sources = inputSources ?? storeSources;

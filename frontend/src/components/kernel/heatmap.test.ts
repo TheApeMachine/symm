@@ -27,7 +27,11 @@ const measurement = (
 
 const history = (values: Measurement[]) => {
 	const buffer = Circular<MeasurementEpoch>(4);
-	buffer.push({ at: values[0]?.at ?? "", readings: values });
+	buffer.push({
+		at: values[0]?.at ?? "",
+		publishedAt: values[0]?.at ?? "",
+		readings: values,
+	});
 
 	return buffer;
 };

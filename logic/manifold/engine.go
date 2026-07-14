@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/signal/compute"
 	"github.com/theapemachine/symm/types"
 )
@@ -163,19 +162,18 @@ type ProcessResult struct {
 Slot is one symbol's population, coordinate, cohort, and solver state.
 */
 type Slot struct {
-	symbol         string
-	config         *pmanifold.Config
-	population     *Population
-	coordinates    *CoordinateMapper
-	cohorts        *CohortBuilder
-	depositor      *MomentDepositor
-	modes          *ModeExtractor
-	forecaster     *ForecastModel
-	solver         *pmanifold.Solver
-	pending        pendingObservation
-	advanceReady   bool
-	lastObservedAt time.Time
-	lastEventAt    time.Time
+	symbol       string
+	config       *pmanifold.Config
+	population   *Population
+	coordinates  *CoordinateMapper
+	cohorts      *CohortBuilder
+	depositor    *MomentDepositor
+	modes        *ModeExtractor
+	forecaster   *ForecastModel
+	solver       *pmanifold.Solver
+	pending      pendingObservation
+	advanceReady bool
+	lastEventAt  time.Time
 }
 
 func newSlot(
@@ -196,7 +194,7 @@ func newSlot(
 	return &Slot{
 		symbol:      symbol,
 		config:      config,
-		population:  NewPopulation(symbol, lifetime, int(config.GridX)),
+		population:  NewPopulation(symbol, lifetime),
 		coordinates: NewCoordinateMapper(halflife, epsilon, lifetime),
 		cohorts:     NewCohortBuilder(config),
 		depositor:   NewMomentDepositor(config),
@@ -210,18 +208,6 @@ func (slot *Slot) Close() {
 		slot.solver.Close()
 		slot.solver = nil
 	}
-}
-
-func (slot *Slot) Process(
-	row kraken.Level3Data,
-) ProcessResult {
-	result := slot.Observe(row)
-
-	if !result.AdvanceReady {
-		return result
-	}
-
-	return slot.Advance()
 }
 
 func (slot *Slot) failedResult(

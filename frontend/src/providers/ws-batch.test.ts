@@ -26,4 +26,33 @@ describe("FrameBatcher", () => {
 		batcher.dispose();
 		vi.useRealTimers();
 	});
+
+	it("clears queue and reschedules after flush throws", async () => {
+		vi.useFakeTimers();
+		const flushed: Record<string, unknown>[] = [];
+		let flushCalls = 0;
+		const batcher = new FrameBatcher((payload) => {
+			flushCalls += 1;
+
+			if (flushCalls === 1) {
+				throw new Error("flush failed");
+			}
+
+			flushed.push(payload);
+		});
+
+		batcher.enqueue({ tick: { count: 1 } });
+
+		expect(() => {
+			vi.advanceTimersByTime(16);
+		}).toThrow("flush failed");
+
+		batcher.enqueue({ tick: { count: 2 } });
+		await vi.advanceTimersByTimeAsync(16);
+
+		expect(flushed).toEqual([{ tick: { count: 2 } }]);
+
+		batcher.dispose();
+		vi.useRealTimers();
+	});
 });

@@ -17,6 +17,11 @@ export type CrossSectionReadout = {
 const finiteNumber = (value: unknown): number =>
 	typeof value === "number" && Number.isFinite(value) ? value : 0;
 
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+	value !== null && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+
 const stringArray = (value: unknown): string[] =>
 	Array.isArray(value)
 		? value.filter((entry): entry is string => typeof entry === "string")
@@ -29,6 +34,58 @@ const numberArray = (value: unknown): number[] =>
 					typeof entry === "number" && Number.isFinite(entry),
 			)
 		: [];
+
+/*
+symbolMetricsFromFrame reads backend CrossSection.Metrics rows and falls back to
+legacy flat arrays when an older diagnostics frame is still in flight.
+*/
+const symbolMetricsFromFrame = (
+	frame: Record<string, unknown> | null,
+): Array<{
+	symbol: string;
+	volume: number;
+	quoteNotional: number;
+	executableDepth: number;
+}> => {
+	const metrics = frame?.metrics;
+
+	if (Array.isArray(metrics)) {
+		return metrics.flatMap((entry) => {
+			const row = asRecord(entry);
+
+			if (row === null) {
+				return [];
+			}
+
+			const symbol = typeof row.symbol === "string" ? row.symbol.trim() : "";
+
+			if (symbol === "") {
+				return [];
+			}
+
+			return [
+				{
+					symbol,
+					volume: finiteNumber(row.volume),
+					quoteNotional: finiteNumber(row.quoteNotional),
+					executableDepth: finiteNumber(row.executableDepth),
+				},
+			];
+		});
+	}
+
+	const symbols = stringArray(frame?.symbols);
+	const volumes = numberArray(frame?.volumes);
+	const quoteNotionals = numberArray(frame?.quoteNotionals);
+	const executableDepths = numberArray(frame?.executableDepths);
+
+	return symbols.map((symbol, index) => ({
+		symbol,
+		volume: volumes[index] ?? 0,
+		quoteNotional: quoteNotionals[index] ?? 0,
+		executableDepth: executableDepths[index] ?? 0,
+	}));
+};
 
 const median = (values: number[]): number => {
 	if (values.length === 0) {
@@ -54,15 +111,41 @@ export const compactNumber = (value: number): string => {
 
 export const crossSectionReadoutFromFrame = (
 	frame: Record<string, unknown> | null,
-): CrossSectionReadout => ({
-	leader: typeof frame?.leader === "string" ? frame.leader : "",
-	leadershipThresholdPercent: finiteNumber(frame?.leadershipThreshold) * 100,
-	breadthPercent: finiteNumber(frame?.breadth) * 100,
-	symbolCount: stringArray(frame?.symbols).length,
-	medianVolume: median(numberArray(frame?.volumes)),
-	medianQuoteNotional: median(numberArray(frame?.quoteNotionals)),
-	medianExecutableDepth: median(numberArray(frame?.executableDepths)),
-});
+): CrossSectionReadout => {
+	const metrics = symbolMetricsFromFrame(frame);
+
+	return {
+		leader: typeof frame?.leader === "string" ? frame.leader : "",
+		leadershipThresholdPercent: finiteNumber(frame?.leadershipThreshold) * 100,
+		breadthPercent: finiteNumber(frame?.breadth) * 100,
+		symbolCount: metrics.length,
+		medianVolume: median(metrics.map((metric) => metric.volume)),
+		medianQuoteNotional: median(metrics.map((metric) => metric.quoteNotional)),
+		medianExecutableDepth: median(
+			metrics.map((metric) => metric.executableDepth),
+		),
+	};
+};
+
+/*
+retainCrossSectionReadout keeps the previous cross-section snapshot when a new
+diagnostics frame arrives without peer metrics, so intermittent empty backend
+ticks do not flash the panel back to zero.
+*/
+export const retainCrossSectionReadout = (
+	previous: CrossSectionReadout | null,
+	incoming: CrossSectionReadout,
+): CrossSectionReadout => {
+	if (incoming.symbolCount > 0) {
+		return incoming;
+	}
+
+	if (previous === null || previous.symbolCount === 0) {
+		return incoming;
+	}
+
+	return previous;
+};
 
 /*
 CrossSectionPanel paints diagnostics readouts directly from the diagnostics store.
@@ -76,12 +159,15 @@ export const CrossSectionPanel = () => {
 	const volumeRef = useRef<HTMLDivElement>(null);
 	const notionalRef = useRef<HTMLDivElement>(null);
 	const depthRef = useRef<HTMLDivElement>(null);
+	const lastReadoutRef = useRef<CrossSectionReadout | null>(null);
 
 	useDirectStorePaint(
 		() => {
-			const readout = crossSectionReadoutFromFrame(
-				diagnosticsStore.state.frame,
+			const readout = retainCrossSectionReadout(
+				lastReadoutRef.current,
+				crossSectionReadoutFromFrame(diagnosticsStore.state.frame),
 			);
+			lastReadoutRef.current = readout;
 			const broad = readout.breadthPercent >= 50;
 
 			if (badgeRef.current !== null) {
@@ -186,29 +272,29 @@ export const CrossSectionPanel = () => {
 					/>
 				</div>
 			</div>
-			<div className="mt-[13px] flex justify-between">
-				<div ref={volumeRef}>
+			<div className="mt-[13px] flex justify-between gap-3">
+				<div ref={volumeRef} className="min-w-0 flex-1">
 					<div
 						data-stat-value="true"
-						className="font-mono text-2xl text-(--f1) leading-none"
+						className="font-mono text-lg text-(--f1) leading-none"
 					/>
 					<div className="mt-1 font-mono text-[9px] text-(--f4)">
 						med volume
 					</div>
 				</div>
-				<div ref={notionalRef}>
+				<div ref={notionalRef} className="min-w-0 flex-1 text-center">
 					<div
 						data-stat-value="true"
-						className="font-mono text-2xl text-(--f1) leading-none"
+						className="font-mono text-lg text-(--f1) leading-none"
 					/>
 					<div className="mt-1 font-mono text-[9px] text-(--f4)">
 						med notional
 					</div>
 				</div>
-				<div ref={depthRef}>
+				<div ref={depthRef} className="min-w-0 flex-1 text-right">
 					<div
 						data-stat-value="true"
-						className="font-mono text-2xl text-(--f1) leading-none"
+						className="font-mono text-lg text-(--f1) leading-none"
 					/>
 					<div className="mt-1 font-mono text-[9px] text-(--f4)">med depth</div>
 				</div>

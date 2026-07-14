@@ -81,7 +81,7 @@ const paintSignalDetail = (
 		paintMetricGrid(refs.metricsGrid, history, headline);
 	}
 
-	if (refs.badge !== null && latest !== undefined) {
+	if (refs.badge !== null) {
 		const statusMeta = kernelStatusMeta(status);
 		refs.badge.textContent = statusMeta.label;
 		refs.badge.style.color = statusMeta.fg;

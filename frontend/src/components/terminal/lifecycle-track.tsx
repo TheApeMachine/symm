@@ -1,6 +1,7 @@
 import { cn } from "#/lib/utils";
 import type { LifecycleState } from "#/types/thesis";
 import {
+	LIFECYCLE_MANAGING,
 	LIFECYCLE_STAGES,
 	LIFECYCLE_TERMINAL,
 	lifecycleStageIndex,
@@ -39,7 +40,6 @@ export const LifecycleTrack = ({
 	symbol: string;
 	state: LifecycleState;
 }) => {
-	const currentIndex = lifecycleStageIndex(state);
 	const terminal = LIFECYCLE_TERMINAL.has(state);
 
 	return (
@@ -55,7 +55,7 @@ export const LifecycleTrack = ({
 							? state === "evaluated"
 								? "success"
 								: "error"
-							: currentIndex >= 6 && currentIndex <= 10
+							: LIFECYCLE_MANAGING.has(state)
 								? "warning"
 								: "info"
 					}

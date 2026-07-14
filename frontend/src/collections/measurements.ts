@@ -9,12 +9,14 @@ import { Circular, type CircularBuffer } from "./circular";
 export type { Category, Measurement } from "#/types/measurement";
 
 /*
-MeasurementEpoch is one backend observation tick: every metric emitted together
-at the same timestamp for one symbol and source.
+MeasurementEpoch is one backend observation batch for a symbol and source.
+publishedAt records when the slot was written so kernel freshness can reflect
+UI ingest time without re-copying the full measurement universe each tick.
 */
 export type MeasurementEpoch = {
 	at: string;
 	readings: Measurement[];
+	publishedAt: string;
 };
 
 type PendingEpoch = {
@@ -23,11 +25,13 @@ type PendingEpoch = {
 	readings: Measurement[];
 };
 
-const pendingGroupKey = (symbol: string, source: string): string =>
+export const measurementGroupKey = (symbol: string, source: string): string =>
 	`${symbol}\u0000${source}`;
 
+const pendingGroupKey = measurementGroupKey;
+
 /*
-epochAt chooses the newest observation timestamp present in one publish batch.
+epochAt chooses the observation timestamp shared by one measurement epoch.
 */
 const epochAt = (readings: Measurement[]): string => {
 	let latest = readings[0]?.at ?? "";
@@ -42,9 +46,9 @@ const epochAt = (readings: Measurement[]): string => {
 };
 
 /*
-headlineSeriesFromBuffer returns one headline sample per retained publish tick,
-oldest first, so sparklines advance on every thesis frame rather than market
-observation timestamps that can remain unchanged between ticks.
+headlineSeriesFromBuffer returns one headline sample per retained observation
+epoch, oldest first, so sparklines preserve distinct market events delivered
+together in one Thesis frame.
 */
 export const headlineSeriesFromBuffer = (
 	buffer: CircularBuffer<MeasurementEpoch> | undefined,
@@ -134,8 +138,15 @@ export const measurementRaw = (
 };
 
 /*
-pushMeasurementEpoch appends one publish-batch slot so the circular buffer
-advances on every thesis tick even when market observation timestamps repeat.
+latestPublishedStamp reads the thesis-frame time of the newest retained slot.
+*/
+export const latestPublishedStamp = (
+	buffer: CircularBuffer<MeasurementEpoch> | undefined,
+): string | undefined => buffer?.values().at(-1)?.publishedAt;
+
+/*
+pushMeasurementEpoch appends one observation epoch without collapsing distinct
+market events that arrived together in one Thesis frame.
 */
 const pushMeasurementEpoch = (
 	buffer: CircularBuffer<MeasurementEpoch>,
@@ -148,12 +159,14 @@ const pushMeasurementEpoch = (
 	buffer.push({
 		at: epochAt(readings),
 		readings: dedupeEpoch(readings),
+		publishedAt: new Date().toISOString(),
 	});
 };
 
 /*
-measurementsStore retains backend measurements exactly as received. Each
-circular-buffer slot is one observation tick, not one metric record.
+measurementsStore retains backend measurements exactly as received. Buffers
+mutate in place and version bumps notify subscribers without cloning the full
+symbol universe on every websocket batch.
 */
 export const measurementsStore = createStore(
 	{
@@ -161,15 +174,20 @@ export const measurementsStore = createStore(
 			string,
 			Record<string, CircularBuffer<MeasurementEpoch>>
 		>,
+		version: 0,
 	},
 	({ setState }) => ({
 		updateFrame: (frames: Measurement[]) =>
 			setState((prev) => {
-				const measurements = { ...prev.measurements };
+				if (frames.length === 0) {
+					return prev;
+				}
+
 				const pending = new Map<string, PendingEpoch>();
 
 				for (const frame of frames) {
-					const key = pendingGroupKey(frame.symbol, frame.source);
+					const groupKey = pendingGroupKey(frame.symbol, frame.source);
+					const key = `${groupKey}\u0000${frame.at}`;
 					const group = pending.get(key) ?? {
 						symbol: frame.symbol,
 						source: frame.source,
@@ -179,6 +197,8 @@ export const measurementsStore = createStore(
 					group.readings.push(frame);
 					pending.set(key, group);
 				}
+
+				const measurements = prev.measurements;
 
 				for (const group of pending.values()) {
 					if (!measurements[group.symbol]) {
@@ -198,6 +218,7 @@ export const measurementsStore = createStore(
 
 				return {
 					measurements,
+					version: prev.version + 1,
 				};
 			}),
 	}),

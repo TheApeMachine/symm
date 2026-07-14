@@ -29,17 +29,18 @@ const (
 Live is the spot websocket and REST transport.
 */
 type Live struct {
-	status    types.Status
-	ctx       context.Context
-	cancel    context.CancelFunc
-	client    *spot.WebSocket
-	sync      *sync.Map
-	paper     *Paper
-	simulator *Simulator
-	auth      bool
-	books     *spot.BookManager
-	isLevel3  bool
-	symbols   []string
+	status     types.Status
+	ctx        context.Context
+	cancel     context.CancelFunc
+	client     *spot.WebSocket
+	sync       *sync.Map
+	paper      *Paper
+	simulator  *Simulator
+	auth       bool
+	books      *spot.BookManager
+	bookAccess sync.RWMutex
+	isLevel3   bool
+	symbols    []string
 }
 
 /*
@@ -87,23 +88,17 @@ func New(
 
 	if live.isLevel3 {
 		live.books = spot.NewBookManager()
-		live.books.OnCreateBook.Recurring(func(e *callback.Event[*book.Book]) {
-			bookInstance := e.Data
-			bookInstance.EnableMaxDepth = false
-			bookInstance.NoBookCrossing = false
+		live.books.OnCreateBook.Recurring(func(event *callback.Event[*book.Book]) {
+			managed := event.Data
 
-			bookInstance.OnChecksummed.Recurring(func(e *callback.Event[*book.ChecksumResult]) {
-				// CreateBook is fired synchronously the moment the resync
-				// resubscribe is sent, well before Kraken's fresh snapshot
-				// has actually repopulated the book, so a resync's own
-				// symbol still checksums as mismatched for a while after
-				// it fires. A real match is the only trustworthy signal
-				// that the book is actually caught up again; only then is
-				// it safe to act on a future mismatch as a new problem.
-				if !e.Data.Match {
-					live.client.Reconnect()
-				}
-			})
+			// Kraken frames are atomic, so depth cannot be enforced per order.
+			managed.EnableMaxDepth = false
+			managed.NoBookCrossing = false
+			managed.OnChecksummed.Recurring(
+				func(*callback.Event[*book.ChecksumResult]) {
+					managed.EnforceDepth()
+				},
+			)
 		})
 	}
 
@@ -111,7 +106,7 @@ func New(
 		if err := live.updateLevel3(event); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
-				"websocket: level3 book update failed",
+				"websocket: level3 book update failed: "+err.Error(),
 				err,
 			))
 		}
@@ -121,7 +116,9 @@ func New(
 		if err := live.updateLevel3(event); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
-				"websocket: level3 book update failed",
+				"websocket: level3 "+utils.GetString(
+					event.Data.Bytes(), "type",
+				)+" failed: "+err.Error(),
 				err,
 			))
 		}
@@ -184,48 +181,10 @@ func (live *Live) updateLevel3(
 		return nil
 	}
 
-	if err := live.books.Update(event); err != nil {
-		return err
-	}
+	live.bookAccess.Lock()
+	defer live.bookAccess.Unlock()
 
-	message, err := event.Data.Map()
-
-	if err != nil {
-		return err
-	}
-
-	if message["channel"] != "level3" {
-		return nil
-	}
-
-	updates, ok := message["data"].([]any)
-
-	if !ok {
-		return nil
-	}
-
-	for _, update := range updates {
-		fields, ok := update.(map[string]any)
-
-		if !ok {
-			continue
-		}
-
-		symbol, ok := fields["symbol"].(string)
-
-		if !ok {
-			continue
-		}
-
-		managed := live.books.GetBook(symbol)
-
-		if managed != nil {
-			managed.EnforceOrder()
-			managed.EnforceDepth()
-		}
-	}
-
-	return nil
+	return live.books.Update(event)
 }
 
 func (live *Live) Initialize() error {
@@ -259,12 +218,7 @@ func (live *Live) route(raw []byte) {
 		return
 	}
 
-	// The BookManager owns level3 lifecycle (see OnSent/OnReceived above).
-	// Forward raw frames to registered handlers so manifold ingest can retain
-	// authoritative kraken.Level3Data rows on the tick Thesis.
-	if channel == "level3" {
-		live.dispatch(channel, raw, false)
-
+	if live.isLevel3 && channel == "level3" {
 		return
 	}
 
@@ -297,14 +251,6 @@ func (live *Live) Status() types.Status {
 
 func (live *Live) Client() *spot.WebSocket {
 	return live.client
-}
-
-/*
-Books returns the managed SDK order books for this transport, if any.
-Only the level3 transport maintains book state.
-*/
-func (live *Live) Books() *spot.BookManager {
-	return live.books
 }
 
 func (live *Live) On(

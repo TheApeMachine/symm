@@ -14,7 +14,11 @@ import {
 } from "#/components/terminal/measurement-view";
 import { paintInlineMeter } from "#/components/terminal/metric-paint";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { Badge } from "@/components/ui/badge";
+import { Flex } from "@/components/ui/flex";
+import { Meter } from "@/components/ui/meter";
 import { Panel } from "@/components/ui/panel";
+import { Stat } from "@/components/ui/stat";
 import type { Variant } from "@/components/ui/types";
 
 export type HealthSummary = {
@@ -215,106 +219,63 @@ export const HealthPanel = ({ sources }: { sources?: string[] }) => {
 
 	return (
 		<Panel size="lg">
-			<div className="flex items-center justify-between">
-				<span className="font-semibold text-(--f1) text-xs">System health</span>
-				<span
+			<Flex.Row align="center" justify="between">
+				<Flex className="font-semibold text-(--f1) text-xs">System health</Flex>
+				<Badge
 					ref={badgeRef}
+					label=""
 					className="rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
 				/>
-			</div>
-			<div className="mt-3 flex gap-[18px]">
-				<div ref={healthyRef} className="">
-					<div
-						data-stat-value="true"
-						className="font-mono text-2xl text-(--f1) leading-none"
-					/>
-					<div className="mt-1 font-mono text-[9px] text-(--f4)">healthy</div>
-				</div>
-				<div ref={avgRef} className="">
-					<div
-						data-stat-value="true"
-						className="font-mono text-2xl text-(--f1) leading-none"
-					/>
-					<div className="mt-1 font-mono text-[9px] text-(--f4)">
-						avg strength
-					</div>
-				</div>
-				<div ref={firingRef} className="">
-					<div
-						data-stat-value="true"
-						className="font-mono text-2xl leading-none"
-					/>
-					<div className="mt-1 font-mono text-[9px] text-(--f4)">firing</div>
-				</div>
-			</div>
-			<div className="mt-[13px] flex flex-col gap-1.5">
-				<div
+			</Flex.Row>
+			<Flex.Row className="mt-3 gap-[18px]">
+				<Stat
+					ref={healthyRef}
+					value=""
+					label="healthy"
+					emphasis="default"
+					valueClassName="font-normal text-(--f1)"
+				/>
+				<Stat
+					ref={avgRef}
+					value=""
+					label="avg strength"
+					emphasis="default"
+					valueClassName="font-normal text-(--f1)"
+				/>
+				<Stat
+					ref={firingRef}
+					value=""
+					label="firing"
+					emphasis="default"
+					valueClassName="font-normal"
+				/>
+			</Flex.Row>
+			<Flex.Column className="mt-[13px] gap-1.5">
+				<Meter
 					ref={healthyMeterRef}
-					className="flex items-center gap-2"
-					role="progressbar"
-					aria-valuemin={0}
-					aria-valuemax={100}
-				>
-					<span
-						data-inline-label="true"
-						className="w-[54px] shrink-0 font-mono text-[9px] text-(--f4)"
-					/>
-					<div
-						data-inline-track="true"
-						className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line) [--meter-tone:var(--info)]"
-					>
-						<div data-inline-fill="true" className="h-full bg-(--meter-tone)" />
-					</div>
-					<span
-						data-inline-value="true"
-						className="w-[18px] shrink-0 text-right font-mono text-[9px] text-(--f2)"
-					/>
-				</div>
-				<div
+					layout="inline"
+					size="xs"
+					percent={0}
+					label=""
+					value=""
+				/>
+				<Meter
 					ref={warmingMeterRef}
-					className="flex items-center gap-2"
-					role="progressbar"
-					aria-valuemin={0}
-					aria-valuemax={100}
-				>
-					<span
-						data-inline-label="true"
-						className="w-[54px] shrink-0 font-mono text-[9px] text-(--f4)"
-					/>
-					<div
-						data-inline-track="true"
-						className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line) [--meter-tone:var(--info)]"
-					>
-						<div data-inline-fill="true" className="h-full bg-(--meter-tone)" />
-					</div>
-					<span
-						data-inline-value="true"
-						className="w-[18px] shrink-0 text-right font-mono text-[9px] text-(--f2)"
-					/>
-				</div>
-				<div
+					layout="inline"
+					size="xs"
+					percent={0}
+					label=""
+					value=""
+				/>
+				<Meter
 					ref={degradedMeterRef}
-					className="flex items-center gap-2"
-					role="progressbar"
-					aria-valuemin={0}
-					aria-valuemax={100}
-				>
-					<span
-						data-inline-label="true"
-						className="w-[54px] shrink-0 font-mono text-[9px] text-(--f4)"
-					/>
-					<div
-						data-inline-track="true"
-						className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line) [--meter-tone:var(--info)]"
-					>
-						<div data-inline-fill="true" className="h-full bg-(--meter-tone)" />
-					</div>
-					<span
-						data-inline-value="true"
-						className="w-[18px] shrink-0 text-right font-mono text-[9px] text-(--f2)"
-					/>
-				</div>
-			</div>
+					layout="inline"
+					size="xs"
+					percent={0}
+					label=""
+					value=""
+				/>
+			</Flex.Column>
 		</Panel>
 	);
 };

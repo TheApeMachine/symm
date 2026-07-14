@@ -4,14 +4,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/kraken"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestSlotAdvance(t *testing.T) {
-	Convey("Given two valid L3 rows observed before any GPU work", t, func() {
+	Convey("Given two SDK book changes observed before any GPU work", t, func() {
 		viper.Set("market.l3_depth", 10)
 		viper.Set("market.manifold.lifetime_capacity", 256)
 		viper.Set("market.forecast.rls.initial_variance", 1.0)
@@ -20,25 +21,26 @@ func TestSlotAdvance(t *testing.T) {
 		defer engine.Close()
 		slot, err := engine.Admit("BTC/USD")
 		So(err, ShouldBeNil)
-		snapshot := kraken.Level3Data{
-			Symbol: "BTC/USD", Type: "snapshot", Timestamp: time.Unix(1, 0),
-			Bids: []kraken.Level3Order{{
-				OrderID: "bid-1", LimitPrice: 99, OrderQty: 2, Timestamp: time.Unix(1, 0),
-			}},
-			Asks: []kraken.Level3Order{{
-				OrderID: "ask-1", LimitPrice: 101, OrderQty: 3, Timestamp: time.Unix(1, 0),
-			}},
-		}
-		update := kraken.Level3Data{
-			Symbol: "BTC/USD", Type: "update", Timestamp: time.Unix(2, 0),
-			Bids: []kraken.Level3Order{{
-				Event: "modify", OrderID: "bid-1", LimitPrice: 99,
-				OrderQty: 4, Timestamp: time.Unix(2, 0),
-			}},
-		}
+		managed := book.New()
+		managed.Name = "BTC/USD"
+		managed.Update(&book.UpdateOptions{
+			Direction: book.Bid, ID: "bid-1",
+			Price: decimal.NewFromFloat64(99.5), Quantity: decimal.NewFromFloat64(2),
+			Timestamp: time.Unix(1, 0),
+		})
+		managed.Update(&book.UpdateOptions{
+			Direction: book.Ask, ID: "ask-1",
+			Price: decimal.NewFromFloat64(100.5), Quantity: decimal.NewFromFloat64(3),
+			Timestamp: time.Unix(1, 0),
+		})
 
-		first := slot.Observe(snapshot)
-		second := slot.Observe(update)
+		first := slot.ObserveBook(managed)
+		managed.Update(&book.UpdateOptions{
+			Direction: book.Bid, ID: "bid-1",
+			Price: decimal.NewFromFloat64(99.5), Quantity: decimal.NewFromFloat64(4),
+			Timestamp: time.Unix(2, 0),
+		})
+		second := slot.ObserveBook(managed)
 		orders := slot.population.Orders()
 
 		Convey("When the field advances once", func() {

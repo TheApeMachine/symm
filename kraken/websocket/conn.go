@@ -25,7 +25,6 @@ type Conn interface {
 	Write(params json.Marshaler) error
 	Close()
 	Post(path string, params json.Marshaler) ([]byte, error)
-	Books() *spot.BookManager
 }
 
 /*
@@ -41,7 +40,6 @@ type API struct {
 	paper     *Paper
 	live      bool
 	bookConns *sync.Map
-	level3    []func([]byte)
 }
 
 func NewAPI(
@@ -58,7 +56,6 @@ func NewAPI(
 		paper:     paper,
 		live:      viper.GetViper().GetString("trading.model") == "live",
 		bookConns: &sync.Map{},
-		level3:    make([]func([]byte), 0),
 	}
 
 	return api
@@ -76,9 +73,9 @@ func (api *API) Close() {
 }
 
 /*
-On registers a channel consumer on the transport that actually owns the
-channel. Level3 consumers are retained because those transports are created
-later, in batches, after the instrument universe arrives.
+On registers a raw channel consumer on the transport that owns the channel.
+Level3 is deliberately absent because the SDK BookManager consumes those frames
+and exposes its books through Books.
 */
 func (api *API) On(channel string, action func([]byte)) {
 	switch channel {
@@ -89,13 +86,6 @@ func (api *API) On(channel string, action func([]byte)) {
 		}
 
 		api.paper.On(channel, action)
-	case "level3":
-		api.level3 = append(api.level3, action)
-		api.bookConns.Range(func(_, value any) bool {
-			value.(*Live).On(channel, action)
-
-			return true
-		})
 	default:
 		api.public.On(channel, action)
 	}
@@ -157,14 +147,18 @@ func (api *API) SubscribeTrade(pairs []string) error {
 	return errnie.Error(api.public.Client().SubTrades(pairs))
 }
 
+/*
+Books yields the SDK BookManager owned by each Level3 transport directly.
+*/
 func (api *API) Books() iter.Seq[*spot.BookManager] {
 	return func(yield func(*spot.BookManager) bool) {
 		api.bookConns.Range(func(key, value any) bool {
-			if !yield(value.(*Live).Books()) {
-				return false
-			}
+			live := value.(*Live)
+			live.bookAccess.RLock()
+			keepGoing := yield(live.books)
+			live.bookAccess.RUnlock()
 
-			return true
+			return keepGoing
 		})
 	}
 }
@@ -192,10 +186,6 @@ func (api *API) SubscribeLevel3(pairs []string) error {
 	)
 
 	live.symbols = pairs
-
-	for _, action := range api.level3 {
-		live.On("level3", action)
-	}
 
 	if err := live.Initialize(); err != nil {
 		live.Close()

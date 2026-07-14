@@ -154,6 +154,7 @@ const NavIcon = ({ surface }: { surface: TerminalSurface }) => {
 					fill="none"
 					stroke="currentColor"
 					strokeWidth="1.6"
+					aria-hidden="true"
 				>
 					<title>Trade journal</title>
 					<path d="M6 4h9l3 3v13H6z" />

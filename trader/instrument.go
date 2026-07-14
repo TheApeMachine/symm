@@ -4,6 +4,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/viper"
@@ -21,7 +22,7 @@ tier always includes open holdings so every managed position receives the data
 required for continuation and exit decisions.
 */
 type Instrument struct {
-	status    types.Status
+	status    atomic.Value
 	api       *websocket.API
 	price     *broker.Price
 	cache     *sync.Map
@@ -41,28 +42,29 @@ func NewInstrument(
 	channel chan []byte,
 ) *Instrument {
 	instrument := &Instrument{
-		status: types.INITIALIZING,
-		api:    api,
-		price:  price,
-		cache:  &sync.Map{},
-		quote:  viper.GetString("market.quote_currency"),
-		uiHub:  channel,
+		api:   api,
+		price: price,
+		cache: &sync.Map{},
+		quote: viper.GetString("market.quote_currency"),
+		uiHub: channel,
 	}
+	instrument.status.Store(types.INITIALIZING)
 
 	return instrument
 }
 
 func (instrument *Instrument) Initialize() error {
 	errnie.Info("initializing instrument")
+	instrument.status.Store(types.PENDING)
 
 	instrument.api.On("instrument", instrument.On)
 
 	if err := instrument.api.SubscribeInstruments(); err != nil {
-		instrument.status = types.ERROR
-		errnie.Error(err)
+		instrument.status.Store(types.ERROR)
+
+		return errnie.Error(err)
 	}
 
-	instrument.status = types.PENDING
 	return nil
 }
 
@@ -77,18 +79,26 @@ func (instrument *Instrument) On(data []byte) {
 		instrument.cache.Store(pair.Symbol, pair)
 	}
 
-	if instrument.status == types.READY || instrument.status == types.ERROR {
+	status := instrument.Status()
+
+	if status == types.READY || status == types.ERROR {
 		return
 	}
 
 	if err := instrument.Subscribe(); err != nil {
-		instrument.status = types.ERROR
+		instrument.status.Store(types.ERROR)
 		errnie.Error(err)
 	}
 }
 
 func (instrument *Instrument) Status() types.Status {
-	return instrument.status
+	status := instrument.status.Load()
+
+	if status == nil {
+		return types.INITIALIZING
+	}
+
+	return status.(types.Status)
 }
 
 /*
@@ -127,7 +137,7 @@ func (instrument *Instrument) Pair(symbol string) (kraken.InstrumentPair, error)
 }
 
 func (instrument *Instrument) Subscribe() error {
-	if instrument.status == types.READY {
+	if instrument.Status() == types.READY {
 		return nil
 	}
 
@@ -150,7 +160,7 @@ func (instrument *Instrument) Subscribe() error {
 	}
 
 	if len(symbols) == 0 {
-		instrument.status = types.INITIALIZING
+		instrument.status.Store(types.INITIALIZING)
 		return nil
 	}
 
@@ -179,7 +189,7 @@ func (instrument *Instrument) Subscribe() error {
 		time.Sleep(pace)
 	}
 
-	instrument.status = types.READY
+	instrument.status.Store(types.READY)
 
 	return nil
 }
@@ -305,7 +315,7 @@ func (instrument *Instrument) Activate(required []string) (bool, error) {
 	for batch := range slices.Chunk(symbols, batchSize) {
 		for _, subscribe := range subscribers {
 			if err := subscribe(batch); err != nil {
-				instrument.status = types.ERROR
+				instrument.status.Store(types.ERROR)
 
 				return false, errnie.Error(err)
 			}

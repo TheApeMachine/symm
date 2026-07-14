@@ -59,6 +59,48 @@ func TestThesisPublish(t *testing.T) {
 			})
 		})
 	})
+
+	Convey("Given a tick without decision or lifecycle events", t, func() {
+		uiHub := make(chan []byte, 1)
+		thesis := NewThesis(uiHub)
+		thesis.Tick = 1
+
+		thesis.Publish()
+
+		Convey("Then absent event collections are not published as clearing frames", func() {
+			frame := map[string]any{}
+			So(json.Unmarshal(<-uiHub, &frame), ShouldBeNil)
+			So(frame, ShouldNotContainKey, "decisions")
+			So(frame, ShouldNotContainKey, "tradeJournal")
+			So(frame, ShouldNotContainKey, "lifecycle")
+			So(frame, ShouldNotContainKey, "manifold")
+		})
+	})
+
+	Convey("Given a tick thesis absorbing evaluated PostMortem findings", t, func() {
+		uiHub := make(chan []byte, 1)
+		tickThesis := NewThesis(uiHub)
+		evaluated := NewThesis(nil)
+		evaluated.Findings = append(evaluated.Findings, Finding{
+			Symbol: "BTC/USD", Component: "execution",
+			Condition: "entry and exit fills reconciled with reported fees",
+			Evidence:  []string{"buy-fill", "sell-fill"}, EstimatedEffect: 7.92,
+			RequiredValidation: "aggregate comparable completed Theses and validate by chronological replay",
+		})
+
+		tickThesis.AbsorbFindings(evaluated)
+		tickThesis.Publish()
+
+		Convey("Then the wire frame carries the structured symbol", func() {
+			var frame struct {
+				Findings []Finding `json:"findings"`
+			}
+
+			So(json.Unmarshal(<-uiHub, &frame), ShouldBeNil)
+			So(frame.Findings, ShouldHaveLength, 1)
+			So(frame.Findings[0].Symbol, ShouldEqual, "BTC/USD")
+		})
+	})
 }
 
 func BenchmarkThesisPublish(b *testing.B) {

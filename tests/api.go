@@ -19,7 +19,6 @@ MockConn is a controllable Kraken websocket transport.
 type MockConn struct {
 	channels     map[string][]func([]byte)
 	client       *spot.WebSocket
-	books        *spot.BookManager
 	postResponse []byte
 	postPath     string
 	postParams   json.Marshaler
@@ -37,10 +36,6 @@ type MockPostCall struct {
 
 func (conn *MockConn) Client() *spot.WebSocket {
 	return conn.client
-}
-
-func (conn *MockConn) Books() *spot.BookManager {
-	return conn.books
 }
 
 func (conn *MockConn) On(channel string, action func([]byte)) {

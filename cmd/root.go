@@ -105,7 +105,7 @@ var (
 			defer uiHub.Close()
 
 			instrument := trader.NewInstrument(api, price, channel)
-			analyzer := logic.NewAnalyzer(booter)
+			analyzer := logic.NewAnalyzer(ctx, booter, api)
 
 			planner := strategy.NewPlanner(
 				ctx,

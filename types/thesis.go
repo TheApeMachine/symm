@@ -161,6 +161,18 @@ func (thesis *Thesis) RecordTrade(observation TradeObservation) {
 }
 
 /*
+AbsorbFindings retains evaluated PostMortem findings from one completed lifecycle
+on the current tick thesis so Publish can expose them on the UI wire.
+*/
+func (thesis *Thesis) AbsorbFindings(evaluated *Thesis) {
+	if evaluated == nil || len(evaluated.Findings) == 0 {
+		return
+	}
+
+	thesis.Findings = append(thesis.Findings, evaluated.Findings...)
+}
+
+/*
 Absorb idempotently retains the current tick evidence used to manage one open position.
 */
 func (thesis *Thesis) Absorb(current *Thesis, symbol string) {
@@ -374,9 +386,7 @@ func (thesis *Thesis) Publish() {
 	}
 
 	leader, leadershipThreshold := thesis.CrossSection.Leadership()
-
-	select {
-	case thesis.uiHub <- datura.Map[any]{
+	frame := datura.Map[any]{
 		"tick": datura.Map[any]{"count": thesis.Tick},
 		"diagnostics": []datura.Map[any]{
 			{
@@ -386,15 +396,42 @@ func (thesis *Thesis) Publish() {
 				"breadth":             thesis.CrossSection.Breadth(),
 			},
 		},
-		"measurements": thesis.Measurements,
-		"decisions":    thesis.Decisions,
-		"tradeJournal": thesis.TradeJournal,
-		"lifecycle":    thesis.Lifecycle,
-		"findings":     thesis.Findings,
-		"manifold":     thesis.Manifold,
-		"resonance":    thesis.Resonance,
-		"causal":       thesis.Causal,
-	}.Marshal():
+	}
+
+	if len(thesis.Measurements) > 0 {
+		frame["measurements"] = thesis.Measurements
+	}
+
+	if len(thesis.Decisions) > 0 {
+		frame["decisions"] = thesis.Decisions
+	}
+
+	if len(thesis.TradeJournal) > 0 {
+		frame["tradeJournal"] = thesis.TradeJournal
+	}
+
+	if len(thesis.Lifecycle) > 0 {
+		frame["lifecycle"] = thesis.Lifecycle
+	}
+
+	if len(thesis.Findings) > 0 {
+		frame["findings"] = thesis.Findings
+	}
+
+	if len(thesis.Manifold) > 0 {
+		frame["manifold"] = thesis.Manifold
+	}
+
+	if len(thesis.Resonance) > 0 {
+		frame["resonance"] = thesis.Resonance
+	}
+
+	if len(thesis.Causal) > 0 {
+		frame["causal"] = thesis.Causal
+	}
+
+	select {
+	case thesis.uiHub <- frame.Marshal():
 	default:
 	}
 }

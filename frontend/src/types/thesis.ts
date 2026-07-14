@@ -60,6 +60,7 @@ Finding mirrors the backend PostMortem evidence record attributed to one system
 layer so proposed adjustments stay separate from live model state.
 */
 export type Finding = {
+	symbol: string;
 	component: string;
 	condition: string;
 	evidence: string[];
@@ -100,6 +101,19 @@ export const LIFECYCLE_TERMINAL = new Set([
 	"rejected",
 	"invalid",
 ]);
+
+const managingStart = LIFECYCLE_STAGES.indexOf("managing");
+const managingEnd = LIFECYCLE_STAGES.indexOf("closed");
+
+/*
+LIFECYCLE_MANAGING spans active position-management stages between entry completion
+and post-exit review so journal badges can use warning tone without index math.
+*/
+export const LIFECYCLE_MANAGING: Set<string> = new Set(
+	managingStart >= 0 && managingEnd >= managingStart
+		? LIFECYCLE_STAGES.slice(managingStart, managingEnd + 1)
+		: [],
+);
 
 export const lifecycleStageIndex = (state: LifecycleState): number => {
 	const index = LIFECYCLE_STAGES.indexOf(

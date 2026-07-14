@@ -1,5 +1,17 @@
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+export const isPlainObject = (
+	value: unknown,
+): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
+
+const orderedEventArrays = new Set([
+	"measurements",
+	"decisions",
+	"tradeJournal",
+	"findings",
+	"manifold",
+	"resonance",
+	"causal",
+]);
 
 /*
 mergeFrameEntry coalesces one keyed backend payload inside a 16ms worker window.
@@ -29,6 +41,8 @@ export const mergeFrameEntry = (
 
 /*
 mergeFramePayload merges a parsed websocket object into the active worker queue.
+Ordered thesis evidence is appended so the paint window cannot discard market
+epochs, while complete state snapshots continue to replace older arrays.
 */
 export const mergeFramePayload = (
 	queue: Record<string, unknown>,
@@ -37,6 +51,12 @@ export const mergeFramePayload = (
 	const next = { ...queue };
 
 	for (const [key, data] of Object.entries(incoming)) {
+		if (orderedEventArrays.has(key) && Array.isArray(data)) {
+			const queued = Array.isArray(queue[key]) ? queue[key] : [];
+			next[key] = [...queued, ...data];
+			continue;
+		}
+
 		next[key] = mergeFrameEntry(queue[key], data);
 	}
 

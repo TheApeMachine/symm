@@ -72,6 +72,22 @@ describe("orderedEpoch", () => {
 		expect(dedupeEpoch([left, right])).toHaveLength(2);
 	});
 
+	it("does not collide when field values contain delimiter characters", () => {
+		const at = "2026-07-14T16:25:24Z";
+		const left = {
+			...measurement("value", at, 0.11),
+			side: "buy:sell",
+		};
+		const right = {
+			...measurement("value", at, 0.22),
+			side: "buy",
+			subject: "sell",
+		};
+
+		expect(measurementIdentity(left)).not.toBe(measurementIdentity(right));
+		expect(dedupeEpoch([left, right])).toHaveLength(2);
+	});
+
 	it("sorts metrics deterministically after the headline", () => {
 		const at = "2026-07-14T16:25:24Z";
 		const values = [

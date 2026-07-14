@@ -7,10 +7,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 )
-
-const TradesHistoryEndpoint = "/0/private/TradesHistory"
 
 type TradesHistory struct {
 	Error  []interface{}       `json:"error"`
@@ -19,12 +16,6 @@ type TradesHistory struct {
 
 type TradesHistoryResult struct {
 	Trades map[string]spot.Trade `json:"trades"`
-}
-
-func NewTradesHistory(buf []byte) *TradesHistory {
-	data := &TradesHistory{}
-	errnie.Error(sonic.Unmarshal(buf, data))
-	return data
 }
 
 func (history *TradesHistory) Action() string {
@@ -42,17 +33,6 @@ type TradesHistoryRequest struct {
 	WithoutCount     bool   `json:"without_count"`
 	Ledgers          bool   `json:"ledgers"`
 	RebaseMultiplier string `json:"rebase_multiplier"`
-}
-
-func NewTradesHistoryRequest() *TradesHistoryRequest {
-	return &TradesHistoryRequest{
-		Type:             "all",
-		Trades:           true,
-		ConsolidateTaker: true,
-		WithoutCount:     false,
-		Ledgers:          false,
-		RebaseMultiplier: "rebased",
-	}
 }
 
 func (request *TradesHistoryRequest) MarshalJSON() ([]byte, error) {

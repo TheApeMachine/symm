@@ -69,18 +69,20 @@ const paintMetricRow = (
 	const fill = row.querySelector<HTMLElement>("[data-metric-fill='true']");
 	const percent = percentOf(measurement);
 	const variant = measurement.metric === headline ? "warning" : "info";
+	const labelText = [
+		metricLabel(measurement.metric),
+		sideLabel(measurement.side),
+	]
+		.filter(Boolean)
+		.join(" · ");
+	const valueText = formatRaw(measurement);
 
 	if (label !== null) {
-		label.textContent = [
-			metricLabel(measurement.metric),
-			sideLabel(measurement.side),
-		]
-			.filter(Boolean)
-			.join(" · ");
+		label.textContent = labelText;
 	}
 
 	if (value !== null) {
-		value.textContent = formatRaw(measurement);
+		value.textContent = valueText;
 	}
 
 	if (track !== null) {
@@ -91,6 +93,8 @@ const paintMetricRow = (
 		fill.style.width = `${percent}%`;
 	}
 
+	row.setAttribute("aria-label", labelText);
+	row.setAttribute("aria-valuetext", valueText);
 	row.setAttribute("aria-valuenow", String(Math.round(percent)));
 };
 
@@ -139,8 +143,12 @@ export const paintMetricGrid = (
 		}
 	}
 
-	for (const row of orderedRows) {
-		grid.appendChild(row);
+	const orderMatches =
+		orderedRows.length === grid.children.length &&
+		orderedRows.every((row, index) => grid.children[index] === row);
+
+	if (!orderMatches) {
+		grid.replaceChildren(...orderedRows);
 	}
 };
 

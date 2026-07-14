@@ -15,6 +15,28 @@ describe("mergeFramePayload", () => {
 		expect(merged.positions).toEqual([{ symbol: "ETH/USD", mark: 2 }]);
 	});
 
+	it("preserves ordered thesis evidence inside one paint window", () => {
+		const merged = mergeFramePayload(
+			{
+				measurements: [{ symbol: "BTC/USD", at: "first" }],
+				manifold: [{ symbol: "BTC/USD", epoch: 1 }],
+			},
+			{
+				measurements: [{ symbol: "BTC/USD", at: "second" }],
+				manifold: [{ symbol: "BTC/USD", epoch: 2 }],
+			},
+		);
+
+		expect(merged.measurements).toEqual([
+			{ symbol: "BTC/USD", at: "first" },
+			{ symbol: "BTC/USD", at: "second" },
+		]);
+		expect(merged.manifold).toEqual([
+			{ symbol: "BTC/USD", epoch: 1 },
+			{ symbol: "BTC/USD", epoch: 2 },
+		]);
+	});
+
 	it("shallow-merges object maps inside one worker window", () => {
 		const merged = mergeFramePayload(
 			{

@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from "class-variance-authority";
-import type { ComponentPropsWithoutRef } from "react";
+import { type ComponentPropsWithoutRef, forwardRef } from "react";
 import { cn } from "@/lib/utils";
 import type { Size } from "./types";
 
@@ -102,57 +102,93 @@ export type MeterProps = Omit<ComponentPropsWithoutRef<"div">, "children"> &
 Meter is a labeled progress bar with semantic fill variants and stacked, inline,
 or bar-only layouts.
 */
-export const Meter = ({
-	percent,
-	label,
-	value,
-	variant,
-	size,
-	layout,
-	animated = false,
-	labelClassName,
-	valueClassName,
-	trackClassName,
-	className,
-	...props
-}: MeterProps) => {
-	const resolvedSize = (size ?? "s") as Size;
-	const resolvedLayout = layout ?? "stacked";
-	const fillWidth = clampPercent(percent);
+export const Meter = forwardRef<HTMLDivElement, MeterProps>(
+	(
+		{
+			percent,
+			label,
+			value,
+			variant,
+			size,
+			layout,
+			animated = false,
+			labelClassName,
+			valueClassName,
+			trackClassName,
+			className,
+			...props
+		},
+		ref,
+	) => {
+		const resolvedSize = (size ?? "s") as Size;
+		const resolvedLayout = layout ?? "stacked";
+		const fillWidth = clampPercent(percent);
 
-	return (
-		<div
-			className={cn(meterVariants({ layout }), className)}
-			{...props}
-			role="progressbar"
-			aria-valuenow={fillWidth}
-			aria-valuemin={0}
-			aria-valuemax={100}
-		>
-			{resolvedLayout === "stacked" &&
-			(label !== undefined || value !== undefined) ? (
-				<div className={meterHeaderVariants({ size: resolvedSize })}>
-					<span className={cn("text-(--f3)", labelClassName)}>{label}</span>
-					<span className={cn("text-(--f1)", valueClassName)}>{value}</span>
-				</div>
-			) : null}
+		return (
+			<div
+				ref={ref}
+				className={cn(meterVariants({ layout }), className)}
+				{...props}
+				role="progressbar"
+				aria-valuenow={fillWidth}
+				aria-valuemin={0}
+				aria-valuemax={100}
+			>
+				{resolvedLayout === "stacked" &&
+				(label !== undefined || value !== undefined) ? (
+					<div className={meterHeaderVariants({ size: resolvedSize })}>
+						<span className={cn("text-(--f3)", labelClassName)}>{label}</span>
+						<span className={cn("text-(--f1)", valueClassName)}>{value}</span>
+					</div>
+				) : null}
 
-			{resolvedLayout === "inline" ? (
-				<>
-					{label === undefined ? null : (
-						<span
+				{resolvedLayout === "inline" ? (
+					<>
+						{label === undefined ? null : (
+							<span
+								data-inline-label="true"
+								className={cn(
+									meterInlineLabelClass[resolvedSize],
+									labelClassName,
+								)}
+							>
+								{label}
+							</span>
+						)}
+						<div
+							data-inline-track="true"
 							className={cn(
-								meterInlineLabelClass[resolvedSize],
-								labelClassName,
+								meterTrackVariants({ variant, size: resolvedSize }),
+								"flex-1",
+								trackClassName,
 							)}
 						>
-							{label}
-						</span>
-					)}
+							<div
+								data-inline-fill="true"
+								className={cn(
+									"h-full bg-(--meter-tone)",
+									animated && "transition-[width] duration-500 ease-out",
+								)}
+								style={{ width: `${fillWidth}%` }}
+							/>
+						</div>
+						{value === undefined ? null : (
+							<span
+								data-inline-value="true"
+								className={cn(
+									meterInlineValueClass[resolvedSize],
+									valueClassName,
+								)}
+							>
+								{value}
+							</span>
+						)}
+					</>
+				) : (
 					<div
 						className={cn(
 							meterTrackVariants({ variant, size: resolvedSize }),
-							"flex-1",
+							resolvedLayout === "bar" && "w-full",
 							trackClassName,
 						)}
 					>
@@ -164,34 +200,8 @@ export const Meter = ({
 							style={{ width: `${fillWidth}%` }}
 						/>
 					</div>
-					{value === undefined ? null : (
-						<span
-							className={cn(
-								meterInlineValueClass[resolvedSize],
-								valueClassName,
-							)}
-						>
-							{value}
-						</span>
-					)}
-				</>
-			) : (
-				<div
-					className={cn(
-						meterTrackVariants({ variant, size: resolvedSize }),
-						resolvedLayout === "bar" && "w-full",
-						trackClassName,
-					)}
-				>
-					<div
-						className={cn(
-							"h-full bg-(--meter-tone)",
-							animated && "transition-[width] duration-500 ease-out",
-						)}
-						style={{ width: `${fillWidth}%` }}
-					/>
-				</div>
-			)}
-		</div>
-	);
-};
+				)}
+			</div>
+		);
+	},
+);

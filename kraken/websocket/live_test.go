@@ -43,23 +43,44 @@ func TestNewSetsAuthURL(t *testing.T) {
 	})
 }
 
-func TestLiveUpdateLevel3PreservesMessageBoundary(t *testing.T) {
-	Convey("Given a depth-limited L3 book and one atomic boundary shift", t, func() {
+func TestLiveUpdateLevel3(t *testing.T) {
+	Convey("Given a depth-limited SDK book", t, func() {
 		live := New(context.Background(), nil, true, Level3WebSocketURL)
 		live.client.Reconnect = func() {}
-		managed := live.books.CreateBook("BTC/USD", 1)
-		restingPrice, err := decimal.NewFromString("100")
+		managed := live.books.CreateBook("BTC/USD", 10)
+		So(managed.EnableMaxDepth, ShouldBeFalse)
+		So(managed.NoBookCrossing, ShouldBeFalse)
+		quantity, err := decimal.NewFromString("1")
+		So(err, ShouldBeNil)
+
+		for price := 91; price <= 100; price++ {
+			restingPrice, parseErr := decimal.NewFromString(strconv.Itoa(price))
+			So(parseErr, ShouldBeNil)
+
+			managed.Update(&book.UpdateOptions{
+				Direction: book.Bid,
+				ID:        "bid-" + strconv.Itoa(price),
+				Price:     restingPrice,
+				Quantity:  quantity,
+				Timestamp: time.Unix(int64(price), 0),
+			})
+		}
+
+		restingAskPrice, err := decimal.NewFromString("102")
 		So(err, ShouldBeNil)
 
 		managed.Update(&book.UpdateOptions{
-			Direction: book.Bid,
-			ID:        "resting",
-			Price:     restingPrice,
-			Quantity:  decimal.NewFromInt64(1),
+			Direction: book.Ask,
+			ID:        "resting-ask",
+			Price:     restingAskPrice,
+			Quantity:  quantity,
 			Timestamp: time.Unix(1, 0),
 		})
 
-		checksum := crc32.ChecksumIEEE([]byte("1011"))
+		checksum := crc32.ChecksumIEEE([]byte(
+			"1031" + "1001" + "991" + "981" + "971" +
+				"961" + "951" + "941" + "931" + "921",
+		))
 		raw := []byte(fmt.Sprintf(`{
 			"channel":"level3",
 			"type":"update",
@@ -67,25 +88,58 @@ func TestLiveUpdateLevel3PreservesMessageBoundary(t *testing.T) {
 				"symbol":"BTC/USD",
 				"checksum":%d,
 				"bids":[
-					{"event":"add","order_id":"new-best","limit_price":101,"order_qty":1,"timestamp":"2024-01-01T00:00:02Z"},
-					{"event":"delete","order_id":"resting","limit_price":100,"timestamp":"2024-01-01T00:00:03Z"}
+					{"event":"add","order_id":"new-best","limit_price":103,"order_qty":1,"timestamp":"2024-01-01T00:00:02Z"},
+					{"event":"delete","order_id":"bid-91","limit_price":91,"timestamp":"2024-01-01T00:00:03Z"}
 				],
-				"asks":[]
+				"asks":[
+					{"event":"delete","order_id":"resting-ask","limit_price":102,"timestamp":"2024-01-01T00:00:03Z"}
+				]
 			}]
 		}`, checksum))
 		event := &callback.Event[*kraken.WebSocketMessage]{
 			Data: kraken.NewWebSocketMessage(raw),
 		}
 
-		Convey("When the complete message is applied", func() {
+		Convey("When a complete message repairs intermediate depth and crossing", func() {
 			err := live.updateLevel3(event)
 
-			Convey("Then no intermediate trim loses the later deleted level", func() {
+			Convey("Then the SDK applies every order before enforcing book depth", func() {
 				So(err, ShouldBeNil)
-				So(managed.EnableMaxDepth, ShouldBeFalse)
-				So(managed.NoBookCrossing, ShouldBeFalse)
-				So(managed.Bids.Levels, ShouldHaveLength, 1)
-				So(managed.BestBid().Price.Float64(), ShouldEqual, 101.0)
+				So(managed.Bids.Levels, ShouldHaveLength, 10)
+				So(managed.Asks.Levels, ShouldBeEmpty)
+				So(managed.BestBid().Price.Float64(), ShouldEqual, 103.0)
+				So(managed.WorstBid().Price.Float64(), ShouldEqual, 92.0)
+			})
+		})
+
+		Convey("When an update pushes a price level out of subscription scope", func() {
+			checksum := crc32.ChecksumIEEE([]byte(
+				"1021" + "1041" + "1001" + "991" + "981" + "971" +
+					"961" + "951" + "941" + "931" + "921",
+			))
+			raw := []byte(fmt.Sprintf(`{
+				"channel":"level3",
+				"type":"update",
+				"data":[{
+					"symbol":"BTC/USD",
+					"checksum":%d,
+					"bids":[
+						{"event":"add","order_id":"new-best","limit_price":104,"order_qty":1,"timestamp":"2024-01-01T00:00:02Z"}
+					],
+					"asks":[]
+				}]
+			}`, checksum))
+			event := &callback.Event[*kraken.WebSocketMessage]{
+				Data: kraken.NewWebSocketMessage(raw),
+			}
+
+			err := live.updateLevel3(event)
+
+			Convey("Then the SDK removes the completed frame's worst level", func() {
+				So(err, ShouldBeNil)
+				So(managed.Bids.Levels, ShouldHaveLength, 10)
+				So(managed.BestBid().Price.Float64(), ShouldEqual, 104.0)
+				So(managed.WorstBid().Price.Float64(), ShouldEqual, 92.0)
 			})
 		})
 	})
@@ -151,7 +205,7 @@ func TestLiveSubscribeLevel3SendsDepth(t *testing.T) {
 
 /*
 BenchmarkLiveUpdateLevel3 measures one complete L3 message application through
-checksum validation and message-boundary depth enforcement.
+the SDK manager and checksum validation.
 */
 func BenchmarkLiveUpdateLevel3(b *testing.B) {
 	live := New(context.Background(), nil, true, Level3WebSocketURL)
@@ -185,12 +239,8 @@ func BenchmarkLiveUpdateLevel3(b *testing.B) {
 
 func TestLiveRoute(t *testing.T) {
 	Convey("Given callbacks registered on a live transport", t, func() {
-		live := &Live{sync: &sync.Map{}}
-		level3Frames := make([][]byte, 0, 2)
+		live := &Live{sync: &sync.Map{}, isLevel3: true}
 		tickerFrames := make([][]byte, 0, 1)
-		live.On("level3", func(raw []byte) {
-			level3Frames = append(level3Frames, raw)
-		})
 		live.On("ticker", func(raw []byte) {
 			tickerFrames = append(tickerFrames, raw)
 		})
@@ -202,40 +252,36 @@ func TestLiveRoute(t *testing.T) {
 			So(tickerFrames, ShouldResemble, [][]byte{raw})
 		})
 
-		Convey("It should route level3 market data to registered handlers", func() {
+		Convey("It should leave level3 market data with the SDK BookManager", func() {
 			raw := []byte(`{"channel":"level3","type":"update","data":[{"symbol":"BTC/USD"}]}`)
 			live.route(raw)
-
-			So(level3Frames, ShouldResemble, [][]byte{raw})
 		})
 
 		Convey("It should not route subscription acknowledgements as market data", func() {
 			raw := []byte(`{"method":"subscribe","result":{"channel":"level3"},"success":true}`)
 			live.route(raw)
 
-			So(level3Frames, ShouldBeEmpty)
+			So(tickerFrames, ShouldBeEmpty)
 		})
 
 		Convey("It should not route failed acknowledgements as market data", func() {
 			raw := []byte(`{"error":"invalid depth","result":{"channel":"level3"},"success":false}`)
 			live.route(raw)
 
-			So(level3Frames, ShouldBeEmpty)
+			So(tickerFrames, ShouldBeEmpty)
 		})
 
 		Convey("It should ignore status and heartbeat frames", func() {
 			live.route([]byte(`{"channel":"status"}`))
 			live.route([]byte(`{"channel":"heartbeat"}`))
 
-			So(level3Frames, ShouldBeEmpty)
 			So(tickerFrames, ShouldBeEmpty)
 		})
 	})
 }
 
 func BenchmarkLiveRoute(b *testing.B) {
-	live := &Live{sync: &sync.Map{}}
-	live.On("level3", func([]byte) {})
+	live := &Live{sync: &sync.Map{}, isLevel3: true}
 	raw := []byte(`{"channel":"level3","type":"update","data":[{"symbol":"BTC/USD"}]}`)
 	b.ReportAllocs()
 	b.ResetTimer()

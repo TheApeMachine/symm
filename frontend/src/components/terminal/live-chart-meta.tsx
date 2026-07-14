@@ -1,5 +1,4 @@
 import { useRef } from "react";
-import { appStore } from "#/collections/app";
 import { manifoldStore } from "#/collections/manifold";
 import { resonanceStore } from "#/collections/resonance";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
@@ -44,7 +43,7 @@ export const LiveManifoldMeta = ({ focusSymbol }: { focusSymbol: string }) => {
 					: `modes ${String(manifold.oscillatorCount)}`;
 			}
 		},
-		[manifoldStore, appStore],
+		[manifoldStore],
 		[focusSymbol],
 	);
 

@@ -8,15 +8,13 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
 )
 
 func TestInstrumentOn(t *testing.T) {
 	Convey("Given an instrument snapshot frame", t, func() {
 		instrument := &Instrument{
-			status: types.INITIALIZING,
-			cache:  &sync.Map{},
-			quote:  "EUR",
+			cache: &sync.Map{},
+			quote: "EUR",
 		}
 
 		raw := []byte(`{"channel":"instrument","type":"snapshot","data":{"pairs":[{"symbol":"BTC/USD","base":"BTC","quote":"USD","status":"online"}]}}`)
@@ -36,9 +34,8 @@ func TestInstrumentOn(t *testing.T) {
 
 func BenchmarkInstrumentOn(b *testing.B) {
 	instrument := &Instrument{
-		status: types.INITIALIZING,
-		cache:  &sync.Map{},
-		quote:  "EUR",
+		cache: &sync.Map{},
+		quote: "EUR",
 	}
 	raw := []byte(`{"channel":"instrument","type":"snapshot","data":{"pairs":[{"symbol":"BTC/USD","base":"BTC","quote":"USD","status":"online"}]}}`)
 
@@ -53,9 +50,8 @@ func TestInstrumentSubscribeRejectsInvalidBatchSize(t *testing.T) {
 	Convey("Given an invalid subscribe batch size", t, func() {
 		viper.Set("market.subscribe_batch", 0)
 		instrument := &Instrument{
-			status: types.PENDING,
-			cache:  &sync.Map{},
-			quote:  "USD",
+			cache: &sync.Map{},
+			quote: "USD",
 		}
 		instrument.cache.Store("BTC/USD", kraken.InstrumentPair{
 			Symbol: "BTC/USD",

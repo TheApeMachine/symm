@@ -2,6 +2,7 @@ import { memo, useRef } from "react";
 import {
 	headlineSeriesFromBuffer,
 	latestMeasurementReadings,
+	latestPublishedStamp,
 	measurementsStore,
 } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
@@ -40,18 +41,16 @@ const paintKernelListRow = (
 	focusSymbol: string,
 ): void => {
 	const buffer = measurementsStore.state.measurements[focusSymbol]?.[source];
+	const epoch = latestMeasurementReadings(buffer);
 	const headline = headlineMetric(source);
 	const latest =
-		headline === null
-			? latestMeasurementReadings(buffer).at(-1)
-			: latestByMetric(latestMeasurementReadings(buffer), headline);
+		headline === null ? epoch.at(-1) : latestByMetric(epoch, headline);
 	const status = resolveStatus(latest);
 	const statusMeta = kernelStatusMeta(status);
 	const spark = kernelSparkPaths(
 		headline === null ? [] : headlineSeriesFromBuffer(buffer, headline),
 		status,
 	);
-	const epoch = latestMeasurementReadings(buffer);
 	const percent =
 		headline === null || latest === undefined ? 0 : percentOf(latest);
 	const readout =
@@ -66,6 +65,7 @@ const paintKernelListRow = (
 	if (refs.button !== null) {
 		refs.button.style.borderLeftColor = active ? "var(--acc)" : "transparent";
 		refs.button.style.background = active ? "var(--raised)" : "transparent";
+		refs.button.setAttribute("aria-pressed", active ? "true" : "false");
 	}
 
 	if (refs.sparkArea !== null) {
@@ -90,7 +90,9 @@ const paintKernelListRow = (
 	}
 
 	if (refs.age !== null) {
-		refs.age.textContent = ageText(stampOf(latest?.at));
+		refs.age.textContent = ageText(
+			stampOf(latestPublishedStamp(buffer) ?? latest?.at),
+		);
 	}
 
 	if (refs.badge !== null) {

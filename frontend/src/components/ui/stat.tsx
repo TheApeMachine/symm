@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from "class-variance-authority";
-import type { ComponentPropsWithoutRef } from "react";
+import { type ComponentPropsWithoutRef, forwardRef } from "react";
 import { cn } from "@/lib/utils";
 import type { Size } from "./types";
 
@@ -95,49 +95,60 @@ export type StatProps = Omit<ComponentPropsWithoutRef<"div">, "children"> &
 Stat displays a labeled metric with metric, tile, or feature layouts and
 semantic value tones.
 */
-export const Stat = ({
-	value,
-	label,
-	layout,
-	variant,
-	size,
-	emphasis,
-	valueClassName,
-	labelClassName,
-	className,
-	...props
-}: StatProps) => {
-	const resolvedLayout = layout ?? "metric";
-	const resolvedSize = (size ?? VALUE_SIZE_BY_LAYOUT[resolvedLayout]) as Size;
-	const labelFirst = resolvedLayout === "tile" || resolvedLayout === "feature";
+export const Stat = forwardRef<HTMLDivElement, StatProps>(
+	(
+		{
+			value,
+			label,
+			layout,
+			variant,
+			size,
+			emphasis,
+			valueClassName,
+			labelClassName,
+			className,
+			...props
+		},
+		ref,
+	) => {
+		const resolvedLayout = layout ?? "metric";
+		const resolvedSize = (size ?? VALUE_SIZE_BY_LAYOUT[resolvedLayout]) as Size;
+		const labelFirst =
+			resolvedLayout === "tile" || resolvedLayout === "feature";
 
-	const valueNode = (
-		<div
-			className={cn(
-				statValueVariants({ variant, size: resolvedSize, emphasis }),
-				VALUE_SPACING_BY_LAYOUT[resolvedLayout],
-				valueClassName,
-			)}
-		>
-			{value}
-		</div>
-	);
+		const valueNode = (
+			<div
+				data-stat-value="true"
+				className={cn(
+					statValueVariants({ variant, size: resolvedSize, emphasis }),
+					VALUE_SPACING_BY_LAYOUT[resolvedLayout],
+					valueClassName,
+				)}
+			>
+				{value}
+			</div>
+		);
 
-	const labelNode = (
-		<div
-			className={cn(
-				statLabelVariants({ layout: resolvedLayout }),
-				labelClassName,
-			)}
-		>
-			{label}
-		</div>
-	);
+		const labelNode = (
+			<div
+				className={cn(
+					statLabelVariants({ layout: resolvedLayout }),
+					labelClassName,
+				)}
+			>
+				{label}
+			</div>
+		);
 
-	return (
-		<div className={cn(statVariants({ layout }), className)} {...props}>
-			{labelFirst ? labelNode : valueNode}
-			{labelFirst ? valueNode : labelNode}
-		</div>
-	);
-};
+		return (
+			<div
+				ref={ref}
+				className={cn(statVariants({ layout }), className)}
+				{...props}
+			>
+				{labelFirst ? labelNode : valueNode}
+				{labelFirst ? valueNode : labelNode}
+			</div>
+		);
+	},
+);

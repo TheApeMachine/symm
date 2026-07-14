@@ -53,6 +53,7 @@ func TestPostMortemEvaluate(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(thesis.LifecycleState("BTC/USD"), ShouldEqual, types.LifecycleEvaluated)
 			So(thesis.Findings, ShouldHaveLength, 3)
+			So(thesis.Findings[0].Symbol, ShouldEqual, "BTC/USD")
 			So(thesis.Findings[0].Component, ShouldEqual, "forecast")
 			So(thesis.Findings[1].Component, ShouldEqual, "decision")
 			So(thesis.Findings[2].Component, ShouldEqual, "execution")
@@ -92,6 +93,7 @@ func TestPostMortemEvaluate(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(thesis.LifecycleState("BTC/USD"), ShouldEqual, types.LifecycleEvaluated)
 			So(thesis.Findings, ShouldHaveLength, 1)
+			So(thesis.Findings[0].Symbol, ShouldEqual, "BTC/USD")
 			So(thesis.Findings[0].Component, ShouldEqual, "reconciliation")
 			So(thesis.Findings[0].Evidence, ShouldResemble,
 				[]string{"historical-buy", "sell-fill"})

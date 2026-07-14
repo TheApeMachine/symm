@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { Measurement } from "#/collections/measurements";
+import { Circular } from "#/collections/circular";
+import type { Measurement, MeasurementEpoch } from "#/collections/measurements";
 import {
+	hawkesMetricsFromBuffer,
 	hawkesMetricsFromFrames,
+	hawkesSamplesFromBuffer,
 	hawkesSamplesFromFrames,
 	latentPointsFromFrames,
 	xrayLayersFromManifold,
@@ -79,6 +82,38 @@ describe("xray", () => {
 			buyIntensity: 0.3,
 			sellIntensity: 0.2,
 			exo: 0.09,
+		});
+	});
+
+	it("builds one hawkes sample per retained observation epoch", () => {
+		const buffer = Circular<MeasurementEpoch>(50);
+		const epoch = (at: string, publishedAt: string, readings: Measurement[]) =>
+			({ at, publishedAt, readings }) satisfies MeasurementEpoch;
+
+		buffer.push(
+			epoch("1", "1", [
+				hawkesMeasurement("1", "arrival_rate", "buy", 0.15),
+				hawkesMeasurement("1", "arrival_rate", "sell", 0.1),
+			]),
+		);
+		buffer.push(
+			epoch("1", "2", [
+				hawkesMeasurement("1", "conditional_intensity", "buy", 0.3),
+				hawkesMeasurement("1", "conditional_intensity", "sell", 0.2),
+				hawkesMeasurement("1", "baseline_intensity", "buy", 0.05),
+				hawkesMeasurement("1", "baseline_intensity", "sell", 0.04),
+				hawkesMeasurement("1", "spectral_radius", "", 0.8),
+			]),
+		);
+
+		expect(
+			hawkesSamplesFromBuffer(buffer, "BTC/USD").map(
+				(sample) => sample.intensity,
+			),
+		).toEqual([0.25, 0.5]);
+		expect(hawkesMetricsFromBuffer(buffer)).toMatchObject({
+			intensity: 0.5,
+			branching: 0.8,
 		});
 	});
 

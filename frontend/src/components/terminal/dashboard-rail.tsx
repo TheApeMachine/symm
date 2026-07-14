@@ -10,121 +10,121 @@ import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { cn } from "#/lib/utils";
 
 const sameSymbols = (left: string[], right: string[]): boolean =>
-	left.length === right.length &&
-	left.every((symbol, index) => symbol === right[index]);
+  left.length === right.length &&
+  left.every((symbol, index) => symbol === right[index]);
 
 const DecisionRows = ({ decisions }: { decisions: Action[] }) => (
-	<div className="min-h-0 flex-1 overflow-auto">
-		<div className="grid grid-cols-[78px_58px_minmax(84px,1fr)_72px] gap-2 border-(--line) border-b px-3 py-2 font-mono text-[9px] text-(--f4) uppercase">
-			<span>Symbol</span>
-			<span className="text-right">Comb</span>
-			<span className="text-right">Fraction</span>
-			<span className="text-right">Action</span>
-		</div>
-		{decisions.length === 0 ? (
-			<div className="px-4 py-5 font-mono text-[11px] text-(--f4)">
-				waiting for decision frames
-			</div>
-		) : null}
-		{decisions.map((decision) => {
-			return (
-				<div
-					key={`${decision.symbol}:${decision.id}:${decision.tick}`}
-					data-symbol={decision.symbol}
-					className="grid grid-cols-[78px_58px_minmax(84px,1fr)_72px] gap-2 border-(--line) border-b px-3 py-2 font-mono text-[11px]"
-				>
-					<div className="min-w-0">
-						<div className="truncate font-semibold text-(--f1)">
-							{decision.symbol}
-						</div>
-						<div className="truncate text-[9px] text-(--f4)">
-							{decision.type} / {decision.side}
-						</div>
-					</div>
-					<span className="text-right text-(--f2)">
-						{fixed(Number(decision.score))}
-					</span>
-					<span className="truncate text-right text-(--f2)">
-						{(decision.fraction * 100).toFixed(2)}%
-					</span>
-					<span className="text-right">
-						<span
-							className={cn(
-								"rounded-[2px] px-1.5 py-0.5 font-semibold text-[9px] uppercase",
-								decision.side === "sell"
-									? "bg-[color-mix(in_srgb,var(--down)_16%,transparent)] text-(--down)"
-									: decision.verdict === "allow"
-										? "bg-[color-mix(in_srgb,var(--up)_16%,transparent)] text-(--up)"
-										: "bg-[color-mix(in_srgb,var(--down)_16%,transparent)] text-(--down)",
-							)}
-						>
-							{decision.side}
-						</span>
-					</span>
-				</div>
-			);
-		})}
-	</div>
+  <div className="min-h-0 flex-1 overflow-auto">
+    <div className="grid grid-cols-[78px_58px_minmax(84px,1fr)_72px] gap-2 border-(--line) border-b px-3 py-2 font-mono text-[9px] text-(--f4) uppercase">
+      <span>Symbol</span>
+      <span className="text-right">Comb</span>
+      <span className="text-right">Fraction</span>
+      <span className="text-right">Action</span>
+    </div>
+    {decisions.length === 0 ? (
+      <div className="px-4 py-5 font-mono text-[11px] text-(--f4)">
+        waiting for decision frames
+      </div>
+    ) : null}
+    {decisions.map((decision) => {
+      return (
+        <div
+          key={`${decision.symbol}:${decision.id}:${decision.tick}`}
+          data-symbol={decision.symbol}
+          className="grid grid-cols-[78px_58px_minmax(84px,1fr)_72px] gap-2 border-(--line) border-b px-3 py-2 font-mono text-[11px]"
+        >
+          <div className="min-w-0">
+            <div className="truncate font-semibold text-(--f1)">
+              {decision.symbol}
+            </div>
+            <div className="truncate text-[9px] text-(--f4)">
+              {decision.type} / {decision.side}
+            </div>
+          </div>
+          <span className="text-right text-(--f2)">
+            {fixed(Number(decision.score))}
+          </span>
+          <span className="truncate text-right text-(--f2)">
+            {(decision.fraction * 100).toFixed(2)}%
+          </span>
+          <span className="text-right">
+            <span
+              className={cn(
+                "rounded-[2px] px-1.5 py-0.5 font-semibold text-[9px] uppercase",
+                decision.side === "sell"
+                  ? "bg-[color-mix(in_srgb,var(--down)_16%,transparent)] text-(--down)"
+                  : decision.verdict === "allow"
+                    ? "bg-[color-mix(in_srgb,var(--up)_16%,transparent)] text-(--up)"
+                    : "bg-[color-mix(in_srgb,var(--down)_16%,transparent)] text-(--down)",
+              )}
+            >
+              {decision.side}
+            </span>
+          </span>
+        </div>
+      );
+    })}
+  </div>
 );
 
 type ExecutionAuditRow = {
-	reason: string;
-	reference: string;
-	meta: string;
+  reason: string;
+  reference: string;
+  meta: string;
 };
 
 export const executionAuditRow = (execution: Execution): ExecutionAuditRow => {
-	const reason = execution.order_status ?? execution.exec_type;
+  const reason = execution.order_status ?? execution.exec_type;
 
-	if (typeof reason !== "string" || reason.length === 0) {
-		throw new TypeError("execution requires order_status or exec_type");
-	}
+  if (typeof reason !== "string" || reason.length === 0) {
+    throw new TypeError("execution requires order_status or exec_type");
+  }
 
-	const timestamp =
-		typeof execution.timestamp === "string"
-			? execution.timestamp.slice(11, 19)
-			: "";
-	const identifier =
-		typeof execution.sequence === "number"
-			? String(execution.sequence)
-			: (execution.exec_id ?? execution.order_id ?? "");
-	const trade =
-		execution.last_qty !== undefined && execution.last_price !== undefined
-			? `${execution.last_qty} @ ${fixed(Number(execution.last_price))}`
-			: "";
-	const meta = [
-		execution.exec_type,
-		execution.side,
-		execution.symbol,
-		trade,
-	].filter((value) => typeof value === "string" && value.length > 0);
+  const timestamp =
+    typeof execution.timestamp === "string"
+      ? execution.timestamp.slice(11, 19)
+      : "";
+  const identifier =
+    typeof execution.sequence === "number"
+      ? String(execution.sequence)
+      : (execution.exec_id ?? execution.order_id ?? "");
+  const trade =
+    execution.last_qty !== undefined && execution.last_price !== undefined
+      ? `${execution.last_qty} @ ${fixed(Number(execution.last_price))}`
+      : "";
+  const meta = [
+    execution.exec_type,
+    execution.side,
+    execution.symbol,
+    trade,
+  ].filter((value) => typeof value === "string" && value.length > 0);
 
-	return {
-		reason,
-		reference: [`#${identifier}`, timestamp].filter(Boolean).join(" · "),
-		meta: meta.join(" · "),
-	};
+  return {
+    reason,
+    reference: [`#${identifier}`, timestamp].filter(Boolean).join(" · "),
+    meta: meta.join(" · "),
+  };
 };
 
 const PositionRows = ({
-	symbols,
-	quote,
-	observed,
+  symbols,
+  quote,
+  observed,
 }: {
-	symbols: string[];
-	quote: string;
-	observed: boolean;
+  symbols: string[];
+  quote: string;
+  observed: boolean;
 }) => (
-	<div className="min-h-0 flex-1 overflow-auto p-1.5">
-		{symbols.length === 0 ? (
-			<div className="px-4 py-5 font-mono text-[11px] text-(--f4)">
-				{observed ? "no open positions" : "waiting for position frames"}
-			</div>
-		) : null}
-		{symbols.slice(-8).map((symbol) => (
-			<PositionGauge key={symbol} symbol={symbol} quote={quote} />
-		))}
-	</div>
+  <div className="min-h-0 flex-1 overflow-auto p-1.5">
+    {symbols.length === 0 ? (
+      <div className="px-4 py-5 font-mono text-[11px] text-(--f4)">
+        {observed ? "no open positions" : "waiting for position frames"}
+      </div>
+    ) : null}
+    {symbols.slice(-8).map((symbol) => (
+      <PositionGauge key={symbol} symbol={symbol} quote={quote} />
+    ))}
+  </div>
 );
 
 const AuditRows = ({ executions }: { executions: Execution[] }) => (
@@ -155,121 +155,121 @@ const AuditRows = ({ executions }: { executions: Execution[] }) => (
 					</div>
 				</div>
 			);
-		})}
-	</div>
+    })}
+  </div>
 );
 
 const LiveDecisionMeta = () => {
-	const allowRef = useRef<HTMLSpanElement>(null);
-	const denyRef = useRef<HTMLSpanElement>(null);
+  const allowRef = useRef<HTMLSpanElement>(null);
+  const denyRef = useRef<HTMLSpanElement>(null);
 
-	useDirectStorePaint(
-		() => {
-			const actions = Object.values(actionStore.state.actions).flatMap(
-				(history) => history.values(),
-			);
-			const allowed = actions.filter((action) => action.verdict === "allow");
-			const denied = actions.filter((action) => action.verdict !== "allow");
+  useDirectStorePaint(
+    () => {
+      const actions = Object.values(actionStore.state.actions).flatMap(
+        (history) => history.values(),
+      );
+      const allowed = actions.filter((action) => action.verdict === "allow");
+      const denied = actions.filter((action) => action.verdict !== "allow");
 
-			if (allowRef.current !== null) {
-				allowRef.current.textContent = String(allowed.length);
-			}
+      if (allowRef.current !== null) {
+        allowRef.current.textContent = String(allowed.length);
+      }
 
-			if (denyRef.current !== null) {
-				denyRef.current.textContent = String(denied.length);
-			}
-		},
-		[actionStore],
-		[],
-	);
+      if (denyRef.current !== null) {
+        denyRef.current.textContent = String(denied.length);
+      }
+    },
+    [actionStore],
+    [],
+  );
 
-	return (
-		<span>
-			<span ref={allowRef} /> allow · <span ref={denyRef} /> deny
-		</span>
-	);
+  return (
+    <span>
+      <span ref={allowRef} /> allow · <span ref={denyRef} /> deny
+    </span>
+  );
 };
 
 const LivePositionMeta = ({
-	symbols,
-	quote,
+  symbols,
+  quote,
 }: {
-	symbols: string[];
-	quote: string;
+  symbols: string[];
+  quote: string;
 }) => {
-	const prefixRef = useRef<HTMLSpanElement>(null);
-	const countRef = useRef<HTMLSpanElement>(null);
+  const prefixRef = useRef<HTMLSpanElement>(null);
+  const countRef = useRef<HTMLSpanElement>(null);
 
-	useDirectStorePaint(
-		() => {
-			const net = positionsStore.state.positions.reduce(
-				(sum, position) => sum + position.pnl,
-				0,
-			);
+  useDirectStorePaint(
+    () => {
+      const net = positionsStore.state.positions.reduce(
+        (sum, position) => sum + position.pnl,
+        0,
+      );
 
-			if (prefixRef.current !== null) {
-				prefixRef.current.textContent =
-					symbols.length === 0 ? "" : `net ${net.toFixed(4)} ${quote} · `;
-				prefixRef.current.style.display = symbols.length === 0 ? "none" : "";
-			}
+      if (prefixRef.current !== null) {
+        prefixRef.current.textContent =
+          symbols.length === 0 ? "" : `net ${net.toFixed(4)} ${quote} · `;
+        prefixRef.current.style.display = symbols.length === 0 ? "none" : "";
+      }
 
-			if (countRef.current !== null) {
-				countRef.current.textContent = `${symbols.length} open`;
-			}
-		},
-		[positionsStore],
-		[symbols.length, quote],
-	);
+      if (countRef.current !== null) {
+        countRef.current.textContent = `${symbols.length} open`;
+      }
+    },
+    [positionsStore],
+    [symbols.length, quote],
+  );
 
-	return (
-		<span>
-			<span ref={prefixRef} />
-			<span ref={countRef} />
-		</span>
-	);
+  return (
+    <span>
+      <span ref={prefixRef} />
+      <span ref={countRef} />
+    </span>
+  );
 };
 
 export const DashboardRail = () => {
-	const actions = useSelector(actionStore, (state) =>
-		Object.values(state.actions).flatMap((history) => history.values()),
-	);
+  const actions = useSelector(actionStore, (state) =>
+    Object.values(state.actions).flatMap((history) => history.values()),
+  );
 
-	/*
+  /*
 	symbols only changes reference when a position opens or closes, not on
 	every mark/pnl tick, so it is the one piece of positions state safe to
 	drive React re-renders and row mount/unmount from. Each PositionGauge
 	reads its own live values straight from the stores.
 	*/
-	const symbols = useSelector(
-		positionsStore,
-		(state) => state.positions.map((position) => position.symbol),
-		{ compare: sameSymbols },
-	);
-	const observed = useSelector(positionsStore, (state) => state.observed);
-	const quoteSymbol = useSelector(
-		positionsStore,
-		(state) => state.positions[0]?.symbol,
-	);
+  const symbols = useSelector(
+    positionsStore,
+    (state) => state.positions.map((position) => position.symbol),
+    { compare: sameSymbols },
+  );
+  const observed = useSelector(positionsStore, (state) => state.observed);
+  const quoteSymbol = useSelector(
+    positionsStore,
+    (state) => state.positions[0]?.symbol,
+  );
 	const quote = quoteSymbol?.split("/")[1] ?? "USD";
 	const executions = useSelector(executionsStore, (state) => state.executions);
 
-	return (
-		<div className="flex min-h-0 flex-col bg-(--surface)">
-			<div className="flex min-h-0 flex-[1.15] flex-col border-(--line) border-b">
-				<ColumnHeader title="Decisions" meta={<LiveDecisionMeta />} />
-				<DecisionRows decisions={actions.reverse()} />
-			</div>
-			<div className="flex min-h-0 flex-1 flex-col border-(--line) border-b">
-				<ColumnHeader
-					title="Open positions"
-					meta={<LivePositionMeta symbols={symbols} quote={quote} />}
-				/>
-				<PositionRows symbols={symbols} quote={quote} observed={observed} />
-			</div>
-			<div className="flex min-h-0 flex-1 flex-col">
-				<ColumnHeader title="Audit trail" />
+  return (
+    <div className="flex min-h-0 flex-col bg-(--surface)">
+      <div className="flex min-h-0 flex-[1.15] flex-col border-(--line) border-b">
+        <ColumnHeader title="Decisions" meta={<LiveDecisionMeta />} />
+        <DecisionRows decisions={actions.reverse()} />
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col border-(--line) border-b">
+        <ColumnHeader
+          title="Open positions"
+          meta={<LivePositionMeta symbols={symbols} quote={quote} />}
+        />
+        <PositionRows symbols={symbols} quote={quote} observed={observed} />
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <ColumnHeader title="Audit trail" />
 				<AuditRows executions={[...executions].reverse()} />
-			</div>
-		</div>
-	);
+      </div>
+    </div>
+  );
 };

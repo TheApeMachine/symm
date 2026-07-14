@@ -6,6 +6,7 @@ import { tradeJournalStore } from "./trade-journal";
 
 describe("thesis frame stores", () => {
 	it("accepts backend strategy decisions", () => {
+		decisionStore.actions.reset();
 		decisionStore.actions.updateFrame([
 			{
 				action: "enter",
@@ -68,8 +69,10 @@ describe("thesis frame stores", () => {
 	});
 
 	it("accepts backend postmortem findings", () => {
+		findingsStore.actions.reset();
 		findingsStore.actions.updateFrame([
 			{
+				symbol: "BTC/USD",
 				component: "forecast",
 				condition: "expected return overstated",
 				evidence: ["BTC/USD realized below forecast"],
@@ -80,6 +83,45 @@ describe("thesis frame stores", () => {
 		]);
 
 		expect(findingsStore.state.findings).toHaveLength(1);
+		expect(findingsStore.state.findings[0]?.symbol).toBe("BTC/USD");
 		expect(findingsStore.state.findings[0]?.component).toBe("forecast");
+	});
+
+	it("retains findings across frames without duplicating them", () => {
+		findingsStore.actions.reset();
+		findingsStore.actions.updateFrame([
+			{
+				symbol: "BTC/USD",
+				component: "forecast",
+				condition: "expected return overstated",
+				evidence: ["BTC/USD realized below forecast"],
+				estimatedEffect: -0.004,
+				uncertainty: 0.001,
+				requiredValidation: "replay on next cohort",
+			},
+		]);
+		findingsStore.actions.updateFrame([
+			{
+				symbol: "BTC/USD",
+				component: "forecast",
+				condition: "expected return overstated",
+				evidence: ["BTC/USD realized below forecast"],
+				estimatedEffect: -0.004,
+				uncertainty: 0.001,
+				requiredValidation: "replay on next cohort",
+			},
+			{
+				symbol: "ETH/USD",
+				component: "execution",
+				condition: "fees exceeded edge",
+				evidence: ["fee-1"],
+				estimatedEffect: -0.002,
+				uncertainty: 0.001,
+				requiredValidation: "replay on next cohort",
+			},
+		]);
+
+		expect(findingsStore.state.findings).toHaveLength(2);
+		expect(findingsStore.state.findings[1]?.symbol).toBe("ETH/USD");
 	});
 });
