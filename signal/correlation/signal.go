@@ -2,6 +2,7 @@ package correlation
 
 import (
 	"context"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -20,6 +21,10 @@ type Signal struct {
 	section *Section
 }
 
+/*
+NewSignal creates correlation measurement state and subscribes its ticker
+input so successive ticks can establish real price relationships.
+*/
 func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -31,19 +36,34 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 	}
 }
 
+/*
+Measure converts the receiver's current market input into typed measurements
+so downstream logic consumes explicit evidence.
+*/
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
 	rows := signal.ticker.cache
 	out := make([]*types.Measurement, 0, len(rows))
 
-	thesis.CrossSection.ProcessUpdates(rows)
+	thesis.CrossSection.Measure(rows)
+	scoresBySymbol := signal.section.Measure(rows)
 
-	for _, row := range rows {
-		scores, ok := signal.section.Scores(row.Symbol, thesis.CrossSection)
+	for _, metric := range thesis.CrossSection.Metrics {
+		scores, ok := scoresBySymbol[metric.Symbol]
 
 		if !ok {
 			continue
+		}
+
+		var at time.Time
+
+		for index := len(rows) - 1; index >= 0; index-- {
+			if rows[index].Symbol == metric.Symbol {
+				at = rows[index].Timestamp
+
+				break
+			}
 		}
 
 		validity := types.MeasurementValidity{
@@ -52,15 +72,96 @@ func (signal *Signal) Measure(
 		}
 
 		out = append(out,
-			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricCorrelation, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["correlation"], Validity: validity},
-			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricSigned, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["signed"], Validity: validity},
-			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricRelativeEnergy, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["relativeEnergy"], Validity: validity},
-			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricHerdScore, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["herdScore"], Validity: validity},
-			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricAlphaScore, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["alphaScore"], Validity: validity},
-			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricNoiseScore, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["noiseScore"], Validity: validity},
-			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricStressScore, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["stressScore"], Validity: validity},
-			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricPeakScore, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["peakScore"], Validity: validity},
-			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricStrength, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["strength"], Validity: validity},
+			&types.Measurement{
+				Source:   types.SourceCorrelation,
+				Metric:   types.MetricCorrelation,
+				Stream:   types.Correlation,
+				Symbol:   metric.Symbol,
+				At:       at,
+				Unit:     types.UnitDimensionless,
+				Raw:      scores["correlation"],
+				Validity: validity,
+			},
+			&types.Measurement{
+				Source:   types.SourceCorrelation,
+				Metric:   types.MetricSigned,
+				Stream:   types.Correlation,
+				Symbol:   metric.Symbol,
+				At:       at,
+				Unit:     types.UnitDimensionless,
+				Raw:      scores["signed"],
+				Validity: validity,
+			},
+			&types.Measurement{
+				Source:   types.SourceCorrelation,
+				Metric:   types.MetricRelativeEnergy,
+				Stream:   types.Correlation,
+				Symbol:   metric.Symbol,
+				At:       at,
+				Unit:     types.UnitDimensionless,
+				Raw:      scores["relativeEnergy"],
+				Validity: validity,
+			},
+			&types.Measurement{
+				Source:   types.SourceCorrelation,
+				Metric:   types.MetricHerdScore,
+				Stream:   types.Correlation,
+				Symbol:   metric.Symbol,
+				At:       at,
+				Unit:     types.UnitDimensionless,
+				Raw:      scores["herdScore"],
+				Validity: validity,
+			},
+			&types.Measurement{
+				Source:   types.SourceCorrelation,
+				Metric:   types.MetricAlphaScore,
+				Stream:   types.Correlation,
+				Symbol:   metric.Symbol,
+				At:       at,
+				Unit:     types.UnitDimensionless,
+				Raw:      scores["alphaScore"],
+				Validity: validity,
+			},
+			&types.Measurement{
+				Source:   types.SourceCorrelation,
+				Metric:   types.MetricNoiseScore,
+				Stream:   types.Correlation,
+				Symbol:   metric.Symbol,
+				At:       at,
+				Unit:     types.UnitDimensionless,
+				Raw:      scores["noiseScore"],
+				Validity: validity,
+			},
+			&types.Measurement{
+				Source:   types.SourceCorrelation,
+				Metric:   types.MetricStressScore,
+				Stream:   types.Correlation,
+				Symbol:   metric.Symbol,
+				At:       at,
+				Unit:     types.UnitDimensionless,
+				Raw:      scores["stressScore"],
+				Validity: validity,
+			},
+			&types.Measurement{
+				Source:   types.SourceCorrelation,
+				Metric:   types.MetricPeakScore,
+				Stream:   types.Correlation,
+				Symbol:   metric.Symbol,
+				At:       at,
+				Unit:     types.UnitDimensionless,
+				Raw:      scores["peakScore"],
+				Validity: validity,
+			},
+			&types.Measurement{
+				Source:   types.SourceCorrelation,
+				Metric:   types.MetricStrength,
+				Stream:   types.Correlation,
+				Symbol:   metric.Symbol,
+				At:       at,
+				Unit:     types.UnitDimensionless,
+				Raw:      scores["strength"],
+				Validity: validity,
+			},
 		)
 	}
 
@@ -72,6 +173,10 @@ func (signal *Signal) Measure(
 	return thesis
 }
 
+/*
+Close releases the receiver's owned resources so shutdown does not leave
+active market-data producers.
+*/
 func (signal *Signal) Close() (err error) {
 	err = errnie.Error(errnie.Err(
 		errnie.Internal,

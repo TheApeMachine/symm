@@ -21,8 +21,8 @@ type Event struct {
 EventChunk is one symbol's events, already ordered by event time,
 stream, and sequence, as observed by Watermark: the newest event time
 seen across every stream in the drain cycle that produced this chunk.
-Every signal measuring an event in this chunk sees the same frozen
-CrossSection snapshot taken at that watermark.
+Every signal measuring an event in this chunk contributes to the same
+CrossSection carried by the current Thesis tick.
 */
 type EventChunk struct {
 	Symbol    string
@@ -32,8 +32,8 @@ type EventChunk struct {
 
 /*
 Drainer decodes queued frames from one feed's stream into ordered
-events, and measures one already-ordered event against a shared,
-frozen CrossSection snapshot. Feeds implement this in addition to Feed
+events, and measures one already-ordered event against the shared current-tick
+CrossSection. Feeds implement this in addition to Feed
 so a chunker can merge every stream's events before any signal runs,
 instead of each feed measuring its own batch in isolation.
 */

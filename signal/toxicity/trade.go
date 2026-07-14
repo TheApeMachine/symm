@@ -35,6 +35,10 @@ func NewTrade(ctx context.Context, api *websocket.API) *Trade {
 	return trade
 }
 
+/*
+On decodes an inbound market-data message and retains its relevant rows so
+measurement uses the authoritative event stream.
+*/
 func (trade *Trade) On(data []byte) {
 	if len(data) == 0 {
 		return

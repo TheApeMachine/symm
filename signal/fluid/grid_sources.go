@@ -33,6 +33,10 @@ func (grid *FluidGrid) accumulateReactionSources(currentMid float64) {
 	}
 }
 
+/*
+clearReactionAccumulators clears consumed reaction totals so events are
+applied exactly once.
+*/
 func (grid *FluidGrid) clearReactionAccumulators() {
 	grid.clearField(grid.sourceAccumulator)
 	grid.clearField(grid.addAccumulator)
@@ -41,6 +45,10 @@ func (grid *FluidGrid) clearReactionAccumulators() {
 	grid.clearField(grid.attributedExecuteAccumulator)
 }
 
+/*
+midSourceBalance returns net near-mid reaction balance so published flow
+distinguishes addition from removal.
+*/
 func (grid *FluidGrid) midSourceBalance() float64 {
 	index := grid.midIndex
 

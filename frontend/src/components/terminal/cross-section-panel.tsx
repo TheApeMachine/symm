@@ -1,7 +1,9 @@
 import { useSelector } from "@tanstack/react-store";
 import { diagnosticsStore } from "#/collections/diagnostics";
-import { StatusBadge } from "#/components/dashboard/status-badge";
-import { Meter, Stat } from "#/components/terminal/health";
+import { Badge } from "@/components/ui/badge";
+import { Meter } from "@/components/ui/meter";
+import { Panel } from "@/components/ui/panel";
+import { Stat } from "@/components/ui/stat";
 
 const finiteNumber = (value: unknown): number =>
 	typeof value === "number" && Number.isFinite(value) ? value : 0;
@@ -69,12 +71,12 @@ export const CrossSectionPanel = () => {
 	const broad = readout.breadthPercent >= 50;
 
 	return (
-		<div className="rounded-[4px] border border-(--line) bg-(--sunken) p-[13px]">
+		<Panel size="lg">
 			<div className="flex items-center justify-between">
 				<span className="font-semibold text-(--f1) text-xs">Cross-section</span>
-				<StatusBadge
+				<Badge
 					label={broad ? "broad" : "thin"}
-					tone={broad ? "var(--up)" : "var(--warn)"}
+					variant={broad ? "success" : "warning"}
 				/>
 			</div>
 			<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
@@ -90,10 +92,11 @@ export const CrossSectionPanel = () => {
 			</div>
 			<div className="mt-2.5">
 				<Meter
+					layout="inline"
 					label="Breadth"
 					value={`${Math.round(readout.breadthPercent)}%`}
 					percent={readout.breadthPercent}
-					color={broad ? "var(--up)" : "var(--warn)"}
+					variant={broad ? "success" : "warning"}
 				/>
 			</div>
 			<div className="mt-[13px] flex justify-between">
@@ -107,6 +110,6 @@ export const CrossSectionPanel = () => {
 					label="med depth"
 				/>
 			</div>
-		</div>
+		</Panel>
 	);
 };

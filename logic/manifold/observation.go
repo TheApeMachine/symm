@@ -23,10 +23,12 @@ pendingObservation is the latest valid market boundary for the population that
 has not yet advanced the field solver.
 */
 type pendingObservation struct {
-	metadata ObservationMetadata
-	bestBid  float64
-	bestAsk  float64
-	midPrice float64
+	metadata        ObservationMetadata
+	bestBid         float64
+	bestAsk         float64
+	bestBidQuantity float64
+	bestAskQuantity float64
+	midPrice        float64
 }
 
 /*
@@ -35,9 +37,6 @@ GPU field. Every accepted row updates the exact population ledger.
 */
 func (slot *Slot) Observe(
 	row kraken.Level3Data,
-	pricePrecision int,
-	qtyPrecision int,
-	book Level3Book,
 ) ProcessResult {
 	observation := ObservationMetadata{
 		At:        row.Timestamp,
@@ -50,32 +49,19 @@ func (slot *Slot) Observe(
 		return slot.invalidate(observation, TimestampRegress)
 	}
 
-	if book == nil {
-		return slot.invalidate(observation, BookInvalid)
+	slot.population.Apply(row)
+
+	if !slot.population.Ready() {
+		return slot.invalidate(observation, slot.population.InvalidReason())
 	}
 
-	if !book.Apply(row, pricePrecision, qtyPrecision) {
-		reason := book.InvalidReason(slot.symbol)
-
-		if reason == Valid {
-			reason = BookInvalid
-		}
-
-		return slot.invalidate(observation, reason)
-	}
-
-	bestBid, bestAsk, ok := book.TopOfBook(slot.symbol)
+	bestBid, bestAsk, bestBidQuantity, bestAskQuantity, ok := slot.population.TopOfBook()
 
 	if !ok {
 		return slot.invalidate(observation, NonPositiveMid)
 	}
 
 	midPrice := (bestBid + bestAsk) / 2
-	slot.population.Apply(row, midPrice)
-
-	if !slot.population.Ready() {
-		return slot.invalidate(observation, slot.population.InvalidReason())
-	}
 
 	if observation.At.IsZero() {
 		observation.At = slot.population.LastAt()
@@ -90,10 +76,12 @@ func (slot *Slot) Observe(
 	}
 
 	slot.pending = pendingObservation{
-		metadata: observation,
-		bestBid:  bestBid,
-		bestAsk:  bestAsk,
-		midPrice: midPrice,
+		metadata:        observation,
+		bestBid:         bestBid,
+		bestAsk:         bestAsk,
+		bestBidQuantity: bestBidQuantity,
+		bestAskQuantity: bestAskQuantity,
+		midPrice:        midPrice,
 	}
 	slot.advanceReady = true
 

@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import type { Action } from "#/collections/actions";
 import type { Balance } from "#/collections/balances";
 import type { CausalFrame } from "#/collections/causal";
@@ -6,6 +5,9 @@ import type { ManifoldFrame } from "#/collections/manifold";
 import type { Order } from "#/collections/orders";
 import type { Position } from "#/collections/positions";
 import type { ResonanceFrame } from "#/collections/resonance";
+
+import { Meter } from "@/components/ui/meter";
+import { Panel } from "@/components/ui/panel";
 
 type History<T> = { values: () => T[] };
 
@@ -22,18 +24,32 @@ type AllocationInput = {
 
 type AllocationRow = {
 	action?: Action;
-	allocated: boolean; dotColor: string; inPlay: boolean; symbol: string;
-	edge: number; edgeLeft: number; edgeWidth: number;
-	notional: number; share: number; support: number;
-	thesis: number; xPct: number;
+	allocated: boolean;
+	dotColor: string;
+	inPlay: boolean;
+	symbol: string;
+	edge: number;
+	edgeLeft: number;
+	edgeWidth: number;
+	notional: number;
+	share: number;
+	support: number;
+	thesis: number;
+	xPct: number;
 };
 
 export type AllocationSummary = {
-	deployable: number; deployed: number; positionCount: number;
-	mad: number; median: number; medianPct: number;
-	quote: string; reserved: number;
+	deployable: number;
+	deployed: number;
+	positionCount: number;
+	mad: number;
+	median: number;
+	medianPct: number;
+	quote: string;
+	reserved: number;
 	rows: AllocationRow[];
-	threshold: number; thresholdPct: number;
+	threshold: number;
+	thresholdPct: number;
 };
 
 const latest = <T,>(history?: History<T>): T | undefined =>
@@ -145,7 +161,10 @@ export const allocationSummary = ({
 				scores.length
 			: 0;
 	const threshold = med + dispersion;
-	const sumPositive = scores.reduce((sum, score) => sum + Math.max(0, score), 0);
+	const sumPositive = scores.reduce(
+		(sum, score) => sum + Math.max(0, score),
+		0,
+	);
 	const lo = Math.min(...scores, threshold) * 0.92;
 	const hi = Math.max(...scores, threshold) * 1.04;
 	const span = hi - lo || 1;
@@ -204,7 +223,10 @@ export const AllocationMain = ({ alloc }: { alloc: AllocationSummary }) => {
 				<span className="text-(--f4)">
 					mad <span className="text-(--f2)">{alloc.mad.toFixed(3)}</span>
 				</span>
-				<span className="text-(--f4)">entry <span className="text-(--acc)">{alloc.threshold.toFixed(3)}</span></span>
+				<span className="text-(--f4)">
+					entry{" "}
+					<span className="text-(--acc)">{alloc.threshold.toFixed(3)}</span>
+				</span>
 				<span className="ml-auto text-(--f4)">live ladder frames</span>
 			</div>
 
@@ -288,7 +310,10 @@ export const AllocationMain = ({ alloc }: { alloc: AllocationSummary }) => {
 					["var(--f4)", "scanned"],
 				].map(([color, label]) => (
 					<span key={label} className="inline-flex items-center gap-[5px]">
-						<span className="h-2 w-2 rounded-full" style={{ background: color }} />
+						<span
+							className="h-2 w-2 rounded-full"
+							style={{ background: color }}
+						/>
 						{label}
 					</span>
 				))}
@@ -300,17 +325,10 @@ export const AllocationMain = ({ alloc }: { alloc: AllocationSummary }) => {
 	);
 };
 
-const Panel = ({ children }: { children: ReactNode }) => (
-	<div className="rounded-[4px] border border-(--line) bg-(--sunken) p-3">{children}</div>
-);
-
-const Bar = ({ percent }: { percent: number }) => (
-	<div className="h-2 overflow-hidden rounded bg-(--line)">
-		<div className="h-full bg-(--acc)" style={{ width: `${percent}%` }} />
-	</div>
-);
-
-export const AllocationSidePanel = ({ alloc, orders }: {
+export const AllocationSidePanel = ({
+	alloc,
+	orders,
+}: {
 	alloc: AllocationSummary;
 	orders: Order[];
 }) => {
@@ -324,7 +342,9 @@ export const AllocationSidePanel = ({ alloc, orders }: {
 		<div className="flex flex-col gap-3.5">
 			<Panel>
 				<div className="flex items-center justify-between">
-					<span className="font-semibold text-[12px] text-(--f1)">Capital deployment</span>
+					<span className="font-semibold text-[12px] text-(--f1)">
+						Capital deployment
+					</span>
 					<span className="font-mono text-[11px] text-(--acc)">
 						{deployedPercent}%
 					</span>
@@ -332,7 +352,12 @@ export const AllocationSidePanel = ({ alloc, orders }: {
 				<div className="mt-1 mb-[11px] font-mono text-[9.5px] text-(--f4)">
 					share of deployable free cash
 				</div>
-				<Bar percent={deployedPercent} />
+				<Meter
+					layout="bar"
+					percent={deployedPercent}
+					variant="warning"
+					size="lg"
+				/>
 				<div className="mt-[7px] flex justify-between font-mono text-[10px] text-(--f3)">
 					<span>deployed {money(alloc.deployed, alloc.quote)}</span>
 					<span>reserved {money(alloc.reserved, alloc.quote)}</span>
@@ -360,7 +385,9 @@ export const AllocationSidePanel = ({ alloc, orders }: {
 			</Panel>
 
 			<Panel>
-				<div className="mb-0.5 font-semibold text-[12px] text-(--f1)">Position sizing</div>
+				<div className="mb-0.5 font-semibold text-[12px] text-(--f1)">
+					Position sizing
+				</div>
 				<div className="mb-[11px] font-mono text-[9.5px] text-(--f4)">
 					notional {alloc.quote} per allocated symbol
 				</div>
@@ -373,24 +400,21 @@ export const AllocationSidePanel = ({ alloc, orders }: {
 					{rows.map((row) => (
 						<div key={row.symbol} data-symbol={row.symbol}>
 							<div className="mb-1 flex items-center justify-between">
-								<span className="font-mono text-[11px] font-semibold text-(--f1)">{row.symbol.split("/")[0]}</span>
+								<span className="font-mono text-[11px] font-semibold text-(--f1)">
+									{row.symbol.split("/")[0]}
+								</span>
 								<span className="font-mono text-[10.5px] text-(--acc)">
 									{money(row.notional, alloc.quote)}
 								</span>
 							</div>
-							<div className="flex items-center gap-2">
-								<div className="h-1.5 flex-1 overflow-hidden rounded bg-(--line)">
-									<div
-										className="h-full bg-(--acc) transition-[width] duration-500"
-										style={{
-											width: `${Math.round(row.share * 100)}%`,
-										}}
-									/>
-								</div>
-								<span className="w-[38px] text-right font-mono text-[9.5px] text-(--f3)">
-									{(row.share * 100).toFixed(1)}%
-								</span>
-							</div>
+							<Meter
+								layout="inline"
+								percent={Math.round(row.share * 100)}
+								value={`${(row.share * 100).toFixed(1)}%`}
+								variant="warning"
+								size="m"
+								animated
+							/>
 						</div>
 					))}
 				</div>

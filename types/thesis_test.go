@@ -23,6 +23,9 @@ func TestThesisPublish(t *testing.T) {
 		thesis.Hypotheses = append(thesis.Hypotheses, Hypothesis{
 			Source: SourceCausal, Symbol: "BTC/USD", At: time.Unix(1, 0),
 		})
+		So(thesis.Transition(
+			"BTC/USD", LifecycleShaped, time.Unix(1, 0),
+		), ShouldBeNil)
 
 		Convey("When published", func() {
 			thesis.Publish()
@@ -31,14 +34,142 @@ func TestThesisPublish(t *testing.T) {
 				payload := <-uiHub
 
 				var frame struct {
-					Measurements []Measurement `json:"measurements"`
+					Measurements []Measurement      `json:"measurements"`
+					TradeJournal []TradeObservation `json:"tradeJournal"`
+					Lifecycle    map[string]string  `json:"lifecycle"`
 				}
 
 				So(json.Unmarshal(payload, &frame), ShouldBeNil)
 				So(len(frame.Measurements), ShouldEqual, 1)
 				So(frame.Measurements[0].Symbol, ShouldEqual, "BTC/USD")
 				So(frame.Measurements[0].Source, ShouldEqual, SourcePumpDump)
+				So(frame.TradeJournal, ShouldHaveLength, 1)
+				So(frame.Lifecycle["BTC/USD"], ShouldEqual, LifecycleShaped)
 			})
+		})
+	})
+}
+
+func BenchmarkThesisAbsorb(b *testing.B) {
+	current := NewThesis(nil)
+
+	for index := 0; index < 32; index++ {
+		current.Measurements = append(current.Measurements, &Measurement{
+			Symbol: "BTC/USD", Raw: float64(index),
+		})
+	}
+
+	current.Forecasts = append(current.Forecasts, Forecasts{Symbol: "BTC/USD"})
+	current.Hypotheses = append(current.Hypotheses, Hypothesis{Symbol: "BTC/USD"})
+	current.Categories = append(current.Categories, Category{Symbol: "BTC/USD"})
+	current.Graphs["BTC/USD"] = NewGraph("BTC/USD")
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		lifecycle := NewThesis(nil)
+		lifecycle.Absorb(current, "BTC/USD")
+
+		if len(lifecycle.Measurements) != 32 {
+			b.Fatal("symbol evidence was not absorbed")
+		}
+	}
+}
+
+func TestThesisAbsorb(t *testing.T) {
+	Convey("Given an open-position Thesis and a later market tick", t, func() {
+		lifecycle := NewThesis(nil)
+		current := NewThesis(nil)
+		current.Measurements = []*Measurement{
+			{Symbol: "BTC/USD", Raw: 1},
+			{Symbol: "ETH/USD", Raw: 2},
+		}
+		current.Forecasts = []Forecasts{
+			{Symbol: "BTC/USD", ExpectedReturn: 0.01},
+			{Symbol: "ETH/USD", ExpectedReturn: 0.02},
+		}
+		current.Hypotheses = []Hypothesis{
+			{Symbol: "BTC/USD", Claim: "continuation"},
+			{Symbol: "ETH/USD", Claim: "unrelated"},
+		}
+		current.Categories = []Category{
+			{Symbol: "BTC/USD", Type: OrganicTrend},
+			{Symbol: "ETH/USD", Type: Equilibrium},
+		}
+		current.Graphs["BTC/USD"] = NewGraph("BTC/USD")
+
+		lifecycle.Absorb(current, "BTC/USD")
+
+		Convey("Then only evidence used to manage that position is retained", func() {
+			So(lifecycle.Measurements, ShouldHaveLength, 1)
+			So(lifecycle.Forecasts, ShouldHaveLength, 1)
+			So(lifecycle.Hypotheses, ShouldHaveLength, 1)
+			So(lifecycle.Categories, ShouldHaveLength, 1)
+			So(lifecycle.Graphs, ShouldContainKey, "BTC/USD")
+			So(lifecycle.Measurements[0].Symbol, ShouldEqual, "BTC/USD")
+		})
+	})
+}
+
+func TestThesisTransition(t *testing.T) {
+	Convey("Given a newly observed symbol", t, func() {
+		thesis := NewThesis(nil)
+
+		Convey("Then valid trade lifecycle edges advance in order", func() {
+			So(thesis.Transition("BTC/USD", LifecycleShaped, time.Unix(1, 0)), ShouldBeNil)
+			So(thesis.Transition("BTC/USD", LifecycleEntrySelected, time.Unix(2, 0)), ShouldBeNil)
+			So(thesis.Transition("BTC/USD", LifecycleEntrySubmitted, time.Unix(3, 0)), ShouldBeNil)
+			So(thesis.Transition("BTC/USD", LifecycleEntered, time.Unix(4, 0)), ShouldBeNil)
+			So(thesis.Transition("BTC/USD", LifecycleManaging, time.Unix(5, 0)), ShouldBeNil)
+			So(thesis.Transition("BTC/USD", LifecycleExitSelected, time.Unix(6, 0)), ShouldBeNil)
+			So(thesis.Transition("BTC/USD", LifecycleExitSubmitted, time.Unix(7, 0)), ShouldBeNil)
+			So(thesis.Transition("BTC/USD", LifecycleClosed, time.Unix(8, 0)), ShouldBeNil)
+			So(thesis.LifecycleState("BTC/USD"), ShouldEqual, LifecycleClosed)
+			So(thesis.TradeJournal, ShouldHaveLength, 8)
+			So(thesis.TradeJournal[7].At, ShouldResemble, time.Unix(8, 0))
+		})
+
+		Convey("Then an impossible edge is rejected without changing state", func() {
+			err := thesis.Transition("BTC/USD", LifecycleClosed, time.Unix(1, 0))
+
+			So(err, ShouldNotBeNil)
+			So(thesis.LifecycleState("BTC/USD"), ShouldEqual, LifecycleObserving)
+		})
+	})
+}
+
+func TestThesisObservePostExit(t *testing.T) {
+	Convey("Given a closed lifecycle with a two-epoch forecast horizon", t, func() {
+		thesis := NewThesis(nil)
+		thesis.Forecasts = append(thesis.Forecasts, Forecasts{
+			Symbol: "BTC/USD", At: time.Unix(2, 0), SourceEpoch: 10, HorizonEvents: 2,
+		})
+		So(thesis.Transition("BTC/USD", LifecycleManaging, time.Unix(1, 0)), ShouldBeNil)
+		So(thesis.Transition("BTC/USD", LifecycleExitSelected, time.Unix(2, 0)), ShouldBeNil)
+		So(thesis.Transition("BTC/USD", LifecycleExitSubmitted, time.Unix(2, 0)), ShouldBeNil)
+		So(thesis.Transition("BTC/USD", LifecycleClosed, time.Unix(3, 0)), ShouldBeNil)
+
+		first := NewThesis(nil)
+		first.Forecasts = append(first.Forecasts, Forecasts{
+			Symbol: "BTC/USD", At: time.Unix(4, 0), SourceEpoch: 11,
+		})
+		second := NewThesis(nil)
+		second.Forecasts = append(second.Forecasts, Forecasts{
+			Symbol: "BTC/USD", At: time.Unix(5, 0), SourceEpoch: 12,
+		})
+
+		So(thesis.ObservePostExit(first, "BTC/USD"), ShouldBeNil)
+
+		Convey("Then one epoch starts but does not complete the required tail", func() {
+			So(thesis.LifecycleState("BTC/USD"), ShouldEqual, LifecyclePostExitObservation)
+		})
+
+		So(thesis.ObservePostExit(second, "BTC/USD"), ShouldBeNil)
+
+		Convey("Then the second distinct epoch makes the Thesis PostMortem-ready", func() {
+			So(thesis.LifecycleState("BTC/USD"), ShouldEqual, LifecyclePostMortemReady)
+			So(thesis.Forecasts, ShouldHaveLength, 3)
 		})
 	})
 }

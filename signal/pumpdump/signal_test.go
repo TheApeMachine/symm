@@ -113,7 +113,9 @@ func measureField(
 	thesis := types.NewThesis(nil)
 	result := signal.Measure(thesis)
 
-	for _, measurement := range result.Measurements {
+	for index := len(result.Measurements) - 1; index >= 0; index-- {
+		measurement := result.Measurements[index]
+
 		if measurement.Symbol == "ALGO/USD" && measurement.Metric == metric {
 			return measurement.Raw, true
 		}

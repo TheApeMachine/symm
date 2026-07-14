@@ -50,15 +50,20 @@ func BenchmarkForecastsExecutableReturn(b *testing.B) {
 
 func eligibleForecast() Forecasts {
 	return Forecasts{
-		Source:        "manifold_forecast",
-		Symbol:        "BTC/USD",
-		At:            time.Unix(1, 0),
-		SourceEpoch:   1,
-		HorizonEvents: 1,
-		ExpiresEpoch:  2,
-		Target:        "next_l3_epoch_mid_log_return",
-		ModelVersion:  "test",
-		Ready:         true,
-		Confidence:    0.5,
+		Source:         "manifold_forecast",
+		Symbol:         "BTC/USD",
+		At:             time.Unix(1, 0),
+		SourceEpoch:    1,
+		HorizonEvents:  1,
+		ExpiresEpoch:   2,
+		Target:         "next_l3_epoch_mid_log_return",
+		ModelVersion:   "test",
+		Ready:          true,
+		Calibrated:     true,
+		FrictionReady:  true,
+		ReferencePrice: 100,
+		BuyCapacity:    1000,
+		SellCapacity:   1000,
+		Confidence:     0.5,
 	}
 }

@@ -37,11 +37,13 @@ type Crypto struct {
 	uiHub      chan []byte
 	desk       *broker.Desk
 	price      *broker.Price
+	balance    *broker.Balance
 	api        *websocket.API
 	instrument *Instrument
 	tick       *atomic.Int64
 	tickBudget time.Duration
 	planner    *strategy.Planner
+	postMortem *strategy.PostMortem
 	analyzer   *logic.Analyzer
 }
 
@@ -76,13 +78,14 @@ func NewCrypto(
 		api:        api,
 		desk:       desk,
 		price:      price,
+		balance:    balance,
 		instrument: instrument,
 		uiHub:      uiHub,
 		tick:       &atomic.Int64{},
 		tickBudget: tickBudget,
 		analyzer:   analyzer,
 		planner:    planner,
-		level3:     level3,
+		postMortem: &strategy.PostMortem{},
 	}
 
 	return crypto, nil
@@ -108,13 +111,17 @@ func (crypto *Crypto) Run() error {
 
 		for crypto.Status() != types.ERROR {
 			if crypto.booter.Ready(system.StageWarmup) {
-				thesis := crypto.planner.BeginTick()
+				if crypto.instrument != nil {
+					if _, err := crypto.instrument.Activate(); err != nil {
+						crypto.status = types.ERROR
+						errnie.Error(err)
 
-				if crypto.level3 != nil {
-					crypto.level3.Drain(thesis, crypto.analyzer, crypto.instrument)
+						continue
+					}
 				}
 
-				thesis = crypto.planner.CompleteTick(thesis)
+				thesis := crypto.planner.Update()
+				crypto.trade(thesis)
 				thesis.Publish()
 			}
 
@@ -129,6 +136,71 @@ func (crypto *Crypto) Run() error {
 	}()
 
 	return nil
+}
+
+/*
+trade supplies current broker constraints to strategy, then submits each
+selected Intent unchanged through Desk for exchange validation and execution.
+*/
+func (crypto *Crypto) trade(thesis *types.Thesis) {
+	for symbol, lifecycle := range crypto.desk.PostExit(thesis) {
+		if err := crypto.postMortem.Evaluate(lifecycle, symbol); err != nil {
+			errnie.Error(err)
+
+			continue
+		}
+
+		if err := crypto.desk.Finalize(symbol, lifecycle); err != nil {
+			errnie.Error(err)
+		}
+	}
+
+	if len(thesis.Forecasts) == 0 {
+		return
+	}
+
+	fees := make(map[string]float64, len(thesis.Forecasts))
+
+	for _, forecast := range thesis.Forecasts {
+		fee, err := crypto.price.FeeFraction(forecast.Symbol)
+
+		if err != nil {
+			errnie.Error(err)
+
+			continue
+		}
+
+		fees[forecast.Symbol] = fee.Float64()
+	}
+
+	available, err := crypto.balance.AvailableQuote()
+
+	if err != nil {
+		available = 0
+	}
+
+	intents := crypto.planner.Decide(
+		thesis,
+		crypto.desk.Exposures(),
+		fees,
+		available,
+		crypto.desk.Slots(),
+	)
+
+	for _, intent := range intents {
+		decision := intent.Selected()
+		pair, err := crypto.instrument.Pair(decision.Symbol)
+
+		if err != nil {
+			errnie.Error(err)
+
+			continue
+		}
+
+		if err := crypto.desk.Execute(intent, pair); err != nil {
+			errnie.Error(err)
+		}
+	}
 }
 
 func (crypto *Crypto) publish(mapping datura.Map[any]) {

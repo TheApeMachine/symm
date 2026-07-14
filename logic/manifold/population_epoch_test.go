@@ -21,14 +21,14 @@ func TestPopulationBeginEpoch(t *testing.T) {
 			Asks: []kraken.Level3Order{{
 				OrderID: "ask-1", LimitPrice: 101, OrderQty: 1,
 			}},
-		}, 100)
+		})
 		population.Apply(kraken.Level3Data{
 			Type:      "update",
 			Timestamp: time.Unix(2, 0),
 			Bids: []kraken.Level3Order{{
 				Event: "modify", OrderID: "bid-1", LimitPrice: 99, OrderQty: 2,
 			}},
-		}, 100)
+		})
 
 		Convey("When the accumulated population begins one field epoch", func() {
 			first := population.BeginEpoch()

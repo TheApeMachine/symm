@@ -31,15 +31,6 @@ const (
 )
 
 /*
-Level3Book validates checksum continuity and exposes the merged top of book.
-*/
-type Level3Book interface {
-	Apply(row kraken.Level3Data, pricePrecision, qtyPrecision int) bool
-	TopOfBook(symbol string) (bid, ask float64, ok bool)
-	InvalidReason(symbol string) InvalidReason
-}
-
-/*
 Population owns the per-symbol order registry and exact quantity accounting.
 */
 type Population struct {
@@ -118,7 +109,7 @@ func (population *Population) Orders() []*PhysicalOrder {
 	return orders
 }
 
-func (population *Population) Apply(row kraken.Level3Data, midPrice float64) {
+func (population *Population) Apply(row kraken.Level3Data) {
 	snapshot := strings.EqualFold(row.Type, "snapshot")
 
 	if snapshot {
@@ -126,11 +117,6 @@ func (population *Population) Apply(row kraken.Level3Data, midPrice float64) {
 	}
 
 	if population.invalid != "" {
-		return
-	}
-
-	if midPrice <= 0 {
-		population.invalidate(NonPositiveMid)
 		return
 	}
 
@@ -142,7 +128,10 @@ func (population *Population) Apply(row kraken.Level3Data, midPrice float64) {
 		population.applySide(row.Asks, OrderSideAsk, row.Type)
 
 	if !valid {
-		population.invalidate(MissingOrder)
+		if population.invalid == "" {
+			population.invalidate(MissingOrder)
+		}
+
 		return
 	}
 
@@ -155,6 +144,39 @@ func (population *Population) Apply(row kraken.Level3Data, midPrice float64) {
 		}
 	}
 
+}
+
+/*
+TopOfBook derives the executable boundary from the exact visible order
+population so field coordinates use the same orders they evolve.
+*/
+func (population *Population) TopOfBook() (float64, float64, float64, float64, bool) {
+	bestBid := 0.0
+	bestAsk := 0.0
+	bestBidQuantity := 0.0
+	bestAskQuantity := 0.0
+
+	for _, order := range population.orders {
+		if order.LimitPrice <= 0 || order.Quantity <= 0 {
+			continue
+		}
+
+		switch {
+		case order.Side == OrderSideBid && order.LimitPrice > bestBid:
+			bestBid = order.LimitPrice
+			bestBidQuantity = order.Quantity
+		case order.Side == OrderSideBid && order.LimitPrice == bestBid:
+			bestBidQuantity += order.Quantity
+		case order.Side == OrderSideAsk && (bestAsk == 0 || order.LimitPrice < bestAsk):
+			bestAsk = order.LimitPrice
+			bestAskQuantity = order.Quantity
+		case order.Side == OrderSideAsk && order.LimitPrice == bestAsk:
+			bestAskQuantity += order.Quantity
+		}
+	}
+
+	return bestBid, bestAsk, bestBidQuantity, bestAskQuantity,
+		bestBid > 0 && bestAsk > bestBid
 }
 
 /*

@@ -3,13 +3,14 @@ import type {
 	CognitiveBeam as FrameBeam,
 } from "#/collections/cognitive";
 import { TERMINAL_COLORS } from "#/components/terminal/canvas";
+import type { Variant } from "@/components/ui/types";
 
 export type CortexBeam = {
 	rank: number;
 	sequence: string;
 	score: string;
 	percent: number;
-	color: string;
+	variant: Variant;
 };
 
 export type CortexClass = {
@@ -126,7 +127,7 @@ const beamsFromReading = (reading: Record<string, unknown>): CortexBeam[] => {
 		sequence: beam.sequence,
 		score: beam.score.toFixed(2),
 		percent: Math.round(Math.exp(beam.score - maxScore) * 100),
-		color: index === 0 ? "var(--acc)" : "var(--info)",
+		variant: index === 0 ? "warning" : "info",
 	}));
 };
 

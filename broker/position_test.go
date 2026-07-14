@@ -3,6 +3,7 @@ package broker
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -57,10 +58,21 @@ func TestPositionExecutionAck(t *testing.T) {
 		}
 		price.status = types.READY
 		price.fees.Store("BTC/USD", kraken.TradeVolumeFees{Fee: "0.26"})
+		thesis := types.NewThesis(nil)
+		So(thesis.Transition(
+			"BTC/USD", types.LifecycleShaped, time.Unix(1, 0),
+		), ShouldBeNil)
+		So(thesis.Transition(
+			"BTC/USD", types.LifecycleEntrySelected, time.Unix(2, 0),
+		), ShouldBeNil)
+		So(thesis.Transition(
+			"BTC/USD", types.LifecycleEntrySubmitted, time.Unix(3, 0),
+		), ShouldBeNil)
 		position := &Position{
 			orderID: "order-1",
 			ui:      ui,
 			price:   price,
+			thesis:  thesis,
 			Data: &PositionData{
 				Symbol: "BTC/USD",
 			},
@@ -91,7 +103,132 @@ func TestPositionExecutionAck(t *testing.T) {
 			So(position.Data.Mark.Float64(), ShouldEqual, 110.0)
 			So(position.Status(), ShouldEqual, types.FILLED)
 			So(position.Executions(), ShouldHaveLength, 1)
+			So(thesis.TradeJournal, ShouldHaveLength, 5)
+			So(thesis.TradeJournal[4].Kind, ShouldEqual, "execution")
+			So(thesis.TradeJournal[4].ExecutionID, ShouldEqual, "fill-2")
+			So(thesis.TradeJournal[4].Quantity, ShouldEqual, "1")
+			So(thesis.TradeJournal[4].Price, ShouldEqual, "110")
 			So(len(ui), ShouldEqual, 1)
+		})
+	})
+}
+
+func TestPositionExecutionAckClosesWithoutDiscardingLifecycle(t *testing.T) {
+	Convey("Given the final sell fill for a Thesis-backed position", t, func() {
+		thesis := types.NewThesis(nil)
+		So(thesis.Transition(
+			"BTC/USD", types.LifecycleManaging, time.Unix(1, 0),
+		), ShouldBeNil)
+		So(thesis.Transition(
+			"BTC/USD", types.LifecycleExitSelected, time.Unix(2, 0),
+		), ShouldBeNil)
+		So(thesis.Transition(
+			"BTC/USD", types.LifecycleExitSubmitted, time.Unix(3, 0),
+		), ShouldBeNil)
+		position := &Position{
+			orderID:       "exit-1",
+			requestedQty:  *decimal.NewFromInt64(1),
+			priorQty:      *decimal.NewFromInt64(1),
+			currentAction: "exit",
+			ui:            make(chan []byte, 1),
+			price:         &Price{},
+			thesis:        thesis,
+			executions: []*kraken.Execution{{Data: []kraken.ExecutionData{{
+				ExecID: "entry-fill", ExecType: "trade", Symbol: "BTC/USD", Side: "buy",
+				LastQty: 1, LastPrice: *decimal.NewFromInt64(100),
+				Cost: *decimal.NewFromInt64(100), FeeUsdEquiv: *decimal.NewFromInt64(1),
+			}}}},
+			Data: &PositionData{
+				Symbol:     "BTC/USD",
+				Qty:        *decimal.NewFromInt64(1),
+				EntryPrice: *decimal.NewFromInt64(100),
+			},
+		}
+
+		position.ExecutionAck([]byte(`{
+			"channel":"executions",
+			"type":"update",
+			"data":[{
+				"order_id":"exit-1",
+				"exec_id":"exit-fill",
+				"exec_type":"trade",
+				"symbol":"BTC/USD",
+				"side":"sell",
+				"last_qty":1,
+				"last_price":"110",
+				"cost":"110",
+				"order_status":"filled",
+				"cum_qty":1,
+				"cum_cost":"110",
+				"avg_price":"110",
+				"fee_usd_equiv":"1",
+				"timestamp":"2026-07-14T10:00:00Z"
+			}]
+		}`))
+
+		Convey("Then the runtime position closes while its Thesis retains the fill", func() {
+			So(position.Status(), ShouldEqual, types.CLOSED)
+			So(position.Data.Qty.Sign(), ShouldEqual, 0)
+			So(position.Thesis(), ShouldEqual, thesis)
+			So(position.Data.PnL.Float64(), ShouldEqual, 8.0)
+			So(position.Data.ReturnPct, ShouldAlmostEqual, 7.9207920792, 0.0000001)
+			So(thesis.TradeJournal, ShouldHaveLength, 7)
+			So(thesis.TradeJournal[4].ExecutionID, ShouldEqual, "exit-fill")
+			So(thesis.TradeJournal[5].Kind, ShouldEqual, "final_outcome")
+			So(thesis.TradeJournal[5].PnL, ShouldEqual, "8.000000000000")
+			So(thesis.TradeJournal[6].Kind, ShouldEqual, "position_snapshot")
+			So(thesis.TradeJournal[6].Status, ShouldEqual, "closed")
+		})
+	})
+}
+
+func TestPositionExecutionAckReduces(t *testing.T) {
+	Convey("Given a filled reduction smaller than the open position", t, func() {
+		thesis := types.NewThesis(nil)
+		So(thesis.Transition(
+			"BTC/USD", types.LifecycleManaging, time.Unix(1, 0),
+		), ShouldBeNil)
+		position := &Position{
+			orderID:       "reduce-1",
+			requestedQty:  *decimal.NewFromInt64(1),
+			priorQty:      *decimal.NewFromInt64(2),
+			currentAction: "reduce",
+			ui:            make(chan []byte, 1),
+			thesis:        thesis,
+			Data: &PositionData{
+				Symbol: "BTC/USD", Qty: *decimal.NewFromInt64(2),
+				EntryPrice: *decimal.NewFromInt64(0),
+			},
+		}
+
+		position.ExecutionAck([]byte(`{
+			"channel":"executions",
+			"type":"update",
+			"data":[{
+				"order_id":"reduce-1",
+				"exec_id":"reduce-fill",
+				"exec_type":"trade",
+				"symbol":"BTC/USD",
+				"side":"sell",
+				"last_qty":1,
+				"last_price":"110",
+				"cost":"110",
+				"order_status":"filled",
+				"cum_qty":1,
+				"cum_cost":"110",
+				"avg_price":"110",
+				"fee_usd_equiv":"1",
+				"timestamp":"2026-07-14T10:00:00Z"
+			}]
+		}`))
+
+		Convey("Then only the requested quantity is removed and management continues", func() {
+			So(position.Data.Qty.Float64(), ShouldEqual, 1.0)
+			So(position.Status(), ShouldEqual, types.OPEN)
+			So(thesis.LifecycleState("BTC/USD"), ShouldEqual, types.LifecycleManaging)
+			So(thesis.TradeJournal, ShouldHaveLength, 3)
+			So(thesis.TradeJournal[2].Kind, ShouldEqual, "position_snapshot")
+			So(thesis.TradeJournal[2].Action, ShouldEqual, "reduce")
 		})
 	})
 }
@@ -133,10 +270,15 @@ func TestPositionHydrate(t *testing.T) {
 						Volume: decimal.NewFromFloat64(13536.853376037476),
 					},
 					"btc-buy": {
-						Pair:   "BTCUSD",
-						Type:   "buy",
-						Price:  decimal.NewFromFloat64(64129.900),
-						Volume: decimal.NewFromFloat64(0.0001),
+						OrderID: "btc-order",
+						Pair:    "BTCUSD",
+						Type:    "buy",
+						Time:    decimal.NewFromInt64(1_700_000_000),
+						Price:   decimal.NewFromFloat64(64129.900),
+						Cost:    decimal.NewFromFloat64(6.41299),
+						Fee:     decimal.NewFromFloat64(0.016673774),
+						Volume:  decimal.NewFromFloat64(0.0001),
+						TradeID: decimal.NewFromInt64(1),
 					},
 				},
 			},
@@ -147,6 +289,7 @@ func TestPositionHydrate(t *testing.T) {
 			ui:      ui,
 			price:   price,
 			balance: balance,
+			thesis:  types.NewThesis(nil),
 			Data:    &PositionData{},
 		}
 
@@ -162,4 +305,84 @@ func TestPositionHydrate(t *testing.T) {
 			So(position.Data.PnL.Float64(), ShouldAlmostEqual, -0.142114, 0.000001)
 		})
 	})
+}
+
+func TestPositionReconcile(t *testing.T) {
+	Convey("Given a closed round trip followed by the wallet's current buy", t, func() {
+		currentQuantity, err := decimal.NewFromString("1.0000000000004")
+		So(err, ShouldBeNil)
+		currentCost, err := decimal.NewFromString("120.000000000048")
+		So(err, ShouldBeNil)
+		position := &Position{
+			balance: &Balance{quote: "USD"},
+			Data:    &PositionData{Symbol: "BTC/USD"},
+		}
+		history := &kraken.TradesHistory{Result: kraken.TradesHistoryResult{
+			Trades: map[string]spot.Trade{
+				"closed-buy": {
+					Pair: "BTCUSD", Type: "buy", Time: decimal.NewFromInt64(1),
+					Price: decimal.NewFromInt64(100), Cost: decimal.NewFromInt64(100),
+					Fee: decimal.NewFromInt64(1), Volume: decimal.NewFromInt64(1),
+				},
+				"closed-sell": {
+					Pair: "BTCUSD", Type: "sell", Time: decimal.NewFromInt64(2),
+					Price: decimal.NewFromInt64(110), Cost: decimal.NewFromInt64(110),
+					Fee: decimal.NewFromInt64(1), Volume: decimal.NewFromInt64(1),
+				},
+				"current-buy": {
+					Pair: "BTCUSD", Type: "buy", Time: decimal.NewFromInt64(3),
+					Price: decimal.NewFromInt64(120), Cost: currentCost,
+					Fee: decimal.NewFromInt64(1), Volume: currentQuantity,
+				},
+			},
+		}}
+
+		err = position.reconcile(history, "BTC/USD", SpotHolding{
+			Asset: "BTC", Qty: *currentQuantity,
+		})
+
+		Convey("Then only the still-open chronological lot becomes the cost basis", func() {
+			So(err, ShouldBeNil)
+			So(position.Data.Qty.String(), ShouldEqual, "1.0000000000004")
+			So(position.Data.EntryPrice.Float64(), ShouldEqual, 120.0)
+			So(position.Executions(), ShouldHaveLength, 1)
+			So(position.Executions()[0].Data[0].ExecID, ShouldEqual, "current-buy")
+		})
+	})
+}
+
+func BenchmarkPositionReconcile(b *testing.B) {
+	history := &kraken.TradesHistory{Result: kraken.TradesHistoryResult{
+		Trades: map[string]spot.Trade{
+			"closed-buy": {
+				Pair: "BTCUSD", Type: "buy", Time: decimal.NewFromInt64(1),
+				Price: decimal.NewFromInt64(100), Cost: decimal.NewFromInt64(100),
+				Fee: decimal.NewFromInt64(1), Volume: decimal.NewFromInt64(1),
+			},
+			"closed-sell": {
+				Pair: "BTCUSD", Type: "sell", Time: decimal.NewFromInt64(2),
+				Price: decimal.NewFromInt64(110), Cost: decimal.NewFromInt64(110),
+				Fee: decimal.NewFromInt64(1), Volume: decimal.NewFromInt64(1),
+			},
+			"current-buy": {
+				Pair: "BTCUSD", Type: "buy", Time: decimal.NewFromInt64(3),
+				Price: decimal.NewFromInt64(120), Cost: decimal.NewFromInt64(120),
+				Fee: decimal.NewFromInt64(1), Volume: decimal.NewFromInt64(1),
+			},
+		},
+	}}
+	holding := SpotHolding{Asset: "BTC", Qty: *decimal.NewFromInt64(1)}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		position := &Position{
+			balance: &Balance{quote: "USD"},
+			Data:    &PositionData{Symbol: "BTC/USD"},
+		}
+
+		if err := position.reconcile(history, "BTC/USD", holding); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

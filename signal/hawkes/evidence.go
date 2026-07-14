@@ -92,6 +92,10 @@ func (evidence *Evidence) Measure(
 	return append(measurements, evidence.model(symbol, outcome)...)
 }
 
+/*
+observation builds empirical Hawkes evidence from event counts so observations
+remain distinct from fitted estimates.
+*/
 func (evidence *Evidence) observation(
 	symbol string,
 	outcome excitation.Outcome,
@@ -109,6 +113,10 @@ func (evidence *Evidence) observation(
 	)
 }
 
+/*
+intensity builds arrival-intensity evidence only when the process has
+sufficient readiness.
+*/
 func (evidence *Evidence) intensity(
 	symbol string,
 	outcome excitation.Outcome,
@@ -137,6 +145,10 @@ func (evidence *Evidence) intensity(
 	)
 }
 
+/*
+conditional builds conditional-intensity evidence from the retained Hawkes fit
+so current excitation remains explicit.
+*/
 func (evidence *Evidence) conditional(
 	symbol string,
 	outcome excitation.Outcome,
@@ -162,6 +174,10 @@ func (evidence *Evidence) conditional(
 	return measurement
 }
 
+/*
+model publishes fitted Hawkes parameters so downstream logic can inspect the
+model producing intensities.
+*/
 func (evidence *Evidence) model(
 	symbol string,
 	outcome excitation.Outcome,
@@ -215,6 +231,10 @@ func (evidence *Evidence) model(
 	}
 }
 
+/*
+modelValue builds one fitted parameter measurement with its fit epoch and
+readiness attached.
+*/
 func (evidence *Evidence) modelValue(
 	symbol string,
 	outcome excitation.Outcome,
@@ -236,6 +256,10 @@ func (evidence *Evidence) modelValue(
 	return measurement
 }
 
+/*
+fitScale returns the exact interval used by the retained fit so parameters
+from different epochs are not conflated.
+*/
 func (evidence *Evidence) fitScale(
 	outcome excitation.Outcome,
 ) types.ScaleReference {
@@ -246,6 +270,10 @@ func (evidence *Evidence) fitScale(
 	}
 }
 
+/*
+measurement assembles one Hawkes measurement from evidence already owned by
+the signal.
+*/
 func (evidence *Evidence) measurement(
 	symbol string,
 	outcome excitation.Outcome,
@@ -279,6 +307,10 @@ func (evidence *Evidence) measurement(
 	}
 }
 
+/*
+normalized normalizes a Hawkes value against a compatible empirical reference
+when that reference exists.
+*/
 func (evidence *Evidence) normalized(
 	outcome excitation.Outcome,
 	metric types.MetricType,
@@ -306,6 +338,10 @@ func (evidence *Evidence) normalized(
 	}
 }
 
+/*
+arrivalNormalized normalizes arrival rate against process baseline so excess
+activity is comparable within a fit epoch.
+*/
 func (evidence *Evidence) arrivalNormalized(
 	side types.MeasurementSide,
 	outcome excitation.Outcome,
@@ -324,6 +360,10 @@ func (evidence *Evidence) arrivalNormalized(
 	return evidence.intensityNormalized(side, outcome, raw)
 }
 
+/*
+intensityNormalized normalizes conditional intensity against its arrival
+baseline so excitation remains directional.
+*/
 func (evidence *Evidence) intensityNormalized(
 	side types.MeasurementSide,
 	outcome excitation.Outcome,

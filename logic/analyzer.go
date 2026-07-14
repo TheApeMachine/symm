@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/theapemachine/datura"
@@ -12,9 +13,10 @@ import (
 )
 
 /*
-Analyzer coordinates the L3 manifold path with resonance and causal logic.
-Operational state flows directly between stages; durable graphs and forecasts
-are appended to the tick Thesis passed in by the planner.
+Analyzer composes every signal measurement on the current Thesis into
+symbol-local evidence graphs. Its existing L3 path may add measurements,
+forecasts, and hypotheses to that same Thesis without defining the rest of the
+analysis pipeline around one market-data source.
 */
 type Analyzer struct {
 	gate       stageGate
@@ -52,6 +54,9 @@ func NewAnalyzer(
 	}
 }
 
+/*
+Initialize marks the synchronous Analyzer ready for Thesis processing.
+*/
 func (analyzer *Analyzer) Initialize() error {
 	errnie.Info("initializing analyzer")
 
@@ -66,6 +71,9 @@ func (analyzer *Analyzer) Status() types.Status {
 	return analyzer.status
 }
 
+/*
+Close releases the existing L3 engine owned by the Analyzer.
+*/
 func (analyzer *Analyzer) Close() {
 	analyzer.engine.Close()
 }
@@ -74,123 +82,100 @@ func (analyzer *Analyzer) Close() {
 Update runs logic stages against the current tick thesis after signals measure.
 */
 func (analyzer *Analyzer) Update(thesis *types.Thesis) {
-	symbols := make(map[string]struct{})
+	if value, exists := thesis.Signals.Load("level3"); exists {
+		rows, ok := value.([]kraken.Level3Data)
 
-	for _, measurement := range thesis.Measurements {
-		if measurement != nil && measurement.Symbol != "" {
-			symbols[measurement.Symbol] = struct{}{}
+		if !ok {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic analyzer: level3 signal has invalid type",
+				nil,
+			))
+		}
+
+		if ok {
+			analyzer.IngestLevel3(thesis, rows)
 		}
 	}
 
-	for symbol := range symbols {
-		analyzer.composeGraph(thesis, symbol)
-
-		composer := CategoryComposer{}
-		composer.Compose(thesis, symbol)
-	}
-}
-
-func (analyzer *Analyzer) composeGraph(thesis *types.Thesis, symbol string) {
-	graph := types.NewGraph(symbol)
-
 	for _, measurement := range thesis.Measurements {
-		if measurement == nil || measurement.Symbol != symbol {
+		if measurement == nil || measurement.Symbol == "" {
 			continue
+		}
+
+		graph := thesis.Graphs[measurement.Symbol]
+
+		if graph == nil {
+			graph = types.NewGraph(measurement.Symbol)
+			thesis.Graphs[measurement.Symbol] = graph
 		}
 
 		graph.AddNode(measurement)
 	}
 
-	graph.Compose()
-	thesis.Graphs[symbol] = graph
+	for _, graph := range thesis.Graphs {
+		graph.Compose()
+	}
 }
 
 /*
-IngestLevel3 preserves the synchronous ingest contract by observing the row and
-immediately advancing its symbol when the population is ready.
+IngestLevel3 applies every authoritative row in the tick, then advances each
+mutated symbol once so a transport burst becomes one coherent field epoch.
 */
 func (analyzer *Analyzer) IngestLevel3(
 	thesis *types.Thesis,
-	row kraken.Level3Data,
-	pricePrecision int,
-	qtyPrecision int,
-	book manifold.Level3Book,
+	rows []kraken.Level3Data,
 ) {
 	if !analyzer.gate.Ready(system.StagePreflight) {
 		return
 	}
 
-	result := analyzer.ObserveLevel3(thesis, row, pricePrecision, qtyPrecision, book)
+	mutated := map[string]*manifold.Slot{}
 
-	if result.AdvanceReady {
-		analyzer.AdvanceLevel3(thesis, row.Symbol)
+	for _, row := range rows {
+		symbol := strings.TrimSpace(row.Symbol)
+
+		if symbol == "" {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"logic analyzer: level3 symbol required",
+				nil,
+			))
+
+			continue
+		}
+
+		slot, ready := analyzer.admit(symbol)
+
+		if !ready {
+			continue
+		}
+
+		result := slot.Observe(row)
+		analyzer.handle(symbol, thesis, result)
+
+		if result.AdvanceReady {
+			mutated[symbol] = slot
+		}
+	}
+
+	symbols := make([]string, 0, len(mutated))
+
+	for symbol := range mutated {
+		symbols = append(symbols, symbol)
+	}
+
+	sort.Strings(symbols)
+
+	for _, symbol := range symbols {
+		analyzer.handle(symbol, thesis, mutated[symbol].Advance())
 	}
 }
 
 /*
-ObserveLevel3 applies one authoritative L3 row without doing GPU work. The
-typed result preserves the reason an observation cannot be scheduled.
+admit obtains the existing L3 slot for a symbol and initializes its persistent
+resonance and causal models when the symbol first reaches that path.
 */
-func (analyzer *Analyzer) ObserveLevel3(
-	thesis *types.Thesis,
-	row kraken.Level3Data,
-	pricePrecision int,
-	qtyPrecision int,
-	book manifold.Level3Book,
-) manifold.ProcessResult {
-	if !analyzer.gate.Ready(system.StagePreflight) {
-		return manifold.ProcessResult{}
-	}
-
-	symbol := strings.TrimSpace(row.Symbol)
-
-	if symbol == "" {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"logic analyzer: level3 symbol required",
-			nil,
-		))
-
-		return manifold.ProcessResult{}
-	}
-
-	slot, ready := analyzer.admit(symbol)
-
-	if !ready {
-		return manifold.ProcessResult{}
-	}
-
-	result := slot.Observe(row, pricePrecision, qtyPrecision, book)
-	analyzer.handle(symbol, thesis, result)
-
-	return result
-}
-
-/*
-AdvanceLevel3 evolves one admitted symbol from its latest accumulated
-population and publishes the resulting typed state.
-*/
-func (analyzer *Analyzer) AdvanceLevel3(thesis *types.Thesis, symbol string) {
-	if !analyzer.gate.Ready(system.StagePreflight) {
-		return
-	}
-
-	symbol = strings.TrimSpace(symbol)
-	slot, ok := analyzer.engine.Slot(symbol)
-
-	if !ok {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"logic analyzer: manifold slot not admitted",
-			nil,
-		))
-
-		return
-	}
-
-	analyzer.handle(symbol, thesis, slot.Advance())
-}
-
 func (analyzer *Analyzer) admit(symbol string) (*manifold.Slot, bool) {
 	slot, err := analyzer.engine.Admit(symbol)
 
@@ -212,6 +197,10 @@ func (analyzer *Analyzer) admit(symbol string) (*manifold.Slot, bool) {
 	return slot, true
 }
 
+/*
+handle appends the durable outputs produced by one L3 advance to the same
+Thesis used by the measurement-wide analysis path.
+*/
 func (analyzer *Analyzer) handle(
 	symbol string,
 	thesis *types.Thesis,
@@ -223,6 +212,12 @@ func (analyzer *Analyzer) handle(
 
 	if result.Forecast != nil {
 		thesis.Forecasts = append(thesis.Forecasts, *result.Forecast)
+
+		if err := thesis.Transition(
+			symbol, types.LifecycleShaped, result.Forecast.At,
+		); err != nil {
+			errnie.Error(err)
+		}
 	}
 
 	if !result.GasReady {

@@ -1,12 +1,21 @@
 package websocket
 
 import (
+	"context"
+	"fmt"
+	"hash/crc32"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	gorillawebsocket "github.com/gorilla/websocket"
+	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
@@ -32,6 +41,139 @@ func TestNewSetsAuthURL(t *testing.T) {
 			So(live.status, ShouldEqual, types.READY)
 		})
 	})
+}
+
+func TestLiveUpdateLevel3PreservesMessageBoundary(t *testing.T) {
+	Convey("Given a depth-limited L3 book and one atomic boundary shift", t, func() {
+		live := New(context.Background(), nil, true, Level3WebSocketURL)
+		live.client.Reconnect = func() {}
+		managed := live.books.CreateBook("BTC/USD", 1)
+		restingPrice, err := decimal.NewFromString("100")
+		So(err, ShouldBeNil)
+
+		managed.Update(&book.UpdateOptions{
+			Direction: book.Bid,
+			ID:        "resting",
+			Price:     restingPrice,
+			Quantity:  decimal.NewFromInt64(1),
+			Timestamp: time.Unix(1, 0),
+		})
+
+		checksum := crc32.ChecksumIEEE([]byte("1011"))
+		raw := []byte(fmt.Sprintf(`{
+			"channel":"level3",
+			"type":"update",
+			"data":[{
+				"symbol":"BTC/USD",
+				"checksum":%d,
+				"bids":[
+					{"event":"add","order_id":"new-best","limit_price":101,"order_qty":1,"timestamp":"2024-01-01T00:00:02Z"},
+					{"event":"delete","order_id":"resting","limit_price":100,"timestamp":"2024-01-01T00:00:03Z"}
+				],
+				"asks":[]
+			}]
+		}`, checksum))
+		event := &callback.Event[*kraken.WebSocketMessage]{
+			Data: kraken.NewWebSocketMessage(raw),
+		}
+
+		Convey("When the complete message is applied", func() {
+			err := live.updateLevel3(event)
+
+			Convey("Then no intermediate trim loses the later deleted level", func() {
+				So(err, ShouldBeNil)
+				So(managed.EnableMaxDepth, ShouldBeFalse)
+				So(managed.NoBookCrossing, ShouldBeFalse)
+				So(managed.Bids.Levels, ShouldHaveLength, 1)
+				So(managed.BestBid().Price.Float64(), ShouldEqual, 101.0)
+			})
+		})
+	})
+}
+
+func TestLiveSubscribeLevel3SendsDepth(t *testing.T) {
+	Convey("Given an authenticated L3 websocket", t, func() {
+		requests := make(chan map[string]any, 1)
+		upgrader := gorillawebsocket.Upgrader{}
+		server := httptest.NewServer(http.HandlerFunc(func(
+			response http.ResponseWriter,
+			request *http.Request,
+		) {
+			connection, err := upgrader.Upgrade(response, request, nil)
+
+			if err != nil {
+				return
+			}
+
+			defer connection.Close()
+
+			var message map[string]any
+
+			if connection.ReadJSON(&message) == nil {
+				requests <- message
+			}
+
+			connection.ReadMessage()
+		}))
+		defer server.Close()
+
+		client := spot.NewWebSocket()
+		client.URL = "ws" + strings.TrimPrefix(server.URL, "http")
+		client.Token = "token"
+		live := &Live{client: client}
+
+		So(client.Connect(), ShouldBeNil)
+
+		Convey("When level3 is subscribed at the configured depth", func() {
+			So(live.SubscribeLevel3([]string{"BTC/USD"}, 100), ShouldBeNil)
+
+			request := <-requests
+			params := request["params"].(map[string]any)
+
+			Convey("Then depth is present on the actual wire request", func() {
+				So(request["method"], ShouldEqual, "subscribe")
+				So(params["channel"], ShouldEqual, "level3")
+				So(params["depth"], ShouldEqual, float64(100))
+				So(params["symbol"], ShouldResemble, []any{"BTC/USD"})
+			})
+		})
+
+		So(client.Disconnect(), ShouldBeNil)
+	})
+}
+
+/*
+BenchmarkLiveUpdateLevel3 measures one complete L3 message application through
+checksum validation and message-boundary depth enforcement.
+*/
+func BenchmarkLiveUpdateLevel3(b *testing.B) {
+	live := New(context.Background(), nil, true, Level3WebSocketURL)
+	live.client.Reconnect = func() {}
+	live.books.CreateBook("BTC/USD", 10)
+	checksum := crc32.ChecksumIEEE([]byte("1011"))
+	raw := []byte(fmt.Sprintf(`{
+		"channel":"level3",
+		"type":"update",
+		"data":[{
+			"symbol":"BTC/USD",
+			"checksum":%d,
+			"bids":[
+				{"event":"modify","order_id":"best","limit_price":101,"order_qty":1,"timestamp":"2024-01-01T00:00:02Z"}
+			],
+			"asks":[]
+		}]
+	}`, checksum))
+	event := &callback.Event[*kraken.WebSocketMessage]{
+		Data: kraken.NewWebSocketMessage(raw),
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if err := live.updateLevel3(event); err != nil {
+			b.Fatal(err)
+		}
+	}
 }
 
 func TestLiveRoute(t *testing.T) {

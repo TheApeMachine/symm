@@ -337,8 +337,8 @@ func (price *Price) WithFee(
 }
 
 /*
-Taker returns the estimated all-in taker purchase cost for a quantity
-at the current last price.
+Taker returns the estimated all-in taker purchase cost for a quantity at the
+current ask, which is the executable boundary for a market buy.
 
 The result is:
 
@@ -358,16 +358,16 @@ func (price *Price) Taker(
 		))
 	}
 
-	if ticker.Last == nil {
+	if ticker.Ask == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.NotFound,
-			"ticker has no last price for "+symbol,
+			"ticker has no ask price for "+symbol,
 			nil,
 		))
 	}
 
 	notional := price.Notional(
-		*ticker.Last,
+		*ticker.Ask,
 		quantity,
 	)
 

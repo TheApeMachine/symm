@@ -21,6 +21,10 @@ type Signal struct {
 	ticker *Ticker
 }
 
+/*
+NewSignal creates liquidity measurement state and subscribes its ticker input
+so each tick can compare executable liquidity across the observed cohort.
+*/
 func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -31,15 +35,19 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 	}
 }
 
+/*
+Measure converts the receiver's current market input into typed measurements
+so downstream logic consumes explicit evidence.
+*/
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
 	rows := signal.ticker.cache
 	out := make([]*types.Measurement, 0, len(rows))
 
-	thesis.CrossSection.ProcessUpdates(rows)
+	thesis.CrossSection.Measure(rows)
 
-	metrics := thesis.CrossSection.ReadView().Metrics
+	metrics := thesis.CrossSection.Metrics
 	notionalPeers := make([]float64, 0, len(metrics))
 	depthPeers := make([]float64, 0, len(metrics))
 
@@ -74,58 +82,53 @@ func (signal *Signal) Measure(
 				depth := math.Max(0, relative-1)
 				balance := 1 / (1 + math.Abs(relative-1))
 				strength := max(scarcity, max(balance, depth))
-
-				out = append(out,
-					types.ObservationMeasurement(
-						types.SourceLiquidity, types.Liquidity, types.MetricRVOL,
-						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
-						types.UnitDimensionless, relative, peerMaturity,
-					),
-					types.ObservationMeasurement(
-						types.SourceLiquidity, types.Liquidity, types.MetricScarcityScore,
-						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
-						types.UnitDimensionless, scarcity, peerMaturity,
-					),
-					types.ObservationMeasurement(
-						types.SourceLiquidity, types.Liquidity, types.MetricPeerBalanceScore,
-						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
-						types.UnitDimensionless, balance, peerMaturity,
-					),
-					types.ObservationMeasurement(
-						types.SourceLiquidity, types.Liquidity, types.MetricDepthScore,
-						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
-						types.UnitDimensionless, depth, peerMaturity,
-					),
-					types.ObservationMeasurement(
-						types.SourceLiquidity, types.Liquidity, types.MetricStrength,
-						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
-						types.UnitDimensionless, strength, peerMaturity,
-					),
-					types.ObservationNormalizedMeasurement(
-						types.SourceLiquidity, types.Liquidity, types.MetricQuoteNotional,
-						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
-						types.UnitQuoteCurrency, notional, peerMaturity,
-						types.NormalizeRatio(notional, notionalMedian),
-					),
-					types.ObservationNormalizedMeasurement(
-						types.SourceLiquidity, types.Liquidity, types.MetricQuoteNotionalMedian,
-						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
-						types.UnitQuoteCurrency, notionalMedian, peerMaturity,
-						types.NormalizeFinite(1),
-					),
-					types.ObservationNormalizedMeasurement(
-						types.SourceLiquidity, types.Liquidity, types.MetricExecutableDepth,
-						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
-						types.UnitQuoteCurrency, executableDepth, peerMaturity,
+				validity := types.MeasurementValidity{
+					State:     types.ValidityValid,
+					Readiness: types.ReadinessObservation,
+				}
+				scale := types.ScaleReference{
+					Kind:    types.ScaleObservationWindow,
+					From:    row.Timestamp,
+					Through: row.Timestamp,
+				}
+				specs := []struct {
+					metric     types.MetricType
+					unit       types.MeasurementUnit
+					raw        float64
+					normalized *float64
+				}{
+					{types.MetricRVOL, types.UnitDimensionless, relative, types.NormalizeFinite(relative)},
+					{types.MetricScarcityScore, types.UnitDimensionless, scarcity, types.NormalizeFinite(scarcity)},
+					{types.MetricPeerBalanceScore, types.UnitDimensionless, balance, types.NormalizeFinite(balance)},
+					{types.MetricDepthScore, types.UnitDimensionless, depth, types.NormalizeFinite(depth)},
+					{types.MetricStrength, types.UnitDimensionless, strength, types.NormalizeFinite(strength)},
+					{types.MetricQuoteNotional, types.UnitQuoteCurrency, notional, types.NormalizeRatio(notional, notionalMedian)},
+					{types.MetricQuoteNotionalMedian, types.UnitQuoteCurrency, notionalMedian, types.NormalizeFinite(1)},
+					{
+						types.MetricExecutableDepth,
+						types.UnitQuoteCurrency,
+						executableDepth,
 						types.NormalizeRatio(executableDepth, depthMedian),
-					),
-					types.ObservationNormalizedMeasurement(
-						types.SourceLiquidity, types.Liquidity, types.MetricExecutableDepthMedian,
-						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
-						types.UnitQuoteCurrency, depthMedian, peerMaturity,
-						types.NormalizeFinite(1),
-					),
-				)
+					},
+					{types.MetricExecutableDepthMedian, types.UnitQuoteCurrency, depthMedian, types.NormalizeFinite(1)},
+				}
+
+				for _, spec := range specs {
+					out = append(out, &types.Measurement{
+						Source:     types.SourceLiquidity,
+						Stream:     types.Liquidity,
+						Metric:     spec.metric,
+						Subject:    types.SubjectPeerLiquidity,
+						Symbol:     row.Symbol,
+						At:         row.Timestamp,
+						Unit:       spec.unit,
+						Raw:        spec.raw,
+						Normalized: spec.normalized,
+						Maturity:   peerMaturity,
+						Validity:   validity,
+						Scale:      scale,
+					})
+				}
 			}
 		}
 	}
@@ -138,6 +141,10 @@ func (signal *Signal) Measure(
 	return thesis
 }
 
+/*
+Close releases the receiver's owned resources so shutdown does not leave
+active market-data producers.
+*/
 func (signal *Signal) Close() (err error) {
 	err = errnie.Error(errnie.Err(
 		errnie.Internal,

@@ -86,10 +86,18 @@ func (grid *FluidGrid) resolveVelocity(velocity, dt float64) float64 {
 	return math.Max(-limit, math.Min(velocity, limit))
 }
 
+/*
+spatialSpan returns the represented price span so transport limits remain tied
+to grid resolution.
+*/
 func (grid *FluidGrid) spatialSpan() float64 {
 	return float64(len(grid.velocity)-1) * grid.tickSize
 }
 
+/*
+estimateDiffusionCoefficient derives diffusion from observed grid dynamics so
+integration uses the market's current smoothing scale.
+*/
 func (grid *FluidGrid) estimateDiffusionCoefficient() float64 {
 	cellCount := len(grid.velocity)
 

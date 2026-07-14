@@ -91,6 +91,10 @@ func (dynamics *fluidDynamics) icebergBalanceFloor() (float64, bool) {
 	return sampleQuantile(0.75, dynamics.sourceBalanceRatio), true
 }
 
+/*
+icebergScore compares replenishment and execution rates against observed
+history so hidden-liquidity evidence is scale-aware.
+*/
 func (dynamics *fluidDynamics) icebergScore(addRate, executeRate float64) float64 {
 	if addRate <= 0 || executeRate <= 0 {
 		return 0

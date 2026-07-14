@@ -22,6 +22,10 @@ type Signal struct {
 	section *Section
 }
 
+/*
+NewSignal creates lead-lag measurement state and subscribes its ticker input
+so temporal relationships persist across Thesis ticks.
+*/
 func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -33,14 +37,18 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 	}
 }
 
+/*
+Measure converts the receiver's current market input into typed measurements
+so downstream logic consumes explicit evidence.
+*/
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
 	rows := signal.ticker.cache
 	out := make([]*types.Measurement, 0, len(rows))
 
-	thesis.CrossSection.ProcessUpdates(rows)
-	anchor := thesis.CrossSection.ReadView().Leader
+	thesis.CrossSection.Measure(rows)
+	anchor, _ := thesis.CrossSection.Leadership()
 
 	if anchor != "" {
 		signal.section.SetAnchor(anchor)
@@ -153,17 +161,116 @@ func (signal *Signal) Measure(
 			}
 
 			out = append(out,
-				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricCorrelation, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: correlation, Validity: validity},
-				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricSignedCorrelation, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: signedCorrelation, Validity: validity},
-				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricSignedContempCorrelation, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: signedContempCorrelation, Validity: validity},
-				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricSignedLagCorrelation, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: signedLagCorrelation, Validity: validity},
-				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricLagFraction, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: lagFraction, Validity: validity},
-				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricSampleSupport, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: sampleSupport, Validity: validity},
-				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricInefficient, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: inefficient, Validity: validity},
-				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricSync, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: syncScore, Validity: validity},
-				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricDecoupled, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: decoupled, Validity: validity},
-				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricStall, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: stall, Validity: validity},
-				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricStrength, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: strength, Validity: validity},
+				&types.Measurement{
+					Source:   types.SourceLeadLag,
+					Metric:   types.MetricCorrelation,
+					Stream:   types.LeadLag,
+					Symbol:   row.Symbol,
+					At:       row.Timestamp,
+					Unit:     types.UnitDimensionless,
+					Raw:      correlation,
+					Validity: validity,
+				},
+				&types.Measurement{
+					Source:   types.SourceLeadLag,
+					Metric:   types.MetricSignedCorrelation,
+					Stream:   types.LeadLag,
+					Symbol:   row.Symbol,
+					At:       row.Timestamp,
+					Unit:     types.UnitDimensionless,
+					Raw:      signedCorrelation,
+					Validity: validity,
+				},
+				&types.Measurement{
+					Source:   types.SourceLeadLag,
+					Metric:   types.MetricSignedContempCorrelation,
+					Stream:   types.LeadLag,
+					Symbol:   row.Symbol,
+					At:       row.Timestamp,
+					Unit:     types.UnitDimensionless,
+					Raw:      signedContempCorrelation,
+					Validity: validity,
+				},
+				&types.Measurement{
+					Source:   types.SourceLeadLag,
+					Metric:   types.MetricSignedLagCorrelation,
+					Stream:   types.LeadLag,
+					Symbol:   row.Symbol,
+					At:       row.Timestamp,
+					Unit:     types.UnitDimensionless,
+					Raw:      signedLagCorrelation,
+					Validity: validity,
+				},
+				&types.Measurement{
+					Source:   types.SourceLeadLag,
+					Metric:   types.MetricLagFraction,
+					Stream:   types.LeadLag,
+					Symbol:   row.Symbol,
+					At:       row.Timestamp,
+					Unit:     types.UnitDimensionless,
+					Raw:      lagFraction,
+					Validity: validity,
+				},
+				&types.Measurement{
+					Source:   types.SourceLeadLag,
+					Metric:   types.MetricSampleSupport,
+					Stream:   types.LeadLag,
+					Symbol:   row.Symbol,
+					At:       row.Timestamp,
+					Unit:     types.UnitDimensionless,
+					Raw:      sampleSupport,
+					Validity: validity,
+				},
+				&types.Measurement{
+					Source:   types.SourceLeadLag,
+					Metric:   types.MetricInefficient,
+					Stream:   types.LeadLag,
+					Symbol:   row.Symbol,
+					At:       row.Timestamp,
+					Unit:     types.UnitDimensionless,
+					Raw:      inefficient,
+					Validity: validity,
+				},
+				&types.Measurement{
+					Source:   types.SourceLeadLag,
+					Metric:   types.MetricSync,
+					Stream:   types.LeadLag,
+					Symbol:   row.Symbol,
+					At:       row.Timestamp,
+					Unit:     types.UnitDimensionless,
+					Raw:      syncScore,
+					Validity: validity,
+				},
+				&types.Measurement{
+					Source:   types.SourceLeadLag,
+					Metric:   types.MetricDecoupled,
+					Stream:   types.LeadLag,
+					Symbol:   row.Symbol,
+					At:       row.Timestamp,
+					Unit:     types.UnitDimensionless,
+					Raw:      decoupled,
+					Validity: validity,
+				},
+				&types.Measurement{
+					Source:   types.SourceLeadLag,
+					Metric:   types.MetricStall,
+					Stream:   types.LeadLag,
+					Symbol:   row.Symbol,
+					At:       row.Timestamp,
+					Unit:     types.UnitDimensionless,
+					Raw:      stall,
+					Validity: validity,
+				},
+				&types.Measurement{
+					Source:   types.SourceLeadLag,
+					Metric:   types.MetricStrength,
+					Stream:   types.LeadLag,
+					Symbol:   row.Symbol,
+					At:       row.Timestamp,
+					Unit:     types.UnitDimensionless,
+					Raw:      strength,
+					Validity: validity,
+				},
 			)
 		}
 	}
@@ -176,6 +283,10 @@ func (signal *Signal) Measure(
 	return thesis
 }
 
+/*
+Close releases the receiver's owned resources so shutdown does not leave
+active market-data producers.
+*/
 func (signal *Signal) Close() (err error) {
 	err = errnie.Error(errnie.Err(
 		errnie.Internal,

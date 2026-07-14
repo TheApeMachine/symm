@@ -4,6 +4,7 @@ import {
 	cortexTreeFromReading,
 	drawCortexTree,
 } from "#/components/terminal/cortex-tree";
+import type { Variant } from "@/components/ui/types";
 
 const clamp = (value: number, min: number, max: number): number =>
 	Math.min(max, Math.max(min, value));
@@ -22,8 +23,8 @@ export type CognitivePosterior = {
 	classes: Array<{
 		name: string;
 		percent: number;
-		color: string;
-		foreground: string;
+		variant: Variant;
+		emphasis: boolean;
 	}>;
 };
 
@@ -121,8 +122,8 @@ export const cognitivePosteriorFromReading = (
 		classes: sorted.map((entry, index) => ({
 			name: entry.name,
 			percent: Math.round(entry.probability * 100),
-			color: index === 0 ? "var(--acc)" : "var(--info)",
-			foreground: index === 0 ? "var(--f1)" : "var(--f3)",
+			variant: index === 0 ? "warning" : "info",
+			emphasis: index === 0,
 		})),
 	};
 };

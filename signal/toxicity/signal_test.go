@@ -8,6 +8,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -26,7 +27,9 @@ func TestSignal_MeasureUsesTradeEventTime(testingTB *testing.T) {
 					},
 				},
 			},
-			level3: &Level3{},
+			level3: &Level3{
+				api: websocket.NewAPI(context.Background(), nil, nil, nil),
+			},
 		}
 
 		result := signal.Measure(types.NewThesis(nil))
@@ -57,7 +60,9 @@ func TestSignal_MeasureSkipsTradeWithoutTimestamp(testingTB *testing.T) {
 					},
 				},
 			},
-			level3: &Level3{},
+			level3: &Level3{
+				api: websocket.NewAPI(context.Background(), nil, nil, nil),
+			},
 		}
 
 		result := signal.Measure(types.NewThesis(nil))
@@ -133,7 +138,9 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 				},
 			},
 		},
-		level3: &Level3{},
+		level3: &Level3{
+			api: websocket.NewAPI(context.Background(), nil, nil, nil),
+		},
 	}
 
 	for benchmark.Loop() {

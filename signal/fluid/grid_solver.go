@@ -56,6 +56,10 @@ func (grid *FluidGrid) faceFluxDivergence(rho []float64, index int) float64 {
 	return (faceRight - faceLeft) / grid.tickSize
 }
 
+/*
+computeRHS assembles the density equation's right-hand side from transport,
+diffusion, and reaction sources.
+*/
 func (grid *FluidGrid) computeRHS(
 	rho []float64,
 	rhs []float64,
@@ -78,6 +82,10 @@ func (grid *FluidGrid) computeRHS(
 	}
 }
 
+/*
+applyNeumannBoundary copies interior density to boundary cells so the solver
+enforces zero normal density gradient.
+*/
 func (grid *FluidGrid) applyNeumannBoundary(rho []float64) {
 	cellCount := len(rho)
 
@@ -89,6 +97,10 @@ func (grid *FluidGrid) applyNeumannBoundary(rho []float64) {
 	rho[cellCount-1] = rho[cellCount-2]
 }
 
+/*
+integrateRK2 advances density with a second-order Runge-Kutta step so
+transport error remains controlled.
+*/
 func (grid *FluidGrid) integrateRK2(dt float64) {
 	grid.computeRHS(grid.rho, grid.rhoK1, grid.sources)
 

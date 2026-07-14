@@ -3,6 +3,8 @@ import { useEffect, useRef } from "react";
 import { appStore } from "#/collections/app";
 import { instrumentsStore } from "#/collections/instruments";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
+import { paletteGroupVariant } from "#/components/terminal/badge-tone";
+import { Badge } from "@/components/ui/badge";
 
 const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 	{ id: "dashboard", label: "Dashboard", hint: "Fluid field · live decisions" },
@@ -206,30 +208,7 @@ export const CommandPalette = ({
 						) : (
 							commands.map((command, index) => {
 								const selected = index === selectedIndex;
-								const tagStyle =
-									command.group === "Surface"
-										? {
-												color: "var(--info)",
-												borderColor:
-													"color-mix(in srgb, var(--info) 35%, transparent)",
-												background:
-													"color-mix(in srgb, var(--info) 10%, transparent)",
-											}
-										: command.group === "Symbol"
-											? {
-													color: "var(--up)",
-													borderColor:
-														"color-mix(in srgb, var(--up) 35%, transparent)",
-													background:
-														"color-mix(in srgb, var(--up) 10%, transparent)",
-												}
-											: {
-													color: "var(--acc)",
-													borderColor:
-														"color-mix(in srgb, var(--acc) 35%, transparent)",
-													background:
-														"color-mix(in srgb, var(--acc) 10%, transparent)",
-												};
+								const tagVariant = paletteGroupVariant(command.group);
 
 								return (
 									<button
@@ -261,12 +240,12 @@ export const CommandPalette = ({
 												{command.hint}
 											</div>
 										</div>
-										<span
-											className="shrink-0 rounded-[2px] border px-1.5 py-0.5 font-semibold text-[9px] uppercase tracking-wider"
-											style={tagStyle}
-										>
-											{command.group}
-										</span>
+										<Badge
+											label={command.group}
+											variant={tagVariant}
+											size="xs"
+											className="shrink-0"
+										/>
 									</button>
 								);
 							})

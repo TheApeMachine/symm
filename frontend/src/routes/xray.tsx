@@ -1,11 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import {
+	type MouseEvent,
 	useCallback,
 	useEffect,
 	useMemo,
 	useRef,
-	type MouseEvent,
 } from "react";
 import { appStore } from "#/collections/app";
 import {
@@ -16,10 +16,10 @@ import {
 import { instrumentsStore } from "#/collections/instruments";
 import { manifoldStore } from "#/collections/manifold";
 import {
+	type Measurement,
 	measurementEpochs,
 	measurementRaw,
 	measurementsStore,
-	type Measurement,
 } from "#/collections/measurements";
 import { resonanceStore } from "#/collections/resonance";
 import { terminalStore } from "#/collections/terminal";
@@ -30,6 +30,7 @@ import {
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
 import { XrayLayerRows } from "#/components/terminal/xray-layers";
+import { Meter } from "@/components/ui/meter";
 
 type Draw = (
 	context: CanvasRenderingContext2D,
@@ -888,6 +889,7 @@ const RouteComponent = () => {
 		hawkesNow.branching ??
 		0;
 	const momentumFg = momentumShare >= 0.4 ? "var(--up)" : "var(--f3)";
+	const momentumVariant = momentumShare >= 0.4 ? "success" : "info";
 
 	return (
 		<div className="flex h-full min-w-[1100px] flex-col">
@@ -1035,17 +1037,16 @@ const RouteComponent = () => {
 									{momentumShare.toFixed(2)} / 0.40
 								</span>
 							</div>
-							<div className="relative h-1.5 overflow-hidden rounded-sm bg-(--line)">
-								<div
-									className="h-full"
-									style={{
-										width: `${Math.min(100, momentumShare * 100)}%`,
-										background: momentumFg,
-									}}
+							<div className="relative">
+								<Meter
+									layout="bar"
+									percent={Math.min(100, momentumShare * 100)}
+									variant={momentumVariant}
+									size="m"
 								/>
-							</div>
-							<div className="relative h-0">
-								<div className="absolute top-[-9px] left-[40%] h-3 w-0.5 bg-(--acc)" />
+								<div className="relative h-0">
+									<div className="absolute top-[-9px] left-[40%] h-3 w-0.5 bg-(--acc)" />
+								</div>
 							</div>
 							<div className="mt-1.5 font-mono text-[8.5px] text-(--f4)">
 								drive playbook gate · mode share ≥ 0.40

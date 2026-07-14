@@ -16,12 +16,14 @@ import (
 )
 
 type Instrument struct {
-	status types.Status
-	api    *websocket.API
-	price  *broker.Price
-	cache  *sync.Map
-	quote  string
-	uiHub  chan []byte
+	status    types.Status
+	api       *websocket.API
+	price     *broker.Price
+	cache     *sync.Map
+	quote     string
+	uiHub     chan []byte
+	symbols   []string
+	tierReady bool
 }
 
 func NewInstrument(
@@ -143,8 +145,85 @@ func (instrument *Instrument) Subscribe() error {
 		return nil
 	}
 
+	batchSize := viper.GetInt("market.subscribe_batch")
+	pace := viper.GetDuration("market.subscribe_pace")
+	instrument.symbols = symbols
+
+	for batch := range slices.Chunk(symbols, batchSize) {
+		if err := instrument.api.SubscribeTicker(batch); err != nil {
+			return errnie.Error(err)
+		}
+
+		if err := instrument.price.GetFees(batch); err != nil {
+			return errnie.Error(err)
+		}
+
+		time.Sleep(pace)
+	}
+
+	instrument.status = types.READY
+
+	return nil
+}
+
+/*
+Tier returns the most immediately executable symbols from the observed ticker
+cohort. It does not invent liquidity for listed pairs that have emitted no
+ticker; the heavy tier becomes valid only when the cohort can fill every slot.
+*/
+func (instrument *Instrument) Tier() ([]string, bool) {
+	rows, _ := instrument.price.Snapshot(instrument.symbols)
+	size := viper.GetInt("market.universe.trading_tier_size")
+
+	if size <= 0 || len(rows) < size {
+		return nil, false
+	}
+
+	sort.Slice(rows, func(left, right int) bool {
+		leftDepth := types.ExecutableDepth(rows[left])
+		rightDepth := types.ExecutableDepth(rows[right])
+
+		if leftDepth != rightDepth {
+			return leftDepth > rightDepth
+		}
+
+		leftNotional := types.QuoteNotional(rows[left])
+		rightNotional := types.QuoteNotional(rows[right])
+
+		if leftNotional != rightNotional {
+			return leftNotional > rightNotional
+		}
+
+		return rows[left].Symbol < rows[right].Symbol
+	})
+
+	size = min(size, len(rows))
+	symbols := make([]string, size)
+
+	for index := range symbols {
+		symbols[index] = rows[index].Symbol
+	}
+
+	return symbols, true
+}
+
+/*
+Activate subscribes the statistically selected heavy tier exactly once. Ticker
+coverage remains universal while trade, book, and level3 compute stays within
+the configured solver capacity.
+*/
+func (instrument *Instrument) Activate() (bool, error) {
+	if instrument.tierReady {
+		return true, nil
+	}
+
+	symbols, ready := instrument.Tier()
+
+	if !ready {
+		return false, nil
+	}
+
 	subscribers := []func([]string) error{
-		instrument.api.SubscribeTicker,
 		instrument.api.SubscribeTrade,
 		instrument.api.SubscribeBook,
 	}
@@ -154,23 +233,18 @@ func (instrument *Instrument) Subscribe() error {
 	}
 
 	batchSize := viper.GetInt("market.subscribe_batch")
-	pace := viper.GetDuration("market.subscribe_pace")
 
 	for batch := range slices.Chunk(symbols, batchSize) {
 		for _, subscribe := range subscribers {
 			if err := subscribe(batch); err != nil {
-				errnie.Error(err)
+				instrument.status = types.ERROR
+
+				return false, errnie.Error(err)
 			}
 		}
-
-		if err := instrument.price.GetFees(batch); err != nil {
-			errnie.Error(err)
-		}
-
-		time.Sleep(pace)
 	}
 
-	instrument.status = types.READY
+	instrument.tierReady = true
 
-	return nil
+	return true, nil
 }

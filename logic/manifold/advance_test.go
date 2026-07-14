@@ -20,7 +20,6 @@ func TestSlotAdvance(t *testing.T) {
 		defer engine.Close()
 		slot, err := engine.Admit("BTC/USD")
 		So(err, ShouldBeNil)
-		book := &observationBook{bestBid: 99, bestAsk: 101}
 		snapshot := kraken.Level3Data{
 			Symbol: "BTC/USD", Type: "snapshot", Timestamp: time.Unix(1, 0),
 			Bids: []kraken.Level3Order{{
@@ -38,8 +37,8 @@ func TestSlotAdvance(t *testing.T) {
 			}},
 		}
 
-		first := slot.Observe(snapshot, 1, 8, book)
-		second := slot.Observe(update, 1, 8, book)
+		first := slot.Observe(snapshot)
+		second := slot.Observe(update)
 		orders := slot.population.Orders()
 
 		Convey("When the field advances once", func() {

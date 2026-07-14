@@ -7,6 +7,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
@@ -32,7 +33,6 @@ func TestNewCrypto(t *testing.T) {
 				nil,
 				analyzer,
 				planner,
-				nil,
 			)
 
 			Convey("Then it is ready to start", func() {
@@ -51,6 +51,7 @@ func TestCryptoRun(t *testing.T) {
 		booter := system.NewBooter(ctx, channel)
 		analyzer := logic.NewAnalyzer(booter, channel)
 		planner := strategy.NewPlanner(ctx, channel, nil, analyzer)
+		desk := broker.NewDesk(nil, nil, nil, channel)
 
 		crypto, err := NewCrypto(
 			ctx,
@@ -58,12 +59,11 @@ func TestCryptoRun(t *testing.T) {
 			nil,
 			nil,
 			nil,
-			nil,
+			desk,
 			channel,
 			nil,
 			analyzer,
 			planner,
-			nil,
 		)
 		So(err, ShouldBeNil)
 

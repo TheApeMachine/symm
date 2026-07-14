@@ -7,7 +7,14 @@ import { instrumentsStore } from "#/collections/instruments";
 import { manifoldStore } from "#/collections/manifold";
 import { measurementsStore } from "#/collections/measurements";
 import { resonanceStore } from "#/collections/resonance";
+import {
+	verdictBadgeClassName,
+	verdictToVariant,
+} from "#/components/terminal/badge-tone";
 import { cn } from "#/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Meter } from "@/components/ui/meter";
+import { Panel } from "@/components/ui/panel";
 import { fixed } from "./decision-format";
 import { DecisionSideRail } from "./decision-side";
 
@@ -67,70 +74,70 @@ export const DecisionsSurface = () => {
 			.filter((symbol) => !instrumentSymbols.includes(symbol))
 			.sort(),
 	];
-	const candidates = symbols
-		.map((symbol) => {
-			const action = allowedBySymbol[symbol];
-			const causal = causalBySymbol[symbol]?.values().at(-1);
-			const resonance = resonanceBySymbol[symbol]?.values().at(-1);
-			const manifold = manifoldBySymbol[symbol]?.values().at(-1);
-			const causalStrength = finite(causal?.strength);
-			const causalBaseline = finite(causal?.baseline);
-			const resonanceConfidence = ratio(resonance?.confidence);
-			const causalConfidence = ratio(causal?.confidence);
-			const score = action?.score ?? Math.min(resonanceConfidence, causalConfidence);
-			const support = [causal, resonance, manifold].filter(Boolean).length;
-			const inPlay = support >= 2 && causalStrength >= causalBaseline;
-			const verdict = action?.verdict ?? (inPlay ? "blocked" : "below");
-			const why =
-				action?.reason ??
-				(causal === undefined
-					? "waiting causal"
-					: resonance === undefined
-						? "waiting resonance"
-						: manifold === undefined
-							? "waiting manifold"
-							: inPlay
-								? "not admitted"
-								: "below line");
+	const candidates = symbols.map((symbol) => {
+		const action = allowedBySymbol[symbol];
+		const causal = causalBySymbol[symbol]?.values().at(-1);
+		const resonance = resonanceBySymbol[symbol]?.values().at(-1);
+		const manifold = manifoldBySymbol[symbol]?.values().at(-1);
+		const causalStrength = finite(causal?.strength);
+		const causalBaseline = finite(causal?.baseline);
+		const resonanceConfidence = ratio(resonance?.confidence);
+		const causalConfidence = ratio(causal?.confidence);
+		const score =
+			action?.score ?? Math.min(resonanceConfidence, causalConfidence);
+		const support = [causal, resonance, manifold].filter(Boolean).length;
+		const inPlay = support >= 2 && causalStrength >= causalBaseline;
+		const verdict = action?.verdict ?? (inPlay ? "blocked" : "below");
+		const why =
+			action?.reason ??
+			(causal === undefined
+				? "waiting causal"
+				: resonance === undefined
+					? "waiting resonance"
+					: manifold === undefined
+						? "waiting manifold"
+						: inPlay
+							? "not admitted"
+							: "below line");
 
-			return {
-				action,
-				causal,
-				manifold,
-				resonance,
-				symbol,
-				support,
-				score,
-				inPlay,
-				verdict,
-				why,
-				bars: [
-					{ src: "causal", value: causalStrength },
-					{ src: "predict", value: finite(resonance?.confidence) },
-					{ src: "manifold", value: finite(manifold?.momentum) },
-				].filter((bar) => bar.value !== 0),
-				waterfall: [
-					{
-						src: "causal",
-						delta: causalStrength - causalBaseline,
-					},
-					{
-						src: "predict",
-						delta: finite(resonance?.flow) - finite(resonance?.baseline),
-					},
-					{
-						src: "field",
-						delta: finite(manifold?.momentum),
-					},
-				],
-				probes: [
-					{ label: "beta", value: finite(causal?.beta) },
-					{ label: "panic", value: finite(causal?.panic) },
-					{ label: "residual", value: finite(causal?.residual) },
-					{ label: "intervention", value: finite(causal?.intervention) },
-				],
-			};
-		});
+		return {
+			action,
+			causal,
+			manifold,
+			resonance,
+			symbol,
+			support,
+			score,
+			inPlay,
+			verdict,
+			why,
+			bars: [
+				{ src: "causal", value: causalStrength },
+				{ src: "predict", value: finite(resonance?.confidence) },
+				{ src: "manifold", value: finite(manifold?.momentum) },
+			].filter((bar) => bar.value !== 0),
+			waterfall: [
+				{
+					src: "causal",
+					delta: causalStrength - causalBaseline,
+				},
+				{
+					src: "predict",
+					delta: finite(resonance?.flow) - finite(resonance?.baseline),
+				},
+				{
+					src: "field",
+					delta: finite(manifold?.momentum),
+				},
+			],
+			probes: [
+				{ label: "beta", value: finite(causal?.beta) },
+				{ label: "panic", value: finite(causal?.panic) },
+				{ label: "residual", value: finite(causal?.residual) },
+				{ label: "intervention", value: finite(causal?.intervention) },
+			],
+		};
+	});
 	const current =
 		candidates.find((candidate) => candidate.symbol === selectedSymbol) ??
 		candidates.find((candidate) => candidate.symbol === focusSymbol) ??
@@ -141,7 +148,9 @@ export const DecisionsSurface = () => {
 	const allowed = candidates.filter(
 		(candidate) => candidate.verdict === "allow",
 	).length;
-	const entryLine = finite(current?.causal?.baseline ?? current?.action?.entryLine);
+	const entryLine = finite(
+		current?.causal?.baseline ?? current?.action?.entryLine,
+	);
 	const entryScore = finite(
 		current?.causal?.strength ?? current?.action?.entryScore,
 	);
@@ -203,7 +212,7 @@ export const DecisionsSurface = () => {
 				</div>
 
 				{current ? (
-					<div className="mb-3.5 flex items-center gap-3.5 rounded border border-(--line) bg-(--sunken) px-3 py-2 font-mono text-[11.5px]">
+					<Panel className="mb-3.5 flex items-center gap-3.5 px-3 py-2 font-mono text-[11.5px]">
 						<span className="text-(--f3)">entry line</span>
 						<span className="font-semibold text-(--acc)">
 							{fixed(entryLine)}
@@ -217,142 +226,124 @@ export const DecisionsSurface = () => {
 						<span className="ml-auto text-(--f4)">
 							support gate ≥ 2 · backend verdict wins
 						</span>
-					</div>
+					</Panel>
 				) : null}
 
-        <div className="mb-2 flex items-baseline justify-between">
-          <span className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
-            Candidate evaluation
-          </span>
-          <span className="font-mono text-[9.5px] text-(--f4)">
-            click a row to inspect attribution + counterfactuals
-          </span>
-        </div>
+				<div className="mb-2 flex items-baseline justify-between">
+					<span className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+						Candidate evaluation
+					</span>
+					<span className="font-mono text-[9.5px] text-(--f4)">
+						click a row to inspect attribution + counterfactuals
+					</span>
+				</div>
 
-        <div className="flex flex-col gap-[7px]">
-          {candidates.length === 0 ? (
-            <div className="rounded border border-(--line) bg-(--surface) px-3 py-8 text-center font-mono text-[11px] text-(--f4)">
-              waiting for backend decision frames
-            </div>
-          ) : null}
+				<div className="flex flex-col gap-[7px]">
+					{candidates.length === 0 ? (
+						<div className="rounded border border-(--line) bg-(--surface) px-3 py-8 text-center font-mono text-[11px] text-(--f4)">
+							waiting for backend decision frames
+						</div>
+					) : null}
 
-          {candidates.map((candidate) => {
-            const selected = candidate.symbol === current?.symbol;
+					{candidates.map((candidate) => {
+						const selected = candidate.symbol === current?.symbol;
 						const scorePercent = Math.round(ratio(candidate.score) * 100);
-						const verdictTone =
-							candidate.verdict === "allow"
-								? "var(--up)"
-								: candidate.verdict === "blocked"
-									? "var(--down)"
-									: "var(--f3)";
-						const verdictBackground =
-							candidate.verdict === "allow"
-								? "color-mix(in srgb,var(--up) 16%,transparent)"
-								: candidate.verdict === "blocked"
-									? "color-mix(in srgb,var(--down) 14%,transparent)"
-									: "var(--line)";
 
-            return (
-              <button
-                type="button"
-                key={candidate.symbol}
-                data-symbol={candidate.symbol}
-                onClick={() => setSelectedSymbol(selected ? null : candidate.symbol)}
-                className={cn(
-                  "cursor-pointer overflow-hidden rounded border bg-(--surface) text-left font-[inherit]",
-                  selected
+						return (
+							<button
+								type="button"
+								key={candidate.symbol}
+								data-symbol={candidate.symbol}
+								onClick={() =>
+									setSelectedSymbol(selected ? null : candidate.symbol)
+								}
+								className={cn(
+									"cursor-pointer overflow-hidden rounded border bg-(--surface) text-left font-[inherit]",
+									selected
 										? "border-[color-mix(in_srgb,var(--up)_30%,transparent)]"
 										: "border-(--line)",
-                )}
-              >
-                <div className="grid grid-cols-[78px_1fr_132px_92px] items-center gap-3 px-3 py-2.5">
-                <div>
-                  <div className="font-mono font-semibold text-[13px] text-(--f1)">
-                    {candidate.symbol}
-                  </div>
-                  <div className="font-mono text-[9px] text-(--f4)">
-										×{candidate.support} src
-									</div>
-                </div>
-
-                <div className="flex min-w-0 flex-col gap-1 font-mono text-[9px]">
-									{candidate.bars.length === 0 ? (
-										<div className="text-(--f4)">waiting for ladder frames</div>
-									) : null}
-									{candidate.bars.map((bar) => (
-										<div key={bar.src} className="flex items-center gap-[7px]">
-											<span className="w-16 text-(--f4)">{bar.src}</span>
-											<div className="h-1 flex-1 overflow-hidden rounded-sm bg-(--line)">
-												<div
-													className="h-full"
-													style={{
-														width: `${Math.round(ratio(bar.value) * 100)}%`,
-														background:
-															ratio(bar.value) > 0.6
-																? "var(--acc)"
-																: "var(--info)",
-													}}
-												/>
-											</div>
-											<span className="w-[30px] text-right text-(--f3)">
-												{fixed(bar.value)}
-											</span>
+								)}
+							>
+								<div className="grid grid-cols-[78px_1fr_132px_92px] items-center gap-3 px-3 py-2.5">
+									<div>
+										<div className="font-mono font-semibold text-[13px] text-(--f1)">
+											{candidate.symbol}
 										</div>
-									))}
-                </div>
+										<div className="font-mono text-[9px] text-(--f4)">
+											×{candidate.support} src
+										</div>
+									</div>
 
-                <div>
-                  <div className="mb-0.5 flex items-center justify-between font-mono text-[9.5px] text-(--f4)">
-                    <span>combined</span>
-                    <span className="text-(--f1)">
-                      {fixed(candidate.score)}
-                    </span>
-                  </div>
-									<div className="h-1.5 overflow-hidden rounded-sm bg-(--line)">
-										<div
-											className="h-full"
-											style={{
-												width: `${scorePercent}%`,
-												background:
-													candidate.verdict === "allow"
-														? "var(--up)"
-														: candidate.inPlay
-															? "var(--down)"
-															: "var(--info)",
-											}}
+									<div className="flex min-w-0 flex-col gap-1 font-mono text-[9px]">
+										{candidate.bars.length === 0 ? (
+											<div className="text-(--f4)">
+												waiting for ladder frames
+											</div>
+										) : null}
+										{candidate.bars.map((bar) => (
+											<Meter
+												key={bar.src}
+												layout="inline"
+												label={bar.src}
+												value={fixed(bar.value)}
+												percent={Math.round(ratio(bar.value) * 100)}
+												variant={ratio(bar.value) > 0.6 ? "warning" : "info"}
+												size="s"
+												labelClassName="w-16 text-(--f4)"
+												valueClassName="w-[30px] text-(--f3)"
+											/>
+										))}
+									</div>
+
+									<div>
+										<Meter
+											layout="stacked"
+											label="combined"
+											value={fixed(candidate.score)}
+											percent={scorePercent}
+											variant={
+												candidate.verdict === "allow"
+													? "success"
+													: candidate.inPlay
+														? "error"
+														: "info"
+											}
+											size="m"
+											labelClassName="text-[9.5px] text-(--f4)"
 										/>
+										<div
+											className="mt-1 font-mono text-[9px]"
+											style={{
+												color:
+													entryScore >= entryLine ? "var(--up)" : "var(--down)",
+											}}
+										>
+											edge{" "}
+											{fixed(
+												finite(candidate.causal?.strength) -
+													finite(candidate.causal?.baseline),
+											)}
+										</div>
 									</div>
-									<div
-										className="mt-1 font-mono text-[9px]"
-										style={{
-											color:
-												entryScore >= entryLine ? "var(--up)" : "var(--down)",
-										}}
-									>
-										edge {fixed(finite(candidate.causal?.strength) - finite(candidate.causal?.baseline))}
-									</div>
-                </div>
 
-                <div className="text-right">
-                  <span
-                    className="inline-block rounded-sm px-2.5 py-1 font-semibold text-[10px] uppercase"
-										style={{
-											background: verdictBackground,
-											color: verdictTone,
-										}}
-                  >
-                    {String(candidate.verdict).toUpperCase()}
-                  </span>
-									<div className="mt-1 font-mono text-[9px] text-(--f4)">
-										{candidate.why}
+									<div className="text-right">
+										<Badge
+											label={String(candidate.verdict)}
+											variant={verdictToVariant(String(candidate.verdict))}
+											className={verdictBadgeClassName(
+												String(candidate.verdict),
+											)}
+										/>
+										<div className="mt-1 font-mono text-[9px] text-(--f4)">
+											{candidate.why}
+										</div>
 									</div>
-                </div>
-              </div>
+								</div>
 
-                {selected ? (
-                  <div className="grid grid-cols-2 gap-5 border-(--line) border-t bg-(--sunken) px-3.5 py-3 font-mono text-[9.5px]">
-                    <div>
-                      <div className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.1em]">
+								{selected ? (
+									<div className="grid grid-cols-2 gap-5 border-(--line) border-t bg-(--sunken) px-3.5 py-3 font-mono text-[9.5px]">
+										<div>
+											<div className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.1em]">
 												Score attribution
 											</div>
 											<div className="flex flex-col gap-1.5">
@@ -361,7 +352,10 @@ export const DecisionsSurface = () => {
 													const positive = row.delta >= 0;
 
 													return (
-														<div key={row.src} className="flex items-center gap-2">
+														<div
+															key={row.src}
+															className="flex items-center gap-2"
+														>
 															<span className="w-[60px] text-(--f4)">
 																{row.src}
 															</span>
@@ -402,9 +396,9 @@ export const DecisionsSurface = () => {
 														.filter(Boolean)
 														.join(" / ")}
 											</div>
-                    </div>
-                    <div>
-                      <div className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.1em]">
+										</div>
+										<div>
+											<div className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.1em]">
 												Counterfactual probes · do(·)
 											</div>
 											<div className="flex flex-col gap-1.5">
@@ -420,18 +414,18 @@ export const DecisionsSurface = () => {
 													</div>
 												))}
 											</div>
-                    </div>
-                  </div>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+										</div>
+									</div>
+								) : null}
+							</button>
+						);
+					})}
+				</div>
+			</div>
 
-      <div className="min-h-0 overflow-auto border-(--line) border-l bg-(--surface) p-3.5">
-        <DecisionSideRail symbol={current?.symbol} />
-      </div>
-    </div>
-  );
+			<div className="min-h-0 overflow-auto border-(--line) border-l bg-(--surface) p-3.5">
+				<DecisionSideRail symbol={current?.symbol} />
+			</div>
+		</div>
+	);
 };

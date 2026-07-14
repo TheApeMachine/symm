@@ -61,40 +61,31 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 }
 
 func TestSignal_Measure(testingTB *testing.T) {
-	Convey("Given cached ticker rows with enough history to establish a leadership threshold", testingTB, func() {
+	Convey("Given current ticker rows with one clear cohort leader", testingTB, func() {
 		now := time.Now()
 		signal := &Signal{
-			ctx:    context.Background(),
-			ticker: &Ticker{cache: []kraken.TickerData{}},
+			ctx: context.Background(),
+			ticker: &Ticker{cache: []kraken.TickerData{
+				{
+					Symbol:    "BTC/USD",
+					ChangePct: 5,
+					Last:      krakendecimal.NewFromFloat64(105),
+					Timestamp: now,
+				},
+				{
+					Symbol:    "ETH/USD",
+					ChangePct: 2,
+					Last:      krakendecimal.NewFromFloat64(102),
+					Timestamp: now,
+				},
+				{
+					Symbol:    "SOL/USD",
+					ChangePct: -1,
+					Last:      krakendecimal.NewFromFloat64(99),
+					Timestamp: now,
+				},
+			}},
 		}
-
-		/*
-			LeadershipThreshold only counts a symbol once it has at least
-			MinBars observations, so a single tick per symbol can never
-			establish a threshold and IsLeader always reports false. Seed
-			each symbol with MinBars bars to reflect that a leadership
-			signal needs real history behind it, not a synthetic minimum
-			the test invents on its own.
-		*/
-		minBars := types.DefaultCrossSectionConfig().MinBars
-		seed := func(symbol string, changePct, last float64) []kraken.TickerData {
-			rows := make([]kraken.TickerData, 0, minBars)
-
-			for bar := range minBars {
-				rows = append(rows, kraken.TickerData{
-					Symbol:    symbol,
-					ChangePct: changePct,
-					Last:      krakendecimal.NewFromFloat64(last),
-					Timestamp: now.Add(time.Duration(bar) * time.Second),
-				})
-			}
-
-			return rows
-		}
-
-		signal.ticker.cache = append(signal.ticker.cache, seed("BTC/USD", 5, 105)...)
-		signal.ticker.cache = append(signal.ticker.cache, seed("ETH/USD", 2, 102)...)
-		signal.ticker.cache = append(signal.ticker.cache, seed("SOL/USD", -1, 99)...)
 
 		thesis := types.NewThesis(nil)
 

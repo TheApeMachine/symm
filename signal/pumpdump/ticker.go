@@ -32,6 +32,10 @@ func NewTicker(ctx context.Context, api *websocket.API) *Ticker {
 	return ticker
 }
 
+/*
+On decodes an inbound market-data message and retains its relevant rows so
+measurement uses the authoritative event stream.
+*/
 func (ticker *Ticker) On(data []byte) {
 	if len(data) == 0 {
 		return

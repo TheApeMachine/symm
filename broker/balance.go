@@ -172,3 +172,25 @@ func (balance *Balance) Available(amount decimal.Decimal) bool {
 
 	return false
 }
+
+/*
+AvailableQuote returns the unreserved quote-currency capital strategy may
+allocate. Missing balance state is an error rather than zero available cash.
+*/
+func (balance *Balance) AvailableQuote() (float64, error) {
+	if balance.model == nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"quote balance not available",
+			nil,
+		))
+	}
+
+	row, err := balance.Get(balance.quote)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return row.Available.Float64(), nil
+}

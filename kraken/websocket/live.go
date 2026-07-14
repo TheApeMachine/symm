@@ -89,15 +89,8 @@ func New(
 		live.books = spot.NewBookManager()
 		live.books.OnCreateBook.Recurring(func(e *callback.Event[*book.Book]) {
 			bookInstance := e.Data
-			bookInstance.EnableMaxDepth = true
-			bookInstance.EnforceDepth()
-			bookInstance.EnforceOrder()
-
-			bookInstance.OnUpdated.Recurring(func(e *callback.Event[*book.UpdateOptions]) {
-				bookInstance.EnableMaxDepth = true
-				bookInstance.EnforceDepth()
-				bookInstance.EnforceOrder()
-			})
+			bookInstance.EnableMaxDepth = false
+			bookInstance.NoBookCrossing = false
 
 			bookInstance.OnChecksummed.Recurring(func(e *callback.Event[*book.ChecksumResult]) {
 				// CreateBook is fired synchronously the moment the resync
@@ -115,21 +108,21 @@ func New(
 	}
 
 	live.client.OnSent.Recurring(func(event *callback.Event[*kraken.WebSocketMessage]) {
-		if live.isLevel3 && live.books != nil && live.books.Update(event) != nil {
+		if err := live.updateLevel3(event); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"websocket: level3 book update failed",
-				nil,
+				err,
 			))
 		}
 	})
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*kraken.WebSocketMessage]) {
-		if live.isLevel3 && live.books != nil && live.books.Update(event) != nil {
+		if err := live.updateLevel3(event); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"websocket: level3 book update failed",
-				nil,
+				err,
 			))
 		}
 
@@ -149,8 +142,9 @@ func New(
 
 	if live.auth {
 		live.client.OnAuthenticated.Recurring(func(event *callback.Event[string]) {
-			if live.isLevel3 && len(live.symbols) > 0 && live.client.SubL3(
-				live.symbols, viper.GetInt("market.l3_depth"),
+			if live.isLevel3 && len(live.symbols) > 0 && live.SubscribeLevel3(
+				live.symbols,
+				viper.GetInt("market.l3_depth"),
 			) != nil {
 				errnie.Error(errnie.Err(
 					errnie.Validation,
@@ -164,6 +158,73 @@ func New(
 	}
 
 	return live
+}
+
+/*
+SubscribeLevel3 sends the configured depth explicitly because the SDK's depth
+argument is not included in its level3 subscription payload.
+*/
+func (live *Live) SubscribeLevel3(symbols []string, depth int) error {
+	return live.client.SubPrivate("level3", map[string]any{
+		"params": map[string]any{
+			"symbol": symbols,
+			"depth":  depth,
+		},
+	})
+}
+
+/*
+updateLevel3 applies one complete websocket message before truncating affected
+books, preserving Kraken's atomic L3 message boundary.
+*/
+func (live *Live) updateLevel3(
+	event *callback.Event[*kraken.WebSocketMessage],
+) error {
+	if !live.isLevel3 || live.books == nil {
+		return nil
+	}
+
+	if err := live.books.Update(event); err != nil {
+		return err
+	}
+
+	message, err := event.Data.Map()
+
+	if err != nil {
+		return err
+	}
+
+	if message["channel"] != "level3" {
+		return nil
+	}
+
+	updates, ok := message["data"].([]any)
+
+	if !ok {
+		return nil
+	}
+
+	for _, update := range updates {
+		fields, ok := update.(map[string]any)
+
+		if !ok {
+			continue
+		}
+
+		symbol, ok := fields["symbol"].(string)
+
+		if !ok {
+			continue
+		}
+
+		managed := live.books.GetBook(symbol)
+
+		if managed != nil {
+			managed.EnforceDepth()
+		}
+	}
+
+	return nil
 }
 
 func (live *Live) Initialize() error {

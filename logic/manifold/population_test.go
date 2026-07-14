@@ -53,7 +53,7 @@ func TestPopulationApplySnapshot(t *testing.T) {
 			}},
 		}
 
-		population.Apply(row, 100)
+		population.Apply(row)
 
 		Convey("It should retain exact order carriers", func() {
 			So(population.Ready(), ShouldBeTrue)
@@ -81,14 +81,14 @@ func TestPopulationApplyDepthBoundary(t *testing.T) {
 			Asks: []kraken.Level3Order{
 				wire("", "ask-1a", 110, 1), wire("", "ask-1b", 110, 1), wire("", "ask-2", 111, 2),
 			},
-		}, 105)
+		})
 
 		Convey("When new best levels push the old boundary out and it later returns", func() {
 			population.Apply(kraken.Level3Data{
 				Type: "update", Timestamp: at,
 				Bids: []kraken.Level3Order{wire("add", "bid-new", 101, 3)},
 				Asks: []kraken.Level3Order{wire("add", "ask-new", 109, 3)},
-			}, 105)
+			})
 			accounting := population.Accounting()
 			So(population.Orders(), ShouldHaveLength, 6)
 			So(accounting.Initial, ShouldEqual, 8)
@@ -100,7 +100,7 @@ func TestPopulationApplyDepthBoundary(t *testing.T) {
 				Type: "update", Timestamp: at,
 				Bids: []kraken.Level3Order{wire("delete", "bid-new", 101, 3), wire("add", "bid-2", 99, 2)},
 				Asks: []kraken.Level3Order{wire("delete", "ask-new", 109, 3), wire("add", "ask-2", 111, 2)},
-			}, 105)
+			})
 			accounting = population.Accounting()
 			So(population.Ready(), ShouldBeTrue)
 			So(population.Orders(), ShouldHaveLength, 6)
@@ -310,8 +310,8 @@ func TestCoordinateVelocity(t *testing.T) {
 	})
 }
 
-func TestPopulationRecoversAfterInvalidMid(t *testing.T) {
-	Convey("Given a population invalidated by a one-sided update", t, func() {
+func TestPopulationTopOfBook(t *testing.T) {
+	Convey("Given a population made one-sided by an update", t, func() {
 		population := NewPopulation("BTC/USD", NewLifetimeEstimator(256), testBookDepth)
 
 		population.Apply(kraken.Level3Data{
@@ -322,7 +322,7 @@ func TestPopulationRecoversAfterInvalidMid(t *testing.T) {
 			Asks: []kraken.Level3Order{{
 				OrderID: "ask-1", LimitPrice: 101, OrderQty: 1, Timestamp: time.Unix(1, 0),
 			}},
-		}, 100)
+		})
 
 		population.Apply(kraken.Level3Data{
 			Symbol: "BTC/USD", Type: "update", Timestamp: time.Unix(2, 0),
@@ -330,10 +330,11 @@ func TestPopulationRecoversAfterInvalidMid(t *testing.T) {
 				OrderID: "bid-1", Event: "delete", LimitPrice: 99, OrderQty: 1,
 				Timestamp: time.Unix(2, 0),
 			}},
-		}, 0)
+		})
 
-		Convey("A fresh snapshot should clear invalid state", func() {
-			So(population.Ready(), ShouldBeFalse)
+		Convey("A fresh snapshot should restore an executable top of book", func() {
+			_, _, _, _, ready := population.TopOfBook()
+			So(ready, ShouldBeFalse)
 
 			population.Apply(kraken.Level3Data{
 				Symbol: "BTC/USD", Type: "snapshot", Timestamp: time.Unix(3, 0),
@@ -343,9 +344,14 @@ func TestPopulationRecoversAfterInvalidMid(t *testing.T) {
 				Asks: []kraken.Level3Order{{
 					OrderID: "ask-2", LimitPrice: 102, OrderQty: 2, Timestamp: time.Unix(3, 0),
 				}},
-			}, 100)
+			})
 
-			So(population.Ready(), ShouldBeTrue)
+			bid, ask, bidQuantity, askQuantity, ready := population.TopOfBook()
+			So(ready, ShouldBeTrue)
+			So(bid, ShouldEqual, 98.0)
+			So(ask, ShouldEqual, 102.0)
+			So(bidQuantity, ShouldEqual, 2.0)
+			So(askQuantity, ShouldEqual, 2.0)
 		})
 	})
 }
@@ -359,7 +365,7 @@ func TestPopulationAccountingIdentity(t *testing.T) {
 			Bids: []kraken.Level3Order{{
 				OrderID: "bid-1", LimitPrice: 100, OrderQty: 5, Timestamp: time.Unix(1, 0),
 			}},
-		}, 100)
+		})
 
 		population.Apply(kraken.Level3Data{
 			Symbol: "ETH/USD", Type: "update", Timestamp: time.Unix(2, 0),
@@ -367,7 +373,7 @@ func TestPopulationAccountingIdentity(t *testing.T) {
 				OrderID: "bid-1", Event: "modify", LimitPrice: 101, OrderQty: 3,
 				Timestamp: time.Unix(2, 0),
 			}},
-		}, 100)
+		})
 
 		population.Apply(kraken.Level3Data{
 			Symbol: "ETH/USD", Type: "update", Timestamp: time.Unix(3, 0),
@@ -375,7 +381,7 @@ func TestPopulationAccountingIdentity(t *testing.T) {
 				OrderID: "bid-1", Event: "delete", LimitPrice: 101, OrderQty: 3,
 				Timestamp: time.Unix(3, 0),
 			}},
-		}, 100)
+		})
 
 		accounting := population.Accounting()
 

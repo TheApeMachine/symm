@@ -92,10 +92,23 @@ func TestAPIOnRoutesChannels(t *testing.T) {
 
 		api.On("ticker", func([]byte) {})
 		api.On("balances", func([]byte) {})
+		api.On("level3", func([]byte) {})
 
 		Convey("Then each callback registers on its dedicated transport", func() {
 			So(len(public.channels["ticker"]), ShouldEqual, 1)
 			So(len(private.channels["balances"]), ShouldEqual, 1)
+			So(api.level3, ShouldHaveLength, 1)
+			So(len(public.channels["level3"]), ShouldEqual, 0)
+		})
+
+		Convey("Then a level3 transport created before another consumer receives it", func() {
+			level3 := New(context.Background(), nil, true, Level3WebSocketURL)
+			api.bookConns.Store("BTC/USD", level3)
+			api.On("level3", func([]byte) {})
+
+			callbacks, ok := level3.sync.Load("level3")
+			So(ok, ShouldBeTrue)
+			So(callbacks.([]func([]byte)), ShouldHaveLength, 1)
 		})
 	})
 

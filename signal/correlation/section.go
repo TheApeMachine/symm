@@ -2,99 +2,127 @@ package correlation
 
 import (
 	"math"
+	"slices"
+	"strings"
 
 	"github.com/theapemachine/nomagique/algorithm"
 	nomcorrelation "github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/statistic"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/kraken"
 )
 
 /*
-Section scores cohort correlation and relative energy for one symbol.
-Correlation scores every peer in the cross-section for every subject
-symbol every tick.
-
-ponytail: this is O(symbols²) per tick; return/sample/absolute-value
-buffers are held here and reused across calls instead of being
-reallocated on each one. Upgrade path: pre-aggregate peer statistics
-once per tick instead of rescoring pairwise if the symbol count grows.
+Section retains the price paths correlation actually needs and calculates each
+updated symbol's relationship to its observed peers.
 */
 type Section struct {
+	samples        map[string][]nomcorrelation.Sample
 	subjectReturns []float64
-	subjectSamples []nomcorrelation.Sample
 	peerReturns    []float64
-	peerSamples    []nomcorrelation.Sample
-	energyAbsolute []float64
+	retention      []float64
 }
 
+/*
+NewSection creates empty correlation history owned by one correlation signal.
+*/
 func NewSection() *Section {
-	return &Section{}
+	return &Section{
+		samples: make(map[string][]nomcorrelation.Sample),
+	}
 }
 
-func ensureReturnLen(buffer []float64, length int) []float64 {
-	if cap(buffer) >= length {
-		return buffer[:length]
+/*
+Measure records the current ticker batch and calculates correlation evidence
+for every symbol updated by that batch.
+*/
+func (section *Section) Measure(
+	rows []kraken.TickerData,
+) map[string]map[string]float64 {
+	updated := make(map[string]struct{})
+
+	for _, row := range rows {
+		symbol := strings.TrimSpace(row.Symbol)
+
+		if symbol == "" || row.Timestamp.IsZero() || row.Last == nil || row.Last.Sign() <= 0 {
+			continue
+		}
+
+		samples := section.samples[symbol]
+
+		if len(samples) > 0 && !row.Timestamp.After(samples[len(samples)-1].At) {
+			continue
+		}
+
+		section.samples[symbol] = append(samples, nomcorrelation.Sample{
+			At:    row.Timestamp,
+			Value: row.Last.Float64(),
+		})
+		section.trim(symbol)
+		updated[symbol] = struct{}{}
 	}
 
-	return make([]float64, length)
-}
+	results := make(map[string]map[string]float64, len(updated))
 
-func ensureSampleLen(buffer []nomcorrelation.Sample, length int) []nomcorrelation.Sample {
-	if cap(buffer) >= length {
-		return buffer[:length]
+	for symbol := range updated {
+		scores, ok := section.scores(symbol)
+
+		if ok {
+			results[symbol] = scores
+		}
 	}
 
-	return make([]nomcorrelation.Sample, length)
+	return results
 }
 
-func (section *Section) Scores(
-	symbol string,
-	crossSection *types.CrossSection,
-) (map[string]float64, bool) {
-	if crossSection == nil {
+/*
+trim retains the adaptive long window derived from the symbol's observed
+returns, keeping history bounded without imposing one market-wide horizon.
+*/
+func (section *Section) trim(symbol string) {
+	samples := section.samples[symbol]
+
+	if len(samples) < 3 {
+		return
+	}
+
+	section.retention = section.returns(samples, section.retention)
+	_, longWindow, err := statistic.ResolveWindows(
+		section.retention,
+		0,
+		0,
+	)
+
+	if err != nil || longWindow <= 0 || len(samples) <= longWindow+1 {
+		return
+	}
+
+	section.samples[symbol] = samples[len(samples)-longWindow-1:]
+}
+
+/*
+scores calculates one symbol's cohort correlation and relative return energy.
+*/
+func (section *Section) scores(symbol string) (map[string]float64, bool) {
+	subjectSamples := section.samples[symbol]
+
+	if len(subjectSamples) < 3 {
 		return nil, false
 	}
 
-	window := crossSection.MaxReturnWindow()
-	sampleWindow := window + 1
-
-	section.subjectReturns = ensureReturnLen(section.subjectReturns, window)
-	subjectWritten := crossSection.SymbolReturns(symbol, section.subjectReturns)
-
-	if subjectWritten < 2 {
-		return nil, false
-	}
-
-	section.subjectSamples = ensureSampleLen(section.subjectSamples, sampleWindow)
-	subjectSampleWritten := crossSection.SymbolSamples(symbol, section.subjectSamples)
-
-	if subjectSampleWritten < 2 {
-		return nil, false
-	}
-
-	subjectSamples := section.subjectSamples[:subjectSampleWritten]
-
-	section.peerReturns = ensureReturnLen(section.peerReturns, window)
-	section.peerSamples = ensureSampleLen(section.peerSamples, sampleWindow)
+	section.subjectReturns = section.returns(
+		subjectSamples,
+		section.subjectReturns,
+	)
 
 	var signedTotal float64
 	var absoluteTotal float64
 	var peerEnergyTotal float64
 	var peerCount float64
 
-	for _, peer := range crossSection.ReadView().Metrics {
-		if peer.Symbol == symbol {
+	for peerSymbol, peerSamples := range section.samples {
+		if peerSymbol == symbol || len(peerSamples) < 3 {
 			continue
 		}
-
-		peerWritten := crossSection.SymbolReturns(peer.Symbol, section.peerReturns)
-
-		if peerWritten < 2 {
-			continue
-		}
-
-		peerSampleWritten := crossSection.SymbolSamples(peer.Symbol, section.peerSamples)
-		peerSamples := section.peerSamples[:peerSampleWritten]
 
 		correlation, ok := section.correlation(subjectSamples, peerSamples)
 
@@ -102,9 +130,11 @@ func (section *Section) Scores(
 			continue
 		}
 
+		section.peerReturns = section.returns(peerSamples, section.peerReturns)
+
 		signedTotal += correlation
 		absoluteTotal += math.Abs(correlation)
-		peerEnergyTotal += section.energy(section.peerReturns[:peerWritten])
+		peerEnergyTotal += section.energy(section.peerReturns)
 		peerCount++
 	}
 
@@ -114,7 +144,7 @@ func (section *Section) Scores(
 
 	signed := signedTotal / peerCount
 	correlation := absoluteTotal / peerCount
-	subjectEnergy := section.energy(section.subjectReturns[:subjectWritten])
+	subjectEnergy := section.energy(section.subjectReturns)
 	peerEnergy := peerEnergyTotal / peerCount
 
 	if peerEnergy <= 0 {
@@ -147,29 +177,52 @@ func (section *Section) Scores(
 	}, true
 }
 
+/*
+correlation calculates the asynchronous return relationship between two price
+paths.
+*/
 func (section *Section) correlation(
 	left []nomcorrelation.Sample,
 	right []nomcorrelation.Sample,
 ) (float64, bool) {
-	if len(left) < 2 || len(right) < 2 {
-		return 0, false
-	}
-
 	return algorithm.HayashiPairCorrelation(left, right, 0)
 }
 
+/*
+energy calculates median absolute return magnitude for scale-compatible peer
+comparison.
+*/
 func (section *Section) energy(values []float64) float64 {
-	section.energyAbsolute = ensureReturnLen(section.energyAbsolute, len(values))
-
-	for index, value := range values {
-		section.energyAbsolute[index] = math.Abs(value)
-	}
-
-	median, ok := statistic.MedianOf(section.energyAbsolute)
+	median, ok := statistic.MedianAbsoluteOf(values)
 
 	if !ok {
 		return 0
 	}
 
 	return median
+}
+
+/*
+returns calculates chronological log returns into reusable Section storage.
+*/
+func (section *Section) returns(
+	samples []nomcorrelation.Sample,
+	buffer []float64,
+) []float64 {
+	returns := slices.Grow(buffer[:0], len(samples)-1)[:len(samples)-1]
+	written := 0
+
+	for index := 1; index < len(samples); index++ {
+		previous := samples[index-1].Value
+		current := samples[index].Value
+
+		if previous <= 0 || current <= 0 {
+			continue
+		}
+
+		returns[written] = math.Log(current / previous)
+		written++
+	}
+
+	return returns[:written]
 }

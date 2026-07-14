@@ -35,12 +35,20 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 	}
 }
 
+/*
+touchSnapshot retains prior best-level quantities so toxicity can distinguish
+withdrawal from execution.
+*/
 type touchSnapshot struct {
 	bidQuantity float64
 	askQuantity float64
 	observedAt  time.Time
 }
 
+/*
+symbolEvidence aggregates trade and fill evidence for one symbol so touch
+honesty uses one event batch.
+*/
 type symbolEvidence struct {
 	latestAt    time.Time
 	tradeCount  int
@@ -51,11 +59,16 @@ type symbolEvidence struct {
 	askExecuted float64
 }
 
+/*
+Measure converts the receiver's current market input into typed measurements
+so downstream logic consumes explicit evidence.
+*/
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
 	trades := signal.trades.cache
 	books := signal.level3.Books()
+	level3Rows := signal.level3.Rows()
 	evidence := map[string]*symbolEvidence{}
 
 	for _, trade := range trades {
@@ -113,33 +126,62 @@ func (signal *Signal) Measure(
 
 	for symbol, row := range evidence {
 		maturity := float64(row.tradeCount) / float64(row.tradeCount+1)
+		validity := types.MeasurementValidity{
+			State:     types.ValidityValid,
+			Readiness: types.ReadinessObservation,
+		}
+		scale := types.ScaleReference{
+			Kind:    types.ScaleObservationWindow,
+			From:    row.latestAt,
+			Through: row.latestAt,
+		}
 
-		out = append(out,
-			types.ObservationMeasurement(
-				types.SourceToxicity, types.Toxicity, types.MetricTradeVolume,
-				types.SubjectLevel3Tape, symbol, row.latestAt,
-				types.UnitBaseCurrency, row.volume.Float64(), maturity,
-			),
-		)
+		out = append(out, &types.Measurement{
+			Source:   types.SourceToxicity,
+			Stream:   types.Toxicity,
+			Metric:   types.MetricTradeVolume,
+			Subject:  types.SubjectLevel3Tape,
+			Symbol:   symbol,
+			At:       row.latestAt,
+			Unit:     types.UnitBaseCurrency,
+			Raw:      row.volume.Float64(),
+			Maturity: maturity,
+			Validity: validity,
+			Scale:    scale,
+		})
 
 		if row.fillBid != nil {
-			out = append(out,
-				types.ObservationSideMeasurement(
-					types.SourceToxicity, types.Toxicity, types.MetricFillVolume,
-					types.SubjectLevel3Tape, symbol, types.SideBuy, row.latestAt,
-					types.UnitQuoteCurrency, row.fillBid.Float64(), maturity,
-				),
-			)
+			out = append(out, &types.Measurement{
+				Source:   types.SourceToxicity,
+				Stream:   types.Toxicity,
+				Metric:   types.MetricFillVolume,
+				Subject:  types.SubjectLevel3Tape,
+				Symbol:   symbol,
+				Side:     types.SideBuy,
+				At:       row.latestAt,
+				Unit:     types.UnitQuoteCurrency,
+				Raw:      row.fillBid.Float64(),
+				Maturity: maturity,
+				Validity: validity,
+				Scale:    scale,
+			})
 		}
 
 		if row.fillAsk != nil {
-			out = append(out,
-				types.ObservationSideMeasurement(
-					types.SourceToxicity, types.Toxicity, types.MetricFillVolume,
-					types.SubjectLevel3Tape, symbol, types.SideSell, row.latestAt,
-					types.UnitQuoteCurrency, row.fillAsk.Float64(), maturity,
-				),
-			)
+			out = append(out, &types.Measurement{
+				Source:   types.SourceToxicity,
+				Stream:   types.Toxicity,
+				Metric:   types.MetricFillVolume,
+				Subject:  types.SubjectLevel3Tape,
+				Symbol:   symbol,
+				Side:     types.SideSell,
+				At:       row.latestAt,
+				Unit:     types.UnitQuoteCurrency,
+				Raw:      row.fillAsk.Float64(),
+				Maturity: maturity,
+				Validity: validity,
+				Scale:    scale,
+			})
 		}
 
 		for bookManager := range books {
@@ -165,31 +207,71 @@ func (signal *Signal) Measure(
 			}
 
 			out = append(out,
-				types.ObservationSideMeasurement(
-					types.SourceToxicity, types.Toxicity, types.MetricBestPrice,
-					types.SubjectLevel3Touch, symbol, types.SideBuy, row.latestAt,
-					types.UnitQuoteCurrency, bid.Price.Float64(), maturity,
-				),
-				types.ObservationSideMeasurement(
-					types.SourceToxicity, types.Toxicity, types.MetricBestPrice,
-					types.SubjectLevel3Touch, symbol, types.SideSell, row.latestAt,
-					types.UnitQuoteCurrency, ask.Price.Float64(), maturity,
-				),
-				types.ObservationSideMeasurement(
-					types.SourceToxicity, types.Toxicity, types.MetricTouchQuantity,
-					types.SubjectLevel3Touch, symbol, types.SideBuy, row.latestAt,
-					types.UnitBaseCurrency, bidQuantity, maturity,
-				),
-				types.ObservationSideMeasurement(
-					types.SourceToxicity, types.Toxicity, types.MetricTouchQuantity,
-					types.SubjectLevel3Touch, symbol, types.SideSell, row.latestAt,
-					types.UnitBaseCurrency, askQuantity, maturity,
-				),
+				&types.Measurement{
+					Source:   types.SourceToxicity,
+					Stream:   types.Toxicity,
+					Metric:   types.MetricBestPrice,
+					Subject:  types.SubjectLevel3Touch,
+					Symbol:   symbol,
+					Side:     types.SideBuy,
+					At:       row.latestAt,
+					Unit:     types.UnitQuoteCurrency,
+					Raw:      bid.Price.Float64(),
+					Maturity: maturity,
+					Validity: validity,
+					Scale:    scale,
+				},
+				&types.Measurement{
+					Source:   types.SourceToxicity,
+					Stream:   types.Toxicity,
+					Metric:   types.MetricBestPrice,
+					Subject:  types.SubjectLevel3Touch,
+					Symbol:   symbol,
+					Side:     types.SideSell,
+					At:       row.latestAt,
+					Unit:     types.UnitQuoteCurrency,
+					Raw:      ask.Price.Float64(),
+					Maturity: maturity,
+					Validity: validity,
+					Scale:    scale,
+				},
+				&types.Measurement{
+					Source:   types.SourceToxicity,
+					Stream:   types.Toxicity,
+					Metric:   types.MetricTouchQuantity,
+					Subject:  types.SubjectLevel3Touch,
+					Symbol:   symbol,
+					Side:     types.SideBuy,
+					At:       row.latestAt,
+					Unit:     types.UnitBaseCurrency,
+					Raw:      bidQuantity,
+					Maturity: maturity,
+					Validity: validity,
+					Scale:    scale,
+				},
+				&types.Measurement{
+					Source:   types.SourceToxicity,
+					Stream:   types.Toxicity,
+					Metric:   types.MetricTouchQuantity,
+					Subject:  types.SubjectLevel3Touch,
+					Symbol:   symbol,
+					Side:     types.SideSell,
+					At:       row.latestAt,
+					Unit:     types.UnitBaseCurrency,
+					Raw:      askQuantity,
+					Maturity: maturity,
+					Validity: validity,
+					Scale:    scale,
+				},
 			)
 
 			out = append(out, signal.touchHonesty(
-				symbol, row, signal.priorTouch[symbol],
-				bidQuantity, askQuantity, maturity,
+				symbol,
+				row,
+				signal.priorTouch[symbol],
+				bidQuantity,
+				askQuantity,
+				maturity,
 			)...)
 		}
 	}
@@ -199,11 +281,20 @@ func (signal *Signal) Measure(
 
 	thesis.Signals.Store("trades", trades)
 	thesis.Signals.Store("books", books)
+
+	if len(level3Rows) > 0 {
+		thesis.Signals.Store("level3", level3Rows)
+	}
+
 	thesis.Measurements = append(thesis.Measurements, out...)
 
 	return thesis
 }
 
+/*
+touchHonesty compares current and prior touch quantities against executions so
+cancellations are not mistaken for fills.
+*/
 func (signal *Signal) touchHonesty(
 	symbol string,
 	row *symbolEvidence,
@@ -219,27 +310,50 @@ func (signal *Signal) touchHonesty(
 	bidCancelled := cancelledQuantity(prior.bidQuantity, bidQuantity, row.bidExecuted)
 	askCancelled := cancelledQuantity(prior.askQuantity, askQuantity, row.askExecuted)
 	measurements := make([]*types.Measurement, 0, 4)
+	validity := types.MeasurementValidity{
+		State:     types.ValidityValid,
+		Readiness: types.ReadinessObservation,
+	}
+	scale := types.ScaleReference{
+		Kind:    types.ScaleObservationWindow,
+		From:    row.latestAt,
+		Through: row.latestAt,
+	}
 
 	if bidCancelled > 0 {
-		measurements = append(measurements,
-			types.ObservationSideNormalizedMeasurement(
-				types.SourceToxicity, types.Toxicity, types.MetricCancelledQuantity,
-				types.SubjectLevel3Touch, symbol, types.SideBuy, row.latestAt,
-				types.UnitBaseCurrency, bidCancelled, maturity,
-				types.NormalizeRatio(bidCancelled, prior.bidQuantity),
-			),
-		)
+		measurements = append(measurements, &types.Measurement{
+			Source:     types.SourceToxicity,
+			Stream:     types.Toxicity,
+			Metric:     types.MetricCancelledQuantity,
+			Subject:    types.SubjectLevel3Touch,
+			Symbol:     symbol,
+			Side:       types.SideBuy,
+			At:         row.latestAt,
+			Unit:       types.UnitBaseCurrency,
+			Raw:        bidCancelled,
+			Normalized: types.NormalizeRatio(bidCancelled, prior.bidQuantity),
+			Maturity:   maturity,
+			Validity:   validity,
+			Scale:      scale,
+		})
 	}
 
 	if askCancelled > 0 {
-		measurements = append(measurements,
-			types.ObservationSideNormalizedMeasurement(
-				types.SourceToxicity, types.Toxicity, types.MetricCancelledQuantity,
-				types.SubjectLevel3Touch, symbol, types.SideSell, row.latestAt,
-				types.UnitBaseCurrency, askCancelled, maturity,
-				types.NormalizeRatio(askCancelled, prior.askQuantity),
-			),
-		)
+		measurements = append(measurements, &types.Measurement{
+			Source:     types.SourceToxicity,
+			Stream:     types.Toxicity,
+			Metric:     types.MetricCancelledQuantity,
+			Subject:    types.SubjectLevel3Touch,
+			Symbol:     symbol,
+			Side:       types.SideSell,
+			At:         row.latestAt,
+			Unit:       types.UnitBaseCurrency,
+			Raw:        askCancelled,
+			Normalized: types.NormalizeRatio(askCancelled, prior.askQuantity),
+			Maturity:   maturity,
+			Validity:   validity,
+			Scale:      scale,
+		})
 	}
 
 	retreatingSide, retreatingQuantity, retreatBaseline := dominantRetreat(
@@ -250,14 +364,21 @@ func (signal *Signal) touchHonesty(
 		return measurements
 	}
 
-	measurements = append(measurements,
-		types.ObservationSideNormalizedMeasurement(
-			types.SourceToxicity, types.Toxicity, types.MetricRetreatingQuantity,
-			types.SubjectLevel3Touch, symbol, retreatingSide, row.latestAt,
-			types.UnitBaseCurrency, retreatingQuantity, maturity,
-			types.NormalizeRatio(retreatingQuantity, retreatBaseline),
-		),
-	)
+	measurements = append(measurements, &types.Measurement{
+		Source:     types.SourceToxicity,
+		Stream:     types.Toxicity,
+		Metric:     types.MetricRetreatingQuantity,
+		Subject:    types.SubjectLevel3Touch,
+		Symbol:     symbol,
+		Side:       retreatingSide,
+		At:         row.latestAt,
+		Unit:       types.UnitBaseCurrency,
+		Raw:        retreatingQuantity,
+		Normalized: types.NormalizeRatio(retreatingQuantity, retreatBaseline),
+		Maturity:   maturity,
+		Validity:   validity,
+		Scale:      scale,
+	})
 
 	return measurements
 }
@@ -328,6 +449,10 @@ func zeroed(total *decimal.Decimal) *decimal.Decimal {
 	return total
 }
 
+/*
+Close releases the receiver's owned resources so shutdown does not leave
+active market-data producers.
+*/
 func (signal *Signal) Close() error {
 	signal.cancel()
 

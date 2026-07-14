@@ -42,6 +42,10 @@ func NewSignal(
 	}
 }
 
+/*
+Measure converts the receiver's current market input into typed measurements
+so downstream logic consumes explicit evidence.
+*/
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
@@ -188,40 +192,52 @@ emit the same metric set for a symbol.
 func (signal *Signal) measurements(
 	symbol string, at time.Time, output equation.BookflowOutput, maturity float64,
 ) []*types.Measurement {
-	return []*types.Measurement{
-		types.ObservationMeasurement(
-			types.SourceDepthFlow, types.DepthFlow, types.MetricLoadedScore,
-			types.SubjectBookImbalance, symbol, at,
-			types.UnitDimensionless, output.LoadedScore, maturity,
-		),
-		types.ObservationMeasurement(
-			types.SourceDepthFlow, types.DepthFlow, types.MetricSpoofScore,
-			types.SubjectBookImbalance, symbol, at,
-			types.UnitDimensionless, output.SpoofScore, maturity,
-		),
-		types.ObservationMeasurement(
-			types.SourceDepthFlow, types.DepthFlow, types.MetricThinScore,
-			types.SubjectBookImbalance, symbol, at,
-			types.UnitDimensionless, output.ThinScore, maturity,
-		),
-		types.ObservationMeasurement(
-			types.SourceDepthFlow, types.DepthFlow, types.MetricNeutralScore,
-			types.SubjectBookImbalance, symbol, at,
-			types.UnitDimensionless, output.NeutralScore, maturity,
-		),
-		types.ObservationMeasurement(
-			types.SourceDepthFlow, types.DepthFlow, types.MetricStrength,
-			types.SubjectBookImbalance, symbol, at,
-			types.UnitDimensionless, output.Strength, maturity,
-		),
-		types.ObservationMeasurement(
-			types.SourceDepthFlow, types.DepthFlow, types.MetricValue,
-			types.SubjectBookImbalance, symbol, at,
-			types.UnitDimensionless, output.Value, maturity,
-		),
+	validity := types.MeasurementValidity{
+		State:     types.ValidityValid,
+		Readiness: types.ReadinessObservation,
 	}
+	scale := types.ScaleReference{
+		Kind:    types.ScaleObservationWindow,
+		From:    at,
+		Through: at,
+	}
+	specs := []struct {
+		metric types.MetricType
+		raw    float64
+	}{
+		{types.MetricLoadedScore, output.LoadedScore},
+		{types.MetricSpoofScore, output.SpoofScore},
+		{types.MetricThinScore, output.ThinScore},
+		{types.MetricNeutralScore, output.NeutralScore},
+		{types.MetricStrength, output.Strength},
+		{types.MetricValue, output.Value},
+	}
+	measurements := make([]*types.Measurement, 0, len(specs))
+
+	for _, spec := range specs {
+		measurements = append(measurements, &types.Measurement{
+			Source:     types.SourceDepthFlow,
+			Stream:     types.DepthFlow,
+			Metric:     spec.metric,
+			Subject:    types.SubjectBookImbalance,
+			Symbol:     symbol,
+			At:         at,
+			Unit:       types.UnitDimensionless,
+			Raw:        spec.raw,
+			Normalized: types.NormalizeFinite(spec.raw),
+			Maturity:   maturity,
+			Validity:   validity,
+			Scale:      scale,
+		})
+	}
+
+	return measurements
 }
 
+/*
+Close releases the receiver's owned resources so shutdown does not leave
+active market-data producers.
+*/
 func (signal *Signal) Close() (err error) {
 	err = errnie.Error(errnie.Err(
 		errnie.Internal,

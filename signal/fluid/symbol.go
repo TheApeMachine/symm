@@ -24,6 +24,10 @@ type bufferedTrade struct {
 	side  string
 }
 
+/*
+FluidSymbol owns one market's fluid grid and observed context so state
+transitions remain symbol-local.
+*/
 type FluidSymbol struct {
 	symbol             string
 	book               *kraken.BookData
@@ -44,6 +48,10 @@ type FluidSymbol struct {
 	memorySamples      []float64
 }
 
+/*
+fluidReading captures one coherent fluid state for classification so
+measurements come from a single epoch.
+*/
 type fluidReading struct {
 	symbol            string
 	price             float64
@@ -63,6 +71,10 @@ type fluidReading struct {
 	gridSteps         int
 }
 
+/*
+setInstrumentTickSize records validated instrument tick size so grid
+configuration uses exchange metadata.
+*/
 func (state *FluidSymbol) setInstrumentTickSize(priceIncrement float64) {
 	if priceIncrement <= 0 {
 		return
@@ -77,6 +89,10 @@ func (state *FluidSymbol) setInstrumentTickSize(priceIncrement float64) {
 	_ = state.configureTickFromBook(state.book.Bids, state.book.Asks)
 }
 
+/*
+configureTickFromBook derives tick configuration from a book update when the
+exchange supplies its price increment.
+*/
 func (state *FluidSymbol) configureTickFromBook(
 	bids, asks []kraken.BookLevel,
 ) error {
@@ -177,6 +193,10 @@ func (state *FluidSymbol) ConfigureTick(priceIncrement float64) error {
 	return state.configureGrid(priceIncrement, state.config.gridHalfWidth)
 }
 
+/*
+configureGrid creates or remaps the fluid grid for the current tick size so
+retained state stays aligned with prices.
+*/
 func (state *FluidSymbol) configureGrid(
 	priceIncrement float64,
 	halfWidth int,
@@ -220,6 +240,10 @@ func (state *FluidSymbol) configureGrid(
 	return nil
 }
 
+/*
+FeedTicker updates price and volume context from a ticker event so fluid
+measurements use current market scale.
+*/
 func (state *FluidSymbol) FeedTicker(row kraken.TickerData, at time.Time) error {
 	if at.IsZero() {
 		return fmt.Errorf("fluid: ticker event time is zero")
@@ -264,6 +288,10 @@ func (state *FluidSymbol) FeedTicker(row kraken.TickerData, at time.Time) error 
 	return nil
 }
 
+/*
+FeedBook validates and applies a book event so resting liquidity advances the
+symbol's fluid state.
+*/
 func (state *FluidSymbol) FeedBook(update kraken.BookData, at time.Time) error {
 	return state.feedBookLocked(update, at)
 }
@@ -305,6 +333,11 @@ func applyBookDeltas(current []kraken.BookLevel, deltas []kraken.BookLevel, isAs
 
 	return result
 }
+
+/*
+feedBookLocked applies one validated book update while the caller exclusively
+owns symbol state.
+*/
 func (state *FluidSymbol) feedBookLocked(update kraken.BookData, at time.Time) error {
 	if update.PriceIncrement.Float64() > 0 {
 		state.instrumentTickSize = update.PriceIncrement.Float64()
@@ -391,6 +424,10 @@ func (state *FluidSymbol) feedBookLocked(update kraken.BookData, at time.Time) e
 	return state.flux.addBook(flux)
 }
 
+/*
+updateTouchLocked records best bid and ask levels so spread-sensitive dynamics
+use the current touch.
+*/
 func (state *FluidSymbol) updateTouchLocked(bids, asks []kraken.BookLevel) {
 	if len(bids) == 0 || len(asks) == 0 {
 		return
@@ -412,6 +449,10 @@ func (state *FluidSymbol) updateTouchLocked(bids, asks []kraken.BookLevel) {
 	}
 }
 
+/*
+FeedTrade validates and applies a trade event so executed flow advances the
+symbol's fluid state.
+*/
 func (state *FluidSymbol) FeedTrade(
 	at time.Time,
 	price, qty float64,
@@ -436,6 +477,10 @@ func (state *FluidSymbol) FeedTrade(
 	return state.applyTrade(at, price, qty, side)
 }
 
+/*
+bufferTrade retains a trade arriving before usable book state so event
+ordering is preserved explicitly.
+*/
 func (state *FluidSymbol) bufferTrade(
 	at time.Time,
 	price, qty float64,
@@ -449,6 +494,10 @@ func (state *FluidSymbol) bufferTrade(
 	})
 }
 
+/*
+applyTrade projects one validated trade into the configured grid so executions
+affect density and velocity.
+*/
 func (state *FluidSymbol) applyTrade(
 	at time.Time,
 	price, qty float64,
@@ -463,6 +512,10 @@ func (state *FluidSymbol) applyTrade(
 	return state.grid.ingestTrade(price, qty, at)
 }
 
+/*
+flushBufferedTrades applies retained pre-book trades after grid initialization
+so authoritative events are not discarded.
+*/
 func (state *FluidSymbol) flushBufferedTrades() error {
 	if len(state.bufferedTrades) == 0 || state.grid == nil || state.grid.lastMidPrice <= 0 {
 		return nil
@@ -484,10 +537,18 @@ func (state *FluidSymbol) flushBufferedTrades() error {
 	return nil
 }
 
+/*
+HasBook reports whether the symbol has usable book state before consumers
+request a fluid reading.
+*/
 func (state *FluidSymbol) HasBook() bool {
 	return state.bookReady
 }
 
+/*
+Row returns the current wire representation so registry snapshots expose the
+state used by measurements.
+*/
 func (state *FluidSymbol) Row() map[string]any {
 	if state.lastEventAt.IsZero() {
 		return nil
@@ -496,6 +557,10 @@ func (state *FluidSymbol) Row() map[string]any {
 	return state.wireRowLocked()
 }
 
+/*
+Reading returns a coherent fluid reading only after the symbol has sufficient
+initialized state.
+*/
 func (state *FluidSymbol) Reading() (fluidReading, bool) {
 	if state.last <= 0 || state.lastEventAt.IsZero() {
 		return fluidReading{}, false
@@ -573,6 +638,10 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 	}, true
 }
 
+/*
+wireRowLocked assembles current wire fields while the caller owns symbol
+state.
+*/
 func (state *FluidSymbol) wireRowLocked() map[string]any {
 	if state.last <= 0 || state.grid == nil || !state.grid.ready() {
 		return nil
@@ -605,6 +674,10 @@ func (state *FluidSymbol) wireRowLocked() map[string]any {
 	})
 }
 
+/*
+fluidViscosity derives viscosity from grid dynamics and spread so the
+published value is market-scaled.
+*/
 func (state *FluidSymbol) fluidViscosity(spread float64) float64 {
 	spreadViscosity := state.spreadViscosity(spread)
 	replenishment := state.grid.viscosity()
@@ -616,6 +689,10 @@ func (state *FluidSymbol) fluidViscosity(spread float64) float64 {
 	return spreadViscosity
 }
 
+/*
+spreadViscosity derives the spread contribution to viscosity so price
+separation is represented dimensionally.
+*/
 func (state *FluidSymbol) spreadViscosity(spread float64) float64 {
 	mid := (state.bid + state.ask) / 2
 
@@ -628,6 +705,10 @@ func (state *FluidSymbol) spreadViscosity(spread float64) float64 {
 
 const fluidMemorySampleCap = 32
 
+/*
+recordPriceMemory updates retained price history so adaptive dynamics use
+observed movement rather than a fixed window.
+*/
 func (state *FluidSymbol) recordPriceMemory(price float64) {
 	if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
 		return

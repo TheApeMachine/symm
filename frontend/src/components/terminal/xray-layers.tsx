@@ -1,4 +1,6 @@
 import { heatColor } from "#/components/terminal/canvas";
+import { Meter } from "@/components/ui/meter";
+import type { Variant } from "@/components/ui/types";
 
 const LAYER_NAMES = ["sensory", "micro", "meso", "macro"];
 
@@ -56,20 +58,36 @@ const layerColor = (value: unknown): string => {
 	return heatColor((value + 1) / 2);
 };
 
-const layerErrorTone = (error: unknown): string => {
+const layerErrorVariant = (error: unknown): Variant => {
 	if (typeof error !== "number") {
-		return "var(--f4)";
+		return "info";
 	}
 
 	if (error > 0.55) {
-		return "var(--down)";
+		return "error";
 	}
 
 	if (error > 0.3) {
-		return "var(--warn)";
+		return "warning";
 	}
 
-	return "var(--up)";
+	return "success";
+};
+
+const layerErrorValueClass = (variant: Variant): string => {
+	if (variant === "error") {
+		return "text-(--down)";
+	}
+
+	if (variant === "warning") {
+		return "text-(--warn)";
+	}
+
+	if (variant === "success") {
+		return "text-(--up)";
+	}
+
+	return "text-(--f4)";
 };
 
 export const XrayLayerRows = ({
@@ -81,7 +99,7 @@ export const XrayLayerRows = ({
 		{layers.map((layer, index) => {
 			const state = Array.isArray(layer.state) ? layer.state : [];
 			const error = typeof layer.error_norm === "number" ? layer.error_norm : 0;
-			const errorTone = layerErrorTone(layer.error_norm);
+			const errorVariant = layerErrorVariant(layer.error_norm);
 			const layerIndex =
 				typeof layer.index === "number" && Number.isFinite(layer.index)
 					? layer.index
@@ -123,17 +141,17 @@ export const XrayLayerRows = ({
 					<div className="w-20 shrink-0">
 						<div className="flex justify-between font-mono text-[9px] text-(--f4)">
 							<span>ε</span>
-							<span style={{ color: errorTone }}>{error.toFixed(3)}</span>
+							<span className={layerErrorValueClass(errorVariant)}>
+								{error.toFixed(3)}
+							</span>
 						</div>
-						<div className="mt-[3px] h-1 overflow-hidden rounded-[2px] bg-(--line)">
-							<div
-								className="h-full"
-								style={{
-									width: `${errorWidth}%`,
-									background: errorTone,
-								}}
-							/>
-						</div>
+						<Meter
+							layout="bar"
+							percent={errorWidth}
+							variant={errorVariant}
+							size="xs"
+							className="mt-[3px]"
+						/>
 					</div>
 				</div>
 			);

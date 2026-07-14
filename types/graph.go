@@ -2,9 +2,12 @@ package types
 
 import (
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"gonum.org/v1/gonum/graph/multi"
 )
 
 /*
@@ -52,6 +55,9 @@ type Graph struct {
 	At     time.Time
 	Nodes  []Node
 	Edges  []Edge
+	graph  *multi.DirectedGraph
+	nodes  map[string]int64
+	lines  map[[3]int64]Edge
 }
 
 /*
@@ -62,6 +68,9 @@ func NewGraph(symbol string) *Graph {
 		Symbol: symbol,
 		Nodes:  []Node{},
 		Edges:  []Edge{},
+		graph:  multi.NewDirectedGraph(),
+		nodes:  map[string]int64{},
+		lines:  map[[3]int64]Edge{},
 	}
 }
 
@@ -75,10 +84,8 @@ func (graph *Graph) AddNode(measurement *Measurement) bool {
 
 	key := measurementKey(measurement)
 
-	for _, node := range graph.Nodes {
-		if node.Key == key {
-			return false
-		}
+	if _, exists := graph.nodes[key]; exists {
+		return false
 	}
 
 	retained := *measurement
@@ -97,6 +104,9 @@ func (graph *Graph) AddNode(measurement *Measurement) bool {
 		Key:         key,
 		Measurement: retained,
 	})
+	topologyNode := graph.graph.NewNode()
+	graph.graph.AddNode(topologyNode)
+	graph.nodes[key] = topologyNode.ID()
 
 	if graph.At.IsZero() || measurement.At.After(graph.At) {
 		graph.At = measurement.At
@@ -119,24 +129,33 @@ func (graph *Graph) Relate(
 		return false
 	}
 
-	if !graph.hasNode(fromKey) || !graph.hasNode(toKey) {
+	fromID, fromExists := graph.nodes[fromKey]
+	toID, toExists := graph.nodes[toKey]
+
+	if !fromExists || !toExists {
 		return false
 	}
 
-	for _, edge := range graph.Edges {
-		if edge.Type == edgeType && edge.From == fromKey && edge.To == toKey &&
-			edge.At.Equal(at) && edge.ObservedFrom.Equal(observedFrom) {
-			return false
-		}
-	}
-
-	graph.Edges = append(graph.Edges, Edge{
+	edge := Edge{
 		Type:         edgeType,
 		From:         fromKey,
 		To:           toKey,
 		At:           at,
 		ObservedFrom: observedFrom,
-	})
+	}
+
+	lines := graph.graph.Lines(fromID, toID)
+
+	for lines.Next() {
+		if graph.lines[[3]int64{fromID, toID, lines.Line().ID()}] == edge {
+			return false
+		}
+	}
+
+	line := graph.graph.NewLine(graph.graph.Node(fromID), graph.graph.Node(toID))
+	graph.graph.SetLine(line)
+	graph.lines[[3]int64{fromID, toID, line.ID()}] = edge
+	graph.Edges = append(graph.Edges, edge)
 
 	if graph.At.IsZero() || at.After(graph.At) {
 		graph.At = at
@@ -146,17 +165,47 @@ func (graph *Graph) Relate(
 }
 
 /*
-Compose derives only relationships proven by shared measurement identity,
-signed normalization, and event-time intervals.
+Compose derives relationships between chronological neighbors of each shared
+observable. A neighbor chain preserves temporal order and conflict without
+materializing the redundant transitive closure of a busy event stream.
 */
 func (graph *Graph) Compose() {
-	for leftIndex, left := range graph.Nodes {
-		for rightIndex := leftIndex + 1; rightIndex < len(graph.Nodes); rightIndex++ {
-			graph.compose(left, graph.Nodes[rightIndex])
+	observables := map[string][]Node{}
+
+	for _, node := range graph.Nodes {
+		measurement := node.Measurement
+
+		if measurement.Metric == "" || measurement.Subject == "" {
+			continue
+		}
+
+		key := string(measurement.Metric) + "\x00" +
+			string(measurement.Subject) + "\x00" + string(measurement.Side)
+		observables[key] = append(observables[key], node)
+	}
+
+	for _, nodes := range observables {
+		sort.Slice(nodes, func(leftIndex, rightIndex int) bool {
+			left := nodes[leftIndex]
+			right := nodes[rightIndex]
+
+			if left.Measurement.At.Equal(right.Measurement.At) {
+				return left.Key < right.Key
+			}
+
+			return left.Measurement.At.Before(right.Measurement.At)
+		})
+
+		for index := 1; index < len(nodes); index++ {
+			graph.compose(nodes[index-1], nodes[index])
 		}
 	}
 }
 
+/*
+compose derives every direct relationship justified between two neighboring
+observations of the same metric, subject, and side.
+*/
 func (graph *Graph) compose(left, right Node) {
 	if left.Measurement.Validity.State != ValidityValid ||
 		right.Measurement.Validity.State != ValidityValid {
@@ -179,6 +228,10 @@ func (graph *Graph) compose(left, right Node) {
 	graph.composeTime(left, right, at, observedFrom)
 }
 
+/*
+composeDirection preserves signed agreement or contradiction independently of
+the temporal relationship between the same observations.
+*/
 func (graph *Graph) composeDirection(
 	left, right Node, at, observedFrom time.Time,
 ) {
@@ -204,6 +257,10 @@ func (graph *Graph) composeDirection(
 	graph.Relate(from.Key, to.Key, Supports, at, observedFrom)
 }
 
+/*
+composeTime records direct lead and lag edges when neighboring evidence
+intervals do not overlap.
+*/
 func (graph *Graph) composeTime(
 	left, right Node, at, observedFrom time.Time,
 ) {
@@ -224,6 +281,10 @@ func (graph *Graph) composeTime(
 	}
 }
 
+/*
+composeStale marks an older observation when its own horizon expired before
+the neighboring observation arrived.
+*/
 func (graph *Graph) composeStale(
 	older, newer Node, at, observedFrom time.Time,
 ) {
@@ -232,16 +293,6 @@ func (graph *Graph) composeStale(
 	if horizon > 0 && older.Measurement.At.Add(horizon).Before(newer.Measurement.At) {
 		graph.Relate(older.Key, newer.Key, Stale, at, observedFrom)
 	}
-}
-
-func (graph *Graph) hasNode(key string) bool {
-	for _, node := range graph.Nodes {
-		if node.Key == key {
-			return true
-		}
-	}
-
-	return false
 }
 
 func sameObservable(left, right Measurement) bool {

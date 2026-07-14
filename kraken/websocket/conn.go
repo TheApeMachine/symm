@@ -41,6 +41,7 @@ type API struct {
 	paper     *Paper
 	live      bool
 	bookConns *sync.Map
+	level3    []func([]byte)
 }
 
 func NewAPI(
@@ -57,6 +58,7 @@ func NewAPI(
 		paper:     paper,
 		live:      viper.GetViper().GetString("trading.model") == "live",
 		bookConns: &sync.Map{},
+		level3:    make([]func([]byte), 0),
 	}
 
 	return api
@@ -73,6 +75,11 @@ func (api *API) Close() {
 	api.private.Close()
 }
 
+/*
+On registers a channel consumer on the transport that actually owns the
+channel. Level3 consumers are retained because those transports are created
+later, in batches, after the instrument universe arrives.
+*/
 func (api *API) On(channel string, action func([]byte)) {
 	switch channel {
 	case "balances", "executions", "add_order":
@@ -82,6 +89,13 @@ func (api *API) On(channel string, action func([]byte)) {
 		}
 
 		api.paper.On(channel, action)
+	case "level3":
+		api.level3 = append(api.level3, action)
+		api.bookConns.Range(func(_, value any) bool {
+			value.(*Live).On(channel, action)
+
+			return true
+		})
 	default:
 		api.public.On(channel, action)
 	}
@@ -161,16 +175,16 @@ func (api *API) SubscribeBook(pairs []string) error {
 	))
 }
 
+/*
+SubscribeLevel3 assigns each symbol batch its own authenticated book transport.
+The transport subscribes after authentication and repeats that same request
+after reconnect, so this method must not send a second competing subscription.
+*/
 func (api *API) SubscribeLevel3(pairs []string) error {
-	depth := viper.GetInt("market.l3_depth")
-
 	key := strings.Join(pairs, "|")
 
-	if bookConn, loaded := api.bookConns.Load(key); loaded {
-		live := bookConn.(*Live)
-		live.symbols = pairs
-
-		return errnie.Error(live.Client().SubL3(pairs, depth))
+	if _, loaded := api.bookConns.Load(key); loaded {
+		return nil
 	}
 
 	live := New(
@@ -179,20 +193,22 @@ func (api *API) SubscribeLevel3(pairs []string) error {
 
 	live.symbols = pairs
 
+	for _, action := range api.level3 {
+		live.On("level3", action)
+	}
+
 	if err := live.Initialize(); err != nil {
 		live.Close()
 		return errnie.Error(err)
 	}
 
-	actual, loaded := api.bookConns.LoadOrStore(key, live)
+	_, loaded := api.bookConns.LoadOrStore(key, live)
 
 	if loaded {
 		live.Close()
-		live = actual.(*Live)
-		live.symbols = pairs
 	}
 
-	return errnie.Error(live.Client().SubL3(pairs, depth))
+	return nil
 }
 
 func (api *API) SubscribeBalance() error {

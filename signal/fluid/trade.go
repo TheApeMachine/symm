@@ -6,6 +6,10 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+Trade feeds executed flow into shared symbol state so later book measurements
+include tape-driven liquidity removal.
+*/
 type Trade struct {
 	registry *Registry
 }
@@ -14,6 +18,10 @@ func NewTrade(registry *Registry) *Trade {
 	return &Trade{registry: registry}
 }
 
+/*
+Measure validates and applies one trade row. It emits no measurement because
+book updates own publication of the combined fluid state.
+*/
 func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) {
 	if row.Timestamp.IsZero() {
 		return nil, errnie.Error(errnie.Err(

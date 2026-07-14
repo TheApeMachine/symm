@@ -2,10 +2,10 @@ import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
-import { StatusBadge } from "#/components/dashboard/status-badge";
 import {
 	kernelCopy,
 	kernelStatusMeta,
+	kernelStatusVariant,
 } from "#/components/terminal/kernel-meta";
 import {
 	ageText,
@@ -19,11 +19,13 @@ import {
 	sideLabel,
 	stampOf,
 } from "#/components/terminal/measurement-view";
+import { colormapCss, heatmapForeground } from "#/lib/colormap";
+import { Badge } from "@/components/ui/badge";
 import { Flex } from "@/components/ui/flex";
 import { Grid } from "@/components/ui/grid";
-import { InspectorMeter } from "./meter";
-
-const clampPercent = (value: number) => Math.max(0, Math.min(100, value * 100));
+import { Meter } from "@/components/ui/meter";
+import { Panel } from "@/components/ui/panel";
+import { buildHeatmapCells } from "./heatmap";
 
 export const SignalDetail = () => {
 	const selectedSource = useSelector(
@@ -59,18 +61,7 @@ export const SignalDetail = () => {
 	const heatmap =
 		headline === null
 			? []
-			: Object.entries(measurements.measurements).flatMap(
-					([symbol, sources]) => {
-						const frame = latestByMetric(
-							sources[source]?.values() ?? [],
-							headline,
-						);
-
-						return frame === undefined
-							? []
-							: [{ symbol, value: percentOf(frame) / 100 }];
-					},
-				);
+			: buildHeatmapCells(measurements.measurements, source, headline);
 
 	return (
 		<Flex.Column className="min-h-0 overflow-auto px-5 py-[18px]">
@@ -83,15 +74,15 @@ export const SignalDetail = () => {
 						{copy.sub}
 					</Flex>
 				</Flex.Column>
-				<StatusBadge label={statusMeta.label} tone={statusMeta.fg} />
+				<Badge label={statusMeta.label} variant={kernelStatusVariant(status)} />
 			</Flex.Row>
 			<Flex className="mt-3.5 max-w-[560px] font-serif text-[15px] text-(--f2) leading-[1.55]">
 				{copy.blurb}
 			</Flex>
 			{epoch.length === 0 ? (
-				<Flex className="mt-[18px] rounded border border-(--line) bg-(--sunken) px-3 py-8 text-center font-mono text-[11px] text-(--f4)">
+				<Panel className="mt-[18px] px-3 py-8 text-center font-mono text-[11px] text-(--f4)">
 					waiting for backend {selectedSource} measurement
-				</Flex>
+				</Panel>
 			) : null}
 			{epoch.length === 0 ? null : (
 				<Grid
@@ -100,7 +91,7 @@ export const SignalDetail = () => {
 					style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
 				>
 					{epoch.map((measurement) => (
-						<InspectorMeter
+						<Meter
 							key={`${measurement.metric}:${measurement.side ?? ""}`}
 							label={[
 								metricLabel(measurement.metric),
@@ -110,9 +101,8 @@ export const SignalDetail = () => {
 								.join(" · ")}
 							value={formatRaw(measurement)}
 							percent={percentOf(measurement)}
-							color={
-								measurement.metric === headline ? "var(--acc)" : "var(--info)"
-							}
+							variant={measurement.metric === headline ? "warning" : "info"}
+							size="xs"
 						/>
 					))}
 				</Grid>
@@ -154,10 +144,14 @@ export const SignalDetail = () => {
 					<Flex className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
 						Cross-section · {metricLabel(headline)} heatmap
 					</Flex>
-					<Grid cols={12} className="gap-[3px]">
+					<Grid
+						cols={12}
+						responsive={false}
+						className="gap-[3px]"
+						style={{ gridTemplateColumns: "repeat(12, minmax(0, 1fr))" }}
+					>
 						{heatmap.map((cell) => {
-							const percent = Math.round(clampPercent(cell.value));
-							const label = cell.symbol.split("/")[0] ?? cell.symbol;
+							const percent = Math.round(cell.value * 100);
 
 							return (
 								<Flex
@@ -166,11 +160,11 @@ export const SignalDetail = () => {
 									title={`${cell.symbol} · ${percent}%`}
 									className="aspect-square cursor-pointer items-center justify-center rounded-[2px] font-mono text-[8px]"
 									style={{
-										background: `color-mix(in srgb, var(--acc) ${percent}%, var(--sunken))`,
-										color: percent > 62 ? "#14110f" : "var(--f3)",
+										background: colormapCss(cell.value),
+										color: heatmapForeground(cell.value),
 									}}
 								>
-									{label}
+									{cell.label}
 								</Flex>
 							);
 						})}

@@ -235,6 +235,31 @@ func TestGraphCompose(t *testing.T) {
 			So(graph.Edges, ShouldBeEmpty)
 		})
 	})
+
+	Convey("Given a busy chronological stream of one observable", t, func() {
+		graph := NewGraph("BTC/USD")
+		normalized := 0.5
+
+		for index := range 1_000 {
+			at := time.Unix(int64(index+1), 0)
+			graph.AddNode(&Measurement{
+				Source: SourceHawkes, Stream: Hawkes, Metric: MetricStrength,
+				Subject: SubjectTradeArrivals, Symbol: "BTC/USD",
+				At: at, ObservedFrom: at.Add(-time.Second),
+				Horizon: time.Second, Unit: UnitDimensionless,
+				Normalized: &normalized,
+				Validity:   MeasurementValidity{State: ValidityValid},
+				Scale:      ScaleReference{Kind: ScaleObservationWindow},
+			})
+		}
+
+		graph.Compose()
+
+		Convey("Then direct evidence remains connected without a transitive closure", func() {
+			So(graph.Nodes, ShouldHaveLength, 1_000)
+			So(graph.Edges, ShouldHaveLength, 999)
+		})
+	})
 }
 
 func edgeTypes(edges []Edge) []EdgeType {
@@ -265,7 +290,7 @@ func BenchmarkGraphAddNode(b *testing.B) {
 
 func BenchmarkGraphCompose(b *testing.B) {
 	normalized := 0.5
-	measurements := make([]*Measurement, 16)
+	measurements := make([]*Measurement, 1_000)
 
 	for index := range measurements {
 		measurements[index] = &Measurement{

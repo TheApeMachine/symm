@@ -33,6 +33,10 @@ func (flux *fluxAccumulator) setTarget(target float64) error {
 	return nil
 }
 
+/*
+hasTarget reports whether a conservation target exists before flux is
+evaluated.
+*/
 func (flux *fluxAccumulator) hasTarget() bool {
 	return flux.target > 0
 }
@@ -76,6 +80,10 @@ func (flux *fluxAccumulator) addTrade(qty float64) error {
 	return nil
 }
 
+/*
+close clears completed bar totals while retaining the configured volume target
+so the next bar uses the same empirically established scale.
+*/
 func (flux *fluxAccumulator) close() {
 	flux.bookOpen = 0
 	flux.tradeOpen = 0

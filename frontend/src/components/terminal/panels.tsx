@@ -8,6 +8,9 @@ import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { tickStore } from "#/collections/tick";
 import { formatUptime } from "#/components/terminal/kernel-meta";
 import { cn } from "#/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Meter } from "@/components/ui/meter";
+import { panelVariants } from "@/components/ui/panel";
 
 type WalletMetrics = {
 	asset: string;
@@ -261,37 +264,31 @@ export const TerminalTopBar = () => {
 					SYMM
 				</span>
 			</div>
-			<span
-				className={cn(
-					"inline-flex items-center gap-1.5 rounded-[2px] border px-[7px] py-0.5 font-semibold text-[10px] uppercase tracking-[0.08em]",
-					online
-						? "border-[color-mix(in_srgb,var(--up)_40%,transparent)] bg-[color-mix(in_srgb,var(--up)_12%,transparent)] text-(--up)"
-						: "border-[color-mix(in_srgb,var(--down)_40%,transparent)] bg-[color-mix(in_srgb,var(--down)_12%,transparent)] text-(--down)",
-				)}
-			>
-				<span
-					className={cn(
-						"size-1.5 rounded-full",
-						online ? "animate-pulse bg-(--up)" : "bg-(--down)",
-					)}
-				/>
-				{online ? "live" : "offline"}
-			</span>
+			<Badge
+				label={online ? "live" : "offline"}
+				variant={online ? "success" : "error"}
+				dot
+				className={online ? "[&_span[aria-hidden]]:animate-pulse" : undefined}
+			/>
 			<span className="font-mono text-[12px] text-(--f3)">
 				{String(tick?.open ?? 0)} open positions
 			</span>
 			<div className="ml-auto flex items-center gap-[22px]">
-				<span
+				<Badge
+					label={focusSymbol}
+					variant="warning"
+					size="m"
 					data-symbol={focusSymbol}
-					className="cursor-pointer rounded-[3px] border border-[color-mix(in_srgb,var(--acc)_35%,transparent)] bg-[color-mix(in_srgb,var(--acc)_10%,transparent)] px-2.5 py-1 font-mono font-semibold text-[11px] text-(--acc) uppercase tracking-[0.08em]"
 					title="Focused symbol"
-				>
-					{focusSymbol}
-				</span>
+					className="cursor-pointer font-mono"
+				/>
 				<button
 					type="button"
 					onClick={openPalette}
-					className="flex cursor-pointer items-center gap-2 rounded-[3px] border border-(--line) bg-(--sunken) py-[5px] pr-2 pl-[9px] text-(--f3) hover:border-(--line2) hover:text-(--f1)"
+					className={cn(
+						panelVariants({ size: "s" }),
+						"flex cursor-pointer items-center gap-2 py-[5px] pr-2 pl-[9px] text-(--f3) hover:border-(--line2) hover:text-(--f1)",
+					)}
 				>
 					<svg
 						width="13"
@@ -485,19 +482,15 @@ const ProgressLine = ({
 	value: number;
 	accent?: boolean;
 }) => (
-	<div className={label === "quotes" ? "mt-[7px]" : "mt-1.5"}>
-		<div className="mb-[3px] flex justify-between text-(--f4)">
-			<span>{label}</span>
-			<span>{text}</span>
-		</div>
-		<div className="h-1 overflow-hidden rounded-[2px] bg-(--line)">
-			<div
-				className="h-full transition-[width] duration-500 ease-out"
-				style={{
-					width: `${value}%`,
-					background: accent ? "var(--acc)" : "var(--info)",
-				}}
-			/>
-		</div>
-	</div>
+	<Meter
+		layout="stacked"
+		label={label}
+		value={text}
+		percent={value}
+		variant={accent ? "warning" : "info"}
+		size="xs"
+		animated
+		className={label === "quotes" ? "mt-[7px]" : "mt-1.5"}
+		labelClassName="text-(--f4)"
+	/>
 );

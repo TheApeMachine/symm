@@ -2,11 +2,11 @@ import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
-import { StatusBadge } from "#/components/dashboard/status-badge";
 import {
 	kernelCopy,
 	kernelSparkPaths,
 	kernelStatusMeta,
+	kernelStatusVariant,
 } from "#/components/terminal/kernel-meta";
 import {
 	ageText,
@@ -20,6 +20,8 @@ import {
 	seriesByMetric,
 	stampOf,
 } from "#/components/terminal/measurement-view";
+import { Badge } from "@/components/ui/badge";
+import { Meter } from "@/components/ui/meter";
 
 export const KernelList = ({
 	compact = false,
@@ -99,7 +101,10 @@ export const KernelList = ({
 									style={{ backgroundColor: statusMeta.fg }}
 								/>
 							) : (
-								<StatusBadge label={statusMeta.label} tone={statusMeta.fg} />
+								<Badge
+									label={statusMeta.label}
+									variant={kernelStatusVariant(status)}
+								/>
 							)}
 						</div>
 
@@ -127,15 +132,14 @@ export const KernelList = ({
 
 								<div className="mt-1.5 flex items-center gap-2">
 									{headline === null ? null : (
-										<div className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line)">
-											<div
-												className="h-full transition-all duration-500 ease-out"
-												style={{
-													width: `${percent}%`,
-													backgroundColor: spark.line,
-												}}
-											/>
-										</div>
+										<Meter
+											layout="bar"
+											percent={percent}
+											variant={spark.active ? "warning" : "info"}
+											size="xs"
+											trackClassName="flex-1"
+											animated
+										/>
 									)}
 
 									<span className="flex-1 truncate text-right font-mono text-[10px] text-(--f2)">

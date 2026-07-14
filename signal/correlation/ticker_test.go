@@ -155,14 +155,12 @@ func TestSignal_MeasureDenominationInvariant(t *testing.T) {
 		start := time.Unix(1_700_000_000, 0)
 		subjectPrices, peerPrices := correlatedPricePaths(11, 96)
 
-		signal := &Signal{
-			ctx:     context.Background(),
-			ticker:  &Ticker{cache: []kraken.TickerData{}},
-			section: NewSection(),
-		}
-
-		buildThesis := func(subjectFactor float64) *types.Thesis {
-			thesis := types.NewThesis(nil)
+		measure := func(subjectFactor float64) *types.Thesis {
+			signal := &Signal{
+				ctx:     context.Background(),
+				ticker:  &Ticker{cache: []kraken.TickerData{}},
+				section: NewSection(),
+			}
 			history := make([]kraken.TickerData, 0, len(subjectPrices)*2)
 
 			for index := range subjectPrices {
@@ -173,26 +171,18 @@ func TestSignal_MeasureDenominationInvariant(t *testing.T) {
 				)
 			}
 
-			thesis.CrossSection.ProcessUpdates(history)
+			signal.ticker.cache = history
 
-			signal.ticker.cache = []kraken.TickerData{
-				denominationRow(
-					"BTC/USD",
-					subjectPrices[len(subjectPrices)-1]*subjectFactor,
-					start.Add(time.Duration(len(subjectPrices)-1)*time.Second),
-				),
-			}
-
-			return thesis
+			return signal.Measure(types.NewThesis(nil))
 		}
 
-		baselineResult := signal.Measure(buildThesis(1))
+		baselineResult := measure(1)
 		baselineMetrics := measurementFields(baselineResult.Measurements, "BTC/USD")
 		So(baselineMetrics, ShouldNotBeEmpty)
 
 		Convey("When the subject's entire history is requoted in a different denomination", func() {
 			for _, factor := range rescaleFactors {
-				result := signal.Measure(buildThesis(factor))
+				result := measure(factor)
 				metrics := measurementFields(result.Measurements, "BTC/USD")
 				So(metrics, ShouldNotBeEmpty)
 
@@ -228,7 +218,6 @@ func BenchmarkSignal_Measure(b *testing.B) {
 		ticker:  &Ticker{cache: []kraken.TickerData{}},
 		section: NewSection(),
 	}
-	thesis := types.NewThesis(nil)
 	history := make([]kraken.TickerData, 0, len(subjectPrices)*2)
 
 	for index := range subjectPrices {
@@ -239,16 +228,18 @@ func BenchmarkSignal_Measure(b *testing.B) {
 		)
 	}
 
-	thesis.CrossSection.ProcessUpdates(history)
-
-	rows := []kraken.TickerData{
-		denominationRow("BTC/USD", subjectPrices[len(subjectPrices)-1], start.Add(time.Duration(len(subjectPrices)-1)*time.Second)),
-	}
+	signal.section.Measure(history)
+	tick := 0
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal.ticker.cache = append([]kraken.TickerData(nil), rows...)
-		_ = signal.Measure(thesis)
+		tick++
+		at := start.Add(time.Duration(len(subjectPrices)+tick) * time.Second)
+		signal.ticker.cache = []kraken.TickerData{
+			denominationRow("BTC/USD", subjectPrices[len(subjectPrices)-1]+float64(tick%7), at),
+			denominationRow("ETH/USD", peerPrices[len(peerPrices)-1]+float64(tick%5), at),
+		}
+		_ = signal.Measure(types.NewThesis(nil))
 	}
 }

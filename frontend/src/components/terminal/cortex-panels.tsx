@@ -1,8 +1,11 @@
-import { StatusBadge } from "#/components/dashboard/status-badge";
 import {
 	cognitiveBeamsFromReading,
 	cognitivePosteriorFromReading,
 } from "#/components/terminal/cognitive-viz";
+import { Badge } from "@/components/ui/badge";
+import { Meter } from "@/components/ui/meter";
+import { Panel } from "@/components/ui/panel";
+import { Stat } from "@/components/ui/stat";
 
 const finite = (value: unknown): number | null =>
 	typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -28,29 +31,30 @@ export const CortexBeamList = ({
 	return (
 		<div className="flex min-h-0 flex-1 flex-col gap-[5px] overflow-auto px-2 py-1.5">
 			{beams.map((beam) => (
-				<div
-					key={beam.rank}
-					className="flex items-center gap-2 rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5"
-				>
+				<Panel key={beam.rank} size="s" className="flex items-center gap-2">
 					<span
-						className="w-4 shrink-0 font-mono text-[10px]"
-						style={{ color: beam.color }}
+						className={
+							beam.variant === "warning"
+								? "w-4 shrink-0 font-mono text-[10px] text-(--acc)"
+								: "w-4 shrink-0 font-mono text-[10px] text-(--info)"
+						}
 					>
 						#{beam.rank}
 					</span>
 					<span className="flex-1 font-mono text-[11px] text-(--f1)">
 						{beam.sequence || "root"}
 					</span>
-					<div className="h-1 w-[70px] overflow-hidden rounded-[2px] bg-(--line)">
-						<div
-							className="h-full"
-							style={{ width: `${beam.percent}%`, background: beam.color }}
-						/>
-					</div>
+					<Meter
+						layout="bar"
+						percent={beam.percent}
+						variant={beam.variant}
+						trackClassName="w-[70px]"
+						size="xs"
+					/>
 					<span className="w-11 shrink-0 text-right font-mono text-[9.5px] text-(--f3)">
 						{beam.score}
 					</span>
-				</div>
+				</Panel>
 			))}
 		</div>
 	);
@@ -74,23 +78,24 @@ export const CortexSidePanels = ({
 		entropyBits !== null && entropyThreshold !== null && entropyThreshold > 0
 			? `${Math.round(clamp((entropyBits / entropyThreshold) * 100, 0, 100))}%`
 			: "—";
-	const remPhaseColor =
+	const remPhaseVariant =
 		reading?.sideline === true
-			? "var(--down)"
+			? "error"
 			: reading?.ambiguous === true
-				? "var(--warn)"
-				: "var(--info)";
+				? "warning"
+				: "info";
 
 	return (
 		<div className="flex flex-col gap-3.5">
-			<div className="rounded-[4px] border border-(--line) bg-(--sunken) p-3">
+			<Panel>
 				<div className="flex items-center justify-between">
 					<span className="font-semibold text-[12px] text-(--f1)">
 						Attractor basin · classify
 					</span>
-					<span className="rounded-[2px] border border-[color-mix(in_srgb,var(--acc)_38%,transparent)] bg-[color-mix(in_srgb,var(--acc)_12%,transparent)] px-2 py-0.5 font-semibold text-[10px] text-(--acc) uppercase">
-						{posterior.winner} {posterior.winnerPercent}
-					</span>
+					<Badge
+						label={`${posterior.winner} ${posterior.winnerPercent}`}
+						variant="warning"
+					/>
 				</div>
 				<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
 					softmax posterior · b/[class]/[sequence]
@@ -104,17 +109,22 @@ export const CortexSidePanels = ({
 						posterior.classes.map((row) => (
 							<div key={row.name} className="flex items-center gap-2">
 								<span
-									className="w-16 font-mono text-[10px]"
-									style={{ color: row.foreground }}
+									className={
+										row.emphasis
+											? "w-16 font-mono text-[10px] text-(--f1)"
+											: "w-16 font-mono text-[10px] text-(--f3)"
+									}
 								>
 									{row.name}
 								</span>
-								<div className="h-1.5 flex-1 overflow-hidden rounded-[3px] bg-(--line)">
-									<div
-										className="h-full transition-[width] duration-500"
-										style={{ width: `${row.percent}%`, background: row.color }}
-									/>
-								</div>
+								<Meter
+									layout="bar"
+									percent={row.percent}
+									variant={row.variant}
+									trackClassName="flex-1"
+									size="m"
+									animated
+								/>
 								<span className="w-8 text-right font-mono text-[10px] text-(--f2)">
 									{row.percent}%
 								</span>
@@ -122,9 +132,9 @@ export const CortexSidePanels = ({
 						))
 					)}
 				</div>
-			</div>
+			</Panel>
 
-			<div className="rounded-[4px] border border-(--line) bg-(--sunken) p-3">
+			<Panel>
 				<div className="font-semibold text-[12px] text-(--f1)">
 					Contrastive evidence
 				</div>
@@ -132,77 +142,65 @@ export const CortexSidePanels = ({
 					routing margin · winner vs runner-up
 				</div>
 				<div className="grid grid-cols-3 gap-2.5 text-center">
-					<StatBlock
+					<Stat
+						layout="feature"
 						label="winner bits"
 						value={posterior.winnerBits}
-						tone="var(--up)"
-						large
+						variant="success"
 					/>
-					<StatBlock
+					<Stat
+						layout="feature"
 						label="runner-up bits"
 						value={posterior.runnerBits}
-						tone="var(--f2)"
-						large
 					/>
-					<StatBlock
+					<Stat
+						layout="feature"
 						label="KL divergence"
 						value={posterior.kl}
-						tone="var(--acc)"
-						large
+						variant="warning"
 					/>
 				</div>
-				<div className="mt-3">
-					<div className="mb-1 flex justify-between text-[9.5px] text-(--f4)">
-						<span>separation margin</span>
-						<span className="font-mono">{posterior.marginPercent}%</span>
-					</div>
-					<div className="h-[5px] overflow-hidden rounded-[3px] bg-(--line)">
-						<div
-							className="h-full bg-(--acc)"
-							style={{ width: `${posterior.marginPercent}%` }}
-						/>
-					</div>
-				</div>
-			</div>
+				<Meter
+					layout="stacked"
+					label="separation margin"
+					value={`${posterior.marginPercent}%`}
+					percent={posterior.marginPercent}
+					variant="warning"
+					size="s"
+					className="mt-3"
+					labelClassName="text-[9.5px] text-(--f4)"
+				/>
+			</Panel>
 
-			<div className="rounded-[4px] border border-(--line) bg-(--sunken) p-3">
+			<Panel>
 				<div className="flex items-center justify-between">
 					<span className="font-semibold text-[12px] text-(--f1)">
 						Branch entropy gate
 					</span>
-					<StatusBadge
+					<Badge
 						label={posterior.ambiguous ? "ambiguous" : "decisive"}
-						tone={posterior.ambiguous ? "var(--down)" : "var(--up)"}
+						variant={posterior.ambiguous ? "error" : "success"}
 					/>
 				</div>
 				<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
 					shannon H vs uniform threshold
 				</div>
-				<div className="flex items-center gap-2">
-					<span className="w-[38px] font-mono text-[10px] text-(--f3)">
-						{posterior.entropy}b
-					</span>
-					<div className="relative h-1.5 flex-1 overflow-hidden rounded-[3px] bg-(--line)">
-						<div
-							className="h-full"
-							style={{
-								width: `${posterior.entropyPercent}%`,
-								background: posterior.ambiguous ? "var(--down)" : "var(--up)",
-							}}
-						/>
-					</div>
-					<span className="w-14 text-right font-mono text-[9px] text-(--f4)">
-						thr {posterior.entropyThreshold}
-					</span>
-				</div>
-			</div>
+				<Meter
+					layout="inline"
+					label={`${posterior.entropy}b`}
+					value={`thr ${posterior.entropyThreshold}`}
+					percent={posterior.entropyPercent}
+					variant={posterior.ambiguous ? "error" : "success"}
+					size="m"
+				/>
+			</Panel>
 
-			<div className="rounded-[4px] border border-(--line) bg-(--sunken) p-3">
+			<Panel>
 				<div className="flex items-center justify-between">
 					<span className="font-semibold text-[12px] text-(--f1)">
 						REM consolidation
 					</span>
-					<StatusBadge
+					<Badge
 						label={
 							reading?.sideline
 								? "sideline"
@@ -210,55 +208,22 @@ export const CortexSidePanels = ({
 									? "rem-replay"
 									: "awake"
 						}
-						tone={remPhaseColor}
+						variant={remPhaseVariant}
 					/>
 				</div>
 				<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
 					episodic replay · decay · retroactive inhibition
 				</div>
 				<div className="grid grid-cols-3 gap-2 font-mono">
-					<StatBlock label="decay γ" value={decay} />
-					<StatBlock
+					<Stat layout="tile" label="decay γ" value={decay} />
+					<Stat
+						layout="tile"
 						label="replays"
 						value={replays === null ? "—" : replays.toString()}
 					/>
-					<StatBlock label="inhibition" value={inhibition} />
+					<Stat layout="tile" label="inhibition" value={inhibition} />
 				</div>
-			</div>
+			</Panel>
 		</div>
 	);
 };
-
-const StatBlock = ({
-	label,
-	value,
-	tone = "var(--f1)",
-	large = false,
-}: {
-	label: string;
-	value: string;
-	tone?: string;
-	large?: boolean;
-}) => (
-	<div
-		className={
-			large
-				? "px-1 py-1"
-				: "rounded-[3px] border border-(--line) bg-(--surface) px-2 py-1.5"
-		}
-	>
-		<div className="font-mono text-[8.5px] text-(--f4) uppercase tracking-[0.08em]">
-			{label}
-		</div>
-		<div
-			className={
-				large
-					? "mt-1 font-mono text-[19px] leading-none"
-					: "mt-0.5 font-mono text-[11px]"
-			}
-			style={{ color: tone }}
-		>
-			{value}
-		</div>
-	</div>
-);

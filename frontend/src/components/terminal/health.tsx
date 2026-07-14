@@ -1,66 +1,30 @@
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
-import { StatusBadge } from "#/components/dashboard/status-badge";
 import {
 	headlineMetric,
 	latestByMetric,
 	percentOf,
 	resolveStatus,
 } from "#/components/terminal/measurement-view";
-
-export const Meter = ({
-	label,
-	value,
-	percent,
-	color = "var(--info)",
-}: {
-	label: string;
-	value: string;
-	percent: number;
-	color?: string;
-}) => (
-	<div className="flex items-center gap-2">
-		<span className="w-[58px] text-[10px] text-(--f4)">{label}</span>
-		<div className="h-[5px] flex-1 overflow-hidden rounded-[3px] bg-(--line)">
-			<div
-				className="h-full"
-				style={{ width: `${percent}%`, backgroundColor: color }}
-			/>
-		</div>
-		<span className="w-[18px] text-right font-mono text-[10px] text-(--f2)">
-			{value}
-		</span>
-	</div>
-);
-
-export const Stat = ({
-	value,
-	label,
-	accent = false,
-}: {
-	value: string;
-	label: string;
-	accent?: boolean;
-}) => (
-	<div>
-		<div
-			className="font-mono font-semibold text-2xl leading-none"
-			style={{ color: accent ? "var(--acc)" : "var(--f1)" }}
-		>
-			{value}
-		</div>
-		<div className="mt-1 text-[9px] text-(--f4)">{label}</div>
-	</div>
-);
+import { Badge } from "@/components/ui/badge";
+import { Meter } from "@/components/ui/meter";
+import { Panel } from "@/components/ui/panel";
+import { Stat } from "@/components/ui/stat";
+import type { Variant } from "@/components/ui/types";
 
 export type HealthSummary = {
-	bars: Array<{ color: string; count: number; label: string; percent: number }>;
+	bars: Array<{
+		variant: Variant;
+		count: number;
+		label: string;
+		percent: number;
+	}>;
 	avg: number;
 	firing: number;
 	label: string;
 	measured: number;
-	tone: string;
+	variant: Variant;
 	total: number;
 };
 
@@ -115,16 +79,12 @@ export const terminalHealthSummary = (
 
 	const label =
 		degraded > 0 ? "Degraded" : measured < total / 2 ? "Thin" : "Nominal";
-	const tone =
-		degraded > 0
-			? "var(--down)"
-			: measured < total / 2
-				? "var(--warn)"
-				: "var(--up)";
+	const variant: Variant =
+		degraded > 0 ? "error" : measured < total / 2 ? "warning" : "success";
 	const bars = [
-		{ label: "Healthy", count: measured, color: "var(--up)" },
-		{ label: "Warming", count: warming, color: "var(--warn)" },
-		{ label: "Degraded", count: degraded, color: "var(--down)" },
+		{ label: "Healthy", count: measured, variant: "success" as const },
+		{ label: "Warming", count: warming, variant: "warning" as const },
+		{ label: "Degraded", count: degraded, variant: "error" as const },
 	].map((bar) => ({
 		...bar,
 		percent: total > 0 ? Math.round((bar.count / total) * 100) : 0,
@@ -136,7 +96,7 @@ export const terminalHealthSummary = (
 		firing,
 		label,
 		measured,
-		tone,
+		variant,
 		total,
 	};
 };
@@ -147,28 +107,29 @@ export const HealthPanel = ({ sources }: { sources?: string[] }) => {
 	const health = terminalHealthSummary(readings, focusSymbol, sources);
 
 	return (
-		<div className="rounded-[4px] border border-(--line) bg-(--sunken) p-[13px]">
+		<Panel size="lg">
 			<div className="flex items-center justify-between">
 				<span className="font-semibold text-(--f1) text-xs">System health</span>
-				<StatusBadge label={health.label} tone={health.tone} />
+				<Badge label={health.label} variant={health.variant} />
 			</div>
 			<div className="mt-3 flex gap-[18px]">
 				<Stat value={`${health.measured}/${health.total}`} label="healthy" />
 				<Stat value={`${health.avg}%`} label="avg strength" />
-				<Stat value={String(health.firing)} label="firing" accent />
+				<Stat value={String(health.firing)} label="firing" variant="warning" />
 			</div>
 			<div className="mt-[13px] flex flex-col gap-1.5">
 				{health.bars.map((bar) => (
 					<Meter
 						key={bar.label}
+						layout="inline"
 						label={bar.label}
 						value={String(bar.count)}
 						percent={bar.percent}
-						color={bar.color}
+						variant={bar.variant}
 					/>
 				))}
 			</div>
-		</div>
+		</Panel>
 	);
 };
 
@@ -244,7 +205,7 @@ export const RadarPanel = ({ sources }: { sources?: string[] }) => {
 		.join(" ");
 
 	return (
-		<div className="rounded-[4px] border border-(--line) bg-(--sunken) p-[13px]">
+		<Panel size="lg">
 			<div className="mb-2 font-semibold text-(--f1) text-xs">
 				Strongest signals
 			</div>
@@ -297,6 +258,6 @@ export const RadarPanel = ({ sources }: { sources?: string[] }) => {
 					</text>
 				))}
 			</svg>
-		</div>
+		</Panel>
 	);
 };

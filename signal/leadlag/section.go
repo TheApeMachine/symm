@@ -39,6 +39,10 @@ type Section struct {
 	lastMove     algorithm.MoveBaselineOutput
 }
 
+/*
+symbolState retains aligned prices and returns for one market so lead-lag
+calculations use coherent samples.
+*/
 type symbolState struct {
 	last          float64
 	lastSampleAt  time.Time
@@ -75,6 +79,10 @@ func NewSection() *Section {
 	}
 }
 
+/*
+AnchorSymbol returns the cohort anchor so callers can expose the active
+reference market.
+*/
 func (section *Section) AnchorSymbol() string {
 	return section.anchorSymbol
 }
@@ -110,6 +118,10 @@ func (section *Section) PriceSampleCount(symbol string) int {
 	return len(state.prices)
 }
 
+/*
+ensure returns existing symbol state or creates owned state so observations
+share one timeline.
+*/
 func (section *Section) ensure(symbol string) *symbolState {
 	raw, _ := section.universe.LoadOrStore(symbol, &symbolState{})
 
@@ -122,6 +134,10 @@ func (section *Section) ensure(symbol string) *symbolState {
 	return state
 }
 
+/*
+ObservePrice records timestamped price and derives returns so lead-lag
+features use aligned observations.
+*/
 func (section *Section) ObservePrice(symbol string, price float64, at time.Time) {
 	if symbol == "" || price <= 0 || at.IsZero() {
 		return
@@ -158,10 +174,18 @@ func (section *Section) ObservePrice(symbol string, price float64, at time.Time)
 	}
 }
 
+/*
+anchorState returns active anchor state so feature calculation reads one
+explicit reference series.
+*/
 func (section *Section) anchorState() *symbolState {
 	return section.ensure(section.anchorSymbol)
 }
 
+/*
+Features derives lag and contemporaneous evidence for a symbol against the
+current anchor.
+*/
 func (section *Section) Features(scope string) LagFeatures {
 	anchor := section.anchorState()
 	follower := section.ensure(scope)
@@ -228,12 +252,20 @@ func (section *Section) Features(scope string) LagFeatures {
 	return features
 }
 
+/*
+anchorMove records one observed anchor displacement so delayed responses can
+be measured against its direction and time.
+*/
 type anchorMove struct {
 	moved       bool
 	stallMargin float64
 	ready       bool
 }
 
+/*
+recordAnchorMove records the latest significant anchor move so lag response is
+evaluated against observed leadership.
+*/
 func (section *Section) recordAnchorMove(samples []priceSample) {
 	if len(samples) < sampleFloor {
 		return
@@ -255,6 +287,10 @@ func (section *Section) recordAnchorMove(samples []priceSample) {
 	section.lastMove = output
 }
 
+/*
+anchorMove returns the retained anchor move used to evaluate delayed symbol
+response.
+*/
 func (section *Section) anchorMove() anchorMove {
 	return anchorMove{
 		moved:       section.lastMove.Moved > 0,
@@ -263,6 +299,10 @@ func (section *Section) anchorMove() anchorMove {
 	}
 }
 
+/*
+maxLagBars derives supported lag depth from available samples so search never
+exceeds observed evidence.
+*/
 func (section *Section) maxLagBars(sampleCount int) int {
 	return resolvedMaxLagBars(sampleCount)
 }

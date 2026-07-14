@@ -142,14 +142,26 @@ func newFluidGrid(
 	}, nil
 }
 
+/*
+ready reports whether the grid has enough integrated state to publish a fluid
+reading.
+*/
 func (grid *FluidGrid) ready() bool {
 	return grid.stepCount >= 1
 }
 
+/*
+steps returns completed grid integrations so measurement maturity reflects
+actual observations.
+*/
 func (grid *FluidGrid) steps() int {
 	return grid.stepCount
 }
 
+/*
+ingestBook applies an order-book update to density and source fields so the
+grid represents current resting liquidity.
+*/
 func (grid *FluidGrid) ingestBook(
 	bids, asks []kraken.BookLevel,
 	midPrice float64,
@@ -224,6 +236,10 @@ func (grid *FluidGrid) ingestBook(
 	return nil
 }
 
+/*
+resetToCurrentBook reinitializes density from the current book after
+discontinuity so stale solver state cannot contaminate a new epoch.
+*/
 func (grid *FluidGrid) resetToCurrentBook(at time.Time, midPrice float64) {
 	copy(grid.rho, grid.filteredObservedRho)
 	copy(grid.prevObservedRho, grid.observedRho)
@@ -233,6 +249,10 @@ func (grid *FluidGrid) resetToCurrentBook(at time.Time, midPrice float64) {
 	grid.clearReactionAccumulators()
 }
 
+/*
+ingestTrade applies executed flow to the grid so observed removals affect
+velocity and reaction sources.
+*/
 func (grid *FluidGrid) ingestTrade(
 	tradePrice, qty float64,
 	at time.Time,
@@ -264,12 +284,20 @@ func (grid *FluidGrid) ingestTrade(
 	return nil
 }
 
+/*
+clearField zeros a reusable grid field so the next integration step does not
+retain prior transient values.
+*/
 func (grid *FluidGrid) clearField(field []float64) {
 	for index := range field {
 		field[index] = 0
 	}
 }
 
+/*
+projectObserved projects observed book density onto the grid so empirical
+levels anchor solver state.
+*/
 func (grid *FluidGrid) projectObserved(
 	bids, asks []kraken.BookLevel,
 	midPrice float64,
@@ -300,6 +328,10 @@ func (grid *FluidGrid) projectObserved(
 	grid.filterSparseDensity(grid.filteredObservedRho)
 }
 
+/*
+filterSparseDensity removes unsupported isolated density cells so numerical
+artifacts are not treated as liquidity.
+*/
 func (grid *FluidGrid) filterSparseDensity(density []float64) {
 	if len(density) < 3 || len(grid.filterScratch) != len(density) {
 		return
@@ -369,6 +401,10 @@ func positiveFinite(value float64) float64 {
 	return value
 }
 
+/*
+priceIndex maps a market price to its grid cell so book and trade events share
+one spatial coordinate system.
+*/
 func (grid *FluidGrid) priceIndex(midPrice, price float64) int {
 	offset := int(math.Round((price - midPrice) / grid.tickSize))
 	index := grid.midIndex + offset
@@ -380,6 +416,10 @@ func (grid *FluidGrid) priceIndex(midPrice, price float64) int {
 	return index
 }
 
+/*
+prepareSourcesForIntegration finalizes accumulated source terms so each solver
+step consumes one coherent interval.
+*/
 func (grid *FluidGrid) prepareSourcesForIntegration() {
 	invInterval := 1.0 / grid.integrationInterval.Seconds()
 
@@ -388,6 +428,10 @@ func (grid *FluidGrid) prepareSourcesForIntegration() {
 	}
 }
 
+/*
+measureReplenishment derives touch replenishment rates from observed source
+changes so liquidity recovery remains data-driven.
+*/
 func (grid *FluidGrid) measureReplenishment(dt float64, spread float64) {
 	replenished := 0.0
 	consumed := 0.0
@@ -424,14 +468,26 @@ func (grid *FluidGrid) measureReplenishment(dt float64, spread float64) {
 	grid.replenishmentRate = 0
 }
 
+/*
+midAddRateAtTouch returns the current near-touch addition rate used by fluid
+classification.
+*/
 func (grid *FluidGrid) midAddRateAtTouch() float64 {
 	return grid.midAddRate
 }
 
+/*
+midExecuteRateAtTouch returns the current near-touch execution rate used by
+fluid classification.
+*/
 func (grid *FluidGrid) midExecuteRateAtTouch() float64 {
 	return grid.midExecuteRate
 }
 
+/*
+touchBandActivityRates aggregates addition and execution inside the observed
+spread band so touch activity uses the instrument's scale.
+*/
 func (grid *FluidGrid) touchBandActivityRates(spread float64) (addRate, executeRate float64) {
 	touchBand := touchBandCells(spread, grid.tickSize, grid.halfWidth)
 	invInterval := 1.0 / grid.integrationInterval.Seconds()
@@ -470,10 +526,18 @@ func (grid *FluidGrid) measureMidDivergence() {
 	grid.midDivergence = grid.faceFluxDivergence(grid.rho, index) / touchDensity
 }
 
+/*
+midVelocityDivergence calculates velocity divergence around the midpoint so
+local compression and expansion remain spatially grounded.
+*/
 func (grid *FluidGrid) midVelocityDivergence() float64 {
 	return grid.midDivergence
 }
 
+/*
+viscosity derives effective market viscosity from observed density and
+velocity gradients so resistance is not fixed.
+*/
 func (grid *FluidGrid) viscosity() float64 {
 	return grid.replenishmentRate
 }
@@ -486,6 +550,10 @@ func touchSpreadFromBook(bids, asks []kraken.BookLevel) float64 {
 	return asks[0].Price.Float64() - bids[0].Price.Float64()
 }
 
+/*
+rhoGradFloor derives a local density-gradient floor so viscosity remains tied
+to observable book structure.
+*/
 func (grid *FluidGrid) rhoGradFloor(index int) float64 {
 	if index < 0 || index >= len(grid.observedRho) {
 		return rhoFloor
@@ -512,6 +580,10 @@ func (grid *FluidGrid) rhoGradFloor(index int) float64 {
 	return floor
 }
 
+/*
+medianObservedRho returns median observed density so sparse cells do not
+dictate the grid's reference scale.
+*/
 func (grid *FluidGrid) medianObservedRho() float64 {
 	if len(grid.observedRho) == 0 {
 		return 0
@@ -533,10 +605,18 @@ func (grid *FluidGrid) medianObservedRho() float64 {
 	return median
 }
 
+/*
+reynolds calculates the current market Reynolds quantity from observed spread
+and derived viscosity.
+*/
 func (grid *FluidGrid) reynolds(spread float64) float64 {
 	return grid.reynoldsAgainst(spread, grid.replenishmentRate)
 }
 
+/*
+reynoldsAgainst calculates Reynolds against explicit viscosity so callers can
+compare compatible fluid regimes.
+*/
 func (grid *FluidGrid) reynoldsAgainst(spread, viscosity float64) float64 {
 	if spread <= 0 {
 		return math.NaN()

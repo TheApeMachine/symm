@@ -41,17 +41,23 @@ func TestCausalUpdateRejectsRegressions(t *testing.T) {
 		)
 		So(err, ShouldNotBeNil)
 
+		_, sameTimeProduced, err := causal.Update(
+			causalState(time.Unix(2, 0), 101, 3),
+		)
+		So(err, ShouldBeNil)
+
 		var regressedProduced bool
 
 		_, regressedProduced, err = causal.Update(
 			causalState(time.Unix(1, 0), 99, 1),
 		)
 
-		Convey("It should reject both without replacing chronological state", func() {
+		Convey("It should accept equal-time progress and reject duplicate or backward epochs", func() {
 			So(err, ShouldNotBeNil)
 			So(duplicateProduced, ShouldBeFalse)
+			So(sameTimeProduced, ShouldBeTrue)
 			So(regressedProduced, ShouldBeFalse)
-			So(causal.pending.epoch, ShouldEqual, uint64(2))
+			So(causal.pending.epoch, ShouldEqual, uint64(3))
 			So(causal.pending.at, ShouldEqual, time.Unix(2, 0))
 		})
 	})

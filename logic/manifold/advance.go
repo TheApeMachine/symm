@@ -54,6 +54,8 @@ func (slot *Slot) Advance() ProcessResult {
 		mapped,
 		pending.bestBid,
 		pending.bestAsk,
+		pending.bestBidQuantity,
+		pending.bestAskQuantity,
 		pending.midPrice,
 		at,
 		eventDeltaT,

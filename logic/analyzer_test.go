@@ -5,9 +5,24 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/manifold"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
+
+/*
+readyStageGate admits every analyzer stage in focused synchronous tests.
+*/
+type readyStageGate struct{}
+
+/*
+Ready reports that the focused analyzer fixture has completed preflight.
+*/
+func (readyStageGate) Ready(system.StageType) bool {
+	return true
+}
 
 func TestAnalyzerUpdate(t *testing.T) {
 	Convey("Given measurements for two symbols", t, func() {
@@ -62,6 +77,39 @@ func TestAnalyzerUpdateComposesRelationships(t *testing.T) {
 		Convey("It should retain the contradiction on the symbol graph", func() {
 			So(thesis.Graphs["BTC/USD"].Edges, ShouldHaveLength, 1)
 			So(thesis.Graphs["BTC/USD"].Edges[0].Type, ShouldEqual, types.Contradicts)
+		})
+	})
+}
+
+func TestAnalyzerIngestLevel3(t *testing.T) {
+	Convey("Given authoritative L3 rows on the current Thesis", t, func() {
+		viper.Set("market.l3_depth", 10)
+		viper.Set("market.forecast.rls.initial_variance", 1.0)
+		viper.Set("market.forecast.rls.forgetting_factor", 1.0)
+		viper.Set("market.manifold.lifetime_capacity", 256)
+		analyzer := NewAnalyzer(readyStageGate{}, nil)
+		defer analyzer.Close()
+		thesis := types.NewThesis(nil)
+		thesis.Signals.Store("level3", []kraken.Level3Data{
+			{
+				Symbol: "BTC/USD", Type: "snapshot", Timestamp: time.Unix(1, 0),
+				Bids: []kraken.Level3Order{{
+					OrderID: "bid-1", LimitPrice: 99, OrderQty: 2,
+					Timestamp: time.Unix(1, 0),
+				}},
+				Asks: []kraken.Level3Order{{
+					OrderID: "ask-1", LimitPrice: 101, OrderQty: 3,
+					Timestamp: time.Unix(1, 0),
+				}},
+			},
+		})
+
+		analyzer.Update(thesis)
+
+		Convey("Then the symbol is admitted and its tick epoch is consumed", func() {
+			slot, exists := analyzer.engine.Slot("BTC/USD")
+			So(exists, ShouldBeTrue)
+			So(slot.Advance().StateProduced, ShouldBeFalse)
 		})
 	})
 }

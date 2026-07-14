@@ -135,6 +135,10 @@ func NewSignal(
 	return signal
 }
 
+/*
+onTicker decodes ticker updates and feeds symbol state so price context stays
+current.
+*/
 func (signal *Signal) onTicker(data []byte) {
 	if len(data) == 0 {
 		return
@@ -149,6 +153,10 @@ func (signal *Signal) onTicker(data []byte) {
 	signal.tickerCache = append(signal.tickerCache, frame.Data...)
 }
 
+/*
+onTrade decodes trade updates and feeds executed flow so tape activity reaches
+the grid.
+*/
 func (signal *Signal) onTrade(data []byte) {
 	if len(data) == 0 {
 		return
@@ -163,6 +171,10 @@ func (signal *Signal) onTrade(data []byte) {
 	signal.tradeCache = append(signal.tradeCache, frame.Data...)
 }
 
+/*
+onBook decodes book updates and feeds resting-liquidity changes so the grid
+follows the live book.
+*/
 func (signal *Signal) onBook(data []byte) {
 	if len(data) == 0 {
 		return
@@ -249,6 +261,10 @@ func appendMeasurements[Row any](
 	}
 }
 
+/*
+Close releases the receiver's owned resources so shutdown does not leave
+active market-data producers.
+*/
 func (signal *Signal) Close() error {
 	signal.cancel()
 

@@ -6,13 +6,16 @@ import {
 	cognitiveScopes,
 	cognitiveStore,
 } from "#/collections/cognitive";
+import { Meter } from "@/components/ui/meter";
+import { Panel } from "@/components/ui/panel";
+import type { Variant } from "@/components/ui/types";
 
 type Rung = {
 	rung: number;
 	name: string;
 	desc: string;
 	key: string;
-	color: string;
+	variant: Variant;
 };
 
 const RUNGS: Rung[] = [
@@ -21,21 +24,21 @@ const RUNGS: Rung[] = [
 		name: "Association",
 		desc: "P(y | x)",
 		key: "beta",
-		color: "var(--info)",
+		variant: "info",
 	},
 	{
 		rung: 2,
 		name: "Intervention",
 		desc: "P(y | do(x))",
 		key: "intervention",
-		color: "var(--acc)",
+		variant: "warning",
 	},
 	{
 		rung: 3,
 		name: "Counterfactual",
 		desc: "Pearl strength",
 		key: "strength",
-		color: "var(--up)",
+		variant: "success",
 	},
 ];
 
@@ -57,7 +60,7 @@ export type CognitiveBeamModel = {
 		label: string;
 		value: string;
 		percent: number;
-		color: string;
+		variant: Variant;
 	}>;
 };
 
@@ -102,19 +105,19 @@ export const cognitiveBeamModel = (
 				label: "Entropy gate",
 				value: `${entropyBits.toFixed(2)} / ${entropyThreshold.toFixed(1)} bits`,
 				percent: entropyPercent,
-				color: "var(--up)",
+				variant: "success",
 			},
 			{
 				label: "Class confidence",
 				value: `${Math.round(confidence * 100)}%`,
 				percent: confidence * 100,
-				color: "var(--info)",
+				variant: "info",
 			},
 			{
 				label: "Lookahead beam",
 				value: lookahead.toFixed(3),
 				percent: lookahead * 100,
-				color: "var(--acc)",
+				variant: "warning",
 			},
 		],
 	};
@@ -123,26 +126,25 @@ export const cognitiveBeamModel = (
 export const CausalLadder = ({ symbol }: { symbol?: string }) => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
 	const scope = isConcreteSymbol(symbol) ? symbol : focusSymbol;
-	const frame = useSelector(
-		causalStore,
-		(state) => state.causal[scope]?.values().at(-1),
+	const frame = useSelector(causalStore, (state) =>
+		state.causal[scope]?.values().at(-1),
 	);
 
 	if (frame === undefined) {
 		return (
-			<div className="rounded border border-(--line) bg-(--sunken) p-3">
+			<Panel>
 				<div className="font-semibold text-[12px] text-(--f1)">
 					Causal ladder
 				</div>
 				<div className="mt-2 font-mono text-[9.5px] text-(--f4)">
 					no causal reading yet
 				</div>
-			</div>
+			</Panel>
 		);
 	}
 
 	return (
-		<div className="rounded border border-(--line) bg-(--sunken) p-3">
+		<Panel>
 			<div className="font-semibold text-[12px] text-(--f1)">Causal ladder</div>
 			<div className="mt-0.5 mb-3 font-mono text-[9.5px] text-(--f4)">
 				pearl do-calculus · {String(frame.category)}
@@ -163,8 +165,13 @@ export const CausalLadder = ({ symbol }: { symbol?: string }) => {
 									{rung.rung}. {rung.name}
 								</span>
 								<span
-									className="font-mono text-[11px]"
-									style={{ color: rung.color }}
+									className={
+										rung.variant === "success"
+											? "font-mono text-[11px] text-(--up)"
+											: rung.variant === "warning"
+												? "font-mono text-[11px] text-(--acc)"
+												: "font-mono text-[11px] text-(--info)"
+									}
 								>
 									{value.toFixed(3)}
 								</span>
@@ -172,12 +179,13 @@ export const CausalLadder = ({ symbol }: { symbol?: string }) => {
 							<div className="my-1.5 font-mono text-[9px] text-(--f4)">
 								{rung.desc}
 							</div>
-							<div className="h-[5px] overflow-hidden rounded-sm bg-(--line)">
-								<div
-									className="h-full transition-[width] duration-500"
-									style={{ width: `${value * 100}%`, background: rung.color }}
-								/>
-							</div>
+							<Meter
+								layout="bar"
+								percent={value * 100}
+								variant={rung.variant}
+								size="s"
+								animated
+							/>
 						</div>
 					);
 				})}
@@ -208,7 +216,7 @@ export const CausalLadder = ({ symbol }: { symbol?: string }) => {
 					</span>
 				</div>
 			</div>
-		</div>
+		</Panel>
 	);
 };
 
@@ -218,19 +226,19 @@ export const CognitiveBeam = ({ symbol }: { symbol?: string }) => {
 
 	if (model === null) {
 		return (
-			<div className="mt-3.5 rounded border border-(--line) bg-(--sunken) p-3">
+			<Panel className="mt-3.5">
 				<div className="font-semibold text-[12px] text-(--f1)">
 					Cognitive beam
 				</div>
 				<div className="mt-2 font-mono text-[9.5px] text-(--f4)">
 					waiting for cognitive frame
 				</div>
-			</div>
+			</Panel>
 		);
 	}
 
 	return (
-		<div className="mt-3.5 rounded border border-(--line) bg-(--sunken) p-3">
+		<Panel className="mt-3.5">
 			<div className="flex items-center justify-between">
 				<span className="font-semibold text-[12px] text-(--f1)">
 					Cognitive beam
@@ -248,21 +256,15 @@ export const CognitiveBeam = ({ symbol }: { symbol?: string }) => {
 
 			<div className="mt-3 flex flex-col gap-2.5">
 				{model.meters.map((meter) => (
-					<div key={meter.label}>
-						<div className="mb-1 flex justify-between text-[10.5px]">
-							<span className="text-(--f3)">{meter.label}</span>
-							<span className="font-mono text-(--f1)">{meter.value}</span>
-						</div>
-						<div className="h-[5px] overflow-hidden rounded-sm bg-(--line)">
-							<div
-								className="h-full"
-								style={{
-									width: `${meter.percent}%`,
-									background: meter.color,
-								}}
-							/>
-						</div>
-					</div>
+					<Meter
+						key={meter.label}
+						layout="stacked"
+						label={meter.label}
+						value={meter.value}
+						percent={meter.percent}
+						variant={meter.variant}
+						size="s"
+					/>
 				))}
 			</div>
 
@@ -276,7 +278,7 @@ export const CognitiveBeam = ({ symbol }: { symbol?: string }) => {
 					<span className="text-(--f1)">{model.paths}</span>
 				</div>
 			</div>
-		</div>
+		</Panel>
 	);
 };
 

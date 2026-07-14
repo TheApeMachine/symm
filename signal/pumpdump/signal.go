@@ -33,6 +33,10 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 	}
 }
 
+/*
+Measure converts the receiver's current market input into typed measurements
+so downstream logic consumes explicit evidence.
+*/
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
@@ -87,6 +91,10 @@ func (signal *Signal) Measure(
 	return thesis
 }
 
+/*
+Close releases the receiver's owned resources so shutdown does not leave
+active market-data producers.
+*/
 func (signal *Signal) Close() (err error) {
 	err = errnie.Error(errnie.Err(
 		errnie.Internal,

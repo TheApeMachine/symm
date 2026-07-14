@@ -26,6 +26,9 @@ type Forecasts struct {
 	IncrementalMSE           float64       `json:"incrementalMSE"`
 	IncrementalMSELowerBound float64       `json:"incrementalMSELowerBound"`
 	ExpectedReturn           float64       `json:"expectedReturn"`
+	ReferencePrice           float64       `json:"referencePrice"`
+	BuyCapacity              float64       `json:"buyCapacity"`
+	SellCapacity             float64       `json:"sellCapacity"`
 	ExpectedFees             float64       `json:"expectedFees"`
 	ExpectedSpread           float64       `json:"expectedSpread"`
 	ExpectedImpact           float64       `json:"expectedImpact"`
@@ -39,7 +42,8 @@ Eligible reports whether the forecast carries the calibration and provenance
 required by strategy. It does not infer missing metadata or thresholds.
 */
 func (forecasts Forecasts) Eligible() bool {
-	if !forecasts.Ready || forecasts.Source == "" || forecasts.Symbol == "" {
+	if !forecasts.Ready || !forecasts.Calibrated || !forecasts.FrictionReady ||
+		forecasts.Source == "" || forecasts.Symbol == "" {
 		return false
 	}
 
@@ -54,6 +58,9 @@ func (forecasts Forecasts) Eligible() bool {
 
 	values := []float64{
 		forecasts.ExpectedReturn,
+		forecasts.ReferencePrice,
+		forecasts.BuyCapacity,
+		forecasts.SellCapacity,
 		forecasts.ExpectedFees,
 		forecasts.ExpectedSpread,
 		forecasts.ExpectedImpact,
@@ -71,6 +78,9 @@ func (forecasts Forecasts) Eligible() bool {
 	}
 
 	return forecasts.ExpectedFees >= 0 &&
+		forecasts.ReferencePrice > 0 &&
+		forecasts.BuyCapacity > 0 &&
+		forecasts.SellCapacity > 0 &&
 		forecasts.ExpectedSpread >= 0 &&
 		forecasts.ExpectedImpact >= 0 &&
 		forecasts.ExpectedAdverseSelection >= 0 &&

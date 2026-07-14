@@ -37,6 +37,10 @@ func NewBook(
 	return book
 }
 
+/*
+On decodes an inbound market-data message and retains its relevant rows so
+measurement uses the authoritative event stream.
+*/
 func (book *Book) On(data []byte) {
 	if len(data) == 0 {
 		return

@@ -36,6 +36,10 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 	}
 }
 
+/*
+Measure converts the receiver's current market input into typed measurements
+so downstream logic consumes explicit evidence.
+*/
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
@@ -87,11 +91,24 @@ func (signal *Signal) Measure(
 	return thesis
 }
 
+/*
+cvdMeasurements maps signed-flow output into typed CVD measurements while
+preserving each metric's unit and normalization.
+*/
 func (signal *Signal) cvdMeasurements(
 	row kraken.TradeData,
 	output equation.FlowOutput,
 	maturity float64,
 ) []*types.Measurement {
+	validity := types.MeasurementValidity{
+		State:     types.ValidityValid,
+		Readiness: types.ReadinessObservation,
+	}
+	scale := types.ScaleReference{
+		Kind:    types.ScaleObservationWindow,
+		From:    row.Timestamp,
+		Through: row.Timestamp,
+	}
 	specs := []struct {
 		metric types.MetricType
 		unit   types.MeasurementUnit
@@ -108,16 +125,35 @@ func (signal *Signal) cvdMeasurements(
 	measurements := make([]*types.Measurement, 0, len(specs))
 
 	for _, spec := range specs {
-		measurements = append(measurements, types.ObservationMeasurement(
-			types.SourceCVD, types.CVD, spec.metric,
-			types.SubjectAggressorFlow, row.Symbol, row.Timestamp,
-			spec.unit, spec.value, maturity,
-		))
+		var normalized *float64
+
+		if spec.unit == types.UnitDimensionless {
+			normalized = types.NormalizeFinite(spec.value)
+		}
+
+		measurements = append(measurements, &types.Measurement{
+			Source:     types.SourceCVD,
+			Stream:     types.CVD,
+			Metric:     spec.metric,
+			Subject:    types.SubjectAggressorFlow,
+			Symbol:     row.Symbol,
+			At:         row.Timestamp,
+			Unit:       spec.unit,
+			Raw:        spec.value,
+			Normalized: normalized,
+			Maturity:   maturity,
+			Validity:   validity,
+			Scale:      scale,
+		})
 	}
 
 	return measurements
 }
 
+/*
+Close releases the receiver's owned resources so shutdown does not leave
+active market-data producers.
+*/
 func (signal *Signal) Close() (err error) {
 	err = errnie.Error(errnie.Err(
 		errnie.Internal,

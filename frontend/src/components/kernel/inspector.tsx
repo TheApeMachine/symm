@@ -2,10 +2,10 @@ import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
-import { StatusBadge } from "#/components/dashboard/status-badge";
 import {
 	kernelCopy,
 	kernelStatusMeta,
+	kernelStatusVariant,
 } from "#/components/terminal/kernel-meta";
 import {
 	formatRaw,
@@ -17,7 +17,10 @@ import {
 	resolveStatus,
 	sideLabel,
 } from "#/components/terminal/measurement-view";
-import { InspectorMeter } from "./meter";
+import { cn } from "#/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Meter } from "@/components/ui/meter";
+import { panelVariants } from "@/components/ui/panel";
 
 export const KernelInspector = () => {
 	const inspectorSource = useSelector(
@@ -93,7 +96,10 @@ export const KernelInspector = () => {
 								<span className="font-serif font-semibold text-[19px] text-(--f1) leading-[1.1]">
 									{copy.name}
 								</span>
-								<StatusBadge label={statusMeta.label} tone={statusMeta.fg} />
+								<Badge
+									label={statusMeta.label}
+									variant={kernelStatusVariant(status)}
+								/>
 							</div>
 							<div className="mt-1 font-mono text-[10px] text-(--f4)">
 								{copy.sub}
@@ -128,7 +134,10 @@ export const KernelInspector = () => {
 						<svg
 							viewBox="0 0 150 30"
 							preserveAspectRatio="none"
-							className="block h-[52px] w-full rounded-[3px] border border-(--line) bg-(--sunken)"
+							className={cn(
+								panelVariants({ size: "bare" }),
+								"block h-[52px] w-full",
+							)}
 						>
 							<title>Signal history</title>
 							<polyline
@@ -142,7 +151,7 @@ export const KernelInspector = () => {
 					</div>
 					<div className="flex flex-col gap-2.5 px-4 pt-3.5 pb-0.5">
 						{epoch.slice(0, 4).map((measurement) => (
-							<InspectorMeter
+							<Meter
 								key={`${measurement.metric}:${measurement.side ?? ""}`}
 								label={[
 									metricLabel(measurement.metric),
@@ -152,9 +161,8 @@ export const KernelInspector = () => {
 									.join(" · ")}
 								value={formatRaw(measurement)}
 								percent={percentOf(measurement)}
-								color={
-									measurement.metric === headline ? "var(--acc)" : "var(--info)"
-								}
+								variant={measurement.metric === headline ? "warning" : "info"}
+								size="xs"
 							/>
 						))}
 					</div>

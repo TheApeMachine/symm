@@ -11,6 +11,10 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+Book owns fluid book measurement and classification so order-book dynamics
+stay separate from signal orchestration.
+*/
 type Book struct {
 	registry   *Registry
 	fluidflow  *equation.Fluidflow
@@ -33,6 +37,10 @@ func NewBook(registry *Registry) *Book {
 	}
 }
 
+/*
+Measure converts the receiver's current market input into typed measurements
+so downstream logic consumes explicit evidence.
+*/
 func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 	if row.Timestamp.IsZero() {
 		return nil, errnie.Error(errnie.Err(
@@ -100,6 +108,10 @@ func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 	return measurements, nil
 }
 
+/*
+measurementsFromReading turns one validated fluid reading into classified
+measurements so solver state is published with its evidence.
+*/
 func (book *Book) measurementsFromReading(
 	reading fluidReading,
 	eventAt time.Time,
@@ -226,6 +238,10 @@ func (book *Book) measurementsFromReading(
 	return measurements, nil
 }
 
+/*
+fluidflowInput maps empirical book dynamics into equation input so
+classification consumes dimensionally meaningful values.
+*/
 func (book *Book) fluidflowInput(reading fluidReading) equation.FluidflowInput {
 	divergence := math.Abs(reading.divergence)
 	velocityCurvature := math.Abs(reading.velocityCurvature)
@@ -264,6 +280,10 @@ func (book *Book) fluidflowInput(reading fluidReading) equation.FluidflowInput {
 	}
 }
 
+/*
+baseline selects an empirical quantile when history exists and otherwise uses
+the current sample as the only observed scale.
+*/
 func (book *Book) baseline(percentile float64, values []float64, sample float64) float64 {
 	if len(values) > 0 {
 		return sampleQuantile(percentile, values)
@@ -272,6 +292,10 @@ func (book *Book) baseline(percentile float64, values []float64, sample float64)
 	return sample
 }
 
+/*
+finite removes non-finite solver values so invalid floating-point state is not
+published as market evidence.
+*/
 func (book *Book) finite(value float64) float64 {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0
@@ -280,6 +304,10 @@ func (book *Book) finite(value float64) float64 {
 	return value
 }
 
+/*
+finitePositive retains finite positive values for equation inputs whose domain
+excludes zero and negative values.
+*/
 func (book *Book) finitePositive(value float64) float64 {
 	if value <= 0 {
 		return 0

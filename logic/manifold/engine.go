@@ -214,11 +214,8 @@ func (slot *Slot) Close() {
 
 func (slot *Slot) Process(
 	row kraken.Level3Data,
-	pricePrecision int,
-	qtyPrecision int,
-	book Level3Book,
 ) ProcessResult {
-	result := slot.Observe(row, pricePrecision, qtyPrecision, book)
+	result := slot.Observe(row)
 
 	if !result.AdvanceReady {
 		return result
@@ -321,6 +318,8 @@ func (slot *Slot) step(
 	orders []*PhysicalOrder,
 	bestBid float64,
 	bestAsk float64,
+	bestBidQuantity float64,
+	bestAskQuantity float64,
 	midPrice float64,
 	at time.Time,
 	eventDeltaT float64,
@@ -427,6 +426,8 @@ func (slot *Slot) step(
 	state.Reading = reading
 	state.BestBid = bestBid
 	state.BestAsk = bestAsk
+	state.BestBidQuantity = bestBidQuantity
+	state.BestAskQuantity = bestAskQuantity
 	state.MidPrice = midPrice
 	state.VisibleMass = conservation.VisibleMass
 	state.ConservationResidual = conservation.Residual

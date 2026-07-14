@@ -5,11 +5,19 @@ import (
 	"github.com/theapemachine/symm/kraken"
 )
 
+/*
+symbolBookFixture provides reusable book state for fluid tests so multi-step
+grid behavior is exercised consistently.
+*/
 type symbolBookFixture struct {
 	symbol string
 	seq    int
 }
 
+/*
+snapshot builds a deterministic book snapshot for fluid tests so grid
+transitions use realistic bid and ask levels.
+*/
 func (fixture *symbolBookFixture) snapshot(
 	bidPrice, bidQty, askPrice, askQty float64,
 ) kraken.BookData {

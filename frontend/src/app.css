@@ -3,11 +3,15 @@
 
 :root {
 	--acc: #e8a33d;
+	--brand: oklch(0.5691 0.2451 282.62);
 	--scan: 0.5;
 	--up: #9cc06e;
 	--down: #d5786a;
 	--info: #7fbacb;
 	--warn: #e8a33d;
+	--success: var(--up);
+	--warning: var(--warn);
+	--error: var(--down);
 	--bg: #0e0c0a;
 	--surface: #17140f;
 	--raised: #1f1a14;

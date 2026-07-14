@@ -1,3 +1,5 @@
+import type { Variant } from "@/components/ui/types";
+
 export type SignalHealthStatus =
 	| "waiting"
 	| "standby"
@@ -209,6 +211,25 @@ export const kernelStatusMeta = (
 	};
 
 	return table[status] ?? table.waiting;
+};
+
+/*
+kernelStatusVariant maps kernel health status onto semantic UI variants.
+*/
+export const kernelStatusVariant = (status: SignalHealthStatus): Variant => {
+	if (status === "measured") {
+		return "success";
+	}
+
+	if (status === "fault" || status === "ambiguous") {
+		return "error";
+	}
+
+	if (status === "unknown") {
+		return "warning";
+	}
+
+	return "info";
 };
 
 export const kernelSparkPaths = (

@@ -24,6 +24,10 @@ const (
 	secondsPerDay = 24 * 60 * 60
 )
 
+/*
+symbolConfig holds instrument-scale configuration so each fluid grid follows
+exchange metadata.
+*/
 type symbolConfig struct {
 	tickSizeFallback    float64
 	gridHalfWidth       int

@@ -22,6 +22,8 @@ type State struct {
 	InvalidReason        InvalidReason  `json:"invalidReason"`
 	BestBid              float64        `json:"bestBid"`
 	BestAsk              float64        `json:"bestAsk"`
+	BestBidQuantity      float64        `json:"bestBidQuantity"`
+	BestAskQuantity      float64        `json:"bestAskQuantity"`
 	MidPrice             float64        `json:"midPrice"`
 	VisibleMass          float64        `json:"visibleMass"`
 	ConservationResidual float64        `json:"conservationResidual"`

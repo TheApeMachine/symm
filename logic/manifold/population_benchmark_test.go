@@ -61,14 +61,14 @@ func BenchmarkPopulationApply(b *testing.B) {
 	}
 
 	population := NewPopulation("BTC/USD", nil, testBookDepth)
-	population.Apply(snapshot, 105)
+	population.Apply(snapshot)
 	updates := []kraken.Level3Data{newBest, republish}
 	updateIndex := 0
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for b.Loop() {
-		population.Apply(updates[updateIndex%len(updates)], 105)
+		population.Apply(updates[updateIndex%len(updates)])
 		updateIndex++
 	}
 

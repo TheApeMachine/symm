@@ -2,7 +2,8 @@ import { memo, useLayoutEffect, useRef } from "react";
 import { type Position, positionsStore } from "#/collections/positions";
 import { type Stop, stopsStore } from "#/collections/stops";
 import { fixed } from "#/components/terminal/decision-format";
-import { Flex } from "@/components/ui/flex";
+
+import { Panel } from "@/components/ui/panel";
 
 const clampPercent = (value: number, lo: number, hi: number): number => {
 	if (!(hi > lo)) {
@@ -216,9 +217,7 @@ const paintPositionGauge = (
 
 	if (refs.summary) {
 		const stopSuffix =
-			stop !== undefined &&
-			geometry !== null &&
-			geometry.stopPct !== null
+			stop !== undefined && geometry !== null && geometry.stopPct !== null
 				? ` / stop ${fixed(stop.stop_price)}`
 				: "";
 		refs.summary.textContent = `entry ${fixed(position.entry_price)} / mark ${markLabel}${stopSuffix}`;
@@ -239,10 +238,7 @@ const paintPositionGauge = (
 		refs.stagnationWrap.style.display = hasStagnation ? "" : "none";
 
 		if (hasStagnation) {
-			const stagnationHealth = Math.max(
-				0,
-				Math.min(1, stop.stagnation_health),
-			);
+			const stagnationHealth = Math.max(0, Math.min(1, stop.stagnation_health));
 			const stagnationTone = stop.stagnation_pending
 				? accentTone
 				: stagnationHealth > 0.5
@@ -308,9 +304,10 @@ export const PositionGauge = memo(
 		}, [symbol, quote]);
 
 		return (
-			<div
+			<Panel
 				data-symbol={symbol}
-				className="mb-[5px] rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5 font-mono text-[11px]"
+				size="s"
+				className="mb-[5px] font-mono text-[11px]"
 			>
 				<div className="flex items-start justify-between gap-3">
 					<span className="font-semibold text-(--f1)">{symbol}</span>
@@ -392,7 +389,7 @@ export const PositionGauge = memo(
 						⚡
 					</span>
 				</div>
-			</div>
+			</Panel>
 		);
 	},
 );
