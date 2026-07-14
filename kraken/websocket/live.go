@@ -220,6 +220,7 @@ func (live *Live) updateLevel3(
 		managed := live.books.GetBook(symbol)
 
 		if managed != nil {
+			managed.EnforceOrder()
 			managed.EnforceDepth()
 		}
 	}

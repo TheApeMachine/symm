@@ -6,7 +6,7 @@ system:
     level: debug
   websocket:
     channel:
-      buffer: 8192
+      buffer: 16384
 
 cognitive:
   persist_dir: ""

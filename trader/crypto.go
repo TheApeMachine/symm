@@ -16,14 +16,6 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-const (
-	channelInstrument = "instrument"
-	channelTicker     = "ticker"
-	channelTrade      = "trade"
-	channelBook       = "book"
-	channelLevel3     = "level3"
-)
-
 /*
 Crypto is the simple trading runtime.
 It consumes market and private frames, publishes UI frames,
@@ -112,7 +104,13 @@ func (crypto *Crypto) Run() error {
 		for crypto.Status() != types.ERROR {
 			if crypto.booter.Ready(system.StageWarmup) {
 				if crypto.instrument != nil {
-					if _, err := crypto.instrument.Activate(); err != nil {
+					required := make([]string, 0, crypto.desk.OpenPositions())
+
+					for _, position := range crypto.desk.Positions() {
+						required = append(required, position.Data.Symbol)
+					}
+
+					if _, err := crypto.instrument.Activate(required); err != nil {
 						crypto.status = types.ERROR
 						errnie.Error(err)
 
@@ -166,7 +164,6 @@ func (crypto *Crypto) trade(thesis *types.Thesis) {
 
 		if err != nil {
 			errnie.Error(err)
-
 			continue
 		}
 
@@ -176,6 +173,7 @@ func (crypto *Crypto) trade(thesis *types.Thesis) {
 	available, err := crypto.balance.AvailableQuote()
 
 	if err != nil {
+		errnie.Error(err)
 		available = 0
 	}
 
@@ -193,7 +191,6 @@ func (crypto *Crypto) trade(thesis *types.Thesis) {
 
 		if err != nil {
 			errnie.Error(err)
-
 			continue
 		}
 

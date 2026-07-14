@@ -240,14 +240,21 @@ export const DecisionsSurface = () => {
 
 				<div className="flex flex-col gap-[7px]">
 					{candidates.length === 0 ? (
-						<div className="rounded border border-(--line) bg-(--surface) px-3 py-8 text-center font-mono text-[11px] text-(--f4)">
+						<Panel
+							variant="surface"
+							size="bare"
+							className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
+						>
 							waiting for backend decision frames
-						</div>
+						</Panel>
 					) : null}
 
 					{candidates.map((candidate) => {
 						const selected = candidate.symbol === current?.symbol;
 						const scorePercent = Math.round(ratio(candidate.score) * 100);
+						const edge =
+							finite(candidate.causal?.strength) -
+							finite(candidate.causal?.baseline);
 
 						return (
 							<button
@@ -314,15 +321,10 @@ export const DecisionsSurface = () => {
 										<div
 											className="mt-1 font-mono text-[9px]"
 											style={{
-												color:
-													entryScore >= entryLine ? "var(--up)" : "var(--down)",
+												color: edge >= 0 ? "var(--up)" : "var(--down)",
 											}}
 										>
-											edge{" "}
-											{fixed(
-												finite(candidate.causal?.strength) -
-													finite(candidate.causal?.baseline),
-											)}
+											edge {fixed(edge)}
 										</div>
 									</div>
 
@@ -343,7 +345,7 @@ export const DecisionsSurface = () => {
 								{selected ? (
 									<div className="grid grid-cols-2 gap-5 border-(--line) border-t bg-(--sunken) px-3.5 py-3 font-mono text-[9.5px]">
 										<div>
-											<div className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.1em]">
+											<div className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-widest">
 												Score attribution
 											</div>
 											<div className="flex flex-col gap-1.5">
@@ -398,7 +400,7 @@ export const DecisionsSurface = () => {
 											</div>
 										</div>
 										<div>
-											<div className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.1em]">
+											<div className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-widest">
 												Counterfactual probes · do(·)
 											</div>
 											<div className="flex flex-col gap-1.5">

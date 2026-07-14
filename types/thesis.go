@@ -159,35 +159,125 @@ func (thesis *Thesis) RecordTrade(observation TradeObservation) {
 /*
 Absorb retains the current tick evidence used to manage one open position.
 It copies only symbol-relevant derived state rather than raw transport frames.
+Repeated calls with the same current tick remain idempotent for that symbol.
 */
 func (thesis *Thesis) Absorb(current *Thesis, symbol string) {
-	for _, measurement := range current.Measurements {
+	absorbedMeasurements := make(map[*Measurement]struct{})
+
+	for _, measurement := range thesis.Measurements {
 		if measurement.Symbol == symbol {
-			thesis.Measurements = append(thesis.Measurements, measurement)
+			absorbedMeasurements[measurement] = struct{}{}
+		}
+	}
+
+	for _, measurement := range current.Measurements {
+		if measurement.Symbol != symbol {
+			continue
+		}
+
+		if _, exists := absorbedMeasurements[measurement]; exists {
+			continue
+		}
+
+		absorbedMeasurements[measurement] = struct{}{}
+		thesis.Measurements = append(thesis.Measurements, measurement)
+	}
+
+	absorbedForecasts := make(map[forecastAbsorbKey]struct{})
+
+	for _, forecast := range thesis.Forecasts {
+		if forecast.Symbol == symbol {
+			absorbedForecasts[forecastAbsorbKey{
+				sourceEpoch: forecast.SourceEpoch,
+				at:          forecast.At,
+			}] = struct{}{}
 		}
 	}
 
 	for _, forecast := range current.Forecasts {
-		if forecast.Symbol == symbol {
-			thesis.Forecasts = append(thesis.Forecasts, forecast)
+		if forecast.Symbol != symbol {
+			continue
+		}
+
+		key := forecastAbsorbKey{
+			sourceEpoch: forecast.SourceEpoch,
+			at:          forecast.At,
+		}
+
+		if _, exists := absorbedForecasts[key]; exists {
+			continue
+		}
+
+		absorbedForecasts[key] = struct{}{}
+		thesis.Forecasts = append(thesis.Forecasts, forecast)
+	}
+
+	absorbedHypotheses := make(map[hypothesisAbsorbKey]struct{})
+
+	for _, hypothesis := range thesis.Hypotheses {
+		if hypothesis.Symbol == symbol {
+			absorbedHypotheses[hypothesisAbsorbKey{
+				source: hypothesis.Source,
+				at:     hypothesis.At,
+				claim:  hypothesis.Claim,
+			}] = struct{}{}
 		}
 	}
 
 	for _, hypothesis := range current.Hypotheses {
-		if hypothesis.Symbol == symbol {
-			thesis.Hypotheses = append(thesis.Hypotheses, hypothesis)
+		if hypothesis.Symbol != symbol {
+			continue
+		}
+
+		key := hypothesisAbsorbKey{
+			source: hypothesis.Source,
+			at:     hypothesis.At,
+			claim:  hypothesis.Claim,
+		}
+
+		if _, exists := absorbedHypotheses[key]; exists {
+			continue
+		}
+
+		absorbedHypotheses[key] = struct{}{}
+		thesis.Hypotheses = append(thesis.Hypotheses, hypothesis)
+	}
+
+	absorbedCategories := make(map[CategoryType]struct{})
+
+	for _, category := range thesis.Categories {
+		if category.Symbol == symbol {
+			absorbedCategories[category.Type] = struct{}{}
 		}
 	}
 
 	for _, category := range current.Categories {
-		if category.Symbol == symbol {
-			thesis.Categories = append(thesis.Categories, category)
+		if category.Symbol != symbol {
+			continue
 		}
+
+		if _, exists := absorbedCategories[category.Type]; exists {
+			continue
+		}
+
+		absorbedCategories[category.Type] = struct{}{}
+		thesis.Categories = append(thesis.Categories, category)
 	}
 
 	if graph, exists := current.Graphs[symbol]; exists {
 		thesis.Graphs[symbol] = graph
 	}
+}
+
+type forecastAbsorbKey struct {
+	sourceEpoch uint64
+	at          time.Time
+}
+
+type hypothesisAbsorbKey struct {
+	source SourceType
+	at     time.Time
+	claim  string
 }
 
 /*

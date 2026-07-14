@@ -210,6 +210,45 @@ func TestSignal_MeasureRequiresCrossSection(t *testing.T) {
 	})
 }
 
+func TestSignal_MeasureUsesTrimmedSymbolTimestamp(t *testing.T) {
+	Convey("Given ticker rows whose symbols need trimming", t, func() {
+		start := time.Unix(1_700_000_100, 0)
+		subjectPrices, peerPrices := correlatedPricePaths(3, 3)
+		signal := &Signal{
+			ctx:     context.Background(),
+			ticker:  &Ticker{cache: []kraken.TickerData{}},
+			section: NewSection(),
+		}
+		history := make([]kraken.TickerData, 0, len(subjectPrices)*2)
+
+		for index := range subjectPrices {
+			at := start.Add(time.Duration(index) * time.Second)
+			subjectRow := denominationRow("BTC/USD", subjectPrices[index], at)
+			peerRow := denominationRow("ETH/USD", peerPrices[index], at)
+			subjectRow.Symbol = " BTC/USD "
+			history = append(history, subjectRow, peerRow)
+		}
+
+		signal.ticker.cache = history
+
+		result := signal.Measure(types.NewThesis(nil))
+
+		Convey("Then measurements carry the source row timestamp", func() {
+			metrics := measurementFields(result.Measurements, "BTC/USD")
+			So(metrics, ShouldNotBeEmpty)
+
+			for _, measurement := range result.Measurements {
+				if measurement.Symbol != "BTC/USD" {
+					continue
+				}
+
+				So(measurement.At, ShouldEqual, start.Add(2*time.Second))
+				So(measurement.At.IsZero(), ShouldBeFalse)
+			}
+		})
+	})
+}
+
 func BenchmarkSignal_Measure(b *testing.B) {
 	start := time.Unix(1_700_000_000, 0)
 	subjectPrices, peerPrices := correlatedPricePaths(13, 64)

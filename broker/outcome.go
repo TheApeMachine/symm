@@ -40,8 +40,7 @@ func (price *Price) Reconcile(
 				continue
 			}
 
-			if fill.ExecID == "" || fill.Cost.Sign() <= 0 ||
-				fill.FeeUsdEquiv.Sign() < 0 || fill.LastQty <= 0 {
+			if fill.ExecID == "" || fill.Cost.Sign() <= 0 || fill.LastQty <= 0 {
 				return nil, errnie.Err(
 					errnie.Validation,
 					"incomplete execution data for "+symbol,

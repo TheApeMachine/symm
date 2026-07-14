@@ -46,57 +46,65 @@ func (postMortem *PostMortem) Evaluate(
 		}
 	}
 
-	accepted := false
-	reconciledEntry := false
-	buyFilled := false
-	sellFilled := false
-	closed := false
-	final := types.TradeObservation{}
-	executionIDs := make([]string, 0)
+	var entryAcceptance, reconciliation, buyFill, sellFill, closure, final *types.TradeObservation
 	evaluatedAt := time.Time{}
 
-	for _, observation := range thesis.TradeJournal {
+	for index := range thesis.TradeJournal {
+		observation := &thesis.TradeJournal[index]
+
 		if observation.Symbol != symbol {
 			continue
-		}
-
-		if observation.Kind == "broker_acceptance" && observation.Action == "enter" {
-			accepted = true
-		}
-
-		if observation.Kind == "position_reconciliation" {
-			reconciledEntry = true
-			executionIDs = append(executionIDs, observation.ExecutionID)
-		}
-
-		if observation.Kind == "execution" && observation.Side == "buy" {
-			buyFilled = true
-			executionIDs = append(executionIDs, observation.ExecutionID)
-		}
-
-		if observation.Kind == "execution" && observation.Side == "sell" {
-			sellFilled = true
-			executionIDs = append(executionIDs, observation.ExecutionID)
-		}
-
-		if observation.Kind == "position_snapshot" &&
-			observation.Status == types.LifecycleClosed {
-			quantity, err := decimal.NewFromString(observation.Quantity)
-
-			if err != nil {
-				return errnie.Err(errnie.Validation, "invalid closed quantity for "+symbol, err)
-			}
-
-			closed = quantity.Sign() == 0
-		}
-
-		if observation.Kind == "final_outcome" {
-			final = observation
 		}
 
 		if observation.At.After(evaluatedAt) {
 			evaluatedAt = observation.At
 		}
+
+		switch {
+		case observation.Kind == "broker_acceptance" && observation.Action == "enter":
+			entryAcceptance = postMortem.latestTradeObservation(entryAcceptance, observation)
+		case observation.Kind == "position_reconciliation":
+			reconciliation = postMortem.latestTradeObservation(reconciliation, observation)
+		case observation.Kind == "execution" && observation.Side == "buy":
+			buyFill = postMortem.latestTradeObservation(buyFill, observation)
+		case observation.Kind == "execution" && observation.Side == "sell":
+			sellFill = postMortem.latestTradeObservation(sellFill, observation)
+		case observation.Kind == "position_snapshot" &&
+			observation.Status == types.LifecycleClosed:
+			closure = postMortem.latestTradeObservation(closure, observation)
+		case observation.Kind == "final_outcome":
+			final = postMortem.latestTradeObservation(final, observation)
+		}
+	}
+
+	accepted := entryAcceptance != nil
+	reconciledEntry := reconciliation != nil
+	buyFilled := buyFill != nil
+	sellFilled := sellFill != nil
+	closed := false
+
+	if closure != nil {
+		quantity, err := decimal.NewFromString(closure.Quantity)
+
+		if err != nil {
+			return errnie.Err(errnie.Validation, "invalid closed quantity for "+symbol, err)
+		}
+
+		closed = quantity.Sign() == 0
+	}
+
+	executionIDs := make([]string, 0, 3)
+
+	if reconciliation != nil && reconciliation.ExecutionID != "" {
+		executionIDs = append(executionIDs, reconciliation.ExecutionID)
+	}
+
+	if buyFill != nil && buyFill.ExecutionID != "" {
+		executionIDs = append(executionIDs, buyFill.ExecutionID)
+	}
+
+	if sellFill != nil && sellFill.ExecutionID != "" {
+		executionIDs = append(executionIDs, sellFill.ExecutionID)
 	}
 
 	if entry == nil && !reconciledEntry {
@@ -104,7 +112,13 @@ func (postMortem *PostMortem) Evaluate(
 	}
 
 	if exit == nil || (!accepted && !reconciledEntry) || !sellFilled || !closed ||
-		final.PnL == "" || final.Fee == "" {
+		final == nil || final.PnL == "" || final.Fee == "" {
+		return errnie.Err(errnie.Validation, "incomplete reconciled trade journal for "+symbol, nil)
+	}
+
+	if !postMortem.tradeJournalOrdered(
+		entryAcceptance, reconciliation, buyFill, sellFill, closure, final,
+	) {
 		return errnie.Err(errnie.Validation, "incomplete reconciled trade journal for "+symbol, nil)
 	}
 
@@ -135,24 +149,103 @@ func (postMortem *PostMortem) Evaluate(
 
 	thesis.Findings = append(thesis.Findings,
 		types.Finding{
-			Component: "forecast", Condition: "entry forecast selected for execution",
-			Evidence: []string{entry.ForecastSource, entry.ForecastModel,
-				strconv.FormatUint(entry.ForecastEpoch, 10)},
-			EstimatedEffect: entry.ExpectedReturn, Uncertainty: entry.Uncertainty,
-			RequiredValidation: validation, CurrentModel: entry.ForecastModel,
+			Component: "forecast",
+			Condition: "entry forecast selected for execution",
+			Evidence: []string{
+				entry.ForecastSource,
+				entry.ForecastModel,
+				strconv.FormatUint(entry.ForecastEpoch, 10),
+			},
+			EstimatedEffect:    entry.ExpectedReturn,
+			Uncertainty:        entry.Uncertainty,
+			RequiredValidation: validation,
+			CurrentModel:       entry.ForecastModel,
 		},
 		types.Finding{
-			Component: "decision", Condition: entry.Reason,
-			Evidence:        []string{entry.Action, exit.Action, exit.Reason},
-			EstimatedEffect: entry.Utility, Uncertainty: entry.Uncertainty,
+			Component: "decision",
+			Condition: entry.Reason,
+			Evidence: []string{
+				entry.Action, exit.Action, exit.Reason,
+			},
+			EstimatedEffect:    entry.Utility,
+			Uncertainty:        entry.Uncertainty,
 			RequiredValidation: validation,
 		},
 		types.Finding{
-			Component: "execution", Condition: "entry and exit fills reconciled with reported fees",
-			Evidence: executionIDs, EstimatedEffect: final.ReturnPct,
+			Component:          "execution",
+			Condition:          "entry and exit fills reconciled with reported fees",
+			Evidence:           executionIDs,
+			EstimatedEffect:    final.ReturnPct,
 			RequiredValidation: validation,
 		},
 	)
 
 	return thesis.Transition(symbol, types.LifecycleEvaluated, evaluatedAt)
+}
+
+/*
+latestTradeObservation keeps the journal event with the latest At timestamp.
+*/
+func (postMortem *PostMortem) latestTradeObservation(
+	current, candidate *types.TradeObservation,
+) *types.TradeObservation {
+	if candidate == nil {
+		return current
+	}
+
+	if current == nil || !candidate.At.Before(current.At) {
+		return candidate
+	}
+
+	return current
+}
+
+/*
+tradeJournalOrdered verifies entry, exit, closure, and final outcome timestamps
+advance in chronological order using the latest event selected for each stage.
+*/
+func (postMortem *PostMortem) tradeJournalOrdered(
+	entryAcceptance, reconciliation, buyFill, sellFill, closure, final *types.TradeObservation,
+) bool {
+	entryAt := postMortem.tradeJournalEntryAt(entryAcceptance, reconciliation)
+
+	if entryAt.IsZero() || sellFill == nil || closure == nil || final == nil {
+		return false
+	}
+
+	previous := entryAt
+
+	if buyFill != nil {
+		if previous.After(buyFill.At) {
+			return false
+		}
+
+		previous = buyFill.At
+	}
+
+	if previous.After(sellFill.At) || sellFill.At.After(closure.At) || closure.At.After(final.At) {
+		return false
+	}
+
+	return true
+}
+
+/*
+tradeJournalEntryAt returns the earliest accepted entry boundary for the trade.
+*/
+func (postMortem *PostMortem) tradeJournalEntryAt(
+	entryAcceptance, reconciliation *types.TradeObservation,
+) time.Time {
+	entryAt := time.Time{}
+
+	if reconciliation != nil {
+		entryAt = reconciliation.At
+	}
+
+	if entryAcceptance != nil &&
+		(entryAt.IsZero() || entryAcceptance.At.Before(entryAt)) {
+		entryAt = entryAcceptance.At
+	}
+
+	return entryAt
 }

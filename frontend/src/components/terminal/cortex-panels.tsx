@@ -78,12 +78,11 @@ export const CortexSidePanels = ({
 		entropyBits !== null && entropyThreshold !== null && entropyThreshold > 0
 			? `${Math.round(clamp((entropyBits / entropyThreshold) * 100, 0, 100))}%`
 			: "—";
-	const remPhaseVariant =
-		reading?.sideline === true
-			? "error"
-			: reading?.ambiguous === true
-				? "warning"
-				: "info";
+	const remPhaseVariant = reading?.sideline
+		? "error"
+		: reading?.ambiguous
+			? "warning"
+			: "info";
 
 	return (
 		<div className="flex flex-col gap-3.5">

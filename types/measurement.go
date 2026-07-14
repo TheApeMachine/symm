@@ -235,6 +235,36 @@ type MeasurementValidity struct {
 }
 
 /*
+ObservationValidity derives observation-layer validity from how many
+corroborating events contributed to the current window. A lone event stays
+provisional so downstream logic and UI can distinguish thin batches from
+multi-event corroboration while ReadinessObservation remains unchanged.
+*/
+func ObservationValidity(evidenceCount int) MeasurementValidity {
+	validity := MeasurementValidity{
+		Readiness: ReadinessObservation,
+	}
+
+	if evidenceCount <= 0 {
+		validity.State = ValidityInvalid
+		validity.Reason = "no observation evidence"
+
+		return validity
+	}
+
+	if evidenceCount == 1 {
+		validity.State = ValidityProvisional
+		validity.Reason = "single observation in window"
+
+		return validity
+	}
+
+	validity.State = ValidityValid
+
+	return validity
+}
+
+/*
 ScaleType identifies the baseline or observation epoch that gives a normalized
 or estimated value its local scale.
 */

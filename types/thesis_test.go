@@ -109,6 +109,15 @@ func TestThesisAbsorb(t *testing.T) {
 			So(lifecycle.Graphs, ShouldContainKey, "BTC/USD")
 			So(lifecycle.Measurements[0].Symbol, ShouldEqual, "BTC/USD")
 		})
+
+		Convey("Then repeated absorption of the same tick stays idempotent", func() {
+			lifecycle.Absorb(current, "BTC/USD")
+
+			So(lifecycle.Measurements, ShouldHaveLength, 1)
+			So(lifecycle.Forecasts, ShouldHaveLength, 1)
+			So(lifecycle.Hypotheses, ShouldHaveLength, 1)
+			So(lifecycle.Categories, ShouldHaveLength, 1)
+		})
 	})
 }
 
@@ -163,6 +172,13 @@ func TestThesisObservePostExit(t *testing.T) {
 
 		Convey("Then one epoch starts but does not complete the required tail", func() {
 			So(thesis.LifecycleState("BTC/USD"), ShouldEqual, LifecyclePostExitObservation)
+		})
+
+		So(thesis.ObservePostExit(first, "BTC/USD"), ShouldBeNil)
+
+		Convey("Then repeating the same post-exit tick does not duplicate evidence", func() {
+			So(thesis.LifecycleState("BTC/USD"), ShouldEqual, LifecyclePostExitObservation)
+			So(thesis.Forecasts, ShouldHaveLength, 2)
 		})
 
 		So(thesis.ObservePostExit(second, "BTC/USD"), ShouldBeNil)

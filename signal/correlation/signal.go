@@ -2,6 +2,7 @@ package correlation
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -48,6 +49,21 @@ func (signal *Signal) Measure(
 
 	thesis.CrossSection.Measure(rows)
 	scoresBySymbol := signal.section.Measure(rows)
+	latestAtBySymbol := make(map[string]time.Time, len(rows))
+
+	for _, row := range rows {
+		symbol := strings.TrimSpace(row.Symbol)
+
+		if symbol == "" || row.Timestamp.IsZero() {
+			continue
+		}
+
+		if !row.Timestamp.After(latestAtBySymbol[symbol]) {
+			continue
+		}
+
+		latestAtBySymbol[symbol] = row.Timestamp
+	}
 
 	for _, metric := range thesis.CrossSection.Metrics {
 		scores, ok := scoresBySymbol[metric.Symbol]
@@ -56,14 +72,10 @@ func (signal *Signal) Measure(
 			continue
 		}
 
-		var at time.Time
+		at, ok := latestAtBySymbol[metric.Symbol]
 
-		for index := len(rows) - 1; index >= 0; index-- {
-			if rows[index].Symbol == metric.Symbol {
-				at = rows[index].Timestamp
-
-				break
-			}
+		if !ok || at.IsZero() {
+			continue
 		}
 
 		validity := types.MeasurementValidity{

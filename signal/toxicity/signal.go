@@ -60,6 +60,33 @@ type symbolEvidence struct {
 }
 
 /*
+observationContext carries the shared validity and scale contract for one
+toxicity observation window anchored at a source event time.
+*/
+type observationContext struct {
+	validity types.MeasurementValidity
+	scale    types.ScaleReference
+}
+
+/*
+newObservationContext builds validity from corroborating event count and scale
+from the observation timestamp so Measure and touchHonesty share one contract.
+*/
+func newObservationContext(
+	at time.Time,
+	evidenceCount int,
+) observationContext {
+	return observationContext{
+		validity: types.ObservationValidity(evidenceCount),
+		scale: types.ScaleReference{
+			Kind:    types.ScaleObservationWindow,
+			From:    at,
+			Through: at,
+		},
+	}
+}
+
+/*
 Measure converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
@@ -126,15 +153,7 @@ func (signal *Signal) Measure(
 
 	for symbol, row := range evidence {
 		maturity := float64(row.tradeCount) / float64(row.tradeCount+1)
-		validity := types.MeasurementValidity{
-			State:     types.ValidityValid,
-			Readiness: types.ReadinessObservation,
-		}
-		scale := types.ScaleReference{
-			Kind:    types.ScaleObservationWindow,
-			From:    row.latestAt,
-			Through: row.latestAt,
-		}
+		obsCtx := newObservationContext(row.latestAt, row.tradeCount)
 
 		out = append(out, &types.Measurement{
 			Source:   types.SourceToxicity,
@@ -146,8 +165,8 @@ func (signal *Signal) Measure(
 			Unit:     types.UnitBaseCurrency,
 			Raw:      row.volume.Float64(),
 			Maturity: maturity,
-			Validity: validity,
-			Scale:    scale,
+			Validity: obsCtx.validity,
+			Scale:    obsCtx.scale,
 		})
 
 		if row.fillBid != nil {
@@ -162,8 +181,8 @@ func (signal *Signal) Measure(
 				Unit:     types.UnitQuoteCurrency,
 				Raw:      row.fillBid.Float64(),
 				Maturity: maturity,
-				Validity: validity,
-				Scale:    scale,
+				Validity: obsCtx.validity,
+				Scale:    obsCtx.scale,
 			})
 		}
 
@@ -179,8 +198,8 @@ func (signal *Signal) Measure(
 				Unit:     types.UnitQuoteCurrency,
 				Raw:      row.fillAsk.Float64(),
 				Maturity: maturity,
-				Validity: validity,
-				Scale:    scale,
+				Validity: obsCtx.validity,
+				Scale:    obsCtx.scale,
 			})
 		}
 
@@ -218,8 +237,8 @@ func (signal *Signal) Measure(
 					Unit:     types.UnitQuoteCurrency,
 					Raw:      bid.Price.Float64(),
 					Maturity: maturity,
-					Validity: validity,
-					Scale:    scale,
+					Validity: obsCtx.validity,
+					Scale:    obsCtx.scale,
 				},
 				&types.Measurement{
 					Source:   types.SourceToxicity,
@@ -232,8 +251,8 @@ func (signal *Signal) Measure(
 					Unit:     types.UnitQuoteCurrency,
 					Raw:      ask.Price.Float64(),
 					Maturity: maturity,
-					Validity: validity,
-					Scale:    scale,
+					Validity: obsCtx.validity,
+					Scale:    obsCtx.scale,
 				},
 				&types.Measurement{
 					Source:   types.SourceToxicity,
@@ -246,8 +265,8 @@ func (signal *Signal) Measure(
 					Unit:     types.UnitBaseCurrency,
 					Raw:      bidQuantity,
 					Maturity: maturity,
-					Validity: validity,
-					Scale:    scale,
+					Validity: obsCtx.validity,
+					Scale:    obsCtx.scale,
 				},
 				&types.Measurement{
 					Source:   types.SourceToxicity,
@@ -260,8 +279,8 @@ func (signal *Signal) Measure(
 					Unit:     types.UnitBaseCurrency,
 					Raw:      askQuantity,
 					Maturity: maturity,
-					Validity: validity,
-					Scale:    scale,
+					Validity: obsCtx.validity,
+					Scale:    obsCtx.scale,
 				},
 			)
 
@@ -310,15 +329,7 @@ func (signal *Signal) touchHonesty(
 	bidCancelled := cancelledQuantity(prior.bidQuantity, bidQuantity, row.bidExecuted)
 	askCancelled := cancelledQuantity(prior.askQuantity, askQuantity, row.askExecuted)
 	measurements := make([]*types.Measurement, 0, 4)
-	validity := types.MeasurementValidity{
-		State:     types.ValidityValid,
-		Readiness: types.ReadinessObservation,
-	}
-	scale := types.ScaleReference{
-		Kind:    types.ScaleObservationWindow,
-		From:    row.latestAt,
-		Through: row.latestAt,
-	}
+	obsCtx := newObservationContext(row.latestAt, row.tradeCount)
 
 	if bidCancelled > 0 {
 		measurements = append(measurements, &types.Measurement{
@@ -333,8 +344,8 @@ func (signal *Signal) touchHonesty(
 			Raw:        bidCancelled,
 			Normalized: types.NormalizeRatio(bidCancelled, prior.bidQuantity),
 			Maturity:   maturity,
-			Validity:   validity,
-			Scale:      scale,
+			Validity:   obsCtx.validity,
+			Scale:      obsCtx.scale,
 		})
 	}
 
@@ -351,8 +362,8 @@ func (signal *Signal) touchHonesty(
 			Raw:        askCancelled,
 			Normalized: types.NormalizeRatio(askCancelled, prior.askQuantity),
 			Maturity:   maturity,
-			Validity:   validity,
-			Scale:      scale,
+			Validity:   obsCtx.validity,
+			Scale:      obsCtx.scale,
 		})
 	}
 
@@ -376,8 +387,8 @@ func (signal *Signal) touchHonesty(
 		Raw:        retreatingQuantity,
 		Normalized: types.NormalizeRatio(retreatingQuantity, retreatBaseline),
 		Maturity:   maturity,
-		Validity:   validity,
-		Scale:      scale,
+		Validity:   obsCtx.validity,
+		Scale:      obsCtx.scale,
 	})
 
 	return measurements

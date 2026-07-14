@@ -61,6 +61,19 @@ type Graph struct {
 }
 
 /*
+edgeEqual reports whether two edges carry the same relationship and temporal
+provenance. time.Time fields use Equal so duplicate detection survives
+monotonic-clock differences between stored and incoming timestamps.
+*/
+func edgeEqual(left, right Edge) bool {
+	return left.Type == right.Type &&
+		left.From == right.From &&
+		left.To == right.To &&
+		left.At.Equal(right.At) &&
+		left.ObservedFrom.Equal(right.ObservedFrom)
+}
+
+/*
 NewGraph starts an empty relationship graph for one symbol.
 */
 func NewGraph(symbol string) *Graph {
@@ -147,7 +160,7 @@ func (graph *Graph) Relate(
 	lines := graph.graph.Lines(fromID, toID)
 
 	for lines.Next() {
-		if graph.lines[[3]int64{fromID, toID, lines.Line().ID()}] == edge {
+		if edgeEqual(graph.lines[[3]int64{fromID, toID, lines.Line().ID()}], edge) {
 			return false
 		}
 	}

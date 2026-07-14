@@ -600,6 +600,7 @@ func (position *Position) Execution(
 
 func (position *Position) Enter() error {
 	position.requestedQty = position.Data.Qty
+	position.Data.Qty = *decimal.NewFromInt64(0)
 
 	/*
 		Taker returns the estimated quote-currency cost of buying

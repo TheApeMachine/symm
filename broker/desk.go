@@ -190,7 +190,10 @@ func (desk *Desk) OpenPositions() int {
 	count := 0
 
 	desk.positions.Range(func(_, value any) bool {
-		if value.(*Position).Data.Qty.Sign() > 0 {
+		position := value.(*Position)
+
+		if position.Data.Qty.Sign() > 0 || position.Status() == types.PENDING ||
+			position.Status() == types.OPEN {
 			count++
 		}
 

@@ -41,6 +41,8 @@ func TestSignal_MeasureUsesTradeEventTime(testingTB *testing.T) {
 			So(volume.At, ShouldEqual, eventAt)
 			So(volume.Subject, ShouldEqual, types.SubjectLevel3Tape)
 			So(volume.Maturity, ShouldBeGreaterThan, 0)
+			So(volume.Validity.State, ShouldEqual, types.ValidityProvisional)
+			So(volume.Validity.Readiness, ShouldEqual, types.ReadinessObservation)
 			So(volume.Normalized, ShouldBeNil)
 			So(volume.Scale.Kind, ShouldEqual, types.ScaleObservationWindow)
 		})
@@ -95,6 +97,7 @@ func TestSignal_touchHonestyEmitsCancelledQuantity(testingTB *testing.T) {
 			cancelled, ok := latestMetric(measurements, types.MetricCancelledQuantity, types.SideBuy)
 			So(ok, ShouldBeTrue)
 			So(cancelled.Raw, ShouldEqual, 3)
+			So(cancelled.Validity.State, ShouldEqual, types.ValidityProvisional)
 			So(cancelled.Normalized, ShouldNotBeNil)
 			So(*cancelled.Normalized, ShouldAlmostEqual, 0.6, 1e-9)
 

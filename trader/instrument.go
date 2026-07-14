@@ -3,6 +3,7 @@ package trader
 import (
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +16,11 @@ import (
 	"github.com/theapemachine/symm/utils"
 )
 
+/*
+Instrument owns Kraken pair metadata and the subscription universe. Its heavy
+tier always includes open holdings so every managed position receives the data
+required for continuation and exit decisions.
+*/
 type Instrument struct {
 	status    types.Status
 	api       *websocket.API
@@ -26,6 +32,10 @@ type Instrument struct {
 	tierReady bool
 }
 
+/*
+NewInstrument creates the market-instrument registry used by subscriptions and
+order validation.
+*/
 func NewInstrument(
 	api *websocket.API,
 	price *broker.Price,
@@ -146,6 +156,15 @@ func (instrument *Instrument) Subscribe() error {
 	}
 
 	batchSize := viper.GetInt("market.subscribe_batch")
+
+	if batchSize < 1 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trader: market.subscribe_batch must be at least 1",
+			nil,
+		))
+	}
+
 	pace := viper.GetDuration("market.subscribe_pace")
 	instrument.symbols = symbols
 
@@ -171,12 +190,48 @@ Tier returns the most immediately executable symbols from the observed ticker
 cohort. It does not invent liquidity for listed pairs that have emitted no
 ticker; the heavy tier becomes valid only when the cohort can fill every slot.
 */
-func (instrument *Instrument) Tier() ([]string, bool) {
-	rows, _ := instrument.price.Snapshot(instrument.symbols)
+func (instrument *Instrument) Tier(required []string) ([]string, bool, error) {
+	rows, missing := instrument.price.Snapshot(instrument.symbols)
+
+	if len(missing) > 0 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trader: incomplete ticker snapshot: "+strings.Join(missing, ", "),
+			nil,
+		))
+	}
+
 	size := viper.GetInt("market.universe.trading_tier_size")
 
 	if size <= 0 || len(rows) < size {
-		return nil, false
+		return nil, false, nil
+	}
+
+	requiredSet := make(map[string]struct{}, len(required))
+	available := make(map[string]struct{}, len(instrument.symbols))
+
+	for _, symbol := range instrument.symbols {
+		available[symbol] = struct{}{}
+	}
+
+	for _, symbol := range required {
+		if _, exists := available[symbol]; !exists {
+			return nil, false, errnie.Err(
+				errnie.Validation,
+				"open holding has no online instrument: "+symbol,
+				nil,
+			)
+		}
+
+		requiredSet[symbol] = struct{}{}
+	}
+
+	if len(requiredSet) > size {
+		return nil, false, errnie.Err(
+			errnie.Validation,
+			"open holdings exceed configured trading tier capacity",
+			nil,
+		)
 	}
 
 	sort.Slice(rows, func(left, right int) bool {
@@ -197,14 +252,32 @@ func (instrument *Instrument) Tier() ([]string, bool) {
 		return rows[left].Symbol < rows[right].Symbol
 	})
 
-	size = min(size, len(rows))
-	symbols := make([]string, size)
+	symbols := make([]string, 0, size)
+	seen := make(map[string]struct{}, size)
 
-	for index := range symbols {
-		symbols[index] = rows[index].Symbol
+	for symbol := range requiredSet {
+		symbols = append(symbols, symbol)
 	}
 
-	return symbols, true
+	sort.Strings(symbols)
+
+	for _, symbol := range symbols {
+		seen[symbol] = struct{}{}
+	}
+
+	for _, row := range rows {
+		if len(symbols) == size {
+			break
+		}
+
+		if _, exists := seen[row.Symbol]; exists {
+			continue
+		}
+
+		symbols = append(symbols, row.Symbol)
+	}
+
+	return symbols, true, nil
 }
 
 /*
@@ -212,12 +285,16 @@ Activate subscribes the statistically selected heavy tier exactly once. Ticker
 coverage remains universal while trade, book, and level3 compute stays within
 the configured solver capacity.
 */
-func (instrument *Instrument) Activate() (bool, error) {
+func (instrument *Instrument) Activate(required []string) (bool, error) {
 	if instrument.tierReady {
 		return true, nil
 	}
 
-	symbols, ready := instrument.Tier()
+	symbols, ready, err := instrument.Tier(required)
+
+	if err != nil {
+		return false, errnie.Error(err)
+	}
 
 	if !ready {
 		return false, nil

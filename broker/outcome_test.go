@@ -57,6 +57,30 @@ func TestPriceReconcile(t *testing.T) {
 			So(outcome.PnL.Float64(), ShouldEqual, 8.0)
 		})
 	})
+
+	Convey("Given a maker-rebate fill with negative USD-equivalent fee", t, func() {
+		price := &Price{}
+		executions := []*kraken.Execution{{Data: []kraken.ExecutionData{
+			{
+				ExecID: "buy", ExecType: "trade", Symbol: "BTC/USD", Side: "buy",
+				LastQty: 1, LastPrice: *decimal.NewFromInt64(100),
+				Cost: *decimal.NewFromInt64(100), FeeUsdEquiv: *decimal.NewFromFloat64(1),
+			},
+			{
+				ExecID: "sell", ExecType: "trade", Symbol: "BTC/USD", Side: "sell",
+				LastQty: 1, LastPrice: *decimal.NewFromInt64(110),
+				Cost: *decimal.NewFromInt64(110), FeeUsdEquiv: *decimal.NewFromFloat64(-0.5),
+			},
+		}}}
+
+		outcome, err := price.Reconcile("BTC/USD", executions)
+
+		Convey("Then the rebate reduces total fees and increases realized PnL", func() {
+			So(err, ShouldBeNil)
+			So(outcome.ExitFee.Float64(), ShouldEqual, -0.5)
+			So(outcome.PnL.Float64(), ShouldEqual, 9.5)
+		})
+	})
 }
 
 func BenchmarkPriceReconcile(b *testing.B) {

@@ -191,11 +191,19 @@ func (planner *Planner) continuation(
 	}
 
 	return types.Decision{
-		Action: action, Symbol: forecast.Symbol, At: forecast.At,
-		Utility: utility, Alternatives: alternatives, ProposedQuantity: quantity,
-		ExpectedFees: fee, ExpectedSpread: forecast.ExpectedSpread / 2,
-		ReferencePrice: forecast.ReferencePrice, ValidThroughEpoch: forecast.ExpiresEpoch,
-		ForecastSource: forecast.Source, Cause: "continuation", Reason: reason,
+		Action:            action,
+		Symbol:            forecast.Symbol,
+		At:                forecast.At,
+		Utility:           utility,
+		Alternatives:      alternatives,
+		ProposedQuantity:  quantity,
+		ExpectedFees:      fee,
+		ExpectedSpread:    forecast.ExpectedSpread / 2,
+		ReferencePrice:    forecast.ReferencePrice,
+		ValidThroughEpoch: forecast.ExpiresEpoch,
+		ForecastSource:    forecast.Source,
+		Cause:             "continuation",
+		Reason:            reason,
 	}
 }
 
@@ -284,10 +292,15 @@ func (planner *Planner) nothing(
 	reason string,
 ) types.Decision {
 	return types.Decision{
-		Action: "nothing", Symbol: forecast.Symbol, At: forecast.At,
-		Alternatives:   map[string]float64{"nothing": 0},
-		ReferencePrice: forecast.ReferencePrice, ValidThroughEpoch: forecast.ExpiresEpoch,
-		ForecastSource: forecast.Source, Cause: "infeasible", Reason: reason,
+		Action:            "nothing",
+		Symbol:            forecast.Symbol,
+		At:                forecast.At,
+		Alternatives:      map[string]float64{"nothing": 0},
+		ReferencePrice:    forecast.ReferencePrice,
+		ValidThroughEpoch: forecast.ExpiresEpoch,
+		ForecastSource:    forecast.Source,
+		Cause:             "infeasible",
+		Reason:            reason,
 	}
 }
 
@@ -339,7 +352,6 @@ func NewPlanner(
 
 func (planner *Planner) Initialize() error {
 	errnie.Info("initializing planner")
-
 	planner.status = types.READY
 	return nil
 }

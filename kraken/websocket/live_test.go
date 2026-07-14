@@ -127,7 +127,14 @@ func TestLiveSubscribeLevel3SendsDepth(t *testing.T) {
 		Convey("When level3 is subscribed at the configured depth", func() {
 			So(live.SubscribeLevel3([]string{"BTC/USD"}, 100), ShouldBeNil)
 
-			request := <-requests
+			var request map[string]any
+
+			select {
+			case request = <-requests:
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for subscribe request")
+			}
+
 			params := request["params"].(map[string]any)
 
 			Convey("Then depth is present on the actual wire request", func() {

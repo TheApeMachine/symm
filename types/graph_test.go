@@ -122,6 +122,30 @@ func TestGraphRelate(t *testing.T) {
 				So(graph.Edges[0].ObservedFrom, ShouldEqual, at.Add(-time.Second))
 			})
 		})
+
+		Convey("When the same edge is related again with equivalent timestamps", func() {
+			wallAt := time.Now().Truncate(time.Second)
+			observedFrom := wallAt.Add(-time.Second)
+			fromKey := measurementKey(from)
+			toKey := measurementKey(to)
+
+			So(graph.Relate(fromKey, toKey, Supports, wallAt, observedFrom), ShouldBeTrue)
+
+			equivalentAt := time.Date(
+				wallAt.Year(), wallAt.Month(), wallAt.Day(),
+				wallAt.Hour(), wallAt.Minute(), wallAt.Second(), 0, wallAt.Location(),
+			)
+			equivalentObservedFrom := time.Date(
+				observedFrom.Year(), observedFrom.Month(), observedFrom.Day(),
+				observedFrom.Hour(), observedFrom.Minute(), observedFrom.Second(),
+				0, observedFrom.Location(),
+			)
+
+			Convey("Then duplicate edges are rejected", func() {
+				So(graph.Relate(fromKey, toKey, Supports, equivalentAt, equivalentObservedFrom), ShouldBeFalse)
+				So(graph.Edges, ShouldHaveLength, 1)
+			})
+		})
 	})
 }
 
