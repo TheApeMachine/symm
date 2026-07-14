@@ -56,7 +56,7 @@ export const SignalsSurface = () => {
 			<div className="min-h-0 space-y-3.5 overflow-auto border-(--line) border-l bg-(--surface) p-3.5">
 				<HealthPanel sources={sources} />
 				<CrossSectionPanel />
-				<RadarPanel />
+				<RadarPanel sources={sources} />
 			</div>
 		</div>
 	);

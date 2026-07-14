@@ -107,8 +107,7 @@ const KERNEL_COPY: Record<
 	correlation: {
 		name: "Correlation",
 		sub: "correlation · cross-section",
-		blurb:
-			"Cross-symbol correlation pressure from backend measurements.",
+		blurb: "Cross-symbol correlation pressure from backend measurements.",
 	},
 	pumpdump: {
 		name: "Pumpdump",
@@ -125,8 +124,7 @@ const KERNEL_COPY: Record<
 	liquidity: {
 		name: "Liquidity",
 		sub: "liquidity · depth",
-		blurb:
-			"Book depth and liquidity pressure from backend measurements.",
+		blurb: "Book depth and liquidity pressure from backend measurements.",
 	},
 	toxicity: {
 		name: "Toxicity",
@@ -159,8 +157,7 @@ export const kernelCopy = (source: string, category: string) =>
 	KERNEL_COPY[source] ?? {
 		name: source,
 		sub: category || source,
-		blurb:
-			"Backend measurement projected into the terminal signal surface.",
+		blurb: "Backend measurement projected into the terminal signal surface.",
 	};
 
 export const kernelStatusMeta = (
@@ -233,7 +230,8 @@ export const kernelSparkPaths = (
 					? "0.0"
 					: "150.0"
 				: ((index / Math.max(history.length - 1, 1)) * 150).toFixed(1);
-		const y = (29 - value * 26).toFixed(1);
+		const clamped = Math.max(0, Math.min(1, value));
+		const y = (29 - clamped * 26).toFixed(1);
 
 		return `${x},${y}`;
 	});

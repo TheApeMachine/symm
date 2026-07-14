@@ -6,9 +6,7 @@ import (
 	"testing"
 	"time"
 
-	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/tests"
@@ -32,12 +30,12 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 			Feed(tickerfixture.NewFixture(tickerfixture.UPDATE, 32))
 
 		Convey("When calm and pumped ticker timelines are measured", func() {
-			calm := measureField(signal, handlers, market.Frames(), "rvol")
+			calm := measureField(signal, handlers, market.Frames(), types.MetricRVOL)
 			pumped := measureField(
 				signal,
 				handlers,
 				tests.Spike(market.Frames(), 16, 1.25, 8),
-				"rvol",
+				types.MetricRVOL,
 			)
 
 			Convey("Then the pumped stream should lift relative volume", func() {
@@ -65,11 +63,7 @@ func TestSignal_MeasureSkipsIncompleteRow(testingTB *testing.T) {
 			result := signal.Measure(types.NewThesis(nil))
 
 			Convey("Then it should wait without publishing metrics", func() {
-				raw, ok := result.Measurements.Load("pumpdump")
-				So(ok, ShouldBeTrue)
-
-				out := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])
-				So(out, ShouldBeEmpty)
+				So(result.Measurements, ShouldBeEmpty)
 			})
 		})
 	})
@@ -91,12 +85,15 @@ func TestSignal_Measure(testingTB *testing.T) {
 		result := signal.Measure(types.NewThesis(nil))
 
 		Convey("It should publish ignition metrics without categories", func() {
-			raw, ok := result.Measurements.Load("pumpdump")
-			So(ok, ShouldBeTrue)
+			ignition := 0.0
 
-			out, ok := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])
-			So(ok, ShouldBeTrue)
-			So(out["ALGO/USD"]["ignition"].Float64(), ShouldBeGreaterThan, 0)
+			for _, measurement := range result.Measurements {
+				if measurement.Symbol == "ALGO/USD" && measurement.Metric == types.MetricIgnition {
+					ignition = measurement.Raw
+				}
+			}
+
+			So(ignition, ShouldBeGreaterThan, 0)
 			So(len(signal.ticker.cache), ShouldEqual, 0)
 		})
 	})
@@ -106,7 +103,7 @@ func measureField(
 	signal *Signal,
 	handlers tests.Handlers,
 	frames iter.Seq[tests.Frame],
-	key string,
+	metric types.MetricType,
 ) float64 {
 	signal.ticker.cache = signal.ticker.cache[:0]
 	tests.Replay(handlers, frames)
@@ -114,19 +111,15 @@ func measureField(
 	thesis := types.NewThesis(nil)
 	result := signal.Measure(thesis)
 
-	raw, ok := result.Measurements.Load("pumpdump")
+	value := 0.0
 
-	if !ok {
-		return 0
+	for _, measurement := range result.Measurements {
+		if measurement.Symbol == "ALGO/USD" && measurement.Metric == metric {
+			value = measurement.Raw
+		}
 	}
 
-	out, ok := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])
-
-	if !ok || out["ALGO/USD"] == nil || out["ALGO/USD"][key] == nil {
-		return 0
-	}
-
-	return out["ALGO/USD"][key].Float64()
+	return value
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {

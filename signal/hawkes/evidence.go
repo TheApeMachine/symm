@@ -260,7 +260,7 @@ func (evidence *Evidence) measurement(
 		Source:       types.SourceHawkes,
 		Metric:       metric,
 		Subject:      subject,
-		Stream:       "trades",
+		Stream:       types.Hawkes,
 		Symbol:       symbol,
 		Side:         side,
 		At:           outcome.At,
@@ -268,16 +268,71 @@ func (evidence *Evidence) measurement(
 		Horizon:      outcome.Horizon,
 		Unit:         unit,
 		Raw:          raw,
-		Normalized:   0,
+		Normalized:   evidence.normalized(outcome, metric, side, unit, raw),
 		Maturity:     outcome.Maturity,
-		Uncertainty: types.MeasurementUncertainty{
-			Available: false,
-		},
-		Validity: validity,
+		Validity:     validity,
 		Scale: types.ScaleReference{
 			Kind:    types.ScaleObservationWindow,
 			From:    outcome.ObservedFrom,
 			Through: outcome.At,
 		},
+	}
+}
+
+func (evidence *Evidence) normalized(
+	outcome excitation.Outcome,
+	metric types.MetricType,
+	side types.MeasurementSide,
+	unit types.MeasurementUnit,
+	raw float64,
+) *float64 {
+	if unit == types.UnitDimensionless {
+		return types.NormalizeFinite(raw)
+	}
+
+	if unit != types.UnitEventsPerSecond {
+		return nil
+	}
+
+	switch metric {
+	case types.MetricArrivalRate:
+		return evidence.arrivalNormalized(side, outcome, raw)
+	case types.MetricConditionalIntensity, types.MetricBaselineIntensity:
+		return evidence.intensityNormalized(side, outcome, raw)
+	default:
+		return nil
+	}
+}
+
+func (evidence *Evidence) arrivalNormalized(
+	side types.MeasurementSide,
+	outcome excitation.Outcome,
+	raw float64,
+) *float64 {
+	if !outcome.Readiness.HawkesFit {
+		total := outcome.BuyArrivalRate + outcome.SellArrivalRate
+
+		if total <= 0 {
+			return nil
+		}
+
+		return types.NormalizeDeviation(raw, total/2)
+	}
+
+	return evidence.intensityNormalized(side, outcome, raw)
+}
+
+func (evidence *Evidence) intensityNormalized(
+	side types.MeasurementSide,
+	outcome excitation.Outcome,
+	raw float64,
+) *float64 {
+	switch side {
+	case types.SideBuy:
+		return types.NormalizeDeviation(raw, outcome.Fit.MuX)
+	case types.SideSell:
+		return types.NormalizeDeviation(raw, outcome.Fit.MuY)
+	default:
+		return nil
 	}
 }

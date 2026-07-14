@@ -3,8 +3,6 @@ package cvd
 import (
 	"context"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
@@ -41,7 +39,7 @@ func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
 	trades := signal.trade.cache
-	out := datura.Map[datura.Map[*decimal.Decimal]]{}
+	out := make([]*types.Measurement, 0, len(trades))
 
 	for _, row := range trades {
 		if row.Symbol == "" || row.Price.Sign() <= 0 || row.Qty <= 0 {
@@ -77,23 +75,49 @@ func (signal *Signal) Measure(
 			)))
 		}
 
-		out[row.Symbol] = datura.Map[*decimal.Decimal]{
-			"absorption":  decimal.NewFromFloat64(output.Absorption),
-			"drive":       decimal.NewFromFloat64(output.Drive),
-			"balance":     decimal.NewFromFloat64(output.Balance),
-			"starvation":  decimal.NewFromFloat64(output.Starvation),
-			"strength":    decimal.NewFromFloat64(output.Value),
-			"net":         decimal.NewFromFloat64(output.Net),
-			"netFraction": decimal.NewFromFloat64(output.NetFraction),
-			"category":    decimal.NewFromFloat64(output.Category),
-			"maturity":    decimal.NewFromFloat64(maturity),
-		}
+		out = append(out,
+			types.ObservationMeasurement(
+				types.SourceCVD, types.CVD, types.MetricAbsorption,
+				types.SubjectAggressorFlow, row.Symbol, row.Timestamp,
+				types.UnitDimensionless, output.Absorption, maturity,
+			),
+			types.ObservationMeasurement(
+				types.SourceCVD, types.CVD, types.MetricDrive,
+				types.SubjectAggressorFlow, row.Symbol, row.Timestamp,
+				types.UnitDimensionless, output.Drive, maturity,
+			),
+			types.ObservationMeasurement(
+				types.SourceCVD, types.CVD, types.MetricBalance,
+				types.SubjectAggressorFlow, row.Symbol, row.Timestamp,
+				types.UnitDimensionless, output.Balance, maturity,
+			),
+			types.ObservationMeasurement(
+				types.SourceCVD, types.CVD, types.MetricStarvation,
+				types.SubjectAggressorFlow, row.Symbol, row.Timestamp,
+				types.UnitDimensionless, output.Starvation, maturity,
+			),
+			types.ObservationMeasurement(
+				types.SourceCVD, types.CVD, types.MetricStrength,
+				types.SubjectAggressorFlow, row.Symbol, row.Timestamp,
+				types.UnitDimensionless, output.Value, maturity,
+			),
+			types.ObservationMeasurement(
+				types.SourceCVD, types.CVD, types.MetricNetFraction,
+				types.SubjectAggressorFlow, row.Symbol, row.Timestamp,
+				types.UnitDimensionless, output.NetFraction, maturity,
+			),
+			types.ObservationMeasurement(
+				types.SourceCVD, types.CVD, types.MetricNet,
+				types.SubjectAggressorFlow, row.Symbol, row.Timestamp,
+				types.UnitQuoteCurrency, output.Net, maturity,
+			),
+		)
 	}
 
 	signal.trade.cache = signal.trade.cache[:0]
 
 	thesis.Signals.Store("trades", trades)
-	thesis.Measurements.Store("cvd", out)
+	thesis.Measurements = append(thesis.Measurements, out...)
 
 	return thesis
 }

@@ -8,12 +8,35 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
+
+func measureField(measurements []*types.Measurement, symbol string, metric types.MetricType) (*types.Measurement, bool) {
+	for index := len(measurements) - 1; index >= 0; index-- {
+		measurement := measurements[index]
+
+		if measurement.Symbol == symbol && measurement.Metric == metric {
+			return measurement, true
+		}
+	}
+
+	return nil, false
+}
+
+func measurementFields(measurements []*types.Measurement, symbol string) map[types.MetricType]float64 {
+	fields := map[types.MetricType]float64{}
+
+	for _, measurement := range measurements {
+		if measurement.Symbol == symbol {
+			fields[measurement.Metric] = measurement.Raw
+		}
+	}
+
+	return fields
+}
 
 func TestTradeOn(testingTB *testing.T) {
 	Convey("Given a CVD trade ingestor", testingTB, func() {
@@ -49,13 +72,14 @@ func TestSignal_Measure(testingTB *testing.T) {
 			}
 
 			Convey("Then CVD measurements should be emitted", func() {
-				raw, ok := result.Measurements.Load("cvd")
+				strength, ok := measureField(result.Measurements, "MATIC/USD", types.MetricStrength)
 				So(ok, ShouldBeTrue)
+				So(strength.Raw, ShouldBeGreaterThan, 0)
 
-				metrics := raw.(datura.Map[datura.Map[*decimal.Decimal]])["MATIC/USD"]
-				So(metrics, ShouldNotBeNil)
-				So(metrics["strength"].Float64(), ShouldBeGreaterThan, 0)
-				So(metrics["drive"].Float64(), ShouldBeGreaterThan, 0)
+				drive, ok := measureField(result.Measurements, "MATIC/USD", types.MetricDrive)
+				So(ok, ShouldBeTrue)
+				So(drive.Raw, ShouldBeGreaterThan, 0)
+
 				So(len(signal.trade.cache), ShouldEqual, 0)
 			})
 		})
@@ -135,21 +159,22 @@ func TestSignal_MeasureFlowProfiles(testingTB *testing.T) {
 					sample: algorithm.NewTradeFlowSample(),
 					flow:   equation.NewFlow(),
 				}
-				var metrics datura.Map[*decimal.Decimal]
+				var metrics map[types.MetricType]float64
+
+				wantMetric := map[string]types.MetricType{
+					"absorption": types.MetricAbsorption,
+					"drive":      types.MetricDrive,
+					"balance":    types.MetricBalance,
+					"starvation": types.MetricStarvation,
+				}[testCase.wantScore]
 
 				for _, row := range testCase.rows {
 					signal.trade.cache = []kraken.TradeData{row}
 					result := signal.Measure(types.NewThesis(nil))
 
-					raw, ok := result.Measurements.Load("cvd")
+					symbolMetrics := measurementFields(result.Measurements, "BTC/USD")
 
-					if !ok {
-						continue
-					}
-
-					symbolMetrics := raw.(datura.Map[datura.Map[*decimal.Decimal]])["BTC/USD"]
-
-					if symbolMetrics == nil {
+					if len(symbolMetrics) == 0 {
 						continue
 					}
 
@@ -159,20 +184,19 @@ func TestSignal_MeasureFlowProfiles(testingTB *testing.T) {
 				Convey(fmt.Sprintf("Then CVD should emphasize %s", testCase.wantScore), func() {
 					So(metrics, ShouldNotBeNil)
 
-					selected := metrics[testCase.wantScore].Float64()
-					for key, value := range metrics {
-						if key == "net" || key == "netFraction" || key == "category" || key == "maturity" || key == "strength" {
+					selected := metrics[wantMetric]
+
+					for _, competitor := range []types.MetricType{
+						types.MetricAbsorption, types.MetricDrive, types.MetricBalance, types.MetricStarvation,
+					} {
+						if competitor == wantMetric {
 							continue
 						}
 
-						if key == testCase.wantScore {
-							continue
-						}
-
-						So(selected, ShouldBeGreaterThanOrEqualTo, value.Float64())
+						So(selected, ShouldBeGreaterThanOrEqualTo, metrics[competitor])
 					}
 
-					So(metrics["strength"].Float64(), ShouldBeGreaterThan, 0)
+					So(metrics[types.MetricStrength], ShouldBeGreaterThan, 0)
 				})
 			})
 		}

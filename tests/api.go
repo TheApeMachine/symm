@@ -11,22 +11,20 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	krakenws "github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
 MockConn is a controllable Kraken websocket transport.
 */
 type MockConn struct {
-	channels            map[string][]func([]byte)
-	client              *spot.WebSocket
-	books               *spot.BookManager
-	postResponse        []byte
-	postPath            string
-	postParams          json.Marshaler
-	postCalls           []MockPostCall
-	closeCount          int
-	level3Subscriptions []MockLevel3Subscription
+	channels     map[string][]func([]byte)
+	client       *spot.WebSocket
+	books        *spot.BookManager
+	postResponse []byte
+	postPath     string
+	postParams   json.Marshaler
+	postCalls    []MockPostCall
+	closeCount   int
 }
 
 /*
@@ -35,15 +33,6 @@ MockPostCall records one REST post issued through a mock transport.
 type MockPostCall struct {
 	Path   string
 	Params json.Marshaler
-}
-
-/*
-MockLevel3Subscription records one SubscribeLevel3 call issued through
-a mock transport.
-*/
-type MockLevel3Subscription struct {
-	Symbols []string
-	Depth   int
 }
 
 func (conn *MockConn) Client() *spot.WebSocket {
@@ -68,10 +57,6 @@ func (conn *MockConn) Write(params json.Marshaler) error {
 
 func (conn *MockConn) Close() {
 	conn.closeCount++
-}
-
-func (conn *MockConn) Status() types.Status {
-	return types.READY
 }
 
 func (conn *MockConn) Post(path string, params json.Marshaler) ([]byte, error) {
@@ -106,21 +91,15 @@ MockAPI wires a controllable websocket.API for integration tests.
 type MockAPI struct {
 	public  *MockConn
 	private *MockConn
-	level3  *MockConn
 }
 
 /*
 NewMockAPI constructs a paper-mode API backed by controllable transports.
 */
 func NewMockAPI() *MockAPI {
-	public := &MockConn{client: mockNormalizerClient()}
-	private := &MockConn{}
-	level3 := &MockConn{}
-
 	return &MockAPI{
-		public:  public,
-		private: private,
-		level3:  level3,
+		public:  &MockConn{client: mockNormalizerClient()},
+		private: &MockConn{},
 	}
 }
 
@@ -136,13 +115,6 @@ Private returns the private transport mock.
 */
 func (mock *MockAPI) Private() *MockConn {
 	return mock.private
-}
-
-/*
-Level3 returns the level3 transport mock.
-*/
-func (mock *MockAPI) Level3() *MockConn {
-	return mock.level3
 }
 
 /*

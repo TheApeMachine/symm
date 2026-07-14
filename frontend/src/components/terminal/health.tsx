@@ -2,6 +2,12 @@ import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
 import { StatusBadge } from "#/components/dashboard/status-badge";
+import {
+	headlineMetric,
+	latestByMetric,
+	percentOf,
+	resolveStatus,
+} from "#/components/terminal/measurement-view";
 
 export const Meter = ({
 	label,
@@ -73,8 +79,8 @@ export const terminalHealthSummary = (
 	let measured = 0;
 	let warming = 0;
 	let degraded = 0;
-	let confidence = 0;
-	let confidenceCount = 0;
+	let strength = 0;
+	let strengthCount = 0;
 	let firing = 0;
 
 	for (const source of sources) {
@@ -84,18 +90,12 @@ export const terminalHealthSummary = (
 						(sourceMap) => sourceMap[source]?.values() ?? [],
 					)
 				: (readings.measurements[focusSymbol]?.[source]?.values() ?? []);
-		const frame = history.at(-1);
-		const status =
-			frame === undefined
-				? "waiting"
-				: frame.status === "fault" ||
-						frame.status === "ambiguous" ||
-						frame.status === "calibrating"
-					? frame.status
-					: "measured";
-		const category = frame?.categories?.at(0);
+		const headline = headlineMetric(source);
+		const latest =
+			headline === null ? history.at(-1) : latestByMetric(history, headline);
+		const status = resolveStatus(latest);
 
-		if (status === "ambiguous" || status === "fault") {
+		if (status === "fault") {
 			degraded += 1;
 		} else if (status === "waiting" || status === "calibrating") {
 			warming += 1;
@@ -103,12 +103,12 @@ export const terminalHealthSummary = (
 			measured += 1;
 		}
 
-		if (typeof category?.confidence === "number") {
-			confidence += category.confidence;
-			confidenceCount += 1;
+		if (headline !== null && latest !== undefined) {
+			strength += percentOf(latest) / 100;
+			strengthCount += 1;
 		}
 
-		if (frame !== undefined) {
+		if (history.length > 0) {
 			firing += 1;
 		}
 	}
@@ -131,10 +131,7 @@ export const terminalHealthSummary = (
 	}));
 
 	return {
-		avg:
-			confidenceCount > 0
-				? Math.round((confidence / confidenceCount) * 100)
-				: 0,
+		avg: strengthCount > 0 ? Math.round((strength / strengthCount) * 100) : 0,
 		bars,
 		firing,
 		label,
@@ -157,7 +154,7 @@ export const HealthPanel = ({ sources }: { sources?: string[] }) => {
 			</div>
 			<div className="mt-3 flex gap-[18px]">
 				<Stat value={`${health.measured}/${health.total}`} label="healthy" />
-				<Stat value={`${health.avg}%`} label="avg conf" />
+				<Stat value={`${health.avg}%`} label="avg strength" />
 				<Stat value={String(health.firing)} label="firing" accent />
 			</div>
 			<div className="mt-[13px] flex flex-col gap-1.5">
@@ -175,125 +172,61 @@ export const HealthPanel = ({ sources }: { sources?: string[] }) => {
 	);
 };
 
-const finiteRatio = (value: unknown): number => {
-	const number = typeof value === "number" ? value : Number(value);
+export type SignalAxis = { label: string; value: number };
 
-	return Number.isFinite(number) ? Math.min(1, Math.max(0, number)) : 0;
+/*
+topSignalAxes ranks sources by their market-wide headline strength — the mean
+of each source's latest headline metric across every symbol currently
+reporting it. Sources without a headline metric (e.g. toxicity, which reports
+raw liquidity stats rather than a composite score) are not rankable this way
+and are excluded rather than faked into a score.
+*/
+export const topSignalAxes = (
+	readings: typeof measurementsStore.state,
+	sources: string[],
+	slots = 5,
+): SignalAxis[] => {
+	const ranked = sources.flatMap((source) => {
+		const headline = headlineMetric(source);
+
+		if (headline === null) {
+			return [];
+		}
+
+		const values = Object.values(readings.measurements).flatMap((sourceMap) => {
+			const latest = latestByMetric(
+				sourceMap[source]?.values() ?? [],
+				headline,
+			);
+
+			return latest === undefined ? [] : [percentOf(latest) / 100];
+		});
+
+		if (values.length === 0) {
+			return [];
+		}
+
+		return [
+			{
+				label: source,
+				value: values.reduce((sum, value) => sum + value, 0) / values.length,
+			},
+		];
+	});
+
+	return ranked.sort((left, right) => right.value - left.value).slice(0, slots);
 };
 
-export const regimeValuesFromFrames = (
-	readings: typeof measurementsStore.state,
-	regimeFrame: Record<string, unknown> | null,
-): [number, number, number, number, number] => {
-	if (regimeFrame !== null) {
-		return [
-			finiteRatio(regimeFrame.volatility),
-			finiteRatio(regimeFrame.trend),
-			finiteRatio(regimeFrame.bullish),
-			finiteRatio(regimeFrame.bearish),
-			finiteRatio(regimeFrame.choppiness),
-		];
-	}
-
-	const rows = Object.values(readings.measurements).flatMap((sources) =>
-		Object.values(sources).flatMap((history) => {
-			const frame = history.values().at(-1);
-
-			return (
-				frame?.categories?.map((category) => ({
-					source: frame.source,
-					type: category.type,
-					value: Math.max(category.confidence, category.strength),
-				})) ?? []
-			);
-		}),
-	);
-	const axis = (matches: (row: (typeof rows)[number]) => boolean) => {
-		const values = rows.flatMap((row) => (matches(row) ? [row.value] : []));
-
-		return values.length === 0
-			? 0
-			: finiteRatio(
-					values.reduce((sum, value) => sum + value, 0) / values.length,
-				);
-	};
-	const contains = (row: (typeof rows)[number], terms: string[]) =>
-		terms.some((term) => row.type.includes(term) || row.source.includes(term));
-
-	return [
-		axis((row) =>
-			contains(row, [
-				"turbulent",
-				"frenzy",
-				"ignition",
-				"vacuum",
-				"shock",
-				"collapse",
-				"expansion",
-				"reversal",
-				"bluff",
-				"spoof",
-				"thinning",
-				"scarcity",
-			]),
-		),
-		axis((row) =>
-			contains(row, [
-				"trend",
-				"drift",
-				"drive",
-				"laminar",
-				"edge",
-				"alpha",
-				"beta",
-				"surge",
-			]),
-		),
-		axis((row) =>
-			contains(row, [
-				"edge",
-				"ignition",
-				"trend",
-				"surge",
-				"drive",
-				"robust",
-				"absorption",
-				"support",
-				"alpha",
-			]),
-		),
-		axis((row) =>
-			contains(row, [
-				"slump",
-				"vacuum",
-				"collapse",
-				"exhaustion",
-				"starvation",
-				"thinning",
-				"bluff",
-				"stress",
-				"faded",
-				"scarcity",
-			]),
-		),
-		axis((row) =>
-			contains(row, [
-				"balance",
-				"neutrality",
-				"equilibrium",
-				"noise",
-				"decoupled",
-				"stall",
-				"median",
-				"saturation",
-			]),
+export const RadarPanel = ({ sources }: { sources?: string[] }) => {
+	const readings = useSelector(measurementsStore, (state) => state);
+	const candidates = sources ?? [
+		...new Set(
+			Object.values(readings.measurements).flatMap((sourceMap) =>
+				Object.keys(sourceMap),
+			),
 		),
 	];
-};
-
-export const RadarPanel = () => {
-	const readings = useSelector(measurementsStore, (state) => state);
-	const values = regimeValuesFromFrames(readings, null);
+	const axes = topSignalAxes(readings, candidates);
 	const units = [
 		[0, -1],
 		[0.951, -0.309],
@@ -304,18 +237,22 @@ export const RadarPanel = () => {
 	const points = units
 		.map(
 			([x, y], index) =>
-				`${110 + x * 84 * values[index]},${105 + y * 84 * values[index]}`,
+				`${110 + x * 84 * (axes[index]?.value ?? 0)},${
+					105 + y * 84 * (axes[index]?.value ?? 0)
+				}`,
 		)
 		.join(" ");
 
 	return (
 		<div className="rounded-[4px] border border-(--line) bg-(--sunken) p-[13px]">
-			<div className="mb-2 font-semibold text-(--f1) text-xs">Regime radar</div>
+			<div className="mb-2 font-semibold text-(--f1) text-xs">
+				Strongest signals
+			</div>
 			<div className="mb-2 font-mono text-[9.5px] text-(--f4)">
-				cross-section mean · market
+				cross-section mean strength · market
 			</div>
 			<svg viewBox="0 0 220 210" className="block w-full">
-				<title>Regime radar</title>
+				<title>Strongest signals</title>
 				<polygon
 					points="110,21 190,79 159,173 61,173 30,79"
 					fill="none"
@@ -347,20 +284,18 @@ export const RadarPanel = () => {
 					stroke="#e8a33d"
 					strokeWidth="1.6"
 				/>
-				{["volatility", "trend", "bullish", "bearish", "chop"].map(
-					(label, index) => (
-						<text
-							key={label}
-							x={110 + units[index][0] * 98}
-							y={105 + units[index][1] * 98}
-							textAnchor="middle"
-							fontSize="9"
-							fill="#938a7e"
-						>
-							{label}
-						</text>
-					),
-				)}
+				{units.map(([x, y], index) => (
+					<text
+						key={`${x}:${y}`}
+						x={110 + x * 98}
+						y={105 + y * 98}
+						textAnchor="middle"
+						fontSize="9"
+						fill="#938a7e"
+					>
+						{axes[index]?.label ?? "—"}
+					</text>
+				))}
 			</svg>
 		</div>
 	);

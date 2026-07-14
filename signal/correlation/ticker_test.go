@@ -9,11 +9,22 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	nomcorrelation "github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
+
+func measurementFields(measurements []*types.Measurement, symbol string) map[types.MetricType]float64 {
+	fields := map[types.MetricType]float64{}
+
+	for _, measurement := range measurements {
+		if measurement.Symbol == symbol {
+			fields[measurement.Metric] = measurement.Raw
+		}
+	}
+
+	return fields
+}
 
 /*
 correlatedPricePaths generates two positive price paths of length count:
@@ -169,7 +180,7 @@ func TestSignal_MeasureDenominationInvariant(t *testing.T) {
 				)
 			}
 
-			So(thesis.CrossSection.Observe(history), ShouldBeNil)
+			thesis.CrossSection.ProcessUpdates(history)
 
 			signal.ticker.cache = []kraken.TickerData{
 				denominationRow(
@@ -183,23 +194,17 @@ func TestSignal_MeasureDenominationInvariant(t *testing.T) {
 		}
 
 		baselineResult := signal.Measure(buildThesis(1))
-		baselineRaw, ok := baselineResult.Measurements.Load("correlation")
-		So(ok, ShouldBeTrue)
-
-		baselineMetrics := baselineRaw.(datura.Map[datura.Map[*decimal.Decimal]])["BTC/USD"]
-		So(baselineMetrics, ShouldNotBeNil)
+		baselineMetrics := measurementFields(baselineResult.Measurements, "BTC/USD")
+		So(baselineMetrics, ShouldNotBeEmpty)
 
 		Convey("When the subject's entire history is requoted in a different denomination", func() {
 			for _, factor := range rescaleFactors {
 				result := signal.Measure(buildThesis(factor))
-				raw, hasCorrelation := result.Measurements.Load("correlation")
-				So(hasCorrelation, ShouldBeTrue)
+				metrics := measurementFields(result.Measurements, "BTC/USD")
+				So(metrics, ShouldNotBeEmpty)
 
-				metrics := raw.(datura.Map[datura.Map[*decimal.Decimal]])["BTC/USD"]
-				So(metrics, ShouldNotBeNil)
-
-				for key, value := range baselineMetrics {
-					So(metrics[key].Float64(), ShouldAlmostEqual, value.Float64(), 1e-9)
+				for metric, value := range baselineMetrics {
+					So(metrics[metric], ShouldAlmostEqual, value, 1e-9)
 				}
 			}
 		})
@@ -217,12 +222,7 @@ func TestSignal_MeasureRequiresCrossSection(t *testing.T) {
 		result := signal.Measure(types.NewThesis(nil))
 
 		Convey("Then correlation emits nothing for that symbol", func() {
-			raw, ok := result.Measurements.Load("correlation")
-			So(ok, ShouldBeTrue)
-
-			out := raw.(datura.Map[datura.Map[*decimal.Decimal]])
-			_, hasSymbol := out["BTC/USD"]
-			So(hasSymbol, ShouldBeFalse)
+			So(measurementFields(result.Measurements, "BTC/USD"), ShouldBeEmpty)
 		})
 	})
 }
@@ -246,7 +246,7 @@ func BenchmarkSignal_Measure(b *testing.B) {
 		)
 	}
 
-	_ = thesis.CrossSection.Observe(history)
+	thesis.CrossSection.ProcessUpdates(history)
 
 	rows := []kraken.TickerData{
 		denominationRow("BTC/USD", subjectPrices[len(subjectPrices)-1], start.Add(time.Duration(len(subjectPrices)-1)*time.Second)),

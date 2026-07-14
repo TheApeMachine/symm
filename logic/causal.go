@@ -55,23 +55,53 @@ Update aligns one manifold observation with the next observed mid return. The
 named treatment and controls are recorded on every output so the result is not
 mistaken for a causal claim about anonymous latent columns.
 */
-func (causal *Causal) Update(thesis *types.Thesis) {
-	stored, ok := thesis.Measurements.Load(causal.symbol + ":manifold")
-
-	if !ok {
-		return
+func (causal *Causal) Update(
+	state manifold.State,
+) (types.Hypothesis, bool, error) {
+	if state.At.IsZero() || state.Epoch == 0 {
+		return types.Hypothesis{}, false, errnie.Err(
+			errnie.Validation,
+			"logic causal: manifold chronology required",
+			nil,
+		)
 	}
 
-	state := stored.(manifold.State)
+	if causal.pending != nil &&
+		(state.Epoch <= causal.pending.epoch || !state.At.After(causal.pending.at)) {
+		return types.Hypothesis{}, false, errnie.Err(
+			errnie.Validation,
+			"logic causal: manifold chronology regressed",
+			nil,
+		)
+	}
+
 	features, ready := causal.features(state)
 
 	if !ready {
-		return
+		return types.Hypothesis{}, false, nil
 	}
 
 	outcome := causal.observe(state, features)
-	thesis.Measurements.Store(causal.symbol+":causal", outcome)
 	causal.publish(outcome)
+
+	return types.Hypothesis{
+		Source:         types.SourceCausal,
+		Symbol:         outcome.Symbol,
+		At:             outcome.At,
+		Samples:        outcome.Samples,
+		Ready:          outcome.Ready,
+		Claim:          outcome.Hypothesis,
+		Treatment:      outcome.Treatment,
+		Controls:       append([]string(nil), outcome.Controls...),
+		Outcome:        outcome.Target,
+		Association:    outcome.Reading.Association,
+		Intervention:   outcome.Reading.Intervention,
+		DoExpectation:  outcome.Reading.DoExpectation,
+		Uplift:         outcome.Reading.Uplift,
+		Counterfactual: outcome.Reading.Counterfactual,
+		Confidence:     outcome.Reading.Confidence,
+		Strength:       outcome.Reading.Strength,
+	}, true, nil
 }
 
 func (causal *Causal) observe(

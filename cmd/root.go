@@ -21,6 +21,8 @@ import (
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
 	"github.com/theapemachine/symm/signal/exhaust"
+	"github.com/theapemachine/symm/signal/fluid"
+	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/signal/leadlag"
 	"github.com/theapemachine/symm/signal/liquidity"
 	"github.com/theapemachine/symm/signal/pumpdump"
@@ -87,7 +89,7 @@ var (
 			api := websocket.NewAPI(ctx, public, private, paper)
 			defer api.Close()
 
-			price := broker.NewPrice(api, channel)
+			price := broker.NewPrice(api)
 			balance := broker.NewBalance(api, channel)
 			desk := broker.NewDesk(api, price, balance, channel)
 			uiHub, err := ui.NewHub(ctx, price, balance, desk, channel)
@@ -105,6 +107,16 @@ var (
 			instrument := trader.NewInstrument(api, price, channel)
 			analyzer := logic.NewAnalyzer(booter, channel)
 
+			level3Ingress, err := trader.NewLevel3Ingress(ctx, api)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"failed to create level3 ingress",
+					err,
+				))
+			}
+
 			planner := strategy.NewPlanner(
 				ctx,
 				channel,
@@ -118,6 +130,8 @@ var (
 					exhaust.NewSignal(ctx, api, instrument),
 					sentiment.NewSignal(ctx, api),
 					depthflow.NewSignal(ctx, api, instrument),
+					fluid.NewSignal(ctx, api, instrument),
+					hawkes.NewSignal(ctx, api),
 				},
 				analyzer,
 			)
@@ -133,6 +147,7 @@ var (
 				instrument,
 				analyzer,
 				planner,
+				level3Ingress,
 			)
 
 			if err != nil {
@@ -167,6 +182,15 @@ var (
 					planner,
 				),
 			)
+
+			if err := booter.Start(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"failed to boot",
+					err,
+				))
+			}
+
 			crypto.Run()
 
 			return uiHub.Serve()

@@ -20,7 +20,6 @@ const (
 	channelInstrument = "instrument"
 	channelTicker     = "ticker"
 	channelTrade      = "trade"
-	channelOHLC       = "ohlc"
 	channelBook       = "book"
 	channelLevel3     = "level3"
 )
@@ -44,6 +43,7 @@ type Crypto struct {
 	tickBudget time.Duration
 	planner    *strategy.Planner
 	analyzer   *logic.Analyzer
+	level3     *Level3Ingress
 }
 
 /*
@@ -60,6 +60,7 @@ func NewCrypto(
 	instrument *Instrument,
 	analyzer *logic.Analyzer,
 	planner *strategy.Planner,
+	level3 *Level3Ingress,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -83,6 +84,7 @@ func NewCrypto(
 		tickBudget: tickBudget,
 		analyzer:   analyzer,
 		planner:    planner,
+		level3:     level3,
 	}
 
 	return crypto, nil
@@ -108,7 +110,13 @@ func (crypto *Crypto) Run() error {
 
 		for crypto.Status() != types.ERROR {
 			if crypto.booter.Ready(system.StageWarmup) {
-				thesis := crypto.planner.Update()
+				thesis := crypto.planner.BeginTick()
+
+				if crypto.level3 != nil {
+					crypto.level3.Drain(thesis, crypto.analyzer, crypto.instrument)
+				}
+
+				thesis = crypto.planner.CompleteTick(thesis)
 				thesis.Publish()
 			}
 

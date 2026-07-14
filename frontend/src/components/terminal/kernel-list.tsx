@@ -2,12 +2,24 @@ import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
+import { StatusBadge } from "#/components/dashboard/status-badge";
 import {
 	kernelCopy,
 	kernelSparkPaths,
 	kernelStatusMeta,
-	type SignalHealthStatus,
 } from "#/components/terminal/kernel-meta";
+import {
+	ageText,
+	formatRaw,
+	headlineMetric,
+	latestByMetric,
+	latestEpoch,
+	metricLabel,
+	percentOf,
+	resolveStatus,
+	seriesByMetric,
+	stampOf,
+} from "#/components/terminal/measurement-view";
 
 export const KernelList = ({
 	compact = false,
@@ -35,33 +47,27 @@ export const KernelList = ({
 		<div className="min-h-0 overflow-auto">
 			{sources.map((source) => {
 				const values = measurements[source]?.values() ?? [];
-				const frame = values.at(-1);
-				const category = frame?.categories?.at(0);
-				const confidence = category?.confidence ?? 0;
-				const surprise = category?.surprisal ?? 0;
-				const copy = kernelCopy(source, category?.type ?? source);
-				const status = (
-					frame === undefined
-						? "waiting"
-						: frame.status === "fault" ||
-								frame.status === "ambiguous" ||
-								frame.status === "calibrating"
-							? frame.status
-							: "measured"
-				) as SignalHealthStatus;
+				const headline = headlineMetric(source);
+				const latest =
+					headline === null ? values.at(-1) : latestByMetric(values, headline);
+				const status = resolveStatus(latest);
 				const statusMeta = kernelStatusMeta(status);
+				const copy = kernelCopy(source, source);
 				const spark = kernelSparkPaths(
-					values.flatMap((frame) => {
-						const value = frame.categories?.at(0)?.confidence;
-
-						return typeof value === "number" && Number.isFinite(value)
-							? [value]
-							: [];
-					}),
+					headline === null ? [] : seriesByMetric(values, headline),
 					status,
 				);
 				const inspecting = terminal.inspectorSource === source;
 				const selected = terminal.selectedSource === source;
+				const epoch = latestEpoch(values);
+				const percent =
+					headline === null || latest === undefined ? 0 : percentOf(latest);
+				const readout =
+					headline === null
+						? `${epoch.length} readings`
+						: latest === undefined
+							? "—"
+							: `${metricLabel(headline)} ${formatRaw(latest)}`;
 
 				return (
 					<button
@@ -93,16 +99,7 @@ export const KernelList = ({
 									style={{ backgroundColor: statusMeta.fg }}
 								/>
 							) : (
-								<span
-									className="shrink-0 rounded-[2px] border px-1.5 py-0.5 text-[9px] font-semibold tracking-wider uppercase"
-									style={{
-										borderColor: statusMeta.bd,
-										backgroundColor: statusMeta.bg,
-										color: statusMeta.fg,
-									}}
-								>
-									{statusMeta.label}
-								</span>
+								<StatusBadge label={statusMeta.label} tone={statusMeta.fg} />
 							)}
 						</div>
 
@@ -129,37 +126,31 @@ export const KernelList = ({
 								</svg>
 
 								<div className="mt-1.5 flex items-center gap-2">
-									<div className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line)">
-										<div
-											className="h-full transition-all duration-500 ease-out"
-											style={{
-												width: `${confidence * 100}%`,
-												backgroundColor: spark.line,
-											}}
-										/>
-									</div>
+									{headline === null ? null : (
+										<div className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line)">
+											<div
+												className="h-full transition-all duration-500 ease-out"
+												style={{
+													width: `${percent}%`,
+													backgroundColor: spark.line,
+												}}
+											/>
+										</div>
+									)}
 
-									<span className="w-7 text-right font-mono text-[10px] text-(--f2)">
-										{Math.floor(confidence * 100)}%
+									<span className="flex-1 truncate text-right font-mono text-[10px] text-(--f2)">
+										{readout}
 									</span>
 
-									<span
-										className="w-[62px] text-right font-mono text-[9.5px]"
-										style={{
-											color:
-												status === "ambiguous" ? "var(--acc)" : "var(--f4)",
-										}}
-									>
-										{surprise.toFixed(2)}x thr
+									<span className="w-[46px] shrink-0 text-right font-mono text-[9.5px] text-(--f4)">
+										{ageText(stampOf(latest?.at))}
 									</span>
 								</div>
 							</>
 						)}
 						{compact ? (
 							<div className="mt-1 truncate font-mono text-[9px] text-(--f4)">
-								{frame === undefined
-									? statusMeta.label
-									: `${Math.floor(confidence * 100)}% conf · ${statusMeta.label}`}
+								{latest === undefined ? statusMeta.label : readout}
 							</div>
 						) : null}
 					</button>

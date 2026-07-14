@@ -14,17 +14,21 @@ nothing. Keeping this scope explicit prevents the entry path from masquerading
 as the later position-aware hold, exit, rotation, and reversal strategy.
 */
 type Planner struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	status   types.Status
-	uiHub    chan<- []byte
-	signals  []types.Signal
-	analyzer *logic.Analyzer
+	ctx          context.Context
+	cancel       context.CancelFunc
+	status       types.Status
+	uiHub        chan<- []byte
+	signals      []types.Signal
+	analyzer     *logic.Analyzer
+	crossSection *types.CrossSection
 }
 
 /*
 NewPlanner creates a Planner that is ready once its dependencies are assigned.
-Planning has no deferred initialization or warmup of its own.
+Planning has no deferred initialization or warmup of its own. crossSection
+lives on the Planner, not the per-tick Thesis, so signals that need
+cross-sectional return history (e.g. correlation) keep seeing it accumulate
+across ticks instead of starting over from a single observation every time.
 */
 func NewPlanner(
 	ctx context.Context,
@@ -34,13 +38,22 @@ func NewPlanner(
 ) *Planner {
 	ctx, cancel := context.WithCancel(ctx)
 
+	crossSection, err := types.NewCrossSection(types.DefaultCrossSectionConfig())
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
+	}
+
 	return &Planner{
-		ctx:      ctx,
-		cancel:   cancel,
-		status:   types.READY,
-		uiHub:    uiHub,
-		signals:  signals,
-		analyzer: analyzer,
+		ctx:          ctx,
+		cancel:       cancel,
+		status:       types.READY,
+		uiHub:        uiHub,
+		signals:      signals,
+		analyzer:     analyzer,
+		crossSection: crossSection,
 	}
 }
 
@@ -63,8 +76,23 @@ func (planner *Planner) Status() types.Status {
 Update evaluates the thesis for all symbols and returns intended actions.
 */
 func (planner *Planner) Update() *types.Thesis {
-	thesis := types.NewThesis(planner.uiHub)
+	return planner.CompleteTick(planner.BeginTick())
+}
 
+/*
+BeginTick starts one cognitive epoch carrier shared by L3 ingest and signals.
+*/
+func (planner *Planner) BeginTick() *types.Thesis {
+	thesis := types.NewThesis(planner.uiHub)
+	thesis.CrossSection = planner.crossSection
+
+	return thesis
+}
+
+/*
+CompleteTick runs signal measurement and logic composition on one thesis.
+*/
+func (planner *Planner) CompleteTick(thesis *types.Thesis) *types.Thesis {
 	for _, signal := range planner.signals {
 		thesis = signal.Measure(thesis)
 	}

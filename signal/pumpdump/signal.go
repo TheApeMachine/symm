@@ -3,8 +3,6 @@ package pumpdump
 import (
 	"context"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -38,7 +36,7 @@ func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
 	rows := signal.ticker.cache
-	out := datura.Map[datura.Map[*decimal.Decimal]]{}
+	out := make([]*types.Measurement, 0, len(rows))
 
 	for _, row := range rows {
 		if row.Symbol == "" || row.Volume <= 0 || row.Last == nil || row.Last.Sign() <= 0 ||
@@ -47,7 +45,7 @@ func (signal *Signal) Measure(
 			continue
 		}
 
-		output, ready, _, err := signal.ignition.Measure(equation.IgnitionInput{
+		output, ready, maturity, err := signal.ignition.Measure(equation.IgnitionInput{
 			Symbol: row.Symbol,
 			Volume: row.Volume,
 			Last:   row.Last.Float64(),
@@ -67,22 +65,16 @@ func (signal *Signal) Measure(
 			continue
 		}
 
-		out[row.Symbol] = datura.Map[*decimal.Decimal]{
-			"rvol":        decimal.NewFromFloat64(output.RVOL),
-			"precursor":   decimal.NewFromFloat64(output.Precursor),
-			"spread":      decimal.NewFromFloat64(output.Spread),
-			"ignition":    decimal.NewFromFloat64(output.Ignition),
-			"compression": decimal.NewFromFloat64(output.Compression),
-			"trend":       decimal.NewFromFloat64(output.Trend),
-			"exhaustion":  decimal.NewFromFloat64(output.Exhaustion),
-			"strength":    decimal.NewFromFloat64(output.Strength),
-		}
+		out = append(out, ignitionMeasurements(
+			row.Symbol, row.Timestamp, output, maturity,
+			row.Bid.Float64(), row.Ask.Float64(),
+		)...)
 	}
 
 	signal.ticker.cache = signal.ticker.cache[:0]
 
 	thesis.Signals.Store("tickers", rows)
-	thesis.Measurements.Store("pumpdump", out)
+	thesis.Measurements = append(thesis.Measurements, out...)
 
 	return thesis
 }

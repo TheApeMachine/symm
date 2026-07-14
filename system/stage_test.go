@@ -52,7 +52,7 @@ func TestStageInitialize(t *testing.T) {
 		stage := system.NewStage(system.StagePreflight, first, second)
 
 		Convey("When Initialize runs", func() {
-			err := stage.Initialize()
+			err := stage.Initialize(nil)
 
 			Convey("Then it returns no error", func() {
 				So(err, ShouldBeNil)
@@ -82,7 +82,7 @@ func TestStageInitialize(t *testing.T) {
 			done := make(chan error, 1)
 
 			go func() {
-				done <- stage.Initialize()
+				done <- stage.Initialize(nil)
 			}()
 
 			Convey("Then it waits for the first reporter before touching the second", func() {
@@ -108,7 +108,7 @@ func TestStageInitialize(t *testing.T) {
 		stage := system.NewStage(system.StagePreflight, failing, never)
 
 		Convey("When Initialize runs", func() {
-			err := stage.Initialize()
+			err := stage.Initialize(nil)
 
 			Convey("Then it returns an error and never starts the next reporter", func() {
 				So(err, ShouldNotBeNil)

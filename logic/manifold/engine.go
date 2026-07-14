@@ -79,6 +79,10 @@ func (engine *Engine) Config() *pmanifold.Config {
 	return engine.config
 }
 
+func (engine *Engine) Halflife() time.Duration {
+	return engine.halflife
+}
+
 func (engine *Engine) Close() {
 	engine.slots.Range(func(key, value any) bool {
 		slot := value.(*Slot)
@@ -144,6 +148,7 @@ ProcessResult carries replay metadata from one L3 ingest step.
 */
 type ProcessResult struct {
 	State         State
+	Forecast      *types.Forecasts
 	Observation   ObservationMetadata
 	Accounting    PopulationAccounting
 	CohortCount   int
@@ -208,28 +213,25 @@ func (slot *Slot) Close() {
 }
 
 func (slot *Slot) Process(
-	thesis *types.Thesis,
 	row kraken.Level3Data,
 	pricePrecision int,
 	qtyPrecision int,
 	book Level3Book,
 ) ProcessResult {
-	result := slot.Observe(thesis, row, pricePrecision, qtyPrecision, book)
+	result := slot.Observe(row, pricePrecision, qtyPrecision, book)
 
 	if !result.AdvanceReady {
 		return result
 	}
 
-	return slot.Advance(thesis)
+	return slot.Advance()
 }
 
 func (slot *Slot) failedResult(
-	thesis *types.Thesis,
 	observation ObservationMetadata,
 	reason InvalidReason,
 ) ProcessResult {
 	outcome := slot.markFailed(
-		thesis,
 		observation.At,
 		reason,
 		slot.population.Epoch(),
@@ -309,12 +311,12 @@ func (slot *Slot) mapCarriers(
 
 type stepOutcome struct {
 	State        State
+	Forecast     *types.Forecasts
 	GasReady     bool
 	DepositCount int
 }
 
 func (slot *Slot) step(
-	thesis *types.Thesis,
 	cohorts []Cohort,
 	orders []*PhysicalOrder,
 	bestBid float64,
@@ -343,7 +345,7 @@ func (slot *Slot) step(
 
 	if err := slot.solver.ResetSources(); err != nil {
 		errnie.Error(errnie.Err(errnie.UnprocessableContent, "logic manifold: reset sources failed", err))
-		return slot.markFailed(thesis, at, SolverFailed, epoch, transform.Version)
+		return slot.markFailed(at, SolverFailed, epoch, transform.Version)
 	}
 
 	deposits := slot.depositor.Deposits(cohorts)
@@ -360,7 +362,7 @@ func (slot *Slot) step(
 			deposit.EInt,
 		); err != nil {
 			errnie.Error(errnie.Err(errnie.UnprocessableContent, "logic manifold: source failed", err))
-			return slot.markFailed(thesis, at, SolverFailed, epoch, transform.Version)
+			return slot.markFailed(at, SolverFailed, epoch, transform.Version)
 		}
 	}
 
@@ -372,12 +374,12 @@ func (slot *Slot) step(
 	}
 
 	if len(oscillators) == 0 {
-		return slot.markFailed(thesis, at, SolverFailed, epoch, transform.Version)
+		return slot.markFailed(at, SolverFailed, epoch, transform.Version)
 	}
 
 	if err := slot.solver.SetOscillators(oscillators); err != nil {
 		errnie.Error(errnie.Err(errnie.UnprocessableContent, "logic manifold: set oscillators failed", err))
-		return slot.markFailed(thesis, at, SolverFailed, epoch, transform.Version)
+		return slot.markFailed(at, SolverFailed, epoch, transform.Version)
 	}
 
 	controls := slot.config.RuntimeControls()
@@ -386,7 +388,7 @@ func (slot *Slot) step(
 
 	if err := slot.solver.SetControls(controls); err != nil {
 		errnie.Error(errnie.Err(errnie.UnprocessableContent, "logic manifold: set controls failed", err))
-		return slot.markFailed(thesis, at, SolverFailed, epoch, transform.Version)
+		return slot.markFailed(at, SolverFailed, epoch, transform.Version)
 	}
 
 	var reading pmanifold.Reading
@@ -401,11 +403,11 @@ func (slot *Slot) step(
 				"logic manifold: step failed: "+err.Error(),
 				err,
 			))
-			return slot.markFailed(thesis, at, SolverFailed, epoch, transform.Version)
+			return slot.markFailed(at, SolverFailed, epoch, transform.Version)
 		}
 
 		if !reading.IsFinite() {
-			return slot.markFailed(thesis, at, SolverFailed, epoch, transform.Version)
+			return slot.markFailed(at, SolverFailed, epoch, transform.Version)
 		}
 	}
 
@@ -415,7 +417,7 @@ func (slot *Slot) step(
 			"logic manifold: field read failed",
 			err,
 		))
-		return slot.markFailed(thesis, at, SolverFailed, epoch, transform.Version)
+		return slot.markFailed(at, SolverFailed, epoch, transform.Version)
 	}
 
 	conservation := slot.depositor.Conservation(accounting, cohorts)
@@ -435,10 +437,8 @@ func (slot *Slot) step(
 	state.StressAnisotropy = stressAnisotropy(pressureTensor)
 	state.OscillatorCount = len(oscillators)
 
-	thesis.Measurements.Store(slot.symbol+":manifold", state)
-	thesis.Measurements.Store(slot.symbol+":step_at", at)
-
 	gasReady := state.GasReady()
+	var producedForecast *types.Forecasts
 
 	if gasReady {
 		forecast, ready, err := slot.forecaster.Update(state)
@@ -452,19 +452,19 @@ func (slot *Slot) step(
 		}
 
 		if ready {
-			thesis.Measurements.Store(slot.symbol+":manifold_forecasts", forecast)
+			producedForecast = &forecast
 		}
 	}
 
 	return stepOutcome{
 		State:        state,
+		Forecast:     producedForecast,
 		GasReady:     gasReady,
 		DepositCount: len(deposits),
 	}
 }
 
 func (slot *Slot) markFailed(
-	thesis *types.Thesis,
 	at time.Time,
 	reason InvalidReason,
 	epoch uint64,
@@ -479,10 +479,6 @@ func (slot *Slot) markFailed(
 		Ready:         false,
 		InvalidReason: reason,
 	}
-
-	thesis.Measurements.Store(slot.symbol+":manifold_invalid", string(reason))
-	thesis.Measurements.Store(slot.symbol+":manifold", state)
-	thesis.Measurements.Delete(slot.symbol + ":manifold_forecasts")
 
 	return stepOutcome{
 		State:    state,

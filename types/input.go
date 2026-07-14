@@ -11,7 +11,6 @@ type Input struct {
 	At     time.Time
 	Ticker []kraken.TickerData
 	Trade  []kraken.TradeData
-	OHLC   kraken.OHLCDataSlice
 	Book   kraken.BookDataSlice
 	Level3 kraken.Level3DataSlice
 }
@@ -24,10 +23,6 @@ func (input Input) Latest() time.Time {
 	}
 
 	for _, row := range input.Trade {
-		latest = latestTime(latest, row.Timestamp)
-	}
-
-	for _, row := range input.OHLC {
 		latest = latestTime(latest, row.Timestamp)
 	}
 

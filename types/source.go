@@ -12,7 +12,8 @@ const (
 	SourceLeadLag     SourceType = "leadlag"
 	SourceLiquidity   SourceType = "liquidity"
 	SourcePumpDump    SourceType = "pumpdump"
+	SourceCausal      SourceType = "causal"
+	SourceResonance   SourceType = "resonance"
 	SourceSentiment   SourceType = "sentiment"
 	SourceToxicity    SourceType = "toxicity"
-	SourceOHLC        SourceType = "ohlc"
 )

@@ -3,11 +3,13 @@ package fluid
 import (
 	"context"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -95,69 +97,173 @@ requires massive traded volume.
 Viscosity is the inverse of the spread; activity, displacement and turbulence
 are derived inline against the pair's own median-scaled baselines.
 */
-type Signal[T any] struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	err        error
-	registry   *Registry
-	fluidflow  *equation.Fluidflow
-	classifier *probability.ScoreClassifier
-	ticker     *Ticker
-	trade      *Trade
-	book       *Book
+type Signal struct {
+	ctx         context.Context
+	cancel      context.CancelFunc
+	api         *websocket.API
+	instrument  *trader.Instrument
+	registry    *Registry
+	ticker      *Ticker
+	trade       *Trade
+	book        *Book
+	tickerCache []kraken.TickerData
+	tradeCache  []kraken.TradeData
+	bookCache   []kraken.BookData
 }
 
-func NewSignal[T any](ctx context.Context) *Signal[T] {
+func NewSignal(
+	ctx context.Context, api *websocket.API, instrument *trader.Instrument,
+) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 	registry := NewSyncRegistry()
 
-	return &Signal[T]{
-		ctx:       ctx,
-		cancel:    cancel,
-		registry:  registry,
-		fluidflow: equation.NewFluidflow(),
-		classifier: probability.NewScoreClassifier(
-			[]string{"laminarScore", "turbulentScore", "inertialScore", "viscousScore"},
-			[]float64{
-				float64(types.CategoryIndex(types.CategoryLaminar)),
-				float64(types.CategoryIndex(types.CategoryTurbulent)),
-				float64(types.CategoryIndex(types.CategoryInertial)),
-				float64(types.CategoryIndex(types.CategoryViscous)),
-			},
-		),
-		ticker: NewTicker(registry),
-		trade:  NewTrade(registry),
-		book:   NewBook(registry),
+	signal := &Signal{
+		ctx:        ctx,
+		cancel:     cancel,
+		api:        api,
+		instrument: instrument,
+		registry:   registry,
+		ticker:     NewTicker(registry),
+		trade:      NewTrade(registry),
+		book:       NewBook(registry),
 	}
+
+	signal.api.On("ticker", signal.onTicker)
+	signal.api.On("trade", signal.onTrade)
+	signal.api.On("book", signal.onBook)
+
+	return signal
+}
+
+func (signal *Signal) onTicker(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+
+	frame := utils.Unmarshal[kraken.Ticker](data)
+
+	if len(frame.Data) == 0 {
+		return
+	}
+
+	signal.tickerCache = append(signal.tickerCache, frame.Data...)
+}
+
+func (signal *Signal) onTrade(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+
+	frame := kraken.NewTrade(data)
+
+	if len(frame.Data) == 0 {
+		return
+	}
+
+	signal.tradeCache = append(signal.tradeCache, frame.Data...)
+}
+
+func (signal *Signal) onBook(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+
+	frame := kraken.NewBook(data)
+
+	if len(frame.Data) == 0 {
+		return
+	}
+
+	for index := range frame.Data {
+		frame.Data[index].PriceIncrement = signal.increment(frame.Data[index].Symbol)
+	}
+
+	signal.bookCache = append(signal.bookCache, frame.Data...)
 }
 
 /*
-Measure feeds each scoped ticker, book, or trade row through the per-symbol
-fluid solver and yields a measurement only after the book lattice has integrated.
+increment resolves the exchange price increment for symbol, defaulting to a
+zero decimal (skipped downstream by Book.Measure's own guard) until
+instrument metadata for that symbol has arrived.
 */
-func (signal *Signal[T]) Measure(
-	input T,
-	crossSection *types.CrossSection,
-) ([]*types.Measurement, error) {
-	switch row := any(input).(type) {
-	case kraken.TickerData:
-		return signal.ticker.Measure(row)
-	case kraken.TradeData:
-		return signal.trade.Measure(row)
-	case kraken.BookData:
-		return signal.book.Measure(row)
+func (signal *Signal) increment(symbol string) decimal.Decimal {
+	if signal.instrument == nil {
+		return *decimal.NewFromInt64(0)
 	}
 
-	return nil, nil
+	pair, err := signal.instrument.Pair(symbol)
+
+	if err != nil {
+		return *decimal.NewFromInt64(0)
+	}
+
+	return pair.Increment()
 }
 
-func (signal *Signal[T]) Error() error {
-	return errnie.Error(signal.err)
+/*
+Measure feeds every ticker, trade, and book row cached since the last tick
+through the per-symbol fluid solver, in that order: ticker and trade rows
+only update per-symbol state (FluidSymbol.Reading has nothing to read yet
+after them), while book rows are what actually classify and emit, so book
+runs last against the freshest state.
+*/
+func (signal *Signal) Measure(
+	thesis *types.Thesis,
+) *types.Thesis {
+	out := make(
+		[]*types.Measurement, 0,
+		len(signal.tickerCache)+len(signal.tradeCache)+len(signal.bookCache),
+	)
+
+	for _, row := range signal.tickerCache {
+		measurements, err := signal.ticker.Measure(row)
+
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		out = append(out, measurements...)
+	}
+
+	for _, row := range signal.tradeCache {
+		measurements, err := signal.trade.Measure(row)
+
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		out = append(out, measurements...)
+	}
+
+	for _, row := range signal.bookCache {
+		measurements, err := signal.book.Measure(row)
+
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		out = append(out, measurements...)
+	}
+
+	signal.tickerCache = signal.tickerCache[:0]
+	signal.tradeCache = signal.tradeCache[:0]
+	signal.bookCache = signal.bookCache[:0]
+
+	thesis.Measurements = append(thesis.Measurements, out...)
+
+	return thesis
 }
 
-func (signal *Signal[T]) Close() (err error) {
-	err = signal.err
+func (signal *Signal) Close() (err error) {
+	err = errnie.Error(errnie.Err(
+		errnie.Internal,
+		"signal: close failed",
+		nil,
+	))
+
 	signal.cancel()
-
-	return errnie.Error(err)
+	return err
 }

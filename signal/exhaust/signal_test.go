@@ -7,12 +7,23 @@ import (
 
 	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
+
+func measureField(measurements []*types.Measurement, symbol string, metric types.MetricType) (*types.Measurement, bool) {
+	for index := len(measurements) - 1; index >= 0; index-- {
+		measurement := measurements[index]
+
+		if measurement.Symbol == symbol && measurement.Metric == metric {
+			return measurement, true
+		}
+	}
+
+	return nil, false
+}
 
 func exhaustBookRow(symbol string, bidQuantity float64, askQuantity float64) kraken.BookData {
 	return kraken.BookData{
@@ -51,13 +62,15 @@ func TestSignal_MeasureDetectsMechanicalDecay(testingTB *testing.T) {
 			result := signal.Measure(types.NewThesis(nil))
 
 			Convey("Then exhaust urgency and mechanical score should rise", func() {
-				raw, ok := result.Measurements.Load("exhaust")
+				urgency, ok := measureField(result.Measurements, "BTC/USD", types.MetricUrgency)
 				So(ok, ShouldBeTrue)
+				So(urgency.Raw, ShouldBeGreaterThan, 0)
+				So(urgency.Maturity, ShouldBeGreaterThan, 0.85)
 
-				metrics := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])["BTC/USD"]
-				So(metrics["urgency"].Float64(), ShouldBeGreaterThan, 0)
-				So(metrics["mechanical"].Float64(), ShouldBeGreaterThan, 0)
-				So(metrics["maturity"].Float64(), ShouldBeGreaterThan, 0.85)
+				mechanical, ok := measureField(result.Measurements, "BTC/USD", types.MetricMechanical)
+				So(ok, ShouldBeTrue)
+				So(mechanical.Raw, ShouldBeGreaterThan, 0)
+
 				So(len(signal.book.cache), ShouldEqual, 0)
 			})
 		})
@@ -80,11 +93,7 @@ func TestSignal_MeasureSkipsBookWithoutIncrement(testingTB *testing.T) {
 		result := signal.Measure(types.NewThesis(nil))
 
 		Convey("Then it emits nothing for that symbol", func() {
-			raw, ok := result.Measurements.Load("exhaust")
-			So(ok, ShouldBeTrue)
-
-			out := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])
-			_, hasSymbol := out["BTC/USD"]
+			_, hasSymbol := measureField(result.Measurements, "BTC/USD", types.MetricMechanical)
 			So(hasSymbol, ShouldBeFalse)
 		})
 	})

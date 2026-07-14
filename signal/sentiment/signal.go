@@ -4,8 +4,6 @@ import (
 	"context"
 	"math"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -35,36 +33,24 @@ func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
 	tickers := signal.ticker.cache
-	out := datura.Map[datura.Map[*decimal.Decimal]]{}
+	out := make([]*types.Measurement, 0, len(tickers))
 
-	thesis.CrossSection.Observe(tickers)
-	view := thesis.CrossSection.Snapshot()
-	breadth := view.Breadth()
+	thesis.CrossSection.ProcessUpdates(tickers)
+	summary := thesis.CrossSection.ReadView()
+	breadth := summary.Breadth
 
 	for _, row := range tickers {
-		if out[row.Symbol] == nil {
-			out[row.Symbol] = datura.Map[*decimal.Decimal]{
-				"change":         decimal.NewFromFloat64(0),
-				"breadth":        decimal.NewFromFloat64(0),
-				"leaderStrength": decimal.NewFromFloat64(0),
-				"leaderEvidence": decimal.NewFromFloat64(0),
-				"relativeLead":   decimal.NewFromFloat64(0),
-				"surgeScore":     decimal.NewFromFloat64(0),
-				"divergentScore": decimal.NewFromFloat64(0),
-				"slumpScore":     decimal.NewFromFloat64(0),
-				"strength":       decimal.NewFromFloat64(0),
-			}
-		}
-
 		change := row.ChangePct / 100
 		leaderStrength := 0.0
 		leaderEvidence := 0.0
 		relativeLead := 0.0
 
-		if view.IsLeader(row.Symbol, change) {
+		isLeader := summary.Leader == row.Symbol && summary.LeadershipThreshold > 0 &&
+			math.Abs(change) >= summary.LeadershipThreshold
+
+		if isLeader {
 			leaderStrength = math.Abs(change)
-			threshold := view.LeadershipThreshold()
-			leaderEvidence = leaderStrength / threshold
+			leaderEvidence = leaderStrength / summary.LeadershipThreshold
 			relativeLead = 1
 		}
 
@@ -74,21 +60,28 @@ func (signal *Signal) Measure(
 		slumpScore := (1 - breadth) * (1 - relativeLead) / (1 + leaderMass)
 		strength := math.Max(surgeScore, math.Max(divergentScore, slumpScore))
 
-		out[row.Symbol]["change"] = decimal.NewFromFloat64(change)
-		out[row.Symbol]["breadth"] = decimal.NewFromFloat64(breadth)
-		out[row.Symbol]["leaderStrength"] = decimal.NewFromFloat64(leaderStrength)
-		out[row.Symbol]["leaderEvidence"] = decimal.NewFromFloat64(leaderEvidence)
-		out[row.Symbol]["relativeLead"] = decimal.NewFromFloat64(relativeLead)
-		out[row.Symbol]["surgeScore"] = decimal.NewFromFloat64(surgeScore)
-		out[row.Symbol]["divergentScore"] = decimal.NewFromFloat64(divergentScore)
-		out[row.Symbol]["slumpScore"] = decimal.NewFromFloat64(slumpScore)
-		out[row.Symbol]["strength"] = decimal.NewFromFloat64(strength)
+		validity := types.MeasurementValidity{
+			State:     types.ValidityValid,
+			Readiness: types.ReadinessObservation,
+		}
+
+		out = append(out,
+			&types.Measurement{Source: types.SourceSentiment, Metric: types.MetricChange, Stream: types.Sentiment, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: change, Validity: validity},
+			&types.Measurement{Source: types.SourceSentiment, Metric: types.MetricBreadth, Stream: types.Sentiment, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: breadth, Validity: validity},
+			&types.Measurement{Source: types.SourceSentiment, Metric: types.MetricLeaderStrength, Stream: types.Sentiment, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: leaderStrength, Validity: validity},
+			&types.Measurement{Source: types.SourceSentiment, Metric: types.MetricLeaderEvidence, Stream: types.Sentiment, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: leaderEvidence, Validity: validity},
+			&types.Measurement{Source: types.SourceSentiment, Metric: types.MetricRelativeLead, Stream: types.Sentiment, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: relativeLead, Validity: validity},
+			&types.Measurement{Source: types.SourceSentiment, Metric: types.MetricSurgeScore, Stream: types.Sentiment, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: surgeScore, Validity: validity},
+			&types.Measurement{Source: types.SourceSentiment, Metric: types.MetricDivergentScore, Stream: types.Sentiment, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: divergentScore, Validity: validity},
+			&types.Measurement{Source: types.SourceSentiment, Metric: types.MetricSlumpScore, Stream: types.Sentiment, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: slumpScore, Validity: validity},
+			&types.Measurement{Source: types.SourceSentiment, Metric: types.MetricStrength, Stream: types.Sentiment, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: strength, Validity: validity},
+		)
 	}
 
 	signal.ticker.cache = signal.ticker.cache[:0]
 
 	thesis.Signals.Store("tickers", tickers)
-	thesis.Measurements.Store("sentiment", out)
+	thesis.Measurements = append(thesis.Measurements, out...)
 
 	return thesis
 }

@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -45,7 +44,6 @@ It owns:
 type Price struct {
 	status  types.Status
 	api     *websocket.API
-	ui      chan []byte
 	fees    *sync.Map
 	tickers *sync.Map
 }
@@ -55,12 +53,10 @@ NewPrice wires the price stream to the shared Kraken API.
 */
 func NewPrice(
 	api *websocket.API,
-	ui chan []byte,
 ) *Price {
 	return &Price{
 		status:  types.INITIALIZING,
 		api:     api,
-		ui:      ui,
 		fees:    &sync.Map{},
 		tickers: &sync.Map{},
 	}
@@ -73,20 +69,6 @@ func (price *Price) Initialize() error {
 
 func (price *Price) Status() types.Status {
 	return price.status
-}
-
-func (price *Price) Publish() {
-	price.tickers.Range(func(_, value any) bool {
-		ticker := value.(*kraken.TickerData)
-
-		price.ui <- datura.Map[any]{
-			"tickers": []kraken.TickerData{
-				*ticker,
-			},
-		}.Marshal()
-
-		return true
-	})
 }
 
 /*

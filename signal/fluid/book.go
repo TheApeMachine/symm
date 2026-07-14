@@ -170,32 +170,36 @@ func (book *Book) measurementsFromReading(
 		From:    eventAt,
 		Through: eventAt,
 	}
-	uncertainty := types.MeasurementUncertainty{Available: false}
 	subject := types.SubjectType("order_book")
+
+	laminarConfidence := confidenceByCategory[types.Laminar]
+	turbulentConfidence := confidenceByCategory[types.Turbulent]
+	inertialConfidence := confidenceByCategory[types.Inertial]
+	viscousConfidence := confidenceByCategory[types.Viscous]
 
 	specs := []struct {
 		metric     types.MetricType
 		raw        float64
-		normalized float64
+		normalized *float64
 	}{
-		{types.MetricType("laminar_score"), output.LaminarScore, confidenceByCategory[types.Laminar]},
-		{types.MetricType("turbulent_score"), output.TurbulentScore, confidenceByCategory[types.Turbulent]},
-		{types.MetricType("inertial_score"), output.InertialScore, confidenceByCategory[types.Inertial]},
-		{types.MetricType("viscous_score"), output.ViscousScore, confidenceByCategory[types.Viscous]},
-		{types.MetricType("strength"), output.Strength, 0},
-		{types.MetricType("viscosity"), reading.viscosity, 0},
-		{types.MetricType("reynolds"), reading.reynolds, 0},
-		{types.MetricType("divergence_v2"), reading.divergence, 0},
-		{types.MetricType("velocity_curvature_v2"), reading.velocityCurvature, 0},
-		{types.MetricType("turbulence"), reading.turbulence, 0},
-		{types.MetricType("source_balance"), reading.sourceBalance, 0},
-		{types.MetricType("memory"), reading.memory, 0},
-		{types.MetricType("mid_add_rate"), reading.midAddRate, 0},
-		{types.MetricType("mid_execute_rate"), reading.midExecuteRate, 0},
-		{types.MetricType("laminar"), output.LaminarScore, confidenceByCategory[types.Laminar]},
-		{types.MetricType("turbulent"), output.TurbulentScore, confidenceByCategory[types.Turbulent]},
-		{types.MetricType("inertial"), output.InertialScore, confidenceByCategory[types.Inertial]},
-		{types.MetricType("viscous"), output.ViscousScore, confidenceByCategory[types.Viscous]},
+		{types.MetricType("laminar_score"), output.LaminarScore, &laminarConfidence},
+		{types.MetricType("turbulent_score"), output.TurbulentScore, &turbulentConfidence},
+		{types.MetricType("inertial_score"), output.InertialScore, &inertialConfidence},
+		{types.MetricType("viscous_score"), output.ViscousScore, &viscousConfidence},
+		{types.MetricType("strength"), output.Strength, nil},
+		{types.MetricType("viscosity"), reading.viscosity, nil},
+		{types.MetricType("reynolds"), reading.reynolds, nil},
+		{types.MetricType("divergence_v2"), reading.divergence, nil},
+		{types.MetricType("velocity_curvature_v2"), reading.velocityCurvature, nil},
+		{types.MetricType("turbulence"), reading.turbulence, nil},
+		{types.MetricType("source_balance"), reading.sourceBalance, nil},
+		{types.MetricType("memory"), reading.memory, nil},
+		{types.MetricType("mid_add_rate"), reading.midAddRate, nil},
+		{types.MetricType("mid_execute_rate"), reading.midExecuteRate, nil},
+		{types.MetricType("laminar"), output.LaminarScore, &laminarConfidence},
+		{types.MetricType("turbulent"), output.TurbulentScore, &turbulentConfidence},
+		{types.MetricType("inertial"), output.InertialScore, &inertialConfidence},
+		{types.MetricType("viscous"), output.ViscousScore, &viscousConfidence},
 	}
 
 	measurements := make([]*types.Measurement, 0, len(specs))
@@ -214,7 +218,6 @@ func (book *Book) measurementsFromReading(
 			Raw:          spec.raw,
 			Normalized:   spec.normalized,
 			Maturity:     maturity,
-			Uncertainty:  uncertainty,
 			Validity:     validity,
 			Scale:        scale,
 		})

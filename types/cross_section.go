@@ -4,9 +4,11 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/theapemachine/errnie"
-	nomcorrelation "github.com/theapemachine/nomagique/correlation"
+	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -22,11 +24,11 @@ type CrossSectionConfig struct {
 	BreadthCap int
 }
 
-type CrossSection struct {
-	config  CrossSectionConfig
-	symbols map[string][]kraken.TickerData
-}
-
+/*
+DefaultCrossSectionConfig returns the bounds every production CrossSection
+runs with. Tests that need different bounds build their own config; nothing
+here is a per-symbol assumption.
+*/
 func DefaultCrossSectionConfig() CrossSectionConfig {
 	return CrossSectionConfig{
 		ReturnCap:  defaultReturnCap,
@@ -35,174 +37,330 @@ func DefaultCrossSectionConfig() CrossSectionConfig {
 	}
 }
 
-func NewCrossSection(config CrossSectionConfig) (*CrossSection, error) {
-	if config.ReturnCap <= 0 {
-		return nil, errnie.Err(errnie.Validation, "types: cross-section return cap must be positive", nil)
-	}
-
-	if config.MinBars <= 1 {
-		return nil, errnie.Err(errnie.Validation, "types: cross-section min bars must exceed one", nil)
-	}
-
-	if config.BreadthCap <= 0 {
-		return nil, errnie.Err(errnie.Validation, "types: cross-section breadth cap must be positive", nil)
-	}
-
-	return &CrossSection{
-		config:  config,
-		symbols: map[string][]kraken.TickerData{},
-	}, nil
+/*
+SymbolMetrics is one symbol's row in a published CrossSectionSummary.
+*/
+type SymbolMetrics struct {
+	Symbol          string  `json:"symbol"`
+	Volume          float64 `json:"volume"`
+	QuoteNotional   float64 `json:"quoteNotional"`
+	ExecutableDepth float64 `json:"executableDepth"`
+	LatestChange    float64 `json:"latestChange"`
 }
 
-func (crossSection *CrossSection) Observe(rows []kraken.TickerData) error {
-	if crossSection == nil {
-		return errnie.Err(errnie.Validation, "types: cross-section is nil", nil)
+type CrossSectionSummary struct {
+	Metrics             []SymbolMetrics `json:"metrics"`
+	Leader              string          `json:"leader"`
+	LeadershipThreshold float64         `json:"leadershipThreshold"`
+	Breadth             float64         `json:"breadth"`
+}
+
+/*
+observation is what a ring slot actually holds. Kraken's Decimal.Float64
+walks through math/big.Rat, which allocates; SymbolReturns and
+SymbolSamples read the same historical slots repeatedly (once per peer,
+every tick, for every subject), so that conversion is paid once here at
+ingestion instead of on every one of those reads.
+*/
+type observation struct {
+	at              time.Time
+	last            float64
+	changePct       float64
+	volume          float64
+	quoteNotional   float64
+	executableDepth float64
+}
+
+/*
+CrossSection tracks every symbol's recent ticker history in fixed-size
+per-symbol ring buffers, so the cost of a tick is bounded by how many
+symbols actually updated, not by any growing map or slice. Symbols are
+registered lazily on first observation because the tracked universe is
+discovered asynchronously (instrument discovery finishes after this
+CrossSection already exists), not known upfront.
+
+ProcessUpdates is the single writer; it must only ever be called
+sequentially from the planner's tick loop. ReadView is safe for concurrent
+readers because it hands out an immutable, atomically-published snapshot.
+*/
+type CrossSection struct {
+	config    CrossSectionConfig
+	symbols   []string
+	symbolMap map[string]int
+
+	// history[i] is symbol i's ring buffer; ringIdx[i] is its current head.
+	history [][]observation
+	ringIdx []int
+	// counts[i] is how many bars symbol i has ever received, saturating at
+	// ReturnCap. A symbol needs at least MinBars of these before its change
+	// is trusted enough to count toward the leadership threshold.
+	counts []int
+
+	activeView atomic.Pointer[CrossSectionSummary]
+}
+
+func NewCrossSection(config CrossSectionConfig) (*CrossSection, error) {
+	if config.ReturnCap <= 0 || config.MinBars <= 1 {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "invalid bounds parameters", nil))
 	}
+
+	crossSection := &CrossSection{
+		config:    config,
+		symbolMap: make(map[string]int),
+	}
+
+	crossSection.activeView.Store(&CrossSectionSummary{})
+
+	return crossSection, nil
+}
+
+/*
+MaxReturnWindow reports how many bars of history each symbol's ring can
+hold, so callers know how large a buffer to pass to SymbolReturns and
+SymbolSamples.
+*/
+func (crossSection *CrossSection) MaxReturnWindow() int {
+	return crossSection.config.ReturnCap
+}
+
+/*
+ProcessUpdates folds raw ticker rows into the per-symbol ring buffers. A
+symbol seen for the first time is registered on the spot; every symbol
+seen before this reuses its existing ring with zero further allocation.
+Must be called sequentially inside the planner's tick loop.
+*/
+func (crossSection *CrossSection) ProcessUpdates(rows []kraken.TickerData) {
+	mutated := false
+	capLen := crossSection.config.ReturnCap + 1
 
 	for _, row := range rows {
 		symbol := strings.TrimSpace(row.Symbol)
 
-		if symbol == "" || row.Timestamp.IsZero() {
+		if symbol == "" || row.Timestamp.IsZero() || row.Last == nil || row.Last.Sign() <= 0 {
 			continue
 		}
 
-		if row.Last == nil || row.Last.Sign() <= 0 {
+		index, exists := crossSection.symbolMap[symbol]
+
+		if !exists {
+			index = len(crossSection.symbols)
+			crossSection.symbolMap[symbol] = index
+			crossSection.symbols = append(crossSection.symbols, symbol)
+			crossSection.history = append(crossSection.history, make([]observation, capLen))
+			crossSection.ringIdx = append(crossSection.ringIdx, 0)
+			crossSection.counts = append(crossSection.counts, 0)
+		}
+
+		currentPos := crossSection.ringIdx[index]
+		latest := crossSection.history[index][currentPos]
+
+		if !latest.at.IsZero() && !row.Timestamp.After(latest.at) {
 			continue
 		}
 
-		observations := append(crossSection.symbols[symbol], row)
-		if len(observations) > crossSection.config.ReturnCap+1 {
-			observations = observations[len(observations)-crossSection.config.ReturnCap-1:]
+		nextPos := (currentPos + 1) % capLen
+		crossSection.history[index][nextPos] = observation{
+			at:              row.Timestamp,
+			last:            row.Last.Float64(),
+			changePct:       row.ChangePct,
+			volume:          row.Volume,
+			quoteNotional:   QuoteNotional(row),
+			executableDepth: ExecutableDepth(row),
+		}
+		crossSection.ringIdx[index] = nextPos
+
+		if crossSection.counts[index] < crossSection.config.ReturnCap {
+			crossSection.counts[index]++
 		}
 
-		crossSection.symbols[symbol] = observations
+		mutated = true
 	}
 
-	return nil
+	if mutated {
+		crossSection.recomputeSummary()
+	}
 }
 
 /*
-Snapshot returns an independent, deep copy of crossSection's current
-per-symbol history. The result never changes even as the source keeps
-observing new ticker rows, so every signal measuring events within the
-same watermark can share one frozen cross-sectional view instead of
-racing a live, mutating accumulator or peer signals seeing inconsistent
-partial history.
+ReadView hands out the most recently published summary. Lock-free and safe
+for any number of concurrent readers; the returned pointer is never
+mutated after publication.
 */
-func (crossSection *CrossSection) Snapshot() *CrossSection {
-	if crossSection == nil {
-		return nil
-	}
-
-	symbols := make(map[string][]kraken.TickerData, len(crossSection.symbols))
-
-	for symbol, observations := range crossSection.symbols {
-		symbols[symbol] = append([]kraken.TickerData(nil), observations...)
-	}
-
-	return &CrossSection{config: crossSection.config, symbols: symbols}
+func (crossSection *CrossSection) ReadView() *CrossSectionSummary {
+	return crossSection.activeView.Load()
 }
 
-/*
-CrossSectionSummary is the exported, JSON-serializable readout of a
-CrossSection. CrossSection itself keeps its per-symbol ticker history
-unexported, so this is what gets published to the frontend.
-*/
-type CrossSectionSummary struct {
-	Symbols             []string  `json:"symbols"`
-	Leader              string    `json:"leader"`
-	LeadershipThreshold float64   `json:"leadershipThreshold"`
-	Breadth             float64   `json:"breadth"`
-	Volumes             []float64 `json:"volumes"`
-	QuoteNotionals      []float64 `json:"quoteNotionals"`
-	ExecutableDepths    []float64 `json:"executableDepths"`
-}
+func (crossSection *CrossSection) recomputeSummary() {
+	symbolCount := len(crossSection.symbols)
+	metrics := make([]SymbolMetrics, 0, symbolCount)
+	changes := make([]float64, 0, symbolCount)
 
-/*
-Summary reduces crossSection to its exported aggregates, safe to hand
-to callers outside this package (e.g. publishing over the wire) without
-exposing the unexported per-symbol history.
-*/
-func (crossSection *CrossSection) Summary() CrossSectionSummary {
-	return CrossSectionSummary{
-		Symbols:             crossSection.Symbols(),
-		Leader:              crossSection.Leader(),
-		LeadershipThreshold: crossSection.LeadershipThreshold(),
-		Breadth:             crossSection.Breadth(),
-		Volumes:             crossSection.Volumes(),
-		QuoteNotionals:      crossSection.QuoteNotionals(),
-		ExecutableDepths:    crossSection.ExecutableDepths(),
-	}
-}
+	var positive, total float64
+	var leader string
+	var leaderStrength float64
 
-func (crossSection *CrossSection) Volumes() []float64 {
-	volumes := make([]float64, 0, len(crossSection.symbols))
-	for _, observations := range crossSection.symbols {
-		latest, ok := latestTicker(observations)
-		if !ok || latest.Volume <= 0 {
+	for index, symbol := range crossSection.symbols {
+		head := crossSection.ringIdx[index]
+		latest := crossSection.history[index][head]
+
+		if latest.at.IsZero() {
 			continue
 		}
 
-		volumes = append(volumes, latest.Volume)
+		// change_pct is the venue's own rolling change, already computed over
+		// whatever window Kraken maintains for that symbol. Deriving our own
+		// tick-to-tick delta from the ring would both need a bootstrap tick
+		// and impose an arbitrary sampling cadence as the "window" instead.
+		change := latest.changePct / 100
+
+		metrics = append(metrics, SymbolMetrics{
+			Symbol:          symbol,
+			Volume:          latest.volume,
+			QuoteNotional:   latest.quoteNotional,
+			ExecutableDepth: latest.executableDepth,
+			LatestChange:    change,
+		})
+
+		total++
+
+		if change > 0 {
+			positive++
+		}
+
+		absoluteChange := math.Abs(change)
+
+		if absoluteChange > leaderStrength {
+			leaderStrength = absoluteChange
+			leader = symbol
+		}
+
+		// A symbol's own change is only trusted for the leadership threshold
+		// once it has enough bars behind it; a brand-new symbol's first tick
+		// should never single-handedly define what "leading" means.
+		if crossSection.counts[index] >= crossSection.config.MinBars {
+			changes = append(changes, absoluteChange)
+		}
 	}
 
-	return volumes
+	var breadth float64
+	if total > 0 {
+		breadth = positive / total
+	}
+
+	var threshold float64
+	if len(changes) > 0 {
+		sort.Float64s(changes)
+		threshold = changes[len(changes)/2]
+	}
+
+	crossSection.activeView.Store(&CrossSectionSummary{
+		Metrics:             metrics,
+		Leader:              leader,
+		LeadershipThreshold: threshold,
+		Breadth:             breadth,
+	})
 }
 
 /*
-QuoteNotionals returns each symbol's latest executable quote notional
-(volume times the vwap traded rate, falling back to last trade price
-when no vwap is reported yet), the same tradable-value axis Universe
-ranking uses. Comparing this instead of raw base-currency Volume avoids
-mixing symbols denominated in wildly different unit sizes.
+SymbolReturns writes symbol's log returns, oldest first, into dst and
+reports how many were written. The lookback is len(dst) bars; dst is
+caller-owned so a hot loop (e.g. correlation scoring every peer every
+tick) can reuse one buffer instead of allocating per call.
 */
-func (crossSection *CrossSection) QuoteNotionals() []float64 {
-	notionals := make([]float64, 0, len(crossSection.symbols))
+func (crossSection *CrossSection) SymbolReturns(symbol string, dst []float64) int {
+	if len(dst) == 0 {
+		return 0
+	}
 
-	for _, observations := range crossSection.symbols {
-		latest, ok := latestTicker(observations)
+	index, exists := crossSection.symbolMap[strings.TrimSpace(symbol)]
 
-		if !ok {
+	if !exists {
+		return 0
+	}
+
+	capLen := crossSection.config.ReturnCap + 1
+	head := crossSection.ringIdx[index]
+	written := 0
+
+	for offset := range dst {
+		currentPos := (head - offset + capLen) % capLen
+		previousPos := (head - offset - 1 + capLen) % capLen
+
+		current := crossSection.history[index][currentPos]
+		previous := crossSection.history[index][previousPos]
+
+		if current.at.IsZero() || previous.at.IsZero() {
+			break
+		}
+
+		if current.last <= 0 || previous.last <= 0 {
 			continue
 		}
 
-		if notional := QuoteNotional(latest); notional > 0 {
-			notionals = append(notionals, notional)
-		}
+		dst[written] = math.Log(current.last / previous.last)
+		written++
 	}
 
-	return notionals
+	reverseFloat64s(dst[:written])
+
+	return written
 }
 
 /*
-ExecutableDepths returns each symbol's latest executable top-of-book
-depth: the smaller of bid/ask quantity, valued at the mid price. This is
-liquidity actually available to trade right now, not a volume proxy for
-it.
+SymbolSamples writes symbol's recent (timestamp, price) samples, oldest
+first, into dst and reports how many were written. dst is caller-owned for
+the same reuse reason as SymbolReturns. Chronological order matters here:
+callers correlate two symbols' samples pairwise over time (e.g.
+Hayashi-Yoshida), which requires walking both series forward in time.
 */
-func (crossSection *CrossSection) ExecutableDepths() []float64 {
-	depths := make([]float64, 0, len(crossSection.symbols))
+func (crossSection *CrossSection) SymbolSamples(symbol string, dst []correlation.Sample) int {
+	if len(dst) == 0 {
+		return 0
+	}
 
-	for _, observations := range crossSection.symbols {
-		latest, ok := latestTicker(observations)
+	index, exists := crossSection.symbolMap[strings.TrimSpace(symbol)]
 
-		if !ok {
+	if !exists {
+		return 0
+	}
+
+	capLen := crossSection.config.ReturnCap + 1
+	head := crossSection.ringIdx[index]
+	written := 0
+
+	for offset := range dst {
+		pos := (head - offset + capLen) % capLen
+		entry := crossSection.history[index][pos]
+
+		if entry.at.IsZero() {
+			break
+		}
+
+		if entry.last <= 0 {
 			continue
 		}
 
-		if depth := ExecutableDepth(latest); depth > 0 {
-			depths = append(depths, depth)
-		}
+		dst[written] = correlation.Sample{At: entry.at, Value: entry.last}
+		written++
 	}
 
-	return depths
+	reverseSamples(dst[:written])
+
+	return written
 }
 
-/*
-QuoteNotional values row's traded volume at its vwap rate, falling back
-to the last trade price when vwap has not been reported yet. Zero when
-either input is unavailable.
-*/
+func reverseFloat64s(values []float64) {
+	for left, right := 0, len(values)-1; left < right; left, right = left+1, right-1 {
+		values[left], values[right] = values[right], values[left]
+	}
+}
+
+func reverseSamples(samples []correlation.Sample) {
+	for left, right := 0, len(samples)-1; left < right; left, right = left+1, right-1 {
+		samples[left], samples[right] = samples[right], samples[left]
+	}
+}
+
 func QuoteNotional(row kraken.TickerData) float64 {
 	rate := row.Vwap
 
@@ -217,13 +375,11 @@ func QuoteNotional(row kraken.TickerData) float64 {
 	return row.Volume * rate
 }
 
-/*
-ExecutableDepth values the smaller of row's bid/ask quantity at the mid
-price: the quantity a taker could actually clear on either side right
-now without walking past the top of book. Zero when the quote is not
-two-sided.
-*/
 func ExecutableDepth(row kraken.TickerData) float64 {
+	if row.Bid == nil || row.Ask == nil {
+		return 0
+	}
+
 	bid := row.Bid.Float64()
 	ask := row.Ask.Float64()
 
@@ -231,196 +387,11 @@ func ExecutableDepth(row kraken.TickerData) float64 {
 		return 0
 	}
 
-	qty := min(row.BidQty, row.AskQty)
+	quantity := min(row.BidQty, row.AskQty)
 
-	if qty <= 0 {
+	if quantity <= 0 {
 		return 0
 	}
 
-	return qty * (bid + ask) / 2
-}
-
-func (crossSection *CrossSection) Breadth() float64 {
-	var positive float64
-	var total float64
-
-	for _, observations := range crossSection.symbols {
-		change, ok := latestChange(observations)
-		if !ok {
-			continue
-		}
-
-		total++
-		if change > 0 {
-			positive++
-		}
-	}
-
-	if total == 0 {
-		return 0
-	}
-
-	return positive / total
-}
-
-func (crossSection *CrossSection) IsLeader(symbol string, change float64) bool {
-	leader := crossSection.Leader()
-	if leader != strings.TrimSpace(symbol) {
-		return false
-	}
-
-	threshold := crossSection.LeadershipThreshold()
-	if threshold <= 0 {
-		return false
-	}
-
-	return math.Abs(change) >= threshold
-}
-
-func (crossSection *CrossSection) LeadershipThreshold() float64 {
-	changes := make([]float64, 0, len(crossSection.symbols))
-	for _, observations := range crossSection.symbols {
-		if len(observations) < crossSection.config.MinBars {
-			continue
-		}
-
-		change, ok := latestChange(observations)
-		if ok {
-			changes = append(changes, math.Abs(change))
-		}
-	}
-
-	if len(changes) == 0 {
-		return 0
-	}
-
-	sort.Float64s(changes)
-	return changes[len(changes)/2]
-}
-
-func (crossSection *CrossSection) Leader() string {
-	var leader string
-	var strength float64
-
-	for symbol, observations := range crossSection.symbols {
-		change, ok := latestChange(observations)
-		if !ok || math.Abs(change) <= strength {
-			continue
-		}
-
-		leader = symbol
-		strength = math.Abs(change)
-	}
-
-	return leader
-}
-
-func (crossSection *CrossSection) MaxReturnWindow() int {
-	if crossSection == nil || crossSection.config.ReturnCap <= 0 {
-		return 0
-	}
-
-	return crossSection.config.ReturnCap
-}
-
-func (crossSection *CrossSection) Symbols() []string {
-	symbols := make([]string, 0, len(crossSection.symbols))
-	for symbol := range crossSection.symbols {
-		symbols = append(symbols, symbol)
-	}
-
-	sort.Strings(symbols)
-	return symbols
-}
-
-func (crossSection *CrossSection) SymbolReturns(symbol string, window int) []float64 {
-	observations := crossSection.window(symbol, window+1)
-	return tickerReturns(observations)
-}
-
-func (crossSection *CrossSection) SymbolSamples(
-	symbol string,
-	window int,
-) []nomcorrelation.Sample {
-	observations := crossSection.window(symbol, window)
-	samples := make([]nomcorrelation.Sample, 0, len(observations))
-
-	for _, row := range observations {
-		lastPrice := row.Last.Float64()
-
-		if lastPrice <= 0 || row.Timestamp.IsZero() {
-			continue
-		}
-
-		samples = append(samples, nomcorrelation.Sample{
-			At:    row.Timestamp,
-			Value: lastPrice,
-		})
-	}
-
-	return samples
-}
-
-func (crossSection *CrossSection) window(symbol string, window int) []kraken.TickerData {
-	observations := crossSection.symbols[strings.TrimSpace(symbol)]
-	if window <= 0 || len(observations) <= window {
-		return append([]kraken.TickerData(nil), observations...)
-	}
-
-	return append([]kraken.TickerData(nil), observations[len(observations)-window:]...)
-}
-
-func latestTicker(rows []kraken.TickerData) (kraken.TickerData, bool) {
-	if len(rows) == 0 {
-		return kraken.TickerData{}, false
-	}
-
-	return rows[len(rows)-1], true
-}
-
-func latestChange(rows []kraken.TickerData) (float64, bool) {
-	latest, ok := latestTicker(rows)
-	if !ok {
-		return 0, false
-	}
-
-	if latest.ChangePct != 0 {
-		return latest.ChangePct / 100, true
-	}
-
-	if len(rows) < 2 {
-		return 0, false
-	}
-
-	previous := rows[len(rows)-2]
-	previousLast := previous.Last.Float64()
-	latestLast := latest.Last.Float64()
-
-	if previousLast <= 0 || latestLast <= 0 {
-		return 0, false
-	}
-
-	return math.Log(latestLast / previousLast), true
-}
-
-func tickerReturns(rows []kraken.TickerData) []float64 {
-	if len(rows) < 2 {
-		return nil
-	}
-
-	returns := make([]float64, 0, len(rows)-1)
-	for index := 1; index < len(rows); index++ {
-		previous := rows[index-1]
-		current := rows[index]
-		previousLast := previous.Last.Float64()
-		currentLast := current.Last.Float64()
-
-		if previousLast <= 0 || currentLast <= 0 {
-			continue
-		}
-
-		returns = append(returns, math.Log(currentLast/previousLast))
-	}
-
-	return returns
+	return quantity * (bid + ask) / 2
 }

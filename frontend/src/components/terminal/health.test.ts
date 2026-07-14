@@ -9,26 +9,14 @@ describe("terminalHealthSummary", () => {
 
 		history.push({
 			source: "depthflow",
+			metric: "strength",
 			symbol: "BTC/USD",
 			at: "2026-07-06T10:00:00Z",
-			raw: 0,
-			normalized: { value: 0, available: false },
-			uncertainty: { available: false },
-			validity: { state: "", readiness: "" },
+			raw: 0.21,
+			normalized: null,
+			uncertainty: null,
+			validity: { state: "valid", readiness: "observation" },
 			scale: { kind: "", from: "", through: "" },
-			status: "measured",
-			elapsed: 0,
-			entryBaseline: 0.5,
-			exitBaseline: 0.25,
-			categories: [
-				{
-					type: "loaded_imbalance",
-					confidence: 0.21,
-					surprisal: 0,
-					strength: 0.4,
-				},
-			],
-			metrics: {},
 		});
 
 		const summary = terminalHealthSummary(

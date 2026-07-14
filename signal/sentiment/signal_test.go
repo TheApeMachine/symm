@@ -9,12 +9,25 @@ import (
 
 	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/tests"
 	tickerfixture "github.com/theapemachine/symm/tests/fixtures/ticker"
 	"github.com/theapemachine/symm/types"
 )
+
+func lastMeasurement(
+	measurements []*types.Measurement, symbol string, metric types.MetricType,
+) (*types.Measurement, bool) {
+	for index := len(measurements) - 1; index >= 0; index-- {
+		measurement := measurements[index]
+
+		if measurement.Symbol == symbol && measurement.Metric == metric {
+			return measurement, true
+		}
+	}
+
+	return nil, false
+}
 
 func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 	Convey("Given a sentiment signal fed by a market replay", testingTB, func() {
@@ -31,12 +44,12 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 			Feed(tickerfixture.NewFixture(tickerfixture.UPDATE, 32))
 
 		Convey("When calm and pumped ticker timelines are measured", func() {
-			calm := measureField(signal, handlers, market.Frames(), "change")
+			calm := measureField(signal, handlers, market.Frames(), types.MetricChange)
 			pumped := measureField(
 				signal,
 				handlers,
 				tests.Spike(market.Frames(), 16, 1.25, 1),
-				"change",
+				types.MetricChange,
 			)
 
 			Convey("Then the pumped stream should amplify measured change", func() {
@@ -88,13 +101,14 @@ func TestSignal_Measure(testingTB *testing.T) {
 		result := signal.Measure(thesis)
 
 		Convey("It should publish breadth and leader scores without categories", func() {
-			raw, ok := result.Measurements.Load("sentiment")
+			breadth, ok := lastMeasurement(result.Measurements, "BTC/USD", types.MetricBreadth)
 			So(ok, ShouldBeTrue)
+			So(breadth.Raw, ShouldAlmostEqual, 2.0/3.0, 0.0001)
 
-			out, ok := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])
+			surge, ok := lastMeasurement(result.Measurements, "BTC/USD", types.MetricSurgeScore)
 			So(ok, ShouldBeTrue)
-			So(out["BTC/USD"]["breadth"].Float64(), ShouldAlmostEqual, 2.0/3.0, 0.0001)
-			So(out["BTC/USD"]["surgeScore"].Float64(), ShouldBeGreaterThan, 0)
+			So(surge.Raw, ShouldBeGreaterThan, 0)
+
 			So(len(signal.ticker.cache), ShouldEqual, 0)
 		})
 	})
@@ -104,7 +118,7 @@ func measureField(
 	signal *Signal,
 	handlers tests.Handlers,
 	frames iter.Seq[tests.Frame],
-	key string,
+	metric types.MetricType,
 ) float64 {
 	signal.ticker.cache = signal.ticker.cache[:0]
 	tests.Replay(handlers, frames)
@@ -112,19 +126,13 @@ func measureField(
 	thesis := types.NewThesis(nil)
 	result := signal.Measure(thesis)
 
-	raw, ok := result.Measurements.Load("sentiment")
+	measurement, ok := lastMeasurement(result.Measurements, "ALGO/USD", metric)
 
 	if !ok {
 		return 0
 	}
 
-	out, ok := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])
-
-	if !ok || out["ALGO/USD"] == nil || out["ALGO/USD"][key] == nil {
-		return 0
-	}
-
-	return out["ALGO/USD"][key].Float64()
+	return measurement.Raw
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {

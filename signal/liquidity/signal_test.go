@@ -7,10 +7,21 @@ import (
 
 	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
+
+func measureField(measurements []*types.Measurement, symbol string, metric types.MetricType) (*types.Measurement, bool) {
+	for index := len(measurements) - 1; index >= 0; index-- {
+		measurement := measurements[index]
+
+		if measurement.Symbol == symbol && measurement.Metric == metric {
+			return measurement, true
+		}
+	}
+
+	return nil, false
+}
 
 func liquidityRow(
 	symbol string, bid, ask, bidQty, askQty, volume, vwap float64,
@@ -42,11 +53,7 @@ func TestSignal_MeasureRequiresTwoExecutablePeers(testingTB *testing.T) {
 		result := signal.Measure(types.NewThesis(nil))
 
 		Convey("Then it emits nothing rather than dividing by an unsupported median", func() {
-			raw, ok := result.Measurements.Load("liquidity")
-			So(ok, ShouldBeTrue)
-
-			out := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])
-			So(out, ShouldBeEmpty)
+			So(result.Measurements, ShouldBeEmpty)
 		})
 	})
 }
@@ -67,15 +74,19 @@ func TestSignal_MeasureUsesExecutableValueNotRawVolume(testingTB *testing.T) {
 		result := signal.Measure(types.NewThesis(nil))
 
 		Convey("Then it scores the subject as liquid, not scarce", func() {
-			raw, ok := result.Measurements.Load("liquidity")
+			rvol, ok := measureField(result.Measurements, "BTC/USD", types.MetricRVOL)
 			So(ok, ShouldBeTrue)
+			So(rvol.Raw, ShouldBeGreaterThan, 1)
+			So(rvol.Subject, ShouldEqual, types.SubjectPeerLiquidity)
+			So(rvol.Maturity, ShouldBeGreaterThan, 0)
 
-			out := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])
-			subject := out["BTC/USD"]
+			depthScore, ok := measureField(result.Measurements, "BTC/USD", types.MetricDepthScore)
+			So(ok, ShouldBeTrue)
+			So(depthScore.Raw, ShouldBeGreaterThan, 0)
 
-			So(subject["rvol"].Float64(), ShouldBeGreaterThan, 1)
-			So(subject["depthScore"].Float64(), ShouldBeGreaterThan, 0)
-			So(subject["scarcityScore"].Float64(), ShouldEqual, 0)
+			scarcity, ok := measureField(result.Measurements, "BTC/USD", types.MetricScarcityScore)
+			So(ok, ShouldBeTrue)
+			So(scarcity.Raw, ShouldEqual, 0)
 		})
 	})
 }
@@ -96,15 +107,21 @@ func TestSignal_MeasureAtPeerMedianIsBalanced(testingTB *testing.T) {
 		result := signal.Measure(types.NewThesis(nil))
 
 		Convey("Then relative value is one and neither scarcity nor depth dominates", func() {
-			raw, ok := result.Measurements.Load("liquidity")
+			rvol, ok := measureField(result.Measurements, "BTC/USD", types.MetricRVOL)
 			So(ok, ShouldBeTrue)
+			So(rvol.Raw, ShouldAlmostEqual, 1, 1e-9)
 
-			subject := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])["BTC/USD"]
+			scarcity, ok := measureField(result.Measurements, "BTC/USD", types.MetricScarcityScore)
+			So(ok, ShouldBeTrue)
+			So(scarcity.Raw, ShouldEqual, 0)
 
-			So(subject["rvol"].Float64(), ShouldAlmostEqual, 1, 1e-9)
-			So(subject["scarcityScore"].Float64(), ShouldEqual, 0)
-			So(subject["depthScore"].Float64(), ShouldEqual, 0)
-			So(subject["medianScore"].Float64(), ShouldEqual, 1)
+			depthScore, ok := measureField(result.Measurements, "BTC/USD", types.MetricDepthScore)
+			So(ok, ShouldBeTrue)
+			So(depthScore.Raw, ShouldEqual, 0)
+
+			peerBalance, ok := measureField(result.Measurements, "BTC/USD", types.MetricPeerBalanceScore)
+			So(ok, ShouldBeTrue)
+			So(peerBalance.Raw, ShouldEqual, 1)
 		})
 	})
 }
@@ -135,11 +152,7 @@ func TestSignal_MeasureSkipsNonExecutableSubject(testingTB *testing.T) {
 		result := signal.Measure(types.NewThesis(nil))
 
 		Convey("Then it emits nothing for the unexecutable subject", func() {
-			raw, ok := result.Measurements.Load("liquidity")
-			So(ok, ShouldBeTrue)
-
-			out := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])
-			_, hasSubject := out["BTC/USD"]
+			_, hasSubject := measureField(result.Measurements, "BTC/USD", types.MetricRVOL)
 			So(hasSubject, ShouldBeFalse)
 		})
 	})

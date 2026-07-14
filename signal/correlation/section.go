@@ -11,11 +11,40 @@ import (
 
 /*
 Section scores cohort correlation and relative energy for one symbol.
+Correlation scores every peer in the cross-section for every subject
+symbol every tick.
+
+ponytail: this is O(symbols²) per tick; return/sample/absolute-value
+buffers are held here and reused across calls instead of being
+reallocated on each one. Upgrade path: pre-aggregate peer statistics
+once per tick instead of rescoring pairwise if the symbol count grows.
 */
-type Section struct{}
+type Section struct {
+	subjectReturns []float64
+	subjectSamples []nomcorrelation.Sample
+	peerReturns    []float64
+	peerSamples    []nomcorrelation.Sample
+	energyAbsolute []float64
+}
 
 func NewSection() *Section {
 	return &Section{}
+}
+
+func ensureReturnLen(buffer []float64, length int) []float64 {
+	if cap(buffer) >= length {
+		return buffer[:length]
+	}
+
+	return make([]float64, length)
+}
+
+func ensureSampleLen(buffer []nomcorrelation.Sample, length int) []nomcorrelation.Sample {
+	if cap(buffer) >= length {
+		return buffer[:length]
+	}
+
+	return make([]nomcorrelation.Sample, length)
 }
 
 func (section *Section) Scores(
@@ -28,35 +57,45 @@ func (section *Section) Scores(
 
 	window := crossSection.MaxReturnWindow()
 	sampleWindow := window + 1
-	subject := crossSection.SymbolReturns(symbol, window)
 
-	if len(subject) < 2 {
+	section.subjectReturns = ensureReturnLen(section.subjectReturns, window)
+	subjectWritten := crossSection.SymbolReturns(symbol, section.subjectReturns)
+
+	if subjectWritten < 2 {
 		return nil, false
 	}
 
-	subjectSamples := crossSection.SymbolSamples(symbol, sampleWindow)
+	section.subjectSamples = ensureSampleLen(section.subjectSamples, sampleWindow)
+	subjectSampleWritten := crossSection.SymbolSamples(symbol, section.subjectSamples)
 
-	if len(subjectSamples) < 2 {
+	if subjectSampleWritten < 2 {
 		return nil, false
 	}
+
+	subjectSamples := section.subjectSamples[:subjectSampleWritten]
+
+	section.peerReturns = ensureReturnLen(section.peerReturns, window)
+	section.peerSamples = ensureSampleLen(section.peerSamples, sampleWindow)
 
 	var signedTotal float64
 	var absoluteTotal float64
 	var peerEnergyTotal float64
 	var peerCount float64
 
-	for _, peer := range crossSection.Symbols() {
-		if peer == symbol {
+	for _, peer := range crossSection.ReadView().Metrics {
+		if peer.Symbol == symbol {
 			continue
 		}
 
-		peerReturns := crossSection.SymbolReturns(peer, window)
+		peerWritten := crossSection.SymbolReturns(peer.Symbol, section.peerReturns)
 
-		if len(peerReturns) < 2 {
+		if peerWritten < 2 {
 			continue
 		}
 
-		peerSamples := crossSection.SymbolSamples(peer, sampleWindow)
+		peerSampleWritten := crossSection.SymbolSamples(peer.Symbol, section.peerSamples)
+		peerSamples := section.peerSamples[:peerSampleWritten]
+
 		correlation, ok := section.correlation(subjectSamples, peerSamples)
 
 		if !ok {
@@ -65,7 +104,7 @@ func (section *Section) Scores(
 
 		signedTotal += correlation
 		absoluteTotal += math.Abs(correlation)
-		peerEnergyTotal += section.energy(peerReturns)
+		peerEnergyTotal += section.energy(section.peerReturns[:peerWritten])
 		peerCount++
 	}
 
@@ -75,7 +114,7 @@ func (section *Section) Scores(
 
 	signed := signedTotal / peerCount
 	correlation := absoluteTotal / peerCount
-	subjectEnergy := section.energy(subject)
+	subjectEnergy := section.energy(section.subjectReturns[:subjectWritten])
 	peerEnergy := peerEnergyTotal / peerCount
 
 	if peerEnergy <= 0 {
@@ -120,13 +159,13 @@ func (section *Section) correlation(
 }
 
 func (section *Section) energy(values []float64) float64 {
-	absolute := make([]float64, 0, len(values))
+	section.energyAbsolute = ensureReturnLen(section.energyAbsolute, len(values))
 
-	for _, value := range values {
-		absolute = append(absolute, math.Abs(value))
+	for index, value := range values {
+		section.energyAbsolute[index] = math.Abs(value)
 	}
 
-	median, ok := statistic.MedianOf(absolute)
+	median, ok := statistic.MedianOf(section.energyAbsolute)
 
 	if !ok {
 		return 0

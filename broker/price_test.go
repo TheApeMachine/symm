@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -77,7 +78,7 @@ func TestPriceGetFees(t *testing.T) {
 				"OLD/USD": {Fee: "0.4000"},
 			}},
 		}), ShouldBeNil)
-		price := NewPrice(websocket.NewAPI(mock.Public(), mock.Private(), mock.Level3(), nil), nil)
+		price := NewPrice(websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil))
 
 		Convey("When the exact trading tier is hydrated", func() {
 			err := price.GetFees([]string{"BTC/USD", "ETH/USD"})
@@ -104,7 +105,7 @@ func TestPriceGetFees(t *testing.T) {
 				"BTC/USD": {Fee: "0.2600"},
 			}},
 		}), ShouldBeNil)
-		price := NewPrice(websocket.NewAPI(mock.Public(), mock.Private(), mock.Level3(), nil), nil)
+		price := NewPrice(websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil))
 
 		Convey("When fee hydration is attempted", func() {
 			err := price.GetFees([]string{"BTC/USD", "ETH/USD"})
@@ -131,7 +132,7 @@ func TestPriceGetFees(t *testing.T) {
 				"BTC/USD": {Fee: "invalid"},
 			}},
 		}), ShouldBeNil)
-		price := NewPrice(websocket.NewAPI(mock.Public(), mock.Private(), mock.Level3(), nil), nil)
+		price := NewPrice(websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil))
 
 		Convey("When fee hydration is attempted", func() {
 			err := price.GetFees([]string{"BTC/USD"})

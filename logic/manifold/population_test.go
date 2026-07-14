@@ -254,8 +254,8 @@ func TestMomentDepositor(t *testing.T) {
 	})
 }
 
-func TestManifoldStateRoundTrip(t *testing.T) {
-	Convey("Given typed manifold state stored on a thesis", t, func() {
+func TestStateIsFinite(t *testing.T) {
+	Convey("Given a ready typed manifold state", t, func() {
 		state := State{
 			Ready:                true,
 			VisibleMass:          1,
@@ -272,13 +272,9 @@ func TestManifoldStateRoundTrip(t *testing.T) {
 				ViscosityProxy:   0.5,
 			},
 		}
-		thesis := types.NewThesis(nil)
-		thesis.Measurements.Store("BTC/USD:manifold", state)
 
-		Convey("It should remain readable for downstream resonance", func() {
-			stored, ok := thesis.Measurements.Load("BTC/USD:manifold")
-			So(ok, ShouldBeTrue)
-			So(stored.(State).IsFinite(), ShouldBeTrue)
+		Convey("It should be directly consumable by downstream logic", func() {
+			So(state.IsFinite(), ShouldBeTrue)
 		})
 	})
 }

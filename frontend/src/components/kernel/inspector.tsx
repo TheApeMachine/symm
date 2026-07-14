@@ -2,11 +2,21 @@ import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
+import { StatusBadge } from "#/components/dashboard/status-badge";
 import {
 	kernelCopy,
 	kernelStatusMeta,
-	type SignalHealthStatus,
 } from "#/components/terminal/kernel-meta";
+import {
+	formatRaw,
+	headlineMetric,
+	latestByMetric,
+	latestEpoch,
+	metricLabel,
+	percentOf,
+	resolveStatus,
+	sideLabel,
+} from "#/components/terminal/measurement-view";
 import { InspectorMeter } from "./meter";
 
 export const KernelInspector = () => {
@@ -24,43 +34,46 @@ export const KernelInspector = () => {
 
 		return state.measurements[focusSymbol]?.[source]?.values() ?? [];
 	});
-	const frame = history.at(-1);
-	const category = frame?.categories?.at(0);
-	const metrics = frame?.metrics ?? {};
-	const confidence = category?.confidence ?? 0;
-	const surprise = category?.surprisal ?? 0;
-	const strength = category?.strength ?? confidence;
-	const status: SignalHealthStatus =
-		metrics.error !== undefined
-			? "fault"
-			: ((frame?.status ?? "standby") as SignalHealthStatus);
-	if (inspectorSource === null || frame === undefined) {
+	const headline = headlineMetric(source);
+	const latest =
+		headline === null ? history.at(-1) : latestByMetric(history, headline);
+
+	if (inspectorSource === null || latest === undefined) {
 		return null;
 	}
 
-	const copy = kernelCopy(source, category?.type ?? source);
+	const epoch = latestEpoch(history);
+	const status = resolveStatus(latest);
+	const copy = kernelCopy(source, source);
 	const statusMeta = kernelStatusMeta(status);
 	const width = 150;
 	const baseline = 29;
 	const scale = 26;
-	const values = history.slice(-40).flatMap((measurement) => {
-		const value = measurement.categories?.at(0)?.confidence;
+	const seriesSource = headline ?? epoch[0]?.metric;
+	const values = seriesSource
+		? history.flatMap((measurement) => {
+				if (
+					measurement.metric !== seriesSource ||
+					(measurement.side ?? "") !== ""
+				) {
+					return [];
+				}
 
-		return typeof value === "number" && Number.isFinite(value) ? [value] : [];
-	});
+				return Number.isFinite(measurement.raw) ? [measurement.raw] : [];
+			})
+		: [];
 	const points = values
+		.slice(-40)
 		.map(
-			(value, index) =>
-				`${((index / Math.max(values.length - 1, 1)) * width).toFixed(
+			(value, index, series) =>
+				`${((index / Math.max(series.length - 1, 1)) * width).toFixed(
 					1,
-				)},${(baseline - value * scale).toFixed(1)}`,
+				)},${(baseline - Math.max(0, Math.min(1, value)) * scale).toFixed(1)}`,
 		)
 		.join(" ");
-	const observedAt = frame.at;
-	const observed =
-		typeof observedAt === "number" || typeof observedAt === "string"
-			? new Date(observedAt).toLocaleTimeString("en-US", { hour12: false })
-			: "—";
+	const observed = latest.at
+		? new Date(latest.at).toLocaleTimeString("en-US", { hour12: false })
+		: "—";
 
 	return (
 		<div className="absolute inset-y-0 left-[282px] right-[332px] z-9 animate-[symFade_0.18s_ease] bg-[color-mix(in_srgb,var(--sunken)_60%,transparent)] p-8 backdrop-blur-[3px]">
@@ -78,16 +91,7 @@ export const KernelInspector = () => {
 								<span className="font-serif font-semibold text-[19px] text-(--f1) leading-[1.1]">
 									{copy.name}
 								</span>
-								<span
-									className="shrink-0 rounded-[2px] border px-1.5 py-0.5 text-[9px] font-semibold tracking-wider uppercase"
-									style={{
-										borderColor: statusMeta.bd,
-										backgroundColor: statusMeta.bg,
-										color: statusMeta.fg,
-									}}
-								>
-									{statusMeta.label}
-								</span>
+								<StatusBadge label={statusMeta.label} tone={statusMeta.fg} />
 							</div>
 							<div className="mt-1 font-mono text-[10px] text-(--f4)">
 								{copy.sub}
@@ -117,7 +121,7 @@ export const KernelInspector = () => {
 					<div className="mx-4 mt-3.5">
 						<div className="mb-1.5 flex items-center justify-between font-mono text-[9px] text-(--f4) uppercase tracking-widest">
 							<span>signal history</span>
-							<span>40 ticks</span>
+							<span>{metricLabel(seriesSource)}</span>
 						</div>
 						<svg
 							viewBox="0 0 150 30"
@@ -135,28 +139,26 @@ export const KernelInspector = () => {
 						</svg>
 					</div>
 					<div className="flex flex-col gap-2.5 px-4 pt-3.5 pb-0.5">
-						<InspectorMeter
-							label="Confidence"
-							value={`${Math.floor(confidence * 100)}%`}
-							percent={confidence * 100}
-							color="var(--info)"
-						/>
-						<InspectorMeter
-							label="Surprise"
-							value={surprise.toFixed(2)}
-							percent={Math.min(100, surprise * 100)}
-							color="var(--acc)"
-						/>
-						<InspectorMeter
-							label="Strength"
-							value={strength.toFixed(4)}
-							percent={Math.min(100, strength * 100)}
-							color="var(--up)"
-						/>
+						{epoch.slice(0, 4).map((measurement) => (
+							<InspectorMeter
+								key={`${measurement.metric}:${measurement.side ?? ""}`}
+								label={[
+									metricLabel(measurement.metric),
+									sideLabel(measurement.side),
+								]
+									.filter(Boolean)
+									.join(" · ")}
+								value={formatRaw(measurement)}
+								percent={percentOf(measurement)}
+								color={
+									measurement.metric === headline ? "var(--acc)" : "var(--info)"
+								}
+							/>
+						))}
 					</div>
 					<div className="mt-[11px] flex items-center justify-between gap-3 border-(--line) border-t bg-(--sunken) px-4 py-3.5">
 						<div className="min-w-0 font-mono text-[9.5px] text-(--f4) leading-[1.55]">
-							<div>active {frame.symbol}</div>
+							<div>active {latest.symbol}</div>
 							<div>
 								observed {observed} · {history.length} samples
 							</div>

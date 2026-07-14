@@ -3,8 +3,6 @@ package correlation
 import (
 	"context"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -37,40 +35,39 @@ func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
 	rows := signal.ticker.cache
-	out := datura.Map[datura.Map[*decimal.Decimal]]{}
+	out := make([]*types.Measurement, 0, len(rows))
 
-	thesis.CrossSection.Observe(rows)
+	thesis.CrossSection.ProcessUpdates(rows)
 
 	for _, row := range rows {
-		if row.Symbol == "" {
-			continue
-		}
-
 		scores, ok := signal.section.Scores(row.Symbol, thesis.CrossSection)
 
 		if !ok {
 			continue
 		}
 
-		metrics := datura.Map[*decimal.Decimal]{
-			"correlation":    decimal.NewFromFloat64(scores["correlation"]),
-			"signed":         decimal.NewFromFloat64(scores["signed"]),
-			"relativeEnergy": decimal.NewFromFloat64(scores["relativeEnergy"]),
-			"herdScore":      decimal.NewFromFloat64(scores["herdScore"]),
-			"alphaScore":     decimal.NewFromFloat64(scores["alphaScore"]),
-			"noiseScore":     decimal.NewFromFloat64(scores["noiseScore"]),
-			"stressScore":    decimal.NewFromFloat64(scores["stressScore"]),
-			"peakScore":      decimal.NewFromFloat64(scores["peakScore"]),
-			"strength":       decimal.NewFromFloat64(scores["strength"]),
+		validity := types.MeasurementValidity{
+			State:     types.ValidityValid,
+			Readiness: types.ReadinessObservation,
 		}
 
-		out[row.Symbol] = metrics
+		out = append(out,
+			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricCorrelation, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["correlation"], Validity: validity},
+			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricSigned, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["signed"], Validity: validity},
+			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricRelativeEnergy, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["relativeEnergy"], Validity: validity},
+			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricHerdScore, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["herdScore"], Validity: validity},
+			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricAlphaScore, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["alphaScore"], Validity: validity},
+			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricNoiseScore, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["noiseScore"], Validity: validity},
+			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricStressScore, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["stressScore"], Validity: validity},
+			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricPeakScore, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["peakScore"], Validity: validity},
+			&types.Measurement{Source: types.SourceCorrelation, Metric: types.MetricStrength, Stream: types.Correlation, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: scores["strength"], Validity: validity},
+		)
 	}
 
 	signal.ticker.cache = signal.ticker.cache[:0]
 
 	thesis.Signals.Store("tickers", rows)
-	thesis.Measurements.Store("correlation", out)
+	thesis.Measurements = append(thesis.Measurements, out...)
 
 	return thesis
 }

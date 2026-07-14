@@ -6,7 +6,6 @@ import (
 
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -34,7 +33,6 @@ func (book *observationBook) TopOfBook(string) (float64, float64, bool) {
 
 func TestSlotObserve(t *testing.T) {
 	Convey("Given a slot with an authoritative L3 book", t, func() {
-		thesis := types.NewThesis(nil)
 		config := &pmanifold.Config{
 			GridX: 1, GridY: 1, GridZ: 1,
 			DomainX: 1, DomainY: 1, DomainZ: 1,
@@ -60,8 +58,8 @@ func TestSlotObserve(t *testing.T) {
 		}
 
 		Convey("When a row regresses behind the latest valid observation", func() {
-			first := slot.Observe(thesis, snapshot, 1, 8, book)
-			regressed := slot.Observe(thesis, kraken.Level3Data{
+			first := slot.Observe(snapshot, 1, 8, book)
+			regressed := slot.Observe(kraken.Level3Data{
 				Symbol: "BTC/USD", Type: "update", Timestamp: time.Unix(1, 0),
 				Bids: []kraken.Level3Order{{
 					Event: "modify", OrderID: "bid-1", LimitPrice: 99,
@@ -82,10 +80,10 @@ func TestSlotObserve(t *testing.T) {
 		Convey("When a checksum failure is followed by updates and a fresh snapshot", func() {
 			book.reject = true
 			book.reason = ChecksumFailed
-			failed := slot.Observe(thesis, snapshot, 1, 8, book)
+			failed := slot.Observe(snapshot, 1, 8, book)
 			book.reject = false
 			book.reason = Valid
-			update := slot.Observe(thesis, kraken.Level3Data{
+			update := slot.Observe(kraken.Level3Data{
 				Symbol: "BTC/USD", Type: "update", Timestamp: time.Unix(3, 0),
 				Bids: []kraken.Level3Order{{
 					Event: "add", OrderID: "bid-2", LimitPrice: 98,
@@ -95,7 +93,7 @@ func TestSlotObserve(t *testing.T) {
 			snapshot.Timestamp = time.Unix(4, 0)
 			snapshot.Bids[0].Timestamp = snapshot.Timestamp
 			snapshot.Asks[0].Timestamp = snapshot.Timestamp
-			recovered := slot.Observe(thesis, snapshot, 1, 8, book)
+			recovered := slot.Observe(snapshot, 1, 8, book)
 
 			Convey("Then no untrusted row is schedulable and the snapshot restores readiness", func() {
 				So(failed.AdvanceReady, ShouldBeFalse)
@@ -112,7 +110,6 @@ func TestSlotObserve(t *testing.T) {
 }
 
 func BenchmarkSlotObserve(b *testing.B) {
-	thesis := types.NewThesis(nil)
 	config := &pmanifold.Config{
 		GridX: 1, GridY: 1, GridZ: 1,
 		DomainX: 1, DomainY: 1, DomainZ: 1,
@@ -131,7 +128,7 @@ func BenchmarkSlotObserve(b *testing.B) {
 	}
 
 	book := &observationBook{bestBid: 99, bestAsk: 101}
-	slot.Observe(thesis, kraken.Level3Data{
+	slot.Observe(kraken.Level3Data{
 		Symbol: "BTC/USD", Type: "snapshot", Timestamp: time.Unix(0, 1),
 		Bids: []kraken.Level3Order{{
 			OrderID: "bid-1", LimitPrice: 99, OrderQty: 1, Timestamp: time.Unix(0, 1),
@@ -152,6 +149,6 @@ func BenchmarkSlotObserve(b *testing.B) {
 		update.Timestamp = at
 		update.Bids[0].OrderQty = float64(index%2) + 1
 		update.Bids[0].Timestamp = at
-		slot.Observe(thesis, update, 1, 8, book)
+		slot.Observe(update, 1, 8, book)
 	}
 }

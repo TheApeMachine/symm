@@ -23,13 +23,10 @@ market:
   # backpressure rather than discard authoritative order-level deltas.
   l3_ring_capacity: 8192
   # High-liquidity run: deeper L2 book and faster subscription pacing.
-  subscribe_pace: 50ms
+  subscribe_pace: 2s
   subscribe_batch: 200
   book:
     depth: 10
-  ohlc:
-    # Kraken websocket v2 expresses candle intervals as whole minutes.
-    interval: 1
   universe:
     # Bounded compute/subscription ceiling for the heavier trade/book/level3
     # tier; every eligible pair still gets lightweight ticker/OHLC observation.

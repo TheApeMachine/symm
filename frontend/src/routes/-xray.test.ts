@@ -24,9 +24,9 @@ const hawkesMeasurement = (
 	horizon: 0,
 	unit: "dimensionless",
 	raw,
-	normalized: { value: 0, available: false },
+	normalized: null,
 	maturity: 1,
-	uncertainty: { available: false },
+	uncertainty: null,
 	validity: { state: "provisional", readiness: "model" },
 	scale: { kind: "observation_window", from: at, through: at },
 });

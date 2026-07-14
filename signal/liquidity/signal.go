@@ -4,8 +4,6 @@ import (
 	"context"
 	"math"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -37,18 +35,32 @@ func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
 	rows := signal.ticker.cache
-	out := datura.Map[datura.Map[*decimal.Decimal]]{}
+	out := make([]*types.Measurement, 0, len(rows))
 
-	thesis.CrossSection.Observe(rows)
-	view := thesis.CrossSection.Snapshot()
-	notionalPeers := view.QuoteNotionals()
-	depthPeers := view.ExecutableDepths()
+	thesis.CrossSection.ProcessUpdates(rows)
+
+	metrics := thesis.CrossSection.ReadView().Metrics
+	notionalPeers := make([]float64, 0, len(metrics))
+	depthPeers := make([]float64, 0, len(metrics))
+
+	for _, metric := range metrics {
+		if metric.QuoteNotional > 0 {
+			notionalPeers = append(notionalPeers, metric.QuoteNotional)
+		}
+
+		if metric.ExecutableDepth > 0 {
+			depthPeers = append(depthPeers, metric.ExecutableDepth)
+		}
+	}
 
 	if len(notionalPeers) >= 2 && len(depthPeers) >= 2 {
 		notionalMedian, notionalOK := statistic.MedianOf(notionalPeers)
 		depthMedian, depthOK := statistic.MedianOf(depthPeers)
 
 		if notionalOK && notionalMedian > 0 && depthOK && depthMedian > 0 {
+			peerMaturity := float64(len(notionalPeers)) /
+				float64(len(notionalPeers)+1)
+
 			for _, row := range rows {
 				notional := types.QuoteNotional(row)
 				executableDepth := types.ExecutableDepth(row)
@@ -63,17 +75,57 @@ func (signal *Signal) Measure(
 				balance := 1 / (1 + math.Abs(relative-1))
 				strength := max(scarcity, max(balance, depth))
 
-				out[row.Symbol] = datura.Map[*decimal.Decimal]{
-					"rvol":                  decimal.NewFromFloat64(relative),
-					"scarcityScore":         decimal.NewFromFloat64(scarcity),
-					"medianScore":           decimal.NewFromFloat64(balance),
-					"depthScore":            decimal.NewFromFloat64(depth),
-					"strength":              decimal.NewFromFloat64(strength),
-					"quoteNotional":         decimal.NewFromFloat64(notional),
-					"quoteNotionalMedian":   decimal.NewFromFloat64(notionalMedian),
-					"executableDepth":       decimal.NewFromFloat64(executableDepth),
-					"executableDepthMedian": decimal.NewFromFloat64(depthMedian),
-				}
+				out = append(out,
+					types.ObservationMeasurement(
+						types.SourceLiquidity, types.Liquidity, types.MetricRVOL,
+						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
+						types.UnitDimensionless, relative, peerMaturity,
+					),
+					types.ObservationMeasurement(
+						types.SourceLiquidity, types.Liquidity, types.MetricScarcityScore,
+						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
+						types.UnitDimensionless, scarcity, peerMaturity,
+					),
+					types.ObservationMeasurement(
+						types.SourceLiquidity, types.Liquidity, types.MetricPeerBalanceScore,
+						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
+						types.UnitDimensionless, balance, peerMaturity,
+					),
+					types.ObservationMeasurement(
+						types.SourceLiquidity, types.Liquidity, types.MetricDepthScore,
+						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
+						types.UnitDimensionless, depth, peerMaturity,
+					),
+					types.ObservationMeasurement(
+						types.SourceLiquidity, types.Liquidity, types.MetricStrength,
+						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
+						types.UnitDimensionless, strength, peerMaturity,
+					),
+					types.ObservationNormalizedMeasurement(
+						types.SourceLiquidity, types.Liquidity, types.MetricQuoteNotional,
+						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
+						types.UnitQuoteCurrency, notional, peerMaturity,
+						types.NormalizeRatio(notional, notionalMedian),
+					),
+					types.ObservationNormalizedMeasurement(
+						types.SourceLiquidity, types.Liquidity, types.MetricQuoteNotionalMedian,
+						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
+						types.UnitQuoteCurrency, notionalMedian, peerMaturity,
+						types.NormalizeFinite(1),
+					),
+					types.ObservationNormalizedMeasurement(
+						types.SourceLiquidity, types.Liquidity, types.MetricExecutableDepth,
+						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
+						types.UnitQuoteCurrency, executableDepth, peerMaturity,
+						types.NormalizeRatio(executableDepth, depthMedian),
+					),
+					types.ObservationNormalizedMeasurement(
+						types.SourceLiquidity, types.Liquidity, types.MetricExecutableDepthMedian,
+						types.SubjectPeerLiquidity, row.Symbol, row.Timestamp,
+						types.UnitQuoteCurrency, depthMedian, peerMaturity,
+						types.NormalizeFinite(1),
+					),
+				)
 			}
 		}
 	}
@@ -81,7 +133,7 @@ func (signal *Signal) Measure(
 	signal.ticker.cache = signal.ticker.cache[:0]
 
 	thesis.Signals.Store("tickers", rows)
-	thesis.Measurements.Store("liquidity", out)
+	thesis.Measurements = append(thesis.Measurements, out...)
 
 	return thesis
 }

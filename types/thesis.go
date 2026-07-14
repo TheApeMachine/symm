@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -14,7 +15,11 @@ type Thesis struct {
 	uiHub        chan<- []byte
 	Signals      *sync.Map
 	CrossSection *CrossSection
-	Measurements *sync.Map
+	Measurements []*Measurement
+	Graphs       map[string]*Graph
+	Forecasts    []Forecasts
+	Hypotheses   []Hypothesis
+	Categories   []Category
 }
 
 /*
@@ -24,33 +29,31 @@ func NewThesis(uiHub chan<- []byte) *Thesis {
 	crossSection, err := NewCrossSection(DefaultCrossSectionConfig())
 
 	if err != nil {
-		panic(err)
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, err.Error(), err,
+		))
 	}
 
 	return &Thesis{
 		uiHub:        uiHub,
 		Signals:      &sync.Map{},
 		CrossSection: crossSection,
-		Measurements: &sync.Map{},
+		Measurements: make([]*Measurement, 0),
+		Graphs:       make(map[string]*Graph),
+		Forecasts:    make([]Forecasts, 0),
+		Hypotheses:   make([]Hypothesis, 0),
+		Categories:   make([]Category, 0),
 	}
 }
 
 func (thesis *Thesis) Publish() {
-	out := datura.Map[any]{
-		"diagnostics":  []CrossSectionSummary{thesis.CrossSection.Summary()},
-		"measurements": make([]datura.Map[any], 0),
-	}
-
-	thesis.Measurements.Range(func(key, value any) bool {
-		out["measurements"] = append(out["measurements"].([]datura.Map[any]), datura.Map[any]{
-			key.(string): value,
-		})
-
-		return true
-	})
-
 	select {
-	case thesis.uiHub <- out.Marshal():
+	case thesis.uiHub <- datura.Map[any]{
+		"diagnostics": []CrossSectionSummary{
+			*thesis.CrossSection.ReadView(),
+		},
+		"measurements": thesis.Measurements,
+	}.Marshal():
 	default:
 	}
 }

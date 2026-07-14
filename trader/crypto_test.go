@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +32,7 @@ func TestNewCrypto(t *testing.T) {
 				nil,
 				analyzer,
 				planner,
+				nil,
 			)
 
 			Convey("Then it is ready to start", func() {
@@ -61,6 +63,7 @@ func TestCryptoRun(t *testing.T) {
 			nil,
 			analyzer,
 			planner,
+			nil,
 		)
 		So(err, ShouldBeNil)
 
@@ -69,6 +72,7 @@ func TestCryptoRun(t *testing.T) {
 			system.NewStage(system.StageWarmup, crypto),
 		)
 
+		So(booter.Start(), ShouldBeNil)
 		So(crypto.Run(), ShouldBeNil)
 
 		Convey("When one tick elapses", func() {
@@ -78,11 +82,22 @@ func TestCryptoRun(t *testing.T) {
 				So(crypto.Status(), ShouldEqual, types.READY)
 				So(crypto.tick.Load(), ShouldBeGreaterThan, 0)
 
-				select {
-				case frame := <-channel:
-					So(string(frame), ShouldContainSubstring, `"tick"`)
-				default:
-					So("tick frame", ShouldEqual, "published")
+				// booter.Start published its own boot-progress frames onto
+				// this same channel before crypto.Run started ticking, so
+				// a tick frame is somewhere in the backlog, not necessarily
+				// first.
+				foundTick := false
+
+				for {
+					select {
+					case frame := <-channel:
+						if strings.Contains(string(frame), `"tick"`) {
+							foundTick = true
+						}
+					default:
+						So(foundTick, ShouldBeTrue)
+						return
+					}
 				}
 			})
 		})

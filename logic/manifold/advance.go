@@ -1,14 +1,10 @@
 package manifold
 
-import (
-	"github.com/theapemachine/symm/types"
-)
-
 /*
 Advance evolves the field once from every valid population mutation accumulated
 since the previous advance.
 */
-func (slot *Slot) Advance(thesis *types.Thesis) ProcessResult {
+func (slot *Slot) Advance() ProcessResult {
 	result := ProcessResult{}
 
 	if !slot.advanceReady {
@@ -22,13 +18,13 @@ func (slot *Slot) Advance(thesis *types.Thesis) ProcessResult {
 	result.Accounting = slot.population.Accounting()
 
 	if !slot.population.Ready() {
-		return slot.failedResult(thesis, pending.metadata, slot.population.InvalidReason())
+		return slot.failedResult(pending.metadata, slot.population.InvalidReason())
 	}
 
 	at := pending.metadata.At
 
 	if !slot.lastEventAt.IsZero() && at.Before(slot.lastEventAt) {
-		return slot.invalidate(thesis, pending.metadata, TimestampRegress)
+		return slot.invalidate(pending.metadata, TimestampRegress)
 	}
 
 	epoch := slot.population.BeginEpoch()
@@ -36,13 +32,13 @@ func (slot *Slot) Advance(thesis *types.Thesis) ProcessResult {
 	transform, epochReady := slot.coordinates.BeginEpoch(orders, pending.midPrice, at)
 
 	if !epochReady {
-		return slot.failedResult(thesis, pending.metadata, UnmappedCarriers)
+		return slot.failedResult(pending.metadata, UnmappedCarriers)
 	}
 
 	mapped, mapReady := slot.mapCarriers(orders, pending.midPrice, at, transform)
 
 	if !mapReady {
-		return slot.failedResult(thesis, pending.metadata, UnmappedCarriers)
+		return slot.failedResult(pending.metadata, UnmappedCarriers)
 	}
 
 	cohorts := slot.cohorts.Build(mapped)
@@ -50,11 +46,10 @@ func (slot *Slot) Advance(thesis *types.Thesis) ProcessResult {
 	subdivisions := EventSubdivisions(slot.config, eventDeltaT, cohorts)
 
 	if subdivisions <= 0 {
-		return slot.failedResult(thesis, pending.metadata, StabilityFailed)
+		return slot.failedResult(pending.metadata, StabilityFailed)
 	}
 
 	outcome := slot.step(
-		thesis,
 		cohorts,
 		mapped,
 		pending.bestBid,
@@ -78,6 +73,7 @@ func (slot *Slot) Advance(thesis *types.Thesis) ProcessResult {
 	result.CohortCount = len(cohorts)
 	result.OrderCount = len(mapped)
 	result.DepositCount = outcome.DepositCount
+	result.Forecast = outcome.Forecast
 
 	return result
 }

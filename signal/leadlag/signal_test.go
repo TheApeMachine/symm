@@ -8,10 +8,21 @@ import (
 
 	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
+
+func hasMeasurement(measurements []*types.Measurement, symbol string, metric types.MetricType) (*types.Measurement, bool) {
+	for index := len(measurements) - 1; index >= 0; index-- {
+		measurement := measurements[index]
+
+		if measurement.Symbol == symbol && measurement.Metric == metric {
+			return measurement, true
+		}
+	}
+
+	return nil, false
+}
 
 func seedLaggedPaths(
 	section *Section,
@@ -142,14 +153,10 @@ func TestSignal_MeasureEmitsLeadlag(testingTB *testing.T) {
 		result := signal.Measure(types.NewThesis(nil))
 
 		Convey("Then it should emit numeric leadlag measurements", func() {
-			raw, ok := result.Measurements.Load("leadlag")
-			So(ok, ShouldBeTrue)
-
-			out := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])
-			metrics, hasFollower := out["ETH/USD"]
+			strength, hasFollower := hasMeasurement(result.Measurements, "ETH/USD", types.MetricStrength)
 
 			So(hasFollower, ShouldBeTrue)
-			So(metrics["strength"].Float64(), ShouldBeGreaterThan, 0)
+			So(strength.Raw, ShouldBeGreaterThan, 0)
 			So(len(signal.ticker.cache), ShouldEqual, 0)
 		})
 	})
@@ -182,11 +189,7 @@ func TestSignal_MeasureSkipsIncompleteRow(testingTB *testing.T) {
 		result := signal.Measure(types.NewThesis(nil))
 
 		Convey("Then it should omit the incomplete follower", func() {
-			raw, ok := result.Measurements.Load("leadlag")
-			So(ok, ShouldBeTrue)
-
-			out := raw.(datura.Map[datura.Map[*krakendecimal.Decimal]])
-			_, hasFollower := out["ETH/USD"]
+			_, hasFollower := hasMeasurement(result.Measurements, "ETH/USD", types.MetricStrength)
 			So(hasFollower, ShouldBeFalse)
 		})
 	})

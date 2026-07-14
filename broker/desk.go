@@ -5,6 +5,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -135,14 +136,15 @@ func (desk *Desk) snapshot() []PositionData {
 }
 
 func (desk *Desk) Publish() {
-	desk.positions.Range(func(_, value any) bool {
-		position := value.(*Position)
-		position.Publish()
-		return true
-	})
+	out := datura.Map[any]{
+		"positions": desk.snapshot(),
+		"balances":  desk.balance.Snapshot(),
+	}
 
-	desk.balance.Publish()
-	desk.price.Publish()
+	select {
+	case desk.ui <- out.Marshal():
+	default:
+	}
 }
 
 func (desk *Desk) Status() types.Status {

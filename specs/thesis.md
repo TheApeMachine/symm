@@ -178,7 +178,7 @@ Conceptually:
 ```go
 type LogicEpoch struct {
     At            time.Time
-    Measurements  *sync.Map        // Measurement
+    Measurements  []Measurement
     Graph         []Graph
     Categories    []Category
     Hypotheses    []Hypothesis
@@ -186,9 +186,9 @@ type LogicEpoch struct {
 }
 ```
 
-### Relationship types
+### Edge Relationship types
 
-Logic should be able to represent:
+The Graph should be able to represent:
 
 - Supports.
 - Contradicts.
@@ -256,7 +256,7 @@ type Thesis struct {
 	uiHub        chan<- []byte
 	Signals      *sync.Map
 	CrossSection *CrossSection
-	Measurements *sync.Map
+	Measurements []Measurement
 }
 ```
 

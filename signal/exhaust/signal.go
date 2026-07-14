@@ -2,9 +2,8 @@ package exhaust
 
 import (
 	"context"
+	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
@@ -49,7 +48,7 @@ func (signal *Signal) Measure(
 ) *types.Thesis {
 	books := signal.book.cache
 	trades := signal.trade.cache
-	out := datura.Map[datura.Map[*decimal.Decimal]]{}
+	out := make([]*types.Measurement, 0, len(books)+len(trades))
 
 	for _, row := range books {
 		if row.Symbol == "" || row.PriceIncrement.Sign() <= 0 {
@@ -124,17 +123,7 @@ func (signal *Signal) Measure(
 			)))
 		}
 
-		out[row.Symbol] = datura.Map[*decimal.Decimal]{
-			"mechanical": decimal.NewFromFloat64(output.Mechanical),
-			"thermal":    decimal.NewFromFloat64(output.Thermal),
-			"fragile":    decimal.NewFromFloat64(output.Fragile),
-			"reversal":   decimal.NewFromFloat64(output.Reversal),
-			"urgency":    decimal.NewFromFloat64(output.Urgency),
-			"strength":   decimal.NewFromFloat64(output.Strength),
-			"value":      decimal.NewFromFloat64(output.Value),
-			"category":   decimal.NewFromFloat64(output.Category),
-			"maturity":   decimal.NewFromFloat64(maturity),
-		}
+		out = append(out, signal.measurements(row.Symbol, row.Timestamp, output, maturity)...)
 	}
 
 	for _, row := range trades {
@@ -171,17 +160,7 @@ func (signal *Signal) Measure(
 			)))
 		}
 
-		out[row.Symbol] = datura.Map[*decimal.Decimal]{
-			"mechanical": decimal.NewFromFloat64(output.Mechanical),
-			"thermal":    decimal.NewFromFloat64(output.Thermal),
-			"fragile":    decimal.NewFromFloat64(output.Fragile),
-			"reversal":   decimal.NewFromFloat64(output.Reversal),
-			"urgency":    decimal.NewFromFloat64(output.Urgency),
-			"strength":   decimal.NewFromFloat64(output.Strength),
-			"value":      decimal.NewFromFloat64(output.Value),
-			"category":   decimal.NewFromFloat64(output.Category),
-			"maturity":   decimal.NewFromFloat64(maturity),
-		}
+		out = append(out, signal.measurements(row.Symbol, row.Timestamp, output, maturity)...)
 	}
 
 	signal.book.cache = signal.book.cache[:0]
@@ -189,9 +168,34 @@ func (signal *Signal) Measure(
 
 	thesis.Signals.Store("books", books)
 	thesis.Signals.Store("trades", trades)
-	thesis.Measurements.Store("exhaust", out)
+	thesis.Measurements = append(thesis.Measurements, out...)
 
 	return thesis
+}
+
+/*
+measurements converts a decay calculator output into the shared Measurement
+shape, so both the book-driven and trade-driven observation paths emit the
+same metric set for a symbol.
+*/
+func (signal *Signal) measurements(
+	symbol string, at time.Time, output equation.DecayOutput, maturity float64,
+) []*types.Measurement {
+	validity := types.MeasurementValidity{
+		State:     types.ValidityValid,
+		Readiness: types.ReadinessObservation,
+	}
+
+	return []*types.Measurement{
+		{Source: types.SourceExhaustion, Metric: types.MetricMechanical, Stream: types.Exhaust, Symbol: symbol, At: at, Unit: types.UnitDimensionless, Raw: output.Mechanical, Maturity: maturity, Validity: validity},
+		{Source: types.SourceExhaustion, Metric: types.MetricThermal, Stream: types.Exhaust, Symbol: symbol, At: at, Unit: types.UnitDimensionless, Raw: output.Thermal, Maturity: maturity, Validity: validity},
+		{Source: types.SourceExhaustion, Metric: types.MetricFragile, Stream: types.Exhaust, Symbol: symbol, At: at, Unit: types.UnitDimensionless, Raw: output.Fragile, Maturity: maturity, Validity: validity},
+		{Source: types.SourceExhaustion, Metric: types.MetricReversal, Stream: types.Exhaust, Symbol: symbol, At: at, Unit: types.UnitDimensionless, Raw: output.Reversal, Maturity: maturity, Validity: validity},
+		{Source: types.SourceExhaustion, Metric: types.MetricUrgency, Stream: types.Exhaust, Symbol: symbol, At: at, Unit: types.UnitDimensionless, Raw: output.Urgency, Maturity: maturity, Validity: validity},
+		{Source: types.SourceExhaustion, Metric: types.MetricStrength, Stream: types.Exhaust, Symbol: symbol, At: at, Unit: types.UnitDimensionless, Raw: output.Strength, Maturity: maturity, Validity: validity},
+		{Source: types.SourceExhaustion, Metric: types.MetricValue, Stream: types.Exhaust, Symbol: symbol, At: at, Unit: types.UnitDimensionless, Raw: output.Value, Maturity: maturity, Validity: validity},
+		{Source: types.SourceExhaustion, Metric: types.MetricCategory, Stream: types.Exhaust, Symbol: symbol, At: at, Unit: types.UnitDimensionless, Raw: output.Category, Maturity: maturity, Validity: validity},
+	}
 }
 
 func (signal *Signal) Close() (err error) {

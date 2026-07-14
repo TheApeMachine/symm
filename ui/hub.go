@@ -71,8 +71,6 @@ func NewHub(
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		defer conn.Close()
 
-		hub.price.Publish()
-		hub.balance.Publish()
 		hub.desk.Publish()
 
 		for {

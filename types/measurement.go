@@ -25,6 +25,85 @@ const (
 	MetricCrossSelfDelta       MetricType = "cross_self_likelihood_delta"
 	MetricImmediateOffspring   MetricType = "immediate_expected_offspring"
 	MetricTotalDescendants     MetricType = "expected_total_descendants"
+	MetricRVOL                 MetricType = "rvol"
+	MetricPrecursor            MetricType = "precursor"
+	MetricSpread               MetricType = "spread"
+	MetricCompression          MetricType = "compression"
+	MetricIgnition             MetricType = "ignition"
+	MetricTrend                MetricType = "trend"
+	MetricExhaustion           MetricType = "exhaustion"
+	MetricStrength             MetricType = "strength"
+	MetricValue                MetricType = "value"
+	MetricCategory             MetricType = "category"
+	MetricResonanceEnergy      MetricType = "resonance_energy"
+	MetricResonanceSurprise    MetricType = "resonance_surprise"
+
+	// exhaust (microstructure decay)
+	MetricMechanical MetricType = "mechanical"
+	MetricThermal    MetricType = "thermal"
+	MetricFragile    MetricType = "fragile"
+	MetricReversal   MetricType = "reversal"
+	MetricUrgency    MetricType = "urgency"
+
+	// depthflow (touch-level book imbalance)
+	MetricLoadedScore  MetricType = "loaded_score"
+	MetricSpoofScore   MetricType = "spoof_score"
+	MetricThinScore    MetricType = "thin_score"
+	MetricNeutralScore MetricType = "neutral_score"
+
+	// cvd (signed aggressor flow)
+	MetricAbsorption  MetricType = "absorption"
+	MetricDrive       MetricType = "drive"
+	MetricBalance     MetricType = "balance"
+	MetricStarvation  MetricType = "starvation"
+	MetricNet         MetricType = "net"
+	MetricNetFraction MetricType = "net_fraction"
+
+	// correlation and leadlag (cohort relation)
+	MetricCorrelation              MetricType = "correlation"
+	MetricSigned                   MetricType = "signed"
+	MetricRelativeEnergy           MetricType = "relative_energy"
+	MetricHerdScore                MetricType = "herd_score"
+	MetricAlphaScore               MetricType = "alpha_score"
+	MetricNoiseScore               MetricType = "noise_score"
+	MetricStressScore              MetricType = "stress_score"
+	MetricPeakScore                MetricType = "peak_score"
+	MetricSignedCorrelation        MetricType = "signed_correlation"
+	MetricSignedContempCorrelation MetricType = "signed_contemp_correlation"
+	MetricSignedLagCorrelation     MetricType = "signed_lag_correlation"
+	MetricLagFraction              MetricType = "lag_fraction"
+	MetricSampleSupport            MetricType = "sample_support"
+	MetricInefficient              MetricType = "inefficient"
+	MetricSync                     MetricType = "sync"
+	MetricDecoupled                MetricType = "decoupled"
+	MetricStall                    MetricType = "stall"
+
+	// sentiment (breadth and leadership)
+	MetricChange         MetricType = "change"
+	MetricBreadth        MetricType = "breadth"
+	MetricLeaderStrength MetricType = "leader_strength"
+	MetricLeaderEvidence MetricType = "leader_evidence"
+	MetricRelativeLead   MetricType = "relative_lead"
+	MetricSurgeScore     MetricType = "surge_score"
+	MetricDivergentScore MetricType = "divergent_score"
+	MetricSlumpScore     MetricType = "slump_score"
+
+	// liquidity (peer notional and depth scarcity)
+	MetricScarcityScore         MetricType = "scarcity_score"
+	MetricPeerBalanceScore      MetricType = "peer_balance_score"
+	MetricDepthScore            MetricType = "depth_score"
+	MetricQuoteNotional         MetricType = "quote_notional"
+	MetricQuoteNotionalMedian   MetricType = "quote_notional_median"
+	MetricExecutableDepth       MetricType = "executable_depth"
+	MetricExecutableDepthMedian MetricType = "executable_depth_median"
+
+	// toxicity (level3 touch liquidity honesty)
+	MetricTouchQuantity      MetricType = "touch_quantity"
+	MetricBestPrice          MetricType = "best_price"
+	MetricTradeVolume        MetricType = "trade_volume"
+	MetricFillVolume         MetricType = "fill_volume"
+	MetricRetreatingQuantity MetricType = "retreating_quantity"
+	MetricCancelledQuantity  MetricType = "cancelled_quantity"
 )
 
 /*
@@ -35,10 +114,24 @@ subjects differ.
 type SubjectType string
 
 const (
-	SubjectTradeArrivals SubjectType = "trade_arrivals"
-	SubjectHawkesProcess SubjectType = "hawkes_process"
-	SubjectHawkesKernel  SubjectType = "hawkes_kernel"
-	SubjectHawkesFit     SubjectType = "hawkes_fit"
+	SubjectTradeArrivals   SubjectType = "trade_arrivals"
+	SubjectHawkesProcess   SubjectType = "hawkes_process"
+	SubjectHawkesKernel    SubjectType = "hawkes_kernel"
+	SubjectHawkesFit       SubjectType = "hawkes_fit"
+	SubjectManifoldState   SubjectType = "manifold_state"
+	SubjectPumpVolumeLift  SubjectType = "pump_volume_lift"
+	SubjectPumpPriceLift   SubjectType = "pump_price_lift"
+	SubjectPumpSpread      SubjectType = "pump_spread"
+	SubjectPumpCompression SubjectType = "pump_compression"
+	SubjectPumpIgnition    SubjectType = "pump_ignition"
+	SubjectPumpTrend       SubjectType = "pump_trend"
+	SubjectPumpExhaustion  SubjectType = "pump_exhaustion"
+	SubjectPumpComposite   SubjectType = "pump_composite"
+	SubjectBookImbalance   SubjectType = "book_imbalance"
+	SubjectAggressorFlow   SubjectType = "aggressor_flow"
+	SubjectPeerLiquidity   SubjectType = "peer_liquidity"
+	SubjectLevel3Touch     SubjectType = "level3_touch"
+	SubjectLevel3Tape      SubjectType = "level3_tape"
 )
 
 /*
@@ -70,24 +163,16 @@ const (
 	UnitInverseSecond   MeasurementUnit = "inverse_second"
 	UnitNat             MeasurementUnit = "nat"
 	UnitSecond          MeasurementUnit = "second"
+	UnitQuoteCurrency   MeasurementUnit = "quote_currency"
+	UnitBaseCurrency    MeasurementUnit = "base_currency"
 )
 
 /*
-OptionalValue makes a missing normalized representation distinct from the
-valid normalized value zero.
-*/
-type OptionalValue struct {
-	Value     float64 `json:"value"`
-	Available bool    `json:"available"`
-}
-
-/*
-MeasurementUncertainty reports an interval only when the estimator calculated
-one. An unavailable interval stays explicit and must not be read as zero
-uncertainty.
+MeasurementUncertainty reports an interval the estimator actually calculated.
+A nil *MeasurementUncertainty on Measurement stays explicit about "no
+interval" and must not be read as zero uncertainty.
 */
 type MeasurementUncertainty struct {
-	Available  bool    `json:"available"`
 	Lower      float64 `json:"lower,omitempty"`
 	Upper      float64 `json:"upper,omitempty"`
 	Confidence float64 `json:"confidence,omitempty"`
@@ -158,6 +243,7 @@ type StreamType string
 const (
 	Correlation StreamType = "correlation"
 	Covariance  StreamType = "covariance"
+	CVD         StreamType = "cvd"
 	DepthFlow   StreamType = "depth_flow"
 	Exhaust     StreamType = "exhaust"
 	Fluid       StreamType = "fluid"
@@ -165,6 +251,7 @@ const (
 	LeadLag     StreamType = "lead_lag"
 	Liquidity   StreamType = "liquidity"
 	PumpDump    StreamType = "pump_dump"
+	Resonance   StreamType = "resonance"
 	Sentiment   StreamType = "sentiment"
 	Toxicity    StreamType = "toxicity"
 )
@@ -175,20 +262,20 @@ signals use the typed fields above the compatibility block; the legacy fields
 remain only while older signals are migrated to the same contract.
 */
 type Measurement struct {
-	Source       SourceType
-	Metric       MetricType
-	Subject      SubjectType
-	Stream       StreamType
-	Symbol       string
-	Side         MeasurementSide
-	At           time.Time
-	ObservedFrom time.Time
-	Horizon      time.Duration
-	Unit         MeasurementUnit
-	Raw          float64
-	Normalized   float64
-	Maturity     float64
-	Uncertainty  MeasurementUncertainty
-	Validity     MeasurementValidity
-	Scale        ScaleReference
+	Source       SourceType              `json:"source"`
+	Metric       MetricType              `json:"metric,omitempty"`
+	Subject      SubjectType             `json:"subject,omitempty"`
+	Stream       StreamType              `json:"stream,omitempty"`
+	Symbol       string                  `json:"symbol"`
+	Side         MeasurementSide         `json:"side,omitempty"`
+	At           time.Time               `json:"at"`
+	ObservedFrom time.Time               `json:"observedFrom,omitempty"`
+	Horizon      time.Duration           `json:"horizon,omitempty"`
+	Unit         MeasurementUnit         `json:"unit,omitempty"`
+	Raw          float64                 `json:"raw"`
+	Normalized   *float64                `json:"normalized"`
+	Maturity     float64                 `json:"maturity,omitempty"`
+	Uncertainty  *MeasurementUncertainty `json:"uncertainty"`
+	Validity     MeasurementValidity     `json:"validity"`
+	Scale        ScaleReference          `json:"scale"`
 }

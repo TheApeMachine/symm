@@ -1,10 +1,12 @@
 package types
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/symm/kraken"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -92,6 +94,112 @@ func TestExecutableDepth(t *testing.T) {
 	})
 }
 
+func TestCrossSectionObserveDedupesRepeatedTimestamp(t *testing.T) {
+	Convey("Given a cross-section that already observed a symbol at a given timestamp", t, func() {
+		crossSection, err := NewCrossSection(DefaultCrossSectionConfig())
+		So(err, ShouldBeNil)
+
+		at := time.Now()
+		row := liquidityTestRow("BTC/USD", 999, 1001, 2, 2, 1, 1000)
+		row.Timestamp = at
+
+		crossSection.ProcessUpdates([]kraken.TickerData{row})
+
+		Convey("When another signal observes the same timestamp again this tick", func() {
+			crossSection.ProcessUpdates([]kraken.TickerData{row})
+
+			Convey("Then the repeated observation is not appended twice", func() {
+				dst := make([]correlation.Sample, crossSection.MaxReturnWindow()+1)
+				So(crossSection.SymbolSamples("BTC/USD", dst), ShouldEqual, 1)
+			})
+		})
+
+		Convey("When a genuinely later timestamp arrives", func() {
+			later := row
+			later.Timestamp = at.Add(time.Second)
+			crossSection.ProcessUpdates([]kraken.TickerData{later})
+
+			Convey("Then it is appended as a second observation", func() {
+				dst := make([]correlation.Sample, crossSection.MaxReturnWindow()+1)
+				So(crossSection.SymbolSamples("BTC/USD", dst), ShouldEqual, 2)
+			})
+		})
+	})
+}
+
+/*
+BenchmarkCrossSectionTick replays one tick against a warm 200-symbol
+universe: every symbol's ring is already full, and the subject symbol
+scores every peer's returns and samples, mirroring what Section.Scores
+does once per symbol every tick in correlation. This is the steady-state
+hot path the ring buffers and cached float64 conversions exist for.
+*/
+func BenchmarkCrossSectionTick(b *testing.B) {
+	crossSection, err := NewCrossSection(DefaultCrossSectionConfig())
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	symbolCount := 200
+	symbols := make([]string, symbolCount)
+
+	for index := range symbolCount {
+		symbols[index] = fmt.Sprintf("SYM%d/USD", index)
+	}
+
+	start := time.Now()
+	window := crossSection.MaxReturnWindow()
+
+	for bar := range window + 8 {
+		rows := make([]kraken.TickerData, symbolCount)
+
+		for index, symbol := range symbols {
+			price := 100 + float64(bar) + float64(index)*0.01
+			rows[index] = liquidityTestRow(symbol, price-1, price+1, 5, 5, 10, price)
+			rows[index].Timestamp = start.Add(time.Duration(bar) * time.Second)
+			rows[index].ChangePct = float64(index%7) - 3
+		}
+
+		crossSection.ProcessUpdates(rows)
+	}
+
+	subject := symbols[0]
+	returns := make([]float64, window)
+	samples := make([]correlation.Sample, window+1)
+	tickRows := make([]kraken.TickerData, symbolCount)
+
+	// Decimals are built once; only the timestamp (a plain time.Time) moves
+	// per iteration, so the loop below measures ProcessUpdates and the
+	// return/sample reads, not decimal construction.
+	for index, symbol := range symbols {
+		price := 200 + float64(index)*0.01
+		tickRows[index] = liquidityTestRow(symbol, price-1, price+1, 5, 5, 10, price)
+	}
+
+	tick := 0
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		tick++
+
+		for index := range tickRows {
+			tickRows[index].Timestamp = start.Add(time.Duration(window+100+tick) * time.Second)
+		}
+
+		crossSection.ProcessUpdates(tickRows)
+
+		for _, peer := range symbols {
+			if peer == subject {
+				continue
+			}
+
+			crossSection.SymbolReturns(peer, returns)
+			crossSection.SymbolSamples(peer, samples)
+		}
+	}
+}
+
 func TestCrossSectionQuoteNotionalsAndExecutableDepths(t *testing.T) {
 	Convey("Given a cross-section observing three symbols", t, func() {
 		crossSection, err := NewCrossSection(DefaultCrossSectionConfig())
@@ -102,15 +210,18 @@ func TestCrossSectionQuoteNotionalsAndExecutableDepths(t *testing.T) {
 			liquidityTestRow("ETH/USD", 99, 101, 5, 5, 100, 100),
 			liquidityTestRow("SOL/USD", 99, 101, 5, 5, 100, 100),
 		}
-		So(crossSection.Observe(rows), ShouldBeNil)
+		crossSection.ProcessUpdates(rows)
 
-		Convey("When QuoteNotionals and ExecutableDepths are read", func() {
-			notionals := crossSection.QuoteNotionals()
-			depths := crossSection.ExecutableDepths()
+		Convey("When the summary is read", func() {
+			metrics := crossSection.ReadView().Metrics
 
-			Convey("Then every observed symbol contributes one value to each axis", func() {
-				So(notionals, ShouldHaveLength, 3)
-				So(depths, ShouldHaveLength, 3)
+			Convey("Then every observed symbol contributes one row with both axes", func() {
+				So(metrics, ShouldHaveLength, 3)
+
+				for _, metric := range metrics {
+					So(metric.QuoteNotional, ShouldBeGreaterThan, 0)
+					So(metric.ExecutableDepth, ShouldBeGreaterThan, 0)
+				}
 			})
 		})
 	})

@@ -33,5 +33,9 @@ func NewLevel3(ctx context.Context, api *websocket.API) *Level3 {
 Books returns every order book the SDK currently manages for this transport.
 */
 func (level3 *Level3) Books() iter.Seq[*spot.BookManager] {
+	if level3.api == nil {
+		return func(yield func(*spot.BookManager) bool) {}
+	}
+
 	return level3.api.Books()
 }

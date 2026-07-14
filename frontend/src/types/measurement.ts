@@ -10,13 +10,7 @@ export type Category = {
 	strength: number;
 };
 
-export type OptionalValue = {
-	value: number;
-	available: boolean;
-};
-
 export type MeasurementUncertainty = {
-	available: boolean;
 	lower?: number;
 	upper?: number;
 	confidence?: number;
@@ -52,9 +46,9 @@ export type Measurement = {
 	horizon?: number;
 	unit?: string;
 	raw: number;
-	normalized: OptionalValue;
+	normalized: number | null;
 	maturity?: number;
-	uncertainty: MeasurementUncertainty;
+	uncertainty: MeasurementUncertainty | null;
 	validity: MeasurementValidity;
 	scale: ScaleReference;
 
@@ -83,7 +77,6 @@ export const KNOWN_SOURCES = [
 	"pumpdump",
 	"sentiment",
 	"toxicity",
-	"ohlc",
 ] as const;
 
 export type SourceType = (typeof KNOWN_SOURCES)[number] | string;

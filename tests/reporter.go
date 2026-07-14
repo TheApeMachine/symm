@@ -1,14 +1,23 @@
 package tests
 
-import "github.com/theapemachine/symm/types"
+import (
+	"sync"
+
+	"github.com/theapemachine/symm/types"
+)
 
 /*
 MockReporter is a controllable types.StatusReporter for booter and stage
 tests. Status is driven directly by the test; Initialize records that it
 ran and, when configured, drives the reporter to READY or ERROR itself so
 sequencing tests can assert one reporter finished before the next starts.
+A Booter under test runs its own background publishLoop goroutine from the
+moment it is constructed, so every field here is read from that goroutine
+concurrently with the test driving it from the main goroutine; the mutex
+is load-bearing, not defensive filler.
 */
 type MockReporter struct {
+	mutex             sync.Mutex
 	status            types.Status
 	initializeErr     error
 	initializeCalls   int
@@ -23,6 +32,9 @@ func NewMockReporter(status types.Status) *MockReporter {
 }
 
 func (reporter *MockReporter) Status() types.Status {
+	reporter.mutex.Lock()
+	defer reporter.mutex.Unlock()
+
 	return reporter.status
 }
 
@@ -30,6 +42,9 @@ func (reporter *MockReporter) Status() types.Status {
 SetStatus lets a test move the reporter directly to a new status.
 */
 func (reporter *MockReporter) SetStatus(status types.Status) {
+	reporter.mutex.Lock()
+	defer reporter.mutex.Unlock()
+
 	reporter.status = status
 }
 
@@ -39,6 +54,9 @@ SetInitializeError if configured, and otherwise moves the reporter to
 READY when SetReadyOnInitialize was requested.
 */
 func (reporter *MockReporter) Initialize() error {
+	reporter.mutex.Lock()
+	defer reporter.mutex.Unlock()
+
 	reporter.initializeCalls++
 
 	if reporter.initializeErr != nil {
@@ -58,6 +76,9 @@ SetInitializeError configures the error Initialize returns and moves the
 reporter to ERROR when Initialize is next called.
 */
 func (reporter *MockReporter) SetInitializeError(err error) {
+	reporter.mutex.Lock()
+	defer reporter.mutex.Unlock()
+
 	reporter.initializeErr = err
 }
 
@@ -67,6 +88,9 @@ READY, mirroring a real reporter whose own Initialize does the work that
 makes it ready.
 */
 func (reporter *MockReporter) SetReadyOnInitialize(ready bool) {
+	reporter.mutex.Lock()
+	defer reporter.mutex.Unlock()
+
 	reporter.readyOnInitialize = ready
 }
 
@@ -74,5 +98,8 @@ func (reporter *MockReporter) SetReadyOnInitialize(ready bool) {
 InitializeCalls returns how many times Initialize was called.
 */
 func (reporter *MockReporter) InitializeCalls() int {
+	reporter.mutex.Lock()
+	defer reporter.mutex.Unlock()
+
 	return reporter.initializeCalls
 }

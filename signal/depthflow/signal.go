@@ -2,9 +2,8 @@ package depthflow
 
 import (
 	"context"
+	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
@@ -48,7 +47,7 @@ func (signal *Signal) Measure(
 ) *types.Thesis {
 	books := signal.book.cache
 	trades := signal.trade.cache
-	out := datura.Map[datura.Map[*decimal.Decimal]]{}
+	out := make([]*types.Measurement, 0, len(books)+len(trades))
 
 	for _, row := range books {
 		if row.Symbol == "" || row.PriceIncrement.Sign() <= 0 {
@@ -127,16 +126,7 @@ func (signal *Signal) Measure(
 			continue
 		}
 
-		out[row.Symbol] = datura.Map[*decimal.Decimal]{
-			"loadedScore":  decimal.NewFromFloat64(output.LoadedScore),
-			"spoofScore":   decimal.NewFromFloat64(output.SpoofScore),
-			"thinScore":    decimal.NewFromFloat64(output.ThinScore),
-			"neutralScore": decimal.NewFromFloat64(output.NeutralScore),
-			"strength":     decimal.NewFromFloat64(output.Strength),
-			"value":        decimal.NewFromFloat64(output.Value),
-			"category":     decimal.NewFromFloat64(output.Category),
-			"maturity":     decimal.NewFromFloat64(maturity),
-		}
+		out = append(out, signal.measurements(row.Symbol, row.Timestamp, output, maturity)...)
 	}
 
 	for _, row := range trades {
@@ -177,16 +167,7 @@ func (signal *Signal) Measure(
 			continue
 		}
 
-		out[row.Symbol] = datura.Map[*decimal.Decimal]{
-			"loadedScore":  decimal.NewFromFloat64(output.LoadedScore),
-			"spoofScore":   decimal.NewFromFloat64(output.SpoofScore),
-			"thinScore":    decimal.NewFromFloat64(output.ThinScore),
-			"neutralScore": decimal.NewFromFloat64(output.NeutralScore),
-			"strength":     decimal.NewFromFloat64(output.Strength),
-			"value":        decimal.NewFromFloat64(output.Value),
-			"category":     decimal.NewFromFloat64(output.Category),
-			"maturity":     decimal.NewFromFloat64(maturity),
-		}
+		out = append(out, signal.measurements(row.Symbol, row.Timestamp, output, maturity)...)
 	}
 
 	signal.book.cache = signal.book.cache[:0]
@@ -194,9 +175,51 @@ func (signal *Signal) Measure(
 
 	thesis.Signals.Store("books", books)
 	thesis.Signals.Store("trades", trades)
-	thesis.Measurements.Store("depthflow", out)
+	thesis.Measurements = append(thesis.Measurements, out...)
 
 	return thesis
+}
+
+/*
+measurements converts a bookflow calculator output into the shared
+Measurement shape, so both the book-driven and trade-driven observation paths
+emit the same metric set for a symbol.
+*/
+func (signal *Signal) measurements(
+	symbol string, at time.Time, output equation.BookflowOutput, maturity float64,
+) []*types.Measurement {
+	return []*types.Measurement{
+		types.ObservationMeasurement(
+			types.SourceDepthFlow, types.DepthFlow, types.MetricLoadedScore,
+			types.SubjectBookImbalance, symbol, at,
+			types.UnitDimensionless, output.LoadedScore, maturity,
+		),
+		types.ObservationMeasurement(
+			types.SourceDepthFlow, types.DepthFlow, types.MetricSpoofScore,
+			types.SubjectBookImbalance, symbol, at,
+			types.UnitDimensionless, output.SpoofScore, maturity,
+		),
+		types.ObservationMeasurement(
+			types.SourceDepthFlow, types.DepthFlow, types.MetricThinScore,
+			types.SubjectBookImbalance, symbol, at,
+			types.UnitDimensionless, output.ThinScore, maturity,
+		),
+		types.ObservationMeasurement(
+			types.SourceDepthFlow, types.DepthFlow, types.MetricNeutralScore,
+			types.SubjectBookImbalance, symbol, at,
+			types.UnitDimensionless, output.NeutralScore, maturity,
+		),
+		types.ObservationMeasurement(
+			types.SourceDepthFlow, types.DepthFlow, types.MetricStrength,
+			types.SubjectBookImbalance, symbol, at,
+			types.UnitDimensionless, output.Strength, maturity,
+		),
+		types.ObservationMeasurement(
+			types.SourceDepthFlow, types.DepthFlow, types.MetricValue,
+			types.SubjectBookImbalance, symbol, at,
+			types.UnitDimensionless, output.Value, maturity,
+		),
+	}
 }
 
 func (signal *Signal) Close() (err error) {

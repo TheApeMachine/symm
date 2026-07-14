@@ -37,11 +37,27 @@ type Resonance struct {
 	ui          chan []byte
 	manifold    *learning.ResonanceManifold
 	baselines   map[string]*adaptive.TimeElastic
+	halflife    time.Duration
+	startedAt   time.Time
 	lastEventAt time.Time
 	samples     uint64
 }
 
-func NewResonance(symbol string, ui chan []byte) *Resonance {
+func NewResonance(
+	symbol string,
+	ui chan []byte,
+	halflife time.Duration,
+) *Resonance {
+	if halflife <= 0 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logic resonance: baseline halflife must be positive",
+			nil,
+		))
+
+		return nil
+	}
+
 	arch := []int{resonanceObservables, resonanceObservables, resonanceObservables}
 	manifold, err := learning.NewResonanceManifold(arch, 0, resonanceAlpha)
 
@@ -58,6 +74,7 @@ func NewResonance(symbol string, ui chan []byte) *Resonance {
 		ui:        ui,
 		manifold:  manifold,
 		baselines: map[string]*adaptive.TimeElastic{},
+		halflife:  halflife,
 	}
 
 	return resonance
@@ -65,21 +82,13 @@ func NewResonance(symbol string, ui chan []byte) *Resonance {
 
 func (resonance *Resonance) Close() {}
 
-func (resonance *Resonance) Update(thesis *types.Thesis) {
+func (resonance *Resonance) Update(state manifold.State) []*types.Measurement {
 	if resonance.manifold == nil {
-		return
+		return nil
 	}
-
-	stored, ok := thesis.Measurements.Load(resonance.symbol + ":manifold")
-
-	if !ok {
-		return
-	}
-
-	state := stored.(manifold.State)
 
 	if !state.IsFinite() {
-		return
+		return nil
 	}
 
 	reading := state.Reading
@@ -95,17 +104,17 @@ func (resonance *Resonance) Update(thesis *types.Thesis) {
 	stepAt := state.At
 
 	if stepAt.IsZero() {
-		return
+		return nil
 	}
 
 	if resonance.eventStale(stepAt) {
-		return
+		return nil
 	}
 
 	observables, ready := resonance.normalize(raw, stepAt)
 
 	if !ready {
-		return
+		return nil
 	}
 
 	resonance.advanceEventAt(stepAt)
@@ -117,7 +126,7 @@ func (resonance *Resonance) Update(thesis *types.Thesis) {
 			err,
 		))
 
-		return
+		return nil
 	}
 
 	resonance.manifold.Learn(nil)
@@ -145,10 +154,8 @@ func (resonance *Resonance) Update(thesis *types.Thesis) {
 			nil,
 		))
 
-		return
+		return nil
 	}
-
-	thesis.Measurements.Store(resonance.symbol+":resonance", outcome)
 
 	if resonance.ui != nil {
 		select {
@@ -160,6 +167,36 @@ func (resonance *Resonance) Update(thesis *types.Thesis) {
 				nil,
 			))
 		}
+	}
+
+	observedFrom := stepAt.Add(-state.Duration())
+	elapsed := stepAt.Sub(resonance.startedAt)
+	maturity := -math.Expm1(
+		-math.Ln2 * float64(elapsed) /
+			float64(resonance.halflife),
+	)
+	scale := types.ScaleReference{
+		Kind: types.ScaleObservationWindow, From: observedFrom, Through: stepAt,
+	}
+	validity := types.MeasurementValidity{
+		State: types.ValidityValid, Readiness: types.ReadinessModel,
+	}
+
+	return []*types.Measurement{
+		{
+			Source: types.SourceResonance, Stream: types.Resonance,
+			Metric: types.MetricResonanceEnergy, Subject: types.SubjectManifoldState,
+			Symbol: resonance.symbol, At: stepAt, ObservedFrom: observedFrom,
+			Horizon: state.Duration(), Unit: types.UnitDimensionless,
+			Raw: outcome.Energy, Maturity: maturity, Validity: validity, Scale: scale,
+		},
+		{
+			Source: types.SourceResonance, Stream: types.Resonance,
+			Metric: types.MetricResonanceSurprise, Subject: types.SubjectManifoldState,
+			Symbol: resonance.symbol, At: stepAt, ObservedFrom: observedFrom,
+			Horizon: state.Duration(), Unit: types.UnitNat,
+			Raw: outcome.Surprise, Maturity: maturity, Validity: validity, Scale: scale,
+		},
 	}
 }
 
@@ -188,7 +225,7 @@ func (resonance *Resonance) normalize(
 
 		if tracker == nil {
 			tracker = adaptive.NewTimeElastic(adaptive.TimeElasticConfig{
-				Halflife: manifold.DefaultBaselineHalflife,
+				Halflife: resonance.halflife,
 				Epsilon:  manifold.BaselineEpsilon,
 			})
 			resonance.baselines[key] = tracker
@@ -228,6 +265,10 @@ func (resonance *Resonance) eventStale(at time.Time) bool {
 func (resonance *Resonance) advanceEventAt(at time.Time) {
 	if at.IsZero() {
 		return
+	}
+
+	if resonance.startedAt.IsZero() {
+		resonance.startedAt = at
 	}
 
 	if resonance.lastEventAt.IsZero() || at.After(resonance.lastEventAt) {

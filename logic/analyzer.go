@@ -13,7 +13,8 @@ import (
 
 /*
 Analyzer coordinates the L3 manifold path with resonance and causal logic.
-Every stage reads and writes through the tick Thesis passed in by the planner.
+Operational state flows directly between stages; durable graphs and forecasts
+are appended to the tick Thesis passed in by the planner.
 */
 type Analyzer struct {
 	gate       stageGate
@@ -73,34 +74,31 @@ func (analyzer *Analyzer) Close() {
 Update runs logic stages against the current tick thesis after signals measure.
 */
 func (analyzer *Analyzer) Update(thesis *types.Thesis) {
-	for symbol, resonance := range analyzer.resonances {
-		analyzer.composeGraph(thesis, symbol)
-		resonance.Update(thesis)
+	symbols := make(map[string]struct{})
 
-		if causal := analyzer.causals[symbol]; causal != nil {
-			causal.Update(thesis)
+	for _, measurement := range thesis.Measurements {
+		if measurement != nil && measurement.Symbol != "" {
+			symbols[measurement.Symbol] = struct{}{}
 		}
+	}
+
+	for symbol := range symbols {
+		analyzer.composeGraph(thesis, symbol)
+
+		composer := CategoryComposer{}
+		composer.Compose(thesis, symbol)
 	}
 }
 
 func (analyzer *Analyzer) composeGraph(thesis *types.Thesis, symbol string) {
-	graph := NewGraph(symbol)
+	graph := types.NewGraph(symbol)
 
-	thesis.Measurements.Range(func(key, value any) bool {
-		measurements, ok := value.([]*types.Measurement)
+	for _, measurement := range thesis.Measurements {
+		graph.AddNode(measurement)
+	}
 
-		if !ok {
-			return true
-		}
-
-		for _, measurement := range measurements {
-			graph.AddNode(measurement)
-		}
-
-		return true
-	})
-
-	thesis.Measurements.Store(symbol+":graph", graph)
+	graph.Compose()
+	thesis.Graphs[symbol] = graph
 }
 
 /*
@@ -158,7 +156,7 @@ func (analyzer *Analyzer) ObserveLevel3(
 		return manifold.ProcessResult{}
 	}
 
-	result := slot.Observe(thesis, row, pricePrecision, qtyPrecision, book)
+	result := slot.Observe(row, pricePrecision, qtyPrecision, book)
 	analyzer.handle(symbol, thesis, result)
 
 	return result
@@ -186,7 +184,7 @@ func (analyzer *Analyzer) AdvanceLevel3(thesis *types.Thesis, symbol string) {
 		return
 	}
 
-	analyzer.handle(symbol, thesis, slot.Advance(thesis))
+	analyzer.handle(symbol, thesis, slot.Advance())
 }
 
 func (analyzer *Analyzer) admit(symbol string) (*manifold.Slot, bool) {
@@ -198,7 +196,9 @@ func (analyzer *Analyzer) admit(symbol string) (*manifold.Slot, bool) {
 	}
 
 	if analyzer.resonances[symbol] == nil {
-		analyzer.resonances[symbol] = NewResonance(symbol, analyzer.uiHub)
+		analyzer.resonances[symbol] = NewResonance(
+			symbol, analyzer.uiHub, analyzer.engine.Halflife(),
+		)
 	}
 
 	if analyzer.causals[symbol] == nil {
@@ -215,6 +215,10 @@ func (analyzer *Analyzer) handle(
 ) {
 	if result.StateProduced {
 		analyzer.publish(result.State)
+	}
+
+	if result.Forecast != nil {
+		thesis.Forecasts = append(thesis.Forecasts, *result.Forecast)
 	}
 
 	if !result.GasReady {
@@ -238,11 +242,23 @@ func (analyzer *Analyzer) handle(
 	}
 
 	if resonance := analyzer.resonances[symbol]; resonance != nil {
-		resonance.Update(thesis)
+		thesis.Measurements = append(
+			thesis.Measurements,
+			resonance.Update(result.State)...,
+		)
 	}
 
 	if causal := analyzer.causals[symbol]; causal != nil {
-		causal.Update(thesis)
+		hypothesis, produced, err := causal.Update(result.State)
+
+		if err != nil {
+			errnie.Error(err)
+			return
+		}
+
+		if produced {
+			thesis.Hypotheses = append(thesis.Hypotheses, hypothesis)
+		}
 	}
 }
 

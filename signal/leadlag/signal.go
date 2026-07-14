@@ -4,8 +4,6 @@ import (
 	"context"
 	"math"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -39,11 +37,10 @@ func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
 	rows := signal.ticker.cache
-	out := datura.Map[datura.Map[*decimal.Decimal]]{}
+	out := make([]*types.Measurement, 0, len(rows))
 
-	thesis.CrossSection.Observe(rows)
-	view := thesis.CrossSection.Snapshot()
-	anchor := view.Leader()
+	thesis.CrossSection.ProcessUpdates(rows)
+	anchor := thesis.CrossSection.ReadView().Leader
 
 	if anchor != "" {
 		signal.section.SetAnchor(anchor)
@@ -150,26 +147,31 @@ func (signal *Signal) Measure(
 				strength = 0.01
 			}
 
-			out[row.Symbol] = datura.Map[*decimal.Decimal]{
-				"correlation":              decimal.NewFromFloat64(correlation),
-				"signedCorrelation":        decimal.NewFromFloat64(signedCorrelation),
-				"signedContempCorrelation": decimal.NewFromFloat64(signedContempCorrelation),
-				"signedLagCorrelation":     decimal.NewFromFloat64(signedLagCorrelation),
-				"lagFraction":              decimal.NewFromFloat64(lagFraction),
-				"sampleSupport":            decimal.NewFromFloat64(sampleSupport),
-				"inefficient":              decimal.NewFromFloat64(inefficient),
-				"sync":                     decimal.NewFromFloat64(syncScore),
-				"decoupled":                decimal.NewFromFloat64(decoupled),
-				"stall":                    decimal.NewFromFloat64(stall),
-				"strength":                 decimal.NewFromFloat64(strength),
+			validity := types.MeasurementValidity{
+				State:     types.ValidityValid,
+				Readiness: types.ReadinessObservation,
 			}
+
+			out = append(out,
+				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricCorrelation, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: correlation, Validity: validity},
+				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricSignedCorrelation, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: signedCorrelation, Validity: validity},
+				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricSignedContempCorrelation, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: signedContempCorrelation, Validity: validity},
+				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricSignedLagCorrelation, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: signedLagCorrelation, Validity: validity},
+				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricLagFraction, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: lagFraction, Validity: validity},
+				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricSampleSupport, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: sampleSupport, Validity: validity},
+				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricInefficient, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: inefficient, Validity: validity},
+				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricSync, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: syncScore, Validity: validity},
+				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricDecoupled, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: decoupled, Validity: validity},
+				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricStall, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: stall, Validity: validity},
+				&types.Measurement{Source: types.SourceLeadLag, Metric: types.MetricStrength, Stream: types.LeadLag, Symbol: row.Symbol, At: row.Timestamp, Unit: types.UnitDimensionless, Raw: strength, Validity: validity},
+			)
 		}
 	}
 
 	signal.ticker.cache = signal.ticker.cache[:0]
 
 	thesis.Signals.Store("tickers", rows)
-	thesis.Measurements.Store("leadlag", out)
+	thesis.Measurements = append(thesis.Measurements, out...)
 
 	return thesis
 }

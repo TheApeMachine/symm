@@ -6,17 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
-	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
 )
 
 func TestAPITradeVolume(t *testing.T) {
@@ -30,7 +26,7 @@ func TestAPITradeVolume(t *testing.T) {
 				"fees_maker":{"XXBTZUSD":{"fee":"0.1600"}}
 			}
 		}`)}
-		api := NewAPI(public, private, &stubConn{}, nil)
+		api := NewAPI(context.Background(), public, private, nil)
 
 		Convey("When the fee tier is requested", func() {
 			tradeVolume, err := api.TradeVolume([]string{"BTC/USD"})
@@ -52,32 +48,12 @@ func TestAPITradeVolume(t *testing.T) {
 }
 
 func BenchmarkAPITradeVolume(b *testing.B) {
-	newAssets := map[string]spot.AssetInfo{
-		"USD": {AltName: "USD"},
-	}
-	oldAssets := map[string]spot.AssetInfo{
-		"ZUSD": {AltName: "USD"},
-	}
-	newPairs := make(map[string]spot.AssetPair, 40)
-	oldPairs := make(map[string]spot.AssetPair, 40)
 	fees := make(map[string]kraken.TradeVolumeFees, 40)
 	symbols := make([]string, 40)
 
 	for index := range symbols {
-		standard := fmt.Sprintf("ASSET-%02d", index)
-		alternative := fmt.Sprintf("A%02d", index)
-		legacy := fmt.Sprintf("X%02d", index)
-		canonical := legacy + "ZUSD"
-		symbols[index] = standard + "/USD"
-		newAssets[standard] = spot.AssetInfo{AltName: alternative}
-		oldAssets[legacy] = spot.AssetInfo{AltName: alternative}
-		newPairs[symbols[index]] = spot.AssetPair{
-			Base: standard, Quote: "USD", WSName: symbols[index],
-		}
-		oldPairs[canonical] = spot.AssetPair{
-			Base: legacy, Quote: "ZUSD", WSName: alternative + "/USD",
-		}
-		fees[canonical] = kraken.TradeVolumeFees{Fee: "0.2600"}
+		symbols[index] = fmt.Sprintf("ASSET-%02d/USD", index)
+		fees[symbols[index]] = kraken.TradeVolumeFees{Fee: "0.2600"}
 	}
 
 	response, err := json.Marshal(&kraken.TradeVolume{
@@ -89,14 +65,7 @@ func BenchmarkAPITradeVolume(b *testing.B) {
 	}
 
 	private := &stubConn{postResponse: response}
-	api := NewAPI(&stubConn{}, private, &stubConn{}, nil)
-	api.normalizer.Update(&spot.AssetsManagerUpdate{
-		NewAssets: newAssets,
-		OldAssets: oldAssets,
-		NewPairs:  newPairs,
-		OldPairs:  oldPairs,
-	})
-	api.normalizerOnce.Do(func() {})
+	api := NewAPI(context.Background(), &stubConn{}, private, nil)
 	b.ReportAllocs()
 	b.ResetTimer()
 
@@ -108,26 +77,23 @@ func BenchmarkAPITradeVolume(b *testing.B) {
 		}
 
 		if len(tradeVolume.Result.Fees) != len(symbols) {
-			b.Fatal("incomplete normalized fee tier")
+			b.Fatal("incomplete fee tier")
 		}
 	}
 }
 
-func TestAPIOnRoutesLevel3(t *testing.T) {
+func TestAPIOnRoutesChannels(t *testing.T) {
 	Convey("Given a live API with stub transports", t, func() {
 		viper.Set("trading.model", "live")
 
 		public := &stubConn{}
 		private := &stubConn{}
-		level3 := &stubConn{}
-		api := NewAPI(public, private, level3, nil)
+		api := NewAPI(context.Background(), public, private, nil)
 
-		api.On("level3", func([]byte) {})
 		api.On("ticker", func([]byte) {})
 		api.On("balances", func([]byte) {})
 
 		Convey("Then each callback registers on its dedicated transport", func() {
-			So(len(level3.channels["level3"]), ShouldEqual, 1)
 			So(len(public.channels["ticker"]), ShouldEqual, 1)
 			So(len(private.channels["balances"]), ShouldEqual, 1)
 		})
@@ -137,23 +103,21 @@ func TestAPIOnRoutesLevel3(t *testing.T) {
 		viper.Set("trading.model", "paper")
 
 		public := &stubConn{}
-		level3 := &stubConn{}
+		private := &stubConn{}
 		paper := NewPaper(context.Background(), newTestSimulator())
-		api := NewAPI(public, level3, level3, paper)
+		api := NewAPI(context.Background(), public, private, paper)
 
-		api.On("level3", func([]byte) {})
 		api.On("ticker", func([]byte) {})
 		api.On("balances", func([]byte) {})
 		api.On("executions", func([]byte) {})
 		api.On("add_order", func([]byte) {})
 
-		Convey("Then level3 registers on the shared authenticated transport", func() {
-			So(len(level3.channels["level3"]), ShouldEqual, 1)
+		Convey("Then ticker registers on the public transport", func() {
 			So(len(public.channels["ticker"]), ShouldEqual, 1)
 		})
 
 		Convey("Then balances, executions, and add_order register on the paper transport instead", func() {
-			So(len(level3.channels["balances"]), ShouldEqual, 0)
+			So(len(private.channels["balances"]), ShouldEqual, 0)
 
 			_, ok := paper.sync.Load("balances")
 			So(ok, ShouldBeTrue)
@@ -167,88 +131,18 @@ func TestAPIOnRoutesLevel3(t *testing.T) {
 	})
 }
 
-func TestAPISubscribeLevel3(t *testing.T) {
-	Convey("Given a connected level3 transport with an authentication token", t, func() {
-		requests := make(chan []byte, 1)
-		errors := make(chan error, 1)
-		upgrader := gorillawebsocket.Upgrader{}
-		server := httptest.NewServer(http.HandlerFunc(func(
-			writer http.ResponseWriter,
-			request *http.Request,
-		) {
-			connection, err := upgrader.Upgrade(writer, request, nil)
-
-			if err != nil {
-				errors <- err
-				return
-			}
-
-			defer connection.Close()
-			_, raw, err := connection.ReadMessage()
-
-			if err != nil {
-				errors <- err
-				return
-			}
-
-			requests <- raw
-			_, _, _ = connection.ReadMessage()
-		}))
-		defer server.Close()
-
-		client := spot.NewWebSocket()
-		client.URL = "ws" + strings.TrimPrefix(server.URL, "http")
-		client.Token = "level3-token"
-		So(client.Connect(), ShouldBeNil)
-
-		level3 := &stubConn{client: client}
-		api := NewAPI(&stubConn{}, &stubConn{}, level3, nil)
-		viper.Set("market.l3_depth", 25)
-
-		Convey("When level3 is subscribed", func() {
-			So(api.SubscribeLevel3([]string{"BTC/USD", "ETH/USD"}), ShouldBeNil)
-
-			select {
-			case err := <-errors:
-				So(err, ShouldBeNil)
-			case raw := <-requests:
-				request := struct {
-					Method string `json:"method"`
-					Params struct {
-						Channel string   `json:"channel"`
-						Symbols []string `json:"symbol"`
-						Depth   int      `json:"depth"`
-						Token   string   `json:"token"`
-					} `json:"params"`
-				}{}
-
-				So(json.Unmarshal(raw, &request), ShouldBeNil)
-				So(request.Method, ShouldEqual, "subscribe")
-				So(request.Params.Channel, ShouldEqual, "level3")
-				So(request.Params.Symbols, ShouldResemble, []string{"BTC/USD", "ETH/USD"})
-				So(request.Params.Depth, ShouldEqual, 25)
-				So(request.Params.Token, ShouldEqual, "level3-token")
-			case <-time.After(time.Second):
-				So("level3 subscription", ShouldEqual, "received")
-			}
-		})
-
-		So(client.Disconnect(), ShouldBeNil)
-	})
-}
-
-func TestAPICloseSharedLevel3(t *testing.T) {
-	Convey("Given a paper API sharing its authenticated and level3 transport", t, func() {
+func TestAPIClose(t *testing.T) {
+	Convey("Given an API with stub public and private transports", t, func() {
 		public := &stubConn{}
-		level3 := &stubConn{}
-		api := NewAPI(public, level3, level3, nil)
+		private := &stubConn{}
+		api := NewAPI(context.Background(), public, private, nil)
 
 		Convey("When the API closes", func() {
 			api.Close()
 
-			Convey("Then each physical connection closes exactly once", func() {
+			Convey("Then each transport closes exactly once", func() {
 				So(public.closeCount, ShouldEqual, 1)
-				So(level3.closeCount, ShouldEqual, 1)
+				So(private.closeCount, ShouldEqual, 1)
 			})
 		})
 	})
@@ -272,13 +166,7 @@ type stubConn struct {
 
 func (stub *stubConn) Client() *spot.WebSocket { return stub.client }
 
-func (stub *stubConn) Books() BookLookup { return stub.books }
-
-func (stub *stubConn) SubscribeLevel3(symbols []string, depth int) error {
-	return stub.client.SubL3(symbols, depth, map[string]any{
-		"params": map[string]any{"depth": depth},
-	})
-}
+func (stub *stubConn) Books() *spot.BookManager { return stub.books }
 
 func (stub *stubConn) On(channel string, action func([]byte)) {
 	if stub.channels == nil {
@@ -291,8 +179,6 @@ func (stub *stubConn) On(channel string, action func([]byte)) {
 func (stub *stubConn) Write(params json.Marshaler) error { return nil }
 
 func (stub *stubConn) Close() { stub.closeCount++ }
-
-func (stub *stubConn) Status() types.Status { return types.READY }
 
 func (stub *stubConn) Post(path string, params json.Marshaler) ([]byte, error) {
 	stub.postPath = path

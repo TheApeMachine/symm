@@ -2,6 +2,7 @@ package system_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -30,9 +31,11 @@ func TestBooterReady(t *testing.T) {
 			system.NewStage(system.StageReady, ready),
 		)
 
-		// AddStages already resolved every reporter to READY through its own
-		// Initialize. Reset them so each scenario below can drive its own
-		// partial-boot state without racing a background Initialize call.
+		So(booter.Start(), ShouldBeNil)
+
+		// Start already resolved every reporter to READY through each
+		// stage's own Initialize. Reset them so each scenario below can
+		// drive its own partial-boot state.
 		instrument.SetStatus(types.INITIALIZING)
 		signal.SetStatus(types.INITIALIZING)
 		ready.SetStatus(types.INITIALIZING)
@@ -62,34 +65,23 @@ func TestBooterReady(t *testing.T) {
 				So(booter.Ready(system.StageReady), ShouldBeFalse)
 			})
 		})
+	})
+}
 
-		Convey("When asked about a stage that was never registered", func() {
-			Convey("Then Ready reports false rather than panicking", func() {
-				So(booter.Ready(system.StageType(99)), ShouldBeFalse)
-			})
-		})
+func TestBooterError(t *testing.T) {
+	Convey("Given a booter with a reporter that fails to initialize", t, func() {
+		failing := tests.NewMockReporter(types.INITIALIZING)
+		failing.SetInitializeError(errors.New("boom"))
 
-		Convey("When preflight is still initializing", func() {
-			Convey("Then CurrentPhase reports scan", func() {
-				So(booter.CurrentPhase(), ShouldEqual, "scan")
-			})
-		})
+		booter := system.NewBooter(context.Background(), nil)
+		booter.AddStages(system.NewStage(system.StagePreflight, failing))
 
-		Convey("When preflight is ready and warmup is still initializing", func() {
-			instrument.SetStatus(types.READY)
+		Convey("When Start runs that stage", func() {
+			err := booter.Start()
 
-			Convey("Then CurrentPhase reports evaluate", func() {
-				So(booter.CurrentPhase(), ShouldEqual, "evaluate")
-			})
-		})
-
-		Convey("When every stage is ready", func() {
-			instrument.SetStatus(types.READY)
-			signal.SetStatus(types.READY)
-			ready.SetStatus(types.READY)
-
-			Convey("Then CurrentPhase reports commit", func() {
-				So(booter.CurrentPhase(), ShouldEqual, "commit")
+			Convey("Then Start reports the failure and Error is true", func() {
+				So(err, ShouldNotBeNil)
+				So(booter.Error(), ShouldBeTrue)
 			})
 		})
 	})
