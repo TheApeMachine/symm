@@ -201,21 +201,19 @@ func (live *Live) route(raw []byte) {
 	// Forward raw frames to registered handlers so manifold ingest can retain
 	// authoritative kraken.Level3Data rows on the tick Thesis.
 	if channel == "level3" {
-		callbacks, ok := live.sync.Load(channel)
-
-		if ok {
-			for _, callback := range callbacks.([]func([]byte)) {
-				callback(raw)
-			}
-		}
+		live.dispatch(channel, raw, false)
 
 		return
 	}
 
+	live.dispatch(channel, raw, true)
+}
+
+func (live *Live) dispatch(channel string, raw []byte, logIfMissing bool) {
 	callbacks, ok := live.sync.Load(channel)
 
 	if !ok {
-		if channel != "" {
+		if logIfMissing && channel != "" {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"websocket: channel "+channel+" not found",

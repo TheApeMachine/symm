@@ -48,7 +48,7 @@ func (signal *Signal) Measure(
 ) *types.Thesis {
 	books := signal.book.cache
 	trades := signal.trade.cache
-	out := make([]*types.Measurement, 0, len(books)+len(trades))
+	out := make([]*types.Measurement, 0, 8*(len(books)+len(trades)))
 
 	for _, row := range books {
 		if row.Symbol == "" || row.PriceIncrement.Sign() <= 0 {
@@ -185,17 +185,38 @@ func (signal *Signal) measurements(
 		State:     types.ValidityValid,
 		Readiness: types.ReadinessObservation,
 	}
-
-	return []*types.Measurement{
-		{Source: types.SourceExhaustion, Metric: types.MetricMechanical, Stream: types.Exhaust, Symbol: symbol, At: at, Unit: types.UnitDimensionless, Raw: output.Mechanical, Maturity: maturity, Validity: validity},
-		{Source: types.SourceExhaustion, Metric: types.MetricThermal, Stream: types.Exhaust, Symbol: symbol, At: at, Unit: types.UnitDimensionless, Raw: output.Thermal, Maturity: maturity, Validity: validity},
-		{Source: types.SourceExhaustion, Metric: types.MetricFragile, Stream: types.Exhaust, Symbol: symbol, At: at, Unit: types.UnitDimensionless, Raw: output.Fragile, Maturity: maturity, Validity: validity},
-		{Source: types.SourceExhaustion, Metric: types.MetricReversal, Stream: types.Exhaust, Symbol: symbol, At: at, Unit: types.UnitDimensionless, Raw: output.Reversal, Maturity: maturity, Validity: validity},
-		{Source: types.SourceExhaustion, Metric: types.MetricUrgency, Stream: types.Exhaust, Symbol: symbol, At: at, Unit: types.UnitDimensionless, Raw: output.Urgency, Maturity: maturity, Validity: validity},
-		{Source: types.SourceExhaustion, Metric: types.MetricStrength, Stream: types.Exhaust, Symbol: symbol, At: at, Unit: types.UnitDimensionless, Raw: output.Strength, Maturity: maturity, Validity: validity},
-		{Source: types.SourceExhaustion, Metric: types.MetricValue, Stream: types.Exhaust, Symbol: symbol, At: at, Unit: types.UnitDimensionless, Raw: output.Value, Maturity: maturity, Validity: validity},
-		{Source: types.SourceExhaustion, Metric: types.MetricCategory, Stream: types.Exhaust, Symbol: symbol, At: at, Unit: types.UnitDimensionless, Raw: output.Category, Maturity: maturity, Validity: validity},
+	specs := []struct {
+		metric types.MetricType
+		raw    float64
+	}{
+		{types.MetricMechanical, output.Mechanical},
+		{types.MetricThermal, output.Thermal},
+		{types.MetricFragile, output.Fragile},
+		{types.MetricReversal, output.Reversal},
+		{types.MetricUrgency, output.Urgency},
+		{types.MetricStrength, output.Strength},
+		{types.MetricValue, output.Value},
+		{types.MetricCategory, output.Category},
 	}
+	measurements := make([]*types.Measurement, 0, len(specs))
+
+	for _, spec := range specs {
+		measurements = append(measurements, &types.Measurement{
+			Source:       types.SourceExhaustion,
+			Metric:       spec.metric,
+			Stream:       types.Exhaust,
+			Symbol:       symbol,
+			At:           at,
+			ObservedFrom: at,
+			Unit:         types.UnitDimensionless,
+			Raw:          spec.raw,
+			Normalized:   types.NormalizeFinite(spec.raw),
+			Maturity:     maturity,
+			Validity:     validity,
+		})
+	}
+
+	return measurements
 }
 
 func (signal *Signal) Close() (err error) {

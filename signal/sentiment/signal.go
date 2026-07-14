@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -32,8 +33,12 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	tickers := signal.ticker.cache
-	out := make([]*types.Measurement, 0, len(tickers))
+	tickers := append([]kraken.TickerData(nil), signal.ticker.cache...)
+	out := make([]*types.Measurement, 0, len(tickers)*9)
+
+	if thesis.CrossSection == nil {
+		return thesis
+	}
 
 	thesis.CrossSection.ProcessUpdates(tickers)
 	summary := thesis.CrossSection.ReadView()

@@ -5,6 +5,7 @@ import (
 	"iter"
 
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 )
 
@@ -19,23 +20,30 @@ type Level3 struct {
 	api    *websocket.API
 }
 
-func NewLevel3(ctx context.Context, api *websocket.API) *Level3 {
+/*
+NewLevel3 constructs the toxicity level3 book iterator for api.
+*/
+func NewLevel3(ctx context.Context, api *websocket.API) (*Level3, error) {
+	if api == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"toxicity: websocket API required",
+			nil,
+		))
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Level3{
 		ctx:    ctx,
 		cancel: cancel,
 		api:    api,
-	}
+	}, nil
 }
 
 /*
 Books returns every order book the SDK currently manages for this transport.
 */
 func (level3 *Level3) Books() iter.Seq[*spot.BookManager] {
-	if level3.api == nil {
-		return func(yield func(*spot.BookManager) bool) {}
-	}
-
 	return level3.api.Books()
 }

@@ -59,7 +59,9 @@ export const KernelInspector = () => {
 					return [];
 				}
 
-				return Number.isFinite(measurement.raw) ? [measurement.raw] : [];
+				return Number.isFinite(measurement.raw)
+					? [percentOf(measurement) / 100]
+					: [];
 			})
 		: [];
 	const points = values

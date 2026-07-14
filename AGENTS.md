@@ -19,6 +19,8 @@ Failure after an honest principled try is acceptable. Failure from magic numbers
 > 3. Absolutely no fakery, performative math or implementation, or otherwise compromised mechanisms.
 > 4. No "good enough" and no "lesser" implementation when a better one exists, which also includes being honest about what each signal needs to consume regarding market data, to make all of the above work.
 
+**Once you complete a task, always go back and read over everything you created or changed once more, and see if you can refactor, or sharpen up the implementation, with a clear focus on maintainability and compactness.**
+
 ---
 
 ## Anti-patterns (learned the hard way)
@@ -34,6 +36,7 @@ Failure after an honest principled try is acceptable. Failure from magic numbers
 
 Work is complete only when verified. You must provide proof of execution in your completion message.
 
+* **Code Comments** Each type and each method must have a Godoc-style comment above it, explaining both the what and the why clearly, in a naturally flowing paragraph. For top-level comments like these we always use the `/**/` style, while for inline comments we use the `//` style.
 * **Automated Tests:** Corresponding test coverage must exist, run, and pass for the exact code path changed.
 * **Benchmarks:** A performance benchmark must exist and be executed for any data-processing or signal-calculation changes.
 * **Verification Output:** You must paste the literal, unmodified stdout output of the test and benchmark runs in your response.
@@ -49,7 +52,10 @@ Work is complete only when verified. You must provide proof of execution in your
 
 ### Structure
 
-Prefer methods over functions. Compose types to represent logical units.
+* Prefer methods over functions. 
+* Compose types to represent logical units.
+* Do not use prefixes and underscores as artificial sub-groupings is package filenames. If there is a need to do so, it is a clear indication a sub-package needs to be created where those files can live without prefix and underscores.
+* No artificial ceremony. Keep implementations simple, but effective. There is no need to constantly restructure things into more and more types, or to manually create what Go already has solutions for.
 
 #### Go Structural Pattern
 
@@ -185,10 +191,14 @@ func (objectName *ObjectName) update() {
 
 Now ObjectName is clearly updating itself.
 
+**Never use loose functions unless there is a very good reason for it.**
+**Never use helper methods out of habit, they have to truly add value.**
+
 ### Control Flow
 
 * **Early Returns:** Write guard clauses with early returns. Keep the primary logic path at indentation level 1.
 * **Over Guarding:** Do not overly guard things, just let the system crash, at least we will know what goes wrong.
+* **Over-use of `if` Statements** There are often much cleaner ways to set up branching control flow, especially when making proper use of composed types. We always prefer to use as little `if` statements as possible.
 * **No Else Blocks:** Do not use `else`. Invert conditions to return early or exit.
 * **Nesting Ceiling:** Do not nest `if` blocks deeper than two levels. Extract deeply nested logic into a helper method.
 * **No Silent Failures:** If a precondition fails or an unexpected state occurs, return a descriptive error. Substituting default fallbacks or silently skipping errors is prohibited.
@@ -196,8 +206,22 @@ Now ObjectName is clearly updating itself.
 ### Naming & Formatting
 
 * **No Single-Character Names:** Variable names and method receivers must be descriptive (e.g., use `signalCalculator`, not `s`), the exception here is the `testing.T` and `testing.B` instance variable which should always be `t` and `b`.
-* **Block Separation:** Insert an empty newline between distinct logical code blocks, except where there are only a few lines lines in a block or method/function. And `if` statements ALWAYS have an empty line above them, unless they are the first thing in a new block.
-* **Line Breaks:** Wrap long function signatures to prevent lines from running past split-view boundaries.
+* **Block Separation:** Insert an empty newline between distinct logical code blocks, except where there are only a few lines in a block or method/function. And `if` statements ALWAYS have an empty line above them, unless they are the first thing in a new block.
+* **Line Breaks:** Wrap long function signatures to prevent lines from running past split-view boundaries. The two examples below are both correct ways to approach this, depending on how long the line is.
+
+```go
+myType.MyMethod(
+    someParam, someOtherParam, oneMoreParam,
+)
+
+myType.MyMethod(
+    someParam,
+    someOtherParam,
+    oneMoreParam,
+    oneFinalParam,
+)
+```
+
 * **Errors** Instance variables for errors are always `err` and nothing else. Errors are logged with `errnie`
 
 ```go

@@ -97,6 +97,25 @@ const (
 	MetricExecutableDepth       MetricType = "executable_depth"
 	MetricExecutableDepthMedian MetricType = "executable_depth_median"
 
+	// fluid (mechanical order-book dynamics)
+	MetricLaminarScore         MetricType = "laminar_score"
+	MetricTurbulentScore       MetricType = "turbulent_score"
+	MetricInertialScore        MetricType = "inertial_score"
+	MetricViscousScore         MetricType = "viscous_score"
+	MetricViscosity            MetricType = "viscosity"
+	MetricReynolds             MetricType = "reynolds"
+	MetricDivergenceV2         MetricType = "divergence_v2"
+	MetricVelocityCurvatureV2  MetricType = "velocity_curvature_v2"
+	MetricTurbulence           MetricType = "turbulence"
+	MetricSourceBalance        MetricType = "source_balance"
+	MetricMemory               MetricType = "memory"
+	MetricMidAddRate           MetricType = "mid_add_rate"
+	MetricMidExecuteRate       MetricType = "mid_execute_rate"
+	MetricLaminar                MetricType = "laminar"
+	MetricTurbulent              MetricType = "turbulent"
+	MetricInertial               MetricType = "inertial"
+	MetricViscous                MetricType = "viscous"
+
 	// toxicity (level3 touch liquidity honesty)
 	MetricTouchQuantity      MetricType = "touch_quantity"
 	MetricBestPrice          MetricType = "best_price"

@@ -1,6 +1,7 @@
 package pumpdump
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/theapemachine/nomagique/equation"
@@ -14,9 +15,17 @@ func ignitionMeasurements(
 	maturity float64,
 	bid float64,
 	ask float64,
-) []*types.Measurement {
+) ([]*types.Measurement, error) {
 	if at.IsZero() {
-		at = time.Now()
+		return nil, fmt.Errorf("pumpdump: observation timestamp required")
+	}
+
+	if bid <= 0 || ask <= 0 {
+		return nil, fmt.Errorf("pumpdump: bid and ask must be positive")
+	}
+
+	if bid >= ask {
+		return nil, fmt.Errorf("pumpdump: crossed BBO bid=%v ask=%v", bid, ask)
 	}
 
 	mid := (bid + ask) / 2
@@ -63,5 +72,5 @@ func ignitionMeasurements(
 			types.SubjectPumpComposite, symbol, at,
 			types.UnitDimensionless, output.Strength, maturity,
 		),
-	}
+	}, nil
 }

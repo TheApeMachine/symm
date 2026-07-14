@@ -83,7 +83,7 @@ func (stage *Stage) Initialize(uiHub chan<- []byte) error {
 		if err := reporter.Initialize(); err != nil {
 			stage.status = types.ERROR
 			stage.Publish(uiHub, datura.Map[any]{
-				"stage":  stage.stageType,
+				"stage":  stage.stageType.String(),
 				"status": stage.status,
 			})
 
@@ -94,7 +94,7 @@ func (stage *Stage) Initialize(uiHub chan<- []byte) error {
 			if reporter.Status() == types.ERROR {
 				stage.status = types.ERROR
 				stage.Publish(uiHub, datura.Map[any]{
-					"stage":  stage.stageType,
+					"stage":  stage.stageType.String(),
 					"status": stage.status,
 				})
 

@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -27,15 +28,7 @@ func measureField(measurements []*types.Measurement, symbol string, metric types
 }
 
 func measurementFields(measurements []*types.Measurement, symbol string) map[types.MetricType]float64 {
-	fields := map[types.MetricType]float64{}
-
-	for _, measurement := range measurements {
-		if measurement.Symbol == symbol {
-			fields[measurement.Metric] = measurement.Raw
-		}
-	}
-
-	return fields
+	return tests.MeasurementFields(measurements, symbol)
 }
 
 func TestTradeOn(testingTB *testing.T) {

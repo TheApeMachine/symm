@@ -118,6 +118,8 @@ func latestMetric(
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {
+	benchmark.ReportAllocs()
+
 	eventAt := time.Unix(1, 0).UTC()
 	signal := &Signal{
 		ctx: context.Background(),

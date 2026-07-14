@@ -94,6 +94,10 @@ func (analyzer *Analyzer) composeGraph(thesis *types.Thesis, symbol string) {
 	graph := types.NewGraph(symbol)
 
 	for _, measurement := range thesis.Measurements {
+		if measurement == nil || measurement.Symbol != symbol {
+			continue
+		}
+
 		graph.AddNode(measurement)
 	}
 

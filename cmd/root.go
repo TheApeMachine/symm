@@ -117,13 +117,23 @@ var (
 				))
 			}
 
+			toxicitySignal, err := toxicity.NewSignal(ctx, api)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"failed to create toxicity signal",
+					err,
+				))
+			}
+
 			planner := strategy.NewPlanner(
 				ctx,
 				channel,
 				[]types.Signal{
 					pumpdump.NewSignal(ctx, api),
 					liquidity.NewSignal(ctx, api),
-					toxicity.NewSignal(ctx, api),
+					toxicitySignal,
 					leadlag.NewSignal(ctx, api),
 					cvd.NewSignal(ctx, api),
 					correlation.NewSignal(ctx, api),

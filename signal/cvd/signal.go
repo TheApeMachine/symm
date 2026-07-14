@@ -6,6 +6,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -38,7 +39,7 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	trades := signal.trade.cache
+	trades := append([]kraken.TradeData(nil), signal.trade.cache...)
 	out := make([]*types.Measurement, 0, len(trades))
 
 	for _, row := range trades {
@@ -75,43 +76,7 @@ func (signal *Signal) Measure(
 			)))
 		}
 
-		out = append(out,
-			types.ObservationMeasurement(
-				types.SourceCVD, types.CVD, types.MetricAbsorption,
-				types.SubjectAggressorFlow, row.Symbol, row.Timestamp,
-				types.UnitDimensionless, output.Absorption, maturity,
-			),
-			types.ObservationMeasurement(
-				types.SourceCVD, types.CVD, types.MetricDrive,
-				types.SubjectAggressorFlow, row.Symbol, row.Timestamp,
-				types.UnitDimensionless, output.Drive, maturity,
-			),
-			types.ObservationMeasurement(
-				types.SourceCVD, types.CVD, types.MetricBalance,
-				types.SubjectAggressorFlow, row.Symbol, row.Timestamp,
-				types.UnitDimensionless, output.Balance, maturity,
-			),
-			types.ObservationMeasurement(
-				types.SourceCVD, types.CVD, types.MetricStarvation,
-				types.SubjectAggressorFlow, row.Symbol, row.Timestamp,
-				types.UnitDimensionless, output.Starvation, maturity,
-			),
-			types.ObservationMeasurement(
-				types.SourceCVD, types.CVD, types.MetricStrength,
-				types.SubjectAggressorFlow, row.Symbol, row.Timestamp,
-				types.UnitDimensionless, output.Value, maturity,
-			),
-			types.ObservationMeasurement(
-				types.SourceCVD, types.CVD, types.MetricNetFraction,
-				types.SubjectAggressorFlow, row.Symbol, row.Timestamp,
-				types.UnitDimensionless, output.NetFraction, maturity,
-			),
-			types.ObservationMeasurement(
-				types.SourceCVD, types.CVD, types.MetricNet,
-				types.SubjectAggressorFlow, row.Symbol, row.Timestamp,
-				types.UnitQuoteCurrency, output.Net, maturity,
-			),
-		)
+		out = append(out, signal.cvdMeasurements(row, output, maturity)...)
 	}
 
 	signal.trade.cache = signal.trade.cache[:0]
@@ -120,6 +85,37 @@ func (signal *Signal) Measure(
 	thesis.Measurements = append(thesis.Measurements, out...)
 
 	return thesis
+}
+
+func (signal *Signal) cvdMeasurements(
+	row kraken.TradeData,
+	output equation.FlowOutput,
+	maturity float64,
+) []*types.Measurement {
+	specs := []struct {
+		metric types.MetricType
+		unit   types.MeasurementUnit
+		value  float64
+	}{
+		{types.MetricAbsorption, types.UnitDimensionless, output.Absorption},
+		{types.MetricDrive, types.UnitDimensionless, output.Drive},
+		{types.MetricBalance, types.UnitDimensionless, output.Balance},
+		{types.MetricStarvation, types.UnitDimensionless, output.Starvation},
+		{types.MetricStrength, types.UnitDimensionless, output.Value},
+		{types.MetricNetFraction, types.UnitDimensionless, output.NetFraction},
+		{types.MetricNet, types.UnitQuoteCurrency, output.Net},
+	}
+	measurements := make([]*types.Measurement, 0, len(specs))
+
+	for _, spec := range specs {
+		measurements = append(measurements, types.ObservationMeasurement(
+			types.SourceCVD, types.CVD, spec.metric,
+			types.SubjectAggressorFlow, row.Symbol, row.Timestamp,
+			spec.unit, spec.value, maturity,
+		))
+	}
+
+	return measurements
 }
 
 func (signal *Signal) Close() (err error) {

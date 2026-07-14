@@ -54,11 +54,5 @@ func NormalizeDeviation(value float64, baseline float64) *float64 {
 NormalizeSigned retains directional finite values, including negative evidence.
 */
 func NormalizeSigned(value float64) *float64 {
-	if math.IsNaN(value) || math.IsInf(value, 0) || value == 0 {
-		return nil
-	}
-
-	normalized := value
-
-	return &normalized
+	return NormalizeFinite(value)
 }

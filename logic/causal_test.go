@@ -36,17 +36,20 @@ func TestCausalUpdateRejectsRegressions(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(produced, ShouldBeTrue)
 
-		_, duplicateProduced, duplicateErr := causal.Update(
+		_, duplicateProduced, err := causal.Update(
 			causalState(time.Unix(2, 0), 100, 2),
 		)
-		_, regressedProduced, regressedErr := causal.Update(
+		So(err, ShouldNotBeNil)
+
+		var regressedProduced bool
+
+		_, regressedProduced, err = causal.Update(
 			causalState(time.Unix(1, 0), 99, 1),
 		)
 
 		Convey("It should reject both without replacing chronological state", func() {
-			So(duplicateErr, ShouldNotBeNil)
+			So(err, ShouldNotBeNil)
 			So(duplicateProduced, ShouldBeFalse)
-			So(regressedErr, ShouldNotBeNil)
 			So(regressedProduced, ShouldBeFalse)
 			So(causal.pending.epoch, ShouldEqual, uint64(2))
 			So(causal.pending.at, ShouldEqual, time.Unix(2, 0))

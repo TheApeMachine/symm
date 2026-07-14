@@ -2,7 +2,6 @@ package types
 
 import (
 	"math"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -191,72 +190,18 @@ func (crossSection *CrossSection) ReadView() *CrossSectionSummary {
 }
 
 func (crossSection *CrossSection) recomputeSummary() {
-	symbolCount := len(crossSection.symbols)
-	metrics := make([]SymbolMetrics, 0, symbolCount)
-	changes := make([]float64, 0, symbolCount)
-
-	var positive, total float64
-	var leader string
-	var leaderStrength float64
-
-	for index, symbol := range crossSection.symbols {
-		head := crossSection.ringIdx[index]
-		latest := crossSection.history[index][head]
-
-		if latest.at.IsZero() {
-			continue
-		}
-
-		// change_pct is the venue's own rolling change, already computed over
-		// whatever window Kraken maintains for that symbol. Deriving our own
-		// tick-to-tick delta from the ring would both need a bootstrap tick
-		// and impose an arbitrary sampling cadence as the "window" instead.
-		change := latest.changePct / 100
-
-		metrics = append(metrics, SymbolMetrics{
-			Symbol:          symbol,
-			Volume:          latest.volume,
-			QuoteNotional:   latest.quoteNotional,
-			ExecutableDepth: latest.executableDepth,
-			LatestChange:    change,
-		})
-
-		total++
-
-		if change > 0 {
-			positive++
-		}
-
-		absoluteChange := math.Abs(change)
-
-		if absoluteChange > leaderStrength {
-			leaderStrength = absoluteChange
-			leader = symbol
-		}
-
-		// A symbol's own change is only trusted for the leadership threshold
-		// once it has enough bars behind it; a brand-new symbol's first tick
-		// should never single-handedly define what "leading" means.
-		if crossSection.counts[index] >= crossSection.config.MinBars {
-			changes = append(changes, absoluteChange)
-		}
-	}
+	metrics, changes, positive, total, leader, _ :=
+		crossSection.accumulateSummaryMetrics()
 
 	var breadth float64
 	if total > 0 {
 		breadth = positive / total
 	}
 
-	var threshold float64
-	if len(changes) > 0 {
-		sort.Float64s(changes)
-		threshold = changes[len(changes)/2]
-	}
-
 	crossSection.activeView.Store(&CrossSectionSummary{
 		Metrics:             metrics,
 		Leader:              leader,
-		LeadershipThreshold: threshold,
+		LeadershipThreshold: leadershipThreshold(changes),
 		Breadth:             breadth,
 	})
 }
@@ -266,10 +211,19 @@ SymbolReturns writes symbol's log returns, oldest first, into dst and
 reports how many were written. The lookback is len(dst) bars; dst is
 caller-owned so a hot loop (e.g. correlation scoring every peer every
 tick) can reuse one buffer instead of allocating per call.
+
+Call this sequentially on the writer/tick-loop goroutine after
+ProcessUpdates completes; it is not safe for concurrent callers.
 */
 func (crossSection *CrossSection) SymbolReturns(symbol string, dst []float64) int {
 	if len(dst) == 0 {
 		return 0
+	}
+
+	window := crossSection.MaxReturnWindow()
+
+	if len(dst) > window {
+		dst = dst[:window]
 	}
 
 	index, exists := crossSection.symbolMap[strings.TrimSpace(symbol)]
@@ -312,10 +266,19 @@ first, into dst and reports how many were written. dst is caller-owned for
 the same reuse reason as SymbolReturns. Chronological order matters here:
 callers correlate two symbols' samples pairwise over time (e.g.
 Hayashi-Yoshida), which requires walking both series forward in time.
+
+Call this sequentially on the writer/tick-loop goroutine after
+ProcessUpdates completes; it is not safe for concurrent callers.
 */
 func (crossSection *CrossSection) SymbolSamples(symbol string, dst []correlation.Sample) int {
 	if len(dst) == 0 {
 		return 0
+	}
+
+	window := crossSection.MaxReturnWindow()
+
+	if len(dst) > window {
+		dst = dst[:window]
 	}
 
 	index, exists := crossSection.symbolMap[strings.TrimSpace(symbol)]

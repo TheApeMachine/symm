@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -35,7 +36,7 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	rows := signal.ticker.cache
+	rows := append([]kraken.TickerData(nil), signal.ticker.cache...)
 	out := make([]*types.Measurement, 0, len(rows))
 
 	for _, row := range rows {
@@ -65,10 +66,17 @@ func (signal *Signal) Measure(
 			continue
 		}
 
-		out = append(out, ignitionMeasurements(
+		measurements, err := ignitionMeasurements(
 			row.Symbol, row.Timestamp, output, maturity,
 			row.Bid.Float64(), row.Ask.Float64(),
-		)...)
+		)
+
+		if err != nil {
+			errnie.Error(errnie.Err(errnie.Validation, err.Error(), err))
+			continue
+		}
+
+		out = append(out, measurements...)
 	}
 
 	signal.ticker.cache = signal.ticker.cache[:0]

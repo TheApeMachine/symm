@@ -33,15 +33,14 @@ API is the single Kraken transport surface for symm.
 Callers subscribe, order, and listen through named methods only.
 */
 type API struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	status         types.Status
-	public         Conn
-	private        Conn
-	paper          *Paper
-	live           bool
-	bookConns      *sync.Map
-	level3Handlers []func([]byte)
+	ctx       context.Context
+	cancel    context.CancelFunc
+	status    types.Status
+	public    Conn
+	private   Conn
+	paper     *Paper
+	live      bool
+	bookConns *sync.Map
 }
 
 func NewAPI(
@@ -76,8 +75,6 @@ func (api *API) Close() {
 
 func (api *API) On(channel string, action func([]byte)) {
 	switch channel {
-	case "level3":
-		api.registerLevel3Handler(action)
 	case "balances", "executions", "add_order":
 		if api.live {
 			api.private.On(channel, action)
@@ -87,21 +84,6 @@ func (api *API) On(channel string, action func([]byte)) {
 		api.paper.On(channel, action)
 	default:
 		api.public.On(channel, action)
-	}
-}
-
-func (api *API) registerLevel3Handler(action func([]byte)) {
-	api.level3Handlers = append(api.level3Handlers, action)
-
-	api.bookConns.Range(func(key, value any) bool {
-		value.(*Live).On("level3", action)
-		return true
-	})
-}
-
-func (api *API) attachLevel3Handlers(live *Live) {
-	for _, handler := range api.level3Handlers {
-		live.On("level3", handler)
 	}
 }
 
@@ -184,22 +166,31 @@ func (api *API) SubscribeLevel3(pairs []string) error {
 
 	key := strings.Join(pairs, "|")
 
-	bookConn, loaded := api.bookConns.LoadOrStore(key, New(
-		api.ctx, nil, true, Level3WebSocketURL,
-	))
+	if bookConn, loaded := api.bookConns.Load(key); loaded {
+		live := bookConn.(*Live)
+		live.symbols = pairs
 
-	live := bookConn.(*Live)
-	live.symbols = pairs
-
-	// New only constructs the transport; it does not dial. A freshly stored
-	// connection must be connected before anything can be written to it.
-	if !loaded {
-		if err := live.Initialize(); err != nil {
-			return errnie.Error(err)
-		}
+		return errnie.Error(live.Client().SubL3(pairs, depth))
 	}
 
-	api.attachLevel3Handlers(live)
+	live := New(
+		api.ctx, nil, true, Level3WebSocketURL,
+	)
+
+	live.symbols = pairs
+
+	if err := live.Initialize(); err != nil {
+		live.Close()
+		return errnie.Error(err)
+	}
+
+	actual, loaded := api.bookConns.LoadOrStore(key, live)
+
+	if loaded {
+		live.Close()
+		live = actual.(*Live)
+		live.symbols = pairs
+	}
 
 	return errnie.Error(live.Client().SubL3(pairs, depth))
 }

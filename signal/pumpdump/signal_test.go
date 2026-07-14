@@ -30,8 +30,8 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 			Feed(tickerfixture.NewFixture(tickerfixture.UPDATE, 32))
 
 		Convey("When calm and pumped ticker timelines are measured", func() {
-			calm := measureField(signal, handlers, market.Frames(), types.MetricRVOL)
-			pumped := measureField(
+			calm, hasCalm := measureField(signal, handlers, market.Frames(), types.MetricRVOL)
+			pumped, hasPumped := measureField(
 				signal,
 				handlers,
 				tests.Spike(market.Frames(), 16, 1.25, 8),
@@ -40,6 +40,8 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 
 			Convey("Then the pumped stream should lift relative volume", func() {
 				So(len(signal.ticker.cache), ShouldEqual, 0)
+				So(hasCalm, ShouldBeTrue)
+				So(hasPumped, ShouldBeTrue)
 				So(pumped, ShouldBeGreaterThan, calm)
 			})
 		})
@@ -104,22 +106,20 @@ func measureField(
 	handlers tests.Handlers,
 	frames iter.Seq[tests.Frame],
 	metric types.MetricType,
-) float64 {
+) (float64, bool) {
 	signal.ticker.cache = signal.ticker.cache[:0]
 	tests.Replay(handlers, frames)
 
 	thesis := types.NewThesis(nil)
 	result := signal.Measure(thesis)
 
-	value := 0.0
-
 	for _, measurement := range result.Measurements {
 		if measurement.Symbol == "ALGO/USD" && measurement.Metric == metric {
-			value = measurement.Raw
+			return measurement.Raw, true
 		}
 	}
 
-	return value
+	return 0, false
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {

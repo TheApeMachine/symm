@@ -17,7 +17,10 @@ func measureField(measurements []*types.Measurement, symbol string, metric types
 	for index := len(measurements) - 1; index >= 0; index-- {
 		measurement := measurements[index]
 
-		if measurement.Symbol == symbol && measurement.Metric == metric {
+		if measurement.Symbol == symbol &&
+			measurement.Metric == metric &&
+			measurement.Source == types.SourceExhaustion &&
+			measurement.Stream == types.Exhaust {
 			return measurement, true
 		}
 	}

@@ -2,6 +2,7 @@ import { memo, useLayoutEffect, useRef } from "react";
 import { type Position, positionsStore } from "#/collections/positions";
 import { type Stop, stopsStore } from "#/collections/stops";
 import { fixed } from "#/components/terminal/decision-format";
+import { Flex } from "@/components/ui/flex";
 
 const clampPercent = (value: number, lo: number, hi: number): number => {
 	if (!(hi > lo)) {
@@ -215,7 +216,9 @@ const paintPositionGauge = (
 
 	if (refs.summary) {
 		const stopSuffix =
-			stop !== undefined && geometry?.stopPct !== null
+			stop !== undefined &&
+			geometry !== null &&
+			geometry.stopPct !== null
 				? ` / stop ${fixed(stop.stop_price)}`
 				: "";
 		refs.summary.textContent = `entry ${fixed(position.entry_price)} / mark ${markLabel}${stopSuffix}`;
@@ -236,15 +239,19 @@ const paintPositionGauge = (
 		refs.stagnationWrap.style.display = hasStagnation ? "" : "none";
 
 		if (hasStagnation) {
+			const stagnationHealth = Math.max(
+				0,
+				Math.min(1, stop.stagnation_health),
+			);
 			const stagnationTone = stop.stagnation_pending
 				? accentTone
-				: stop.stagnation_health > 0.5
+				: stagnationHealth > 0.5
 					? upTone
-					: stop.stagnation_health > 0.2
+					: stagnationHealth > 0.2
 						? warnTone
 						: downTone;
 
-			refs.stagnationBar.style.width = `${(stop.stagnation_health * 100).toFixed(0)}%`;
+			refs.stagnationBar.style.width = `${(stagnationHealth * 100).toFixed(0)}%`;
 			refs.stagnationBar.style.background = stagnationTone;
 			refs.stagnationFlash.style.display = stop.stagnation_pending
 				? ""

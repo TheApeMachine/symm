@@ -59,20 +59,20 @@ func (causal *Causal) Update(
 	state manifold.State,
 ) (types.Hypothesis, bool, error) {
 	if state.At.IsZero() || state.Epoch == 0 {
-		return types.Hypothesis{}, false, errnie.Err(
+		return types.Hypothesis{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"logic causal: manifold chronology required",
 			nil,
-		)
+		))
 	}
 
 	if causal.pending != nil &&
 		(state.Epoch <= causal.pending.epoch || !state.At.After(causal.pending.at)) {
-		return types.Hypothesis{}, false, errnie.Err(
+		return types.Hypothesis{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"logic causal: manifold chronology regressed",
 			nil,
-		)
+		))
 	}
 
 	features, ready := causal.features(state)

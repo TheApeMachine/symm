@@ -297,8 +297,10 @@ func (evidence *Evidence) normalized(
 	switch metric {
 	case types.MetricArrivalRate:
 		return evidence.arrivalNormalized(side, outcome, raw)
-	case types.MetricConditionalIntensity, types.MetricBaselineIntensity:
+	case types.MetricConditionalIntensity:
 		return evidence.intensityNormalized(side, outcome, raw)
+	case types.MetricBaselineIntensity:
+		return types.NormalizeFinite(raw)
 	default:
 		return nil
 	}

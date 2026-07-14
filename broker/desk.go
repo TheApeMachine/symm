@@ -2,6 +2,8 @@ package broker
 
 import (
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
@@ -13,14 +15,15 @@ import (
 )
 
 type Desk struct {
-	status       types.Status
-	api          *websocket.API
-	ui           chan []byte
-	price        *Price
-	balance      *Balance
-	positions    *sync.Map
-	maxPositions int
-	maxReserved  int
+	status         types.Status
+	api            *websocket.API
+	ui             chan []byte
+	price          *Price
+	balance        *Balance
+	positions      *sync.Map
+	maxPositions   int
+	maxReserved    int
+	publishPending atomic.Bool
 }
 
 func NewDesk(
@@ -136,14 +139,46 @@ func (desk *Desk) snapshot() []PositionData {
 }
 
 func (desk *Desk) Publish() {
-	out := datura.Map[any]{
-		"positions": desk.snapshot(),
-		"balances":  desk.balance.Snapshot(),
-	}
+	payload := desk.marshalSnapshot()
 
 	select {
-	case desk.ui <- out.Marshal():
+	case desk.ui <- payload:
 	default:
+		desk.enqueuePublish()
+	}
+}
+
+func (desk *Desk) marshalSnapshot() []byte {
+	return datura.Map[any]{
+		"positions": desk.snapshot(),
+		"balances":  desk.balance.Snapshot(),
+	}.Marshal()
+}
+
+func (desk *Desk) enqueuePublish() {
+	if !desk.publishPending.CompareAndSwap(false, true) {
+		return
+	}
+
+	go desk.flushPublish()
+}
+
+func (desk *Desk) flushPublish() {
+	defer desk.publishPending.Store(false)
+
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		payload := desk.marshalSnapshot()
+
+		select {
+		case desk.ui <- payload:
+			return
+		default:
+			// ponytail: UI channel backpressure coalesces to the newest snapshot
+			// and retries until the hub accepts one frame.
+		}
 	}
 }
 

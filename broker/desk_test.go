@@ -44,7 +44,7 @@ func TestDeskPublish(t *testing.T) {
 				err := sonic.Unmarshal(payload, &frame)
 				So(err, ShouldBeNil)
 			default:
-				So("desk publish did not emit a frame", ShouldBeEmpty)
+				t.Fatal("desk publish did not emit a frame")
 			}
 
 			positions, ok := frame["positions"].([]any)

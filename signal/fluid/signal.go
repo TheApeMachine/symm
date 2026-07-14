@@ -188,12 +188,16 @@ instrument metadata for that symbol has arrived.
 */
 func (signal *Signal) increment(symbol string) decimal.Decimal {
 	if signal.instrument == nil {
+		// ponytail: instrument metadata may arrive after the first book frame;
+		// zero increment keeps the row skippable until Pair resolves.
 		return *decimal.NewFromInt64(0)
 	}
 
 	pair, err := signal.instrument.Pair(symbol)
 
 	if err != nil {
+		// ponytail: unknown symbols stay at zero increment until the universe
+		// registers the pair and subsequent frames carry a real tick size.
 		return *decimal.NewFromInt64(0)
 	}
 
@@ -215,38 +219,9 @@ func (signal *Signal) Measure(
 		len(signal.tickerCache)+len(signal.tradeCache)+len(signal.bookCache),
 	)
 
-	for _, row := range signal.tickerCache {
-		measurements, err := signal.ticker.Measure(row)
-
-		if err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		out = append(out, measurements...)
-	}
-
-	for _, row := range signal.tradeCache {
-		measurements, err := signal.trade.Measure(row)
-
-		if err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		out = append(out, measurements...)
-	}
-
-	for _, row := range signal.bookCache {
-		measurements, err := signal.book.Measure(row)
-
-		if err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		out = append(out, measurements...)
-	}
+	appendMeasurements(&out, signal.tickerCache, signal.ticker.Measure)
+	appendMeasurements(&out, signal.tradeCache, signal.trade.Measure)
+	appendMeasurements(&out, signal.bookCache, signal.book.Measure)
 
 	signal.tickerCache = signal.tickerCache[:0]
 	signal.tradeCache = signal.tradeCache[:0]
@@ -257,13 +232,25 @@ func (signal *Signal) Measure(
 	return thesis
 }
 
-func (signal *Signal) Close() (err error) {
-	err = errnie.Error(errnie.Err(
-		errnie.Internal,
-		"signal: close failed",
-		nil,
-	))
+func appendMeasurements[Row any](
+	out *[]*types.Measurement,
+	rows []Row,
+	measure func(Row) ([]*types.Measurement, error),
+) {
+	for _, row := range rows {
+		measurements, err := measure(row)
 
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		*out = append(*out, measurements...)
+	}
+}
+
+func (signal *Signal) Close() error {
 	signal.cancel()
-	return err
+
+	return nil
 }

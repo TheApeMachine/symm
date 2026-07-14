@@ -256,7 +256,7 @@ type Thesis struct {
 	uiHub        chan<- []byte
 	Signals      *sync.Map
 	CrossSection *CrossSection
-	Measurements []Measurement
+	Measurements []*Measurement
 }
 ```
 

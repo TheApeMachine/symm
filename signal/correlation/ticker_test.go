@@ -11,19 +11,12 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	nomcorrelation "github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
 )
 
 func measurementFields(measurements []*types.Measurement, symbol string) map[types.MetricType]float64 {
-	fields := map[types.MetricType]float64{}
-
-	for _, measurement := range measurements {
-		if measurement.Symbol == symbol {
-			fields[measurement.Metric] = measurement.Raw
-		}
-	}
-
-	return fields
+	return tests.MeasurementFields(measurements, symbol)
 }
 
 /*

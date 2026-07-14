@@ -24,16 +24,24 @@ type Signal struct {
 	priorTouch map[string]touchSnapshot
 }
 
-func NewSignal(ctx context.Context, api *websocket.API) *Signal {
+func NewSignal(ctx context.Context, api *websocket.API) (*Signal, error) {
 	ctx, cancel := context.WithCancel(ctx)
+
+	level3, err := NewLevel3(ctx, api)
+
+	if err != nil {
+		cancel()
+
+		return nil, errnie.Error(err)
+	}
 
 	return &Signal{
 		ctx:        ctx,
 		cancel:     cancel,
 		trades:     NewTrade(ctx, api),
-		level3:     NewLevel3(ctx, api),
+		level3:     level3,
 		priorTouch: map[string]touchSnapshot{},
-	}
+	}, nil
 }
 
 type touchSnapshot struct {
@@ -329,13 +337,8 @@ func zeroed(total *decimal.Decimal) *decimal.Decimal {
 	return total
 }
 
-func (signal *Signal) Close() (err error) {
-	err = errnie.Error(errnie.Err(
-		errnie.Internal,
-		"signal: close failed",
-		nil,
-	))
-
+func (signal *Signal) Close() error {
 	signal.cancel()
-	return err
+
+	return nil
 }
