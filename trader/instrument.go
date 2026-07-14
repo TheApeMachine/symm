@@ -3,7 +3,6 @@ package trader
 import (
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -191,15 +190,7 @@ cohort. It does not invent liquidity for listed pairs that have emitted no
 ticker; the heavy tier becomes valid only when the cohort can fill every slot.
 */
 func (instrument *Instrument) Tier(required []string) ([]string, bool, error) {
-	rows, missing := instrument.price.Snapshot(instrument.symbols)
-
-	if len(missing) > 0 {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trader: incomplete ticker snapshot: "+strings.Join(missing, ", "),
-			nil,
-		))
-	}
+	rows, _ := instrument.price.Snapshot(instrument.symbols)
 
 	size := viper.GetInt("market.universe.trading_tier_size")
 

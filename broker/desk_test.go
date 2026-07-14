@@ -205,10 +205,7 @@ func TestDeskExecute(t *testing.T) {
 		previousModel := viper.Get("trading.model")
 		viper.Set("trading.model", "live")
 		defer viper.Set("trading.model", previousModel)
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
+		ctx := context.Background()
 		mock := tests.NewMockAPI()
 		api := websocket.NewAPI(ctx, mock.Public(), mock.Private(), nil)
 		price := NewPrice(api)
@@ -230,7 +227,7 @@ func TestDeskExecute(t *testing.T) {
 		desk.status = types.READY
 		desk.maxPositions = 2
 		planner := strategy.NewPlanner(ctx, nil, nil, nil)
-		entryAt := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
+		entryAt := time.Now().UTC()
 		thesis := types.NewThesis(nil)
 		thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
 			Source: "manifold_forecast", Symbol: "ALGO/USD", At: entryAt,
@@ -266,27 +263,28 @@ func TestDeskExecute(t *testing.T) {
 		entryPrice := 0.10036
 		entryFee := entryHalf * entryPrice * 0.0026
 		handlers := tests.Handlers{
-			"add_order": func(payload []byte) { mock.Private().Emit("add_order", payload) },
-			"executions": func(payload []byte) {
-				mock.Private().Emit("executions", payload)
-			},
+			"add_order":  func(payload []byte) { mock.Private().Emit("add_order", payload) },
+			"executions": func(payload []byte) { mock.Private().Emit("executions", payload) },
 		}
 		entryPartial := tests.NewReplayFixture([]byte(fmt.Sprintf(`
-{"channel":"add_order","type":"update","method":"add_order","result":{"order_id":"entry-order"},"success":true,"req_id":%d,"time_out":"2026-07-14T10:00:01Z"}
-{"channel":"executions","type":"update","data":[{"order_id":"entry-order","exec_id":"entry-partial","exec_type":"trade","symbol":"ALGO/USD","side":"buy","last_qty":%.12f,"last_price":"%.8f","cost":"%.12f","order_status":"partially_filled","cum_qty":%.12f,"cum_cost":"%.12f","avg_price":"%.8f","fee_usd_equiv":"%.12f","timestamp":"2026-07-14T10:00:01Z"}]}
+{"channel":"add_order","type":"update","method":"add_order","result":{"order_id":"entry-order"},"success":true,"req_id":%d,"time_out":"%s"}
+{"channel":"executions","type":"update","data":[{"order_id":"entry-order","exec_id":"entry-partial","exec_type":"trade","symbol":"ALGO/USD","side":"buy","last_qty":%.12f,"last_price":"%.8f","cost":"%.12f","order_status":"partially_filled","cum_qty":%.12f,"cum_cost":"%.12f","avg_price":"%.8f","fee_usd_equiv":"%.12f","timestamp":"%s"}]}
 `, position.reqID,
-			entryHalf, entryPrice, entryHalf*entryPrice, entryHalf,
+			entryAt.Add(time.Second).Format(time.RFC3339Nano), entryHalf,
+			entryPrice, entryHalf*entryPrice, entryHalf,
 			entryHalf*entryPrice, entryPrice, entryFee,
+			entryAt.Add(time.Second).Format(time.RFC3339Nano),
 		)))
 		tests.NewMarket().Feed(entryPartial).Replay(handlers)
 		So(position.Status(), ShouldEqual, types.PARTIAL_FILLED)
 		So(thesis.LifecycleState("ALGO/USD"), ShouldEqual, types.LifecyclePartiallyEntered)
 
 		entryFilled := tests.NewReplayFixture([]byte(fmt.Sprintf(`
-{"channel":"executions","type":"update","data":[{"order_id":"entry-order","exec_id":"entry-filled","exec_type":"trade","symbol":"ALGO/USD","side":"buy","last_qty":%.12f,"last_price":"%.8f","cost":"%.12f","order_status":"filled","cum_qty":%.12f,"cum_cost":"%.12f","avg_price":"%.8f","fee_usd_equiv":"%.12f","timestamp":"2026-07-14T10:00:02Z"}]}
+{"channel":"executions","type":"update","data":[{"order_id":"entry-order","exec_id":"entry-filled","exec_type":"trade","symbol":"ALGO/USD","side":"buy","last_qty":%.12f,"last_price":"%.8f","cost":"%.12f","order_status":"filled","cum_qty":%.12f,"cum_cost":"%.12f","avg_price":"%.8f","fee_usd_equiv":"%.12f","timestamp":"%s"}]}
 `,
 			entryHalf, entryPrice, entryHalf*entryPrice, entryQuantity,
 			entryQuantity*entryPrice, entryPrice, entryFee,
+			entryAt.Add(2*time.Second).Format(time.RFC3339Nano),
 		)))
 		tests.NewMarket().Feed(entryFilled).Replay(handlers)
 		So(position.Status(), ShouldEqual, types.FILLED)
@@ -320,21 +318,24 @@ func TestDeskExecute(t *testing.T) {
 		exitPrice := 0.11
 		exitFee := exitHalf * exitPrice * 0.0026
 		exitPartial := tests.NewReplayFixture([]byte(fmt.Sprintf(`
-{"channel":"add_order","type":"update","method":"add_order","result":{"order_id":"exit-order"},"success":true,"req_id":%d,"time_out":"2026-07-14T10:00:04Z"}
-{"channel":"executions","type":"update","data":[{"order_id":"exit-order","exec_id":"exit-partial","exec_type":"trade","symbol":"ALGO/USD","side":"sell","last_qty":%.12f,"last_price":"%.8f","cost":"%.12f","order_status":"partially_filled","cum_qty":%.12f,"cum_cost":"%.12f","avg_price":"%.8f","fee_usd_equiv":"%.12f","timestamp":"2026-07-14T10:00:04Z"}]}
+{"channel":"add_order","type":"update","method":"add_order","result":{"order_id":"exit-order"},"success":true,"req_id":%d,"time_out":"%s"}
+{"channel":"executions","type":"update","data":[{"order_id":"exit-order","exec_id":"exit-partial","exec_type":"trade","symbol":"ALGO/USD","side":"sell","last_qty":%.12f,"last_price":"%.8f","cost":"%.12f","order_status":"partially_filled","cum_qty":%.12f,"cum_cost":"%.12f","avg_price":"%.8f","fee_usd_equiv":"%.12f","timestamp":"%s"}]}
 `, position.reqID,
-			exitHalf, exitPrice, exitHalf*exitPrice, exitHalf,
+			entryAt.Add(4*time.Second).Format(time.RFC3339Nano), exitHalf,
+			exitPrice, exitHalf*exitPrice, exitHalf,
 			exitHalf*exitPrice, exitPrice, exitFee,
+			entryAt.Add(4*time.Second).Format(time.RFC3339Nano),
 		)))
 		tests.NewMarket().Feed(exitPartial).Replay(handlers)
 		So(position.Status(), ShouldEqual, types.PARTIAL_FILLED)
 		So(thesis.LifecycleState("ALGO/USD"), ShouldEqual, types.LifecyclePartiallyExited)
 
 		exitFilled := tests.NewReplayFixture([]byte(fmt.Sprintf(`
-{"channel":"executions","type":"update","data":[{"order_id":"exit-order","exec_id":"exit-filled","exec_type":"trade","symbol":"ALGO/USD","side":"sell","last_qty":%.12f,"last_price":"%.8f","cost":"%.12f","order_status":"filled","cum_qty":%.12f,"cum_cost":"%.12f","avg_price":"%.8f","fee_usd_equiv":"%.12f","timestamp":"2026-07-14T10:00:05Z"}]}
+{"channel":"executions","type":"update","data":[{"order_id":"exit-order","exec_id":"exit-filled","exec_type":"trade","symbol":"ALGO/USD","side":"sell","last_qty":%.12f,"last_price":"%.8f","cost":"%.12f","order_status":"filled","cum_qty":%.12f,"cum_cost":"%.12f","avg_price":"%.8f","fee_usd_equiv":"%.12f","timestamp":"%s"}]}
 `,
 			exitHalf, exitPrice, exitHalf*exitPrice, exitQuantity,
 			exitQuantity*exitPrice, exitPrice, exitFee,
+			entryAt.Add(5*time.Second).Format(time.RFC3339Nano),
 		)))
 		tests.NewMarket().Feed(exitFilled).Replay(handlers)
 		So(position.Status(), ShouldEqual, types.CLOSED)

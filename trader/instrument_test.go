@@ -72,6 +72,30 @@ func TestInstrumentSubscribeRejectsInvalidBatchSize(t *testing.T) {
 }
 
 func TestInstrumentTier(t *testing.T) {
+	Convey("Given fewer observed tickers than the configured heavy tier", t, func() {
+		viper.Set("market.universe.trading_tier_size", 2)
+		price := broker.NewPrice(nil)
+		price.TickerAck([]byte(`{
+			"channel":"ticker",
+			"type":"snapshot",
+			"data":[
+				{"symbol":"DEEP/USD","bid":"10","bid_qty":20,"ask":"11","ask_qty":20,"last":"10.5","volume":100,"vwap":10.5,"timestamp":"2026-07-14T09:00:00Z"}
+			]
+		}`))
+		instrument := &Instrument{
+			price:   price,
+			symbols: []string{"DEEP/USD", "PENDING/USD"},
+		}
+
+		symbols, ready, err := instrument.Tier(nil)
+
+		Convey("Then activation waits without reporting normal startup as an error", func() {
+			So(err, ShouldBeNil)
+			So(ready, ShouldBeFalse)
+			So(symbols, ShouldBeNil)
+		})
+	})
+
 	Convey("Given a complete ticker snapshot wider than the heavy tier", t, func() {
 		viper.Set("market.universe.trading_tier_size", 2)
 		price := broker.NewPrice(nil)
