@@ -1,59 +1,37 @@
 import { createStore } from "@tanstack/react-store";
-import { Circular } from "./circular";
+import type { StrategyDecision } from "#/types/thesis";
 
+const asDecisions = (frame: unknown): StrategyDecision[] => {
+	if (!Array.isArray(frame)) {
+		return [];
+	}
+
+	return frame.filter(
+		(row): row is StrategyDecision =>
+			typeof row === "object" &&
+			row !== null &&
+			typeof (row as StrategyDecision).symbol === "string" &&
+			typeof (row as StrategyDecision).action === "string",
+	);
+};
+
+/*
+decisionStore retains the backend strategy decision snapshot published with each
+thesis tick so the decision surface can show utility and alternatives beside
+gate verdicts without conflating the two decision layers.
+*/
 export const decisionStore = createStore(
 	{
-		tick: null as number | null,
-		decisions: Circular(50),
-		allowed: [] as Record<string, unknown>[],
-		denied: [] as Record<string, unknown>[],
+		decisions: [] as StrategyDecision[],
 	},
 	({ setState }) => ({
-		observeTick: (tick: unknown) =>
-			setState((prev) => {
-				const count = Number(tick);
-
-				if (!Number.isFinite(count) || prev.tick === count) {
-					return prev;
-				}
-
-				return { ...prev, tick: count };
-			}),
 		updateFrame: (frame: unknown) =>
-			setState((prev) => {
-				const next = { ...prev };
-				const decisions = Array.isArray(frame)
-					? (frame as Record<string, unknown>[])
-					: [frame as Record<string, unknown>];
-
-				for (const decision of decisions) {
-					const tick = Number(decision.tick);
-
-					if (Number.isFinite(tick)) {
-						next.tick = tick;
-					}
-
-					next.decisions.push(decision);
-					next.allowed =
-						decision.verdict === "allow"
-							? [...next.allowed, decision].slice(-50)
-							: next.allowed;
-					next.denied =
-						decision.verdict === "allow"
-							? next.denied
-							: [...next.denied, decision].slice(-50);
-				}
-
-				return {
-					...next,
-				};
-			}),
+			setState(() => ({
+				decisions: asDecisions(frame),
+			})),
 		reset: () =>
 			setState(() => ({
-				tick: null,
-				decisions: Circular(50),
-				allowed: [],
-				denied: [],
+				decisions: [],
 			})),
 	}),
 );

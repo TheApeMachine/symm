@@ -9,7 +9,7 @@ import {
 import { useSelector } from "@tanstack/react-store";
 import { useEffect } from "react";
 import { appStore } from "#/collections/app";
-import { terminalStore, type TerminalSurface } from "#/collections/terminal";
+import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { CommandPalette } from "#/components/terminal/palette";
 import { TerminalNav, TerminalTopBar } from "#/components/terminal/panels";
 import { SymbolFocusLayer } from "#/components/terminal/symbol-focus";
@@ -20,6 +20,7 @@ const SURFACE_VALUES = new Set<TerminalSurface>([
 	"dashboard",
 	"signals",
 	"decisions",
+	"journal",
 	"xray",
 	"cortex",
 	"allocation",
@@ -29,12 +30,14 @@ const SURFACE_ALIASES: Record<string, TerminalSurface> = {
 	insight: "signals",
 	decision: "decisions",
 	alloc: "allocation",
+	trade: "journal",
 };
 
 const SURFACE_PATHS: Record<TerminalSurface, string> = {
 	dashboard: "/",
 	signals: "/signals",
 	decisions: "/decisions",
+	journal: "/journal",
 	xray: "/xray",
 	cortex: "/cortex",
 	allocation: "/allocation",

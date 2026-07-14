@@ -4,6 +4,7 @@ export type TerminalSurface =
 	| "dashboard"
 	| "signals"
 	| "decisions"
+	| "journal"
 	| "xray"
 	| "cortex"
 	| "allocation";

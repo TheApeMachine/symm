@@ -1,16 +1,20 @@
 import { useSelector } from "@tanstack/react-store";
+import { useRef } from "react";
 import { appStore } from "#/collections/app";
-import { measurementsStore } from "#/collections/measurements";
+import {
+	flattenMeasurementBuffer,
+	measurementsStore,
+	measurementTickCount,
+} from "#/collections/measurements";
 import {
 	headlineMetric,
 	latestByMetric,
 	percentOf,
 	resolveStatus,
 } from "#/components/terminal/measurement-view";
-import { Badge } from "@/components/ui/badge";
-import { Meter } from "@/components/ui/meter";
+import { paintInlineMeter } from "#/components/terminal/metric-paint";
+import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { Panel } from "@/components/ui/panel";
-import { Stat } from "@/components/ui/stat";
 import type { Variant } from "@/components/ui/types";
 
 export type HealthSummary = {
@@ -48,12 +52,16 @@ export const terminalHealthSummary = (
 	let firing = 0;
 
 	for (const source of sources) {
+		const buffer =
+			focusSymbol === "stream"
+				? undefined
+				: readings.measurements[focusSymbol]?.[source];
 		const history =
 			focusSymbol === "stream"
-				? Object.values(readings.measurements).flatMap(
-						(sourceMap) => sourceMap[source]?.values() ?? [],
+				? Object.values(readings.measurements).flatMap((sourceMap) =>
+						flattenMeasurementBuffer(sourceMap[source]),
 					)
-				: (readings.measurements[focusSymbol]?.[source]?.values() ?? []);
+				: flattenMeasurementBuffer(buffer);
 		const headline = headlineMetric(source);
 		const latest =
 			headline === null ? history.at(-1) : latestByMetric(history, headline);
@@ -72,7 +80,11 @@ export const terminalHealthSummary = (
 			strengthCount += 1;
 		}
 
-		if (history.length > 0) {
+		if (
+			focusSymbol === "stream"
+				? history.length > 0
+				: measurementTickCount(buffer) > 0
+		) {
 			firing += 1;
 		}
 	}
@@ -101,33 +113,207 @@ export const terminalHealthSummary = (
 	};
 };
 
+const VARIANT_TONE: Record<Variant, string> = {
+	brand: "var(--brand)",
+	info: "var(--info)",
+	success: "var(--success)",
+	warning: "var(--warning)",
+	error: "var(--error)",
+};
+
+/*
+HealthPanel paints system-health readouts directly from the measurement store.
+*/
 export const HealthPanel = ({ sources }: { sources?: string[] }) => {
-	const readings = useSelector(measurementsStore, (state) => state);
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const health = terminalHealthSummary(readings, focusSymbol, sources);
+	const badgeRef = useRef<HTMLSpanElement>(null);
+	const healthyRef = useRef<HTMLDivElement>(null);
+	const avgRef = useRef<HTMLDivElement>(null);
+	const firingRef = useRef<HTMLDivElement>(null);
+	const healthyMeterRef = useRef<HTMLDivElement>(null);
+	const warmingMeterRef = useRef<HTMLDivElement>(null);
+	const degradedMeterRef = useRef<HTMLDivElement>(null);
+
+	useDirectStorePaint(
+		() => {
+			const health = terminalHealthSummary(
+				measurementsStore.state,
+				focusSymbol,
+				sources,
+			);
+
+			if (badgeRef.current !== null) {
+				badgeRef.current.textContent = health.label;
+				badgeRef.current.style.color = VARIANT_TONE[health.variant];
+				badgeRef.current.style.background = `color-mix(in srgb, ${VARIANT_TONE[health.variant]} 12%, transparent)`;
+				badgeRef.current.style.borderColor = `color-mix(in srgb, ${VARIANT_TONE[health.variant]} 38%, transparent)`;
+			}
+
+			const paintStat = (
+				node: HTMLDivElement | null,
+				value: string,
+				variant?: Variant,
+			) => {
+				if (node === null) {
+					return;
+				}
+
+				const valueNode = node.querySelector<HTMLElement>(
+					"[data-stat-value='true']",
+				);
+
+				if (valueNode === null) {
+					return;
+				}
+
+				valueNode.textContent = value;
+
+				if (variant !== undefined) {
+					valueNode.style.color = VARIANT_TONE[variant];
+				}
+			};
+
+			paintStat(healthyRef.current, `${health.measured}/${health.total}`);
+			paintStat(avgRef.current, `${health.avg}%`);
+			paintStat(firingRef.current, String(health.firing), "warning");
+
+			const [healthyBar, warmingBar, degradedBar] = health.bars;
+
+			if (healthyBar !== undefined && healthyMeterRef.current !== null) {
+				paintInlineMeter(
+					healthyMeterRef.current,
+					healthyBar.label,
+					String(healthyBar.count),
+					healthyBar.percent,
+					healthyBar.variant as "success" | "warning" | "error",
+				);
+			}
+
+			if (warmingBar !== undefined && warmingMeterRef.current !== null) {
+				paintInlineMeter(
+					warmingMeterRef.current,
+					warmingBar.label,
+					String(warmingBar.count),
+					warmingBar.percent,
+					warmingBar.variant as "success" | "warning" | "error",
+				);
+			}
+
+			if (degradedBar !== undefined && degradedMeterRef.current !== null) {
+				paintInlineMeter(
+					degradedMeterRef.current,
+					degradedBar.label,
+					String(degradedBar.count),
+					degradedBar.percent,
+					degradedBar.variant as "success" | "warning" | "error",
+				);
+			}
+		},
+		[measurementsStore],
+		[focusSymbol, sources],
+	);
 
 	return (
 		<Panel size="lg">
 			<div className="flex items-center justify-between">
 				<span className="font-semibold text-(--f1) text-xs">System health</span>
-				<Badge label={health.label} variant={health.variant} />
+				<span
+					ref={badgeRef}
+					className="rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
+				/>
 			</div>
 			<div className="mt-3 flex gap-[18px]">
-				<Stat value={`${health.measured}/${health.total}`} label="healthy" />
-				<Stat value={`${health.avg}%`} label="avg strength" />
-				<Stat value={String(health.firing)} label="firing" variant="warning" />
+				<div ref={healthyRef} className="">
+					<div
+						data-stat-value="true"
+						className="font-mono text-2xl text-(--f1) leading-none"
+					/>
+					<div className="mt-1 font-mono text-[9px] text-(--f4)">healthy</div>
+				</div>
+				<div ref={avgRef} className="">
+					<div
+						data-stat-value="true"
+						className="font-mono text-2xl text-(--f1) leading-none"
+					/>
+					<div className="mt-1 font-mono text-[9px] text-(--f4)">
+						avg strength
+					</div>
+				</div>
+				<div ref={firingRef} className="">
+					<div
+						data-stat-value="true"
+						className="font-mono text-2xl leading-none"
+					/>
+					<div className="mt-1 font-mono text-[9px] text-(--f4)">firing</div>
+				</div>
 			</div>
 			<div className="mt-[13px] flex flex-col gap-1.5">
-				{health.bars.map((bar) => (
-					<Meter
-						key={bar.label}
-						layout="inline"
-						label={bar.label}
-						value={String(bar.count)}
-						percent={bar.percent}
-						variant={bar.variant}
+				<div
+					ref={healthyMeterRef}
+					className="flex items-center gap-2"
+					role="progressbar"
+					aria-valuemin={0}
+					aria-valuemax={100}
+				>
+					<span
+						data-inline-label="true"
+						className="w-[54px] shrink-0 font-mono text-[9px] text-(--f4)"
 					/>
-				))}
+					<div
+						data-inline-track="true"
+						className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line) [--meter-tone:var(--info)]"
+					>
+						<div data-inline-fill="true" className="h-full bg-(--meter-tone)" />
+					</div>
+					<span
+						data-inline-value="true"
+						className="w-[18px] shrink-0 text-right font-mono text-[9px] text-(--f2)"
+					/>
+				</div>
+				<div
+					ref={warmingMeterRef}
+					className="flex items-center gap-2"
+					role="progressbar"
+					aria-valuemin={0}
+					aria-valuemax={100}
+				>
+					<span
+						data-inline-label="true"
+						className="w-[54px] shrink-0 font-mono text-[9px] text-(--f4)"
+					/>
+					<div
+						data-inline-track="true"
+						className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line) [--meter-tone:var(--info)]"
+					>
+						<div data-inline-fill="true" className="h-full bg-(--meter-tone)" />
+					</div>
+					<span
+						data-inline-value="true"
+						className="w-[18px] shrink-0 text-right font-mono text-[9px] text-(--f2)"
+					/>
+				</div>
+				<div
+					ref={degradedMeterRef}
+					className="flex items-center gap-2"
+					role="progressbar"
+					aria-valuemin={0}
+					aria-valuemax={100}
+				>
+					<span
+						data-inline-label="true"
+						className="w-[54px] shrink-0 font-mono text-[9px] text-(--f4)"
+					/>
+					<div
+						data-inline-track="true"
+						className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line) [--meter-tone:var(--info)]"
+					>
+						<div data-inline-fill="true" className="h-full bg-(--meter-tone)" />
+					</div>
+					<span
+						data-inline-value="true"
+						className="w-[18px] shrink-0 text-right font-mono text-[9px] text-(--f2)"
+					/>
+				</div>
 			</div>
 		</Panel>
 	);
@@ -156,7 +342,7 @@ export const topSignalAxes = (
 
 		const values = Object.values(readings.measurements).flatMap((sourceMap) => {
 			const latest = latestByMetric(
-				sourceMap[source]?.values() ?? [],
+				flattenMeasurementBuffer(sourceMap[source]),
 				headline,
 			);
 
@@ -178,31 +364,59 @@ export const topSignalAxes = (
 	return ranked.sort((left, right) => right.value - left.value).slice(0, slots);
 };
 
+const RADAR_UNITS: Array<[number, number]> = [
+	[0, -1],
+	[0.951, -0.309],
+	[0.588, 0.809],
+	[-0.588, 0.809],
+	[-0.951, -0.309],
+];
+
+/*
+RadarPanel paints the strongest-signals radar directly from measurement store
+snapshots so the right rail stays off the React render path.
+*/
 export const RadarPanel = ({ sources }: { sources?: string[] }) => {
-	const readings = useSelector(measurementsStore, (state) => state);
-	const candidates = sources ?? [
-		...new Set(
-			Object.values(readings.measurements).flatMap((sourceMap) =>
-				Object.keys(sourceMap),
-			),
-		),
-	];
-	const axes = topSignalAxes(readings, candidates);
-	const units = [
-		[0, -1],
-		[0.951, -0.309],
-		[0.588, 0.809],
-		[-0.588, 0.809],
-		[-0.951, -0.309],
-	];
-	const points = units
-		.map(
-			([x, y], index) =>
-				`${110 + x * 84 * (axes[index]?.value ?? 0)},${
-					105 + y * 84 * (axes[index]?.value ?? 0)
-				}`,
-		)
-		.join(" ");
+	const radarFillRef = useRef<SVGPolygonElement>(null);
+	const axisLabelRefs = useRef<Array<SVGTextElement | null>>([]);
+
+	useDirectStorePaint(
+		() => {
+			const readings = measurementsStore.state;
+			const candidates = sources ?? [
+				...new Set(
+					Object.values(readings.measurements).flatMap((sourceMap) =>
+						Object.keys(sourceMap),
+					),
+				),
+			];
+			const axes = topSignalAxes(readings, candidates);
+			const points = RADAR_UNITS.map(
+				([x, y], index) =>
+					`${110 + x * 84 * (axes[index]?.value ?? 0)},${
+						105 + y * 84 * (axes[index]?.value ?? 0)
+					}`,
+			).join(" ");
+
+			if (radarFillRef.current !== null) {
+				radarFillRef.current.setAttribute("points", points);
+			}
+
+			for (const [index, [x, y]] of RADAR_UNITS.entries()) {
+				const label = axisLabelRefs.current[index];
+
+				if (label === null || label === undefined) {
+					continue;
+				}
+
+				label.textContent = axes[index]?.label ?? "—";
+				label.setAttribute("x", String(110 + x * 98));
+				label.setAttribute("y", String(105 + y * 98));
+			}
+		},
+		[measurementsStore],
+		[sources],
+	);
 
 	return (
 		<Panel size="lg">
@@ -229,7 +443,7 @@ export const RadarPanel = ({ sources }: { sources?: string[] }) => {
 					fill="none"
 					stroke="#2b251e"
 				/>
-				{units.map(([x, y]) => (
+				{RADAR_UNITS.map(([x, y]) => (
 					<line
 						key={`${x}:${y}`}
 						x1="110"
@@ -240,22 +454,23 @@ export const RadarPanel = ({ sources }: { sources?: string[] }) => {
 					/>
 				))}
 				<polygon
-					points={points}
+					ref={radarFillRef}
 					fill="rgba(232,163,61,0.22)"
 					stroke="#e8a33d"
 					strokeWidth="1.6"
 				/>
-				{units.map(([x, y], index) => (
+				{RADAR_UNITS.map(([x, y], index) => (
 					<text
 						key={`${x}:${y}`}
+						ref={(element) => {
+							axisLabelRefs.current[index] = element;
+						}}
 						x={110 + x * 98}
 						y={105 + y * 98}
 						textAnchor="middle"
 						fontSize="9"
 						fill="#938a7e"
-					>
-						{axes[index]?.label ?? "—"}
-					</text>
+					/>
 				))}
 			</svg>
 		</Panel>

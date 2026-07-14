@@ -1,72 +1,71 @@
 import { useSelector } from "@tanstack/react-store";
+import { useRef } from "react";
 import { appStore } from "#/collections/app";
-import { measurementsStore } from "#/collections/measurements";
+import {
+	flattenMeasurementBuffer,
+	latestMeasurementReadings,
+	measurementsStore,
+	measurementTickCount,
+} from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
 	kernelStatusMeta,
-	kernelStatusVariant,
 } from "#/components/terminal/kernel-meta";
 import {
-	formatRaw,
 	headlineMetric,
 	latestByMetric,
-	latestEpoch,
 	metricLabel,
 	percentOf,
 	resolveStatus,
-	sideLabel,
 } from "#/components/terminal/measurement-view";
+import { paintMetricGrid } from "#/components/terminal/metric-paint";
+import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { cn } from "#/lib/utils";
-import { Badge } from "@/components/ui/badge";
-import { Meter } from "@/components/ui/meter";
 import { panelVariants } from "@/components/ui/panel";
 
-export const KernelInspector = () => {
-	const inspectorSource = useSelector(
-		terminalStore,
-		(state) => state.inspectorSource,
-	);
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const { closeInspect, inspectSource } = terminalStore.actions;
-	const source = inspectorSource ?? "";
-	const history = useSelector(measurementsStore, (state) => {
-		if (source === "") {
-			return [];
-		}
+type InspectorPaintRefs = {
+	badge: HTMLSpanElement | null;
+	seriesLabel: HTMLSpanElement | null;
+	sparkLine: SVGPolylineElement | null;
+	metricsGrid: HTMLDivElement | null;
+	activeSymbol: HTMLDivElement | null;
+	observed: HTMLDivElement | null;
+};
 
-		return state.measurements[focusSymbol]?.[source]?.values() ?? [];
-	});
+const paintInspector = (
+	refs: InspectorPaintRefs,
+	source: string,
+	focusSymbol: string,
+): void => {
+	const buffer = measurementsStore.state.measurements[focusSymbol]?.[source];
+	const history = flattenMeasurementBuffer(buffer);
 	const headline = headlineMetric(source);
 	const latest =
-		headline === null ? history.at(-1) : latestByMetric(history, headline);
+		headline === null
+			? latestMeasurementReadings(buffer).at(-1)
+			: latestByMetric(latestMeasurementReadings(buffer), headline);
 
-	if (inspectorSource === null || latest === undefined) {
-		return null;
+	if (latest === undefined) {
+		return;
 	}
 
-	const epoch = latestEpoch(history);
 	const status = resolveStatus(latest);
-	const copy = kernelCopy(source, source);
 	const statusMeta = kernelStatusMeta(status);
+	const seriesSource = headline ?? history.at(-1)?.metric;
+	const values =
+		seriesSource === undefined || buffer === undefined
+			? []
+			: buffer.values().flatMap((epoch) => {
+					const measurement = latestByMetric(epoch.readings, seriesSource);
+
+					return measurement !== undefined && Number.isFinite(measurement.raw)
+						? [Math.max(0, Math.min(1, percentOf(measurement) / 100))]
+						: [];
+				});
 	const width = 150;
 	const baseline = 29;
 	const scale = 26;
-	const seriesSource = headline ?? epoch[0]?.metric;
-	const values = seriesSource
-		? history.flatMap((measurement) => {
-				if (
-					measurement.metric !== seriesSource ||
-					(measurement.side ?? "") !== ""
-				) {
-					return [];
-				}
-
-				return Number.isFinite(measurement.raw)
-					? [percentOf(measurement) / 100]
-					: [];
-			})
-		: [];
 	const points = values
 		.slice(-40)
 		.map(
@@ -80,25 +79,91 @@ export const KernelInspector = () => {
 		? new Date(latest.at).toLocaleTimeString("en-US", { hour12: false })
 		: "—";
 
+	if (refs.badge !== null) {
+		refs.badge.textContent = statusMeta.label;
+		refs.badge.style.color = statusMeta.fg;
+		refs.badge.style.background = statusMeta.bg;
+		refs.badge.style.borderColor = statusMeta.bd;
+	}
+
+	if (refs.seriesLabel !== null) {
+		refs.seriesLabel.textContent = metricLabel(seriesSource);
+	}
+
+	if (refs.sparkLine !== null) {
+		refs.sparkLine.setAttribute("points", points);
+	}
+
+	if (refs.metricsGrid !== null) {
+		paintMetricGrid(refs.metricsGrid, history, headline);
+	}
+
+	if (refs.activeSymbol !== null) {
+		refs.activeSymbol.textContent = `active ${latest.symbol}`;
+	}
+
+	if (refs.observed !== null) {
+		refs.observed.textContent = `observed ${observed} · ${measurementTickCount(buffer)} samples`;
+	}
+};
+
+/*
+KernelInspectorPanel renders a static inspector shell and paints every
+high-frequency readout directly from the measurement store.
+*/
+const KernelInspectorPanel = ({
+	source,
+	focusSymbol,
+}: {
+	source: string;
+	focusSymbol: string;
+}) => {
+	const badgeRef = useRef<HTMLSpanElement>(null);
+	const seriesLabelRef = useRef<HTMLSpanElement>(null);
+	const sparkLineRef = useRef<SVGPolylineElement>(null);
+	const metricsGridRef = useRef<HTMLDivElement>(null);
+	const activeSymbolRef = useRef<HTMLDivElement>(null);
+	const observedRef = useRef<HTMLDivElement>(null);
+	const { closeInspect, inspectSource } = terminalStore.actions;
+	const copy = kernelCopy(source, source);
+
+	useDirectStorePaint(
+		() =>
+			paintInspector(
+				{
+					badge: badgeRef.current,
+					seriesLabel: seriesLabelRef.current,
+					sparkLine: sparkLineRef.current,
+					metricsGrid: metricsGridRef.current,
+					activeSymbol: activeSymbolRef.current,
+					observed: observedRef.current,
+				},
+				source,
+				focusSymbol,
+			),
+		[measurementsStore],
+		[source, focusSymbol],
+	);
+
 	return (
-		<div className="absolute inset-y-0 left-[282px] right-[332px] z-9 animate-[symFade_0.18s_ease] bg-[color-mix(in_srgb,var(--sunken)_60%,transparent)] p-8 backdrop-blur-[3px]">
+		<div className="absolute inset-y-0 left-[282px] right-[332px] z-9 flex animate-[symFade_0.18s_ease] flex-col bg-[color-mix(in_srgb,var(--sunken)_60%,transparent)] p-8 backdrop-blur-[3px]">
 			<button
 				type="button"
 				aria-label="Close kernel inspector"
 				className="absolute inset-0"
 				onClick={closeInspect}
 			/>
-			<div className="pointer-events-none relative z-10 flex w-full items-start justify-center">
-				<div className="pointer-events-auto w-full max-w-[452px] overflow-hidden rounded-[6px] border border-(--line2) bg-(--surface) shadow-[0_22px_54px_-14px_rgba(0,0,0,0.72)]">
-					<div className="flex items-start justify-between gap-2.5 border-(--line) border-b px-4 pt-3.5 pb-[13px]">
+			<div className="pointer-events-none relative z-10 flex min-h-0 flex-1 items-center justify-center">
+				<div className="pointer-events-auto flex max-h-full w-full max-w-[452px] flex-col overflow-hidden rounded-[6px] border border-(--line2) bg-(--surface) shadow-[0_22px_54px_-14px_rgba(0,0,0,0.72)]">
+					<div className="flex shrink-0 items-start justify-between gap-2.5 border-(--line) border-b px-4 pt-3.5 pb-[13px]">
 						<div className="min-w-0">
 							<div className="flex items-center gap-2">
 								<span className="font-serif font-semibold text-[19px] text-(--f1) leading-[1.1]">
 									{copy.name}
 								</span>
-								<Badge
-									label={statusMeta.label}
-									variant={kernelStatusVariant(status)}
+								<span
+									ref={badgeRef}
+									className="shrink-0 rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
 								/>
 							</div>
 							<div className="mt-1 font-mono text-[10px] text-(--f4)">
@@ -123,13 +188,13 @@ export const KernelInspector = () => {
 							</svg>
 						</button>
 					</div>
-					<p className="mx-4 mt-3.5 font-serif text-[14px] text-(--f2) leading-[1.56]">
+					<p className="mx-4 mt-3.5 shrink-0 font-serif text-[14px] text-(--f2) leading-[1.56]">
 						{copy.blurb}
 					</p>
-					<div className="mx-4 mt-3.5">
+					<div className="mx-4 mt-3.5 shrink-0">
 						<div className="mb-1.5 flex items-center justify-between font-mono text-[9px] text-(--f4) uppercase tracking-widest">
 							<span>signal history</span>
-							<span>{metricLabel(seriesSource)}</span>
+							<span ref={seriesLabelRef} />
 						</div>
 						<svg
 							viewBox="0 0 150 30"
@@ -141,7 +206,7 @@ export const KernelInspector = () => {
 						>
 							<title>Signal history</title>
 							<polyline
-								points={points}
+								ref={sparkLineRef}
 								fill="none"
 								stroke="var(--acc)"
 								strokeWidth="1.5"
@@ -149,33 +214,18 @@ export const KernelInspector = () => {
 							/>
 						</svg>
 					</div>
-					<div className="flex flex-col gap-2.5 px-4 pt-3.5 pb-0.5">
-						{epoch.slice(0, 4).map((measurement) => (
-							<Meter
-								key={`${measurement.metric}:${measurement.side ?? ""}`}
-								label={[
-									metricLabel(measurement.metric),
-									sideLabel(measurement.side),
-								]
-									.filter(Boolean)
-									.join(" · ")}
-								value={formatRaw(measurement)}
-								percent={percentOf(measurement)}
-								variant={measurement.metric === headline ? "warning" : "info"}
-								size="xs"
-							/>
-						))}
-					</div>
-					<div className="mt-[11px] flex items-center justify-between gap-3 border-(--line) border-t bg-(--sunken) px-4 py-3.5">
+					<div
+						ref={metricsGridRef}
+						className="grid min-h-0 flex-1 grid-cols-2 content-start gap-x-3 gap-y-2.5 overflow-y-auto px-4 pt-3.5 pb-0.5"
+					/>
+					<div className="mt-[11px] flex shrink-0 items-center justify-between gap-3 border-(--line) border-t bg-(--sunken) px-4 py-3.5">
 						<div className="min-w-0 font-mono text-[9.5px] text-(--f4) leading-[1.55]">
-							<div>active {latest.symbol}</div>
-							<div>
-								observed {observed} · {history.length} samples
-							</div>
+							<div ref={activeSymbolRef} />
+							<div ref={observedRef} />
 						</div>
 						<button
 							type="button"
-							onClick={() => inspectSource(inspectorSource)}
+							onClick={() => inspectSource(source)}
 							className="shrink-0 cursor-pointer rounded-[3px] border border-[color-mix(in_srgb,var(--acc)_45%,transparent)] bg-[color-mix(in_srgb,var(--acc)_12%,transparent)] px-3 py-2 font-semibold text-[11px] text-(--acc) whitespace-nowrap hover:bg-[color-mix(in_srgb,var(--acc)_22%,transparent)]"
 						>
 							Open in signal insight →
@@ -184,5 +234,25 @@ export const KernelInspector = () => {
 				</div>
 			</div>
 		</div>
+	);
+};
+
+/*
+KernelInspector opens a vertically scaled detail modal for one signal source.
+Only open/close state uses React; measurement readouts bypass reconciliation.
+*/
+export const KernelInspector = () => {
+	const inspectorSource = useSelector(
+		terminalStore,
+		(state) => state.inspectorSource,
+	);
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+
+	if (inspectorSource === null) {
+		return null;
+	}
+
+	return (
+		<KernelInspectorPanel source={inspectorSource} focusSymbol={focusSymbol} />
 	);
 };

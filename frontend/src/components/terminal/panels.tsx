@@ -2,14 +2,17 @@ import { Link } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
 import { appStore } from "#/collections/app";
-import { type Balance, balancesStore } from "#/collections/balances";
-import { type Position, positionsStore } from "#/collections/positions";
+import type { Balance } from "#/collections/balances";
+import type { Position } from "#/collections/positions";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
-import { tickStore } from "#/collections/tick";
 import { formatUptime } from "#/components/terminal/kernel-meta";
+import {
+	LiveEngineTicker,
+	LiveOpenCount,
+	LiveWalletMetrics,
+} from "#/components/terminal/live-ticker";
 import { cn } from "#/lib/utils";
 import { Badge } from "@/components/ui/badge";
-import { Meter } from "@/components/ui/meter";
 import { panelVariants } from "@/components/ui/panel";
 
 type WalletMetrics = {
@@ -53,6 +56,7 @@ type TerminalRoutePath =
 	| "/"
 	| "/signals"
 	| "/decisions"
+	| "/journal"
 	| "/xray"
 	| "/cortex"
 	| "/allocation";
@@ -65,6 +69,7 @@ const SURFACE_ITEMS: Array<{
 	{ key: "dashboard", label: "Dashboard", to: "/" },
 	{ key: "signals", label: "Signal insight", to: "/signals" },
 	{ key: "decisions", label: "Decision tree", to: "/decisions" },
+	{ key: "journal", label: "Trade journal", to: "/journal" },
 	{ key: "xray", label: "Latent x-ray", to: "/xray" },
 	{ key: "cortex", label: "Cognitive tree", to: "/cortex" },
 	{ key: "allocation", label: "Allocation", to: "/allocation" },
@@ -138,6 +143,22 @@ const NavIcon = ({ surface }: { surface: TerminalSurface }) => {
 					<circle cx="5" cy="20" r="2" />
 					<circle cx="19" cy="20" r="2" />
 					<path d="M12 6v5M12 11l-6 6M12 11l6 6" />
+				</svg>
+			);
+		case "journal":
+			return (
+				<svg
+					width="15"
+					height="15"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="1.6"
+				>
+					<title>Trade journal</title>
+					<path d="M6 4h9l3 3v13H6z" />
+					<path d="M15 4v3h3" />
+					<path d="M8 11h8M8 15h8" />
 				</svg>
 			);
 		case "xray":
@@ -237,24 +258,7 @@ export const TerminalSection = ({
 export const TerminalTopBar = () => {
 	const online = useSelector(appStore, (state) => state.online);
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const tick = useSelector(tickStore, (state) => state.frame);
 	const { openPalette } = terminalStore.actions;
-
-	const balancesList = useSelector(balancesStore, (state) => state.balances);
-	const positions = useSelector(positionsStore, (state) => state.positions);
-	const wallet = walletMetrics(balancesList, positions);
-	const cashValue = wallet ? `${wallet.cash.toFixed(2)} ${wallet.asset}` : "—";
-	const availableValue = wallet
-		? `${wallet.available.toFixed(2)} ${wallet.asset}`
-		: "—";
-	const reservedValue = wallet
-		? `${wallet.reserved.toFixed(2)} ${wallet.asset}`
-		: "—";
-
-	const inProfit = (wallet?.unrealized ?? 0) > 0;
-	const equityValue = wallet
-		? `${wallet.equity.toFixed(2)} ${wallet.asset}`
-		: "—";
 
 	return (
 		<header className="relative z-5 flex h-[52px] shrink-0 items-center gap-3.5 border-(--line) border-b bg-(--surface) px-4">
@@ -270,9 +274,7 @@ export const TerminalTopBar = () => {
 				dot
 				className={online ? "[&_span[aria-hidden]]:animate-pulse" : undefined}
 			/>
-			<span className="font-mono text-[12px] text-(--f3)">
-				{String(tick?.open ?? 0)} open positions
-			</span>
+			<LiveOpenCount />
 			<div className="ml-auto flex items-center gap-[22px]">
 				<Badge
 					label={focusSymbol}
@@ -307,85 +309,16 @@ export const TerminalTopBar = () => {
 						⌘K
 					</span>
 				</button>
-				<TopMetric label="Cash" value={cashValue} strong />
-				<div className="relative flex flex-col items-end gap-px">
-					{inProfit && (
-						<img
-							src="/lambo.png"
-							alt=""
-							aria-hidden="true"
-							className="pointer-events-none absolute -top-1.5 right-0 h-11 opacity-60"
-						/>
-					)}
-					<span className="text-[9px] text-(--f4) uppercase tracking-widest">
-						Equity
-					</span>
-					<span
-						className={cn(
-							"relative font-mono text-[12px] font-semibold",
-							inProfit ? "text-(--up)" : "text-(--down)",
-						)}
-					>
-						{equityValue}
-					</span>
-				</div>
-				<TopMetric label="Available" value={availableValue} />
-				<TopMetric label="Reserved" value={reservedValue} />
-				<TopMetric
-					label="Tick"
-					value={tick?.count !== undefined ? String(tick.count) : "…"}
-					accent
-				/>
+				<LiveWalletMetrics />
 			</div>
 		</header>
 	);
 };
 
-const TopMetric = ({
-	label,
-	value,
-	accent = false,
-	strong = false,
-}: {
-	label: string;
-	value: string;
-	accent?: boolean;
-	strong?: boolean;
-}) => (
-	<div className="flex flex-col items-end gap-px">
-		<span className="text-[9px] text-(--f4) uppercase tracking-widest">
-			{label}
-		</span>
-		<span
-			className={cn(
-				"font-mono text-[12px]",
-				accent && "font-semibold text-(--acc)",
-				strong && !accent && "font-medium text-(--f1)",
-				!accent && !strong && "font-medium text-(--f2)",
-			)}
-		>
-			{value}
-		</span>
-	</div>
-);
-
 export const TerminalNav = ({ active }: { active: TerminalSurface }) => {
 	const scanlines = useSelector(terminalStore, (state) => state.scanlines);
 	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
 	const { toggleScanlines, toggleFieldStyle } = terminalStore.actions;
-	const online = useSelector(appStore, (state) => state.online);
-	const tick = useSelector(tickStore, (state) => state.frame);
-	const storyTicks = tick?.count ?? 0;
-	const enginePhase = (tick?.phase as string) ?? "";
-	const candidates = (tick?.candidates as number) ?? 0;
-	const open = (tick?.open as number) ?? 0;
-	const fluid = (tick?.fluid as number) ?? 0;
-	const quotesReady = (tick?.quotes_ready as number) ?? 0;
-	const quotesTotal = (tick?.quotes_total as number) ?? 0;
-	const quotesPercent =
-		quotesTotal > 0 ? Math.round((quotesReady / quotesTotal) * 100) : 0;
-	const fluidPercent =
-		quotesTotal > 0 ? Math.round((fluid / quotesTotal) * 100) : 0;
 	const clockText = new Date().toISOString().slice(11, 19);
 
 	return (
@@ -413,27 +346,7 @@ export const TerminalNav = ({ active }: { active: TerminalSurface }) => {
 			<div className="px-2.5 pt-[18px] pb-1.5 font-semibold text-[9px] text-(--f4) uppercase tracking-[0.14em]">
 				Engine
 			</div>
-			<div className="mx-2 border border-(--line) rounded-[3px] bg-(--sunken) p-2.5 font-mono text-[11px] leading-[1.7]">
-				<MetricLine label="seq" value={`#${storyTicks}`} />
-				<MetricLine
-					label="phase"
-					value={online ? enginePhase || "stream" : "offline"}
-					accent
-				/>
-				<MetricLine label="cand" value={candidates.toString()} />
-				<MetricLine label="open" value={open.toString()} />
-				<ProgressLine
-					label="quotes"
-					text={quotesTotal > 0 ? `${quotesReady}/${quotesTotal}` : "—"}
-					value={quotesPercent}
-				/>
-				<ProgressLine
-					label="fluid"
-					text={fluid > 0 ? String(fluid) : "—"}
-					value={fluidPercent}
-					accent
-				/>
-			</div>
+			<LiveEngineTicker />
 			<div className="mt-auto border-(--line) border-t p-2.5 font-mono text-[10px] text-(--f4) leading-[1.6]">
 				<div>{clockText} UTC</div>
 				<div>uptime {formatUptime(null)}</div>
@@ -455,42 +368,3 @@ export const TerminalNav = ({ active }: { active: TerminalSurface }) => {
 		</nav>
 	);
 };
-
-const MetricLine = ({
-	label,
-	value,
-	accent = false,
-}: {
-	label: string;
-	value: string;
-	accent?: boolean;
-}) => (
-	<div className="flex justify-between">
-		<span className="text-(--f4)">{label}</span>
-		<span className={accent ? "text-(--acc)" : "text-(--f1)"}>{value}</span>
-	</div>
-);
-
-const ProgressLine = ({
-	label,
-	text,
-	value,
-	accent = false,
-}: {
-	label: string;
-	text: string;
-	value: number;
-	accent?: boolean;
-}) => (
-	<Meter
-		layout="stacked"
-		label={label}
-		value={text}
-		percent={value}
-		variant={accent ? "warning" : "info"}
-		size="xs"
-		animated
-		className={label === "quotes" ? "mt-[7px]" : "mt-1.5"}
-		labelClassName="text-(--f4)"
-	/>
-);

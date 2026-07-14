@@ -1,5 +1,6 @@
 import { bench, describe, vi } from "vitest";
 import { WsFeed } from "./websocket";
+import { applyFramePayload } from "./ws-stores";
 
 const mockedReact = vi.hoisted(() => ({
 	cleanup: undefined as (() => void) | undefined,
@@ -41,7 +42,7 @@ class MockWebSocket {
 	}
 }
 
-const frame = JSON.stringify({
+const frame = {
 	measurements: [
 		{
 			source: "fluid",
@@ -122,14 +123,63 @@ const frame = JSON.stringify({
 			],
 		},
 	],
-});
+	decisions: [
+		{
+			action: "enter",
+			symbol: "BTC/USD",
+			at: "2026-01-01T00:00:00Z",
+			utility: 0.42,
+			alternatives: { hold: 0.1 },
+			allocationClass: "core",
+			proposedNotional: 100,
+			proposedQuantity: 0.01,
+			referencePrice: 61000,
+			validThroughEpoch: 1,
+			forecastSource: "resonance",
+			forecastModel: "online",
+			forecastEpoch: 1,
+			calibrationCount: 1,
+			expectedReturn: 0.01,
+			expectedFees: 0.0001,
+			expectedSpread: 0.0001,
+			expectedImpact: 0.0001,
+			adverseSelection: 0.0001,
+			uncertainty: 0.05,
+			confidence: 0.8,
+			availableCapital: 1000,
+			openPositions: 0,
+			slotCapacity: 4,
+			cause: "edge_clear",
+			reason: "utility exceeds hold",
+		},
+	],
+	lifecycle: { "BTC/USD": "managing" },
+	tradeJournal: [
+		{
+			kind: "lifecycle_transition",
+			symbol: "BTC/USD",
+			status: "entered",
+			at: "2026-01-01T00:00:01Z",
+			decision: 0,
+		},
+	],
+	findings: [
+		{
+			component: "forecast",
+			condition: "expected return overstated",
+			evidence: ["BTC/USD realized below forecast"],
+			estimatedEffect: -0.004,
+			uncertainty: 0.001,
+			requiredValidation: "replay on next cohort",
+		},
+	],
+};
 
 vi.stubGlobal("WebSocket", MockWebSocket);
 WsFeed();
-const socket = MockWebSocket.instances[0];
 
 describe("WsFeed", () => {
 	bench("applies a named backend UI frame", () => {
-		socket.emit("message", { data: frame });
+		applyFramePayload(frame);
 	});
 });

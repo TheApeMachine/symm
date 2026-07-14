@@ -1,9 +1,18 @@
-import { useSelector } from "@tanstack/react-store";
+import { useRef } from "react";
 import { diagnosticsStore } from "#/collections/diagnostics";
-import { Badge } from "@/components/ui/badge";
-import { Meter } from "@/components/ui/meter";
+import { paintInlineMeter } from "#/components/terminal/metric-paint";
+import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { Panel } from "@/components/ui/panel";
-import { Stat } from "@/components/ui/stat";
+
+export type CrossSectionReadout = {
+	leader: string;
+	leadershipThresholdPercent: number;
+	breadthPercent: number;
+	symbolCount: number;
+	medianVolume: number;
+	medianQuoteNotional: number;
+	medianExecutableDepth: number;
+};
 
 const finiteNumber = (value: unknown): number =>
 	typeof value === "number" && Number.isFinite(value) ? value : 0;
@@ -43,16 +52,6 @@ export const compactNumber = (value: number): string => {
 	return abs >= 1 ? value.toFixed(2) : value.toFixed(4);
 };
 
-export type CrossSectionReadout = {
-	leader: string;
-	leadershipThresholdPercent: number;
-	breadthPercent: number;
-	symbolCount: number;
-	medianVolume: number;
-	medianQuoteNotional: number;
-	medianExecutableDepth: number;
-};
-
 export const crossSectionReadoutFromFrame = (
 	frame: Record<string, unknown> | null,
 ): CrossSectionReadout => ({
@@ -65,50 +64,154 @@ export const crossSectionReadoutFromFrame = (
 	medianExecutableDepth: median(numberArray(frame?.executableDepths)),
 });
 
+/*
+CrossSectionPanel paints diagnostics readouts directly from the diagnostics store.
+*/
 export const CrossSectionPanel = () => {
-	const frame = useSelector(diagnosticsStore, (state) => state.frame);
-	const readout = crossSectionReadoutFromFrame(frame);
-	const broad = readout.breadthPercent >= 50;
+	const badgeRef = useRef<HTMLSpanElement>(null);
+	const subtitleRef = useRef<HTMLDivElement>(null);
+	const leaderRef = useRef<HTMLSpanElement>(null);
+	const thresholdRef = useRef<HTMLSpanElement>(null);
+	const breadthMeterRef = useRef<HTMLDivElement>(null);
+	const volumeRef = useRef<HTMLDivElement>(null);
+	const notionalRef = useRef<HTMLDivElement>(null);
+	const depthRef = useRef<HTMLDivElement>(null);
+
+	useDirectStorePaint(
+		() => {
+			const readout = crossSectionReadoutFromFrame(
+				diagnosticsStore.state.frame,
+			);
+			const broad = readout.breadthPercent >= 50;
+
+			if (badgeRef.current !== null) {
+				badgeRef.current.textContent = broad ? "broad" : "thin";
+				badgeRef.current.style.color = broad
+					? "var(--success)"
+					: "var(--warning)";
+				badgeRef.current.style.background = broad
+					? "color-mix(in srgb, var(--success) 12%, transparent)"
+					: "color-mix(in srgb, var(--warning) 12%, transparent)";
+				badgeRef.current.style.borderColor = broad
+					? "color-mix(in srgb, var(--success) 38%, transparent)"
+					: "color-mix(in srgb, var(--warning) 38%, transparent)";
+			}
+
+			if (subtitleRef.current !== null) {
+				subtitleRef.current.textContent = `breadth · leadership · liquidity axes · ${readout.symbolCount} symbols`;
+			}
+
+			if (leaderRef.current !== null) {
+				leaderRef.current.textContent = readout.leader || "—";
+			}
+
+			if (thresholdRef.current !== null) {
+				thresholdRef.current.textContent = `thr ${readout.leadershipThresholdPercent.toFixed(2)}%`;
+			}
+
+			if (breadthMeterRef.current !== null) {
+				paintInlineMeter(
+					breadthMeterRef.current,
+					"Breadth",
+					`${Math.round(readout.breadthPercent)}%`,
+					readout.breadthPercent,
+					broad ? "success" : "warning",
+				);
+			}
+
+			const paintStat = (node: HTMLDivElement | null, value: string) => {
+				const valueNode = node?.querySelector<HTMLElement>(
+					"[data-stat-value='true']",
+				);
+
+				if (valueNode !== null && valueNode !== undefined) {
+					valueNode.textContent = value;
+				}
+			};
+
+			paintStat(volumeRef.current, compactNumber(readout.medianVolume));
+			paintStat(
+				notionalRef.current,
+				compactNumber(readout.medianQuoteNotional),
+			);
+			paintStat(depthRef.current, compactNumber(readout.medianExecutableDepth));
+		},
+		[diagnosticsStore],
+		[],
+	);
 
 	return (
 		<Panel size="lg">
 			<div className="flex items-center justify-between">
 				<span className="font-semibold text-(--f1) text-xs">Cross-section</span>
-				<Badge
-					label={broad ? "broad" : "thin"}
-					variant={broad ? "success" : "warning"}
+				<span
+					ref={badgeRef}
+					className="rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
 				/>
 			</div>
-			<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
-				breadth · leadership · liquidity axes · {readout.symbolCount} symbols
-			</div>
+			<div
+				ref={subtitleRef}
+				className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)"
+			/>
 			<div className="flex items-center justify-between">
 				<span className="font-mono text-[11px] text-(--f2)">
-					leader <span className="text-(--acc)">{readout.leader || "—"}</span>
+					leader <span ref={leaderRef} className="text-(--acc)" />
 				</span>
-				<span className="font-mono text-[10px] text-(--f4)">
-					thr {readout.leadershipThresholdPercent.toFixed(2)}%
-				</span>
+				<span
+					ref={thresholdRef}
+					className="font-mono text-[10px] text-(--f4)"
+				/>
 			</div>
 			<div className="mt-2.5">
-				<Meter
-					layout="inline"
-					label="Breadth"
-					value={`${Math.round(readout.breadthPercent)}%`}
-					percent={readout.breadthPercent}
-					variant={broad ? "success" : "warning"}
-				/>
+				<div
+					ref={breadthMeterRef}
+					className="flex items-center gap-2"
+					role="progressbar"
+					aria-valuemin={0}
+					aria-valuemax={100}
+				>
+					<span
+						data-inline-label="true"
+						className="w-[54px] shrink-0 font-mono text-[9px] text-(--f4)"
+					/>
+					<div
+						data-inline-track="true"
+						className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line) [--meter-tone:var(--info)]"
+					>
+						<div data-inline-fill="true" className="h-full bg-(--meter-tone)" />
+					</div>
+					<span
+						data-inline-value="true"
+						className="w-[18px] shrink-0 text-right font-mono text-[9px] text-(--f2)"
+					/>
+				</div>
 			</div>
 			<div className="mt-[13px] flex justify-between">
-				<Stat value={compactNumber(readout.medianVolume)} label="med volume" />
-				<Stat
-					value={compactNumber(readout.medianQuoteNotional)}
-					label="med notional"
-				/>
-				<Stat
-					value={compactNumber(readout.medianExecutableDepth)}
-					label="med depth"
-				/>
+				<div ref={volumeRef}>
+					<div
+						data-stat-value="true"
+						className="font-mono text-2xl text-(--f1) leading-none"
+					/>
+					<div className="mt-1 font-mono text-[9px] text-(--f4)">
+						med volume
+					</div>
+				</div>
+				<div ref={notionalRef}>
+					<div
+						data-stat-value="true"
+						className="font-mono text-2xl text-(--f1) leading-none"
+					/>
+					<div className="mt-1 font-mono text-[9px] text-(--f4)">
+						med notional
+					</div>
+				</div>
+				<div ref={depthRef}>
+					<div
+						data-stat-value="true"
+						className="font-mono text-2xl text-(--f1) leading-none"
+					/>
+					<div className="mt-1 font-mono text-[9px] text-(--f4)">med depth</div>
+				</div>
 			</div>
 		</Panel>
 	);

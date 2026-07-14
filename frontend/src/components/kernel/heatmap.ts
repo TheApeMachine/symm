@@ -1,8 +1,10 @@
+import type { CircularBuffer } from "#/collections/circular";
+import type { MeasurementEpoch } from "#/collections/measurements";
+import { flattenMeasurementBuffer } from "#/collections/measurements";
 import {
 	latestByMetric,
 	percentOf,
 } from "#/components/terminal/measurement-view";
-import type { Measurement } from "#/types/measurement";
 
 export type HeatmapCell = {
 	symbol: string;
@@ -10,7 +12,7 @@ export type HeatmapCell = {
 	value: number;
 };
 
-type SourceHistory = { values: () => Measurement[] };
+type SourceHistory = CircularBuffer<MeasurementEpoch> | undefined;
 
 /*
 heatmapLabel shortens a pair symbol to its base asset for the cell caption.
@@ -29,7 +31,10 @@ export const buildHeatmapCells = (
 	headline: string,
 ): HeatmapCell[] =>
 	Object.entries(measurements).flatMap(([symbol, sources]) => {
-		const frame = latestByMetric(sources[source]?.values() ?? [], headline);
+		const frame = latestByMetric(
+			flattenMeasurementBuffer(sources[source]),
+			headline,
+		);
 
 		if (frame === undefined) {
 			return [];

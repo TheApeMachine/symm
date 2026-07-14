@@ -1,5 +1,6 @@
 export type CircularBuffer<T> = {
 	push: (value: T) => void;
+	replaceTail: (value: T) => void;
 	values: () => T[];
 	length: () => number;
 };
@@ -10,7 +11,9 @@ export const Circular = <T>(positions: number): CircularBuffer<T> => {
 	let count = 0;
 
 	const push = (value: T) => {
-		if (positions <= 0) return;
+		if (positions <= 0) {
+			return;
+		}
 
 		const index = (start + count) % positions;
 
@@ -23,19 +26,30 @@ export const Circular = <T>(positions: number): CircularBuffer<T> => {
 		}
 	};
 
-	const length = () => {
-		return count;
+	const replaceTail = (value: T) => {
+		if (positions <= 0) {
+			return;
+		}
+
+		if (count === 0) {
+			push(value);
+			return;
+		}
+
+		buffer[(start + count - 1) % positions] = value;
 	};
+
+	const length = () => count;
 
 	const values = () => {
 		const result: T[] = [];
 
-		for (let i = 0; i < count; i++) {
-			result.push(buffer[(start + i) % positions]);
+		for (let index = 0; index < count; index += 1) {
+			result.push(buffer[(start + index) % positions]);
 		}
 
 		return result;
 	};
 
-	return { push, values, length };
+	return { push, replaceTail, values, length };
 };

@@ -1,67 +1,171 @@
 import { useSelector } from "@tanstack/react-store";
+import { useRef } from "react";
 import { appStore } from "#/collections/app";
-import { measurementsStore } from "#/collections/measurements";
+import {
+	flattenMeasurementBuffer,
+	measurementsStore,
+	measurementTickCount,
+} from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
+import { buildHeatmapCells } from "#/components/kernel/heatmap";
 import {
 	kernelCopy,
 	kernelStatusMeta,
-	kernelStatusVariant,
 } from "#/components/terminal/kernel-meta";
 import {
 	ageText,
-	formatRaw,
 	headlineMetric,
 	latestByMetric,
-	latestEpoch,
 	metricLabel,
-	percentOf,
+	orderedEpoch,
 	resolveStatus,
-	sideLabel,
 	stampOf,
 } from "#/components/terminal/measurement-view";
-import { colormapCss, heatmapForeground } from "#/lib/colormap";
-import { Badge } from "@/components/ui/badge";
+import {
+	paintHeatmapGrid,
+	paintMetricGrid,
+} from "#/components/terminal/metric-paint";
+import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { Flex } from "@/components/ui/flex";
-import { Grid } from "@/components/ui/grid";
-import { Meter } from "@/components/ui/meter";
-import { Panel } from "@/components/ui/panel";
-import { buildHeatmapCells } from "./heatmap";
 
+type SignalDetailRefs = {
+	badge: HTMLSpanElement | null;
+	waitingPanel: HTMLDivElement | null;
+	metricsGrid: HTMLDivElement | null;
+	activeReadings: HTMLSpanElement | null;
+	metricsCount: HTMLSpanElement | null;
+	observed: HTMLSpanElement | null;
+	validity: HTMLSpanElement | null;
+	heatmapSection: HTMLDivElement | null;
+	heatmapTitle: HTMLSpanElement | null;
+	heatmapGrid: HTMLDivElement | null;
+};
+
+const paintSignalDetail = (
+	refs: SignalDetailRefs,
+	source: string,
+	focusSymbol: string,
+): void => {
+	const measurements = measurementsStore.state.measurements;
+	const buffer = measurements[focusSymbol]?.[source];
+	const history = flattenMeasurementBuffer(buffer);
+	const headline = headlineMetric(source);
+	const latest =
+		headline === null ? history.at(-1) : latestByMetric(history, headline);
+	const epoch = orderedEpoch(history, headline);
+	const status = resolveStatus(latest);
+	const observedStamp = stampOf(latest?.at);
+	const active = Object.values(measurements).reduce(
+		(sum, sources) => sum + measurementTickCount(sources[source]),
+		0,
+	);
+	const total = Object.values(measurements).reduce(
+		(sum, sources) =>
+			sum +
+			Object.values(sources).reduce(
+				(sourceSum, sourceHistory) =>
+					sourceSum + measurementTickCount(sourceHistory),
+				0,
+			),
+		0,
+	);
+	const heatmap =
+		headline === null ? [] : buildHeatmapCells(measurements, source, headline);
+
+	if (refs.waitingPanel !== null) {
+		refs.waitingPanel.style.display = epoch.length === 0 ? "" : "none";
+	}
+
+	if (refs.metricsGrid !== null) {
+		refs.metricsGrid.style.display = epoch.length === 0 ? "none" : "";
+		paintMetricGrid(refs.metricsGrid, history, headline);
+	}
+
+	if (refs.badge !== null && latest !== undefined) {
+		const statusMeta = kernelStatusMeta(status);
+		refs.badge.textContent = statusMeta.label;
+		refs.badge.style.color = statusMeta.fg;
+		refs.badge.style.background = statusMeta.bg;
+		refs.badge.style.borderColor = statusMeta.bd;
+	}
+
+	if (refs.activeReadings !== null) {
+		refs.activeReadings.textContent = `${active.toLocaleString()} / ${total.toLocaleString()}`;
+	}
+
+	if (refs.metricsCount !== null) {
+		refs.metricsCount.textContent = String(epoch.length);
+	}
+
+	if (refs.observed !== null) {
+		refs.observed.textContent = Number.isFinite(observedStamp)
+			? `${new Date(observedStamp).toLocaleTimeString("en-US", {
+					hour12: false,
+				})} / ${ageText(observedStamp)}`
+			: "— / —";
+	}
+
+	if (refs.validity !== null) {
+		refs.validity.textContent =
+			latest?.validity?.reason || latest?.validity?.state || "—";
+	}
+
+	if (refs.heatmapSection !== null) {
+		refs.heatmapSection.style.display = headline === null ? "none" : "";
+	}
+
+	if (refs.heatmapTitle !== null && headline !== null) {
+		refs.heatmapTitle.textContent = `Cross-section · ${metricLabel(headline)} heatmap`;
+	}
+
+	if (refs.heatmapGrid !== null && headline !== null) {
+		paintHeatmapGrid(refs.heatmapGrid, heatmap);
+	}
+};
+
+/*
+SignalDetail renders a static signal-insight shell and paints every live
+measurement readout directly from the measurement store.
+*/
 export const SignalDetail = () => {
 	const selectedSource = useSelector(
 		terminalStore,
 		(state) => state.selectedSource,
 	);
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const measurements = useSelector(measurementsStore, (state) => state);
-	const source = selectedSource;
-	const history =
-		measurements.measurements[focusSymbol]?.[source]?.values() ?? [];
-	const headline = headlineMetric(source);
-	const latest =
-		headline === null ? history.at(-1) : latestByMetric(history, headline);
-	const epoch = latestEpoch(history);
-	const status = resolveStatus(latest);
+	const badgeRef = useRef<HTMLSpanElement>(null);
+	const waitingPanelRef = useRef<HTMLDivElement>(null);
+	const metricsGridRef = useRef<HTMLDivElement>(null);
+	const activeReadingsRef = useRef<HTMLSpanElement>(null);
+	const metricsCountRef = useRef<HTMLSpanElement>(null);
+	const observedRef = useRef<HTMLSpanElement>(null);
+	const validityRef = useRef<HTMLSpanElement>(null);
+	const heatmapSectionRef = useRef<HTMLDivElement>(null);
+	const heatmapTitleRef = useRef<HTMLDivElement>(null);
+	const heatmapGridRef = useRef<HTMLDivElement>(null);
 	const copy = kernelCopy(selectedSource, selectedSource);
-	const statusMeta = kernelStatusMeta(status);
-	const observedStamp = stampOf(latest?.at);
-	const active = Object.values(measurements.measurements).reduce(
-		(sum, sources) => sum + (sources[source]?.values().length ?? 0),
-		0,
-	);
-	const total = Object.values(measurements.measurements).reduce(
-		(sum, sources) =>
-			sum +
-			Object.values(sources).reduce(
-				(sourceSum, sourceHistory) => sourceSum + sourceHistory.values().length,
-				0,
+
+	useDirectStorePaint(
+		() =>
+			paintSignalDetail(
+				{
+					badge: badgeRef.current,
+					waitingPanel: waitingPanelRef.current,
+					metricsGrid: metricsGridRef.current,
+					activeReadings: activeReadingsRef.current,
+					metricsCount: metricsCountRef.current,
+					observed: observedRef.current,
+					validity: validityRef.current,
+					heatmapSection: heatmapSectionRef.current,
+					heatmapTitle: heatmapTitleRef.current,
+					heatmapGrid: heatmapGridRef.current,
+				},
+				selectedSource,
+				focusSymbol,
 			),
-		0,
+		[measurementsStore],
+		[selectedSource, focusSymbol],
 	);
-	const heatmap =
-		headline === null
-			? []
-			: buildHeatmapCells(measurements.measurements, source, headline);
 
 	return (
 		<Flex.Column className="min-h-0 overflow-auto px-5 py-[18px]">
@@ -74,103 +178,57 @@ export const SignalDetail = () => {
 						{copy.sub}
 					</Flex>
 				</Flex.Column>
-				<Badge label={statusMeta.label} variant={kernelStatusVariant(status)} />
+				<span
+					ref={badgeRef}
+					className="shrink-0 rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
+				/>
 			</Flex.Row>
 			<Flex className="mt-3.5 max-w-[560px] font-serif text-[15px] text-(--f2) leading-[1.55]">
 				{copy.blurb}
 			</Flex>
-			{epoch.length === 0 ? (
-				<Panel className="mt-[18px] px-3 py-8 text-center font-mono text-[11px] text-(--f4)">
-					waiting for backend {selectedSource} measurement
-				</Panel>
-			) : null}
-			{epoch.length === 0 ? null : (
-				<Grid
-					cols={2}
-					className="mt-[18px] gap-x-[22px] gap-y-3"
-					style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
-				>
-					{epoch.map((measurement) => (
-						<Meter
-							key={`${measurement.metric}:${measurement.side ?? ""}`}
-							label={[
-								metricLabel(measurement.metric),
-								sideLabel(measurement.side),
-							]
-								.filter(Boolean)
-								.join(" · ")}
-							value={formatRaw(measurement)}
-							percent={percentOf(measurement)}
-							variant={measurement.metric === headline ? "warning" : "info"}
-							size="xs"
-						/>
-					))}
-				</Grid>
-			)}
-			<Grid
-				cols={2}
-				className="mt-5 gap-x-[22px] gap-y-2 border-(--line) border-t pt-3.5 font-mono text-xs"
+			<div
+				ref={waitingPanelRef}
+				className="mt-[18px] rounded-[3px] border border-(--line) bg-(--sunken) px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
+			>
+				waiting for backend {selectedSource} measurement
+			</div>
+			<div
+				ref={metricsGridRef}
+				className="mt-[18px] grid gap-x-[22px] gap-y-3"
+				style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
+			/>
+			<div
+				className="mt-5 grid gap-x-[22px] gap-y-2 border-(--line) border-t pt-3.5 font-mono text-xs"
 				style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
 			>
-				<Flex.Row className="justify-between">
-					<Flex className="text-(--f3)">Active readings</Flex>
-					<Flex className="text-(--f1)">
-						{active.toLocaleString()} / {total.toLocaleString()}
-					</Flex>
-				</Flex.Row>
-				<Flex.Row className="justify-between">
-					<Flex className="text-(--f3)">Metrics this tick</Flex>
-					<Flex className="text-(--f1)">{epoch.length}</Flex>
-				</Flex.Row>
-				<Flex.Row className="justify-between">
-					<Flex className="text-(--f3)">Observed</Flex>
-					<Flex className="text-(--f1)">
-						{Number.isFinite(observedStamp)
-							? `${new Date(observedStamp).toLocaleTimeString("en-US", {
-									hour12: false,
-								})} / ${ageText(observedStamp)}`
-							: "— / —"}
-					</Flex>
-				</Flex.Row>
-				<Flex.Row className="justify-between">
-					<Flex className="text-(--f3)">Validity</Flex>
-					<Flex className="text-(--f1)">
-						{latest?.validity?.reason || latest?.validity?.state || "—"}
-					</Flex>
-				</Flex.Row>
-			</Grid>
-			{headline === null ? null : (
-				<Flex.Column className="mt-[18px]">
-					<Flex className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
-						Cross-section · {metricLabel(headline)} heatmap
-					</Flex>
-					<Grid
-						cols={12}
-						responsive={false}
-						className="gap-[3px]"
-						style={{ gridTemplateColumns: "repeat(12, minmax(0, 1fr))" }}
-					>
-						{heatmap.map((cell) => {
-							const percent = Math.round(cell.value * 100);
-
-							return (
-								<Flex
-									key={cell.symbol}
-									data-symbol={cell.symbol}
-									title={`${cell.symbol} · ${percent}%`}
-									className="aspect-square cursor-pointer items-center justify-center rounded-[2px] font-mono text-[8px]"
-									style={{
-										background: colormapCss(cell.value),
-										color: heatmapForeground(cell.value),
-									}}
-								>
-									{cell.label}
-								</Flex>
-							);
-						})}
-					</Grid>
-				</Flex.Column>
-			)}
+				<div className="flex justify-between">
+					<span className="text-(--f3)">Active readings</span>
+					<span ref={activeReadingsRef} className="text-(--f1)" />
+				</div>
+				<div className="flex justify-between">
+					<span className="text-(--f3)">Metrics this tick</span>
+					<span ref={metricsCountRef} className="text-(--f1)" />
+				</div>
+				<div className="flex justify-between">
+					<span className="text-(--f3)">Observed</span>
+					<span ref={observedRef} className="text-(--f1)" />
+				</div>
+				<div className="flex justify-between">
+					<span className="text-(--f3)">Validity</span>
+					<span ref={validityRef} className="text-(--f1)" />
+				</div>
+			</div>
+			<div ref={heatmapSectionRef} className="mt-[18px]">
+				<div
+					ref={heatmapTitleRef}
+					className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]"
+				/>
+				<div
+					ref={heatmapGridRef}
+					className="grid gap-[3px]"
+					style={{ gridTemplateColumns: "repeat(12, minmax(0, 1fr))" }}
+				/>
+			</div>
 		</Flex.Column>
 	);
 };

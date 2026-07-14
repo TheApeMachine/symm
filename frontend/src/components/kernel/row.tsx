@@ -1,11 +1,14 @@
-import { measurementsStore } from "#/collections/measurements";
-import { terminalStore } from "#/collections/terminal";
 import { useSelector } from "@tanstack/react-store";
+import {
+	flattenMeasurementBuffer,
+	measurementsStore,
+} from "#/collections/measurements";
+import { terminalStore } from "#/collections/terminal";
 
 export const KernelRow = ({ source }: { source: string }) => {
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
 	const history = useSelector(measurementsStore, (state) =>
-		state.measurements[focusSymbol]?.[source]?.values() ?? [],
+		flattenMeasurementBuffer(state.measurements[focusSymbol]?.[source]),
 	);
 	const measurement = history.at(-1);
 	const confidence = measurement?.categories?.at(0)?.confidence ?? 0;
@@ -16,8 +19,7 @@ export const KernelRow = ({ source }: { source: string }) => {
 					.map(
 						(item, index) =>
 							`${(index / (history.length - 1)).toFixed(3)},${(
-								1 -
-								(item.categories?.at(0)?.confidence ?? 0)
+								1 - (item.categories?.at(0)?.confidence ?? 0)
 							).toFixed(3)}`,
 					)
 					.join(" ");

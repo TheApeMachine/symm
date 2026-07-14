@@ -9,7 +9,7 @@ export const Canvas = ({
 	children,
 	className,
 }: {
-	title: string;
+	title: ReactNode;
 	meta: string;
 	topRight?: ReactNode;
 	legend?: ReactNode;

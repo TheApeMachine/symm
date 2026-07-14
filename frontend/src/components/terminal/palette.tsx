@@ -10,6 +10,11 @@ const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 	{ id: "dashboard", label: "Dashboard", hint: "Fluid field · live decisions" },
 	{ id: "signals", label: "Signal insight", hint: "Per-kernel forensics" },
 	{ id: "decisions", label: "Decision tree", hint: "Gate-by-gate trace" },
+	{
+		id: "journal",
+		label: "Trade journal",
+		hint: "Lifecycle · observations · findings",
+	},
 	{ id: "xray", label: "Latent x-ray", hint: "State-space cross-section" },
 	{ id: "cortex", label: "Cognitive tree", hint: "Reasoning graph" },
 	{ id: "allocation", label: "Allocation", hint: "Capital & exposure" },

@@ -16,6 +16,7 @@ import {
 import { instrumentsStore } from "#/collections/instruments";
 import { manifoldStore } from "#/collections/manifold";
 import {
+	flattenMeasurementBuffer,
 	type Measurement,
 	measurementEpochs,
 	measurementRaw,
@@ -847,8 +848,9 @@ const RouteComponent = () => {
 	const resonance = resonanceState[activeSymbol]?.values().at(-1) ?? null;
 	const manifold = manifoldState[activeSymbol]?.values().at(-1) ?? null;
 	const layers = xrayLayersFromManifold(manifold, resonance);
-	const hawkesHistory =
-		readings.measurements[activeSymbol]?.hawkes?.values() ?? [];
+	const hawkesHistory = flattenMeasurementBuffer(
+		readings.measurements[activeSymbol]?.hawkes,
+	);
 	const symbols = [
 		...new Set([
 			activeSymbol,

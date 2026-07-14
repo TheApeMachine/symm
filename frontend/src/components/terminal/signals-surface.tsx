@@ -8,30 +8,35 @@ import { CrossSectionPanel } from "#/components/terminal/cross-section-panel";
 import { HealthPanel, RadarPanel } from "#/components/terminal/health";
 import { KernelList } from "#/components/terminal/kernel-list";
 import { orderedKernelSources } from "#/components/terminal/kernel-meta";
+import {
+	backendMeasurementSources,
+	sameSources,
+} from "#/components/terminal/measurement-sources";
 
 export const signalsSurfaceSources = (
 	kernels: string[],
-	measurements: typeof measurementsStore.state,
+	backendSources: string[],
 ): string[] =>
-	orderedKernelSources([
-		...new Set([
-			...kernels,
-			...Object.values(measurements.measurements).flatMap((sources) =>
-				Object.keys(sources),
-			),
-		]),
-	]);
+	orderedKernelSources([...new Set([...kernels, ...backendSources])]);
 
+/*
+SignalsSurface keeps React reconciliation scoped to source-key changes while
+every live readout inside the surface bypasses React via direct store paint.
+*/
 export const SignalsSurface = () => {
 	const kernels = useSelector(appStore, (state) => state.kernels);
-	const measurements = useSelector(measurementsStore, (state) => state);
+	const backendSources = useSelector(
+		measurementsStore,
+		backendMeasurementSources,
+		{ compare: sameSources },
+	);
 	const selectedSource = useSelector(
 		terminalStore,
 		(state) => state.selectedSource,
 	);
 	const sources = useMemo(
-		() => signalsSurfaceSources(kernels, measurements),
-		[kernels, measurements],
+		() => signalsSurfaceSources(kernels, backendSources),
+		[kernels, backendSources],
 	);
 
 	useEffect(() => {

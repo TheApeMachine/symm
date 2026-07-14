@@ -1,7 +1,8 @@
-import { memo, useLayoutEffect, useRef } from "react";
+import { memo, useRef } from "react";
 import { type Position, positionsStore } from "#/collections/positions";
 import { type Stop, stopsStore } from "#/collections/stops";
 import { fixed } from "#/components/terminal/decision-format";
+import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 
 import { Panel } from "@/components/ui/panel";
 
@@ -273,35 +274,31 @@ export const PositionGauge = memo(
 		const stagnationBarRef = useRef<HTMLDivElement>(null);
 		const stagnationFlashRef = useRef<HTMLSpanElement>(null);
 
-		useLayoutEffect(() => {
-			const refs: PositionGaugeRefs = {
-				track: trackRef.current,
-				progress: progressRef.current,
-				stopMarker: stopMarkerRef.current,
-				peakMarker: peakMarkerRef.current,
-				entryMarker: entryMarkerRef.current,
-				markMarker: markMarkerRef.current,
-				pnl: pnlRef.current,
-				summary: summaryRef.current,
-				returnPct: returnRef.current,
-				momentumWrap: momentumWrapRef.current,
-				momentumBar: momentumBarRef.current,
-				stagnationWrap: stagnationWrapRef.current,
-				stagnationBar: stagnationBarRef.current,
-				stagnationFlash: stagnationFlashRef.current,
-			};
-
-			const paint = () => paintPositionGauge(refs, symbol, quote);
-
-			paint();
-			const positionsSubscription = positionsStore.subscribe(paint);
-			const stopsSubscription = stopsStore.subscribe(paint);
-
-			return () => {
-				positionsSubscription.unsubscribe();
-				stopsSubscription.unsubscribe();
-			};
-		}, [symbol, quote]);
+		useDirectStorePaint(
+			() =>
+				paintPositionGauge(
+					{
+						track: trackRef.current,
+						progress: progressRef.current,
+						stopMarker: stopMarkerRef.current,
+						peakMarker: peakMarkerRef.current,
+						entryMarker: entryMarkerRef.current,
+						markMarker: markMarkerRef.current,
+						pnl: pnlRef.current,
+						summary: summaryRef.current,
+						returnPct: returnRef.current,
+						momentumWrap: momentumWrapRef.current,
+						momentumBar: momentumBarRef.current,
+						stagnationWrap: stagnationWrapRef.current,
+						stagnationBar: stagnationBarRef.current,
+						stagnationFlash: stagnationFlashRef.current,
+					},
+					symbol,
+					quote,
+				),
+			[positionsStore, stopsStore],
+			[symbol, quote],
+		);
 
 		return (
 			<Panel

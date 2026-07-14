@@ -1,10 +1,12 @@
 import { useSelector } from "@tanstack/react-store";
+import { useRef } from "react";
 import { type Action, actionStore } from "#/collections/actions";
 import { type Execution, executionsStore } from "#/collections/executions";
 import { positionsStore } from "#/collections/positions";
 import { ColumnHeader } from "#/components/dashboard/header";
 import { fixed } from "#/components/terminal/decision-format";
 import { PositionGauge } from "#/components/terminal/position-gauge";
+import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { cn } from "#/lib/utils";
 
 const sameSymbols = (left: string[], right: string[]): boolean =>
@@ -157,12 +159,80 @@ const AuditRows = ({ executions }: { executions: Execution[] }) => (
 	</div>
 );
 
+const LiveDecisionMeta = () => {
+	const allowRef = useRef<HTMLSpanElement>(null);
+	const denyRef = useRef<HTMLSpanElement>(null);
+
+	useDirectStorePaint(
+		() => {
+			const actions = Object.values(actionStore.state.actions).flatMap(
+				(history) => history.values(),
+			);
+			const allowed = actions.filter((action) => action.verdict === "allow");
+			const denied = actions.filter((action) => action.verdict !== "allow");
+
+			if (allowRef.current !== null) {
+				allowRef.current.textContent = String(allowed.length);
+			}
+
+			if (denyRef.current !== null) {
+				denyRef.current.textContent = String(denied.length);
+			}
+		},
+		[actionStore],
+		[],
+	);
+
+	return (
+		<span>
+			<span ref={allowRef} /> allow · <span ref={denyRef} /> deny
+		</span>
+	);
+};
+
+const LivePositionMeta = ({
+	symbols,
+	quote,
+}: {
+	symbols: string[];
+	quote: string;
+}) => {
+	const prefixRef = useRef<HTMLSpanElement>(null);
+	const countRef = useRef<HTMLSpanElement>(null);
+
+	useDirectStorePaint(
+		() => {
+			const net = positionsStore.state.positions.reduce(
+				(sum, position) => sum + position.pnl,
+				0,
+			);
+
+			if (prefixRef.current !== null) {
+				prefixRef.current.textContent =
+					symbols.length === 0 ? "" : `net ${net.toFixed(4)} ${quote} · `;
+				prefixRef.current.style.display = symbols.length === 0 ? "none" : "";
+			}
+
+			if (countRef.current !== null) {
+				countRef.current.textContent = `${symbols.length} open`;
+			}
+		},
+		[positionsStore],
+		[symbols.length, quote],
+	);
+
+	return (
+		<span>
+			<span ref={prefixRef} />
+			<span ref={countRef} />
+		</span>
+	);
+};
+
 export const DashboardRail = () => {
 	const actions = useSelector(actionStore, (state) =>
 		Object.values(state.actions).flatMap((history) => history.values()),
 	);
-	const allowed = actions.filter((action) => action.verdict === "allow");
-	const denied = actions.filter((action) => action.verdict !== "allow");
 
 	/*
 	symbols only changes reference when a position opens or closes, not on
@@ -180,34 +250,19 @@ export const DashboardRail = () => {
 		positionsStore,
 		(state) => state.positions[0]?.symbol,
 	);
-	const net = useSelector(positionsStore, (state) =>
-		state.positions.reduce((sum, position) => sum + position.pnl, 0),
-	);
 	const quote = quoteSymbol?.split("/")[1] ?? "USD";
 	const executions = useSelector(executionsStore, (state) => state.executions);
 
 	return (
 		<div className="flex min-h-0 flex-col bg-(--surface)">
 			<div className="flex min-h-0 flex-[1.15] flex-col border-(--line) border-b">
-				<ColumnHeader
-					title="Decisions"
-					meta={
-						<span>
-							{allowed.length} allow · {denied.length} deny
-						</span>
-					}
-				/>
+				<ColumnHeader title="Decisions" meta={<LiveDecisionMeta />} />
 				<DecisionRows decisions={actions.reverse()} />
 			</div>
 			<div className="flex min-h-0 flex-1 flex-col border-(--line) border-b">
 				<ColumnHeader
 					title="Open positions"
-					meta={
-						<span>
-							{symbols.length === 0 ? "" : `net ${net.toFixed(4)} ${quote} · `}
-							{symbols.length} open
-						</span>
-					}
+					meta={<LivePositionMeta symbols={symbols} quote={quote} />}
 				/>
 				<PositionRows symbols={symbols} quote={quote} observed={observed} />
 			</div>

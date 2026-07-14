@@ -56,7 +56,7 @@ export const seriesByMetric = (
 
 /*
 latestEpoch returns every measurement that shares the most recent observation
-time in the buffer — one signal tick's complete readout.
+time in a flat measurement list.
 */
 export const latestEpoch = (values: Measurement[]): Measurement[] => {
 	const at = values.at(-1)?.at;
@@ -66,6 +66,75 @@ export const latestEpoch = (values: Measurement[]): Measurement[] => {
 	}
 
 	return values.filter((measurement) => measurement.at === at);
+};
+
+/*
+measurementIdentity is the stable identity for one backend measurement record.
+Metric and side alone are insufficient because cross-section signals can emit
+the same metric twice per tick from different subjects or streams.
+*/
+export const measurementIdentity = (measurement: Measurement): string =>
+	[
+		measurement.metric ?? "",
+		measurement.side ?? "",
+		measurement.subject ?? "",
+		measurement.stream ?? "",
+	].join(":");
+
+/*
+dedupeEpoch keeps the last record for each measurement identity within one
+observation tick so duplicate websocket pushes do not create duplicate UI keys.
+*/
+export const dedupeEpoch = (epoch: Measurement[]): Measurement[] => {
+	const byIdentity = new Map<string, Measurement>();
+
+	for (const measurement of epoch) {
+		byIdentity.set(measurementIdentity(measurement), measurement);
+	}
+
+	return [...byIdentity.values()];
+};
+
+/*
+orderedEpoch returns the latest observation tick sorted with the headline metric
+first so detail surfaces can render every backend metric without arbitrary caps.
+*/
+export const orderedEpoch = (
+	values: Measurement[],
+	headline: string | null,
+): Measurement[] => {
+	const epoch = dedupeEpoch(latestEpoch(values));
+
+	return [...epoch].sort((left, right) => {
+		const leftRank = left.metric === headline ? 0 : 1;
+		const rightRank = right.metric === headline ? 0 : 1;
+
+		if (leftRank !== rightRank) {
+			return leftRank - rightRank;
+		}
+
+		const metricCompare = (left.metric ?? "").localeCompare(right.metric ?? "");
+
+		if (metricCompare !== 0) {
+			return metricCompare;
+		}
+
+		const sideCompare = (left.side ?? "").localeCompare(right.side ?? "");
+
+		if (sideCompare !== 0) {
+			return sideCompare;
+		}
+
+		const subjectCompare = (left.subject ?? "").localeCompare(
+			right.subject ?? "",
+		);
+
+		if (subjectCompare !== 0) {
+			return subjectCompare;
+		}
+
+		return (left.stream ?? "").localeCompare(right.stream ?? "");
+	});
 };
 
 /*

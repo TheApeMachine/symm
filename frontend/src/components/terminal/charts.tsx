@@ -1,8 +1,9 @@
 import { useSelector } from "@tanstack/react-store";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { appStore } from "#/collections/app";
 import { manifoldStore } from "#/collections/manifold";
 import {
+	flattenMeasurementBuffer,
 	measurementEpochs,
 	measurementRaw,
 	measurementsStore,
@@ -17,6 +18,8 @@ import {
 	resizeCanvas,
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
+import { LiveCanvas } from "#/components/terminal/live-canvas";
+import { appendPredictionSample } from "#/components/terminal/prediction-history";
 
 type Draw = (
 	context: CanvasRenderingContext2D,
@@ -94,8 +97,9 @@ const frameMatrix = (
 		frame?.coherenceMag2,
 		frame?.guidanceSpeed,
 		frame?.stressAnisotropy,
-	].filter((value): value is number =>
-		typeof value === "number" && Number.isFinite(value),
+	].filter(
+		(value): value is number =>
+			typeof value === "number" && Number.isFinite(value),
 	);
 
 	if (scalarRow.length > 0) {
@@ -254,8 +258,6 @@ const drawWaiting = (
 	context.fillText(message, 18, 52);
 };
 
-const PREDICTION_HISTORY_LIMIT = 130;
-
 export type TerminalPredictionSample = {
 	key: string;
 	symbol: string;
@@ -344,18 +346,14 @@ export const TerminalFluidChart = ({
 }: {
 	contour?: boolean;
 }) => {
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const frame = useSelector(
-		manifoldStore,
-		(state) => state.manifold[focusSymbol]?.values().at(-1) ?? null,
-	);
-	const matrix = useMemo(() => frameMatrix(frame), [frame]);
-	const particles = useMemo(
-		() => terminalFluidParticlesFromFrame(frame),
-		[frame],
-	);
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
+			const focusSymbol = appStore.state.focusSymbol;
+			const frame =
+				manifoldStore.state.manifold[focusSymbol]?.values().at(-1) ?? null;
+			const matrix = frameMatrix(frame);
+			const particles = terminalFluidParticlesFromFrame(frame);
+
 			if (matrix.length === 0 && particles.length === 0) {
 				drawWaiting(context, width, height, "waiting for manifold field");
 				return;
@@ -374,11 +372,6 @@ export const TerminalFluidChart = ({
 				const matrixRows = matrix.length;
 				const { min, max } = matrixExtent(matrix);
 				const span = max - min || 1;
-				// Sample the density field at a fine, fixed cadence rather than
-				// scaling the block size with the canvas. The Rho matrix is coarse
-				// (grid-resolution), so bilinear upsampling at ~2px reads the field
-				// as the continuous fluid surface the solver actually computes,
-				// instead of grid-sized blocks that look static and flat.
 				const sampleSize = 2;
 
 				for (let y = 0; y < height; y += sampleSize) {
@@ -479,144 +472,113 @@ export const TerminalFluidChart = ({
 				context.fill();
 			}
 		},
-		[frame, matrix, particles, contour],
+		[contour],
 	);
 
-	return <StaticCanvas draw={draw} />;
+	return (
+		<LiveCanvas
+			draw={draw}
+			stores={[manifoldStore, appStore]}
+			deps={[contour]}
+		/>
+	);
 };
 
 export const TerminalPredictionChart = () => {
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const frame = useSelector(
-		resonanceStore,
-		(state) => state.resonance[focusSymbol]?.values().at(-1) ?? null,
-	);
-	const sample = useMemo(() => terminalPredictionSampleFromFrame(frame), [frame]);
-	const [samples, setSamples] = useState<TerminalPredictionSample[]>([]);
+	const draw = useCallback<Draw>((context, width, height) => {
+		const focusSymbol = appStore.state.focusSymbol;
+		const frame =
+			resonanceStore.state.resonance[focusSymbol]?.values().at(-1) ?? null;
+		const sample = terminalPredictionSampleFromFrame(frame);
+		const samples = appendPredictionSample(focusSymbol, sample);
 
-	useEffect(() => {
-		setSamples((previous) => {
-			if (
-				previous.length === 0 ||
-				previous[previous.length - 1]?.symbol === focusSymbol
-			) {
-				return previous;
-			}
-
-			return [];
-		});
-	}, [focusSymbol]);
-
-	useEffect(() => {
-		if (sample === null) {
+		if (samples.length === 0) {
+			drawWaiting(context, width, height, "waiting for resonance history");
 			return;
 		}
 
-		setSamples((previous) => {
-			const last = previous[previous.length - 1];
+		clearCanvas(context, width, height);
+		drawGrid(context, width, height, 18);
 
-			if (last?.symbol !== sample.symbol) {
-				return [sample];
-			}
+		const values = samples
+			.flatMap((entry) => [entry.actual, entry.prediction])
+			.filter(Number.isFinite);
 
-			if (last.key === sample.key) {
-				return previous;
-			}
+		if (values.length === 0) {
+			return;
+		}
 
-			return [...previous, sample].slice(-PREDICTION_HISTORY_LIMIT);
-		});
-	}, [sample]);
+		let min = Math.min(...values);
+		let max = Math.max(...values);
+		const span = max > min ? max - min : 1;
+		const margin = span * 0.08;
+		min -= margin;
+		max += margin;
+		const paddedSpan = max > min ? max - min : 1;
+		const paddingX = 18;
+		const plotWidth = Math.max(1, width - paddingX * 2);
+		const plotHeight = Math.max(1, height - 46);
+		const denominator = Math.max(samples.length - 1, 1);
+		const xFor = (index: number) =>
+			paddingX + (index / denominator) * plotWidth;
+		const yFor = (value: number) =>
+			height - 26 - ((value - min) / paddedSpan) * plotHeight;
+		const actualPoints = samples.map((entry, index) => ({
+			x: xFor(index),
+			y: yFor(entry.actual),
+		}));
+		const predictionPoints = samples.map((entry, index) => ({
+			x: xFor(index),
+			y: yFor(entry.prediction),
+		}));
 
-	const draw = useCallback<Draw>(
-		(context, width, height) => {
-			if (samples.length === 0) {
-				drawWaiting(context, width, height, "waiting for resonance history");
-				return;
-			}
-
-			clearCanvas(context, width, height);
-			drawGrid(context, width, height, 18);
-
-			const values = samples
-				.flatMap((entry) => [entry.actual, entry.prediction])
-				.filter(Number.isFinite);
-
-			if (values.length === 0) {
-				return;
-			}
-
-			let min = Math.min(...values);
-			let max = Math.max(...values);
-			const span = max > min ? max - min : 1;
-			const margin = span * 0.08;
-			min -= margin;
-			max += margin;
-			const paddedSpan = max > min ? max - min : 1;
-			const paddingX = 18;
-			const plotWidth = Math.max(1, width - paddingX * 2);
-			const plotHeight = Math.max(1, height - 46);
-			const denominator = Math.max(samples.length - 1, 1);
-			const xFor = (index: number) =>
-				paddingX + (index / denominator) * plotWidth;
-			const yFor = (value: number) =>
-				height - 26 - ((value - min) / paddedSpan) * plotHeight;
-			const actualPoints = samples.map((entry, index) => ({
-				x: xFor(index),
-				y: yFor(entry.actual),
-			}));
-			const predictionPoints = samples.map((entry, index) => ({
-				x: xFor(index),
-				y: yFor(entry.prediction),
-			}));
-
-			context.fillStyle = "rgba(232, 163, 61, 0.18)";
-			context.beginPath();
-			for (const [index, point] of actualPoints.entries()) {
-				if (index === 0) {
-					context.moveTo(point.x, point.y);
-				} else {
-					context.lineTo(point.x, point.y);
-				}
-			}
-			for (let index = predictionPoints.length - 1; index >= 0; index -= 1) {
-				const point = predictionPoints[index];
+		context.fillStyle = "rgba(232, 163, 61, 0.18)";
+		context.beginPath();
+		for (const [index, point] of actualPoints.entries()) {
+			if (index === 0) {
+				context.moveTo(point.x, point.y);
+			} else {
 				context.lineTo(point.x, point.y);
 			}
-			context.closePath();
+		}
+		for (let index = predictionPoints.length - 1; index >= 0; index -= 1) {
+			const point = predictionPoints[index];
+			context.lineTo(point.x, point.y);
+		}
+		context.closePath();
+		context.fill();
+
+		drawPolyline(context, actualPoints, TERMINAL_COLORS.foreground);
+		drawPolyline(context, predictionPoints, TERMINAL_COLORS.cyan, true);
+
+		const latest = samples[samples.length - 1];
+
+		if (latest !== undefined) {
+			context.fillStyle = TERMINAL_COLORS.amber;
+			context.beginPath();
+			context.arc(
+				xFor(samples.length - 1),
+				yFor(latest.actual),
+				2.6,
+				0,
+				Math.PI * 2,
+			);
 			context.fill();
+			context.fillStyle = TERMINAL_COLORS.muted;
+			context.font = "10px JetBrains Mono, monospace";
+			context.fillText(`ε ${latest.error.toFixed(4)}`, 18, height - 8);
+		}
+	}, []);
 
-			drawPolyline(context, actualPoints, TERMINAL_COLORS.foreground);
-			drawPolyline(context, predictionPoints, TERMINAL_COLORS.cyan, true);
-
-			const latest = samples[samples.length - 1];
-
-			if (latest !== undefined) {
-				context.fillStyle = TERMINAL_COLORS.amber;
-				context.beginPath();
-				context.arc(
-					xFor(samples.length - 1),
-					yFor(latest.actual),
-					2.6,
-					0,
-					Math.PI * 2,
-				);
-				context.fill();
-				context.fillStyle = TERMINAL_COLORS.muted;
-				context.font = "10px JetBrains Mono, monospace";
-				context.fillText(`ε ${latest.error.toFixed(4)}`, 18, height - 8);
-			}
-		},
-		[samples],
+	return (
+		<LiveCanvas draw={draw} stores={[resonanceStore, appStore]} deps={[]} />
 	);
-
-	return <StaticCanvas draw={draw} />;
 };
 
 export const TerminalHawkesChart = () => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const history = useSelector(
-		measurementsStore,
-		(state) => state.measurements[focusSymbol]?.hawkes?.values() ?? [],
+	const history = useSelector(measurementsStore, (state) =>
+		flattenMeasurementBuffer(state.measurements[focusSymbol]?.hawkes),
 	);
 	const epoch = measurementEpochs(history).at(-1);
 	const typedValues =
@@ -730,14 +692,14 @@ export const TerminalSignalHeatmap = ({
 		() =>
 			Object.values(readings.measurements).flatMap((sources) =>
 				Object.values(sources).flatMap((history) =>
-					history.values().flatMap((frame) => {
+					flattenMeasurementBuffer(history).flatMap((frame) => {
 						const category = frame.categories?.at(0);
 						const value =
 							kind === "confidence"
 								? category?.confidence
 								: category?.surprisal;
 
-					return typeof value === "number" ? [[value]] : [];
+						return typeof value === "number" ? [[value]] : [];
 					}),
 				),
 			),

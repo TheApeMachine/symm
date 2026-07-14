@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { Circular } from "#/collections/circular";
+import type { MeasurementEpoch } from "#/collections/measurements";
 import type { Measurement } from "#/types/measurement";
 import { buildHeatmapCells, heatmapLabel } from "./heatmap";
 
@@ -23,9 +25,12 @@ const measurement = (
 	},
 });
 
-const history = (values: Measurement[]) => ({
-	values: () => values,
-});
+const history = (values: Measurement[]) => {
+	const buffer = Circular<MeasurementEpoch>(4);
+	buffer.push({ at: values[0]?.at ?? "", readings: values });
+
+	return buffer;
+};
 
 describe("heatmapLabel", () => {
 	it("keeps the base asset from a pair symbol", () => {
@@ -74,7 +79,7 @@ describe("buildHeatmapCells", () => {
 	it("skips symbols without a headline reading for the selected source", () => {
 		const cells = buildHeatmapCells(
 			{
-				"BTC/EUR": { liquidity: history([]) },
+				"BTC/EUR": { liquidity: Circular<MeasurementEpoch>(1) },
 				"ETH/EUR": {
 					fluid: history([measurement("ETH/EUR", 0.5, "strength")]),
 				},

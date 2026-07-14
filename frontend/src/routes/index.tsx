@@ -1,8 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
-import { manifoldStore } from "#/collections/manifold";
-import { resonanceStore } from "#/collections/resonance";
 import { terminalStore } from "#/collections/terminal";
 import { Canvas } from "#/components/dashboard/canvas";
 import { FluidLegend } from "#/components/dashboard/fluid";
@@ -15,19 +13,16 @@ import {
 } from "#/components/terminal/charts";
 import { DashboardRail } from "#/components/terminal/dashboard-rail";
 import { KernelList } from "#/components/terminal/kernel-list";
+import {
+	LiveManifoldMeta,
+	LiveResonanceFooter,
+	LiveResonanceTitle,
+} from "#/components/terminal/live-chart-meta";
 
 const RouteComponent = () => {
-	const app = useSelector(appStore, (state) => state);
-	const terminal = useSelector(terminalStore, (state) => state);
-	const focusSymbol = app.focusSymbol;
-	const manifold = useSelector(
-		manifoldStore,
-		(state) => state.manifold[focusSymbol]?.values().at(-1) ?? null,
-	);
-	const resonance = useSelector(
-		resonanceStore,
-		(state) => state.resonance[focusSymbol]?.values().at(-1) ?? null,
-	);
+	const kernels = useSelector(appStore, (state) => state.kernels);
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
 
 	return (
 		<div className="flex h-full min-w-[1120px] flex-col">
@@ -38,45 +33,30 @@ const RouteComponent = () => {
 				<div className="min-h-0 overflow-auto border-(--line) border-r bg-(--surface)">
 					<ColumnHeader
 						title="Signal kernels"
-						meta={`${app.kernels.length} kernels`}
+						meta={`${kernels.length} kernels`}
 					/>
-					<KernelList sources={app.kernels} />
+					<KernelList sources={kernels} />
 				</div>
 
 				<div className="flex min-h-0 flex-col border-(--line) border-r bg-(--sunken)">
 					<Canvas
 						title="Fluid density field"
 						meta="kinetic L3 · price × log-size × lifetime-CDF"
-						topRight={
-							<div>
-								{manifold === null ? (
-									<div>waiting</div>
-								) : (
-									<>
-										<div>epoch {String(manifold.epoch)}</div>
-										<div>mass {String(manifold.visibleMass)}</div>
-										<div>modes {String(manifold.oscillatorCount)}</div>
-									</>
-								)}
-							</div>
-						}
+						topRight={<LiveManifoldMeta focusSymbol={focusSymbol} />}
 						legend={<FluidLegend />}
 						className="flex-[1.45]"
 					>
-						<TerminalFluidChart contour={terminal.fieldStyle === "Contour"} />
+						<TerminalFluidChart contour={fieldStyle === "Contour"} />
 					</Canvas>
 					<Canvas
-						title={`Predictive coding · ${
-							resonance === null
-								? "waiting"
-								: `${String(resonance.samples)} samples`
-						}`}
-						meta="online hierarchy · sensory reconstruction"
-						footer={
-							resonance === null
-								? "waiting"
-								: `symbol ${String(resonance.symbol)}`
+						title={
+							<>
+								Predictive coding ·{" "}
+								<LiveResonanceTitle focusSymbol={focusSymbol} />
+							</>
 						}
+						meta="online hierarchy · sensory reconstruction"
+						footer={<LiveResonanceFooter focusSymbol={focusSymbol} />}
 						topRight={
 							<div className="flex gap-3 text-left">
 								<span className="inline-flex items-center gap-1.5">

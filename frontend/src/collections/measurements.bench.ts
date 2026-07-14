@@ -1,6 +1,12 @@
 import { bench, describe } from "vitest";
 import type { Measurement } from "#/types/measurement";
-import { measurementEpochs, measurementRaw } from "./measurements";
+import { Circular } from "./circular";
+import type { MeasurementEpoch } from "./measurements";
+import {
+	headlineSeriesFromBuffer,
+	measurementEpochs,
+	measurementRaw,
+} from "./measurements";
 
 const identities = [
 	["event_count", ""],
@@ -55,5 +61,33 @@ describe("measurement epoch readout", () => {
 	bench("groups retained Hawkes records and reads a directional metric", () => {
 		const epochs = measurementEpochs(measurements);
 		measurementRaw(epochs.at(-1) ?? [], "conditional_intensity", "buy");
+	});
+
+	bench("builds one headline sample per retained publish tick", () => {
+		const buffer = Circular<MeasurementEpoch>(50);
+
+		for (let tick = 0; tick < 50; tick += 1) {
+			const at = "2026-07-12T10:00:00Z";
+
+			buffer.push({
+				at,
+				readings: [
+					{
+						source: "leadlag",
+						metric: "strength",
+						symbol: "BTC/USD",
+						stream: "lead_lag",
+						at,
+						raw: tick / 50,
+						normalized: tick / 50,
+						uncertainty: null,
+						validity: { state: "valid", readiness: "observation" },
+						scale: { kind: "observation_window", from: at, through: at },
+					},
+				],
+			});
+		}
+
+		headlineSeriesFromBuffer(buffer, "strength");
 	});
 });

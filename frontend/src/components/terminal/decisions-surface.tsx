@@ -17,6 +17,7 @@ import { Meter } from "@/components/ui/meter";
 import { Panel } from "@/components/ui/panel";
 import { fixed } from "./decision-format";
 import { DecisionSideRail } from "./decision-side";
+import { StrategyDecisionRows } from "./strategy-decisions";
 
 const finite = (value: unknown): number => {
 	const number = typeof value === "number" ? value : Number(value);
@@ -427,6 +428,7 @@ export const DecisionsSurface = () => {
 
 			<div className="min-h-0 overflow-auto border-(--line) border-l bg-(--surface) p-3.5">
 				<DecisionSideRail symbol={current?.symbol} />
+				<StrategyDecisionRows symbol={current?.symbol} />
 			</div>
 		</div>
 	);
