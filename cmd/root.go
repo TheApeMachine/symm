@@ -107,33 +107,13 @@ var (
 			instrument := trader.NewInstrument(api, price, channel)
 			analyzer := logic.NewAnalyzer(booter, channel)
 
-			level3Ingress, err := trader.NewLevel3Ingress(ctx, api)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"failed to create level3 ingress",
-					err,
-				))
-			}
-
-			toxicitySignal, err := toxicity.NewSignal(ctx, api)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"failed to create toxicity signal",
-					err,
-				))
-			}
-
 			planner := strategy.NewPlanner(
 				ctx,
 				channel,
 				[]types.Signal{
 					pumpdump.NewSignal(ctx, api),
 					liquidity.NewSignal(ctx, api),
-					toxicitySignal,
+					toxicity.NewSignal(ctx, api),
 					leadlag.NewSignal(ctx, api),
 					cvd.NewSignal(ctx, api),
 					correlation.NewSignal(ctx, api),
@@ -157,7 +137,6 @@ var (
 				instrument,
 				analyzer,
 				planner,
-				level3Ingress,
 			)
 
 			if err != nil {

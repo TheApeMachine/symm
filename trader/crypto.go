@@ -43,7 +43,6 @@ type Crypto struct {
 	tickBudget time.Duration
 	planner    *strategy.Planner
 	analyzer   *logic.Analyzer
-	level3     *Level3Ingress
 }
 
 /*
@@ -60,7 +59,6 @@ func NewCrypto(
 	instrument *Instrument,
 	analyzer *logic.Analyzer,
 	planner *strategy.Planner,
-	level3 *Level3Ingress,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 

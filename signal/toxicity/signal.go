@@ -7,7 +7,6 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -24,24 +23,16 @@ type Signal struct {
 	priorTouch map[string]touchSnapshot
 }
 
-func NewSignal(ctx context.Context, api *websocket.API) (*Signal, error) {
+func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
-
-	level3, err := NewLevel3(ctx, api)
-
-	if err != nil {
-		cancel()
-
-		return nil, errnie.Error(err)
-	}
 
 	return &Signal{
 		ctx:        ctx,
 		cancel:     cancel,
 		trades:     NewTrade(ctx, api),
-		level3:     level3,
+		level3:     NewLevel3(ctx, api),
 		priorTouch: map[string]touchSnapshot{},
-	}, nil
+	}
 }
 
 type touchSnapshot struct {

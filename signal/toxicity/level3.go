@@ -5,7 +5,6 @@ import (
 	"iter"
 
 	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 )
 
@@ -23,13 +22,9 @@ type Level3 struct {
 /*
 NewLevel3 constructs the toxicity level3 book iterator for api.
 */
-func NewLevel3(ctx context.Context, api *websocket.API) (*Level3, error) {
+func NewLevel3(ctx context.Context, api *websocket.API) *Level3 {
 	if api == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"toxicity: websocket API required",
-			nil,
-		))
+		return nil
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -38,7 +33,7 @@ func NewLevel3(ctx context.Context, api *websocket.API) (*Level3, error) {
 		ctx:    ctx,
 		cancel: cancel,
 		api:    api,
-	}, nil
+	}
 }
 
 /*
