@@ -6,6 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/errnie"
 )
 
 func TestGraphCompose(t *testing.T) {
@@ -31,8 +32,8 @@ func TestGraphCompose(t *testing.T) {
 			Validity:   MeasurementValidity{State: ValidityValid},
 			Scale:      ScaleReference{Kind: ScaleObservationWindow},
 		}
-		graph.AddNode(older)
-		graph.AddNode(newer)
+		So(graph.AddNode(older), ShouldBeNil)
+		So(graph.AddNode(newer), ShouldBeNil)
 
 		graph.Compose()
 
@@ -67,8 +68,8 @@ func TestGraphCompose(t *testing.T) {
 		second.Source = SourcePumpDump
 		second.Stream = PumpDump
 		second.Normalized = &secondValue
-		graph.AddNode(first)
-		graph.AddNode(&second)
+		So(graph.AddNode(first), ShouldBeNil)
+		So(graph.AddNode(&second), ShouldBeNil)
 
 		graph.Compose()
 
@@ -89,12 +90,14 @@ func TestGraphCompose(t *testing.T) {
 		second := *first
 		second.Source = SourcePumpDump
 		second.Stream = PumpDump
-		graph.AddNode(first)
-		graph.AddNode(&second)
+		firstErr := graph.AddNode(first)
+		secondErr := graph.AddNode(&second)
 
 		graph.Compose()
 
 		Convey("It should not equate unnamed observables", func() {
+			So(firstErr, ShouldBeNil)
+			So(secondErr, ShouldBeNil)
 			So(graphEdges(graph), ShouldBeEmpty)
 		})
 	})
@@ -114,12 +117,14 @@ func TestGraphCompose(t *testing.T) {
 		second.Source = SourcePumpDump
 		second.Stream = PumpDump
 		second.Normalized = &nonFinite
-		graph.AddNode(first)
-		graph.AddNode(&second)
+		So(graph.AddNode(first), ShouldBeNil)
+		err := graph.AddNode(&second)
 
 		graph.Compose()
 
-		Convey("It should not claim directional agreement", func() {
+		Convey("It should reject the invalid value before composing", func() {
+			So(err, ShouldNotBeNil)
+			So(errnie.IsValidation(err), ShouldBeTrue)
 			So(graphEdges(graph), ShouldBeEmpty)
 		})
 	})
@@ -130,7 +135,7 @@ func TestGraphCompose(t *testing.T) {
 
 		for index := range 1_000 {
 			at := time.Unix(int64(index+1), 0)
-			graph.AddNode(&Measurement{
+			err := graph.AddNode(&Measurement{
 				Source: SourceHawkes, Stream: Hawkes, Metric: MetricStrength,
 				Subject: SubjectTradeArrivals, Symbol: "BTC/USD",
 				At: at, ObservedFrom: at.Add(-time.Second),
@@ -139,6 +144,7 @@ func TestGraphCompose(t *testing.T) {
 				Validity:   MeasurementValidity{State: ValidityValid},
 				Scale:      ScaleReference{Kind: ScaleObservationWindow},
 			})
+			So(err, ShouldBeNil)
 		}
 
 		graph.Compose()
@@ -181,7 +187,9 @@ func BenchmarkGraphCompose(b *testing.B) {
 		graph := NewGraph("BTC/USD")
 
 		for _, measurement := range measurements {
-			graph.AddNode(measurement)
+			if err := graph.AddNode(measurement); err != nil {
+				b.Fatal(err)
+			}
 		}
 
 		graph.Compose()

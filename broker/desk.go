@@ -149,10 +149,16 @@ func (desk *Desk) Publish() {
 }
 
 func (desk *Desk) marshalSnapshot() []byte {
-	return datura.Map[any]{
+	snapshot := datura.Map[any]{
 		"positions": desk.snapshot(),
-		"balances":  desk.balance.Snapshot(),
-	}.Marshal()
+	}
+	balances := desk.balance.Snapshot()
+
+	if len(balances) > 0 {
+		snapshot["balances"] = balances
+	}
+
+	return snapshot.Marshal()
 }
 
 func (desk *Desk) enqueuePublish() {

@@ -5,9 +5,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/graph"
 	"gonum.org/v1/gonum/graph/multi"
 )
+
+var graphMeasurementValidator = errnie.New()
 
 /*
 EdgeType names how two measurement nodes relate within one symbol epoch.
@@ -107,18 +110,24 @@ func NewGraph(symbol string) *Graph {
 }
 
 /*
-AddNode retains one immutable measurement as a Gonum node when it belongs to
-this graph's symbol and is not already present.
+AddNode validates and retains one immutable measurement as a Gonum node when it
+belongs to this graph's symbol. Repeated evidence is an idempotent no-op.
 */
-func (evidenceGraph *Graph) AddNode(measurement *Measurement) bool {
-	if measurement == nil || measurement.Symbol != evidenceGraph.Symbol {
-		return false
+func (evidenceGraph *Graph) AddNode(measurement *Measurement) error {
+	if err := graphMeasurementValidator.Validate(measurement); err != nil {
+		return err
+	}
+
+	if measurement.Symbol != evidenceGraph.Symbol {
+		return errnie.Err(
+			errnie.Validation, "measurement symbol does not match graph", nil,
+		).With("graph", evidenceGraph.Symbol, "measurement", measurement.Symbol)
 	}
 
 	key := MeasurementKey(measurement)
 
 	if _, exists := evidenceGraph.nodeIDs[key]; exists {
-		return false
+		return nil
 	}
 
 	retained := *measurement
@@ -143,7 +152,7 @@ func (evidenceGraph *Graph) AddNode(measurement *Measurement) bool {
 		evidenceGraph.At = measurement.At
 	}
 
-	return true
+	return nil
 }
 
 /*

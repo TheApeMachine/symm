@@ -1,41 +1,15 @@
 import { bench, describe } from "vitest";
-import type { Action } from "#/collections/actions";
 import { Circular } from "#/collections/circular";
 import { allocationSummary } from "./allocation-side";
 
-const history = <T,>(frame: T) => {
+const history = <T>(frame: T) => {
 	const frames = Circular<T>(8);
 	frames.push(frame);
 
 	return frames;
 };
 
-const action = (symbol: string, score: number): Action => ({
-	id: `1:${symbol}`,
-	tick: 1,
-	symbol,
-	type: "entry",
-	side: "buy",
-	verdict: "allow",
-	reason: "matched_branch",
-	score,
-	entryLine: 0,
-	entryScore: score,
-	entryConfidence: score,
-	fraction: 0.05,
-	price: 100,
-	branchKey: "field/resonance/causal",
-	reasonSource: "causal",
-	reasonCategory: "edge",
-	decisionAt: "2026-07-06T10:00:00Z",
-});
-
 const symbols = Array.from({ length: 24 }, (_, index) => `SYM${index}/USD`);
-const actions = Object.fromEntries(
-	symbols
-		.filter((_, index) => index % 7 === 0)
-		.map((symbol, index) => [symbol, history(action(symbol, 0.65 + index / 100))]),
-);
 const causal = Object.fromEntries(
 	symbols.map((symbol, index) => [
 		symbol,
@@ -43,8 +17,11 @@ const causal = Object.fromEntries(
 			source: "causal",
 			symbol,
 			at: "2026-07-06T10:00:00Z",
-			strength: 0.2 + index / 40,
-			baseline: 0.25,
+			reading: {
+				strength: 0.2 + index / 40,
+				entryBaseline: 0.25,
+				confidence: 0.4,
+			},
 		}),
 	]),
 );
@@ -71,8 +48,9 @@ describe("allocationSummary", () => {
 		allocationSummary({
 			focusSymbol: "BTC/USD",
 			symbols,
-			actions,
-			balances: [{ asset: "USD", balance: 1200, available: 1000, reserved: 50 }],
+			balances: [
+				{ asset: "USD", balance: 1200, available: 1000, reserved: 50 },
+			],
 			causal,
 			manifold,
 			positions: [],

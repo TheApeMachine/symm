@@ -1,10 +1,12 @@
 package types
 
 import (
+	"math"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/errnie"
 	gonumgraph "gonum.org/v1/gonum/graph"
 )
 
@@ -22,12 +24,12 @@ func TestGraphAddNode(t *testing.T) {
 		}
 
 		Convey("When the same measurement is added twice", func() {
-			first := graph.AddNode(measurement)
-			second := graph.AddNode(measurement)
+			firstErr := graph.AddNode(measurement)
+			secondErr := graph.AddNode(measurement)
 
 			Convey("Then only one node is retained", func() {
-				So(first, ShouldBeTrue)
-				So(second, ShouldBeFalse)
+				So(firstErr, ShouldBeNil)
+				So(secondErr, ShouldBeNil)
 				So(graph.Nodes().Len(), ShouldEqual, 1)
 				So(graph.At, ShouldEqual, at)
 			})
@@ -37,12 +39,12 @@ func TestGraphAddNode(t *testing.T) {
 			later := *measurement
 			later.At = at.Add(time.Second)
 
-			first := graph.AddNode(measurement)
-			second := graph.AddNode(&later)
+			firstErr := graph.AddNode(measurement)
+			secondErr := graph.AddNode(&later)
 
 			Convey("Then both evidence instances are retained", func() {
-				So(first, ShouldBeTrue)
-				So(second, ShouldBeTrue)
+				So(firstErr, ShouldBeNil)
+				So(secondErr, ShouldBeNil)
 				So(graph.Nodes().Len(), ShouldEqual, 2)
 			})
 		})
@@ -53,7 +55,7 @@ func TestGraphAddNode(t *testing.T) {
 			measurement.Uncertainty = &MeasurementUncertainty{
 				Lower: 0.4, Upper: 0.6,
 			}
-			graph.AddNode(measurement)
+			So(graph.AddNode(measurement), ShouldBeNil)
 
 			normalized = 0.9
 			measurement.Uncertainty.Lower = 0.8
@@ -69,16 +71,43 @@ func TestGraphAddNode(t *testing.T) {
 
 		Convey("When a foreign symbol measurement is added", func() {
 			foreign := &Measurement{
-				Stream: Hawkes,
-				Metric: MetricArrivalRate,
-				Symbol: "ETH/USD",
-				At:     at,
+				Stream:  Hawkes,
+				Metric:  MetricArrivalRate,
+				Subject: SubjectTradeArrivals,
+				Symbol:  "ETH/USD",
+				At:      at,
 			}
 
-			added := graph.AddNode(foreign)
+			err := graph.AddNode(foreign)
 
 			Convey("Then it is rejected", func() {
-				So(added, ShouldBeFalse)
+				So(err, ShouldNotBeNil)
+				So(errnie.IsValidation(err), ShouldBeTrue)
+				So(graph.Nodes().Len(), ShouldEqual, 0)
+			})
+		})
+
+		Convey("When a normalized value is non-finite", func() {
+			nonFinite := math.NaN()
+			measurement.Normalized = &nonFinite
+
+			err := graph.AddNode(measurement)
+
+			Convey("Then structural validation rejects it before insertion", func() {
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "Normalized: must be finite")
+				So(graph.Nodes().Len(), ShouldEqual, 0)
+			})
+		})
+
+		Convey("When the evidence interval runs backwards", func() {
+			measurement.ObservedFrom = at.Add(time.Second)
+
+			err := graph.AddNode(measurement)
+
+			Convey("Then cross-field validation rejects it before insertion", func() {
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "evidence interval ends before it starts")
 				So(graph.Nodes().Len(), ShouldEqual, 0)
 			})
 		})
@@ -106,8 +135,8 @@ func TestGraphRelate(t *testing.T) {
 			At:      at,
 		}
 
-		graph.AddNode(from)
-		graph.AddNode(to)
+		So(graph.AddNode(from), ShouldBeNil)
+		So(graph.AddNode(to), ShouldBeNil)
 
 		Convey("When they are linked with temporal context", func() {
 			linked := graph.Relate(
@@ -185,6 +214,8 @@ func BenchmarkGraphAddNode(b *testing.B) {
 	}
 
 	for b.Loop() {
-		graph.AddNode(measurement)
+		if err := graph.AddNode(measurement); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

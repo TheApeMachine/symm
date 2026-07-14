@@ -79,7 +79,13 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 	}
 
 	for _, measurement := range thesis.Measurements {
-		if measurement == nil || measurement.Symbol == "" {
+		if measurement == nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"analyzer received a nil measurement",
+				nil,
+			))
+
 			continue
 		}
 
@@ -87,10 +93,15 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 
 		if evidenceGraph == nil {
 			evidenceGraph = types.NewGraph(measurement.Symbol)
-			thesis.Graphs[measurement.Symbol] = evidenceGraph
 		}
 
-		evidenceGraph.AddNode(measurement)
+		if err := evidenceGraph.AddNode(measurement); err != nil {
+			errnie.Error(err)
+
+			continue
+		}
+
+		thesis.Graphs[measurement.Symbol] = evidenceGraph
 	}
 
 	for _, evidenceGraph := range thesis.Graphs {

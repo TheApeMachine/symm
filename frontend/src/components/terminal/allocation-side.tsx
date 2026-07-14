@@ -1,10 +1,14 @@
-import type { Action } from "#/collections/actions";
 import type { Balance } from "#/collections/balances";
 import type { CausalFrame } from "#/collections/causal";
 import type { ManifoldFrame } from "#/collections/manifold";
 import type { Order } from "#/collections/orders";
 import type { Position } from "#/collections/positions";
 import type { ResonanceFrame } from "#/collections/resonance";
+import {
+	causalConfidence,
+	causalEntryBaseline,
+	causalStrength,
+} from "#/components/terminal/causal-view";
 
 import { Meter } from "@/components/ui/meter";
 import { Panel } from "@/components/ui/panel";
@@ -14,7 +18,6 @@ type History<T> = { values: () => T[] };
 type AllocationInput = {
 	focusSymbol: string;
 	symbols: string[];
-	actions: Record<string, History<Action>>;
 	balances: Balance[];
 	causal: Record<string, History<CausalFrame>>;
 	manifold: Record<string, History<ManifoldFrame>>;
@@ -23,7 +26,6 @@ type AllocationInput = {
 };
 
 type AllocationRow = {
-	action?: Action;
 	allocated: boolean;
 	dotColor: string;
 	inPlay: boolean;
@@ -95,7 +97,6 @@ const balanceAmount = (
 export const allocationSummary = ({
 	focusSymbol,
 	symbols,
-	actions,
 	balances,
 	causal,
 	manifold,
@@ -103,7 +104,6 @@ export const allocationSummary = ({
 	resonance,
 }: AllocationInput): AllocationSummary => {
 	const known = new Set([
-		...Object.keys(actions),
 		...Object.keys(causal),
 		...Object.keys(manifold),
 		...Object.keys(resonance),
@@ -119,24 +119,19 @@ export const allocationSummary = ({
 		.filter((position) => quoteAsset(position.symbol) === quote)
 		.reduce((sum, position) => sum + position.qty * position.mark, 0);
 	const rows = orderedSymbols.map((symbol) => {
-		const action = latest(actions[symbol]);
 		const causalFrame = latest(causal[symbol]);
 		const manifoldFrame = latest(manifold[symbol]);
 		const resonanceFrame = latest(resonance[symbol]);
 		const support = [causalFrame, manifoldFrame, resonanceFrame].filter(
 			Boolean,
 		).length;
-		const score =
-			action?.entryScore ??
-			causalFrame?.strength ??
+		const thesis =
 			Math.min(
 				probability(resonanceFrame?.confidence),
-				probability(causalFrame?.confidence),
-			);
-		const thesis = probability(score) * Math.sqrt(Math.max(1, support));
+				probability(causalConfidence(causalFrame)),
+			) * Math.sqrt(Math.max(1, support));
 
 		return {
-			action,
 			allocated: false,
 			dotColor: "var(--f4)",
 			edge: 0,
@@ -144,7 +139,7 @@ export const allocationSummary = ({
 			edgeWidth: 0,
 			inPlay:
 				support >= 2 &&
-				finite(causalFrame?.strength) >= finite(causalFrame?.baseline),
+				causalStrength(causalFrame) >= causalEntryBaseline(causalFrame),
 			notional: 0,
 			share: 0,
 			support,
@@ -179,7 +174,7 @@ export const allocationSummary = ({
 			row.edge > 0 && row.thesis + sumPositive > 0
 				? row.edge / (row.thesis + sumPositive)
 				: 0;
-		row.allocated = row.action?.verdict === "allow" && row.edge > 0;
+		row.allocated = row.edge > 0;
 		row.notional = row.allocated ? deployable * row.share : 0;
 		row.inPlay = row.inPlay || row.edge > 0;
 		row.xPct = pct(row.thesis);
@@ -208,7 +203,7 @@ export const allocationSummary = ({
 };
 
 const visibleRows = (alloc: AllocationSummary) =>
-	alloc.rows.filter((row) => row.allocated || row.inPlay || row.action);
+	alloc.rows.filter((row) => row.allocated || row.inPlay);
 
 export const AllocationMain = ({ alloc }: { alloc: AllocationSummary }) => {
 	const rows = visibleRows(alloc);
@@ -394,7 +389,7 @@ export const AllocationSidePanel = ({
 				<div className="flex flex-col gap-[9px]">
 					{rows.length === 0 ? (
 						<div className="border-(--line) border-t pt-[11px] font-mono text-[9.5px] text-(--f4)">
-							waiting for admitted backend actions
+							no symbols above entry edge
 						</div>
 					) : null}
 					{rows.map((row) => (

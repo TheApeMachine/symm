@@ -405,6 +405,17 @@ func (slot *Slot) step(
 		return slot.markFailed(at, SolverFailed, epoch, transform.Version)
 	}
 
+	particles, err := readParticles(slot.config, slot.solver, len(oscillators))
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"logic manifold: particle read failed",
+			err,
+		))
+		return slot.markFailed(at, SolverFailed, epoch, transform.Version)
+	}
+
 	conservation := slot.depositor.Conservation(accounting, cohorts)
 	pressureTensor := ReferencePressureTensor(slot.config, cohorts)
 	touchBand := slot.config.DomainX / float64(slot.config.GridX)
@@ -423,6 +434,12 @@ func (slot *Slot) step(
 	state.PressureTensor = pressureTensor
 	state.StressAnisotropy = stressAnisotropy(pressureTensor)
 	state.OscillatorCount = len(oscillators)
+	state.Grid = pmanifold.Grid{
+		X: slot.config.GridX,
+		Y: slot.config.GridY,
+		Z: slot.config.GridZ,
+	}
+	state.Particles = particles
 
 	gasReady := state.GasReady()
 	var producedForecast *types.Forecasts

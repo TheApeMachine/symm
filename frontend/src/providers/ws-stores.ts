@@ -1,5 +1,4 @@
 import { batch } from "@tanstack/store";
-import { actionStore } from "#/collections/actions";
 import { balancesStore } from "#/collections/balances";
 import { causalStore } from "#/collections/causal";
 import { cognitiveStore } from "#/collections/cognitive";
@@ -26,14 +25,12 @@ type FrameStore = {
 };
 
 export const frameStores = {
-	actions: actionStore,
 	balances: balancesStore,
 	causal: causalStore,
 	cognitive: cognitiveStore,
 	decisions: decisionStore,
 	diagnostics: diagnosticsStore,
 	findings: findingsStore,
-	intents: actionStore,
 	lifecycle: lifecycleStore,
 	tradeJournal: tradeJournalStore,
 	positions: positionsStore,

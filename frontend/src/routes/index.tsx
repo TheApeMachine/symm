@@ -41,7 +41,7 @@ const RouteComponent = () => {
 				<div className="flex min-h-0 flex-col border-(--line) border-r bg-(--sunken)">
 					<Canvas
 						title="Fluid density field"
-						meta="kinetic L3 · price × log-size × lifetime-CDF"
+						meta="navier–stokes · vol-rank × Δ · whale carriers"
 						topRight={<LiveManifoldMeta focusSymbol={focusSymbol} />}
 						legend={<FluidLegend />}
 						className="flex-[1.45]"

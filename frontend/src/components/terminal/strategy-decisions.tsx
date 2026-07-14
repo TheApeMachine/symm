@@ -1,5 +1,8 @@
 import { useSelector } from "@tanstack/react-store";
-import { decisionStore } from "#/collections/decisions";
+import {
+	decisionStore,
+	latestStrategyDecisions,
+} from "#/collections/decisions";
 import { fixed } from "#/components/terminal/decision-format";
 import { TerminalSection } from "#/components/terminal/panels";
 import type { StrategyDecision } from "#/types/thesis";
@@ -17,7 +20,9 @@ StrategyDecisionRows renders backend strategy decisions beside gate verdicts so
 utility, alternatives, and cause remain visible without inferring them locally.
 */
 export const StrategyDecisionRows = ({ symbol }: { symbol?: string }) => {
-	const decisions = useSelector(decisionStore, (state) => state.decisions);
+	const decisions = useSelector(decisionStore, (state) =>
+		latestStrategyDecisions(state.decisions),
+	);
 	const rows = symbol
 		? decisions.filter((decision) => decision.symbol === symbol)
 		: decisions;

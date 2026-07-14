@@ -14,12 +14,19 @@ import {
 	drawGrid,
 	drawMatrix,
 	drawPolyline,
-	heatColor,
 	resizeCanvas,
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
-import { LiveCanvas } from "#/components/terminal/live-canvas";
+import {
+	drawFluidField,
+	drawFluidWhaleCarriers,
+	isFluidFieldMatrix,
+	type TerminalFluidParticle,
+} from "#/components/terminal/fluid-field";
+import { MockupFluidCanvas } from "#/components/terminal/mockup-fluid-canvas";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+
+export type { TerminalFluidParticle };
 
 type Draw = (
 	context: CanvasRenderingContext2D,
@@ -115,22 +122,6 @@ const finiteNumber = (value: unknown): number | null =>
 const stringValue = (value: unknown): string =>
 	typeof value === "string" ? value.trim() : "";
 
-export type TerminalFluidParticle = {
-	source: string;
-	role: string;
-	cellX: number;
-	cellY: number;
-	cellZ: number;
-	phase: number;
-	omega: number;
-	amplitude: number;
-	heat: number;
-	velX: number;
-	velY: number;
-	velZ: number;
-	speed: number;
-};
-
 const terminalFluidParticleFromRecord = (
 	record: Record<string, unknown>,
 ): TerminalFluidParticle | null => {
@@ -185,53 +176,7 @@ export const terminalFluidParticlesFromFrame = (
 		return particle === null ? [] : [particle];
 	});
 
-const matrixExtent = (matrix: number[][]): { min: number; max: number } => {
-	let min = Number.POSITIVE_INFINITY;
-	let max = Number.NEGATIVE_INFINITY;
-
-	for (const row of matrix) {
-		for (const value of row) {
-			if (!Number.isFinite(value)) {
-				continue;
-			}
-
-			min = Math.min(min, value);
-			max = Math.max(max, value);
-		}
-	}
-
-	if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
-		return { min: 0, max: 1 };
-	}
-
-	return { min, max };
-};
-
-const matrixSample = (matrix: number[][], x: number, y: number): number => {
-	const rows = matrix.length;
-	const columns = matrix[0]?.length ?? 0;
-
-	if (rows === 0 || columns === 0) {
-		return 0;
-	}
-
-	const x0 = Math.max(0, Math.min(columns - 1, Math.floor(x)));
-	const y0 = Math.max(0, Math.min(rows - 1, Math.floor(y)));
-	const x1 = Math.max(0, Math.min(columns - 1, x0 + 1));
-	const y1 = Math.max(0, Math.min(rows - 1, y0 + 1));
-	const tx = x - x0;
-	const ty = y - y0;
-	const a = matrix[y0]?.[x0] ?? 0;
-	const b = matrix[y0]?.[x1] ?? a;
-	const c = matrix[y1]?.[x0] ?? a;
-	const d = matrix[y1]?.[x1] ?? c;
-	const top = a + (b - a) * tx;
-	const bottom = c + (d - c) * tx;
-
-	return top + (bottom - top) * ty;
-};
-
-const gridDimensions = (
+const fluidGridDimensions = (
 	frame: Record<string, unknown> | null | undefined,
 	matrix: number[][],
 ): { columns: number; rows: number } => {
@@ -300,130 +245,28 @@ export const TerminalFluidChart = ({
 				manifoldStore.state.manifold[focusSymbol]?.values().at(-1) ?? null;
 			const matrix = frameMatrix(frame);
 			const particles = terminalFluidParticlesFromFrame(frame);
+			const fieldMatrix = isFluidFieldMatrix(matrix) ? matrix : [];
+			const { columns, rows } = fluidGridDimensions(frame, fieldMatrix);
 
-			if (matrix.length === 0 && particles.length === 0) {
+			if (fieldMatrix.length === 0 && particles.length === 0) {
 				drawWaiting(context, width, height, "waiting for manifold field");
 				return;
 			}
 
-			clearCanvas(context, width, height);
-
-			const { columns, rows } = gridDimensions(frame, matrix);
-
-			if (columns === 0 || rows === 0) {
-				return;
-			}
-
-			if (matrix.length > 0) {
-				const matrixColumns = matrix[0]?.length ?? 0;
-				const matrixRows = matrix.length;
-				const { min, max } = matrixExtent(matrix);
-				const span = max - min || 1;
-				const sampleSize = 2;
-
-				for (let y = 0; y < height; y += sampleSize) {
-					for (let x = 0; x < width; x += sampleSize) {
-						const sourceX = (x / Math.max(width - 1, 1)) * (matrixColumns - 1);
-						const sourceY = (y / Math.max(height - 1, 1)) * (matrixRows - 1);
-						const value = matrixSample(matrix, sourceX, sourceY);
-						let normalized = (value - min) / span;
-
-						normalized = Math.max(0, Math.min(1, Math.sqrt(normalized)));
-
-						if (contour) {
-							normalized = Math.floor(normalized / 0.12) * 0.12;
-						}
-
-						context.fillStyle = heatColor(normalized);
-						context.fillRect(x, y, sampleSize + 1, sampleSize + 1);
-					}
-				}
+			if (fieldMatrix.length > 0) {
+				drawFluidField(context, width, height, fieldMatrix, contour);
 			} else {
+				clearCanvas(context, width, height);
 				drawGrid(context, width, height);
 			}
 
-			const maxAmplitude = Math.max(
-				1,
-				...particles.map((particle) => Math.abs(particle.amplitude)),
-			);
-			const maxHeat = Math.max(
-				1,
-				...particles.map((particle) => Math.abs(particle.heat)),
-			);
-			const maxSpeed = Math.max(
-				1,
-				...particles.map((particle) => Math.abs(particle.speed)),
-			);
-			const cellWidth = width / Math.max(columns, 1);
-			const cellHeight = height / Math.max(rows, 1);
-			const cellSpan = Math.hypot(cellWidth, cellHeight);
-			const occupancy = Math.max(1, particles.length);
-
-			for (const particle of particles) {
-				const x = (particle.cellX / Math.max(columns - 1, 1)) * width;
-				const y = (particle.cellZ / Math.max(rows - 1, 1)) * height;
-				const velocity = Math.hypot(particle.velX, particle.velZ);
-				const directionX =
-					velocity > 0 ? particle.velX / velocity : Math.cos(particle.phase);
-				const directionY =
-					velocity > 0 ? particle.velZ / velocity : Math.sin(particle.phase);
-				const role = particle.role.toLowerCase();
-				const whale = role.includes("whale");
-				const amplitude = Math.abs(particle.amplitude) / maxAmplitude;
-				const heat = Math.abs(particle.heat) / maxHeat;
-				const speed = Math.abs(particle.speed) / maxSpeed;
-				const length =
-					cellSpan * (1 + (speed * Math.max(columns, rows)) / occupancy);
-				const radius = cellSpan * (0.75 + amplitude + heat);
-				const core = Math.max(
-					1.6,
-					Math.min(3.2, cellSpan * (0.08 + amplitude)),
-				);
-				const color = whale ? TERMINAL_COLORS.amber : TERMINAL_COLORS.cyan;
-				const trail = context.createLinearGradient(
-					x - directionX * length,
-					y - directionY * length,
-					x + directionX * length,
-					y + directionY * length,
-				);
-
-				trail.addColorStop(0, "rgba(0,0,0,0)");
-				trail.addColorStop(
-					0.5,
-					whale ? "rgba(232, 163, 61, 0.62)" : "rgba(127, 186, 203, 0.56)",
-				);
-				trail.addColorStop(1, "rgba(0,0,0,0)");
-
-				context.save();
-				context.globalCompositeOperation = "lighter";
-				context.strokeStyle = trail;
-				context.lineWidth = Math.max(1.4, cellSpan * (0.1 + amplitude));
-				context.beginPath();
-				context.moveTo(x - directionX * length, y - directionY * length);
-				context.lineTo(x + directionX * length, y + directionY * length);
-				context.stroke();
-
-				const glow = context.createRadialGradient(x, y, 0, x, y, radius);
-
-				glow.addColorStop(0, color);
-				glow.addColorStop(1, "rgba(0,0,0,0)");
-				context.fillStyle = glow;
-				context.beginPath();
-				context.arc(x, y, radius, 0, Math.PI * 2);
-				context.fill();
-				context.restore();
-
-				context.fillStyle = TERMINAL_COLORS.foreground;
-				context.beginPath();
-				context.arc(x, y, core, 0, Math.PI * 2);
-				context.fill();
-			}
+			drawFluidWhaleCarriers(context, width, height, particles, columns, rows);
 		},
 		[contour],
 	);
 
 	return (
-		<LiveCanvas
+		<MockupFluidCanvas
 			draw={draw}
 			stores={[manifoldStore, appStore]}
 			deps={[contour]}

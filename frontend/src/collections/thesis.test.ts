@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decisionStore } from "./decisions";
+import { decisionStore, latestStrategyDecisions } from "./decisions";
 import { findingsStore } from "./findings";
 import { lifecycleStore } from "./lifecycle";
 import { tradeJournalStore } from "./trade-journal";
@@ -38,8 +38,15 @@ describe("thesis frame stores", () => {
 			},
 		]);
 
-		expect(decisionStore.state.decisions).toHaveLength(1);
-		expect(decisionStore.state.decisions[0]?.action).toBe("enter");
+		expect(latestStrategyDecisions(decisionStore.state.decisions)).toHaveLength(
+			1,
+		);
+		expect(
+			latestStrategyDecisions(decisionStore.state.decisions)[0]?.action,
+		).toBe("enter");
+		expect(
+			decisionStore.state.decisions["BTC/USD"]?.values().at(-1)?.action,
+		).toBe("enter");
 	});
 
 	it("merges backend lifecycle maps", () => {

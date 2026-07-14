@@ -1,10 +1,8 @@
 import { type RefObject, useRef } from "react";
-import { actionStore } from "#/collections/actions";
 import { appStore } from "#/collections/app";
 import { type Balance, balancesStore } from "#/collections/balances";
 import { type Position, positionsStore } from "#/collections/positions";
 import { tickStore } from "#/collections/tick";
-import { whyLabel } from "#/components/terminal/decision-format";
 import { walletMetrics } from "#/components/terminal/panels";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 
@@ -31,23 +29,11 @@ export const LivePulseTicker = () => {
 	const candRef = useRef<HTMLSpanElement>(null);
 	const openRef = useRef<HTMLSpanElement>(null);
 	const quotesRef = useRef<HTMLSpanElement>(null);
-	const rejectRef = useRef<HTMLSpanElement>(null);
 
 	useDirectStorePaint(
 		() => {
 			const tick = tickStore.state.frame;
 			const online = appStore.state.online;
-			const denied = Object.values(actionStore.state.actions)
-				.flatMap((actions) => actions.values())
-				.filter((action) => action.verdict !== "allow");
-			const latestDenied = denied.at(-1);
-			const rejectText =
-				latestDenied === undefined
-					? ""
-					: `reject ${String(latestDenied.reasonSource)} ${whyLabel(
-							latestDenied.reason,
-						)} x${denied.length}`;
-
 			setText(tickRef.current, `#${String(tick?.count ?? 0)}`);
 			setText(
 				phaseRef.current,
@@ -62,13 +48,8 @@ export const LivePulseTicker = () => {
 					? `${String(tick.quotes_ready)}/${String(tick.quotes_total)}`
 					: "—",
 			);
-
-			if (rejectRef.current !== null) {
-				rejectRef.current.textContent = rejectText;
-				rejectRef.current.style.display = rejectText === "" ? "none" : "";
-			}
 		},
-		[tickStore, appStore, actionStore],
+		[tickStore, appStore],
 		[],
 	);
 
@@ -90,13 +71,14 @@ export const LivePulseTicker = () => {
 			<span>
 				quotes <span ref={quotesRef} />
 			</span>
-			<span
-				ref={rejectRef}
-				className="ml-auto text-(--down)"
-				style={{ display: "none" }}
-			/>
 		</div>
 	);
+};
+
+const setVisibility = (element: HTMLElement | null, visible: boolean) => {
+	if (element !== null) {
+		element.style.display = visible ? "" : "none";
+	}
 };
 
 type WalletPaintRefs = {
@@ -104,6 +86,7 @@ type WalletPaintRefs = {
 	available: HTMLSpanElement | null;
 	reserved: HTMLSpanElement | null;
 	equity: HTMLSpanElement | null;
+	lambo: HTMLImageElement | null;
 	tick: HTMLSpanElement | null;
 	open: HTMLSpanElement | null;
 };
@@ -132,6 +115,7 @@ const paintWalletMetrics = (
 	setText(refs.reserved, reservedValue);
 	setText(refs.equity, equityValue);
 	setTone(refs.equity, inProfit ? "var(--up)" : "var(--down)");
+	setVisibility(refs.lambo, inProfit);
 	setText(refs.tick, tick?.count !== undefined ? String(tick.count) : "…");
 	setText(refs.open, String(tick?.open ?? 0));
 };
@@ -165,6 +149,7 @@ export const LiveWalletMetrics = () => {
 	const availableRef = useRef<HTMLSpanElement>(null);
 	const reservedRef = useRef<HTMLSpanElement>(null);
 	const equityRef = useRef<HTMLSpanElement>(null);
+	const lamboRef = useRef<HTMLImageElement>(null);
 	const tickRef = useRef<HTMLSpanElement>(null);
 
 	useDirectStorePaint(
@@ -175,6 +160,7 @@ export const LiveWalletMetrics = () => {
 					available: availableRef.current,
 					reserved: reservedRef.current,
 					equity: equityRef.current,
+					lambo: lamboRef.current,
 					tick: tickRef.current,
 					open: null,
 				},
@@ -190,6 +176,14 @@ export const LiveWalletMetrics = () => {
 		<>
 			<LiveTopMetric label="Cash" valueRef={cashRef} strong />
 			<div className="relative flex flex-col items-end gap-px">
+				<img
+					ref={lamboRef}
+					src="/lambo.png"
+					alt=""
+					aria-hidden="true"
+					className="pointer-events-none absolute -top-1.5 right-0 h-11 opacity-60"
+					style={{ display: "none" }}
+				/>
 				<span className="text-[9px] text-(--f4) uppercase tracking-widest">
 					Equity
 				</span>

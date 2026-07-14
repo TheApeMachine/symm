@@ -7,6 +7,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
+	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 )
 
 func TestStateSpreadReturn(t *testing.T) {
@@ -29,6 +30,27 @@ func TestStateMarshalJSON(t *testing.T) {
 			At:            time.Unix(1, 0).UTC(),
 			Epoch:         2,
 			MidPrice:      100,
+			Grid: pmanifold.Grid{
+				X: 64,
+				Y: 3,
+				Z: 38,
+			},
+			Particles: []pmanifold.Particle{
+				{
+					Role:      "whale_carrier",
+					CellX:     7,
+					CellY:     1,
+					CellZ:     5,
+					Phase:     0.4,
+					Omega:     1.7,
+					Amplitude: 0.9,
+					Heat:      1.1,
+					VelX:      0.1,
+					VelY:      0.2,
+					VelZ:      0.3,
+					Speed:     0.374,
+				},
+			},
 		}
 
 		frame, err := sonic.Marshal(state)
@@ -43,6 +65,8 @@ func TestStateMarshalJSON(t *testing.T) {
 			So(decoded["epoch"], ShouldEqual, float64(2))
 			So(decoded["midPrice"], ShouldEqual, float64(100))
 			So(decoded["rho"], ShouldNotBeNil)
+			So(decoded["grid"], ShouldNotBeNil)
+			So(decoded["particles"], ShouldNotBeNil)
 		})
 	})
 }

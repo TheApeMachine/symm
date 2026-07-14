@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { actionStore } from "#/collections/actions";
 import { appStore } from "#/collections/app";
 import { balancesStore } from "#/collections/balances";
 import { causalStore } from "#/collections/causal";
@@ -41,7 +40,6 @@ const RouteComponent = () => {
 	const alloc = allocationSummary({
 		focusSymbol: useSelector(appStore, (state) => state.focusSymbol),
 		symbols: useSelector(instrumentsStore, (state) => state.symbols),
-		actions: useSelector(actionStore, (state) => state.actions),
 		balances: useSelector(balancesStore, (state) => state.balances),
 		causal: useSelector(causalStore, (state) => state.causal),
 		manifold: useSelector(manifoldStore, (state) => state.manifold),

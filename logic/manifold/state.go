@@ -13,30 +13,32 @@ and strategy layers.
 */
 type State struct {
 	FieldSnapshot
-	Source               string         `json:"source"`
-	Symbol               string         `json:"symbol"`
-	At                   time.Time      `json:"at"`
-	Epoch                uint64         `json:"epoch"`
-	ScaleVersion         uint64         `json:"scaleVersion"`
-	Ready                bool           `json:"ready"`
-	InvalidReason        InvalidReason  `json:"invalidReason"`
-	BestBid              float64        `json:"bestBid"`
-	BestAsk              float64        `json:"bestAsk"`
-	BestBidQuantity      float64        `json:"bestBidQuantity"`
-	BestAskQuantity      float64        `json:"bestAskQuantity"`
-	MidPrice             float64        `json:"midPrice"`
-	VisibleMass          float64        `json:"visibleMass"`
-	ConservationResidual float64        `json:"conservationResidual"`
-	ConservationBound    float64        `json:"conservationBound"`
-	BidTouchDensity      float64        `json:"bidTouchDensity"`
-	AskTouchDensity      float64        `json:"askTouchDensity"`
-	StressAnisotropy     float64        `json:"stressAnisotropy"`
-	DeltaT               float64        `json:"deltaT"`
-	Subdivisions         int            `json:"subdivisions"`
-	PriceScale           float64        `json:"priceScale"`
-	SizeScale            float64        `json:"sizeScale"`
-	PressureTensor       PressureTensor `json:"pressureTensor"`
-	OscillatorCount      int            `json:"oscillatorCount"`
+	Source               string               `json:"source"`
+	Symbol               string               `json:"symbol"`
+	At                   time.Time            `json:"at"`
+	Epoch                uint64               `json:"epoch"`
+	ScaleVersion         uint64               `json:"scaleVersion"`
+	Ready                bool                 `json:"ready"`
+	InvalidReason        InvalidReason        `json:"invalidReason"`
+	BestBid              float64              `json:"bestBid"`
+	BestAsk              float64              `json:"bestAsk"`
+	BestBidQuantity      float64              `json:"bestBidQuantity"`
+	BestAskQuantity      float64              `json:"bestAskQuantity"`
+	MidPrice             float64              `json:"midPrice"`
+	VisibleMass          float64              `json:"visibleMass"`
+	ConservationResidual float64              `json:"conservationResidual"`
+	ConservationBound    float64              `json:"conservationBound"`
+	BidTouchDensity      float64              `json:"bidTouchDensity"`
+	AskTouchDensity      float64              `json:"askTouchDensity"`
+	StressAnisotropy     float64              `json:"stressAnisotropy"`
+	DeltaT               float64              `json:"deltaT"`
+	Subdivisions         int                  `json:"subdivisions"`
+	PriceScale           float64              `json:"priceScale"`
+	SizeScale            float64              `json:"sizeScale"`
+	PressureTensor       PressureTensor       `json:"pressureTensor"`
+	OscillatorCount      int                  `json:"oscillatorCount"`
+	Grid                 pmanifold.Grid       `json:"grid"`
+	Particles            []pmanifold.Particle `json:"particles"`
 	pmanifold.Reading
 }
 

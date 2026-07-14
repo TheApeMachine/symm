@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeBalances } from "./balances";
+import { balancesStore, normalizeBalances } from "./balances";
 
 describe("normalizeBalances", () => {
 	it("normalizes the complete quote balance snapshot", () => {
@@ -36,5 +36,26 @@ describe("normalizeBalances", () => {
 				{ asset: "USD", balance: null, available: 1100, reserved: 100 },
 			]),
 		).toThrow("balances[0].balance");
+	});
+
+	it("retains the last quote snapshot when a bundled desk frame omits balances", () => {
+		balancesStore.actions.updateFrame([
+			{
+				asset: "USD",
+				balance: 1200,
+				available: 1100,
+				reserved: 100,
+			},
+		]);
+		balancesStore.actions.updateFrame([]);
+
+		expect(balancesStore.state.balances).toEqual([
+			{
+				asset: "USD",
+				balance: 1200,
+				available: 1100,
+				reserved: 100,
+			},
+		]);
 	});
 });

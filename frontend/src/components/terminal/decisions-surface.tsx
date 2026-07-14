@@ -1,8 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
 import { useState } from "react";
-import { actionStore } from "#/collections/actions";
 import { appStore } from "#/collections/app";
 import { causalStore } from "#/collections/causal";
+import {
+	decisionStore,
+	latestStrategyDecisions,
+} from "#/collections/decisions";
 import { instrumentsStore } from "#/collections/instruments";
 import { manifoldStore } from "#/collections/manifold";
 import { measurementsStore } from "#/collections/measurements";
@@ -11,12 +14,23 @@ import {
 	verdictBadgeClassName,
 	verdictToVariant,
 } from "#/components/terminal/badge-tone";
+import {
+	causalAssociation,
+	causalCategory,
+	causalConfidence,
+	causalContagion,
+	causalEntryBaseline,
+	causalIntervention,
+	causalNoise,
+	causalRatio,
+	causalStrength,
+} from "#/components/terminal/causal-view";
 import { cn } from "#/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Meter } from "@/components/ui/meter";
 import { Panel } from "@/components/ui/panel";
 import { fixed } from "./decision-format";
-import { DecisionSideRail } from "./decision-side";
+import { DecisionSideRail, LiveDecisionsEntryLine } from "./decision-side";
 import { StrategyDecisionRows } from "./strategy-decisions";
 
 const finite = (value: unknown): number => {
@@ -28,10 +42,35 @@ const finite = (value: unknown): number => {
 const ratio = (value: unknown): number =>
 	Math.min(1, Math.max(0, finite(value)));
 
+const strategyVerdict = (
+	action: string | undefined,
+	inPlay: boolean,
+): string => {
+	if (action === "enter" || action === "exit") {
+		return "allow";
+	}
+
+	if (inPlay) {
+		return "blocked";
+	}
+
+	return "below";
+};
+
 export const DecisionsSurface = () => {
 	const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const actionsBySymbol = useSelector(actionStore, (state) => state.actions);
+	const strategyDecisions = useSelector(decisionStore, (state) =>
+		latestStrategyDecisions(state.decisions),
+	);
+	const decisionsBySymbol = strategyDecisions.reduce(
+		(out, decision) => {
+			out[decision.symbol] = decision;
+
+			return out;
+		},
+		{} as Record<string, (typeof strategyDecisions)[number]>,
+	);
 	const causalBySymbol = useSelector(causalStore, (state) => state.causal);
 	const manifoldBySymbol = useSelector(
 		manifoldStore,
@@ -49,24 +88,13 @@ export const DecisionsSurface = () => {
 		instrumentsStore,
 		(state) => state.symbols,
 	);
-	const allowedActions = Object.values(actionsBySymbol).flatMap((history) =>
-		history.values(),
-	);
-	const allowedBySymbol = allowedActions.reduce(
-		(out, action) => {
-			out[action.symbol] = action;
-
-			return out;
-		},
-		{} as Record<string, (typeof allowedActions)[number]>,
-	);
 	const symbolSet = new Set(
 		[
 			...Object.keys(causalBySymbol),
 			...Object.keys(resonanceBySymbol),
 			...Object.keys(manifoldBySymbol),
 			...Object.keys(measurementsBySymbol),
-			...Object.keys(actionsBySymbol),
+			...Object.keys(decisionsBySymbol),
 		].filter((symbol) => symbol.includes("/")),
 	);
 	const symbols = [
@@ -76,21 +104,21 @@ export const DecisionsSurface = () => {
 			.sort(),
 	];
 	const candidates = symbols.map((symbol) => {
-		const action = allowedBySymbol[symbol];
+		const decision = decisionsBySymbol[symbol];
 		const causal = causalBySymbol[symbol]?.values().at(-1);
 		const resonance = resonanceBySymbol[symbol]?.values().at(-1);
 		const manifold = manifoldBySymbol[symbol]?.values().at(-1);
-		const causalStrength = finite(causal?.strength);
-		const causalBaseline = finite(causal?.baseline);
+		const causalStrengthValue = causalStrength(causal);
+		const causalBaselineValue = causalEntryBaseline(causal);
 		const resonanceConfidence = ratio(resonance?.confidence);
-		const causalConfidence = ratio(causal?.confidence);
+		const causalConfidenceValue = causalRatio(causalConfidence(causal));
 		const score =
-			action?.score ?? Math.min(resonanceConfidence, causalConfidence);
+			decision?.utility ?? Math.min(resonanceConfidence, causalConfidenceValue);
 		const support = [causal, resonance, manifold].filter(Boolean).length;
-		const inPlay = support >= 2 && causalStrength >= causalBaseline;
-		const verdict = action?.verdict ?? (inPlay ? "blocked" : "below");
+		const inPlay = support >= 2 && causalStrengthValue >= causalBaselineValue;
+		const verdict = strategyVerdict(decision?.action, inPlay);
 		const why =
-			action?.reason ??
+			decision?.reason ??
 			(causal === undefined
 				? "waiting causal"
 				: resonance === undefined
@@ -98,11 +126,11 @@ export const DecisionsSurface = () => {
 					: manifold === undefined
 						? "waiting manifold"
 						: inPlay
-							? "not admitted"
+							? "below utility"
 							: "below line");
 
 		return {
-			action,
+			decision,
 			causal,
 			manifold,
 			resonance,
@@ -113,14 +141,14 @@ export const DecisionsSurface = () => {
 			verdict,
 			why,
 			bars: [
-				{ src: "causal", value: causalStrength },
+				{ src: "causal", value: causalStrengthValue },
 				{ src: "predict", value: finite(resonance?.confidence) },
 				{ src: "manifold", value: finite(manifold?.momentum) },
 			].filter((bar) => bar.value !== 0),
 			waterfall: [
 				{
 					src: "causal",
-					delta: causalStrength - causalBaseline,
+					delta: causalStrengthValue - causalBaselineValue,
 				},
 				{
 					src: "predict",
@@ -132,10 +160,10 @@ export const DecisionsSurface = () => {
 				},
 			],
 			probes: [
-				{ label: "beta", value: finite(causal?.beta) },
-				{ label: "panic", value: finite(causal?.panic) },
-				{ label: "residual", value: finite(causal?.residual) },
-				{ label: "intervention", value: finite(causal?.intervention) },
+				{ label: "beta", value: causalAssociation(causal) },
+				{ label: "panic", value: causalContagion(causal) },
+				{ label: "residual", value: causalNoise(causal) },
+				{ label: "intervention", value: causalIntervention(causal) },
 			],
 		};
 	});
@@ -149,15 +177,6 @@ export const DecisionsSurface = () => {
 	const allowed = candidates.filter(
 		(candidate) => candidate.verdict === "allow",
 	).length;
-	const entryLine = finite(
-		current?.causal?.baseline ?? current?.action?.entryLine,
-	);
-	const entryScore = finite(
-		current?.causal?.strength ?? current?.action?.entryScore,
-	);
-	const entryConfidence = finite(
-		current?.causal?.confidence ?? current?.action?.entryConfidence,
-	);
 
 	return (
 		<div className="grid h-full min-h-0 min-w-[1040px] grid-cols-[minmax(640px,1fr)_332px]">
@@ -212,23 +231,7 @@ export const DecisionsSurface = () => {
 					</div>
 				</div>
 
-				{current ? (
-					<Panel className="mb-3.5 flex items-center gap-3.5 px-3 py-2 font-mono text-[11.5px]">
-						<span className="text-(--f3)">entry line</span>
-						<span className="font-semibold text-(--acc)">
-							{fixed(entryLine)}
-						</span>
-						<span className="text-(--f4)">·</span>
-						<span className="text-(--f3)">strength {fixed(entryScore)}</span>
-						<span className="text-(--f4)">·</span>
-						<span className="text-(--f3)">
-							confidence {fixed(entryConfidence)}
-						</span>
-						<span className="ml-auto text-(--f4)">
-							support gate ≥ 2 · backend verdict wins
-						</span>
-					</Panel>
-				) : null}
+				<LiveDecisionsEntryLine symbol={current?.symbol} />
 
 				<div className="mb-2 flex items-baseline justify-between">
 					<span className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
@@ -254,8 +257,8 @@ export const DecisionsSurface = () => {
 						const selected = candidate.symbol === current?.symbol;
 						const scorePercent = Math.round(ratio(candidate.score) * 100);
 						const edge =
-							finite(candidate.causal?.strength) -
-							finite(candidate.causal?.baseline);
+							causalStrength(candidate.causal) -
+							causalEntryBaseline(candidate.causal);
 
 						return (
 							<button
@@ -390,11 +393,13 @@ export const DecisionsSurface = () => {
 											</div>
 											<div className="mt-2 text-[9px] text-(--f4)">
 												branch ·{" "}
-												{candidate.action?.branchKey ??
+												{candidate.decision?.cause ??
 													[
 														candidate.manifold?.category,
 														candidate.resonance?.category,
-														candidate.causal?.category,
+														candidate.causal === undefined
+															? ""
+															: String(causalCategory(candidate.causal)),
 													]
 														.filter(Boolean)
 														.join(" / ")}

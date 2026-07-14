@@ -62,9 +62,21 @@ export const balancesStore = createStore(
 	},
 	({ setState }) => ({
 		updateFrame: (balances: unknown) =>
-			setState(() => ({
-				balances: normalizeBalances(balances),
-				observed: true,
-			})),
+			setState((prev) => {
+				const normalized = normalizeBalances(balances);
+
+				if (
+					normalized.length === 0 &&
+					prev.observed &&
+					prev.balances.length > 0
+				) {
+					return prev;
+				}
+
+				return {
+					balances: normalized,
+					observed: true,
+				};
+			}),
 	}),
 );

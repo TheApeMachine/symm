@@ -37,6 +37,39 @@ export const resizeCanvas = (
 	return context;
 };
 
+/*
+resizeMockupCanvas matches the tmp terminal canvases: one backing-store pixel per
+CSS pixel with no device-pixel-ratio scaling.
+*/
+export const resizeMockupCanvas = (
+	canvas: HTMLCanvasElement,
+): CanvasRenderingContext2D | null => {
+	const width = canvas.clientWidth;
+	const height = canvas.clientHeight;
+
+	if (!width || !height) {
+		return null;
+	}
+
+	if (canvas.width !== width) {
+		canvas.width = width;
+	}
+
+	if (canvas.height !== height) {
+		canvas.height = height;
+	}
+
+	const context = canvas.getContext("2d");
+
+	if (context === null) {
+		return null;
+	}
+
+	context.setTransform(1, 0, 0, 1, 0, 0);
+
+	return context;
+};
+
 export const clearCanvas = (
 	context: CanvasRenderingContext2D,
 	width: number,

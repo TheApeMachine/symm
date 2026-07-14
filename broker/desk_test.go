@@ -108,6 +108,50 @@ func TestDeskPublish(t *testing.T) {
 			position, ok := positions[0].(map[string]any)
 			So(ok, ShouldBeTrue)
 			So(position["symbol"], ShouldEqual, "BTC/USD")
+			_, hasBalances := frame["balances"]
+			So(hasBalances, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given a desk with quote balance and an open position", t, func() {
+		ui := make(chan []byte, 1)
+		desk := NewDesk(nil, nil, &Balance{
+			status: types.READY,
+			quote:  "USD",
+			model: &kraken.Balance{Data: []kraken.BalanceData{{
+				Asset:     "USD",
+				Balance:   *decimal.NewFromInt64(1000),
+				Available: *decimal.NewFromInt64(900),
+				Reserved:  *decimal.NewFromInt64(100),
+			}}},
+		}, ui)
+		desk.positions.Store("BTC/USD", &Position{
+			Data: &PositionData{
+				Symbol:     "BTC/USD",
+				Qty:        *decimal.NewFromFloat64(0.0001),
+				EntryPrice: *decimal.NewFromFloat64(64129.900),
+				Mark:       *decimal.NewFromFloat64(63039.400),
+				PnL:        *decimal.NewFromFloat64(-0.142114),
+				ReturnPct:  -0.0222,
+			},
+		})
+
+		desk.Publish()
+
+		Convey("It should include balances when the quote row is available", func() {
+			var frame map[string]any
+
+			select {
+			case payload := <-ui:
+				err := sonic.Unmarshal(payload, &frame)
+				So(err, ShouldBeNil)
+			default:
+				t.Fatal("desk publish did not emit a frame")
+			}
+
+			balances, ok := frame["balances"].([]any)
+			So(ok, ShouldBeTrue)
+			So(balances, ShouldHaveLength, 1)
 		})
 	})
 }

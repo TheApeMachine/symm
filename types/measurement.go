@@ -1,6 +1,8 @@
 package types
 
 import (
+	"cmp"
+	"errors"
 	"time"
 )
 
@@ -315,16 +317,44 @@ type Measurement struct {
 	Metric       MetricType              `json:"metric,omitempty"`
 	Subject      SubjectType             `json:"subject,omitempty"`
 	Stream       StreamType              `json:"stream,omitempty"`
-	Symbol       string                  `json:"symbol"`
+	Symbol       string                  `json:"symbol" validate:"required"`
 	Side         MeasurementSide         `json:"side,omitempty"`
-	At           time.Time               `json:"at"`
+	At           time.Time               `json:"at" validate:"required"`
 	ObservedFrom time.Time               `json:"observedFrom,omitempty"`
-	Horizon      time.Duration           `json:"horizon,omitempty"`
+	Horizon      time.Duration           `json:"horizon,omitempty" validate:"nonnegative"`
 	Unit         MeasurementUnit         `json:"unit,omitempty"`
-	Raw          float64                 `json:"raw"`
-	Normalized   *float64                `json:"normalized"`
-	Maturity     float64                 `json:"maturity,omitempty"`
+	Raw          float64                 `json:"raw" validate:"finite"`
+	Normalized   *float64                `json:"normalized" validate:"finite"`
+	Maturity     float64                 `json:"maturity,omitempty" validate:"finite"`
 	Uncertainty  *MeasurementUncertainty `json:"uncertainty"`
 	Validity     MeasurementValidity     `json:"validity"`
 	Scale        ScaleReference          `json:"scale"`
+}
+
+/*
+ValidateStruct enforces the cross-field time ordering that tags cannot express.
+A measurement may omit an explicit scale interval, but any interval it does
+resolve must run forward.
+*/
+func (measurement Measurement) ValidateStruct() error {
+	from, through := measurement.Interval()
+	scaleBackwards := !measurement.Scale.From.IsZero() &&
+		!measurement.Scale.Through.IsZero() &&
+		measurement.Scale.Through.Before(measurement.Scale.From)
+
+	if scaleBackwards || through.Before(from) {
+		return errors.New("evidence interval ends before it starts")
+	}
+
+	return nil
+}
+
+/*
+Interval resolves the evidence interval once using the measurement's declared
+provenance, then its scale, then its observation time. Relationship composition
+uses this canonical policy instead of reconstructing it at every call site.
+*/
+func (measurement Measurement) Interval() (time.Time, time.Time) {
+	return cmp.Or(measurement.ObservedFrom, measurement.Scale.From, measurement.At),
+		cmp.Or(measurement.Scale.Through, measurement.At)
 }
