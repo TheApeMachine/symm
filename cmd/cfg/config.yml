@@ -9,7 +9,7 @@ system:
       buffer: 16384
 
 cognitive:
-  persist_dir: runs/cognitive
+  persist_dir: ~/.symm/cognitive
   tick_budget: 10ms
 
 market:
@@ -27,10 +27,6 @@ market:
   subscribe_batch: 200
   book:
     depth: 10
-  universe:
-    # Bounded compute/subscription ceiling for the heavier trade/book/level3
-    # tier; every eligible pair still gets lightweight ticker/OHLC observation.
-    trading_tier_size: 40
   forecast:
     # Dimensionless RLS covariance prior and memory policy for the per-symbol,
     # next-L3-epoch mid-return learner. A factor of one retains all observations

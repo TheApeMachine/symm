@@ -41,6 +41,24 @@ func TestPriceTickerAck(t *testing.T) {
 }
 
 func TestPriceSnapshot(t *testing.T) {
+	Convey("Given an initializing Price", t, func() {
+		mock := tests.NewMockAPI()
+		price := NewPrice(websocket.NewAPI(
+			context.Background(), mock.Public(), mock.Private(), nil,
+		))
+
+		Convey("When its ticker callback is registered", func() {
+			err := price.Initialize()
+
+			Convey("Then Price is ready independently of trading-tier fees", func() {
+				So(err, ShouldBeNil)
+				So(price.Status(), ShouldEqual, types.READY)
+				_, feeErr := price.FeeRate("BTC/USD")
+				So(feeErr, ShouldNotBeNil)
+			})
+		})
+	})
+
 	Convey("Given ticker rows for part of an expected identity set", t, func() {
 		price := &Price{
 			fees:    &sync.Map{},
@@ -69,31 +87,28 @@ func TestPriceSnapshot(t *testing.T) {
 }
 
 func TestPriceGetFees(t *testing.T) {
-	Convey("Given normalized fee tiers for the requested symbols and an unrelated symbol", t, func() {
+	Convey("Given a Kraken-keyed fee tier for one requested symbol", t, func() {
 		mock := tests.NewMockAPI()
 		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
 			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFees{
-				"BTC/USD": {Fee: "0.2600"},
-				"ETH/USD": {Fee: "0.2600"},
-				"OLD/USD": {Fee: "0.4000"},
+				"XXBTZUSD": {Fee: "0.2600"},
 			}},
 		}), ShouldBeNil)
-		price := NewPrice(websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil))
+		api := websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil)
+		So(api.Initialize(), ShouldBeNil)
+		price := NewPrice(api)
 
 		Convey("When the exact trading tier is hydrated", func() {
-			err := price.GetFees([]string{"BTC/USD", "ETH/USD"})
+			err := price.GetFees([]string{"BTC/USD"})
 
 			Convey("Then only that complete tier is committed before Price becomes ready", func() {
 				So(err, ShouldBeNil)
-				So(mock.LastTradeVolumeSymbols(), ShouldResemble, []string{"BTC/USD", "ETH/USD"})
+				So(mock.LastTradeVolumeSymbols(), ShouldResemble, []string{"BTC/USD"})
 				So(price.Status(), ShouldEqual, types.READY)
 
 				btcFee, err := price.FeeRate("BTC/USD")
 				So(err, ShouldBeNil)
 				So(btcFee.Fee, ShouldEqual, "0.2600")
-
-				_, err = price.FeeRate("OLD/USD")
-				So(err, ShouldNotBeNil)
 			})
 		})
 	})
@@ -101,26 +116,22 @@ func TestPriceGetFees(t *testing.T) {
 	Convey("Given a fee response missing one requested symbol", t, func() {
 		mock := tests.NewMockAPI()
 		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
-			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFees{
-				"BTC/USD": {Fee: "0.2600"},
-			}},
+			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFees{}},
 		}), ShouldBeNil)
-		price := NewPrice(websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil))
+		api := websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil)
+		So(api.Initialize(), ShouldBeNil)
+		price := NewPrice(api)
 
 		Convey("When fee hydration is attempted", func() {
-			err := price.GetFees([]string{"BTC/USD", "ETH/USD"})
+			err := price.GetFees([]string{"BTC/USD"})
 
-			Convey("Then Price becomes ready and only returned tiers are cached", func() {
-				So(err, ShouldBeNil)
-				So(price.Status(), ShouldEqual, types.READY)
+			Convey("Then the incomplete tier is rejected without becoming ready", func() {
+				So(err, ShouldNotBeNil)
+				So(price.Status(), ShouldNotEqual, types.READY)
 
-				btcFee, err := price.FeeRate("BTC/USD")
-				So(err, ShouldBeNil)
-				So(btcFee.Fee, ShouldEqual, "0.2600")
+				_, err = price.FeeRate("BTC/USD")
+				So(err, ShouldNotBeNil)
 
-				ethFee, err := price.FeeRate("ETH/USD")
-				So(err, ShouldBeNil)
-				So(ethFee.Fee, ShouldBeEmpty)
 			})
 		})
 	})
@@ -129,21 +140,22 @@ func TestPriceGetFees(t *testing.T) {
 		mock := tests.NewMockAPI()
 		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
 			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFees{
-				"BTC/USD": {Fee: "invalid"},
+				"XXBTZUSD": {Fee: "invalid"},
 			}},
 		}), ShouldBeNil)
-		price := NewPrice(websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil))
+		api := websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil)
+		So(api.Initialize(), ShouldBeNil)
+		price := NewPrice(api)
 
 		Convey("When fee hydration is attempted", func() {
 			err := price.GetFees([]string{"BTC/USD"})
 
-			Convey("Then the tier is cached and Price becomes ready", func() {
-				So(err, ShouldBeNil)
-				So(price.Status(), ShouldEqual, types.READY)
+			Convey("Then the malformed tier is rejected without becoming ready", func() {
+				So(err, ShouldNotBeNil)
+				So(price.Status(), ShouldNotEqual, types.READY)
 
-				btcFee, err := price.FeeRate("BTC/USD")
-				So(err, ShouldBeNil)
-				So(btcFee.Fee, ShouldEqual, "invalid")
+				_, err = price.FeeRate("BTC/USD")
+				So(err, ShouldNotBeNil)
 			})
 		})
 	})
