@@ -2,8 +2,10 @@ package hawkes
 
 import (
 	"context"
+	"sync"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -25,6 +27,7 @@ type Signal struct {
 	cancel     context.CancelFunc
 	api        *websocket.API
 	trade      *Trade
+	access     sync.Mutex
 	tradeCache []kraken.TradeData
 }
 
@@ -62,7 +65,53 @@ func (signal *Signal) onTrade(data []byte) {
 		return
 	}
 
+	signal.access.Lock()
 	signal.tradeCache = append(signal.tradeCache, frame.Data...)
+	signal.access.Unlock()
+}
+
+/*
+Outcome returns the latest measured Hawkes outcome for one symbol.
+*/
+func (trade *Trade) Outcome(symbol string) (excitation.Outcome, bool) {
+	if trade == nil || trade.process == nil {
+		return excitation.Outcome{}, false
+	}
+
+	return trade.process.Outcome(symbol)
+}
+
+/*
+Symbols returns every symbol with retained Hawkes excitation state.
+*/
+func (trade *Trade) Symbols() []string {
+	if trade == nil || trade.process == nil {
+		return nil
+	}
+
+	return trade.process.Symbols()
+}
+
+/*
+Outcome returns the latest measured Hawkes outcome for one symbol.
+*/
+func (signal *Signal) Outcome(symbol string) (excitation.Outcome, bool) {
+	if signal == nil || signal.trade == nil {
+		return excitation.Outcome{}, false
+	}
+
+	return signal.trade.Outcome(symbol)
+}
+
+/*
+Symbols returns every symbol with retained Hawkes excitation state.
+*/
+func (signal *Signal) Symbols() []string {
+	if signal == nil || signal.trade == nil {
+		return nil
+	}
+
+	return signal.trade.Symbols()
 }
 
 /*
@@ -72,9 +121,14 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	out := make([]*types.Measurement, 0, len(signal.tradeCache))
+	signal.access.Lock()
+	rows := append([]kraken.TradeData(nil), signal.tradeCache...)
+	signal.tradeCache = signal.tradeCache[:0]
+	signal.access.Unlock()
 
-	for _, row := range signal.tradeCache {
+	out := make([]*types.Measurement, 0, len(rows))
+
+	for _, row := range rows {
 		measurements, err := signal.trade.Measure(row)
 
 		if err != nil {
@@ -84,8 +138,6 @@ func (signal *Signal) Measure(
 
 		out = append(out, measurements...)
 	}
-
-	signal.tradeCache = signal.tradeCache[:0]
 
 	thesis.Measurements = append(thesis.Measurements, out...)
 

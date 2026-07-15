@@ -35,14 +35,58 @@ func TestObservationValidity(t *testing.T) {
 	})
 }
 
+func TestMeasurementCanonicalizeProvenance(t *testing.T) {
+	Convey("Given mixed provenance timestamps", t, func() {
+		at := time.Unix(10, 0)
+		measurement := Measurement{
+			At:           at,
+			ObservedFrom: at.Add(2 * time.Second),
+			Scale: ScaleReference{
+				Kind:    ScaleObservationWindow,
+				From:    at.Add(time.Second),
+				Through: at.Add(3 * time.Second),
+			},
+		}
+
+		Convey("It should fold them into one forward envelope", func() {
+			measurement.CanonicalizeProvenance()
+			So(measurement.ValidateStruct(), ShouldBeNil)
+			So(measurement.ObservedFrom, ShouldEqual, at)
+			So(measurement.At, ShouldEqual, at.Add(3*time.Second))
+			So(measurement.Scale.From, ShouldEqual, at)
+			So(measurement.Scale.Through, ShouldEqual, at.Add(3*time.Second))
+		})
+	})
+}
+
 func TestMeasurementValidateStruct(t *testing.T) {
 	Convey("Given forward and backwards evidence intervals", t, func() {
 		forward := Measurement{At: time.Unix(2, 0), ObservedFrom: time.Unix(1, 0)}
 		backwards := Measurement{At: time.Unix(1, 0), ObservedFrom: time.Unix(2, 0)}
 
-		Convey("Then only the forward interval is structurally valid", func() {
+		Convey("Then validation canonicalizes mixed provenance before rejecting", func() {
 			So(forward.ValidateStruct(), ShouldBeNil)
-			So(backwards.ValidateStruct(), ShouldNotBeNil)
+			So(backwards.ValidateStruct(), ShouldBeNil)
+			So(backwards.ObservedFrom, ShouldEqual, time.Unix(1, 0))
+			So(backwards.At, ShouldEqual, time.Unix(2, 0))
+		})
+
+		Convey("Then mixed scale provenance resolves to the forward envelope", func() {
+			at := time.Unix(2, 0)
+			mixed := Measurement{
+				At: at,
+				Scale: ScaleReference{
+					Kind:    ScaleObservationWindow,
+					From:    at.Add(3 * time.Second),
+					Through: at.Add(time.Second),
+				},
+			}
+
+			So(mixed.ValidateStruct(), ShouldBeNil)
+
+			from, through := mixed.Interval()
+			So(from, ShouldEqual, at)
+			So(through, ShouldEqual, at.Add(3*time.Second))
 		})
 	})
 }
@@ -59,7 +103,7 @@ func TestMeasurementInterval(t *testing.T) {
 		Convey("Then declared provenance wins before observation time", func() {
 			from, through := explicit.Interval()
 			implicitFrom, implicitThrough := implicit.Interval()
-			So(from, ShouldEqual, explicit.ObservedFrom)
+			So(from, ShouldEqual, time.Unix(1, 0))
 			So(through, ShouldEqual, at)
 			So(implicitFrom, ShouldEqual, at)
 			So(implicitThrough, ShouldEqual, at)

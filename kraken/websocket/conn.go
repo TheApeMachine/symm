@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"iter"
+	"maps"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -32,14 +34,15 @@ API is the single Kraken transport surface for symm.
 Callers subscribe, order, and listen through named methods only.
 */
 type API struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	status    types.Status
-	public    Conn
-	private   Conn
-	paper     *Paper
-	live      bool
-	bookConns *sync.Map
+	ctx        context.Context
+	cancel     context.CancelFunc
+	status     types.Status
+	normalizer *spot.Normalizer
+	public     Conn
+	private    Conn
+	paper      *Paper
+	live       bool
+	bookConns  *sync.Map
 }
 
 func NewAPI(
@@ -48,14 +51,15 @@ func NewAPI(
 	ctx, cancel := context.WithCancel(ctx)
 
 	api := &API{
-		ctx:       ctx,
-		cancel:    cancel,
-		status:    types.INITIALIZING,
-		public:    public,
-		private:   private,
-		paper:     paper,
-		live:      viper.GetViper().GetString("trading.model") == "live",
-		bookConns: &sync.Map{},
+		ctx:        ctx,
+		cancel:     cancel,
+		status:     types.INITIALIZING,
+		normalizer: spot.NewNormalizer(),
+		public:     public,
+		private:    private,
+		paper:      paper,
+		live:       viper.GetViper().GetString("trading.model") == "live",
+		bookConns:  &sync.Map{},
 	}
 
 	return api
@@ -63,6 +67,27 @@ func NewAPI(
 
 func (api *API) Initialize() error {
 	errnie.Info("initializing API")
+
+	if api.public == nil || api.public.Client() == nil {
+		api.status = types.ERROR
+
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cannot initialize Kraken pair normalizer without public REST",
+			nil,
+		))
+	}
+
+	if err := api.normalizer.Use(api.public.Client().REST); err != nil {
+		api.status = types.ERROR
+
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to initialize Kraken pair normalizer",
+			err,
+		))
+	}
+
 	api.status = types.READY
 	return nil
 }
@@ -92,6 +117,12 @@ func (api *API) On(channel string, action func([]byte)) {
 }
 
 func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolume, error) {
+	if api.status != types.READY {
+		if err := api.Initialize(); err != nil {
+			return nil, errnie.Error(err)
+		}
+	}
+
 	response, err := api.private.Post(
 		TradeVolumeEndpoint,
 		kraken.NewTradeVolumeRequest(symbols),
@@ -105,7 +136,32 @@ func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolume, error) {
 		))
 	}
 
-	return kraken.NewTradeVolume(response), nil
+	tradeVolume := kraken.NewTradeVolume(response)
+
+	if err := kraken.Validate(tradeVolume); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"invalid trade volume response",
+			err,
+		))
+	}
+
+	fees := make(map[string]kraken.TradeVolumeFees, len(tradeVolume.Result.Fees))
+
+	for symbol, fee := range tradeVolume.Result.Fees {
+		fees[api.normalizer.Name(symbol)] = fee
+	}
+
+	tradeVolume.Result.Fees = fees
+	fees = make(map[string]kraken.TradeVolumeFees, len(tradeVolume.Result.FeesMaker))
+
+	for symbol, fee := range tradeVolume.Result.FeesMaker {
+		fees[api.normalizer.Name(symbol)] = fee
+	}
+
+	tradeVolume.Result.FeesMaker = fees
+
+	return tradeVolume, nil
 }
 
 func (api *API) TradesHistory() (*kraken.TradesHistory, error) {
@@ -113,26 +169,66 @@ func (api *API) TradesHistory() (*kraken.TradesHistory, error) {
 		return api.paper.TradesHistory()
 	}
 
-	response, err := api.private.Client().REST.TradesHistory(&spot.TradesHistoryRequest{
-		Type:             "all",
-		Trades:           true,
-		ConsolidateTaker: true,
-		Ledgers:          false,
-	})
+	trades, err := api.fetchLiveTradesHistory()
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to get trades history",
-			err,
-		))
+		return nil, err
 	}
 
 	return &kraken.TradesHistory{
 		Result: kraken.TradesHistoryResult{
-			Trades: response.Result.Trades,
+			Trades: trades,
 		},
 	}, nil
+}
+
+/*
+fetchLiveTradesHistory walks Kraken trade-history pages until the reported
+count is covered or a short page is returned. Boot-time reconciliation needs
+the full ledger, not just the first REST page.
+*/
+func (api *API) fetchLiveTradesHistory() (map[string]spot.Trade, error) {
+	merged := make(map[string]spot.Trade)
+	offset := 0
+
+	for {
+		response, err := api.private.Client().REST.TradesHistory(&spot.TradesHistoryRequest{
+			Type:             "all",
+			Trades:           true,
+			ConsolidateTaker: true,
+			Ofs:              offset,
+		})
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Internal,
+				"failed to get trades history",
+				err,
+			))
+		}
+
+		page := response.Result.Trades
+
+		if len(page) == 0 {
+			break
+		}
+
+		maps.Copy(merged, page)
+
+		totalCount, countErr := strconv.ParseInt(response.Result.Count.String(), 10, 64)
+
+		if countErr == nil && int64(len(merged)) >= totalCount {
+			break
+		}
+
+		if len(page) < 50 {
+			break
+		}
+
+		offset += len(page)
+	}
+
+	return merged, nil
 }
 
 func (api *API) SubscribeInstruments() error {

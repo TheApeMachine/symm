@@ -8,140 +8,70 @@ import (
 )
 
 /*
-State is the typed per-symbol field readout consumed by resonance, causal,
-and strategy layers.
+State is the typed physical readout produced after one Hawkes-driven GPU step.
 */
 type State struct {
-	FieldSnapshot
-	Source               string               `json:"source"`
-	Symbol               string               `json:"symbol"`
-	At                   time.Time            `json:"at"`
-	Epoch                uint64               `json:"epoch"`
-	ScaleVersion         uint64               `json:"scaleVersion"`
-	Ready                bool                 `json:"ready"`
-	InvalidReason        InvalidReason        `json:"invalidReason"`
-	BestBid              float64              `json:"bestBid"`
-	BestAsk              float64              `json:"bestAsk"`
-	BestBidQuantity      float64              `json:"bestBidQuantity"`
-	BestAskQuantity      float64              `json:"bestAskQuantity"`
-	MidPrice             float64              `json:"midPrice"`
-	VisibleMass          float64              `json:"visibleMass"`
-	ConservationResidual float64              `json:"conservationResidual"`
-	ConservationBound    float64              `json:"conservationBound"`
-	BidTouchDensity      float64              `json:"bidTouchDensity"`
-	AskTouchDensity      float64              `json:"askTouchDensity"`
-	StressAnisotropy     float64              `json:"stressAnisotropy"`
-	DeltaT               float64              `json:"deltaT"`
-	Subdivisions         int                  `json:"subdivisions"`
-	PriceScale           float64              `json:"priceScale"`
-	SizeScale            float64              `json:"sizeScale"`
-	PressureTensor       PressureTensor       `json:"pressureTensor"`
-	OscillatorCount      int                  `json:"oscillatorCount"`
-	Grid                 pmanifold.Grid       `json:"grid"`
-	Particles            []pmanifold.Particle `json:"particles"`
-	pmanifold.Reading
+	Source           string               `json:"source"`
+	Symbol           string               `json:"symbol"`
+	At               time.Time            `json:"at"`
+	Duration         time.Duration        `json:"duration"`
+	Epoch            uint64               `json:"epoch"`
+	ReferencePrice   float64              `json:"referencePrice"`
+	Spread           float64              `json:"spread"`
+	BuyCapacity      float64              `json:"buyCapacity"`
+	SellCapacity     float64              `json:"sellCapacity"`
+	InvalidReason    string               `json:"invalidReason,omitempty"`
+	StressAnisotropy float64              `json:"stressAnisotropy"`
+	Subdivisions     uint32               `json:"subdivisions"`
+	BuyIntensity     float64              `json:"buyIntensity"`
+	SellIntensity    float64              `json:"sellIntensity"`
+	SpectralRadius   float64              `json:"spectralRadius"`
+	Reading          pmanifold.Reading    `json:"reading"`
+	OscillatorCount  int                  `json:"oscillatorCount"`
+	Grid             pmanifold.Grid       `json:"grid,omitempty"`
+	Rho              [][]float64          `json:"rho,omitempty"`
+	PsiMag2          [][]float64          `json:"psiMag2,omitempty"`
+	GuidanceVelX     [][]float64          `json:"guidanceVelX,omitempty"`
+	GuidanceVelZ     [][]float64          `json:"guidanceVelZ,omitempty"`
+	Particles        []pmanifold.Particle `json:"particles,omitempty"`
 }
 
+/*
+IsFinite reports whether every numerical field required by downstream models
+is a finite real number.
+*/
 func (state State) IsFinite() bool {
-	return state.Ready && state.Reading.IsFinite()
-}
-
-func (state State) GasReady() bool {
-	if !state.IsFinite() || !state.gatesFinite() {
+	if state.At.IsZero() || state.Epoch == 0 {
 		return false
 	}
 
-	if state.DeltaT <= 0 || state.Subdivisions <= 0 {
-		return false
-	}
-
-	if state.VisibleMass <= 0 {
-		return false
-	}
-
-	if state.ConservationBound < 0 ||
-		math.Abs(state.ConservationResidual) > state.ConservationBound {
-		return false
-	}
-
-	if state.PriceScale <= 0 || state.SizeScale <= 0 {
-		return false
-	}
-
-	return true
-}
-
-func (state State) gatesFinite() bool {
-	values := [...]float64{
-		state.VisibleMass,
-		state.ConservationResidual,
-		state.ConservationBound,
-		state.DeltaT,
-		state.PriceScale,
-		state.SizeScale,
-	}
-
-	for _, value := range values {
+	for _, value := range []float64{
+		state.StressAnisotropy,
+		state.ReferencePrice,
+		state.Spread,
+		state.BuyCapacity,
+		state.SellCapacity,
+		state.BuyIntensity,
+		state.SellIntensity,
+		state.SpectralRadius,
+		state.Reading.PressureGradX,
+		state.Reading.Divergence,
+		state.Reading.CoherenceMag2,
+		state.Reading.GuidanceSpeed,
+	} {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return false
 		}
 	}
 
-	return true
+	return state.ReferencePrice > 0 && state.Spread > 0 &&
+		state.BuyCapacity > 0 && state.SellCapacity > 0 &&
+		state.Reading.IsFinite()
 }
 
-func (state State) Duration() time.Duration {
-	return time.Duration(state.DeltaT * float64(time.Second))
-}
-
-func (state State) HasSpread() bool {
-	return state.BestBid > 0 && state.BestAsk >= state.BestBid && state.MidPrice > 0
-}
-
-func (state State) SpreadReturn() float64 {
-	if !state.HasSpread() {
-		return 0
-	}
-
-	return (state.BestAsk - state.BestBid) / state.MidPrice
-}
-
-func stressAnisotropy(tensor PressureTensor) float64 {
-	mean := tensor.IsotropicScalar()
-
-	if mean <= 0 {
-		return 0
-	}
-
-	maxAxis := math.Max(tensor.XX, math.Max(tensor.YY, tensor.ZZ))
-	minAxis := math.Min(tensor.XX, math.Min(tensor.YY, tensor.ZZ))
-
-	return (maxAxis - minAxis) / mean
-}
-
-func touchMassDensity(orders []*PhysicalOrder, side OrderSide, touchBand float64) float64 {
-	if len(orders) == 0 || touchBand <= 0 {
-		return 0
-	}
-
-	totalMass := 0.0
-	touchMass := 0.0
-
-	for _, order := range orders {
-		totalMass += order.Quantity
-
-		if order.Side != side {
-			continue
-		}
-
-		if math.Abs(order.Coordinate.Price) <= touchBand {
-			touchMass += order.Quantity
-		}
-	}
-
-	if totalMass <= 0 {
-		return 0
-	}
-
-	return touchMass / totalMass
+/*
+GasReady reports whether the GPU gas step produced a finite physical readout.
+*/
+func (state State) GasReady() bool {
+	return state.InvalidReason == Valid && state.IsFinite()
 }

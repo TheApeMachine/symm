@@ -7,6 +7,8 @@ const position = (mark: number, returnPct: number): Position => ({
 	symbol: "XLM/USD",
 	qty: 10,
 	entry_price: 100,
+	entry_fee: 2.6,
+	exit_fee: 2.6,
 	mark,
 	pnl: returnPct * 100,
 	return_pct: returnPct,

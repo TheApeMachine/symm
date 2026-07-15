@@ -416,4 +416,50 @@ export const drawCortexTree = (
 			context.fillText(truncate(node.token, 12), x + 7, y + 3.2);
 		}
 	}
+
+	const beamSequence = [...tree.beamPrefixes].sort(
+		(left, right) => right.length - left.length,
+	)[0];
+
+	if (beamSequence !== undefined && beamSequence !== "") {
+		const tokens = beamSequence.split("_").filter(Boolean);
+		const pathNodes: CortexNode[] = [tree.root];
+		let prefix = "";
+
+		for (const token of tokens) {
+			prefix = prefix === "" ? token : `${prefix}_${token}`;
+			const match = tree.nodes.find((node) => node.prefix === prefix);
+
+			if (match !== undefined) {
+				pathNodes.push(match);
+			}
+		}
+
+		if (pathNodes.length > 1) {
+			const tick = performance.now() / 1500;
+			const segment = (tick % 1) * (pathNodes.length - 1);
+			const startIndex = Math.floor(segment);
+			const fraction = segment - startIndex;
+			const start = positions.get(pathNodes[startIndex]?.id ?? -1);
+			const end = positions.get(
+				pathNodes[Math.min(pathNodes.length - 1, startIndex + 1)]?.id ?? -1,
+			);
+
+			if (start !== undefined && end !== undefined) {
+				const pulseX = start.x + (end.x - start.x) * fraction;
+				const pulseY = start.y + (end.y - start.y) * fraction;
+
+				context.fillStyle = TERMINAL_COLORS.amber;
+				context.globalAlpha = 0.95;
+				context.beginPath();
+				context.arc(pulseX, pulseY, 3.6, 0, Math.PI * 2);
+				context.fill();
+				context.globalAlpha = 0.22;
+				context.beginPath();
+				context.arc(pulseX, pulseY, 9, 0, Math.PI * 2);
+				context.fill();
+				context.globalAlpha = 1;
+			}
+		}
+	}
 };

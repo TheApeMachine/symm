@@ -26,6 +26,7 @@ const statValueVariants = cva(
 				success: "[--stat-tone:var(--success)]",
 				warning: "[--stat-tone:var(--warning)]",
 				error: "[--stat-tone:var(--error)]",
+				disabled: "[--stat-tone:var(--f3)]",
 			},
 			emphasis: {
 				default: "",

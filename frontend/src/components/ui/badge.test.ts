@@ -16,4 +16,13 @@ describe("badgeVariants", () => {
 		expect(classes).toContain("[--badge-tone:var(--info)]");
 		expect(classes).toContain("text-[10px]");
 	});
+
+	it("composes muted disabled styling for inactive states", () => {
+		const classes = badgeVariants({ variant: "disabled", size: "xs" });
+
+		expect(classes).toContain("[--badge-tone:var(--f3)]");
+		expect(classes).toContain("border-(--line2)");
+		expect(classes).toContain("bg-(--line)");
+		expect(classes).toContain("text-(--f3)");
+	});
 });

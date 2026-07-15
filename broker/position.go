@@ -1,64 +1,16 @@
 package broker
 
 import (
-	"errors"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
-
-var orderStatuses = map[string]types.Status{
-	"open":              types.OPEN,
-	"filled":            types.FILLED,
-	"cancelled":         types.CANCELLED,
-	"rejected":          types.REJECTED,
-	"expired":           types.EXPIRED,
-	"partial":           types.PARTIAL,
-	"partial_filled":    types.PARTIAL_FILLED,
-	"partially_filled":  types.PARTIAL_FILLED,
-	"partial_cancelled": types.PARTIAL_CANCELLED,
-	"partial_rejected":  types.PARTIAL_REJECTED,
-	"partial_expired":   types.PARTIAL_EXPIRED,
-}
-
-var positionDataValidator = errnie.New()
-
-type PositionData struct {
-	Symbol     string          `json:"symbol" validate:"required"`
-	Qty        decimal.Decimal `json:"qty" validate:"required"`
-	EntryPrice decimal.Decimal `json:"entry_price" validate:"required"`
-	Mark       decimal.Decimal `json:"mark"`
-	PnL        decimal.Decimal `json:"pnl"`
-	ReturnPct  float64         `json:"return_pct"`
-}
-
-/*
-ValidateStruct rejects restored positions whose quantity or entry price are not
-strictly positive so OPEN positions cannot survive with zero or negative marks.
-*/
-func (data PositionData) ValidateStruct() error {
-	if !strictPositiveDecimal(data.Qty) {
-		return errors.New("qty must be positive")
-	}
-
-	if !strictPositiveDecimal(data.EntryPrice) {
-		return errors.New("entry price must be positive")
-	}
-
-	return nil
-}
-
-func strictPositiveDecimal(value decimal.Decimal) bool {
-	return value.Rat().Sign() > 0
-}
 
 type StopData struct {
 	Symbol     string          `json:"symbol"`
@@ -70,25 +22,15 @@ type StopData struct {
 }
 
 type Position struct {
-	status        types.Status
-	api           *websocket.API
-	ui            chan []byte
-	price         *Price
-	balance       *Balance
-	theses        *Theses
-	orderID       string
-	clientID      int
-	reqID         int
-	requestedQty  decimal.Decimal
-	priorQty      decimal.Decimal
-	currentAction string
-	order         *kraken.LimitOrder
-	executions    []*kraken.Execution
-	Data          *PositionData
-	Stop          *StopData
-	tickers       []*kraken.TickerData
-	thesis        *types.Thesis
-	snapshot      func() []PositionData
+	status    types.Status
+	api       *websocket.API
+	price     *Price
+	balance   *Balance
+	Stop      *StopData
+	tickers   []*kraken.TickerData
+	pnl       *decimal.Decimal
+	returnPct *float64
+	mark      *decimal.Decimal
 }
 
 func NewPosition(
@@ -96,23 +38,15 @@ func NewPosition(
 	ui chan []byte,
 	price *Price,
 	balance *Balance,
-	data *PositionData,
-	thesis *types.Thesis,
-	snapshot func() []PositionData,
-	theses *Theses,
+	order *spot.Order,
 ) *Position {
 	position := &Position{
-		status:     types.INITIALIZING,
-		api:        api,
-		ui:         ui,
-		price:      price,
-		balance:    balance,
-		theses:     theses,
-		Data:       data,
-		thesis:     thesis,
-		snapshot:   snapshot,
-		executions: make([]*kraken.Execution, 0),
-		tickers:    make([]*kraken.TickerData, 0),
+		status:  types.INITIALIZING,
+		api:     api,
+		price:   price,
+		balance: balance,
+		tickers: make([]*kraken.TickerData, 0),
+		Stop:    &StopData{Symbol: order.Description.Pair},
 	}
 
 	position.api.On("add_order", position.OrderAck)
@@ -122,51 +56,8 @@ func NewPosition(
 	return position
 }
 
-/*
-Thesis returns the lifecycle record associated when this Position was opened
-or reconciled. Strategy uses it to append later management decisions in place.
-*/
-func (position *Position) Thesis() *types.Thesis {
-	return position.thesis
-}
-
-/*
-record appends one immutable position fact to the associated lifecycle. A nil
-Thesis is permitted only for directly constructed positions in focused tests.
-*/
-func (position *Position) record(observation types.TradeObservation) {
-	if position.thesis == nil {
-		return
-	}
-
-	position.thesis.RecordTrade(observation)
-}
-
 func (position *Position) Status() types.Status {
 	return position.status
-}
-
-/*
-Publish broadcasts the full current position set, not just this one.
-
-The frontend treats every "positions" message as the complete
-authoritative state and replaces its store with it wholesale. Sending
-only this position here would mean any single position's own update
-(a fill, an order ack, its next ticker) wipes every other open
-position off the dashboard. snapshot is nil for positions built
-directly, such as in tests that construct a Position without a Desk,
-in which case this position is all there is to report.
-*/
-func (position *Position) Publish() {
-	positions := []PositionData{*position.Data}
-
-	if position.snapshot != nil {
-		positions = position.snapshot()
-	}
-
-	position.ui <- datura.Map[any]{
-		"positions": positions,
-	}.Marshal()
 }
 
 /*
@@ -190,90 +81,69 @@ func (position *Position) Hydrate(
 		return position
 	}
 
-	if position.balance == nil ||
-		position.api == nil ||
-		position.price == nil {
+	if position.balance == nil || position.price == nil {
 		return position
 	}
 
-	position.Data.Symbol = symbol
+	holding, err := position.balance.Holding(symbol)
 
-	holding, ok := position.holding(symbol)
-
-	if !ok {
+	if errnie.Error(err) != nil {
 		return position
+	}
+
+	if holding.Order == nil {
+		holding.Order = &spot.Order{
+			Description: &spot.OrderDescription{Pair: symbol},
+			Volume:      &holding.Qty,
+		}
 	}
 
 	if err := position.reconcile(history, symbol, holding); err != nil {
-		position.status = types.ERROR
-		position.record(types.TradeObservation{
-			Kind: "reconciliation_error", Symbol: symbol, Error: err.Error(), At: time.Now(),
-		})
 		errnie.Error(err)
 
 		return position
 	}
 
-	quote, err := position.price.PositionQuote(
-		position.Data.Symbol,
-		position.Data.EntryPrice,
-		position.Data.Qty,
-	)
+	holding, err = position.balance.Holding(symbol)
 
-	if err != nil {
-		errnie.Warn(
-			"position quote pending for " + position.Data.Symbol + ": " + err.Error(),
-		)
-	} else {
-		position.Data.Mark = quote.Mark
-		position.Data.PnL = quote.PnL
-		position.Data.ReturnPct = quote.ReturnPct
+	if errnie.Error(err) != nil {
+		return position
 	}
 
-	position.status = types.OPEN
-	state := position.thesis.LifecycleState(symbol)
-
-	if state == types.LifecycleEntered {
-		if err := position.thesis.Transition(
-			symbol, types.LifecycleManaging, time.Now(),
-		); err != nil {
-			position.status = types.ERROR
-			errnie.Error(err)
-
-			return position
-		}
-	}
-
-	if state == types.LifecycleExitSelected {
-		if err := position.thesis.Transition(
-			symbol, types.LifecycleManaging, time.Now(),
-		); err != nil {
-			position.status = types.ERROR
-			errnie.Error(err)
-
-			return position
-		}
-	}
-
-	if state != types.LifecycleEntered && state != types.LifecycleManaging &&
-		state != types.LifecycleExitSelected && state != types.LifecycleInvalid {
-		position.status = types.ERROR
-		position.record(types.TradeObservation{
-			Kind: "thesis_recovery_error", Symbol: symbol, Status: state,
-			Error: "lifecycle cannot safely resume without open-order reconciliation",
-			At:    time.Now(),
-		})
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"unsafe recovered lifecycle for "+symbol+": "+state,
-			nil,
-		))
+	if holding.Order == nil || holding.Order.Description == nil ||
+		holding.Order.Price == nil || holding.Order.Volume == nil {
+		position.status = types.OPEN
 
 		return position
 	}
 
-	position.Publish()
+	holding.EntryPrice = *holding.Order.Price
+	position.balance.Update(symbol, holding)
 
+	quote, err := position.price.PositionQuote(
+		holding.Order.Description.Pair,
+		*holding.Order.Price,
+		*holding.Order.Volume,
+	)
+
+	if err != nil {
+		errnie.Warn(
+			"position quote pending for " + holding.Order.Description.Pair + ": " + err.Error(),
+		)
+	} else {
+		position.mark = &quote.Mark
+		position.pnl = &quote.PnL
+		position.returnPct = &quote.ReturnPct
+		holding.Mark = quote.Mark
+		holding.EntryPrice = *holding.Order.Price
+		holding.EntryFee = quote.EntryFee
+		holding.ExitFee = quote.ExitFee
+		holding.PnL = quote.PnL
+		holding.ReturnPct = quote.ReturnPct
+		position.balance.Update(symbol, holding)
+	}
+
+	position.status = types.OPEN
 	return position
 }
 
@@ -285,37 +155,15 @@ round trips from contaminating the cost basis of a newly managed position.
 func (position *Position) reconcile(
 	history *kraken.TradesHistory,
 	symbol string,
-	holding SpotHolding,
+	holding types.Holding,
 ) error {
-	knownExecutions := make(map[string]struct{})
-	knownOrders := make(map[string]struct{})
-	verifyIdentity := position.thesis != nil &&
-		position.thesis.LifecycleState(symbol) != types.LifecycleInvalid
-
-	if verifyIdentity {
-		for _, observation := range position.thesis.TradeJournal {
-			if observation.Symbol != symbol {
-				continue
-			}
-
-			if observation.ExecutionID != "" &&
-				(observation.Side == "buy" || observation.Kind == "position_reconciliation") {
-				knownExecutions[observation.ExecutionID] = struct{}{}
-			}
-
-			if observation.OrderID != "" {
-				knownOrders[observation.OrderID] = struct{}{}
-			}
-		}
-	}
-
 	trades := make([]struct {
 		id    string
 		trade spot.Trade
 	}, 0)
 
 	for id, trade := range history.Result.Trades {
-		if position.balance.Symbol(trade.Pair) != symbol {
+		if !position.balance.TradeMatchesSymbol(trade.Pair, symbol) {
 			continue
 		}
 
@@ -396,77 +244,46 @@ func (position *Position) reconcile(
 	calculationScale := max(quantityScale, costScale)
 	totalQuantity := decimal.NewFromInt64(0).SetScale(calculationScale)
 	totalCost := decimal.NewFromInt64(0).SetScale(calculationScale)
+	walletQuantity := holding.Qty.Copy().SetScale(calculationScale)
 
 	for _, lot := range lots {
 		if lot.remaining.Sign() <= 0 {
 			continue
 		}
 
-		if verifyIdentity {
-			_, executionKnown := knownExecutions[lot.id]
-			_, orderKnown := knownOrders[lot.trade.OrderID]
-
-			if !executionKnown && !orderKnown {
-				return errnie.Err(
-					errnie.Validation,
-					"persisted Thesis does not own remaining buy lot for "+symbol,
-					nil,
-				)
-			}
-		}
-
 		ratio := lot.remaining.Div(lot.trade.Volume)
 		cost := lot.trade.Cost.Mul(ratio)
 		fee := lot.trade.Fee.Mul(ratio)
 		tradeAt := time.Unix(0, int64(lot.trade.Time.Float64()*float64(time.Second)))
+
 		execution := &kraken.Execution{Data: []kraken.ExecutionData{{
-			OrderID: lot.trade.OrderID, ExecID: lot.id, ExecType: "trade",
-			Symbol: symbol, Side: "buy", LastQty: lot.remaining.Float64(),
-			LastPrice: *lot.trade.Price, Cost: *cost, FeeUsdEquiv: *fee,
-			Timestamp: tradeAt, OrderStatus: "filled",
+			OrderID:     lot.trade.OrderID,
+			ExecID:      lot.id,
+			ExecType:    "trade",
+			Symbol:      symbol,
+			Side:        "buy",
+			LastQty:     lot.remaining.Float64(),
+			LastPrice:   *lot.trade.Price,
+			Cost:        *cost,
+			FeeUsdEquiv: *fee,
+			Timestamp:   tradeAt,
+			OrderStatus: "filled",
 		}}}
-		position.executions = append(position.executions, execution)
-		position.record(types.TradeObservation{
-			Kind: "position_reconciliation", Symbol: symbol, Side: "buy",
-			OrderID: lot.trade.OrderID, ExecutionID: lot.id,
-			Quantity: lot.remaining.String(), Price: lot.trade.Price.String(),
-			Cost: cost.String(), Fee: fee.String(), At: tradeAt,
-		})
+
+		holding.Executions = append(holding.Executions, execution)
 		totalQuantity = totalQuantity.Add(&lot.remaining)
 		totalCost = totalCost.Add(cost)
 	}
 
-	if totalQuantity.Cmp(&holding.Qty) != 0 || totalQuantity.Sign() <= 0 {
+	if totalQuantity.Cmp(walletQuantity) != 0 || totalQuantity.Sign() <= 0 {
 		return errnie.Err(errnie.Validation, "trade history does not reconcile wallet quantity for "+symbol, nil)
 	}
 
-	position.Data.Qty = holding.Qty
-	position.Data.EntryPrice = *totalCost.Div(totalQuantity)
+	holding.Order.Volume = walletQuantity.SetScale(holding.Qty.GetScale())
+	holding.Order.Price = totalCost.Div(totalQuantity)
+	position.balance.Update(symbol, holding)
 
 	return nil
-}
-
-/*
-holding returns the wallet holding whose asset is symbol's own base
-asset, skipping the quote currency and empty holdings.
-
-Hydrate previously took whichever non-quote holding it iterated to
-first and paired it with symbol's own entry price, so a wallet holding
-several assets (e.g. GALA, BTC) could hydrate the BTC/USD position
-with GALA's quantity the moment GALA happened to sort before BTC.
-*/
-func (position *Position) holding(symbol string) (SpotHolding, bool) {
-	for _, holding := range position.balance.Holdings() {
-		if holding.Asset == position.balance.quote || holding.Qty.Sign() <= 0 {
-			continue
-		}
-
-		if position.balance.Symbol(holding.Asset) == symbol {
-			return holding, true
-		}
-	}
-
-	return SpotHolding{}, false
 }
 
 func (position *Position) OrderAck(buf []byte) {
@@ -474,37 +291,10 @@ func (position *Position) OrderAck(buf []byte) {
 
 	if errnie.Error(kraken.Validate(orderAck)) != nil {
 		position.status = types.ERROR
-		position.record(types.TradeObservation{
-			Kind: "order_acknowledgement", Symbol: position.Data.Symbol,
-			Status: string(types.ERROR), Error: orderAck.Error, At: orderAck.TimeOut,
-		})
 		return
 	}
 
-	if orderAck.ReqID != position.reqID {
-		return
-	}
-
-	position.orderID = orderAck.Result.OrderID
-	position.clientID = orderAck.Result.OrderUserref
 	position.status = types.OPEN
-	position.record(types.TradeObservation{
-		Kind: "order_acknowledgement", Symbol: position.Data.Symbol,
-		Status: string(position.status), OrderID: position.orderID, At: orderAck.TimeOut,
-	})
-
-	if position.theses != nil {
-		if err := position.theses.Save(position.Data.Symbol, position.thesis); err != nil {
-			position.status = types.ERROR
-			errnie.Error(err)
-
-			return
-		}
-
-		position.thesis.Publish()
-	}
-
-	position.Publish()
 }
 
 func (position *Position) ExecutionAck(buf []byte) {
@@ -521,174 +311,179 @@ func (position *Position) ExecutionAck(buf []byte) {
 		Data:     make([]kraken.ExecutionData, 0),
 		Sequence: execution.Sequence,
 	}
-	matchedAt := time.Time{}
 
-	for _, executionData := range execution.Data {
-		if executionData.OrderID != position.orderID {
+	if position.Stop == nil {
+		position.status = types.ERROR
+
+		return
+	}
+
+	holding, err := position.balance.Holding(position.Stop.Symbol)
+
+	if errnie.Error(err) != nil {
+		position.status = types.ERROR
+
+		return
+	}
+
+	for _, data := range execution.Data {
+		if data.Symbol != position.Stop.Symbol {
 			continue
 		}
 
-		cumulativeQuantity := decimal.NewFromFloat64(
-			executionData.CumQty,
-		)
-
-		switch executionData.Side {
-		case "buy":
-			position.Data.Qty = *cumulativeQuantity
-			position.Data.EntryPrice = executionData.AvgPrice
-
-		case "sell":
-			position.Data.Qty = *position.priorQty.Sub(
-				cumulativeQuantity,
-			)
-		}
-
-		position.Data.Mark = executionData.LastPrice
-
-		if status, ok := orderStatuses[executionData.OrderStatus]; ok {
-			position.status = status
-		}
-
-		next := ""
-
-		if executionData.Side == "buy" && position.status == types.PARTIAL_FILLED {
-			next = types.LifecyclePartiallyEntered
-		}
-
-		if executionData.Side == "buy" && position.status == types.FILLED {
-			next = types.LifecycleEntered
-		}
-
-		if executionData.Side == "sell" && position.currentAction == "exit" &&
-			position.status == types.PARTIAL_FILLED {
-			next = types.LifecyclePartiallyExited
-		}
-
-		if executionData.Side == "sell" && position.currentAction == "exit" &&
-			position.Data.Qty.Sign() <= 0 {
-			next = types.LifecycleClosed
-		}
-
-		if next != "" && position.thesis != nil {
-			if err := position.thesis.Transition(
-				position.Data.Symbol, next, executionData.Timestamp,
-			); err != nil {
-				position.status = types.ERROR
-				position.record(types.TradeObservation{
-					Kind: "execution_error", Symbol: position.Data.Symbol,
-					Error: err.Error(), At: executionData.Timestamp,
-				})
-				errnie.Error(err)
-
-				return
-			}
-		}
-
-		position.record(types.TradeObservation{
-			Kind:        "execution",
-			Symbol:      executionData.Symbol,
-			Side:        executionData.Side,
-			Status:      executionData.OrderStatus,
-			OrderID:     executionData.OrderID,
-			ExecutionID: executionData.ExecID,
-			Quantity: strconv.FormatFloat(
-				executionData.LastQty, 'f', -1, 64,
-			),
-			Price: executionData.LastPrice.String(),
-			Cost:  executionData.Cost.String(),
-			Fee:   executionData.FeeUsdEquiv.String(),
-			At:    executionData.Timestamp,
-		})
-
-		matchedExecution.Data = append(matchedExecution.Data, executionData)
-		matchedAt = executionData.Timestamp
+		matchedExecution.Data = append(matchedExecution.Data, data)
 	}
 
 	if len(matchedExecution.Data) > 0 {
 		if err := position.Execution(matchedExecution); err != nil {
 			position.status = types.ERROR
+
 			return
 		}
 
-		position.executions = append(
-			position.executions,
+		holding.Executions = append(
+			holding.Executions,
 			matchedExecution,
 		)
+		entryQuantity := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
+		exitQuantity := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
+		entryCost := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
+		entryFee := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
+		mark := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
+		seen := make(map[string]struct{})
 
-		if position.currentAction == "reduce" && position.status == types.FILLED {
-			position.status = types.OPEN
-			position.record(types.TradeObservation{
-				Kind: "position_snapshot", Action: "reduce", Symbol: position.Data.Symbol,
-				Status: string(types.OPEN), Quantity: position.Data.Qty.String(),
-				Price: position.Data.Mark.String(), At: matchedAt,
-			})
-		}
+		for _, observed := range holding.Executions {
+			for _, fill := range observed.Data {
+				if fill.Symbol != position.Stop.Symbol || fill.ExecType != "trade" {
+					continue
+				}
 
-		if position.Data.Qty.Sign() <= 0 {
-			position.status = types.CLOSED
-			outcome, err := position.price.Reconcile(
-				position.Data.Symbol, position.executions,
-			)
+				if fill.ExecID == "" || fill.LastQty <= 0 || fill.Cost.Sign() <= 0 {
+					position.status = types.ERROR
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"incomplete execution data for "+position.Stop.Symbol,
+						nil,
+					))
 
-			if err != nil {
-				position.record(types.TradeObservation{
-					Kind: "reconciliation_error", Symbol: position.Data.Symbol,
-					Status: string(types.CLOSED), Error: err.Error(), At: matchedAt,
-				})
-				errnie.Error(err)
-			} else {
-				position.Data.Mark = outcome.Mark
-				position.Data.PnL = outcome.PnL
-				position.Data.ReturnPct = outcome.ReturnPct
-				fees := outcome.EntryFee.Add(&outcome.ExitFee)
-				position.record(types.TradeObservation{
-					Kind: "final_outcome", Symbol: position.Data.Symbol,
-					Status: string(types.CLOSED), Quantity: position.Data.Qty.String(),
-					Price: position.Data.Mark.String(), Fee: fees.String(),
-					PnL: position.Data.PnL.String(), ReturnPct: position.Data.ReturnPct,
-					At: matchedAt,
-				})
+					return
+				}
+
+				if _, exists := seen[fill.ExecID]; exists {
+					continue
+				}
+
+				seen[fill.ExecID] = struct{}{}
+				quantity := decimal.NewFromFloat64(fill.LastQty).SetScale(decimal.DefaultScale)
+				mark = fill.LastPrice.Copy().SetScale(decimal.DefaultScale)
+
+				switch fill.Side {
+				case "buy":
+					entryQuantity = entryQuantity.Add(quantity)
+					entryCost = entryCost.Add(&fill.Cost)
+					entryFee = entryFee.Add(&fill.FeeUsdEquiv)
+
+					if holding.EntryAt.IsZero() || fill.Timestamp.Before(holding.EntryAt) {
+						holding.EntryAt = fill.Timestamp
+					}
+				case "sell":
+					exitQuantity = exitQuantity.Add(quantity)
+					holding.ExitAt = fill.Timestamp
+				default:
+					position.status = types.ERROR
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"unsupported execution side for "+position.Stop.Symbol,
+						nil,
+					))
+
+					return
+				}
 			}
-
-			position.record(types.TradeObservation{
-				Kind: "position_snapshot", Symbol: position.Data.Symbol,
-				Status: string(types.CLOSED), Quantity: position.Data.Qty.String(),
-				Price: position.Data.Mark.String(), At: matchedAt,
-			})
 		}
 
-		//Refresh the PnL after the execution changes quantity
-		//or average entry price.
-		if position.Data.Qty.Sign() > 0 &&
-			position.Data.EntryPrice.Sign() > 0 {
-			quote, err := position.price.PositionQuote(
-				position.Data.Symbol,
-				position.Data.EntryPrice,
-				position.Data.Qty,
+		if entryQuantity.Sign() <= 0 {
+			position.status = types.ERROR
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"position has no entry execution for "+position.Stop.Symbol,
+				nil,
+			))
+
+			return
+		}
+
+		if entryQuantity.Cmp(exitQuantity) < 0 {
+			position.status = types.ERROR
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"executions exceed position quantity for "+position.Stop.Symbol,
+				nil,
+			))
+
+			return
+		}
+
+		holding.Qty = *entryQuantity.Sub(exitQuantity)
+		holding.EntryPrice = *entryCost.Div(entryQuantity)
+		holding.EntryFee = *entryFee
+		holding.Mark = *mark
+
+		if holding.Order != nil {
+			holding.Order.Price = &holding.EntryPrice
+			holding.Order.Volume = &holding.Qty
+		}
+
+		if holding.Qty.Sign() <= 0 {
+			position.status = types.CLOSED
+
+			if holding.Order != nil && holding.Order.Description != nil {
+				outcome, err := position.price.Reconcile(
+					holding.Order.Description.Pair, holding.Executions,
+				)
+
+				if err != nil {
+					errnie.Error(err)
+				} else {
+					position.mark = &outcome.Mark
+					position.pnl = &outcome.PnL
+					position.returnPct = &outcome.ReturnPct
+					holding.Mark = outcome.Mark
+					holding.EntryFee = outcome.EntryFee
+					holding.ExitFee = outcome.ExitFee
+					holding.PnL = outcome.PnL
+					holding.ReturnPct = outcome.ReturnPct
+				}
+			}
+		} else if holding.Order != nil && holding.Order.Description != nil {
+			remainingFraction := holding.Qty.Div(entryQuantity)
+			holding.EntryFee = *entryFee.Mul(remainingFraction)
+			quote, err := position.price.PositionQuoteAt(
+				holding.Order.Description.Pair,
+				holding.EntryPrice,
+				holding.Mark,
+				holding.Qty,
 			)
 
 			if err == nil {
-				position.Data.Mark = quote.Mark
-				position.Data.PnL = quote.PnL
-				position.Data.ReturnPct = quote.ReturnPct
+				pnl := quote.PnL.Add(&quote.EntryFee).Sub(&holding.EntryFee)
+				returnPct := pnl.Div(&quote.EntryNotional).Mul(decimal.NewFromInt64(100))
+				position.mark = &quote.Mark
+				position.pnl = pnl
+				position.returnPct = new(float64)
+				*position.returnPct = returnPct.Float64()
+				holding.Mark = quote.Mark
+				holding.ExitFee = quote.ExitFee
+				holding.PnL = *pnl
+				holding.ReturnPct = returnPct.Float64()
+				position.status = types.OPEN
 			} else {
 				errnie.Error(err)
 			}
 		}
+
+		position.balance.Update(position.Stop.Symbol, holding)
 	}
-
-	if position.theses != nil && position.thesis != nil {
-		if err := position.theses.Save(position.Data.Symbol, position.thesis); err != nil {
-			position.status = types.ERROR
-			errnie.Error(err)
-
-			return
-		}
-
-		position.thesis.Publish()
-	}
-
-	position.Publish()
 }
 
 /*
@@ -713,16 +508,33 @@ func (position *Position) Execution(
 }
 
 func (position *Position) Enter() error {
-	position.requestedQty = position.Data.Qty
-	position.Data.Qty = *decimal.NewFromInt64(0)
+	if position.Stop == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"position symbol not set",
+			nil,
+		))
+	}
 
-	/*
-		Taker returns the estimated quote-currency cost of buying
-		the requested quantity, including one taker fee.
-	*/
+	holding, err := position.balance.Holding(position.Stop.Symbol)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	if holding.Order == nil || holding.Order.Volume == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"entry order not set for "+position.Stop.Symbol,
+			nil,
+		))
+	}
+
+	requestedQty := holding.Order.Volume
+
 	amount, err := position.price.Taker(
-		position.Data.Symbol,
-		position.requestedQty,
+		position.Stop.Symbol,
+		*requestedQty,
 	)
 
 	if err != nil {
@@ -743,60 +555,14 @@ func (position *Position) Enter() error {
 
 	order := kraken.NewMarketOrder(
 		"buy",
-		position.requestedQty.Float64(),
-		position.Data.Symbol,
+		requestedQty.Float64(),
+		position.Stop.Symbol,
 	)
 
-	position.reqID = order.ReqID
 	position.status = types.PENDING
-
-	if position.thesis != nil {
-		if err := position.thesis.Transition(
-			position.Data.Symbol, types.LifecycleEntrySubmitted, time.Now(),
-		); err != nil {
-			position.status = types.ERROR
-
-			return errnie.Error(err)
-		}
-	}
-
-	position.record(types.TradeObservation{
-		Kind: "order_submission", Action: "enter", Symbol: position.Data.Symbol,
-		Side: "buy", Status: string(position.status),
-		Quantity: position.requestedQty.String(), At: time.Now(),
-	})
-
-	if position.theses != nil && position.thesis != nil {
-		if err := position.theses.Save(position.Data.Symbol, position.thesis); err != nil {
-			position.status = types.ERROR
-
-			return errnie.Error(err)
-		}
-
-		position.thesis.Publish()
-	}
 
 	if err := position.api.AddOrder(order); err != nil {
 		position.status = types.ERROR
-
-		if position.thesis != nil {
-			errnie.Error(position.thesis.Transition(
-				position.Data.Symbol, types.LifecycleRejected, time.Now(),
-			))
-		}
-
-		position.record(types.TradeObservation{
-			Kind: "execution_error", Action: "enter", Symbol: position.Data.Symbol,
-			Side: "buy", Status: string(position.status), Error: err.Error(), At: time.Now(),
-		})
-
-		if position.theses != nil && position.thesis != nil {
-			if persistErr := position.theses.Save(
-				position.Data.Symbol, position.thesis,
-			); persistErr != nil {
-				return errnie.Error(errors.Join(err, persistErr))
-			}
-		}
 
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -805,22 +571,25 @@ func (position *Position) Enter() error {
 		))
 	}
 
-	position.Publish()
-
 	return nil
 }
 
 func (position *Position) Exit(action string, quantity decimal.Decimal) error {
-	if position.thesis != nil &&
-		position.thesis.LifecycleState(position.Data.Symbol) == types.LifecycleInvalid {
+	if position.Stop == nil {
 		return errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"position has no recoverable Thesis for automatic exit",
+			errnie.Validation,
+			"position symbol not set",
 			nil,
 		))
 	}
 
-	if quantity.Sign() <= 0 || quantity.Cmp(&position.Data.Qty) > 0 {
+	holding, err := position.balance.Holding(position.Stop.Symbol)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	if quantity.Sign() <= 0 || quantity.Cmp(&holding.Qty) > 0 {
 		return errnie.Error(errnie.Err(
 			errnie.Forbidden,
 			"position does not contain requested sell quantity",
@@ -828,65 +597,16 @@ func (position *Position) Exit(action string, quantity decimal.Decimal) error {
 		))
 	}
 
-	position.priorQty = position.Data.Qty
-	position.requestedQty = quantity
-	position.currentAction = action
-
 	order := kraken.NewMarketOrder(
 		"sell",
-		position.requestedQty.Float64(),
-		position.Data.Symbol,
+		quantity.Float64(),
+		position.Stop.Symbol,
 	)
 
-	position.reqID = order.ReqID
 	position.status = types.PENDING
-
-	if position.thesis != nil && action == "exit" {
-		if err := position.thesis.Transition(
-			position.Data.Symbol, types.LifecycleExitSubmitted, time.Now(),
-		); err != nil {
-			position.status = types.ERROR
-
-			return errnie.Error(err)
-		}
-	}
-
-	position.record(types.TradeObservation{
-		Kind: "order_submission", Action: action, Symbol: position.Data.Symbol,
-		Side: "sell", Status: string(position.status),
-		Quantity: position.requestedQty.String(), At: time.Now(),
-	})
-
-	if position.theses != nil && position.thesis != nil {
-		if err := position.theses.Save(position.Data.Symbol, position.thesis); err != nil {
-			position.status = types.ERROR
-
-			return errnie.Error(err)
-		}
-
-		position.thesis.Publish()
-	}
 
 	if err := position.api.AddOrder(order); err != nil {
 		position.status = types.ERROR
-
-		if position.thesis != nil && action == "exit" {
-			errnie.Error(position.thesis.Transition(
-				position.Data.Symbol, types.LifecycleManaging, time.Now(),
-			))
-		}
-		position.record(types.TradeObservation{
-			Kind: "execution_error", Action: action, Symbol: position.Data.Symbol,
-			Side: "sell", Status: string(position.status), Error: err.Error(), At: time.Now(),
-		})
-
-		if position.theses != nil && position.thesis != nil {
-			if persistErr := position.theses.Save(
-				position.Data.Symbol, position.thesis,
-			); persistErr != nil {
-				return errnie.Error(errors.Join(err, persistErr))
-			}
-		}
 
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -895,13 +615,21 @@ func (position *Position) Exit(action string, quantity decimal.Decimal) error {
 		))
 	}
 
-	position.Publish()
-
 	return nil
 }
 
 func (position *Position) Executions() []*kraken.Execution {
-	return position.executions
+	if position.Stop == nil {
+		return nil
+	}
+
+	holding, err := position.balance.Holding(position.Stop.Symbol)
+
+	if err != nil {
+		return nil
+	}
+
+	return holding.Executions
 }
 
 /*
@@ -916,7 +644,14 @@ func (position *Position) TickerAck(buf []byte) {
 		return
 	}
 
-	if errnie.Error(positionDataValidator.Validate(position.Data)) != nil {
+	if position.Stop == nil {
+		return
+	}
+
+	holding, err := position.balance.Holding(position.Stop.Symbol)
+
+	if err != nil || holding.Order == nil || holding.Order.Description == nil ||
+		holding.Order.Price == nil || holding.Order.Volume == nil {
 		position.status = types.ERROR
 
 		return
@@ -929,18 +664,18 @@ func (position *Position) TickerAck(buf []byte) {
 	}
 
 	for _, tickerData := range ticker.Data {
-		if tickerData.Symbol != position.Data.Symbol ||
+		if tickerData.Symbol != position.Stop.Symbol ||
 			tickerData.Last == nil ||
-			position.Data.EntryPrice.Sign() <= 0 ||
-			position.Data.Qty.Sign() <= 0 {
+			holding.Order.Price.Sign() <= 0 ||
+			holding.Order.Volume.Sign() <= 0 {
 			continue
 		}
 
 		quote, err := position.price.PositionQuoteAt(
-			position.Data.Symbol,
-			position.Data.EntryPrice,
+			position.Stop.Symbol,
+			*holding.Order.Price,
 			*tickerData.Last,
-			position.Data.Qty,
+			*holding.Order.Volume,
 		)
 
 		if err != nil {
@@ -953,17 +688,16 @@ func (position *Position) TickerAck(buf []byte) {
 			return
 		}
 
-		position.Data.Mark = quote.Mark
-		position.Data.PnL = quote.PnL
-		position.Data.ReturnPct = quote.ReturnPct
-		position.record(types.TradeObservation{
-			Kind: "position_snapshot", Symbol: position.Data.Symbol,
-			Status: string(position.status), Quantity: position.Data.Qty.String(),
-			Price: position.Data.Mark.String(), PnL: position.Data.PnL.String(),
-			ReturnPct: position.Data.ReturnPct, At: tickerData.Timestamp,
-		})
-
-		position.Publish()
+		position.mark = &quote.Mark
+		position.pnl = &quote.PnL
+		position.returnPct = &quote.ReturnPct
+		holding.Mark = quote.Mark
+		holding.EntryPrice = *holding.Order.Price
+		holding.EntryFee = quote.EntryFee
+		holding.ExitFee = quote.ExitFee
+		holding.PnL = quote.PnL
+		holding.ReturnPct = quote.ReturnPct
+		position.balance.Update(position.Stop.Symbol, holding)
 
 		return
 	}

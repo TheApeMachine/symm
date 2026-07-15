@@ -7,30 +7,30 @@ Decision records the action strategy selected and the alternatives it compared.
 It is owned by one Thesis so intended behavior remains separate from execution.
 */
 type Decision struct {
-	Action            string             `json:"action"`
-	Symbol            string             `json:"symbol"`
-	At                time.Time          `json:"at"`
-	Utility           float64            `json:"utility"`
+	Action            string             `json:"action" validate:"required,oneof=enter|exit|reduce|hold|nothing"`
+	Symbol            string             `json:"symbol" validate:"required"`
+	At                time.Time          `json:"at" validate:"required"`
+	Utility           float64            `json:"utility" validate:"finite"`
 	Alternatives      map[string]float64 `json:"alternatives"`
 	AllocationClass   string             `json:"allocationClass"`
-	ProposedNotional  float64            `json:"proposedNotional"`
-	ProposedQuantity  float64            `json:"proposedQuantity"`
-	ReferencePrice    float64            `json:"referencePrice"`
+	ProposedNotional  float64            `json:"proposedNotional" validate:"finite"`
+	ProposedQuantity  float64            `json:"proposedQuantity" validate:"finite"`
+	ReferencePrice    float64            `json:"referencePrice" validate:"finite"`
 	ValidThroughEpoch uint64             `json:"validThroughEpoch"`
 	ForecastSource    string             `json:"forecastSource"`
 	ForecastModel     string             `json:"forecastModel"`
 	ForecastEpoch     uint64             `json:"forecastEpoch"`
 	CalibrationCount  uint64             `json:"calibrationCount"`
-	ExpectedReturn    float64            `json:"expectedReturn"`
-	ExpectedFees      float64            `json:"expectedFees"`
-	ExpectedSpread    float64            `json:"expectedSpread"`
-	ExpectedImpact    float64            `json:"expectedImpact"`
-	AdverseSelection  float64            `json:"adverseSelection"`
-	Uncertainty       float64            `json:"uncertainty"`
-	Confidence        float64            `json:"confidence"`
-	AvailableCapital  float64            `json:"availableCapital"`
-	OpenPositions     int                `json:"openPositions"`
-	SlotCapacity      int                `json:"slotCapacity"`
+	ExpectedReturn    float64            `json:"expectedReturn" validate:"finite"`
+	ExpectedFees      float64            `json:"expectedFees" validate:"finite,nonnegative"`
+	ExpectedSpread    float64            `json:"expectedSpread" validate:"finite,nonnegative"`
+	ExpectedImpact    float64            `json:"expectedImpact" validate:"finite,nonnegative"`
+	AdverseSelection  float64            `json:"adverseSelection" validate:"finite,nonnegative"`
+	Uncertainty       float64            `json:"uncertainty" validate:"finite,nonnegative"`
+	Confidence        float64            `json:"confidence" validate:"finite,min=0,max=1"`
+	AvailableCapital  float64            `json:"availableCapital" validate:"finite,nonnegative"`
+	OpenPositions     int                `json:"openPositions" validate:"min=0"`
+	SlotCapacity      int                `json:"slotCapacity" validate:"min=0"`
 	Cause             string             `json:"cause"`
 	Reason            string             `json:"reason"`
 }

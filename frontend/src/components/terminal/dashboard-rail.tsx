@@ -5,10 +5,10 @@ import {
 	latestStrategyDecisions,
 } from "#/collections/decisions";
 import { positionsStore } from "#/collections/positions";
-import { tradeObservationKey } from "#/collections/snapshot-retain";
 import {
 	tradeJournalStore,
 	tradeJournalValues,
+	tradeObservationKey,
 } from "#/collections/trade-journal";
 import { ColumnHeader } from "#/components/dashboard/header";
 import { fixed } from "#/components/terminal/decision-format";
@@ -400,10 +400,9 @@ const LivePositionMeta = ({
 
 	useDirectStorePaint(
 		() => {
-			const net = positionsStore.state.positions.reduce(
-				(sum, position) => sum + position.pnl,
-				0,
-			);
+			const net = positionsStore.state.positions
+				.filter((position) => symbols.includes(position.symbol))
+				.reduce((sum, position) => sum + position.pnl, 0);
 
 			if (prefixRef.current !== null) {
 				prefixRef.current.textContent =
@@ -442,13 +441,27 @@ export const DashboardRail = () => {
 	*/
 	const symbols = useSelector(
 		positionsStore,
-		(state) => state.positions.map((position) => position.symbol),
+		(state) =>
+			state.positions
+				.filter(
+					(position) =>
+						position.qty > 0 &&
+						Array.isArray(position.executions) &&
+						position.executions.length > 0,
+				)
+				.map((position) => position.symbol),
 		{ compare: sameSymbols },
 	);
 	const observed = useSelector(positionsStore, (state) => state.observed);
 	const quoteSymbol = useSelector(
 		positionsStore,
-		(state) => state.positions[0]?.symbol,
+		(state) =>
+			state.positions.find(
+				(position) =>
+					position.qty > 0 &&
+					Array.isArray(position.executions) &&
+					position.executions.length > 0,
+			)?.symbol,
 	);
 	const quote = quoteSymbol?.split("/")[1] ?? "USD";
 	const auditRows = useSelector(tradeJournalStore, (state) =>

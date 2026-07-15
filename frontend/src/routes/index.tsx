@@ -28,14 +28,15 @@ const RouteComponent = () => {
 	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
 
 	return (
-		<Flex.Column className="h-full min-w-[1120px]">
+		<Flex.Column fullWidth className="h-full min-w-[1120px]">
 			<Pulse />
-			<Flex className="relative min-h-0 flex-1">
+			<Flex fullWidth className="relative min-h-0 flex-1">
 				<KernelInspector />
 				<ThesisModal />
 				<Grid
+					fullWidth
 					responsive={false}
-					className="h-full min-h-0 grid-cols-[282px_minmax(360px,1fr)_332px]"
+					className="h-full min-h-0 min-w-0 flex-1 grid-cols-[282px_minmax(360px,1fr)_332px]"
 				>
 					<div className="min-h-0 overflow-auto border-(--line) border-r bg-(--surface)">
 						<ColumnHeader
@@ -48,7 +49,7 @@ const RouteComponent = () => {
 					<Flex.Column className="min-h-0 border-(--line) border-r bg-(--sunken)">
 						<Canvas
 							title="Fluid density field"
-							meta="navier–stokes · vol-rank × Δ · whale carriers"
+							meta="navier-stokes · rho + |psi|^2 · price x time"
 							topRight={<LiveManifoldMeta focusSymbol={focusSymbol} />}
 							legend={<FluidLegend />}
 							className="flex-[1.45]"

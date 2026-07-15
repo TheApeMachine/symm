@@ -82,6 +82,8 @@ const frame = {
 			symbol: "BTC/USD",
 			qty: 0.01,
 			entry_price: 61000,
+			entry_fee: 1.586,
+			exit_fee: 1.597,
 			mark: 61420,
 			pnl: 4.2,
 			return_pct: 0.0068852459,

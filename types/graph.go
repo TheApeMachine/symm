@@ -10,8 +10,6 @@ import (
 	"gonum.org/v1/gonum/graph/multi"
 )
 
-var graphMeasurementValidator = errnie.New()
-
 /*
 EdgeType names how two measurement nodes relate within one symbol epoch.
 */
@@ -115,10 +113,12 @@ belongs to this graph's symbol. Repeated evidence is an idempotent no-op.
 */
 func (evidenceGraph *Graph) AddNode(measurement *Measurement) error {
 	if measurement == nil {
-		return graphMeasurementValidator.Validate((*Measurement)(nil))
+		return errnie.Validate((*Measurement)(nil))
 	}
 
-	if err := graphMeasurementValidator.Validate(measurement); err != nil {
+	measurement.CanonicalizeProvenance()
+
+	if err := errnie.Validate(measurement); err != nil {
 		return err
 	}
 

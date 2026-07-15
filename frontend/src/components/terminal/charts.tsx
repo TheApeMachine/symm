@@ -61,10 +61,16 @@ const frameOutput = (
 	frame: Record<string, unknown> | null | undefined,
 ): Record<string, unknown> | null => asRecord(frame?.output);
 
+const frameReading = (
+	frame: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | null =>
+	asRecord(frame?.reading) ?? asRecord(frameOutput(frame)?.reading);
+
 const frameMatrix = (
 	frame: Record<string, unknown> | null | undefined,
 ): number[][] => {
 	const output = frameOutput(frame);
+	const reading = frameReading(frame);
 
 	for (const value of [
 		frame?.rho,
@@ -104,6 +110,13 @@ const frameMatrix = (
 		frame?.coherenceMag2,
 		frame?.guidanceSpeed,
 		frame?.stressAnisotropy,
+		reading?.pressureGradX,
+		reading?.pressureGradY,
+		reading?.pressureGradZ,
+		reading?.divergence,
+		reading?.coherenceMag2,
+		reading?.guidanceSpeed,
+		reading?.viscosityProxy,
 	].filter(
 		(value): value is number =>
 			typeof value === "number" && Number.isFinite(value),
@@ -247,6 +260,7 @@ export const TerminalFluidChart = ({
 			const particles = terminalFluidParticlesFromFrame(frame);
 			const fieldMatrix = isFluidFieldMatrix(matrix) ? matrix : [];
 			const { columns, rows } = fluidGridDimensions(frame, fieldMatrix);
+			const reading = frameReading(frame);
 
 			if (fieldMatrix.length === 0 && particles.length === 0) {
 				drawWaiting(context, width, height, "waiting for manifold field");
@@ -254,7 +268,20 @@ export const TerminalFluidChart = ({
 			}
 
 			if (fieldMatrix.length > 0) {
-				drawFluidField(context, width, height, fieldMatrix, contour);
+				drawFluidField(context, width, height, fieldMatrix, contour, {
+					particles,
+					pressureGradX:
+						finiteNumber(frame?.pressureGradX) ??
+						finiteNumber(reading?.pressureGradX) ??
+						0,
+					pressureGradZ:
+						finiteNumber(frame?.pressureGradZ) ??
+						finiteNumber(reading?.pressureGradZ) ??
+						0,
+					psiMag2: numberMatrix(frame?.psiMag2),
+					guidanceVelX: numberMatrix(frame?.guidanceVelX),
+					guidanceVelZ: numberMatrix(frame?.guidanceVelZ),
+				});
 			} else {
 				clearCanvas(context, width, height);
 				drawGrid(context, width, height);

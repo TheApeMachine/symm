@@ -134,3 +134,10 @@ func marshalFrame(frame map[string]any) []byte {
 
 	return payload
 }
+
+/*
+MarshalFrame serializes one Kraken-shaped map for test fixtures.
+*/
+func MarshalFrame(frame map[string]any) []byte {
+	return marshalFrame(frame)
+}

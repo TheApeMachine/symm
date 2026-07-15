@@ -115,10 +115,15 @@ func TestGraphAddNode(t *testing.T) {
 
 			err := graph.AddNode(measurement)
 
-			Convey("Then cross-field validation rejects it before insertion", func() {
-				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldContainSubstring, "evidence interval ends before it starts")
-				So(graph.Nodes().Len(), ShouldEqual, 0)
+			Convey("Then provenance is canonicalized before insertion", func() {
+				So(err, ShouldBeNil)
+				So(graph.Nodes().Len(), ShouldEqual, 1)
+
+				nodes := graph.Nodes()
+				So(nodes.Next(), ShouldBeTrue)
+				retained := nodes.Node().(*Node)
+				So(retained.Measurement.ObservedFrom, ShouldEqual, at)
+				So(retained.Measurement.At, ShouldEqual, at.Add(time.Second))
 			})
 		})
 	})

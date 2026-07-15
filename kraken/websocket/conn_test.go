@@ -136,20 +136,21 @@ func TestAPITradeVolume(t *testing.T) {
 			}
 		}`)}
 		api := NewAPI(context.Background(), public, private, nil)
+		So(api.Initialize(), ShouldBeNil)
 
 		Convey("When the fee tier is requested", func() {
 			tradeVolume, err := api.TradeVolume([]string{"BTC/USD"})
 
-			Convey("Then the private endpoint is used and the response passes through unmodified", func() {
+			Convey("Then the private endpoint is used and SDK pair names are normalized", func() {
 				So(err, ShouldBeNil)
 				So(private.postPath, ShouldEqual, TradeVolumeEndpoint)
 				So(tradeVolume.Result.Fees, ShouldResemble, map[string]kraken.TradeVolumeFees{
-					"XXBTZUSD": {
+					"BTC/USD": {
 						Fee: "0.2600", MinFee: "0.1000", TierVolume: "0.0000",
 					},
 				})
 				So(tradeVolume.Result.FeesMaker, ShouldResemble, map[string]kraken.TradeVolumeFees{
-					"XXBTZUSD": {Fee: "0.1600"},
+					"BTC/USD": {Fee: "0.1600"},
 				})
 			})
 		})
@@ -174,7 +175,16 @@ func BenchmarkAPITradeVolume(b *testing.B) {
 	}
 
 	private := &stubConn{postResponse: response}
-	api := NewAPI(context.Background(), &stubConn{}, private, nil)
+	api := NewAPI(
+		context.Background(),
+		&stubConn{client: normalizerClient()},
+		private,
+		nil,
+	)
+
+	if err := api.Initialize(); err != nil {
+		b.Fatal(err)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 

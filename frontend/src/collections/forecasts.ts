@@ -1,8 +1,11 @@
-import {
-	createSnapshotRowStore,
-	forecastRowKey,
-} from "#/collections/snapshot-retain";
+import { createStore } from "@tanstack/react-store";
 import type { ThesisForecast } from "#/types/thesis";
+import { Circular, type CircularBuffer } from "./circular";
+
+const FORECAST_HISTORY_LIMIT = 50;
+
+const forecastKey = (row: ThesisForecast): string =>
+	`${row.symbol}:${row.source}:${row.target}:${row.sourceEpoch}`;
 
 const asForecasts = (frame: unknown): ThesisForecast[] => {
 	if (!Array.isArray(frame)) {
@@ -19,11 +22,58 @@ const asForecasts = (frame: unknown): ThesisForecast[] => {
 };
 
 /*
-forecastsStore merges backend thesis.Forecasts snapshots by row identity so
+forecastValues returns the newest retained forecast row for each identity.
+*/
+export const forecastValues = (
+	forecasts: Record<string, CircularBuffer<ThesisForecast>>,
+): ThesisForecast[] =>
+	Object.keys(forecasts)
+		.sort()
+		.flatMap((key) => {
+			const forecast = forecasts[key]?.values().at(-1);
+
+			return forecast === undefined ? [] : [forecast];
+		});
+
+/*
+forecastsStore retains backend thesis forecasts in bounded circular buffers so
 partial tick frames cannot erase retained symbol evidence.
 */
-export const forecastsStore = createSnapshotRowStore(
-	"forecasts",
-	asForecasts,
-	forecastRowKey,
+export const forecastsStore = createStore(
+	{
+		forecasts: {} as Record<string, CircularBuffer<ThesisForecast>>,
+		version: 0,
+	},
+	({ setState }) => ({
+		updateFrame: (frame: unknown) =>
+			setState((prev) => {
+				const rows = asForecasts(frame);
+
+				if (rows.length === 0) {
+					return prev;
+				}
+
+				const forecasts = prev.forecasts;
+
+				for (const row of rows) {
+					const key = forecastKey(row);
+
+					if (!forecasts[key]) {
+						forecasts[key] = Circular<ThesisForecast>(FORECAST_HISTORY_LIMIT);
+					}
+
+					forecasts[key].push(row);
+				}
+
+				return {
+					forecasts,
+					version: prev.version + 1,
+				};
+			}),
+		reset: () =>
+			setState(() => ({
+				forecasts: {},
+				version: 0,
+			})),
+	}),
 );

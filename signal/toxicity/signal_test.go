@@ -2,12 +2,13 @@ package toxicity
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -16,21 +17,13 @@ func TestSignal_MeasureUsesTradeEventTime(testingTB *testing.T) {
 	Convey("Given cached trades with explicit event timestamps", testingTB, func() {
 		eventAt := time.Unix(42, 500_000_000).UTC()
 		signal := &Signal{
-			ctx: context.Background(),
-			trades: &Trade{
-				cache: []spot.Trade{
-					{
-						Pair:   "BTC/USD",
-						Time:   decimal.NewFromFloat64(float64(eventAt.Unix()) + 0.5),
-						Price:  decimal.NewFromFloat64(100),
-						Volume: decimal.NewFromFloat64(1),
-					},
-				},
-			},
+			ctx:    context.Background(),
+			trades: &Trade{},
 			level3: &Level3{
 				api: websocket.NewAPI(context.Background(), nil, nil, nil),
 			},
 		}
+		signal.trades.On([]byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"buy","price":100,"qty":1,"ord_type":"market","trade_id":1,"timestamp":"1970-01-01T00:00:42.5Z"}]}`))
 
 		result := signal.Measure(types.NewThesis(nil))
 
@@ -46,6 +39,30 @@ func TestSignal_MeasureUsesTradeEventTime(testingTB *testing.T) {
 			So(volume.Normalized, ShouldBeNil)
 			So(volume.Scale.Kind, ShouldEqual, types.ScaleObservationWindow)
 		})
+
+		Convey("Then websocket writes can overlap measurement drains", func() {
+			payload := []byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"buy","price":100,"qty":1,"ord_type":"market","trade_id":1,"timestamp":"1970-01-01T00:00:42.5Z"}]}`)
+			wait := sync.WaitGroup{}
+			wait.Add(2)
+
+			go func() {
+				defer wait.Done()
+
+				for range 100 {
+					signal.trades.On(payload)
+				}
+			}()
+
+			go func() {
+				defer wait.Done()
+
+				for range 100 {
+					signal.Measure(types.NewThesis(nil))
+				}
+			}()
+
+			wait.Wait()
+		})
 	})
 }
 
@@ -54,11 +71,11 @@ func TestSignal_MeasureSkipsTradeWithoutTimestamp(testingTB *testing.T) {
 		signal := &Signal{
 			ctx: context.Background(),
 			trades: &Trade{
-				cache: []spot.Trade{
+				cache: []kraken.TradeData{
 					{
-						Pair:   "BTC/USD",
-						Price:  decimal.NewFromFloat64(100),
-						Volume: decimal.NewFromFloat64(1),
+						Symbol: "BTC/USD",
+						Price:  *decimal.NewFromFloat64(100),
+						Qty:    1,
 					},
 				},
 			},
@@ -132,12 +149,12 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	signal := &Signal{
 		ctx: context.Background(),
 		trades: &Trade{
-			cache: []spot.Trade{
+			cache: []kraken.TradeData{
 				{
-					Pair:   "BTC/USD",
-					Time:   decimal.NewFromFloat64(float64(eventAt.Unix())),
-					Price:  decimal.NewFromFloat64(100),
-					Volume: decimal.NewFromFloat64(1),
+					Symbol:    "BTC/USD",
+					Timestamp: eventAt,
+					Price:     *decimal.NewFromFloat64(100),
+					Qty:       1,
 				},
 			},
 		},
@@ -147,12 +164,12 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	}
 
 	for benchmark.Loop() {
-		signal.trades.cache = []spot.Trade{
+		signal.trades.cache = []kraken.TradeData{
 			{
-				Pair:   "BTC/USD",
-				Time:   decimal.NewFromFloat64(float64(eventAt.Unix())),
-				Price:  decimal.NewFromFloat64(100),
-				Volume: decimal.NewFromFloat64(1),
+				Symbol:    "BTC/USD",
+				Timestamp: eventAt,
+				Price:     *decimal.NewFromFloat64(100),
+				Qty:       1,
 			},
 		}
 		signal.Measure(types.NewThesis(nil))

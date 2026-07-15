@@ -229,6 +229,10 @@ export const kernelStatusVariant = (status: SignalHealthStatus): Variant => {
 		return "warning";
 	}
 
+	if (status === "waiting" || status === "standby") {
+		return "disabled";
+	}
+
 	return "info";
 };
 
@@ -243,21 +247,33 @@ export const kernelSparkPaths = (
 	active: boolean;
 } => {
 	const history = values.length > 0 ? values : [0];
+	const minimum = Math.min(...history);
+	const maximum = Math.max(...history);
+	const scaled =
+		minimum < 0 || maximum > 1
+			? history.map((value) =>
+					maximum > minimum
+						? (value - minimum) / (maximum - minimum)
+						: value > 0
+							? 1
+							: 0,
+				)
+			: history;
 	const active = status === "measured" || status === "ambiguous";
-	const points = history.map((value, index) => {
+	const points = scaled.map((value, index) => {
 		const x =
-			history.length === 1
+			scaled.length === 1
 				? index === 0
 					? "0.0"
 					: "150.0"
-				: ((index / Math.max(history.length - 1, 1)) * 150).toFixed(1);
+				: ((index / Math.max(scaled.length - 1, 1)) * 150).toFixed(1);
 		const clamped = Math.max(0, Math.min(1, value));
 		const y = (29 - clamped * 26).toFixed(1);
 
 		return `${x},${y}`;
 	});
 	const spark =
-		history.length === 1
+		scaled.length === 1
 			? `${points[0]} 150,${points[0].split(",")[1]}`
 			: points.join(" ");
 	const area = `${spark} 150,30 0,30`;

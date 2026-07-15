@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { Measurement } from "#/types/measurement";
 import {
 	dedupeEpoch,
+	headlineMetric,
+	latestByMetric,
 	latestEpoch,
 	measurementIdentity,
 	orderedEpoch,
@@ -41,6 +43,12 @@ describe("orderedEpoch", () => {
 		expect(latestEpoch(values)).toHaveLength(7);
 		expect(orderedEpoch(values, "strength")).toHaveLength(7);
 		expect(orderedEpoch(values, "strength")[0]?.metric).toBe("strength");
+		expect(headlineMetric("fluid")).toBe("reynolds");
+		expect(headlineMetric("hawkes")).toBe("conditional_intensity");
+		expect(headlineMetric("toxicity")).toBe("touch_quantity");
+		const bid = measurement("conditional_intensity", at, 0.18, "buy");
+		const ask = measurement("conditional_intensity", at, 0.21, "sell");
+		expect(latestByMetric([bid, ask], "conditional_intensity")).toBe(ask);
 	});
 
 	it("dedupes duplicate metric identities within one observation tick", () => {

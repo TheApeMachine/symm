@@ -67,11 +67,14 @@ export const CortexSidePanels = ({
 }) => {
 	const posterior = cognitivePosteriorFromReading(reading);
 	const lookaheadScore = finite(reading?.lookaheadScore);
-	const decay =
-		lookaheadScore === null
-			? "—"
-			: Math.exp(Math.min(0, lookaheadScore)).toFixed(3);
 	const replays = finite(reading?.lookaheadPaths);
+	const nodeCount = finite(reading?.nodeCount);
+	const decay =
+		replays !== null && nodeCount !== null && replays + nodeCount > 0
+			? (replays / (replays + nodeCount)).toFixed(3)
+			: lookaheadScore === null
+				? "—"
+				: Math.exp(Math.min(0, lookaheadScore)).toFixed(3);
 	const entropyBits = finite(reading?.entropyBits);
 	const entropyThreshold = finite(reading?.entropyThreshold);
 	const inhibition =
@@ -92,7 +95,11 @@ export const CortexSidePanels = ({
 						Attractor basin · classify
 					</span>
 					<Badge
-						label={`${posterior.winner} ${posterior.winnerPercent}`}
+						label={
+							posterior.classes.length === 0
+								? `waiting ${posterior.winnerPercent}`
+								: `${posterior.winner} ${posterior.winnerPercent}`
+						}
 						variant="warning"
 					/>
 				</div>
@@ -202,7 +209,7 @@ export const CortexSidePanels = ({
 					<Badge
 						label={
 							reading?.sideline
-								? "sideline"
+								? "waiting"
 								: reading?.ambiguous
 									? "rem-replay"
 									: "awake"

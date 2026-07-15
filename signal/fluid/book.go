@@ -6,34 +6,23 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Book owns fluid book measurement and classification so order-book dynamics
-stay separate from signal orchestration.
+Book owns fluid book measurement so order-book dynamics stay separate from
+signal orchestration and downstream interpretation.
 */
 type Book struct {
-	registry   *Registry
-	fluidflow  *equation.Fluidflow
-	classifier *probability.ScoreClassifier
+	registry  *Registry
+	fluidflow *equation.Fluidflow
 }
 
 func NewBook(registry *Registry) *Book {
 	return &Book{
 		registry:  registry,
 		fluidflow: equation.NewFluidflow(),
-		classifier: probability.NewScoreClassifier(
-			[]string{"laminarScore", "turbulentScore", "inertialScore", "viscousScore"},
-			[]float64{
-				float64(types.CategoryIndex(types.CategoryLaminar)),
-				float64(types.CategoryIndex(types.CategoryTurbulent)),
-				float64(types.CategoryIndex(types.CategoryInertial)),
-				float64(types.CategoryIndex(types.CategoryViscous)),
-			},
-		),
 	}
 }
 
@@ -109,8 +98,8 @@ func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 }
 
 /*
-measurementsFromReading turns one validated fluid reading into classified
-measurements so solver state is published with its evidence.
+measurementsFromReading turns one validated fluid reading into numerical
+measurements so solver state is published without selecting a category.
 */
 func (book *Book) measurementsFromReading(
 	reading fluidReading,
@@ -124,99 +113,51 @@ func (book *Book) measurementsFromReading(
 		))
 	}
 
-	result, err := book.classifier.Classify(map[string]float64{
-		"laminarScore":   output.LaminarScore,
-		"turbulentScore": output.TurbulentScore,
-		"inertialScore":  output.InertialScore,
-		"viscousScore":   output.ViscousScore,
-		"strength":       output.Strength,
-	})
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
-	}
-
-	categories := []types.CategoryType{
-		types.Laminar,
-		types.Turbulent,
-		types.Inertial,
-		types.Viscous,
-	}
-	strengths := []float64{
-		output.LaminarScore,
-		output.TurbulentScore,
-		output.InertialScore,
-		output.ViscousScore,
-	}
-	categoryRows := make([]types.Category, 0, len(categories))
-
-	for index, category := range categories {
-		confidence := 0.0
-
-		if index < len(result.Probabilities) {
-			confidence = result.Probabilities[index]
-		}
-
-		categoryRows = append(categoryRows, types.Category{
-			Type:       category,
-			Confidence: confidence,
-			Strength:   strengths[index],
-		})
-	}
-
-	confidenceByCategory := make(map[types.CategoryType]float64, len(categoryRows))
-
-	for _, categoryRow := range categoryRows {
-		confidenceByCategory[categoryRow.Type] = categoryRow.Confidence
-	}
-
 	maturity := float64(reading.gridSteps) / float64(reading.gridSteps+1)
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,
 		Readiness: types.ReadinessObservation,
 	}
-	scale := types.ScaleReference{
-		Kind:    types.ScaleObservationWindow,
-		From:    eventAt,
-		Through: eventAt,
+	historyFrom := eventAt
+	earliestStamp := reading.dynamics.earliestStamp()
+
+	if !earliestStamp.IsZero() {
+		historyFrom = earliestStamp
 	}
+
 	subject := types.SubjectType("order_book")
 
-	laminarConfidence := confidenceByCategory[types.Laminar]
-	turbulentConfidence := confidenceByCategory[types.Turbulent]
-	inertialConfidence := confidenceByCategory[types.Inertial]
-	viscousConfidence := confidenceByCategory[types.Viscous]
-
 	specs := []struct {
-		metric     types.MetricType
-		raw        float64
-		normalized *float64
+		metric types.MetricType
+		unit   types.MeasurementUnit
+		raw    float64
+		from   time.Time
 	}{
-		{types.MetricLaminarScore, output.LaminarScore, &laminarConfidence},
-		{types.MetricTurbulentScore, output.TurbulentScore, &turbulentConfidence},
-		{types.MetricInertialScore, output.InertialScore, &inertialConfidence},
-		{types.MetricViscousScore, output.ViscousScore, &viscousConfidence},
-		{types.MetricStrength, output.Strength, nil},
-		{types.MetricViscosity, reading.viscosity, nil},
-		{types.MetricReynolds, reading.reynolds, nil},
-		{types.MetricDivergenceV2, reading.divergence, nil},
-		{types.MetricVelocityCurvatureV2, reading.velocityCurvature, nil},
-		{types.MetricTurbulence, reading.turbulence, nil},
-		{types.MetricSourceBalance, reading.sourceBalance, nil},
-		{types.MetricMemory, reading.memory, nil},
-		{types.MetricMidAddRate, reading.midAddRate, nil},
-		{types.MetricMidExecuteRate, reading.midExecuteRate, nil},
-		{types.MetricLaminar, output.LaminarScore, &laminarConfidence},
-		{types.MetricTurbulent, output.TurbulentScore, &turbulentConfidence},
-		{types.MetricInertial, output.InertialScore, &inertialConfidence},
-		{types.MetricViscous, output.ViscousScore, &viscousConfidence},
+		{types.MetricLaminarScore, types.UnitDimensionless, output.LaminarScore, historyFrom},
+		{types.MetricTurbulentScore, types.UnitDimensionless, output.TurbulentScore, historyFrom},
+		{types.MetricInertialScore, types.UnitDimensionless, output.InertialScore, historyFrom},
+		{types.MetricViscousScore, types.UnitDimensionless, output.ViscousScore, historyFrom},
+		{types.MetricViscosity, types.UnitDimensionless, reading.viscosity, eventAt},
+		{types.MetricReynolds, types.UnitDimensionless, reading.reynolds, eventAt},
+		{types.MetricDivergenceV2, types.UnitInverseSecond, reading.divergence, eventAt},
+		{types.MetricVelocityCurvatureV2, types.UnitInverseQuoteCurrencySecond, reading.velocityCurvature, eventAt},
+		{types.MetricTurbulence, types.UnitQuoteCurrencyPerSecond, reading.turbulence, eventAt},
+		{types.MetricSourceBalance, types.UnitBaseCurrency, reading.sourceBalance, eventAt},
+		{types.MetricMemory, types.UnitDimensionless, reading.memory, eventAt},
+		{types.MetricMidAddRate, types.UnitBaseCurrencyPerSecond, reading.midAddRate, eventAt},
+		{types.MetricMidExecuteRate, types.UnitBaseCurrencyPerSecond, reading.midExecuteRate, eventAt},
 	}
 
 	measurements := make([]*types.Measurement, 0, len(specs))
 
 	for _, spec := range specs {
+		from := spec.from
+		through := eventAt
+
+		if through.Before(from) {
+			from = through
+		}
+
 		measurements = append(measurements, &types.Measurement{
 			Source:       types.SourceFluid,
 			Metric:       spec.metric,
@@ -224,14 +165,17 @@ func (book *Book) measurementsFromReading(
 			Stream:       types.Fluid,
 			Symbol:       reading.symbol,
 			Side:         types.SideNone,
-			At:           eventAt,
-			ObservedFrom: eventAt,
-			Unit:         types.UnitDimensionless,
+			At:           through,
+			ObservedFrom: from,
+			Unit:         spec.unit,
 			Raw:          spec.raw,
-			Normalized:   spec.normalized,
 			Maturity:     maturity,
 			Validity:     validity,
-			Scale:        scale,
+			Scale: types.ScaleReference{
+				Kind:    types.ScaleObservationWindow,
+				From:    from,
+				Through: through,
+			},
 		})
 	}
 
@@ -239,8 +183,8 @@ func (book *Book) measurementsFromReading(
 }
 
 /*
-fluidflowInput maps empirical book dynamics into equation input so
-classification consumes dimensionally meaningful values.
+fluidflowInput maps empirical book dynamics and their per-symbol baselines into
+dimensionless fluid-state evidence.
 */
 func (book *Book) fluidflowInput(reading fluidReading) equation.FluidflowInput {
 	divergence := math.Abs(reading.divergence)
@@ -249,34 +193,28 @@ func (book *Book) fluidflowInput(reading fluidReading) equation.FluidflowInput {
 	laminarCeiling := book.baseline(0.5, reading.dynamics.reynoldsHistory, reading.reynolds)
 	turbulentFloor := book.baseline(0.75, reading.dynamics.reynoldsHistory, reading.reynolds)
 	divergenceEdge := book.baseline(0.5, reading.dynamics.divergenceHistory, divergence)
-	turbulentReady := 0.0
-
-	if turbulentFloor > 0 {
-		turbulentReady = 1
-	}
+	viscosityBaseline := book.baseline(
+		0.5, reading.dynamics.viscosityHistory, reading.viscosity,
+	)
+	vorticityBaseline := book.baseline(
+		0.5, reading.dynamics.velocityCurvatureHistory, velocityCurvature,
+	)
+	turbulenceBaseline := book.baseline(
+		0.5, reading.dynamics.turbulenceHistory, turbulence,
+	)
 
 	return equation.FluidflowInput{
-		Reynolds:       book.finitePositive(reading.reynolds),
-		Divergence:     book.finitePositive(divergence),
-		Viscosity:      book.finitePositive(reading.viscosity),
-		MidAddRate:     book.finitePositive(reading.midAddRate),
-		MidExecuteRate: book.finitePositive(reading.midExecuteRate),
-		LaminarCeiling: book.finitePositive(laminarCeiling),
-		TurbulentFloor: book.finitePositive(turbulentFloor),
-		TurbulentReady: turbulentReady > 0,
-		DivergenceEdge: book.finitePositive(divergenceEdge),
-		IcebergScore: book.finitePositive(
-			reading.dynamics.icebergScore(
-				reading.midAddRate, reading.midExecuteRate,
-			),
-		),
-		Vorticity:  book.finitePositive(velocityCurvature),
-		Turbulence: book.finitePositive(turbulence),
-		Memory:     book.finitePositive(reading.memory),
-		Price:      book.finitePositive(reading.price),
-		SpreadBPS:  book.finitePositive(reading.spreadBPS),
-		ChangePct:  book.finite(reading.changePct),
-		Volume:     book.finitePositive(reading.volume),
+		Reynolds:           book.finitePositive(reading.reynolds),
+		Divergence:         book.finitePositive(divergence),
+		Viscosity:          book.finitePositive(reading.viscosity),
+		LaminarCeiling:     book.finitePositive(laminarCeiling),
+		TurbulentFloor:     book.finitePositive(turbulentFloor),
+		DivergenceEdge:     book.finitePositive(divergenceEdge),
+		ViscosityBaseline:  book.finitePositive(viscosityBaseline),
+		Vorticity:          book.finitePositive(velocityCurvature),
+		VorticityBaseline:  book.finitePositive(vorticityBaseline),
+		Turbulence:         book.finitePositive(turbulence),
+		TurbulenceBaseline: book.finitePositive(turbulenceBaseline),
 	}
 }
 

@@ -26,6 +26,35 @@ func Replay(handlers Handlers, frames iter.Seq[Frame]) {
 }
 
 /*
+ReplayStep delivers one payload through an explicit callback so broker tests can
+script order acknowledgements and execution fills outside channel routing.
+*/
+type ReplayStep struct {
+	Deliver func([]byte)
+	Payload []byte
+}
+
+/*
+ReplaySteps runs one ordered list of broker callbacks for position tests.
+*/
+func ReplaySteps(steps ...ReplayStep) {
+	for _, step := range steps {
+		step.Deliver(step.Payload)
+	}
+}
+
+/*
+ReplayPayloads drives one handler through every payload in each fixture.
+*/
+func ReplayPayloads(handler func([]byte), fixtures ...PayloadFixture) {
+	for _, fixture := range fixtures {
+		for payload := range fixture.Generate() {
+			handler(payload)
+		}
+	}
+}
+
+/*
 ReplayFixture serves a recorded jsonl slice of raw Kraken frames as a Fixture,
 so a real historical capture drives the same pipeline as synthetic fixtures.
 */

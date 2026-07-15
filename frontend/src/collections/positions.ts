@@ -4,9 +4,12 @@ export type Position = Record<string, unknown> & {
 	symbol: string;
 	qty: number;
 	entry_price: number;
+	entry_fee: number;
+	exit_fee: number;
 	mark: number;
 	pnl: number;
 	return_pct: number;
+	executions?: unknown[];
 };
 
 type PositionFrame = Record<string, unknown>;
@@ -47,6 +50,8 @@ const parsePosition = (value: unknown, index: number): Position => {
 		symbol: frame.symbol,
 		qty: requiredFinite(frame.qty, `${path}.qty`),
 		entry_price: requiredFinite(frame.entry_price, `${path}.entry_price`),
+		entry_fee: requiredFinite(frame.entry_fee, `${path}.entry_fee`),
+		exit_fee: requiredFinite(frame.exit_fee, `${path}.exit_fee`),
 		mark: requiredFinite(frame.mark, `${path}.mark`),
 		pnl: requiredFinite(frame.pnl, `${path}.pnl`),
 		return_pct: requiredFinite(frame.return_pct, `${path}.return_pct`),

@@ -37,8 +37,19 @@ export const walletMetrics = (
 	}
 
 	const balance = balances[0];
-	const unrealized = positions.reduce(
+	const funded = positions.filter(
+		(position) =>
+			position.qty > 0 &&
+			Array.isArray(position.executions) &&
+			position.executions.length > 0,
+	);
+	const unrealized = funded.reduce(
 		(total, position) => total + position.pnl,
+		0,
+	);
+	const committed = funded.reduce(
+		(total, position) =>
+			total + position.entry_price * position.qty + position.entry_fee,
 		0,
 	);
 
@@ -48,7 +59,7 @@ export const walletMetrics = (
 		available: balance.available,
 		reserved: balance.reserved,
 		unrealized,
-		equity: balance.balance + unrealized,
+		equity: balance.balance + committed + unrealized,
 	};
 };
 

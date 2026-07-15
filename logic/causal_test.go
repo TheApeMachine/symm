@@ -82,26 +82,25 @@ func BenchmarkCausalUpdate(b *testing.B) {
 
 func causalState(at time.Time, midPrice float64, epoch uint64) manifold.State {
 	state := manifold.State{
-		Source:            "manifold",
-		Symbol:            "BTC/USD",
-		At:                at,
-		Epoch:             epoch,
-		Ready:             true,
-		MidPrice:          midPrice,
-		VisibleMass:       1,
-		BidTouchDensity:   0.6,
-		AskTouchDensity:   0.4,
-		DeltaT:            1,
-		Subdivisions:      1,
-		PriceScale:        1,
-		SizeScale:         1,
-		StressAnisotropy:  0.1,
-		ConservationBound: 0,
+		Symbol:           "BTC/USD",
+		At:               at,
+		Epoch:            epoch,
+		ReferencePrice:   midPrice,
+		Spread:           0.01,
+		BuyCapacity:      1000,
+		SellCapacity:     1000,
+		Duration:         time.Second,
+		InvalidReason:    manifold.Valid,
+		StressAnisotropy: 0.1,
+		Subdivisions:     1,
+		BuyIntensity:     0.6,
+		SellIntensity:    0.4,
+		SpectralRadius:   0.2,
 	}
-	state.PressureGradX = 0.2
-	state.Divergence = 0.1
-	state.CoherenceMag2 = 0.3
-	state.GuidanceSpeed = 0.4
+	state.Reading.PressureGradX = 0.2
+	state.Reading.Divergence = 0.1
+	state.Reading.CoherenceMag2 = 0.3
+	state.Reading.GuidanceSpeed = 0.4
 
 	return state
 }

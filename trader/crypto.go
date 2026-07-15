@@ -100,13 +100,7 @@ func (crypto *Crypto) Run() error {
 		for crypto.Status() != types.ERROR {
 			if crypto.booter.Ready(system.StageWarmup) {
 				if crypto.instrument != nil {
-					required := make([]string, 0, crypto.desk.OpenPositions())
-
-					for _, position := range crypto.desk.Positions() {
-						required = append(required, position.Data.Symbol)
-					}
-
-					if _, err := crypto.instrument.Activate(required); err != nil {
+					if _, err := crypto.instrument.Activate(); err != nil {
 						crypto.status = types.ERROR
 						errnie.Error(err)
 
@@ -129,37 +123,34 @@ func (crypto *Crypto) Run() error {
 
 /*
 trade supplies current broker constraints to strategy, then submits each
-selected Intent unchanged through Desk for exchange validation and execution.
+selected order through Desk for exchange validation and execution.
 */
 func (crypto *Crypto) trade(thesis *types.Thesis) {
-	for symbol, lifecycle := range crypto.desk.PostExit(thesis) {
-		if err := crypto.postMortem.Evaluate(lifecycle, symbol); err != nil {
-			errnie.Error(err)
-
-			if checkpointErr := crypto.desk.Checkpoint(symbol, lifecycle); checkpointErr != nil {
-				crypto.status = types.ERROR
-				errnie.Error(checkpointErr)
-
-				return
-			}
-
-			continue
-		}
-
-		thesis.AbsorbFindings(lifecycle)
-
-		if err := crypto.desk.Finalize(symbol, lifecycle); err != nil {
-			errnie.Error(err)
-		}
-	}
-
 	if len(thesis.Forecasts) == 0 {
 		return
 	}
 
+	thesis.Positions = thesis.Positions[:0]
+
+	for _, position := range crypto.desk.Positions() {
+		if position.Stop == nil {
+			continue
+		}
+
+		holding, err := crypto.balance.Holding(position.Stop.Symbol)
+
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		thesis.Positions = append(thesis.Positions, holding)
+	}
+
 	fees := make(map[string]float64, len(thesis.Forecasts))
 
-	for _, forecast := range thesis.Forecasts {
+	for index := range thesis.Forecasts {
+		forecast := &thesis.Forecasts[index]
 		fee, err := crypto.price.FeeFraction(forecast.Symbol)
 
 		if err != nil {
@@ -167,7 +158,10 @@ func (crypto *Crypto) trade(thesis *types.Thesis) {
 			continue
 		}
 
-		fees[forecast.Symbol] = fee.Float64()
+		feeFraction := fee.Float64()
+		forecast.ExpectedFees = 2 * feeFraction
+		forecast.FrictionReady = true
+		fees[forecast.Symbol] = feeFraction
 	}
 
 	available, err := crypto.balance.AvailableQuote()
@@ -177,45 +171,34 @@ func (crypto *Crypto) trade(thesis *types.Thesis) {
 		available = 0
 	}
 
-	positions := crypto.desk.Exposures()
-	decisionCounts := make(map[string]int, len(positions))
-
-	for symbol, exposure := range positions {
-		decisionCounts[symbol] = len(exposure.Thesis.Decisions)
-	}
-
-	intents := crypto.planner.Decide(
+	thesis = crypto.planner.Decide(
 		thesis,
-		positions,
 		fees,
 		available,
-		crypto.desk.Slots(),
+		viper.GetViper().GetInt("trading.slots.normal"),
 	)
 
-	for symbol, exposure := range positions {
-		if len(exposure.Thesis.Decisions) == decisionCounts[symbol] {
+	for _, order := range thesis.Orders {
+		if order.Description == nil {
 			continue
 		}
 
-		if err := crypto.desk.Checkpoint(symbol, exposure.Thesis); err != nil {
-			crypto.status = types.ERROR
-			errnie.Error(err)
+		switch order.Description.Type {
+		case "enter":
+			pair, err := crypto.instrument.Pair(order.Description.Pair)
 
-			return
-		}
-	}
+			if err != nil {
+				errnie.Error(err)
+				continue
+			}
 
-	for _, intent := range intents {
-		decision := intent.Selected()
-		pair, err := crypto.instrument.Pair(decision.Symbol)
-
-		if err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		if err := crypto.desk.Execute(intent, pair); err != nil {
-			errnie.Error(err)
+			if err := crypto.desk.Buy(order, pair); err != nil {
+				errnie.Error(err)
+			}
+		case "exit", "reduce":
+			if err := crypto.desk.Sell(order); err != nil {
+				errnie.Error(err)
+			}
 		}
 	}
 }

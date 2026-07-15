@@ -163,7 +163,12 @@ func (resonance *Resonance) Update(
 		return nil, nil
 	}
 
-	observedFrom := stepAt.Add(-state.Duration())
+	observedFrom := stepAt.Add(-state.Duration)
+
+	if state.Duration < 0 || observedFrom.After(stepAt) {
+		observedFrom = stepAt
+	}
+
 	elapsed := stepAt.Sub(resonance.startedAt)
 	maturity := -math.Expm1(
 		-math.Ln2 * float64(elapsed) /
@@ -181,14 +186,14 @@ func (resonance *Resonance) Update(
 			Source: types.SourceResonance, Stream: types.Resonance,
 			Metric: types.MetricResonanceEnergy, Subject: types.SubjectManifoldState,
 			Symbol: resonance.symbol, At: stepAt, ObservedFrom: observedFrom,
-			Horizon: state.Duration(), Unit: types.UnitDimensionless,
+			Horizon: state.Duration, Unit: types.UnitDimensionless,
 			Raw: outcome.Energy, Maturity: maturity, Validity: validity, Scale: scale,
 		},
 		{
 			Source: types.SourceResonance, Stream: types.Resonance,
 			Metric: types.MetricResonanceSurprise, Subject: types.SubjectManifoldState,
 			Symbol: resonance.symbol, At: stepAt, ObservedFrom: observedFrom,
-			Horizon: state.Duration(), Unit: types.UnitNat,
+			Horizon: state.Duration, Unit: types.UnitNat,
 			Raw: outcome.Surprise, Maturity: maturity, Validity: validity, Scale: scale,
 		},
 	}, &outcome
@@ -272,8 +277,8 @@ func (resonance *Resonance) advanceEventAt(at time.Time) {
 
 /*
 ResonanceOutcome is the online predictive-coding measurement for one manifold
-state. It intentionally carries no return forecast: the current model has no
-chronologically calibrated task head and therefore cannot be a strategy input.
+state. Analyzer combines its reconstruction surprise with Causal's calibrated
+next-epoch return rather than treating latent reconstruction as a return target.
 */
 type ResonanceOutcome struct {
 	Source      string                        `json:"source"`

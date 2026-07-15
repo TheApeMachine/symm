@@ -10,6 +10,7 @@ import {
 	kernelCopy,
 	kernelSparkPaths,
 	kernelStatusMeta,
+	kernelStatusVariant,
 } from "#/components/terminal/kernel-meta";
 import {
 	ageText,
@@ -22,6 +23,8 @@ import {
 	stampOf,
 } from "#/components/terminal/measurement-view";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { Badge, badgeVariants } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 type KernelListRowRefs = {
 	button: HTMLButtonElement | null;
@@ -97,9 +100,13 @@ const paintKernelListRow = (
 
 	if (refs.badge !== null) {
 		refs.badge.textContent = statusMeta.label;
-		refs.badge.style.color = statusMeta.fg;
-		refs.badge.style.background = statusMeta.bg;
-		refs.badge.style.borderColor = statusMeta.bd;
+		refs.badge.className = cn(
+			badgeVariants({
+				variant: kernelStatusVariant(status),
+				size: "xs",
+			}),
+			"shrink-0 font-mono",
+		);
 	}
 
 	if (refs.statusDot !== null) {
@@ -185,9 +192,11 @@ export const KernelListRow = memo(
 							className="size-[7px] shrink-0 rounded-full"
 						/>
 					) : (
-						<span
+						<Badge
 							ref={badgeRef}
-							className="shrink-0 rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
+							label=""
+							size="xs"
+							className="shrink-0 font-mono"
 						/>
 					)}
 				</div>

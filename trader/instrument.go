@@ -17,19 +17,19 @@ import (
 )
 
 /*
-Instrument owns Kraken pair metadata and the subscription universe. Its heavy
-tier always includes open holdings so every managed position receives the data
-required for continuation and exit decisions.
+Instrument owns Kraken pair metadata and the subscription universe. Every
+online pair for the configured quote currency remains observable so strategy
+can discover opportunities across the whole tradable market.
 */
 type Instrument struct {
-	status    atomic.Value
-	api       *websocket.API
-	price     *broker.Price
-	cache     *sync.Map
-	quote     string
-	uiHub     chan []byte
-	symbols   []string
-	tierReady bool
+	status  atomic.Value
+	api     *websocket.API
+	price   *broker.Price
+	cache   *sync.Map
+	quote   string
+	uiHub   chan []byte
+	symbols []string
+	active  bool
 }
 
 /*
@@ -178,11 +178,11 @@ func (instrument *Instrument) Subscribe() error {
 	instrument.symbols = symbols
 
 	for batch := range slices.Chunk(symbols, batchSize) {
-		if err := instrument.api.SubscribeTicker(batch); err != nil {
+		if err := instrument.price.GetFees(batch); err != nil {
 			return errnie.Error(err)
 		}
 
-		if err := instrument.price.GetFees(batch); err != nil {
+		if err := instrument.api.SubscribeTicker(batch); err != nil {
 			return errnie.Error(err)
 		}
 
@@ -195,109 +195,15 @@ func (instrument *Instrument) Subscribe() error {
 }
 
 /*
-Tier returns the most immediately executable symbols from the observed ticker
-cohort. It does not invent liquidity for listed pairs that have emitted no
-ticker; the heavy tier becomes valid only when the cohort can fill every slot.
+Activate subscribes trade, book, and level3 data for the complete online quote
+universe exactly once, preserving every symbol as a possible opportunity.
 */
-func (instrument *Instrument) Tier(required []string) ([]string, bool, error) {
-	rows, _ := instrument.price.Snapshot(instrument.symbols)
-
-	size := viper.GetInt("market.universe.trading_tier_size")
-
-	if size <= 0 || len(rows) < size {
-		return nil, false, nil
-	}
-
-	requiredSet := make(map[string]struct{}, len(required))
-	available := make(map[string]struct{}, len(instrument.symbols))
-
-	for _, symbol := range instrument.symbols {
-		available[symbol] = struct{}{}
-	}
-
-	for _, symbol := range required {
-		if _, exists := available[symbol]; !exists {
-			return nil, false, errnie.Err(
-				errnie.Validation,
-				"open holding has no online instrument: "+symbol,
-				nil,
-			)
-		}
-
-		requiredSet[symbol] = struct{}{}
-	}
-
-	if len(requiredSet) > size {
-		return nil, false, errnie.Err(
-			errnie.Validation,
-			"open holdings exceed configured trading tier capacity",
-			nil,
-		)
-	}
-
-	sort.Slice(rows, func(left, right int) bool {
-		leftDepth := types.ExecutableDepth(rows[left])
-		rightDepth := types.ExecutableDepth(rows[right])
-
-		if leftDepth != rightDepth {
-			return leftDepth > rightDepth
-		}
-
-		leftNotional := types.QuoteNotional(rows[left])
-		rightNotional := types.QuoteNotional(rows[right])
-
-		if leftNotional != rightNotional {
-			return leftNotional > rightNotional
-		}
-
-		return rows[left].Symbol < rows[right].Symbol
-	})
-
-	symbols := make([]string, 0, size)
-	seen := make(map[string]struct{}, size)
-
-	for symbol := range requiredSet {
-		symbols = append(symbols, symbol)
-	}
-
-	sort.Strings(symbols)
-
-	for _, symbol := range symbols {
-		seen[symbol] = struct{}{}
-	}
-
-	for _, row := range rows {
-		if len(symbols) == size {
-			break
-		}
-
-		if _, exists := seen[row.Symbol]; exists {
-			continue
-		}
-
-		symbols = append(symbols, row.Symbol)
-	}
-
-	return symbols, true, nil
-}
-
-/*
-Activate subscribes the statistically selected heavy tier exactly once. Ticker
-coverage remains universal while trade, book, and level3 compute stays within
-the configured solver capacity.
-*/
-func (instrument *Instrument) Activate(required []string) (bool, error) {
-	if instrument.tierReady {
+func (instrument *Instrument) Activate() (bool, error) {
+	if instrument.active {
 		return true, nil
 	}
 
-	symbols, ready, err := instrument.Tier(required)
-
-	if err != nil {
-		return false, errnie.Error(err)
-	}
-
-	if !ready {
+	if len(instrument.symbols) == 0 {
 		return false, nil
 	}
 
@@ -312,7 +218,7 @@ func (instrument *Instrument) Activate(required []string) (bool, error) {
 
 	batchSize := viper.GetInt("market.subscribe_batch")
 
-	for batch := range slices.Chunk(symbols, batchSize) {
+	for batch := range slices.Chunk(instrument.symbols, batchSize) {
 		for _, subscribe := range subscribers {
 			if err := subscribe(batch); err != nil {
 				instrument.status.Store(types.ERROR)
@@ -322,7 +228,7 @@ func (instrument *Instrument) Activate(required []string) (bool, error) {
 		}
 	}
 
-	instrument.tierReady = true
+	instrument.active = true
 
 	return true, nil
 }

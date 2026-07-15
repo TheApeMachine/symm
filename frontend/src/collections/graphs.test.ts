@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { graphsStore } from "./graphs";
+import { graphsStore, latestGraphFrame } from "./graphs";
 
 describe("graphsStore", () => {
 	it("retains the latest evidence graph per symbol", () => {
@@ -30,8 +30,10 @@ describe("graphsStore", () => {
 			},
 		]);
 
-		expect(graphsStore.state.graphs["BTC/USD"]?.nodes).toHaveLength(1);
-		expect(graphsStore.state.graphs["BTC/USD"]?.edges).toHaveLength(1);
+		const graph = latestGraphFrame(graphsStore.state.graphs, "BTC/USD");
+
+		expect(graph?.nodes).toHaveLength(1);
+		expect(graph?.edges).toHaveLength(1);
 	});
 
 	it("does not replace a populated graph with an empty node frame", () => {
@@ -53,9 +55,9 @@ describe("graphsStore", () => {
 			},
 		]);
 
-		expect(graphsStore.state.graphs["BTC/USD"]?.nodes).toHaveLength(1);
-		expect(graphsStore.state.graphs["BTC/USD"]?.at).toBe(
-			"2026-07-14T12:00:00Z",
-		);
+		const graph = latestGraphFrame(graphsStore.state.graphs, "BTC/USD");
+
+		expect(graph?.nodes).toHaveLength(1);
+		expect(graph?.at).toBe("2026-07-14T12:00:00Z");
 	});
 });

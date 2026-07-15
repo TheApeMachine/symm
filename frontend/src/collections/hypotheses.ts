@@ -1,8 +1,11 @@
-import {
-	createSnapshotRowStore,
-	hypothesisRowKey,
-} from "#/collections/snapshot-retain";
+import { createStore } from "@tanstack/react-store";
 import type { ThesisHypothesis } from "#/types/thesis";
+import { Circular, type CircularBuffer } from "./circular";
+
+const HYPOTHESIS_HISTORY_LIMIT = 50;
+
+const hypothesisKey = (row: ThesisHypothesis): string =>
+	`${row.symbol}:${row.source}:${row.claim}`;
 
 const asHypotheses = (frame: unknown): ThesisHypothesis[] => {
 	if (!Array.isArray(frame)) {
@@ -19,11 +22,60 @@ const asHypotheses = (frame: unknown): ThesisHypothesis[] => {
 };
 
 /*
-hypothesesStore merges backend thesis.Hypotheses snapshots by row identity so
-partial tick frames cannot erase retained symbol evidence.
+hypothesisValues returns the newest retained hypothesis row for each identity.
 */
-export const hypothesesStore = createSnapshotRowStore(
-	"hypotheses",
-	asHypotheses,
-	hypothesisRowKey,
+export const hypothesisValues = (
+	hypotheses: Record<string, CircularBuffer<ThesisHypothesis>>,
+): ThesisHypothesis[] =>
+	Object.keys(hypotheses)
+		.sort()
+		.flatMap((key) => {
+			const hypothesis = hypotheses[key]?.values().at(-1);
+
+			return hypothesis === undefined ? [] : [hypothesis];
+		});
+
+/*
+hypothesesStore retains backend thesis hypotheses in bounded circular buffers
+so partial tick frames cannot erase retained symbol evidence.
+*/
+export const hypothesesStore = createStore(
+	{
+		hypotheses: {} as Record<string, CircularBuffer<ThesisHypothesis>>,
+		version: 0,
+	},
+	({ setState }) => ({
+		updateFrame: (frame: unknown) =>
+			setState((prev) => {
+				const rows = asHypotheses(frame);
+
+				if (rows.length === 0) {
+					return prev;
+				}
+
+				const hypotheses = prev.hypotheses;
+
+				for (const row of rows) {
+					const key = hypothesisKey(row);
+
+					if (!hypotheses[key]) {
+						hypotheses[key] = Circular<ThesisHypothesis>(
+							HYPOTHESIS_HISTORY_LIMIT,
+						);
+					}
+
+					hypotheses[key].push(row);
+				}
+
+				return {
+					hypotheses,
+					version: prev.version + 1,
+				};
+			}),
+		reset: () =>
+			setState(() => ({
+				hypotheses: {},
+				version: 0,
+			})),
+	}),
 );

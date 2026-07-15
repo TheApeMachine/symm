@@ -4,7 +4,7 @@ import { categoriesStore } from "#/collections/categories";
 import { decisionStore } from "#/collections/decisions";
 import { findingsStore } from "#/collections/findings";
 import { forecastsStore } from "#/collections/forecasts";
-import { graphsStore } from "#/collections/graphs";
+import { graphsStore, latestGraphFrame } from "#/collections/graphs";
 import { hypothesesStore } from "#/collections/hypotheses";
 import { lifecycleStore } from "#/collections/lifecycle";
 import { measurementsStore } from "#/collections/measurements";
@@ -56,7 +56,7 @@ const Section = ({
 const ThesisEvidenceCanvas = ({ symbol }: { symbol: string }) => {
 	const graph = useSelector(
 		graphsStore,
-		(state) => state.graphs[symbol] ?? null,
+		(state) => latestGraphFrame(state.graphs, symbol),
 		{
 			compare: (left, right) =>
 				graphTopologyKey(left) === graphTopologyKey(right),
@@ -253,9 +253,9 @@ const useThesisRefresh = (symbol: string | null): void => {
 	useSelector(measurementsStore, (state) =>
 		symbol === null ? 0 : state.measurements[symbol],
 	);
-	useSelector(forecastsStore, (state) => state.forecasts.length);
-	useSelector(hypothesesStore, (state) => state.hypotheses.length);
-	useSelector(categoriesStore, (state) => state.categories.length);
+	useSelector(forecastsStore, (state) => state.version);
+	useSelector(hypothesesStore, (state) => state.version);
+	useSelector(categoriesStore, (state) => state.version);
 	useSelector(decisionStore, (state) => state.decisions[symbol ?? ""]);
 	useSelector(lifecycleStore, (state) => state.lifecycle[symbol ?? ""]);
 	useSelector(tradeJournalStore, (state) => state.version);

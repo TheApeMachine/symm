@@ -2,11 +2,6 @@ import { type HTMLMotionProps, motion } from "motion/react";
 import type { CSSProperties, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-const colsClasses = Array.from(
-	{ length: 12 },
-	(_, i) => `grid-cols-${i + 1}`,
-).concat("grid-cols-none");
-
 const rowsClasses = Array.from(
 	{ length: 6 },
 	(_, i) => `grid-rows-${i + 1}`,
@@ -114,7 +109,13 @@ export const Grid = ({
 }: GridProps) => {
 	// Generate responsive classes when responsive is true
 	const getResponsiveColsClass = () => {
-		if (!responsive || !cols) return cols ? colsClasses[cols - 1] : undefined;
+		if (!responsive) {
+			return undefined;
+		}
+
+		if (!cols) {
+			return undefined;
+		}
 
 		// Responsive approach: mobile -> tablet -> desktop
 		// This ensures items display in a grid at reasonable breakpoints

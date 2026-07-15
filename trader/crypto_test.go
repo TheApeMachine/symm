@@ -7,6 +7,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/strategy"
@@ -15,10 +16,13 @@ import (
 )
 
 func TestNewCrypto(t *testing.T) {
+	viper.Set("market.l3_depth", 10)
+
 	Convey("Given NewCrypto wiring", t, func() {
 		ctx := context.Background()
 		booter := system.NewBooter(ctx, nil)
-		analyzer := logic.NewAnalyzer(ctx, booter, nil)
+		analyzer, err := logic.NewAnalyzer(ctx, booter, nil, nil, nil)
+		So(err, ShouldBeNil)
 		planner := strategy.NewPlanner(ctx, nil, nil, analyzer)
 
 		Convey("When the runtime is constructed", func() {
@@ -44,13 +48,16 @@ func TestNewCrypto(t *testing.T) {
 }
 
 func TestCryptoRun(t *testing.T) {
+	viper.Set("market.l3_depth", 10)
+
 	Convey("Given a started crypto runtime", t, func() {
 		ctx := context.Background()
 		channel := make(chan []byte, 8)
 		booter := system.NewBooter(ctx, channel)
-		analyzer := logic.NewAnalyzer(ctx, booter, nil)
+		analyzer, err := logic.NewAnalyzer(ctx, booter, nil, nil, nil)
+		So(err, ShouldBeNil)
 		planner := strategy.NewPlanner(ctx, channel, nil, analyzer)
-		desk := broker.NewDesk(nil, nil, nil, channel, nil)
+		desk := broker.NewDesk(nil, nil, nil, channel)
 
 		crypto, err := NewCrypto(
 			ctx,

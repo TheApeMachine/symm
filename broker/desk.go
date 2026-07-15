@@ -1,20 +1,18 @@
 package broker
 
 import (
-	"errors"
 	"math"
-	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -24,7 +22,6 @@ type Desk struct {
 	ui             chan []byte
 	price          *Price
 	balance        *Balance
-	theses         *Theses
 	positions      *sync.Map
 	maxPositions   int
 	maxReserved    int
@@ -36,7 +33,6 @@ func NewDesk(
 	price *Price,
 	balance *Balance,
 	messages chan []byte,
-	theses *Theses,
 ) *Desk {
 	return &Desk{
 		status:       types.INITIALIZING,
@@ -44,7 +40,6 @@ func NewDesk(
 		ui:           messages,
 		price:        price,
 		balance:      balance,
-		theses:       theses,
 		positions:    &sync.Map{},
 		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
 		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
@@ -57,19 +52,27 @@ inventory from trade history. The booter calls this once per boot.
 */
 func (desk *Desk) Initialize() error {
 	errnie.Info("initializing desk")
+	feeSymbols := make([]string, 0)
 
-	if desk.theses == nil {
-		desk.status = types.ERROR
+	for holding := range desk.balance.Holdings() {
+		if holding.Asset == desk.balance.quote || holding.Qty.Sign() <= 0 ||
+			strings.Contains(holding.Asset, "/") {
+			continue
+		}
 
-		return errnie.Err(errnie.Validation, "durable Thesis store is required", nil)
+		feeSymbols = append(feeSymbols, desk.balance.Symbol(holding.Asset))
 	}
 
-	active, err := desk.theses.Active()
+	if len(feeSymbols) > 0 {
+		if err := desk.price.GetFees(feeSymbols); err != nil {
+			desk.status = types.ERROR
 
-	if err != nil {
-		desk.status = types.ERROR
-
-		return err
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"failed to load fees for existing holdings",
+				err,
+			))
+		}
 	}
 
 	history, err := desk.api.TradesHistory()
@@ -84,43 +87,25 @@ func (desk *Desk) Initialize() error {
 		))
 	}
 
-	for _, holding := range desk.balance.Holdings() {
+	for holding := range desk.balance.Holdings() {
 		if holding.Asset == desk.balance.quote || holding.Qty.Sign() <= 0 {
 			continue
 		}
 
-		fixed := desk.balance.Symbol(holding.Asset)
-		data := &PositionData{
-			Symbol: fixed,
-			Qty:    holding.Qty,
-			Mark:   *decimal.NewFromInt64(0),
-			PnL:    *decimal.NewFromInt64(0),
+		if strings.Contains(holding.Asset, "/") {
+			continue
 		}
-		thesis, found := active[fixed]
-		delete(active, fixed)
 
-		if !found {
-			thesis = types.NewThesis(desk.ui)
+		fixed := desk.balance.Symbol(holding.Asset)
+		holding.Symbol = fixed
+		desk.balance.Update(fixed, holding)
 
-			if err := thesis.Transition(
-				fixed, types.LifecycleInvalid, time.Now(),
-			); err != nil {
-				desk.status = types.ERROR
-
-				return err
-			}
-
-			thesis.RecordTrade(types.TradeObservation{
-				Kind: "thesis_recovery_error", Symbol: fixed,
-				Status: types.LifecycleInvalid,
-				Error:  "durable originating Thesis not found",
-				At:     time.Now(),
-			})
-			errnie.Error(errnie.Err(
-				errnie.NotFound,
-				"open holding has no durable originating Thesis for "+fixed,
-				nil,
-			))
+		order := &spot.Order{
+			Description: &spot.OrderDescription{
+				Pair: fixed,
+			},
+			Volume: &holding.Qty,
+			Price:  decimal.NewFromInt64(0),
 		}
 
 		/*
@@ -143,154 +128,35 @@ func (desk *Desk) Initialize() error {
 			desk.ui,
 			desk.price,
 			desk.balance,
-			data,
-			thesis,
-			desk.snapshot,
-			desk.theses,
+			order,
 		)
 
 		desk.positions.Store(fixed, position)
 		position.Hydrate(fixed, history)
 
 		if position.Status() != types.OPEN {
-			desk.status = types.ERROR
-
-			return errnie.Err(
-				errnie.Validation, "failed to recover open position for "+fixed, nil,
-			)
-		}
-
-		if err := desk.theses.Save(fixed, thesis); err != nil {
-			desk.status = types.ERROR
-
-			return err
-		}
-
-
-		thesis.Publish()
-	}
-
-	remaining := make([]string, 0, len(active))
-
-	for symbol := range active {
-		remaining = append(remaining, symbol)
-	}
-
-	sort.Strings(remaining)
-
-	for _, symbol := range remaining {
-		thesis := active[symbol]
-		state := thesis.LifecycleState(symbol)
-
-		switch state {
-		case types.LifecycleClosed, types.LifecyclePostExitObservation,
-			types.LifecyclePostMortemReady:
-			desk.positions.Store(symbol, &Position{
-				status:     types.CLOSED,
-				ui:         desk.ui,
-				price:      desk.price,
-				balance:    desk.balance,
-				theses:     desk.theses,
-				Data:       &PositionData{Symbol: symbol},
-				thesis:     thesis,
-				snapshot:   desk.snapshot,
-				executions: make([]*kraken.Execution, 0),
-				tickers:    make([]*kraken.TickerData, 0),
-			})
-			thesis.Publish()
-		case types.LifecycleEvaluated:
-			if err := desk.theses.Complete(symbol, thesis); err != nil {
-				desk.status = types.ERROR
-
-				return err
-			}
-		case types.LifecycleInvalid:
-			thesis.Publish()
-		default:
-			desk.status = types.ERROR
-
-			return errnie.Err(
+			desk.positions.Delete(fixed)
+			errnie.Error(errnie.Err(
 				errnie.Validation,
-				"active Thesis has no wallet holding for "+symbol+" in state "+state,
+				"failed to recover open position for "+fixed+"; holding skipped at boot",
 				nil,
-			)
+			))
+
+			continue
 		}
+
 	}
 
 	desk.status = types.READY
-	desk.Publish()
-
 	return nil
 }
 
-/*
-snapshot returns the current data for every position desk holds, so a
-single position's own publish can report the full open set instead of
-just itself.
-*/
-func (desk *Desk) snapshot() []PositionData {
-	positions := make([]PositionData, 0)
-
-	desk.positions.Range(func(_, value any) bool {
-		position := value.(*Position)
-
-		if position.Data.Qty.Sign() > 0 {
-			positions = append(positions, *position.Data)
-		}
-
-		return true
-	})
-
-	return positions
-}
-
 func (desk *Desk) Publish() {
-	payload := desk.marshalSnapshot()
-
 	select {
-	case desk.ui <- payload:
+	case desk.ui <- datura.Map[any]{
+		"balances": desk.balance.Snapshot(),
+	}.Marshal():
 	default:
-		desk.enqueuePublish()
-	}
-}
-
-func (desk *Desk) marshalSnapshot() []byte {
-	snapshot := datura.Map[any]{
-		"positions": desk.snapshot(),
-	}
-	balances := desk.balance.Snapshot()
-
-	if len(balances) > 0 {
-		snapshot["balances"] = balances
-	}
-
-	return snapshot.Marshal()
-}
-
-func (desk *Desk) enqueuePublish() {
-	if !desk.publishPending.CompareAndSwap(false, true) {
-		return
-	}
-
-	go desk.flushPublish()
-}
-
-func (desk *Desk) flushPublish() {
-	defer desk.publishPending.Store(false)
-
-	ticker := time.NewTicker(time.Millisecond)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		payload := desk.marshalSnapshot()
-
-		select {
-		case desk.ui <- payload:
-			return
-		default:
-			// ponytail: UI channel backpressure coalesces to the newest snapshot
-			// and retries until the hub accepts one frame.
-		}
 	}
 }
 
@@ -304,7 +170,17 @@ func (desk *Desk) OpenPositions() int {
 	desk.positions.Range(func(_, value any) bool {
 		position := value.(*Position)
 
-		if position.Data.Qty.Sign() > 0 || position.Status() == types.PENDING ||
+		if position.Stop == nil {
+			return true
+		}
+
+		holding, err := desk.balance.Holding(position.Stop.Symbol)
+
+		if err != nil {
+			return true
+		}
+
+		if holding.Qty.Sign() > 0 || position.Status() == types.PENDING ||
 			position.Status() == types.OPEN {
 			count++
 		}
@@ -321,9 +197,17 @@ func (desk *Desk) Positions() []*Position {
 	desk.positions.Range(func(_, value any) bool {
 		position := value.(*Position)
 
-		if position.Data.Qty.Sign() > 0 {
-			positions = append(positions, position)
+		if position.Stop == nil {
+			return true
 		}
+
+		holding, err := desk.balance.Holding(position.Stop.Symbol)
+
+		if err != nil || holding.Qty.Sign() <= 0 {
+			return true
+		}
+
+		positions = append(positions, position)
 
 		return true
 	})
@@ -331,161 +215,20 @@ func (desk *Desk) Positions() []*Position {
 	return positions
 }
 
-/*
-Exposures returns the immutable position values and originating Thesis needed
-to compare continuation alternatives without exposing mutable Positions.
-*/
-func (desk *Desk) Exposures() map[string]types.Exposure {
-	exposures := make(map[string]types.Exposure)
-
-	desk.positions.Range(func(key, value any) bool {
-		position := value.(*Position)
-
-		if position.Data.Qty.Sign() > 0 {
-			notional := 0.0
-
-			if position.Data.Mark.Sign() > 0 {
-				notional = desk.price.Notional(
-					position.Data.Mark, position.Data.Qty,
-				).Float64()
-			}
-
-			exposures[key.(string)] = types.Exposure{
-				Thesis: position.Thesis(), Quantity: position.Data.Qty.Float64(),
-				Mark: position.Data.Mark.Float64(), Notional: notional,
-				ReturnPct: position.Data.ReturnPct,
-			}
-		}
-
-		return true
-	})
-
-	return exposures
-}
-
-/*
-PostExit advances closed position Theses with later forecast epochs and returns
-only those whose evidence-derived observation tail is complete.
-*/
-func (desk *Desk) PostExit(current *types.Thesis) map[string]*types.Thesis {
-	ready := make(map[string]*types.Thesis)
-
-	desk.positions.Range(func(key, value any) bool {
-		position := value.(*Position)
-		symbol := key.(string)
-		state := position.Thesis().LifecycleState(symbol)
-
-		if state == types.LifecyclePostMortemReady {
-			ready[symbol] = position.Thesis()
-
-			return true
-		}
-
-		if position.Status() != types.CLOSED ||
-			(state != types.LifecycleClosed && state != types.LifecyclePostExitObservation) {
-			return true
-		}
-
-		if err := position.Thesis().ObservePostExit(current, symbol); err != nil {
-			errnie.Error(err)
-
-			return true
-		}
-
-		if desk.theses != nil {
-			if err := desk.theses.Save(symbol, position.Thesis()); err != nil {
-				errnie.Error(err)
-
-				return true
-			}
-
-			position.Thesis().Publish()
-		}
-
-		if position.Thesis().LifecycleState(symbol) == types.LifecyclePostMortemReady {
-			ready[symbol] = position.Thesis()
-		}
-
-		return true
-	})
-
-	return ready
-}
-
-/*
-Checkpoint persists a strategy-mutated lifecycle only when it still belongs to
-the live Position for that symbol, retaining hold decisions that emit no order.
-*/
-func (desk *Desk) Checkpoint(symbol string, thesis *types.Thesis) error {
-	value, exists := desk.positions.Load(symbol)
-
-	if !exists || value.(*Position).Thesis() != thesis {
-		return errnie.Err(errnie.Validation, "position Thesis mismatch for "+symbol, nil)
-	}
-
-	if desk.theses == nil {
-		return errnie.Err(errnie.Validation, "durable Thesis store is required", nil)
-	}
-
-	if err := desk.theses.Save(symbol, thesis); err != nil {
-		return err
-	}
-
-	thesis.Publish()
-
-	return nil
-}
-
-/*
-Finalize removes runtime position state only after PostMortem evaluated the
-same Thesis retained by that position.
-*/
-func (desk *Desk) Finalize(symbol string, thesis *types.Thesis) error {
-	value, exists := desk.positions.Load(symbol)
-
-	if !exists || value.(*Position).Thesis() != thesis {
-		return errnie.Err(errnie.Validation, "position Thesis mismatch for "+symbol, nil)
-	}
-
-	if thesis.LifecycleState(symbol) != types.LifecycleEvaluated {
-		return errnie.Err(errnie.Forbidden, "unevaluated position cannot finalize "+symbol, nil)
-	}
-
-	if desk.theses != nil {
-		if err := desk.theses.Complete(symbol, thesis); err != nil {
-			return err
-		}
-	}
-
-	desk.positions.Delete(symbol)
-	desk.Publish()
-
-	return nil
-}
-
-/*
-Slots returns the normal allocation capacity configured for strategy. Reserved
-capacity remains unavailable unless strategy explicitly selects that class.
-*/
-func (desk *Desk) Slots() int {
-	return desk.maxPositions
-}
-
 func (desk *Desk) Buy(
-	intent strategy.Intent,
+	order spot.Order,
 	pair kraken.InstrumentPair,
 ) error {
-	decision := intent.Selected()
-	symbol := decision.Symbol
-	opportunity := decision.AllocationClass == "reserved"
-
-	if desk.theses == nil {
+	if order.Description == nil {
 		return errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"durable Thesis store is required before entry",
+			errnie.Validation,
+			"order description required",
 			nil,
 		))
 	}
+
+	symbol := order.Description.Pair
+	opportunity := order.Description.OrderType == "reserved"
 
 	if desk.status != types.READY {
 		return errnie.Error(errnie.Err(
@@ -521,10 +264,19 @@ func (desk *Desk) Buy(
 		))
 	}
 
-	quantity, price, err := desk.quantity(symbol, decision.ProposedNotional, pair)
+	notional := order.Volume.Float64()
+	quantity, price, err := desk.quantity(symbol, notional, pair)
 
 	if err != nil {
 		return err
+	}
+
+	spotOrder := &spot.Order{
+		Description: &spot.OrderDescription{
+			Pair: symbol,
+		},
+		Volume: &quantity,
+		Price:  &price,
 	}
 
 	position := NewPosition(
@@ -532,22 +284,17 @@ func (desk *Desk) Buy(
 		desk.ui,
 		desk.price,
 		desk.balance,
-		&PositionData{
-			Symbol:     symbol,
-			Qty:        quantity,
-			EntryPrice: price,
-		},
-		intent.Thesis,
-		desk.snapshot,
-		desk.theses,
+		spotOrder,
 	)
-	/*
-		Store the position immediately to reserve its slot.
 
-		If Position.Enter fails, Position.Enter should release the slot
-		or notify Desk so the reservation can be removed.
-	*/
 	desk.positions.Store(symbol, position)
+
+	desk.balance.Update(symbol, types.Holding{
+		Symbol: symbol,
+		Asset:  pair.Base,
+		Order:  spotOrder,
+		Qty:    *decimal.NewFromInt64(0),
+	})
 
 	if err := position.Enter(); err != nil {
 		desk.positions.Delete(symbol)
@@ -610,80 +357,19 @@ func (desk *Desk) quantity(
 }
 
 /*
-Execute validates and submits the exact action selected by strategy without
-reinterpreting it as another portfolio action.
+Sell submits the selected exit through the Position already associated with
+the order symbol, preserving one lifecycle across entry and exit.
 */
-func (desk *Desk) Execute(
-	intent strategy.Intent,
-	pair kraken.InstrumentPair,
-) error {
-	decision := intent.Selected()
-	intent.Thesis.RecordTrade(types.TradeObservation{
-		Kind: "intent_submission", Action: decision.Action,
-		Symbol: decision.Symbol, Decision: intent.Decision, At: time.Now(),
-	})
-
-	var err error
-
-	switch decision.Action {
-	case "enter":
-		err = desk.Buy(intent, pair)
-	case "exit":
-		err = desk.Sell(intent)
-	case "reduce":
-		err = desk.Sell(intent)
-	default:
-		err = errnie.Error(errnie.Err(
+func (desk *Desk) Sell(order spot.Order) error {
+	if order.Description == nil || order.Volume == nil {
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"broker cannot execute action "+decision.Action,
+			"order description and volume required",
 			nil,
 		))
 	}
 
-	status := "accepted"
-	observation := types.TradeObservation{
-		Kind: "broker_acceptance", Action: decision.Action,
-		Symbol: decision.Symbol, Decision: intent.Decision, Status: status, At: time.Now(),
-	}
-
-	if err != nil {
-		observation.Kind = "broker_rejection"
-		observation.Status = "rejected"
-		observation.Error = err.Error()
-
-		next := types.LifecycleRejected
-
-		if decision.Action == "exit" || decision.Action == "reduce" {
-			next = types.LifecycleManaging
-		}
-
-		if transitionErr := intent.Thesis.Transition(
-			decision.Symbol, next, time.Now(),
-		); transitionErr != nil {
-			errnie.Error(transitionErr)
-		}
-	}
-
-	intent.Thesis.RecordTrade(observation)
-
-	if desk.theses != nil {
-		err = errors.Join(err, desk.theses.Save(decision.Symbol, intent.Thesis))
-
-		if err == nil {
-			intent.Thesis.Publish()
-		}
-	}
-
-	return err
-}
-
-/*
-Sell submits the selected exit through the Position already associated with
-the Intent's Thesis, preserving one lifecycle across entry and exit.
-*/
-func (desk *Desk) Sell(intent strategy.Intent) error {
-	decision := intent.Selected()
-	symbol := decision.Symbol
+	symbol := order.Description.Pair
 	position, ok := desk.positions.Load(symbol)
 
 	if !ok || position == nil {
@@ -694,45 +380,9 @@ func (desk *Desk) Sell(intent strategy.Intent) error {
 		))
 	}
 
-	if position.(*Position).Thesis() != intent.Thesis {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"exit Thesis does not own position for "+symbol,
-			nil,
-		))
-	}
-
-	quantity := decimal.NewFromFloat64(decision.ProposedQuantity)
-
-	return position.(*Position).Exit(decision.Action, *quantity)
+	return position.(*Position).Exit(order.Description.Type, *order.Volume)
 }
 
 func (desk *Desk) Close() error {
-	var err error
-
-	desk.positions.Range(func(key, value any) bool {
-		position := value.(*Position)
-		err = errors.Join(err, desk.Checkpoint(key.(string), position.Thesis()))
-
-		return true
-	})
-
-	return err
-}
-
-func (desk *Desk) Executions() []*kraken.Execution {
-	executions := make([]*kraken.Execution, 0)
-
-	desk.positions.Range(func(_, value any) bool {
-		position := value.(*Position)
-
-		executions = append(
-			executions,
-			position.Executions()...,
-		)
-
-		return true
-	})
-
-	return executions
+	return nil
 }

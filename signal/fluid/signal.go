@@ -20,11 +20,12 @@ Vorticity (Vort), and Turbulence (Turb) — against Viscosity (Visc).
 1. What it measures exactly (in isolation)
 
 The Fluid signal applies order-book fluid dynamics per symbol from book,
-trades, and ticks. Reynolds classifies laminar versus turbulent flow.
+trades, and ticks. Reynolds distinguishes laminar from turbulent flow.
 Divergence is ∇·(ρv) at the touch. Viscosity is replenishment resistance
 after consumption.
 
-It isolates the following mechanical states:
+It exposes evidence for the following mechanical states without selecting one
+inside the signal:
 
 Laminar Stability (Orderly Flow): High Viscosity (tight bid/ask spreads)
 coupled with low Field Activity.
@@ -85,9 +86,9 @@ Divergence.
 Semantic Meaning: The market is "thick" or viscous. Every tick move
 requires massive traded volume.
 
-# Summary of Fluid Categories
+# Summary of Fluid Evidence
 
-| Category   | Visc (Spread) | Dominant Metric            | Market "Feel"      |
+| State      | Visc (Spread) | Dominant Metric            | Market "Feel"      |
 |:-----------|:--------------|:---------------------------|:-------------------|
 | Laminar    | High (Tight)  | None (Low Activity)        | Smooth/Consistent  |
 | Turbulent  | Variable      | Turbulence / Vorticity     | Shattered/Fragile  |
@@ -220,7 +221,7 @@ func (signal *Signal) increment(symbol string) decimal.Decimal {
 Measure feeds every ticker, trade, and book row cached since the last tick
 through the per-symbol fluid solver, in that order: ticker and trade rows
 only update per-symbol state (FluidSymbol.Reading has nothing to read yet
-after them), while book rows are what actually classify and emit, so book
+after them), while book rows are what actually measure and emit, so book
 runs last against the freshest state.
 */
 func (signal *Signal) Measure(

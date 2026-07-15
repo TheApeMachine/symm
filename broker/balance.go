@@ -1,7 +1,9 @@
 package broker
 
 import (
+	"iter"
 	"strings"
+	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
@@ -12,25 +14,22 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-type SpotHolding struct {
-	Asset string
-	Qty   decimal.Decimal
-}
-
 type Balance struct {
-	status types.Status
-	api    *websocket.API
-	ui     chan []byte
-	model  *kraken.Balance
-	quote  string
+	status   types.Status
+	api      *websocket.API
+	ui       chan []byte
+	model    *kraken.Balance
+	holdings *sync.Map
+	quote    string
 }
 
 func NewBalance(api *websocket.API, ui chan []byte) *Balance {
 	balance := &Balance{
-		status: types.INITIALIZING,
-		api:    api,
-		ui:     ui,
-		quote:  viper.GetString("market.quote_currency"),
+		status:   types.INITIALIZING,
+		api:      api,
+		ui:       ui,
+		quote:    viper.GetString("market.quote_currency"),
+		holdings: &sync.Map{},
 	}
 
 	return balance
@@ -102,6 +101,42 @@ func (balance *Balance) BalanceAck(buf []byte) {
 		return
 	}
 
+	for _, balanceData := range balance.model.Data {
+		assetHolding := types.Holding{
+			Asset: balanceData.Asset,
+			Qty:   balanceData.Balance,
+		}
+
+		if value, ok := balance.holdings.Load(balanceData.Asset); ok {
+			assetHolding = value.(types.Holding)
+			assetHolding.Qty = balanceData.Balance
+		}
+
+		balance.holdings.Store(balanceData.Asset, assetHolding)
+
+		if balanceData.Asset == balance.quote {
+			continue
+		}
+
+		symbol := balance.Symbol(balanceData.Asset)
+		value, ok := balance.holdings.Load(symbol)
+
+		if !ok {
+			continue
+		}
+
+		holding := value.(types.Holding)
+		holding.Symbol = symbol
+		holding.Asset = balanceData.Asset
+		holding.Qty = balanceData.Balance
+
+		if holding.Order != nil {
+			holding.Order.Volume = &holding.Qty
+		}
+
+		balance.holdings.Store(symbol, holding)
+	}
+
 	balance.status = types.READY
 	balance.Publish()
 }
@@ -123,21 +158,42 @@ func (balance *Balance) Get(symbol string) (*kraken.BalanceData, error) {
 /*
 Holdings returns non-quote spot wallet balances that represent open inventory.
 */
-func (balance *Balance) Holdings() []SpotHolding {
-	if balance.model == nil {
-		return nil
-	}
+func (balance *Balance) Holdings() iter.Seq[types.Holding] {
+	return func(yield func(types.Holding) bool) {
+		balance.holdings.Range(func(key, value any) bool {
+			holding := value.(types.Holding)
 
-	holdings := make([]SpotHolding, 0)
+			if key.(string) != holding.Asset {
+				return true
+			}
 
-	for _, balanceData := range balance.model.Data {
-		holdings = append(holdings, SpotHolding{
-			Asset: balanceData.Asset,
-			Qty:   balanceData.Balance,
+			return yield(holding)
 		})
 	}
+}
 
-	return holdings
+/*
+Holding returns the holding for a given symbol.
+*/
+func (balance *Balance) Holding(symbol string) (types.Holding, error) {
+	value, ok := balance.holdings.Load(symbol)
+
+	if !ok {
+		return types.Holding{}, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"holding not found for "+symbol,
+			nil,
+		))
+	}
+
+	return value.(types.Holding), nil
+}
+
+/*
+Update updates the holding for a given symbol.
+*/
+func (balance *Balance) Update(symbol string, holding types.Holding) {
+	balance.holdings.Store(symbol, holding)
 }
 
 /*
@@ -161,6 +217,21 @@ func (balance *Balance) Symbol(pair string) string {
 	base := strings.TrimSuffix(pair, balance.quote)
 
 	return base + "/" + balance.quote
+}
+
+/*
+TradeMatchesSymbol reports whether a REST trade-history pair belongs to the
+normalized slash symbol used throughout symm.
+*/
+func (balance *Balance) TradeMatchesSymbol(tradePair string, symbol string) bool {
+	if balance.Symbol(tradePair) == symbol {
+		return true
+	}
+
+	base := strings.TrimSuffix(symbol, "/"+balance.quote)
+	compact := base + balance.quote
+
+	return tradePair == compact || tradePair == base
 }
 
 func (balance *Balance) Available(amount decimal.Decimal) bool {

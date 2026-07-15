@@ -56,6 +56,18 @@ describe("terminalFluidParticlesFromFrame", () => {
 });
 
 describe("terminalFluidMatrixFromFrame", () => {
+	it("reads nested manifold reading scalars", () => {
+		expect(
+			terminalFluidMatrixFromFrame({
+				reading: {
+					pressureGradX: 0.1,
+					divergence: -0.2,
+					coherenceMag2: 0.3,
+				},
+			}),
+		).toEqual([[0.1, -0.2, 0.3]]);
+	});
+
 	it("renders the typed scalar manifold readout directly", () => {
 		expect(
 			terminalFluidMatrixFromFrame({

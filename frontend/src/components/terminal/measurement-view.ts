@@ -3,12 +3,13 @@ import type { SignalHealthStatus } from "./kernel-meta";
 
 /*
 Sources that reduce their metrics to one composite score expose it as
-"strength" (types.MetricStrength on the backend). Toxicity has no composite
-score — it reports raw touch, price, and fill quantities — so it has no
-headline metric and is rendered as a stat strip instead of a score bar.
+"strength" (types.MetricStrength on the backend). Hawkes and toxicity instead
+chart their native conditional-intensity and touch-quantity measurements.
 */
 const SOURCE_HEADLINE_METRIC: Record<string, string | null> = {
-	toxicity: null,
+	fluid: "reynolds",
+	hawkes: "conditional_intensity",
+	toxicity: "touch_quantity",
 };
 
 export const headlineMetric = (source: string): string | null =>
@@ -26,15 +27,25 @@ export const latestByMetric = (
 	metric: string,
 	side = "",
 ): Measurement | undefined => {
+	let directional: Measurement | undefined;
+
 	for (let index = values.length - 1; index >= 0; index -= 1) {
 		const measurement = values[index];
 
-		if (measurement.metric === metric && (measurement.side ?? "") === side) {
+		if (measurement.metric !== metric) {
+			continue;
+		}
+
+		if ((measurement.side ?? "") === side) {
 			return measurement;
+		}
+
+		if (side === "" && directional === undefined) {
+			directional = measurement;
 		}
 	}
 
-	return undefined;
+	return directional;
 };
 
 /*
@@ -170,6 +181,9 @@ const UNIT_SUFFIX: Record<string, string> = {
 	dimensionless: "",
 	quote_currency: " quote",
 	base_currency: " base",
+	quote_currency_per_second: " quote/s",
+	base_currency_per_second: " base/s",
+	inverse_quote_currency_second: " /(quote·s)",
 	count: "",
 	events_per_second: "/s",
 	inverse_second: "/s",

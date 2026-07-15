@@ -5,7 +5,9 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
 )
@@ -18,18 +20,30 @@ const (
 
 var causalControls = []int{1, 2, 3, 4, 5}
 
+/*
+Causal aligns physical observations with the next realized midpoint return and
+retains online Pearl evidence plus forecast-error calibration for one symbol.
+*/
 type Causal struct {
 	symbol  string
 	pearl   *algorithm.Pearl
 	pending *causalObservation
+	mse     *statistic.Mean
+	errors  *adaptive.Variance
 	samples uint64
 }
 
+/*
+causalObservation retains the feature row and prediction awaiting the next
+manifold epoch, where the realized return can calibrate that prediction.
+*/
 type causalObservation struct {
-	features []float64
-	midPrice float64
-	epoch    uint64
-	at       time.Time
+	features        []float64
+	midPrice        float64
+	epoch           uint64
+	at              time.Time
+	predictedReturn float64
+	predicted       bool
 }
 
 /*
@@ -41,6 +55,8 @@ func NewCausal(symbol string) *Causal {
 
 	return &Causal{
 		symbol: symbol,
+		mse:    statistic.NewMean(),
+		errors: adaptive.NewVariance(),
 		pearl: algorithm.NewPearl(algorithm.PearlConfig{
 			Target:     causalTargetIndex,
 			Treatment:  causalTreatmentIndex,
@@ -81,7 +97,11 @@ func (causal *Causal) Update(
 		return types.Hypothesis{}, nil, nil
 	}
 
-	outcome := causal.observe(state, features)
+	outcome, err := causal.observe(state, features)
+
+	if err != nil {
+		return types.Hypothesis{}, nil, err
+	}
 
 	return types.Hypothesis{
 		Source:         types.SourceCausal,
@@ -106,7 +126,7 @@ func (causal *Causal) Update(
 func (causal *Causal) observe(
 	state manifold.State,
 	features []float64,
-) CausalOutcome {
+) (CausalOutcome, error) {
 	outcome := CausalOutcome{
 		Source:     "causal",
 		Symbol:     causal.symbol,
@@ -125,7 +145,35 @@ func (causal *Causal) observe(
 	}
 
 	if causal.pending != nil && state.Epoch > causal.pending.epoch {
-		target := math.Log(state.MidPrice / causal.pending.midPrice)
+		target := math.Log(state.ReferencePrice / causal.pending.midPrice)
+
+		if causal.pending.predicted {
+			residual := target - causal.pending.predictedReturn
+			mse, err := causal.mse.Measure(residual * residual)
+
+			if err != nil {
+				return CausalOutcome{}, errnie.Err(
+					errnie.UnprocessableContent,
+					"logic causal: failed to calibrate forecast error",
+					err,
+				)
+			}
+
+			errorVariance, err := causal.errors.Measure(residual)
+
+			if err != nil {
+				return CausalOutcome{}, errnie.Err(
+					errnie.UnprocessableContent,
+					"logic causal: failed to measure forecast uncertainty",
+					err,
+				)
+			}
+
+			outcome.CalibrationSamples = uint64(mse.Count)
+			outcome.IncrementalMSE = mse.Value
+			outcome.Uncertainty = math.Sqrt(math.Max(errorVariance.Value, 0))
+		}
+
 		row := append(append([]float64(nil), causal.pending.features...), target)
 		reading, ready, err := causal.pearl.Measure(algorithm.PearlInput{
 			Key: causal.symbol,
@@ -148,28 +196,38 @@ func (causal *Causal) observe(
 
 	causal.pending = &causalObservation{
 		features: append([]float64(nil), features...),
-		midPrice: state.MidPrice,
+		midPrice: state.ReferencePrice,
 		epoch:    state.Epoch,
 		at:       state.At,
 	}
 
-	return outcome
+	if outcome.Ready && finite(outcome.Reading.DoExpectation) {
+		causal.pending.predictedReturn = outcome.Reading.DoExpectation
+		causal.pending.predicted = true
+		outcome.ExpectedReturn = outcome.Reading.DoExpectation
+	}
+
+	return outcome, nil
 }
 
 func (causal *Causal) features(state manifold.State) ([]float64, bool) {
-	touchMass := state.BidTouchDensity + state.AskTouchDensity
+	if !state.GasReady() || state.ReferencePrice <= 0 {
+		return nil, false
+	}
 
-	if !state.GasReady() || state.MidPrice <= 0 || touchMass <= 0 {
+	touchMass := state.BuyIntensity + state.SellIntensity
+
+	if touchMass <= 0 {
 		return nil, false
 	}
 
 	features := []float64{
-		(state.BidTouchDensity - state.AskTouchDensity) / touchMass,
-		state.PressureGradX,
-		state.Divergence,
+		(state.BuyIntensity - state.SellIntensity) / touchMass,
+		state.Reading.PressureGradX,
+		state.Reading.Divergence,
 		state.StressAnisotropy,
-		state.CoherenceMag2,
-		state.GuidanceSpeed,
+		state.Reading.CoherenceMag2,
+		state.Reading.GuidanceSpeed,
 	}
 
 	return features, finiteSlice(features)
@@ -179,14 +237,18 @@ func (causal *Causal) features(state manifold.State) ([]float64, bool) {
 CausalOutcome is a named, future-outcome causal hypothesis measurement.
 */
 type CausalOutcome struct {
-	Source     string                `json:"source"`
-	Symbol     string                `json:"symbol"`
-	At         time.Time             `json:"at"`
-	Samples    uint64                `json:"samples"`
-	Ready      bool                  `json:"ready"`
-	Hypothesis string                `json:"hypothesis"`
-	Treatment  string                `json:"treatment"`
-	Controls   []string              `json:"controls"`
-	Target     string                `json:"target"`
-	Reading    algorithm.PearlOutput `json:"reading"`
+	Source             string                `json:"source"`
+	Symbol             string                `json:"symbol"`
+	At                 time.Time             `json:"at"`
+	Samples            uint64                `json:"samples"`
+	Ready              bool                  `json:"ready"`
+	Hypothesis         string                `json:"hypothesis"`
+	Treatment          string                `json:"treatment"`
+	Controls           []string              `json:"controls"`
+	Target             string                `json:"target"`
+	Reading            algorithm.PearlOutput `json:"reading"`
+	ExpectedReturn     float64               `json:"expectedReturn"`
+	IncrementalMSE     float64               `json:"incrementalMSE"`
+	Uncertainty        float64               `json:"uncertainty"`
+	CalibrationSamples uint64                `json:"calibrationSamples"`
 }

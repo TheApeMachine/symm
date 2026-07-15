@@ -1,5 +1,4 @@
 import { createStore } from "@tanstack/react-store";
-import { tradeObservationKey } from "#/collections/snapshot-retain";
 import type { TradeObservation } from "#/types/thesis";
 import { Circular, type CircularBuffer } from "./circular";
 
@@ -18,6 +17,13 @@ const asJournal = (frame: unknown): TradeObservation[] => {
 			typeof (row as TradeObservation).kind === "string",
 	);
 };
+
+/*
+tradeObservationKey identifies one immutable broker fact so cumulative thesis
+snapshots can append history without collapsing distinct lifecycle events.
+*/
+export const tradeObservationKey = (row: TradeObservation): string =>
+	`${row.kind}:${row.symbol}:${row.at}:${row.decision}:${row.orderId ?? ""}:${row.executionId ?? ""}`;
 
 /*
 tradeJournalValues returns retained observations oldest-first so journal and
@@ -39,7 +45,9 @@ export const pushJournalObservations = (
 		return { journal: buffer, appended: false };
 	}
 
-	const knownKeys = new Set(buffer.values().map(tradeObservationKey));
+	const knownKeys = new Set(
+		buffer.values().map((observation) => tradeObservationKey(observation)),
+	);
 	const appendedRows: TradeObservation[] = [];
 
 	for (const observation of incoming) {

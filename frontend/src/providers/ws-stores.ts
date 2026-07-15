@@ -75,8 +75,10 @@ export const applyFramePayload = (parsedData: Record<string, unknown>) => {
 				continue;
 			}
 
-			if (frameStores[key]?.actions) {
-				frameStores[key].actions.updateFrame(data);
+			const storeKey = key === "cognition" ? "cognitive" : key;
+
+			if (frameStores[storeKey]?.actions) {
+				frameStores[storeKey].actions.updateFrame(data);
 				continue;
 			}
 

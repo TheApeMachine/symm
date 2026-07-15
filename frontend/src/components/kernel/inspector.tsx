@@ -16,7 +16,6 @@ import {
 	headlineMetric,
 	latestByMetric,
 	metricLabel,
-	percentOf,
 	resolveStatus,
 } from "#/components/terminal/measurement-view";
 import { paintMetricGrid } from "#/components/terminal/metric-paint";
@@ -53,16 +52,30 @@ const paintInspector = (
 	const status = resolveStatus(latest);
 	const statusMeta = kernelStatusMeta(status);
 	const seriesSource = headline ?? history.at(-1)?.metric;
-	const values =
+	const series =
 		seriesSource === undefined || buffer === undefined
 			? []
 			: buffer.values().flatMap((epoch) => {
 					const measurement = latestByMetric(epoch.readings, seriesSource);
 
 					return measurement !== undefined && Number.isFinite(measurement.raw)
-						? [Math.max(0, Math.min(1, percentOf(measurement) / 100))]
+						? [measurement]
 						: [];
 				});
+	const rawValues = series.map((measurement) => measurement.raw);
+	const minimum = rawValues.length > 0 ? Math.min(...rawValues) : 0;
+	const maximum = rawValues.length > 0 ? Math.max(...rawValues) : 0;
+	const values = series.map((measurement) => {
+		if (typeof measurement.normalized === "number") {
+			return Math.max(0, Math.min(1, measurement.normalized));
+		}
+
+		if (maximum > minimum) {
+			return (measurement.raw - minimum) / (maximum - minimum);
+		}
+
+		return measurement.raw > 0 ? 0.5 : 0;
+	});
 	const width = 150;
 	const baseline = 29;
 	const scale = 26;

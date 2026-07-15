@@ -64,6 +64,8 @@ func NewPrice(
 
 func (price *Price) Initialize() error {
 	price.api.On("ticker", price.TickerAck)
+	price.status = types.READY
+
 	return nil
 }
 
@@ -165,6 +167,7 @@ func (price *Price) GetFees(
 	symbols []string,
 ) error {
 	errnie.Info("getting fees for symbols: " + strings.Join(symbols, ", "))
+	fees := make(map[string]kraken.TradeVolumeFees, len(symbols))
 	tradeVolume, err := price.api.TradeVolume(symbols)
 
 	if err != nil {
@@ -175,8 +178,40 @@ func (price *Price) GetFees(
 		))
 	}
 
+	if len(tradeVolume.Result.Fees) != len(symbols) {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trade volume response does not match requested trading tier",
+			nil,
+		))
+	}
+
 	for _, symbol := range symbols {
-		price.fees.Store(symbol, tradeVolume.Result.Fees[symbol])
+		fee, found := tradeVolume.Result.Fees[symbol]
+
+		if !found || fee.Fee == "" {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"trade volume response missing taker fee for "+symbol,
+				nil,
+			))
+		}
+
+		feePercent, err := decimal.NewFromString(fee.Fee)
+
+		if err != nil || feePercent.Sign() < 0 {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"trade volume response has invalid taker fee for "+symbol,
+				err,
+			))
+		}
+
+		fees[symbol] = fee
+	}
+
+	for symbol, fee := range fees {
+		price.fees.Store(symbol, fee)
 	}
 
 	price.status = types.READY

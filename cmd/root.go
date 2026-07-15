@@ -74,15 +74,31 @@ var (
 				))
 			}
 
+			if strings.HasPrefix(persistDir, "~/") {
+				home, err := os.UserHomeDir()
+
+				if err != nil {
+					return errnie.Error(errnie.Err(
+						errnie.IO, "failed to resolve cognitive.persist_dir", err,
+					))
+				}
+
+				persistDir = filepath.Join(home, strings.TrimPrefix(persistDir, "~/"))
+			}
+
+			if !filepath.IsAbs(persistDir) {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"cognitive.persist_dir must be absolute or home-relative",
+					nil,
+				))
+			}
+
 			tree := dmt.NewTree(persistDir)
+
 			defer func() {
 				errnie.Error(tree.Close())
 			}()
-			theses, err := broker.NewTheses(tree, channel)
-
-			if err != nil {
-				return errnie.Error(err)
-			}
 
 			simulator := websocket.NewLatencySimulator(booter)
 
@@ -111,7 +127,7 @@ var (
 
 			price := broker.NewPrice(api)
 			balance := broker.NewBalance(api, channel)
-			desk := broker.NewDesk(api, price, balance, channel, theses)
+			desk := broker.NewDesk(api, price, balance, channel)
 			uiHub, err := ui.NewHub(ctx, price, balance, desk, channel)
 
 			if err != nil {
@@ -125,7 +141,16 @@ var (
 			defer uiHub.Close()
 
 			instrument := trader.NewInstrument(api, price, channel)
-			analyzer := logic.NewAnalyzer(ctx, booter, api)
+			hawkesSignal := hawkes.NewSignal(ctx, api)
+			analyzer, err := logic.NewAnalyzer(ctx, booter, api, hawkesSignal, tree)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"failed to create analyzer",
+					err,
+				))
+			}
 
 			planner := strategy.NewPlanner(
 				ctx,
@@ -141,7 +166,7 @@ var (
 					sentiment.NewSignal(ctx, api),
 					depthflow.NewSignal(ctx, api, instrument),
 					fluid.NewSignal(ctx, api, instrument),
-					hawkes.NewSignal(ctx, api),
+					hawkesSignal,
 				},
 				analyzer,
 			)

@@ -1,5 +1,4 @@
 import { createStore } from "@tanstack/react-store";
-import { retainLifecycleMap } from "#/collections/snapshot-retain";
 import type { LifecycleState } from "#/types/thesis";
 
 /*
@@ -9,15 +8,30 @@ machine position can be rendered without inferring it from execution frames.
 export const lifecycleStore = createStore(
 	{
 		lifecycle: {} as Record<string, LifecycleState>,
+		version: 0,
 	},
 	({ setState }) => ({
 		updateFrame: (frame: Record<string, LifecycleState>) =>
-			setState((prev) => ({
-				lifecycle: retainLifecycleMap(frame, prev.lifecycle),
-			})),
+			setState((prev) => {
+				if (Object.keys(frame).length === 0) {
+					return prev;
+				}
+
+				const lifecycle = prev.lifecycle;
+
+				for (const [symbol, state] of Object.entries(frame)) {
+					lifecycle[symbol] = state;
+				}
+
+				return {
+					lifecycle,
+					version: prev.version + 1,
+				};
+			}),
 		reset: () =>
 			setState(() => ({
 				lifecycle: {},
+				version: 0,
 			})),
 	}),
 );

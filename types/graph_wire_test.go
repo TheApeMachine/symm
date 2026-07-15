@@ -63,6 +63,25 @@ func TestGraphFrame(t *testing.T) {
 				So(decoded.Edges[0].To, ShouldNotBeEmpty)
 			})
 		})
+
+		Convey("When published through a Thesis", func() {
+			uiHub := make(chan []byte, 1)
+			thesis := NewThesis(uiHub)
+			thesis.Graphs.Store(graph.Symbol, graph)
+			thesis.Publish()
+			payload := <-uiHub
+			published := struct {
+				Graphs []GraphFrame `json:"graphs"`
+			}{}
+
+			Convey("Then the websocket payload contains the existing graph frame", func() {
+				So(json.Unmarshal(payload, &published), ShouldBeNil)
+				So(published.Graphs, ShouldHaveLength, 1)
+				So(published.Graphs[0].Symbol, ShouldEqual, graph.Symbol)
+				So(published.Graphs[0].Nodes, ShouldHaveLength, 2)
+				So(published.Graphs[0].Edges, ShouldNotBeEmpty)
+			})
+		})
 	})
 }
 

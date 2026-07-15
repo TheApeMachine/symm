@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"context"
 	"sync"
 	"testing"
 
@@ -8,7 +9,53 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/tests"
 )
+
+/*
+TestInstrumentSubscribeLoadsUniverseFees verifies every online USD pair gets
+its fee schedule before the complete market-data universe is subscribed.
+*/
+func TestInstrumentSubscribeLoadsUniverseFees(t *testing.T) {
+	Convey("Given two online USD instruments with complete Kraken fees", t, func() {
+		viper.Set("market.subscribe_batch", 200)
+		mock := tests.NewMockAPI()
+		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
+			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFees{
+				"XXBTZUSD": {Fee: "0.2600"},
+				"ZECUSD":   {Fee: "0.2600"},
+			}},
+		}), ShouldBeNil)
+		api := websocket.NewAPI(
+			context.Background(), mock.Public(), mock.Private(), nil,
+		)
+		So(api.Initialize(), ShouldBeNil)
+		price := broker.NewPrice(api)
+		instrument := NewInstrument(api, price, nil)
+		instrument.quote = "USD"
+		instrument.cache.Store("BTC/USD", kraken.InstrumentPair{
+			Symbol: "BTC/USD", Quote: "USD", Status: "online",
+		})
+		instrument.cache.Store("ZEC/USD", kraken.InstrumentPair{
+			Symbol: "ZEC/USD", Quote: "USD", Status: "online",
+		})
+
+		err := instrument.Subscribe()
+
+		Convey("Then all eligible symbols have fees before subscription transport is attempted", func() {
+			So(err, ShouldNotBeNil)
+			So(mock.LastTradeVolumeSymbols(), ShouldResemble, []string{"BTC/USD", "ZEC/USD"})
+			btcFee, feeErr := price.FeeFraction("BTC/USD")
+			So(feeErr, ShouldBeNil)
+			So(btcFee.Float64(), ShouldEqual, 0.0026)
+			zecFee, feeErr := price.FeeFraction("ZEC/USD")
+
+			So(feeErr, ShouldBeNil)
+			So(zecFee.Float64(), ShouldEqual, 0.0026)
+		})
+	})
+}
 
 func TestInstrumentOn(t *testing.T) {
 	Convey("Given an instrument snapshot frame", t, func() {
@@ -65,110 +112,4 @@ func TestInstrumentSubscribeRejectsInvalidBatchSize(t *testing.T) {
 			So(err, ShouldNotBeNil)
 		})
 	})
-}
-
-func TestInstrumentTier(t *testing.T) {
-	Convey("Given fewer observed tickers than the configured heavy tier", t, func() {
-		viper.Set("market.universe.trading_tier_size", 2)
-		price := broker.NewPrice(nil)
-		price.TickerAck([]byte(`{
-			"channel":"ticker",
-			"type":"snapshot",
-			"data":[
-				{"symbol":"DEEP/USD","bid":"10","bid_qty":20,"ask":"11","ask_qty":20,"last":"10.5","volume":100,"vwap":10.5,"timestamp":"2026-07-14T09:00:00Z"}
-			]
-		}`))
-		instrument := &Instrument{
-			price:   price,
-			symbols: []string{"DEEP/USD", "PENDING/USD"},
-		}
-
-		symbols, ready, err := instrument.Tier(nil)
-
-		Convey("Then activation waits without reporting normal startup as an error", func() {
-			So(err, ShouldBeNil)
-			So(ready, ShouldBeFalse)
-			So(symbols, ShouldBeNil)
-		})
-	})
-
-	Convey("Given a complete ticker snapshot wider than the heavy tier", t, func() {
-		viper.Set("market.universe.trading_tier_size", 2)
-		price := broker.NewPrice(nil)
-		price.TickerAck([]byte(`{
-			"channel":"ticker",
-			"type":"snapshot",
-			"data":[
-				{"symbol":"THIN/USD","bid":"10","bid_qty":1,"ask":"11","ask_qty":1,"last":"10.5","volume":100,"vwap":10.5,"timestamp":"2026-07-14T09:00:00Z"},
-				{"symbol":"DEEP/USD","bid":"10","bid_qty":20,"ask":"11","ask_qty":20,"last":"10.5","volume":100,"vwap":10.5,"timestamp":"2026-07-14T09:00:00Z"},
-				{"symbol":"MID/USD","bid":"10","bid_qty":10,"ask":"11","ask_qty":10,"last":"10.5","volume":100,"vwap":10.5,"timestamp":"2026-07-14T09:00:00Z"}
-			]
-		}`))
-		instrument := &Instrument{
-			price:   price,
-			symbols: []string{"THIN/USD", "DEEP/USD", "MID/USD"},
-		}
-
-		symbols, ready, err := instrument.Tier(nil)
-
-		Convey("Then executable depth selects a deterministic bounded tier", func() {
-			So(err, ShouldBeNil)
-			So(ready, ShouldBeTrue)
-			So(symbols, ShouldResemble, []string{"DEEP/USD", "MID/USD"})
-		})
-	})
-
-	Convey("Given an open holding outside the depth-ranked tier", t, func() {
-		viper.Set("market.universe.trading_tier_size", 2)
-		price := broker.NewPrice(nil)
-		price.TickerAck([]byte(`{
-			"channel":"ticker",
-			"type":"snapshot",
-			"data":[
-				{"symbol":"HELD/USD","bid":"10","bid_qty":1,"ask":"11","ask_qty":1,"last":"10.5","volume":100,"vwap":10.5,"timestamp":"2026-07-14T09:00:00Z"},
-				{"symbol":"DEEP/USD","bid":"10","bid_qty":20,"ask":"11","ask_qty":20,"last":"10.5","volume":100,"vwap":10.5,"timestamp":"2026-07-14T09:00:00Z"},
-				{"symbol":"MID/USD","bid":"10","bid_qty":10,"ask":"11","ask_qty":10,"last":"10.5","volume":100,"vwap":10.5,"timestamp":"2026-07-14T09:00:00Z"}
-			]
-		}`))
-		instrument := &Instrument{
-			price:   price,
-			symbols: []string{"HELD/USD", "DEEP/USD", "MID/USD"},
-		}
-
-		symbols, ready, err := instrument.Tier([]string{"HELD/USD"})
-
-		Convey("Then the holding is retained before depth fills remaining capacity", func() {
-			So(err, ShouldBeNil)
-			So(ready, ShouldBeTrue)
-			So(symbols, ShouldResemble, []string{"HELD/USD", "DEEP/USD"})
-		})
-	})
-}
-
-func BenchmarkInstrumentTier(b *testing.B) {
-	viper.Set("market.universe.trading_tier_size", 2)
-	price := broker.NewPrice(nil)
-	price.TickerAck([]byte(`{
-		"channel":"ticker",
-		"type":"snapshot",
-		"data":[
-			{"symbol":"THIN/USD","bid":"10","bid_qty":1,"ask":"11","ask_qty":1,"last":"10.5","volume":100,"vwap":10.5,"timestamp":"2026-07-14T09:00:00Z"},
-			{"symbol":"DEEP/USD","bid":"10","bid_qty":20,"ask":"11","ask_qty":20,"last":"10.5","volume":100,"vwap":10.5,"timestamp":"2026-07-14T09:00:00Z"},
-			{"symbol":"MID/USD","bid":"10","bid_qty":10,"ask":"11","ask_qty":10,"last":"10.5","volume":100,"vwap":10.5,"timestamp":"2026-07-14T09:00:00Z"}
-		]
-	}`))
-	instrument := &Instrument{
-		price:   price,
-		symbols: []string{"THIN/USD", "DEEP/USD", "MID/USD"},
-	}
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		symbols, ready, err := instrument.Tier(nil)
-
-		if err != nil || !ready || len(symbols) != 2 {
-			b.Fatal("incomplete trading tier")
-		}
-	}
 }

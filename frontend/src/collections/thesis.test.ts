@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { decisionStore, latestStrategyDecisions } from "./decisions";
 import { findingsList, findingsStore } from "./findings";
-import { forecastsStore } from "./forecasts";
-import { graphsStore } from "./graphs";
+import { forecastsStore, forecastValues } from "./forecasts";
+import { graphsStore, latestGraphFrame } from "./graphs";
 import { lifecycleStore } from "./lifecycle";
 import { tradeJournalStore, tradeJournalValues } from "./trade-journal";
 
@@ -113,7 +113,9 @@ describe("thesis frame stores", () => {
 			},
 		]);
 
-		expect(graphsStore.state.graphs["BTC/USD"]?.symbol).toBe("BTC/USD");
+		expect(latestGraphFrame(graphsStore.state.graphs, "BTC/USD")?.symbol).toBe(
+			"BTC/USD",
+		);
 	});
 
 	it("retains thesis snapshots when later frames publish empty arrays", () => {
@@ -148,8 +150,10 @@ describe("thesis frame stores", () => {
 		]);
 		forecastsStore.actions.updateFrame([]);
 
-		expect(forecastsStore.state.forecasts).toHaveLength(1);
-		expect(forecastsStore.state.forecasts[0]?.symbol).toBe("BTC/USD");
+		expect(forecastValues(forecastsStore.state.forecasts)).toHaveLength(1);
+		expect(forecastValues(forecastsStore.state.forecasts)[0]?.symbol).toBe(
+			"BTC/USD",
+		);
 	});
 
 	it("merges partial thesis snapshots without dropping other symbols", () => {
@@ -211,10 +215,9 @@ describe("thesis frame stores", () => {
 			},
 		]);
 
-		expect(forecastsStore.state.forecasts.map((row) => row.symbol)).toEqual([
-			"BTC/USD",
-			"ETH/USD",
-		]);
+		expect(
+			forecastValues(forecastsStore.state.forecasts).map((row) => row.symbol),
+		).toEqual(["BTC/USD", "ETH/USD"]);
 	});
 
 	it("retains findings across frames without duplicating them", () => {

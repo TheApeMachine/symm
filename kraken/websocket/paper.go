@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/bytedance/sonic"
@@ -208,9 +209,19 @@ func (paper *Paper) execute(entity string, command ...string) (datura.Map[any], 
 	stdout, err := cmd.Output()
 
 	if err != nil {
+		details := strings.TrimSpace(stderr.String())
+
+		if details == "" {
+			details = strings.TrimSpace(string(stdout))
+		}
+
+		if details == "" {
+			details = err.Error()
+		}
+
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
-			"failed to subscribe to "+entity+": "+stderr.String(),
+			"kraken paper "+entity+" command failed: "+details,
 			err,
 		))
 	}

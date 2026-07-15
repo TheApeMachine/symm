@@ -1,20 +1,14 @@
-import { categoriesStore } from "#/collections/categories";
+import { categoriesStore, categoryValues } from "#/collections/categories";
 import { decisionStore } from "#/collections/decisions";
 import { findingsList, findingsStore } from "#/collections/findings";
-import { forecastsStore } from "#/collections/forecasts";
-import { graphsStore } from "#/collections/graphs";
-import { hypothesesStore } from "#/collections/hypotheses";
+import { forecastsStore, forecastValues } from "#/collections/forecasts";
+import { graphsStore, latestGraphFrame } from "#/collections/graphs";
+import { hypothesesStore, hypothesisValues } from "#/collections/hypotheses";
 import { lifecycleStore } from "#/collections/lifecycle";
 import {
 	flattenMeasurementBuffer,
 	measurementsStore,
 } from "#/collections/measurements";
-import {
-	categoryRowKey,
-	forecastRowKey,
-	hypothesisRowKey,
-	mergeSnapshotArray,
-} from "#/collections/snapshot-retain";
 import { tickStore } from "#/collections/tick";
 import {
 	tradeJournalStore,
@@ -81,23 +75,30 @@ categories so classification evidence survives partial thesis tick frames.
 */
 export const categoriesForSymbol = (symbol: string): ThesisCategory[] => {
 	const measurements = measurementsForSymbol(symbol);
-	const fromMeasurements = measurements.flatMap((measurement) =>
-		(measurement.categories ?? []).map((category) =>
-			categoryFromMeasurement(measurement.symbol, category),
-		),
-	);
-	const fromStore = categoriesStore.state.categories.filter(
-		(category) =>
-			category.symbol === undefined ||
-			category.symbol === "" ||
-			category.symbol === symbol,
-	);
+	const merged = new Map<string, ThesisCategory>();
 
-	return mergeSnapshotArray(
-		[...fromStore, ...fromMeasurements],
-		[],
-		categoryRowKey,
-	);
+	for (const category of categoryValues(categoriesStore.state.categories)) {
+		if (
+			category.symbol !== undefined &&
+			category.symbol !== "" &&
+			category.symbol !== symbol
+		) {
+			continue;
+		}
+
+		merged.set(category.type, category);
+	}
+
+	for (const measurement of measurements) {
+		for (const category of measurement.categories ?? []) {
+			merged.set(
+				category.type,
+				categoryFromMeasurement(measurement.symbol, category),
+			);
+		}
+	}
+
+	return [...merged.values()];
 };
 
 /*
@@ -112,37 +113,20 @@ export const accumulateThesisSnapshot = (
 		return incoming;
 	}
 
-	const forSymbol = <T extends { symbol: string }>(rows: T[]): T[] =>
-		rows.filter((row) => row.symbol === incoming.symbol);
-
 	return {
 		...incoming,
 		lifecycle: incoming.lifecycle ?? previous.lifecycle,
 		graph: incoming.graph ?? previous.graph,
 		decision: incoming.decision ?? previous.decision,
 		forecasts:
-			incoming.forecasts.length > 0
-				? mergeSnapshotArray(
-						incoming.forecasts,
-						forSymbol(previous.forecasts),
-						forecastRowKey,
-					)
-				: previous.forecasts,
+			incoming.forecasts.length > 0 ? incoming.forecasts : previous.forecasts,
 		hypotheses:
 			incoming.hypotheses.length > 0
-				? mergeSnapshotArray(
-						incoming.hypotheses,
-						forSymbol(previous.hypotheses),
-						hypothesisRowKey,
-					)
+				? incoming.hypotheses
 				: previous.hypotheses,
 		categories:
 			incoming.categories.length > 0
-				? mergeSnapshotArray(
-						incoming.categories,
-						previous.categories,
-						categoryRowKey,
-					)
+				? incoming.categories
 				: previous.categories,
 		observations:
 			incoming.observations.length >= previous.observations.length
@@ -164,13 +148,13 @@ export const thesisSnapshotFor = (symbol: string): ThesisSnapshot => {
 		symbol,
 		tick: tickCount(tickStore.state.frame),
 		lifecycle: lifecycleStore.state.lifecycle[symbol] ?? null,
-		graph: graphsStore.state.graphs[symbol] ?? null,
+		graph: latestGraphFrame(graphsStore.state.graphs, symbol),
 		measurements,
 		decision,
-		forecasts: forecastsStore.state.forecasts.filter(
+		forecasts: forecastValues(forecastsStore.state.forecasts).filter(
 			(forecast) => forecast.symbol === symbol,
 		),
-		hypotheses: hypothesesStore.state.hypotheses.filter(
+		hypotheses: hypothesisValues(hypothesesStore.state.hypotheses).filter(
 			(hypothesis) => hypothesis.symbol === symbol,
 		),
 		categories: categoriesForSymbol(symbol),

@@ -1,7 +1,6 @@
 package types
 
 import (
-	"cmp"
 	"errors"
 	"time"
 )
@@ -113,10 +112,6 @@ const (
 	MetricMemory              MetricType = "memory"
 	MetricMidAddRate          MetricType = "mid_add_rate"
 	MetricMidExecuteRate      MetricType = "mid_execute_rate"
-	MetricLaminar             MetricType = "laminar"
-	MetricTurbulent           MetricType = "turbulent"
-	MetricInertial            MetricType = "inertial"
-	MetricViscous             MetricType = "viscous"
 
 	// toxicity (level3 touch liquidity honesty)
 	MetricTouchQuantity      MetricType = "touch_quantity"
@@ -178,14 +173,17 @@ erases what the original value represented.
 type MeasurementUnit string
 
 const (
-	UnitCount           MeasurementUnit = "count"
-	UnitDimensionless   MeasurementUnit = "dimensionless"
-	UnitEventsPerSecond MeasurementUnit = "events_per_second"
-	UnitInverseSecond   MeasurementUnit = "inverse_second"
-	UnitNat             MeasurementUnit = "nat"
-	UnitSecond          MeasurementUnit = "second"
-	UnitQuoteCurrency   MeasurementUnit = "quote_currency"
-	UnitBaseCurrency    MeasurementUnit = "base_currency"
+	UnitCount                      MeasurementUnit = "count"
+	UnitDimensionless              MeasurementUnit = "dimensionless"
+	UnitEventsPerSecond            MeasurementUnit = "events_per_second"
+	UnitInverseSecond              MeasurementUnit = "inverse_second"
+	UnitNat                        MeasurementUnit = "nat"
+	UnitSecond                     MeasurementUnit = "second"
+	UnitQuoteCurrency              MeasurementUnit = "quote_currency"
+	UnitBaseCurrency               MeasurementUnit = "base_currency"
+	UnitQuoteCurrencyPerSecond     MeasurementUnit = "quote_currency_per_second"
+	UnitBaseCurrencyPerSecond      MeasurementUnit = "base_currency_per_second"
+	UnitInverseQuoteCurrencySecond MeasurementUnit = "inverse_quote_currency_second"
 )
 
 /*
@@ -332,11 +330,71 @@ type Measurement struct {
 }
 
 /*
+CanonicalizeProvenance folds every declared timestamp into one forward evidence
+window so graph validation reflects the full span instead of rejecting mixed
+producer fields.
+*/
+func (measurement *Measurement) CanonicalizeProvenance() {
+	stamps := make([]time.Time, 0, 4)
+
+	for _, stamp := range []time.Time{
+		measurement.At,
+		measurement.ObservedFrom,
+		measurement.Scale.From,
+		measurement.Scale.Through,
+	} {
+		if stamp.IsZero() {
+			continue
+		}
+
+		stamps = append(stamps, stamp)
+	}
+
+	if len(stamps) == 0 {
+		return
+	}
+
+	from := stamps[0]
+	through := stamps[0]
+
+	for _, stamp := range stamps[1:] {
+		if stamp.Before(from) {
+			from = stamp
+		}
+
+		if stamp.After(through) {
+			through = stamp
+		}
+	}
+
+	measurement.ObservedFrom = from
+	measurement.At = through
+	measurement.Horizon = through.Sub(from)
+
+	if measurement.Scale.Kind != "" ||
+		!measurement.Scale.From.IsZero() ||
+		!measurement.Scale.Through.IsZero() {
+		if measurement.Scale.Kind == "" {
+			measurement.Scale.Kind = ScaleObservationWindow
+		}
+
+		measurement.Scale.From = from
+		measurement.Scale.Through = through
+	}
+}
+
+/*
 ValidateStruct enforces the cross-field time ordering that tags cannot express.
 A measurement may omit an explicit scale interval, but any interval it does
 resolve must run forward.
 */
-func (measurement Measurement) ValidateStruct() error {
+func (measurement *Measurement) ValidateStruct() error {
+	if measurement == nil {
+		return errors.New("measurement required")
+	}
+
+	measurement.CanonicalizeProvenance()
+
 	from, through := measurement.Interval()
 	scaleBackwards := !measurement.Scale.From.IsZero() &&
 		!measurement.Scale.Through.IsZero() &&
@@ -355,6 +413,37 @@ provenance, then its scale, then its observation time. Relationship composition
 uses this canonical policy instead of reconstructing it at every call site.
 */
 func (measurement Measurement) Interval() (time.Time, time.Time) {
-	return cmp.Or(measurement.ObservedFrom, measurement.Scale.From, measurement.At),
-		cmp.Or(measurement.Scale.Through, measurement.At)
+	stamps := make([]time.Time, 0, 4)
+
+	for _, stamp := range []time.Time{
+		measurement.At,
+		measurement.ObservedFrom,
+		measurement.Scale.From,
+		measurement.Scale.Through,
+	} {
+		if stamp.IsZero() {
+			continue
+		}
+
+		stamps = append(stamps, stamp)
+	}
+
+	if len(stamps) == 0 {
+		return time.Time{}, time.Time{}
+	}
+
+	from := stamps[0]
+	through := stamps[0]
+
+	for _, stamp := range stamps[1:] {
+		if stamp.Before(from) {
+			from = stamp
+		}
+
+		if stamp.After(through) {
+			through = stamp
+		}
+	}
+
+	return from, through
 }

@@ -23,18 +23,18 @@ type Forecasts struct {
 	Calibrated               bool          `json:"calibrated"`
 	FrictionReady            bool          `json:"frictionReady"`
 	CalibrationSamples       uint64        `json:"calibrationSamples"`
-	IncrementalMSE           float64       `json:"incrementalMSE"`
-	IncrementalMSELowerBound float64       `json:"incrementalMSELowerBound"`
-	ExpectedReturn           float64       `json:"expectedReturn"`
-	ReferencePrice           float64       `json:"referencePrice"`
-	BuyCapacity              float64       `json:"buyCapacity"`
-	SellCapacity             float64       `json:"sellCapacity"`
-	ExpectedFees             float64       `json:"expectedFees"`
-	ExpectedSpread           float64       `json:"expectedSpread"`
-	ExpectedImpact           float64       `json:"expectedImpact"`
-	ExpectedAdverseSelection float64       `json:"expectedAdverseSelection"`
-	Uncertainty              float64       `json:"uncertainty"`
-	Confidence               float64       `json:"confidence"`
+	IncrementalMSE           float64       `json:"incrementalMSE" validate:"finite"`
+	IncrementalMSELowerBound float64       `json:"incrementalMSELowerBound" validate:"finite"`
+	ExpectedReturn           float64       `json:"expectedReturn" validate:"finite"`
+	ReferencePrice           float64       `json:"referencePrice" validate:"finite"`
+	BuyCapacity              float64       `json:"buyCapacity" validate:"finite"`
+	SellCapacity             float64       `json:"sellCapacity" validate:"finite"`
+	ExpectedFees             float64       `json:"expectedFees" validate:"finite,nonnegative"`
+	ExpectedSpread           float64       `json:"expectedSpread" validate:"finite,nonnegative"`
+	ExpectedImpact           float64       `json:"expectedImpact" validate:"finite,nonnegative"`
+	ExpectedAdverseSelection float64       `json:"expectedAdverseSelection" validate:"finite,nonnegative"`
+	Uncertainty              float64       `json:"uncertainty" validate:"finite,nonnegative"`
+	Confidence               float64       `json:"confidence" validate:"finite,min=0,max=1"`
 }
 
 /*

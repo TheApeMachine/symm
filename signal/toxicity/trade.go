@@ -2,10 +2,10 @@ package toxicity
 
 import (
 	"context"
+	"sync"
 
-	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -15,7 +15,8 @@ type Trade struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	api    *websocket.API
-	cache  []spot.Trade
+	access sync.Mutex
+	cache  []kraken.TradeData
 }
 
 /*
@@ -28,7 +29,7 @@ func NewTrade(ctx context.Context, api *websocket.API) *Trade {
 		ctx:    ctx,
 		cancel: cancel,
 		api:    api,
-		cache:  []spot.Trade{},
+		cache:  []kraken.TradeData{},
 	}
 
 	trade.api.On("trade", trade.On)
@@ -44,11 +45,13 @@ func (trade *Trade) On(data []byte) {
 		return
 	}
 
-	trades := utils.UnmarshalSlice[spot.Trade](data)
+	trades := kraken.NewTrade(data)
 
-	if len(trades) == 0 {
+	if len(trades.Data) == 0 {
 		return
 	}
 
-	trade.cache = append(trade.cache, trades...)
+	trade.access.Lock()
+	trade.cache = append(trade.cache, trades.Data...)
+	trade.access.Unlock()
 }

@@ -1,0 +1,9 @@
+{
+	"method": "add_order",
+	"result": {
+		"order_id": "order-1",
+		"order_userref": 0
+	},
+	"success": true,
+	"req_id": 7
+}

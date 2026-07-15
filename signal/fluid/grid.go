@@ -469,16 +469,16 @@ func (grid *FluidGrid) measureReplenishment(dt float64, spread float64) {
 }
 
 /*
-midAddRateAtTouch returns the current near-touch addition rate used by fluid
-classification.
+midAddRateAtTouch returns the current near-touch addition rate published as
+fluid evidence.
 */
 func (grid *FluidGrid) midAddRateAtTouch() float64 {
 	return grid.midAddRate
 }
 
 /*
-midExecuteRateAtTouch returns the current near-touch execution rate used by
-fluid classification.
+midExecuteRateAtTouch returns the current near-touch execution rate published
+as fluid evidence.
 */
 func (grid *FluidGrid) midExecuteRateAtTouch() float64 {
 	return grid.midExecuteRate

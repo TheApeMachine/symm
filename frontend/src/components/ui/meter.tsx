@@ -15,6 +15,7 @@ export const meterTrackVariants = cva(
 				success: "[--meter-tone:var(--success)]",
 				warning: "[--meter-tone:var(--warning)]",
 				error: "[--meter-tone:var(--error)]",
+				disabled: "[--meter-tone:var(--f3)]",
 			},
 			size: {
 				xxs: "h-1 rounded-[2px]",

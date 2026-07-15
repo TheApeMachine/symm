@@ -5,12 +5,12 @@ export const FluidLegend = () => (
 			whale carrier
 		</span>
 		<span className="inline-flex items-center gap-1.5">
-			<span className="size-2 rounded-full bg-info" />
-			laminar
+			<span className="inline-block h-px w-3 bg-[rgba(255,228,180,0.75)]" />
+			guidance flow
 		</span>
 		<span className="inline-flex items-center gap-1.5">
-			<span className="size-2 rounded-full bg-(--down)" />
-			turbulent
+			<span className="size-2 rounded-full bg-info/70" />
+			|psi|^2 veil
 		</span>
 	</div>
 );

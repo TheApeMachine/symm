@@ -53,6 +53,8 @@ describe("allocationSummary", () => {
 					symbol: "BTC/USD",
 					qty: 0.5,
 					entry_price: 100,
+					entry_fee: 0.13,
+					exit_fee: 0.156,
 					mark: 120,
 					pnl: 10,
 					return_pct: 0.2,

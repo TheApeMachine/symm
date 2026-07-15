@@ -2,6 +2,7 @@ package hawkes
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,7 +38,7 @@ func tradeRow(symbol, side string, price float64, quantity float64, at time.Time
 
 func TestSignalOnTrade(testingTB *testing.T) {
 	Convey("Given a Hawkes signal wired to the trade channel", testingTB, func() {
-		signal := &Signal{tradeCache: []kraken.TradeData{}}
+		signal := &Signal{trade: NewTrade(), tradeCache: []kraken.TradeData{}}
 		payload := []byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"buy","price":100.5,"qty":1.25,"ord_type":"market","trade_id":1,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
 
 		Convey("When a trade frame arrives over the wire", func() {
@@ -55,6 +56,29 @@ func TestSignalOnTrade(testingTB *testing.T) {
 			Convey("Then nothing should be cached", func() {
 				So(len(signal.tradeCache), ShouldEqual, 0)
 			})
+		})
+
+		Convey("When websocket writes overlap measurement drains", func() {
+			wait := sync.WaitGroup{}
+			wait.Add(2)
+
+			go func() {
+				defer wait.Done()
+
+				for range 100 {
+					signal.onTrade(payload)
+				}
+			}()
+
+			go func() {
+				defer wait.Done()
+
+				for range 100 {
+					signal.Measure(types.NewThesis(nil))
+				}
+			}()
+
+			wait.Wait()
 		})
 	})
 }

@@ -123,6 +123,7 @@ const VARIANT_TONE: Record<Variant, string> = {
 	success: "var(--success)",
 	warning: "var(--warning)",
 	error: "var(--error)",
+	disabled: "var(--f3)",
 };
 
 /*
@@ -280,49 +281,92 @@ export const HealthPanel = ({ sources }: { sources?: string[] }) => {
 	);
 };
 
-export type SignalAxis = { label: string; value: number };
-
 /*
-topSignalAxes ranks sources by their market-wide headline strength — the mean
-of each source's latest headline metric across every symbol currently
-reporting it. Sources without a headline metric (e.g. toxicity, which reports
-raw liquidity stats rather than a composite score) are not rankable this way
-and are excluded rather than faked into a score.
+regimeAxes projects typed numerical measurements onto the five fields in the
+backend Regime contract, then averages each field across reporting symbols.
+Turbulence supplies volatility, pump trend supplies trend, and signed CVD
+pressure supplies bullish, bearish, and stochastic-balance evidence.
 */
-export const topSignalAxes = (
+export const regimeAxes = (
 	readings: typeof measurementsStore.state,
 	sources: string[],
-	slots = 5,
-): SignalAxis[] => {
-	const ranked = sources.flatMap((source) => {
-		const headline = headlineMetric(source);
+): Array<{ label: string; value: number }> => {
+	const available = new Set(sources);
+	let volatile = 0;
+	let volatileCount = 0;
+	let trending = 0;
+	let trendingCount = 0;
+	let bullish = 0;
+	let bearish = 0;
+	let directionalCount = 0;
+	let choppy = 0;
+	let choppyCount = 0;
 
-		if (headline === null) {
-			return [];
+	for (const sourceMap of Object.values(readings.measurements)) {
+		const turbulence = available.has("fluid")
+			? latestByMetric(
+					flattenMeasurementBuffer(sourceMap.fluid),
+					"turbulent_score",
+				)
+			: undefined;
+
+		if (turbulence !== undefined && turbulence.validity.state !== "invalid") {
+			volatile += percentOf(turbulence) / 100;
+			volatileCount += 1;
 		}
 
-		const values = Object.values(readings.measurements).flatMap((sourceMap) => {
-			const latest = latestByMetric(
-				flattenMeasurementBuffer(sourceMap[source]),
-				headline,
-			);
+		const trend = available.has("pumpdump")
+			? latestByMetric(flattenMeasurementBuffer(sourceMap.pumpdump), "trend")
+			: undefined;
 
-			return latest === undefined ? [] : [percentOf(latest) / 100];
-		});
-
-		if (values.length === 0) {
-			return [];
+		if (trend !== undefined && trend.validity.state !== "invalid") {
+			trending += percentOf(trend) / 100;
+			trendingCount += 1;
 		}
 
-		return [
-			{
-				label: source,
-				value: values.reduce((sum, value) => sum + value, 0) / values.length,
-			},
-		];
-	});
+		if (!available.has("cvd")) {
+			continue;
+		}
 
-	return ranked.sort((left, right) => right.value - left.value).slice(0, slots);
+		const flow = flattenMeasurementBuffer(sourceMap.cvd);
+		const net = latestByMetric(flow, "net");
+		const netFraction = latestByMetric(flow, "net_fraction");
+		const balance = latestByMetric(flow, "balance");
+
+		if (
+			net !== undefined &&
+			netFraction !== undefined &&
+			net.validity.state !== "invalid" &&
+			netFraction.validity.state !== "invalid"
+		) {
+			const pressure = percentOf(netFraction) / 100;
+			bullish += net.raw > 0 ? pressure : 0;
+			bearish += net.raw < 0 ? pressure : 0;
+			directionalCount += 1;
+		}
+
+		if (balance !== undefined && balance.validity.state !== "invalid") {
+			choppy += percentOf(balance) / 100;
+			choppyCount += 1;
+		}
+	}
+
+	return [
+		{
+			label: "volatility",
+			value: volatileCount > 0 ? volatile / volatileCount : 0,
+		},
+		{ label: "trend", value: trendingCount > 0 ? trending / trendingCount : 0 },
+		{
+			label: "bullish",
+			value: directionalCount > 0 ? bullish / directionalCount : 0,
+		},
+		{
+			label: "bearish",
+			value: directionalCount > 0 ? bearish / directionalCount : 0,
+		},
+		{ label: "chop", value: choppyCount > 0 ? choppy / choppyCount : 0 },
+	];
 };
 
 const RADAR_UNITS: Array<[number, number]> = [
@@ -334,7 +378,7 @@ const RADAR_UNITS: Array<[number, number]> = [
 ];
 
 /*
-RadarPanel paints the strongest-signals radar directly from measurement store
+RadarPanel paints the five-axis market regime directly from typed measurement
 snapshots so the right rail stays off the React render path.
 */
 export const RadarPanel = ({ sources }: { sources?: string[] }) => {
@@ -351,7 +395,7 @@ export const RadarPanel = ({ sources }: { sources?: string[] }) => {
 					),
 				),
 			];
-			const axes = topSignalAxes(readings, candidates);
+			const axes = regimeAxes(readings, candidates);
 			const points = RADAR_UNITS.map(
 				([x, y], index) =>
 					`${110 + x * 84 * (axes[index]?.value ?? 0)},${
@@ -381,14 +425,12 @@ export const RadarPanel = ({ sources }: { sources?: string[] }) => {
 
 	return (
 		<Panel size="lg">
-			<div className="mb-2 font-semibold text-(--f1) text-xs">
-				Strongest signals
-			</div>
+			<div className="mb-2 font-semibold text-(--f1) text-xs">Regime radar</div>
 			<div className="mb-2 font-mono text-[9.5px] text-(--f4)">
-				cross-section mean strength · market
+				cross-section mean · market
 			</div>
 			<svg viewBox="0 0 220 210" className="block w-full">
-				<title>Strongest signals</title>
+				<title>Regime radar</title>
 				<polygon
 					points="110,21 190,79 159,173 61,173 30,79"
 					fill="none"

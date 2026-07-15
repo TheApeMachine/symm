@@ -4,6 +4,8 @@ import (
 	"context"
 	"sort"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/types"
@@ -11,7 +13,7 @@ import (
 
 /*
 Planner records the feasible action alternatives for each calibrated forecast
-and emits Intents only for actions that cross the broker boundary.
+and emits orders only for actions that cross the broker boundary.
 */
 type Planner struct {
 	ctx      context.Context
@@ -29,14 +31,22 @@ with paying the observable cost to exit now.
 */
 func (planner *Planner) Decide(
 	thesis *types.Thesis,
-	positions map[string]types.Exposure,
 	fees map[string]float64,
 	available float64,
 	slots int,
-) []Intent {
-	intents := make([]Intent, 0)
+) *types.Thesis {
 	entries := make([]types.Decision, 0)
-	remainingSlots := slots - len(positions)
+	openBySymbol := make(map[string]types.Holding, len(thesis.Positions))
+
+	for _, holding := range thesis.Positions {
+		if holding.Order == nil || holding.Order.Description == nil {
+			continue
+		}
+
+		openBySymbol[holding.Order.Description.Pair] = holding
+	}
+
+	remainingSlots := slots - len(openBySymbol)
 
 	for _, forecast := range thesis.Forecasts {
 		fee, feeReady := fees[forecast.Symbol]
@@ -45,51 +55,77 @@ func (planner *Planner) Decide(
 			continue
 		}
 
-		if thesis.LifecycleState(forecast.Symbol) == types.LifecycleObserving {
-			if err := thesis.Transition(
-				forecast.Symbol, types.LifecycleShaped, forecast.At,
-			); err != nil {
-				errnie.Error(err)
-				continue
-			}
+		if _, ok := thesis.Lifecycle.Load(forecast.Symbol); !ok {
+			thesis.Lifecycle.Store(forecast.Symbol, types.LifecycleShaped)
 		}
 
-		if exposure, exists := positions[forecast.Symbol]; exists {
-			lifecycle := exposure.Thesis
-
-			if lifecycle.LifecycleState(forecast.Symbol) == types.LifecycleInvalid {
-				continue
-			}
-
-			lifecycle.Absorb(thesis, forecast.Symbol)
-
-			if lifecycle.LifecycleState(forecast.Symbol) == types.LifecycleEntered {
-				if err := lifecycle.Transition(
-					forecast.Symbol, types.LifecycleManaging, forecast.At,
-				); err != nil {
-					errnie.Error(err)
-					continue
-				}
-			}
-
-			decision := planner.continuation(forecast, fee, exposure)
-			decision.Cause = planner.cause(lifecycle, forecast, decision.Action)
-			planner.context(&decision, forecast, available, len(positions), slots)
+		if holding, exists := openBySymbol[forecast.Symbol]; exists {
+			decision := planner.continuation(forecast, fee, holding)
+			decision.Cause = planner.cause(thesis, forecast, decision.Action)
+			planner.context(&decision, forecast, available, len(openBySymbol), slots)
+			thesis.Decisions = append(thesis.Decisions, decision)
 
 			if decision.Action == "exit" {
-				if err := lifecycle.Transition(
-					forecast.Symbol, types.LifecycleExitSelected, forecast.At,
-				); err != nil {
-					errnie.Error(err)
-					continue
-				}
+				thesis.Lifecycle.Store(forecast.Symbol, types.LifecycleExitSelected)
 			}
-
-			index := lifecycle.RecordDecision(decision)
 
 			if decision.Action == "exit" || decision.Action == "reduce" {
-				intents = append(intents, Intent{Thesis: lifecycle, Decision: index})
+				thesis.Orders = append(thesis.Orders, spot.Order{
+					Description: &spot.OrderDescription{
+						Pair:      forecast.Symbol,
+						Type:      decision.Action,
+						Price:     decimal.NewFromFloat64(decision.ReferencePrice),
+						OrderType: "market",
+					},
+					Volume: decimal.NewFromFloat64(decision.ProposedQuantity),
+					Price:  decimal.NewFromFloat64(decision.ReferencePrice),
+				})
 			}
+
+			continue
+		}
+
+		referencePrice := decimal.NewFromFloat64(forecast.ReferencePrice)
+		entryPrice := decimal.NewFromFloat64(
+			forecast.ReferencePrice * (1 + forecast.ExpectedSpread/2),
+		)
+		candidateIndex := len(thesis.Positions)
+		thesis.Positions = append(thesis.Positions, types.Holding{
+			Symbol: forecast.Symbol,
+			Qty:    *decimal.NewFromInt64(0),
+			Order: &spot.Order{
+				Description: &spot.OrderDescription{
+					Pair: forecast.Symbol, Type: "enter", OrderType: "market",
+				},
+				Price: entryPrice,
+			},
+			EntryPrice: *entryPrice,
+			Mark:       *referencePrice,
+		})
+
+		cognitionValue, cognitionFound := thesis.Cognition.Load(forecast.Symbol)
+		cognition, cognitionValid := cognitionValue.(types.Cognition)
+
+		if !cognitionFound || !cognitionValid || !cognition.Ready ||
+			cognition.Ambiguous || cognition.Winner != "buy" {
+			reason := "cognitive memory is not ready for this evidence sequence"
+			cause := "cognitive_not_ready"
+
+			if cognitionValid && cognition.Ambiguous {
+				reason = "cognitive memory is ambiguous for this evidence sequence"
+				cause = "cognitive_ambiguity"
+			}
+
+			if cognitionValid && cognition.Ready && !cognition.Ambiguous &&
+				cognition.Winner != "buy" {
+				reason = "cognitive memory does not support a buy entry"
+				cause = "cognitive_opposition"
+			}
+
+			decision := planner.nothing(forecast, reason)
+			decision.Cause = cause
+			planner.context(&decision, forecast, available, len(openBySymbol), slots)
+			thesis.Decisions = append(thesis.Decisions, decision)
 
 			continue
 		}
@@ -98,8 +134,8 @@ func (planner *Planner) Decide(
 			decision := planner.nothing(
 				forecast, "portfolio capacity makes entry infeasible",
 			)
-			planner.context(&decision, forecast, available, len(positions), slots)
-			thesis.RecordDecision(decision)
+			planner.context(&decision, forecast, available, len(openBySymbol), slots)
+			thesis.Decisions = append(thesis.Decisions, decision)
 
 			continue
 		}
@@ -109,10 +145,15 @@ func (planner *Planner) Decide(
 			fee,
 			available/float64(remainingSlots),
 		)
-		planner.context(&decision, forecast, available, len(positions), slots)
+		planner.context(&decision, forecast, available, len(openBySymbol), slots)
+		candidate := &thesis.Positions[candidateIndex]
+		candidate.Qty = *decimal.NewFromFloat64(
+			decision.ProposedNotional / candidate.EntryPrice.Float64(),
+		)
+		candidate.Order.Volume = &candidate.Qty
 
 		if decision.Action == "nothing" {
-			thesis.RecordDecision(decision)
+			thesis.Decisions = append(thesis.Decisions, decision)
 
 			continue
 		}
@@ -131,23 +172,27 @@ func (planner *Planner) Decide(
 			decision.Action = "nothing"
 			decision.Utility = 0
 			decision.Reason = "higher-utility entries consumed available slots"
-			thesis.RecordDecision(decision)
+			thesis.Decisions = append(thesis.Decisions, decision)
 
 			continue
 		}
 
-		if err := thesis.Transition(
-			decision.Symbol, types.LifecycleEntrySelected, decision.At,
-		); err != nil {
-			errnie.Error(err)
-			continue
-		}
+		thesis.Lifecycle.Store(decision.Symbol, types.LifecycleEntrySelected)
+		thesis.Decisions = append(thesis.Decisions, decision)
 
-		index := thesis.RecordDecision(decision)
-		intents = append(intents, Intent{Thesis: thesis, Decision: index})
+		thesis.Orders = append(thesis.Orders, spot.Order{
+			Description: &spot.OrderDescription{
+				Pair:      decision.Symbol,
+				Type:      decision.Action,
+				Price:     decimal.NewFromFloat64(decision.ReferencePrice),
+				OrderType: "market",
+			},
+			Volume: decimal.NewFromFloat64(decision.ProposedNotional),
+			Price:  decimal.NewFromFloat64(decision.ReferencePrice),
+		})
 	}
 
-	return intents
+	return thesis
 }
 
 /*
@@ -157,7 +202,7 @@ Entry cost is sunk; exiting now pays one fee and one side of the spread.
 func (planner *Planner) continuation(
 	forecast types.Forecasts,
 	fee float64,
-	exposure types.Exposure,
+	holding types.Holding,
 ) types.Decision {
 	hold := forecast.ExpectedReturn
 	exit := -(fee + forecast.ExpectedSpread/2)
@@ -166,8 +211,11 @@ func (planner *Planner) continuation(
 	reason := "remaining expected return exceeds current exit cost"
 	alternatives := map[string]float64{"hold": hold}
 	quantity := 0.0
+	mark := holding.Mark.Float64()
+	qty := holding.Qty.Float64()
+	notional := mark * qty
 
-	exitAvailable := exposure.Notional > 0 && forecast.SellCapacity >= exposure.Notional
+	exitAvailable := notional > 0 && forecast.SellCapacity >= notional
 
 	if exitAvailable {
 		alternatives["exit"] = exit
@@ -176,19 +224,19 @@ func (planner *Planner) continuation(
 	if exitAvailable && exit > hold {
 		action = "exit"
 		utility = exit
-		quantity = exposure.Quantity
+		quantity = qty
 		reason = "current exit utility exceeds remaining expected return"
 	}
 
-	if exposure.Notional > forecast.SellCapacity && exposure.Notional > 0 {
-		fraction := forecast.SellCapacity / exposure.Notional
+	if notional > forecast.SellCapacity && notional > 0 {
+		fraction := forecast.SellCapacity / notional
 		reduce := fraction*exit + (1-fraction)*hold
 		alternatives["reduce"] = reduce
 
 		if reduce > utility {
 			action = "reduce"
 			utility = reduce
-			quantity = exposure.Quantity * fraction
+			quantity = qty * fraction
 			reason = "visible bid capacity supports reduction but not complete exit"
 		}
 	}
@@ -368,7 +416,7 @@ func (planner *Planner) Status() types.Status {
 }
 
 /*
-Update evaluates the thesis for all symbols and returns intended actions.
+Update measures and analyzes the next Thesis before portfolio context is applied.
 */
 func (planner *Planner) Update() *types.Thesis {
 	thesis := types.NewThesis(planner.uiHub)

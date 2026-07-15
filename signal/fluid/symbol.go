@@ -49,7 +49,7 @@ type FluidSymbol struct {
 }
 
 /*
-fluidReading captures one coherent fluid state for classification so
+fluidReading captures one coherent fluid state for evidence measurement so
 measurements come from a single epoch.
 */
 type fluidReading struct {
@@ -591,7 +591,7 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 	// inertial/viscous ratio (division by zero) rather than a NaN, so it is
 	// caught here explicitly and reported as the reflexive "no measurable
 	// flow relative to damping yet" boundary: reynolds is left at its
-	// zero-value and downstream classification falls to the score-based
+	// zero-value and downstream evidence falls to the score-based
 	// (laminar/inertial) path instead of the ratio-based one.
 	reynolds := 0.0
 
@@ -614,8 +614,6 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 		viscosity,
 		math.Abs(state.grid.midVelocityCurvature()),
 		state.grid.turbulenceIntensity(),
-		state.grid.midAddRateAtTouch(),
-		state.grid.midExecuteRateAtTouch(),
 	)
 
 	return fluidReading{

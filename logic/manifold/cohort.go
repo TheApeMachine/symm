@@ -8,176 +8,141 @@ import (
 )
 
 /*
-VelocityCross holds the off-diagonal second central velocity moments.
+cohortKey identifies one spatial grid cell in the toroidal manifold domain.
 */
-type VelocityCross struct {
-	PriceSize float64
-	PriceAge  float64
-	SizeAge   float64
+type cohortKey struct {
+	cellX uint32
+	cellY uint32
+	cellZ uint32
 }
 
 /*
-Cohort conservatively aggregates spatially local orders while preserving mass,
-centroid, mean velocity, and second central velocity moment.
+cohortState aggregates mapped orders that share one spatial cell.
 */
-type Cohort struct {
-	Side         OrderSide
-	Mass         float64
-	MassRoundoff float64
-	Centroid     Coordinate
-	Velocity     Coordinate
-	SecondMoment Coordinate
-	CrossMoment  VelocityCross
-	Count        int
-}
-
-type cohortCell struct {
-	side OrderSide
-	x    uint32
-	y    uint32
-	z    uint32
+type cohortState struct {
+	mass   float64
+	posX   float64
+	posY   float64
+	posZ   float64
+	velX   float64
+	velY   float64
+	velZ   float64
+	heat   float64
+	omega  float64
+	phase  float64
+	orders int
 }
 
 /*
-CohortBuilder groups only carriers that occupy the same physical grid cell.
+cohortsFromMappedOrders conservatively merges co-located mapped orders into one
+oscillator population capped by the GPU carrier budget.
 */
-type CohortBuilder struct {
-	config *pmanifold.Config
-}
-
-func NewCohortBuilder(config *pmanifold.Config) *CohortBuilder {
-	return &CohortBuilder{config: config}
-}
-
-func (builder *CohortBuilder) Build(orders []*PhysicalOrder) []Cohort {
-	if len(orders) == 0 || builder.config == nil {
+func cohortsFromMappedOrders(
+	config pmanifold.Config,
+	orders []mappedOrder,
+) []pmanifold.Oscillator {
+	if len(orders) == 0 {
 		return nil
 	}
 
-	buckets := map[cohortCell][]*PhysicalOrder{}
+	cohorts := map[cohortKey]*cohortState{}
 
 	for _, order := range orders {
-		cell := builder.cell(order)
-		buckets[cell] = append(buckets[cell], order)
+		key := cohortKey{
+			cellX: torusCell(config, order.posX, config.DomainX, config.GridX),
+			cellY: torusCell(config, order.posY, config.DomainY, config.GridY),
+			cellZ: torusCell(config, order.posZ, config.DomainZ, config.GridZ),
+		}
+
+		state := cohorts[key]
+
+		if state == nil {
+			state = &cohortState{}
+			cohorts[key] = state
+		}
+
+		state.mass += order.mass
+		state.posX += order.posX * order.mass
+		state.posY += order.posY * order.mass
+		state.posZ += order.posZ * order.mass
+		state.velX += order.velX * order.mass
+		state.velY += order.velY * order.mass
+		state.velZ += order.velZ * order.mass
+		state.heat += order.heat
+		state.omega += order.omega * order.mass
+		state.phase += order.phase * order.mass
+		state.orders++
 	}
 
-	keys := make([]cohortCell, 0, len(buckets))
+	keys := make([]cohortKey, 0, len(cohorts))
 
-	for key := range buckets {
+	for key := range cohorts {
 		keys = append(keys, key)
 	}
 
 	sort.Slice(keys, func(left, right int) bool {
-		if keys[left].side != keys[right].side {
-			return keys[left].side < keys[right].side
-		}
-
-		if keys[left].x != keys[right].x {
-			return keys[left].x < keys[right].x
-		}
-
-		if keys[left].y != keys[right].y {
-			return keys[left].y < keys[right].y
-		}
-
-		return keys[left].z < keys[right].z
+		return cohorts[keys[left]].mass > cohorts[keys[right]].mass
 	})
 
-	cohorts := make([]Cohort, 0, len(keys))
+	limit := int(config.MaxModes)
 
-	for _, key := range keys {
-		bucket := buckets[key]
-		mass := roundedQuantity{}
-
-		for _, order := range bucket {
-			mass = mass.Add(roundedQuantity{value: order.Quantity})
-		}
-
-		if mass.value > 0 {
-			cohort := builder.cohort(key.side, bucket, mass.value)
-			cohort.MassRoundoff = mass.roundoff
-			cohorts = append(cohorts, cohort)
-		}
+	if limit <= 0 || limit > len(keys) {
+		limit = len(keys)
 	}
 
-	return cohorts
-}
+	oscillators := make([]pmanifold.Oscillator, 0, limit)
 
-func (builder *CohortBuilder) cell(order *PhysicalOrder) cohortCell {
-	return cohortCell{
-		side: order.Side,
-		x: builder.centeredCell(
-			order.Coordinate.Price,
-			builder.config.DomainX,
-			builder.config.GridX,
-		),
-		y: builder.centeredCell(
-			order.Coordinate.Size,
-			builder.config.DomainY,
-			builder.config.GridY,
-		),
-		z: builder.unitCell(order.Coordinate.Age, builder.config.GridZ),
+	for _, key := range keys[:limit] {
+		state := cohorts[key]
+
+		if state.mass <= 0 {
+			continue
+		}
+
+		amplitude := math.Sqrt(state.mass)
+
+		if amplitude <= 0 || math.IsNaN(amplitude) {
+			continue
+		}
+
+		oscillators = append(oscillators, pmanifold.Oscillator{
+			Phase:     state.phase / state.mass,
+			Omega:     state.omega / state.mass,
+			Amplitude: amplitude,
+			PosX:      state.posX / state.mass,
+			PosY:      state.posY / state.mass,
+			PosZ:      state.posZ / state.mass,
+			Heat:      state.heat,
+			VelX:      state.velX / state.mass,
+			VelY:      state.velY / state.mass,
+			VelZ:      state.velZ / state.mass,
+		})
 	}
+
+	return oscillators
 }
 
-func (builder *CohortBuilder) centeredCell(value float64, domain float64, grid uint32) uint32 {
+func torusCell(
+	config pmanifold.Config,
+	position float64,
+	domain float64,
+	grid uint32,
+) uint32 {
 	if grid == 0 || domain <= 0 {
 		return 0
 	}
 
-	normalized := min(max(value/domain+0.5, 0), 1)
-	return min(uint32(math.Floor(normalized*float64(grid))), grid-1)
-}
+	index := int(math.Floor(position * float64(grid) / domain))
 
-func (builder *CohortBuilder) unitCell(value float64, grid uint32) uint32 {
-	if grid == 0 {
-		return 0
+	if index < 0 {
+		index = 0
 	}
 
-	normalized := min(max(value, 0), 1)
-	return min(uint32(math.Floor(normalized*float64(grid))), grid-1)
-}
+	maxIndex := int(grid) - 1
 
-func (builder *CohortBuilder) cohort(
-	side OrderSide,
-	orders []*PhysicalOrder,
-	totalMass float64,
-) Cohort {
-	centroid := Coordinate{}
-	velocity := Coordinate{}
-	secondMoment := Coordinate{}
-	crossMoment := VelocityCross{}
-
-	for _, order := range orders {
-		weight := order.Quantity / totalMass
-		centroid.Price += weight * order.Coordinate.Price
-		centroid.Size += weight * order.Coordinate.Size
-		centroid.Age += weight * order.Coordinate.Age
-		velocity.Price += weight * order.Velocity.Price
-		velocity.Size += weight * order.Velocity.Size
-		velocity.Age += weight * order.Velocity.Age
+	if index > maxIndex {
+		index = maxIndex
 	}
 
-	for _, order := range orders {
-		weight := order.Quantity / totalMass
-		deltaPrice := order.Velocity.Price - velocity.Price
-		deltaSize := order.Velocity.Size - velocity.Size
-		deltaAge := order.Velocity.Age - velocity.Age
-		secondMoment.Price += weight * deltaPrice * deltaPrice
-		secondMoment.Size += weight * deltaSize * deltaSize
-		secondMoment.Age += weight * deltaAge * deltaAge
-		crossMoment.PriceSize += weight * deltaPrice * deltaSize
-		crossMoment.PriceAge += weight * deltaPrice * deltaAge
-		crossMoment.SizeAge += weight * deltaSize * deltaAge
-	}
-
-	return Cohort{
-		Side:         side,
-		Mass:         totalMass,
-		Centroid:     centroid,
-		Velocity:     velocity,
-		SecondMoment: secondMoment,
-		CrossMoment:  crossMoment,
-		Count:        len(orders),
-	}
+	return uint32(index)
 }

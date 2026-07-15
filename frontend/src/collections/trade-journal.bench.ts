@@ -1,5 +1,5 @@
 import { bench, describe } from "vitest";
-import { pushJournalObservations, tradeJournalStore } from "./trade-journal";
+import { tradeJournalStore } from "./trade-journal";
 
 describe("tradeJournalStore", () => {
 	bench("appends deduped observations into the circular journal", () => {

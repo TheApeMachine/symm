@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -93,39 +93,40 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	trades := signal.trades.cache
+	signal.trades.access.Lock()
+	trades := append([]kraken.TradeData(nil), signal.trades.cache...)
+	signal.trades.cache = signal.trades.cache[:0]
+	signal.trades.access.Unlock()
+
 	books := signal.level3.Books()
 	evidence := map[string]*symbolEvidence{}
 
 	for _, trade := range trades {
-		if trade.Price == nil || trade.Volume == nil || trade.Price.Sign() <= 0 {
+		if trade.Price.Sign() <= 0 || trade.Qty <= 0 || trade.Timestamp.IsZero() {
 			continue
 		}
 
-		at, ok := tradeAt(trade)
+		at := trade.Timestamp.UTC()
 
-		if !ok {
-			continue
-		}
-
-		row := evidence[trade.Pair]
+		row := evidence[trade.Symbol]
 
 		if row == nil {
 			row = &symbolEvidence{}
-			evidence[trade.Pair] = row
+			evidence[trade.Symbol] = row
 		}
 
 		row.tradeCount++
-		row.volume = zeroed(row.volume).Add(trade.Volume)
+		volume := decimal.NewFromFloat64(trade.Qty)
+		row.volume = zeroed(row.volume).Add(volume)
 
 		if at.After(row.latestAt) {
 			row.latestAt = at
 		}
 
 		for bookManager := range books {
-			book := bookManager.GetBook(trade.Pair)
+			book := bookManager.GetBook(trade.Symbol)
 
-			if book == nil || book.Name != trade.Pair {
+			if book == nil || book.Name != trade.Symbol {
 				continue
 			}
 
@@ -136,13 +137,13 @@ func (signal *Signal) Measure(
 			}
 
 			if trade.Price.Cmp(bid.Price) == 0 {
-				row.fillBid = zeroed(row.fillBid).Add(bid.Price.Mul(trade.Volume))
-				row.bidExecuted += trade.Volume.Float64()
+				row.fillBid = zeroed(row.fillBid).Add(bid.Price.Mul(volume))
+				row.bidExecuted += trade.Qty
 			}
 
 			if trade.Price.Cmp(ask.Price) == 0 {
-				row.fillAsk = zeroed(row.fillAsk).Add(ask.Price.Mul(trade.Volume))
-				row.askExecuted += trade.Volume.Float64()
+				row.fillAsk = zeroed(row.fillAsk).Add(ask.Price.Mul(volume))
+				row.askExecuted += trade.Qty
 			}
 		}
 	}
@@ -254,29 +255,35 @@ func (signal *Signal) Measure(
 					Scale:    obsCtx.scale,
 				},
 				&types.Measurement{
-					Source:   types.SourceToxicity,
-					Stream:   types.Toxicity,
-					Metric:   types.MetricTouchQuantity,
-					Subject:  types.SubjectLevel3Touch,
-					Symbol:   symbol,
-					Side:     types.SideBuy,
-					At:       row.latestAt,
-					Unit:     types.UnitBaseCurrency,
-					Raw:      bidQuantity,
+					Source:  types.SourceToxicity,
+					Stream:  types.Toxicity,
+					Metric:  types.MetricTouchQuantity,
+					Subject: types.SubjectLevel3Touch,
+					Symbol:  symbol,
+					Side:    types.SideBuy,
+					At:      row.latestAt,
+					Unit:    types.UnitBaseCurrency,
+					Raw:     bidQuantity,
+					Normalized: types.NormalizeRatio(
+						bidQuantity, bidQuantity+askQuantity,
+					),
 					Maturity: maturity,
 					Validity: obsCtx.validity,
 					Scale:    obsCtx.scale,
 				},
 				&types.Measurement{
-					Source:   types.SourceToxicity,
-					Stream:   types.Toxicity,
-					Metric:   types.MetricTouchQuantity,
-					Subject:  types.SubjectLevel3Touch,
-					Symbol:   symbol,
-					Side:     types.SideSell,
-					At:       row.latestAt,
-					Unit:     types.UnitBaseCurrency,
-					Raw:      askQuantity,
+					Source:  types.SourceToxicity,
+					Stream:  types.Toxicity,
+					Metric:  types.MetricTouchQuantity,
+					Subject: types.SubjectLevel3Touch,
+					Symbol:  symbol,
+					Side:    types.SideSell,
+					At:      row.latestAt,
+					Unit:    types.UnitBaseCurrency,
+					Raw:     askQuantity,
+					Normalized: types.NormalizeRatio(
+						askQuantity, bidQuantity+askQuantity,
+					),
 					Maturity: maturity,
 					Validity: obsCtx.validity,
 					Scale:    obsCtx.scale,
@@ -295,7 +302,6 @@ func (signal *Signal) Measure(
 	}
 
 	signal.priorTouch = nextTouch
-	signal.trades.cache = signal.trades.cache[:0]
 
 	thesis.Signals.Store("trades", trades)
 	thesis.Signals.Store("books", books)
@@ -429,18 +435,6 @@ func retreatPressure(cancelled float64, priorTouch float64) float64 {
 	}
 
 	return cancelled / priorTouch
-}
-
-func tradeAt(trade spot.Trade) (time.Time, bool) {
-	if trade.Time == nil || trade.Time.Sign() <= 0 {
-		return time.Time{}, false
-	}
-
-	seconds := trade.Time.Float64()
-	whole := int64(seconds)
-	fraction := seconds - float64(whole)
-
-	return time.Unix(whole, int64(fraction*1e9)).UTC(), true
 }
 
 /*

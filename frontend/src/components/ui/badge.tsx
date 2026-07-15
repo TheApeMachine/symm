@@ -29,6 +29,12 @@ export const badgeVariants = cva(
 				success: "[--badge-tone:var(--success)]",
 				warning: "[--badge-tone:var(--warning)]",
 				error: "[--badge-tone:var(--error)]",
+				disabled: [
+					"[--badge-tone:var(--f3)]",
+					"border-(--line2)",
+					"bg-(--line)",
+					"text-(--f3)",
+				],
 			},
 			size: {
 				xxs: "px-1 py-px text-[8px] tracking-[0.06em]",
