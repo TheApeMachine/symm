@@ -235,10 +235,15 @@ whichever operand needs more decimal places first keeps that rescale
 lossless in both directions.
 */
 func (price *Price) Notional(
+	instrument *kraken.InstrumentPair,
 	rate *decimal.Decimal,
 	quantity *decimal.Decimal,
 ) *decimal.Decimal {
-	return rate.Copy().Mul(quantity)
+	return quantity.SetScale(int64(
+		instrument.CostPrecision,
+	)).Mul(rate.SetScale(int64(
+		instrument.PricePrecision,
+	))).SetScale(int64(instrument.CostPrecision))
 }
 
 /*
@@ -302,6 +307,7 @@ func (price *Price) Taker(
 	}
 
 	notional := price.Notional(
+		instrument,
 		ticker.Ask,
 		quantity,
 	)
@@ -340,6 +346,7 @@ func (price *Price) WithFriction(
 	}
 
 	notional := price.Notional(
+		instrument,
 		ticker.Ask,
 		quantity,
 	)

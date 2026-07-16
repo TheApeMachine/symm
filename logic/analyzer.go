@@ -206,6 +206,8 @@ func (analyzer *Analyzer) observe(
 	}
 
 	if resonanceOutcome == nil || causalOutcome == nil ||
+		!resonanceOutcome.ReturnReady ||
+		resonanceOutcome.CalibrationSamples == 0 ||
 		!causalOutcome.Ready || causalOutcome.CalibrationSamples == 0 {
 		return
 	}
@@ -213,20 +215,28 @@ func (analyzer *Analyzer) observe(
 	// Candidate notional is capped at the best ask, so the forecast does not
 	// claim depth-crossing impact beyond the directly observed touch spread.
 	thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
-		Source: "resonance+causal", Symbol: state.Symbol, At: state.At,
-		ObservedInterval: state.Duration, SourceEpoch: state.Epoch,
-		HorizonEvents: 1, ExpiresEpoch: state.Epoch + 1,
-		Target: causalOutcome.Target, ModelVersion: causalHypothesis,
-		Ready: true, Calibrated: true,
-		CalibrationSamples:       causalOutcome.CalibrationSamples,
-		IncrementalMSE:           causalOutcome.IncrementalMSE,
+		Source:           "resonance+causal",
+		Symbol:           state.Symbol,
+		At:               state.At,
+		ObservedInterval: state.Duration,
+		SourceEpoch:      state.Epoch,
+		HorizonEvents:    1,
+		ExpiresEpoch:     state.Epoch + 1,
+		Target:           resonanceOutcome.Target,
+		ModelVersion:     "resonance_return_head_v1",
+		Ready:            true, Calibrated: true,
+		CalibrationSamples: min(
+			resonanceOutcome.CalibrationSamples,
+			causalOutcome.CalibrationSamples,
+		),
+		IncrementalMSE:           resonanceOutcome.IncrementalMSE,
 		IncrementalMSELowerBound: 0,
-		ExpectedReturn:           causalOutcome.ExpectedReturn,
+		ExpectedReturn:           resonanceOutcome.ExpectedReturn,
 		ReferencePrice:           state.ReferencePrice,
-		BuyCapacity:              state.BuyCapacity, SellCapacity: state.SellCapacity,
+		BuyCapacity:              state.BuyCapacity,
+		SellCapacity:             state.SellCapacity,
 		ExpectedSpread:           state.Spread,
-		ExpectedAdverseSelection: math.Max(0, -causalOutcome.Reading.Uplift),
-		Uncertainty:              causalOutcome.Uncertainty,
+		Uncertainty:              resonanceOutcome.Uncertainty,
 		Confidence: math.Min(
 			causalOutcome.Reading.Confidence,
 			1/(1+resonanceOutcome.Surprise),
@@ -320,13 +330,18 @@ func (analyzer *Analyzer) cognize(
 	predictionBuffer := make([]dmt.LookaheadPrediction, 0, len(parts))
 	predictions := analyzer.tree.PredictNextSensoryTokens(parent, predictionBuffer)
 	reading := types.Cognition{
-		Source: "dmt", Symbol: state.Symbol, At: state.At,
-		Sequence: string(sequence), Ready: len(classification.Winner) > 0,
-		Winner: string(classification.Winner), Confidence: classification.Highest,
-		EntropyBits: ambiguity.EntropyBits, EntropyThreshold: ambiguity.Threshold,
-		Ambiguous:   ambiguity.Ambiguous,
-		Cohort:      analyzer.tree.GetSensoryWeight(sequence).Count,
-		Predictions: make(map[string]float64, len(predictions)),
+		Source:           "dmt",
+		Symbol:           state.Symbol,
+		At:               state.At,
+		Sequence:         string(sequence),
+		Ready:            len(classification.Winner) > 0,
+		Winner:           string(classification.Winner),
+		Confidence:       classification.Highest,
+		EntropyBits:      ambiguity.EntropyBits,
+		EntropyThreshold: ambiguity.Threshold,
+		Ambiguous:        ambiguity.Ambiguous,
+		Cohort:           analyzer.tree.GetSensoryWeight(sequence).Count,
+		Predictions:      make(map[string]float64, len(predictions)),
 	}
 
 	if len(classification.Scores) > 1 {

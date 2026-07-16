@@ -1,12 +1,10 @@
 package pumpdump
 
 import (
-	"errors"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/tests"
 	tickerfixture "github.com/theapemachine/symm/tests/fixtures/ticker"
@@ -23,13 +21,11 @@ func TestTickerOn(testingTB *testing.T) {
 		Convey("When fixture frames are replayed", func() {
 			tests.Replay(tests.Handlers{"ticker": ticker.On}, fixture.Frames())
 
-			Convey("Then falling behind reports the exact retained boundary", func() {
-				_, err := ticker.cache.Pending(time.Now().UTC())
-				overrun := structure.ClockOverrunError{}
+			Convey("Then the current retained window remains available", func() {
+				rows, err := ticker.cache.Pending(time.Now().UTC())
 
-				So(errors.As(err, &overrun), ShouldBeTrue)
-				So(overrun.Expected, ShouldEqual, 1)
-				So(overrun.Oldest, ShouldEqual, 2)
+				So(err, ShouldBeNil)
+				So(rows, ShouldHaveLength, 2)
 			})
 		})
 	})

@@ -47,6 +47,60 @@ func TestSolverAdvance(t *testing.T) {
 	})
 }
 
+func TestSolverAdvanceWaitsForMarketState(t *testing.T) {
+	viper.Set("market.l3_depth", 8)
+	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+	viper.Set("market.manifold_max_symbols", 8)
+
+	Convey("Given Hawkes state before its authoritative L3 book", t, func() {
+		solver, err := NewSolver(newTestBookSource("BTC/USD"))
+		So(err, ShouldBeNil)
+		defer solver.Close()
+
+		state, advanceErr := solver.advance(
+			"ETH/USD",
+			solverOutcome(time.Unix(1, 0), 4, 2),
+		)
+
+		Convey("It should wait without consuming GPU symbol capacity", func() {
+			So(advanceErr, ShouldBeNil)
+			So(state.GasReady(), ShouldBeFalse)
+			So(solver.symbols, ShouldBeEmpty)
+		})
+	})
+}
+
+func TestSolverAdvanceAppliesAbsoluteHawkesForcing(t *testing.T) {
+	viper.Set("market.l3_depth", 8)
+	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+	viper.Set("market.manifold_max_symbols", 8)
+
+	Convey("Given the same L3 state under different absolute arrival pressure", t, func() {
+		quiet, quietErr := NewSolver(newTestBookSource("BTC/USD"))
+		active, activeErr := NewSolver(newTestBookSource("BTC/USD"))
+		So(quietErr, ShouldBeNil)
+		So(activeErr, ShouldBeNil)
+		defer quiet.Close()
+		defer active.Close()
+
+		at := time.Unix(1, 0)
+		quietState, quietAdvanceErr := quiet.advance(
+			"BTC/USD", solverOutcome(at, 2, 1),
+		)
+		activeState, activeAdvanceErr := active.advance(
+			"BTC/USD", solverOutcome(at, 8, 4),
+		)
+
+		Convey("It should produce a different GPU response without moving carriers", func() {
+			So(quietAdvanceErr, ShouldBeNil)
+			So(activeAdvanceErr, ShouldBeNil)
+			So(quietState.GasReady(), ShouldBeTrue)
+			So(activeState.GasReady(), ShouldBeTrue)
+			So(activeState.Reading, ShouldNotResemble, quietState.Reading)
+		})
+	})
+}
+
 func solverOutcome(at time.Time, buyRate, sellRate float64) excitation.Outcome {
 	return excitation.Outcome{
 		At:              at,
@@ -63,10 +117,10 @@ func solverOutcome(at time.Time, buyRate, sellRate float64) excitation.Outcome {
 		Fit: hawkes.BivariateFit{
 			MuX:            buyRate,
 			MuY:            sellRate,
-			AlphaXX:        buyRate,
-			AlphaYY:        sellRate,
-			AlphaXY:        buyRate * 0.1,
-			AlphaYX:        sellRate * 0.1,
+			AlphaXX:        buyRate * 0.1,
+			AlphaYY:        sellRate * 0.1,
+			AlphaXY:        buyRate * 0.01,
+			AlphaYX:        sellRate * 0.01,
 			Beta:           2,
 			IntensityX:     buyRate,
 			IntensityY:     sellRate,

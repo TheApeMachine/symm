@@ -27,8 +27,8 @@ type HawkesSource interface {
 }
 
 /*
-Solver owns per-symbol GPU manifold slots and advances the toroidal fluid field
-from Hawkes excitation outcomes.
+Solver owns per-symbol GPU manifold slots and advances the market-grounded L3
+carrier field under Hawkes-derived temporal controls.
 */
 type Solver struct {
 	config   pmanifold.Config
@@ -162,31 +162,58 @@ func (solver *Solver) advance(
 	symbol string,
 	outcome excitation.Outcome,
 ) (State, error) {
-	slot, err := solver.admit(symbol)
+	slot := solver.symbols[symbol]
+
+	if slot != nil && (outcome.At.Before(slot.at) ||
+		(outcome.At.Equal(slot.at) && outcome.EventCount == slot.events)) {
+		return State{}, nil
+	}
+
+	var prior *coordinateEpoch
+
+	if slot != nil {
+		prior = slot.coords
+	}
+
+	oscillators, coordEpoch, ready, err := solver.populationOscillators(
+		symbol, outcome.At, prior,
+	)
 
 	if err != nil {
 		return State{}, err
 	}
 
-	if outcome.At.Before(slot.at) ||
-		(outcome.At.Equal(slot.at) && outcome.EventCount == slot.events) {
+	if !ready {
 		return State{}, nil
 	}
 
+	if slot == nil {
+		slot, err = solver.admit(symbol)
+
+		if err != nil {
+			return State{}, err
+		}
+	}
+
 	handle := slot.handle
-	controls := runtimeControls(solver.config, outcome)
+	interval := eventInterval(solver.config, slot.at, outcome)
+	controls := runtimeControls(
+		solver.config,
+		outcome,
+		interval,
+	)
 
 	if err := handle.SetControls(controls); err != nil {
 		return State{}, err
 	}
 
-	oscillators, coordEpoch, err := solver.populationOscillators(symbol, outcome.At, slot.coords)
-
-	if err != nil {
-		return State{}, err
-	}
-
-	if err := inject(handle, solver.config, outcome, oscillators); err != nil {
+	if err := inject(
+		handle,
+		solver.config,
+		outcome,
+		interval,
+		oscillators,
+	); err != nil {
 		return State{}, err
 	}
 
@@ -216,7 +243,7 @@ func (solver *Solver) advance(
 		Source:           "manifold",
 		Symbol:           symbol,
 		At:               outcome.At,
-		Duration:         outcome.Horizon,
+		Duration:         interval,
 		Epoch:            slot.epoch,
 		ReferencePrice:   coordEpoch.midPrice,
 		Spread:           coordEpoch.spread,
@@ -295,9 +322,9 @@ func (solver *Solver) populationOscillators(
 	symbol string,
 	at time.Time,
 	prior *coordinateEpoch,
-) ([]pmanifold.Oscillator, *coordinateEpoch, error) {
+) ([]pmanifold.Oscillator, *coordinateEpoch, bool, error) {
 	if solver.books == nil {
-		return nil, prior, errnie.Err(
+		return nil, prior, false, errnie.Err(
 			errnie.Internal,
 			"manifold: L3 book source is not configured",
 			nil,
@@ -307,35 +334,23 @@ func (solver *Solver) populationOscillators(
 	symbolBook, midPrice, ok := bookForSymbol(solver.books, symbol)
 
 	if !ok || symbolBook == nil {
-		return nil, prior, errnie.Err(
-			errnie.Internal,
-			"manifold: authoritative L3 book is unavailable",
-			nil,
-		)
+		return nil, prior, false, nil
 	}
 
 	orders := ordersFromBook(symbolBook)
 	mapped, coordEpoch, ready := mapOrders(solver.config, orders, midPrice, at, prior)
 
 	if !ready {
-		return nil, prior, errnie.Err(
-			errnie.Internal,
-			"manifold: coordinate mapping failed",
-			nil,
-		)
+		return nil, prior, false, nil
 	}
 
 	oscillators := cohortsFromMappedOrders(solver.config, mapped)
 
 	if len(oscillators) == 0 {
-		return nil, prior, errnie.Err(
-			errnie.Internal,
-			"manifold: cohort extraction produced no carriers",
-			nil,
-		)
+		return nil, prior, false, nil
 	}
 
-	return oscillators, coordEpoch, nil
+	return oscillators, coordEpoch, true, nil
 }
 
 func (solver *Solver) Close() {

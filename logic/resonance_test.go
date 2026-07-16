@@ -50,6 +50,11 @@ func TestResonanceUpdate(t *testing.T) {
 			So(outcome, ShouldNotBeNil)
 			So(next[0].Maturity, ShouldBeGreaterThan, measurements[0].Maturity)
 			So(next[0].Maturity, ShouldBeLessThan, 1)
+			So(outcome.Target, ShouldEqual, resonanceReturnTarget)
+			So(outcome.ReturnReady, ShouldBeTrue)
+			So(outcome.CalibrationSamples, ShouldBeGreaterThan, 0)
+			So(outcome.IncrementalMSE, ShouldBeGreaterThanOrEqualTo, 0)
+			So(outcome.Uncertainty, ShouldBeGreaterThanOrEqualTo, 0)
 		})
 
 		Convey("It should not publish a negative observation horizon", func() {

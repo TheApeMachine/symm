@@ -1,21 +1,24 @@
 package manifold
 
 import (
+	"time"
+
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 )
 
 /*
 runtimeControls derives the per-step Metal controls from static engine config and
-the latest Hawkes excitation outcome so GPE self-interaction and wave damping track
-empirical reflexivity and decay.
+the latest Hawkes excitation outcome. Event chronology controls the solver clock;
+Hawkes decay controls damping rather than being misused as a spatial speed.
 */
 func runtimeControls(
 	config pmanifold.Config,
 	outcome excitation.Outcome,
+	interval time.Duration,
 ) pmanifold.RuntimeControls {
 	controls := config.RuntimeControls()
-	controls.DeltaT = integrationDeltaT(config, outcome)
+	controls.DeltaT = integrationDeltaT(config, interval)
 
 	if !outcome.Readiness.HawkesFit {
 		return controls

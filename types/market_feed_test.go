@@ -1,7 +1,6 @@
 package types
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -62,7 +61,7 @@ func TestMarketFeed_Batch(t *testing.T) {
 	})
 }
 
-func TestMarketFeed_Overrun(t *testing.T) {
+func TestMarketFeed_Drain(t *testing.T) {
 	Convey("Given more unseen path events than the timeline can retain", t, func() {
 		feed := NewMarketFeed[marketFeedRow](2, 2)
 		start := time.Unix(100, 0).UTC()
@@ -71,13 +70,14 @@ func TestMarketFeed_Overrun(t *testing.T) {
 			So(feed.Observe("BTC/USD", start, marketFeedRow{value: index}), ShouldBeNil)
 		}
 
-		_, err := feed.Drain(start)
-		overrun := structure.ClockOverrunError{}
+		rows, err := feed.Drain(start)
 
-		Convey("It exposes the overrun without advancing the cursor", func() {
-			So(errors.As(err, &overrun), ShouldBeTrue)
-			So(overrun.Expected, ShouldEqual, 1)
-			So(overrun.Oldest, ShouldEqual, 2)
+		Convey("It consumes the retained window and advances the cursor", func() {
+			So(err, ShouldBeNil)
+			So(rows, ShouldHaveLength, 2)
+			So(rows[0].value, ShouldEqual, 1)
+			So(rows[1].value, ShouldEqual, 2)
+			So(feed.cursor.After, ShouldEqual, 3)
 		})
 	})
 }

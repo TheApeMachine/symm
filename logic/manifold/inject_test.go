@@ -1,7 +1,6 @@
 package manifold
 
 import (
-	"math"
 	"testing"
 	"time"
 
@@ -34,34 +33,18 @@ func testOutcome() excitation.Outcome {
 			HawkesFit:   true,
 		},
 		Fit: hawkes.BivariateFit{
-			AlphaXX:        4,
-			AlphaYY:        2,
-			AlphaXY:        0.4,
-			AlphaYX:        0.6,
+			MuX:            1,
+			MuY:            1,
+			AlphaXX:        0.4,
+			AlphaYY:        0.2,
+			AlphaXY:        0.04,
+			AlphaYX:        0.06,
 			Beta:           2,
 			IntensityX:     4,
 			IntensityY:     2,
 			SpectralRadius: 0.35,
 		},
 	}
-}
-
-func TestHawkesCells(t *testing.T) {
-	Convey("Given a bivariate Hawkes outcome and grid config", t, func() {
-		config := testPhysicsConfig()
-		outcome := testOutcome()
-
-		Convey("It should map intensities and branching into bounded cell indices", func() {
-			buyCellX, sellCellX, cellY, cellZ := hawkesCells(
-				config, outcome, 4, 2, 6,
-			)
-
-			So(buyCellX, ShouldEqual, 5)
-			So(sellCellX, ShouldEqual, 2)
-			So(cellY, ShouldBeLessThan, config.GridY)
-			So(cellZ, ShouldEqual, 2)
-		})
-	})
 }
 
 func TestStressAnisotropy(t *testing.T) {
@@ -74,33 +57,50 @@ func TestStressAnisotropy(t *testing.T) {
 	})
 }
 
-func TestBuildOscillators(t *testing.T) {
-	Convey("Given Hawkes intensities", t, func() {
-		config := testPhysicsConfig()
+func TestArrivalForcing(t *testing.T) {
+	Convey("Given absolute conditional intensities and a fitted branching matrix", t, func() {
 		outcome := testOutcome()
-		oscillators := buildOscillators(config, outcome, 4, 2, 6)
+		buyPressure, sellPressure, ready := arrivalForcing(outcome, 0.01)
 
-		Convey("It should produce two finite buy and sell oscillator modes", func() {
-			So(len(oscillators), ShouldEqual, 2)
-			So(oscillators[0].Omega, ShouldEqual, outcome.Fit.Beta)
-			So(oscillators[0].Amplitude, ShouldAlmostEqual, 4.0/6.0)
-			So(oscillators[1].Amplitude, ShouldAlmostEqual, 2.0/6.0)
-			So(math.IsNaN(oscillators[0].PosX), ShouldBeFalse)
-			So(math.IsNaN(oscillators[1].VelX), ShouldBeFalse)
+		Convey("It should preserve activity scale and directional cross-excitation", func() {
+			So(ready, ShouldBeTrue)
+			So(buyPressure, ShouldAlmostEqual, 0.0484)
+			So(sellPressure, ShouldAlmostEqual, 0.0232)
+
+			outcome.Fit.IntensityX *= 2
+			outcome.Fit.IntensityY *= 2
+			doubleBuy, doubleSell, doubleReady := arrivalForcing(outcome, 0.01)
+
+			So(doubleReady, ShouldBeTrue)
+			So(doubleBuy, ShouldAlmostEqual, 2*buyPressure)
+			So(doubleSell, ShouldAlmostEqual, 2*sellPressure)
 		})
 	})
 }
 
 func TestIntegrationDeltaT(t *testing.T) {
-	Convey("Given a Hawkes decay rate", t, func() {
+	Convey("Given a chronological market interval", t, func() {
 		config := testPhysicsConfig()
+
+		Convey("It should use event time when it is tighter than the configured step", func() {
+			deltaT := integrationDeltaT(config, time.Millisecond)
+
+			So(deltaT, ShouldAlmostEqual, 0.001)
+		})
+	})
+}
+
+func TestEventInterval(t *testing.T) {
+	Convey("Given successive market observations", t, func() {
 		outcome := testOutcome()
+		outcome.At = time.Unix(3, 0)
 
-		Convey("It should choose the advective limit when it is tighter", func() {
-			deltaT := integrationDeltaT(config, outcome)
-
-			So(deltaT, ShouldBeGreaterThan, 0)
-			So(deltaT, ShouldBeLessThanOrEqualTo, config.DeltaT)
+		Convey("It should derive solver time from event chronology", func() {
+			So(
+				eventInterval(testPhysicsConfig(), time.Unix(1, 0), outcome),
+				ShouldEqual,
+				2*time.Second,
+			)
 		})
 	})
 }

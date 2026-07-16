@@ -15,7 +15,7 @@ func TestRuntimeControls(t *testing.T) {
 		outcome := testOutcome()
 
 		Convey("It should scale GPE interaction by eta and set damping to beta", func() {
-			controls := runtimeControls(config, outcome)
+			controls := runtimeControls(config, outcome, outcome.Horizon)
 
 			So(controls.GInteraction, ShouldAlmostEqual, config.GInteraction()*outcome.Fit.SpectralRadius)
 			So(controls.EnergyDecay, ShouldEqual, outcome.Fit.Beta)
@@ -36,7 +36,7 @@ func TestRuntimeControls(t *testing.T) {
 		}
 
 		Convey("It should keep the static engine defaults", func() {
-			controls := runtimeControls(config, outcome)
+			controls := runtimeControls(config, outcome, outcome.Horizon)
 
 			So(controls.GInteraction, ShouldEqual, config.GInteraction())
 			So(controls.EnergyDecay, ShouldEqual, config.EnergyDecay())
