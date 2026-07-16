@@ -57,6 +57,7 @@ func TestNewCrypto(t *testing.T) {
 				planner,
 				tree,
 				thesis,
+				nil,
 			)
 
 			Convey("Then it is ready to start", func() {
@@ -111,11 +112,14 @@ func TestCryptoRun(t *testing.T) {
 			planner,
 			tree,
 			thesis,
+			nil,
 		)
+
 		So(err, ShouldBeNil)
+
 		t.Cleanup(func() {
 			crypto.cancel()
-			<-crypto.done
+			<-crypto.ctx.Done()
 		})
 
 		booter.AddStages(

@@ -1,9 +1,11 @@
 package hawkes
 
 import (
+	"container/ring"
 	"context"
 	"sync"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/symm/kraken"
@@ -28,7 +30,7 @@ type Signal struct {
 	api        *websocket.API
 	trade      *Trade
 	access     sync.Mutex
-	tradeCache []kraken.TradeData
+	tradeCache *sync.Map
 }
 
 /*
@@ -39,10 +41,11 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		api:    api,
-		trade:  NewTrade(),
+		ctx:        ctx,
+		cancel:     cancel,
+		api:        api,
+		trade:      NewTrade(),
+		tradeCache: &sync.Map{},
 	}
 
 	signal.api.On("trade", signal.onTrade)
@@ -66,8 +69,17 @@ func (signal *Signal) onTrade(data []byte) {
 	}
 
 	signal.access.Lock()
-	signal.tradeCache = append(signal.tradeCache, frame.Data...)
-	signal.access.Unlock()
+	defer signal.access.Unlock()
+
+	for _, data := range frame.Data {
+		found, _ := signal.tradeCache.LoadOrStore(data.Symbol, ring.New(
+			viper.GetInt("signals.feed_ring_capacity"),
+		))
+
+		track := found.(*ring.Ring)
+		track.Value = data
+		signal.tradeCache.Store(data.Symbol, track.Next())
+	}
 }
 
 /*
@@ -121,9 +133,18 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
+	rows := make([]kraken.TradeData, 0)
 	signal.access.Lock()
-	rows := append([]kraken.TradeData(nil), signal.tradeCache...)
-	signal.tradeCache = signal.tradeCache[:0]
+	signal.tradeCache.Range(func(key, value any) bool {
+		value.(*ring.Ring).Do(func(value any) {
+			if value != nil {
+				rows = append(rows, value.(kraken.TradeData))
+			}
+		})
+		signal.tradeCache.Delete(key)
+
+		return true
+	})
 	signal.access.Unlock()
 
 	out := make([]*types.Measurement, 0, len(rows))

@@ -49,7 +49,7 @@ trading:
     reserved: 2
 
 signals:
-  feed_ring_capacity: 8192
+  feed_ring_capacity: 128
   # Zero derives bars/day from signals.fluid.integration_interval.
   volume_clock_bars_per_day: 0
   fluid:

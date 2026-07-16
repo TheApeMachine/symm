@@ -48,19 +48,19 @@ func TestSignal_MeasureDetectsLoadedImbalance(testingTB *testing.T) {
 	Convey("Given repeated bid-heavy book frames", testingTB, func() {
 		signal := &Signal{
 			ctx:      context.Background(),
-			book:     &Book{cache: []kraken.BookData{}},
-			trade:    &Trade{cache: []kraken.TradeData{}},
+			book:     &Book{cache: bookCache()},
+			trade:    &Trade{cache: tradeCache()},
 			sample:   flow.NewSample(),
 			bookflow: equation.NewBookflow(),
 		}
 
 		for range 6 {
-			signal.book.cache = append(signal.book.cache, depthflowBookRow("BTC/USD", 20, 4))
+			signal.book.cache = bookCache(append(bookRows(signal.book.cache), depthflowBookRow("BTC/USD", 20, 4))...)
 			signal.Measure(types.NewThesis(nil))
 		}
 
 		Convey("When the final frame is measured", func() {
-			signal.book.cache = []kraken.BookData{depthflowBookRow("BTC/USD", 24, 4)}
+			signal.book.cache = bookCache(depthflowBookRow("BTC/USD", 24, 4))
 			result := signal.Measure(types.NewThesis(nil))
 
 			Convey("Then depthflow loaded score and strength should rise", func() {
@@ -73,7 +73,7 @@ func TestSignal_MeasureDetectsLoadedImbalance(testingTB *testing.T) {
 				So(ok, ShouldBeTrue)
 				So(strength.Raw, ShouldBeGreaterThan, 0)
 
-				So(len(signal.book.cache), ShouldEqual, 0)
+				So(len(bookRows(signal.book.cache)), ShouldEqual, 0)
 			})
 		})
 	})
@@ -82,14 +82,14 @@ func TestSignal_MeasureDetectsLoadedImbalance(testingTB *testing.T) {
 func BenchmarkSignal_Measure(benchmark *testing.B) {
 	signal := &Signal{
 		ctx:      context.Background(),
-		book:     &Book{cache: []kraken.BookData{}},
-		trade:    &Trade{cache: []kraken.TradeData{}},
+		book:     &Book{cache: bookCache()},
+		trade:    &Trade{cache: tradeCache()},
 		sample:   flow.NewSample(),
 		bookflow: equation.NewBookflow(),
 	}
 
 	for range 6 {
-		signal.book.cache = append(signal.book.cache, depthflowBookRow("BTC/USD", 20, 4))
+		signal.book.cache = bookCache(append(bookRows(signal.book.cache), depthflowBookRow("BTC/USD", 20, 4))...)
 		_ = signal.Measure(types.NewThesis(nil))
 	}
 
@@ -98,7 +98,7 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		signal.book.cache = append([]kraken.BookData(nil), rows...)
+		signal.book.cache = bookCache(rows...)
 		_ = signal.Measure(types.NewThesis(nil))
 	}
 }

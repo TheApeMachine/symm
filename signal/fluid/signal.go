@@ -1,9 +1,12 @@
 package fluid
 
 import (
+	"container/ring"
 	"context"
+	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
@@ -107,9 +110,9 @@ type Signal struct {
 	ticker      *Ticker
 	trade       *Trade
 	book        *Book
-	tickerCache []kraken.TickerData
-	tradeCache  []kraken.TradeData
-	bookCache   []kraken.BookData
+	tickerCache *sync.Map
+	tradeCache  *sync.Map
+	bookCache   *sync.Map
 }
 
 func NewSignal(
@@ -119,14 +122,17 @@ func NewSignal(
 	registry := NewSyncRegistry()
 
 	signal := &Signal{
-		ctx:        ctx,
-		cancel:     cancel,
-		api:        api,
-		instrument: instrument,
-		registry:   registry,
-		ticker:     NewTicker(registry),
-		trade:      NewTrade(registry),
-		book:       NewBook(registry),
+		ctx:         ctx,
+		cancel:      cancel,
+		api:         api,
+		instrument:  instrument,
+		registry:    registry,
+		ticker:      NewTicker(registry),
+		trade:       NewTrade(registry),
+		book:        NewBook(registry),
+		tickerCache: &sync.Map{},
+		tradeCache:  &sync.Map{},
+		bookCache:   &sync.Map{},
 	}
 
 	signal.api.On("ticker", signal.onTicker)
@@ -151,7 +157,15 @@ func (signal *Signal) onTicker(data []byte) {
 		return
 	}
 
-	signal.tickerCache = append(signal.tickerCache, frame.Data...)
+	for _, data := range frame.Data {
+		found, _ := signal.tickerCache.LoadOrStore(data.Symbol, ring.New(
+			viper.GetInt("signals.feed_ring_capacity"),
+		))
+
+		track := found.(*ring.Ring)
+		track.Value = data
+		signal.tickerCache.Store(data.Symbol, track.Next())
+	}
 }
 
 /*
@@ -169,7 +183,15 @@ func (signal *Signal) onTrade(data []byte) {
 		return
 	}
 
-	signal.tradeCache = append(signal.tradeCache, frame.Data...)
+	for _, data := range frame.Data {
+		found, _ := signal.tradeCache.LoadOrStore(data.Symbol, ring.New(
+			viper.GetInt("signals.feed_ring_capacity"),
+		))
+
+		track := found.(*ring.Ring)
+		track.Value = data
+		signal.tradeCache.Store(data.Symbol, track.Next())
+	}
 }
 
 /*
@@ -191,7 +213,15 @@ func (signal *Signal) onBook(data []byte) {
 		frame.Data[index].PriceIncrement = signal.increment(frame.Data[index].Symbol)
 	}
 
-	signal.bookCache = append(signal.bookCache, frame.Data...)
+	for _, data := range frame.Data {
+		found, _ := signal.bookCache.LoadOrStore(data.Symbol, ring.New(
+			viper.GetInt("signals.feed_ring_capacity"),
+		))
+
+		track := found.(*ring.Ring)
+		track.Value = data
+		signal.bookCache.Store(data.Symbol, track.Next())
+	}
 }
 
 /*
@@ -227,18 +257,47 @@ runs last against the freshest state.
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	out := make(
-		[]*types.Measurement, 0,
-		len(signal.tickerCache)+len(signal.tradeCache)+len(signal.bookCache),
-	)
+	tickers := make([]kraken.TickerData, 0)
+	signal.tickerCache.Range(func(key, value any) bool {
+		value.(*ring.Ring).Do(func(value any) {
+			if value != nil {
+				tickers = append(tickers, value.(kraken.TickerData))
+			}
+		})
+		signal.tickerCache.Delete(key)
 
-	appendMeasurements(&out, signal.tickerCache, signal.ticker.Measure)
-	appendMeasurements(&out, signal.tradeCache, signal.trade.Measure)
-	appendMeasurements(&out, signal.bookCache, signal.book.Measure)
+		return true
+	})
 
-	signal.tickerCache = signal.tickerCache[:0]
-	signal.tradeCache = signal.tradeCache[:0]
-	signal.bookCache = signal.bookCache[:0]
+	trades := make([]kraken.TradeData, 0)
+	signal.tradeCache.Range(func(key, value any) bool {
+		value.(*ring.Ring).Do(func(value any) {
+			if value != nil {
+				trades = append(trades, value.(kraken.TradeData))
+			}
+		})
+		signal.tradeCache.Delete(key)
+
+		return true
+	})
+
+	books := make([]kraken.BookData, 0)
+	signal.bookCache.Range(func(key, value any) bool {
+		value.(*ring.Ring).Do(func(value any) {
+			if value != nil {
+				books = append(books, value.(kraken.BookData))
+			}
+		})
+		signal.bookCache.Delete(key)
+
+		return true
+	})
+
+	out := make([]*types.Measurement, 0, len(tickers)+len(trades)+len(books))
+
+	appendMeasurements(&out, tickers, signal.ticker.Measure)
+	appendMeasurements(&out, trades, signal.trade.Measure)
+	appendMeasurements(&out, books, signal.book.Measure)
 
 	thesis.Measurements = append(thesis.Measurements, out...)
 

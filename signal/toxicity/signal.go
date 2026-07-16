@@ -1,6 +1,7 @@
 package toxicity
 
 import (
+	"container/ring"
 	"context"
 	"math"
 	"time"
@@ -93,9 +94,18 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
+	trades := make([]kraken.TradeData, 0)
 	signal.trades.access.Lock()
-	trades := append([]kraken.TradeData(nil), signal.trades.cache...)
-	signal.trades.cache = signal.trades.cache[:0]
+	signal.trades.cache.Range(func(key, value any) bool {
+		value.(*ring.Ring).Do(func(value any) {
+			if value != nil {
+				trades = append(trades, value.(kraken.TradeData))
+			}
+		})
+		signal.trades.cache.Delete(key)
+
+		return true
+	})
 	signal.trades.access.Unlock()
 
 	books := signal.level3.Books()

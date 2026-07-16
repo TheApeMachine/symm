@@ -34,7 +34,7 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 		signal := &Signal{
 			ctx: context.Background(),
 			ticker: &Ticker{
-				cache: []kraken.TickerData{},
+				cache: tickerCache(),
 			},
 		}
 		handlers := tests.Handlers{
@@ -53,7 +53,7 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 			)
 
 			Convey("Then the pumped stream should amplify measured change", func() {
-				So(len(signal.ticker.cache), ShouldEqual, 0)
+				So(len(tickerRows(signal.ticker.cache)), ShouldEqual, 0)
 				So(math.Abs(pumped), ShouldBeGreaterThan, math.Abs(calm))
 			})
 		})
@@ -65,26 +65,26 @@ func TestSignal_Measure(testingTB *testing.T) {
 		now := time.Now()
 		signal := &Signal{
 			ctx: context.Background(),
-			ticker: &Ticker{cache: []kraken.TickerData{
-				{
+			ticker: &Ticker{cache: tickerCache(
+				kraken.TickerData{
 					Symbol:    "BTC/USD",
 					ChangePct: 5,
 					Last:      krakendecimal.NewFromFloat64(105),
 					Timestamp: now,
 				},
-				{
+				kraken.TickerData{
 					Symbol:    "ETH/USD",
 					ChangePct: 2,
 					Last:      krakendecimal.NewFromFloat64(102),
 					Timestamp: now,
 				},
-				{
+				kraken.TickerData{
 					Symbol:    "SOL/USD",
 					ChangePct: -1,
 					Last:      krakendecimal.NewFromFloat64(99),
 					Timestamp: now,
 				},
-			}},
+			)},
 		}
 
 		thesis := types.NewThesis(nil)
@@ -100,7 +100,7 @@ func TestSignal_Measure(testingTB *testing.T) {
 			So(ok, ShouldBeTrue)
 			So(surge.Raw, ShouldBeGreaterThan, 0)
 
-			So(len(signal.ticker.cache), ShouldEqual, 0)
+			So(len(tickerRows(signal.ticker.cache)), ShouldEqual, 0)
 		})
 	})
 }
@@ -111,7 +111,7 @@ func measureField(
 	frames iter.Seq[tests.Frame],
 	metric types.MetricType,
 ) float64 {
-	signal.ticker.cache = signal.ticker.cache[:0]
+	signal.ticker.cache = tickerCache()
 	tests.Replay(handlers, frames)
 
 	thesis := types.NewThesis(nil)
@@ -131,20 +131,20 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	signal := &Signal{
 		ctx: context.Background(),
 		ticker: &Ticker{
-			cache: []kraken.TickerData{
-				{
+			cache: tickerCache(
+				kraken.TickerData{
 					Symbol:    "BTC/USD",
 					ChangePct: 5,
 					Last:      krakendecimal.NewFromFloat64(105),
 					Timestamp: now,
 				},
-				{
+				kraken.TickerData{
 					Symbol:    "ETH/USD",
 					ChangePct: 2,
 					Last:      krakendecimal.NewFromFloat64(102),
 					Timestamp: now,
 				},
-			},
+			),
 		},
 	}
 	thesis := types.NewThesis(nil)
@@ -152,20 +152,20 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		signal.ticker.cache = []kraken.TickerData{
-			{
+		signal.ticker.cache = tickerCache(
+			kraken.TickerData{
 				Symbol:    "BTC/USD",
 				ChangePct: 5,
 				Last:      krakendecimal.NewFromFloat64(105),
 				Timestamp: now,
 			},
-			{
+			kraken.TickerData{
 				Symbol:    "ETH/USD",
 				ChangePct: 2,
 				Last:      krakendecimal.NewFromFloat64(102),
 				Timestamp: now,
 			},
-		}
+		)
 		_ = signal.Measure(thesis)
 	}
 }

@@ -1,7 +1,11 @@
 package cvd
 
 import (
+	"container/ring"
 	"context"
+	"sync"
+
+	"github.com/spf13/viper"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -14,7 +18,7 @@ type Trade struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	api    *websocket.API
-	cache  []kraken.TradeData
+	cache  *sync.Map
 }
 
 func NewTrade(ctx context.Context, api *websocket.API) *Trade {
@@ -24,7 +28,7 @@ func NewTrade(ctx context.Context, api *websocket.API) *Trade {
 		ctx:    ctx,
 		cancel: cancel,
 		api:    api,
-		cache:  []kraken.TradeData{},
+		cache:  &sync.Map{},
 	}
 
 	trade.api.On("trade", trade.On)
@@ -46,5 +50,13 @@ func (trade *Trade) On(data []byte) {
 		return
 	}
 
-	trade.cache = append(trade.cache, frame.Data...)
+	for _, data := range frame.Data {
+		found, _ := trade.cache.LoadOrStore(data.Symbol, ring.New(
+			viper.GetInt("signals.feed_ring_capacity"),
+		))
+
+		track := found.(*ring.Ring)
+		track.Value = data
+		trade.cache.Store(data.Symbol, track.Next())
+	}
 }

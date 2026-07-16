@@ -18,7 +18,7 @@ func TestSignal_MeasureUsesTradeEventTime(testingTB *testing.T) {
 		eventAt := time.Unix(42, 500_000_000).UTC()
 		signal := &Signal{
 			ctx:    context.Background(),
-			trades: &Trade{},
+			trades: &Trade{cache: tradeCache()},
 			level3: &Level3{
 				api: websocket.NewAPI(context.Background(), nil, nil, nil),
 			},
@@ -71,13 +71,13 @@ func TestSignal_MeasureSkipsTradeWithoutTimestamp(testingTB *testing.T) {
 		signal := &Signal{
 			ctx: context.Background(),
 			trades: &Trade{
-				cache: []kraken.TradeData{
-					{
+				cache: tradeCache(
+					kraken.TradeData{
 						Symbol: "BTC/USD",
 						Price:  *decimal.NewFromFloat64(100),
 						Qty:    1,
 					},
-				},
+				),
 			},
 			level3: &Level3{
 				api: websocket.NewAPI(context.Background(), nil, nil, nil),
@@ -149,14 +149,14 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	signal := &Signal{
 		ctx: context.Background(),
 		trades: &Trade{
-			cache: []kraken.TradeData{
-				{
+			cache: tradeCache(
+				kraken.TradeData{
 					Symbol:    "BTC/USD",
 					Timestamp: eventAt,
 					Price:     *decimal.NewFromFloat64(100),
 					Qty:       1,
 				},
-			},
+			),
 		},
 		level3: &Level3{
 			api: websocket.NewAPI(context.Background(), nil, nil, nil),
@@ -164,14 +164,14 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	}
 
 	for benchmark.Loop() {
-		signal.trades.cache = []kraken.TradeData{
-			{
+		signal.trades.cache = tradeCache(
+			kraken.TradeData{
 				Symbol:    "BTC/USD",
 				Timestamp: eventAt,
 				Price:     *decimal.NewFromFloat64(100),
 				Qty:       1,
 			},
-		}
+		)
 		signal.Measure(types.NewThesis(nil))
 	}
 }

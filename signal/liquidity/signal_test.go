@@ -44,9 +44,9 @@ func TestSignal_MeasureRequiresTwoExecutablePeers(testingTB *testing.T) {
 		signal := &Signal{
 			ctx: context.Background(),
 			ticker: &Ticker{
-				cache: []kraken.TickerData{
+				cache: tickerCache(
 					liquidityRow("BTC/USD", 999, 1001, 2, 2, 1, 1000),
-				},
+				),
 			},
 		}
 
@@ -63,11 +63,11 @@ func TestSignal_MeasureUsesExecutableValueNotRawVolume(testingTB *testing.T) {
 		signal := &Signal{
 			ctx: context.Background(),
 			ticker: &Ticker{
-				cache: []kraken.TickerData{
+				cache: tickerCache(
 					liquidityRow("BTC/USD", 999, 1001, 2, 2, 1, 1000),
 					liquidityRow("PENNY1/USD", 0.0001, 0.0001, 1_000_000, 1_000_000, 1_000_000, 0.0001),
 					liquidityRow("PENNY2/USD", 0.0001, 0.0001, 1_000_000, 1_000_000, 1_000_000, 0.0001),
-				},
+				),
 			},
 		}
 
@@ -96,11 +96,11 @@ func TestSignal_MeasureAtPeerMedianIsBalanced(testingTB *testing.T) {
 		signal := &Signal{
 			ctx: context.Background(),
 			ticker: &Ticker{
-				cache: []kraken.TickerData{
+				cache: tickerCache(
 					liquidityRow("BTC/USD", 99, 101, 5, 5, 100, 100),
 					liquidityRow("ETH/USD", 99, 101, 5, 5, 100, 100),
 					liquidityRow("SOL/USD", 99, 101, 5, 5, 100, 100),
-				},
+				),
 			},
 		}
 
@@ -131,8 +131,8 @@ func TestSignal_MeasureSkipsNonExecutableSubject(testingTB *testing.T) {
 		signal := &Signal{
 			ctx: context.Background(),
 			ticker: &Ticker{
-				cache: []kraken.TickerData{
-					{
+				cache: tickerCache(
+					kraken.TickerData{
 						Symbol:    "BTC/USD",
 						Bid:       krakendecimal.NewFromFloat64(0),
 						BidQty:    0,
@@ -145,7 +145,7 @@ func TestSignal_MeasureSkipsNonExecutableSubject(testingTB *testing.T) {
 					},
 					liquidityRow("ETH/USD", 99, 101, 5, 5, 100, 100),
 					liquidityRow("SOL/USD", 99, 101, 5, 5, 100, 100),
-				},
+				),
 			},
 		}
 
@@ -162,22 +162,22 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	signal := &Signal{
 		ctx: context.Background(),
 		ticker: &Ticker{
-			cache: []kraken.TickerData{
+			cache: tickerCache(
 				liquidityRow("BTC/USD", 999, 1001, 2, 2, 1, 1000),
 				liquidityRow("ETH/USD", 99, 101, 5, 5, 100, 100),
 				liquidityRow("SOL/USD", 99, 101, 5, 5, 100, 100),
-			},
+			),
 		},
 	}
 
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		signal.ticker.cache = []kraken.TickerData{
+		signal.ticker.cache = tickerCache(
 			liquidityRow("BTC/USD", 999, 1001, 2, 2, 1, 1000),
 			liquidityRow("ETH/USD", 99, 101, 5, 5, 100, 100),
 			liquidityRow("SOL/USD", 99, 101, 5, 5, 100, 100),
-		}
+		)
 		_ = signal.Measure(types.NewThesis(nil))
 	}
 }

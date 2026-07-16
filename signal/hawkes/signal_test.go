@@ -38,15 +38,15 @@ func tradeRow(symbol, side string, price float64, quantity float64, at time.Time
 
 func TestSignalOnTrade(testingTB *testing.T) {
 	Convey("Given a Hawkes signal wired to the trade channel", testingTB, func() {
-		signal := &Signal{trade: NewTrade(), tradeCache: []kraken.TradeData{}}
+		signal := &Signal{trade: NewTrade(), tradeCache: tradeCache()}
 		payload := []byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"buy","price":100.5,"qty":1.25,"ord_type":"market","trade_id":1,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
 
 		Convey("When a trade frame arrives over the wire", func() {
 			signal.onTrade(payload)
 
 			Convey("Then the row should accumulate in the trade cache", func() {
-				So(len(signal.tradeCache), ShouldEqual, 1)
-				So(signal.tradeCache[0].Symbol, ShouldEqual, "BTC/USD")
+				So(len(tradeRows(signal.tradeCache)), ShouldEqual, 1)
+				So(tradeRows(signal.tradeCache)[0].Symbol, ShouldEqual, "BTC/USD")
 			})
 		})
 
@@ -54,7 +54,7 @@ func TestSignalOnTrade(testingTB *testing.T) {
 			signal.onTrade(nil)
 
 			Convey("Then nothing should be cached", func() {
-				So(len(signal.tradeCache), ShouldEqual, 0)
+				So(tradeRows(signal.tradeCache), ShouldBeEmpty)
 			})
 		})
 
@@ -86,8 +86,9 @@ func TestSignalOnTrade(testingTB *testing.T) {
 func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given a Hawkes signal with enough marked arrivals to identify a stream", testingTB, func() {
 		signal := &Signal{
-			ctx:   context.Background(),
-			trade: NewTrade(),
+			ctx:        context.Background(),
+			trade:      NewTrade(),
+			tradeCache: tradeCache(),
 		}
 		start := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 		sides := []string{"buy", "sell", "buy", "sell", "buy", "sell"}
@@ -95,9 +96,9 @@ func TestSignalMeasure(testingTB *testing.T) {
 
 		Convey("When each trade arrives on its own tick", func() {
 			for index, side := range sides {
-				signal.tradeCache = []kraken.TradeData{
+				signal.tradeCache = tradeCache(
 					tradeRow("BTC/USD", side, 100+float64(index), 1, start.Add(time.Duration(index)*time.Second)),
-				}
+				)
 				result = signal.Measure(types.NewThesis(nil))
 			}
 
@@ -106,7 +107,7 @@ func TestSignalMeasure(testingTB *testing.T) {
 				So(ok, ShouldBeTrue)
 				So(count.Raw, ShouldBeGreaterThan, 0)
 
-				So(len(signal.tradeCache), ShouldEqual, 0)
+				So(tradeRows(signal.tradeCache), ShouldBeEmpty)
 			})
 		})
 	})

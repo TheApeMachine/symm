@@ -1,9 +1,12 @@
 package exhaust
 
 import (
+	"container/ring"
 	"context"
+	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -17,7 +20,7 @@ type Book struct {
 	cancel     context.CancelFunc
 	api        *websocket.API
 	instrument *broker.Instrument
-	cache      []kraken.BookData
+	cache      *sync.Map
 }
 
 func NewBook(
@@ -30,7 +33,7 @@ func NewBook(
 		cancel:     cancel,
 		api:        api,
 		instrument: instrument,
-		cache:      []kraken.BookData{},
+		cache:      &sync.Map{},
 	}
 
 	book.api.On("book", book.On)
@@ -56,7 +59,15 @@ func (book *Book) On(data []byte) {
 		frame.Data[index].PriceIncrement = book.increment(frame.Data[index].Symbol)
 	}
 
-	book.cache = append(book.cache, frame.Data...)
+	for _, data := range frame.Data {
+		found, _ := book.cache.LoadOrStore(data.Symbol, ring.New(
+			viper.GetInt("signals.feed_ring_capacity"),
+		))
+
+		track := found.(*ring.Ring)
+		track.Value = data
+		book.cache.Store(data.Symbol, track.Next())
+	}
 }
 
 /*

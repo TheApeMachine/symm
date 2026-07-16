@@ -1,7 +1,11 @@
 package correlation
 
 import (
+	"container/ring"
 	"context"
+	"sync"
+
+	"github.com/spf13/viper"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -14,7 +18,7 @@ type Ticker struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	api    *websocket.API
-	cache  []kraken.TickerData
+	cache  *sync.Map
 }
 
 func NewTicker(ctx context.Context, api *websocket.API) *Ticker {
@@ -24,7 +28,7 @@ func NewTicker(ctx context.Context, api *websocket.API) *Ticker {
 		ctx:    ctx,
 		cancel: cancel,
 		api:    api,
-		cache:  []kraken.TickerData{},
+		cache:  &sync.Map{},
 	}
 
 	ticker.api.On("ticker", ticker.On)
@@ -46,5 +50,13 @@ func (ticker *Ticker) On(data []byte) {
 		return
 	}
 
-	ticker.cache = append(ticker.cache, frame.Data...)
+	for _, data := range frame.Data {
+		found, _ := ticker.cache.LoadOrStore(data.Symbol, ring.New(
+			viper.GetInt("signals.feed_ring_capacity"),
+		))
+
+		track := found.(*ring.Ring)
+		track.Value = data
+		ticker.cache.Store(data.Symbol, track.Next())
+	}
 }

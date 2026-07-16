@@ -46,22 +46,22 @@ func TestSignal_MeasureDetectsMechanicalDecay(testingTB *testing.T) {
 	Convey("Given deteriorating bid depth on repeated book frames", testingTB, func() {
 		signal := &Signal{
 			ctx:    context.Background(),
-			book:   &Book{cache: []kraken.BookData{}},
-			trade:  &Trade{cache: []kraken.TradeData{}},
+			book:   &Book{cache: bookCache()},
+			trade:  &Trade{cache: tradeCache()},
 			sample: algorithm.NewDecaySample(),
 			decay:  equation.NewDecay(),
 		}
 		quantities := []float64{20, 18, 16, 14, 12, 10, 8, 6, 4}
 
 		for _, bidQuantity := range quantities {
-			signal.book.cache = append(signal.book.cache, exhaustBookRow("BTC/USD", bidQuantity, 10))
+			signal.book.cache = bookCache(append(bookRows(signal.book.cache), exhaustBookRow("BTC/USD", bidQuantity, 10))...)
 			signal.Measure(types.NewThesis(nil))
 		}
 
 		Convey("When the final frame is measured", func() {
-			signal.book.cache = []kraken.BookData{
+			signal.book.cache = bookCache(
 				exhaustBookRow("BTC/USD", 2, 10),
-			}
+			)
 			result := signal.Measure(types.NewThesis(nil))
 
 			Convey("Then exhaust urgency and mechanical score should rise", func() {
@@ -74,7 +74,7 @@ func TestSignal_MeasureDetectsMechanicalDecay(testingTB *testing.T) {
 				So(ok, ShouldBeTrue)
 				So(mechanical.Raw, ShouldBeGreaterThan, 0)
 
-				So(len(signal.book.cache), ShouldEqual, 0)
+				So(len(bookRows(signal.book.cache)), ShouldEqual, 0)
 			})
 		})
 	})
@@ -84,14 +84,14 @@ func TestSignal_MeasureSkipsBookWithoutIncrement(testingTB *testing.T) {
 	Convey("Given a book row without price increment", testingTB, func() {
 		signal := &Signal{
 			ctx:    context.Background(),
-			book:   &Book{cache: []kraken.BookData{}},
-			trade:  &Trade{cache: []kraken.TradeData{}},
+			book:   &Book{cache: bookCache()},
+			trade:  &Trade{cache: tradeCache()},
 			sample: algorithm.NewDecaySample(),
 			decay:  equation.NewDecay(),
 		}
 		row := exhaustBookRow("BTC/USD", 10, 10)
 		row.PriceIncrement = *krakendecimal.NewFromFloat64(0)
-		signal.book.cache = []kraken.BookData{row}
+		signal.book.cache = bookCache(row)
 
 		result := signal.Measure(types.NewThesis(nil))
 
@@ -105,14 +105,14 @@ func TestSignal_MeasureSkipsBookWithoutIncrement(testingTB *testing.T) {
 func BenchmarkSignal_Measure(benchmark *testing.B) {
 	signal := &Signal{
 		ctx:    context.Background(),
-		book:   &Book{cache: []kraken.BookData{}},
-		trade:  &Trade{cache: []kraken.TradeData{}},
+		book:   &Book{cache: bookCache()},
+		trade:  &Trade{cache: tradeCache()},
 		sample: algorithm.NewDecaySample(),
 		decay:  equation.NewDecay(),
 	}
 
 	for index := range 9 {
-		signal.book.cache = append(signal.book.cache, exhaustBookRow("BTC/USD", 20-float64(index)*2, 10))
+		signal.book.cache = bookCache(append(bookRows(signal.book.cache), exhaustBookRow("BTC/USD", 20-float64(index)*2, 10))...)
 		_ = signal.Measure(types.NewThesis(nil))
 	}
 
@@ -121,7 +121,7 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		signal.book.cache = append([]kraken.BookData(nil), rows...)
+		signal.book.cache = bookCache(rows...)
 		_ = signal.Measure(types.NewThesis(nil))
 	}
 }

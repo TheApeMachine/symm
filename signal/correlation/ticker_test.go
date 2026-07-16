@@ -84,15 +84,15 @@ var rescaleFactors = []float64{0.0001, 0.001, 0.5, 2, 1000, 1_000_000}
 
 func TestTickerOn(t *testing.T) {
 	Convey("Given a correlation ticker ingestor", t, func() {
-		ticker := &Ticker{cache: []kraken.TickerData{}}
+		ticker := &Ticker{cache: tickerCache()}
 		payload := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"ALGO/USD","bid":0.10025,"bid_qty":740,"ask":0.10035,"ask_qty":740,"last":0.10035,"volume":997038.98,"vwap":0.10148,"low":0.09979,"high":0.10285,"change_pct":-0.17,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
 
 		Convey("When a ticker frame arrives", func() {
 			ticker.On(payload)
 
 			Convey("Then ticker rows should accumulate in cache", func() {
-				So(len(ticker.cache), ShouldEqual, 1)
-				So(ticker.cache[0].Symbol, ShouldEqual, "ALGO/USD")
+				So(len(tickerRows(ticker.cache)), ShouldEqual, 1)
+				So(tickerRows(ticker.cache)[0].Symbol, ShouldEqual, "ALGO/USD")
 			})
 		})
 	})
@@ -158,7 +158,7 @@ func TestSignal_MeasureDenominationInvariant(t *testing.T) {
 		measure := func(subjectFactor float64) *types.Thesis {
 			signal := &Signal{
 				ctx:     context.Background(),
-				ticker:  &Ticker{cache: []kraken.TickerData{}},
+				ticker:  &Ticker{cache: tickerCache()},
 				section: NewSection(),
 			}
 			history := make([]kraken.TickerData, 0, len(subjectPrices)*2)
@@ -171,7 +171,7 @@ func TestSignal_MeasureDenominationInvariant(t *testing.T) {
 				)
 			}
 
-			signal.ticker.cache = history
+			signal.ticker.cache = tickerCache(history...)
 
 			return signal.Measure(types.NewThesis(nil))
 		}
@@ -198,7 +198,7 @@ func TestSignal_MeasureRequiresCrossSection(t *testing.T) {
 	Convey("Given a lone ticker row with no peer history", t, func() {
 		signal := &Signal{
 			ctx:     context.Background(),
-			ticker:  &Ticker{cache: []kraken.TickerData{denominationRow("BTC/USD", 100, time.Now())}},
+			ticker:  &Ticker{cache: tickerCache(denominationRow("BTC/USD", 100, time.Now()))},
 			section: NewSection(),
 		}
 
@@ -216,7 +216,7 @@ func TestSignal_MeasureUsesTrimmedSymbolTimestamp(t *testing.T) {
 		subjectPrices, peerPrices := correlatedPricePaths(3, 3)
 		signal := &Signal{
 			ctx:     context.Background(),
-			ticker:  &Ticker{cache: []kraken.TickerData{}},
+			ticker:  &Ticker{cache: tickerCache()},
 			section: NewSection(),
 		}
 		history := make([]kraken.TickerData, 0, len(subjectPrices)*2)
@@ -229,7 +229,7 @@ func TestSignal_MeasureUsesTrimmedSymbolTimestamp(t *testing.T) {
 			history = append(history, subjectRow, peerRow)
 		}
 
-		signal.ticker.cache = history
+		signal.ticker.cache = tickerCache(history...)
 
 		result := signal.Measure(types.NewThesis(nil))
 
@@ -254,7 +254,7 @@ func BenchmarkSignal_Measure(b *testing.B) {
 	subjectPrices, peerPrices := correlatedPricePaths(13, 64)
 	signal := &Signal{
 		ctx:     context.Background(),
-		ticker:  &Ticker{cache: []kraken.TickerData{}},
+		ticker:  &Ticker{cache: tickerCache()},
 		section: NewSection(),
 	}
 	history := make([]kraken.TickerData, 0, len(subjectPrices)*2)
@@ -275,10 +275,10 @@ func BenchmarkSignal_Measure(b *testing.B) {
 	for b.Loop() {
 		tick++
 		at := start.Add(time.Duration(len(subjectPrices)+tick) * time.Second)
-		signal.ticker.cache = []kraken.TickerData{
+		signal.ticker.cache = tickerCache(
 			denominationRow("BTC/USD", subjectPrices[len(subjectPrices)-1]+float64(tick%7), at),
 			denominationRow("ETH/USD", peerPrices[len(peerPrices)-1]+float64(tick%5), at),
-		}
+		)
 		_ = signal.Measure(types.NewThesis(nil))
 	}
 }

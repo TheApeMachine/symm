@@ -1,6 +1,7 @@
 package exhaust
 
 import (
+	"container/ring"
 	"context"
 	"time"
 
@@ -50,8 +51,29 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	books := signal.book.cache
-	trades := signal.trade.cache
+	books := make([]kraken.BookData, 0)
+	signal.book.cache.Range(func(key, value any) bool {
+		value.(*ring.Ring).Do(func(value any) {
+			if value != nil {
+				books = append(books, value.(kraken.BookData))
+			}
+		})
+		signal.book.cache.Delete(key)
+
+		return true
+	})
+
+	trades := make([]kraken.TradeData, 0)
+	signal.trade.cache.Range(func(key, value any) bool {
+		value.(*ring.Ring).Do(func(value any) {
+			if value != nil {
+				trades = append(trades, value.(kraken.TradeData))
+			}
+		})
+		signal.trade.cache.Delete(key)
+
+		return true
+	})
 	out := make([]*types.Measurement, 0, 8*(len(books)+len(trades)))
 
 	for _, row := range books {
@@ -166,9 +188,6 @@ func (signal *Signal) Measure(
 
 		out = append(out, signal.measurements(row.Symbol, row.Timestamp, output, maturity)...)
 	}
-
-	signal.book.cache = signal.book.cache[:0]
-	signal.trade.cache = signal.trade.cache[:0]
 
 	thesis.Signals.Store("books", books)
 	thesis.Signals.Store("trades", trades)

@@ -1,6 +1,7 @@
 package sentiment
 
 import (
+	"container/ring"
 	"context"
 	"math"
 
@@ -41,7 +42,17 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	tickers := append([]kraken.TickerData(nil), signal.ticker.cache...)
+	tickers := make([]kraken.TickerData, 0)
+	signal.ticker.cache.Range(func(key, value any) bool {
+		value.(*ring.Ring).Do(func(value any) {
+			if value != nil {
+				tickers = append(tickers, value.(kraken.TickerData))
+			}
+		})
+		signal.ticker.cache.Delete(key)
+
+		return true
+	})
 	out := make([]*types.Measurement, 0, len(tickers)*9)
 
 	if thesis.CrossSection == nil {
@@ -171,8 +182,6 @@ func (signal *Signal) Measure(
 			},
 		)
 	}
-
-	signal.ticker.cache = signal.ticker.cache[:0]
 
 	thesis.Signals.Store("tickers", tickers)
 	thesis.Measurements = append(thesis.Measurements, out...)

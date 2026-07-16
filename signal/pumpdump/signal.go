@@ -1,6 +1,7 @@
 package pumpdump
 
 import (
+	"container/ring"
 	"context"
 
 	"github.com/theapemachine/errnie"
@@ -40,7 +41,17 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	rows := append([]kraken.TickerData(nil), signal.ticker.cache...)
+	rows := make([]kraken.TickerData, 0)
+	signal.ticker.cache.Range(func(key, value any) bool {
+		value.(*ring.Ring).Do(func(value any) {
+			if value != nil {
+				rows = append(rows, value.(kraken.TickerData))
+			}
+		})
+		signal.ticker.cache.Delete(key)
+
+		return true
+	})
 	out := make([]*types.Measurement, 0, len(rows))
 
 	for _, row := range rows {
@@ -82,8 +93,6 @@ func (signal *Signal) Measure(
 
 		out = append(out, measurements...)
 	}
-
-	signal.ticker.cache = signal.ticker.cache[:0]
 
 	thesis.Signals.Store("tickers", rows)
 	thesis.Measurements = append(thesis.Measurements, out...)

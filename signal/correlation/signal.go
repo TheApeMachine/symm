@@ -1,11 +1,13 @@
 package correlation
 
 import (
+	"container/ring"
 	"context"
 	"strings"
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -44,7 +46,17 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	rows := signal.ticker.cache
+	rows := make([]kraken.TickerData, 0)
+	signal.ticker.cache.Range(func(key, value any) bool {
+		value.(*ring.Ring).Do(func(value any) {
+			if value != nil {
+				rows = append(rows, value.(kraken.TickerData))
+			}
+		})
+		signal.ticker.cache.Delete(key)
+
+		return true
+	})
 	out := make([]*types.Measurement, 0, len(rows))
 
 	thesis.CrossSection.Measure(rows)
@@ -176,8 +188,6 @@ func (signal *Signal) Measure(
 			},
 		)
 	}
-
-	signal.ticker.cache = signal.ticker.cache[:0]
 
 	thesis.Signals.Store("tickers", rows)
 	thesis.Measurements = append(thesis.Measurements, out...)

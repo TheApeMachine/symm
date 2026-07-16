@@ -33,15 +33,15 @@ func measurementFields(measurements []*types.Measurement, symbol string) map[typ
 
 func TestTradeOn(testingTB *testing.T) {
 	Convey("Given a CVD trade ingestor", testingTB, func() {
-		trade := &Trade{cache: []kraken.TradeData{}}
+		trade := &Trade{cache: tradeCache()}
 		payload := []byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"buy","price":100.5,"qty":1.25,"ord_type":"market","trade_id":1,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
 
 		Convey("When a trade frame arrives", func() {
 			trade.On(payload)
 
 			Convey("Then trade rows should accumulate in cache", func() {
-				So(len(trade.cache), ShouldEqual, 1)
-				So(trade.cache[0].Symbol, ShouldEqual, "BTC/USD")
+				So(len(tradeRows(trade.cache)), ShouldEqual, 1)
+				So(tradeRows(trade.cache)[0].Symbol, ShouldEqual, "BTC/USD")
 			})
 		})
 	})
@@ -51,7 +51,7 @@ func TestSignal_Measure(testingTB *testing.T) {
 	Convey("Given a CVD signal", testingTB, func() {
 		signal := &Signal{
 			ctx:    context.Background(),
-			trade:  &Trade{cache: []kraken.TradeData{}},
+			trade:  &Trade{cache: tradeCache()},
 			sample: algorithm.NewTradeFlowSample(),
 			flow:   equation.NewFlow(),
 		}
@@ -60,7 +60,7 @@ func TestSignal_Measure(testingTB *testing.T) {
 			var result *types.Thesis
 
 			for _, row := range trades("MATIC/USD", "buy", 100, 1, 30, time.Now().UTC()) {
-				signal.trade.cache = []kraken.TradeData{row}
+				signal.trade.cache = tradeCache(row)
 				result = signal.Measure(types.NewThesis(nil))
 			}
 
@@ -73,7 +73,7 @@ func TestSignal_Measure(testingTB *testing.T) {
 				So(ok, ShouldBeTrue)
 				So(drive.Raw, ShouldBeGreaterThan, 0)
 
-				So(len(signal.trade.cache), ShouldEqual, 0)
+				So(len(tradeRows(signal.trade.cache)), ShouldEqual, 0)
 			})
 		})
 	})
@@ -148,7 +148,7 @@ func TestSignal_MeasureFlowProfiles(testingTB *testing.T) {
 			Convey(fmt.Sprintf("When measuring %s", testCase.name), func() {
 				signal := &Signal{
 					ctx:    context.Background(),
-					trade:  &Trade{cache: []kraken.TradeData{}},
+					trade:  &Trade{cache: tradeCache()},
 					sample: algorithm.NewTradeFlowSample(),
 					flow:   equation.NewFlow(),
 				}
@@ -162,7 +162,7 @@ func TestSignal_MeasureFlowProfiles(testingTB *testing.T) {
 				}[testCase.wantScore]
 
 				for _, row := range testCase.rows {
-					signal.trade.cache = []kraken.TradeData{row}
+					signal.trade.cache = tradeCache(row)
 					result := signal.Measure(types.NewThesis(nil))
 
 					symbolMetrics := measurementFields(result.Measurements, "BTC/USD")
@@ -200,20 +200,20 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	rows := trades("MATIC/USD", "buy", 100, 1, 8, time.Now().UTC())
 	signal := &Signal{
 		ctx:    context.Background(),
-		trade:  &Trade{cache: []kraken.TradeData{}},
+		trade:  &Trade{cache: tradeCache()},
 		sample: algorithm.NewTradeFlowSample(),
 		flow:   equation.NewFlow(),
 	}
 
 	for _, row := range rows {
-		signal.trade.cache = []kraken.TradeData{row}
+		signal.trade.cache = tradeCache(row)
 		_ = signal.Measure(types.NewThesis(nil))
 	}
 
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		signal.trade.cache = append([]kraken.TradeData(nil), rows[len(rows)-1])
+		signal.trade.cache = tradeCache(rows[len(rows)-1])
 		_ = signal.Measure(types.NewThesis(nil))
 	}
 }

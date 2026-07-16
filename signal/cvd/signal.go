@@ -1,6 +1,7 @@
 package cvd
 
 import (
+	"container/ring"
 	"context"
 
 	"github.com/theapemachine/errnie"
@@ -43,7 +44,17 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	trades := append([]kraken.TradeData(nil), signal.trade.cache...)
+	trades := make([]kraken.TradeData, 0)
+	signal.trade.cache.Range(func(key, value any) bool {
+		value.(*ring.Ring).Do(func(value any) {
+			if value != nil {
+				trades = append(trades, value.(kraken.TradeData))
+			}
+		})
+		signal.trade.cache.Delete(key)
+
+		return true
+	})
 	out := make([]*types.Measurement, 0, len(trades))
 
 	for _, row := range trades {
@@ -82,8 +93,6 @@ func (signal *Signal) Measure(
 
 		out = append(out, signal.cvdMeasurements(row, output, maturity)...)
 	}
-
-	signal.trade.cache = signal.trade.cache[:0]
 
 	thesis.Signals.Store("trades", trades)
 	thesis.Measurements = append(thesis.Measurements, out...)

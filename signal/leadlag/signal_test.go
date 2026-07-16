@@ -131,24 +131,24 @@ func TestSignal_MeasureEmitsLeadlag(testingTB *testing.T) {
 		signal := &Signal{
 			ctx:     context.Background(),
 			section: NewSection(),
-			ticker:  &Ticker{cache: []kraken.TickerData{}},
+			ticker:  &Ticker{cache: tickerCache()},
 		}
 		btcLast, ethLast, at := seedLaggedPaths(signal.section, 6, 120)
 
-		signal.ticker.cache = []kraken.TickerData{
-			{
+		signal.ticker.cache = tickerCache(
+			kraken.TickerData{
 				Symbol:    "BTC/USD",
 				Last:      krakendecimal.NewFromFloat64(btcLast),
 				ChangePct: 5,
 				Timestamp: at,
 			},
-			{
+			kraken.TickerData{
 				Symbol:    "ETH/USD",
 				Last:      krakendecimal.NewFromFloat64(ethLast),
 				ChangePct: 1,
 				Timestamp: at,
 			},
-		}
+		)
 
 		result := signal.Measure(types.NewThesis(nil))
 
@@ -157,7 +157,7 @@ func TestSignal_MeasureEmitsLeadlag(testingTB *testing.T) {
 
 			So(hasFollower, ShouldBeTrue)
 			So(strength.Raw, ShouldBeGreaterThan, 0)
-			So(len(signal.ticker.cache), ShouldEqual, 0)
+			So(len(tickerRows(signal.ticker.cache)), ShouldEqual, 0)
 		})
 	})
 }
@@ -167,25 +167,25 @@ func TestSignal_MeasureSkipsIncompleteRow(testingTB *testing.T) {
 		signal := &Signal{
 			ctx:     context.Background(),
 			section: NewSection(),
-			ticker:  &Ticker{cache: []kraken.TickerData{}},
+			ticker:  &Ticker{cache: tickerCache()},
 		}
 		now := time.Now()
 
 		signal.section.SetAnchor("BTC/USD")
 		signal.section.ObservePrice("BTC/USD", 100, now)
 
-		signal.ticker.cache = []kraken.TickerData{
-			{
+		signal.ticker.cache = tickerCache(
+			kraken.TickerData{
 				Symbol:    "BTC/USD",
 				Last:      krakendecimal.NewFromFloat64(100),
 				ChangePct: 5,
 				Timestamp: now,
 			},
-			{
+			kraken.TickerData{
 				Symbol:    "ETH/USD",
 				Timestamp: now,
 			},
-		}
+		)
 		result := signal.Measure(types.NewThesis(nil))
 
 		Convey("Then it should omit the incomplete follower", func() {
@@ -199,7 +199,7 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	signal := &Signal{
 		ctx:     context.Background(),
 		section: NewSection(),
-		ticker:  &Ticker{cache: []kraken.TickerData{}},
+		ticker:  &Ticker{cache: tickerCache()},
 	}
 	btcLast, ethLast, at := seedLaggedPaths(signal.section, 6, 120)
 	rows := []kraken.TickerData{
@@ -220,7 +220,7 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		signal.ticker.cache = append([]kraken.TickerData(nil), rows...)
+		signal.ticker.cache = tickerCache(rows...)
 		_ = signal.Measure(types.NewThesis(nil))
 	}
 }

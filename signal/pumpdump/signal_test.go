@@ -19,7 +19,7 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 		signal := &Signal{
 			ctx: context.Background(),
 			ticker: &Ticker{
-				cache: []kraken.TickerData{},
+				cache: tickerCache(),
 			},
 			ignition: equation.NewIgnition(),
 		}
@@ -39,7 +39,7 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 			)
 
 			Convey("Then the pumped stream should lift relative volume", func() {
-				So(len(signal.ticker.cache), ShouldEqual, 0)
+				So(tickerRows(signal.ticker.cache), ShouldBeEmpty)
 				So(hasCalm, ShouldBeTrue)
 				So(hasPumped, ShouldBeTrue)
 				So(pumped, ShouldBeGreaterThan, calm)
@@ -52,11 +52,11 @@ func TestSignal_MeasureSkipsIncompleteRow(testingTB *testing.T) {
 	Convey("Given a partial Kraken ticker row", testingTB, func() {
 		signal := &Signal{
 			ctx:      context.Background(),
-			ticker:   &Ticker{cache: []kraken.TickerData{}},
+			ticker:   &Ticker{cache: tickerCache()},
 			ignition: equation.NewIgnition(),
 		}
 
-		signal.ticker.cache = append(signal.ticker.cache, kraken.TickerData{
+		signal.ticker.cache = tickerCache(kraken.TickerData{
 			Symbol:    "BTC/USD",
 			Timestamp: time.Now(),
 		})
@@ -76,7 +76,7 @@ func TestSignal_Measure(testingTB *testing.T) {
 		signal := &Signal{
 			ctx: context.Background(),
 			ticker: &Ticker{
-				cache: []kraken.TickerData{},
+				cache: tickerCache(),
 			},
 			ignition: equation.NewIgnition(),
 		}
@@ -96,7 +96,7 @@ func TestSignal_Measure(testingTB *testing.T) {
 			}
 
 			So(ignition, ShouldBeGreaterThan, 0)
-			So(len(signal.ticker.cache), ShouldEqual, 0)
+			So(tickerRows(signal.ticker.cache), ShouldBeEmpty)
 		})
 	})
 }
@@ -107,7 +107,7 @@ func measureField(
 	frames iter.Seq[tests.Frame],
 	metric types.MetricType,
 ) (float64, bool) {
-	signal.ticker.cache = signal.ticker.cache[:0]
+	signal.ticker.cache = tickerCache()
 	tests.Replay(handlers, frames)
 
 	thesis := types.NewThesis(nil)
@@ -128,7 +128,7 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	signal := &Signal{
 		ctx: context.Background(),
 		ticker: &Ticker{
-			cache: []kraken.TickerData{},
+			cache: tickerCache(),
 		},
 		ignition: equation.NewIgnition(),
 	}
@@ -141,7 +141,7 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		signal.ticker.cache = signal.ticker.cache[:0]
+		signal.ticker.cache = tickerCache()
 		tests.Replay(handlers, market.Frames())
 		_ = signal.Measure(types.NewThesis(nil))
 	}
