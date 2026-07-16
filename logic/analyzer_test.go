@@ -181,12 +181,12 @@ func TestAnalyzerUpdate(t *testing.T) {
 
 		analyzer.Update(second)
 
-		Convey("It should publish the accumulated Gonum topology on the current Thesis", func() {
+		Convey("It should keep only the current tick topology on the Thesis", func() {
 			value, found := second.Graphs.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 			evidenceGraph := value.(*types.Graph)
-			So(evidenceGraph.Nodes().Len(), ShouldEqual, 2)
-			So(evidenceGraph.Edges().Next(), ShouldBeTrue)
+			So(evidenceGraph.Nodes().Len(), ShouldEqual, 1)
+			So(evidenceGraph.Edges().Next(), ShouldBeFalse)
 		})
 	})
 

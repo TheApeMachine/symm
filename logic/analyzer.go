@@ -26,7 +26,6 @@ type Analyzer struct {
 	manifold  *manifold.Solver
 	hawkes    manifold.HawkesSource
 	tree      *dmt.Tree
-	graphs    map[string]*types.Graph
 	resonance map[string]*Resonance
 	causal    map[string]*Causal
 }
@@ -62,7 +61,6 @@ func NewAnalyzer(
 		manifold:  solver,
 		hawkes:    hawkes,
 		tree:      tree,
-		graphs:    make(map[string]*types.Graph),
 		resonance: make(map[string]*Resonance),
 		causal:    make(map[string]*Causal),
 	}, nil
@@ -90,10 +88,6 @@ Update delegates Hawkes-driven field analysis after signal measure, then compose
 every measurement into its symbol Gonum graph.
 */
 func (analyzer *Analyzer) Update(thesis *types.Thesis) {
-	if analyzer.graphs == nil {
-		analyzer.graphs = make(map[string]*types.Graph)
-	}
-
 	if analyzer.manifold != nil &&
 		analyzer.hawkes != nil &&
 		analyzer.gate != nil &&
@@ -135,19 +129,19 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 			continue
 		}
 
-		evidenceGraph := analyzer.graphs[measurement.Symbol]
+		value, found := thesis.Graphs.Load(measurement.Symbol)
 
-		if evidenceGraph == nil {
-			evidenceGraph = types.NewGraph(measurement.Symbol)
-			analyzer.graphs[measurement.Symbol] = evidenceGraph
+		if !found {
+			value = types.NewGraph(measurement.Symbol)
+			thesis.Graphs.Store(measurement.Symbol, value)
 		}
+
+		evidenceGraph := value.(*types.Graph)
 
 		if err := evidenceGraph.AddNode(measurement); err != nil {
 			errnie.Error(err)
 			continue
 		}
-
-		thesis.Graphs.Store(measurement.Symbol, evidenceGraph)
 	}
 
 	thesis.Graphs.Range(func(key, value any) bool {

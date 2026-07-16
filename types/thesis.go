@@ -274,33 +274,33 @@ func (thesis *Thesis) Publish() {
 		})
 	}
 
-	// graphs := make([]GraphFrame, 0)
+	graphs := make([]GraphFrame, 0)
 
-	// if thesis.Graphs != nil {
-	// 	thesis.Graphs.Range(func(key, value any) bool {
-	// 		evidenceGraph, ok := value.(*Graph)
+	if thesis.Graphs != nil {
+		thesis.Graphs.Range(func(key, value any) bool {
+			evidenceGraph, ok := value.(*Graph)
 
-	// 		if !ok {
-	// 			errnie.Error(errnie.Err(
-	// 				errnie.Validation,
-	// 				"thesis contains an invalid evidence graph",
-	// 				nil,
-	// 			))
+			if !ok {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"thesis contains an invalid evidence graph",
+					nil,
+				))
 
-	// 			return true
-	// 		}
+				return true
+			}
 
-	// 		graphs = append(graphs, evidenceGraph.Frame())
+			graphs = append(graphs, evidenceGraph.Frame())
 
-	// 		return true
-	// 	})
-	// }
+			return true
+		})
+	}
 
-	// if len(graphs) > 0 {
-	// 	thesis.Send(datura.Map[any]{
-	// 		"graphs": graphs,
-	// 	})
-	// }
+	if len(graphs) > 0 {
+		thesis.Send(datura.Map[any]{
+			"graphs": graphs,
+		})
+	}
 
 	if len(thesis.Forecasts) > 0 {
 		thesis.Send(datura.Map[any]{

@@ -222,6 +222,17 @@ myType.MyMethod(
 )
 ```
 
+What would be incorrect is something like this.
+
+```go
+thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
+    Source: "resonance+causal", Symbol: state.Symbol,
+    At: state.At, ObservedInterval: state.Duration,
+})
+```
+
+Key/Value pairs should always be on their own line, so the formatting aligns everything in a nice, readable manner.
+
 * **Errors** Instance variables for errors are always `err` and nothing else. Errors are logged with `errnie`
 
 ```go
