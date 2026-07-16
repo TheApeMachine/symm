@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -16,6 +17,68 @@ type plannerCutSignal struct {
 	cut     int
 	seen    int
 	measure func()
+}
+
+/*
+plannerWorkSignal supplies repeatable numerical work for Planner.Update
+benchmarks without coupling the strategy package to concrete signal internals.
+*/
+type plannerWorkSignal struct {
+	values []float64
+}
+
+/*
+plannerConcurrentSignal blocks after announcing its start so tests can prove
+that Planner launches every signal before collecting results.
+*/
+type plannerConcurrentSignal struct {
+	source  types.SourceType
+	started chan<- types.SourceType
+	release <-chan struct{}
+}
+
+/*
+Measure publishes isolated evidence around the synchronization point used by
+the concurrency test.
+*/
+func (signal *plannerConcurrentSignal) Measure(
+	thesis *types.Thesis,
+) *types.Thesis {
+	signal.started <- signal.source
+	<-signal.release
+	thesis.Measurements = append(thesis.Measurements, &types.Measurement{
+		Source: signal.source,
+		Metric: types.MetricStrength,
+		At:     thesis.At,
+	})
+	thesis.CrossSection.Metrics = append(
+		thesis.CrossSection.Metrics,
+		types.SymbolMetric{Symbol: string(signal.source), At: thesis.At},
+	)
+	thesis.Signals.Store(string(signal.source), signal.source)
+
+	return thesis
+}
+
+/*
+Measure reduces the benchmark fixture and retains its result so the compiler
+cannot eliminate the work.
+*/
+func (signal *plannerWorkSignal) Measure(thesis *types.Thesis) *types.Thesis {
+	total := 0.0
+
+	for _, value := range signal.values {
+		total += math.Sqrt(value)
+	}
+
+	thesis.Measurements = append(thesis.Measurements, &types.Measurement{
+		Source: types.SourceCorrelation,
+		Metric: types.MetricStrength,
+		Raw:    total,
+		At:     thesis.At,
+	})
+
+	return thesis
 }
 
 func (signal *plannerCutSignal) Capture(time.Time) error {
@@ -47,14 +110,94 @@ func TestPlanner_UpdateCapturesInputsFirst(t *testing.T) {
 			[]types.Signal{earlier, later},
 			nil,
 		)
+		t.Cleanup(planner.Close)
 
-		planner.Update()
+		planner.Update("", "")
 
 		Convey("It defers that observation until the next Thesis", func() {
 			So(later.seen, ShouldEqual, 0)
-			planner.Update()
+			planner.Update("", "")
 			So(later.seen, ShouldEqual, 1)
 		})
+	})
+}
+
+func TestPlanner_UpdateMeasuresSignalsConcurrently(t *testing.T) {
+	Convey("Given two independent signals blocked inside measurement", t, func() {
+		started := make(chan types.SourceType, 2)
+		release := make(chan struct{})
+		completed := make(chan *types.Thesis, 1)
+		signals := []types.Signal{
+			&plannerConcurrentSignal{
+				source: types.SourceCorrelation, started: started, release: release,
+			},
+			&plannerConcurrentSignal{
+				source: types.SourceCVD, started: started, release: release,
+			},
+		}
+		planner := NewPlanner(context.Background(), nil, signals, nil)
+		t.Cleanup(planner.Close)
+
+		go func() {
+			completed <- planner.Update("", "")
+		}()
+
+		first := <-started
+		var second types.SourceType
+
+		select {
+		case second = <-started:
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatal("second signal did not start concurrently")
+		}
+
+		close(release)
+		thesis := <-completed
+
+		Convey("It should merge isolated results in configured order", func() {
+			So(first, ShouldNotEqual, second)
+			So(thesis.Measurements, ShouldHaveLength, 2)
+			So(thesis.Measurements[0].Source, ShouldEqual, types.SourceCorrelation)
+			So(thesis.Measurements[1].Source, ShouldEqual, types.SourceCVD)
+			So(thesis.CrossSection.Metrics, ShouldHaveLength, 2)
+			_, correlationFound := thesis.Signals.Load(string(types.SourceCorrelation))
+			_, cvdFound := thesis.Signals.Load(string(types.SourceCVD))
+			So(correlationFound, ShouldBeTrue)
+			So(cvdFound, ShouldBeTrue)
+		})
+	})
+}
+
+func TestPlanner_CloseReleasesMeasurementWait(t *testing.T) {
+	Convey("Given a worker still measuring when Planner closes", t, func() {
+		started := make(chan types.SourceType, 1)
+		release := make(chan struct{})
+		completed := make(chan *types.Thesis, 1)
+		planner := NewPlanner(
+			context.Background(),
+			nil,
+			[]types.Signal{&plannerConcurrentSignal{
+				source: types.SourceCorrelation, started: started, release: release,
+			}},
+			nil,
+		)
+
+		go func() {
+			completed <- planner.Update("", "")
+		}()
+
+		<-started
+		planner.Close()
+
+		select {
+		case <-completed:
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatal("Planner remained blocked after close")
+		}
+
+		close(release)
 	})
 }
 
@@ -157,4 +300,41 @@ func BenchmarkPlannerDecide(b *testing.B) {
 		})
 		planner.Decide(thesis, fees, 100, 1)
 	}
+}
+
+func BenchmarkPlanner_UpdateMeasuresSignals(b *testing.B) {
+	values := make([]float64, 65536)
+
+	for index := range values {
+		values[index] = float64(index + 1)
+	}
+
+	signals := make([]types.Signal, 11)
+
+	for index := range signals {
+		signals[index] = &plannerWorkSignal{values: values}
+	}
+
+	planner := NewPlanner(context.Background(), nil, signals, nil)
+	b.Cleanup(planner.Close)
+
+	b.Run("sequential", func(b *testing.B) {
+		b.ReportAllocs()
+
+		for b.Loop() {
+			thesis := types.NewThesis(nil)
+
+			for _, signal := range signals {
+				signal.Measure(thesis)
+			}
+		}
+	})
+
+	b.Run("channel", func(b *testing.B) {
+		b.ReportAllocs()
+
+		for b.Loop() {
+			planner.Update("", "")
+		}
+	})
 }

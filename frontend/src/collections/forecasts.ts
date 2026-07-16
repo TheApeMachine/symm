@@ -2,22 +2,10 @@ import { createStore } from "@tanstack/react-store";
 import type { ThesisForecast } from "#/types/thesis";
 import { Circular, type CircularBuffer } from "./circular";
 
-const FORECAST_HISTORY_LIMIT = 50;
+export const FORECAST_HISTORY_LIMIT = 50;
 
 const forecastKey = (row: ThesisForecast): string =>
-	`${row.symbol}:${row.source}:${row.target}:${row.sourceEpoch}`;
-
-const cloneForecastBuffer = (
-	buffer: CircularBuffer<ThesisForecast>,
-): CircularBuffer<ThesisForecast> => {
-	const cloned = Circular<ThesisForecast>(buffer.capacity());
-
-	for (const value of buffer.values()) {
-		cloned.push(value);
-	}
-
-	return cloned;
-};
+	`${row.symbol}:${row.source}:${row.target}`;
 
 const asForecasts = (frame: unknown): ThesisForecast[] => {
 	if (!Array.isArray(frame)) {
@@ -65,22 +53,16 @@ export const forecastsStore = createStore(
 					return prev;
 				}
 
-				const forecasts = { ...prev.forecasts };
+				const forecasts = prev.forecasts;
 
 				for (const row of rows) {
 					const key = forecastKey(row);
-					const existing = forecasts[key];
 
-					if (existing === undefined) {
-						const buffer = Circular<ThesisForecast>(FORECAST_HISTORY_LIMIT);
-						buffer.push(row);
-						forecasts[key] = buffer;
-						continue;
+					if (!forecasts[key]) {
+						forecasts[key] = Circular<ThesisForecast>(FORECAST_HISTORY_LIMIT);
 					}
 
-					const buffer = cloneForecastBuffer(existing);
-					buffer.push(row);
-					forecasts[key] = buffer;
+					forecasts[key].push(row);
 				}
 
 				return {

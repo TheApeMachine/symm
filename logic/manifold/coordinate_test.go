@@ -9,12 +9,12 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 )
 
-func TestBookForSymbol(t *testing.T) {
+func TestOrdersForSymbol(t *testing.T) {
 	source := newTestBookSource("BTC/USD")
-	symbolBook, midPrice, ok := bookForSymbol(source, "BTC/USD")
+	orders, midPrice, ok := ordersForSymbol(source, "BTC/USD")
 
-	if !ok || symbolBook == nil || midPrice <= 0 {
-		t.Fatalf("bookForSymbol = %v mid=%v ok=%v", symbolBook, midPrice, ok)
+	if !ok || len(orders) == 0 || midPrice <= 0 {
+		t.Fatalf("ordersForSymbol = %d mid=%v ok=%v", len(orders), midPrice, ok)
 	}
 }
 

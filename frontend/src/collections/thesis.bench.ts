@@ -1,6 +1,7 @@
 import { bench, describe } from "vitest";
 import { decisionStore } from "./decisions";
 import { findingsStore } from "./findings";
+import { forecastsStore } from "./forecasts";
 import { graphsStore } from "./graphs";
 import { lifecycleStore } from "./lifecycle";
 import { tradeJournalStore } from "./trade-journal";
@@ -43,6 +44,33 @@ const observations = Array.from({ length: 24 }, (_, index) => ({
 	decision: index,
 }));
 
+const forecast = {
+	source: "manifold",
+	symbol: "BTC/USD",
+	at: "2026-07-14T12:00:00Z",
+	sourceEpoch: 1,
+	horizonEvents: 2,
+	expiresEpoch: 3,
+	target: "return",
+	modelVersion: "v1",
+	ready: true,
+	calibrated: true,
+	frictionReady: true,
+	calibrationSamples: 20,
+	incrementalMSE: 0.1,
+	incrementalMSELowerBound: 0.05,
+	expectedReturn: 0.01,
+	referencePrice: 100,
+	buyCapacity: 1,
+	sellCapacity: 1,
+	expectedFees: 0.001,
+	expectedSpread: 0.001,
+	expectedImpact: 0.001,
+	expectedAdverseSelection: 0.001,
+	uncertainty: 0.01,
+	confidence: 0.8,
+};
+
 describe("thesis frame stores", () => {
 	bench("applies strategy decisions, lifecycle, journal, and findings", () => {
 		decisionStore.actions.updateFrame(decisions);
@@ -83,5 +111,12 @@ describe("thesis frame stores", () => {
 				})),
 			},
 		]);
+	});
+
+	bench("updates bounded forecast history across source epochs", () => {
+		const sourceEpoch = forecast.sourceEpoch + 1;
+
+		forecastsStore.actions.updateFrame([{ ...forecast, sourceEpoch }]);
+		forecast.sourceEpoch = sourceEpoch;
 	});
 });

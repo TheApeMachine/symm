@@ -39,6 +39,7 @@ entire lifecycle of a tick, picking up all data along the way.
 */
 type Thesis struct {
 	checkpoint   atomic.Int64
+	uiProjection atomic.Value
 	uiHub        chan<- []byte
 	Tick         int64          `json:"tick"`
 	At           time.Time      `json:"at"`
@@ -58,6 +59,30 @@ type Thesis struct {
 	Cognition    *sync.Map      `json:"cognition"`
 	Resonance    []any          `json:"resonance"`
 	Causal       []any          `json:"causal"`
+}
+
+/*
+SetUIProjection records the symbol and signal source the operator is currently
+inspecting so bounded analysis and websocket publication retain that view.
+*/
+func (thesis *Thesis) SetUIProjection(symbol string, source SourceType) {
+	thesis.uiProjection.Store([2]string{symbol, string(source)})
+}
+
+/*
+UIProjection returns one consistent dashboard scope while a thesis is being
+published concurrently with frontend focus changes.
+*/
+func (thesis *Thesis) UIProjection() (string, SourceType) {
+	projection := thesis.uiProjection.Load()
+
+	if projection == nil {
+		return "", ""
+	}
+
+	view := projection.([2]string)
+
+	return view[0], SourceType(view[1])
 }
 
 /*
@@ -200,7 +225,22 @@ func NewThesis(uiHub chan<- []byte) *Thesis {
 }
 
 /*
-Publish exposes the non-empty evidence accumulated by this tick without delaying trading.
+NewSignalThesis creates the isolated subset a signal can measure concurrently.
+Planner merges this evidence into the complete lifecycle Thesis after workers
+return it through the result channel.
+*/
+func NewSignalThesis(at time.Time) *Thesis {
+	return &Thesis{
+		At:           at,
+		Signals:      &sync.Map{},
+		CrossSection: NewCrossSection(),
+		Measurements: make([]*Measurement, 0),
+	}
+}
+
+/*
+Publish exposes the evidence accumulated by this tick and explicit empty
+current-state snapshots without delaying trading.
 */
 func (thesis *Thesis) Publish() {
 	if thesis.uiHub == nil {
@@ -260,10 +300,15 @@ func (thesis *Thesis) Publish() {
 		})
 	}
 
-	graphs := make([]GraphFrame, 0)
+	graphs := make([]GraphFrame, 0, 1)
+	focusSymbol, _ := thesis.UIProjection()
 
-	if thesis.Graphs != nil {
+	if thesis.Graphs != nil && focusSymbol != "" {
 		thesis.Graphs.Range(func(key, value any) bool {
+			if key != focusSymbol {
+				return true
+			}
+
 			evidenceGraph, ok := value.(*Graph)
 
 			if !ok {
@@ -310,9 +355,13 @@ func (thesis *Thesis) Publish() {
 		})
 	}
 
-	manifolds := make([]any, 0)
+	manifolds := make([]any, 0, 1)
 
 	thesis.Manifold.Range(func(key, value any) bool {
+		if key != focusSymbol {
+			return true
+		}
+
 		manifolds = append(manifolds, value)
 		return true
 	})
@@ -323,9 +372,13 @@ func (thesis *Thesis) Publish() {
 		})
 	}
 
-	cognition := make([]Cognition, 0)
+	cognition := make([]Cognition, 0, 1)
 
 	thesis.Cognition.Range(func(key, value any) bool {
+		if key != focusSymbol {
+			return true
+		}
+
 		reading, ok := value.(Cognition)
 
 		if !ok {
@@ -363,14 +416,20 @@ func (thesis *Thesis) Publish() {
 }
 
 /*
-CurrentMeasurements returns the latest complete signal epoch for each symbol
-and source. Analysis retains every observation; this projection keeps the live
-dashboard current without replaying the market-event backlog into the browser.
+CurrentMeasurements returns complete current detail for the focused symbol and
+the selected source's headline cross-section. Analysis retains every
+observation; this projection keeps the live dashboard current without replaying
+the market-event backlog into the browser.
 */
 func (thesis *Thesis) CurrentMeasurements() []*Measurement {
 	latest := make(map[string]time.Time)
+	focusSymbol, focusSource := thesis.UIProjection()
 
 	for _, measurement := range thesis.Measurements {
+		if !thesis.measurementVisible(measurement, focusSymbol, focusSource) {
+			continue
+		}
+
 		key := measurement.Symbol + "\x00" + string(measurement.Source)
 
 		if measurement.At.After(latest[key]) {
@@ -378,9 +437,13 @@ func (thesis *Thesis) CurrentMeasurements() []*Measurement {
 		}
 	}
 
-	current := make([]*Measurement, 0, len(thesis.Measurements))
+	current := make([]*Measurement, 0, len(latest))
 
 	for _, measurement := range thesis.Measurements {
+		if !thesis.measurementVisible(measurement, focusSymbol, focusSource) {
+			continue
+		}
+
 		key := measurement.Symbol + "\x00" + string(measurement.Source)
 
 		if measurement.At.Equal(latest[key]) {
@@ -389,6 +452,42 @@ func (thesis *Thesis) CurrentMeasurements() []*Measurement {
 	}
 
 	return current
+}
+
+/*
+measurementVisible keeps full metrics for the focused symbol and only the
+selected source's headline metric for the cross-section. An unset projection
+retains the complete current epoch for persistence and direct callers.
+*/
+func (thesis *Thesis) measurementVisible(
+	measurement *Measurement,
+	focusSymbol string,
+	focusSource SourceType,
+) bool {
+	if focusSymbol == "" && focusSource == "" {
+		return true
+	}
+
+	if measurement.Symbol == focusSymbol {
+		return true
+	}
+
+	if measurement.Source != focusSource {
+		return false
+	}
+
+	switch focusSource {
+	case SourceFluid:
+		return measurement.Metric == MetricReynolds
+	case SourceHawkes:
+		return measurement.Metric == MetricConditionalIntensity
+	case SourceLiquidity:
+		return measurement.Metric == MetricScarcityScore
+	case SourceToxicity:
+		return measurement.Metric == MetricTouchQuantity
+	default:
+		return measurement.Metric == MetricStrength
+	}
 }
 
 func (thesis *Thesis) Send(frame datura.Map[any]) {

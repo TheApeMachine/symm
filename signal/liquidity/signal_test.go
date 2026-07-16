@@ -73,25 +73,16 @@ func TestSignal_MeasureUsesExecutableValueNotRawVolume(testingTB *testing.T) {
 
 		result := signal.Measure(types.NewThesis(nil))
 
-		Convey("Then it scores the subject as liquid, not scarce", func() {
-			relative, ok := measureField(result.Measurements, "BTC/USD", types.MetricRelativeLiquidity)
+		Convey("Then current executable depth, not raw units, determines scarcity", func() {
+			relative, ok := measureField(result.Measurements, "BTC/USD", types.MetricRelativeTouchDepth)
 			So(ok, ShouldBeTrue)
 			So(relative.Raw, ShouldBeGreaterThan, 1)
 			So(relative.Subject, ShouldEqual, types.SubjectPeerLiquidity)
 			So(relative.Maturity, ShouldBeGreaterThan, 0)
 
-			depthScore, ok := measureField(result.Measurements, "BTC/USD", types.MetricDepthScore)
+			strength, ok := measureField(result.Measurements, "BTC/USD", types.MetricScarcityScore)
 			So(ok, ShouldBeTrue)
-			So(depthScore.Raw, ShouldBeGreaterThan, 0)
-			So(depthScore.Raw, ShouldBeLessThan, 1)
-
-			strength, ok := measureField(result.Measurements, "BTC/USD", types.MetricStrength)
-			So(ok, ShouldBeTrue)
-			So(strength.Raw, ShouldBeLessThan, 1)
-
-			scarcity, ok := measureField(result.Measurements, "BTC/USD", types.MetricScarcityScore)
-			So(ok, ShouldBeTrue)
-			So(scarcity.Raw, ShouldEqual, 0)
+			So(strength.Raw, ShouldEqual, 0)
 		})
 	})
 }
@@ -111,26 +102,67 @@ func TestSignal_MeasureAtPeerMedianIsBalanced(testingTB *testing.T) {
 
 		result := signal.Measure(types.NewThesis(nil))
 
-		Convey("Then relative value is one and neither scarcity nor depth dominates", func() {
-			relative, ok := measureField(result.Measurements, "BTC/USD", types.MetricRelativeLiquidity)
+		Convey("Then relative touch depth is one and scarcity is zero", func() {
+			relative, ok := measureField(result.Measurements, "BTC/USD", types.MetricRelativeTouchDepth)
 			So(ok, ShouldBeTrue)
 			So(relative.Raw, ShouldAlmostEqual, 1, 1e-9)
 
-			scarcity, ok := measureField(result.Measurements, "BTC/USD", types.MetricScarcityScore)
-			So(ok, ShouldBeTrue)
-			So(scarcity.Raw, ShouldEqual, 0)
-
-			depthScore, ok := measureField(result.Measurements, "BTC/USD", types.MetricDepthScore)
-			So(ok, ShouldBeTrue)
-			So(depthScore.Raw, ShouldEqual, 0)
-
-			peerBalance, ok := measureField(result.Measurements, "BTC/USD", types.MetricPeerBalanceScore)
-			So(ok, ShouldBeTrue)
-			So(peerBalance.Raw, ShouldEqual, 1)
-
-			strength, ok := measureField(result.Measurements, "BTC/USD", types.MetricStrength)
+			strength, ok := measureField(result.Measurements, "BTC/USD", types.MetricScarcityScore)
 			So(ok, ShouldBeTrue)
 			So(strength.Raw, ShouldEqual, 0)
+		})
+	})
+}
+
+func TestSignal_MeasureDoesNotMixTurnoverIntoTouchDepth(testingTB *testing.T) {
+	Convey("Given high reported turnover but below-median executable touch depth", testingTB, func() {
+		signal := &Signal{
+			ctx: context.Background(),
+			ticker: &Ticker{
+				cache: tickerCache(
+					liquidityRow("BTC/USD", 99, 101, 0.5, 0.5, 1_000_000, 100),
+					liquidityRow("ETH/USD", 99, 101, 1, 1, 100, 100),
+					liquidityRow("SOL/USD", 99, 101, 1, 1, 100, 100),
+				),
+			},
+		}
+
+		result := signal.Measure(types.NewThesis(nil))
+
+		Convey("Then turnover cannot inflate the current depth ratio", func() {
+			relative, ok := measureField(result.Measurements, "BTC/USD", types.MetricRelativeTouchDepth)
+			So(ok, ShouldBeTrue)
+			So(relative.Raw, ShouldAlmostEqual, 0.5, 1e-9)
+
+			strength, ok := measureField(result.Measurements, "BTC/USD", types.MetricScarcityScore)
+			So(ok, ShouldBeTrue)
+			So(strength.Raw, ShouldAlmostEqual, 0.5, 1e-9)
+		})
+	})
+}
+
+func TestSignal_MeasureDoesNotRequireReportedTurnover(testingTB *testing.T) {
+	Convey("Given executable peers without reported turnover", testingTB, func() {
+		signal := &Signal{
+			ctx: context.Background(),
+			ticker: &Ticker{
+				cache: tickerCache(
+					liquidityRow("BTC/USD", 99, 101, 0.5, 0.5, 0, 0),
+					liquidityRow("ETH/USD", 99, 101, 1, 1, 0, 0),
+					liquidityRow("SOL/USD", 99, 101, 1, 1, 0, 0),
+				),
+			},
+		}
+
+		result := signal.Measure(types.NewThesis(nil))
+
+		Convey("Then touch scarcity remains measurable without invented turnover", func() {
+			strength, ok := measureField(result.Measurements, "BTC/USD", types.MetricScarcityScore)
+			So(ok, ShouldBeTrue)
+			So(strength.Raw, ShouldAlmostEqual, 0.5, 1e-9)
+
+			_, hasNotional := measureField(result.Measurements, "BTC/USD", types.MetricReportedVolumeNotional)
+			So(hasNotional, ShouldBeFalse)
 		})
 	})
 }
@@ -161,7 +193,7 @@ func TestSignal_MeasureSkipsNonExecutableSubject(testingTB *testing.T) {
 		result := signal.Measure(types.NewThesis(nil))
 
 		Convey("Then it emits nothing for the unexecutable subject", func() {
-			_, hasSubject := measureField(result.Measurements, "BTC/USD", types.MetricRelativeLiquidity)
+			_, hasSubject := measureField(result.Measurements, "BTC/USD", types.MetricRelativeTouchDepth)
 			So(hasSubject, ShouldBeFalse)
 		})
 	})

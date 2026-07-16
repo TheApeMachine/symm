@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { decisionStore, latestStrategyDecisions } from "./decisions";
 import { findingsList, findingsStore } from "./findings";
-import { forecastsStore, forecastValues } from "./forecasts";
+import {
+	FORECAST_HISTORY_LIMIT,
+	forecastsStore,
+	forecastValues,
+} from "./forecasts";
 import { graphsStore, latestGraphFrame } from "./graphs";
 import { lifecycleStore } from "./lifecycle";
 import { tradeJournalStore, tradeJournalValues } from "./trade-journal";
@@ -156,7 +160,7 @@ describe("thesis frame stores", () => {
 		);
 	});
 
-	it("clones retained forecast buffers instead of mutating previous state", () => {
+	it("bounds forecast history across changing source epochs", () => {
 		forecastsStore.actions.reset();
 		const row = {
 			source: "manifold",
@@ -185,16 +189,23 @@ describe("thesis frame stores", () => {
 			confidence: 0.8,
 		};
 
-		forecastsStore.actions.updateFrame([row]);
-		const previousForecasts = forecastsStore.state.forecasts;
-		const previousBuffer = previousForecasts["BTC/USD:manifold:return:1"];
+		for (let sourceEpoch = 1; sourceEpoch <= 200; sourceEpoch += 1) {
+			forecastsStore.actions.updateFrame([
+				{ ...row, sourceEpoch, expectedReturn: sourceEpoch / 10_000 },
+			]);
+		}
 
-		forecastsStore.actions.updateFrame([
-			{ ...row, sourceEpoch: 2, expectedReturn: 0.02 },
+		expect(Object.keys(forecastsStore.state.forecasts)).toEqual([
+			"BTC/USD:manifold:return",
 		]);
-
-		expect(previousBuffer?.values()).toHaveLength(1);
-		expect(previousForecasts).not.toBe(forecastsStore.state.forecasts);
+		expect(
+			forecastsStore.state.forecasts[
+				"BTC/USD:manifold:return"
+			]?.length(),
+		).toBe(FORECAST_HISTORY_LIMIT);
+		expect(forecastValues(forecastsStore.state.forecasts)[0]?.sourceEpoch).toBe(
+			200,
+		);
 	});
 
 	it("merges partial thesis snapshots without dropping other symbols", () => {

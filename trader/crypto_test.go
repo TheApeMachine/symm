@@ -100,6 +100,8 @@ func TestCryptoRun(t *testing.T) {
 		})
 		thesis := types.NewThesis(channel)
 		desk := broker.NewDesk(nil, nil, nil, nil)
+		hub, err := ui.NewHub(ctx, nil, nil, thesis, channel)
+		So(err, ShouldBeNil)
 
 		crypto, err := NewCrypto(
 			ctx,
@@ -113,7 +115,7 @@ func TestCryptoRun(t *testing.T) {
 			planner,
 			tree,
 			thesis,
-			&ui.Hub{},
+			hub,
 		)
 
 		So(err, ShouldBeNil)

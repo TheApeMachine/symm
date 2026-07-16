@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"sort"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -22,6 +23,19 @@ type Planner struct {
 	uiHub    chan<- []byte
 	signals  []types.Signal
 	analyzer *logic.Analyzer
+	jobs     chan signalTask
+	results  chan signalTask
+}
+
+/*
+signalTask carries one immutable measurement assignment through Planner's
+pre-warmed channel workers and returns the isolated Thesis on the result path.
+*/
+type signalTask struct {
+	index  int
+	at     time.Time
+	signal types.Signal
+	thesis *types.Thesis
 }
 
 /*
@@ -381,8 +395,8 @@ func (planner *Planner) context(
 }
 
 /*
-NewPlanner creates a Planner that is ready once its dependencies are assigned.
-Planning has no deferred initialization or warmup of its own.
+NewPlanner creates a Planner and pre-warms one channel worker per configured
+signal so Update never creates goroutines on the trading path.
 */
 func NewPlanner(
 	ctx context.Context,
@@ -391,15 +405,29 @@ func NewPlanner(
 	analyzer *logic.Analyzer,
 ) *Planner {
 	ctx, cancel := context.WithCancel(ctx)
-
-	return &Planner{
+	planner := &Planner{
 		ctx:      ctx,
 		cancel:   cancel,
 		status:   types.READY,
 		uiHub:    uiHub,
 		signals:  signals,
 		analyzer: analyzer,
+		jobs:     make(chan signalTask, len(signals)),
+		results:  make(chan signalTask, len(signals)),
 	}
+	ready := make(chan struct{}, len(signals))
+
+	for range signals {
+		go planner.work(ready)
+	}
+
+	for range signals {
+		<-ready
+	}
+
+	close(ready)
+
+	return planner
 }
 
 func (planner *Planner) Initialize() error {
@@ -417,10 +445,23 @@ func (planner *Planner) Status() types.Status {
 }
 
 /*
-Update measures and analyzes the next Thesis before portfolio context is applied.
+Close releases the Planner context so its pre-warmed measurement workers exit.
 */
-func (planner *Planner) Update() *types.Thesis {
+func (planner *Planner) Close() {
+	planner.cancel()
+}
+
+/*
+Update measures and analyzes the next Thesis under the current dashboard
+projection before runtime identity and portfolio context are applied. Crypto
+publishes only after assigning its tick.
+*/
+func (planner *Planner) Update(
+	focusSymbol string,
+	focusSource types.SourceType,
+) *types.Thesis {
 	thesis := types.NewThesis(planner.uiHub)
+	thesis.SetUIProjection(focusSymbol, focusSource)
 
 	for _, signal := range planner.signals {
 		inputSignal, ok := signal.(types.InputSignal)
@@ -439,15 +480,73 @@ func (planner *Planner) Update() *types.Thesis {
 		}
 	}
 
-	for _, signal := range planner.signals {
-		thesis = signal.Measure(thesis)
-	}
+	planner.measure(thesis)
 
 	if planner.analyzer != nil {
 		planner.analyzer.Update(thesis)
 	}
 
-	thesis.Publish()
-
 	return thesis
+}
+
+/*
+measure dispatches independent signals to pre-warmed channel workers and merges
+their isolated results in configured order.
+*/
+func (planner *Planner) measure(thesis *types.Thesis) {
+	ordered := make([]*types.Thesis, len(planner.signals))
+
+	for index, signal := range planner.signals {
+		select {
+		case <-planner.ctx.Done():
+			return
+		case planner.jobs <- signalTask{
+			index:  index,
+			at:     thesis.At,
+			signal: signal,
+		}:
+		}
+	}
+
+	for range planner.signals {
+		select {
+		case <-planner.ctx.Done():
+			return
+		case measured := <-planner.results:
+			ordered[measured.index] = measured.thesis
+		}
+	}
+
+	for _, measured := range ordered {
+		thesis.Measurements = append(thesis.Measurements, measured.Measurements...)
+		thesis.CrossSection.Merge(measured.CrossSection)
+		measured.Signals.Range(func(key, value any) bool {
+			thesis.Signals.Store(key, value)
+			return true
+		})
+	}
+}
+
+/*
+work measures channel assignments until Planner closes, keeping goroutine setup
+off the repeated Update path.
+*/
+func (planner *Planner) work(ready chan<- struct{}) {
+	ready <- struct{}{}
+
+	for {
+		select {
+		case <-planner.ctx.Done():
+			return
+		case task := <-planner.jobs:
+			isolated := types.NewSignalThesis(task.at)
+			task.thesis = task.signal.Measure(isolated)
+
+			select {
+			case <-planner.ctx.Done():
+				return
+			case planner.results <- task:
+			}
+		}
+	}
 }

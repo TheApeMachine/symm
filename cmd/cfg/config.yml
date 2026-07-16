@@ -20,6 +20,9 @@ market:
   manifold_max_symbols: 64
   l3_enabled: true
   l3_depth: 10
+  # Kraken's standard L3 subscription-rate budget. Depth determines the cost
+  # per symbol, so websocket batches are derived from this value.
+  l3_rate_limit: 200
   # Lock-free MPMC ingress requires a power-of-two capacity. Producers apply
   # backpressure rather than discard authoritative order-level deltas.
   l3_ring_capacity: 8192

@@ -59,13 +59,6 @@ export const graphsStore = createStore(
 						continue;
 					}
 
-					if (
-						previous !== undefined &&
-						row.nodes.length < previous.nodes.length
-					) {
-						continue;
-					}
-
 					graphs[row.symbol].push(row);
 				}
 

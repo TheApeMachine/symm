@@ -135,9 +135,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 			So(found, ShouldBeTrue)
 			reading := firstValue.(types.Cognition)
 			So(reading.Ready, ShouldBeFalse)
-			So(reading.REMReplays, ShouldEqual, 1)
-			So(reading.REMFrom, ShouldEqual, state.At)
-			So(reading.REMThrough, ShouldEqual, state.At)
+			So(reading.REMReplays, ShouldEqual, 0)
 		})
 
 		state.At = state.At.Add(time.Second)
@@ -152,7 +150,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 			reading := secondValue.(types.Cognition)
 			So(reading.Ready, ShouldBeTrue)
 			So(reading.Winner, ShouldEqual, "buy")
-			So(reading.Cohort, ShouldEqual, 2)
+			So(reading.Cohort, ShouldEqual, 1)
 		})
 	})
 
@@ -251,6 +249,41 @@ func TestAnalyzerUpdateComposesRelationships(t *testing.T) {
 			evidenceGraph := graph.(*types.Graph)
 			So(evidenceGraph.Edges(), ShouldNotBeEmpty)
 			So(evidenceGraph.Edges()[0].Type, ShouldEqual, types.Contradicts)
+		})
+	})
+}
+
+func TestAnalyzerConsolidate(t *testing.T) {
+	Convey("Given episodic observations pending behind the DMT ambiguity gate", t, func() {
+		tree := dmt.NewTree("")
+		analyzer := &Analyzer{tree: tree}
+		sequence := []byte("symbol-btc-usd_pressure-positive")
+		from := time.Unix(0, 100)
+		through := time.Unix(0, 200)
+		_, _, err := tree.CommitToEpisodicBuffer(uint64(from.UnixNano()), sequence)
+		So(err, ShouldBeNil)
+		_, _, err = tree.CommitToEpisodicBuffer(uint64(through.UnixNano()), sequence)
+		So(err, ShouldBeNil)
+		thesis := types.NewThesis(nil)
+		thesis.Cognition.Store("BTC/USD", types.Cognition{Symbol: "BTC/USD"})
+
+		analyzer.consolidate(thesis, []time.Time{from, through}, false)
+
+		Convey("It should retain the interval without replaying it early", func() {
+			So(tree.GetSensoryWeight(sequence).Count, ShouldEqual, 0)
+			reading, _ := thesis.Cognition.Load("BTC/USD")
+			So(reading.(types.Cognition).REMReplays, ShouldEqual, 0)
+		})
+
+		analyzer.consolidate(thesis, nil, true)
+
+		Convey("It should replay the complete pending interval when requested", func() {
+			So(tree.GetSensoryWeight(sequence).Count, ShouldEqual, 2)
+			reading, _ := thesis.Cognition.Load("BTC/USD")
+			cognition := reading.(types.Cognition)
+			So(cognition.REMFrom, ShouldEqual, from)
+			So(cognition.REMThrough, ShouldEqual, through)
+			So(cognition.REMReplays, ShouldEqual, 2)
 		})
 	})
 }

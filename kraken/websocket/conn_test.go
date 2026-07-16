@@ -267,6 +267,62 @@ func TestAPIOnRoutesChannels(t *testing.T) {
 	})
 }
 
+/*
+TestAPILevel3BatchSize verifies that L3 connection batches honor Kraken's
+depth-weighted subscription-rate budget instead of counting symbols directly.
+*/
+func TestAPILevel3BatchSize(t *testing.T) {
+	previousDepth := viper.Get("market.l3_depth")
+	previousLimit := viper.Get("market.l3_rate_limit")
+	t.Cleanup(func() {
+		viper.Set("market.l3_depth", previousDepth)
+		viper.Set("market.l3_rate_limit", previousLimit)
+	})
+
+	Convey("Given Kraken's standard L3 subscription budget", t, func() {
+		api := &API{}
+		viper.Set("market.l3_rate_limit", 200)
+
+		Convey("Depth 10 admits forty symbols per connection", func() {
+			viper.Set("market.l3_depth", 10)
+			batchSize, err := api.level3BatchSize()
+			So(err, ShouldBeNil)
+			So(batchSize, ShouldEqual, 40)
+		})
+
+		Convey("Depth 100 admits eight symbols per connection", func() {
+			viper.Set("market.l3_depth", 100)
+			batchSize, err := api.level3BatchSize()
+			So(err, ShouldBeNil)
+			So(batchSize, ShouldEqual, 8)
+		})
+
+		Convey("Depth 1000 admits two symbols per connection", func() {
+			viper.Set("market.l3_depth", 1000)
+			batchSize, err := api.level3BatchSize()
+			So(err, ShouldBeNil)
+			So(batchSize, ShouldEqual, 2)
+		})
+	})
+}
+
+/*
+BenchmarkAPILevel3BatchSize measures the depth-weighted L3 batch calculation
+used whenever the market universe is subscribed.
+*/
+func BenchmarkAPILevel3BatchSize(b *testing.B) {
+	viper.Set("market.l3_depth", 10)
+	viper.Set("market.l3_rate_limit", 200)
+	api := &API{}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if _, err := api.level3BatchSize(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func TestAPIClose(t *testing.T) {
 	Convey("Given an API with stub public and private transports", t, func() {
 		public := &stubConn{}

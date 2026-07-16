@@ -10,14 +10,11 @@ import (
 )
 
 /*
-inject applies Hawkes forcing to the authoritative L3 carriers before installing
-them. PIC then deposits each carrier's mass and forced momentum together.
+inject installs the forced authoritative L3 carriers so PIC deposits each
+carrier's mass and momentum together on the next solver step.
 */
 func inject(
 	handle *pmanifold.Solver,
-	config pmanifold.Config,
-	outcome excitation.Outcome,
-	interval time.Duration,
 	oscillators []pmanifold.Oscillator,
 ) error {
 	if handle == nil {
@@ -36,10 +33,6 @@ func inject(
 		)
 	}
 
-	if err := applyForcing(config, outcome, interval, oscillators); err != nil {
-		return err
-	}
-
 	if err := handle.SetOscillators(oscillators); err != nil {
 		return errnie.Err(
 			errnie.Internal,
@@ -53,22 +46,24 @@ func inject(
 
 /*
 applyForcing distributes one event-time Hawkes impulse across the L3 carrier
-mass. Applying it as velocity keeps the deposited gas state conservative.
+mass and returns the fastest resulting rarefaction. Applying pressure as
+velocity keeps the deposited gas state conservative, while the rarefaction
+sets the gas solver's advective stability limit.
 */
 func applyForcing(
 	config pmanifold.Config,
 	outcome excitation.Outcome,
 	interval time.Duration,
 	oscillators []pmanifold.Oscillator,
-) error {
+) (float64, error) {
 	buyPressure, sellPressure, ready := arrivalForcing(
 		outcome, integrationDeltaT(config, interval),
 	)
 
 	if !ready {
-		return errnie.Err(
+		return 0, errnie.Err(
 			errnie.Validation,
-			"manifold: Hawkes forcing is not ready",
+			"manifold: arrival forcing is not ready",
 			nil,
 		)
 	}
@@ -86,7 +81,7 @@ func applyForcing(
 	}
 
 	if buyMass <= 0 || sellMass <= 0 {
-		return errnie.Err(
+		return 0, errnie.Err(
 			errnie.Validation,
 			"manifold: L3 carriers require both book sides for forcing",
 			nil,
@@ -104,22 +99,71 @@ func applyForcing(
 		oscillator.VelX += pressure / mass
 	}
 
-	return nil
+	characteristicSpeed := 0.0
+
+	for _, oscillator := range oscillators {
+		velocity := math.Sqrt(
+			oscillator.VelX*oscillator.VelX +
+				oscillator.VelY*oscillator.VelY +
+				oscillator.VelZ*oscillator.VelZ,
+		)
+		specificInternalEnergy := oscillator.Heat / oscillator.Amplitude
+		soundSpeed := math.Sqrt(
+			config.Gamma * (config.Gamma - 1) * specificInternalEnergy,
+		)
+		rarefactionSpeed := velocity + 2*soundSpeed/(config.Gamma-1)
+
+		if !finiteNonNegative(rarefactionSpeed) {
+			return 0, errnie.Err(
+				errnie.Validation,
+				"manifold: carrier characteristic speed is not finite",
+				nil,
+			)
+		}
+
+		if rarefactionSpeed > characteristicSpeed {
+			characteristicSpeed = rarefactionSpeed
+		}
+	}
+
+	if characteristicSpeed <= 0 {
+		return 0, errnie.Err(
+			errnie.Validation,
+			"manifold: carrier characteristic speed must be positive",
+			nil,
+		)
+	}
+
+	return characteristicSpeed, nil
 }
 
 /*
-arrivalForcing advances the fitted branching matrix by one solver interval so
-self- and cross-excitation contribute to the next absolute arrival pressure.
+arrivalForcing converts observed arrival intensity into the next absolute
+pressure impulse. Once fitted, the Hawkes branching matrix adds self- and
+cross-excitation; before fit, the empirical side rates remain valid forcing.
 */
 func arrivalForcing(
 	outcome excitation.Outcome,
 	deltaT float64,
 ) (buyPressure float64, sellPressure float64, ready bool) {
 	buyIntensity, sellIntensity := intensities(outcome)
+
+	if !outcome.Readiness.Intensity || deltaT <= 0 ||
+		buyIntensity < 0 || sellIntensity < 0 {
+		return 0, 0, false
+	}
+
+	if !outcome.Readiness.HawkesFit {
+		buyPressure = buyIntensity * deltaT
+		sellPressure = sellIntensity * deltaT
+
+		return buyPressure, sellPressure,
+			finiteNonNegative(buyPressure) && finiteNonNegative(sellPressure)
+	}
+
 	beta := outcome.Fit.Beta
 
-	if !outcome.Readiness.HawkesFit || !outcome.Fit.Valid() || beta <= 0 || deltaT <= 0 ||
-		buyIntensity < 0 || sellIntensity < 0 {
+	if !outcome.Fit.Valid() || beta <= 0 {
 		return 0, 0, false
 	}
 
@@ -157,11 +201,13 @@ func stressAnisotropy(outcome excitation.Outcome) float64 {
 }
 
 func integrationDeltaT(config pmanifold.Config, interval time.Duration) float64 {
-	if interval > 0 {
+	configured := config.DeltaT
+
+	if interval > 0 && interval.Seconds() < configured {
 		return interval.Seconds()
 	}
 
-	return config.DeltaT
+	return configured
 }
 
 func eventInterval(

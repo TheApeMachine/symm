@@ -5,6 +5,7 @@ import {
 	headlineMetric,
 	latestByMetric,
 	latestEpoch,
+	metricLabel,
 	measurementIdentity,
 	orderedEpoch,
 } from "./measurement-view";
@@ -108,5 +109,13 @@ describe("orderedEpoch", () => {
 		expect(
 			orderedEpoch(values, "strength").map((entry) => entry.metric),
 		).toEqual(["strength", "correlation", "decoupled", "sync"]);
+	});
+
+	it("humanizes semantic liquidity metric identifiers", () => {
+		expect(metricLabel("scarcity_score")).toBe("Scarcity Score");
+		expect(metricLabel("relative_touch_depth")).toBe("Relative Touch Depth");
+		expect(metricLabel("reported_volume_notional")).toBe(
+			"Reported Volume Notional",
+		);
 	});
 });

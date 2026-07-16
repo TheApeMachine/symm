@@ -89,15 +89,13 @@ const (
 	MetricDivergentScore MetricType = "divergent_score"
 	MetricSlumpScore     MetricType = "slump_score"
 
-	// liquidity (peer notional and depth scarcity)
-	MetricScarcityScore         MetricType = "scarcity_score"
-	MetricPeerBalanceScore      MetricType = "peer_balance_score"
-	MetricDepthScore            MetricType = "depth_score"
-	MetricQuoteNotional         MetricType = "quote_notional"
-	MetricQuoteNotionalMedian   MetricType = "quote_notional_median"
-	MetricExecutableDepth       MetricType = "executable_depth"
-	MetricExecutableDepthMedian MetricType = "executable_depth_median"
-	MetricRelativeLiquidity     MetricType = "relative_liquidity"
+	// liquidity (reported turnover and executable touch-depth scarcity)
+	MetricScarcityScore                MetricType = "scarcity_score"
+	MetricReportedVolumeNotional       MetricType = "reported_volume_notional"
+	MetricReportedVolumeNotionalMedian MetricType = "reported_volume_notional_median"
+	MetricExecutableTouchDepth         MetricType = "executable_touch_depth"
+	MetricExecutableTouchDepthMedian   MetricType = "executable_touch_depth_median"
+	MetricRelativeTouchDepth           MetricType = "relative_touch_depth"
 
 	// fluid (mechanical order-book dynamics)
 	MetricLaminarScore        MetricType = "laminar_score"

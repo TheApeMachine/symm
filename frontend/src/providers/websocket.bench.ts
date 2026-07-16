@@ -20,6 +20,7 @@ class MockWebSocket {
 
 	readonly url: string;
 	readyState = MockWebSocket.OPEN;
+	sent: string[] = [];
 	private listeners: Record<string, Listener[]> = {};
 
 	constructor(url: string) {
@@ -33,6 +34,10 @@ class MockWebSocket {
 
 	close() {
 		this.readyState = 3;
+	}
+
+	send(data: string) {
+		this.sent.push(data);
 	}
 
 	emit(type: string, event: Record<string, unknown> = {}) {
@@ -56,17 +61,6 @@ const frame = {
 				{ type: "laminar", confidence: 0.8, surprisal: 0.2, strength: 0.6 },
 			],
 			metrics: { divergence: 0.1 },
-		},
-	],
-	intents: [
-		{
-			Symbol: "BTC/USD",
-			Action: "buy",
-			Size: "0.05",
-			Edge: 0.72,
-			Velocity: 0.72,
-			Confidence: 0.82,
-			Thesis: {},
 		},
 	],
 	balances: [

@@ -72,6 +72,7 @@ func TestGraphFrame(t *testing.T) {
 			thesis.Measurements = append(thesis.Measurements, first, second)
 			thesis.Graphs.Store(graph.Symbol, graph)
 			thesis.Lifecycle.Store(graph.Symbol, LifecycleManaging)
+			thesis.SetUIProjection(graph.Symbol, SourceFluid)
 			thesis.Publish()
 			published := struct {
 				Graphs    []GraphFrame      `json:"graphs"`

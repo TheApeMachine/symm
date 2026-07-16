@@ -1,8 +1,11 @@
 package ui
 
 import (
+	"maps"
 	"context"
+	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/bytedance/sonic"
@@ -26,7 +29,16 @@ type Hub struct {
 	Messages   chan []byte
 	price      *broker.Price
 	balance    *broker.Balance
-	thesis     *types.Thesis
+	thesis     atomic.Pointer[types.Thesis]
+	projection atomic.Value
+}
+
+/*
+projection is the frontend's current symbol and signal-source viewport.
+*/
+type projection struct {
+	FocusSymbol string           `json:"focusSymbol"`
+	Source      types.SourceType `json:"source"`
 }
 
 func NewHub(
@@ -53,8 +65,11 @@ func NewHub(
 		}),
 		price:   price,
 		balance: balance,
-		thesis:  thesis,
 	}
+	view := projection{FocusSymbol: "BTC/USD", Source: types.SourceFluid}
+	hub.projection.Store(view)
+	thesis.SetUIProjection(view.FocusSymbol, view.Source)
+	hub.thesis.Store(thesis)
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
@@ -69,11 +84,29 @@ func NewHub(
 		defer conn.Close()
 		conn.EnableWriteCompression(true)
 
-		hub.thesis.Publish()
+		closed := make(chan struct{})
+
+		go func() {
+			defer close(closed)
+
+			for {
+				control := projection{}
+
+				if err := conn.ReadJSON(&control); err != nil {
+					return
+				}
+
+				hub.SetProjection(control.FocusSymbol, control.Source)
+			}
+		}()
+
+		hub.Thesis().Publish()
 
 		for {
 			select {
 			case <-hub.ctx.Done():
+				return
+			case <-closed:
 				return
 			case msg := <-hub.Messages:
 				// FOR THE FINAL TIME: THERE IS ONLY 1 CLIENT, THE FRONTEND,
@@ -84,7 +117,18 @@ func NewHub(
 					return
 				}
 
-				if err := conn.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+				current, err := hub.currentFrame(msg)
+
+				if err != nil {
+					errnie.Error(errnie.Err(
+						errnie.Internal,
+						"failed to coalesce dashboard frames",
+						err,
+					))
+					continue
+				}
+
+				if err := conn.Conn.WriteMessage(websocket.TextMessage, current); err != nil {
 					if errors.Is(err, syscall.EPIPE) {
 						return
 					}
@@ -99,6 +143,41 @@ func NewHub(
 	}))
 
 	return hub, nil
+}
+
+/*
+currentFrame collapses any queued dashboard snapshots into their newest value
+per frame key before the websocket write. The channel is transport buffering,
+not browser history, so reconnects must not replay stale analysis states.
+*/
+func (hub *Hub) currentFrame(first []byte) ([]byte, error) {
+	frames := make([][]byte, 0, len(hub.Messages)+1)
+	frames = append(frames, first)
+
+	for {
+		select {
+		case frame := <-hub.Messages:
+			frames = append(frames, frame)
+		default:
+			if len(frames) == 1 {
+				return first, nil
+			}
+
+			current := make(map[string]json.RawMessage)
+
+			for _, frame := range frames {
+				incoming := make(map[string]json.RawMessage)
+
+				if err := sonic.Unmarshal(frame, &incoming); err != nil {
+					return nil, err
+				}
+
+				maps.Copy(current, incoming)
+			}
+
+			return sonic.Marshal(current)
+		}
+	}
 }
 
 func (hub *Hub) Initialize() error {
@@ -121,5 +200,28 @@ func (hub *Hub) Close() error {
 }
 
 func (hub *Hub) SetThesis(thesis *types.Thesis) {
-	hub.thesis = thesis
+	hub.thesis.Store(thesis)
+	view := hub.projection.Load().(projection)
+	thesis.SetUIProjection(view.FocusSymbol, view.Source)
+}
+
+/*
+Thesis atomically returns the active runtime thesis while ticks replace it.
+*/
+func (hub *Hub) Thesis() *types.Thesis {
+	return hub.thesis.Load()
+}
+
+/*
+SetProjection applies the frontend's current observability scope to both the
+active thesis and every subsequent tick.
+*/
+func (hub *Hub) SetProjection(symbol string, source types.SourceType) {
+	if symbol == "" || source == "" {
+		return
+	}
+
+	view := projection{FocusSymbol: symbol, Source: source}
+	hub.projection.Store(view)
+	hub.thesis.Load().SetUIProjection(symbol, source)
 }

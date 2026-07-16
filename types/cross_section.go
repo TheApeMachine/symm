@@ -24,9 +24,8 @@ type SymbolMetric struct {
 }
 
 /*
-CrossSection contains the current tick's peer metrics. Thesis owns it and each
-signal may contribute fresher ticker rows while the tick moves through the
-pipeline.
+CrossSection contains the current tick's peer metrics. Each signal measures an
+isolated view, then Planner merges those views into the completed Thesis.
 */
 type CrossSection struct {
 	Metrics []SymbolMetric `json:"metrics"`
@@ -76,6 +75,31 @@ func (crossSection *CrossSection) Measure(rows []kraken.TickerData) {
 		}
 
 		crossSection.index[symbol] = len(crossSection.Metrics)
+		crossSection.Metrics = append(crossSection.Metrics, metric)
+	}
+}
+
+/*
+Merge retains the newest metric for each symbol from an independently measured
+cross-section so Planner can combine concurrent signal results deterministically.
+*/
+func (crossSection *CrossSection) Merge(incoming *CrossSection) {
+	if incoming == nil {
+		return
+	}
+
+	for _, metric := range incoming.Metrics {
+		index, exists := crossSection.index[metric.Symbol]
+
+		if exists {
+			if metric.At.After(crossSection.Metrics[index].At) {
+				crossSection.Metrics[index] = metric
+			}
+
+			continue
+		}
+
+		crossSection.index[metric.Symbol] = len(crossSection.Metrics)
 		crossSection.Metrics = append(crossSection.Metrics, metric)
 	}
 }

@@ -3,6 +3,7 @@ package manifold
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/spf13/viper"
@@ -109,8 +110,10 @@ func NewSolver(books BookSource) (*Solver, error) {
 }
 
 /*
-Update advances the GPU field for every symbol whose Hawkes intensity moved
-forward and stores the resulting readout on the thesis.
+Update advances the GPU field for every symbol whose observed arrival intensity
+moved forward and stores the resulting readout on the thesis. A fitted Hawkes
+kernel refines the forcing but is not required to start the physical field. The
+configured GPU capacity retains the strongest current absolute forcing.
 */
 func (solver *Solver) Update(
 	thesis *types.Thesis,
@@ -120,22 +123,62 @@ func (solver *Solver) Update(
 		return nil
 	}
 
-	var failures []error
+	type candidate struct {
+		symbol    string
+		outcome   excitation.Outcome
+		intensity float64
+	}
+
+	candidates := make([]candidate, 0, solver.capacity)
 
 	for _, symbol := range hawkes.Symbols() {
 		outcome, ok := hawkes.Outcome(symbol)
 
-		if !ok || !outcome.Readiness.HawkesFit {
+		if !ok || !outcome.Readiness.Intensity {
 			continue
 		}
 
 		buyIntensity, sellIntensity := intensities(outcome)
+		intensity := buyIntensity + sellIntensity
 
-		if buyIntensity+sellIntensity <= 0 {
+		if intensity <= 0 {
 			continue
 		}
 
-		state, err := solver.advance(symbol, outcome)
+		candidates = append(candidates, candidate{
+			symbol:    symbol,
+			outcome:   outcome,
+			intensity: intensity,
+		})
+	}
+
+	sort.Slice(candidates, func(left, right int) bool {
+		if candidates[left].intensity == candidates[right].intensity {
+			return candidates[left].symbol < candidates[right].symbol
+		}
+
+		return candidates[left].intensity > candidates[right].intensity
+	})
+
+	if len(candidates) > solver.capacity {
+		focusSymbol, _ := thesis.UIProjection()
+
+		for index := solver.capacity; index < len(candidates); index++ {
+			if candidates[index].symbol != focusSymbol {
+				continue
+			}
+
+			candidates[solver.capacity-1] = candidates[index]
+			break
+		}
+
+		candidates = candidates[:solver.capacity]
+	}
+
+	var failures []error
+
+	for _, candidate := range candidates {
+		state, err := solver.advance(candidate.symbol, candidate.outcome)
 
 		if err != nil {
 			cause := err
@@ -146,7 +189,7 @@ func (solver *Solver) Update(
 
 			failures = append(failures, errnie.Err(
 				errnie.Internal,
-				fmt.Sprintf("manifold: %s failed to advance field", symbol),
+				fmt.Sprintf("manifold: %s failed to advance field", candidate.symbol),
 				err,
 			).With("cause", cause.Error()))
 
@@ -157,7 +200,7 @@ func (solver *Solver) Update(
 			continue
 		}
 
-		thesis.Manifold.Store(symbol, state)
+		thesis.Manifold.Store(candidate.symbol, state)
 	}
 
 	return errors.Join(failures...)
@@ -192,7 +235,7 @@ func (solver *Solver) advance(
 		return State{}, nil
 	}
 
-	if slot == nil {
+	if slot == nil || slot.handle == nil {
 		slot, err = solver.admit(symbol)
 
 		if err != nil {
@@ -202,11 +245,37 @@ func (solver *Solver) advance(
 
 	handle := slot.handle
 	interval := eventInterval(solver.config, slot.at, outcome)
+	slot.at = outcome.At
+	slot.events = outcome.EventCount
+	characteristicSpeed, err := applyForcing(
+		solver.config,
+		outcome,
+		interval,
+		oscillators,
+	)
+
+	if err != nil {
+		return State{}, err
+	}
+
 	controls := runtimeControls(
 		solver.config,
 		outcome,
 		interval,
 	)
+	advectiveDeltaT := solver.config.AdvectiveDeltaT(characteristicSpeed)
+
+	if advectiveDeltaT <= 0 {
+		return State{}, errnie.Err(
+			errnie.Validation,
+			"manifold: carrier state produced no stable integration step",
+			nil,
+		)
+	}
+
+	if advectiveDeltaT < controls.DeltaT {
+		controls.DeltaT = advectiveDeltaT
+	}
 
 	if err := handle.SetControls(controls); err != nil {
 		return State{}, err
@@ -214,9 +283,6 @@ func (solver *Solver) advance(
 
 	if err := inject(
 		handle,
-		solver.config,
-		outcome,
-		interval,
 		oscillators,
 	); err != nil {
 		return State{}, err
@@ -225,13 +291,14 @@ func (solver *Solver) advance(
 	reading, err := handle.Step()
 
 	if err != nil {
+		handle.Close()
+		slot.handle = nil
+
 		return State{}, err
 	}
 
 	slot.coords = coordEpoch
 	slot.epoch++
-	slot.at = outcome.At
-	slot.events = outcome.EventCount
 	buyIntensity, sellIntensity := intensities(outcome)
 
 	projection, projectionErr := projectField(handle, solver.config, len(oscillators))
@@ -286,23 +353,33 @@ func (solver *Solver) admit(symbol string) (*symbolSlot, error) {
 
 	slot, ok := solver.symbols[symbol]
 
-	if ok {
+	if ok && slot.handle != nil {
 		return slot, nil
 	}
 
-	if len(solver.symbols) >= solver.capacity {
-		var oldestSymbol string
+	active := 0
+
+	for _, candidateSlot := range solver.symbols {
+		if candidateSlot.handle != nil {
+			active++
+		}
+	}
+
+	if active >= solver.capacity {
 		var oldestSlot *symbolSlot
 
-		for candidateSymbol, candidateSlot := range solver.symbols {
+		for _, candidateSlot := range solver.symbols {
+			if candidateSlot.handle == nil {
+				continue
+			}
+
 			if oldestSlot == nil || candidateSlot.at.Before(oldestSlot.at) {
-				oldestSymbol = candidateSymbol
 				oldestSlot = candidateSlot
 			}
 		}
 
 		oldestSlot.handle.Close()
-		delete(solver.symbols, oldestSymbol)
+		oldestSlot.handle = nil
 	}
 
 	err := compute.WithMetalInit(func() error {
@@ -312,8 +389,12 @@ func (solver *Solver) admit(symbol string) (*symbolSlot, error) {
 			return err
 		}
 
-		slot = &symbolSlot{handle: handle}
-		solver.symbols[symbol] = slot
+		if slot == nil {
+			slot = &symbolSlot{}
+			solver.symbols[symbol] = slot
+		}
+
+		slot.handle = handle
 
 		return nil
 	})
@@ -342,13 +423,12 @@ func (solver *Solver) populationOscillators(
 		)
 	}
 
-	symbolBook, midPrice, ok := bookForSymbol(solver.books, symbol)
+	orders, midPrice, ok := ordersForSymbol(solver.books, symbol)
 
-	if !ok || symbolBook == nil {
+	if !ok {
 		return nil, prior, false, nil
 	}
 
-	orders := ordersFromBook(symbolBook)
 	mapped, coordEpoch, ready := mapOrders(solver.config, orders, midPrice, at, prior)
 
 	if !ready {

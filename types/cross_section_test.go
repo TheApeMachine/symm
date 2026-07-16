@@ -141,6 +141,32 @@ func TestCrossSectionMeasureReplacesSymbol(t *testing.T) {
 	})
 }
 
+func TestCrossSectionMerge(t *testing.T) {
+	Convey("Given independently measured cross-sections", t, func() {
+		older := time.Unix(1, 0)
+		newer := time.Unix(2, 0)
+		crossSection := NewCrossSection()
+		crossSection.Metrics = append(crossSection.Metrics, SymbolMetric{
+			Symbol: "BTC/USD", At: older, LatestChange: 0.01,
+		})
+		crossSection.index["BTC/USD"] = 0
+		incoming := NewCrossSection()
+		incoming.Metrics = append(incoming.Metrics,
+			SymbolMetric{Symbol: "BTC/USD", At: newer, LatestChange: 0.02},
+			SymbolMetric{Symbol: "ETH/USD", At: newer, LatestChange: -0.01},
+		)
+
+		crossSection.Merge(incoming)
+
+		Convey("It should retain one newest metric per symbol", func() {
+			So(crossSection.Metrics, ShouldHaveLength, 2)
+			So(crossSection.Metrics[crossSection.index["BTC/USD"]].At, ShouldEqual, newer)
+			So(crossSection.Metrics[crossSection.index["BTC/USD"]].LatestChange, ShouldEqual, 0.02)
+			So(crossSection.Metrics[crossSection.index["ETH/USD"]].LatestChange, ShouldEqual, -0.01)
+		})
+	})
+}
+
 /*
 BenchmarkCrossSectionMeasure calculates the current 200-symbol tick including
 liquidity, breadth, and leadership.

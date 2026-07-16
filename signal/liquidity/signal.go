@@ -12,9 +12,9 @@ import (
 )
 
 /*
-Liquidity is the Scarcity perspective, identifying opportunities in thin markets
-by ranking a symbol's quote notional and executable depth against its peers.
-Categories belong in logic; this signal emits numerical scores only.
+Liquidity is the Scarcity perspective, identifying opportunities where current
+executable touch depth is thin relative to peers. Reported-volume notional is
+retained as separate turnover context and never mixed into the book-depth score.
 */
 type Signal struct {
 	ctx    context.Context
@@ -80,75 +80,70 @@ func (signal *Signal) Measure(
 		}
 	}
 
-	if len(notionalPeers) >= 2 && len(depthPeers) >= 2 {
-		notionalMedian, notionalOK := statistic.MedianOf(notionalPeers)
-		depthMedian, depthOK := statistic.MedianOf(depthPeers)
+	depthMedian, depthOK := statistic.MedianOf(depthPeers)
 
-		if notionalOK && notionalMedian > 0 && depthOK && depthMedian > 0 {
-			peerMaturity := float64(len(notionalPeers)) /
-				float64(len(notionalPeers)+1)
+	if len(depthPeers) < 2 || !depthOK || depthMedian <= 0 {
+		thesis.Signals.Store("liquidity.tickers", rows)
+		return thesis
+	}
 
-			for _, row := range rows {
-				notional := types.QuoteNotional(row)
-				executableDepth := types.ExecutableDepth(row)
+	notionalMedian, hasNotionalMedian := statistic.MedianOf(notionalPeers)
+	peerMaturity := float64(len(depthPeers)) / float64(len(depthPeers)+1)
+	type measurementSpec struct {
+		metric     types.MetricType
+		unit       types.MeasurementUnit
+		raw        float64
+		normalized *float64
+	}
 
-				if notional <= 0 || executableDepth <= 0 {
-					continue
-				}
+	for _, row := range rows {
+		executableDepth := types.ExecutableDepth(row)
 
-				relative := math.Sqrt((notional / notionalMedian) * (executableDepth / depthMedian))
-				scarcity := math.Max(0, 1-relative)
-				depth := math.Max(0, 1-1/relative)
-				strength := max(scarcity, depth)
-				balance := 1 - strength
-				validity := types.MeasurementValidity{
-					State:     types.ValidityValid,
-					Readiness: types.ReadinessObservation,
-				}
-				scale := types.ScaleReference{
-					Kind:    types.ScaleObservationWindow,
-					From:    row.Timestamp,
-					Through: row.Timestamp,
-				}
-				specs := []struct {
-					metric     types.MetricType
-					unit       types.MeasurementUnit
-					raw        float64
-					normalized *float64
-				}{
-					{types.MetricRelativeLiquidity, types.UnitDimensionless, relative, types.NormalizeFinite(relative)},
-					{types.MetricScarcityScore, types.UnitDimensionless, scarcity, types.NormalizeFinite(scarcity)},
-					{types.MetricPeerBalanceScore, types.UnitDimensionless, balance, types.NormalizeFinite(balance)},
-					{types.MetricDepthScore, types.UnitDimensionless, depth, types.NormalizeFinite(depth)},
-					{types.MetricStrength, types.UnitDimensionless, strength, types.NormalizeFinite(strength)},
-					{types.MetricQuoteNotional, types.UnitQuoteCurrency, notional, types.NormalizeRatio(notional, notionalMedian)},
-					{types.MetricQuoteNotionalMedian, types.UnitQuoteCurrency, notionalMedian, types.NormalizeFinite(1)},
-					{
-						types.MetricExecutableDepth,
-						types.UnitQuoteCurrency,
-						executableDepth,
-						types.NormalizeRatio(executableDepth, depthMedian),
-					},
-					{types.MetricExecutableDepthMedian, types.UnitQuoteCurrency, depthMedian, types.NormalizeFinite(1)},
-				}
+		if executableDepth <= 0 {
+			continue
+		}
 
-				for _, spec := range specs {
-					out = append(out, &types.Measurement{
-						Source:     types.SourceLiquidity,
-						Stream:     types.Liquidity,
-						Metric:     spec.metric,
-						Subject:    types.SubjectPeerLiquidity,
-						Symbol:     row.Symbol,
-						At:         row.Timestamp,
-						Unit:       spec.unit,
-						Raw:        spec.raw,
-						Normalized: spec.normalized,
-						Maturity:   peerMaturity,
-						Validity:   validity,
-						Scale:      scale,
-					})
-				}
-			}
+		relativeDepth := executableDepth / depthMedian
+		scarcity := math.Max(0, 1-relativeDepth)
+		validity := types.MeasurementValidity{
+			State:     types.ValidityValid,
+			Readiness: types.ReadinessObservation,
+		}
+		scale := types.ScaleReference{
+			Kind:    types.ScaleObservationWindow,
+			From:    row.Timestamp,
+			Through: row.Timestamp,
+		}
+		specs := []measurementSpec{
+			{types.MetricRelativeTouchDepth, types.UnitDimensionless, relativeDepth, types.NormalizeFinite(relativeDepth)},
+			{types.MetricScarcityScore, types.UnitDimensionless, scarcity, types.NormalizeFinite(scarcity)},
+			{types.MetricExecutableTouchDepth, types.UnitQuoteCurrency, executableDepth, nil},
+			{types.MetricExecutableTouchDepthMedian, types.UnitQuoteCurrency, depthMedian, nil},
+		}
+		reportedNotional := types.QuoteNotional(row)
+
+		if reportedNotional > 0 && hasNotionalMedian && notionalMedian > 0 {
+			specs = append(specs,
+				measurementSpec{types.MetricReportedVolumeNotional, types.UnitQuoteCurrency, reportedNotional, nil},
+				measurementSpec{types.MetricReportedVolumeNotionalMedian, types.UnitQuoteCurrency, notionalMedian, nil},
+			)
+		}
+
+		for _, spec := range specs {
+			out = append(out, &types.Measurement{
+				Source:     types.SourceLiquidity,
+				Stream:     types.Liquidity,
+				Metric:     spec.metric,
+				Subject:    types.SubjectPeerLiquidity,
+				Symbol:     row.Symbol,
+				At:         row.Timestamp,
+				Unit:       spec.unit,
+				Raw:        spec.raw,
+				Normalized: spec.normalized,
+				Maturity:   peerMaturity,
+				Validity:   validity,
+				Scale:      scale,
+			})
 		}
 	}
 

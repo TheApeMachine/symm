@@ -60,4 +60,32 @@ describe("graphsStore", () => {
 		expect(graph?.nodes).toHaveLength(1);
 		expect(graph?.at).toBe("2026-07-14T12:00:00Z");
 	});
+
+	it("replaces an older graph when the current topology is smaller", () => {
+		graphsStore.actions.reset();
+		graphsStore.actions.updateFrame([
+			{
+				symbol: "BTC/USD",
+				at: "2026-07-14T12:00:00Z",
+				nodes: [
+					{ key: "node-a", measurement: { source: "fluid" } },
+					{ key: "node-b", measurement: { source: "hawkes" } },
+				],
+				edges: [],
+			},
+		]);
+		graphsStore.actions.updateFrame([
+			{
+				symbol: "BTC/USD",
+				at: "2026-07-14T12:01:00Z",
+				nodes: [{ key: "node-c", measurement: { source: "cvd" } }],
+				edges: [],
+			},
+		]);
+
+		const graph = latestGraphFrame(graphsStore.state.graphs, "BTC/USD");
+
+		expect(graph?.nodes).toHaveLength(1);
+		expect(graph?.at).toBe("2026-07-14T12:01:00Z");
+	});
 });

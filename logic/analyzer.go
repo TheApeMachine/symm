@@ -22,13 +22,19 @@ has measured the current Thesis. The manifold solver owns the Hawkes-driven GPU
 field step, while the Analyzer builds each symbol's typed evidence topology.
 */
 type Analyzer struct {
-	gate      stageGate
-	status    types.Status
-	manifold  *manifold.Solver
-	hawkes    manifold.HawkesSource
-	tree      *dmt.Tree
-	resonance map[string]*Resonance
-	causal    map[string]*Causal
+	gate           stageGate
+	status         types.Status
+	manifold       *manifold.Solver
+	hawkes         manifold.HawkesSource
+	tree           *dmt.Tree
+	resonance      map[string]*Resonance
+	causal         map[string]*Causal
+	remFrom        time.Time
+	remThrough     time.Time
+	remPending     int
+	lastREMFrom    time.Time
+	lastREMThrough time.Time
+	lastREMReplays int
 }
 
 /*
@@ -157,51 +163,63 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 	})
 
 	remObservations := make([]time.Time, 0, len(states))
+	remRequested := false
 
 	for _, state := range states {
 		if analyzer.cognize(thesis, state) {
 			remObservations = append(remObservations, state.At)
+			value, _ := thesis.Cognition.Load(state.Symbol)
+			remRequested = remRequested || value.(types.Cognition).Ambiguous
 		}
 	}
 
-	analyzer.consolidate(thesis, remObservations)
+	analyzer.consolidate(thesis, remObservations, remRequested)
 }
 
 /*
-consolidate replays the episodic observations committed by the current Thesis
-as one REM batch. Classification has already read prior memory, so replay is the
-single learning step for the current observations.
+consolidate accumulates episodic observations and replays the pending interval
+when DMT reports ambiguous branching. The ambiguity gate supplies the trigger,
+so REM has no unrelated timer or fixed batch threshold.
 */
 func (analyzer *Analyzer) consolidate(
 	thesis *types.Thesis,
 	observations []time.Time,
+	requested bool,
 ) {
-	if analyzer.tree == nil || len(observations) == 0 {
+	if analyzer.tree == nil {
 		return
 	}
 
-	from := observations[0]
-	through := observations[0]
-
-	for _, at := range observations[1:] {
-		if at.Before(from) {
-			from = at
+	for _, at := range observations {
+		if analyzer.remFrom.IsZero() || at.Before(analyzer.remFrom) {
+			analyzer.remFrom = at
 		}
 
-		if at.After(through) {
-			through = at
+		if analyzer.remThrough.IsZero() || at.After(analyzer.remThrough) {
+			analyzer.remThrough = at
 		}
+
+		analyzer.remPending++
 	}
 
-	analyzer.tree.ExecuteREMSleepConsolidation(
-		uint64(from.UnixNano()),
-		uint64(through.UnixNano()),
-	)
+	if requested && analyzer.remPending > 0 {
+		analyzer.tree.ExecuteREMSleepConsolidation(
+			uint64(analyzer.remFrom.UnixNano()),
+			uint64(analyzer.remThrough.UnixNano()),
+		)
+		analyzer.lastREMFrom = analyzer.remFrom
+		analyzer.lastREMThrough = analyzer.remThrough
+		analyzer.lastREMReplays = analyzer.remPending
+		analyzer.remFrom = time.Time{}
+		analyzer.remThrough = time.Time{}
+		analyzer.remPending = 0
+	}
+
 	thesis.Cognition.Range(func(key, value any) bool {
 		reading := value.(types.Cognition)
-		reading.REMFrom = from
-		reading.REMThrough = through
-		reading.REMReplays = len(observations)
+		reading.REMFrom = analyzer.lastREMFrom
+		reading.REMThrough = analyzer.lastREMThrough
+		reading.REMReplays = analyzer.lastREMReplays
 		thesis.Cognition.Store(key, reading)
 
 		return true
@@ -425,6 +443,7 @@ func (analyzer *Analyzer) cognize(
 	reading.Classes = classes
 
 	thesis.Cognition.Store(state.Symbol, reading)
+	analyzer.tree.TrainSensorySequence(sequence)
 
 	if _, _, err := analyzer.tree.CommitToEpisodicBuffer(
 		uint64(state.At.UnixNano()), sequence,

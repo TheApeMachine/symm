@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { appStore } from "#/collections/app";
+import { terminalStore } from "#/collections/terminal";
 import { FrameBatcher } from "#/providers/ws-batch";
 import { applyFramePayload } from "#/providers/ws-stores";
 
@@ -21,6 +22,30 @@ let socket: WebSocket | null = null;
 let batcher: FrameBatcher | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let attempt = 0;
+let lastProjection = "";
+
+const sendProjection = (force = false) => {
+	const projection = {
+		focusSymbol: appStore.state.focusSymbol,
+		source: terminalStore.state.selectedSource,
+	};
+	const key = `${projection.focusSymbol}\u0000${projection.source}`;
+
+	if (!force && key === lastProjection) {
+		return;
+	}
+
+	if (worker !== null) {
+		worker.postMessage({ type: "CONTROL", projection });
+		lastProjection = key;
+		return;
+	}
+
+	if (socket?.readyState === WebSocket.OPEN) {
+		socket.send(JSON.stringify(projection));
+		lastProjection = key;
+	}
+};
 
 const disconnectTransport = () => {
 	if (reconnectTimer !== null) {
@@ -77,7 +102,12 @@ const handleWorkerMessage = (event: MessageEvent<WorkerOutbound>) => {
 	}
 
 	if (message.type === "ONLINE") {
+		if (message.online) {
+			sendProjection(true);
+		}
+
 		appStore.actions.updateOnline(message.online);
+
 		return;
 	}
 
@@ -133,6 +163,7 @@ const connectInline = () => {
 		}
 
 		attempt = 0;
+		sendProjection(true);
 		appStore.actions.updateOnline(true);
 	});
 
@@ -190,8 +221,12 @@ the TanStack stores through either the 16ms worker batcher or the inline path.
 export const WsFeed = () => {
 	useEffect(() => {
 		connect();
+		const focusSubscription = appStore.subscribe(() => sendProjection());
+		const sourceSubscription = terminalStore.subscribe(() => sendProjection());
 
 		return () => {
+			focusSubscription.unsubscribe();
+			sourceSubscription.unsubscribe();
 			disconnectTransport();
 		};
 	}, []);

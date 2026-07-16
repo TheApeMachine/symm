@@ -1,11 +1,13 @@
 package types
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -32,6 +34,80 @@ func TestThesisCurrentMeasurements(t *testing.T) {
 			So(current[1].At, ShouldEqual, latest)
 		})
 	})
+
+	Convey("Given a focused dashboard projection", t, func() {
+		thesis := NewThesis(nil)
+		at := time.Unix(2, 0)
+		thesis.Measurements = []*Measurement{
+			{Symbol: "BTC/USD", Source: SourceFluid, Metric: MetricReynolds, At: at},
+			{Symbol: "BTC/USD", Source: SourceFluid, Metric: MetricViscosity, At: at},
+			{Symbol: "ETH/USD", Source: SourceFluid, Metric: MetricReynolds, At: at},
+			{Symbol: "ETH/USD", Source: SourceFluid, Metric: MetricViscosity, At: at},
+			{Symbol: "ETH/USD", Source: SourceHawkes, Metric: MetricStrength, At: at},
+		}
+		thesis.SetUIProjection("BTC/USD", SourceFluid)
+
+		current := thesis.CurrentMeasurements()
+
+		Convey("It should retain focused detail and one selected-source cross-section", func() {
+			So(current, ShouldHaveLength, 3)
+			So(current[0].Symbol, ShouldEqual, "BTC/USD")
+			So(current[1].Symbol, ShouldEqual, "BTC/USD")
+			So(current[2].Symbol, ShouldEqual, "ETH/USD")
+			So(current[2].Metric, ShouldEqual, MetricReynolds)
+		})
+	})
+
+	Convey("Given a liquidity cross-section projection", t, func() {
+		thesis := NewThesis(nil)
+		at := time.Unix(2, 0)
+		thesis.Measurements = []*Measurement{
+			{Symbol: "BTC/USD", Source: SourceLiquidity, Metric: MetricScarcityScore, At: at},
+			{Symbol: "BTC/USD", Source: SourceLiquidity, Metric: MetricRelativeTouchDepth, At: at},
+			{Symbol: "ETH/USD", Source: SourceLiquidity, Metric: MetricScarcityScore, At: at},
+			{Symbol: "ETH/USD", Source: SourceLiquidity, Metric: MetricRelativeTouchDepth, At: at},
+		}
+		thesis.SetUIProjection("BTC/USD", SourceLiquidity)
+
+		current := thesis.CurrentMeasurements()
+
+		Convey("It should use scarcity as the peer headline", func() {
+			So(current, ShouldHaveLength, 3)
+			So(current[2].Symbol, ShouldEqual, "ETH/USD")
+			So(current[2].Metric, ShouldEqual, MetricScarcityScore)
+		})
+	})
+}
+
+/*
+TestThesisPublish verifies empty current-state collections remain observable so
+the dashboard can distinguish an idle online system from a missing frame.
+*/
+func TestThesisPublish(t *testing.T) {
+	Convey("Given an idle Thesis with a dashboard channel", t, func() {
+		uiHub := make(chan []byte, 1)
+		thesis := NewThesis(uiHub)
+
+		thesis.Publish()
+
+		frame := struct {
+			Decisions    []Decision   `json:"decisions"`
+			Orders       []spot.Order `json:"orders"`
+			Positions    []Holding    `json:"positions"`
+			TradeJournal []any        `json:"tradeJournal"`
+			Findings     []Finding    `json:"findings"`
+		}{}
+		err := sonic.Unmarshal(<-uiHub, &frame)
+
+		Convey("It should publish explicit empty current-state snapshots", func() {
+			So(err, ShouldBeNil)
+			So(frame.Decisions, ShouldNotBeNil)
+			So(frame.Orders, ShouldNotBeNil)
+			So(frame.Positions, ShouldNotBeNil)
+			So(frame.TradeJournal, ShouldNotBeNil)
+			So(frame.Findings, ShouldNotBeNil)
+		})
+	})
 }
 
 /*
@@ -42,6 +118,7 @@ func TestThesisMarshalJSON(t *testing.T) {
 	Convey("Given a completed Thesis tick", t, func() {
 		thesis := NewThesis(nil)
 		thesis.Tick = 47
+		thesis.SetUIProjection("BTC/USD", SourceFluid)
 		thesis.Positions = append(thesis.Positions, Holding{
 			Symbol: "BTC/USD", Asset: "BTC", Qty: decimal.NewFromFloat64(0.25),
 		})
@@ -108,5 +185,59 @@ func BenchmarkThesisMarshalJSON(b *testing.B) {
 		if _, err := sonic.Marshal(thesis); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func BenchmarkThesisCurrentMeasurements(b *testing.B) {
+	thesis := NewThesis(nil)
+	at := time.Unix(1, 0)
+	sources := []SourceType{
+		SourceCorrelation,
+		SourceCVD,
+		SourceDepthFlow,
+		SourceExhaustion,
+		SourceFluid,
+		SourceHawkes,
+		SourceLeadLag,
+		SourceLiquidity,
+		SourcePumpDump,
+		SourceSentiment,
+		SourceToxicity,
+	}
+
+	for symbolIndex := range 642 {
+		symbol := "SYMBOL-" + strconv.Itoa(symbolIndex) + "/USD"
+
+		for _, source := range sources {
+			for metricIndex := range 8 {
+				metric := MetricValue
+
+				if metricIndex == 0 {
+					metric = MetricStrength
+				}
+
+				if source == SourceFluid && metricIndex == 0 {
+					metric = MetricReynolds
+				}
+
+				if source == SourceLiquidity && metricIndex == 0 {
+					metric = MetricScarcityScore
+				}
+
+				thesis.Measurements = append(thesis.Measurements, &Measurement{
+					Source: source,
+					Metric: metric,
+					Symbol: symbol,
+					At:     at,
+				})
+			}
+		}
+	}
+
+	thesis.SetUIProjection("SYMBOL-0/USD", SourceFluid)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = thesis.CurrentMeasurements()
 	}
 }

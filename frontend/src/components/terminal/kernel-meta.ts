@@ -125,8 +125,9 @@ const KERNEL_COPY: Record<
 	},
 	liquidity: {
 		name: "Liquidity",
-		sub: "liquidity · depth",
-		blurb: "Book depth and liquidity pressure from backend measurements.",
+		sub: "liquidity · touch scarcity",
+		blurb:
+			"Current executable touch depth relative to the market cross-section, with reported-volume turnover shown separately as context.",
 	},
 	toxicity: {
 		name: "Toxicity",

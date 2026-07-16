@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,7 +18,10 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-const TradeVolumeEndpoint = "/0/private/TradeVolume"
+const (
+	TradeVolumeEndpoint           = "/0/private/TradeVolume"
+	level3MaxSymbolsPerConnection = 200
+)
 
 /*
 Conn is the internal websocket and REST transport.
@@ -323,30 +327,59 @@ The transport subscribes after authentication and repeats that same request
 after reconnect, so this method must not send a second competing subscription.
 */
 func (api *API) SubscribeLevel3(pairs []string) error {
-	key := strings.Join(pairs, "|")
+	batchSize, err := api.level3BatchSize()
 
-	if _, loaded := api.bookConns.Load(key); loaded {
-		return nil
+	if err != nil {
+		return err
 	}
 
-	live := New(
-		api.ctx, nil, true, Level3WebSocketURL,
-	)
+	for batch := range slices.Chunk(pairs, batchSize) {
+		key := strings.Join(batch, "|")
 
-	live.symbols = pairs
+		if _, loaded := api.bookConns.Load(key); loaded {
+			continue
+		}
 
-	if err := live.Initialize(); err != nil {
-		live.Close()
-		return errnie.Error(err)
-	}
+		live := New(api.ctx, nil, true, Level3WebSocketURL)
+		live.symbols = batch
 
-	_, loaded := api.bookConns.LoadOrStore(key, live)
+		if err := live.Initialize(); err != nil {
+			live.Close()
+			return errnie.Error(err)
+		}
 
-	if loaded {
-		live.Close()
+		_, loaded := api.bookConns.LoadOrStore(key, live)
+
+		if loaded {
+			live.Close()
+		}
 	}
 
 	return nil
+}
+
+/*
+level3BatchSize derives the number of symbols that fit in one Kraken L3
+subscription request from the configured client-tier budget and book depth.
+*/
+func (api *API) level3BatchSize() (int, error) {
+	depth := viper.GetInt("market.l3_depth")
+	rateLimit := viper.GetInt("market.l3_rate_limit")
+	rateCost := map[int]int{
+		10:   5,
+		100:  25,
+		1000: 100,
+	}[depth]
+
+	if rateCost == 0 || rateLimit < rateCost {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"websocket: L3 depth and rate limit cannot admit one symbol",
+			nil,
+		))
+	}
+
+	return min(rateLimit/rateCost, level3MaxSymbolsPerConnection), nil
 }
 
 func (api *API) SubscribeBalance() error {

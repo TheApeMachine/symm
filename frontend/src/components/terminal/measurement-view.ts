@@ -2,13 +2,13 @@ import type { Measurement } from "#/types/measurement";
 import type { SignalHealthStatus } from "./kernel-meta";
 
 /*
-Sources that reduce their metrics to one composite score expose it as
-"strength" (types.MetricStrength on the backend). Hawkes and toxicity instead
-chart their native conditional-intensity and touch-quantity measurements.
+SOURCE_HEADLINE_METRIC selects the native metric that best summarizes sources
+whose primary reading is more specific than the shared strength metric.
 */
 const SOURCE_HEADLINE_METRIC: Record<string, string | null> = {
 	fluid: "reynolds",
 	hawkes: "conditional_intensity",
+	liquidity: "scarcity_score",
 	toxicity: "touch_quantity",
 };
 

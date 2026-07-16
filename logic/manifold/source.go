@@ -1,16 +1,13 @@
 package manifold
 
-import (
-	"github.com/krakenfx/api-go/v2/pkg/book"
-)
-
 /*
-bookForSymbol resolves one SDK-managed L3 book and its midpoint for ingestion.
+ordersForSymbol copies one SDK-managed L3 population while BookSource retains
+its read lease, so websocket updates cannot mutate a level during extraction.
 */
-func bookForSymbol(
+func ordersForSymbol(
 	source BookSource,
 	symbol string,
-) (*book.Book, float64, bool) {
+) ([]physicalOrder, float64, bool) {
 	if source == nil || symbol == "" {
 		return nil, 0, false
 	}
@@ -41,7 +38,13 @@ func bookForSymbol(
 			continue
 		}
 
-		return symbolBook, (bidPrice + askPrice) / 2, true
+		orders := ordersFromBook(symbolBook)
+
+		if len(orders) == 0 {
+			continue
+		}
+
+		return orders, (bidPrice + askPrice) / 2, true
 	}
 
 	return nil, 0, false

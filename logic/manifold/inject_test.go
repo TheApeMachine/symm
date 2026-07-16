@@ -58,6 +58,25 @@ func TestStressAnisotropy(t *testing.T) {
 }
 
 func TestArrivalForcing(t *testing.T) {
+	Convey("Given empirical arrival intensity before Hawkes fit", t, func() {
+		outcome := excitation.Outcome{
+			BuyArrivalRate:  4,
+			SellArrivalRate: 2,
+			Readiness: excitation.Readiness{
+				Observation: true,
+				Intensity:   true,
+			},
+		}
+
+		Convey("It should apply the observed side rates without invented coupling", func() {
+			buyPressure, sellPressure, ready := arrivalForcing(outcome, 0.01)
+
+			So(ready, ShouldBeTrue)
+			So(buyPressure, ShouldAlmostEqual, 0.04)
+			So(sellPressure, ShouldAlmostEqual, 0.02)
+		})
+	})
+
 	Convey("Given absolute conditional intensities and a fitted branching matrix", t, func() {
 		outcome := testOutcome()
 		buyPressure, sellPressure, ready := arrivalForcing(outcome, 0.01)
@@ -103,10 +122,13 @@ func TestApplyForcing(t *testing.T) {
 		beforeBuy := oscillators[1].Amplitude*oscillators[1].VelX +
 			oscillators[2].Amplitude*oscillators[2].VelX
 
-		err := applyForcing(config, outcome, 10*time.Millisecond, oscillators)
+		characteristicSpeed, err := applyForcing(
+			config, outcome, 10*time.Millisecond, oscillators,
+		)
 
 		Convey("It should conserve the fitted side impulse with carrier mass", func() {
 			So(err, ShouldBeNil)
+			So(characteristicSpeed, ShouldBeGreaterThan, 0)
 
 			afterSell := oscillators[0].Amplitude * oscillators[0].VelX
 			afterBuy := oscillators[1].Amplitude*oscillators[1].VelX +
@@ -145,7 +167,7 @@ func BenchmarkApplyForcing(b *testing.B) {
 	for index := 0; index < b.N; index++ {
 		copy(oscillators, population)
 
-		if err := applyForcing(
+		if _, err := applyForcing(
 			config, outcome, 10*time.Millisecond, oscillators,
 		); err != nil {
 			b.Fatal(err)
@@ -161,6 +183,12 @@ func TestIntegrationDeltaT(t *testing.T) {
 			deltaT := integrationDeltaT(config, time.Millisecond)
 
 			So(deltaT, ShouldAlmostEqual, 0.001)
+		})
+
+		Convey("It should not exceed the configured stable integration step", func() {
+			deltaT := integrationDeltaT(config, time.Second)
+
+			So(deltaT, ShouldAlmostEqual, config.DeltaT)
 		})
 	})
 }

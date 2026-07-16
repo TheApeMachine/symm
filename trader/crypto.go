@@ -127,10 +127,11 @@ func (crypto *Crypto) Run() error {
 			}
 
 			if crypto.booter.Ready(system.StageWarmup) {
-				thesis := crypto.planner.Update()
-				crypto.uiHub.SetThesis(thesis)
-
+				focusSymbol, focusSource := crypto.uiHub.Thesis().UIProjection()
+				thesis := crypto.planner.Update(focusSymbol, focusSource)
 				thesis.Tick = crypto.tick.Add(1)
+				crypto.uiHub.SetThesis(thesis)
+				thesis.Publish()
 				crypto.trade(thesis)
 
 				encoded, err := sonic.Marshal(thesis)
@@ -183,6 +184,10 @@ Close stops the trader and its composed resources.
 */
 func (crypto *Crypto) Close() error {
 	crypto.cancel()
+
+	if crypto.planner != nil {
+		crypto.planner.Close()
+	}
 
 	if err := crypto.desk.Close(); err != nil {
 		return err
