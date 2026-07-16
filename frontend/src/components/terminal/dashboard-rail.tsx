@@ -132,8 +132,11 @@ const LiveDecisionEmpty = () => {
 				return;
 			}
 
-			emptyRef.current.style.display =
-				Object.keys(decisionStore.state.decisions).length === 0 ? "" : "none";
+			const empty = Object.keys(decisionStore.state.decisions).length === 0;
+			emptyRef.current.style.display = empty ? "" : "none";
+			emptyRef.current.textContent = decisionStore.state.observed
+				? "no current decisions"
+				: "waiting for decision frames";
 		},
 		[decisionStore],
 		[],

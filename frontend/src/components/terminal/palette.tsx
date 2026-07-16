@@ -155,11 +155,15 @@ export const CommandPalette = ({
 				active: symbol === app.focusSymbol,
 			}),
 		),
-	].filter((command) =>
-		`${command.label} ${command.hint}`
+	].filter((command) => {
+		if (terminal.paletteMode === "symbols" && command.group !== "Symbol") {
+			return false;
+		}
+
+		return `${command.label} ${command.hint}`
 			.toLowerCase()
-			.includes(terminal.paletteQuery.trim().toLowerCase()),
-	);
+			.includes(terminal.paletteQuery.trim().toLowerCase());
+	});
 	const selectedIndex =
 		commands.length === 0
 			? 0
@@ -197,7 +201,11 @@ export const CommandPalette = ({
 								event.preventDefault();
 								onRun(command.surface, command.source, command.symbol);
 							}}
-							placeholder="Jump to a surface, kernel, or symbol…"
+							placeholder={
+								terminal.paletteMode === "symbols"
+									? "Search symbols…"
+									: "Jump to a surface, kernel, or symbol…"
+							}
 							spellCheck={false}
 							className="min-w-0 flex-1 bg-transparent text-[15px] text-(--f1) outline-none"
 						/>

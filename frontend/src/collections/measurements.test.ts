@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { appStore } from "#/collections/app";
 import { Circular } from "#/collections/circular";
 import { tickStore } from "#/collections/tick";
 import { applyFramePayload } from "#/providers/ws-stores";
@@ -28,6 +29,7 @@ const measurement = (metric: string, at: string, raw: number): Measurement => ({
 
 describe("measurementsStore", () => {
 	beforeEach(() => {
+		appStore.actions.updateFocusSymbol("BTC/USD");
 		measurementsStore.setState(() => ({
 			measurements: {},
 			version: 0,
@@ -43,6 +45,23 @@ describe("measurementsStore", () => {
 				bySource: {},
 			};
 		});
+	});
+
+	it("retains history only for the focused symbol", () => {
+		for (let index = 0; index < 3; index += 1) {
+			measurementsStore.actions.updateFrame([
+				{
+					...measurement("strength", `2026-07-14T16:25:2${index}Z`, index),
+					symbol: "ETH/USD",
+				},
+			]);
+		}
+
+		const buffer = measurementsStore.state.measurements["ETH/USD"]?.leadlag;
+
+		expect(buffer?.capacity()).toBe(1);
+		expect(measurementTickCount(buffer)).toBe(1);
+		expect(latestMeasurementReadings(buffer)[0]?.raw).toBe(2);
 	});
 
 	it("retains one circular-buffer slot per observation tick", () => {
@@ -119,6 +138,7 @@ describe("measurementsStore", () => {
 		}
 
 		const mapBefore = measurementsStore.state.measurements;
+		appStore.actions.updateFocusSymbol("SYM0/USD");
 
 		measurementsStore.actions.updateFrame([
 			{

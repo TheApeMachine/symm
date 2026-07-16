@@ -33,7 +33,7 @@ describe("causalStore", () => {
 		expect(causalStore.state.version).toBe(1);
 	});
 
-	it("retains every publish frame for the same symbol", () => {
+	it("replaces the superseded frame for the same symbol", () => {
 		const frame = (samples: number) => ({
 			source: "causal",
 			symbol: "BTC/USD",
@@ -48,9 +48,6 @@ describe("causalStore", () => {
 		causalStore.actions.updateFrame(frame(1));
 		causalStore.actions.updateFrame(frame(2));
 
-		expect(causalStore.state.causal["BTC/USD"]?.values()).toEqual([
-			frame(1),
-			frame(2),
-		]);
+		expect(causalStore.state.causal["BTC/USD"]?.values()).toEqual([frame(2)]);
 	});
 });

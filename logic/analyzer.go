@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
@@ -18,7 +19,7 @@ import (
 /*
 Analyzer coordinates the composed analysis responsibilities after every signal
 has measured the current Thesis. The manifold solver owns the Hawkes-driven GPU
-field step, while the Analyzer builds each symbol's evidence topology with Gonum.
+field step, while the Analyzer builds each symbol's typed evidence topology.
 */
 type Analyzer struct {
 	gate      stageGate
@@ -85,7 +86,7 @@ func (analyzer *Analyzer) Close() {
 
 /*
 Update delegates Hawkes-driven field analysis after signal measure, then composes
-every measurement into its symbol Gonum graph.
+the current typed relationships for each symbol's evidence graph.
 */
 func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 	if analyzer.manifold != nil &&
@@ -155,9 +156,56 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 		return true
 	})
 
+	remObservations := make([]time.Time, 0, len(states))
+
 	for _, state := range states {
-		analyzer.cognize(thesis, state)
+		if analyzer.cognize(thesis, state) {
+			remObservations = append(remObservations, state.At)
+		}
 	}
+
+	analyzer.consolidate(thesis, remObservations)
+}
+
+/*
+consolidate replays the episodic observations committed by the current Thesis
+as one REM batch. Classification has already read prior memory, so replay is the
+single learning step for the current observations.
+*/
+func (analyzer *Analyzer) consolidate(
+	thesis *types.Thesis,
+	observations []time.Time,
+) {
+	if analyzer.tree == nil || len(observations) == 0 {
+		return
+	}
+
+	from := observations[0]
+	through := observations[0]
+
+	for _, at := range observations[1:] {
+		if at.Before(from) {
+			from = at
+		}
+
+		if at.After(through) {
+			through = at
+		}
+	}
+
+	analyzer.tree.ExecuteREMSleepConsolidation(
+		uint64(from.UnixNano()),
+		uint64(through.UnixNano()),
+	)
+	thesis.Cognition.Range(func(key, value any) bool {
+		reading := value.(types.Cognition)
+		reading.REMFrom = from
+		reading.REMThrough = through
+		reading.REMReplays = len(observations)
+		thesis.Cognition.Store(key, reading)
+
+		return true
+	})
 }
 
 /*
@@ -257,9 +305,9 @@ back onto the Thesis before learning the current observation.
 func (analyzer *Analyzer) cognize(
 	thesis *types.Thesis,
 	state manifold.State,
-) {
+) bool {
 	if analyzer.tree == nil || !state.GasReady() {
-		return
+		return false
 	}
 
 	parts := make([]string, 0, len(thesis.Measurements)+4)
@@ -319,7 +367,7 @@ func (analyzer *Analyzer) cognize(
 	sequence := []byte(strings.Join(parts, "_"))
 
 	if len(sequence) == 0 {
-		return
+		return false
 	}
 
 	parent := sequence
@@ -377,12 +425,12 @@ func (analyzer *Analyzer) cognize(
 	reading.Classes = classes
 
 	thesis.Cognition.Store(state.Symbol, reading)
-	analyzer.tree.TrainSensorySequence(sequence)
 
 	if _, _, err := analyzer.tree.CommitToEpisodicBuffer(
 		uint64(state.At.UnixNano()), sequence,
 	); err != nil {
 		errnie.Error(err)
+		return false
 	}
 
 	class := []byte("balanced")
@@ -421,4 +469,6 @@ func (analyzer *Analyzer) cognize(
 			errnie.Error(err)
 		}
 	}
+
+	return true
 }

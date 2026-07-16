@@ -149,9 +149,11 @@ func TestGraphCompose(t *testing.T) {
 
 		graph.Compose()
 
-		Convey("Then direct evidence remains connected without a transitive closure", func() {
-			So(graph.Nodes(), ShouldHaveLength, 1_000)
-			So(graphEdges(graph), ShouldHaveLength, 999)
+		Convey("Then only the current direct relationship remains on the live graph", func() {
+			So(graph.Nodes(), ShouldHaveLength, 2)
+			So(graphEdges(graph), ShouldHaveLength, 1)
+			So(graph.Nodes()[0].Measurement.At.Unix(), ShouldBeGreaterThanOrEqualTo, int64(999))
+			So(graph.Nodes()[1].Measurement.At.Unix(), ShouldBeGreaterThanOrEqualTo, int64(999))
 		})
 	})
 }

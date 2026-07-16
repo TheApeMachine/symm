@@ -270,7 +270,7 @@ export const TerminalSection = ({
 export const TerminalTopBar = () => {
 	const online = useSelector(appStore, (state) => state.online);
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const { openPalette } = terminalStore.actions;
+	const { openPalette, openSymbolPalette } = terminalStore.actions;
 
 	return (
 		<header className="relative z-5 flex h-[52px] shrink-0 items-center gap-3.5 border-(--line) border-b bg-(--surface) px-4">
@@ -288,14 +288,20 @@ export const TerminalTopBar = () => {
 			/>
 			<LiveOpenCount />
 			<div className="ml-auto flex items-center gap-[22px]">
-				<Badge
-					label={focusSymbol}
-					variant="warning"
-					size="m"
+				<button
+					type="button"
+					onClick={openSymbolPalette}
 					data-symbol={focusSymbol}
-					title="Focused symbol"
-					className="cursor-pointer font-mono"
-				/>
+					title="Search focused symbol"
+					className="cursor-pointer"
+				>
+					<Badge
+						label={focusSymbol}
+						variant="warning"
+						size="m"
+						className="font-mono"
+					/>
+				</button>
 				<button
 					type="button"
 					onClick={openPalette}

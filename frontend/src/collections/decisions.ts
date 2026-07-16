@@ -57,7 +57,10 @@ export const decisionStore = createStore(
 				const rows = asDecisions(frame);
 
 				if (rows.length === 0) {
-					return prev;
+					return {
+						...prev,
+						observed: true,
+					};
 				}
 
 				const decisions = prev.decisions;

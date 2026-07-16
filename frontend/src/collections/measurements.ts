@@ -1,4 +1,5 @@
 import { createStore } from "@tanstack/react-store";
+import { appStore } from "#/collections/app";
 import {
 	dedupeEpoch,
 	latestByMetric,
@@ -24,6 +25,9 @@ type PendingEpoch = {
 	source: string;
 	readings: Measurement[];
 };
+
+const FOCUS_HISTORY_LIMIT = 50;
+const CROSS_SECTION_HISTORY_LIMIT = 1;
 
 export const measurementGroupKey = (symbol: string, source: string): string =>
 	`${symbol}\u0000${source}`;
@@ -164,6 +168,33 @@ const pushMeasurementEpoch = (
 };
 
 /*
+measurementBuffer keeps history only for the focused symbol. Cross-section
+symbols retain their latest epoch, which is sufficient for heatmaps and avoids
+multiplying the full market universe by the sparkline history length.
+*/
+const measurementBuffer = (
+	current: CircularBuffer<MeasurementEpoch> | undefined,
+	symbol: string,
+): CircularBuffer<MeasurementEpoch> => {
+	const capacity =
+		symbol === appStore.state.focusSymbol
+			? FOCUS_HISTORY_LIMIT
+			: CROSS_SECTION_HISTORY_LIMIT;
+
+	if (current?.capacity() === capacity) {
+		return current;
+	}
+
+	const buffer = Circular<MeasurementEpoch>(capacity);
+
+	for (const epoch of current?.values().slice(-capacity) ?? []) {
+		buffer.push(epoch);
+	}
+
+	return buffer;
+};
+
+/*
 measurementsStore retains backend measurements exactly as received. Buffers
 mutate in place and version bumps notify subscribers without cloning the full
 symbol universe on every websocket batch.
@@ -205,10 +236,10 @@ export const measurementsStore = createStore(
 						measurements[group.symbol] = {};
 					}
 
-					if (!measurements[group.symbol][group.source]) {
-						measurements[group.symbol][group.source] =
-							Circular<MeasurementEpoch>(50);
-					}
+					measurements[group.symbol][group.source] = measurementBuffer(
+						measurements[group.symbol][group.source],
+						group.symbol,
+					);
 
 					pushMeasurementEpoch(
 						measurements[group.symbol][group.source],

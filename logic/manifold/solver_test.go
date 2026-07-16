@@ -75,7 +75,7 @@ func TestSolverAdvanceAppliesAbsoluteHawkesForcing(t *testing.T) {
 	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
 	viper.Set("market.manifold_max_symbols", 8)
 
-	Convey("Given the same L3 state under different absolute arrival pressure", t, func() {
+	Convey("Given the same L3 state up to a 117-unit absolute arrival impulse", t, func() {
 		quiet, quietErr := NewSolver(newTestBookSource("BTC/USD"))
 		active, activeErr := NewSolver(newTestBookSource("BTC/USD"))
 		So(quietErr, ShouldBeNil)
@@ -88,15 +88,44 @@ func TestSolverAdvanceAppliesAbsoluteHawkesForcing(t *testing.T) {
 			"BTC/USD", solverOutcome(at, 2, 1),
 		)
 		activeState, activeAdvanceErr := active.advance(
-			"BTC/USD", solverOutcome(at, 8, 4),
+			"BTC/USD", solverOutcome(at, 140, 70),
 		)
 
-		Convey("It should produce a different GPU response without moving carriers", func() {
+		Convey("It should respond without encoding forcing into carrier coordinates", func() {
 			So(quietAdvanceErr, ShouldBeNil)
 			So(activeAdvanceErr, ShouldBeNil)
 			So(quietState.GasReady(), ShouldBeTrue)
 			So(activeState.GasReady(), ShouldBeTrue)
 			So(activeState.Reading, ShouldNotResemble, quietState.Reading)
+		})
+	})
+}
+
+func TestSolverAdvanceReplacesOldestSymbolAtCapacity(t *testing.T) {
+	viper.Set("market.l3_depth", 8)
+	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+	viper.Set("market.manifold_max_symbols", 1)
+
+	Convey("Given more active symbols than the configured GPU working set", t, func() {
+		solver, err := NewSolver(newTestBookSource("BTC/USD", "ETH/USD"))
+		So(err, ShouldBeNil)
+		defer solver.Close()
+
+		_, firstErr := solver.advance(
+			"BTC/USD",
+			solverOutcome(time.Unix(1, 0), 4, 2),
+		)
+		state, secondErr := solver.advance(
+			"ETH/USD",
+			solverOutcome(time.Unix(2, 0), 4, 2),
+		)
+
+		Convey("It should replace the stale field and advance the current symbol", func() {
+			So(firstErr, ShouldBeNil)
+			So(secondErr, ShouldBeNil)
+			So(state.GasReady(), ShouldBeTrue)
+			So(solver.symbols, ShouldNotContainKey, "BTC/USD")
+			So(solver.symbols, ShouldContainKey, "ETH/USD")
 		})
 	})
 }

@@ -133,7 +133,11 @@ func TestAnalyzerUpdate(t *testing.T) {
 
 		Convey("It should expose the cold DMT reading on the Thesis", func() {
 			So(found, ShouldBeTrue)
-			So(firstValue.(types.Cognition).Ready, ShouldBeFalse)
+			reading := firstValue.(types.Cognition)
+			So(reading.Ready, ShouldBeFalse)
+			So(reading.REMReplays, ShouldEqual, 1)
+			So(reading.REMFrom, ShouldEqual, state.At)
+			So(reading.REMThrough, ShouldEqual, state.At)
 		})
 
 		state.At = state.At.Add(time.Second)
@@ -148,7 +152,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 			reading := secondValue.(types.Cognition)
 			So(reading.Ready, ShouldBeTrue)
 			So(reading.Winner, ShouldEqual, "buy")
-			So(reading.Cohort, ShouldEqual, 1)
+			So(reading.Cohort, ShouldEqual, 2)
 		})
 	})
 

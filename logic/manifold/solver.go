@@ -34,7 +34,6 @@ type Solver struct {
 	config   pmanifold.Config
 	capacity int
 	symbols  map[string]*symbolSlot
-	handle   *pmanifold.Solver
 	books    BookSource
 }
 
@@ -139,11 +138,17 @@ func (solver *Solver) Update(
 		state, err := solver.advance(symbol, outcome)
 
 		if err != nil {
+			cause := err
+
+			for errors.Unwrap(cause) != nil {
+				cause = errors.Unwrap(cause)
+			}
+
 			failures = append(failures, errnie.Err(
 				errnie.Internal,
 				fmt.Sprintf("manifold: %s failed to advance field", symbol),
 				err,
-			))
+			).With("cause", cause.Error()))
 
 			continue
 		}
@@ -266,6 +271,10 @@ func (solver *Solver) advance(
 	}, nil
 }
 
+/*
+admit allocates a GPU field for the requested symbol, replacing the least
+recently advanced field when the configured working-set capacity is full.
+*/
 func (solver *Solver) admit(symbol string) (*symbolSlot, error) {
 	if symbol == "" {
 		return nil, errnie.Err(
@@ -282,32 +291,34 @@ func (solver *Solver) admit(symbol string) (*symbolSlot, error) {
 	}
 
 	if len(solver.symbols) >= solver.capacity {
-		return nil, errnie.Err(
-			errnie.Internal,
-			"manifold: symbol capacity exhausted",
-			nil,
-		)
+		var oldestSymbol string
+		var oldestSlot *symbolSlot
+
+		for candidateSymbol, candidateSlot := range solver.symbols {
+			if oldestSlot == nil || candidateSlot.at.Before(oldestSlot.at) {
+				oldestSymbol = candidateSymbol
+				oldestSlot = candidateSlot
+			}
+		}
+
+		oldestSlot.handle.Close()
+		delete(solver.symbols, oldestSymbol)
 	}
 
-	var err error
-
-	err = compute.WithMetalInit(func() error {
-		solver.handle, err = pmanifold.NewSolver(solver.config)
+	err := compute.WithMetalInit(func() error {
+		handle, err := pmanifold.NewSolver(solver.config)
 
 		if err != nil {
-			err = errors.Join(err, errnie.Error(err))
 			return err
 		}
 
-		slot = &symbolSlot{handle: solver.handle}
+		slot = &symbolSlot{handle: handle}
 		solver.symbols[symbol] = slot
 
 		return nil
 	})
 
 	if err != nil {
-		err = errors.Join(err, errnie.Error(err))
-
 		return nil, errnie.Err(
 			errnie.Internal,
 			"manifold: failed to initialize solver",

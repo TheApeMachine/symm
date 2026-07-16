@@ -93,7 +93,9 @@ and PostMortem findings as three linked rails so backend-only data is inspectabl
 */
 export const JournalSurface = () => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const lifecycle = useSelector(lifecycleStore, (state) => state.lifecycle);
+	const online = useSelector(appStore, (state) => state.online);
+	useSelector(lifecycleStore, (state) => state.version);
+	const lifecycle = lifecycleStore.state.lifecycle;
 	const observations = useSelector(tradeJournalStore, (state) =>
 		tradeJournalValues(state.journal),
 	);
@@ -148,16 +150,20 @@ export const JournalSurface = () => {
 								size="bare"
 								className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
 							>
-								waiting for lifecycle frames
+								{online
+									? "no active lifecycle"
+									: "waiting for lifecycle frames"}
 							</Panel>
 						) : null}
 						{symbols.map((symbol) => (
 							<button
 								type="button"
 								key={symbol}
-								onClick={() =>
-									setSelectedSymbol(activeSymbol === symbol ? null : symbol)
-								}
+								onClick={() => {
+									setSelectedSymbol(activeSymbol === symbol ? null : symbol);
+									appStore.actions.updateFocusSymbol(symbol);
+								}}
+								data-symbol={symbol}
 								className={cn(
 									"cursor-pointer text-left",
 									activeSymbol === symbol &&
@@ -191,7 +197,9 @@ export const JournalSurface = () => {
 							size="bare"
 							className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
 						>
-							waiting for trade journal frames
+							{online
+								? "no broker events recorded"
+								: "waiting for trade journal frames"}
 						</Panel>
 					) : null}
 					{filteredObservations.map((observation) => (
@@ -242,7 +250,9 @@ export const JournalSurface = () => {
 								size="bare"
 								className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
 							>
-								waiting for findings frames
+								{online
+									? "no postmortem findings"
+									: "waiting for findings frames"}
 							</Panel>
 						) : null}
 						{activeFindings.map((finding) => (

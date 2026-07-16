@@ -10,8 +10,8 @@ import (
 )
 
 /*
-inject installs the authoritative L3 carriers and applies Hawkes pressure to
-their existing cells. Hawkes changes forcing, never coordinates or carrier mass.
+inject applies Hawkes forcing to the authoritative L3 carriers before installing
+them. PIC then deposits each carrier's mass and forced momentum together.
 */
 func inject(
 	handle *pmanifold.Solver,
@@ -36,12 +36,8 @@ func inject(
 		)
 	}
 
-	if err := handle.ResetSources(); err != nil {
-		return errnie.Err(
-			errnie.Internal,
-			"manifold: failed to reset sources",
-			err,
-		)
+	if err := applyForcing(config, outcome, interval, oscillators); err != nil {
+		return err
 	}
 
 	if err := handle.SetOscillators(oscillators); err != nil {
@@ -52,15 +48,14 @@ func inject(
 		)
 	}
 
-	return applyForcing(handle, config, outcome, interval, oscillators)
+	return nil
 }
 
 /*
-applyForcing distributes one event-time Hawkes pressure step across the L3
-carrier population while preserving the model's absolute activity scale.
+applyForcing distributes one event-time Hawkes impulse across the L3 carrier
+mass. Applying it as velocity keeps the deposited gas state conservative.
 */
 func applyForcing(
-	handle *pmanifold.Solver,
 	config pmanifold.Config,
 	outcome excitation.Outcome,
 	interval time.Duration,
@@ -98,27 +93,15 @@ func applyForcing(
 		)
 	}
 
-	for _, oscillator := range oscillators {
+	for index := range oscillators {
+		oscillator := &oscillators[index]
 		pressure, mass := buyPressure, buyMass
 
 		if oscillator.PosX < midpoint {
 			pressure, mass = -sellPressure, sellMass
 		}
 
-		err := handle.SourceCell(
-			torusCell(config, oscillator.PosX, config.DomainX, config.GridX),
-			torusCell(config, oscillator.PosY, config.DomainY, config.GridY),
-			torusCell(config, oscillator.PosZ, config.DomainZ, config.GridZ),
-			pressure*oscillator.Amplitude/mass, 0, 0, 0, 0,
-		)
-
-		if err != nil {
-			return errnie.Err(
-				errnie.Internal,
-				"manifold: failed to apply Hawkes forcing",
-				err,
-			)
-		}
+		oscillator.VelX += pressure / mass
 	}
 
 	return nil

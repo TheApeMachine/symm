@@ -44,11 +44,12 @@ export type CausalFrame = {
 	reading?: CausalReading;
 };
 
-const CAUSAL_HISTORY_LIMIT = 130;
+const CAUSAL_HISTORY_LIMIT = 1;
 
 /*
-causalStore retains backend causal frames in bounded circular buffers so
-websocket ingest and direct paint stay off the React render path.
+causalStore retains the latest backend causal frame per symbol. Every consumer
+reads the current causal outcome, so keeping superseded frames only increases
+the cross-section memory footprint.
 */
 export const causalStore = createStore(
 	{

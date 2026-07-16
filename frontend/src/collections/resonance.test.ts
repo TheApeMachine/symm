@@ -1,12 +1,35 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { appStore } from "#/collections/app";
 import { resonanceStore } from "./resonance";
 
 describe("resonanceStore", () => {
 	beforeEach(() => {
+		appStore.actions.updateFocusSymbol("BTC/USD");
 		resonanceStore.setState(() => ({
 			resonance: {},
 			version: 0,
 		}));
+	});
+
+	it("keeps only the latest latent frame outside the focused symbol", () => {
+		resonanceStore.actions.updateFrame({
+			source: "resonance",
+			symbol: "ETH/USD",
+			at: "2026-07-12T00:00:00Z",
+			samples: 1,
+		});
+		resonanceStore.actions.updateFrame({
+			source: "resonance",
+			symbol: "ETH/USD",
+			at: "2026-07-12T00:00:01Z",
+			samples: 2,
+		});
+
+		expect(resonanceStore.state.resonance["ETH/USD"]?.capacity()).toBe(1);
+		expect(resonanceStore.state.resonance["ETH/USD"]?.values()).toHaveLength(1);
+		expect(
+			resonanceStore.state.resonance["ETH/USD"]?.values().at(-1)?.samples,
+		).toBe(2);
 	});
 
 	it("accepts the singleton domain object published by the backend", () => {

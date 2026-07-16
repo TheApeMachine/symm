@@ -10,9 +10,6 @@ import { Stat } from "@/components/ui/stat";
 const finite = (value: unknown): number | null =>
 	typeof value === "number" && Number.isFinite(value) ? value : null;
 
-const clamp = (value: number, min: number, max: number): number =>
-	Math.min(max, Math.max(min, value));
-
 export const CortexBeamList = ({
 	reading,
 }: {
@@ -66,31 +63,14 @@ export const CortexSidePanels = ({
 	reading: Record<string, unknown> | null;
 }) => {
 	const posterior = cognitivePosteriorFromReading(reading);
-	const lookaheadScore = finite(reading?.lookaheadScore);
-	const replays = finite(reading?.lookaheadPaths);
-	const nodeCount = finite(reading?.nodeCount);
-	const validReplays = replays !== null && replays >= 0 ? replays : null;
-	const validNodeCount =
-		nodeCount !== null && nodeCount >= 0 ? nodeCount : null;
-	const decay =
-		validReplays !== null &&
-		validNodeCount !== null &&
-		validReplays + validNodeCount > 0
-			? (validReplays / (validReplays + validNodeCount)).toFixed(3)
-			: lookaheadScore === null
-				? "—"
-				: Math.exp(Math.min(0, lookaheadScore)).toFixed(3);
-	const entropyBits = finite(reading?.entropyBits);
-	const entropyThreshold = finite(reading?.entropyThreshold);
-	const inhibition =
-		entropyBits !== null && entropyThreshold !== null && entropyThreshold > 0
-			? `${Math.round(clamp((entropyBits / entropyThreshold) * 100, 0, 100))}%`
-			: "—";
-	const remPhaseVariant = reading?.sideline
-		? "error"
-		: reading?.ambiguous
-			? "warning"
-			: "info";
+	const replays = finite(reading?.remReplays);
+	const remFrom = typeof reading?.remFrom === "string" ? reading.remFrom : "";
+	const remThrough =
+		typeof reading?.remThrough === "string" ? reading.remThrough : "";
+	const remWindow =
+		remFrom === "" || remThrough === ""
+			? "—"
+			: `${remFrom.slice(11, 19)}–${remThrough.slice(11, 19)}`;
 
 	return (
 		<div className="flex flex-col gap-3.5">
@@ -212,27 +192,25 @@ export const CortexSidePanels = ({
 						REM consolidation
 					</span>
 					<Badge
-						label={
-							reading?.sideline
-								? "waiting"
-								: reading?.ambiguous
-									? "rem-replay"
-									: "awake"
-						}
-						variant={remPhaseVariant}
+						label={replays === null ? "waiting" : "consolidated"}
+						variant={replays === null ? "warning" : "success"}
 					/>
 				</div>
 				<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
 					episodic replay · decay · retroactive inhibition
 				</div>
 				<div className="grid grid-cols-3 gap-2 font-mono">
-					<Stat layout="tile" label="decay γ" value={decay} />
+					<Stat layout="tile" label="window" value={remWindow} />
 					<Stat
 						layout="tile"
 						label="replays"
 						value={replays === null ? "—" : replays.toString()}
 					/>
-					<Stat layout="tile" label="inhibition" value={inhibition} />
+					<Stat
+						layout="tile"
+						label="cohort"
+						value={finite(reading?.regimeCohort)?.toString() ?? "—"}
+					/>
 				</div>
 			</Panel>
 		</div>

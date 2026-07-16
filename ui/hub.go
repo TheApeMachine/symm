@@ -67,6 +67,7 @@ func NewHub(
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		defer conn.Close()
+		conn.EnableWriteCompression(true)
 
 		hub.thesis.Publish()
 
@@ -93,6 +94,8 @@ func NewHub(
 				}
 			}
 		}
+	}, websocket.Config{
+		EnableCompression: true,
 	}))
 
 	return hub, nil

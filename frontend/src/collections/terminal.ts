@@ -18,6 +18,7 @@ export const terminalStore = createStore(
 		selectedSource: "fluid",
 		inspectorSource: null as string | null,
 		paletteOpen: false,
+		paletteMode: "all" as "all" | "symbols",
 		paletteQuery: "",
 		paletteIndex: 0,
 		focusSymbol: DEFAULT_FOCUS_SYMBOL,
@@ -54,6 +55,15 @@ export const terminalStore = createStore(
 			setState((prev) => ({
 				...prev,
 				paletteOpen: true,
+				paletteMode: "all",
+				paletteQuery: "",
+				paletteIndex: 0,
+			})),
+		openSymbolPalette: () =>
+			setState((prev) => ({
+				...prev,
+				paletteOpen: true,
+				paletteMode: "symbols",
 				paletteQuery: "",
 				paletteIndex: 0,
 			})),

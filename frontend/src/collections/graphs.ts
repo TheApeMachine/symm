@@ -2,7 +2,7 @@ import { createStore } from "@tanstack/react-store";
 import type { GraphFrame } from "#/types/thesis";
 import { Circular, type CircularBuffer } from "./circular";
 
-const GRAPH_HISTORY_LIMIT = 50;
+const GRAPH_HISTORY_LIMIT = 1;
 
 const asGraphs = (frame: unknown): GraphFrame[] => {
 	if (!Array.isArray(frame)) {
@@ -28,8 +28,9 @@ export const latestGraphFrame = (
 ): GraphFrame | null => graphs[symbol]?.values().at(-1) ?? null;
 
 /*
-graphsStore retains backend thesis evidence graphs per symbol in bounded
-circular buffers so partial empty frames cannot erase populated topology.
+graphsStore retains the latest backend evidence graph per symbol. Graph frames
+already contain the complete current topology, so historical copies only retain
+large superseded payloads.
 */
 export const graphsStore = createStore(
 	{

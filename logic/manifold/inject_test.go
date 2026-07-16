@@ -78,6 +78,81 @@ func TestArrivalForcing(t *testing.T) {
 	})
 }
 
+func TestApplyForcing(t *testing.T) {
+	Convey("Given L3 carrier mass on both sides of the book", t, func() {
+		config := testPhysicsConfig()
+		outcome := testOutcome()
+		oscillators := []pmanifold.Oscillator{
+			{
+				Amplitude: 0.2,
+				PosX:      0.25,
+				VelX:      -0.1,
+			},
+			{
+				Amplitude: 0.3,
+				PosX:      0.75,
+				VelX:      0.1,
+			},
+			{
+				Amplitude: 0.5,
+				PosX:      0.80,
+				VelX:      0.2,
+			},
+		}
+		beforeSell := oscillators[0].Amplitude * oscillators[0].VelX
+		beforeBuy := oscillators[1].Amplitude*oscillators[1].VelX +
+			oscillators[2].Amplitude*oscillators[2].VelX
+
+		err := applyForcing(config, outcome, 10*time.Millisecond, oscillators)
+
+		Convey("It should conserve the fitted side impulse with carrier mass", func() {
+			So(err, ShouldBeNil)
+
+			afterSell := oscillators[0].Amplitude * oscillators[0].VelX
+			afterBuy := oscillators[1].Amplitude*oscillators[1].VelX +
+				oscillators[2].Amplitude*oscillators[2].VelX
+
+			So(afterSell-beforeSell, ShouldAlmostEqual, -0.0232)
+			So(afterBuy-beforeBuy, ShouldAlmostEqual, 0.0484)
+		})
+	})
+}
+
+func BenchmarkApplyForcing(b *testing.B) {
+	config := testPhysicsConfig()
+	outcome := testOutcome()
+	population := []pmanifold.Oscillator{
+		{
+			Amplitude: 0.2,
+			PosX:      0.25,
+			VelX:      -0.1,
+		},
+		{
+			Amplitude: 0.3,
+			PosX:      0.75,
+			VelX:      0.1,
+		},
+		{
+			Amplitude: 0.5,
+			PosX:      0.80,
+			VelX:      0.2,
+		},
+	}
+	oscillators := make([]pmanifold.Oscillator, len(population))
+
+	b.ResetTimer()
+
+	for index := 0; index < b.N; index++ {
+		copy(oscillators, population)
+
+		if err := applyForcing(
+			config, outcome, 10*time.Millisecond, oscillators,
+		); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func TestIntegrationDeltaT(t *testing.T) {
 	Convey("Given a chronological market interval", t, func() {
 		config := testPhysicsConfig()

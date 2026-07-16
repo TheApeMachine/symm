@@ -28,6 +28,9 @@ export type CognitiveReading = {
 	branches?: CognitiveBranch[];
 	beams?: CognitiveBeam[];
 	classes?: CognitiveClass[];
+	remFrom?: string;
+	remThrough?: string;
+	remReplays?: number;
 };
 
 export type CognitiveBranch = {
@@ -71,6 +74,9 @@ type CognitionFrame = {
 	branches?: CognitiveBranch[];
 	beams?: CognitiveBeam[];
 	classes?: CognitiveClass[];
+	remFrom?: string;
+	remThrough?: string;
+	remReplays?: number;
 };
 
 const finite = (value: unknown): number | null =>
@@ -115,6 +121,9 @@ export const cognitiveReadingFromFrame = (
 		branches: frame.branches,
 		beams: frame.beams,
 		classes: frame.classes,
+		remFrom: frame.remFrom,
+		remThrough: frame.remThrough,
+		remReplays: finite(frame.remReplays) ?? undefined,
 	};
 };
 

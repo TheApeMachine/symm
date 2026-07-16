@@ -6,9 +6,10 @@ import (
 )
 
 /*
-Compose derives relationships between chronological neighbors of each shared
-observable without materializing a redundant transitive closure. AddNode has
-already established each measurement's structural invariants.
+Compose derives the current relationship between the two newest observations
+of each shared observable. Older measurements remain analysis inputs, but they
+do not belong in the live graph once a newer direct relationship supersedes
+them.
 */
 func (evidenceGraph *Graph) Compose() {
 	observables := make(map[string][]*Node)
@@ -37,8 +38,9 @@ func (evidenceGraph *Graph) Compose() {
 			return older.Measurement.At.Before(newer.Measurement.At)
 		})
 
-		for index := 1; index < len(observable); index++ {
-			evidenceGraph.compose(observable[index-1], observable[index])
+		if len(observable) > 1 {
+			latest := len(observable) - 1
+			evidenceGraph.compose(observable[latest-1], observable[latest])
 		}
 	}
 

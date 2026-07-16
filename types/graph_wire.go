@@ -3,8 +3,8 @@ package types
 import "time"
 
 /*
-GraphNodeWire carries one measurement node for UI serialization without exposing
-Gonum internals on the websocket frame.
+GraphNodeWire carries one measurement node and its stable evidence key on the
+websocket frame.
 */
 type GraphNodeWire struct {
 	Key         string      `json:"key"`
@@ -33,7 +33,7 @@ type GraphFrame struct {
 }
 
 /*
-Frame serializes the current Gonum topology into a UI-safe wire snapshot.
+Frame serializes the current typed evidence topology into its UI wire snapshot.
 */
 func (evidenceGraph *Graph) Frame() GraphFrame {
 	frame := GraphFrame{

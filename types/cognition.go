@@ -59,4 +59,7 @@ type Cognition struct {
 	Branches         []CognitionBranch  `json:"branches,omitempty"`
 	Beams            []CognitionBeam    `json:"beams,omitempty"`
 	Classes          []CognitionClass   `json:"classes,omitempty"`
+	REMFrom          time.Time          `json:"remFrom,omitempty"`
+	REMThrough       time.Time          `json:"remThrough,omitempty"`
+	REMReplays       int                `json:"remReplays,omitempty"`
 }

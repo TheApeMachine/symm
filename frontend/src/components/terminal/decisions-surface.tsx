@@ -71,15 +71,12 @@ export const DecisionsSurface = () => {
 		},
 		{} as Record<string, (typeof strategyDecisions)[number]>,
 	);
-	const causalBySymbol = useSelector(causalStore, (state) => state.causal);
-	const manifoldBySymbol = useSelector(
-		manifoldStore,
-		(state) => state.manifold,
-	);
-	const resonanceBySymbol = useSelector(
-		resonanceStore,
-		(state) => state.resonance,
-	);
+	useSelector(causalStore, (state) => state.version);
+	useSelector(manifoldStore, (state) => state.version);
+	useSelector(resonanceStore, (state) => state.version);
+	const causalBySymbol = causalStore.state.causal;
+	const manifoldBySymbol = manifoldStore.state.manifold;
+	const resonanceBySymbol = resonanceStore.state.resonance;
 	const measurementsBySymbol = useSelector(
 		measurementsStore,
 		(state) => state.measurements,
@@ -93,7 +90,6 @@ export const DecisionsSurface = () => {
 			...Object.keys(causalBySymbol),
 			...Object.keys(resonanceBySymbol),
 			...Object.keys(manifoldBySymbol),
-			...Object.keys(measurementsBySymbol),
 			...Object.keys(decisionsBySymbol),
 		].filter((symbol) => symbol.includes("/")),
 	);

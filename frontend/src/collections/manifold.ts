@@ -7,6 +7,8 @@ export type ManifoldFrame = Record<string, unknown> & {
 	at: string;
 };
 
+const MANIFOLD_HISTORY_LIMIT = 1;
+
 const asManifoldFrames = (
 	frame: ManifoldFrame | ManifoldFrame[],
 ): ManifoldFrame[] => {
@@ -19,8 +21,8 @@ const asManifoldFrames = (
 };
 
 /*
-manifoldStore retains backend manifold states per symbol in bounded circular
-buffers so the fluid canvas can paint rho projections without React churn.
+manifoldStore retains the latest backend manifold state per symbol so the fluid
+canvas can paint its dense projection without retaining superseded matrices.
 */
 export const manifoldStore = createStore(
 	{
@@ -40,7 +42,9 @@ export const manifoldStore = createStore(
 
 				for (const row of rows) {
 					if (!manifold[row.symbol]) {
-						manifold[row.symbol] = Circular<ManifoldFrame>(50);
+						manifold[row.symbol] = Circular<ManifoldFrame>(
+							MANIFOLD_HISTORY_LIMIT,
+						);
 					}
 
 					manifold[row.symbol].push(row);

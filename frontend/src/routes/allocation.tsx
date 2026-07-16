@@ -37,14 +37,18 @@ const AllocMetric = ({
 );
 
 const RouteComponent = () => {
+	useSelector(causalStore, (state) => state.version);
+	useSelector(manifoldStore, (state) => state.version);
+	useSelector(resonanceStore, (state) => state.version);
+
 	const alloc = allocationSummary({
 		focusSymbol: useSelector(appStore, (state) => state.focusSymbol),
 		symbols: useSelector(instrumentsStore, (state) => state.symbols),
 		balances: useSelector(balancesStore, (state) => state.balances),
-		causal: useSelector(causalStore, (state) => state.causal),
-		manifold: useSelector(manifoldStore, (state) => state.manifold),
+		causal: causalStore.state.causal,
+		manifold: manifoldStore.state.manifold,
 		positions: useSelector(positionsStore, (state) => state.positions),
-		resonance: useSelector(resonanceStore, (state) => state.resonance),
+		resonance: resonanceStore.state.resonance,
 	});
 	const orders = useSelector(ordersStore, (state) => state.orders);
 	const money = (value: number) => `${value.toFixed(2)} ${alloc.quote}`;
@@ -63,11 +67,7 @@ const RouteComponent = () => {
 				</div>
 				<div className="ml-auto flex items-center gap-5">
 					<AllocMetric label="Deployable" value={money(alloc.deployable)} />
-					<AllocMetric
-						label="Deployed"
-						value={money(alloc.deployed)}
-						accent
-					/>
+					<AllocMetric label="Deployed" value={money(alloc.deployed)} accent />
 					<AllocMetric label="Positions" value={String(alloc.positionCount)} />
 				</div>
 			</div>

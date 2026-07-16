@@ -3,15 +3,7 @@ export const isPlainObject = (
 ): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
-const orderedEventArrays = new Set([
-	"measurements",
-	"decisions",
-	"tradeJournal",
-	"findings",
-	"manifold",
-	"resonance",
-	"causal",
-]);
+const orderedEventArrays = new Set(["tradeJournal", "findings"]);
 
 /*
 mergeFrameEntry coalesces one keyed backend payload inside a 16ms worker window.
@@ -41,8 +33,9 @@ export const mergeFrameEntry = (
 
 /*
 mergeFramePayload merges a parsed websocket object into the active worker queue.
-Ordered thesis evidence is appended so the paint window cannot discard market
-epochs, while complete state snapshots continue to replace older arrays.
+Ordered journal evidence is appended so the paint window cannot discard broker
+events. Live analysis arrays are complete state snapshots and replace an older
+snapshot queued in the same paint window.
 */
 export const mergeFramePayload = (
 	queue: Record<string, unknown>,

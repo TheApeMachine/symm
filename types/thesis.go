@@ -210,7 +210,12 @@ func (thesis *Thesis) Publish() {
 	leader, leadershipThreshold := thesis.CrossSection.Leadership()
 
 	thesis.Send(datura.Map[any]{
-		"tick": datura.Map[any]{"count": thesis.Tick},
+		"tick":         datura.Map[any]{"count": thesis.Tick},
+		"decisions":    thesis.Decisions,
+		"orders":       thesis.Orders,
+		"positions":    thesis.Positions,
+		"tradeJournal": []any{},
+		"findings":     thesis.Findings,
 		"diagnostics": []datura.Map[any]{
 			{
 				"metrics":             thesis.CrossSection.Metrics,
@@ -226,24 +231,6 @@ func (thesis *Thesis) Publish() {
 	if len(measurements) > 0 {
 		thesis.Send(datura.Map[any]{
 			"measurements": measurements,
-		})
-	}
-
-	if len(thesis.Decisions) > 0 {
-		thesis.Send(datura.Map[any]{
-			"decisions": thesis.Decisions,
-		})
-	}
-
-	if len(thesis.Orders) > 0 {
-		thesis.Send(datura.Map[any]{
-			"orders": thesis.Orders,
-		})
-	}
-
-	if len(thesis.Positions) > 0 {
-		thesis.Send(datura.Map[any]{
-			"positions": thesis.Positions,
 		})
 	}
 
@@ -270,12 +257,6 @@ func (thesis *Thesis) Publish() {
 
 		thesis.Send(datura.Map[any]{
 			"lifecycle": lifecycle,
-		})
-	}
-
-	if len(thesis.Findings) > 0 {
-		thesis.Send(datura.Map[any]{
-			"findings": thesis.Findings,
 		})
 	}
 

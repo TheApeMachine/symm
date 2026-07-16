@@ -14,7 +14,6 @@ import {
 	cognitiveScopes,
 	cognitiveStore,
 } from "#/collections/cognitive";
-import { instrumentsStore } from "#/collections/instruments";
 import { manifoldStore } from "#/collections/manifold";
 import {
 	type Measurement,
@@ -930,10 +929,6 @@ const RowFact = ({
 
 const RouteComponent = () => {
 	const activeSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const instrumentSymbols = useSelector(
-		instrumentsStore,
-		(state) => state.symbols,
-	);
 	const readings = useSelector(measurementsStore, (state) => state);
 	const resonanceState = useSelector(
 		resonanceStore,
@@ -948,17 +943,6 @@ const RouteComponent = () => {
 	const manifold = manifoldState[activeSymbol]?.values().at(-1) ?? null;
 	const layers = xrayLayersFromManifold(manifold, resonance);
 	const hawkesBuffer = readings.measurements[activeSymbol]?.hawkes;
-	const symbols = [
-		...new Set([
-			activeSymbol,
-			...Object.keys(resonanceState),
-			...Object.keys(manifoldState),
-			...Object.keys(readings.measurements),
-			...instrumentSymbols,
-		]),
-	]
-		.filter((symbol) => symbol.includes("/"))
-		.slice(0, 10);
 	const latentPoints = useMemo(
 		() => latentPointsFromFrames(resonanceState),
 		[resonanceState],
@@ -992,36 +976,6 @@ const RouteComponent = () => {
 
 	return (
 		<div className="flex h-full min-w-[1100px] flex-col">
-			<div className="flex h-[46px] shrink-0 items-center gap-2 overflow-x-auto border-(--line) border-b bg-(--surface) px-3.5">
-				<span className="mr-1 shrink-0 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
-					Inspect symbol
-				</span>
-				{symbols.map((symbol) => {
-					const active = symbol === activeSymbol;
-
-					return (
-						<button
-							key={symbol}
-							type="button"
-							data-symbol={symbol}
-							onClick={() => {
-								appStore.actions.updateFocusSymbol(symbol);
-								terminalStore.actions.selectFocusSymbol(symbol);
-							}}
-							className="shrink-0 cursor-pointer rounded-[3px] border px-[11px] py-1 font-mono font-medium text-[11px]"
-							style={{
-								borderColor: active ? "var(--acc)" : "var(--line)",
-								background: active
-									? "color-mix(in srgb,var(--acc) 14%,transparent)"
-									: "transparent",
-								color: active ? "var(--acc)" : "var(--f3)",
-							}}
-						>
-							{symbol.split("/")[0]}
-						</button>
-					);
-				})}
-			</div>
 			<div className="grid min-h-0 flex-1 grid-cols-[minmax(520px,1fr)_352px]">
 				<div className="flex min-h-0 flex-col overflow-auto border-(--line) border-r">
 					<div className="shrink-0 px-[18px] py-4">

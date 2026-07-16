@@ -15,7 +15,7 @@ describe("mergeFramePayload", () => {
 		expect(merged.positions).toEqual([{ symbol: "ETH/USD", mark: 2 }]);
 	});
 
-	it("preserves ordered thesis evidence inside one paint window", () => {
+	it("keeps only the latest analysis snapshots inside one paint window", () => {
 		const merged = mergeFramePayload(
 			{
 				measurements: [{ symbol: "BTC/USD", at: "first" }],
@@ -27,14 +27,17 @@ describe("mergeFramePayload", () => {
 			},
 		);
 
-		expect(merged.measurements).toEqual([
-			{ symbol: "BTC/USD", at: "first" },
-			{ symbol: "BTC/USD", at: "second" },
-		]);
-		expect(merged.manifold).toEqual([
-			{ symbol: "BTC/USD", epoch: 1 },
-			{ symbol: "BTC/USD", epoch: 2 },
-		]);
+		expect(merged.measurements).toEqual([{ symbol: "BTC/USD", at: "second" }]);
+		expect(merged.manifold).toEqual([{ symbol: "BTC/USD", epoch: 2 }]);
+	});
+
+	it("preserves ordered journal evidence inside one paint window", () => {
+		const merged = mergeFramePayload(
+			{ tradeJournal: [{ id: "first" }] },
+			{ tradeJournal: [{ id: "second" }] },
+		);
+
+		expect(merged.tradeJournal).toEqual([{ id: "first" }, { id: "second" }]);
 	});
 
 	it("shallow-merges object maps inside one worker window", () => {
