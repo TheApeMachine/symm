@@ -1,15 +1,16 @@
 package exhaust
 
 import (
-	"container/ring"
 	"context"
-	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -20,7 +21,7 @@ type Book struct {
 	cancel     context.CancelFunc
 	api        *websocket.API
 	instrument *broker.Instrument
-	cache      *sync.Map
+	cache      *types.MarketFeed[kraken.BookData]
 }
 
 func NewBook(
@@ -33,7 +34,10 @@ func NewBook(
 		cancel:     cancel,
 		api:        api,
 		instrument: instrument,
-		cache:      &sync.Map{},
+		cache: types.NewMarketFeed[kraken.BookData](
+			viper.GetInt("signals.feed_timeline_capacity"),
+			viper.GetInt("signals.feed_track_capacity"),
+		),
 	}
 
 	book.api.On("book", book.On)
@@ -60,13 +64,14 @@ func (book *Book) On(data []byte) {
 	}
 
 	for _, data := range frame.Data {
-		found, _ := book.cache.LoadOrStore(data.Symbol, ring.New(
-			viper.GetInt("signals.feed_ring_capacity"),
-		))
-
-		track := found.(*ring.Ring)
-		track.Value = data
-		book.cache.Store(data.Symbol, track.Next())
+		if err := book.cache.Observe(data.Symbol, data.Timestamp, data); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"exhaust: book observation failed",
+				err,
+			))
+			return
+		}
 	}
 }
 
@@ -87,4 +92,45 @@ func (book *Book) increment(symbol string) decimal.Decimal {
 	}
 
 	return pair.Increment()
+}
+
+/*
+levels converts exchange decimals into the tick-aware book levels required by
+the decay sample, preserving the instrument's authoritative price increment.
+*/
+func (book *Book) levels(
+	row kraken.BookData,
+) ([]flow.BookLevel, []flow.BookLevel, error) {
+	bids := make([]flow.BookLevel, 0, len(row.Bids))
+	asks := make([]flow.BookLevel, 0, len(row.Asks))
+
+	for _, level := range row.Bids {
+		tick, err := kraken.PriceTick(level.Price, row.PriceIncrement)
+
+		if err != nil {
+			return nil, nil, err
+		}
+
+		bids = append(bids, flow.BookLevel{
+			Price:    level.Price.Float64(),
+			Ticks:    tick,
+			Quantity: level.Qty,
+		})
+	}
+
+	for _, level := range row.Asks {
+		tick, err := kraken.PriceTick(level.Price, row.PriceIncrement)
+
+		if err != nil {
+			return nil, nil, err
+		}
+
+		asks = append(asks, flow.BookLevel{
+			Price:    level.Price.Float64(),
+			Ticks:    tick,
+			Quantity: level.Qty,
+		})
+	}
+
+	return bids, asks, nil
 }

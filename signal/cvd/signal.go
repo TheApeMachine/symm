@@ -1,8 +1,8 @@
 package cvd
 
 import (
-	"container/ring"
 	"context"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
@@ -38,23 +38,31 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 }
 
 /*
+Capture freezes the trade journal so cumulative signed flow consumes a complete
+ingress range without destructively clearing retained trades.
+*/
+func (signal *Signal) Capture(at time.Time) error {
+	return signal.trade.cache.Capture(at)
+}
+
+/*
 Measure converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	trades := make([]kraken.TradeData, 0)
-	signal.trade.cache.Range(func(key, value any) bool {
-		value.(*ring.Ring).Do(func(value any) {
-			if value != nil {
-				trades = append(trades, value.(kraken.TradeData))
-			}
-		})
-		signal.trade.cache.Delete(key)
+	trades, err := signal.trade.cache.Drain(thesis.At)
 
-		return true
-	})
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"cvd: trade drain failed",
+			err,
+		))
+		return thesis
+	}
+
 	out := make([]*types.Measurement, 0, len(trades))
 
 	for _, row := range trades {
@@ -94,7 +102,7 @@ func (signal *Signal) Measure(
 		out = append(out, signal.cvdMeasurements(row, output, maturity)...)
 	}
 
-	thesis.Signals.Store("trades", trades)
+	thesis.Signals.Store("cvd.trades", trades)
 	thesis.Measurements = append(thesis.Measurements, out...)
 
 	return thesis

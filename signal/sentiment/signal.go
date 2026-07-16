@@ -1,12 +1,11 @@
 package sentiment
 
 import (
-	"container/ring"
 	"context"
 	"math"
+	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -36,23 +35,31 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 }
 
 /*
+Capture freezes the ticker journal before planner starts measuring signals so
+breadth and leadership use one stable market surface.
+*/
+func (signal *Signal) Capture(at time.Time) error {
+	return signal.ticker.cache.Capture(at)
+}
+
+/*
 Measure converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	tickers := make([]kraken.TickerData, 0)
-	signal.ticker.cache.Range(func(key, value any) bool {
-		value.(*ring.Ring).Do(func(value any) {
-			if value != nil {
-				tickers = append(tickers, value.(kraken.TickerData))
-			}
-		})
-		signal.ticker.cache.Delete(key)
+	tickers, err := signal.ticker.cache.Frame(thesis.At)
 
-		return true
-	})
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"sentiment: ticker frame failed",
+			err,
+		))
+		return thesis
+	}
+
 	out := make([]*types.Measurement, 0, len(tickers)*9)
 
 	if thesis.CrossSection == nil {
@@ -183,7 +190,7 @@ func (signal *Signal) Measure(
 		)
 	}
 
-	thesis.Signals.Store("tickers", tickers)
+	thesis.Signals.Store("sentiment.tickers", tickers)
 	thesis.Measurements = append(thesis.Measurements, out...)
 
 	return thesis

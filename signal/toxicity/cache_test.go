@@ -1,20 +1,18 @@
 package toxicity
 
 import (
-	"container/ring"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
-	"sync"
+	"github.com/theapemachine/symm/types"
 )
 
-func tradeCache(rows ...kraken.TradeData) *sync.Map {
-	viper.Set("signals.feed_ring_capacity", 128)
-	cache := &sync.Map{}
+func tradeCache(rows ...kraken.TradeData) *types.MarketFeed[kraken.TradeData] {
+	cache := types.NewMarketFeed[kraken.TradeData](128, 128)
+
 	for _, row := range rows {
-		found, _ := cache.LoadOrStore(row.Symbol, ring.New(128))
-		track := found.(*ring.Ring)
-		track.Value = row
-		cache.Store(row.Symbol, track.Next())
+		if err := cache.Observe(row.Symbol, row.Timestamp, row); err != nil {
+			panic(err)
+		}
 	}
+
 	return cache
 }

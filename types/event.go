@@ -1,6 +1,9 @@
 package types
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 /*
 Event is one decoded market row tagged with the stream that produced it
@@ -10,11 +13,38 @@ stream, and sequence, before any signal measures them.
 */
 type Event struct {
 	Stream   string
+	Priority int
 	Sequence uint64
 	At       time.Time
 	Symbol   string
 	Price    float64
 	Row      any
+}
+
+/*
+OrderEvents sorts decoded rows by event time, explicit stream priority, stream
+sequence, and symbol. Callers choose priority from signal semantics; sequence
+preserves the authoritative order within each entity journal.
+*/
+func OrderEvents(events []Event) {
+	sort.SliceStable(events, func(left int, right int) bool {
+		leftEvent := events[left]
+		rightEvent := events[right]
+
+		if !leftEvent.At.Equal(rightEvent.At) {
+			return leftEvent.At.Before(rightEvent.At)
+		}
+
+		if leftEvent.Priority != rightEvent.Priority {
+			return leftEvent.Priority < rightEvent.Priority
+		}
+
+		if leftEvent.Sequence != rightEvent.Sequence {
+			return leftEvent.Sequence < rightEvent.Sequence
+		}
+
+		return leftEvent.Symbol < rightEvent.Symbol
+	})
 }
 
 /*

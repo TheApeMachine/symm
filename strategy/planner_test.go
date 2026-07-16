@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -9,6 +10,53 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/types"
 )
+
+type plannerCutSignal struct {
+	high    int
+	cut     int
+	seen    int
+	measure func()
+}
+
+func (signal *plannerCutSignal) Capture(time.Time) error {
+	signal.cut = signal.high
+	return nil
+}
+
+func (signal *plannerCutSignal) Measure(thesis *types.Thesis) *types.Thesis {
+	signal.seen = signal.cut
+
+	if signal.measure != nil {
+		signal.measure()
+	}
+
+	return thesis
+}
+
+func TestPlanner_UpdateCapturesInputsFirst(t *testing.T) {
+	Convey("Given an observation arriving while an earlier signal measures", t, func() {
+		later := &plannerCutSignal{}
+		earlier := &plannerCutSignal{
+			measure: func() {
+				later.high++
+			},
+		}
+		planner := NewPlanner(
+			context.Background(),
+			nil,
+			[]types.Signal{earlier, later},
+			nil,
+		)
+
+		planner.Update()
+
+		Convey("It defers that observation until the next Thesis", func() {
+			So(later.seen, ShouldEqual, 0)
+			planner.Update()
+			So(later.seen, ShouldEqual, 1)
+		})
+	})
+}
 
 func TestPlannerDecide(t *testing.T) {
 	forecast := types.Forecasts{

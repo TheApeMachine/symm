@@ -3,6 +3,7 @@ package types
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -40,6 +41,7 @@ type Thesis struct {
 	checkpoint   atomic.Int64
 	uiHub        chan<- []byte
 	Tick         int64          `json:"tick"`
+	At           time.Time      `json:"at"`
 	Positions    []Holding      `json:"positions"`
 	Signals      *sync.Map      `json:"signals"`
 	CrossSection *CrossSection  `json:"crossSection"`
@@ -177,6 +179,7 @@ NewThesis creates an empty in-process lifecycle carrier for one tick.
 func NewThesis(uiHub chan<- []byte) *Thesis {
 	return &Thesis{
 		uiHub:        uiHub,
+		At:           time.Now().UTC(),
 		Positions:    make([]Holding, 0),
 		Decisions:    make([]Decision, 0),
 		Signals:      &sync.Map{},

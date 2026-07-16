@@ -1,13 +1,13 @@
 package toxicity
 
 import (
-	"container/ring"
 	"context"
-	"sync"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -17,8 +17,7 @@ type Trade struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	api    *websocket.API
-	access sync.Mutex
-	cache  *sync.Map
+	cache  *types.MarketFeed[kraken.TradeData]
 }
 
 /*
@@ -31,7 +30,10 @@ func NewTrade(ctx context.Context, api *websocket.API) *Trade {
 		ctx:    ctx,
 		cancel: cancel,
 		api:    api,
-		cache:  &sync.Map{},
+		cache: types.NewMarketFeed[kraken.TradeData](
+			viper.GetInt("signals.feed_timeline_capacity"),
+			viper.GetInt("signals.feed_track_capacity"),
+		),
 	}
 
 	trade.api.On("trade", trade.On)
@@ -53,16 +55,14 @@ func (trade *Trade) On(data []byte) {
 		return
 	}
 
-	trade.access.Lock()
-	defer trade.access.Unlock()
-
 	for _, data := range trades.Data {
-		found, _ := trade.cache.LoadOrStore(data.Symbol, ring.New(
-			viper.GetInt("signals.feed_ring_capacity"),
-		))
-
-		track := found.(*ring.Ring)
-		track.Value = data
-		trade.cache.Store(data.Symbol, track.Next())
+		if err := trade.cache.Observe(data.Symbol, data.Timestamp, data); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"toxicity: trade observation failed",
+				err,
+			))
+			return
+		}
 	}
 }

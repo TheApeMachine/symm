@@ -1,7 +1,6 @@
 package exhaust
 
 import (
-	"container/ring"
 	"context"
 	"time"
 
@@ -45,155 +44,178 @@ func NewSignal(
 }
 
 /*
+Capture freezes book and trade journals at one planner boundary so decay state
+can consume a stable causal event range.
+*/
+func (signal *Signal) Capture(at time.Time) error {
+	if err := signal.book.cache.Capture(at); err != nil {
+		return err
+	}
+
+	return signal.trade.cache.Capture(at)
+}
+
+/*
 Measure converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	books := make([]kraken.BookData, 0)
-	signal.book.cache.Range(func(key, value any) bool {
-		value.(*ring.Ring).Do(func(value any) {
-			if value != nil {
-				books = append(books, value.(kraken.BookData))
-			}
-		})
-		signal.book.cache.Delete(key)
+	bookBatch, err := signal.book.cache.Batch(thesis.At)
 
-		return true
-	})
-
-	trades := make([]kraken.TradeData, 0)
-	signal.trade.cache.Range(func(key, value any) bool {
-		value.(*ring.Ring).Do(func(value any) {
-			if value != nil {
-				trades = append(trades, value.(kraken.TradeData))
-			}
-		})
-		signal.trade.cache.Delete(key)
-
-		return true
-	})
-	out := make([]*types.Measurement, 0, 8*(len(books)+len(trades)))
-
-	for _, row := range books {
-		if row.Symbol == "" || row.PriceIncrement.Sign() <= 0 {
-			continue
-		}
-
-		bids := make([]flow.BookLevel, 0, len(row.Bids))
-		asks := make([]flow.BookLevel, 0, len(row.Asks))
-
-		for _, level := range row.Bids {
-			tick, err := kraken.PriceTick(level.Price, row.PriceIncrement)
-
-			if err != nil {
-				panic(errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					err.Error(),
-					err,
-				)))
-			}
-
-			bids = append(bids, flow.BookLevel{
-				Price:    level.Price.Float64(),
-				Ticks:    tick,
-				Quantity: level.Qty,
-			})
-		}
-
-		for _, level := range row.Asks {
-			tick, err := kraken.PriceTick(level.Price, row.PriceIncrement)
-
-			if err != nil {
-				panic(errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					err.Error(),
-					err,
-				)))
-			}
-
-			asks = append(asks, flow.BookLevel{
-				Price:    level.Price.Float64(),
-				Ticks:    tick,
-				Quantity: level.Qty,
-			})
-		}
-
-		input, ready, maturity, err := signal.sample.MeasureBook(flow.BookInput{
-			Symbol:   row.Symbol,
-			TickSize: row.PriceIncrement.Float64(),
-			Bids:     bids,
-			Asks:     asks,
-		})
-
-		if err != nil {
-			panic(errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				err.Error(),
-				err,
-			)))
-		}
-
-		if !ready {
-			continue
-		}
-
-		output, err := signal.decay.Measure(input)
-
-		if err != nil {
-			panic(errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				err.Error(),
-				err,
-			)))
-		}
-
-		out = append(out, signal.measurements(row.Symbol, row.Timestamp, output, maturity)...)
+	if err != nil {
+		errnie.Error(err)
+		return thesis
 	}
 
-	for _, row := range trades {
-		if row.Symbol == "" || row.Price.Sign() <= 0 || row.Qty <= 0 {
+	tradeBatch, err := signal.trade.cache.Batch(thesis.At)
+
+	if err != nil {
+		errnie.Error(err)
+		return thesis
+	}
+	events := exhaustEvents(bookBatch.Rows, tradeBatch.Rows)
+	out := make([]*types.Measurement, 0, 8*len(events))
+
+	for _, event := range events {
+		if event.Stream == "book" {
+			out = append(out, signal.measureBook(event.Row.(kraken.BookData))...)
 			continue
 		}
 
-		input, ready, maturity, err := signal.sample.MeasureTrade(flow.TradeInput{
-			Symbol:   row.Symbol,
-			Price:    row.Price.Float64(),
-			Quantity: row.Qty,
-			Side:     row.Side,
-		})
-
-		if err != nil {
-			panic(errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				err.Error(),
-				err,
-			)))
-		}
-
-		if !ready {
-			continue
-		}
-
-		output, err := signal.decay.Measure(input)
-
-		if err != nil {
-			panic(errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				err.Error(),
-				err,
-			)))
-		}
-
-		out = append(out, signal.measurements(row.Symbol, row.Timestamp, output, maturity)...)
+		out = append(out, signal.measureTrade(event.Row.(kraken.TradeData))...)
 	}
 
-	thesis.Signals.Store("books", books)
-	thesis.Signals.Store("trades", trades)
+	if err := signal.book.cache.Commit(bookBatch); err != nil {
+		errnie.Error(err)
+		return thesis
+	}
+
+	if err := signal.trade.cache.Commit(tradeBatch); err != nil {
+		errnie.Error(err)
+		return thesis
+	}
+
+	thesis.Signals.Store("exhaust.books", bookBatch.Rows)
+	thesis.Signals.Store("exhaust.trades", tradeBatch.Rows)
 	thesis.Measurements = append(thesis.Measurements, out...)
 
 	return thesis
+}
+
+/*
+measureBook applies one book event to the shared decay sample at its causal
+position in the merged entity timeline.
+*/
+func (signal *Signal) measureBook(row kraken.BookData) []*types.Measurement {
+	if row.Symbol == "" || row.PriceIncrement.Sign() <= 0 {
+		return nil
+	}
+
+	bids, asks, err := signal.book.levels(row)
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	input, ready, maturity, err := signal.sample.MeasureBook(flow.BookInput{
+		Symbol:   row.Symbol,
+		TickSize: row.PriceIncrement.Float64(),
+		Bids:     bids,
+		Asks:     asks,
+	})
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	if !ready {
+		return nil
+	}
+
+	output, err := signal.decay.Measure(input)
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	return signal.measurements(row.Symbol, row.Timestamp, output, maturity)
+}
+
+/*
+measureTrade applies one trade event to the shared decay sample at its causal
+position in the merged entity timeline.
+*/
+func (signal *Signal) measureTrade(row kraken.TradeData) []*types.Measurement {
+	if row.Symbol == "" || row.Price.Sign() <= 0 || row.Qty <= 0 {
+		return nil
+	}
+
+	input, ready, maturity, err := signal.sample.MeasureTrade(flow.TradeInput{
+		Symbol:   row.Symbol,
+		Price:    row.Price.Float64(),
+		Quantity: row.Qty,
+		Side:     row.Side,
+	})
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	if !ready {
+		return nil
+	}
+
+	output, err := signal.decay.Measure(input)
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	return signal.measurements(row.Symbol, row.Timestamp, output, maturity)
+}
+
+/*
+exhaustEvents merges book and trade batches by event time. Trades precede books
+at equal timestamps so the book state includes simultaneous executed pressure.
+*/
+func exhaustEvents(
+	books []kraken.BookData,
+	trades []kraken.TradeData,
+) []types.Event {
+	events := make([]types.Event, 0, len(books)+len(trades))
+
+	for index, row := range trades {
+		events = append(events, types.Event{
+			Stream:   "trade",
+			Priority: 0,
+			Sequence: uint64(index + 1),
+			At:       row.Timestamp,
+			Symbol:   row.Symbol,
+			Row:      row,
+		})
+	}
+
+	for index, row := range books {
+		events = append(events, types.Event{
+			Stream:   "book",
+			Priority: 1,
+			Sequence: uint64(index + 1),
+			At:       row.Timestamp,
+			Symbol:   row.Symbol,
+			Row:      row,
+		})
+	}
+
+	types.OrderEvents(events)
+
+	return events
 }
 
 /*

@@ -423,6 +423,23 @@ func (planner *Planner) Update() *types.Thesis {
 	thesis := types.NewThesis(planner.uiHub)
 
 	for _, signal := range planner.signals {
+		inputSignal, ok := signal.(types.InputSignal)
+
+		if !ok {
+			continue
+		}
+
+		if err := inputSignal.Capture(thesis.At); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"planner: signal input cut failed",
+				err,
+			))
+			return thesis
+		}
+	}
+
+	for _, signal := range planner.signals {
 		thesis = signal.Measure(thesis)
 	}
 

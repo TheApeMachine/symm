@@ -1,9 +1,8 @@
 package hawkes
 
 import (
-	"container/ring"
 	"context"
-	"sync"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -29,8 +28,7 @@ type Signal struct {
 	cancel     context.CancelFunc
 	api        *websocket.API
 	trade      *Trade
-	access     sync.Mutex
-	tradeCache *sync.Map
+	tradeCache *types.MarketFeed[kraken.TradeData]
 }
 
 /*
@@ -41,11 +39,14 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:        ctx,
-		cancel:     cancel,
-		api:        api,
-		trade:      NewTrade(),
-		tradeCache: &sync.Map{},
+		ctx:    ctx,
+		cancel: cancel,
+		api:    api,
+		trade:  NewTrade(),
+		tradeCache: types.NewMarketFeed[kraken.TradeData](
+			viper.GetInt("signals.feed_timeline_capacity"),
+			viper.GetInt("signals.feed_track_capacity"),
+		),
 	}
 
 	signal.api.On("trade", signal.onTrade)
@@ -68,18 +69,24 @@ func (signal *Signal) onTrade(data []byte) {
 		return
 	}
 
-	signal.access.Lock()
-	defer signal.access.Unlock()
-
 	for _, data := range frame.Data {
-		found, _ := signal.tradeCache.LoadOrStore(data.Symbol, ring.New(
-			viper.GetInt("signals.feed_ring_capacity"),
-		))
-
-		track := found.(*ring.Ring)
-		track.Value = data
-		signal.tradeCache.Store(data.Symbol, track.Next())
+		if err := signal.tradeCache.Observe(data.Symbol, data.Timestamp, data); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"hawkes: trade observation failed",
+				err,
+			))
+			return
+		}
 	}
+}
+
+/*
+Capture freezes the trade journal so every arrival through the planner boundary
+reaches the excitation process exactly once.
+*/
+func (signal *Signal) Capture(at time.Time) error {
+	return signal.tradeCache.Capture(at)
 }
 
 /*
@@ -133,19 +140,16 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	rows := make([]kraken.TradeData, 0)
-	signal.access.Lock()
-	signal.tradeCache.Range(func(key, value any) bool {
-		value.(*ring.Ring).Do(func(value any) {
-			if value != nil {
-				rows = append(rows, value.(kraken.TradeData))
-			}
-		})
-		signal.tradeCache.Delete(key)
+	rows, err := signal.tradeCache.Drain(thesis.At)
 
-		return true
-	})
-	signal.access.Unlock()
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"hawkes: trade drain failed",
+			err,
+		))
+		return thesis
+	}
 
 	out := make([]*types.Measurement, 0, len(rows))
 

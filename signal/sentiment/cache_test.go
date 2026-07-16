@@ -1,33 +1,30 @@
 package sentiment
 
 import (
-	"container/ring"
-	"github.com/spf13/viper"
+	"time"
+
 	"github.com/theapemachine/symm/kraken"
-	"sync"
+	"github.com/theapemachine/symm/types"
 )
 
-func tickerCache(rows ...kraken.TickerData) *sync.Map {
-	viper.Set("signals.feed_ring_capacity", 128)
-	cache := &sync.Map{}
+func tickerCache(rows ...kraken.TickerData) *types.MarketFeed[kraken.TickerData] {
+	cache := types.NewMarketFeed[kraken.TickerData](128, 128)
+
 	for _, row := range rows {
-		found, _ := cache.LoadOrStore(row.Symbol, ring.New(128))
-		track := found.(*ring.Ring)
-		track.Value = row
-		cache.Store(row.Symbol, track.Next())
+		if err := cache.Observe(row.Symbol, row.Timestamp, row); err != nil {
+			panic(err)
+		}
 	}
+
 	return cache
 }
 
-func tickerRows(cache *sync.Map) []kraken.TickerData {
-	rows := make([]kraken.TickerData, 0)
-	cache.Range(func(_, value any) bool {
-		value.(*ring.Ring).Do(func(value any) {
-			if value != nil {
-				rows = append(rows, value.(kraken.TickerData))
-			}
-		})
-		return true
-	})
+func tickerRows(cache *types.MarketFeed[kraken.TickerData]) []kraken.TickerData {
+	rows, err := cache.Pending(time.Now().UTC())
+
+	if err != nil {
+		panic(err)
+	}
+
 	return rows
 }

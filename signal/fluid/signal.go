@@ -1,9 +1,8 @@
 package fluid
 
 import (
-	"container/ring"
 	"context"
-	"sync"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
@@ -110,9 +109,9 @@ type Signal struct {
 	ticker      *Ticker
 	trade       *Trade
 	book        *Book
-	tickerCache *sync.Map
-	tradeCache  *sync.Map
-	bookCache   *sync.Map
+	tickerCache *types.MarketFeed[kraken.TickerData]
+	tradeCache  *types.MarketFeed[kraken.TradeData]
+	bookCache   *types.MarketFeed[kraken.BookData]
 }
 
 func NewSignal(
@@ -122,17 +121,26 @@ func NewSignal(
 	registry := NewSyncRegistry()
 
 	signal := &Signal{
-		ctx:         ctx,
-		cancel:      cancel,
-		api:         api,
-		instrument:  instrument,
-		registry:    registry,
-		ticker:      NewTicker(registry),
-		trade:       NewTrade(registry),
-		book:        NewBook(registry),
-		tickerCache: &sync.Map{},
-		tradeCache:  &sync.Map{},
-		bookCache:   &sync.Map{},
+		ctx:        ctx,
+		cancel:     cancel,
+		api:        api,
+		instrument: instrument,
+		registry:   registry,
+		ticker:     NewTicker(registry),
+		trade:      NewTrade(registry),
+		book:       NewBook(registry),
+		tickerCache: types.NewMarketFeed[kraken.TickerData](
+			viper.GetInt("signals.feed_timeline_capacity"),
+			viper.GetInt("signals.feed_track_capacity"),
+		),
+		tradeCache: types.NewMarketFeed[kraken.TradeData](
+			viper.GetInt("signals.feed_timeline_capacity"),
+			viper.GetInt("signals.feed_track_capacity"),
+		),
+		bookCache: types.NewMarketFeed[kraken.BookData](
+			viper.GetInt("signals.feed_timeline_capacity"),
+			viper.GetInt("signals.feed_track_capacity"),
+		),
 	}
 
 	signal.api.On("ticker", signal.onTicker)
@@ -158,13 +166,14 @@ func (signal *Signal) onTicker(data []byte) {
 	}
 
 	for _, data := range frame.Data {
-		found, _ := signal.tickerCache.LoadOrStore(data.Symbol, ring.New(
-			viper.GetInt("signals.feed_ring_capacity"),
-		))
-
-		track := found.(*ring.Ring)
-		track.Value = data
-		signal.tickerCache.Store(data.Symbol, track.Next())
+		if err := signal.tickerCache.Observe(data.Symbol, data.Timestamp, data); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"fluid: ticker observation failed",
+				err,
+			))
+			return
+		}
 	}
 }
 
@@ -184,13 +193,14 @@ func (signal *Signal) onTrade(data []byte) {
 	}
 
 	for _, data := range frame.Data {
-		found, _ := signal.tradeCache.LoadOrStore(data.Symbol, ring.New(
-			viper.GetInt("signals.feed_ring_capacity"),
-		))
-
-		track := found.(*ring.Ring)
-		track.Value = data
-		signal.tradeCache.Store(data.Symbol, track.Next())
+		if err := signal.tradeCache.Observe(data.Symbol, data.Timestamp, data); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"fluid: trade observation failed",
+				err,
+			))
+			return
+		}
 	}
 }
 
@@ -214,14 +224,31 @@ func (signal *Signal) onBook(data []byte) {
 	}
 
 	for _, data := range frame.Data {
-		found, _ := signal.bookCache.LoadOrStore(data.Symbol, ring.New(
-			viper.GetInt("signals.feed_ring_capacity"),
-		))
-
-		track := found.(*ring.Ring)
-		track.Value = data
-		signal.bookCache.Store(data.Symbol, track.Next())
+		if err := signal.bookCache.Observe(data.Symbol, data.Timestamp, data); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"fluid: book observation failed",
+				err,
+			))
+			return
+		}
 	}
+}
+
+/*
+Capture freezes ticker, trade, and book journals at one planner boundary so
+Fluid can merge their event ranges without cross-stream look-ahead.
+*/
+func (signal *Signal) Capture(at time.Time) error {
+	if err := signal.tickerCache.Capture(at); err != nil {
+		return err
+	}
+
+	if err := signal.tradeCache.Capture(at); err != nil {
+		return err
+	}
+
+	return signal.bookCache.Capture(at)
 }
 
 /*
@@ -245,80 +272,6 @@ func (signal *Signal) increment(symbol string) decimal.Decimal {
 	}
 
 	return pair.Increment()
-}
-
-/*
-Measure feeds every ticker, trade, and book row cached since the last tick
-through the per-symbol fluid solver, in that order: ticker and trade rows
-only update per-symbol state (FluidSymbol.Reading has nothing to read yet
-after them), while book rows are what actually measure and emit, so book
-runs last against the freshest state.
-*/
-func (signal *Signal) Measure(
-	thesis *types.Thesis,
-) *types.Thesis {
-	tickers := make([]kraken.TickerData, 0)
-	signal.tickerCache.Range(func(key, value any) bool {
-		value.(*ring.Ring).Do(func(value any) {
-			if value != nil {
-				tickers = append(tickers, value.(kraken.TickerData))
-			}
-		})
-		signal.tickerCache.Delete(key)
-
-		return true
-	})
-
-	trades := make([]kraken.TradeData, 0)
-	signal.tradeCache.Range(func(key, value any) bool {
-		value.(*ring.Ring).Do(func(value any) {
-			if value != nil {
-				trades = append(trades, value.(kraken.TradeData))
-			}
-		})
-		signal.tradeCache.Delete(key)
-
-		return true
-	})
-
-	books := make([]kraken.BookData, 0)
-	signal.bookCache.Range(func(key, value any) bool {
-		value.(*ring.Ring).Do(func(value any) {
-			if value != nil {
-				books = append(books, value.(kraken.BookData))
-			}
-		})
-		signal.bookCache.Delete(key)
-
-		return true
-	})
-
-	out := make([]*types.Measurement, 0, len(tickers)+len(trades)+len(books))
-
-	appendMeasurements(&out, tickers, signal.ticker.Measure)
-	appendMeasurements(&out, trades, signal.trade.Measure)
-	appendMeasurements(&out, books, signal.book.Measure)
-
-	thesis.Measurements = append(thesis.Measurements, out...)
-
-	return thesis
-}
-
-func appendMeasurements[Row any](
-	out *[]*types.Measurement,
-	rows []Row,
-	measure func(Row) ([]*types.Measurement, error),
-) {
-	for _, row := range rows {
-		measurements, err := measure(row)
-
-		if err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		*out = append(*out, measurements...)
-	}
 }
 
 /*

@@ -1,14 +1,14 @@
 package sentiment
 
 import (
-	"container/ring"
 	"context"
-	"sync"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
 
@@ -19,7 +19,7 @@ type Ticker struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	api    *websocket.API
-	cache  *sync.Map
+	cache  *types.MarketFeed[kraken.TickerData]
 }
 
 /*
@@ -32,7 +32,10 @@ func NewTicker(ctx context.Context, api *websocket.API) *Ticker {
 		ctx:    ctx,
 		cancel: cancel,
 		api:    api,
-		cache:  &sync.Map{},
+		cache: types.NewMarketFeed[kraken.TickerData](
+			viper.GetInt("signals.feed_timeline_capacity"),
+			viper.GetInt("signals.feed_track_capacity"),
+		),
 	}
 
 	ticker.api.On("ticker", ticker.On)
@@ -55,12 +58,13 @@ func (ticker *Ticker) On(data []byte) {
 	}
 
 	for _, data := range frame.Data {
-		found, _ := ticker.cache.LoadOrStore(data.Symbol, ring.New(
-			viper.GetInt("signals.feed_ring_capacity"),
-		))
-
-		track := found.(*ring.Ring)
-		track.Value = data
-		ticker.cache.Store(data.Symbol, track.Next())
+		if err := ticker.cache.Observe(data.Symbol, data.Timestamp, data); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"sentiment: ticker observation failed",
+				err,
+			))
+			return
+		}
 	}
 }

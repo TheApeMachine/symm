@@ -49,7 +49,13 @@ trading:
     reserved: 2
 
 signals:
-  feed_ring_capacity: 128
+  # Retain one full websocket ingress buffer per private signal stream so the
+  # planner can pause for a complete queued burst without losing path events.
+  feed_timeline_capacity: 16384
+  # Preserve the existing per-symbol history allowance independently from the
+  # global burst journal; multiplying the timeline size by every symbol would
+  # make memory scale with the square of the observed market surface.
+  feed_track_capacity: 128
   # Zero derives bars/day from signals.fluid.integration_interval.
   volume_clock_bars_per_day: 0
   fluid:

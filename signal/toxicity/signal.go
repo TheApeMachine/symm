@@ -1,13 +1,14 @@
 package toxicity
 
 import (
-	"container/ring"
 	"context"
+	"encoding/json"
 	"math"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -34,6 +35,14 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 		level3:     NewLevel3(api),
 		priorTouch: map[string]touchSnapshot{},
 	}
+}
+
+/*
+Capture freezes the public trade journal before planner measurement. Level3
+state remains authoritative in its own versioned book implementation.
+*/
+func (signal *Signal) Capture(at time.Time) error {
+	return signal.trades.cache.Capture(at)
 }
 
 /*
@@ -94,19 +103,16 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	trades := make([]kraken.TradeData, 0)
-	signal.trades.access.Lock()
-	signal.trades.cache.Range(func(key, value any) bool {
-		value.(*ring.Ring).Do(func(value any) {
-			if value != nil {
-				trades = append(trades, value.(kraken.TradeData))
-			}
-		})
-		signal.trades.cache.Delete(key)
+	trades, err := signal.trades.cache.Drain(thesis.At)
 
-		return true
-	})
-	signal.trades.access.Unlock()
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"toxicity: trade drain failed",
+			err,
+		))
+		return thesis
+	}
 
 	books := signal.level3.Books()
 	evidence := map[string]*symbolEvidence{}
@@ -313,8 +319,27 @@ func (signal *Signal) Measure(
 
 	signal.priorTouch = nextTouch
 
-	thesis.Signals.Store("trades", trades)
-	thesis.Signals.Store("books", books)
+	thesis.Signals.Store("toxicity.trades", trades)
+	bookSnapshots := map[string]json.RawMessage{}
+
+	for bookManager := range books {
+		for _, symbol := range bookManager.GetBooks() {
+			raw, err := sonic.Marshal(bookManager.GetBook(symbol))
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"toxicity: book snapshot failed",
+					err,
+				))
+				return thesis
+			}
+
+			bookSnapshots[symbol] = raw
+		}
+	}
+
+	thesis.Signals.Store("toxicity.books", bookSnapshots)
 
 	thesis.Measurements = append(thesis.Measurements, out...)
 

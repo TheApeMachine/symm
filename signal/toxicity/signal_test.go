@@ -2,10 +2,12 @@ package toxicity
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
@@ -40,6 +42,15 @@ func TestSignal_MeasureUsesTradeEventTime(testingTB *testing.T) {
 			So(volume.Scale.Kind, ShouldEqual, types.ScaleObservationWindow)
 		})
 
+		Convey("Then the Thesis remains serializable for runtime persistence", func() {
+			books, found := result.Signals.Load("toxicity.books")
+			So(found, ShouldBeTrue)
+			So(books, ShouldHaveSameTypeAs, map[string]json.RawMessage{})
+
+			_, err := sonic.Marshal(result)
+			So(err, ShouldBeNil)
+		})
+
 		Convey("Then websocket writes can overlap measurement drains", func() {
 			payload := []byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"buy","price":100,"qty":1,"ord_type":"market","trade_id":1,"timestamp":"1970-01-01T00:00:42.5Z"}]}`)
 			wait := sync.WaitGroup{}
@@ -68,25 +79,26 @@ func TestSignal_MeasureUsesTradeEventTime(testingTB *testing.T) {
 
 func TestSignal_MeasureSkipsTradeWithoutTimestamp(testingTB *testing.T) {
 	Convey("Given a trade row without event time", testingTB, func() {
+		cache := tradeCache()
 		signal := &Signal{
 			ctx: context.Background(),
 			trades: &Trade{
-				cache: tradeCache(
-					kraken.TradeData{
-						Symbol: "BTC/USD",
-						Price:  *decimal.NewFromFloat64(100),
-						Qty:    1,
-					},
-				),
+				cache: cache,
 			},
 			level3: &Level3{
 				api: websocket.NewAPI(context.Background(), nil, nil, nil),
 			},
 		}
+		err := cache.Observe("BTC/USD", time.Time{}, kraken.TradeData{
+			Symbol: "BTC/USD",
+			Price:  *decimal.NewFromFloat64(100),
+			Qty:    1,
+		})
 
 		result := signal.Measure(types.NewThesis(nil))
 
-		Convey("Then it emits nothing instead of inventing wall-clock time", func() {
+		Convey("Then ingestion rejects it instead of inventing wall-clock time", func() {
+			So(err, ShouldNotBeNil)
 			So(result.Measurements, ShouldBeEmpty)
 		})
 	})
