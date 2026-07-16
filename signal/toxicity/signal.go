@@ -103,7 +103,7 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) *types.Thesis {
-	trades, err := signal.trades.cache.Drain(thesis.At)
+	tradeBatch, err := signal.trades.cache.Batch(thesis.At)
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -114,6 +114,7 @@ func (signal *Signal) Measure(
 		return thesis
 	}
 
+	trades := tradeBatch.Rows
 	books := signal.level3.Books()
 	evidence := map[string]*symbolEvidence{}
 
@@ -317,9 +318,6 @@ func (signal *Signal) Measure(
 		}
 	}
 
-	signal.priorTouch = nextTouch
-
-	thesis.Signals.Store("toxicity.trades", trades)
 	bookSnapshots := map[string]json.RawMessage{}
 
 	for bookManager := range books {
@@ -339,8 +337,18 @@ func (signal *Signal) Measure(
 		}
 	}
 
-	thesis.Signals.Store("toxicity.books", bookSnapshots)
+	if err := signal.trades.cache.Commit(tradeBatch); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"toxicity: trade commit failed",
+			err,
+		))
+		return thesis
+	}
 
+	signal.priorTouch = nextTouch
+	thesis.Signals.Store("toxicity.trades", trades)
+	thesis.Signals.Store("toxicity.books", bookSnapshots)
 	thesis.Measurements = append(thesis.Measurements, out...)
 
 	return thesis

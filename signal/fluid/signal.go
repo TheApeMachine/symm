@@ -165,14 +165,17 @@ func (signal *Signal) onTicker(data []byte) {
 		return
 	}
 
-	for _, data := range frame.Data {
-		if err := signal.tickerCache.Observe(data.Symbol, data.Timestamp, data); err != nil {
+	for _, tickerData := range frame.Data {
+		if err := signal.tickerCache.Observe(
+			tickerData.Symbol,
+			tickerData.Timestamp,
+			tickerData,
+		); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
-				"fluid: ticker observation failed",
+				"fluid: ticker observation failed for "+tickerData.Symbol,
 				err,
 			))
-			return
 		}
 	}
 }
@@ -192,14 +195,17 @@ func (signal *Signal) onTrade(data []byte) {
 		return
 	}
 
-	for _, data := range frame.Data {
-		if err := signal.tradeCache.Observe(data.Symbol, data.Timestamp, data); err != nil {
+	for _, tradeData := range frame.Data {
+		if err := signal.tradeCache.Observe(
+			tradeData.Symbol,
+			tradeData.Timestamp,
+			tradeData,
+		); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
-				"fluid: trade observation failed",
+				"fluid: trade observation failed for "+tradeData.Symbol,
 				err,
 			))
-			return
 		}
 	}
 }
@@ -223,14 +229,17 @@ func (signal *Signal) onBook(data []byte) {
 		frame.Data[index].PriceIncrement = signal.increment(frame.Data[index].Symbol)
 	}
 
-	for _, data := range frame.Data {
-		if err := signal.bookCache.Observe(data.Symbol, data.Timestamp, data); err != nil {
+	for _, bookData := range frame.Data {
+		if err := signal.bookCache.Observe(
+			bookData.Symbol,
+			bookData.Timestamp,
+			bookData,
+		); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
-				"fluid: book observation failed",
+				"fluid: book observation failed for "+bookData.Symbol,
 				err,
 			))
-			return
 		}
 	}
 }

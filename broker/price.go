@@ -71,7 +71,7 @@ func (price *Price) TickerAck(buf []byte) {
 	for _, item := range ticker.Data {
 		price.tickers.Store(
 			item.Symbol,
-			item,
+			&item,
 		)
 	}
 }
@@ -227,12 +227,9 @@ For example:
 	Quantity: 0.1 BTC
 	Notional: 5,000 USD
 
-Decimal.Mul rescales its argument down to the receiver's own scale
-before multiplying, which silently rounds a fine-grained quantity (e.g.
-0.0001 BTC, scale 4) to zero whenever the coarser-scaled price (e.g.
-64129.9, scale 1) is the receiver. Widening the receiver's scale to
-whichever operand needs more decimal places first keeps that rescale
-lossless in both directions.
+The instrument supplies the only valid price and cost precision. The quantity
+is scaled to the instrument's cost precision before multiplication, and the
+result remains at that authoritative cost precision.
 */
 func (price *Price) Notional(
 	instrument *kraken.InstrumentPair,
@@ -323,9 +320,6 @@ WithFriction returns the current notional plus two taker fees.
 
 This helper assumes both fees are based on the same current notional.
 It is useful as a rough current-price estimate, but it is not PnL.
-
-PositionQuote should be used for actual position valuation because it
-calculates entry and exit fees from their respective notionals.
 */
 func (price *Price) WithFriction(
 	instrument *kraken.InstrumentPair,

@@ -55,8 +55,12 @@ func (trade *Trade) On(data []byte) {
 		return
 	}
 
-	for _, data := range trades.Data {
-		if err := trade.cache.Observe(data.Symbol, data.Timestamp, data); err != nil {
+	for _, tradeData := range trades.Data {
+		if err := trade.cache.Observe(
+			tradeData.Symbol,
+			tradeData.Timestamp,
+			tradeData,
+		); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
 				"toxicity: trade observation failed",

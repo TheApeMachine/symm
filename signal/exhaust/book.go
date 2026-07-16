@@ -63,14 +63,17 @@ func (book *Book) On(data []byte) {
 		frame.Data[index].PriceIncrement = book.increment(frame.Data[index].Symbol)
 	}
 
-	for _, data := range frame.Data {
-		if err := book.cache.Observe(data.Symbol, data.Timestamp, data); err != nil {
+	for _, bookData := range frame.Data {
+		if err := book.cache.Observe(
+			bookData.Symbol,
+			bookData.Timestamp,
+			bookData,
+		); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
-				"exhaust: book observation failed",
+				"exhaust: book observation failed for "+bookData.Symbol,
 				err,
 			))
-			return
 		}
 	}
 }

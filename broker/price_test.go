@@ -182,7 +182,12 @@ func TestPriceWithFriction(t *testing.T) {
 
 		Convey("When WithFriction is requested for unit quantity", func() {
 			net, err := price.WithFriction(
-				&kraken.InstrumentPair{Symbol: "BTC/USD"}, decimal.NewFromInt64(1),
+				&kraken.InstrumentPair{
+					Symbol:         "BTC/USD",
+					PricePrecision: 1,
+					CostPrecision:  4,
+				},
+				decimal.NewFromInt64(1),
 			)
 
 			Convey("Then it returns the all-in round-trip taker quote", func() {
@@ -219,7 +224,12 @@ func BenchmarkPriceWithFriction(b *testing.B) {
 
 	for b.Loop() {
 		_, _ = price.WithFriction(
-			&kraken.InstrumentPair{Symbol: "BTC/USD"}, decimal.NewFromInt64(1),
+			&kraken.InstrumentPair{
+				Symbol:         "BTC/USD",
+				PricePrecision: 1,
+				CostPrecision:  4,
+			},
+			decimal.NewFromInt64(1),
 		)
 	}
 }

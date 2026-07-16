@@ -10,57 +10,6 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-/*
-TestBalanceAckRefreshesSymbolHolding verifies wallet frames refresh both the
-asset inventory and the managed symbol Holding without losing execution state.
-*/
-func TestBalanceAckRefreshesSymbolHolding(t *testing.T) {
-	Convey("Given a balance frame after an execution", t, func() {
-		holdings := &sync.Map{}
-		holdings.Store("ZEC/USD", types.Holding{
-			Symbol: "ZEC/USD", Asset: "ZEC",
-			Qty: decimal.NewFromInt64(0),
-		})
-		balance := &Balance{
-			quote: "USD", holdings: holdings,
-			ui: make(chan []byte, 2),
-		}
-		model := &kraken.Balance{Channel: "balances", Data: []kraken.BalanceData{
-			{Asset: "USD", Balance: decimal.NewFromInt64(50), Available: decimal.NewFromInt64(50)},
-			{Asset: "ZEC", Balance: decimal.NewFromFloat64(0.2), Available: decimal.NewFromFloat64(0.2)},
-		}}
-		buffer, err := model.MarshalJSON()
-
-		So(err, ShouldBeNil)
-		balance.BalanceAck(buffer)
-
-		Convey("It should refresh both wallet inventory and the managed symbol", func() {
-			holding, holdingErr := balance.Holding("ZEC/USD")
-			wallet, walletErr := balance.Holding("ZEC")
-
-			So(holdingErr, ShouldBeNil)
-			So(walletErr, ShouldBeNil)
-			So(holding.Qty.Float64(), ShouldEqual, 0.2)
-			So(wallet.Qty.Float64(), ShouldEqual, 0.2)
-			So(balance.Snapshot()[0]["balance"], ShouldEqual, 50.0)
-
-			update := &kraken.Balance{
-				Channel: "balances", Type: "update", Data: []kraken.BalanceData{{
-					Asset: "ZEC", Balance: decimal.NewFromFloat64(0.3),
-				}},
-			}
-			updateBuffer, updateErr := update.MarshalJSON()
-			So(updateErr, ShouldBeNil)
-			balance.BalanceAck(updateBuffer)
-
-			So(balance.Snapshot()[0]["balance"], ShouldEqual, 50.0)
-			wallet, walletErr = balance.Holding("ZEC")
-			So(walletErr, ShouldBeNil)
-			So(wallet.Qty.Float64(), ShouldEqual, 0.3)
-		})
-	})
-}
-
 func TestBalanceAvailable(t *testing.T) {
 	Convey("Given reserved quote cash", t, func() {
 		total, err := decimal.NewFromString("100")

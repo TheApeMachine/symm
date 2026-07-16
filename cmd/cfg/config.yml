@@ -49,8 +49,9 @@ trading:
     reserved: 2
 
 signals:
-  # Retain one full websocket ingress buffer per private signal stream so the
-  # planner can pause for a complete queued burst without losing path events.
+  # Each private stream retains the current 16,384-event window. Older events
+  # are overwritten by design; use a larger configured ring or a durable
+  # journal if a strategy must inspect bursts larger than this live window.
   feed_timeline_capacity: 16384
   # Preserve the existing per-symbol history allowance independently from the
   # global burst journal; multiplying the timeline size by every symbol would

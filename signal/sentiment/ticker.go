@@ -57,8 +57,12 @@ func (ticker *Ticker) On(data []byte) {
 		return
 	}
 
-	for _, data := range frame.Data {
-		if err := ticker.cache.Observe(data.Symbol, data.Timestamp, data); err != nil {
+	for _, tickerData := range frame.Data {
+		if err := ticker.cache.Observe(
+			tickerData.Symbol,
+			tickerData.Timestamp,
+			tickerData,
+		); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
 				"sentiment: ticker observation failed",

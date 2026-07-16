@@ -69,14 +69,17 @@ func (signal *Signal) onTrade(data []byte) {
 		return
 	}
 
-	for _, data := range frame.Data {
-		if err := signal.tradeCache.Observe(data.Symbol, data.Timestamp, data); err != nil {
+	for _, tradeData := range frame.Data {
+		if err := signal.tradeCache.Observe(
+			tradeData.Symbol,
+			tradeData.Timestamp,
+			tradeData,
+		); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
-				"hawkes: trade observation failed",
+				"hawkes: trade observation failed for "+tradeData.Symbol,
 				err,
 			))
-			return
 		}
 	}
 }

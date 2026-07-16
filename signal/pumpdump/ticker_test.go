@@ -11,8 +11,8 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-func TestTickerOn(testingTB *testing.T) {
-	Convey("Given a pumpdump ticker ingestor", testingTB, func() {
+func TestTickerOn(t *testing.T) {
+	Convey("Given a pumpdump ticker ingestor", t, func() {
 		ticker := &Ticker{
 			cache: types.NewMarketFeed[kraken.TickerData](2, 2),
 		}

@@ -16,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/ui"
 )
 
 func TestNewCrypto(t *testing.T) {
@@ -112,7 +113,7 @@ func TestCryptoRun(t *testing.T) {
 			planner,
 			tree,
 			thesis,
-			nil,
+			&ui.Hub{},
 		)
 
 		So(err, ShouldBeNil)

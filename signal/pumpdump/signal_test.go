@@ -39,7 +39,10 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 			)
 
 			Convey("Then the pumped stream should lift relative volume", func() {
-				So(tickerRows(signal.ticker.cache), ShouldBeEmpty)
+				So(tickerRows(
+					signal.ticker.cache,
+					time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC),
+				), ShouldBeEmpty)
 				So(hasCalm, ShouldBeTrue)
 				So(hasPumped, ShouldBeTrue)
 				So(pumped, ShouldBeGreaterThan, calm)
@@ -96,7 +99,10 @@ func TestSignal_Measure(testingTB *testing.T) {
 			}
 
 			So(ignition, ShouldBeGreaterThan, 0)
-			So(tickerRows(signal.ticker.cache), ShouldBeEmpty)
+			So(tickerRows(
+				signal.ticker.cache,
+				time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC),
+			), ShouldBeEmpty)
 		})
 	})
 }

@@ -19,8 +19,11 @@ func tickerCache(rows ...kraken.TickerData) *types.MarketFeed[kraken.TickerData]
 	return cache
 }
 
-func tickerRows(cache *types.MarketFeed[kraken.TickerData]) []kraken.TickerData {
-	rows, err := cache.Pending(time.Now().UTC())
+func tickerRows(
+	cache *types.MarketFeed[kraken.TickerData],
+	cutoff time.Time,
+) []kraken.TickerData {
+	rows, err := cache.Pending(cutoff)
 
 	if err != nil {
 		panic(err)

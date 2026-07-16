@@ -8,7 +8,8 @@ import (
 )
 
 func bookCache(rows ...kraken.BookData) *types.MarketFeed[kraken.BookData] {
-	cache := types.NewMarketFeed[kraken.BookData](128, 128)
+	capacity := max(128, len(rows))
+	cache := types.NewMarketFeed[kraken.BookData](capacity, capacity)
 
 	for _, row := range rows {
 		if err := cache.Observe(row.Symbol, row.Timestamp, row); err != nil {
@@ -20,7 +21,8 @@ func bookCache(rows ...kraken.BookData) *types.MarketFeed[kraken.BookData] {
 }
 
 func tradeCache(rows ...kraken.TradeData) *types.MarketFeed[kraken.TradeData] {
-	cache := types.NewMarketFeed[kraken.TradeData](128, 128)
+	capacity := max(128, len(rows))
+	cache := types.NewMarketFeed[kraken.TradeData](capacity, capacity)
 
 	for _, row := range rows {
 		if err := cache.Observe(row.Symbol, row.Timestamp, row); err != nil {

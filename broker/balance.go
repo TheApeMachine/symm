@@ -33,7 +33,7 @@ func NewBalance(api *websocket.API, holdings []types.Holding, ui chan []byte) *B
 	}
 
 	for _, holding := range holdings {
-		balance.holdings.Store(holding.Symbol, holding)
+		balance.holdings.Store(holding.Symbol, &holding)
 	}
 
 	return balance
@@ -124,8 +124,8 @@ func (balance *Balance) BalanceAck(buf []byte) {
 
 			balance.model.Data[index] = update
 			break
-		}
 	}
+ 	}
 
 	balance.model.Sequence = incoming.Sequence
 	balance.model.Timestamp = incoming.Timestamp
@@ -154,13 +154,13 @@ Holdings returns non-quote spot wallet balances that represent open inventory.
 func (balance *Balance) Holdings() iter.Seq[types.Holding] {
 	return func(yield func(types.Holding) bool) {
 		balance.holdings.Range(func(key, value any) bool {
-			holding := value.(types.Holding)
+			holding := value.(*types.Holding)
 
 			if key.(string) != holding.Asset {
 				return true
 			}
 
-			return yield(holding)
+			return yield(*holding)
 		})
 	}
 }
@@ -179,7 +179,7 @@ func (balance *Balance) Holding(symbol string) (types.Holding, error) {
 		))
 	}
 
-	return value.(types.Holding), nil
+	return *value.(*types.Holding), nil
 }
 
 /*
