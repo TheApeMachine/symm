@@ -4,8 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
@@ -37,7 +37,6 @@ type Crypto struct {
 	instrument *broker.Instrument
 	tree       *dmt.Tree
 	tick       *atomic.Int64
-	tickBudget time.Duration
 	planner    *strategy.Planner
 	postMortem *strategy.PostMortem
 	analyzer   *logic.Analyzer
@@ -62,11 +61,19 @@ func NewCrypto(
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	dataPath := viper.GetViper().GetString("data.path")
-	tickBudget := viper.GetViper().GetDuration("cognitive.tick_budget")
+	dataPath := strings.TrimSpace(viper.GetViper().GetString("system.data_path"))
 
-	if tickBudget <= 0 {
-		tickBudget = 10 * time.Millisecond
+	if strings.HasPrefix(dataPath, "~/") {
+		home, err := os.UserHomeDir()
+
+		if err != nil {
+			cancel()
+			return nil, errnie.Error(errnie.Err(
+				errnie.IO, "failed to resolve system.data_path", err,
+			))
+		}
+
+		dataPath = filepath.Join(home, strings.TrimPrefix(dataPath, "~/"))
 	}
 
 	crypto := &Crypto{
@@ -81,7 +88,6 @@ func NewCrypto(
 		instrument: instrument,
 		tree:       tree,
 		tick:       &atomic.Int64{},
-		tickBudget: tickBudget,
 		analyzer:   analyzer,
 		planner:    planner,
 		postMortem: &strategy.PostMortem{},
@@ -124,6 +130,7 @@ func (crypto *Crypto) Run() error {
 				thesis := crypto.planner.Update()
 				thesis.Tick = crypto.tick.Add(1)
 				crypto.trade(thesis)
+				thesis.Publish()
 				encoded, err := sonic.Marshal(thesis)
 
 				if err != nil {
@@ -133,7 +140,7 @@ func (crypto *Crypto) Run() error {
 				}
 
 				// Store the thesis to a file in the data directory
-				filePath := filepath.Join(os.Getenv(crypto.dataPath), "thesis.json")
+				filePath := filepath.Join(crypto.dataPath, "thesis.json")
 				err = os.WriteFile(filePath, encoded, 0644)
 
 				if err != nil {

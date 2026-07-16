@@ -385,5 +385,8 @@ func (live *Live) Close() {
 	}
 
 	live.cancel()
-	live.client.Disconnect()
+
+	if live.client.IsActive() {
+		errnie.Error(live.client.Disconnect())
+	}
 }

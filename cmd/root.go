@@ -139,23 +139,39 @@ var (
 			defer api.Close()
 
 			holdings := make([]types.Holding, 0)
+			dataPath := strings.TrimSpace(viper.GetString("system.data_path"))
 
-			filePath := filepath.Join(os.Getenv(viper.GetString("data.path")), "thesis.json")
-			encoded, err := os.ReadFile(filePath)
+			if strings.HasPrefix(dataPath, "~/") {
+				home, err := os.UserHomeDir()
 
-			if err != nil {
+				if err != nil {
+					return errnie.Error(errnie.Err(
+						errnie.IO, "failed to resolve system.data_path", err,
+					))
+				}
+
+				dataPath = filepath.Join(home, strings.TrimPrefix(dataPath, "~/"))
+			}
+
+			if err := os.MkdirAll(dataPath, 0o700); err != nil {
 				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"failed to read holdings from data directory",
-					err,
+					errnie.IO, "failed to create data directory", err,
 				))
 			}
 
-			if err := sonic.Unmarshal(encoded, &thesis); err != nil {
+			encoded, err := os.ReadFile(filepath.Join(dataPath, "thesis.json"))
+
+			if err == nil {
+				if err := sonic.Unmarshal(encoded, thesis); err != nil {
+					return errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						"failed to unmarshal thesis",
+						err,
+					))
+				}
+			} else if !os.IsNotExist(err) {
 				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"failed to unmarshal thesis",
-					err,
+					errnie.IO, "failed to read thesis from data directory", err,
 				))
 			}
 
