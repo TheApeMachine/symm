@@ -9,43 +9,16 @@ import (
 )
 
 /*
-Measure drains stable ticker, trade, and book batches, applies their merged
-event-time order, and commits every cursor only after processing completes.
+Calculate applies one central immutable market cut in deterministic event-time
+order and publishes only the measurements produced by Fluid's calculators.
 */
-func (signal *Signal) Measure(thesis *types.Thesis) *types.Thesis {
-	tickerBatch, err := signal.tickerCache.Batch(thesis.At)
-
-	if err != nil {
-		errnie.Error(err)
-		return thesis
-	}
-
-	tradeBatch, err := signal.tradeCache.Batch(thesis.At)
-
-	if err != nil {
-		errnie.Error(err)
-		return thesis
-	}
-
-	bookBatch, err := signal.bookCache.Batch(thesis.At)
-
-	if err != nil {
-		errnie.Error(err)
-		return thesis
-	}
-
-	events := signal.events(tickerBatch.Rows, tradeBatch.Rows, bookBatch.Rows)
+func (signal *Signal) Calculate(
+	frame *types.MarketFrame,
+) ([]*types.Measurement, error) {
+	events := signal.events(frame.Tickers, frame.Trades, frame.Books)
 	measurements := signal.apply(events)
 
-	if err := signal.commit(tickerBatch, tradeBatch, bookBatch); err != nil {
-		errnie.Error(err)
-		return thesis
-	}
-
-	thesis.Measurements = append(thesis.Measurements, measurements...)
-	signal.Publish(measurements)
-
-	return thesis
+	return measurements, nil
 }
 
 /*
@@ -135,24 +108,4 @@ func (signal *Signal) measure(
 	}
 
 	return nil, fmt.Errorf("fluid: unsupported event stream %q", event.Stream)
-}
-
-/*
-commit advances all entity cursors after their merged timeline was processed,
-so a failed read cannot partially consume one stream ahead of another.
-*/
-func (signal *Signal) commit(
-	tickers types.MarketBatch[kraken.TickerData],
-	trades types.MarketBatch[kraken.TradeData],
-	books types.MarketBatch[kraken.BookData],
-) error {
-	if err := signal.tickerCache.Commit(tickers); err != nil {
-		return err
-	}
-
-	if err := signal.tradeCache.Commit(trades); err != nil {
-		return err
-	}
-
-	return signal.bookCache.Commit(books)
 }

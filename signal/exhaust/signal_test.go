@@ -42,39 +42,45 @@ func exhaustBookRow(symbol string, bidQuantity float64, askQuantity float64) kra
 	}
 }
 
+func newExhaustSignal() *Signal {
+	return &Signal{
+		ctx:    context.Background(),
+		sample: algorithm.NewDecaySample(),
+		decay:  equation.NewDecay(),
+	}
+}
+
+func exhaustFrame(books ...kraken.BookData) *types.MarketFrame {
+	return &types.MarketFrame{
+		Books:        books,
+		Trades:       nil,
+		CrossSection: types.NewCrossSection(),
+	}
+}
+
 func TestSignal_MeasureDetectsMechanicalDecay(testingTB *testing.T) {
 	Convey("Given deteriorating bid depth on repeated book frames", testingTB, func() {
-		signal := &Signal{
-			ctx:    context.Background(),
-			book:   &Book{cache: bookCache()},
-			trade:  &Trade{cache: tradeCache()},
-			sample: algorithm.NewDecaySample(),
-			decay:  equation.NewDecay(),
-		}
-		quantities := []float64{20, 18, 16, 14, 12, 10, 8, 6, 4}
+		signal := newExhaustSignal()
+		quantities := []float64{20, 18, 16, 14, 12, 10, 8, 6, 4, 2}
 
+		books := make([]kraken.BookData, 0, len(quantities))
 		for _, bidQuantity := range quantities {
-			signal.book.cache = bookCache(append(bookRows(signal.book.cache), exhaustBookRow("BTC/USD", bidQuantity, 10))...)
-			signal.Measure(types.NewThesis(nil))
+			books = append(books, exhaustBookRow("BTC/USD", bidQuantity, 10))
 		}
 
-		Convey("When the final frame is measured", func() {
-			signal.book.cache = bookCache(
-				exhaustBookRow("BTC/USD", 2, 10),
-			)
-			result := signal.Measure(types.NewThesis(nil))
+		Convey("When the deteriorating frames are measured", func() {
+			result, err := signal.Calculate(exhaustFrame(books...))
+			So(err, ShouldBeNil)
 
 			Convey("Then exhaust urgency and mechanical score should rise", func() {
-				urgency, ok := measureField(result.Measurements, "BTC/USD", types.MetricUrgency)
+				urgency, ok := measureField(result, "BTC/USD", types.MetricUrgency)
 				So(ok, ShouldBeTrue)
 				So(urgency.Raw, ShouldBeGreaterThan, 0)
 				So(urgency.Maturity, ShouldBeGreaterThan, 0.85)
 
-				mechanical, ok := measureField(result.Measurements, "BTC/USD", types.MetricMechanical)
+				mechanical, ok := measureField(result, "BTC/USD", types.MetricMechanical)
 				So(ok, ShouldBeTrue)
 				So(mechanical.Raw, ShouldBeGreaterThan, 0)
-
-				So(len(bookRows(signal.book.cache)), ShouldEqual, 0)
 			})
 		})
 	})
@@ -82,46 +88,34 @@ func TestSignal_MeasureDetectsMechanicalDecay(testingTB *testing.T) {
 
 func TestSignal_MeasureSkipsBookWithoutIncrement(testingTB *testing.T) {
 	Convey("Given a book row without price increment", testingTB, func() {
-		signal := &Signal{
-			ctx:    context.Background(),
-			book:   &Book{cache: bookCache()},
-			trade:  &Trade{cache: tradeCache()},
-			sample: algorithm.NewDecaySample(),
-			decay:  equation.NewDecay(),
-		}
+		signal := newExhaustSignal()
 		row := exhaustBookRow("BTC/USD", 10, 10)
 		row.PriceIncrement = *krakendecimal.NewFromFloat64(0)
-		signal.book.cache = bookCache(row)
 
-		result := signal.Measure(types.NewThesis(nil))
+		result, err := signal.Calculate(exhaustFrame(row))
+		So(err, ShouldBeNil)
 
 		Convey("Then it emits nothing for that symbol", func() {
-			_, hasSymbol := measureField(result.Measurements, "BTC/USD", types.MetricMechanical)
+			_, hasSymbol := measureField(result, "BTC/USD", types.MetricMechanical)
 			So(hasSymbol, ShouldBeFalse)
 		})
 	})
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {
-	signal := &Signal{
-		ctx:    context.Background(),
-		book:   &Book{cache: bookCache()},
-		trade:  &Trade{cache: tradeCache()},
-		sample: algorithm.NewDecaySample(),
-		decay:  equation.NewDecay(),
-	}
+	signal := newExhaustSignal()
 
+	books := make([]kraken.BookData, 0, 9)
 	for index := range 9 {
-		signal.book.cache = bookCache(append(bookRows(signal.book.cache), exhaustBookRow("BTC/USD", 20-float64(index)*2, 10))...)
-		_ = signal.Measure(types.NewThesis(nil))
+		books = append(books, exhaustBookRow("BTC/USD", 20-float64(index)*2, 10))
 	}
+	_, _ = signal.Calculate(exhaustFrame(books...))
 
-	rows := []kraken.BookData{exhaustBookRow("BTC/USD", 2, 10)}
+	frame := exhaustFrame(exhaustBookRow("BTC/USD", 2, 10))
 
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		signal.book.cache = bookCache(rows...)
-		_ = signal.Measure(types.NewThesis(nil))
+		_, _ = signal.Calculate(frame)
 	}
 }

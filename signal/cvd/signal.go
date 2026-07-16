@@ -2,7 +2,6 @@ package cvd
 
 import (
 	"context"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -21,10 +20,34 @@ only.
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	trade  *Trade
 	sample *algorithm.TradeFlowSample
 	flow   *equation.Flow
 	ui     chan []byte
+}
+
+/*
+Measure supports direct replay against the legacy signal-local journal. The
+live runtime uses Calculate with the central immutable market cut.
+*/
+func (signal *Signal) Measure(thesis *types.Thesis) chan []*types.Measurement {
+	out := make(chan []*types.Measurement)
+
+	go func() {
+		defer close(out)
+
+		measurements, err := signal.Calculate(thesis.Market())
+
+		if err != nil {
+			errnie.Error(err)
+			out <- nil
+			return
+		}
+
+		out <- measurements
+		signal.Publish(measurements)
+	}()
+
+	return out
 }
 
 func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
@@ -33,7 +56,6 @@ func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		trade:  NewTrade(ctx, api),
 		sample: algorithm.NewTradeFlowSample(),
 		flow:   equation.NewFlow(),
 		ui:     ui,
@@ -60,31 +82,13 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 }
 
 /*
-Capture freezes the trade journal so cumulative signed flow consumes a complete
-ingress range without destructively clearing retained trades.
-*/
-func (signal *Signal) Capture(at time.Time) error {
-	return signal.trade.cache.Capture(at)
-}
-
-/*
-Measure converts the receiver's current market input into typed measurements
+Calculate converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
-func (signal *Signal) Measure(
-	thesis *types.Thesis,
-) *types.Thesis {
-	trades, err := signal.trade.cache.Drain(thesis.At)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"cvd: trade drain failed",
-			err,
-		))
-		return thesis
-	}
-
+func (signal *Signal) Calculate(
+	frame *types.MarketFrame,
+) ([]*types.Measurement, error) {
+	trades := frame.Trades
 	out := make([]*types.Measurement, 0, len(trades))
 
 	for _, row := range trades {
@@ -124,10 +128,9 @@ func (signal *Signal) Measure(
 		out = append(out, signal.cvdMeasurements(row, output, maturity)...)
 	}
 
-	thesis.Measurements = append(thesis.Measurements, out...)
 	signal.Publish(out)
 
-	return thesis
+	return out, nil
 }
 
 /*

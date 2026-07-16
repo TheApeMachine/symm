@@ -23,11 +23,30 @@ signal emits numerical scores only.
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	book   *Book
-	trade  *Trade
 	sample *algorithm.DecaySample
 	decay  *equation.Decay
 	ui     chan []byte
+}
+
+func (signal *Signal) Measure(thesis *types.Thesis) chan []*types.Measurement {
+	out := make(chan []*types.Measurement)
+
+	go func() {
+		defer close(out)
+
+		measurements, err := signal.Calculate(thesis.Market())
+
+		if err != nil {
+			errnie.Error(err)
+			out <- nil
+			return
+		}
+
+		out <- measurements
+		signal.Publish(measurements)
+	}()
+
+	return out
 }
 
 func NewSignal(
@@ -38,8 +57,6 @@ func NewSignal(
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		book:   NewBook(ctx, api, instrument),
-		trade:  NewTrade(ctx, api),
 		sample: algorithm.NewDecaySample(),
 		decay:  equation.NewDecay(),
 		ui:     ui,
@@ -66,38 +83,13 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 }
 
 /*
-Capture freezes book and trade journals at one planner boundary so decay state
-can consume a stable causal event range.
-*/
-func (signal *Signal) Capture(at time.Time) error {
-	if err := signal.book.cache.Capture(at); err != nil {
-		return err
-	}
-
-	return signal.trade.cache.Capture(at)
-}
-
-/*
-Measure converts the receiver's current market input into typed measurements
+Calculate converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
-func (signal *Signal) Measure(
-	thesis *types.Thesis,
-) *types.Thesis {
-	bookBatch, err := signal.book.cache.Batch(thesis.At)
-
-	if err != nil {
-		errnie.Error(err)
-		return thesis
-	}
-
-	tradeBatch, err := signal.trade.cache.Batch(thesis.At)
-
-	if err != nil {
-		errnie.Error(err)
-		return thesis
-	}
-	events := exhaustEvents(bookBatch.Rows, tradeBatch.Rows)
+func (signal *Signal) Calculate(
+	frame *types.MarketFrame,
+) ([]*types.Measurement, error) {
+	events := exhaustEvents(frame.Books, frame.Trades)
 	out := make([]*types.Measurement, 0, 8*len(events))
 
 	for _, event := range events {
@@ -109,20 +101,7 @@ func (signal *Signal) Measure(
 		out = append(out, signal.measureTrade(event.Row.(kraken.TradeData))...)
 	}
 
-	if err := signal.book.cache.Commit(bookBatch); err != nil {
-		errnie.Error(err)
-		return thesis
-	}
-
-	if err := signal.trade.cache.Commit(tradeBatch); err != nil {
-		errnie.Error(err)
-		return thesis
-	}
-
-	thesis.Measurements = append(thesis.Measurements, out...)
-	signal.Publish(out)
-
-	return thesis
+	return out, nil
 }
 
 /*
@@ -134,7 +113,7 @@ func (signal *Signal) measureBook(row kraken.BookData) []*types.Measurement {
 		return nil
 	}
 
-	bids, asks, err := signal.book.levels(row)
+	bids, asks, err := types.BookLevels(row)
 
 	if err != nil {
 		errnie.Error(err)

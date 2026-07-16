@@ -44,36 +44,40 @@ func depthflowBookRow(symbol string, bidQuantity float64, askQuantity float64) k
 	}
 }
 
+func depthflowFrame(rows ...kraken.BookData) *types.MarketFrame {
+	return &types.MarketFrame{
+		Books:        rows,
+		Trades:       nil,
+		CrossSection: types.NewCrossSection(),
+	}
+}
+
 func TestSignal_MeasureDetectsLoadedImbalance(testingTB *testing.T) {
 	Convey("Given repeated bid-heavy book frames", testingTB, func() {
 		signal := &Signal{
 			ctx:      context.Background(),
-			book:     &Book{cache: bookCache()},
-			trade:    &Trade{cache: tradeCache()},
 			sample:   flow.NewSample(),
 			bookflow: equation.NewBookflow(),
 		}
 
 		for range 6 {
-			signal.book.cache = bookCache(append(bookRows(signal.book.cache), depthflowBookRow("BTC/USD", 20, 4))...)
-			signal.Measure(types.NewThesis(nil))
+			_, err := signal.Calculate(depthflowFrame(depthflowBookRow("BTC/USD", 20, 4)))
+			So(err, ShouldBeNil)
 		}
 
 		Convey("When the final frame is measured", func() {
-			signal.book.cache = bookCache(depthflowBookRow("BTC/USD", 24, 4))
-			result := signal.Measure(types.NewThesis(nil))
+			result, err := signal.Calculate(depthflowFrame(depthflowBookRow("BTC/USD", 24, 4)))
+			So(err, ShouldBeNil)
 
 			Convey("Then depthflow loaded score and strength should rise", func() {
-				loaded, ok := measureField(result.Measurements, "BTC/USD", types.MetricLoadedScore)
+				loaded, ok := measureField(result, "BTC/USD", types.MetricLoadedScore)
 				So(ok, ShouldBeTrue)
 				So(loaded.Raw, ShouldBeGreaterThan, 0)
 				So(loaded.Maturity, ShouldBeGreaterThan, 0.85)
 
-				strength, ok := measureField(result.Measurements, "BTC/USD", types.MetricStrength)
+				strength, ok := measureField(result, "BTC/USD", types.MetricStrength)
 				So(ok, ShouldBeTrue)
 				So(strength.Raw, ShouldBeGreaterThan, 0)
-
-				So(len(bookRows(signal.book.cache)), ShouldEqual, 0)
 			})
 		})
 	})
@@ -82,23 +86,19 @@ func TestSignal_MeasureDetectsLoadedImbalance(testingTB *testing.T) {
 func BenchmarkSignal_Measure(benchmark *testing.B) {
 	signal := &Signal{
 		ctx:      context.Background(),
-		book:     &Book{cache: bookCache()},
-		trade:    &Trade{cache: tradeCache()},
 		sample:   flow.NewSample(),
 		bookflow: equation.NewBookflow(),
 	}
 
 	for range 6 {
-		signal.book.cache = bookCache(append(bookRows(signal.book.cache), depthflowBookRow("BTC/USD", 20, 4))...)
-		_ = signal.Measure(types.NewThesis(nil))
+		_, _ = signal.Calculate(depthflowFrame(depthflowBookRow("BTC/USD", 20, 4)))
 	}
 
-	rows := []kraken.BookData{depthflowBookRow("BTC/USD", 24, 4)}
+	frame := depthflowFrame(depthflowBookRow("BTC/USD", 24, 4))
 
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		signal.book.cache = bookCache(rows...)
-		_ = signal.Measure(types.NewThesis(nil))
+		_, _ = signal.Calculate(frame)
 	}
 }

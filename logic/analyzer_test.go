@@ -51,7 +51,7 @@ func (scripted *scriptedHawkes) Outcome(symbol string) (excitation.Outcome, bool
 
 func TestAnalyzerUpdate(t *testing.T) {
 	Convey("Given measurements for two symbols", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(nil, nil)
 		thesis.Measurements = append(thesis.Measurements,
 			&types.Measurement{
 				Stream: types.Hawkes, Metric: types.MetricArrivalRate,
@@ -97,7 +97,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 			},
 		}
 
-		first := types.NewThesis(nil)
+		first := types.NewThesis(nil, nil)
 		first.Manifold.Store(state.Symbol, state)
 		analyzer.Update(first)
 		firstValue, found := first.Cognition.Load(state.Symbol)
@@ -111,7 +111,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 
 		state.At = state.At.Add(time.Second)
 		state.Epoch++
-		second := types.NewThesis(nil)
+		second := types.NewThesis(nil, nil)
 		second.Manifold.Store(state.Symbol, state)
 		analyzer.Update(second)
 		secondValue, found := second.Cognition.Load(state.Symbol)
@@ -128,7 +128,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 	Convey("Given successive tick measurements for one symbol", t, func() {
 		analyzer := &Analyzer{}
 		positive := 0.5
-		first := types.NewThesis(nil)
+		first := types.NewThesis(nil, nil)
 		first.Measurements = append(first.Measurements, &types.Measurement{
 			Source: types.SourceHawkes, Stream: types.Hawkes,
 			Metric: types.MetricStrength, Subject: types.SubjectTradeArrivals,
@@ -137,7 +137,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 			Validity: types.MeasurementValidity{State: types.ValidityValid},
 		})
 		analyzer.Update(first)
-		second := types.NewThesis(nil)
+		second := types.NewThesis(nil, nil)
 		second.Measurements = append(second.Measurements, &types.Measurement{
 			Source: types.SourceHawkes, Stream: types.Hawkes,
 			Metric: types.MetricStrength, Subject: types.SubjectTradeArrivals,
@@ -165,7 +165,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 			state.Reading.Divergence += math.Cos(float64(index)) / 100
 			state.BuyIntensity += math.Sin(float64(index)) / 10
 			state.SellIntensity -= math.Sin(float64(index)) / 10
-			thesis := types.NewThesis(nil)
+			thesis := types.NewThesis(nil, nil)
 			thesis.Manifold.Store(state.Symbol, state)
 			analyzer.Update(thesis)
 
@@ -191,7 +191,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 
 func TestAnalyzerUpdateComposesRelationships(t *testing.T) {
 	Convey("Given comparable typed measurements on one thesis", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(nil, nil)
 		positive := 0.5
 		negative := -0.5
 		thesis.Measurements = append(thesis.Measurements,
@@ -235,7 +235,7 @@ func TestAnalyzerConsolidate(t *testing.T) {
 		So(err, ShouldBeNil)
 		_, _, err = tree.CommitToEpisodicBuffer(uint64(through.UnixNano()), sequence)
 		So(err, ShouldBeNil)
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(nil, nil)
 		thesis.Cognition.Store("BTC/USD", types.Cognition{Symbol: "BTC/USD"})
 
 		analyzer.consolidate(thesis, []time.Time{from, through}, false)
@@ -263,7 +263,7 @@ func BenchmarkAnalyzerUpdate(b *testing.B) {
 	analyzer := &Analyzer{}
 
 	for b.Loop() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(nil, nil)
 		thesis.Measurements = append(thesis.Measurements, &types.Measurement{
 			Stream: types.Hawkes, Metric: types.MetricArrivalRate,
 			Symbol: "BTC/USD", At: time.Unix(1, 0),
@@ -286,6 +286,6 @@ func BenchmarkAnalyzerCognize(b *testing.B) {
 	}
 
 	for b.Loop() {
-		analyzer.cognize(types.NewThesis(nil), state)
+		analyzer.cognize(types.NewThesis(nil, nil), state)
 	}
 }

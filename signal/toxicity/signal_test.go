@@ -2,11 +2,9 @@ package toxicity
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
@@ -14,24 +12,43 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-func TestSignal_MeasureUsesTradeEventTime(testingTB *testing.T) {
-	Convey("Given cached trades with explicit event timestamps", testingTB, func() {
-		eventAt := time.Unix(42, 500_000_000).UTC()
-		signal := &Signal{
-			ctx:    context.Background(),
-			trades: &Trade{cache: tradeCache()},
-			level3: &Level3{
-				api: websocket.NewAPI(context.Background(), nil, nil, nil),
-			},
-		}
-		signal.trades.On([]byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"buy","price":100,"qty":1,"ord_type":"market","trade_id":1,"timestamp":"1970-01-01T00:00:42.5Z"}]}`))
+/*
+frameFrom builds an immutable market cut from raw trade rows, mirroring the
+central feed so Calculate consumes explicit evidence.
+*/
+func frameFrom(rows ...kraken.TradeData) *types.MarketFrame {
+	return &types.MarketFrame{
+		Trades:       rows,
+		CrossSection: types.NewCrossSection(),
+	}
+}
 
-		result := signal.Measure(types.NewThesis(nil))
+func newSignal() *Signal {
+	return &Signal{
+		ctx:        context.Background(),
+		level3:     NewLevel3(websocket.NewAPI(context.Background(), nil, nil, nil)),
+		priorTouch: map[string]touchSnapshot{},
+	}
+}
+
+func TestSignal_CalculateUsesTradeEventTime(testingTB *testing.T) {
+	Convey("Given trades with explicit event timestamps", testingTB, func() {
+		eventAt := time.Unix(42, 500_000_000).UTC()
+		signal := newSignal()
+
+		measurements, err := signal.Calculate(frameFrom(kraken.TradeData{
+			Symbol:    "BTC/USD",
+			Side:      "buy",
+			Price:     *decimal.NewFromFloat64(100),
+			Qty:       1,
+			Timestamp: eventAt,
+		}))
 
 		Convey("Then measurements use the trade event time and typed subjects", func() {
-			So(result.Measurements, ShouldNotBeEmpty)
+			So(err, ShouldBeNil)
+			So(measurements, ShouldNotBeEmpty)
 
-			volume := result.Measurements[0]
+			volume := measurements[0]
 			So(volume.At, ShouldEqual, eventAt)
 			So(volume.Subject, ShouldEqual, types.SubjectLevel3Tape)
 			So(volume.Maturity, ShouldBeGreaterThan, 0)
@@ -40,61 +57,22 @@ func TestSignal_MeasureUsesTradeEventTime(testingTB *testing.T) {
 			So(volume.Normalized, ShouldBeNil)
 			So(volume.Scale.Kind, ShouldEqual, types.ScaleObservationWindow)
 		})
-
-		Convey("Then the Thesis remains serializable for runtime persistence", func() {
-			_, err := sonic.Marshal(result)
-			So(err, ShouldBeNil)
-		})
-
-		Convey("Then websocket writes can overlap measurement drains", func() {
-			payload := []byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"buy","price":100,"qty":1,"ord_type":"market","trade_id":1,"timestamp":"1970-01-01T00:00:42.5Z"}]}`)
-			wait := sync.WaitGroup{}
-			wait.Add(2)
-
-			go func() {
-				defer wait.Done()
-
-				for range 100 {
-					signal.trades.On(payload)
-				}
-			}()
-
-			go func() {
-				defer wait.Done()
-
-				for range 100 {
-					signal.Measure(types.NewThesis(nil))
-				}
-			}()
-
-			wait.Wait()
-		})
 	})
 }
 
-func TestSignal_MeasureSkipsTradeWithoutTimestamp(testingTB *testing.T) {
+func TestSignal_CalculateSkipsTradeWithoutTimestamp(testingTB *testing.T) {
 	Convey("Given a trade row without event time", testingTB, func() {
-		cache := tradeCache()
-		signal := &Signal{
-			ctx: context.Background(),
-			trades: &Trade{
-				cache: cache,
-			},
-			level3: &Level3{
-				api: websocket.NewAPI(context.Background(), nil, nil, nil),
-			},
-		}
-		err := cache.Observe("BTC/USD", time.Time{}, kraken.TradeData{
+		signal := newSignal()
+
+		measurements, err := signal.Calculate(frameFrom(kraken.TradeData{
 			Symbol: "BTC/USD",
 			Price:  *decimal.NewFromFloat64(100),
 			Qty:    1,
-		})
+		}))
 
-		result := signal.Measure(types.NewThesis(nil))
-
-		Convey("Then ingestion rejects it instead of inventing wall-clock time", func() {
-			So(err, ShouldNotBeNil)
-			So(result.Measurements, ShouldBeEmpty)
+		Convey("Then it ignores it instead of inventing wall-clock time", func() {
+			So(err, ShouldBeNil)
+			So(measurements, ShouldBeEmpty)
 		})
 	})
 }
@@ -149,36 +127,19 @@ func latestMetric(
 	return nil, false
 }
 
-func BenchmarkSignal_Measure(benchmark *testing.B) {
+func BenchmarkSignal_Calculate(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	eventAt := time.Unix(1, 0).UTC()
-	signal := &Signal{
-		ctx: context.Background(),
-		trades: &Trade{
-			cache: tradeCache(
-				kraken.TradeData{
-					Symbol:    "BTC/USD",
-					Timestamp: eventAt,
-					Price:     *decimal.NewFromFloat64(100),
-					Qty:       1,
-				},
-			),
-		},
-		level3: &Level3{
-			api: websocket.NewAPI(context.Background(), nil, nil, nil),
-		},
-	}
+	signal := newSignal()
+	frame := frameFrom(kraken.TradeData{
+		Symbol:    "BTC/USD",
+		Timestamp: eventAt,
+		Price:     *decimal.NewFromFloat64(100),
+		Qty:       1,
+	})
 
 	for benchmark.Loop() {
-		signal.trades.cache = tradeCache(
-			kraken.TradeData{
-				Symbol:    "BTC/USD",
-				Timestamp: eventAt,
-				Price:     *decimal.NewFromFloat64(100),
-				Qty:       1,
-			},
-		)
-		signal.Measure(types.NewThesis(nil))
+		_, _ = signal.Calculate(frame)
 	}
 }

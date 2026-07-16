@@ -2,7 +2,6 @@ package pumpdump
 
 import (
 	"context"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -19,9 +18,29 @@ evidence so one market observation cannot masquerade as corroborating signals.
 type Signal struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
-	ticker   *Ticker
 	ignition *equation.Ignition
 	ui       chan []byte
+}
+
+func (signal *Signal) Measure(thesis *types.Thesis) chan []*types.Measurement {
+	out := make(chan []*types.Measurement)
+
+	go func() {
+		defer close(out)
+
+		measurements, err := signal.Calculate(thesis.Market())
+
+		if err != nil {
+			errnie.Error(err)
+			out <- nil
+			return
+		}
+
+		out <- measurements
+		signal.Publish(measurements)
+	}()
+
+	return out
 }
 
 func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
@@ -30,7 +49,6 @@ func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal 
 	return &Signal{
 		ctx:      ctx,
 		cancel:   cancel,
-		ticker:   NewTicker(ctx, api),
 		ignition: equation.NewIgnition(),
 		ui:       ui,
 	}
@@ -56,31 +74,13 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 }
 
 /*
-Capture freezes the ticker journal so the ignition model consumes every unseen
-state transition through one planner boundary.
-*/
-func (signal *Signal) Capture(at time.Time) error {
-	return signal.ticker.cache.Capture(at)
-}
-
-/*
-Measure converts the receiver's current market input into typed measurements
+Calculate converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
-func (signal *Signal) Measure(
-	thesis *types.Thesis,
-) *types.Thesis {
-	rows, err := signal.ticker.cache.Drain(thesis.At)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"pumpdump: ticker drain failed",
-			err,
-		))
-		return thesis
-	}
-
+func (signal *Signal) Calculate(
+	frame *types.MarketFrame,
+) ([]*types.Measurement, error) {
+	rows := frame.Tickers
 	out := make([]*types.Measurement, 0, len(rows))
 
 	for _, row := range rows {
@@ -123,10 +123,7 @@ func (signal *Signal) Measure(
 		out = append(out, measurements...)
 	}
 
-	thesis.Measurements = append(thesis.Measurements, out...)
-	signal.Publish(out)
-
-	return thesis
+	return out, nil
 }
 
 /*

@@ -2,9 +2,6 @@ package hawkes
 
 import (
 	"context"
-	"time"
-
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
@@ -25,12 +22,38 @@ forecast readiness remains false until residual and out-of-sample validation
 exists.
 */
 type Signal struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	api        *websocket.API
-	trade      *Trade
-	tradeCache *types.MarketFeed[kraken.TradeData]
-	ui         chan []byte
+	ctx      context.Context
+	cancel   context.CancelFunc
+	api      *websocket.API
+	sample   *excitation.Sample
+	process  *excitation.Process
+	evidence *Evidence
+	ui       chan []byte
+}
+
+/*
+Measure supports direct replay against the legacy signal-local trade journal.
+The live runtime uses Calculate with the central immutable market cut.
+*/
+func (signal *Signal) Measure(thesis *types.Thesis) chan []*types.Measurement {
+	out := make(chan []*types.Measurement)
+
+	go func() {
+		defer close(out)
+
+		measurements, err := signal.Calculate(thesis.Market())
+
+		if err != nil {
+			errnie.Error(err)
+			out <- nil
+			return
+		}
+
+		out <- measurements
+		signal.Publish(measurements)
+	}()
+
+	return out
 }
 
 /*
@@ -60,126 +83,52 @@ func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal 
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		api:    api,
-		trade:  NewTrade(),
-		ui:     ui,
-		tradeCache: types.NewMarketFeed[kraken.TradeData](
-			viper.GetInt("signals.feed_timeline_capacity"),
-			viper.GetInt("signals.feed_track_capacity"),
-		),
+		ctx:      ctx,
+		cancel:   cancel,
+		api:      api,
+		sample:   excitation.NewSample(),
+		process:  excitation.NewProcess(),
+		evidence: NewEvidence(),
+		ui:       ui,
 	}
-
-	signal.api.On("trade", signal.onTrade)
 
 	return signal
-}
-
-/*
-onTrade decodes trade updates and feeds executed flow so tape activity reaches
-the grid.
-*/
-func (signal *Signal) onTrade(data []byte) {
-	if len(data) == 0 {
-		return
-	}
-
-	frame := kraken.NewTrade(data)
-
-	if len(frame.Data) == 0 {
-		return
-	}
-
-	for _, tradeData := range frame.Data {
-		if err := signal.tradeCache.Observe(
-			tradeData.Symbol,
-			tradeData.Timestamp,
-			tradeData,
-		); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"hawkes: trade observation failed for "+tradeData.Symbol,
-				err,
-			))
-		}
-	}
-}
-
-/*
-Capture freezes the trade journal so every arrival through the planner boundary
-reaches the excitation process exactly once.
-*/
-func (signal *Signal) Capture(at time.Time) error {
-	return signal.tradeCache.Capture(at)
-}
-
-/*
-Outcome returns the latest measured Hawkes outcome for one symbol.
-*/
-func (trade *Trade) Outcome(symbol string) (excitation.Outcome, bool) {
-	if trade == nil || trade.process == nil {
-		return excitation.Outcome{}, false
-	}
-
-	return trade.process.Outcome(symbol)
-}
-
-/*
-Symbols returns every symbol with retained Hawkes excitation state.
-*/
-func (trade *Trade) Symbols() []string {
-	if trade == nil || trade.process == nil {
-		return nil
-	}
-
-	return trade.process.Symbols()
 }
 
 /*
 Outcome returns the latest measured Hawkes outcome for one symbol.
 */
 func (signal *Signal) Outcome(symbol string) (excitation.Outcome, bool) {
-	if signal == nil || signal.trade == nil {
+	if signal == nil || signal.process == nil {
 		return excitation.Outcome{}, false
 	}
 
-	return signal.trade.Outcome(symbol)
+	return signal.process.Outcome(symbol)
 }
 
 /*
 Symbols returns every symbol with retained Hawkes excitation state.
 */
 func (signal *Signal) Symbols() []string {
-	if signal == nil || signal.trade == nil {
+	if signal == nil || signal.process == nil {
 		return nil
 	}
 
-	return signal.trade.Symbols()
+	return signal.process.Symbols()
 }
 
 /*
-Measure converts the receiver's current market input into typed measurements
+Calculate converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
-func (signal *Signal) Measure(
-	thesis *types.Thesis,
-) *types.Thesis {
-	rows, err := signal.tradeCache.Drain(thesis.At)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"hawkes: trade drain failed",
-			err,
-		))
-		return thesis
-	}
-
+func (signal *Signal) Calculate(
+	frame *types.MarketFrame,
+) ([]*types.Measurement, error) {
+	rows := frame.Trades
 	out := make([]*types.Measurement, 0, len(rows))
 
 	for _, row := range rows {
-		measurements, err := signal.trade.Measure(row)
+		measurements, err := signal.measure(row)
 
 		if err != nil {
 			errnie.Error(err)
@@ -189,10 +138,47 @@ func (signal *Signal) Measure(
 		out = append(out, measurements...)
 	}
 
-	thesis.Measurements = append(thesis.Measurements, out...)
-	signal.Publish(out)
+	return out, nil
+}
 
-	return thesis
+/*
+measure updates the marked arrival stream and emits every numerical quantity
+supported by the estimator's current readiness level.
+*/
+func (signal *Signal) measure(row kraken.TradeData) ([]*types.Measurement, error) {
+	input, ready, err := signal.sample.MeasureArrival(excitation.TradeInput{
+		Symbol:    row.Symbol,
+		Side:      row.Side,
+		Timestamp: row.Timestamp,
+	})
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			err.Error(),
+			err,
+		))
+	}
+
+	if !ready {
+		return nil, nil
+	}
+
+	output, ready, err := signal.process.Measure(input)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			err.Error(),
+			err,
+		))
+	}
+
+	if !ready {
+		return nil, nil
+	}
+
+	return signal.evidence.Measure(row.Symbol, output), nil
 }
 
 /*

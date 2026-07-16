@@ -4,7 +4,6 @@ import (
 	"context"
 	"iter"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/equation"
@@ -14,35 +13,95 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+drive replays a ticker timeline through Calculate one frame at a time, warming
+the shared ignition state exactly as the live feed does, and returns the last
+frame's measurements.
+*/
+func drive(signal *Signal, frames iter.Seq[tests.Frame]) []*types.Measurement {
+	var last []*types.Measurement
+
+	for frame := range frames {
+		rows := kraken.NewTicker(frame.Payload).Data
+
+		if len(rows) == 0 {
+			continue
+		}
+
+		measurements, err := signal.Calculate(&types.MarketFrame{
+			Tickers:      rows,
+			CrossSection: types.NewCrossSection(),
+		})
+
+		if err != nil {
+			continue
+		}
+
+		last = measurements
+	}
+
+	return last
+}
+
+/*
+peakField replays a timeline and returns the greatest ALGO/USD value observed
+for the metric, so a transient spike mid-stream is not masked by the calm tail.
+*/
+func peakField(
+	signal *Signal, frames iter.Seq[tests.Frame], metric types.MetricType,
+) (float64, bool) {
+	peak := 0.0
+	found := false
+
+	for frame := range frames {
+		rows := kraken.NewTicker(frame.Payload).Data
+
+		if len(rows) == 0 {
+			continue
+		}
+
+		measurements, err := signal.Calculate(&types.MarketFrame{
+			Tickers:      rows,
+			CrossSection: types.NewCrossSection(),
+		})
+
+		if err != nil {
+			continue
+		}
+
+		for _, measurement := range measurements {
+			if measurement.Symbol == "ALGO/USD" && measurement.Metric == metric {
+				found = true
+
+				if measurement.Raw > peak {
+					peak = measurement.Raw
+				}
+			}
+		}
+	}
+
+	return peak, found
+}
+
+func newSignal() *Signal {
+	return &Signal{
+		ctx:      context.Background(),
+		ignition: equation.NewIgnition(),
+	}
+}
+
 func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 	Convey("Given a pumpdump signal fed by a market replay", testingTB, func() {
-		signal := &Signal{
-			ctx: context.Background(),
-			ticker: &Ticker{
-				cache: tickerCache(),
-			},
-			ignition: equation.NewIgnition(),
-		}
-		handlers := tests.Handlers{
-			"ticker": signal.ticker.On,
-		}
 		market := tests.NewMarket().
 			Feed(tickerfixture.NewFixture(tickerfixture.UPDATE, 32))
 
 		Convey("When calm and pumped ticker timelines are measured", func() {
-			calm, hasCalm := measureField(signal, handlers, market.Frames(), types.MetricRVOL)
-			pumped, hasPumped := measureField(
-				signal,
-				handlers,
-				tests.Spike(market.Frames(), 16, 1.25, 8),
-				types.MetricRVOL,
+			calm, hasCalm := peakField(newSignal(), market.Frames(), types.MetricRVOL)
+			pumped, hasPumped := peakField(
+				newSignal(), tests.Spike(market.Frames(), 16, 1.25, 8), types.MetricRVOL,
 			)
 
 			Convey("Then the pumped stream should lift relative volume", func() {
-				So(tickerRows(
-					signal.ticker.cache,
-					time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC),
-				), ShouldBeEmpty)
 				So(hasCalm, ShouldBeTrue)
 				So(hasPumped, ShouldBeTrue)
 				So(pumped, ShouldBeGreaterThan, calm)
@@ -53,102 +112,52 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 
 func TestSignal_MeasureSkipsIncompleteRow(testingTB *testing.T) {
 	Convey("Given a partial Kraken ticker row", testingTB, func() {
-		signal := &Signal{
-			ctx:      context.Background(),
-			ticker:   &Ticker{cache: tickerCache()},
-			ignition: equation.NewIgnition(),
-		}
-
-		signal.ticker.cache = tickerCache(kraken.TickerData{
-			Symbol:    "BTC/USD",
-			Timestamp: time.Now(),
-		})
+		signal := newSignal()
 
 		Convey("When measure runs", func() {
-			result := signal.Measure(types.NewThesis(nil))
+			result, err := signal.Calculate(&types.MarketFrame{
+				Tickers: []kraken.TickerData{
+					{Symbol: "BTC/USD"},
+				},
+				CrossSection: types.NewCrossSection(),
+			})
 
 			Convey("Then it should wait without publishing metrics", func() {
-				So(result.Measurements, ShouldBeEmpty)
+				So(err, ShouldBeNil)
+				So(result, ShouldBeEmpty)
 			})
 		})
 	})
 }
 
 func TestSignal_Measure(testingTB *testing.T) {
-	Convey("Given cached ticker rows", testingTB, func() {
-		signal := &Signal{
-			ctx: context.Background(),
-			ticker: &Ticker{
-				cache: tickerCache(),
-			},
-			ignition: equation.NewIgnition(),
-		}
+	Convey("Given a replayed ticker timeline", testingTB, func() {
+		signal := newSignal()
 		fixture := tickerfixture.NewFixture(tickerfixture.UPDATE, 32)
 
-		tests.Replay(tests.Handlers{"ticker": signal.ticker.On}, fixture.Frames())
-
-		result := signal.Measure(types.NewThesis(nil))
+		result := drive(signal, fixture.Frames())
 
 		Convey("It should publish ignition metrics without categories", func() {
 			ignition := 0.0
 
-			for _, measurement := range result.Measurements {
+			for _, measurement := range result {
 				if measurement.Symbol == "ALGO/USD" && measurement.Metric == types.MetricIgnition {
 					ignition = measurement.Raw
 				}
 			}
 
 			So(ignition, ShouldBeGreaterThan, 0)
-			So(tickerRows(
-				signal.ticker.cache,
-				time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC),
-			), ShouldBeEmpty)
 		})
 	})
 }
 
-func measureField(
-	signal *Signal,
-	handlers tests.Handlers,
-	frames iter.Seq[tests.Frame],
-	metric types.MetricType,
-) (float64, bool) {
-	signal.ticker.cache = tickerCache()
-	tests.Replay(handlers, frames)
-
-	thesis := types.NewThesis(nil)
-	result := signal.Measure(thesis)
-
-	for index := len(result.Measurements) - 1; index >= 0; index-- {
-		measurement := result.Measurements[index]
-
-		if measurement.Symbol == "ALGO/USD" && measurement.Metric == metric {
-			return measurement.Raw, true
-		}
-	}
-
-	return 0, false
-}
-
 func BenchmarkSignal_Measure(benchmark *testing.B) {
-	signal := &Signal{
-		ctx: context.Background(),
-		ticker: &Ticker{
-			cache: tickerCache(),
-		},
-		ignition: equation.NewIgnition(),
-	}
-	handlers := tests.Handlers{
-		"ticker": signal.ticker.On,
-	}
 	market := tests.NewMarket().
 		Feed(tickerfixture.NewFixture(tickerfixture.UPDATE, 32))
 
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		signal.ticker.cache = tickerCache()
-		tests.Replay(handlers, market.Frames())
-		_ = signal.Measure(types.NewThesis(nil))
+		_ = drive(newSignal(), market.Frames())
 	}
 }

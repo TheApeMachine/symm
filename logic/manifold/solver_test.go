@@ -50,7 +50,7 @@ func TestSolverUpdate(t *testing.T) {
 		outcome := solverOutcome(time.Unix(1, 0), 4, 2)
 		outcome.Readiness.HawkesFit = false
 		outcome.Fit = hawkes.BivariateFit{}
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(nil, nil)
 
 		err = solver.Update(thesis, staticHawkesSource{
 			symbols: []string{"BTC/USD"},
@@ -73,7 +73,7 @@ func TestSolverUpdate(t *testing.T) {
 		So(err, ShouldBeNil)
 		defer solver.Close()
 
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(nil, nil)
 		bitcoin := solverOutcome(time.Unix(1, 0), 2, 1)
 		bitcoin.Readiness.HawkesFit = false
 		bitcoin.Fit = hawkes.BivariateFit{}
@@ -104,7 +104,7 @@ func TestSolverUpdate(t *testing.T) {
 		So(err, ShouldBeNil)
 		defer solver.Close()
 
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(nil, nil)
 		thesis.SetUIProjection("BTC/USD", types.SourceFluid)
 		bitcoin := solverOutcome(time.Unix(1, 0), 2, 1)
 		ether := solverOutcome(time.Unix(1, 0), 8, 4)

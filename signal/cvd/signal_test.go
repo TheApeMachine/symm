@@ -31,49 +31,42 @@ func measurementFields(measurements []*types.Measurement, symbol string) map[typ
 	return tests.MeasurementFields(measurements, symbol)
 }
 
-func TestTradeOn(testingTB *testing.T) {
-	Convey("Given a CVD trade ingestor", testingTB, func() {
-		trade := &Trade{cache: tradeCache()}
-		payload := []byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"buy","price":100.5,"qty":1.25,"ord_type":"market","trade_id":1,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
+func newSignal() *Signal {
+	return &Signal{
+		ctx:    context.Background(),
+		sample: algorithm.NewTradeFlowSample(),
+		flow:   equation.NewFlow(),
+	}
+}
 
-		Convey("When a trade frame arrives", func() {
-			trade.On(payload)
-
-			Convey("Then trade rows should accumulate in cache", func() {
-				So(len(tradeRows(trade.cache)), ShouldEqual, 1)
-				So(tradeRows(trade.cache)[0].Symbol, ShouldEqual, "BTC/USD")
-			})
-		})
-	})
+func frameFor(rows ...kraken.TradeData) *types.MarketFrame {
+	return &types.MarketFrame{
+		Trades:       rows,
+		CrossSection: types.NewCrossSection(),
+	}
 }
 
 func TestSignal_Measure(testingTB *testing.T) {
 	Convey("Given a CVD signal", testingTB, func() {
-		signal := &Signal{
-			ctx:    context.Background(),
-			trade:  &Trade{cache: tradeCache()},
-			sample: algorithm.NewTradeFlowSample(),
-			flow:   equation.NewFlow(),
-		}
+		signal := newSignal()
 
 		Convey("When measuring repeated buy trades with rising price", func() {
-			var result *types.Thesis
+			var measurements []*types.Measurement
 
 			for _, row := range trades("MATIC/USD", "buy", 100, 1, 30, time.Now().UTC()) {
-				signal.trade.cache = tradeCache(row)
-				result = signal.Measure(types.NewThesis(nil))
+				result, err := signal.Calculate(frameFor(row))
+				So(err, ShouldBeNil)
+				measurements = result
 			}
 
 			Convey("Then CVD measurements should be emitted", func() {
-				strength, ok := measureField(result.Measurements, "MATIC/USD", types.MetricStrength)
+				strength, ok := measureField(measurements, "MATIC/USD", types.MetricStrength)
 				So(ok, ShouldBeTrue)
 				So(strength.Raw, ShouldBeGreaterThan, 0)
 
-				drive, ok := measureField(result.Measurements, "MATIC/USD", types.MetricDrive)
+				drive, ok := measureField(measurements, "MATIC/USD", types.MetricDrive)
 				So(ok, ShouldBeTrue)
 				So(drive.Raw, ShouldBeGreaterThan, 0)
-
-				So(len(tradeRows(signal.trade.cache)), ShouldEqual, 0)
 			})
 		})
 	})
@@ -146,12 +139,7 @@ func TestSignal_MeasureFlowProfiles(testingTB *testing.T) {
 			testCase := testCase
 
 			Convey(fmt.Sprintf("When measuring %s", testCase.name), func() {
-				signal := &Signal{
-					ctx:    context.Background(),
-					trade:  &Trade{cache: tradeCache()},
-					sample: algorithm.NewTradeFlowSample(),
-					flow:   equation.NewFlow(),
-				}
+				signal := newSignal()
 				var metrics map[types.MetricType]float64
 
 				wantMetric := map[string]types.MetricType{
@@ -162,10 +150,10 @@ func TestSignal_MeasureFlowProfiles(testingTB *testing.T) {
 				}[testCase.wantScore]
 
 				for _, row := range testCase.rows {
-					signal.trade.cache = tradeCache(row)
-					result := signal.Measure(types.NewThesis(nil))
+					result, err := signal.Calculate(frameFor(row))
+					So(err, ShouldBeNil)
 
-					symbolMetrics := measurementFields(result.Measurements, "BTC/USD")
+					symbolMetrics := measurementFields(result, "BTC/USD")
 
 					if len(symbolMetrics) == 0 {
 						continue
@@ -198,23 +186,16 @@ func TestSignal_MeasureFlowProfiles(testingTB *testing.T) {
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {
 	rows := trades("MATIC/USD", "buy", 100, 1, 8, time.Now().UTC())
-	signal := &Signal{
-		ctx:    context.Background(),
-		trade:  &Trade{cache: tradeCache()},
-		sample: algorithm.NewTradeFlowSample(),
-		flow:   equation.NewFlow(),
-	}
+	signal := newSignal()
 
 	for _, row := range rows {
-		signal.trade.cache = tradeCache(row)
-		_ = signal.Measure(types.NewThesis(nil))
+		_, _ = signal.Calculate(frameFor(row))
 	}
 
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		signal.trade.cache = tradeCache(rows[len(rows)-1])
-		_ = signal.Measure(types.NewThesis(nil))
+		_, _ = signal.Calculate(frameFor(rows[len(rows)-1]))
 	}
 }
 

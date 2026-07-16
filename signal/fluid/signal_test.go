@@ -14,7 +14,7 @@ func TestSignalOnTicker(testingTB *testing.T) {
 		payload := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","bid":100,"ask":101,"last":100.5,"volume":10,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
 
 		Convey("When a ticker frame arrives", func() {
-			signal.onTicker(payload)
+			signal.observeTicker(payload)
 
 			Convey("Then the row should accumulate in the ticker cache", func() {
 				So(len(tickerRows(signal.tickerCache)), ShouldEqual, 1)
@@ -23,7 +23,7 @@ func TestSignalOnTicker(testingTB *testing.T) {
 		})
 
 		Convey("When an empty frame arrives", func() {
-			signal.onTicker(nil)
+			signal.observeTicker(nil)
 
 			Convey("Then nothing should be cached", func() {
 				So(tickerRows(signal.tickerCache), ShouldBeEmpty)
@@ -38,7 +38,7 @@ func TestSignalOnTrade(testingTB *testing.T) {
 		payload := []byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"buy","price":100.5,"qty":1.25,"ord_type":"market","trade_id":1,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
 
 		Convey("When a trade frame arrives", func() {
-			signal.onTrade(payload)
+			signal.observeTrade(payload)
 
 			Convey("Then the row should accumulate in the trade cache", func() {
 				So(len(tradeRows(signal.tradeCache)), ShouldEqual, 1)
@@ -54,7 +54,7 @@ func TestSignalOnBook(testingTB *testing.T) {
 		payload := []byte(`{"channel":"book","type":"update","data":[{"symbol":"BTC/USD","bids":[{"price":100,"qty":10}],"asks":[{"price":101,"qty":10}],"checksum":1,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
 
 		Convey("When a book frame arrives", func() {
-			signal.onBook(payload)
+			signal.observeBook(payload)
 
 			Convey("Then the row should accumulate with a zero price increment", func() {
 				So(len(bookRows(signal.bookCache)), ShouldEqual, 1)
@@ -83,13 +83,12 @@ func TestSignalMeasure(testingTB *testing.T) {
 		signal.bookCache = bookCache(row)
 
 		Convey("When measuring a tick with no market state yet", func() {
-			result := signal.Measure(types.NewThesis(nil))
+			frame := &types.MarketFrame{CrossSection: types.NewCrossSection()}
+			measurements, err := signal.Calculate(frame)
 
-			Convey("Then it should drain every cache without erroring", func() {
-				So(tickerRows(signal.tickerCache), ShouldBeEmpty)
-				So(tradeRows(signal.tradeCache), ShouldBeEmpty)
-				So(bookRows(signal.bookCache), ShouldBeEmpty)
-				So(result.Measurements, ShouldBeEmpty)
+			Convey("Then it should measure an empty frame without erroring", func() {
+				So(err, ShouldBeNil)
+				So(measurements, ShouldBeEmpty)
 			})
 		})
 	})

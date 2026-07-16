@@ -2,8 +2,6 @@ package depthflow
 
 import (
 	"context"
-	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -16,8 +14,6 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-var depthflowProbe atomic.Int64
-
 /*
 DepthFlow is the "Weight of the Book" perspective, measuring touch-level book
 imbalance with trade-pressure confirmation. Categories belong in logic; this
@@ -26,11 +22,34 @@ signal emits numerical scores only.
 type Signal struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
-	book     *Book
-	trade    *Trade
 	sample   *flow.Sample
 	bookflow *equation.Bookflow
 	ui       chan []byte
+}
+
+/*
+Measure supports direct replay against legacy signal-local journals. The live
+runtime uses Calculate with the central immutable market cut.
+*/
+func (signal *Signal) Measure(thesis *types.Thesis) chan []*types.Measurement {
+	out := make(chan []*types.Measurement)
+
+	go func() {
+		defer close(out)
+
+		measurements, err := signal.Calculate(thesis.Market())
+
+		if err != nil {
+			errnie.Error(err)
+			out <- nil
+			return
+		}
+
+		out <- measurements
+		signal.Publish(measurements)
+	}()
+
+	return out
 }
 
 func NewSignal(
@@ -41,8 +60,6 @@ func NewSignal(
 	return &Signal{
 		ctx:      ctx,
 		cancel:   cancel,
-		book:     NewBook(ctx, api, instrument),
-		trade:    NewTrade(ctx, api),
 		sample:   flow.NewSample(),
 		bookflow: equation.NewBookflow(),
 		ui:       ui,
@@ -69,46 +86,14 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 }
 
 /*
-Capture freezes book and trade journals at one planner boundary so their event
-ranges can be merged without admitting later observations.
-*/
-func (signal *Signal) Capture(at time.Time) error {
-	if err := signal.book.cache.Capture(at); err != nil {
-		return err
-	}
-
-	return signal.trade.cache.Capture(at)
-}
-
-/*
-Measure converts the receiver's current market input into typed measurements
+Calculate converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
-func (signal *Signal) Measure(
-	thesis *types.Thesis,
-) *types.Thesis {
-	bookBatch, err := signal.book.cache.Batch(thesis.At)
-
-	if err != nil {
-		errnie.Error(err)
-		return thesis
-	}
-
-	tradeBatch, err := signal.trade.cache.Batch(thesis.At)
-
-	if err != nil {
-		errnie.Error(err)
-		return thesis
-	}
-	events := depthEvents(bookBatch.Rows, tradeBatch.Rows)
+func (signal *Signal) Calculate(
+	frame *types.MarketFrame,
+) ([]*types.Measurement, error) {
+	events := depthEvents(frame.Books, frame.Trades)
 	out := make([]*types.Measurement, 0, len(events))
-
-	if depthflowProbe.Add(1)%2000 == 1 {
-		errnie.Info(fmt.Sprintf(
-			"depthflow probe: books=%d trades=%d events=%d",
-			len(bookBatch.Rows), len(tradeBatch.Rows), len(events),
-		))
-	}
 
 	for _, event := range events {
 		if event.Stream == "book" {
@@ -119,20 +104,7 @@ func (signal *Signal) Measure(
 		out = append(out, signal.measureTrade(event.Row.(kraken.TradeData))...)
 	}
 
-	if err := signal.book.cache.Commit(bookBatch); err != nil {
-		errnie.Error(err)
-		return thesis
-	}
-
-	if err := signal.trade.cache.Commit(tradeBatch); err != nil {
-		errnie.Error(err)
-		return thesis
-	}
-
-	thesis.Measurements = append(thesis.Measurements, out...)
-	signal.Publish(out)
-
-	return thesis
+	return out, nil
 }
 
 /*
@@ -144,7 +116,7 @@ func (signal *Signal) measureBook(row kraken.BookData) []*types.Measurement {
 		return nil
 	}
 
-	bids, asks, err := signal.book.levels(row)
+	bids, asks, err := types.BookLevels(row)
 
 	if err != nil {
 		errnie.Error(err)

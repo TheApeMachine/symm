@@ -8,9 +8,23 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
+
+func newTestSignal() *Signal {
+	return &Signal{
+		ctx:      context.Background(),
+		sample:   excitation.NewSample(),
+		process:  excitation.NewProcess(),
+		evidence: NewEvidence(),
+	}
+}
+
+func frameOf(rows ...kraken.TradeData) *types.MarketFrame {
+	return &types.MarketFrame{Trades: rows, CrossSection: types.NewCrossSection()}
+}
 
 func measureField(
 	measurements []*types.Measurement, symbol string, metric types.MetricType,
@@ -37,28 +51,29 @@ func tradeRow(symbol, side string, price float64, quantity float64, at time.Time
 }
 
 func TestSignalOnTrade(testingTB *testing.T) {
-	Convey("Given a Hawkes signal wired to the trade channel", testingTB, func() {
-		signal := &Signal{trade: NewTrade(), tradeCache: tradeCache()}
-		payload := []byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"buy","price":100.5,"qty":1.25,"ord_type":"market","trade_id":1,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
+	Convey("Given a Hawkes signal driven by the central market cut", testingTB, func() {
+		signal := newTestSignal()
+		at := time.Date(2023, 9, 25, 9, 4, 31, 0, time.UTC)
+		row := tradeRow("BTC/USD", "buy", 100.5, 1.25, at)
 
-		Convey("When a trade frame arrives over the wire", func() {
-			signal.onTrade(payload)
+		Convey("When a trade frame is calculated", func() {
+			_, err := signal.Calculate(frameOf(row))
 
-			Convey("Then the row should accumulate in the trade cache", func() {
-				So(len(tradeRows(signal.tradeCache)), ShouldEqual, 1)
-				So(tradeRows(signal.tradeCache)[0].Symbol, ShouldEqual, "BTC/USD")
+			Convey("Then Calculate should accept the row without error", func() {
+				So(err, ShouldBeNil)
 			})
 		})
 
 		Convey("When an empty frame arrives", func() {
-			signal.onTrade(nil)
+			measurements, err := signal.Calculate(frameOf())
 
-			Convey("Then nothing should be cached", func() {
-				So(tradeRows(signal.tradeCache), ShouldBeEmpty)
+			Convey("Then nothing should be measured", func() {
+				So(err, ShouldBeNil)
+				So(measurements, ShouldBeEmpty)
 			})
 		})
 
-		Convey("When websocket writes overlap measurement drains", func() {
+		Convey("When frame calculations overlap measurement drains", func() {
 			wait := sync.WaitGroup{}
 			wait.Add(2)
 
@@ -66,7 +81,7 @@ func TestSignalOnTrade(testingTB *testing.T) {
 				defer wait.Done()
 
 				for range 100 {
-					signal.onTrade(payload)
+					signal.Calculate(frameOf(row))
 				}
 			}()
 
@@ -74,7 +89,7 @@ func TestSignalOnTrade(testingTB *testing.T) {
 				defer wait.Done()
 
 				for range 100 {
-					signal.Measure(types.NewThesis(nil))
+					<-signal.Measure(types.NewThesis(nil, frameOf(row)))
 				}
 			}()
 
@@ -85,29 +100,25 @@ func TestSignalOnTrade(testingTB *testing.T) {
 
 func TestSignalMeasure(testingTB *testing.T) {
 	Convey("Given a Hawkes signal with enough marked arrivals to identify a stream", testingTB, func() {
-		signal := &Signal{
-			ctx:        context.Background(),
-			trade:      NewTrade(),
-			tradeCache: tradeCache(),
-		}
+		signal := newTestSignal()
 		start := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 		sides := []string{"buy", "sell", "buy", "sell", "buy", "sell"}
-		var result *types.Thesis
+		var result []*types.Measurement
 
 		Convey("When each trade arrives on its own tick", func() {
 			for index, side := range sides {
-				signal.tradeCache = tradeCache(
+				frame := frameOf(
 					tradeRow("BTC/USD", side, 100+float64(index), 1, start.Add(time.Duration(index)*time.Second)),
 				)
-				result = signal.Measure(types.NewThesis(nil))
+				measurements, err := signal.Calculate(frame)
+				So(err, ShouldBeNil)
+				result = measurements
 			}
 
 			Convey("Then event-count observation measurements should be emitted", func() {
-				count, ok := measureField(result.Measurements, "BTC/USD", types.MetricEventCount)
+				count, ok := measureField(result, "BTC/USD", types.MetricEventCount)
 				So(ok, ShouldBeTrue)
 				So(count.Raw, ShouldBeGreaterThan, 0)
-
-				So(tradeRows(signal.tradeCache), ShouldBeEmpty)
 			})
 		})
 	})

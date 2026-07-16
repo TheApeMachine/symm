@@ -66,13 +66,13 @@ func TestAnalyzerCognizeExportsVisualization(t *testing.T) {
 			},
 		}
 
-		first := types.NewThesis(nil)
+		first := types.NewThesis(nil, nil)
 		first.Manifold.Store(state.Symbol, state)
 		analyzer.Update(first)
 
 		state.At = state.At.Add(time.Second)
 		state.Epoch++
-		second := types.NewThesis(nil)
+		second := types.NewThesis(nil, nil)
 		second.Manifold.Store(state.Symbol, state)
 		analyzer.Update(second)
 		secondValue, found := second.Cognition.Load(state.Symbol)

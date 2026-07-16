@@ -15,7 +15,7 @@ that its concurrent state is usable again after restart.
 */
 func TestThesisMarshalJSON(t *testing.T) {
 	Convey("Given a completed Thesis tick", t, func() {
-		thesis := NewThesis(nil)
+		thesis := NewThesis(nil, nil)
 		thesis.Tick = 47
 		thesis.SetUIProjection("BTC/USD", SourceFluid)
 		thesis.Positions = append(thesis.Positions, Holding{
@@ -39,7 +39,7 @@ func TestThesisMarshalJSON(t *testing.T) {
 		encoded, err := sonic.Marshal(thesis)
 		So(err, ShouldBeNil)
 
-		restored := NewThesis(nil)
+		restored := NewThesis(nil, nil)
 		err = sonic.Unmarshal(encoded, restored)
 
 		Convey("It should restore the tick and its live state containers", func() {
@@ -66,7 +66,7 @@ func TestThesisMarshalJSON(t *testing.T) {
 BenchmarkThesisMarshalJSON measures the checkpoint encoding used once per tick.
 */
 func BenchmarkThesisMarshalJSON(b *testing.B) {
-	thesis := NewThesis(nil)
+	thesis := NewThesis(nil, nil)
 	thesis.Tick = 47
 	thesis.Positions = append(thesis.Positions, Holding{
 		Symbol: "BTC/USD", Asset: "BTC", Qty: decimal.NewFromFloat64(0.25),

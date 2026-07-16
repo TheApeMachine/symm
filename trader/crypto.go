@@ -42,6 +42,7 @@ type Crypto struct {
 	analyzer   *logic.Analyzer
 	dataPath   string
 	uiHub      *ui.Hub
+	market     *Market
 }
 
 /*
@@ -78,6 +79,13 @@ func NewCrypto(
 		dataPath = filepath.Join(home, strings.TrimPrefix(dataPath, "~/"))
 	}
 
+	market, err := NewMarket(api, instrument)
+
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
 	crypto := &Crypto{
 		ctx:        ctx,
 		cancel:     cancel,
@@ -95,6 +103,7 @@ func NewCrypto(
 		postMortem: &strategy.PostMortem{},
 		dataPath:   dataPath,
 		uiHub:      uiHub,
+		market:     market,
 	}
 	crypto.tick.Store(thesis.Tick)
 
@@ -135,8 +144,6 @@ func (crypto *Crypto) Run() error {
 			}()
 		}
 
-		loops := int64(0)
-
 		for crypto.Status() != types.ERROR {
 			select {
 			case <-crypto.ctx.Done():
@@ -144,21 +151,17 @@ func (crypto *Crypto) Run() error {
 			default:
 			}
 
-			loops++
-			ready := crypto.booter.Ready(system.StageWarmup)
-
-			if !ready {
-				if loops%1_000_000 == 1 {
-					errnie.Error(audit.Record(recorder, "tick_gate", map[string]any{
-						"loops": loops,
-						"ready": false,
-					}))
-				}
-
+			if !crypto.booter.Ready(system.StageWarmup) {
 				continue
 			}
 
-			thesis := crypto.planner.Update()
+			frame := crypto.market.Cut()
+
+			if frame.IsEmpty() {
+				continue
+			}
+
+			thesis := crypto.planner.Update(frame)
 			thesis.Tick = crypto.tick.Add(1)
 			crypto.trade(thesis)
 

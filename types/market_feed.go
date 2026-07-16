@@ -10,8 +10,8 @@ import (
 
 /*
 MarketFeed is one bounded, single-consumer market-data journal. ClockRing owns
-retention and ingress ordering; MarketFeed owns only the consumer's captured cut
-and cursor so signal code cannot destructively clear observations.
+retention and ingress ordering; MarketFeed owns the central consumer's captured
+cut and cursor.
 */
 type MarketFeed[T any] struct {
 	clock    *structure.ClockRing[string, T]
@@ -97,8 +97,8 @@ func (feed *MarketFeed[T]) Observe(
 }
 
 /*
-Capture freezes this consumer at the clock's present ingress high-water mark.
-Planner calls Capture for every signal before any signal starts measuring.
+Capture freezes this consumer at the clock's present ingress high-water mark so
+the central feed can cut every stream before concurrent measurement begins.
 */
 func (feed *MarketFeed[T]) Capture(at time.Time) error {
 	if feed == nil {

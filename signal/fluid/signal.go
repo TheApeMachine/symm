@@ -2,10 +2,8 @@ package fluid
 
 import (
 	"context"
-	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
@@ -104,7 +102,6 @@ are derived inline against the pair's own median-scaled baselines.
 type Signal struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	api         *websocket.API
 	instrument  *broker.Instrument
 	registry    *Registry
 	ticker      *Ticker
@@ -114,6 +111,92 @@ type Signal struct {
 	tradeCache  *types.MarketFeed[kraken.TradeData]
 	bookCache   *types.MarketFeed[kraken.BookData]
 	ui          chan []byte
+}
+
+/*
+observeTicker retains replay data for direct signal tests. Live ingestion is owned
+exclusively by trader.Market and does not register this method.
+*/
+func (signal *Signal) observeTicker(data []byte) {
+	frame := utils.Unmarshal[kraken.Ticker](data)
+
+	for _, row := range frame.Data {
+		if err := signal.tickerCache.Observe(row.Symbol, row.Timestamp, row); err != nil {
+			errnie.Error(err)
+			return
+		}
+	}
+}
+
+/*
+observeTrade retains replay data for direct signal tests. Live ingestion is owned
+exclusively by trader.Market and does not register this method.
+*/
+func (signal *Signal) observeTrade(data []byte) {
+	frame := kraken.NewTrade(data)
+
+	for _, row := range frame.Data {
+		if err := signal.tradeCache.Observe(row.Symbol, row.Timestamp, row); err != nil {
+			errnie.Error(err)
+			return
+		}
+	}
+}
+
+/*
+observeBook retains enriched replay data for direct signal tests. Live ingestion is
+owned exclusively by trader.Market and does not register this method.
+*/
+func (signal *Signal) observeBook(data []byte) {
+	frame := kraken.NewBook(data)
+
+	for _, row := range frame.Data {
+		row.PriceIncrement = signal.increment(row.Symbol)
+
+		if err := signal.bookCache.Observe(row.Symbol, row.Timestamp, row); err != nil {
+			errnie.Error(err)
+			return
+		}
+	}
+}
+
+/*
+increment resolves exchange tick size for direct replay. Central live book
+ingestion performs this enrichment before producing the shared market cut.
+*/
+func (signal *Signal) increment(symbol string) decimal.Decimal {
+	if signal.instrument == nil {
+		return *decimal.NewFromInt64(0)
+	}
+
+	pair, err := signal.instrument.Pair(symbol)
+
+	if err != nil {
+		return *decimal.NewFromInt64(0)
+	}
+
+	return pair.Increment()
+}
+
+func (signal *Signal) Measure(thesis *types.Thesis) chan []*types.Measurement {
+	out := make(chan []*types.Measurement)
+
+	go func() {
+		defer close(out)
+
+		measurements, err := signal.Calculate(thesis.Market())
+
+		if err != nil {
+			errnie.Error(err)
+			out <- nil
+			return
+		}
+
+		out <- measurements
+		signal.Publish(measurements)
+	}()
+
+	return out
 }
 
 /*
@@ -144,165 +227,15 @@ func NewSignal(
 	signal := &Signal{
 		ctx:        ctx,
 		cancel:     cancel,
-		api:        api,
 		instrument: instrument,
 		registry:   registry,
 		ui:         ui,
 		ticker:     NewTicker(registry),
 		trade:      NewTrade(registry),
 		book:       NewBook(registry),
-		tickerCache: types.NewMarketFeed[kraken.TickerData](
-			viper.GetInt("signals.feed_timeline_capacity"),
-			viper.GetInt("signals.feed_track_capacity"),
-		),
-		tradeCache: types.NewMarketFeed[kraken.TradeData](
-			viper.GetInt("signals.feed_timeline_capacity"),
-			viper.GetInt("signals.feed_track_capacity"),
-		),
-		bookCache: types.NewMarketFeed[kraken.BookData](
-			viper.GetInt("signals.feed_timeline_capacity"),
-			viper.GetInt("signals.feed_track_capacity"),
-		),
 	}
-
-	signal.api.On("ticker", signal.onTicker)
-	signal.api.On("trade", signal.onTrade)
-	signal.api.On("book", signal.onBook)
 
 	return signal
-}
-
-/*
-onTicker decodes ticker updates and feeds symbol state so price context stays
-current.
-*/
-func (signal *Signal) onTicker(data []byte) {
-	if len(data) == 0 {
-		return
-	}
-
-	frame := utils.Unmarshal[kraken.Ticker](data)
-
-	if len(frame.Data) == 0 {
-		return
-	}
-
-	for _, tickerData := range frame.Data {
-		if err := signal.tickerCache.Observe(
-			tickerData.Symbol,
-			tickerData.Timestamp,
-			tickerData,
-		); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"fluid: ticker observation failed for "+tickerData.Symbol,
-				err,
-			))
-		}
-	}
-}
-
-/*
-onTrade decodes trade updates and feeds executed flow so tape activity reaches
-the grid.
-*/
-func (signal *Signal) onTrade(data []byte) {
-	if len(data) == 0 {
-		return
-	}
-
-	frame := kraken.NewTrade(data)
-
-	if len(frame.Data) == 0 {
-		return
-	}
-
-	for _, tradeData := range frame.Data {
-		if err := signal.tradeCache.Observe(
-			tradeData.Symbol,
-			tradeData.Timestamp,
-			tradeData,
-		); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"fluid: trade observation failed for "+tradeData.Symbol,
-				err,
-			))
-		}
-	}
-}
-
-/*
-onBook decodes book updates and feeds resting-liquidity changes so the grid
-follows the live book.
-*/
-func (signal *Signal) onBook(data []byte) {
-	if len(data) == 0 {
-		return
-	}
-
-	frame := kraken.NewBook(data)
-
-	if len(frame.Data) == 0 {
-		return
-	}
-
-	for index := range frame.Data {
-		frame.Data[index].PriceIncrement = signal.increment(frame.Data[index].Symbol)
-	}
-
-	for _, bookData := range frame.Data {
-		if err := signal.bookCache.Observe(
-			bookData.Symbol,
-			bookData.Timestamp,
-			bookData,
-		); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"fluid: book observation failed for "+bookData.Symbol,
-				err,
-			))
-		}
-	}
-}
-
-/*
-Capture freezes ticker, trade, and book journals at one planner boundary so
-Fluid can merge their event ranges without cross-stream look-ahead.
-*/
-func (signal *Signal) Capture(at time.Time) error {
-	if err := signal.tickerCache.Capture(at); err != nil {
-		return err
-	}
-
-	if err := signal.tradeCache.Capture(at); err != nil {
-		return err
-	}
-
-	return signal.bookCache.Capture(at)
-}
-
-/*
-increment resolves the exchange price increment for symbol, defaulting to a
-zero decimal (skipped downstream by Book.Measure's own guard) until
-instrument metadata for that symbol has arrived.
-*/
-func (signal *Signal) increment(symbol string) decimal.Decimal {
-	if signal.instrument == nil {
-		// ponytail: instrument metadata may arrive after the first book frame;
-		// zero increment keeps the row skippable until Pair resolves.
-		return *decimal.NewFromInt64(0)
-	}
-
-	pair, err := signal.instrument.Pair(symbol)
-
-	if err != nil {
-		// ponytail: unknown symbols stay at zero increment until the universe
-		// registers the pair and subsequent frames carry a real tick size.
-		return *decimal.NewFromInt64(0)
-	}
-
-	return pair.Increment()
 }
 
 /*

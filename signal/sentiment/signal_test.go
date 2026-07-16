@@ -2,7 +2,6 @@ package sentiment
 
 import (
 	"context"
-	"iter"
 	"math"
 	"testing"
 	"time"
@@ -10,8 +9,6 @@ import (
 	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/tests"
-	tickerfixture "github.com/theapemachine/symm/tests/fixtures/ticker"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -29,31 +26,39 @@ func lastMeasurement(
 	return nil, false
 }
 
-func TestSignal_MeasureFromMarket(testingTB *testing.T) {
-	Convey("Given a sentiment signal fed by a market replay", testingTB, func() {
-		signal := &Signal{
-			ctx: context.Background(),
-			ticker: &Ticker{
-				cache: tickerCache(),
-			},
-		}
-		handlers := tests.Handlers{
-			"ticker": signal.ticker.On,
-		}
-		market := tests.NewMarket().
-			Feed(tickerfixture.NewFixture(tickerfixture.UPDATE, 32))
+/*
+frameFrom builds an immutable market cut from raw ticker rows, mirroring the
+central feed: it measures the cross-section once and shares it with Calculate.
+*/
+func frameFrom(rows ...kraken.TickerData) *types.MarketFrame {
+	crossSection := types.NewCrossSection()
+	crossSection.Measure(rows)
 
-		Convey("When calm and pumped ticker timelines are measured", func() {
-			calm := measureField(signal, handlers, market.Frames(), types.MetricChange)
-			pumped := measureField(
-				signal,
-				handlers,
-				tests.Spike(market.Frames(), 16, 1.25, 1),
-				types.MetricChange,
-			)
+	return &types.MarketFrame{
+		Tickers:      rows,
+		CrossSection: crossSection,
+	}
+}
+
+func TestSignal_MeasureFromMarket(testingTB *testing.T) {
+	Convey("Given a sentiment signal fed by a market cut", testingTB, func() {
+		signal := &Signal{ctx: context.Background()}
+		now := time.Now()
+
+		calmRows := []kraken.TickerData{
+			{Symbol: "ALGO/USD", ChangePct: 1, Last: krakendecimal.NewFromFloat64(101), Volume: 10, Timestamp: now},
+			{Symbol: "ETH/USD", ChangePct: 0.2, Last: krakendecimal.NewFromFloat64(100), Volume: 10, Timestamp: now},
+		}
+		pumpedRows := []kraken.TickerData{
+			{Symbol: "ALGO/USD", ChangePct: 25, Last: krakendecimal.NewFromFloat64(125), Volume: 10, Timestamp: now},
+			{Symbol: "ETH/USD", ChangePct: 0.2, Last: krakendecimal.NewFromFloat64(100), Volume: 10, Timestamp: now},
+		}
+
+		Convey("When calm and pumped ticker cohorts are measured", func() {
+			calm := measureField(signal, calmRows, types.MetricChange)
+			pumped := measureField(signal, pumpedRows, types.MetricChange)
 
 			Convey("Then the pumped stream should amplify measured change", func() {
-				So(len(tickerRows(signal.ticker.cache)), ShouldEqual, 0)
 				So(math.Abs(pumped), ShouldBeGreaterThan, math.Abs(calm))
 			})
 		})
@@ -63,65 +68,63 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 func TestSignal_Measure(testingTB *testing.T) {
 	Convey("Given current ticker rows with one clear cohort leader", testingTB, func() {
 		now := time.Now()
-		signal := &Signal{
-			ctx: context.Background(),
-			ticker: &Ticker{cache: tickerCache(
-				kraken.TickerData{
-					Symbol:    "BTC/USD",
-					ChangePct: 5,
-					Last:      krakendecimal.NewFromFloat64(105),
-					Timestamp: now,
-				},
-				kraken.TickerData{
-					Symbol:    "ETH/USD",
-					ChangePct: 2,
-					Last:      krakendecimal.NewFromFloat64(102),
-					Timestamp: now,
-				},
-				kraken.TickerData{
-					Symbol:    "SOL/USD",
-					ChangePct: -1,
-					Last:      krakendecimal.NewFromFloat64(99),
-					Timestamp: now,
-				},
-			)},
-		}
+		signal := &Signal{ctx: context.Background()}
 
-		thesis := types.NewThesis(nil)
+		frame := frameFrom(
+			kraken.TickerData{
+				Symbol:    "BTC/USD",
+				ChangePct: 5,
+				Last:      krakendecimal.NewFromFloat64(105),
+				Volume:    10,
+				Timestamp: now,
+			},
+			kraken.TickerData{
+				Symbol:    "ETH/USD",
+				ChangePct: 2,
+				Last:      krakendecimal.NewFromFloat64(102),
+				Volume:    10,
+				Timestamp: now,
+			},
+			kraken.TickerData{
+				Symbol:    "SOL/USD",
+				ChangePct: -1,
+				Last:      krakendecimal.NewFromFloat64(99),
+				Volume:    10,
+				Timestamp: now,
+			},
+		)
 
-		result := signal.Measure(thesis)
+		result, err := signal.Calculate(frame)
+		So(err, ShouldBeNil)
 
 		Convey("It should publish breadth and leader scores without categories", func() {
-			breadth, ok := lastMeasurement(result.Measurements, "BTC/USD", types.MetricBreadth)
+			breadth, ok := lastMeasurement(result, "BTC/USD", types.MetricBreadth)
 			So(ok, ShouldBeTrue)
 			So(breadth.Raw, ShouldAlmostEqual, 2.0/3.0, 0.0001)
 
-			surge, ok := lastMeasurement(result.Measurements, "BTC/USD", types.MetricSurgeScore)
+			surge, ok := lastMeasurement(result, "BTC/USD", types.MetricSurgeScore)
 			So(ok, ShouldBeTrue)
 			So(surge.Raw, ShouldBeGreaterThan, 0)
 
-			strength, ok := lastMeasurement(result.Measurements, "BTC/USD", types.MetricStrength)
+			strength, ok := lastMeasurement(result, "BTC/USD", types.MetricStrength)
 			So(ok, ShouldBeTrue)
 			So(strength.Raw, ShouldBeLessThanOrEqualTo, 1)
-
-			So(len(tickerRows(signal.ticker.cache)), ShouldEqual, 0)
 		})
 	})
 }
 
 func measureField(
 	signal *Signal,
-	handlers tests.Handlers,
-	frames iter.Seq[tests.Frame],
+	rows []kraken.TickerData,
 	metric types.MetricType,
 ) float64 {
-	signal.ticker.cache = tickerCache()
-	tests.Replay(handlers, frames)
+	result, err := signal.Calculate(frameFrom(rows...))
 
-	thesis := types.NewThesis(nil)
-	result := signal.Measure(thesis)
+	if err != nil {
+		return 0
+	}
 
-	measurement, ok := lastMeasurement(result.Measurements, "ALGO/USD", metric)
+	measurement, ok := lastMeasurement(result, "ALGO/USD", metric)
 
 	if !ok {
 		return 0
@@ -132,44 +135,27 @@ func measureField(
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {
 	now := time.Now()
-	signal := &Signal{
-		ctx: context.Background(),
-		ticker: &Ticker{
-			cache: tickerCache(
-				kraken.TickerData{
-					Symbol:    "BTC/USD",
-					ChangePct: 5,
-					Last:      krakendecimal.NewFromFloat64(105),
-					Timestamp: now,
-				},
-				kraken.TickerData{
-					Symbol:    "ETH/USD",
-					ChangePct: 2,
-					Last:      krakendecimal.NewFromFloat64(102),
-					Timestamp: now,
-				},
-			),
+	signal := &Signal{ctx: context.Background()}
+	frame := frameFrom(
+		kraken.TickerData{
+			Symbol:    "BTC/USD",
+			ChangePct: 5,
+			Last:      krakendecimal.NewFromFloat64(105),
+			Volume:    10,
+			Timestamp: now,
 		},
-	}
-	thesis := types.NewThesis(nil)
+		kraken.TickerData{
+			Symbol:    "ETH/USD",
+			ChangePct: 2,
+			Last:      krakendecimal.NewFromFloat64(102),
+			Volume:    10,
+			Timestamp: now,
+		},
+	)
 
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		signal.ticker.cache = tickerCache(
-			kraken.TickerData{
-				Symbol:    "BTC/USD",
-				ChangePct: 5,
-				Last:      krakendecimal.NewFromFloat64(105),
-				Timestamp: now,
-			},
-			kraken.TickerData{
-				Symbol:    "ETH/USD",
-				ChangePct: 2,
-				Last:      krakendecimal.NewFromFloat64(102),
-				Timestamp: now,
-			},
-		)
-		_ = signal.Measure(thesis)
+		_, _ = signal.Calculate(frame)
 	}
 }

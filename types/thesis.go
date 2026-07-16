@@ -39,6 +39,7 @@ type Thesis struct {
 	checkpoint   atomic.Int64
 	uiProjection atomic.Value
 	uiHub        chan<- []byte
+	marketFrame  *MarketFrame
 	Tick         int64          `json:"tick"`
 	At           time.Time      `json:"at"`
 	Positions    []Holding      `json:"positions"`
@@ -197,10 +198,11 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 /*
 NewThesis creates an empty in-process lifecycle carrier for one tick.
 */
-func NewThesis(uiHub chan<- []byte) *Thesis {
+func NewThesis(uiHub chan<- []byte, marketFrame *MarketFrame) *Thesis {
 	return &Thesis{
 		uiHub:        uiHub,
 		At:           time.Now().UTC(),
+		marketFrame:  marketFrame,
 		Positions:    make([]Holding, 0),
 		Decisions:    make([]Decision, 0),
 		CrossSection: NewCrossSection(),
@@ -220,14 +222,8 @@ func NewThesis(uiHub chan<- []byte) *Thesis {
 }
 
 /*
-NewSignalThesis creates the isolated subset a signal can measure concurrently.
-Planner merges this evidence into the complete lifecycle Thesis after workers
-return it through the result channel.
+Market returns the central immutable market cut for this thesis.
 */
-func NewSignalThesis(at time.Time) *Thesis {
-	return &Thesis{
-		At:           at,
-		CrossSection: NewCrossSection(),
-		Measurements: make([]*Measurement, 0),
-	}
+func (thesis *Thesis) Market() *MarketFrame {
+	return thesis.marketFrame
 }

@@ -19,7 +19,6 @@ from level3 order events corroborated by the public trade tape.
 type Signal struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
-	trades     *Trade
 	level3     *Level3
 	priorTouch map[string]touchSnapshot
 	ui         chan []byte
@@ -31,11 +30,31 @@ func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal 
 	return &Signal{
 		ctx:        ctx,
 		cancel:     cancel,
-		trades:     NewTrade(ctx, api),
 		level3:     NewLevel3(api),
 		priorTouch: map[string]touchSnapshot{},
 		ui:         ui,
 	}
+}
+
+func (signal *Signal) Measure(thesis *types.Thesis) chan []*types.Measurement {
+	out := make(chan []*types.Measurement)
+
+	go func() {
+		defer close(out)
+
+		measurements, err := signal.Calculate(thesis.Market())
+
+		if err != nil {
+			errnie.Error(err)
+			out <- nil
+			return
+		}
+
+		out <- measurements
+		signal.Publish(measurements)
+	}()
+
+	return out
 }
 
 /*
@@ -55,14 +74,6 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 	}.Marshal():
 	default:
 	}
-}
-
-/*
-Capture freezes the public trade journal before planner measurement. Level3
-state remains authoritative in its own versioned book implementation.
-*/
-func (signal *Signal) Capture(at time.Time) error {
-	return signal.trades.cache.Capture(at)
 }
 
 /*
@@ -117,24 +128,13 @@ func newObservationContext(
 }
 
 /*
-Measure converts the receiver's current market input into typed measurements
+Calculate converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
-func (signal *Signal) Measure(
-	thesis *types.Thesis,
-) *types.Thesis {
-	tradeBatch, err := signal.trades.cache.Batch(thesis.At)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"toxicity: trade drain failed",
-			err,
-		))
-		return thesis
-	}
-
-	trades := tradeBatch.Rows
+func (signal *Signal) Calculate(
+	frame *types.MarketFrame,
+) ([]*types.Measurement, error) {
+	trades := frame.Trades
 	books := signal.level3.Books()
 	evidence := map[string]*symbolEvidence{}
 
@@ -338,20 +338,10 @@ func (signal *Signal) Measure(
 		}
 	}
 
-	if err := signal.trades.cache.Commit(tradeBatch); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"toxicity: trade commit failed",
-			err,
-		))
-		return thesis
-	}
-
 	signal.priorTouch = nextTouch
-	thesis.Measurements = append(thesis.Measurements, out...)
 	signal.Publish(out)
 
-	return thesis
+	return out, nil
 }
 
 /*

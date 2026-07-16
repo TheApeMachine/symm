@@ -19,14 +19,38 @@ emits numerical scores only.
 type Signal struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
-	ticker  *Ticker
 	section *Section
 	ui      chan []byte
 }
 
 /*
-NewSignal creates correlation measurement state and subscribes its ticker
-input so successive ticks can establish real price relationships.
+Measure supports direct replay against the legacy signal-local journal. The
+live runtime uses Calculate with the central immutable market cut.
+*/
+func (signal *Signal) Measure(thesis *types.Thesis) chan []*types.Measurement {
+	out := make(chan []*types.Measurement)
+
+	go func() {
+		defer close(out)
+
+		measurements, err := signal.Calculate(thesis.Market())
+
+		if err != nil {
+			errnie.Error(err)
+			out <- nil
+			return
+		}
+
+		out <- measurements
+		signal.Publish(measurements)
+	}()
+
+	return out
+}
+
+/*
+NewSignal creates correlation measurement state for central market cuts so
+successive ticks can establish real price relationships.
 */
 func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
@@ -34,7 +58,6 @@ func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal 
 	return &Signal{
 		ctx:     ctx,
 		cancel:  cancel,
-		ticker:  NewTicker(ctx, api),
 		section: NewSection(),
 		ui:      ui,
 	}
@@ -60,34 +83,15 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 }
 
 /*
-Capture freezes the ticker journal so the asynchronous price paths consume a
-complete ingress range from one planner cycle.
-*/
-func (signal *Signal) Capture(at time.Time) error {
-	return signal.ticker.cache.Capture(at)
-}
-
-/*
-Measure converts the receiver's current market input into typed measurements
+Calculate converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
-func (signal *Signal) Measure(
-	thesis *types.Thesis,
-) *types.Thesis {
-	rows, err := signal.ticker.cache.Drain(thesis.At)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"correlation: ticker drain failed",
-			err,
-		))
-		return thesis
-	}
-
+func (signal *Signal) Calculate(
+	frame *types.MarketFrame,
+) ([]*types.Measurement, error) {
+	rows := frame.Tickers
 	out := make([]*types.Measurement, 0, len(rows))
 
-	thesis.CrossSection.Measure(rows)
 	scoresBySymbol := signal.section.Measure(rows)
 	latestAtBySymbol := make(map[string]time.Time, len(rows))
 
@@ -105,7 +109,7 @@ func (signal *Signal) Measure(
 		latestAtBySymbol[symbol] = row.Timestamp
 	}
 
-	for _, metric := range thesis.CrossSection.Metrics {
+	for _, metric := range frame.CrossSection.Metrics {
 		scores, ok := scoresBySymbol[metric.Symbol]
 
 		if !ok {
@@ -217,10 +221,7 @@ func (signal *Signal) Measure(
 		)
 	}
 
-	thesis.Measurements = append(thesis.Measurements, out...)
-	signal.Publish(out)
-
-	return thesis
+	return out, nil
 }
 
 /*

@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"runtime"
 	"testing"
 	"time"
 
@@ -20,12 +21,18 @@ func TestNewCrypto(t *testing.T) {
 	previousDepth := viper.Get("market.l3_depth")
 	previousInterval := viper.Get("signals.fluid.integration_interval")
 	previousCapacity := viper.Get("market.manifold_max_symbols")
+	previousTimeline := viper.Get("signals.feed_timeline_capacity")
+	previousTrack := viper.Get("signals.feed_track_capacity")
 	t.Cleanup(func() { viper.Set("market.l3_depth", previousDepth) })
 	t.Cleanup(func() { viper.Set("signals.fluid.integration_interval", previousInterval) })
 	t.Cleanup(func() { viper.Set("market.manifold_max_symbols", previousCapacity) })
+	t.Cleanup(func() { viper.Set("signals.feed_timeline_capacity", previousTimeline) })
+	t.Cleanup(func() { viper.Set("signals.feed_track_capacity", previousTrack) })
 	viper.Set("market.l3_depth", 10)
 	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
 	viper.Set("market.manifold_max_symbols", 8)
+	viper.Set("signals.feed_timeline_capacity", 128)
+	viper.Set("signals.feed_track_capacity", 128)
 
 	Convey("Given NewCrypto wiring", t, func() {
 		ctx := context.Background()
@@ -39,7 +46,7 @@ func TestNewCrypto(t *testing.T) {
 				t.Error(err)
 			}
 		})
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(nil, nil)
 		thesis.Tick = 46
 
 		Convey("When the runtime is constructed", func() {
@@ -72,13 +79,19 @@ func TestCryptoRun(t *testing.T) {
 	previousInterval := viper.Get("signals.fluid.integration_interval")
 	previousCapacity := viper.Get("market.manifold_max_symbols")
 	previousDataPath := viper.Get("system.data_path")
+	previousTimeline := viper.Get("signals.feed_timeline_capacity")
+	previousTrack := viper.Get("signals.feed_track_capacity")
 	t.Cleanup(func() { viper.Set("market.l3_depth", previousDepth) })
 	t.Cleanup(func() { viper.Set("signals.fluid.integration_interval", previousInterval) })
 	t.Cleanup(func() { viper.Set("market.manifold_max_symbols", previousCapacity) })
 	t.Cleanup(func() { viper.Set("system.data_path", previousDataPath) })
+	t.Cleanup(func() { viper.Set("signals.feed_timeline_capacity", previousTimeline) })
+	t.Cleanup(func() { viper.Set("signals.feed_track_capacity", previousTrack) })
 	viper.Set("market.l3_depth", 10)
 	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
 	viper.Set("market.manifold_max_symbols", 8)
+	viper.Set("signals.feed_timeline_capacity", 128)
+	viper.Set("signals.feed_track_capacity", 128)
 	dataPath := t.TempDir()
 	viper.Set("system.data_path", dataPath)
 
@@ -95,7 +108,7 @@ func TestCryptoRun(t *testing.T) {
 				t.Error(err)
 			}
 		})
-		thesis := types.NewThesis(channel)
+		thesis := types.NewThesis(channel, nil)
 		desk := broker.NewDesk(nil, nil, nil, nil)
 		hub, err := ui.NewHub(ctx, nil, nil, thesis, channel)
 		So(err, ShouldBeNil)
@@ -130,12 +143,35 @@ func TestCryptoRun(t *testing.T) {
 		So(booter.Start(), ShouldBeNil)
 		So(crypto.Run(), ShouldBeNil)
 
-		Convey("When one tick elapses", func() {
-			time.Sleep(15 * time.Millisecond)
+		Convey("When no market frame has arrived", func() {
+			Convey("Then the runtime should wait without advancing the tick", func() {
+				So(crypto.Status(), ShouldEqual, types.READY)
+				So(crypto.tick.Load(), ShouldEqual, 0)
+			})
+		})
+
+		Convey("When one market frame arrives", func() {
+			crypto.market.OnTicker([]byte(`{
+				"channel":"ticker",
+				"type":"update",
+				"data":[{
+					"symbol":"BTC/USD",
+					"bid":"100",
+					"ask":"101",
+					"last":"100.5",
+					"volume":10,
+					"timestamp":"2026-07-16T20:00:00Z"
+				}]
+			}`))
+			deadline := time.Now().Add(time.Second)
+
+			for crypto.tick.Load() == 0 && time.Now().Before(deadline) {
+				runtime.Gosched()
+			}
 
 			Convey("Then the runtime reports ready and advances the tick", func() {
 				So(crypto.Status(), ShouldEqual, types.READY)
-				So(crypto.tick.Load(), ShouldBeGreaterThan, 0)
+				So(crypto.tick.Load(), ShouldEqual, 1)
 			})
 		})
 	})

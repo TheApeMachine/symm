@@ -24,8 +24,8 @@ type SymbolMetric struct {
 }
 
 /*
-CrossSection contains the current tick's peer metrics. Each signal measures an
-isolated view, then Planner merges those views into the completed Thesis.
+CrossSection contains the current market cut's peer metrics. The central feed
+calculates it once and concurrent signals share it as immutable context.
 */
 type CrossSection struct {
 	Metrics []SymbolMetric `json:"metrics"`
@@ -80,8 +80,8 @@ func (crossSection *CrossSection) Measure(rows []kraken.TickerData) {
 }
 
 /*
-Merge retains the newest metric for each symbol from an independently measured
-cross-section so Planner can combine concurrent signal results deterministically.
+Merge retains the newest metric for each symbol when persisted or replayed
+cross-sectional state is combined.
 */
 func (crossSection *CrossSection) Merge(incoming *CrossSection) {
 	if incoming == nil {

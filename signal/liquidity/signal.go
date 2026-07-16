@@ -3,7 +3,6 @@ package liquidity
 import (
 	"context"
 	"math"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -20,13 +19,33 @@ retained as separate turnover context and never mixed into the book-depth score.
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	ticker *Ticker
 	ui     chan []byte
 }
 
+func (signal *Signal) Measure(thesis *types.Thesis) chan []*types.Measurement {
+	out := make(chan []*types.Measurement)
+
+	go func() {
+		defer close(out)
+
+		measurements, err := signal.Calculate(thesis.Market())
+
+		if err != nil {
+			errnie.Error(err)
+			out <- nil
+			return
+		}
+
+		out <- measurements
+		signal.Publish(measurements)
+	}()
+
+	return out
+}
+
 /*
-NewSignal creates liquidity measurement state and subscribes its ticker input
-so each tick can compare executable liquidity across the observed cohort.
+NewSignal creates liquidity measurement state for central market cuts so each
+tick can compare executable liquidity across the observed cohort.
 */
 func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
@@ -34,7 +53,6 @@ func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		ticker: NewTicker(ctx, api),
 		ui:     ui,
 	}
 }
@@ -59,36 +77,15 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 }
 
 /*
-Capture freezes the ticker journal before planner starts measuring signals so
-the peer surface cannot change midway through one Thesis.
-*/
-func (signal *Signal) Capture(at time.Time) error {
-	return signal.ticker.cache.Capture(at)
-}
-
-/*
-Measure converts the receiver's current market input into typed measurements
+Calculate converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
-func (signal *Signal) Measure(
-	thesis *types.Thesis,
-) *types.Thesis {
-	rows, err := signal.ticker.cache.Frame(thesis.At)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"liquidity: ticker frame failed",
-			err,
-		))
-		return thesis
-	}
-
+func (signal *Signal) Calculate(
+	frame *types.MarketFrame,
+) ([]*types.Measurement, error) {
+	rows := frame.Tickers
 	out := make([]*types.Measurement, 0, len(rows))
-
-	thesis.CrossSection.Measure(rows)
-
-	metrics := thesis.CrossSection.Metrics
+	metrics := frame.CrossSection.Metrics
 	notionalPeers := make([]float64, 0, len(metrics))
 	depthPeers := make([]float64, 0, len(metrics))
 
@@ -105,8 +102,7 @@ func (signal *Signal) Measure(
 	depthMedian, depthOK := statistic.MedianOf(depthPeers)
 
 	if len(depthPeers) < 2 || !depthOK || depthMedian <= 0 {
-		signal.Publish(out)
-		return thesis
+		return out, nil
 	}
 
 	notionalMedian, hasNotionalMedian := statistic.MedianOf(notionalPeers)
@@ -169,10 +165,7 @@ func (signal *Signal) Measure(
 		}
 	}
 
-	thesis.Measurements = append(thesis.Measurements, out...)
-	signal.Publish(out)
-
-	return thesis
+	return out, nil
 }
 
 /*

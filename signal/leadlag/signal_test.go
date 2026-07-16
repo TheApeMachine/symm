@@ -24,6 +24,16 @@ func hasMeasurement(measurements []*types.Measurement, symbol string, metric typ
 	return nil, false
 }
 
+func marketFrame(rows ...kraken.TickerData) *types.MarketFrame {
+	crossSection := types.NewCrossSection()
+	crossSection.Measure(rows)
+
+	return &types.MarketFrame{
+		Tickers:      rows,
+		CrossSection: crossSection,
+	}
+}
+
 func seedLaggedPaths(
 	section *Section,
 	lagBars int,
@@ -131,11 +141,10 @@ func TestSignal_MeasureEmitsLeadlag(testingTB *testing.T) {
 		signal := &Signal{
 			ctx:     context.Background(),
 			section: NewSection(),
-			ticker:  &Ticker{cache: tickerCache()},
 		}
 		btcLast, ethLast, at := seedLaggedPaths(signal.section, 6, 120)
 
-		signal.ticker.cache = tickerCache(
+		frame := marketFrame(
 			kraken.TickerData{
 				Symbol:    "BTC/USD",
 				Last:      krakendecimal.NewFromFloat64(btcLast),
@@ -150,14 +159,15 @@ func TestSignal_MeasureEmitsLeadlag(testingTB *testing.T) {
 			},
 		)
 
-		result := signal.Measure(types.NewThesis(nil))
+		measurements, err := signal.Calculate(frame)
 
 		Convey("Then it should emit numeric leadlag measurements", func() {
-			strength, hasFollower := hasMeasurement(result.Measurements, "ETH/USD", types.MetricStrength)
+			So(err, ShouldBeNil)
+
+			strength, hasFollower := hasMeasurement(measurements, "ETH/USD", types.MetricStrength)
 
 			So(hasFollower, ShouldBeTrue)
 			So(strength.Raw, ShouldBeGreaterThan, 0)
-			So(len(tickerRows(signal.ticker.cache)), ShouldEqual, 0)
 		})
 	})
 }
@@ -167,14 +177,13 @@ func TestSignal_MeasureSkipsIncompleteRow(testingTB *testing.T) {
 		signal := &Signal{
 			ctx:     context.Background(),
 			section: NewSection(),
-			ticker:  &Ticker{cache: tickerCache()},
 		}
 		now := time.Now()
 
 		signal.section.SetAnchor("BTC/USD")
 		signal.section.ObservePrice("BTC/USD", 100, now)
 
-		signal.ticker.cache = tickerCache(
+		frame := marketFrame(
 			kraken.TickerData{
 				Symbol:    "BTC/USD",
 				Last:      krakendecimal.NewFromFloat64(100),
@@ -186,10 +195,13 @@ func TestSignal_MeasureSkipsIncompleteRow(testingTB *testing.T) {
 				Timestamp: now,
 			},
 		)
-		result := signal.Measure(types.NewThesis(nil))
+
+		measurements, err := signal.Calculate(frame)
 
 		Convey("Then it should omit the incomplete follower", func() {
-			_, hasFollower := hasMeasurement(result.Measurements, "ETH/USD", types.MetricStrength)
+			So(err, ShouldBeNil)
+
+			_, hasFollower := hasMeasurement(measurements, "ETH/USD", types.MetricStrength)
 			So(hasFollower, ShouldBeFalse)
 		})
 	})
@@ -199,28 +211,26 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	signal := &Signal{
 		ctx:     context.Background(),
 		section: NewSection(),
-		ticker:  &Ticker{cache: tickerCache()},
 	}
 	btcLast, ethLast, at := seedLaggedPaths(signal.section, 6, 120)
-	rows := []kraken.TickerData{
-		{
+	frame := marketFrame(
+		kraken.TickerData{
 			Symbol:    "BTC/USD",
 			Last:      krakendecimal.NewFromFloat64(btcLast),
 			ChangePct: 5,
 			Timestamp: at,
 		},
-		{
+		kraken.TickerData{
 			Symbol:    "ETH/USD",
 			Last:      krakendecimal.NewFromFloat64(ethLast),
 			ChangePct: 4,
 			Timestamp: at,
 		},
-	}
+	)
 
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		signal.ticker.cache = tickerCache(rows...)
-		_ = signal.Measure(types.NewThesis(nil))
+		_, _ = signal.Calculate(frame)
 	}
 }

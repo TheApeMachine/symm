@@ -17,7 +17,7 @@ func restoreThesis(
 	encoded []byte,
 	message string,
 ) *types.Thesis {
-	restored := types.NewThesis(channel)
+	restored := types.NewThesis(channel, nil)
 
 	if err := sonic.Unmarshal(encoded, restored); err != nil {
 		errnie.Error(errnie.Err(errnie.UnprocessableContent, message, err))

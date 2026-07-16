@@ -103,7 +103,7 @@ var (
 				errnie.Error(tree.Close())
 			}()
 
-			thesis := types.NewThesis(channel)
+			thesis := types.NewThesis(channel, nil)
 
 			if encoded, found := tree.Get([]byte(types.ThesisKey)); found {
 				thesis = restoreThesis(

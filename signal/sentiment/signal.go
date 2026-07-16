@@ -3,7 +3,6 @@ package sentiment
 import (
 	"context"
 	"math"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -18,13 +17,37 @@ performance. Categories belong in logic; this signal emits numerical scores only
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	ticker *Ticker
 	ui     chan []byte
 }
 
 /*
-NewSignal creates sentiment measurement state and subscribes its ticker input
-so every tick can compare breadth with current leadership.
+Measure supports direct replay against the legacy signal-local journal. The
+live runtime uses Calculate with the central immutable market cut.
+*/
+func (signal *Signal) Measure(thesis *types.Thesis) chan []*types.Measurement {
+	out := make(chan []*types.Measurement)
+
+	go func() {
+		defer close(out)
+
+		measurements, err := signal.Calculate(thesis.Market())
+
+		if err != nil {
+			errnie.Error(err)
+			out <- nil
+			return
+		}
+
+		out <- measurements
+		signal.Publish(measurements)
+	}()
+
+	return out
+}
+
+/*
+NewSignal creates sentiment measurement state for central market cuts so every
+tick can compare breadth with current leadership.
 */
 func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
@@ -32,7 +55,6 @@ func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		ticker: NewTicker(ctx, api),
 		ui:     ui,
 	}
 }
@@ -57,40 +79,21 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 }
 
 /*
-Capture freezes the ticker journal before planner starts measuring signals so
-breadth and leadership use one stable market surface.
-*/
-func (signal *Signal) Capture(at time.Time) error {
-	return signal.ticker.cache.Capture(at)
-}
-
-/*
-Measure converts the receiver's current market input into typed measurements
+Calculate converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
-func (signal *Signal) Measure(
-	thesis *types.Thesis,
-) *types.Thesis {
-	tickers, err := signal.ticker.cache.Frame(thesis.At)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"sentiment: ticker frame failed",
-			err,
-		))
-		return thesis
-	}
-
+func (signal *Signal) Calculate(
+	frame *types.MarketFrame,
+) ([]*types.Measurement, error) {
+	tickers := frame.Tickers
 	out := make([]*types.Measurement, 0, len(tickers)*9)
 
-	if thesis.CrossSection == nil {
-		return thesis
+	if frame.CrossSection == nil {
+		return out, nil
 	}
 
-	thesis.CrossSection.Measure(tickers)
-	leader, leadershipThreshold := thesis.CrossSection.Leadership()
-	breadth := thesis.CrossSection.Breadth()
+	leader, leadershipThreshold := frame.CrossSection.Leadership()
+	breadth := frame.CrossSection.Breadth()
 
 	for _, row := range tickers {
 		change := row.ChangePct / 100
@@ -212,10 +215,7 @@ func (signal *Signal) Measure(
 		)
 	}
 
-	thesis.Measurements = append(thesis.Measurements, out...)
-	signal.Publish(out)
-
-	return thesis
+	return out, nil
 }
 
 /*

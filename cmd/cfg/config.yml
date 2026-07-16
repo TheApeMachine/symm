@@ -52,9 +52,9 @@ trading:
     reserved: 2
 
 signals:
-  # Each private stream retains the current 16,384-event window. Older events
-  # are overwritten by design; use a larger configured ring or a durable
-  # journal if a strategy must inspect bursts larger than this live window.
+  # The central public stream retains this event window. Older events are
+  # overwritten by design; enlarge the configured ring if one measurement cut
+  # must inspect a larger live burst.
   feed_timeline_capacity: 128
   # Preserve the existing per-symbol history allowance independently from the
   # global burst journal; multiplying the timeline size by every symbol would
