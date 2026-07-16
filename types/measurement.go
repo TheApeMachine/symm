@@ -97,6 +97,7 @@ const (
 	MetricQuoteNotionalMedian   MetricType = "quote_notional_median"
 	MetricExecutableDepth       MetricType = "executable_depth"
 	MetricExecutableDepthMedian MetricType = "executable_depth_median"
+	MetricRelativeLiquidity     MetricType = "relative_liquidity"
 
 	// fluid (mechanical order-book dynamics)
 	MetricLaminarScore        MetricType = "laminar_score"

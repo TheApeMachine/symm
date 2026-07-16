@@ -88,7 +88,7 @@ func (position *Position) ExecutionAck(buf []byte) {
 			continue
 		}
 
-		found, ok := position.balance.holdings.Load(data.Symbol)
+		value, ok := position.balance.holdings.Load(data.Symbol)
 
 		if !ok {
 			errnie.Error(errnie.Err(
@@ -100,22 +100,18 @@ func (position *Position) ExecutionAck(buf []byte) {
 			return
 		}
 
-		holding := found.(*types.Holding)
+		holding := value.(*types.Holding)
+		holding.Update(&data)
 		holding.Mark = &data.LastPrice
+		holding.Executions = append(holding.Executions, execution)
 
-		var err error
-		holding.PnL, err = position.price.WithFriction(position.pair, holding.Qty)
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"failed to calculate friction for "+data.Symbol,
-				err,
-			))
-
+		if data.Side == "sell" && data.ExecType == "trade" {
+			holding.Status = types.CLOSED
+			position.status = types.CLOSED
 			return
 		}
 
+		position.status = holding.Status
 		return
 	}
 }
@@ -215,17 +211,17 @@ func (position *Position) Exit() error {
 /*
 TickerAck updates this position from its own ticker only.
 
-Position does not perform fee, notional, PnL, or return calculations.
-It delegates the entire valuation to Price.
+Ticker updates only the current mark. Execution data remains authoritative for
+entry and exit facts, and no mark-to-market value is invented here.
 */
 func (position *Position) TickerAck(buf []byte) {
-	holding, err := position.balance.Holding(position.Stop.Symbol)
+	value, ok := position.balance.holdings.Load(position.Stop.Symbol)
 
-	if err != nil {
+	if !ok {
 		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to get holding for "+position.Stop.Symbol,
-			err,
+			errnie.NotFound,
+			"holding not found for "+position.Stop.Symbol,
+			nil,
 		))
 
 		return
@@ -238,19 +234,11 @@ func (position *Position) TickerAck(buf []byte) {
 	}
 
 	for _, tickerData := range ticker.Data {
-		holding.Mark = tickerData.Last
-		holding.PnL, err = position.price.WithFriction(position.pair, holding.Qty)
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"failed to calculate friction for "+position.Stop.Symbol,
-				err,
-			))
-
+		if tickerData.Symbol != position.Stop.Symbol {
 			continue
 		}
 
+		value.(*types.Holding).Mark = tickerData.Last
 		return
 	}
 }

@@ -147,6 +147,11 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 	thesis.Graphs.Range(func(key, value any) bool {
 		evidenceGraph := value.(*types.Graph)
 		evidenceGraph.Compose()
+
+		if len(evidenceGraph.Edges()) == 0 {
+			thesis.Graphs.Delete(key)
+		}
+
 		return true
 	})
 

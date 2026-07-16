@@ -185,7 +185,7 @@ func TestPriceWithFriction(t *testing.T) {
 				&kraken.InstrumentPair{
 					Symbol:         "BTC/USD",
 					PricePrecision: 1,
-					CostPrecision:  4,
+					CostPrecision:  2,
 				},
 				decimal.NewFromInt64(1),
 			)
@@ -194,7 +194,7 @@ func TestPriceWithFriction(t *testing.T) {
 				// 50000.5 notional + two 0.26% taker fees:
 				// fee = 50000.5 * 0.0026 = 130.0013, total = 260.0026.
 				So(err, ShouldBeNil)
-				So(net.Float64(), ShouldAlmostEqual, 50260.5026, 1e-8)
+				So(net.Float64(), ShouldAlmostEqual, 50260.50, 1e-8)
 			})
 		})
 	})

@@ -43,32 +43,18 @@ func (evidenceGraph *Graph) Frame() GraphFrame {
 		Edges:  make([]GraphEdgeWire, 0),
 	}
 
-	nodes := evidenceGraph.Nodes()
-
-	for nodes.Next() {
-		node := nodes.Node().(*Node)
+	for _, node := range evidenceGraph.Nodes() {
 		frame.Nodes = append(frame.Nodes, GraphNodeWire{
 			Key:         node.Key,
 			Measurement: node.Measurement,
 		})
 	}
 
-	edges := evidenceGraph.Edges()
-
-	for edges.Next() {
-		edge := edges.Edge()
-		lines := evidenceGraph.Lines(edge.From().ID(), edge.To().ID())
-
-		for lines.Next() {
-			relation := lines.Line().(*Edge)
-			frame.Edges = append(frame.Edges, GraphEdgeWire{
-				From:         relation.From().(*Node).Key,
-				To:           relation.To().(*Node).Key,
-				Type:         relation.Type,
-				At:           relation.At,
-				ObservedFrom: relation.ObservedFrom,
-			})
-		}
+	for _, edge := range evidenceGraph.Edges() {
+		frame.Edges = append(frame.Edges, GraphEdgeWire{
+			From: edge.From, To: edge.To, Type: edge.Type,
+			At: edge.At, ObservedFrom: edge.ObservedFrom,
+		})
 	}
 
 	return frame

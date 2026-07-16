@@ -84,12 +84,22 @@ func BenchmarkBalanceSnapshot(b *testing.B) {
 }
 
 /*
-BenchmarkBalanceAck measures wallet-to-managed-Holding synchronization.
+BenchmarkBalanceAck measures balance snapshot ingestion and publication.
 */
 func BenchmarkBalanceAck(b *testing.B) {
 	model := &kraken.Balance{Channel: "balances", Data: []kraken.BalanceData{
-		{Asset: "USD", Balance: decimal.NewFromInt64(50), Available: decimal.NewFromInt64(50)},
-		{Asset: "ZEC", Balance: decimal.NewFromFloat64(0.2), Available: decimal.NewFromFloat64(0.2)},
+		{
+			Asset:     "USD",
+			Balance:   decimal.NewFromInt64(50),
+			Available: decimal.NewFromInt64(50),
+			Reserved:  decimal.NewFromInt64(0),
+		},
+		{
+			Asset:     "ZEC",
+			Balance:   decimal.NewFromFloat64(0.2),
+			Available: decimal.NewFromFloat64(0.2),
+			Reserved:  decimal.NewFromInt64(0),
+		},
 	}}
 	buffer, err := model.MarshalJSON()
 

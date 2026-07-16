@@ -6,12 +6,10 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"gonum.org/v1/gonum/graph"
-	"gonum.org/v1/gonum/graph/multi"
 )
 
 /*
-EdgeType names how two measurement nodes relate within one symbol epoch.
+EdgeType names a relationship justified between two evidence references.
 */
 type EdgeType string
 
@@ -28,88 +26,52 @@ const (
 )
 
 /*
-Node is a Gonum node carrying one immutable measurement as graph evidence.
+Node retains one immutable measurement only while it participates in a typed
+evidence relationship.
 */
 type Node struct {
-	id          int64
 	Key         string
 	Measurement Measurement
 }
 
 /*
-ID returns the Gonum identity allocated by the graph that owns the node.
-*/
-func (node *Node) ID() int64 {
-	return node.id
-}
-
-/*
-Edge is a Gonum line carrying the relationship and temporal provenance that
-connect two measurement nodes.
+Edge connects two evidence keys with its relationship and observed interval.
 */
 type Edge struct {
-	line         graph.Line
+	From         string
+	To           string
 	Type         EdgeType
 	At           time.Time
 	ObservedFrom time.Time
 }
 
 /*
-From returns the source evidence node for this directed relationship.
-*/
-func (edge *Edge) From() graph.Node {
-	return edge.line.From()
-}
-
-/*
-To returns the destination evidence node for this directed relationship.
-*/
-func (edge *Edge) To() graph.Node {
-	return edge.line.To()
-}
-
-/*
-ReversedLine returns the same evidence relationship with its direction reversed.
-*/
-func (edge *Edge) ReversedLine() graph.Line {
-	reversed := *edge
-	reversed.line = edge.line.ReversedLine()
-
-	return &reversed
-}
-
-/*
-ID returns the Gonum identity allocated for this line between its endpoints.
-*/
-func (edge *Edge) ID() int64 {
-	return edge.line.ID()
-}
-
-/*
-Graph embeds Gonum's directed multigraph as the sole topology for one symbol.
-The wrapper only supplies the domain operations used to compose evidence.
+Graph owns the typed evidence relationships for one symbol. Candidate nodes are
+retained during composition and pruned when no justified edge references them.
 */
 type Graph struct {
-	*multi.DirectedGraph
-	Symbol  string
-	At      time.Time
-	nodeIDs map[string]int64
+	Symbol string
+	At     time.Time
+	nodes  map[string]*Node
+	edges  []*Edge
+	seen   map[string]struct{}
 }
 
 /*
-NewGraph starts an empty Gonum relationship graph for one symbol.
+NewGraph starts an empty symbol-local evidence graph.
 */
 func NewGraph(symbol string) *Graph {
 	return &Graph{
-		DirectedGraph: multi.NewDirectedGraph(),
-		Symbol:        symbol,
-		nodeIDs:       make(map[string]int64),
+		Symbol: symbol,
+		nodes:  make(map[string]*Node),
+		edges:  make([]*Edge, 0),
+		seen:   make(map[string]struct{}),
 	}
 }
 
 /*
-AddNode validates and retains one immutable measurement as a Gonum node when it
-belongs to this graph's symbol. Repeated evidence is an idempotent no-op.
+AddNode validates and stages one immutable measurement for relationship
+composition. Staged evidence without a relationship is removed by Compose.
 */
 func (evidenceGraph *Graph) AddNode(measurement *Measurement) error {
 	if measurement == nil {
@@ -130,7 +92,7 @@ func (evidenceGraph *Graph) AddNode(measurement *Measurement) error {
 
 	key := MeasurementKey(measurement)
 
-	if _, exists := evidenceGraph.nodeIDs[key]; exists {
+	if _, exists := evidenceGraph.nodes[key]; exists {
 		return nil
 	}
 
@@ -146,11 +108,7 @@ func (evidenceGraph *Graph) AddNode(measurement *Measurement) error {
 		retained.Uncertainty = &uncertainty
 	}
 
-	identity := evidenceGraph.NewNode().ID()
-	evidenceGraph.DirectedGraph.AddNode(&Node{
-		id: identity, Key: key, Measurement: retained,
-	})
-	evidenceGraph.nodeIDs[key] = identity
+	evidenceGraph.nodes[key] = &Node{Key: key, Measurement: retained}
 
 	if evidenceGraph.At.IsZero() || measurement.At.After(evidenceGraph.At) {
 		evidenceGraph.At = measurement.At
@@ -160,8 +118,8 @@ func (evidenceGraph *Graph) AddNode(measurement *Measurement) error {
 }
 
 /*
-Relate adds one typed Gonum line between existing measurement node keys while
-rejecting an equivalent relationship already present between those nodes.
+Relate records one typed relationship between existing evidence references and
+rejects an equivalent relationship already present.
 */
 func (evidenceGraph *Graph) Relate(
 	fromKey string,
@@ -170,32 +128,22 @@ func (evidenceGraph *Graph) Relate(
 	at time.Time,
 	observedFrom time.Time,
 ) bool {
-	if fromKey == "" || toKey == "" || edgeType == "" {
+	if fromKey == "" || toKey == "" || edgeType == "" ||
+		evidenceGraph.nodes[fromKey] == nil || evidenceGraph.nodes[toKey] == nil {
 		return false
 	}
 
-	from := evidenceGraph.node(fromKey)
-	to := evidenceGraph.node(toKey)
+	identity := edgeKey(fromKey, toKey, edgeType, at, observedFrom)
 
-	if from == nil || to == nil {
+	if _, exists := evidenceGraph.seen[identity]; exists {
 		return false
 	}
 
-	lines := evidenceGraph.Lines(from.ID(), to.ID())
-
-	for lines.Next() {
-		existing := lines.Line().(*Edge)
-
-		if existing.Type == edgeType && existing.At.Equal(at) &&
-			existing.ObservedFrom.Equal(observedFrom) {
-			return false
-		}
-	}
-
-	line := evidenceGraph.NewLine(from, to)
-	evidenceGraph.SetLine(&Edge{
-		line: line, Type: edgeType, At: at, ObservedFrom: observedFrom,
+	evidenceGraph.edges = append(evidenceGraph.edges, &Edge{
+		From: fromKey, To: toKey, Type: edgeType,
+		At: at, ObservedFrom: observedFrom,
 	})
+	evidenceGraph.seen[identity] = struct{}{}
 
 	if evidenceGraph.At.IsZero() || at.After(evidenceGraph.At) {
 		evidenceGraph.At = at
@@ -205,22 +153,45 @@ func (evidenceGraph *Graph) Relate(
 }
 
 /*
-node resolves one key through its Gonum node ID. The index contains identities
-only; Gonum remains the sole owner of node values and graph topology.
+Nodes returns the evidence currently owned by the graph.
 */
-func (evidenceGraph *Graph) node(key string) *Node {
-	identity, exists := evidenceGraph.nodeIDs[key]
+func (evidenceGraph *Graph) Nodes() []*Node {
+	nodes := make([]*Node, 0, len(evidenceGraph.nodes))
 
-	if !exists {
-		return nil
+	for _, node := range evidenceGraph.nodes {
+		nodes = append(nodes, node)
 	}
 
-	return evidenceGraph.Node(identity).(*Node)
+	return nodes
 }
 
 /*
-MeasurementKey returns the stable identity used by graph nodes and category
-evidence references.
+Edges returns the typed relationships currently owned by the graph.
+*/
+func (evidenceGraph *Graph) Edges() []*Edge {
+	return evidenceGraph.edges
+}
+
+/*
+prune removes staged measurements that did not participate in a relationship.
+*/
+func (evidenceGraph *Graph) prune() {
+	referenced := make(map[string]struct{}, len(evidenceGraph.edges)*2)
+
+	for _, edge := range evidenceGraph.edges {
+		referenced[edge.From] = struct{}{}
+		referenced[edge.To] = struct{}{}
+	}
+
+	for key := range evidenceGraph.nodes {
+		if _, ok := referenced[key]; !ok {
+			delete(evidenceGraph.nodes, key)
+		}
+	}
+}
+
+/*
+MeasurementKey returns the stable evidence reference used by nodes and edges.
 */
 func MeasurementKey(measurement *Measurement) string {
 	var key strings.Builder
@@ -254,4 +225,16 @@ func MeasurementKey(measurement *Measurement) string {
 	writeInt(measurement.Scale.Through.UnixNano())
 
 	return key.String()
+}
+
+func edgeKey(
+	from string,
+	to string,
+	edgeType EdgeType,
+	at time.Time,
+	observedFrom time.Time,
+) string {
+	return from + "\x00" + to + "\x00" + string(edgeType) + "\x00" +
+		strconv.FormatInt(at.UnixNano(), 10) + "\x00" +
+		strconv.FormatInt(observedFrom.UnixNano(), 10)
 }

@@ -154,10 +154,11 @@ func (section *Section) scores(symbol string) (map[string]float64, bool) {
 	relativeEnergy := subjectEnergy / peerEnergy
 	excessEnergy := math.Max(0, relativeEnergy-1)
 	energyDeficit := math.Max(0, 1-relativeEnergy)
+	excessMass := excessEnergy / (1 + excessEnergy)
 	herdScore := math.Max(0, signed) / (1 + excessEnergy)
-	alphaScore := excessEnergy / (1 + math.Max(0, signed))
+	alphaScore := excessMass / (1 + math.Max(0, signed))
 	noiseScore := math.Max(0, 1-correlation) / (1 + excessEnergy + energyDeficit)
-	stressScore := math.Max(0, -signed) * (1 + excessEnergy)
+	stressScore := 1 - (1-math.Max(0, -signed))*(1-excessMass)
 	strength := max(max(herdScore, alphaScore), max(noiseScore, stressScore))
 
 	if strength <= 0 {

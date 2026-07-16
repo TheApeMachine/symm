@@ -220,7 +220,7 @@ func (grid *FluidGrid) ingestBook(
 			return err
 		}
 
-		grid.measureReplenishment(dt, touchSpread)
+		grid.measureReplenishment(touchSpread)
 		grid.measureMidDivergence()
 
 		grid.lastIntegrateAt = grid.lastIntegrateAt.Add(grid.integrationInterval)
@@ -432,7 +432,7 @@ func (grid *FluidGrid) prepareSourcesForIntegration() {
 measureReplenishment derives touch replenishment rates from observed source
 changes so liquidity recovery remains data-driven.
 */
-func (grid *FluidGrid) measureReplenishment(dt float64, spread float64) {
+func (grid *FluidGrid) measureReplenishment(spread float64) {
 	replenished := 0.0
 	consumed := 0.0
 	touchBand := touchBandCells(spread, grid.tickSize, grid.halfWidth)
@@ -455,12 +455,6 @@ func (grid *FluidGrid) measureReplenishment(dt float64, spread float64) {
 
 	if consumed > 0 {
 		grid.replenishmentRate = replenished / consumed
-
-		return
-	}
-
-	if replenished > 0 {
-		grid.replenishmentRate = replenished * dt
 
 		return
 	}

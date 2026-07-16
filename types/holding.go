@@ -33,11 +33,27 @@ type Holding struct {
 	IsOpportunity bool                `json:"is_opportunity"`
 }
 
+/*
+Update records the fields supplied by one execution without replacing entry
+facts with exit or cancellation zero values.
+*/
 func (holding *Holding) Update(execution *kraken.ExecutionData) {
 	holding.Status = MarketStatuses[execution.ExecType]
-	holding.EntryAt = &execution.Timestamp
-	holding.EntryPrice = execution.LastPrice.Copy()
-	holding.EntryFee = execution.FeeUsdEquiv.Copy()
-	holding.ExitPrice = execution.LastPrice.Copy()
-	holding.ExitFee = execution.FeeUsdEquiv.Copy()
+
+	if execution.ExecType != "trade" {
+		return
+	}
+
+	if execution.Side == "buy" {
+		holding.EntryAt = &execution.Timestamp
+		holding.EntryPrice = execution.LastPrice.Copy()
+		holding.EntryFee = execution.FeeUsdEquiv.Copy()
+		return
+	}
+
+	if execution.Side == "sell" {
+		holding.ExitAt = &execution.Timestamp
+		holding.ExitPrice = execution.LastPrice.Copy()
+		holding.ExitFee = execution.FeeUsdEquiv.Copy()
+	}
 }

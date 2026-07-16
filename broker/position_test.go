@@ -13,11 +13,11 @@ import (
 )
 
 /*
-TestPositionExecutionAckValuesHoldingImmediately verifies confirmed fills become
-fee-inclusive published Holding state before another ticker is required.
+TestPositionExecutionAck verifies confirmed fills update the existing strategy
+holding without deriving wallet quantity or speculative round-trip valuation.
 */
-func TestPositionExecutionAckValuesHoldingImmediately(t *testing.T) {
-	Convey("Given a confirmed entry fill and the current execution price", t, func() {
+func TestPositionExecutionAck(t *testing.T) {
+	Convey("Given an existing strategy holding and a confirmed entry fill", t, func() {
 		fees := &sync.Map{}
 		fees.Store("BTC/USD", kraken.TradeVolumeFee{
 			Fee: decimal.NewFromFloat64(0.26),
@@ -28,6 +28,12 @@ func TestPositionExecutionAckValuesHoldingImmediately(t *testing.T) {
 			tickers: &sync.Map{},
 		}
 		holdings := &sync.Map{}
+		holding := &types.Holding{
+			Symbol: "BTC/USD",
+			Asset:  "BTC",
+			Qty:    decimal.NewFromInt64(1),
+		}
+		holdings.Store("BTC/USD", holding)
 		balance := &Balance{quote: "USD", holdings: holdings}
 		request := kraken.NewMarketOrder("buy", 1, "BTC/USD")
 		position := &Position{
@@ -40,9 +46,7 @@ func TestPositionExecutionAckValuesHoldingImmediately(t *testing.T) {
 		}
 		position.OrderAck([]byte(`{"method":"add_order","result":{"order_id":"order-1"},"success":true,"req_id":` +
 			strconv.Itoa(request.ReqID) + `}`))
-		_, holdingExistsBeforeFill := holdings.Load("BTC/USD")
 		So(position.Status(), ShouldEqual, types.PENDING)
-		So(holdingExistsBeforeFill, ShouldBeFalse)
 		execution := &kraken.Execution{
 			Channel: "executions", Type: "update",
 			Data: []kraken.ExecutionData{{
@@ -58,22 +62,14 @@ func TestPositionExecutionAckValuesHoldingImmediately(t *testing.T) {
 		So(err, ShouldBeNil)
 		position.ExecutionAck(buffer)
 
-		Convey("It should publish an open holding at the round-trip fee loss", func() {
-			holding, holdingErr := balance.Holding("BTC/USD")
-			assetHolding, assetErr := balance.Holding("BTC")
-
-			So(holdingErr, ShouldBeNil)
-			So(assetErr, ShouldBeNil)
-			So(assetHolding.Qty.Float64(), ShouldEqual, holding.Qty.Float64())
+		Convey("It should record the execution facts on that holding", func() {
 			So(position.Status(), ShouldEqual, types.OPEN)
 			So(holding.Qty.Float64(), ShouldEqual, 1.0)
 			So(holding.EntryPrice.Float64(), ShouldEqual, 100.0)
 			So(holding.Mark.Float64(), ShouldEqual, 100.0)
 			So(holding.EntryFee.Float64(), ShouldAlmostEqual, 0.26, 0.0000001)
-			So(holding.ExitFee.Float64(), ShouldAlmostEqual, 0.26, 0.0000001)
-			So(holding.PnL.Float64(), ShouldAlmostEqual, -0.52, 0.0000001)
-			So(holding.ReturnPct, ShouldAlmostEqual, -0.52, 0.0000001)
-			So(holding.EntryAt, ShouldEqual, time.Unix(1, 0))
+			So(holding.ExitFee, ShouldBeNil)
+			So(*holding.EntryAt, ShouldEqual, time.Unix(1, 0))
 			So(holding.Executions, ShouldHaveLength, 1)
 		})
 
@@ -100,9 +96,7 @@ func TestPositionExecutionAckValuesHoldingImmediately(t *testing.T) {
 
 			So(holdingErr, ShouldBeNil)
 			So(position.Status(), ShouldEqual, types.CLOSED)
-			So(holding.Qty.Sign(), ShouldEqual, 0)
 			So(holding.Mark.Float64(), ShouldEqual, 101.0)
-			So(holding.PnL.Float64(), ShouldAlmostEqual, 0.4774, 0.0000001)
 			So(holding.Executions, ShouldHaveLength, 2)
 		})
 
@@ -122,7 +116,7 @@ func TestPositionExecutionAckValuesHoldingImmediately(t *testing.T) {
 
 			So(canceledErr, ShouldBeNil)
 			position.ExecutionAck(canceledBuffer)
-			So(position.Status(), ShouldEqual, types.OPEN)
+			So(position.Status(), ShouldEqual, types.CANCELED)
 		})
 	})
 }
@@ -176,7 +170,7 @@ func BenchmarkPositionExecutionAck(b *testing.B) {
 			pair:    &kraken.InstrumentPair{Symbol: "BTC/USD", Base: "BTC"},
 			orderID: "order-1", Stop: &StopData{Symbol: "BTC/USD"},
 		}
-		holdings.Store("BTC/USD", types.Holding{
+		holdings.Store("BTC/USD", &types.Holding{
 			Symbol: "BTC/USD", Asset: "BTC",
 			Qty: decimal.NewFromInt64(0),
 		})

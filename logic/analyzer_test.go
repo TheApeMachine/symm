@@ -95,7 +95,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 
 		analyzer.Update(thesis)
 
-		Convey("It should write one symbol-local graph directly onto the thesis", func() {
+		Convey("It should not retain measurements without relationships", func() {
 			graphCount := 0
 
 			thesis.Graphs.Range(func(_, _ any) bool {
@@ -104,13 +104,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 				return true
 			})
 
-			So(graphCount, ShouldEqual, 2)
-			graph, ok := thesis.Graphs.Load("BTC/USD")
-			So(ok, ShouldBeTrue)
-			So(graph.(*types.Graph).Nodes().Len(), ShouldEqual, 1)
-			graph, ok = thesis.Graphs.Load("ETH/USD")
-			So(ok, ShouldBeTrue)
-			So(graph.(*types.Graph).Nodes().Len(), ShouldEqual, 1)
+			So(graphCount, ShouldEqual, 0)
 		})
 	})
 
@@ -181,12 +175,9 @@ func TestAnalyzerUpdate(t *testing.T) {
 
 		analyzer.Update(second)
 
-		Convey("It should keep only the current tick topology on the Thesis", func() {
-			value, found := second.Graphs.Load("BTC/USD")
-			So(found, ShouldBeTrue)
-			evidenceGraph := value.(*types.Graph)
-			So(evidenceGraph.Nodes().Len(), ShouldEqual, 1)
-			So(evidenceGraph.Edges().Next(), ShouldBeFalse)
+		Convey("It should omit a current tick without a relationship", func() {
+			_, found := second.Graphs.Load("BTC/USD")
+			So(found, ShouldBeFalse)
 		})
 	})
 
@@ -254,12 +245,8 @@ func TestAnalyzerUpdateComposesRelationships(t *testing.T) {
 			graph, ok := thesis.Graphs.Load("BTC/USD")
 			So(ok, ShouldBeTrue)
 			evidenceGraph := graph.(*types.Graph)
-			edges := evidenceGraph.Edges()
-			So(edges.Next(), ShouldBeTrue)
-			edge := edges.Edge()
-			lines := evidenceGraph.Lines(edge.From().ID(), edge.To().ID())
-			So(lines.Next(), ShouldBeTrue)
-			So(lines.Line().(*types.Edge).Type, ShouldEqual, types.Contradicts)
+			So(evidenceGraph.Edges(), ShouldNotBeEmpty)
+			So(evidenceGraph.Edges()[0].Type, ShouldEqual, types.Contradicts)
 		})
 	})
 }

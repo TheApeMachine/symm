@@ -179,6 +179,9 @@ func TestSignal_MeasureDenominationInvariant(t *testing.T) {
 		baselineResult := measure(1)
 		baselineMetrics := measurementFields(baselineResult.Measurements, "BTC/USD")
 		So(baselineMetrics, ShouldNotBeEmpty)
+		So(baselineMetrics[types.MetricStrength], ShouldBeLessThanOrEqualTo, 1)
+		So(baselineMetrics[types.MetricAlphaScore], ShouldBeLessThanOrEqualTo, 1)
+		So(baselineMetrics[types.MetricStressScore], ShouldBeLessThanOrEqualTo, 1)
 
 		Convey("When the subject's entire history is requoted in a different denomination", func() {
 			for _, factor := range rescaleFactors {

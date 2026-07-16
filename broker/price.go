@@ -268,9 +268,12 @@ func (price *Price) Fee(
 		return nil
 	}
 
-	fraction := tradeVolume.Fee.Div(decimal.NewFromInt64(100))
+	feePrecision := tradeVolume.Fee.GetScale() + 2
+	fraction := tradeVolume.Fee.SetScale(feePrecision).Div(
+		decimal.NewFromInt64(100).SetScale(feePrecision),
+	)
 
-	return amount.Copy().Mul(fraction)
+	return fraction.Mul(amount).SetScale(int64(instrument.CostPrecision))
 }
 
 /*

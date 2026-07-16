@@ -74,15 +74,20 @@ func TestSignal_MeasureUsesExecutableValueNotRawVolume(testingTB *testing.T) {
 		result := signal.Measure(types.NewThesis(nil))
 
 		Convey("Then it scores the subject as liquid, not scarce", func() {
-			rvol, ok := measureField(result.Measurements, "BTC/USD", types.MetricRVOL)
+			relative, ok := measureField(result.Measurements, "BTC/USD", types.MetricRelativeLiquidity)
 			So(ok, ShouldBeTrue)
-			So(rvol.Raw, ShouldBeGreaterThan, 1)
-			So(rvol.Subject, ShouldEqual, types.SubjectPeerLiquidity)
-			So(rvol.Maturity, ShouldBeGreaterThan, 0)
+			So(relative.Raw, ShouldBeGreaterThan, 1)
+			So(relative.Subject, ShouldEqual, types.SubjectPeerLiquidity)
+			So(relative.Maturity, ShouldBeGreaterThan, 0)
 
 			depthScore, ok := measureField(result.Measurements, "BTC/USD", types.MetricDepthScore)
 			So(ok, ShouldBeTrue)
 			So(depthScore.Raw, ShouldBeGreaterThan, 0)
+			So(depthScore.Raw, ShouldBeLessThan, 1)
+
+			strength, ok := measureField(result.Measurements, "BTC/USD", types.MetricStrength)
+			So(ok, ShouldBeTrue)
+			So(strength.Raw, ShouldBeLessThan, 1)
 
 			scarcity, ok := measureField(result.Measurements, "BTC/USD", types.MetricScarcityScore)
 			So(ok, ShouldBeTrue)
@@ -107,9 +112,9 @@ func TestSignal_MeasureAtPeerMedianIsBalanced(testingTB *testing.T) {
 		result := signal.Measure(types.NewThesis(nil))
 
 		Convey("Then relative value is one and neither scarcity nor depth dominates", func() {
-			rvol, ok := measureField(result.Measurements, "BTC/USD", types.MetricRVOL)
+			relative, ok := measureField(result.Measurements, "BTC/USD", types.MetricRelativeLiquidity)
 			So(ok, ShouldBeTrue)
-			So(rvol.Raw, ShouldAlmostEqual, 1, 1e-9)
+			So(relative.Raw, ShouldAlmostEqual, 1, 1e-9)
 
 			scarcity, ok := measureField(result.Measurements, "BTC/USD", types.MetricScarcityScore)
 			So(ok, ShouldBeTrue)
@@ -122,6 +127,10 @@ func TestSignal_MeasureAtPeerMedianIsBalanced(testingTB *testing.T) {
 			peerBalance, ok := measureField(result.Measurements, "BTC/USD", types.MetricPeerBalanceScore)
 			So(ok, ShouldBeTrue)
 			So(peerBalance.Raw, ShouldEqual, 1)
+
+			strength, ok := measureField(result.Measurements, "BTC/USD", types.MetricStrength)
+			So(ok, ShouldBeTrue)
+			So(strength.Raw, ShouldEqual, 0)
 		})
 	})
 }
@@ -152,7 +161,7 @@ func TestSignal_MeasureSkipsNonExecutableSubject(testingTB *testing.T) {
 		result := signal.Measure(types.NewThesis(nil))
 
 		Convey("Then it emits nothing for the unexecutable subject", func() {
-			_, hasSubject := measureField(result.Measurements, "BTC/USD", types.MetricRVOL)
+			_, hasSubject := measureField(result.Measurements, "BTC/USD", types.MetricRelativeLiquidity)
 			So(hasSubject, ShouldBeFalse)
 		})
 	})

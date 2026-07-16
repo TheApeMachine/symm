@@ -10,6 +10,31 @@ import (
 )
 
 /*
+TestThesisCurrentMeasurements verifies the UI projection retains every metric
+from the newest source epoch without replaying earlier observations.
+*/
+func TestThesisCurrentMeasurements(t *testing.T) {
+	Convey("Given multiple epochs from one symbol and source", t, func() {
+		thesis := NewThesis(nil)
+		first := time.Unix(1, 0)
+		latest := time.Unix(2, 0)
+		thesis.Measurements = []*Measurement{
+			{Symbol: "BTC/USD", Source: "hawkes", Metric: MetricArrivalRate, At: first},
+			{Symbol: "BTC/USD", Source: "hawkes", Metric: MetricArrivalRate, At: latest},
+			{Symbol: "BTC/USD", Source: "hawkes", Metric: MetricDecayRate, At: latest},
+		}
+
+		current := thesis.CurrentMeasurements()
+
+		Convey("It should retain the complete newest epoch only", func() {
+			So(current, ShouldHaveLength, 2)
+			So(current[0].At, ShouldEqual, latest)
+			So(current[1].At, ShouldEqual, latest)
+		})
+	})
+}
+
+/*
 TestThesisMarshalJSON verifies the persisted checkpoint is the Thesis itself and
 that its concurrent state is usable again after restart.
 */
@@ -59,7 +84,7 @@ func TestThesisMarshalJSON(t *testing.T) {
 			So(cognition.(Cognition).Winner, ShouldEqual, "buy")
 			restoredGraph, graphFound := restored.Graphs.Load("BTC/USD")
 			So(graphFound, ShouldBeTrue)
-			So(restoredGraph.(*Graph).Nodes().Len(), ShouldEqual, 1)
+			So(restoredGraph.(*Graph).Nodes(), ShouldHaveLength, 1)
 		})
 	})
 }

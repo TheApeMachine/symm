@@ -126,9 +126,11 @@ func (desk *Desk) Buy(
 		&pair,
 	)
 
+	desk.balance.holdings.Store(holding.Symbol, &holding)
 	desk.positions.Store(holding.Symbol, position)
 
 	if err := position.Enter(); err != nil {
+		desk.balance.holdings.Delete(holding.Symbol)
 		desk.positions.Delete(holding.Symbol)
 		return err
 	}

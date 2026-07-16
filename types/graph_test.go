@@ -7,7 +7,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/errnie"
-	gonumgraph "gonum.org/v1/gonum/graph"
 )
 
 func TestGraphAddNode(t *testing.T) {
@@ -30,7 +29,7 @@ func TestGraphAddNode(t *testing.T) {
 			Convey("Then only one node is retained", func() {
 				So(firstErr, ShouldBeNil)
 				So(secondErr, ShouldBeNil)
-				So(graph.Nodes().Len(), ShouldEqual, 1)
+				So(graph.Nodes(), ShouldHaveLength, 1)
 				So(graph.At, ShouldEqual, at)
 			})
 		})
@@ -45,7 +44,7 @@ func TestGraphAddNode(t *testing.T) {
 			Convey("Then both evidence instances are retained", func() {
 				So(firstErr, ShouldBeNil)
 				So(secondErr, ShouldBeNil)
-				So(graph.Nodes().Len(), ShouldEqual, 2)
+				So(graph.Nodes(), ShouldHaveLength, 2)
 			})
 		})
 
@@ -61,9 +60,7 @@ func TestGraphAddNode(t *testing.T) {
 			measurement.Uncertainty.Lower = 0.8
 
 			Convey("Then retained evidence remains immutable", func() {
-				nodes := graph.Nodes()
-				So(nodes.Next(), ShouldBeTrue)
-				retained := nodes.Node().(*Node)
+				retained := graph.Nodes()[0]
 				So(*retained.Measurement.Normalized, ShouldEqual, 0.5)
 				So(retained.Measurement.Uncertainty.Lower, ShouldEqual, 0.4)
 			})
@@ -75,7 +72,7 @@ func TestGraphAddNode(t *testing.T) {
 			Convey("Then validation rejects it before insertion", func() {
 				So(err, ShouldNotBeNil)
 				So(errnie.IsValidation(err), ShouldBeTrue)
-				So(graph.Nodes().Len(), ShouldEqual, 0)
+				So(graph.Nodes(), ShouldBeEmpty)
 			})
 		})
 
@@ -93,7 +90,7 @@ func TestGraphAddNode(t *testing.T) {
 			Convey("Then it is rejected", func() {
 				So(err, ShouldNotBeNil)
 				So(errnie.IsValidation(err), ShouldBeTrue)
-				So(graph.Nodes().Len(), ShouldEqual, 0)
+				So(graph.Nodes(), ShouldBeEmpty)
 			})
 		})
 
@@ -106,7 +103,7 @@ func TestGraphAddNode(t *testing.T) {
 			Convey("Then structural validation rejects it before insertion", func() {
 				So(err, ShouldNotBeNil)
 				So(err.Error(), ShouldContainSubstring, "Normalized: must be finite")
-				So(graph.Nodes().Len(), ShouldEqual, 0)
+				So(graph.Nodes(), ShouldBeEmpty)
 			})
 		})
 
@@ -117,11 +114,9 @@ func TestGraphAddNode(t *testing.T) {
 
 			Convey("Then provenance is canonicalized before insertion", func() {
 				So(err, ShouldBeNil)
-				So(graph.Nodes().Len(), ShouldEqual, 1)
+				So(graph.Nodes(), ShouldHaveLength, 1)
 
-				nodes := graph.Nodes()
-				So(nodes.Next(), ShouldBeTrue)
-				retained := nodes.Node().(*Node)
+				retained := graph.Nodes()[0]
 				So(retained.Measurement.ObservedFrom, ShouldEqual, at)
 				So(retained.Measurement.At, ShouldEqual, at.Add(time.Second))
 			})
@@ -197,25 +192,56 @@ func TestGraphRelate(t *testing.T) {
 	})
 }
 
-func graphEdges(evidenceGraph *Graph) []*Edge {
-	edges := evidenceGraph.Edges()
-	relations := make([]*Edge, 0)
-
-	for edges.Next() {
-		edge := edges.Edge()
-		lines := evidenceGraph.Lines(edge.From().ID(), edge.To().ID())
-
-		for lines.Next() {
-			relations = append(relations, lines.Line().(*Edge))
+/*
+TestGraphRelationshipTypes verifies the domain graph accepts every relationship
+defined by the evidence contract without losing its references or time span.
+*/
+func TestGraphRelationshipTypes(t *testing.T) {
+	Convey("Given two referenced evidence nodes", t, func() {
+		graph := NewGraph("BTC/USD")
+		at := time.Unix(20, 0)
+		from := &Measurement{Symbol: "BTC/USD", At: at, Source: SourceHawkes}
+		to := &Measurement{Symbol: "BTC/USD", At: at, Source: SourceFluid}
+		So(graph.AddNode(from), ShouldBeNil)
+		So(graph.AddNode(to), ShouldBeNil)
+		fromKey := MeasurementKey(from)
+		toKey := MeasurementKey(to)
+		relationships := []EdgeType{
+			Supports,
+			Contradicts,
+			Conditions,
+			Leads,
+			Lags,
+			Redundant,
+			Independent,
+			Stale,
+			Incomparable,
 		}
-	}
 
-	return relations
+		for _, relationship := range relationships {
+			So(
+				graph.Relate(fromKey, toKey, relationship, at, at.Add(-time.Second)),
+				ShouldBeTrue,
+			)
+		}
+
+		Convey("Every edge should retain evidence references and temporal context", func() {
+			So(graph.Edges(), ShouldHaveLength, len(relationships))
+
+			for index, edge := range graph.Edges() {
+				So(edge.From, ShouldEqual, fromKey)
+				So(edge.To, ShouldEqual, toKey)
+				So(edge.Type, ShouldEqual, relationships[index])
+				So(edge.At, ShouldEqual, at)
+				So(edge.ObservedFrom, ShouldEqual, at.Add(-time.Second))
+			}
+		})
+	})
 }
 
-var _ gonumgraph.Node = (*Node)(nil)
-var _ gonumgraph.Line = (*Edge)(nil)
-var _ gonumgraph.DirectedMultigraph = (*Graph)(nil)
+func graphEdges(evidenceGraph *Graph) []*Edge {
+	return evidenceGraph.Edges()
+}
 
 func BenchmarkGraphAddNode(b *testing.B) {
 	graph := NewGraph("BTC/USD")

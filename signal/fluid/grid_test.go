@@ -320,12 +320,27 @@ func TestFluidGridReplenishmentRatio(t *testing.T) {
 		grid.sources[grid.midIndex-1] = 4
 		grid.sources[grid.midIndex+1] = -4
 
-		grid.measureReplenishment(0.1, 0.02)
+		grid.measureReplenishment(0.02)
 
 		Convey("It should use replenished over consumed as viscosity", func() {
 			So(grid.viscosity(), ShouldEqual, 1)
 			So(grid.midAddRateAtTouch(), ShouldBeGreaterThan, 0)
 			So(grid.midExecuteRateAtTouch(), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+func TestFluidGridReplenishmentRequiresConsumption(t *testing.T) {
+	Convey("Given touch replenishment without observed consumption", t, func() {
+		setFluidGridConfig()
+		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+		So(err, ShouldBeNil)
+		grid.sources[grid.midIndex] = 4
+
+		grid.measureReplenishment(0.02)
+
+		Convey("It should not mix replenished quantity into the viscosity ratio", func() {
+			So(grid.viscosity(), ShouldEqual, 0)
 		})
 	})
 }

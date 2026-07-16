@@ -12,10 +12,8 @@ already established each measurement's structural invariants.
 */
 func (evidenceGraph *Graph) Compose() {
 	observables := make(map[string][]*Node)
-	nodes := evidenceGraph.Nodes()
 
-	for nodes.Next() {
-		node := nodes.Node().(*Node)
+	for _, node := range evidenceGraph.Nodes() {
 		measurement := node.Measurement
 
 		if measurement.Metric == "" || measurement.Subject == "" {
@@ -43,6 +41,8 @@ func (evidenceGraph *Graph) Compose() {
 			evidenceGraph.compose(observable[index-1], observable[index])
 		}
 	}
+
+	evidenceGraph.prune()
 }
 
 /*

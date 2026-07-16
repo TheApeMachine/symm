@@ -150,7 +150,7 @@ func TestGraphCompose(t *testing.T) {
 		graph.Compose()
 
 		Convey("Then direct evidence remains connected without a transitive closure", func() {
-			So(graph.Nodes().Len(), ShouldEqual, 1_000)
+			So(graph.Nodes(), ShouldHaveLength, 1_000)
 			So(graphEdges(graph), ShouldHaveLength, 999)
 		})
 	})

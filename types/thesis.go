@@ -221,9 +221,11 @@ func (thesis *Thesis) Publish() {
 		},
 	})
 
-	if len(thesis.Measurements) > 0 {
+	measurements := thesis.CurrentMeasurements()
+
+	if len(measurements) > 0 {
 		thesis.Send(datura.Map[any]{
-			"measurements": thesis.Measurements,
+			"measurements": measurements,
 		})
 	}
 
@@ -293,7 +295,11 @@ func (thesis *Thesis) Publish() {
 				return true
 			}
 
-			graphs = append(graphs, evidenceGraph.Frame())
+			graph := evidenceGraph.Frame()
+
+			if len(graph.Edges) > 0 {
+				graphs = append(graphs, graph)
+			}
 
 			return true
 		})
@@ -373,6 +379,35 @@ func (thesis *Thesis) Publish() {
 			"causal": thesis.Causal,
 		})
 	}
+}
+
+/*
+CurrentMeasurements returns the latest complete signal epoch for each symbol
+and source. Analysis retains every observation; this projection keeps the live
+dashboard current without replaying the market-event backlog into the browser.
+*/
+func (thesis *Thesis) CurrentMeasurements() []*Measurement {
+	latest := make(map[string]time.Time)
+
+	for _, measurement := range thesis.Measurements {
+		key := measurement.Symbol + "\x00" + string(measurement.Source)
+
+		if measurement.At.After(latest[key]) {
+			latest[key] = measurement.At
+		}
+	}
+
+	current := make([]*Measurement, 0, len(thesis.Measurements))
+
+	for _, measurement := range thesis.Measurements {
+		key := measurement.Symbol + "\x00" + string(measurement.Source)
+
+		if measurement.At.Equal(latest[key]) {
+			current = append(current, measurement)
+		}
+	}
+
+	return current
 }
 
 func (thesis *Thesis) Send(frame datura.Map[any]) {

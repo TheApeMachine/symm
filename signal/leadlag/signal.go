@@ -170,10 +170,6 @@ func (signal *Signal) Measure(
 			stall := sampleSupport * anchorActive * stallEvidence
 			strength := max(max(inefficient, syncScore), max(decoupled, stall))
 
-			if strength <= 0 {
-				strength = 0.01
-			}
-
 			validity := types.MeasurementValidity{
 				State:     types.ValidityValid,
 				Readiness: types.ReadinessObservation,

@@ -14,6 +14,7 @@ func TestGraphFrame(t *testing.T) {
 		firstAt := time.Unix(10, 0)
 		secondAt := firstAt.Add(time.Second)
 		first := &Measurement{
+			Source:  SourceHawkes,
 			Stream:  Hawkes,
 			Metric:  MetricArrivalRate,
 			Subject: SubjectTradeArrivals,
@@ -23,7 +24,8 @@ func TestGraphFrame(t *testing.T) {
 			Raw:     0.4,
 		}
 		second := &Measurement{
-			Stream:  Hawkes,
+			Source:  SourceFluid,
+			Stream:  Fluid,
 			Metric:  MetricArrivalRate,
 			Subject: SubjectTradeArrivals,
 			Side:    SideSell,
@@ -67,6 +69,7 @@ func TestGraphFrame(t *testing.T) {
 		Convey("When published through a Thesis", func() {
 			uiHub := make(chan []byte, 4)
 			thesis := NewThesis(uiHub)
+			thesis.Measurements = append(thesis.Measurements, first, second)
 			thesis.Graphs.Store(graph.Symbol, graph)
 			thesis.Lifecycle.Store(graph.Symbol, LifecycleManaging)
 			thesis.Publish()
@@ -92,7 +95,7 @@ func TestGraphFrame(t *testing.T) {
 				}
 			}
 
-			Convey("Then the websocket payload contains the existing graph frame", func() {
+			Convey("Then the websocket payload contains the current graph projection", func() {
 				So(published.Graphs, ShouldHaveLength, 1)
 				So(published.Graphs[0].Symbol, ShouldEqual, graph.Symbol)
 				So(published.Graphs[0].Nodes, ShouldHaveLength, 2)
@@ -108,14 +111,20 @@ func BenchmarkGraphFrame(b *testing.B) {
 	at := time.Unix(10, 0)
 
 	for index := range 32 {
+		normalized := float64(index+1) / 32
 		measurement := &Measurement{
-			Stream:  Hawkes,
-			Metric:  MetricArrivalRate,
-			Subject: SubjectTradeArrivals,
-			Side:    SideBuy,
-			Symbol:  "BTC/USD",
-			At:      at.Add(time.Duration(index) * time.Second),
-			Raw:     float64(index) / 32,
+			Source:     SourceHawkes,
+			Stream:     Hawkes,
+			Metric:     MetricArrivalRate,
+			Subject:    SubjectTradeArrivals,
+			Side:       SideBuy,
+			Symbol:     "BTC/USD",
+			At:         at.Add(time.Duration(index) * time.Second),
+			Raw:        float64(index) / 32,
+			Normalized: &normalized,
+			Validity:   MeasurementValidity{State: ValidityValid},
+			Unit:       UnitEventsPerSecond,
+			Scale:      ScaleReference{Kind: ScaleObservationWindow},
 		}
 
 		if err := graph.AddNode(measurement); err != nil {

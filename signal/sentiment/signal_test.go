@@ -100,6 +100,10 @@ func TestSignal_Measure(testingTB *testing.T) {
 			So(ok, ShouldBeTrue)
 			So(surge.Raw, ShouldBeGreaterThan, 0)
 
+			strength, ok := lastMeasurement(result.Measurements, "BTC/USD", types.MetricStrength)
+			So(ok, ShouldBeTrue)
+			So(strength.Raw, ShouldBeLessThanOrEqualTo, 1)
+
 			So(len(tickerRows(signal.ticker.cache)), ShouldEqual, 0)
 		})
 	})

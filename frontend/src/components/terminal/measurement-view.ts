@@ -218,6 +218,7 @@ export const percentOf = (measurement: Measurement): number => {
 
 const METRIC_LABEL_OVERRIDES: Record<string, string> = {
 	rvol: "RVOL",
+	viscosity: "Replenishment Ratio",
 };
 
 /*

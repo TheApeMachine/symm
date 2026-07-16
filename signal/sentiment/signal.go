@@ -86,8 +86,8 @@ func (signal *Signal) Measure(
 		}
 
 		leaderMass := leaderEvidence / (1 + leaderEvidence)
-		surgeScore := breadth * leaderEvidence * math.Max(relativeLead, 1/(1+leaderEvidence))
-		divergentScore := (1 - breadth) * relativeLead * leaderEvidence
+		surgeScore := breadth * leaderMass * math.Max(relativeLead, 1-leaderMass)
+		divergentScore := (1 - breadth) * relativeLead * leaderMass
 		slumpScore := (1 - breadth) * (1 - relativeLead) / (1 + leaderMass)
 		strength := math.Max(surgeScore, math.Max(divergentScore, slumpScore))
 

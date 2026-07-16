@@ -98,9 +98,9 @@ func (signal *Signal) Measure(
 
 				relative := math.Sqrt((notional / notionalMedian) * (executableDepth / depthMedian))
 				scarcity := math.Max(0, 1-relative)
-				depth := math.Max(0, relative-1)
-				balance := 1 / (1 + math.Abs(relative-1))
-				strength := max(scarcity, max(balance, depth))
+				depth := math.Max(0, 1-1/relative)
+				strength := max(scarcity, depth)
+				balance := 1 - strength
 				validity := types.MeasurementValidity{
 					State:     types.ValidityValid,
 					Readiness: types.ReadinessObservation,
@@ -116,7 +116,7 @@ func (signal *Signal) Measure(
 					raw        float64
 					normalized *float64
 				}{
-					{types.MetricRVOL, types.UnitDimensionless, relative, types.NormalizeFinite(relative)},
+					{types.MetricRelativeLiquidity, types.UnitDimensionless, relative, types.NormalizeFinite(relative)},
 					{types.MetricScarcityScore, types.UnitDimensionless, scarcity, types.NormalizeFinite(scarcity)},
 					{types.MetricPeerBalanceScore, types.UnitDimensionless, balance, types.NormalizeFinite(balance)},
 					{types.MetricDepthScore, types.UnitDimensionless, depth, types.NormalizeFinite(depth)},
