@@ -128,10 +128,10 @@ func TestAPITradeVolume(t *testing.T) {
 	Convey("Given a private TradeVolume response keyed by the requested pair", t, func() {
 		viper.Set("trading.model", "live")
 		public := &stubConn{client: normalizerClient()}
-		private := &stubConn{postResponse: []byte(`{
+		private := &stubConn{client: normalizerClient(), postResponse: []byte(`{
 			"error":[],
 			"result":{
-				"fees":{"XXBTZUSD":{"fee":"0.2600","min_fee":"0.1000","tier_volume":"0.0000"}},
+				"fees":{"XXBTZUSD":{"fee":"0.2600"}},
 				"fees_maker":{"XXBTZUSD":{"fee":"0.1600"}}
 			}
 		}`)}
@@ -144,26 +144,26 @@ func TestAPITradeVolume(t *testing.T) {
 			Convey("Then the private endpoint is used and SDK pair names are normalized", func() {
 				So(err, ShouldBeNil)
 				So(private.postPath, ShouldEqual, TradeVolumeEndpoint)
-				So(tradeVolume.Result.Fees, ShouldResemble, map[string]kraken.TradeVolumeFees{
-					"BTC/USD": {
-						Fee: "0.2600", MinFee: "0.1000", TierVolume: "0.0000",
-					},
-				})
-				So(tradeVolume.Result.FeesMaker, ShouldResemble, map[string]kraken.TradeVolumeFees{
-					"BTC/USD": {Fee: "0.1600"},
-				})
+				encoded, encodeErr := private.postParams.MarshalJSON()
+				So(encodeErr, ShouldBeNil)
+				So(string(encoded), ShouldContainSubstring, `"pair":"BTC/USD"`)
+				So(string(encoded), ShouldContainSubstring, `"fee_schedule":true`)
+				So(tradeVolume.Fees["BTC/USD"].Fee.Float64(), ShouldEqual, 0.26)
+				So(tradeVolume.FeesMaker["BTC/USD"].Fee.Float64(), ShouldEqual, 0.16)
 			})
 		})
 	})
 }
 
 func BenchmarkAPITradeVolume(b *testing.B) {
-	fees := make(map[string]kraken.TradeVolumeFees, 40)
+	fees := make(map[string]kraken.TradeVolumeFee, 40)
 	symbols := make([]string, 40)
 
 	for index := range symbols {
 		symbols[index] = fmt.Sprintf("ASSET-%02d/USD", index)
-		fees[symbols[index]] = kraken.TradeVolumeFees{Fee: "0.2600"}
+		fees[symbols[index]] = kraken.TradeVolumeFee{
+			Fee: decimal.NewFromFloat64(0.26),
+		}
 	}
 
 	response, err := json.Marshal(&kraken.TradeVolume{
@@ -174,7 +174,7 @@ func BenchmarkAPITradeVolume(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	private := &stubConn{postResponse: response}
+	private := &stubConn{client: normalizerClient(), postResponse: response}
 	api := NewAPI(
 		context.Background(),
 		&stubConn{client: normalizerClient()},
@@ -195,7 +195,7 @@ func BenchmarkAPITradeVolume(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		if tradeVolume != nil && len(tradeVolume.Result.Fees) != len(symbols) {
+		if tradeVolume != nil && len(tradeVolume.Fees) != len(symbols) {
 			b.Fatal("incomplete fee tier")
 		}
 	}

@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/bytedance/sonic"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
@@ -100,6 +101,18 @@ var (
 				errnie.Error(tree.Close())
 			}()
 
+			thesis := types.NewThesis(channel)
+
+			if encoded, found := tree.Get([]byte(types.ThesisKey)); found {
+				if err := sonic.Unmarshal(encoded, thesis); err != nil {
+					return errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						"failed to restore persisted Thesis",
+						err,
+					))
+				}
+			}
+
 			simulator := websocket.NewLatencySimulator(booter)
 
 			public := websocket.New(
@@ -126,8 +139,9 @@ var (
 			defer api.Close()
 
 			price := broker.NewPrice(api)
+			instrument := broker.NewInstrument(api, price, channel)
 			balance := broker.NewBalance(api, channel)
-			desk := broker.NewDesk(api, price, balance, channel)
+			desk := broker.NewDesk(api, instrument, price, balance, thesis, channel)
 			uiHub, err := ui.NewHub(ctx, price, balance, desk, channel)
 
 			if err != nil {
@@ -140,7 +154,6 @@ var (
 
 			defer uiHub.Close()
 
-			instrument := trader.NewInstrument(api, price, channel)
 			hawkesSignal := hawkes.NewSignal(ctx, api)
 			analyzer, err := logic.NewAnalyzer(ctx, booter, api, hawkesSignal, tree)
 
@@ -181,6 +194,8 @@ var (
 				instrument,
 				analyzer,
 				planner,
+				tree,
+				thesis,
 			)
 
 			if err != nil {

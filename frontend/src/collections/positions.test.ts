@@ -49,4 +49,22 @@ describe("normalizePositions", () => {
 			]),
 		).toThrow("positions[0].mark");
 	});
+
+	it("replaces invalid executions with an empty array", () => {
+		expect(
+			normalizePositions([
+				{
+					symbol: "XLM/USD",
+					qty: 10,
+					entry_price: 0.25,
+					entry_fee: 0.0065,
+					exit_fee: 0.00702,
+					mark: 0.27,
+					pnl: 0.2,
+					return_pct: 0.08,
+					executions: "invalid",
+				},
+			])[0]?.executions,
+		).toEqual([]);
+	});
 });

@@ -8,6 +8,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/strategy"
@@ -16,7 +17,15 @@ import (
 )
 
 func TestNewCrypto(t *testing.T) {
+	previousDepth := viper.Get("market.l3_depth")
+	previousInterval := viper.Get("signals.fluid.integration_interval")
+	previousCapacity := viper.Get("market.manifold_max_symbols")
+	t.Cleanup(func() { viper.Set("market.l3_depth", previousDepth) })
+	t.Cleanup(func() { viper.Set("signals.fluid.integration_interval", previousInterval) })
+	t.Cleanup(func() { viper.Set("market.manifold_max_symbols", previousCapacity) })
 	viper.Set("market.l3_depth", 10)
+	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+	viper.Set("market.manifold_max_symbols", 8)
 
 	Convey("Given NewCrypto wiring", t, func() {
 		ctx := context.Background()
@@ -24,6 +33,14 @@ func TestNewCrypto(t *testing.T) {
 		analyzer, err := logic.NewAnalyzer(ctx, booter, nil, nil, nil)
 		So(err, ShouldBeNil)
 		planner := strategy.NewPlanner(ctx, nil, nil, analyzer)
+		tree := dmt.NewTree(t.TempDir())
+		t.Cleanup(func() {
+			if err := tree.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+		thesis := types.NewThesis(nil)
+		thesis.Tick = 46
 
 		Convey("When the runtime is constructed", func() {
 			crypto, err := NewCrypto(
@@ -36,19 +53,30 @@ func TestNewCrypto(t *testing.T) {
 				nil,
 				analyzer,
 				planner,
+				tree,
+				thesis,
 			)
 
 			Convey("Then it is ready to start", func() {
 				So(err, ShouldBeNil)
 				So(crypto, ShouldNotBeNil)
 				So(crypto.tickBudget, ShouldEqual, 10*time.Millisecond)
+				So(crypto.tick.Load(), ShouldEqual, 46)
 			})
 		})
 	})
 }
 
 func TestCryptoRun(t *testing.T) {
+	previousDepth := viper.Get("market.l3_depth")
+	previousInterval := viper.Get("signals.fluid.integration_interval")
+	previousCapacity := viper.Get("market.manifold_max_symbols")
+	t.Cleanup(func() { viper.Set("market.l3_depth", previousDepth) })
+	t.Cleanup(func() { viper.Set("signals.fluid.integration_interval", previousInterval) })
+	t.Cleanup(func() { viper.Set("market.manifold_max_symbols", previousCapacity) })
 	viper.Set("market.l3_depth", 10)
+	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+	viper.Set("market.manifold_max_symbols", 8)
 
 	Convey("Given a started crypto runtime", t, func() {
 		ctx := context.Background()
@@ -57,7 +85,14 @@ func TestCryptoRun(t *testing.T) {
 		analyzer, err := logic.NewAnalyzer(ctx, booter, nil, nil, nil)
 		So(err, ShouldBeNil)
 		planner := strategy.NewPlanner(ctx, channel, nil, analyzer)
-		desk := broker.NewDesk(nil, nil, nil, channel)
+		tree := dmt.NewTree(t.TempDir())
+		t.Cleanup(func() {
+			if err := tree.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+		thesis := types.NewThesis(channel)
+		desk := broker.NewDesk(nil, nil, nil, nil, thesis, channel)
 
 		crypto, err := NewCrypto(
 			ctx,
@@ -69,8 +104,14 @@ func TestCryptoRun(t *testing.T) {
 			nil,
 			analyzer,
 			planner,
+			tree,
+			thesis,
 		)
 		So(err, ShouldBeNil)
+		t.Cleanup(func() {
+			crypto.cancel()
+			<-crypto.done
+		})
 
 		booter.AddStages(
 			system.NewStage(system.StagePreflight),
@@ -86,6 +127,8 @@ func TestCryptoRun(t *testing.T) {
 			Convey("Then the runtime reports ready and publishes a tick", func() {
 				So(crypto.Status(), ShouldEqual, types.READY)
 				So(crypto.tick.Load(), ShouldBeGreaterThan, 0)
+				_, persisted := tree.Get([]byte(types.ThesisKey))
+				So(persisted, ShouldBeTrue)
 
 				// booter.Start published its own boot-progress frames onto
 				// this same channel before crypto.Run started ticking, so

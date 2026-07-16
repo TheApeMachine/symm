@@ -74,10 +74,6 @@ func mapOrders(
 
 		signedLogPrice := math.Log(order.price / midPrice)
 
-		if order.side == book.Ask {
-			signedLogPrice = -signedLogPrice
-		}
-
 		logPrices = append(logPrices, signedLogPrice)
 		logSizes = append(logSizes, math.Log(1+order.quantity))
 		ages = append(ages, at.Sub(order.timestamp).Seconds())
@@ -163,10 +159,6 @@ func mapOrders(
 
 		signedLogPrice := math.Log(order.price / midPrice)
 
-		if order.side == book.Ask {
-			signedLogPrice = -signedLogPrice
-		}
-
 		logSize := math.Log(1 + order.quantity)
 		age := at.Sub(order.timestamp).Seconds()
 		posX := signedLogPrice/priceScale + config.DomainX/2
@@ -218,7 +210,9 @@ func survivalCoordinate(age float64, sortedAges []float64) float64 {
 		return 0
 	}
 
-	rank := sort.SearchFloat64s(sortedAges, age) + 1
+	rank := sort.Search(len(sortedAges), func(index int) bool {
+		return sortedAges[index] > age
+	})
 
 	return float64(rank) / float64(len(sortedAges))
 }

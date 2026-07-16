@@ -4,8 +4,13 @@ import { cn } from "@/lib/utils";
 
 const rowsClasses = Array.from(
 	{ length: 6 },
-	(_, i) => `grid-rows-${i + 1}`,
+	(_, index) => `grid-rows-${index + 1}`,
 ).concat("grid-rows-none");
+
+const colsClasses = Array.from(
+	{ length: 12 },
+	(_, index) => `grid-cols-${index + 1}`,
+);
 
 const gapClasses = Array.from({ length: 16 }, (_, i) => `gap-${i}`).concat(
 	"gap-0",
@@ -110,7 +115,7 @@ export const Grid = ({
 	// Generate responsive classes when responsive is true
 	const getResponsiveColsClass = () => {
 		if (!responsive) {
-			return undefined;
+			return cols ? colsClasses[cols - 1] : undefined;
 		}
 
 		if (!cols) {

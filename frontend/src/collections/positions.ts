@@ -37,6 +37,14 @@ const requiredFinite = (value: unknown, path: string): number => {
 	throw new TypeError(`${path} must be finite`);
 };
 
+const parseExecutions = (value: unknown): unknown[] | undefined => {
+	if (value === undefined) {
+		return undefined;
+	}
+
+	return Array.isArray(value) ? value : [];
+};
+
 const parsePosition = (value: unknown, index: number): Position => {
 	const path = `positions[${index}]`;
 	const frame = asFrame(value, path);
@@ -45,8 +53,10 @@ const parsePosition = (value: unknown, index: number): Position => {
 		throw new TypeError(`${path}.symbol must be a non-empty string`);
 	}
 
+	const { executions, ...rest } = frame;
+
 	return {
-		...frame,
+		...rest,
 		symbol: frame.symbol,
 		qty: requiredFinite(frame.qty, `${path}.qty`),
 		entry_price: requiredFinite(frame.entry_price, `${path}.entry_price`),
@@ -55,6 +65,7 @@ const parsePosition = (value: unknown, index: number): Position => {
 		mark: requiredFinite(frame.mark, `${path}.mark`),
 		pnl: requiredFinite(frame.pnl, `${path}.pnl`),
 		return_pct: requiredFinite(frame.return_pct, `${path}.return_pct`),
+		executions: parseExecutions(executions),
 	};
 };
 

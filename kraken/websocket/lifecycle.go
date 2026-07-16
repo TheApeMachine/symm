@@ -6,7 +6,8 @@ import (
 )
 
 /*
-Lifecycle emits paper order and execution frames through the latency simulator.
+Lifecycle emits paper order acknowledgements, executions, and the resulting
+balance frames through the latency simulator.
 */
 type Lifecycle struct {
 	paper *Paper
@@ -16,7 +17,7 @@ func NewLifecycle(paper *Paper) *Lifecycle {
 	return &Lifecycle{paper: paper}
 }
 
-func (lifecycle *Lifecycle) Balance() error {
+func (lifecycle *Lifecycle) Balance(frameType string) error {
 	var model datura.Map[any]
 	var err error
 
@@ -28,8 +29,11 @@ func (lifecycle *Lifecycle) Balance() error {
 		return err
 	}
 
+	balance := kraken.NewBalanceFromMap(model)
+	balance.Type = frameType
+
 	return lifecycle.paper.simulator.Emit(
-		lifecycle.paper, WEBSOCKET, "balances", kraken.NewBalanceFromMap(model),
+		lifecycle.paper, WEBSOCKET, "balances", balance,
 	)
 }
 
@@ -74,5 +78,5 @@ func (lifecycle *Lifecycle) Place(model datura.Map[any], reqID int) error {
 		return err
 	}
 
-	return lifecycle.Balance()
+	return lifecycle.Balance("update")
 }

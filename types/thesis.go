@@ -4,12 +4,15 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
 const (
+	ThesisKey = "thesis"
+
 	LifecycleObserving           = "observing"
 	LifecycleShaped              = "shaped"
 	LifecycleEntrySelected       = "entry_selected"
@@ -36,9 +39,9 @@ entire lifecycle of a tick, picking up all data along the way.
 type Thesis struct {
 	checkpoint   atomic.Int64
 	uiHub        chan<- []byte
-	Tick         int64
-	Positions    []Holding
-	Signals      *sync.Map
+	Tick         int64          `json:"tick"`
+	Positions    []Holding      `json:"positions"`
+	Signals      *sync.Map      `json:"signals"`
 	CrossSection *CrossSection  `json:"crossSection"`
 	Measurements []*Measurement `json:"measurements"`
 	Graphs       *sync.Map      `json:"graphs"`
@@ -53,6 +56,119 @@ type Thesis struct {
 	Cognition    *sync.Map      `json:"cognition"`
 	Resonance    []any          `json:"resonance"`
 	Causal       []any          `json:"causal"`
+}
+
+/*
+MarshalJSON stores the Thesis itself while translating its concurrent maps into
+ordinary JSON objects. The live Thesis remains the only state model.
+*/
+func (thesis *Thesis) MarshalJSON() ([]byte, error) {
+	type alias Thesis
+	signals := make(map[string]any)
+	graphs := make(map[string]GraphFrame)
+	lifecycle := make(map[string]string)
+	manifold := make(map[string]any)
+	cognition := make(map[string]Cognition)
+
+	thesis.Signals.Range(func(key, value any) bool {
+		signals[key.(string)] = value
+		return true
+	})
+	thesis.Graphs.Range(func(key, value any) bool {
+		graphs[key.(string)] = value.(*Graph).Frame()
+		return true
+	})
+	thesis.Lifecycle.Range(func(key, value any) bool {
+		lifecycle[key.(string)] = value.(string)
+		return true
+	})
+	thesis.Manifold.Range(func(key, value any) bool {
+		manifold[key.(string)] = value
+		return true
+	})
+	thesis.Cognition.Range(func(key, value any) bool {
+		cognition[key.(string)] = value.(Cognition)
+		return true
+	})
+
+	return sonic.Marshal(struct {
+		*alias
+		Signals   map[string]any        `json:"signals"`
+		Graphs    map[string]GraphFrame `json:"graphs"`
+		Lifecycle map[string]string     `json:"lifecycle"`
+		Manifold  map[string]any        `json:"manifold"`
+		Cognition map[string]Cognition  `json:"cognition"`
+	}{
+		alias: (*alias)(thesis), Signals: signals, Graphs: graphs,
+		Lifecycle: lifecycle, Manifold: manifold, Cognition: cognition,
+	})
+}
+
+/*
+UnmarshalJSON restores a persisted Thesis and rebuilds its in-process maps and
+Gonum evidence graphs from their stored values.
+*/
+func (thesis *Thesis) UnmarshalJSON(data []byte) error {
+	type alias Thesis
+	decoded := struct {
+		*alias
+		Signals   map[string]any        `json:"signals"`
+		Graphs    map[string]GraphFrame `json:"graphs"`
+		Lifecycle map[string]string     `json:"lifecycle"`
+		Manifold  map[string]any        `json:"manifold"`
+		Cognition map[string]Cognition  `json:"cognition"`
+	}{alias: (*alias)(thesis)}
+
+	if err := sonic.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	thesis.Signals = &sync.Map{}
+	thesis.Graphs = &sync.Map{}
+	thesis.Lifecycle = &sync.Map{}
+	thesis.Manifold = &sync.Map{}
+	thesis.Cognition = &sync.Map{}
+
+	for key, value := range decoded.Signals {
+		thesis.Signals.Store(key, value)
+	}
+	for key, frame := range decoded.Graphs {
+		graph := NewGraph(frame.Symbol)
+
+		for _, node := range frame.Nodes {
+			measurement := node.Measurement
+
+			if err := graph.AddNode(&measurement); err != nil {
+				return err
+			}
+		}
+		for _, edge := range frame.Edges {
+			graph.Relate(edge.From, edge.To, edge.Type, edge.At, edge.ObservedFrom)
+		}
+
+		thesis.Graphs.Store(key, graph)
+	}
+	for key, value := range decoded.Lifecycle {
+		thesis.Lifecycle.Store(key, value)
+	}
+	for key, value := range decoded.Manifold {
+		thesis.Manifold.Store(key, value)
+	}
+	for key, value := range decoded.Cognition {
+		thesis.Cognition.Store(key, value)
+	}
+
+	if thesis.CrossSection == nil {
+		thesis.CrossSection = NewCrossSection()
+	}
+
+	thesis.CrossSection.index = make(map[string]int, len(thesis.CrossSection.Metrics))
+
+	for index, metric := range thesis.CrossSection.Metrics {
+		thesis.CrossSection.index[metric.Symbol] = index
+	}
+
+	return nil
 }
 
 /*
@@ -115,7 +231,27 @@ func (thesis *Thesis) Publish() {
 	}
 
 	if thesis.Lifecycle != nil {
-		frame["lifecycle"] = thesis.Lifecycle
+		lifecycle := make(map[string]string)
+
+		thesis.Lifecycle.Range(func(key, value any) bool {
+			symbol, symbolOK := key.(string)
+			state, stateOK := value.(string)
+
+			if !symbolOK || !stateOK {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"thesis contains invalid lifecycle state",
+					nil,
+				))
+
+				return true
+			}
+
+			lifecycle[symbol] = state
+			return true
+		})
+
+		frame["lifecycle"] = lifecycle
 	}
 
 	if len(thesis.Findings) > 0 {
@@ -176,9 +312,17 @@ func (thesis *Thesis) Publish() {
 	thesis.Cognition.Range(func(key, value any) bool {
 		reading, ok := value.(Cognition)
 
-		if ok {
-			cognition = append(cognition, reading)
+		if !ok {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"thesis contains invalid cognition state",
+				nil,
+			))
+
+			return true
 		}
+
+		cognition = append(cognition, reading)
 
 		return true
 	})

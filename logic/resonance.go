@@ -163,11 +163,13 @@ func (resonance *Resonance) Update(
 		return nil, nil
 	}
 
-	observedFrom := stepAt.Add(-state.Duration)
+	horizon := state.Duration
 
-	if state.Duration < 0 || observedFrom.After(stepAt) {
-		observedFrom = stepAt
+	if horizon < 0 {
+		horizon = 0
 	}
+
+	observedFrom := stepAt.Add(-horizon)
 
 	elapsed := stepAt.Sub(resonance.startedAt)
 	maturity := -math.Expm1(
@@ -186,14 +188,14 @@ func (resonance *Resonance) Update(
 			Source: types.SourceResonance, Stream: types.Resonance,
 			Metric: types.MetricResonanceEnergy, Subject: types.SubjectManifoldState,
 			Symbol: resonance.symbol, At: stepAt, ObservedFrom: observedFrom,
-			Horizon: state.Duration, Unit: types.UnitDimensionless,
+			Horizon: horizon, Unit: types.UnitDimensionless,
 			Raw: outcome.Energy, Maturity: maturity, Validity: validity, Scale: scale,
 		},
 		{
 			Source: types.SourceResonance, Stream: types.Resonance,
 			Metric: types.MetricResonanceSurprise, Subject: types.SubjectManifoldState,
 			Symbol: resonance.symbol, At: stepAt, ObservedFrom: observedFrom,
-			Horizon: state.Duration, Unit: types.UnitNat,
+			Horizon: horizon, Unit: types.UnitNat,
 			Raw: outcome.Surprise, Maturity: maturity, Validity: validity, Scale: scale,
 		},
 	}, &outcome

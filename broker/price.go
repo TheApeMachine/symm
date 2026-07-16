@@ -12,39 +12,24 @@ import (
 )
 
 /*
-PositionQuote is the complete current valuation of a position.
+Price is the broker price surface for symm. It is the single source of
+truth for all pricing and fee information, and calculations. No monetary
+value should be calculated outside of this package.
 
-All monetary fields are in the quote currency.
+Important considerations:
 
-For BTC/USD:
-
-	EntryNotional, ExitNotional, EntryFee, ExitFee and PnL are USD.
-*/
-type PositionQuote struct {
-	Mark          decimal.Decimal
-	EntryNotional decimal.Decimal
-	ExitNotional  decimal.Decimal
-	EntryFee      decimal.Decimal
-	ExitFee       decimal.Decimal
-	PnL           decimal.Decimal
-	ReturnPct     float64
-}
-
-/*
-Price is the broker price surface for symm.
-
-It owns:
-
-  - live ticker snapshots
-  - TradeVolume fee tiers
-  - notional calculations
-  - fee calculations
-  - current position valuations
+  - Kraken has specific requirements around decimal precision, which can
+    be found on the Instrument data. This is the only correct source of
+    precision information.
+  - The Kraken SDK already provides us with a decimal.Decimal type, which
+    is the correct type to use for all monetary values. No monetary calculation
+    may ever be performed using Float64.
 */
 type Price struct {
 	status  types.Status
 	api     *websocket.API
 	fees    *sync.Map
+	scales  *sync.Map
 	tickers *sync.Map
 }
 
@@ -84,15 +69,9 @@ func (price *Price) TickerAck(buf []byte) {
 	}
 
 	for _, item := range ticker.Data {
-		/*
-			Make a new copy for each iteration before storing
-			its address.
-		*/
-		value := item
-
 		price.tickers.Store(
 			item.Symbol,
-			&value,
+			item,
 		)
 	}
 }
@@ -167,8 +146,8 @@ func (price *Price) GetFees(
 	symbols []string,
 ) error {
 	errnie.Info("getting fees for symbols: " + strings.Join(symbols, ", "))
-	fees := make(map[string]kraken.TradeVolumeFees, len(symbols))
-	tradeVolume, err := price.api.TradeVolume(symbols)
+
+	tradeVolumeResult, err := price.api.TradeVolume(symbols)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -178,32 +157,16 @@ func (price *Price) GetFees(
 		))
 	}
 
-	if len(tradeVolume.Result.Fees) != len(symbols) {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trade volume response does not match requested trading tier",
-			nil,
-		))
-	}
+	fees := make(map[string]kraken.TradeVolumeFee, len(symbols))
 
 	for _, symbol := range symbols {
-		fee, found := tradeVolume.Result.Fees[symbol]
+		fee, ok := tradeVolumeResult.Fees[symbol]
 
-		if !found || fee.Fee == "" {
+		if !ok || fee.Fee == nil {
 			return errnie.Error(errnie.Err(
 				errnie.Validation,
 				"trade volume response missing taker fee for "+symbol,
 				nil,
-			))
-		}
-
-		feePercent, err := decimal.NewFromString(fee.Fee)
-
-		if err != nil || feePercent.Sign() < 0 {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"trade volume response has invalid taker fee for "+symbol,
-				err,
 			))
 		}
 
@@ -229,9 +192,9 @@ For example:
 */
 func (price *Price) FeeRate(
 	symbol string,
-) (kraken.TradeVolumeFees, error) {
+) (kraken.TradeVolumeFee, error) {
 	if price.Status() != types.READY {
-		return kraken.TradeVolumeFees{}, errnie.Error(
+		return kraken.TradeVolumeFee{}, errnie.Error(
 			errnie.Err(
 				errnie.NotImplemented,
 				"price not ready",
@@ -243,7 +206,7 @@ func (price *Price) FeeRate(
 	rate, ok := price.fees.Load(symbol)
 
 	if !ok {
-		return kraken.TradeVolumeFees{}, errnie.Error(
+		return kraken.TradeVolumeFee{}, errnie.Error(
 			errnie.Err(
 				errnie.NotFound,
 				"fee rate not found for symbol "+symbol,
@@ -252,52 +215,7 @@ func (price *Price) FeeRate(
 		)
 	}
 
-	return rate.(kraken.TradeVolumeFees), nil
-}
-
-/*
-FeeFraction returns Kraken's fee percentage as a decimal fraction.
-
-Examples:
-
-	Kraken "0.1000" percent becomes 0.001.
-	Kraken "0.2600" percent becomes 0.0026.
-
-This is the value that can safely be multiplied by a notional.
-*/
-func (price *Price) FeeFraction(
-	symbol string,
-) (*decimal.Decimal, error) {
-	feeTier, err := price.FeeRate(symbol)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to get fee tier for "+symbol,
-			err,
-		))
-	}
-
-	feePercent, err := decimal.NewFromString(
-		feeTier.Fee,
-	)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to parse fee rate "+feeTier.Fee,
-			err,
-		))
-	}
-
-	/*
-		Kraken gives us a percentage.
-
-		0.1000 / 100 = 0.001
-	*/
-	return feePercent.Div(
-		decimal.NewFromInt64(100),
-	), nil
+	return rate.(kraken.TradeVolumeFee), nil
 }
 
 /*
@@ -317,10 +235,10 @@ whichever operand needs more decimal places first keeps that rescale
 lossless in both directions.
 */
 func (price *Price) Notional(
-	unitPrice decimal.Decimal,
-	quantity decimal.Decimal,
+	rate *decimal.Decimal,
+	quantity *decimal.Decimal,
 ) *decimal.Decimal {
-	return unitPrice.SetScale(decimal.DefaultScale).Mul(&quantity)
+	return rate.Copy().Mul(quantity)
 }
 
 /*
@@ -333,42 +251,24 @@ For example:
 	Fee:      5 USD
 */
 func (price *Price) Fee(
-	symbol string,
-	amount decimal.Decimal,
-) (*decimal.Decimal, error) {
-	rate, err := price.FeeFraction(symbol)
+	instrument *kraken.InstrumentPair,
+	amount *decimal.Decimal,
+) *decimal.Decimal {
+	tradeVolume, err := price.FeeRate(instrument.Symbol)
 
 	if err != nil {
-		return nil, err
-	}
-
-	return amount.Mul(rate), nil
-}
-
-/*
-WithFee adds one taker fee to an amount.
-
-For example:
-
-	Amount: 10,000
-	Fee:        10
-	Result: 10,010
-*/
-func (price *Price) WithFee(
-	symbol string,
-	amount decimal.Decimal,
-) (*decimal.Decimal, error) {
-	fee, err := price.Fee(symbol, amount)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.Internal,
-			"failed to calculate fee",
+			"failed to get trade volume fee rate for "+instrument.Symbol,
 			err,
 		))
+
+		return nil
 	}
 
-	return amount.Add(fee), nil
+	fraction := tradeVolume.Fee.Div(decimal.NewFromInt64(100))
+
+	return amount.Copy().Mul(fraction)
 }
 
 /*
@@ -380,15 +280,15 @@ The result is:
 	current notional + one taker fee
 */
 func (price *Price) Taker(
-	symbol string,
-	quantity decimal.Decimal,
+	instrument *kraken.InstrumentPair,
+	quantity *decimal.Decimal,
 ) (*decimal.Decimal, error) {
-	ticker, err := price.Get(symbol)
+	ticker, err := price.Get(instrument.Symbol)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
-			"failed to get ticker for "+symbol,
+			"failed to get ticker for "+instrument.Symbol,
 			err,
 		))
 	}
@@ -396,20 +296,20 @@ func (price *Price) Taker(
 	if ticker.Ask == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.NotFound,
-			"ticker has no ask price for "+symbol,
+			"ticker has no ask price for "+instrument.Symbol,
 			nil,
 		))
 	}
 
 	notional := price.Notional(
-		*ticker.Ask,
+		ticker.Ask,
 		quantity,
 	)
 
-	return price.WithFee(
-		symbol,
-		*notional,
-	)
+	return notional.Add(price.Fee(
+		instrument,
+		notional,
+	)), nil
 }
 
 /*
@@ -422,198 +322,42 @@ PositionQuote should be used for actual position valuation because it
 calculates entry and exit fees from their respective notionals.
 */
 func (price *Price) WithFriction(
-	symbol string,
-	quantity decimal.Decimal,
+	instrument *kraken.InstrumentPair,
+	quantity *decimal.Decimal,
 ) (*decimal.Decimal, error) {
-	ticker, err := price.Get(symbol)
+	ticker, err := price.Get(instrument.Symbol)
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to get ticker for "+symbol,
-			err,
-		))
+		return nil, err
 	}
 
-	if ticker.Last == nil {
+	if ticker.Ask == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.NotFound,
-			"ticker has no last price for "+symbol,
+			"ticker has no ask price for "+instrument.Symbol,
 			nil,
 		))
 	}
 
 	notional := price.Notional(
-		*ticker.Last,
+		ticker.Ask,
 		quantity,
 	)
 
-	fee, err := price.Fee(
-		symbol,
-		*notional,
+	taker, err := price.Taker(
+		instrument,
+		quantity,
 	)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
-			"failed to calculate friction for "+symbol,
+			"failed to calculate friction for "+instrument.Symbol,
 			err,
 		))
 	}
 
-	totalFees := fee.Mul(
-		decimal.NewFromInt64(2),
-	)
-
-	return notional.Add(totalFees), nil
-}
-
-/*
-PositionQuote calculates a position using the latest cached price.
-
-This is the main method Desk and Position should call.
-*/
-func (price *Price) PositionQuote(
-	symbol string,
-	entryPrice decimal.Decimal,
-	quantity decimal.Decimal,
-) (*PositionQuote, error) {
-	ticker, err := price.Get(symbol)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to get ticker for "+symbol,
-			err,
-		))
-	}
-
-	if ticker.Last == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"ticker has no last price for "+symbol,
-			nil,
-		))
-	}
-
-	return price.PositionQuoteAt(
-		symbol,
-		entryPrice,
-		*ticker.Last,
-		quantity,
-	)
-}
-
-/*
-PositionQuoteAt calculates the current estimated net PnL of a long
-spot position at a supplied mark price.
-
-The formula is:
-
-	entry notional = entry price × quantity
-	exit notional  = mark price × quantity
-
-	entry fee = entry notional × fee fraction
-	exit fee  = exit notional × fee fraction
-
-	PnL = exit notional
-	    - entry notional
-	    - entry fee
-	    - exit fee
-
-	ReturnPct = PnL / entry notional × 100
-
-This currently assumes:
-
-  - a positive long position
-  - the same taker fee rate for entry and exit
-  - the entire quantity exits at the supplied mark
-*/
-func (price *Price) PositionQuoteAt(
-	symbol string,
-	entryPrice decimal.Decimal,
-	mark decimal.Decimal,
-	quantity decimal.Decimal,
-) (*PositionQuote, error) {
-	if entryPrice.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"entry price must be positive for "+symbol,
-			nil,
-		))
-	}
-
-	if mark.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"mark price must be positive for "+symbol,
-			nil,
-		))
-	}
-
-	if quantity.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"quantity must be positive for "+symbol,
-			nil,
-		))
-	}
-
-	entryNotional := price.Notional(
-		entryPrice,
-		quantity,
-	)
-
-	exitNotional := price.Notional(
-		mark,
-		quantity,
-	)
-
-	entryFee, err := price.Fee(
-		symbol,
-		*entryNotional,
-	)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to calculate entry fee for "+symbol,
-			err,
-		))
-	}
-
-	exitFee, err := price.Fee(
-		symbol,
-		*exitNotional,
-	)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to calculate exit fee for "+symbol,
-			err,
-		))
-	}
-
-	grossPnL := exitNotional.Sub(
-		entryNotional,
-	)
-
-	netPnL := grossPnL.
-		Sub(entryFee).
-		Sub(exitFee)
-
-	returnPct := netPnL.
-		Div(entryNotional).
-		Mul(decimal.NewFromInt64(100))
-
-	return &PositionQuote{
-		Mark:          mark,
-		EntryNotional: *entryNotional,
-		ExitNotional:  *exitNotional,
-		EntryFee:      *entryFee,
-		ExitFee:       *exitFee,
-		PnL:           *netPnL,
-		ReturnPct:     returnPct.Float64(),
-	}, nil
+	return taker.Add(price.Fee(
+		instrument, notional,
+	)), nil
 }

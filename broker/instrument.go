@@ -1,4 +1,4 @@
-package trader
+package broker
 
 import (
 	"slices"
@@ -9,7 +9,6 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -24,7 +23,7 @@ can discover opportunities across the whole tradable market.
 type Instrument struct {
 	status  atomic.Value
 	api     *websocket.API
-	price   *broker.Price
+	price   *Price
 	cache   *sync.Map
 	quote   string
 	uiHub   chan []byte
@@ -38,7 +37,7 @@ order validation.
 */
 func NewInstrument(
 	api *websocket.API,
-	price *broker.Price,
+	price *Price,
 	channel chan []byte,
 ) *Instrument {
 	instrument := &Instrument{
@@ -61,7 +60,6 @@ func (instrument *Instrument) Initialize() error {
 
 	if err := instrument.api.SubscribeInstruments(); err != nil {
 		instrument.status.Store(types.ERROR)
-
 		return errnie.Error(err)
 	}
 
@@ -79,9 +77,9 @@ func (instrument *Instrument) On(data []byte) {
 		instrument.cache.Store(pair.Symbol, pair)
 	}
 
-	status := instrument.Status()
-
-	if status == types.READY || status == types.ERROR {
+	if slices.Contains([]types.Status{
+		types.READY, types.ERROR,
+	}, instrument.Status()) {
 		return
 	}
 

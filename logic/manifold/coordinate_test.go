@@ -1,6 +1,7 @@
 package manifold
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -48,7 +49,11 @@ func TestMapOrders(t *testing.T) {
 		t.Fatalf("mapped orders = %d, want 2", len(mapped))
 	}
 
-	if epoch == nil || len(epoch.positions) != 2 {
+	if epoch == nil {
+		t.Fatal("epoch is nil")
+	}
+
+	if len(epoch.positions) != 2 {
 		t.Fatalf("epoch positions = %d, want 2", len(epoch.positions))
 	}
 
@@ -58,6 +63,14 @@ func TestMapOrders(t *testing.T) {
 
 	if mapped[0].mass <= 0 || mapped[0].omega <= 0 {
 		t.Fatalf("mapped oscillator fields are invalid: %+v", mapped[0])
+	}
+
+	if mapped[0].posX >= config.DomainX/2 || mapped[1].posX <= config.DomainX/2 {
+		t.Fatalf("book sides collapsed onto one coordinate side: %+v", mapped)
+	}
+
+	if rank := survivalCoordinate(5, []float64{5, 5, 10}); rank != 2.0/3.0 {
+		t.Fatalf("upper-tie survival rank = %v, want %v", rank, 2.0/3.0)
 	}
 }
 
@@ -71,7 +84,7 @@ func TestCohortsFromMappedOrders(t *testing.T) {
 			posY:    1,
 			posZ:    1,
 			omega:   2,
-			phase:   1,
+			phase:   2*math.Pi - 0.1,
 			heat:    0.25,
 		},
 		{
@@ -81,7 +94,7 @@ func TestCohortsFromMappedOrders(t *testing.T) {
 			posY:    1.01,
 			posZ:    1.01,
 			omega:   4,
-			phase:   2,
+			phase:   0.1,
 			heat:    0.75,
 		},
 	}
@@ -94,6 +107,28 @@ func TestCohortsFromMappedOrders(t *testing.T) {
 
 	if oscillators[0].Amplitude <= 0 {
 		t.Fatalf("amplitude = %v, want positive", oscillators[0].Amplitude)
+	}
+
+	if math.Abs(oscillators[0].Phase) > 0.11 {
+		t.Fatalf("circular phase = %v, want near zero", oscillators[0].Phase)
+	}
+
+	if torusCell(config, config.DomainX, config.DomainX, config.GridX) != 0 ||
+		torusCell(
+			config, -config.DomainX/float64(config.GridX), config.DomainX, config.GridX,
+		) != config.GridX-1 {
+		t.Fatal("toroidal cell mapping did not wrap")
+	}
+
+	limited := config
+	limited.MaxModes = 1
+	equalMass := cohortsFromMappedOrders(limited, []mappedOrder{
+		{mass: 0.5, posX: 0.9, posY: 0.9, posZ: 0.9},
+		{mass: 0.5, posX: 0.1, posY: 0.1, posZ: 0.1},
+	})
+
+	if len(equalMass) != 1 || equalMass[0].PosX != 0.1 {
+		t.Fatalf("equal-mass cohort selection is not deterministic: %+v", equalMass)
 	}
 }
 
@@ -118,6 +153,12 @@ func TestOrdersFromBook(t *testing.T) {
 
 	if len(orders) != 2 {
 		t.Fatalf("orders = %d, want 2", len(orders))
+	}
+
+	oneSided := ordersFromBook(&book.Book{Bids: symbolBook.Bids})
+
+	if len(oneSided) != 1 {
+		t.Fatalf("one-sided orders = %d, want 1", len(oneSided))
 	}
 }
 

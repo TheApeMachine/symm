@@ -55,6 +55,10 @@ func TestPlannerDecide(t *testing.T) {
 			So(thesis.Decisions[0].Action, ShouldEqual, "enter")
 			So(thesis.Orders, ShouldHaveLength, 1)
 			So(thesis.Orders[0].Description.Type, ShouldEqual, "enter")
+			So(thesis.Orders[0].Volume.Float64(), ShouldAlmostEqual,
+				thesis.Decisions[0].ProposedQuantity, 1e-12)
+			So(thesis.Orders[0].Volume.Float64(), ShouldBeLessThan,
+				thesis.Decisions[0].ProposedNotional)
 			So(thesis.Positions, ShouldHaveLength, 1)
 			So(thesis.Positions[0].Qty.Sign(), ShouldEqual, 1)
 		})
@@ -67,8 +71,8 @@ func TestPlannerDecide(t *testing.T) {
 		thesis.Forecasts = append(thesis.Forecasts, exitForecast)
 		thesis.Positions = append(thesis.Positions, types.Holding{
 			Order: &spot.Order{Description: &spot.OrderDescription{Pair: "BTC/USD"}},
-			Qty:   *decimal.NewFromFloat64(0.5),
-			Mark:  *decimal.NewFromFloat64(100),
+			Qty:   decimal.NewFromFloat64(0.5),
+			Mark:  decimal.NewFromFloat64(100),
 		})
 
 		planner.Decide(thesis, map[string]float64{"BTC/USD": 0.001}, 100, 1)

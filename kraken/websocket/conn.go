@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"iter"
 	"maps"
 	"strconv"
@@ -78,6 +79,17 @@ func (api *API) Initialize() error {
 		))
 	}
 
+	if api.live && (api.private == nil || api.private.Client() == nil ||
+		api.private.Client().REST == nil) {
+		api.status = types.ERROR
+
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cannot initialize Kraken private transport without REST",
+			nil,
+		))
+	}
+
 	if err := api.normalizer.Use(api.public.Client().REST); err != nil {
 		api.status = types.ERROR
 
@@ -116,13 +128,7 @@ func (api *API) On(channel string, action func([]byte)) {
 	}
 }
 
-func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolume, error) {
-	if api.status != types.READY {
-		if err := api.Initialize(); err != nil {
-			return nil, errnie.Error(err)
-		}
-	}
-
+func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error) {
 	response, err := api.private.Post(
 		TradeVolumeEndpoint,
 		kraken.NewTradeVolumeRequest(symbols),
@@ -131,35 +137,39 @@ func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolume, error) {
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
-			"failed to get trade volume",
+			fmt.Sprintf(
+				"websocket.API.TradeVolume[%s]: failed to get trade volume: %s",
+				response,
+				err.Error(),
+			),
 			err,
 		))
 	}
 
 	tradeVolume := kraken.NewTradeVolume(response)
 
-	if err := kraken.Validate(tradeVolume); err != nil {
+	if tradeVolume == nil {
 		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"invalid trade volume response",
-			err,
+			errnie.UnprocessableContent,
+			"Kraken returned an invalid trade volume response",
+			nil,
 		))
 	}
 
-	fees := make(map[string]kraken.TradeVolumeFees, len(tradeVolume.Result.Fees))
+	fees := make(map[string]kraken.TradeVolumeFee, len(tradeVolume.Fees))
 
-	for symbol, fee := range tradeVolume.Result.Fees {
+	for symbol, fee := range tradeVolume.Fees {
 		fees[api.normalizer.Name(symbol)] = fee
 	}
 
-	tradeVolume.Result.Fees = fees
-	fees = make(map[string]kraken.TradeVolumeFees, len(tradeVolume.Result.FeesMaker))
+	tradeVolume.Fees = fees
+	fees = make(map[string]kraken.TradeVolumeFee, len(tradeVolume.FeesMaker))
 
-	for symbol, fee := range tradeVolume.Result.FeesMaker {
+	for symbol, fee := range tradeVolume.FeesMaker {
 		fees[api.normalizer.Name(symbol)] = fee
 	}
 
-	tradeVolume.Result.FeesMaker = fees
+	tradeVolume.FeesMaker = fees
 
 	return tradeVolume, nil
 }
@@ -188,6 +198,15 @@ count is covered or a short page is returned. Boot-time reconciliation needs
 the full ledger, not just the first REST page.
 */
 func (api *API) fetchLiveTradesHistory() (map[string]spot.Trade, error) {
+	if api.private == nil || api.private.Client() == nil ||
+		api.private.Client().REST == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"Kraken private REST client is unavailable",
+			nil,
+		))
+	}
+
 	merged := make(map[string]spot.Trade)
 	offset := 0
 
@@ -213,7 +232,16 @@ func (api *API) fetchLiveTradesHistory() (map[string]spot.Trade, error) {
 			break
 		}
 
+		previousCount := len(merged)
 		maps.Copy(merged, page)
+
+		if len(merged) == previousCount {
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"Kraken trades history pagination made no progress",
+				nil,
+			))
+		}
 
 		totalCount, countErr := strconv.ParseInt(response.Result.Count.String(), 10, 64)
 
@@ -305,16 +333,17 @@ func (api *API) SubscribeBalance() error {
 	return api.paper.SubBalances()
 }
 
-func (api *API) SubscribeExecutions(symbols []string) error {
+func (api *API) SubscribeExecutions() error {
 	if api.live {
 		return errnie.Error(api.private.Client().SubExecutions(map[string]any{
-			"symbols": symbols,
+			"params": map[string]any{
+				"snap_orders": false,
+				"snap_trades": false,
+			},
 		}))
 	}
 
-	return api.paper.SubExecutions(map[string]any{
-		"symbols": symbols,
-	})
+	return api.paper.SubExecutions()
 }
 
 func (api *API) AddOrder(order *kraken.MarketOrder) error {

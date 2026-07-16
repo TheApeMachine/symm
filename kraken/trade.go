@@ -1,6 +1,7 @@
 package kraken
 
 import (
+	"strings"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -60,46 +61,56 @@ func (subscription TradeSubscription) MarshalJSON() ([]byte, error) {
 	})
 }
 
-type TradeVolume struct {
-	Error  []string          `json:"error"`
-	Result TradeVolumeResult `json:"result"`
+type TradeVolumeInput struct {
+	DomainSpotVolume30D    string `json:"domain_spot_volume_30d"`
+	DomainAssetsOnPlatform string `json:"domain_assets_on_platform"`
+	DomainFuturesVolume30D string `json:"domain_futures_volume_30d"`
+}
+
+type TradeVolumeFee struct {
+	Fee               *decimal.Decimal `json:"fee"`
+	Minfee            *decimal.Decimal `json:"minfee"`
+	Maxfee            *decimal.Decimal `json:"maxfee"`
+	Nextfee           *decimal.Decimal `json:"nextfee"`
+	Tiervolume        string           `json:"tiervolume"`
+	Nextvolume        string           `json:"nextvolume"`
+	Nextfuturesvolume string           `json:"nextfuturesvolume"`
+}
+
+type TradeVolumeTier struct {
+	MakerFee            *decimal.Decimal `json:"maker_fee"`
+	TakerFee            *decimal.Decimal `json:"taker_fee"`
+	Active              bool             `json:"active,omitempty"`
+	MinSpotVolume       string           `json:"min_spot_volume,omitempty"`
+	MinFuturesVolume    string           `json:"min_futures_volume,omitempty"`
+	MinAssetsOnPlatform string           `json:"min_assets_on_platform,omitempty"`
+}
+
+type TradeVolumeSchedule struct {
+	Pair  string            `json:"pair"`
+	Class string            `json:"class"`
+	Tiers []TradeVolumeTier `json:"tiers"`
 }
 
 type TradeVolumeResult struct {
-	Currency   string                     `json:"currency"`
-	AssetClass string                     `json:"asset_class"`
-	Volume     string                     `json:"volume"`
-	Inputs     TradeVolumeInputs          `json:"inputs"`
-	Fees       map[string]TradeVolumeFees `json:"fees"`
-	FeesMaker  map[string]TradeVolumeFees `json:"fees_maker"`
+	Currency   string                    `json:"currency"`
+	AssetClass string                    `json:"asset_class"`
+	Volume     string                    `json:"volume"`
+	Inputs     TradeVolumeInput          `json:"inputs"`
+	Fees       map[string]TradeVolumeFee `json:"fees"`
+	FeesMaker  map[string]TradeVolumeFee `json:"fees_maker"`
+	Schedules  []TradeVolumeSchedule     `json:"schedules"`
 }
 
-type TradeVolumeInputs struct {
-	DomainSpotVolume30D    string `json:"domain_spot_volume_30d"`
-	DomainFuturesVolume30D string `json:"domain_futures_volume_30d"`
-	DomainAssetsOnPlatform string `json:"domain_assets_on_platform"`
+type TradeVolume struct {
+	Error  []interface{}     `json:"error"`
+	Result TradeVolumeResult `json:"result"`
 }
 
-type TradeVolumeFees struct {
-	Fee        string `json:"fee"`
-	MinFee     string `json:"min_fee"`
-	MaxFee     string `json:"max_fee"`
-	NextFee    string `json:"next_fee"`
-	TierVolume string `json:"tier_volume"`
-	NextVolume string `json:"next_volume"`
-}
+func NewTradeVolume(buf []byte) *TradeVolumeResult {
+	tradeVolume := &TradeVolume{}
 
-/*
-Equal reports whether two TradeVolume fee tiers carry identical values.
-*/
-func (fees TradeVolumeFees) Equal(other TradeVolumeFees) bool {
-	return fees == other
-}
-
-func NewTradeVolume(buf []byte) *TradeVolume {
-	var tradeVolume TradeVolume
-
-	if err := sonic.Unmarshal(buf, &tradeVolume); err != nil {
+	if err := sonic.Unmarshal(buf, tradeVolume); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"invalid trade volume",
@@ -109,7 +120,7 @@ func NewTradeVolume(buf []byte) *TradeVolume {
 		return nil
 	}
 
-	return &tradeVolume
+	return &tradeVolume.Result
 }
 
 func (tradeVolume *TradeVolume) Action() string {
@@ -121,14 +132,14 @@ func (tradeVolume *TradeVolume) IsSuccess() bool {
 }
 
 type TradeVolumeRequest struct {
-	Pair    []string `json:"pair"`
-	FeeInfo bool     `json:"fee-info"`
+	Pair        string `json:"pair"`
+	FeeSchedule bool   `json:"fee_schedule"`
 }
 
 func NewTradeVolumeRequest(symbols []string) *TradeVolumeRequest {
 	return &TradeVolumeRequest{
-		Pair:    symbols,
-		FeeInfo: true,
+		Pair:        strings.Join(symbols, ","),
+		FeeSchedule: true,
 	}
 }
 

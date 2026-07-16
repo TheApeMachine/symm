@@ -5,9 +5,9 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -102,7 +102,7 @@ type Signal struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	api         *websocket.API
-	instrument  *trader.Instrument
+	instrument  *broker.Instrument
 	registry    *Registry
 	ticker      *Ticker
 	trade       *Trade
@@ -113,7 +113,7 @@ type Signal struct {
 }
 
 func NewSignal(
-	ctx context.Context, api *websocket.API, instrument *trader.Instrument,
+	ctx context.Context, api *websocket.API, instrument *broker.Instrument,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 	registry := NewSyncRegistry()

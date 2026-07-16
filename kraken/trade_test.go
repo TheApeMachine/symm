@@ -10,18 +10,15 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestTradeVolumeFeesEqual(t *testing.T) {
-	Convey("Given two TradeVolume fee tiers", t, func() {
-		left := TradeVolumeFees{Fee: "0.2600", MinFee: "0.1000", TierVolume: "0.0000"}
-		right := TradeVolumeFees{Fee: "0.2600", MinFee: "0.1000", TierVolume: "0.0000"}
-		different := TradeVolumeFees{Fee: "0.1800", MinFee: "0.1000", TierVolume: "0.0000"}
+func TestNewTradeVolume(t *testing.T) {
+	Convey("Given a typed Kraken TradeVolume response", t, func() {
+		result := NewTradeVolume([]byte(`{
+			"error":[],"result":{"fees":{"XXBTZUSD":{"fee":"0.2600"}}}
+		}`))
 
-		Convey("When the tiers match", func() {
-			So(left.Equal(right), ShouldBeTrue)
-		})
-
-		Convey("When the tiers differ", func() {
-			So(left.Equal(different), ShouldBeFalse)
+		Convey("It should decode the result without rebuilding its fields", func() {
+			So(result, ShouldNotBeNil)
+			So(result.Fees["XXBTZUSD"].Fee.Float64(), ShouldEqual, 0.26)
 		})
 	})
 }
@@ -42,10 +39,8 @@ func TestNewTradeVolumeRequest(t *testing.T) {
 				_, hasNonce := body["nonce"]
 				So(hasNonce, ShouldBeFalse)
 
-				pairs := body["pair"].([]any)
-				So(pairs, ShouldHaveLength, 2)
-				So(pairs[0], ShouldEqual, "BTC/USD")
-				So(pairs[1], ShouldEqual, "ETH/USD")
+				So(body["pair"], ShouldEqual, "BTC/USD,ETH/USD")
+				So(body["fee_schedule"], ShouldBeTrue)
 			})
 		})
 

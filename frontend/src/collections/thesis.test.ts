@@ -156,6 +156,47 @@ describe("thesis frame stores", () => {
 		);
 	});
 
+	it("clones retained forecast buffers instead of mutating previous state", () => {
+		forecastsStore.actions.reset();
+		const row = {
+			source: "manifold",
+			symbol: "BTC/USD",
+			at: "2026-07-14T12:00:00Z",
+			sourceEpoch: 1,
+			horizonEvents: 2,
+			expiresEpoch: 3,
+			target: "return",
+			modelVersion: "v1",
+			ready: true,
+			calibrated: true,
+			frictionReady: true,
+			calibrationSamples: 1,
+			incrementalMSE: 0.1,
+			incrementalMSELowerBound: 0.05,
+			expectedReturn: 0.01,
+			referencePrice: 100,
+			buyCapacity: 1,
+			sellCapacity: 1,
+			expectedFees: 0.001,
+			expectedSpread: 0.001,
+			expectedImpact: 0.001,
+			expectedAdverseSelection: 0.001,
+			uncertainty: 0.01,
+			confidence: 0.8,
+		};
+
+		forecastsStore.actions.updateFrame([row]);
+		const previousForecasts = forecastsStore.state.forecasts;
+		const previousBuffer = previousForecasts["BTC/USD:manifold:return:1"];
+
+		forecastsStore.actions.updateFrame([
+			{ ...row, sourceEpoch: 2, expectedReturn: 0.02 },
+		]);
+
+		expect(previousBuffer?.values()).toHaveLength(1);
+		expect(previousForecasts).not.toBe(forecastsStore.state.forecasts);
+	});
+
 	it("merges partial thesis snapshots without dropping other symbols", () => {
 		forecastsStore.actions.reset();
 		forecastsStore.actions.updateFrame([

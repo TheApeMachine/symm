@@ -90,8 +90,8 @@ func TestPriceGetFees(t *testing.T) {
 	Convey("Given a Kraken-keyed fee tier for one requested symbol", t, func() {
 		mock := tests.NewMockAPI()
 		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
-			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFees{
-				"XXBTZUSD": {Fee: "0.2600"},
+			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFee{
+				"XXBTZUSD": {Fee: decimal.NewFromFloat64(0.26)},
 			}},
 		}), ShouldBeNil)
 		api := websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil)
@@ -108,7 +108,7 @@ func TestPriceGetFees(t *testing.T) {
 
 				btcFee, err := price.FeeRate("BTC/USD")
 				So(err, ShouldBeNil)
-				So(btcFee.Fee, ShouldEqual, "0.2600")
+				So(btcFee.Fee.Float64(), ShouldEqual, 0.26)
 			})
 		})
 	})
@@ -116,7 +116,7 @@ func TestPriceGetFees(t *testing.T) {
 	Convey("Given a fee response missing one requested symbol", t, func() {
 		mock := tests.NewMockAPI()
 		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
-			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFees{}},
+			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFee{}},
 		}), ShouldBeNil)
 		api := websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil)
 		So(api.Initialize(), ShouldBeNil)
@@ -139,8 +139,8 @@ func TestPriceGetFees(t *testing.T) {
 	Convey("Given a malformed fee for one requested symbol", t, func() {
 		mock := tests.NewMockAPI()
 		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
-			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFees{
-				"XXBTZUSD": {Fee: "invalid"},
+			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFee{
+				"XXBTZUSD": {},
 			}},
 		}), ShouldBeNil)
 		api := websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil)
@@ -168,19 +168,21 @@ func TestPriceWithFriction(t *testing.T) {
 			tickers: &sync.Map{},
 		}
 		price.status = types.READY
-		price.fees.Store("BTC/USD", kraken.TradeVolumeFees{Fee: "0.2600"})
+		price.fees.Store("BTC/USD", kraken.TradeVolumeFee{
+			Fee: decimal.NewFromFloat64(0.26),
+		})
 		last, err := decimal.NewFromString("50000.5")
 
 		So(err, ShouldBeNil)
 
 		price.tickers.Store("BTC/USD", &kraken.TickerData{
 			Symbol: "BTC/USD",
-			Last:   last,
+			Ask:    last,
 		})
 
 		Convey("When WithFriction is requested for unit quantity", func() {
 			net, err := price.WithFriction(
-				"BTC/USD", *decimal.NewFromInt64(1),
+				&kraken.InstrumentPair{Symbol: "BTC/USD"}, decimal.NewFromInt64(1),
 			)
 
 			Convey("Then it returns the all-in round-trip taker quote", func() {
@@ -199,7 +201,9 @@ func BenchmarkPriceWithFriction(b *testing.B) {
 		tickers: &sync.Map{},
 	}
 	price.status = types.READY
-	price.fees.Store("BTC/USD", kraken.TradeVolumeFees{Fee: "0.2600"})
+	price.fees.Store("BTC/USD", kraken.TradeVolumeFee{
+		Fee: decimal.NewFromFloat64(0.26),
+	})
 	last, err := decimal.NewFromString("50000.5")
 
 	if err != nil {
@@ -208,14 +212,14 @@ func BenchmarkPriceWithFriction(b *testing.B) {
 
 	price.tickers.Store("BTC/USD", &kraken.TickerData{
 		Symbol: "BTC/USD",
-		Last:   last,
+		Ask:    last,
 	})
 
 	b.ReportAllocs()
 
 	for b.Loop() {
 		_, _ = price.WithFriction(
-			"BTC/USD", *decimal.NewFromInt64(1),
+			&kraken.InstrumentPair{Symbol: "BTC/USD"}, decimal.NewFromInt64(1),
 		)
 	}
 }

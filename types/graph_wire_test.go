@@ -68,10 +68,18 @@ func TestGraphFrame(t *testing.T) {
 			uiHub := make(chan []byte, 1)
 			thesis := NewThesis(uiHub)
 			thesis.Graphs.Store(graph.Symbol, graph)
+			thesis.Lifecycle.Store(graph.Symbol, LifecycleManaging)
 			thesis.Publish()
-			payload := <-uiHub
+			var payload []byte
+
+			select {
+			case payload = <-uiHub:
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for Thesis publication")
+			}
 			published := struct {
-				Graphs []GraphFrame `json:"graphs"`
+				Graphs    []GraphFrame      `json:"graphs"`
+				Lifecycle map[string]string `json:"lifecycle"`
 			}{}
 
 			Convey("Then the websocket payload contains the existing graph frame", func() {
@@ -80,6 +88,7 @@ func TestGraphFrame(t *testing.T) {
 				So(published.Graphs[0].Symbol, ShouldEqual, graph.Symbol)
 				So(published.Graphs[0].Nodes, ShouldHaveLength, 2)
 				So(published.Graphs[0].Edges, ShouldNotBeEmpty)
+				So(published.Lifecycle[graph.Symbol], ShouldEqual, LifecycleManaging)
 			})
 		})
 	})

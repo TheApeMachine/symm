@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -207,6 +208,12 @@ func (live *Live) route(raw []byte) {
 	channel := utils.GetString(raw, "channel")
 
 	if channel == "" {
+		if method := utils.GetString(raw, "method"); method == "add_order" {
+			channel = method
+		}
+	}
+
+	if channel == "" {
 		if message := utils.GetString(raw, "error"); message != "" {
 			errnie.Error(errnie.Err(errnie.Validation, message, nil))
 		}
@@ -315,9 +322,31 @@ func (live *Live) do(options spot.RequestOptions) ([]byte, error) {
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			err.Error(),
+			errnie.Internal,
+			"Kraken REST request failed",
 			err,
+		))
+	}
+
+	errors := utils.GetStringSlice(resp.Body, "error")
+
+	if len(errors) > 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			errors[0],
+			nil,
+		))
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"websocket.Live.do[%d]: %s",
+				resp.StatusCode,
+				resp.Body,
+			),
+			nil,
 		))
 	}
 

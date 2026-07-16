@@ -95,13 +95,38 @@ func (balance *Balance) Snapshot() []datura.Map[any] {
 }
 
 func (balance *Balance) BalanceAck(buf []byte) {
-	balance.model = kraken.NewBalance(buf)
+	incoming := kraken.NewBalance(buf)
 
-	if errnie.Error(kraken.Validate(balance.model)) != nil {
+	if errnie.Error(kraken.Validate(incoming)) != nil {
 		return
 	}
 
-	for _, balanceData := range balance.model.Data {
+	if balance.model == nil || incoming.Type == "snapshot" {
+		balance.model = incoming
+	} else {
+		for _, update := range incoming.Data {
+			found := false
+
+			for index := range balance.model.Data {
+				if balance.model.Data[index].Asset != update.Asset {
+					continue
+				}
+
+				balance.model.Data[index] = update
+				found = true
+				break
+			}
+
+			if !found {
+				balance.model.Data = append(balance.model.Data, update)
+			}
+		}
+
+		balance.model.Sequence = incoming.Sequence
+		balance.model.Timestamp = incoming.Timestamp
+	}
+
+	for _, balanceData := range incoming.Data {
 		assetHolding := types.Holding{
 			Asset: balanceData.Asset,
 			Qty:   balanceData.Balance,
@@ -112,7 +137,7 @@ func (balance *Balance) BalanceAck(buf []byte) {
 			assetHolding.Qty = balanceData.Balance
 		}
 
-		balance.holdings.Store(balanceData.Asset, assetHolding)
+		balance.Update(balanceData.Asset, assetHolding)
 
 		if balanceData.Asset == balance.quote {
 			continue
@@ -131,10 +156,10 @@ func (balance *Balance) BalanceAck(buf []byte) {
 		holding.Qty = balanceData.Balance
 
 		if holding.Order != nil {
-			holding.Order.Volume = &holding.Qty
+			holding.Order.Volume = holding.Qty
 		}
 
-		balance.holdings.Store(symbol, holding)
+		balance.Update(symbol, holding)
 	}
 
 	balance.status = types.READY
@@ -193,7 +218,17 @@ func (balance *Balance) Holding(symbol string) (types.Holding, error) {
 Update updates the holding for a given symbol.
 */
 func (balance *Balance) Update(symbol string, holding types.Holding) {
-	balance.holdings.Store(symbol, holding)
+	if symbol != "" {
+		holding.Symbol = symbol
+	}
+
+	if holding.Asset != "" {
+		balance.holdings.Store(holding.Asset, holding)
+	}
+
+	if symbol != "" {
+		balance.holdings.Store(symbol, holding)
+	}
 }
 
 /*

@@ -27,8 +27,6 @@ export const latestByMetric = (
 	metric: string,
 	side = "",
 ): Measurement | undefined => {
-	let directional: Measurement | undefined;
-
 	for (let index = values.length - 1; index >= 0; index -= 1) {
 		const measurement = values[index];
 
@@ -36,16 +34,12 @@ export const latestByMetric = (
 			continue;
 		}
 
-		if ((measurement.side ?? "") === side) {
+		if (side === "" || (measurement.side ?? "") === side) {
 			return measurement;
-		}
-
-		if (side === "" && directional === undefined) {
-			directional = measurement;
 		}
 	}
 
-	return directional;
+	return undefined;
 };
 
 /*

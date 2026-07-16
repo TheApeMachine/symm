@@ -417,18 +417,25 @@ export const drawCortexTree = (
 		}
 	}
 
-	const beamSequence = [...tree.beamPrefixes].sort(
-		(left, right) => right.length - left.length,
-	)[0];
+	let beamSequence = "";
 
-	if (beamSequence !== undefined && beamSequence !== "") {
+	for (const prefix of tree.beamPrefixes) {
+		if (prefix.length > beamSequence.length) {
+			beamSequence = prefix;
+		}
+	}
+
+	if (beamSequence !== "") {
+		const nodeByPrefix = new Map(
+			tree.nodes.map((node) => [node.prefix, node] as const),
+		);
 		const tokens = beamSequence.split("_").filter(Boolean);
 		const pathNodes: CortexNode[] = [tree.root];
 		let prefix = "";
 
 		for (const token of tokens) {
 			prefix = prefix === "" ? token : `${prefix}_${token}`;
-			const match = tree.nodes.find((node) => node.prefix === prefix);
+			const match = nodeByPrefix.get(prefix);
 
 			if (match !== undefined) {
 				pathNodes.push(match);

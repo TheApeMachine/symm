@@ -18,6 +18,9 @@ const (
 	PARTIAL_REJECTED  Status = "partial_rejected"
 	PARTIAL_EXPIRED   Status = "partial_expired"
 	FILLED            Status = "filled"
+	AMENDED           Status = "amended"
+	RESTATED          Status = "restated"
+	STATUS            Status = "status"
 	READY             Status = "ready"
 	BUSY              Status = "busy"
 	PRIORITY          Status = "priority"
@@ -29,4 +32,17 @@ const (
 type StatusReporter interface {
 	Status() Status
 	Initialize() error
+}
+
+var MarketStatuses = map[string]Status{
+	"pending_new":    PENDING,
+	"new":            NEW,
+	"trade":          OPEN,
+	"filled":         FILLED,
+	"canceled":       CANCELED,
+	"iceberg_filled": FILLED,
+	"expired":        EXPIRED,
+	"amended":        AMENDED,
+	"restated":       RESTATED,
+	"status":         STATUS,
 }

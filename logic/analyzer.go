@@ -98,7 +98,9 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 		analyzer.hawkes != nil &&
 		analyzer.gate != nil &&
 		analyzer.gate.Ready(system.StagePreflight) {
-		analyzer.manifold.Update(thesis, analyzer.hawkes)
+		if err := analyzer.manifold.Update(thesis, analyzer.hawkes); err != nil {
+			errnie.Error(err)
+		}
 	}
 
 	states := make([]manifold.State, 0)

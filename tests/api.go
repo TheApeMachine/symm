@@ -176,7 +176,11 @@ func tradeVolumeSymbols(params json.Marshaler) ([]string, error) {
 		))
 	}
 
-	return request.Pair, nil
+	if request.Pair == "" {
+		return nil, nil
+	}
+
+	return strings.Split(request.Pair, ","), nil
 }
 
 func mockNormalizerClient() *spot.WebSocket {

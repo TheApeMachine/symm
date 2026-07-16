@@ -51,6 +51,22 @@ func TestResonanceUpdate(t *testing.T) {
 			So(next[0].Maturity, ShouldBeGreaterThan, measurements[0].Maturity)
 			So(next[0].Maturity, ShouldBeLessThan, 1)
 		})
+
+		Convey("It should not publish a negative observation horizon", func() {
+			nextIndex := producedAt + 1
+			state := causalState(
+				time.Unix(int64(nextIndex), 0),
+				100+float64(nextIndex),
+				uint64(nextIndex),
+			)
+			state.Duration = -time.Second
+			state.Reading.PressureGradX += float64(nextIndex) / 100
+			next, _ := resonance.Update(state)
+
+			So(next, ShouldHaveLength, 2)
+			So(next[0].Horizon, ShouldEqual, time.Duration(0))
+			So(next[1].Horizon, ShouldEqual, time.Duration(0))
+		})
 	})
 }
 

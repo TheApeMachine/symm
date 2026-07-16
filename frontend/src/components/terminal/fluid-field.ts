@@ -2,7 +2,7 @@ import { clearCanvas, drawGrid } from "#/components/terminal/canvas";
 import { mad, median } from "#/components/terminal/decision-format";
 import { colormap } from "#/lib/colormap";
 
-const OUTLIER_MAD = 1.5;
+const OUTLIER_MAD = 1.5; // ponytail: fixed MAD multiplier; upgrade path is per-symbol adaptive tail estimation from live deposit dispersion.
 
 const finiteValues = (matrix: number[][]): number[] =>
 	matrix.flat().filter((value) => Number.isFinite(value));
@@ -49,7 +49,7 @@ export const normalizeFluidLattice = (
 	let peak = 0;
 	const normalized = matrix.map((row) =>
 		row.map((value) => {
-			let unit = (value - floor) / span;
+			let unit = Number.isFinite(value) ? (value - floor) / span : 0;
 
 			unit = Math.max(0, Math.min(1, unit));
 
@@ -241,6 +241,7 @@ export const compositeFieldLattice = (
 	return rho.map((row, rowIndex) =>
 		row.map((value, columnIndex) => {
 			const psi = psiMag2[rowIndex]?.[columnIndex] ?? 0;
+			// ponytail: fixed psi blend factor; upgrade path is coherence-weighted mixing from live |psi|^2/rho ratio statistics.
 
 			return Math.max(value, psi * 0.85);
 		}),
@@ -344,9 +345,23 @@ export const drawPilotWaveOverlay = (
 		}
 	}
 
+	const overlayCanvas = ensureFluidOverlayCanvas(width, height);
+
+	if (overlayCanvas === null) {
+		return;
+	}
+
+	const overlayContext = overlayCanvas.getContext("2d");
+
+	if (overlayContext === null) {
+		return;
+	}
+
+	overlayContext.putImageData(imageData, 0, 0);
+
 	context.save();
 	context.globalCompositeOperation = "screen";
-	context.putImageData(imageData, 0, 0);
+	context.drawImage(overlayCanvas, 0, 0);
 	context.restore();
 };
 
@@ -370,6 +385,7 @@ export const drawFluidFlowOverlay = (
 
 	const cellWidth = width / columns;
 	const cellHeight = height / rows;
+	// ponytail: fixed sparse-flow stride and rho/speed cutoffs; upgrade path is lattice-density-aware sampling from observed carrier occupancy.
 	const strideX = Math.max(1, Math.floor(columns / 24));
 	const strideY = Math.max(1, Math.floor(rows / 16));
 
@@ -384,6 +400,7 @@ export const drawFluidFlowOverlay = (
 		) {
 			const rho = lattice[row]?.[column] ?? 0;
 
+			// ponytail: fixed rho floor for sparse-flow rendering; upgrade path is adaptive masking from live deposit percentiles.
 			if (rho < 0.03) {
 				continue;
 			}
@@ -392,6 +409,7 @@ export const drawFluidFlowOverlay = (
 			const flowY = flow.flowY[row]?.[column] ?? 0;
 			const speed = Math.hypot(flowX, flowY);
 
+			// ponytail: fixed speed floor for guidance streaks; upgrade path is lattice-speed percentile gating from observed guidance magnitudes.
 			if (speed <= 0.04) {
 				continue;
 			}
@@ -457,6 +475,36 @@ type FluidPaintBuffer = {
 
 let fluidPaintBuffer: FluidPaintBuffer | null = null;
 
+type FluidOverlayCanvas = {
+	width: number;
+	height: number;
+	canvas: HTMLCanvasElement;
+};
+
+let fluidOverlayCanvas: FluidOverlayCanvas | null = null;
+
+const ensureFluidOverlayCanvas = (
+	width: number,
+	height: number,
+): HTMLCanvasElement | null => {
+	if (width <= 0 || height <= 0 || typeof document === "undefined") {
+		return null;
+	}
+
+	if (
+		fluidOverlayCanvas === null ||
+		fluidOverlayCanvas.width !== width ||
+		fluidOverlayCanvas.height !== height
+	) {
+		const canvas = document.createElement("canvas");
+		canvas.width = width;
+		canvas.height = height;
+		fluidOverlayCanvas = { width, height, canvas };
+	}
+
+	return fluidOverlayCanvas.canvas;
+};
+
 const ensureFluidPaintBuffer = (
 	width: number,
 	height: number,
@@ -513,6 +561,72 @@ export const sampleBilinearLattice = (
 	const south = southwest + (southeast - southwest) * deltaX;
 
 	return north + (south - north) * deltaY;
+};
+
+/*
+resampleFluidLattice projects one lattice onto the target rho grid so guidance
+velocities can cover the full density field when backend frames disagree on size.
+*/
+export const resampleFluidLattice = (
+	lattice: number[][],
+	rows: number,
+	columns: number,
+): number[][] => {
+	if (!isFluidFieldMatrix(lattice) || rows <= 0 || columns <= 0) {
+		return [];
+	}
+
+	return Array.from({ length: rows }, (_, row) =>
+		Array.from({ length: columns }, (_, column) => {
+			const sampleX = columns <= 1 ? 0 : column / (columns - 1);
+			const sampleY = rows <= 1 ? 0 : row / (rows - 1);
+
+			return sampleBilinearLattice(lattice, sampleX, sampleY);
+		}),
+	);
+};
+
+const latticeMatchesShape = (
+	lattice: number[][],
+	rows: number,
+	columns: number,
+): boolean =>
+	isFluidFieldMatrix(lattice) &&
+	lattice.length === rows &&
+	(lattice[0]?.length ?? 0) === columns;
+
+const resolveGuidanceFlowLattice = (
+	matrix: number[][],
+	rows: number,
+	columns: number,
+	options: TerminalFluidFieldDrawOptions,
+): FlowLattice => {
+	const velX = options.guidanceVelX;
+	const velZ = options.guidanceVelZ;
+
+	if (velX && velZ && isFluidFieldMatrix(velX) && isFluidFieldMatrix(velZ)) {
+		const alignedVelX = latticeMatchesShape(velX, rows, columns)
+			? velX
+			: resampleFluidLattice(velX, rows, columns);
+		const alignedVelZ = latticeMatchesShape(velZ, rows, columns)
+			? velZ
+			: resampleFluidLattice(velZ, rows, columns);
+
+		if (
+			isFluidFieldMatrix(alignedVelX) &&
+			isFluidFieldMatrix(alignedVelZ) &&
+			latticeMatchesShape(alignedVelX, rows, columns) &&
+			latticeMatchesShape(alignedVelZ, rows, columns)
+		) {
+			return normalizeFlowLattice(
+				buildGuidanceFlowLattice(alignedVelX, alignedVelZ),
+			);
+		}
+	}
+
+	return normalizeFlowLattice(
+		buildPilotFlowLattice(matrix, options.particles ?? []),
+	);
 };
 
 /*
@@ -631,17 +745,12 @@ export const drawFluidField = (
 		drawPilotWaveOverlay(context, width, height, options.psiMag2);
 	}
 
-	const guidanceFlow =
-		options.guidanceVelX &&
-		options.guidanceVelZ &&
-		isFluidFieldMatrix(options.guidanceVelX) &&
-		isFluidFieldMatrix(options.guidanceVelZ)
-			? normalizeFlowLattice(
-					buildGuidanceFlowLattice(options.guidanceVelX, options.guidanceVelZ),
-				)
-			: normalizeFlowLattice(
-					buildPilotFlowLattice(matrix, options.particles ?? []),
-				);
+	const guidanceFlow = resolveGuidanceFlowLattice(
+		matrix,
+		rows,
+		columns,
+		options,
+	);
 	const pressureFlow = buildPressureFlowLattice(
 		rows,
 		columns,
@@ -679,6 +788,7 @@ export const drawFluidWhaleCarriers = (
 	const carriers = particles
 		.filter((particle) => particle.role.toLowerCase().includes("whale"))
 		.sort((left, right) => right.amplitude - left.amplitude)
+		// ponytail: fixed carrier ceiling; upgrade path is amplitude-ranked budgeting from live lattice occupancy and canvas size.
 		.slice(0, 16);
 	const cellWidth = width / Math.max(columns, 1);
 	const cellHeight = height / Math.max(rows, 1);

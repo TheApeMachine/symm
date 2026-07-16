@@ -105,32 +105,11 @@ func (paper *Paper) Close() {
 }
 
 func (paper *Paper) SubBalances() error {
-	return paper.lifecycle.Balance()
+	return paper.lifecycle.Balance("snapshot")
 }
 
-func (paper *Paper) SubExecutions(map[string]any) error {
-	var model datura.Map[any]
-	var err error
-
-	paper.simulator.Do(REST, func() {
-		model, err = paper.execute("executions", "history")
-	})
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to subscribe to executions",
-			err,
-		))
-	}
-
-	trades, ok := model["trades"].([]any)
-
-	if !ok {
-		return nil
-	}
-
-	return paper.lifecycle.Replay(trades)
+func (paper *Paper) SubExecutions() error {
+	return nil
 }
 
 func (paper *Paper) TradesHistory() (*kraken.TradesHistory, error) {

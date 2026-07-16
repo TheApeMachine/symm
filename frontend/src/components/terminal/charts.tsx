@@ -129,6 +129,23 @@ const frameMatrix = (
 	return [];
 };
 
+const frameAuxMatrix = (
+	frame: Record<string, unknown> | null | undefined,
+	field: string,
+): number[][] => {
+	const output = frameOutput(frame);
+
+	for (const value of [frame?.[field], output?.[field]]) {
+		const matrix = numberMatrix(value);
+
+		if (matrix.length > 0) {
+			return matrix;
+		}
+	}
+
+	return [];
+};
+
 const finiteNumber = (value: unknown): number | null =>
 	typeof value === "number" && Number.isFinite(value) ? value : null;
 
@@ -278,9 +295,9 @@ export const TerminalFluidChart = ({
 						finiteNumber(frame?.pressureGradZ) ??
 						finiteNumber(reading?.pressureGradZ) ??
 						0,
-					psiMag2: numberMatrix(frame?.psiMag2),
-					guidanceVelX: numberMatrix(frame?.guidanceVelX),
-					guidanceVelZ: numberMatrix(frame?.guidanceVelZ),
+					psiMag2: frameAuxMatrix(frame, "psiMag2"),
+					guidanceVelX: frameAuxMatrix(frame, "guidanceVelX"),
+					guidanceVelZ: frameAuxMatrix(frame, "guidanceVelZ"),
 				});
 			} else {
 				clearCanvas(context, width, height);

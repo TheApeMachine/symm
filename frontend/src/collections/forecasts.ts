@@ -7,6 +7,18 @@ const FORECAST_HISTORY_LIMIT = 50;
 const forecastKey = (row: ThesisForecast): string =>
 	`${row.symbol}:${row.source}:${row.target}:${row.sourceEpoch}`;
 
+const cloneForecastBuffer = (
+	buffer: CircularBuffer<ThesisForecast>,
+): CircularBuffer<ThesisForecast> => {
+	const cloned = Circular<ThesisForecast>(buffer.capacity());
+
+	for (const value of buffer.values()) {
+		cloned.push(value);
+	}
+
+	return cloned;
+};
+
 const asForecasts = (frame: unknown): ThesisForecast[] => {
 	if (!Array.isArray(frame)) {
 		return [];
@@ -53,16 +65,22 @@ export const forecastsStore = createStore(
 					return prev;
 				}
 
-				const forecasts = prev.forecasts;
+				const forecasts = { ...prev.forecasts };
 
 				for (const row of rows) {
 					const key = forecastKey(row);
+					const existing = forecasts[key];
 
-					if (!forecasts[key]) {
-						forecasts[key] = Circular<ThesisForecast>(FORECAST_HISTORY_LIMIT);
+					if (existing === undefined) {
+						const buffer = Circular<ThesisForecast>(FORECAST_HISTORY_LIMIT);
+						buffer.push(row);
+						forecasts[key] = buffer;
+						continue;
 					}
 
-					forecasts[key].push(row);
+					const buffer = cloneForecastBuffer(existing);
+					buffer.push(row);
+					forecasts[key] = buffer;
 				}
 
 				return {

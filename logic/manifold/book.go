@@ -30,7 +30,7 @@ type physicalOrder struct {
 ordersFromBook walks every visible L3 order on both sides of one symbol book.
 */
 func ordersFromBook(symbolBook *book.Book) []physicalOrder {
-	if symbolBook == nil || symbolBook.Bids == nil || symbolBook.Asks == nil {
+	if symbolBook == nil {
 		return nil
 	}
 

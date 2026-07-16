@@ -50,9 +50,20 @@ func TestEvidenceMeasureProjectedIntervals(t *testing.T) {
 		measurements := evidence.Measure("BTC/USD", outcome)
 
 		Convey("It should publish forward evidence intervals for every metric", func() {
+			So(measurements, ShouldNotBeEmpty)
+
 			for _, measurement := range measurements {
 				So(measurement.ValidateStruct(), ShouldBeNil)
 			}
+		})
+
+		Convey("It should derive a missing origin from the observed horizon", func() {
+			missingOrigin := outcome
+			missingOrigin.ObservedFrom = time.Time{}
+			measurements := evidence.Measure("BTC/USD", missingOrigin)
+
+			So(measurements, ShouldNotBeEmpty)
+			So(measurements[0].ObservedFrom, ShouldEqual, outcome.At.Add(-outcome.Horizon))
 		})
 	})
 }
@@ -80,12 +91,15 @@ func TestEvidenceFitEpochBoundsFallback(t *testing.T) {
 	evidence := NewEvidence()
 	outcome := projectedOutcome()
 	outcome.FitObservedFrom = time.Time{}
+	outcome.ObservedFrom = time.Time{}
 	outcome.Readiness.ModelUpdated = true
 
 	Convey("Given a fit epoch missing its origin stamp", t, func() {
 		measurements := evidence.Measure("BTC/USD", outcome)
 
 		Convey("It should still publish forward model intervals", func() {
+			validated := 0
+
 			for _, measurement := range measurements {
 				if measurement.Metric == types.MetricEventCount ||
 					measurement.Metric == types.MetricArrivalRate {
@@ -93,7 +107,13 @@ func TestEvidenceFitEpochBoundsFallback(t *testing.T) {
 				}
 
 				So(measurement.ValidateStruct(), ShouldBeNil)
+				validated++
 			}
+
+			So(validated, ShouldBeGreaterThan, 0)
+			model, ok := findMeasurement(measurements, types.MetricSpectralRadius)
+			So(ok, ShouldBeTrue)
+			So(model.ObservedFrom, ShouldEqual, outcome.FitAt.Add(-outcome.Horizon))
 		})
 	})
 }

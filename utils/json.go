@@ -36,6 +36,28 @@ func Unmarshal[T any](raw []byte) T {
 	return v
 }
 
+func GetStringSlice(raw []byte, path ...any) []string {
+	node, err := sonic.Get(raw, path...)
+
+	if err != nil || !node.Exists() {
+		return nil
+	}
+
+	value, err := node.Array()
+
+	if err != nil {
+		return nil
+	}
+
+	out := make([]string, len(value))
+
+	for _, v := range value {
+		out = append(out, v.(string))
+	}
+
+	return out
+}
+
 func GetString(raw []byte, path ...any) string {
 	node, err := sonic.Get(raw, path...)
 

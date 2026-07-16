@@ -8,9 +8,9 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -29,7 +29,7 @@ type Signal struct {
 }
 
 func NewSignal(
-	ctx context.Context, api *websocket.API, instrument *trader.Instrument,
+	ctx context.Context, api *websocket.API, instrument *broker.Instrument,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 

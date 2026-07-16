@@ -5,7 +5,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -25,11 +28,13 @@ type Crypto struct {
 	status     types.Status
 	ctx        context.Context
 	cancel     context.CancelFunc
+	done       chan struct{}
 	desk       *broker.Desk
 	price      *broker.Price
 	balance    *broker.Balance
 	api        *websocket.API
-	instrument *Instrument
+	instrument *broker.Instrument
+	tree       *dmt.Tree
 	tick       *atomic.Int64
 	tickBudget time.Duration
 	planner    *strategy.Planner
@@ -47,9 +52,11 @@ func NewCrypto(
 	price *broker.Price,
 	balance *broker.Balance,
 	desk *broker.Desk,
-	instrument *Instrument,
+	instrument *broker.Instrument,
 	analyzer *logic.Analyzer,
 	planner *strategy.Planner,
+	tree *dmt.Tree,
+	thesis *types.Thesis,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -69,12 +76,14 @@ func NewCrypto(
 		price:      price,
 		balance:    balance,
 		instrument: instrument,
+		tree:       tree,
 		tick:       &atomic.Int64{},
 		tickBudget: tickBudget,
 		analyzer:   analyzer,
 		planner:    planner,
 		postMortem: &strategy.PostMortem{},
 	}
+	crypto.tick.Store(thesis.Tick)
 
 	return crypto, nil
 }
@@ -94,10 +103,19 @@ func (crypto *Crypto) Status() types.Status {
 }
 
 func (crypto *Crypto) Run() error {
+	crypto.done = make(chan struct{})
+
 	go func() {
+		defer close(crypto.done)
 		errnie.Info("crypto runtime started")
 
 		for crypto.Status() != types.ERROR {
+			select {
+			case <-crypto.ctx.Done():
+				return
+			default:
+			}
+
 			if crypto.booter.Ready(system.StageWarmup) {
 				if crypto.instrument != nil {
 					if _, err := crypto.instrument.Activate(); err != nil {
@@ -111,6 +129,20 @@ func (crypto *Crypto) Run() error {
 				thesis := crypto.planner.Update()
 				thesis.Tick = crypto.tick.Add(1)
 				crypto.trade(thesis)
+				encoded, err := sonic.Marshal(thesis)
+
+				if err != nil {
+					crypto.status = types.ERROR
+					errnie.Error(err)
+					continue
+				}
+
+				if _, _, err := crypto.tree.Insert([]byte(types.ThesisKey), encoded); err != nil {
+					crypto.status = types.ERROR
+					errnie.Error(err)
+					continue
+				}
+
 				thesis.Publish()
 			}
 
@@ -126,10 +158,6 @@ trade supplies current broker constraints to strategy, then submits each
 selected order through Desk for exchange validation and execution.
 */
 func (crypto *Crypto) trade(thesis *types.Thesis) {
-	if len(thesis.Forecasts) == 0 {
-		return
-	}
-
 	thesis.Positions = thesis.Positions[:0]
 
 	for _, position := range crypto.desk.Positions() {
@@ -147,21 +175,34 @@ func (crypto *Crypto) trade(thesis *types.Thesis) {
 		thesis.Positions = append(thesis.Positions, holding)
 	}
 
+	if len(thesis.Forecasts) == 0 {
+		return
+	}
+
 	fees := make(map[string]float64, len(thesis.Forecasts))
 
 	for index := range thesis.Forecasts {
 		forecast := &thesis.Forecasts[index]
-		fee, err := crypto.price.FeeFraction(forecast.Symbol)
+		fee, err := crypto.price.FeeRate(forecast.Symbol)
 
 		if err != nil {
 			errnie.Error(err)
 			continue
 		}
 
-		feeFraction := fee.Float64()
-		forecast.ExpectedFees = 2 * feeFraction
+		if fee.Fee == nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"taker fee is missing for "+forecast.Symbol,
+				nil,
+			))
+			continue
+		}
+
+		fraction := fee.Fee.Div(decimal.NewFromInt64(100))
+		forecast.ExpectedFees = fraction.Mul(decimal.NewFromInt64(2)).Float64()
 		forecast.FrictionReady = true
-		fees[forecast.Symbol] = feeFraction
+		fees[forecast.Symbol] = fraction.Float64()
 	}
 
 	available, err := crypto.balance.AvailableQuote()
@@ -192,13 +233,19 @@ func (crypto *Crypto) trade(thesis *types.Thesis) {
 				continue
 			}
 
-			if err := crypto.desk.Buy(order, pair); err != nil {
+			if err := crypto.desk.Buy(order, &pair); err != nil {
 				errnie.Error(err)
 			}
 		case "exit", "reduce":
 			if err := crypto.desk.Sell(order); err != nil {
 				errnie.Error(err)
 			}
+		default:
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"unexpected order type "+order.Description.Type,
+				nil,
+			))
 		}
 	}
 }
@@ -208,6 +255,10 @@ Close stops the trader and its composed resources.
 */
 func (crypto *Crypto) Close() error {
 	crypto.cancel()
+
+	if crypto.done != nil {
+		<-crypto.done
+	}
 
 	if err := crypto.desk.Close(); err != nil {
 		return err

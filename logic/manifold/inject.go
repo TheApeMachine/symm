@@ -45,6 +45,14 @@ func inject(
 		)
 	}
 
+	if len(oscillators) == 0 {
+		return errnie.Err(
+			errnie.Internal,
+			"manifold: oscillator population is empty",
+			nil,
+		)
+	}
+
 	if err := handle.ResetDeposits(); err != nil {
 		return errnie.Err(
 			errnie.Internal,
@@ -60,14 +68,6 @@ func inject(
 			errnie.Internal,
 			"manifold: failed to deposit intensities",
 			err,
-		)
-	}
-
-	if len(oscillators) == 0 {
-		return errnie.Err(
-			errnie.Internal,
-			"manifold: oscillator population is empty",
-			nil,
 		)
 	}
 

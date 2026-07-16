@@ -4,9 +4,9 @@ import (
 	"context"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/trader"
 )
 
 /*
@@ -16,12 +16,12 @@ type Book struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	api        *websocket.API
-	instrument *trader.Instrument
+	instrument *broker.Instrument
 	cache      []kraken.BookData
 }
 
 func NewBook(
-	ctx context.Context, api *websocket.API, instrument *trader.Instrument,
+	ctx context.Context, api *websocket.API, instrument *broker.Instrument,
 ) *Book {
 	ctx, cancel := context.WithCancel(ctx)
 

@@ -44,6 +44,9 @@ func TestCausalUpdateRejectsRegressions(t *testing.T) {
 		_, sameTimeOutcome, err := causal.Update(
 			causalState(time.Unix(2, 0), 101, 3),
 		)
+		skipped := NewCausal("ETH/USD")
+		_, _, skippedErr := skipped.Update(causalState(time.Unix(1, 0), 100, 1))
+		_, skippedOutcome, skippedErr := skipped.Update(causalState(time.Unix(3, 0), 102, 3))
 		So(err, ShouldBeNil)
 
 		var regressedOutcome *CausalOutcome
@@ -56,6 +59,9 @@ func TestCausalUpdateRejectsRegressions(t *testing.T) {
 			So(err, ShouldNotBeNil)
 			So(duplicateOutcome, ShouldBeNil)
 			So(sameTimeOutcome, ShouldNotBeNil)
+			So(skippedErr, ShouldBeNil)
+			So(skippedOutcome.CalibrationSamples, ShouldEqual, uint64(0))
+			So(skipped.pending.epoch, ShouldEqual, uint64(3))
 			So(regressedOutcome, ShouldBeNil)
 			So(causal.pending.epoch, ShouldEqual, uint64(3))
 			So(causal.pending.at, ShouldEqual, time.Unix(2, 0))

@@ -92,15 +92,15 @@ func (planner *Planner) Decide(
 		candidateIndex := len(thesis.Positions)
 		thesis.Positions = append(thesis.Positions, types.Holding{
 			Symbol: forecast.Symbol,
-			Qty:    *decimal.NewFromInt64(0),
+			Qty:    decimal.NewFromInt64(0),
 			Order: &spot.Order{
 				Description: &spot.OrderDescription{
 					Pair: forecast.Symbol, Type: "enter", OrderType: "market",
 				},
 				Price: entryPrice,
 			},
-			EntryPrice: *entryPrice,
-			Mark:       *referencePrice,
+			EntryPrice: entryPrice,
+			Mark:       referencePrice,
 		})
 
 		cognitionValue, cognitionFound := thesis.Cognition.Load(forecast.Symbol)
@@ -147,10 +147,8 @@ func (planner *Planner) Decide(
 		)
 		planner.context(&decision, forecast, available, len(openBySymbol), slots)
 		candidate := &thesis.Positions[candidateIndex]
-		candidate.Qty = *decimal.NewFromFloat64(
-			decision.ProposedNotional / candidate.EntryPrice.Float64(),
-		)
-		candidate.Order.Volume = &candidate.Qty
+		candidate.Qty = decimal.NewFromFloat64(decision.ProposedQuantity)
+		candidate.Order.Volume = candidate.Qty
 
 		if decision.Action == "nothing" {
 			thesis.Decisions = append(thesis.Decisions, decision)
@@ -187,7 +185,7 @@ func (planner *Planner) Decide(
 				Price:     decimal.NewFromFloat64(decision.ReferencePrice),
 				OrderType: "market",
 			},
-			Volume: decimal.NewFromFloat64(decision.ProposedNotional),
+			Volume: decimal.NewFromFloat64(decision.ProposedQuantity),
 			Price:  decimal.NewFromFloat64(decision.ReferencePrice),
 		})
 	}
@@ -308,6 +306,8 @@ func (planner *Planner) entry(
 	capital float64,
 ) types.Decision {
 	proposed := min(capital, forecast.BuyCapacity)
+	unitCost := forecast.ReferencePrice * (1 + forecast.ExpectedSpread/2) * (1 + fee)
+	quantity := proposed / unitCost
 	utility := forecast.ExpectedReturn - 2*fee - forecast.ExpectedSpread -
 		forecast.ExpectedImpact - forecast.ExpectedAdverseSelection
 
@@ -317,6 +317,7 @@ func (planner *Planner) entry(
 		)
 		decision.Alternatives["enter"] = utility
 		decision.ProposedNotional = proposed
+		decision.ProposedQuantity = quantity
 		decision.ExpectedFees = 2 * fee
 		decision.ExpectedSpread = forecast.ExpectedSpread
 
@@ -326,7 +327,7 @@ func (planner *Planner) entry(
 	return types.Decision{
 		Action: "enter", Symbol: forecast.Symbol, At: forecast.At,
 		Utility: utility, Alternatives: map[string]float64{"enter": utility, "nothing": 0},
-		AllocationClass: "normal", ProposedNotional: proposed,
+		AllocationClass: "normal", ProposedNotional: proposed, ProposedQuantity: quantity,
 		ExpectedFees: 2 * fee, ExpectedSpread: forecast.ExpectedSpread,
 		ReferencePrice: forecast.ReferencePrice, ValidThroughEpoch: forecast.ExpiresEpoch,
 		ForecastSource: forecast.Source, Cause: "entry",

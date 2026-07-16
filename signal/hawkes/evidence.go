@@ -293,6 +293,10 @@ func (evidence *Evidence) applyFitEvaluation(
 
 	through := outcome.At
 
+	if from.IsZero() && !through.IsZero() {
+		from = through.Add(-outcome.Horizon)
+	}
+
 	if through.Before(from) {
 		from = through
 	}
@@ -323,6 +327,10 @@ func (evidence *Evidence) fitEpochBounds(
 
 	if through.IsZero() {
 		through = outcome.At
+	}
+
+	if from.IsZero() && !through.IsZero() {
+		from = through.Add(-outcome.Horizon)
 	}
 
 	if through.Before(from) {
@@ -380,6 +388,10 @@ func (evidence *Evidence) observationInterval(
 ) (time.Time, time.Time) {
 	from := outcome.ObservedFrom
 	through := outcome.At
+
+	if from.IsZero() && !through.IsZero() {
+		from = through.Add(-outcome.Horizon)
+	}
 
 	if through.Before(from) {
 		from = through

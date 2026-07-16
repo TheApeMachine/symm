@@ -35,21 +35,41 @@ esac
 
 		paper := NewPaper(context.Background(), NewSimulator())
 		var execution *kraken.Execution
-		paper.On("add_order", func([]byte) {})
+		var orderAck *kraken.OrderResponse
+		var balance *kraken.Balance
+		events := make([]string, 0, 3)
+		paper.On("add_order", func(buffer []byte) {
+			orderAck = kraken.NewOrderResponse(buffer)
+			events = append(events, "ack")
+		})
 		paper.On("executions", func(buffer []byte) {
 			execution = kraken.NewExecution(buffer)
+			events = append(events, "execution")
 		})
-		paper.On("balances", func([]byte) {})
+		paper.On("balances", func(buffer []byte) {
+			balance = kraken.NewBalance(buffer)
+			events = append(events, "balance")
+		})
 
-		err := paper.AddOrder(kraken.NewMarketOrder("sell", 0.00299963, "BTC/USD"))
+		order := kraken.NewMarketOrder("sell", 0.00299963, "BTC/USD")
+		err := paper.AddOrder(order)
 
 		Convey("Then the emitted fill reconciles with the internal symbol", func() {
 			So(err, ShouldBeNil)
+			So(events, ShouldResemble, []string{"ack", "execution", "balance"})
+			So(orderAck, ShouldNotBeNil)
+			So(orderAck.ReqID, ShouldEqual, order.ReqID)
+			So(orderAck.Result.OrderID, ShouldEqual, "PAPER-00041")
 			So(execution, ShouldNotBeNil)
 			So(execution.Data, ShouldHaveLength, 1)
 			So(execution.Data[0].ExecID, ShouldEqual, "PAPER-00042")
 			So(execution.Data[0].Symbol, ShouldEqual, "BTC/USD")
 			So(execution.Data[0].FeeUsdEquiv.Float64(), ShouldAlmostEqual, 0.5056802650744, 1e-8)
+			So(balance, ShouldNotBeNil)
+			So(balance.Type, ShouldEqual, "update")
+			So(balance.Data, ShouldHaveLength, 1)
+			So(balance.Data[0].Asset, ShouldEqual, "USD")
+			So(balance.Data[0].Balance.Float64(), ShouldEqual, 100.0)
 		})
 	})
 }

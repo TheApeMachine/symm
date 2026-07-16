@@ -45,14 +45,16 @@ func TestOrderAckFixtureGenerate(t *testing.T) {
 			orderackfixture.Options{ReqID: 8, OrderID: "wrong", Success: true},
 			orderackfixture.Options{ReqID: 7, OrderID: "right", Success: true},
 		)
-		count := 0
+		frames := make([][]byte, 0, 2)
 
-		for range fixture.Generate() {
-			count++
+		for frame := range fixture.Generate() {
+			frames = append(frames, frame)
 		}
 
 		Convey("Then every configured acknowledgement is emitted in order", func() {
-			So(count, ShouldEqual, 2)
+			So(frames, ShouldHaveLength, 2)
+			So(string(frames[0]), ShouldContainSubstring, "wrong")
+			So(string(frames[1]), ShouldContainSubstring, "right")
 		})
 	})
 }

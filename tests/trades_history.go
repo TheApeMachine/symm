@@ -98,7 +98,7 @@ HydrateBalance returns the wallet rows used by broker hydrate tests.
 */
 func HydrateBalance() []kraken.BalanceData {
 	return []kraken.BalanceData{
-		{Asset: "GALA", Balance: *decimal.NewFromFloat64(13536.853376037476)},
-		{Asset: "BTC", Balance: *decimal.NewFromFloat64(0.0001)},
+		{Asset: "GALA", Balance: decimal.NewFromFloat64(13536.853376037476)},
+		{Asset: "BTC", Balance: decimal.NewFromFloat64(0.0001)},
 	}
 }

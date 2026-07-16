@@ -6,6 +6,7 @@ import {
 	isFluidFieldMatrix,
 	normalizeFlowLattice,
 	normalizeFluidLattice,
+	resampleFluidLattice,
 	sampleBilinearLattice,
 	terminalFluidFieldStats,
 } from "./fluid-field";
@@ -46,6 +47,33 @@ describe("normalizeFluidLattice", () => {
 		];
 
 		expect(normalizeFluidLattice(sparse, false).peak).toBeGreaterThan(0.5);
+	});
+
+	it("maps non-finite cells to zero before peak tracking", () => {
+		const lattice = [
+			[Number.NaN, 0.5],
+			[0.25, Number.POSITIVE_INFINITY],
+		];
+		const { normalized, peak } = normalizeFluidLattice(lattice, false);
+
+		expect(Number.isFinite(peak)).toBe(true);
+		expect(normalized[0][0]).toBe(0);
+		expect(normalized[1][1]).toBe(0);
+	});
+});
+
+describe("resampleFluidLattice", () => {
+	it("projects mismatched guidance velocities onto the rho grid", () => {
+		const source = [
+			[0, 1],
+			[0, 1],
+		];
+
+		expect(resampleFluidLattice(source, 3, 3)).toEqual([
+			[0, 0.5, 1],
+			[0, 0.5, 1],
+			[0, 0.5, 1],
+		]);
 	});
 });
 

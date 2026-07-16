@@ -1,6 +1,7 @@
 package manifold
 
 import (
+	"fmt"
 	"math"
 
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
@@ -35,26 +36,30 @@ func projectField(
 		},
 	}
 
-	if handle == nil || oscillatorCount <= 0 {
+	if handle == nil {
 		return projection, nil
 	}
 
 	rho, err := handle.ReadRhoProjection()
 
 	if err != nil {
-		return fieldProjection{}, err
+		return fieldProjection{}, fmt.Errorf("manifold: read rho projection: %w", err)
 	}
 
 	pilotWave, err := handle.ReadPilotWaveProjection()
 
 	if err != nil {
-		return fieldProjection{}, err
+		return fieldProjection{}, fmt.Errorf("manifold: read pilot-wave projection: %w", err)
 	}
 
-	oscillators, err := handle.ReadOscillators(oscillatorCount)
+	oscillators := make([]pmanifold.Oscillator, 0)
 
-	if err != nil {
-		return fieldProjection{}, err
+	if oscillatorCount > 0 {
+		oscillators, err = handle.ReadOscillators(oscillatorCount)
+
+		if err != nil {
+			return fieldProjection{}, fmt.Errorf("manifold: read oscillators: %w", err)
+		}
 	}
 
 	projection.Rho = rho

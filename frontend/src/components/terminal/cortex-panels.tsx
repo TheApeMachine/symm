@@ -69,9 +69,14 @@ export const CortexSidePanels = ({
 	const lookaheadScore = finite(reading?.lookaheadScore);
 	const replays = finite(reading?.lookaheadPaths);
 	const nodeCount = finite(reading?.nodeCount);
+	const validReplays = replays !== null && replays >= 0 ? replays : null;
+	const validNodeCount =
+		nodeCount !== null && nodeCount >= 0 ? nodeCount : null;
 	const decay =
-		replays !== null && nodeCount !== null && replays + nodeCount > 0
-			? (replays / (replays + nodeCount)).toFixed(3)
+		validReplays !== null &&
+		validNodeCount !== null &&
+		validReplays + validNodeCount > 0
+			? (validReplays / (validReplays + validNodeCount)).toFixed(3)
 			: lookaheadScore === null
 				? "—"
 				: Math.exp(Math.min(0, lookaheadScore)).toFixed(3);

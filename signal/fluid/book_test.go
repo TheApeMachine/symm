@@ -60,6 +60,7 @@ func TestBookMeasureWaitsForMarketState(t *testing.T) {
 			}
 
 			measurements, err := book.measurementsFromReading(reading, eventAt)
+			So(err, ShouldBeNil)
 			seen := make(map[types.MetricType]*types.Measurement, len(measurements))
 
 			for _, measurement := range measurements {
@@ -69,7 +70,6 @@ func TestBookMeasureWaitsForMarketState(t *testing.T) {
 			}
 
 			Convey("Then it should publish unique category-free evidence with real scale", func() {
-				So(err, ShouldBeNil)
 				So(measurements, ShouldHaveLength, 13)
 				So(seen[types.MetricStrength], ShouldBeNil)
 				So(seen[types.MetricType("laminar")], ShouldBeNil)

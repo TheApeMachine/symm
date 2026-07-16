@@ -29,7 +29,8 @@ type cohortState struct {
 	velZ   float64
 	heat   float64
 	omega  float64
-	phase  float64
+	sine   float64
+	cosine float64
 	orders int
 }
 
@@ -70,7 +71,8 @@ func cohortsFromMappedOrders(
 		state.velZ += order.velZ * order.mass
 		state.heat += order.heat
 		state.omega += order.omega * order.mass
-		state.phase += order.phase * order.mass
+		state.sine += math.Sin(order.phase) * order.mass
+		state.cosine += math.Cos(order.phase) * order.mass
 		state.orders++
 	}
 
@@ -81,7 +83,22 @@ func cohortsFromMappedOrders(
 	}
 
 	sort.Slice(keys, func(left, right int) bool {
-		return cohorts[keys[left]].mass > cohorts[keys[right]].mass
+		leftMass := cohorts[keys[left]].mass
+		rightMass := cohorts[keys[right]].mass
+
+		if leftMass != rightMass {
+			return leftMass > rightMass
+		}
+
+		if keys[left].cellX != keys[right].cellX {
+			return keys[left].cellX < keys[right].cellX
+		}
+
+		if keys[left].cellY != keys[right].cellY {
+			return keys[left].cellY < keys[right].cellY
+		}
+
+		return keys[left].cellZ < keys[right].cellZ
 	})
 
 	limit := int(config.MaxModes)
@@ -106,7 +123,7 @@ func cohortsFromMappedOrders(
 		}
 
 		oscillators = append(oscillators, pmanifold.Oscillator{
-			Phase:     state.phase / state.mass,
+			Phase:     math.Atan2(state.sine, state.cosine),
 			Omega:     state.omega / state.mass,
 			Amplitude: amplitude,
 			PosX:      state.posX / state.mass,
@@ -132,16 +149,10 @@ func torusCell(
 		return 0
 	}
 
-	index := int(math.Floor(position * float64(grid) / domain))
+	index := int(math.Floor(position*float64(grid)/domain)) % int(grid)
 
 	if index < 0 {
-		index = 0
-	}
-
-	maxIndex := int(grid) - 1
-
-	if index > maxIndex {
-		index = maxIndex
+		index += int(grid)
 	}
 
 	return uint32(index)

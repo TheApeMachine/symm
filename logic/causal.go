@@ -144,7 +144,7 @@ func (causal *Causal) observe(
 		Target: "next_l3_epoch_mid_log_return",
 	}
 
-	if causal.pending != nil && state.Epoch > causal.pending.epoch {
+	if causal.pending != nil && state.Epoch == causal.pending.epoch+1 {
 		target := math.Log(state.ReferencePrice / causal.pending.midPrice)
 
 		if causal.pending.predicted {

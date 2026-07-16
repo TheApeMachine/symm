@@ -19,15 +19,15 @@ func TestBalanceAckRefreshesSymbolHolding(t *testing.T) {
 		holdings := &sync.Map{}
 		holdings.Store("ZEC/USD", types.Holding{
 			Symbol: "ZEC/USD", Asset: "ZEC",
-			Qty: *decimal.NewFromInt64(0),
+			Qty: decimal.NewFromInt64(0),
 		})
 		balance := &Balance{
 			quote: "USD", holdings: holdings,
-			ui: make(chan []byte, 1),
+			ui: make(chan []byte, 2),
 		}
 		model := &kraken.Balance{Channel: "balances", Data: []kraken.BalanceData{
-			{Asset: "USD", Balance: *decimal.NewFromInt64(50), Available: *decimal.NewFromInt64(50)},
-			{Asset: "ZEC", Balance: *decimal.NewFromFloat64(0.2), Available: *decimal.NewFromFloat64(0.2)},
+			{Asset: "USD", Balance: decimal.NewFromInt64(50), Available: decimal.NewFromInt64(50)},
+			{Asset: "ZEC", Balance: decimal.NewFromFloat64(0.2), Available: decimal.NewFromFloat64(0.2)},
 		}}
 		buffer, err := model.MarshalJSON()
 
@@ -43,6 +43,20 @@ func TestBalanceAckRefreshesSymbolHolding(t *testing.T) {
 			So(holding.Qty.Float64(), ShouldEqual, 0.2)
 			So(wallet.Qty.Float64(), ShouldEqual, 0.2)
 			So(balance.Snapshot()[0]["balance"], ShouldEqual, 50.0)
+
+			update := &kraken.Balance{
+				Channel: "balances", Type: "update", Data: []kraken.BalanceData{{
+					Asset: "ZEC", Balance: decimal.NewFromFloat64(0.3),
+				}},
+			}
+			updateBuffer, updateErr := update.MarshalJSON()
+			So(updateErr, ShouldBeNil)
+			balance.BalanceAck(updateBuffer)
+
+			So(balance.Snapshot()[0]["balance"], ShouldEqual, 50.0)
+			wallet, walletErr = balance.Holding("ZEC")
+			So(walletErr, ShouldBeNil)
+			So(wallet.Qty.Float64(), ShouldEqual, 0.3)
 		})
 	})
 }
@@ -60,9 +74,9 @@ func TestBalanceAvailable(t *testing.T) {
 			quote:  "USD",
 			model: &kraken.Balance{Data: []kraken.BalanceData{{
 				Asset:     "USD",
-				Amount:    *total,
-				Balance:   *total,
-				Available: *available,
+				Amount:    total,
+				Balance:   total,
+				Available: available,
 			}}},
 		}
 
@@ -87,9 +101,9 @@ func TestBalancePublish(t *testing.T) {
 			ui:     messages,
 			model: &kraken.Balance{Data: []kraken.BalanceData{{
 				Asset:     "USD",
-				Balance:   *total,
-				Available: *available,
-				Reserved:  *reserved,
+				Balance:   total,
+				Available: available,
+				Reserved:  reserved,
 			}}},
 		}
 
@@ -109,7 +123,7 @@ func BenchmarkBalanceSnapshot(b *testing.B) {
 		status: types.READY,
 		quote:  "USD",
 		model: &kraken.Balance{Data: []kraken.BalanceData{{
-			Asset: "USD", Balance: *total, Available: *total,
+			Asset: "USD", Balance: total, Available: total,
 		}}},
 	}
 
@@ -125,8 +139,8 @@ BenchmarkBalanceAck measures wallet-to-managed-Holding synchronization.
 */
 func BenchmarkBalanceAck(b *testing.B) {
 	model := &kraken.Balance{Channel: "balances", Data: []kraken.BalanceData{
-		{Asset: "USD", Balance: *decimal.NewFromInt64(50), Available: *decimal.NewFromInt64(50)},
-		{Asset: "ZEC", Balance: *decimal.NewFromFloat64(0.2), Available: *decimal.NewFromFloat64(0.2)},
+		{Asset: "USD", Balance: decimal.NewFromInt64(50), Available: decimal.NewFromInt64(50)},
+		{Asset: "ZEC", Balance: decimal.NewFromFloat64(0.2), Available: decimal.NewFromFloat64(0.2)},
 	}}
 	buffer, err := model.MarshalJSON()
 

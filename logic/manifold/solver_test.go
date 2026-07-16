@@ -14,6 +14,8 @@ import (
 
 func TestSolverAdvance(t *testing.T) {
 	viper.Set("market.l3_depth", 8)
+	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+	viper.Set("market.manifold_max_symbols", 8)
 
 	Convey("Given Hawkes excitation", t, func() {
 		solver, err := NewSolver(newTestBookSource("BTC/USD"))
@@ -75,6 +77,8 @@ func solverOutcome(at time.Time, buyRate, sellRate float64) excitation.Outcome {
 
 func BenchmarkSolverAdvance(b *testing.B) {
 	viper.Set("market.l3_depth", 8)
+	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+	viper.Set("market.manifold_max_symbols", 8)
 
 	solver, err := NewSolver(newTestBookSource("BTC/USD"))
 

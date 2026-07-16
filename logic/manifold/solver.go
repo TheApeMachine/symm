@@ -54,10 +54,21 @@ func NewSolver(books BookSource) (*Solver, error) {
 
 	deltaT := viper.GetDuration(
 		"signals.fluid.integration_interval",
-	).Seconds()
+	)
 
 	if deltaT <= 0 {
-		deltaT = 0.01
+		idleThreshold := viper.GetDuration("signals.fluid.idle_threshold")
+		maxIntegrationSteps := viper.GetInt("signals.fluid.max_integration_steps")
+
+		if idleThreshold <= 0 || maxIntegrationSteps <= 0 {
+			return nil, errnie.Err(
+				errnie.Validation,
+				"manifold: integration interval requires idle threshold and max steps",
+				nil,
+			)
+		}
+
+		deltaT = idleThreshold / time.Duration(maxIntegrationSteps)
 	}
 
 	config, err := pmanifold.NewConfig(
@@ -66,7 +77,7 @@ func NewSolver(books BookSource) (*Solver, error) {
 		grid,
 		1,
 		int(grid/2),
-		deltaT,
+		deltaT.Seconds(),
 		5.0/3.0,
 		defaultMaxModes,
 	)
@@ -83,7 +94,11 @@ func NewSolver(books BookSource) (*Solver, error) {
 	capacity := viper.GetInt("market.manifold_max_symbols")
 
 	if capacity <= 0 {
-		capacity = 64
+		return nil, errnie.Err(
+			errnie.Validation,
+			"manifold: symbol capacity must be positive",
+			nil,
+		)
 	}
 
 	return &Solver{
@@ -101,10 +116,12 @@ forward and stores the resulting readout on the thesis.
 func (solver *Solver) Update(
 	thesis *types.Thesis,
 	hawkes HawkesSource,
-) {
+) error {
 	if solver == nil || thesis == nil || hawkes == nil {
-		return
+		return nil
 	}
+
+	var failures []error
 
 	for _, symbol := range hawkes.Symbols() {
 		outcome, ok := hawkes.Outcome(symbol)
@@ -122,7 +139,7 @@ func (solver *Solver) Update(
 		state, err := solver.advance(symbol, outcome)
 
 		if err != nil {
-			errnie.Error(errnie.Err(
+			failures = append(failures, errnie.Err(
 				errnie.Internal,
 				fmt.Sprintf("manifold: %s failed to advance field", symbol),
 				err,
@@ -137,6 +154,8 @@ func (solver *Solver) Update(
 
 		thesis.Manifold.Store(symbol, state)
 	}
+
+	return errors.Join(failures...)
 }
 
 func (solver *Solver) advance(
@@ -171,14 +190,13 @@ func (solver *Solver) advance(
 		return State{}, err
 	}
 
-	slot.coords = coordEpoch
-
 	reading, err := handle.Step()
 
 	if err != nil {
 		return State{}, err
 	}
 
+	slot.coords = coordEpoch
 	slot.epoch++
 	slot.at = outcome.At
 	slot.events = outcome.EventCount
