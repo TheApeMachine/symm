@@ -426,9 +426,13 @@ func (planner *Planner) Update() *types.Thesis {
 		thesis = signal.Measure(thesis)
 	}
 
+	thesis.Publish()
+
 	if planner.analyzer != nil {
 		planner.analyzer.Update(thesis)
 	}
+
+	thesis.Publish()
 
 	return thesis
 }

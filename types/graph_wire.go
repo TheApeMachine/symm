@@ -36,6 +36,9 @@ type GraphFrame struct {
 Frame serializes the current Gonum topology into a UI-safe wire snapshot.
 */
 func (evidenceGraph *Graph) Frame() GraphFrame {
+	evidenceGraph.access.RLock()
+	defer evidenceGraph.access.RUnlock()
+
 	frame := GraphFrame{
 		Symbol: evidenceGraph.Symbol,
 		At:     evidenceGraph.At,

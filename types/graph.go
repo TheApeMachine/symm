@@ -3,6 +3,7 @@ package types
 import (
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -94,6 +95,7 @@ type Graph struct {
 	Symbol  string
 	At      time.Time
 	nodeIDs map[string]int64
+	access  sync.RWMutex
 }
 
 /*
@@ -129,6 +131,8 @@ func (evidenceGraph *Graph) AddNode(measurement *Measurement) error {
 	}
 
 	key := MeasurementKey(measurement)
+	evidenceGraph.access.Lock()
+	defer evidenceGraph.access.Unlock()
 
 	if _, exists := evidenceGraph.nodeIDs[key]; exists {
 		return nil
@@ -173,6 +177,9 @@ func (evidenceGraph *Graph) Relate(
 	if fromKey == "" || toKey == "" || edgeType == "" {
 		return false
 	}
+
+	evidenceGraph.access.Lock()
+	defer evidenceGraph.access.Unlock()
 
 	from := evidenceGraph.node(fromKey)
 	to := evidenceGraph.node(toKey)

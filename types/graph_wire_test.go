@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -99,6 +100,62 @@ func TestGraphFrame(t *testing.T) {
 				So(published.Graphs[0].Edges, ShouldNotBeEmpty)
 				So(published.Lifecycle[graph.Symbol], ShouldEqual, LifecycleManaging)
 			})
+		})
+	})
+}
+
+func TestGraphFrameConcurrentMutation(t *testing.T) {
+	Convey("Given a graph published while analyzer evidence is added", t, func() {
+		graph := NewGraph("BTC/USD")
+		failures := make(chan error, 1)
+		wait := sync.WaitGroup{}
+		wait.Add(2)
+
+		go func() {
+			defer wait.Done()
+			previousKey := ""
+
+			for index := range 1_000 {
+				measurement := &Measurement{
+					Stream: Hawkes, Metric: MetricArrivalRate,
+					Subject: SubjectTradeArrivals, Side: SideBuy,
+					Symbol: "BTC/USD", At: time.Unix(int64(index), 0),
+					Raw: float64(index),
+				}
+
+				if err := graph.AddNode(measurement); err != nil {
+					failures <- err
+					return
+				}
+
+				key := MeasurementKey(measurement)
+
+				if previousKey != "" {
+					graph.Relate(
+						previousKey, key, Leads,
+						measurement.At, measurement.At.Add(-time.Second),
+					)
+				}
+
+				previousKey = key
+			}
+		}()
+
+		go func() {
+			defer wait.Done()
+
+			for range 1_000 {
+				_ = graph.Frame()
+			}
+		}()
+
+		wait.Wait()
+
+		Convey("Then publication returns a complete topology snapshot", func() {
+			So(len(failures), ShouldEqual, 0)
+			frame := graph.Frame()
+			So(frame.Nodes, ShouldHaveLength, 1_000)
+			So(frame.Edges, ShouldHaveLength, 999)
 		})
 	})
 }

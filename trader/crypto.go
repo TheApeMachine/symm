@@ -17,6 +17,7 @@ import (
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -29,7 +30,6 @@ type Crypto struct {
 	status     types.Status
 	ctx        context.Context
 	cancel     context.CancelFunc
-	done       chan struct{}
 	desk       *broker.Desk
 	price      *broker.Price
 	balance    *broker.Balance
@@ -41,6 +41,7 @@ type Crypto struct {
 	postMortem *strategy.PostMortem
 	analyzer   *logic.Analyzer
 	dataPath   string
+	uiHub      *ui.Hub
 }
 
 /*
@@ -58,6 +59,7 @@ func NewCrypto(
 	planner *strategy.Planner,
 	tree *dmt.Tree,
 	thesis *types.Thesis,
+	uiHub *ui.Hub,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -92,6 +94,7 @@ func NewCrypto(
 		planner:    planner,
 		postMortem: &strategy.PostMortem{},
 		dataPath:   dataPath,
+		uiHub:      uiHub,
 	}
 	crypto.tick.Store(thesis.Tick)
 
@@ -113,10 +116,7 @@ func (crypto *Crypto) Status() types.Status {
 }
 
 func (crypto *Crypto) Run() error {
-	crypto.done = make(chan struct{})
-
 	go func() {
-		defer close(crypto.done)
 		errnie.Info("crypto runtime started")
 
 		for crypto.Status() != types.ERROR {
@@ -128,9 +128,11 @@ func (crypto *Crypto) Run() error {
 
 			if crypto.booter.Ready(system.StageWarmup) {
 				thesis := crypto.planner.Update()
+				crypto.uiHub.SetThesis(thesis)
+
 				thesis.Tick = crypto.tick.Add(1)
 				crypto.trade(thesis)
-				thesis.Publish()
+
 				encoded, err := sonic.Marshal(thesis)
 
 				if err != nil {
@@ -181,10 +183,6 @@ Close stops the trader and its composed resources.
 */
 func (crypto *Crypto) Close() error {
 	crypto.cancel()
-
-	if crypto.done != nil {
-		<-crypto.done
-	}
 
 	if err := crypto.desk.Close(); err != nil {
 		return err

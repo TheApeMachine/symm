@@ -53,6 +53,7 @@ func NewHub(
 		}),
 		price:   price,
 		balance: balance,
+		thesis:  thesis,
 	}
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
@@ -114,4 +115,8 @@ func (hub *Hub) Close() error {
 
 	hub.cancel()
 	return nil
+}
+
+func (hub *Hub) SetThesis(thesis *types.Thesis) {
+	hub.thesis = thesis
 }

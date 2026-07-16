@@ -104,6 +104,13 @@ func (api *API) Initialize() error {
 	return nil
 }
 
+/*
+Status returns the API lifecycle state used by ordered system boot stages.
+*/
+func (api *API) Status() types.Status {
+	return api.status
+}
+
 func (api *API) Close() {
 	api.public.Close()
 	api.private.Close()
@@ -157,16 +164,33 @@ func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error)
 	}
 
 	fees := make(map[string]kraken.TradeVolumeFee, len(tradeVolume.Fees))
+	requested := make(map[string]string, len(symbols))
+
+	for _, symbol := range symbols {
+		requested[strings.ReplaceAll(symbol, "/", "")] = symbol
+	}
 
 	for symbol, fee := range tradeVolume.Fees {
-		fees[api.normalizer.Name(symbol)] = fee
+		name := api.normalizer.Name(symbol)
+
+		if requestedName, ok := requested[symbol]; ok {
+			name = requestedName
+		}
+
+		fees[name] = fee
 	}
 
 	tradeVolume.Fees = fees
 	fees = make(map[string]kraken.TradeVolumeFee, len(tradeVolume.FeesMaker))
 
 	for symbol, fee := range tradeVolume.FeesMaker {
-		fees[api.normalizer.Name(symbol)] = fee
+		name := api.normalizer.Name(symbol)
+
+		if requestedName, ok := requested[symbol]; ok {
+			name = requestedName
+		}
+
+		fees[name] = fee
 	}
 
 	tradeVolume.FeesMaker = fees

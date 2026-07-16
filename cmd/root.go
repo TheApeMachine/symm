@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/bytedance/sonic"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
@@ -104,13 +103,9 @@ var (
 			thesis := types.NewThesis(channel)
 
 			if encoded, found := tree.Get([]byte(types.ThesisKey)); found {
-				if err := sonic.Unmarshal(encoded, thesis); err != nil {
-					return errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						"failed to restore persisted Thesis",
-						err,
-					))
-				}
+				thesis = restoreThesis(
+					thesis, channel, encoded, "failed to restore persisted Thesis",
+				)
 			}
 
 			simulator := websocket.NewLatencySimulator(booter)
@@ -162,16 +157,12 @@ var (
 			encoded, err := os.ReadFile(filepath.Join(dataPath, "thesis.json"))
 
 			if err == nil {
-				if err := sonic.Unmarshal(encoded, thesis); err != nil {
-					return errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						"failed to unmarshal thesis",
-						err,
-					))
-				}
+				thesis = restoreThesis(
+					thesis, channel, encoded, "failed to unmarshal optional thesis",
+				)
 			} else if !os.IsNotExist(err) {
-				return errnie.Error(errnie.Err(
-					errnie.IO, "failed to read thesis from data directory", err,
+				errnie.Error(errnie.Err(
+					errnie.IO, "failed to read optional thesis from data directory", err,
 				))
 			}
 
@@ -237,6 +228,7 @@ var (
 				planner,
 				tree,
 				thesis,
+				uiHub,
 			)
 
 			if err != nil {
@@ -256,6 +248,7 @@ var (
 					public,
 					private,
 					paper,
+					api,
 					instrument,
 					balance,
 					price,

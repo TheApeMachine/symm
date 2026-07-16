@@ -19,7 +19,21 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
+
+func TestAPIStatus(t *testing.T) {
+	Convey("Given an API lifecycle", t, func() {
+		public := &stubConn{client: normalizerClient()}
+		api := NewAPI(context.Background(), public, &stubConn{}, nil)
+
+		Convey("It should report the state set by initialization", func() {
+			So(api.Status(), ShouldEqual, types.INITIALIZING)
+			So(api.Initialize(), ShouldBeNil)
+			So(api.Status(), ShouldEqual, types.READY)
+		})
+	})
+}
 
 func TestAPIBooks(t *testing.T) {
 	Convey("Given an SDK book managed by a level3 transport", t, func() {
@@ -131,25 +145,27 @@ func TestAPITradeVolume(t *testing.T) {
 		private := &stubConn{client: normalizerClient(), postResponse: []byte(`{
 			"error":[],
 			"result":{
-				"fees":{"XXBTZUSD":{"fee":"0.2600"}},
-				"fees_maker":{"XXBTZUSD":{"fee":"0.1600"}}
+				"fees":{"XXBTZUSD":{"fee":"0.2600"},"AUSD":{"fee":"0.4000"}},
+				"fees_maker":{"XXBTZUSD":{"fee":"0.1600"},"AUSD":{"fee":"0.2500"}}
 			}
 		}`)}
 		api := NewAPI(context.Background(), public, private, nil)
 		So(api.Initialize(), ShouldBeNil)
 
 		Convey("When the fee tier is requested", func() {
-			tradeVolume, err := api.TradeVolume([]string{"BTC/USD"})
+			tradeVolume, err := api.TradeVolume([]string{"BTC/USD", "A/USD"})
 
 			Convey("Then the private endpoint is used and SDK pair names are normalized", func() {
 				So(err, ShouldBeNil)
 				So(private.postPath, ShouldEqual, TradeVolumeEndpoint)
 				encoded, encodeErr := private.postParams.MarshalJSON()
 				So(encodeErr, ShouldBeNil)
-				So(string(encoded), ShouldContainSubstring, `"pair":"BTC/USD"`)
+				So(string(encoded), ShouldContainSubstring, `"pair":"BTC/USD,A/USD"`)
 				So(string(encoded), ShouldContainSubstring, `"fee_schedule":true`)
 				So(tradeVolume.Fees["BTC/USD"].Fee.Float64(), ShouldEqual, 0.26)
 				So(tradeVolume.FeesMaker["BTC/USD"].Fee.Float64(), ShouldEqual, 0.16)
+				So(tradeVolume.Fees["A/USD"].Fee.Float64(), ShouldEqual, 0.40)
+				So(tradeVolume.FeesMaker["A/USD"].Fee.Float64(), ShouldEqual, 0.25)
 			})
 		})
 	})
