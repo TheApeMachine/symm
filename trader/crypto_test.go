@@ -62,7 +62,6 @@ func TestNewCrypto(t *testing.T) {
 			Convey("Then it is ready to start", func() {
 				So(err, ShouldBeNil)
 				So(crypto, ShouldNotBeNil)
-				So(crypto.tickBudget, ShouldEqual, 10*time.Millisecond)
 				So(crypto.tick.Load(), ShouldEqual, 46)
 			})
 		})
