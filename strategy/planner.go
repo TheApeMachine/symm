@@ -8,6 +8,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/types"
 )
@@ -25,6 +26,15 @@ type Planner struct {
 	analyzer *logic.Analyzer
 	jobs     chan signalTask
 	results  chan signalTask
+	recorder *audit.Recorder
+}
+
+/*
+SetRecorder attaches a diagnostic recorder so measure can report per-signal
+measurement counts. A nil recorder disables recording.
+*/
+func (planner *Planner) SetRecorder(recorder *audit.Recorder) {
+	planner.recorder = recorder
 }
 
 /*
@@ -36,6 +46,169 @@ type signalTask struct {
 	at     time.Time
 	signal types.Signal
 	thesis *types.Thesis
+}
+
+/*
+NewPlanner creates a Planner and pre-warms one channel worker per configured
+signal so Update never creates goroutines on the trading path.
+*/
+func NewPlanner(
+	ctx context.Context,
+	uiHub chan<- []byte,
+	signals []types.Signal,
+	analyzer *logic.Analyzer,
+) *Planner {
+	ctx, cancel := context.WithCancel(ctx)
+	planner := &Planner{
+		ctx:      ctx,
+		cancel:   cancel,
+		status:   types.READY,
+		uiHub:    uiHub,
+		signals:  signals,
+		analyzer: analyzer,
+		jobs:     make(chan signalTask, len(signals)),
+		results:  make(chan signalTask, len(signals)),
+	}
+	ready := make(chan struct{}, len(signals))
+
+	for range signals {
+		go planner.work(ready)
+	}
+
+	for range signals {
+		<-ready
+	}
+
+	close(ready)
+
+	return planner
+}
+
+func (planner *Planner) Initialize() error {
+	errnie.Info("initializing planner")
+	planner.status = types.READY
+	return nil
+}
+
+/*
+Status reports whether the Planner itself is ready to evaluate evidence.
+Boot-stage admission remains a separate concern enforced by Update.
+*/
+func (planner *Planner) Status() types.Status {
+	return planner.status
+}
+
+/*
+Close releases the Planner context so its pre-warmed measurement workers exit.
+*/
+func (planner *Planner) Close() {
+	planner.cancel()
+}
+
+/*
+Update measures and analyzes the next Thesis under the current dashboard
+projection before runtime identity and portfolio context are applied. Crypto
+publishes only after assigning its tick.
+*/
+func (planner *Planner) Update() *types.Thesis {
+	thesis := types.NewThesis(planner.uiHub)
+
+	for _, signal := range planner.signals {
+		inputSignal, ok := signal.(types.InputSignal)
+
+		if !ok {
+			continue
+		}
+
+		if err := inputSignal.Capture(thesis.At); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"planner: signal input cut failed",
+				err,
+			))
+			return thesis
+		}
+	}
+
+	planner.measure(thesis)
+
+	if planner.analyzer != nil {
+		planner.analyzer.Update(thesis)
+	}
+
+	return thesis
+}
+
+/*
+measure dispatches independent signals to pre-warmed channel workers and merges
+their isolated results in configured order.
+*/
+func (planner *Planner) measure(thesis *types.Thesis) {
+	ordered := make([]*types.Thesis, len(planner.signals))
+
+	for index, signal := range planner.signals {
+		select {
+		case <-planner.ctx.Done():
+			return
+		case planner.jobs <- signalTask{
+			index:  index,
+			at:     thesis.At,
+			signal: signal,
+		}:
+		}
+	}
+
+	for range planner.signals {
+		select {
+		case <-planner.ctx.Done():
+			return
+		case measured := <-planner.results:
+			ordered[measured.index] = measured.thesis
+		}
+	}
+
+	counts := make([]int, len(ordered))
+
+	for index, measured := range ordered {
+		if measured == nil {
+			continue
+		}
+
+		counts[index] = len(measured.Measurements)
+		thesis.Measurements = append(thesis.Measurements, measured.Measurements...)
+		thesis.CrossSection.Merge(measured.CrossSection)
+	}
+
+	if planner.recorder != nil {
+		errnie.Error(audit.Record(planner.recorder, "signal_counts", map[string]any{
+			"counts": counts,
+			"total":  len(thesis.Measurements),
+		}))
+	}
+}
+
+/*
+work measures channel assignments until Planner closes, keeping goroutine setup
+off the repeated Update path.
+*/
+func (planner *Planner) work(ready chan<- struct{}) {
+	ready <- struct{}{}
+
+	for {
+		select {
+		case <-planner.ctx.Done():
+			return
+		case task := <-planner.jobs:
+			isolated := types.NewSignalThesis(task.at)
+			task.thesis = task.signal.Measure(isolated)
+
+			select {
+			case <-planner.ctx.Done():
+				return
+			case planner.results <- task:
+			}
+		}
+	}
 }
 
 /*
@@ -339,13 +512,21 @@ func (planner *Planner) entry(
 	}
 
 	return types.Decision{
-		Action: "enter", Symbol: forecast.Symbol, At: forecast.At,
-		Utility: utility, Alternatives: map[string]float64{"enter": utility, "nothing": 0},
-		AllocationClass: "normal", ProposedNotional: proposed, ProposedQuantity: quantity,
-		ExpectedFees: 2 * fee, ExpectedSpread: forecast.ExpectedSpread,
-		ReferencePrice: forecast.ReferencePrice, ValidThroughEpoch: forecast.ExpiresEpoch,
-		ForecastSource: forecast.Source, Cause: "entry",
-		Reason: "expected executable return exceeds doing nothing",
+		Action:            "enter",
+		Symbol:            forecast.Symbol,
+		At:                forecast.At,
+		Utility:           utility,
+		Alternatives:      map[string]float64{"enter": utility, "nothing": 0},
+		AllocationClass:   "normal",
+		ProposedNotional:  proposed,
+		ProposedQuantity:  quantity,
+		ExpectedFees:      2 * fee,
+		ExpectedSpread:    forecast.ExpectedSpread,
+		ReferencePrice:    forecast.ReferencePrice,
+		ValidThroughEpoch: forecast.ExpiresEpoch,
+		ForecastSource:    forecast.Source,
+		Cause:             "entry",
+		Reason:            "expected executable return exceeds doing nothing",
 	}
 }
 
@@ -392,161 +573,4 @@ func (planner *Planner) context(
 	decision.AvailableCapital = available
 	decision.OpenPositions = openPositions
 	decision.SlotCapacity = slots
-}
-
-/*
-NewPlanner creates a Planner and pre-warms one channel worker per configured
-signal so Update never creates goroutines on the trading path.
-*/
-func NewPlanner(
-	ctx context.Context,
-	uiHub chan<- []byte,
-	signals []types.Signal,
-	analyzer *logic.Analyzer,
-) *Planner {
-	ctx, cancel := context.WithCancel(ctx)
-	planner := &Planner{
-		ctx:      ctx,
-		cancel:   cancel,
-		status:   types.READY,
-		uiHub:    uiHub,
-		signals:  signals,
-		analyzer: analyzer,
-		jobs:     make(chan signalTask, len(signals)),
-		results:  make(chan signalTask, len(signals)),
-	}
-	ready := make(chan struct{}, len(signals))
-
-	for range signals {
-		go planner.work(ready)
-	}
-
-	for range signals {
-		<-ready
-	}
-
-	close(ready)
-
-	return planner
-}
-
-func (planner *Planner) Initialize() error {
-	errnie.Info("initializing planner")
-	planner.status = types.READY
-	return nil
-}
-
-/*
-Status reports whether the Planner itself is ready to evaluate evidence.
-Boot-stage admission remains a separate concern enforced by Update.
-*/
-func (planner *Planner) Status() types.Status {
-	return planner.status
-}
-
-/*
-Close releases the Planner context so its pre-warmed measurement workers exit.
-*/
-func (planner *Planner) Close() {
-	planner.cancel()
-}
-
-/*
-Update measures and analyzes the next Thesis under the current dashboard
-projection before runtime identity and portfolio context are applied. Crypto
-publishes only after assigning its tick.
-*/
-func (planner *Planner) Update(
-	focusSymbol string,
-	focusSource types.SourceType,
-) *types.Thesis {
-	thesis := types.NewThesis(planner.uiHub)
-	thesis.SetUIProjection(focusSymbol, focusSource)
-
-	for _, signal := range planner.signals {
-		inputSignal, ok := signal.(types.InputSignal)
-
-		if !ok {
-			continue
-		}
-
-		if err := inputSignal.Capture(thesis.At); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"planner: signal input cut failed",
-				err,
-			))
-			return thesis
-		}
-	}
-
-	planner.measure(thesis)
-
-	if planner.analyzer != nil {
-		planner.analyzer.Update(thesis)
-	}
-
-	return thesis
-}
-
-/*
-measure dispatches independent signals to pre-warmed channel workers and merges
-their isolated results in configured order.
-*/
-func (planner *Planner) measure(thesis *types.Thesis) {
-	ordered := make([]*types.Thesis, len(planner.signals))
-
-	for index, signal := range planner.signals {
-		select {
-		case <-planner.ctx.Done():
-			return
-		case planner.jobs <- signalTask{
-			index:  index,
-			at:     thesis.At,
-			signal: signal,
-		}:
-		}
-	}
-
-	for range planner.signals {
-		select {
-		case <-planner.ctx.Done():
-			return
-		case measured := <-planner.results:
-			ordered[measured.index] = measured.thesis
-		}
-	}
-
-	for _, measured := range ordered {
-		thesis.Measurements = append(thesis.Measurements, measured.Measurements...)
-		thesis.CrossSection.Merge(measured.CrossSection)
-		measured.Signals.Range(func(key, value any) bool {
-			thesis.Signals.Store(key, value)
-			return true
-		})
-	}
-}
-
-/*
-work measures channel assignments until Planner closes, keeping goroutine setup
-off the repeated Update path.
-*/
-func (planner *Planner) work(ready chan<- struct{}) {
-	ready <- struct{}{}
-
-	for {
-		select {
-		case <-planner.ctx.Done():
-			return
-		case task := <-planner.jobs:
-			isolated := types.NewSignalThesis(task.at)
-			task.thesis = task.signal.Measure(isolated)
-
-			select {
-			case <-planner.ctx.Done():
-				return
-			case planner.results <- task:
-			}
-		}
-	}
 }

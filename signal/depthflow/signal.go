@@ -2,8 +2,11 @@ package depthflow
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
@@ -12,6 +15,8 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
+
+var depthflowProbe atomic.Int64
 
 /*
 DepthFlow is the "Weight of the Book" perspective, measuring touch-level book
@@ -25,10 +30,11 @@ type Signal struct {
 	trade    *Trade
 	sample   *flow.Sample
 	bookflow *equation.Bookflow
+	ui       chan []byte
 }
 
 func NewSignal(
-	ctx context.Context, api *websocket.API, instrument *broker.Instrument,
+	ctx context.Context, api *websocket.API, instrument *broker.Instrument, ui chan []byte,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -39,6 +45,26 @@ func NewSignal(
 		trade:    NewTrade(ctx, api),
 		sample:   flow.NewSample(),
 		bookflow: equation.NewBookflow(),
+		ui:       ui,
+	}
+}
+
+/*
+Publish sends one small datura frame to the UI the moment this signal has
+measured its evidence, mirroring broker.Balance.Publish.
+*/
+func (signal *Signal) Publish(measurements []*types.Measurement) {
+	filtered := types.FilterLatest(measurements)
+
+	if len(filtered) == 0 {
+		return
+	}
+
+	select {
+	case signal.ui <- datura.Map[any]{
+		"measurements": filtered,
+	}.Marshal():
+	default:
 	}
 }
 
@@ -77,6 +103,13 @@ func (signal *Signal) Measure(
 	events := depthEvents(bookBatch.Rows, tradeBatch.Rows)
 	out := make([]*types.Measurement, 0, len(events))
 
+	if depthflowProbe.Add(1)%2000 == 1 {
+		errnie.Info(fmt.Sprintf(
+			"depthflow probe: books=%d trades=%d events=%d",
+			len(bookBatch.Rows), len(tradeBatch.Rows), len(events),
+		))
+	}
+
 	for _, event := range events {
 		if event.Stream == "book" {
 			out = append(out, signal.measureBook(event.Row.(kraken.BookData))...)
@@ -96,9 +129,8 @@ func (signal *Signal) Measure(
 		return thesis
 	}
 
-	thesis.Signals.Store("depthflow.books", bookBatch.Rows)
-	thesis.Signals.Store("depthflow.trades", tradeBatch.Rows)
 	thesis.Measurements = append(thesis.Measurements, out...)
+	signal.Publish(out)
 
 	return thesis
 }

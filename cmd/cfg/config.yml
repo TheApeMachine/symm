@@ -7,7 +7,7 @@ system:
     level: debug
   websocket:
     channel:
-      buffer: 16384
+      buffer: 1024
 
 cognitive:
   persist_dir: ~/.symm/cognitive
@@ -55,7 +55,7 @@ signals:
   # Each private stream retains the current 16,384-event window. Older events
   # are overwritten by design; use a larger configured ring or a durable
   # journal if a strategy must inspect bursts larger than this live window.
-  feed_timeline_capacity: 16384
+  feed_timeline_capacity: 128
   # Preserve the existing per-symbol history allowance independently from the
   # global burst journal; multiplying the timeline size by every symbol would
   # make memory scale with the square of the observed market surface.

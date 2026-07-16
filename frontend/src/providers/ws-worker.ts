@@ -6,11 +6,8 @@ import { isPlainObject } from "#/providers/ws-frame-merge";
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 5000;
 
-type ViewProjection = { focusSymbol: string; source: string };
-
 type WorkerInbound =
 	| { type: "CONNECT"; url: string }
-	| { type: "CONTROL"; projection: ViewProjection }
 	| { type: "DISCONNECT" };
 
 type WorkerOutbound =
@@ -165,14 +162,6 @@ self.addEventListener("message", (event: MessageEvent<WorkerInbound>) => {
 
 	if (message.type === "CONNECT") {
 		connect(message.url);
-		return;
-	}
-
-	if (message.type === "CONTROL") {
-		if (socket?.readyState === WebSocket.OPEN) {
-			socket.send(JSON.stringify(message.projection));
-		}
-
 		return;
 	}
 

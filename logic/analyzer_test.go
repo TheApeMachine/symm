@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
-	"github.com/theapemachine/nomagique/hawkes"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/system"
@@ -48,34 +47,6 @@ func (scripted *scriptedHawkes) Outcome(symbol string) (excitation.Outcome, bool
 	scripted.index++
 
 	return outcome, true
-}
-
-func hawkesOutcome(at time.Time, buyRate, sellRate float64) excitation.Outcome {
-	return excitation.Outcome{
-		At:              at,
-		Horizon:         time.Second,
-		EventCount:      8,
-		BuyArrivalRate:  buyRate,
-		SellArrivalRate: sellRate,
-		Maturity:        0.75,
-		Readiness: excitation.Readiness{
-			Observation: true,
-			Intensity:   true,
-			HawkesFit:   true,
-		},
-		Fit: hawkes.BivariateFit{
-			MuX:            buyRate,
-			MuY:            sellRate,
-			AlphaXX:        buyRate,
-			AlphaYY:        sellRate,
-			AlphaXY:        buyRate * 0.1,
-			AlphaYX:        sellRate * 0.1,
-			Beta:           2,
-			IntensityX:     buyRate,
-			IntensityY:     sellRate,
-			SpectralRadius: 0.35,
-		},
-	}
 }
 
 func TestAnalyzerUpdate(t *testing.T) {

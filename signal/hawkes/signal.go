@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/symm/kraken"
@@ -29,13 +30,33 @@ type Signal struct {
 	api        *websocket.API
 	trade      *Trade
 	tradeCache *types.MarketFeed[kraken.TradeData]
+	ui         chan []byte
+}
+
+/*
+Publish sends one small datura frame to the UI the moment this signal has
+measured its evidence, mirroring broker.Balance.Publish.
+*/
+func (signal *Signal) Publish(measurements []*types.Measurement) {
+	filtered := types.FilterLatest(measurements)
+
+	if len(filtered) == 0 {
+		return
+	}
+
+	select {
+	case signal.ui <- datura.Map[any]{
+		"measurements": filtered,
+	}.Marshal():
+	default:
+	}
 }
 
 /*
 NewSignal constructs the symbol-local excitation measurement pipeline. Its
 trade component is the sole owner of the mutable marked-arrival history.
 */
-func NewSignal(ctx context.Context, api *websocket.API) *Signal {
+func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
@@ -43,6 +64,7 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 		cancel: cancel,
 		api:    api,
 		trade:  NewTrade(),
+		ui:     ui,
 		tradeCache: types.NewMarketFeed[kraken.TradeData](
 			viper.GetInt("signals.feed_timeline_capacity"),
 			viper.GetInt("signals.feed_track_capacity"),
@@ -168,6 +190,7 @@ func (signal *Signal) Measure(
 	}
 
 	thesis.Measurements = append(thesis.Measurements, out...)
+	signal.Publish(out)
 
 	return thesis
 }

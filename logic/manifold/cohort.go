@@ -50,9 +50,9 @@ func cohortsFromMappedOrders(
 
 	for _, order := range orders {
 		key := cohortKey{
-			cellX: torusCell(config, order.posX, config.DomainX, config.GridX),
-			cellY: torusCell(config, order.posY, config.DomainY, config.GridY),
-			cellZ: torusCell(config, order.posZ, config.DomainZ, config.GridZ),
+			cellX: torusCell(order.posX, config.DomainX, config.GridX),
+			cellY: torusCell(order.posY, config.DomainY, config.GridY),
+			cellZ: torusCell(order.posZ, config.DomainZ, config.GridZ),
 		}
 
 		state := cohorts[key]
@@ -140,7 +140,6 @@ func cohortsFromMappedOrders(
 }
 
 func torusCell(
-	config pmanifold.Config,
 	position float64,
 	domain float64,
 	grid uint32,

@@ -5,6 +5,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -20,19 +21,40 @@ type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	ticker *Ticker
+	ui     chan []byte
 }
 
 /*
 NewSignal creates liquidity measurement state and subscribes its ticker input
 so each tick can compare executable liquidity across the observed cohort.
 */
-func NewSignal(ctx context.Context, api *websocket.API) *Signal {
+func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
 		ticker: NewTicker(ctx, api),
+		ui:     ui,
+	}
+}
+
+/*
+Publish sends one small datura frame to the UI the moment this signal has
+measured its evidence, mirroring broker.Balance.Publish.
+*/
+func (signal *Signal) Publish(measurements []*types.Measurement) {
+	filtered := types.FilterLatest(measurements)
+
+	if len(filtered) == 0 {
+		return
+	}
+
+	select {
+	case signal.ui <- datura.Map[any]{
+		"measurements": filtered,
+	}.Marshal():
+	default:
 	}
 }
 
@@ -83,7 +105,7 @@ func (signal *Signal) Measure(
 	depthMedian, depthOK := statistic.MedianOf(depthPeers)
 
 	if len(depthPeers) < 2 || !depthOK || depthMedian <= 0 {
-		thesis.Signals.Store("liquidity.tickers", rows)
+		signal.Publish(out)
 		return thesis
 	}
 
@@ -147,8 +169,8 @@ func (signal *Signal) Measure(
 		}
 	}
 
-	thesis.Signals.Store("liquidity.tickers", rows)
 	thesis.Measurements = append(thesis.Measurements, out...)
+	signal.Publish(out)
 
 	return thesis
 }

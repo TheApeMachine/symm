@@ -161,8 +161,8 @@ func mapOrders(
 
 		logSize := math.Log(1 + order.quantity)
 		age := at.Sub(order.timestamp).Seconds()
-		posX := signedLogPrice/priceScale + config.DomainX/2
-		posY := (logSize-sizeMean)/sizeScale + config.DomainY/2
+		posX := domainCoordinate(signedLogPrice/priceScale, config.DomainX)
+		posY := domainCoordinate((logSize-sizeMean)/sizeScale, config.DomainY)
 		posZ := survivalCoordinate(age, sortedAges) * config.DomainZ
 
 		velX, velY, velZ := 0.0, 0.0, 0.0
@@ -203,6 +203,17 @@ func mapOrders(
 	}
 
 	return mapped, nextEpoch, true
+}
+
+/*
+domainCoordinate maps an unbounded z-score onto (0, domain) centered at
+domain/2 via tanh, so the ±sigma bulk of orders spreads across the whole grid
+axis instead of collapsing into a stripe around the domain center. A z-score of
+0 (an order at the mid) lands exactly at domain/2, preserving the buy/sell split
+inject.go derives from PosX >= DomainX/2.
+*/
+func domainCoordinate(zscore float64, domain float64) float64 {
+	return (math.Tanh(zscore) + 1) / 2 * domain
 }
 
 func survivalCoordinate(age float64, sortedAges []float64) float64 {

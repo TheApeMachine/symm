@@ -65,45 +65,6 @@ func TestGraphFrame(t *testing.T) {
 				So(decoded.Edges[0].To, ShouldNotBeEmpty)
 			})
 		})
-
-		Convey("When published through a Thesis", func() {
-			uiHub := make(chan []byte, 4)
-			thesis := NewThesis(uiHub)
-			thesis.Measurements = append(thesis.Measurements, first, second)
-			thesis.Graphs.Store(graph.Symbol, graph)
-			thesis.Lifecycle.Store(graph.Symbol, LifecycleManaging)
-			thesis.SetUIProjection(graph.Symbol, SourceFluid)
-			thesis.Publish()
-			published := struct {
-				Graphs    []GraphFrame      `json:"graphs"`
-				Lifecycle map[string]string `json:"lifecycle"`
-			}{}
-
-			for len(uiHub) > 0 {
-				frame := struct {
-					Graphs    []GraphFrame      `json:"graphs"`
-					Lifecycle map[string]string `json:"lifecycle"`
-				}{}
-
-				So(json.Unmarshal(<-uiHub, &frame), ShouldBeNil)
-
-				if len(frame.Graphs) > 0 {
-					published.Graphs = frame.Graphs
-				}
-
-				if len(frame.Lifecycle) > 0 {
-					published.Lifecycle = frame.Lifecycle
-				}
-			}
-
-			Convey("Then the websocket payload contains the current graph projection", func() {
-				So(published.Graphs, ShouldHaveLength, 1)
-				So(published.Graphs[0].Symbol, ShouldEqual, graph.Symbol)
-				So(published.Graphs[0].Nodes, ShouldHaveLength, 2)
-				So(published.Graphs[0].Edges, ShouldNotBeEmpty)
-				So(published.Lifecycle[graph.Symbol], ShouldEqual, LifecycleManaging)
-			})
-		})
 	})
 }
 

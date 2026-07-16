@@ -7,10 +7,10 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
@@ -116,8 +116,26 @@ func (crypto *Crypto) Status() types.Status {
 }
 
 func (crypto *Crypto) Run() error {
+	recorder, recorderErr := audit.NewRecorder(
+		filepath.Join(crypto.dataPath, "runtime-audit.jsonl"),
+	)
+
+	if recorderErr != nil {
+		errnie.Error(recorderErr)
+	}
+
+	crypto.planner.SetRecorder(recorder)
+
 	go func() {
 		errnie.Info("crypto runtime started")
+
+		if recorder != nil {
+			defer func() {
+				errnie.Error(recorder.Close())
+			}()
+		}
+
+		loops := int64(0)
 
 		for crypto.Status() != types.ERROR {
 			select {
@@ -126,32 +144,30 @@ func (crypto *Crypto) Run() error {
 			default:
 			}
 
-			if crypto.booter.Ready(system.StageWarmup) {
-				focusSymbol, focusSource := crypto.uiHub.Thesis().UIProjection()
-				thesis := crypto.planner.Update(focusSymbol, focusSource)
-				thesis.Tick = crypto.tick.Add(1)
-				crypto.uiHub.SetThesis(thesis)
-				thesis.Publish()
-				crypto.trade(thesis)
+			loops++
+			ready := crypto.booter.Ready(system.StageWarmup)
 
-				encoded, err := sonic.Marshal(thesis)
-
-				if err != nil {
-					crypto.status = types.ERROR
-					errnie.Error(err)
-					continue
+			if !ready {
+				if loops%1_000_000 == 1 {
+					errnie.Error(audit.Record(recorder, "tick_gate", map[string]any{
+						"loops": loops,
+						"ready": false,
+					}))
 				}
 
-				// Store the thesis to a file in the data directory
-				filePath := filepath.Join(crypto.dataPath, "thesis.json")
-				err = os.WriteFile(filePath, encoded, 0644)
-
-				if err != nil {
-					crypto.status = types.ERROR
-					errnie.Error(err)
-					continue
-				}
+				continue
 			}
+
+			thesis := crypto.planner.Update()
+			thesis.Tick = crypto.tick.Add(1)
+			crypto.trade(thesis)
+
+			errnie.Error(audit.Record(recorder, "tick", map[string]any{
+				"tick":         thesis.Tick,
+				"measurements": len(thesis.Measurements),
+				"decisions":    len(thesis.Decisions),
+				"forecasts":    len(thesis.Forecasts),
+			}))
 		}
 	}()
 

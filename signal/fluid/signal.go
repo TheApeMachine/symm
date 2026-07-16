@@ -6,6 +6,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
@@ -112,10 +113,30 @@ type Signal struct {
 	tickerCache *types.MarketFeed[kraken.TickerData]
 	tradeCache  *types.MarketFeed[kraken.TradeData]
 	bookCache   *types.MarketFeed[kraken.BookData]
+	ui          chan []byte
+}
+
+/*
+Publish sends one small datura frame to the UI the moment this signal has
+measured its evidence, mirroring broker.Balance.Publish.
+*/
+func (signal *Signal) Publish(measurements []*types.Measurement) {
+	filtered := types.FilterLatest(measurements)
+
+	if len(filtered) == 0 {
+		return
+	}
+
+	select {
+	case signal.ui <- datura.Map[any]{
+		"measurements": filtered,
+	}.Marshal():
+	default:
+	}
 }
 
 func NewSignal(
-	ctx context.Context, api *websocket.API, instrument *broker.Instrument,
+	ctx context.Context, api *websocket.API, instrument *broker.Instrument, ui chan []byte,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 	registry := NewSyncRegistry()
@@ -126,6 +147,7 @@ func NewSignal(
 		api:        api,
 		instrument: instrument,
 		registry:   registry,
+		ui:         ui,
 		ticker:     NewTicker(registry),
 		trade:      NewTrade(registry),
 		book:       NewBook(registry),

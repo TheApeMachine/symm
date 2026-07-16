@@ -5,6 +5,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -18,19 +19,40 @@ type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	ticker *Ticker
+	ui     chan []byte
 }
 
 /*
 NewSignal creates sentiment measurement state and subscribes its ticker input
 so every tick can compare breadth with current leadership.
 */
-func NewSignal(ctx context.Context, api *websocket.API) *Signal {
+func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
 		ticker: NewTicker(ctx, api),
+		ui:     ui,
+	}
+}
+
+/*
+Publish sends one small datura frame to the UI the moment this signal has
+measured its evidence, mirroring broker.Balance.Publish.
+*/
+func (signal *Signal) Publish(measurements []*types.Measurement) {
+	filtered := types.FilterLatest(measurements)
+
+	if len(filtered) == 0 {
+		return
+	}
+
+	select {
+	case signal.ui <- datura.Map[any]{
+		"measurements": filtered,
+	}.Marshal():
+	default:
 	}
 }
 
@@ -190,8 +212,8 @@ func (signal *Signal) Measure(
 		)
 	}
 
-	thesis.Signals.Store("sentiment.tickers", tickers)
 	thesis.Measurements = append(thesis.Measurements, out...)
+	signal.Publish(out)
 
 	return thesis
 }

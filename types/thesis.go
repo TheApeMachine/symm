@@ -7,8 +7,6 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 )
 
 const (
@@ -44,7 +42,6 @@ type Thesis struct {
 	Tick         int64          `json:"tick"`
 	At           time.Time      `json:"at"`
 	Positions    []Holding      `json:"positions"`
-	Signals      *sync.Map      `json:"signals"`
 	CrossSection *CrossSection  `json:"crossSection"`
 	Measurements []*Measurement `json:"measurements"`
 	Graphs       *sync.Map      `json:"graphs"`
@@ -97,22 +94,21 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 	manifold := make(map[string]any)
 	cognition := make(map[string]Cognition)
 
-	thesis.Signals.Range(func(key, value any) bool {
-		signals[key.(string)] = value
-		return true
-	})
 	thesis.Graphs.Range(func(key, value any) bool {
 		graphs[key.(string)] = value.(*Graph).Frame()
 		return true
 	})
+
 	thesis.Lifecycle.Range(func(key, value any) bool {
 		lifecycle[key.(string)] = value.(string)
 		return true
 	})
+
 	thesis.Manifold.Range(func(key, value any) bool {
 		manifold[key.(string)] = value
 		return true
 	})
+
 	thesis.Cognition.Range(func(key, value any) bool {
 		cognition[key.(string)] = value.(Cognition)
 		return true
@@ -150,15 +146,11 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	thesis.Signals = &sync.Map{}
 	thesis.Graphs = &sync.Map{}
 	thesis.Lifecycle = &sync.Map{}
 	thesis.Manifold = &sync.Map{}
 	thesis.Cognition = &sync.Map{}
 
-	for key, value := range decoded.Signals {
-		thesis.Signals.Store(key, value)
-	}
 	for key, frame := range decoded.Graphs {
 		graph := NewGraph(frame.Symbol)
 
@@ -169,18 +161,22 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 				return err
 			}
 		}
+
 		for _, edge := range frame.Edges {
 			graph.Relate(edge.From, edge.To, edge.Type, edge.At, edge.ObservedFrom)
 		}
 
 		thesis.Graphs.Store(key, graph)
 	}
+
 	for key, value := range decoded.Lifecycle {
 		thesis.Lifecycle.Store(key, value)
 	}
+
 	for key, value := range decoded.Manifold {
 		thesis.Manifold.Store(key, value)
 	}
+
 	for key, value := range decoded.Cognition {
 		thesis.Cognition.Store(key, value)
 	}
@@ -207,7 +203,6 @@ func NewThesis(uiHub chan<- []byte) *Thesis {
 		At:           time.Now().UTC(),
 		Positions:    make([]Holding, 0),
 		Decisions:    make([]Decision, 0),
-		Signals:      &sync.Map{},
 		CrossSection: NewCrossSection(),
 		Measurements: make([]*Measurement, 0),
 		Graphs:       &sync.Map{},
@@ -232,267 +227,7 @@ return it through the result channel.
 func NewSignalThesis(at time.Time) *Thesis {
 	return &Thesis{
 		At:           at,
-		Signals:      &sync.Map{},
 		CrossSection: NewCrossSection(),
 		Measurements: make([]*Measurement, 0),
-	}
-}
-
-/*
-Publish exposes the evidence accumulated by this tick and explicit empty
-current-state snapshots without delaying trading.
-*/
-func (thesis *Thesis) Publish() {
-	if thesis.uiHub == nil {
-		return
-	}
-
-	leader, leadershipThreshold := thesis.CrossSection.Leadership()
-
-	thesis.Send(datura.Map[any]{
-		"tick":         datura.Map[any]{"count": thesis.Tick},
-		"decisions":    thesis.Decisions,
-		"orders":       thesis.Orders,
-		"positions":    thesis.Positions,
-		"tradeJournal": []any{},
-		"findings":     thesis.Findings,
-		"diagnostics": []datura.Map[any]{
-			{
-				"metrics":             thesis.CrossSection.Metrics,
-				"leader":              leader,
-				"leadershipThreshold": leadershipThreshold,
-				"breadth":             thesis.CrossSection.Breadth(),
-			},
-		},
-	})
-
-	measurements := thesis.CurrentMeasurements()
-
-	if len(measurements) > 0 {
-		thesis.Send(datura.Map[any]{
-			"measurements": measurements,
-		})
-	}
-
-	if thesis.Lifecycle != nil {
-		lifecycle := make(map[string]string)
-
-		thesis.Lifecycle.Range(func(key, value any) bool {
-			symbol, symbolOK := key.(string)
-			state, stateOK := value.(string)
-
-			if !symbolOK || !stateOK {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"thesis contains invalid lifecycle state",
-					nil,
-				))
-
-				return true
-			}
-
-			lifecycle[symbol] = state
-			return true
-		})
-
-		thesis.Send(datura.Map[any]{
-			"lifecycle": lifecycle,
-		})
-	}
-
-	graphs := make([]GraphFrame, 0, 1)
-	focusSymbol, _ := thesis.UIProjection()
-
-	if thesis.Graphs != nil && focusSymbol != "" {
-		thesis.Graphs.Range(func(key, value any) bool {
-			if key != focusSymbol {
-				return true
-			}
-
-			evidenceGraph, ok := value.(*Graph)
-
-			if !ok {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"thesis contains an invalid evidence graph",
-					nil,
-				))
-
-				return true
-			}
-
-			graph := evidenceGraph.Frame()
-
-			if len(graph.Edges) > 0 {
-				graphs = append(graphs, graph)
-			}
-
-			return true
-		})
-	}
-
-	if len(graphs) > 0 {
-		thesis.Send(datura.Map[any]{
-			"graphs": graphs,
-		})
-	}
-
-	if len(thesis.Forecasts) > 0 {
-		thesis.Send(datura.Map[any]{
-			"forecasts": thesis.Forecasts,
-		})
-	}
-
-	if len(thesis.Hypotheses) > 0 {
-		thesis.Send(datura.Map[any]{
-			"hypotheses": thesis.Hypotheses,
-		})
-	}
-
-	if len(thesis.Categories) > 0 {
-		thesis.Send(datura.Map[any]{
-			"categories": thesis.Categories,
-		})
-	}
-
-	manifolds := make([]any, 0, 1)
-
-	thesis.Manifold.Range(func(key, value any) bool {
-		if key != focusSymbol {
-			return true
-		}
-
-		manifolds = append(manifolds, value)
-		return true
-	})
-
-	if len(manifolds) > 0 {
-		thesis.Send(datura.Map[any]{
-			"manifold": manifolds,
-		})
-	}
-
-	cognition := make([]Cognition, 0, 1)
-
-	thesis.Cognition.Range(func(key, value any) bool {
-		if key != focusSymbol {
-			return true
-		}
-
-		reading, ok := value.(Cognition)
-
-		if !ok {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"thesis contains invalid cognition state",
-				nil,
-			))
-
-			return true
-		}
-
-		cognition = append(cognition, reading)
-
-		return true
-	})
-
-	if len(cognition) > 0 {
-		thesis.Send(datura.Map[any]{
-			"cognition": cognition,
-		})
-	}
-
-	if len(thesis.Resonance) > 0 {
-		thesis.Send(datura.Map[any]{
-			"resonance": thesis.Resonance,
-		})
-	}
-
-	if len(thesis.Causal) > 0 {
-		thesis.Send(datura.Map[any]{
-			"causal": thesis.Causal,
-		})
-	}
-}
-
-/*
-CurrentMeasurements returns complete current detail for the focused symbol and
-the selected source's headline cross-section. Analysis retains every
-observation; this projection keeps the live dashboard current without replaying
-the market-event backlog into the browser.
-*/
-func (thesis *Thesis) CurrentMeasurements() []*Measurement {
-	latest := make(map[string]time.Time)
-	focusSymbol, focusSource := thesis.UIProjection()
-
-	for _, measurement := range thesis.Measurements {
-		if !thesis.measurementVisible(measurement, focusSymbol, focusSource) {
-			continue
-		}
-
-		key := measurement.Symbol + "\x00" + string(measurement.Source)
-
-		if measurement.At.After(latest[key]) {
-			latest[key] = measurement.At
-		}
-	}
-
-	current := make([]*Measurement, 0, len(latest))
-
-	for _, measurement := range thesis.Measurements {
-		if !thesis.measurementVisible(measurement, focusSymbol, focusSource) {
-			continue
-		}
-
-		key := measurement.Symbol + "\x00" + string(measurement.Source)
-
-		if measurement.At.Equal(latest[key]) {
-			current = append(current, measurement)
-		}
-	}
-
-	return current
-}
-
-/*
-measurementVisible keeps full metrics for the focused symbol and only the
-selected source's headline metric for the cross-section. An unset projection
-retains the complete current epoch for persistence and direct callers.
-*/
-func (thesis *Thesis) measurementVisible(
-	measurement *Measurement,
-	focusSymbol string,
-	focusSource SourceType,
-) bool {
-	if focusSymbol == "" && focusSource == "" {
-		return true
-	}
-
-	if measurement.Symbol == focusSymbol {
-		return true
-	}
-
-	if measurement.Source != focusSource {
-		return false
-	}
-
-	switch focusSource {
-	case SourceFluid:
-		return measurement.Metric == MetricReynolds
-	case SourceHawkes:
-		return measurement.Metric == MetricConditionalIntensity
-	case SourceLiquidity:
-		return measurement.Metric == MetricScarcityScore
-	case SourceToxicity:
-		return measurement.Metric == MetricTouchQuantity
-	default:
-		return measurement.Metric == MetricStrength
-	}
-}
-
-func (thesis *Thesis) Send(frame datura.Map[any]) {
-	select {
-	case thesis.uiHub <- frame.Marshal():
-	default:
 	}
 }

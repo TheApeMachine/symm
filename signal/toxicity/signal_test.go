@@ -2,7 +2,6 @@ package toxicity
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -43,10 +42,6 @@ func TestSignal_MeasureUsesTradeEventTime(testingTB *testing.T) {
 		})
 
 		Convey("Then the Thesis remains serializable for runtime persistence", func() {
-			books, found := result.Signals.Load("toxicity.books")
-			So(found, ShouldBeTrue)
-			So(books, ShouldHaveSameTypeAs, map[string]json.RawMessage{})
-
 			_, err := sonic.Marshal(result)
 			So(err, ShouldBeNil)
 		})

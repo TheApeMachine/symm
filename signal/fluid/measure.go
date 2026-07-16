@@ -43,6 +43,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) *types.Thesis {
 	}
 
 	thesis.Measurements = append(thesis.Measurements, measurements...)
+	signal.Publish(measurements)
 
 	return thesis
 }

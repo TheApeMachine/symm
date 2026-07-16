@@ -2,12 +2,11 @@ package toxicity
 
 import (
 	"context"
-	"encoding/json"
 	"math"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -23,9 +22,10 @@ type Signal struct {
 	trades     *Trade
 	level3     *Level3
 	priorTouch map[string]touchSnapshot
+	ui         chan []byte
 }
 
-func NewSignal(ctx context.Context, api *websocket.API) *Signal {
+func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
@@ -34,6 +34,26 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 		trades:     NewTrade(ctx, api),
 		level3:     NewLevel3(api),
 		priorTouch: map[string]touchSnapshot{},
+		ui:         ui,
+	}
+}
+
+/*
+Publish sends one small datura frame to the UI the moment this signal has
+measured its evidence, mirroring broker.Balance.Publish.
+*/
+func (signal *Signal) Publish(measurements []*types.Measurement) {
+	filtered := types.FilterLatest(measurements)
+
+	if len(filtered) == 0 {
+		return
+	}
+
+	select {
+	case signal.ui <- datura.Map[any]{
+		"measurements": filtered,
+	}.Marshal():
+	default:
 	}
 }
 
@@ -318,25 +338,6 @@ func (signal *Signal) Measure(
 		}
 	}
 
-	bookSnapshots := map[string]json.RawMessage{}
-
-	for bookManager := range books {
-		for _, symbol := range bookManager.GetBooks() {
-			raw, err := sonic.Marshal(bookManager.GetBook(symbol))
-
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"toxicity: book snapshot failed",
-					err,
-				))
-				return thesis
-			}
-
-			bookSnapshots[symbol] = raw
-		}
-	}
-
 	if err := signal.trades.cache.Commit(tradeBatch); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
@@ -347,9 +348,8 @@ func (signal *Signal) Measure(
 	}
 
 	signal.priorTouch = nextTouch
-	thesis.Signals.Store("toxicity.trades", trades)
-	thesis.Signals.Store("toxicity.books", bookSnapshots)
 	thesis.Measurements = append(thesis.Measurements, out...)
+	signal.Publish(out)
 
 	return thesis
 }

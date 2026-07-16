@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
@@ -26,10 +27,11 @@ type Signal struct {
 	trade  *Trade
 	sample *algorithm.DecaySample
 	decay  *equation.Decay
+	ui     chan []byte
 }
 
 func NewSignal(
-	ctx context.Context, api *websocket.API, instrument *broker.Instrument,
+	ctx context.Context, api *websocket.API, instrument *broker.Instrument, ui chan []byte,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -40,6 +42,26 @@ func NewSignal(
 		trade:  NewTrade(ctx, api),
 		sample: algorithm.NewDecaySample(),
 		decay:  equation.NewDecay(),
+		ui:     ui,
+	}
+}
+
+/*
+Publish sends one small datura frame to the UI the moment this signal has
+measured its evidence, mirroring broker.Balance.Publish.
+*/
+func (signal *Signal) Publish(measurements []*types.Measurement) {
+	filtered := types.FilterLatest(measurements)
+
+	if len(filtered) == 0 {
+		return
+	}
+
+	select {
+	case signal.ui <- datura.Map[any]{
+		"measurements": filtered,
+	}.Marshal():
+	default:
 	}
 }
 
@@ -97,9 +119,8 @@ func (signal *Signal) Measure(
 		return thesis
 	}
 
-	thesis.Signals.Store("exhaust.books", bookBatch.Rows)
-	thesis.Signals.Store("exhaust.trades", tradeBatch.Rows)
 	thesis.Measurements = append(thesis.Measurements, out...)
+	signal.Publish(out)
 
 	return thesis
 }

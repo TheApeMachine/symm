@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -32,6 +34,62 @@ func TestAPIStatus(t *testing.T) {
 			So(api.Initialize(), ShouldBeNil)
 			So(api.Status(), ShouldEqual, types.READY)
 		})
+	})
+}
+
+/*
+TestAPISubscribeTradeRequestsSnapshot verifies restart subscriptions request
+Kraken's current trade window so arrival state does not wait for future fills.
+*/
+func TestAPISubscribeTradeRequestsSnapshot(t *testing.T) {
+	Convey("Given a connected public Kraken websocket", t, func() {
+		requests := make(chan map[string]any, 1)
+		upgrader := gorillawebsocket.Upgrader{}
+		server := httptest.NewServer(http.HandlerFunc(func(
+			response http.ResponseWriter,
+			request *http.Request,
+		) {
+			connection, err := upgrader.Upgrade(response, request, nil)
+
+			if err != nil {
+				return
+			}
+
+			defer connection.Close()
+			message := map[string]any{}
+
+			if connection.ReadJSON(&message) == nil {
+				requests <- message
+			}
+
+			connection.ReadMessage()
+		}))
+		defer server.Close()
+
+		client := spot.NewWebSocket()
+		client.URL = "ws" + strings.TrimPrefix(server.URL, "http")
+		So(client.Connect(), ShouldBeNil)
+
+		api := &API{public: &stubConn{client: client}}
+		So(api.SubscribeTrade([]string{"BTC/USD"}), ShouldBeNil)
+
+		var request map[string]any
+
+		select {
+		case request = <-requests:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for trade subscription")
+		}
+
+		params := request["params"].(map[string]any)
+
+		Convey("It should request Kraken's current trade window", func() {
+			So(params["channel"], ShouldEqual, "trade")
+			So(params["symbol"], ShouldResemble, []any{"BTC/USD"})
+			So(params["snapshot"], ShouldEqual, true)
+		})
+
+		So(client.Disconnect(), ShouldBeNil)
 	})
 }
 

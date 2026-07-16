@@ -62,7 +62,10 @@ var (
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
 			startPprof()
 
-			channel := make(chan []byte, viper.GetInt("system.websocket.channel.buffer"))
+			buffer := viper.GetInt("system.websocket.channel.buffer")
+			errnie.Info(fmt.Sprintf("starting ui channel with a buffer of %d", buffer))
+			channel := make(chan []byte, buffer)
+
 			booter := system.NewBooter(ctx, channel)
 			persistDir := strings.TrimSpace(viper.GetString("cognitive.persist_dir"))
 
@@ -186,8 +189,8 @@ var (
 
 			defer uiHub.Close()
 
-			hawkesSignal := hawkes.NewSignal(ctx, api)
-			analyzer, err := logic.NewAnalyzer(ctx, booter, api, hawkesSignal, tree)
+			hawkesSignal := hawkes.NewSignal(ctx, api, channel)
+			analyzer, err := logic.NewAnalyzer(ctx, booter, api, hawkesSignal, tree, channel)
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
@@ -201,16 +204,16 @@ var (
 				ctx,
 				channel,
 				[]types.Signal{
-					pumpdump.NewSignal(ctx, api),
-					liquidity.NewSignal(ctx, api),
-					toxicity.NewSignal(ctx, api),
-					leadlag.NewSignal(ctx, api),
-					cvd.NewSignal(ctx, api),
-					correlation.NewSignal(ctx, api),
-					exhaust.NewSignal(ctx, api, instrument),
-					sentiment.NewSignal(ctx, api),
-					depthflow.NewSignal(ctx, api, instrument),
-					fluid.NewSignal(ctx, api, instrument),
+					pumpdump.NewSignal(ctx, api, channel),
+					liquidity.NewSignal(ctx, api, channel),
+					toxicity.NewSignal(ctx, api, channel),
+					leadlag.NewSignal(ctx, api, channel),
+					cvd.NewSignal(ctx, api, channel),
+					correlation.NewSignal(ctx, api, channel),
+					exhaust.NewSignal(ctx, api, instrument, channel),
+					sentiment.NewSignal(ctx, api, channel),
+					depthflow.NewSignal(ctx, api, instrument, channel),
+					fluid.NewSignal(ctx, api, instrument, channel),
 					hawkesSignal,
 				},
 				analyzer,

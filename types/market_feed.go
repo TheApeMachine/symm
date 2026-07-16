@@ -3,7 +3,6 @@ package types
 import (
 	"fmt"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/datura/structure"
@@ -15,7 +14,6 @@ retention and ingress ordering; MarketFeed owns only the consumer's captured cut
 and cursor so signal code cannot destructively clear observations.
 */
 type MarketFeed[T any] struct {
-	access   sync.Mutex
 	clock    *structure.ClockRing[string, T]
 	cursor   structure.ClockCursor
 	cut      structure.ClockCut
@@ -50,11 +48,22 @@ func NewMarketFeed[T any](
 		)}
 	}
 
-	timeline := structure.NewRing(structure.NewListRing[structure.ClockSlot[string, T]](timelineCapacity))
+	// SPSC rings are lock-free for the clock's one-producer (Observe) /
+	// many-walker (Batch, Frame) access pattern. Drop-oldest keeps ingest
+	// non-blocking; capacities must be a power of two.
+	timeline := structure.NewSPSCRing[structure.ClockSlot[string, T]](timelineCapacity, true)
 	newTrack := func() structure.Ring[structure.ClockSlot[string, T]] {
-		return structure.NewRing(structure.NewListRing[structure.ClockSlot[string, T]](trackCapacity))
+		return structure.NewSPSCRing[structure.ClockSlot[string, T]](trackCapacity, true)
 	}
-	clock, err := structure.NewClockRing(timeline, newTrack)
+
+	if timeline == nil {
+		return &MarketFeed[T]{err: fmt.Errorf(
+			"types: market feed timeline capacity must be a power of two: %d",
+			timelineCapacity,
+		)}
+	}
+
+	clock, err := structure.NewClockRing[string, T](timeline, newTrack)
 
 	if err != nil {
 		return &MarketFeed[T]{err: err}
@@ -106,10 +115,8 @@ func (feed *MarketFeed[T]) Capture(at time.Time) error {
 		return err
 	}
 
-	feed.access.Lock()
 	feed.cut = cut
 	feed.captured = true
-	feed.access.Unlock()
 
 	return nil
 }
@@ -146,9 +153,6 @@ func (feed *MarketFeed[T]) Batch(at time.Time) (MarketBatch[T], error) {
 		return MarketBatch[T]{}, feed.err
 	}
 
-	feed.access.Lock()
-	defer feed.access.Unlock()
-
 	cut, err := feed.cutThrough(at)
 
 	if err != nil {
@@ -177,9 +181,6 @@ func (feed *MarketFeed[T]) Commit(batch MarketBatch[T]) error {
 		return fmt.Errorf("types: market feed is required")
 	}
 
-	feed.access.Lock()
-	defer feed.access.Unlock()
-
 	if feed.cursor.After != batch.From {
 		return fmt.Errorf(
 			"types: market batch starts at %d, current cursor is %d",
@@ -206,9 +207,6 @@ func (feed *MarketFeed[T]) Frame(at time.Time) ([]T, error) {
 	if feed.err != nil {
 		return nil, feed.err
 	}
-
-	feed.access.Lock()
-	defer feed.access.Unlock()
 
 	cut, err := feed.cutThrough(at)
 
@@ -252,9 +250,6 @@ func (feed *MarketFeed[T]) Pending(at time.Time) ([]T, error) {
 	if feed.err != nil {
 		return nil, feed.err
 	}
-
-	feed.access.Lock()
-	defer feed.access.Unlock()
 
 	cut, err := feed.clock.Cut(at)
 

@@ -296,7 +296,14 @@ func (api *API) SubscribeTicker(pairs []string) error {
 }
 
 func (api *API) SubscribeTrade(pairs []string) error {
-	return errnie.Error(api.public.Client().SubTrades(pairs))
+	return errnie.Error(api.public.Client().SubTrades(
+		pairs,
+		map[string]any{
+			"params": map[string]any{
+				"snapshot": true,
+			},
+		},
+	))
 }
 
 /*
@@ -306,9 +313,7 @@ func (api *API) Books() iter.Seq[*spot.BookManager] {
 	return func(yield func(*spot.BookManager) bool) {
 		api.bookConns.Range(func(key, value any) bool {
 			live := value.(*Live)
-			live.bookAccess.RLock()
 			keepGoing := yield(live.books)
-			live.bookAccess.RUnlock()
 
 			return keepGoing
 		})

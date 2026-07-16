@@ -69,9 +69,23 @@ func (balance *Balance) Publish() {
 		return
 	}
 
-	balance.ui <- datura.Map[any]{
-		"balances": balance.Snapshot(),
-	}.Marshal()
+	positions := make([]types.Holding, 0)
+
+	if balance.holdings != nil {
+		balance.holdings.Range(func(key, value any) bool {
+			holding := value.(*types.Holding)
+			positions = append(positions, *holding)
+			return true
+		})
+	}
+
+	select {
+	case balance.ui <- datura.Map[any]{
+		"balances":  balance.Snapshot(),
+		"positions": positions,
+	}.Marshal():
+	default:
+	}
 }
 
 /*
@@ -124,8 +138,8 @@ func (balance *Balance) BalanceAck(buf []byte) {
 
 			balance.model.Data[index] = update
 			break
+		}
 	}
- 	}
 
 	balance.model.Sequence = incoming.Sequence
 	balance.model.Timestamp = incoming.Timestamp

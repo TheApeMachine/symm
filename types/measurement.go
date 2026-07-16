@@ -446,3 +446,32 @@ func (measurement Measurement) Interval() (time.Time, time.Time) {
 
 	return from, through
 }
+
+/*
+FilterLatest returns a new slice containing only those measurements that share
+the maximum (newest) timestamp in the input. If the input is empty, it returns
+nil.
+*/
+func FilterLatest(measurements []*Measurement) []*Measurement {
+	if len(measurements) == 0 {
+		return nil
+	}
+
+	var latest time.Time
+
+	for _, m := range measurements {
+		if m.At.After(latest) {
+			latest = m.At
+		}
+	}
+
+	filtered := make([]*Measurement, 0, len(measurements))
+
+	for _, m := range measurements {
+		if m.At.Equal(latest) {
+			filtered = append(filtered, m)
+		}
+	}
+
+	return filtered
+}

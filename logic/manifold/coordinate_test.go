@@ -113,9 +113,9 @@ func TestCohortsFromMappedOrders(t *testing.T) {
 		t.Fatalf("circular phase = %v, want near zero", oscillators[0].Phase)
 	}
 
-	if torusCell(config, config.DomainX, config.DomainX, config.GridX) != 0 ||
+	if torusCell(config.DomainX, config.DomainX, config.GridX) != 0 ||
 		torusCell(
-			config, -config.DomainX/float64(config.GridX), config.DomainX, config.GridX,
+			-config.DomainX/float64(config.GridX), config.DomainX, config.GridX,
 		) != config.GridX-1 {
 		t.Fatal("toroidal cell mapping did not wrap")
 	}

@@ -8,7 +8,10 @@ import (
 )
 
 func tickerCache(rows ...kraken.TickerData) *types.MarketFeed[kraken.TickerData] {
-	capacity := max(128, len(rows))
+	capacity := 128
+	for capacity < len(rows) {
+		capacity <<= 1
+	}
 	cache := types.NewMarketFeed[kraken.TickerData](capacity, capacity)
 
 	for _, row := range rows {

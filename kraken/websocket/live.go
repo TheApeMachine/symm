@@ -30,18 +30,17 @@ const (
 Live is the spot websocket and REST transport.
 */
 type Live struct {
-	status     types.Status
-	ctx        context.Context
-	cancel     context.CancelFunc
-	client     *spot.WebSocket
-	sync       *sync.Map
-	paper      *Paper
-	simulator  *Simulator
-	auth       bool
-	books      *spot.BookManager
-	bookAccess sync.RWMutex
-	isLevel3   bool
-	symbols    []string
+	status    types.Status
+	ctx       context.Context
+	cancel    context.CancelFunc
+	client    *spot.WebSocket
+	sync      *sync.Map
+	paper     *Paper
+	simulator *Simulator
+	auth      bool
+	books     *spot.BookManager
+	isLevel3  bool
+	symbols   []string
 }
 
 /*
@@ -182,9 +181,6 @@ func (live *Live) updateLevel3(
 		return nil
 	}
 
-	live.bookAccess.Lock()
-	defer live.bookAccess.Unlock()
-
 	return live.books.Update(event)
 }
 
@@ -193,6 +189,7 @@ func (live *Live) Initialize() error {
 
 	if err := live.client.Connect(); err != nil {
 		live.status = types.ERROR
+
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"websocket: connect failed",
@@ -229,20 +226,18 @@ func (live *Live) route(raw []byte) {
 		return
 	}
 
-	live.dispatch(channel, raw, true)
+	live.dispatch(channel, raw)
 }
 
-func (live *Live) dispatch(channel string, raw []byte, logIfMissing bool) {
+func (live *Live) dispatch(channel string, raw []byte) {
 	callbacks, ok := live.sync.Load(channel)
 
 	if !ok {
-		if logIfMissing && channel != "" {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"websocket: channel "+channel+" not found",
-				nil,
-			))
-		}
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"websocket: channel "+channel+" not found",
+			nil,
+		))
 
 		return
 	}

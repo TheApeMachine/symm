@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -27,6 +28,7 @@ type Analyzer struct {
 	manifold       *manifold.Solver
 	hawkes         manifold.HawkesSource
 	tree           *dmt.Tree
+	ui             chan []byte
 	resonance      map[string]*Resonance
 	causal         map[string]*Causal
 	remFrom        time.Time
@@ -35,6 +37,17 @@ type Analyzer struct {
 	lastREMFrom    time.Time
 	lastREMThrough time.Time
 	lastREMReplays int
+}
+
+/*
+publish sends one small datura frame to the UI the moment the analyzer has the
+evidence, mirroring broker.Balance.Publish.
+*/
+func (analyzer *Analyzer) publish(frame datura.Map[any]) {
+	select {
+	case analyzer.ui <- frame.Marshal():
+	default:
+	}
 }
 
 /*
@@ -53,6 +66,7 @@ func NewAnalyzer(
 	api *websocket.API,
 	hawkes manifold.HawkesSource,
 	tree *dmt.Tree,
+	ui chan []byte,
 ) (*Analyzer, error) {
 	_ = ctx
 
@@ -68,6 +82,7 @@ func NewAnalyzer(
 		manifold:  solver,
 		hawkes:    hawkes,
 		tree:      tree,
+		ui:        ui,
 		resonance: make(map[string]*Resonance),
 		causal:    make(map[string]*Causal),
 	}, nil
@@ -125,6 +140,28 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 		return true
 	})
 
+	if len(states) > 0 {
+		frame := make([]any, 0, len(states))
+
+		for _, state := range states {
+			frame = append(frame, state)
+		}
+
+		analyzer.publish(datura.Map[any]{"manifold": frame})
+	}
+
+	if len(thesis.Resonance) > 0 {
+		analyzer.publish(datura.Map[any]{"resonance": thesis.Resonance})
+	}
+
+	if len(thesis.Causal) > 0 {
+		analyzer.publish(datura.Map[any]{"causal": thesis.Causal})
+	}
+
+	if len(thesis.Hypotheses) > 0 {
+		analyzer.publish(datura.Map[any]{"hypotheses": thesis.Hypotheses})
+	}
+
 	for _, measurement := range thesis.Measurements {
 		if measurement == nil {
 			errnie.Error(errnie.Err(
@@ -174,6 +211,26 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 	}
 
 	analyzer.consolidate(thesis, remObservations, remRequested)
+
+	cognition := make([]types.Cognition, 0)
+
+	thesis.Cognition.Range(func(key, value any) bool {
+		reading, ok := value.(types.Cognition)
+
+		if ok {
+			cognition = append(cognition, reading)
+		}
+
+		return true
+	})
+
+	if len(cognition) > 0 {
+		analyzer.publish(datura.Map[any]{"cognition": cognition})
+	}
+
+	if len(thesis.Forecasts) > 0 {
+		analyzer.publish(datura.Map[any]{"forecasts": thesis.Forecasts})
+	}
 }
 
 /*

@@ -5,6 +5,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -21,13 +22,14 @@ type Signal struct {
 	cancel  context.CancelFunc
 	ticker  *Ticker
 	section *Section
+	ui      chan []byte
 }
 
 /*
 NewSignal creates lead-lag measurement state and subscribes its ticker input
 so temporal relationships persist across Thesis ticks.
 */
-func NewSignal(ctx context.Context, api *websocket.API) *Signal {
+func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
@@ -35,6 +37,26 @@ func NewSignal(ctx context.Context, api *websocket.API) *Signal {
 		cancel:  cancel,
 		ticker:  NewTicker(ctx, api),
 		section: NewSection(),
+		ui:      ui,
+	}
+}
+
+/*
+Publish sends one small datura frame to the UI the moment this signal has
+measured its evidence, mirroring broker.Balance.Publish.
+*/
+func (signal *Signal) Publish(measurements []*types.Measurement) {
+	filtered := types.FilterLatest(measurements)
+
+	if len(filtered) == 0 {
+		return
+	}
+
+	select {
+	case signal.ui <- datura.Map[any]{
+		"measurements": filtered,
+	}.Marshal():
+	default:
 	}
 }
 
@@ -290,7 +312,7 @@ func (signal *Signal) Measure(
 		}
 	}
 
-	thesis.Signals.Store("leadlag.tickers", rows)
+	signal.Publish(out)
 	thesis.Measurements = append(thesis.Measurements, out...)
 
 	return thesis
