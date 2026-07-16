@@ -202,7 +202,7 @@ Publish exposes the non-empty evidence accumulated by this tick without delaying
 func (thesis *Thesis) Publish() {
 	leader, leadershipThreshold := thesis.CrossSection.Leadership()
 
-	frame := datura.Map[any]{
+	thesis.Send(datura.Map[any]{
 		"tick": datura.Map[any]{"count": thesis.Tick},
 		"diagnostics": []datura.Map[any]{
 			{
@@ -212,22 +212,30 @@ func (thesis *Thesis) Publish() {
 				"breadth":             thesis.CrossSection.Breadth(),
 			},
 		},
-	}
+	})
 
 	if len(thesis.Measurements) > 0 {
-		frame["measurements"] = thesis.Measurements
+		thesis.Send(datura.Map[any]{
+			"measurements": thesis.Measurements,
+		})
 	}
 
 	if len(thesis.Decisions) > 0 {
-		frame["decisions"] = thesis.Decisions
+		thesis.Send(datura.Map[any]{
+			"decisions": thesis.Decisions,
+		})
 	}
 
 	if len(thesis.Orders) > 0 {
-		frame["orders"] = thesis.Orders
+		thesis.Send(datura.Map[any]{
+			"orders": thesis.Orders,
+		})
 	}
 
 	if len(thesis.Positions) > 0 {
-		frame["positions"] = thesis.Positions
+		thesis.Send(datura.Map[any]{
+			"positions": thesis.Positions,
+		})
 	}
 
 	if thesis.Lifecycle != nil {
@@ -251,11 +259,15 @@ func (thesis *Thesis) Publish() {
 			return true
 		})
 
-		frame["lifecycle"] = lifecycle
+		thesis.Send(datura.Map[any]{
+			"lifecycle": lifecycle,
+		})
 	}
 
 	if len(thesis.Findings) > 0 {
-		frame["findings"] = thesis.Findings
+		thesis.Send(datura.Map[any]{
+			"findings": thesis.Findings,
+		})
 	}
 
 	graphs := make([]GraphFrame, 0)
@@ -281,19 +293,27 @@ func (thesis *Thesis) Publish() {
 	}
 
 	if len(graphs) > 0 {
-		frame["graphs"] = graphs
+		thesis.Send(datura.Map[any]{
+			"graphs": graphs,
+		})
 	}
 
 	if len(thesis.Forecasts) > 0 {
-		frame["forecasts"] = thesis.Forecasts
+		thesis.Send(datura.Map[any]{
+			"forecasts": thesis.Forecasts,
+		})
 	}
 
 	if len(thesis.Hypotheses) > 0 {
-		frame["hypotheses"] = thesis.Hypotheses
+		thesis.Send(datura.Map[any]{
+			"hypotheses": thesis.Hypotheses,
+		})
 	}
 
 	if len(thesis.Categories) > 0 {
-		frame["categories"] = thesis.Categories
+		thesis.Send(datura.Map[any]{
+			"categories": thesis.Categories,
+		})
 	}
 
 	manifolds := make([]any, 0)
@@ -304,7 +324,9 @@ func (thesis *Thesis) Publish() {
 	})
 
 	if len(manifolds) > 0 {
-		frame["manifold"] = manifolds
+		thesis.Send(datura.Map[any]{
+			"manifold": manifolds,
+		})
 	}
 
 	cognition := make([]Cognition, 0)
@@ -328,17 +350,25 @@ func (thesis *Thesis) Publish() {
 	})
 
 	if len(cognition) > 0 {
-		frame["cognition"] = cognition
+		thesis.Send(datura.Map[any]{
+			"cognition": cognition,
+		})
 	}
 
 	if len(thesis.Resonance) > 0 {
-		frame["resonance"] = thesis.Resonance
+		thesis.Send(datura.Map[any]{
+			"resonance": thesis.Resonance,
+		})
 	}
 
 	if len(thesis.Causal) > 0 {
-		frame["causal"] = thesis.Causal
+		thesis.Send(datura.Map[any]{
+			"causal": thesis.Causal,
+		})
 	}
+}
 
+func (thesis *Thesis) Send(frame datura.Map[any]) {
 	select {
 	case thesis.uiHub <- frame.Marshal():
 	default:

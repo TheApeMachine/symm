@@ -2,11 +2,12 @@ package trader
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
@@ -40,6 +41,7 @@ type Crypto struct {
 	planner    *strategy.Planner
 	postMortem *strategy.PostMortem
 	analyzer   *logic.Analyzer
+	dataPath   string
 }
 
 /*
@@ -60,6 +62,7 @@ func NewCrypto(
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
+	dataPath := viper.GetViper().GetString("data.path")
 	tickBudget := viper.GetViper().GetDuration("cognitive.tick_budget")
 
 	if tickBudget <= 0 {
@@ -82,6 +85,7 @@ func NewCrypto(
 		analyzer:   analyzer,
 		planner:    planner,
 		postMortem: &strategy.PostMortem{},
+		dataPath:   dataPath,
 	}
 	crypto.tick.Store(thesis.Tick)
 
@@ -117,15 +121,6 @@ func (crypto *Crypto) Run() error {
 			}
 
 			if crypto.booter.Ready(system.StageWarmup) {
-				if crypto.instrument != nil {
-					if _, err := crypto.instrument.Activate(); err != nil {
-						crypto.status = types.ERROR
-						errnie.Error(err)
-
-						continue
-					}
-				}
-
 				thesis := crypto.planner.Update()
 				thesis.Tick = crypto.tick.Add(1)
 				crypto.trade(thesis)
@@ -137,16 +132,16 @@ func (crypto *Crypto) Run() error {
 					continue
 				}
 
-				if _, _, err := crypto.tree.Insert([]byte(types.ThesisKey), encoded); err != nil {
+				// Store the thesis to a file in the data directory
+				filePath := filepath.Join(os.Getenv(crypto.dataPath), "thesis.json")
+				err = os.WriteFile(filePath, encoded, 0644)
+
+				if err != nil {
 					crypto.status = types.ERROR
 					errnie.Error(err)
 					continue
 				}
-
-				thesis.Publish()
 			}
-
-			time.Sleep(crypto.tickBudget)
 		}
 	}()
 
@@ -158,94 +153,18 @@ trade supplies current broker constraints to strategy, then submits each
 selected order through Desk for exchange validation and execution.
 */
 func (crypto *Crypto) trade(thesis *types.Thesis) {
-	thesis.Positions = thesis.Positions[:0]
-
-	for _, position := range crypto.desk.Positions() {
-		if position.Stop == nil {
-			continue
+	for _, holding := range thesis.Positions {
+		if !crypto.desk.HasSlot(holding.IsOpportunity) {
+			return
 		}
 
-		holding, err := crypto.balance.Holding(position.Stop.Symbol)
-
-		if err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		thesis.Positions = append(thesis.Positions, holding)
-	}
-
-	if len(thesis.Forecasts) == 0 {
-		return
-	}
-
-	fees := make(map[string]float64, len(thesis.Forecasts))
-
-	for index := range thesis.Forecasts {
-		forecast := &thesis.Forecasts[index]
-		fee, err := crypto.price.FeeRate(forecast.Symbol)
-
-		if err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		if fee.Fee == nil {
+		if err := crypto.desk.Buy(holding, holding.IsOpportunity); err != nil {
 			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"taker fee is missing for "+forecast.Symbol,
-				nil,
+				errnie.UnprocessableContent,
+				"failed to buy holding "+holding.Symbol,
+				err,
 			))
 			continue
-		}
-
-		fraction := fee.Fee.Div(decimal.NewFromInt64(100))
-		forecast.ExpectedFees = fraction.Mul(decimal.NewFromInt64(2)).Float64()
-		forecast.FrictionReady = true
-		fees[forecast.Symbol] = fraction.Float64()
-	}
-
-	available, err := crypto.balance.AvailableQuote()
-
-	if err != nil {
-		errnie.Error(err)
-		available = 0
-	}
-
-	thesis = crypto.planner.Decide(
-		thesis,
-		fees,
-		available,
-		viper.GetViper().GetInt("trading.slots.normal"),
-	)
-
-	for _, order := range thesis.Orders {
-		if order.Description == nil {
-			continue
-		}
-
-		switch order.Description.Type {
-		case "enter":
-			pair, err := crypto.instrument.Pair(order.Description.Pair)
-
-			if err != nil {
-				errnie.Error(err)
-				continue
-			}
-
-			if err := crypto.desk.Buy(order, &pair); err != nil {
-				errnie.Error(err)
-			}
-		case "exit", "reduce":
-			if err := crypto.desk.Sell(order); err != nil {
-				errnie.Error(err)
-			}
-		default:
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"unexpected order type "+order.Description.Type,
-				nil,
-			))
 		}
 	}
 }

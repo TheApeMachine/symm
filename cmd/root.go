@@ -138,11 +138,36 @@ var (
 			api := websocket.NewAPI(ctx, public, private, paper)
 			defer api.Close()
 
+			holdings := make([]types.Holding, 0)
+
+			filePath := filepath.Join(os.Getenv(viper.GetString("data.path")), "thesis.json")
+			encoded, err := os.ReadFile(filePath)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"failed to read holdings from data directory",
+					err,
+				))
+			}
+
+			if err := sonic.Unmarshal(encoded, &thesis); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"failed to unmarshal thesis",
+					err,
+				))
+			}
+
+			for _, holding := range thesis.Positions {
+				holdings = append(holdings, holding)
+			}
+
 			price := broker.NewPrice(api)
 			instrument := broker.NewInstrument(api, price, channel)
-			balance := broker.NewBalance(api, channel)
-			desk := broker.NewDesk(api, instrument, price, balance, thesis, channel)
-			uiHub, err := ui.NewHub(ctx, price, balance, desk, channel)
+			balance := broker.NewBalance(api, holdings, channel)
+			desk := broker.NewDesk(api, instrument, price, balance)
+			uiHub, err := ui.NewHub(ctx, price, balance, thesis, channel)
 
 			if err != nil {
 				return errnie.Error(errnie.Err(

@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"errors"
-	"sync"
 	"syscall"
 
 	"github.com/bytedance/sonic"
@@ -19,23 +18,22 @@ import (
 Hub owns the dashboard websocket and forwards typed backend frames to clients.
 */
 type Hub struct {
-	status      types.Status
-	ctx         context.Context
-	cancel      context.CancelFunc
-	app         *fiber.App
-	listenAddr  string
-	Messages    chan []byte
-	price       *broker.Price
-	balance     *broker.Balance
-	desk        *broker.Desk
-	subscribers *sync.Map
+	status     types.Status
+	ctx        context.Context
+	cancel     context.CancelFunc
+	app        *fiber.App
+	listenAddr string
+	Messages   chan []byte
+	price      *broker.Price
+	balance    *broker.Balance
+	thesis     *types.Thesis
 }
 
 func NewHub(
 	ctx context.Context,
 	price *broker.Price,
 	balance *broker.Balance,
-	desk *broker.Desk,
+	thesis *types.Thesis,
 	channel chan []byte,
 ) (*Hub, error) {
 	ctx, cancel := context.WithCancel(ctx)
@@ -53,10 +51,8 @@ func NewHub(
 			ReadBufferSize:  1024 * 1024,
 			WriteBufferSize: 1024 * 1024,
 		}),
-		price:       price,
-		balance:     balance,
-		desk:        desk,
-		subscribers: &sync.Map{},
+		price:   price,
+		balance: balance,
 	}
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
@@ -71,7 +67,7 @@ func NewHub(
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		defer conn.Close()
 
-		hub.desk.Publish()
+		hub.thesis.Publish()
 
 		for {
 			select {

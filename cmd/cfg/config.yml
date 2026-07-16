@@ -1,4 +1,5 @@
 system:
+  data_path: ~/.symm/data
   pprof:
     enabled: false
     addr: 127.0.0.1:6060

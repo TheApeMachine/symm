@@ -175,13 +175,22 @@ func (instrument *Instrument) Subscribe() error {
 	pace := viper.GetDuration("market.subscribe_pace")
 	instrument.symbols = symbols
 
+	subscribers := []func([]string) error{
+		instrument.api.SubscribeTrade,
+		instrument.api.SubscribeBook,
+		instrument.api.SubscribeTicker,
+		instrument.api.SubscribeLevel3,
+	}
+
 	for batch := range slices.Chunk(symbols, batchSize) {
 		if err := instrument.price.GetFees(batch); err != nil {
 			return errnie.Error(err)
 		}
 
-		if err := instrument.api.SubscribeTicker(batch); err != nil {
-			return errnie.Error(err)
+		for _, subscribe := range subscribers {
+			if err := subscribe(batch); err != nil {
+				return errnie.Error(err)
+			}
 		}
 
 		time.Sleep(pace)
@@ -190,43 +199,4 @@ func (instrument *Instrument) Subscribe() error {
 	instrument.status.Store(types.READY)
 
 	return nil
-}
-
-/*
-Activate subscribes trade, book, and level3 data for the complete online quote
-universe exactly once, preserving every symbol as a possible opportunity.
-*/
-func (instrument *Instrument) Activate() (bool, error) {
-	if instrument.active {
-		return true, nil
-	}
-
-	if len(instrument.symbols) == 0 {
-		return false, nil
-	}
-
-	subscribers := []func([]string) error{
-		instrument.api.SubscribeTrade,
-		instrument.api.SubscribeBook,
-	}
-
-	if viper.GetBool("market.l3_enabled") {
-		subscribers = append(subscribers, instrument.api.SubscribeLevel3)
-	}
-
-	batchSize := viper.GetInt("market.subscribe_batch")
-
-	for batch := range slices.Chunk(instrument.symbols, batchSize) {
-		for _, subscribe := range subscribers {
-			if err := subscribe(batch); err != nil {
-				instrument.status.Store(types.ERROR)
-
-				return false, errnie.Error(err)
-			}
-		}
-	}
-
-	instrument.active = true
-
-	return true, nil
 }

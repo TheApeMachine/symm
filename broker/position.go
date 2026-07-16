@@ -32,7 +32,6 @@ type Position struct {
 
 func NewPosition(
 	api *websocket.API,
-	ui chan []byte,
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
@@ -68,13 +67,7 @@ func (position *Position) OrderAck(buf []byte) {
 	}
 
 	if errnie.Error(kraken.Validate(orderAck)) != nil {
-		position.status = types.REJECTED
-
-		if holding, err := position.balance.Holding(position.Stop.Symbol); err == nil &&
-			holding.Qty.Sign() > 0 {
-			position.status = types.OPEN
-		}
-
+		position.status = types.ERROR
 		return
 	}
 
@@ -91,42 +84,32 @@ func (position *Position) ExecutionAck(buf []byte) {
 	}
 
 	for _, data := range execution.Data {
-		if position.orderID == "" || data.OrderID != position.orderID || data.Symbol != position.pair.Symbol {
+		if data.OrderID != position.orderID {
 			continue
 		}
 
-		found, _ := position.balance.holdings.LoadOrStore(position.pair.Symbol, types.Holding{
-			Status:     types.MarketStatuses[data.ExecType],
-			Symbol:     position.pair.Symbol,
-			Asset:      position.pair.Base,
-			Qty:        decimal.NewFromFloat64(data.LastQty),
-			EntryAt:    &data.Timestamp,
-			EntryPrice: &data.LastPrice,
-			EntryFee:   &data.FeeUsdEquiv,
-			ExitPrice:  &data.LastPrice,
-			ExitFee:    &data.FeeUsdEquiv,
-		})
+		found, ok := position.balance.holdings.Load(data.Symbol)
 
-		pair, err := position.instrument.Pair(position.pair.Symbol)
-
-		if err != nil {
+		if !ok {
 			errnie.Error(errnie.Err(
 				errnie.Internal,
-				"failed to get price for "+position.pair.Symbol,
-				err,
+				"holding not found for "+data.Symbol,
+				nil,
 			))
 
 			return
 		}
 
-		holding := found.(types.Holding)
+		holding := found.(*types.Holding)
 		holding.Mark = &data.LastPrice
-		holding.PnL, err = position.price.WithFriction(&pair, holding.Qty)
+
+		var err error
+		holding.PnL, err = position.price.WithFriction(position.pair, holding.Qty)
 
 		if err != nil {
 			errnie.Error(errnie.Err(
 				errnie.Internal,
-				"failed to calculate friction for "+position.pair.Symbol,
+				"failed to calculate friction for "+data.Symbol,
 				err,
 			))
 
@@ -138,27 +121,17 @@ func (position *Position) ExecutionAck(buf []byte) {
 }
 
 func (position *Position) Enter() error {
-	holding, err := position.balance.Holding(position.Stop.Symbol)
+	holding, err := position.balance.Holding(position.pair.Symbol)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
-			"failed to get holding for "+position.Stop.Symbol,
+			"failed to get holding for "+position.pair.Symbol,
 			err,
 		))
 	}
 
-	instrument, err := position.instrument.Pair(position.Stop.Symbol)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to get instrument for "+position.Stop.Symbol,
-			err,
-		))
-	}
-
-	if holding.Qty.Cmp(decimal.NewFromFloat64(instrument.QtyMin)) < 0 {
+	if holding.Qty.Cmp(decimal.NewFromFloat64(position.pair.QtyMin)) < 0 {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"position quantity is less than minimum quantity",
@@ -166,7 +139,7 @@ func (position *Position) Enter() error {
 		))
 	}
 
-	amount, err := position.price.Taker(&instrument, holding.Qty)
+	amount, err := position.price.Taker(position.pair, holding.Qty)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -217,14 +190,13 @@ func (position *Position) Exit() error {
 		))
 	}
 
-	if holding.Qty.Sign() <= 0 || holding.Qty.Cmp(holding.Qty) > 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to get holding for "+position.Stop.Symbol,
-			err,
-		))
-	}
+	request := kraken.NewMarketOrder(
+		"sell",
+		holding.Qty.Float64(),
+		holding.Symbol,
+	)
 
+	position.request = request
 	position.status = types.PENDING
 
 	if err := position.api.AddOrder(position.request); err != nil {
@@ -238,20 +210,6 @@ func (position *Position) Exit() error {
 	}
 
 	return nil
-}
-
-func (position *Position) Executions() []*kraken.Execution {
-	if position.Stop == nil {
-		return nil
-	}
-
-	holding, err := position.balance.Holding(position.Stop.Symbol)
-
-	if err != nil {
-		return nil
-	}
-
-	return holding.Executions
 }
 
 /*
@@ -280,13 +238,6 @@ func (position *Position) TickerAck(buf []byte) {
 	}
 
 	for _, tickerData := range ticker.Data {
-		if tickerData.Symbol != position.Stop.Symbol ||
-			tickerData.Last == nil ||
-			holding.Order.Price.Sign() <= 0 ||
-			holding.Order.Volume.Sign() <= 0 {
-			continue
-		}
-
 		holding.Mark = tickerData.Last
 		holding.PnL, err = position.price.WithFriction(position.pair, holding.Qty)
 
@@ -297,7 +248,7 @@ func (position *Position) TickerAck(buf []byte) {
 				err,
 			))
 
-			return
+			continue
 		}
 
 		return

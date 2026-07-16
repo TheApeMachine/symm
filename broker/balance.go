@@ -17,19 +17,23 @@ import (
 type Balance struct {
 	status   types.Status
 	api      *websocket.API
-	ui       chan []byte
 	model    *kraken.Balance
 	holdings *sync.Map
 	quote    string
+	ui       chan []byte
 }
 
-func NewBalance(api *websocket.API, ui chan []byte) *Balance {
+func NewBalance(api *websocket.API, holdings []types.Holding, ui chan []byte) *Balance {
 	balance := &Balance{
 		status:   types.INITIALIZING,
 		api:      api,
-		ui:       ui,
-		quote:    viper.GetString("market.quote_currency"),
+		quote:    viper.GetViper().GetString("market.quote_currency"),
 		holdings: &sync.Map{},
+		ui:       ui,
+	}
+
+	for _, holding := range holdings {
+		balance.holdings.Store(holding.Symbol, holding)
 	}
 
 	return balance
@@ -51,6 +55,8 @@ func (balance *Balance) Initialize() error {
 	}
 
 	balance.status = types.READY
+	balance.Publish()
+
 	return nil
 }
 
@@ -103,64 +109,26 @@ func (balance *Balance) BalanceAck(buf []byte) {
 
 	if balance.model == nil || incoming.Type == "snapshot" {
 		balance.model = incoming
-	} else {
-		for _, update := range incoming.Data {
-			found := false
-
-			for index := range balance.model.Data {
-				if balance.model.Data[index].Asset != update.Asset {
-					continue
-				}
-
-				balance.model.Data[index] = update
-				found = true
-				break
-			}
-
-			if !found {
-				balance.model.Data = append(balance.model.Data, update)
-			}
-		}
-
-		balance.model.Sequence = incoming.Sequence
-		balance.model.Timestamp = incoming.Timestamp
+		return
 	}
 
-	for _, balanceData := range incoming.Data {
-		assetHolding := types.Holding{
-			Asset: balanceData.Asset,
-			Qty:   balanceData.Balance,
-		}
-
-		if value, ok := balance.holdings.Load(balanceData.Asset); ok {
-			assetHolding = value.(types.Holding)
-			assetHolding.Qty = balanceData.Balance
-		}
-
-		balance.Update(balanceData.Asset, assetHolding)
-
-		if balanceData.Asset == balance.quote {
-			continue
-		}
-
-		symbol := balance.Symbol(balanceData.Asset)
-		value, ok := balance.holdings.Load(symbol)
-
-		if !ok {
-			continue
-		}
-
-		holding := value.(types.Holding)
-		holding.Symbol = symbol
-		holding.Asset = balanceData.Asset
-		holding.Qty = balanceData.Balance
-
-		if holding.Order != nil {
-			holding.Order.Volume = holding.Qty
-		}
-
-		balance.Update(symbol, holding)
+	if incoming.Sequence < balance.model.Sequence {
+		return
 	}
+
+	for _, update := range incoming.Data {
+		for index := range balance.model.Data {
+			if balance.model.Data[index].Asset != update.Asset {
+				continue
+			}
+
+			balance.model.Data[index] = update
+			break
+		}
+	}
+
+	balance.model.Sequence = incoming.Sequence
+	balance.model.Timestamp = incoming.Timestamp
 
 	balance.status = types.READY
 	balance.Publish()
@@ -212,23 +180,6 @@ func (balance *Balance) Holding(symbol string) (types.Holding, error) {
 	}
 
 	return value.(types.Holding), nil
-}
-
-/*
-Update updates the holding for a given symbol.
-*/
-func (balance *Balance) Update(symbol string, holding types.Holding) {
-	if symbol != "" {
-		holding.Symbol = symbol
-	}
-
-	if holding.Asset != "" {
-		balance.holdings.Store(holding.Asset, holding)
-	}
-
-	if symbol != "" {
-		balance.holdings.Store(symbol, holding)
-	}
 }
 
 /*
