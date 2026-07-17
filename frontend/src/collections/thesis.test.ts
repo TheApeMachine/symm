@@ -36,6 +36,9 @@ describe("thesis frame stores", () => {
 				adverseSelection: 0.0001,
 				uncertainty: 0.05,
 				confidence: 0.8,
+				opportunityMargin: 0.01,
+				cognitiveLead: 0.2,
+				basinConfidence: 0.6,
 				availableCapital: 1000,
 				openPositions: 1,
 				slotCapacity: 4,
@@ -199,9 +202,7 @@ describe("thesis frame stores", () => {
 			"BTC/USD:manifold:return",
 		]);
 		expect(
-			forecastsStore.state.forecasts[
-				"BTC/USD:manifold:return"
-			]?.length(),
+			forecastsStore.state.forecasts["BTC/USD:manifold:return"]?.length(),
 		).toBe(FORECAST_HISTORY_LIMIT);
 		expect(forecastValues(forecastsStore.state.forecasts)[0]?.sourceEpoch).toBe(
 			200,

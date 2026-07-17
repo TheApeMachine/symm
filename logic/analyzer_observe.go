@@ -138,10 +138,41 @@ func (analyzer *Analyzer) forecast(
 		BuyCapacity:              state.BuyCapacity,
 		SellCapacity:             state.SellCapacity,
 		ExpectedSpread:           state.Spread,
+		ExpectedImpact:           forecastImpact(state),
+		ExpectedAdverseSelection: forecastAdverse(state),
 		Uncertainty:              resonanceOutcome.Uncertainty,
 		Confidence: math.Min(
 			causalOutcome.Reading.Confidence,
-			1/(1+resonanceOutcome.Surprise),
+			math.Exp(-math.Abs(resonanceOutcome.Surprise)),
 		),
 	})
+}
+
+/*
+forecastImpact is temporary impact as capacity utilization times the observed
+spread. Candidate size is capped at BuyCapacity, so the ratio is the share of
+two-sided visible depth consumed by a full-touch entry.
+*/
+func forecastImpact(state manifold.State) float64 {
+	depth := state.BuyCapacity + state.SellCapacity
+
+	if state.BuyCapacity <= 0 || depth <= 0 || state.Spread < 0 {
+		return 0
+	}
+
+	return state.Spread * (state.BuyCapacity / depth)
+}
+
+/*
+forecastAdverse is informed-flow drag from manifold stress scaled by the
+observed spread so adverse selection stays in return units.
+*/
+func forecastAdverse(state manifold.State) float64 {
+	stress := math.Abs(state.StressAnisotropy)
+
+	if stress <= 0 || state.Spread < 0 {
+		return 0
+	}
+
+	return stress * state.Spread
 }

@@ -123,6 +123,8 @@ func (balance *Balance) BalanceAck(buf []byte) {
 
 	if balance.model == nil || incoming.Type == "snapshot" {
 		balance.model = incoming
+		balance.status = types.READY
+		balance.Publish()
 		return
 	}
 
@@ -130,14 +132,39 @@ func (balance *Balance) BalanceAck(buf []byte) {
 		return
 	}
 
+	// A gap means we missed updates; force a fresh snapshot on the next
+	// subscribe/reconnect rather than merging over unknown state.
+	if balance.model.Sequence > 0 &&
+		incoming.Sequence > balance.model.Sequence+1 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"balance: sequence gap; waiting for snapshot resync",
+			nil,
+		))
+		balance.model = nil
+
+		if err := balance.api.SubscribeBalance(); err != nil {
+			errnie.Error(err)
+		}
+
+		return
+	}
+
 	for _, update := range incoming.Data {
+		replaced := false
+
 		for index := range balance.model.Data {
 			if balance.model.Data[index].Asset != update.Asset {
 				continue
 			}
 
 			balance.model.Data[index] = update
+			replaced = true
 			break
+		}
+
+		if !replaced {
+			balance.model.Data = append(balance.model.Data, update)
 		}
 	}
 
@@ -170,7 +197,11 @@ func (balance *Balance) Holdings() iter.Seq[types.Holding] {
 		balance.holdings.Range(func(key, value any) bool {
 			holding := value.(*types.Holding)
 
-			if key.(string) != holding.Asset {
+			if key.(string) != holding.Symbol {
+				return true
+			}
+
+			if holding.Closed() {
 				return true
 			}
 

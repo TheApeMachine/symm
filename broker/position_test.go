@@ -23,10 +23,10 @@ func TestPositionExecutionAck(t *testing.T) {
 			Fee: decimal.NewFromFloat64(0.26),
 		})
 		price := &Price{
-			status:  types.READY,
 			fees:    fees,
 			tickers: &sync.Map{},
 		}
+		price.status.Store(types.READY)
 		holdings := &sync.Map{}
 		holding := &types.Holding{
 			Symbol: "BTC/USD",
@@ -52,7 +52,9 @@ func TestPositionExecutionAck(t *testing.T) {
 			Data: []kraken.ExecutionData{{
 				OrderID: "order-1", ExecID: "buy-1", ExecType: "trade",
 				Symbol: "BTC/USD", Side: "buy", OrderType: "market",
-				LastQty: 1, LastPrice: *decimal.NewFromInt64(100),
+				LastQty: 1, CumQty: 1, OrderStatus: "filled",
+				LastPrice:   *decimal.NewFromInt64(100),
+				AvgPrice:    *decimal.NewFromInt64(100),
 				Cost:        *decimal.NewFromInt64(100),
 				FeeUsdEquiv: *decimal.NewFromFloat64(0.26), Timestamp: time.Unix(1, 0),
 			}},
@@ -83,7 +85,9 @@ func TestPositionExecutionAck(t *testing.T) {
 				Data: []kraken.ExecutionData{{
 					OrderID: "sell-1", ExecID: "sell-fill", ExecType: "trade",
 					Symbol: "BTC/USD", Side: "sell", OrderType: "market",
-					LastQty: 1, LastPrice: *decimal.NewFromInt64(101),
+					LastQty: 1, CumQty: 1, OrderStatus: "filled",
+					LastPrice:   *decimal.NewFromInt64(101),
+					AvgPrice:    *decimal.NewFromInt64(101),
 					Cost:        *decimal.NewFromInt64(101),
 					FeeUsdEquiv: *decimal.NewFromFloat64(0.2626), Timestamp: time.Unix(2, 0),
 				}},
@@ -142,7 +146,8 @@ func BenchmarkPositionExecutionAck(b *testing.B) {
 	fees.Store("BTC/USD", kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.26),
 	})
-	price := &Price{status: types.READY, fees: fees, tickers: &sync.Map{}}
+	price := &Price{fees: fees, tickers: &sync.Map{}}
+	price.status.Store(types.READY)
 	execution := &kraken.Execution{
 		Channel: "executions", Type: "update",
 		Data: []kraken.ExecutionData{{

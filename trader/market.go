@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"context"
 	"time"
 
 	"github.com/spf13/viper"
@@ -17,9 +18,15 @@ of ticker, trade, and book handlers and produces immutable cuts for all signals.
 */
 type Market struct {
 	instrument *broker.Instrument
+	api        *websocket.API
 	tickers    *types.MarketFeed[kraken.TickerData]
 	trades     *types.MarketFeed[kraken.TradeData]
 	books      *types.MarketFeed[kraken.BookData]
+	ctx        context.Context
+	cancel     context.CancelFunc
+	tickersIn  chan []byte
+	tradesIn   chan []byte
+	booksIn    chan []byte
 }
 
 /*
@@ -34,6 +41,7 @@ func NewMarket(
 	trackCapacity := viper.GetInt("signals.feed_track_capacity")
 	market := &Market{
 		instrument: instrument,
+		api:        api,
 		tickers: types.NewMarketFeed[kraken.TickerData](
 			timelineCapacity,
 			trackCapacity,
@@ -56,11 +64,7 @@ func NewMarket(
 		))
 	}
 
-	if api != nil {
-		api.On("ticker", market.OnTicker)
-		api.On("trade", market.OnTrade)
-		api.On("book", market.OnBook)
-	}
+	market.bindIngress(api)
 
 	return market, nil
 }
@@ -91,7 +95,7 @@ func (market *Market) OnTicker(data []byte) {
 				"market: retain ticker row for "+row.Symbol,
 				err,
 			))
-			return
+			continue
 		}
 	}
 }
@@ -122,7 +126,7 @@ func (market *Market) OnTrade(data []byte) {
 				"market: retain trade row for "+row.Symbol,
 				err,
 			))
-			return
+			continue
 		}
 	}
 }
@@ -184,7 +188,12 @@ func (market *Market) OnBook(data []byte) {
 				"market: retain book row for "+row.Symbol,
 				err,
 			))
-			return
+
+			if market.api != nil {
+				errnie.Error(market.api.ResyncBook([]string{row.Symbol}))
+			}
+
+			continue
 		}
 	}
 }

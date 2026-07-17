@@ -28,17 +28,18 @@ func TestNewSetsAuthURL(t *testing.T) {
 			client: spot.NewWebSocket(),
 			auth:   true,
 		}
+		live.status.Store(types.INITIALIZING)
 		live.client.URL = PrivateWebSocketURL
 
 		live.client.OnAuthenticated.Recurring(func(event *callback.Event[string]) {
-			live.status = types.READY
+			live.status.Store(types.READY)
 		})
 
 		live.client.OnAuthenticated.Call("token")
 
 		Convey("It should become ready after authentication", func() {
 			So(live.client.URL, ShouldEqual, PrivateWebSocketURL)
-			So(live.status, ShouldEqual, types.READY)
+			So(live.Status(), ShouldEqual, types.READY)
 		})
 	})
 }
@@ -322,6 +323,59 @@ func TestAuthNonceSurvivesRestart(t *testing.T) {
 
 			So(err, ShouldBeNil)
 			So(firstNonceAfterRestart, ShouldBeGreaterThan, priorRunLastNonce)
+		})
+	})
+}
+
+func TestAuthNonceIsSharedAcrossAuthenticatedLives(t *testing.T) {
+	Convey("Given concurrent authenticated Live transports", t, func() {
+		const workers = 32
+		const perWorker = 64
+		seen := make(map[string]struct{}, workers*perWorker)
+		duplicates := 0
+		var mu sync.Mutex
+		var wait sync.WaitGroup
+		wait.Add(workers)
+
+		for range workers {
+			go func() {
+				defer wait.Done()
+
+				for range perWorker {
+					nonce := authNonce()()
+					mu.Lock()
+
+					if _, exists := seen[nonce]; exists {
+						duplicates++
+					}
+
+					seen[nonce] = struct{}{}
+					mu.Unlock()
+				}
+			}()
+		}
+
+		wait.Wait()
+
+		Convey("Then every shared nonce is unique", func() {
+			So(duplicates, ShouldEqual, 0)
+			So(len(seen), ShouldEqual, workers*perWorker)
+		})
+
+		Convey("Then New wires the shared generator onto authenticated REST", func() {
+			private := New(context.Background(), nil, true, PrivateWebSocketURL)
+			level3 := New(context.Background(), nil, true, Level3WebSocketURL)
+			defer private.Close()
+			defer level3.Close()
+
+			So(private.client.REST.Nonce, ShouldNotBeNil)
+			So(level3.client.REST.Nonce, ShouldNotBeNil)
+
+			first, err := strconv.ParseInt(private.client.REST.Nonce(), 10, 64)
+			So(err, ShouldBeNil)
+			second, err := strconv.ParseInt(level3.client.REST.Nonce(), 10, 64)
+			So(err, ShouldBeNil)
+			So(second, ShouldBeGreaterThan, first)
 		})
 	})
 }

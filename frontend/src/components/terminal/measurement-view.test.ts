@@ -3,6 +3,7 @@ import type { Measurement } from "#/types/measurement";
 import {
 	dedupeEpoch,
 	headlineMetric,
+	headlineReading,
 	latestByMetric,
 	latestEpoch,
 	measurementIdentity,
@@ -51,6 +52,19 @@ describe("orderedEpoch", () => {
 		const bid = measurement("conditional_intensity", at, 0.18, "buy");
 		const ask = measurement("conditional_intensity", at, 0.21, "sell");
 		expect(latestByMetric([bid, ask], "conditional_intensity")).toBe(ask);
+		expect(
+			headlineReading([measurement("event_count", at, 4, "buy")], "hawkes")
+				?.metric,
+		).toBe("event_count");
+		expect(
+			headlineReading(
+				[
+					measurement("event_count", at, 4, "buy"),
+					measurement("arrival_rate", at, 0.5, "buy"),
+				],
+				"hawkes",
+			)?.metric,
+		).toBe("arrival_rate");
 	});
 
 	it("dedupes duplicate metric identities within one observation tick", () => {

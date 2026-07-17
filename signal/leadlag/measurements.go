@@ -97,13 +97,37 @@ func (signal *Signal) selectCorrelations(
 	lagCorrelation := math.Abs(selected.signedLagCorrelation)
 	contempCorrelation := math.Abs(selected.signedContempCorrelation)
 	selected.correlation = min(math.Max(contempCorrelation, lagCorrelation), 1)
-	lagDominates := max(0, min(1, (lagCorrelation-contempCorrelation)*1e9))
+	lagDominates := dominanceFraction(lagCorrelation, contempCorrelation, features.SampleCount)
 	selected.signedCorrelation = min(max(
 		selected.signedContempCorrelation+lagDominates*(selected.signedLagCorrelation-selected.signedContempCorrelation),
 		-1,
 	), 1)
 
 	return selected
+}
+
+func dominanceFraction(lagCorrelation, contempCorrelation float64, sampleCount int) float64 {
+	diff := lagCorrelation - contempCorrelation
+
+	if diff <= 0 {
+		return 0
+	}
+
+	tolerance := correlationTolerance(sampleCount)
+
+	if tolerance <= 0 {
+		return 0
+	}
+
+	return min(1, diff/tolerance)
+}
+
+func correlationTolerance(sampleCount int) float64 {
+	if sampleCount <= 0 {
+		return 0
+	}
+
+	return 1 / math.Sqrt(float64(sampleCount))
 }
 
 /*
@@ -124,7 +148,7 @@ func sampleSupportFraction(sampleCount int) float64 {
 		return 0
 	}
 
-	return float64(sampleCount) / float64(shortWindow)
+	return min(1, float64(sampleCount)/float64(shortWindow))
 }
 
 type evidenceWeights struct {

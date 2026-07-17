@@ -162,6 +162,12 @@ func (instrument *Instrument) Subscribe() error {
 		return nil
 	}
 
+	// Lead majors first so BTC/ETH L2/L3 and trades authenticate and warm before
+	// the long tail of thin USD pairs consumes the subscribe budget.
+	sort.SliceStable(symbols, func(left, right int) bool {
+		return subscribeRank(symbols[left]) < subscribeRank(symbols[right])
+	})
+
 	batchSize := viper.GetInt("market.subscribe_batch")
 
 	if batchSize < 1 {
@@ -199,4 +205,21 @@ func (instrument *Instrument) Subscribe() error {
 	instrument.status.Store(types.READY)
 
 	return nil
+}
+
+/*
+subscribeRank orders majors ahead of the long USD tail so high-liquidity books
+and trades warm first under Kraken's subscribe pacing budget.
+*/
+func subscribeRank(symbol string) int {
+	switch symbol {
+	case "BTC/USD":
+		return 0
+	case "ETH/USD":
+		return 1
+	case "SOL/USD":
+		return 2
+	default:
+		return 100
+	}
 }

@@ -105,8 +105,8 @@ func TestSessionPaperSmoke(t *testing.T) {
 				So(last, ShouldNotBeNil)
 				So(len(last.Measurements), ShouldBeGreaterThan, 0)
 				So(session.Desk().OpenPositions(), ShouldEqual, 0)
-				// Decide is not yet on the Tick path; honest empty decisions
-				// beat inventing hold/nothing without a reason pipeline.
+				// Paper pump sessions run without analyzer forecasts/fees, so
+				// Decide has nothing Eligible and correctly stays empty.
 				So(len(last.Decisions), ShouldEqual, 0)
 				So(len(last.Positions), ShouldEqual, 0)
 			})
@@ -183,7 +183,7 @@ func TestMockAPIWire(t *testing.T) {
 			seen := 0
 			api.On("ticker", func([]byte) { seen++ })
 			for frame := range tickerfixture.NewFixture(tickerfixture.UPDATE, 3).Frames() {
-				mock.Emit(frame)
+				mock.Emit(frame.Channel, frame.Payload)
 			}
 
 			Convey("Then handlers registered through API.On receive frames", func() {

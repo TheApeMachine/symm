@@ -28,6 +28,9 @@ type Decision struct {
 	AdverseSelection  float64            `json:"adverseSelection" validate:"finite,nonnegative"`
 	Uncertainty       float64            `json:"uncertainty" validate:"finite,nonnegative"`
 	Confidence        float64            `json:"confidence" validate:"finite,min=0,max=1"`
+	OpportunityMargin float64            `json:"opportunityMargin" validate:"finite"`
+	CognitiveLead     float64            `json:"cognitiveLead" validate:"finite"`
+	BasinConfidence   float64            `json:"basinConfidence" validate:"finite,nonnegative"`
 	AvailableCapital  float64            `json:"availableCapital" validate:"finite,nonnegative"`
 	OpenPositions     int                `json:"openPositions" validate:"min=0"`
 	SlotCapacity      int                `json:"slotCapacity" validate:"min=0"`

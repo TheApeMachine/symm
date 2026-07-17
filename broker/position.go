@@ -1,10 +1,14 @@
 package broker
 
 import (
+	"context"
+	"sync"
+
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -27,9 +31,16 @@ type Position struct {
 	request    *kraken.MarketOrder
 	orderID    string
 	Stop       *StopData
+	stoploss   *strategy.Stoploss
 	tickers    []*kraken.TickerData
+	seenExec   sync.Map
+	onTerminal func(symbol string)
 }
 
+/*
+NewPosition constructs a position manager. Callbacks are registered once on
+Desk so closed positions do not accumulate forever on the hot ticker path.
+*/
 func NewPosition(
 	api *websocket.API,
 	instrument *Instrument,
@@ -37,7 +48,7 @@ func NewPosition(
 	balance *Balance,
 	pair *kraken.InstrumentPair,
 ) *Position {
-	position := &Position{
+	return &Position{
 		status:     types.INITIALIZING,
 		api:        api,
 		instrument: instrument,
@@ -46,13 +57,8 @@ func NewPosition(
 		pair:       pair,
 		tickers:    make([]*kraken.TickerData, 0),
 		Stop:       &StopData{Symbol: pair.Symbol},
+		stoploss:   strategy.NewStoploss(context.Background()),
 	}
-
-	position.api.On("add_order", position.OrderAck)
-	position.api.On("executions", position.ExecutionAck)
-	position.api.On("ticker", position.TickerAck)
-
-	return position
 }
 
 func (position *Position) Status() types.Status {
@@ -68,6 +74,7 @@ func (position *Position) OrderAck(buf []byte) {
 
 	if errnie.Error(kraken.Validate(orderAck)) != nil {
 		position.status = types.ERROR
+		position.notifyTerminal()
 		return
 	}
 
@@ -80,12 +87,19 @@ func (position *Position) ExecutionAck(buf []byte) {
 
 	if errnie.Error(kraken.Validate(execution)) != nil {
 		position.status = types.ERROR
+		position.notifyTerminal()
 		return
 	}
 
 	for _, data := range execution.Data {
 		if data.OrderID != position.orderID {
 			continue
+		}
+
+		if data.ExecID != "" {
+			if _, seen := position.seenExec.LoadOrStore(data.ExecID, struct{}{}); seen {
+				continue
+			}
 		}
 
 		value, ok := position.balance.holdings.Load(data.Symbol)
@@ -104,14 +118,13 @@ func (position *Position) ExecutionAck(buf []byte) {
 		holding.Update(&data)
 		holding.Mark = &data.LastPrice
 		holding.Executions = append(holding.Executions, execution)
+		position.status = holding.Status
 
-		if data.Side == "sell" && data.ExecType == "trade" {
-			holding.Status = types.CLOSED
+		if holding.Closed() || holding.Status == types.CLOSED {
 			position.status = types.CLOSED
-			return
+			position.notifyTerminal()
 		}
 
-		position.status = holding.Status
 		return
 	}
 }
@@ -127,7 +140,9 @@ func (position *Position) Enter() error {
 		))
 	}
 
-	if holding.Qty.Cmp(decimal.NewFromFloat64(position.pair.QtyMin)) < 0 {
+	qty := position.pair.RoundQty(holding.Qty)
+
+	if qty == nil || qty.Cmp(decimal.NewFromFloat64(position.pair.QtyMin)) < 0 {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"position quantity is less than minimum quantity",
@@ -135,13 +150,21 @@ func (position *Position) Enter() error {
 		))
 	}
 
-	amount, err := position.price.Taker(position.pair, holding.Qty)
+	amount, err := position.price.Taker(position.pair, qty)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to calculate taker cost: "+err.Error(),
 			err,
+		))
+	}
+
+	if !position.pair.MeetsCostMin(amount) {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"position notional is below instrument cost_min",
+			nil,
 		))
 	}
 
@@ -153,9 +176,12 @@ func (position *Position) Enter() error {
 		))
 	}
 
+	holding.Qty = qty
+	position.balance.holdings.Store(holding.Symbol, &holding)
+
 	request := kraken.NewMarketOrder(
 		"buy",
-		holding.Qty.Float64(),
+		qty.Float64(),
 		holding.Symbol,
 	)
 
@@ -186,9 +212,19 @@ func (position *Position) Exit() error {
 		))
 	}
 
+	qty := position.pair.RoundQty(holding.Qty)
+
+	if qty == nil || qty.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"position has no filled quantity to exit",
+			nil,
+		))
+	}
+
 	request := kraken.NewMarketOrder(
 		"sell",
-		holding.Qty.Float64(),
+		qty.Float64(),
 		holding.Symbol,
 	)
 
@@ -241,4 +277,31 @@ func (position *Position) TickerAck(buf []byte) {
 		value.(*types.Holding).Mark = tickerData.Last
 		return
 	}
+}
+
+/*
+Regulate updates the composed Stoploss from logic Evidence and mirrors the
+numeric surface onto StopData for UI / audit without inventing mark prices.
+*/
+func (position *Position) Regulate(evidence strategy.Evidence) strategy.Verdict {
+	verdict := position.stoploss.Update(evidence)
+	armed, entry, peakReturn, stopReturn, _, _, _ := position.stoploss.State()
+	position.Stop.Armed = armed
+	position.Stop.PeakReturn = peakReturn
+	position.Stop.StopReturn = stopReturn
+
+	if armed && entry > 0 {
+		position.Stop.PeakPrice = *decimal.NewFromFloat64(entry * (1 + peakReturn))
+		position.Stop.StopPrice = *decimal.NewFromFloat64(entry * (1 + stopReturn))
+	}
+
+	return verdict
+}
+
+func (position *Position) notifyTerminal() {
+	if position.onTerminal == nil || position.pair == nil {
+		return
+	}
+
+	position.onTerminal(position.pair.Symbol)
 }

@@ -158,7 +158,47 @@ func TestSolverAdvance(t *testing.T) {
 			So(len(state.PsiMag2), ShouldBeGreaterThan, 0)
 			So(len(state.Particles), ShouldBeGreaterThan, 0)
 			So(staleErr, ShouldBeNil)
-			So(stale.GasReady(), ShouldBeFalse)
+			So(stale.GasReady(), ShouldBeTrue)
+			So(stale.Epoch, ShouldEqual, state.Epoch)
+			So(stale.Rho, ShouldResemble, state.Rho)
+		})
+	})
+}
+
+func TestSolverUpdateRepublishesQuietManifold(t *testing.T) {
+	viper.Set("market.l3_depth", 8)
+	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+	viper.Set("market.manifold_max_symbols", 8)
+
+	Convey("Given a GasReady field and a quiet Hawkes outcome", t, func() {
+		books := newTestBookSource("BTC/USD")
+		solver, err := NewSolver(books)
+		So(err, ShouldBeNil)
+		defer solver.Close()
+
+		at := time.Unix(1, 0)
+		outcome := solverOutcome(at, 4, 2)
+		first := types.NewThesis(nil, nil)
+		So(solver.Update(first, staticHawkesSource{
+			symbols:  []string{"BTC/USD"},
+			outcomes: map[string]excitation.Outcome{"BTC/USD": outcome},
+		}), ShouldBeNil)
+
+		value, found := first.Manifold.Load("BTC/USD")
+		So(found, ShouldBeTrue)
+		So(value.(State).GasReady(), ShouldBeTrue)
+
+		second := types.NewThesis(nil, nil)
+		So(solver.Update(second, staticHawkesSource{
+			symbols:  []string{"BTC/USD"},
+			outcomes: map[string]excitation.Outcome{"BTC/USD": outcome},
+		}), ShouldBeNil)
+
+		Convey("Then the next Thesis still carries the manifold field", func() {
+			replay, found := second.Manifold.Load("BTC/USD")
+			So(found, ShouldBeTrue)
+			So(replay.(State).GasReady(), ShouldBeTrue)
+			So(replay.(State).Epoch, ShouldEqual, value.(State).Epoch)
 		})
 	})
 }

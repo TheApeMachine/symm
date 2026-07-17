@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -31,18 +33,20 @@ const (
 Live is the spot websocket and REST transport.
 */
 type Live struct {
-	status    types.Status
-	ctx       context.Context
-	cancel    context.CancelFunc
-	client    *spot.WebSocket
-	sync      *sync.Map
-	paper     *Paper
-	simulator *Simulator
-	auth      bool
-	books     *spot.BookManager
-	bookMu    sync.RWMutex
-	isLevel3  bool
-	symbols   []string
+	status       atomic.Value
+	ctx          context.Context
+	cancel       context.CancelFunc
+	client       *spot.WebSocket
+	sync         *sync.Map
+	paper        *Paper
+	simulator    *Simulator
+	auth         bool
+	books        *spot.BookManager
+	bookMu       sync.RWMutex
+	isLevel3     bool
+	symbols      []string
+	reconnectMu  sync.Mutex
+	reconnectFns []func()
 }
 
 /*
@@ -57,7 +61,6 @@ func New(
 	ctx, cancel := context.WithCancel(ctx)
 
 	live := &Live{
-		status:    types.INITIALIZING,
 		ctx:       ctx,
 		cancel:    cancel,
 		simulator: simulator,
@@ -65,6 +68,7 @@ func New(
 		sync:      &sync.Map{},
 		auth:      auth,
 	}
+	live.status.Store(types.INITIALIZING)
 
 	live.client.URL = endpoint
 
@@ -75,17 +79,10 @@ func New(
 	if live.auth {
 		live.client.REST.PublicKey = os.Getenv("KRAKEN_API_KEY")
 		live.client.REST.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
-
-		// Kraken remembers the last accepted nonce per key across process
-		// restarts. The vendored counter defaults to second granularity, so
-		// any restart landing within the same wall-clock second as the prior
-		// run's last request resets to a lower nonce and gets rejected.
-		// Microsecond granularity keeps the restart-collision window well
-		// below realistic process startup latency while staying inside the
-		// int64 range Kraken expects for the nonce field.
-		nonceCounter := kraken.NewEpochCounter()
-		nonceCounter.Granularity = time.Microsecond
-		live.client.REST.Nonce = nonceCounter.Get
+		// Private and every Level3 batch authenticate with the same key; they
+		// must share one monotonic nonce sequence or concurrent token fetches
+		// collide (EAPI:Invalid nonce).
+		live.client.REST.Nonce = authNonce()
 	}
 
 	if live.isLevel3 {
@@ -130,12 +127,13 @@ func New(
 
 	live.client.OnConnected.Recurring(func(event *callback.Event[any]) {
 		if !live.auth {
-			live.status = types.READY
+			live.fireReconnect()
+			live.status.Store(types.READY)
 			return
 		}
 
-		if errnie.Error(live.client.Authenticate()) != nil {
-			live.status = types.ERROR
+		if errnie.Error(live.authenticate()) != nil {
+			live.status.Store(types.ERROR)
 		}
 	})
 
@@ -152,11 +150,57 @@ func New(
 				))
 			}
 
-			live.status = types.READY
+			live.fireReconnect()
+			live.status.Store(types.READY)
 		})
 	}
 
 	return live
+}
+
+/*
+authenticate fetches a websocket token. An Invalid nonce rejection bumps the
+persisted high-water and retries once so reconnect storms after a crash do not
+leave the transport permanently in ERROR.
+*/
+func (live *Live) authenticate() error {
+	err := live.client.Authenticate()
+
+	if err == nil {
+		return nil
+	}
+
+	if !strings.Contains(err.Error(), "Invalid nonce") {
+		return err
+	}
+
+	bumpAuthNonce()
+
+	return live.client.Authenticate()
+}
+
+/*
+OnReconnect registers a callback invoked after public connect or private
+authentication so subscription intent can be replayed.
+*/
+func (live *Live) OnReconnect(fn func()) {
+	if live == nil || fn == nil {
+		return
+	}
+
+	live.reconnectMu.Lock()
+	live.reconnectFns = append(live.reconnectFns, fn)
+	live.reconnectMu.Unlock()
+}
+
+func (live *Live) fireReconnect() {
+	live.reconnectMu.Lock()
+	callbacks := append([]func(){}, live.reconnectFns...)
+	live.reconnectMu.Unlock()
+
+	for _, callback := range callbacks {
+		callback()
+	}
 }
 
 /*
@@ -303,7 +347,7 @@ func (live *Live) Initialize() error {
 	errnie.Info("initializing live")
 
 	if err := live.client.Connect(); err != nil {
-		live.status = types.ERROR
+		live.status.Store(types.ERROR)
 
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -312,7 +356,7 @@ func (live *Live) Initialize() error {
 		))
 	}
 
-	live.status = types.READY
+	live.status.Store(types.READY)
 	return nil
 }
 
@@ -363,7 +407,13 @@ func (live *Live) dispatch(channel string, raw []byte) {
 }
 
 func (live *Live) Status() types.Status {
-	return live.status
+	status := live.status.Load()
+
+	if status == nil {
+		return types.INITIALIZING
+	}
+
+	return status.(types.Status)
 }
 
 func (live *Live) Client() *spot.WebSocket {

@@ -10,8 +10,7 @@ import {
 import { tickStore } from "#/collections/tick";
 import { sourceHasUniverseFrames } from "#/components/terminal/measurement-sources";
 import {
-	headlineMetric,
-	latestByMetric,
+	headlineReading,
 	percentOf,
 	resolveKernelStatus,
 } from "#/components/terminal/measurement-view";
@@ -106,9 +105,7 @@ export const terminalHealthSummary = (
 						flattenMeasurementBuffer(sourceMap[source]),
 					)
 				: flattenMeasurementBuffer(buffer);
-		const headline = headlineMetric(source);
-		const latest =
-			headline === null ? history.at(-1) : latestByMetric(history, headline);
+		const latest = headlineReading(history, source);
 		const status =
 			focusSymbol === "stream"
 				? resolveKernelStatus(latest, history.length > 0)
@@ -129,7 +126,7 @@ export const terminalHealthSummary = (
 			measured += 1;
 		}
 
-		if (headline !== null && latest !== undefined) {
+		if (latest !== undefined) {
 			strength += percentOf(latest) / 100;
 			strengthCount += 1;
 		}

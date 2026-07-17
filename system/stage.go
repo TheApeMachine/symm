@@ -1,6 +1,7 @@
 package system
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -31,7 +32,7 @@ func (stageType StageType) String() string {
 
 type Stage struct {
 	stageType StageType
-	status    types.Status
+	status    atomic.Value
 	reporters []types.StatusReporter
 }
 
@@ -39,32 +40,44 @@ func NewStage(
 	stageType StageType,
 	reporters ...types.StatusReporter,
 ) *Stage {
-	return &Stage{
+	stage := &Stage{
 		stageType: stageType,
-		status:    types.INITIALIZING,
 		reporters: reporters,
 	}
+
+	stage.status.Store(types.INITIALIZING)
+
+	return stage
 }
 
 func (stage *Stage) Status() types.Status {
+	status := stage.status.Load()
+
+	if status == nil {
+		status = types.INITIALIZING
+		stage.status.Store(status)
+	}
+
 	for _, reporter := range stage.reporters {
-		if reporter.Status() == types.ERROR {
-			stage.status = types.ERROR
-			return stage.status
+		reporterStatus := reporter.Status()
+
+		if reporterStatus == types.ERROR {
+			stage.status.Store(types.ERROR)
+			return types.ERROR
 		}
 
-		if reporter.Status() != types.READY {
-			if stage.status != types.INITIALIZING {
-				stage.status = types.PENDING
-				return stage.status
+		if reporterStatus != types.READY {
+			if status.(types.Status) != types.INITIALIZING {
+				stage.status.Store(types.PENDING)
+				return types.PENDING
 			}
 
-			return stage.status
+			return status.(types.Status)
 		}
 	}
 
-	stage.status = types.READY
-	return stage.status
+	stage.status.Store(types.READY)
+	return types.READY
 }
 
 /*
@@ -77,14 +90,14 @@ func (stage *Stage) Initialize(uiHub chan<- []byte) error {
 	for _, reporter := range stage.reporters {
 		stage.Publish(uiHub, datura.Map[any]{
 			"stage":  stage.stageType.String(),
-			"status": stage.status,
+			"status": stage.Status(),
 		})
 
 		if err := reporter.Initialize(); err != nil {
-			stage.status = types.ERROR
+			stage.status.Store(types.ERROR)
 			stage.Publish(uiHub, datura.Map[any]{
 				"stage":  stage.stageType.String(),
-				"status": stage.status,
+				"status": types.ERROR,
 			})
 
 			return errnie.Error(err)
@@ -92,10 +105,10 @@ func (stage *Stage) Initialize(uiHub chan<- []byte) error {
 
 		for reporter.Status() != types.READY {
 			if reporter.Status() == types.ERROR {
-				stage.status = types.ERROR
+				stage.status.Store(types.ERROR)
 				stage.Publish(uiHub, datura.Map[any]{
 					"stage":  stage.stageType.String(),
-					"status": stage.status,
+					"status": types.ERROR,
 				})
 
 				return errnie.Error(errnie.Err(

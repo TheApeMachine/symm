@@ -221,7 +221,13 @@ func (section *Section) returns(
 			continue
 		}
 
-		returns[written] = math.Log(current / previous)
+		delta := samples[index].At.Sub(samples[index-1].At).Seconds()
+
+		if delta <= 0 {
+			continue
+		}
+
+		returns[written] = math.Log(current/previous) / math.Sqrt(delta)
 		written++
 	}
 

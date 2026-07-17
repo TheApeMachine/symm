@@ -35,7 +35,7 @@ func (dynamics *fluidDynamics) record(
 ) {
 	dynamics.stamps = append(dynamics.stamps, float64(at.UnixNano()))
 
-	dynamics.reynoldsHistory = appendFinite(dynamics.reynoldsHistory, reynolds, false)
+	dynamics.reynoldsHistory = appendFinite(dynamics.reynoldsHistory, reynolds, true)
 	dynamics.divergenceHistory = appendFinite(dynamics.divergenceHistory, divergence, true)
 	dynamics.viscosityHistory = appendFinite(dynamics.viscosityHistory, viscosity, false)
 	dynamics.velocityCurvatureHistory = appendFinite(

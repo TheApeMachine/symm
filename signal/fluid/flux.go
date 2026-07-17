@@ -10,10 +10,8 @@ a consistent quantum of activity. Book churn accumulates continuously within the
 open bar and is paired with trade volume when the bar closes.
 */
 type fluxAccumulator struct {
-	target    float64
-	progress  float64
-	bookOpen  float64
-	tradeOpen float64
+	target   float64
+	progress float64
 }
 
 func newFluxAccumulator() *fluxAccumulator {
@@ -53,8 +51,6 @@ func (flux *fluxAccumulator) addBook(churn float64) error {
 		return fmt.Errorf("fluid: volume clock target is not set")
 	}
 
-	flux.bookOpen += churn
-
 	return nil
 }
 
@@ -70,7 +66,6 @@ func (flux *fluxAccumulator) addTrade(qty float64) error {
 		return fmt.Errorf("fluid: volume clock target is not set")
 	}
 
-	flux.tradeOpen += qty
 	flux.progress += qty
 
 	if flux.progress >= flux.target {
@@ -85,7 +80,5 @@ close clears completed bar totals while retaining the configured volume target
 so the next bar uses the same empirically established scale.
 */
 func (flux *fluxAccumulator) close() {
-	flux.bookOpen = 0
-	flux.tradeOpen = 0
 	flux.progress = 0
 }

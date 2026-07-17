@@ -46,6 +46,7 @@ type API struct {
 	paper      *Paper
 	live       bool
 	level3     *Level3Registry
+	subs       subscriptionIntent
 }
 
 func NewAPI(
@@ -61,9 +62,10 @@ func NewAPI(
 		public:     public,
 		private:    private,
 		paper:      paper,
-		live:   viper.GetViper().GetString("trading.model") == "live",
-		level3: NewLevel3Registry(),
+		live:       viper.GetViper().GetString("trading.model") == "live",
+		level3:     NewLevel3Registry(),
 	}
+	api.bindReconnect()
 
 	return api
 }
@@ -286,14 +288,22 @@ func (api *API) fetchLiveTradesHistory() (map[string]spot.Trade, error) {
 }
 
 func (api *API) SubscribeInstruments() error {
+	api.subs.mu.Lock()
+	api.subs.instruments = true
+	api.subs.mu.Unlock()
+
 	return errnie.Error(api.public.Client().SubInstruments())
 }
 
 func (api *API) SubscribeTicker(pairs []string) error {
+	api.rememberSymbols(&api.subs.tickers, pairs)
+
 	return errnie.Error(api.public.Client().SubTicker(pairs))
 }
 
 func (api *API) SubscribeTrade(pairs []string) error {
+	api.rememberSymbols(&api.subs.trades, pairs)
+
 	return errnie.Error(api.public.Client().SubTrades(
 		pairs,
 		map[string]any{
@@ -338,6 +348,8 @@ func (api *API) PeekBook(symbol string, fn func(*book.Book)) bool {
 }
 
 func (api *API) SubscribeBook(pairs []string) error {
+	api.rememberSymbols(&api.subs.books, pairs)
+
 	return errnie.Error(api.public.Client().SubBook(
 		pairs, viper.GetInt("market.book.depth"), nil,
 	))
@@ -353,6 +365,10 @@ func (api *API) SubscribeLevel3(pairs []string) error {
 }
 
 func (api *API) SubscribeBalance() error {
+	api.subs.mu.Lock()
+	api.subs.balances = true
+	api.subs.mu.Unlock()
+
 	if api.live {
 		return errnie.Error(api.private.Client().SubBalances())
 	}
@@ -361,11 +377,15 @@ func (api *API) SubscribeBalance() error {
 }
 
 func (api *API) SubscribeExecutions() error {
+	api.subs.mu.Lock()
+	api.subs.executions = true
+	api.subs.mu.Unlock()
+
 	if api.live {
 		return errnie.Error(api.private.Client().SubExecutions(map[string]any{
 			"params": map[string]any{
-				"snap_orders": false,
-				"snap_trades": false,
+				"snap_orders": true,
+				"snap_trades": true,
 			},
 		}))
 	}

@@ -82,8 +82,15 @@ func (causal *Causal) Update(
 		))
 	}
 
+	if causal.pending != nil && state.Epoch == causal.pending.epoch &&
+		!state.At.Before(causal.pending.at) {
+		// Same epoch re-presented (idle symbol republished with its last
+		// GasReady state): nothing new to align, skip without erroring.
+		return types.Hypothesis{}, nil, nil
+	}
+
 	if causal.pending != nil &&
-		(state.Epoch <= causal.pending.epoch || state.At.Before(causal.pending.at)) {
+		(state.Epoch < causal.pending.epoch || state.At.Before(causal.pending.at)) {
 		return types.Hypothesis{}, nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"logic causal: manifold chronology regressed",

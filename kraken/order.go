@@ -91,7 +91,7 @@ func NewLimitOrder(
 			OrderQty:   orderQty,
 			Symbol:     symbol,
 		},
-		ReqID: int(time.Now().UnixNano()),
+		ReqID: NextReqID(),
 	}
 }
 
@@ -122,7 +122,7 @@ func NewMarketOrder(
 			OrderQty:  orderQty,
 			Symbol:    symbol,
 		},
-		ReqID: int(time.Now().UnixNano()),
+		ReqID: NextReqID(),
 	}
 }
 

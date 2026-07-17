@@ -58,6 +58,10 @@ type symbolSlot struct {
 	at     time.Time
 	events int
 	coords *coordinateEpoch
+	// last is the most recent GasReady projection. Thesis is rebuilt every Cut,
+	// so a quiet Hawkes outcome must republish this instead of vanishing from
+	// the UI between trade arrivals.
+	last State
 }
 
 /*
@@ -221,6 +225,10 @@ func (solver *Solver) Update(
 			continue
 		}
 
+		if slot := solver.symbols[candidate.symbol]; slot != nil {
+			slot.last = state
+		}
+
 		advanced++
 		thesis.Manifold.Store(candidate.symbol, state)
 	}
@@ -242,6 +250,10 @@ func (solver *Solver) advance(
 
 	if slot != nil && (outcome.At.Before(slot.at) ||
 		(outcome.At.Equal(slot.at) && outcome.EventCount == slot.events)) {
+		if slot.last.GasReady() {
+			return slot.last, nil
+		}
+
 		return State{}, nil
 	}
 
@@ -347,7 +359,7 @@ func (solver *Solver) advance(
 		))
 	}
 
-	return State{
+	state := State{
 		Source:           "manifold",
 		Symbol:           symbol,
 		At:               outcome.At,
@@ -371,7 +383,10 @@ func (solver *Solver) advance(
 		GuidanceVelX:     projection.GuidanceVelX,
 		GuidanceVelZ:     projection.GuidanceVelZ,
 		Particles:        projection.Particles,
-	}, nil
+	}
+	slot.last = state
+
+	return state, nil
 }
 
 /*

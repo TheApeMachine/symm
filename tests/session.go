@@ -326,7 +326,7 @@ func (session *Session) Emit(frame Frame) {
 		return
 	}
 
-	session.mock.Emit(frame)
+	session.mock.Emit(frame.Channel, frame.Payload)
 }
 
 /*

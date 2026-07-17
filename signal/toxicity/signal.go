@@ -9,6 +9,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -120,6 +121,17 @@ func (signal *Signal) Calculate(
 	frame *types.MarketFrame,
 ) ([]*types.Measurement, error) {
 	trades := frame.Trades
+	incrementBySymbol := map[string]*decimal.Decimal{}
+
+	for _, row := range frame.Books {
+		if row.Symbol == "" || row.PriceIncrement.Sign() <= 0 {
+			continue
+		}
+
+		increment := row.PriceIncrement
+		incrementBySymbol[row.Symbol] = &increment
+	}
+
 	evidence := map[string]*symbolEvidence{}
 
 	for _, trade := range trades {
@@ -144,6 +156,8 @@ func (signal *Signal) Calculate(
 			row.latestAt = at
 		}
 
+		increment := incrementBySymbol[trade.Symbol]
+
 		signal.level3.PeekBook(trade.Symbol, func(symbolBook *book.Book) {
 			if symbolBook.Name != trade.Symbol {
 				return
@@ -155,12 +169,12 @@ func (signal *Signal) Calculate(
 				return
 			}
 
-			if trade.Price.Cmp(bid.Price) == 0 {
+			if touchMatch(trade.Price, bid.Price, increment) {
 				row.fillBid = zeroed(row.fillBid).Add(bid.Price.Mul(volume))
 				row.bidExecuted += trade.Qty
 			}
 
-			if trade.Price.Cmp(ask.Price) == 0 {
+			if touchMatch(trade.Price, ask.Price, increment) {
 				row.fillAsk = zeroed(row.fillAsk).Add(ask.Price.Mul(volume))
 				row.askExecuted += trade.Qty
 			}
@@ -462,6 +476,36 @@ func zeroed(total *decimal.Decimal) *decimal.Decimal {
 	}
 
 	return total
+}
+
+func touchMatch(tradePrice decimal.Decimal, touchPrice *decimal.Decimal, increment *decimal.Decimal) bool {
+	if touchPrice == nil {
+		return false
+	}
+
+	if increment == nil || increment.Sign() <= 0 {
+		return tradePrice.Cmp(touchPrice) == 0
+	}
+
+	tradeTick, err := kraken.PriceTick(tradePrice, *increment)
+
+	if err != nil {
+		return tradePrice.Cmp(touchPrice) == 0
+	}
+
+	touchTick, err := kraken.PriceTick(*touchPrice, *increment)
+
+	if err != nil {
+		return tradePrice.Cmp(touchPrice) == 0
+	}
+
+	delta := tradeTick - touchTick
+
+	if delta < 0 {
+		delta = -delta
+	}
+
+	return delta <= 1
 }
 
 /*

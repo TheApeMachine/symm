@@ -1,16 +1,16 @@
-package broker
+package broker_test
 
 import (
 	"context"
-	"sync"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/mockapi"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -20,11 +20,19 @@ its fee schedule before the complete market-data universe is subscribed.
 */
 func TestInstrumentSubscribeLoadsUniverseFees(t *testing.T) {
 	previousBatch := viper.Get("market.subscribe_batch")
-	t.Cleanup(func() { viper.Set("market.subscribe_batch", previousBatch) })
+	previousPace := viper.Get("market.subscribe_pace")
+	previousQuote := viper.Get("market.quote_currency")
+	t.Cleanup(func() {
+		viper.Set("market.subscribe_batch", previousBatch)
+		viper.Set("market.subscribe_pace", previousPace)
+		viper.Set("market.quote_currency", previousQuote)
+	})
 
 	Convey("Given two online USD instruments with complete Kraken fees", t, func() {
+		viper.Set("market.quote_currency", "USD")
 		viper.Set("market.subscribe_batch", 200)
-		mock := tests.NewMockAPI()
+		viper.Set("market.subscribe_pace", "0ms")
+		mock := mockapi.NewMockAPI()
 		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
 			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFee{
 				"XXBTZUSD": {Fee: decimal.NewFromFloat64(0.26)},
@@ -35,20 +43,21 @@ func TestInstrumentSubscribeLoadsUniverseFees(t *testing.T) {
 			context.Background(), mock.Public(), mock.Private(), nil,
 		)
 		So(api.Initialize(), ShouldBeNil)
-		price := NewPrice(api)
-		instrument := NewInstrument(api, price, nil)
-		instrument.quote = "USD"
-		instrument.cache.Store("BTC/USD", kraken.InstrumentPair{
-			Symbol: "BTC/USD", Quote: "USD", Status: "online",
-		})
-		instrument.cache.Store("ZEC/USD", kraken.InstrumentPair{
-			Symbol: "ZEC/USD", Quote: "USD", Status: "online",
-		})
-
-		err := instrument.Subscribe()
+		price := broker.NewPrice(api)
+		instrument := broker.NewInstrument(api, price, nil)
+		instrument.On([]byte(`{
+			"channel":"instrument",
+			"type":"snapshot",
+			"data":{
+				"pairs":[
+					{"symbol":"BTC/USD","quote":"USD","status":"online"},
+					{"symbol":"ZEC/USD","quote":"USD","status":"online"}
+				]
+			}
+		}`))
 
 		Convey("Then all eligible symbols have fees before subscription transport is attempted", func() {
-			So(err, ShouldNotBeNil)
+			So(instrument.Status(), ShouldEqual, types.ERROR)
 			So(mock.LastTradeVolumeSymbols(), ShouldResemble, []string{"BTC/USD", "ZEC/USD"})
 			btcFee, feeErr := price.FeeRate("BTC/USD")
 			So(feeErr, ShouldBeNil)
@@ -63,10 +72,13 @@ func TestInstrumentSubscribeLoadsUniverseFees(t *testing.T) {
 
 func TestInstrumentOn(t *testing.T) {
 	Convey("Given an instrument snapshot frame", t, func() {
-		instrument := &Instrument{
-			cache: &sync.Map{},
-			quote: "EUR",
-		}
+		mock := mockapi.NewMockAPI()
+		api := websocket.NewAPI(
+			context.Background(), mock.Public(), mock.Private(), nil,
+		)
+		So(api.Initialize(), ShouldBeNil)
+		price := broker.NewPrice(api)
+		instrument := broker.NewInstrument(api, price, nil)
 
 		raw := []byte(`{"channel":"instrument","type":"snapshot","data":{"pairs":[{"symbol":"BTC/USD","base":"BTC","quote":"USD","status":"online","qty_precision":8,"qty_increment":0.00000001,"price_precision":1,"cost_precision":5,"cost_min":0.5,"tick_size":0.1,"price_increment":0.1,"qty_min":0.0001}]}}`)
 
@@ -92,11 +104,16 @@ func TestInstrumentOn(t *testing.T) {
 }
 
 func BenchmarkInstrumentOn(b *testing.B) {
-	instrument := &Instrument{
-		cache: &sync.Map{},
-		quote: "EUR",
-	}
-	instrument.status.Store(types.READY)
+	previousBatch := viper.Get("market.subscribe_batch")
+	b.Cleanup(func() { viper.Set("market.subscribe_batch", previousBatch) })
+	viper.Set("market.subscribe_batch", 0)
+	mock := mockapi.NewMockAPI()
+	api := websocket.NewAPI(
+		context.Background(), mock.Public(), mock.Private(), nil,
+	)
+	_ = api.Initialize()
+	price := broker.NewPrice(api)
+	instrument := broker.NewInstrument(api, price, nil)
 	raw := []byte(`{"channel":"instrument","type":"snapshot","data":{"pairs":[{"symbol":"BTC/USD","base":"BTC","quote":"USD","status":"online"}]}}`)
 
 	b.ReportAllocs()
@@ -108,24 +125,30 @@ func BenchmarkInstrumentOn(b *testing.B) {
 
 func TestInstrumentSubscribeRejectsInvalidBatchSize(t *testing.T) {
 	previousBatch := viper.Get("market.subscribe_batch")
-	t.Cleanup(func() { viper.Set("market.subscribe_batch", previousBatch) })
+	previousQuote := viper.Get("market.quote_currency")
+	t.Cleanup(func() {
+		viper.Set("market.subscribe_batch", previousBatch)
+		viper.Set("market.quote_currency", previousQuote)
+	})
 
 	Convey("Given an invalid subscribe batch size", t, func() {
+		viper.Set("market.quote_currency", "USD")
 		viper.Set("market.subscribe_batch", 0)
-		instrument := &Instrument{
-			cache: &sync.Map{},
-			quote: "USD",
-		}
-		instrument.cache.Store("BTC/USD", kraken.InstrumentPair{
-			Symbol: "BTC/USD",
-			Quote:  "USD",
-			Status: "online",
-		})
-
-		err := instrument.Subscribe()
+		mock := mockapi.NewMockAPI()
+		api := websocket.NewAPI(
+			context.Background(), mock.Public(), mock.Private(), nil,
+		)
+		So(api.Initialize(), ShouldBeNil)
+		price := broker.NewPrice(api)
+		instrument := broker.NewInstrument(api, price, nil)
+		instrument.On([]byte(`{
+			"channel":"instrument",
+			"type":"snapshot",
+			"data":{"pairs":[{"symbol":"BTC/USD","quote":"USD","status":"online"}]}
+		}`))
 
 		Convey("Then subscription aborts before batching", func() {
-			So(err, ShouldNotBeNil)
+			So(instrument.Status(), ShouldEqual, types.ERROR)
 		})
 	})
 }

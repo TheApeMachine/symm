@@ -3,6 +3,7 @@ package broker
 import (
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -26,7 +27,7 @@ Important considerations:
     may ever be performed using Float64.
 */
 type Price struct {
-	status  types.Status
+	status  atomic.Value
 	api     *websocket.API
 	fees    *sync.Map
 	scales  *sync.Map
@@ -39,23 +40,32 @@ NewPrice wires the price stream to the shared Kraken API.
 func NewPrice(
 	api *websocket.API,
 ) *Price {
-	return &Price{
-		status:  types.INITIALIZING,
+	price := &Price{
 		api:     api,
 		fees:    &sync.Map{},
 		tickers: &sync.Map{},
 	}
+
+	price.status.Store(types.INITIALIZING)
+
+	return price
 }
 
 func (price *Price) Initialize() error {
 	price.api.On("ticker", price.TickerAck)
-	price.status = types.READY
+	price.status.Store(types.READY)
 
 	return nil
 }
 
 func (price *Price) Status() types.Status {
-	return price.status
+	status := price.status.Load()
+
+	if status == nil {
+		return types.INITIALIZING
+	}
+
+	return status.(types.Status)
 }
 
 /*
@@ -177,7 +187,38 @@ func (price *Price) GetFees(
 		price.fees.Store(symbol, fee)
 	}
 
-	price.status = types.READY
+	price.status.Store(types.READY)
+	return nil
+}
+
+/*
+RememberFee stores one already-validated taker fee tier. Paper sessions and
+tests use it when TradeVolume was resolved out of band; live Subscribe still
+loads tiers through GetFees.
+*/
+func (price *Price) RememberFee(
+	symbol string,
+	fee kraken.TradeVolumeFee,
+) error {
+	if price == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price is required",
+			nil,
+		))
+	}
+
+	if symbol == "" || fee.Fee == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price: symbol and taker fee are required",
+			nil,
+		))
+	}
+
+	price.fees.Store(symbol, fee)
+	price.status.Store(types.READY)
+
 	return nil
 }
 

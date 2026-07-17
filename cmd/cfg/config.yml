@@ -10,7 +10,9 @@ system:
     level: debug
   websocket:
     channel:
-      buffer: 64
+      # Public book/trade/ticker ingress queues and UI fan-out. Undersizing
+      # stalls the Kraken reader behind book decode and starves trades.
+      buffer: 4096
 
 cognitive:
   persist_dir: ~/.symm/cognitive
@@ -61,11 +63,11 @@ signals:
   # The central public stream retains this event window. Older events are
   # overwritten by design; enlarge the configured ring if one measurement cut
   # must inspect a larger live burst.
-  feed_timeline_capacity: 64
+  feed_timeline_capacity: 4096
   # Preserve the existing per-symbol history allowance independently from the
   # global burst journal; multiplying the timeline size by every symbol would
   # make memory scale with the square of the observed market surface.
-  feed_track_capacity: 64
+  feed_track_capacity: 512
   # Zero derives bars/day from signals.fluid.integration_interval.
   volume_clock_bars_per_day: 0
   fluid:

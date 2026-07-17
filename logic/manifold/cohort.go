@@ -17,7 +17,9 @@ type cohortKey struct {
 }
 
 /*
-cohortState aggregates mapped orders that share one spatial cell.
+cohortState aggregates mapped orders that share one spatial cell. vel2 is the
+mass-weighted sum of squared velocities so Heat can recover PIC rest-frame
+kinetic energy after the mean velocity is removed.
 */
 type cohortState struct {
 	mass   float64
@@ -27,7 +29,7 @@ type cohortState struct {
 	velX   float64
 	velY   float64
 	velZ   float64
-	heat   float64
+	vel2   float64
 	omega  float64
 	sine   float64
 	cosine float64
@@ -37,8 +39,9 @@ type cohortState struct {
 /*
 cohortsFromMappedOrders conservatively merges co-located mapped orders into one
 oscillator population capped by the GPU carrier budget. Amplitude is particle
-mass and Heat is Amplitude·CV so PIC deposits a thermodynamically warm carrier
-field instead of a cold hypersonic one.
+mass; Heat is Amplitude times the cohort's velocity-dispersion specific
+internal energy so sound speed tracks book kinematics instead of a fixed CV
+wall that permanently zeroed Hawkes forcing.
 */
 func cohortsFromMappedOrders(
 	config pmanifold.Config,
@@ -71,7 +74,9 @@ func cohortsFromMappedOrders(
 		state.velX += order.velX * order.mass
 		state.velY += order.velY * order.mass
 		state.velZ += order.velZ * order.mass
-		state.heat += order.heat
+		state.vel2 += (order.velX*order.velX +
+			order.velY*order.velY +
+			order.velZ*order.velZ) * order.mass
 		state.omega += order.omega * order.mass
 		state.sine += math.Sin(order.phase) * order.mass
 		state.cosine += math.Cos(order.phase) * order.mass
@@ -118,17 +123,9 @@ func cohortsFromMappedOrders(
 			continue
 		}
 
-		// PIC treats Amplitude as particle mass and Heat as internal energy.
-		// Using sqrt(mass) understated the forcing denominator and left carriers
-		// cold (Heat/Amplitude → 0 for thin books), so Hawkes impulses drove
-		// hypersonic VelX that later poisoned the gas RK2 stage.
 		amplitude := state.mass
 
 		if amplitude <= 0 || math.IsNaN(amplitude) || math.IsInf(amplitude, 0) {
-			continue
-		}
-
-		if config.CV <= 0 {
 			continue
 		}
 
@@ -139,7 +136,7 @@ func cohortsFromMappedOrders(
 			PosX:      state.posX / state.mass,
 			PosY:      state.posY / state.mass,
 			PosZ:      state.posZ / state.mass,
-			Heat:      amplitude * config.CV,
+			Heat:      amplitude * state.specificEnergy(),
 			VelX:      state.velX / state.mass,
 			VelY:      state.velY / state.mass,
 			VelZ:      state.velZ / state.mass,
@@ -149,6 +146,32 @@ func cohortsFromMappedOrders(
 	return oscillators
 }
 
+/*
+specificEnergy is the PIC rest-frame specific kinetic energy of the cohort:
+½(⟨|v|²⟩ − |⟨v⟩|²). Coherent books stay cold so Hawkes impulses retain Courant
+headroom; dispersed books heat up and constrain forcing.
+*/
+func (state *cohortState) specificEnergy() float64 {
+	if state == nil || state.mass <= 0 {
+		return 0
+	}
+
+	meanSquare := state.vel2 / state.mass
+	meanX := state.velX / state.mass
+	meanY := state.velY / state.mass
+	meanZ := state.velZ / state.mass
+	variance := meanSquare - (meanX*meanX + meanY*meanY + meanZ*meanZ)
+
+	if variance <= 0 || math.IsNaN(variance) || math.IsInf(variance, 0) {
+		return 0
+	}
+
+	return 0.5 * variance
+}
+
+/*
+torusCell maps a domain coordinate onto a wrapped grid index.
+*/
 func torusCell(
 	position float64,
 	domain float64,

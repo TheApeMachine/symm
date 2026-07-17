@@ -39,15 +39,17 @@ func TestCausalUpdateRejectsRegressions(t *testing.T) {
 		_, duplicateOutcome, err := causal.Update(
 			causalState(time.Unix(2, 0), 100, 2),
 		)
-		So(err, ShouldNotBeNil)
+		So(err, ShouldBeNil)
+		So(duplicateOutcome, ShouldBeNil)
 
 		_, sameTimeOutcome, err := causal.Update(
 			causalState(time.Unix(2, 0), 101, 3),
 		)
+		So(err, ShouldBeNil)
+
 		skipped := NewCausal("ETH/USD")
 		_, _, skippedErr := skipped.Update(causalState(time.Unix(1, 0), 100, 1))
 		_, skippedOutcome, skippedErr := skipped.Update(causalState(time.Unix(3, 0), 102, 3))
-		So(err, ShouldBeNil)
 
 		var regressedOutcome *CausalOutcome
 
@@ -55,7 +57,7 @@ func TestCausalUpdateRejectsRegressions(t *testing.T) {
 			causalState(time.Unix(1, 0), 99, 1),
 		)
 
-		Convey("It should accept equal-time progress and reject duplicate or backward epochs", func() {
+		Convey("It should no-op repeated epochs, accept progress, and reject regressions", func() {
 			So(err, ShouldNotBeNil)
 			So(duplicateOutcome, ShouldBeNil)
 			So(sameTimeOutcome, ShouldNotBeNil)

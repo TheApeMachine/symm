@@ -25,6 +25,9 @@ export type StrategyDecision = {
 	adverseSelection: number;
 	uncertainty: number;
 	confidence: number;
+	opportunityMargin: number;
+	cognitiveLead: number;
+	basinConfidence: number;
 	availableCapital: number;
 	openPositions: number;
 	slotCapacity: number;

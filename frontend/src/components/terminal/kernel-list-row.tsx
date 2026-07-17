@@ -17,7 +17,7 @@ import {
 	ageText,
 	formatRaw,
 	headlineMetric,
-	latestByMetric,
+	headlineReading,
 	metricLabel,
 	percentOf,
 	resolveKernelStatus,
@@ -47,25 +47,26 @@ const paintKernelListRow = (
 	const buffer = measurementsStore.state.measurements[focusSymbol]?.[source];
 	const epoch = latestMeasurementReadings(buffer);
 	const headline = headlineMetric(source);
-	const latest =
-		headline === null ? epoch.at(-1) : latestByMetric(epoch, headline);
+	const latest = headlineReading(epoch, source);
+	const activeMetric = latest?.metric ?? headline;
 	const status = resolveKernelStatus(
 		latest,
 		sourceHasUniverseFrames(measurementsStore.state, source),
 	);
 	const statusMeta = kernelStatusMeta(status);
 	const spark = kernelSparkPaths(
-		headline === null ? [] : headlineSeriesFromBuffer(buffer, headline),
+		activeMetric === null || activeMetric === undefined
+			? []
+			: headlineSeriesFromBuffer(buffer, activeMetric),
 		status,
 	);
-	const percent =
-		headline === null || latest === undefined ? 0 : percentOf(latest);
+	const percent = latest === undefined ? 0 : percentOf(latest);
 	const readout =
 		headline === null
 			? `${epoch.length} readings`
-			: latest === undefined
+			: latest === undefined || activeMetric === undefined
 				? "—"
-				: `${metricLabel(headline)} ${formatRaw(latest)}`;
+				: `${metricLabel(activeMetric)} ${formatRaw(latest)}`;
 	const { inspectorSource, selectedSource } = terminalStore.state;
 	const active = inspectorSource === source || selectedSource === source;
 

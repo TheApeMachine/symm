@@ -1,26 +1,25 @@
-package broker
+package broker_test
 
 import (
 	"context"
 	"fmt"
-	"sync"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/mockapi"
 	"github.com/theapemachine/symm/types"
 )
 
 func TestPriceTickerAck(t *testing.T) {
 	Convey("Given a ticker envelope", t, func() {
-		price := &Price{
-			fees:    &sync.Map{},
-			tickers: &sync.Map{},
-		}
-		price.status = types.READY
+		price := broker.NewPrice(nil)
+		So(price.RememberFee("BTC/USD", kraken.TradeVolumeFee{
+			Fee: decimal.NewFromFloat64(0.26),
+		}), ShouldBeNil)
 
 		price.TickerAck([]byte(`{
 			"channel":"ticker",
@@ -42,8 +41,8 @@ func TestPriceTickerAck(t *testing.T) {
 
 func TestPriceSnapshot(t *testing.T) {
 	Convey("Given an initializing Price", t, func() {
-		mock := tests.NewMockAPI()
-		price := NewPrice(websocket.NewAPI(
+		mock := mockapi.NewMockAPI()
+		price := broker.NewPrice(websocket.NewAPI(
 			context.Background(), mock.Public(), mock.Private(), nil,
 		))
 
@@ -60,10 +59,7 @@ func TestPriceSnapshot(t *testing.T) {
 	})
 
 	Convey("Given ticker rows for part of an expected identity set", t, func() {
-		price := &Price{
-			fees:    &sync.Map{},
-			tickers: &sync.Map{},
-		}
+		price := broker.NewPrice(nil)
 		price.TickerAck([]byte(`{
 			"channel":"ticker",
 			"type":"snapshot",
@@ -88,7 +84,7 @@ func TestPriceSnapshot(t *testing.T) {
 
 func TestPriceGetFees(t *testing.T) {
 	Convey("Given a Kraken-keyed fee tier for one requested symbol", t, func() {
-		mock := tests.NewMockAPI()
+		mock := mockapi.NewMockAPI()
 		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
 			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFee{
 				"XXBTZUSD": {Fee: decimal.NewFromFloat64(0.26)},
@@ -96,7 +92,7 @@ func TestPriceGetFees(t *testing.T) {
 		}), ShouldBeNil)
 		api := websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil)
 		So(api.Initialize(), ShouldBeNil)
-		price := NewPrice(api)
+		price := broker.NewPrice(api)
 
 		Convey("When the exact trading tier is hydrated", func() {
 			err := price.GetFees([]string{"BTC/USD"})
@@ -114,13 +110,13 @@ func TestPriceGetFees(t *testing.T) {
 	})
 
 	Convey("Given a fee response missing one requested symbol", t, func() {
-		mock := tests.NewMockAPI()
+		mock := mockapi.NewMockAPI()
 		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
 			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFee{}},
 		}), ShouldBeNil)
 		api := websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil)
 		So(api.Initialize(), ShouldBeNil)
-		price := NewPrice(api)
+		price := broker.NewPrice(api)
 
 		Convey("When fee hydration is attempted", func() {
 			err := price.GetFees([]string{"BTC/USD"})
@@ -137,7 +133,7 @@ func TestPriceGetFees(t *testing.T) {
 	})
 
 	Convey("Given a malformed fee for one requested symbol", t, func() {
-		mock := tests.NewMockAPI()
+		mock := mockapi.NewMockAPI()
 		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
 			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFee{
 				"XXBTZUSD": {},
@@ -145,7 +141,7 @@ func TestPriceGetFees(t *testing.T) {
 		}), ShouldBeNil)
 		api := websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil)
 		So(api.Initialize(), ShouldBeNil)
-		price := NewPrice(api)
+		price := broker.NewPrice(api)
 
 		Convey("When fee hydration is attempted", func() {
 			err := price.GetFees([]string{"BTC/USD"})
@@ -163,22 +159,15 @@ func TestPriceGetFees(t *testing.T) {
 
 func TestPriceWithFriction(t *testing.T) {
 	Convey("Given a price stream with a known taker fee", t, func() {
-		price := &Price{
-			fees:    &sync.Map{},
-			tickers: &sync.Map{},
-		}
-		price.status = types.READY
-		price.fees.Store("BTC/USD", kraken.TradeVolumeFee{
+		price := broker.NewPrice(nil)
+		So(price.RememberFee("BTC/USD", kraken.TradeVolumeFee{
 			Fee: decimal.NewFromFloat64(0.26),
-		})
-		last, err := decimal.NewFromString("50000.5")
-
-		So(err, ShouldBeNil)
-
-		price.tickers.Store("BTC/USD", &kraken.TickerData{
-			Symbol: "BTC/USD",
-			Ask:    last,
-		})
+		}), ShouldBeNil)
+		price.TickerAck([]byte(`{
+			"channel":"ticker",
+			"type":"update",
+			"data":[{"symbol":"BTC/USD","last":"50000.5","bid":"50000.0","ask":"50000.5"}]
+		}`))
 
 		Convey("When WithFriction is requested for unit quantity", func() {
 			net, err := price.WithFriction(
@@ -201,24 +190,15 @@ func TestPriceWithFriction(t *testing.T) {
 }
 
 func BenchmarkPriceWithFriction(b *testing.B) {
-	price := &Price{
-		fees:    &sync.Map{},
-		tickers: &sync.Map{},
-	}
-	price.status = types.READY
-	price.fees.Store("BTC/USD", kraken.TradeVolumeFee{
+	price := broker.NewPrice(nil)
+	_ = price.RememberFee("BTC/USD", kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.26),
 	})
-	last, err := decimal.NewFromString("50000.5")
-
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	price.tickers.Store("BTC/USD", &kraken.TickerData{
-		Symbol: "BTC/USD",
-		Ask:    last,
-	})
+	price.TickerAck([]byte(`{
+		"channel":"ticker",
+		"type":"update",
+		"data":[{"symbol":"BTC/USD","last":"50000.5","bid":"50000.0","ask":"50000.5"}]
+	}`))
 
 	b.ReportAllocs()
 
@@ -235,15 +215,15 @@ func BenchmarkPriceWithFriction(b *testing.B) {
 }
 
 func BenchmarkPriceSnapshot(b *testing.B) {
-	price := &Price{
-		fees:    &sync.Map{},
-		tickers: &sync.Map{},
-	}
+	price := broker.NewPrice(nil)
 	symbols := make([]string, 641)
 
 	for index := range symbols {
 		symbols[index] = fmt.Sprintf("ASSET-%03d/USD", index)
-		price.tickers.Store(symbols[index], &kraken.TickerData{Symbol: symbols[index]})
+		price.TickerAck([]byte(fmt.Sprintf(
+			`{"channel":"ticker","type":"update","data":[{"symbol":"%s","last":"1","bid":"1","ask":"1"}]}`,
+			symbols[index],
+		)))
 	}
 
 	b.ReportAllocs()
@@ -258,10 +238,7 @@ func BenchmarkPriceSnapshot(b *testing.B) {
 }
 
 func BenchmarkPriceTickerAck(b *testing.B) {
-	price := &Price{
-		fees:    &sync.Map{},
-		tickers: &sync.Map{},
-	}
+	price := broker.NewPrice(nil)
 	frame := []byte(`{
 		"channel":"ticker",
 		"type":"update",

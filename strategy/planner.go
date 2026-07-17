@@ -3,7 +3,6 @@ package strategy
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -170,27 +169,34 @@ func signalName(signal types.Signal) string {
 
 /*
 Decide compares current executable utility for exposed and unexposed symbols.
-Entries compete with doing nothing; open positions compare current continuation
-with paying the observable cost to exit now.
+Normal slots admit any positive-utility entry; reserved slots stay empty until
+an opportunity-class entry needs overflow — so a full book can still take an
+OXT-style ignition without mediocre names consuming the reserve lane.
 */
 func (planner *Planner) Decide(
 	thesis *types.Thesis,
 	fees map[string]float64,
 	available float64,
-	slots int,
+	normalSlots int,
+	reservedSlots int,
 ) *types.Thesis {
 	entries := make([]types.Decision, 0)
 	openBySymbol := make(map[string]types.Holding, len(thesis.Positions))
 
 	for _, holding := range thesis.Positions {
-		if holding.Order == nil || holding.Order.Description == nil {
+		if holding.Symbol == "" || holding.Closed() {
 			continue
 		}
 
-		openBySymbol[holding.Order.Description.Pair] = holding
+		openBySymbol[holding.Symbol] = holding
 	}
 
-	remainingSlots := slots - len(openBySymbol)
+	open := len(openBySymbol)
+	ceiling := normalSlots + reservedSlots
+	freeNormal := max(0, normalSlots-open)
+	freeReserved := max(0, ceiling-open-freeNormal)
+	freeTotal := freeNormal + freeReserved
+	slotCapacity := ceiling
 
 	for _, forecast := range thesis.Forecasts {
 		fee, feeReady := fees[forecast.Symbol]
@@ -206,7 +212,7 @@ func (planner *Planner) Decide(
 		if holding, exists := openBySymbol[forecast.Symbol]; exists {
 			decision := planner.continuation(forecast, fee, holding)
 			decision.Cause = planner.cause(thesis, forecast, decision.Action)
-			planner.context(&decision, forecast, available, len(openBySymbol), slots)
+			planner.context(&decision, forecast, available, open, slotCapacity)
 			thesis.Decisions = append(thesis.Decisions, decision)
 
 			if decision.Action == "exit" {
@@ -229,24 +235,6 @@ func (planner *Planner) Decide(
 			continue
 		}
 
-		referencePrice := decimal.NewFromFloat64(forecast.ReferencePrice)
-		entryPrice := decimal.NewFromFloat64(
-			forecast.ReferencePrice * (1 + forecast.ExpectedSpread/2),
-		)
-		candidateIndex := len(thesis.Positions)
-		thesis.Positions = append(thesis.Positions, types.Holding{
-			Symbol: forecast.Symbol,
-			Qty:    decimal.NewFromInt64(0),
-			Order: &spot.Order{
-				Description: &spot.OrderDescription{
-					Pair: forecast.Symbol, Type: "enter", OrderType: "market",
-				},
-				Price: entryPrice,
-			},
-			EntryPrice: entryPrice,
-			Mark:       referencePrice,
-		})
-
 		cognitionValue, cognitionFound := thesis.Cognition.Load(forecast.Symbol)
 		cognition, cognitionValid := cognitionValue.(types.Cognition)
 
@@ -268,31 +256,30 @@ func (planner *Planner) Decide(
 
 			decision := planner.nothing(forecast, reason)
 			decision.Cause = cause
-			planner.context(&decision, forecast, available, len(openBySymbol), slots)
+			planner.context(&decision, forecast, available, open, slotCapacity)
 			thesis.Decisions = append(thesis.Decisions, decision)
 
 			continue
 		}
 
-		if remainingSlots <= 0 || available <= 0 {
+		if freeTotal <= 0 || available <= 0 {
 			decision := planner.nothing(
 				forecast, "portfolio capacity makes entry infeasible",
 			)
-			planner.context(&decision, forecast, available, len(openBySymbol), slots)
+			planner.context(&decision, forecast, available, open, slotCapacity)
 			thesis.Decisions = append(thesis.Decisions, decision)
 
 			continue
 		}
 
 		decision := planner.entry(
+			thesis,
 			forecast,
+			cognition,
 			fee,
-			available/float64(remainingSlots),
+			available/float64(freeTotal),
 		)
-		planner.context(&decision, forecast, available, len(openBySymbol), slots)
-		candidate := &thesis.Positions[candidateIndex]
-		candidate.Qty = decimal.NewFromFloat64(decision.ProposedQuantity)
-		candidate.Order.Volume = candidate.Qty
+		planner.context(&decision, forecast, available, open, slotCapacity)
 
 		if decision.Action == "nothing" {
 			thesis.Decisions = append(thesis.Decisions, decision)
@@ -303,231 +290,7 @@ func (planner *Planner) Decide(
 		entries = append(entries, decision)
 	}
 
-	sort.Slice(entries, func(left, right int) bool {
-		return entries[left].Utility > entries[right].Utility
-	})
-
-	selected := min(len(entries), max(remainingSlots, 0))
-
-	for index, decision := range entries {
-		if index >= selected {
-			decision.Action = "nothing"
-			decision.Utility = 0
-			decision.Reason = "higher-utility entries consumed available slots"
-			thesis.Decisions = append(thesis.Decisions, decision)
-
-			continue
-		}
-
-		thesis.Lifecycle.Store(decision.Symbol, types.LifecycleEntrySelected)
-		thesis.Decisions = append(thesis.Decisions, decision)
-
-		thesis.Orders = append(thesis.Orders, spot.Order{
-			Description: &spot.OrderDescription{
-				Pair:      decision.Symbol,
-				Type:      decision.Action,
-				Price:     decimal.NewFromFloat64(decision.ReferencePrice),
-				OrderType: "market",
-			},
-			Volume: decimal.NewFromFloat64(decision.ProposedQuantity),
-			Price:  decimal.NewFromFloat64(decision.ReferencePrice),
-		})
-	}
+	planner.admit(thesis, entries, freeNormal, freeReserved)
 
 	return thesis
-}
-
-/*
-continuation computes hold and exit utility from the same current forecast.
-Entry cost is sunk; exiting now pays one fee and one side of the spread.
-*/
-func (planner *Planner) continuation(
-	forecast types.Forecasts,
-	fee float64,
-	holding types.Holding,
-) types.Decision {
-	hold := forecast.ExpectedReturn
-	exit := -(fee + forecast.ExpectedSpread/2)
-	action := "hold"
-	utility := hold
-	reason := "remaining expected return exceeds current exit cost"
-	alternatives := map[string]float64{"hold": hold}
-	quantity := 0.0
-	mark := holding.Mark.Float64()
-	qty := holding.Qty.Float64()
-	notional := mark * qty
-
-	exitAvailable := notional > 0 && forecast.SellCapacity >= notional
-
-	if exitAvailable {
-		alternatives["exit"] = exit
-	}
-
-	if exitAvailable && exit > hold {
-		action = "exit"
-		utility = exit
-		quantity = qty
-		reason = "current exit utility exceeds remaining expected return"
-	}
-
-	if notional > forecast.SellCapacity && notional > 0 {
-		fraction := forecast.SellCapacity / notional
-		reduce := fraction*exit + (1-fraction)*hold
-		alternatives["reduce"] = reduce
-
-		if reduce > utility {
-			action = "reduce"
-			utility = reduce
-			quantity = qty * fraction
-			reason = "visible bid capacity supports reduction but not complete exit"
-		}
-	}
-
-	return types.Decision{
-		Action:            action,
-		Symbol:            forecast.Symbol,
-		At:                forecast.At,
-		Utility:           utility,
-		Alternatives:      alternatives,
-		ProposedQuantity:  quantity,
-		ExpectedFees:      fee,
-		ExpectedSpread:    forecast.ExpectedSpread / 2,
-		ReferencePrice:    forecast.ReferencePrice,
-		ValidThroughEpoch: forecast.ExpiresEpoch,
-		ForecastSource:    forecast.Source,
-		Cause:             "continuation",
-		Reason:            reason,
-	}
-}
-
-/*
-cause identifies the evidence boundary behind a management action. A ready
-negative causal outcome is opposing-thesis formation; an elapsed entry forecast
-is invalidation; a negative current forecast without either is weakening.
-*/
-func (planner *Planner) cause(
-	thesis *types.Thesis,
-	forecast types.Forecasts,
-	action string,
-) string {
-	if action == "hold" {
-		return "continuation"
-	}
-
-	if action == "reduce" {
-		return "liquidity_deterioration"
-	}
-
-	for index := len(thesis.Hypotheses) - 1; index >= 0; index-- {
-		hypothesis := thesis.Hypotheses[index]
-
-		if hypothesis.Symbol == forecast.Symbol && hypothesis.Ready &&
-			hypothesis.Outcome == forecast.Target && hypothesis.DoExpectation < 0 &&
-			hypothesis.Uplift < 0 {
-			return "opposing_thesis"
-		}
-	}
-
-	for index := len(thesis.Decisions) - 1; index >= 0; index-- {
-		decision := thesis.Decisions[index]
-
-		if decision.Symbol == forecast.Symbol && decision.Action == "enter" &&
-			forecast.SourceEpoch >= decision.ValidThroughEpoch {
-			return "thesis_invalidation"
-		}
-	}
-
-	return "thesis_weakening"
-}
-
-/*
-entry computes the complete round-trip utility of opening one normal slot and
-caps proposed capital at the currently visible best-ask capacity.
-*/
-func (planner *Planner) entry(
-	forecast types.Forecasts,
-	fee float64,
-	capital float64,
-) types.Decision {
-	proposed := min(capital, forecast.BuyCapacity)
-	unitCost := forecast.ReferencePrice * (1 + forecast.ExpectedSpread/2) * (1 + fee)
-	quantity := proposed / unitCost
-	utility := forecast.ExpectedReturn - 2*fee - forecast.ExpectedSpread -
-		forecast.ExpectedImpact - forecast.ExpectedAdverseSelection
-
-	if proposed <= 0 || utility <= 0 {
-		decision := planner.nothing(
-			forecast, "expected executable return does not exceed doing nothing",
-		)
-		decision.Alternatives["enter"] = utility
-		decision.ProposedNotional = proposed
-		decision.ProposedQuantity = quantity
-		decision.ExpectedFees = 2 * fee
-		decision.ExpectedSpread = forecast.ExpectedSpread
-
-		return decision
-	}
-
-	return types.Decision{
-		Action:            "enter",
-		Symbol:            forecast.Symbol,
-		At:                forecast.At,
-		Utility:           utility,
-		Alternatives:      map[string]float64{"enter": utility, "nothing": 0},
-		AllocationClass:   "normal",
-		ProposedNotional:  proposed,
-		ProposedQuantity:  quantity,
-		ExpectedFees:      2 * fee,
-		ExpectedSpread:    forecast.ExpectedSpread,
-		ReferencePrice:    forecast.ReferencePrice,
-		ValidThroughEpoch: forecast.ExpiresEpoch,
-		ForecastSource:    forecast.Source,
-		Cause:             "entry",
-		Reason:            "expected executable return exceeds doing nothing",
-	}
-}
-
-/*
-nothing records an explicit no-action selection while retaining the forecast
-price and validity boundary that made the comparison possible.
-*/
-func (planner *Planner) nothing(
-	forecast types.Forecasts,
-	reason string,
-) types.Decision {
-	return types.Decision{
-		Action:            "nothing",
-		Symbol:            forecast.Symbol,
-		At:                forecast.At,
-		Alternatives:      map[string]float64{"nothing": 0},
-		ReferencePrice:    forecast.ReferencePrice,
-		ValidThroughEpoch: forecast.ExpiresEpoch,
-		ForecastSource:    forecast.Source,
-		Cause:             "infeasible",
-		Reason:            reason,
-	}
-}
-
-/*
-context records the forecast decomposition and portfolio values actually used
-for one utility comparison so the Decision remains auditable on its Thesis.
-*/
-func (planner *Planner) context(
-	decision *types.Decision,
-	forecast types.Forecasts,
-	available float64,
-	openPositions int,
-	slots int,
-) {
-	decision.ForecastModel = forecast.ModelVersion
-	decision.ForecastEpoch = forecast.SourceEpoch
-	decision.CalibrationCount = forecast.CalibrationSamples
-	decision.ExpectedReturn = forecast.ExpectedReturn
-	decision.ExpectedImpact = forecast.ExpectedImpact
-	decision.AdverseSelection = forecast.ExpectedAdverseSelection
-	decision.Uncertainty = forecast.Uncertainty
-	decision.Confidence = forecast.Confidence
-	decision.AvailableCapital = available
-	decision.OpenPositions = openPositions
-	decision.SlotCapacity = slots
 }

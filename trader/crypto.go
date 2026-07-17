@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -208,6 +209,12 @@ func (crypto *Crypto) Tick(at time.Time) (*types.Thesis, error) {
 	}))
 
 	thesis := crypto.planner.Update(frame, tick)
+	crypto.decide(thesis)
+
+	if crypto.desk != nil {
+		crypto.desk.Regulate(thesis)
+	}
+
 	elapsed := time.Since(started).Nanoseconds()
 
 	errnie.Error(audit.Phase(recorder, tick, "update_end", map[string]any{
@@ -260,13 +267,51 @@ func (crypto *Crypto) publishTick(thesis *types.Thesis, elapsedNs int64) {
 }
 
 /*
-trade supplies current broker constraints to strategy, then submits each
-selected order through Desk for exchange validation and execution.
+trade submits enter-selected holdings and Decide exit/reduce orders through Desk.
 */
 func (crypto *Crypto) trade(thesis *types.Thesis) {
+	if crypto.desk == nil {
+		return
+	}
+
+	enters := make(map[string]struct{}, len(thesis.Decisions))
+	exits := make(map[string]float64, len(thesis.Decisions))
+
+	for _, decision := range thesis.Decisions {
+		switch decision.Action {
+		case "enter":
+			enters[decision.Symbol] = struct{}{}
+		case "exit", "reduce":
+			exits[decision.Symbol] = decision.ProposedQuantity
+		}
+	}
+
+	for symbol, quantity := range exits {
+		holding := types.Holding{
+			Symbol: symbol,
+			Qty:    decimal.NewFromFloat64(quantity),
+		}
+
+		if err := crypto.desk.Sell(holding); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"failed to sell holding "+symbol,
+				err,
+			))
+		}
+	}
+
 	for _, holding := range thesis.Positions {
+		if _, ok := enters[holding.Symbol]; !ok {
+			continue
+		}
+
+		if holding.Qty == nil || holding.Qty.Sign() <= 0 {
+			continue
+		}
+
 		if !crypto.desk.HasSlot(holding.IsOpportunity) {
-			return
+			continue
 		}
 
 		if err := crypto.desk.Buy(holding, holding.IsOpportunity); err != nil {
@@ -285,6 +330,10 @@ Close stops the trader and its composed resources.
 */
 func (crypto *Crypto) Close() error {
 	crypto.cancel()
+
+	if crypto.market != nil {
+		crypto.market.Close()
+	}
 
 	if crypto.planner != nil {
 		crypto.planner.Close()

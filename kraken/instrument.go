@@ -1,6 +1,8 @@
 package kraken
 
 import (
+	"math"
+
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -74,6 +76,48 @@ func (pair InstrumentPair) Increment() decimal.Decimal {
 
 func (pair InstrumentPair) HasIncrement() bool {
 	return decimalPositive(pair.Increment())
+}
+
+/*
+RoundQty floors quantity onto the exchange lot grid using QtyIncrement when
+present, otherwise QtyPrecision decimal places.
+*/
+func (pair InstrumentPair) RoundQty(quantity *decimal.Decimal) *decimal.Decimal {
+	if quantity == nil {
+		return nil
+	}
+
+	if pair.QtyIncrement > 0 {
+		steps := math.Floor(quantity.Float64() / pair.QtyIncrement)
+		rounded := decimal.NewFromFloat64(steps * pair.QtyIncrement)
+
+		if pair.QtyPrecision > 0 {
+			return rounded.SetScale(int64(pair.QtyPrecision))
+		}
+
+		return rounded
+	}
+
+	if pair.QtyPrecision > 0 {
+		return quantity.Copy().SetScale(int64(pair.QtyPrecision))
+	}
+
+	return quantity.Copy()
+}
+
+/*
+MeetsCostMin reports whether a quote notional clears the instrument cost floor.
+*/
+func (pair InstrumentPair) MeetsCostMin(notional *decimal.Decimal) bool {
+	if notional == nil {
+		return false
+	}
+
+	if !decimalPositive(pair.CostMin) {
+		return notional.Sign() > 0
+	}
+
+	return notional.Cmp(&pair.CostMin) >= 0
 }
 
 func decimalPositive(value decimal.Decimal) (positive bool) {

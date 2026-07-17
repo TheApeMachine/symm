@@ -109,8 +109,9 @@ func TestCohortsFromMappedOrders(t *testing.T) {
 		t.Fatalf("amplitude = %v, want cohort mass 1", oscillators[0].Amplitude)
 	}
 
-	if math.Abs(oscillators[0].Heat-config.CV) > 1e-12 {
-		t.Fatalf("heat = %v, want amplitude*CV=%v", oscillators[0].Heat, config.CV)
+	// Zero velocities → cold PIC carrier (no CV wall).
+	if oscillators[0].Heat != 0 {
+		t.Fatalf("heat = %v, want 0 for coherent zero-velocity cohort", oscillators[0].Heat)
 	}
 
 	if math.Abs(oscillators[0].Phase) > 0.11 {
@@ -133,6 +134,105 @@ func TestCohortsFromMappedOrders(t *testing.T) {
 
 	if len(equalMass) != 1 || equalMass[0].PosX != 0.1 {
 		t.Fatalf("equal-mass cohort selection is not deterministic: %+v", equalMass)
+	}
+}
+
+/*
+TestCohortHeatFromVelocityDispersion seeds Heat from PIC rest-frame kinetic
+energy so sound speed tracks book kinematics instead of Amplitude·CV.
+*/
+func TestCohortHeatFromVelocityDispersion(t *testing.T) {
+	t.Parallel()
+
+	config := testPhysicsConfig()
+	orders := []mappedOrder{
+		{
+			orderID: "slow",
+			mass:    0.5,
+			posX:    0.5,
+			posY:    0.5,
+			posZ:    0.5,
+			velX:    0,
+			velY:    0,
+			velZ:    0,
+		},
+		{
+			orderID: "fast",
+			mass:    0.5,
+			posX:    0.51,
+			posY:    0.51,
+			posZ:    0.51,
+			velX:    2,
+			velY:    0,
+			velZ:    0,
+		},
+	}
+
+	oscillators := cohortsFromMappedOrders(config, orders)
+
+	if len(oscillators) != 1 {
+		t.Fatalf("cohorts = %d, want 1", len(oscillators))
+	}
+
+	// ⟨v⟩ = 1, ⟨v²⟩ = 2, variance = 1, specific energy = 0.5, Heat = 0.5.
+	want := 0.5
+
+	if math.Abs(oscillators[0].Heat-want) > 1e-12 {
+		t.Fatalf("heat = %v, want %v from velocity dispersion", oscillators[0].Heat, want)
+	}
+
+	if math.Abs(oscillators[0].Heat-config.CV) < 1e-9 {
+		t.Fatal("heat must not collapse back onto Amplitude·CV")
+	}
+}
+
+/*
+TestColdCohortAdmitsForcingAtProductionDeltaT proves the √15 CV wall is gone:
+coherent cold carriers keep Courant headroom at the derived 100ms fluid step.
+*/
+func TestColdCohortAdmitsForcingAtProductionDeltaT(t *testing.T) {
+	t.Parallel()
+
+	config := testPhysicsConfig()
+	oscillators := cohortsFromMappedOrders(config, []mappedOrder{
+		{mass: 0.4, posX: 0.25, posY: 0.5, posZ: 0.5},
+		{mass: 0.6, posX: 0.75, posY: 0.5, posZ: 0.5},
+	})
+
+	if len(oscillators) != 2 {
+		t.Fatalf("cohorts = %d, want 2", len(oscillators))
+	}
+
+	for _, oscillator := range oscillators {
+		if oscillator.Heat != 0 {
+			t.Fatalf("cold cohort heat = %v, want 0", oscillator.Heat)
+		}
+	}
+
+	interval := 100 * time.Millisecond
+	deltaT := integrationDeltaT(config, interval)
+	speedLimit := config.AdvectiveDeltaT(1) / deltaT
+	baseSpeed, err := boundSpeed(config, oscillators)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if baseSpeed >= speedLimit {
+		t.Fatalf(
+			"cold baseSpeed %v saturates speedLimit %v; forcing would still collapse",
+			baseSpeed, speedLimit,
+		)
+	}
+
+	_, scale, err := applyForcing(config, testOutcome(), interval, oscillators)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if scale <= 0 {
+		t.Fatalf("scale = %v, want positive market impulse", scale)
 	}
 }
 

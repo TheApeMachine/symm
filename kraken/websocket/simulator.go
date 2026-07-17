@@ -50,6 +50,7 @@ simulation of the market and avoids the optimism bias.
 type Simulator struct {
 	booter        *system.Booter
 	status        types.Status
+	mu            sync.Mutex
 	wsLatencies   *ring.Ring
 	restLatencies *ring.Ring
 	fillLatencies *ring.Ring
@@ -75,51 +76,64 @@ real public/private measurements arrive. Fill stays random only.
 func (simulator *Simulator) Initialize() error {
 	errnie.Info("initializing simulator")
 
-	simulator.wsLatencies.Do(func(item any) {
-		simulator.wsLatencies.Value = time.Duration(30+rand.Intn(90)) * time.Millisecond
-		simulator.wsLatencies = simulator.wsLatencies.Next()
-	})
+	simulator.mu.Lock()
+	defer simulator.mu.Unlock()
 
-	simulator.restLatencies.Do(func(item any) {
-		simulator.restLatencies.Value = time.Duration(30+rand.Intn(90)) * time.Millisecond
-		simulator.restLatencies = simulator.restLatencies.Next()
-	})
+	wsLatencies := simulator.wsLatencies
+	for idx := 0; idx < wsLatencies.Len(); idx++ {
+		wsLatencies.Value = time.Duration(30+rand.Intn(90)) * time.Millisecond
+		wsLatencies = wsLatencies.Next()
+	}
 
-	simulator.fillLatencies.Do(func(item any) {
-		simulator.fillLatencies.Value = time.Duration(40+rand.Intn(360)) * time.Millisecond
-		simulator.fillLatencies = simulator.fillLatencies.Next()
-	})
+	restLatencies := simulator.restLatencies
+	for idx := 0; idx < restLatencies.Len(); idx++ {
+		restLatencies.Value = time.Duration(30+rand.Intn(90)) * time.Millisecond
+		restLatencies = restLatencies.Next()
+	}
+
+	fillLatencies := simulator.fillLatencies
+	for idx := 0; idx < fillLatencies.Len(); idx++ {
+		fillLatencies.Value = time.Duration(40+rand.Intn(360)) * time.Millisecond
+		fillLatencies = fillLatencies.Next()
+	}
 
 	simulator.status = types.READY
 	return nil
 }
 
 func (simulator *Simulator) Do(latencyType LatencyType, fn func()) {
-	var latencyRing *ring.Ring
+	var wait time.Duration
+
+	simulator.mu.Lock()
 
 	switch latencyType {
 	case WEBSOCKET:
-		latencyRing = simulator.wsLatencies
+		if simulator.wsLatencies != nil && simulator.wsLatencies.Value != nil {
+			wait = simulator.wsLatencies.Value.(time.Duration)
+		}
+
+		if simulator.wsLatencies != nil {
+			simulator.wsLatencies = simulator.wsLatencies.Next()
+		}
 	case REST:
-		latencyRing = simulator.restLatencies
+		if simulator.restLatencies != nil && simulator.restLatencies.Value != nil {
+			wait = simulator.restLatencies.Value.(time.Duration)
+		}
+
+		if simulator.restLatencies != nil {
+			simulator.restLatencies = simulator.restLatencies.Next()
+		}
 	case FILL:
-		latencyRing = simulator.fillLatencies
-	}
+		if simulator.fillLatencies != nil && simulator.fillLatencies.Value != nil {
+			wait = simulator.fillLatencies.Value.(time.Duration)
+		}
 
-	var wait time.Duration
-
-	if latencyRing != nil && latencyRing.Value != nil {
-		wait = latencyRing.Value.(time.Duration)
-
-		switch latencyType {
-		case WEBSOCKET:
-			simulator.wsLatencies = latencyRing.Next()
-		case REST:
-			simulator.restLatencies = latencyRing.Next()
-		case FILL:
-			simulator.fillLatencies = latencyRing.Next()
+		if simulator.fillLatencies != nil {
+			simulator.fillLatencies = simulator.fillLatencies.Next()
 		}
 	}
+
+	simulator.mu.Unlock()
 
 	time.Sleep(wait)
 	fn()
@@ -138,6 +152,9 @@ func (simulator *Simulator) Emit(
 }
 
 func (simulator *Simulator) Record(latencyType LatencyType, latency time.Duration) {
+	simulator.mu.Lock()
+	defer simulator.mu.Unlock()
+
 	switch latencyType {
 	case WEBSOCKET:
 		simulator.wsLatencies.Value = latency

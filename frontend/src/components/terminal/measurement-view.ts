@@ -12,10 +12,50 @@ const SOURCE_HEADLINE_METRIC: Record<string, string | null> = {
 	toxicity: "touch_quantity",
 };
 
+/*
+SOURCE_HEADLINE_FALLBACKS keeps kernels readable when the preferred metric has
+not matured yet. Hawkes publishes event_count/arrival_rate before a fit yields
+conditional_intensity; without fallbacks BTC looks OFF FOCUS while live.
+*/
+const SOURCE_HEADLINE_FALLBACKS: Record<string, readonly string[]> = {
+	hawkes: ["conditional_intensity", "arrival_rate", "event_count"],
+};
+
 export const headlineMetric = (source: string): string | null =>
 	source in SOURCE_HEADLINE_METRIC
 		? SOURCE_HEADLINE_METRIC[source]
 		: "strength";
+
+/*
+headlineReading returns the newest focus reading for a source, walking each
+configured fallback metric before treating the kernel as absent.
+*/
+export const headlineReading = (
+	values: Measurement[],
+	source: string,
+): Measurement | undefined => {
+	const fallbacks = SOURCE_HEADLINE_FALLBACKS[source];
+
+	if (fallbacks !== undefined) {
+		for (const metric of fallbacks) {
+			const reading = latestByMetric(values, metric);
+
+			if (reading !== undefined) {
+				return reading;
+			}
+		}
+
+		return undefined;
+	}
+
+	const headline = headlineMetric(source);
+
+	if (headline === null) {
+		return values.at(-1);
+	}
+
+	return latestByMetric(values, headline);
+};
 
 /*
 latestByMetric finds the most recent measurement matching a metric and side.
