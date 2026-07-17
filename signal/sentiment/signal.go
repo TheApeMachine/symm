@@ -35,13 +35,13 @@ func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal 
 }
 
 /*
-Publish sends one small datura frame to the UI the moment this signal has
-measured its evidence, mirroring broker.Balance.Publish.
+Publish sends one compact datura frame per symbol with nested metrics so the UI
+receives one observation map rather than one envelope per metric.
 */
 func (signal *Signal) Publish(measurements []*types.Measurement) {
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": measurements,
+		"measurements": types.WireMeasurements(measurements),
 	}.Marshal():
 	default:
 	}
@@ -199,9 +199,9 @@ func (signal *Signal) Calculate(
 		}
 
 		out = append(out, measurements...)
-		signal.Publish(measurements)
 	}
 
+	signal.Publish(out)
 	return out, nil
 }
 

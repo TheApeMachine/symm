@@ -47,21 +47,21 @@ func inject(
 /*
 applyForcing distributes one event-time Hawkes impulse across the L3 carrier
 mass and returns the fastest resulting rarefaction. Applying pressure as
-velocity keeps the deposited gas state conservative, while the rarefaction
-sets the gas solver's advective stability limit.
+velocity keeps the deposited gas state conservative. When the raw impulse would
+outrun the event-time Courant bound, the increments are scaled uniformly so
+direction and buy/sell ratio survive while the gas step stays finite.
 */
 func applyForcing(
 	config pmanifold.Config,
 	outcome excitation.Outcome,
 	interval time.Duration,
 	oscillators []pmanifold.Oscillator,
-) (float64, error) {
-	buyPressure, sellPressure, ready := arrivalForcing(
-		outcome, integrationDeltaT(config, interval),
-	)
+) (characteristicSpeed float64, scale float64, err error) {
+	deltaT := integrationDeltaT(config, interval)
+	buyPressure, sellPressure, ready := arrivalForcing(outcome, deltaT)
 
 	if !ready {
-		return 0, errnie.Err(
+		return 0, 0, errnie.Err(
 			errnie.Validation,
 			"manifold: arrival forcing is not ready",
 			nil,
@@ -81,39 +81,213 @@ func applyForcing(
 	}
 
 	if buyMass <= 0 || sellMass <= 0 {
-		return 0, errnie.Err(
+		return 0, 0, errnie.Err(
 			errnie.Validation,
 			"manifold: L3 carriers require both book sides for forcing",
 			nil,
 		)
 	}
 
+	bases := make([]float64, len(oscillators))
+	increments := make([]float64, len(oscillators))
+	scale = 1
+
 	for index := range oscillators {
-		oscillator := &oscillators[index]
 		pressure, mass := buyPressure, buyMass
 
-		if oscillator.PosX < midpoint {
+		if oscillators[index].PosX < midpoint {
 			pressure, mass = -sellPressure, sellMass
 		}
 
-		oscillator.VelX += pressure / mass
+		bases[index] = oscillators[index].VelX
+		increments[index] = pressure / mass
+		oscillators[index].VelX = bases[index] + increments[index]
 	}
 
+	characteristicSpeed, err = boundSpeed(config, oscillators)
+
+	if err != nil {
+		return 0, 0, err
+	}
+
+	speedLimit := config.AdvectiveDeltaT(1) / deltaT
+
+	if speedLimit > 0 && characteristicSpeed > speedLimit {
+		characteristicSpeed, scale, err = rescaleImpulse(
+			config,
+			oscillators,
+			bases,
+			increments,
+			characteristicSpeed,
+			speedLimit,
+		)
+
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+
+	if characteristicSpeed <= 0 {
+		return 0, 0, errnie.Err(
+			errnie.Validation,
+			"manifold: carrier characteristic speed must be positive",
+			nil,
+		)
+	}
+
+	return characteristicSpeed, scale, nil
+}
+
+/*
+rescaleImpulse shrinks the Hawkes velocity increments uniformly until the
+population rarefaction fits the event-time Courant bound. Prior carrier motion
+is left intact when it alone already saturates that bound.
+*/
+func rescaleImpulse(
+	config pmanifold.Config,
+	oscillators []pmanifold.Oscillator,
+	bases []float64,
+	increments []float64,
+	fullSpeed float64,
+	speedLimit float64,
+) (characteristicSpeed float64, scale float64, err error) {
+	for index := range oscillators {
+		oscillators[index].VelX = bases[index]
+	}
+
+	baseSpeed, err := boundSpeed(config, oscillators)
+
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if baseSpeed >= speedLimit {
+		return baseSpeed, 0, nil
+	}
+
+	scale = (speedLimit - baseSpeed) / (fullSpeed - baseSpeed)
+
+	if !finiteNonNegative(scale) || scale > 1 {
+		scale = 1
+	}
+
+	for index := range oscillators {
+		oscillators[index].VelX = bases[index] + scale*increments[index]
+	}
+
+	characteristicSpeed, err = boundSpeed(config, oscillators)
+
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if characteristicSpeed <= speedLimit {
+		return characteristicSpeed, scale, nil
+	}
+
+	scale *= speedLimit / characteristicSpeed
+
+	for index := range oscillators {
+		oscillators[index].VelX = bases[index] + scale*increments[index]
+	}
+
+	characteristicSpeed, err = boundSpeed(config, oscillators)
+
+	return characteristicSpeed, scale, err
+}
+
+/*
+boundSpeed is the stricter of the rarefaction head and the HLL Courant speed.
+*/
+func boundSpeed(
+	config pmanifold.Config,
+	oscillators []pmanifold.Oscillator,
+) (float64, error) {
+	rarefaction, err := rarefactionSpeed(config, oscillators)
+
+	if err != nil {
+		return 0, err
+	}
+
+	courant, err := gasCourantSpeed(config, oscillators)
+
+	if err != nil {
+		return 0, err
+	}
+
+	if courant > rarefaction {
+		return courant, nil
+	}
+
+	return rarefaction, nil
+}
+
+/*
+rarefactionSpeed returns the fastest 1D rarefaction head after forcing.
+*/
+func rarefactionSpeed(
+	config pmanifold.Config,
+	oscillators []pmanifold.Oscillator,
+) (float64, error) {
+	return carrierSpeed(config, oscillators, true)
+}
+
+/*
+gasCourantSpeed returns the fastest multidimensional HLL Courant speed (|u|+c)
+matching the Metal gas_rhs_cell stability check.
+*/
+func gasCourantSpeed(
+	config pmanifold.Config,
+	oscillators []pmanifold.Oscillator,
+) (float64, error) {
+	return carrierSpeed(config, oscillators, false)
+}
+
+/*
+carrierSpeed evaluates either the 1D rarefaction head or the HLL |u|+c speed
+from forced carrier thermodynamics.
+*/
+func carrierSpeed(
+	config pmanifold.Config,
+	oscillators []pmanifold.Oscillator,
+	rarefaction bool,
+) (float64, error) {
 	characteristicSpeed := 0.0
 
 	for _, oscillator := range oscillators {
+		if oscillator.Amplitude <= 0 {
+			return 0, errnie.Err(
+				errnie.Validation,
+				"manifold: carrier amplitude must be positive",
+				nil,
+			)
+		}
+
 		velocity := math.Sqrt(
 			oscillator.VelX*oscillator.VelX +
 				oscillator.VelY*oscillator.VelY +
 				oscillator.VelZ*oscillator.VelZ,
 		)
 		specificInternalEnergy := oscillator.Heat / oscillator.Amplitude
+
+		if !finiteNonNegative(specificInternalEnergy) {
+			return 0, errnie.Err(
+				errnie.Validation,
+				"manifold: carrier specific internal energy is not finite",
+				nil,
+			)
+		}
+
 		soundSpeed := math.Sqrt(
 			config.Gamma * (config.Gamma - 1) * specificInternalEnergy,
 		)
-		rarefactionSpeed := velocity + 2*soundSpeed/(config.Gamma-1)
+		speed := velocity + soundSpeed
 
-		if !finiteNonNegative(rarefactionSpeed) {
+		if rarefaction {
+			speed = velocity + 2*soundSpeed/(config.Gamma-1)
+		}
+
+		if !finiteNonNegative(speed) {
 			return 0, errnie.Err(
 				errnie.Validation,
 				"manifold: carrier characteristic speed is not finite",
@@ -121,17 +295,9 @@ func applyForcing(
 			)
 		}
 
-		if rarefactionSpeed > characteristicSpeed {
-			characteristicSpeed = rarefactionSpeed
+		if speed > characteristicSpeed {
+			characteristicSpeed = speed
 		}
-	}
-
-	if characteristicSpeed <= 0 {
-		return 0, errnie.Err(
-			errnie.Validation,
-			"manifold: carrier characteristic speed must be positive",
-			nil,
-		)
 	}
 
 	return characteristicSpeed, nil

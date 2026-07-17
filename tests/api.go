@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -8,13 +9,18 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	krakenws "github.com/theapemachine/symm/kraken/websocket"
 )
 
+// Compile-time proof that MockConn is a drop-in websocket.Conn emulator.
+var _ krakenws.Conn = (*MockConn)(nil)
+
 /*
-MockConn is a controllable Kraken websocket transport.
+MockConn is a controllable Kraken websocket transport that implements
+websocket.Conn so tests inject it through NewAPI exactly as root does.
 */
 type MockConn struct {
 	channels     map[string][]func([]byte)
@@ -89,12 +95,12 @@ type MockAPI struct {
 }
 
 /*
-NewMockAPI constructs a paper-mode API backed by controllable transports.
+NewMockAPI constructs controllable public and private Conn emulators.
 */
 func NewMockAPI() *MockAPI {
 	return &MockAPI{
 		public:  &MockConn{client: mockNormalizerClient()},
-		private: &MockConn{},
+		private: &MockConn{client: mockNormalizerClient()},
 	}
 }
 
@@ -110,6 +116,56 @@ Private returns the private transport mock.
 */
 func (mock *MockAPI) Private() *MockConn {
 	return mock.private
+}
+
+/*
+Wire returns a paper-mode websocket.API backed by this emulator, matching the
+Conn injection path used in cmd/root.go. trading.model is forced to paper for
+the lifetime of the returned API construction.
+*/
+func (mock *MockAPI) Wire(
+	ctx context.Context,
+) (*krakenws.API, *krakenws.Paper, error) {
+	if mock == nil {
+		return nil, nil, errnie.Err(
+			errnie.Validation, "tests: mock API is required", nil,
+		)
+	}
+
+	simulator := krakenws.NewSimulator()
+
+	if err := simulator.Initialize(); err != nil {
+		return nil, nil, errnie.Err(
+			errnie.Internal, "tests: simulator initialize failed", err,
+		)
+	}
+
+	paper := krakenws.NewPaper(ctx, simulator)
+
+	if err := paper.Initialize(); err != nil {
+		return nil, nil, errnie.Err(
+			errnie.Internal, "tests: paper initialize failed", err,
+		)
+	}
+
+	previous := viper.GetString("trading.model")
+	viper.Set("trading.model", "paper")
+	api := krakenws.NewAPI(ctx, mock.public, mock.private, paper)
+	viper.Set("trading.model", previous)
+
+	return api, paper, nil
+}
+
+/*
+Emit delivers one public channel frame to every registered handler, the same
+path Market and Price use after API.On registration.
+*/
+func (mock *MockAPI) Emit(frame Frame) {
+	if mock == nil {
+		return
+	}
+
+	mock.public.Emit(frame.Channel, frame.Payload)
 }
 
 /*

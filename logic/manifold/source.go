@@ -1,8 +1,10 @@
 package manifold
 
+import "github.com/krakenfx/api-go/v2/pkg/book"
+
 /*
-ordersForSymbol copies one SDK-managed L3 population while BookSource retains
-its read lease, so websocket updates cannot mutate a level during extraction.
+ordersForSymbol copies one SDK-managed L3 population under the BookSource read
+lease so websocket updates cannot mutate a level during extraction.
 */
 func ordersForSymbol(
 	source BookSource,
@@ -12,40 +14,38 @@ func ordersForSymbol(
 		return nil, 0, false
 	}
 
-	for manager := range source.Books() {
-		if manager == nil {
-			continue
-		}
+	var (
+		orders   []physicalOrder
+		midPrice float64
+		ready    bool
+	)
 
-		symbolBook := manager.GetBook(symbol)
-
-		if symbolBook == nil {
-			continue
-		}
-
+	source.PeekBook(symbol, func(symbolBook *book.Book) {
 		bestBid := symbolBook.BestBid()
 		bestAsk := symbolBook.BestAsk()
 
 		if bestBid == nil || bestAsk == nil ||
 			bestBid.Price == nil || bestAsk.Price == nil {
-			continue
+			return
 		}
 
 		bidPrice := bestBid.Price.Float64()
 		askPrice := bestAsk.Price.Float64()
 
 		if bidPrice <= 0 || askPrice <= 0 {
-			continue
+			return
 		}
 
-		orders := ordersFromBook(symbolBook)
+		copied := ordersFromBook(symbolBook)
 
-		if len(orders) == 0 {
-			continue
+		if len(copied) == 0 {
+			return
 		}
 
-		return orders, (bidPrice + askPrice) / 2, true
-	}
+		orders = copied
+		midPrice = (bidPrice + askPrice) / 2
+		ready = true
+	})
 
-	return nil, 0, false
+	return orders, midPrice, ready
 }

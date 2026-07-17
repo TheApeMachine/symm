@@ -34,9 +34,11 @@ func (analyzer *Analyzer) cognitionVisualization(
 	classes = cognitionClasses(classification)
 	branches, nodeCount = analyzer.cognitionBranches(parts)
 	beamWidth = cognitionBeamWidth(predictions)
-	maxHops = cognitionMaxHops(parts)
+	// Sequence depth is what Cortex labels as maxHops. Beam search must not
+	// reuse that depth: measurement cardinality is not a lookahead horizon.
+	maxHops = cognitionSequenceDepth(parts)
 	beams, lookaheadScore, lookaheadPaths = analyzer.cognitionBeams(
-		parent, beamWidth, maxHops, predictions,
+		parent, beamWidth, 1, predictions,
 	)
 
 	return branches, beams, classes, beamWidth, maxHops, nodeCount, lookaheadScore, lookaheadPaths
@@ -65,7 +67,11 @@ func cognitionBeamWidth(predictions []dmt.LookaheadPrediction) int {
 	return len(predictions)
 }
 
-func cognitionMaxHops(parts []string) int {
+/*
+cognitionSequenceDepth reports how deep the current sensory prefix is so the
+UI can scale the tree view. It is not a beam-search budget.
+*/
+func cognitionSequenceDepth(parts []string) int {
 	if len(parts) == 0 {
 		return 1
 	}

@@ -1,6 +1,8 @@
 package logic
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +12,54 @@ import (
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
 )
+
+/*
+TestCognitionVisualizationStaysBounded proves beam-search hops are not the
+measurement-token cardinality. A freeze after manifold on busy ticks was
+ExecuteBeamSearch(parent, width, len(parts)).
+*/
+func TestCognitionVisualizationStaysBounded(t *testing.T) {
+	tree := dmt.NewTree("")
+	parts := make([]string, 0, 80)
+	parts = append(parts, "symbol-vvv-usd")
+
+	for index := 0; index < 64; index++ {
+		parts = append(parts, fmt.Sprintf("exhaust-metric-%d-positive", index))
+	}
+
+	sequence := []byte(strings.Join(parts, "_"))
+	parent := []byte(strings.Join(parts[:len(parts)-1], "_"))
+	analyzer := &Analyzer{tree: tree}
+
+	tree.TrainSensorySequence(sequence)
+
+	for index := 0; index < 32; index++ {
+		alternate := append([]string{}, parts...)
+		alternate[len(alternate)-1] = fmt.Sprintf(
+			"exhaust-metric-%d-negative", index,
+		)
+		tree.TrainSensorySequence([]byte(strings.Join(alternate, "_")))
+	}
+
+	var scratch dmt.ClassificationScratch
+	classification := tree.Classify(sequence, &scratch)
+	predictions := tree.PredictNextSensoryTokens(parent, nil)
+
+	done := make(chan struct{})
+
+	go func() {
+		_, _, _, _, _, _, _, _ = analyzer.cognitionVisualization(
+			sequence, parent, parts, classification, predictions,
+		)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cognitionVisualization hung with wide measurement token set")
+	}
+}
 
 func TestCognitionVisualization(t *testing.T) {
 	Convey("Given a trained sensory sequence", t, func() {

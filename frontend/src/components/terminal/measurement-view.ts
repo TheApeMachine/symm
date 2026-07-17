@@ -171,6 +171,26 @@ export const resolveStatus = (
 	return "measured";
 };
 
+/*
+resolveKernelStatus distinguishes a quiet focus symbol from a source the
+universe is already measuring elsewhere, so the kernel list does not paint a
+STANDBY lie while other symbols are live.
+*/
+export const resolveKernelStatus = (
+	measurement: Measurement | undefined,
+	universeHasSource: boolean,
+): SignalHealthStatus => {
+	if (measurement !== undefined) {
+		return resolveStatus(measurement);
+	}
+
+	if (universeHasSource) {
+		return "unfocused";
+	}
+
+	return "waiting";
+};
+
 const UNIT_SUFFIX: Record<string, string> = {
 	dimensionless: "",
 	quote_currency: " quote",

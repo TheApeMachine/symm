@@ -9,7 +9,11 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/conditions"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -78,6 +82,60 @@ func TestSignal_MeasureDetectsLoadedImbalance(testingTB *testing.T) {
 				strength, ok := measureField(result, "BTC/USD", types.MetricStrength)
 				So(ok, ShouldBeTrue)
 				So(strength.Raw, ShouldBeGreaterThan, 0)
+			})
+		})
+	})
+}
+
+func sessionSignals(
+	ctx context.Context,
+	api *websocket.API,
+	instrument *broker.Instrument,
+	channel chan []byte,
+) []types.Signal {
+	return []types.Signal{NewSignal(ctx, api, instrument, channel)}
+}
+
+func TestSignal_MeasureFromMarket(testingTB *testing.T) {
+	Convey("Given depthflow inside a paper Session market", testingTB, func() {
+		calmSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+		})
+		So(err, ShouldBeNil)
+		loadSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+		})
+		So(err, ShouldBeNil)
+
+		Convey("When balanced and bid-loaded books play through Cut", func() {
+			// Calm UPDATE books are bid-only and look "loaded"; compare two-sided
+			// balanced snapshots against an intentional bid overweight instead.
+			calmTheses, err := calmSession.Play(
+				conditions.Imbalance(24, 0, 1, 1).Frames(),
+			)
+			So(err, ShouldBeNil)
+			loadTheses, err := loadSession.Play(
+				conditions.Imbalance(24, 0, 6, 0.15).Frames(),
+			)
+			So(err, ShouldBeNil)
+
+			balanced, hasBalanced := tests.PeakSourceMetric(
+				calmTheses,
+				types.SourceDepthFlow,
+				conditions.Subject(),
+				types.MetricStrength,
+			)
+			loaded, hasLoaded := tests.PeakSourceMetric(
+				loadTheses,
+				types.SourceDepthFlow,
+				conditions.Subject(),
+				types.MetricStrength,
+			)
+
+			Convey("Then bid-loaded books lift strength versus balanced depth", func() {
+				So(hasLoaded, ShouldBeTrue)
+				So(hasBalanced, ShouldBeTrue)
+				So(loaded, ShouldBeGreaterThan, balanced)
 			})
 		})
 	})

@@ -247,6 +247,8 @@ func TestAnalyzerConsolidate(t *testing.T) {
 		})
 
 		analyzer.consolidate(thesis, nil, true)
+		analyzer.rem.Await()
+		analyzer.rem.Stamp(thesis)
 
 		Convey("It should replay the complete pending interval when requested", func() {
 			So(tree.GetSensoryWeight(sequence).Count, ShouldEqual, 2)

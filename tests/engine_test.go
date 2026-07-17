@@ -10,7 +10,7 @@ import (
 
 func TestEngineRun(t *testing.T) {
 	Convey("Given a ticker update payload", t, func() {
-		base := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"ALGO/USD","bid":0.10,"ask":0.11,"last":0.105,"volume":100,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
+		base := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"MATIC/USD","bid":0.10,"ask":0.11,"last":0.105,"volume":100,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
 
 		Convey("When the engine drifts price forward", func() {
 			engine := NewEngine(3).Drift(0.01).VolumeAdd(5).Interval(0)
@@ -78,7 +78,7 @@ func TestReplay(t *testing.T) {
 }
 
 func BenchmarkEngineRun(b *testing.B) {
-	base := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"ALGO/USD","bid":0.10,"ask":0.11,"last":0.105,"volume":100,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
+	base := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"MATIC/USD","bid":0.10,"ask":0.11,"last":0.105,"volume":100,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
 	engine := NewEngine(32).Drift(0.001).Jitter(0.005).VolumeAdd(10)
 
 	b.ReportAllocs()

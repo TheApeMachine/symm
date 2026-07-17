@@ -22,12 +22,14 @@ export const appStore = createStore(
 		query: "",
 		kernels: DEFAULT_KERNELS,
 		observedSources: new Set<string>(),
+		startedAtMs: null as number | null,
 	},
 	({ setState }) => ({
 		updateOnline: (online: boolean) =>
 			setState((prev) => ({
 				...prev,
-				online: online,
+				online,
+				startedAtMs: online ? (prev.startedAtMs ?? Date.now()) : null,
 			})),
 		updateError: (err: Record<string, unknown>) =>
 			setState((prev) => ({

@@ -7,8 +7,11 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/conditions"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -125,6 +128,63 @@ func latestMetric(
 	}
 
 	return nil, false
+}
+
+func sessionSignals(
+	ctx context.Context,
+	api *websocket.API,
+	_ *broker.Instrument,
+	channel chan []byte,
+) []types.Signal {
+	return []types.Signal{NewSignal(ctx, api, channel)}
+}
+
+func TestSignal_MeasureFromMarket(testingTB *testing.T) {
+	Convey("Given toxicity inside a paper Session with Level3 touch", testingTB, func() {
+		calmSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+			Level3:  true,
+		})
+		So(err, ShouldBeNil)
+		hotSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+			Level3:  true,
+		})
+		So(err, ShouldBeNil)
+
+		calmSession.SeedTouch(conditions.Subject(), 0.56, 0.57, 1000)
+		hotSession.SeedTouch(conditions.Subject(), 0.56, 0.57, 1000)
+
+		Convey("When calm and aggression tapes play through Cut", func() {
+			calmTheses, err := calmSession.Play(conditions.Calm(24).Frames())
+			So(err, ShouldBeNil)
+			hotTheses, err := hotSession.Play(
+				conditions.Aggression(24, 4, 8).Frames(),
+			)
+			So(err, ShouldBeNil)
+
+			calm, hasCalm := tests.PeakSourceMetric(
+				calmTheses,
+				types.SourceToxicity,
+				conditions.Subject(),
+				types.MetricTradeVolume,
+			)
+			hot, hasHot := tests.PeakSourceMetric(
+				hotTheses,
+				types.SourceToxicity,
+				conditions.Subject(),
+				types.MetricTradeVolume,
+			)
+
+			Convey("Then aggression lifts trade-volume evidence under PeekBook", func() {
+				So(hasHot, ShouldBeTrue)
+
+				if hasCalm {
+					So(hot, ShouldBeGreaterThan, calm)
+				}
+			})
+		})
+	})
 }
 
 func BenchmarkSignal_Calculate(benchmark *testing.B) {

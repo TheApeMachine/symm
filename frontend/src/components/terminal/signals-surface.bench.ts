@@ -1,7 +1,7 @@
 import { bench, describe } from "vitest";
 import { DEFAULT_KERNELS } from "#/collections/app";
 import { measurementsStore } from "#/collections/measurements";
-import { regimeAxes } from "./health";
+import { regimeAxes } from "./regime-radar";
 import { signalsSurfaceSources } from "./signals-surface";
 
 // ponytail: static fixture timestamp and measurement shapes; upgrade path is varied timestamps and heterogeneous measurement payloads per kernel.

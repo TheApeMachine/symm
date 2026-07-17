@@ -2,11 +2,9 @@ package leadlag
 
 import (
 	"context"
-	"math"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -45,7 +43,7 @@ measured its evidence, mirroring broker.Balance.Publish.
 func (signal *Signal) Publish(measurements []*types.Measurement) {
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": measurements,
+		"measurements": types.WireMeasurements(measurements),
 	}.Marshal():
 	default:
 	}
@@ -71,232 +69,53 @@ func (signal *Signal) Calculate(
 ) ([]*types.Measurement, error) {
 	rows := frame.Tickers
 	out := make([]*types.Measurement, 0, len(rows))
-	anchor, _ := frame.CrossSection.Leadership()
 
-	if anchor != "" {
-		signal.section.SetAnchor(anchor)
-
-		for _, row := range rows {
-			if row.Timestamp.IsZero() {
-				continue
-			}
-
-			if row.Last == nil {
-				continue
-			}
-
-			lastPrice := row.Last.Float64()
-
-			if lastPrice <= 0 {
-				continue
-			}
-
-			signal.section.ObservePrice(row.Symbol, lastPrice, row.Timestamp)
+	for _, row := range rows {
+		if row.Timestamp.IsZero() || row.Last == nil {
+			continue
 		}
 
-		for _, row := range rows {
-			features := signal.section.Features(row.Symbol)
+		lastPrice := row.Last.Float64()
 
-			if features.Price <= 0 {
-				continue
-			}
-
-			lagFraction := 0.0
-			lagCorrelation := 0.0
-			contempCorrelation := 0.0
-			signedLagCorrelation := 0.0
-			signedContempCorrelation := 0.0
-
-			if features.LagOK && features.SampleCount > 0 {
-				dynamicMax := signal.section.maxLagBars(features.SampleCount)
-
-				if dynamicMax > 0 {
-					lagFraction = math.Abs(float64(features.LagBars)) / float64(dynamicMax)
-				}
-
-				signedLagCorrelation = features.LagCorr
-				lagCorrelation = math.Abs(features.LagCorr)
-			}
-
-			if features.ContempOK {
-				signedContempCorrelation = features.ContempCorr
-				contempCorrelation = math.Abs(features.ContempCorr)
-			}
-
-			correlation := min(math.Max(contempCorrelation, lagCorrelation), 1)
-
-			lagDominates := max(0, min(1, (lagCorrelation-contempCorrelation)*1e9))
-			signedCorrelation := min(max(
-				signedContempCorrelation+lagDominates*(signedLagCorrelation-signedContempCorrelation),
-				-1,
-			), 1)
-
-			sampleSupport := 0.0
-
-			if features.SampleCount > 0 {
-				shortWindow, _, err := statistic.ResolveWindows(
-					make([]float64, features.SampleCount),
-					0,
-					0,
-				)
-
-				if err == nil && shortWindow > 0 {
-					sampleSupport = float64(features.SampleCount) / float64(shortWindow)
-				}
-			}
-
-			anchorActive := 0.1
-
-			if features.MoveMoved ||
-				(features.StallMargin > 0 && lagFraction > 0) ||
-				features.ContempOK ||
-				features.LagOK {
-				anchorActive = 1
-			}
-
-			stallDamp := 1.0
-
-			if features.MoveMoved {
-				stallDamp = 0
-			}
-
-			stallMargin := math.Min(1, math.Max(0, features.StallMargin))
-			noLag := 1 - lagFraction
-			uncorrelated := 1 - correlation
-			lagEvidence := lagCorrelation * lagFraction
-			syncEvidence := contempCorrelation * noLag
-			decoupledEvidence := uncorrelated * (1 - stallMargin)
-			stallEvidence := stallMargin * uncorrelated * noLag * stallDamp
-
-			inefficient := sampleSupport * anchorActive * lagEvidence * (1 - stallMargin)
-			syncScore := sampleSupport * anchorActive * syncEvidence * (1 - stallMargin)
-			decoupled := sampleSupport * anchorActive * decoupledEvidence
-			stall := sampleSupport * anchorActive * stallEvidence
-			strength := max(max(inefficient, syncScore), max(decoupled, stall))
-
-			validity := types.MeasurementValidity{
-				State:     types.ValidityValid,
-				Readiness: types.ReadinessObservation,
-			}
-
-			measurements := []*types.Measurement{
-				{
-					Source:   types.SourceLeadLag,
-					Metric:   types.MetricCorrelation,
-					Stream:   types.LeadLag,
-					Symbol:   row.Symbol,
-					At:       row.Timestamp,
-					Unit:     types.UnitDimensionless,
-					Raw:      correlation,
-					Validity: validity,
-				},
-				{
-					Source:   types.SourceLeadLag,
-					Metric:   types.MetricSignedCorrelation,
-					Stream:   types.LeadLag,
-					Symbol:   row.Symbol,
-					At:       row.Timestamp,
-					Unit:     types.UnitDimensionless,
-					Raw:      signedCorrelation,
-					Validity: validity,
-				},
-				{
-					Source:   types.SourceLeadLag,
-					Metric:   types.MetricSignedContempCorrelation,
-					Stream:   types.LeadLag,
-					Symbol:   row.Symbol,
-					At:       row.Timestamp,
-					Unit:     types.UnitDimensionless,
-					Raw:      signedContempCorrelation,
-					Validity: validity,
-				},
-				{
-					Source:   types.SourceLeadLag,
-					Metric:   types.MetricSignedLagCorrelation,
-					Stream:   types.LeadLag,
-					Symbol:   row.Symbol,
-					At:       row.Timestamp,
-					Unit:     types.UnitDimensionless,
-					Raw:      signedLagCorrelation,
-					Validity: validity,
-				},
-				{
-					Source:   types.SourceLeadLag,
-					Metric:   types.MetricLagFraction,
-					Stream:   types.LeadLag,
-					Symbol:   row.Symbol,
-					At:       row.Timestamp,
-					Unit:     types.UnitDimensionless,
-					Raw:      lagFraction,
-					Validity: validity,
-				},
-				{
-					Source:   types.SourceLeadLag,
-					Metric:   types.MetricSampleSupport,
-					Stream:   types.LeadLag,
-					Symbol:   row.Symbol,
-					At:       row.Timestamp,
-					Unit:     types.UnitDimensionless,
-					Raw:      sampleSupport,
-					Validity: validity,
-				},
-				{
-					Source:   types.SourceLeadLag,
-					Metric:   types.MetricInefficient,
-					Stream:   types.LeadLag,
-					Symbol:   row.Symbol,
-					At:       row.Timestamp,
-					Unit:     types.UnitDimensionless,
-					Raw:      inefficient,
-					Validity: validity,
-				},
-				{
-					Source:   types.SourceLeadLag,
-					Metric:   types.MetricSync,
-					Stream:   types.LeadLag,
-					Symbol:   row.Symbol,
-					At:       row.Timestamp,
-					Unit:     types.UnitDimensionless,
-					Raw:      syncScore,
-					Validity: validity,
-				},
-				{
-					Source:   types.SourceLeadLag,
-					Metric:   types.MetricDecoupled,
-					Stream:   types.LeadLag,
-					Symbol:   row.Symbol,
-					At:       row.Timestamp,
-					Unit:     types.UnitDimensionless,
-					Raw:      decoupled,
-					Validity: validity,
-				},
-				{
-					Source:   types.SourceLeadLag,
-					Metric:   types.MetricStall,
-					Stream:   types.LeadLag,
-					Symbol:   row.Symbol,
-					At:       row.Timestamp,
-					Unit:     types.UnitDimensionless,
-					Raw:      stall,
-					Validity: validity,
-				},
-				{
-					Source:   types.SourceLeadLag,
-					Metric:   types.MetricStrength,
-					Stream:   types.LeadLag,
-					Symbol:   row.Symbol,
-					At:       row.Timestamp,
-					Unit:     types.UnitDimensionless,
-					Raw:      strength,
-					Validity: validity,
-				},
-			}
-
-			out = append(out, measurements...)
-			signal.Publish(measurements)
+		if lastPrice <= 0 {
+			continue
 		}
+
+		signal.section.ObservePrice(row.Symbol, lastPrice, row.Timestamp)
 	}
 
+	if anchor, _ := frame.CrossSection.Leadership(); anchor != "" {
+		signal.section.SetAnchor(anchor)
+	}
+
+	for _, row := range rows {
+		if row.Timestamp.IsZero() || row.Symbol == "" || row.Last == nil {
+			continue
+		}
+
+		if row.Last.Float64() <= 0 {
+			continue
+		}
+
+		if signal.section.AnchorSymbol() == "" {
+			measurements := signal.provisional(row.Symbol, row.Timestamp)
+			out = append(out, measurements...)
+			signal.Publish(measurements)
+
+			continue
+		}
+
+		features := signal.section.Features(row.Symbol)
+
+		if features.Price <= 0 {
+			continue
+		}
+
+		measurements := signal.score(row.Symbol, row.Timestamp, features)
+		out = append(out, measurements...)
+	}
+
+	signal.Publish(out)
 	return out, nil
 }
 

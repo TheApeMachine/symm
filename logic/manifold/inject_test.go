@@ -1,6 +1,7 @@
 package manifold
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -106,28 +107,32 @@ func TestApplyForcing(t *testing.T) {
 				Amplitude: 0.2,
 				PosX:      0.25,
 				VelX:      -0.1,
+				Heat:      0.04,
 			},
 			{
 				Amplitude: 0.3,
 				PosX:      0.75,
 				VelX:      0.1,
+				Heat:      0.09,
 			},
 			{
 				Amplitude: 0.5,
 				PosX:      0.80,
 				VelX:      0.2,
+				Heat:      0.25,
 			},
 		}
 		beforeSell := oscillators[0].Amplitude * oscillators[0].VelX
 		beforeBuy := oscillators[1].Amplitude*oscillators[1].VelX +
 			oscillators[2].Amplitude*oscillators[2].VelX
 
-		characteristicSpeed, err := applyForcing(
+		characteristicSpeed, scale, err := applyForcing(
 			config, outcome, 10*time.Millisecond, oscillators,
 		)
 
 		Convey("It should conserve the fitted side impulse with carrier mass", func() {
 			So(err, ShouldBeNil)
+			So(scale, ShouldEqual, 1)
 			So(characteristicSpeed, ShouldBeGreaterThan, 0)
 
 			afterSell := oscillators[0].Amplitude * oscillators[0].VelX
@@ -136,6 +141,48 @@ func TestApplyForcing(t *testing.T) {
 
 			So(afterSell-beforeSell, ShouldAlmostEqual, -0.0232)
 			So(afterBuy-beforeBuy, ShouldAlmostEqual, 0.0484)
+		})
+	})
+}
+
+/*
+TestApplyForcingRescalesThinBookImpulse verifies that a Hawkes impulse on a
+thin L3 population is scaled into the event-time CFL envelope instead of being
+rejected or deposited as an unbounded rarefaction that poisons the gas step.
+*/
+func TestApplyForcingRescalesThinBookImpulse(t *testing.T) {
+	Convey("Given tiny carrier mass and a large fitted arrival impulse", t, func() {
+		config := testPhysicsConfig()
+		outcome := testOutcome()
+		outcome.Fit.IntensityX = 1e6
+		outcome.Fit.IntensityY = 5e5
+		oscillators := []pmanifold.Oscillator{
+			{Amplitude: 1e-6, PosX: 0.25, Heat: 1e-6 * config.CV},
+			{Amplitude: 1e-6, PosX: 0.75, Heat: 1e-6 * config.CV},
+		}
+		interval := 10 * time.Millisecond
+		deltaT := integrationDeltaT(config, interval)
+		speedLimit := config.AdvectiveDeltaT(1) / deltaT
+		buyPressure, sellPressure, ready := arrivalForcing(outcome, deltaT)
+		So(ready, ShouldBeTrue)
+
+		characteristicSpeed, scale, err := applyForcing(
+			config, outcome, interval, oscillators,
+		)
+
+		Convey("It should keep rarefaction inside the event-time Courant bound", func() {
+			So(err, ShouldBeNil)
+			So(scale, ShouldBeGreaterThan, 0)
+			So(scale, ShouldBeLessThan, 1)
+			So(characteristicSpeed, ShouldBeGreaterThan, 0)
+			So(characteristicSpeed, ShouldBeLessThanOrEqualTo, speedLimit*(1+1e-9))
+			So(oscillators[0].VelX, ShouldBeLessThan, 0)
+			So(oscillators[1].VelX, ShouldBeGreaterThan, 0)
+			So(
+				math.Abs(oscillators[1].VelX/oscillators[0].VelX),
+				ShouldAlmostEqual,
+				buyPressure/sellPressure,
+			)
 		})
 	})
 }
@@ -167,7 +214,7 @@ func BenchmarkApplyForcing(b *testing.B) {
 	for index := 0; index < b.N; index++ {
 		copy(oscillators, population)
 
-		if _, err := applyForcing(
+		if _, _, err := applyForcing(
 			config, outcome, 10*time.Millisecond, oscillators,
 		); err != nil {
 			b.Fatal(err)

@@ -1,4 +1,5 @@
 import { batch } from "@tanstack/store";
+import { appStore } from "#/collections/app";
 import { balancesStore } from "#/collections/balances";
 import { categoriesStore } from "#/collections/categories";
 import { causalStore } from "#/collections/causal";
@@ -13,14 +14,16 @@ import { hypothesesStore } from "#/collections/hypotheses";
 import { instrumentsStore } from "#/collections/instruments";
 import { lifecycleStore } from "#/collections/lifecycle";
 import { manifoldStore } from "#/collections/manifold";
+import { expandWireMeasurements } from "#/collections/measurement-wire";
 import { measurementsStore } from "#/collections/measurements";
 import { ordersStore } from "#/collections/orders";
 import { positionsStore } from "#/collections/positions";
 import { resonanceStore } from "#/collections/resonance";
 import { stopsStore } from "#/collections/stops";
+import { terminalStore } from "#/collections/terminal";
 import { tickStore } from "#/collections/tick";
 import { tradeJournalStore } from "#/collections/trade-journal";
-import type { Measurement } from "#/types/measurement";
+import { liveFocusSymbol } from "#/components/terminal/measurement-sources";
 
 type FrameStore = {
 	actions: {
@@ -52,13 +55,11 @@ export const frameStores = {
 	tick: tickStore,
 } as Record<string, FrameStore>;
 
-const isMeasurementFrame = (value: unknown): value is Measurement[] =>
-	Array.isArray(value);
-
 /*
 applyFramePayload routes one coalesced worker payload into the TanStack stores
 that already own each backend frame key. Tick updates first so the counter never
-waits behind a large measurements ingest.
+waits behind a large measurements ingest. Nested wire metrics maps expand into
+flat readings before the measurements store sees them.
 */
 export const applyFramePayload = (parsedData: Record<string, unknown>) => {
 	batch(() => {
@@ -66,8 +67,17 @@ export const applyFramePayload = (parsedData: Record<string, unknown>) => {
 			frameStores.tick.actions.updateFrame(parsedData.tick);
 		}
 
-		if (isMeasurementFrame(parsedData.measurements)) {
-			measurementsStore.actions.updateFrame(parsedData.measurements);
+		if (Array.isArray(parsedData.measurements)) {
+			measurementsStore.actions.updateFrame(
+				expandWireMeasurements(parsedData.measurements),
+			);
+			const preferred = appStore.state.focusSymbol;
+			const live = liveFocusSymbol(measurementsStore.state, preferred);
+
+			if (live !== preferred) {
+				appStore.actions.updateFocusSymbol(live);
+				terminalStore.actions.selectFocusSymbol(live);
+			}
 		}
 
 		for (const [key, data] of Object.entries(parsedData)) {

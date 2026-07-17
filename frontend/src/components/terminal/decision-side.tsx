@@ -20,6 +20,10 @@ import {
 	causalUplift,
 	latestCausalFrame,
 } from "#/components/terminal/causal-view";
+import {
+	formatBeamSequence,
+	formatEntropyGate,
+} from "#/components/terminal/cognitive-entropy";
 import { fixed } from "#/components/terminal/decision-format";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { Meter } from "@/components/ui/meter";
@@ -141,6 +145,7 @@ const isConcreteSymbol = (symbol: string | undefined): symbol is string =>
 	symbol !== undefined && symbol !== "" && symbol !== "stream";
 
 export type CognitiveBeamModel = {
+	sequenceTitle: string;
 	cohort: string;
 	sequence: string;
 	winner: string;
@@ -183,6 +188,8 @@ export const cognitiveBeamModel = (
 		Number.isFinite(reading.entropyThreshold)
 			? reading.entropyThreshold
 			: 0;
+	const entropyGate = formatEntropyGate(entropyBits, entropyThreshold);
+	const sequence = formatBeamSequence(reading.sequence || "waiting");
 	const confidence = Math.min(
 		1,
 		Math.max(
@@ -212,22 +219,19 @@ export const cognitiveBeamModel = (
 		Number.isFinite(reading.prewarmPaths)
 			? reading.prewarmPaths
 			: 0);
-	const entropyPercent =
-		entropyThreshold > 0
-			? Math.min(100, Math.max(0, (entropyBits / entropyThreshold) * 100))
-			: 0;
 
 	return {
 		cohort: String(reading.regimeCohort),
-		sequence: reading.sequence || "waiting",
+		sequence: sequence.preview,
+		sequenceTitle: sequence.title,
 		winner: reading.winnerClass || "pending",
 		paths: String(Math.round(paths)),
 		meters: [
 			{
 				label: "Entropy gate",
-				value: `${entropyBits.toFixed(2)} / ${entropyThreshold.toFixed(1)} bits`,
-				percent: entropyPercent,
-				variant: "success",
+				value: entropyGate.value,
+				percent: entropyGate.percent,
+				variant: entropyGate.ungated ? "disabled" : "success",
 			},
 			{
 				label: "Class confidence",
@@ -474,7 +478,10 @@ export const CognitiveBeam = ({ symbol }: { symbol?: string }) => {
 			<div className="mt-2 font-mono text-[9.5px] text-(--f4)">
 				DMT sequence
 			</div>
-			<div className="mt-1 break-all rounded-sm border border-(--line) bg-(--bg) p-1.5 font-mono text-[10px] text-(--f2)">
+			<div
+				className="mt-1 line-clamp-3 wrap-break-word rounded-sm border border-(--line) bg-(--bg) p-1.5 font-mono text-[10px] text-(--f2)"
+				title={model.sequenceTitle}
+			>
 				{model.sequence}
 			</div>
 

@@ -1,5 +1,8 @@
 system:
   data_path: ~/.symm/data
+  audit:
+    # Rename runtime-audit.jsonl aside on boot so diagnostics start clean.
+    rotate_on_boot: true
   pprof:
     enabled: false
     addr: 127.0.0.1:6060
@@ -7,11 +10,14 @@ system:
     level: debug
   websocket:
     channel:
-      buffer: 1024
+      buffer: 64
 
 cognitive:
   persist_dir: ~/.symm/cognitive
   tick_budget: 10ms
+  # Rotate the cognitive store aside on boot so a bloated WAL cannot poison the
+  # next run. Discards persisted Thesis recovery from that directory.
+  reset_on_boot: true
 
 market:
   quote_currency: USD
@@ -55,11 +61,11 @@ signals:
   # The central public stream retains this event window. Older events are
   # overwritten by design; enlarge the configured ring if one measurement cut
   # must inspect a larger live burst.
-  feed_timeline_capacity: 128
+  feed_timeline_capacity: 64
   # Preserve the existing per-symbol history allowance independently from the
   # global burst journal; multiplying the timeline size by every symbol would
   # make memory scale with the square of the observed market surface.
-  feed_track_capacity: 128
+  feed_track_capacity: 64
   # Zero derives bars/day from signals.fluid.integration_interval.
   volume_clock_bars_per_day: 0
   fluid:

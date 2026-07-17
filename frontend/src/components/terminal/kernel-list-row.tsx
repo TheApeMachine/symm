@@ -12,6 +12,7 @@ import {
 	kernelStatusMeta,
 	kernelStatusVariant,
 } from "#/components/terminal/kernel-meta";
+import { sourceHasUniverseFrames } from "#/components/terminal/measurement-sources";
 import {
 	ageText,
 	formatRaw,
@@ -19,7 +20,7 @@ import {
 	latestByMetric,
 	metricLabel,
 	percentOf,
-	resolveStatus,
+	resolveKernelStatus,
 	stampOf,
 } from "#/components/terminal/measurement-view";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
@@ -48,7 +49,10 @@ const paintKernelListRow = (
 	const headline = headlineMetric(source);
 	const latest =
 		headline === null ? epoch.at(-1) : latestByMetric(epoch, headline);
-	const status = resolveStatus(latest);
+	const status = resolveKernelStatus(
+		latest,
+		sourceHasUniverseFrames(measurementsStore.state, source),
+	);
 	const statusMeta = kernelStatusMeta(status);
 	const spark = kernelSparkPaths(
 		headline === null ? [] : headlineSeriesFromBuffer(buffer, headline),

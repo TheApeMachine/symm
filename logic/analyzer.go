@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/system"
@@ -23,20 +24,36 @@ has measured the current Thesis. The manifold solver owns the Hawkes-driven GPU
 field step, while the Analyzer builds each symbol's typed evidence topology.
 */
 type Analyzer struct {
-	gate           stageGate
-	status         types.Status
-	manifold       *manifold.Solver
-	hawkes         manifold.HawkesSource
-	tree           *dmt.Tree
-	ui             chan []byte
-	resonance      map[string]*Resonance
-	causal         map[string]*Causal
-	remFrom        time.Time
-	remThrough     time.Time
-	remPending     int
-	lastREMFrom    time.Time
-	lastREMThrough time.Time
-	lastREMReplays int
+	gate      stageGate
+	status    types.Status
+	manifold  *manifold.Solver
+	hawkes    manifold.HawkesSource
+	tree      *dmt.Tree
+	ui        chan []byte
+	recorder  *audit.Recorder
+	resonance map[string]*Resonance
+	causal    map[string]*Causal
+	rem       *remSleep
+}
+
+/*
+SetRecorder attaches the runtime audit stream to the analyzer, manifold solver,
+and REM scheduler so phase breadcrumbs survive a freeze.
+*/
+func (analyzer *Analyzer) SetRecorder(recorder *audit.Recorder) {
+	if analyzer == nil {
+		return
+	}
+
+	analyzer.recorder = recorder
+
+	if analyzer.manifold != nil {
+		analyzer.manifold.SetRecorder(recorder)
+	}
+
+	if analyzer.rem != nil {
+		analyzer.rem.SetRecorder(recorder)
+	}
 }
 
 /*
@@ -85,6 +102,7 @@ func NewAnalyzer(
 		ui:        ui,
 		resonance: make(map[string]*Resonance),
 		causal:    make(map[string]*Causal),
+		rem:       newREMSleep(tree),
 	}, nil
 }
 
@@ -100,6 +118,10 @@ func (analyzer *Analyzer) Status() types.Status {
 }
 
 func (analyzer *Analyzer) Close() {
+	if analyzer.rem != nil {
+		analyzer.rem.Await()
+	}
+
 	if analyzer.manifold != nil {
 		analyzer.manifold.Close()
 	}
@@ -110,16 +132,33 @@ Update delegates Hawkes-driven field analysis after signal measure, then compose
 the current typed relationships for each symbol's evidence graph.
 */
 func (analyzer *Analyzer) Update(thesis *types.Thesis) {
+	started := time.Now()
+
+	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "analyze_begin", nil))
+
 	if analyzer.manifold != nil &&
 		analyzer.hawkes != nil &&
 		analyzer.gate != nil &&
 		analyzer.gate.Ready(system.StagePreflight) {
+		manifoldStarted := time.Now()
+
 		if err := analyzer.manifold.Update(thesis, analyzer.hawkes); err != nil {
 			errnie.Error(err)
+			errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "manifold", map[string]any{
+				"ok":  false,
+				"ns":  time.Since(manifoldStarted).Nanoseconds(),
+				"err": err.Error(),
+			}))
+		} else {
+			errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "manifold", map[string]any{
+				"ok": true,
+				"ns": time.Since(manifoldStarted).Nanoseconds(),
+			}))
 		}
 	}
 
 	states := make([]manifold.State, 0)
+	observeStarted := time.Now()
 
 	thesis.Manifold.Range(func(key, value any) bool {
 		state, ok := value.(manifold.State)
@@ -139,6 +178,13 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 
 		return true
 	})
+
+	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "observe", map[string]any{
+		"states": len(states),
+		"ns":     time.Since(observeStarted).Nanoseconds(),
+	}))
+
+	publishStarted := time.Now()
 
 	if len(states) > 0 {
 		frame := make([]any, 0, len(states))
@@ -161,6 +207,12 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 	if len(thesis.Hypotheses) > 0 {
 		analyzer.publish(datura.Map[any]{"hypotheses": thesis.Hypotheses})
 	}
+
+	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "publish", map[string]any{
+		"ns": time.Since(publishStarted).Nanoseconds(),
+	}))
+
+	graphsStarted := time.Now()
 
 	for _, measurement := range thesis.Measurements {
 		if measurement == nil {
@@ -199,16 +251,38 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 		return true
 	})
 
+	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "graphs", map[string]any{
+		"measurements": len(thesis.Measurements),
+		"ns":           time.Since(graphsStarted).Nanoseconds(),
+	}))
+
 	remObservations := make([]time.Time, 0, len(states))
 	remRequested := false
+	cognizeStarted := time.Now()
 
 	for _, state := range states {
 		if analyzer.cognize(thesis, state) {
 			remObservations = append(remObservations, state.At)
-			value, _ := thesis.Cognition.Load(state.Symbol)
-			remRequested = remRequested || value.(types.Cognition).Ambiguous
+			value, found := thesis.Cognition.Load(state.Symbol)
+
+			if found {
+				remRequested = remRequested || value.(types.Cognition).Ambiguous
+			}
 		}
 	}
+
+	remPending := 0
+
+	if analyzer.rem != nil {
+		remPending = analyzer.rem.Pending()
+	}
+
+	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "cognize", map[string]any{
+		"states":      len(states),
+		"ns":          time.Since(cognizeStarted).Nanoseconds(),
+		"ambiguous":   remRequested,
+		"rem_pending": remPending,
+	}))
 
 	analyzer.consolidate(thesis, remObservations, remRequested)
 
@@ -231,56 +305,44 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 	if len(thesis.Forecasts) > 0 {
 		analyzer.publish(datura.Map[any]{"forecasts": thesis.Forecasts})
 	}
+
+	remPending = 0
+
+	if analyzer.rem != nil {
+		remPending = analyzer.rem.Pending()
+	}
+
+	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "analyze_end", map[string]any{
+		"ns":          time.Since(started).Nanoseconds(),
+		"states":      len(states),
+		"forecasts":   len(thesis.Forecasts),
+		"hypotheses":  len(thesis.Hypotheses),
+		"rem_pending": remPending,
+	}))
 }
 
 /*
-consolidate accumulates episodic observations and replays the pending interval
-when DMT reports ambiguous branching. The ambiguity gate supplies the trigger,
-so REM has no unrelated timer or fixed batch threshold.
+consolidate accumulates episodic observations and requests off-path REM when
+DMT reports ambiguous branching. The ambiguity gate supplies the trigger, so
+REM has no unrelated timer or fixed batch threshold.
 */
 func (analyzer *Analyzer) consolidate(
 	thesis *types.Thesis,
 	observations []time.Time,
 	requested bool,
 ) {
-	if analyzer.tree == nil {
-		return
+	if analyzer.rem == nil {
+		analyzer.rem = newREMSleep(analyzer.tree)
+		analyzer.rem.SetRecorder(analyzer.recorder)
 	}
 
-	for _, at := range observations {
-		if analyzer.remFrom.IsZero() || at.Before(analyzer.remFrom) {
-			analyzer.remFrom = at
-		}
+	analyzer.rem.Accumulate(observations)
 
-		if analyzer.remThrough.IsZero() || at.After(analyzer.remThrough) {
-			analyzer.remThrough = at
-		}
-
-		analyzer.remPending++
+	if requested {
+		analyzer.rem.Request(thesis.Tick)
 	}
 
-	if requested && analyzer.remPending > 0 {
-		analyzer.tree.ExecuteREMSleepConsolidation(
-			uint64(analyzer.remFrom.UnixNano()),
-			uint64(analyzer.remThrough.UnixNano()),
-		)
-		analyzer.lastREMFrom = analyzer.remFrom
-		analyzer.lastREMThrough = analyzer.remThrough
-		analyzer.lastREMReplays = analyzer.remPending
-		analyzer.remFrom = time.Time{}
-		analyzer.remThrough = time.Time{}
-		analyzer.remPending = 0
-	}
-
-	thesis.Cognition.Range(func(key, value any) bool {
-		reading := value.(types.Cognition)
-		reading.REMFrom = analyzer.lastREMFrom
-		reading.REMThrough = analyzer.lastREMThrough
-		reading.REMReplays = analyzer.lastREMReplays
-		thesis.Cognition.Store(key, reading)
-
-		return true
-	})
+	analyzer.rem.Stamp(thesis)
 }
 
 /*

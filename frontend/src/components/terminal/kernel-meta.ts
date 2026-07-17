@@ -3,6 +3,7 @@ import type { Variant } from "@/components/ui/types";
 export type SignalHealthStatus =
 	| "waiting"
 	| "standby"
+	| "unfocused"
 	| "calibrating"
 	| "fault"
 	| "ambiguous"
@@ -197,6 +198,12 @@ export const kernelStatusMeta = (
 			bg: "var(--line)",
 			bd: "var(--line2)",
 		},
+		unfocused: {
+			label: "Off focus",
+			fg: "var(--warn)",
+			bg: "color-mix(in srgb, var(--warn) 12%, transparent)",
+			bd: "color-mix(in srgb, var(--warn) 38%, transparent)",
+		},
 		calibrating: {
 			label: "Calib",
 			fg: "var(--info)",
@@ -218,23 +225,25 @@ export const kernelStatusMeta = (
 kernelStatusVariant maps kernel health status onto semantic UI variants.
 */
 export const kernelStatusVariant = (status: SignalHealthStatus): Variant => {
-	if (status === "measured") {
-		return "success";
+	switch (status) {
+		case "measured":
+			return "success";
+		case "fault":
+		case "ambiguous":
+			return "error";
+		case "unknown":
+		case "unfocused":
+			return "warning";
+		case "waiting":
+		case "standby":
+			return "disabled";
+		case "calibrating":
+			return "info";
+		default: {
+			const _exhaustive: never = status;
+			return _exhaustive;
+		}
 	}
-
-	if (status === "fault" || status === "ambiguous") {
-		return "error";
-	}
-
-	if (status === "unknown") {
-		return "warning";
-	}
-
-	if (status === "waiting" || status === "standby") {
-		return "disabled";
-	}
-
-	return "info";
 };
 
 export const kernelSparkPaths = (
@@ -293,7 +302,7 @@ export const kernelSparkPaths = (
 
 export const formatUptime = (startedAtMs: number | null): string => {
 	if (startedAtMs === null || !Number.isFinite(startedAtMs)) {
-		return "0m 0s";
+		return "—";
 	}
 
 	const totalSeconds = Math.max(

@@ -1,12 +1,17 @@
 package liquidity
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/conditions"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -65,8 +70,14 @@ func TestSignal_MeasureRequiresTwoExecutablePeers(testingTB *testing.T) {
 			liquidityRow("BTC/USD", 999, 1001, 2, 2, 1, 1000),
 		)
 
-		Convey("Then it emits nothing rather than dividing by an unsupported median", func() {
-			So(result, ShouldBeEmpty)
+		Convey("Then it emits provisional depth without inventing a peer median", func() {
+			depth, ok := measureField(result, "BTC/USD", types.MetricExecutableTouchDepth)
+			So(ok, ShouldBeTrue)
+			So(depth.Validity.State, ShouldEqual, types.ValidityProvisional)
+			So(depth.Validity.Reason, ShouldContainSubstring, "peer executable-depth median")
+
+			_, hasRelative := measureField(result, "BTC/USD", types.MetricRelativeTouchDepth)
+			So(hasRelative, ShouldBeFalse)
 		})
 	})
 }
@@ -183,6 +194,58 @@ func TestSignal_MeasureSkipsNonExecutableSubject(testingTB *testing.T) {
 		Convey("Then it emits nothing for the unexecutable subject", func() {
 			_, hasSubject := measureField(result, "BTC/USD", types.MetricRelativeTouchDepth)
 			So(hasSubject, ShouldBeFalse)
+		})
+	})
+}
+
+func sessionSignals(
+	ctx context.Context,
+	api *websocket.API,
+	_ *broker.Instrument,
+	channel chan []byte,
+) []types.Signal {
+	return []types.Signal{NewSignal(ctx, api, channel)}
+}
+
+func TestSignal_MeasureFromMarket(testingTB *testing.T) {
+	Convey("Given liquidity inside a paper Session cohort market", testingTB, func() {
+		herdSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+		})
+		So(err, ShouldBeNil)
+		thinSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+		})
+		So(err, ShouldBeNil)
+
+		Convey("When herd and thin-subject cohorts play through Cut", func() {
+			herdTheses, err := herdSession.Play(conditions.Herd(24).Frames())
+			So(err, ShouldBeNil)
+			thinTheses, err := thinSession.Play(
+				conditions.ThinHerd(24, 0.15).Frames(),
+			)
+			So(err, ShouldBeNil)
+
+			herd, hasHerd := tests.PeakSourceMetric(
+				herdTheses,
+				types.SourceLiquidity,
+				conditions.Subject(),
+				types.MetricScarcityScore,
+			)
+			thin, hasThin := tests.PeakSourceMetric(
+				thinTheses,
+				types.SourceLiquidity,
+				conditions.Subject(),
+				types.MetricScarcityScore,
+			)
+
+			Convey("Then a starved subject raises scarcity versus the herd", func() {
+				So(hasThin, ShouldBeTrue)
+
+				if hasHerd {
+					So(thin, ShouldBeGreaterThan, herd)
+				}
+			})
 		})
 	})
 }

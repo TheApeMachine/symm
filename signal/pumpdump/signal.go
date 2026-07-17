@@ -40,7 +40,7 @@ measured its evidence, mirroring broker.Balance.Publish.
 func (signal *Signal) Publish(measurements []*types.Measurement) {
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": measurements,
+		"measurements": types.WireMeasurements(measurements),
 	}.Marshal():
 	default:
 	}
@@ -90,12 +90,8 @@ func (signal *Signal) Calculate(
 			)))
 		}
 
-		if !ready {
-			continue
-		}
-
 		measurements, err := ignitionMeasurements(
-			row.Symbol, row.Timestamp, output, maturity,
+			row.Symbol, row.Timestamp, output, maturity, ready,
 			row.Bid.Float64(), row.Ask.Float64(),
 		)
 
@@ -105,9 +101,9 @@ func (signal *Signal) Calculate(
 		}
 
 		out = append(out, measurements...)
-		signal.Publish(measurements)
 	}
 
+	signal.Publish(out)
 	return out, nil
 }
 

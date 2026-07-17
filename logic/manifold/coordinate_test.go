@@ -105,8 +105,12 @@ func TestCohortsFromMappedOrders(t *testing.T) {
 		t.Fatalf("cohorts = %d, want 1", len(oscillators))
 	}
 
-	if oscillators[0].Amplitude <= 0 {
-		t.Fatalf("amplitude = %v, want positive", oscillators[0].Amplitude)
+	if math.Abs(oscillators[0].Amplitude-1) > 1e-12 {
+		t.Fatalf("amplitude = %v, want cohort mass 1", oscillators[0].Amplitude)
+	}
+
+	if math.Abs(oscillators[0].Heat-config.CV) > 1e-12 {
+		t.Fatalf("heat = %v, want amplitude*CV=%v", oscillators[0].Heat, config.CV)
 	}
 
 	if math.Abs(oscillators[0].Phase) > 0.11 {

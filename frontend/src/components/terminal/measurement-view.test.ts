@@ -5,9 +5,10 @@ import {
 	headlineMetric,
 	latestByMetric,
 	latestEpoch,
-	metricLabel,
 	measurementIdentity,
+	metricLabel,
 	orderedEpoch,
+	resolveKernelStatus,
 } from "./measurement-view";
 
 const measurement = (
@@ -117,5 +118,18 @@ describe("orderedEpoch", () => {
 		expect(metricLabel("reported_volume_notional")).toBe(
 			"Reported Volume Notional",
 		);
+	});
+});
+
+describe("resolveKernelStatus", () => {
+	it("labels a quiet focus as off-focus when the universe has the source", () => {
+		expect(resolveKernelStatus(undefined, true)).toBe("unfocused");
+		expect(resolveKernelStatus(undefined, false)).toBe("waiting");
+		expect(
+			resolveKernelStatus(
+				measurement("strength", "2026-07-14T16:25:24Z", 0.2),
+				true,
+			),
+		).toBe("measured");
 	});
 });

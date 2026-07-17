@@ -5,13 +5,14 @@ import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
 import { SignalDetail } from "#/components/kernel/detail";
 import { CrossSectionPanel } from "#/components/terminal/cross-section-panel";
-import { HealthPanel, RadarPanel } from "#/components/terminal/health";
+import { HealthPanel } from "#/components/terminal/health";
 import { KernelList } from "#/components/terminal/kernel-list";
 import { orderedKernelSources } from "#/components/terminal/kernel-meta";
 import {
 	backendMeasurementSources,
 	sameSources,
 } from "#/components/terminal/measurement-sources";
+import { RadarPanel } from "#/components/terminal/regime-radar";
 
 export const signalsSurfaceSources = (
 	kernels: string[],

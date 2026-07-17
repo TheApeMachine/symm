@@ -83,7 +83,7 @@ func TestNewMarket(t *testing.T) {
 		Convey("Then construction fails before handlers are registered", func() {
 			So(market, ShouldBeNil)
 			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "track capacity")
+			So(err.Error(), ShouldContainSubstring, "invalid feed configuration")
 		})
 	})
 }
@@ -120,10 +120,26 @@ func TestMarket_Cut(t *testing.T) {
 				So(threshold, ShouldBeGreaterThan, 0)
 			})
 
-			Convey("Then those rows do not enter a later cut again", func() {
+			Convey("Then a quiet later cut stays empty so the planner does not busy-spin", func() {
 				later, err := market.Cut(cutAt.Add(time.Second))
 				So(err, ShouldBeNil)
 				So(later.IsEmpty(), ShouldBeTrue)
+			})
+
+			Convey("Then a book-only later cut carries only the active symbol's ticker", func() {
+				instrument := broker.NewInstrument(nil, nil, nil)
+				instrument.On([]byte(marketInstrumentFrame))
+				bookMarket, err := NewMarket(nil, instrument)
+				So(err, ShouldBeNil)
+				bookMarket.OnTicker([]byte(marketTickerFrame))
+				_, err = bookMarket.Cut(cutAt)
+				So(err, ShouldBeNil)
+				bookMarket.OnBook([]byte(marketBookFrame))
+				later, err := bookMarket.Cut(cutAt.Add(time.Second))
+				So(err, ShouldBeNil)
+				So(later.Tickers, ShouldHaveLength, 1)
+				So(later.Tickers[0].Symbol, ShouldEqual, "BTC/USD")
+				So(later.Books, ShouldHaveLength, 1)
 			})
 		})
 
@@ -134,7 +150,7 @@ func TestMarket_Cut(t *testing.T) {
 
 			Convey("Then only the configured newest rows survive", func() {
 				So(err, ShouldBeNil)
-				So(bounded.Tickers, ShouldHaveLength, 4)
+				So(bounded.Tickers, ShouldHaveLength, 2)
 				later, err := market.Cut(cutAt.Add(time.Second))
 				So(err, ShouldBeNil)
 				So(later.IsEmpty(), ShouldBeTrue)

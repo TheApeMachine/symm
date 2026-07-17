@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Circular } from "#/collections/circular";
 import type { MeasurementEpoch } from "#/collections/measurements";
-import { regimeAxes, terminalHealthSummary } from "./health";
+import { terminalHealthSummary } from "./health";
+import { regimeAxes } from "./regime-radar";
 
 describe("terminalHealthSummary", () => {
 	it("counts backend measurement frames as firing", () => {
@@ -36,12 +37,56 @@ describe("terminalHealthSummary", () => {
 			},
 			"BTC/USD",
 			["depthflow", "fluid"],
+			{ count: 12, completed: true, ns: 45_000_000 },
 		);
 
 		expect(summary.firing).toBe(1);
 		expect(summary.measured).toBe(1);
 		expect(summary.total).toBe(2);
 		expect(summary.avg).toBe(21);
+		expect(summary.label).toBe("Live");
+		expect(summary.tickMs).toBe(45);
+		expect(summary.completed).toBe(true);
+	});
+
+	it("does not call a silent focus STANDBY when the universe is live", () => {
+		const history = Circular<MeasurementEpoch>(4);
+
+		history.push({
+			at: "2026-07-06T10:00:00Z",
+			publishedAt: "2026-07-06T10:00:00Z",
+			readings: [
+				{
+					source: "depthflow",
+					metric: "strength",
+					symbol: "ETH/USD",
+					at: "2026-07-06T10:00:00Z",
+					raw: 0.21,
+					normalized: null,
+					uncertainty: null,
+					validity: { state: "valid", readiness: "observation" },
+					scale: { kind: "", from: "", through: "" },
+				},
+			],
+		});
+
+		const summary = terminalHealthSummary(
+			{
+				measurements: {
+					"ETH/USD": {
+						depthflow: history,
+					},
+				},
+				version: 1,
+			},
+			"BTC/USD",
+			["depthflow"],
+			{ count: 3, completed: true, ns: 12_000_000 },
+		);
+
+		expect(summary.firing).toBe(1);
+		expect(summary.label).toBe("Live · thin focus");
+		expect(summary.completed).toBe(true);
 	});
 
 	it("projects numerical measurements onto the backend regime axes", () => {

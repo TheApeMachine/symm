@@ -45,6 +45,7 @@ type Crypto struct {
 	dataPath   string
 	uiHub      *ui.Hub
 	market     *Market
+	recorder   *audit.Recorder
 }
 
 /*
@@ -127,15 +128,22 @@ func (crypto *Crypto) Status() types.Status {
 }
 
 func (crypto *Crypto) Run() error {
-	recorder, recorderErr := audit.NewRecorder(
-		filepath.Join(crypto.dataPath, "runtime-audit.jsonl"),
-	)
+	auditPath := filepath.Join(crypto.dataPath, "runtime-audit.jsonl")
+
+	if viper.GetBool("system.audit.rotate_on_boot") {
+		if err := audit.Rotate(auditPath); err != nil {
+			errnie.Error(err)
+		}
+	}
+
+	recorder, recorderErr := audit.NewRecorder(auditPath)
 
 	if recorderErr != nil {
 		errnie.Error(recorderErr)
 	}
 
 	crypto.planner.SetRecorder(recorder)
+	crypto.recorder = recorder
 
 	go func() {
 		errnie.Info("crypto runtime started")
@@ -157,33 +165,9 @@ func (crypto *Crypto) Run() error {
 				continue
 			}
 
-			frame, err := crypto.market.Cut(time.Now().UTC())
-
-			if err != nil {
-				crypto.status = types.ERROR
-				errnie.Error(errnie.Err(
-					errnie.Internal,
-					"crypto: market cut failed",
-					err,
-				))
+			if _, err := crypto.Tick(time.Now().UTC()); err != nil {
 				return
 			}
-
-			if frame.IsEmpty() {
-				continue
-			}
-
-			thesis := crypto.planner.Update(frame)
-			thesis.Tick = crypto.tick.Add(1)
-			crypto.trade(thesis)
-			crypto.publishTick(thesis)
-
-			errnie.Error(audit.Record(recorder, "tick", map[string]any{
-				"tick":         thesis.Tick,
-				"measurements": len(thesis.Measurements),
-				"decisions":    len(thesis.Decisions),
-				"forecasts":    len(thesis.Forecasts),
-			}))
 		}
 	}()
 
@@ -191,18 +175,78 @@ func (crypto *Crypto) Run() error {
 }
 
 /*
-publishTick sends the frontend one compact factual runtime projection after a
-completed Thesis tick so the dashboard counter reflects actual planner progress.
+Tick cuts the market at at, runs one planner update and trade pass, then
+publishes the tick projection. An empty cut returns a nil Thesis without error
+so callers can advance virtual time without busy-spinning.
 */
-func (crypto *Crypto) publishTick(thesis *types.Thesis) {
+func (crypto *Crypto) Tick(at time.Time) (*types.Thesis, error) {
+	frame, err := crypto.market.Cut(at)
+
+	if err != nil {
+		crypto.status = types.ERROR
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"crypto: market cut failed",
+			err,
+		))
+
+		return nil, err
+	}
+
+	if frame.IsEmpty() {
+		return nil, nil
+	}
+
+	tick := crypto.tick.Add(1)
+	started := time.Now()
+	recorder := crypto.recorder
+
+	errnie.Error(audit.Phase(recorder, tick, "cut", map[string]any{
+		"tickers": len(frame.Tickers),
+		"trades":  len(frame.Trades),
+		"books":   len(frame.Books),
+	}))
+
+	thesis := crypto.planner.Update(frame, tick)
+	elapsed := time.Since(started).Nanoseconds()
+
+	errnie.Error(audit.Phase(recorder, tick, "update_end", map[string]any{
+		"ns":        elapsed,
+		"completed": true,
+	}))
+
+	crypto.trade(thesis)
+	crypto.publishTick(thesis, elapsed)
+
+	errnie.Error(audit.Record(recorder, "tick", map[string]any{
+		"tick":         thesis.Tick,
+		"measurements": types.ObservationCount(thesis.Measurements),
+		"decisions":    len(thesis.Decisions),
+		"forecasts":    len(thesis.Forecasts),
+		"ns":           elapsed,
+		"completed":    true,
+	}))
+
+	return thesis, nil
+}
+
+/*
+publishTick sends the frontend one compact factual runtime projection after a
+completed Thesis tick so engine health reflects actual planner progress and
+latency rather than focus-scoped kernel standby.
+*/
+func (crypto *Crypto) publishTick(thesis *types.Thesis, elapsedNs int64) {
 	if crypto.uiHub == nil {
 		return
 	}
 
 	tick := datura.Map[any]{
 		"count":        thesis.Tick,
-		"measurements": len(thesis.Measurements),
+		"measurements": types.ObservationCount(thesis.Measurements),
 		"candidates":   len(thesis.Positions),
+		"ns":           elapsedNs,
+		"completed":    true,
+		"phase":        "complete",
 	}
 
 	if crypto.desk != nil {

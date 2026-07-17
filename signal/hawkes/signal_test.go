@@ -9,7 +9,11 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/conditions"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -89,7 +93,7 @@ func TestSignalOnTrade(testingTB *testing.T) {
 				defer wait.Done()
 
 				for range 100 {
-					<-signal.Measure(types.NewThesis(nil, frameOf(row)))
+					_ = signal.Measure(types.NewThesis(nil, frameOf(row)))
 				}
 			}()
 
@@ -119,6 +123,58 @@ func TestSignalMeasure(testingTB *testing.T) {
 				count, ok := measureField(result, "BTC/USD", types.MetricEventCount)
 				So(ok, ShouldBeTrue)
 				So(count.Raw, ShouldBeGreaterThan, 0)
+			})
+		})
+	})
+}
+
+func sessionSignals(
+	ctx context.Context,
+	api *websocket.API,
+	_ *broker.Instrument,
+	channel chan []byte,
+) []types.Signal {
+	return []types.Signal{NewSignal(ctx, api, channel)}
+}
+
+func TestSignal_MeasureFromMarket(testingTB *testing.T) {
+	Convey("Given Hawkes inside a paper Session market", testingTB, func() {
+		calmSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+		})
+		So(err, ShouldBeNil)
+		hotSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+		})
+		So(err, ShouldBeNil)
+
+		Convey("When calm and aggression tapes play through Cut", func() {
+			calmTheses, err := calmSession.Play(conditions.Calm(32).Frames())
+			So(err, ShouldBeNil)
+			hotTheses, err := hotSession.Play(
+				conditions.Aggression(32, 4, 6).Frames(),
+			)
+			So(err, ShouldBeNil)
+
+			calm, hasCalm := tests.PeakSourceMetric(
+				calmTheses,
+				types.SourceHawkes,
+				conditions.Subject(),
+				types.MetricEventCount,
+			)
+			hot, hasHot := tests.PeakSourceMetric(
+				hotTheses,
+				types.SourceHawkes,
+				conditions.Subject(),
+				types.MetricEventCount,
+			)
+
+			Convey("Then aggression raises event-count evidence versus calm", func() {
+				So(hasHot, ShouldBeTrue)
+
+				if hasCalm {
+					So(hot, ShouldBeGreaterThanOrEqualTo, calm)
+				}
 			})
 		})
 	})

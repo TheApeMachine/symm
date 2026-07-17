@@ -1,8 +1,9 @@
-import { type RefObject, useRef } from "react";
+import { type RefObject, useEffect, useRef } from "react";
 import { appStore } from "#/collections/app";
 import { type Balance, balancesStore } from "#/collections/balances";
 import { type Position, positionsStore } from "#/collections/positions";
 import { tickStore } from "#/collections/tick";
+import { formatUptime } from "#/components/terminal/kernel-meta";
 import { walletMetrics } from "#/components/terminal/panels";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 
@@ -37,16 +38,22 @@ export const LivePulseTicker = () => {
 			setText(tickRef.current, `#${String(tick?.count ?? 0)}`);
 			setText(
 				phaseRef.current,
-				online ? String(tick?.phase ?? "stream") : "offline",
+				online
+					? String(
+							tick?.completed === true ? "complete" : (tick?.phase ?? "stream"),
+						)
+					: "offline",
 			);
 			setText(measRef.current, String(tick?.measurements ?? "—"));
 			setText(candRef.current, String(tick?.candidates ?? "—"));
 			setText(openRef.current, String(tick?.open ?? "—"));
 			setText(
 				quotesRef.current,
-				tick?.quotes_ready !== undefined && tick?.quotes_total !== undefined
-					? `${String(tick.quotes_ready)}/${String(tick.quotes_total)}`
-					: "—",
+				typeof tick?.ns === "number"
+					? `${Math.round(tick.ns / 1_000_000)}ms`
+					: tick?.quotes_ready !== undefined && tick?.quotes_total !== undefined
+						? `${String(tick.quotes_ready)}/${String(tick.quotes_total)}`
+						: "—",
 			);
 		},
 		[tickStore, appStore],
@@ -69,7 +76,7 @@ export const LivePulseTicker = () => {
 				open <span ref={openRef} />
 			</span>
 			<span>
-				quotes <span ref={quotesRef} />
+				tick <span ref={quotesRef} />
 			</span>
 		</div>
 	);
@@ -230,50 +237,40 @@ const LiveTopMetric = ({
 
 /*
 LiveEngineTicker paints the nav engine readout directly from tick snapshots.
+cand/open are position counts (zeros are honest). tick latency and measurement
+counts come from publishTick; retired quotes/fluid bars are not invented.
 */
 export const LiveEngineTicker = () => {
 	const seqRef = useRef<HTMLSpanElement>(null);
 	const phaseRef = useRef<HTMLSpanElement>(null);
 	const candRef = useRef<HTMLSpanElement>(null);
 	const openRef = useRef<HTMLSpanElement>(null);
-	const quotesTextRef = useRef<HTMLSpanElement>(null);
-	const quotesBarRef = useRef<HTMLDivElement>(null);
-	const fluidTextRef = useRef<HTMLSpanElement>(null);
-	const fluidBarRef = useRef<HTMLDivElement>(null);
+	const measRef = useRef<HTMLSpanElement>(null);
+	const latencyRef = useRef<HTMLSpanElement>(null);
 
 	useDirectStorePaint(
 		() => {
 			const online = appStore.state.online;
 			const tick = tickStore.state.frame;
 			const storyTicks = tick?.count ?? 0;
-			const enginePhase = (tick?.phase as string) ?? "";
+			const enginePhase =
+				tick?.completed === true ? "complete" : ((tick?.phase as string) ?? "");
 			const candidates = (tick?.candidates as number) ?? 0;
 			const open = (tick?.open as number) ?? 0;
-			const fluid = (tick?.fluid as number) ?? 0;
-			const quotesReady = (tick?.quotes_ready as number) ?? 0;
-			const quotesTotal = (tick?.quotes_total as number) ?? 0;
-			const quotesPercent =
-				quotesTotal > 0 ? Math.round((quotesReady / quotesTotal) * 100) : 0;
-			const fluidPercent =
-				quotesTotal > 0 ? Math.round((fluid / quotesTotal) * 100) : 0;
+			const measurements =
+				typeof tick?.measurements === "number" ? tick.measurements : null;
+			const ns = typeof tick?.ns === "number" ? tick.ns : null;
+			const latencyMs = ns === null ? null : Math.round(ns / 1_000_000);
 
 			setText(seqRef.current, `#${storyTicks}`);
 			setText(phaseRef.current, online ? enginePhase || "stream" : "offline");
 			setText(candRef.current, candidates.toString());
 			setText(openRef.current, open.toString());
 			setText(
-				quotesTextRef.current,
-				quotesTotal > 0 ? `${quotesReady}/${quotesTotal}` : "—",
+				measRef.current,
+				measurements === null ? "—" : String(measurements),
 			);
-			setText(fluidTextRef.current, fluid > 0 ? String(fluid) : "—");
-
-			if (quotesBarRef.current !== null) {
-				quotesBarRef.current.style.width = `${quotesPercent}%`;
-			}
-
-			if (fluidBarRef.current !== null) {
-				fluidBarRef.current.style.width = `${fluidPercent}%`;
-			}
+			setText(latencyRef.current, latencyMs === null ? "—" : `${latencyMs}ms`);
 		},
 		[tickStore, appStore],
 		[],
@@ -297,24 +294,51 @@ export const LiveEngineTicker = () => {
 				<span className="text-(--f4)">open</span>
 				<span ref={openRef} className="text-(--f1)" />
 			</div>
-			<div className="mt-[7px]">
-				<div className="mb-1 flex justify-between">
-					<span className="text-(--f4)">quotes</span>
-					<span ref={quotesTextRef} className="text-(--f1)" />
-				</div>
-				<div className="h-1 overflow-hidden rounded-full bg-(--line)">
-					<div ref={quotesBarRef} className="h-full rounded-full bg-(--info)" />
-				</div>
+			<div className="flex justify-between">
+				<span className="text-(--f4)">meas</span>
+				<span ref={measRef} className="text-(--f1)" />
 			</div>
-			<div className="mt-1.5">
-				<div className="mb-1 flex justify-between">
-					<span className="text-(--f4)">fluid</span>
-					<span ref={fluidTextRef} className="text-(--f1)" />
-				</div>
-				<div className="h-1 overflow-hidden rounded-full bg-(--line)">
-					<div ref={fluidBarRef} className="h-full rounded-full bg-(--warn)" />
-				</div>
+			<div className="flex justify-between">
+				<span className="text-(--f4)">tick</span>
+				<span ref={latencyRef} className="text-(--f1)" />
 			</div>
 		</div>
+	);
+};
+
+/*
+LiveEngineClock paints UTC clock and session uptime from appStore.startedAtMs.
+*/
+export const LiveEngineClock = () => {
+	const clockRef = useRef<HTMLDivElement>(null);
+	const uptimeRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		const paint = () => {
+			setText(
+				clockRef.current,
+				`${new Date().toISOString().slice(11, 19)} UTC`,
+			);
+			setText(
+				uptimeRef.current,
+				`uptime ${formatUptime(appStore.state.startedAtMs)}`,
+			);
+		};
+
+		paint();
+		const interval = window.setInterval(paint, 1000);
+		const subscription = appStore.subscribe(paint);
+
+		return () => {
+			window.clearInterval(interval);
+			subscription.unsubscribe();
+		};
+	}, []);
+
+	return (
+		<>
+			<div ref={clockRef} />
+			<div ref={uptimeRef}>uptime —</div>
+		</>
 	);
 };

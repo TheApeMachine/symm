@@ -64,6 +64,22 @@ func TestMarketFeed_Frame(t *testing.T) {
 	})
 }
 
+func TestMarketFeed_Progress(t *testing.T) {
+	Convey("Given a captured feed with and without new ingress", t, func() {
+		feed := NewMarketFeed[marketFeedRow](4, 4)
+		start := time.Unix(100, 0).UTC()
+		So(feed.Capture(start), ShouldBeNil)
+		So(feed.Progress(), ShouldBeFalse)
+		So(feed.Observe("BTC/USD", start, marketFeedRow{value: 1}), ShouldBeNil)
+		So(feed.Capture(start), ShouldBeNil)
+		So(feed.Progress(), ShouldBeTrue)
+		_, err := feed.Frame(start)
+		So(err, ShouldBeNil)
+		So(feed.Capture(start), ShouldBeNil)
+		So(feed.Progress(), ShouldBeFalse)
+	})
+}
+
 func TestMarketFeed_Batch(t *testing.T) {
 	Convey("Given a non-destructive event batch", t, func() {
 		feed := NewMarketFeed[marketFeedRow](4, 4)

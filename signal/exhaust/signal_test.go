@@ -9,7 +9,11 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/conditions"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -98,6 +102,58 @@ func TestSignal_MeasureSkipsBookWithoutIncrement(testingTB *testing.T) {
 		Convey("Then it emits nothing for that symbol", func() {
 			_, hasSymbol := measureField(result, "BTC/USD", types.MetricMechanical)
 			So(hasSymbol, ShouldBeFalse)
+		})
+	})
+}
+
+func sessionSignals(
+	ctx context.Context,
+	api *websocket.API,
+	instrument *broker.Instrument,
+	channel chan []byte,
+) []types.Signal {
+	return []types.Signal{NewSignal(ctx, api, instrument, channel)}
+}
+
+func TestSignal_MeasureFromMarket(testingTB *testing.T) {
+	Convey("Given exhaust inside a paper Session market", testingTB, func() {
+		calmSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+		})
+		So(err, ShouldBeNil)
+		decaySession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+		})
+		So(err, ShouldBeNil)
+
+		Convey("When calm and decaying books play through Cut", func() {
+			calmTheses, err := calmSession.Play(conditions.Calm(24).Frames())
+			So(err, ShouldBeNil)
+			decayTheses, err := decaySession.Play(
+				conditions.Decay(24, 0, 0.9).Frames(),
+			)
+			So(err, ShouldBeNil)
+
+			calm, hasCalm := tests.PeakSourceMetric(
+				calmTheses,
+				types.SourceExhaustion,
+				conditions.Subject(),
+				types.MetricMechanical,
+			)
+			decayed, hasDecay := tests.PeakSourceMetric(
+				decayTheses,
+				types.SourceExhaustion,
+				conditions.Subject(),
+				types.MetricMechanical,
+			)
+
+			Convey("Then book decay lifts mechanical exhaust versus calm", func() {
+				So(hasDecay, ShouldBeTrue)
+
+				if hasCalm {
+					So(decayed, ShouldBeGreaterThan, calm)
+				}
+			})
 		})
 	})
 }

@@ -36,7 +36,9 @@ type cohortState struct {
 
 /*
 cohortsFromMappedOrders conservatively merges co-located mapped orders into one
-oscillator population capped by the GPU carrier budget.
+oscillator population capped by the GPU carrier budget. Amplitude is particle
+mass and Heat is Amplitude·CV so PIC deposits a thermodynamically warm carrier
+field instead of a cold hypersonic one.
 */
 func cohortsFromMappedOrders(
 	config pmanifold.Config,
@@ -116,9 +118,17 @@ func cohortsFromMappedOrders(
 			continue
 		}
 
-		amplitude := math.Sqrt(state.mass)
+		// PIC treats Amplitude as particle mass and Heat as internal energy.
+		// Using sqrt(mass) understated the forcing denominator and left carriers
+		// cold (Heat/Amplitude → 0 for thin books), so Hawkes impulses drove
+		// hypersonic VelX that later poisoned the gas RK2 stage.
+		amplitude := state.mass
 
-		if amplitude <= 0 || math.IsNaN(amplitude) {
+		if amplitude <= 0 || math.IsNaN(amplitude) || math.IsInf(amplitude, 0) {
+			continue
+		}
+
+		if config.CV <= 0 {
 			continue
 		}
 
@@ -129,7 +139,7 @@ func cohortsFromMappedOrders(
 			PosX:      state.posX / state.mass,
 			PosY:      state.posY / state.mass,
 			PosZ:      state.posZ / state.mass,
-			Heat:      state.heat,
+			Heat:      amplitude * config.CV,
 			VelX:      state.velX / state.mass,
 			VelY:      state.velY / state.mass,
 			VelZ:      state.velZ / state.mass,

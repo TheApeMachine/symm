@@ -12,6 +12,7 @@ import (
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
@@ -39,6 +40,7 @@ type Live struct {
 	simulator *Simulator
 	auth      bool
 	books     *spot.BookManager
+	bookMu    sync.RWMutex
 	isLevel3  bool
 	symbols   []string
 }
@@ -172,7 +174,8 @@ func (live *Live) SubscribeLevel3(symbols []string, depth int) error {
 
 /*
 updateLevel3 applies one complete websocket message before truncating affected
-books, preserving Kraken's atomic L3 message boundary.
+books, preserving Kraken's atomic L3 message boundary. The write lease excludes
+PeekBook readers so Side.Levels is never ranged while the SDK mutates it.
 */
 func (live *Live) updateLevel3(
 	event *callback.Event[*kraken.WebSocketMessage],
@@ -181,7 +184,87 @@ func (live *Live) updateLevel3(
 		return nil
 	}
 
+	live.bookMu.Lock()
+	defer live.bookMu.Unlock()
+
 	return live.books.Update(event)
+}
+
+/*
+peekBook calls fn while holding the Level3 read lease for this transport.
+*/
+func (live *Live) peekBook(symbol string, fn func(*book.Book)) bool {
+	if live == nil || live.books == nil || fn == nil || symbol == "" {
+		return false
+	}
+
+	live.bookMu.RLock()
+	defer live.bookMu.RUnlock()
+
+	symbolBook := live.books.GetBook(symbol)
+
+	if symbolBook == nil {
+		return false
+	}
+
+	fn(symbolBook)
+
+	return true
+}
+
+/*
+ApplyLevel3 feeds one raw Level3 websocket payload through the write lease.
+*/
+func (live *Live) ApplyLevel3(payload []byte) error {
+	if live == nil || len(payload) == 0 {
+		return nil
+	}
+
+	return live.updateLevel3(&callback.Event[*kraken.WebSocketMessage]{
+		Data: kraken.NewWebSocketMessage(payload),
+	})
+}
+
+/*
+SeedTouch installs a two-sided L3 touch for symbol under the write lease so
+toxicity harness tests can PeekBook without checksummed fixture replay.
+*/
+func (live *Live) SeedTouch(
+	symbol string,
+	bid float64,
+	ask float64,
+	quantity float64,
+	at time.Time,
+) {
+	if live == nil || live.books == nil || symbol == "" {
+		return
+	}
+
+	live.bookMu.Lock()
+	defer live.bookMu.Unlock()
+
+	symbolBook := live.books.GetBook(symbol)
+
+	if symbolBook == nil {
+		symbolBook = live.books.CreateBook(symbol, 10)
+		symbolBook.EnableMaxDepth = false
+		symbolBook.NoBookCrossing = false
+	}
+
+	symbolBook.Update(&book.UpdateOptions{
+		Direction: book.Bid,
+		ID:        "seed-bid",
+		Price:     decimal.NewFromFloat64(bid),
+		Quantity:  decimal.NewFromFloat64(quantity),
+		Timestamp: at,
+	})
+	symbolBook.Update(&book.UpdateOptions{
+		Direction: book.Ask,
+		ID:        "seed-ask",
+		Price:     decimal.NewFromFloat64(ask),
+		Quantity:  decimal.NewFromFloat64(quantity),
+		Timestamp: at,
+	})
 }
 
 func (live *Live) Initialize() error {

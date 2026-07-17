@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -307,7 +308,9 @@ func (api *API) SubscribeTrade(pairs []string) error {
 }
 
 /*
-Books yields the SDK BookManager owned by each Level3 transport directly.
+Books yields the SDK BookManager owned by each Level3 transport. Callers that
+read book contents must use PeekBook instead — the managers are live and
+mutated under a write lease during websocket updates.
 */
 func (api *API) Books() iter.Seq[*spot.BookManager] {
 	return func(yield func(*spot.BookManager) bool) {
@@ -318,6 +321,44 @@ func (api *API) Books() iter.Seq[*spot.BookManager] {
 			return keepGoing
 		})
 	}
+}
+
+/*
+AttachLevel3 registers a Level3 Live transport so PeekBook and Session harness
+tests can feed SDK-managed books without opening a real L3 websocket.
+*/
+func (api *API) AttachLevel3(live *Live) {
+	if api == nil || live == nil || live.books == nil {
+		return
+	}
+
+	api.bookConns.Store("session-level3", live)
+}
+
+/*
+PeekBook invokes fn under the Level3 read lease for symbol so Side.Levels and
+order queues cannot be mutated mid-read by updateLevel3.
+*/
+func (api *API) PeekBook(symbol string, fn func(*book.Book)) bool {
+	if api == nil || fn == nil || symbol == "" {
+		return false
+	}
+
+	found := false
+
+	api.bookConns.Range(func(_, value any) bool {
+		live := value.(*Live)
+
+		if !live.peekBook(symbol, fn) {
+			return true
+		}
+
+		found = true
+
+		return false
+	})
+
+	return found
 }
 
 func (api *API) SubscribeBook(pairs []string) error {

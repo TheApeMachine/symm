@@ -11,7 +11,7 @@ import (
 
 func TestNewWithEngine(t *testing.T) {
 	Convey("Given a custom ticker engine", t, func() {
-		raw := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"ALGO/USD","bid":0.10,"ask":0.11,"last":0.105,"volume":100,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
+		raw := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"MATIC/USD","bid":0.10,"ask":0.11,"last":0.105,"volume":100,"timestamp":"2023-09-25T09:04:31.742648Z"}]}`)
 		engine := tests.NewEngine(4).
 			Drift(0.002).
 			Jitter(0.01).

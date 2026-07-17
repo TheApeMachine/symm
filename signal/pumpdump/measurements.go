@@ -13,6 +13,7 @@ func ignitionMeasurements(
 	at time.Time,
 	output equation.IgnitionOutput,
 	maturity float64,
+	ready bool,
 	bid float64,
 	ask float64,
 ) ([]*types.Measurement, error) {
@@ -32,6 +33,11 @@ func ignitionMeasurements(
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,
 		Readiness: types.ReadinessObservation,
+	}
+
+	if !ready {
+		validity.State = types.ValidityProvisional
+		validity.Reason = "ignition baselines not ready"
 	}
 	scale := types.ScaleReference{
 		Kind:    types.ScaleObservationWindow,

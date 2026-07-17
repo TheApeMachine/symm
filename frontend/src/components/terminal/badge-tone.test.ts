@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import { paletteGroupVariant, verdictToVariant } from "./badge-tone";
 
 describe("verdictToVariant", () => {
-	it("maps backend verdicts to badge variants", () => {
+	it("maps candidate verdicts to badge variants", () => {
 		expect(verdictToVariant("allow")).toBe("success");
 		expect(verdictToVariant("blocked")).toBe("error");
+		expect(verdictToVariant("hold")).toBe("warning");
+		expect(verdictToVariant("waiting")).toBe("info");
 		expect(verdictToVariant("below")).toBe("info");
 	});
 });

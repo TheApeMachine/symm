@@ -43,7 +43,7 @@ measured its evidence, mirroring broker.Balance.Publish.
 func (signal *Signal) Publish(measurements []*types.Measurement) {
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": measurements,
+		"measurements": types.WireMeasurements(measurements),
 	}.Marshal():
 	default:
 	}
@@ -84,13 +84,10 @@ func (signal *Signal) Calculate(
 	}
 
 	depthMedian, depthOK := statistic.MedianOf(depthPeers)
-
-	if len(depthPeers) < 2 || !depthOK || depthMedian <= 0 {
-		return out, nil
-	}
-
+	peerReady := len(depthPeers) >= 2 && depthOK && depthMedian > 0
 	notionalMedian, hasNotionalMedian := statistic.MedianOf(notionalPeers)
 	peerMaturity := float64(len(depthPeers)) / float64(len(depthPeers)+1)
+
 	type measurementSpec struct {
 		metric     types.MetricType
 		unit       types.MeasurementUnit
@@ -105,8 +102,6 @@ func (signal *Signal) Calculate(
 			continue
 		}
 
-		relativeDepth := executableDepth / depthMedian
-		scarcity := math.Max(0, 1-relativeDepth)
 		validity := types.MeasurementValidity{
 			State:     types.ValidityValid,
 			Readiness: types.ReadinessObservation,
@@ -117,14 +112,27 @@ func (signal *Signal) Calculate(
 			Through: row.Timestamp,
 		}
 		specs := []measurementSpec{
-			{types.MetricRelativeTouchDepth, types.UnitDimensionless, relativeDepth, types.NormalizeFinite(relativeDepth)},
-			{types.MetricScarcityScore, types.UnitDimensionless, scarcity, types.NormalizeFinite(scarcity)},
 			{types.MetricExecutableTouchDepth, types.UnitQuoteCurrency, executableDepth, nil},
-			{types.MetricExecutableTouchDepthMedian, types.UnitQuoteCurrency, depthMedian, nil},
 		}
+
+		if !peerReady {
+			validity.State = types.ValidityProvisional
+			validity.Reason = "peer executable-depth median unavailable"
+		}
+
+		if peerReady {
+			relativeDepth := executableDepth / depthMedian
+			scarcity := math.Max(0, 1-relativeDepth)
+			specs = append(specs,
+				measurementSpec{types.MetricRelativeTouchDepth, types.UnitDimensionless, relativeDepth, types.NormalizeFinite(relativeDepth)},
+				measurementSpec{types.MetricScarcityScore, types.UnitDimensionless, scarcity, types.NormalizeFinite(scarcity)},
+				measurementSpec{types.MetricExecutableTouchDepthMedian, types.UnitQuoteCurrency, depthMedian, nil},
+			)
+		}
+
 		reportedNotional := types.QuoteNotional(row)
 
-		if reportedNotional > 0 && hasNotionalMedian && notionalMedian > 0 {
+		if peerReady && reportedNotional > 0 && hasNotionalMedian && notionalMedian > 0 {
 			specs = append(specs,
 				measurementSpec{types.MetricReportedVolumeNotional, types.UnitQuoteCurrency, reportedNotional, nil},
 				measurementSpec{types.MetricReportedVolumeNotionalMedian, types.UnitQuoteCurrency, notionalMedian, nil},
@@ -150,10 +158,10 @@ func (signal *Signal) Calculate(
 			}
 
 			out = append(out, measurements...)
-			signal.Publish(measurements)
 		}
 	}
 
+	signal.Publish(out)
 	return out, nil
 }
 

@@ -10,8 +10,11 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/conditions"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -181,6 +184,52 @@ func TestSignal_MeasureFlowProfiles(testingTB *testing.T) {
 				})
 			})
 		}
+	})
+}
+
+func sessionSignals(
+	ctx context.Context,
+	api *websocket.API,
+	_ *broker.Instrument,
+	channel chan []byte,
+) []types.Signal {
+	return []types.Signal{NewSignal(ctx, api, channel)}
+}
+
+func TestSignal_MeasureFromMarket(testingTB *testing.T) {
+	Convey("Given CVD inside a paper Session market", testingTB, func() {
+		calmSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+		})
+		So(err, ShouldBeNil)
+		hotSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+		})
+		So(err, ShouldBeNil)
+
+		Convey("When calm and aggression trade tapes play through Cut", func() {
+			calmTheses, err := calmSession.Play(conditions.Calm(32).Frames())
+			So(err, ShouldBeNil)
+			hotTheses, err := hotSession.Play(
+				conditions.Aggression(32, 8, 8).Frames(),
+			)
+			So(err, ShouldBeNil)
+
+			calm, hasCalm := tests.PeakSourceMetric(
+				calmTheses, types.SourceCVD, conditions.Subject(), types.MetricDrive,
+			)
+			hot, hasHot := tests.PeakSourceMetric(
+				hotTheses, types.SourceCVD, conditions.Subject(), types.MetricDrive,
+			)
+
+			Convey("Then buy aggression lifts drive versus calm sells", func() {
+				So(hasHot, ShouldBeTrue)
+
+				if hasCalm {
+					So(hot, ShouldBeGreaterThan, calm)
+				}
+			})
+		})
 	})
 }
 

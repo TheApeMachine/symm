@@ -10,7 +10,7 @@ import (
 func TestFrameSequence(t *testing.T) {
 	Convey("Given a Kraken-shaped payload sequence", t, func() {
 		sequence := func(yield func([]byte) bool) {
-			yield([]byte(`{"channel":"ticker","type":"snapshot","data":[{"symbol":"ALGO/USD"}]}`))
+			yield([]byte(`{"channel":"ticker","type":"snapshot","data":[{"symbol":"MATIC/USD"}]}`))
 		}
 
 		Convey("When frames are requested", func() {

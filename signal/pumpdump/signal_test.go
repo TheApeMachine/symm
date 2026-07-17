@@ -4,11 +4,16 @@ import (
 	"context"
 	"iter"
 	"testing"
+	"time"
 
+	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/conditions"
 	tickerfixture "github.com/theapemachine/symm/tests/fixtures/ticker"
 	"github.com/theapemachine/symm/types"
 )
@@ -43,46 +48,6 @@ func drive(signal *Signal, frames iter.Seq[tests.Frame]) []*types.Measurement {
 	return last
 }
 
-/*
-peakField replays a timeline and returns the greatest ALGO/USD value observed
-for the metric, so a transient spike mid-stream is not masked by the calm tail.
-*/
-func peakField(
-	signal *Signal, frames iter.Seq[tests.Frame], metric types.MetricType,
-) (float64, bool) {
-	peak := 0.0
-	found := false
-
-	for frame := range frames {
-		rows := kraken.NewTicker(frame.Payload).Data
-
-		if len(rows) == 0 {
-			continue
-		}
-
-		measurements, err := signal.Calculate(&types.MarketFrame{
-			Tickers:      rows,
-			CrossSection: types.NewCrossSection(),
-		})
-
-		if err != nil {
-			continue
-		}
-
-		for _, measurement := range measurements {
-			if measurement.Symbol == "ALGO/USD" && measurement.Metric == metric {
-				found = true
-
-				if measurement.Raw > peak {
-					peak = measurement.Raw
-				}
-			}
-		}
-	}
-
-	return peak, found
-}
-
 func newSignal() *Signal {
 	return &Signal{
 		ctx:      context.Background(),
@@ -90,15 +55,39 @@ func newSignal() *Signal {
 	}
 }
 
-func TestSignal_MeasureFromMarket(testingTB *testing.T) {
-	Convey("Given a pumpdump signal fed by a market replay", testingTB, func() {
-		market := tests.NewMarket().
-			Feed(tickerfixture.NewFixture(tickerfixture.UPDATE, 32))
+func sessionSignals(
+	ctx context.Context,
+	api *websocket.API,
+	_ *broker.Instrument,
+	channel chan []byte,
+) []types.Signal {
+	return []types.Signal{NewSignal(ctx, api, channel)}
+}
 
-		Convey("When calm and pumped ticker timelines are measured", func() {
-			calm, hasCalm := peakField(newSignal(), market.Frames(), types.MetricRVOL)
-			pumped, hasPumped := peakField(
-				newSignal(), tests.Spike(market.Frames(), 16, 1.25, 8), types.MetricRVOL,
+func TestSignal_MeasureFromMarket(testingTB *testing.T) {
+	Convey("Given pumpdump inside a paper Session market", testingTB, func() {
+		calmSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+		})
+		So(err, ShouldBeNil)
+		pumpSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+		})
+		So(err, ShouldBeNil)
+
+		Convey("When calm and pumped conditions play through Cut", func() {
+			calmTheses, err := calmSession.Play(conditions.Calm(32).Frames())
+			So(err, ShouldBeNil)
+			pumpTheses, err := pumpSession.Play(
+				conditions.Pump(32, 16, 1.25, 8).Frames(),
+			)
+			So(err, ShouldBeNil)
+
+			calm, hasCalm := tests.PeakMetric(
+				calmTheses, "MATIC/USD", types.MetricRVOL,
+			)
+			pumped, hasPumped := tests.PeakMetric(
+				pumpTheses, "MATIC/USD", types.MetricRVOL,
 			)
 
 			Convey("Then the pumped stream should lift relative volume", func() {
@@ -130,6 +119,56 @@ func TestSignal_MeasureSkipsIncompleteRow(testingTB *testing.T) {
 	})
 }
 
+func TestSignal_MeasureEmitsWhileCalibrating(testingTB *testing.T) {
+	Convey("Given a complete ticker that has not yet formed ignition baselines", testingTB, func() {
+		signal := newSignal()
+		at := time.Date(2026, 7, 17, 1, 3, 45, 0, time.UTC)
+		row := kraken.TickerData{
+			Symbol:    "BTC/USD",
+			Bid:       krakendecimal.NewFromFloat64(999),
+			Ask:       krakendecimal.NewFromFloat64(1001),
+			Last:      krakendecimal.NewFromFloat64(1000),
+			Volume:    10,
+			Timestamp: at,
+		}
+
+		first, err := signal.Calculate(&types.MarketFrame{
+			Tickers:      []kraken.TickerData{row},
+			CrossSection: types.NewCrossSection(),
+		})
+		So(err, ShouldBeNil)
+		So(first, ShouldNotBeEmpty)
+
+		second, err := signal.Calculate(&types.MarketFrame{
+			Tickers: []kraken.TickerData{{
+				Symbol:    row.Symbol,
+				Bid:       row.Bid,
+				Ask:       row.Ask,
+				Last:      row.Last,
+				Volume:    row.Volume,
+				Timestamp: at.Add(time.Second),
+			}},
+			CrossSection: types.NewCrossSection(),
+		})
+
+		Convey("Then the second tick still publishes provisional ignition evidence", func() {
+			So(err, ShouldBeNil)
+			So(second, ShouldNotBeEmpty)
+
+			found := false
+
+			for _, measurement := range second {
+				if measurement.Metric == types.MetricIgnition {
+					found = true
+					So(measurement.Validity.State, ShouldEqual, types.ValidityProvisional)
+				}
+			}
+
+			So(found, ShouldBeTrue)
+		})
+	})
+}
+
 func TestSignal_Measure(testingTB *testing.T) {
 	Convey("Given a replayed ticker timeline", testingTB, func() {
 		signal := newSignal()
@@ -141,7 +180,7 @@ func TestSignal_Measure(testingTB *testing.T) {
 			ignition := 0.0
 
 			for _, measurement := range result {
-				if measurement.Symbol == "ALGO/USD" && measurement.Metric == types.MetricIgnition {
+				if measurement.Symbol == "MATIC/USD" && measurement.Metric == types.MetricIgnition {
 					ignition = measurement.Raw
 				}
 			}

@@ -2,7 +2,10 @@ package strategy
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -32,6 +35,10 @@ measurement counts. A nil recorder disables recording.
 */
 func (planner *Planner) SetRecorder(recorder *audit.Recorder) {
 	planner.recorder = recorder
+
+	if planner.analyzer != nil {
+		planner.analyzer.SetRecorder(recorder)
+	}
 }
 
 /*
@@ -83,30 +90,82 @@ func (planner *Planner) Close() {
 Update fans one immutable market cut through concurrent signal channels, then
 analyzes the single Thesis assembled by Planner's result collector.
 */
-func (planner *Planner) Update(frame *types.MarketFrame) *types.Thesis {
+func (planner *Planner) Update(frame *types.MarketFrame, tick int64) *types.Thesis {
 	thesis := types.NewThesis(planner.uiHub, frame)
 	thesis.CrossSection = frame.CrossSection
+	thesis.Tick = tick
+	started := time.Now()
+
+	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "measure_begin", map[string]any{
+		"signals": len(planner.signals),
+		"tickers": len(frame.Tickers),
+		"trades":  len(frame.Trades),
+		"books":   len(frame.Books),
+	}))
 
 	// Fan out first so every signal starts before we block on any result, then
 	// drain exactly once per signal. Ranging until close deadlocks here because
 	// the closer would only run after Update returns.
-	fanIn := make(chan []*types.Measurement, len(planner.signals))
+	type measured struct {
+		name string
+		rows []*types.Measurement
+	}
+
+	fanIn := make(chan measured, len(planner.signals))
 
 	for _, signal := range planner.signals {
 		go func() {
-			fanIn <- signal.Measure(thesis)
+			fanIn <- measured{
+				name: signalName(signal),
+				rows: signal.Measure(thesis),
+			}
 		}()
 	}
 
+	counts := make(map[string]int, len(planner.signals))
+
 	for range planner.signals {
-		thesis.Measurements = append(thesis.Measurements, <-fanIn...)
+		batch := <-fanIn
+		counts[batch.name] = len(batch.rows)
+		thesis.Measurements = append(thesis.Measurements, batch.rows...)
 	}
+
+	errnie.Error(audit.Record(planner.recorder, "signal_counts", map[string]any{
+		"tick":   thesis.Tick,
+		"counts": counts,
+		"ns":     time.Since(started).Nanoseconds(),
+	}))
+	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "measure_end", map[string]any{
+		"measurements": len(thesis.Measurements),
+		"ns":           time.Since(started).Nanoseconds(),
+	}))
 
 	if planner.analyzer != nil {
 		planner.analyzer.Update(thesis)
 	}
 
 	return thesis
+}
+
+/*
+signalName returns a stable short label for audit rows from the concrete signal
+type without requiring every signal package to advertise a name method.
+*/
+func signalName(signal types.Signal) string {
+	name := fmt.Sprintf("%T", signal)
+	name = strings.TrimPrefix(name, "*")
+
+	if index := strings.LastIndex(name, "."); index >= 0 {
+		packageName := name[:index]
+
+		if slash := strings.LastIndex(packageName, "/"); slash >= 0 {
+			packageName = packageName[slash+1:]
+		}
+
+		return packageName
+	}
+
+	return name
 }
 
 /*

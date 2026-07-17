@@ -5,6 +5,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -43,7 +44,7 @@ measured its evidence, mirroring broker.Balance.Publish.
 func (signal *Signal) Publish(measurements []*types.Measurement) {
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": measurements,
+		"measurements": types.WireMeasurements(measurements),
 	}.Marshal():
 	default:
 	}
@@ -119,7 +120,6 @@ func (signal *Signal) Calculate(
 	frame *types.MarketFrame,
 ) ([]*types.Measurement, error) {
 	trades := frame.Trades
-	books := signal.level3.Books()
 	evidence := map[string]*symbolEvidence{}
 
 	for _, trade := range trades {
@@ -144,17 +144,15 @@ func (signal *Signal) Calculate(
 			row.latestAt = at
 		}
 
-		for bookManager := range books {
-			book := bookManager.GetBook(trade.Symbol)
-
-			if book == nil || book.Name != trade.Symbol {
-				continue
+		signal.level3.PeekBook(trade.Symbol, func(symbolBook *book.Book) {
+			if symbolBook.Name != trade.Symbol {
+				return
 			}
 
-			bid, ask := book.BestBid(), book.BestAsk()
+			bid, ask := symbolBook.BestBid(), symbolBook.BestAsk()
 
 			if bid == nil || ask == nil {
-				continue
+				return
 			}
 
 			if trade.Price.Cmp(bid.Price) == 0 {
@@ -166,7 +164,7 @@ func (signal *Signal) Calculate(
 				row.fillAsk = zeroed(row.fillAsk).Add(ask.Price.Mul(volume))
 				row.askExecuted += trade.Qty
 			}
-		}
+		})
 	}
 
 	out := make([]*types.Measurement, 0, len(evidence)*8)
@@ -224,17 +222,15 @@ func (signal *Signal) Calculate(
 			})
 		}
 
-		for bookManager := range books {
-			book := bookManager.GetBook(symbol)
-
-			if book == nil || book.Name != symbol {
-				continue
+		signal.level3.PeekBook(symbol, func(symbolBook *book.Book) {
+			if symbolBook.Name != symbol {
+				return
 			}
 
-			bid, ask := book.BestBid(), book.BestAsk()
+			bid, ask := symbolBook.BestBid(), symbolBook.BestAsk()
 
 			if bid == nil || ask == nil {
-				continue
+				return
 			}
 
 			bidQuantity := bid.Quantity.Float64()
@@ -321,10 +317,10 @@ func (signal *Signal) Calculate(
 			)
 
 			out = append(out, measurements...)
-			signal.Publish(measurements)
-		}
+		})
 	}
 
+	signal.Publish(out)
 	signal.priorTouch = nextTouch
 
 	return out, nil

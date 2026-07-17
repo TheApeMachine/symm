@@ -8,7 +8,11 @@ import (
 
 	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/conditions"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -172,6 +176,44 @@ func TestSignal_MeasureEmitsLeadlag(testingTB *testing.T) {
 	})
 }
 
+func TestSignal_MeasureEmitsWithoutLeader(testingTB *testing.T) {
+	Convey("Given a flat cohort with no cross-section leader", testingTB, func() {
+		signal := &Signal{
+			ctx:     context.Background(),
+			section: NewSection(),
+		}
+		now := time.Now()
+		frame := marketFrame(
+			kraken.TickerData{
+				Symbol:    "BTC/USD",
+				Last:      krakendecimal.NewFromFloat64(100),
+				ChangePct: 0,
+				Timestamp: now,
+			},
+			kraken.TickerData{
+				Symbol:    "ETH/USD",
+				Last:      krakendecimal.NewFromFloat64(50),
+				ChangePct: 0,
+				Timestamp: now,
+			},
+		)
+
+		measurements, err := signal.Calculate(frame)
+
+		Convey("Then every symbol still publishes provisional lead-lag evidence", func() {
+			So(err, ShouldBeNil)
+
+			btc, hasBTC := hasMeasurement(measurements, "BTC/USD", types.MetricStrength)
+			eth, hasETH := hasMeasurement(measurements, "ETH/USD", types.MetricStrength)
+			So(hasBTC, ShouldBeTrue)
+			So(hasETH, ShouldBeTrue)
+			So(btc.Validity.State, ShouldEqual, types.ValidityProvisional)
+			So(eth.Validity.State, ShouldEqual, types.ValidityProvisional)
+			So(btc.Validity.Reason, ShouldContainSubstring, "no cross-section leader")
+		})
+	})
+}
+
 func TestSignal_MeasureSkipsIncompleteRow(testingTB *testing.T) {
 	Convey("Given a follower row without a last price", testingTB, func() {
 		signal := &Signal{
@@ -203,6 +245,56 @@ func TestSignal_MeasureSkipsIncompleteRow(testingTB *testing.T) {
 
 			_, hasFollower := hasMeasurement(measurements, "ETH/USD", types.MetricStrength)
 			So(hasFollower, ShouldBeFalse)
+		})
+	})
+}
+
+func sessionSignals(
+	ctx context.Context,
+	api *websocket.API,
+	_ *broker.Instrument,
+	channel chan []byte,
+) []types.Signal {
+	return []types.Signal{NewSignal(ctx, api, channel)}
+}
+
+func TestSignal_MeasureFromMarket(testingTB *testing.T) {
+	Convey("Given leadlag inside a paper Session cohort market", testingTB, func() {
+		herdSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+		})
+		So(err, ShouldBeNil)
+		lagSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+		})
+		So(err, ShouldBeNil)
+
+		Convey("When herd and lagged cohorts play through Cut", func() {
+			herdTheses, err := herdSession.Play(conditions.Herd(32).Frames())
+			So(err, ShouldBeNil)
+			lagTheses, err := lagSession.Play(conditions.Lag(32, 4).Frames())
+			So(err, ShouldBeNil)
+
+			herd, hasHerd := tests.PeakSourceMetric(
+				herdTheses,
+				types.SourceLeadLag,
+				"ETH/USD",
+				types.MetricStrength,
+			)
+			lagged, hasLag := tests.PeakSourceMetric(
+				lagTheses,
+				types.SourceLeadLag,
+				"ETH/USD",
+				types.MetricStrength,
+			)
+
+			Convey("Then a delayed follower differs from co-moving herd strength", func() {
+				So(hasLag || hasHerd, ShouldBeTrue)
+
+				if hasLag && hasHerd {
+					So(math.Abs(lagged-herd), ShouldBeGreaterThan, 0)
+				}
+			})
 		})
 	})
 }

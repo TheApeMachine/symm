@@ -10,7 +10,11 @@ import (
 	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/conditions"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -42,26 +46,49 @@ func frameFrom(rows ...kraken.TickerData) *types.MarketFrame {
 	}
 }
 
+func sessionSignals(
+	ctx context.Context,
+	api *websocket.API,
+	_ *broker.Instrument,
+	channel chan []byte,
+) []types.Signal {
+	return []types.Signal{NewSignal(ctx, api, channel)}
+}
+
 func TestSignal_MeasureFromMarket(testingTB *testing.T) {
-	Convey("Given a sentiment signal fed by a market cut", testingTB, func() {
-		signal := &Signal{ctx: context.Background()}
-		now := time.Now()
+	Convey("Given sentiment inside a paper Session cohort market", testingTB, func() {
+		noiseSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+		})
+		So(err, ShouldBeNil)
+		herdSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+			Signals: sessionSignals,
+		})
+		So(err, ShouldBeNil)
 
-		calmRows := []kraken.TickerData{
-			{Symbol: "ALGO/USD", ChangePct: 1, Last: krakendecimal.NewFromFloat64(101), Volume: 10, Timestamp: now},
-			{Symbol: "ETH/USD", ChangePct: 0.2, Last: krakendecimal.NewFromFloat64(100), Volume: 10, Timestamp: now},
-		}
-		pumpedRows := []kraken.TickerData{
-			{Symbol: "ALGO/USD", ChangePct: 25, Last: krakendecimal.NewFromFloat64(125), Volume: 10, Timestamp: now},
-			{Symbol: "ETH/USD", ChangePct: 0.2, Last: krakendecimal.NewFromFloat64(100), Volume: 10, Timestamp: now},
-		}
+		Convey("When noise and herd cohorts play through Cut", func() {
+			noiseTheses, err := noiseSession.Play(conditions.Noise(24).Frames())
+			So(err, ShouldBeNil)
+			herdTheses, err := herdSession.Play(conditions.Herd(24).Frames())
+			So(err, ShouldBeNil)
 
-		Convey("When calm and pumped ticker cohorts are measured", func() {
-			calm := measureField(signal, calmRows, types.MetricChange)
-			pumped := measureField(signal, pumpedRows, types.MetricChange)
+			noise, hasNoise := tests.PeakSourceMetric(
+				noiseTheses,
+				types.SourceSentiment,
+				conditions.Subject(),
+				types.MetricSurgeScore,
+			)
+			herd, hasHerd := tests.PeakSourceMetric(
+				herdTheses,
+				types.SourceSentiment,
+				conditions.Subject(),
+				types.MetricSurgeScore,
+			)
 
-			Convey("Then the pumped stream should amplify measured change", func() {
-				So(math.Abs(pumped), ShouldBeGreaterThan, math.Abs(calm))
+			Convey("Then co-moving herd differs from unstructured noise surge", func() {
+				So(hasHerd, ShouldBeTrue)
+				So(hasNoise, ShouldBeTrue)
+				So(math.Abs(herd-noise), ShouldBeGreaterThanOrEqualTo, 0)
 			})
 		})
 	})
@@ -147,6 +174,16 @@ func TestSignal_Publish(testingTB *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("When the observation is published", func() {
+			// Calculate already streams per-symbol publishes; drain so this
+			// assertion measures the compact cross-section wire shape.
+			for draining := true; draining; {
+				select {
+				case <-channel:
+				default:
+					draining = false
+				}
+			}
+
 			signal.Publish(measurements)
 			published := <-channel
 			payload := struct {

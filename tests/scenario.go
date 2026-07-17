@@ -90,6 +90,97 @@ func Reversal(frames iter.Seq[Frame], at int, ratePerFrame float64) iter.Seq[Fra
 	)
 }
 
+/*
+TradeAggression forces buy-side aggressor flow and scales trade qty from frame
+at onward — the tape signature CVD and Hawkes should treat as drive/excitation.
+*/
+func TradeAggression(
+	frames iter.Seq[Frame],
+	at int,
+	qtyMul float64,
+) iter.Seq[Frame] {
+	return func(yield func(Frame) bool) {
+		index := 0
+
+		for frame := range frames {
+			shaped := frame
+
+			if frame.Channel == "trade" {
+				mul := 1.0
+
+				if index >= at {
+					mul = qtyMul
+				}
+
+				shaped = shapeTradeAggression(frame, mul)
+			}
+
+			index++
+
+			if !yield(shaped) {
+				return
+			}
+		}
+	}
+}
+
+/*
+BookDecay thins resting qty on both sides from frame at onward — mechanical
+liquidity withdrawal for exhaust-style assertions.
+*/
+func BookDecay(frames iter.Seq[Frame], at int, depth float64) iter.Seq[Frame] {
+	return func(yield func(Frame) bool) {
+		index := 0
+
+		for frame := range frames {
+			shaped := frame
+
+			if frame.Channel == "book" && index >= at {
+				progress := math.Min(
+					float64(index-at+1)/float64(max(index-at+1, 4)), 1,
+				)
+				fraction := math.Max(1-depth*progress, 0.05)
+				shaped = shapeBookQty(frame, fraction, fraction)
+			}
+
+			index++
+
+			if !yield(shaped) {
+				return
+			}
+		}
+	}
+}
+
+/*
+BookImbalance loads the bid side and thins the ask side from frame at onward —
+depthflow loaded-book pressure without inventing a second fixture language.
+*/
+func BookImbalance(
+	frames iter.Seq[Frame],
+	at int,
+	bidMul float64,
+	askMul float64,
+) iter.Seq[Frame] {
+	return func(yield func(Frame) bool) {
+		index := 0
+
+		for frame := range frames {
+			shaped := frame
+
+			if frame.Channel == "book" && index >= at {
+				shaped = shapeBookQty(frame, bidMul, askMul)
+			}
+
+			index++
+
+			if !yield(shaped) {
+				return
+			}
+		}
+	}
+}
+
 func shapeFrame(frame Frame, priceMul, volumeMul float64) Frame {
 	if priceMul == 1 && volumeMul == 1 {
 		return frame
@@ -107,5 +198,122 @@ func shapeFrame(frame Frame, priceMul, volumeMul float64) Frame {
 		Channel: frame.Channel,
 		Type:    frame.Type,
 		Payload: marshalFrame(payload),
+	}
+}
+
+func shapeTradeAggression(frame Frame, qtyMul float64) Frame {
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(frame.Payload, &payload); err != nil {
+		panic(err)
+	}
+
+	for _, row := range frameRows(payload) {
+		row["side"] = "buy"
+
+		if qtyMul != 1 {
+			if qty, ok := row["qty"].(float64); ok {
+				row["qty"] = roundField(qty * qtyMul)
+			}
+		}
+	}
+
+	return Frame{
+		Channel: frame.Channel,
+		Type:    frame.Type,
+		Payload: marshalFrame(payload),
+	}
+}
+
+func shapeBookQty(frame Frame, bidMul, askMul float64) Frame {
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(frame.Payload, &payload); err != nil {
+		panic(err)
+	}
+
+	for _, row := range frameRows(payload) {
+		scaleLevels(row, "bids", bidMul)
+		scaleLevels(row, "asks", askMul)
+	}
+
+	return Frame{
+		Channel: frame.Channel,
+		Type:    frame.Type,
+		Payload: marshalFrame(payload),
+	}
+}
+
+/*
+ThinSubject scales bid_qty/ask_qty for one ticker symbol so liquidity scarcity
+can be falsified against a deep peer cohort.
+*/
+func ThinSubject(
+	frames iter.Seq[Frame],
+	symbol string,
+	qtyMul float64,
+) iter.Seq[Frame] {
+	return func(yield func(Frame) bool) {
+		for frame := range frames {
+			shaped := frame
+
+			if frame.Channel == "ticker" {
+				shaped = shapeSubjectQty(frame, symbol, qtyMul)
+			}
+
+			if !yield(shaped) {
+				return
+			}
+		}
+	}
+}
+
+func shapeSubjectQty(frame Frame, symbol string, qtyMul float64) Frame {
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(frame.Payload, &payload); err != nil {
+		panic(err)
+	}
+
+	for _, row := range frameRows(payload) {
+		if row["symbol"] != symbol {
+			continue
+		}
+
+		scaleRowFields(row, qtyMul, []string{"bid_qty", "ask_qty"})
+	}
+
+	return Frame{
+		Channel: frame.Channel,
+		Type:    frame.Type,
+		Payload: marshalFrame(payload),
+	}
+}
+
+func scaleLevels(row map[string]any, side string, mul float64) {
+	if mul == 1 {
+		return
+	}
+
+	levels, ok := row[side].([]any)
+
+	if !ok {
+		return
+	}
+
+	for _, raw := range levels {
+		level, ok := raw.(map[string]any)
+
+		if !ok {
+			continue
+		}
+
+		qty, ok := level["qty"].(float64)
+
+		if !ok {
+			continue
+		}
+
+		level["qty"] = roundField(math.Max(qty*mul, 0))
 	}
 }

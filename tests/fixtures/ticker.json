@@ -3,7 +3,7 @@
     "type": "update",
     "data": [
         {
-            "symbol": "ALGO/USD",
+            "symbol": "MATIC/USD",
             "bid": 0.10025,
             "bid_qty": 740.0,
             "ask": 0.10035,

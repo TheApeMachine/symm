@@ -5,8 +5,8 @@ import { appStore } from "#/collections/app";
 import type { Balance } from "#/collections/balances";
 import type { Position } from "#/collections/positions";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
-import { formatUptime } from "#/components/terminal/kernel-meta";
 import {
+	LiveEngineClock,
 	LiveEngineTicker,
 	LiveOpenCount,
 	LiveWalletMetrics,
@@ -337,7 +337,6 @@ export const TerminalNav = ({ active }: { active: TerminalSurface }) => {
 	const scanlines = useSelector(terminalStore, (state) => state.scanlines);
 	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
 	const { toggleScanlines, toggleFieldStyle } = terminalStore.actions;
-	const clockText = new Date().toISOString().slice(11, 19);
 
 	return (
 		<nav className="flex w-[210px] shrink-0 flex-col border-(--line) border-r bg-(--surface)">
@@ -366,8 +365,7 @@ export const TerminalNav = ({ active }: { active: TerminalSurface }) => {
 			</div>
 			<LiveEngineTicker />
 			<div className="mt-auto border-(--line) border-t p-2.5 font-mono text-[10px] text-(--f4) leading-[1.6]">
-				<div>{clockText} UTC</div>
-				<div>uptime {formatUptime(null)}</div>
+				<LiveEngineClock />
 				<button
 					type="button"
 					onClick={toggleFieldStyle}

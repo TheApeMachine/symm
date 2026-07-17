@@ -29,6 +29,7 @@ import { cn } from "#/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Meter } from "@/components/ui/meter";
 import { Panel } from "@/components/ui/panel";
+import { causalCleared, judgeCandidate, pearlEdge } from "./decision-candidate";
 import { fixed } from "./decision-format";
 import { DecisionSideRail, LiveDecisionsEntryLine } from "./decision-side";
 import { StrategyDecisionRows } from "./strategy-decisions";
@@ -41,21 +42,6 @@ const finite = (value: unknown): number => {
 
 const ratio = (value: unknown): number =>
 	Math.min(1, Math.max(0, finite(value)));
-
-const strategyVerdict = (
-	action: string | undefined,
-	inPlay: boolean,
-): string => {
-	if (action === "enter" || action === "exit") {
-		return "allow";
-	}
-
-	if (inPlay) {
-		return "blocked";
-	}
-
-	return "below";
-};
 
 export const DecisionsSurface = () => {
 	const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
@@ -111,19 +97,12 @@ export const DecisionsSurface = () => {
 		const score =
 			decision?.utility ?? Math.min(resonanceConfidence, causalConfidenceValue);
 		const support = [causal, resonance, manifold].filter(Boolean).length;
-		const inPlay = support >= 2 && causalStrengthValue >= causalBaselineValue;
-		const verdict = strategyVerdict(decision?.action, inPlay);
-		const why =
-			decision?.reason ??
-			(causal === undefined
-				? "waiting causal"
-				: resonance === undefined
-					? "waiting resonance"
-					: manifold === undefined
-						? "waiting manifold"
-						: inPlay
-							? "below utility"
-							: "below line");
+		const cleared = causalCleared(causal);
+		const judgement = judgeCandidate(decision, support, cleared, {
+			causal: causal === undefined,
+			resonance: resonance === undefined,
+			manifold: manifold === undefined,
+		});
 
 		return {
 			decision,
@@ -133,14 +112,26 @@ export const DecisionsSurface = () => {
 			symbol,
 			support,
 			score,
-			inPlay,
-			verdict,
-			why,
+			inPlay: judgement.inPlay,
+			verdict: judgement.verdict,
+			why: judgement.why,
 			bars: [
-				{ src: "causal", value: causalStrengthValue },
-				{ src: "predict", value: finite(resonance?.confidence) },
-				{ src: "manifold", value: finite(manifold?.momentum) },
-			].filter((bar) => bar.value !== 0),
+				{
+					src: "causal",
+					value: causalStrengthValue,
+					present: causal !== undefined,
+				},
+				{
+					src: "predict",
+					value: finite(resonance?.confidence),
+					present: resonance !== undefined,
+				},
+				{
+					src: "manifold",
+					value: finite(manifold?.momentum),
+					present: manifold !== undefined,
+				},
+			].filter((bar) => bar.present),
 			waterfall: [
 				{
 					src: "causal",
@@ -252,9 +243,7 @@ export const DecisionsSurface = () => {
 					{candidates.map((candidate) => {
 						const selected = candidate.symbol === current?.symbol;
 						const scorePercent = Math.round(ratio(candidate.score) * 100);
-						const edge =
-							causalStrength(candidate.causal) -
-							causalEntryBaseline(candidate.causal);
+						const edge = pearlEdge(candidate.causal);
 
 						return (
 							<button
@@ -294,7 +283,13 @@ export const DecisionsSurface = () => {
 												label={bar.src}
 												value={fixed(bar.value)}
 												percent={Math.round(ratio(bar.value) * 100)}
-												variant={ratio(bar.value) > 0.6 ? "warning" : "info"}
+												variant={
+													bar.value === 0
+														? "disabled"
+														: ratio(bar.value) > 0.6
+															? "warning"
+															: "info"
+												}
 												size="s"
 												labelClassName="w-16 text-(--f4)"
 												valueClassName="w-[30px] text-(--f3)"
@@ -305,13 +300,17 @@ export const DecisionsSurface = () => {
 									<div>
 										<Meter
 											layout="stacked"
-											label="combined"
+											label={
+												candidate.decision !== undefined
+													? "utility"
+													: "combined"
+											}
 											value={fixed(candidate.score)}
 											percent={scorePercent}
 											variant={
 												candidate.verdict === "allow"
 													? "success"
-													: candidate.inPlay
+													: candidate.verdict === "blocked"
 														? "error"
 														: "info"
 											}
@@ -324,7 +323,7 @@ export const DecisionsSurface = () => {
 												color: edge >= 0 ? "var(--up)" : "var(--down)",
 											}}
 										>
-											edge {fixed(edge)}
+											pearl Δ {fixed(edge)}
 										</div>
 									</div>
 

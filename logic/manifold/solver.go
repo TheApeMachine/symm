@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/signal/compute"
 	"github.com/theapemachine/symm/types"
 )
@@ -36,6 +37,19 @@ type Solver struct {
 	capacity int
 	symbols  map[string]*symbolSlot
 	books    BookSource
+	recorder *audit.Recorder
+}
+
+/*
+SetRecorder attaches the runtime audit stream so forcing rescale and advance
+failures leave a durable breadcrumb without blocking the GPU hot path.
+*/
+func (solver *Solver) SetRecorder(recorder *audit.Recorder) {
+	if solver == nil {
+		return
+	}
+
+	solver.recorder = recorder
 }
 
 type symbolSlot struct {
@@ -176,6 +190,7 @@ func (solver *Solver) Update(
 	}
 
 	var failures []error
+	advanced := 0
 
 	for _, candidate := range candidates {
 		state, err := solver.advance(candidate.symbol, candidate.outcome)
@@ -193,6 +208,12 @@ func (solver *Solver) Update(
 				err,
 			).With("cause", cause.Error()))
 
+			errnie.Error(audit.Record(solver.recorder, "manifold_advance", map[string]any{
+				"symbol": candidate.symbol,
+				"ok":     false,
+				"error":  cause.Error(),
+			}))
+
 			continue
 		}
 
@@ -200,8 +221,15 @@ func (solver *Solver) Update(
 			continue
 		}
 
+		advanced++
 		thesis.Manifold.Store(candidate.symbol, state)
 	}
+
+	errnie.Error(audit.Record(solver.recorder, "manifold", map[string]any{
+		"candidates": len(candidates),
+		"advanced":   advanced,
+		"failed":     len(failures),
+	}))
 
 	return errors.Join(failures...)
 }
@@ -247,7 +275,7 @@ func (solver *Solver) advance(
 	interval := eventInterval(solver.config, slot.at, outcome)
 	slot.at = outcome.At
 	slot.events = outcome.EventCount
-	characteristicSpeed, err := applyForcing(
+	characteristicSpeed, scale, err := applyForcing(
 		solver.config,
 		outcome,
 		interval,
@@ -256,6 +284,14 @@ func (solver *Solver) advance(
 
 	if err != nil {
 		return State{}, err
+	}
+
+	if scale < 1 {
+		errnie.Error(audit.Record(solver.recorder, "manifold_force", map[string]any{
+			"symbol": symbol,
+			"scale":  scale,
+			"speed":  characteristicSpeed,
+		}))
 	}
 
 	controls := runtimeControls(

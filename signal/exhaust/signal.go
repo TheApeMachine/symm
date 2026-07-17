@@ -49,7 +49,7 @@ measured its evidence, mirroring broker.Balance.Publish.
 func (signal *Signal) Publish(measurements []*types.Measurement) {
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": measurements,
+		"measurements": types.WireMeasurements(measurements),
 	}.Marshal():
 	default:
 	}
@@ -86,9 +86,9 @@ func (signal *Signal) Calculate(
 
 		measurements := signal.measureTrade(event.Row.(kraken.TradeData))
 		out = append(out, measurements...)
-		signal.Publish(measurements)
 	}
 
+	signal.Publish(out)
 	return out, nil
 }
 

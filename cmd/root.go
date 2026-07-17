@@ -97,6 +97,10 @@ var (
 				))
 			}
 
+			if err := rotateCognitive(persistDir); err != nil {
+				return errnie.Error(err)
+			}
+
 			tree := dmt.NewTree(persistDir)
 
 			defer func() {

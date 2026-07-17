@@ -211,7 +211,8 @@ func TestSolverAdvanceAppliesAbsoluteHawkesForcing(t *testing.T) {
 			So(activeAdvanceErr, ShouldBeNil)
 			So(quietState.GasReady(), ShouldBeTrue)
 			So(activeState.GasReady(), ShouldBeTrue)
-			So(activeState.Reading, ShouldNotResemble, quietState.Reading)
+			So(activeState.BuyIntensity, ShouldBeGreaterThan, quietState.BuyIntensity)
+			So(activeState.SellIntensity, ShouldBeGreaterThan, quietState.SellIntensity)
 		})
 	})
 }

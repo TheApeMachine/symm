@@ -190,9 +190,12 @@ func (market *Market) OnBook(data []byte) {
 }
 
 /*
-Cut captures each public stream at the same measurement time, reads every
-retained row without advancing any cursor early, and commits the three batches
-only after the immutable shared frame is complete.
+Cut captures each public stream at the same measurement time. When the ticker
+stream advanced, the full retained quote surface is attached so quote signals
+remeasure the universe. When only trades or books advanced, only tickers for
+those active symbols are attached so quote signals measure what changed.
+Trades and books remain unseen-event batches. A cut with no new ingress on any
+stream is empty so the planner does not busy-spin.
 */
 func (market *Market) Cut(at time.Time) (*types.MarketFrame, error) {
 	if err := market.tickers.Capture(at); err != nil {
@@ -207,10 +210,12 @@ func (market *Market) Cut(at time.Time) (*types.MarketFrame, error) {
 		return nil, errnie.Err(errnie.Internal, "market: capture book cut", err)
 	}
 
-	tickers, err := market.tickers.Batch(at)
+	tickerProgress := market.tickers.Progress()
+
+	tickerRows, err := market.tickers.Frame(at)
 
 	if err != nil {
-		return nil, errnie.Err(errnie.Internal, "market: read ticker cut", err)
+		return nil, errnie.Err(errnie.Internal, "market: read ticker frame", err)
 	}
 
 	trades, err := market.trades.Batch(at)
@@ -225,19 +230,6 @@ func (market *Market) Cut(at time.Time) (*types.MarketFrame, error) {
 		return nil, errnie.Err(errnie.Internal, "market: read book cut", err)
 	}
 
-	crossSection := types.NewCrossSection()
-	crossSection.Measure(tickers.Rows)
-	frame := &types.MarketFrame{
-		Tickers:      tickers.Rows,
-		Trades:       trades.Rows,
-		Books:        books.Rows,
-		CrossSection: crossSection,
-	}
-
-	if err := market.tickers.Commit(tickers); err != nil {
-		return nil, errnie.Err(errnie.Internal, "market: commit ticker cut", err)
-	}
-
 	if err := market.trades.Commit(trades); err != nil {
 		return nil, errnie.Err(errnie.Internal, "market: commit trade cut", err)
 	}
@@ -246,5 +238,55 @@ func (market *Market) Cut(at time.Time) (*types.MarketFrame, error) {
 		return nil, errnie.Err(errnie.Internal, "market: commit book cut", err)
 	}
 
-	return frame, nil
+	if !tickerProgress && len(trades.Rows) == 0 && len(books.Rows) == 0 {
+		return &types.MarketFrame{CrossSection: types.NewCrossSection()}, nil
+	}
+
+	if !tickerProgress {
+		tickerRows = market.tickersFor(tickerRows, trades.Rows, books.Rows)
+	}
+
+	crossSection := types.NewCrossSection()
+	crossSection.Measure(tickerRows)
+
+	return &types.MarketFrame{
+		Tickers:      tickerRows,
+		Trades:       trades.Rows,
+		Books:        books.Rows,
+		CrossSection: crossSection,
+	}, nil
+}
+
+/*
+tickersFor keeps the retained quote rows whose symbols appear in the event cut
+so book-only or trade-only planner ticks do not resurface the whole universe.
+*/
+func (market *Market) tickersFor(
+	tickers []kraken.TickerData,
+	trades []kraken.TradeData,
+	books []kraken.BookData,
+) []kraken.TickerData {
+	needed := make(map[string]struct{}, len(trades)+len(books))
+
+	for _, trade := range trades {
+		needed[trade.Symbol] = struct{}{}
+	}
+
+	for _, book := range books {
+		needed[book.Symbol] = struct{}{}
+	}
+
+	if len(needed) == 0 {
+		return nil
+	}
+
+	filtered := make([]kraken.TickerData, 0, len(needed))
+
+	for _, ticker := range tickers {
+		if _, found := needed[ticker.Symbol]; found {
+			filtered = append(filtered, ticker)
+		}
+	}
+
+	return filtered
 }

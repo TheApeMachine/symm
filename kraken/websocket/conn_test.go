@@ -113,7 +113,7 @@ func TestAPIBooks(t *testing.T) {
 			}
 		})
 
-		Convey("It should protect direct SDK reads during websocket updates", func() {
+		Convey("It should protect PeekBook reads during websocket updates", func() {
 			live.isLevel3 = true
 			checksum := managed.L3Checksum("").LocalChecksum
 			raw := []byte(fmt.Sprintf(`{
@@ -136,7 +136,7 @@ func TestAPIBooks(t *testing.T) {
 				Data: sdkkraken.NewWebSocketMessage(raw),
 			}
 			start := make(chan struct{})
-			failures := make(chan error, 2)
+			failures := make(chan error, 8)
 			wait := sync.WaitGroup{}
 			wait.Add(2)
 
@@ -157,29 +157,52 @@ func TestAPIBooks(t *testing.T) {
 				<-start
 
 				for range 256 {
-					for books := range api.Books() {
-						ask := books.GetBook("BTC/USD").BestAsk()
+					var readErr error
+
+					ok := api.PeekBook("BTC/USD", func(symbolBook *book.Book) {
+						ask := symbolBook.BestAsk()
 
 						if ask == nil || len(ask.Queue()) != 1 {
-							failures <- fmt.Errorf("incomplete SDK book read")
+							readErr = fmt.Errorf("incomplete SDK book read")
 							return
 						}
+
+						// Range the live Levels map — the crash path without a lease.
+						for _, level := range symbolBook.Asks.Levels {
+							if level == nil {
+								readErr = fmt.Errorf("nil ask level")
+								return
+							}
+						}
+					})
+
+					if !ok {
+						failures <- fmt.Errorf("PeekBook missed BTC/USD")
+						return
+					}
+
+					if readErr != nil {
+						failures <- readErr
+						return
 					}
 				}
 			}()
 
 			close(start)
 			wait.Wait()
+			close(failures)
 
-			So(len(failures), ShouldEqual, 0)
+			for err := range failures {
+				So(err, ShouldBeNil)
+			}
 		})
 	})
 }
 
 /*
-BenchmarkAPIBooks measures protected direct access to one SDK-managed book.
+BenchmarkAPIPeekBook measures leased access to one SDK-managed book.
 */
-func BenchmarkAPIBooks(b *testing.B) {
+func BenchmarkAPIPeekBook(b *testing.B) {
 	manager := spot.NewBookManager()
 	manager.CreateBook("BTC/USD", 10)
 	live := &Live{books: manager}
@@ -188,10 +211,12 @@ func BenchmarkAPIBooks(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		for books := range api.Books() {
-			if books.GetBook("BTC/USD") == nil {
+		if !api.PeekBook("BTC/USD", func(symbolBook *book.Book) {
+			if symbolBook == nil {
 				b.Fatal("managed book missing")
 			}
+		}) {
+			b.Fatal("PeekBook missed BTC/USD")
 		}
 	}
 }

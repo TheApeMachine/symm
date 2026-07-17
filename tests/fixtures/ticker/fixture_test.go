@@ -24,7 +24,7 @@ func TestNewFixture(t *testing.T) {
 				So(frame["channel"], ShouldEqual, "ticker")
 				So(frame["type"], ShouldEqual, "snapshot")
 				So(data, ShouldHaveLength, 1)
-				So(row["symbol"], ShouldEqual, "ALGO/USD")
+				So(row["symbol"], ShouldEqual, "MATIC/USD")
 			})
 		})
 

@@ -202,9 +202,25 @@ func (feed *MarketFeed[T]) Commit(batch MarketBatch[T]) error {
 }
 
 /*
+Progress reports whether the captured cut contains ingress newer than this
+consumer's cursor. Market.Cut uses it so a quiet cycle can stay empty while a
+book-only cycle can attach retained tickers for the active event symbols.
+*/
+func (feed *MarketFeed[T]) Progress() bool {
+	if feed == nil || !feed.captured {
+		return false
+	}
+
+	return feed.cut.Through != feed.cursor.After
+}
+
+/*
 Frame returns one newest state per observed symbol through the captured cut.
-It advances the same logical cursor used by Pending while leaving retained
-clock history available for later as-of reads.
+Unlike Batch, it resurfaces retained latest rows even when this stream had no
+new ingress. Market.Cut may then narrow that surface to active event symbols
+so quote signals measure what changed rather than the whole universe.
+The cursor advances to the cut high-water so event readers do not replay the
+same ingress.
 */
 func (feed *MarketFeed[T]) Frame(at time.Time) ([]T, error) {
 	if feed == nil {
@@ -219,10 +235,6 @@ func (feed *MarketFeed[T]) Frame(at time.Time) ([]T, error) {
 
 	if err != nil {
 		return nil, err
-	}
-
-	if cut.Through == feed.cursor.After {
-		return nil, nil
 	}
 
 	frame, err := feed.clock.FrameThrough(cut)

@@ -1,3 +1,4 @@
+import { formatEntropyGate } from "#/components/terminal/cognitive-entropy";
 import {
 	type CortexBeam,
 	type CortexTree,
@@ -58,6 +59,14 @@ export const cognitivePosteriorFromReading = (
 	const winner = sorted[0];
 	const runner = sorted[1];
 
+	const bits =
+		typeof reading?.entropyBits === "number" ? reading.entropyBits : 0;
+	const threshold =
+		typeof reading?.entropyThreshold === "number"
+			? reading.entropyThreshold
+			: 0;
+	const entropyGate = formatEntropyGate(bits, threshold);
+
 	if (winner === undefined) {
 		return {
 			winner: "waiting",
@@ -66,14 +75,8 @@ export const cognitivePosteriorFromReading = (
 			runnerBits: "—",
 			kl: "—",
 			marginPercent: 0,
-			entropy:
-				typeof reading?.entropyBits === "number"
-					? reading.entropyBits.toFixed(2)
-					: "0.00",
-			entropyThreshold:
-				typeof reading?.entropyThreshold === "number"
-					? reading.entropyThreshold.toFixed(2)
-					: "0.00",
+			entropy: entropyGate.ungated ? "ungated" : bits.toFixed(2),
+			entropyThreshold: entropyGate.ungated ? "—" : threshold.toFixed(2),
 			entropyPercent: 0,
 			ambiguous: reading?.ambiguous === true,
 			classes: [],
@@ -91,13 +94,6 @@ export const cognitivePosteriorFromReading = (
 			? null
 			: winnerProbability *
 				Math.log2(winnerProbability / Math.max(runnerProbability, 1e-9));
-	const entropyRatio =
-		reading !== null &&
-		typeof reading.entropyBits === "number" &&
-		typeof reading.entropyThreshold === "number" &&
-		reading.entropyThreshold > 0
-			? reading.entropyBits / reading.entropyThreshold
-			: 0;
 
 	return {
 		winner: winner.name,
@@ -109,15 +105,9 @@ export const cognitivePosteriorFromReading = (
 			runnerBits === null
 				? 0
 				: Math.round(clamp((runnerBits - winnerBits) / 4, 0, 1) * 100),
-		entropy:
-			typeof reading?.entropyBits === "number"
-				? reading.entropyBits.toFixed(2)
-				: "0.00",
-		entropyThreshold:
-			typeof reading?.entropyThreshold === "number"
-				? reading.entropyThreshold.toFixed(2)
-				: "0.00",
-		entropyPercent: Math.round(clamp(entropyRatio, 0, 1) * 100),
+		entropy: entropyGate.ungated ? "ungated" : bits.toFixed(2),
+		entropyThreshold: entropyGate.ungated ? "—" : threshold.toFixed(2),
+		entropyPercent: Math.round(entropyGate.percent),
 		ambiguous: reading?.ambiguous === true,
 		classes: sorted.map((entry, index) => ({
 			name: entry.name,

@@ -46,7 +46,7 @@ func TestPlannerUpdateCollectsEverySignal(t *testing.T) {
 	done := make(chan *types.Thesis, 1)
 
 	go func() {
-		done <- planner.Update(&types.MarketFrame{})
+		done <- planner.Update(&types.MarketFrame{}, 1)
 	}()
 
 	select {
@@ -56,6 +56,10 @@ func TestPlannerUpdateCollectsEverySignal(t *testing.T) {
 				"expected 3 measurements, got %d",
 				len(thesis.Measurements),
 			)
+		}
+
+		if thesis.Tick != 1 {
+			t.Fatalf("expected tick 1, got %d", thesis.Tick)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("planner.Update deadlocked collecting signal results")
@@ -83,6 +87,6 @@ func BenchmarkPlannerUpdate(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		planner.Update(frame)
+		planner.Update(frame, 1)
 	}
 }

@@ -1,0 +1,22 @@
+package audit
+
+/*
+Phase writes one ordered runtime breadcrumb. Tick correlates the row with the
+crypto sequence counter so a freeze can be located by the last phase that
+landed before the next tick row.
+*/
+func Phase(
+	recorder *Recorder,
+	tick int64,
+	phase string,
+	value map[string]any,
+) error {
+	if value == nil {
+		value = map[string]any{}
+	}
+
+	value["tick"] = tick
+	value["phase"] = phase
+
+	return Record(recorder, "phase", value)
+}
