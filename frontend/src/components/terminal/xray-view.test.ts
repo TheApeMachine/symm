@@ -4,11 +4,9 @@ import type { Measurement, MeasurementEpoch } from "#/collections/measurements";
 import {
 	hawkesMetricsFromBuffer,
 	hawkesMetricsFromFrames,
-	hawkesSamplesFromBuffer,
-	hawkesSamplesFromFrames,
 	latentPointsFromFrames,
-	xrayLayersFromManifold,
-} from "./xray";
+	xrayLayersFromResonance,
+} from "#/components/terminal/xray-view";
 
 const hawkesMeasurement = (
 	at: string,
@@ -34,47 +32,52 @@ const hawkesMeasurement = (
 	scale: { kind: "observation_window", from: at, through: at },
 });
 
-describe("xray", () => {
-	it("builds four hierarchy rows from manifold rho", () => {
-		const layers = xrayLayersFromManifold(
-			{
-				rho: [
-					[0, 1, 2, 3],
-					[1, 2, 3, 4],
-					[2, 3, 4, 5],
-					[3, 4, 5, 6],
-					[4, 5, 6, 7],
-					[5, 6, 7, 8],
-					[6, 7, 8, 9],
-					[7, 8, 9, 10],
-				],
-			},
-			null,
-		);
+describe("xray-view", () => {
+	it("builds hierarchy rows from resonance layers", () => {
+		const layers = xrayLayersFromResonance({
+			source: "resonance",
+			symbol: "BTC/USD",
+			at: "2026-07-12T00:00:00Z",
+			surprise: 0.25,
+			layers: [
+				{ state: [0.1, -0.2, 0.3], prediction: [0.0, -0.1, 0.2] },
+				{ state: [0.4], prediction: [0.5] },
+			],
+		});
 
-		expect(layers).toHaveLength(4);
+		expect(layers).toHaveLength(2);
 		expect(layers[0]?.label).toBe("L0 · sensory");
-		expect(layers[3]?.label).toBe("L3 · macro");
-		expect(layers.every((layer) => layer.state.length === 16)).toBe(true);
-		expect(layers.every((layer) => layer.error_norm > 0)).toBe(true);
+		expect(layers[1]?.label).toBe("L1 · macro");
+		expect(layers[0]?.state).toEqual([0.1, -0.2, 0.3]);
+		expect(layers[0]?.error_norm).toBeCloseTo(0.1, 5);
+	});
+
+	it("ignores manifold density when building hierarchy", () => {
+		expect(
+			xrayLayersFromResonance({
+				source: "resonance",
+				symbol: "BTC/USD",
+				at: "2026-07-12T00:00:00Z",
+				rho: [
+					[0, 1],
+					[1, 0],
+				],
+			}),
+		).toEqual([]);
 	});
 
 	it("groups sequential hawkes metrics by observation epoch", () => {
 		const frames = [
 			hawkesMeasurement("1", "arrival_rate", "buy", 0.15),
 			hawkesMeasurement("1", "arrival_rate", "sell", 0.1),
-			hawkesMeasurement("1", "event_count", "", 12),
 			hawkesMeasurement("2", "conditional_intensity", "buy", 0.3),
 			hawkesMeasurement("2", "conditional_intensity", "sell", 0.2),
 			hawkesMeasurement("2", "baseline_intensity", "buy", 0.05),
 			hawkesMeasurement("2", "baseline_intensity", "sell", 0.04),
 			hawkesMeasurement("2", "spectral_radius", "", 0.8),
-			hawkesMeasurement("2", "event_count", "", 18),
 		];
-		const hawkes = hawkesSamplesFromFrames(frames, "BTC/USD");
 		const metrics = hawkesMetricsFromFrames(frames);
 
-		expect(hawkes.map((sample) => sample.intensity)).toEqual([0.25, 0.5]);
 		expect(metrics).toMatchObject({
 			intensity: 0.5,
 			branching: 0.8,
@@ -85,55 +88,34 @@ describe("xray", () => {
 		});
 	});
 
-	it("builds one hawkes sample per retained observation epoch", () => {
+	it("reads hawkes metrics from retained observation epochs", () => {
 		const buffer = Circular<MeasurementEpoch>(50);
-		const epoch = (at: string, publishedAt: string, readings: Measurement[]) =>
-			({ at, publishedAt, readings }) satisfies MeasurementEpoch;
 
-		buffer.push(
-			epoch("1", "1", [
-				hawkesMeasurement("1", "arrival_rate", "buy", 0.15),
-				hawkesMeasurement("1", "arrival_rate", "sell", 0.1),
-			]),
-		);
-		buffer.push(
-			epoch("1", "2", [
+		buffer.push({
+			at: "1",
+			publishedAt: "1",
+			readings: [
 				hawkesMeasurement("1", "conditional_intensity", "buy", 0.3),
 				hawkesMeasurement("1", "conditional_intensity", "sell", 0.2),
 				hawkesMeasurement("1", "baseline_intensity", "buy", 0.05),
 				hawkesMeasurement("1", "baseline_intensity", "sell", 0.04),
 				hawkesMeasurement("1", "spectral_radius", "", 0.8),
-			]),
-		);
+			],
+		});
 
-		expect(
-			hawkesSamplesFromBuffer(buffer, "BTC/USD").map(
-				(sample) => sample.intensity,
-			),
-		).toEqual([0.25, 0.5]);
 		expect(hawkesMetricsFromBuffer(buffer)).toMatchObject({
 			intensity: 0.5,
 			branching: 0.8,
 		});
 	});
 
-	it("retains the legacy hawkes readout during migration", () => {
-		const frame: Measurement = {
-			...hawkesMeasurement("1", "conditional_intensity", "buy", 0),
-			metric: undefined,
-			metrics: { intensityRatio: 0.4 },
-		};
-
-		expect(hawkesSamplesFromFrames([frame], "BTC/USD")).toMatchObject([
-			{ key: "1", symbol: "BTC/USD", intensity: 0.4 },
-		]);
-	});
-
-	it("reads latent histories from live frame fields", () => {
+	it("reads latent histories from live resonance frames", () => {
 		const latent = latentPointsFromFrames({
 			"BTC/USD": {
 				values: () => [
 					{
+						source: "resonance",
+						symbol: "BTC/USD",
 						at: "2",
 						category: "equilibrium",
 						latent: [0.2, -0.4, 0.8],

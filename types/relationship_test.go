@@ -78,6 +78,28 @@ func TestGraphCompose(t *testing.T) {
 		})
 	})
 
+	Convey("Given repeated observations with identical normalized evidence", t, func() {
+		graph := NewGraph("BTC/USD")
+		normalized := 0.4
+		older := &Measurement{
+			Source: SourceHawkes, Stream: Hawkes, Metric: MetricStrength,
+			Subject: SubjectTradeArrivals, Symbol: "BTC/USD",
+			At: time.Unix(1, 0), Unit: UnitDimensionless,
+			Normalized: &normalized,
+			Validity:   MeasurementValidity{State: ValidityValid},
+		}
+		newer := *older
+		newer.At = time.Unix(2, 0)
+		So(graph.AddNode(older), ShouldBeNil)
+		So(graph.AddNode(&newer), ShouldBeNil)
+
+		graph.Compose()
+
+		Convey("It should retain redundancy as a distinct relationship", func() {
+			So(edgeTypes(graphEdges(graph)), ShouldContain, Redundant)
+		})
+	})
+
 	Convey("Given measurements without a typed subject", t, func() {
 		graph := NewGraph("BTC/USD")
 		normalized := 0.5

@@ -36,44 +36,28 @@ func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal 
 	}
 }
 
-func (signal *Signal) Measure(thesis *types.Thesis) chan []*types.Measurement {
-	out := make(chan []*types.Measurement)
-
-	go func() {
-		defer close(out)
-
-		measurements, err := signal.Calculate(thesis.Market())
-
-		if err != nil {
-			errnie.Error(err)
-			out <- nil
-			return
-		}
-
-		out <- measurements
-		signal.Publish(measurements)
-	}()
-
-	return out
-}
-
 /*
 Publish sends one small datura frame to the UI the moment this signal has
 measured its evidence, mirroring broker.Balance.Publish.
 */
 func (signal *Signal) Publish(measurements []*types.Measurement) {
-	filtered := types.FilterLatest(measurements)
-
-	if len(filtered) == 0 {
-		return
-	}
-
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": filtered,
+		"measurements": measurements,
 	}.Marshal():
 	default:
 	}
+}
+
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	measurements, err := signal.Calculate(thesis.Market())
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	return measurements
 }
 
 /*
@@ -327,19 +311,21 @@ func (signal *Signal) Calculate(
 				},
 			)
 
-			out = append(out, signal.touchHonesty(
+			measurements := signal.touchHonesty(
 				symbol,
 				row,
 				signal.priorTouch[symbol],
 				bidQuantity,
 				askQuantity,
 				maturity,
-			)...)
+			)
+
+			out = append(out, measurements...)
+			signal.Publish(measurements)
 		}
 	}
 
 	signal.priorTouch = nextTouch
-	signal.Publish(out)
 
 	return out, nil
 }

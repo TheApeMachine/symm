@@ -2,6 +2,7 @@ package hawkes
 
 import (
 	"context"
+
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
@@ -32,47 +33,31 @@ type Signal struct {
 }
 
 /*
-Measure supports direct replay against the legacy signal-local trade journal.
-The live runtime uses Calculate with the central immutable market cut.
-*/
-func (signal *Signal) Measure(thesis *types.Thesis) chan []*types.Measurement {
-	out := make(chan []*types.Measurement)
-
-	go func() {
-		defer close(out)
-
-		measurements, err := signal.Calculate(thesis.Market())
-
-		if err != nil {
-			errnie.Error(err)
-			out <- nil
-			return
-		}
-
-		out <- measurements
-		signal.Publish(measurements)
-	}()
-
-	return out
-}
-
-/*
 Publish sends one small datura frame to the UI the moment this signal has
 measured its evidence, mirroring broker.Balance.Publish.
 */
 func (signal *Signal) Publish(measurements []*types.Measurement) {
-	filtered := types.FilterLatest(measurements)
-
-	if len(filtered) == 0 {
-		return
-	}
-
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": filtered,
+		"measurements": measurements,
 	}.Marshal():
 	default:
 	}
+}
+
+/*
+Measure supports direct replay against the legacy signal-local trade journal.
+The live runtime uses Calculate with the central immutable market cut.
+*/
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	measurements, err := signal.Calculate(thesis.Market())
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	return measurements
 }
 
 /*
@@ -136,6 +121,7 @@ func (signal *Signal) Calculate(
 		}
 
 		out = append(out, measurements...)
+		signal.Publish(measurements)
 	}
 
 	return out, nil

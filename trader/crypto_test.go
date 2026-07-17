@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
@@ -97,7 +98,7 @@ func TestCryptoRun(t *testing.T) {
 
 	Convey("Given a started crypto runtime", t, func() {
 		ctx := context.Background()
-		channel := make(chan []byte, 8)
+		channel := make(chan []byte, 128)
 		booter := system.NewBooter(ctx, channel)
 		analyzer, err := logic.NewAnalyzer(ctx, booter, nil, nil, nil, nil)
 		So(err, ShouldBeNil)
@@ -112,6 +113,11 @@ func TestCryptoRun(t *testing.T) {
 		desk := broker.NewDesk(nil, nil, nil, nil)
 		hub, err := ui.NewHub(ctx, nil, nil, thesis, channel)
 		So(err, ShouldBeNil)
+		t.Cleanup(func() {
+			if err := hub.Close(); err != nil {
+				t.Error(err)
+			}
+		})
 
 		crypto, err := NewCrypto(
 			ctx,
@@ -172,6 +178,30 @@ func TestCryptoRun(t *testing.T) {
 			Convey("Then the runtime reports ready and advances the tick", func() {
 				So(crypto.Status(), ShouldEqual, types.READY)
 				So(crypto.tick.Load(), ShouldEqual, 1)
+
+				published := int64(0)
+				deadline = time.Now().Add(time.Second)
+
+				for published == 0 && time.Now().Before(deadline) {
+					select {
+					case raw := <-channel:
+						frame := struct {
+							Tick *struct {
+								Count int64 `json:"count"`
+							} `json:"tick"`
+						}{}
+
+						So(sonic.Unmarshal(raw, &frame), ShouldBeNil)
+
+						if frame.Tick != nil {
+							published = frame.Tick.Count
+						}
+					default:
+						runtime.Gosched()
+					}
+				}
+
+				So(published, ShouldEqual, 1)
 			})
 		})
 	})

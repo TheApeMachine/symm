@@ -6,8 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bytedance/sonic"
 	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -83,7 +85,7 @@ func TestSignal_Measure(testingTB *testing.T) {
 				ChangePct: 2,
 				Last:      krakendecimal.NewFromFloat64(102),
 				Volume:    10,
-				Timestamp: now,
+				Timestamp: now.Add(time.Nanosecond),
 			},
 			kraken.TickerData{
 				Symbol:    "SOL/USD",
@@ -109,6 +111,71 @@ func TestSignal_Measure(testingTB *testing.T) {
 			strength, ok := lastMeasurement(result, "BTC/USD", types.MetricStrength)
 			So(ok, ShouldBeTrue)
 			So(strength.Raw, ShouldBeLessThanOrEqualTo, 1)
+		})
+	})
+}
+
+/*
+TestSignal_Publish verifies that frontend publication carries one compact map
+of named values per symbol instead of repeating the measurement envelope.
+*/
+func TestSignal_Publish(testingTB *testing.T) {
+	Convey("Given one complete sentiment observation", testingTB, func() {
+		now := time.Now()
+		channel := make(chan []byte, 1)
+		signal := &Signal{
+			ctx: context.Background(),
+			ui:  channel,
+		}
+		frame := frameFrom(
+			kraken.TickerData{
+				Symbol:    "BTC/USD",
+				ChangePct: 5,
+				Last:      krakendecimal.NewFromFloat64(105),
+				Volume:    10,
+				Timestamp: now,
+			},
+			kraken.TickerData{
+				Symbol:    "ETH/USD",
+				ChangePct: 2,
+				Last:      krakendecimal.NewFromFloat64(102),
+				Volume:    10,
+				Timestamp: now,
+			},
+		)
+		measurements, err := signal.Calculate(frame)
+		So(err, ShouldBeNil)
+
+		Convey("When the observation is published", func() {
+			signal.Publish(measurements)
+			published := <-channel
+			payload := struct {
+				Measurements []struct {
+					Source  string             `json:"source"`
+					Symbol  string             `json:"symbol"`
+					Metrics map[string]float64 `json:"metrics"`
+				} `json:"measurements"`
+			}{}
+			So(sonic.Unmarshal(published, &payload), ShouldBeNil)
+
+			Convey("Then both unsynchronized symbols retain one complete map", func() {
+				metricsBySymbol := make(map[string]map[string]float64)
+
+				for _, measurement := range payload.Measurements {
+					metricsBySymbol[measurement.Symbol] = measurement.Metrics
+				}
+
+				So(payload.Measurements, ShouldHaveLength, 2)
+				So(metricsBySymbol["BTC/USD"], ShouldHaveLength, 9)
+				So(metricsBySymbol["ETH/USD"], ShouldHaveLength, 9)
+				So(metricsBySymbol["BTC/USD"]["breadth"], ShouldAlmostEqual, 1)
+				So(metricsBySymbol["BTC/USD"]["strength"], ShouldBeGreaterThan, 0)
+
+				full := datura.Map[any]{
+					"measurements": types.FilterLatest(measurements),
+				}.Marshal()
+				So(len(published), ShouldBeLessThan, len(full))
+			})
 		})
 	})
 }
@@ -157,5 +224,43 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 
 	for benchmark.Loop() {
 		_, _ = signal.Calculate(frame)
+	}
+}
+
+/*
+BenchmarkSignal_Publish measures the compact sentiment websocket encoding path.
+*/
+func BenchmarkSignal_Publish(benchmark *testing.B) {
+	now := time.Now()
+	signal := &Signal{
+		ctx: context.Background(),
+		ui:  make(chan []byte, 1),
+	}
+	frame := frameFrom(
+		kraken.TickerData{
+			Symbol:    "BTC/USD",
+			ChangePct: 5,
+			Last:      krakendecimal.NewFromFloat64(105),
+			Volume:    10,
+			Timestamp: now,
+		},
+		kraken.TickerData{
+			Symbol:    "ETH/USD",
+			ChangePct: 2,
+			Last:      krakendecimal.NewFromFloat64(102),
+			Volume:    10,
+			Timestamp: now,
+		},
+	)
+	measurements, err := signal.Calculate(frame)
+
+	if err != nil {
+		benchmark.Fatal(err)
+	}
+
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		signal.Publish(measurements)
 	}
 }

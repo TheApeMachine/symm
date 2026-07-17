@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
@@ -155,7 +157,17 @@ func (crypto *Crypto) Run() error {
 				continue
 			}
 
-			frame := crypto.market.Cut()
+			frame, err := crypto.market.Cut(time.Now().UTC())
+
+			if err != nil {
+				crypto.status = types.ERROR
+				errnie.Error(errnie.Err(
+					errnie.Internal,
+					"crypto: market cut failed",
+					err,
+				))
+				return
+			}
 
 			if frame.IsEmpty() {
 				continue
@@ -164,6 +176,7 @@ func (crypto *Crypto) Run() error {
 			thesis := crypto.planner.Update(frame)
 			thesis.Tick = crypto.tick.Add(1)
 			crypto.trade(thesis)
+			crypto.publishTick(thesis)
 
 			errnie.Error(audit.Record(recorder, "tick", map[string]any{
 				"tick":         thesis.Tick,
@@ -175,6 +188,31 @@ func (crypto *Crypto) Run() error {
 	}()
 
 	return nil
+}
+
+/*
+publishTick sends the frontend one compact factual runtime projection after a
+completed Thesis tick so the dashboard counter reflects actual planner progress.
+*/
+func (crypto *Crypto) publishTick(thesis *types.Thesis) {
+	if crypto.uiHub == nil {
+		return
+	}
+
+	tick := datura.Map[any]{
+		"count":        thesis.Tick,
+		"measurements": len(thesis.Measurements),
+		"candidates":   len(thesis.Positions),
+	}
+
+	if crypto.desk != nil {
+		tick["open"] = crypto.desk.OpenPositions()
+	}
+
+	select {
+	case crypto.uiHub.Messages <- datura.Map[any]{"tick": tick}.Marshal():
+	default:
+	}
 }
 
 /*

@@ -87,17 +87,19 @@ func (planner *Planner) Update(frame *types.MarketFrame) *types.Thesis {
 	thesis := types.NewThesis(planner.uiHub, frame)
 	thesis.CrossSection = frame.CrossSection
 
-	// Fan out first so every signal's goroutine starts before we block on any
-	// result; draining in a second pass keeps the signals concurrent instead of
-	// serializing on each channel read.
-	channels := make([]chan []*types.Measurement, len(planner.signals))
+	// Fan out first so every signal starts before we block on any result, then
+	// drain exactly once per signal. Ranging until close deadlocks here because
+	// the closer would only run after Update returns.
+	fanIn := make(chan []*types.Measurement, len(planner.signals))
 
-	for index, signal := range planner.signals {
-		channels[index] = signal.Measure(thesis)
+	for _, signal := range planner.signals {
+		go func() {
+			fanIn <- signal.Measure(thesis)
+		}()
 	}
 
-	for _, channel := range channels {
-		thesis.Measurements = append(thesis.Measurements, <-channel...)
+	for range planner.signals {
+		thesis.Measurements = append(thesis.Measurements, <-fanIn...)
 	}
 
 	if planner.analyzer != nil {

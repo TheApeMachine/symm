@@ -14,6 +14,30 @@ type marketFeedRow struct {
 	value  int
 }
 
+/*
+TestNewMarketFeed verifies that both bounded ring capacities are validated
+before live ingestion can discover a lazy per-symbol track configuration error.
+*/
+func TestNewMarketFeed(t *testing.T) {
+	Convey("Given invalid market feed capacities", t, func() {
+		Convey("A non-power-of-two timeline is rejected", func() {
+			feed := NewMarketFeed[marketFeedRow](3, 4)
+			_, err := feed.Pending(time.Now().UTC())
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "timeline capacity")
+		})
+
+		Convey("A non-power-of-two symbol track is rejected", func() {
+			feed := NewMarketFeed[marketFeedRow](4, 3)
+			_, err := feed.Pending(time.Now().UTC())
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "track capacity")
+		})
+	})
+}
+
 func TestMarketFeed_Frame(t *testing.T) {
 	Convey("Given symbols that update at different rates", t, func() {
 		feed := NewMarketFeed[marketFeedRow](8, 4)

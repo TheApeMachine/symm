@@ -48,6 +48,13 @@ func NewMarketFeed[T any](
 		)}
 	}
 
+	if trackCapacity&(trackCapacity-1) != 0 {
+		return &MarketFeed[T]{err: fmt.Errorf(
+			"types: market feed track capacity must be a power of two: %d",
+			trackCapacity,
+		)}
+	}
+
 	// SPSC rings are lock-free for the clock's one-producer (Observe) /
 	// many-walker (Batch, Frame) access pattern. Drop-oldest keeps ingest
 	// non-blocking; capacities must be a power of two.

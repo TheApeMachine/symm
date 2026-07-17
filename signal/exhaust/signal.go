@@ -28,27 +28,6 @@ type Signal struct {
 	ui     chan []byte
 }
 
-func (signal *Signal) Measure(thesis *types.Thesis) chan []*types.Measurement {
-	out := make(chan []*types.Measurement)
-
-	go func() {
-		defer close(out)
-
-		measurements, err := signal.Calculate(thesis.Market())
-
-		if err != nil {
-			errnie.Error(err)
-			out <- nil
-			return
-		}
-
-		out <- measurements
-		signal.Publish(measurements)
-	}()
-
-	return out
-}
-
 func NewSignal(
 	ctx context.Context, api *websocket.API, instrument *broker.Instrument, ui chan []byte,
 ) *Signal {
@@ -68,18 +47,23 @@ Publish sends one small datura frame to the UI the moment this signal has
 measured its evidence, mirroring broker.Balance.Publish.
 */
 func (signal *Signal) Publish(measurements []*types.Measurement) {
-	filtered := types.FilterLatest(measurements)
-
-	if len(filtered) == 0 {
-		return
-	}
-
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": filtered,
+		"measurements": measurements,
 	}.Marshal():
 	default:
 	}
+}
+
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	measurements, err := signal.Calculate(thesis.Market())
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	return measurements
 }
 
 /*
@@ -94,11 +78,15 @@ func (signal *Signal) Calculate(
 
 	for _, event := range events {
 		if event.Stream == "book" {
-			out = append(out, signal.measureBook(event.Row.(kraken.BookData))...)
+			measurements := signal.measureBook(event.Row.(kraken.BookData))
+			out = append(out, measurements...)
+			signal.Publish(measurements)
 			continue
 		}
 
-		out = append(out, signal.measureTrade(event.Row.(kraken.TradeData))...)
+		measurements := signal.measureTrade(event.Row.(kraken.TradeData))
+		out = append(out, measurements...)
+		signal.Publish(measurements)
 	}
 
 	return out, nil

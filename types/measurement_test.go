@@ -1,6 +1,7 @@
 package types
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -109,4 +110,81 @@ func TestMeasurementInterval(t *testing.T) {
 			So(implicitThrough, ShouldEqual, at)
 		})
 	})
+}
+
+func TestFilterLatest(t *testing.T) {
+	Convey("Given unsynchronized measurement epochs across symbols", t, func() {
+		btcOlder := &Measurement{
+			Symbol: "BTC/USD",
+			Metric: MetricBreadth,
+			At:     time.Unix(1, 0),
+		}
+		btcBreadth := &Measurement{
+			Symbol: "BTC/USD",
+			Metric: MetricBreadth,
+			At:     time.Unix(2, 0),
+		}
+		btcStrength := &Measurement{
+			Symbol: "BTC/USD",
+			Metric: MetricStrength,
+			At:     time.Unix(2, 0),
+		}
+		ethLatest := &Measurement{
+			Symbol: "ETH/USD",
+			Metric: MetricStrength,
+			At:     time.Unix(3, 0),
+		}
+
+		Convey("Then every symbol keeps its newest complete epoch", func() {
+			filtered := FilterLatest([]*Measurement{
+				btcOlder,
+				btcBreadth,
+				btcStrength,
+				ethLatest,
+			})
+
+			So(filtered, ShouldResemble, []*Measurement{
+				btcBreadth,
+				btcStrength,
+				ethLatest,
+			})
+		})
+	})
+}
+
+func BenchmarkFilterLatest(b *testing.B) {
+	const (
+		symbolCount = 256
+		metricCount = 9
+		epochCount  = 3
+	)
+
+	measurements := make(
+		[]*Measurement,
+		0,
+		symbolCount*metricCount*epochCount,
+	)
+
+	for symbolIndex := 0; symbolIndex < symbolCount; symbolIndex++ {
+		symbol := "PAIR-" + strconv.Itoa(symbolIndex)
+
+		for epochIndex := 0; epochIndex < epochCount; epochIndex++ {
+			for metricIndex := 0; metricIndex < metricCount; metricIndex++ {
+				measurements = append(measurements, &Measurement{
+					Symbol: symbol,
+					Metric: MetricStrength,
+					At:     time.Unix(int64(epochIndex), 0),
+				})
+			}
+		}
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for iteration := 0; iteration < b.N; iteration++ {
+		if len(FilterLatest(measurements)) != symbolCount*metricCount {
+			b.Fatal("latest measurement epoch lost a symbol")
+		}
+	}
 }

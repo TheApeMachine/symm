@@ -79,8 +79,8 @@ func (evidenceGraph *Graph) compose(older, newer *Node) {
 }
 
 /*
-composeDirection records signed agreement between validated finite values.
-Zero and absent normalization carry no direction and therefore add no edge.
+composeDirection records exact repetition as redundancy and signed agreement or
+conflict between distinct finite values. An unmatched zero has no direction.
 */
 func (evidenceGraph *Graph) composeDirection(
 	older, newer *Node,
@@ -89,8 +89,20 @@ func (evidenceGraph *Graph) composeDirection(
 	olderValue := older.Measurement.Normalized
 	newerValue := newer.Measurement.Normalized
 
-	if olderValue == nil || newerValue == nil ||
-		*olderValue == 0 || *newerValue == 0 {
+	if olderValue == nil || newerValue == nil {
+		return
+	}
+
+	if *olderValue == *newerValue {
+		evidenceGraph.Relate(
+			older.Key, newer.Key, Redundant,
+			newer.Measurement.At, observedFrom,
+		)
+
+		return
+	}
+
+	if *olderValue == 0 || *newerValue == 0 {
 		return
 	}
 

@@ -24,31 +24,6 @@ type Signal struct {
 }
 
 /*
-Measure supports direct replay against the legacy signal-local journal. The
-live runtime uses Calculate with the central immutable market cut.
-*/
-func (signal *Signal) Measure(thesis *types.Thesis) chan []*types.Measurement {
-	out := make(chan []*types.Measurement)
-
-	go func() {
-		defer close(out)
-
-		measurements, err := signal.Calculate(thesis.Market())
-
-		if err != nil {
-			errnie.Error(err)
-			out <- nil
-			return
-		}
-
-		out <- measurements
-		signal.Publish(measurements)
-	}()
-
-	return out
-}
-
-/*
 NewSignal creates correlation measurement state for central market cuts so
 successive ticks can establish real price relationships.
 */
@@ -68,18 +43,27 @@ Publish sends one small datura frame to the UI the moment this signal has
 measured its evidence, mirroring broker.Balance.Publish.
 */
 func (signal *Signal) Publish(measurements []*types.Measurement) {
-	filtered := types.FilterLatest(measurements)
-
-	if len(filtered) == 0 {
-		return
-	}
-
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": filtered,
+		"measurements": measurements,
 	}.Marshal():
 	default:
 	}
+}
+
+/*
+Measure supports direct replay against the legacy signal-local journal. The
+live runtime uses Calculate with the central immutable market cut.
+*/
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	measurements, err := signal.Calculate(thesis.Market())
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	return measurements
 }
 
 /*
@@ -127,8 +111,8 @@ func (signal *Signal) Calculate(
 			Readiness: types.ReadinessObservation,
 		}
 
-		out = append(out,
-			&types.Measurement{
+		measurements := []*types.Measurement{
+			{
 				Source:   types.SourceCorrelation,
 				Metric:   types.MetricCorrelation,
 				Stream:   types.Correlation,
@@ -138,7 +122,7 @@ func (signal *Signal) Calculate(
 				Raw:      scores["correlation"],
 				Validity: validity,
 			},
-			&types.Measurement{
+			{
 				Source:   types.SourceCorrelation,
 				Metric:   types.MetricSigned,
 				Stream:   types.Correlation,
@@ -148,7 +132,7 @@ func (signal *Signal) Calculate(
 				Raw:      scores["signed"],
 				Validity: validity,
 			},
-			&types.Measurement{
+			{
 				Source:   types.SourceCorrelation,
 				Metric:   types.MetricRelativeEnergy,
 				Stream:   types.Correlation,
@@ -158,7 +142,7 @@ func (signal *Signal) Calculate(
 				Raw:      scores["relativeEnergy"],
 				Validity: validity,
 			},
-			&types.Measurement{
+			{
 				Source:   types.SourceCorrelation,
 				Metric:   types.MetricHerdScore,
 				Stream:   types.Correlation,
@@ -168,7 +152,7 @@ func (signal *Signal) Calculate(
 				Raw:      scores["herdScore"],
 				Validity: validity,
 			},
-			&types.Measurement{
+			{
 				Source:   types.SourceCorrelation,
 				Metric:   types.MetricAlphaScore,
 				Stream:   types.Correlation,
@@ -178,7 +162,7 @@ func (signal *Signal) Calculate(
 				Raw:      scores["alphaScore"],
 				Validity: validity,
 			},
-			&types.Measurement{
+			{
 				Source:   types.SourceCorrelation,
 				Metric:   types.MetricNoiseScore,
 				Stream:   types.Correlation,
@@ -188,7 +172,7 @@ func (signal *Signal) Calculate(
 				Raw:      scores["noiseScore"],
 				Validity: validity,
 			},
-			&types.Measurement{
+			{
 				Source:   types.SourceCorrelation,
 				Metric:   types.MetricStressScore,
 				Stream:   types.Correlation,
@@ -198,7 +182,7 @@ func (signal *Signal) Calculate(
 				Raw:      scores["stressScore"],
 				Validity: validity,
 			},
-			&types.Measurement{
+			{
 				Source:   types.SourceCorrelation,
 				Metric:   types.MetricPeakScore,
 				Stream:   types.Correlation,
@@ -208,7 +192,7 @@ func (signal *Signal) Calculate(
 				Raw:      scores["peakScore"],
 				Validity: validity,
 			},
-			&types.Measurement{
+			{
 				Source:   types.SourceCorrelation,
 				Metric:   types.MetricStrength,
 				Stream:   types.Correlation,
@@ -218,7 +202,10 @@ func (signal *Signal) Calculate(
 				Raw:      scores["strength"],
 				Validity: validity,
 			},
-		)
+		}
+
+		out = append(out, measurements...)
+		signal.Publish(measurements)
 	}
 
 	return out, nil

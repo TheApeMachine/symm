@@ -27,7 +27,7 @@ market:
   # backpressure rather than discard authoritative order-level deltas.
   l3_ring_capacity: 8192
   # High-liquidity run: deeper L2 book and faster subscription pacing.
-  subscribe_pace: 50ms
+  subscribe_pace: 20ms
   subscribe_batch: 200
   book:
     depth: 10

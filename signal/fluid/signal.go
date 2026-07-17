@@ -178,25 +178,15 @@ func (signal *Signal) increment(symbol string) decimal.Decimal {
 	return pair.Increment()
 }
 
-func (signal *Signal) Measure(thesis *types.Thesis) chan []*types.Measurement {
-	out := make(chan []*types.Measurement)
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	measurements, err := signal.Calculate(thesis.Market())
 
-	go func() {
-		defer close(out)
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
 
-		measurements, err := signal.Calculate(thesis.Market())
-
-		if err != nil {
-			errnie.Error(err)
-			out <- nil
-			return
-		}
-
-		out <- measurements
-		signal.Publish(measurements)
-	}()
-
-	return out
+	return measurements
 }
 
 /*
@@ -204,15 +194,9 @@ Publish sends one small datura frame to the UI the moment this signal has
 measured its evidence, mirroring broker.Balance.Publish.
 */
 func (signal *Signal) Publish(measurements []*types.Measurement) {
-	filtered := types.FilterLatest(measurements)
-
-	if len(filtered) == 0 {
-		return
-	}
-
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": filtered,
+		"measurements": measurements,
 	}.Marshal():
 	default:
 	}

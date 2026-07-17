@@ -1,0 +1,237 @@
+package trader
+
+import (
+	"testing"
+	"time"
+
+	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/broker"
+)
+
+const marketBookFrame = `{
+	"channel":"book",
+	"type":"snapshot",
+	"data":[{
+		"symbol":"BTC/USD",
+		"bids":[{"price":"1000","qty":2}],
+		"asks":[{"price":"1000.1","qty":2}],
+		"timestamp":"2026-07-17T01:03:45Z"
+	}]
+}`
+
+const marketInstrumentFrame = `{
+	"channel":"instrument",
+	"type":"snapshot",
+	"data":{"pairs":[{
+		"symbol":"BTC/USD",
+		"base":"BTC",
+		"quote":"USD",
+		"status":"offline",
+		"tick_size":"0.1",
+		"price_increment":"0.1"
+	}]}
+}`
+
+const marketTickerFrame = `{
+	"channel":"ticker",
+	"type":"update",
+	"data":[
+		{
+			"symbol":"BTC/USD",
+			"bid":"999",
+			"bid_qty":2,
+			"ask":"1001",
+			"ask_qty":2,
+			"last":"1000",
+			"volume":1,
+			"vwap":1000,
+			"change_pct":5,
+			"timestamp":"2026-07-17T01:03:45Z"
+		},
+		{
+			"symbol":"ETH/USD",
+			"bid":"99",
+			"bid_qty":5,
+			"ask":"101",
+			"ask_qty":5,
+			"last":"100",
+			"volume":100,
+			"vwap":100,
+			"change_pct":1,
+			"timestamp":"2026-07-17T01:03:45Z"
+		}
+	]
+}`
+
+/*
+TestNewMarket verifies that central feed configuration is rejected during
+construction rather than after the public websocket has started delivering rows.
+*/
+func TestNewMarket(t *testing.T) {
+	previousTimeline := viper.Get("signals.feed_timeline_capacity")
+	previousTrack := viper.Get("signals.feed_track_capacity")
+	t.Cleanup(func() { viper.Set("signals.feed_timeline_capacity", previousTimeline) })
+	t.Cleanup(func() { viper.Set("signals.feed_track_capacity", previousTrack) })
+	viper.Set("signals.feed_timeline_capacity", 4)
+	viper.Set("signals.feed_track_capacity", 3)
+
+	Convey("Given an invalid per-symbol feed capacity", t, func() {
+		market, err := NewMarket(nil, nil)
+
+		Convey("Then construction fails before handlers are registered", func() {
+			So(market, ShouldBeNil)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "track capacity")
+		})
+	})
+}
+
+/*
+TestMarket_Cut verifies that the central market cut includes the peer state
+required by every cross-sectional signal.
+*/
+func TestMarket_Cut(t *testing.T) {
+	previousTimeline := viper.Get("signals.feed_timeline_capacity")
+	previousTrack := viper.Get("signals.feed_track_capacity")
+	t.Cleanup(func() { viper.Set("signals.feed_timeline_capacity", previousTimeline) })
+	t.Cleanup(func() { viper.Set("signals.feed_track_capacity", previousTrack) })
+	viper.Set("signals.feed_timeline_capacity", 4)
+	viper.Set("signals.feed_track_capacity", 4)
+	cutAt := time.Date(2026, 7, 17, 1, 3, 46, 0, time.UTC)
+
+	Convey("Given current ticker rows retained by the central market", t, func() {
+		market, err := NewMarket(nil, nil)
+		So(err, ShouldBeNil)
+
+		market.OnTicker([]byte(marketTickerFrame))
+
+		Convey("When Market.Cut freezes the current journals", func() {
+			frame, err := market.Cut(cutAt)
+			So(err, ShouldBeNil)
+
+			Convey("Then it carries the cross-section derived from that same cut", func() {
+				So(frame.CrossSection, ShouldNotBeNil)
+				So(frame.CrossSection.Metrics, ShouldHaveLength, 2)
+
+				leader, threshold := frame.CrossSection.Leadership()
+				So(leader, ShouldEqual, "BTC/USD")
+				So(threshold, ShouldBeGreaterThan, 0)
+			})
+
+			Convey("Then those rows do not enter a later cut again", func() {
+				later, err := market.Cut(cutAt.Add(time.Second))
+				So(err, ShouldBeNil)
+				So(later.IsEmpty(), ShouldBeTrue)
+			})
+		})
+
+		Convey("When ingress exceeds the configured retained window", func() {
+			market.OnTicker([]byte(marketTickerFrame))
+			market.OnTicker([]byte(marketTickerFrame))
+			bounded, err := market.Cut(cutAt)
+
+			Convey("Then only the configured newest rows survive", func() {
+				So(err, ShouldBeNil)
+				So(bounded.Tickers, ShouldHaveLength, 4)
+				later, err := market.Cut(cutAt.Add(time.Second))
+				So(err, ShouldBeNil)
+				So(later.IsEmpty(), ShouldBeTrue)
+			})
+		})
+	})
+}
+
+/*
+TestMarket_OnBook verifies that the central book owner enriches exchange rows
+with the instrument increment required for tick-normalized calculations.
+*/
+func TestMarket_OnBook(t *testing.T) {
+	previousTimeline := viper.Get("signals.feed_timeline_capacity")
+	previousTrack := viper.Get("signals.feed_track_capacity")
+	t.Cleanup(func() { viper.Set("signals.feed_timeline_capacity", previousTimeline) })
+	t.Cleanup(func() { viper.Set("signals.feed_track_capacity", previousTrack) })
+	viper.Set("signals.feed_timeline_capacity", 4)
+	viper.Set("signals.feed_track_capacity", 4)
+	cutAt := time.Date(2026, 7, 17, 1, 3, 46, 0, time.UTC)
+
+	Convey("Given current Kraken instrument metadata", t, func() {
+		instrument := broker.NewInstrument(nil, nil, nil)
+		instrument.On([]byte(marketInstrumentFrame))
+		market, err := NewMarket(nil, instrument)
+		So(err, ShouldBeNil)
+
+		Convey("When a raw public book snapshot arrives", func() {
+			market.OnBook([]byte(marketBookFrame))
+			frame, err := market.Cut(cutAt)
+			So(err, ShouldBeNil)
+
+			Convey("Then the retained row carries the exchange increment", func() {
+				So(frame.Books, ShouldHaveLength, 1)
+				So(
+					frame.Books[0].PriceIncrement.Cmp(
+						krakendecimal.NewFromFloat64(0.1),
+					),
+					ShouldEqual,
+					0,
+				)
+			})
+		})
+	})
+}
+
+/*
+BenchmarkMarket_Cut measures the complete central cut, including the shared
+cross-sectional projection consumed by concurrent signals.
+*/
+func BenchmarkMarket_Cut(b *testing.B) {
+	previousTimeline := viper.Get("signals.feed_timeline_capacity")
+	previousTrack := viper.Get("signals.feed_track_capacity")
+	b.Cleanup(func() { viper.Set("signals.feed_timeline_capacity", previousTimeline) })
+	b.Cleanup(func() { viper.Set("signals.feed_track_capacity", previousTrack) })
+	viper.Set("signals.feed_timeline_capacity", 128)
+	viper.Set("signals.feed_track_capacity", 128)
+	market, err := NewMarket(nil, nil)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	cutAt := time.Date(2026, 7, 17, 1, 3, 46, 0, time.UTC)
+
+	for b.Loop() {
+		market.OnTicker([]byte(marketTickerFrame))
+
+		if _, err := market.Cut(cutAt); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+/*
+BenchmarkMarket_OnBook measures central decoding and instrument enrichment for
+the public book path that supplies all book-driven signals.
+*/
+func BenchmarkMarket_OnBook(b *testing.B) {
+	previousTimeline := viper.Get("signals.feed_timeline_capacity")
+	previousTrack := viper.Get("signals.feed_track_capacity")
+	b.Cleanup(func() { viper.Set("signals.feed_timeline_capacity", previousTimeline) })
+	b.Cleanup(func() { viper.Set("signals.feed_track_capacity", previousTrack) })
+	viper.Set("signals.feed_timeline_capacity", 128)
+	viper.Set("signals.feed_track_capacity", 128)
+	instrument := broker.NewInstrument(nil, nil, nil)
+	instrument.On([]byte(marketInstrumentFrame))
+	market, err := NewMarket(nil, instrument)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		market.OnBook([]byte(marketBookFrame))
+	}
+}

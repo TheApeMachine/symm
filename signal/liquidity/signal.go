@@ -22,27 +22,6 @@ type Signal struct {
 	ui     chan []byte
 }
 
-func (signal *Signal) Measure(thesis *types.Thesis) chan []*types.Measurement {
-	out := make(chan []*types.Measurement)
-
-	go func() {
-		defer close(out)
-
-		measurements, err := signal.Calculate(thesis.Market())
-
-		if err != nil {
-			errnie.Error(err)
-			out <- nil
-			return
-		}
-
-		out <- measurements
-		signal.Publish(measurements)
-	}()
-
-	return out
-}
-
 /*
 NewSignal creates liquidity measurement state for central market cuts so each
 tick can compare executable liquidity across the observed cohort.
@@ -62,18 +41,23 @@ Publish sends one small datura frame to the UI the moment this signal has
 measured its evidence, mirroring broker.Balance.Publish.
 */
 func (signal *Signal) Publish(measurements []*types.Measurement) {
-	filtered := types.FilterLatest(measurements)
-
-	if len(filtered) == 0 {
-		return
-	}
-
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": filtered,
+		"measurements": measurements,
 	}.Marshal():
 	default:
 	}
+}
+
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	measurements, err := signal.Calculate(thesis.Market())
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	return measurements
 }
 
 /*
@@ -148,20 +132,25 @@ func (signal *Signal) Calculate(
 		}
 
 		for _, spec := range specs {
-			out = append(out, &types.Measurement{
-				Source:     types.SourceLiquidity,
-				Stream:     types.Liquidity,
-				Metric:     spec.metric,
-				Subject:    types.SubjectPeerLiquidity,
-				Symbol:     row.Symbol,
-				At:         row.Timestamp,
-				Unit:       spec.unit,
-				Raw:        spec.raw,
-				Normalized: spec.normalized,
-				Maturity:   peerMaturity,
-				Validity:   validity,
-				Scale:      scale,
-			})
+			measurements := []*types.Measurement{
+				{
+					Source:     types.SourceLiquidity,
+					Stream:     types.Liquidity,
+					Metric:     spec.metric,
+					Subject:    types.SubjectPeerLiquidity,
+					Symbol:     row.Symbol,
+					At:         row.Timestamp,
+					Unit:       spec.unit,
+					Raw:        spec.raw,
+					Normalized: spec.normalized,
+					Maturity:   peerMaturity,
+					Validity:   validity,
+					Scale:      scale,
+				},
+			}
+
+			out = append(out, measurements...)
+			signal.Publish(measurements)
 		}
 	}
 

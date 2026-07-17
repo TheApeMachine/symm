@@ -448,28 +448,31 @@ func (measurement Measurement) Interval() (time.Time, time.Time) {
 }
 
 /*
-FilterLatest returns a new slice containing only those measurements that share
-the maximum (newest) timestamp in the input. If the input is empty, it returns
-nil.
+FilterLatest returns the newest complete measurement epoch for every symbol in
+the input. Signal calculations cover the market cross-section, whose ticker
+timestamps are not synchronized, so a single global maximum would discard
+otherwise current symbols before publication.
 */
 func FilterLatest(measurements []*Measurement) []*Measurement {
 	if len(measurements) == 0 {
 		return nil
 	}
 
-	var latest time.Time
+	latestBySymbol := make(map[string]time.Time)
 
-	for _, m := range measurements {
-		if m.At.After(latest) {
-			latest = m.At
+	for _, measurement := range measurements {
+		latest, exists := latestBySymbol[measurement.Symbol]
+
+		if !exists || measurement.At.After(latest) {
+			latestBySymbol[measurement.Symbol] = measurement.At
 		}
 	}
 
 	filtered := make([]*Measurement, 0, len(measurements))
 
-	for _, m := range measurements {
-		if m.At.Equal(latest) {
-			filtered = append(filtered, m)
+	for _, measurement := range measurements {
+		if measurement.At.Equal(latestBySymbol[measurement.Symbol]) {
+			filtered = append(filtered, measurement)
 		}
 	}
 
