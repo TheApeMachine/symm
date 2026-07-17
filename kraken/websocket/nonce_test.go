@@ -7,21 +7,23 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
 )
 
 /*
-TestAuthNonceIsMonotonic ensures issued nonces never decrease.
+TestAuthNonceIsMonotonic ensures issued nonces never decrease on a fresh
+generator instance.
 */
 func TestAuthNonceIsMonotonic(t *testing.T) {
-	Convey("Given the shared auth nonce generator", t, func() {
-		generate := authNonce()
+	Convey("Given an isolated auth nonce generator", t, func() {
+		nonce, err := NewAuthNonce(t.TempDir())
+		So(err, ShouldBeNil)
+
 		prior := int64(0)
 
 		for range 64 {
-			raw := generate()
-			value, err := strconv.ParseInt(raw, 10, 64)
-			So(err, ShouldBeNil)
+			raw := nonce.Next()
+			value, parseErr := strconv.ParseInt(raw, 10, 64)
+			So(parseErr, ShouldBeNil)
 			So(value, ShouldBeGreaterThan, prior)
 			prior = value
 		}
@@ -35,25 +37,20 @@ high-water so Kraken never sees a reused nonce after a crash or reboot.
 func TestAuthNoncePersistsAcrossRestart(t *testing.T) {
 	Convey("Given a persisted high-water ahead of wall clock", t, func() {
 		dir := t.TempDir()
-		previous := viper.Get("system.data_path")
-		viper.Set("system.data_path", dir)
-		t.Cleanup(func() { viper.Set("system.data_path", previous) })
-
 		path := filepath.Join(dir, "kraken-auth-nonce")
 		ahead := int64(9_000_000_000_000_000_000)
 		So(os.WriteFile(path, []byte(strconv.FormatInt(ahead, 10)+"\n"), 0o600), ShouldBeNil)
 
-		loaded := loadNonce(path)
+		loaded, err := loadNonce(path)
+		So(err, ShouldBeNil)
 		So(loaded, ShouldEqual, ahead)
 
-		seed := int64(1)
-		highWater := loaded
+		nonce, err := NewAuthNonce(dir)
+		So(err, ShouldBeNil)
 
-		if seed <= highWater {
-			seed = highWater + 1
-		}
-
-		So(seed, ShouldEqual, ahead+1)
+		next, err := strconv.ParseInt(nonce.Next(), 10, 64)
+		So(err, ShouldBeNil)
+		So(next, ShouldEqual, ahead+1)
 	})
 }
 
@@ -64,16 +61,34 @@ after Invalid nonce clears Kraken's last accepted value.
 func TestBumpAuthNonceAdvancesPersistedHighWater(t *testing.T) {
 	Convey("Given an initialized auth nonce", t, func() {
 		dir := t.TempDir()
-		previous := viper.Get("system.data_path")
-		viper.Set("system.data_path", dir)
-		t.Cleanup(func() { viper.Set("system.data_path", previous) })
-
-		before, err := strconv.ParseInt(authNonce()(), 10, 64)
+		nonce, err := NewAuthNonce(dir)
 		So(err, ShouldBeNil)
 
-		bumpAuthNonce()
+		before, err := strconv.ParseInt(nonce.Next(), 10, 64)
+		So(err, ShouldBeNil)
 
-		after := loadNonce(noncePath())
+		nonce.Bump()
+
+		after, err := loadNonce(filepath.Join(dir, "kraken-auth-nonce"))
+		So(err, ShouldBeNil)
 		So(after, ShouldBeGreaterThan, before)
+	})
+}
+
+/*
+TestLoadNonceRejectsCorruptValues ensures invalid persisted high-water cannot
+silently reset authentication to zero.
+*/
+func TestLoadNonceRejectsCorruptValues(t *testing.T) {
+	Convey("Given a non-numeric nonce file", t, func() {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "kraken-auth-nonce")
+		So(os.WriteFile(path, []byte("not-a-nonce\n"), 0o600), ShouldBeNil)
+
+		_, err := loadNonce(path)
+		So(err, ShouldNotBeNil)
+
+		_, err = NewAuthNonce(dir)
+		So(err, ShouldNotBeNil)
 	})
 }

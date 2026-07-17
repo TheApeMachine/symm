@@ -58,7 +58,9 @@ func TestInstrumentSubscribeLoadsUniverseFees(t *testing.T) {
 
 		Convey("Then all eligible symbols have fees before subscription transport is attempted", func() {
 			So(instrument.Status(), ShouldEqual, types.ERROR)
-			So(mock.LastTradeVolumeSymbols(), ShouldResemble, []string{"BTC/USD", "ZEC/USD"})
+			symbols, symbolsErr := mock.LastTradeVolumeSymbols()
+			So(symbolsErr, ShouldBeNil)
+			So(symbols, ShouldResemble, []string{"BTC/USD", "ZEC/USD"})
 			btcFee, feeErr := price.FeeRate("BTC/USD")
 			So(feeErr, ShouldBeNil)
 			So(btcFee.Fee.Float64(), ShouldEqual, 0.26)

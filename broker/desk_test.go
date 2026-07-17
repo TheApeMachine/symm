@@ -13,8 +13,8 @@ import (
 )
 
 /*
-TestDeskInitialize verifies the Desk subscribes to authoritative executions
-without manufacturing Position managers from restored wallet holdings.
+TestDeskInitialize verifies the Desk subscribes to authoritative executions and
+stays empty when Balance has no seeded holdings to adopt.
 */
 func TestDeskInitialize(t *testing.T) {
 	Convey("Given an empty Desk", t, func() {

@@ -11,14 +11,14 @@ import (
 type Order struct {
 	Method string `json:"method"`
 	Params any    `json:"params"`
-	ReqID  int    `json:"req_id"`
+	ReqID  int64  `json:"req_id"`
 }
 
 func (order *Order) MarshalJSON() ([]byte, error) {
 	return sonic.Marshal(struct {
 		Method string `json:"method"`
 		Params any    `json:"params"`
-		ReqID  int    `json:"req_id"`
+		ReqID  int64  `json:"req_id"`
 	}{
 		Method: order.Method,
 		Params: order.Params,
@@ -36,7 +36,7 @@ type OrderResponse struct {
 	Result  OrderResponseResult `json:"result"`
 	Error   string              `json:"error"`
 	Success bool                `json:"success"`
-	ReqID   int                 `json:"req_id"`
+	ReqID   int64               `json:"req_id"`
 	TimeIn  time.Time           `json:"time_in"`
 	TimeOut time.Time           `json:"time_out"`
 }
@@ -63,7 +63,7 @@ func (order *OrderResponse) IsSuccess() bool {
 type LimitOrder struct {
 	Method string           `json:"method"`
 	Params LimitOrderParams `json:"params"`
-	ReqID  int              `json:"req_id"`
+	ReqID  int64            `json:"req_id"`
 }
 
 type LimitOrderParams struct {
@@ -91,14 +91,14 @@ func NewLimitOrder(
 			OrderQty:   orderQty,
 			Symbol:     symbol,
 		},
-		ReqID: NextReqID(),
+		ReqID: orderRequestID.Next(),
 	}
 }
 
 type MarketOrder struct {
 	Method string            `json:"method"`
 	Params MarketOrderParams `json:"params"`
-	ReqID  int               `json:"req_id"`
+	ReqID  int64             `json:"req_id"`
 }
 
 type MarketOrderParams struct {
@@ -122,7 +122,7 @@ func NewMarketOrder(
 			OrderQty:  orderQty,
 			Symbol:    symbol,
 		},
-		ReqID: NextReqID(),
+		ReqID: orderRequestID.Next(),
 	}
 }
 
@@ -136,7 +136,7 @@ func (order *LimitOrder) MarshalJSON() ([]byte, error) {
 	return sonic.Marshal((*alias)(order))
 }
 
-func NewOrderResponseFromMap(model datura.Map[any], reqID int) *OrderResponse {
+func NewOrderResponseFromMap(model datura.Map[any], reqID int64) *OrderResponse {
 	orderID, _ := model["order_id"].(string)
 
 	return &OrderResponse{

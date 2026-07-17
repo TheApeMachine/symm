@@ -35,6 +35,52 @@ func TestHoldingUpdateBuyRecordsFilledQty(t *testing.T) {
 }
 
 /*
+TestHoldingUpdateBuyFirstLastQtyReplaces verifies the first LastQty-only print
+replaces pre-submit size instead of accumulating against it.
+*/
+func TestHoldingUpdateBuyFirstLastQtyReplaces(t *testing.T) {
+	Convey("Given a holding with requested size and a first LastQty-only print", t, func() {
+		holding := &Holding{Qty: decimal.NewFromInt64(1)}
+		holding.Update(&kraken.ExecutionData{
+			ExecType:  "trade",
+			Side:      "buy",
+			Timestamp: time.Unix(1, 0),
+			LastQty:   0.4,
+			LastPrice: *decimal.NewFromInt64(100),
+		})
+
+		So(holding.Qty.Float64(), ShouldEqual, 0.4)
+		So(holding.EntryPrice.Float64(), ShouldEqual, 100)
+	})
+}
+
+/*
+TestHoldingUpdateBuySubsequentLastQtyAccumulates verifies later LastQty-only
+prints accumulate until the exchange reports CumQty.
+*/
+func TestHoldingUpdateBuySubsequentLastQtyAccumulates(t *testing.T) {
+	Convey("Given a first LastQty-only fill and a second without CumQty", t, func() {
+		holding := &Holding{Qty: decimal.NewFromInt64(1)}
+		holding.Update(&kraken.ExecutionData{
+			ExecType:  "trade",
+			Side:      "buy",
+			Timestamp: time.Unix(1, 0),
+			LastQty:   0.4,
+			LastPrice: *decimal.NewFromInt64(100),
+		})
+		holding.Update(&kraken.ExecutionData{
+			ExecType:  "trade",
+			Side:      "buy",
+			Timestamp: time.Unix(2, 0),
+			LastQty:   0.3,
+			LastPrice: *decimal.NewFromInt64(110),
+		})
+
+		So(holding.Qty.Float64(), ShouldEqual, 0.7)
+	})
+}
+
+/*
 TestHoldingUpdateBuyAccumulatesFees verifies multi-leg entry accounting.
 */
 func TestHoldingUpdateBuyAccumulatesFees(t *testing.T) {
@@ -55,7 +101,7 @@ func TestHoldingUpdateBuyAccumulatesFees(t *testing.T) {
 
 		So(holding.Qty.Float64(), ShouldEqual, 1.0)
 		So(holding.EntryPrice.Float64(), ShouldEqual, 106)
-		So(holding.EntryFee.Float64(), ShouldAlmostEqual, 0.26, 0.0000001)
+		So(holding.EntryFee.Float64(), ShouldEqual, 0.3)
 	})
 }
 
@@ -98,6 +144,51 @@ func TestHoldingUpdateFilledSellCloses(t *testing.T) {
 		So(holding.Status, ShouldEqual, CLOSED)
 		So(holding.Closed(), ShouldBeTrue)
 		So(holding.Qty.Float64(), ShouldEqual, 0)
+	})
+}
+
+/*
+TestHoldingProjectFillsMissingUIFields verifies restart frames stay finite.
+*/
+func TestHoldingProjectFillsMissingUIFields(t *testing.T) {
+	Convey("Given a persisted holding with only entry accounting", t, func() {
+		holding := &Holding{
+			Symbol:     "BTC/USD",
+			Qty:        decimal.NewFromFloat64(0.25),
+			EntryPrice: decimal.NewFromFloat64(100),
+			Status:     OPEN,
+		}
+
+		holding.Project()
+
+		Convey("It should project mark and zero fees for the UI", func() {
+			So(holding.Mark.Float64(), ShouldEqual, 100)
+			So(holding.EntryFee.Float64(), ShouldEqual, 0)
+			So(holding.ExitFee.Float64(), ShouldEqual, 0)
+			So(holding.PnL.Float64(), ShouldEqual, 0)
+			So(*holding.ReturnPct, ShouldEqual, 0)
+		})
+	})
+}
+
+/*
+TestHoldingMarkToMarketUpdatesOpenPnL verifies live mark drives UI PnL.
+*/
+func TestHoldingMarkToMarketUpdatesOpenPnL(t *testing.T) {
+	Convey("Given an open holding with a moved mark", t, func() {
+		holding := &Holding{
+			Symbol:     "BTC/USD",
+			Qty:        decimal.NewFromFloat64(2),
+			EntryPrice: decimal.NewFromFloat64(100),
+			EntryFee:   decimal.NewFromFloat64(0.5),
+			Mark:       decimal.NewFromFloat64(110),
+			Status:     OPEN,
+		}
+
+		holding.MarkToMarket()
+
+		So(holding.PnL.Float64(), ShouldEqual, 19.5)
+		So(*holding.ReturnPct, ShouldAlmostEqual, 0.1, 0.0000001)
 	})
 }
 

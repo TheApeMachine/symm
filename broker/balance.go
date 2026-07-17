@@ -74,6 +74,7 @@ func (balance *Balance) Publish() {
 	if balance.holdings != nil {
 		balance.holdings.Range(func(key, value any) bool {
 			holding := value.(*types.Holding)
+			holding.Project()
 			positions = append(positions, *holding)
 			return true
 		})
@@ -103,11 +104,21 @@ func (balance *Balance) Snapshot() []datura.Map[any] {
 			continue
 		}
 
+		if balanceData.Balance == nil || balanceData.Available == nil {
+			continue
+		}
+
+		reserved := 0.0
+
+		if balanceData.Reserved != nil {
+			reserved = balanceData.Reserved.Float64()
+		}
+
 		balances = append(balances, datura.Map[any]{
 			"asset":     balanceData.Asset,
 			"balance":   balanceData.Balance.Float64(),
 			"available": balanceData.Available.Float64(),
-			"reserved":  balanceData.Reserved.Float64(),
+			"reserved":  reserved,
 		})
 	}
 
@@ -173,6 +184,18 @@ func (balance *Balance) BalanceAck(buf []byte) {
 
 	balance.status = types.READY
 	balance.Publish()
+}
+
+/*
+Resync clears cached Kraken balance state and requests a fresh snapshot
+subscription after reconciliation detects missing or inconsistent holdings.
+*/
+func (balance *Balance) Resync() {
+	balance.model = nil
+
+	if err := balance.api.SubscribeBalance(); err != nil {
+		errnie.Error(err)
+	}
 }
 
 func (balance *Balance) Get(symbol string) (*kraken.BalanceData, error) {
@@ -265,10 +288,10 @@ func (balance *Balance) TradeMatchesSymbol(tradePair string, symbol string) bool
 	return tradePair == compact || tradePair == base
 }
 
-func (balance *Balance) Available(amount decimal.Decimal) bool {
+func (balance *Balance) Available(amount *decimal.Decimal) bool {
 	for _, balanceData := range balance.model.Data {
 		if balanceData.Asset == balance.quote {
-			return balanceData.Available.Sub(&amount).Sign() >= 0
+			return balanceData.Available.Sub(amount).Sign() >= 0
 		}
 	}
 

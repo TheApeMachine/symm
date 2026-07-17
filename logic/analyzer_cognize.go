@@ -2,6 +2,7 @@ package logic
 
 import (
 	"bytes"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -110,7 +111,17 @@ func (analyzer *Analyzer) cognize(
 	if _, _, err := analyzer.tree.CommitToEpisodicBuffer(
 		uint64(state.At.UnixNano()), sequence,
 	); err != nil {
-		errnie.Error(err)
+		// The dmt persistence wrapper renders only "dmt/tree" and hides the
+		// underlying WAL cause; unwrap so the real failure is visible.
+		cause := err
+		for unwrapped := errors.Unwrap(cause); unwrapped != nil; unwrapped = errors.Unwrap(cause) {
+			cause = unwrapped
+		}
+
+		errnie.Error(errnie.Err(errnie.IO, "logic cognize: episodic commit failed", err).
+			With("cause", cause.Error()).
+			With("symbol", state.Symbol))
+
 		return false
 	}
 

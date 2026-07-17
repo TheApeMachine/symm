@@ -74,28 +74,111 @@ func TestMapOrders(t *testing.T) {
 	}
 }
 
+/*
+TestMapOrdersOmegaFromTouchProximity derives oscillator frequency from
+distance-to-mid, not from opaque order IDs, so identical book state shares
+omega and near-touch resting size runs faster than deep book.
+*/
+func TestMapOrdersOmegaFromTouchProximity(t *testing.T) {
+	t.Parallel()
+
+	config := testPhysicsConfig()
+	at := time.Unix(100, 0)
+	orders := []physicalOrder{
+		{
+			orderID:   "id-near-a",
+			side:      book.Bid,
+			price:     100.4,
+			quantity:  2,
+			timestamp: at.Add(-5 * time.Second),
+		},
+		{
+			orderID:   "id-near-b",
+			side:      book.Bid,
+			price:     100.4,
+			quantity:  2,
+			timestamp: at.Add(-5 * time.Second),
+		},
+		{
+			orderID:   "id-deep",
+			side:      book.Bid,
+			price:     90,
+			quantity:  2,
+			timestamp: at.Add(-5 * time.Second),
+		},
+		{
+			orderID:   "ask-1",
+			side:      book.Ask,
+			price:     100.6,
+			quantity:  2,
+			timestamp: at.Add(-5 * time.Second),
+		},
+	}
+
+	mapped, _, ready := mapOrders(config, orders, 100.5, at, nil)
+
+	if !ready {
+		t.Fatal("mapOrders returned not ready")
+	}
+
+	if len(mapped) != 4 {
+		t.Fatalf("mapped orders = %d, want 4", len(mapped))
+	}
+
+	if mapped[0].omega != mapped[1].omega {
+		t.Fatalf(
+			"identical book state produced divergent omega from order IDs: %v vs %v",
+			mapped[0].omega, mapped[1].omega,
+		)
+	}
+
+	if mapped[0].omega <= mapped[2].omega {
+		t.Fatalf(
+			"near-touch omega %v should exceed deep-book omega %v",
+			mapped[0].omega, mapped[2].omega,
+		)
+	}
+
+	askPhase := mapped[3].phase
+	bidPhase := mapped[0].phase
+
+	if math.Abs(math.Sin(askPhase-bidPhase)) < 0.5 {
+		t.Fatalf(
+			"ask/bid phases should oppose across the mid: bid=%v ask=%v",
+			bidPhase, askPhase,
+		)
+	}
+
+	omegaMin := config.GateWidthMin()
+	omegaMax := config.GateWidthMax()
+
+	for _, order := range mapped {
+		if order.omega < omegaMin || order.omega > omegaMax {
+			t.Fatalf("omega %v outside [%v, %v]", order.omega, omegaMin, omegaMax)
+		}
+	}
+}
+
 func TestCohortsFromMappedOrders(t *testing.T) {
 	config := testPhysicsConfig()
 	orders := []mappedOrder{
 		{
-			orderID: "a",
-			mass:    0.25,
-			posX:    1,
-			posY:    1,
-			posZ:    1,
-			omega:   2,
-			phase:   2*math.Pi - 0.1,
-			heat:    0.25,
+			mass:  0.25,
+			posX:  1,
+			posY:  1,
+			posZ:  1,
+			omega: 2,
+			phase: 2*math.Pi - 0.1,
+			heat:  0.25,
 		},
 		{
-			orderID: "b",
-			mass:    0.75,
-			posX:    1.01,
-			posY:    1.01,
-			posZ:    1.01,
-			omega:   4,
-			phase:   0.1,
-			heat:    0.75,
+			mass:  0.75,
+			posX:  1.01,
+			posY:  1.01,
+			posZ:  1.01,
+			omega: 4,
+			phase: 0.1,
+			heat:  0.75,
 		},
 	}
 
@@ -109,9 +192,12 @@ func TestCohortsFromMappedOrders(t *testing.T) {
 		t.Fatalf("amplitude = %v, want cohort mass 1", oscillators[0].Amplitude)
 	}
 
-	// Zero velocities → cold PIC carrier (no CV wall).
-	if oscillators[0].Heat != 0 {
-		t.Fatalf("heat = %v, want 0 for coherent zero-velocity cohort", oscillators[0].Heat)
+	// Zero velocities → cold PIC carrier resting on the positive CV floor
+	// (Amplitude·floor), well below the old Amplitude·CV √15 wall.
+	wantHeat := oscillators[0].Amplitude * specificEnergyFloorFraction * config.CV
+
+	if math.Abs(oscillators[0].Heat-wantHeat) > 1e-12 {
+		t.Fatalf("heat = %v, want %v (CV floor) for coherent zero-velocity cohort", oscillators[0].Heat, wantHeat)
 	}
 
 	if math.Abs(oscillators[0].Phase) > 0.11 {
@@ -147,24 +233,22 @@ func TestCohortHeatFromVelocityDispersion(t *testing.T) {
 	config := testPhysicsConfig()
 	orders := []mappedOrder{
 		{
-			orderID: "slow",
-			mass:    0.5,
-			posX:    0.5,
-			posY:    0.5,
-			posZ:    0.5,
-			velX:    0,
-			velY:    0,
-			velZ:    0,
+			mass: 0.5,
+			posX: 0.5,
+			posY: 0.5,
+			posZ: 0.5,
+			velX: 0,
+			velY: 0,
+			velZ: 0,
 		},
 		{
-			orderID: "fast",
-			mass:    0.5,
-			posX:    0.51,
-			posY:    0.51,
-			posZ:    0.51,
-			velX:    2,
-			velY:    0,
-			velZ:    0,
+			mass: 0.5,
+			posX: 0.51,
+			posY: 0.51,
+			posZ: 0.51,
+			velX: 2,
+			velY: 0,
+			velZ: 0,
 		},
 	}
 
@@ -174,8 +258,10 @@ func TestCohortHeatFromVelocityDispersion(t *testing.T) {
 		t.Fatalf("cohorts = %d, want 1", len(oscillators))
 	}
 
-	// ⟨v⟩ = 1, ⟨v²⟩ = 2, variance = 1, specific energy = 0.5, Heat = 0.5.
-	want := 0.5
+	// ⟨v⟩ = 1, ⟨v²⟩ = 2, variance = 1, dispersion energy = 0.5, plus the
+	// positive CV floor that keeps the gas cell finite. Amplitude = mass = 1.
+	floor := specificEnergyFloorFraction * config.CV
+	want := floor + 0.5
 
 	if math.Abs(oscillators[0].Heat-want) > 1e-12 {
 		t.Fatalf("heat = %v, want %v from velocity dispersion", oscillators[0].Heat, want)
@@ -188,7 +274,8 @@ func TestCohortHeatFromVelocityDispersion(t *testing.T) {
 
 /*
 TestColdCohortAdmitsForcingAtProductionDeltaT proves the √15 CV wall is gone:
-coherent cold carriers keep Courant headroom at the derived 100ms fluid step.
+coherent cold carriers sit on the positive CV floor (never zero, which would
+NaN the gas kernel) yet keep Courant headroom at the derived 100ms fluid step.
 */
 func TestColdCohortAdmitsForcingAtProductionDeltaT(t *testing.T) {
 	t.Parallel()
@@ -203,9 +290,15 @@ func TestColdCohortAdmitsForcingAtProductionDeltaT(t *testing.T) {
 		t.Fatalf("cohorts = %d, want 2", len(oscillators))
 	}
 
+	// Coherent (zero-variance) carriers rest on the CV floor: strictly positive
+	// so the gas cell stays finite, but far below the old Amplitude·CV wall.
+	floor := specificEnergyFloorFraction * config.CV
+
 	for _, oscillator := range oscillators {
-		if oscillator.Heat != 0 {
-			t.Fatalf("cold cohort heat = %v, want 0", oscillator.Heat)
+		wantHeat := oscillator.Amplitude * floor
+
+		if math.Abs(oscillator.Heat-wantHeat) > 1e-12 {
+			t.Fatalf("cold cohort heat = %v, want %v (CV floor)", oscillator.Heat, wantHeat)
 		}
 	}
 

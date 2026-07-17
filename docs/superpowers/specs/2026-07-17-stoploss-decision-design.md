@@ -13,7 +13,7 @@ resonance, causal, cognition), not named market regimes or P&L color.
 - Inputs are a thin `Evidence` projection from Thesis logic outputs + mark path.
 - `weight ∈ (0,1]` updates on resonance forecast epoch resolution (residual/σ).
 - `lockedFloor` max-monotone; `trailDistance` widens/narrows from weight and σ.
-- Live stop = `max(lockedFloor, mark * (1 - trailDistance))` in return space.
+- Live stop = `max(lockedFloor, markReturn - trailDistance)` in return space.
 - Take-profit fires when peak return is approached and resonance forward path
   turns non-positive (or residual z-score blows out).
 - **Decide** admits entries; cognition buy support remains the entry gate.

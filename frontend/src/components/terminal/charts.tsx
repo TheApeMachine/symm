@@ -19,8 +19,9 @@ import {
 } from "#/components/terminal/canvas";
 import {
 	drawFluidField,
-	drawFluidWhaleCarriers,
+	drawFluidParticles,
 	isFluidFieldMatrix,
+	resolvePilotDisplayLattice,
 	type TerminalFluidParticle,
 } from "#/components/terminal/fluid-field";
 import { MockupFluidCanvas } from "#/components/terminal/mockup-fluid-canvas";
@@ -273,38 +274,49 @@ export const TerminalFluidChart = ({
 			const focusSymbol = appStore.state.focusSymbol;
 			const frame =
 				manifoldStore.state.manifold[focusSymbol]?.values().at(-1) ?? null;
-			const matrix = frameMatrix(frame);
+			const rho = frameMatrix(frame);
+			const psiMag2 = frameAuxMatrix(frame, "psiMag2");
 			const particles = terminalFluidParticlesFromFrame(frame);
-			const fieldMatrix = isFluidFieldMatrix(matrix) ? matrix : [];
-			const { columns, rows } = fluidGridDimensions(frame, fieldMatrix);
+			const display = resolvePilotDisplayLattice(
+				isFluidFieldMatrix(rho) ? rho : [],
+				psiMag2,
+			);
+			const { columns, rows } = fluidGridDimensions(frame, display);
 			const reading = frameReading(frame);
 
-			if (fieldMatrix.length === 0 && particles.length === 0) {
-				drawWaiting(context, width, height, "waiting for manifold field");
+			if (display.length === 0 && particles.length === 0) {
+				drawWaiting(context, width, height, "waiting for pilot-wave field");
 				return;
 			}
 
-			if (fieldMatrix.length > 0) {
-				drawFluidField(context, width, height, fieldMatrix, contour, {
-					particles,
-					pressureGradX:
-						finiteNumber(frame?.pressureGradX) ??
-						finiteNumber(reading?.pressureGradX) ??
-						0,
-					pressureGradZ:
-						finiteNumber(frame?.pressureGradZ) ??
-						finiteNumber(reading?.pressureGradZ) ??
-						0,
-					psiMag2: frameAuxMatrix(frame, "psiMag2"),
-					guidanceVelX: frameAuxMatrix(frame, "guidanceVelX"),
-					guidanceVelZ: frameAuxMatrix(frame, "guidanceVelZ"),
-				});
+			if (display.length > 0) {
+				drawFluidField(
+					context,
+					width,
+					height,
+					isFluidFieldMatrix(rho) ? rho : [],
+					contour,
+					{
+						particles,
+						pressureGradX:
+							finiteNumber(frame?.pressureGradX) ??
+							finiteNumber(reading?.pressureGradX) ??
+							0,
+						pressureGradZ:
+							finiteNumber(frame?.pressureGradZ) ??
+							finiteNumber(reading?.pressureGradZ) ??
+							0,
+						psiMag2,
+						guidanceVelX: frameAuxMatrix(frame, "guidanceVelX"),
+						guidanceVelZ: frameAuxMatrix(frame, "guidanceVelZ"),
+					},
+				);
 			} else {
 				clearCanvas(context, width, height);
 				drawGrid(context, width, height);
 			}
 
-			drawFluidWhaleCarriers(context, width, height, particles, columns, rows);
+			drawFluidParticles(context, width, height, particles, columns, rows);
 		},
 		[contour],
 	);
@@ -678,3 +690,18 @@ export const TerminalPositionChart = ({
 };
 
 export const terminalFluidMatrixFromFrame = frameMatrix;
+
+export const terminalFluidPsiMatrixFromFrame = (
+	frame: Record<string, unknown> | null | undefined,
+): number[][] => frameAuxMatrix(frame, "psiMag2");
+
+export const terminalFluidDisplayLatticeFromFrame = (
+	frame: Record<string, unknown> | null | undefined,
+): number[][] => {
+	const rho = frameMatrix(frame);
+
+	return resolvePilotDisplayLattice(
+		isFluidFieldMatrix(rho) ? rho : [],
+		frameAuxMatrix(frame, "psiMag2"),
+	);
+};

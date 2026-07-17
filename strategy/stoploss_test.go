@@ -6,15 +6,30 @@ import (
 )
 
 func testEvidence(mark, entry, uncertainty, expected, mse float64) Evidence {
+	return testEvidenceAtEpoch(mark, entry, uncertainty, expected, mse, 1)
+}
+
+func testEvidenceAtEpoch(
+	mark, entry, uncertainty, expected, mse float64,
+	epoch uint64,
+) Evidence {
+	residual := 0.0
+
+	if uncertainty > 0 && mse > 0 {
+		residual = mse / uncertainty
+	}
+
 	return Evidence{
-		Symbol:         "AAA/USD",
-		Mark:           mark,
-		Entry:          entry,
-		ExpectedReturn: expected,
-		Uncertainty:    uncertainty,
-		IncrementalMSE: mse,
-		ReturnReady:    true,
-		Present:        true,
+		Symbol:             "AAA/USD",
+		Mark:               mark,
+		Entry:              entry,
+		ForecastEpoch:      epoch,
+		NormalizedResidual: residual,
+		ExpectedReturn:     expected,
+		Uncertainty:        uncertainty,
+		IncrementalMSE:     mse,
+		ReturnReady:        true,
+		Present:            true,
 	}
 }
 
@@ -100,6 +115,71 @@ func TestStoplossTakeProfitNearPeakWithDeadForward(t *testing.T) {
 }
 
 /*
+TestStoplossWaitsWithoutTrailScale proves vacuum σ cannot arm a knife-edge stop.
+*/
+func TestStoplossWaitsWithoutTrailScale(t *testing.T) {
+	t.Parallel()
+
+	stop := NewStoploss(context.Background())
+	first := stop.Update(Evidence{
+		Symbol:              "AAA/USD",
+		Mark:                99.9,
+		Entry:               100,
+		CognitionReady:      true,
+		CognitionConfidence: 0.95,
+		Present:             true,
+	})
+
+	if first.Action != "hold" {
+		t.Fatalf("want hold without scale, got %s (%s)", first.Action, first.Reason)
+	}
+}
+
+/*
+TestStoplossDoesNotArmOnSpreadAlone keeps thin-book spread from arming a
+knife-edge trail before forecast σ exists.
+*/
+func TestStoplossDoesNotArmOnSpreadAlone(t *testing.T) {
+	t.Parallel()
+
+	stop := NewStoploss(context.Background())
+	first := stop.Update(Evidence{
+		Symbol:  "AAA/USD",
+		Mark:    100.1,
+		Entry:   100,
+		Spread:  0.001,
+		Present: true,
+	})
+
+	if first.Action != "hold" || stop.armed {
+		t.Fatalf("spread-only must not arm: action=%s armed=%v", first.Action, stop.armed)
+	}
+}
+
+/*
+TestStoplossFloorWaitsForEarnedCushion ensures early lifts that stay inside
+trail distance do not lock a positive floor.
+*/
+func TestStoplossFloorWaitsForEarnedCushion(t *testing.T) {
+	t.Parallel()
+
+	stop := NewStoploss(context.Background())
+	entry := 100.0
+	uncertainty := 0.05
+
+	_ = stop.Update(testEvidence(100, entry, uncertainty, 0.02, 0.02))
+	lift := stop.Update(testEvidence(103, entry, uncertainty, 0.02, 0.02))
+
+	if lift.LockedFloor > 0 {
+		t.Fatalf("unearned lift must not lock floor: %+v", lift)
+	}
+
+	if lift.Action != "hold" {
+		t.Fatalf("want hold before earned floor, got %s (%s)", lift.Action, lift.Reason)
+	}
+}
+
+/*
 TestStoplossFreezesWithoutEvidence keeps floors intact across a nil frame.
 */
 func TestStoplossFreezesWithoutEvidence(t *testing.T) {
@@ -127,13 +207,41 @@ func TestStoplossWeightMovesWithSkill(t *testing.T) {
 	t.Parallel()
 
 	stop := NewStoploss(context.Background())
-	poor := stop.Update(testEvidence(100, 100, 0.02, 0.01, 0.08))
-	better := stop.Update(testEvidence(101, 100, 0.02, 0.01, 0.002))
+	poor := stop.Update(testEvidenceAtEpoch(100, 100, 0.02, 0.01, 0.08, 1))
+	better := stop.Update(testEvidenceAtEpoch(101, 100, 0.02, 0.01, 0.002, 2))
 
 	if better.Weight <= poor.Weight {
 		t.Fatalf(
 			"weight should rise with skill: poor=%v better=%v",
 			poor.Weight, better.Weight,
+		)
+	}
+}
+
+/*
+TestStoplossReweightOncePerEpoch ensures skill updates apply once per forecast
+epoch and do not double-apply when the same epoch is replayed.
+*/
+func TestStoplossReweightOncePerEpoch(t *testing.T) {
+	t.Parallel()
+
+	stop := NewStoploss(context.Background())
+	first := stop.Update(testEvidenceAtEpoch(100, 100, 0.02, 0.01, 0.08, 1))
+	duplicate := stop.Update(testEvidenceAtEpoch(101, 100, 0.02, 0.01, 0.002, 1))
+
+	if duplicate.Weight != first.Weight {
+		t.Fatalf(
+			"same epoch must not reweight: first=%v duplicate=%v",
+			first.Weight, duplicate.Weight,
+		)
+	}
+
+	next := stop.Update(testEvidenceAtEpoch(102, 100, 0.02, 0.01, 0.002, 2))
+
+	if next.Weight <= first.Weight {
+		t.Fatalf(
+			"new epoch should reweight upward: first=%v next=%v",
+			first.Weight, next.Weight,
 		)
 	}
 }

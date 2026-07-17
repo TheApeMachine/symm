@@ -19,6 +19,7 @@ func TestRuntimeControls(t *testing.T) {
 
 			So(controls.GInteraction, ShouldAlmostEqual, config.GInteraction()*outcome.Fit.SpectralRadius)
 			So(controls.EnergyDecay, ShouldEqual, outcome.Fit.Beta)
+			So(controls.TopdownPhaseScale, ShouldAlmostEqual, config.CouplingScale()*outcome.Fit.SpectralRadius)
 			So(controls.DeltaT, ShouldBeGreaterThan, 0)
 			So(controls.Validate(), ShouldBeNil)
 		})

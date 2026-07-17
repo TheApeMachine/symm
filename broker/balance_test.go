@@ -30,7 +30,7 @@ func TestBalanceAvailable(t *testing.T) {
 		}
 
 		Convey("It should authorize from available cash, not total balance", func() {
-			So(balance.Available(*requested), ShouldBeFalse)
+			So(balance.Available(requested), ShouldBeFalse)
 		})
 	})
 }

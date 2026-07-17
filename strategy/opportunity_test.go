@@ -31,10 +31,10 @@ func TestOpportunityReservedNeedsMarginAndLead(t *testing.T) {
 
 	snrOnly := measureOpportunity(
 		decideForecast("OXT/USD", 0.08, 0.02),
-		buyCognition("OXT/USD"), // confidence 0.6, basin 0.7 → negative lead
+		buyCognition("OXT/USD"), // confidence 0.6, basin 2/(1+2)=0.667 → negative lead
 		func() *types.Thesis {
 			cut := types.NewThesis(nil, nil)
-			cut.Manifold.Store("OXT/USD", readyBasin("OXT/USD", 0.7))
+			cut.Manifold.Store("OXT/USD", readyBasin("OXT/USD", 2.0))
 			return cut
 		}(),
 	)
@@ -69,6 +69,32 @@ func TestOpportunityLeadNeutralWithoutManifold(t *testing.T) {
 
 	if reading.BasinReady || reading.Lead != 0 || reading.Reserved() {
 		t.Fatalf("missing manifold must neutralize lead: %+v", reading)
+	}
+}
+
+/*
+TestOpportunityBasinMatchesConfidenceScale maps physical coherence onto [0,1)
+so Lead is a difference of commensurate quantities.
+*/
+func TestOpportunityBasinMatchesConfidenceScale(t *testing.T) {
+	t.Parallel()
+
+	thesis := types.NewThesis(nil, nil)
+	thesis.Manifold.Store("OXT/USD", readyBasin("OXT/USD", 3))
+	reading := measureOpportunity(
+		decideForecast("OXT/USD", 0.08, 0.02),
+		buyCognition("OXT/USD"),
+		thesis,
+	)
+
+	want := 3.0 / 4.0
+
+	if reading.Basin != want {
+		t.Fatalf("want basin %v, got %v", want, reading.Basin)
+	}
+
+	if reading.Basin >= 1 || reading.Basin <= 0 {
+		t.Fatalf("basin must sit in (0,1), got %v", reading.Basin)
 	}
 }
 

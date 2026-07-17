@@ -17,13 +17,13 @@ type Book struct {
 }
 
 type BookData struct {
-	Symbol         string          `json:"symbol"`
-	Type           string          `json:"type"`
-	PriceIncrement decimal.Decimal `json:"-"`
-	Bids           []BookLevel     `json:"bids"`
-	Asks           []BookLevel     `json:"asks"`
-	Checksum       uint32          `json:"checksum"`
-	Timestamp      time.Time       `json:"timestamp"`
+	Symbol         string           `json:"symbol"`
+	Type           string           `json:"type"`
+	PriceIncrement *decimal.Decimal `json:"-"`
+	Bids           []BookLevel      `json:"bids"`
+	Asks           []BookLevel      `json:"asks"`
+	Checksum       uint32           `json:"checksum"`
+	Timestamp      time.Time        `json:"timestamp"`
 }
 
 type BookLevel struct {

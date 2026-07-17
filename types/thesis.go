@@ -1,12 +1,14 @@
 package types
 
 import (
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/theapemachine/errnie"
 )
 
 const (
@@ -42,7 +44,8 @@ type Thesis struct {
 	marketFrame  *MarketFrame
 	Tick         int64          `json:"tick"`
 	At           time.Time      `json:"at"`
-	Positions    []Holding      `json:"positions"`
+	Positions    *sync.Map      `json:"positions"`
+	Holdings     *sync.Map      `json:"holdings"`
 	CrossSection *CrossSection  `json:"crossSection"`
 	Measurements []*Measurement `json:"measurements"`
 	Graphs       *sync.Map      `json:"graphs"`
@@ -57,6 +60,34 @@ type Thesis struct {
 	Cognition    *sync.Map      `json:"cognition"`
 	Resonance    []any          `json:"resonance"`
 	Causal       []any          `json:"causal"`
+}
+
+func (thesis *Thesis) Save(path string) error {
+	file, err := os.Create(path)
+
+	if err != nil {
+		return err
+	}
+
+	defer file.Close()
+
+	json, err := thesis.MarshalJSON()
+
+	if err != nil {
+		return err
+	}
+
+	_, err = file.Write(json)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"failed to write thesis to file",
+			err,
+		))
+	}
+
+	return nil
 }
 
 /*
@@ -203,7 +234,8 @@ func NewThesis(uiHub chan<- []byte, marketFrame *MarketFrame) *Thesis {
 		uiHub:        uiHub,
 		At:           time.Now().UTC(),
 		marketFrame:  marketFrame,
-		Positions:    make([]Holding, 0),
+		Positions:    &sync.Map{},
+		Holdings:     &sync.Map{},
 		Decisions:    make([]Decision, 0),
 		CrossSection: NewCrossSection(),
 		Measurements: make([]*Measurement, 0),

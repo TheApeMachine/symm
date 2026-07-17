@@ -136,7 +136,7 @@ func cohortsFromMappedOrders(
 			PosX:      state.posX / state.mass,
 			PosY:      state.posY / state.mass,
 			PosZ:      state.posZ / state.mass,
-			Heat:      amplitude * state.specificEnergy(),
+			Heat:      amplitude * state.specificEnergy(config.CV),
 			VelX:      state.velX / state.mass,
 			VelY:      state.velY / state.mass,
 			VelZ:      state.velZ / state.mass,
@@ -147,13 +147,29 @@ func cohortsFromMappedOrders(
 }
 
 /*
-specificEnergy is the PIC rest-frame specific kinetic energy of the cohort:
-½(⟨|v|²⟩ − |⟨v⟩|²). Coherent books stay cold so Hawkes impulses retain Courant
-headroom; dispersed books heat up and constrain forcing.
+specificEnergyFloorFraction keeps a strictly positive thermal baseline so the
+gas kernel's primitive recovery (pressure = (γ−1)·ρ·e) never divides through a
+zero internal energy. It is a small fraction of CV: enough to stay finite, far
+below the old Heat=Amplitude·CV that pinned sound speed at the √15 Courant wall.
 */
-func (state *cohortState) specificEnergy() float64 {
+const specificEnergyFloorFraction = 1.0 / 32.0
+
+/*
+specificEnergy is the PIC rest-frame specific kinetic energy of the cohort,
+½(⟨|v|²⟩ − |⟨v⟩|²), lifted onto a positive CV-scaled floor. Coherent books stay
+near the floor so Hawkes impulses retain Courant headroom; dispersed books heat
+up and constrain forcing. The floor guarantees a finite, non-degenerate gas
+cell even for single-order or perfectly coherent cohorts (variance = 0).
+*/
+func (state *cohortState) specificEnergy(cv float64) float64 {
+	floor := 0.0
+
+	if cv > 0 {
+		floor = specificEnergyFloorFraction * cv
+	}
+
 	if state == nil || state.mass <= 0 {
-		return 0
+		return floor
 	}
 
 	meanSquare := state.vel2 / state.mass
@@ -163,10 +179,10 @@ func (state *cohortState) specificEnergy() float64 {
 	variance := meanSquare - (meanX*meanX + meanY*meanY + meanZ*meanZ)
 
 	if variance <= 0 || math.IsNaN(variance) || math.IsInf(variance, 0) {
-		return 0
+		return floor
 	}
 
-	return 0.5 * variance
+	return floor + 0.5*variance
 }
 
 /*

@@ -61,7 +61,7 @@ func (lifecycle *Lifecycle) Replay(trades []any) error {
 	return nil
 }
 
-func (lifecycle *Lifecycle) Place(model datura.Map[any], reqID int) error {
+func (lifecycle *Lifecycle) Place(model datura.Map[any], reqID int64) error {
 	orderAck := kraken.NewOrderResponseFromMap(model, reqID)
 
 	err := lifecycle.paper.simulator.Emit(lifecycle.paper, WEBSOCKET, "add_order", orderAck)

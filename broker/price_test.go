@@ -99,7 +99,9 @@ func TestPriceGetFees(t *testing.T) {
 
 			Convey("Then only that complete tier is committed before Price becomes ready", func() {
 				So(err, ShouldBeNil)
-				So(mock.LastTradeVolumeSymbols(), ShouldResemble, []string{"BTC/USD"})
+				symbols, symbolsErr := mock.LastTradeVolumeSymbols()
+				So(symbolsErr, ShouldBeNil)
+				So(symbols, ShouldResemble, []string{"BTC/USD"})
 				So(price.Status(), ShouldEqual, types.READY)
 
 				btcFee, err := price.FeeRate("BTC/USD")

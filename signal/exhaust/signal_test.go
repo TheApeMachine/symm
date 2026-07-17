@@ -35,7 +35,7 @@ func measureField(measurements []*types.Measurement, symbol string, metric types
 func exhaustBookRow(symbol string, bidQuantity float64, askQuantity float64) kraken.BookData {
 	return kraken.BookData{
 		Symbol:         symbol,
-		PriceIncrement: *krakendecimal.NewFromFloat64(1),
+		PriceIncrement: krakendecimal.NewFromFloat64(1),
 		Bids: []kraken.BookLevel{
 			{Price: *krakendecimal.NewFromFloat64(100), Qty: bidQuantity},
 		},
@@ -94,7 +94,7 @@ func TestSignal_MeasureSkipsBookWithoutIncrement(testingTB *testing.T) {
 	Convey("Given a book row without price increment", testingTB, func() {
 		signal := newExhaustSignal()
 		row := exhaustBookRow("BTC/USD", 10, 10)
-		row.PriceIncrement = *krakendecimal.NewFromFloat64(0)
+		row.PriceIncrement = krakendecimal.NewFromFloat64(0)
 
 		result, err := signal.Calculate(exhaustFrame(row))
 		So(err, ShouldBeNil)

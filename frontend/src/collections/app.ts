@@ -36,6 +36,11 @@ export const appStore = createStore(
 				...prev,
 				error: err,
 			})),
+		clearError: () =>
+			setState((prev) => ({
+				...prev,
+				error: null,
+			})),
 		updateFocusSymbol: (symbol: string) =>
 			setState((prev) => ({
 				...prev,

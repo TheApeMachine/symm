@@ -102,13 +102,19 @@ func TestSessionPaperSmoke(t *testing.T) {
 			last := tests.Last(theses)
 
 			Convey("Then the paper path records measured ticks without silent fills", func() {
+				positions := 0
+				last.Holdings.Range(func(key, value any) bool {
+					positions++
+					return true
+				})
+
 				So(last, ShouldNotBeNil)
 				So(len(last.Measurements), ShouldBeGreaterThan, 0)
 				So(session.Desk().OpenPositions(), ShouldEqual, 0)
 				// Paper pump sessions run without analyzer forecasts/fees, so
 				// Decide has nothing Eligible and correctly stays empty.
 				So(len(last.Decisions), ShouldEqual, 0)
-				So(len(last.Positions), ShouldEqual, 0)
+				So(positions, ShouldEqual, 0)
 			})
 		})
 	})

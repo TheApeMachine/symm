@@ -58,9 +58,9 @@ const KERNEL_COPY: Record<
 > = {
 	fluid: {
 		name: "Fluid dynamics",
-		sub: "fluid · vol-rank × Δ",
+		sub: "fluid · compressible gas",
 		blurb:
-			"Navier–Stokes pressure field over the market cross-section. Whale carriers bend the density surface; turbulence flags regime breaks before price confirms.",
+			"Navier–Stokes gas density over the market cross-section. Sparse ρ deposits mark where mass has been injected and advected; turbulence flags regime breaks before price confirms.",
 	},
 	hawkes: {
 		name: "Hawkes process",
@@ -97,9 +97,9 @@ const KERNEL_COPY: Record<
 	},
 	manifold: {
 		name: "Manifold",
-		sub: "manifold · whale carriers",
+		sub: "manifold · |ψ|² · particles",
 		blurb:
-			"Density manifold projection of the liquidity field, with whale-carrier markers lifted off the base surface.",
+			"Pilot-wave projection of the coherence field. |ψ|² paints the cloud, guidance current is the stream, and particles surf that stream.",
 	},
 	regime: {
 		name: "Regime radar",

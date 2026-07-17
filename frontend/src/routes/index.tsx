@@ -48,8 +48,8 @@ const RouteComponent = () => {
 
 					<Flex.Column className="min-h-0 border-(--line) border-r bg-(--sunken)">
 						<Canvas
-							title="Fluid density field"
-							meta="navier-stokes · rho + |psi|^2 · price x time"
+							title="Pilot-wave field"
+							meta="|ψ|² · guidance current · particles · price × time"
 							topRight={<LiveManifoldMeta focusSymbol={focusSymbol} />}
 							legend={<FluidLegend />}
 							className="flex-[1.45]"

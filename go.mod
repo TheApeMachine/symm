@@ -6,6 +6,7 @@ require (
 	github.com/bytedance/sonic v1.15.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/krakenfx/api-go/v2 v2.0.0
+	github.com/phuslu/log v1.0.124
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
 )
@@ -38,16 +39,13 @@ require (
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
-	github.com/phuslu/log v1.0.124 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/savsgio/gotils v0.0.0-20250924091648-bce9a52d7761 // indirect
 	github.com/smarty/assertions v1.16.0 // indirect
-	github.com/smarty/go-disruptor v0.5.0 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
-	github.com/theapemachine/qpool v1.2.5 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect

@@ -3,6 +3,7 @@ import { mad, median } from "#/components/terminal/decision-format";
 import { colormap } from "#/lib/colormap";
 
 const OUTLIER_MAD = 1.5; // ponytail: fixed MAD multiplier; upgrade path is per-symbol adaptive tail estimation from live deposit dispersion.
+const DISPLAY_GAMMA = 0.55; // ponytail: fixed display gamma so midtones enter the mockup teal band; upgrade path is per-symbol histogram equalization from live lattice occupancy.
 
 const finiteValues = (matrix: number[][]): number[] =>
 	matrix.flat().filter((value) => Number.isFinite(value));
@@ -24,9 +25,9 @@ const matrixExtent = (matrix: number[][]): { min: number; max: number } => {
 };
 
 /*
-normalizeFluidLattice maps raw rho onto a display lattice using median/MAD
-contrast so sparse gas deposits read as continuous clouds instead of faint
-streaks against a crushed background.
+normalizeFluidLattice maps a field lattice onto the mockup colormap ramp using
+min/max extent plus display gamma so the teal→gold band stays lit instead of
+crushing the bulk of the lattice into near-black.
 */
 export const normalizeFluidLattice = (
 	matrix: number[][],
@@ -38,20 +39,15 @@ export const normalizeFluidLattice = (
 		return { normalized: [], peak: 0 };
 	}
 
-	const center = median(values);
-	const dispersion = mad(values);
 	const { min, max } = matrixExtent(matrix);
-	const span =
-		dispersion > 0
-			? dispersion * (1 + OUTLIER_MAD)
-			: Math.max(max - min, Number.EPSILON);
-	const floor = dispersion > 0 ? center - dispersion : min;
+	const span = Math.max(max - min, Number.EPSILON);
 	let peak = 0;
 	const normalized = matrix.map((row) =>
 		row.map((value) => {
-			let unit = Number.isFinite(value) ? (value - floor) / span : 0;
+			let unit = Number.isFinite(value) ? (value - min) / span : 0;
 
 			unit = Math.max(0, Math.min(1, unit));
+			unit = unit > 0 ? unit ** DISPLAY_GAMMA : 0;
 
 			if (contour) {
 				unit = Math.floor(unit / 0.12) * 0.12;
@@ -103,9 +99,9 @@ const emptyFlowLattice = (rows: number, columns: number): FlowLattice => ({
 });
 
 /*
-buildPilotFlowLattice splats oscillator guidance velocities onto the price-time
-projection so the overlay reflects the pilot-wave current particles actually
-ride, not a decorative animation.
+buildPilotFlowLattice splats particle velocities onto the price-time projection
+so the overlay can fall back to observed particle motion when the solver does
+not publish a guidance lattice.
 */
 export const buildPilotFlowLattice = (
 	lattice: number[][],
@@ -223,30 +219,31 @@ export const mergeFlowLattices = (
 };
 
 /*
-compositeFieldLattice blends gas density and pilot-wave magnitude so the canvas
-shows continuous field structure instead of a sparse PIC deposit stripe.
+resolvePilotDisplayLattice prefers |ψ|² as the primary cloud and falls back to
+gas ρ only when the coherence projection is missing.
+*/
+export const resolvePilotDisplayLattice = (
+	rho: number[][],
+	psiMag2?: number[][],
+): number[][] => {
+	if (psiMag2 && isFluidFieldMatrix(psiMag2)) {
+		return psiMag2;
+	}
+
+	if (isFluidFieldMatrix(rho)) {
+		return rho;
+	}
+
+	return [];
+};
+
+/*
+compositeFieldLattice remains as a compatibility alias for the pilot-first lattice.
 */
 export const compositeFieldLattice = (
 	rho: number[][],
 	psiMag2?: number[][],
-): number[][] => {
-	if (!isFluidFieldMatrix(rho)) {
-		return [];
-	}
-
-	if (!psiMag2 || !isFluidFieldMatrix(psiMag2)) {
-		return rho;
-	}
-
-	return rho.map((row, rowIndex) =>
-		row.map((value, columnIndex) => {
-			const psi = psiMag2[rowIndex]?.[columnIndex] ?? 0;
-			// ponytail: fixed psi blend factor; upgrade path is coherence-weighted mixing from live |psi|^2/rho ratio statistics.
-
-			return Math.max(value, psi * 0.85);
-		}),
-	);
-};
+): number[][] => resolvePilotDisplayLattice(rho, psiMag2);
 
 /*
 normalizeFlowLattice scales guidance velocities by their observed percentile so
@@ -300,9 +297,56 @@ export const buildGuidanceFlowLattice = (
 });
 
 /*
-drawPilotWaveOverlay paints |psi|^2 as a cool coherence veil over the gas field.
+meanGuidanceSpeed is the lattice-mean |v| of the published Bohm current so the
+UI can read guidance from the same field the streaks paint when the scalar
+reading is absent.
 */
-export const drawPilotWaveOverlay = (
+export const meanGuidanceSpeed = (
+	velX: number[][] | undefined,
+	velZ: number[][] | undefined,
+): number | null => {
+	if (
+		!velX ||
+		!velZ ||
+		!isFluidFieldMatrix(velX) ||
+		!isFluidFieldMatrix(velZ)
+	) {
+		return null;
+	}
+
+	const rows = Math.min(velX.length, velZ.length);
+	let total = 0;
+	let count = 0;
+
+	for (let row = 0; row < rows; row += 1) {
+		const rowX = velX[row];
+		const rowZ = velZ[row];
+		const columns = Math.min(rowX?.length ?? 0, rowZ?.length ?? 0);
+
+		for (let column = 0; column < columns; column += 1) {
+			const speed = Math.hypot(rowX[column] ?? 0, rowZ[column] ?? 0);
+
+			if (!Number.isFinite(speed)) {
+				continue;
+			}
+
+			total += speed;
+			count += 1;
+		}
+	}
+
+	if (count === 0) {
+		return null;
+	}
+
+	return total / count;
+};
+
+/*
+drawGasDensityOverlay paints sparse ρ as a faint warm veil under the pilot-wave
+cloud so gas mass remains readable without owning the frame.
+*/
+export const drawGasDensityOverlay = (
 	context: CanvasRenderingContext2D,
 	width: number,
 	height: number,
@@ -323,6 +367,7 @@ export const drawPilotWaveOverlay = (
 	}
 
 	const pixels = imageData.data;
+	pixels.fill(0);
 
 	for (let row = 0; row < height; row += 1) {
 		const sampleY = height <= 1 ? 0 : row / (height - 1);
@@ -335,12 +380,12 @@ export const drawPilotWaveOverlay = (
 				continue;
 			}
 
-			const alpha = Math.floor(90 + unit * 120);
+			const alpha = Math.floor(28 + unit * 70);
 			const index = (row * width + column) * 4;
 
-			pixels[index] = Math.floor(24 + unit * 70);
-			pixels[index + 1] = Math.floor(72 + unit * 110);
-			pixels[index + 2] = Math.floor(120 + unit * 90);
+			pixels[index] = Math.floor(40 + unit * 90);
+			pixels[index + 1] = Math.floor(28 + unit * 40);
+			pixels[index + 2] = Math.floor(18 + unit * 20);
 			pixels[index + 3] = alpha;
 		}
 	}
@@ -366,8 +411,13 @@ export const drawPilotWaveOverlay = (
 };
 
 /*
-drawFluidFlowOverlay paints short guidance streaks masked by rho so directionality
-reads on top of the gas heatmap without inventing motion the solver did not emit.
+drawPilotWaveOverlay remains as a compatibility alias for the faint gas veil.
+*/
+export const drawPilotWaveOverlay = drawGasDensityOverlay;
+
+/*
+drawFluidFlowOverlay paints short guidance streaks masked by the display field so
+directionality reads on top of |ψ|² without inventing motion the solver did not emit.
 */
 export const drawFluidFlowOverlay = (
 	context: CanvasRenderingContext2D,
@@ -385,7 +435,7 @@ export const drawFluidFlowOverlay = (
 
 	const cellWidth = width / columns;
 	const cellHeight = height / rows;
-	// ponytail: fixed sparse-flow stride and rho/speed cutoffs; upgrade path is lattice-density-aware sampling from observed carrier occupancy.
+	// ponytail: fixed sparse-flow stride and field/speed cutoffs; upgrade path is lattice-density-aware sampling from observed particle occupancy.
 	const strideX = Math.max(1, Math.floor(columns / 24));
 	const strideY = Math.max(1, Math.floor(rows / 16));
 
@@ -398,10 +448,10 @@ export const drawFluidFlowOverlay = (
 			column < columns;
 			column += strideX
 		) {
-			const rho = lattice[row]?.[column] ?? 0;
+			const field = lattice[row]?.[column] ?? 0;
 
-			// ponytail: fixed rho floor for sparse-flow rendering; upgrade path is adaptive masking from live deposit percentiles.
-			if (rho < 0.03) {
+			// ponytail: fixed field floor so streaks stay inside lit cloud cells like the tmp mockup; upgrade path is adaptive masking from live |ψ|² percentiles.
+			if (field < 0.28) {
 				continue;
 			}
 
@@ -410,7 +460,7 @@ export const drawFluidFlowOverlay = (
 			const speed = Math.hypot(flowX, flowY);
 
 			// ponytail: fixed speed floor for guidance streaks; upgrade path is lattice-speed percentile gating from observed guidance magnitudes.
-			if (speed <= 0.04) {
+			if (speed <= 0.08) {
 				continue;
 			}
 
@@ -419,10 +469,10 @@ export const drawFluidFlowOverlay = (
 			const centerX = (column + 0.5) * cellWidth;
 			const centerY = (row + 0.5) * cellHeight;
 			const streak =
-				Math.min(cellWidth, cellHeight) * (0.85 + Math.min(speed, 1.2) * 0.75);
+				Math.min(cellWidth, cellHeight) * (0.55 + Math.min(speed, 1.2) * 0.45);
 
-			context.strokeStyle = `rgba(255, 228, 180, ${0.22 + rho * 0.42})`;
-			context.lineWidth = 1.15;
+			context.strokeStyle = `rgba(255, 228, 180, ${0.12 + field * 0.22})`;
+			context.lineWidth = 1;
 			context.beginPath();
 			context.moveTo(
 				centerX - directionX * streak * 0.5,
@@ -630,8 +680,50 @@ const resolveGuidanceFlowLattice = (
 };
 
 /*
-drawSmoothFluidField bilinearly upsamples rho onto the canvas so the field reads
-as continuous clouds instead of discrete lattice blocks.
+drawBlockFluidField paints one lattice cell per fillRect using the same chunky
+heatmap contract as frontend/tmp (cell + 1px overlap, mockup colormap stops).
+*/
+export const drawBlockFluidField = (
+	context: CanvasRenderingContext2D,
+	width: number,
+	height: number,
+	lattice: number[][],
+): number => {
+	const rows = lattice.length;
+	const columns = lattice[0]?.length ?? 0;
+
+	if (rows === 0 || columns === 0 || width <= 0 || height <= 0) {
+		return 0;
+	}
+
+	const cellWidth = width / columns;
+	const cellHeight = height / rows;
+	let peak = 0;
+
+	for (let row = 0; row < rows; row += 1) {
+		for (let column = 0; column < columns; column += 1) {
+			const unit = lattice[row]?.[column] ?? 0;
+
+			peak = Math.max(peak, unit);
+
+			const [red, green, blue] = colormap(unit);
+
+			context.fillStyle = `rgb(${red | 0},${green | 0},${blue | 0})`;
+			context.fillRect(
+				column * cellWidth,
+				row * cellHeight,
+				cellWidth + 1,
+				cellHeight + 1,
+			);
+		}
+	}
+
+	return peak;
+};
+
+/*
+drawSmoothFluidField bilinearly upsamples a lattice onto the canvas when a
+continuous read is preferred over the mockup block grid.
 */
 export const drawSmoothFluidField = (
 	context: CanvasRenderingContext2D,
@@ -714,7 +806,40 @@ export const terminalFluidFieldStats = (
 };
 
 /*
-drawFluidField paints the terminal density field from one rho projection.
+blendGasIntoPilot keeps |ψ|² as the cloud owner while letting sparse ρ deposits
+contribute mass where the coherence field is thin, matching one mockup colormap.
+*/
+export const blendGasIntoPilot = (
+	psiMag2: number[][],
+	rho: number[][],
+): number[][] => {
+	if (!isFluidFieldMatrix(psiMag2)) {
+		return isFluidFieldMatrix(rho) ? rho : [];
+	}
+
+	if (!isFluidFieldMatrix(rho)) {
+		return psiMag2;
+	}
+
+	const rows = psiMag2.length;
+	const columns = psiMag2[0]?.length ?? 0;
+	const alignedRho = latticeMatchesShape(rho, rows, columns)
+		? rho
+		: resampleFluidLattice(rho, rows, columns);
+
+	return psiMag2.map((row, rowIndex) =>
+		row.map((psi, columnIndex) => {
+			const gas = alignedRho[rowIndex]?.[columnIndex] ?? 0;
+			// ponytail: fixed gas contribution under |ψ|²; upgrade path is coherence-weighted mixing from live |ψ|²/ρ ratio statistics.
+
+			return Math.max(psi, gas * 0.45);
+		}),
+	);
+};
+
+/*
+drawFluidField paints the pilot-wave cloud with the frontend/tmp block heatmap
+style, then lays a light guidance current and mockup-scale particle markers.
 */
 export const drawFluidField = (
 	context: CanvasRenderingContext2D,
@@ -726,36 +851,29 @@ export const drawFluidField = (
 ): TerminalFluidFieldStats => {
 	clearCanvas(context, width, height);
 
-	if (!isFluidFieldMatrix(matrix)) {
+	const pilot = resolvePilotDisplayLattice(matrix, options.psiMag2);
+	const primary =
+		options.psiMag2 && isFluidFieldMatrix(options.psiMag2)
+			? blendGasIntoPilot(options.psiMag2, matrix)
+			: pilot;
+
+	if (!isFluidFieldMatrix(primary)) {
 		drawGrid(context, width, height);
 
 		return { columns: 0, rows: 0, peak: 0, outliers: 0 };
 	}
 
-	const { normalized, peak } = normalizeMatrix(
-		compositeFieldLattice(matrix, options.psiMag2),
-		contour,
-	);
-	const rows = matrix.length;
-	const columns = matrix[0]?.length ?? 0;
+	const { normalized, peak } = normalizeMatrix(primary, contour);
+	const rows = primary.length;
+	const columns = primary[0]?.length ?? 0;
 
-	drawSmoothFluidField(context, width, height, normalized);
-
-	if (options.psiMag2 && isFluidFieldMatrix(options.psiMag2)) {
-		drawPilotWaveOverlay(context, width, height, options.psiMag2);
-	}
+	drawBlockFluidField(context, width, height, normalized);
 
 	const guidanceFlow = resolveGuidanceFlowLattice(
-		matrix,
+		primary,
 		rows,
 		columns,
 		options,
-	);
-	const pressureFlow = buildPressureFlowLattice(
-		rows,
-		columns,
-		options.pressureGradX ?? 0,
-		options.pressureGradZ ?? 0,
 	);
 
 	drawFluidFlowOverlay(
@@ -763,21 +881,22 @@ export const drawFluidField = (
 		width,
 		height,
 		normalized,
-		mergeFlowLattices(guidanceFlow, pressureFlow),
+		normalizeFlowLattice(guidanceFlow),
 	);
 
 	return {
 		columns,
 		rows,
 		peak,
-		outliers: outlierCount(finiteValues(matrix)),
+		outliers: outlierCount(finiteValues(primary)),
 	};
 };
 
 /*
-drawFluidWhaleCarriers paints compact carrier markers with local velocity hints.
+drawFluidParticles paints mockup-scale particle markers (accent glow + white core)
+for the strongest oscillators on the price-time slice.
 */
-export const drawFluidWhaleCarriers = (
+export const drawFluidParticles = (
 	context: CanvasRenderingContext2D,
 	width: number,
 	height: number,
@@ -785,54 +904,32 @@ export const drawFluidWhaleCarriers = (
 	columns: number,
 	rows: number,
 ) => {
-	const carriers = particles
-		.filter((particle) => particle.role.toLowerCase().includes("whale"))
+	const markers = particles
+		.filter((particle) => particle.amplitude > 0)
 		.sort((left, right) => right.amplitude - left.amplitude)
-		// ponytail: fixed carrier ceiling; upgrade path is amplitude-ranked budgeting from live lattice occupancy and canvas size.
-		.slice(0, 16);
-	const cellWidth = width / Math.max(columns, 1);
-	const cellHeight = height / Math.max(rows, 1);
-	const markerRadius = Math.max(3, Math.min(cellWidth, cellHeight) * 0.22);
+		// ponytail: fixed particle ceiling matching the tmp mockup carrier count; upgrade path is amplitude-ranked budgeting from live lattice occupancy.
+		.slice(0, 3);
 
-	for (const particle of carriers) {
+	for (const particle of markers) {
 		const x = (particle.cellX / Math.max(columns - 1, 1)) * width;
 		const y = (particle.cellZ / Math.max(rows - 1, 1)) * height;
-		const glow = context.createRadialGradient(
-			x,
-			y,
-			0,
-			x,
-			y,
-			markerRadius * 2.4,
-		);
+		const glow = context.createRadialGradient(x, y, 0, x, y, 22);
 
-		glow.addColorStop(0, "rgba(255, 196, 96, 0.9)");
+		glow.addColorStop(0, "rgba(232, 163, 61, 0.95)");
 		glow.addColorStop(1, "rgba(0,0,0,0)");
 		context.fillStyle = glow;
 		context.beginPath();
-		context.arc(x, y, markerRadius * 2.4, 0, Math.PI * 2);
+		context.arc(x, y, 22, 0, Math.PI * 2);
 		context.fill();
 
 		context.fillStyle = "#fff";
 		context.beginPath();
-		context.arc(x, y, Math.max(1.4, markerRadius * 0.35), 0, Math.PI * 2);
+		context.arc(x, y, 2.4, 0, Math.PI * 2);
 		context.fill();
-
-		const speed = Math.hypot(particle.velX, particle.velZ);
-
-		if (speed <= 0) {
-			continue;
-		}
-
-		const directionX = particle.velX / speed;
-		const directionY = particle.velZ / speed;
-		const tick = markerRadius * 1.8;
-
-		context.strokeStyle = "rgba(255, 228, 180, 0.75)";
-		context.lineWidth = 1;
-		context.beginPath();
-		context.moveTo(x, y);
-		context.lineTo(x + directionX * tick, y + directionY * tick);
-		context.stroke();
 	}
 };
+
+/*
+drawFluidWhaleCarriers remains as a compatibility alias for particle markers.
+*/
+export const drawFluidWhaleCarriers = drawFluidParticles;

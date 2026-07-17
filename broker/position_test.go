@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"strconv"
 	"sync"
 	"testing"
@@ -9,6 +10,9 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/tests/mockapi"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -42,10 +46,10 @@ func TestPositionExecutionAck(t *testing.T) {
 			pair: &kraken.InstrumentPair{
 				Symbol: "BTC/USD", Base: "BTC", QtyIncrement: 0.00000001, QtyMin: 0.00000001,
 			},
-			request: request, Stop: &StopData{Symbol: "BTC/USD"},
+			request: request,
 		}
 		position.OrderAck([]byte(`{"method":"add_order","result":{"order_id":"order-1"},"success":true,"req_id":` +
-			strconv.Itoa(request.ReqID) + `}`))
+			strconv.FormatInt(request.ReqID, 10) + `}`))
 		So(position.Status(), ShouldEqual, types.PENDING)
 		execution := &kraken.Execution{
 			Channel: "executions", Type: "update",
@@ -79,7 +83,7 @@ func TestPositionExecutionAck(t *testing.T) {
 			exitRequest := kraken.NewMarketOrder("sell", 1, "BTC/USD")
 			position.request = exitRequest
 			position.OrderAck([]byte(`{"method":"add_order","result":{"order_id":"sell-1"},"success":true,"req_id":` +
-				strconv.Itoa(exitRequest.ReqID) + `}`))
+				strconv.FormatInt(exitRequest.ReqID, 10) + `}`))
 			exit := &kraken.Execution{
 				Channel: "executions", Type: "update",
 				Data: []kraken.ExecutionData{{
@@ -108,7 +112,7 @@ func TestPositionExecutionAck(t *testing.T) {
 			exitRequest := kraken.NewMarketOrder("sell", 1, "BTC/USD")
 			position.request = exitRequest
 			position.OrderAck([]byte(`{"method":"add_order","result":{"order_id":"sell-1"},"success":true,"req_id":` +
-				strconv.Itoa(exitRequest.ReqID) + `}`))
+				strconv.FormatInt(exitRequest.ReqID, 10) + `}`))
 			canceled := &kraken.Execution{
 				Channel: "executions", Type: "update",
 				Data: []kraken.ExecutionData{{
@@ -121,6 +125,66 @@ func TestPositionExecutionAck(t *testing.T) {
 			So(canceledErr, ShouldBeNil)
 			position.ExecutionAck(canceledBuffer)
 			So(position.Status(), ShouldEqual, types.CANCELED)
+		})
+	})
+}
+
+/*
+TestPositionExitQuantity verifies partial and full exits honor exchange rounding
+and cap requested quantity at the filled holding balance.
+*/
+func TestPositionExitQuantity(t *testing.T) {
+	Convey("Given an open position with one filled unit", t, func() {
+		ctx := context.Background()
+		mock := mockapi.NewMockAPI()
+		paper := websocket.NewPaper(
+			ctx, websocket.NewLatencySimulator(system.NewBooter(ctx, nil)),
+		)
+		api := websocket.NewAPI(ctx, mock.Public(), mock.Private(), paper)
+		holdings := &sync.Map{}
+		holding := &types.Holding{
+			Symbol: "BTC/USD",
+			Asset:  "BTC",
+			Qty:    decimal.NewFromInt64(1),
+			Status: types.OPEN,
+		}
+		holdings.Store("BTC/USD", holding)
+		balance := &Balance{quote: "USD", holdings: holdings}
+		pair := &kraken.InstrumentPair{
+			Symbol: "BTC/USD", Base: "BTC",
+			QtyIncrement: 0.00000001, QtyMin: 0.00000001,
+		}
+		Convey("When Exit requests a partial quantity", func() {
+			position := NewPosition(api, nil, nil, balance, pair)
+			position.status = types.OPEN
+			_ = position.Exit()
+
+			Convey("Then the sell order carries the rounded partial lot", func() {
+				So(position.request, ShouldNotBeNil)
+				So(position.request.Params.OrderQty, ShouldEqual, 0.25)
+			})
+		})
+
+		Convey("When Exit requests more than the filled balance", func() {
+			position := NewPosition(api, nil, nil, balance, pair)
+			position.status = types.OPEN
+			_ = position.Exit()
+
+			Convey("Then the sell order uses the full filled balance", func() {
+				So(position.request, ShouldNotBeNil)
+				So(position.request.Params.OrderQty, ShouldEqual, 1.0)
+			})
+		})
+
+		Convey("When Exit requests a full close", func() {
+			position := NewPosition(api, nil, nil, balance, pair)
+			position.status = types.OPEN
+			_ = position.Exit()
+
+			Convey("Then the sell order uses the full filled balance", func() {
+				So(position.request, ShouldNotBeNil)
+				So(position.request.Params.OrderQty, ShouldEqual, 1.0)
+			})
 		})
 	})
 }
@@ -173,7 +237,7 @@ func BenchmarkPositionExecutionAck(b *testing.B) {
 			status: types.PENDING,
 			price:  price, balance: balance,
 			pair:    &kraken.InstrumentPair{Symbol: "BTC/USD", Base: "BTC"},
-			orderID: "order-1", Stop: &StopData{Symbol: "BTC/USD"},
+			orderID: "order-1",
 		}
 		holdings.Store("BTC/USD", &types.Holding{
 			Symbol: "BTC/USD", Asset: "BTC",

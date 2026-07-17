@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizePositions } from "./positions";
+import { normalizePositions, positionsStore } from "./positions";
 
 describe("normalizePositions", () => {
 	it("preserves complete snapshots while normalizing financial fields", () => {
@@ -66,5 +66,27 @@ describe("normalizePositions", () => {
 				},
 			])[0]?.executions,
 		).toEqual([]);
+	});
+});
+
+describe("positionsStore", () => {
+	it("refuses to overwrite an observed non-empty snapshot with empty", () => {
+		positionsStore.actions.updateFrame([
+			{
+				symbol: "XLM/USD",
+				qty: 10,
+				entry_price: 0.25,
+				entry_fee: 0.0065,
+				exit_fee: 0.00702,
+				mark: 0.27,
+				pnl: 0.2,
+				return_pct: 0.08,
+			},
+		]);
+
+		positionsStore.actions.updateFrame([]);
+
+		expect(positionsStore.state.positions).toHaveLength(1);
+		expect(positionsStore.state.positions[0]?.symbol).toBe("XLM/USD");
 	});
 });

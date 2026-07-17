@@ -12,6 +12,8 @@ system:
     channel:
       # Public book/trade/ticker ingress queues and UI fan-out. Undersizing
       # stalls the Kraken reader behind book decode and starves trades.
+      # ponytail: fixed capacity is an intentional simplification with memory
+      # and burst limits; telemetry-driven or adaptive sizing is the upgrade path.
       buffer: 4096
 
 cognitive:
@@ -33,6 +35,8 @@ market:
   l3_rate_limit: 200
   # Lock-free MPMC ingress requires a power-of-two capacity. Producers apply
   # backpressure rather than discard authoritative order-level deltas.
+  # ponytail: fixed capacity is an intentional simplification with memory and
+  # burst limits; telemetry-driven or adaptive sizing is the upgrade path.
   l3_ring_capacity: 8192
   # High-liquidity run: deeper L2 book and faster subscription pacing.
   subscribe_pace: 20ms
@@ -55,6 +59,8 @@ ui:
 
 trading:
   model: paper
+  allocation:
+    max_fraction: 0.20
   slots:
     normal: 2
     reserved: 2
@@ -63,10 +69,14 @@ signals:
   # The central public stream retains this event window. Older events are
   # overwritten by design; enlarge the configured ring if one measurement cut
   # must inspect a larger live burst.
+  # ponytail: fixed capacity is an intentional simplification with memory and
+  # burst limits; telemetry-driven or adaptive sizing is the upgrade path.
   feed_timeline_capacity: 4096
   # Preserve the existing per-symbol history allowance independently from the
   # global burst journal; multiplying the timeline size by every symbol would
   # make memory scale with the square of the observed market surface.
+  # ponytail: fixed capacity is an intentional simplification with memory and
+  # burst limits; telemetry-driven or adaptive sizing is the upgrade path.
   feed_track_capacity: 512
   # Zero derives bars/day from signals.fluid.integration_interval.
   volume_clock_bars_per_day: 0

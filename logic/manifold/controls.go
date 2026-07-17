@@ -10,7 +10,8 @@ import (
 /*
 runtimeControls derives the per-step Metal controls from static engine config and
 the latest Hawkes excitation outcome. Event chronology controls the solver clock;
-Hawkes decay controls damping rather than being misused as a spatial speed.
+fitted branching scales GPE interaction, damping, and coherence phase torque so
+arrival structure reaches the wave field rather than only the gas impulse.
 */
 func runtimeControls(
 	config pmanifold.Config,
@@ -33,6 +34,7 @@ func runtimeControls(
 
 	controls.GInteraction = config.GInteraction() * hawkesEta
 	controls.EnergyDecay = hawkesBeta
+	controls.TopdownPhaseScale = config.CouplingScale() * hawkesEta
 
 	return controls
 }

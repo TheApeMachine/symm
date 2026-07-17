@@ -8,7 +8,7 @@ import (
 )
 
 /*
-fieldProjection is the GPU price-time slice the terminal fluid canvas paints.
+fieldProjection is the GPU price-time slice the terminal pilot-wave canvas paints.
 */
 type fieldProjection struct {
 	Rho          [][]float64
@@ -72,7 +72,7 @@ func projectField(
 }
 
 /*
-particlesFromOscillators maps post-step oscillator state into dashboard carriers
+particlesFromOscillators maps post-step oscillator state into dashboard particles
 using the same toroidal cell indexing the GPU solver uses.
 */
 func particlesFromOscillators(
@@ -87,7 +87,7 @@ func particlesFromOscillators(
 		}
 
 		particles = append(particles, pmanifold.Particle{
-			Role:      "whale_carrier",
+			Role:      "particle",
 			CellX:     cellCoordinate(oscillator.PosX, config.DomainX, config.GridX),
 			CellY:     cellCoordinate(oscillator.PosY, config.DomainY, config.GridY),
 			CellZ:     cellCoordinate(oscillator.PosZ, config.DomainZ, config.GridZ),

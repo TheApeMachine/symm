@@ -173,9 +173,11 @@ var (
 				))
 			}
 
-			for _, holding := range thesis.Positions {
-				holdings = append(holdings, holding)
-			}
+			thesis.Holdings.Range(func(key, value any) bool {
+				holding := value.(*types.Holding)
+				holdings = append(holdings, *holding)
+				return true
+			})
 
 			price := broker.NewPrice(api)
 			instrument := broker.NewInstrument(api, price, channel)
@@ -192,6 +194,7 @@ var (
 			}
 
 			defer uiHub.Close()
+			errnie.AttachWriter(ui.NewErrorBridge(uiHub))
 
 			hawkesSignal := hawkes.NewSignal(ctx, api, channel)
 			analyzer, err := logic.NewAnalyzer(ctx, booter, api, hawkesSignal, tree, channel)
@@ -222,6 +225,7 @@ var (
 				},
 				analyzer,
 			)
+			planner.Bind(strategy.NewAllocator(ctx, balance, instrument, price))
 
 			crypto, err := trader.NewCrypto(
 				ctx,

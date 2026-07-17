@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -78,7 +79,7 @@ func TestNewMarket(t *testing.T) {
 	viper.Set("signals.feed_track_capacity", 3)
 
 	Convey("Given an invalid per-symbol feed capacity", t, func() {
-		market, err := NewMarket(nil, nil)
+		market, err := NewMarket(context.Background(), nil, nil)
 
 		Convey("Then construction fails before handlers are registered", func() {
 			So(market, ShouldBeNil)
@@ -102,7 +103,7 @@ func TestMarket_Cut(t *testing.T) {
 	cutAt := time.Date(2026, 7, 17, 1, 3, 46, 0, time.UTC)
 
 	Convey("Given current ticker rows retained by the central market", t, func() {
-		market, err := NewMarket(nil, nil)
+		market, err := NewMarket(context.Background(), nil, nil)
 		So(err, ShouldBeNil)
 
 		market.OnTicker([]byte(marketTickerFrame))
@@ -129,7 +130,7 @@ func TestMarket_Cut(t *testing.T) {
 			Convey("Then a book-only later cut carries only the active symbol's ticker", func() {
 				instrument := broker.NewInstrument(nil, nil, nil)
 				instrument.On([]byte(marketInstrumentFrame))
-				bookMarket, err := NewMarket(nil, instrument)
+				bookMarket, err := NewMarket(context.Background(), nil, instrument)
 				So(err, ShouldBeNil)
 				bookMarket.OnTicker([]byte(marketTickerFrame))
 				_, err = bookMarket.Cut(cutAt)
@@ -175,7 +176,7 @@ func TestMarket_OnBook(t *testing.T) {
 	Convey("Given current Kraken instrument metadata", t, func() {
 		instrument := broker.NewInstrument(nil, nil, nil)
 		instrument.On([]byte(marketInstrumentFrame))
-		market, err := NewMarket(nil, instrument)
+		market, err := NewMarket(context.Background(), nil, instrument)
 		So(err, ShouldBeNil)
 
 		Convey("When a raw public book snapshot arrives", func() {
@@ -208,7 +209,7 @@ func BenchmarkMarket_Cut(b *testing.B) {
 	b.Cleanup(func() { viper.Set("signals.feed_track_capacity", previousTrack) })
 	viper.Set("signals.feed_timeline_capacity", 128)
 	viper.Set("signals.feed_track_capacity", 128)
-	market, err := NewMarket(nil, nil)
+	market, err := NewMarket(context.Background(), nil, nil)
 
 	if err != nil {
 		b.Fatal(err)
@@ -239,7 +240,7 @@ func BenchmarkMarket_OnBook(b *testing.B) {
 	viper.Set("signals.feed_track_capacity", 128)
 	instrument := broker.NewInstrument(nil, nil, nil)
 	instrument.On([]byte(marketInstrumentFrame))
-	market, err := NewMarket(nil, instrument)
+	market, err := NewMarket(context.Background(), nil, instrument)
 
 	if err != nil {
 		b.Fatal(err)

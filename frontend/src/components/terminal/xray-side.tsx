@@ -9,6 +9,10 @@ import { manifoldStore } from "#/collections/manifold";
 import { measurementsStore } from "#/collections/measurements";
 import { resonanceStore } from "#/collections/resonance";
 import {
+	isFluidFieldMatrix,
+	meanGuidanceSpeed,
+} from "#/components/terminal/fluid-field";
+import {
 	cascadeLabel,
 	finiteMetric,
 	formatMetric,
@@ -19,6 +23,16 @@ import {
 	stringMetric,
 } from "#/components/terminal/xray-view";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+
+const frameMatrix = (frame: unknown, key: string): number[][] | undefined => {
+	if (frame === null || frame === undefined || typeof frame !== "object") {
+		return undefined;
+	}
+
+	const value = (frame as Record<string, unknown>)[key];
+
+	return isFluidFieldMatrix(value) ? value : undefined;
+};
 
 const isConcreteSymbol = (symbol: string): boolean => symbol !== "";
 
@@ -123,7 +137,13 @@ export const XrayFactsPanel = () => {
 				events: eventsRef.current,
 				branching: branchingRef.current,
 			}),
-		[resonanceStore, manifoldStore, measurementsStore, cognitiveStore, appStore],
+		[
+			resonanceStore,
+			manifoldStore,
+			measurementsStore,
+			cognitiveStore,
+			appStore,
+		],
 		[],
 	);
 
@@ -192,8 +212,12 @@ const paintManifold = (refs: ManifoldRefs): void => {
 	}
 
 	if (refs.guidance !== null) {
+		const latticeGuidance = meanGuidanceSpeed(
+			frameMatrix(frame, "guidanceVelX"),
+			frameMatrix(frame, "guidanceVelZ"),
+		);
 		refs.guidance.textContent = formatMetric(
-			finiteMetric(reading?.guidanceSpeed),
+			finiteMetric(reading?.guidanceSpeed) ?? latticeGuidance,
 		);
 	}
 
@@ -248,7 +272,7 @@ export const XrayManifoldPanel = () => {
 					Manifold reading
 				</div>
 				<div className="mt-0.5 font-mono text-[9.5px] text-(--f4)">
-					navier–stokes · ρ projection · oscillator carriers
+					|ψ|² · guidance current · particles
 				</div>
 			</div>
 			<div className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-[11px]">

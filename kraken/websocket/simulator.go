@@ -50,6 +50,8 @@ simulation of the market and avoids the optimism bias.
 type Simulator struct {
 	booter        *system.Booter
 	status        types.Status
+	// ponytail: global lock serializes independent websocket, REST, and fill
+	// latency operations; per-ring locking is the intended upgrade path.
 	mu            sync.Mutex
 	wsLatencies   *ring.Ring
 	restLatencies *ring.Ring

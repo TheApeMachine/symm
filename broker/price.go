@@ -223,6 +223,33 @@ func (price *Price) RememberFee(
 }
 
 /*
+Fraction returns the cached taker fee as a unitless decimal fraction for
+strategy utility math. Kraken stores Fee as a percent; this is the single
+place that converts percent to fraction so callers never divide by 100.
+*/
+func (price *Price) Fraction(symbol string) (*decimal.Decimal, error) {
+	tradeVolume, err := price.FeeRate(symbol)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if tradeVolume.Fee == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"fee rate missing fee for symbol "+symbol,
+			nil,
+		))
+	}
+
+	feePrecision := tradeVolume.Fee.GetScale() + 2
+
+	return tradeVolume.Fee.SetScale(feePrecision).Div(
+		decimal.NewFromInt64(100).SetScale(feePrecision),
+	), nil
+}
+
+/*
 FeeRate returns the cached TradeVolume taker fee tier for symbol.
 
 Kraken returns the Fee field as a percentage.

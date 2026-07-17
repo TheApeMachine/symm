@@ -22,7 +22,7 @@ const SOURCE_HEADLINE_FALLBACKS: Record<string, readonly string[]> = {
 };
 
 export const headlineMetric = (source: string): string | null =>
-	source in SOURCE_HEADLINE_METRIC
+	Object.hasOwn(SOURCE_HEADLINE_METRIC, source)
 		? SOURCE_HEADLINE_METRIC[source]
 		: "strength";
 
@@ -34,7 +34,9 @@ export const headlineReading = (
 	values: Measurement[],
 	source: string,
 ): Measurement | undefined => {
-	const fallbacks = SOURCE_HEADLINE_FALLBACKS[source];
+	const fallbacks = Object.hasOwn(SOURCE_HEADLINE_FALLBACKS, source)
+		? SOURCE_HEADLINE_FALLBACKS[source]
+		: undefined;
 
 	if (fallbacks !== undefined) {
 		for (const metric of fallbacks) {

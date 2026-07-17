@@ -1,6 +1,7 @@
 package types
 
 import (
+	"math"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -20,7 +21,7 @@ type Holding struct {
 	Executions    []*kraken.Execution `json:"executions,omitempty"`
 	Symbol        string              `json:"symbol"`
 	Asset         string              `json:"asset,omitempty"`
-	Qty           *decimal.Decimal    `json:"qty"`
+	Qty           *decimal.Decimal    `json:"qty" validate:"required,min=1"`
 	EntryAt       *time.Time          `json:"entry_at,omitempty"`
 	ExitAt        *time.Time          `json:"exit_at,omitempty"`
 	EntryPrice    *decimal.Decimal    `json:"entry_price"`
@@ -71,7 +72,76 @@ func (holding *Holding) Closed() bool {
 		holding.ExitAt != nil
 }
 
+/*
+Project fills missing mark and fee fields so UI position frames remain finite
+after restart recovery where only entry accounting was persisted.
+*/
+func (holding *Holding) Project() {
+	if holding == nil {
+		return
+	}
+
+	if holding.Mark == nil {
+		if holding.EntryPrice != nil {
+			holding.Mark = holding.EntryPrice.Copy()
+		} else {
+			holding.Mark = decimal.NewFromInt64(0)
+		}
+	}
+
+	if holding.EntryPrice == nil {
+		holding.EntryPrice = decimal.NewFromInt64(0)
+	}
+
+	if holding.EntryFee == nil {
+		holding.EntryFee = decimal.NewFromInt64(0)
+	}
+
+	if holding.ExitFee == nil {
+		holding.ExitFee = decimal.NewFromInt64(0)
+	}
+
+	if holding.Qty == nil {
+		holding.Qty = decimal.NewFromInt64(0)
+	}
+
+	holding.MarkToMarket()
+}
+
+/*
+MarkToMarket recomputes open PnL and return fraction from the live mark against
+entry accounting. Closed lots keep realized exit fields untouched.
+*/
+func (holding *Holding) MarkToMarket() {
+	if holding == nil || holding.Closed() {
+		return
+	}
+
+	if holding.Mark == nil || holding.EntryPrice == nil || holding.Qty == nil {
+		return
+	}
+
+	mark := holding.Mark.Float64()
+	entry := holding.EntryPrice.Float64()
+	qty := holding.Qty.Float64()
+
+	if mark <= 0 || entry <= 0 || qty <= 0 || math.IsNaN(mark) || math.IsInf(mark, 0) {
+		return
+	}
+
+	entryFee := 0.0
+
+	if holding.EntryFee != nil {
+		entryFee = holding.EntryFee.Float64()
+	}
+
+	holding.PnL = decimal.NewFromFloat64((mark-entry)*qty - entryFee)
+	ret := (mark - entry) / entry
+	holding.ReturnPct = &ret
+}
+
 func (holding *Holding) applyBuy(execution *kraken.ExecutionData) {
+	firstFill := holding.EntryAt == nil
 	holding.EntryAt = &execution.Timestamp
 	holding.EntryPrice = execution.LastPrice.Copy()
 
@@ -84,7 +154,7 @@ func (holding *Holding) applyBuy(execution *kraken.ExecutionData) {
 	} else if execution.LastQty > 0 {
 		// First print without CumQty replaces the pre-submit requested size;
 		// later prints accumulate until the exchange reports CumQty.
-		if holding.EntryAt == nil {
+		if firstFill {
 			holding.Qty = decimal.NewFromFloat64(execution.LastQty)
 		} else {
 			holding.Qty = holding.addQty(execution.LastQty)
@@ -137,7 +207,7 @@ func (holding *Holding) addFee(
 	prior *decimal.Decimal,
 	fee *decimal.Decimal,
 ) *decimal.Decimal {
-	if fee == nil {
+	if fee == nil || fee.Float64() <= 0 {
 		return prior
 	}
 
@@ -147,23 +217,19 @@ func (holding *Holding) addFee(
 		return copied
 	}
 
-	return decimal.NewFromFloat64(prior.Float64() + copied.Float64())
+	return prior.Add(copied)
 }
 
 /*
 averagePrice returns AvgPrice when the exchange supplied a usable value.
-Zero-value decimals panic on Sign, so callers must use this guard.
+Zero-value decimals have no scaled integer, so Float64 guards absence safely.
 */
 func averagePrice(execution *kraken.ExecutionData) *decimal.Decimal {
 	if execution == nil {
 		return nil
 	}
 
-	defer func() {
-		recover()
-	}()
-
-	if execution.AvgPrice.Sign() <= 0 {
+	if execution.AvgPrice.Float64() <= 0 {
 		return nil
 	}
 

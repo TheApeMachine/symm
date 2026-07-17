@@ -84,9 +84,21 @@ export const positionsStore = createStore(
 	},
 	({ setState }) => ({
 		updateFrame: (positions: unknown) =>
-			setState(() => ({
-				positions: normalizePositions(positions),
-				observed: true,
-			})),
+			setState((prev) => {
+				const normalized = normalizePositions(positions);
+
+				if (
+					normalized.length === 0 &&
+					prev.observed &&
+					prev.positions.length > 0
+				) {
+					return prev;
+				}
+
+				return {
+					positions: normalized,
+					observed: true,
+				};
+			}),
 	}),
 );

@@ -79,7 +79,7 @@ func driveFluidPath(aggressive bool) ([]*types.Measurement, error) {
 
 		row := fixture.snapshot(bid, bidQty, ask, askQty)
 		row.Timestamp = stamp
-		row.PriceIncrement = *krakendecimal.NewFromFloat64(0.01)
+		row.PriceIncrement = krakendecimal.NewFromFloat64(0.01)
 
 		var trades []kraken.TradeData
 
@@ -212,7 +212,7 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 		}
 		row := fixture.snapshot(99.5, 20-float64(index), 100.5, 10)
 		row.Timestamp = stamp
-		row.PriceIncrement = *krakendecimal.NewFromFloat64(0.01)
+		row.PriceIncrement = krakendecimal.NewFromFloat64(0.01)
 		if _, err := signal.Calculate(&types.MarketFrame{
 			Tickers:      []kraken.TickerData{ticker},
 			Books:        []kraken.BookData{row},
@@ -233,7 +233,7 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	}
 	row := fixture.snapshot(99.5, 12, 100.5, 14)
 	row.Timestamp = stamp
-	row.PriceIncrement = *krakendecimal.NewFromFloat64(0.01)
+	row.PriceIncrement = krakendecimal.NewFromFloat64(0.01)
 	frame := &types.MarketFrame{
 		Tickers:      []kraken.TickerData{ticker},
 		Books:        []kraken.BookData{row},

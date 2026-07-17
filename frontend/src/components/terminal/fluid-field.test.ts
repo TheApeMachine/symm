@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+	blendGasIntoPilot,
 	buildGuidanceFlowLattice,
 	buildPilotFlowLattice,
-	compositeFieldLattice,
 	isFluidFieldMatrix,
+	meanGuidanceSpeed,
 	normalizeFlowLattice,
 	normalizeFluidLattice,
 	resampleFluidLattice,
+	resolvePilotDisplayLattice,
 	sampleBilinearLattice,
 	terminalFluidFieldStats,
 } from "./fluid-field";
@@ -87,7 +89,7 @@ describe("buildPilotFlowLattice", () => {
 		const flow = buildPilotFlowLattice(lattice, [
 			{
 				source: "manifold",
-				role: "whale_carrier",
+				role: "particle",
 				cellX: 1,
 				cellY: 0,
 				cellZ: 1,
@@ -124,8 +126,23 @@ describe("buildGuidanceFlowLattice", () => {
 	});
 });
 
-describe("compositeFieldLattice", () => {
-	it("blends rho and pilot-wave magnitude into one display lattice", () => {
+describe("meanGuidanceSpeed", () => {
+	it("averages Bohm current magnitude across the lattice", () => {
+		const velX = [
+			[3, 0],
+			[0, 0],
+		];
+		const velZ = [
+			[4, 0],
+			[0, 0],
+		];
+
+		expect(meanGuidanceSpeed(velX, velZ)).toBeCloseTo(1.25);
+	});
+});
+
+describe("resolvePilotDisplayLattice", () => {
+	it("prefers |ψ|² over gas ρ for the primary cloud", () => {
 		const rho = [
 			[0, 0.2],
 			[0.1, 0.3],
@@ -135,10 +152,36 @@ describe("compositeFieldLattice", () => {
 			[0, 0.4],
 		];
 
-		expect(compositeFieldLattice(rho, psiMag2)).toEqual([
-			[0.425, 0.2],
-			[0.1, 0.34],
-		]);
+		expect(resolvePilotDisplayLattice(rho, psiMag2)).toEqual(psiMag2);
+	});
+
+	it("falls back to gas ρ when |ψ|² is absent", () => {
+		const rho = [
+			[0, 0.2],
+			[0.1, 0.3],
+		];
+
+		expect(resolvePilotDisplayLattice(rho)).toEqual(rho);
+	});
+});
+
+describe("blendGasIntoPilot", () => {
+	it("lets sparse ρ fill where |ψ|² is thin without owning bright cells", () => {
+		const psiMag2 = [
+			[0.5, 0.1],
+			[0, 0.4],
+		];
+		const rho = [
+			[0, 0.8],
+			[0.6, 0.1],
+		];
+
+		const blended = blendGasIntoPilot(psiMag2, rho);
+
+		expect(blended[0][0]).toBeCloseTo(0.5);
+		expect(blended[0][1]).toBeCloseTo(0.36);
+		expect(blended[1][0]).toBeCloseTo(0.27);
+		expect(blended[1][1]).toBeCloseTo(0.4);
 	});
 });
 

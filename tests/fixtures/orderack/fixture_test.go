@@ -13,7 +13,7 @@ func TestOrderAckFrame(t *testing.T) {
 		for _, testCase := range []struct {
 			caseName string
 			options  orderackfixture.Options
-			reqID    int
+			reqID    int64
 			orderID  string
 		}{
 			{

@@ -227,7 +227,7 @@ const paintPositionGauge = (
 
 	if (refs.returnPct) {
 		refs.returnPct.style.color = pnlTone;
-		refs.returnPct.textContent = `${position.return_pct.toFixed(4)}%`;
+		refs.returnPct.textContent = `${(position.return_pct * 100).toFixed(4)}%`;
 	}
 
 	if (refs.momentumWrap && refs.momentumBar) {

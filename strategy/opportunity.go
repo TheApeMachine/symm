@@ -10,8 +10,8 @@ import (
 /*
 Opportunity is the decomposed admit state for one forecast. Margin is economic
 edge after uncertainty; Lead is how far cognition has committed ahead of the
-manifold basin. Reserved overflow requires both positive — anticipatory edge,
-not planner horizon outrunning a world model.
+manifold basin on a shared [0,1) scale. Reserved overflow requires both
+positive — anticipatory edge, not planner horizon outrunning a world model.
 */
 type Opportunity struct {
 	Margin     float64
@@ -31,9 +31,18 @@ func (opportunity Opportunity) Reserved() bool {
 }
 
 /*
+CognitiveClears reports whether cognition clears the forecast noise share.
+Economic enter is decided by executable utility (return − uncertainty −
+friction); this gate only blocks Winner=buy at ε confidence.
+*/
+func (opportunity Opportunity) CognitiveClears(forecast types.Forecasts) bool {
+	return opportunity.Cognitive > noiseShare(forecast)
+}
+
+/*
 measureOpportunity builds OpportunityMargin and CognitiveLead from independent
-estimators: forecast return/uncertainty, cognition winner confidence, and
-manifold coherence as basin settling.
+estimators. Margin is the SNR term that also enters utility; Lead ranks the
+reserved lane once utility has already cleared.
 */
 func measureOpportunity(
 	forecast types.Forecasts,
@@ -57,8 +66,22 @@ func measureOpportunity(
 }
 
 /*
-basinConfidence returns manifold coherence as the physical basin settling
-measure. Missing or invalid manifold leaves BasinReady false so Lead stays
+noiseShare is the fraction of forecast magnitude explained by uncertainty.
+Cognition must exceed this share before a buy winner is treated as actionable.
+*/
+func noiseShare(forecast types.Forecasts) float64 {
+	if forecast.Uncertainty <= 0 {
+		return 0
+	}
+
+	magnitude := math.Abs(forecast.ExpectedReturn) + forecast.Uncertainty
+
+	return forecast.Uncertainty / magnitude
+}
+
+/*
+basinConfidence maps manifold coherence onto [0,1) so Lead compares like
+quantities. Missing or invalid manifold leaves BasinReady false so Lead stays
 neutral rather than inventing dynamics.
 */
 func basinConfidence(thesis *types.Thesis, symbol string) (float64, bool) {
@@ -84,5 +107,5 @@ func basinConfidence(thesis *types.Thesis, symbol string) (float64, bool) {
 		return 0, false
 	}
 
-	return coherence, true
+	return coherence / (1 + coherence), true
 }

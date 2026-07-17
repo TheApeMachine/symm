@@ -138,8 +138,8 @@ func (analyzer *Analyzer) forecast(
 		BuyCapacity:              state.BuyCapacity,
 		SellCapacity:             state.SellCapacity,
 		ExpectedSpread:           state.Spread,
-		ExpectedImpact:           forecastImpact(state),
-		ExpectedAdverseSelection: forecastAdverse(state),
+		ExpectedImpact:           analyzer.forecastImpact(state),
+		ExpectedAdverseSelection: analyzer.forecastAdverse(state),
 		Uncertainty:              resonanceOutcome.Uncertainty,
 		Confidence: math.Min(
 			causalOutcome.Reading.Confidence,
@@ -152,8 +152,11 @@ func (analyzer *Analyzer) forecast(
 forecastImpact is temporary impact as capacity utilization times the observed
 spread. Candidate size is capped at BuyCapacity, so the ratio is the share of
 two-sided visible depth consumed by a full-touch entry.
+
+ponytail: spread-times-utilization is a coarse friction proxy; upgrade path is
+manifold gas-derived impact from calibrated depth consumption models.
 */
-func forecastImpact(state manifold.State) float64 {
+func (analyzer *Analyzer) forecastImpact(state manifold.State) float64 {
 	depth := state.BuyCapacity + state.SellCapacity
 
 	if state.BuyCapacity <= 0 || depth <= 0 || state.Spread < 0 {
@@ -166,8 +169,12 @@ func forecastImpact(state manifold.State) float64 {
 /*
 forecastAdverse is informed-flow drag from manifold stress scaled by the
 observed spread so adverse selection stays in return units.
+
+ponytail: stress-anisotropy times spread is an interim adverse-selection
+heuristic; upgrade path is causal-head informed-flow probability scaled by
+observed touch cost.
 */
-func forecastAdverse(state manifold.State) float64 {
+func (analyzer *Analyzer) forecastAdverse(state manifold.State) float64 {
 	stress := math.Abs(state.StressAnisotropy)
 
 	if stress <= 0 || state.Spread < 0 {

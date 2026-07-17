@@ -10,14 +10,15 @@ import (
 
 /*
 admit selects entries by utility while keeping reserved overflow opportunity-
-only. Opportunity names may consume normal slots first so the reserve lane
-stays available for the next ignition.
+only. When free slots are exhausted, a challenger may displace the weakest
+incumbent only if rotate surplus is positive.
 */
 func (planner *Planner) admit(
 	thesis *types.Thesis,
 	entries []types.Decision,
 	freeNormal int,
 	freeReserved int,
+	incumbents []Incumbent,
 ) {
 	sort.Slice(entries, func(left, right int) bool {
 		return entries[left].Utility > entries[right].Utility
@@ -31,68 +32,208 @@ func (planner *Planner) admit(
 		useNormal := admittedNormal < freeNormal
 		useReserved := opportunity && admittedReserved < freeReserved
 
-		if !useNormal && !useReserved {
-			decision.Action = "nothing"
-			decision.Utility = 0
-
-			if !opportunity && freeNormal <= admittedNormal {
-				decision.Reason = "normal slots full; reserved requires opportunity"
+		if useNormal || useReserved {
+			if useNormal {
+				admittedNormal++
 			}
 
-			if opportunity {
-				decision.Reason = "higher-utility entries consumed available slots"
+			if !useNormal && useReserved {
+				admittedReserved++
 			}
 
-			thesis.Decisions = append(thesis.Decisions, decision)
+			planner.persistAcceptedEntry(thesis, decision, opportunity)
 
 			continue
 		}
 
-		if useNormal {
-			admittedNormal++
+		if planner.displace(thesis, &decision, incumbents) {
+			continue
 		}
 
-		if !useNormal && useReserved {
-			admittedReserved++
-		}
-
-		thesis.Lifecycle.Store(decision.Symbol, types.LifecycleEntrySelected)
-		thesis.Decisions = append(thesis.Decisions, decision)
-		entryPrice := decimal.NewFromFloat64(
-			decision.ReferencePrice * (1 + decision.ExpectedSpread/2),
+		planner.persistRejectedEntry(
+			thesis, decision, opportunity, freeNormal, admittedNormal, incumbents,
 		)
-		thesis.Positions = append(thesis.Positions, types.Holding{
-			Symbol: decision.Symbol,
-			Qty:    decimal.NewFromFloat64(decision.ProposedQuantity),
-			Order: &spot.Order{
-				Description: &spot.OrderDescription{
-					Pair: decision.Symbol, Type: "enter", OrderType: "market",
-				},
-				Price:  entryPrice,
-				Volume: decimal.NewFromFloat64(decision.ProposedQuantity),
-			},
-			EntryPrice:    entryPrice,
-			Mark:          decimal.NewFromFloat64(decision.ReferencePrice),
-			IsOpportunity: opportunity,
-		})
-
-		thesis.Orders = append(thesis.Orders, spot.Order{
-			Description: &spot.OrderDescription{
-				Pair:      decision.Symbol,
-				Type:      decision.Action,
-				Price:     decimal.NewFromFloat64(decision.ReferencePrice),
-				OrderType: "market",
-			},
-			Volume: decimal.NewFromFloat64(decision.ProposedQuantity),
-			Price:  decimal.NewFromFloat64(decision.ReferencePrice),
-		})
 	}
 }
 
 /*
-entry computes the complete round-trip utility of opening one slot and caps
-proposed capital at the currently visible best-ask capacity. AllocationClass
-reserved requires positive OpportunityMargin and CognitiveLead together.
+displace replaces the weakest open holding when the challenger's enter utility
+clears hold utility plus exit friction. Sizes the challenger from the capital
+the exit frees.
+*/
+func (planner *Planner) displace(
+	thesis *types.Thesis,
+	decision *types.Decision,
+	incumbents []Incumbent,
+) bool {
+	index, found := weakest(incumbents)
+
+	if !found {
+		return false
+	}
+
+	incumbent := &incumbents[index]
+	surplus := rotateSurplus(
+		decision.Utility, incumbent.HoldUtility, incumbent.ExitCost,
+	)
+
+	if surplus <= 0 {
+		return false
+	}
+
+	planner.scaleTo(decision, incumbent.Notional)
+	incumbent.Displaced = true
+
+	decision.Cause = "rotation"
+	decision.Reason = "challenger utility clears weakest incumbent after exit cost"
+	decision.Alternatives["hold_incumbent"] = incumbent.HoldUtility
+	decision.Alternatives["exit_cost"] = incumbent.ExitCost
+	decision.Alternatives["rotate_surplus"] = surplus
+
+	thesis.Decisions = append(thesis.Decisions, types.Decision{
+		Action:            "exit",
+		Symbol:            incumbent.Symbol,
+		At:                decision.At,
+		Utility:           -incumbent.ExitCost,
+		Alternatives:      map[string]float64{"exit": -incumbent.ExitCost, "hold": incumbent.HoldUtility},
+		ProposedQuantity:  0,
+		ReferencePrice:    decision.ReferencePrice,
+		ValidThroughEpoch: decision.ValidThroughEpoch,
+		Cause:             "rotation",
+		Reason:            "displaced by higher-utility challenger " + decision.Symbol,
+	})
+	thesis.Lifecycle.Store(incumbent.Symbol, types.LifecycleExitSelected)
+	thesis.Orders = append(thesis.Orders, spot.Order{
+		Description: &spot.OrderDescription{
+			Pair:      incumbent.Symbol,
+			Type:      "exit",
+			OrderType: "market",
+		},
+	})
+
+	planner.persistAcceptedEntry(
+		thesis, *decision, decision.AllocationClass == "reserved",
+	)
+
+	return true
+}
+
+/*
+scaleTo sets proposed notional to the capital freed by a displaced incumbent
+and rescales quantity so the enter lot matches that budget. Cash-capped
+counterfactual proposals may be smaller than the exit frees; rotate must
+scale up to the freed notional, not only down.
+*/
+func (planner *Planner) scaleTo(decision *types.Decision, notional float64) {
+	if notional <= 0 || decision.ProposedNotional <= 0 {
+		return
+	}
+
+	scale := notional / decision.ProposedNotional
+	decision.ProposedNotional = notional
+	decision.ProposedQuantity *= scale
+}
+
+/*
+persistRejectedEntry records a slot-exhausted or rotate-rejected entry as an
+explicit nothing decision so the Thesis audit trail shows why utility-ranked
+intent did not execute.
+*/
+func (planner *Planner) persistRejectedEntry(
+	thesis *types.Thesis,
+	decision types.Decision,
+	opportunity bool,
+	freeNormal int,
+	admittedNormal int,
+	incumbents []Incumbent,
+) {
+	decision.Action = "nothing"
+	prior := decision.Utility
+	decision.Utility = 0
+	decision.Cause = "slots_full"
+	decision.Reason = "higher-utility entries consumed available slots"
+
+	if !opportunity && freeNormal <= admittedNormal {
+		decision.Reason = "normal slots full; reserved requires opportunity"
+	}
+
+	if index, found := weakest(incumbents); found {
+		incumbent := incumbents[index]
+		surplus := rotateSurplus(prior, incumbent.HoldUtility, incumbent.ExitCost)
+		decision.Alternatives["hold_incumbent"] = incumbent.HoldUtility
+		decision.Alternatives["exit_cost"] = incumbent.ExitCost
+		decision.Alternatives["rotate_surplus"] = surplus
+
+		if surplus <= 0 {
+			decision.Cause = "rotate_wait"
+			decision.Reason = "challenger utility does not clear weakest incumbent after exit cost"
+		}
+	}
+
+	thesis.Decisions = append(thesis.Decisions, decision)
+}
+
+/*
+persistAcceptedEntry writes lifecycle, decisions, positions, and orders for
+one admitted entry so downstream broker and UI layers see the full executable
+intent.
+*/
+func (planner *Planner) persistAcceptedEntry(
+	thesis *types.Thesis,
+	decision types.Decision,
+	opportunity bool,
+) {
+	thesis.Lifecycle.Store(decision.Symbol, types.LifecycleEntrySelected)
+	thesis.Decisions = append(thesis.Decisions, decision)
+
+	entryPrice := decimal.NewFromFloat64(
+		decision.ReferencePrice,
+	).Mul(
+		decimal.NewFromFloat64(1).Add(
+			decimal.NewFromFloat64(
+				decision.ExpectedSpread,
+			).Div(
+				decimal.NewFromFloat64(2),
+			),
+		),
+	)
+
+	thesis.Holdings.Store(decision.Symbol, types.Holding{
+		Symbol: decision.Symbol,
+		Qty:    decimal.NewFromFloat64(decision.ProposedQuantity),
+		Order: &spot.Order{
+			Description: &spot.OrderDescription{
+				Pair:      decision.Symbol,
+				Type:      "enter",
+				OrderType: "market",
+			},
+			Price:  entryPrice,
+			Volume: decimal.NewFromFloat64(decision.ProposedQuantity),
+		},
+		EntryPrice:    entryPrice,
+		Mark:          decimal.NewFromFloat64(decision.ReferencePrice),
+		IsOpportunity: opportunity,
+	})
+
+	thesis.Orders = append(thesis.Orders, spot.Order{
+		Description: &spot.OrderDescription{
+			Pair:      decision.Symbol,
+			Type:      decision.Action,
+			Price:     decimal.NewFromFloat64(decision.ReferencePrice),
+			OrderType: "market",
+		},
+		Volume: decimal.NewFromFloat64(decision.ProposedQuantity),
+		Price:  decimal.NewFromFloat64(decision.ReferencePrice),
+	})
+}
+
+/*
+entry computes executable utility for opening one slot and caps proposed
+notional at both wallet cash and visible best-ask capacity. Utility is the
+single economic gate — expected return minus uncertainty minus round-trip
+friction. Cognition must still clear the forecast noise share;
+AllocationClass reserved further needs positive OpportunityMargin and
+CognitiveLead.
 */
 func (planner *Planner) entry(
 	thesis *types.Thesis,
@@ -100,28 +241,41 @@ func (planner *Planner) entry(
 	cognition types.Cognition,
 	fee float64,
 	capital float64,
+	available float64,
 ) types.Decision {
+	// BuyCapacity is a liquidity ceiling, not a wallet. Proposed notional must
+	// stay inside deployable cash so Fraction (proposed/available) stays honest.
 	proposed := min(capital, forecast.BuyCapacity)
+
+	if available > 0 {
+		proposed = min(proposed, available)
+	}
+
 	unitCost := forecast.ReferencePrice * (1 + forecast.ExpectedSpread/2) * (1 + fee)
-	quantity := proposed / unitCost
-	utility := forecast.ExpectedReturn - 2*fee - forecast.ExpectedSpread -
-		forecast.ExpectedImpact - forecast.ExpectedAdverseSelection
+	quantity := 0.0
+
+	if unitCost > 0 {
+		quantity = proposed / unitCost
+	}
+
 	reading := measureOpportunity(forecast, cognition, thesis)
+	utility := reading.Margin - 2*fee - forecast.ExpectedSpread -
+		forecast.ExpectedImpact - forecast.ExpectedAdverseSelection
 
 	if proposed <= 0 || utility <= 0 {
-		decision := planner.nothing(
-			forecast, "expected executable return does not exceed doing nothing",
+		return planner.rejectEntry(
+			forecast, reading, utility, proposed, quantity, fee,
+			"infeasible",
+			"expected executable utility does not exceed doing nothing",
 		)
-		decision.Alternatives["enter"] = utility
-		decision.ProposedNotional = proposed
-		decision.ProposedQuantity = quantity
-		decision.ExpectedFees = 2 * fee
-		decision.ExpectedSpread = forecast.ExpectedSpread
-		decision.OpportunityMargin = reading.Margin
-		decision.CognitiveLead = reading.Lead
-		decision.BasinConfidence = reading.Basin
+	}
 
-		return decision
+	if !reading.CognitiveClears(forecast) {
+		return planner.rejectEntry(
+			forecast, reading, utility, proposed, quantity, fee,
+			"cognitive_weak",
+			"cognitive confidence does not clear forecast noise share",
+		)
 	}
 
 	allocation := "normal"
@@ -148,8 +302,33 @@ func (planner *Planner) entry(
 		CognitiveLead:     reading.Lead,
 		BasinConfidence:   reading.Basin,
 		Cause:             "entry",
-		Reason:            "expected executable return exceeds doing nothing",
+		Reason:            "executable utility exceeds doing nothing",
 	}
+}
+
+/*
+rejectEntry records a nothing decision that still exposes the opportunity
+surface so audit and UI can see why enter was refused.
+*/
+func (planner *Planner) rejectEntry(
+	forecast types.Forecasts,
+	reading Opportunity,
+	utility, proposed, quantity, fee float64,
+	cause, reason string,
+) types.Decision {
+	decision := planner.nothing(forecast, reason)
+	decision.Cause = cause
+	decision.Utility = utility
+	decision.Alternatives["enter"] = utility
+	decision.ProposedNotional = proposed
+	decision.ProposedQuantity = quantity
+	decision.ExpectedFees = 2 * fee
+	decision.ExpectedSpread = forecast.ExpectedSpread
+	decision.OpportunityMargin = reading.Margin
+	decision.CognitiveLead = reading.Lead
+	decision.BasinConfidence = reading.Basin
+
+	return decision
 }
 
 /*

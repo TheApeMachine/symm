@@ -93,6 +93,12 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 				return;
 			}
 
+			if (event.key === "Escape" && appStore.state.error) {
+				event.preventDefault();
+				appStore.actions.clearError();
+				return;
+			}
+
 			if (!terminalStore.state.paletteOpen) {
 				return;
 			}
@@ -151,25 +157,51 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 						{app.error ? (
 							<dialog
 								open
-								className="fixed top-4 right-4 z-80 m-0 max-w-[520px] border border-[#5f2d2d] bg-[#1a0f0e] p-0 text-[#f1d7cf] shadow-[0_18px_80px_rgba(0,0,0,0.55)]"
+								aria-label="Backend error"
+								className="fixed inset-0 z-80 m-0 flex h-full w-full max-h-none max-w-none items-center justify-center border-0 bg-[rgba(8,6,5,0.82)] p-6 text-[#f1d7cf]"
+								onClick={(event) => {
+									if (event.target === event.currentTarget) {
+										appStore.actions.clearError();
+									}
+								}}
+								onKeyDown={(event) => {
+									if (event.key === "Escape") {
+										event.preventDefault();
+										appStore.actions.clearError();
+									}
+								}}
 							>
-								<dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-2 p-4 font-mono text-[11px]">
-									{Object.entries(app.error).map(([key, value]) => (
-										<div
-											className="contents"
-											key={`${key}:${value === null ? "null" : typeof value === "object" ? JSON.stringify(value) : String(value)}`}
+								<div className="flex max-h-full w-full max-w-3xl flex-col border border-[#5f2d2d] bg-[#1a0f0e] shadow-[0_18px_80px_rgba(0,0,0,0.55)]">
+									<div className="flex items-center justify-between border-b border-[#5f2d2d] px-4 py-3">
+										<span className="font-mono text-[11px] tracking-[0.14em] text-[#d56b61] uppercase">
+											backend error
+										</span>
+										<button
+											type="button"
+											className="font-mono text-[11px] text-[#f1d7cf] underline-offset-2 hover:underline"
+											onClick={() => appStore.actions.clearError()}
 										>
-											<dt className="text-[#d56b61]">{key}</dt>
-											<dd className="min-w-0 wrap-break-word text-[#f1d7cf]">
-												{value === null
-													? "null"
-													: typeof value === "object"
-														? JSON.stringify(value)
-														: String(value)}
-											</dd>
-										</div>
-									))}
-								</dl>
+											dismiss
+										</button>
+									</div>
+									<dl className="min-h-0 flex-1 overflow-auto grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-2 p-4 font-mono text-[11px]">
+										{Object.entries(app.error).map(([key, value]) => (
+											<div
+												className="contents"
+												key={`${key}:${value === null ? "null" : typeof value === "object" ? JSON.stringify(value) : String(value)}`}
+											>
+												<dt className="text-[#d56b61]">{key}</dt>
+												<dd className="min-w-0 wrap-break-word text-[#f1d7cf]">
+													{value === null
+														? "null"
+														: typeof value === "object"
+															? JSON.stringify(value)
+															: String(value)}
+												</dd>
+											</div>
+										))}
+									</dl>
+								</div>
 							</dialog>
 						) : null}
 					</div>

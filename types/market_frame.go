@@ -34,7 +34,7 @@ func BookLevels(
 	asks := make([]flow.BookLevel, 0, len(row.Asks))
 
 	for _, level := range row.Bids {
-		tick, err := kraken.PriceTick(level.Price, row.PriceIncrement)
+		tick, err := kraken.PriceTick(level.Price, *row.PriceIncrement)
 
 		if err != nil {
 			return nil, nil, err
@@ -48,7 +48,7 @@ func BookLevels(
 	}
 
 	for _, level := range row.Asks {
-		tick, err := kraken.PriceTick(level.Price, row.PriceIncrement)
+		tick, err := kraken.PriceTick(level.Price, *row.PriceIncrement)
 
 		if err != nil {
 			return nil, nil, err

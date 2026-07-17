@@ -1,7 +1,6 @@
 package manifold
 
 import (
-	"hash/fnv"
 	"math"
 	"sort"
 	"time"
@@ -17,7 +16,6 @@ var goldenRatio = (1 + math.Sqrt(5)) / 2
 mappedOrder carries one L3 order in dimensionless manifold coordinates.
 */
 type mappedOrder struct {
-	orderID  string
 	mass     float64
 	posX     float64
 	posY     float64
@@ -177,13 +175,21 @@ func mapOrders(
 
 		nextEpoch.positions[order.orderID] = [3]float64{posX, posY, posZ}
 
-		contentByte := contentByte(order.orderID)
-		omega := omegaMin + float64(contentByte)/255*(omegaMax-omegaMin)
+		// Near-touch size updates and cancels faster than deep book; map that
+		// urgency onto the configured gate-width band without consulting IDs.
+		touchProximity := 1 - math.Abs(math.Tanh(signedLogPrice/priceScale))
+		omega := omegaMin + touchProximity*(omegaMax-omegaMin)
+		// Bid/ask opposition plus sequence diversity so co-located cohorts
+		// interfere instead of sharing one global phase.
 		phase := goldenPhase(uint64(index) + 1)
+
+		if order.side == book.Ask {
+			phase += math.Pi
+		}
+
 		mass := order.quantity / totalMass
 
 		mapped = append(mapped, mappedOrder{
-			orderID:  order.orderID,
 			mass:     mass,
 			posX:     posX,
 			posY:     posY,
@@ -232,11 +238,4 @@ func goldenPhase(sequence uint64) float64 {
 	fraction := float64(sequence)*goldenRatio - math.Floor(float64(sequence)*goldenRatio)
 
 	return 2 * math.Pi * fraction
-}
-
-func contentByte(orderID string) uint8 {
-	hasher := fnv.New32a()
-	_, _ = hasher.Write([]byte(orderID))
-
-	return uint8(hasher.Sum32())
 }

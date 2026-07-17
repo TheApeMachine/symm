@@ -35,7 +35,7 @@ func measureField(measurements []*types.Measurement, symbol string, metric types
 func depthflowBookRow(symbol string, bidQuantity float64, askQuantity float64) kraken.BookData {
 	return kraken.BookData{
 		Symbol:         symbol,
-		PriceIncrement: *krakendecimal.NewFromFloat64(0.1),
+		PriceIncrement: krakendecimal.NewFromFloat64(0.1),
 		Bids: []kraken.BookLevel{
 			{Price: *krakendecimal.NewFromFloat64(100.0), Qty: bidQuantity},
 			{Price: *krakendecimal.NewFromFloat64(99.9), Qty: bidQuantity},

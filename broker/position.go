@@ -1,25 +1,13 @@
 package broker
 
 import (
-	"context"
 	"sync"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
-
-type StopData struct {
-	Symbol     string          `json:"symbol"`
-	Armed      bool            `json:"-"`
-	PeakPrice  decimal.Decimal `json:"-"`
-	StopPrice  decimal.Decimal `json:"stop_price"`
-	PeakReturn float64         `json:"peak_return"`
-	StopReturn float64         `json:"stop_return"`
-}
 
 type Position struct {
 	status     types.Status
@@ -30,8 +18,6 @@ type Position struct {
 	pair       *kraken.InstrumentPair
 	request    *kraken.MarketOrder
 	orderID    string
-	Stop       *StopData
-	stoploss   *strategy.Stoploss
 	tickers    []*kraken.TickerData
 	seenExec   sync.Map
 	onTerminal func(symbol string)
@@ -56,8 +42,6 @@ func NewPosition(
 		balance:    balance,
 		pair:       pair,
 		tickers:    make([]*kraken.TickerData, 0),
-		Stop:       &StopData{Symbol: pair.Symbol},
-		stoploss:   strategy.NewStoploss(context.Background()),
 	}
 }
 
@@ -74,7 +58,6 @@ func (position *Position) OrderAck(buf []byte) {
 
 	if errnie.Error(kraken.Validate(orderAck)) != nil {
 		position.status = types.ERROR
-		position.notifyTerminal()
 		return
 	}
 
@@ -87,7 +70,6 @@ func (position *Position) ExecutionAck(buf []byte) {
 
 	if errnie.Error(kraken.Validate(execution)) != nil {
 		position.status = types.ERROR
-		position.notifyTerminal()
 		return
 	}
 
@@ -117,12 +99,12 @@ func (position *Position) ExecutionAck(buf []byte) {
 		holding := value.(*types.Holding)
 		holding.Update(&data)
 		holding.Mark = &data.LastPrice
+		holding.MarkToMarket()
 		holding.Executions = append(holding.Executions, execution)
 		position.status = holding.Status
 
 		if holding.Closed() || holding.Status == types.CLOSED {
 			position.status = types.CLOSED
-			position.notifyTerminal()
 		}
 
 		return
@@ -140,17 +122,7 @@ func (position *Position) Enter() error {
 		))
 	}
 
-	qty := position.pair.RoundQty(holding.Qty)
-
-	if qty == nil || qty.Cmp(decimal.NewFromFloat64(position.pair.QtyMin)) < 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"position quantity is less than minimum quantity",
-			nil,
-		))
-	}
-
-	amount, err := position.price.Taker(position.pair, qty)
+	amount, err := position.price.Taker(position.pair, holding.Qty)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -160,15 +132,7 @@ func (position *Position) Enter() error {
 		))
 	}
 
-	if !position.pair.MeetsCostMin(amount) {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"position notional is below instrument cost_min",
-			nil,
-		))
-	}
-
-	if !position.balance.Available(*amount) {
+	if !position.balance.Available(amount) {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"insufficient balance",
@@ -176,16 +140,12 @@ func (position *Position) Enter() error {
 		))
 	}
 
-	holding.Qty = qty
-	position.balance.holdings.Store(holding.Symbol, &holding)
-
-	request := kraken.NewMarketOrder(
+	position.request = kraken.NewMarketOrder(
 		"buy",
-		qty.Float64(),
+		holding.Qty.Float64(),
 		holding.Symbol,
 	)
 
-	position.request = request
 	position.status = types.PENDING
 
 	if err := position.api.AddOrder(position.request); err != nil {
@@ -201,34 +161,26 @@ func (position *Position) Enter() error {
 	return nil
 }
 
+/*
+Exit submits a market sell for the filled position.
+*/
 func (position *Position) Exit() error {
-	holding, err := position.balance.Holding(position.Stop.Symbol)
+	holding, err := position.balance.Holding(position.pair.Symbol)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
-			"failed to get holding for "+position.Stop.Symbol,
+			"failed to get holding for "+position.pair.Symbol,
 			err,
 		))
 	}
 
-	qty := position.pair.RoundQty(holding.Qty)
-
-	if qty == nil || qty.Sign() <= 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"position has no filled quantity to exit",
-			nil,
-		))
-	}
-
-	request := kraken.NewMarketOrder(
+	position.request = kraken.NewMarketOrder(
 		"sell",
-		qty.Float64(),
+		holding.Qty.Float64(),
 		holding.Symbol,
 	)
 
-	position.request = request
 	position.status = types.PENDING
 
 	if err := position.api.AddOrder(position.request); err != nil {
@@ -247,61 +199,42 @@ func (position *Position) Exit() error {
 /*
 TickerAck updates this position from its own ticker only.
 
-Ticker updates only the current mark. Execution data remains authoritative for
-entry and exit facts, and no mark-to-market value is invented here.
+Ticker updates the current mark and recomputes open mark-to-market PnL.
+Execution data remains authoritative for entry and exit facts.
 */
-func (position *Position) TickerAck(buf []byte) {
-	value, ok := position.balance.holdings.Load(position.Stop.Symbol)
+func (position *Position) TickerAck(buf []byte) bool {
+	holding, err := position.balance.Holding(position.pair.Symbol)
 
-	if !ok {
+	if err != nil {
 		errnie.Error(errnie.Err(
 			errnie.NotFound,
-			"holding not found for "+position.Stop.Symbol,
+			"holding not found for "+position.pair.Symbol,
 			nil,
 		))
 
-		return
+		return false
 	}
 
 	ticker := kraken.NewTicker(buf)
 
 	if errnie.Error(kraken.Validate(ticker)) != nil {
-		return
+		return false
 	}
 
 	for _, tickerData := range ticker.Data {
-		if tickerData.Symbol != position.Stop.Symbol {
+		if tickerData.Symbol != position.pair.Symbol {
 			continue
 		}
 
-		value.(*types.Holding).Mark = tickerData.Last
-		return
-	}
-}
+		if tickerData.Last == nil || tickerData.Last.Float64() <= 0 {
+			return false
+		}
 
-/*
-Regulate updates the composed Stoploss from logic Evidence and mirrors the
-numeric surface onto StopData for UI / audit without inventing mark prices.
-*/
-func (position *Position) Regulate(evidence strategy.Evidence) strategy.Verdict {
-	verdict := position.stoploss.Update(evidence)
-	armed, entry, peakReturn, stopReturn, _, _, _ := position.stoploss.State()
-	position.Stop.Armed = armed
-	position.Stop.PeakReturn = peakReturn
-	position.Stop.StopReturn = stopReturn
+		holding.Mark = tickerData.Last
+		holding.MarkToMarket()
 
-	if armed && entry > 0 {
-		position.Stop.PeakPrice = *decimal.NewFromFloat64(entry * (1 + peakReturn))
-		position.Stop.StopPrice = *decimal.NewFromFloat64(entry * (1 + stopReturn))
+		return true
 	}
 
-	return verdict
-}
-
-func (position *Position) notifyTerminal() {
-	if position.onTerminal == nil || position.pair == nil {
-		return
-	}
-
-	position.onTerminal(position.pair.Symbol)
+	return false
 }

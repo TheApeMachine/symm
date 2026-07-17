@@ -1,0 +1,283 @@
+package tests_test
+
+import (
+	"context"
+	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/conditions"
+	"github.com/theapemachine/symm/types"
+)
+
+/*
+TestSessionPumpReservedDoesNotRotateMaturing plays a controlled pump through
+the Kraken Conn emulator, then runs Decide with a reserved-class ignition and
+a maturing incumbent. The pump name must take reserved overflow without
+exiting the incumbent.
+*/
+func TestSessionPumpReservedDoesNotRotateMaturing(t *testing.T) {
+	Convey("Given an emulator Session on a pump timeline", t, func() {
+		session, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
+			Signals: pumpdumpSignals,
+		})
+		So(err, ShouldBeNil)
+
+		theses, err := session.Play(conditions.Pump(24, 12, 1.25, 8).Frames())
+		So(err, ShouldBeNil)
+		So(len(theses), ShouldBeGreaterThan, 0)
+
+		calm, hasCalm := tests.PeakMetric(
+			theses, "MATIC/USD", types.MetricRVOL,
+		)
+		So(hasCalm, ShouldBeTrue)
+		So(calm, ShouldBeGreaterThan, 0)
+
+		So(session.SeedTakerFee("MATIC/USD", 0.26), ShouldBeNil)
+		So(session.SeedTakerFee("BTC/USD", 0.26), ShouldBeNil)
+		session.SeedQuoteCapital(10_000)
+
+		thesis := types.NewThesis(nil, nil)
+		tests.SeedMatureHolding(thesis, "BTC/USD", 100)
+		tests.SeedOpportunityForecast(thesis, "BTC/USD", 0.03, 0.01)
+		tests.SeedOpportunityForecast(thesis, "MATIC/USD", 0.12, 0.02)
+		tests.SeedEarlyCognition(thesis, "MATIC/USD")
+		thesis.Cognition.Store("BTC/USD", types.Cognition{
+			Source: "dmt", Symbol: "BTC/USD", Winner: "buy",
+			Ready: true, Confidence: 0.6, Ambiguous: false,
+		})
+
+		// One normal slot occupied by the maturing name; reserved stays free.
+		session.Planner().Decide(
+			thesis,
+			map[string]float64{"MATIC/USD": 0.0026, "BTC/USD": 0.0026},
+			10_000,
+			1,
+			2,
+		)
+
+		Convey("Then the pump ignition enters reserved without rotating BTC", func() {
+			entered := false
+			rotatedBTC := false
+
+			for _, decision := range thesis.Decisions {
+				if decision.Symbol == "MATIC/USD" && decision.Action == "enter" {
+					entered = true
+					So(decision.AllocationClass, ShouldEqual, "reserved")
+					So(decision.OpportunityMargin, ShouldBeGreaterThan, 0)
+					So(decision.CognitiveLead, ShouldBeGreaterThan, 0)
+				}
+
+				if decision.Symbol == "BTC/USD" && decision.Action == "exit" {
+					rotatedBTC = true
+				}
+			}
+
+			So(entered, ShouldBeTrue)
+			So(rotatedBTC, ShouldBeFalse)
+
+			holding, ok := findThesisHolding(thesis, "MATIC/USD")
+			So(ok, ShouldBeTrue)
+			So(holding.IsOpportunity, ShouldBeTrue)
+		})
+	})
+}
+
+/*
+TestSessionPumpRotateWhenChallengerClearsWeakest uses the emulator pump cut,
+then Decide-displaces a weak open hold when rotate surplus is positive.
+*/
+func TestSessionPumpRotateWhenChallengerClearsWeakest(t *testing.T) {
+	Convey("Given a full normal book and a stronger emulator-backed challenger", t, func() {
+		session, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
+			Signals: pumpdumpSignals,
+		})
+		So(err, ShouldBeNil)
+
+		_, err = session.Play(conditions.Pump(24, 12, 1.25, 8).Frames())
+		So(err, ShouldBeNil)
+
+		So(session.SeedTakerFee("MATIC/USD", 0.26), ShouldBeNil)
+		So(session.SeedTakerFee("WEAK/USD", 0.26), ShouldBeNil)
+		session.SeedQuoteCapital(0)
+
+		thesis := types.NewThesis(nil, nil)
+		tests.SeedMatureHolding(thesis, "WEAK/USD", 100)
+		tests.SeedOpportunityForecast(thesis, "WEAK/USD", 0.02, 0.01)
+		tests.SeedOpportunityForecast(thesis, "MATIC/USD", 0.12, 0.01)
+		tests.SeedEarlyCognition(thesis, "MATIC/USD")
+
+		session.Planner().Decide(
+			thesis,
+			map[string]float64{"MATIC/USD": 0.0026, "WEAK/USD": 0.0026},
+			0,
+			1,
+			0,
+		)
+
+		Convey("Then WEAK is displaced and MATIC enters by rotation", func() {
+			exited := false
+			entered := false
+
+			for _, decision := range thesis.Decisions {
+				if decision.Action == "exit" && decision.Symbol == "WEAK/USD" {
+					So(decision.Cause, ShouldEqual, "rotation")
+					exited = true
+				}
+
+				if decision.Action == "enter" && decision.Symbol == "MATIC/USD" {
+					So(decision.Cause, ShouldEqual, "rotation")
+					entered = true
+				}
+			}
+
+			So(exited, ShouldBeTrue)
+			So(entered, ShouldBeTrue)
+		})
+	})
+}
+
+/*
+TestSessionPumpWaitsWhenRotateSurplusNonPositive keeps a strong maturing hold
+when the pump challenger does not clear hold utility plus exit cost.
+*/
+func TestSessionPumpWaitsWhenRotateSurplusNonPositive(t *testing.T) {
+	Convey("Given a strong incumbent and a weaker pump challenger", t, func() {
+		session, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
+			Signals: pumpdumpSignals,
+		})
+		So(err, ShouldBeNil)
+
+		_, err = session.Play(conditions.Pump(16, 8, 1.2, 4).Frames())
+		So(err, ShouldBeNil)
+
+		So(session.SeedTakerFee("MATIC/USD", 0.26), ShouldBeNil)
+		So(session.SeedTakerFee("HOLD/USD", 0.26), ShouldBeNil)
+
+		thesis := types.NewThesis(nil, nil)
+		tests.SeedMatureHolding(thesis, "HOLD/USD", 100)
+		tests.SeedOpportunityForecast(thesis, "HOLD/USD", 0.10, 0.01)
+		tests.SeedOpportunityForecast(thesis, "MATIC/USD", 0.04, 0.01)
+		tests.SeedEarlyCognition(thesis, "MATIC/USD")
+
+		session.Planner().Decide(
+			thesis,
+			map[string]float64{"MATIC/USD": 0.0026, "HOLD/USD": 0.0026},
+			0,
+			1,
+			0,
+		)
+
+		Convey("Then Decide waits instead of rotating", func() {
+			sawWait := false
+
+			for _, decision := range thesis.Decisions {
+				So(decision.Action, ShouldNotEqual, "exit")
+
+				if decision.Symbol == "MATIC/USD" && decision.Action == "enter" {
+					So(false, ShouldBeTrue)
+				}
+
+				if decision.Symbol == "MATIC/USD" && decision.Cause == "rotate_wait" {
+					sawWait = true
+				}
+			}
+
+			So(sawWait, ShouldBeTrue)
+		})
+	})
+}
+
+/*
+TestSessionRunDecideUsesEmulatorFeesAndCapital exercises Crypto.Decide after
+Play so friction and quote capital come from the Conn-backed broker surfaces.
+*/
+func TestSessionRunDecideUsesEmulatorFeesAndCapital(t *testing.T) {
+	Convey("Given Played tape plus seeded fee and balance frames", t, func() {
+		session, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
+			Signals: pumpdumpSignals,
+		})
+		So(err, ShouldBeNil)
+
+		_, err = session.Play(conditions.Calm(8).Frames())
+		So(err, ShouldBeNil)
+
+		So(session.SeedTakerFee("MATIC/USD", 0.26), ShouldBeNil)
+		session.SeedQuoteCapital(5_000)
+
+		available, err := session.Balance().AvailableQuote()
+		So(err, ShouldBeNil)
+		So(available, ShouldEqual, 5_000)
+
+		thesis := types.NewThesis(nil, nil)
+		tests.SeedOpportunityForecast(thesis, "MATIC/USD", 0.12, 0.02)
+		tests.SeedEarlyCognition(thesis, "MATIC/USD")
+		// FrictionReady forecasts still need Price fee application via Decide.
+		thesis.Forecasts[0].FrictionReady = false
+
+		session.RunDecide(thesis)
+
+		Convey("Then Crypto.Decide applies fees and admits the ignition", func() {
+			So(thesis.Forecasts[0].FrictionReady, ShouldBeTrue)
+			So(thesis.Forecasts[0].ExpectedFees, ShouldEqual, 0.0026)
+
+			entered := false
+
+			for _, decision := range thesis.Decisions {
+				if decision.Symbol == "MATIC/USD" && decision.Action == "enter" {
+					entered = true
+					So(decision.AllocationClass, ShouldEqual, "reserved")
+				}
+			}
+
+			So(entered, ShouldBeTrue)
+		})
+	})
+}
+
+/*
+BenchmarkSessionPumpDecide measures Play + Decide on a pump condition.
+*/
+func BenchmarkSessionPumpDecide(b *testing.B) {
+	session, err := tests.NewSession(context.Background(), b, tests.SessionOptions{
+		Signals: pumpdumpSignals,
+	})
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		theses, playErr := session.Play(conditions.Pump(16, 8, 1.25, 6).Frames())
+
+		if playErr != nil {
+			b.Fatal(playErr)
+		}
+
+		thesis := types.NewThesis(nil, nil)
+		tests.SeedOpportunityForecast(thesis, "MATIC/USD", 0.12, 0.02)
+		tests.SeedEarlyCognition(thesis, "MATIC/USD")
+		_ = theses
+		session.Planner().Decide(
+			thesis,
+			map[string]float64{"MATIC/USD": 0.0026},
+			10_000,
+			2,
+			2,
+		)
+	}
+}
+
+func findThesisHolding(thesis *types.Thesis, symbol string) (types.Holding, bool) {
+	thesis.Holdings.Range(func(key, value any) bool {
+		holding := value.(types.Holding)
+		if holding.Symbol == symbol {
+			return false
+		}
+		return true
+	})
+
+	return types.Holding{}, false
+}

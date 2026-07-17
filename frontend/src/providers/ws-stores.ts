@@ -63,6 +63,18 @@ flat readings before the measurements store sees them.
 */
 export const applyFramePayload = (parsedData: Record<string, unknown>) => {
 	batch(() => {
+		if (parsedData.error !== undefined) {
+			const frame = parsedData.error;
+
+			if (
+				frame !== null &&
+				typeof frame === "object" &&
+				!Array.isArray(frame)
+			) {
+				appStore.actions.updateError(frame as Record<string, unknown>);
+			}
+		}
+
 		if (parsedData.tick !== undefined) {
 			frameStores.tick.actions.updateFrame(parsedData.tick);
 		}
@@ -81,7 +93,7 @@ export const applyFramePayload = (parsedData: Record<string, unknown>) => {
 		}
 
 		for (const [key, data] of Object.entries(parsedData)) {
-			if (key === "measurements" || key === "tick") {
+			if (key === "measurements" || key === "tick" || key === "error") {
 				continue;
 			}
 

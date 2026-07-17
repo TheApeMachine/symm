@@ -7,7 +7,11 @@ import { paletteGroupVariant } from "#/components/terminal/badge-tone";
 import { Badge } from "@/components/ui/badge";
 
 const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
-	{ id: "dashboard", label: "Dashboard", hint: "Fluid field · live decisions" },
+	{
+		id: "dashboard",
+		label: "Dashboard",
+		hint: "Pilot-wave field · live decisions",
+	},
 	{ id: "signals", label: "Signal insight", hint: "Per-kernel forensics" },
 	{ id: "decisions", label: "Decision tree", hint: "Gate-by-gate trace" },
 	{

@@ -73,8 +73,9 @@ func (instrument *Instrument) On(data []byte) {
 		return
 	}
 
-	for _, pair := range frame.Data.Pairs {
-		instrument.cache.Store(pair.Symbol, pair)
+	for index := range frame.Data.Pairs {
+		pair := frame.Data.Pairs[index]
+		instrument.cache.Store(pair.Symbol, &pair)
 	}
 
 	if slices.Contains([]types.Status{
@@ -106,7 +107,7 @@ func (instrument *Instrument) Pairs() []kraken.InstrumentPair {
 	pairs := make([]kraken.InstrumentPair, 0)
 
 	instrument.cache.Range(func(key, value any) bool {
-		pairs = append(pairs, value.(kraken.InstrumentPair))
+		pairs = append(pairs, *value.(*kraken.InstrumentPair))
 		return true
 	})
 
@@ -120,18 +121,18 @@ func (instrument *Instrument) Pairs() []kraken.InstrumentPair {
 /*
 Pair returns the cached instrument metadata for the symbol, if known.
 */
-func (instrument *Instrument) Pair(symbol string) (kraken.InstrumentPair, error) {
+func (instrument *Instrument) Pair(symbol string) (*kraken.InstrumentPair, error) {
 	value, ok := instrument.cache.Load(symbol)
 
 	if !ok {
-		return kraken.InstrumentPair{}, errnie.Error(errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.NotFound,
 			"trader: instrument pair not found",
 			nil,
 		))
 	}
 
-	return value.(kraken.InstrumentPair), nil
+	return value.(*kraken.InstrumentPair), nil
 }
 
 func (instrument *Instrument) Subscribe() error {
@@ -210,6 +211,9 @@ func (instrument *Instrument) Subscribe() error {
 /*
 subscribeRank orders majors ahead of the long USD tail so high-liquidity books
 and trades warm first under Kraken's subscribe pacing budget.
+
+ponytail: the fixed major-symbol ranking is only a bootstrap ceiling; live
+liquidity ranking or configuration-driven ordering is the intended upgrade path.
 */
 func subscribeRank(symbol string) int {
 	switch symbol {

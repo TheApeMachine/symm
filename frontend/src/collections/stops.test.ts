@@ -35,6 +35,28 @@ describe("normalizeStops", () => {
 		});
 	});
 
+	it("consumes numerical stop surfaces without legacy momentum fields", () => {
+		expect(
+			normalizeStops([
+				{
+					symbol: "NIGHT/USD",
+					stop_price: 0.027,
+					peak_return: 0.02,
+					stop_return: -0.01,
+					armed: true,
+				},
+			]),
+		).toMatchObject({
+			"NIGHT/USD": {
+				symbol: "NIGHT/USD",
+				stop_price: 0.027,
+				peak_return: 0.02,
+				stop_return: -0.01,
+				armed: true,
+			},
+		});
+	});
+
 	it("consumes array stop snapshots", () => {
 		expect(normalizeStops([stop])["XLM/USD"]?.stop_price).toBe(0.24);
 	});

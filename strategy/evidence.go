@@ -15,6 +15,8 @@ type Evidence struct {
 	Symbol               string
 	Mark                 float64
 	Entry                float64
+	ForecastEpoch        uint64
+	NormalizedResidual   float64
 	ExpectedReturn       float64
 	Uncertainty          float64
 	IncrementalMSE       float64
@@ -58,12 +60,16 @@ func Project(thesis *types.Thesis, holding types.Holding) Evidence {
 			continue
 		}
 
+		evidence.ForecastEpoch = forecast.SourceEpoch
 		evidence.ExpectedReturn = forecast.ExpectedReturn
 		evidence.Uncertainty = forecast.Uncertainty
 		evidence.IncrementalMSE = forecast.IncrementalMSE
 		evidence.ReturnReady = forecast.Ready && forecast.Calibrated
 		evidence.Spread = forecast.ExpectedSpread
 		evidence.SellCapacity = forecast.SellCapacity
+		evidence.NormalizedResidual = normalizedResidual(
+			evidence.IncrementalMSE, evidence.Uncertainty,
+		)
 	}
 
 	for index := len(thesis.Resonance) - 1; index >= 0; index-- {
@@ -77,6 +83,9 @@ func Project(thesis *types.Thesis, holding types.Holding) Evidence {
 		evidence.Uncertainty = outcome.Uncertainty
 		evidence.IncrementalMSE = outcome.IncrementalMSE
 		evidence.ReturnReady = outcome.ReturnReady
+		evidence.NormalizedResidual = normalizedResidual(
+			evidence.IncrementalMSE, evidence.Uncertainty,
+		)
 		break
 	}
 
@@ -110,9 +119,28 @@ func Project(thesis *types.Thesis, holding types.Holding) Evidence {
 			evidence.Spread = state.Spread / state.ReferencePrice
 			evidence.SellCapacity = state.SellCapacity
 		}
+
+		if ok && state.Epoch > 0 {
+			evidence.ForecastEpoch = state.Epoch
+		}
 	}
 
 	return evidence
+}
+
+/*
+normalizedResidual scales incremental forecast error by uncertainty so
+Stoploss can derive skill and blowout from one comparable statistic.
+
+ponytail: MSE-over-uncertainty is an interim σ-normalized residual; upgrade
+path is calibrated posterior σ from the resonance return head.
+*/
+func normalizedResidual(incrementalMSE, uncertainty float64) float64 {
+	if uncertainty <= 0 || incrementalMSE <= 0 {
+		return 0
+	}
+
+	return incrementalMSE / uncertainty
 }
 
 /*

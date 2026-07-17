@@ -164,18 +164,18 @@ func (signal *Signal) observeBook(data []byte) {
 increment resolves exchange tick size for direct replay. Central live book
 ingestion performs this enrichment before producing the shared market cut.
 */
-func (signal *Signal) increment(symbol string) decimal.Decimal {
+func (signal *Signal) increment(symbol string) *decimal.Decimal {
 	if signal.instrument == nil {
-		return *decimal.NewFromInt64(0)
+		return decimal.NewFromInt64(0)
 	}
 
 	pair, err := signal.instrument.Pair(symbol)
 
 	if err != nil {
-		return *decimal.NewFromInt64(0)
+		return decimal.NewFromInt64(0)
 	}
 
-	return pair.Increment()
+	return decimal.NewFromFloat64(pair.QtyIncrement)
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {

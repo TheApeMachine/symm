@@ -34,6 +34,8 @@ type Session struct {
 	crypto   *trader.Crypto
 	planner  *strategy.Planner
 	desk     *broker.Desk
+	price    *broker.Price
+	balance  *broker.Balance
 	channel  chan []byte
 	clock    time.Time
 	interval time.Duration
@@ -99,6 +101,12 @@ func NewSession(
 	api.On("instrument", instrument.On)
 
 	balance := broker.NewBalance(api, nil, channel)
+
+	if err := balance.Initialize(); err != nil {
+		cancel()
+		return nil, errnie.Err(errnie.Internal, "tests: balance initialize", err)
+	}
+
 	desk := broker.NewDesk(api, instrument, price, balance)
 
 	if err := desk.Initialize(); err != nil {
@@ -133,6 +141,7 @@ func NewSession(
 	}
 
 	planner := strategy.NewPlanner(sessionCtx, channel, signals, nil)
+	planner.Bind(strategy.NewAllocator(sessionCtx, balance, instrument, price))
 	tree := dmt.NewTree(testingTB.TempDir())
 	testingTB.Cleanup(func() {
 		errnie.Error(tree.Close())
@@ -176,6 +185,8 @@ func NewSession(
 		crypto:   crypto,
 		planner:  planner,
 		desk:     desk,
+		price:    price,
+		balance:  balance,
 		channel:  channel,
 		clock:    clock,
 		interval: interval,
@@ -295,10 +306,38 @@ func (session *Session) Desk() *broker.Desk {
 }
 
 /*
+Price exposes the broker fee/ticker surface for Decide friction seeding.
+*/
+func (session *Session) Price() *broker.Price {
+	return session.price
+}
+
+/*
+Balance exposes quote capital for AvailableQuote assertions after balance
+frames are emitted through the Conn emulator.
+*/
+func (session *Session) Balance() *broker.Balance {
+	return session.balance
+}
+
+/*
 Planner exposes the strategy planner wired into Crypto.Tick.
 */
 func (session *Session) Planner() *strategy.Planner {
 	return session.planner
+}
+
+/*
+RunDecide applies the same Plan path Crypto.Tick uses after a market Play, so
+reserved/rotate assertions can run on a thesis seeded from the emulator cut
+without requiring the GPU analyzer to invent forecasts.
+*/
+func (session *Session) RunDecide(thesis *types.Thesis) {
+	if session == nil || session.crypto == nil {
+		return
+	}
+
+	session.crypto.Plan(thesis)
 }
 
 /*

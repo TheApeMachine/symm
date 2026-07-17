@@ -1,15 +1,13 @@
 package broker
 
 import (
+	"slices"
 	"sync"
 	"sync/atomic"
-	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -24,6 +22,7 @@ type Desk struct {
 	maxReserved    int
 	publishPending atomic.Bool
 	bound          atomic.Bool
+	onInventory    atomic.Value
 }
 
 func NewDesk(
@@ -45,8 +44,8 @@ func NewDesk(
 }
 
 /*
-Initialize binds desk-level order/execution/ticker handlers once and
-subscribes to executions with catch-up snapshots so reconnect can recover.
+Initialize binds desk-level order/execution/ticker handlers once,
+subscribes to executions, and adopts Balance-seeded holdings from restart.
 */
 func (desk *Desk) Initialize() error {
 	errnie.Info("initializing desk")
@@ -63,6 +62,11 @@ func (desk *Desk) Initialize() error {
 	}
 
 	desk.status = types.READY
+
+	if desk.balance != nil {
+		desk.balance.Publish()
+	}
+
 	return nil
 }
 
@@ -71,81 +75,32 @@ func (desk *Desk) Status() types.Status {
 }
 
 /*
-bind registers the single fan-out handlers used by every live Position. Per
-position On registration was unbounded and raced under concurrent Buy.
+Update checks all positions and removes any that have been
+closed or errored.
 */
-func (desk *Desk) bind() {
-	if desk.api == nil || !desk.bound.CompareAndSwap(false, true) {
-		return
-	}
-
-	desk.api.On("add_order", desk.orderAck)
-	desk.api.On("executions", desk.executionAck)
-	desk.api.On("ticker", desk.tickerAck)
-}
-
-func (desk *Desk) orderAck(buf []byte) {
+func (desk *Desk) Update() {
 	desk.positions.Range(func(_, value any) bool {
 		position := value.(*Position)
-		position.OrderAck(buf)
 
-		if position.Status() == types.ERROR {
-			desk.evict(position.pair.Symbol)
+		if slices.Contains([]types.Status{
+			types.CLOSED, types.ERROR,
+		}, position.Status()) {
+			desk.balance.holdings.Delete(position.pair.Symbol)
+			desk.positions.Delete(position.pair.Symbol)
 		}
 
 		return true
 	})
-}
-
-func (desk *Desk) executionAck(buf []byte) {
-	desk.positions.Range(func(_, value any) bool {
-		position := value.(*Position)
-		position.ExecutionAck(buf)
-
-		status := position.Status()
-
-		if status == types.CLOSED || status == types.ERROR {
-			desk.evict(position.pair.Symbol)
-		}
-
-		return true
-	})
-}
-
-func (desk *Desk) tickerAck(buf []byte) {
-	desk.positions.Range(func(_, value any) bool {
-		position := value.(*Position)
-
-		if position.Status() == types.CLOSED || position.Status() == types.ERROR {
-			return true
-		}
-
-		position.TickerAck(buf)
-		return true
-	})
-}
-
-func (desk *Desk) evict(symbol string) {
-	if symbol == "" {
-		return
-	}
-
-	desk.positions.Delete(symbol)
 }
 
 /*
 OpenPositions counts live (non-terminal) positions that still occupy a slot.
 */
 func (desk *Desk) OpenPositions() int {
+	desk.Update()
 	count := 0
 
 	desk.positions.Range(func(_, value any) bool {
-		status := value.(*Position).Status()
-
-		if status == types.CLOSED || status == types.ERROR {
-			return true
-		}
-
 		count++
 		return true
 	})
@@ -153,56 +108,27 @@ func (desk *Desk) OpenPositions() int {
 	return count
 }
 
-/*
-Holdings yields open inventory currently managed by the desk so Decide can seed
-continuation/exit against broker truth rather than an empty Thesis.
-*/
-func (desk *Desk) Holdings() []types.Holding {
-	if desk == nil || desk.balance == nil {
-		return nil
-	}
-
-	rows := make([]types.Holding, 0)
-
-	desk.positions.Range(func(key, value any) bool {
-		position := value.(*Position)
-		status := position.Status()
-
-		if status == types.CLOSED || status == types.ERROR {
-			return true
-		}
-
-		holding, err := desk.balance.Holding(key.(string))
-
-		if err != nil {
-			return true
-		}
-
-		if holding.Order == nil {
-			holding.Order = &spot.Order{
-				Description: &spot.OrderDescription{
-					Pair: holding.Symbol,
-					Type: "open",
-				},
-			}
-		}
-
-		rows = append(rows, holding)
-		return true
-	})
-
-	return rows
-}
-
 func (desk *Desk) Buy(
 	holding types.Holding,
 	opportunity bool,
-) error {
+) (*Position, error) {
+	return desk.BuyAfter(holding, opportunity, 0)
+}
+
+/*
+BuyAfter places an entry while treating freeing same-tick full exits as already
+vacated slots so rotate can sell then buy before the exit fill lands.
+*/
+func (desk *Desk) BuyAfter(
+	holding types.Holding,
+	opportunity bool,
+	freeing int,
+) (*Position, error) {
 	desk.bind()
-	openPositions := desk.OpenPositions()
+	openPositions := max(desk.OpenPositions()-freeing, 0)
 
 	if openPositions >= desk.maxPositions+desk.maxReserved {
-		return errnie.Error(errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.Forbidden,
 			"desk at max positions and reserved",
 			nil,
@@ -210,7 +136,7 @@ func (desk *Desk) Buy(
 	}
 
 	if openPositions >= desk.maxPositions && !opportunity {
-		return errnie.Error(errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.Forbidden,
 			"desk at max positions",
 			nil,
@@ -218,7 +144,7 @@ func (desk *Desk) Buy(
 	}
 
 	if _, exists := desk.positions.Load(holding.Symbol); exists {
-		return errnie.Error(errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.Forbidden,
 			"position already exists for "+holding.Symbol,
 			nil,
@@ -228,7 +154,7 @@ func (desk *Desk) Buy(
 	pair, err := desk.instrument.Pair(holding.Symbol)
 
 	if err != nil {
-		return errnie.Error(errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to get instrument pair for "+holding.Symbol,
 			err,
@@ -240,7 +166,7 @@ func (desk *Desk) Buy(
 		desk.instrument,
 		desk.price,
 		desk.balance,
-		&pair,
+		pair,
 	)
 	position.onTerminal = desk.evict
 
@@ -250,28 +176,15 @@ func (desk *Desk) Buy(
 	if err := position.Enter(); err != nil {
 		desk.balance.holdings.Delete(holding.Symbol)
 		desk.positions.Delete(holding.Symbol)
-		return err
-	}
 
-	return nil
-}
-
-/*
-Sell submits the selected exit through the Position already associated with
-the order symbol, preserving one lifecycle across entry and exit.
-*/
-func (desk *Desk) Sell(holding types.Holding) error {
-	position, ok := desk.positions.Load(holding.Symbol)
-
-	if !ok || position == nil {
-		return errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"position not found for "+holding.Symbol,
-			nil,
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to enter position",
+			err,
 		))
 	}
 
-	return position.(*Position).Exit()
+	return position, nil
 }
 
 func (desk *Desk) Close() error {
@@ -279,7 +192,15 @@ func (desk *Desk) Close() error {
 }
 
 func (desk *Desk) HasSlot(opportunity bool) bool {
-	openPositions := desk.OpenPositions()
+	return desk.HasSlotAfter(opportunity, 0)
+}
+
+/*
+HasSlotAfter reports whether an enter fits after counting same-tick full exits
+as freed capacity — required for rotate to clear the slot ceiling in one tick.
+*/
+func (desk *Desk) HasSlotAfter(opportunity bool, freeing int) bool {
+	openPositions := max(desk.OpenPositions()-freeing, 0)
 
 	if openPositions >= desk.maxPositions+desk.maxReserved {
 		return false
@@ -325,58 +246,4 @@ func (desk *Desk) ReservedSlots() int {
 	}
 
 	return desk.maxReserved
-}
-
-/*
-Regulate feeds each open position's Stoploss from Thesis logic Evidence and
-appends exit Decisions when stop or take_profit fires. Trade remains the sole
-order submission path so exits stay auditable on the Thesis.
-*/
-func (desk *Desk) Regulate(thesis *types.Thesis) {
-	if desk == nil || thesis == nil || desk.balance == nil {
-		return
-	}
-
-	desk.positions.Range(func(key, value any) bool {
-		position := value.(*Position)
-		status := position.Status()
-
-		if status == types.CLOSED || status == types.ERROR || status == types.PENDING {
-			return true
-		}
-
-		holding, err := desk.balance.Holding(key.(string))
-
-		if err != nil {
-			return true
-		}
-
-		evidence := strategy.Project(thesis, holding)
-		verdict := position.Regulate(evidence)
-
-		if verdict.Action != "stop" && verdict.Action != "take_profit" {
-			return true
-		}
-
-		quantity := 0.0
-
-		if holding.Qty != nil {
-			quantity = holding.Qty.Float64()
-		}
-
-		thesis.Decisions = append(thesis.Decisions, types.Decision{
-			Action:           "exit",
-			Symbol:           holding.Symbol,
-			At:               time.Now().UTC(),
-			Utility:          verdict.StopReturn,
-			Alternatives:     map[string]float64{verdict.Action: verdict.StopReturn},
-			ProposedQuantity: quantity,
-			ReferencePrice:   evidence.Mark,
-			Cause:            verdict.Action,
-			Reason:           verdict.Reason,
-		})
-		thesis.Lifecycle.Store(holding.Symbol, types.LifecycleExitSelected)
-
-		return true
-	})
 }

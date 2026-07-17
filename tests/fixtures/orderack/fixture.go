@@ -16,7 +16,7 @@ var fixtureFiles embed.FS
 Options parameterize one private add_order acknowledgement frame.
 */
 type Options struct {
-	ReqID   int
+	ReqID   int64
 	OrderID string
 	Success bool
 }

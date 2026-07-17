@@ -9,7 +9,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/tests"
 )
 
 func resetFluidConfig() {
@@ -150,7 +149,7 @@ func TestFluidBookSnapshotWithExchangeIncrement(t *testing.T) {
 
 		row := rows[0]
 		row.Type = "snapshot"
-		row.PriceIncrement = tests.Decimal(t, "0.0001")
+		row.PriceIncrement = decimal.NewFromFloat64(0.0001)
 
 		registry := NewSyncRegistry()
 		book := NewBook(registry)

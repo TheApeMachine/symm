@@ -14,58 +14,80 @@ import (
 )
 
 var (
-	authNonceOnce sync.Once
-	authNonceFn   func() string
-	authHighWater atomic.Int64
-	authPersistMu sync.Mutex
-	authLastWrite time.Time
+	processNonce     *AuthNonce
+	processNonceOnce sync.Once
+	processNonceErr  error
 )
 
 /*
-authNonce returns the process-wide Kraken REST nonce generator.
-
-Private and Level3 Live transports share one API key. Nonces must be strictly
-increasing for that key across process restarts: boot-time concurrent token
-fetches can run an in-memory counter ahead of wall clock, so the next start
-would otherwise reuse a lower value and Kraken rejects it with
-EAPI:Invalid nonce. A persisted high-water plus an atomic increment keeps
-every authenticated REST call monotonic for the key.
+AuthNonce issues strictly increasing Kraken REST nonces backed by a storage
+path. Private and Level3 transports share one process instance so concurrent
+token fetches cannot collide; tests construct isolated generators per TempDir.
 */
-func authNonce() func() string {
-	authNonceOnce.Do(func() {
-		path := noncePath()
-		highWater := loadNonce(path)
-		seed := time.Now().UnixNano()
-
-		if seed <= highWater {
-			seed = highWater + 1
-		}
-
-		authHighWater.Store(seed - 1)
-
-		authNonceFn = func() string {
-			next := authHighWater.Add(1)
-			persistNonce(path, next)
-
-			return strconv.FormatInt(next, 10)
-		}
-	})
-
-	return authNonceFn
+type AuthNonce struct {
+	path      string
+	highWater atomic.Int64
+	persistMu sync.Mutex
+	lastWrite time.Time
 }
 
 /*
-bumpAuthNonce jumps the high-water mark by one second of nanoseconds after an
-Invalid nonce rejection so the retry clears anything Kraken still holds, then
-persists so the next process start does not repeat the collision.
+NewAuthNonce seeds a generator from pathDir/kraken-auth-nonce. A missing file
+is the valid zero state; other read or parse failures abort construction so
+authentication cannot proceed on corrupt high-water state.
 */
-func bumpAuthNonce() {
-	authNonce()
-	next := authHighWater.Add(int64(time.Second))
-	persistNonceAbsolute(noncePath(), next)
+func NewAuthNonce(pathDir string) (*AuthNonce, error) {
+	path := filepath.Join(pathDir, "kraken-auth-nonce")
+	highWater, err := loadNonce(path)
+
+	if err != nil {
+		return nil, err
+	}
+
+	seed := time.Now().UnixNano()
+
+	if seed <= highWater {
+		seed = highWater + 1
+	}
+
+	nonce := &AuthNonce{path: path}
+	nonce.highWater.Store(seed - 1)
+
+	return nonce, nil
 }
 
-func noncePath() string {
+/*
+Next returns the next monotonic nonce string and persists the high-water mark.
+*/
+func (nonce *AuthNonce) Next() string {
+	next := nonce.highWater.Add(1)
+	nonce.persist(next, false)
+
+	return strconv.FormatInt(next, 10)
+}
+
+/*
+Bump jumps the high-water by one second of nanoseconds after an Invalid nonce
+rejection so the retry clears anything Kraken still holds, then persists.
+*/
+func (nonce *AuthNonce) Bump() {
+	next := nonce.highWater.Add(int64(time.Second))
+	nonce.persist(next, true)
+}
+
+/*
+processAuthNonce returns the process-wide generator shared by authenticated
+Live transports. Construction errors prevent REST Nonce wiring and auth.
+*/
+func processAuthNonce() (*AuthNonce, error) {
+	processNonceOnce.Do(func() {
+		processNonce, processNonceErr = NewAuthNonce(nonceDir())
+	})
+
+	return processNonce, processNonceErr
+}
+
+func nonceDir() string {
 	dataPath := strings.TrimSpace(viper.GetString("system.data_path"))
 
 	if strings.HasPrefix(dataPath, "~/") {
@@ -80,45 +102,79 @@ func noncePath() string {
 		home, err := os.UserHomeDir()
 
 		if err != nil {
-			return filepath.Join(os.TempDir(), "symm-kraken-auth-nonce")
+			return os.TempDir()
 		}
 
 		dataPath = filepath.Join(home, ".symm", "data")
 	}
 
-	return filepath.Join(dataPath, "kraken-auth-nonce")
+	return dataPath
 }
 
-func loadNonce(path string) int64 {
+/*
+loadNonce reads a persisted high-water. Missing files yield zero; other IO,
+parse, negative, or overflow failures return a descriptive error.
+*/
+func loadNonce(path string) (int64, error) {
 	body, err := os.ReadFile(path)
 
 	if err != nil {
-		return 0
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.IO,
+			"websocket: failed to read auth nonce",
+			err,
+		))
 	}
 
 	value, err := strconv.ParseInt(strings.TrimSpace(string(body)), 10, 64)
 
-	if err != nil || value < 0 {
-		return 0
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"websocket: invalid auth nonce value",
+			err,
+		))
 	}
 
-	return value
+	if value < 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"websocket: auth nonce must not be negative",
+			nil,
+		))
+	}
+
+	return value, nil
 }
 
-func persistNonce(path string, value int64) {
-	authPersistMu.Lock()
-	defer authPersistMu.Unlock()
+/*
+persist serializes every high-water write through persistMu, including absolute
+bumps, so concurrent writers cannot regress the stored value.
+*/
+func (nonce *AuthNonce) persist(value int64, force bool) {
+	nonce.persistMu.Lock()
+	defer nonce.persistMu.Unlock()
 
-	if time.Since(authLastWrite) < 50*time.Millisecond && value%128 != 0 {
+	if !force && time.Since(nonce.lastWrite) < 50*time.Millisecond && value%128 != 0 {
 		return
 	}
 
-	authLastWrite = time.Now()
-	persistNonceAbsolute(path, value)
+	nonce.lastWrite = time.Now()
+	nonce.writeAtomic(value)
 }
 
-func persistNonceAbsolute(path string, value int64) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+/*
+writeAtomic writes and syncs the nonce to a temporary file, then renames it into
+place so a crash cannot leave a truncated high-water file.
+*/
+func (nonce *AuthNonce) writeAtomic(value int64) {
+	dir := filepath.Dir(nonce.path)
+
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.IO,
 			"websocket: failed to create nonce directory",
@@ -128,11 +184,58 @@ func persistNonceAbsolute(path string, value int64) {
 		return
 	}
 
-	if err := os.WriteFile(
-		path,
-		[]byte(strconv.FormatInt(value, 10)+"\n"),
-		0o600,
-	); err != nil {
+	temporary, err := os.CreateTemp(dir, "kraken-auth-nonce-*.tmp")
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"websocket: failed to create nonce temp file",
+			err,
+		))
+
+		return
+	}
+
+	temporaryPath := temporary.Name()
+	payload := []byte(strconv.FormatInt(value, 10) + "\n")
+
+	if _, err := temporary.Write(payload); err != nil {
+		temporary.Close()
+		os.Remove(temporaryPath)
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"websocket: failed to write auth nonce",
+			err,
+		))
+
+		return
+	}
+
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		os.Remove(temporaryPath)
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"websocket: failed to sync auth nonce",
+			err,
+		))
+
+		return
+	}
+
+	if err := temporary.Close(); err != nil {
+		os.Remove(temporaryPath)
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"websocket: failed to close auth nonce temp file",
+			err,
+		))
+
+		return
+	}
+
+	if err := os.Rename(temporaryPath, nonce.path); err != nil {
+		os.Remove(temporaryPath)
 		errnie.Error(errnie.Err(
 			errnie.IO,
 			"websocket: failed to persist auth nonce",

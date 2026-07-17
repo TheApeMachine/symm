@@ -4,20 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
 	gorillawebsocket "github.com/gorilla/websocket"
-	"github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/krakenfx/api-go/v2/pkg/callback"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -30,27 +23,28 @@ const (
 )
 
 /*
-Live is the spot websocket and REST transport.
+Live is the spot websocket and REST transport. Authentication, reconnect
+replay, and callback wiring are owned by the composed Transport.
 */
 type Live struct {
-	status       atomic.Value
-	ctx          context.Context
-	cancel       context.CancelFunc
-	client       *spot.WebSocket
-	sync         *sync.Map
-	paper        *Paper
-	simulator    *Simulator
-	auth         bool
-	books        *spot.BookManager
-	bookMu       sync.RWMutex
-	isLevel3     bool
-	symbols      []string
-	reconnectMu  sync.Mutex
-	reconnectFns []func()
+	status    atomic.Value
+	ctx       context.Context
+	cancel    context.CancelFunc
+	client    *spot.WebSocket
+	sync      *sync.Map
+	paper     *Paper
+	simulator *Simulator
+	books     *spot.BookManager
+	bookMu    sync.RWMutex
+	level3    *level3Apply
+	isLevel3  bool
+	symbols   []string
+	transport *Transport
 }
 
 /*
-New opens a spot websocket transport.
+New opens a spot websocket transport and delegates lifecycle wiring to
+Transport so connect, auth, and replay stay out of the construction path.
 */
 func New(
 	ctx context.Context,
@@ -59,6 +53,7 @@ func New(
 	endpoint string,
 ) *Live {
 	ctx, cancel := context.WithCancel(ctx)
+	transport := NewTransport(auth)
 
 	live := &Live{
 		ctx:       ctx,
@@ -66,281 +61,31 @@ func New(
 		simulator: simulator,
 		client:    spot.NewWebSocket(),
 		sync:      &sync.Map{},
-		auth:      auth,
+		transport: transport,
 	}
 	live.status.Store(types.INITIALIZING)
-
 	live.client.URL = endpoint
 
 	if endpoint == Level3WebSocketURL {
 		live.isLevel3 = true
+		configureLevel3(live)
 	}
 
-	if live.auth {
-		live.client.REST.PublicKey = os.Getenv("KRAKEN_API_KEY")
-		live.client.REST.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
-		// Private and every Level3 batch authenticate with the same key; they
-		// must share one monotonic nonce sequence or concurrent token fetches
-		// collide (EAPI:Invalid nonce).
-		live.client.REST.Nonce = authNonce()
-	}
-
-	if live.isLevel3 {
-		live.books = spot.NewBookManager()
-		live.books.OnCreateBook.Recurring(func(event *callback.Event[*book.Book]) {
-			managed := event.Data
-
-			// Kraken frames are atomic, so depth cannot be enforced per order.
-			managed.EnableMaxDepth = false
-			managed.NoBookCrossing = false
-			managed.OnChecksummed.Recurring(
-				func(*callback.Event[*book.ChecksumResult]) {
-					managed.EnforceDepth()
-				},
-			)
-		})
-	}
-
-	live.client.OnSent.Recurring(func(event *callback.Event[*kraken.WebSocketMessage]) {
-		if err := live.updateLevel3(event); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"websocket: level3 book update failed: "+err.Error(),
-				err,
-			))
-		}
-	})
-
-	live.client.OnReceived.Recurring(func(event *callback.Event[*kraken.WebSocketMessage]) {
-		if err := live.updateLevel3(event); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"websocket: level3 "+utils.GetString(
-					event.Data.Bytes(), "type",
-				)+" failed: "+err.Error(),
-				err,
-			))
-		}
-
-		live.route(event.Data.Bytes())
-	})
-
-	live.client.OnConnected.Recurring(func(event *callback.Event[any]) {
-		if !live.auth {
-			live.fireReconnect()
-			live.status.Store(types.READY)
-			return
-		}
-
-		if errnie.Error(live.authenticate()) != nil {
-			live.status.Store(types.ERROR)
-		}
-	})
-
-	if live.auth {
-		live.client.OnAuthenticated.Recurring(func(event *callback.Event[string]) {
-			if live.isLevel3 && len(live.symbols) > 0 && live.SubscribeLevel3(
-				live.symbols,
-				viper.GetInt("market.l3_depth"),
-			) != nil {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"websocket: level3 book subscription failed",
-					nil,
-				))
-			}
-
-			live.fireReconnect()
-			live.status.Store(types.READY)
-		})
-	}
+	transport.wireCredentials(live.client)
+	transport.bindCallbacks(live)
 
 	return live
 }
 
 /*
-authenticate fetches a websocket token. An Invalid nonce rejection bumps the
-persisted high-water and retries once so reconnect storms after a crash do not
-leave the transport permanently in ERROR.
+OnReconnect registers a reconnect replay callback on the composed Transport.
 */
-func (live *Live) authenticate() error {
-	err := live.client.Authenticate()
-
-	if err == nil {
-		return nil
-	}
-
-	if !strings.Contains(err.Error(), "Invalid nonce") {
-		return err
-	}
-
-	bumpAuthNonce()
-
-	return live.client.Authenticate()
-}
-
-/*
-OnReconnect registers a callback invoked after public connect or private
-authentication so subscription intent can be replayed.
-*/
-func (live *Live) OnReconnect(fn func()) {
-	if live == nil || fn == nil {
+func (live *Live) OnReconnect(fn func() error) {
+	if live == nil || live.transport == nil {
 		return
 	}
 
-	live.reconnectMu.Lock()
-	live.reconnectFns = append(live.reconnectFns, fn)
-	live.reconnectMu.Unlock()
-}
-
-func (live *Live) fireReconnect() {
-	live.reconnectMu.Lock()
-	callbacks := append([]func(){}, live.reconnectFns...)
-	live.reconnectMu.Unlock()
-
-	for _, callback := range callbacks {
-		callback()
-	}
-}
-
-/*
-SubscribeLevel3 sends the configured depth explicitly because the SDK's depth
-argument is not included in its level3 subscription payload.
-*/
-func (live *Live) SubscribeLevel3(symbols []string, depth int) error {
-	return live.client.SubPrivate("level3", map[string]any{
-		"params": map[string]any{
-			"symbol": symbols,
-			"depth":  depth,
-		},
-	})
-}
-
-/*
-updateLevel3 applies one complete websocket message before truncating affected
-books, preserving Kraken's atomic L3 message boundary. The write lease excludes
-PeekBook readers so Side.Levels is never ranged while the SDK mutates it.
-*/
-func (live *Live) updateLevel3(
-	event *callback.Event[*kraken.WebSocketMessage],
-) error {
-	if !live.isLevel3 || live.books == nil {
-		return nil
-	}
-
-	live.bookMu.Lock()
-	defer live.bookMu.Unlock()
-
-	return live.books.Update(event)
-}
-
-/*
-peekBook calls fn while holding the Level3 read lease for this transport.
-*/
-func (live *Live) peekBook(symbol string, fn func(*book.Book)) bool {
-	if live == nil || live.books == nil || fn == nil || symbol == "" {
-		return false
-	}
-
-	live.bookMu.RLock()
-	defer live.bookMu.RUnlock()
-
-	symbolBook := live.books.GetBook(symbol)
-
-	if symbolBook == nil {
-		return false
-	}
-
-	fn(symbolBook)
-
-	return true
-}
-
-/*
-ApplyLevel3 feeds one raw Level3 websocket payload through the write lease.
-*/
-func (live *Live) ApplyLevel3(payload []byte) error {
-	if live == nil {
-		return nil
-	}
-
-	if len(payload) == 0 {
-		return errnie.Err(
-			errnie.Validation,
-			"websocket: level3 payload is empty",
-			nil,
-		)
-	}
-
-	return live.updateLevel3(&callback.Event[*kraken.WebSocketMessage]{
-		Data: kraken.NewWebSocketMessage(payload),
-	})
-}
-
-/*
-SeedTouchDecimals installs a two-sided L3 touch using exact decimal prices.
-*/
-func (live *Live) SeedTouchDecimals(
-	symbol string,
-	bid *decimal.Decimal,
-	ask *decimal.Decimal,
-	quantity float64,
-	at time.Time,
-) {
-	if live == nil || live.books == nil || symbol == "" || bid == nil || ask == nil {
-		return
-	}
-
-	live.bookMu.Lock()
-	defer live.bookMu.Unlock()
-
-	symbolBook := live.books.GetBook(symbol)
-
-	if symbolBook == nil {
-		symbolBook = live.books.CreateBook(symbol, 10)
-		symbolBook.EnableMaxDepth = false
-		symbolBook.NoBookCrossing = false
-	}
-
-	quantityDecimal := decimal.NewFromFloat64(quantity)
-	symbolBook.Update(&book.UpdateOptions{
-		Direction: book.Bid,
-		ID:        "seed-bid",
-		Price:     bid,
-		Quantity:  quantityDecimal,
-		Timestamp: at,
-	})
-	symbolBook.Update(&book.UpdateOptions{
-		Direction: book.Ask,
-		ID:        "seed-ask",
-		Price:     ask,
-		Quantity:  quantityDecimal,
-		Timestamp: at,
-	})
-}
-
-/*
-SeedTouch installs a two-sided L3 touch for symbol under the write lease so
-toxicity harness tests can PeekBook without checksummed fixture replay.
-*/
-func (live *Live) SeedTouch(
-	symbol string,
-	bid float64,
-	ask float64,
-	quantity float64,
-	at time.Time,
-) {
-	if live == nil || live.books == nil || symbol == "" {
-		return
-	}
-
-	live.SeedTouchDecimals(
-		symbol,
-		decimal.NewFromFloat64(bid),
-		decimal.NewFromFloat64(ask),
-		quantity,
-		at,
-	)
+	live.transport.OnReconnect(fn)
 }
 
 func (live *Live) Initialize() error {
@@ -357,6 +102,7 @@ func (live *Live) Initialize() error {
 	}
 
 	live.status.Store(types.READY)
+
 	return nil
 }
 
@@ -520,8 +266,10 @@ func (live *Live) do(options spot.RequestOptions) ([]byte, error) {
 func (live *Live) Get(
 	path string, params json.Marshaler,
 ) ([]byte, error) {
+	auth := live.transport != nil && live.transport.auth
+
 	return live.do(spot.RequestOptions{
-		Auth:   live.auth,
+		Auth:   auth,
 		Path:   path,
 		Method: "GET",
 		Query:  params,
@@ -531,8 +279,10 @@ func (live *Live) Get(
 func (live *Live) Post(
 	path string, params json.Marshaler,
 ) ([]byte, error) {
+	auth := live.transport != nil && live.transport.auth
+
 	return live.do(spot.RequestOptions{
-		Auth:   live.auth,
+		Auth:   auth,
 		Path:   path,
 		Method: "POST",
 		Body:   params,

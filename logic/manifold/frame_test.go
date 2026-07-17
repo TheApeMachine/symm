@@ -37,8 +37,8 @@ func TestParticlesFromOscillators(t *testing.T) {
 
 	particle := particles[0]
 
-	if particle.Role != "whale_carrier" {
-		t.Fatalf("role = %q, want whale_carrier", particle.Role)
+	if particle.Role != "particle" {
+		t.Fatalf("role = %q, want particle", particle.Role)
 	}
 
 	if particle.CellX != 8 || particle.CellY != 1 || particle.CellZ != 4 {

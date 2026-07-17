@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	terminalFluidDisplayLatticeFromFrame,
 	terminalFluidMatrixFromFrame,
 	terminalFluidParticlesFromFrame,
 } from "./charts";
@@ -10,7 +11,7 @@ describe("terminalFluidParticlesFromFrame", () => {
 			particles: [
 				{
 					source: "fluid",
-					role: "whale_carrier",
+					role: "particle",
 					cell_x: 7,
 					cell_y: 2,
 					cell_z: 5,
@@ -30,7 +31,7 @@ describe("terminalFluidParticlesFromFrame", () => {
 		expect(particles).toEqual([
 			{
 				source: "fluid",
-				role: "whale_carrier",
+				role: "particle",
 				cellX: 7,
 				cellY: 2,
 				cellZ: 5,
@@ -52,6 +53,25 @@ describe("terminalFluidParticlesFromFrame", () => {
 		});
 
 		expect(particles).toEqual([]);
+	});
+});
+
+describe("terminalFluidDisplayLatticeFromFrame", () => {
+	it("prefers psiMag2 for the painted cloud", () => {
+		const psiMag2 = [
+			[0.5, 0.1],
+			[0, 0.4],
+		];
+
+		expect(
+			terminalFluidDisplayLatticeFromFrame({
+				rho: [
+					[0, 0.2],
+					[0.1, 0.3],
+				],
+				psiMag2,
+			}),
+		).toEqual(psiMag2);
 	});
 });
 

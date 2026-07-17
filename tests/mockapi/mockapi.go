@@ -61,6 +61,10 @@ func (conn *MockConn) On(channel string, action func([]byte)) {
 
 /*
 Write is a no-op transport write for emulator parity.
+
+ponytail: requests are broadly accepted even though the REST client supports
+only two endpoints; configurable failures and request/response fixtures are
+the upgrade path.
 */
 func (conn *MockConn) Write(params json.Marshaler) error {
 	return nil
@@ -75,6 +79,10 @@ func (conn *MockConn) Close() {
 
 /*
 Post records the REST call and returns the configured response.
+
+ponytail: requests are broadly accepted even though the REST client supports
+only two endpoints; configurable failures and request/response fixtures are
+the upgrade path.
 */
 func (conn *MockConn) Post(path string, params json.Marshaler) ([]byte, error) {
 	conn.postPath = path
@@ -210,7 +218,7 @@ func (mock *MockAPI) SetTradeVolumeResponse(tradeVolume *kraken.TradeVolume) err
 /*
 LastTradeVolumeSymbols returns the pair list from the latest TradeVolume post.
 */
-func (mock *MockAPI) LastTradeVolumeSymbols() []string {
+func (mock *MockAPI) LastTradeVolumeSymbols() ([]string, error) {
 	for index := len(mock.private.postCalls) - 1; index >= 0; index-- {
 		call := mock.private.postCalls[index]
 
@@ -221,13 +229,13 @@ func (mock *MockAPI) LastTradeVolumeSymbols() []string {
 		symbols, err := tradeVolumeSymbols(call.Params)
 
 		if err != nil {
-			return nil
+			return nil, err
 		}
 
-		return symbols
+		return symbols, nil
 	}
 
-	return nil
+	return nil, nil
 }
 
 func tradeVolumeSymbols(params json.Marshaler) ([]string, error) {

@@ -25,8 +25,8 @@ import (
 func TestNewSetsAuthURL(t *testing.T) {
 	Convey("Given an authenticated live transport", t, func() {
 		live := &Live{
-			client: spot.NewWebSocket(),
-			auth:   true,
+			client:    spot.NewWebSocket(),
+			transport: NewTransport(true),
 		}
 		live.status.Store(types.INITIALIZING)
 		live.client.URL = PrivateWebSocketURL
@@ -331,6 +331,10 @@ func TestAuthNonceIsSharedAcrossAuthenticatedLives(t *testing.T) {
 	Convey("Given concurrent authenticated Live transports", t, func() {
 		const workers = 32
 		const perWorker = 64
+		shared, err := processAuthNonce()
+		So(err, ShouldBeNil)
+		So(shared, ShouldNotBeNil)
+
 		seen := make(map[string]struct{}, workers*perWorker)
 		duplicates := 0
 		var mu sync.Mutex
@@ -342,7 +346,7 @@ func TestAuthNonceIsSharedAcrossAuthenticatedLives(t *testing.T) {
 				defer wait.Done()
 
 				for range perWorker {
-					nonce := authNonce()()
+					nonce := shared.Next()
 					mu.Lock()
 
 					if _, exists := seen[nonce]; exists {
@@ -371,10 +375,10 @@ func TestAuthNonceIsSharedAcrossAuthenticatedLives(t *testing.T) {
 			So(private.client.REST.Nonce, ShouldNotBeNil)
 			So(level3.client.REST.Nonce, ShouldNotBeNil)
 
-			first, err := strconv.ParseInt(private.client.REST.Nonce(), 10, 64)
-			So(err, ShouldBeNil)
-			second, err := strconv.ParseInt(level3.client.REST.Nonce(), 10, 64)
-			So(err, ShouldBeNil)
+			first, parseErr := strconv.ParseInt(private.client.REST.Nonce(), 10, 64)
+			So(parseErr, ShouldBeNil)
+			second, parseErr := strconv.ParseInt(level3.client.REST.Nonce(), 10, 64)
+			So(parseErr, ShouldBeNil)
 			So(second, ShouldBeGreaterThan, first)
 		})
 	})

@@ -27,6 +27,7 @@ type Market struct {
 	tickersIn  chan []byte
 	tradesIn   chan []byte
 	booksIn    chan []byte
+	resyncIn   chan string
 }
 
 /*
@@ -34,6 +35,7 @@ NewMarket creates the central public feed and registers exactly one handler per
 Kraken stream so decoding and retention are not repeated by every signal.
 */
 func NewMarket(
+	ctx context.Context,
 	api *websocket.API,
 	instrument *broker.Instrument,
 ) (*Market, error) {
@@ -64,7 +66,7 @@ func NewMarket(
 		))
 	}
 
-	market.bindIngress(api)
+	market.bindIngress(ctx, api)
 
 	return market, nil
 }
@@ -167,7 +169,7 @@ func (market *Market) OnBook(data []byte) {
 			continue
 		}
 
-		if !pair.HasIncrement() {
+		if pair.PriceIncrement.Sign() <= 0 {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"market: positive price increment required for "+row.Symbol,
@@ -176,7 +178,7 @@ func (market *Market) OnBook(data []byte) {
 			continue
 		}
 
-		row.PriceIncrement = pair.Increment()
+		row.PriceIncrement = &pair.PriceIncrement
 
 		if err := market.books.Observe(
 			row.Symbol,
@@ -190,7 +192,7 @@ func (market *Market) OnBook(data []byte) {
 			))
 
 			if market.api != nil {
-				errnie.Error(market.api.ResyncBook([]string{row.Symbol}))
+				market.scheduleBookResync(row.Symbol)
 			}
 
 			continue

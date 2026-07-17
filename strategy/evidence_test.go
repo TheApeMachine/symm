@@ -49,6 +49,38 @@ func TestProjectPrefersResonanceOverForecast(t *testing.T) {
 }
 
 /*
+TestProjectForecastEpochFromSourceEpoch copies forecast provenance onto Evidence.
+*/
+func TestProjectForecastEpochFromSourceEpoch(t *testing.T) {
+	t.Parallel()
+
+	thesis := types.NewThesis(nil, nil)
+	thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
+		Symbol:         "AAA/USD",
+		SourceEpoch:    42,
+		ExpectedReturn: 0.01,
+		Uncertainty:    0.02,
+		IncrementalMSE: 0.01,
+		Ready:          true,
+		Calibrated:     true,
+	})
+
+	evidence := Project(thesis, types.Holding{
+		Symbol:     "AAA/USD",
+		Mark:       decimal.NewFromFloat64(110),
+		EntryPrice: decimal.NewFromFloat64(100),
+	})
+
+	if evidence.ForecastEpoch != 42 {
+		t.Fatalf("forecast epoch: want 42, got %v", evidence.ForecastEpoch)
+	}
+
+	if evidence.NormalizedResidual != 0.5 {
+		t.Fatalf("normalized residual: want 0.5, got %v", evidence.NormalizedResidual)
+	}
+}
+
+/*
 TestProjectAbsentWithoutMark freezes Present when inventory lacks a mark.
 */
 func TestProjectAbsentWithoutMark(t *testing.T) {

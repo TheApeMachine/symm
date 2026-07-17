@@ -5,16 +5,18 @@ export type Stop = {
 	stop_price: number;
 	peak_return: number;
 	stop_return: number;
-	momentum: number;
-	peak_momentum: number;
-	momentum_floor: number;
-	momentum_health: number;
-	momentum_active: boolean;
-	peak_touch_count: number;
-	stagnation_max_touches: number;
-	stagnation_health: number;
-	stagnation_pending: boolean;
-	stagnation_active: boolean;
+	armed?: boolean;
+	peak_price?: number;
+	momentum?: number;
+	peak_momentum?: number;
+	momentum_floor?: number;
+	momentum_health?: number;
+	momentum_active?: boolean;
+	peak_touch_count?: number;
+	stagnation_max_touches?: number;
+	stagnation_health?: number;
+	stagnation_pending?: boolean;
+	stagnation_active?: boolean;
 };
 
 type StopFrame = Record<string, unknown>;
@@ -42,13 +44,19 @@ const requiredFinite = (value: unknown, path: string): number => {
 	throw new TypeError(`${path} must be finite`);
 };
 
-const requiredBoolean = (value: unknown, path: string): boolean => {
-	if (typeof value === "boolean") {
-		return value;
-	}
+const optionalFinite = (value: unknown): number | undefined => {
+	const number =
+		typeof value === "number"
+			? value
+			: typeof value === "string" && value.trim().length > 0
+				? Number(value)
+				: Number.NaN;
 
-	throw new TypeError(`${path} must be boolean`);
+	return Number.isFinite(number) ? number : undefined;
 };
+
+const optionalBoolean = (value: unknown): boolean | undefined =>
+	typeof value === "boolean" ? value : undefined;
 
 const parseStop = (value: unknown, index: number): Stop => {
 	const path = `stops[${index}]`;
@@ -63,40 +71,18 @@ const parseStop = (value: unknown, index: number): Stop => {
 		stop_price: requiredFinite(frame.stop_price, `${path}.stop_price`),
 		peak_return: requiredFinite(frame.peak_return, `${path}.peak_return`),
 		stop_return: requiredFinite(frame.stop_return, `${path}.stop_return`),
-		momentum: requiredFinite(frame.momentum, `${path}.momentum`),
-		peak_momentum: requiredFinite(frame.peak_momentum, `${path}.peak_momentum`),
-		momentum_floor: requiredFinite(
-			frame.momentum_floor,
-			`${path}.momentum_floor`,
-		),
-		momentum_health: requiredFinite(
-			frame.momentum_health,
-			`${path}.momentum_health`,
-		),
-		momentum_active: requiredBoolean(
-			frame.momentum_active,
-			`${path}.momentum_active`,
-		),
-		peak_touch_count: requiredFinite(
-			frame.peak_touch_count,
-			`${path}.peak_touch_count`,
-		),
-		stagnation_max_touches: requiredFinite(
-			frame.stagnation_max_touches,
-			`${path}.stagnation_max_touches`,
-		),
-		stagnation_health: requiredFinite(
-			frame.stagnation_health,
-			`${path}.stagnation_health`,
-		),
-		stagnation_pending: requiredBoolean(
-			frame.stagnation_pending,
-			`${path}.stagnation_pending`,
-		),
-		stagnation_active: requiredBoolean(
-			frame.stagnation_active,
-			`${path}.stagnation_active`,
-		),
+		armed: optionalBoolean(frame.armed),
+		peak_price: optionalFinite(frame.peak_price),
+		momentum: optionalFinite(frame.momentum),
+		peak_momentum: optionalFinite(frame.peak_momentum),
+		momentum_floor: optionalFinite(frame.momentum_floor),
+		momentum_health: optionalFinite(frame.momentum_health),
+		momentum_active: optionalBoolean(frame.momentum_active),
+		peak_touch_count: optionalFinite(frame.peak_touch_count),
+		stagnation_max_touches: optionalFinite(frame.stagnation_max_touches),
+		stagnation_health: optionalFinite(frame.stagnation_health),
+		stagnation_pending: optionalBoolean(frame.stagnation_pending),
+		stagnation_active: optionalBoolean(frame.stagnation_active),
 	};
 };
 

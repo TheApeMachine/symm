@@ -4,7 +4,7 @@ import { resonanceStore } from "#/collections/resonance";
 import { terminalStore } from "#/collections/terminal";
 import {
 	fluidGridDimensions,
-	terminalFluidMatrixFromFrame,
+	terminalFluidDisplayLatticeFromFrame,
 } from "#/components/terminal/charts";
 import {
 	isFluidFieldMatrix,
@@ -13,7 +13,7 @@ import {
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 
 /*
-LiveManifoldMeta paints fluid-density canvas metadata without React reconciliation.
+LiveManifoldMeta paints pilot-wave canvas metadata without React reconciliation.
 */
 export const LiveManifoldMeta = ({ focusSymbol }: { focusSymbol: string }) => {
 	const gridRef = useRef<HTMLDivElement>(null);
@@ -27,15 +27,10 @@ export const LiveManifoldMeta = ({ focusSymbol }: { focusSymbol: string }) => {
 				manifoldStore.state.manifold[focusSymbol]?.values().at(-1) ?? null;
 			const contour = terminalStore.state.fieldStyle === "Contour";
 			const waiting = manifold === null;
-			const matrix = terminalFluidMatrixFromFrame(manifold);
-			const { columns, rows } = fluidGridDimensions(
-				manifold,
-				isFluidFieldMatrix(matrix) ? matrix : [],
-			);
-			const stats = terminalFluidFieldStats(
-				isFluidFieldMatrix(matrix) ? matrix : [],
-				contour,
-			);
+			const display = terminalFluidDisplayLatticeFromFrame(manifold);
+			const field = isFluidFieldMatrix(display) ? display : [];
+			const { columns, rows } = fluidGridDimensions(manifold, field);
+			const stats = terminalFluidFieldStats(field, contour);
 
 			if (waitingRef.current !== null) {
 				waitingRef.current.style.display = waiting ? "" : "none";

@@ -18,7 +18,7 @@ func TestThesisMarshalJSON(t *testing.T) {
 		thesis := NewThesis(nil, nil)
 		thesis.Tick = 47
 		thesis.SetUIProjection("BTC/USD", SourceFluid)
-		thesis.Positions = append(thesis.Positions, Holding{
+		thesis.Holdings.Store("BTC/USD", Holding{
 			Symbol: "BTC/USD", Asset: "BTC", Qty: decimal.NewFromFloat64(0.25),
 		})
 		thesis.CrossSection.Metrics = append(thesis.CrossSection.Metrics, SymbolMetric{
@@ -43,10 +43,13 @@ func TestThesisMarshalJSON(t *testing.T) {
 		err = sonic.Unmarshal(encoded, restored)
 
 		Convey("It should restore the tick and its live state containers", func() {
+			found, ok := restored.Holdings.Load("BTC/USD")
+			So(ok, ShouldBeTrue)
+			
 			So(err, ShouldBeNil)
 			So(restored.Tick, ShouldEqual, 47)
 			So(restored.Positions, ShouldHaveLength, 1)
-			So(restored.Positions[0].Qty.Float64(), ShouldEqual, 0.25)
+			So(found.(Holding).Qty.Float64(), ShouldEqual, 0.25)
 			So(restored.CrossSection.Metrics, ShouldHaveLength, 1)
 			So(restored.CrossSection.index["BTC/USD"], ShouldEqual, 0)
 			lifecycle, lifecycleFound := restored.Lifecycle.Load("BTC/USD")
@@ -68,7 +71,7 @@ BenchmarkThesisMarshalJSON measures the checkpoint encoding used once per tick.
 func BenchmarkThesisMarshalJSON(b *testing.B) {
 	thesis := NewThesis(nil, nil)
 	thesis.Tick = 47
-	thesis.Positions = append(thesis.Positions, Holding{
+	thesis.Holdings.Store("BTC/USD", Holding{
 		Symbol: "BTC/USD", Asset: "BTC", Qty: decimal.NewFromFloat64(0.25),
 	})
 	thesis.Lifecycle.Store("BTC/USD", LifecycleEntered)
