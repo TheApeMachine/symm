@@ -23,6 +23,7 @@ func PeakMetric(
 ) (float64, bool) {
 	peak := 0.0
 	found := false
+	initialized := false
 
 	for _, thesis := range theses {
 		if thesis == nil {
@@ -35,6 +36,12 @@ func PeakMetric(
 			}
 
 			found = true
+
+			if !initialized {
+				peak = measurement.Raw
+				initialized = true
+				continue
+			}
 
 			if measurement.Raw > peak {
 				peak = measurement.Raw
@@ -80,6 +87,7 @@ func PeakSourceMetricTail(
 	start := int(float64(len(theses)) * skipFraction)
 	peak := 0.0
 	found := false
+	initialized := false
 
 	for _, thesis := range theses[start:] {
 		if thesis == nil {
@@ -94,6 +102,12 @@ func PeakSourceMetricTail(
 			}
 
 			found = true
+
+			if !initialized {
+				peak = measurement.Raw
+				initialized = true
+				continue
+			}
 
 			if measurement.Raw > peak {
 				peak = measurement.Raw

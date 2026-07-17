@@ -9,6 +9,8 @@ import (
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 )
 
+const speedLimitTolerance = 1e-9
+
 /*
 inject installs the forced authoritative L3 carriers so PIC deposits each
 carrier's mass and momentum together on the next solver step.
@@ -125,6 +127,14 @@ func applyForcing(
 		if err != nil {
 			return 0, 0, err
 		}
+
+		if scale > 0 && !withinSpeedLimit(characteristicSpeed, speedLimit) {
+			return 0, 0, errnie.Err(
+				errnie.Validation,
+				"manifold: forced carrier speed exceeds Courant bound",
+				nil,
+			)
+		}
 	}
 
 	if characteristicSpeed <= 0 {
@@ -182,7 +192,9 @@ func rescaleImpulse(
 	}
 
 	if characteristicSpeed <= speedLimit {
-		return characteristicSpeed, scale, nil
+		if withinSpeedLimit(characteristicSpeed, speedLimit) {
+			return characteristicSpeed, scale, nil
+		}
 	}
 
 	scale *= speedLimit / characteristicSpeed
@@ -193,7 +205,83 @@ func rescaleImpulse(
 
 	characteristicSpeed, err = boundSpeed(config, oscillators)
 
-	return characteristicSpeed, scale, err
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if withinSpeedLimit(characteristicSpeed, speedLimit) {
+		return characteristicSpeed, scale, nil
+	}
+
+	return bisectImpulseScale(
+		config,
+		oscillators,
+		bases,
+		increments,
+		speedLimit,
+		scale,
+	)
+}
+
+/*
+bisectImpulseScale shrinks a uniform impulse scale until boundSpeed respects
+the event-time Courant limit within speedLimitTolerance.
+*/
+func bisectImpulseScale(
+	config pmanifold.Config,
+	oscillators []pmanifold.Oscillator,
+	bases []float64,
+	increments []float64,
+	speedLimit float64,
+	upperScale float64,
+) (characteristicSpeed float64, scale float64, err error) {
+	low := 0.0
+	high := upperScale
+
+	if high <= 0 {
+		high = 1
+	}
+
+	for range 64 {
+		mid := (low + high) / 2
+
+		for index := range oscillators {
+			oscillators[index].VelX = bases[index] + mid*increments[index]
+		}
+
+		speed, boundErr := boundSpeed(config, oscillators)
+
+		if boundErr != nil {
+			return 0, 0, boundErr
+		}
+
+		if speed > speedLimit {
+			high = mid
+			continue
+		}
+
+		low = mid
+		characteristicSpeed = speed
+		scale = mid
+	}
+
+	if !withinSpeedLimit(characteristicSpeed, speedLimit) {
+		return 0, 0, errnie.Err(
+			errnie.Validation,
+			"manifold: rescaled impulse still exceeds Courant bound",
+			nil,
+		)
+	}
+
+	return characteristicSpeed, scale, nil
+}
+
+/*
+withinSpeedLimit reports whether a rarefaction speed respects the Courant cap
+within floating-point tolerance.
+*/
+func withinSpeedLimit(speed float64, speedLimit float64) bool {
+	return speed <= speedLimit*(1+speedLimitTolerance)
 }
 
 /*

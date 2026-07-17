@@ -198,11 +198,11 @@ func sessionSignals(
 
 func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 	Convey("Given CVD inside a paper Session market", testingTB, func() {
-		calmSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		calmSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)
-		hotSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		hotSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)
@@ -223,11 +223,9 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 			)
 
 			Convey("Then buy aggression lifts drive versus calm sells", func() {
+				So(hasCalm, ShouldBeTrue)
 				So(hasHot, ShouldBeTrue)
-
-				if hasCalm {
-					So(hot, ShouldBeGreaterThan, calm)
-				}
+				So(hot, ShouldBeGreaterThan, calm)
 			})
 		})
 	})

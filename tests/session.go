@@ -38,7 +38,7 @@ type Session struct {
 	clock    time.Time
 	interval time.Duration
 	tree     *dmt.Tree
-	level3   *websocket.Live
+	books    *SessionLevel3
 }
 
 /*
@@ -68,46 +68,20 @@ type SessionOptions struct {
 /*
 NewSession builds a paper stack against temporary data and cognitive paths.
 */
-func NewSession(testingTB testing.TB, options SessionOptions) (*Session, error) {
+func NewSession(
+	ctx context.Context,
+	testingTB testing.TB,
+	options SessionOptions,
+) (*Session, error) {
 	testingTB.Helper()
 
-	previousModel := viper.Get("trading.model")
-	previousData := viper.Get("system.data_path")
-	previousTimeline := viper.Get("signals.feed_timeline_capacity")
-	previousTrack := viper.Get("signals.feed_track_capacity")
-	previousSlots := viper.Get("trading.slots.normal")
-	previousReserved := viper.Get("trading.slots.reserved")
-	previousQuote := viper.Get("market.quote_currency")
-	previousBatch := viper.Get("market.subscribe_batch")
-	previousPace := viper.Get("market.subscribe_pace")
+	restoreViper := configureSessionViper(testingTB)
+	testingTB.Cleanup(restoreViper)
 
-	testingTB.Cleanup(func() {
-		viper.Set("trading.model", previousModel)
-		viper.Set("system.data_path", previousData)
-		viper.Set("signals.feed_timeline_capacity", previousTimeline)
-		viper.Set("signals.feed_track_capacity", previousTrack)
-		viper.Set("trading.slots.normal", previousSlots)
-		viper.Set("trading.slots.reserved", previousReserved)
-		viper.Set("market.quote_currency", previousQuote)
-		viper.Set("market.subscribe_batch", previousBatch)
-		viper.Set("market.subscribe_pace", previousPace)
-	})
-
-	dataPath := testingTB.TempDir()
-	viper.Set("trading.model", "paper")
-	viper.Set("system.data_path", dataPath)
-	viper.Set("signals.feed_timeline_capacity", 128)
-	viper.Set("signals.feed_track_capacity", 128)
-	viper.Set("trading.slots.normal", 2)
-	viper.Set("trading.slots.reserved", 2)
-	viper.Set("market.quote_currency", "USD")
-	viper.Set("market.subscribe_batch", 200)
-	viper.Set("market.subscribe_pace", "20ms")
-
-	ctx, cancel := context.WithCancel(context.Background())
+	sessionCtx, cancel := context.WithCancel(ctx)
 	channel := make(chan []byte, 256)
 	mock := NewMockAPI()
-	api, paper, err := mock.Wire(ctx)
+	api, paper, err := mock.Wire(sessionCtx)
 
 	if err != nil {
 		cancel()
@@ -122,9 +96,6 @@ func NewSession(testingTB testing.TB, options SessionOptions) (*Session, error) 
 	}
 
 	instrument := broker.NewInstrument(api, price, channel)
-	// Register the handler without SubscribeInstruments — the mock Conn has no
-	// live socket write path. Conditions prefix an instrument snapshot so Pair()
-	// resolves before book frames arrive.
 	api.On("instrument", instrument.On)
 
 	balance := broker.NewBalance(api, nil, channel)
@@ -144,14 +115,13 @@ func NewSession(testingTB testing.TB, options SessionOptions) (*Session, error) 
 		)
 	}
 
-	var level3 *websocket.Live
+	var books *SessionLevel3
 
 	if options.Level3 {
-		level3 = websocket.New(ctx, nil, true, websocket.Level3WebSocketURL)
-		api.AttachLevel3(level3)
+		books = NewSessionLevel3(sessionCtx, api)
 	}
 
-	signals := options.Signals(ctx, api, instrument, channel)
+	signals := options.Signals(sessionCtx, api, instrument, channel)
 
 	if len(signals) == 0 {
 		cancel()
@@ -162,27 +132,22 @@ func NewSession(testingTB testing.TB, options SessionOptions) (*Session, error) 
 		)
 	}
 
-	planner := strategy.NewPlanner(ctx, channel, signals, nil)
+	planner := strategy.NewPlanner(sessionCtx, channel, signals, nil)
 	tree := dmt.NewTree(testingTB.TempDir())
 	testingTB.Cleanup(func() {
 		errnie.Error(tree.Close())
 	})
 
-	thesis := types.NewThesis(channel, nil)
-	booter := system.NewBooter(ctx, channel)
-	crypto, err := trader.NewCrypto(
-		ctx,
-		booter,
+	crypto, err := wireSessionCrypto(
+		sessionCtx,
 		api,
 		price,
 		balance,
 		desk,
 		instrument,
-		nil,
 		planner,
 		tree,
-		thesis,
-		nil,
+		channel,
 	)
 
 	if err != nil {
@@ -203,7 +168,7 @@ func NewSession(testingTB testing.TB, options SessionOptions) (*Session, error) 
 	}
 
 	session := &Session{
-		ctx:      ctx,
+		ctx:      sessionCtx,
 		cancel:   cancel,
 		mock:     mock,
 		api:      api,
@@ -215,7 +180,7 @@ func NewSession(testingTB testing.TB, options SessionOptions) (*Session, error) 
 		clock:    clock,
 		interval: interval,
 		tree:     tree,
-		level3:   level3,
+		books:    books,
 	}
 
 	testingTB.Cleanup(func() {
@@ -223,6 +188,70 @@ func NewSession(testingTB testing.TB, options SessionOptions) (*Session, error) 
 	})
 
 	return session, nil
+}
+
+func configureSessionViper(testingTB testing.TB) func() {
+	previousModel := viper.Get("trading.model")
+	previousData := viper.Get("system.data_path")
+	previousTimeline := viper.Get("signals.feed_timeline_capacity")
+	previousTrack := viper.Get("signals.feed_track_capacity")
+	previousSlots := viper.Get("trading.slots.normal")
+	previousReserved := viper.Get("trading.slots.reserved")
+	previousQuote := viper.Get("market.quote_currency")
+	previousBatch := viper.Get("market.subscribe_batch")
+	previousPace := viper.Get("market.subscribe_pace")
+
+	viper.Set("trading.model", "paper")
+	viper.Set("system.data_path", testingTB.TempDir())
+	viper.Set("signals.feed_timeline_capacity", 128)
+	viper.Set("signals.feed_track_capacity", 128)
+	viper.Set("trading.slots.normal", 2)
+	viper.Set("trading.slots.reserved", 2)
+	viper.Set("market.quote_currency", "USD")
+	viper.Set("market.subscribe_batch", 200)
+	viper.Set("market.subscribe_pace", "20ms")
+
+	return func() {
+		viper.Set("trading.model", previousModel)
+		viper.Set("system.data_path", previousData)
+		viper.Set("signals.feed_timeline_capacity", previousTimeline)
+		viper.Set("signals.feed_track_capacity", previousTrack)
+		viper.Set("trading.slots.normal", previousSlots)
+		viper.Set("trading.slots.reserved", previousReserved)
+		viper.Set("market.quote_currency", previousQuote)
+		viper.Set("market.subscribe_batch", previousBatch)
+		viper.Set("market.subscribe_pace", previousPace)
+	}
+}
+
+func wireSessionCrypto(
+	ctx context.Context,
+	api *websocket.API,
+	price *broker.Price,
+	balance *broker.Balance,
+	desk *broker.Desk,
+	instrument *broker.Instrument,
+	planner *strategy.Planner,
+	tree *dmt.Tree,
+	channel chan []byte,
+) (*trader.Crypto, error) {
+	thesis := types.NewThesis(channel, nil)
+	booter := system.NewBooter(ctx, channel)
+
+	return trader.NewCrypto(
+		ctx,
+		booter,
+		api,
+		price,
+		balance,
+		desk,
+		instrument,
+		nil,
+		planner,
+		tree,
+		thesis,
+		nil,
+	)
 }
 
 /*
@@ -280,10 +309,10 @@ func (session *Session) Paper() *websocket.Paper {
 }
 
 /*
-Clock returns the next virtual cut time.
+Level3 exposes harness Level3 books when enabled.
 */
-func (session *Session) Clock() time.Time {
-	return session.clock
+func (session *Session) Level3() *SessionLevel3 {
+	return session.books
 }
 
 /*
@@ -292,35 +321,12 @@ handlers (Market, Price, …). Level3 frames are applied under the Session L3
 write lease when Level3 was enabled.
 */
 func (session *Session) Emit(frame Frame) {
-	if frame.Channel == "level3" && session.level3 != nil {
-		session.level3.ApplyLevel3(frame.Payload)
+	if frame.Channel == "level3" && session.books != nil {
+		errnie.Error(session.books.Apply(frame.Payload))
 		return
 	}
 
 	session.mock.Emit(frame)
-}
-
-/*
-Level3Enabled reports whether PeekBook-backed books are attached.
-*/
-func (session *Session) Level3Enabled() bool {
-	return session.level3 != nil
-}
-
-/*
-SeedTouch installs a two-sided L3 quote for toxicity Session tests.
-*/
-func (session *Session) SeedTouch(
-	symbol string,
-	bid float64,
-	ask float64,
-	quantity float64,
-) {
-	if session == nil || session.level3 == nil {
-		return
-	}
-
-	session.level3.SeedTouch(symbol, bid, ask, quantity, session.clock)
 }
 
 /*
@@ -356,7 +362,8 @@ func (session *Session) Play(frames iter.Seq[Frame]) ([]*types.Thesis, error) {
 			continue
 		}
 
-		thesis, err := session.tickNow()
+		thesis, err := session.crypto.Tick(session.clock)
+		session.clock = session.clock.Add(session.interval)
 
 		if err != nil {
 			return theses, err
@@ -369,13 +376,12 @@ func (session *Session) Play(frames iter.Seq[Frame]) ([]*types.Thesis, error) {
 		}
 	}
 
-	// Flush only when no ticker-driven tick completed, so trailing book/trade
-	// frames alone cannot replace a measured thesis with an empty quote cut.
 	if !pending || len(theses) > 0 {
 		return theses, nil
 	}
 
-	thesis, err := session.tickNow()
+	thesis, err := session.crypto.Tick(session.clock)
+	session.clock = session.clock.Add(session.interval)
 
 	if err != nil {
 		return theses, err
@@ -386,11 +392,4 @@ func (session *Session) Play(frames iter.Seq[Frame]) ([]*types.Thesis, error) {
 	}
 
 	return theses, nil
-}
-
-func (session *Session) tickNow() (*types.Thesis, error) {
-	thesis, err := session.crypto.Tick(session.clock)
-	session.clock = session.clock.Add(session.interval)
-
-	return thesis, err
 }

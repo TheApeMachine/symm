@@ -216,12 +216,62 @@ func (live *Live) peekBook(symbol string, fn func(*book.Book)) bool {
 ApplyLevel3 feeds one raw Level3 websocket payload through the write lease.
 */
 func (live *Live) ApplyLevel3(payload []byte) error {
-	if live == nil || len(payload) == 0 {
+	if live == nil {
 		return nil
+	}
+
+	if len(payload) == 0 {
+		return errnie.Err(
+			errnie.Validation,
+			"websocket: level3 payload is empty",
+			nil,
+		)
 	}
 
 	return live.updateLevel3(&callback.Event[*kraken.WebSocketMessage]{
 		Data: kraken.NewWebSocketMessage(payload),
+	})
+}
+
+/*
+SeedTouchDecimals installs a two-sided L3 touch using exact decimal prices.
+*/
+func (live *Live) SeedTouchDecimals(
+	symbol string,
+	bid *decimal.Decimal,
+	ask *decimal.Decimal,
+	quantity float64,
+	at time.Time,
+) {
+	if live == nil || live.books == nil || symbol == "" || bid == nil || ask == nil {
+		return
+	}
+
+	live.bookMu.Lock()
+	defer live.bookMu.Unlock()
+
+	symbolBook := live.books.GetBook(symbol)
+
+	if symbolBook == nil {
+		symbolBook = live.books.CreateBook(symbol, 10)
+		symbolBook.EnableMaxDepth = false
+		symbolBook.NoBookCrossing = false
+	}
+
+	quantityDecimal := decimal.NewFromFloat64(quantity)
+	symbolBook.Update(&book.UpdateOptions{
+		Direction: book.Bid,
+		ID:        "seed-bid",
+		Price:     bid,
+		Quantity:  quantityDecimal,
+		Timestamp: at,
+	})
+	symbolBook.Update(&book.UpdateOptions{
+		Direction: book.Ask,
+		ID:        "seed-ask",
+		Price:     ask,
+		Quantity:  quantityDecimal,
+		Timestamp: at,
 	})
 }
 
@@ -240,31 +290,13 @@ func (live *Live) SeedTouch(
 		return
 	}
 
-	live.bookMu.Lock()
-	defer live.bookMu.Unlock()
-
-	symbolBook := live.books.GetBook(symbol)
-
-	if symbolBook == nil {
-		symbolBook = live.books.CreateBook(symbol, 10)
-		symbolBook.EnableMaxDepth = false
-		symbolBook.NoBookCrossing = false
-	}
-
-	symbolBook.Update(&book.UpdateOptions{
-		Direction: book.Bid,
-		ID:        "seed-bid",
-		Price:     decimal.NewFromFloat64(bid),
-		Quantity:  decimal.NewFromFloat64(quantity),
-		Timestamp: at,
-	})
-	symbolBook.Update(&book.UpdateOptions{
-		Direction: book.Ask,
-		ID:        "seed-ask",
-		Price:     decimal.NewFromFloat64(ask),
-		Quantity:  decimal.NewFromFloat64(quantity),
-		Timestamp: at,
-	})
+	live.SeedTouchDecimals(
+		symbol,
+		decimal.NewFromFloat64(bid),
+		decimal.NewFromFloat64(ask),
+		quantity,
+		at,
+	)
 }
 
 func (live *Live) Initialize() error {

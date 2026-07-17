@@ -26,6 +26,7 @@ import {
 } from "#/components/terminal/cognitive-entropy";
 import { fixed } from "#/components/terminal/decision-format";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { Flex } from "@/components/ui/flex";
 import { Meter } from "@/components/ui/meter";
 import { Panel } from "@/components/ui/panel";
 import type { Variant } from "@/components/ui/types";
@@ -478,12 +479,12 @@ export const CognitiveBeam = ({ symbol }: { symbol?: string }) => {
 			<div className="mt-2 font-mono text-[9.5px] text-(--f4)">
 				DMT sequence
 			</div>
-			<div
+			<Flex
 				className="mt-1 line-clamp-3 wrap-break-word rounded-sm border border-(--line) bg-(--bg) p-1.5 font-mono text-[10px] text-(--f2)"
 				title={model.sequenceTitle}
 			>
 				{model.sequence}
-			</div>
+			</Flex>
 
 			<div className="mt-3 flex flex-col gap-2.5">
 				{model.meters.map((meter) => (

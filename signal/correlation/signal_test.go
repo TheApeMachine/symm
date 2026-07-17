@@ -23,11 +23,11 @@ func sessionSignals(
 
 func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 	Convey("Given correlation inside a paper Session cohort market", testingTB, func() {
-		herdSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		herdSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)
-		noiseSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		noiseSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)
@@ -58,19 +58,17 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 			)
 
 			Convey("Then herd and noise paths diverge directionally", func() {
-				So(hasHerd || hasNoise, ShouldBeTrue)
-
-				if hasHerd && hasNoise {
-					So(herd+1, ShouldBeGreaterThan, noiseOnHerd)
-					So(noise+1, ShouldBeGreaterThan, 0)
-				}
+				So(hasHerd, ShouldBeTrue)
+				So(hasNoise, ShouldBeTrue)
+				So(herd, ShouldBeGreaterThan, noiseOnHerd)
+				So(noise, ShouldBeGreaterThan, noiseOnHerd)
 			})
 		})
 	})
 }
 
 func BenchmarkSignal_MeasureFromMarket(benchmark *testing.B) {
-	session, err := tests.NewSession(benchmark, tests.SessionOptions{
+	session, err := tests.NewSession(context.Background(), benchmark, tests.SessionOptions{
 		Signals: sessionSignals,
 	})
 

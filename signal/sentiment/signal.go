@@ -59,6 +59,8 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		return nil
 	}
 
+	signal.Publish(measurements)
+
 	return measurements
 }
 
@@ -201,7 +203,6 @@ func (signal *Signal) Calculate(
 		out = append(out, measurements...)
 	}
 
-	signal.Publish(out)
 	return out, nil
 }
 

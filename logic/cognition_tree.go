@@ -37,6 +37,9 @@ func (analyzer *Analyzer) cognitionVisualization(
 	// Sequence depth is what Cortex labels as maxHops. Beam search must not
 	// reuse that depth: measurement cardinality is not a lookahead horizon.
 	maxHops = cognitionSequenceDepth(parts)
+	// ponytail: cognitionBeams uses maxHops=1 on purpose. Beam search must not
+	// reuse sequence depth as a lookahead horizon; one hop is the current cap
+	// until measurement-cardinality-driven multi-hop search is wired in.
 	beams, lookaheadScore, lookaheadPaths = analyzer.cognitionBeams(
 		parent, beamWidth, 1, predictions,
 	)

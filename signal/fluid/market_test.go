@@ -30,7 +30,7 @@ driveFluidPath feeds ticker, book, and optional aggressive trades that warm
 the fluid grid. MATIC Level2 Session books cannot configure the exchange tick
 for fluid, so falsifiers use BTC/USD with PriceIncrement set.
 */
-func driveFluidPath(aggressive bool) []*types.Measurement {
+func driveFluidPath(aggressive bool) ([]*types.Measurement, error) {
 	symbolConfigValue.Store(nil)
 	signal := NewSignal(context.Background(), nil, nil, nil)
 	at := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
@@ -70,10 +70,12 @@ func driveFluidPath(aggressive bool) []*types.Measurement {
 			ticker.ChangePct = float64(index) * 0.5
 		}
 
-		_, _ = signal.Calculate(&types.MarketFrame{
+		if _, err := signal.Calculate(&types.MarketFrame{
 			Tickers:      []kraken.TickerData{ticker},
 			CrossSection: types.NewCrossSection(),
-		})
+		}); err != nil {
+			return out, err
+		}
 
 		row := fixture.snapshot(bid, bidQty, ask, askQty)
 		row.Timestamp = stamp
@@ -99,13 +101,13 @@ func driveFluidPath(aggressive bool) []*types.Measurement {
 		})
 
 		if err != nil {
-			continue
+			return out, err
 		}
 
 		out = append(out, measurements...)
 	}
 
-	return out
+	return out, nil
 }
 
 /*
@@ -143,7 +145,7 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 		})
 		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
 
-		session, err := tests.NewSession(testingTB, tests.SessionOptions{
+		session, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)
@@ -152,8 +154,10 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 			_, err := session.Play(conditions.Decay(16, 0, 0.9).Frames())
 			So(err, ShouldBeNil)
 
-			calm := driveFluidPath(false)
-			stressed := driveFluidPath(true)
+			calm, err := driveFluidPath(false)
+			So(err, ShouldBeNil)
+			stressed, err := driveFluidPath(true)
+			So(err, ShouldBeNil)
 
 			calmViscosity, hasCalm := peakFluidMetric(calm, types.MetricViscosity)
 			stressViscosity, hasStress := peakFluidMetric(
@@ -200,18 +204,22 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 			Volume:    1_000,
 			Timestamp: stamp,
 		}
-		_, _ = signal.Calculate(&types.MarketFrame{
+		if _, err := signal.Calculate(&types.MarketFrame{
 			Tickers:      []kraken.TickerData{ticker},
 			CrossSection: types.NewCrossSection(),
-		})
+		}); err != nil {
+			benchmark.Fatal(err)
+		}
 		row := fixture.snapshot(99.5, 20-float64(index), 100.5, 10)
 		row.Timestamp = stamp
 		row.PriceIncrement = *krakendecimal.NewFromFloat64(0.01)
-		_, _ = signal.Calculate(&types.MarketFrame{
+		if _, err := signal.Calculate(&types.MarketFrame{
 			Tickers:      []kraken.TickerData{ticker},
 			Books:        []kraken.BookData{row},
 			CrossSection: types.NewCrossSection(),
-		})
+		}); err != nil {
+			benchmark.Fatal(err)
+		}
 	}
 
 	stamp := at.Add(time.Second)
@@ -235,6 +243,8 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _ = signal.Calculate(frame)
+		if _, err := signal.Calculate(frame); err != nil {
+			benchmark.Fatal(err)
+		}
 	}
 }

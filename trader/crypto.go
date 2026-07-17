@@ -132,14 +132,14 @@ func (crypto *Crypto) Run() error {
 
 	if viper.GetBool("system.audit.rotate_on_boot") {
 		if err := audit.Rotate(auditPath); err != nil {
-			errnie.Error(err)
+			return err
 		}
 	}
 
 	recorder, recorderErr := audit.NewRecorder(auditPath)
 
 	if recorderErr != nil {
-		errnie.Error(recorderErr)
+		return recorderErr
 	}
 
 	crypto.planner.SetRecorder(recorder)

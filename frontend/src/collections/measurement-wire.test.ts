@@ -76,4 +76,35 @@ describe("expandWireMeasurements", () => {
 		expect(readings[0]?.metric).toBe("strength");
 		expect(readings[0]?.raw).toBe(0.11);
 	});
+
+	it("skips compact and flat rows with missing identity fields", () => {
+		expect(
+			expandWireMeasurements([
+				{
+					source: "",
+					symbol: "BTC/USD",
+					at: "2026-07-17T09:00:00Z",
+					metrics: { strength: 0.5 },
+				},
+				{
+					source: "sentiment",
+					symbol: "BTC/USD",
+					metrics: { strength: 0.5 },
+				},
+				{
+					source: "leadlag",
+					metric: "strength",
+					symbol: "BTC/USD",
+					raw: 0.11,
+				},
+				{
+					source: "leadlag",
+					metric: "strength",
+					symbol: "BTC/USD",
+					at: "2026-07-17T09:00:00Z",
+					raw: Number.NaN,
+				},
+			]),
+		).toEqual([]);
+	});
 });

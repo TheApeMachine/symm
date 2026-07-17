@@ -103,8 +103,8 @@ func TestAPIBooks(t *testing.T) {
 			Timestamp: time.Unix(1, 0),
 		})
 		live := &Live{books: manager}
-		api := &API{bookConns: &sync.Map{}}
-		api.bookConns.Store("BTC/USD", live)
+		api := &API{level3: NewLevel3Registry()}
+		api.level3.Attach("BTC/USD", live)
 
 		Convey("It should expose that same SDK manager directly", func() {
 			for books := range api.Books() {
@@ -206,8 +206,8 @@ func BenchmarkAPIPeekBook(b *testing.B) {
 	manager := spot.NewBookManager()
 	manager.CreateBook("BTC/USD", 10)
 	live := &Live{books: manager}
-	api := &API{bookConns: &sync.Map{}}
-	api.bookConns.Store("BTC/USD", live)
+	api := &API{level3: NewLevel3Registry()}
+	api.level3.Attach("BTC/USD", live)
 	b.ReportAllocs()
 
 	for b.Loop() {
@@ -363,26 +363,25 @@ func TestAPILevel3BatchSize(t *testing.T) {
 	})
 
 	Convey("Given Kraken's standard L3 subscription budget", t, func() {
-		api := &API{}
 		viper.Set("market.l3_rate_limit", 200)
 
 		Convey("Depth 10 admits forty symbols per connection", func() {
 			viper.Set("market.l3_depth", 10)
-			batchSize, err := api.level3BatchSize()
+			batchSize, err := level3BatchSize()
 			So(err, ShouldBeNil)
 			So(batchSize, ShouldEqual, 40)
 		})
 
 		Convey("Depth 100 admits eight symbols per connection", func() {
 			viper.Set("market.l3_depth", 100)
-			batchSize, err := api.level3BatchSize()
+			batchSize, err := level3BatchSize()
 			So(err, ShouldBeNil)
 			So(batchSize, ShouldEqual, 8)
 		})
 
 		Convey("Depth 1000 admits two symbols per connection", func() {
 			viper.Set("market.l3_depth", 1000)
-			batchSize, err := api.level3BatchSize()
+			batchSize, err := level3BatchSize()
 			So(err, ShouldBeNil)
 			So(batchSize, ShouldEqual, 2)
 		})
@@ -396,11 +395,10 @@ used whenever the market universe is subscribed.
 func BenchmarkAPILevel3BatchSize(b *testing.B) {
 	viper.Set("market.l3_depth", 10)
 	viper.Set("market.l3_rate_limit", 200)
-	api := &API{}
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if _, err := api.level3BatchSize(); err != nil {
+		if _, err := level3BatchSize(); err != nil {
 			b.Fatal(err)
 		}
 	}

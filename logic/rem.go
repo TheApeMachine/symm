@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -16,25 +17,39 @@ consolidation off the analyzer hot path. Ambiguity still gates the request;
 single-flight prevents a second REM from stacking while one is in flight.
 */
 type remSleep struct {
-	tree        *dmt.Tree
-	recorder    *audit.Recorder
-	mu          sync.Mutex
-	busy        bool
-	finished    chan struct{}
-	from        time.Time
-	through     time.Time
-	pending     int
-	lastFrom    time.Time
-	lastThrough time.Time
-	lastReplays int
+	ctx            context.Context
+	cancel         context.CancelFunc
+	tree           *dmt.Tree
+	recorder       *audit.Recorder
+	mu             sync.Mutex
+	busy           bool
+	rerunRequested bool
+	rerunTick      int64
+	finished       chan struct{}
+	from           time.Time
+	through        time.Time
+	pending        int
+	lastFrom       time.Time
+	lastThrough    time.Time
+	lastReplays    int
 }
 
 /*
 newREMSleep wires REM onto an optional cognitive tree. A nil tree keeps the
 scheduler inert so tests without DMT still exercise analyzer Update.
 */
-func newREMSleep(tree *dmt.Tree) *remSleep {
-	return &remSleep{tree: tree}
+func newREMSleep(ctx context.Context, tree *dmt.Tree) *remSleep {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+
+	return &remSleep{
+		ctx:    ctx,
+		cancel: cancel,
+		tree:   tree,
+	}
 }
 
 /*
@@ -89,8 +104,8 @@ func (rem *remSleep) Accumulate(observations []time.Time) {
 
 /*
 Request starts asynchronous REM when the ambiguity gate fires and work is
-pending. If REM is already running, the window stays queued and rem_deferred is
-audited so the tick path never blocks on WAL decay.
+pending. If REM is already running, observations stay queued, rerun is marked,
+and rem_deferred is audited so the tick path never blocks on WAL decay.
 */
 func (rem *remSleep) Request(tick int64) {
 	if rem == nil || rem.tree == nil {
@@ -105,6 +120,8 @@ func (rem *remSleep) Request(tick int64) {
 	}
 
 	if rem.busy {
+		rem.rerunRequested = true
+		rem.rerunTick = tick
 		errnie.Error(audit.Phase(rem.recorder, tick, "rem_deferred", map[string]any{
 			"pending": rem.pending,
 			"from":    rem.from.UnixNano(),
@@ -114,6 +131,14 @@ func (rem *remSleep) Request(tick int64) {
 		return
 	}
 
+	rem.launchPass(tick)
+}
+
+/*
+launchPass drains the pending REM window and starts one consolidation pass.
+The caller must hold rem.mu; launchPass releases it before returning.
+*/
+func (rem *remSleep) launchPass(tick int64) {
 	from := rem.from
 	through := rem.through
 	pending := rem.pending
@@ -121,6 +146,8 @@ func (rem *remSleep) Request(tick int64) {
 	rem.through = time.Time{}
 	rem.pending = 0
 	rem.busy = true
+	rem.rerunRequested = false
+	rem.rerunTick = 0
 	finished := make(chan struct{})
 	rem.finished = finished
 	rem.mu.Unlock()
@@ -154,17 +181,29 @@ func (rem *remSleep) execute(
 		uint64(through.UnixNano()),
 	)
 
+	errnie.Error(audit.Phase(rem.recorder, tick, "rem", map[string]any{
+		"pending": pending,
+		"ns":      time.Since(remStarted).Nanoseconds(),
+	}))
+
 	rem.mu.Lock()
 	rem.lastFrom = from
 	rem.lastThrough = through
 	rem.lastReplays = pending
 	rem.busy = false
-	rem.mu.Unlock()
 
-	errnie.Error(audit.Phase(rem.recorder, tick, "rem", map[string]any{
-		"pending": pending,
-		"ns":      time.Since(remStarted).Nanoseconds(),
-	}))
+	if rem.pending == 0 {
+		rem.mu.Unlock()
+		return
+	}
+
+	nextTick := rem.rerunTick
+
+	if nextTick == 0 {
+		nextTick = tick
+	}
+
+	rem.launchPass(nextTick)
 }
 
 /*
@@ -213,6 +252,26 @@ func (rem *remSleep) Await() {
 			return
 		}
 
-		<-finished
+		select {
+		case <-finished:
+		case <-rem.ctx.Done():
+			return
+		}
 	}
+}
+
+/*
+Close cancels the REM scheduler and waits for any in-flight pass to finish.
+Analyzer shutdown uses it so teardown can interrupt Await without hanging.
+*/
+func (rem *remSleep) Close() {
+	if rem == nil {
+		return
+	}
+
+	if rem.cancel != nil {
+		rem.cancel()
+	}
+
+	rem.Await()
 }

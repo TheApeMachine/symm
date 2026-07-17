@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"iter"
 	"maps"
-	"slices"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -20,8 +18,7 @@ import (
 )
 
 const (
-	TradeVolumeEndpoint           = "/0/private/TradeVolume"
-	level3MaxSymbolsPerConnection = 200
+	TradeVolumeEndpoint = "/0/private/TradeVolume"
 )
 
 /*
@@ -48,7 +45,7 @@ type API struct {
 	private    Conn
 	paper      *Paper
 	live       bool
-	bookConns  *sync.Map
+	level3     *Level3Registry
 }
 
 func NewAPI(
@@ -64,8 +61,8 @@ func NewAPI(
 		public:     public,
 		private:    private,
 		paper:      paper,
-		live:       viper.GetViper().GetString("trading.model") == "live",
-		bookConns:  &sync.Map{},
+		live:   viper.GetViper().GetString("trading.model") == "live",
+		level3: NewLevel3Registry(),
 	}
 
 	return api
@@ -313,14 +310,7 @@ read book contents must use PeekBook instead — the managers are live and
 mutated under a write lease during websocket updates.
 */
 func (api *API) Books() iter.Seq[*spot.BookManager] {
-	return func(yield func(*spot.BookManager) bool) {
-		api.bookConns.Range(func(key, value any) bool {
-			live := value.(*Live)
-			keepGoing := yield(live.books)
-
-			return keepGoing
-		})
-	}
+	return api.level3.Books()
 }
 
 /*
@@ -328,11 +318,11 @@ AttachLevel3 registers a Level3 Live transport so PeekBook and Session harness
 tests can feed SDK-managed books without opening a real L3 websocket.
 */
 func (api *API) AttachLevel3(live *Live) {
-	if api == nil || live == nil || live.books == nil {
+	if api == nil {
 		return
 	}
 
-	api.bookConns.Store("session-level3", live)
+	api.level3.Attach("session-level3", live)
 }
 
 /*
@@ -340,25 +330,11 @@ PeekBook invokes fn under the Level3 read lease for symbol so Side.Levels and
 order queues cannot be mutated mid-read by updateLevel3.
 */
 func (api *API) PeekBook(symbol string, fn func(*book.Book)) bool {
-	if api == nil || fn == nil || symbol == "" {
+	if api == nil {
 		return false
 	}
 
-	found := false
-
-	api.bookConns.Range(func(_, value any) bool {
-		live := value.(*Live)
-
-		if !live.peekBook(symbol, fn) {
-			return true
-		}
-
-		found = true
-
-		return false
-	})
-
-	return found
+	return api.level3.PeekBook(symbol, fn)
 }
 
 func (api *API) SubscribeBook(pairs []string) error {
@@ -373,59 +349,7 @@ The transport subscribes after authentication and repeats that same request
 after reconnect, so this method must not send a second competing subscription.
 */
 func (api *API) SubscribeLevel3(pairs []string) error {
-	batchSize, err := api.level3BatchSize()
-
-	if err != nil {
-		return err
-	}
-
-	for batch := range slices.Chunk(pairs, batchSize) {
-		key := strings.Join(batch, "|")
-
-		if _, loaded := api.bookConns.Load(key); loaded {
-			continue
-		}
-
-		live := New(api.ctx, nil, true, Level3WebSocketURL)
-		live.symbols = batch
-
-		if err := live.Initialize(); err != nil {
-			live.Close()
-			return errnie.Error(err)
-		}
-
-		_, loaded := api.bookConns.LoadOrStore(key, live)
-
-		if loaded {
-			live.Close()
-		}
-	}
-
-	return nil
-}
-
-/*
-level3BatchSize derives the number of symbols that fit in one Kraken L3
-subscription request from the configured client-tier budget and book depth.
-*/
-func (api *API) level3BatchSize() (int, error) {
-	depth := viper.GetInt("market.l3_depth")
-	rateLimit := viper.GetInt("market.l3_rate_limit")
-	rateCost := map[int]int{
-		10:   5,
-		100:  25,
-		1000: 100,
-	}[depth]
-
-	if rateCost == 0 || rateLimit < rateCost {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"websocket: L3 depth and rate limit cannot admit one symbol",
-			nil,
-		))
-	}
-
-	return min(rateLimit/rateCost, level3MaxSymbolsPerConnection), nil
+	return errnie.Error(api.level3.SubscribeAll(api.ctx, pairs))
 }
 
 func (api *API) SubscribeBalance() error {

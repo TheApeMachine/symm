@@ -44,6 +44,48 @@ func measureField(
 	return nil, false
 }
 
+/*
+peakHawkesSideMetric returns the greatest raw buy/sell Hawkes value for subject.
+*/
+func peakHawkesSideMetric(
+	theses []*types.Thesis,
+	side types.MeasurementSide,
+	metric types.MetricType,
+) (float64, bool) {
+	peak := 0.0
+	found := false
+	initialized := false
+
+	for _, thesis := range theses {
+		if thesis == nil {
+			continue
+		}
+
+		for _, measurement := range thesis.Measurements {
+			if measurement.Source != types.SourceHawkes ||
+				measurement.Symbol != conditions.Subject() ||
+				measurement.Metric != metric ||
+				measurement.Side != side {
+				continue
+			}
+
+			found = true
+
+			if !initialized {
+				peak = measurement.Raw
+				initialized = true
+				continue
+			}
+
+			if measurement.Raw > peak {
+				peak = measurement.Raw
+			}
+		}
+	}
+
+	return peak, found
+}
+
 func tradeRow(symbol, side string, price float64, quantity float64, at time.Time) kraken.TradeData {
 	return kraken.TradeData{
 		Symbol:    symbol,
@@ -139,11 +181,11 @@ func sessionSignals(
 
 func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 	Convey("Given Hawkes inside a paper Session market", testingTB, func() {
-		calmSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		calmSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)
-		hotSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		hotSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)
@@ -152,30 +194,51 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 			calmTheses, err := calmSession.Play(conditions.Calm(32).Frames())
 			So(err, ShouldBeNil)
 			hotTheses, err := hotSession.Play(
-				conditions.Aggression(32, 4, 6).Frames(),
+				conditions.Aggression(32, 4, 12).Frames(),
 			)
 			So(err, ShouldBeNil)
 
-			calm, hasCalm := tests.PeakSourceMetric(
+			calmBuy, hasCalm := peakHawkesSideMetric(
 				calmTheses,
-				types.SourceHawkes,
-				conditions.Subject(),
+				types.SideBuy,
 				types.MetricEventCount,
 			)
-			hot, hasHot := tests.PeakSourceMetric(
+			hotBuy, hasHot := peakHawkesSideMetric(
 				hotTheses,
-				types.SourceHawkes,
-				conditions.Subject(),
+				types.SideBuy,
 				types.MetricEventCount,
 			)
 
-			Convey("Then aggression raises event-count evidence versus calm", func() {
+			Convey("Then aggression raises buy event-count evidence versus calm", func() {
+				So(hasCalm, ShouldBeTrue)
 				So(hasHot, ShouldBeTrue)
-
-				if hasCalm {
-					So(hot, ShouldBeGreaterThanOrEqualTo, calm)
-				}
+				So(hotBuy, ShouldBeGreaterThan, calmBuy)
 			})
 		})
 	})
+}
+
+func BenchmarkSignal_Measure(benchmark *testing.B) {
+	signal := newTestSignal()
+	start := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+
+	for index := range 8 {
+		_, _ = signal.Calculate(frameOf(tradeRow(
+			"MATIC/USD",
+			"buy",
+			0.56+float64(index)*0.001,
+			1+float64(index),
+			start.Add(time.Duration(index)*time.Second),
+		)))
+	}
+
+	frame := frameOf(tradeRow(
+		"MATIC/USD", "buy", 0.57, 4, start.Add(9*time.Second),
+	))
+
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		_, _ = signal.Calculate(frame)
+	}
 }

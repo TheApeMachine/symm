@@ -209,11 +209,11 @@ func sessionSignals(
 
 func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 	Convey("Given liquidity inside a paper Session cohort market", testingTB, func() {
-		herdSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		herdSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)
-		thinSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		thinSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)
@@ -240,11 +240,9 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 			)
 
 			Convey("Then a starved subject raises scarcity versus the herd", func() {
+				So(hasHerd, ShouldBeTrue)
 				So(hasThin, ShouldBeTrue)
-
-				if hasHerd {
-					So(thin, ShouldBeGreaterThan, herd)
-				}
+				So(thin, ShouldBeGreaterThan, herd)
 			})
 		})
 	})

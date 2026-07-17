@@ -28,6 +28,9 @@ type WireRow = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
+const isNonEmptyString = (value: unknown): value is string =>
+	typeof value === "string" && value.trim() !== "";
+
 /*
 splitWireMetricKey recovers metric and optional side from a wire metrics key.
 Directional Hawkes values publish as metric:side.
@@ -68,7 +71,17 @@ export const expandWireMeasurements = (frames: unknown): Measurement[] => {
 		const metrics = row.metrics;
 
 		if (metrics !== undefined && isRecord(metrics)) {
-			const at = String(row.at ?? "");
+			if (
+				!isNonEmptyString(row.source) ||
+				!isNonEmptyString(row.symbol) ||
+				!isNonEmptyString(row.at)
+			) {
+				continue;
+			}
+
+			const source = row.source;
+			const symbol = row.symbol;
+			const at = row.at;
 			const validity = row.validity ?? {
 				state: "valid",
 				readiness: "observation",
@@ -86,10 +99,14 @@ export const expandWireMeasurements = (frames: unknown): Measurement[] => {
 
 				const { metric, side } = splitWireMetricKey(key);
 
+				if (metric === "") {
+					continue;
+				}
+
 				readings.push({
-					source: String(row.source ?? ""),
+					source,
 					stream: row.stream,
-					symbol: String(row.symbol ?? ""),
+					symbol,
 					at,
 					metric,
 					side: side === "" ? undefined : side,
@@ -111,8 +128,40 @@ export const expandWireMeasurements = (frames: unknown): Measurement[] => {
 			continue;
 		}
 
-		if (typeof row.symbol === "string" && typeof row.raw === "number") {
-			readings.push(row as Measurement);
+		if (
+			isNonEmptyString(row.source) &&
+			isNonEmptyString(row.symbol) &&
+			isNonEmptyString(row.at) &&
+			typeof row.raw === "number" &&
+			Number.isFinite(row.raw)
+		) {
+			readings.push({
+				source: row.source,
+				stream: row.stream,
+				symbol: row.symbol,
+				at: row.at,
+				metric: row.metric,
+				side: row.side,
+				raw: row.raw,
+				normalized: row.normalized ?? null,
+				maturity: row.maturity,
+				uncertainty: row.uncertainty ?? null,
+				validity: row.validity ?? {
+					state: "valid",
+					readiness: "observation",
+				},
+				scale: row.scale ?? {
+					kind: "observation_window",
+					from: row.at,
+					through: row.at,
+				},
+				status: row.status,
+				elapsed: row.elapsed,
+				entryBaseline: row.entryBaseline,
+				exitBaseline: row.exitBaseline,
+				categories: row.categories,
+				metrics: row.metrics,
+			});
 		}
 	}
 

@@ -66,11 +66,11 @@ func sessionSignals(
 
 func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 	Convey("Given pumpdump inside a paper Session market", testingTB, func() {
-		calmSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		calmSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)
-		pumpSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		pumpSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)

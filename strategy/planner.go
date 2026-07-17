@@ -126,7 +126,7 @@ func (planner *Planner) Update(frame *types.MarketFrame, tick int64) *types.Thes
 
 	for range planner.signals {
 		batch := <-fanIn
-		counts[batch.name] = len(batch.rows)
+		counts[batch.name] += len(batch.rows)
 		thesis.Measurements = append(thesis.Measurements, batch.rows...)
 	}
 

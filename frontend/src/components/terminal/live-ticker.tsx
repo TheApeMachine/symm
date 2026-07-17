@@ -6,6 +6,7 @@ import { tickStore } from "#/collections/tick";
 import { formatUptime } from "#/components/terminal/kernel-meta";
 import { walletMetrics } from "#/components/terminal/panels";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { Flex } from "@/components/ui/flex";
 
 const setText = (element: HTMLElement | null, value: string) => {
 	if (element !== null) {
@@ -241,12 +242,12 @@ cand/open are position counts (zeros are honest). tick latency and measurement
 counts come from publishTick; retired quotes/fluid bars are not invented.
 */
 export const LiveEngineTicker = () => {
-	const seqRef = useRef<HTMLSpanElement>(null);
-	const phaseRef = useRef<HTMLSpanElement>(null);
-	const candRef = useRef<HTMLSpanElement>(null);
-	const openRef = useRef<HTMLSpanElement>(null);
-	const measRef = useRef<HTMLSpanElement>(null);
-	const latencyRef = useRef<HTMLSpanElement>(null);
+	const seqRef = useRef<HTMLDivElement>(null);
+	const phaseRef = useRef<HTMLDivElement>(null);
+	const candRef = useRef<HTMLDivElement>(null);
+	const openRef = useRef<HTMLDivElement>(null);
+	const measRef = useRef<HTMLDivElement>(null);
+	const latencyRef = useRef<HTMLDivElement>(null);
 
 	useDirectStorePaint(
 		() => {
@@ -277,32 +278,32 @@ export const LiveEngineTicker = () => {
 	);
 
 	return (
-		<div className="mx-2 border border-(--line) rounded-[3px] bg-(--sunken) p-2.5 font-mono text-[11px] leading-[1.7]">
-			<div className="flex justify-between">
-				<span className="text-(--f4)">seq</span>
-				<span ref={seqRef} className="text-(--f1)" />
-			</div>
-			<div className="flex justify-between">
-				<span className="text-(--f4)">phase</span>
-				<span ref={phaseRef} className="text-(--acc)" />
-			</div>
-			<div className="flex justify-between">
-				<span className="text-(--f4)">cand</span>
-				<span ref={candRef} className="text-(--f1)" />
-			</div>
-			<div className="flex justify-between">
-				<span className="text-(--f4)">open</span>
-				<span ref={openRef} className="text-(--f1)" />
-			</div>
-			<div className="flex justify-between">
-				<span className="text-(--f4)">meas</span>
-				<span ref={measRef} className="text-(--f1)" />
-			</div>
-			<div className="flex justify-between">
-				<span className="text-(--f4)">tick</span>
-				<span ref={latencyRef} className="text-(--f1)" />
-			</div>
-		</div>
+		<Flex.Column className="mx-2 border border-(--line) rounded-[3px] bg-(--sunken) p-2.5 font-mono text-[11px] leading-[1.7]">
+			<Flex.Row justify="between">
+				<Flex className="text-(--f4)">seq</Flex>
+				<Flex ref={seqRef} className="text-(--f1)" />
+			</Flex.Row>
+			<Flex.Row justify="between">
+				<Flex className="text-(--f4)">phase</Flex>
+				<Flex ref={phaseRef} className="text-(--acc)" />
+			</Flex.Row>
+			<Flex.Row justify="between">
+				<Flex className="text-(--f4)">cand</Flex>
+				<Flex ref={candRef} className="text-(--f1)" />
+			</Flex.Row>
+			<Flex.Row justify="between">
+				<Flex className="text-(--f4)">open</Flex>
+				<Flex ref={openRef} className="text-(--f1)" />
+			</Flex.Row>
+			<Flex.Row justify="between">
+				<Flex className="text-(--f4)">meas</Flex>
+				<Flex ref={measRef} className="text-(--f1)" />
+			</Flex.Row>
+			<Flex.Row justify="between">
+				<Flex className="text-(--f4)">tick</Flex>
+				<Flex ref={latencyRef} className="text-(--f1)" />
+			</Flex.Row>
+		</Flex.Column>
 	);
 };
 
@@ -337,8 +338,8 @@ export const LiveEngineClock = () => {
 
 	return (
 		<>
-			<div ref={clockRef} />
-			<div ref={uptimeRef}>uptime —</div>
+			<Flex ref={clockRef} />
+			<Flex ref={uptimeRef}>uptime —</Flex>
 		</>
 	);
 };

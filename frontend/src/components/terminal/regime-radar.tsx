@@ -8,6 +8,7 @@ import {
 	percentOf,
 } from "#/components/terminal/measurement-view";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { Flex } from "@/components/ui/flex";
 import { Panel } from "@/components/ui/panel";
 
 /*
@@ -154,10 +155,10 @@ export const RadarPanel = ({ sources }: { sources?: string[] }) => {
 
 	return (
 		<Panel size="lg">
-			<div className="mb-2 font-semibold text-(--f1) text-xs">Regime radar</div>
-			<div className="mb-2 font-mono text-[9.5px] text-(--f4)">
+			<Flex className="mb-2 font-semibold text-(--f1) text-xs">Regime radar</Flex>
+			<Flex className="mb-2 font-mono text-[9.5px] text-(--f4)">
 				cross-section mean · market
-			</div>
+			</Flex>
 			<svg viewBox="0 0 220 210" className="block w-full">
 				<title>Regime radar</title>
 				<polygon

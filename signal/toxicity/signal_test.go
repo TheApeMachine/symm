@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/tests/conditions"
+	tradefixture "github.com/theapemachine/symm/tests/fixtures/trade"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -130,6 +131,67 @@ func latestMetric(
 	return nil, false
 }
 
+/*
+peakToxicityFillVolume returns the greatest Level3 fill volume for the subject.
+*/
+func peakToxicityFillVolume(theses []*types.Thesis) (float64, bool) {
+	return peakToxicityFillVolumeTail(theses, 0)
+}
+
+func peakToxicityFillVolumeTail(
+	theses []*types.Thesis,
+	skipFraction float64,
+) (float64, bool) {
+	if skipFraction < 0 {
+		skipFraction = 0
+	}
+
+	if skipFraction > 0.9 {
+		skipFraction = 0.9
+	}
+
+	start := int(float64(len(theses)) * skipFraction)
+	peak := 0.0
+	found := false
+	initialized := false
+
+	for _, thesis := range theses[start:] {
+		if thesis == nil {
+			continue
+		}
+
+		for _, measurement := range thesis.Measurements {
+			if measurement.Source != types.SourceToxicity ||
+				measurement.Symbol != conditions.Subject() ||
+				measurement.Metric != types.MetricFillVolume {
+				continue
+			}
+
+			found = true
+
+			if !initialized {
+				peak = measurement.Raw
+				initialized = true
+				continue
+			}
+
+			if measurement.Raw > peak {
+				peak = measurement.Raw
+			}
+		}
+	}
+
+	return peak, found
+}
+
+func tradeFixturePayload() []byte {
+	for frame := range tradefixture.NewFixture(tradefixture.UPDATE, 1).Frames() {
+		return frame.Payload
+	}
+
+	panic("tests: trade fixture missing")
+}
+
 func sessionSignals(
 	ctx context.Context,
 	api *websocket.API,
@@ -141,53 +203,64 @@ func sessionSignals(
 
 func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 	Convey("Given toxicity inside a paper Session with Level3 touch", testingTB, func() {
-		calmSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		calmSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 			Level3:  true,
 		})
 		So(err, ShouldBeNil)
-		hotSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		hotSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 			Level3:  true,
 		})
 		So(err, ShouldBeNil)
 
-		calmSession.SeedTouch(conditions.Subject(), 0.56, 0.57, 1000)
-		hotSession.SeedTouch(conditions.Subject(), 0.56, 0.57, 1000)
+		seedAt := time.Date(2026, 7, 17, 1, 0, 0, 0, time.UTC)
+		trade := kraken.NewTrade(tradeFixturePayload())
+		tradeRow := trade.Data[0]
+		bidPrice := tradeRow.Price
+		askPrice := decimal.NewFromFloat64(tradeRow.Price.Float64() + 0.0001)
+		So(calmSession.Level3().SeedTouchDecimals(
+			conditions.Subject(), &bidPrice, askPrice, 1000, seedAt,
+		), ShouldBeNil)
+		So(hotSession.Level3().SeedTouchDecimals(
+			conditions.Subject(), &bidPrice, askPrice, 1000, seedAt,
+		), ShouldBeNil)
 
 		Convey("When calm and aggression tapes play through Cut", func() {
 			calmTheses, err := calmSession.Play(conditions.Calm(24).Frames())
 			So(err, ShouldBeNil)
 			hotTheses, err := hotSession.Play(
-				conditions.Aggression(24, 4, 8).Frames(),
+				conditions.Aggression(24, 0, 20).Frames(),
 			)
 			So(err, ShouldBeNil)
 
-			calm, hasCalm := tests.PeakSourceMetric(
+			_, hasCalmTouch := tests.PeakSourceMetric(
 				calmTheses,
 				types.SourceToxicity,
 				conditions.Subject(),
-				types.MetricTradeVolume,
+				types.MetricBestPrice,
 			)
-			hot, hasHot := tests.PeakSourceMetric(
+			_, hasHotTouch := tests.PeakSourceMetric(
 				hotTheses,
 				types.SourceToxicity,
 				conditions.Subject(),
-				types.MetricTradeVolume,
+				types.MetricBestPrice,
 			)
+			calmFill, hasCalmFill := peakToxicityFillVolume(calmTheses)
+			hotFill, hasHotFill := peakToxicityFillVolume(hotTheses)
 
-			Convey("Then aggression lifts trade-volume evidence under PeekBook", func() {
-				So(hasHot, ShouldBeTrue)
-
-				if hasCalm {
-					So(hot, ShouldBeGreaterThan, calm)
-				}
+			Convey("Then aggression lifts fill evidence under PeekBook", func() {
+				So(hasCalmTouch, ShouldBeTrue)
+				So(hasHotTouch, ShouldBeTrue)
+				So(hasCalmFill, ShouldBeTrue)
+				So(hasHotFill, ShouldBeTrue)
+				So(hotFill, ShouldBeGreaterThan, calmFill)
 			})
 		})
 	})
 }
 
-func BenchmarkSignal_Calculate(benchmark *testing.B) {
+func BenchmarkSignal_Measure(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	eventAt := time.Unix(1, 0).UTC()

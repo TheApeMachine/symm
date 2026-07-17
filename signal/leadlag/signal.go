@@ -57,6 +57,8 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		return nil
 	}
 
+	signal.Publish(measurements)
+
 	return measurements
 }
 
@@ -67,56 +69,7 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Calculate(
 	frame *types.MarketFrame,
 ) ([]*types.Measurement, error) {
-	rows := frame.Tickers
-	out := make([]*types.Measurement, 0, len(rows))
-
-	for _, row := range rows {
-		if row.Timestamp.IsZero() || row.Last == nil {
-			continue
-		}
-
-		lastPrice := row.Last.Float64()
-
-		if lastPrice <= 0 {
-			continue
-		}
-
-		signal.section.ObservePrice(row.Symbol, lastPrice, row.Timestamp)
-	}
-
-	if anchor, _ := frame.CrossSection.Leadership(); anchor != "" {
-		signal.section.SetAnchor(anchor)
-	}
-
-	for _, row := range rows {
-		if row.Timestamp.IsZero() || row.Symbol == "" || row.Last == nil {
-			continue
-		}
-
-		if row.Last.Float64() <= 0 {
-			continue
-		}
-
-		if signal.section.AnchorSymbol() == "" {
-			measurements := signal.provisional(row.Symbol, row.Timestamp)
-			out = append(out, measurements...)
-			signal.Publish(measurements)
-
-			continue
-		}
-
-		features := signal.section.Features(row.Symbol)
-
-		if features.Price <= 0 {
-			continue
-		}
-
-		measurements := signal.score(row.Symbol, row.Timestamp, features)
-		out = append(out, measurements...)
-	}
-
-	signal.Publish(out)
-	return out, nil
+	return signal.measureFrame(frame)
 }
 
 /*

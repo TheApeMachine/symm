@@ -57,38 +57,40 @@ func sessionSignals(
 
 func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 	Convey("Given sentiment inside a paper Session cohort market", testingTB, func() {
-		noiseSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		noiseSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)
-		herdSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		herdSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)
 
 		Convey("When noise and herd cohorts play through Cut", func() {
-			noiseTheses, err := noiseSession.Play(conditions.Noise(24).Frames())
+			noiseTheses, err := noiseSession.Play(conditions.Noise(32).Frames())
 			So(err, ShouldBeNil)
-			herdTheses, err := herdSession.Play(conditions.Herd(24).Frames())
+			herdTheses, err := herdSession.Play(conditions.Herd(32).Frames())
 			So(err, ShouldBeNil)
 
-			noise, hasNoise := tests.PeakSourceMetric(
+			noiseChange, hasNoise := tests.PeakSourceMetricTail(
 				noiseTheses,
 				types.SourceSentiment,
 				conditions.Subject(),
-				types.MetricSurgeScore,
+				types.MetricChange,
+				0.25,
 			)
-			herd, hasHerd := tests.PeakSourceMetric(
+			herdChange, hasHerd := tests.PeakSourceMetricTail(
 				herdTheses,
 				types.SourceSentiment,
 				conditions.Subject(),
-				types.MetricSurgeScore,
+				types.MetricChange,
+				0.25,
 			)
 
-			Convey("Then co-moving herd differs from unstructured noise surge", func() {
+			Convey("Then co-moving herd differs from unstructured noise change", func() {
 				So(hasHerd, ShouldBeTrue)
 				So(hasNoise, ShouldBeTrue)
-				So(math.Abs(herd-noise), ShouldBeGreaterThanOrEqualTo, 0)
+				So(math.Abs(herdChange-noiseChange), ShouldBeGreaterThan, 0)
 			})
 		})
 	})

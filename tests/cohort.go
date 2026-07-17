@@ -153,8 +153,12 @@ func (cohort *Cohort) priceMul(step int, symbolIndex int) float64 {
 		return 1 + 0.015*float64(delayed)
 	case CohortNoise:
 		phase := float64(symbolIndex+1) * 1.7
+		// ponytail: step-scaled sinusoidal drift is capped so long horizons cannot
+		// drive thin symbols to non-positive prices under independent noise paths.
+		drift := 0.008 * float64(step) * math.Sin(phase+float64(step)*0.35)
+		const noiseDriftCeiling = 0.15
 
-		return 1 + 0.008*float64(step)*math.Sin(phase+float64(step)*0.35)
+		return 1 + math.Max(-noiseDriftCeiling, math.Min(noiseDriftCeiling, drift))
 	default:
 		return 1
 	}

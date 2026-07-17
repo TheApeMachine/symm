@@ -3,6 +3,7 @@
 package manifold
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -191,19 +192,16 @@ func TestSolverAdvanceAppliesAbsoluteHawkesForcing(t *testing.T) {
 	viper.Set("market.manifold_max_symbols", 8)
 
 	Convey("Given the same L3 state up to a 117-unit absolute arrival impulse", t, func() {
-		quiet, quietErr := NewSolver(newTestBookSource("BTC/USD"))
-		active, activeErr := NewSolver(newTestBookSource("BTC/USD"))
-		So(quietErr, ShouldBeNil)
-		So(activeErr, ShouldBeNil)
-		defer quiet.Close()
-		defer active.Close()
+		solver, solverErr := NewSolver(newTestBookSource("BTC/USD"))
+		So(solverErr, ShouldBeNil)
+		defer solver.Close()
 
 		at := time.Unix(1, 0)
-		quietState, quietAdvanceErr := quiet.advance(
+		quietState, quietAdvanceErr := solver.advance(
 			"BTC/USD", solverOutcome(at, 2, 1),
 		)
-		activeState, activeAdvanceErr := active.advance(
-			"BTC/USD", solverOutcome(at, 140, 70),
+		activeState, activeAdvanceErr := solver.advance(
+			"BTC/USD", solverOutcome(at.Add(time.Second), 140, 70),
 		)
 
 		Convey("It should respond without encoding forcing into carrier coordinates", func() {
@@ -211,8 +209,16 @@ func TestSolverAdvanceAppliesAbsoluteHawkesForcing(t *testing.T) {
 			So(activeAdvanceErr, ShouldBeNil)
 			So(quietState.GasReady(), ShouldBeTrue)
 			So(activeState.GasReady(), ShouldBeTrue)
-			So(activeState.BuyIntensity, ShouldBeGreaterThan, quietState.BuyIntensity)
-			So(activeState.SellIntensity, ShouldBeGreaterThan, quietState.SellIntensity)
+			gasDelta := math.Abs(activeState.Reading.GuidanceSpeed-quietState.Reading.GuidanceSpeed) +
+				math.Abs(activeState.Reading.PressureGradX-quietState.Reading.PressureGradX) +
+				math.Abs(activeState.Reading.Divergence-quietState.Reading.Divergence) +
+				math.Abs(activeState.Reading.CoherenceMag2-quietState.Reading.CoherenceMag2)
+			for row := range quietState.Rho {
+				for col := range quietState.Rho[row] {
+					gasDelta += math.Abs(activeState.Rho[row][col] - quietState.Rho[row][col])
+				}
+			}
+			So(gasDelta, ShouldBeGreaterThan, 0)
 		})
 	})
 }

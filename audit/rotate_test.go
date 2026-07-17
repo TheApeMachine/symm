@@ -31,4 +31,18 @@ func TestRotate(t *testing.T) {
 	Convey("Given a missing audit log", t, func() {
 		So(Rotate(filepath.Join(t.TempDir(), "missing.jsonl")), ShouldBeNil)
 	})
+
+	Convey("Given two rotations in the same second", t, func() {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "runtime-audit.jsonl")
+		So(os.WriteFile(path, []byte("{\"tick\":1}\n"), 0o644), ShouldBeNil)
+		So(Rotate(path), ShouldBeNil)
+		So(os.WriteFile(path, []byte("{\"tick\":2}\n"), 0o644), ShouldBeNil)
+		So(Rotate(path), ShouldBeNil)
+
+		entries, err := os.ReadDir(dir)
+		So(err, ShouldBeNil)
+		So(entries, ShouldHaveLength, 2)
+		So(entries[0].Name(), ShouldNotEqual, entries[1].Name())
+	})
 }

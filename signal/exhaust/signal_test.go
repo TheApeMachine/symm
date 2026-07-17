@@ -117,11 +117,11 @@ func sessionSignals(
 
 func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 	Convey("Given exhaust inside a paper Session market", testingTB, func() {
-		calmSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		calmSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)
-		decaySession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		decaySession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)
@@ -148,11 +148,9 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 			)
 
 			Convey("Then book decay lifts mechanical exhaust versus calm", func() {
+				So(hasCalm, ShouldBeTrue)
 				So(hasDecay, ShouldBeTrue)
-
-				if hasCalm {
-					So(decayed, ShouldBeGreaterThan, calm)
-				}
+				So(decayed, ShouldBeGreaterThan, calm)
 			})
 		})
 	})

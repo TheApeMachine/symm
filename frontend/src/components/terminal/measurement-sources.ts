@@ -52,6 +52,7 @@ export const liveFocusSymbol = (
 		return preferred;
 	}
 
+	// ponytail: sorted-symbol fallback uses lexical order as a temporary heuristic until live-focus ranking exists.
 	const symbols = Object.keys(state.measurements).sort();
 
 	for (const symbol of symbols) {

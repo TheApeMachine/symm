@@ -105,14 +105,8 @@ func TradeAggression(
 		for frame := range frames {
 			shaped := frame
 
-			if frame.Channel == "trade" {
-				mul := 1.0
-
-				if index >= at {
-					mul = qtyMul
-				}
-
-				shaped = shapeTradeAggression(frame, mul)
+			if frame.Channel == "trade" && index >= at {
+				shaped = shapeTradeAggression(frame, qtyMul)
 			}
 
 			index++

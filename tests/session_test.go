@@ -29,7 +29,7 @@ func pumpdumpSignals(
 
 func TestSessionPlay(t *testing.T) {
 	Convey("Given a paper Session fed by ticker fixtures", t, func() {
-		session, err := tests.NewSession(t, tests.SessionOptions{
+		session, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
 			Signals: pumpdumpSignals,
 		})
 		So(err, ShouldBeNil)
@@ -52,11 +52,11 @@ func TestSessionPlay(t *testing.T) {
 
 func TestSessionPumpLiftsRVOL(t *testing.T) {
 	Convey("Given calm and pumped Session timelines", t, func() {
-		calmSession, err := tests.NewSession(t, tests.SessionOptions{
+		calmSession, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
 			Signals: pumpdumpSignals,
 		})
 		So(err, ShouldBeNil)
-		pumpSession, err := tests.NewSession(t, tests.SessionOptions{
+		pumpSession, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
 			Signals: pumpdumpSignals,
 		})
 		So(err, ShouldBeNil)
@@ -87,7 +87,7 @@ func TestSessionPumpLiftsRVOL(t *testing.T) {
 
 func TestSessionPaperSmoke(t *testing.T) {
 	Convey("Given a paper Session on a pump condition", t, func() {
-		session, err := tests.NewSession(t, tests.SessionOptions{
+		session, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
 			Signals: pumpdumpSignals,
 		})
 		So(err, ShouldBeNil)
@@ -116,7 +116,7 @@ func TestSessionPaperSmoke(t *testing.T) {
 
 func TestSessionConcurrentEmitTick(t *testing.T) {
 	Convey("Given a paper Session under concurrent book/trade pressure", t, func() {
-		session, err := tests.NewSession(t, tests.SessionOptions{
+		session, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
 			Signals: pumpdumpSignals,
 		})
 		So(err, ShouldBeNil)
@@ -194,7 +194,7 @@ func TestMockAPIWire(t *testing.T) {
 }
 
 func BenchmarkSessionPlay(b *testing.B) {
-	session, err := tests.NewSession(b, tests.SessionOptions{
+	session, err := tests.NewSession(context.Background(), b, tests.SessionOptions{
 		Signals: pumpdumpSignals,
 	})
 
@@ -212,7 +212,7 @@ func BenchmarkSessionPlay(b *testing.B) {
 }
 
 func BenchmarkSessionAdvance(b *testing.B) {
-	session, err := tests.NewSession(b, tests.SessionOptions{
+	session, err := tests.NewSession(context.Background(), b, tests.SessionOptions{
 		Signals: pumpdumpSignals,
 	})
 

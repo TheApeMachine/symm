@@ -1,11 +1,7 @@
 package logic
 
 import (
-	"bytes"
 	"context"
-	"math"
-	"sort"
-	"strings"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -24,6 +20,7 @@ has measured the current Thesis. The manifold solver owns the Hawkes-driven GPU
 field step, while the Analyzer builds each symbol's typed evidence topology.
 */
 type Analyzer struct {
+	ctx       context.Context
 	gate      stageGate
 	status    types.Status
 	manifold  *manifold.Solver
@@ -34,6 +31,13 @@ type Analyzer struct {
 	resonance map[string]*Resonance
 	causal    map[string]*Causal
 	rem       *remSleep
+}
+
+/*
+stageGate exposes boot readiness without coupling Analyzer to boot orchestration.
+*/
+type stageGate interface {
+	Ready(system.StageType) bool
 }
 
 /*
@@ -68,13 +72,6 @@ func (analyzer *Analyzer) publish(frame datura.Map[any]) {
 }
 
 /*
-stageGate exposes boot readiness without coupling Analyzer to boot orchestration.
-*/
-type stageGate interface {
-	Ready(system.StageType) bool
-}
-
-/*
 NewAnalyzer composes the field processor required by the analysis stage.
 */
 func NewAnalyzer(
@@ -85,8 +82,6 @@ func NewAnalyzer(
 	tree *dmt.Tree,
 	ui chan []byte,
 ) (*Analyzer, error) {
-	_ = ctx
-
 	solver, err := manifold.NewSolver(api)
 
 	if err != nil {
@@ -94,6 +89,7 @@ func NewAnalyzer(
 	}
 
 	return &Analyzer{
+		ctx:       ctx,
 		gate:      gate,
 		status:    types.READY,
 		manifold:  solver,
@@ -102,10 +98,13 @@ func NewAnalyzer(
 		ui:        ui,
 		resonance: make(map[string]*Resonance),
 		causal:    make(map[string]*Causal),
-		rem:       newREMSleep(tree),
+		rem:       newREMSleep(ctx, tree),
 	}, nil
 }
 
+/*
+Initialize marks the analyzer ready for thesis updates.
+*/
 func (analyzer *Analyzer) Initialize() error {
 	errnie.Info("initializing analyzer")
 	analyzer.status = types.READY
@@ -113,13 +112,19 @@ func (analyzer *Analyzer) Initialize() error {
 	return nil
 }
 
+/*
+Status reports analyzer readiness for the boot gate.
+*/
 func (analyzer *Analyzer) Status() types.Status {
 	return analyzer.status
 }
 
+/*
+Close drains REM and releases the manifold solver.
+*/
 func (analyzer *Analyzer) Close() {
 	if analyzer.rem != nil {
-		analyzer.rem.Await()
+		analyzer.rem.Close()
 	}
 
 	if analyzer.manifold != nil {
@@ -135,178 +140,25 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 	started := time.Now()
 
 	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "analyze_begin", nil))
-
-	if analyzer.manifold != nil &&
-		analyzer.hawkes != nil &&
-		analyzer.gate != nil &&
-		analyzer.gate.Ready(system.StagePreflight) {
-		manifoldStarted := time.Now()
-
-		if err := analyzer.manifold.Update(thesis, analyzer.hawkes); err != nil {
-			errnie.Error(err)
-			errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "manifold", map[string]any{
-				"ok":  false,
-				"ns":  time.Since(manifoldStarted).Nanoseconds(),
-				"err": err.Error(),
-			}))
-		} else {
-			errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "manifold", map[string]any{
-				"ok": true,
-				"ns": time.Since(manifoldStarted).Nanoseconds(),
-			}))
-		}
-	}
-
-	states := make([]manifold.State, 0)
-	observeStarted := time.Now()
-
-	thesis.Manifold.Range(func(key, value any) bool {
-		state, ok := value.(manifold.State)
-
-		if !ok {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"analyzer received invalid manifold state",
-				nil,
-			))
-
-			return true
-		}
-
-		states = append(states, state)
-		analyzer.observe(thesis, state)
-
-		return true
-	})
-
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "observe", map[string]any{
-		"states": len(states),
-		"ns":     time.Since(observeStarted).Nanoseconds(),
-	}))
-
-	publishStarted := time.Now()
-
-	if len(states) > 0 {
-		frame := make([]any, 0, len(states))
-
-		for _, state := range states {
-			frame = append(frame, state)
-		}
-
-		analyzer.publish(datura.Map[any]{"manifold": frame})
-	}
-
-	if len(thesis.Resonance) > 0 {
-		analyzer.publish(datura.Map[any]{"resonance": thesis.Resonance})
-	}
-
-	if len(thesis.Causal) > 0 {
-		analyzer.publish(datura.Map[any]{"causal": thesis.Causal})
-	}
-
-	if len(thesis.Hypotheses) > 0 {
-		analyzer.publish(datura.Map[any]{"hypotheses": thesis.Hypotheses})
-	}
-
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "publish", map[string]any{
-		"ns": time.Since(publishStarted).Nanoseconds(),
-	}))
-
-	graphsStarted := time.Now()
-
-	for _, measurement := range thesis.Measurements {
-		if measurement == nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"analyzer received a nil measurement",
-				nil,
-			))
-
-			continue
-		}
-
-		value, found := thesis.Graphs.Load(measurement.Symbol)
-
-		if !found {
-			value = types.NewGraph(measurement.Symbol)
-			thesis.Graphs.Store(measurement.Symbol, value)
-		}
-
-		evidenceGraph := value.(*types.Graph)
-
-		if err := evidenceGraph.AddNode(measurement); err != nil {
-			errnie.Error(err)
-			continue
-		}
-	}
-
-	thesis.Graphs.Range(func(key, value any) bool {
-		evidenceGraph := value.(*types.Graph)
-		evidenceGraph.Compose()
-
-		if len(evidenceGraph.Edges()) == 0 {
-			thesis.Graphs.Delete(key)
-		}
-
-		return true
-	})
-
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "graphs", map[string]any{
-		"measurements": len(thesis.Measurements),
-		"ns":           time.Since(graphsStarted).Nanoseconds(),
-	}))
-
-	remObservations := make([]time.Time, 0, len(states))
-	remRequested := false
-	cognizeStarted := time.Now()
-
-	for _, state := range states {
-		if analyzer.cognize(thesis, state) {
-			remObservations = append(remObservations, state.At)
-			value, found := thesis.Cognition.Load(state.Symbol)
-
-			if found {
-				remRequested = remRequested || value.(types.Cognition).Ambiguous
-			}
-		}
-	}
-
-	remPending := 0
-
-	if analyzer.rem != nil {
-		remPending = analyzer.rem.Pending()
-	}
-
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "cognize", map[string]any{
-		"states":      len(states),
-		"ns":          time.Since(cognizeStarted).Nanoseconds(),
-		"ambiguous":   remRequested,
-		"rem_pending": remPending,
-	}))
-
+	analyzer.stepManifold(thesis)
+	states := analyzer.observeStates(thesis)
+	analyzer.publishMeasured(thesis, states)
+	analyzer.composeGraphs(thesis)
+	remObservations, remRequested := analyzer.cognizeStates(thesis, states)
 	analyzer.consolidate(thesis, remObservations, remRequested)
+	analyzer.publishCognition(thesis)
+	analyzer.finish(thesis, states, started)
+}
 
-	cognition := make([]types.Cognition, 0)
-
-	thesis.Cognition.Range(func(key, value any) bool {
-		reading, ok := value.(types.Cognition)
-
-		if ok {
-			cognition = append(cognition, reading)
-		}
-
-		return true
-	})
-
-	if len(cognition) > 0 {
-		analyzer.publish(datura.Map[any]{"cognition": cognition})
-	}
-
-	if len(thesis.Forecasts) > 0 {
-		analyzer.publish(datura.Map[any]{"forecasts": thesis.Forecasts})
-	}
-
-	remPending = 0
+/*
+finish audits analyze_end with the terminal rem and forecast counts.
+*/
+func (analyzer *Analyzer) finish(
+	thesis *types.Thesis,
+	states []manifold.State,
+	started time.Time,
+) {
+	remPending := 0
 
 	if analyzer.rem != nil {
 		remPending = analyzer.rem.Pending()
@@ -319,294 +171,4 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 		"hypotheses":  len(thesis.Hypotheses),
 		"rem_pending": remPending,
 	}))
-}
-
-/*
-consolidate accumulates episodic observations and requests off-path REM when
-DMT reports ambiguous branching. The ambiguity gate supplies the trigger, so
-REM has no unrelated timer or fixed batch threshold.
-*/
-func (analyzer *Analyzer) consolidate(
-	thesis *types.Thesis,
-	observations []time.Time,
-	requested bool,
-) {
-	if analyzer.rem == nil {
-		analyzer.rem = newREMSleep(analyzer.tree)
-		analyzer.rem.SetRecorder(analyzer.recorder)
-	}
-
-	analyzer.rem.Accumulate(observations)
-
-	if requested {
-		analyzer.rem.Request(thesis.Tick)
-	}
-
-	analyzer.rem.Stamp(thesis)
-}
-
-/*
-observe connects one manifold state to the existing resonance, causal, and
-forecast outputs through the Thesis without making those components depend on
-the manifold solver.
-*/
-func (analyzer *Analyzer) observe(
-	thesis *types.Thesis,
-	state manifold.State,
-) {
-	if analyzer.resonance == nil {
-		analyzer.resonance = make(map[string]*Resonance)
-	}
-
-	if analyzer.causal == nil {
-		analyzer.causal = make(map[string]*Causal)
-	}
-
-	resonance := analyzer.resonance[state.Symbol]
-
-	if resonance == nil {
-		resonance = NewResonance(state.Symbol, manifold.DefaultBaselineHalflife())
-		analyzer.resonance[state.Symbol] = resonance
-	}
-
-	measurements, resonanceOutcome := resonance.Update(state)
-	thesis.Measurements = append(thesis.Measurements, measurements...)
-
-	if resonanceOutcome != nil {
-		thesis.Resonance = append(thesis.Resonance, resonanceOutcome)
-	}
-
-	causal := analyzer.causal[state.Symbol]
-
-	if causal == nil {
-		causal = NewCausal(state.Symbol)
-		analyzer.causal[state.Symbol] = causal
-	}
-
-	hypothesis, causalOutcome, err := causal.Update(state)
-
-	if err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	if causalOutcome != nil {
-		thesis.Hypotheses = append(thesis.Hypotheses, hypothesis)
-		thesis.Causal = append(thesis.Causal, causalOutcome)
-	}
-
-	if resonanceOutcome == nil || causalOutcome == nil ||
-		!resonanceOutcome.ReturnReady ||
-		resonanceOutcome.CalibrationSamples == 0 ||
-		!causalOutcome.Ready || causalOutcome.CalibrationSamples == 0 {
-		return
-	}
-
-	// Candidate notional is capped at the best ask, so the forecast does not
-	// claim depth-crossing impact beyond the directly observed touch spread.
-	thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
-		Source:           "resonance+causal",
-		Symbol:           state.Symbol,
-		At:               state.At,
-		ObservedInterval: state.Duration,
-		SourceEpoch:      state.Epoch,
-		HorizonEvents:    1,
-		ExpiresEpoch:     state.Epoch + 1,
-		Target:           resonanceOutcome.Target,
-		ModelVersion:     "resonance_return_head_v1",
-		Ready:            true, Calibrated: true,
-		CalibrationSamples: min(
-			resonanceOutcome.CalibrationSamples,
-			causalOutcome.CalibrationSamples,
-		),
-		IncrementalMSE:           resonanceOutcome.IncrementalMSE,
-		IncrementalMSELowerBound: 0,
-		ExpectedReturn:           resonanceOutcome.ExpectedReturn,
-		ReferencePrice:           state.ReferencePrice,
-		BuyCapacity:              state.BuyCapacity,
-		SellCapacity:             state.SellCapacity,
-		ExpectedSpread:           state.Spread,
-		Uncertainty:              resonanceOutcome.Uncertainty,
-		Confidence: math.Min(
-			causalOutcome.Reading.Confidence,
-			1/(1+resonanceOutcome.Surprise),
-		),
-	})
-}
-
-/*
-cognize turns the Thesis evidence for one manifold state into a deterministic
-DMT sensory sequence, reads learned cognition, and writes the decoupled result
-back onto the Thesis before learning the current observation.
-*/
-func (analyzer *Analyzer) cognize(
-	thesis *types.Thesis,
-	state manifold.State,
-) bool {
-	if analyzer.tree == nil || !state.GasReady() {
-		return false
-	}
-
-	parts := make([]string, 0, len(thesis.Measurements)+4)
-	seen := make(map[string]struct{}, len(thesis.Measurements)+4)
-	replacer := strings.NewReplacer("_", "-", "/", "-")
-	parts = append(parts, "symbol-"+replacer.Replace(state.Symbol))
-
-	for _, measurement := range thesis.Measurements {
-		if measurement == nil || measurement.Symbol != state.Symbol ||
-			measurement.Normalized == nil ||
-			measurement.Validity.State != types.ValidityValid {
-			continue
-		}
-
-		direction := "negative"
-
-		if *measurement.Normalized > 0 {
-			direction = "positive"
-		}
-
-		if *measurement.Normalized == 0 {
-			direction = "zero"
-		}
-
-		token := replacer.Replace(strings.Join([]string{
-			string(measurement.Source), string(measurement.Metric),
-			string(measurement.Side), direction,
-		}, "-"))
-
-		if _, exists := seen[token]; exists {
-			continue
-		}
-
-		seen[token] = struct{}{}
-		parts = append(parts, token)
-	}
-
-	for name, value := range map[string]float64{
-		"pressure":   state.Reading.PressureGradX,
-		"divergence": state.Reading.Divergence,
-		"stress":     state.StressAnisotropy,
-	} {
-		direction := "negative"
-
-		if value > 0 {
-			direction = "positive"
-		}
-
-		if value == 0 {
-			direction = "zero"
-		}
-
-		parts = append(parts, name+"-"+direction)
-	}
-
-	sort.Strings(parts)
-	sequence := []byte(strings.Join(parts, "_"))
-
-	if len(sequence) == 0 {
-		return false
-	}
-
-	parent := sequence
-
-	if boundary := bytes.LastIndexByte(sequence, '_'); boundary > 0 {
-		parent = sequence[:boundary]
-	}
-
-	var classificationScratch dmt.ClassificationScratch
-	classification := analyzer.tree.Classify(sequence, &classificationScratch)
-	storageParent := append([]byte("s/"), parent...)
-	ambiguity := analyzer.tree.MeasureBranchAmbiguity(storageParent)
-	predictionBuffer := make([]dmt.LookaheadPrediction, 0, len(parts))
-	predictions := analyzer.tree.PredictNextSensoryTokens(parent, predictionBuffer)
-	reading := types.Cognition{
-		Source:           "dmt",
-		Symbol:           state.Symbol,
-		At:               state.At,
-		Sequence:         string(sequence),
-		Ready:            len(classification.Winner) > 0,
-		Winner:           string(classification.Winner),
-		Confidence:       classification.Highest,
-		EntropyBits:      ambiguity.EntropyBits,
-		EntropyThreshold: ambiguity.Threshold,
-		Ambiguous:        ambiguity.Ambiguous,
-		Cohort:           analyzer.tree.GetSensoryWeight(sequence).Count,
-		Predictions:      make(map[string]float64, len(predictions)),
-	}
-
-	if len(classification.Scores) > 1 {
-		reading.Contrast = analyzer.tree.ComputeBasinContrastiveEvidence(
-			classification.Scores[0].ClassName,
-			classification.Scores[1].ClassName,
-			sequence,
-		).Divergence
-	}
-
-	for _, prediction := range predictions {
-		reading.Predictions[string(prediction.Token)] = prediction.Probability
-	}
-
-	branches, beams, classes, beamWidth, maxHops, nodeCount, lookaheadScore, lookaheadPaths :=
-		analyzer.cognitionVisualization(
-			sequence, parent, parts, classification, predictions,
-		)
-
-	reading.RegimePrefix = string(parent)
-	reading.LookaheadScore = lookaheadScore
-	reading.LookaheadPaths = lookaheadPaths
-	reading.BeamWidth = beamWidth
-	reading.MaxHops = maxHops
-	reading.NodeCount = nodeCount
-	reading.Branches = branches
-	reading.Beams = beams
-	reading.Classes = classes
-
-	thesis.Cognition.Store(state.Symbol, reading)
-	analyzer.tree.TrainSensorySequence(sequence)
-
-	if _, _, err := analyzer.tree.CommitToEpisodicBuffer(
-		uint64(state.At.UnixNano()), sequence,
-	); err != nil {
-		errnie.Error(err)
-		return false
-	}
-
-	class := []byte("balanced")
-
-	if state.BuyIntensity > state.SellIntensity {
-		class = []byte("buy")
-	}
-
-	if state.SellIntensity > state.BuyIntensity {
-		class = []byte("sell")
-	}
-
-	attractors := [][]byte{[]byte("buy"), []byte("sell"), []byte("balanced")}
-	weights := make([]dmt.CognitiveState, len(attractors))
-	total := uint64(1)
-
-	for index, candidate := range attractors {
-		weights[index] = analyzer.tree.GetAttractorBasin(candidate, sequence)
-		total += weights[index].Count
-
-		if bytes.Equal(candidate, class) {
-			weights[index].Count++
-		}
-	}
-
-	for index, candidate := range attractors {
-		if weights[index].Count == 0 {
-			continue
-		}
-
-		weights[index].Probability = float64(weights[index].Count) / float64(total)
-
-		if _, _, err := analyzer.tree.InsertAttractorBasin(
-			candidate, sequence, weights[index],
-		); err != nil {
-			errnie.Error(err)
-		}
-	}
-
-	return true
 }

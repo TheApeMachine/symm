@@ -3,7 +3,8 @@ isUngatedThreshold detects DMT's ungated entropy sentinel (MaxFloat64) so the
 UI does not paint Number.MAX_VALUE as a real gate.
 */
 export const isUngatedThreshold = (threshold: number): boolean =>
-	!Number.isFinite(threshold) || threshold >= Number.MAX_VALUE / 2;
+	threshold === Number.POSITIVE_INFINITY ||
+	threshold >= Number.MAX_VALUE / 2;
 
 /*
 formatEntropyGate renders bits against a real threshold, or "ungated" when DMT

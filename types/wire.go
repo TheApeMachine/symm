@@ -45,55 +45,75 @@ func WireMeasurements(measurements []*Measurement) []datura.Map[any] {
 		group, exists := groups[key]
 
 		if !exists {
-			group = &wireGroup{
-				source:   measurement.Source,
-				stream:   measurement.Stream,
-				symbol:   measurement.Symbol,
-				at:       measurement.At,
-				maturity: measurement.Maturity,
-				validity: measurement.Validity,
-				metrics:  datura.Map[any]{},
-			}
+			group = newWireGroup(measurement)
 			groups[key] = group
 			order = append(order, key)
 		}
 
-		if measurement.At.After(group.at) {
-			group.at = measurement.At
-			group.maturity = measurement.Maturity
-			group.validity = measurement.Validity
-		}
-
-		group.metrics[wireMetricKey(measurement)] = measurement.Raw
+		group.accumulate(measurement)
 	}
 
 	out := make([]datura.Map[any], 0, len(order))
 
 	for _, key := range order {
-		group := groups[key]
-		frame := datura.Map[any]{
-			"source":  group.source,
-			"symbol":  group.symbol,
-			"at":      group.at,
-			"metrics": group.metrics,
-		}
-
-		if group.stream != "" {
-			frame["stream"] = group.stream
-		}
-
-		if group.maturity > 0 {
-			frame["maturity"] = group.maturity
-		}
-
-		if group.validity.State != "" || group.validity.Readiness != "" {
-			frame["validity"] = group.validity
-		}
-
-		out = append(out, frame)
+		out = append(out, groups[key].frame())
 	}
 
 	return out
+}
+
+/*
+newWireGroup seeds one source×symbol observation from its first measurement.
+*/
+func newWireGroup(measurement *Measurement) *wireGroup {
+	return &wireGroup{
+		source:   measurement.Source,
+		stream:   measurement.Stream,
+		symbol:   measurement.Symbol,
+		at:       measurement.At,
+		maturity: measurement.Maturity,
+		validity: measurement.Validity,
+		metrics:  datura.Map[any]{},
+	}
+}
+
+/*
+accumulate merges one metric row and advances observation metadata when newer.
+*/
+func (group *wireGroup) accumulate(measurement *Measurement) {
+	if measurement.At.After(group.at) {
+		group.at = measurement.At
+		group.maturity = measurement.Maturity
+		group.validity = measurement.Validity
+	}
+
+	group.metrics[wireMetricKey(measurement)] = measurement.Raw
+}
+
+/*
+frame encodes one wire observation map for the UI publish path.
+*/
+func (group *wireGroup) frame() datura.Map[any] {
+	frame := datura.Map[any]{
+		"source":  group.source,
+		"symbol":  group.symbol,
+		"at":      group.at,
+		"metrics": group.metrics,
+	}
+
+	if group.stream != "" {
+		frame["stream"] = group.stream
+	}
+
+	if group.maturity > 0 {
+		frame["maturity"] = group.maturity
+	}
+
+	if group.validity.State != "" || group.validity.Readiness != "" {
+		frame["validity"] = group.validity
+	}
+
+	return frame
 }
 
 /*

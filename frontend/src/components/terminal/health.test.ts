@@ -49,6 +49,21 @@ describe("terminalHealthSummary", () => {
 		expect(summary.completed).toBe(true);
 	});
 
+	it("honors explicit completed false over tick count", () => {
+		const summary = terminalHealthSummary(
+			{
+				measurements: {},
+				version: 1,
+			},
+			"BTC/USD",
+			["depthflow"],
+			{ count: 12, completed: false, ns: 12_000_000 },
+		);
+
+		expect(summary.completed).toBe(false);
+		expect(summary.label).toBe("Silent");
+	});
+
 	it("does not call a silent focus STANDBY when the universe is live", () => {
 		const history = Circular<MeasurementEpoch>(4);
 

@@ -260,11 +260,11 @@ func sessionSignals(
 
 func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 	Convey("Given leadlag inside a paper Session cohort market", testingTB, func() {
-		herdSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		herdSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)
-		lagSession, err := tests.NewSession(testingTB, tests.SessionOptions{
+		lagSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
 			Signals: sessionSignals,
 		})
 		So(err, ShouldBeNil)
@@ -289,11 +289,9 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 			)
 
 			Convey("Then a delayed follower differs from co-moving herd strength", func() {
-				So(hasLag || hasHerd, ShouldBeTrue)
-
-				if hasLag && hasHerd {
-					So(math.Abs(lagged-herd), ShouldBeGreaterThan, 0)
-				}
+				So(hasLag, ShouldBeTrue)
+				So(hasHerd, ShouldBeTrue)
+				So(math.Abs(lagged-herd), ShouldBeGreaterThan, 0)
 			})
 		})
 	})

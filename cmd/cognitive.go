@@ -3,10 +3,10 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/audit"
 )
 
 /*
@@ -36,7 +36,7 @@ func rotateCognitive(persistDir string) error {
 		)
 	}
 
-	stamped := persistDir + "." + time.Now().UTC().Format("20060102T150405Z")
+	stamped := audit.RotatedPath(persistDir)
 
 	if err := os.Rename(persistDir, stamped); err != nil {
 		return errnie.Err(errnie.IO, "cognitive: rotate persist_dir failed", err)

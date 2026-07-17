@@ -2,6 +2,7 @@ package hawkes
 
 import (
 	"context"
+	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -30,6 +31,7 @@ type Signal struct {
 	process  *excitation.Process
 	evidence *Evidence
 	ui       chan []byte
+	mu       sync.Mutex
 }
 
 /*
@@ -88,6 +90,9 @@ func (signal *Signal) Outcome(symbol string) (excitation.Outcome, bool) {
 		return excitation.Outcome{}, false
 	}
 
+	signal.mu.Lock()
+	defer signal.mu.Unlock()
+
 	return signal.process.Outcome(symbol)
 }
 
@@ -98,6 +103,9 @@ func (signal *Signal) Symbols() []string {
 	if signal == nil || signal.process == nil {
 		return nil
 	}
+
+	signal.mu.Lock()
+	defer signal.mu.Unlock()
 
 	return signal.process.Symbols()
 }
@@ -112,6 +120,8 @@ func (signal *Signal) Calculate(
 	rows := frame.Trades
 	out := make([]*types.Measurement, 0, len(rows))
 
+	signal.mu.Lock()
+
 	for _, row := range rows {
 		measurements, err := signal.measure(row)
 
@@ -123,6 +133,7 @@ func (signal *Signal) Calculate(
 		out = append(out, measurements...)
 	}
 
+	signal.mu.Unlock()
 	signal.Publish(out)
 	return out, nil
 }

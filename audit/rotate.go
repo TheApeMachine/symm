@@ -31,11 +31,22 @@ func Rotate(filename string) error {
 		return fmt.Errorf("audit: rotate path is a directory: %s", filename)
 	}
 
-	stamped := filename + "." + time.Now().UTC().Format("20060102T150405Z")
+	stamped := RotatedPath(filename)
 
 	if err := os.Rename(filename, stamped); err != nil {
 		return errnie.Err(errnie.IO, "audit: rotate rename failed", err)
 	}
 
 	return nil
+}
+
+/*
+RotatedPath returns path with a UTC second stamp and nanosecond suffix so
+same-second rotations never collide.
+*/
+func RotatedPath(path string) string {
+	now := time.Now().UTC()
+
+	return path + "." + now.Format("20060102T150405Z") +
+		fmt.Sprintf(".%09d", now.Nanosecond())
 }

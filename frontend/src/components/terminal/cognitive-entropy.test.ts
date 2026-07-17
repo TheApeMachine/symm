@@ -6,11 +6,13 @@ import {
 } from "./cognitive-entropy";
 
 describe("isUngatedThreshold", () => {
-	it("treats MaxFloat64 as ungated", () => {
+	it("treats MaxFloat64 and positive infinity as ungated", () => {
 		expect(isUngatedThreshold(Number.MAX_VALUE)).toBe(true);
 		expect(isUngatedThreshold(1.7976931348623157e308)).toBe(true);
-		expect(isUngatedThreshold(1.5)).toBe(false);
 		expect(isUngatedThreshold(Number.POSITIVE_INFINITY)).toBe(true);
+		expect(isUngatedThreshold(1.5)).toBe(false);
+		expect(isUngatedThreshold(Number.NaN)).toBe(false);
+		expect(isUngatedThreshold(Number.NEGATIVE_INFINITY)).toBe(false);
 	});
 });
 

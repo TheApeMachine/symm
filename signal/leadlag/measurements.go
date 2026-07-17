@@ -9,60 +9,144 @@ import (
 )
 
 /*
-score converts one follower's lag features into the published lead-lag
-measurement bundle for the current tick.
+measureFrame ingests prices, refreshes the anchor, and scores each follower row.
 */
-func (signal *Signal) score(
-	symbol string,
-	at time.Time,
-	features LagFeatures,
-) []*types.Measurement {
-	lagFraction := 0.0
-	lagCorrelation := 0.0
-	contempCorrelation := 0.0
-	signedLagCorrelation := 0.0
-	signedContempCorrelation := 0.0
+func (signal *Signal) measureFrame(
+	frame *types.MarketFrame,
+) ([]*types.Measurement, error) {
+	rows := frame.Tickers
+	out := make([]*types.Measurement, 0, len(rows))
 
-	if features.LagOK && features.SampleCount > 0 {
-		dynamicMax := signal.section.maxLagBars(features.SampleCount)
-
-		if dynamicMax > 0 {
-			lagFraction = math.Abs(float64(features.LagBars)) / float64(dynamicMax)
+	for _, row := range rows {
+		if row.Timestamp.IsZero() || row.Symbol == "" || row.Last == nil {
+			continue
 		}
 
-		signedLagCorrelation = features.LagCorr
-		lagCorrelation = math.Abs(features.LagCorr)
+		lastPrice := row.Last.Float64()
+
+		if lastPrice <= 0 {
+			continue
+		}
+
+		signal.section.ObservePrice(row.Symbol, lastPrice, row.Timestamp)
+	}
+
+	if anchor, _ := frame.CrossSection.Leadership(); anchor != "" {
+		signal.section.SetAnchor(anchor)
+	} else {
+		signal.section.ClearAnchor()
+	}
+
+	for _, row := range rows {
+		if row.Timestamp.IsZero() || row.Symbol == "" || row.Last == nil {
+			continue
+		}
+
+		if row.Last.Float64() <= 0 {
+			continue
+		}
+
+		if signal.section.AnchorSymbol() == "" {
+			out = append(out, signal.provisional(row.Symbol, row.Timestamp)...)
+			continue
+		}
+
+		features := signal.section.Features(row.Symbol)
+
+		if features.Price <= 0 {
+			continue
+		}
+
+		out = append(out, signal.score(row.Symbol, row.Timestamp, features)...)
+	}
+
+	return out, nil
+}
+
+type correlationSelection struct {
+	correlation              float64
+	signedCorrelation        float64
+	signedContempCorrelation float64
+	signedLagCorrelation     float64
+	lagFraction              float64
+}
+
+/*
+selectCorrelations derives lag and contemporaneous correlation evidence.
+*/
+func (signal *Signal) selectCorrelations(
+	features LagFeatures,
+) correlationSelection {
+	selected := correlationSelection{}
+	dynamicMax := 0
+
+	if features.LagOK && features.SampleCount > 0 {
+		dynamicMax = signal.section.maxLagBars(features.SampleCount)
+
+		if dynamicMax > 0 {
+			selected.lagFraction = math.Abs(float64(features.LagBars)) / float64(dynamicMax)
+		}
+
+		selected.signedLagCorrelation = features.LagCorr
 	}
 
 	if features.ContempOK {
-		signedContempCorrelation = features.ContempCorr
-		contempCorrelation = math.Abs(features.ContempCorr)
+		selected.signedContempCorrelation = features.ContempCorr
 	}
 
-	correlation := min(math.Max(contempCorrelation, lagCorrelation), 1)
+	lagCorrelation := math.Abs(selected.signedLagCorrelation)
+	contempCorrelation := math.Abs(selected.signedContempCorrelation)
+	selected.correlation = min(math.Max(contempCorrelation, lagCorrelation), 1)
 	lagDominates := max(0, min(1, (lagCorrelation-contempCorrelation)*1e9))
-	signedCorrelation := min(max(
-		signedContempCorrelation+lagDominates*(signedLagCorrelation-signedContempCorrelation),
+	selected.signedCorrelation = min(max(
+		selected.signedContempCorrelation+lagDominates*(selected.signedLagCorrelation-selected.signedContempCorrelation),
 		-1,
 	), 1)
-	sampleSupport := 0.0
 
-	if features.SampleCount > 0 {
-		shortWindow, _, err := statistic.ResolveWindows(
-			make([]float64, features.SampleCount),
-			0,
-			0,
-		)
+	return selected
+}
 
-		if err == nil && shortWindow > 0 {
-			sampleSupport = float64(features.SampleCount) / float64(shortWindow)
-		}
+/*
+sampleSupportFraction scales evidence by resolved short-window depth.
+*/
+func sampleSupportFraction(sampleCount int) float64 {
+	if sampleCount <= 0 {
+		return 0
 	}
 
+	shortWindow, _, err := statistic.ResolveWindows(
+		make([]float64, sampleCount),
+		0,
+		0,
+	)
+
+	if err != nil || shortWindow <= 0 {
+		return 0
+	}
+
+	return float64(sampleCount) / float64(shortWindow)
+}
+
+type evidenceWeights struct {
+	inefficient float64
+	syncScore   float64
+	decoupled   float64
+	stall       float64
+	strength    float64
+}
+
+/*
+weightEvidence combines correlation selection with stall and anchor context.
+*/
+func weightEvidence(
+	features LagFeatures,
+	selected correlationSelection,
+	sampleSupport float64,
+) evidenceWeights {
 	anchorActive := 0.1
 
 	if features.MoveMoved ||
-		(features.StallMargin > 0 && lagFraction > 0) ||
+		(features.StallMargin > 0 && selected.lagFraction > 0) ||
 		features.ContempOK ||
 		features.LagOK {
 		anchorActive = 1
@@ -75,9 +159,11 @@ func (signal *Signal) score(
 	}
 
 	stallMargin := math.Min(1, math.Max(0, features.StallMargin))
-	noLag := 1 - lagFraction
-	uncorrelated := 1 - correlation
-	lagEvidence := lagCorrelation * lagFraction
+	noLag := 1 - selected.lagFraction
+	uncorrelated := 1 - selected.correlation
+	lagCorrelation := math.Abs(selected.signedLagCorrelation)
+	contempCorrelation := math.Abs(selected.signedContempCorrelation)
+	lagEvidence := lagCorrelation * selected.lagFraction
 	syncEvidence := contempCorrelation * noLag
 	decoupledEvidence := uncorrelated * (1 - stallMargin)
 	stallEvidence := stallMargin * uncorrelated * noLag * stallDamp
@@ -85,7 +171,26 @@ func (signal *Signal) score(
 	syncScore := sampleSupport * anchorActive * syncEvidence * (1 - stallMargin)
 	decoupled := sampleSupport * anchorActive * decoupledEvidence
 	stall := sampleSupport * anchorActive * stallEvidence
-	strength := max(max(inefficient, syncScore), max(decoupled, stall))
+
+	return evidenceWeights{
+		inefficient: inefficient,
+		syncScore:   syncScore,
+		decoupled:   decoupled,
+		stall:       stall,
+		strength:    max(max(inefficient, syncScore), max(decoupled, stall)),
+	}
+}
+
+/*
+buildScoreMeasurements materializes the lead-lag metric bundle for one row.
+*/
+func buildScoreMeasurements(
+	symbol string,
+	at time.Time,
+	selected correlationSelection,
+	sampleSupport float64,
+	weights evidenceWeights,
+) []*types.Measurement {
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,
 		Readiness: types.ReadinessObservation,
@@ -95,17 +200,17 @@ func (signal *Signal) score(
 		raw    float64
 	}
 	readings := []reading{
-		{types.MetricCorrelation, correlation},
-		{types.MetricSignedCorrelation, signedCorrelation},
-		{types.MetricSignedContempCorrelation, signedContempCorrelation},
-		{types.MetricSignedLagCorrelation, signedLagCorrelation},
-		{types.MetricLagFraction, lagFraction},
+		{types.MetricCorrelation, selected.correlation},
+		{types.MetricSignedCorrelation, selected.signedCorrelation},
+		{types.MetricSignedContempCorrelation, selected.signedContempCorrelation},
+		{types.MetricSignedLagCorrelation, selected.signedLagCorrelation},
+		{types.MetricLagFraction, selected.lagFraction},
 		{types.MetricSampleSupport, sampleSupport},
-		{types.MetricInefficient, inefficient},
-		{types.MetricSync, syncScore},
-		{types.MetricDecoupled, decoupled},
-		{types.MetricStall, stall},
-		{types.MetricStrength, strength},
+		{types.MetricInefficient, weights.inefficient},
+		{types.MetricSync, weights.syncScore},
+		{types.MetricDecoupled, weights.decoupled},
+		{types.MetricStall, weights.stall},
+		{types.MetricStrength, weights.strength},
 	}
 	measurements := make([]*types.Measurement, 0, len(readings))
 
@@ -123,6 +228,22 @@ func (signal *Signal) score(
 	}
 
 	return measurements
+}
+
+/*
+score converts one follower's lag features into the published lead-lag
+measurement bundle for the current tick.
+*/
+func (signal *Signal) score(
+	symbol string,
+	at time.Time,
+	features LagFeatures,
+) []*types.Measurement {
+	selected := signal.selectCorrelations(features)
+	sampleSupport := sampleSupportFraction(features.SampleCount)
+	weights := weightEvidence(features, selected, sampleSupport)
+
+	return buildScoreMeasurements(symbol, at, selected, sampleSupport, weights)
 }
 
 /*

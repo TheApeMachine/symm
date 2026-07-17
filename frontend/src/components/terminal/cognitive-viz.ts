@@ -10,6 +10,24 @@ import type { Variant } from "@/components/ui/types";
 const clamp = (value: number, min: number, max: number): number =>
 	Math.min(max, Math.max(min, value));
 
+const sanitizeEntropyBits = (value: unknown): number =>
+	typeof value === "number" && Number.isFinite(value) ? value : 0;
+
+const sanitizeEntropyThreshold = (value: unknown): number => {
+	if (typeof value !== "number") {
+		return 0;
+	}
+
+	if (
+		value === Number.POSITIVE_INFINITY ||
+		value >= Number.MAX_VALUE / 2
+	) {
+		return value;
+	}
+
+	return Number.isFinite(value) ? value : 0;
+};
+
 export type CognitivePosterior = {
 	winner: string;
 	winnerPercent: string;
@@ -59,12 +77,8 @@ export const cognitivePosteriorFromReading = (
 	const winner = sorted[0];
 	const runner = sorted[1];
 
-	const bits =
-		typeof reading?.entropyBits === "number" ? reading.entropyBits : 0;
-	const threshold =
-		typeof reading?.entropyThreshold === "number"
-			? reading.entropyThreshold
-			: 0;
+	const bits = sanitizeEntropyBits(reading?.entropyBits);
+	const threshold = sanitizeEntropyThreshold(reading?.entropyThreshold);
 	const entropyGate = formatEntropyGate(bits, threshold);
 
 	if (winner === undefined) {

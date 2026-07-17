@@ -45,11 +45,20 @@ export type HealthSummary = {
 engineHealthLabel prefers completed planner ticks over focus-scoped kernel
 standby so a silent BTC focus cannot paint the engine as dead while ticks run.
 */
+/*
+tickCompleted prefers an explicit completed flag (including false) and only
+infers completion from a numeric count when the flag is absent.
+*/
+export const tickCompleted = (tick: DashboardFrame | null): boolean =>
+	typeof tick?.completed === "boolean"
+		? tick.completed
+		: typeof tick?.count === "number";
+
 export const engineHealthLabel = (
 	tick: DashboardFrame | null,
 	focus: { degraded: number; measured: number; total: number },
 ): { label: string; variant: Variant } => {
-	const completed = tick?.completed === true || typeof tick?.count === "number";
+	const completed = tickCompleted(tick);
 
 	if (!completed) {
 		return { label: "Silent", variant: "warning" };
@@ -155,7 +164,7 @@ export const terminalHealthSummary = (
 		variant: engine.variant,
 		total,
 		tickMs: ns === null ? null : Math.round(ns / 1_000_000),
-		completed: tick?.completed === true || typeof tick?.count === "number",
+		completed: tickCompleted(tick),
 	};
 };
 

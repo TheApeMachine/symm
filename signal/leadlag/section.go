@@ -106,6 +106,19 @@ func (section *Section) SetAnchor(symbol string) {
 }
 
 /*
+ClearAnchor drops the live leader so leaderless cuts emit provisional evidence.
+*/
+func (section *Section) ClearAnchor() {
+	if section.anchorSymbol == "" {
+		return
+	}
+
+	section.moveBaseline = newMoveBaseline()
+	section.lastMove = algorithm.MoveBaselineOutput{}
+	section.anchorSymbol = ""
+}
+
+/*
 PriceSampleCount returns how many spaced price samples are buffered for symbol.
 */
 func (section *Section) PriceSampleCount(symbol string) int {
