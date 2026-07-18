@@ -49,6 +49,13 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 	}
 }
 
+/*
+Interest requires ticker depth fields for cross-sectional scarcity.
+*/
+func (signal *Signal) Interest() types.StreamInterest {
+	return types.StreamTicker
+}
+
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	measurements, err := signal.Calculate(thesis.Market())
 
@@ -161,7 +168,6 @@ func (signal *Signal) Calculate(
 		}
 	}
 
-	signal.Publish(out)
 	return out, nil
 }
 

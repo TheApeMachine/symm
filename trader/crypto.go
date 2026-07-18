@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -29,26 +28,28 @@ It consumes market and private frames, publishes UI frames,
 and delegates measurement to Signal.
 */
 type Crypto struct {
-	booter     *system.Booter
-	status     types.Status
-	ctx        context.Context
-	cancel     context.CancelFunc
-	desk       *broker.Desk
-	price      *broker.Price
-	balance    *broker.Balance
-	api        *websocket.API
-	instrument *broker.Instrument
-	tree       *dmt.Tree
-	tick       *atomic.Int64
-	planner    *strategy.Planner
-	postMortem *strategy.PostMortem
-	analyzer   *logic.Analyzer
-	dataPath   string
-	uiHub      *ui.Hub
-	market     *Market
-	recorder   *audit.Recorder
-	lastThesis atomic.Pointer[types.Thesis]
-	recovery   *types.Thesis
+	booter         *system.Booter
+	status         types.Status
+	ctx            context.Context
+	cancel         context.CancelFunc
+	desk           *broker.Desk
+	price          *broker.Price
+	balance        *broker.Balance
+	api            *websocket.API
+	instrument     *broker.Instrument
+	tree           *dmt.Tree
+	tick           *atomic.Int64
+	planner        *strategy.Planner
+	postMortem     *strategy.PostMortem
+	analyzer       *logic.Analyzer
+	dataPath       string
+	uiHub          *ui.Hub
+	market         *Market
+	recorder       *audit.Recorder
+	lastThesis     atomic.Pointer[types.Thesis]
+	checkpointAt   atomic.Int64
+	checkpointSlot atomic.Pointer[types.Thesis]
+	recovery       *types.Thesis
 }
 
 /*
@@ -144,6 +145,8 @@ func (crypto *Crypto) Run() error {
 		}
 	}
 
+	go crypto.checkpointLoop()
+
 	go func() {
 		errnie.Info("crypto runtime started")
 
@@ -151,6 +154,12 @@ func (crypto *Crypto) Run() error {
 			defer func() {
 				errnie.Error(crypto.recorder.Close())
 			}()
+		}
+
+		budget := viper.GetDuration("cognitive.tick_budget")
+
+		if budget <= 0 {
+			budget = 10 * time.Millisecond
 		}
 
 		for crypto.Status() != types.ERROR {
@@ -165,7 +174,13 @@ func (crypto *Crypto) Run() error {
 				continue
 			}
 
-			if _, err := crypto.Tick(time.Now().UTC()); err != nil {
+			if crypto.market != nil {
+				crypto.market.WaitDirty(budget)
+			}
+
+			_, err := crypto.Tick(time.Now().UTC())
+
+			if err != nil {
 				return
 			}
 		}
@@ -215,15 +230,7 @@ func (crypto *Crypto) Tick(at time.Time) (*types.Thesis, error) {
 
 	crypto.trade(thesis)
 	crypto.lastThesis.Store(thesis)
-
-	if err := thesis.Save(crypto.dataPath); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"crypto: thesis checkpoint failed",
-			err,
-		))
-	}
-
+	crypto.checkpoint(thesis)
 	crypto.publishTick(thesis)
 
 	errnie.Error(audit.Record(crypto.recorder, "tick", map[string]any{
@@ -270,182 +277,6 @@ func (crypto *Crypto) publishTick(thesis *types.Thesis) {
 	case crypto.uiHub.Messages <- datura.Map[any]{"tick": tick}.Marshal():
 	default:
 	}
-}
-
-/*
-Plan seeds open inventory, runs Planner friction→Decide→Allocate, and publishes
-strategy frames. Fee and lot math stay on the composed Allocator.
-*/
-func (crypto *Crypto) Plan(thesis *types.Thesis) error {
-	if thesis == nil || crypto.planner == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"crypto: plan requires thesis and planner",
-			nil,
-		))
-	}
-
-	crypto.seedOpen(thesis)
-	available, normal, reserved, err := crypto.constraints()
-
-	if err != nil {
-		return err
-	}
-
-	crypto.planner.Run(thesis, available, normal, reserved)
-	crypto.publishStrategy(thesis)
-
-	return nil
-}
-
-/*
-seedOpen copies broker-open inventory onto Thesis.Holdings so Decide's
-continuation branch sees real positions, then merges durable recovery state.
-*/
-func (crypto *Crypto) seedOpen(thesis *types.Thesis) {
-	if crypto.balance != nil {
-		for holding := range crypto.balance.Holdings() {
-			thesis.Holdings.Store(holding.Symbol, holding)
-		}
-	}
-
-	if crypto.recovery == nil || crypto.recovery.Holdings == nil {
-		return
-	}
-
-	crypto.recovery.Holdings.Range(func(key, value any) bool {
-		if _, exists := thesis.Holdings.Load(key); exists {
-			return true
-		}
-
-		thesis.Holdings.Store(key, value)
-
-		return true
-	})
-}
-
-/*
-constraints returns quote capital plus normal and reserved slot ceilings.
-*/
-func (crypto *Crypto) constraints() (float64, int, int, error) {
-	normal, reserved := 0, 0
-
-	if crypto.desk != nil {
-		normal = crypto.desk.NormalSlots()
-		reserved = crypto.desk.ReservedSlots()
-	}
-
-	if crypto.balance == nil {
-		return 0, normal, reserved, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"crypto: balance unavailable for plan",
-			nil,
-		))
-	}
-
-	available, err := crypto.balance.AvailableQuote()
-
-	if err != nil {
-		return 0, normal, reserved, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"crypto: quote balance unavailable for plan",
-			err,
-		))
-	}
-
-	return available, normal, reserved, nil
-}
-
-/*
-publishStrategy forwards decision frames so the terminal sees strategy output
-after Analyzer already published forecasts.
-*/
-func (crypto *Crypto) publishStrategy(thesis *types.Thesis) {
-	if crypto.uiHub == nil || len(thesis.Decisions) == 0 {
-		return
-	}
-
-	select {
-	case crypto.uiHub.Messages <- datura.Map[any]{
-		"decisions": thesis.Decisions,
-	}.Marshal():
-	default:
-	}
-}
-
-/*
-trade submits enter-selected holdings and Decide exit/reduce orders through Desk.
-*/
-func (crypto *Crypto) trade(thesis *types.Thesis) {
-	if crypto.desk == nil {
-		return
-	}
-
-	enters := make(map[string]struct{}, len(thesis.Decisions))
-	sells := make(map[string]*decimal.Decimal, len(thesis.Decisions))
-
-	for _, decision := range thesis.Decisions {
-		switch decision.Action {
-		case "enter":
-			enters[decision.Symbol] = struct{}{}
-		case "exit":
-			sells[decision.Symbol] = nil
-		case "reduce":
-			if prior, ok := sells[decision.Symbol]; ok && prior == nil {
-				continue
-			}
-
-			qty := decimal.NewFromFloat64(decision.ProposedQuantity)
-			sells[decision.Symbol] = qty
-		}
-	}
-
-	freeing := 0
-
-	thesis.Holdings.Range(func(key, value any) bool {
-		holding := value.(types.Holding)
-
-		if _, enter := enters[holding.Symbol]; !enter {
-			return true
-		}
-
-		if err := errnie.Validate(&holding); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"invalid holding for "+holding.Symbol,
-				err,
-			))
-
-			thesis.Holdings.Delete(key)
-			return true
-		}
-
-		if !crypto.desk.HasSlotAfter(holding.IsOpportunity, freeing) {
-			return true
-		}
-
-		position, err := crypto.desk.BuyAfter(
-			holding, holding.IsOpportunity, freeing,
-		)
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"failed to buy holding "+holding.Symbol,
-				err,
-			))
-
-			return true
-		}
-
-		thesis.Positions.Store(holding.Symbol, position)
-
-		if freeing > 0 {
-			freeing--
-		}
-
-		return true
-	})
 }
 
 /*

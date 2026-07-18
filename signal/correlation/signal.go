@@ -207,7 +207,6 @@ func (signal *Signal) Calculate(
 		out = append(out, measurements...)
 	}
 
-	signal.Publish(out)
 	return out, nil
 }
 

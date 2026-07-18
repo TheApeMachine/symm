@@ -108,14 +108,6 @@ var (
 				errnie.Error(tree.Close())
 			}()
 
-			thesis := types.NewThesis(channel, nil)
-
-			if encoded, found := tree.Get([]byte(types.ThesisKey)); found {
-				thesis = restoreThesis(
-					thesis, channel, encoded, "failed to restore persisted Thesis",
-				)
-			}
-
 			simulator := websocket.NewLatencySimulator(booter)
 
 			dataPath := strings.TrimSpace(viper.GetString("system.data_path"))
@@ -173,6 +165,7 @@ var (
 				))
 			}
 
+			thesis := types.NewThesis(channel, nil)
 			encoded, err := os.ReadFile(filepath.Join(dataPath, "thesis.json"))
 
 			if err == nil {
@@ -186,8 +179,13 @@ var (
 			}
 
 			thesis.Holdings.Range(func(key, value any) bool {
-				holding := value.(types.Holding)
-				holdings = append(holdings, holding)
+				switch holding := value.(type) {
+				case *types.Holding:
+					holdings = append(holdings, *holding)
+				case types.Holding:
+					holdings = append(holdings, holding)
+				}
+
 				return true
 			})
 
@@ -226,6 +224,7 @@ var (
 				ctx,
 				channel,
 				api,
+				desk,
 				instrument,
 				price,
 				balance,

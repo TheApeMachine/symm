@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -18,6 +19,7 @@ type Desk struct {
 	price          *Price
 	balance        *Balance
 	positions      *sync.Map
+	marks          Marks
 	maxPositions   int
 	maxReserved    int
 	publishPending atomic.Bool
@@ -31,13 +33,16 @@ func NewDesk(
 	price *Price,
 	balance *Balance,
 ) *Desk {
+	positions := &sync.Map{}
+
 	return &Desk{
 		status:       types.INITIALIZING,
 		api:          api,
 		instrument:   instrument,
 		price:        price,
 		balance:      balance,
-		positions:    &sync.Map{},
+		positions:    positions,
+		marks:        Marks{positions: positions},
 		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
 		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
 	}
@@ -50,6 +55,10 @@ subscribes to executions, and adopts Balance-seeded holdings from restart.
 func (desk *Desk) Initialize() error {
 	errnie.Info("initializing desk")
 	desk.bind()
+
+	if desk.price != nil {
+		desk.price.RouteMarks(desk.Mark)
+	}
 
 	if err := desk.api.SubscribeExecutions(); err != nil {
 		desk.status = types.ERROR
@@ -118,7 +127,7 @@ func (desk *Desk) Update() {
 		position := value.(*Position)
 
 		if slices.Contains([]types.Status{
-			types.CLOSED, types.ERROR,
+			types.CLOSED, types.ERROR, types.CANCELED,
 		}, position.Status()) {
 			desk.evict(position.pair.Symbol)
 		}
@@ -170,11 +179,32 @@ func (desk *Desk) Position(symbol string) (*Position, bool) {
 	return position, ok && position != nil
 }
 
+/*
+Pending reports whether symbol already has an outstanding broker order.
+*/
+func (desk *Desk) Pending(symbol string) bool {
+	position, ok := desk.Position(symbol)
+
+	return ok && desk.marks.Pending(position)
+}
+
+/*
+PendingSymbols returns symbols with outstanding entry/exit/reduce intents for
+compact recovery snapshots.
+*/
+func (desk *Desk) PendingSymbols() map[string]string {
+	if desk == nil {
+		return map[string]string{}
+	}
+
+	return desk.marks.PendingSymbols()
+}
+
 func (desk *Desk) Buy(
 	holding types.Holding,
 	opportunity bool,
 ) (*Position, error) {
-	return desk.BuyAfter(holding, opportunity, 0)
+	return desk.BuyAfter(holding, opportunity, 0, "")
 }
 
 /*
@@ -185,6 +215,7 @@ func (desk *Desk) BuyAfter(
 	holding types.Holding,
 	opportunity bool,
 	freeing int,
+	reservationID string,
 ) (*Position, error) {
 	desk.bind()
 	openPositions := max(desk.OpenPositions()-freeing, 0)
@@ -231,11 +262,14 @@ func (desk *Desk) BuyAfter(
 		pair,
 	)
 	position.onTerminal = desk.evict
+	position.claim.Bind(desk.balance, reservationID)
 
-	desk.balance.holdings.Store(holding.Symbol, &holding)
+	seed := holding
+	desk.balance.holdings.Store(holding.Symbol, &seed)
 	desk.positions.Store(holding.Symbol, position)
 
 	if err := position.Enter(); err != nil {
+		position.claim.Release()
 		desk.evict(holding.Symbol)
 
 		return nil, errnie.Error(errnie.Err(
@@ -246,6 +280,34 @@ func (desk *Desk) BuyAfter(
 	}
 
 	return position, nil
+}
+
+/*
+Mark applies a Price-cache mark to an open lot after a single ticker decode.
+*/
+func (desk *Desk) Mark(symbol string) {
+	if desk == nil {
+		return
+	}
+
+	desk.marks.Apply(symbol)
+}
+
+/*
+Sell submits a full exit (nil quantity) or a partial reduce for a desk-owned lot.
+*/
+func (desk *Desk) Sell(symbol string, quantity *decimal.Decimal) error {
+	position, ok := desk.Position(symbol)
+
+	if !ok {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"desk: no open position for "+symbol,
+			nil,
+		))
+	}
+
+	return position.Sell(quantity)
 }
 
 func (desk *Desk) Close() error {
@@ -272,6 +334,34 @@ func (desk *Desk) HasSlotAfter(opportunity bool, freeing int) bool {
 	}
 
 	return true
+}
+
+/*
+SetSlots overrides normal and reserved capacity. Fixtures use this so parallel
+tests do not race on process-wide viper values after Desk construction.
+*/
+func (desk *Desk) SetSlots(normal, reserved int) {
+	if desk == nil {
+		return
+	}
+
+	desk.maxPositions = normal
+	desk.maxReserved = reserved
+}
+
+/*
+Free returns free normal and reserved slot counts given how many positions are
+already open. Desk owns the slot arithmetic so Planner never re-derives it.
+*/
+func (desk *Desk) Free(open int) (normal, reserved int) {
+	if desk == nil {
+		return 0, 0
+	}
+
+	normal = max(0, desk.NormalSlots()-open)
+	reserved = max(0, desk.MaxSlots()-open-normal)
+
+	return normal, reserved
 }
 
 /*

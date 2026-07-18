@@ -152,6 +152,7 @@ func NewSession(
 		sessionCtx,
 		channel,
 		api,
+		desk,
 		instrument,
 		price,
 		balance,
@@ -234,6 +235,8 @@ func configureSessionViper(testingTB testing.TB) func() {
 	previousBatch := viper.Get("market.subscribe_batch")
 	previousPace := viper.Get("market.subscribe_pace")
 	previousFraction := viper.Get("trading.allocation.max_fraction")
+	previousInterval := viper.Get("signals.fluid.integration_interval")
+	previousManifold := viper.Get("market.manifold_max_symbols")
 
 	viper.Set("trading.model", "paper")
 	viper.Set("system.data_path", testingTB.TempDir())
@@ -245,6 +248,8 @@ func configureSessionViper(testingTB testing.TB) func() {
 	viper.Set("market.quote_currency", "USD")
 	viper.Set("market.subscribe_batch", 200)
 	viper.Set("market.subscribe_pace", "20ms")
+	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+	viper.Set("market.manifold_max_symbols", 8)
 
 	return func() {
 		viper.Set("trading.model", previousModel)
@@ -257,6 +262,8 @@ func configureSessionViper(testingTB testing.TB) func() {
 		viper.Set("market.subscribe_batch", previousBatch)
 		viper.Set("market.subscribe_pace", previousPace)
 		viper.Set("trading.allocation.max_fraction", previousFraction)
+		viper.Set("signals.fluid.integration_interval", previousInterval)
+		viper.Set("market.manifold_max_symbols", previousManifold)
 	}
 }
 

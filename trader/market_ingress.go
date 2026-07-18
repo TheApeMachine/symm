@@ -71,8 +71,55 @@ func (market *Market) offer(queue chan []byte) func([]byte) {
 
 		select {
 		case queue <- append([]byte(nil), data...):
+			market.dirtyWake()
 		case <-market.ctx.Done():
 		}
+	}
+}
+
+/*
+dirtyWake signals that ingress arrived so the runtime can coalesce one Cut.
+*/
+func (market *Market) dirtyWake() {
+	if market == nil || market.dirty == nil {
+		return
+	}
+
+	select {
+	case market.dirty <- struct{}{}:
+	default:
+	}
+}
+
+/*
+WaitDirty blocks until ingress dirties the market, the budget elapses, or the
+market context cancels.
+*/
+func (market *Market) WaitDirty(budget time.Duration) {
+	if market == nil {
+		return
+	}
+
+	if budget <= 0 {
+		budget = 10 * time.Millisecond
+	}
+
+	var done <-chan struct{}
+
+	if market.ctx != nil {
+		done = market.ctx.Done()
+	}
+
+	var dirty <-chan struct{}
+
+	if market.dirty != nil {
+		dirty = market.dirty
+	}
+
+	select {
+	case <-done:
+	case <-dirty:
+	case <-time.After(budget):
 	}
 }
 

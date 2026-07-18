@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura/structure"
@@ -153,7 +153,7 @@ func (recorder *Recorder) drain() {
 				}
 			default:
 				flush()
-				runtime.Gosched()
+				time.Sleep(10 * time.Millisecond)
 				continue
 			}
 		}

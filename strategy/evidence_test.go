@@ -75,8 +75,9 @@ func TestProjectForecastEpochFromSourceEpoch(t *testing.T) {
 		t.Fatalf("forecast epoch: want 42, got %v", evidence.ForecastEpoch)
 	}
 
-	if evidence.NormalizedResidual != 0.5 {
-		t.Fatalf("normalized residual: want 0.5, got %v", evidence.NormalizedResidual)
+	// sqrt(0.01) / 0.02 = 5
+	if evidence.NormalizedResidual != 5 {
+		t.Fatalf("normalized residual: want 5, got %v", evidence.NormalizedResidual)
 	}
 }
 

@@ -58,6 +58,13 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 Measure supports direct replay against legacy signal-local journals. The live
 runtime uses Calculate with the central immutable market cut.
 */
+/*
+Interest requires book and trade prints for imbalance confirmation.
+*/
+func (signal *Signal) Interest() types.StreamInterest {
+	return types.StreamBook | types.StreamTrade
+}
+
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	measurements, err := signal.Calculate(thesis.Market())
 
@@ -83,7 +90,6 @@ func (signal *Signal) Calculate(
 		if event.Stream == "book" {
 			measurements := signal.measureBook(event.Row.(kraken.BookData))
 			out = append(out, measurements...)
-			signal.Publish(measurements)
 			continue
 		}
 
@@ -91,7 +97,6 @@ func (signal *Signal) Calculate(
 		out = append(out, measurements...)
 	}
 
-	signal.Publish(out)
 	return out, nil
 }
 

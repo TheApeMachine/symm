@@ -1,140 +1,266 @@
 package strategy
 
 import (
-	"math"
+	"context"
+	"maps"
 
-	"github.com/theapemachine/symm/logic/manifold"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Opportunity is the decomposed admit state for one forecast. Margin is economic
-edge after uncertainty; Lead is how far cognition has committed ahead of the
-manifold basin on a shared [0,1) scale. Reserved overflow is for anticipatory
-edge only — high SNR, cognition ahead of the basin by more than noise, and a
-non-ambiguous short-horizon reading.
+Opportunity turns logic outputs into enter decisions.
+Fee rates come from Price.Fraction; flatten-now lot PnL stays on WithFriction.
 */
 type Opportunity struct {
-	Margin      float64
-	Lead        float64
-	Cognitive   float64
-	Basin       float64
-	BasinReady  bool
-	Ambiguous   bool
-	Contrast    float64
-	Uncertainty float64
-	Horizon     uint64
-	Noise       float64
+	ctx      context.Context
+	cancel   context.CancelFunc
+	price    *broker.Price
+	recorder *audit.Recorder
+	uiHub    chan<- []byte
 }
 
 /*
-Reserved reports whether this reading may consume overflow slots. Normal-lane
-enter only needs positive executable utility; reserved further demands that
-margin exceed residual uncertainty (SNR > 2), cognitive lead clear the same
-noise share CognitiveClears uses, the basin be ready, the horizon be the next
-event, and cognition be non-ambiguous with positive winner contrast.
+NewOpportunity wires the surfaces Measure needs to score forecasts.
 */
-func (opportunity Opportunity) Reserved() bool {
-	if opportunity.Ambiguous || !opportunity.BasinReady {
-		return false
+func NewOpportunity(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	price *broker.Price,
+	recorder *audit.Recorder,
+	uiHub chan<- []byte,
+) *Opportunity {
+	return &Opportunity{
+		ctx:      ctx,
+		cancel:   cancel,
+		price:    price,
+		recorder: recorder,
+		uiHub:    uiHub,
 	}
-
-	if opportunity.Horizon != 1 {
-		return false
-	}
-
-	if opportunity.Contrast <= 0 {
-		return false
-	}
-
-	if opportunity.Margin <= opportunity.Uncertainty {
-		return false
-	}
-
-	return opportunity.Lead > opportunity.Noise
 }
 
 /*
-CognitiveClears reports whether cognition clears the forecast noise share.
-Economic enter is decided by executable utility (return − uncertainty −
-friction); this gate only blocks Winner=buy at ε confidence.
+Measure stamps fee friction, scores executable utility, and appends enter when
+utility clears doing nothing and cognition clears forecast noise. Cognitive and
+forecast rejects are recorded as explicit nothing decisions for audit.
 */
-func (opportunity Opportunity) CognitiveClears(forecast types.Forecasts) bool {
-	return opportunity.Cognitive > noiseShare(forecast)
+func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
+	if err := opportunity.validate(map[string]any{
+		"thesis": thesis,
+	}); err != nil {
+		return
+	}
+
+	blocked := occupied(thesis)
+
+	for index := range thesis.Forecasts {
+		forecast := &thesis.Forecasts[index]
+
+		if _, skip := blocked[forecast.Symbol]; skip {
+			continue
+		}
+
+		fraction, err := opportunity.price.Fraction(forecast.Symbol)
+
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		forecast.ExpectedFees = fraction.Float64()
+		forecast.FrictionReady = true
+
+		if !forecast.Eligible() {
+			continue
+		}
+
+		cogVal, ok := thesis.Cognition.Load(forecast.Symbol)
+
+		if !ok {
+			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
+				*forecast, 0, "cognitive_not_ready",
+				"cognitive memory is not ready for this evidence sequence",
+			))
+
+			continue
+		}
+
+		cognition, ok := cogVal.(types.Cognition)
+
+		if !ok || !cognition.Ready {
+			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
+				*forecast, 0, "cognitive_not_ready",
+				"cognitive memory is not ready for this evidence sequence",
+			))
+
+			continue
+		}
+
+		if cognition.Ambiguous {
+			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
+				*forecast, 0, "cognitive_ambiguity",
+				"cognitive memory is ambiguous for this evidence sequence",
+			))
+
+			continue
+		}
+
+		if cognition.Winner != "buy" {
+			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
+				*forecast, 0, "cognitive_opposition",
+				"cognitive memory does not support a buy entry",
+			))
+
+			continue
+		}
+
+		if cognition.Confidence <= 0 {
+			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
+				*forecast, 0, "cognitive_no_confidence",
+				"cognitive buy support has no confidence",
+			))
+
+			continue
+		}
+
+		if forecast.Confidence <= 0 {
+			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
+				*forecast, 0, "forecast_no_confidence",
+				"forecast confidence is not positive",
+			))
+
+			continue
+		}
+
+		reading := measureOpportunity(*forecast, cognition, thesis)
+		utility := reading.Margin - 2*forecast.ExpectedFees - forecast.ExpectedSpread -
+			forecast.ExpectedImpact - forecast.ExpectedAdverseSelection
+
+		if utility <= 0 {
+			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
+				*forecast, utility, "infeasible",
+				"expected executable utility does not exceed doing nothing",
+			))
+
+			continue
+		}
+
+		if !reading.CognitiveClears(*forecast) {
+			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
+				*forecast, utility, "cognitive_weak",
+				"cognitive confidence does not clear forecast noise share",
+			))
+
+			continue
+		}
+
+		allocation := "normal"
+
+		if reading.Reserved() {
+			allocation = "reserved"
+		}
+
+		risk := 1 - cognition.Confidence
+
+		if risk < 0 {
+			risk = 0
+		}
+
+		thesis.Decisions = append(thesis.Decisions, types.Decision{
+			Action:            types.ActionEnter,
+			Symbol:            forecast.Symbol,
+			At:                forecast.At,
+			Utility:           utility,
+			Risk:              risk,
+			AllocationClass:   allocation,
+			Alternatives:      map[string]float64{"enter": utility, "nothing": 0},
+			ExpectedFees:      decimal.NewFromFloat64(2 * forecast.ExpectedFees),
+			ExpectedSpread:    decimal.NewFromFloat64(forecast.ExpectedSpread),
+			ReferencePrice:    decimal.NewFromFloat64(forecast.ReferencePrice),
+			ValidThroughEpoch: forecast.ExpiresEpoch,
+			ForecastSource:    forecast.Source,
+			ForecastEpoch:     forecast.SourceEpoch,
+			Confidence:        cognition.Confidence,
+			OpportunityMargin: reading.Margin,
+			CognitiveLead:     reading.Lead,
+			BasinConfidence:   reading.Basin,
+			Cause:             "entry",
+			Reason:            "executable utility exceeds doing nothing",
+		})
+	}
 }
 
 /*
-measureOpportunity builds OpportunityMargin and CognitiveLead from independent
-estimators. Margin is the SNR term that also enters utility; Lead ranks the
-reserved lane once utility has already cleared.
+reject records a nothing decision that still exposes enter utility when scored.
 */
-func measureOpportunity(
+func (opportunity *Opportunity) reject(
 	forecast types.Forecasts,
-	cognition types.Cognition,
-	thesis *types.Thesis,
-) Opportunity {
-	reading := Opportunity{
-		Margin:      forecast.ExpectedReturn - forecast.Uncertainty,
-		Cognitive:   cognition.Confidence,
-		Ambiguous:   cognition.Ambiguous,
-		Contrast:    cognition.Contrast,
-		Uncertainty: forecast.Uncertainty,
-		Horizon:     forecast.HorizonEvents,
-		Noise:       noiseShare(forecast),
+	utility float64,
+	cause, reason string,
+) types.Decision {
+	return types.Decision{
+		Action:            types.ActionNothing,
+		Symbol:            forecast.Symbol,
+		At:                forecast.At,
+		Utility:           utility,
+		Alternatives:      map[string]float64{"enter": utility, "nothing": 0},
+		ReferencePrice:    decimal.NewFromFloat64(forecast.ReferencePrice),
+		ValidThroughEpoch: forecast.ExpiresEpoch,
+		ForecastSource:    forecast.Source,
+		Cause:             cause,
+		Reason:            reason,
 	}
+}
 
-	basin, ready := basinConfidence(thesis, forecast.Symbol)
-	reading.Basin = basin
-	reading.BasinReady = ready
+func (opportunity *Opportunity) validate(mandatory map[string]any) error {
+	check := map[string]any{"price": opportunity.price}
+	maps.Copy(check, mandatory)
 
-	if ready {
-		reading.Lead = cognition.Confidence - basin
-	}
-
-	return reading
+	return errnie.Error(errnie.Require(check))
 }
 
 /*
-noiseShare is the fraction of forecast magnitude explained by uncertainty.
-Cognition must exceed this share before a buy winner is treated as actionable.
+occupied lists symbols that already hold inventory or pending entry/exit intent
+so Measure cannot propose a fresh enter against a live lot.
 */
-func noiseShare(forecast types.Forecasts) float64 {
-	if forecast.Uncertainty <= 0 {
-		return 0
+func occupied(thesis *types.Thesis) map[string]struct{} {
+	blocked := map[string]struct{}{}
+
+	if thesis == nil {
+		return blocked
 	}
 
-	magnitude := math.Abs(forecast.ExpectedReturn) + forecast.Uncertainty
+	thesis.Holdings.Range(func(_, value any) bool {
+		holding, ok := value.(*types.Holding)
 
-	return forecast.Uncertainty / magnitude
-}
+		if !ok || holding == nil || holding.Status == types.CLOSED {
+			return true
+		}
 
-/*
-basinConfidence maps manifold coherence onto [0,1) so Lead compares like
-quantities. Missing or invalid manifold leaves BasinReady false so Lead stays
-neutral rather than inventing dynamics.
-*/
-func basinConfidence(thesis *types.Thesis, symbol string) (float64, bool) {
-	if thesis == nil || thesis.Manifold == nil {
-		return 0, false
-	}
+		blocked[holding.Symbol] = struct{}{}
 
-	value, found := thesis.Manifold.Load(symbol)
+		return true
+	})
 
-	if !found {
-		return 0, false
-	}
+	thesis.Lifecycle.Range(func(key, value any) bool {
+		symbol, ok := key.(string)
 
-	state, ok := value.(manifold.State)
+		if !ok {
+			return true
+		}
 
-	if !ok || !state.GasReady() {
-		return 0, false
-	}
+		switch value {
+		case types.LifecycleEntrySelected, types.LifecycleEntrySubmitted,
+			types.LifecycleExitSelected, types.LifecycleExitSubmitted,
+			types.LifecyclePartiallyEntered, types.LifecycleManaging:
+			blocked[symbol] = struct{}{}
+		}
 
-	coherence := state.Reading.CoherenceMag2
+		return true
+	})
 
-	if math.IsNaN(coherence) || math.IsInf(coherence, 0) || coherence < 0 {
-		return 0, false
-	}
-
-	return coherence / (1 + coherence), true
+	return blocked
 }

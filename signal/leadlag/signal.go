@@ -57,7 +57,6 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		return nil
 	}
 
-	signal.Publish(measurements)
 
 	return measurements
 }

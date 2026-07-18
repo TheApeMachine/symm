@@ -158,6 +158,17 @@ func (instrument *Instrument) Pairs() []kraken.InstrumentPair {
 }
 
 /*
+Remember stores one pair for paper/fixture sizing without a live instrument feed.
+*/
+func (instrument *Instrument) Remember(pair *kraken.InstrumentPair) {
+	if instrument == nil || pair == nil || pair.Symbol == "" {
+		return
+	}
+
+	instrument.cache.Store(pair.Symbol, pair)
+}
+
+/*
 Pair returns the cached instrument metadata for the symbol, if known.
 */
 func (instrument *Instrument) Pair(symbol string) (*kraken.InstrumentPair, error) {
@@ -225,7 +236,6 @@ func (instrument *Instrument) Subscribe() error {
 		instrument.api.SubscribeTrade,
 		instrument.api.SubscribeBook,
 		instrument.api.SubscribeTicker,
-		instrument.api.SubscribeLevel3,
 	}
 
 	for batch := range slices.Chunk(symbols, batchSize) {
@@ -240,6 +250,28 @@ func (instrument *Instrument) Subscribe() error {
 		}
 
 		time.Sleep(pace)
+	}
+
+	if viper.GetBool("market.l3_enabled") {
+		ceiling := viper.GetInt("market.l3_universe")
+
+		if ceiling < 1 {
+			ceiling = 16
+		}
+
+		l3 := symbols
+
+		if len(l3) > ceiling {
+			l3 = l3[:ceiling]
+		}
+
+		for batch := range slices.Chunk(l3, batchSize) {
+			if err := instrument.api.SubscribeLevel3(batch); err != nil {
+				return errnie.Error(err)
+			}
+
+			time.Sleep(pace)
+		}
 	}
 
 	instrument.status.Store(types.READY)

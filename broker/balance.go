@@ -1,7 +1,9 @@
 package broker
 
 import (
+	"context"
 	"iter"
+	"maps"
 	"strings"
 	"sync"
 
@@ -19,8 +21,10 @@ type Balance struct {
 	api      *websocket.API
 	model    *kraken.Balance
 	holdings *sync.Map
+	books    map[string]*Reservation
 	quote    string
 	ui       chan []byte
+	mu       sync.Mutex
 }
 
 func NewBalance(api *websocket.API, holdings []types.Holding, ui chan []byte) *Balance {
@@ -29,6 +33,7 @@ func NewBalance(api *websocket.API, holdings []types.Holding, ui chan []byte) *B
 		api:      api,
 		quote:    viper.GetViper().GetString("market.quote_currency"),
 		holdings: &sync.Map{},
+		books:    map[string]*Reservation{},
 		ui:       ui,
 	}
 
@@ -69,21 +74,24 @@ Frame marshals the current quote snapshot and open holdings for the terminal.
 Nil when Balance is not ready to publish a coherent desk view.
 */
 func (balance *Balance) Frame() []byte {
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
+
 	if balance.status != types.READY || balance.model == nil {
 		return nil
 	}
 
-	holdings := make([]types.Holding, 0)
+	positions := make([]*types.Holding, 0)
 
 	balance.holdings.Range(func(key, value any) bool {
 		holding := value.(*types.Holding)
-		holdings = append(holdings, *holding)
+		positions = append(positions, holding)
 		return true
 	})
 
 	return datura.Map[any]{
-		"balances":  balance.Snapshot(),
-		"positions": holdings,
+		"balances":  balance.snapshotLocked(),
+		"positions": positions,
 	}.Marshal()
 }
 
@@ -97,6 +105,10 @@ func (balance *Balance) Publish() {
 		return
 	}
 
+	if len(balance.ui) == cap(balance.ui) {
+		return
+	}
+
 	select {
 	case balance.ui <- balance.Frame():
 	default:
@@ -107,6 +119,13 @@ func (balance *Balance) Publish() {
 Snapshot returns the quote-currency accounting row.
 */
 func (balance *Balance) Snapshot() []datura.Map[any] {
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
+
+	return balance.snapshotLocked()
+}
+
+func (balance *Balance) snapshotLocked() []datura.Map[any] {
 	balances := make([]datura.Map[any], 0, 1)
 
 	if balance.model == nil {
@@ -140,28 +159,40 @@ func (balance *Balance) Snapshot() []datura.Map[any] {
 }
 
 func (balance *Balance) BalanceAck(buf []byte) {
+	publish := false
+
+	balance.mu.Lock()
+
 	incoming := kraken.NewBalance(buf)
 
 	if errnie.Error(kraken.Validate(incoming)) != nil {
+		balance.mu.Unlock()
 		return
 	}
 
 	if balance.model == nil || incoming.Type == "snapshot" {
 		balance.model = incoming
 		balance.status = types.READY
-		balance.Publish()
+		balance.syncWallet()
+		publish = true
+		balance.mu.Unlock()
+
+		if publish {
+			balance.Publish()
+		}
 
 		return
 	}
 
 	if incoming.Sequence < balance.model.Sequence {
+		balance.mu.Unlock()
 		return
 	}
 
-	// A gap means we missed updates; force a fresh snapshot on the next
-	// subscribe/reconnect rather than merging over unknown state.
 	if balance.model.Sequence > 0 &&
 		incoming.Sequence > balance.model.Sequence+1 {
+
+		balance.mu.Unlock()
 
 		errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -195,7 +226,50 @@ func (balance *Balance) BalanceAck(buf []byte) {
 	balance.model.Sequence = incoming.Sequence
 	balance.model.Timestamp = incoming.Timestamp
 	balance.status = types.READY
+	balance.syncWallet()
+	balance.mu.Unlock()
 	balance.Publish()
+}
+
+/*
+syncWallet mirrors non-quote asset balances onto open Holding rows.
+*/
+func (balance *Balance) syncWallet() {
+	if balance == nil || balance.model == nil {
+		return
+	}
+
+	for _, row := range balance.model.Data {
+		if row.Asset == "" || row.Asset == balance.quote {
+			continue
+		}
+
+		symbol := row.Asset + "/" + balance.quote
+
+		if row.Balance == nil || row.Balance.Sign() <= 0 {
+			balance.holdings.Delete(symbol)
+			continue
+		}
+
+		qty := row.Balance.Copy()
+
+		if value, ok := balance.holdings.Load(symbol); ok {
+			holding := value.(*types.Holding)
+			holding.Qty = qty
+			holding.Asset = row.Asset
+
+			if holding.Status == types.CLOSED || holding.Status == "" {
+				holding.Status = types.OPEN
+			}
+
+			continue
+		}
+
+		holding := types.NewHolding(context.Background(), symbol, qty)
+		holding.Asset = row.Asset
+		holding.Status = types.OPEN
+		balance.holdings.Store(symbol, holding)
+	}
 }
 
 /*
@@ -280,6 +354,26 @@ func (balance *Balance) Holding(symbol string) (types.Holding, error) {
 }
 
 /*
+Remember stores an open holding when restart recovery still knows the lot but
+the wallet map lost its shell.
+*/
+func (balance *Balance) Remember(holding *types.Holding) {
+	if balance == nil || holding == nil || holding.Symbol == "" {
+		return
+	}
+
+	if holding.Status == types.CLOSED {
+		return
+	}
+
+	if _, exists := balance.holdings.Load(holding.Symbol); exists {
+		return
+	}
+
+	balance.holdings.Store(holding.Symbol, holding)
+}
+
+/*
 Symbol normalizes a compact trade-history pair (e.g. "BTCUSD") into the
 slash-delimited symbol form (e.g. "BTC/USD") used everywhere else in
 symm: WS v2 ticker/book/instrument symbols, and Price's cache keys.
@@ -317,6 +411,119 @@ func (balance *Balance) TradeMatchesSymbol(tradePair string, symbol string) bool
 	return tradePair == compact || tradePair == base
 }
 
+/*
+Reserve moves quote capital from Available into Reserved so concurrent sizing
+cannot double-spend the same cash. Pass amount for a fixed reservation, or
+nil amount with fraction to reserve that share of current Available. When
+rollback is true the same amount is released back to Available.
+*/
+func (balance *Balance) Reserve(
+	amount, fraction *decimal.Decimal, rollback bool,
+) (*decimal.Decimal, error) {
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
+
+	if err := balance.validate(map[string]any{
+		"model": balance.model,
+	}); err != nil {
+		return nil, err
+	}
+
+	reserved, err := balance.reservation(amount, fraction)
+
+	if err != nil {
+		return nil, err
+	}
+
+	for index := range balance.model.Data {
+		row := &balance.model.Data[index]
+
+		if row.Asset != balance.quote || row.Available == nil {
+			continue
+		}
+
+		if row.Reserved == nil {
+			row.Reserved = decimal.NewFromInt64(0)
+		}
+
+		if rollback {
+			row.Available = row.Available.Add(reserved)
+			row.Reserved = row.Reserved.Sub(reserved)
+
+			return reserved.Copy(), nil
+		}
+
+		if row.Available.Sub(reserved).Sign() < 0 {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"insufficient available balance to reserve",
+				nil,
+			))
+		}
+
+		row.Available = row.Available.Sub(reserved)
+		row.Reserved = row.Reserved.Add(reserved)
+
+		return reserved.Copy(), nil
+	}
+
+	return nil, errnie.Error(errnie.Err(
+		errnie.NotFound,
+		"quote balance not found",
+		nil,
+	))
+}
+
+/*
+reservation resolves either a fixed amount or a fraction of Available into the
+decimal that will move between Available and Reserved.
+*/
+func (balance *Balance) reservation(
+	amount, fraction *decimal.Decimal,
+) (*decimal.Decimal, error) {
+	if amount != nil {
+		if amount.Sign() <= 0 {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"reserve amount must be positive",
+				nil,
+			))
+		}
+
+		return amount.Copy(), nil
+	}
+
+	if fraction == nil || fraction.Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"reserve requires amount or positive fraction",
+			nil,
+		))
+	}
+
+	row, err := balance.Get(balance.quote)
+
+	if err != nil || row.Available == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"quote balance not found",
+			err,
+		))
+	}
+
+	// Kraken Mul truncates the right factor to the left scale; lift first so
+	// max_fraction 0.20 against an integer Available does not collapse to 0.
+	scale := row.Available.GetScale()
+
+	if fraction.GetScale() > scale {
+		scale = fraction.GetScale()
+	}
+
+	scale += 8
+
+	return row.Available.SetScale(scale).Mul(fraction.SetScale(scale)), nil
+}
+
 func (balance *Balance) Available(amount *decimal.Decimal) bool {
 	if amount == nil {
 		return false
@@ -338,23 +545,48 @@ func (balance *Balance) Available(amount *decimal.Decimal) bool {
 }
 
 /*
-AvailableQuote returns the unreserved quote-currency capital strategy may
-allocate. Missing balance state is an error rather than zero available cash.
+AvailableCash returns unreserved quote-currency capital as a decimal so
+Allocator can size lots without crossing through float64.
+Missing balance state is an error rather than zero available cash.
 */
-func (balance *Balance) AvailableQuote() (float64, error) {
+func (balance *Balance) AvailableCash() (*decimal.Decimal, error) {
 	row, err := balance.Get(balance.quote)
 
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	if row.Available == nil {
-		return 0, errnie.Error(errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.NotFound,
 			"quote available balance missing",
 			nil,
 		))
 	}
 
-	return row.Available.Float64(), nil
+	return row.Available.Copy(), nil
+}
+
+/*
+AvailableQuote returns the unreserved quote-currency capital as float64 for
+Decide slot budgets that still consume float decision fields.
+*/
+func (balance *Balance) AvailableQuote() (float64, error) {
+	cash, err := balance.AvailableCash()
+
+	if err != nil {
+		return 0, err
+	}
+
+	return cash.Float64(), nil
+}
+
+func (balance *Balance) validate(mandatory map[string]any) error {
+	check := map[string]any{
+		"model": balance.model,
+	}
+
+	maps.Copy(check, mandatory)
+
+	return errnie.Error(errnie.Require(check))
 }

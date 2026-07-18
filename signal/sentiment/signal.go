@@ -59,8 +59,6 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		return nil
 	}
 
-	signal.Publish(measurements)
-
 	return measurements
 }
 
@@ -108,7 +106,7 @@ func (signal *Signal) Calculate(
 		}
 
 		measurements := []*types.Measurement{
-			&types.Measurement{
+			{
 				Source:   types.SourceSentiment,
 				Metric:   types.MetricChange,
 				Stream:   types.Sentiment,
@@ -118,7 +116,7 @@ func (signal *Signal) Calculate(
 				Raw:      change,
 				Validity: validity,
 			},
-			&types.Measurement{
+			{
 				Source:   types.SourceSentiment,
 				Metric:   types.MetricBreadth,
 				Stream:   types.Sentiment,
@@ -128,7 +126,7 @@ func (signal *Signal) Calculate(
 				Raw:      breadth,
 				Validity: validity,
 			},
-			&types.Measurement{
+			{
 				Source:   types.SourceSentiment,
 				Metric:   types.MetricLeaderStrength,
 				Stream:   types.Sentiment,
@@ -138,7 +136,7 @@ func (signal *Signal) Calculate(
 				Raw:      leaderStrength,
 				Validity: validity,
 			},
-			&types.Measurement{
+			{
 				Source:   types.SourceSentiment,
 				Metric:   types.MetricLeaderEvidence,
 				Stream:   types.Sentiment,
@@ -148,7 +146,7 @@ func (signal *Signal) Calculate(
 				Raw:      leaderEvidence,
 				Validity: validity,
 			},
-			&types.Measurement{
+			{
 				Source:   types.SourceSentiment,
 				Metric:   types.MetricRelativeLead,
 				Stream:   types.Sentiment,
@@ -158,7 +156,7 @@ func (signal *Signal) Calculate(
 				Raw:      relativeLead,
 				Validity: validity,
 			},
-			&types.Measurement{
+			{
 				Source:   types.SourceSentiment,
 				Metric:   types.MetricSurgeScore,
 				Stream:   types.Sentiment,
@@ -168,7 +166,7 @@ func (signal *Signal) Calculate(
 				Raw:      surgeScore,
 				Validity: validity,
 			},
-			&types.Measurement{
+			{
 				Source:   types.SourceSentiment,
 				Metric:   types.MetricDivergentScore,
 				Stream:   types.Sentiment,
@@ -178,7 +176,7 @@ func (signal *Signal) Calculate(
 				Raw:      divergentScore,
 				Validity: validity,
 			},
-			&types.Measurement{
+			{
 				Source:   types.SourceSentiment,
 				Metric:   types.MetricSlumpScore,
 				Stream:   types.Sentiment,
@@ -188,7 +186,7 @@ func (signal *Signal) Calculate(
 				Raw:      slumpScore,
 				Validity: validity,
 			},
-			&types.Measurement{
+			{
 				Source:   types.SourceSentiment,
 				Metric:   types.MetricStrength,
 				Stream:   types.Sentiment,

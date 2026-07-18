@@ -17,7 +17,6 @@ func (signal *Signal) Calculate(
 ) ([]*types.Measurement, error) {
 	events := signal.events(frame.Tickers, frame.Trades, frame.Books)
 	measurements := signal.apply(events)
-	signal.Publish(measurements)
 	return measurements, nil
 }
 

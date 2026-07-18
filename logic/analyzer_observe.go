@@ -31,7 +31,10 @@ func (analyzer *Analyzer) observeStates(thesis *types.Thesis) []manifold.State {
 		}
 
 		states = append(states, state)
-		analyzer.observe(thesis, state)
+
+		if !state.Replay {
+			analyzer.observe(thesis, state)
+		}
 
 		return true
 	})

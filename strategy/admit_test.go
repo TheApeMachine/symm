@@ -17,8 +17,12 @@ func TestAdmitKeepsReservedForOpportunity(t *testing.T) {
 	planner := testPlanner()
 	thesis := types.NewThesis(nil, nil)
 
-	thesis.Holdings.Store("AAA/USD", testHolding("AAA/USD", 1, 1))
-	thesis.Holdings.Store("BBB/USD", testHolding("BBB/USD", 1, 1))
+	aaa := testHolding("AAA/USD", 1, 1)
+	bbb := testHolding("BBB/USD", 1, 1)
+	thesis.Holdings.Store("AAA/USD", aaa)
+	thesis.Holdings.Store("BBB/USD", bbb)
+	seedOpenLot(planner, aaa)
+	seedOpenLot(planner, bbb)
 
 	boring := decideForecast("CCC/USD", 0.01, 0.02) // negative margin
 	pump := decideForecast("OXT/USD", 0.08, 0.02)   // positive margin
@@ -29,8 +33,7 @@ func TestAdmitKeepsReservedForOpportunity(t *testing.T) {
 	thesis.Manifold.Store("CCC/USD", readyBasin("CCC/USD", 0.2))
 	thesis.Manifold.Store("OXT/USD", readyBasin("OXT/USD", 0.2))
 
-	fees := map[string]float64{"CCC/USD": 0.001, "OXT/USD": 0.001}
-	planner.Decide(thesis, fees, 1000, 2, 2)
+	planner.Decide(thesis)
 
 	entered := map[string]bool{}
 	rejected := map[string]string{}
@@ -88,7 +91,7 @@ func TestDecideRejectsBuyWithoutConfidence(t *testing.T) {
 			Winner: "buy", Ready: true, Confidence: 0, Ambiguous: false,
 		})
 
-		planner.Decide(thesis, map[string]float64{"ZZZ/USD": 0.001}, 1000, 2, 2)
+		planner.Decide(thesis)
 
 		for _, decision := range thesis.Decisions {
 			if decision.Symbol != "ZZZ/USD" {
@@ -120,7 +123,7 @@ func TestDecideRejectsBuyWithoutConfidence(t *testing.T) {
 		thesis.Forecasts = append(thesis.Forecasts, forecast)
 		thesis.Cognition.Store("ZZZ/USD", buyCognition("ZZZ/USD"))
 
-		planner.Decide(thesis, map[string]float64{"ZZZ/USD": 0.001}, 1000, 2, 2)
+		planner.Decide(thesis)
 
 		for _, decision := range thesis.Decisions {
 			if decision.Symbol != "ZZZ/USD" {
@@ -158,7 +161,7 @@ func TestDecideRejectsWhenUncertaintyConsumesUtility(t *testing.T) {
 	thesis.Forecasts = append(thesis.Forecasts, forecast)
 	thesis.Cognition.Store("WEAK/USD", buyCognition("WEAK/USD"))
 
-	planner.Decide(thesis, map[string]float64{"WEAK/USD": 0.001}, 1000, 2, 2)
+	planner.Decide(thesis)
 
 	for _, decision := range thesis.Decisions {
 		if decision.Symbol != "WEAK/USD" {
@@ -199,7 +202,7 @@ func TestDecideRejectsWeakCognitiveConfidence(t *testing.T) {
 		Winner: "buy", Ready: true, Confidence: 0.01, Ambiguous: false,
 	})
 
-	planner.Decide(thesis, map[string]float64{"COLD/USD": 0.001}, 1000, 2, 2)
+	planner.Decide(thesis)
 
 	for _, decision := range thesis.Decisions {
 		if decision.Symbol != "COLD/USD" {
@@ -221,16 +224,16 @@ func TestDecideRejectsWeakCognitiveConfidence(t *testing.T) {
 }
 
 /*
-TestDecideCapsProposedNotionalByAvailableCash keeps rejected full-book
-challengers from publishing book-depth or rotate-budget notionals against
-cash AvailableCapital (the Fraction column's denominator).
+TestDecideCapsProposedNotionalByAvailableCash keeps Decide from publishing a
+lot size; Allocator owns ProposedNotional, so rejected challengers stay at zero.
 */
 func TestDecideCapsProposedNotionalByAvailableCash(t *testing.T) {
 	t.Parallel()
 
 	planner := testPlanner()
 	thesis := types.NewThesis(nil, nil)
-	thesis.Holdings.Store("FAT/USD", testHolding("FAT/USD", 3400, 1))
+	fat := testHolding("FAT/USD", 3400, 1)
+	thesis.Holdings.Store("FAT/USD", fat)
 
 	hold := decideForecast("FAT/USD", 0.10, 0.01)
 	challenger := decideForecast("XRP/USD", 0.04, 0.01)
@@ -239,25 +242,23 @@ func TestDecideCapsProposedNotionalByAvailableCash(t *testing.T) {
 	thesis.Cognition.Store("XRP/USD", buyCognition("XRP/USD"))
 
 	available := 5.73
-	fees := map[string]float64{"FAT/USD": 0.001, "XRP/USD": 0.001}
-	planner.Decide(thesis, fees, available, 1, 0)
+	planner = testPlannerSlots(1, 0, available)
+	seedOpenLot(planner, fat)
+	planner.Decide(thesis)
 
 	for _, decision := range thesis.Decisions {
 		if decision.Symbol != "XRP/USD" {
 			continue
 		}
 
-		if decision.AvailableCapital != available {
+		if decision.AvailableCapital == nil ||
+			decision.AvailableCapital.Float64() != available {
 			t.Fatalf("available capital: got %v want %v", decision.AvailableCapital, available)
 		}
 
-		if decision.ProposedNotional > available {
-			t.Fatalf(
-				"proposed %v exceeds available %v (fraction would be %.0f%%)",
-				decision.ProposedNotional,
-				available,
-				100*decision.ProposedNotional/available,
-			)
+		// Decide must not invent a lot; Allocator owns ProposedNotional.
+		if decision.ProposedNotional != nil && decision.ProposedNotional.Sign() > 0 {
+			t.Fatalf("Decide must leave notional unsized, got %v", decision.ProposedNotional)
 		}
 
 		return
@@ -275,8 +276,10 @@ func TestDecideRotateScalesUpToIncumbentNotional(t *testing.T) {
 
 	planner := testPlanner()
 	thesis := types.NewThesis(nil, nil)
-	thesis.Holdings.Store("WEAK/USD", testHolding("WEAK/USD", 100, 1))
-	thesis.Holdings.Store("KEEP/USD", testHolding("KEEP/USD", 100, 1))
+	weakLot := testHolding("WEAK/USD", 100, 1)
+	keepLot := testHolding("KEEP/USD", 100, 1)
+	thesis.Holdings.Store("WEAK/USD", weakLot)
+	thesis.Holdings.Store("KEEP/USD", keepLot)
 
 	weak := decideForecast("WEAK/USD", 0.02, 0.01)
 	keep := decideForecast("KEEP/USD", 0.08, 0.01)
@@ -285,12 +288,10 @@ func TestDecideRotateScalesUpToIncumbentNotional(t *testing.T) {
 	thesis.Cognition.Store("NEXT/USD", buyCognition("NEXT/USD"))
 	thesis.Manifold.Store("NEXT/USD", readyBasin("NEXT/USD", 0.2))
 
-	fees := map[string]float64{
-		"WEAK/USD": 0.001,
-		"KEEP/USD": 0.001,
-		"NEXT/USD": 0.001,
-	}
-	planner.Decide(thesis, fees, 5.73, 2, 0)
+	planner = testPlannerSlots(2, 0, 1000)
+	seedOpenLot(planner, weakLot)
+	seedOpenLot(planner, keepLot)
+	planner.Decide(thesis)
 
 	for _, decision := range thesis.Decisions {
 		if decision.Action != "enter" || decision.Symbol != "NEXT/USD" {
@@ -301,9 +302,10 @@ func TestDecideRotateScalesUpToIncumbentNotional(t *testing.T) {
 			t.Fatalf("want rotation enter, got %+v", decision)
 		}
 
-		if decision.ProposedNotional != 100 {
+		if decision.ProposedNotional == nil ||
+			decision.ProposedNotional.Sign() <= 0 {
 			t.Fatalf(
-				"rotate must size to freed incumbent notional, got %v",
+				"rotate enter must be sized by Allocator, got %v",
 				decision.ProposedNotional,
 			)
 		}

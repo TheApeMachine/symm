@@ -4,6 +4,8 @@ import (
 	"context"
 	"math"
 	"time"
+
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 )
 
 /*
@@ -197,20 +199,14 @@ func (stoploss *Stoploss) Regulate(
 		return
 	}
 
-	quantity := 0.0
-
-	if holding.Qty != nil {
-		quantity = holding.Qty.Float64()
-	}
-
 	thesis.Decisions = append(thesis.Decisions, Decision{
 		Action:           "exit",
 		Symbol:           holding.Symbol,
 		At:               time.Now().UTC(),
 		Utility:          stoploss.StopReturn,
 		Alternatives:     map[string]float64{verdict.Action: stoploss.StopReturn},
-		ProposedQuantity: quantity,
-		ReferencePrice:   evidence.Mark,
+		ProposedQuantity: holding.Qty,
+		ReferencePrice:   decimal.NewFromFloat64(evidence.Mark),
 		Cause:            verdict.Action,
 		Reason:           verdict.Reason,
 	})
@@ -323,7 +319,7 @@ func (trail *Trail) armScale(evidence StopEvidence) float64 {
 	}
 
 	if evidence.ReturnReady && evidence.IncrementalMSE > 0 {
-		return evidence.IncrementalMSE
+		return math.Sqrt(evidence.IncrementalMSE)
 	}
 
 	return 0

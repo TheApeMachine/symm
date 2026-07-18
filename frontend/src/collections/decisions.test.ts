@@ -77,4 +77,37 @@ describe("decisionStore", () => {
 			DECISION_HISTORY_LIMIT,
 		);
 	});
+
+	it("normalizes krakenfx decimal wire strings into finite numbers", () => {
+		decisionStore.actions.reset();
+		decisionStore.actions.updateFrame([
+			{
+				...sampleDecision("BTC/USD", "enter", "2026-07-14T12:00:00Z"),
+				proposedNotional: "100.50",
+				proposedQuantity: "0.01",
+				referencePrice: "61000.25",
+				expectedReturn: "0.01",
+				expectedFees: "0.0002",
+				expectedSpread: "0.0001",
+				expectedImpact: "0.0003",
+				availableCapital: "1000.00",
+			},
+		]);
+
+		const decision = decisionStore.state.decisions["BTC/USD"]?.values().at(-1);
+
+		expect(decision).toEqual(
+			expect.objectContaining({
+				proposedNotional: 100.5,
+				proposedQuantity: 0.01,
+				referencePrice: 61000.25,
+				expectedReturn: 0.01,
+				expectedFees: 0.0002,
+				expectedSpread: 0.0001,
+				expectedImpact: 0.0003,
+				availableCapital: 1000,
+			}),
+		);
+		expect(Number.isFinite(decision?.availableCapital)).toBe(true);
+	});
 });

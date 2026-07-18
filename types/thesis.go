@@ -228,7 +228,8 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 	thesis.Holdings = &sync.Map{}
 
 	for key, holding := range decoded.Holdings {
-		thesis.Holdings.Store(key, holding)
+		seed := holding
+		thesis.Holdings.Store(key, &seed)
 	}
 
 	for key := range decoded.Positions {

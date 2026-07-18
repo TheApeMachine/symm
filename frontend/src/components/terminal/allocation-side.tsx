@@ -9,7 +9,7 @@ import {
 	causalEntryBaseline,
 	causalStrength,
 } from "#/components/terminal/causal-view";
-
+import { resonancePredict } from "#/components/terminal/decision-candidate";
 import { Meter } from "@/components/ui/meter";
 import { Panel } from "@/components/ui/panel";
 
@@ -127,7 +127,7 @@ export const allocationSummary = ({
 		).length;
 		const thesis =
 			Math.min(
-				probability(resonanceFrame?.confidence),
+				probability(resonancePredict(resonanceFrame) ?? 0),
 				probability(causalConfidence(causalFrame)),
 			) * Math.sqrt(Math.max(1, support));
 

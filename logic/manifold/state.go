@@ -11,29 +11,32 @@ import (
 State is the typed physical readout produced after one Hawkes-driven GPU step.
 */
 type State struct {
-	Source           string               `json:"source"`
-	Symbol           string               `json:"symbol"`
-	At               time.Time            `json:"at"`
-	Duration         time.Duration        `json:"duration"`
-	Epoch            uint64               `json:"epoch"`
-	ReferencePrice   float64              `json:"referencePrice"`
-	Spread           float64              `json:"spread"`
-	BuyCapacity      float64              `json:"buyCapacity"`
-	SellCapacity     float64              `json:"sellCapacity"`
-	InvalidReason    string               `json:"invalidReason,omitempty"`
-	StressAnisotropy float64              `json:"stressAnisotropy"`
-	Subdivisions     uint32               `json:"subdivisions"`
-	BuyIntensity     float64              `json:"buyIntensity"`
-	SellIntensity    float64              `json:"sellIntensity"`
-	SpectralRadius   float64              `json:"spectralRadius"`
-	Reading          pmanifold.Reading    `json:"reading"`
-	OscillatorCount  int                  `json:"oscillatorCount"`
-	Grid             pmanifold.Grid       `json:"grid,omitempty"`
-	Rho              [][]float64          `json:"rho,omitempty"`
-	PsiMag2          [][]float64          `json:"psiMag2,omitempty"`
-	GuidanceVelX     [][]float64          `json:"guidanceVelX,omitempty"`
-	GuidanceVelZ     [][]float64          `json:"guidanceVelZ,omitempty"`
-	Particles        []pmanifold.Particle `json:"particles,omitempty"`
+	Source           string            `json:"source"`
+	Symbol           string            `json:"symbol"`
+	At               time.Time         `json:"at"`
+	Duration         time.Duration     `json:"duration"`
+	Epoch            uint64            `json:"epoch"`
+	ReferencePrice   float64           `json:"referencePrice"`
+	Spread           float64           `json:"spread"`
+	BuyCapacity      float64           `json:"buyCapacity"`
+	SellCapacity     float64           `json:"sellCapacity"`
+	InvalidReason    string            `json:"invalidReason,omitempty"`
+	StressAnisotropy float64           `json:"stressAnisotropy"`
+	Subdivisions     uint32            `json:"subdivisions"`
+	BuyIntensity     float64           `json:"buyIntensity"`
+	SellIntensity    float64           `json:"sellIntensity"`
+	SpectralRadius   float64           `json:"spectralRadius"`
+	Reading          pmanifold.Reading `json:"reading"`
+	OscillatorCount  int               `json:"oscillatorCount"`
+	// Replay marks a cache republish of an unchanged epoch so resonance and
+	// cognition skip retrain/WAL while UI can still paint the field.
+	Replay       bool                 `json:"replay,omitempty"`
+	Grid         pmanifold.Grid       `json:"grid,omitempty"`
+	Rho          [][]float64          `json:"rho,omitempty"`
+	PsiMag2      [][]float64          `json:"psiMag2,omitempty"`
+	GuidanceVelX [][]float64          `json:"guidanceVelX,omitempty"`
+	GuidanceVelZ [][]float64          `json:"guidanceVelZ,omitempty"`
+	Particles    []pmanifold.Particle `json:"particles,omitempty"`
 }
 
 /*
@@ -74,4 +77,19 @@ GasReady reports whether the GPU gas step produced a finite physical readout.
 */
 func (state State) GasReady() bool {
 	return state.InvalidReason == Valid && state.IsFinite()
+}
+
+/*
+Summary drops grid, field, and particle payloads so the UI can paint scalars
+without re-shipping multi-megabyte manifolds each tick.
+*/
+func (state State) Summary() State {
+	state.Grid = pmanifold.Grid{}
+	state.Rho = nil
+	state.PsiMag2 = nil
+	state.GuidanceVelX = nil
+	state.GuidanceVelZ = nil
+	state.Particles = nil
+
+	return state
 }

@@ -37,6 +37,21 @@ const requiredFinite = (value: unknown, path: string): number => {
 	throw new TypeError(`${path} must be finite`);
 };
 
+const optionalFinite = (value: unknown, fallback = 0): number => {
+	if (value === null || value === undefined) {
+		return fallback;
+	}
+
+	const number =
+		typeof value === "number"
+			? value
+			: typeof value === "string" && value.trim().length > 0
+				? Number(value)
+				: Number.NaN;
+
+	return Number.isFinite(number) ? number : fallback;
+};
+
 const parseExecutions = (value: unknown): unknown[] | undefined => {
 	if (value === undefined) {
 		return undefined;
@@ -55,16 +70,19 @@ const parsePosition = (value: unknown, index: number): Position => {
 
 	const { executions, ...rest } = frame;
 
+	const mark = optionalFinite(frame.mark);
+	const entry = optionalFinite(frame.entry_price, mark);
+
 	return {
 		...rest,
 		symbol: frame.symbol,
 		qty: requiredFinite(frame.qty, `${path}.qty`),
-		entry_price: requiredFinite(frame.entry_price, `${path}.entry_price`),
-		entry_fee: requiredFinite(frame.entry_fee, `${path}.entry_fee`),
-		exit_fee: requiredFinite(frame.exit_fee, `${path}.exit_fee`),
-		mark: requiredFinite(frame.mark, `${path}.mark`),
-		pnl: requiredFinite(frame.pnl, `${path}.pnl`),
-		return_pct: requiredFinite(frame.return_pct, `${path}.return_pct`),
+		entry_price: entry,
+		entry_fee: optionalFinite(frame.entry_fee),
+		exit_fee: optionalFinite(frame.exit_fee),
+		mark,
+		pnl: optionalFinite(frame.pnl),
+		return_pct: optionalFinite(frame.return_pct),
 		executions: parseExecutions(executions),
 	};
 };

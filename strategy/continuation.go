@@ -1,6 +1,67 @@
 package strategy
 
-import "github.com/theapemachine/symm/types"
+import (
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/symm/types"
+)
+
+/*
+manage projects stop evidence and continuation for every open holding before
+entry scoring. Stoploss owns full exits; continuation may only hold or reduce.
+*/
+func (planner *Planner) manage(thesis *types.Thesis) {
+	if thesis == nil || planner.price == nil {
+		return
+	}
+
+	forecasts := make(map[string]types.Forecasts, len(thesis.Forecasts))
+
+	for _, forecast := range thesis.Forecasts {
+		forecasts[forecast.Symbol] = forecast
+	}
+
+	thesis.Holdings.Range(func(_, value any) bool {
+		holding, ok := value.(*types.Holding)
+
+		if !ok || holding == nil || holding.Status == types.CLOSED {
+			return true
+		}
+
+		if holding.Stoploss != nil {
+			holding.Stoploss.Regulate(thesis, *holding, Project(thesis, *holding))
+		}
+
+		if exiting(thesis, holding.Symbol) {
+			return true
+		}
+
+		forecast, found := forecasts[holding.Symbol]
+
+		if !found || holding.Mark == nil || holding.Qty == nil {
+			return true
+		}
+
+		fee := 0.0
+
+		if fraction, err := planner.price.Fraction(holding.Symbol); err == nil {
+			fee = fraction.Float64()
+		}
+
+		decision := planner.continuation(forecast, fee, holding)
+		decision.Cause = planner.cause(thesis, forecast, decision.Action)
+		thesis.Decisions = append(thesis.Decisions, decision)
+
+		return true
+	})
+}
+
+func exiting(thesis *types.Thesis, symbol string) bool {
+	phase, found := thesis.Lifecycle.Load(symbol)
+
+	return found &&
+		(phase == types.LifecycleExitSelected ||
+			phase == types.LifecycleExitSubmitted)
+}
 
 /*
 continuation compares hold against liquidity-forced reduction only. Full exits
@@ -14,7 +75,7 @@ func (planner *Planner) continuation(
 ) types.Decision {
 	hold := forecast.ExpectedReturn
 	exit := -(fee + forecast.ExpectedSpread/2)
-	action := "hold"
+	action := types.ActionHold
 	utility := hold
 	reason := "stoploss owns full exit; continuation holds"
 	alternatives := map[string]float64{"hold": hold}
@@ -29,7 +90,7 @@ func (planner *Planner) continuation(
 		alternatives["reduce"] = reduce
 
 		if reduce > utility {
-			action = "reduce"
+			action = types.ActionReduce
 			utility = reduce
 			quantity = qty * fraction
 			reason = "visible bid capacity supports reduction but not complete exit"
@@ -42,10 +103,10 @@ func (planner *Planner) continuation(
 		At:                forecast.At,
 		Utility:           utility,
 		Alternatives:      alternatives,
-		ProposedQuantity:  quantity,
-		ExpectedFees:      fee,
-		ExpectedSpread:    forecast.ExpectedSpread / 2,
-		ReferencePrice:    forecast.ReferencePrice,
+		ProposedQuantity:  decimal.NewFromFloat64(quantity),
+		ExpectedFees:      decimal.NewFromFloat64(fee),
+		ExpectedSpread:    decimal.NewFromFloat64(forecast.ExpectedSpread / 2),
+		ReferencePrice:    decimal.NewFromFloat64(forecast.ReferencePrice),
 		ValidThroughEpoch: forecast.ExpiresEpoch,
 		ForecastSource:    forecast.Source,
 		Cause:             "continuation",
@@ -61,13 +122,13 @@ is invalidation; a negative current forecast without either is weakening.
 func (planner *Planner) cause(
 	thesis *types.Thesis,
 	forecast types.Forecasts,
-	action string,
+	action types.Action,
 ) string {
-	if action == "hold" {
+	if action == types.ActionHold {
 		return "continuation"
 	}
 
-	if action == "reduce" {
+	if action == types.ActionReduce {
 		return "liquidity_deterioration"
 	}
 
@@ -84,7 +145,8 @@ func (planner *Planner) cause(
 	for index := len(thesis.Decisions) - 1; index >= 0; index-- {
 		decision := thesis.Decisions[index]
 
-		if decision.Symbol == forecast.Symbol && decision.Action == "enter" &&
+		if decision.Symbol == forecast.Symbol &&
+			decision.Action == types.ActionEnter &&
 			forecast.SourceEpoch >= decision.ValidThroughEpoch {
 			return "thesis_invalidation"
 		}

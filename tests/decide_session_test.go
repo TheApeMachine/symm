@@ -48,13 +48,8 @@ func TestSessionPumpReservedDoesNotRotateMaturing(t *testing.T) {
 		})
 
 		// One normal slot occupied by the maturing name; reserved stays free.
-		session.Planner().Decide(
-			thesis,
-			map[string]float64{"MATIC/USD": 0.0026, "BTC/USD": 0.0026},
-			10_000,
-			1,
-			2,
-		)
+		session.Desk().SetSlots(1, 2)
+		So(session.RunDecide(thesis), ShouldBeNil)
 
 		Convey("Then the pump ignition enters reserved without rotating BTC", func() {
 			entered := false
@@ -107,13 +102,8 @@ func TestSessionPumpRotateWhenChallengerClearsWeakest(t *testing.T) {
 		tests.SeedOpportunityForecast(thesis, "MATIC/USD", 0.12, 0.01)
 		tests.SeedEarlyCognition(thesis, "MATIC/USD")
 
-		session.Planner().Decide(
-			thesis,
-			map[string]float64{"MATIC/USD": 0.0026, "WEAK/USD": 0.0026},
-			0,
-			1,
-			0,
-		)
+		session.Desk().SetSlots(1, 0)
+		So(session.RunDecide(thesis), ShouldBeNil)
 
 		Convey("Then WEAK is displaced and MATIC enters by rotation", func() {
 			exited := false
@@ -153,6 +143,7 @@ func TestSessionPumpWaitsWhenRotateSurplusNonPositive(t *testing.T) {
 
 		So(session.SeedTakerFee("MATIC/USD", 0.26), ShouldBeNil)
 		So(session.SeedTakerFee("HOLD/USD", 0.26), ShouldBeNil)
+		So(session.SeedQuoteCapital(0), ShouldBeNil)
 
 		thesis := types.NewThesis(nil, nil)
 		tests.SeedMatureHolding(thesis, "HOLD/USD", 100)
@@ -160,13 +151,8 @@ func TestSessionPumpWaitsWhenRotateSurplusNonPositive(t *testing.T) {
 		tests.SeedOpportunityForecast(thesis, "MATIC/USD", 0.04, 0.01)
 		tests.SeedEarlyCognition(thesis, "MATIC/USD")
 
-		session.Planner().Decide(
-			thesis,
-			map[string]float64{"MATIC/USD": 0.0026, "HOLD/USD": 0.0026},
-			0,
-			1,
-			0,
-		)
+		session.Desk().SetSlots(1, 0)
+		So(session.RunDecide(thesis), ShouldBeNil)
 
 		Convey("Then Decide waits instead of rotating", func() {
 			sawWait := false
@@ -247,6 +233,15 @@ func BenchmarkSessionPumpDecide(b *testing.B) {
 		b.Fatal(err)
 	}
 
+	if err := session.SeedTakerFee("MATIC/USD", 0.26); err != nil {
+		b.Fatal(err)
+	}
+
+	if err := session.SeedQuoteCapital(10_000); err != nil {
+		b.Fatal(err)
+	}
+
+	session.Desk().SetSlots(2, 2)
 	b.ReportAllocs()
 
 	for b.Loop() {
@@ -260,13 +255,10 @@ func BenchmarkSessionPumpDecide(b *testing.B) {
 		tests.SeedOpportunityForecast(thesis, "MATIC/USD", 0.12, 0.02)
 		tests.SeedEarlyCognition(thesis, "MATIC/USD")
 		_ = theses
-		session.Planner().Decide(
-			thesis,
-			map[string]float64{"MATIC/USD": 0.0026},
-			10_000,
-			2,
-			2,
-		)
+
+		if decideErr := session.RunDecide(thesis); decideErr != nil {
+			b.Fatal(decideErr)
+		}
 	}
 }
 
@@ -275,13 +267,13 @@ func findThesisHolding(thesis *types.Thesis, symbol string) (types.Holding, bool
 	ok := false
 
 	thesis.Holdings.Range(func(key, value any) bool {
-		holding := value.(types.Holding)
+		holding, typed := value.(*types.Holding)
 
-		if holding.Symbol != symbol {
+		if !typed || holding == nil || holding.Symbol != symbol {
 			return true
 		}
 
-		found = holding
+		found = *holding
 		ok = true
 
 		return false

@@ -34,20 +34,28 @@ describe("normalizePositions", () => {
 		]);
 	});
 
-	it("rejects a snapshot missing the immediate mark", () => {
-		expect(() =>
+	it("defaults missing mark and entry fields so restart rows still render", () => {
+		expect(
 			normalizePositions([
 				{
 					symbol: "XLM/USD",
 					qty: 10,
-					entry_price: 0.25,
-					entry_fee: 0.0065,
-					exit_fee: 0.00702,
-					pnl: 0.2,
-					return_pct: 0.08,
+					entry_price: null,
+					mark: 0.27,
 				},
 			]),
-		).toThrow("positions[0].mark");
+		).toEqual([
+			{
+				symbol: "XLM/USD",
+				qty: 10,
+				entry_price: 0.27,
+				entry_fee: 0,
+				exit_fee: 0,
+				mark: 0.27,
+				pnl: 0,
+				return_pct: 0,
+			},
+		]);
 	});
 
 	it("replaces invalid executions with an empty array", () => {

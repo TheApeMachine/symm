@@ -85,7 +85,6 @@ func (signal *Signal) Calculate(
 		signal.emitSymbolMeasurements(symbol, row, &out, nextTouch)
 	}
 
-	signal.Publish(out)
 	signal.priorTouch = nextTouch
 
 	return out, nil

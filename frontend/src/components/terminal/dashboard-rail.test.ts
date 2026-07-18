@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { TradeObservation } from "#/types/thesis";
+import type { StrategyDecision, TradeObservation } from "#/types/thesis";
 import {
 	auditObservations,
+	decisionFraction,
 	isAuditObservation,
 	tradeObservationAuditRow,
 } from "./dashboard-rail";
@@ -14,6 +15,64 @@ const observation = (
 	decision: 0,
 	at: "2026-07-12T04:05:06Z",
 	...overrides,
+});
+
+const sampleDecision = (
+	overrides: Partial<StrategyDecision> = {},
+): StrategyDecision => ({
+	action: "enter",
+	symbol: "BTC/USD",
+	at: "2026-07-14T12:00:00Z",
+	utility: 0.42,
+	alternatives: {},
+	allocationClass: "core",
+	proposedNotional: 100,
+	proposedQuantity: 0.01,
+	referencePrice: 61000,
+	validThroughEpoch: 3,
+	forecastSource: "resonance",
+	forecastModel: "online",
+	forecastEpoch: 2,
+	calibrationCount: 4,
+	expectedReturn: 0.01,
+	expectedFees: 0.0002,
+	expectedSpread: 0.0001,
+	expectedImpact: 0.0003,
+	adverseSelection: 0.0001,
+	uncertainty: 0.05,
+	confidence: 0.8,
+	opportunityMargin: 0.01,
+	cognitiveLead: 0.2,
+	basinConfidence: 0.6,
+	availableCapital: 1000,
+	openPositions: 1,
+	slotCapacity: 4,
+	cause: "edge_clear",
+	reason: "utility exceeds hold",
+	...overrides,
+});
+
+describe("decisionFraction", () => {
+	it("returns the sized notional share of available capital", () => {
+		expect(decisionFraction(sampleDecision())).toBeCloseTo(0.1);
+	});
+
+	it("returns null for non-finite capital instead of throwing", () => {
+		expect(
+			decisionFraction(sampleDecision({ availableCapital: Number.NaN })),
+		).toBeNull();
+	});
+
+	it("accepts decimal wire strings without throwing DomainError", () => {
+		expect(
+			decisionFraction(
+				sampleDecision({
+					availableCapital: "1000.00" as unknown as number,
+					proposedNotional: "100" as unknown as number,
+				}),
+			),
+		).toBeCloseTo(0.1);
+	});
 });
 
 describe("isAuditObservation", () => {

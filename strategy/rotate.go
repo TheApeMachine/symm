@@ -14,6 +14,7 @@ type Incumbent struct {
 	Notional    float64
 	Qty         float64
 	Mark        float64
+	ClearScore  float64
 	Displaced   bool
 }
 
@@ -26,11 +27,14 @@ func (planner *Planner) holdUtility(forecast types.Forecasts) float64 {
 }
 
 /*
-exitCost is the one-way taker friction paid to liquidate an incumbent when a
-challenger displaces it.
+exitCost is the full one-way friction paid to liquidate an incumbent: fee,
+half-spread, impact, and adverse selection.
 */
 func (planner *Planner) exitCost(forecast types.Forecasts, fee float64) float64 {
-	return fee + forecast.ExpectedSpread/2
+	return fee +
+		forecast.ExpectedSpread/2 +
+		forecast.ExpectedImpact +
+		forecast.ExpectedAdverseSelection
 }
 
 /*

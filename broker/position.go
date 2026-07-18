@@ -2,6 +2,7 @@ package broker
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -11,8 +12,18 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+const (
+	intentFlat          = ""
+	intentEntryPending  = "entry_pending"
+	intentOpen          = "open"
+	intentReducePending = "reduce_pending"
+	intentExitPending   = "exit_pending"
+)
+
 type Position struct {
 	status      types.Status
+	closed      atomic.Bool
+	intent      atomic.Value
 	api         *websocket.API
 	instrument  *Instrument
 	price       *Price
@@ -21,14 +32,13 @@ type Position struct {
 	request     *kraken.MarketOrder
 	order       *spot.Order
 	orderID     string
+	claim       Claim
 	tickers     []*kraken.TickerData
 	executions  []*kraken.Execution
 	seenExec    sync.Map
 	onTerminal  func(symbol string)
-	onTicker    func([]byte)
 	onOrder     func([]byte)
 	onExecution func([]byte)
-	subTicker   uint64
 	subOrder    uint64
 	subExec     uint64
 }
@@ -64,7 +74,7 @@ func NewPosition(
 		},
 	}
 
-	position.onTicker = position.TickerAck
+	position.intent.Store(intentFlat)
 	position.onOrder = position.OrderAck
 	position.onExecution = position.ExecutionAck
 	position.subscribe()
@@ -72,35 +82,44 @@ func NewPosition(
 	return position
 }
 
+/*
+Pending reports whether an order is outstanding for this lot.
+*/
+func (position *Position) Pending() bool {
+	if position == nil {
+		return false
+	}
+
+	intent, _ := position.intent.Load().(string)
+
+	return intent == intentEntryPending ||
+		intent == intentExitPending ||
+		intent == intentReducePending
+}
+
 func (position *Position) Status() types.Status {
 	return position.status
 }
 
 /*
-subscribe registers channel handlers once and stores the ids On returns.
+subscribe registers order/execution handlers once. Marks arrive via Desk from
+the single Price ticker decode path.
 */
 func (position *Position) subscribe() {
-	if position == nil || position.api == nil || position.subTicker != 0 {
+	if position == nil || position.api == nil || position.subOrder != 0 {
 		return
 	}
 
-	position.subTicker = position.api.On("ticker", position.onTicker)
 	position.subOrder = position.api.On("add_order", position.onOrder)
 	position.subExec = position.api.On("executions", position.onExecution)
 }
 
 /*
-unsubscribe drops this position's channel handlers so closed lots leave the
-ticker path. Safe to call more than once.
+unsubscribe drops this position's channel handlers. Safe to call more than once.
 */
 func (position *Position) unsubscribe() {
 	if position == nil || position.api == nil {
 		return
-	}
-
-	if position.subTicker != 0 {
-		position.api.Unsubscribe("ticker", position.subTicker)
-		position.subTicker = 0
 	}
 
 	if position.subOrder != 0 {
@@ -115,15 +134,15 @@ func (position *Position) unsubscribe() {
 }
 
 /*
-Close tears down channel handlers when the desk evicts a terminal lot.
+Close unsubscribes channel handlers once. Desk.evict owns map removal so this
+method never re-enters through onTerminal.
 */
 func (position *Position) Close() {
-	position.balance.holdings.Delete(position.pair.Symbol)
-	position.unsubscribe()
-
-	if position.onTerminal != nil && position.pair != nil {
-		position.onTerminal(position.pair.Symbol)
+	if position == nil || !position.closed.CompareAndSwap(false, true) {
+		return
 	}
+
+	position.unsubscribe()
 }
 
 func (position *Position) OrderAck(buf []byte) {
@@ -135,6 +154,7 @@ func (position *Position) OrderAck(buf []byte) {
 
 	if errnie.Error(kraken.Validate(orderAck)) != nil {
 		position.status = types.ERROR
+		position.claim.Release()
 		return
 	}
 
@@ -147,6 +167,7 @@ func (position *Position) ExecutionAck(buf []byte) {
 
 	if errnie.Error(kraken.Validate(execution)) != nil {
 		position.status = types.ERROR
+		position.claim.Release()
 		return
 	}
 
@@ -170,53 +191,67 @@ func (position *Position) ExecutionAck(buf []byte) {
 				nil,
 			))
 
-			return
+			continue
 		}
 
 		holding := value.(*types.Holding)
-		pnl, err := position.price.WithFriction(position.pair, holding.Qty)
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"failed to calculate pnl",
-				err,
-			))
-
-			return
-		}
-
-		holding.Mark = data.LastPrice
-		holding.PnL = pnl
+		position.price.Fill(position.pair, holding, data)
 		position.executions = append(position.executions, execution)
 
-		status := position.fillStatus(data)
+		status := position.fillStatus(holding, data)
 		holding.Status = status
 		position.status = status
+		position.noteIntent(status)
 
 		if position.balance != nil {
 			position.balance.Publish()
 		}
 
-		if holding.Status == types.CLOSED {
-			position.Close()
+		if holding.Status == types.CLOSED || holding.Status == types.CANCELED {
+			position.terminal()
 		}
+	}
+}
 
-		return
+func (position *Position) noteIntent(status types.Status) {
+	switch status {
+	case types.OPEN:
+		position.intent.Store(intentOpen)
+
+		if position.request != nil && position.request.Params.Side == "buy" {
+			position.claim.Consume()
+		}
+	case types.CLOSED, types.CANCELED, types.ERROR:
+		position.intent.Store(intentFlat)
 	}
 }
 
 /*
 fillStatus maps an execution print onto inventory status. Buys that trade stay
-open; a filled sell closes the lot; cancel prints cancel the pending request.
+open; a sell only closes when remaining qty is exhausted — partial reduces must
+keep the Desk shell so paper remainders stay sellable.
 */
-func (position *Position) fillStatus(data kraken.ExecutionData) types.Status {
+func (position *Position) fillStatus(
+	holding *types.Holding,
+	data kraken.ExecutionData,
+) types.Status {
 	if data.OrderStatus == "canceled" || data.ExecType == "canceled" {
+		if position.request != nil && position.request.Params.Side == "sell" {
+			return types.OPEN
+		}
+
+		position.claim.Release()
+
 		return types.CANCELED
 	}
 
-	if data.Side == "sell" && data.OrderStatus == "filled" {
-		return types.CLOSED
+	if data.Side == "sell" &&
+		(data.OrderStatus == "filled" || data.ExecType == "trade") {
+		if holding == nil || holding.Qty == nil || holding.Qty.Sign() <= 0 {
+			return types.CLOSED
+		}
+
+		return types.OPEN
 	}
 
 	if data.ExecType == "trade" {
@@ -247,7 +282,11 @@ func (position *Position) Enter() error {
 		))
 	}
 
-	if !position.balance.Available(amount) {
+	if position.claim.ID() != "" {
+		if !position.claim.Funded(amount) {
+			return errnie.Error(ErrInsufficientReservation())
+		}
+	} else if !position.balance.Available(amount) {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"insufficient balance",
@@ -262,9 +301,12 @@ func (position *Position) Enter() error {
 	)
 
 	position.status = types.PENDING
+	position.intent.Store(intentEntryPending)
 
 	if err := position.api.AddOrder(position.request); err != nil {
 		position.status = types.ERROR
+		position.intent.Store(intentFlat)
+		position.claim.Release()
 
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -277,9 +319,17 @@ func (position *Position) Enter() error {
 }
 
 /*
-Exit submits a market sell for the filled position.
+Exit submits a market sell for the full filled quantity.
 */
 func (position *Position) Exit() error {
+	return position.Sell(nil)
+}
+
+/*
+Sell submits a market sell. Nil quantity sells the full live lot; a positive
+quantity reduces.
+*/
+func (position *Position) Sell(quantity *decimal.Decimal) error {
 	holding, err := position.balance.Holding(position.pair.Symbol)
 
 	if err != nil {
@@ -290,16 +340,36 @@ func (position *Position) Exit() error {
 		))
 	}
 
+	size := holding.Qty
+
+	if quantity != nil {
+		size = quantity
+	}
+
+	if size == nil || size.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"sell quantity must be positive for "+position.pair.Symbol,
+			nil,
+		))
+	}
+
 	position.request = kraken.NewMarketOrder(
 		"sell",
-		holding.Qty.Float64(),
+		size.Float64(),
 		holding.Symbol,
 	)
-
 	position.status = types.PENDING
+
+	if quantity != nil {
+		position.intent.Store(intentReducePending)
+	} else {
+		position.intent.Store(intentExitPending)
+	}
 
 	if err := position.api.AddOrder(position.request); err != nil {
 		position.status = types.OPEN
+		position.intent.Store(intentOpen)
 
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -312,55 +382,18 @@ func (position *Position) Exit() error {
 }
 
 /*
-TickerAck routes this symbol's ticker print onto the Holding mark surface and
-publishes the desk snapshot. Other symbols on the shared ticker channel are
-ignored.
+terminal asks Desk to evict this lot, or drops the holding locally when no Desk
+callback is wired (unit tests and orphaned positions).
 */
-func (position *Position) TickerAck(buf []byte) {
-	if position == nil || position.balance == nil || position.pair == nil {
+func (position *Position) terminal() {
+	if position.onTerminal != nil && position.pair != nil {
+		position.onTerminal(position.pair.Symbol)
 		return
 	}
 
-	value, ok := position.balance.holdings.Load(position.pair.Symbol)
-
-	if !ok {
-		return
+	if position.balance != nil && position.pair != nil {
+		position.balance.holdings.Delete(position.pair.Symbol)
 	}
 
-	holding, ok := value.(*types.Holding)
-
-	if !ok || holding == nil {
-		return
-	}
-
-	ticker := kraken.NewTicker(buf)
-
-	if errnie.Error(kraken.Validate(ticker)) != nil {
-		return
-	}
-
-	for _, tickerData := range ticker.Data {
-		if tickerData.Symbol != position.pair.Symbol {
-			continue
-		}
-
-		pnl, err := position.price.WithFriction(
-			position.pair, holding.Qty,
-		)
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"failed to calculate pnl",
-				err,
-			))
-
-			return
-		}
-
-		holding.Mark = tickerData.Last
-		holding.PnL = pnl
-		position.balance.Publish()
-		return
-	}
+	position.Close()
 }

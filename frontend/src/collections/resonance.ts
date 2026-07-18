@@ -22,6 +22,11 @@ export type ResonanceFrame = Record<string, unknown> & {
 	layers?: ResonanceLayer[];
 	energy?: number;
 	surprise?: number;
+	expectedReturn?: number;
+	returnReady?: boolean;
+	incrementalMSE?: number;
+	uncertainty?: number;
+	calibrationSamples?: number;
 };
 
 const RESONANCE_HISTORY_LIMIT = 130;

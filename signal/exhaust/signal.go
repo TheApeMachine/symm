@@ -80,7 +80,6 @@ func (signal *Signal) Calculate(
 		if event.Stream == "book" {
 			measurements := signal.measureBook(event.Row.(kraken.BookData))
 			out = append(out, measurements...)
-			signal.Publish(measurements)
 			continue
 		}
 
@@ -88,7 +87,6 @@ func (signal *Signal) Calculate(
 		out = append(out, measurements...)
 	}
 
-	signal.Publish(out)
 	return out, nil
 }
 

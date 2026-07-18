@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
@@ -30,6 +31,7 @@ func testPlanner(
 	return strategy.NewPlanner(
 		ctx,
 		uiHub,
+		nil,
 		nil,
 		nil,
 		nil,
@@ -237,6 +239,31 @@ func TestCryptoRun(t *testing.T) {
 
 				So(published, ShouldEqual, 1)
 			})
+		})
+	})
+}
+
+/*
+TestCryptoTradePointerHoldings proves enter submission reads the pointer shape
+admit/planner store on Thesis.Holdings — a value assertion panics at runtime.
+*/
+func TestCryptoTradePointerHoldings(t *testing.T) {
+	Convey("Given an enter decision backed by a pointer holding", t, func() {
+		crypto := &Crypto{desk: broker.NewDesk(nil, nil, nil, nil)}
+		thesis := types.NewThesis(nil, nil)
+		holding := types.NewHolding(
+			context.Background(),
+			"BTC/USD",
+			decimal.NewFromFloat64(0.01),
+		)
+		thesis.Holdings.Store("BTC/USD", holding)
+		thesis.Decisions = []types.Decision{{
+			Symbol: "BTC/USD",
+			Action: "enter",
+		}}
+
+		Convey("When trade submits the enter", func() {
+			So(func() { crypto.trade(thesis) }, ShouldNotPanic)
 		})
 	})
 }

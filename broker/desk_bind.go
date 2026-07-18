@@ -10,16 +10,22 @@ func (desk *Desk) bind() {
 	}
 }
 
+/*
+evict removes a terminal lot from the desk maps, then closes channel handlers.
+LoadAndDelete runs first so Position.Close cannot re-enter through onTerminal.
+*/
 func (desk *Desk) evict(symbol string) {
 	if symbol == "" {
 		return
 	}
 
-	if value, ok := desk.positions.Load(symbol); ok {
-		value.(*Position).Close()
-	}
+	value, ok := desk.positions.LoadAndDelete(symbol)
 
-	desk.positions.Delete(symbol)
+	if ok {
+		position := value.(*Position)
+		position.onTerminal = nil
+		position.Close()
+	}
 
 	if desk.balance != nil && desk.balance.holdings != nil {
 		desk.balance.holdings.Delete(symbol)

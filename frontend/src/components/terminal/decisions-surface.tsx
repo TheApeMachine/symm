@@ -29,7 +29,14 @@ import { cn } from "#/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Meter } from "@/components/ui/meter";
 import { Panel } from "@/components/ui/panel";
-import { causalCleared, judgeCandidate, pearlEdge } from "./decision-candidate";
+import {
+	causalCleared,
+	judgeCandidate,
+	manifoldField,
+	pearlEdge,
+	resonanceEdge,
+	resonancePredict,
+} from "./decision-candidate";
 import { fixed } from "./decision-format";
 import { DecisionSideRail, LiveDecisionsEntryLine } from "./decision-side";
 import { StrategyDecisionRows } from "./strategy-decisions";
@@ -42,6 +49,8 @@ const finite = (value: unknown): number => {
 
 const ratio = (value: unknown): number =>
 	Math.min(1, Math.max(0, finite(value)));
+
+const present = (value: number | null): number => (value === null ? 0 : value);
 
 export const DecisionsSurface = () => {
 	const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
@@ -92,10 +101,13 @@ export const DecisionsSurface = () => {
 		const manifold = manifoldBySymbol[symbol]?.values().at(-1);
 		const causalStrengthValue = causalStrength(causal);
 		const causalBaselineValue = causalEntryBaseline(causal);
-		const resonanceConfidence = ratio(resonance?.confidence);
+		const predict = resonancePredict(resonance);
+		const field = manifoldField(manifold);
+		const predictEdge = resonanceEdge(resonance);
 		const causalConfidenceValue = causalRatio(causalConfidence(causal));
 		const score =
-			decision?.utility ?? Math.min(resonanceConfidence, causalConfidenceValue);
+			decision?.utility ??
+			Math.min(ratio(present(predict)), causalConfidenceValue);
 		const support = [causal, resonance, manifold].filter(Boolean).length;
 		const cleared = causalCleared(causal);
 		const judgement = judgeCandidate(decision, support, cleared, {
@@ -123,12 +135,12 @@ export const DecisionsSurface = () => {
 				},
 				{
 					src: "predict",
-					value: finite(resonance?.confidence),
+					value: present(predict),
 					present: resonance !== undefined,
 				},
 				{
 					src: "manifold",
-					value: finite(manifold?.momentum),
+					value: present(field),
 					present: manifold !== undefined,
 				},
 			].filter((bar) => bar.present),
@@ -139,11 +151,11 @@ export const DecisionsSurface = () => {
 				},
 				{
 					src: "predict",
-					delta: finite(resonance?.flow) - finite(resonance?.baseline),
+					delta: present(predictEdge),
 				},
 				{
 					src: "field",
-					delta: finite(manifold?.momentum),
+					delta: present(field),
 				},
 			],
 			probes: [

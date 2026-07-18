@@ -4,18 +4,51 @@ import { Circular, type CircularBuffer } from "./circular";
 
 export const DECISION_HISTORY_LIMIT = 50;
 
+/*
+wireNumber converts krakenfx decimal JSON strings (and numeric literals) into
+JS numbers so paint and domain checks see finite bases, not string coercion traps.
+*/
+const wireNumber = (value: unknown): number => {
+	if (typeof value === "number") {
+		return value;
+	}
+
+	if (typeof value === "string" && value.trim().length > 0) {
+		return Number(value);
+	}
+
+	return Number.NaN;
+};
+
+/*
+normalizeDecision lifts decimal wire fields onto StrategyDecision number slots.
+*/
+const normalizeDecision = (row: StrategyDecision): StrategyDecision => ({
+	...row,
+	proposedNotional: wireNumber(row.proposedNotional),
+	proposedQuantity: wireNumber(row.proposedQuantity),
+	referencePrice: wireNumber(row.referencePrice),
+	expectedReturn: wireNumber(row.expectedReturn),
+	expectedFees: wireNumber(row.expectedFees),
+	expectedSpread: wireNumber(row.expectedSpread),
+	expectedImpact: wireNumber(row.expectedImpact),
+	availableCapital: wireNumber(row.availableCapital),
+});
+
 const asDecisions = (frame: unknown): StrategyDecision[] => {
 	if (!Array.isArray(frame)) {
 		return [];
 	}
 
-	return frame.filter(
-		(row): row is StrategyDecision =>
-			typeof row === "object" &&
-			row !== null &&
-			typeof (row as StrategyDecision).symbol === "string" &&
-			typeof (row as StrategyDecision).action === "string",
-	);
+	return frame
+		.filter(
+			(row): row is StrategyDecision =>
+				typeof row === "object" &&
+				row !== null &&
+				typeof (row as StrategyDecision).symbol === "string" &&
+				typeof (row as StrategyDecision).action === "string",
+		)
+		.map(normalizeDecision);
 };
 
 /*

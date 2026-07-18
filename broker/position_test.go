@@ -78,13 +78,46 @@ func TestPositionExecutionAck(t *testing.T) {
 		So(err, ShouldBeNil)
 		position.ExecutionAck(buffer)
 
-		Convey("It should open the lot and record the execution on Position", func() {
+		Convey("It should open the lot and record WithFriction flatten-now PnL", func() {
 			So(position.Status(), ShouldEqual, types.OPEN)
 			So(holding.Status, ShouldEqual, types.OPEN)
 			So(holding.Qty.Float64(), ShouldEqual, 1.0)
 			So(holding.Mark.Float64(), ShouldEqual, 100.0)
 			So(holding.PnL, ShouldNotBeNil)
+			// (bid 100 − exit 0.26) − (entry 100 + entry 0.26)
+			So(holding.PnL.Float64(), ShouldAlmostEqual, -0.52, 1e-8)
 			So(position.executions, ShouldHaveLength, 1)
+		})
+
+		Convey("It should keep remainder inventory after a partial sell", func() {
+			holding.Qty = decimal.NewFromFloat64(0.0138685)
+			exitRequest := kraken.NewMarketOrder("sell", 0.00884981, "BTC/USD")
+			position.request = exitRequest
+			position.OrderAck([]byte(`{"method":"add_order","result":{"order_id":"sell-partial"},"success":true,"req_id":` +
+				strconv.FormatInt(exitRequest.ReqID, 10) + `}`))
+			exit := &kraken.Execution{
+				Channel: "executions", Type: "update",
+				Data: []kraken.ExecutionData{{
+					OrderID: "sell-partial", ExecID: "sell-partial-fill",
+					ExecType: "trade", Symbol: "BTC/USD", Side: "sell",
+					OrderType: "market", LastQty: 0.00884981, CumQty: 0.00884981,
+					OrderStatus: "filled",
+					LastPrice:   decimal.NewFromInt64(101),
+					AvgPrice:    decimal.NewFromInt64(101),
+					Cost:        decimal.NewFromInt64(16),
+					FeeUsdEquiv: decimal.NewFromFloat64(0.04), Timestamp: time.Unix(2, 0),
+				}},
+			}
+			exitBuffer, exitErr := exit.MarshalJSON()
+
+			So(exitErr, ShouldBeNil)
+			position.ExecutionAck(exitBuffer)
+			live, holdingErr := balance.Holding("BTC/USD")
+
+			So(holdingErr, ShouldBeNil)
+			So(position.Status(), ShouldEqual, types.OPEN)
+			So(live.Status, ShouldEqual, types.OPEN)
+			So(live.Qty.Float64(), ShouldAlmostEqual, 0.00501869, 1e-7)
 		})
 
 		Convey("It should close and evict the holding when the position exits", func() {
@@ -137,7 +170,7 @@ func TestPositionExecutionAck(t *testing.T) {
 
 			So(canceledErr, ShouldBeNil)
 			position.ExecutionAck(canceledBuffer)
-			So(position.Status(), ShouldEqual, types.CANCELED)
+			So(position.Status(), ShouldEqual, types.OPEN)
 		})
 	})
 }

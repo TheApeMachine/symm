@@ -28,6 +28,7 @@ type Market struct {
 	tradesIn   chan []byte
 	booksIn    chan []byte
 	resyncIn   chan string
+	dirty      chan struct{}
 }
 
 /*
@@ -56,6 +57,7 @@ func NewMarket(
 			timelineCapacity,
 			trackCapacity,
 		),
+		dirty: make(chan struct{}, 1),
 	}
 
 	if _, err := market.tickers.Pending(time.Now().UTC()); err != nil {
@@ -222,6 +224,12 @@ func (market *Market) Cut(at time.Time) (*types.MarketFrame, error) {
 	}
 
 	tickerProgress := market.tickers.Progress()
+	tradeProgress := market.trades.Progress()
+	bookProgress := market.books.Progress()
+
+	if !tickerProgress && !tradeProgress && !bookProgress {
+		return &types.MarketFrame{CrossSection: types.NewCrossSection()}, nil
+	}
 
 	tickerRows, err := market.tickers.Frame(at)
 
@@ -247,10 +255,6 @@ func (market *Market) Cut(at time.Time) (*types.MarketFrame, error) {
 
 	if err := market.books.Commit(books); err != nil {
 		return nil, errnie.Err(errnie.Internal, "market: commit book cut", err)
-	}
-
-	if !tickerProgress && len(trades.Rows) == 0 && len(books.Rows) == 0 {
-		return &types.MarketFrame{CrossSection: types.NewCrossSection()}, nil
 	}
 
 	if !tickerProgress {

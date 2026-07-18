@@ -1,13 +1,23 @@
 import type { CausalFrame } from "#/collections/causal";
+import type { ManifoldFrame } from "#/collections/manifold";
+import type { ResonanceFrame } from "#/collections/resonance";
 import {
 	causalEntryBaseline,
 	causalReading,
 	causalStrength,
 } from "#/components/terminal/causal-view";
+import { manifoldReading } from "#/components/terminal/xray-view";
 import type { StrategyDecision } from "#/types/thesis";
 
 const finiteOrNull = (value: unknown): number | null =>
 	typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const readingNumber = (
+	reading: Record<string, unknown> | null,
+	camel: string,
+	pascal: string,
+): number | null =>
+	finiteOrNull(reading?.[camel]) ?? finiteOrNull(reading?.[pascal]);
 
 /*
 causalCleared is true only when both Pearl strength and entry baseline are
@@ -102,3 +112,39 @@ not be read as the combined score.
 */
 export const pearlEdge = (frame: CausalFrame | undefined): number =>
 	causalStrength(frame) - causalEntryBaseline(frame);
+
+/*
+resonancePredict is the surprise-derived confidence analyzer uses when composing
+forecast confidence: exp(-|surprise|). Missing surprise is not a zero confidence.
+*/
+export const resonancePredict = (
+	frame: ResonanceFrame | undefined,
+): number | null => {
+	const surprise = finiteOrNull(frame?.surprise);
+
+	if (surprise === null) {
+		return null;
+	}
+
+	return Math.exp(-Math.abs(surprise));
+};
+
+/*
+resonanceEdge is the return head's signed expected return, used as the predict
+attribution delta on the decision waterfall.
+*/
+export const resonanceEdge = (
+	frame: ResonanceFrame | undefined,
+): number | null => finiteOrNull(frame?.expectedReturn);
+
+/*
+manifoldField is mean |ψ|² from the published manifold reading. Accepts both
+camelCase (tagged wire) and PascalCase (legacy untagged wire).
+*/
+export const manifoldField = (
+	frame: ManifoldFrame | undefined,
+): number | null => {
+	const reading = manifoldReading(frame);
+
+	return readingNumber(reading, "coherenceMag2", "CoherenceMag2");
+};

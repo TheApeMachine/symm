@@ -240,7 +240,9 @@ func (solver *Solver) advance(
 	if slot != nil && (outcome.At.Before(slot.at) ||
 		(outcome.At.Equal(slot.at) && outcome.EventCount == slot.events)) {
 		if slot.last.GasReady() {
-			return slot.last, nil
+			replay := slot.last
+			replay.Replay = true
+			return replay, nil
 		}
 
 		return State{}, nil

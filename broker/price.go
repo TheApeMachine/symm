@@ -1,9 +1,11 @@
 package broker
 
 import (
+	"math/big"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -32,6 +34,7 @@ type Price struct {
 	fees    *sync.Map
 	scales  *sync.Map
 	tickers *sync.Map
+	onMark  func(symbol string)
 }
 
 /*
@@ -69,7 +72,19 @@ func (price *Price) Status() types.Status {
 }
 
 /*
-TickerAck decodes a ticker envelope and refreshes the per-symbol cache.
+RouteMarks registers the single mark fan-out after Price decodes a ticker.
+*/
+func (price *Price) RouteMarks(mark func(symbol string)) {
+	if price == nil {
+		return
+	}
+
+	price.onMark = mark
+}
+
+/*
+TickerAck decodes a ticker envelope once, refreshes the cache, and fans marks
+to open lots without each Position re-decoding the envelope.
 */
 func (price *Price) TickerAck(buf []byte) {
 	ticker := kraken.NewTicker(buf)
@@ -83,6 +98,10 @@ func (price *Price) TickerAck(buf []byte) {
 			item.Symbol,
 			&item,
 		)
+
+		if price.onMark != nil {
+			price.onMark(item.Symbol)
+		}
 	}
 }
 
@@ -389,49 +408,367 @@ func (price *Price) Taker(
 }
 
 /*
-WithFriction returns the current notional plus two taker fees.
+Fill applies one execution print onto a holding: entry/exit cost basis, fee
+pro-rate on partial reduce, then Mark flatten-now PnL. Position calls this once.
+*/
+func (price *Price) Fill(
+	instrument *kraken.InstrumentPair,
+	holding *types.Holding,
+	data kraken.ExecutionData,
+) {
+	if price == nil || instrument == nil || holding == nil {
+		return
+	}
 
-This helper assumes both fees are based on the same current notional.
-It is useful as a rough current-price estimate, but it is not PnL.
+	if data.LastPrice != nil {
+		holding.Mark = data.LastPrice.Copy()
+	}
+
+	switch data.Side {
+	case "buy":
+		price.fillEntry(holding, data)
+	case "sell":
+		price.fillExit(holding, data)
+	}
+
+	if holding.Qty == nil || holding.Qty.Sign() <= 0 {
+		return
+	}
+
+	_ = price.Mark(instrument, holding)
+}
+
+func (price *Price) fillEntry(
+	holding *types.Holding,
+	data kraken.ExecutionData,
+) {
+	switch {
+	case data.AvgPrice != nil:
+		holding.EntryPrice = data.AvgPrice.Copy()
+	case data.LastPrice != nil:
+		holding.EntryPrice = data.LastPrice.Copy()
+	}
+
+	if data.FeeUsdEquiv != nil {
+		holding.EntryFee = data.FeeUsdEquiv.Copy()
+	}
+
+	if holding.EntryAt != nil {
+		return
+	}
+
+	at := data.Timestamp
+
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+
+	holding.EntryAt = &at
+}
+
+func (price *Price) fillExit(
+	holding *types.Holding,
+	data kraken.ExecutionData,
+) {
+	if data.AvgPrice != nil {
+		holding.ExitPrice = data.AvgPrice.Copy()
+	}
+
+	if data.FeeUsdEquiv != nil {
+		holding.ExitFee = data.FeeUsdEquiv.Copy()
+	}
+
+	before := holding.Qty.Copy()
+	remaining := before.Sub(decimal.NewFromFloat64(data.LastQty))
+
+	if holding.EntryFee != nil {
+		holding.EntryFee = price.Prorate(holding.EntryFee, remaining, before)
+	}
+
+	holding.Qty = remaining
+
+	at := data.Timestamp
+
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+
+	holding.ExitAt = &at
+}
+
+/*
+WithFriction returns flatten-now PnL for a remaining lot:
+
+	(bid notional − exit taker fee) − (entry notional + entry fee)
+
+Incomplete lots return nil without logging — zero qty after a full exit is
+expected and must not flood the UI through errnie.Error.
 */
 func (price *Price) WithFriction(
 	instrument *kraken.InstrumentPair,
 	quantity *decimal.Decimal,
+	entry *decimal.Decimal,
+	entryFee *decimal.Decimal,
 ) (*decimal.Decimal, error) {
+	if quantity == nil || entry == nil || quantity.Sign() <= 0 {
+		return nil, nil
+	}
+
 	ticker, err := price.Get(instrument.Symbol)
 
 	if err != nil {
 		return nil, err
 	}
 
-	if ticker.Ask == nil {
-		return nil, errnie.Error(errnie.Err(
+	if ticker.Bid == nil {
+		return nil, errnie.Err(
 			errnie.NotFound,
-			"ticker has no ask price for "+instrument.Symbol,
+			"ticker has no bid price for "+instrument.Symbol,
 			nil,
-		))
+		)
 	}
 
-	notional := price.Notional(
+	exitNotional := price.Notional(instrument, ticker.Bid, quantity)
+	exitFee := price.Fee(instrument, exitNotional)
+
+	if exitFee == nil {
+		return nil, errnie.Err(
+			errnie.Internal,
+			"failed to calculate exit fee for "+instrument.Symbol,
+			nil,
+		)
+	}
+
+	cost := price.Notional(instrument, entry, quantity)
+
+	if entryFee != nil {
+		cost = cost.Add(entryFee)
+	}
+
+	return exitNotional.Sub(exitFee).Sub(cost), nil
+}
+
+/*
+Mark stamps executable bid, flatten-now PnL, and return onto a holding.
+*/
+func (price *Price) Mark(
+	instrument *kraken.InstrumentPair,
+	holding *types.Holding,
+) error {
+	if price == nil || instrument == nil || holding == nil {
+		return nil
+	}
+
+	holding.PnL = nil
+	holding.ReturnPct = nil
+
+	ticker, err := price.Get(instrument.Symbol)
+
+	if err == nil && ticker != nil && ticker.Bid != nil {
+		holding.Mark = ticker.Bid.Copy()
+	}
+
+	pnl, err := price.WithFriction(
 		instrument,
-		ticker.Ask,
-		quantity,
+		holding.Qty,
+		holding.EntryPrice,
+		holding.EntryFee,
 	)
 
-	taker, err := price.Taker(
-		instrument,
-		quantity,
-	)
+	if err != nil || pnl == nil {
+		return err
+	}
+
+	holding.PnL = pnl
+	basis := price.Notional(instrument, holding.EntryPrice, holding.Qty)
+
+	if holding.EntryFee != nil {
+		basis = basis.Add(holding.EntryFee)
+	}
+
+	if basis.Sign() <= 0 {
+		return nil
+	}
+
+	pct := price.Div(pnl, basis).Float64()
+	holding.ReturnPct = &pct
+
+	return nil
+}
+
+/*
+Prorate scales an amount by remain/total on the Price arithmetic surface.
+*/
+func (price *Price) Prorate(
+	amount, remain, total *decimal.Decimal,
+) *decimal.Decimal {
+	if price == nil || amount == nil || remain == nil || total == nil ||
+		total.Sign() <= 0 {
+		return amount
+	}
+
+	return price.Div(price.Mul(amount, remain), total)
+}
+
+/*
+ReferencePrice returns the live ask price for a symbol.
+*/
+func (price *Price) ReferencePrice(
+	pair *kraken.InstrumentPair,
+) (*decimal.Decimal, error) {
+	ticker, err := price.Get(pair.Symbol)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
-			"failed to calculate friction for "+instrument.Symbol,
+			"failed to get ticker for "+pair.Symbol,
 			err,
 		))
 	}
 
-	return taker.Add(price.Fee(
-		instrument, notional,
-	)), nil
+	if ticker.Ask == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"ticker has no ask price for "+pair.Symbol,
+			nil,
+		))
+	}
+
+	return ticker.Ask, nil
+}
+
+/*
+Quantity converts a quote budget into an instrument-quantized base quantity at
+the live ask, after one taker fee, so a later Taker cost fits inside the budget.
+*/
+func (price *Price) Quantity(
+	pair *kraken.InstrumentPair,
+	budget *decimal.Decimal,
+) (*decimal.Decimal, error) {
+	ticker, err := price.Get(pair.Symbol)
+
+	if err != nil || ticker.Ask == nil || ticker.Ask.Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"quantity: ask unavailable for "+pair.Symbol,
+			err,
+		))
+	}
+
+	unit := ticker.Ask.Copy()
+
+	if fee, feeErr := price.Fraction(pair.Symbol); feeErr == nil && fee != nil {
+		unit = price.Mul(ticker.Ask, decimal.NewFromInt64(1).Add(fee))
+	}
+
+	quantity := price.Quantize(pair, price.Div(budget, unit))
+	minimum := decimal.NewFromFloat64(pair.QtyMin)
+
+	if quantity == nil || quantity.Cmp(minimum) < 0 {
+		quantity = price.Quantize(pair, minimum)
+	}
+
+	// Decimal quantize can leave a hair over budget after fees; shrink until
+	// Taker fits or the instrument minimum cannot.
+	for range 4 {
+		cost, costErr := price.Taker(pair, quantity)
+
+		if costErr != nil || cost == nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Internal,
+				"quantity: taker cost unavailable for "+pair.Symbol,
+				costErr,
+			))
+		}
+
+		if cost.Cmp(budget) <= 0 {
+			return quantity, nil
+		}
+
+		quantity = price.Quantize(pair, price.Mul(quantity, price.Div(budget, cost)))
+
+		if quantity == nil || quantity.Cmp(minimum) < 0 {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"quantity: budget below instrument minimum for "+pair.Symbol,
+				nil,
+			))
+		}
+	}
+
+	return nil, errnie.Error(errnie.Err(
+		errnie.Validation,
+		"quantity: could not fit budget for "+pair.Symbol,
+		nil,
+	))
+}
+
+/*
+Quantize floors quantity to the instrument qty_increment and qty_precision so
+exchange lots never round up past the funded budget.
+*/
+func (price *Price) Quantize(
+	pair *kraken.InstrumentPair,
+	quantity *decimal.Decimal,
+) *decimal.Decimal {
+	if quantity == nil || quantity.Sign() <= 0 {
+		return quantity
+	}
+
+	result := quantity.Copy()
+
+	if pair.QtyIncrement > 0 {
+		increment := decimal.NewFromFloat64(pair.QtyIncrement)
+
+		if increment.Sign() > 0 {
+			steps := price.floorScale(price.Div(result, increment), 0)
+			result = price.Mul(steps, increment)
+		}
+	}
+
+	if pair.QtyPrecision >= 0 {
+		result = price.floorScale(result, int64(pair.QtyPrecision))
+	}
+
+	return result
+}
+
+/*
+Mul multiplies after lifting both factors to a shared scale so a fractional
+right-hand value is not truncated to zero against an integer left.
+*/
+func (price *Price) Mul(left, right *decimal.Decimal) *decimal.Decimal {
+	scale := price.alignScale(left, right)
+
+	return left.SetScale(scale).Mul(right.SetScale(scale))
+}
+
+/*
+Div divides after the same scale lift so a sub-unit divisor cannot collapse
+to zero when the dividend carries a coarser scale.
+*/
+func (price *Price) Div(left, right *decimal.Decimal) *decimal.Decimal {
+	scale := price.alignScale(left, right)
+
+	return left.SetScale(scale).Div(right.SetScale(scale))
+}
+
+/*
+floorScale truncates toward zero rather than banker's rounding so a buy cannot
+inflate past the funded budget.
+*/
+func (price *Price) floorScale(value *decimal.Decimal, scale int64) *decimal.Decimal {
+	return value.Copy().SetRounding(func(integer *big.Int, factor *big.Int) *big.Int {
+		return new(big.Int).Quo(integer, factor)
+	}).SetScale(scale)
+}
+
+func (price *Price) alignScale(left, right *decimal.Decimal) int64 {
+	scale := left.GetScale()
+
+	if right.GetScale() > scale {
+		scale = right.GetScale()
+	}
+
+	return scale + 8
 }

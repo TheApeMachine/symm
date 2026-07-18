@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
@@ -17,8 +20,8 @@ import (
 
 /*
 Hub owns the dashboard websocket and forwards typed backend frames to clients.
-ready gates upgrades until Warmup (or later) so the browser cannot attach
-during preflight and inherit allocator/ticker gaps as BACKEND ERROR overlays.
+A coalescer always drains Messages (even with no browser) and flushes
+latest-by-key snapshots on a fixed cadence so reconnects never replay a backlog.
 */
 type Hub struct {
 	status     types.Status
@@ -29,6 +32,8 @@ type Hub struct {
 	Messages   chan []byte
 	balance    *broker.Balance
 	ready      func() bool
+	live       atomic.Pointer[websocket.Conn]
+	latest     sync.Map
 }
 
 func NewHub(
@@ -69,48 +74,47 @@ func NewHub(
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
-		defer conn.Close()
+		defer func() {
+			hub.live.CompareAndSwap(conn, nil)
+			conn.Close()
+		}()
 
-		// Write the desk snapshot on the socket itself. Publish() is
-		// non-blocking into Messages and is dropped when the tick stream has
-		// saturated the buffer — exactly the refresh path that left cash and
-		// open holdings blank while engine.open still counted desk slots.
-		if hub.balance != nil && conn.Conn != nil {
-			if frame := hub.balance.Frame(); len(frame) > 0 {
+		if conn.Conn != nil {
+			if hub.balance != nil {
+				if frame := hub.balance.Frame(); len(frame) > 0 {
+					if err := conn.Conn.WriteMessage(websocket.TextMessage, frame); err != nil {
+						if hub.clientGone(err) {
+							return
+						}
+
+						errnie.Error(err)
+						return
+					}
+				}
+			}
+
+			hub.latest.Range(func(_, value any) bool {
+				frame, ok := value.([]byte)
+
+				if !ok || len(frame) == 0 {
+					return true
+				}
+
 				if err := conn.Conn.WriteMessage(websocket.TextMessage, frame); err != nil {
 					if hub.clientGone(err) {
-						return
+						return false
 					}
 
 					errnie.Error(err)
-					return
+					return false
 				}
-			}
+
+				return true
+			})
 		}
 
-		for {
-			select {
-			case <-hub.ctx.Done():
-				return
-			case msg := <-hub.Messages:
-				// FOR THE FINAL TIME: THERE IS ONLY 1 CLIENT, THE FRONTEND,
-				// SO: NO, THERE IS NO SITUATION OF MULTIPLE CLIENTS COMPETING
-				// FOR THE SAME MESSAGE CHANNEL!
-
-				if conn.Conn == nil {
-					return
-				}
-
-				if err := conn.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-					if hub.clientGone(err) {
-						return
-					}
-
-					errnie.Error(err)
-					return
-				}
-			}
-		}
+		hub.live.Store(conn)
+		<-hub.ctx.Done()
 	}, websocket.Config{
 		EnableCompression: true,
 	}))
@@ -118,10 +122,6 @@ func NewHub(
 	return hub, nil
 }
 
-/*
-open reports whether the dashboard socket may accept clients. A nil ready
-callback stays open (tests); production passes Booter.Ready(Warmup).
-*/
 func (hub *Hub) open() bool {
 	if hub == nil || hub.ready == nil {
 		return true
@@ -133,6 +133,7 @@ func (hub *Hub) open() bool {
 func (hub *Hub) Initialize() error {
 	errnie.Info("initializing UI hub")
 	hub.status = types.READY
+	go hub.coalesce()
 	return nil
 }
 
@@ -150,9 +151,75 @@ func (hub *Hub) Close() error {
 }
 
 /*
-clientGone reports write failures that mean the browser dropped or desynced the
-socket rather than a hub-side publish bug.
+coalesce drains producer frames continuously and flushes latest-by-key to the
+connected client every 16ms.
 */
+func (hub *Hub) coalesce() {
+	ticker := time.NewTicker(16 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-hub.ctx.Done():
+			return
+		case msg := <-hub.Messages:
+			hub.latest.Store(frameKey(msg), msg)
+		case <-ticker.C:
+			conn := hub.live.Load()
+
+			if conn == nil || conn.Conn == nil {
+				continue
+			}
+
+			hub.latest.Range(func(key, value any) bool {
+				frame, ok := value.([]byte)
+
+				if !ok {
+					return true
+				}
+
+				if err := conn.Conn.WriteMessage(websocket.TextMessage, frame); err != nil {
+					if hub.clientGone(err) {
+						hub.live.CompareAndSwap(conn, nil)
+						return false
+					}
+
+					errnie.Error(err)
+					return false
+				}
+
+				hub.latest.Delete(key)
+
+				return true
+			})
+		}
+	}
+}
+
+func frameKey(msg []byte) string {
+	var frame map[string]any
+
+	if err := sonic.Unmarshal(msg, &frame); err != nil || len(frame) == 0 {
+		return "raw"
+	}
+
+	for _, key := range []string{
+		"measurements", "manifold", "cognition", "forecasts",
+		"decisions", "positions", "balances", "tick", "resonance",
+		"causal", "hypotheses",
+	} {
+		if _, ok := frame[key]; ok {
+			return key
+		}
+	}
+
+	for key := range frame {
+		return key
+	}
+
+	return "raw"
+}
+
 func (hub *Hub) clientGone(err error) bool {
 	if err == nil {
 		return false

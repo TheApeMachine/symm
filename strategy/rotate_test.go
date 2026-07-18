@@ -13,7 +13,7 @@ capacity is free — not forecast order.
 func TestAdmitRanksByUtilityWithFreeSlots(t *testing.T) {
 	t.Parallel()
 
-	planner := testPlanner()
+	planner := testPlannerSlots(1, 0, 1000)
 	thesis := types.NewThesis(nil, nil)
 	low := decideForecast("LOW/USD", 0.04, 0.01)
 	high := decideForecast("HIGH/USD", 0.10, 0.01)
@@ -21,8 +21,7 @@ func TestAdmitRanksByUtilityWithFreeSlots(t *testing.T) {
 	thesis.Cognition.Store("LOW/USD", buyCognition("LOW/USD"))
 	thesis.Cognition.Store("HIGH/USD", buyCognition("HIGH/USD"))
 
-	fees := map[string]float64{"LOW/USD": 0.001, "HIGH/USD": 0.001}
-	planner.Decide(thesis, fees, 1000, 1, 0)
+	planner.Decide(thesis)
 
 	entered := map[string]bool{}
 
@@ -50,8 +49,10 @@ func TestDecideRotatesWhenChallengerClearsWeakest(t *testing.T) {
 
 	planner := testPlanner()
 	thesis := types.NewThesis(nil, nil)
-	thesis.Holdings.Store("WEAK/USD", testHolding("WEAK/USD", 100, 1))
-	thesis.Holdings.Store("KEEP/USD", testHolding("KEEP/USD", 100, 1))
+	weakLot := testHolding("WEAK/USD", 100, 1)
+	keepLot := testHolding("KEEP/USD", 100, 1)
+	thesis.Holdings.Store("WEAK/USD", weakLot)
+	thesis.Holdings.Store("KEEP/USD", keepLot)
 
 	weak := decideForecast("WEAK/USD", 0.02, 0.01) // hold margin 0.01
 	keep := decideForecast("KEEP/USD", 0.08, 0.01) // hold margin 0.07
@@ -60,12 +61,10 @@ func TestDecideRotatesWhenChallengerClearsWeakest(t *testing.T) {
 	thesis.Cognition.Store("NEXT/USD", buyCognition("NEXT/USD"))
 	thesis.Manifold.Store("NEXT/USD", readyBasin("NEXT/USD", 0.2))
 
-	fees := map[string]float64{
-		"WEAK/USD": 0.001,
-		"KEEP/USD": 0.001,
-		"NEXT/USD": 0.001,
-	}
-	planner.Decide(thesis, fees, 0, 2, 0)
+	planner = testPlannerSlots(2, 0, 1000)
+	seedOpenLot(planner, weakLot)
+	seedOpenLot(planner, keepLot)
+	planner.Decide(thesis)
 
 	exited := false
 	entered := false
@@ -104,7 +103,8 @@ func TestDecideWaitsWhenRotateSurplusNonPositive(t *testing.T) {
 
 	planner := testPlanner()
 	thesis := types.NewThesis(nil, nil)
-	thesis.Holdings.Store("HOLD/USD", testHolding("HOLD/USD", 100, 1))
+	holdLot := testHolding("HOLD/USD", 100, 1)
+	thesis.Holdings.Store("HOLD/USD", holdLot)
 
 	// hold margin 0.09; challenger utility after friction ~0.04 - costs < hold+exit
 	hold := decideForecast("HOLD/USD", 0.10, 0.01)
@@ -112,8 +112,9 @@ func TestDecideWaitsWhenRotateSurplusNonPositive(t *testing.T) {
 	thesis.Forecasts = append(thesis.Forecasts, hold, challenger)
 	thesis.Cognition.Store("MEH/USD", buyCognition("MEH/USD"))
 
-	fees := map[string]float64{"HOLD/USD": 0.001, "MEH/USD": 0.001}
-	planner.Decide(thesis, fees, 0, 1, 0)
+	planner = testPlannerSlots(1, 0, 1000)
+	seedOpenLot(planner, holdLot)
+	planner.Decide(thesis)
 
 	sawWait := false
 
@@ -156,11 +157,6 @@ BenchmarkDecideRotate measures a full-book rotate evaluation path.
 */
 func BenchmarkDecideRotate(b *testing.B) {
 	planner := testPlanner()
-	fees := map[string]float64{
-		"WEAK/USD": 0.001,
-		"KEEP/USD": 0.001,
-		"NEXT/USD": 0.001,
-	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -178,6 +174,6 @@ func BenchmarkDecideRotate(b *testing.B) {
 		thesis.Manifold.Store(
 			"NEXT/USD", readyBasin("NEXT/USD", 0.2),
 		)
-		_ = planner.Decide(thesis, fees, 0, 2, 0)
+		_ = planner.Decide(thesis)
 	}
 }

@@ -3,9 +3,12 @@ package strategy
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
@@ -19,18 +22,37 @@ Planner records the feasible action alternatives for each calibrated forecast
 and emits orders only for actions that cross the broker boundary.
 */
 type Planner struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	status     types.Status
-	api        *websocket.API
-	instrument *broker.Instrument
-	price      *broker.Price
-	balance    *broker.Balance
-	uiHub      chan<- []byte
-	signals    []types.Signal
-	analyzer   *logic.Analyzer
-	recorder   *audit.Recorder
-	allocator  *Allocator
+	ctx         context.Context
+	cancel      context.CancelFunc
+	status      types.Status
+	api         *websocket.API
+	desk        *broker.Desk
+	instrument  *broker.Instrument
+	price       *broker.Price
+	balance     *broker.Balance
+	uiHub       chan<- []byte
+	signals     []types.Signal
+	workers     []signalWorker
+	analyzer    *logic.Analyzer
+	recorder    *audit.Recorder
+	allocator   *Allocator
+	opportunity *Opportunity
+	arbiter     *Arbiter
+}
+
+/*
+signalWorker is one persistent Measure goroutine with a depth-one job slot so
+a slow signal never stacks duplicate cuts.
+*/
+type signalWorker struct {
+	signal types.Signal
+	jobs   chan *types.Thesis
+	out    chan measured
+}
+
+type measured struct {
+	name string
+	rows []*types.Measurement
 }
 
 /*
@@ -41,6 +63,7 @@ func NewPlanner(
 	ctx context.Context,
 	uiHub chan<- []byte,
 	api *websocket.API,
+	desk *broker.Desk,
 	instrument *broker.Instrument,
 	price *broker.Price,
 	balance *broker.Balance,
@@ -56,6 +79,7 @@ func NewPlanner(
 		cancel:     cancel,
 		status:     types.READY,
 		api:        api,
+		desk:       desk,
 		instrument: instrument,
 		price:      price,
 		balance:    balance,
@@ -64,34 +88,42 @@ func NewPlanner(
 		signals:    signals,
 		analyzer:   analyzer,
 		recorder:   recorder,
+		opportunity: NewOpportunity(
+			ctx, cancel, price, recorder, uiHub,
+		),
+		arbiter: NewArbiter(desk, price),
+	}
+	planner.arbiter.planner = planner
+	planner.workers = make([]signalWorker, 0, len(signals))
+
+	for _, signal := range signals {
+		worker := signalWorker{
+			signal: signal,
+			jobs:   make(chan *types.Thesis, 1),
+			out:    make(chan measured, 1),
+		}
+		planner.workers = append(planner.workers, worker)
+		go planner.runWorker(worker)
 	}
 
 	return planner
 }
 
 /*
-Run applies Allocator friction, Decide, then Allocate so Tick stays orchestration
-only — fee provenance and lot sizing never live on Crypto.
+runWorker measures one job at a time until Planner.Close cancels the context.
 */
-func (planner *Planner) Run(
-	thesis *types.Thesis,
-	available float64,
-	normalSlots int,
-	reservedSlots int,
-) *types.Thesis {
-	fees := map[string]float64{}
-
-	if planner.allocator != nil {
-		fees = planner.allocator.Friction(thesis)
+func (planner *Planner) runWorker(worker signalWorker) {
+	for {
+		select {
+		case <-planner.ctx.Done():
+			return
+		case thesis := <-worker.jobs:
+			worker.out <- measured{
+				name: signalName(worker.signal),
+				rows: worker.signal.Measure(thesis),
+			}
+		}
 	}
-
-	planner.Decide(thesis, fees, available, normalSlots, reservedSlots)
-
-	if planner.allocator != nil {
-		planner.allocator.Allocate(thesis)
-	}
-
-	return thesis
 }
 
 func (planner *Planner) Initialize() error {
@@ -132,32 +164,35 @@ func (planner *Planner) Update(frame *types.MarketFrame, tick int64) *types.Thes
 		"books":   len(frame.Books),
 	}))
 
-	// Fan out first so every signal starts before we block on any result, then
-	// drain exactly once per signal. Ranging until close deadlocks here because
-	// the closer would only run after Update returns.
-	type measured struct {
-		name string
-		rows []*types.Measurement
+	interest := types.FrameInterest(frame)
+
+	if interest == 0 {
+		interest = types.StreamAll
 	}
 
-	fanIn := make(chan measured, len(planner.signals))
+	counts := make(map[string]int, len(planner.workers))
+	active := make([]signalWorker, 0, len(planner.workers))
 
-	for _, signal := range planner.signals {
-		go func() {
-			fanIn <- measured{
-				name: signalName(signal),
-				rows: signal.Measure(thesis),
-			}
-		}()
+	for _, worker := range planner.workers {
+		if types.SignalInterest(worker.signal)&interest == 0 {
+			continue
+		}
+
+		select {
+		case worker.jobs <- thesis:
+			active = append(active, worker)
+		default:
+			// Depth-one: still measuring prior cut; skip this tick.
+		}
 	}
 
-	counts := make(map[string]int, len(planner.signals))
-
-	for range planner.signals {
-		batch := <-fanIn
+	for _, worker := range active {
+		batch := <-worker.out
 		counts[batch.name] += len(batch.rows)
 		thesis.Measurements = append(thesis.Measurements, batch.rows...)
 	}
+
+	planner.publishMeasurements(thesis)
 
 	errnie.Error(audit.Record(planner.recorder, "signal_counts", map[string]any{
 		"tick":   thesis.Tick,
@@ -175,6 +210,115 @@ func (planner *Planner) Update(frame *types.MarketFrame, tick int64) *types.Thes
 	}
 
 	return thesis
+}
+
+/*
+Decide manages open inventory, scores flat-symbol entries, arbitrates slots,
+then sizes admitted enters.
+*/
+func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
+	if err := errnie.Error(errnie.Require(map[string]any{
+		"thesis":      thesis,
+		"opportunity": planner.opportunity,
+		"arbiter":     planner.arbiter,
+		"price":       planner.price,
+		"allocator":   planner.allocator,
+	})); err != nil {
+		return thesis
+	}
+
+	planner.manage(thesis)
+	planner.opportunity.Measure(thesis)
+	planner.arbiter.Select(thesis)
+
+	if err := planner.allocator.Allocate(thesis); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to allocate",
+			err,
+		))
+	}
+
+	planner.commitRotations(thesis)
+
+	return thesis
+}
+
+/*
+commitRotations appends rotation exits only after the challenger Books a
+Reservation, and demotes unsized enters so Trade never submits naked sells.
+*/
+func (planner *Planner) commitRotations(thesis *types.Thesis) {
+	if thesis == nil {
+		return
+	}
+
+	exits := make([]types.Decision, 0)
+
+	for index := range thesis.Decisions {
+		decision := &thesis.Decisions[index]
+
+		if decision.Action == types.ActionEnter && decision.ReservationID == "" {
+			decision.Action = types.ActionNothing
+			decision.Displaces = ""
+			decision.ProposedQuantity = nil
+			decision.ProposedNotional = nil
+			thesis.Holdings.Delete(decision.Symbol)
+
+			if decision.Reason == "" {
+				decision.Reason = "unsized"
+			}
+
+			continue
+		}
+
+		if decision.Action != types.ActionEnter ||
+			decision.Cause != "rotation" ||
+			decision.Displaces == "" ||
+			decision.ReservationID == "" {
+			continue
+		}
+
+		qty := decision.Alternatives["incumbent_qty"]
+		mark := decision.Alternatives["incumbent_mark"]
+
+		exits = append(exits, types.Decision{
+			Action:  types.ActionExit,
+			Symbol:  decision.Displaces,
+			At:      decision.At,
+			Utility: -decision.Alternatives["exit_cost"],
+			Alternatives: map[string]float64{
+				"exit": -decision.Alternatives["exit_cost"],
+				"hold": decision.Alternatives["hold_incumbent"],
+			},
+			ProposedQuantity:  decimal.NewFromFloat64(qty),
+			ReferencePrice:    decimal.NewFromFloat64(mark),
+			ValidThroughEpoch: decision.ValidThroughEpoch,
+			Cause:             "rotation",
+			Reason:            "displaced by higher-utility challenger " + decision.Symbol,
+		})
+
+		thesis.Lifecycle.Store(decision.Displaces, types.LifecycleExitSelected)
+	}
+
+	thesis.Decisions = append(thesis.Decisions, exits...)
+}
+
+/*
+publishMeasurements emits one combined measurement frame after fan-in so the
+terminal never replaces a partial signal snapshot with another in the same cut.
+*/
+func (planner *Planner) publishMeasurements(thesis *types.Thesis) {
+	if planner.uiHub == nil || thesis == nil || len(thesis.Measurements) == 0 {
+		return
+	}
+
+	select {
+	case planner.uiHub <- datura.Map[any]{
+		"measurements": types.WireMeasurements(thesis.Measurements),
+	}.Marshal():
+	default:
+	}
 }
 
 /*
@@ -198,200 +342,19 @@ func signalName(signal types.Signal) string {
 	return name
 }
 
-/*
-Decide compares current executable utility for exposed and unexposed symbols.
-Free slots admit by utility rank; reserved overflow stays opportunity-only.
-When capacity is full, a challenger may displace the weakest incumbent only if
-rotate surplus is positive — otherwise the open thesis is left to mature.
-*/
-func (planner *Planner) Decide(
-	thesis *types.Thesis,
-	fees map[string]float64,
-	available float64,
-	normalSlots int,
-	reservedSlots int,
-) *types.Thesis {
-	entries := make([]types.Decision, 0)
-	incumbents := make([]Incumbent, 0)
-	openBySymbol := make(map[string]*types.Holding, 0)
-
-	thesis.Holdings.Range(func(key, value any) bool {
-		holding, ok := value.(*types.Holding)
-
-		if !ok || holding == nil {
-			return true
-		}
-
-		if holding.Status == types.CLOSED {
-			thesis.Holdings.Delete(key)
-			return true
-		}
-
-		openBySymbol[holding.Symbol] = holding
-		return true
-	})
-
-	open := len(openBySymbol)
-	ceiling := normalSlots + reservedSlots
-	freeNormal := max(0, normalSlots-open)
-	freeReserved := max(0, ceiling-open-freeNormal)
-	freeTotal := freeNormal + freeReserved
-	slotCapacity := ceiling
-	rotateCapital := available
-
-	for _, holding := range openBySymbol {
-		if holding.Mark == nil || holding.Qty == nil {
-			continue
-		}
-
-		notional := holding.Mark.Float64() * holding.Qty.Float64()
-
-		if notional > rotateCapital {
-			rotateCapital = notional
-		}
+func (planner *Planner) validate(mandatory map[string]any) error {
+	check := map[string]any{
+		"desk":       planner.desk,
+		"instrument": planner.instrument,
+		"price":      planner.price,
+		"balance":    planner.balance,
+		"allocator":  planner.allocator,
+		"uiHub":      planner.uiHub,
+		"signals":    planner.signals,
+		"analyzer":   planner.analyzer,
 	}
 
-	for _, forecast := range thesis.Forecasts {
-		fee, feeReady := fees[forecast.Symbol]
+	maps.Copy(check, mandatory)
 
-		if !forecast.Eligible() || !feeReady || fee < 0 {
-			continue
-		}
-
-		if _, ok := thesis.Lifecycle.Load(forecast.Symbol); !ok {
-			thesis.Lifecycle.Store(forecast.Symbol, types.LifecycleShaped)
-		}
-
-		if holding, exists := openBySymbol[forecast.Symbol]; exists {
-			notional := 0.0
-			qty := 0.0
-			mark := 0.0
-
-			if holding.Mark != nil && holding.Qty != nil {
-				notional = holding.Mark.Float64() * holding.Qty.Float64()
-				qty = holding.Qty.Float64()
-				mark = holding.Mark.Float64()
-			}
-
-			incumbents = append(incumbents, Incumbent{
-				Symbol:      forecast.Symbol,
-				HoldUtility: planner.holdUtility(forecast),
-				ExitCost:    planner.exitCost(forecast, fee),
-				Notional:    notional,
-				Qty:         qty,
-				Mark:        mark,
-			})
-
-			priorDecisions := len(thesis.Decisions)
-
-			if len(thesis.Decisions) > priorDecisions {
-				continue
-			}
-
-			decision := planner.continuation(forecast, fee, holding)
-			decision.Cause = planner.cause(thesis, forecast, decision.Action)
-			planner.context(&decision, forecast, available, open, slotCapacity)
-			thesis.Decisions = append(thesis.Decisions, decision)
-
-			if decision.Action == "exit" {
-				thesis.Lifecycle.Store(forecast.Symbol, types.LifecycleExitSelected)
-			}
-
-			continue
-		}
-
-		cognitionValue, cognitionFound := thesis.Cognition.Load(forecast.Symbol)
-		cognition, cognitionValid := cognitionValue.(types.Cognition)
-
-		if !cognitionFound || !cognitionValid || !cognition.Ready ||
-			cognition.Ambiguous || cognition.Winner != "buy" ||
-			cognition.Confidence <= 0 {
-			reason := "cognitive memory is not ready for this evidence sequence"
-			cause := "cognitive_not_ready"
-
-			if cognitionValid && cognition.Ambiguous {
-				reason = "cognitive memory is ambiguous for this evidence sequence"
-				cause = "cognitive_ambiguity"
-			}
-
-			if cognitionValid && cognition.Ready && !cognition.Ambiguous &&
-				cognition.Winner != "buy" {
-				reason = "cognitive memory does not support a buy entry"
-				cause = "cognitive_opposition"
-			}
-
-			if cognitionValid && cognition.Ready && !cognition.Ambiguous &&
-				cognition.Winner == "buy" && cognition.Confidence <= 0 {
-				reason = "cognitive buy support has no confidence"
-				cause = "cognitive_no_confidence"
-			}
-
-			decision := planner.nothing(forecast, reason)
-			decision.Cause = cause
-			planner.context(&decision, forecast, available, open, slotCapacity)
-			thesis.Decisions = append(thesis.Decisions, decision)
-
-			continue
-		}
-
-		if forecast.Confidence <= 0 {
-			decision := planner.nothing(
-				forecast, "forecast confidence is not positive",
-			)
-			decision.Cause = "forecast_no_confidence"
-			planner.context(&decision, forecast, available, open, slotCapacity)
-			thesis.Decisions = append(thesis.Decisions, decision)
-
-			continue
-		}
-
-		// Deployable budget is always wallet cash (split across free slots).
-		// Rotate uses incumbent notional only inside displace/scaleTo — never as
-		// the ProposedNotional published against AvailableCapital on the wire.
-		capital := 0.0
-
-		if freeTotal > 0 {
-			capital = available / float64(freeTotal)
-		}
-
-		if freeTotal <= 0 && available > 0 {
-			capital = available
-		}
-
-		if freeTotal <= 0 && available <= 0 {
-			capital = rotateCapital
-		}
-
-		if capital <= 0 {
-			decision := planner.nothing(
-				forecast, "portfolio capacity makes entry infeasible",
-			)
-			planner.context(&decision, forecast, available, open, slotCapacity)
-			thesis.Decisions = append(thesis.Decisions, decision)
-
-			continue
-		}
-
-		decision := planner.entry(
-			thesis,
-			forecast,
-			cognition,
-			fee,
-			capital,
-			available,
-		)
-		planner.context(&decision, forecast, available, open, slotCapacity)
-
-		if decision.Action == "nothing" {
-			thesis.Decisions = append(thesis.Decisions, decision)
-
-			continue
-		}
-
-		entries = append(entries, decision)
-	}
-
-	planner.admit(thesis, entries, freeNormal, freeReserved, incumbents)
-
-	return thesis
+	return errnie.Error(errnie.Require(check))
 }

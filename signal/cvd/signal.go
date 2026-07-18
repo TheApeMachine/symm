@@ -54,6 +54,13 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 Measure supports direct replay against the legacy signal-local journal. The
 live runtime uses Calculate with the central immutable market cut.
 */
+/*
+Interest requires aggressor trade flow.
+*/
+func (signal *Signal) Interest() types.StreamInterest {
+	return types.StreamTrade
+}
+
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	measurements, err := signal.Calculate(thesis.Market())
 
@@ -113,7 +120,6 @@ func (signal *Signal) Calculate(
 		out = append(out, measurements...)
 	}
 
-	signal.Publish(out)
 	return out, nil
 }
 

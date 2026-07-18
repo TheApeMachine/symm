@@ -134,7 +134,6 @@ func (signal *Signal) Calculate(
 	}
 
 	signal.mu.Unlock()
-	signal.Publish(out)
 	return out, nil
 }
 

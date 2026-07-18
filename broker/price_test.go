@@ -178,7 +178,7 @@ func TestPriceGetFees(t *testing.T) {
 }
 
 func TestPriceWithFriction(t *testing.T) {
-	Convey("Given a price stream with a known taker fee", t, func() {
+	Convey("Given a live bid and paid entry friction", t, func() {
 		price := broker.NewPrice(nil)
 		So(price.RememberFee("BTC/USD", kraken.TradeVolumeFee{
 			Fee: decimal.NewFromFloat64(0.26),
@@ -188,22 +188,52 @@ func TestPriceWithFriction(t *testing.T) {
 			"type":"update",
 			"data":[{"symbol":"BTC/USD","last":"50000.5","bid":"50000.0","ask":"50000.5"}]
 		}`))
+		pair := &kraken.InstrumentPair{
+			Symbol:         "BTC/USD",
+			PricePrecision: 1,
+			CostPrecision:  2,
+		}
+		qty := decimal.NewFromInt64(1)
+		entry := decimal.NewFromFloat64(50000.0)
+		entryFee := price.Fee(pair, price.Notional(pair, entry, qty))
 
-		Convey("When WithFriction is requested for unit quantity", func() {
-			net, err := price.WithFriction(
-				&kraken.InstrumentPair{
-					Symbol:         "BTC/USD",
-					PricePrecision: 1,
-					CostPrecision:  2,
-				},
+		Convey("When WithFriction scores flatten-now PnL", func() {
+			pnl, err := price.WithFriction(pair, qty, entry, entryFee)
+
+			Convey("Then PnL is (bid − exit fee) − (entry + entry fee)", func() {
+				// bid 50000 − exit 130 − entry 50000 − entryFee 130 = −260
+				So(err, ShouldBeNil)
+				So(pnl.Float64(), ShouldAlmostEqual, -260.0, 1e-8)
+			})
+		})
+
+		Convey("When Mark stamps a holding", func() {
+			holding := &types.Holding{
+				Symbol:     "BTC/USD",
+				Qty:        qty,
+				EntryPrice: entry,
+				EntryFee:   entryFee,
+			}
+			err := price.Mark(pair, holding)
+
+			Convey("Then bid, PnL, and return land without caller money math", func() {
+				So(err, ShouldBeNil)
+				So(holding.Mark.Float64(), ShouldAlmostEqual, 50000.0, 1e-8)
+				So(holding.PnL.Float64(), ShouldAlmostEqual, -260.0, 1e-8)
+				So(holding.ReturnPct, ShouldNotBeNil)
+				So(*holding.ReturnPct, ShouldAlmostEqual, -260.0/50130.0, 1e-8)
+			})
+		})
+
+		Convey("When Prorate scales remaining entry fee", func() {
+			scaled := price.Prorate(
+				entryFee,
+				decimal.NewFromFloat64(0.5),
 				decimal.NewFromInt64(1),
 			)
 
-			Convey("Then it returns the all-in round-trip taker quote", func() {
-				// 50000.5 notional + two 0.26% taker fees:
-				// fee = 50000.5 * 0.0026 = 130.0013, total = 260.0026.
-				So(err, ShouldBeNil)
-				So(net.Float64(), ShouldAlmostEqual, 50260.50, 1e-8)
+			Convey("Then half the fee remains on the lot", func() {
+				So(scaled.Float64(), ShouldAlmostEqual, entryFee.Float64()/2, 1e-8)
 			})
 		})
 	})
@@ -219,18 +249,19 @@ func BenchmarkPriceWithFriction(b *testing.B) {
 		"type":"update",
 		"data":[{"symbol":"BTC/USD","last":"50000.5","bid":"50000.0","ask":"50000.5"}]
 	}`))
+	pair := &kraken.InstrumentPair{
+		Symbol:         "BTC/USD",
+		PricePrecision: 1,
+		CostPrecision:  4,
+	}
+	qty := decimal.NewFromInt64(1)
+	entry := decimal.NewFromFloat64(50000.0)
+	entryFee := price.Fee(pair, price.Notional(pair, entry, qty))
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = price.WithFriction(
-			&kraken.InstrumentPair{
-				Symbol:         "BTC/USD",
-				PricePrecision: 1,
-				CostPrecision:  4,
-			},
-			decimal.NewFromInt64(1),
-		)
+		_, _ = price.WithFriction(pair, qty, entry, entryFee)
 	}
 }
 
@@ -240,7 +271,7 @@ func BenchmarkPriceSnapshot(b *testing.B) {
 
 	for index := range symbols {
 		symbols[index] = fmt.Sprintf("ASSET-%03d/USD", index)
-		price.TickerAck(fmt.Appendf(nil, 
+		price.TickerAck(fmt.Appendf(nil,
 			`{"channel":"ticker","type":"update","data":[{"symbol":"%s","last":"1","bid":"1","ask":"1"}]}`,
 			symbols[index],
 		))

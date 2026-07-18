@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { CausalFrame } from "#/collections/causal";
+import type { ManifoldFrame } from "#/collections/manifold";
+import type { ResonanceFrame } from "#/collections/resonance";
 import type { StrategyDecision } from "#/types/thesis";
-import { causalCleared, judgeCandidate } from "./decision-candidate";
+import {
+	causalCleared,
+	judgeCandidate,
+	manifoldField,
+	resonanceEdge,
+	resonancePredict,
+} from "./decision-candidate";
 
 const causalFrame = (
 	strength: number | undefined,
@@ -72,5 +80,73 @@ describe("judgeCandidate", () => {
 			verdict: "hold",
 			why: "expected executable return does not exceed doing nothing",
 		});
+	});
+});
+
+describe("resonancePredict", () => {
+	it("maps surprise to analyzer forecast confidence contribution", () => {
+		expect(resonancePredict(undefined)).toBeNull();
+		expect(
+			resonancePredict({
+				source: "resonance",
+				symbol: "BTC/USD",
+				at: "2026-07-18T00:00:00Z",
+				surprise: 0,
+			} as ResonanceFrame),
+		).toBe(1);
+		expect(
+			resonancePredict({
+				source: "resonance",
+				symbol: "BTC/USD",
+				at: "2026-07-18T00:00:00Z",
+				surprise: Math.LN2,
+			} as ResonanceFrame),
+		).toBeCloseTo(0.5, 10);
+	});
+
+	it("reads expectedReturn as the predict attribution edge", () => {
+		expect(
+			resonanceEdge({
+				source: "resonance",
+				symbol: "BTC/USD",
+				at: "2026-07-18T00:00:00Z",
+				expectedReturn: 0.012,
+			} as ResonanceFrame),
+		).toBe(0.012);
+	});
+});
+
+describe("manifoldField", () => {
+	it("reads coherenceMag2 from the nested reading", () => {
+		expect(
+			manifoldField({
+				source: "manifold",
+				symbol: "BTC/USD",
+				at: "2026-07-18T00:00:00Z",
+				reading: { coherenceMag2: 0.37 },
+			} as ManifoldFrame),
+		).toBe(0.37);
+	});
+
+	it("accepts legacy PascalCase reading keys", () => {
+		expect(
+			manifoldField({
+				source: "manifold",
+				symbol: "BTC/USD",
+				at: "2026-07-18T00:00:00Z",
+				reading: { CoherenceMag2: 0.41 },
+			} as ManifoldFrame),
+		).toBe(0.41);
+	});
+
+	it("does not invent a field from a missing reading", () => {
+		expect(
+			manifoldField({
+				source: "manifold",
+				symbol: "BTC/USD",
+				at: "2026-07-18T00:00:00Z",
+				momentum: 0.9,
+			} as ManifoldFrame),
+		).toBeNull();
 	});
 });

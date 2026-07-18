@@ -1,6 +1,8 @@
 package strategy
 
 import (
+	"math"
+
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
@@ -107,18 +109,15 @@ func Project(thesis *types.Thesis, holding types.Holding) types.StopEvidence {
 }
 
 /*
-normalizedResidual scales incremental forecast error by uncertainty so
-Stoploss can derive skill and blowout from one comparable statistic.
-
-ponytail: MSE-over-uncertainty is an interim σ-normalized residual; upgrade
-path is calibrated posterior σ from the resonance return head.
+normalizedResidual is sqrt(MSE) / σ so Stoploss sees a dimensionless residual
+in return space rather than return-squared over return.
 */
 func normalizedResidual(incrementalMSE, uncertainty float64) float64 {
 	if uncertainty <= 0 || incrementalMSE <= 0 {
 		return 0
 	}
 
-	return incrementalMSE / uncertainty
+	return math.Sqrt(incrementalMSE) / uncertainty
 }
 
 /*

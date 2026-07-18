@@ -128,7 +128,7 @@ SeedMatureHolding places an open thesis holding used as an incumbent for
 rotate-versus-wait assertions.
 */
 func SeedMatureHolding(thesis *types.Thesis, symbol string, notional float64) {
-	thesis.Holdings.Store(symbol, types.Holding{
+	thesis.Holdings.Store(symbol, &types.Holding{
 		Symbol: symbol,
 		Qty:    decimal.NewFromFloat64(notional),
 		Mark:   decimal.NewFromFloat64(1),

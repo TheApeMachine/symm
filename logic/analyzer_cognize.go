@@ -27,6 +27,10 @@ func (analyzer *Analyzer) cognizeStates(
 	cognizeStarted := time.Now()
 
 	for _, state := range states {
+		if state.Replay {
+			continue
+		}
+
 		if !analyzer.cognize(thesis, state) {
 			continue
 		}
@@ -190,7 +194,8 @@ func signedToken(value float64) string {
 }
 
 /*
-readCognition classifies the sensory sequence and attaches visualization fields.
+readCognition classifies the sensory sequence for strategy. Tree visualization
+is intentionally omitted from this hot path.
 */
 func (analyzer *Analyzer) readCognition(
 	state manifold.State,
@@ -231,20 +236,9 @@ func (analyzer *Analyzer) readCognition(
 		reading.Predictions[string(prediction.Token)] = prediction.Probability
 	}
 
-	branches, beams, classes, beamWidth, maxHops, nodeCount, lookaheadScore, lookaheadPaths :=
-		analyzer.cognitionVisualization(
-			sequence, parent, parts, classification, predictions,
-		)
-
+	// Tree visualization stays off the classify hot path; Cortex can request
+	// branch expansion separately without blocking strategy.
 	reading.RegimePrefix = string(parent)
-	reading.LookaheadScore = lookaheadScore
-	reading.LookaheadPaths = lookaheadPaths
-	reading.BeamWidth = beamWidth
-	reading.MaxHops = maxHops
-	reading.NodeCount = nodeCount
-	reading.Branches = branches
-	reading.Beams = beams
-	reading.Classes = classes
 
 	return reading
 }

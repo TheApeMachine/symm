@@ -14,7 +14,6 @@ import { ColumnHeader } from "#/components/dashboard/header";
 import { fixed } from "#/components/terminal/decision-format";
 import { PositionGauge } from "#/components/terminal/position-gauge";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
-import { requirePositive } from "#/lib/domain";
 import { cn } from "#/lib/utils";
 import type { StrategyDecision, TradeObservation } from "#/types/thesis";
 
@@ -23,16 +22,20 @@ const sameSymbols = (left: string[], right: string[]): boolean =>
 	left.every((symbol, index) => symbol === right[index]);
 
 /*
-decisionFraction is the deployable notional share of available capital.
-Undefined when capital is not strictly positive.
+decisionFraction is the Allocator-sized notional share of available capital.
+Unset when the decision has no sized lot yet. Wire decimals may still arrive as
+strings before ingest normalization, so both sides are coerced before the
+finite-positive gate — paint returns null instead of throwing DomainError.
 */
-const decisionFraction = (decision: StrategyDecision): number => {
-	const capital = requirePositive(
-		decision.availableCapital,
-		"decision.availableCapital",
-	);
+export const decisionFraction = (decision: StrategyDecision): number | null => {
+	const notional = Number(decision.proposedNotional);
+	const capital = Number(decision.availableCapital);
 
-	return decision.proposedNotional / capital;
+	if (!(notional > 0) || !(capital > 0) || !Number.isFinite(capital)) {
+		return null;
+	}
+
+	return notional / capital;
 };
 
 const actionBadgeClass = (action: string): string => {
@@ -75,11 +78,9 @@ const paintDecisionRow = (refs: DecisionRowRefs, symbol: string): void => {
 	}
 
 	if (refs.fraction !== null) {
-		try {
-			refs.fraction.textContent = `${(decisionFraction(decision) * 100).toFixed(2)}%`;
-		} catch {
-			refs.fraction.textContent = "—";
-		}
+		const fraction = decisionFraction(decision);
+		refs.fraction.textContent =
+			fraction === null ? "—" : `${(fraction * 100).toFixed(2)}%`;
 	}
 
 	if (refs.action !== null) {
