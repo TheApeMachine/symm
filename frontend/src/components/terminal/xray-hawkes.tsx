@@ -7,10 +7,7 @@ import {
 	resizeCanvas,
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
-import {
-	hawkesCurveFromBuffer,
-	hawkesIntensityAt,
-} from "#/components/terminal/hawkes-curve";
+import { hawkesSeriesFromBuffer } from "#/components/terminal/hawkes-curve";
 import { drawXrayWaiting } from "#/components/terminal/xray-draw";
 import {
 	cascadeLabel,
@@ -20,7 +17,8 @@ import {
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 
 /*
-XrayHawkesPanel paints fitted Hawkes intensity from measurement epochs.
+XrayHawkesPanel paints a dense Hawkes intensity path: arrival impulses and the
+exponential decay between them, matching the terminal mockup sampler.
 */
 export const XrayHawkesPanel = () => {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -45,7 +43,7 @@ export const XrayHawkesPanel = () => {
 		const buffer = measurementsStore.state.measurements[symbol]?.hawkes;
 		const metrics = hawkesMetricsFromBuffer(buffer);
 		const cascade = cascadeLabel(metrics.branching);
-		const segments = hawkesCurveFromBuffer(buffer);
+		const series = hawkesSeriesFromBuffer(buffer);
 		const width = canvas.clientWidth;
 		const height = canvas.clientHeight;
 
@@ -63,7 +61,7 @@ export const XrayHawkesPanel = () => {
 			cascadeRef.current.style.color = cascade.color;
 		}
 
-		if (segments.length === 0) {
+		if (series === null || series.samples.length < 2) {
 			drawXrayWaiting(
 				context,
 				width,
@@ -76,92 +74,97 @@ export const XrayHawkesPanel = () => {
 		clearCanvas(context, width, height);
 		drawGrid(context, width, height, 18);
 
-		const padX = 18;
-		const padTop = 18;
-		const padBottom = 28;
+		const padX = 14;
+		const padTop = 30;
+		const padBottom = 26;
 		const innerWidth = Math.max(1, width - padX * 2);
-		const innerHeight = Math.max(1, height - padTop - padBottom);
-		const first = segments[0];
-		const latest = segments.at(-1);
-
-		if (first === undefined || latest === undefined) {
-			return;
-		}
-
-		const fromAt = first.fromAt;
-		const throughAt = latest.throughAt;
-		const duration = Math.max(1, throughAt - fromAt);
-		const maxIntensity = Math.max(
-			...segments.flatMap((segment) => [
-				segment.beforeArrival,
-				segment.afterArrival,
-				segment.throughIntensity,
-			]),
-			latest.baseline,
-			1e-9,
-		);
-		const xFor = (at: number): number =>
-			padX + ((at - fromAt) / duration) * innerWidth;
+		const base = height - padBottom;
+		const maxIntensity =
+			Math.max(series.baseline * 1.2, ...series.samples) * 1.1;
+		const xFor = (index: number): number =>
+			padX + (index / (series.samples.length - 1)) * innerWidth;
 		const yFor = (intensity: number): number =>
-			padTop + (1 - intensity / maxIntensity) * innerHeight;
-		const trace = (): void => {
-			for (const segment of segments) {
-				const fromX = xFor(segment.fromAt);
-				const throughX = xFor(segment.throughAt);
-				context.lineTo(fromX, yFor(segment.beforeArrival));
-				context.lineTo(fromX, yFor(segment.afterArrival));
-
-				for (let pixel = Math.floor(fromX) + 1; pixel < throughX; pixel += 1) {
-					const at =
-						segment.fromAt +
-						((pixel - fromX) / Math.max(throughX - fromX, 1)) *
-							(segment.throughAt - segment.fromAt);
-					context.lineTo(pixel, yFor(hawkesIntensityAt(segment, at)));
-				}
-
-				context.lineTo(throughX, yFor(segment.throughIntensity));
-			}
-		};
-
-		context.fillStyle = "rgba(232, 163, 61, 0.18)";
-		context.beginPath();
-		context.moveTo(padX, height - padBottom);
-		context.lineTo(xFor(first.fromAt), yFor(first.beforeArrival));
-		trace();
-		context.lineTo(width - padX, height - padBottom);
-		context.closePath();
-		context.fill();
+			base - (intensity / maxIntensity) * (base - padTop);
+		const latest = series.samples[series.samples.length - 1] ?? series.baseline;
 
 		context.strokeStyle = "rgba(232, 163, 61, 0.28)";
-		context.setLineDash([4, 5]);
+		context.setLineDash([3, 3]);
+		context.lineWidth = 1;
 		context.beginPath();
-		context.moveTo(padX, yFor(latest.baseline));
-		context.lineTo(width - padX, yFor(latest.baseline));
+		context.moveTo(padX, yFor(series.baseline));
+		context.lineTo(width - padX, yFor(series.baseline));
 		context.stroke();
 		context.setLineDash([]);
 
-		context.strokeStyle = TERMINAL_COLORS.amber;
-		context.lineWidth = 1.8;
 		context.beginPath();
-		context.moveTo(xFor(first.fromAt), yFor(first.beforeArrival));
-		trace();
+		context.moveTo(xFor(0), base);
+
+		for (let index = 0; index < series.samples.length; index += 1) {
+			context.lineTo(xFor(index), yFor(series.samples[index] ?? 0));
+		}
+
+		context.lineTo(xFor(series.samples.length - 1), base);
+		context.closePath();
+		context.fillStyle = "rgba(232, 163, 61, 0.14)";
+		context.fill();
+
+		context.strokeStyle = TERMINAL_COLORS.amber;
+		context.lineWidth = 1.6;
+		context.beginPath();
+
+		for (let index = 0; index < series.samples.length; index += 1) {
+			const x = xFor(index);
+			const y = yFor(series.samples[index] ?? 0);
+
+			if (index === 0) {
+				context.moveTo(x, y);
+				continue;
+			}
+
+			context.lineTo(x, y);
+		}
+
 		context.stroke();
 
-		const x = xFor(latest.throughAt);
-		const y = yFor(latest.throughIntensity);
+		const duration = Math.max(1, series.throughAt - series.fromAt);
+		context.strokeStyle = "#7FBACB";
+		context.lineWidth = 1;
 
+		for (const eventAt of series.events) {
+			const age = series.throughAt - eventAt;
+
+			if (age < 0 || age > duration) {
+				continue;
+			}
+
+			const x = padX + ((eventAt - series.fromAt) / duration) * innerWidth;
+			context.globalAlpha = Math.max(0.2, 1 - age / duration);
+			context.beginPath();
+			context.moveTo(x, base);
+			context.lineTo(x, base + 8);
+			context.stroke();
+		}
+
+		context.globalAlpha = 1;
 		context.fillStyle = TERMINAL_COLORS.amber;
 		context.shadowBlur = 10;
 		context.shadowColor = TERMINAL_COLORS.amber;
 		context.beginPath();
-		context.arc(x, y, 3.5, 0, Math.PI * 2);
+		context.arc(
+			xFor(series.samples.length - 1),
+			yFor(latest),
+			3.5,
+			0,
+			Math.PI * 2,
+		);
 		context.fill();
 		context.shadowBlur = 0;
 		context.fillStyle = TERMINAL_COLORS.muted;
 		context.font = "10px JetBrains Mono, monospace";
-		context.fillText(`λ ${latest.throughIntensity.toFixed(2)}`, 18, height - 9);
+		context.fillText(`λ ${latest.toFixed(2)}`, 18, height - 9);
 	};
 
+	const paintRef = useRef(paint);
 	useDirectStorePaint(paint, [measurementsStore, appStore], []);
 
 	useEffect(() => {
@@ -171,7 +174,9 @@ export const XrayHawkesPanel = () => {
 			return;
 		}
 
-		const observer = new ResizeObserver(paint);
+		const observer = new ResizeObserver(() => {
+			paintRef.current();
+		});
 		observer.observe(canvas);
 
 		return () => observer.disconnect();
@@ -201,10 +206,7 @@ export const XrayHawkesPanel = () => {
 				</div>
 			</div>
 			<div className="relative min-h-0 flex-1">
-				<canvas
-					ref={canvasRef}
-					className="absolute inset-0 block size-full"
-				/>
+				<canvas ref={canvasRef} className="absolute inset-0 block size-full" />
 			</div>
 		</div>
 	);

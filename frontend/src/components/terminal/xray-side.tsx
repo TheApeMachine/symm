@@ -24,14 +24,26 @@ import {
 } from "#/components/terminal/xray-view";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 
+const numberMatrix = (value: unknown): number[][] =>
+	Array.isArray(value)
+		? value
+				.map((row) =>
+					Array.isArray(row)
+						? row.filter((cell): cell is number => Number.isFinite(cell))
+						: [],
+				)
+				.filter((row) => row.length > 0)
+		: [];
+
 const frameMatrix = (frame: unknown, key: string): number[][] | undefined => {
 	if (frame === null || frame === undefined || typeof frame !== "object") {
 		return undefined;
 	}
 
 	const value = (frame as Record<string, unknown>)[key];
+	const matrix = numberMatrix(value);
 
-	return isFluidFieldMatrix(value) ? value : undefined;
+	return isFluidFieldMatrix(matrix) ? matrix : undefined;
 };
 
 const isConcreteSymbol = (symbol: string): boolean => symbol !== "";

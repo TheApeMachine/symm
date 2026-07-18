@@ -2,12 +2,12 @@ package types
 
 import (
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 )
 
@@ -39,7 +39,6 @@ entire lifecycle of a tick, picking up all data along the way.
 */
 type Thesis struct {
 	checkpoint   atomic.Int64
-	uiProjection atomic.Value
 	uiHub        chan<- []byte
 	marketFrame  *MarketFrame
 	Tick         int64          `json:"tick"`
@@ -51,7 +50,6 @@ type Thesis struct {
 	Graphs       *sync.Map      `json:"graphs"`
 	Forecasts    []Forecasts    `json:"forecasts"`
 	Decisions    []Decision     `json:"decisions"`
-	Orders       []spot.Order   `json:"orders"`
 	Lifecycle    *sync.Map      `json:"lifecycle"`
 	Findings     []Finding      `json:"findings"`
 	Hypotheses   []Hypothesis   `json:"hypotheses"`
@@ -62,56 +60,77 @@ type Thesis struct {
 	Causal       []any          `json:"causal"`
 }
 
-func (thesis *Thesis) Save(path string) error {
-	file, err := os.Create(path)
-
-	if err != nil {
-		return err
-	}
-
-	defer file.Close()
-
+func (thesis *Thesis) Save(dir string) error {
+	target := filepath.Join(dir, ThesisKey+".json")
 	json, err := thesis.MarshalJSON()
 
 	if err != nil {
 		return err
 	}
 
-	_, err = file.Write(json)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"failed to create thesis directory",
+			err,
+		))
+	}
+
+	temporary, err := os.CreateTemp(dir, ThesisKey+"-*.tmp")
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
-			"failed to write thesis to file",
+			"failed to create thesis temp file",
+			err,
+		))
+	}
+
+	temporaryPath := temporary.Name()
+
+	if _, err := temporary.Write(json); err != nil {
+		temporary.Close()
+		os.Remove(temporaryPath)
+
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"failed to write thesis checkpoint",
+			err,
+		))
+	}
+
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		os.Remove(temporaryPath)
+
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"failed to sync thesis checkpoint",
+			err,
+		))
+	}
+
+	if err := temporary.Close(); err != nil {
+		os.Remove(temporaryPath)
+
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"failed to close thesis temp file",
+			err,
+		))
+	}
+
+	if err := os.Rename(temporaryPath, target); err != nil {
+		os.Remove(temporaryPath)
+
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"failed to persist thesis checkpoint",
 			err,
 		))
 	}
 
 	return nil
-}
-
-/*
-SetUIProjection records the symbol and signal source the operator is currently
-inspecting so bounded analysis and websocket publication retain that view.
-*/
-func (thesis *Thesis) SetUIProjection(symbol string, source SourceType) {
-	thesis.uiProjection.Store([2]string{symbol, string(source)})
-}
-
-/*
-UIProjection returns one consistent dashboard scope while a thesis is being
-published concurrently with frontend focus changes.
-*/
-func (thesis *Thesis) UIProjection() (string, SourceType) {
-	projection := thesis.uiProjection.Load()
-
-	if projection == nil {
-		return "", ""
-	}
-
-	view := projection.([2]string)
-
-	return view[0], SourceType(view[1])
 }
 
 /*
@@ -125,6 +144,24 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 	lifecycle := make(map[string]string)
 	manifold := make(map[string]any)
 	cognition := make(map[string]Cognition)
+	positions := make(map[string]bool)
+	holdings := make(map[string]Holding)
+
+	thesis.Positions.Range(func(key, value any) bool {
+		positions[key.(string)] = true
+		return true
+	})
+
+	thesis.Holdings.Range(func(key, value any) bool {
+		switch holding := value.(type) {
+		case Holding:
+			holdings[key.(string)] = holding
+		case *Holding:
+			holdings[key.(string)] = *holding
+		}
+
+		return true
+	})
 
 	thesis.Graphs.Range(func(key, value any) bool {
 		graphs[key.(string)] = value.(*Graph).Frame()
@@ -153,9 +190,12 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 		Lifecycle map[string]string     `json:"lifecycle"`
 		Manifold  map[string]any        `json:"manifold"`
 		Cognition map[string]Cognition  `json:"cognition"`
+		Positions map[string]bool       `json:"positions"`
+		Holdings  map[string]Holding    `json:"holdings"`
 	}{
 		alias: (*alias)(thesis), Signals: signals, Graphs: graphs,
 		Lifecycle: lifecycle, Manifold: manifold, Cognition: cognition,
+		Positions: positions, Holdings: holdings,
 	})
 }
 
@@ -172,6 +212,8 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 		Lifecycle map[string]string     `json:"lifecycle"`
 		Manifold  map[string]any        `json:"manifold"`
 		Cognition map[string]Cognition  `json:"cognition"`
+		Positions map[string]bool       `json:"positions"`
+		Holdings  map[string]Holding    `json:"holdings"`
 	}{alias: (*alias)(thesis)}
 
 	if err := sonic.Unmarshal(data, &decoded); err != nil {
@@ -182,6 +224,16 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 	thesis.Lifecycle = &sync.Map{}
 	thesis.Manifold = &sync.Map{}
 	thesis.Cognition = &sync.Map{}
+	thesis.Positions = &sync.Map{}
+	thesis.Holdings = &sync.Map{}
+
+	for key, holding := range decoded.Holdings {
+		thesis.Holdings.Store(key, holding)
+	}
+
+	for key := range decoded.Positions {
+		thesis.Positions.Store(key, nil)
+	}
 
 	for key, frame := range decoded.Graphs {
 		graph := NewGraph(frame.Symbol)
@@ -241,7 +293,6 @@ func NewThesis(uiHub chan<- []byte, marketFrame *MarketFrame) *Thesis {
 		Measurements: make([]*Measurement, 0),
 		Graphs:       &sync.Map{},
 		Forecasts:    make([]Forecasts, 0),
-		Orders:       make([]spot.Order, 0),
 		Lifecycle:    &sync.Map{},
 		Findings:     make([]Finding, 0),
 		Hypotheses:   make([]Hypothesis, 0),

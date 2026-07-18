@@ -61,6 +61,7 @@ func (desk *Desk) Initialize() error {
 		))
 	}
 
+	desk.adoptOpen()
 	desk.status = types.READY
 
 	if desk.balance != nil {
@@ -68,6 +69,40 @@ func (desk *Desk) Initialize() error {
 	}
 
 	return nil
+}
+
+/*
+adoptOpen wraps Balance-seeded restart inventory in Position shells so ticker
+marks and exits can reach recovered lots. Safe to call again after instrument
+metadata arrives — early Initialize often runs before Pair lookups succeed.
+*/
+func (desk *Desk) adoptOpen() {
+	if desk == nil || desk.balance == nil || desk.instrument == nil {
+		return
+	}
+
+	for holding := range desk.balance.Holdings() {
+		if _, exists := desk.positions.Load(holding.Symbol); exists {
+			continue
+		}
+
+		pair, err := desk.instrument.Pair(holding.Symbol)
+
+		if err != nil {
+			continue
+		}
+
+		position := NewPosition(
+			desk.api,
+			desk.instrument,
+			desk.price,
+			desk.balance,
+			pair,
+		)
+		position.status = types.OPEN
+		position.onTerminal = desk.evict
+		desk.positions.Store(holding.Symbol, position)
+	}
 }
 
 func (desk *Desk) Status() types.Status {
@@ -85,8 +120,7 @@ func (desk *Desk) Update() {
 		if slices.Contains([]types.Status{
 			types.CLOSED, types.ERROR,
 		}, position.Status()) {
-			desk.balance.holdings.Delete(position.pair.Symbol)
-			desk.positions.Delete(position.pair.Symbol)
+			desk.evict(position.pair.Symbol)
 		}
 
 		return true
@@ -94,18 +128,46 @@ func (desk *Desk) Update() {
 }
 
 /*
-OpenPositions counts live (non-terminal) positions that still occupy a slot.
+OpenPositions counts open inventory that occupies a slot. Wallet holdings are
+the source of truth — position shells can lag adoptOpen or disappear on ERROR
+while paper balances remain.
 */
 func (desk *Desk) OpenPositions() int {
 	desk.Update()
+	desk.adoptOpen()
+
+	if desk.balance == nil {
+		return 0
+	}
+
 	count := 0
 
-	desk.positions.Range(func(_, value any) bool {
+	for range desk.balance.Holdings() {
 		count++
-		return true
-	})
+	}
 
 	return count
+}
+
+/*
+Position returns the live position shell for symbol, adopting restart inventory
+when the instrument registry can resolve the pair.
+*/
+func (desk *Desk) Position(symbol string) (*Position, bool) {
+	if desk == nil || symbol == "" {
+		return nil, false
+	}
+
+	desk.adoptOpen()
+	value, ok := desk.positions.Load(symbol)
+
+	if !ok {
+		return nil, false
+	}
+
+	position, ok := value.(*Position)
+
+	return position, ok && position != nil
 }
 
 func (desk *Desk) Buy(
@@ -174,8 +236,7 @@ func (desk *Desk) BuyAfter(
 	desk.positions.Store(holding.Symbol, position)
 
 	if err := position.Enter(); err != nil {
-		desk.balance.holdings.Delete(holding.Symbol)
-		desk.positions.Delete(holding.Symbol)
+		desk.evict(holding.Symbol)
 
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,

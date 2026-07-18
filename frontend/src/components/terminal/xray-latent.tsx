@@ -53,8 +53,16 @@ export const XrayLatentPanel = () => {
 		clearCanvas(context, width, height);
 
 		const pad = 28;
-		const xRange = latentRange(points, "x");
-		const yRange = latentRange(points, "y");
+		let xRange: ReturnType<typeof latentRange>;
+		let yRange: ReturnType<typeof latentRange>;
+
+		try {
+			xRange = latentRange(points, "x");
+			yRange = latentRange(points, "y");
+		} catch {
+			drawXrayWaiting(context, width, height, "waiting for latent span");
+			return;
+		}
 
 		context.strokeStyle = TERMINAL_COLORS.line;
 		context.lineWidth = 1;

@@ -92,6 +92,87 @@ func TestWireMeasurements(t *testing.T) {
 			So(metrics["strength"], ShouldEqual, 0.9)
 		})
 	})
+
+	Convey("Given a Hawkes fit epoch older than the live intensity", t, func() {
+		fitFrom := time.Unix(80, 0).UTC()
+		fitAt := time.Unix(100, 0).UTC()
+		evalAt := time.Unix(140, 0).UTC()
+		rows := []*Measurement{
+			{
+				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
+				Metric: MetricBaselineIntensity, Side: SideBuy, At: fitAt, Raw: 0.6,
+				Scale: ScaleReference{
+					Kind: ScaleObservationWindow, From: fitFrom, Through: fitAt,
+				},
+			},
+			{
+				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
+				Metric: MetricBaselineIntensity, Side: SideSell, At: fitAt, Raw: 0.4,
+				Scale: ScaleReference{
+					Kind: ScaleObservationWindow, From: fitFrom, Through: fitAt,
+				},
+			},
+			{
+				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
+				Metric: MetricDecayRate, At: fitAt, Raw: 1.5,
+				Scale: ScaleReference{
+					Kind: ScaleObservationWindow, From: fitFrom, Through: fitAt,
+				},
+			},
+			{
+				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
+				Metric: MetricSpectralRadius, At: fitAt, Raw: 0.72,
+				Scale: ScaleReference{
+					Kind: ScaleObservationWindow, From: fitFrom, Through: fitAt,
+				},
+			},
+			{
+				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
+				Metric: MetricConditionalIntensity, Side: SideBuy, At: evalAt, Raw: 0.9,
+				Scale: ScaleReference{
+					Kind: ScaleObservationWindow, From: fitFrom, Through: evalAt,
+				},
+			},
+			{
+				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
+				Metric: MetricConditionalIntensity, Side: SideSell, At: evalAt, Raw: 0.6,
+				Scale: ScaleReference{
+					Kind: ScaleObservationWindow, From: fitFrom, Through: evalAt,
+				},
+			},
+		}
+
+		wired := WireMeasurements(rows)
+
+		Convey("It publishes the fit parameters beside the live intensity", func() {
+			So(wired, ShouldHaveLength, 2)
+
+			var model, intensity datura.Map[any]
+
+			for _, frame := range wired {
+				metrics := frame["metrics"].(datura.Map[any])
+
+				if _, ok := metrics["decay_rate"]; ok {
+					model = frame
+					continue
+				}
+
+				intensity = frame
+			}
+
+			So(model, ShouldNotBeNil)
+			So(intensity, ShouldNotBeNil)
+			So(model["metrics"].(datura.Map[any])["spectral_radius"], ShouldEqual, 0.72)
+			So(intensity["metrics"].(datura.Map[any])["conditional_intensity:buy"], ShouldEqual, 0.9)
+
+			modelScale := model["scale"].(ScaleReference)
+			intensityScale := intensity["scale"].(ScaleReference)
+			So(modelScale.From, ShouldEqual, fitFrom)
+			So(modelScale.Through, ShouldEqual, fitAt)
+			So(intensityScale.From, ShouldEqual, fitFrom)
+			So(intensityScale.Through, ShouldEqual, evalAt)
+		})
+	})
 }
 
 func BenchmarkWireMeasurements(b *testing.B) {

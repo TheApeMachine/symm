@@ -4,6 +4,7 @@ import {
 	measurementsStore,
 } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
+import { requireSampleSize } from "#/lib/domain";
 
 export const KernelRow = ({ source }: { source: string }) => {
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
@@ -13,16 +14,23 @@ export const KernelRow = ({ source }: { source: string }) => {
 	const measurement = history.at(-1);
 	const confidence = measurement?.categories?.at(0)?.confidence ?? 0;
 	const points =
-		history.length === 1
-			? `0,${(1 - confidence).toFixed(3)} 1,${(1 - confidence).toFixed(3)}`
-			: history
-					.map(
-						(item, index) =>
-							`${(index / (history.length - 1)).toFixed(3)},${(
-								1 - (item.categories?.at(0)?.confidence ?? 0)
-							).toFixed(3)}`,
-					)
-					.join(" ");
+		history.length === 0
+			? ""
+			: history.length === 1
+				? `0,${(1 - confidence).toFixed(3)} 1,${(1 - confidence).toFixed(3)}`
+				: (() => {
+						requireSampleSize(history.length, 2, "kernel row sparkline");
+						const span = history.length - 1;
+
+						return history
+							.map(
+								(item, index) =>
+									`${(index / span).toFixed(3)},${(
+										1 - (item.categories?.at(0)?.confidence ?? 0)
+									).toFixed(3)}`,
+							)
+							.join(" ");
+					})();
 
 	return (
 		<button

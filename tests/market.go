@@ -20,19 +20,19 @@ func NewMarket() *Market {
 }
 
 /*
-Prefix appends a stream that fully emits before round-robin begins.
+Prefix appends Generate payloads as typed frames before round-robin begins.
 */
-func (market *Market) Prefix(fixture Fixture) *Market {
-	market.prefix = append(market.prefix, fixture.Frames())
+func (market *Market) Prefix(fixture PayloadFixture) *Market {
+	market.prefix = append(market.prefix, FrameSequence(fixture.Generate()))
 
 	return market
 }
 
 /*
-Feed joins a fixture stream to the round-robin rotation.
+Feed joins Generate payloads into the round-robin rotation as typed frames.
 */
-func (market *Market) Feed(fixture Fixture) *Market {
-	market.streams = append(market.streams, fixture.Frames())
+func (market *Market) Feed(fixture PayloadFixture) *Market {
+	market.streams = append(market.streams, FrameSequence(fixture.Generate()))
 
 	return market
 }

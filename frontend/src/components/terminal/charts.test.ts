@@ -57,21 +57,25 @@ describe("terminalFluidParticlesFromFrame", () => {
 });
 
 describe("terminalFluidDisplayLatticeFromFrame", () => {
-	it("prefers psiMag2 for the painted cloud", () => {
+	it("returns the gas-blended pilot lattice when both fields exist", () => {
 		const psiMag2 = [
 			[0.5, 0.1],
 			[0, 0.4],
 		];
+		const rho = [
+			[0, 0.2],
+			[0.1, 0.3],
+		];
 
 		expect(
 			terminalFluidDisplayLatticeFromFrame({
-				rho: [
-					[0, 0.2],
-					[0.1, 0.3],
-				],
+				rho,
 				psiMag2,
 			}),
-		).toEqual(psiMag2);
+		).toEqual([
+			[0.5, 0.1],
+			[0.045000000000000005, 0.4],
+		]);
 	});
 });
 

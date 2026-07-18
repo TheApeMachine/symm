@@ -151,7 +151,14 @@ func (signal *Signal) observeBook(data []byte) {
 	frame := kraken.NewBook(data)
 
 	for _, row := range frame.Data {
-		row.PriceIncrement = signal.increment(row.Symbol)
+		increment, err := signal.increment(row.Symbol)
+
+		if err != nil {
+			errnie.Error(err)
+			return
+		}
+
+		row.PriceIncrement = increment
 
 		if err := signal.bookCache.Observe(row.Symbol, row.Timestamp, row); err != nil {
 			errnie.Error(err)
@@ -164,18 +171,18 @@ func (signal *Signal) observeBook(data []byte) {
 increment resolves exchange tick size for direct replay. Central live book
 ingestion performs this enrichment before producing the shared market cut.
 */
-func (signal *Signal) increment(symbol string) *decimal.Decimal {
+func (signal *Signal) increment(symbol string) (*decimal.Decimal, error) {
 	if signal.instrument == nil {
-		return decimal.NewFromInt64(0)
+		return decimal.NewFromInt64(0), nil
 	}
 
 	pair, err := signal.instrument.Pair(symbol)
 
 	if err != nil {
-		return decimal.NewFromInt64(0)
+		return nil, err
 	}
 
-	return decimal.NewFromFloat64(pair.QtyIncrement)
+	return pair.PriceIncrement.Copy(), nil
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {

@@ -54,6 +54,17 @@ func TestNewFixture(t *testing.T) {
 	})
 }
 
+func BenchmarkFixtureFrames(benchmark *testing.B) {
+	fixture := NewFixture(UPDATE, 32)
+
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		for range fixture.Frames() {
+		}
+	}
+}
+
 func TestFixtureFrames(t *testing.T) {
 	Convey("Given a ticker update fixture", t, func() {
 		fixture := NewFixture(UPDATE, 2)
@@ -68,6 +79,18 @@ func TestFixtureFrames(t *testing.T) {
 			}
 
 			Convey("Then every generated frame should be typed", func() {
+				So(count, ShouldEqual, 2)
+			})
+		})
+
+		Convey("When frames are requested again", func() {
+			count := 0
+
+			for range fixture.Frames() {
+				count++
+			}
+
+			Convey("Then the materialized sequence should replay", func() {
 				So(count, ShouldEqual, 2)
 			})
 		})

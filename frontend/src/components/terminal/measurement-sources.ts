@@ -40,33 +40,11 @@ export const sourceHasUniverseFrames = (
 	);
 
 /*
-liveFocusSymbol keeps an explicit preferred focus once that symbol has appeared
-in the store. When the preferred symbol has never been observed, it returns the
-first live symbol so a silent default focus cannot paint STANDBY forever.
+liveFocusSymbol keeps the explicit preferred focus. Auto-picking the first live
+symbol made the terminal jump to a lexical random pair at startup; STANDBY on
+the preferred major until its frames arrive is the correct cold-start state.
 */
 export const liveFocusSymbol = (
-	state: typeof measurementsStore.state,
+	_state: typeof measurementsStore.state,
 	preferred: string,
-): string => {
-	if (state.measurements[preferred] !== undefined) {
-		return preferred;
-	}
-
-	// ponytail: sorted-symbol fallback uses lexical order as a temporary heuristic until live-focus ranking exists.
-	const symbols = Object.keys(state.measurements).sort();
-
-	for (const symbol of symbols) {
-		const sourceMap = state.measurements[symbol];
-
-		if (
-			sourceMap !== undefined &&
-			Object.values(sourceMap).some(
-				(buffer) => measurementTickCount(buffer) > 0,
-			)
-		) {
-			return symbol;
-		}
-	}
-
-	return preferred;
-};
+): string => preferred;

@@ -4,10 +4,10 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/tests"
 	executionfixture "github.com/theapemachine/symm/tests/fixtures/execution"
 	orderackfixture "github.com/theapemachine/symm/tests/fixtures/orderack"
 	tickerfixture "github.com/theapemachine/symm/tests/fixtures/ticker"
-	"github.com/theapemachine/symm/tests"
 )
 
 func TestTradesHistoryScenarios(t *testing.T) {
@@ -45,10 +45,10 @@ func TestTradesHistoryScenarios(t *testing.T) {
 func TestMarketPrefixPayload(t *testing.T) {
 	Convey("Given channel and RPC prefix fixtures", t, func() {
 		market := tests.NewMarket().
+			Prefix(tickerfixture.NewFixture(tickerfixture.SNAPSHOT, 1)).
 			PrefixPayload(orderackfixture.NewFixture(
 				orderackfixture.Options{ReqID: 7, OrderID: "right", Success: true},
 			)).
-			Prefix(tickerfixture.NewFixture(tickerfixture.SNAPSHOT, 1)).
 			Feed(executionfixture.NewFixture(executionfixture.BuyFill()))
 
 		order := make([]string, 0)

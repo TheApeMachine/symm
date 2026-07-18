@@ -151,6 +151,8 @@ specificEnergyFloorFraction keeps a strictly positive thermal baseline so the
 gas kernel's primitive recovery (pressure = (γ−1)·ρ·e) never divides through a
 zero internal energy. It is a small fraction of CV: enough to stay finite, far
 below the old Heat=Amplitude·CV that pinned sound speed at the √15 Courant wall.
+The 1/32 ratio is a fixed heuristic today; a cohort-dispersion-derived floor
+would replace it once the manifold exposes a stable per-cell energy scale.
 */
 const specificEnergyFloorFraction = 1.0 / 32.0
 

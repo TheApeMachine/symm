@@ -21,6 +21,7 @@ const (
 /*
 touchToleranceTicks returns the maximum tick distance that still counts as a
 touch fill. One live price increment maps to one tick on Kraken's lattice.
+The tolerance stays at one tick until per-symbol touch statistics exist.
 */
 func touchToleranceTicks(increment *decimal.Decimal) int64 {
 	if increment == nil || increment.Sign() <= 0 {
@@ -111,7 +112,8 @@ func withinTouchTolerance(
 /*
 attributeTouchSide assigns a trade to bid or ask when it lies within one tick
 of a touch. Equal distances prefer ask so a trade at the exact mid of a
-one-tick spread credits the offer side once.
+one-tick spread credits the offer side once. That tie-break is intentional:
+without it, symmetric one-tick books would double-count ambiguous prints.
 */
 func attributeTouchSide(
 	tradePrice decimal.Decimal,
@@ -190,12 +192,12 @@ func attributeTouchFill(
 	volume := decimal.NewFromFloat64(tradeQty)
 
 	if side == touchSideBid {
-		row.fillBid = zeroed(row.fillBid).Add(bid.Price.Mul(volume))
+		row.fillBid = zeroed(row.fillBid).Add(tradePrice.Mul(volume))
 		row.bidExecuted += tradeQty
 	}
 
 	if side == touchSideAsk {
-		row.fillAsk = zeroed(row.fillAsk).Add(ask.Price.Mul(volume))
+		row.fillAsk = zeroed(row.fillAsk).Add(tradePrice.Mul(volume))
 		row.askExecuted += tradeQty
 	}
 }

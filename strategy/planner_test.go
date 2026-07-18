@@ -1,7 +1,6 @@
 package strategy
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -32,15 +31,10 @@ here once all sends complete.
 func TestPlannerUpdateCollectsEverySignal(t *testing.T) {
 	t.Parallel()
 
-	planner := NewPlanner(
-		context.Background(),
-		nil,
-		[]types.Signal{
-			stubSignal{measurements: []*types.Measurement{{Symbol: "AAA/USD"}}},
-			stubSignal{measurements: []*types.Measurement{{Symbol: "BBB/USD"}}},
-			stubSignal{measurements: []*types.Measurement{{Symbol: "CCC/USD"}}},
-		},
-		nil,
+	planner := testPlanner(
+		stubSignal{measurements: []*types.Measurement{{Symbol: "AAA/USD"}}},
+		stubSignal{measurements: []*types.Measurement{{Symbol: "BBB/USD"}}},
+		stubSignal{measurements: []*types.Measurement{{Symbol: "CCC/USD"}}},
 	)
 
 	done := make(chan *types.Thesis, 1)
@@ -71,15 +65,10 @@ BenchmarkPlannerUpdate measures concurrent signal collection cost for one
 immutable market cut so fan-in regressions show up in allocation pressure.
 */
 func BenchmarkPlannerUpdate(b *testing.B) {
-	planner := NewPlanner(
-		context.Background(),
-		nil,
-		[]types.Signal{
-			stubSignal{measurements: []*types.Measurement{{Symbol: "AAA/USD"}}},
-			stubSignal{measurements: []*types.Measurement{{Symbol: "BBB/USD"}}},
-			stubSignal{measurements: []*types.Measurement{{Symbol: "CCC/USD"}}},
-		},
-		nil,
+	planner := testPlanner(
+		stubSignal{measurements: []*types.Measurement{{Symbol: "AAA/USD"}}},
+		stubSignal{measurements: []*types.Measurement{{Symbol: "BBB/USD"}}},
+		stubSignal{measurements: []*types.Measurement{{Symbol: "CCC/USD"}}},
 	)
 	frame := &types.MarketFrame{}
 

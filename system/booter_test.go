@@ -11,6 +11,16 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+func TestBooterReadyBeforeStages(t *testing.T) {
+	Convey("Given a booter with no stages registered yet", t, func() {
+		booter := system.NewBooter(context.Background(), nil)
+
+		Convey("Then Ready is false instead of panicking", func() {
+			So(booter.Ready(system.StageWarmup), ShouldBeFalse)
+		})
+	})
+}
+
 func TestBooterReady(t *testing.T) {
 	Convey("Given a booter with a preflight stage and a warmup stage", t, func() {
 		api := tests.NewMockReporter(types.READY)

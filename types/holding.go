@@ -1,12 +1,10 @@
 package types
 
 import (
-	"math"
+	"context"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/theapemachine/symm/kraken"
 )
 
 /*
@@ -15,223 +13,38 @@ Position orchestrates live holdings; a candidate remains on its originating
 Thesis even when strategy declines to submit its proposed order.
 */
 type Holding struct {
-	Status        Status              `json:"status,omitempty"`
-	Request       *spot.OrderRequest  `json:"request,omitempty"`
-	Order         *spot.Order         `json:"order,omitempty"`
-	Executions    []*kraken.Execution `json:"executions,omitempty"`
-	Symbol        string              `json:"symbol"`
-	Asset         string              `json:"asset,omitempty"`
-	Qty           *decimal.Decimal    `json:"qty" validate:"required,min=1"`
-	EntryAt       *time.Time          `json:"entry_at,omitempty"`
-	ExitAt        *time.Time          `json:"exit_at,omitempty"`
-	EntryPrice    *decimal.Decimal    `json:"entry_price"`
-	EntryFee      *decimal.Decimal    `json:"entry_fee"`
-	ExitPrice     *decimal.Decimal    `json:"exit_price"`
-	ExitFee       *decimal.Decimal    `json:"exit_fee"`
-	PnL           *decimal.Decimal    `json:"pnl"`
-	ReturnPct     *float64            `json:"return_pct"`
-	Mark          *decimal.Decimal    `json:"mark"`
-	IsOpportunity bool                `json:"is_opportunity"`
+	ctx           context.Context
+	cancel        context.CancelFunc
+	Status        Status           `json:"status,omitempty"`
+	Symbol        string           `json:"symbol"`
+	Asset         string           `json:"asset,omitempty"`
+	Qty           *decimal.Decimal `json:"qty" validate:"required"`
+	EntryAt       *time.Time       `json:"entry_at,omitempty"`
+	ExitAt        *time.Time       `json:"exit_at,omitempty"`
+	EntryPrice    *decimal.Decimal `json:"entry_price"`
+	EntryFee      *decimal.Decimal `json:"entry_fee"`
+	ExitPrice     *decimal.Decimal `json:"exit_price"`
+	ExitFee       *decimal.Decimal `json:"exit_fee"`
+	PnL           *decimal.Decimal `json:"pnl"`
+	ReturnPct     *float64         `json:"return_pct"`
+	Mark          *decimal.Decimal `json:"mark"`
+	IsOpportunity bool             `json:"is_opportunity"`
+	Stoploss      *Stoploss        `json:"stoploss"`
 }
 
-/*
-Update applies one execution print. Buys drive Qty/EntryPrice from exchange
-CumQty/AvgPrice and accumulate fees; sells shrink Qty by LastQty and only mark
-CLOSED when OrderStatus is filled or remaining base is exhausted.
-*/
-func (holding *Holding) Update(execution *kraken.ExecutionData) {
-	holding.Status = MarketStatuses[execution.ExecType]
+func NewHolding(
+	ctx context.Context,
+	symbol string,
+	qty *decimal.Decimal,
+) *Holding {
+	ctx, cancel := context.WithCancel(ctx)
 
-	if execution.ExecType != "trade" {
-		return
+	return &Holding{
+		ctx:      ctx,
+		cancel:   cancel,
+		Symbol:   symbol,
+		Qty:      qty,
+		Status:   PENDING,
+		Stoploss: NewStoploss(ctx),
 	}
-
-	if execution.Side == "buy" {
-		holding.applyBuy(execution)
-		return
-	}
-
-	if execution.Side == "sell" {
-		holding.applySell(execution)
-	}
-}
-
-/*
-Closed reports whether inventory has been fully exited after fills.
-*/
-func (holding *Holding) Closed() bool {
-	if holding == nil {
-		return false
-	}
-
-	if holding.Status == CLOSED {
-		return true
-	}
-
-	return holding.Qty != nil && holding.Qty.Sign() <= 0 &&
-		holding.ExitAt != nil
-}
-
-/*
-Project fills missing mark and fee fields so UI position frames remain finite
-after restart recovery where only entry accounting was persisted.
-*/
-func (holding *Holding) Project() {
-	if holding == nil {
-		return
-	}
-
-	if holding.Mark == nil {
-		if holding.EntryPrice != nil {
-			holding.Mark = holding.EntryPrice.Copy()
-		} else {
-			holding.Mark = decimal.NewFromInt64(0)
-		}
-	}
-
-	if holding.EntryPrice == nil {
-		holding.EntryPrice = decimal.NewFromInt64(0)
-	}
-
-	if holding.EntryFee == nil {
-		holding.EntryFee = decimal.NewFromInt64(0)
-	}
-
-	if holding.ExitFee == nil {
-		holding.ExitFee = decimal.NewFromInt64(0)
-	}
-
-	if holding.Qty == nil {
-		holding.Qty = decimal.NewFromInt64(0)
-	}
-
-	holding.MarkToMarket()
-}
-
-/*
-MarkToMarket recomputes open PnL and return fraction from the live mark against
-entry accounting. Closed lots keep realized exit fields untouched.
-*/
-func (holding *Holding) MarkToMarket() {
-	if holding == nil || holding.Closed() {
-		return
-	}
-
-	if holding.Mark == nil || holding.EntryPrice == nil || holding.Qty == nil {
-		return
-	}
-
-	mark := holding.Mark.Float64()
-	entry := holding.EntryPrice.Float64()
-	qty := holding.Qty.Float64()
-
-	if mark <= 0 || entry <= 0 || qty <= 0 || math.IsNaN(mark) || math.IsInf(mark, 0) {
-		return
-	}
-
-	entryFee := 0.0
-
-	if holding.EntryFee != nil {
-		entryFee = holding.EntryFee.Float64()
-	}
-
-	holding.PnL = decimal.NewFromFloat64((mark-entry)*qty - entryFee)
-	ret := (mark - entry) / entry
-	holding.ReturnPct = &ret
-}
-
-func (holding *Holding) applyBuy(execution *kraken.ExecutionData) {
-	firstFill := holding.EntryAt == nil
-	holding.EntryAt = &execution.Timestamp
-	holding.EntryPrice = execution.LastPrice.Copy()
-
-	if execution.CumQty > 0 {
-		holding.Qty = decimal.NewFromFloat64(execution.CumQty)
-
-		if avg := averagePrice(execution); avg != nil {
-			holding.EntryPrice = avg
-		}
-	} else if execution.LastQty > 0 {
-		// First print without CumQty replaces the pre-submit requested size;
-		// later prints accumulate until the exchange reports CumQty.
-		if firstFill {
-			holding.Qty = decimal.NewFromFloat64(execution.LastQty)
-		} else {
-			holding.Qty = holding.addQty(execution.LastQty)
-		}
-	}
-
-	holding.EntryFee = holding.addFee(holding.EntryFee, &execution.FeeUsdEquiv)
-	holding.Status = OPEN
-}
-
-func (holding *Holding) applySell(execution *kraken.ExecutionData) {
-	holding.ExitAt = &execution.Timestamp
-	holding.ExitPrice = execution.LastPrice.Copy()
-
-	if avg := averagePrice(execution); avg != nil {
-		holding.ExitPrice = avg
-	}
-
-	holding.ExitFee = holding.addFee(holding.ExitFee, &execution.FeeUsdEquiv)
-
-	if execution.LastQty > 0 && holding.Qty != nil {
-		holding.Qty = holding.Qty.Sub(decimal.NewFromFloat64(execution.LastQty))
-	}
-
-	if execution.OrderStatus == "filled" ||
-		(holding.Qty != nil && holding.Qty.Sign() <= 0) {
-		holding.Status = CLOSED
-
-		if holding.Qty == nil || holding.Qty.Sign() < 0 {
-			holding.Qty = decimal.NewFromInt64(0)
-		}
-
-		return
-	}
-
-	holding.Status = OPEN
-}
-
-func (holding *Holding) addQty(lastQty float64) *decimal.Decimal {
-	delta := decimal.NewFromFloat64(lastQty)
-
-	if holding.Qty == nil {
-		return delta
-	}
-
-	return holding.Qty.Add(delta)
-}
-
-func (holding *Holding) addFee(
-	prior *decimal.Decimal,
-	fee *decimal.Decimal,
-) *decimal.Decimal {
-	if fee == nil || fee.Float64() <= 0 {
-		return prior
-	}
-
-	copied := fee.Copy()
-
-	if prior == nil {
-		return copied
-	}
-
-	return prior.Add(copied)
-}
-
-/*
-averagePrice returns AvgPrice when the exchange supplied a usable value.
-Zero-value decimals have no scaled integer, so Float64 guards absence safely.
-*/
-func averagePrice(execution *kraken.ExecutionData) *decimal.Decimal {
-	if execution == nil {
-		return nil
-	}
-
-	if execution.AvgPrice.Float64() <= 0 {
-		return nil
-	}
-
-	return execution.AvgPrice.Copy()
 }

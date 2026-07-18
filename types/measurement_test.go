@@ -182,7 +182,7 @@ func BenchmarkFilterLatest(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for iteration := 0; b.Loop(); iteration++ {
 		if len(FilterLatest(measurements)) != symbolCount*metricCount {
 			b.Fatal("latest measurement epoch lost a symbol")
 		}

@@ -10,8 +10,8 @@ import (
 )
 
 /*
-TestOpportunityReservedNeedsMarginAndLead requires both positive economic edge
-and positive cognitive lead; SNR alone or lead alone is not reserved.
+TestOpportunityReservedNeedsMarginAndLead requires both strong economic edge
+and meaningful cognitive lead; SNR alone or lead alone is not reserved.
 */
 func TestOpportunityReservedNeedsMarginAndLead(t *testing.T) {
 	t.Parallel()
@@ -25,7 +25,9 @@ func TestOpportunityReservedNeedsMarginAndLead(t *testing.T) {
 
 	reading := measureOpportunity(forecast, cognition, thesis)
 
-	if reading.Margin <= 0 || reading.Lead <= 0 || !reading.Reserved() {
+	if reading.Margin <= reading.Uncertainty ||
+		reading.Lead <= reading.Noise ||
+		!reading.Reserved() {
 		t.Fatalf("want reserved-ready reading, got %+v", reading)
 	}
 
@@ -51,6 +53,78 @@ func TestOpportunityReservedNeedsMarginAndLead(t *testing.T) {
 
 	if leadOnly.Reserved() {
 		t.Fatalf("lead without margin must not be reserved: %+v", leadOnly)
+	}
+}
+
+/*
+TestOpportunityReservedRejectsWeakSNR ensures Margin must exceed Uncertainty
+so reserved is not tripped by a barely-positive edge.
+*/
+func TestOpportunityReservedRejectsWeakSNR(t *testing.T) {
+	t.Parallel()
+
+	thesis := types.NewThesis(nil, nil)
+	thesis.Manifold.Store("OXT/USD", readyBasin("OXT/USD", 0.2))
+
+	// Margin = 0.01, Uncertainty = 0.02 → fails Margin > Uncertainty.
+	reading := measureOpportunity(
+		decideForecast("OXT/USD", 0.03, 0.02),
+		buyCognition("OXT/USD"),
+		thesis,
+	)
+
+	if reading.Reserved() {
+		t.Fatalf("weak SNR must not be reserved: %+v", reading)
+	}
+}
+
+/*
+TestOpportunityReservedRejectsAmbiguous keeps overflow closed when the entropy
+gate marks cognition ambiguous even if margin and lead look strong.
+*/
+func TestOpportunityReservedRejectsAmbiguous(t *testing.T) {
+	t.Parallel()
+
+	thesis := types.NewThesis(nil, nil)
+	thesis.Manifold.Store("OXT/USD", readyBasin("OXT/USD", 0.2))
+
+	cognition := buyCognition("OXT/USD")
+	cognition.Confidence = 0.7
+	cognition.Ambiguous = true
+
+	reading := measureOpportunity(
+		decideForecast("OXT/USD", 0.08, 0.02),
+		cognition,
+		thesis,
+	)
+
+	if reading.Reserved() {
+		t.Fatalf("ambiguous cognition must not be reserved: %+v", reading)
+	}
+}
+
+/*
+TestOpportunityReservedRejectsZeroContrast requires winner separation before
+overflow is allowed.
+*/
+func TestOpportunityReservedRejectsZeroContrast(t *testing.T) {
+	t.Parallel()
+
+	thesis := types.NewThesis(nil, nil)
+	thesis.Manifold.Store("OXT/USD", readyBasin("OXT/USD", 0.2))
+
+	cognition := buyCognition("OXT/USD")
+	cognition.Confidence = 0.7
+	cognition.Contrast = 0
+
+	reading := measureOpportunity(
+		decideForecast("OXT/USD", 0.08, 0.02),
+		cognition,
+		thesis,
+	)
+
+	if reading.Reserved() {
+		t.Fatalf("zero contrast must not be reserved: %+v", reading)
 	}
 }
 

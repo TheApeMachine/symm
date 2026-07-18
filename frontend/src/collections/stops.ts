@@ -44,7 +44,11 @@ const requiredFinite = (value: unknown, path: string): number => {
 	throw new TypeError(`${path} must be finite`);
 };
 
-const optionalFinite = (value: unknown): number | undefined => {
+const optionalFinite = (value: unknown, path: string): number | undefined => {
+	if (value === undefined) {
+		return undefined;
+	}
+
 	const number =
 		typeof value === "number"
 			? value
@@ -52,11 +56,24 @@ const optionalFinite = (value: unknown): number | undefined => {
 				? Number(value)
 				: Number.NaN;
 
-	return Number.isFinite(number) ? number : undefined;
+	if (Number.isFinite(number)) {
+		return number;
+	}
+
+	throw new TypeError(`${path} must be finite when present`);
 };
 
-const optionalBoolean = (value: unknown): boolean | undefined =>
-	typeof value === "boolean" ? value : undefined;
+const optionalBoolean = (value: unknown, path: string): boolean | undefined => {
+	if (value === undefined) {
+		return undefined;
+	}
+
+	if (typeof value === "boolean") {
+		return value;
+	}
+
+	throw new TypeError(`${path} must be a boolean when present`);
+};
 
 const parseStop = (value: unknown, index: number): Stop => {
 	const path = `stops[${index}]`;
@@ -66,23 +83,64 @@ const parseStop = (value: unknown, index: number): Stop => {
 		throw new TypeError(`${path}.symbol must be a non-empty string`);
 	}
 
+	const momentumActive = optionalBoolean(
+		frame.momentum_active,
+		`${path}.momentum_active`,
+	);
+	const stagnationActive = optionalBoolean(
+		frame.stagnation_active,
+		`${path}.stagnation_active`,
+	);
+	const momentumHealth = optionalFinite(
+		frame.momentum_health,
+		`${path}.momentum_health`,
+	);
+	const stagnationHealth = optionalFinite(
+		frame.stagnation_health,
+		`${path}.stagnation_health`,
+	);
+
+	if (momentumActive === true && momentumHealth === undefined) {
+		throw new TypeError(
+			`${path}.momentum_health is required when momentum_active is true`,
+		);
+	}
+
+	if (stagnationActive === true && stagnationHealth === undefined) {
+		throw new TypeError(
+			`${path}.stagnation_health is required when stagnation_active is true`,
+		);
+	}
+
 	return {
 		symbol: frame.symbol,
 		stop_price: requiredFinite(frame.stop_price, `${path}.stop_price`),
 		peak_return: requiredFinite(frame.peak_return, `${path}.peak_return`),
 		stop_return: requiredFinite(frame.stop_return, `${path}.stop_return`),
-		armed: optionalBoolean(frame.armed),
-		peak_price: optionalFinite(frame.peak_price),
-		momentum: optionalFinite(frame.momentum),
-		peak_momentum: optionalFinite(frame.peak_momentum),
-		momentum_floor: optionalFinite(frame.momentum_floor),
-		momentum_health: optionalFinite(frame.momentum_health),
-		momentum_active: optionalBoolean(frame.momentum_active),
-		peak_touch_count: optionalFinite(frame.peak_touch_count),
-		stagnation_max_touches: optionalFinite(frame.stagnation_max_touches),
-		stagnation_health: optionalFinite(frame.stagnation_health),
-		stagnation_pending: optionalBoolean(frame.stagnation_pending),
-		stagnation_active: optionalBoolean(frame.stagnation_active),
+		armed: optionalBoolean(frame.armed, `${path}.armed`),
+		peak_price: optionalFinite(frame.peak_price, `${path}.peak_price`),
+		momentum: optionalFinite(frame.momentum, `${path}.momentum`),
+		peak_momentum: optionalFinite(frame.peak_momentum, `${path}.peak_momentum`),
+		momentum_floor: optionalFinite(
+			frame.momentum_floor,
+			`${path}.momentum_floor`,
+		),
+		momentum_health: momentumHealth,
+		momentum_active: momentumActive,
+		peak_touch_count: optionalFinite(
+			frame.peak_touch_count,
+			`${path}.peak_touch_count`,
+		),
+		stagnation_max_touches: optionalFinite(
+			frame.stagnation_max_touches,
+			`${path}.stagnation_max_touches`,
+		),
+		stagnation_health: stagnationHealth,
+		stagnation_pending: optionalBoolean(
+			frame.stagnation_pending,
+			`${path}.stagnation_pending`,
+		),
+		stagnation_active: stagnationActive,
 	};
 };
 

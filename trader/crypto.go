@@ -47,8 +47,8 @@ type Crypto struct {
 	uiHub      *ui.Hub
 	market     *Market
 	recorder   *audit.Recorder
-	recovery   *types.Thesis
 	lastThesis atomic.Pointer[types.Thesis]
+	recovery   *types.Thesis
 }
 
 /*
@@ -67,6 +67,7 @@ func NewCrypto(
 	tree *dmt.Tree,
 	thesis *types.Thesis,
 	uiHub *ui.Hub,
+	recorder *audit.Recorder,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -110,9 +111,12 @@ func NewCrypto(
 		dataPath:   dataPath,
 		uiHub:      uiHub,
 		market:     market,
+		recovery:   thesis,
+		recorder:   recorder,
 	}
 
 	crypto.tick.Store(thesis.Tick)
+	crypto.lastThesis.Store(thesis)
 
 	return crypto, nil
 }
@@ -140,21 +144,12 @@ func (crypto *Crypto) Run() error {
 		}
 	}
 
-	recorder, recorderErr := audit.NewRecorder(auditPath)
-
-	if recorderErr != nil {
-		return recorderErr
-	}
-
-	crypto.planner.SetRecorder(recorder)
-	crypto.recorder = recorder
-
 	go func() {
 		errnie.Info("crypto runtime started")
 
-		if recorder != nil {
+		if crypto.recorder != nil {
 			defer func() {
-				errnie.Error(recorder.Close())
+				errnie.Error(crypto.recorder.Close())
 			}()
 		}
 
@@ -166,6 +161,7 @@ func (crypto *Crypto) Run() error {
 			}
 
 			if !crypto.booter.Ready(system.StageWarmup) {
+				time.Sleep(100 * time.Millisecond)
 				continue
 			}
 
@@ -202,35 +198,39 @@ func (crypto *Crypto) Tick(at time.Time) (*types.Thesis, error) {
 	}
 
 	tick := crypto.tick.Add(1)
-	started := time.Now()
-	recorder := crypto.recorder
 
-	errnie.Error(audit.Phase(recorder, tick, "cut", map[string]any{
+	errnie.Error(audit.Phase(crypto.recorder, tick, "cut", map[string]any{
 		"tickers": len(frame.Tickers),
 		"trades":  len(frame.Trades),
 		"books":   len(frame.Books),
 	}))
 
 	thesis := crypto.planner.Update(frame, tick)
-	crypto.Plan(thesis)
 
-	elapsed := time.Since(started).Nanoseconds()
+	if err := crypto.Plan(thesis); err != nil {
+		crypto.status = types.ERROR
 
-	errnie.Error(audit.Phase(recorder, tick, "update_end", map[string]any{
-		"ns":        elapsed,
-		"completed": true,
-	}))
+		return nil, err
+	}
 
 	crypto.trade(thesis)
-	thesis.Save(crypto.dataPath)
-	crypto.publishTick(thesis, elapsed)
+	crypto.lastThesis.Store(thesis)
 
-	errnie.Error(audit.Record(recorder, "tick", map[string]any{
+	if err := thesis.Save(crypto.dataPath); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"crypto: thesis checkpoint failed",
+			err,
+		))
+	}
+
+	crypto.publishTick(thesis)
+
+	errnie.Error(audit.Record(crypto.recorder, "tick", map[string]any{
 		"tick":         thesis.Tick,
 		"measurements": types.ObservationCount(thesis.Measurements),
 		"decisions":    len(thesis.Decisions),
 		"forecasts":    len(thesis.Forecasts),
-		"ns":           elapsed,
 		"completed":    true,
 	}))
 
@@ -242,7 +242,7 @@ publishTick sends the frontend one compact factual runtime projection after a
 completed Thesis tick so engine health reflects actual planner progress and
 latency rather than focus-scoped kernel standby.
 */
-func (crypto *Crypto) publishTick(thesis *types.Thesis, elapsedNs int64) {
+func (crypto *Crypto) publishTick(thesis *types.Thesis) {
 	if crypto.uiHub == nil {
 		return
 	}
@@ -258,7 +258,6 @@ func (crypto *Crypto) publishTick(thesis *types.Thesis, elapsedNs int64) {
 		"count":        thesis.Tick,
 		"measurements": types.ObservationCount(thesis.Measurements),
 		"candidates":   positions,
-		"ns":           elapsedNs,
 		"completed":    true,
 		"phase":        "complete",
 	}
@@ -277,37 +276,58 @@ func (crypto *Crypto) publishTick(thesis *types.Thesis, elapsedNs int64) {
 Plan seeds open inventory, runs Planner friction→Decide→Allocate, and publishes
 strategy frames. Fee and lot math stay on the composed Allocator.
 */
-func (crypto *Crypto) Plan(thesis *types.Thesis) {
+func (crypto *Crypto) Plan(thesis *types.Thesis) error {
 	if thesis == nil || crypto.planner == nil {
-		return
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"crypto: plan requires thesis and planner",
+			nil,
+		))
 	}
 
 	crypto.seedOpen(thesis)
-	available, normal, reserved := crypto.constraints()
+	available, normal, reserved, err := crypto.constraints()
+
+	if err != nil {
+		return err
+	}
+
 	crypto.planner.Run(thesis, available, normal, reserved)
 	crypto.publishStrategy(thesis)
+
+	return nil
 }
 
 /*
 seedOpen copies broker-open inventory onto Thesis.Holdings so Decide's
-continuation branch sees real positions.
+continuation branch sees real positions, then merges durable recovery state.
 */
 func (crypto *Crypto) seedOpen(thesis *types.Thesis) {
-	if crypto.balance == nil {
+	if crypto.balance != nil {
+		for holding := range crypto.balance.Holdings() {
+			thesis.Holdings.Store(holding.Symbol, holding)
+		}
+	}
+
+	if crypto.recovery == nil || crypto.recovery.Holdings == nil {
 		return
 	}
 
-	for holding := range crypto.balance.Holdings() {
-		thesis.Holdings.Store(holding.Symbol, holding)
-	}
+	crypto.recovery.Holdings.Range(func(key, value any) bool {
+		if _, exists := thesis.Holdings.Load(key); exists {
+			return true
+		}
 
-	thesis.MergeRecovery(crypto.recovery)
+		thesis.Holdings.Store(key, value)
+
+		return true
+	})
 }
 
 /*
 constraints returns quote capital plus normal and reserved slot ceilings.
 */
-func (crypto *Crypto) constraints() (float64, int, int) {
+func (crypto *Crypto) constraints() (float64, int, int, error) {
 	normal, reserved := 0, 0
 
 	if crypto.desk != nil {
@@ -316,22 +336,24 @@ func (crypto *Crypto) constraints() (float64, int, int) {
 	}
 
 	if crypto.balance == nil {
-		return 0, normal, reserved
+		return 0, normal, reserved, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"crypto: balance unavailable for plan",
+			nil,
+		))
 	}
 
 	available, err := crypto.balance.AvailableQuote()
 
 	if err != nil {
-		errnie.Error(errnie.Err(
+		return 0, normal, reserved, errnie.Error(errnie.Err(
 			errnie.NotFound,
 			"crypto: quote balance unavailable for plan",
 			err,
 		))
-
-		return 0, normal, reserved
 	}
 
-	return available, normal, reserved
+	return available, normal, reserved, nil
 }
 
 /*
@@ -380,34 +402,14 @@ func (crypto *Crypto) trade(thesis *types.Thesis) {
 
 	freeing := 0
 
-	for symbol, quantity := range sells {
-		position, ok := thesis.Positions.Load(symbol)
-
-		if !ok {
-			continue
-		}
-
-		if err := position.(*broker.Position).Exit(); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"failed to sell holding "+symbol,
-				err,
-			))
-
-			continue
-		}
-
-		crypto.desk.Update()
-
-		if quantity == nil {
-			freeing++
-		}
-	}
-
 	thesis.Holdings.Range(func(key, value any) bool {
 		holding := value.(types.Holding)
 
-		if err := errnie.Validate(holding); err != nil {
+		if _, enter := enters[holding.Symbol]; !enter {
+			return true
+		}
+
+		if err := errnie.Validate(&holding); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
 				"invalid holding for "+holding.Symbol,
@@ -437,7 +439,11 @@ func (crypto *Crypto) trade(thesis *types.Thesis) {
 		}
 
 		thesis.Positions.Store(holding.Symbol, position)
-		freeing--
+
+		if freeing > 0 {
+			freeing--
+		}
+
 		return true
 	})
 }
@@ -447,6 +453,16 @@ Close flushes the durable Thesis checkpoint then stops composed resources.
 */
 func (crypto *Crypto) Close() error {
 	crypto.cancel()
+
+	if latest := crypto.lastThesis.Load(); latest != nil {
+		if err := latest.Save(crypto.dataPath); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"crypto: thesis checkpoint on close failed",
+				err,
+			))
+		}
+	}
 
 	if crypto.market != nil {
 		crypto.market.Close()

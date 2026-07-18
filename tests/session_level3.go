@@ -53,36 +53,13 @@ func (level3 *SessionLevel3) Apply(payload []byte) error {
 }
 
 /*
-SeedTouchDecimals installs a two-sided L3 quote using exact decimal prices.
-*/
-func (level3 *SessionLevel3) SeedTouchDecimals(
-	symbol string,
-	bid *decimal.Decimal,
-	ask *decimal.Decimal,
-	quantity float64,
-	at time.Time,
-) error {
-	if level3 == nil || !level3.Enabled() {
-		return errnie.Err(
-			errnie.Validation,
-			"tests: level3 books are unavailable",
-			nil,
-		)
-	}
-
-	level3.live.SeedTouchDecimals(symbol, bid, ask, quantity, at)
-
-	return nil
-}
-
-/*
 SeedTouch installs a two-sided L3 quote for toxicity Session tests.
 */
 func (level3 *SessionLevel3) SeedTouch(
 	symbol string,
-	bid float64,
-	ask float64,
-	quantity float64,
+	bid *decimal.Decimal,
+	ask *decimal.Decimal,
+	quantity *decimal.Decimal,
 	at time.Time,
 ) error {
 	if level3 == nil || !level3.Enabled() {

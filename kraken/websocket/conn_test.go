@@ -116,7 +116,7 @@ func TestAPIBooks(t *testing.T) {
 		Convey("It should protect PeekBook reads during websocket updates", func() {
 			live.isLevel3 = true
 			checksum := managed.L3Checksum("").LocalChecksum
-			raw := []byte(fmt.Sprintf(`{
+			raw := fmt.Appendf(nil, `{
 				"channel":"level3",
 				"type":"update",
 				"data":[{
@@ -131,7 +131,7 @@ func TestAPIBooks(t *testing.T) {
 						"timestamp":"1970-01-01T00:00:01Z"
 					}]
 				}]
-			}`, checksum))
+			}`, checksum)
 			event := &callback.Event[*sdkkraken.WebSocketMessage]{
 				Data: sdkkraken.NewWebSocketMessage(raw),
 			}
@@ -442,12 +442,29 @@ type stubConn struct {
 
 func (stub *stubConn) Client() *spot.WebSocket { return stub.client }
 
-func (stub *stubConn) On(channel string, action func([]byte)) {
+func (stub *stubConn) On(channel string, action func([]byte)) uint64 {
 	if stub.channels == nil {
 		stub.channels = map[string][]func([]byte){}
 	}
 
 	stub.channels[channel] = append(stub.channels[channel], action)
+
+	return uint64(len(stub.channels[channel]))
+}
+
+func (stub *stubConn) Unsubscribe(channel string, id uint64) {
+	if stub.channels == nil || id == 0 {
+		return
+	}
+
+	handlers := stub.channels[channel]
+
+	if int(id) > len(handlers) {
+		return
+	}
+
+	index := int(id) - 1
+	stub.channels[channel] = append(handlers[:index], handlers[index+1:]...)
 }
 
 func (stub *stubConn) Write(params json.Marshaler) error { return nil }

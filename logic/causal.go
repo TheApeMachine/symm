@@ -152,7 +152,25 @@ func (causal *Causal) observe(
 	}
 
 	if causal.pending != nil && state.Epoch == causal.pending.epoch+1 {
-		target := math.Log(state.ReferencePrice / causal.pending.midPrice)
+		if !(causal.pending.midPrice > 0) || !(state.ReferencePrice > 0) {
+			return CausalOutcome{}, errnie.Err(
+				errnie.Validation,
+				"logic causal: midpoint prices must be strictly positive for log return",
+				nil,
+			)
+		}
+
+		ratio := state.ReferencePrice / causal.pending.midPrice
+
+		if !(ratio > 0) {
+			return CausalOutcome{}, errnie.Err(
+				errnie.Validation,
+				"logic causal: log-return argument must be strictly positive",
+				nil,
+			)
+		}
+
+		target := math.Log(ratio)
 
 		if causal.pending.predicted {
 			residual := target - causal.pending.predictedReturn

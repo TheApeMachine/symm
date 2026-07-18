@@ -2,7 +2,6 @@ import type {
 	CognitiveBranch,
 	CognitiveBeam as FrameBeam,
 } from "#/collections/cognitive";
-import { TERMINAL_COLORS } from "#/components/terminal/canvas";
 import type { Variant } from "@/components/ui/types";
 
 export type CortexBeam = {
@@ -178,18 +177,40 @@ const prefixesFromSequence = (sequence: string): Set<string> => {
 };
 
 const activePrefixesFrom = (
-	reading: Record<string, unknown>,
+	_reading: Record<string, unknown>,
 	beam: FrameBeam | undefined,
 ): Set<string> => {
-	const sequence = stringField(reading.sequence);
-
-	if (sequence !== "") {
-		return prefixesFromSequence(sequence);
+	// Amber tracks the MAP beam through the radix tree (mockup legend), not the
+	// sealed observation bag — that bag is a long sorted spine and reads as one path.
+	if (beam?.sequence) {
+		return prefixesFromSequence(beam.sequence);
 	}
 
-	return prefixesFromSequence(beam?.sequence ?? "");
+	return prefixesFromSequence("");
 };
 
+const compareSiblings = (left: CortexNode, right: CortexNode): number => {
+	const byToken = left.token.localeCompare(right.token);
+
+	if (byToken !== 0) {
+		return byToken;
+	}
+
+	return left.id - right.id;
+};
+
+const treeDepth = (node: CortexNode): number => {
+	if (node.children.length === 0) {
+		return node.depth;
+	}
+
+	return Math.max(...node.children.map(treeDepth));
+};
+
+/*
+cortexTreeFromReading rebuilds the sensory prefix tree for Cortex. Sibling order
+is token-stable so probability jitter cannot reshuffle leaf geometry each tick.
+*/
 export const cortexTreeFromReading = (
 	reading: Record<string, unknown> | null,
 ): CortexTree | null => {
@@ -225,13 +246,7 @@ export const cortexTreeFromReading = (
 	}
 
 	for (const node of byID.values()) {
-		node.children.sort((left, right) => {
-			if (left.probability === right.probability) {
-				return left.token.localeCompare(right.token);
-			}
-
-			return right.probability - left.probability;
-		});
+		node.children.sort(compareSiblings);
 	}
 
 	const nodes = [...byID.values()].sort((left, right) => left.id - right.id);
@@ -243,12 +258,14 @@ export const cortexTreeFromReading = (
 		return null;
 	}
 
-	const maxDepth = Math.max(1, maxHops);
 	const rawBeams = frameBeams(reading);
+	// Layout depth is the rendered tree only. maxHops is sequence metadata for
+	// the beam panel — using it here pinned shallow trees into the left gutter.
+	const measuredDepth = Math.max(1, treeDepth(root));
 
 	return {
 		beamWidth,
-		maxDepth,
+		maxDepth: measuredDepth,
 		nodeCount,
 		root,
 		nodes,
@@ -256,217 +273,4 @@ export const cortexTreeFromReading = (
 		classes: classesFromReading(reading),
 		beamPrefixes: activePrefixesFrom(reading, rawBeams[0]),
 	};
-};
-
-type PositionedNode = {
-	node: CortexNode;
-	x: number;
-	y: number;
-};
-
-const isOnBeam = (tree: CortexTree, node: CortexNode): boolean =>
-	tree.beamPrefixes.has(node.prefix);
-
-const truncate = (value: string, maxLength: number): string =>
-	value.length <= maxLength ? value : value.slice(0, maxLength - 1);
-
-export const drawCortexTree = (
-	context: CanvasRenderingContext2D,
-	width: number,
-	height: number,
-	tree: CortexTree,
-): void => {
-	context.clearRect(0, 0, width, height);
-	context.fillStyle = TERMINAL_COLORS.background;
-	context.fillRect(0, 0, width, height);
-
-	const padLeft = 74;
-	const padRight = 116;
-	const padTop = 44;
-	const padBottom = 26;
-	const usableWidth = Math.max(1, width - padLeft - padRight);
-	const usableHeight = Math.max(1, height - padTop - padBottom);
-	const leaves: CortexNode[] = [];
-
-	const collectLeaves = (node: CortexNode): void => {
-		if (node.children.length === 0) {
-			leaves.push(node);
-			return;
-		}
-
-		for (const child of node.children) {
-			collectLeaves(child);
-		}
-	};
-
-	collectLeaves(tree.root);
-
-	const leafY = new Map<number, number>();
-
-	for (const [index, leaf] of leaves.entries()) {
-		leafY.set(leaf.id, leaves.length > 1 ? index / (leaves.length - 1) : 0.5);
-	}
-
-	const assignY = (node: CortexNode): number => {
-		if (node.children.length === 0) {
-			return leafY.get(node.id) ?? 0.5;
-		}
-
-		const childY = node.children.map(assignY);
-
-		return childY.reduce((sum, value) => sum + value, 0) / childY.length;
-	};
-
-	const yByID = new Map<number, number>();
-
-	const recordY = (node: CortexNode): number => {
-		const y = assignY(node);
-		yByID.set(node.id, y);
-
-		for (const child of node.children) {
-			recordY(child);
-		}
-
-		return y;
-	};
-
-	recordY(tree.root);
-
-	const xFor = (depth: number): number =>
-		padLeft + (depth / Math.max(1, tree.maxDepth)) * usableWidth;
-	const yFor = (node: CortexNode): number =>
-		padTop + (yByID.get(node.id) ?? 0.5) * usableHeight;
-	const positions = new Map<number, PositionedNode>();
-
-	for (const node of tree.nodes) {
-		positions.set(node.id, {
-			node,
-			x: xFor(node.depth),
-			y: yFor(node),
-		});
-	}
-
-	const drawEdges = (node: CortexNode): void => {
-		const from = positions.get(node.id);
-
-		if (from === undefined) {
-			return;
-		}
-
-		for (const child of node.children) {
-			const to = positions.get(child.id);
-
-			if (to === undefined) {
-				continue;
-			}
-
-			const onBeam = isOnBeam(tree, node) && isOnBeam(tree, child);
-			const middleX = (from.x + to.x) / 2;
-
-			context.strokeStyle = onBeam
-				? TERMINAL_COLORS.amber
-				: TERMINAL_COLORS.line;
-			context.lineWidth = onBeam ? 2.2 : 0.6 + child.probability * 2.4;
-			context.globalAlpha = onBeam ? 1 : 0.45 + child.probability * 0.4;
-			context.beginPath();
-			context.moveTo(from.x, from.y);
-			context.bezierCurveTo(middleX, from.y, middleX, to.y, to.x, to.y);
-			context.stroke();
-
-			if (!onBeam) {
-				context.globalAlpha = 0.7;
-				context.fillStyle = TERMINAL_COLORS.muted;
-				context.font = "8px JetBrains Mono, monospace";
-				context.textAlign = "center";
-				context.fillText(
-					child.probability.toFixed(2),
-					middleX,
-					(from.y + to.y) / 2 - 3,
-				);
-			}
-
-			drawEdges(child);
-		}
-	};
-
-	drawEdges(tree.root);
-	context.globalAlpha = 1;
-
-	for (const positioned of positions.values()) {
-		const { node, x, y } = positioned;
-		const onBeam = isOnBeam(tree, node);
-		const radius = node.depth === 0 ? 5.5 : onBeam ? 4.2 : 3;
-
-		context.fillStyle = onBeam ? TERMINAL_COLORS.amber : "#1f1a14";
-		context.strokeStyle = onBeam
-			? TERMINAL_COLORS.amber
-			: TERMINAL_COLORS.lineStrong;
-		context.lineWidth = 1;
-		context.beginPath();
-		context.arc(x, y, radius, 0, Math.PI * 2);
-		context.fill();
-		context.stroke();
-
-		if (node.depth > 0 && (onBeam || node.children.length === 0)) {
-			context.fillStyle = onBeam
-				? TERMINAL_COLORS.foreground
-				: TERMINAL_COLORS.muted;
-			context.font = `${onBeam ? "600 " : ""}9.5px JetBrains Mono, monospace`;
-			context.textAlign = "left";
-			context.fillText(truncate(node.token, 12), x + 7, y + 3.2);
-		}
-	}
-
-	let beamSequence = "";
-
-	for (const prefix of tree.beamPrefixes) {
-		if (prefix.length > beamSequence.length) {
-			beamSequence = prefix;
-		}
-	}
-
-	if (beamSequence !== "") {
-		const nodeByPrefix = new Map(
-			tree.nodes.map((node) => [node.prefix, node] as const),
-		);
-		const tokens = beamSequence.split("_").filter(Boolean);
-		const pathNodes: CortexNode[] = [tree.root];
-		let prefix = "";
-
-		for (const token of tokens) {
-			prefix = prefix === "" ? token : `${prefix}_${token}`;
-			const match = nodeByPrefix.get(prefix);
-
-			if (match !== undefined) {
-				pathNodes.push(match);
-			}
-		}
-
-		if (pathNodes.length > 1) {
-			const tick = performance.now() / 1500;
-			const segment = (tick % 1) * (pathNodes.length - 1);
-			const startIndex = Math.floor(segment);
-			const fraction = segment - startIndex;
-			const start = positions.get(pathNodes[startIndex]?.id ?? -1);
-			const end = positions.get(
-				pathNodes[Math.min(pathNodes.length - 1, startIndex + 1)]?.id ?? -1,
-			);
-
-			if (start !== undefined && end !== undefined) {
-				const pulseX = start.x + (end.x - start.x) * fraction;
-				const pulseY = start.y + (end.y - start.y) * fraction;
-
-				context.fillStyle = TERMINAL_COLORS.amber;
-				context.globalAlpha = 0.95;
-				context.beginPath();
-				context.arc(pulseX, pulseY, 3.6, 0, Math.PI * 2);
-				context.fill();
-				context.globalAlpha = 0.22;
-				context.beginPath();
-				context.arc(pulseX, pulseY, 9, 0, Math.PI * 2);
-				context.fill();
-				context.globalAlpha = 1;
-			}
-		}
-	}
 };

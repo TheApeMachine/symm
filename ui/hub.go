@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"strings"
 	"syscall"
 
 	"github.com/bytedance/sonic"
@@ -16,6 +17,8 @@ import (
 
 /*
 Hub owns the dashboard websocket and forwards typed backend frames to clients.
+ready gates upgrades until Warmup (or later) so the browser cannot attach
+during preflight and inherit allocator/ticker gaps as BACKEND ERROR overlays.
 */
 type Hub struct {
 	status     types.Status
@@ -25,6 +28,7 @@ type Hub struct {
 	listenAddr string
 	Messages   chan []byte
 	balance    *broker.Balance
+	ready      func() bool
 }
 
 func NewHub(
@@ -33,6 +37,7 @@ func NewHub(
 	balance *broker.Balance,
 	thesis *types.Thesis,
 	channel chan []byte,
+	ready func() bool,
 ) (*Hub, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -47,9 +52,14 @@ func NewHub(
 			JSONDecoder: sonic.Unmarshal,
 		}),
 		balance: balance,
+		ready:   ready,
 	}
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
+		if !hub.open() {
+			return fiber.ErrServiceUnavailable
+		}
+
 		if websocket.IsWebSocketUpgrade(c) {
 			c.Locals("allowed", true)
 			return c.Next()
@@ -60,7 +70,23 @@ func NewHub(
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		defer conn.Close()
-		hub.balance.Publish()
+
+		// Write the desk snapshot on the socket itself. Publish() is
+		// non-blocking into Messages and is dropped when the tick stream has
+		// saturated the buffer — exactly the refresh path that left cash and
+		// open holdings blank while engine.open still counted desk slots.
+		if hub.balance != nil && conn.Conn != nil {
+			if frame := hub.balance.Frame(); len(frame) > 0 {
+				if err := conn.Conn.WriteMessage(websocket.TextMessage, frame); err != nil {
+					if hub.clientGone(err) {
+						return
+					}
+
+					errnie.Error(err)
+					return
+				}
+			}
+		}
 
 		for {
 			select {
@@ -76,7 +102,7 @@ func NewHub(
 				}
 
 				if err := conn.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-					if errors.Is(err, syscall.EPIPE) {
+					if hub.clientGone(err) {
 						return
 					}
 
@@ -90,6 +116,18 @@ func NewHub(
 	}))
 
 	return hub, nil
+}
+
+/*
+open reports whether the dashboard socket may accept clients. A nil ready
+callback stays open (tests); production passes Booter.Ready(Warmup).
+*/
+func (hub *Hub) open() bool {
+	if hub == nil || hub.ready == nil {
+		return true
+	}
+
+	return hub.ready()
 }
 
 func (hub *Hub) Initialize() error {
@@ -109,4 +147,28 @@ func (hub *Hub) Close() error {
 
 	hub.cancel()
 	return nil
+}
+
+/*
+clientGone reports write failures that mean the browser dropped or desynced the
+socket rather than a hub-side publish bug.
+*/
+func (hub *Hub) clientGone(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
+		return true
+	}
+
+	if websocket.IsCloseError(err) {
+		return true
+	}
+
+	message := err.Error()
+
+	return strings.Contains(message, "unexpected bytes at end of flate stream") ||
+		strings.Contains(message, "use of closed network connection") ||
+		strings.Contains(message, "broken pipe")
 }

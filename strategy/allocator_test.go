@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
@@ -61,8 +60,6 @@ TestAllocatorSizesQuantityBeforeTaker floors at qty_min when the fraction
 budget is small, then prices that lot through Taker.
 */
 func TestAllocatorSizesQuantityBeforeTaker(t *testing.T) {
-	t.Parallel()
-
 	previous := viper.GetFloat64("trading.allocation.max_fraction")
 	viper.Set("trading.allocation.max_fraction", 0.20)
 	t.Cleanup(func() { viper.Set("trading.allocation.max_fraction", previous) })
@@ -74,7 +71,7 @@ func TestAllocatorSizesQuantityBeforeTaker(t *testing.T) {
 	balance := broker.NewBalance(nil, nil, nil)
 	balance.BalanceAck([]byte(
 		`{"channel":"balances","type":"snapshot","sequence":1,"data":[{` +
-			`"asset":"USD","balance":"10000","available":"10000","reserved":"0"` +
+			`"asset":"USD","balance":"10","available":"10","reserved":"0"` +
 			`}]}`,
 	))
 
@@ -107,15 +104,10 @@ func TestAllocatorSizesQuantityBeforeTaker(t *testing.T) {
 	thesis.Decisions = append(thesis.Decisions, types.Decision{
 		Action: "enter", Symbol: "LRC/USD", Utility: 0.05,
 	})
-	thesis.Holdings.Store("LRC/USD", types.Holding{
+	thesis.Holdings.Store("LRC/USD", &types.Holding{
 		Symbol: "LRC/USD",
 		Qty:    decimal.NewFromFloat64(3),
-		Order: &spot.Order{
-			Description: &spot.OrderDescription{
-				Pair: "LRC/USD", Type: "enter", OrderType: "market",
-			},
-			Volume: decimal.NewFromFloat64(3),
-		},
+		Status: types.PENDING,
 	})
 
 	allocator.Allocate(thesis)
@@ -141,6 +133,61 @@ func TestAllocatorSizesQuantityBeforeTaker(t *testing.T) {
 }
 
 /*
+TestAllocatorSizesMATICWithinSessionBudget verifies a Play-sized MATIC lot clears
+cost_min when quote capital matches the session RunDecide harness.
+*/
+func TestAllocatorSizesMATICWithinSessionBudget(t *testing.T) {
+	previous := viper.GetFloat64("trading.allocation.max_fraction")
+	viper.Set("trading.allocation.max_fraction", 0.20)
+	t.Cleanup(func() { viper.Set("trading.allocation.max_fraction", previous) })
+
+	quote := viper.GetString("market.quote_currency")
+	viper.Set("market.quote_currency", "USD")
+	t.Cleanup(func() { viper.Set("market.quote_currency", quote) })
+
+	balance := broker.NewBalance(nil, nil, nil)
+	balance.BalanceAck([]byte(
+		`{"channel":"balances","type":"snapshot","sequence":1,"data":[{` +
+			`"asset":"USD","balance":"5000","available":"5000","reserved":"0"` +
+			`}]}`,
+	))
+
+	instrument := broker.NewInstrument(nil, nil, nil)
+	instrument.On([]byte(
+		`{"channel":"instrument","type":"snapshot","data":{"pairs":[{` +
+			`"symbol":"MATIC/USD","base":"MATIC","quote":"USD","status":"online",` +
+			`"qty_min":4,"qty_increment":0.00000001,"qty_precision":8,` +
+			`"cost_min":"0.43","cost_precision":6,"tick_size":"0.0001",` +
+			`"price_increment":"0.0001","price_precision":4` +
+			`}]}}`,
+	))
+
+	price := broker.NewPrice(nil)
+	_ = price.RememberFee("MATIC/USD", kraken.TradeVolumeFee{
+		Fee: decimal.NewFromFloat64(0.26),
+	})
+	price.TickerAck([]byte(
+		`{"channel":"ticker","type":"update","data":[{` +
+			`"symbol":"MATIC/USD","last":"0.10035","bid":"0.10025","ask":"0.10035"` +
+			`}]}`,
+	))
+
+	allocator := NewAllocator(context.Background(), balance, instrument, price)
+	holding := &types.Holding{
+		Symbol: "MATIC/USD",
+		Status: types.PENDING,
+	}
+
+	if !allocator.size(holding) {
+		t.Fatalf("want sized MATIC lot, got %s (%s)", allocator.Action, allocator.Reason)
+	}
+
+	if allocator.Quantity == nil || allocator.Quantity.Float64() < 4 {
+		t.Fatalf("want qty >= qty_min 4, got %v", allocator.Quantity)
+	}
+}
+
+/*
 BenchmarkAllocatorAllocate measures one enter sizing pass.
 */
 func BenchmarkAllocatorAllocate(b *testing.B) {
@@ -155,7 +202,7 @@ func BenchmarkAllocatorAllocate(b *testing.B) {
 	balance := broker.NewBalance(nil, nil, nil)
 	balance.BalanceAck([]byte(
 		`{"channel":"balances","type":"snapshot","sequence":1,"data":[{` +
-			`"asset":"USD","balance":"10000","available":"10000","reserved":"0"` +
+			`"asset":"USD","balance":"10","available":"10","reserved":"0"` +
 			`}]}`,
 	))
 
@@ -188,16 +235,11 @@ func BenchmarkAllocatorAllocate(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for index := 0; index < b.N; index++ {
-		thesis.Holdings.Store("LRC/USD", types.Holding{
+	for index := 0; b.Loop(); index++ {
+		thesis.Holdings.Store("LRC/USD", &types.Holding{
 			Symbol: "LRC/USD",
 			Qty:    decimal.NewFromFloat64(3),
-			Order: &spot.Order{
-				Description: &spot.OrderDescription{
-					Pair: "LRC/USD", Type: "enter", OrderType: "market",
-				},
-				Volume: decimal.NewFromFloat64(3),
-			},
+			Status: types.PENDING,
 		})
 		allocator.Allocate(thesis)
 	}

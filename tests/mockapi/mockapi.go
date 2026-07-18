@@ -24,13 +24,19 @@ websocket.Conn so tests can inject it through websocket.NewAPI exactly as root
 does.
 */
 type MockConn struct {
-	channels     map[string][]func([]byte)
+	channels     map[string][]mockHandler
+	nextID       uint64
 	client       *spot.WebSocket
 	postResponse []byte
 	postPath     string
 	postParams   json.Marshaler
 	postCalls    []MockPostCall
 	closeCount   int
+}
+
+type mockHandler struct {
+	id uint64
+	fn func([]byte)
 }
 
 /*
@@ -49,14 +55,55 @@ func (conn *MockConn) Client() *spot.WebSocket {
 }
 
 /*
-On registers a channel handler that receives emitted payloads.
+On registers a channel handler that receives emitted payloads and returns the
+subscription id used by Unsubscribe.
 */
-func (conn *MockConn) On(channel string, action func([]byte)) {
-	if conn.channels == nil {
-		conn.channels = map[string][]func([]byte){}
+func (conn *MockConn) On(channel string, action func([]byte)) uint64 {
+	if conn == nil || action == nil {
+		return 0
 	}
 
-	conn.channels[channel] = append(conn.channels[channel], action)
+	if conn.channels == nil {
+		conn.channels = map[string][]mockHandler{}
+	}
+
+	conn.nextID++
+	id := conn.nextID
+	conn.channels[channel] = append(conn.channels[channel], mockHandler{
+		id: id,
+		fn: action,
+	})
+
+	return id
+}
+
+/*
+Unsubscribe removes one handler previously registered with On by subscription
+id so position teardown can drop ticker listeners without clearing unrelated
+consumers.
+*/
+func (conn *MockConn) Unsubscribe(channel string, id uint64) {
+	if conn == nil || id == 0 || conn.channels == nil {
+		return
+	}
+
+	handlers := conn.channels[channel]
+
+	if len(handlers) == 0 {
+		return
+	}
+
+	next := make([]mockHandler, 0, len(handlers))
+
+	for _, handler := range handlers {
+		if handler.id == id {
+			continue
+		}
+
+		next = append(next, handler)
+	}
+
+	conn.channels[channel] = next
 }
 
 /*
@@ -106,7 +153,7 @@ func (conn *MockConn) Emit(channel string, payload []byte) {
 	}
 
 	for _, handler := range handlers {
-		handler(payload)
+		handler.fn(payload)
 	}
 }
 

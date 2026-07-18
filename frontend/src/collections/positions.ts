@@ -85,18 +85,19 @@ export const positionsStore = createStore(
 	({ setState }) => ({
 		updateFrame: (positions: unknown) =>
 			setState((prev) => {
-				const normalized = normalizePositions(positions);
+				// Balance.Publish sends a bare array (possibly empty). Only that
+				// array shape is authoritative; incomplete non-array frames throw
+				// in normalizePositions and must not clear observed inventory.
+				if (!Array.isArray(positions)) {
+					if (prev.observed && prev.positions.length > 0) {
+						return prev;
+					}
 
-				if (
-					normalized.length === 0 &&
-					prev.observed &&
-					prev.positions.length > 0
-				) {
-					return prev;
+					throw new TypeError("positions must be an array");
 				}
 
 				return {
-					positions: normalized,
+					positions: normalizePositions(positions),
 					observed: true,
 				};
 			}),

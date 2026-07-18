@@ -6,39 +6,35 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/kraken"
+	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 )
 
 /*
-SubscribeLevel3 sends the configured depth explicitly because the SDK's depth
-argument is not included in its level3 subscription payload.
+SubscribeLevel3 subscribes this authenticated transport to L3 via the SDK
+SubL3 helper, matching Kraken's official BookManager example.
 */
 func (live *Live) SubscribeLevel3(symbols []string, depth int) error {
-	return live.client.SubPrivate("level3", map[string]any{
-		"params": map[string]any{
-			"symbol": symbols,
-			"depth":  depth,
-		},
-	})
+	return live.client.SubL3(symbols, depth)
 }
 
 /*
-updateLevel3 applies one complete websocket message before truncating affected
-books, preserving Kraken's atomic L3 message boundary. The write lease excludes
-PeekBook readers so Side.Levels is never ranged while the book mutates.
+updateLevel3 feeds one websocket message into the SDK BookManager under the
+write lease so PeekBook readers never range Side.Levels mid-mutation.
 */
 func (live *Live) updateLevel3(
-	event *callback.Event[*kraken.WebSocketMessage],
+	event *callback.Event[*sdkkraken.WebSocketMessage],
 ) error {
-	if !live.isLevel3 || live.books == nil || live.level3 == nil {
+	if !live.isLevel3 || live.books == nil || event == nil {
 		return nil
 	}
 
 	live.bookMu.Lock()
 	defer live.bookMu.Unlock()
 
-	return live.level3.applyFrame(live.books, event.Data.Bytes())
+	return live.books.Update(event)
 }
 
 /*
@@ -79,19 +75,55 @@ func (live *Live) ApplyLevel3(payload []byte) error {
 		)
 	}
 
-	return live.updateLevel3(&callback.Event[*kraken.WebSocketMessage]{
-		Data: kraken.NewWebSocketMessage(payload),
+	return live.updateLevel3(&callback.Event[*sdkkraken.WebSocketMessage]{
+		Data: sdkkraken.NewWebSocketMessage(payload),
 	})
 }
 
 /*
-SeedTouchDecimals installs a two-sided L3 touch using exact decimal prices.
+invalidateLevel3Book recreates affected SDK books after a failed apply so a
+corrupt book cannot stay on the read path.
 */
-func (live *Live) SeedTouchDecimals(
+func (live *Live) invalidateLevel3Book(raw []byte) {
+	if !live.isLevel3 || live.books == nil || len(raw) == 0 {
+		return
+	}
+
+	frame := kraken.NewLevel3(raw)
+
+	if len(frame.Data) == 0 {
+		return
+	}
+
+	depth := viper.GetInt("market.l3_depth")
+
+	if depth <= 0 {
+		depth = 10
+	}
+
+	live.bookMu.Lock()
+	defer live.bookMu.Unlock()
+
+	for _, data := range frame.Data {
+		if data.Symbol == "" {
+			continue
+		}
+
+		managed := live.books.CreateBook(data.Symbol, depth)
+		managed.EnableMaxDepth = false
+		managed.NoBookCrossing = false
+	}
+}
+
+/*
+SeedTouch installs a two-sided L3 touch for symbol under the write lease so
+toxicity harness tests can PeekBook without checksummed fixture replay.
+*/
+func (live *Live) SeedTouch(
 	symbol string,
 	bid *decimal.Decimal,
 	ask *decimal.Decimal,
-	quantity float64,
+	quantity *decimal.Decimal,
 	at time.Time,
 ) {
 	if live == nil || live.books == nil || symbol == "" || bid == nil || ask == nil {
@@ -109,50 +141,19 @@ func (live *Live) SeedTouchDecimals(
 		symbolBook.NoBookCrossing = false
 	}
 
-	quantityDecimal := decimal.NewFromFloat64(quantity)
-	qtyText := quantityDecimal.String()
-
-	if live.level3 != nil {
-		live.level3.remember(symbol, "seed-bid", level3WireFromText(bid.String(), qtyText))
-		live.level3.remember(symbol, "seed-ask", level3WireFromText(ask.String(), qtyText))
-	}
-
 	symbolBook.Update(&book.UpdateOptions{
 		Direction: book.Bid,
 		ID:        "seed-bid",
 		Price:     bid,
-		Quantity:  quantityDecimal,
+		Quantity:  quantity,
 		Timestamp: at,
 	})
+
 	symbolBook.Update(&book.UpdateOptions{
 		Direction: book.Ask,
 		ID:        "seed-ask",
 		Price:     ask,
-		Quantity:  quantityDecimal,
+		Quantity:  quantity,
 		Timestamp: at,
 	})
-}
-
-/*
-SeedTouch installs a two-sided L3 touch for symbol under the write lease so
-toxicity harness tests can PeekBook without checksummed fixture replay.
-*/
-func (live *Live) SeedTouch(
-	symbol string,
-	bid float64,
-	ask float64,
-	quantity float64,
-	at time.Time,
-) {
-	if live == nil || live.books == nil || symbol == "" {
-		return
-	}
-
-	live.SeedTouchDecimals(
-		symbol,
-		decimal.NewFromFloat64(bid),
-		decimal.NewFromFloat64(ask),
-		quantity,
-		at,
-	)
 }

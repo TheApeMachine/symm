@@ -71,18 +71,24 @@ func TestEvidenceMeasureProjectedIntervals(t *testing.T) {
 func TestEvidenceModelEpochAnchoring(t *testing.T) {
 	evidence := NewEvidence()
 	outcome := projectedOutcome()
-	outcome.Readiness.ModelUpdated = true
 
-	Convey("Given a model-updated Hawkes outcome", t, func() {
+	Convey("Given a retained Hawkes fit evaluated after its parameter epoch", t, func() {
 		measurements := evidence.Measure("BTC/USD", outcome)
 		model, ok := findMeasurement(measurements, types.MetricSpectralRadius)
+		conditional, hasConditional := findMeasurement(
+			measurements, types.MetricConditionalIntensity,
+		)
 
-		Convey("It should anchor parameter evidence to the fit epoch", func() {
+		Convey("It should publish fit parameters beside live intensity", func() {
 			So(ok, ShouldBeTrue)
+			So(hasConditional, ShouldBeTrue)
+			So(outcome.Readiness.ModelUpdated, ShouldBeFalse)
 			So(model.ObservedFrom, ShouldEqual, outcome.FitObservedFrom)
 			So(model.At, ShouldEqual, outcome.FitAt)
 			So(model.Scale.From, ShouldEqual, outcome.FitObservedFrom)
 			So(model.Scale.Through, ShouldEqual, outcome.FitAt)
+			So(conditional.At, ShouldEqual, outcome.At)
+			So(conditional.Scale.From, ShouldEqual, outcome.FitObservedFrom)
 		})
 	})
 }

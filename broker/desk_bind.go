@@ -1,47 +1,13 @@
 package broker
 
-import (
-	"github.com/theapemachine/symm/types"
-)
-
 /*
-bind registers the single fan-out handlers used by every live Position. Per
-position On registration was unbounded and raced under concurrent Buy.
+bind is retained for Initialize/Buy ordering. Channel handlers live on each
+Position so inventory mark updates stay on Holding and closed lots Unsubscribe.
 */
 func (desk *Desk) bind() {
-	if desk.api == nil || !desk.bound.CompareAndSwap(false, true) {
+	if desk == nil || !desk.bound.CompareAndSwap(false, true) {
 		return
 	}
-
-	desk.api.On("add_order", desk.orderAck)
-	desk.api.On("executions", desk.executionAck)
-}
-
-func (desk *Desk) orderAck(buf []byte) {
-	desk.positions.Range(func(_, value any) bool {
-		position := value.(*Position)
-		position.OrderAck(buf)
-
-		if position.Status() == types.ERROR {
-			desk.evict(position.pair.Symbol)
-		}
-
-		return true
-	})
-}
-
-func (desk *Desk) executionAck(buf []byte) {
-	desk.positions.Range(func(_, value any) bool {
-		position := value.(*Position)
-		position.ExecutionAck(buf)
-		status := position.Status()
-
-		if status == types.CLOSED || status == types.ERROR {
-			desk.evict(position.pair.Symbol)
-		}
-
-		return true
-	})
 }
 
 func (desk *Desk) evict(symbol string) {
@@ -49,5 +15,13 @@ func (desk *Desk) evict(symbol string) {
 		return
 	}
 
+	if value, ok := desk.positions.Load(symbol); ok {
+		value.(*Position).Close()
+	}
+
 	desk.positions.Delete(symbol)
+
+	if desk.balance != nil && desk.balance.holdings != nil {
+		desk.balance.holdings.Delete(symbol)
+	}
 }

@@ -50,7 +50,7 @@ func NewTransport(auth bool) *Transport {
 wireCredentials installs API keys and the shared nonce generator on REST.
 */
 func (transport *Transport) wireCredentials(client *spot.WebSocket) {
-	if transport == nil || client == nil || !transport.auth {
+	if client == nil || !transport.auth {
 		return
 	}
 
@@ -82,17 +82,22 @@ func (transport *Transport) bindCallbacks(live *Live) {
 	})
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*kraken.WebSocketMessage]) {
+		raw := event.Data.Bytes()
+
 		if err := live.updateLevel3(event); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"websocket: level3 "+utils.GetString(
-					event.Data.Bytes(), "type",
+					raw, "type",
 				)+" failed: "+err.Error(),
 				err,
 			))
+			live.invalidateLevel3Book(raw)
+
+			return
 		}
 
-		live.route(event.Data.Bytes())
+		live.route(raw)
 	})
 
 	live.client.OnConnected.Recurring(func(event *callback.Event[any]) {
@@ -173,7 +178,7 @@ authenticate fetches a websocket token. An Invalid nonce rejection bumps the
 persisted high-water and retries once so reconnect storms after a crash do not
 leave the transport permanently in ERROR.
 */
-func (transport *Transport) authenticate(client *spot.WebSocket) error {
+func (transport *Transport) authenticate(client *spot.WebSocket) (err error) {
 	if transport.nonceErr != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -182,14 +187,16 @@ func (transport *Transport) authenticate(client *spot.WebSocket) error {
 		))
 	}
 
-	err := client.Authenticate()
+	if err = client.Authenticate(); err != nil && !strings.Contains(err.Error(), "Invalid nonce") {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"websocket: authentication failed",
+			err,
+		))
+	}
 
 	if err == nil {
 		return nil
-	}
-
-	if !strings.Contains(err.Error(), "Invalid nonce") {
-		return err
 	}
 
 	if transport.nonce != nil {
@@ -204,7 +211,7 @@ OnReconnect registers a callback invoked after public connect or private
 authentication so subscription intent can be replayed.
 */
 func (transport *Transport) OnReconnect(fn func() error) {
-	if transport == nil || fn == nil {
+	if fn == nil {
 		return
 	}
 
@@ -232,19 +239,17 @@ func (transport *Transport) fireReconnect() error {
 }
 
 /*
-configureLevel3 installs the SDK book manager and wire-text checksum ledger used
-by authenticated L3 Lives.
+configureLevel3 installs the SDK BookManager the way Kraken's official L3
+example does: create books on subscribe, then feed frames through Update.
 */
 func configureLevel3(live *Live) {
 	live.books = spot.NewBookManager()
-	live.level3 = newLevel3Apply()
 	live.books.OnCreateBook.Recurring(func(event *callback.Event[*book.Book]) {
 		managed := event.Data
 
 		// Kraken frames are atomic, so depth cannot be enforced per order.
 		managed.EnableMaxDepth = false
 		managed.NoBookCrossing = false
-		live.level3.clear(managed.Name)
 		managed.OnChecksummed.Recurring(
 			func(*callback.Event[*book.ChecksumResult]) {
 				managed.EnforceDepth()

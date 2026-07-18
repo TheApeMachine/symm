@@ -123,27 +123,29 @@ func (price *Price) Snapshot(
 }
 
 /*
-Get returns the latest cached ticker row for symbol.
+Get returns the latest cached ticker row for symbol. Missing or not-ready
+lookups return an error without logging — subscription lag is expected and
+must not flood the UI error overlay through errnie.Error.
 */
 func (price *Price) Get(
 	symbol string,
 ) (*kraken.TickerData, error) {
 	if price.Status() != types.READY {
-		return nil, errnie.Error(errnie.Err(
+		return nil, errnie.Err(
 			errnie.NotImplemented,
 			"price not ready",
 			nil,
-		))
+		)
 	}
 
 	ticker, ok := price.tickers.Load(symbol)
 
 	if !ok {
-		return nil, errnie.Error(errnie.Err(
+		return nil, errnie.Err(
 			errnie.NotFound,
 			"ticker not found for symbol "+symbol,
 			nil,
-		))
+		)
 	}
 
 	return ticker.(*kraken.TickerData), nil

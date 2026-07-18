@@ -1,11 +1,9 @@
 package strategy
 
 import (
-	"context"
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -16,19 +14,11 @@ only reserved entries (positive margin and cognitive lead) may take overflow.
 func TestAdmitKeepsReservedForOpportunity(t *testing.T) {
 	t.Parallel()
 
-	planner := NewPlanner(context.Background(), nil, nil, nil)
+	planner := testPlanner()
 	thesis := types.NewThesis(nil, nil)
 
-	thesis.Holdings.Store("AAA/USD", types.Holding{
-		Symbol: "AAA/USD",
-		Qty:    decimal.NewFromFloat64(1),
-		Mark:   decimal.NewFromFloat64(1),
-	})
-	thesis.Holdings.Store("BBB/USD", types.Holding{
-		Symbol: "BBB/USD",
-		Qty:    decimal.NewFromFloat64(1),
-		Mark:   decimal.NewFromFloat64(1),
-	})
+	thesis.Holdings.Store("AAA/USD", testHolding("AAA/USD", 1, 1))
+	thesis.Holdings.Store("BBB/USD", testHolding("BBB/USD", 1, 1))
 
 	boring := decideForecast("CCC/USD", 0.01, 0.02) // negative margin
 	pump := decideForecast("OXT/USD", 0.08, 0.02)   // positive margin
@@ -88,36 +78,71 @@ when cognition or forecast confidence is non-positive.
 func TestDecideRejectsBuyWithoutConfidence(t *testing.T) {
 	t.Parallel()
 
-	planner := NewPlanner(context.Background(), nil, nil, nil)
-	thesis := types.NewThesis(nil, nil)
-	forecast := decideForecast("ZZZ/USD", 0.05, 0.01)
-	forecast.Confidence = 0
-	thesis.Forecasts = append(thesis.Forecasts, forecast)
-	thesis.Cognition.Store("ZZZ/USD", types.Cognition{
-		Source: "dmt", Symbol: "ZZZ/USD", At: time.Unix(1, 0).UTC(),
-		Winner: "buy", Ready: true, Confidence: 0, Ambiguous: false,
+	t.Run("cognitive_no_confidence", func(t *testing.T) {
+		planner := testPlanner()
+		thesis := types.NewThesis(nil, nil)
+		forecast := decideForecast("ZZZ/USD", 0.05, 0.01)
+		thesis.Forecasts = append(thesis.Forecasts, forecast)
+		thesis.Cognition.Store("ZZZ/USD", types.Cognition{
+			Source: "dmt", Symbol: "ZZZ/USD", At: time.Unix(1, 0).UTC(),
+			Winner: "buy", Ready: true, Confidence: 0, Ambiguous: false,
+		})
+
+		planner.Decide(thesis, map[string]float64{"ZZZ/USD": 0.001}, 1000, 2, 2)
+
+		for _, decision := range thesis.Decisions {
+			if decision.Symbol != "ZZZ/USD" {
+				continue
+			}
+
+			if decision.Action == "enter" {
+				t.Fatalf("zero cognitive confidence must not enter: %+v", decision)
+			}
+
+			if decision.Cause != "cognitive_no_confidence" {
+				t.Fatalf(
+					"want cognitive_no_confidence, got %s (%s)",
+					decision.Cause, decision.Reason,
+				)
+			}
+
+			return
+		}
+
+		t.Fatal("expected a nothing decision for ZZZ/USD")
 	})
 
-	planner.Decide(thesis, map[string]float64{"ZZZ/USD": 0.001}, 1000, 2, 2)
+	t.Run("forecast_no_confidence", func(t *testing.T) {
+		planner := testPlanner()
+		thesis := types.NewThesis(nil, nil)
+		forecast := decideForecast("ZZZ/USD", 0.05, 0.01)
+		forecast.Confidence = 0
+		thesis.Forecasts = append(thesis.Forecasts, forecast)
+		thesis.Cognition.Store("ZZZ/USD", buyCognition("ZZZ/USD"))
 
-	for _, decision := range thesis.Decisions {
-		if decision.Symbol != "ZZZ/USD" {
-			continue
+		planner.Decide(thesis, map[string]float64{"ZZZ/USD": 0.001}, 1000, 2, 2)
+
+		for _, decision := range thesis.Decisions {
+			if decision.Symbol != "ZZZ/USD" {
+				continue
+			}
+
+			if decision.Action == "enter" {
+				t.Fatalf("zero forecast confidence must not enter: %+v", decision)
+			}
+
+			if decision.Cause != "forecast_no_confidence" {
+				t.Fatalf(
+					"want forecast_no_confidence, got %s (%s)",
+					decision.Cause, decision.Reason,
+				)
+			}
+
+			return
 		}
 
-		if decision.Action == "enter" {
-			t.Fatalf("zero-confidence buy must not enter: %+v", decision)
-		}
-
-		if decision.Cause != "cognitive_no_confidence" &&
-			decision.Cause != "forecast_no_confidence" {
-			t.Fatalf("want no-confidence cause, got %s (%s)", decision.Cause, decision.Reason)
-		}
-
-		return
-	}
-
-	t.Fatal("expected a nothing decision for ZZZ/USD")
+		t.Fatal("expected a nothing decision for ZZZ/USD")
+	})
 }
 
 /*
@@ -127,7 +152,7 @@ that is smaller than uncertainty fails the single utility gate after friction.
 func TestDecideRejectsWhenUncertaintyConsumesUtility(t *testing.T) {
 	t.Parallel()
 
-	planner := NewPlanner(context.Background(), nil, nil, nil)
+	planner := testPlanner()
 	thesis := types.NewThesis(nil, nil)
 	forecast := decideForecast("WEAK/USD", 0.01, 0.05)
 	thesis.Forecasts = append(thesis.Forecasts, forecast)
@@ -165,7 +190,7 @@ clear Winner=buy and positive utility/margin.
 func TestDecideRejectsWeakCognitiveConfidence(t *testing.T) {
 	t.Parallel()
 
-	planner := NewPlanner(context.Background(), nil, nil, nil)
+	planner := testPlanner()
 	thesis := types.NewThesis(nil, nil)
 	forecast := decideForecast("COLD/USD", 0.08, 0.02)
 	thesis.Forecasts = append(thesis.Forecasts, forecast)
@@ -203,13 +228,9 @@ cash AvailableCapital (the Fraction column's denominator).
 func TestDecideCapsProposedNotionalByAvailableCash(t *testing.T) {
 	t.Parallel()
 
-	planner := NewPlanner(context.Background(), nil, nil, nil)
+	planner := testPlanner()
 	thesis := types.NewThesis(nil, nil)
-	thesis.Holdings.Store("FAT/USD", types.Holding{
-		Symbol: "FAT/USD",
-		Qty:    decimal.NewFromFloat64(3400),
-		Mark:   decimal.NewFromFloat64(1),
-	})
+	thesis.Holdings.Store("FAT/USD", testHolding("FAT/USD", 3400, 1))
 
 	hold := decideForecast("FAT/USD", 0.10, 0.01)
 	challenger := decideForecast("XRP/USD", 0.04, 0.01)
@@ -252,18 +273,10 @@ still adopts the freed incumbent notional when rotation wins.
 func TestDecideRotateScalesUpToIncumbentNotional(t *testing.T) {
 	t.Parallel()
 
-	planner := NewPlanner(context.Background(), nil, nil, nil)
+	planner := testPlanner()
 	thesis := types.NewThesis(nil, nil)
-	thesis.Holdings.Store("WEAK/USD", types.Holding{
-		Symbol: "WEAK/USD",
-		Qty:    decimal.NewFromFloat64(100),
-		Mark:   decimal.NewFromFloat64(1),
-	})
-	thesis.Holdings.Store("KEEP/USD", types.Holding{
-		Symbol: "KEEP/USD",
-		Qty:    decimal.NewFromFloat64(100),
-		Mark:   decimal.NewFromFloat64(1),
-	})
+	thesis.Holdings.Store("WEAK/USD", testHolding("WEAK/USD", 100, 1))
+	thesis.Holdings.Store("KEEP/USD", testHolding("KEEP/USD", 100, 1))
 
 	weak := decideForecast("WEAK/USD", 0.02, 0.01)
 	keep := decideForecast("KEEP/USD", 0.08, 0.01)
@@ -343,14 +356,14 @@ func buyCognition(symbol string) types.Cognition {
 	}
 }
 
-func findHolding(thesis *types.Thesis, symbol string) (types.Holding, bool) {
-	var found types.Holding
+func findHolding(thesis *types.Thesis, symbol string) (*types.Holding, bool) {
+	var found *types.Holding
 	ok := false
 
 	thesis.Holdings.Range(func(_, value any) bool {
-		holding := value.(types.Holding)
+		holding, typed := value.(*types.Holding)
 
-		if holding.Symbol != symbol {
+		if !typed || holding == nil || holding.Symbol != symbol {
 			return true
 		}
 

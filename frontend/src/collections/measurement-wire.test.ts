@@ -53,6 +53,58 @@ describe("expandWireMeasurements", () => {
 		expect(readings.find((reading) => reading.side === "sell")?.raw).toBe(0.7);
 	});
 
+	it("keeps compact hawkes scale identity for fit reconstruction", () => {
+		const fitFrom = "2026-07-14T17:00:00.000Z";
+		const fitThrough = "2026-07-14T17:00:10.000Z";
+		const evalAt = "2026-07-14T17:00:12.000Z";
+
+		const readings = expandWireMeasurements([
+			{
+				source: "hawkes",
+				symbol: "BTC/USD",
+				at: fitThrough,
+				scale: {
+					kind: "observation_window",
+					from: fitFrom,
+					through: fitThrough,
+				},
+				metrics: {
+					"baseline_intensity:buy": 0.6,
+					"baseline_intensity:sell": 0.4,
+					decay_rate: 1,
+					spectral_radius: 0.72,
+				},
+			},
+			{
+				source: "hawkes",
+				symbol: "BTC/USD",
+				at: evalAt,
+				scale: {
+					kind: "observation_window",
+					from: fitFrom,
+					through: evalAt,
+				},
+				metrics: {
+					"conditional_intensity:buy": 0.9,
+					"conditional_intensity:sell": 0.6,
+				},
+			},
+		]);
+
+		const baseline = readings.find(
+			(reading) =>
+				reading.metric === "baseline_intensity" && reading.side === "buy",
+		);
+		const intensity = readings.find(
+			(reading) =>
+				reading.metric === "conditional_intensity" && reading.side === "buy",
+		);
+
+		expect(baseline?.scale.from).toBe(fitFrom);
+		expect(intensity?.scale.from).toBe(fitFrom);
+		expect(intensity?.scale.through).toBe(evalAt);
+	});
+
 	it("passes already-flat measurement rows through", () => {
 		const readings = expandWireMeasurements([
 			{

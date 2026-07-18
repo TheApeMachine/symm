@@ -17,7 +17,6 @@ func TestThesisMarshalJSON(t *testing.T) {
 	Convey("Given a completed Thesis tick", t, func() {
 		thesis := NewThesis(nil, nil)
 		thesis.Tick = 47
-		thesis.SetUIProjection("BTC/USD", SourceFluid)
 		thesis.Holdings.Store("BTC/USD", Holding{
 			Symbol: "BTC/USD", Asset: "BTC", Qty: decimal.NewFromFloat64(0.25),
 		})
@@ -45,10 +44,9 @@ func TestThesisMarshalJSON(t *testing.T) {
 		Convey("It should restore the tick and its live state containers", func() {
 			found, ok := restored.Holdings.Load("BTC/USD")
 			So(ok, ShouldBeTrue)
-			
+
 			So(err, ShouldBeNil)
 			So(restored.Tick, ShouldEqual, 47)
-			So(restored.Positions, ShouldHaveLength, 1)
 			So(found.(Holding).Qty.Float64(), ShouldEqual, 0.25)
 			So(restored.CrossSection.Metrics, ShouldHaveLength, 1)
 			So(restored.CrossSection.index["BTC/USD"], ShouldEqual, 0)

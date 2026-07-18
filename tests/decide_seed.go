@@ -29,9 +29,13 @@ SeedQuoteCapital emits a balances snapshot through the paper transport so
 Crypto.Decide sees available quote via BalanceAck (paper mode does not route
 balances through the public MockConn).
 */
-func (session *Session) SeedQuoteCapital(available float64) {
+func (session *Session) SeedQuoteCapital(available float64) error {
 	if session == nil || session.paper == nil {
-		return
+		return errnie.Err(
+			errnie.NotFound,
+			"tests: session paper unavailable",
+			nil,
+		)
 	}
 
 	amount := formatFloat(available)
@@ -44,7 +48,7 @@ func (session *Session) SeedQuoteCapital(available float64) {
 			`}]}`,
 	)
 
-	errnie.Error(session.paper.Emit("balances", payload))
+	return session.paper.Emit("balances", payload)
 }
 
 /*
@@ -52,7 +56,11 @@ SeedTakerFee stores a percent taker fee on the Price surface for one symbol.
 */
 func (session *Session) SeedTakerFee(symbol string, percent float64) error {
 	if session == nil || session.price == nil {
-		return nil
+		return errnie.Err(
+			errnie.NotFound,
+			"tests: session price unavailable",
+			nil,
+		)
 	}
 
 	return session.price.RememberFee(symbol, kraken.TradeVolumeFee{

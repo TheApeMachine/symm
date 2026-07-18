@@ -139,13 +139,18 @@ func TestMapOrdersOmegaFromTouchProximity(t *testing.T) {
 		)
 	}
 
-	askPhase := mapped[3].phase
-	bidPhase := mapped[0].phase
+	askOrder := mapped[3]
+	askBase := goldenPhase(askOrder.sequence)
+	askOffset := math.Mod(askOrder.phase-askBase+math.Pi, 2*math.Pi) - math.Pi
 
-	if math.Abs(math.Sin(askPhase-bidPhase)) < 0.5 {
+	if askOffset < 0 {
+		askOffset += 2 * math.Pi
+	}
+
+	if math.Abs(askOffset-math.Pi) > 0.1 {
 		t.Fatalf(
-			"ask/bid phases should oppose across the mid: bid=%v ask=%v",
-			bidPhase, askPhase,
+			"ask phase should be π above its golden base: phase=%v base=%v offset=%v",
+			askOrder.phase, askBase, askOffset,
 		)
 	}
 

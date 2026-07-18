@@ -125,6 +125,49 @@ func BenchmarkInstrumentOn(b *testing.B) {
 	}
 }
 
+/*
+TestInstrumentPublishEmitsUniverse verifies the terminal receives searchable
+online quote pairs after an instrument snapshot is ingested.
+*/
+func TestInstrumentPublishEmitsUniverse(t *testing.T) {
+	previousQuote := viper.Get("market.quote_currency")
+	previousBatch := viper.Get("market.subscribe_batch")
+	t.Cleanup(func() {
+		viper.Set("market.quote_currency", previousQuote)
+		viper.Set("market.subscribe_batch", previousBatch)
+	})
+
+	Convey("Given an instrument registry with a UI hub", t, func() {
+		viper.Set("market.quote_currency", "USD")
+		viper.Set("market.subscribe_batch", 0)
+		hub := make(chan []byte, 1)
+		mock := mockapi.NewMockAPI()
+		api := websocket.NewAPI(
+			context.Background(), mock.Public(), mock.Private(), nil,
+		)
+		So(api.Initialize(), ShouldBeNil)
+		price := broker.NewPrice(api)
+		instrument := broker.NewInstrument(api, price, hub)
+
+		instrument.On([]byte(`{
+			"channel":"instrument",
+			"type":"snapshot",
+			"data":{"pairs":[
+				{"symbol":"BTC/USD","base":"BTC","quote":"USD","status":"online"},
+				{"symbol":"ETH/EUR","base":"ETH","quote":"EUR","status":"online"}
+			]}
+		}`))
+
+		Convey("Then only online quote-currency pairs are published", func() {
+			So(len(hub), ShouldEqual, 1)
+			frame := string(<-hub)
+			So(frame, ShouldContainSubstring, `"instruments"`)
+			So(frame, ShouldContainSubstring, `"BTC/USD"`)
+			So(frame, ShouldNotContainSubstring, `"ETH/EUR"`)
+		})
+	})
+}
+
 func TestInstrumentSubscribeRejectsInvalidBatchSize(t *testing.T) {
 	previousBatch := viper.Get("market.subscribe_batch")
 	previousQuote := viper.Get("market.quote_currency")

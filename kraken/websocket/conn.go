@@ -26,10 +26,20 @@ Conn is the internal websocket and REST transport.
 */
 type Conn interface {
 	Client() *spot.WebSocket
-	On(channel string, action func([]byte))
+	On(channel string, action func([]byte)) uint64
+	Unsubscribe(channel string, id uint64)
 	Write(params json.Marshaler) error
 	Close()
 	Post(path string, params json.Marshaler) ([]byte, error)
+}
+
+/*
+channelHandler pairs a stable subscription id with its callback so Unsubscribe
+can drop one listener without comparing function values.
+*/
+type channelHandler struct {
+	id uint64
+	fn func([]byte)
 }
 
 /*
@@ -121,22 +131,65 @@ func (api *API) Close() {
 }
 
 /*
-On registers a raw channel consumer on the transport that owns the channel.
-Level3 is deliberately absent because the SDK BookManager consumes those frames
-and exposes its books through Books.
+On registers a raw channel consumer on the transport that owns the channel and
+returns a subscription id for Unsubscribe. Level3 is deliberately absent
+because the SDK BookManager consumes those frames and exposes its books through
+Books.
 */
-func (api *API) On(channel string, action func([]byte)) {
+func (api *API) On(channel string, action func([]byte)) uint64 {
 	switch channel {
 	case "balances", "executions", "add_order":
 		if api.live {
-			api.private.On(channel, action)
+			return api.private.On(channel, action)
+		}
+
+		return api.paper.On(channel, action)
+	default:
+		return api.public.On(channel, action)
+	}
+}
+
+/*
+Unsubscribe removes one previously registered channel consumer by the id On
+returned, so closed positions can leave the ticker path without leaking handlers.
+*/
+func (api *API) Unsubscribe(channel string, id uint64) {
+	if api == nil || id == 0 {
+		return
+	}
+
+	switch channel {
+	case "balances", "executions", "add_order":
+		if api.live {
+			api.private.Unsubscribe(channel, id)
 			return
 		}
 
-		api.paper.On(channel, action)
+		api.paper.Unsubscribe(channel, id)
 	default:
-		api.public.On(channel, action)
+		api.public.Unsubscribe(channel, id)
 	}
+}
+
+/*
+dropHandler removes the channelHandler with the given id.
+*/
+func dropHandler(handlers []channelHandler, id uint64) []channelHandler {
+	if id == 0 || len(handlers) == 0 {
+		return handlers
+	}
+
+	next := make([]channelHandler, 0, len(handlers))
+
+	for _, handler := range handlers {
+		if handler.id == id {
+			continue
+		}
+
+		next = append(next, handler)
+	}
+
+	return next
 }
 
 func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error) {

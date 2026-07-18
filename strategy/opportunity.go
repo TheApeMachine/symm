@@ -10,24 +10,48 @@ import (
 /*
 Opportunity is the decomposed admit state for one forecast. Margin is economic
 edge after uncertainty; Lead is how far cognition has committed ahead of the
-manifold basin on a shared [0,1) scale. Reserved overflow requires both
-positive — anticipatory edge, not planner horizon outrunning a world model.
+manifold basin on a shared [0,1) scale. Reserved overflow is for anticipatory
+edge only — high SNR, cognition ahead of the basin by more than noise, and a
+non-ambiguous short-horizon reading.
 */
 type Opportunity struct {
-	Margin     float64
-	Lead       float64
-	Cognitive  float64
-	Basin      float64
-	BasinReady bool
+	Margin      float64
+	Lead        float64
+	Cognitive   float64
+	Basin       float64
+	BasinReady  bool
+	Ambiguous   bool
+	Contrast    float64
+	Uncertainty float64
+	Horizon     uint64
+	Noise       float64
 }
 
 /*
-Reserved reports whether this reading may consume overflow slots. Positive
-margin alone is a normal-lane SNR clear; reserved needs cognition ahead of the
-settling manifold as well.
+Reserved reports whether this reading may consume overflow slots. Normal-lane
+enter only needs positive executable utility; reserved further demands that
+margin exceed residual uncertainty (SNR > 2), cognitive lead clear the same
+noise share CognitiveClears uses, the basin be ready, the horizon be the next
+event, and cognition be non-ambiguous with positive winner contrast.
 */
 func (opportunity Opportunity) Reserved() bool {
-	return opportunity.Margin > 0 && opportunity.Lead > 0
+	if opportunity.Ambiguous || !opportunity.BasinReady {
+		return false
+	}
+
+	if opportunity.Horizon != 1 {
+		return false
+	}
+
+	if opportunity.Contrast <= 0 {
+		return false
+	}
+
+	if opportunity.Margin <= opportunity.Uncertainty {
+		return false
+	}
+
+	return opportunity.Lead > opportunity.Noise
 }
 
 /*
@@ -50,8 +74,13 @@ func measureOpportunity(
 	thesis *types.Thesis,
 ) Opportunity {
 	reading := Opportunity{
-		Margin:    forecast.ExpectedReturn - forecast.Uncertainty,
-		Cognitive: cognition.Confidence,
+		Margin:      forecast.ExpectedReturn - forecast.Uncertainty,
+		Cognitive:   cognition.Confidence,
+		Ambiguous:   cognition.Ambiguous,
+		Contrast:    cognition.Contrast,
+		Uncertainty: forecast.Uncertainty,
+		Horizon:     forecast.HorizonEvents,
+		Noise:       noiseShare(forecast),
 	}
 
 	basin, ready := basinConfidence(thesis, forecast.Symbol)

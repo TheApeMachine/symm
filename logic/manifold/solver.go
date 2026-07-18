@@ -179,17 +179,6 @@ func (solver *Solver) Update(
 	})
 
 	if len(candidates) > solver.capacity {
-		focusSymbol, _ := thesis.UIProjection()
-
-		for index := solver.capacity; index < len(candidates); index++ {
-			if candidates[index].symbol != focusSymbol {
-				continue
-			}
-
-			candidates[solver.capacity-1] = candidates[index]
-			break
-		}
-
 		candidates = candidates[:solver.capacity]
 	}
 

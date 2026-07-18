@@ -44,10 +44,17 @@ func TestBalancePublish(t *testing.T) {
 		reserved, err := decimal.NewFromString("10")
 		So(err, ShouldBeNil)
 		messages := make(chan []byte, 1)
+		holdings := &sync.Map{}
+		holdings.Store("BTC/USD", &types.Holding{
+			Symbol: "BTC/USD",
+			Qty:    decimal.NewFromFloat64(0.01),
+			Status: types.OPEN,
+		})
 		balance := &Balance{
-			status: types.READY,
-			quote:  "USD",
-			ui:     messages,
+			status:   types.READY,
+			quote:    "USD",
+			ui:       messages,
+			holdings: holdings,
 			model: &kraken.Balance{Data: []kraken.BalanceData{{
 				Asset:     "USD",
 				Balance:   total,
@@ -58,10 +65,35 @@ func TestBalancePublish(t *testing.T) {
 
 		balance.Publish()
 
-		Convey("It should emit and notify the portfolio owner", func() {
+		Convey("It should emit balances and open holdings together", func() {
 			So(len(messages), ShouldEqual, 1)
-			So(<-messages, ShouldNotBeEmpty)
+			frame := string(<-messages)
+			So(frame, ShouldContainSubstring, `"balances"`)
+			So(frame, ShouldContainSubstring, `"positions"`)
+			So(frame, ShouldContainSubstring, `"BTC/USD"`)
+			So(frame, ShouldContainSubstring, `"balance":100`)
+			So(frame, ShouldContainSubstring, `"available":90`)
+			So(frame, ShouldContainSubstring, `"reserved":10`)
+			So(frame, ShouldNotContainSubstring, `"balances":100`)
 			So(balance.Snapshot(), ShouldHaveLength, 1)
+		})
+	})
+}
+
+/*
+TestBalanceFrameRequiresModel keeps reconnect snapshots from wiping the UI with
+an empty balances array while Kraken resync is still in flight.
+*/
+func TestBalanceFrameRequiresModel(t *testing.T) {
+	Convey("Given a ready balance with a cleared model", t, func() {
+		balance := &Balance{
+			status: types.READY,
+			quote:  "USD",
+			ui:     make(chan []byte, 1),
+		}
+
+		Convey("Then Publish refuses to publish", func() {
+			balance.Publish()
 		})
 	})
 }

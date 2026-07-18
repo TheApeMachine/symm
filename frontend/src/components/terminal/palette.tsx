@@ -2,6 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
 import { appStore } from "#/collections/app";
 import { instrumentsStore } from "#/collections/instruments";
+import { measurementsStore } from "#/collections/measurements";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { paletteGroupVariant } from "#/components/terminal/badge-tone";
 import { Badge } from "@/components/ui/badge";
@@ -110,6 +111,9 @@ export const CommandPalette = ({
 		instrumentsStore,
 		(state) => state.symbols,
 	);
+	const measuredSymbols = useSelector(measurementsStore, (state) =>
+		Object.keys(state.measurements).sort(),
+	);
 	const terminal = useSelector(terminalStore, (state) => state);
 	const { closePalette, setPaletteQuery } = terminalStore.actions;
 	const inputRef = useRef<HTMLInputElement | null>(null);
@@ -125,6 +129,10 @@ export const CommandPalette = ({
 	if (!terminal.paletteOpen) {
 		return null;
 	}
+
+	const symbolUniverse = [
+		...new Set([...instrumentSymbols, ...measuredSymbols]),
+	].sort();
 
 	const commands: PaletteCommand[] = [
 		...SURFACES.map(
@@ -148,7 +156,7 @@ export const CommandPalette = ({
 				active: false,
 			}),
 		),
-		...instrumentSymbols.map(
+		...symbolUniverse.map(
 			(symbol): PaletteCommand => ({
 				key: `symbol:${symbol}`,
 				label: symbol,
@@ -174,6 +182,12 @@ export const CommandPalette = ({
 			: ((terminal.paletteIndex % commands.length) + commands.length) %
 				commands.length;
 	const countText = `${commands.length} command${commands.length === 1 ? "" : "s"}`;
+	const emptyCopy =
+		terminal.paletteMode === "symbols"
+			? symbolUniverse.length === 0
+				? "No symbols yet. Waiting for instrument or measurement frames."
+				: "No match. Try a symbol like BTC/USD."
+			: "No match. Try a surface, kernel, or symbol name.";
 
 	return (
 		<div className="absolute inset-0 z-40 animate-[symFade_.16s_ease] [background:color-mix(in_srgb,var(--sunken)_64%,transparent)] backdrop-blur-[3px]">
@@ -220,7 +234,7 @@ export const CommandPalette = ({
 					<div className="flex min-h-0 flex-col gap-0.5 overflow-auto p-1.5">
 						{commands.length === 0 ? (
 							<div className="px-3.5 py-[26px] text-center font-mono text-[12px] text-(--f4)">
-								No match. Try a surface or kernel name.
+								{emptyCopy}
 							</div>
 						) : (
 							commands.map((command, index) => {

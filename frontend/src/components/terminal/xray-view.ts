@@ -7,8 +7,9 @@ import {
 	measurementTickCount,
 } from "#/collections/measurements";
 import type { ResonanceFrame } from "#/collections/resonance";
-import { latestHawkesRaw } from "#/components/terminal/hawkes-curve";
+import { latestHawkesRaw } from "#/components/terminal/hawkes-fit";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
+import { requirePositiveLength } from "#/lib/domain";
 
 export type HawkesMetrics = {
 	intensity: number | null;
@@ -62,6 +63,8 @@ const layerError = (
 	surprise: number | undefined,
 ): number => {
 	if (state.length > 0 && prediction.length === state.length) {
+		requirePositiveLength(state.length, "xray mean absolute error");
+
 		const total = state.reduce(
 			(sum, value, index) => sum + Math.abs(value - (prediction[index] ?? 0)),
 			0,

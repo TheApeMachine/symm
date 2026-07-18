@@ -4,6 +4,7 @@ import {
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
 import type { LatentPoint } from "#/components/terminal/xray-view";
+import { requirePositive, requirePositiveLength } from "#/lib/domain";
 
 /*
 drawXrayWaiting clears an xray canvas and paints a muted waiting caption.
@@ -47,26 +48,25 @@ export const categoryColor = (category: string, focus: boolean): string => {
 };
 
 /*
-latentRange returns a finite axis span so scatter projection never divides by zero.
+latentRange returns the finite axis span for scatter projection.
+A zero or non-finite span is an undefined scale, not a unit fallback.
 */
 export const latentRange = (
 	points: LatentPoint[],
 	key: "x" | "y",
 ): { min: number; span: number } => {
+	requirePositiveLength(points.length, `latentRange.${key}`);
+
 	const values = points.map((point) => point[key]);
 	const min = Math.min(...values);
 	const max = Math.max(...values);
 	const span = max - min;
 
 	if (!Number.isFinite(min) || !Number.isFinite(span)) {
-		return { min: 0, span: 1 };
+		requirePositive(Number.NaN, `latentRange.${key}.span`);
 	}
 
-	if (span <= 0) {
-		return { min: min - 0.5, span: 1 };
-	}
-
-	return { min, span };
+	return { min, span: requirePositive(span, `latentRange.${key}.span`) };
 };
 
 /*
@@ -81,12 +81,11 @@ export const latentPointScreen = (
 ) => {
 	const xRange = latentRange(points, "x");
 	const yRange = latentRange(points, "y");
+	const xSpan = requirePositive(xRange.span, "latentPointScreen.xSpan");
+	const ySpan = requirePositive(yRange.span, "latentPointScreen.ySpan");
 
 	return {
-		x: pad + ((point.x - xRange.min) / xRange.span) * (width - pad * 2),
-		y:
-			height -
-			pad -
-			((point.y - yRange.min) / yRange.span) * (height - pad * 2),
+		x: pad + ((point.x - xRange.min) / xSpan) * (width - pad * 2),
+		y: height - pad - ((point.y - yRange.min) / ySpan) * (height - pad * 2),
 	};
 };

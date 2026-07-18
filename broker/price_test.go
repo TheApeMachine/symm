@@ -39,6 +39,24 @@ func TestPriceTickerAck(t *testing.T) {
 
 }
 
+func TestPriceFraction(t *testing.T) {
+	Convey("Given a cached TradeVolume percent fee", t, func() {
+		price := broker.NewPrice(nil)
+		So(price.RememberFee("BTC/USD", kraken.TradeVolumeFee{
+			Fee: decimal.NewFromFloat64(0.26),
+		}), ShouldBeNil)
+
+		Convey("When Fraction is requested", func() {
+			fraction, err := price.Fraction("BTC/USD")
+
+			Convey("Then percent is converted once on the Price surface", func() {
+				So(err, ShouldBeNil)
+				So(fraction.Float64(), ShouldEqual, 0.0026)
+			})
+		})
+	})
+}
+
 func TestPriceSnapshot(t *testing.T) {
 	Convey("Given an initializing Price", t, func() {
 		mock := mockapi.NewMockAPI()
@@ -222,10 +240,10 @@ func BenchmarkPriceSnapshot(b *testing.B) {
 
 	for index := range symbols {
 		symbols[index] = fmt.Sprintf("ASSET-%03d/USD", index)
-		price.TickerAck([]byte(fmt.Sprintf(
+		price.TickerAck(fmt.Appendf(nil, 
 			`{"channel":"ticker","type":"update","data":[{"symbol":"%s","last":"1","bid":"1","ask":"1"}]}`,
 			symbols[index],
-		)))
+		))
 	}
 
 	b.ReportAllocs()

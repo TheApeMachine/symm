@@ -14,11 +14,13 @@ export const DEFAULT_KERNELS = [
 	"toxicity",
 ];
 
+export const DEFAULT_FOCUS_SYMBOL = "BTC/USD";
+
 export const appStore = createStore(
 	{
 		online: false,
 		error: null as Record<string, unknown> | null,
-		focusSymbol: "BTC/USD",
+		focusSymbol: DEFAULT_FOCUS_SYMBOL,
 		query: "",
 		kernels: DEFAULT_KERNELS,
 		observedSources: new Set<string>(),

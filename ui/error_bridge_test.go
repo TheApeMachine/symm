@@ -14,7 +14,7 @@ func TestErrorBridgeForwardsErrorLevel(t *testing.T) {
 	t.Parallel()
 
 	messages := make(chan []byte, 2)
-	bridge := &ErrorBridge{messages: messages}
+	bridge := &ErrorBridge{messages: messages, ready: func() bool { return true }}
 
 	info := []byte(`{"level":"info","message":"noise"}`)
 	errorLine := []byte(
@@ -64,7 +64,7 @@ func TestErrorBridgeDedupesIdenticalFlood(t *testing.T) {
 	t.Parallel()
 
 	messages := make(chan []byte, 4)
-	bridge := &ErrorBridge{messages: messages}
+	bridge := &ErrorBridge{messages: messages, ready: func() bool { return true }}
 	line := []byte(`{"level":"error","error":"same"}`)
 
 	_, _ = bridge.Write(line)
@@ -76,13 +76,41 @@ func TestErrorBridgeDedupesIdenticalFlood(t *testing.T) {
 }
 
 /*
+TestErrorBridgeWithholdsUntilReady drops error frames before the Warmup gate.
+*/
+func TestErrorBridgeWithholdsUntilReady(t *testing.T) {
+	t.Parallel()
+
+	messages := make(chan []byte, 2)
+	open := false
+	bridge := &ErrorBridge{
+		messages: messages,
+		ready:    func() bool { return open },
+	}
+	line := []byte(`{"level":"error","error":"allocator: ask unavailable for BILL/USD"}`)
+
+	_, _ = bridge.Write(line)
+
+	if got := len(messages); got != 0 {
+		t.Fatalf("want 0 frames before Warmup, got %d", got)
+	}
+
+	open = true
+	_, _ = bridge.Write(line)
+
+	if got := len(messages); got != 1 {
+		t.Fatalf("want 1 frame after Warmup, got %d", got)
+	}
+}
+
+/*
 TestErrorBridgeDoesNotBlockWhenChannelFull returns immediately on a full hub.
 */
 func TestErrorBridgeDoesNotBlockWhenChannelFull(t *testing.T) {
 	t.Parallel()
 
 	messages := make(chan []byte)
-	bridge := &ErrorBridge{messages: messages}
+	bridge := &ErrorBridge{messages: messages, ready: func() bool { return true }}
 	done := make(chan struct{})
 
 	go func() {

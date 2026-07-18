@@ -99,14 +99,13 @@ func TestSolverUpdate(t *testing.T) {
 		})
 	})
 
-	Convey("Given a focused symbol outside the strongest GPU working set", t, func() {
+	Convey("Given more candidates than GPU capacity", t, func() {
 		viper.Set("market.manifold_max_symbols", 1)
 		solver, err := NewSolver(newTestBookSource("BTC/USD", "ETH/USD"))
 		So(err, ShouldBeNil)
 		defer solver.Close()
 
 		thesis := types.NewThesis(nil, nil)
-		thesis.SetUIProjection("BTC/USD", types.SourceFluid)
 		bitcoin := solverOutcome(time.Unix(1, 0), 2, 1)
 		ether := solverOutcome(time.Unix(1, 0), 8, 4)
 		err = solver.Update(thesis, staticHawkesSource{
@@ -119,10 +118,10 @@ func TestSolverUpdate(t *testing.T) {
 		_, bitcoinFound := thesis.Manifold.Load("BTC/USD")
 		_, etherFound := thesis.Manifold.Load("ETH/USD")
 
-		Convey("It should reserve the existing observability slot for the focus", func() {
+		Convey("It should keep the strongest intensity only", func() {
 			So(err, ShouldBeNil)
-			So(bitcoinFound, ShouldBeTrue)
-			So(etherFound, ShouldBeFalse)
+			So(bitcoinFound, ShouldBeFalse)
+			So(etherFound, ShouldBeTrue)
 		})
 	})
 

@@ -33,6 +33,14 @@ type PayloadFixture interface {
 }
 
 /*
+FramesOf types a payload fixture's Generate stream inside the tests package.
+Call sites should prefer this over fixture.Frames when crossing package edges.
+*/
+func FramesOf(fixture PayloadFixture) iter.Seq[Frame] {
+	return FrameSequence(fixture.Generate())
+}
+
+/*
 StaticSequence replays one fixed payload list in order for scripted broker tests.
 */
 type StaticSequence struct {

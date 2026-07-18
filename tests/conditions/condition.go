@@ -17,7 +17,6 @@ const (
 )
 
 func base(
-	horizon int,
 	ticker tests.Fixture,
 	trade tests.Fixture,
 	book tests.Fixture,
@@ -47,7 +46,7 @@ Calm builds a multi-stream market with mild drift and no scenario shaping —
 the baseline against which stressed conditions are compared.
 */
 func Calm(horizon int) *tests.Market {
-	return base(horizon, calmTicker(horizon), calmTrade(horizon), calmBook(horizon))
+	return base(calmTicker(horizon), calmTrade(horizon), calmBook(horizon))
 }
 
 /*
@@ -56,8 +55,7 @@ calm multi-stream market.
 */
 func Pump(horizon int, at int, priceMul float64, volumeMul float64) *tests.Market {
 	return base(
-		horizon,
-		newShaped(tests.Spike(calmTicker(horizon).Frames(), at, priceMul, volumeMul)),
+		newShaped(tests.Spike(tests.FramesOf(calmTicker(horizon)), at, priceMul, volumeMul)),
 		calmTrade(horizon),
 		calmBook(horizon),
 	)
@@ -69,8 +67,7 @@ bleed used for exit/exhaustion style assertions.
 */
 func Drawdown(horizon int, depth float64, over int) *tests.Market {
 	return base(
-		horizon,
-		newShaped(tests.Drawdown(calmTicker(horizon).Frames(), depth, over)),
+		newShaped(tests.Drawdown(tests.FramesOf(calmTicker(horizon)), depth, over)),
 		calmTrade(horizon),
 		calmBook(horizon),
 	)
@@ -82,8 +79,7 @@ ratePerFrame — momentum flip for exit thesis checks.
 */
 func Reversal(horizon int, at int, ratePerFrame float64) *tests.Market {
 	return base(
-		horizon,
-		newShaped(tests.Reversal(calmTicker(horizon).Frames(), at, ratePerFrame)),
+		newShaped(tests.Reversal(tests.FramesOf(calmTicker(horizon)), at, ratePerFrame)),
 		calmTrade(horizon),
 		calmBook(horizon),
 	)
@@ -94,9 +90,8 @@ Aggression forces buy-heavy trade flow with scaled size from frame at onward.
 */
 func Aggression(horizon int, at int, qtyMul float64) *tests.Market {
 	return base(
-		horizon,
 		calmTicker(horizon),
-		newShaped(tests.TradeAggression(calmTrade(horizon).Frames(), at, qtyMul)),
+		newShaped(tests.TradeAggression(tests.FramesOf(calmTrade(horizon)), at, qtyMul)),
 		calmBook(horizon),
 	)
 }
@@ -106,7 +101,6 @@ Decay thins resting book qty while keeping the calm tape — mechanical withdraw
 */
 func Decay(horizon int, at int, depth float64) *tests.Market {
 	return base(
-		horizon,
 		calmTicker(horizon),
 		calmTrade(horizon),
 		newShaped(tests.BookDecay(twoSidedBooks(horizon), at, depth)),
@@ -118,7 +112,6 @@ Imbalance loads bids and thins asks from frame at onward — depthflow pressure.
 */
 func Imbalance(horizon int, at int, bidMul float64, askMul float64) *tests.Market {
 	return base(
-		horizon,
 		calmTicker(horizon),
 		calmTrade(horizon),
 		newShaped(tests.BookImbalance(twoSidedBooks(horizon), at, bidMul, askMul)),
@@ -127,7 +120,7 @@ func Imbalance(horizon int, at int, bidMul float64, askMul float64) *tests.Marke
 
 func twoSidedBooks(horizon int) iter.Seq[tests.Frame] {
 	return tests.Repeat(
-		bookfixture.NewFixture(bookfixture.SNAPSHOT, 1).Frames(),
+		tests.FramesOf(bookfixture.NewFixture(bookfixture.SNAPSHOT, 1)),
 		horizon,
 	)
 }
@@ -137,7 +130,6 @@ Lag emits a multi-symbol ticker cohort where followers trail the leader.
 */
 func Lag(horizon int, lagFrames int) *tests.Market {
 	return base(
-		horizon,
 		cohortFixture(horizon, tests.CohortLag, lagFrames),
 		calmTrade(horizon),
 		calmBook(horizon),
@@ -149,7 +141,6 @@ Herd emits a co-moving multi-symbol ticker cohort for peer/breadth signals.
 */
 func Herd(horizon int) *tests.Market {
 	return base(
-		horizon,
 		cohortFixture(horizon, tests.CohortHerd, 0),
 		calmTrade(horizon),
 		calmBook(horizon),
@@ -162,7 +153,6 @@ herd from unstructured cohort motion.
 */
 func Noise(horizon int) *tests.Market {
 	return base(
-		horizon,
 		cohortFixture(horizon, tests.CohortNoise, 0),
 		calmTrade(horizon),
 		calmBook(horizon),
@@ -175,9 +165,8 @@ liquidity scarcity rises relative to peers.
 */
 func ThinHerd(horizon int, qtyMul float64) *tests.Market {
 	return base(
-		horizon,
 		newShaped(tests.ThinSubject(
-			cohortFixture(horizon, tests.CohortHerd, 0).Frames(),
+			tests.FramesOf(cohortFixture(horizon, tests.CohortHerd, 0)),
 			subjectSymbol,
 			qtyMul,
 		)),
@@ -200,7 +189,7 @@ func cohortFixture(
 ) tests.Fixture {
 	var basePayload []byte
 
-	for frame := range calmTicker(1).Frames() {
+	for frame := range tests.FramesOf(calmTicker(1)) {
 		basePayload = frame.Payload
 		break
 	}

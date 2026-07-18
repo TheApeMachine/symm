@@ -102,13 +102,14 @@ func TestSessionPaperSmoke(t *testing.T) {
 			last := tests.Last(theses)
 
 			Convey("Then the paper path records measured ticks without silent fills", func() {
+				So(last, ShouldNotBeNil)
+
 				positions := 0
 				last.Holdings.Range(func(key, value any) bool {
 					positions++
 					return true
 				})
 
-				So(last, ShouldNotBeNil)
 				So(len(last.Measurements), ShouldBeGreaterThan, 0)
 				So(session.Desk().OpenPositions(), ShouldEqual, 0)
 				// Paper pump sessions run without analyzer forecasts/fees, so
@@ -188,7 +189,7 @@ func TestMockAPIWire(t *testing.T) {
 		Convey("When a ticker fixture is emitted", func() {
 			seen := 0
 			api.On("ticker", func([]byte) { seen++ })
-			for frame := range tickerfixture.NewFixture(tickerfixture.UPDATE, 3).Frames() {
+			for frame := range tests.FramesOf(tickerfixture.NewFixture(tickerfixture.UPDATE, 3)) {
 				mock.Emit(frame.Channel, frame.Payload)
 			}
 
@@ -228,7 +229,7 @@ func BenchmarkSessionAdvance(b *testing.B) {
 
 	frames := make([]tests.Frame, 0, 16)
 
-	for frame := range tickerfixture.NewFixture(tickerfixture.UPDATE, 16).Frames() {
+	for frame := range tests.FramesOf(tickerfixture.NewFixture(tickerfixture.UPDATE, 16)) {
 		frames = append(frames, frame)
 	}
 

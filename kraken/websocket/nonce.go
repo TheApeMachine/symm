@@ -60,8 +60,12 @@ func NewAuthNonce(pathDir string) (*AuthNonce, error) {
 Next returns the next monotonic nonce string and persists the high-water mark.
 */
 func (nonce *AuthNonce) Next() string {
-	next := nonce.highWater.Add(1)
-	nonce.persist(next, false)
+	nonce.persistMu.Lock()
+	defer nonce.persistMu.Unlock()
+
+	next := nonce.highWater.Load() + 1
+	nonce.highWater.Store(next)
+	nonce.persistValue(next, false)
 
 	return strconv.FormatInt(next, 10)
 }
@@ -71,8 +75,12 @@ Bump jumps the high-water by one second of nanoseconds after an Invalid nonce
 rejection so the retry clears anything Kraken still holds, then persists.
 */
 func (nonce *AuthNonce) Bump() {
-	next := nonce.highWater.Add(int64(time.Second))
-	nonce.persist(next, true)
+	nonce.persistMu.Lock()
+	defer nonce.persistMu.Unlock()
+
+	next := nonce.highWater.Load() + int64(time.Second)
+	nonce.highWater.Store(next)
+	nonce.persistValue(next, true)
 }
 
 /*
@@ -151,14 +159,7 @@ func loadNonce(path string) (int64, error) {
 	return value, nil
 }
 
-/*
-persist serializes every high-water write through persistMu, including absolute
-bumps, so concurrent writers cannot regress the stored value.
-*/
-func (nonce *AuthNonce) persist(value int64, force bool) {
-	nonce.persistMu.Lock()
-	defer nonce.persistMu.Unlock()
-
+func (nonce *AuthNonce) persistValue(value int64, force bool) {
 	if !force && time.Since(nonce.lastWrite) < 50*time.Millisecond && value%128 != 0 {
 		return
 	}

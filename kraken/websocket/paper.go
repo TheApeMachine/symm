@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
@@ -25,6 +26,7 @@ type Paper struct {
 	cancel    context.CancelFunc
 	status    types.Status
 	sync      *sync.Map
+	nextID    atomic.Uint64
 	simulator *Simulator
 	lifecycle *Lifecycle
 	url       string
@@ -63,13 +65,37 @@ func (paper *Paper) Status() types.Status {
 
 func (paper *Paper) On(
 	channel string, action func([]byte),
-) {
-	callbacks, ok := paper.sync.LoadOrStore(channel, []func([]byte){action})
+) uint64 {
+	if paper == nil || action == nil {
+		return 0
+	}
+
+	id := paper.nextID.Add(1)
+	handler := channelHandler{id: id, fn: action}
+	callbacks, ok := paper.sync.LoadOrStore(channel, []channelHandler{handler})
 
 	if ok {
-		callbacks = append(callbacks.([]func([]byte)), action)
-		paper.sync.Store(channel, callbacks)
+		paper.sync.Store(channel, append(callbacks.([]channelHandler), handler))
 	}
+
+	return id
+}
+
+/*
+Unsubscribe removes one handler previously registered with On for channel.
+*/
+func (paper *Paper) Unsubscribe(channel string, id uint64) {
+	if paper == nil || id == 0 {
+		return
+	}
+
+	callbacks, ok := paper.sync.Load(channel)
+
+	if !ok {
+		return
+	}
+
+	paper.sync.Store(channel, dropHandler(callbacks.([]channelHandler), id))
 }
 
 func (paper *Paper) Emit(channel string, payload json.Marshaler) error {
@@ -93,8 +119,8 @@ func (paper *Paper) Emit(channel string, payload json.Marshaler) error {
 		))
 	}
 
-	for _, callback := range callbacks.([]func([]byte)) {
-		callback(raw)
+	for _, handler := range callbacks.([]channelHandler) {
+		handler.fn(raw)
 	}
 
 	return nil

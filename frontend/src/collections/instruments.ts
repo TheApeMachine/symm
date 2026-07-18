@@ -1,5 +1,5 @@
 import { createStore } from "@tanstack/react-store";
-import { appStore } from "./app";
+import { appStore, DEFAULT_FOCUS_SYMBOL } from "./app";
 
 const symbolFrom = (value: unknown): string => {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -57,8 +57,12 @@ export const instrumentsStore = createStore(
 				}
 
 				const symbols = Object.keys(instruments).sort();
-				if (symbols.length > 0 && !symbols.includes(appStore.state.focusSymbol)) {
-					appStore.actions.updateFocusSymbol(symbols[0] ?? "");
+				const focus = appStore.state.focusSymbol;
+
+				// Keep an explicit focus. Only adopt the default major when the
+				// current focus is empty; never jump to a lexical first pair.
+				if (focus === "" && symbols.includes(DEFAULT_FOCUS_SYMBOL)) {
+					appStore.actions.updateFocusSymbol(DEFAULT_FOCUS_SYMBOL);
 				}
 
 				return {

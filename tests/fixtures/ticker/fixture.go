@@ -19,10 +19,17 @@ const (
 	UPDATE   FixtureType = "update"
 )
 
+/*
+Fixture replays an ordered ticker payload sequence for market and broker tests.
+Payloads are materialized up front so Generate and Frames remain repeatable.
+*/
 type Fixture struct {
-	sequence iter.Seq[[]byte]
+	sequence [][]byte
 }
 
+/*
+NewFixture loads an embedded ticker template and expands it over the horizon.
+*/
 func NewFixture(typ FixtureType, horizon int) *Fixture {
 	raw, err := fixtureFiles.ReadFile("fixtures/" + string(typ) + ".json")
 
@@ -45,13 +52,31 @@ func NewWithEngine(
 		engine = tests.NewEngine(1)
 	}
 
-	return &Fixture{sequence: engine.Run(raw)}
+	sequence := make([][]byte, 0)
+
+	for payload := range engine.Run(raw) {
+		sequence = append(sequence, append([]byte(nil), payload...))
+	}
+
+	return &Fixture{sequence: sequence}
 }
 
+/*
+Generate yields the materialized ticker payloads in order.
+*/
 func (fixture *Fixture) Generate() iter.Seq[[]byte] {
-	return fixture.sequence
+	return func(yield func([]byte) bool) {
+		for _, payload := range fixture.sequence {
+			if !yield(payload) {
+				return
+			}
+		}
+	}
 }
 
+/*
+Frames yields typed channel frames derived from Generate.
+*/
 func (fixture *Fixture) Frames() iter.Seq[tests.Frame] {
 	return tests.FrameSequence(fixture.Generate())
 }

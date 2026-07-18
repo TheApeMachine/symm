@@ -17,8 +17,8 @@ import (
 )
 
 /*
-TestPositionExecutionAck verifies confirmed fills update the existing strategy
-holding without deriving wallet quantity or speculative round-trip valuation.
+TestPositionExecutionAck verifies confirmed fills mark inventory through Price
+friction and close the lot when a sell fills.
 */
 func TestPositionExecutionAck(t *testing.T) {
 	Convey("Given an existing strategy holding and a confirmed entry fill", t, func() {
@@ -26,17 +26,25 @@ func TestPositionExecutionAck(t *testing.T) {
 		fees.Store("BTC/USD", kraken.TradeVolumeFee{
 			Fee: decimal.NewFromFloat64(0.26),
 		})
+		tickers := &sync.Map{}
+		tickers.Store("BTC/USD", &kraken.TickerData{
+			Symbol: "BTC/USD",
+			Ask:    decimal.NewFromInt64(100),
+			Bid:    decimal.NewFromInt64(100),
+			Last:   decimal.NewFromInt64(100),
+		})
 		price := &Price{
 			fees:    fees,
-			tickers: &sync.Map{},
+			tickers: tickers,
 		}
 		price.status.Store(types.READY)
 		holdings := &sync.Map{}
-		holding := &types.Holding{
-			Symbol: "BTC/USD",
-			Asset:  "BTC",
-			Qty:    decimal.NewFromInt64(1),
-		}
+		holding := types.NewHolding(
+			context.Background(),
+			"BTC/USD",
+			decimal.NewFromInt64(1),
+		)
+		holding.Asset = "BTC"
 		holdings.Store("BTC/USD", holding)
 		balance := &Balance{quote: "USD", holdings: holdings}
 		request := kraken.NewMarketOrder("buy", 1, "BTC/USD")
@@ -44,7 +52,9 @@ func TestPositionExecutionAck(t *testing.T) {
 			status: types.PENDING,
 			price:  price, balance: balance,
 			pair: &kraken.InstrumentPair{
-				Symbol: "BTC/USD", Base: "BTC", QtyIncrement: 0.00000001, QtyMin: 0.00000001,
+				Symbol: "BTC/USD", Base: "BTC",
+				QtyIncrement: 0.00000001, QtyMin: 0.00000001,
+				CostPrecision: 8,
 			},
 			request: request,
 		}
@@ -57,10 +67,10 @@ func TestPositionExecutionAck(t *testing.T) {
 				OrderID: "order-1", ExecID: "buy-1", ExecType: "trade",
 				Symbol: "BTC/USD", Side: "buy", OrderType: "market",
 				LastQty: 1, CumQty: 1, OrderStatus: "filled",
-				LastPrice:   *decimal.NewFromInt64(100),
-				AvgPrice:    *decimal.NewFromInt64(100),
-				Cost:        *decimal.NewFromInt64(100),
-				FeeUsdEquiv: *decimal.NewFromFloat64(0.26), Timestamp: time.Unix(1, 0),
+				LastPrice:   decimal.NewFromInt64(100),
+				AvgPrice:    decimal.NewFromInt64(100),
+				Cost:        decimal.NewFromInt64(100),
+				FeeUsdEquiv: decimal.NewFromFloat64(0.26), Timestamp: time.Unix(1, 0),
 			}},
 		}
 		buffer, err := execution.MarshalJSON()
@@ -68,18 +78,22 @@ func TestPositionExecutionAck(t *testing.T) {
 		So(err, ShouldBeNil)
 		position.ExecutionAck(buffer)
 
-		Convey("It should record the execution facts on that holding", func() {
+		Convey("It should open the lot and record the execution on Position", func() {
 			So(position.Status(), ShouldEqual, types.OPEN)
+			So(holding.Status, ShouldEqual, types.OPEN)
 			So(holding.Qty.Float64(), ShouldEqual, 1.0)
-			So(holding.EntryPrice.Float64(), ShouldEqual, 100.0)
 			So(holding.Mark.Float64(), ShouldEqual, 100.0)
-			So(holding.EntryFee.Float64(), ShouldAlmostEqual, 0.26, 0.0000001)
-			So(holding.ExitFee, ShouldBeNil)
-			So(*holding.EntryAt, ShouldEqual, time.Unix(1, 0))
-			So(holding.Executions, ShouldHaveLength, 1)
+			So(holding.PnL, ShouldNotBeNil)
+			So(position.executions, ShouldHaveLength, 1)
 		})
 
-		Convey("It should remove the filled quantity when the position exits", func() {
+		Convey("It should close and evict the holding when the position exits", func() {
+			tickers.Store("BTC/USD", &kraken.TickerData{
+				Symbol: "BTC/USD",
+				Ask:    decimal.NewFromInt64(101),
+				Bid:    decimal.NewFromInt64(101),
+				Last:   decimal.NewFromInt64(101),
+			})
 			exitRequest := kraken.NewMarketOrder("sell", 1, "BTC/USD")
 			position.request = exitRequest
 			position.OrderAck([]byte(`{"method":"add_order","result":{"order_id":"sell-1"},"success":true,"req_id":` +
@@ -90,22 +104,21 @@ func TestPositionExecutionAck(t *testing.T) {
 					OrderID: "sell-1", ExecID: "sell-fill", ExecType: "trade",
 					Symbol: "BTC/USD", Side: "sell", OrderType: "market",
 					LastQty: 1, CumQty: 1, OrderStatus: "filled",
-					LastPrice:   *decimal.NewFromInt64(101),
-					AvgPrice:    *decimal.NewFromInt64(101),
-					Cost:        *decimal.NewFromInt64(101),
-					FeeUsdEquiv: *decimal.NewFromFloat64(0.2626), Timestamp: time.Unix(2, 0),
+					LastPrice:   decimal.NewFromInt64(101),
+					AvgPrice:    decimal.NewFromInt64(101),
+					Cost:        decimal.NewFromInt64(101),
+					FeeUsdEquiv: decimal.NewFromFloat64(0.2626), Timestamp: time.Unix(2, 0),
 				}},
 			}
 			exitBuffer, exitErr := exit.MarshalJSON()
 
 			So(exitErr, ShouldBeNil)
 			position.ExecutionAck(exitBuffer)
-			holding, holdingErr := balance.Holding("BTC/USD")
+			_, holdingErr := balance.Holding("BTC/USD")
 
-			So(holdingErr, ShouldBeNil)
+			So(holdingErr, ShouldNotBeNil)
 			So(position.Status(), ShouldEqual, types.CLOSED)
-			So(holding.Mark.Float64(), ShouldEqual, 101.0)
-			So(holding.Executions, ShouldHaveLength, 2)
+			So(position.executions, ShouldHaveLength, 2)
 		})
 
 		Convey("It should keep the holding open when an exit is canceled", func() {
@@ -130,8 +143,8 @@ func TestPositionExecutionAck(t *testing.T) {
 }
 
 /*
-TestPositionExitQuantity verifies partial and full exits honor exchange rounding
-and cap requested quantity at the filled holding balance.
+TestPositionExitQuantity verifies parameterless Exit sizes the sell from the
+full filled holding balance before the transport accepts or rejects it.
 */
 func TestPositionExitQuantity(t *testing.T) {
 	Convey("Given an open position with one filled unit", t, func() {
@@ -142,48 +155,28 @@ func TestPositionExitQuantity(t *testing.T) {
 		)
 		api := websocket.NewAPI(ctx, mock.Public(), mock.Private(), paper)
 		holdings := &sync.Map{}
-		holding := &types.Holding{
-			Symbol: "BTC/USD",
-			Asset:  "BTC",
-			Qty:    decimal.NewFromInt64(1),
-			Status: types.OPEN,
-		}
+		holding := types.NewHolding(ctx, "BTC/USD", decimal.NewFromInt64(1))
+		holding.Asset = "BTC"
+		holding.Status = types.OPEN
 		holdings.Store("BTC/USD", holding)
 		balance := &Balance{quote: "USD", holdings: holdings}
 		pair := &kraken.InstrumentPair{
 			Symbol: "BTC/USD", Base: "BTC",
 			QtyIncrement: 0.00000001, QtyMin: 0.00000001,
 		}
-		Convey("When Exit requests a partial quantity", func() {
+
+		Convey("When Exit closes the position", func() {
 			position := NewPosition(api, nil, nil, balance, pair)
 			position.status = types.OPEN
-			_ = position.Exit()
-
-			Convey("Then the sell order carries the rounded partial lot", func() {
-				So(position.request, ShouldNotBeNil)
-				So(position.request.Params.OrderQty, ShouldEqual, 0.25)
-			})
-		})
-
-		Convey("When Exit requests more than the filled balance", func() {
-			position := NewPosition(api, nil, nil, balance, pair)
-			position.status = types.OPEN
-			_ = position.Exit()
+			err := position.Exit()
 
 			Convey("Then the sell order uses the full filled balance", func() {
 				So(position.request, ShouldNotBeNil)
 				So(position.request.Params.OrderQty, ShouldEqual, 1.0)
-			})
-		})
 
-		Convey("When Exit requests a full close", func() {
-			position := NewPosition(api, nil, nil, balance, pair)
-			position.status = types.OPEN
-			_ = position.Exit()
-
-			Convey("Then the sell order uses the full filled balance", func() {
-				So(position.request, ShouldNotBeNil)
-				So(position.request.Params.OrderQty, ShouldEqual, 1.0)
+				if err != nil {
+					So(err.Error(), ShouldContainSubstring, "failed to place market order")
+				}
 			})
 		})
 	})
@@ -203,23 +196,30 @@ func TestBalanceTradeMatchesSymbol(t *testing.T) {
 }
 
 /*
-BenchmarkPositionExecutionAck measures the fill-to-Holding accounting path.
+BenchmarkPositionExecutionAck measures the fill-to-Holding mark path.
 */
 func BenchmarkPositionExecutionAck(b *testing.B) {
 	fees := &sync.Map{}
 	fees.Store("BTC/USD", kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.26),
 	})
-	price := &Price{fees: fees, tickers: &sync.Map{}}
+	tickers := &sync.Map{}
+	tickers.Store("BTC/USD", &kraken.TickerData{
+		Symbol: "BTC/USD",
+		Ask:    decimal.NewFromInt64(100),
+		Bid:    decimal.NewFromInt64(100),
+		Last:   decimal.NewFromInt64(100),
+	})
+	price := &Price{fees: fees, tickers: tickers}
 	price.status.Store(types.READY)
 	execution := &kraken.Execution{
 		Channel: "executions", Type: "update",
 		Data: []kraken.ExecutionData{{
 			OrderID: "order-1", ExecID: "buy-1", ExecType: "trade",
-			Symbol: "BTC/USD", Side: "buy",
-			LastQty: 1, LastPrice: *decimal.NewFromInt64(100),
-			Cost:        *decimal.NewFromInt64(100),
-			FeeUsdEquiv: *decimal.NewFromFloat64(0.26), Timestamp: time.Unix(1, 0),
+			Symbol: "BTC/USD", Side: "buy", OrderStatus: "filled",
+			LastQty: 1, LastPrice: decimal.NewFromInt64(100),
+			Cost:        decimal.NewFromInt64(100),
+			FeeUsdEquiv: decimal.NewFromFloat64(0.26), Timestamp: time.Unix(1, 0),
 		}},
 	}
 	buffer, err := execution.MarshalJSON()
@@ -236,13 +236,16 @@ func BenchmarkPositionExecutionAck(b *testing.B) {
 		position := &Position{
 			status: types.PENDING,
 			price:  price, balance: balance,
-			pair:    &kraken.InstrumentPair{Symbol: "BTC/USD", Base: "BTC"},
+			pair: &kraken.InstrumentPair{
+				Symbol: "BTC/USD", Base: "BTC", CostPrecision: 8,
+			},
 			orderID: "order-1",
 		}
-		holdings.Store("BTC/USD", &types.Holding{
-			Symbol: "BTC/USD", Asset: "BTC",
-			Qty: decimal.NewFromInt64(0),
-		})
+		holdings.Store("BTC/USD", types.NewHolding(
+			context.Background(),
+			"BTC/USD",
+			decimal.NewFromInt64(1),
+		))
 		position.ExecutionAck(buffer)
 	}
 }

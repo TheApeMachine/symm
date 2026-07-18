@@ -48,23 +48,39 @@ emulation is used. This allows for a much more realistic
 simulation of the market and avoids the optimism bias.
 */
 type Simulator struct {
-	booter        *system.Booter
-	status        types.Status
+	booter *system.Booter
+	status types.Status
 	// ponytail: global lock serializes independent websocket, REST, and fill
 	// latency operations; per-ring locking is the intended upgrade path.
 	mu            sync.Mutex
 	wsLatencies   *ring.Ring
 	restLatencies *ring.Ring
 	fillLatencies *ring.Ring
+	seed          int64
+	rng           *rand.Rand
 }
 
+/*
+NewSimulator constructs a latency simulator with an explicit replay seed.
+*/
 func NewSimulator() *Simulator {
+	seed := time.Now().UnixNano()
+
 	return &Simulator{
 		status:        types.INITIALIZING,
 		wsLatencies:   ring.New(64),
 		restLatencies: ring.New(64),
 		fillLatencies: ring.New(64),
+		seed:          seed,
+		rng:           rand.New(rand.NewSource(seed)),
 	}
+}
+
+/*
+Seed returns the PRNG seed recorded for exact latency-bootstrap replay.
+*/
+func (simulator *Simulator) Seed() int64 {
+	return simulator.seed
 }
 
 func (simulator *Simulator) Status() types.Status {
@@ -83,19 +99,19 @@ func (simulator *Simulator) Initialize() error {
 
 	wsLatencies := simulator.wsLatencies
 	for idx := 0; idx < wsLatencies.Len(); idx++ {
-		wsLatencies.Value = time.Duration(30+rand.Intn(90)) * time.Millisecond
+		wsLatencies.Value = time.Duration(30+simulator.rng.Intn(90)) * time.Millisecond
 		wsLatencies = wsLatencies.Next()
 	}
 
 	restLatencies := simulator.restLatencies
 	for idx := 0; idx < restLatencies.Len(); idx++ {
-		restLatencies.Value = time.Duration(30+rand.Intn(90)) * time.Millisecond
+		restLatencies.Value = time.Duration(30+simulator.rng.Intn(90)) * time.Millisecond
 		restLatencies = restLatencies.Next()
 	}
 
 	fillLatencies := simulator.fillLatencies
 	for idx := 0; idx < fillLatencies.Len(); idx++ {
-		fillLatencies.Value = time.Duration(40+rand.Intn(360)) * time.Millisecond
+		fillLatencies.Value = time.Duration(40+simulator.rng.Intn(360)) * time.Millisecond
 		fillLatencies = fillLatencies.Next()
 	}
 

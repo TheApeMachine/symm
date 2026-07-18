@@ -20,10 +20,8 @@ import { ordersStore } from "#/collections/orders";
 import { positionsStore } from "#/collections/positions";
 import { resonanceStore } from "#/collections/resonance";
 import { stopsStore } from "#/collections/stops";
-import { terminalStore } from "#/collections/terminal";
 import { tickStore } from "#/collections/tick";
 import { tradeJournalStore } from "#/collections/trade-journal";
-import { liveFocusSymbol } from "#/components/terminal/measurement-sources";
 
 type FrameStore = {
 	actions: {
@@ -83,13 +81,6 @@ export const applyFramePayload = (parsedData: Record<string, unknown>) => {
 			measurementsStore.actions.updateFrame(
 				expandWireMeasurements(parsedData.measurements),
 			);
-			const preferred = appStore.state.focusSymbol;
-			const live = liveFocusSymbol(measurementsStore.state, preferred);
-
-			if (live !== preferred) {
-				appStore.actions.updateFocusSymbol(live);
-				terminalStore.actions.selectFocusSymbol(live);
-			}
 		}
 
 		for (const [key, data] of Object.entries(parsedData)) {

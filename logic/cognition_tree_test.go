@@ -61,6 +61,67 @@ func TestCognitionVisualizationStaysBounded(t *testing.T) {
 	}
 }
 
+/*
+TestCognitionBranchesForkFromRoot proves Cortex exports a real radix fork, not a
+sealed-bag spine with one-hop stubs. Sibling pressure tokens under the same
+symbol must both appear as depth-2 children.
+*/
+func TestCognitionBranchesForkFromRoot(t *testing.T) {
+	Convey("Given trained sequences that diverge after the symbol hop", t, func() {
+		tree := dmt.NewTree("")
+		analyzer := &Analyzer{tree: tree}
+
+		tree.TrainSensorySequence([]byte(
+			"symbol-btc-usd_pressure-positive_divergence-negative",
+		))
+		tree.TrainSensorySequence([]byte(
+			"symbol-btc-usd_pressure-negative_divergence-positive",
+		))
+		tree.TrainSensorySequence([]byte(
+			"symbol-eth-usd_pressure-positive_divergence-negative",
+		))
+
+		tip := tree.PredictNextSensoryTokens(
+			[]byte("symbol-btc-usd_pressure-positive"),
+			make([]dmt.LookaheadPrediction, 0, 4),
+		)
+		branches, count := analyzer.cognitionBranches(
+			analyzer.treeExpandWidth(cognitionBeamWidth(tip)),
+		)
+
+		Convey("Then the root fans into multiple symbols and pressure forks", func() {
+			So(count, ShouldEqual, len(branches))
+
+			childrenOf := map[int][]string{}
+
+			for _, branch := range branches {
+				if branch.ParentID < 0 {
+					continue
+				}
+
+				childrenOf[branch.ParentID] = append(
+					childrenOf[branch.ParentID],
+					branch.Token,
+				)
+			}
+
+			So(len(childrenOf[0]), ShouldBeGreaterThanOrEqualTo, 2)
+
+			btcID := -1
+
+			for _, branch := range branches {
+				if branch.Token == "symbol-btc-usd" {
+					btcID = branch.ID
+					break
+				}
+			}
+
+			So(btcID, ShouldBeGreaterThanOrEqualTo, 0)
+			So(len(childrenOf[btcID]), ShouldBeGreaterThanOrEqualTo, 2)
+		})
+	})
+}
+
 func TestCognitionVisualization(t *testing.T) {
 	Convey("Given a trained sensory sequence", t, func() {
 		tree := dmt.NewTree("")
@@ -70,6 +131,8 @@ func TestCognitionVisualization(t *testing.T) {
 		analyzer := &Analyzer{tree: tree}
 
 		tree.TrainSensorySequence(sequence)
+		tree.TrainSensorySequence([]byte("symbol-eth-usd_pressure-negative"))
+		tree.TrainSensorySequence([]byte("symbol-btc-usd_pressure-negative"))
 
 		var scratch dmt.ClassificationScratch
 		classification := tree.Classify(sequence, &scratch)
@@ -80,15 +143,25 @@ func TestCognitionVisualization(t *testing.T) {
 				sequence, parent, parts, classification, predictions,
 			)
 
-		Convey("It should export prefix-tree branches for Cortex", func() {
+		Convey("It should export a bounded radix tree for Cortex", func() {
 			So(len(branches), ShouldBeGreaterThan, 1)
 			So(nodeCount, ShouldEqual, len(branches))
 			So(branches[0].Prefix, ShouldEqual, "")
 			So(beamWidth, ShouldBeGreaterThan, 0)
-			So(maxHops, ShouldEqual, len(parts))
+			So(maxHops, ShouldEqual, cognitionTreeDepth())
+
+			maxDepth := 0
+
+			for _, branch := range branches {
+				if branch.Depth > maxDepth {
+					maxDepth = branch.Depth
+				}
+			}
+
+			So(maxDepth, ShouldBeLessThanOrEqualTo, cognitionTreeDepth())
 		})
 
-		Convey("It should export beam paths and basin posteriors", func() {
+		Convey("It should export diverging beam paths and basin posteriors", func() {
 			So(len(beams), ShouldBeGreaterThan, 0)
 			So(lookaheadPaths, ShouldEqual, len(beams))
 			So(lookaheadScore, ShouldBeGreaterThan, 0)
@@ -136,7 +209,7 @@ func TestAnalyzerCognizeExportsVisualization(t *testing.T) {
 			So(len(reading.Beams), ShouldBeGreaterThan, 0)
 			So(len(reading.Classes), ShouldBeGreaterThan, 0)
 			So(reading.BeamWidth, ShouldBeGreaterThan, 0)
-			So(reading.MaxHops, ShouldBeGreaterThan, 0)
+			So(reading.MaxHops, ShouldEqual, cognitionTreeDepth())
 			So(reading.NodeCount, ShouldEqual, len(reading.Branches))
 			So(reading.RegimePrefix, ShouldNotBeEmpty)
 		})
@@ -151,6 +224,8 @@ func BenchmarkCognitionVisualization(b *testing.B) {
 	analyzer := &Analyzer{tree: tree}
 
 	tree.TrainSensorySequence(sequence)
+	tree.TrainSensorySequence([]byte("symbol-eth-usd_pressure-negative_divergence-positive"))
+	tree.TrainSensorySequence([]byte("symbol-btc-usd_pressure-negative_divergence-positive"))
 
 	var scratch dmt.ClassificationScratch
 	classification := tree.Classify(sequence, &scratch)

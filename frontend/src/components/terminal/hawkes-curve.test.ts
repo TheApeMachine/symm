@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { Circular } from "#/collections/circular";
 import type { Measurement, MeasurementEpoch } from "#/collections/measurements";
 import {
 	hawkesCurveFromBuffer,
 	hawkesIntensityAt,
+	hawkesSeriesFromBuffer,
 	latestHawkesRaw,
+	resetHawkesFitRetention,
+	retainHawkesModelEpoch,
 } from "./hawkes-curve";
 
 const measurement = (
@@ -36,6 +39,10 @@ const epoch = (at: string, readings: Measurement[]): MeasurementEpoch => ({
 });
 
 describe("hawkes curve", () => {
+	beforeEach(() => {
+		resetHawkesFitRetention();
+	});
+
 	it("reconstructs an excitation jump followed by exponential decay", () => {
 		const buffer = Circular<MeasurementEpoch>(8);
 		const fitFrom = "2026-07-14T17:00:00.000Z";
@@ -166,5 +173,243 @@ describe("hawkes curve", () => {
 		);
 
 		expect(latestHawkesRaw(buffer, "spectral_radius")).toBeNull();
+	});
+
+	it("joins evaluation intensities to the retained fit epoch", () => {
+		const buffer = Circular<MeasurementEpoch>(4);
+		const fitFrom = "2026-07-14T17:00:00.000Z";
+		const fitThrough = "2026-07-14T17:00:10.000Z";
+		const firstAt = "2026-07-14T17:00:11.000Z";
+		const nextAt = "2026-07-14T17:00:12.000Z";
+		const nextIntensity = 1 + 2 * Math.exp(-1);
+
+		buffer.push(
+			epoch(fitThrough, [
+				measurement(
+					fitThrough,
+					"baseline_intensity",
+					"buy",
+					0.6,
+					fitFrom,
+					fitThrough,
+				),
+				measurement(
+					fitThrough,
+					"baseline_intensity",
+					"sell",
+					0.4,
+					fitFrom,
+					fitThrough,
+				),
+				measurement(fitThrough, "decay_rate", "", 1, fitFrom, fitThrough),
+				measurement(
+					fitThrough,
+					"spectral_radius",
+					"",
+					0.72,
+					fitFrom,
+					fitThrough,
+				),
+			]),
+		);
+		buffer.push(
+			epoch(firstAt, [
+				measurement(
+					firstAt,
+					"conditional_intensity",
+					"buy",
+					0.9,
+					fitFrom,
+					firstAt,
+				),
+				measurement(
+					firstAt,
+					"conditional_intensity",
+					"sell",
+					0.6,
+					fitFrom,
+					firstAt,
+				),
+			]),
+		);
+		buffer.push(
+			epoch(nextAt, [
+				measurement(
+					nextAt,
+					"conditional_intensity",
+					"buy",
+					nextIntensity * 0.6,
+					fitFrom,
+					nextAt,
+				),
+				measurement(
+					nextAt,
+					"conditional_intensity",
+					"sell",
+					nextIntensity * 0.4,
+					fitFrom,
+					nextAt,
+				),
+			]),
+		);
+
+		const segments = hawkesCurveFromBuffer(buffer);
+
+		expect(segments).toHaveLength(1);
+		expect(segments[0]?.afterArrival).toBeCloseTo(3);
+		expect(latestHawkesRaw(buffer, "spectral_radius")).toBe(0.72);
+	});
+
+	it("samples exponential decay after an impulse across the display window", () => {
+		const buffer = Circular<MeasurementEpoch>(4);
+		const fitFrom = "2026-07-14T17:00:00.000Z";
+		const fitThrough = "2026-07-14T17:00:10.000Z";
+		const eventAt = "2026-07-14T17:00:11.000Z";
+		const now = Date.parse(eventAt) + 4_000;
+
+		buffer.push(
+			epoch(fitThrough, [
+				measurement(
+					fitThrough,
+					"baseline_intensity",
+					"buy",
+					0.5,
+					fitFrom,
+					fitThrough,
+				),
+				measurement(
+					fitThrough,
+					"baseline_intensity",
+					"sell",
+					0.5,
+					fitFrom,
+					fitThrough,
+				),
+				measurement(fitThrough, "decay_rate", "", 1, fitFrom, fitThrough),
+			]),
+		);
+		buffer.push(
+			epoch(eventAt, [
+				measurement(
+					eventAt,
+					"conditional_intensity",
+					"buy",
+					1.8,
+					fitFrom,
+					eventAt,
+				),
+				measurement(
+					eventAt,
+					"conditional_intensity",
+					"sell",
+					1.2,
+					fitFrom,
+					eventAt,
+				),
+			]),
+		);
+
+		const series = hawkesSeriesFromBuffer(buffer, now, 64);
+
+		expect(series).not.toBeNull();
+
+		if (series === null) {
+			throw new Error("expected dense Hawkes series");
+		}
+
+		const peak = Math.max(...series.samples);
+		const latest = series.samples.at(-1) ?? 0;
+
+		expect(peak).toBeGreaterThan(2.5);
+		expect(latest).toBeLessThan(peak);
+		expect(latest).toBeGreaterThan(series.baseline);
+		expect(series.samples.length).toBe(64);
+	});
+
+	it("keeps the fitted curve after the model epoch leaves the buffer", () => {
+		const fitFrom = "2026-07-14T17:00:00.000Z";
+		const fitThrough = "2026-07-14T17:00:10.000Z";
+		const firstAt = "2026-07-14T17:00:11.000Z";
+		const nextAt = "2026-07-14T17:00:12.000Z";
+		const nextIntensity = 1 + 2 * Math.exp(-1);
+
+		retainHawkesModelEpoch(
+			epoch(fitThrough, [
+				measurement(
+					fitThrough,
+					"baseline_intensity",
+					"buy",
+					0.6,
+					fitFrom,
+					fitThrough,
+				),
+				measurement(
+					fitThrough,
+					"baseline_intensity",
+					"sell",
+					0.4,
+					fitFrom,
+					fitThrough,
+				),
+				measurement(fitThrough, "decay_rate", "", 1, fitFrom, fitThrough),
+				measurement(
+					fitThrough,
+					"spectral_radius",
+					"",
+					0.72,
+					fitFrom,
+					fitThrough,
+				),
+			]),
+		);
+
+		const buffer = Circular<MeasurementEpoch>(2);
+
+		buffer.push(
+			epoch(firstAt, [
+				measurement(
+					firstAt,
+					"conditional_intensity",
+					"buy",
+					0.9,
+					fitFrom,
+					firstAt,
+				),
+				measurement(
+					firstAt,
+					"conditional_intensity",
+					"sell",
+					0.6,
+					fitFrom,
+					firstAt,
+				),
+			]),
+		);
+		buffer.push(
+			epoch(nextAt, [
+				measurement(
+					nextAt,
+					"conditional_intensity",
+					"buy",
+					nextIntensity * 0.6,
+					fitFrom,
+					nextAt,
+				),
+				measurement(
+					nextAt,
+					"conditional_intensity",
+					"sell",
+					nextIntensity * 0.4,
+					fitFrom,
+					nextAt,
+				),
+			]),
+		);
+
+		const segments = hawkesCurveFromBuffer(buffer);
+
+		expect(segments).toHaveLength(1);
+		expect(segments[0]?.afterArrival).toBeCloseTo(3);
+		expect(latestHawkesRaw(buffer, "spectral_radius")).toBe(0.72);
 	});
 });

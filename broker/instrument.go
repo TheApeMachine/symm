@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -78,6 +79,8 @@ func (instrument *Instrument) On(data []byte) {
 		instrument.cache.Store(pair.Symbol, &pair)
 	}
 
+	instrument.Publish()
+
 	if slices.Contains([]types.Status{
 		types.READY, types.ERROR,
 	}, instrument.Status()) {
@@ -87,6 +90,42 @@ func (instrument *Instrument) On(data []byte) {
 	if err := instrument.Subscribe(); err != nil {
 		instrument.status.Store(types.ERROR)
 		errnie.Error(err)
+	}
+}
+
+/*
+Publish forwards the online quote-currency instrument universe to the terminal
+so the command palette can search concrete symbols.
+*/
+func (instrument *Instrument) Publish() {
+	if instrument == nil || instrument.uiHub == nil {
+		return
+	}
+
+	pairs := make([]datura.Map[any], 0)
+
+	for _, pair := range instrument.Pairs() {
+		if pair.Quote != instrument.quote || pair.Status != "online" {
+			continue
+		}
+
+		pairs = append(pairs, datura.Map[any]{
+			"symbol": pair.Symbol,
+			"base":   pair.Base,
+			"quote":  pair.Quote,
+			"status": pair.Status,
+		})
+	}
+
+	if len(pairs) == 0 {
+		return
+	}
+
+	select {
+	case instrument.uiHub <- datura.Map[any]{
+		"instruments": pairs,
+	}.Marshal():
+	default:
 	}
 }
 

@@ -35,7 +35,7 @@ func TestSessionPumpReservedDoesNotRotateMaturing(t *testing.T) {
 
 		So(session.SeedTakerFee("MATIC/USD", 0.26), ShouldBeNil)
 		So(session.SeedTakerFee("BTC/USD", 0.26), ShouldBeNil)
-		session.SeedQuoteCapital(10_000)
+		So(session.SeedQuoteCapital(10_000), ShouldBeNil)
 
 		thesis := types.NewThesis(nil, nil)
 		tests.SeedMatureHolding(thesis, "BTC/USD", 100)
@@ -99,7 +99,7 @@ func TestSessionPumpRotateWhenChallengerClearsWeakest(t *testing.T) {
 
 		So(session.SeedTakerFee("MATIC/USD", 0.26), ShouldBeNil)
 		So(session.SeedTakerFee("WEAK/USD", 0.26), ShouldBeNil)
-		session.SeedQuoteCapital(0)
+		So(session.SeedQuoteCapital(0), ShouldBeNil)
 
 		thesis := types.NewThesis(nil, nil)
 		tests.SeedMatureHolding(thesis, "WEAK/USD", 100)
@@ -203,7 +203,7 @@ func TestSessionRunDecideUsesEmulatorFeesAndCapital(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		So(session.SeedTakerFee("MATIC/USD", 0.26), ShouldBeNil)
-		session.SeedQuoteCapital(5_000)
+		So(session.SeedQuoteCapital(5_000), ShouldBeNil)
 
 		available, err := session.Balance().AvailableQuote()
 		So(err, ShouldBeNil)
@@ -215,7 +215,7 @@ func TestSessionRunDecideUsesEmulatorFeesAndCapital(t *testing.T) {
 		// FrictionReady forecasts still need Price fee application via Decide.
 		thesis.Forecasts[0].FrictionReady = false
 
-		session.RunDecide(thesis)
+		So(session.RunDecide(thesis), ShouldBeNil)
 
 		Convey("Then Crypto.Decide applies fees and admits the ignition", func() {
 			So(thesis.Forecasts[0].FrictionReady, ShouldBeTrue)
@@ -271,13 +271,21 @@ func BenchmarkSessionPumpDecide(b *testing.B) {
 }
 
 func findThesisHolding(thesis *types.Thesis, symbol string) (types.Holding, bool) {
+	var found types.Holding
+	ok := false
+
 	thesis.Holdings.Range(func(key, value any) bool {
 		holding := value.(types.Holding)
-		if holding.Symbol == symbol {
-			return false
+
+		if holding.Symbol != symbol {
+			return true
 		}
-		return true
+
+		found = holding
+		ok = true
+
+		return false
 	})
 
-	return types.Holding{}, false
+	return found, ok
 }

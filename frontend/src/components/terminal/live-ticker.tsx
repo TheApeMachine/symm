@@ -91,8 +91,6 @@ const setVisibility = (element: HTMLElement | null, visible: boolean) => {
 
 type WalletPaintRefs = {
 	cash: HTMLSpanElement | null;
-	available: HTMLSpanElement | null;
-	reserved: HTMLSpanElement | null;
 	equity: HTMLSpanElement | null;
 	lambo: HTMLImageElement | null;
 	tick: HTMLSpanElement | null;
@@ -107,22 +105,30 @@ const paintWalletMetrics = (
 	const wallet = walletMetrics(balances, positions);
 	const tick = tickStore.state.frame;
 	const cashValue = wallet ? `${wallet.cash.toFixed(2)} ${wallet.asset}` : "—";
-	const availableValue = wallet
-		? `${wallet.available.toFixed(2)} ${wallet.asset}`
-		: "—";
-	const reservedValue = wallet
-		? `${wallet.reserved.toFixed(2)} ${wallet.asset}`
-		: "—";
-	const inProfit = (wallet?.unrealized ?? 0) > 0;
+	// Equity tone follows price P&L (mark vs entry), not fee-dragged unrealized
+	// dollars — entry fees alone would paint a green book red.
+	const pricePnl = positions.reduce((total, position) => {
+		if (
+			!(position.qty > 0) ||
+			!(position.entry_price > 0) ||
+			!(position.mark > 0)
+		) {
+			return total;
+		}
+
+		return total + (position.mark - position.entry_price) * position.qty;
+	}, 0);
+	const inProfit = pricePnl > 0;
 	const equityValue = wallet
 		? `${wallet.equity.toFixed(2)} ${wallet.asset}`
 		: "—";
 
 	setText(refs.cash, cashValue);
-	setText(refs.available, availableValue);
-	setText(refs.reserved, reservedValue);
 	setText(refs.equity, equityValue);
-	setTone(refs.equity, inProfit ? "var(--up)" : "var(--down)");
+	setTone(
+		refs.equity,
+		pricePnl > 0 ? "var(--up)" : pricePnl < 0 ? "var(--down)" : "var(--f3)",
+	);
 	setVisibility(refs.lambo, inProfit);
 	setText(refs.tick, tick?.count !== undefined ? String(tick.count) : "…");
 	setText(refs.open, String(tick?.open ?? 0));
@@ -154,8 +160,6 @@ LiveWalletMetrics paints wallet and tick counters directly from store snapshots.
 */
 export const LiveWalletMetrics = () => {
 	const cashRef = useRef<HTMLSpanElement>(null);
-	const availableRef = useRef<HTMLSpanElement>(null);
-	const reservedRef = useRef<HTMLSpanElement>(null);
 	const equityRef = useRef<HTMLSpanElement>(null);
 	const lamboRef = useRef<HTMLImageElement>(null);
 	const tickRef = useRef<HTMLSpanElement>(null);
@@ -165,8 +169,6 @@ export const LiveWalletMetrics = () => {
 			paintWalletMetrics(
 				{
 					cash: cashRef.current,
-					available: availableRef.current,
-					reserved: reservedRef.current,
 					equity: equityRef.current,
 					lambo: lamboRef.current,
 					tick: tickRef.current,
@@ -200,8 +202,6 @@ export const LiveWalletMetrics = () => {
 					className="relative font-mono text-[12px] font-semibold"
 				/>
 			</div>
-			<LiveTopMetric label="Available" valueRef={availableRef} />
-			<LiveTopMetric label="Reserved" valueRef={reservedRef} />
 			<LiveTopMetric label="Tick" valueRef={tickRef} accent />
 		</>
 	);

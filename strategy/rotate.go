@@ -12,6 +12,8 @@ type Incumbent struct {
 	HoldUtility float64
 	ExitCost    float64
 	Notional    float64
+	Qty         float64
+	Mark        float64
 	Displaced   bool
 }
 
@@ -50,7 +52,10 @@ func weakest(incumbents []Incumbent) (int, bool) {
 			continue
 		}
 
-		if best < 0 || incumbents[index].HoldUtility < incumbents[best].HoldUtility {
+		weakness := incumbents[index].HoldUtility + incumbents[index].ExitCost
+
+		if best < 0 ||
+			weakness < incumbents[best].HoldUtility+incumbents[best].ExitCost {
 			best = index
 		}
 	}

@@ -1,25 +1,25 @@
-package strategy
+package types
 
 import (
 	"context"
 	"testing"
 )
 
-func testEvidence(mark, entry, uncertainty, expected, mse float64) Evidence {
+func testEvidence(mark, entry, uncertainty, expected, mse float64) StopEvidence {
 	return testEvidenceAtEpoch(mark, entry, uncertainty, expected, mse, 1)
 }
 
 func testEvidenceAtEpoch(
 	mark, entry, uncertainty, expected, mse float64,
 	epoch uint64,
-) Evidence {
+) StopEvidence {
 	residual := 0.0
 
 	if uncertainty > 0 && mse > 0 {
 		residual = mse / uncertainty
 	}
 
-	return Evidence{
+	return StopEvidence{
 		Symbol:             "AAA/USD",
 		Mark:               mark,
 		Entry:              entry,
@@ -121,7 +121,7 @@ func TestStoplossWaitsWithoutTrailScale(t *testing.T) {
 	t.Parallel()
 
 	stop := NewStoploss(context.Background())
-	first := stop.Update(Evidence{
+	first := stop.Update(StopEvidence{
 		Symbol:              "AAA/USD",
 		Mark:                99.9,
 		Entry:               100,
@@ -143,7 +143,7 @@ func TestStoplossDoesNotArmOnSpreadAlone(t *testing.T) {
 	t.Parallel()
 
 	stop := NewStoploss(context.Background())
-	first := stop.Update(Evidence{
+	first := stop.Update(StopEvidence{
 		Symbol:  "AAA/USD",
 		Mark:    100.1,
 		Entry:   100,
@@ -189,7 +189,7 @@ func TestStoplossFreezesWithoutEvidence(t *testing.T) {
 	_ = stop.Update(testEvidence(100, 100, 0.03, 0.02, 0.01))
 	live := stop.Update(testEvidence(106, 100, 0.03, 0.02, 0.01))
 
-	frozen := stop.Update(Evidence{Symbol: "AAA/USD", Present: false})
+	frozen := stop.Update(StopEvidence{Symbol: "AAA/USD", Present: false})
 
 	if frozen.Action != "hold" {
 		t.Fatalf("absent evidence should hold, got %s", frozen.Action)
@@ -207,13 +207,15 @@ func TestStoplossWeightMovesWithSkill(t *testing.T) {
 	t.Parallel()
 
 	stop := NewStoploss(context.Background())
-	poor := stop.Update(testEvidenceAtEpoch(100, 100, 0.02, 0.01, 0.08, 1))
-	better := stop.Update(testEvidenceAtEpoch(101, 100, 0.02, 0.01, 0.002, 2))
+	stop.Update(testEvidenceAtEpoch(100, 100, 0.02, 0.01, 0.08, 1))
+	poor := stop.Weight
+	stop.Update(testEvidenceAtEpoch(101, 100, 0.02, 0.01, 0.002, 2))
+	better := stop.Weight
 
-	if better.Weight <= poor.Weight {
+	if better <= poor {
 		t.Fatalf(
 			"weight should rise with skill: poor=%v better=%v",
-			poor.Weight, better.Weight,
+			poor, better,
 		)
 	}
 }
@@ -226,22 +228,25 @@ func TestStoplossReweightOncePerEpoch(t *testing.T) {
 	t.Parallel()
 
 	stop := NewStoploss(context.Background())
-	first := stop.Update(testEvidenceAtEpoch(100, 100, 0.02, 0.01, 0.08, 1))
-	duplicate := stop.Update(testEvidenceAtEpoch(101, 100, 0.02, 0.01, 0.002, 1))
+	stop.Update(testEvidenceAtEpoch(100, 100, 0.02, 0.01, 0.08, 1))
+	first := stop.Weight
+	stop.Update(testEvidenceAtEpoch(101, 100, 0.02, 0.01, 0.002, 1))
+	duplicate := stop.Weight
 
-	if duplicate.Weight != first.Weight {
+	if duplicate != first {
 		t.Fatalf(
 			"same epoch must not reweight: first=%v duplicate=%v",
-			first.Weight, duplicate.Weight,
+			first, duplicate,
 		)
 	}
 
-	next := stop.Update(testEvidenceAtEpoch(102, 100, 0.02, 0.01, 0.002, 2))
+	stop.Update(testEvidenceAtEpoch(102, 100, 0.02, 0.01, 0.002, 2))
+	next := stop.Weight
 
-	if next.Weight <= first.Weight {
+	if next <= first {
 		t.Fatalf(
 			"new epoch should reweight upward: first=%v next=%v",
-			first.Weight, next.Weight,
+			first, next,
 		)
 	}
 }
@@ -256,7 +261,7 @@ func BenchmarkStoplossUpdate(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for index := 0; index < b.N; index++ {
+	for index := 0; b.Loop(); index++ {
 		evidence.Mark = 100 + float64(index%50)*0.1
 		_ = stop.Update(evidence)
 	}

@@ -58,7 +58,7 @@ func priceIncrementsBySymbol(frame *types.MarketFrame) map[string]*decimal.Decim
 	incrementBySymbol := map[string]*decimal.Decimal{}
 
 	for _, row := range frame.Books {
-		if row.Symbol == "" || row.PriceIncrement.Sign() <= 0 {
+		if row.Symbol == "" || row.PriceIncrement == nil || row.PriceIncrement.Sign() <= 0 {
 			continue
 		}
 

@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/types"
 )
@@ -19,33 +19,54 @@ Planner records the feasible action alternatives for each calibrated forecast
 and emits orders only for actions that cross the broker boundary.
 */
 type Planner struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	status    types.Status
-	uiHub     chan<- []byte
-	signals   []types.Signal
-	analyzer  *logic.Analyzer
-	recorder  *audit.Recorder
-	allocator *Allocator
+	ctx        context.Context
+	cancel     context.CancelFunc
+	status     types.Status
+	api        *websocket.API
+	instrument *broker.Instrument
+	price      *broker.Price
+	balance    *broker.Balance
+	uiHub      chan<- []byte
+	signals    []types.Signal
+	analyzer   *logic.Analyzer
+	recorder   *audit.Recorder
+	allocator  *Allocator
 }
 
 /*
-SetRecorder attaches a diagnostic recorder so measure can report per-signal
-measurement counts. A nil recorder disables recording.
+NewPlanner creates one persistent channel worker per signal. Workers measure a
+shared immutable market cut concurrently while Planner alone assembles Thesis.
 */
-func (planner *Planner) SetRecorder(recorder *audit.Recorder) {
-	planner.recorder = recorder
+func NewPlanner(
+	ctx context.Context,
+	uiHub chan<- []byte,
+	api *websocket.API,
+	instrument *broker.Instrument,
+	price *broker.Price,
+	balance *broker.Balance,
+	signals []types.Signal,
+	analyzer *logic.Analyzer,
+	allocator *Allocator,
+	recorder *audit.Recorder,
+) *Planner {
+	ctx, cancel := context.WithCancel(ctx)
 
-	if planner.analyzer != nil {
-		planner.analyzer.SetRecorder(recorder)
+	planner := &Planner{
+		ctx:        ctx,
+		cancel:     cancel,
+		status:     types.READY,
+		api:        api,
+		instrument: instrument,
+		price:      price,
+		balance:    balance,
+		allocator:  allocator,
+		uiHub:      uiHub,
+		signals:    signals,
+		analyzer:   analyzer,
+		recorder:   recorder,
 	}
-}
 
-/*
-Bind attaches the composed Allocator that owns friction and enter sizing.
-*/
-func (planner *Planner) Bind(allocator *Allocator) {
-	planner.allocator = allocator
+	return planner
 }
 
 /*
@@ -71,30 +92,6 @@ func (planner *Planner) Run(
 	}
 
 	return thesis
-}
-
-/*
-NewPlanner creates one persistent channel worker per signal. Workers measure a
-shared immutable market cut concurrently while Planner alone assembles Thesis.
-*/
-func NewPlanner(
-	ctx context.Context,
-	uiHub chan<- []byte,
-	signals []types.Signal,
-	analyzer *logic.Analyzer,
-) *Planner {
-	ctx, cancel := context.WithCancel(ctx)
-
-	planner := &Planner{
-		ctx:      ctx,
-		cancel:   cancel,
-		status:   types.READY,
-		uiHub:    uiHub,
-		signals:  signals,
-		analyzer: analyzer,
-	}
-
-	return planner
 }
 
 func (planner *Planner) Initialize() error {
@@ -167,6 +164,7 @@ func (planner *Planner) Update(frame *types.MarketFrame, tick int64) *types.Thes
 		"counts": counts,
 		"ns":     time.Since(started).Nanoseconds(),
 	}))
+
 	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "measure_end", map[string]any{
 		"measurements": len(thesis.Measurements),
 		"ns":           time.Since(started).Nanoseconds(),
@@ -215,12 +213,17 @@ func (planner *Planner) Decide(
 ) *types.Thesis {
 	entries := make([]types.Decision, 0)
 	incumbents := make([]Incumbent, 0)
-	openBySymbol := make(map[string]types.Holding, 0)
+	openBySymbol := make(map[string]*types.Holding, 0)
 
 	thesis.Holdings.Range(func(key, value any) bool {
-		holding := value.(types.Holding)
+		holding, ok := value.(*types.Holding)
 
-		if holding.Symbol == "" || holding.Closed() {
+		if !ok || holding == nil {
+			return true
+		}
+
+		if holding.Status == types.CLOSED {
+			thesis.Holdings.Delete(key)
 			return true
 		}
 
@@ -260,15 +263,14 @@ func (planner *Planner) Decide(
 		}
 
 		if holding, exists := openBySymbol[forecast.Symbol]; exists {
-			decision := planner.continuation(forecast, fee, holding)
-			decision.Cause = planner.cause(thesis, forecast, decision.Action)
-			planner.context(&decision, forecast, available, open, slotCapacity)
-			thesis.Decisions = append(thesis.Decisions, decision)
-
 			notional := 0.0
+			qty := 0.0
+			mark := 0.0
 
 			if holding.Mark != nil && holding.Qty != nil {
 				notional = holding.Mark.Float64() * holding.Qty.Float64()
+				qty = holding.Qty.Float64()
+				mark = holding.Mark.Float64()
 			}
 
 			incumbents = append(incumbents, Incumbent{
@@ -276,23 +278,23 @@ func (planner *Planner) Decide(
 				HoldUtility: planner.holdUtility(forecast),
 				ExitCost:    planner.exitCost(forecast, fee),
 				Notional:    notional,
+				Qty:         qty,
+				Mark:        mark,
 			})
+
+			priorDecisions := len(thesis.Decisions)
+
+			if len(thesis.Decisions) > priorDecisions {
+				continue
+			}
+
+			decision := planner.continuation(forecast, fee, holding)
+			decision.Cause = planner.cause(thesis, forecast, decision.Action)
+			planner.context(&decision, forecast, available, open, slotCapacity)
+			thesis.Decisions = append(thesis.Decisions, decision)
 
 			if decision.Action == "exit" {
 				thesis.Lifecycle.Store(forecast.Symbol, types.LifecycleExitSelected)
-			}
-
-			if decision.Action == "exit" || decision.Action == "reduce" {
-				thesis.Orders = append(thesis.Orders, spot.Order{
-					Description: &spot.OrderDescription{
-						Pair:      forecast.Symbol,
-						Type:      decision.Action,
-						Price:     decimal.NewFromFloat64(decision.ReferencePrice),
-						OrderType: "market",
-					},
-					Volume: decimal.NewFromFloat64(decision.ProposedQuantity),
-					Price:  decimal.NewFromFloat64(decision.ReferencePrice),
-				})
 			}
 
 			continue

@@ -14,6 +14,7 @@ import { ColumnHeader } from "#/components/dashboard/header";
 import { fixed } from "#/components/terminal/decision-format";
 import { PositionGauge } from "#/components/terminal/position-gauge";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { requirePositive } from "#/lib/domain";
 import { cn } from "#/lib/utils";
 import type { StrategyDecision, TradeObservation } from "#/types/thesis";
 
@@ -21,10 +22,18 @@ const sameSymbols = (left: string[], right: string[]): boolean =>
 	left.length === right.length &&
 	left.every((symbol, index) => symbol === right[index]);
 
-const decisionFraction = (decision: StrategyDecision): number =>
-	decision.availableCapital > 0
-		? decision.proposedNotional / decision.availableCapital
-		: 0;
+/*
+decisionFraction is the deployable notional share of available capital.
+Undefined when capital is not strictly positive.
+*/
+const decisionFraction = (decision: StrategyDecision): number => {
+	const capital = requirePositive(
+		decision.availableCapital,
+		"decision.availableCapital",
+	);
+
+	return decision.proposedNotional / capital;
+};
 
 const actionBadgeClass = (action: string): string => {
 	if (action === "exit") {
@@ -66,7 +75,11 @@ const paintDecisionRow = (refs: DecisionRowRefs, symbol: string): void => {
 	}
 
 	if (refs.fraction !== null) {
-		refs.fraction.textContent = `${(decisionFraction(decision) * 100).toFixed(2)}%`;
+		try {
+			refs.fraction.textContent = `${(decisionFraction(decision) * 100).toFixed(2)}%`;
+		} catch {
+			refs.fraction.textContent = "—";
+		}
 	}
 
 	if (refs.action !== null) {

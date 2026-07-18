@@ -70,7 +70,7 @@ describe("normalizePositions", () => {
 });
 
 describe("positionsStore", () => {
-	it("refuses to overwrite an observed non-empty snapshot with empty", () => {
+	it("clears inventory on an authoritative empty array snapshot", () => {
 		positionsStore.actions.updateFrame([
 			{
 				symbol: "XLM/USD",
@@ -86,6 +86,27 @@ describe("positionsStore", () => {
 
 		positionsStore.actions.updateFrame([]);
 
+		expect(positionsStore.state.positions).toHaveLength(0);
+		expect(positionsStore.state.observed).toBe(true);
+	});
+
+	it("preserves inventory when a non-array incomplete frame arrives", () => {
+		positionsStore.actions.updateFrame([
+			{
+				symbol: "XLM/USD",
+				qty: 10,
+				entry_price: 0.25,
+				entry_fee: 0.0065,
+				exit_fee: 0.00702,
+				mark: 0.27,
+				pnl: 0.2,
+				return_pct: 0.08,
+			},
+		]);
+
+		expect(() =>
+			positionsStore.actions.updateFrame({ partial: true }),
+		).not.toThrow();
 		expect(positionsStore.state.positions).toHaveLength(1);
 		expect(positionsStore.state.positions[0]?.symbol).toBe("XLM/USD");
 	});

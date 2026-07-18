@@ -13,7 +13,7 @@ import (
 func TestTradeAggression(t *testing.T) {
 	Convey("Given a trade UPDATE timeline", t, func() {
 		frames := tests.TradeAggression(
-			tradefixture.NewFixture(tradefixture.UPDATE, 8).Frames(),
+			tests.FramesOf(tradefixture.NewFixture(tradefixture.UPDATE, 8)),
 			4,
 			5,
 		)
@@ -52,7 +52,7 @@ func TestBookDecay(t *testing.T) {
 		index := 0
 
 		for frame := range tests.BookDecay(
-			tests.Repeat(bookfixture.NewFixture(bookfixture.SNAPSHOT, 1).Frames(), 8),
+			tests.Repeat(tests.FramesOf(bookfixture.NewFixture(bookfixture.SNAPSHOT, 1)), 8),
 			0,
 			0.9,
 		) {
@@ -81,7 +81,7 @@ func TestBookImbalance(t *testing.T) {
 		var bidQty, askQty float64
 
 		for frame := range tests.BookImbalance(
-			tests.Repeat(bookfixture.NewFixture(bookfixture.SNAPSHOT, 1).Frames(), 4),
+			tests.Repeat(tests.FramesOf(bookfixture.NewFixture(bookfixture.SNAPSHOT, 1)), 4),
 			0,
 			4,
 			0.25,

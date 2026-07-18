@@ -18,6 +18,7 @@ import {
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
 import {
+	blendGasIntoPilot,
 	drawFluidField,
 	drawFluidParticles,
 	isFluidFieldMatrix,
@@ -26,8 +27,11 @@ import {
 } from "#/components/terminal/fluid-field";
 import { MockupFluidCanvas } from "#/components/terminal/mockup-fluid-canvas";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
-
-export type { TerminalFluidParticle };
+import {
+	requireNonZero,
+	requirePositiveLength,
+	requireSampleSize,
+} from "#/lib/domain";
 
 type Draw = (
 	context: CanvasRenderingContext2D,
@@ -342,7 +346,7 @@ const paintTerminalPredictionChart = (
 	const focusSymbol = appStore.state.focusSymbol;
 	const frames = resonanceStore.state.resonance[focusSymbol]?.values() ?? [];
 
-	if (frames.length === 0) {
+	if (frames.length < 2) {
 		drawWaiting(context, width, height, "waiting for resonance history");
 		return;
 	}
@@ -374,7 +378,11 @@ const paintTerminalPredictionChart = (
 	const paddingX = 18;
 	const plotWidth = Math.max(1, width - paddingX * 2);
 	const plotHeight = Math.max(1, height - 46);
-	const denominator = Math.max(frames.length - 1, 1);
+	requireSampleSize(frames.length, 2, "resonance sparkline");
+	const denominator = requireNonZero(
+		frames.length - 1,
+		"resonance sparkline denominator",
+	);
 	const xFor = (index: number) => paddingX + (index / denominator) * plotWidth;
 	const yFor = (value: number) =>
 		height - 26 - ((value - min) / paddedSpan) * plotHeight;
@@ -663,10 +671,13 @@ export const TerminalPositionChart = ({
 		(context, width, height) => {
 			clearCanvas(context, width, height);
 			drawGrid(context, width, height);
-			const rowHeight = Math.max(
-				22,
-				(height - 24) / Math.max(positions.length, 1),
-			);
+
+			if (positions.length === 0) {
+				return;
+			}
+
+			requirePositiveLength(positions.length, "position chart rows");
+			const rowHeight = Math.max(22, (height - 24) / positions.length);
 
 			positions.forEach((position, index) => {
 				const y = 18 + index * rowHeight;
@@ -699,9 +710,12 @@ export const terminalFluidDisplayLatticeFromFrame = (
 	frame: Record<string, unknown> | null | undefined,
 ): number[][] => {
 	const rho = frameMatrix(frame);
+	const psiMag2 = frameAuxMatrix(frame, "psiMag2");
+	const lattice = isFluidFieldMatrix(rho) ? rho : [];
 
-	return resolvePilotDisplayLattice(
-		isFluidFieldMatrix(rho) ? rho : [],
-		frameAuxMatrix(frame, "psiMag2"),
-	);
+	if (psiMag2 && isFluidFieldMatrix(psiMag2)) {
+		return blendGasIntoPilot(psiMag2, lattice);
+	}
+
+	return resolvePilotDisplayLattice(lattice, psiMag2);
 };

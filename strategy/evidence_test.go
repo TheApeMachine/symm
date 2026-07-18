@@ -124,7 +124,7 @@ func BenchmarkProject(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for index := 0; index < b.N; index++ {
+	for index := 0; b.Loop(); index++ {
 		_ = Project(thesis, holding)
 	}
 }

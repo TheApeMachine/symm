@@ -211,7 +211,7 @@ func BenchmarkApplyForcing(b *testing.B) {
 
 	b.ResetTimer()
 
-	for index := 0; index < b.N; index++ {
+	for index := 0; b.Loop(); index++ {
 		copy(oscillators, population)
 
 		if _, _, err := applyForcing(

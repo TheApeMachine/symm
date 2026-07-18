@@ -97,7 +97,21 @@ measureBook applies one book event to the shared decay sample at its causal
 position in the merged entity timeline.
 */
 func (signal *Signal) measureBook(row kraken.BookData) []*types.Measurement {
-	if row.Symbol == "" || row.PriceIncrement.Sign() <= 0 {
+	if row.Symbol == "" {
+		return nil
+	}
+
+	if row.PriceIncrement == nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"exhaust: price increment required for "+row.Symbol,
+			nil,
+		))
+
+		return nil
+	}
+
+	if row.PriceIncrement.Sign() <= 0 {
 		return nil
 	}
 

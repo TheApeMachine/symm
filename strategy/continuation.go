@@ -10,7 +10,7 @@ return color once inventory is live.
 func (planner *Planner) continuation(
 	forecast types.Forecasts,
 	fee float64,
-	holding types.Holding,
+	holding *types.Holding,
 ) types.Decision {
 	hold := forecast.ExpectedReturn
 	exit := -(fee + forecast.ExpectedSpread/2)

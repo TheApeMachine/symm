@@ -7,6 +7,17 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+func TestSimulatorSeed(t *testing.T) {
+	Convey("Given a newly constructed simulator", t, func() {
+		simulator := NewSimulator()
+
+		Convey("It should record a nonzero replay seed", func() {
+			So(simulator.Seed(), ShouldNotEqual, 0)
+			So(simulator.rng, ShouldNotBeNil)
+		})
+	})
+}
+
 func TestSimulatorRecordAndDo(t *testing.T) {
 	Convey("Given a simulator with recorded websocket latency", t, func() {
 		simulator := NewSimulator()

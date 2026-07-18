@@ -1,15 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useMemo, useRef } from "react";
+import { appStore } from "#/collections/app";
 import {
 	type CognitiveReading,
 	cognitiveScopes,
 	cognitiveStore,
 } from "#/collections/cognitive";
-import { appStore } from "#/collections/app";
 import { instrumentsStore } from "#/collections/instruments";
 import { resizeCanvas } from "#/components/terminal/canvas";
 import { drawCognitiveTree } from "#/components/terminal/cognitive-viz";
+import { CortexLeafRoster } from "#/components/terminal/cortex-draw";
 import {
 	CortexBeamList,
 	CortexSidePanels,
@@ -20,6 +21,9 @@ const isConcreteScope = (scope: string): boolean =>
 
 const CortexCanvas = ({ reading }: { reading: CognitiveReading | null }) => {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
+	const readingRef = useRef(reading);
+	const rosterRef = useRef(new CortexLeafRoster());
+	readingRef.current = reading;
 
 	useEffect(() => {
 		const canvas = canvasRef.current;
@@ -27,6 +31,8 @@ const CortexCanvas = ({ reading }: { reading: CognitiveReading | null }) => {
 		if (canvas === null) {
 			return;
 		}
+
+		let frame = 0;
 
 		const render = () => {
 			const context = resizeCanvas(canvas);
@@ -39,16 +45,25 @@ const CortexCanvas = ({ reading }: { reading: CognitiveReading | null }) => {
 				context,
 				canvas.clientWidth,
 				canvas.clientHeight,
-				reading as Record<string, unknown> | null,
+				readingRef.current as Record<string, unknown> | null,
+				rosterRef.current,
 			);
 		};
 
-		render();
+		const tick = () => {
+			render();
+			frame = requestAnimationFrame(tick);
+		};
+
+		frame = requestAnimationFrame(tick);
 		const observer = new ResizeObserver(render);
 		observer.observe(canvas);
 
-		return () => observer.disconnect();
-	}, [reading]);
+		return () => {
+			cancelAnimationFrame(frame);
+			observer.disconnect();
+		};
+	}, []);
 
 	return (
 		<canvas
@@ -146,7 +161,7 @@ const RouteComponent = () => {
 			<div className="grid min-h-0 flex-1 grid-cols-[minmax(560px,1fr)_364px]">
 				<div className="flex min-h-0 flex-col border-(--line) border-r">
 					<div className="relative min-h-0 flex-[1.55] overflow-hidden bg-(--sunken)">
-						<CortexCanvas reading={reading} />
+						<CortexCanvas key={activeScope ?? "none"} reading={reading} />
 						<div className="pointer-events-none absolute top-3 left-3.5">
 							<div className="font-semibold text-[10px] text-(--f2) uppercase tracking-[0.13em]">
 								Sensory prefix tree · s/[sequence]

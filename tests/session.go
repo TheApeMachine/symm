@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/trader"
@@ -140,9 +141,30 @@ func NewSession(
 		)
 	}
 
-	planner := strategy.NewPlanner(sessionCtx, channel, signals, nil)
-	planner.Bind(strategy.NewAllocator(sessionCtx, balance, instrument, price))
+	analyzer, err := logic.NewAnalyzer(sessionCtx, nil, api, nil, nil, nil)
+
+	if err != nil {
+		cancel()
+		return nil, errnie.Err(errnie.Internal, "tests: analyzer initialize", err)
+	}
+
+	planner := strategy.NewPlanner(
+		sessionCtx,
+		channel,
+		api,
+		instrument,
+		price,
+		balance,
+		signals,
+		analyzer,
+		strategy.NewAllocator(
+			sessionCtx, balance, instrument, price,
+		),
+		nil,
+	)
+
 	tree := dmt.NewTree(testingTB.TempDir())
+
 	testingTB.Cleanup(func() {
 		errnie.Error(tree.Close())
 	})
@@ -211,6 +233,7 @@ func configureSessionViper(testingTB testing.TB) func() {
 	previousQuote := viper.Get("market.quote_currency")
 	previousBatch := viper.Get("market.subscribe_batch")
 	previousPace := viper.Get("market.subscribe_pace")
+	previousFraction := viper.Get("trading.allocation.max_fraction")
 
 	viper.Set("trading.model", "paper")
 	viper.Set("system.data_path", testingTB.TempDir())
@@ -218,6 +241,7 @@ func configureSessionViper(testingTB testing.TB) func() {
 	viper.Set("signals.feed_track_capacity", 128)
 	viper.Set("trading.slots.normal", 2)
 	viper.Set("trading.slots.reserved", 2)
+	viper.Set("trading.allocation.max_fraction", 0.20)
 	viper.Set("market.quote_currency", "USD")
 	viper.Set("market.subscribe_batch", 200)
 	viper.Set("market.subscribe_pace", "20ms")
@@ -232,6 +256,7 @@ func configureSessionViper(testingTB testing.TB) func() {
 		viper.Set("market.quote_currency", previousQuote)
 		viper.Set("market.subscribe_batch", previousBatch)
 		viper.Set("market.subscribe_pace", previousPace)
+		viper.Set("trading.allocation.max_fraction", previousFraction)
 	}
 }
 
@@ -261,6 +286,7 @@ func wireSessionCrypto(
 		planner,
 		tree,
 		thesis,
+		nil,
 		nil,
 	)
 }
@@ -332,12 +358,26 @@ RunDecide applies the same Plan path Crypto.Tick uses after a market Play, so
 reserved/rotate assertions can run on a thesis seeded from the emulator cut
 without requiring the GPU analyzer to invent forecasts.
 */
-func (session *Session) RunDecide(thesis *types.Thesis) {
+func (session *Session) RunDecide(thesis *types.Thesis) error {
 	if session == nil || session.crypto == nil {
-		return
+		return errnie.Err(
+			errnie.NotFound,
+			"tests: session crypto unavailable",
+			nil,
+		)
+	}
+
+	if thesis == nil {
+		return errnie.Err(
+			errnie.Validation,
+			"tests: thesis required for decide",
+			nil,
+		)
 	}
 
 	session.crypto.Plan(thesis)
+
+	return nil
 }
 
 /*

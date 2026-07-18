@@ -16,6 +16,7 @@ import {
 } from "#/components/terminal/measurement-view";
 import { paintInlineMeter } from "#/components/terminal/metric-paint";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { requirePositive } from "#/lib/domain";
 import { Badge } from "@/components/ui/badge";
 import { Flex } from "@/components/ui/flex";
 import { Meter } from "@/components/ui/meter";
@@ -146,10 +147,18 @@ export const terminalHealthSummary = (
 		{ label: "Healthy", count: measured, variant: "success" as const },
 		{ label: "Warming", count: warming, variant: "warning" as const },
 		{ label: "Degraded", count: degraded, variant: "error" as const },
-	].map((bar) => ({
-		...bar,
-		percent: total > 0 ? Math.round((bar.count / total) * 100) : 0,
-	}));
+	].map((bar) => {
+		if (total <= 0) {
+			return { ...bar, percent: 0 };
+		}
+
+		const mass = requirePositive(total, "health bar mass");
+
+		return {
+			...bar,
+			percent: Math.round((bar.count / mass) * 100),
+		};
+	});
 	const ns = typeof tick?.ns === "number" ? tick.ns : null;
 
 	return {

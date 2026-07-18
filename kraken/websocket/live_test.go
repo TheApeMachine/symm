@@ -82,7 +82,7 @@ func TestLiveUpdateLevel3(t *testing.T) {
 			"1031" + "1001" + "991" + "981" + "971" +
 				"961" + "951" + "941" + "931" + "921",
 		))
-		raw := []byte(fmt.Sprintf(`{
+		raw := fmt.Appendf(nil, `{
 			"channel":"level3",
 			"type":"update",
 			"data":[{
@@ -96,7 +96,7 @@ func TestLiveUpdateLevel3(t *testing.T) {
 					{"event":"delete","order_id":"resting-ask","limit_price":102,"timestamp":"2024-01-01T00:00:03Z"}
 				]
 			}]
-		}`, checksum))
+		}`, checksum)
 		event := &callback.Event[*kraken.WebSocketMessage]{
 			Data: kraken.NewWebSocketMessage(raw),
 		}
@@ -118,7 +118,7 @@ func TestLiveUpdateLevel3(t *testing.T) {
 				"1021" + "1041" + "1001" + "991" + "981" + "971" +
 					"961" + "951" + "941" + "931" + "921",
 			))
-			raw := []byte(fmt.Sprintf(`{
+			raw := fmt.Appendf(nil, `{
 				"channel":"level3",
 				"type":"update",
 				"data":[{
@@ -129,7 +129,7 @@ func TestLiveUpdateLevel3(t *testing.T) {
 					],
 					"asks":[]
 				}]
-			}`, checksum))
+			}`, checksum)
 			event := &callback.Event[*kraken.WebSocketMessage]{
 				Data: kraken.NewWebSocketMessage(raw),
 			}
@@ -146,7 +146,7 @@ func TestLiveUpdateLevel3(t *testing.T) {
 	})
 }
 
-func TestLiveSubscribeLevel3SendsDepth(t *testing.T) {
+func TestLiveSubscribeLevel3UsesSDKSubL3(t *testing.T) {
 	Convey("Given an authenticated L3 websocket", t, func() {
 		requests := make(chan map[string]any, 1)
 		upgrader := gorillawebsocket.Upgrader{}
@@ -179,7 +179,7 @@ func TestLiveSubscribeLevel3SendsDepth(t *testing.T) {
 
 		So(client.Connect(), ShouldBeNil)
 
-		Convey("When level3 is subscribed at the configured depth", func() {
+		Convey("When level3 is subscribed through the SDK helper", func() {
 			So(live.SubscribeLevel3([]string{"BTC/USD"}, 100), ShouldBeNil)
 
 			var request map[string]any
@@ -192,10 +192,9 @@ func TestLiveSubscribeLevel3SendsDepth(t *testing.T) {
 
 			params := request["params"].(map[string]any)
 
-			Convey("Then depth is present on the actual wire request", func() {
+			Convey("Then the wire request matches SubL3", func() {
 				So(request["method"], ShouldEqual, "subscribe")
 				So(params["channel"], ShouldEqual, "level3")
-				So(params["depth"], ShouldEqual, float64(100))
 				So(params["symbol"], ShouldResemble, []any{"BTC/USD"})
 			})
 		})
@@ -213,7 +212,7 @@ func BenchmarkLiveUpdateLevel3(b *testing.B) {
 	live.client.Reconnect = func() {}
 	live.books.CreateBook("BTC/USD", 10)
 	checksum := crc32.ChecksumIEEE([]byte("1011"))
-	raw := []byte(fmt.Sprintf(`{
+	raw := fmt.Appendf(nil, `{
 		"channel":"level3",
 		"type":"update",
 		"data":[{
@@ -224,7 +223,7 @@ func BenchmarkLiveUpdateLevel3(b *testing.B) {
 			],
 			"asks":[]
 		}]
-	}`, checksum))
+	}`, checksum)
 	event := &callback.Event[*kraken.WebSocketMessage]{
 		Data: kraken.NewWebSocketMessage(raw),
 	}

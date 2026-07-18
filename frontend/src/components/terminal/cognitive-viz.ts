@@ -1,9 +1,12 @@
 import { formatEntropyGate } from "#/components/terminal/cognitive-entropy";
 import {
+	CortexLeafRoster,
+	drawCortexTree,
+} from "#/components/terminal/cortex-draw";
+import {
 	type CortexBeam,
 	type CortexTree,
 	cortexTreeFromReading,
-	drawCortexTree,
 } from "#/components/terminal/cortex-tree";
 import type { Variant } from "@/components/ui/types";
 
@@ -18,10 +21,7 @@ const sanitizeEntropyThreshold = (value: unknown): number => {
 		return 0;
 	}
 
-	if (
-		value === Number.POSITIVE_INFINITY ||
-		value >= Number.MAX_VALUE / 2
-	) {
+	if (value === Number.POSITIVE_INFINITY || value >= Number.MAX_VALUE / 2) {
 		return value;
 	}
 
@@ -153,6 +153,7 @@ export const drawCognitiveTree = (
 	width: number,
 	height: number,
 	reading: Record<string, unknown> | null,
+	roster: CortexLeafRoster = new CortexLeafRoster(),
 ): void => {
 	const tree = cognitiveTreeFromReading(reading);
 
@@ -167,5 +168,5 @@ export const drawCognitiveTree = (
 		return;
 	}
 
-	drawCortexTree(context, width, height, tree);
+	drawCortexTree(context, width, height, tree, roster);
 };

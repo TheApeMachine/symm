@@ -1,5 +1,6 @@
 import { createStore } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
+import { retainHawkesModelEpoch } from "#/components/terminal/hawkes-fit";
 import {
 	dedupeEpoch,
 	latestByMetric,
@@ -245,6 +246,14 @@ export const measurementsStore = createStore(
 						measurements[group.symbol][group.source],
 						group.readings,
 					);
+
+					if (group.source === "hawkes") {
+						retainHawkesModelEpoch({
+							at: epochAt(group.readings),
+							publishedAt: new Date().toISOString(),
+							readings: dedupeEpoch(group.readings),
+						});
+					}
 				}
 
 				return {

@@ -32,11 +32,11 @@ type Live struct {
 	cancel    context.CancelFunc
 	client    *spot.WebSocket
 	sync      *sync.Map
+	nextID    atomic.Uint64
 	paper     *Paper
 	simulator *Simulator
 	books     *spot.BookManager
 	bookMu    sync.RWMutex
-	level3    *level3Apply
 	isLevel3  bool
 	symbols   []string
 	transport *Transport
@@ -101,8 +101,6 @@ func (live *Live) Initialize() error {
 		))
 	}
 
-	live.status.Store(types.READY)
-
 	return nil
 }
 
@@ -147,8 +145,8 @@ func (live *Live) dispatch(channel string, raw []byte) {
 		return
 	}
 
-	for _, cb := range callbacks.([]func([]byte)) {
-		cb(raw)
+	for _, handler := range callbacks.([]channelHandler) {
+		handler.fn(raw)
 	}
 }
 
@@ -168,13 +166,37 @@ func (live *Live) Client() *spot.WebSocket {
 
 func (live *Live) On(
 	channel string, action func([]byte),
-) {
-	callbacks, ok := live.sync.LoadOrStore(channel, []func([]byte){action})
+) uint64 {
+	if live == nil || action == nil {
+		return 0
+	}
+
+	id := live.nextID.Add(1)
+	handler := channelHandler{id: id, fn: action}
+	callbacks, ok := live.sync.LoadOrStore(channel, []channelHandler{handler})
 
 	if ok {
-		callbacks = append(callbacks.([]func([]byte)), action)
-		live.sync.Store(channel, callbacks)
+		live.sync.Store(channel, append(callbacks.([]channelHandler), handler))
 	}
+
+	return id
+}
+
+/*
+Unsubscribe removes one handler previously registered with On for channel.
+*/
+func (live *Live) Unsubscribe(channel string, id uint64) {
+	if live == nil || id == 0 {
+		return
+	}
+
+	callbacks, ok := live.sync.Load(channel)
+
+	if !ok {
+		return
+	}
+
+	live.sync.Store(channel, dropHandler(callbacks.([]channelHandler), id))
 }
 
 func (live *Live) Write(params json.Marshaler) error {

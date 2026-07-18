@@ -4,7 +4,8 @@ import (
 	"sort"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -81,6 +82,10 @@ func (planner *Planner) displace(
 		return false
 	}
 
+	if incumbent.Notional <= 0 {
+		return false
+	}
+
 	planner.scaleTo(decision, incumbent.Notional)
 	incumbent.Displaced = true
 
@@ -96,20 +101,36 @@ func (planner *Planner) displace(
 		At:                decision.At,
 		Utility:           -incumbent.ExitCost,
 		Alternatives:      map[string]float64{"exit": -incumbent.ExitCost, "hold": incumbent.HoldUtility},
-		ProposedQuantity:  0,
-		ReferencePrice:    decision.ReferencePrice,
+		ProposedQuantity:  incumbent.Qty,
+		ReferencePrice:    incumbent.Mark,
 		ValidThroughEpoch: decision.ValidThroughEpoch,
 		Cause:             "rotation",
 		Reason:            "displaced by higher-utility challenger " + decision.Symbol,
 	})
+
 	thesis.Lifecycle.Store(incumbent.Symbol, types.LifecycleExitSelected)
-	thesis.Orders = append(thesis.Orders, spot.Order{
-		Description: &spot.OrderDescription{
-			Pair:      incumbent.Symbol,
-			Type:      "exit",
-			OrderType: "market",
-		},
-	})
+
+	if planner.instrument != nil {
+		pair, err := planner.instrument.Pair(incumbent.Symbol)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"failed to get instrument pair",
+				err,
+			))
+
+			return false
+		}
+
+		thesis.Positions.Store(incumbent.Symbol, broker.NewPosition(
+			planner.api,
+			planner.instrument,
+			planner.price,
+			planner.balance,
+			pair,
+		))
+	}
 
 	planner.persistAcceptedEntry(
 		thesis, *decision, decision.AllocationClass == "reserved",
@@ -186,45 +207,37 @@ func (planner *Planner) persistAcceptedEntry(
 	thesis.Lifecycle.Store(decision.Symbol, types.LifecycleEntrySelected)
 	thesis.Decisions = append(thesis.Decisions, decision)
 
-	entryPrice := decimal.NewFromFloat64(
-		decision.ReferencePrice,
-	).Mul(
-		decimal.NewFromFloat64(1).Add(
-			decimal.NewFromFloat64(
-				decision.ExpectedSpread,
-			).Div(
-				decimal.NewFromFloat64(2),
-			),
-		),
+	holding := types.NewHolding(
+		planner.ctx,
+		decision.Symbol,
+		decimal.NewFromFloat64(decision.ProposedQuantity),
 	)
+	holding.IsOpportunity = opportunity
+	thesis.Holdings.Store(decision.Symbol, holding)
 
-	thesis.Holdings.Store(decision.Symbol, types.Holding{
-		Symbol: decision.Symbol,
-		Qty:    decimal.NewFromFloat64(decision.ProposedQuantity),
-		Order: &spot.Order{
-			Description: &spot.OrderDescription{
-				Pair:      decision.Symbol,
-				Type:      "enter",
-				OrderType: "market",
-			},
-			Price:  entryPrice,
-			Volume: decimal.NewFromFloat64(decision.ProposedQuantity),
-		},
-		EntryPrice:    entryPrice,
-		Mark:          decimal.NewFromFloat64(decision.ReferencePrice),
-		IsOpportunity: opportunity,
-	})
+	if planner.instrument == nil {
+		return
+	}
 
-	thesis.Orders = append(thesis.Orders, spot.Order{
-		Description: &spot.OrderDescription{
-			Pair:      decision.Symbol,
-			Type:      decision.Action,
-			Price:     decimal.NewFromFloat64(decision.ReferencePrice),
-			OrderType: "market",
-		},
-		Volume: decimal.NewFromFloat64(decision.ProposedQuantity),
-		Price:  decimal.NewFromFloat64(decision.ReferencePrice),
-	})
+	pair, err := planner.instrument.Pair(decision.Symbol)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get instrument pair",
+			err,
+		))
+
+		return
+	}
+
+	thesis.Positions.Store(decision.Symbol, broker.NewPosition(
+		planner.api,
+		planner.instrument,
+		planner.price,
+		planner.balance,
+		pair,
+	))
 }
 
 /*
@@ -232,8 +245,8 @@ entry computes executable utility for opening one slot and caps proposed
 notional at both wallet cash and visible best-ask capacity. Utility is the
 single economic gate — expected return minus uncertainty minus round-trip
 friction. Cognition must still clear the forecast noise share;
-AllocationClass reserved further needs positive OpportunityMargin and
-CognitiveLead.
+AllocationClass reserved further needs Opportunity.Reserved — strong SNR,
+noise-clearing cognitive lead, next-event horizon, and non-ambiguous contrast.
 */
 func (planner *Planner) entry(
 	thesis *types.Thesis,

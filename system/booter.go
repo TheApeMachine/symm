@@ -42,6 +42,10 @@ func (booter *Booter) AddStages(stages ...*Stage) {
 }
 
 func (booter *Booter) Ready(stage StageType) bool {
+	if booter == nil || int(stage) >= len(booter.stages) {
+		return false
+	}
+
 	return booter.stages[stage].Status() == types.READY
 }
 

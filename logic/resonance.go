@@ -154,7 +154,16 @@ func (resonance *Resonance) Update(
 		return nil, nil
 	}
 
-	resonance.manifold.Learn(nil)
+	if err := resonance.manifold.Learn(nil); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"logic resonance: manifold learn failed",
+			err,
+		))
+
+		return nil, nil
+	}
+
 	resonance.samples++
 	prediction := resonance.manifold.TaskPrediction()
 
@@ -245,7 +254,25 @@ func (resonance *Resonance) learnReturn(state manifold.State) error {
 		return nil
 	}
 
-	target := math.Log(state.ReferencePrice / resonance.pendingMid)
+	if !(resonance.pendingMid > 0) || !(state.ReferencePrice > 0) {
+		return errnie.Err(
+			errnie.Validation,
+			"logic resonance: midpoint prices must be strictly positive for log return",
+			nil,
+		)
+	}
+
+	ratio := state.ReferencePrice / resonance.pendingMid
+
+	if !(ratio > 0) {
+		return errnie.Err(
+			errnie.Validation,
+			"logic resonance: log-return argument must be strictly positive",
+			nil,
+		)
+	}
+
+	target := math.Log(ratio)
 
 	if !finite(target) {
 		return errnie.Err(
@@ -293,7 +320,13 @@ func (resonance *Resonance) learnReturn(state manifold.State) error {
 		)
 	}
 
-	resonance.manifold.Learn([]float64{target})
+	if err := resonance.manifold.Learn([]float64{target}); err != nil {
+		return errnie.Err(
+			errnie.UnprocessableContent,
+			"logic resonance: return learn failed",
+			err,
+		)
+	}
 
 	return nil
 }

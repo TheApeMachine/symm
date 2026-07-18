@@ -64,27 +64,41 @@ func (balance *Balance) Status() types.Status {
 	return balance.status
 }
 
+/*
+Frame marshals the current quote snapshot and open holdings for the terminal.
+Nil when Balance is not ready to publish a coherent desk view.
+*/
+func (balance *Balance) Frame() []byte {
+	if balance.status != types.READY || balance.model == nil {
+		return nil
+	}
+
+	holdings := make([]types.Holding, 0)
+
+	balance.holdings.Range(func(key, value any) bool {
+		holding := value.(*types.Holding)
+		holdings = append(holdings, *holding)
+		return true
+	})
+
+	return datura.Map[any]{
+		"balances":  balance.Snapshot(),
+		"positions": holdings,
+	}.Marshal()
+}
+
+/*
+Publish enqueues a desk snapshot on the UI channel. Callers that must deliver
+on websocket connect should Write Frame() directly — a saturated channel drops
+this non-blocking send.
+*/
 func (balance *Balance) Publish() {
-	if balance.status != types.READY {
+	if balance.ui == nil || balance.status != types.READY || balance.model == nil {
 		return
 	}
 
-	positions := make([]types.Holding, 0)
-
-	if balance.holdings != nil {
-		balance.holdings.Range(func(key, value any) bool {
-			holding := value.(*types.Holding)
-			holding.Project()
-			positions = append(positions, *holding)
-			return true
-		})
-	}
-
 	select {
-	case balance.ui <- datura.Map[any]{
-		"balances":  balance.Snapshot(),
-		"positions": positions,
-	}.Marshal():
+	case balance.ui <- balance.Frame():
 	default:
 	}
 }
@@ -136,6 +150,7 @@ func (balance *Balance) BalanceAck(buf []byte) {
 		balance.model = incoming
 		balance.status = types.READY
 		balance.Publish()
+
 		return
 	}
 
@@ -147,16 +162,14 @@ func (balance *Balance) BalanceAck(buf []byte) {
 	// subscribe/reconnect rather than merging over unknown state.
 	if balance.model.Sequence > 0 &&
 		incoming.Sequence > balance.model.Sequence+1 {
+
 		errnie.Error(errnie.Err(
 			errnie.Validation,
 			"balance: sequence gap; waiting for snapshot resync",
 			nil,
 		))
-		balance.model = nil
 
-		if err := balance.api.SubscribeBalance(); err != nil {
-			errnie.Error(err)
-		}
+		errnie.Error(balance.Resync())
 
 		return
 	}
@@ -181,7 +194,6 @@ func (balance *Balance) BalanceAck(buf []byte) {
 
 	balance.model.Sequence = incoming.Sequence
 	balance.model.Timestamp = incoming.Timestamp
-
 	balance.status = types.READY
 	balance.Publish()
 }
@@ -190,15 +202,32 @@ func (balance *Balance) BalanceAck(buf []byte) {
 Resync clears cached Kraken balance state and requests a fresh snapshot
 subscription after reconciliation detects missing or inconsistent holdings.
 */
-func (balance *Balance) Resync() {
+func (balance *Balance) Resync() error {
 	balance.model = nil
+	balance.status = types.PENDING
 
 	if err := balance.api.SubscribeBalance(); err != nil {
-		errnie.Error(err)
+		balance.status = types.ERROR
+
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"balance: SubscribeBalance failed during resync",
+			err,
+		))
 	}
+
+	return nil
 }
 
 func (balance *Balance) Get(symbol string) (*kraken.BalanceData, error) {
+	if balance.model == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"balance model not available",
+			nil,
+		))
+	}
+
 	for _, balanceData := range balance.model.Data {
 		if balanceData.Asset == symbol {
 			return &balanceData, nil
@@ -224,7 +253,7 @@ func (balance *Balance) Holdings() iter.Seq[types.Holding] {
 				return true
 			}
 
-			if holding.Closed() {
+			if holding.Status == types.CLOSED {
 				return true
 			}
 
@@ -289,10 +318,20 @@ func (balance *Balance) TradeMatchesSymbol(tradePair string, symbol string) bool
 }
 
 func (balance *Balance) Available(amount *decimal.Decimal) bool {
+	if amount == nil {
+		return false
+	}
+
+	if balance.model == nil {
+		return false
+	}
+
 	for _, balanceData := range balance.model.Data {
-		if balanceData.Asset == balance.quote {
-			return balanceData.Available.Sub(amount).Sign() >= 0
+		if balanceData.Asset != balance.quote || balanceData.Available == nil {
+			continue
 		}
+
+		return balanceData.Available.Sub(amount).Sign() >= 0
 	}
 
 	return false
@@ -303,18 +342,18 @@ AvailableQuote returns the unreserved quote-currency capital strategy may
 allocate. Missing balance state is an error rather than zero available cash.
 */
 func (balance *Balance) AvailableQuote() (float64, error) {
-	if balance.model == nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"quote balance not available",
-			nil,
-		))
-	}
-
 	row, err := balance.Get(balance.quote)
 
 	if err != nil {
 		return 0, err
+	}
+
+	if row.Available == nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"quote available balance missing",
+			nil,
+		))
 	}
 
 	return row.Available.Float64(), nil

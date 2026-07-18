@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
@@ -117,6 +118,18 @@ var (
 
 			simulator := websocket.NewLatencySimulator(booter)
 
+			dataPath := strings.TrimSpace(viper.GetString("system.data_path"))
+
+			recorder, err := audit.NewRecorder(filepath.Join(
+				persistDir, "runtime-audit.jsonl",
+			))
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO, "failed to create runtime audit recorder", err,
+				))
+			}
+
 			public := websocket.New(
 				ctx,
 				simulator,
@@ -141,7 +154,6 @@ var (
 			defer api.Close()
 
 			holdings := make([]types.Holding, 0)
-			dataPath := strings.TrimSpace(viper.GetString("system.data_path"))
 
 			if strings.HasPrefix(dataPath, "~/") {
 				home, err := os.UserHomeDir()
@@ -174,8 +186,8 @@ var (
 			}
 
 			thesis.Holdings.Range(func(key, value any) bool {
-				holding := value.(*types.Holding)
-				holdings = append(holdings, *holding)
+				holding := value.(types.Holding)
+				holdings = append(holdings, holding)
 				return true
 			})
 
@@ -183,7 +195,10 @@ var (
 			instrument := broker.NewInstrument(api, price, channel)
 			balance := broker.NewBalance(api, holdings, channel)
 			desk := broker.NewDesk(api, instrument, price, balance)
-			uiHub, err := ui.NewHub(ctx, price, balance, thesis, channel)
+			warmupReady := func() bool {
+				return booter.Ready(system.StageWarmup)
+			}
+			uiHub, err := ui.NewHub(ctx, price, balance, thesis, channel, warmupReady)
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
@@ -194,7 +209,7 @@ var (
 			}
 
 			defer uiHub.Close()
-			errnie.AttachWriter(ui.NewErrorBridge(uiHub))
+			errnie.AttachWriter(ui.NewErrorBridge(uiHub, warmupReady))
 
 			hawkesSignal := hawkes.NewSignal(ctx, api, channel)
 			analyzer, err := logic.NewAnalyzer(ctx, booter, api, hawkesSignal, tree, channel)
@@ -210,6 +225,10 @@ var (
 			planner := strategy.NewPlanner(
 				ctx,
 				channel,
+				api,
+				instrument,
+				price,
+				balance,
 				[]types.Signal{
 					pumpdump.NewSignal(ctx, api, channel),
 					liquidity.NewSignal(ctx, api, channel),
@@ -224,8 +243,9 @@ var (
 					hawkesSignal,
 				},
 				analyzer,
+				strategy.NewAllocator(ctx, balance, instrument, price),
+				recorder,
 			)
-			planner.Bind(strategy.NewAllocator(ctx, balance, instrument, price))
 
 			crypto, err := trader.NewCrypto(
 				ctx,
@@ -240,6 +260,7 @@ var (
 				tree,
 				thesis,
 				uiHub,
+				recorder,
 			)
 
 			if err != nil {

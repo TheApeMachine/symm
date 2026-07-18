@@ -18,6 +18,29 @@ import (
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+testPlanner wires a Planner with nil broker and audit deps for Crypto
+construction tests that only exercise runtime assembly.
+*/
+func testPlanner(
+	ctx context.Context,
+	uiHub chan<- []byte,
+	analyzer *logic.Analyzer,
+) *strategy.Planner {
+	return strategy.NewPlanner(
+		ctx,
+		uiHub,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		analyzer,
+		nil,
+		nil,
+	)
+}
+
 func TestNewCrypto(t *testing.T) {
 	previousDepth := viper.Get("market.l3_depth")
 	previousInterval := viper.Get("signals.fluid.integration_interval")
@@ -40,7 +63,7 @@ func TestNewCrypto(t *testing.T) {
 		booter := system.NewBooter(ctx, nil)
 		analyzer, err := logic.NewAnalyzer(ctx, booter, nil, nil, nil, nil)
 		So(err, ShouldBeNil)
-		planner := strategy.NewPlanner(ctx, nil, nil, analyzer)
+		planner := testPlanner(ctx, nil, analyzer)
 		tree := dmt.NewTree(t.TempDir())
 		t.Cleanup(func() {
 			if err := tree.Close(); err != nil {
@@ -63,6 +86,7 @@ func TestNewCrypto(t *testing.T) {
 				planner,
 				tree,
 				thesis,
+				nil,
 				nil,
 			)
 
@@ -102,7 +126,7 @@ func TestCryptoRun(t *testing.T) {
 		booter := system.NewBooter(ctx, channel)
 		analyzer, err := logic.NewAnalyzer(ctx, booter, nil, nil, nil, nil)
 		So(err, ShouldBeNil)
-		planner := strategy.NewPlanner(ctx, channel, nil, analyzer)
+		planner := testPlanner(ctx, channel, analyzer)
 		tree := dmt.NewTree(t.TempDir())
 		t.Cleanup(func() {
 			if err := tree.Close(); err != nil {
@@ -110,8 +134,17 @@ func TestCryptoRun(t *testing.T) {
 			}
 		})
 		thesis := types.NewThesis(channel, nil)
-		desk := broker.NewDesk(nil, nil, nil, nil)
-		hub, err := ui.NewHub(ctx, nil, nil, thesis, channel)
+		previousQuote := viper.GetString("market.quote_currency")
+		viper.Set("market.quote_currency", "USD")
+		t.Cleanup(func() { viper.Set("market.quote_currency", previousQuote) })
+		balance := broker.NewBalance(nil, nil, make(chan []byte, 8))
+		balance.BalanceAck([]byte(
+			`{"channel":"balances","type":"snapshot","sequence":1,"data":[{` +
+				`"asset":"USD","balance":"1000","available":"1000","reserved":"0"` +
+				`}]}`,
+		))
+		desk := broker.NewDesk(nil, nil, nil, balance)
+		hub, err := ui.NewHub(ctx, nil, balance, thesis, channel, nil)
 		So(err, ShouldBeNil)
 		t.Cleanup(func() {
 			if err := hub.Close(); err != nil {
@@ -124,7 +157,7 @@ func TestCryptoRun(t *testing.T) {
 			booter,
 			nil,
 			nil,
-			nil,
+			balance,
 			desk,
 			nil,
 			analyzer,
@@ -132,6 +165,7 @@ func TestCryptoRun(t *testing.T) {
 			tree,
 			thesis,
 			hub,
+			nil,
 		)
 
 		So(err, ShouldBeNil)

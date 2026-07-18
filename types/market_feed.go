@@ -70,7 +70,7 @@ func NewMarketFeed[T any](
 		)}
 	}
 
-	clock, err := structure.NewClockRing[string, T](timeline, newTrack)
+	clock, err := structure.NewClockRing(timeline, newTrack)
 
 	if err != nil {
 		return &MarketFeed[T]{err: err}

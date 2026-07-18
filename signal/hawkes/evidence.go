@@ -22,10 +22,10 @@ func NewEvidence() *Evidence {
 }
 
 /*
-Measure emits empirical evidence first, updates conditional intensities from a
-retained valid fit, and publishes parameter evidence only on an actual refit
-epoch. This keeps a current intensity from masquerading as a newly estimated
-model.
+Measure emits empirical evidence first, then conditional intensities and the
+retained fit parameters once HawkesFit is true. Parameter rows stay anchored to
+the fit epoch (At/Scale = FitAt) so evaluation ticks do not masquerade as
+refits, while the UI wire can still carry μ, β, and η beside live λ(t).
 */
 func (evidence *Evidence) Measure(
 	symbol string,
@@ -86,10 +86,6 @@ func (evidence *Evidence) Measure(
 			symbol, outcome, types.SideSell, outcome.Fit.IntensityY,
 		),
 	)
-
-	if !outcome.Readiness.ModelUpdated {
-		return measurements
-	}
 
 	return append(measurements, evidence.model(symbol, outcome)...)
 }

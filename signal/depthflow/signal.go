@@ -100,7 +100,21 @@ measureBook applies one book event to the shared flow sample and emits the
 resulting measurements only after both sample and equation report readiness.
 */
 func (signal *Signal) measureBook(row kraken.BookData) []*types.Measurement {
-	if row.Symbol == "" || row.PriceIncrement.Sign() <= 0 {
+	if row.Symbol == "" {
+		return nil
+	}
+
+	if row.PriceIncrement == nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"depthflow: price increment required for "+row.Symbol,
+			nil,
+		))
+
+		return nil
+	}
+
+	if row.PriceIncrement.Sign() <= 0 {
 		return nil
 	}
 

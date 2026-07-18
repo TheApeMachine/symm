@@ -339,7 +339,7 @@ feedBookLocked applies one validated book update while the caller exclusively
 owns symbol state.
 */
 func (state *FluidSymbol) feedBookLocked(update kraken.BookData, at time.Time) error {
-	if update.PriceIncrement.Float64() > 0 {
+	if update.PriceIncrement != nil && update.PriceIncrement.Float64() > 0 {
 		state.instrumentTickSize = update.PriceIncrement.Float64()
 	}
 

@@ -20,6 +20,7 @@ import {
 } from "#/components/terminal/measurement-view";
 import { paintMetricGrid } from "#/components/terminal/metric-paint";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { requireSampleSize } from "#/lib/domain";
 import { cn } from "#/lib/utils";
 import { panelVariants } from "@/components/ui/panel";
 
@@ -79,15 +80,23 @@ const paintInspector = (
 	const width = 150;
 	const baseline = 29;
 	const scale = 26;
-	const points = values
-		.slice(-40)
-		.map(
-			(value, index, series) =>
-				`${((index / Math.max(series.length - 1, 1)) * width).toFixed(
-					1,
-				)},${(baseline - Math.max(0, Math.min(1, value)) * scale).toFixed(1)}`,
-		)
-		.join(" ");
+	const spark = values.slice(-40);
+	const points =
+		spark.length < 2
+			? ""
+			: (() => {
+					requireSampleSize(spark.length, 2, "inspector sparkline");
+					const span = spark.length - 1;
+
+					return spark
+						.map(
+							(value, index) =>
+								`${((index / span) * width).toFixed(1)},${(
+									baseline - Math.max(0, Math.min(1, value)) * scale
+								).toFixed(1)}`,
+						)
+						.join(" ");
+				})();
 	const observed = latest.at
 		? new Date(latest.at).toLocaleTimeString("en-US", { hour12: false })
 		: "—";

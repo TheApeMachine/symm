@@ -113,7 +113,7 @@ func TestCalculateOneTickSpreadDoesNotDoubleCountExecution(t *testing.T) {
 
 		bid := decimal.NewFromFloat64(100)
 		ask := decimal.NewFromFloat64(100.0001)
-		live.SeedTouchDecimals(symbol, bid, ask, 1000, eventAt)
+		live.SeedTouch(symbol, bid, ask, decimal.NewFromFloat64(1000), eventAt)
 
 		signal := &Signal{
 			ctx:        context.Background(),

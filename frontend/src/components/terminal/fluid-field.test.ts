@@ -41,6 +41,18 @@ describe("sampleBilinearLattice", () => {
 });
 
 describe("normalizeFluidLattice", () => {
+	it("keeps uniform positive lattices lit instead of collapsing to zero", () => {
+		const constant = [
+			[0.4, 0.4, 0.4],
+			[0.4, 0.4, 0.4],
+			[0.4, 0.4, 0.4],
+		];
+		const { normalized, peak } = normalizeFluidLattice(constant, false);
+
+		expect(peak).toBeGreaterThan(0);
+		expect(normalized.flat().every((value) => value > 0)).toBe(true);
+	});
+
 	it("expands sparse rho deposits using median/MAD contrast", () => {
 		const sparse = [
 			[0, 0, 0, 0],

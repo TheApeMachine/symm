@@ -64,7 +64,7 @@ func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 		return nil, nil
 	}
 
-	if row.PriceIncrement.Float64() > 0 {
+	if row.PriceIncrement != nil && row.PriceIncrement.Float64() > 0 {
 		state.setInstrumentTickSize(row.PriceIncrement.Float64())
 	}
 

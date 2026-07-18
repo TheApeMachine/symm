@@ -1,5 +1,15 @@
 import type { CircularBuffer } from "#/collections/circular";
-import type { Measurement, MeasurementEpoch } from "#/collections/measurements";
+import type { MeasurementEpoch } from "#/collections/measurements";
+import {
+	collectFitState,
+	type HawkesObservation,
+} from "#/components/terminal/hawkes-fit";
+
+export {
+	latestHawkesRaw,
+	resetHawkesFitRetention,
+	retainHawkesModelEpoch,
+} from "#/components/terminal/hawkes-fit";
 
 /*
 HawkesCurveSegment is one identifiable interval between consecutive arrivals.
@@ -16,200 +26,109 @@ export type HawkesCurveSegment = {
 };
 
 /*
-HawkesModel is the fitted univariate process shared by one parameter epoch.
+HawkesSeries is a dense λ(t) path for canvas drawing: impulses at arrivals and
+exponential decay between them, including a trailing decay to the present.
 */
-type HawkesModel = {
+export type HawkesSeries = {
 	baseline: number;
 	beta: number;
+	fromAt: number;
+	throughAt: number;
+	samples: number[];
+	events: number[];
 };
 
 /*
-HawkesObservation is the pre-arrival intensity emitted for one market event.
+intensityAt evaluates μ + (λᵢ − μ)·e^(−β(t−tᵢ)) after the latest arrival at or
+before t, matching the mockup's continuous decay sampler.
 */
-type HawkesObservation = {
-	at: number;
-	intensity: number;
-	fit: string;
-};
+const intensityAt = (
+	observations: HawkesObservation[],
+	baseline: number,
+	beta: number,
+	at: number,
+): number => {
+	let latest: HawkesObservation | undefined;
 
-/*
-reading selects one directional metric from a complete observation epoch.
-*/
-const reading = (
-	epoch: MeasurementEpoch,
-	metric: string,
-	side = "",
-): Measurement | undefined => {
-	for (let index = epoch.readings.length - 1; index >= 0; index -= 1) {
-		const measurement = epoch.readings[index];
-
-		if (measurement.metric === metric && (measurement.side ?? "") === side) {
-			return measurement;
-		}
-	}
-
-	return undefined;
-};
-
-/*
-raw returns a finite metric value without replacing absent model data.
-*/
-const raw = (
-	epoch: MeasurementEpoch,
-	metric: string,
-	side = "",
-): number | null => {
-	const value = reading(epoch, metric, side)?.raw;
-
-	return Number.isFinite(value) ? (value as number) : null;
-};
-
-/*
-fitKey identifies the parameter interval that produced a measurement.
-*/
-const fitKey = (measurement: Measurement | undefined): string => {
-	const from = measurement?.scale?.from ?? "";
-	const through = measurement?.scale?.through ?? "";
-
-	return from === "" || through === "" ? "" : `${from}\u0000${through}`;
-};
-
-/*
-modelFrom reads one complete fitted kernel from an emitted model epoch.
-*/
-const modelFrom = (epoch: MeasurementEpoch): [string, HawkesModel] | null => {
-	const buy = reading(epoch, "baseline_intensity", "buy");
-	const sell = reading(epoch, "baseline_intensity", "sell");
-	const beta = raw(epoch, "decay_rate");
-	const buyFit = fitKey(buy);
-	const sellFit = fitKey(sell);
-
-	if (
-		buy === undefined ||
-		sell === undefined ||
-		!Number.isFinite(buy.raw) ||
-		!Number.isFinite(sell.raw) ||
-		beta === null ||
-		beta <= 0 ||
-		buyFit === "" ||
-		buyFit !== sellFit
-	) {
-		return null;
-	}
-
-	return [buyFit, { baseline: buy.raw + sell.raw, beta }];
-};
-
-/*
-observationFrom reads the total pre-arrival intensity for one market event.
-*/
-const observationFrom = (epoch: MeasurementEpoch): HawkesObservation | null => {
-	const buy = reading(epoch, "conditional_intensity", "buy");
-	const sell = reading(epoch, "conditional_intensity", "sell");
-	const at = Date.parse(epoch.at);
-	const buyFit = fitKey(buy);
-	const sellFit = fitKey(sell);
-
-	if (
-		buy === undefined ||
-		sell === undefined ||
-		!Number.isFinite(buy.raw) ||
-		!Number.isFinite(sell.raw) ||
-		!Number.isFinite(at) ||
-		buyFit === "" ||
-		buyFit !== sellFit
-	) {
-		return null;
-	}
-
-	return { at, intensity: buy.raw + sell.raw, fit: buyFit };
-};
-
-/*
-latestHawkesRaw carries fitted parameters forward within the active fit epoch.
-Matching scale identity prevents a missing current parameter from silently
-falling back to a stale model.
-*/
-export const latestHawkesRaw = (
-	buffer: CircularBuffer<MeasurementEpoch> | undefined,
-	metric: string,
-	side = "",
-): number | null => {
-	const epochs = buffer?.values() ?? [];
-	let currentFit = "";
-
-	for (let index = epochs.length - 1; index >= 0; index -= 1) {
-		const observation = observationFrom(epochs[index]);
-
-		if (observation !== null) {
-			currentFit = observation.fit;
+	for (const observation of observations) {
+		if (observation.at > at) {
 			break;
 		}
+
+		latest = observation;
 	}
 
-	if (currentFit === "") {
-		return null;
+	if (latest === undefined) {
+		return baseline;
 	}
 
-	for (let index = epochs.length - 1; index >= 0; index -= 1) {
-		const measurement = reading(epochs[index], metric, side);
-		const value = measurement?.raw;
+	const elapsed = Math.max(0, (at - latest.at) / 1000);
 
-		if (
-			value !== undefined &&
-			Number.isFinite(value) &&
-			fitKey(measurement) === currentFit
-		) {
-			return value;
-		}
-	}
-
-	return null;
+	return baseline + (latest.intensity - baseline) * Math.exp(-beta * elapsed);
 };
 
 /*
-hawkesCurveFromBuffer reconstructs the identifiable intensity path for the
-current fitted parameter epoch. Consecutive pre-arrival intensities determine
-the preceding post-arrival jump exactly under the shared exponential kernel.
+hawkesSeriesFromBuffer builds a dense intensity series over a window long enough
+for several half-lives of decay so impulses do not collapse to a single pixel.
+*/
+export const hawkesSeriesFromBuffer = (
+	buffer: CircularBuffer<MeasurementEpoch> | undefined,
+	now = Date.now(),
+	sampleCount = 220,
+): HawkesSeries | null => {
+	const state = collectFitState(buffer);
+
+	if (state === null || sampleCount < 2) {
+		return null;
+	}
+
+	const { model, observations } = state;
+	const lastAt = observations[observations.length - 1]?.at ?? now;
+	const throughAt = Math.max(now, lastAt);
+	const halfLifeMs = (Math.LN2 / model.beta) * 1000;
+	const minWindowMs = Math.max(4_000, halfLifeMs * 6);
+	const maxWindowMs = 60_000;
+	const firstAt = observations[0]?.at ?? throughAt;
+	const windowMs = Math.min(
+		maxWindowMs,
+		Math.max(minWindowMs, throughAt - firstAt),
+	);
+	const fromAt = throughAt - windowMs;
+	const duration = Math.max(1, throughAt - fromAt);
+	const samples = new Array<number>(sampleCount);
+
+	for (let index = 0; index < sampleCount; index += 1) {
+		const at = fromAt + (index / (sampleCount - 1)) * duration;
+		samples[index] = intensityAt(observations, model.baseline, model.beta, at);
+	}
+
+	return {
+		baseline: model.baseline,
+		beta: model.beta,
+		fromAt,
+		throughAt,
+		samples,
+		events: observations.map((observation) => observation.at),
+	};
+};
+
+/*
+hawkesCurveFromBuffer reconstructs identifiable impulse segments between
+consecutive arrivals for tests of the exponential kernel identity.
 */
 export const hawkesCurveFromBuffer = (
 	buffer: CircularBuffer<MeasurementEpoch> | undefined,
 ): HawkesCurveSegment[] => {
-	const epochs = buffer?.values() ?? [];
-	const models = new Map<string, HawkesModel>();
-	const observations: HawkesObservation[] = [];
+	const state = collectFitState(buffer);
 
-	for (const epoch of epochs) {
-		const model = modelFrom(epoch);
-
-		if (model !== null) {
-			models.set(...model);
-		}
-
-		const observation = observationFrom(epoch);
-
-		if (observation !== null) {
-			observations.push(observation);
-		}
-	}
-
-	const currentFit = observations.at(-1)?.fit;
-
-	if (currentFit === undefined) {
+	if (state === null || state.observations.length < 2) {
 		return [];
 	}
 
-	const model = models.get(currentFit);
-	const current = observations.filter(
-		(observation) => observation.fit === currentFit,
-	);
+	const { model, observations } = state;
 
-	if (model === undefined || current.length < 2) {
-		return [];
-	}
-
-	return current.slice(0, -1).flatMap((observation, index) => {
-		const next = current[index + 1];
+	return observations.slice(0, -1).flatMap((observation, index) => {
+		const next = observations[index + 1];
 		const elapsed = (next.at - observation.at) / 1000;
 
 		if (elapsed <= 0) {

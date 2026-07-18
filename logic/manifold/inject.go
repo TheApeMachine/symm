@@ -366,9 +366,29 @@ func carrierSpeed(
 			)
 		}
 
-		soundSpeed := math.Sqrt(
-			config.Gamma * (config.Gamma - 1) * specificInternalEnergy,
+		radicand := config.Gamma * (config.Gamma - 1) * specificInternalEnergy
+		scale := math.Max(
+			1,
+			math.Max(
+				math.Abs(config.Gamma),
+				math.Max(
+					math.Abs(config.Gamma-1),
+					math.Abs(specificInternalEnergy),
+				),
+			),
 		)
+		machineEpsilon := math.Nextafter(1, 2) - 1
+		tolerance := 32 * machineEpsilon * scale
+
+		if radicand < -tolerance {
+			return 0, errnie.Err(
+				errnie.Validation,
+				"manifold: carrier sound-speed radicand is negative beyond floating-point tolerance",
+				nil,
+			)
+		}
+
+		soundSpeed := math.Sqrt(math.Max(0, radicand))
 		speed := velocity + soundSpeed
 
 		if rarefaction {

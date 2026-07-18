@@ -7,38 +7,12 @@ import (
 )
 
 /*
-Evidence is the thin numeric projection Stoploss consumes from one Thesis.
-It collapses logic-layer outputs onto the scalars the stop actually needs so
-exit regulation stays independent of signal vocabulary and named regimes.
-*/
-type Evidence struct {
-	Symbol               string
-	Mark                 float64
-	Entry                float64
-	ForecastEpoch        uint64
-	NormalizedResidual   float64
-	ExpectedReturn       float64
-	Uncertainty          float64
-	IncrementalMSE       float64
-	ReturnReady          bool
-	CausalReady          bool
-	CausalExpectedReturn float64
-	CognitionReady       bool
-	CognitionConfidence  float64
-	CognitionWinner      string
-	CognitionAmbiguous   bool
-	Spread               float64
-	SellCapacity         float64
-	Present              bool
-}
-
-/*
-Project builds Evidence for one open holding from the current Thesis cut.
+Project builds StopEvidence for one open holding from the current Thesis cut.
 Missing mark or entry leaves Present false so Stoploss freezes last state
 instead of inventing prices or zeroing floors through a nil frame.
 */
-func Project(thesis *types.Thesis, holding types.Holding) Evidence {
-	evidence := Evidence{Symbol: holding.Symbol}
+func Project(thesis *types.Thesis, holding types.Holding) types.StopEvidence {
+	evidence := types.StopEvidence{Symbol: holding.Symbol}
 
 	if holding.Mark == nil || holding.EntryPrice == nil {
 		return evidence
@@ -54,6 +28,10 @@ func Project(thesis *types.Thesis, holding types.Holding) Evidence {
 	evidence.Mark = mark
 	evidence.Entry = entry
 	evidence.Present = true
+
+	if thesis == nil {
+		return evidence
+	}
 
 	for _, forecast := range thesis.Forecasts {
 		if forecast.Symbol != holding.Symbol {

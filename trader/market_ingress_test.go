@@ -105,6 +105,7 @@ func TestMarketIngressAsyncTrade(t *testing.T) {
 
 				if time.Now().After(deadline) {
 					So("trade cut", ShouldEqual, "received within deadline")
+					break
 				}
 
 				time.Sleep(10 * time.Millisecond)

@@ -1,6 +1,8 @@
 package types
 
 import (
+	"fmt"
+
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/symm/kraken"
 )
@@ -30,6 +32,13 @@ instead of each owning a legacy book cache.
 func BookLevels(
 	row kraken.BookData,
 ) ([]flow.BookLevel, []flow.BookLevel, error) {
+	if row.PriceIncrement == nil {
+		return nil, nil, fmt.Errorf(
+			"book %s: price increment is required",
+			row.Symbol,
+		)
+	}
+
 	bids := make([]flow.BookLevel, 0, len(row.Bids))
 	asks := make([]flow.BookLevel, 0, len(row.Asks))
 

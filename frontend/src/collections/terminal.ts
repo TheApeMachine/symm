@@ -1,4 +1,5 @@
 import { createStore } from "@tanstack/react-store";
+import { DEFAULT_FOCUS_SYMBOL } from "#/collections/app";
 
 export type TerminalSurface =
 	| "dashboard"
@@ -9,7 +10,7 @@ export type TerminalSurface =
 	| "cortex"
 	| "allocation";
 
-export const DEFAULT_FOCUS_SYMBOL = "stream";
+export { DEFAULT_FOCUS_SYMBOL };
 
 export const terminalStore = createStore(
 	{

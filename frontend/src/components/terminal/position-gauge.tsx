@@ -18,6 +18,58 @@ const clampPercent = (value: number, lo: number, hi: number): number => {
 const positiveFinite = (value: number): number | null =>
 	Number.isFinite(value) && value > 0 ? value : null;
 
+/*
+positionStop prefers stop fields published on the Holding/position frame, then
+falls back to the legacy symbol-keyed stops map.
+*/
+const positionStop = (position: Position, legacy?: Stop): Stop | undefined => {
+	const stopPrice = position.stop_price;
+	const stopReturn = position.stop_return;
+	const peakReturn = position.peak_return;
+
+	if (
+		typeof stopPrice === "number" &&
+		typeof stopReturn === "number" &&
+		typeof peakReturn === "number" &&
+		Number.isFinite(stopPrice) &&
+		Number.isFinite(stopReturn) &&
+		Number.isFinite(peakReturn)
+	) {
+		return {
+			symbol: position.symbol,
+			stop_price: stopPrice,
+			stop_return: stopReturn,
+			peak_return: peakReturn,
+			armed:
+				typeof position.stop_armed === "boolean"
+					? position.stop_armed
+					: undefined,
+			momentum_active:
+				typeof position.momentum_active === "boolean"
+					? position.momentum_active
+					: legacy?.momentum_active,
+			momentum_health:
+				typeof position.momentum_health === "number"
+					? position.momentum_health
+					: legacy?.momentum_health,
+			stagnation_active:
+				typeof position.stagnation_active === "boolean"
+					? position.stagnation_active
+					: legacy?.stagnation_active,
+			stagnation_health:
+				typeof position.stagnation_health === "number"
+					? position.stagnation_health
+					: legacy?.stagnation_health,
+			stagnation_pending:
+				typeof position.stagnation_pending === "boolean"
+					? position.stagnation_pending
+					: legacy?.stagnation_pending,
+		};
+	}
+
+	return legacy;
+};
+
 export type PriceGaugeGeometry = {
 	entryPct: number;
 	markPct: number;
@@ -43,13 +95,16 @@ export const positionGaugeGeometry = (
 			? positiveFinite(entry * (1 + position.return_pct))
 			: null);
 	const markReturn = derivedMark === null ? 0 : derivedMark / entry - 1;
-	const hasStop =
+	const armed =
 		stop !== undefined &&
+		stop.armed !== false &&
 		positiveFinite(stop.stop_price) !== null &&
 		Number.isFinite(stop.stop_return) &&
 		Number.isFinite(stop.peak_return);
 
-	if (!hasStop) {
+	// Unarmed / missing stops: show entry↔mark only. Do not pretend the mark
+	// extreme is take-profit — that was reading as "stop at TP".
+	if (!armed || stop === undefined) {
 		const lo = Math.min(0, markReturn);
 		const hi = Math.max(0, markReturn);
 
@@ -57,7 +112,7 @@ export const positionGaugeGeometry = (
 			return null;
 		}
 
-		const pad = (hi - lo) * 0.15;
+		const pad = Math.max((hi - lo) * 0.15, 1e-6);
 		const domainLo = lo - pad;
 		const domainHi = hi + pad;
 
@@ -75,7 +130,8 @@ export const positionGaugeGeometry = (
 	const trailSpan = peakReturn - stopReturn;
 	const rawLo = Math.min(0, stopReturn, markReturn);
 	const rawHi = Math.max(0, peakReturn, markReturn);
-	const padding = trailSpan > 0 ? trailSpan : rawHi - rawLo;
+	// Keep stop and peak from collapsing onto one pixel when the trail is thin.
+	const padding = Math.max(trailSpan, rawHi - rawLo, 1e-6) * 0.5;
 
 	if (!(padding > 0)) {
 		return null;
@@ -147,13 +203,17 @@ const paintPositionGauge = (
 		return;
 	}
 
-	const stop = stopsStore.state.stops[symbol];
-	const profitable = position.pnl > 0 || position.return_pct > 0;
-	const pnlTone = profitable
-		? upTone
-		: position.pnl < 0 || position.return_pct < 0
-			? downTone
-			: neutralTone;
+	const stop = positionStop(position, stopsStore.state.stops[symbol]);
+	// Color each figure by its own sign — fee-dragged PnL can be red while
+	// return_pct is green when price lifted but fees dominate dollars.
+	const pnlTone =
+		position.pnl > 0 ? upTone : position.pnl < 0 ? downTone : neutralTone;
+	const returnTone =
+		position.return_pct > 0
+			? upTone
+			: position.return_pct < 0
+				? downTone
+				: neutralTone;
 
 	const geometry = positionGaugeGeometry(position, stop);
 	const rawMark = positiveFinite(position.mark);
@@ -226,7 +286,7 @@ const paintPositionGauge = (
 	}
 
 	if (refs.returnPct) {
-		refs.returnPct.style.color = pnlTone;
+		refs.returnPct.style.color = returnTone;
 		refs.returnPct.textContent = `${(position.return_pct * 100).toFixed(4)}%`;
 	}
 
