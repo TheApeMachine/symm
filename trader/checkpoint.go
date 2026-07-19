@@ -79,15 +79,7 @@ func (crypto *Crypto) flushCheckpoint() {
 	if crypto.balance != nil {
 		for holding := range crypto.balance.Holdings() {
 			lot := holding
-
-			if crypto.desk != nil {
-				if position, ok := crypto.desk.Position(lot.Symbol); ok {
-					if stop := position.Stop(); stop != nil {
-						lot.Stoploss = stop
-					}
-				}
-			}
-
+			crypto.bindCheckpointStop(&lot)
 			open[lot.Symbol] = lot
 		}
 	}
@@ -101,4 +93,27 @@ func (crypto *Crypto) flushCheckpoint() {
 			err,
 		))
 	}
+}
+
+/*
+bindCheckpointStop copies a non-nil desk stop onto the holding for recovery.
+*/
+func (crypto *Crypto) bindCheckpointStop(lot *types.Holding) {
+	if crypto.desk == nil || lot == nil {
+		return
+	}
+
+	position, ok := crypto.desk.Position(lot.Symbol)
+
+	if !ok {
+		return
+	}
+
+	stop := position.Stop()
+
+	if stop == nil {
+		return
+	}
+
+	lot.Stoploss = stop
 }

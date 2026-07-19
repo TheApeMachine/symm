@@ -108,7 +108,11 @@ export const cognitiveBeamModel = (
 			: 0);
 
 	return {
-		cohort: String(reading.regimeCohort),
+		cohort:
+			typeof reading.regimeCohort === "number" &&
+			Number.isFinite(reading.regimeCohort)
+				? String(reading.regimeCohort)
+				: "—",
 		sequence: sequence.preview,
 		sequenceTitle: sequence.title,
 		winner: reading.winnerClass || "pending",

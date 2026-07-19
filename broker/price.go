@@ -143,6 +143,34 @@ func (price *Price) Snapshot(
 }
 
 /*
+EachLast visits cached last prices so test harnesses can align paper marks
+with the same quotes Allocator used for sizing.
+*/
+func (price *Price) EachLast(visit func(symbol string, last float64)) {
+	if price == nil || price.tickers == nil || visit == nil {
+		return
+	}
+
+	price.tickers.Range(func(key, value any) bool {
+		symbol, ok := key.(string)
+
+		if !ok {
+			return true
+		}
+
+		ticker, ok := value.(*kraken.TickerData)
+
+		if !ok || ticker == nil || ticker.Last == nil || ticker.Last.Sign() <= 0 {
+			return true
+		}
+
+		visit(symbol, ticker.Last.Float64())
+
+		return true
+	})
+}
+
+/*
 Get returns the latest cached ticker row for symbol. Missing or not-ready
 lookups return an error without logging — subscription lag is expected and
 must not flood the UI error overlay through errnie.Error.
@@ -758,7 +786,7 @@ func (price *Price) Quantity(
 	// Shrink by ratio, and when that stalls, step down one qty_increment.
 	var cost *decimal.Decimal
 
-	for range 8 {
+	for range 8 { // ponytail: fixed 8-iteration ceiling is intentional; could upgrade to convergence-based or adaptive termination
 		var costErr error
 		cost, costErr = price.Taker(pair, quantity)
 

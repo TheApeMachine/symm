@@ -280,11 +280,19 @@ func filterReporters(reporters []types.StatusReporter) []types.StatusReporter {
 	return out
 }
 
+/*
+feedUntilReady repeatedly invokes feed until the instrument reports READY or
+ERROR, or until the wait expires. Preflight must observe a terminal instrument
+status before the stack advances; a single feed pass is not enough when the
+broker still needs several poll cycles to settle.
+*/
 func feedUntilReady(instrument *broker.Instrument, feed func()) {
 	if instrument == nil || feed == nil {
 		return
 	}
 
+	// Fixed 5s window / 5ms poll are intentional boot-time constants for now;
+	// derive or configure them later from instrument cadence rather than hard-coding.
 	deadline := time.Now().Add(5 * time.Second)
 
 	for time.Now().Before(deadline) {

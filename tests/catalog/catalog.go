@@ -30,20 +30,44 @@ const (
 )
 
 /*
+MeasureBound is how AssertMeasure reads PeakSourceMetric.
+*/
+type MeasureBound string
+
+const (
+	// MeasureBoundPositive (default/empty) requires peak > 0.
+	MeasureBoundPositive MeasureBound = ""
+	// MeasureBoundPresent requires a found non-zero peak (signed ok).
+	MeasureBoundPresent MeasureBound = "present"
+	// MeasureBoundZero requires a found peak == 0 (e.g. no lead claim).
+	MeasureBoundZero MeasureBound = "zero"
+)
+
+/*
+WalletBound is the known-correct cash outcome after strategy.
+*/
+type WalletBound string
+
+const (
+	// WalletBoundNone leaves wallet cash unclaimed.
+	WalletBoundNone WalletBound = ""
+	// WalletBoundPreserve requires after >= before (no deploy).
+	WalletBoundPreserve WalletBound = "preserve"
+	// WalletBoundDeploy requires after < before (cash left the wallet).
+	WalletBoundDeploy WalletBound = "deploy"
+)
+
+/*
 StageTruth is the known-correct system behavior at one verification stage.
 */
 type StageTruth struct {
 	MeasureSource types.SourceType
 	MeasureMetric types.MetricType
-	// MeasureBound is how AssertMeasure reads PeakSourceMetric: "positive"
-	// (default, peak > 0), "present" (found and non-zero, signed ok), or
-	// "zero" (found with peak == 0 — e.g. subject has no lead claim).
-	MeasureBound string
-	DecideAction types.Action
-	MustNotEnter bool
-	SizedEnter   bool
-	// WalletBound is "preserve", "deploy", or empty when unclaimed.
-	WalletBound string
+	MeasureBound  MeasureBound
+	DecideAction  types.Action
+	MustNotEnter  bool
+	SizedEnter    bool
+	WalletBound   WalletBound
 }
 
 /*
@@ -72,7 +96,7 @@ func All() []Entry {
 				MeasureMetric: types.MetricRVOL,
 				DecideAction:  types.ActionEnter,
 				SizedEnter:    true,
-				WalletBound:   "deploy",
+				WalletBound:   WalletBoundDeploy,
 			},
 			Market: conditions.TapePump,
 		},
@@ -84,7 +108,7 @@ func All() []Entry {
 				MeasureMetric: types.MetricRVOL,
 				DecideAction:  types.ActionEnter,
 				SizedEnter:    true,
-				WalletBound:   "deploy",
+				WalletBound:   WalletBoundDeploy,
 			},
 			Market: conditions.TapeCoil,
 		},
@@ -95,7 +119,7 @@ func All() []Entry {
 				MeasureSource: types.SourceExhaustion,
 				MeasureMetric: types.MetricMechanical,
 				MustNotEnter:  true,
-				WalletBound:   "preserve",
+				WalletBound:   WalletBoundPreserve,
 			},
 			Market: conditions.TapeExhaustion,
 		},
@@ -106,7 +130,7 @@ func All() []Entry {
 				MeasureSource: types.SourceExhaustion,
 				MeasureMetric: types.MetricMechanical,
 				MustNotEnter:  true,
-				WalletBound:   "preserve",
+				WalletBound:   WalletBoundPreserve,
 			},
 			Market: conditions.TapeVacuum,
 		},
@@ -118,7 +142,7 @@ func All() []Entry {
 				MeasureMetric: types.MetricHerdScore,
 				DecideAction:  types.ActionEnter,
 				SizedEnter:    true,
-				WalletBound:   "deploy",
+				WalletBound:   WalletBoundDeploy,
 			},
 			Market: conditions.TapeSectorLift,
 		},
@@ -129,7 +153,7 @@ func All() []Entry {
 				MeasureSource: types.SourceLiquidity,
 				MeasureMetric: types.MetricScarcityScore,
 				MustNotEnter:  true,
-				WalletBound:   "preserve",
+				WalletBound:   WalletBoundPreserve,
 			},
 			Market: conditions.TapeThinBook,
 		},
@@ -139,9 +163,9 @@ func All() []Entry {
 			Truth: StageTruth{
 				MeasureSource: types.SourceSentiment,
 				MeasureMetric: types.MetricChange,
-				MeasureBound:  "present",
+				MeasureBound:  MeasureBoundPresent,
 				MustNotEnter:  true,
-				WalletBound:   "preserve",
+				WalletBound:   WalletBoundPreserve,
 			},
 			Market: conditions.TapeNoise,
 		},
@@ -150,7 +174,7 @@ func All() []Entry {
 			Capital: 10_000, FeePct: 0.26,
 			Truth: StageTruth{
 				MustNotEnter: true,
-				WalletBound:  "preserve",
+				WalletBound:  WalletBoundPreserve,
 			},
 			Market: conditions.TapePhantomQuote,
 		},
@@ -161,7 +185,7 @@ func All() []Entry {
 				MeasureSource: types.SourceCVD,
 				MeasureMetric: types.MetricDrive,
 				MustNotEnter:  true,
-				WalletBound:   "preserve",
+				WalletBound:   WalletBoundPreserve,
 			},
 			Market: conditions.TapeToxicChase,
 		},
@@ -172,7 +196,7 @@ func All() []Entry {
 				MeasureSource: types.SourceHawkes,
 				MeasureMetric: types.MetricEventCount,
 				MustNotEnter:  true,
-				WalletBound:   "preserve",
+				WalletBound:   WalletBoundPreserve,
 			},
 			Market: conditions.TapeToxicChase,
 		},
@@ -181,7 +205,7 @@ func All() []Entry {
 			Capital: 1, FeePct: 0.26,
 			Truth: StageTruth{
 				MustNotEnter: true,
-				WalletBound:  "preserve",
+				WalletBound:  WalletBoundPreserve,
 			},
 			Market: conditions.TapePump,
 		},
@@ -191,7 +215,7 @@ func All() []Entry {
 			Truth: StageTruth{
 				DecideAction: types.ActionEnter,
 				SizedEnter:   true,
-				WalletBound:  "deploy",
+				WalletBound:  WalletBoundDeploy,
 			},
 			Market: conditions.TapePumpThenReversal,
 		},
@@ -201,9 +225,9 @@ func All() []Entry {
 			Truth: StageTruth{
 				MeasureSource: types.SourceLeadLag,
 				MeasureMetric: types.MetricStrength,
-				MeasureBound:  "zero",
+				MeasureBound:  MeasureBoundZero,
 				MustNotEnter:  true,
-				WalletBound:   "preserve",
+				WalletBound:   WalletBoundPreserve,
 			},
 			Market: conditions.TapeLag,
 		},
@@ -213,7 +237,7 @@ func All() []Entry {
 			Truth: StageTruth{
 				DecideAction: types.ActionEnter,
 				SizedEnter:   true,
-				WalletBound:  "deploy",
+				WalletBound:  WalletBoundDeploy,
 			},
 			Market: conditions.TapePump,
 		},
@@ -223,7 +247,7 @@ func All() []Entry {
 /*
 Frames yields the catalog tape frames for Play.
 */
-func Frames(entry Entry) iter.Seq[tests.Frame] {
+func (entry Entry) Frames() iter.Seq[tests.Frame] {
 	if entry.Market == nil {
 		return func(yield func(tests.Frame) bool) {}
 	}

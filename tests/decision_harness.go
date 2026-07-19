@@ -175,11 +175,13 @@ func (scenario DecisionScenario) exit(
 	}
 
 	entry := lot.EntryPrice.Float64()
-	result.CashAfterEnter = 10_000 - qty*entry
+	cash, err := session.Balance.AvailableQuote()
 
-	if cash, cashErr := session.Balance.AvailableQuote(); cashErr == nil {
-		result.CashAfterEnter = cash
+	if err != nil {
+		return result, err
 	}
+
+	result.CashAfterEnter = cash
 
 	peakMul := scenario.PeakMul
 

@@ -25,13 +25,13 @@ func TestCatalogLogicComposesGraphsFromTape(t *testing.T) {
 		t.Fatalf("boot: %v", err)
 	}
 
-	theses, err := session.Play(catalog.Frames(entry))
+	theses, err := session.Play(entry.Frames())
 
 	if err != nil {
 		t.Fatalf("play: %v", err)
 	}
 
-	if err := catalog.AssertMeasure(theses, entry); err != nil {
+	if err := entry.AssertMeasure(theses); err != nil {
 		t.Fatal(err)
 	}
 
@@ -73,13 +73,13 @@ func TestCatalogLogicCognitionSurfaceAfterHerd(t *testing.T) {
 		t.Fatalf("boot: %v", err)
 	}
 
-	theses, err := session.Play(catalog.Frames(entry))
+	theses, err := session.Play(entry.Frames())
 
 	if err != nil {
 		t.Fatalf("play: %v", err)
 	}
 
-	if err := catalog.AssertMeasure(theses, entry); err != nil {
+	if err := entry.AssertMeasure(theses); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,7 +116,7 @@ func BenchmarkCatalogLogicPumpGraphs(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	frames := catalog.Frames(entry)
+	frames := entry.Frames()
 	b.ReportAllocs()
 
 	for b.Loop() {

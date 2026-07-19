@@ -225,9 +225,13 @@ var (
 
 			defer wired.Close()
 
-			if wired.UIHub != nil {
-				defer wired.UIHub.Close()
+			if wired.UIHub == nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal, "ui hub missing after boot", nil,
+				))
 			}
+
+			defer wired.UIHub.Close()
 
 			wired.Crypto.Run()
 

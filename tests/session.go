@@ -30,14 +30,15 @@ opportunity/trap tapes via Emit/Play; advance with Crypto.Tick. Strategy-only
 truths given seeded forecasts use CommitStrategy and must say so.
 */
 type Session struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	api      *websocket.API
-	channel  chan []byte
-	clock    time.Time
-	interval time.Duration
-	tree     *dmt.Tree
-	stack    *stack.Stack
+	ctx        context.Context
+	cancel     context.CancelFunc
+	api        *websocket.API
+	channel    chan []byte
+	clock      time.Time
+	interval   time.Duration
+	tree       *dmt.Tree
+	stack      *stack.Stack
+	paperState string
 
 	Mock    *MockAPI
 	Paper   *websocket.Paper
@@ -83,7 +84,8 @@ func NewSession(
 	env := NewSessionEnv()
 	t.Cleanup(env.Configure(t))
 
-	InstallPaperCLI(t, filepath.Join(t.TempDir(), "paper-state.json"))
+	paperState := filepath.Join(t.TempDir(), "paper-state.json")
+	InstallPaperCLI(t, paperState)
 
 	sessionCtx, cancel := context.WithCancel(ctx)
 	channel := make(chan []byte, 256)
@@ -150,22 +152,23 @@ func NewSession(
 	}
 
 	session := &Session{
-		ctx:      sessionCtx,
-		cancel:   cancel,
-		api:      api,
-		channel:  channel,
-		clock:    clock,
-		interval: interval,
-		tree:     tree,
-		stack:    wired,
-		Mock:     mock,
-		Paper:    paper,
-		Crypto:   wired.Crypto,
-		Planner:  wired.Planner,
-		Desk:     wired.Desk,
-		Price:    wired.Price,
-		Balance:  wired.Balance,
-		Level3:   books,
+		ctx:        sessionCtx,
+		cancel:     cancel,
+		api:        api,
+		channel:    channel,
+		clock:      clock,
+		interval:   interval,
+		tree:       tree,
+		stack:      wired,
+		paperState: paperState,
+		Mock:       mock,
+		Paper:      paper,
+		Crypto:     wired.Crypto,
+		Planner:    wired.Planner,
+		Desk:       wired.Desk,
+		Price:      wired.Price,
+		Balance:    wired.Balance,
+		Level3:     books,
 	}
 
 	t.Cleanup(func() {

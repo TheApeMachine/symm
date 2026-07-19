@@ -31,7 +31,8 @@ func (frame rawBalanceFrame) MarshalJSON() ([]byte, error) {
 /*
 SeedQuoteCapital emits a balances snapshot through the paper transport so
 Crypto.Decide sees available quote via BalanceAck (paper mode does not route
-balances through the public MockConn).
+balances through the public MockConn). It also aligns the paper CLI wallet so
+fills cannot overwrite Available with the shim's default cash pool.
 */
 func (session *Session) SeedQuoteCapital(available float64) error {
 	if session == nil || session.Paper == nil {
@@ -40,6 +41,10 @@ func (session *Session) SeedQuoteCapital(available float64) error {
 			"tests: session paper unavailable",
 			nil,
 		)
+	}
+
+	if err := session.alignPaperWallet(available); err != nil {
+		return err
 	}
 
 	amount := formatFloat(available)

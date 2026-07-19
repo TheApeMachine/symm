@@ -11,7 +11,7 @@ import (
 /*
 AssertMeasure checks that the tape produced the expected signal evidence.
 */
-func AssertMeasure(theses []*types.Thesis, entry Entry) error {
+func (entry Entry) AssertMeasure(theses []*types.Thesis) error {
 	if entry.Truth.MeasureSource == "" || entry.Truth.MeasureMetric == "" {
 		return nil
 	}
@@ -19,9 +19,9 @@ func AssertMeasure(theses []*types.Thesis, entry Entry) error {
 	bound := tests.BoundPositive
 
 	switch entry.Truth.MeasureBound {
-	case "present":
+	case MeasureBoundPresent:
 		bound = tests.BoundPresent
-	case "zero":
+	case MeasureBoundZero:
 		bound = tests.BoundZero
 	}
 
@@ -40,7 +40,7 @@ func AssertMeasure(theses []*types.Thesis, entry Entry) error {
 /*
 AssertDecide checks enter/refuse and sizing against StageTruth after CommitStrategy.
 */
-func AssertDecide(thesis *types.Thesis, entry Entry) error {
+func (entry Entry) AssertDecide(thesis *types.Thesis) error {
 	if thesis == nil {
 		return fmt.Errorf("catalog %s: nil thesis after strategy", entry.Name)
 	}
@@ -106,16 +106,16 @@ func AssertDecide(thesis *types.Thesis, entry Entry) error {
 /*
 AssertWallet checks preserve/deploy cash bounds after strategy.
 */
-func AssertWallet(before float64, after float64, entry Entry) error {
+func (entry Entry) AssertWallet(before float64, after float64) error {
 	switch entry.Truth.WalletBound {
-	case "preserve":
+	case WalletBoundPreserve:
 		if after < before-0.01 {
 			return fmt.Errorf(
 				"catalog %s: wallet should preserve cash (before=%g after=%g)",
 				entry.Name, before, after,
 			)
 		}
-	case "deploy":
+	case WalletBoundDeploy:
 		if after >= before {
 			return fmt.Errorf(
 				"catalog %s: wallet should deploy cash (before=%g after=%g)",

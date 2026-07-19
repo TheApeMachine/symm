@@ -148,9 +148,84 @@ paper AddOrder spend the same quote pool.
 */
 func SetPaperCash(t testing.TB, statePath string, cash float64) {
 	t.Helper()
-	mutatePaperState(t, statePath, func(state map[string]any) {
+
+	if err := syncPaperCash(statePath, cash); err != nil {
+		t.Fatal(err)
+	}
+}
+
+/*
+syncPaperCash writes the shim USD pool used by paper Buy/Sell so SeedQuoteCapital
+and Desk fills share one cash authority.
+*/
+func syncPaperCash(statePath string, cash float64) error {
+	return writePaperState(statePath, func(state map[string]any) {
 		state["USD"] = cash
 	})
+}
+
+/*
+alignPaperWallet syncs shim cash and marks to the session Balance/Price surfaces
+so paper AddOrder cannot size against a $1 default while Allocator used the tape.
+*/
+func (session *Session) alignPaperWallet(cash float64) error {
+	if session == nil || session.paperState == "" {
+		return nil
+	}
+
+	marks := map[string]float64{}
+
+	if session.Price != nil {
+		session.Price.EachLast(func(symbol string, last float64) {
+			marks[symbol] = last
+		})
+	}
+
+	return writePaperState(session.paperState, func(state map[string]any) {
+		state["USD"] = cash
+
+		if len(marks) == 0 {
+			return
+		}
+
+		prices, _ := state["prices"].(map[string]any)
+
+		if prices == nil {
+			prices = map[string]any{}
+			state["prices"] = prices
+		}
+
+		for symbol, last := range marks {
+			prices[symbol] = last
+		}
+	})
+}
+
+func writePaperState(statePath string, mutate func(map[string]any)) error {
+	if statePath == "" {
+		return nil
+	}
+
+	raw, err := os.ReadFile(statePath)
+
+	if err != nil {
+		return err
+	}
+
+	var state map[string]any
+
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return err
+	}
+
+	mutate(state)
+	out, err := json.Marshal(state)
+
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(statePath, out, 0o644)
 }
 
 /*

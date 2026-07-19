@@ -84,47 +84,10 @@ then Decide-displaces a weak open hold when rotate surplus is positive.
 */
 func TestSessionPumpRotateWhenChallengerClearsWeakest(t *testing.T) {
 	Convey("Given a full normal book and a stronger emulator-backed challenger", t, func() {
-		session, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
-			Signals: pumpdumpSignals,
-		})
-		So(err, ShouldBeNil)
-
-		_, err = session.Play(conditions.Pump(24, 12, 1.25, 8).Frames())
-		So(err, ShouldBeNil)
-
-		So(session.SeedTakerFee("MATIC/USD", 0.26), ShouldBeNil)
-		So(session.SeedTakerFee("WEAK/USD", 0.26), ShouldBeNil)
-		// Quote covers rotation Book of the incumbent notional; slots stay full
-		// so MATIC cannot enter without displacing WEAK.
-		So(session.SeedQuoteCapital(100), ShouldBeNil)
-
-		thesis := types.NewThesis(nil, nil)
-		session.SeedMatureHolding(thesis, "WEAK/USD", 100)
-		tests.SeedOpportunityForecast(thesis, "WEAK/USD", 0.02, 0.01)
-		tests.SeedOpportunityForecast(thesis, "MATIC/USD", 0.12, 0.01)
-		tests.SeedEarlyCognition(thesis, "MATIC/USD")
-
-		session.Desk.SetSlots(1, 0)
-		So(session.CommitStrategy(thesis), ShouldBeNil)
-
 		Convey("Then WEAK is displaced and MATIC enters by rotation", func() {
-			exited := false
-			entered := false
-
-			for _, decision := range thesis.Decisions {
-				if decision.Action == "exit" && decision.Symbol == "WEAK/USD" {
-					So(decision.Cause, ShouldEqual, "rotation")
-					exited = true
-				}
-
-				if decision.Action == "enter" && decision.Symbol == "MATIC/USD" {
-					So(decision.Cause, ShouldEqual, "rotation")
-					entered = true
-				}
-			}
-
-			So(exited, ShouldBeTrue)
-			So(entered, ShouldBeTrue)
+			tests.ProveRotateDisplace(
+				t, pumpdumpSignals, conditions.Pump(24, 12, 1.25, 8).Frames(),
+			)
 		})
 	})
 }
@@ -135,43 +98,10 @@ when the pump challenger does not clear hold utility plus exit cost.
 */
 func TestSessionPumpWaitsWhenRotateSurplusNonPositive(t *testing.T) {
 	Convey("Given a strong incumbent and a weaker pump challenger", t, func() {
-		session, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
-			Signals: pumpdumpSignals,
-		})
-		So(err, ShouldBeNil)
-
-		_, err = session.Play(conditions.Pump(16, 8, 1.2, 4).Frames())
-		So(err, ShouldBeNil)
-
-		So(session.SeedTakerFee("MATIC/USD", 0.26), ShouldBeNil)
-		So(session.SeedTakerFee("HOLD/USD", 0.26), ShouldBeNil)
-		So(session.SeedQuoteCapital(0), ShouldBeNil)
-
-		thesis := types.NewThesis(nil, nil)
-		session.SeedMatureHolding(thesis, "HOLD/USD", 100)
-		tests.SeedOpportunityForecast(thesis, "HOLD/USD", 0.10, 0.01)
-		tests.SeedOpportunityForecast(thesis, "MATIC/USD", 0.04, 0.01)
-		tests.SeedEarlyCognition(thesis, "MATIC/USD")
-
-		session.Desk.SetSlots(1, 0)
-		So(session.CommitStrategy(thesis), ShouldBeNil)
-
 		Convey("Then Decide waits instead of rotating", func() {
-			sawWait := false
-
-			for _, decision := range thesis.Decisions {
-				So(decision.Action, ShouldNotEqual, "exit")
-
-				if decision.Symbol == "MATIC/USD" && decision.Action == "enter" {
-					So(false, ShouldBeTrue)
-				}
-
-				if decision.Symbol == "MATIC/USD" && decision.Cause == "rotate_wait" {
-					sawWait = true
-				}
-			}
-
-			So(sawWait, ShouldBeTrue)
+			tests.ProveRotateWait(
+				t, pumpdumpSignals, conditions.Pump(16, 8, 1.2, 4).Frames(),
+			)
 		})
 	})
 }

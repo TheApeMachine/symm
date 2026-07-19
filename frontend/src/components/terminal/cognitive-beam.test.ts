@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { CognitiveReading } from "#/collections/types";
 import {
 	cognitiveBeamModel,
 	cognitiveReadingFor,
 } from "#/components/terminal/cognitive-beam";
-import type { CognitiveReading } from "#/collections/types";
 
 const reading = (overrides: Partial<CognitiveReading> = {}): CognitiveReading =>
 	({
@@ -44,5 +44,11 @@ describe("cognitiveBeamModel", () => {
 
 	it("returns null when no reading is available", () => {
 		expect(cognitiveBeamModel(null)).toBeNull();
+	});
+
+	it("falls back when regimeCohort is missing", () => {
+		const model = cognitiveBeamModel(reading({ regimeCohort: undefined }));
+
+		expect(model?.cohort).toBe("—");
 	});
 });

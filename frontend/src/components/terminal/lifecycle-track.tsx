@@ -277,9 +277,9 @@ export const paintJournalSurface = (
 
 	for (const symbol of symbols) {
 		paintLifecycleTrack(
-			root.querySelector(`[data-lifecycle-track='${symbol}']`) as
-				| HTMLElement
-				| null,
+			root.querySelector(
+				`[data-lifecycle-track='${CSS.escape(symbol)}']`,
+			) as HTMLElement | null,
 			lifecycleBySymbol[symbol] ?? "observing",
 		);
 	}

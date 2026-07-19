@@ -95,14 +95,15 @@ export const paintAllocationSurface = (
 	}
 
 	for (const row of alloc.rows) {
-		const main = root.querySelector(`[data-alloc-row='${row.symbol}']`);
+		const escaped = CSS.escape(row.symbol);
+		const main = root.querySelector(`[data-alloc-row='${escaped}']`);
 
 		if (main instanceof HTMLElement) {
 			main.style.display = row.allocated || row.inPlay ? "" : "none";
-			setText(main.querySelector("[data-alloc='edge']"), [
-				row.edge >= 0 ? "+" : "-",
-				Math.abs(row.edge).toFixed(3),
-			].join(""));
+			setText(
+				main.querySelector("[data-alloc='edge']"),
+				[row.edge >= 0 ? "+" : "-", Math.abs(row.edge).toFixed(3)].join(""),
+			);
 			setText(
 				main.querySelector("[data-alloc='share']"),
 				`${(row.share * 100).toFixed(1)}%`,
@@ -145,7 +146,7 @@ export const paintAllocationSurface = (
 			}
 		}
 
-		const sizing = root.querySelector(`[data-alloc-size='${row.symbol}']`);
+		const sizing = root.querySelector(`[data-alloc-size='${escaped}']`);
 
 		if (sizing instanceof HTMLElement) {
 			sizing.style.display = row.allocated ? "" : "none";
@@ -166,4 +167,3 @@ export const paintAllocationSurface = (
 		}
 	}
 };
-

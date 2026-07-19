@@ -72,13 +72,13 @@ func ProveMeasure(
 				testingT.Fatalf("boot: %v", err)
 			}
 
-			theses, err := session.Play(Frames(entry))
+			theses, err := session.Play(entry.Frames())
 
 			if err != nil {
 				testingT.Fatalf("play: %v", err)
 			}
 
-			if err := AssertMeasure(theses, entry); err != nil {
+			if err := entry.AssertMeasure(theses); err != nil {
 				testingT.Fatal(err)
 			}
 		})
@@ -105,9 +105,20 @@ func ProveStrategy(
 		t.Fatalf("boot: %v", err)
 	}
 
-	if _, err := session.Play(Frames(entry)); err != nil {
+	if _, err := session.Play(entry.Frames()); err != nil {
 		t.Fatalf("play: %v", err)
 	}
+
+	ProveStrategyOnSession(t, session, entry)
+}
+
+/*
+ProveStrategyOnSession seeds fees/capital, commits strategy, and asserts decide
++ wallet truths on an already-played session. Shared by ProveStrategy and the
+single-session lifecycle proofs.
+*/
+func ProveStrategyOnSession(t testing.TB, session *tests.Session, entry Entry) {
+	t.Helper()
 
 	if err := session.SeedTakerFee(entry.Symbol, entry.FeePct); err != nil {
 		t.Fatal(err)
@@ -137,7 +148,7 @@ func ProveStrategy(
 		t.Fatalf("CommitStrategy: %v", err)
 	}
 
-	if err := AssertDecide(thesis, entry); err != nil {
+	if err := entry.AssertDecide(thesis); err != nil {
 		t.Fatal(err)
 	}
 
@@ -147,15 +158,13 @@ func ProveStrategy(
 		t.Fatal(err)
 	}
 
-	if entry.Truth.WalletBound == "deploy" {
+	if entry.Truth.WalletBound == WalletBoundDeploy {
 		if err := AssertSizedEnter(thesis, entry); err != nil {
 			t.Fatal(err)
 		}
-
-		return
 	}
 
-	if err := AssertWallet(before, after, entry); err != nil {
+	if err := entry.AssertWallet(before, after); err != nil {
 		t.Fatal(err)
 	}
 }
