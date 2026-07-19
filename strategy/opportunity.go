@@ -46,9 +46,33 @@ func NewOpportunity(
 }
 
 /*
-Measure stamps fee friction, scores executable utility, and appends enter when
-utility clears doing nothing and cognition clears forecast noise. Cognitive and
-forecast rejects are recorded as explicit nothing decisions for audit.
+StampFriction writes Price.Fraction fees onto every forecast so Continuity can
+score occupied lots before Measure skips them for fresh enters.
+*/
+func (opportunity *Opportunity) StampFriction(thesis *types.Thesis) {
+	if err := opportunity.validate(map[string]any{"thesis": thesis}); err != nil {
+		return
+	}
+
+	for index := range thesis.Forecasts {
+		forecast := &thesis.Forecasts[index]
+		fraction, err := opportunity.price.Fraction(forecast.Symbol)
+
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		forecast.ExpectedFees = fraction.Float64()
+		forecast.FrictionReady = true
+	}
+}
+
+/*
+Measure scores executable utility and appends enter when utility clears doing
+nothing and cognition clears forecast noise. Cognitive and forecast rejects are
+recorded as explicit nothing decisions for audit. Occupied symbols are skipped
+for entry; Continuity already scored them after StampFriction.
 */
 func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 	if err := opportunity.validate(map[string]any{
@@ -66,15 +90,17 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			continue
 		}
 
-		fraction, err := opportunity.price.Fraction(forecast.Symbol)
+		if !forecast.FrictionReady {
+			fraction, err := opportunity.price.Fraction(forecast.Symbol)
 
-		if err != nil {
-			errnie.Error(err)
-			continue
+			if err != nil {
+				errnie.Error(err)
+				continue
+			}
+
+			forecast.ExpectedFees = fraction.Float64()
+			forecast.FrictionReady = true
 		}
-
-		forecast.ExpectedFees = fraction.Float64()
-		forecast.FrictionReady = true
 
 		if !forecast.Eligible() {
 			continue
@@ -166,10 +192,10 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			allocation = "reserved"
 		}
 
-		risk := 1 - cognition.Confidence
+		haircut := 1 - cognition.Confidence
 
-		if risk < 0 {
-			risk = 0
+		if haircut < 0 {
+			haircut = 0
 		}
 
 		thesis.Decisions = append(thesis.Decisions, types.Decision{
@@ -177,7 +203,7 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			Symbol:            forecast.Symbol,
 			At:                forecast.At,
 			Utility:           utility,
-			Risk:              risk,
+			AllocationHaircut: haircut,
 			AllocationClass:   allocation,
 			Alternatives:      map[string]float64{"enter": utility, "nothing": 0},
 			ExpectedFees:      decimal.NewFromFloat64(2 * forecast.ExpectedFees),

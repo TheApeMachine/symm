@@ -79,7 +79,10 @@ export const categoriesForSymbol = (
 			confidence: category.confidence,
 			surprisal: category.surprisal,
 			strength: category.strength,
-			maturity: 0,
+			maturity:
+				"maturity" in category && typeof category.maturity === "number"
+					? category.maturity
+					: 0,
 		});
 	}
 
@@ -113,6 +116,7 @@ export const accumulateThesisSnapshot = (
 
 	return {
 		...incoming,
+		tick: incoming.tick ?? previous.tick,
 		lifecycle: incoming.lifecycle ?? previous.lifecycle,
 		graph: incoming.graph ?? previous.graph,
 		decision: incoming.decision ?? previous.decision,
@@ -127,13 +131,13 @@ export const accumulateThesisSnapshot = (
 				? incoming.categories
 				: previous.categories,
 		holdings:
-			incoming.holdings.length >= previous.holdings.length
-				? incoming.holdings
-				: previous.holdings,
+			incoming.holdings.length > 0 ? incoming.holdings : previous.holdings,
 		findings:
-			incoming.findings.length >= previous.findings.length
-				? incoming.findings
-				: previous.findings,
+			incoming.findings.length > 0 ? incoming.findings : previous.findings,
+		measurements:
+			incoming.measurements.length > 0
+				? incoming.measurements
+				: previous.measurements,
 	};
 };
 
@@ -163,10 +167,6 @@ export const thesisSnapshotFor = (
 		input.categories,
 		input.measurements,
 	),
-	holdings: input.holdings.filter(
-		(holding) => holding.symbol === input.symbol,
-	),
-	findings: input.findings.filter(
-		(finding) => finding.symbol === input.symbol,
-	),
+	holdings: input.holdings.filter((holding) => holding.symbol === input.symbol),
+	findings: input.findings.filter((finding) => finding.symbol === input.symbol),
 });

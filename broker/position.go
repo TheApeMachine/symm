@@ -99,6 +99,37 @@ func (position *Position) Pending() bool {
 		intent == intentReducePending
 }
 
+/*
+PendingWire projects outstanding order identity for recovery checkpoints.
+*/
+func (position *Position) PendingWire() types.PendingOrderWire {
+	if position == nil || position.pair == nil {
+		return types.PendingOrderWire{}
+	}
+
+	intent, _ := position.intent.Load().(string)
+	side := "buy"
+
+	if intent == intentExitPending || intent == intentReducePending {
+		side = "sell"
+	}
+
+	quantity := 0.0
+
+	if position.request != nil {
+		quantity = position.request.Params.OrderQty
+	}
+
+	return types.PendingOrderWire{
+		Symbol:        position.pair.Symbol,
+		Side:          side,
+		OrderID:       position.orderID,
+		Quantity:      quantity,
+		Intent:        intent,
+		ReservationID: position.claim.ID(),
+	}
+}
+
 func (position *Position) Status() types.Status {
 	return position.status
 }
@@ -208,9 +239,17 @@ func (position *Position) OrderAck(buf []byte) {
 	}
 
 	if errnie.Error(kraken.Validate(orderAck)) != nil {
-		position.status = types.ERROR
+		wasSell := position.requestWasSell()
 		position.intent.Store(intentFlat)
 		position.claim.Release()
+		position.request = nil
+
+		if wasSell {
+			position.status = types.OPEN
+			return
+		}
+
+		position.status = types.ERROR
 		return
 	}
 
@@ -222,8 +261,8 @@ func (position *Position) ExecutionAck(buf []byte) {
 	execution := kraken.NewExecution(buf)
 
 	if errnie.Error(kraken.Validate(execution)) != nil {
-		position.status = types.ERROR
-		position.claim.Release()
+		// Malformed private frames must not fault every subscribed Position —
+		// only ignore until a valid envelope names this order.
 		return
 	}
 
@@ -259,7 +298,8 @@ func (position *Position) ExecutionAck(buf []byte) {
 		status := position.fillStatus(holding, data)
 		holding.Status = status
 		position.status = status
-		position.noteIntent(status)
+		position.noteIntent(status, data)
+		position.reconcileInventory(holding)
 
 		if position.balance != nil {
 			position.balance.Publish()
@@ -271,22 +311,105 @@ func (position *Position) ExecutionAck(buf []byte) {
 	}
 }
 
-func (position *Position) noteIntent(status types.Status) {
+/*
+requestWasSell reports whether the outstanding request is an exit/reduce.
+*/
+func (position *Position) requestWasSell() bool {
+	if position == nil || position.request == nil {
+		return false
+	}
+
+	return position.request.Params.Side == "sell"
+}
+
+/*
+orderTerminal reports whether the execution print ends the outstanding order.
+*/
+func orderTerminal(data kraken.ExecutionData) bool {
+	return data.OrderStatus == "filled" ||
+		data.OrderStatus == "canceled" ||
+		data.ExecType == "canceled"
+}
+
+/*
+noteIntent advances order intent only on terminal prints. Partial fills keep
+entry/exit/reduce pending so Trader cannot overwrite an active order.
+*/
+func (position *Position) noteIntent(
+	status types.Status,
+	data kraken.ExecutionData,
+) {
 	switch status {
 	case types.OPEN:
-		position.intent.Store(intentOpen)
+		if !orderTerminal(data) {
+			return
+		}
 
-		if position.request != nil && position.request.Params.Side == "buy" {
+		if data.Side == "buy" && data.OrderStatus == "filled" {
 			position.claim.Consume()
 		}
+
+		if data.Side == "buy" &&
+			(data.OrderStatus == "canceled" || data.ExecType == "canceled") {
+			position.claim.Release()
+		}
+
+		position.intent.Store(intentOpen)
+		position.request = nil
+		position.orderID = ""
 	case types.CLOSED, types.CANCELED, types.ERROR:
 		position.intent.Store(intentFlat)
+		position.request = nil
+		position.orderID = ""
 	}
 }
 
 /*
-bindEntryStop latches the Position regulator after a buy fill using paid fee
-width in return space.
+reconcileInventory closes a lot only when the exchange Balance row is zero.
+Sell fills never invent that close — wallet sync is the inventory authority.
+*/
+func (position *Position) reconcileInventory(holding *types.Holding) {
+	if position == nil || holding == nil || position.balance == nil {
+		return
+	}
+
+	if holding.Asset == "" {
+		return
+	}
+
+	row, err := position.balance.Get(holding.Asset)
+
+	if err != nil || row == nil {
+		return
+	}
+
+	if row.Balance == nil {
+		return
+	}
+
+	if row.Balance.Sign() > 0 {
+		holding.Qty = row.Balance.Copy()
+
+		if row.Available != nil {
+			holding.SellableQty = row.Available.Copy()
+		}
+
+		holding.Status = types.OPEN
+		position.status = types.OPEN
+		return
+	}
+
+	holding.Status = types.CLOSED
+	holding.Qty = decimal.NewFromFloat64(0)
+	holding.SellableQty = decimal.NewFromFloat64(0)
+	position.status = types.CLOSED
+	position.intent.Store(intentFlat)
+}
+
+/*
+bindEntryStop latches the Position regulator after a buy fill. The adverse band
+is market-derived: paid entry fee, one-way exit fee at the same rate, and live
+half-spread — so touch width alone cannot breach a fee-thin stop.
 */
 func (position *Position) bindEntryStop(
 	holding *types.Holding,
@@ -300,32 +423,74 @@ func (position *Position) bindEntryStop(
 		return
 	}
 
-	trail := 0.0
-
-	if holding.EntryFee != nil && holding.Qty != nil && holding.Qty.Sign() > 0 &&
-		position.price != nil {
-		notional := position.price.Mul(holding.EntryPrice, holding.Qty)
-
-		if notional != nil && notional.Sign() > 0 {
-			trail = position.price.Div(holding.EntryFee, notional).Float64()
-		}
-	}
-
+	trail := position.EntryTrail(holding)
 	position.BindStop(holding.EntryPrice.Float64(), trail)
 	holding.Stoploss = position.stoploss
 }
 
 /*
-fillStatus maps an execution print onto inventory status. Buys that trade stay
-open; a sell only closes when remaining qty is exhausted — partial reduces must
-keep the Desk shell so paper remainders stay sellable.
+EntryTrail is the fill-time survival band in return space: round-trip fee plus
+half the visible touch spread when the book is warm. Fee schedule Fraction is
+used when the fill did not yet carry EntryFee.
+*/
+func (position *Position) EntryTrail(holding *types.Holding) float64 {
+	if position == nil || holding == nil || position.price == nil {
+		return 0
+	}
+
+	feeTrail := 0.0
+
+	if holding.EntryFee != nil && holding.Qty != nil && holding.Qty.Sign() > 0 {
+		notional := position.price.Mul(holding.EntryPrice, holding.Qty)
+
+		if notional != nil && notional.Sign() > 0 {
+			feeTrail = position.price.Div(holding.EntryFee, notional).Float64()
+		}
+	}
+
+	// Exit will pay approximately the same taker fraction again.
+	if feeTrail <= 0 {
+		if fraction, err := position.price.Fraction(holding.Symbol); err == nil &&
+			fraction != nil && fraction.Sign() > 0 {
+			feeTrail = fraction.Float64()
+		}
+	}
+
+	trail := feeTrail * 2
+	halfSpread := 0.0
+
+	if ticker, err := position.price.Get(holding.Symbol); err == nil &&
+		ticker != nil && ticker.Bid != nil && ticker.Ask != nil &&
+		ticker.Bid.Sign() > 0 && ticker.Ask.Sign() > 0 {
+		mid := position.price.Div(ticker.Bid.Add(ticker.Ask), two)
+
+		if mid != nil && mid.Sign() > 0 {
+			width := ticker.Ask.Sub(ticker.Bid)
+
+			if width != nil && width.Sign() > 0 {
+				halfSpread = position.price.Div(width, mid).Float64() / 2
+			}
+		}
+	}
+
+	if halfSpread > 0 {
+		trail += halfSpread
+	}
+
+	return trail
+}
+
+/*
+fillStatus maps an execution print onto inventory status. Buys and sells that
+trade stay OPEN until Balance.syncWallet reports zero total Balance — Available
+alone never closes a lot, and executions never invent a flat inventory state.
 */
 func (position *Position) fillStatus(
 	holding *types.Holding,
 	data kraken.ExecutionData,
 ) types.Status {
 	if data.OrderStatus == "canceled" || data.ExecType == "canceled" {
-		if position.request != nil && position.request.Params.Side == "sell" {
+		if data.Side == "sell" || position.requestWasSell() {
 			return types.OPEN
 		}
 
@@ -334,16 +499,7 @@ func (position *Position) fillStatus(
 		return types.CANCELED
 	}
 
-	if data.Side == "sell" &&
-		(data.OrderStatus == "filled" || data.ExecType == "trade") {
-		if holding == nil || holding.Qty == nil || holding.Qty.Sign() <= 0 {
-			return types.CLOSED
-		}
-
-		return types.OPEN
-	}
-
-	if data.ExecType == "trade" {
+	if data.ExecType == "trade" || data.OrderStatus == "filled" {
 		return types.OPEN
 	}
 
@@ -416,10 +572,10 @@ func (position *Position) Exit() error {
 
 /*
 Sell submits a market sell. Nil quantity sells the full live lot; a positive
-quantity reduces. Outstanding exit/reduce intents are not re-armed. Missing or
-zero wallet Available flattens the lot without contacting the venue; a rejected
-AddOrder clears the shell the same way Enter cleans up a failed buy so Decide
-cannot hammer paper/live with the same ghost size every tick.
+quantity reduces. Outstanding exit/reduce intents are not re-armed. Missing
+wallet inventory flattens a ghost shell; zero Available with positive Balance
+only refuses the sell (inventory is reserved). Venue rejection restores
+managing state and never closes owned inventory.
 */
 func (position *Position) Sell(quantity *decimal.Decimal) error {
 	if position.Pending() {
@@ -455,8 +611,7 @@ func (position *Position) Sell(quantity *decimal.Decimal) error {
 	available, availableErr := position.balance.AssetAvailable(holding.Asset)
 
 	if availableErr != nil {
-		// Missing wallet row means the lot is not sellable — flatten the ghost
-		// shell instead of sending holding.Qty into a venue that already has zero.
+		// No exchange row at all — local shell is a ghost, not reserved inventory.
 		position.balance.closeHolding(position.pair.Symbol)
 		position.terminal()
 		_ = position.balance.Resync()
@@ -469,6 +624,14 @@ func (position *Position) Sell(quantity *decimal.Decimal) error {
 	}
 
 	if available.Sign() <= 0 {
+		if holding.Qty != nil && holding.Qty.Sign() > 0 {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"no sellable "+holding.Asset+" available for "+position.pair.Symbol,
+				nil,
+			))
+		}
+
 		position.balance.closeHolding(position.pair.Symbol)
 		position.terminal()
 
@@ -497,13 +660,9 @@ func (position *Position) Sell(quantity *decimal.Decimal) error {
 	}
 
 	if err := position.api.AddOrder(position.request); err != nil {
-		// Match Enter: venue rejection clears the lot so Decide cannot re-arm
-		// the same sell every tick against paper/live balances that already
-		// report flat (stale local Available must not keep a ghost OPEN shell).
-		position.status = types.ERROR
+		position.status = types.OPEN
 		position.intent.Store(intentFlat)
-		position.balance.closeHolding(position.pair.Symbol)
-		position.terminal()
+		// Keep request for last-attempt sizing audit; Pending reads intent only.
 		_ = position.balance.Resync()
 
 		return errnie.Error(errnie.Err(

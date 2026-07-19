@@ -35,6 +35,11 @@ func TestCatalogLifecycleProofs(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			if entry.IsExitProof() {
+				catalog.ProveExit(t, entry.Kind, catalog.Signals)
+				return
+			}
+
 			needsStrategy := entry.Truth.DecideAction != "" ||
 				entry.Truth.MustNotEnter ||
 				entry.Truth.SizedEnter ||

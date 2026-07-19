@@ -59,6 +59,9 @@ type Thesis struct {
 	Cognition    *sync.Map      `json:"cognition"`
 	Resonance    []any          `json:"resonance"`
 	Causal       []any          `json:"causal"`
+	// cutIncomplete is set when an interested signal worker skipped this cut;
+	// Decide then manages open lots only and refuses fresh enters.
+	cutIncomplete bool
 }
 
 /*
@@ -110,10 +113,41 @@ func (thesis *Thesis) ResetCut(frame *MarketFrame, tick int64) {
 	thesis.Categories = thesis.Categories[:0]
 	thesis.Resonance = thesis.Resonance[:0]
 	thesis.Causal = thesis.Causal[:0]
-	thesis.Graphs = &sync.Map{}
-	thesis.Manifold = &sync.Map{}
-	thesis.Cognition = &sync.Map{}
-	thesis.Positions = &sync.Map{}
+	thesis.cutIncomplete = false
+	clearSyncMap(thesis.Graphs)
+	clearSyncMap(thesis.Manifold)
+	clearSyncMap(thesis.Cognition)
+	clearSyncMap(thesis.Positions)
+}
+
+/*
+clearSyncMap drops every entry from map without reallocating the header.
+*/
+func clearSyncMap(values *sync.Map) {
+	if values == nil {
+		return
+	}
+
+	values.Range(func(key, _ any) bool {
+		values.Delete(key)
+		return true
+	})
+}
+
+/*
+NoteIncomplete marks this cut as missing at least one interested signal measure.
+*/
+func (thesis *Thesis) NoteIncomplete() {
+	if thesis != nil {
+		thesis.cutIncomplete = true
+	}
+}
+
+/*
+Incomplete reports whether the current cut skipped interested signal work.
+*/
+func (thesis *Thesis) Incomplete() bool {
+	return thesis != nil && thesis.cutIncomplete
 }
 
 /*

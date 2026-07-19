@@ -133,7 +133,23 @@ func (desk *Desk) Update() {
 			types.CLOSED, types.ERROR, types.CANCELED,
 		}, position.Status()) {
 			desk.evict(position.pair.Symbol)
+			return true
 		}
+
+		// Wallet Balance is inventory authority; Position status can lag a
+		// syncWallet flatten until the next execution print.
+		if desk.balance == nil || position.pair == nil {
+			return true
+		}
+
+		holding, err := desk.balance.Holding(position.pair.Symbol)
+
+		if err != nil || holding.Status != types.CLOSED {
+			return true
+		}
+
+		position.status = types.CLOSED
+		desk.evict(position.pair.Symbol)
 
 		return true
 	})
@@ -192,12 +208,11 @@ func (desk *Desk) Pending(symbol string) bool {
 }
 
 /*
-PendingSymbols returns symbols with outstanding entry/exit/reduce intents for
-compact recovery snapshots.
+PendingSymbols returns outstanding entry/exit/reduce intents for recovery.
 */
-func (desk *Desk) PendingSymbols() map[string]string {
+func (desk *Desk) PendingSymbols() map[string]types.PendingOrderWire {
 	if desk == nil {
-		return map[string]string{}
+		return map[string]types.PendingOrderWire{}
 	}
 
 	return desk.marks.PendingSymbols()
@@ -211,8 +226,9 @@ func (desk *Desk) Buy(
 }
 
 /*
-BuyAfter places an entry while treating freeing same-tick full exits as already
-vacated slots so rotate can sell then buy before the exit fill lands.
+BuyAfter places an entry. freeing is retained for Arbiter selection probes; the
+trade path passes zero so challenger buys wait for real inventory exits (fill
+gate) rather than optimistic sell-submit credit.
 */
 func (desk *Desk) BuyAfter(
 	holding types.Holding,

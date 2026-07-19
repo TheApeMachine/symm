@@ -26,5 +26,8 @@ type StopEvidence struct {
 	// RetreatPressure is cancelled touch qty / prior touch (toxicity). When
 	// positive, mark moves are quote-only and must not drive stop geometry.
 	RetreatPressure float64
-	Present         bool
+	// RetreatReady is true when this cut observed a retreat measurement so
+	// Stoploss may latch or clear pressure; absent cuts leave sticky retreat.
+	RetreatReady bool
+	Present      bool
 }

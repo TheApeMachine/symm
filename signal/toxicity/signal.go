@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -15,22 +16,28 @@ Toxicity tracks whether near-touch liquidity is sincere, retreating, or bluffing
 from level3 order events corroborated by the public trade tape.
 */
 type Signal struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	level3     *Level3
-	priorTouch map[string]touchSnapshot
-	ui         chan []byte
+	ctx          context.Context
+	cancel       context.CancelFunc
+	level3       *Level3
+	priorTouch   map[string]touchSnapshot
+	touchScratch map[string]touchSnapshot
+	evidence     map[string]*symbolEvidence
+	increments   map[string]*decimal.Decimal
+	ui           chan []byte
 }
 
 func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
-		ctx:        ctx,
-		cancel:     cancel,
-		level3:     NewLevel3(api),
-		priorTouch: map[string]touchSnapshot{},
-		ui:         ui,
+		ctx:          ctx,
+		cancel:       cancel,
+		level3:       NewLevel3(api),
+		priorTouch:   map[string]touchSnapshot{},
+		touchScratch: map[string]touchSnapshot{},
+		evidence:     map[string]*symbolEvidence{},
+		increments:   map[string]*decimal.Decimal{},
+		ui:           ui,
 	}
 }
 
@@ -75,19 +82,42 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Calculate(
 	frame *types.MarketFrame,
 ) ([]*types.Measurement, error) {
-	incrementBySymbol := priceIncrementsBySymbol(frame)
-	evidence := signal.accumulateEvidence(frame.Trades, incrementBySymbol)
+	signal.ensureScratch()
+	signal.resetIncrements(frame)
+	signal.accumulateEvidence(frame.Trades)
 
-	out := make([]*types.Measurement, 0, len(evidence)*8)
-	nextTouch := map[string]touchSnapshot{}
+	out := make([]*types.Measurement, 0, len(signal.evidence)*8)
+	clear(signal.touchScratch)
 
-	for symbol, row := range evidence {
-		signal.emitSymbolMeasurements(symbol, row, &out, nextTouch)
+	for symbol, row := range signal.evidence {
+		signal.emitSymbolMeasurements(symbol, row, &out, signal.touchScratch)
 	}
 
-	signal.priorTouch = nextTouch
+	signal.priorTouch, signal.touchScratch = signal.touchScratch, signal.priorTouch
+	clear(signal.touchScratch)
 
 	return out, nil
+}
+
+/*
+ensureScratch allocates reusable tick maps when tests construct Signal by hand.
+*/
+func (signal *Signal) ensureScratch() {
+	if signal.priorTouch == nil {
+		signal.priorTouch = map[string]touchSnapshot{}
+	}
+
+	if signal.touchScratch == nil {
+		signal.touchScratch = map[string]touchSnapshot{}
+	}
+
+	if signal.evidence == nil {
+		signal.evidence = map[string]*symbolEvidence{}
+	}
+
+	if signal.increments == nil {
+		signal.increments = map[string]*decimal.Decimal{}
+	}
 }
 
 /*

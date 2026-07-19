@@ -1,3 +1,4 @@
+import type { Subscription } from "@tanstack/store";
 import { createKeyedStore } from "#/collections/store";
 import type {
 	Balance,
@@ -21,26 +22,46 @@ import type {
 } from "#/collections/types";
 import { isPlainObject } from "#/providers/ws-frame-merge";
 import type { Category, Measurement } from "#/types/measurement";
-import type { Subscription } from "@tanstack/store";
 
 const DEFAULT_BUFFER = 50;
 
 export const frameStores = {
 	balances: createKeyedStore<Balance>()("balances", 1, (row) => row.asset),
-	categories: createKeyedStore<Category>()(
+	categories: createKeyedStore<Category & { symbol?: string }>()(
 		"categories",
 		DEFAULT_BUFFER,
+		(row) => row.symbol ?? "",
 		(row) => row.type,
 	),
 	causal: createKeyedStore<CausalFrame>()("causal", DEFAULT_BUFFER, (row) => row.symbol),
-	cognitive: createKeyedStore<CognitiveReading>()("cognitive", DEFAULT_BUFFER, (row) => row.symbol),
-	decisions: createKeyedStore<StrategyDecision>()("decisions", DEFAULT_BUFFER, (row) => row.symbol),
+	cognitive: createKeyedStore<CognitiveReading>()(
+		"cognitive",
+		DEFAULT_BUFFER,
+		(row) => row.symbol,
+	),
+	decisions: createKeyedStore<StrategyDecision>()(
+		"decisions",
+		DEFAULT_BUFFER,
+		(row) => row.symbol,
+	),
 	diagnostics: createKeyedStore<DiagnosticsFrame>()("diagnostics", DEFAULT_BUFFER),
 	findings: createKeyedStore<Finding>()("findings", DEFAULT_BUFFER, (row) => row.symbol),
-	forecasts: createKeyedStore<ThesisForecast>()("forecasts", DEFAULT_BUFFER, (row) => row.symbol),
+	forecasts: createKeyedStore<ThesisForecast>()(
+		"forecasts",
+		DEFAULT_BUFFER,
+		(row) => row.symbol,
+	),
 	graphs: createKeyedStore<GraphFrame>()("graphs", DEFAULT_BUFFER, (row) => row.symbol),
-	hypotheses: createKeyedStore<ThesisHypothesis>()("hypotheses", DEFAULT_BUFFER, (row) => row.symbol),
-	lifecycle: createKeyedStore<LifecycleRow>()("lifecycle", DEFAULT_BUFFER, (row) => row.symbol),
+	hypotheses: createKeyedStore<ThesisHypothesis>()(
+		"hypotheses",
+		DEFAULT_BUFFER,
+		(row) => row.symbol,
+	),
+	lifecycle: createKeyedStore<LifecycleRow>()(
+		"lifecycle",
+		DEFAULT_BUFFER,
+		(row) => row.symbol,
+	),
 	holdings: createKeyedStore<Holding>()("holdings", DEFAULT_BUFFER, (row) => row.symbol),
 	stops: createKeyedStore<Stop>()("stops", 1, (row) => row.symbol),
 	executions: createKeyedStore<Execution>()("executions", DEFAULT_BUFFER),
@@ -53,7 +74,11 @@ export const frameStores = {
 	),
 	manifold: createKeyedStore<ManifoldFrame>()("manifold", DEFAULT_BUFFER, (row) => row.symbol),
 	orders: createKeyedStore<Order>()("orders", DEFAULT_BUFFER, (row) => row.pair),
-	resonance: createKeyedStore<ResonanceFrame>()("resonance", DEFAULT_BUFFER, (row) => row.symbol),
+	resonance: createKeyedStore<ResonanceFrame>()(
+		"resonance",
+		DEFAULT_BUFFER,
+		(row) => row.symbol,
+	),
 	tick: createKeyedStore<TickFrame>()("tick", DEFAULT_BUFFER),
 };
 

@@ -50,11 +50,7 @@ func (continuity Continuity) Manage(thesis *types.Thesis) {
 		return
 	}
 
-	forecasts := make(map[string]types.Forecasts, len(thesis.Forecasts))
-
-	for _, forecast := range thesis.Forecasts {
-		forecasts[forecast.Symbol] = forecast
-	}
+	forecasts := selectForecasts(thesis.Forecasts)
 
 	for holding := range continuity.balance.Holdings() {
 		lot := holding
@@ -75,23 +71,37 @@ func (continuity Continuity) Manage(thesis *types.Thesis) {
 			continue
 		}
 
+		if lot.Mark == nil || lot.Qty == nil {
+			continue
+		}
+
 		forecast, found := forecasts[lot.Symbol]
 
-		if !found || lot.Mark == nil || lot.Qty == nil {
+		if !found || !forecast.Eligible() {
+			thesis.Decisions = append(thesis.Decisions, types.Decision{
+				Action: types.ActionHold,
+				Symbol: lot.Symbol,
+				Cause:  "continuation",
+				Reason: "awaiting eligible forecast for continuation scoring",
+			})
+
 			continue
 		}
 
-		if !forecast.Eligible() {
+		fraction, err := continuity.price.Fraction(lot.Symbol)
+
+		if err != nil {
+			thesis.Decisions = append(thesis.Decisions, types.Decision{
+				Action: types.ActionHold,
+				Symbol: lot.Symbol,
+				Cause:  "continuation",
+				Reason: "fee schedule unavailable; refuse continuation score",
+			})
+
 			continue
 		}
 
-		fee := 0.0
-
-		if fraction, err := continuity.price.Fraction(lot.Symbol); err == nil {
-			fee = fraction.Float64()
-		}
-
-		decision := continuity.Score(forecast, fee, &lot)
+		decision := continuity.Score(forecast, fraction.Float64(), &lot)
 		decision.Cause = continuity.Cause(thesis, forecast, decision.Action)
 		thesis.Decisions = append(thesis.Decisions, decision)
 	}

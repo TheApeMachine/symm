@@ -91,8 +91,13 @@ func TestPositionExecutionAck(t *testing.T) {
 
 		Convey("It should keep remainder inventory after a partial sell", func() {
 			holding.Qty = decimal.NewFromFloat64(0.0138685)
+			remainder := decimal.NewFromFloat64(0.00501869)
+			balance.model = &kraken.Balance{Data: []kraken.BalanceData{{
+				Asset: "BTC", Balance: remainder, Available: remainder,
+			}}}
 			exitRequest := kraken.NewMarketOrder("sell", 0.00884981, "BTC/USD")
 			position.request = exitRequest
+			position.intent.Store(intentReducePending)
 			position.OrderAck([]byte(`{"method":"add_order","result":{"order_id":"sell-partial"},"success":true,"req_id":` +
 				strconv.FormatInt(exitRequest.ReqID, 10) + `}`))
 			exit := &kraken.Execution{
@@ -118,17 +123,23 @@ func TestPositionExecutionAck(t *testing.T) {
 			So(position.Status(), ShouldEqual, types.OPEN)
 			So(live.Status, ShouldEqual, types.OPEN)
 			So(live.Qty.Float64(), ShouldAlmostEqual, 0.00501869, 1e-7)
+			So(position.Pending(), ShouldBeFalse)
 		})
 
-		Convey("It should close and evict the holding when the position exits", func() {
+		Convey("It should close only after wallet Balance reaches zero", func() {
 			tickers.Store("BTC/USD", &kraken.TickerData{
 				Symbol: "BTC/USD",
 				Ask:    decimal.NewFromInt64(101),
 				Bid:    decimal.NewFromInt64(101),
 				Last:   decimal.NewFromInt64(101),
 			})
+			owned := decimal.NewFromInt64(1)
+			balance.model = &kraken.Balance{Data: []kraken.BalanceData{{
+				Asset: "BTC", Balance: owned, Available: owned,
+			}}}
 			exitRequest := kraken.NewMarketOrder("sell", 1, "BTC/USD")
 			position.request = exitRequest
+			position.intent.Store(intentExitPending)
 			position.OrderAck([]byte(`{"method":"add_order","result":{"order_id":"sell-1"},"success":true,"req_id":` +
 				strconv.FormatInt(exitRequest.ReqID, 10) + `}`))
 			exit := &kraken.Execution{
@@ -147,11 +158,18 @@ func TestPositionExecutionAck(t *testing.T) {
 
 			So(exitErr, ShouldBeNil)
 			position.ExecutionAck(exitBuffer)
-			closed, holdingErr := balance.Holding("BTC/USD")
+			So(position.Status(), ShouldEqual, types.OPEN)
+			So(holding.Status, ShouldEqual, types.OPEN)
+			So(position.Pending(), ShouldBeFalse)
 
-			So(holdingErr, ShouldBeNil)
-			So(closed.Status, ShouldEqual, types.CLOSED)
-			So(position.Status(), ShouldEqual, types.CLOSED)
+			zero := decimal.NewFromFloat64(0)
+			balance.model.Data[0].Balance = zero
+			balance.model.Data[0].Available = zero
+			position.ExecutionAck(exitBuffer)
+			// Same ExecID is deduped — reconcile via syncWallet authority.
+			balance.syncWallet()
+			So(holding.Status, ShouldEqual, types.CLOSED)
+			So(holding.Qty.Sign(), ShouldEqual, 0)
 			So(position.executions, ShouldHaveLength, 2)
 		})
 
@@ -218,9 +236,12 @@ func TestPositionExitQuantity(t *testing.T) {
 			Convey("Then the sell order uses the full filled balance", func() {
 				So(position.request, ShouldNotBeNil)
 				So(position.request.Params.OrderQty, ShouldEqual, 1.0)
+				So(position.Pending(), ShouldBeFalse)
+				So(holding.Status, ShouldEqual, types.OPEN)
 
 				if err != nil {
 					So(err.Error(), ShouldContainSubstring, "failed to place market order")
+					So(position.Status(), ShouldEqual, types.OPEN)
 				}
 			})
 		})
@@ -273,11 +294,11 @@ func TestPositionSellMissingWalletFlattensGhost(t *testing.T) {
 }
 
 /*
-TestPositionSellVenueRejectFlattensStaleAvailable ensures a venue rejection
-closes the lot even when the local wallet snapshot still shows Available > 0.
+TestPositionSellVenueRejectPreservesInventory ensures a venue rejection keeps
+owned inventory open and only clears the failed exit intent.
 */
-func TestPositionSellVenueRejectFlattensStaleAvailable(t *testing.T) {
-	Convey("Given a stale wallet Available and a venue that rejects the sell", t, func() {
+func TestPositionSellVenueRejectPreservesInventory(t *testing.T) {
+	Convey("Given owned inventory and a venue that rejects the sell", t, func() {
 		ctx := context.Background()
 		mock := mockapi.NewMockAPI()
 		paper := websocket.NewPaper(
@@ -320,13 +341,75 @@ func TestPositionSellVenueRejectFlattensStaleAvailable(t *testing.T) {
 
 		err := position.Sell(nil)
 
-		Convey("Then the lot is closed so Decide cannot re-arm the sell", func() {
+		Convey("Then inventory stays open and managing resumes", func() {
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "failed to place market order")
-			So(holding.Status, ShouldEqual, types.CLOSED)
-			So(holding.Qty.Sign(), ShouldEqual, 0)
+			So(holding.Status, ShouldEqual, types.OPEN)
+			So(holding.Qty.Float64(), ShouldAlmostEqual, 0.0015, 1e-12)
 			So(position.Pending(), ShouldBeFalse)
-			So(position.Status(), ShouldEqual, types.ERROR)
+			So(position.Status(), ShouldEqual, types.OPEN)
+		})
+	})
+}
+
+/*
+TestPositionPartialFillKeepsPending ensures a non-terminal trade print leaves
+exit intent armed so Trader cannot submit a second reduce against the same lot.
+*/
+func TestPositionPartialFillKeepsPending(t *testing.T) {
+	Convey("Given an open lot with a partially filled sell", t, func() {
+		holdings := &sync.Map{}
+		holding := types.NewHolding(
+			context.Background(),
+			"BTC/USD",
+			decimal.NewFromFloat64(1),
+		)
+		holding.Asset = "BTC"
+		holding.Status = types.OPEN
+		holdings.Store("BTC/USD", holding)
+		owned := decimal.NewFromFloat64(1)
+		balance := &Balance{
+			quote:    "USD",
+			holdings: holdings,
+			model: &kraken.Balance{Data: []kraken.BalanceData{{
+				Asset: "BTC", Balance: owned, Available: decimal.NewFromFloat64(0.4),
+			}}},
+		}
+		exitRequest := kraken.NewMarketOrder("sell", 0.6, "BTC/USD")
+		position := &Position{
+			status:  types.PENDING,
+			balance: balance,
+			pair: &kraken.InstrumentPair{
+				Symbol: "BTC/USD", Base: "BTC",
+				QtyIncrement: 0.00000001, QtyMin: 0.00000001,
+			},
+			request: exitRequest,
+		}
+		position.intent.Store(intentExitPending)
+		position.OrderAck([]byte(`{"method":"add_order","result":{"order_id":"sell-partial-live"},"success":true,"req_id":` +
+			strconv.FormatInt(exitRequest.ReqID, 10) + `}`))
+
+		partial := &kraken.Execution{
+			Channel: "executions", Type: "update",
+			Data: []kraken.ExecutionData{{
+				OrderID: "sell-partial-live", ExecID: "partial-1",
+				ExecType: "trade", Symbol: "BTC/USD", Side: "sell",
+				OrderType: "market", LastQty: 0.3, CumQty: 0.3,
+				OrderStatus: "partially filled",
+				LastPrice:   decimal.NewFromInt64(100),
+				AvgPrice:    decimal.NewFromInt64(100),
+				Cost:        decimal.NewFromInt64(30),
+				FeeUsdEquiv: decimal.NewFromFloat64(0.08), Timestamp: time.Unix(2, 0),
+			}},
+		}
+		buffer, err := partial.MarshalJSON()
+		So(err, ShouldBeNil)
+		position.ExecutionAck(buffer)
+
+		Convey("Then Pending stays true and inventory qty is unchanged", func() {
+			So(position.Pending(), ShouldBeTrue)
+			So(position.Status(), ShouldEqual, types.OPEN)
+			So(holding.Qty.Float64(), ShouldEqual, 1.0)
 		})
 	})
 }

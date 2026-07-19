@@ -122,11 +122,13 @@ func TestSyncWalletUsesAvailable(t *testing.T) {
 
 		balance.syncWallet()
 
-		Convey("Then the unsellable lot is closed, not deleted", func() {
+		Convey("Then inventory stays open on total Balance with zero SellableQty", func() {
 			value, ok := balance.holdings.Load("BTC/USD")
 			So(ok, ShouldBeTrue)
-			So(value.(*types.Holding).Status, ShouldEqual, types.CLOSED)
-			So(value.(*types.Holding).Qty.Sign(), ShouldEqual, 0)
+			holding := value.(*types.Holding)
+			So(holding.Status, ShouldEqual, types.OPEN)
+			So(holding.Qty.Float64(), ShouldAlmostEqual, 0.0004675, 1e-12)
+			So(holding.SellableQty.Sign(), ShouldEqual, 0)
 		})
 	})
 }

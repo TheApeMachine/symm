@@ -45,11 +45,11 @@ func newAllocatorMoneyEnv(
 	})
 
 	balance := broker.NewBalance(nil, nil, nil)
-	balance.BalanceAck([]byte(fmt.Sprintf(
+	balance.BalanceAck(fmt.Appendf(nil, 
 		`{"channel":"balances","type":"snapshot","sequence":1,"data":[{`+
 			`"asset":"USD","balance":"%0.8f","available":"%0.8f","reserved":"0"}]}`,
 		cash, cash,
-	)))
+	))
 
 	instrument := broker.NewInstrument(nil, nil, nil)
 	instrument.Remember(&kraken.InstrumentPair{
@@ -69,11 +69,11 @@ func newAllocatorMoneyEnv(
 	_ = price.RememberFee(symbol, kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.40),
 	})
-	price.TickerAck([]byte(fmt.Sprintf(
+	price.TickerAck(fmt.Appendf(nil, 
 		`{"channel":"ticker","type":"update","data":[{`+
 			`"symbol":"%s","ask":"%s","bid":"%s","last":"%s"}]}`,
 		symbol, ask, ask, ask,
-	)))
+	))
 
 	return &allocatorMoneyEnv{
 		balance:    balance,
@@ -91,7 +91,7 @@ func (env *allocatorMoneyEnv) enter(risk float64) *types.Thesis {
 	thesis.Decisions = append(thesis.Decisions, types.Decision{
 		Action: types.ActionEnter,
 		Symbol: env.symbol,
-		Risk:   risk,
+		AllocationHaircut:   risk,
 		At:     time.Unix(1, 0).UTC(),
 	})
 	thesis.Holdings.Store(env.symbol, &types.Holding{
@@ -326,7 +326,7 @@ func BenchmarkAllocateBillSlice(b *testing.B) {
 	for b.Loop() {
 		thesis := types.NewThesis(nil, nil)
 		thesis.Decisions = append(thesis.Decisions, types.Decision{
-			Action: types.ActionEnter, Symbol: "BILL/USD", Risk: 0.2,
+			Action: types.ActionEnter, Symbol: "BILL/USD", AllocationHaircut: 0.2,
 			At: time.Unix(1, 0).UTC(),
 		})
 		thesis.Holdings.Store("BILL/USD", &types.Holding{

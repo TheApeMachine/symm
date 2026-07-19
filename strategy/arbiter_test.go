@@ -116,7 +116,7 @@ func TestClearProbabilityProximityTimesConfidence(t *testing.T) {
 }
 
 /*
-TestClearProbabilityResidualSkillScales hazard by √MSE/(√MSE+σ).
+TestClearProbabilityResidualSkillScales hazard by σ/(√MSE+σ).
 */
 func TestClearProbabilityResidualSkillScales(t *testing.T) {
 	t.Parallel()
@@ -137,6 +137,19 @@ func TestClearProbabilityResidualSkillScales(t *testing.T) {
 
 	if got < 0.249 || got > 0.251 {
 		t.Fatalf("want ~0.25, got %v", got)
+	}
+
+	// Higher RMSE must lower clear score (σ/(rmse+σ) shrinks as rmse grows).
+	worse := NewRotate().Clear(stop, types.Forecasts{
+		ExpectedReturn: -0.01,
+		Calibrated:     true,
+		Confidence:     1,
+		Uncertainty:    0.02,
+		IncrementalMSE: 0.01, // √MSE = 0.1 → skill ≈ 0.167 → clear ≈ 0.083
+	})
+
+	if worse >= got {
+		t.Fatalf("higher residual must lower clear score: base=%v worse=%v", got, worse)
 	}
 }
 

@@ -1,6 +1,7 @@
 package types
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"os"
@@ -15,13 +16,25 @@ const RecoveryKey = "recovery"
 
 /*
 Recovery is the compact durable restart payload: open holdings, pending order
-ids, stop state, and quote reservations. Full Thesis frames stay ephemeral.
+intents, stop state, and quote reservations. Full Thesis frames stay ephemeral.
 */
 type Recovery struct {
-	Holdings      map[string]Holding `json:"holdings"`
-	PendingOrders map[string]string  `json:"pendingOrders"`
-	Reservations  []ReservationWire  `json:"reservations"`
-	Tick          int64              `json:"tick"`
+	Holdings      map[string]Holding          `json:"holdings"`
+	PendingOrders map[string]PendingOrderWire `json:"pendingOrders"`
+	Reservations  []ReservationWire           `json:"reservations"`
+	Tick          int64                       `json:"tick"`
+}
+
+/*
+PendingOrderWire records an outstanding broker intent for restart reconcile.
+*/
+type PendingOrderWire struct {
+	Symbol        string  `json:"symbol"`
+	Side          string  `json:"side"`
+	OrderID       string  `json:"orderId,omitempty"`
+	Quantity      float64 `json:"quantity,omitempty"`
+	Intent        string  `json:"intent"`
+	ReservationID string  `json:"reservationId,omitempty"`
 }
 
 /*
@@ -119,7 +132,7 @@ Non-finite floats are zeroed so encoding/json cannot reject the checkpoint.
 func CaptureRecovery(
 	tick int64,
 	open map[string]Holding,
-	pending map[string]string,
+	pending map[string]PendingOrderWire,
 	reservations []ReservationWire,
 ) *Recovery {
 	holdings := map[string]Holding{}
@@ -209,36 +222,16 @@ func (holding *Holding) Enrich(recovered Holding) {
 		holding.EntryAt = &at
 	}
 
-	if recovered.Stoploss != nil {
+	if recovered.Stoploss != nil && holding.EntryPrice != nil {
 		if holding.Stoploss == nil {
-			stop := *recovered.Stoploss
-			stop.ctx = nil
-			stop.cancel = nil
-			holding.Stoploss = &stop
-		} else {
-			holding.Stoploss.Action = recovered.Stoploss.Action
-			holding.Stoploss.Reason = recovered.Stoploss.Reason
-			holding.Stoploss.Weight = finiteFloat(recovered.Stoploss.Weight)
-			holding.Stoploss.LockedFloor = finiteFloat(recovered.Stoploss.LockedFloor)
-			holding.Stoploss.TrailDistance = finiteFloat(recovered.Stoploss.TrailDistance)
-			holding.Stoploss.StopReturn = finiteFloat(recovered.Stoploss.StopReturn)
-			holding.Stoploss.PeakReturn = finiteFloat(recovered.Stoploss.PeakReturn)
-			holding.Stoploss.MarkReturn = finiteFloat(recovered.Stoploss.MarkReturn)
+			holding.Stoploss = NewStoploss(context.Background())
 		}
+
+		holding.Stoploss.Restore(holding.EntryPrice.Float64(), recovered.Stoploss)
 	}
 
 	if holding.Asset == "" {
 		holding.Asset = recovered.Asset
-	}
-
-	if holding.Stoploss != nil && holding.EntryPrice != nil {
-		trail := holding.Stoploss.TrailDistance
-
-		if trail <= 0 && holding.Stoploss.StopReturn < 0 {
-			trail = -holding.Stoploss.StopReturn
-		}
-
-		holding.Stoploss.Bind(holding.EntryPrice.Float64(), trail)
 	}
 }
 

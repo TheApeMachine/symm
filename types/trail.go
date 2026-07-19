@@ -8,6 +8,7 @@ it so JSON and callers see LockedFloor/StopReturn without a second surface.
 */
 type Trail struct {
 	LockedFloor   float64 `json:"lockedFloor"`
+	FloorDistance float64 `json:"floorDistance"`
 	TrailDistance float64 `json:"trailDistance"`
 	StopReturn    float64 `json:"stopReturn"`
 	PeakReturn    float64 `json:"peakReturn"`
@@ -22,14 +23,17 @@ func NewTrail() Trail {
 }
 
 /*
-Bind resets geometry at fill with an adverse entry band.
+Bind resets geometry at fill with an adverse entry band. FloorDistance latches
+that bind width so later Scale cannot undercut fee/spread survival.
 */
 func (trail *Trail) Bind(distance float64) {
 	trail.LockedFloor = math.Inf(-1)
 	trail.PeakReturn = 0
 	trail.MarkReturn = 0
+	trail.FloorDistance = 0
 
 	if distance > 0 && !math.IsNaN(distance) && !math.IsInf(distance, 0) {
+		trail.FloorDistance = distance
 		trail.TrailDistance = distance
 		trail.StopReturn = -distance
 	}
@@ -37,7 +41,9 @@ func (trail *Trail) Bind(distance float64) {
 
 /*
 Advance records markReturn, ratchets the floor after an earned cushion, and
-sets the live stop. Until that cushion exists the stop is −trail.
+sets the live stop. Until that cushion exists the stop is −trail. Once a floor
+exists StopReturn never loosens — pullbacks and Scale shrinks cannot give back
+drawdown room the ratchet already claimed.
 */
 func (trail *Trail) Advance(markReturn float64) {
 	trail.MarkReturn = markReturn
@@ -48,23 +54,29 @@ func (trail *Trail) Advance(markReturn float64) {
 		trail.LockedFloor = math.Max(trail.LockedFloor, candidate)
 	}
 
-	trail.StopReturn = -trail.TrailDistance
+	next := -trail.TrailDistance
 
 	if !math.IsInf(trail.LockedFloor, -1) {
-		trail.StopReturn = math.Max(
-			trail.LockedFloor,
-			markReturn-trail.TrailDistance,
-		)
+		next = math.Max(trail.LockedFloor, markReturn-trail.TrailDistance)
+		next = math.Max(trail.StopReturn, next)
 	}
+
+	trail.StopReturn = next
 }
 
 /*
-Scale sets TrailDistance from live evidence width divided by skill weight.
+Scale sets TrailDistance from live evidence width divided by skill weight, never
+below FloorDistance so high skill cannot shrink under the fill-time survival band.
+Non-finite scale or weight leaves geometry untouched so Breached cannot go blind.
 */
 func (trail *Trail) Scale(evidence StopEvidence, weight float64) {
 	scale := trail.LiveScale(evidence)
 
-	if scale <= 0 || weight <= 0 {
+	if scale <= 0 || weight <= 0 || math.IsNaN(weight) || math.IsInf(weight, 0) {
+		return
+	}
+
+	if math.IsNaN(scale) || math.IsInf(scale, 0) {
 		return
 	}
 
@@ -72,7 +84,17 @@ func (trail *Trail) Scale(evidence StopEvidence, weight float64) {
 		scale = evidence.Spread
 	}
 
-	trail.TrailDistance = scale / weight
+	next := scale / weight
+
+	if math.IsNaN(next) || math.IsInf(next, 0) || next <= 0 {
+		return
+	}
+
+	if trail.FloorDistance > 0 && next < trail.FloorDistance {
+		next = trail.FloorDistance
+	}
+
+	trail.TrailDistance = next
 }
 
 /*

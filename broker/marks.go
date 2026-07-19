@@ -51,14 +51,21 @@ func (marks *Marks) Apply(symbol string) {
 		return
 	}
 
-	prior := holding.Mark
+	priorBid := holding.Mark
+	priorStop := holding.StopMark
 	_ = position.price.Mark(position.pair, holding)
 
-	if holding.Mark != nil {
+	if holding.StopMark != nil {
+		position.ObserveMark(holding.StopMark.Float64())
+	} else if holding.Mark != nil {
 		position.ObserveMark(holding.Mark.Float64())
 	}
 
-	if prior != nil && holding.Mark != nil && prior.Cmp(holding.Mark) == 0 {
+	bidSame := priorBid != nil && holding.Mark != nil && priorBid.Cmp(holding.Mark) == 0
+	stopSame := priorStop != nil && holding.StopMark != nil &&
+		priorStop.Cmp(holding.StopMark) == 0
+
+	if bidSame && stopSame {
 		return
 	}
 
@@ -73,10 +80,11 @@ func (marks *Marks) Pending(position *Position) bool {
 }
 
 /*
-PendingSymbols returns symbols with outstanding entry/exit/reduce intents.
+PendingSymbols returns outstanding entry/exit/reduce intents with order
+identity for compact recovery snapshots.
 */
-func (marks *Marks) PendingSymbols() map[string]string {
-	pending := map[string]string{}
+func (marks *Marks) PendingSymbols() map[string]types.PendingOrderWire {
+	pending := map[string]types.PendingOrderWire{}
 
 	if marks == nil || marks.positions == nil {
 		return pending
@@ -95,7 +103,7 @@ func (marks *Marks) PendingSymbols() map[string]string {
 			return true
 		}
 
-		pending[symbol] = "pending"
+		pending[symbol] = position.PendingWire()
 
 		return true
 	})

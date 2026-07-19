@@ -88,6 +88,28 @@ func TapeLag() *tests.Market {
 }
 
 /*
+TapeShallowAdverse is a mild quote retreat (~0.8%) for exit-honesty holds —
+the audit-trail band where exit-happy stops used to fire.
+*/
+func TapeShallowAdverse() *tests.Market {
+	return PhantomDrawdown(32, 10, 0.008)
+}
+
+/*
+TapeDrawdownStop is a sincere multi-leg drawdown for stop Regulate proofs.
+*/
+func TapeDrawdownStop() *tests.Market {
+	return Drawdown(32, 0.12, 10)
+}
+
+/*
+TapeCalibratedLift is a modest marked-up tape for locked-floor hold proofs.
+*/
+func TapeCalibratedLift() *tests.Market {
+	return CalibratedLift(32, 8, 1.04)
+}
+
+/*
 TapeImbalance is a bid-loaded book for depthflow loaded-score proofs.
 */
 func TapeImbalance() *tests.Market {

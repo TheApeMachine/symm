@@ -93,16 +93,30 @@ func TestHoldingEnrich(t *testing.T) {
 		recovered := Holding{
 			Symbol:     "ONDO/USD",
 			EntryPrice: entry,
-			Stoploss:   &Stoploss{Skill: Skill{Weight: 0.4}, Action: "hold"},
+			Stoploss: &Stoploss{
+				Skill:  Skill{Weight: 0.4},
+				Action: "hold",
+				Trail: Trail{
+					LockedFloor:   0.03,
+					PeakReturn:    0.08,
+					MarkReturn:    0.05,
+					TrailDistance: 0.02,
+					StopReturn:    0.03,
+					FloorDistance: 0.02,
+				},
+			},
 		}
 
 		live.Enrich(recovered)
 
-		Convey("Then durable fields are copied once", func() {
+		Convey("Then durable fields restore without resetting the trail", func() {
 			So(live.EntryPrice, ShouldNotBeNil)
 			So(live.EntryPrice.Float64(), ShouldEqual, 1.25)
 			So(live.Stoploss, ShouldNotBeNil)
 			So(live.Stoploss.Weight, ShouldEqual, 0.4)
+			So(live.Stoploss.Armed(), ShouldBeTrue)
+			So(live.Stoploss.LockedFloor, ShouldEqual, 0.03)
+			So(live.Stoploss.PeakReturn, ShouldEqual, 0.08)
 		})
 	})
 }
@@ -119,7 +133,9 @@ func BenchmarkCaptureRecovery(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = CaptureRecovery(1, open, map[string]string{"BTC/USD": "oid"}, nil)
+		_ = CaptureRecovery(1, open, map[string]PendingOrderWire{
+			"BTC/USD": {Symbol: "BTC/USD", Side: "sell", OrderID: "oid", Intent: "exit_pending"},
+		}, nil)
 	}
 }
 

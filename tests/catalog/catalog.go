@@ -14,19 +14,26 @@ ScenarioKind names an opportunity or trap tape identity from AGENTS.md.
 type ScenarioKind string
 
 const (
-	KindPump          ScenarioKind = "pump"
-	KindCoil          ScenarioKind = "coil"
-	KindExhaustion    ScenarioKind = "exhaustion"
-	KindVacuum        ScenarioKind = "vacuum"
-	KindSectorLift    ScenarioKind = "sector_lift"
-	KindThinBook      ScenarioKind = "thin_book"
-	KindNoise         ScenarioKind = "noise"
-	KindPhantomQuote  ScenarioKind = "phantom_quote"
-	KindToxicChase    ScenarioKind = "toxic_chase"
-	KindUnfundableLot ScenarioKind = "unfundable_lot"
-	KindReversalExit  ScenarioKind = "reversal_exit"
-	KindLagNoLead     ScenarioKind = "lag_no_lead"
-	KindFundedSlice   ScenarioKind = "funded_slice"
+	KindPump                ScenarioKind = "pump"
+	KindCoil                ScenarioKind = "coil"
+	KindExhaustion          ScenarioKind = "exhaustion"
+	KindVacuum              ScenarioKind = "vacuum"
+	KindSectorLift          ScenarioKind = "sector_lift"
+	KindThinBook            ScenarioKind = "thin_book"
+	KindNoise               ScenarioKind = "noise"
+	KindPhantomQuote        ScenarioKind = "phantom_quote"
+	KindToxicChase          ScenarioKind = "toxic_chase"
+	KindUnfundableLot       ScenarioKind = "unfundable_lot"
+	KindReversalExit        ScenarioKind = "reversal_exit"
+	KindLagNoLead           ScenarioKind = "lag_no_lead"
+	KindFundedSlice         ScenarioKind = "funded_slice"
+	KindPhantomHold         ScenarioKind = "phantom_hold"
+	KindShallowAdverseHold  ScenarioKind = "shallow_adverse_hold"
+	KindSincereStop         ScenarioKind = "sincere_stop"
+	KindCalibratedFloorHold ScenarioKind = "calibrated_floor_hold"
+	KindUngatedAboveStop    ScenarioKind = "ungated_above_stop"
+	KindMonotonePullback    ScenarioKind = "monotone_pullback"
+	KindStickyRetreatHold   ScenarioKind = "sticky_retreat_hold"
 )
 
 /*
@@ -68,6 +75,27 @@ type StageTruth struct {
 	MustNotEnter  bool
 	SizedEnter    bool
 	WalletBound   WalletBound
+
+	// Exit honesty (open-lot Regulate via CommitStrategy after PlayOpen):
+	// MustNotExit requires no ActionExit; ExitCause requires that Cause.
+	MustNotExit bool
+	ExitCause   string
+	// MarkMul is the regulate mark relative to entry (e.g. 0.992 ≈ −0.8%).
+	MarkMul float64
+	// PeakMul ratchets PeakReturn before an adverse MarkMul (sincere stops).
+	PeakMul float64
+	// RetreatPressure > 0 seeds toxicity retreat so quote marks freeze geometry.
+	RetreatPressure float64
+	// TrailDistance binds Stoploss at PlayOpen; required > 0 for exit proofs.
+	TrailDistance float64
+	// KeepForecast seeds a forward path so take-profit does not fire on noise.
+	KeepForecast bool
+	ForecastER   float64
+	ForecastUnc  float64
+	// StickyRetreat re-runs CommitStrategy without re-seeding retreat pressure.
+	StickyRetreat bool
+	// MinStopReturn when > 0 requires Stoploss.StopReturn >= MinStopReturn.
+	MinStopReturn float64
 }
 
 /*
@@ -241,7 +269,112 @@ func All() []Entry {
 			},
 			Market: conditions.TapePump,
 		},
+		{
+			Kind: KindPhantomHold, Name: "phantom_hold_under_retreat", Symbol: "MATIC/USD",
+			Capital: 10_000, FeePct: 0.26,
+			Truth: StageTruth{
+				MustNotExit:     true,
+				MarkMul:         0.985,
+				RetreatPressure: 0.95,
+				TrailDistance:   0.0026,
+				KeepForecast:    true,
+				ForecastER:      0.05,
+				ForecastUnc:     0.02,
+			},
+			Market: conditions.TapePhantomQuote,
+		},
+		{
+			Kind: KindShallowAdverseHold, Name: "shallow_adverse_hold", Symbol: "MATIC/USD",
+			Capital: 10_000, FeePct: 0.26,
+			Truth: StageTruth{
+				MustNotExit:     true,
+				MarkMul:         0.992,
+				RetreatPressure: 0.95,
+				TrailDistance:   0.0026,
+				KeepForecast:    true,
+				ForecastER:      0.05,
+				ForecastUnc:     0.02,
+			},
+			Market: conditions.TapeShallowAdverse,
+		},
+		{
+			Kind: KindSincereStop, Name: "sincere_drawdown_stop", Symbol: "MATIC/USD",
+			Capital: 10_000, FeePct: 0.26,
+			Truth: StageTruth{
+				ExitCause:     "stop",
+				PeakMul:       1.02,
+				MarkMul:       0.97,
+				TrailDistance: 0.0026,
+				KeepForecast:  true,
+				ForecastER:    0.01,
+				ForecastUnc:   0.01,
+			},
+			Market: conditions.TapeDrawdownStop,
+		},
+		{
+			Kind: KindCalibratedFloorHold, Name: "calibrated_floor_hold", Symbol: "MATIC/USD",
+			Capital: 10_000, FeePct: 0.26,
+			Truth: StageTruth{
+				MustNotExit:   true,
+				MarkMul:       1.04,
+				TrailDistance: 0.02,
+				KeepForecast:  true,
+				ForecastER:    0.05,
+				ForecastUnc:   0.02,
+			},
+			Market: conditions.TapeCalibratedLift,
+		},
+		{
+			Kind: KindUngatedAboveStop, Name: "ungated_above_stop_hold", Symbol: "MATIC/USD",
+			Capital: 10_000, FeePct: 0.26,
+			Truth: StageTruth{
+				MustNotExit:   true,
+				MarkMul:       0.999,
+				TrailDistance: 0.0026,
+				KeepForecast:  true,
+				ForecastER:    0.05,
+				ForecastUnc:   0.02,
+			},
+			Market: conditions.TapeShallowAdverse,
+		},
+		{
+			Kind: KindMonotonePullback, Name: "monotone_stop_after_pullback", Symbol: "MATIC/USD",
+			Capital: 10_000, FeePct: 0.26,
+			Truth: StageTruth{
+				MustNotExit:   true,
+				PeakMul:       1.08,
+				MarkMul:       1.07,
+				TrailDistance: 0.02,
+				KeepForecast:  true,
+				ForecastER:    0.05,
+				ForecastUnc:   0.02,
+				MinStopReturn: 0.06,
+			},
+			Market: conditions.TapeCalibratedLift,
+		},
+		{
+			Kind: KindStickyRetreatHold, Name: "sticky_retreat_without_reseed", Symbol: "MATIC/USD",
+			Capital: 10_000, FeePct: 0.26,
+			Truth: StageTruth{
+				MustNotExit:     true,
+				MarkMul:         0.985,
+				RetreatPressure: 0.95,
+				TrailDistance:   0.0026,
+				KeepForecast:    true,
+				ForecastER:      0.05,
+				ForecastUnc:     0.02,
+				StickyRetreat:   true,
+			},
+			Market: conditions.TapePhantomQuote,
+		},
 	}
+}
+
+/*
+IsExitProof reports whether the entry's known truth is open-lot Regulate behavior.
+*/
+func (entry Entry) IsExitProof() bool {
+	return entry.Truth.MustNotExit || entry.Truth.ExitCause != ""
 }
 
 /*

@@ -181,12 +181,7 @@ rotatable projects open Balance lots that have fee and forecast evidence
 complete enough for rotate comparison. Slot capacity uses Desk.OpenPositions.
 */
 func (arbiter *Arbiter) rotatable(thesis *types.Thesis) []Incumbent {
-	forecasts := map[string]types.Forecasts{}
-
-	for _, forecast := range thesis.Forecasts {
-		forecasts[forecast.Symbol] = forecast
-	}
-
+	forecasts := selectForecasts(thesis.Forecasts)
 	rows := make([]Incumbent, 0)
 
 	for holding := range arbiter.balance.Holdings() {
@@ -211,6 +206,13 @@ func (arbiter *Arbiter) rotatable(thesis *types.Thesis) []Incumbent {
 		fraction, err := arbiter.price.Fraction(holding.Symbol)
 
 		if err != nil {
+			thesis.Decisions = append(thesis.Decisions, types.Decision{
+				Action: types.ActionHold,
+				Symbol: holding.Symbol,
+				Cause:  "rotation",
+				Reason: "fee schedule unavailable; keep incumbent",
+			})
+
 			continue
 		}
 

@@ -356,16 +356,8 @@ func priceRetentionCount(observedCount int) int {
 		return observedCount
 	}
 
-	windows, err := statistic.ResolveWindowSet(
-		make([]float64, observedCount),
-		statistic.WindowsConfig{},
-	)
-
-	if err != nil {
-		return observedCount
-	}
-
-	retention := windows.LongWindow + windows.ReturnLag + 1
+	_, longWindow, returnLag := windowsFromCount(observedCount)
+	retention := longWindow + returnLag + 1
 
 	if retention > observedCount {
 		return observedCount
@@ -379,16 +371,7 @@ func resolvedMaxLagBars(sampleCount int) int {
 		return 1
 	}
 
-	_, longWindow, err := statistic.ResolveWindows(
-		make([]float64, sampleCount),
-		0,
-		0,
-	)
-
-	if err != nil {
-		return 1
-	}
-
+	_, longWindow, _ := windowsFromCount(sampleCount)
 	halfSeries := sampleCount / 2
 
 	if longWindow > halfSeries {
@@ -407,15 +390,7 @@ func resolvedShortWindow(sampleCount int) int {
 		return sampleFloor
 	}
 
-	shortWindow, _, err := statistic.ResolveWindows(
-		make([]float64, sampleCount),
-		0,
-		0,
-	)
-
-	if err != nil {
-		return sampleFloor
-	}
+	shortWindow, _, _ := windowsFromCount(sampleCount)
 
 	return max(shortWindow, sampleFloor)
 }

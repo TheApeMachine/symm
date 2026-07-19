@@ -46,6 +46,8 @@ type FluidSymbol struct {
 	config             symbolConfig
 	instrumentTickSize float64
 	memorySamples      []float64
+	fluxPrevious       map[float64]float64
+	fluxSeen           map[float64]struct{}
 }
 
 /*

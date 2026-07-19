@@ -48,8 +48,9 @@ type Crypto struct {
 	recorder       *audit.Recorder
 	lastThesis     atomic.Pointer[types.Thesis]
 	checkpointAt   atomic.Int64
-	checkpointSlot atomic.Pointer[types.Thesis]
+	checkpointSlot atomic.Pointer[types.Recovery]
 	snapshot       *types.Recovery
+	trading        atomic.Bool
 }
 
 /*

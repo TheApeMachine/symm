@@ -49,9 +49,16 @@ func NewStoploss(ctx context.Context) *Stoploss {
 /*
 Bind latches entry and an initial adverse trail at fill. Trail may be fee or
 spread width in return space; later Update only rescales, never waits to exist.
+A non-positive or non-finite distance refuses to arm so Breached cannot go blind.
 */
 func (stoploss *Stoploss) Bind(entry, distance float64) {
 	if stoploss == nil || entry <= 0 || (stoploss.armed && stoploss.entry > 0) {
+		return
+	}
+
+	if distance <= 0 || math.IsNaN(distance) || math.IsInf(distance, 0) {
+		stoploss.Action = "hold"
+		stoploss.Reason = "bind refused; trail width absent"
 		return
 	}
 
@@ -63,12 +70,81 @@ func (stoploss *Stoploss) Bind(entry, distance float64) {
 }
 
 /*
+Restore arms a regulator from durable recovery state without resetting Trail
+geometry. Bind is for fresh fills only — recovery must keep LockedFloor and
+peak/mark returns.
+*/
+func (stoploss *Stoploss) Restore(entry float64, recovered *Stoploss) {
+	if stoploss == nil || recovered == nil || entry <= 0 {
+		return
+	}
+
+	stoploss.armed = true
+	stoploss.entry = entry
+	stoploss.retreat = recovered.retreat
+	stoploss.Trail = recovered.Trail
+	stoploss.Skill = recovered.Skill
+	stoploss.Weight = finiteFloat(stoploss.Weight)
+	stoploss.LockedFloor = finiteFloat(stoploss.LockedFloor)
+	stoploss.TrailDistance = finiteFloat(stoploss.TrailDistance)
+	stoploss.FloorDistance = finiteFloat(stoploss.FloorDistance)
+	stoploss.StopReturn = finiteFloat(stoploss.StopReturn)
+	stoploss.PeakReturn = finiteFloat(stoploss.PeakReturn)
+	stoploss.MarkReturn = finiteFloat(stoploss.MarkReturn)
+	stoploss.Action = recovered.Action
+	stoploss.Reason = recovered.Reason
+
+	if stoploss.Action == "" {
+		stoploss.Action = "hold"
+	}
+
+	if stoploss.Reason == "" {
+		stoploss.Reason = "restored"
+	}
+}
+
+/*
 Close releases the regulator context during position teardown.
 */
 func (stoploss *Stoploss) Close() {
 	if stoploss.cancel != nil {
 		stoploss.cancel()
 	}
+}
+
+/*
+healWidth restores a positive finite TrailDistance from live evidence when an
+armed lot lost its survival band (NaN scale or zero-width recovery bind).
+*/
+func (stoploss *Stoploss) healWidth(evidence StopEvidence) {
+	if stoploss == nil || !stoploss.armed {
+		return
+	}
+
+	if stoploss.TrailDistance > 0 &&
+		!math.IsNaN(stoploss.TrailDistance) &&
+		!math.IsInf(stoploss.TrailDistance, 0) {
+		return
+	}
+
+	distance := stoploss.Trail.LiveScale(evidence)
+
+	if distance <= 0 || math.IsNaN(distance) || math.IsInf(distance, 0) {
+		return
+	}
+
+	if stoploss.FloorDistance <= 0 {
+		stoploss.FloorDistance = distance
+	}
+
+	stoploss.TrailDistance = distance
+
+	if stoploss.StopReturn == 0 || math.IsNaN(stoploss.StopReturn) ||
+		math.IsInf(stoploss.StopReturn, 0) {
+		stoploss.StopReturn = -distance
+	}
+
+	stoploss.Reason = "trail width healed from live evidence"
 }
 
 /*
@@ -115,7 +191,7 @@ func (stoploss *Stoploss) Update(evidence StopEvidence) *Stoploss {
 	if !stoploss.armed {
 		distance := stoploss.TrailDistance
 
-		if distance <= 0 {
+		if distance <= 0 || math.IsNaN(distance) || math.IsInf(distance, 0) {
 			distance = stoploss.Trail.LiveScale(evidence)
 		}
 
@@ -123,11 +199,22 @@ func (stoploss *Stoploss) Update(evidence StopEvidence) *Stoploss {
 		stoploss.Skill.Seed(evidence)
 	}
 
-	stoploss.retreat = math.Max(0, evidence.RetreatPressure)
+	if stoploss.armed {
+		stoploss.healWidth(evidence)
+	}
+
+	if evidence.RetreatReady {
+		stoploss.retreat = math.Max(0, evidence.RetreatPressure)
+	}
+
 	markReturn := (evidence.Mark - stoploss.entry) / stoploss.entry
 
 	if stoploss.retreat > 0 {
 		return stoploss.settle("hold", "retreat-driven mark; geometry frozen", markReturn)
+	}
+
+	if !stoploss.armed {
+		return stoploss.settle("hold", "stop unbound; trail width absent", markReturn)
 	}
 
 	stoploss.Skill.Reweight(evidence)
@@ -235,6 +322,7 @@ func (stoploss Stoploss) MarshalJSON() ([]byte, error) {
 		Reason        string  `json:"reason"`
 		Weight        float64 `json:"weight"`
 		LockedFloor   float64 `json:"lockedFloor"`
+		FloorDistance float64 `json:"floorDistance"`
 		TrailDistance float64 `json:"trailDistance"`
 		StopReturn    float64 `json:"stopReturn"`
 		PeakReturn    float64 `json:"peakReturn"`
@@ -246,6 +334,7 @@ func (stoploss Stoploss) MarshalJSON() ([]byte, error) {
 		Reason:        stoploss.Reason,
 		Weight:        finiteFloat(stoploss.Weight),
 		LockedFloor:   finiteFloat(stoploss.LockedFloor),
+		FloorDistance: finiteFloat(stoploss.FloorDistance),
 		TrailDistance: finiteFloat(stoploss.TrailDistance),
 		StopReturn:    finiteFloat(stoploss.StopReturn),
 		PeakReturn:    finiteFloat(stoploss.PeakReturn),

@@ -32,11 +32,22 @@ func (evidence Evidence) Project(
 ) types.StopEvidence {
 	projected := types.StopEvidence{Symbol: holding.Symbol}
 
-	if holding.Mark == nil || holding.EntryPrice == nil {
+	if holding.EntryPrice == nil {
 		return projected
 	}
 
-	mark := holding.Mark.Float64()
+	// Prefer StopMark (mid/last) for regulator geometry; fall back to bid Mark.
+	markDecimal := holding.StopMark
+
+	if markDecimal == nil {
+		markDecimal = holding.Mark
+	}
+
+	if markDecimal == nil {
+		return projected
+	}
+
+	mark := markDecimal.Float64()
 	entry := holding.EntryPrice.Float64()
 
 	if mark <= 0 || entry <= 0 {
@@ -66,22 +77,22 @@ func (evidence Evidence) forecast(
 	thesis *types.Thesis,
 	symbol string,
 ) {
-	for _, forecast := range thesis.Forecasts {
-		if forecast.Symbol != symbol {
-			continue
-		}
+	forecast, found := selectForecast(thesis.Forecasts, symbol)
 
-		projected.ForecastEpoch = forecast.SourceEpoch
-		projected.ExpectedReturn = forecast.ExpectedReturn
-		projected.Uncertainty = forecast.Uncertainty
-		projected.IncrementalMSE = forecast.IncrementalMSE
-		projected.ReturnReady = forecast.Ready && forecast.Calibrated
-		projected.Spread = forecast.ExpectedSpread
-		projected.SellCapacity = forecast.SellCapacity
-		projected.NormalizedResidual = evidence.residual(
-			projected.IncrementalMSE, projected.Uncertainty,
-		)
+	if !found {
+		return
 	}
+
+	projected.ForecastEpoch = forecast.SourceEpoch
+	projected.ExpectedReturn = forecast.ExpectedReturn
+	projected.Uncertainty = forecast.Uncertainty
+	projected.IncrementalMSE = forecast.IncrementalMSE
+	projected.ReturnReady = forecast.Ready && forecast.Calibrated
+	projected.Spread = forecast.ExpectedSpread
+	projected.SellCapacity = forecast.SellCapacity
+	projected.NormalizedResidual = evidence.residual(
+		projected.IncrementalMSE, projected.Uncertainty,
+	)
 }
 
 func (evidence Evidence) resonance(
@@ -166,7 +177,9 @@ func (evidence Evidence) manifold(
 	}
 
 	if state.GasReady() {
-		projected.Spread = state.Spread / state.ReferencePrice
+		// Manifold spread is already return-space ((ask-bid)/mid); do not
+		// divide by ReferencePrice again or LiveScale undercuts thin books.
+		projected.Spread = state.Spread
 		projected.SellCapacity = state.SellCapacity
 	}
 
@@ -187,6 +200,8 @@ func (evidence Evidence) retreat(
 			measurement.Normalized == nil {
 			continue
 		}
+
+		projected.RetreatReady = true
 
 		if *measurement.Normalized > projected.RetreatPressure {
 			projected.RetreatPressure = *measurement.Normalized

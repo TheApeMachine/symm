@@ -61,6 +61,46 @@ func (session *Session) SeedQuoteCapital(available float64) error {
 }
 
 /*
+SeedLockedLot emits quote cash plus a base asset whose Available is zero while
+Balance remains positive — the open-sell reserved inventory shape.
+*/
+func (session *Session) SeedLockedLot(
+	quote float64,
+	asset string,
+	balance float64,
+) error {
+	if session == nil || session.Paper == nil {
+		return errnie.Err(
+			errnie.NotFound,
+			"tests: session paper unavailable",
+			nil,
+		)
+	}
+
+	if err := session.alignPaperWallet(quote); err != nil {
+		return err
+	}
+
+	cash := formatFloat(quote)
+	owned := formatFloat(balance)
+	payload := rawBalanceFrame(
+		`{"channel":"balances","type":"snapshot","sequence":2,"data":[{` +
+			`"asset":"USD","asset_class":"currency",` +
+			`"balance":"` + cash + `",` +
+			`"available":"` + cash + `",` +
+			`"reserved":"0"` +
+			`},{` +
+			`"asset":"` + asset + `","asset_class":"currency",` +
+			`"balance":"` + owned + `",` +
+			`"available":"0",` +
+			`"reserved":"` + owned + `"` +
+			`}]}`,
+	)
+
+	return session.Paper.Emit("balances", payload)
+}
+
+/*
 SeedTakerFee stores a percent taker fee on the Price surface for one symbol.
 */
 func (session *Session) SeedTakerFee(symbol string, percent float64) error {
@@ -353,6 +393,9 @@ func (session *Session) ObserveQuote(lot *types.Holding, bid, last float64) erro
 	}
 
 	lot.Mark = decimal.NewFromFloat64(bid)
+	// Session stop tests that pass distinct bid/last still regulate on the
+	// executable bid; production Marks.Apply uses StopMark (mid/last).
+	lot.StopMark = decimal.NewFromFloat64(bid)
 	session.Balance.Seed(lot)
 
 	if lot.Stoploss != nil {

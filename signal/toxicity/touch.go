@@ -189,15 +189,15 @@ func attributeTouchFill(
 	}
 
 	side := attributeTouchSide(tradePrice, bid.Price, ask.Price, increment)
-	volume := decimal.NewFromFloat64(tradeQty)
+	notional := tradePrice.Float64() * tradeQty
 
 	if side == touchSideBid {
-		row.fillBid = zeroed(row.fillBid).Add(tradePrice.Mul(volume))
+		row.fillBid += notional
 		row.bidExecuted += tradeQty
 	}
 
 	if side == touchSideAsk {
-		row.fillAsk = zeroed(row.fillAsk).Add(tradePrice.Mul(volume))
+		row.fillAsk += notional
 		row.askExecuted += tradeQty
 	}
 }

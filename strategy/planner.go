@@ -190,6 +190,7 @@ func (planner *Planner) Update(
 
 	counts := make(map[string]int, len(planner.workers))
 	active := make([]signalWorker, 0, len(planner.workers))
+	skipped := make([]string, 0)
 
 	for _, worker := range planner.workers {
 		if types.SignalInterest(worker.signal)&interest == 0 {
@@ -200,7 +201,8 @@ func (planner *Planner) Update(
 		case worker.jobs <- thesis:
 			active = append(active, worker)
 		default:
-			// Depth-one: still measuring prior cut; skip this tick.
+			// Depth-one: still measuring prior cut — cut is incomplete.
+			skipped = append(skipped, signalName(worker.signal))
 		}
 	}
 
@@ -208,6 +210,17 @@ func (planner *Planner) Update(
 		batch := <-worker.out
 		counts[batch.name] += len(batch.rows)
 		thesis.Measurements = append(thesis.Measurements, batch.rows...)
+	}
+
+	if len(skipped) > 0 {
+		thesis.NoteIncomplete()
+		thesis.Measurements = nil
+		errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "measure_incomplete", map[string]any{
+			"skipped": skipped,
+			"ns":      time.Since(started).Nanoseconds(),
+		}))
+
+		return thesis
 	}
 
 	planner.publishMeasurements(thesis)
@@ -239,7 +252,21 @@ func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 		return thesis
 	}
 
+	// Stamp fees on every forecast before Continuity so occupied/managing lots
+	// stay Eligible(); Measure still skips those symbols for fresh enters.
+	planner.opportunity.StampFriction(thesis)
 	planner.continuity.Manage(thesis)
+
+	if thesis.Incomplete() {
+		thesis.Decisions = append(thesis.Decisions, types.Decision{
+			Action: types.ActionNothing,
+			Cause:  "measure_incomplete",
+			Reason: "interested signal skipped this cut; refuse fresh enters",
+		})
+
+		return thesis
+	}
+
 	planner.opportunity.Measure(thesis)
 	planner.arbiter.Select(thesis)
 

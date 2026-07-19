@@ -15,6 +15,9 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+// two is the mid divisor reused on the mark hot path.
+var two = decimal.NewFromInt64(2)
+
 /*
 Price is the broker price surface for symm. It is the single source of
 truth for all pricing and fee information, and calculations. No monetary
@@ -507,14 +510,18 @@ func (price *Price) fillExit(
 		holding.ExitFee = data.FeeUsdEquiv.Copy()
 	}
 
+	// Inventory qty is owned by Balance.syncWallet from exchange Balance.
+	// Executions only update exit economics and prorate remaining entry fee.
 	before := holding.Qty.Copy()
 	remaining := before.Sub(decimal.NewFromFloat64(data.LastQty))
+
+	if remaining.Sign() < 0 {
+		remaining = decimal.NewFromInt64(0)
+	}
 
 	if holding.EntryFee != nil {
 		holding.EntryFee = price.Prorate(holding.EntryFee, remaining, before)
 	}
-
-	holding.Qty = remaining
 
 	at := data.Timestamp
 
@@ -595,9 +602,10 @@ func (price *Price) frictionAt(
 }
 
 /*
-Mark stamps executable bid, flatten-now PnL, and return onto a holding. When the
-ticker book is not yet warm after a fill, the last trade mark on the holding is
-used so the desk does not publish a zero-PnL shell until the next tick.
+Mark stamps executable bid (flatten-now PnL), mid/last StopMark for stop
+geometry, and return onto a holding. When the ticker book is not yet warm after
+a fill, the last trade mark on the holding is used so the desk does not publish
+a zero-PnL shell until the next tick.
 */
 func (price *Price) Mark(
 	instrument *kraken.InstrumentPair,
@@ -621,6 +629,8 @@ func (price *Price) Mark(
 	if bid == nil {
 		bid = holding.Mark
 	}
+
+	holding.StopMark = price.geometryMark(ticker, holding)
 
 	if bid == nil || holding.EntryPrice == nil ||
 		holding.Qty == nil || holding.Qty.Sign() <= 0 {
@@ -657,6 +667,34 @@ func (price *Price) Mark(
 	}
 
 	holding.ReturnPct = &pct
+
+	return nil
+}
+
+/*
+geometryMark prefers touch mid for stop geometry so bid–ask cross after an ask
+entry is not treated as adverse alpha. Falls back to last, then holding.Mark.
+*/
+func (price *Price) geometryMark(
+	ticker *kraken.TickerData,
+	holding *types.Holding,
+) *decimal.Decimal {
+	if price != nil && ticker != nil && ticker.Bid != nil && ticker.Ask != nil &&
+		ticker.Bid.Sign() > 0 && ticker.Ask.Sign() > 0 {
+		sum := ticker.Bid.Add(ticker.Ask)
+
+		if mid := price.Div(sum, two); mid != nil && mid.Sign() > 0 {
+			return mid
+		}
+	}
+
+	if ticker != nil && ticker.Last != nil && ticker.Last.Sign() > 0 {
+		return ticker.Last.Copy()
+	}
+
+	if holding != nil && holding.Mark != nil {
+		return holding.Mark.Copy()
+	}
 
 	return nil
 }

@@ -52,3 +52,70 @@ func TestBookReleaseConsume(t *testing.T) {
 		t.Fatal("Funded after Consume must be false")
 	}
 }
+
+/*
+TestBookSurvivesExchangeSnapshot ensures local claims are independent of the
+Kraken Available/Reserved row so a wallet update cannot erase or double-credit
+reservations.
+*/
+func TestBookSurvivesExchangeSnapshot(t *testing.T) {
+	t.Parallel()
+
+	balance := NewBalance(nil, nil, nil)
+	balance.status = types.READY
+	balance.quote = "USD"
+	balance.model = &kraken.Balance{
+		Data: []kraken.BalanceData{{
+			Asset:     "USD",
+			Available: decimal.NewFromFloat64(1000),
+			Reserved:  decimal.NewFromFloat64(0),
+		}},
+	}
+
+	claim, err := balance.Book(decimal.NewFromFloat64(250), nil)
+
+	if err != nil {
+		t.Fatalf("Book failed: %v", err)
+	}
+
+	cash, err := balance.AvailableCash()
+
+	if err != nil || cash.Float64() != 750 {
+		t.Fatalf("effective cash after Book want 750 got %v err=%v", cash, err)
+	}
+
+	// Exchange snapshot replaces the quote row without knowing about local claims.
+	balance.mu.Lock()
+	balance.model.Data[0] = kraken.BalanceData{
+		Asset:     "USD",
+		Available: decimal.NewFromFloat64(1000),
+		Reserved:  decimal.NewFromFloat64(0),
+	}
+	balance.mu.Unlock()
+
+	cash, err = balance.AvailableCash()
+
+	if err != nil || cash.Float64() != 750 {
+		t.Fatalf("effective cash after snapshot want 750 got %v err=%v", cash, err)
+	}
+
+	if !balance.Funded(claim.ID, decimal.NewFromFloat64(250)) {
+		t.Fatal("claim must survive exchange snapshot")
+	}
+
+	second, err := balance.Book(decimal.NewFromFloat64(800), nil)
+
+	if err == nil || second != nil {
+		t.Fatal("second Book must respect remaining effective available")
+	}
+
+	if err := balance.Release(claim.ID); err != nil {
+		t.Fatalf("Release failed: %v", err)
+	}
+
+	cash, err = balance.AvailableCash()
+
+	if err != nil || cash.Float64() != 1000 {
+		t.Fatalf("effective cash after Release want 1000 got %v err=%v", cash, err)
+	}
+}

@@ -10,8 +10,9 @@ import (
 )
 
 /*
-Reservation is a first-class claim on quote cash owned by Balance until
-Consume forgets it after a live order, or Release returns it on cancel/fail.
+Reservation is a first-class local claim on quote cash. It never mutates the
+cached Kraken Available/Reserved row — exchange snapshots stay authoritative,
+and Book/Release only touch the claim ledger.
 */
 type Reservation struct {
 	ID     string
@@ -21,20 +22,48 @@ type Reservation struct {
 var reservationSeq atomic.Uint64
 
 /*
-Book reserves quote cash and returns an owned Reservation so cancel and fail
-paths can release by id without guessing amounts from Decisions.
+Book atomically checks effective quote availability and inserts a claim.
+Effective available is exchange Available minus active local reservations.
 */
 func (balance *Balance) Book(
 	amount, fraction *decimal.Decimal,
 ) (*Reservation, error) {
-	reserved, err := balance.Reserve(amount, fraction, false)
-
-	if err != nil || reserved == nil {
-		return nil, err
+	if balance == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"balance missing for reservation",
+			nil,
+		))
 	}
 
 	balance.mu.Lock()
 	defer balance.mu.Unlock()
+
+	if err := balance.validate(map[string]any{
+		"model": balance.model,
+	}); err != nil {
+		return nil, err
+	}
+
+	reserved, err := balance.reservation(amount, fraction)
+
+	if err != nil {
+		return nil, err
+	}
+
+	effective, err := balance.effectiveAvailableLocked()
+
+	if err != nil {
+		return nil, err
+	}
+
+	if effective.Sub(reserved).Sign() < 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"insufficient available balance to reserve",
+			nil,
+		))
+	}
 
 	if balance.books == nil {
 		balance.books = map[string]*Reservation{}
@@ -53,8 +82,8 @@ func (balance *Balance) Book(
 }
 
 /*
-Release returns a Book claim to Available. Missing ids are a no-op so idempotent
-cancel paths stay safe.
+Release deletes a Book claim. It does not rewrite the exchange snapshot.
+Missing ids are a no-op so idempotent cancel paths stay safe.
 */
 func (balance *Balance) Release(id string) error {
 	if balance == nil || id == "" {
@@ -62,26 +91,43 @@ func (balance *Balance) Release(id string) error {
 	}
 
 	balance.mu.Lock()
-	row, ok := balance.books[id]
+	defer balance.mu.Unlock()
 
-	if ok {
+	if balance.books != nil {
 		delete(balance.books, id)
 	}
 
-	balance.mu.Unlock()
+	return nil
+}
 
-	if !ok || row == nil || row.Amount == nil {
-		return nil
+/*
+RestoreClaim reinserts a durable reservation id after restart without mutating
+the exchange Available row. Effective available subtracts it again.
+*/
+func (balance *Balance) RestoreClaim(id string, amount *decimal.Decimal) error {
+	if balance == nil || id == "" || amount == nil || amount.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"restore claim requires id and positive amount",
+			nil,
+		))
 	}
 
-	_, err := balance.Reserve(row.Amount, nil, true)
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
 
-	return err
+	if balance.books == nil {
+		balance.books = map[string]*Reservation{}
+	}
+
+	balance.books[id] = &Reservation{ID: id, Amount: amount.Copy()}
+
+	return nil
 }
 
 /*
 Consume drops the Book ledger entry after the broker accepted the order so a
-later cancel cannot double-credit Available while wallet sync owns the cash.
+later cancel cannot double-credit while wallet sync owns the cash.
 */
 func (balance *Balance) Consume(id string) {
 	if balance == nil || id == "" {

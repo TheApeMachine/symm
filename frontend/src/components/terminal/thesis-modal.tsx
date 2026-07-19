@@ -7,22 +7,11 @@ import {
 	useState,
 } from "react";
 import { appStore } from "#/collections/app";
-import type { Holding, TickFrame } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
-import type { Category, Measurement } from "#/types/measurement";
-import type {
-	Finding,
-	GraphFrame,
-	StrategyDecision,
-	ThesisForecast,
-	ThesisHypothesis,
-} from "#/types/thesis";
+import type { Holding, TickFrame } from "#/collections/types";
 import { resizeCanvas } from "#/components/terminal/canvas";
 import { fixed } from "#/components/terminal/decision-format";
-import {
-	drawEvidenceGraph,
-	graphTopologyKey,
-} from "#/components/terminal/evidence-graph-viz";
+import { drawEvidenceGraph } from "#/components/terminal/evidence-graph-viz";
 import { LifecycleTrack } from "#/components/terminal/lifecycle-track";
 import {
 	accumulateThesisSnapshot,
@@ -32,6 +21,14 @@ import {
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { cn } from "#/lib/utils";
 import { getWorker } from "#/providers/websocket";
+import type { Category, Measurement } from "#/types/measurement";
+import type {
+	Finding,
+	GraphFrame,
+	StrategyDecision,
+	ThesisForecast,
+	ThesisHypothesis,
+} from "#/types/thesis";
 import { Badge } from "@/components/ui/badge";
 import { Flex } from "@/components/ui/flex";
 import { Panel } from "@/components/ui/panel";
@@ -60,7 +57,6 @@ const Section = ({
 
 const ThesisEvidenceCanvas = ({ graph }: { graph: GraphFrame | null }) => {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
-	const topology = graphTopologyKey(graph);
 
 	const draw = useCallback(
 		(context: CanvasRenderingContext2D, width: number, height: number) => {
@@ -91,7 +87,7 @@ const ThesisEvidenceCanvas = ({ graph }: { graph: GraphFrame | null }) => {
 		observer.observe(canvas);
 
 		return () => observer.disconnect();
-	}, [draw, topology]);
+	}, [draw]);
 
 	return (
 		<canvas
@@ -232,7 +228,9 @@ const ThesisDetailRail = ({ snapshot }: { snapshot: ThesisSnapshot }) => (
 
 		<Section title="Findings" meta={`${snapshot.findings.length} rows`}>
 			{snapshot.findings.length === 0 ? (
-				<div className="font-mono text-[10px] text-(--f4)">none retained</div>
+				<div className="font-mono text-[10px] text-(--f4)">
+					none retained · postmortem after exit
+				</div>
 			) : (
 				snapshot.findings.slice(-3).map((finding) => (
 					<div
@@ -271,18 +269,20 @@ export const ThesisModal = () => {
 
 	useDirectStorePaint(
 		getWorker(),
-		[
-			{ store: "measurements", key: thesisSymbol ?? "" },
-			{ store: "forecasts", key: "" },
-			{ store: "hypotheses", key: "" },
-			{ store: "categories", key: "" },
-			{ store: "decisions", key: thesisSymbol ?? "" },
-			{ store: "lifecycle", key: thesisSymbol ?? "" },
-			{ store: "holdings", key: "" },
-			{ store: "findings", key: "" },
-			{ store: "graphs", key: thesisSymbol ?? "" },
-			{ store: "tick", key: "" },
-		],
+		thesisSymbol === null
+			? []
+			: [
+					{ store: "measurements", key: thesisSymbol },
+					{ store: "forecasts", key: thesisSymbol },
+					{ store: "hypotheses", key: thesisSymbol },
+					{ store: "categories", key: thesisSymbol },
+					{ store: "decisions", key: thesisSymbol },
+					{ store: "lifecycle", key: thesisSymbol },
+					{ store: "holdings", key: "" },
+					{ store: "findings", key: thesisSymbol },
+					{ store: "graphs", key: thesisSymbol },
+					{ store: "tick", key: "" },
+				],
 		(buffers) => {
 			if (thesisSymbol === null) {
 				retainedRef.current = null;
@@ -293,39 +293,37 @@ export const ThesisModal = () => {
 			const decisions = (buffers[`decisions:${thesisSymbol}`] ??
 				buffers["decisions:"] ??
 				[]) as StrategyDecision[];
-			const lifecycle = (
-				buffers[`lifecycle:${thesisSymbol}`] ??
+			const lifecycle = (buffers[`lifecycle:${thesisSymbol}`] ??
 				buffers["lifecycle:"] ??
-				[]
-			) as Array<{ symbol: string; state: string }>;
+				[]) as Array<{ symbol: string; state: string }>;
 			const graphs = (buffers[`graphs:${thesisSymbol}`] ??
 				buffers["graphs:"] ??
 				[]) as GraphFrame[];
 			const live = thesisSnapshotFor({
 				symbol: thesisSymbol,
-				tick: tickCount(
-					(buffers["tick:"] as TickFrame[] | undefined)?.at(-1),
-				),
+				tick: tickCount((buffers["tick:"] as TickFrame[] | undefined)?.at(-1)),
 				lifecycle:
 					lifecycle.find((row) => row.symbol === thesisSymbol)?.state ?? null,
-				graph:
-					graphs.find((frame) => frame.symbol === thesisSymbol) ??
-					graphs.at(-1) ??
-					null,
+				graph: graphs.find((frame) => frame.symbol === thesisSymbol) ?? null,
 				measurements: (buffers[`measurements:${thesisSymbol}`] ??
 					buffers["measurements:"] ??
 					[]) as Measurement[],
 				decision:
 					decisions.find((decision) => decision.symbol === thesisSymbol) ??
-					decisions.at(-1) ??
 					null,
-				forecasts: (buffers["forecasts:"] ?? []) as ThesisForecast[],
-				hypotheses: (buffers["hypotheses:"] ?? []) as ThesisHypothesis[],
-				categories: (buffers["categories:"] ?? []) as Array<
-					Category & { symbol?: string }
-				>,
+				forecasts: (buffers[`forecasts:${thesisSymbol}`] ??
+					buffers["forecasts:"] ??
+					[]) as ThesisForecast[],
+				hypotheses: (buffers[`hypotheses:${thesisSymbol}`] ??
+					buffers["hypotheses:"] ??
+					[]) as ThesisHypothesis[],
+				categories: (buffers[`categories:${thesisSymbol}`] ??
+					buffers["categories:"] ??
+					[]) as Array<Category & { symbol?: string }>,
 				holdings: (buffers["holdings:"] ?? []) as Holding[],
-				findings: (buffers["findings:"] ?? []) as Finding[],
+				findings: (buffers[`findings:${thesisSymbol}`] ??
+					buffers["findings:"] ??
+					[]) as Finding[],
 			});
 			const next = accumulateThesisSnapshot(retainedRef.current, live);
 			retainedRef.current = next;

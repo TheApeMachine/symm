@@ -51,7 +51,8 @@ Market-facing behavior (signals, logic from market data, strategy decide/allocat
 4. **Known outcomes:** assert stage truths (measure / decide / size / wallet), not merely “calm metric &lt; stressed metric.” Measure bounds may be `positive`, `present` (signed non-zero), or `zero` (e.g. subject has no lead claim).
 5. **Use the catalog:** `tests/catalog` proves signals (`ProveMeasure` / `signals_test`), Analyzer side-effects on `Crypto.LastThesis` (`logic_test`), and strategy admit/size/rotate (`ProveStrategy` / `strategy_test`). Infrastructure without these proofs is incomplete.
 6. **Signal packages own market proofs:** each `signal/*/signal_test.go` (or `market_test.go`) must boot `tests.NewSession` with that signal only, play `conditions.Tape*` streams, and assert absolute `tests.SourceClaim` outcomes (family peaks + stressed-vs-calm exceeds). Relative calm&lt;stress alone is insufficient. Catalog proofs do not replace package-local Session proofs.
-7. Pure unit math (decimal sizing scans, etc.) may remain; they do not replace Session/catalog proof for system behavior.
+7. **Exit honesty:** open-lot Regulate must be proved via catalog `ProveExit` (PlayOpen + adverse mark + CommitStrategy) — hold under phantom/shallow adverse with retreat, stop on sincere ungated breach, lock floor on calibrated lift. Unit Stoploss tests do not replace these Session proofs.
+8. Pure unit math (decimal sizing scans, etc.) may remain; they do not replace Session/catalog proof for system behavior.
 
 ### Preventative Rules:
 

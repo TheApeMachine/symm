@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -16,9 +15,9 @@ honesty uses one event batch.
 type symbolEvidence struct {
 	latestAt    time.Time
 	tradeCount  int
-	volume      *decimal.Decimal
-	fillBid     *decimal.Decimal
-	fillAsk     *decimal.Decimal
+	volume      float64
+	fillBid     float64
+	fillAsk     float64
 	bidExecuted float64
 	askExecuted float64
 }
@@ -51,32 +50,38 @@ func newObservationContext(
 }
 
 /*
-priceIncrementsBySymbol indexes each symbol's live price increment from the
-current market frame so touch attribution uses exchange structure.
+resetIncrements clears and reloads price increments from the current books into
+the Signal scratch map so Calculate does not allocate a fresh map each tick.
 */
-func priceIncrementsBySymbol(frame *types.MarketFrame) map[string]*decimal.Decimal {
-	incrementBySymbol := map[string]*decimal.Decimal{}
+func (signal *Signal) resetIncrements(frame *types.MarketFrame) {
+	clear(signal.increments)
+
+	if frame == nil {
+		return
+	}
 
 	for _, row := range frame.Books {
 		if row.Symbol == "" || row.PriceIncrement == nil || row.PriceIncrement.Sign() <= 0 {
 			continue
 		}
 
-		incrementBySymbol[row.Symbol] = row.PriceIncrement
+		signal.increments[row.Symbol] = row.PriceIncrement
 	}
+}
 
-	return incrementBySymbol
+/*
+resetEvidence drops last tick's per-symbol rows while retaining map capacity.
+*/
+func (signal *Signal) resetEvidence() {
+	clear(signal.evidence)
 }
 
 /*
 accumulateEvidence ingests validated trades and attributes touch fills per
-symbol from the current Level3 book snapshot.
+symbol from the current Level3 book snapshot into Signal.evidence.
 */
-func (signal *Signal) accumulateEvidence(
-	trades []kraken.TradeData,
-	incrementBySymbol map[string]*decimal.Decimal,
-) map[string]*symbolEvidence {
-	evidence := map[string]*symbolEvidence{}
+func (signal *Signal) accumulateEvidence(trades []kraken.TradeData) {
+	signal.resetEvidence()
 
 	for _, trade := range trades {
 		if trade.Price.Sign() <= 0 || trade.Qty <= 0 || trade.Timestamp.IsZero() {
@@ -84,22 +89,21 @@ func (signal *Signal) accumulateEvidence(
 		}
 
 		at := trade.Timestamp.UTC()
-		row := evidence[trade.Symbol]
+		row := signal.evidence[trade.Symbol]
 
 		if row == nil {
 			row = &symbolEvidence{}
-			evidence[trade.Symbol] = row
+			signal.evidence[trade.Symbol] = row
 		}
 
 		row.tradeCount++
-		volume := decimal.NewFromFloat64(trade.Qty)
-		row.volume = zeroed(row.volume).Add(volume)
+		row.volume += trade.Qty
 
 		if at.After(row.latestAt) {
 			row.latestAt = at
 		}
 
-		increment := incrementBySymbol[trade.Symbol]
+		increment := signal.increments[trade.Symbol]
 
 		signal.level3.PeekBook(trade.Symbol, func(symbolBook *book.Book) {
 			if symbolBook.Name != trade.Symbol {
@@ -111,18 +115,4 @@ func (signal *Signal) accumulateEvidence(
 			attributeTouchFill(row, trade.Price, trade.Qty, bid, ask, increment)
 		})
 	}
-
-	return evidence
-}
-
-/*
-zeroed returns total, or a fresh zero accumulator when total has not been
-seeded yet for this tick.
-*/
-func zeroed(total *decimal.Decimal) *decimal.Decimal {
-	if total == nil {
-		return decimal.NewFromFloat64(0)
-	}
-
-	return total
 }

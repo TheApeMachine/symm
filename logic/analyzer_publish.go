@@ -55,10 +55,12 @@ func (analyzer *Analyzer) publishMeasured(
 }
 
 /*
-publishCognition emits cognition and forecast frames after REM consolidation.
+publishCognition emits cognition and forecast frames after REM consolidation,
+and projects ready winners onto thesis.Categories so the terminal category rail
+is not an empty shell while classifications live only on Cognition.
 */
 func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
-	cognition := make([]types.Cognition, 0)
+	cognition := make([]types.Cognition, 0, 8)
 
 	thesis.Cognition.Range(func(key, value any) bool {
 		reading, ok := value.(types.Cognition)
@@ -72,10 +74,43 @@ func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 
 	if len(cognition) > 0 {
 		analyzer.publish(datura.Map[any]{"cognition": cognition})
+		analyzer.projectCategories(thesis, cognition)
 	}
 
 	if len(thesis.Forecasts) > 0 {
 		analyzer.publish(datura.Map[any]{"forecasts": thesis.Forecasts})
+	}
+
+	if len(thesis.Categories) > 0 {
+		analyzer.publish(datura.Map[any]{"categories": thesis.Categories})
+	}
+}
+
+/*
+projectCategories writes one Category row per ready cognition winner so strategy
+publish and the thesis modal share the same classification surface.
+*/
+func (analyzer *Analyzer) projectCategories(
+	thesis *types.Thesis,
+	cognition []types.Cognition,
+) {
+	if thesis == nil {
+		return
+	}
+
+	for _, reading := range cognition {
+		if !reading.Ready || reading.Winner == "" || reading.Symbol == "" {
+			continue
+		}
+
+		thesis.Categories = append(thesis.Categories, types.Category{
+			Symbol:     reading.Symbol,
+			Type:       types.CategoryType(reading.Winner),
+			Confidence: reading.Confidence,
+			Surprisal:  reading.EntropyBits,
+			Strength:   reading.LookaheadScore,
+			Maturity:   float64(reading.Cohort),
+		})
 	}
 }
 

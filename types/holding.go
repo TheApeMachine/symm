@@ -14,21 +14,25 @@ stores only holdings it created (Admit). Live Stoploss is owned by Position;
 the Stoploss pointer here is the same regulator after Desk takes the lot.
 */
 type Holding struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	Status        Status           `json:"status,omitempty"`
-	Symbol        string           `json:"symbol"`
-	Asset         string           `json:"asset,omitempty"`
-	Qty           *decimal.Decimal `json:"qty" validate:"required"`
-	EntryAt       *time.Time       `json:"entry_at,omitempty"`
-	ExitAt        *time.Time       `json:"exit_at,omitempty"`
-	EntryPrice    *decimal.Decimal `json:"entry_price"`
-	EntryFee      *decimal.Decimal `json:"entry_fee"`
-	ExitPrice     *decimal.Decimal `json:"exit_price"`
-	ExitFee       *decimal.Decimal `json:"exit_fee"`
-	PnL           *decimal.Decimal `json:"pnl"`
-	ReturnPct     *float64         `json:"return_pct"`
-	Mark          *decimal.Decimal `json:"mark"`
+	ctx    context.Context
+	cancel context.CancelFunc
+	Status Status           `json:"status,omitempty"`
+	Symbol string           `json:"symbol"`
+	Asset  string           `json:"asset,omitempty"`
+	Qty    *decimal.Decimal `json:"qty" validate:"required"`
+	// SellableQty is exchange Available (unreserved). Qty is total Balance.
+	SellableQty *decimal.Decimal `json:"sellable_qty,omitempty"`
+	EntryAt     *time.Time       `json:"entry_at,omitempty"`
+	ExitAt      *time.Time       `json:"exit_at,omitempty"`
+	EntryPrice  *decimal.Decimal `json:"entry_price"`
+	EntryFee    *decimal.Decimal `json:"entry_fee"`
+	ExitPrice   *decimal.Decimal `json:"exit_price"`
+	ExitFee     *decimal.Decimal `json:"exit_fee"`
+	PnL         *decimal.Decimal `json:"pnl"`
+	ReturnPct   *float64         `json:"return_pct"`
+	Mark        *decimal.Decimal `json:"mark"`
+	// StopMark is mid/last for stop geometry; Mark stays executable bid for PnL.
+	StopMark      *decimal.Decimal `json:"stop_mark,omitempty"`
 	IsOpportunity bool             `json:"is_opportunity"`
 	Stoploss      *Stoploss        `json:"stoploss"`
 }
@@ -65,6 +69,7 @@ func (holding Holding) MarshalJSON() ([]byte, error) {
 		Symbol        string     `json:"symbol"`
 		Asset         string     `json:"asset,omitempty"`
 		Qty           float64    `json:"qty"`
+		SellableQty   float64    `json:"sellable_qty,omitempty"`
 		EntryAt       *time.Time `json:"entry_at,omitempty"`
 		ExitAt        *time.Time `json:"exit_at,omitempty"`
 		EntryPrice    float64    `json:"entry_price"`
@@ -84,6 +89,7 @@ func (holding Holding) MarshalJSON() ([]byte, error) {
 		Symbol:        holding.Symbol,
 		Asset:         holding.Asset,
 		Qty:           decimalFloat(holding.Qty),
+		SellableQty:   decimalFloat(holding.SellableQty),
 		EntryAt:       holding.EntryAt,
 		ExitAt:        holding.ExitAt,
 		EntryPrice:    decimalFloat(holding.EntryPrice),

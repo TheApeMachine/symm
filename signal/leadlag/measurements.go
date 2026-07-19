@@ -4,7 +4,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -138,13 +137,9 @@ func sampleSupportFraction(sampleCount int) float64 {
 		return 0
 	}
 
-	shortWindow, _, err := statistic.ResolveWindows(
-		make([]float64, sampleCount),
-		0,
-		0,
-	)
+	shortWindow, _, _ := windowsFromCount(sampleCount)
 
-	if err != nil || shortWindow <= 0 {
+	if shortWindow <= 0 {
 		return 0
 	}
 

@@ -115,7 +115,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			continue
 		}
 
-		risk := decimal.NewFromFloat64(decision.Risk)
+		risk := decimal.NewFromFloat64(decision.AllocationHaircut)
 		budget := slice.Sub(allocator.price.Mul(slice, risk))
 
 		if decision.Cause == "rotation" {

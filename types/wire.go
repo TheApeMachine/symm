@@ -7,6 +7,15 @@ import (
 )
 
 /*
+wireKey identifies one source×symbol×at observation without string formatting.
+*/
+type wireKey struct {
+	source SourceType
+	symbol string
+	atNano int64
+}
+
+/*
 wireGroup is one source×symbol×at observation assembled for the compact UI wire.
 */
 type wireGroup struct {
@@ -36,8 +45,8 @@ func WireMeasurements(measurements []*Measurement) []datura.Map[any] {
 		return nil
 	}
 
-	groups := make(map[string]*wireGroup, len(candidates))
-	order := make([]string, 0, len(candidates))
+	groups := make(map[wireKey]*wireGroup, len(candidates))
+	order := make([]wireKey, 0, len(candidates))
 
 	for _, measurement := range candidates {
 		if measurement == nil || measurement.Symbol == "" || measurement.Metric == "" {
@@ -76,7 +85,7 @@ func wireCandidates(measurements []*Measurement) []*Measurement {
 		return nil
 	}
 
-	latestKeys := make(map[string]struct{}, len(latest))
+	latestKeys := make(map[wireKey]struct{}, len(latest))
 
 	for _, measurement := range latest {
 		if measurement == nil {
@@ -107,10 +116,12 @@ func wireCandidates(measurements []*Measurement) []*Measurement {
 /*
 wireGroupKey identifies one wire observation slot by source, symbol, and at.
 */
-func wireGroupKey(measurement *Measurement) string {
-	return string(measurement.Source) + "\x00" +
-		measurement.Symbol + "\x00" +
-		measurement.At.UTC().Format(time.RFC3339Nano)
+func wireGroupKey(measurement *Measurement) wireKey {
+	return wireKey{
+		source: measurement.Source,
+		symbol: measurement.Symbol,
+		atNano: measurement.At.UTC().UnixNano(),
+	}
 }
 
 /*
@@ -146,7 +157,7 @@ func newWireGroup(measurement *Measurement) *wireGroup {
 		maturity: measurement.Maturity,
 		validity: measurement.Validity,
 		scale:    measurement.Scale,
-		metrics:  datura.Map[any]{},
+		metrics:  make(datura.Map[any], 8),
 	}
 }
 
@@ -215,14 +226,19 @@ func ObservationCount(measurements []*Measurement) int {
 		return 0
 	}
 
-	seen := make(map[string]struct{}, len(latest))
+	type pair struct {
+		source SourceType
+		symbol string
+	}
+
+	seen := make(map[pair]struct{}, len(latest))
 
 	for _, measurement := range latest {
 		if measurement == nil || measurement.Symbol == "" || measurement.Metric == "" {
 			continue
 		}
 
-		seen[string(measurement.Source)+"\x00"+measurement.Symbol] = struct{}{}
+		seen[pair{measurement.Source, measurement.Symbol}] = struct{}{}
 	}
 
 	return len(seen)

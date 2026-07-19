@@ -192,3 +192,147 @@ func AssertSizedEnter(thesis *types.Thesis, entry Entry) error {
 func errSized(name, detail string) error {
 	return fmt.Errorf("catalog %s: %s", name, detail)
 }
+
+/*
+ProveExit boots the stack, PlayOpens the catalog tape with a bound lot, applies
+the entry's mark/retreat surface, CommitStrategy-regulates, and asserts exit
+honesty (hold under phantom/shallow adverse; stop on sincere breach).
+*/
+func ProveExit(
+	t testing.TB,
+	kind ScenarioKind,
+	signals tests.SignalFactory,
+) {
+	t.Helper()
+
+	entry := MustKind(t, kind)
+
+	if !entry.IsExitProof() {
+		t.Fatalf("catalog %s: not an exit proof entry", entry.Name)
+	}
+
+	session, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
+		Signals: signals,
+	})
+
+	if err != nil {
+		t.Fatalf("boot: %v", err)
+	}
+
+	trail := entry.Truth.TrailDistance
+
+	if trail <= 0 {
+		t.Fatalf(
+			"catalog %s: TrailDistance > 0 required for exit proof (no magic default)",
+			entry.Name,
+		)
+	}
+
+	if entry.Market == nil {
+		t.Fatalf("catalog %s: market tape required for exit proof", entry.Name)
+	}
+
+	lot, statePath, err := session.PlayOpen(t, entry.Market(), entry.Symbol, 100, trail)
+
+	if err != nil {
+		t.Fatalf("PlayOpen: %v", err)
+	}
+
+	entryPrice := lot.EntryPrice.Float64()
+
+	if entry.Truth.PeakMul > 1 {
+		peak := entryPrice * entry.Truth.PeakMul
+
+		if err := session.ObserveQuote(lot, peak, peak); err != nil {
+			t.Fatal(err)
+		}
+
+		tests.SetPaperPrice(t, statePath, entry.Symbol, peak)
+	}
+
+	markMul := entry.Truth.MarkMul
+
+	if markMul <= 0 {
+		t.Fatalf("catalog %s: MarkMul required for exit proof", entry.Name)
+	}
+
+	mark := entryPrice * markMul
+
+	if entry.Truth.RetreatPressure > 0 {
+		lot.Stoploss.NoteRetreat(entry.Truth.RetreatPressure)
+	}
+
+	if err := session.ObserveQuote(lot, mark, mark); err != nil {
+		t.Fatal(err)
+	}
+
+	tests.SetPaperPrice(t, statePath, entry.Symbol, mark)
+
+	thesis := types.NewThesis(nil, nil)
+
+	if entry.Truth.KeepForecast {
+		er := entry.Truth.ForecastER
+		unc := entry.Truth.ForecastUnc
+
+		if er == 0 {
+			er = 0.05
+		}
+
+		if unc <= 0 {
+			unc = 0.02
+		}
+
+		tests.SeedOpportunityForecast(thesis, entry.Symbol, er, unc)
+		thesis.Forecasts[len(thesis.Forecasts)-1].IncrementalMSE = unc * unc * 0.01
+	}
+
+	if entry.Truth.RetreatPressure > 0 {
+		tests.SeedRetreat(thesis, entry.Symbol, entry.Truth.RetreatPressure)
+	}
+
+	if err := session.CommitStrategy(thesis); err != nil {
+		t.Fatalf("CommitStrategy: %v", err)
+	}
+
+	if entry.Truth.StickyRetreat {
+		// Second cut without retreat measurements — sticky pressure must still gate.
+		sticky := types.NewThesis(nil, nil)
+
+		if entry.Truth.KeepForecast {
+			er := entry.Truth.ForecastER
+			unc := entry.Truth.ForecastUnc
+
+			if er == 0 {
+				er = 0.05
+			}
+
+			if unc <= 0 {
+				unc = 0.02
+			}
+
+			tests.SeedOpportunityForecast(sticky, entry.Symbol, er, unc)
+		}
+
+		if err := session.CommitStrategy(sticky); err != nil {
+			t.Fatalf("CommitStrategy sticky: %v", err)
+		}
+
+		thesis = sticky
+	}
+
+	if err := entry.AssertExit(thesis, lot); err != nil {
+		t.Fatal(err)
+	}
+
+	if entry.Truth.MustNotExit && session.Desk.OpenPositions() != 1 {
+		t.Fatalf(
+			"catalog %s: want open lot retained, open=%d",
+			entry.Name, session.Desk.OpenPositions(),
+		)
+	}
+
+	if entry.Kind == KindCalibratedFloorHold &&
+		(lot.Stoploss == nil || lot.Stoploss.LockedFloor <= 0) {
+		t.Fatalf("catalog %s: want positive LockedFloor after calibrated mark", entry.Name)
+	}
+}

@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
@@ -26,9 +27,8 @@ func (crypto *Crypto) Plan(thesis *types.Thesis) error {
 }
 
 /*
-syncInventory enriches Balance from recovery, restores lifecycle for live wallet
-lots, and advances flat symbols through close and PostMortem. It never copies
-wallet inventory onto Thesis.Holdings.
+syncInventory restores recovery state, enriches wallet lots, advances lifecycle,
+and enables trading only after wallet readiness (and one-shot restore) complete.
 */
 func (crypto *Crypto) syncInventory(thesis *types.Thesis) {
 	if thesis == nil {
@@ -36,12 +36,10 @@ func (crypto *Crypto) syncInventory(thesis *types.Thesis) {
 	}
 
 	crypto.healAbandonedExits(thesis)
+	crypto.healCompletedEntries(thesis)
 
 	if crypto.snapshot != nil && crypto.balance != nil && crypto.balance.ModelReady() {
-		for symbol, recovered := range crypto.snapshot.Holdings {
-			crypto.balance.Enrich(symbol, recovered)
-		}
-
+		crypto.restoreRecovery(thesis)
 		crypto.snapshot = nil
 	}
 
@@ -59,6 +57,50 @@ func (crypto *Crypto) syncInventory(thesis *types.Thesis) {
 
 	if crypto.desk != nil {
 		_ = crypto.desk.OpenPositions()
+	}
+
+	if crypto.balance != nil && crypto.balance.ModelReady() {
+		crypto.trading.Store(true)
+	}
+}
+
+/*
+restoreRecovery applies durable holdings, reservations, and pending intents once
+the live wallet is ready. Strategy submission stays gated until this returns.
+*/
+func (crypto *Crypto) restoreRecovery(thesis *types.Thesis) {
+	if crypto.snapshot == nil || crypto.balance == nil {
+		return
+	}
+
+	for symbol, recovered := range crypto.snapshot.Holdings {
+		crypto.balance.Enrich(symbol, recovered)
+	}
+
+	for _, row := range crypto.snapshot.Reservations {
+		if row.ID == "" || row.Amount <= 0 {
+			continue
+		}
+
+		_ = crypto.balance.RestoreClaim(
+			row.ID, decimal.NewFromFloat64(row.Amount),
+		)
+	}
+
+	for symbol, pending := range crypto.snapshot.PendingOrders {
+		if symbol == "" {
+			continue
+		}
+
+		phase := types.LifecycleEntrySubmitted
+
+		if pending.Side == "sell" ||
+			pending.Intent == "exit_pending" ||
+			pending.Intent == "reduce_pending" {
+			phase = types.LifecycleExitSubmitted
+		}
+
+		thesis.NoteLifecycle(symbol, phase, thesis.At)
 	}
 }
 
@@ -88,9 +130,12 @@ func (crypto *Crypto) closeMissing(
 		phase, _ := value.(string)
 
 		switch phase {
+		case types.LifecycleEvaluated, types.LifecycleExpired,
+			types.LifecycleRejected, types.LifecycleInvalid:
+			thesis.Lifecycle.Delete(symbol)
+			return true
 		case types.LifecycleClosed, types.LifecyclePostExitObservation,
-			types.LifecyclePostMortemReady, types.LifecycleEvaluated,
-			types.LifecycleExpired, types.LifecycleRejected, types.LifecycleInvalid:
+			types.LifecyclePostMortemReady:
 			return true
 		}
 
@@ -107,7 +152,7 @@ func (crypto *Crypto) closeMissing(
 
 /*
 healAbandonedExits re-arms ExitSubmitted symbols that still hold open inventory
-with no pending venue order.
+with no pending venue order. Scans live holdings only — not lifetime lifecycle.
 */
 func (crypto *Crypto) healAbandonedExits(thesis *types.Thesis) {
 	if crypto == nil || crypto.desk == nil || crypto.balance == nil ||
@@ -115,43 +160,82 @@ func (crypto *Crypto) healAbandonedExits(thesis *types.Thesis) {
 		return
 	}
 
-	thesis.Lifecycle.Range(func(key, value any) bool {
-		symbol, ok := key.(string)
+	for holding := range crypto.balance.Holdings() {
+		symbol := holding.Symbol
+		value, found := thesis.Lifecycle.Load(symbol)
 
-		if !ok {
-			return true
+		if !found {
+			continue
 		}
 
 		phase, _ := value.(string)
 
 		if phase != types.LifecycleExitSubmitted {
-			return true
+			continue
 		}
 
 		if crypto.desk.Pending(symbol) {
-			return true
+			continue
 		}
 
-		holding, err := crypto.balance.Holding(symbol)
-
-		if err != nil || holding.Status == types.CLOSED {
-			return true
+		if holding.Status == types.CLOSED {
+			continue
 		}
 
 		if holding.Qty == nil || holding.Qty.Sign() <= 0 {
-			return true
+			continue
 		}
 
 		thesis.Lifecycle.Store(symbol, types.LifecycleManaging)
+	}
+}
 
-		return true
-	})
+/*
+healCompletedEntries promotes EntrySubmitted lots that already show open wallet
+qty with no pending entry order into managing.
+*/
+func (crypto *Crypto) healCompletedEntries(thesis *types.Thesis) {
+	if crypto == nil || crypto.desk == nil || crypto.balance == nil ||
+		thesis == nil || thesis.Lifecycle == nil {
+		return
+	}
+
+	for holding := range crypto.balance.Holdings() {
+		symbol := holding.Symbol
+		value, found := thesis.Lifecycle.Load(symbol)
+
+		if !found {
+			continue
+		}
+
+		phase, _ := value.(string)
+
+		if phase != types.LifecycleEntrySubmitted &&
+			phase != types.LifecyclePartiallyEntered {
+			continue
+		}
+
+		if crypto.desk.Pending(symbol) {
+			continue
+		}
+
+		if holding.Status == types.CLOSED {
+			continue
+		}
+
+		if holding.Qty == nil || holding.Qty.Sign() <= 0 {
+			continue
+		}
+
+		thesis.NoteLifecycle(symbol, types.LifecycleEntered, thesis.At)
+		thesis.Lifecycle.Store(symbol, types.LifecycleManaging)
+	}
 }
 
 /*
 markOpen places live wallet lots into the managing lifecycle on the durable
 Thesis. In-flight entry/exit phases are left alone so stoploss and trade
-submission do not re-fire every tick. Stoploss Bind runs on Position.
+submission do not re-fire every tick. Already-armed stops are never rebound.
 */
 func (crypto *Crypto) markOpen(thesis *types.Thesis, holding *types.Holding) {
 	if thesis == nil || holding == nil || holding.Symbol == "" {
@@ -176,7 +260,9 @@ func (crypto *Crypto) markOpen(thesis *types.Thesis, holding *types.Holding) {
 		if position, ok := crypto.desk.Position(holding.Symbol); ok {
 			position.TakeStop(holding)
 
-			if holding.EntryPrice != nil {
+			if stop := position.Stop(); stop != nil && stop.Armed() {
+				holding.Stoploss = stop
+			} else if holding.EntryPrice != nil {
 				trail := 0.0
 
 				if stop := position.Stop(); stop != nil {
@@ -187,8 +273,14 @@ func (crypto *Crypto) markOpen(thesis *types.Thesis, holding *types.Holding) {
 					}
 				}
 
-				position.BindStop(holding.EntryPrice.Float64(), trail)
-				holding.Stoploss = position.Stop()
+				if trail <= 0 {
+					trail = position.EntryTrail(holding)
+				}
+
+				if trail > 0 {
+					position.BindStop(holding.EntryPrice.Float64(), trail)
+					holding.Stoploss = position.Stop()
+				}
 			}
 		}
 	}
@@ -203,38 +295,6 @@ func (crypto *Crypto) markOpen(thesis *types.Thesis, holding *types.Holding) {
 	}
 
 	thesis.Lifecycle.Store(holding.Symbol, types.LifecycleManaging)
-}
-
-/*
-constraints returns quote capital plus normal and reserved slot ceilings.
-*/
-func (crypto *Crypto) constraints() (float64, int, int, error) {
-	normal, reserved := 0, 0
-
-	if crypto.desk != nil {
-		normal = crypto.desk.NormalSlots()
-		reserved = crypto.desk.ReservedSlots()
-	}
-
-	if crypto.balance == nil {
-		return 0, normal, reserved, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"crypto: balance unavailable for plan",
-			nil,
-		))
-	}
-
-	available, err := crypto.balance.AvailableQuote()
-
-	if err != nil {
-		return 0, normal, reserved, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"crypto: quote balance unavailable for plan",
-			err,
-		))
-	}
-
-	return available, normal, reserved, nil
 }
 
 /*

@@ -43,7 +43,7 @@ func TestAllocatorSizesWalletSlice(t *testing.T) {
 	allocator := NewAllocator(context.Background(), balance, instrument, price)
 	thesis := types.NewThesis(nil, nil)
 	thesis.Decisions = append(thesis.Decisions, types.Decision{
-		Action: types.ActionEnter, Symbol: "LRC/USD", Risk: 0,
+		Action: types.ActionEnter, Symbol: "LRC/USD", AllocationHaircut: 0,
 		At: time.Unix(1, 0).UTC(),
 	})
 	thesis.Holdings.Store("LRC/USD", &types.Holding{
@@ -97,7 +97,7 @@ func TestAllocatorScalesByRisk(t *testing.T) {
 		allocator := NewAllocator(context.Background(), balance, instrument, price)
 		thesis := types.NewThesis(nil, nil)
 		thesis.Decisions = append(thesis.Decisions, types.Decision{
-			Action: types.ActionEnter, Symbol: "MATIC/USD", Risk: risk,
+			Action: types.ActionEnter, Symbol: "MATIC/USD", AllocationHaircut: risk,
 		})
 		thesis.Holdings.Store("MATIC/USD", &types.Holding{
 			Symbol: "MATIC/USD", Status: types.PENDING,

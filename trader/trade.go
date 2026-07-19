@@ -7,31 +7,30 @@ import (
 )
 
 /*
-Trade submits Decide exits/reduces through Desk first, then enters, so freeing
-slot intents are counted before BuyAfter. Session harnesses call this after Plan
-to prove fill paths without requiring a full Market.Cut.
+Trade submits Decide exits/reduces through Desk first, then enters. Challenger
+entries wait for real slot capacity (fill-gated) — sell transport success alone
+does not free a slot.
 */
 func (crypto *Crypto) Trade(thesis *types.Thesis) {
 	crypto.trade(thesis)
 }
 
 /*
-trade submits Decide exits/reduces through Desk first, then enters, so freeing
-slot intents are counted before BuyAfter.
+trade submits exits first, then Arbiter-ordered enters against live slot count.
 */
 func (crypto *Crypto) trade(thesis *types.Thesis) {
-	if crypto.desk == nil {
+	if crypto.desk == nil || !crypto.trading.Load() {
 		return
 	}
 
-	enters := make(map[string]types.Decision, len(thesis.Decisions))
+	enters := make([]types.Decision, 0, len(thesis.Decisions))
 	sells := make(map[string]*decimal.Decimal, len(thesis.Decisions))
 	epochs := map[string]uint64{}
 
 	for _, decision := range thesis.Decisions {
 		switch decision.Action {
 		case types.ActionEnter:
-			enters[decision.Symbol] = decision
+			enters = append(enters, decision)
 			epochs[decision.Symbol] = decision.ValidThroughEpoch
 		case types.ActionExit:
 			sells[decision.Symbol] = nil
@@ -46,8 +45,8 @@ func (crypto *Crypto) trade(thesis *types.Thesis) {
 		}
 	}
 
-	freeing := crypto.submitSells(thesis, sells, epochs)
-	crypto.submitEnters(thesis, enters, epochs, freeing)
+	crypto.submitSells(thesis, sells, epochs)
+	crypto.submitEnters(thesis, enters, epochs)
 }
 
 /*
@@ -57,9 +56,7 @@ func (crypto *Crypto) submitSells(
 	thesis *types.Thesis,
 	sells map[string]*decimal.Decimal,
 	epochs map[string]uint64,
-) int {
-	freeing := 0
-
+) {
 	for symbol, quantity := range sells {
 		if expired(thesis, symbol, epochs[symbol]) {
 			continue
@@ -82,7 +79,6 @@ func (crypto *Crypto) submitSells(
 				err,
 			))
 
-			// Lot gone or venue rejected size: stop re-arming ActionExit every tick.
 			if _, open := crypto.desk.Position(symbol); !open {
 				thesis.NoteLifecycle(symbol, types.LifecycleExitSubmitted, thesis.At)
 			}
@@ -91,86 +87,92 @@ func (crypto *Crypto) submitSells(
 		}
 
 		thesis.NoteLifecycle(symbol, types.LifecycleExitSubmitted, thesis.At)
-
-		if quantity == nil {
-			freeing++
-		}
 	}
-
-	return freeing
 }
 
 /*
-submitEnters places admitted Thesis holdings that still carry enter intent.
+submitEnters places admitted Thesis holdings in Arbiter admission order.
+Capacity uses live OpenPositions only — no optimistic freeing from sell submit.
 */
 func (crypto *Crypto) submitEnters(
 	thesis *types.Thesis,
-	enters map[string]types.Decision,
+	enters []types.Decision,
 	epochs map[string]uint64,
-	freeing int,
 ) {
-	thesis.Holdings.Range(func(key, value any) bool {
-		holding, ok := value.(*types.Holding)
+	for _, decision := range enters {
+		symbol := decision.Symbol
+
+		raw, ok := thesis.Holdings.Load(symbol)
+
+		if !ok {
+			continue
+		}
+
+		holding, ok := raw.(*types.Holding)
 
 		if !ok || holding == nil {
-			return true
+			continue
 		}
 
-		decision, enter := enters[holding.Symbol]
-
-		if !enter {
-			return true
-		}
-
-		if expired(thesis, holding.Symbol, epochs[holding.Symbol]) {
-			crypto.release(decision)
-			thesis.Holdings.Delete(key)
-			return true
+		if expired(thesis, symbol, epochs[symbol]) {
+			crypto.rejectEnter(thesis, decision, types.LifecycleExpired)
+			continue
 		}
 
 		if err := errnie.Validate(holding); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
-				"invalid holding for "+holding.Symbol,
+				"invalid holding for "+symbol,
 				err,
 			))
 
-			crypto.release(decision)
-			thesis.Holdings.Delete(key)
-			return true
+			crypto.rejectEnter(thesis, decision, types.LifecycleInvalid)
+			continue
 		}
 
-		if !crypto.desk.HasSlotAfter(holding.IsOpportunity, freeing) {
-			crypto.release(decision)
-			return true
+		if !crypto.desk.HasSlot(holding.IsOpportunity) {
+			// Rotation challengers keep claim+holding until the incumbent fill
+			// frees a real slot. Fresh entries without a displace target demote.
+			if decision.Displaces != "" {
+				continue
+			}
+
+			crypto.rejectEnter(thesis, decision, types.LifecycleRejected)
+			continue
 		}
 
 		position, err := crypto.desk.BuyAfter(
-			*holding, holding.IsOpportunity, freeing, decision.ReservationID,
+			*holding, holding.IsOpportunity, 0, decision.ReservationID,
 		)
 
 		if err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
-				"failed to buy holding "+holding.Symbol,
+				"failed to buy holding "+symbol,
 				err,
 			))
 
-			crypto.release(decision)
-			thesis.Holdings.Delete(key)
-
-			return true
+			crypto.rejectEnter(thesis, decision, types.LifecycleRejected)
+			continue
 		}
 
-		thesis.Positions.Store(holding.Symbol, position)
-		thesis.NoteLifecycle(holding.Symbol, types.LifecycleEntrySubmitted, thesis.At)
+		thesis.Positions.Store(symbol, position)
+		thesis.NoteLifecycle(symbol, types.LifecycleEntrySubmitted, thesis.At)
+	}
+}
 
-		if freeing > 0 {
-			freeing--
-		}
-
-		return true
-	})
+/*
+rejectEnter releases the claim, drops the Thesis candidate holding, and demotes
+lifecycle so Opportunity.occupied cannot permanently block the symbol.
+*/
+func (crypto *Crypto) rejectEnter(
+	thesis *types.Thesis,
+	decision types.Decision,
+	phase string,
+) {
+	crypto.release(decision)
+	thesis.Holdings.Delete(decision.Symbol)
+	thesis.NoteLifecycle(decision.Symbol, phase, thesis.At)
 }
 
 /*
@@ -192,20 +194,13 @@ func expired(thesis *types.Thesis, symbol string, through uint64) bool {
 
 /*
 release returns Booked quote cash when entry submission fails or expires.
+Claims are identity-keyed; amount-only rollback is not supported because the
+exchange snapshot is never mutated by Book.
 */
 func (crypto *Crypto) release(decision types.Decision) {
-	if crypto.balance == nil {
+	if crypto.balance == nil || decision.ReservationID == "" {
 		return
 	}
 
-	if decision.ReservationID != "" {
-		_ = crypto.balance.Release(decision.ReservationID)
-		return
-	}
-
-	if decision.ProposedNotional == nil || decision.ProposedNotional.Sign() <= 0 {
-		return
-	}
-
-	_, _ = crypto.balance.Reserve(decision.ProposedNotional, nil, true)
+	_ = crypto.balance.Release(decision.ReservationID)
 }

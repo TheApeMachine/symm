@@ -77,14 +77,14 @@ func tapeMeasurements(
 			Symbol:   symbol,
 			At:       row.latestAt,
 			Unit:     types.UnitBaseCurrency,
-			Raw:      row.volume.Float64(),
+			Raw:      row.volume,
 			Maturity: maturity,
 			Validity: obsCtx.validity,
 			Scale:    obsCtx.scale,
 		},
 	}
 
-	if row.fillBid != nil {
+	if row.fillBid > 0 {
 		measurements = append(measurements, &types.Measurement{
 			Source:   types.SourceToxicity,
 			Stream:   types.Toxicity,
@@ -94,14 +94,14 @@ func tapeMeasurements(
 			Side:     types.SideBuy,
 			At:       row.latestAt,
 			Unit:     types.UnitQuoteCurrency,
-			Raw:      row.fillBid.Float64(),
+			Raw:      row.fillBid,
 			Maturity: maturity,
 			Validity: obsCtx.validity,
 			Scale:    obsCtx.scale,
 		})
 	}
 
-	if row.fillAsk != nil {
+	if row.fillAsk > 0 {
 		measurements = append(measurements, &types.Measurement{
 			Source:   types.SourceToxicity,
 			Stream:   types.Toxicity,
@@ -111,7 +111,7 @@ func tapeMeasurements(
 			Side:     types.SideSell,
 			At:       row.latestAt,
 			Unit:     types.UnitQuoteCurrency,
-			Raw:      row.fillAsk.Float64(),
+			Raw:      row.fillAsk,
 			Maturity: maturity,
 			Validity: obsCtx.validity,
 			Scale:    obsCtx.scale,

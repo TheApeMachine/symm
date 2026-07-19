@@ -15,7 +15,9 @@ type Decision struct {
 	Symbol            string             `json:"symbol" validate:"required"`
 	At                time.Time          `json:"at" validate:"required"`
 	Utility           float64            `json:"utility" validate:"finite"`
-	Risk              float64            `json:"risk" validate:"finite,nonnegative"`
+	// AllocationHaircut is 1−cognitive confidence (capital haircut), not a
+	// calibrated loss probability. Prefer forecast Uncertainty for risk math.
+	AllocationHaircut float64            `json:"allocation_haircut" validate:"finite,nonnegative"`
 	Alternatives      map[string]float64 `json:"alternatives"`
 	AllocationClass   string             `json:"allocationClass"`
 	ProposedNotional  *decimal.Decimal   `json:"proposedNotional" validate:"required"`

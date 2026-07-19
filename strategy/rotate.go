@@ -174,7 +174,8 @@ func (rotate Rotate) Clear(stop *types.Stoploss, forecast types.Forecasts) float
 
 	if forecast.Uncertainty > 0 && forecast.IncrementalMSE > 0 {
 		rmse := math.Sqrt(forecast.IncrementalMSE)
-		skill = rmse / (rmse + forecast.Uncertainty)
+		// Lower residual error raises clear score; RMSE in the numerator was inverted.
+		skill = forecast.Uncertainty / (rmse + forecast.Uncertainty)
 	}
 
 	return math.Min(1, proximity*confidence*skill)

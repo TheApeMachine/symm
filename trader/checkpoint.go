@@ -11,15 +11,15 @@ import (
 const checkpointInterval = time.Second
 
 /*
-checkpoint publishes the newest thesis into a depth-one slot for the async
-worker. Trading never blocks on Sync.
+checkpoint enqueues an immutable Recovery DTO so the async flusher never reads
+the live Thesis while Planner resets it in place.
 */
 func (crypto *Crypto) checkpoint(thesis *types.Thesis) {
 	if crypto == nil || thesis == nil || crypto.dataPath == "" {
 		return
 	}
 
-	crypto.checkpointSlot.Store(thesis)
+	crypto.checkpointSlot.Store(crypto.captureRecovery(thesis.Tick))
 }
 
 /*
@@ -41,13 +41,26 @@ func (crypto *Crypto) checkpointLoop() {
 }
 
 func (crypto *Crypto) flushCheckpoint() {
-	thesis := crypto.checkpointSlot.Swap(nil)
+	recovery := crypto.checkpointSlot.Swap(nil)
 
-	if thesis == nil || crypto.dataPath == "" {
+	if recovery == nil || crypto.dataPath == "" {
 		return
 	}
 
-	pending := map[string]string{}
+	if err := types.SaveRecovery(crypto.dataPath, recovery); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"crypto: recovery checkpoint failed",
+			err,
+		))
+	}
+}
+
+/*
+captureRecovery builds a durable restart payload from wallet, desk, and books.
+*/
+func (crypto *Crypto) captureRecovery(tick int64) *types.Recovery {
+	pending := map[string]types.PendingOrderWire{}
 
 	if crypto.desk != nil {
 		pending = crypto.desk.PendingSymbols()
@@ -84,15 +97,7 @@ func (crypto *Crypto) flushCheckpoint() {
 		}
 	}
 
-	recovery := types.CaptureRecovery(thesis.Tick, open, pending, reservations)
-
-	if err := types.SaveRecovery(crypto.dataPath, recovery); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"crypto: recovery checkpoint failed",
-			err,
-		))
-	}
+	return types.CaptureRecovery(tick, open, pending, reservations)
 }
 
 /*
