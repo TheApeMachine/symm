@@ -170,7 +170,7 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 			)
 
 			Convey("Then Session stays healthy and stress lifts viscosity", func() {
-				So(session.Desk().OpenPositions(), ShouldEqual, 0)
+				So(session.Desk.OpenPositions(), ShouldEqual, 0)
 				So(hasLaminar, ShouldBeTrue)
 				So(hasStress, ShouldBeTrue)
 				So(len(calm), ShouldBeGreaterThan, 0)

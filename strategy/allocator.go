@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"maps"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
@@ -59,11 +60,11 @@ func (allocator *Allocator) Close() {
 
 /*
 Allocate sizes each enter decision and Books a Reservation. Rotation reuses
-ProposedNotional from Arbiter.scaleTo; free-slot enters take max_fraction.
+ProposedNotional from Admit.Scale; free-slot enters take max_fraction.
 */
 func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
-	if allocator == nil || thesis == nil {
-		return nil
+	if err := allocator.validate(map[string]any{"thesis": thesis}); err != nil {
+		return err
 	}
 
 	for index := range thesis.Decisions {
@@ -198,4 +199,17 @@ func (allocator *Allocator) book(
 	}
 
 	return allocator.balance.Book(nil, allocator.maxFraction)
+}
+
+func (allocator *Allocator) validate(mandatory map[string]any) error {
+	check := map[string]any{
+		"balance":     allocator.balance,
+		"instrument":  allocator.instrument,
+		"price":       allocator.price,
+		"maxFraction": allocator.maxFraction,
+	}
+
+	maps.Copy(check, mandatory)
+
+	return errnie.Error(errnie.Require(check))
 }

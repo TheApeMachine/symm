@@ -12,8 +12,11 @@ TestClearProbabilityNativeStop is certain when Stoploss already selected stop.
 func TestClearProbabilityNativeStop(t *testing.T) {
 	t.Parallel()
 
-	stop := &types.Stoploss{Action: "stop", PeakReturn: 0.1, TrailDistance: 0.05}
-	got := clearProbability(stop, types.Forecasts{ExpectedReturn: -0.01})
+	stop := &types.Stoploss{
+		Action: "stop",
+		Trail:  types.Trail{PeakReturn: 0.1, TrailDistance: 0.05},
+	}
+	got := NewRotate().Clear(stop, types.Forecasts{ExpectedReturn: -0.01})
 
 	if got != 1 {
 		t.Fatalf("want 1, got %v", got)
@@ -26,8 +29,11 @@ TestClearProbabilityNativeTakeProfit is certain when Stoploss selected take_prof
 func TestClearProbabilityNativeTakeProfit(t *testing.T) {
 	t.Parallel()
 
-	stop := &types.Stoploss{Action: "take_profit", PeakReturn: 0.1, TrailDistance: 0.05}
-	got := clearProbability(stop, types.Forecasts{ExpectedReturn: -0.01})
+	stop := &types.Stoploss{
+		Action: "take_profit",
+		Trail:  types.Trail{PeakReturn: 0.1, TrailDistance: 0.05},
+	}
+	got := NewRotate().Clear(stop, types.Forecasts{ExpectedReturn: -0.01})
 
 	if got != 1 {
 		t.Fatalf("want 1, got %v", got)
@@ -40,7 +46,7 @@ TestClearProbabilityMissingStopDoesNotInvent clears wait optionality.
 func TestClearProbabilityMissingStopDoesNotInvent(t *testing.T) {
 	t.Parallel()
 
-	if got := clearProbability(nil, types.Forecasts{}); got != 0 {
+	if got := NewRotate().Clear(nil, types.Forecasts{}); got != 0 {
 		t.Fatalf("want 0, got %v", got)
 	}
 }
@@ -53,9 +59,12 @@ func TestClearProbabilityPositiveForwardBlocksTPClear(t *testing.T) {
 	t.Parallel()
 
 	stop := &types.Stoploss{
-		Action: "hold", PeakReturn: 0.1, MarkReturn: 0.09, TrailDistance: 0.05,
+		Action: "hold",
+		Trail: types.Trail{
+			PeakReturn: 0.1, MarkReturn: 0.09, TrailDistance: 0.05,
+		},
 	}
-	got := clearProbability(stop, types.Forecasts{
+	got := NewRotate().Clear(stop, types.Forecasts{
 		ExpectedReturn: 0.02, Calibrated: true, Confidence: 1,
 	})
 
@@ -71,9 +80,12 @@ func TestClearProbabilityUncalibratedIsZero(t *testing.T) {
 	t.Parallel()
 
 	stop := &types.Stoploss{
-		Action: "hold", PeakReturn: 0.1, MarkReturn: 0.075, TrailDistance: 0.05,
+		Action: "hold",
+		Trail: types.Trail{
+			PeakReturn: 0.1, MarkReturn: 0.075, TrailDistance: 0.05,
+		},
 	}
-	got := clearProbability(stop, types.Forecasts{ExpectedReturn: -0.01})
+	got := NewRotate().Clear(stop, types.Forecasts{ExpectedReturn: -0.01})
 
 	if got != 0 {
 		t.Fatalf("want 0 without calibration, got %v", got)
@@ -87,9 +99,12 @@ func TestClearProbabilityProximityTimesConfidence(t *testing.T) {
 	t.Parallel()
 
 	stop := &types.Stoploss{
-		Action: "hold", PeakReturn: 0.1, MarkReturn: 0.075, TrailDistance: 0.05,
+		Action: "hold",
+		Trail: types.Trail{
+			PeakReturn: 0.1, MarkReturn: 0.075, TrailDistance: 0.05,
+		},
 	}
-	got := clearProbability(stop, types.Forecasts{
+	got := NewRotate().Clear(stop, types.Forecasts{
 		ExpectedReturn: -0.01,
 		Calibrated:     true,
 		Confidence:     1,
@@ -107,9 +122,12 @@ func TestClearProbabilityResidualSkillScales(t *testing.T) {
 	t.Parallel()
 
 	stop := &types.Stoploss{
-		Action: "hold", PeakReturn: 0.1, MarkReturn: 0.075, TrailDistance: 0.05,
+		Action: "hold",
+		Trail: types.Trail{
+			PeakReturn: 0.1, MarkReturn: 0.075, TrailDistance: 0.05,
+		},
 	}
-	got := clearProbability(stop, types.Forecasts{
+	got := NewRotate().Clear(stop, types.Forecasts{
 		ExpectedReturn: -0.01,
 		Calibrated:     true,
 		Confidence:     1,
@@ -128,7 +146,7 @@ TestShouldRotateHighClearForcesWait even when raw surplus is positive.
 func TestShouldRotateHighClearForcesWait(t *testing.T) {
 	t.Parallel()
 
-	if shouldRotate(0.08, 0.03, 0.01, 0.9) {
+	if NewRotate().Gate(0.08, 0.03, 0.01, 0.9) {
 		t.Fatal("high clear probability must force wait")
 	}
 }
@@ -139,7 +157,7 @@ TestShouldRotateLowClearAllowsDisplace when edge clears exit after wait charge.
 func TestShouldRotateLowClearAllowsDisplace(t *testing.T) {
 	t.Parallel()
 
-	if !shouldRotate(0.08, 0.03, 0.01, 0) {
+	if !NewRotate().Gate(0.08, 0.03, 0.01, 0) {
 		t.Fatal("zero clear probability with positive surplus must rotate")
 	}
 }
@@ -150,7 +168,7 @@ TestBestRotationPicksLargestAdvantage across eligible incumbents.
 func TestBestRotationPicksLargestAdvantage(t *testing.T) {
 	t.Parallel()
 
-	index, found := bestRotation(0.10, []Incumbent{
+	index, found := NewRotate().Best(0.10, []Incumbent{
 		{Symbol: "A", HoldUtility: 0.08, ExitCost: 0.01, ClearProb: 0},
 		{Symbol: "B", HoldUtility: 0.02, ExitCost: 0.01, ClearProb: 0},
 	})
@@ -165,7 +183,10 @@ BenchmarkClearProbability measures path-to-probability conversion.
 */
 func BenchmarkClearProbability(b *testing.B) {
 	stop := &types.Stoploss{
-		Action: "hold", PeakReturn: 0.1, MarkReturn: 0.08, TrailDistance: 0.05,
+		Action: "hold",
+		Trail: types.Trail{
+			PeakReturn: 0.1, MarkReturn: 0.08, TrailDistance: 0.05,
+		},
 	}
 	forecast := types.Forecasts{
 		ExpectedReturn: -0.01,
@@ -178,6 +199,6 @@ func BenchmarkClearProbability(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = clearProbability(stop, forecast)
+		_ = NewRotate().Clear(stop, forecast)
 	}
 }

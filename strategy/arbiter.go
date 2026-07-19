@@ -1,7 +1,7 @@
 package strategy
 
 import (
-	"math"
+	"maps"
 	"sort"
 
 	"github.com/theapemachine/errnie"
@@ -17,14 +17,29 @@ net edge beats the option value of waiting for a native clear.
 type Arbiter struct {
 	desk    *broker.Desk
 	price   *broker.Price
-	planner *Planner
+	balance *broker.Balance
+	admit   *Admit
+	rotate  Rotate
 }
 
 /*
-NewArbiter wires Desk slot arithmetic and Price fee fractions for Select.
+NewArbiter wires Desk slot arithmetic, wallet qty, Admit persistence, and
+Rotate gates.
 */
-func NewArbiter(desk *broker.Desk, price *broker.Price) *Arbiter {
-	return &Arbiter{desk: desk, price: price}
+func NewArbiter(
+	desk *broker.Desk,
+	price *broker.Price,
+	balance *broker.Balance,
+	admit *Admit,
+	rotate Rotate,
+) *Arbiter {
+	return &Arbiter{
+		desk:    desk,
+		price:   price,
+		balance: balance,
+		admit:   admit,
+		rotate:  rotate,
+	}
 }
 
 /*
@@ -32,21 +47,15 @@ Select peels Measure enter candidates, admits into free slots, and otherwise
 rotates or waits using the Bellman one-step gate.
 */
 func (arbiter *Arbiter) Select(thesis *types.Thesis) {
-	if err := errnie.Error(errnie.Require(map[string]any{
-		"arbiter": arbiter,
-		"desk":    arbiter.desk,
-		"price":   arbiter.price,
-		"planner": arbiter.planner,
-		"thesis":  thesis,
-	})); err != nil {
+	if err := arbiter.validate(map[string]any{"thesis": thesis}); err != nil {
 		return
 	}
 
-	candidates, rest := peelEnters(thesis.Decisions)
+	candidates, rest := arbiter.peel(thesis.Decisions)
 	thesis.Decisions = rest
 
 	sort.Slice(candidates, func(left, right int) bool {
-		return dollarUtility(candidates[left]) > dollarUtility(candidates[right])
+		return arbiter.dollar(candidates[left]) > arbiter.dollar(candidates[right])
 	})
 
 	rotatable := arbiter.rotatable(thesis)
@@ -57,7 +66,7 @@ func (arbiter *Arbiter) Select(thesis *types.Thesis) {
 
 	for _, decision := range candidates {
 		if arbiter.desk.Pending(decision.Symbol) {
-			arbiter.planner.persistRejectedEntry(
+			arbiter.admit.Reject(
 				thesis, decision, decision.AllocationClass == "reserved",
 				freeNormal, admittedNormal, rotatable,
 			)
@@ -77,7 +86,7 @@ func (arbiter *Arbiter) Select(thesis *types.Thesis) {
 				admittedReserved++
 			}
 
-			arbiter.planner.persistAcceptedEntry(thesis, decision, opportunity)
+			arbiter.admit.Accept(thesis, decision, opportunity)
 
 			continue
 		}
@@ -86,7 +95,7 @@ func (arbiter *Arbiter) Select(thesis *types.Thesis) {
 			continue
 		}
 
-		arbiter.planner.persistRejectedEntry(
+		arbiter.admit.Reject(
 			thesis, decision, opportunity, freeNormal, admittedNormal, rotatable,
 		)
 	}
@@ -107,7 +116,7 @@ func (arbiter *Arbiter) displace(
 		return false
 	}
 
-	index, found := bestRotation(decision.Utility, incumbents)
+	index, found := arbiter.rotate.Best(decision.Utility, incumbents)
 
 	if !found {
 		return false
@@ -119,7 +128,7 @@ func (arbiter *Arbiter) displace(
 		return false
 	}
 
-	arbiter.planner.scaleTo(decision, incumbent.Notional)
+	arbiter.admit.Scale(decision, incumbent.Notional)
 	incumbent.Displaced = true
 
 	edge := decision.Utility - incumbent.HoldUtility
@@ -138,24 +147,18 @@ func (arbiter *Arbiter) displace(
 	decision.Alternatives["clear_prob"] = incumbent.ClearProb
 	decision.Alternatives["rotate_value"] = rotateValue
 	decision.Alternatives["wait_value"] = waitValue
-	decision.Alternatives["rotate_surplus"] = rotateSurplus(
+	decision.Alternatives["rotate_surplus"] = arbiter.rotate.Surplus(
 		decision.Utility, incumbent.HoldUtility, incumbent.ExitCost,
 	)
 	decision.Alternatives["incumbent_qty"] = incumbent.Qty
 	decision.Alternatives["incumbent_mark"] = incumbent.Mark
 
-	arbiter.planner.persistAcceptedEntry(
-		thesis, *decision, opportunity,
-	)
+	arbiter.admit.Accept(thesis, *decision, opportunity)
 
 	return true
 }
 
-/*
-dollarUtility ranks enters by return-space utility times feasible notional so
-slot admission prefers capital that can actually clear.
-*/
-func dollarUtility(decision types.Decision) float64 {
+func (arbiter *Arbiter) dollar(decision types.Decision) float64 {
 	notional := 0.0
 
 	if decision.ProposedNotional != nil {
@@ -174,8 +177,8 @@ func dollarUtility(decision types.Decision) float64 {
 }
 
 /*
-rotatable projects open holdings that have fee and forecast evidence complete
-enough for rotate comparison. Slot capacity itself uses Desk.OpenPositions.
+rotatable projects open Balance lots that have fee and forecast evidence
+complete enough for rotate comparison. Slot capacity uses Desk.OpenPositions.
 */
 func (arbiter *Arbiter) rotatable(thesis *types.Thesis) []Incumbent {
 	forecasts := map[string]types.Forecasts{}
@@ -186,31 +189,29 @@ func (arbiter *Arbiter) rotatable(thesis *types.Thesis) []Incumbent {
 
 	rows := make([]Incumbent, 0)
 
-	thesis.Holdings.Range(func(_, value any) bool {
-		holding, ok := value.(*types.Holding)
-
-		if !ok || holding == nil || holding.Status == types.CLOSED {
-			return true
+	for holding := range arbiter.balance.Holdings() {
+		if holding.Status == types.CLOSED {
+			continue
 		}
 
-		if exiting(thesis, holding.Symbol) {
-			return true
+		if arbiter.exiting(thesis, holding.Symbol) {
+			continue
 		}
 
 		if arbiter.desk.Pending(holding.Symbol) {
-			return true
+			continue
 		}
 
 		forecast, found := forecasts[holding.Symbol]
 
 		if !found {
-			return true
+			continue
 		}
 
 		fraction, err := arbiter.price.Fraction(holding.Symbol)
 
 		if err != nil {
-			return true
+			continue
 		}
 
 		notional := 0.0
@@ -223,166 +224,41 @@ func (arbiter *Arbiter) rotatable(thesis *types.Thesis) []Incumbent {
 			notional = mark * qty
 		}
 
+		var stop *types.Stoploss
+
+		if position, ok := arbiter.desk.Position(holding.Symbol); ok {
+			stop = position.Stop()
+		}
+
 		rows = append(rows, Incumbent{
 			Symbol:      holding.Symbol,
-			HoldUtility: arbiter.planner.holdUtility(forecast),
-			ExitCost:    arbiter.planner.exitCost(forecast, fraction.Float64()),
+			HoldUtility: arbiter.rotate.Hold(forecast),
+			ExitCost:    arbiter.rotate.Exit(forecast, fraction.Float64()),
 			Notional:    notional,
 			Qty:         qty,
 			Mark:        mark,
-			ClearProb:   clearProbability(holding.Stoploss, forecast),
+			ClearProb:   arbiter.rotate.Clear(stop, forecast),
 		})
-
-		return true
-	})
+	}
 
 	return rows
 }
 
-/*
-clearProbability is the calibrated one-horizon P(native clear): stop or
-take-profit frees the slot without a forced rotate. Trail proximity supplies
-geometry; forecast Confidence (online calibration) and residual skill
-√MSE/(√MSE+σ) scale that geometry into a probability in [0,1].
-*/
-func clearProbability(stop *types.Stoploss, forecast types.Forecasts) float64 {
-	if stop == nil {
-		return 0
-	}
+func (arbiter *Arbiter) exiting(thesis *types.Thesis, symbol string) bool {
+	phase, found := thesis.Lifecycle.Load(symbol)
 
-	if stop.Action == "stop" || stop.Action == "take_profit" {
-		return 1
-	}
-
-	if stop.PeakReturn <= 0 || stop.TrailDistance <= 0 {
-		return 0
-	}
-
-	if forecast.ExpectedReturn > 0 {
-		return 0
-	}
-
-	if !forecast.Calibrated || forecast.Confidence <= 0 {
-		return 0
-	}
-
-	giveback := stop.PeakReturn - stop.MarkReturn
-
-	if giveback < 0 {
-		giveback = 0
-	}
-
-	proximity := 1 - giveback/stop.TrailDistance
-
-	if proximity <= 0 {
-		return 0
-	}
-
-	if proximity > 1 {
-		proximity = 1
-	}
-
-	confidence := forecast.Confidence
-
-	if confidence > 1 {
-		confidence = 1
-	}
-
-	skill := 1.0
-
-	if forecast.Uncertainty > 0 && forecast.IncrementalMSE > 0 {
-		rmse := math.Sqrt(forecast.IncrementalMSE)
-		skill = rmse / (rmse + forecast.Uncertainty)
-	}
-
-	probability := proximity * confidence * skill
-
-	if probability > 1 {
-		return 1
-	}
-
-	return probability
+	return found &&
+		(phase == types.LifecycleExitSelected ||
+			phase == types.LifecycleExitSubmitted)
 }
 
-/*
-shouldRotate reports whether enter beats keep after exit friction once the
-option value of a native clear is charged against the edge.
-*/
-func shouldRotate(enter, keep, exitCost, clearProb float64) bool {
-	edge := enter - keep
-
-	if edge <= 0 {
-		return false
-	}
-
-	if clearProb < 0 {
-		clearProb = 0
-	}
-
-	if clearProb > 1 {
-		clearProb = 1
-	}
-
-	return edge*(1-clearProb) > exitCost
-}
-
-/*
-rotationAdvantage is the one-step surplus of displacing an incumbent.
-*/
-func rotationAdvantage(enter, keep, exitCost, clearProb float64) float64 {
-	edge := enter - keep
-
-	if clearProb < 0 {
-		clearProb = 0
-	}
-
-	if clearProb > 1 {
-		clearProb = 1
-	}
-
-	return edge*(1-clearProb) - exitCost
-}
-
-/*
-bestRotation picks the eligible incumbent with the largest positive advantage.
-*/
-func bestRotation(enter float64, incumbents []Incumbent) (int, bool) {
-	best := -1
-	bestAdvantage := 0.0
-
-	for index := range incumbents {
-		if incumbents[index].Displaced {
-			continue
-		}
-
-		advantage := rotationAdvantage(
-			enter,
-			incumbents[index].HoldUtility,
-			incumbents[index].ExitCost,
-			incumbents[index].ClearProb,
-		)
-
-		if advantage <= 0 {
-			continue
-		}
-
-		if best < 0 || advantage > bestAdvantage {
-			best = index
-			bestAdvantage = advantage
-		}
-	}
-
-	return best, best >= 0
-}
-
-func peelEnters(decisions []types.Decision) (enters, rest []types.Decision) {
+func (arbiter *Arbiter) peel(decisions []types.Decision) (enters, rest []types.Decision) {
 	enters = make([]types.Decision, 0, len(decisions))
 	rest = make([]types.Decision, 0, len(decisions))
 
 	for _, decision := range decisions {
 		if decision.Action == types.ActionEnter {
 			enters = append(enters, decision)
-
 			continue
 		}
 
@@ -390,4 +266,17 @@ func peelEnters(decisions []types.Decision) (enters, rest []types.Decision) {
 	}
 
 	return enters, rest
+}
+
+func (arbiter *Arbiter) validate(mandatory map[string]any) error {
+	check := map[string]any{
+		"desk":    arbiter.desk,
+		"price":   arbiter.price,
+		"balance": arbiter.balance,
+		"admit":   arbiter.admit,
+	}
+
+	maps.Copy(check, mandatory)
+
+	return errnie.Error(errnie.Require(check))
 }

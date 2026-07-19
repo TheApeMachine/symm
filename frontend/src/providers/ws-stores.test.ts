@@ -55,4 +55,27 @@ describe("ws-stores", () => {
 
 		subscription.unsubscribe();
 	});
+
+	it("routes cognition wire frames into the cognitive store", () => {
+		frameStores.cognitive.actions.reset();
+
+		applyFramePayload({
+			cognition: [
+				{
+					symbol: "BTC/USD",
+					sequence: "s/abc",
+					winner: "buy",
+					ready: true,
+					confidence: 0.8,
+					branches: [{ id: 1, parentId: 0, token: "a", prefix: "a", depth: 1 }],
+					beams: [{ sequence: "s/abc", score: -1.2 }],
+					classes: [{ name: "buy", probability: 0.7 }],
+				},
+			],
+		});
+
+		expect(
+			frameStores.cognitive.state.cognitive["BTC/USD"]?.values().at(-1),
+		).toMatchObject({ symbol: "BTC/USD", winner: "buy", ready: true });
+	});
 });

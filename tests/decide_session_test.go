@@ -38,7 +38,7 @@ func TestSessionPumpReservedDoesNotRotateMaturing(t *testing.T) {
 		So(session.SeedQuoteCapital(10_000), ShouldBeNil)
 
 		thesis := types.NewThesis(nil, nil)
-		tests.SeedMatureHolding(thesis, "BTC/USD", 100)
+		session.SeedMatureHolding(thesis, "BTC/USD", 100)
 		tests.SeedOpportunityForecast(thesis, "BTC/USD", 0.03, 0.01)
 		tests.SeedOpportunityForecast(thesis, "MATIC/USD", 0.12, 0.02)
 		tests.SeedEarlyCognition(thesis, "MATIC/USD")
@@ -48,7 +48,7 @@ func TestSessionPumpReservedDoesNotRotateMaturing(t *testing.T) {
 		})
 
 		// One normal slot occupied by the maturing name; reserved stays free.
-		session.Desk().SetSlots(1, 2)
+		session.Desk.SetSlots(1, 2)
 		So(session.RunDecide(thesis), ShouldBeNil)
 
 		Convey("Then the pump ignition enters reserved without rotating BTC", func() {
@@ -97,12 +97,12 @@ func TestSessionPumpRotateWhenChallengerClearsWeakest(t *testing.T) {
 		So(session.SeedQuoteCapital(0), ShouldBeNil)
 
 		thesis := types.NewThesis(nil, nil)
-		tests.SeedMatureHolding(thesis, "WEAK/USD", 100)
+		session.SeedMatureHolding(thesis, "WEAK/USD", 100)
 		tests.SeedOpportunityForecast(thesis, "WEAK/USD", 0.02, 0.01)
 		tests.SeedOpportunityForecast(thesis, "MATIC/USD", 0.12, 0.01)
 		tests.SeedEarlyCognition(thesis, "MATIC/USD")
 
-		session.Desk().SetSlots(1, 0)
+		session.Desk.SetSlots(1, 0)
 		So(session.RunDecide(thesis), ShouldBeNil)
 
 		Convey("Then WEAK is displaced and MATIC enters by rotation", func() {
@@ -146,12 +146,12 @@ func TestSessionPumpWaitsWhenRotateSurplusNonPositive(t *testing.T) {
 		So(session.SeedQuoteCapital(0), ShouldBeNil)
 
 		thesis := types.NewThesis(nil, nil)
-		tests.SeedMatureHolding(thesis, "HOLD/USD", 100)
+		session.SeedMatureHolding(thesis, "HOLD/USD", 100)
 		tests.SeedOpportunityForecast(thesis, "HOLD/USD", 0.10, 0.01)
 		tests.SeedOpportunityForecast(thesis, "MATIC/USD", 0.04, 0.01)
 		tests.SeedEarlyCognition(thesis, "MATIC/USD")
 
-		session.Desk().SetSlots(1, 0)
+		session.Desk.SetSlots(1, 0)
 		So(session.RunDecide(thesis), ShouldBeNil)
 
 		Convey("Then Decide waits instead of rotating", func() {
@@ -191,7 +191,7 @@ func TestSessionRunDecideUsesEmulatorFeesAndCapital(t *testing.T) {
 		So(session.SeedTakerFee("MATIC/USD", 0.26), ShouldBeNil)
 		So(session.SeedQuoteCapital(5_000), ShouldBeNil)
 
-		available, err := session.Balance().AvailableQuote()
+		available, err := session.Balance.AvailableQuote()
 		So(err, ShouldBeNil)
 		So(available, ShouldEqual, 5_000)
 
@@ -241,7 +241,7 @@ func BenchmarkSessionPumpDecide(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	session.Desk().SetSlots(2, 2)
+	session.Desk.SetSlots(2, 2)
 	b.ReportAllocs()
 
 	for b.Loop() {
@@ -260,6 +260,116 @@ func BenchmarkSessionPumpDecide(b *testing.B) {
 			b.Fatal(decideErr)
 		}
 	}
+}
+
+/*
+TestSessionRunTradeHoldsUnderRetreat gates ObserveQuote under NoteRetreat.
+*/
+func TestSessionRunTradeHoldsUnderRetreat(t *testing.T) {
+	Convey("Given a Session with a fee-thin open lot noting retreat", t, func() {
+		symbol := conditions.Subject()
+		session, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
+			Signals: pumpdumpSignals,
+		})
+		So(err, ShouldBeNil)
+		lot, statePath, err := session.PlayOpen(
+			t, conditions.PhantomDrawdown(24, 8, 0.015), symbol, 100, 0.0026,
+		)
+		So(err, ShouldBeNil)
+		lot.Stoploss.NoteRetreat(0.95)
+		entry := lot.EntryPrice.Float64()
+		So(session.ObserveQuote(lot, entry*(1-0.015), entry), ShouldBeNil)
+		tests.SetPaperPrice(t, statePath, symbol, entry*(1-0.015))
+
+		Convey("When RunTrade regulates under SeedRetreat", func() {
+			exitThesis := types.NewThesis(nil, nil)
+			tests.SeedOpportunityForecast(exitThesis, symbol, 0.05, 0.02)
+			tests.SeedRetreat(exitThesis, symbol, 0.95)
+			exitThesis.Forecasts[len(exitThesis.Forecasts)-1].IncrementalMSE =
+				0.02 * 0.02 * 0.01
+			So(session.RunTrade(exitThesis), ShouldBeNil)
+
+			Convey("Then no exit Decision fires and markReturn is adverse", func() {
+				So(exitCause(exitThesis, symbol), ShouldEqual, "")
+				So(session.Desk.OpenPositions(), ShouldEqual, 1)
+				So(lot.Stoploss.MarkReturn, ShouldBeLessThan, 0)
+				So(lot.Stoploss.Action, ShouldEqual, "hold")
+			})
+		})
+	})
+}
+
+/*
+TestSessionRunTradeStopsWithoutRetreat is the ungated ObserveQuote control.
+*/
+func TestSessionRunTradeStopsWithoutRetreat(t *testing.T) {
+	Convey("Given a Session with a fee-thin open lot and no retreat", t, func() {
+		symbol := conditions.Subject()
+		session, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
+			Signals: pumpdumpSignals,
+		})
+		So(err, ShouldBeNil)
+		lot, statePath, err := session.PlayOpen(
+			t, conditions.PhantomDrawdown(24, 8, 0.015), symbol, 100, 0.0026,
+		)
+		So(err, ShouldBeNil)
+		entry := lot.EntryPrice.Float64()
+		So(session.ObserveQuote(lot, entry*(1-0.015), entry), ShouldBeNil)
+		tests.SetPaperPrice(t, statePath, symbol, entry*(1-0.015))
+
+		Convey("When RunTrade regulates without forecast σ", func() {
+			exitThesis := types.NewThesis(nil, nil)
+			So(session.RunTrade(exitThesis), ShouldBeNil)
+
+			Convey("Then Stoploss.Regulate emits Cause=stop", func() {
+				So(exitCause(exitThesis, symbol), ShouldEqual, "stop")
+			})
+		})
+	})
+}
+
+/*
+TestSessionRunTradeLocksFloorOnCalibratedMark locks floor under ER=5% σ=2%.
+*/
+func TestSessionRunTradeLocksFloorOnCalibratedMark(t *testing.T) {
+	Convey("Given a Session with an open lot on a calibrated lift tape", t, func() {
+		symbol := conditions.Subject()
+		session, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
+			Signals: pumpdumpSignals,
+		})
+		So(err, ShouldBeNil)
+		lot, statePath, err := session.PlayOpen(
+			t, conditions.CalibratedLift(24, 8, 1.04), symbol, 100, 0.02,
+		)
+		So(err, ShouldBeNil)
+		mark := lot.EntryPrice.Float64() * 1.04
+		So(session.ObserveQuote(lot, mark, mark), ShouldBeNil)
+		tests.SetPaperPrice(t, statePath, symbol, mark)
+
+		Convey("When RunTrade regulates a calibrated forecast", func() {
+			exitThesis := types.NewThesis(nil, nil)
+			tests.SeedOpportunityForecast(exitThesis, symbol, 0.05, 0.02)
+			exitThesis.Forecasts[len(exitThesis.Forecasts)-1].IncrementalMSE =
+				0.02 * 0.02 * 0.01
+			So(session.RunTrade(exitThesis), ShouldBeNil)
+
+			Convey("Then LockedFloor is positive and no exit fires", func() {
+				So(exitCause(exitThesis, symbol), ShouldEqual, "")
+				So(lot.Stoploss.LockedFloor, ShouldBeGreaterThan, 0)
+				So(lot.Stoploss.PeakReturn, ShouldAlmostEqual, 0.04, 0.0001)
+			})
+		})
+	})
+}
+
+func exitCause(thesis *types.Thesis, symbol string) string {
+	for _, decision := range thesis.Decisions {
+		if decision.Symbol == symbol && decision.Action == types.ActionExit {
+			return decision.Cause
+		}
+	}
+
+	return ""
 }
 
 func findThesisHolding(thesis *types.Thesis, symbol string) (types.Holding, bool) {

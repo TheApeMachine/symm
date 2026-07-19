@@ -1,6 +1,10 @@
 package tests
 
 import (
+	"context"
+	"math"
+	"path/filepath"
+	"testing"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -30,7 +34,7 @@ Crypto.Decide sees available quote via BalanceAck (paper mode does not route
 balances through the public MockConn).
 */
 func (session *Session) SeedQuoteCapital(available float64) error {
-	if session == nil || session.paper == nil {
+	if session == nil || session.Paper == nil {
 		return errnie.Err(
 			errnie.NotFound,
 			"tests: session paper unavailable",
@@ -48,14 +52,14 @@ func (session *Session) SeedQuoteCapital(available float64) error {
 			`}]}`,
 	)
 
-	return session.paper.Emit("balances", payload)
+	return session.Paper.Emit("balances", payload)
 }
 
 /*
 SeedTakerFee stores a percent taker fee on the Price surface for one symbol.
 */
 func (session *Session) SeedTakerFee(symbol string, percent float64) error {
-	if session == nil || session.price == nil {
+	if session == nil || session.Price == nil {
 		return errnie.Err(
 			errnie.NotFound,
 			"tests: session price unavailable",
@@ -63,7 +67,7 @@ func (session *Session) SeedTakerFee(symbol string, percent float64) error {
 		)
 	}
 
-	return session.price.RememberFee(symbol, kraken.TradeVolumeFee{
+	return session.Price.RememberFee(symbol, kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(percent),
 	})
 }
@@ -124,16 +128,30 @@ func SeedEarlyCognition(thesis *types.Thesis, symbol string) {
 }
 
 /*
-SeedMatureHolding places an open thesis holding used as an incumbent for
-rotate-versus-wait assertions.
+SeedMatureHolding places an open thesis holding and mirrors it onto Balance so
+Desk.OpenPositions and rotate arbitration see a real occupied slot.
 */
-func SeedMatureHolding(thesis *types.Thesis, symbol string, notional float64) {
-	thesis.Holdings.Store(symbol, &types.Holding{
+func (session *Session) SeedMatureHolding(
+	thesis *types.Thesis,
+	symbol string,
+	notional float64,
+) {
+	if thesis == nil || symbol == "" {
+		return
+	}
+
+	holding := &types.Holding{
 		Symbol: symbol,
+		Asset:  baseAsset(symbol),
 		Qty:    decimal.NewFromFloat64(notional),
 		Mark:   decimal.NewFromFloat64(1),
 		Status: types.OPEN,
-	})
+	}
+	thesis.Holdings.Store(symbol, holding)
+
+	if session != nil && session.Balance != nil {
+		session.Balance.Seed(holding)
+	}
 }
 
 func readyBasin(symbol string, coherence float64) symmmanifold.State {
@@ -160,6 +178,192 @@ func readyBasin(symbol string, coherence float64) symmmanifold.State {
 	}
 }
 
+/*
+SeedRetreat attaches a toxicity retreating_quantity measurement so Project
+feeds RetreatPressure into Stoploss on the next Regulate cut.
+*/
+func SeedRetreat(thesis *types.Thesis, symbol string, pressure float64) {
+	if thesis == nil || symbol == "" || pressure <= 0 {
+		return
+	}
+
+	normalized := pressure
+	thesis.Measurements = append(thesis.Measurements, &types.Measurement{
+		Source:     types.SourceToxicity,
+		Stream:     types.Toxicity,
+		Metric:     types.MetricRetreatingQuantity,
+		Subject:    types.SubjectLevel3Touch,
+		Symbol:     symbol,
+		Side:       types.SideBuy,
+		At:         time.Unix(1, 0).UTC(),
+		Unit:       types.UnitBaseCurrency,
+		Raw:        pressure,
+		Normalized: &normalized,
+	})
+}
+
+/*
+PlayOpen plays a market, seeds fees/capital, and installs a bound open lot.
+*/
+func (session *Session) PlayOpen(
+	testingTB testing.TB,
+	market *Market,
+	symbol string,
+	qty, trail float64,
+) (*types.Holding, string, error) {
+	testingTB.Helper()
+
+	if session == nil || market == nil {
+		return nil, "", errnie.Err(errnie.NotFound, "tests: session or market unavailable", nil)
+	}
+
+	if _, err := session.Play(market.Frames()); err != nil {
+		return nil, "", err
+	}
+
+	if err := session.SeedTakerFee(symbol, 0.26); err != nil {
+		return nil, "", err
+	}
+
+	if err := session.SeedQuoteCapital(10_000); err != nil {
+		return nil, "", err
+	}
+
+	session.Desk.SetSlots(2, 2)
+
+	return session.SeedOpenLot(testingTB, symbol, qty, trail)
+}
+
+/*
+SeedOpenLot installs a bound open Holding on Balance and adopts it on Desk.
+*/
+func (session *Session) SeedOpenLot(
+	testingTB testing.TB,
+	symbol string,
+	qty, trail float64,
+) (*types.Holding, string, error) {
+	testingTB.Helper()
+
+	if session == nil {
+		return nil, "", errnie.Err(errnie.NotFound, "tests: session unavailable", nil)
+	}
+
+	statePath := filepath.Join(testingTB.TempDir(), "paper-state.json")
+	InstallPaperCLI(testingTB, statePath)
+
+	entry := 1.0
+
+	if ticker, tickerErr := session.Price.Get(symbol); tickerErr == nil &&
+		ticker != nil && ticker.Last != nil && ticker.Last.Sign() > 0 {
+		entry = ticker.Last.Float64()
+	}
+
+	const startingCash = 10_000.0
+	cashAfterEnter := startingCash - qty*entry
+
+	if err := session.SeedQuoteCapital(cashAfterEnter); err != nil {
+		return nil, "", err
+	}
+
+	SetPaperCash(testingTB, statePath, cashAfterEnter)
+	SetPaperAsset(testingTB, statePath, baseAsset(symbol), qty)
+	SetPaperPrice(testingTB, statePath, symbol, entry)
+
+	at := time.Unix(1, 0).UTC()
+	stop := types.NewStoploss(context.Background())
+	stop.Bind(entry, trail)
+	lot := &types.Holding{
+		Symbol:     symbol,
+		Asset:      baseAsset(symbol),
+		Qty:        decimal.NewFromFloat64(qty),
+		EntryPrice: decimal.NewFromFloat64(entry),
+		EntryFee:   decimal.NewFromFloat64(qty * entry * 0.0026),
+		Mark:       decimal.NewFromFloat64(entry),
+		Status:     types.OPEN,
+		EntryAt:    &at,
+		Stoploss:   stop,
+	}
+	session.Balance.Seed(lot)
+
+	if session.Desk.OpenPositions() != 1 {
+		return nil, "", errnie.Err(
+			errnie.Validation,
+			"tests: expected one adopted open lot",
+			nil,
+		)
+	}
+
+	return lot, statePath, nil
+}
+
+/*
+Mark stamps equal bid/last/ask onto Price and fans Desk.Marks.
+*/
+func (session *Session) Mark(symbol string, mark float64) error {
+	return session.MarkQuote(symbol, mark, mark)
+}
+
+/*
+MarkQuote stamps distinct bid/last onto Price (ask stays above bid) and fans
+Desk.Marks for open lots.
+*/
+func (session *Session) MarkQuote(symbol string, bid, last float64) error {
+	if session == nil || session.Price == nil {
+		return errnie.Err(errnie.NotFound, "tests: session price unavailable", nil)
+	}
+
+	ask := last
+
+	if ask <= bid {
+		ask = math.Nextafter(bid, math.Inf(1))
+	}
+
+	bidText := decimal.NewFromFloat64(bid).String()
+	lastText := decimal.NewFromFloat64(last).String()
+	askText := decimal.NewFromFloat64(ask).String()
+	session.Price.TickerAck([]byte(
+		`{"channel":"ticker","type":"update","data":[{` +
+			`"symbol":"` + symbol + `","last":"` + lastText +
+			`","bid":"` + bidText + `","ask":"` + askText + `"}]}`,
+	))
+	session.Desk.Mark(symbol)
+
+	return nil
+}
+
+/*
+ObserveQuote writes the executable bid onto a seeded lot and calls
+Stoploss.ObserveMark so Regulate sees the same mark as the desk fan-out.
+*/
+func (session *Session) ObserveQuote(lot *types.Holding, bid, last float64) error {
+	if lot == nil || lot.Symbol == "" {
+		return errnie.Err(errnie.Validation, "tests: lot required", nil)
+	}
+
+	if err := session.MarkQuote(lot.Symbol, bid, last); err != nil {
+		return err
+	}
+
+	lot.Mark = decimal.NewFromFloat64(bid)
+	session.Balance.Seed(lot)
+
+	if lot.Stoploss != nil {
+		lot.Stoploss.ObserveMark(bid)
+	}
+
+	return nil
+}
+
 func formatFloat(value float64) string {
 	return decimal.NewFromFloat64(value).String()
+}
+
+func baseAsset(symbol string) string {
+	for index := 0; index < len(symbol); index++ {
+		if symbol[index] == '/' {
+			return symbol[:index]
+		}
+	}
+
+	return symbol
 }

@@ -27,8 +27,8 @@ func TestCaptureRecoveryNaNSafe(t *testing.T) {
 			Qty:    qty,
 			Status: OPEN,
 			Stoploss: &Stoploss{
-				Weight:     weight,
-				PeakReturn: peak,
+				Skill: Skill{Weight: weight},
+				Trail: Trail{PeakReturn: peak},
 			},
 		})
 
@@ -96,7 +96,7 @@ func TestHoldingEnrich(t *testing.T) {
 		recovered := Holding{
 			Symbol:     "ONDO/USD",
 			EntryPrice: entry,
-			Stoploss:   &Stoploss{Weight: 0.4, Action: "hold"},
+			Stoploss:   &Stoploss{Skill: Skill{Weight: 0.4}, Action: "hold"},
 		}
 
 		live.Enrich(recovered)
@@ -115,7 +115,7 @@ func BenchmarkCaptureRecovery(b *testing.B) {
 	thesis := &Thesis{Holdings: &sync.Map{}}
 	thesis.Holdings.Store("BTC/USD", &Holding{
 		Symbol: "BTC/USD", Qty: qty, Status: OPEN,
-		Stoploss: &Stoploss{Weight: 0.5},
+		Stoploss: &Stoploss{Skill: Skill{Weight: 0.5}},
 	})
 
 	b.ReportAllocs()

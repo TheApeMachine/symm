@@ -80,7 +80,9 @@ export const applyFramePayload = (
 	}
 
 	for (const [name, value] of Object.entries(payload)) {
-		const store = frameStores[name as keyof typeof frameStores];
+		// Backend publishCognition emits "cognition"; UI stores subscribe as "cognitive".
+		const storeName = name === "cognition" ? "cognitive" : name;
+		const store = frameStores[storeName as keyof typeof frameStores];
 
 		if (store === undefined) {
 			continue;

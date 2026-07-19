@@ -33,7 +33,7 @@ func TestProjectPrefersResonanceOverForecast(t *testing.T) {
 		ReturnReady:    true,
 	})
 
-	evidence := Project(thesis, types.Holding{
+	evidence := NewEvidence().Project(thesis, types.Holding{
 		Symbol:     "AAA/USD",
 		Mark:       decimal.NewFromFloat64(110),
 		EntryPrice: decimal.NewFromFloat64(100),
@@ -45,6 +45,33 @@ func TestProjectPrefersResonanceOverForecast(t *testing.T) {
 
 	if evidence.ExpectedReturn != 0.04 || evidence.Uncertainty != 0.05 {
 		t.Fatalf("resonance not preferred: %+v", evidence)
+	}
+}
+
+/*
+TestProjectRetreatPressureFromToxicity copies retreating_quantity onto Evidence
+so Stoploss can gate quote-only marks.
+*/
+func TestProjectRetreatPressureFromToxicity(t *testing.T) {
+	t.Parallel()
+
+	thesis := types.NewThesis(nil, nil)
+	pressure := 0.87
+	thesis.Measurements = append(thesis.Measurements, &types.Measurement{
+		Symbol:     "AAA/USD",
+		Metric:     types.MetricRetreatingQuantity,
+		Normalized: &pressure,
+		Raw:        870,
+	})
+
+	evidence := NewEvidence().Project(thesis, types.Holding{
+		Symbol:     "AAA/USD",
+		Mark:       decimal.NewFromFloat64(100),
+		EntryPrice: decimal.NewFromFloat64(100),
+	})
+
+	if evidence.RetreatPressure != 0.87 {
+		t.Fatalf("retreat pressure: want 0.87, got %v", evidence.RetreatPressure)
 	}
 }
 
@@ -65,7 +92,7 @@ func TestProjectForecastEpochFromSourceEpoch(t *testing.T) {
 		Calibrated:     true,
 	})
 
-	evidence := Project(thesis, types.Holding{
+	evidence := NewEvidence().Project(thesis, types.Holding{
 		Symbol:     "AAA/USD",
 		Mark:       decimal.NewFromFloat64(110),
 		EntryPrice: decimal.NewFromFloat64(100),
@@ -88,7 +115,7 @@ func TestProjectAbsentWithoutMark(t *testing.T) {
 	t.Parallel()
 
 	thesis := types.NewThesis(nil, nil)
-	evidence := Project(thesis, types.Holding{
+	evidence := NewEvidence().Project(thesis, types.Holding{
 		Symbol:     "AAA/USD",
 		EntryPrice: decimal.NewFromFloat64(100),
 		EntryAt:    ptrTime(time.Now()),
@@ -126,6 +153,6 @@ func BenchmarkProject(b *testing.B) {
 	b.ResetTimer()
 
 	for index := 0; b.Loop(); index++ {
-		_ = Project(thesis, holding)
+		_ = NewEvidence().Project(thesis, holding)
 	}
 }

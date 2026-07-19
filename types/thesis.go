@@ -34,8 +34,9 @@ const (
 )
 
 /*
-Thesis is essentially the "state" of a tick. It travels across the
-entire lifecycle of a tick, picking up all data along the way.
+Thesis is the durable lifecycle record from entry through post-mortem. It keeps
+holdings it created plus lifecycle and findings; each market cut replaces
+per-tick evidence in place so the object does not grow without bound.
 */
 type Thesis struct {
 	checkpoint   atomic.Int64
@@ -58,6 +59,61 @@ type Thesis struct {
 	Cognition    *sync.Map      `json:"cognition"`
 	Resonance    []any          `json:"resonance"`
 	Causal       []any          `json:"causal"`
+}
+
+/*
+NewThesis creates a Thesis with empty durable maps and no cut evidence yet.
+*/
+func NewThesis(uiHub chan<- []byte, marketFrame *MarketFrame) *Thesis {
+	return &Thesis{
+		uiHub:        uiHub,
+		At:           time.Now().UTC(),
+		marketFrame:  marketFrame,
+		Positions:    &sync.Map{},
+		Holdings:     &sync.Map{},
+		Decisions:    make([]Decision, 0),
+		CrossSection: NewCrossSection(),
+		Graphs:       &sync.Map{},
+		Forecasts:    make([]Forecasts, 0),
+		Lifecycle:    &sync.Map{},
+		Findings:     make([]Finding, 0),
+		Hypotheses:   make([]Hypothesis, 0),
+		Categories:   make([]Category, 0),
+		Manifold:     &sync.Map{},
+		Cognition:    &sync.Map{},
+		Resonance:    make([]any, 0),
+		Causal:       make([]any, 0),
+	}
+}
+
+/*
+ResetCut replaces per-tick evidence for a new market cut while preserving
+Holdings, Lifecycle, and Findings owned by this Thesis.
+*/
+func (thesis *Thesis) ResetCut(frame *MarketFrame, tick int64) {
+	if thesis == nil {
+		return
+	}
+
+	thesis.marketFrame = frame
+	thesis.Tick = tick
+	thesis.At = time.Now().UTC()
+
+	if frame != nil {
+		thesis.CrossSection = frame.CrossSection
+	}
+
+	thesis.Measurements = nil
+	thesis.Forecasts = thesis.Forecasts[:0]
+	thesis.Decisions = thesis.Decisions[:0]
+	thesis.Hypotheses = thesis.Hypotheses[:0]
+	thesis.Categories = thesis.Categories[:0]
+	thesis.Resonance = thesis.Resonance[:0]
+	thesis.Causal = thesis.Causal[:0]
+	thesis.Graphs = &sync.Map{}
+	thesis.Manifold = &sync.Map{}
+	thesis.Cognition = &sync.Map{}
+	thesis.Positions = &sync.Map{}
 }
 
 func (thesis *Thesis) Save(dir string) error {
@@ -277,32 +333,6 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
-}
-
-/*
-NewThesis creates an empty in-process lifecycle carrier for one tick.
-*/
-func NewThesis(uiHub chan<- []byte, marketFrame *MarketFrame) *Thesis {
-	return &Thesis{
-		uiHub:        uiHub,
-		At:           time.Now().UTC(),
-		marketFrame:  marketFrame,
-		Positions:    &sync.Map{},
-		Holdings:     &sync.Map{},
-		Decisions:    make([]Decision, 0),
-		CrossSection: NewCrossSection(),
-		Measurements: make([]*Measurement, 0),
-		Graphs:       &sync.Map{},
-		Forecasts:    make([]Forecasts, 0),
-		Lifecycle:    &sync.Map{},
-		Findings:     make([]Finding, 0),
-		Hypotheses:   make([]Hypothesis, 0),
-		Categories:   make([]Category, 0),
-		Manifold:     &sync.Map{},
-		Cognition:    &sync.Map{},
-		Resonance:    make([]any, 0),
-		Causal:       make([]any, 0),
-	}
 }
 
 /*

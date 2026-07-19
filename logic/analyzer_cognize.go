@@ -140,15 +140,17 @@ func (analyzer *Analyzer) cognize(
 
 /*
 sensorySequence builds the deterministic DMT token stream for one state.
+The symbol token stays first so the shared radix tree namespaces each coin;
+remaining evidence tokens are sorted for a stable bag under that hop.
 */
 func (analyzer *Analyzer) sensorySequence(
 	thesis *types.Thesis,
 	state manifold.State,
 ) ([]string, []byte) {
-	parts := make([]string, 0, len(thesis.Measurements)+4)
+	evidence := make([]string, 0, len(thesis.Measurements)+4)
 	seen := make(map[string]struct{}, len(thesis.Measurements)+4)
 	replacer := strings.NewReplacer("_", "-", "/", "-")
-	parts = append(parts, "symbol-"+replacer.Replace(state.Symbol))
+	symbolToken := "symbol-" + replacer.Replace(state.Symbol)
 
 	for _, measurement := range thesis.Measurements {
 		if measurement == nil || measurement.Symbol != state.Symbol ||
@@ -168,7 +170,7 @@ func (analyzer *Analyzer) sensorySequence(
 		}
 
 		seen[token] = struct{}{}
-		parts = append(parts, token)
+		evidence = append(evidence, token)
 	}
 
 	for name, value := range map[string]float64{
@@ -176,10 +178,11 @@ func (analyzer *Analyzer) sensorySequence(
 		"divergence": state.Reading.Divergence,
 		"stress":     state.StressAnisotropy,
 	} {
-		parts = append(parts, name+"-"+signedToken(value))
+		evidence = append(evidence, name+"-"+signedToken(value))
 	}
 
-	sort.Strings(parts)
+	sort.Strings(evidence)
+	parts := append([]string{symbolToken}, evidence...)
 
 	return parts, []byte(strings.Join(parts, "_"))
 }

@@ -1,16 +1,52 @@
 package strategy
 
 import (
+	"maps"
+
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-manage projects stop evidence and continuation for every open holding before
-entry scoring. Stoploss owns full exits; continuation may only hold or reduce.
+Continuity projects stop evidence and keep/reduce decisions for open wallet
+lots before entry scoring. Stoploss lives on Position; Continuity may only
+hold or reduce.
 */
-func (planner *Planner) manage(thesis *types.Thesis) {
-	if thesis == nil || planner.price == nil {
+type Continuity struct {
+	price    *broker.Price
+	balance  *broker.Balance
+	desk     *broker.Desk
+	rotate   Rotate
+	evidence Evidence
+}
+
+/*
+NewContinuity wires price fees, wallet qty, Desk positions, rotate keep-scores,
+and stop evidence.
+*/
+func NewContinuity(
+	price *broker.Price,
+	balance *broker.Balance,
+	desk *broker.Desk,
+	rotate Rotate,
+	evidence Evidence,
+) Continuity {
+	return Continuity{
+		price:    price,
+		balance:  balance,
+		desk:     desk,
+		rotate:   rotate,
+		evidence: evidence,
+	}
+}
+
+/*
+Manage projects stop evidence and continuation for every open Balance lot.
+*/
+func (continuity Continuity) Manage(thesis *types.Thesis) {
+	if err := continuity.validate(map[string]any{"thesis": thesis}); err != nil {
 		return
 	}
 
@@ -20,65 +56,59 @@ func (planner *Planner) manage(thesis *types.Thesis) {
 		forecasts[forecast.Symbol] = forecast
 	}
 
-	thesis.Holdings.Range(func(_, value any) bool {
-		holding, ok := value.(*types.Holding)
+	for holding := range continuity.balance.Holdings() {
+		lot := holding
 
-		if !ok || holding == nil || holding.Status == types.CLOSED {
-			return true
+		if lot.Status == types.CLOSED {
+			continue
 		}
 
-		if holding.Stoploss != nil {
-			holding.Stoploss.Regulate(thesis, *holding, Project(thesis, *holding))
+		if position, ok := continuity.desk.Position(lot.Symbol); ok {
+			if stop := position.Stop(); stop != nil {
+				stop.Regulate(
+					thesis, lot, continuity.evidence.Project(thesis, lot),
+				)
+			}
 		}
 
-		if exiting(thesis, holding.Symbol) {
-			return true
+		if continuity.exiting(thesis, lot.Symbol) {
+			continue
 		}
 
-		forecast, found := forecasts[holding.Symbol]
+		forecast, found := forecasts[lot.Symbol]
 
-		if !found || holding.Mark == nil || holding.Qty == nil {
-			return true
+		if !found || lot.Mark == nil || lot.Qty == nil {
+			continue
 		}
 
 		if !forecast.Eligible() {
-			return true
+			continue
 		}
 
 		fee := 0.0
 
-		if fraction, err := planner.price.Fraction(holding.Symbol); err == nil {
+		if fraction, err := continuity.price.Fraction(lot.Symbol); err == nil {
 			fee = fraction.Float64()
 		}
 
-		decision := planner.continuation(forecast, fee, holding)
-		decision.Cause = planner.cause(thesis, forecast, decision.Action)
+		decision := continuity.Score(forecast, fee, &lot)
+		decision.Cause = continuity.Cause(thesis, forecast, decision.Action)
 		thesis.Decisions = append(thesis.Decisions, decision)
-
-		return true
-	})
-}
-
-func exiting(thesis *types.Thesis, symbol string) bool {
-	phase, found := thesis.Lifecycle.Load(symbol)
-
-	return found &&
-		(phase == types.LifecycleExitSelected ||
-			phase == types.LifecycleExitSubmitted)
+	}
 }
 
 /*
-continuation compares keep-score against liquidity-forced reduction only. Full
-exits belong to Stoploss. Keep-score is expected return net of uncertainty —
-the same holdUtility rotate uses — never raw predicted return.
+Score compares keep-score against liquidity-forced reduction only. Full exits
+belong to Stoploss. Keep-score is expected return net of uncertainty — the same
+Hold rotate uses — never raw predicted return.
 */
-func (planner *Planner) continuation(
+func (continuity Continuity) Score(
 	forecast types.Forecasts,
 	fee float64,
 	holding *types.Holding,
 ) types.Decision {
-	hold := planner.holdUtility(forecast)
-	exit := -planner.exitCost(forecast, fee)
+	hold := continuity.rotate.Hold(forecast)
+	exit := -continuity.rotate.Exit(forecast, fee)
 	action := types.ActionHold
 	utility := hold
 	reason := "stoploss owns full exit; continuation holds"
@@ -132,11 +162,9 @@ func (planner *Planner) continuation(
 }
 
 /*
-cause identifies the evidence boundary behind a management action. A ready
-negative causal outcome is opposing-thesis formation; an elapsed entry forecast
-is invalidation; a negative current forecast without either is weakening.
+Cause identifies the evidence boundary behind a management action.
 */
-func (planner *Planner) cause(
+func (continuity Continuity) Cause(
 	thesis *types.Thesis,
 	forecast types.Forecasts,
 	action types.Action,
@@ -170,4 +198,24 @@ func (planner *Planner) cause(
 	}
 
 	return "thesis_weakening"
+}
+
+func (continuity Continuity) exiting(thesis *types.Thesis, symbol string) bool {
+	phase, found := thesis.Lifecycle.Load(symbol)
+
+	return found &&
+		(phase == types.LifecycleExitSelected ||
+			phase == types.LifecycleExitSubmitted)
+}
+
+func (continuity Continuity) validate(mandatory map[string]any) error {
+	check := map[string]any{
+		"price":   continuity.price,
+		"balance": continuity.balance,
+		"desk":    continuity.desk,
+	}
+
+	maps.Copy(check, mandatory)
+
+	return errnie.Error(errnie.Require(check))
 }

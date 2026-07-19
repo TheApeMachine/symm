@@ -68,41 +68,51 @@ var (
 			channel := make(chan []byte, buffer)
 
 			booter := system.NewBooter(ctx, channel)
+			inMemory := viper.GetBool("cognitive.in_memory")
 			persistDir := strings.TrimSpace(viper.GetString("cognitive.persist_dir"))
 
-			if persistDir == "" {
-				return errnie.Error(errnie.Err(
-					errnie.Validation,
-					"cognitive.persist_dir is required for position recovery",
-					nil,
-				))
-			}
-
-			if strings.HasPrefix(persistDir, "~/") {
-				home, err := os.UserHomeDir()
-
-				if err != nil {
+			if !inMemory {
+				if persistDir == "" {
 					return errnie.Error(errnie.Err(
-						errnie.IO, "failed to resolve cognitive.persist_dir", err,
+						errnie.Validation,
+						"cognitive.persist_dir is required unless cognitive.in_memory is set",
+						nil,
 					))
 				}
 
-				persistDir = filepath.Join(home, strings.TrimPrefix(persistDir, "~/"))
+				if strings.HasPrefix(persistDir, "~/") {
+					home, err := os.UserHomeDir()
+
+					if err != nil {
+						return errnie.Error(errnie.Err(
+							errnie.IO, "failed to resolve cognitive.persist_dir", err,
+						))
+					}
+
+					persistDir = filepath.Join(home, strings.TrimPrefix(persistDir, "~/"))
+				}
+
+				if !filepath.IsAbs(persistDir) {
+					return errnie.Error(errnie.Err(
+						errnie.Validation,
+						"cognitive.persist_dir must be absolute or home-relative",
+						nil,
+					))
+				}
+
+				if err := rotateCognitive(persistDir); err != nil {
+					return errnie.Error(err)
+				}
 			}
 
-			if !filepath.IsAbs(persistDir) {
-				return errnie.Error(errnie.Err(
-					errnie.Validation,
-					"cognitive.persist_dir must be absolute or home-relative",
-					nil,
-				))
+			treeDir := persistDir
+
+			if inMemory {
+				treeDir = ""
+				errnie.Info("cognitive tree running in-memory (no DMT WAL)")
 			}
 
-			if err := rotateCognitive(persistDir); err != nil {
-				return errnie.Error(err)
-			}
-
-			tree := dmt.NewTree(persistDir)
+			tree := dmt.NewTree(treeDir)
 
 			defer func() {
 				errnie.Error(tree.Close())
@@ -112,8 +122,26 @@ var (
 
 			dataPath := strings.TrimSpace(viper.GetString("system.data_path"))
 
+			if strings.HasPrefix(dataPath, "~/") {
+				home, err := os.UserHomeDir()
+
+				if err != nil {
+					return errnie.Error(errnie.Err(
+						errnie.IO, "failed to resolve system.data_path", err,
+					))
+				}
+
+				dataPath = filepath.Join(home, strings.TrimPrefix(dataPath, "~/"))
+			}
+
+			auditDir := persistDir
+
+			if inMemory || auditDir == "" {
+				auditDir = dataPath
+			}
+
 			recorder, err := audit.NewRecorder(filepath.Join(
-				persistDir, "runtime-audit.jsonl",
+				auditDir, "runtime-audit.jsonl",
 			))
 
 			if err != nil {
@@ -144,18 +172,6 @@ var (
 
 			api := websocket.NewAPI(ctx, public, private, paper)
 			defer api.Close()
-
-			if strings.HasPrefix(dataPath, "~/") {
-				home, err := os.UserHomeDir()
-
-				if err != nil {
-					return errnie.Error(errnie.Err(
-						errnie.IO, "failed to resolve system.data_path", err,
-					))
-				}
-
-				dataPath = filepath.Join(home, strings.TrimPrefix(dataPath, "~/"))
-			}
 
 			if err := os.MkdirAll(dataPath, 0o700); err != nil {
 				return errnie.Error(errnie.Err(

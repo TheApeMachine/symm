@@ -157,3 +157,26 @@ describe("resolveKernelStatus", () => {
 		).toBe("measured");
 	});
 });
+
+describe("compact buffer rows", () => {
+	it("reads headline strength from a metrics map on the store row", () => {
+		const at = "2026-07-19T04:00:00Z";
+		const row: Measurement = {
+			source: "correlation",
+			symbol: "BTC/USD",
+			at,
+			raw: 0,
+			normalized: null,
+			uncertainty: null,
+			validity: { state: "valid", readiness: "observation" },
+			scale: { kind: "observation_window", from: at, through: at },
+			metrics: { strength: 0.4, herd_score: 0.2 },
+		};
+
+		expect(headlineReading([row], "correlation")?.raw).toBe(0.4);
+		expect(latestByMetric([row], "herd_score")?.raw).toBe(0.2);
+		expect(resolveKernelStatus(headlineReading([row], "correlation"), true)).toBe(
+			"measured",
+		);
+	});
+});

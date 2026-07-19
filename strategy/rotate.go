@@ -1,6 +1,10 @@
 package strategy
 
-import "github.com/theapemachine/symm/types"
+import (
+	"math"
+
+	"github.com/theapemachine/symm/types"
+)
 
 /*
 Incumbent is one open holding's continuation value for rotate comparisons.
@@ -19,18 +23,31 @@ type Incumbent struct {
 }
 
 /*
-holdUtility is the executable value of keeping an open name: expected return
-net of uncertainty. Entry fees are sunk and do not belong in the keep score.
+Rotate owns one-step rotate arithmetic: keep score, exit friction, surplus,
+weakest incumbent, and the Bellman gate.
 */
-func (planner *Planner) holdUtility(forecast types.Forecasts) float64 {
+type Rotate struct{}
+
+/*
+NewRotate returns the rotate arithmetic shell.
+*/
+func NewRotate() Rotate {
+	return Rotate{}
+}
+
+/*
+Hold is the executable value of keeping an open name: expected return net of
+uncertainty. Entry fees are sunk and do not belong in the keep score.
+*/
+func (rotate Rotate) Hold(forecast types.Forecasts) float64 {
 	return forecast.ExpectedReturn - forecast.Uncertainty
 }
 
 /*
-exitCost is the full one-way friction paid to liquidate an incumbent: fee,
+Exit is the full one-way friction paid to liquidate an incumbent: fee,
 half-spread, impact, and adverse selection.
 */
-func (planner *Planner) exitCost(forecast types.Forecasts, fee float64) float64 {
+func (rotate Rotate) Exit(forecast types.Forecasts, fee float64) float64 {
 	return fee +
 		forecast.ExpectedSpread/2 +
 		forecast.ExpectedImpact +
@@ -38,17 +55,17 @@ func (planner *Planner) exitCost(forecast types.Forecasts, fee float64) float64 
 }
 
 /*
-rotateSurplus is the net utility of replacing an incumbent with a challenger.
+Surplus is the net utility of replacing an incumbent with a challenger.
 Positive means rotate; non-positive means wait for the open thesis to mature.
 */
-func rotateSurplus(challenger, hold, exitCost float64) float64 {
+func (rotate Rotate) Surplus(challenger, hold, exitCost float64) float64 {
 	return challenger - hold - exitCost
 }
 
 /*
-weakest returns the displaceable incumbent with the lowest hold utility.
+Weakest returns the displaceable incumbent with the lowest hold utility.
 */
-func weakest(incumbents []Incumbent) (int, bool) {
+func (rotate Rotate) Weakest(incumbents []Incumbent) (int, bool) {
 	best := -1
 
 	for index := range incumbents {
@@ -65,4 +82,100 @@ func weakest(incumbents []Incumbent) (int, bool) {
 	}
 
 	return best, best >= 0
+}
+
+/*
+Gate reports whether enter beats keep after exit friction once the option
+value of a native clear is charged against the edge.
+*/
+func (rotate Rotate) Gate(enter, keep, exitCost, clearProb float64) bool {
+	edge := enter - keep
+
+	if edge <= 0 {
+		return false
+	}
+
+	return edge*(1-math.Min(1, math.Max(0, clearProb))) > exitCost
+}
+
+/*
+Advantage is the one-step surplus of displacing an incumbent.
+*/
+func (rotate Rotate) Advantage(enter, keep, exitCost, clearProb float64) float64 {
+	return (enter-keep)*(1-math.Min(1, math.Max(0, clearProb))) - exitCost
+}
+
+/*
+Best picks the eligible incumbent with the largest positive advantage.
+*/
+func (rotate Rotate) Best(enter float64, incumbents []Incumbent) (int, bool) {
+	best := -1
+	bestAdvantage := 0.0
+
+	for index := range incumbents {
+		if incumbents[index].Displaced {
+			continue
+		}
+
+		advantage := rotate.Advantage(
+			enter,
+			incumbents[index].HoldUtility,
+			incumbents[index].ExitCost,
+			incumbents[index].ClearProb,
+		)
+
+		if advantage <= 0 {
+			continue
+		}
+
+		if best < 0 || advantage > bestAdvantage {
+			best = index
+			bestAdvantage = advantage
+		}
+	}
+
+	return best, best >= 0
+}
+
+/*
+Clear is the calibrated one-horizon P(native clear): stop or take-profit frees
+the slot without a forced rotate.
+*/
+func (rotate Rotate) Clear(stop *types.Stoploss, forecast types.Forecasts) float64 {
+	if stop == nil {
+		return 0
+	}
+
+	if stop.Action == "stop" || stop.Action == "take_profit" {
+		return 1
+	}
+
+	if stop.PeakReturn <= 0 || stop.TrailDistance <= 0 {
+		return 0
+	}
+
+	if forecast.ExpectedReturn > 0 {
+		return 0
+	}
+
+	if !forecast.Calibrated || forecast.Confidence <= 0 {
+		return 0
+	}
+
+	giveback := math.Max(0, stop.PeakReturn-stop.MarkReturn)
+	proximity := math.Min(1, 1-giveback/stop.TrailDistance)
+
+	if proximity <= 0 {
+		return 0
+	}
+
+	confidence := math.Min(1, forecast.Confidence)
+	skill := 1.0
+
+	if forecast.Uncertainty > 0 && forecast.IncrementalMSE > 0 {
+		rmse := math.Sqrt(forecast.IncrementalMSE)
+		skill = rmse / (rmse + forecast.Uncertainty)
+	}
+
+	return math.Min(1, proximity*confidence*skill)
 }

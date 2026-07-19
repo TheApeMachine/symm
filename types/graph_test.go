@@ -112,13 +112,10 @@ func TestGraphAddNode(t *testing.T) {
 
 			err := graph.AddNode(measurement)
 
-			Convey("Then provenance is canonicalized before insertion", func() {
-				So(err, ShouldBeNil)
-				So(graph.Nodes(), ShouldHaveLength, 1)
-
-				retained := graph.Nodes()[0]
-				So(retained.Measurement.ObservedFrom, ShouldEqual, at)
-				So(retained.Measurement.At, ShouldEqual, at.Add(time.Second))
+			Convey("Then provenance is rejected at the boundary", func() {
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "observedFrom after At")
+				So(graph.Nodes(), ShouldBeEmpty)
 			})
 		})
 	})

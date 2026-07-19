@@ -78,8 +78,6 @@ func (evidenceGraph *Graph) AddNode(measurement *Measurement) error {
 		return errnie.Validate((*Measurement)(nil))
 	}
 
-	measurement.CanonicalizeProvenance()
-
 	if err := errnie.Validate(measurement); err != nil {
 		return err
 	}

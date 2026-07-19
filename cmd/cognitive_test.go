@@ -41,4 +41,16 @@ func TestRotateCognitive(t *testing.T) {
 		_, err := os.Stat(persistDir)
 		So(err, ShouldBeNil)
 	})
+
+	Convey("Given in-memory cognition", t, func() {
+		previousMemory := viper.Get("cognitive.in_memory")
+		t.Cleanup(func() { viper.Set("cognitive.in_memory", previousMemory) })
+		persistDir := filepath.Join(t.TempDir(), "cognitive")
+		So(os.MkdirAll(persistDir, 0o700), ShouldBeNil)
+		viper.Set("cognitive.in_memory", true)
+		viper.Set("cognitive.reset_on_boot", true)
+		So(rotateCognitive(persistDir), ShouldBeNil)
+		_, err := os.Stat(persistDir)
+		So(err, ShouldBeNil)
+	})
 }

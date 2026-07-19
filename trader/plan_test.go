@@ -118,7 +118,7 @@ func TestSeedOpenEnrichesWalletLot(t *testing.T) {
 					"ONDO/USD": {
 						Symbol:     "ONDO/USD",
 						EntryPrice: decimal.NewFromFloat64(0.55),
-						Stoploss:   &types.Stoploss{Weight: 0.7},
+						Stoploss:   &types.Stoploss{Skill: types.Skill{Weight: 0.7}},
 					},
 				},
 			},

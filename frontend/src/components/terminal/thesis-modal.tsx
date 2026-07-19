@@ -341,7 +341,7 @@ export const ThesisModal = () => {
 	const { closeThesis } = terminalStore.actions;
 
 	return (
-		<div className="absolute inset-0 z-20 flex animate-[symFade_0.18s_ease] items-center justify-center bg-[color-mix(in_srgb,var(--sunken)_52%,transparent)] p-6 backdrop-blur-[4px]">
+		<div className="absolute inset-0 z-20 flex animate-[symFade_0.18s_ease] items-center justify-center bg-[color-mix(in_srgb,var(--sunken)_52%,transparent)] p-6 backdrop-blur-sm">
 			<button
 				type="button"
 				aria-label="Close thesis modal"

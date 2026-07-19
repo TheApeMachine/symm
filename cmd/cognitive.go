@@ -14,6 +14,10 @@ rotateCognitive renames the cognitive persist directory aside when
 cognitive.reset_on_boot is set, so a bloated WAL cannot poison the next run.
 */
 func rotateCognitive(persistDir string) error {
+	if persistDir == "" || viper.GetBool("cognitive.in_memory") {
+		return nil
+	}
+
 	if !viper.GetBool("cognitive.reset_on_boot") {
 		return nil
 	}

@@ -116,13 +116,15 @@ export const PaperEditorApp = () => {
 };
 ```
 
+> !IMPORTANT! The entire idea behind composition is so you hide away chunks of isolated complexity, which you can then consume, usually in 1 line of code. Don't hide away code, and then write a multi-line helper around that at the consuming site, then you're just bloating the code even further.
+
 ### Size Limits
 
 * **File Size:** Target 200 lines; hard ceiling of 400 lines. Split files exceeding 400 lines into separate types/files.
 * **Method Size:** Target under 30 lines. Methods exceeding 60 lines must be split into sub-methods, unless the operation is atomic (e.g., assembly kernels).
 * **Type Size:** Limit types to a maximum of 10 methods.
 
-This does *not* mean just move some methods to a new file and call it done. What this means is find the additional responsibilities that the object (type) is doing and compose those onto the current type as a new type. So take the example code above as the type that is over the line count, and do something like:
+> !IMPORTANT! This does *not* mean just move some methods to a new file and call it done. What this means is find the additional responsibilities that the object (type) is doing and compose those onto the current type as a new type. So take the example code above as the type that is over the line count, and do something like:
 
 ```go
 /*
@@ -231,7 +233,17 @@ thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
 })
 ```
 
-Key/Value pairs should always be on their own line, so the formatting aligns everything in a nice, readable manner.
+Key/Value pairs should always be on their own line, so the formatting aligns everything in a nice, readable manner, like so:
+
+```go
+thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
+    Source:           "resonance+causal", 
+    Symbol:           state.Symbol,
+    At:               state.At, 
+    ObservedInterval: state.Duration,
+})
+```
+
 
 * **Errors** Instance variables for errors are always `err` and nothing else. Errors are logged with `errnie`
 
@@ -242,6 +254,11 @@ errnie.Error(errnie.Err(
     err,               // or nil
 ))
 ```
+
+> !IMPORTANT! When it comes to tests, you should **always** use Goconvey, tests should mirror the code structure regarding filenames and methods, and use BDD style nested scenarios.
+
+> Another thing about testing in this specific project is to always use the full market simulation system in ./tests/ to validate signals, decision making mechanisms, and anything else trading related, which is everything.
+
 ---
 
 ## Environment & Tooling Constraints

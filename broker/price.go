@@ -454,8 +454,6 @@ func (price *Price) fillEntry(
 		holding.EntryFee = data.FeeUsdEquiv.Copy()
 	}
 
-	price.bindStop(holding)
-
 	if holding.EntryAt != nil {
 		return
 	}
@@ -467,29 +465,6 @@ func (price *Price) fillEntry(
 	}
 
 	holding.EntryAt = &at
-}
-
-/*
-bindStop latches the lot's regulator at entry using paid fee width in return
-space so the desk is never open without a live stop while forecasts catch up.
-*/
-func (price *Price) bindStop(holding *types.Holding) {
-	if holding == nil || holding.Stoploss == nil ||
-		holding.EntryPrice == nil || holding.EntryPrice.Sign() <= 0 {
-		return
-	}
-
-	trail := 0.0
-
-	if holding.EntryFee != nil && holding.Qty != nil && holding.Qty.Sign() > 0 {
-		notional := price.Mul(holding.EntryPrice, holding.Qty)
-
-		if notional != nil && notional.Sign() > 0 {
-			trail = price.Div(holding.EntryFee, notional).Float64()
-		}
-	}
-
-	holding.Stoploss.Bind(holding.EntryPrice.Float64(), trail)
 }
 
 func (price *Price) fillExit(

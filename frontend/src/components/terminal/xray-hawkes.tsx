@@ -32,6 +32,7 @@ export const XrayHawkesPanel = () => {
 	const intensityRef = useRef<HTMLSpanElement>(null);
 	const cascadeRef = useRef<HTMLDivElement>(null);
 	const paintRef = useRef<() => void>(() => undefined);
+	const scaleRef = useRef({ fit: "", peak: 0 });
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
 	const online = useSelector(appStore, (state) => state.online);
 
@@ -94,25 +95,41 @@ export const XrayHawkesPanel = () => {
 			const padBottom = 26;
 			const innerWidth = Math.max(1, width - padX * 2);
 			const base = height - padBottom;
-			const excess = series.samples.map((sample) =>
-				Math.max(0, sample - series.baseline),
+			// Draw (λ − μ) / μ so spike height is excitation in baseline units,
+			// not a window-max auto-scale that reflows every paint.
+			const unit = series.baseline > 0 ? series.baseline : 1;
+			const normalized = series.samples.map((sample) =>
+				Math.max(0, sample - series.baseline) / unit,
 			);
-			const maxExcess = Math.max(1e-9, ...excess) * 1.15;
+			const framePeak = Math.max(
+				series.peakExcess / unit,
+				...normalized,
+				0,
+			);
+
+			if (scaleRef.current.fit !== series.fit) {
+				scaleRef.current = { fit: series.fit, peak: framePeak };
+			} else if (framePeak > scaleRef.current.peak) {
+				scaleRef.current.peak = framePeak;
+			}
+
+			const yMax = Math.max(1, scaleRef.current.peak) * 1.15;
 			const xFor = (index: number): number =>
 				padX + (index / (series.samples.length - 1)) * innerWidth;
 			const yFor = (value: number): number =>
-				base - (value / maxExcess) * (base - padTop);
+				base - (value / yMax) * (base - padTop);
 			const latest = series.samples[series.samples.length - 1] ?? series.baseline;
-			const latestExcess = excess[excess.length - 1] ?? 0;
+			const latestExcess = Math.max(0, latest - series.baseline);
+			const latestNorm = normalized[normalized.length - 1] ?? 0;
 
 			context.beginPath();
 			context.moveTo(xFor(0), base);
 
-			for (let index = 0; index < excess.length; index += 1) {
-				context.lineTo(xFor(index), yFor(excess[index] ?? 0));
+			for (let index = 0; index < normalized.length; index += 1) {
+				context.lineTo(xFor(index), yFor(normalized[index] ?? 0));
 			}
 
-			context.lineTo(xFor(excess.length - 1), base);
+			context.lineTo(xFor(normalized.length - 1), base);
 			context.closePath();
 			context.fillStyle = "rgba(232, 163, 61, 0.14)";
 			context.fill();
@@ -121,9 +138,9 @@ export const XrayHawkesPanel = () => {
 			context.lineWidth = 1.6;
 			context.beginPath();
 
-			for (let index = 0; index < excess.length; index += 1) {
+			for (let index = 0; index < normalized.length; index += 1) {
 				const x = xFor(index);
-				const y = yFor(excess[index] ?? 0);
+				const y = yFor(normalized[index] ?? 0);
 
 				if (index === 0) {
 					context.moveTo(x, y);
@@ -160,8 +177,8 @@ export const XrayHawkesPanel = () => {
 			context.shadowColor = TERMINAL_COLORS.amber;
 			context.beginPath();
 			context.arc(
-				xFor(excess.length - 1),
-				yFor(latestExcess),
+				xFor(normalized.length - 1),
+				yFor(latestNorm),
 				3.5,
 				0,
 				Math.PI * 2,
@@ -171,7 +188,7 @@ export const XrayHawkesPanel = () => {
 			context.fillStyle = TERMINAL_COLORS.muted;
 			context.font = "10px JetBrains Mono, monospace";
 			context.fillText(
-				`λ−μ ${latestExcess.toFixed(2)}  λ ${latest.toFixed(2)}  μ ${series.baseline.toFixed(2)}`,
+				`λ−μ ${latestExcess.toFixed(2)}  (λ−μ)/μ ${latestNorm.toFixed(2)}  λ ${latest.toFixed(2)}  μ ${series.baseline.toFixed(2)}`,
 				18,
 				height - 9,
 			);

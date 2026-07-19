@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 
@@ -33,6 +34,7 @@ type Position struct {
 	order       *spot.Order
 	orderID     string
 	claim       Claim
+	stoploss    *types.Stoploss
 	tickers     []*kraken.TickerData
 	executions  []*kraken.Execution
 	seenExec    sync.Map
@@ -99,6 +101,59 @@ func (position *Position) Pending() bool {
 
 func (position *Position) Status() types.Status {
 	return position.status
+}
+
+/*
+Stop returns the regulator owned by this Position.
+*/
+func (position *Position) Stop() *types.Stoploss {
+	if position == nil {
+		return nil
+	}
+
+	return position.stoploss
+}
+
+/*
+TakeStop installs the lot's Stoploss on this Position and keeps the same
+pointer on the Balance holding for wire/recovery.
+*/
+func (position *Position) TakeStop(holding *types.Holding) {
+	if position == nil || holding == nil {
+		return
+	}
+
+	if holding.Stoploss == nil {
+		holding.Stoploss = types.NewStoploss(context.Background())
+	}
+
+	position.stoploss = holding.Stoploss
+}
+
+/*
+ObserveMark ratchets the Position stop from a live mark print.
+*/
+func (position *Position) ObserveMark(mark float64) {
+	if position == nil || position.stoploss == nil {
+		return
+	}
+
+	position.stoploss.ObserveMark(mark)
+}
+
+/*
+BindStop latches the Position regulator at entry.
+*/
+func (position *Position) BindStop(entry, trail float64) {
+	if position == nil {
+		return
+	}
+
+	if position.stoploss == nil {
+		position.stoploss = types.NewStoploss(context.Background())
+	}
+
+	position.stoploss.Bind(entry, trail)
 }
 
 /*
@@ -196,7 +251,9 @@ func (position *Position) ExecutionAck(buf []byte) {
 		}
 
 		holding := value.(*types.Holding)
+		position.TakeStop(holding)
 		position.price.Fill(position.pair, holding, data)
+		position.bindEntryStop(holding, data)
 		position.executions = append(position.executions, execution)
 
 		status := position.fillStatus(holding, data)
@@ -225,6 +282,37 @@ func (position *Position) noteIntent(status types.Status) {
 	case types.CLOSED, types.CANCELED, types.ERROR:
 		position.intent.Store(intentFlat)
 	}
+}
+
+/*
+bindEntryStop latches the Position regulator after a buy fill using paid fee
+width in return space.
+*/
+func (position *Position) bindEntryStop(
+	holding *types.Holding,
+	data kraken.ExecutionData,
+) {
+	if position == nil || holding == nil || data.Side != "buy" {
+		return
+	}
+
+	if holding.EntryPrice == nil || holding.EntryPrice.Sign() <= 0 {
+		return
+	}
+
+	trail := 0.0
+
+	if holding.EntryFee != nil && holding.Qty != nil && holding.Qty.Sign() > 0 &&
+		position.price != nil {
+		notional := position.price.Mul(holding.EntryPrice, holding.Qty)
+
+		if notional != nil && notional.Sign() > 0 {
+			trail = position.price.Div(holding.EntryFee, notional).Float64()
+		}
+	}
+
+	position.BindStop(holding.EntryPrice.Float64(), trail)
+	holding.Stoploss = position.stoploss
 }
 
 /*

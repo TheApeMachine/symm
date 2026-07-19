@@ -24,6 +24,8 @@ func TestBuilders(t *testing.T) {
 			{"lag", conditions.Lag(4, 2)},
 			{"herd", conditions.Herd(4)},
 			{"noise", conditions.Noise(4)},
+			{"phantom_drawdown", conditions.PhantomDrawdown(4, 1, 0.015)},
+			{"calibrated_lift", conditions.CalibratedLift(4, 1, 1.04)},
 		}
 
 		for _, entry := range markets {

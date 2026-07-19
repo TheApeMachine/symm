@@ -14,15 +14,15 @@ only reserved entries (positive margin and cognitive lead) may take overflow.
 func TestAdmitKeepsReservedForOpportunity(t *testing.T) {
 	t.Parallel()
 
-	planner := testPlanner()
+	planner := decideFixture.Planner()
 	thesis := types.NewThesis(nil, nil)
 
-	aaa := testHolding("AAA/USD", 1, 1)
-	bbb := testHolding("BBB/USD", 1, 1)
+	aaa := decideFixture.Holding("AAA/USD", 1, 1)
+	bbb := decideFixture.Holding("BBB/USD", 1, 1)
 	thesis.Holdings.Store("AAA/USD", aaa)
 	thesis.Holdings.Store("BBB/USD", bbb)
-	seedOpenLot(planner, aaa)
-	seedOpenLot(planner, bbb)
+	decideFixture.Seed(planner, aaa)
+	decideFixture.Seed(planner, bbb)
 
 	boring := decideForecast("CCC/USD", 0.01, 0.02) // negative margin
 	pump := decideForecast("OXT/USD", 0.08, 0.02)   // positive margin
@@ -82,7 +82,7 @@ func TestDecideRejectsBuyWithoutConfidence(t *testing.T) {
 	t.Parallel()
 
 	t.Run("cognitive_no_confidence", func(t *testing.T) {
-		planner := testPlanner()
+		planner := decideFixture.Planner()
 		thesis := types.NewThesis(nil, nil)
 		forecast := decideForecast("ZZZ/USD", 0.05, 0.01)
 		thesis.Forecasts = append(thesis.Forecasts, forecast)
@@ -116,7 +116,7 @@ func TestDecideRejectsBuyWithoutConfidence(t *testing.T) {
 	})
 
 	t.Run("forecast_no_confidence", func(t *testing.T) {
-		planner := testPlanner()
+		planner := decideFixture.Planner()
 		thesis := types.NewThesis(nil, nil)
 		forecast := decideForecast("ZZZ/USD", 0.05, 0.01)
 		forecast.Confidence = 0
@@ -155,7 +155,7 @@ that is smaller than uncertainty fails the single utility gate after friction.
 func TestDecideRejectsWhenUncertaintyConsumesUtility(t *testing.T) {
 	t.Parallel()
 
-	planner := testPlanner()
+	planner := decideFixture.Planner()
 	thesis := types.NewThesis(nil, nil)
 	forecast := decideForecast("WEAK/USD", 0.01, 0.05)
 	thesis.Forecasts = append(thesis.Forecasts, forecast)
@@ -193,7 +193,7 @@ clear Winner=buy and positive utility/margin.
 func TestDecideRejectsWeakCognitiveConfidence(t *testing.T) {
 	t.Parallel()
 
-	planner := testPlanner()
+	planner := decideFixture.Planner()
 	thesis := types.NewThesis(nil, nil)
 	forecast := decideForecast("COLD/USD", 0.08, 0.02)
 	thesis.Forecasts = append(thesis.Forecasts, forecast)
@@ -230,9 +230,9 @@ lot size; Allocator owns ProposedNotional, so rejected challengers stay at zero.
 func TestDecideCapsProposedNotionalByAvailableCash(t *testing.T) {
 	t.Parallel()
 
-	planner := testPlanner()
+	planner := decideFixture.Planner()
 	thesis := types.NewThesis(nil, nil)
-	fat := testHolding("FAT/USD", 3400, 1)
+	fat := decideFixture.Holding("FAT/USD", 3400, 1)
 	thesis.Holdings.Store("FAT/USD", fat)
 
 	hold := decideForecast("FAT/USD", 0.10, 0.01)
@@ -242,8 +242,8 @@ func TestDecideCapsProposedNotionalByAvailableCash(t *testing.T) {
 	thesis.Cognition.Store("XRP/USD", buyCognition("XRP/USD"))
 
 	available := 5.73
-	planner = testPlannerSlots(1, 0, available)
-	seedOpenLot(planner, fat)
+	planner = decideFixture.Slots(1, 0, available)
+	decideFixture.Seed(planner, fat)
 	planner.Decide(thesis)
 
 	for _, decision := range thesis.Decisions {
@@ -274,10 +274,10 @@ still adopts the freed incumbent notional when rotation wins.
 func TestDecideRotateScalesUpToIncumbentNotional(t *testing.T) {
 	t.Parallel()
 
-	planner := testPlanner()
+	planner := decideFixture.Planner()
 	thesis := types.NewThesis(nil, nil)
-	weakLot := testHolding("WEAK/USD", 100, 1)
-	keepLot := testHolding("KEEP/USD", 100, 1)
+	weakLot := decideFixture.Holding("WEAK/USD", 100, 1)
+	keepLot := decideFixture.Holding("KEEP/USD", 100, 1)
 	thesis.Holdings.Store("WEAK/USD", weakLot)
 	thesis.Holdings.Store("KEEP/USD", keepLot)
 
@@ -288,9 +288,9 @@ func TestDecideRotateScalesUpToIncumbentNotional(t *testing.T) {
 	thesis.Cognition.Store("NEXT/USD", buyCognition("NEXT/USD"))
 	thesis.Manifold.Store("NEXT/USD", readyBasin("NEXT/USD", 0.2))
 
-	planner = testPlannerSlots(2, 0, 1000)
-	seedOpenLot(planner, weakLot)
-	seedOpenLot(planner, keepLot)
+	planner = decideFixture.Slots(2, 0, 1000)
+	decideFixture.Seed(planner, weakLot)
+	decideFixture.Seed(planner, keepLot)
 	planner.Decide(thesis)
 
 	for _, decision := range thesis.Decisions {

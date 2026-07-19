@@ -95,14 +95,24 @@ export const measurementRaw = (
 	metric: string,
 	side = "",
 ): number | null => {
+	const key = side === "" ? metric : `${metric}:${side}`;
+
 	for (let index = epoch.length - 1; index >= 0; index -= 1) {
 		const measurement = epoch[index];
 
-		if (measurement.metric !== metric || (measurement.side ?? "") !== side) {
-			continue;
+		if (
+			measurement.metric === metric &&
+			(measurement.side ?? "") === side &&
+			Number.isFinite(measurement.raw)
+		) {
+			return measurement.raw;
 		}
 
-		return Number.isFinite(measurement.raw) ? measurement.raw : null;
+		const raw = measurement.metrics?.[key];
+
+		if (typeof raw === "number" && Number.isFinite(raw)) {
+			return raw;
+		}
 	}
 
 	return null;

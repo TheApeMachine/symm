@@ -9,9 +9,9 @@ import (
 )
 
 /*
-Holding records either wallet-backed inventory or a Thesis-local candidate.
-Position orchestrates live holdings; a candidate remains on its originating
-Thesis even when strategy declines to submit its proposed order.
+Holding is inventory qty and economics. Wallet lots live on Balance; Thesis
+stores only holdings it created (Admit). Live Stoploss is owned by Position;
+the Stoploss pointer here is the same regulator after Desk takes the lot.
 */
 type Holding struct {
 	ctx           context.Context
@@ -34,7 +34,8 @@ type Holding struct {
 }
 
 /*
-NewHolding constructs a pending lot shell with a live stoploss regulator.
+NewHolding constructs a pending Thesis lot with a Stoploss Position will own
+after Desk entry.
 */
 func NewHolding(
 	ctx context.Context,
@@ -106,6 +107,25 @@ func (holding Holding) MarshalJSON() ([]byte, error) {
 	}
 
 	return sonic.Marshal(frame)
+}
+
+/*
+StopFrame projects the live stop surface for the terminal gauge.
+*/
+func (holding *Holding) StopFrame() map[string]any {
+	if holding == nil || holding.Stoploss == nil || holding.Symbol == "" {
+		return nil
+	}
+
+	stop := holding.Stoploss
+
+	return map[string]any{
+		"symbol":      holding.Symbol,
+		"peak_return": finiteFloat(stop.PeakReturn),
+		"stop_return": finiteFloat(stop.StopReturn),
+		"armed":       stop.Armed(),
+		"stop_price":  stop.StopPrice(),
+	}
 }
 
 func decimalFloat(value *decimal.Decimal) float64 {

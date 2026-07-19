@@ -11,68 +11,42 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-// fixtureMu serializes viper reads/writes across parallel Decide fixtures.
-var fixtureMu sync.Mutex
-
 /*
-testPlanner builds a Decide Planner with Desk slot ceilings, Balance cash, and
-Price fee tiers so unit tests exercise ranking without transport wiring.
+Fixture builds Decide Planners with Desk slots, Balance cash, and Price fee
+tiers so unit tests exercise ranking without transport wiring. One shared
+instance serializes viper mutation across parallel tests.
 */
-func testPlanner(signals ...types.Signal) *Planner {
-	fixtureMu.Lock()
-	defer fixtureMu.Unlock()
-
-	previousNormal := viper.GetInt("trading.slots.normal")
-	previousReserved := viper.GetInt("trading.slots.reserved")
-	previousQuote := viper.GetString("market.quote_currency")
-	previousFraction := viper.GetFloat64("trading.allocation.max_fraction")
-
-	viper.Set("trading.slots.normal", 2)
-	viper.Set("trading.slots.reserved", 2)
-	viper.Set("market.quote_currency", "USD")
-	viper.Set("trading.allocation.max_fraction", 0.2)
-
-	balance := broker.NewBalance(nil, nil, nil)
-	balance.BalanceAck([]byte(
-		`{"channel":"balances","type":"snapshot","sequence":1,"data":[{` +
-			`"asset":"USD","balance":"1000","available":"1000","reserved":"0"}]}`,
-	))
-	desk := broker.NewDesk(nil, nil, nil, balance)
-	price := broker.NewPrice(nil)
-	instrument := broker.NewInstrument(nil, price, nil)
-	rememberTestFees(price)
-	rememberTestPairs(instrument, price)
-	allocator := NewAllocator(context.Background(), balance, instrument, price)
-	desk.SetSlots(2, 2)
-
-	planner := NewPlanner(
-		context.Background(),
-		nil,
-		nil,
-		desk,
-		instrument,
-		price,
-		balance,
-		signals,
-		nil,
-		allocator,
-		nil,
-	)
-
-	viper.Set("trading.slots.normal", previousNormal)
-	viper.Set("trading.slots.reserved", previousReserved)
-	viper.Set("market.quote_currency", previousQuote)
-	viper.Set("trading.allocation.max_fraction", previousFraction)
-
-	return planner
+type Fixture struct {
+	mu sync.Mutex
 }
 
 /*
-testPlannerSlots builds a Decide Planner with explicit slot ceilings.
+NewFixture returns a Decide test fixture.
 */
-func testPlannerSlots(normal, reserved int, available float64) *Planner {
-	fixtureMu.Lock()
-	defer fixtureMu.Unlock()
+func NewFixture() *Fixture {
+	return &Fixture{}
+}
+
+// decideFixture is the package fixture for strategy Decide tests.
+var decideFixture = NewFixture()
+
+/*
+Planner builds a Decide Planner with default slot ceilings and cash.
+*/
+func (fixture *Fixture) Planner(signals ...types.Signal) *Planner {
+	return fixture.Slots(2, 2, 1000, signals...)
+}
+
+/*
+Slots builds a Decide Planner with explicit slot ceilings and available cash.
+*/
+func (fixture *Fixture) Slots(
+	normal, reserved int,
+	available float64,
+	signals ...types.Signal,
+) *Planner {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
 
 	previousNormal := viper.GetInt("trading.slots.normal")
 	previousReserved := viper.GetInt("trading.slots.reserved")
@@ -94,20 +68,20 @@ func testPlannerSlots(normal, reserved int, available float64) *Planner {
 	desk := broker.NewDesk(nil, nil, nil, balance)
 	price := broker.NewPrice(nil)
 	instrument := broker.NewInstrument(nil, price, nil)
-	rememberTestFees(price)
-	rememberTestPairs(instrument, price)
+	fixture.fees(price)
+	fixture.pairs(instrument, price)
 	allocator := NewAllocator(context.Background(), balance, instrument, price)
 	desk.SetSlots(normal, reserved)
 
 	planner := NewPlanner(
 		context.Background(),
-		nil,
+		make(chan []byte, 64),
 		nil,
 		desk,
 		instrument,
 		price,
 		balance,
-		nil,
+		signals,
 		nil,
 		allocator,
 		nil,
@@ -121,24 +95,39 @@ func testPlannerSlots(normal, reserved int, available float64) *Planner {
 	return planner
 }
 
-func rememberTestFees(price *broker.Price) {
-	for _, symbol := range testSymbols() {
+/*
+Holding builds an open pointer lot for Thesis.Holdings fixtures.
+*/
+func (fixture *Fixture) Holding(symbol string, qty, mark float64) *types.Holding {
+	return &types.Holding{
+		Symbol: symbol,
+		Qty:    decimal.NewFromFloat64(qty),
+		Mark:   decimal.NewFromFloat64(mark),
+		Status: types.OPEN,
+	}
+}
+
+/*
+Seed puts a thesis holding onto Balance so Desk.OpenPositions counts it.
+*/
+func (fixture *Fixture) Seed(planner *Planner, holding *types.Holding) {
+	if err := planner.validate(map[string]any{"holding": holding}); err != nil {
+		return
+	}
+
+	planner.balance.Seed(holding)
+}
+
+func (fixture *Fixture) fees(price *broker.Price) {
+	for _, symbol := range fixture.symbols() {
 		_ = price.RememberFee(symbol, kraken.TradeVolumeFee{
 			Fee: decimal.NewFromFloat64(0.1),
 		})
 	}
 }
 
-func testSymbols() []string {
-	return []string{
-		"FAT/USD", "XRP/USD", "WEAK/USD", "KEEP/USD", "NEXT/USD",
-		"OXT/USD", "ZZZ/USD", "COLD/USD", "MEH/USD", "CCC/USD",
-		"LOW/USD", "HIGH/USD", "HOLD/USD", "AAA/USD", "BBB/USD",
-	}
-}
-
-func rememberTestPairs(instrument *broker.Instrument, price *broker.Price) {
-	for _, symbol := range testSymbols() {
+func (fixture *Fixture) pairs(instrument *broker.Instrument, price *broker.Price) {
+	for _, symbol := range fixture.symbols() {
 		base := symbol[:len(symbol)-4]
 		instrument.Remember(&kraken.InstrumentPair{
 			Symbol: symbol, Base: base, Quote: "USD", Status: "online",
@@ -152,26 +141,10 @@ func rememberTestPairs(instrument *broker.Instrument, price *broker.Price) {
 	}
 }
 
-/*
-seedOpenLot puts a thesis holding onto Balance so Desk.OpenPositions counts it.
-Wallet qty is seeded so Remember-style authority stays honest under test.
-*/
-func seedOpenLot(planner *Planner, holding *types.Holding) {
-	if planner == nil || planner.balance == nil || holding == nil {
-		return
-	}
-
-	planner.balance.Seed(holding)
-}
-
-/*
-testHolding builds an open pointer lot for Thesis.Holdings fixtures.
-*/
-func testHolding(symbol string, qty, mark float64) *types.Holding {
-	return &types.Holding{
-		Symbol: symbol,
-		Qty:    decimal.NewFromFloat64(qty),
-		Mark:   decimal.NewFromFloat64(mark),
-		Status: types.OPEN,
+func (fixture *Fixture) symbols() []string {
+	return []string{
+		"FAT/USD", "XRP/USD", "WEAK/USD", "KEEP/USD", "NEXT/USD",
+		"OXT/USD", "ZZZ/USD", "COLD/USD", "MEH/USD", "CCC/USD",
+		"LOW/USD", "HIGH/USD", "HOLD/USD", "AAA/USD", "BBB/USD",
 	}
 }

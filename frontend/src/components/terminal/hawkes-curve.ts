@@ -32,6 +32,8 @@ exponential decay between them, including a trailing decay to the present.
 export type HawkesSeries = {
 	baseline: number;
 	beta: number;
+	fit: string;
+	peakExcess: number;
 	fromAt: number;
 	throughAt: number;
 	samples: number[];
@@ -102,9 +104,17 @@ export const hawkesSeriesFromBuffer = (
 		samples[index] = intensityAt(observations, model.baseline, model.beta, at);
 	}
 
+	let peakExcess = 0;
+
+	for (const observation of observations) {
+		peakExcess = Math.max(peakExcess, observation.intensity - model.baseline);
+	}
+
 	return {
 		baseline: model.baseline,
 		beta: model.beta,
+		fit: observations.at(-1)?.fit ?? "",
+		peakExcess: Math.max(0, peakExcess),
 		fromAt,
 		throughAt,
 		samples,

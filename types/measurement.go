@@ -305,9 +305,15 @@ const (
 )
 
 /*
-Measurement is one immutable numerical observation emitted by a signal. New
-signals use the typed fields above the compatibility block; the legacy fields
-remain only while older signals are migrated to the same contract.
+Measurement is one immutable numerical observation emitted by a signal.
+
+Provenance contract (set correctly at emit; never rewritten downstream):
+  - At is the as-of / emit instant and is required.
+  - ObservedFrom, when set, is the start of the observation window and must
+    not be after At. Horizon is At−ObservedFrom when both ends are known.
+  - Scale is an optional separate fit/baseline epoch. When both Scale.From and
+    Scale.Through are set they must run forward; Scale is not folded into the
+    observation interval.
 */
 type Measurement struct {
 	Source       SourceType              `json:"source"`
@@ -329,119 +335,42 @@ type Measurement struct {
 }
 
 /*
-CanonicalizeProvenance folds every declared timestamp into one forward evidence
-window so graph validation reflects the full span instead of rejecting mixed
-producer fields.
-*/
-func (measurement *Measurement) CanonicalizeProvenance() {
-	stamps := make([]time.Time, 0, 4)
-
-	for _, stamp := range []time.Time{
-		measurement.At,
-		measurement.ObservedFrom,
-		measurement.Scale.From,
-		measurement.Scale.Through,
-	} {
-		if stamp.IsZero() {
-			continue
-		}
-
-		stamps = append(stamps, stamp)
-	}
-
-	if len(stamps) == 0 {
-		return
-	}
-
-	from := stamps[0]
-	through := stamps[0]
-
-	for _, stamp := range stamps[1:] {
-		if stamp.Before(from) {
-			from = stamp
-		}
-
-		if stamp.After(through) {
-			through = stamp
-		}
-	}
-
-	measurement.ObservedFrom = from
-	measurement.At = through
-	measurement.Horizon = through.Sub(from)
-
-	if measurement.Scale.Kind != "" ||
-		!measurement.Scale.From.IsZero() ||
-		!measurement.Scale.Through.IsZero() {
-		if measurement.Scale.Kind == "" {
-			measurement.Scale.Kind = ScaleObservationWindow
-		}
-
-		measurement.Scale.From = from
-		measurement.Scale.Through = through
-	}
-}
-
-/*
-ValidateStruct enforces the cross-field time ordering that tags cannot express.
-A measurement may omit an explicit scale interval, but any interval it does
-resolve must run forward.
+ValidateStruct enforces the provenance contract. Producers must emit forward
+observation and scale intervals; this rejects conflict instead of rewriting it.
 */
 func (measurement *Measurement) ValidateStruct() error {
 	if measurement == nil {
 		return errors.New("measurement required")
 	}
 
-	measurement.CanonicalizeProvenance()
+	if !measurement.ObservedFrom.IsZero() &&
+		measurement.ObservedFrom.After(measurement.At) {
+		return errors.New("observedFrom after At")
+	}
 
-	from, through := measurement.Interval()
-	scaleBackwards := !measurement.Scale.From.IsZero() &&
+	if !measurement.Scale.From.IsZero() &&
 		!measurement.Scale.Through.IsZero() &&
-		measurement.Scale.Through.Before(measurement.Scale.From)
-
-	if scaleBackwards || through.Before(from) {
-		return errors.New("evidence interval ends before it starts")
+		measurement.Scale.Through.Before(measurement.Scale.From) {
+		return errors.New("scale interval ends before it starts")
 	}
 
 	return nil
 }
 
 /*
-Interval resolves the evidence interval once using the measurement's declared
-provenance, then its scale, then its observation time. Relationship composition
-uses this canonical policy instead of reconstructing it at every call site.
+Interval returns the observation window: ObservedFrom→At when ObservedFrom is
+set, otherwise the point [At, At]. Scale is intentionally excluded.
 */
 func (measurement Measurement) Interval() (time.Time, time.Time) {
-	stamps := make([]time.Time, 0, 4)
-
-	for _, stamp := range []time.Time{
-		measurement.At,
-		measurement.ObservedFrom,
-		measurement.Scale.From,
-		measurement.Scale.Through,
-	} {
-		if stamp.IsZero() {
-			continue
-		}
-
-		stamps = append(stamps, stamp)
-	}
-
-	if len(stamps) == 0 {
+	if measurement.At.IsZero() && measurement.ObservedFrom.IsZero() {
 		return time.Time{}, time.Time{}
 	}
 
-	from := stamps[0]
-	through := stamps[0]
+	through := measurement.At
+	from := measurement.ObservedFrom
 
-	for _, stamp := range stamps[1:] {
-		if stamp.Before(from) {
-			from = stamp
-		}
-
-		if stamp.After(through) {
-			through = stamp
-		}
+	if from.IsZero() {
+		from = through
 	}
 
 	return from, through

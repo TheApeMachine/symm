@@ -121,7 +121,9 @@ func (book *Book) measurementsFromReading(
 	historyFrom := eventAt
 	earliestStamp := reading.dynamics.earliestStamp()
 
-	if !earliestStamp.IsZero() {
+	// History can only start at or before as-of; a later stamp is not part of
+	// this observation window.
+	if !earliestStamp.IsZero() && !earliestStamp.After(eventAt) {
 		historyFrom = earliestStamp
 	}
 
@@ -151,13 +153,6 @@ func (book *Book) measurementsFromReading(
 	measurements := make([]*types.Measurement, 0, len(specs))
 
 	for _, spec := range specs {
-		from := spec.from
-		through := eventAt
-
-		if through.Before(from) {
-			from = through
-		}
-
 		measurements = append(measurements, &types.Measurement{
 			Source:       types.SourceFluid,
 			Metric:       spec.metric,
@@ -165,16 +160,17 @@ func (book *Book) measurementsFromReading(
 			Stream:       types.Fluid,
 			Symbol:       reading.symbol,
 			Side:         types.SideNone,
-			At:           through,
-			ObservedFrom: from,
+			At:           eventAt,
+			ObservedFrom: spec.from,
+			Horizon:      eventAt.Sub(spec.from),
 			Unit:         spec.unit,
 			Raw:          spec.raw,
 			Maturity:     maturity,
 			Validity:     validity,
 			Scale: types.ScaleReference{
 				Kind:    types.ScaleObservationWindow,
-				From:    from,
-				Through: through,
+				From:    spec.from,
+				Through: eventAt,
 			},
 		})
 	}

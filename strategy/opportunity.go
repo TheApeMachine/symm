@@ -19,6 +19,7 @@ type Opportunity struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	price    *broker.Price
+	balance  *broker.Balance
 	recorder *audit.Recorder
 	uiHub    chan<- []byte
 }
@@ -30,6 +31,7 @@ func NewOpportunity(
 	ctx context.Context,
 	cancel context.CancelFunc,
 	price *broker.Price,
+	balance *broker.Balance,
 	recorder *audit.Recorder,
 	uiHub chan<- []byte,
 ) *Opportunity {
@@ -37,6 +39,7 @@ func NewOpportunity(
 		ctx:      ctx,
 		cancel:   cancel,
 		price:    price,
+		balance:  balance,
 		recorder: recorder,
 		uiHub:    uiHub,
 	}
@@ -54,7 +57,7 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 		return
 	}
 
-	blocked := occupied(thesis)
+	blocked := opportunity.occupied(thesis)
 
 	for index := range thesis.Forecasts {
 		forecast := &thesis.Forecasts[index]
@@ -216,18 +219,31 @@ func (opportunity *Opportunity) reject(
 }
 
 func (opportunity *Opportunity) validate(mandatory map[string]any) error {
-	check := map[string]any{"price": opportunity.price}
+	check := map[string]any{
+		"price":   opportunity.price,
+		"balance": opportunity.balance,
+	}
 	maps.Copy(check, mandatory)
 
 	return errnie.Error(errnie.Require(check))
 }
 
 /*
-occupied lists symbols that already hold inventory or pending entry/exit intent
-so Measure cannot propose a fresh enter against a live lot.
+occupied lists wallet-open symbols, Thesis-created pending lots, and in-flight
+lifecycle so Measure cannot propose a fresh enter against a live lot.
 */
-func occupied(thesis *types.Thesis) map[string]struct{} {
+func (opportunity *Opportunity) occupied(thesis *types.Thesis) map[string]struct{} {
 	blocked := map[string]struct{}{}
+
+	if opportunity.balance != nil {
+		for holding := range opportunity.balance.Holdings() {
+			if holding.Status == types.CLOSED {
+				continue
+			}
+
+			blocked[holding.Symbol] = struct{}{}
+		}
+	}
 
 	if thesis == nil {
 		return blocked

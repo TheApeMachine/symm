@@ -110,6 +110,9 @@ func (desk *Desk) adoptOpen() {
 		)
 		position.status = types.OPEN
 		position.onTerminal = desk.evict
+		lot := holding
+		position.TakeStop(&lot)
+		desk.balance.holdings.Store(holding.Symbol, &lot)
 		desk.positions.Store(holding.Symbol, position)
 	}
 }
@@ -265,6 +268,7 @@ func (desk *Desk) BuyAfter(
 	position.claim.Bind(desk.balance, reservationID)
 
 	seed := holding
+	position.TakeStop(&seed)
 	desk.balance.holdings.Store(holding.Symbol, &seed)
 	desk.positions.Store(holding.Symbol, position)
 

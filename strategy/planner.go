@@ -37,6 +37,10 @@ type Planner struct {
 	recorder    *audit.Recorder
 	allocator   *Allocator
 	opportunity *Opportunity
+	admit       *Admit
+	continuity  Continuity
+	evidence    Evidence
+	rotate      Rotate
 	arbiter     *Arbiter
 }
 
@@ -74,6 +78,10 @@ func NewPlanner(
 ) *Planner {
 	ctx, cancel := context.WithCancel(ctx)
 
+	rotate := NewRotate()
+	evidence := NewEvidence()
+	admit := NewAdmit(ctx, balance, desk, rotate)
+
 	planner := &Planner{
 		ctx:        ctx,
 		cancel:     cancel,
@@ -89,11 +97,14 @@ func NewPlanner(
 		analyzer:   analyzer,
 		recorder:   recorder,
 		opportunity: NewOpportunity(
-			ctx, cancel, price, recorder, uiHub,
+			ctx, cancel, price, balance, recorder, uiHub,
 		),
-		arbiter: NewArbiter(desk, price),
+		admit:      admit,
+		continuity: NewContinuity(price, balance, desk, rotate, evidence),
+		evidence:   evidence,
+		rotate:     rotate,
+		arbiter:    NewArbiter(desk, price, balance, admit, rotate),
 	}
-	planner.arbiter.planner = planner
 	planner.workers = make([]signalWorker, 0, len(signals))
 
 	for _, signal := range signals {
@@ -149,13 +160,19 @@ func (planner *Planner) Close() {
 
 /*
 Update fans one immutable market cut through concurrent signal channels, then
-analyzes the single Thesis assembled by Planner's result collector.
+analyzes the durable Thesis. Per-tick evidence is replaced in place; Holdings
+and Lifecycle created by this Thesis are preserved.
 */
-func (planner *Planner) Update(frame *types.MarketFrame, tick int64) *types.Thesis {
-	thesis := types.NewThesis(planner.uiHub, frame)
-	thesis.CrossSection = frame.CrossSection
-	thesis.Tick = tick
-	planner.bindHoldings(thesis)
+func (planner *Planner) Update(
+	thesis *types.Thesis,
+	frame *types.MarketFrame,
+	tick int64,
+) *types.Thesis {
+	if thesis == nil {
+		thesis = types.NewThesis(planner.uiHub, frame)
+	}
+
+	thesis.ResetCut(frame, tick)
 	started := time.Now()
 
 	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "measure_begin", map[string]any{
@@ -214,36 +231,15 @@ func (planner *Planner) Update(frame *types.MarketFrame, tick int64) *types.Thes
 }
 
 /*
-bindHoldings copies broker-open inventory onto the Thesis before measure and
-analyze so open lots are visible to manifold and Decide.
-*/
-func (planner *Planner) bindHoldings(thesis *types.Thesis) {
-	if planner == nil || planner.balance == nil || thesis == nil {
-		return
-	}
-
-	for holding := range planner.balance.Holdings() {
-		seed := holding
-		thesis.Holdings.Store(holding.Symbol, &seed)
-	}
-}
-
-/*
 Decide manages open inventory, scores flat-symbol entries, arbitrates slots,
 then sizes admitted enters.
 */
 func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
-	if err := errnie.Error(errnie.Require(map[string]any{
-		"thesis":      thesis,
-		"opportunity": planner.opportunity,
-		"arbiter":     planner.arbiter,
-		"price":       planner.price,
-		"allocator":   planner.allocator,
-	})); err != nil {
+	if err := planner.validate(map[string]any{"thesis": thesis}); err != nil {
 		return thesis
 	}
 
-	planner.manage(thesis)
+	planner.continuity.Manage(thesis)
 	planner.opportunity.Measure(thesis)
 	planner.arbiter.Select(thesis)
 
@@ -265,7 +261,7 @@ commitRotations appends rotation exits only after the challenger Books a
 Reservation, and demotes unsized enters so Trade never submits naked sells.
 */
 func (planner *Planner) commitRotations(thesis *types.Thesis) {
-	if thesis == nil {
+	if err := planner.validate(map[string]any{"thesis": thesis}); err != nil {
 		return
 	}
 
@@ -325,7 +321,10 @@ publishMeasurements emits one combined measurement frame after fan-in so the
 terminal never replaces a partial signal snapshot with another in the same cut.
 */
 func (planner *Planner) publishMeasurements(thesis *types.Thesis) {
-	if planner.uiHub == nil || thesis == nil || len(thesis.Measurements) == 0 {
+	if err := planner.validate(map[string]any{
+		"thesis":       thesis,
+		"measurements": thesis.Measurements,
+	}); err != nil {
 		return
 	}
 
@@ -358,16 +357,21 @@ func signalName(signal types.Signal) string {
 	return name
 }
 
+/*
+validate requires Planner surfaces. Call-site extras (e.g. thesis) merge in via
+mandatory. Signals and analyzer stay optional on Decide-only paths.
+*/
 func (planner *Planner) validate(mandatory map[string]any) error {
 	check := map[string]any{
-		"desk":       planner.desk,
-		"instrument": planner.instrument,
-		"price":      planner.price,
-		"balance":    planner.balance,
-		"allocator":  planner.allocator,
-		"uiHub":      planner.uiHub,
-		"signals":    planner.signals,
-		"analyzer":   planner.analyzer,
+		"desk":        planner.desk,
+		"instrument":  planner.instrument,
+		"price":       planner.price,
+		"balance":     planner.balance,
+		"allocator":   planner.allocator,
+		"opportunity": planner.opportunity,
+		"arbiter":     planner.arbiter,
+		"admit":       planner.admit,
+		"uiHub":       planner.uiHub,
 	}
 
 	maps.Copy(check, mandatory)

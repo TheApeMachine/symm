@@ -412,4 +412,58 @@ describe("hawkes curve", () => {
 		expect(segments[0]?.afterArrival).toBeCloseTo(3);
 		expect(latestHawkesRaw(buffer, "spectral_radius")).toBe(0.72);
 	});
+
+	it("builds a series from compact metrics maps retained in the buffer", () => {
+		const fitFrom = "2026-07-14T17:00:00.000Z";
+		const fitThrough = "2026-07-14T17:00:10.000Z";
+		const firstAt = "2026-07-14T17:00:11.000Z";
+		const nextAt = "2026-07-14T17:00:12.000Z";
+		const scale = {
+			kind: "observation_window",
+			from: fitFrom,
+			through: fitThrough,
+		};
+		const compact = (
+			at: string,
+			metrics: Record<string, number>,
+		): Measurement => ({
+			source: "hawkes",
+			symbol: "BTC/USD",
+			stream: "hawkes",
+			at,
+			raw: 0,
+			normalized: null,
+			uncertainty: null,
+			validity: { state: "provisional", readiness: "model" },
+			scale,
+			metrics,
+		});
+
+		const epochs = [
+			epoch(firstAt, [
+				compact(firstAt, {
+					"baseline_intensity:buy": 0.6,
+					"baseline_intensity:sell": 0.4,
+					decay_rate: 1,
+					spectral_radius: 0.72,
+					"conditional_intensity:buy": 0.9,
+					"conditional_intensity:sell": 0.6,
+				}),
+			]),
+			epoch(nextAt, [
+				compact(nextAt, {
+					"conditional_intensity:buy": 1.2,
+					"conditional_intensity:sell": 0.8,
+				}),
+			]),
+		];
+
+		const series = hawkesSeriesFromBuffer(epochs, Date.parse(nextAt) + 1000);
+
+		expect(series).not.toBeNull();
+		expect(series?.samples.length).toBeGreaterThan(1);
+		expect(series?.peakExcess).toBeCloseTo(1.0);
+		expect(series?.fit).toBe(fitFrom);
+		expect(latestHawkesRaw(epochs, "spectral_radius")).toBe(0.72);
+	});
 });

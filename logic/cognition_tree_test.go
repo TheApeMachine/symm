@@ -122,6 +122,50 @@ func TestCognitionBranchesForkFromRoot(t *testing.T) {
 	})
 }
 
+func TestCognitionBeamsStaySymbolScoped(t *testing.T) {
+	Convey("Given two symbols trained on divergent sensory continuations", t, func() {
+		tree := dmt.NewTree("")
+		analyzer := &Analyzer{tree: tree}
+
+		for range 8 {
+			tree.TrainSensorySequence([]byte(
+				"symbol-btc-usd_cvd-absorption--positive_cvd-balance--positive",
+			))
+			tree.TrainSensorySequence([]byte(
+				"symbol-eth-usd_liquidity-scarcity-score--positive_fluid-reynolds--positive",
+			))
+		}
+
+		btcParts := []string{"symbol-btc-usd", "cvd-absorption--positive", "cvd-balance--positive"}
+		ethParts := []string{
+			"symbol-eth-usd", "liquidity-scarcity-score--positive", "fluid-reynolds--positive",
+		}
+		btcSequence := []byte(strings.Join(btcParts, "_"))
+		ethSequence := []byte(strings.Join(ethParts, "_"))
+
+		var scratch dmt.ClassificationScratch
+		btcClass := tree.Classify(btcSequence, &scratch)
+		ethClass := tree.Classify(ethSequence, &scratch)
+		btcTip := tree.PredictNextSensoryTokens([]byte("symbol-btc-usd"), nil)
+		ethTip := tree.PredictNextSensoryTokens([]byte("symbol-eth-usd"), nil)
+
+		_, btcBeams, _, _, _, _, _, _ := analyzer.cognitionVisualization(
+			btcSequence, []byte("symbol-btc-usd"), btcParts, btcClass, btcTip,
+		)
+		_, ethBeams, _, _, _, _, _, _ := analyzer.cognitionVisualization(
+			ethSequence, []byte("symbol-eth-usd"), ethParts, ethClass, ethTip,
+		)
+
+		Convey("Then each symbol's MAP beam stays inside its own namespace", func() {
+			So(len(btcBeams), ShouldBeGreaterThan, 0)
+			So(len(ethBeams), ShouldBeGreaterThan, 0)
+			So(btcBeams[0].Sequence, ShouldContainSubstring, "symbol-btc-usd")
+			So(ethBeams[0].Sequence, ShouldContainSubstring, "symbol-eth-usd")
+			So(btcBeams[0].Sequence, ShouldNotEqual, ethBeams[0].Sequence)
+		})
+	})
+}
+
 func TestCognitionVisualization(t *testing.T) {
 	Convey("Given a trained sensory sequence", t, func() {
 		tree := dmt.NewTree("")

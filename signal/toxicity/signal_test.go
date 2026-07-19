@@ -219,10 +219,10 @@ func TestSignal_MeasureFromMarket(testingTB *testing.T) {
 		tradeRow := trade.Data[0]
 		bidPrice := tradeRow.Price
 		askPrice := decimal.NewFromFloat64(tradeRow.Price.Float64() + 0.0001)
-		So(calmSession.Level3().SeedTouch(
+		So(calmSession.Level3.SeedTouch(
 			conditions.Subject(), &bidPrice, askPrice, decimal.NewFromFloat64(1000), seedAt,
 		), ShouldBeNil)
-		So(hotSession.Level3().SeedTouch(
+		So(hotSession.Level3.SeedTouch(
 			conditions.Subject(), &bidPrice, askPrice, decimal.NewFromFloat64(1000), seedAt,
 		), ShouldBeNil)
 

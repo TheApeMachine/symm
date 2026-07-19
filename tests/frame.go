@@ -141,3 +141,180 @@ MarshalFrame serializes one Kraken-shaped map for test fixtures.
 func MarshalFrame(frame map[string]any) []byte {
 	return marshalFrame(frame)
 }
+
+func shapeFrame(frame Frame, priceMul, volumeMul float64) Frame {
+	if priceMul == 1 && volumeMul == 1 {
+		return frame
+	}
+
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(frame.Payload, &payload); err != nil {
+		panic(err)
+	}
+
+	scaleFrameFields(payload, priceMul, volumeMul, 0, 0)
+
+	return Frame{
+		Channel: frame.Channel,
+		Type:    frame.Type,
+		Payload: marshalFrame(payload),
+	}
+}
+
+func shapeTradeAggression(frame Frame, qtyMul float64) Frame {
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(frame.Payload, &payload); err != nil {
+		panic(err)
+	}
+
+	for _, row := range frameRows(payload) {
+		row["side"] = "buy"
+
+		if qtyMul != 1 {
+			if qty, ok := row["qty"].(float64); ok {
+				row["qty"] = roundField(qty * qtyMul)
+			}
+		}
+	}
+
+	return Frame{
+		Channel: frame.Channel,
+		Type:    frame.Type,
+		Payload: marshalFrame(payload),
+	}
+}
+
+func shapeBookQty(frame Frame, bidMul, askMul float64) Frame {
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(frame.Payload, &payload); err != nil {
+		panic(err)
+	}
+
+	for _, row := range frameRows(payload) {
+		scaleLevels(row, "bids", bidMul)
+		scaleLevels(row, "asks", askMul)
+	}
+
+	return Frame{
+		Channel: frame.Channel,
+		Type:    frame.Type,
+		Payload: marshalFrame(payload),
+	}
+}
+
+func shapeSubjectQty(frame Frame, symbol string, qtyMul float64) Frame {
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(frame.Payload, &payload); err != nil {
+		panic(err)
+	}
+
+	for _, row := range frameRows(payload) {
+		if row["symbol"] != symbol {
+			continue
+		}
+
+		scaleRowFields(row, qtyMul, []string{"bid_qty", "ask_qty"})
+	}
+
+	return Frame{
+		Channel: frame.Channel,
+		Type:    frame.Type,
+		Payload: marshalFrame(payload),
+	}
+}
+
+func scaleLevels(row map[string]any, side string, mul float64) {
+	if mul == 1 {
+		return
+	}
+
+	levels, ok := row[side].([]any)
+
+	if !ok {
+		return
+	}
+
+	for _, raw := range levels {
+		level, ok := raw.(map[string]any)
+
+		if !ok {
+			continue
+		}
+
+		qty, ok := level["qty"].(float64)
+
+		if !ok {
+			continue
+		}
+
+		level["qty"] = roundField(math.Max(qty*mul, 0))
+	}
+}
+
+func shapeTickerBid(frame Frame, bidMul float64) Frame {
+	if bidMul == 1 {
+		return frame
+	}
+
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(frame.Payload, &payload); err != nil {
+		panic(err)
+	}
+
+	for _, row := range frameRows(payload) {
+		bid, ok := row["bid"].(float64)
+
+		if !ok {
+			continue
+		}
+
+		row["bid"] = roundField(math.Max(bid*bidMul, 0))
+	}
+
+	return Frame{
+		Channel: frame.Channel,
+		Type:    frame.Type,
+		Payload: marshalFrame(payload),
+	}
+}
+
+func shapeTouchCancel(frame Frame, remainFraction float64) Frame {
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(frame.Payload, &payload); err != nil {
+		panic(err)
+	}
+
+	for _, row := range frameRows(payload) {
+		levels, ok := row["bids"].([]any)
+
+		if !ok || len(levels) == 0 {
+			continue
+		}
+
+		level, ok := levels[0].(map[string]any)
+
+		if !ok {
+			continue
+		}
+
+		qty, ok := level["qty"].(float64)
+
+		if !ok {
+			continue
+		}
+
+		level["qty"] = roundField(math.Max(qty*remainFraction, 0))
+	}
+
+	return Frame{
+		Channel: frame.Channel,
+		Type:    frame.Type,
+		Payload: marshalFrame(payload),
+	}
+}

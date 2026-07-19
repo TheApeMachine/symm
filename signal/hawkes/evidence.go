@@ -256,7 +256,7 @@ func (evidence *Evidence) modelValue(
 
 /*
 applyFitEpoch anchors fitted-parameter evidence to the retained fit interval so
-graph validation does not mix a newer observation window with an older fit end.
+parameter rows keep FitAt as as-of instead of masquerading as evaluation ticks.
 */
 func (evidence *Evidence) applyFitEpoch(
 	measurement *types.Measurement,
@@ -293,10 +293,6 @@ func (evidence *Evidence) applyFitEvaluation(
 		from = through.Add(-outcome.Horizon)
 	}
 
-	if through.Before(from) {
-		from = through
-	}
-
 	measurement.ObservedFrom = from
 	measurement.At = through
 	measurement.Horizon = through.Sub(from)
@@ -310,6 +306,7 @@ func (evidence *Evidence) applyFitEvaluation(
 /*
 fitEpochBounds resolves the retained Hawkes fit interval, falling back to the
 current observation window when fit provenance has not been stamped yet.
+Missing origin is derived from Horizon; inverted ends are left for validation.
 */
 func (evidence *Evidence) fitEpochBounds(
 	outcome excitation.Outcome,
@@ -327,10 +324,6 @@ func (evidence *Evidence) fitEpochBounds(
 
 	if from.IsZero() && !through.IsZero() {
 		from = through.Add(-outcome.Horizon)
-	}
-
-	if through.Before(from) {
-		from = through
 	}
 
 	return from, through
@@ -376,8 +369,8 @@ func (evidence *Evidence) measurement(
 }
 
 /*
-observationInterval resolves the empirical Hawkes window and collapses any
-backward edge to a point interval instead of publishing inverted provenance.
+observationInterval resolves the empirical Hawkes window. A missing origin is
+derived from Horizon; producers must not emit ObservedFrom after At.
 */
 func (evidence *Evidence) observationInterval(
 	outcome excitation.Outcome,
@@ -387,10 +380,6 @@ func (evidence *Evidence) observationInterval(
 
 	if from.IsZero() && !through.IsZero() {
 		from = through.Add(-outcome.Horizon)
-	}
-
-	if through.Before(from) {
-		from = through
 	}
 
 	return from, through

@@ -11,7 +11,7 @@ import (
 
 func TestContinuationUtilityIsKeepScore(t *testing.T) {
 	Convey("Given a managing forecast with uncertainty", t, func() {
-		planner := &Planner{}
+		continuity := NewContinuity(nil, NewRotate(), NewEvidence())
 		forecast := types.Forecasts{
 			Symbol:         "IDEX/USD",
 			At:             time.Unix(1, 0).UTC(),
@@ -33,7 +33,7 @@ func TestContinuationUtilityIsKeepScore(t *testing.T) {
 			Status: types.OPEN,
 		}
 
-		decision := planner.continuation(forecast, 0.0026, holding)
+		decision := continuity.Score(forecast, 0.0026, holding)
 
 		Convey("It should publish keep-score utility, not raw return", func() {
 			So(decision.Action, ShouldEqual, types.ActionHold)

@@ -44,7 +44,7 @@ func TestSessionPlay(t *testing.T) {
 				So(last, ShouldNotBeNil)
 				So(last.Tick, ShouldBeGreaterThan, 0)
 				So(len(last.Measurements), ShouldBeGreaterThan, 0)
-				So(session.Desk().OpenPositions(), ShouldEqual, 0)
+				So(session.Desk.OpenPositions(), ShouldEqual, 0)
 			})
 		})
 	})
@@ -91,8 +91,8 @@ func TestSessionPaperSmoke(t *testing.T) {
 			Signals: pumpdumpSignals,
 		})
 		So(err, ShouldBeNil)
-		So(session.Paper(), ShouldNotBeNil)
-		So(session.Planner(), ShouldNotBeNil)
+		So(session.Paper, ShouldNotBeNil)
+		So(session.Planner, ShouldNotBeNil)
 
 		Convey("When the pump timeline plays through Tick", func() {
 			theses, err := session.Play(
@@ -111,7 +111,7 @@ func TestSessionPaperSmoke(t *testing.T) {
 				})
 
 				So(len(last.Measurements), ShouldBeGreaterThan, 0)
-				So(session.Desk().OpenPositions(), ShouldEqual, 0)
+				So(session.Desk.OpenPositions(), ShouldEqual, 0)
 				// Paper pump sessions run without analyzer forecasts/fees, so
 				// Decide has nothing Eligible and correctly stays empty.
 				So(len(last.Decisions), ShouldEqual, 0)
@@ -171,7 +171,7 @@ func TestSessionConcurrentEmitTick(t *testing.T) {
 
 			Convey("Then measured ticks remain coherent without crash", func() {
 				So(advanced, ShouldBeGreaterThan, 0)
-				So(session.Desk().OpenPositions(), ShouldEqual, 0)
+				So(session.Desk.OpenPositions(), ShouldEqual, 0)
 			})
 		})
 	})

@@ -1,15 +1,52 @@
 package strategy
 
 import (
+	"context"
+	"maps"
+
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-scaleTo sets proposed notional to the capital freed by a displaced incumbent
-so Allocator redeploys that lot instead of inventing a max_fraction size.
+Admit records accepted and rejected entry decisions onto Thesis and sizes
+rotation redeploys from freed incumbent capital.
 */
-func (planner *Planner) scaleTo(decision *types.Decision, notional float64) {
+type Admit struct {
+	ctx     context.Context
+	balance *broker.Balance
+	desk    *broker.Desk
+	rotate  Rotate
+}
+
+/*
+NewAdmit wires wallet/desk surfaces used when persisting enter decisions.
+*/
+func NewAdmit(
+	ctx context.Context,
+	balance *broker.Balance,
+	desk *broker.Desk,
+	rotate Rotate,
+) *Admit {
+	return &Admit{
+		ctx:     ctx,
+		balance: balance,
+		desk:    desk,
+		rotate:  rotate,
+	}
+}
+
+/*
+Scale sets proposed notional to the capital freed by a displaced incumbent so
+Allocator redeploys that lot instead of inventing a max_fraction size.
+*/
+func (admit *Admit) Scale(decision *types.Decision, notional float64) {
+	if err := admit.validate(map[string]any{"decision": decision}); err != nil {
+		return
+	}
+
 	if notional <= 0 {
 		return
 	}
@@ -32,11 +69,11 @@ func (planner *Planner) scaleTo(decision *types.Decision, notional float64) {
 }
 
 /*
-persistRejectedEntry records a slot-exhausted or rotate-rejected entry as an
-explicit nothing decision so the Thesis audit trail shows why utility-ranked
-intent did not execute.
+Reject records a slot-exhausted or rotate-rejected entry as an explicit nothing
+decision so the Thesis audit trail shows why utility-ranked intent did not
+execute.
 */
-func (planner *Planner) persistRejectedEntry(
+func (admit *Admit) Reject(
 	thesis *types.Thesis,
 	decision types.Decision,
 	opportunity bool,
@@ -44,12 +81,16 @@ func (planner *Planner) persistRejectedEntry(
 	admittedNormal int,
 	incumbents []Incumbent,
 ) {
+	if err := admit.validate(map[string]any{"thesis": thesis}); err != nil {
+		return
+	}
+
 	decision.Action = types.ActionNothing
 	prior := decision.Utility
 	decision.Utility = 0
 	decision.Cause = "slots_full"
 	decision.Reason = "higher-utility entries consumed available slots"
-	planner.stampCapital(&decision)
+	admit.Capital(&decision)
 
 	if decision.Alternatives == nil {
 		decision.Alternatives = map[string]float64{}
@@ -59,40 +100,52 @@ func (planner *Planner) persistRejectedEntry(
 		decision.Reason = "normal slots full; reserved requires opportunity"
 	}
 
-	if index, found := weakest(incumbents); found {
-		incumbent := incumbents[index]
-		edge := prior - incumbent.HoldUtility
-		surplus := rotateSurplus(prior, incumbent.HoldUtility, incumbent.ExitCost)
-		decision.Alternatives["hold_incumbent"] = incumbent.HoldUtility
-		decision.Alternatives["exit_cost"] = incumbent.ExitCost
-		decision.Alternatives["clear_prob"] = incumbent.ClearProb
-		decision.Alternatives["rotate_value"] = edge - incumbent.ExitCost
-		decision.Alternatives["wait_value"] = edge * incumbent.ClearProb
-		decision.Alternatives["rotate_surplus"] = surplus
+	index, found := admit.rotate.Weakest(incumbents)
 
-		if !shouldRotate(prior, incumbent.HoldUtility, incumbent.ExitCost, incumbent.ClearProb) {
-			decision.Cause = "rotate_wait"
-			decision.Reason = "challenger does not clear one-step wait threshold against weakest incumbent"
-		}
+	if !found {
+		thesis.Decisions = append(thesis.Decisions, decision)
+		return
+	}
+
+	incumbent := incumbents[index]
+	edge := prior - incumbent.HoldUtility
+	decision.Alternatives["hold_incumbent"] = incumbent.HoldUtility
+	decision.Alternatives["exit_cost"] = incumbent.ExitCost
+	decision.Alternatives["clear_prob"] = incumbent.ClearProb
+	decision.Alternatives["rotate_value"] = edge - incumbent.ExitCost
+	decision.Alternatives["wait_value"] = edge * incumbent.ClearProb
+	decision.Alternatives["rotate_surplus"] = admit.rotate.Surplus(
+		prior, incumbent.HoldUtility, incumbent.ExitCost,
+	)
+
+	if !admit.rotate.Gate(
+		prior, incumbent.HoldUtility, incumbent.ExitCost, incumbent.ClearProb,
+	) {
+		decision.Cause = "rotate_wait"
+		decision.Reason = "challenger does not clear one-step wait threshold against weakest incumbent"
 	}
 
 	thesis.Decisions = append(thesis.Decisions, decision)
 }
 
 /*
-persistAcceptedEntry records lifecycle, decision, and a Thesis holding for Desk
-to size and submit. Broker Position construction stays on Desk alone.
+Accept records lifecycle, decision, and a Thesis holding for Desk to size and
+submit. Broker Position construction stays on Desk alone.
 */
-func (planner *Planner) persistAcceptedEntry(
+func (admit *Admit) Accept(
 	thesis *types.Thesis,
 	decision types.Decision,
 	opportunity bool,
 ) {
-	planner.stampCapital(&decision)
+	if err := admit.validate(map[string]any{"thesis": thesis}); err != nil {
+		return
+	}
+
+	admit.Capital(&decision)
 	thesis.NoteLifecycle(decision.Symbol, types.LifecycleEntrySelected, decision.At)
 	thesis.Decisions = append(thesis.Decisions, decision)
 
-	holding := types.NewHolding(planner.ctx, decision.Symbol, decision.ProposedQuantity)
+	holding := types.NewHolding(admit.ctx, decision.Symbol, decision.ProposedQuantity)
 	holding.IsOpportunity = opportunity
 
 	// Nil qty means Allocator must size from max_fraction; rotation may leave
@@ -105,23 +158,31 @@ func (planner *Planner) persistAcceptedEntry(
 }
 
 /*
-stampCapital records wallet cash visible at admit time on the decision.
+Capital records wallet cash and slot occupancy visible at admit time.
 */
-func (planner *Planner) stampCapital(decision *types.Decision) {
-	if planner.balance == nil || decision == nil {
+func (admit *Admit) Capital(decision *types.Decision) {
+	if err := admit.validate(map[string]any{"decision": decision}); err != nil {
 		return
 	}
 
-	cash, err := planner.balance.AvailableQuote()
+	cash, err := admit.balance.AvailableQuote()
 
 	if err != nil {
 		return
 	}
 
 	decision.AvailableCapital = decimal.NewFromFloat64(cash)
+	decision.SlotCapacity = admit.desk.MaxSlots()
+	decision.OpenPositions = admit.desk.OpenPositions()
+}
 
-	if planner.desk != nil {
-		decision.SlotCapacity = planner.desk.MaxSlots()
-		decision.OpenPositions = planner.desk.OpenPositions()
+func (admit *Admit) validate(mandatory map[string]any) error {
+	check := map[string]any{
+		"balance": admit.balance,
+		"desk":    admit.desk,
 	}
+
+	maps.Copy(check, mandatory)
+
+	return errnie.Error(errnie.Require(check))
 }

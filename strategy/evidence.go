@@ -1,8 +1,8 @@
 package strategy
 
 import (
-	"slices"
 	"math"
+	"slices"
 
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/logic/manifold"
@@ -10,110 +10,191 @@ import (
 )
 
 /*
-Project builds StopEvidence for one open holding from the current Thesis cut.
-Missing mark or entry leaves Present false so Stoploss freezes last state
-instead of inventing prices or zeroing floors through a nil frame.
+Evidence projects Thesis cuts onto StopEvidence for Stoploss.Regulate. Missing
+mark or entry leaves Present false so the regulator freezes instead of inventing
+prices.
 */
-func Project(thesis *types.Thesis, holding types.Holding) types.StopEvidence {
-	evidence := types.StopEvidence{Symbol: holding.Symbol}
+type Evidence struct{}
+
+/*
+NewEvidence returns the stop-evidence projector.
+*/
+func NewEvidence() Evidence {
+	return Evidence{}
+}
+
+/*
+Project builds StopEvidence for one open holding from the current Thesis cut.
+*/
+func (evidence Evidence) Project(
+	thesis *types.Thesis,
+	holding types.Holding,
+) types.StopEvidence {
+	projected := types.StopEvidence{Symbol: holding.Symbol}
 
 	if holding.Mark == nil || holding.EntryPrice == nil {
-		return evidence
+		return projected
 	}
 
 	mark := holding.Mark.Float64()
 	entry := holding.EntryPrice.Float64()
 
 	if mark <= 0 || entry <= 0 {
-		return evidence
+		return projected
 	}
 
-	evidence.Mark = mark
-	evidence.Entry = entry
-	evidence.Present = true
+	projected.Mark = mark
+	projected.Entry = entry
+	projected.Present = true
 
 	if thesis == nil {
-		return evidence
+		return projected
 	}
 
-	for _, forecast := range thesis.Forecasts {
-		if forecast.Symbol != holding.Symbol {
-			continue
-		}
+	evidence.forecast(&projected, thesis, holding.Symbol)
+	evidence.resonance(&projected, thesis, holding.Symbol)
+	evidence.causal(&projected, thesis, holding.Symbol)
+	evidence.cognition(&projected, thesis, holding.Symbol)
+	evidence.manifold(&projected, thesis, holding.Symbol)
+	evidence.retreat(&projected, thesis, holding.Symbol)
 
-		evidence.ForecastEpoch = forecast.SourceEpoch
-		evidence.ExpectedReturn = forecast.ExpectedReturn
-		evidence.Uncertainty = forecast.Uncertainty
-		evidence.IncrementalMSE = forecast.IncrementalMSE
-		evidence.ReturnReady = forecast.Ready && forecast.Calibrated
-		evidence.Spread = forecast.ExpectedSpread
-		evidence.SellCapacity = forecast.SellCapacity
-		evidence.NormalizedResidual = normalizedResidual(
-			evidence.IncrementalMSE, evidence.Uncertainty,
-		)
-	}
-
-	for index := len(thesis.Resonance) - 1; index >= 0; index-- {
-		outcome, ok := asResonance(thesis.Resonance[index])
-
-		if !ok || outcome.Symbol != holding.Symbol {
-			continue
-		}
-
-		evidence.ExpectedReturn = outcome.ExpectedReturn
-		evidence.Uncertainty = outcome.Uncertainty
-		evidence.IncrementalMSE = outcome.IncrementalMSE
-		evidence.ReturnReady = outcome.ReturnReady
-		evidence.NormalizedResidual = normalizedResidual(
-			evidence.IncrementalMSE, evidence.Uncertainty,
-		)
-		break
-	}
-
-	for _, v := range slices.Backward(thesis.Causal) {
-		outcome, ok := asCausal(v)
-
-		if !ok || outcome.Symbol != holding.Symbol {
-			continue
-		}
-
-		evidence.CausalReady = outcome.Ready
-		evidence.CausalExpectedReturn = outcome.ExpectedReturn
-		break
-	}
-
-	if value, found := thesis.Cognition.Load(holding.Symbol); found {
-		cognition, ok := value.(types.Cognition)
-
-		if ok {
-			evidence.CognitionReady = cognition.Ready
-			evidence.CognitionConfidence = cognition.Confidence
-			evidence.CognitionWinner = cognition.Winner
-			evidence.CognitionAmbiguous = cognition.Ambiguous
-		}
-	}
-
-	if value, found := thesis.Manifold.Load(holding.Symbol); found {
-		state, ok := value.(manifold.State)
-
-		if ok && state.GasReady() {
-			evidence.Spread = state.Spread / state.ReferencePrice
-			evidence.SellCapacity = state.SellCapacity
-		}
-
-		if ok && state.Epoch > 0 {
-			evidence.ForecastEpoch = state.Epoch
-		}
-	}
-
-	return evidence
+	return projected
 }
 
-/*
-normalizedResidual is sqrt(MSE) / σ so Stoploss sees a dimensionless residual
-in return space rather than return-squared over return.
-*/
-func normalizedResidual(incrementalMSE, uncertainty float64) float64 {
+func (evidence Evidence) forecast(
+	projected *types.StopEvidence,
+	thesis *types.Thesis,
+	symbol string,
+) {
+	for _, forecast := range thesis.Forecasts {
+		if forecast.Symbol != symbol {
+			continue
+		}
+
+		projected.ForecastEpoch = forecast.SourceEpoch
+		projected.ExpectedReturn = forecast.ExpectedReturn
+		projected.Uncertainty = forecast.Uncertainty
+		projected.IncrementalMSE = forecast.IncrementalMSE
+		projected.ReturnReady = forecast.Ready && forecast.Calibrated
+		projected.Spread = forecast.ExpectedSpread
+		projected.SellCapacity = forecast.SellCapacity
+		projected.NormalizedResidual = evidence.residual(
+			projected.IncrementalMSE, projected.Uncertainty,
+		)
+	}
+}
+
+func (evidence Evidence) resonance(
+	projected *types.StopEvidence,
+	thesis *types.Thesis,
+	symbol string,
+) {
+	for index := len(thesis.Resonance) - 1; index >= 0; index-- {
+		outcome, ok := evidence.asResonance(thesis.Resonance[index])
+
+		if !ok || outcome.Symbol != symbol {
+			continue
+		}
+
+		projected.ExpectedReturn = outcome.ExpectedReturn
+		projected.Uncertainty = outcome.Uncertainty
+		projected.IncrementalMSE = outcome.IncrementalMSE
+		projected.ReturnReady = outcome.ReturnReady
+		projected.NormalizedResidual = evidence.residual(
+			projected.IncrementalMSE, projected.Uncertainty,
+		)
+		return
+	}
+}
+
+func (evidence Evidence) causal(
+	projected *types.StopEvidence,
+	thesis *types.Thesis,
+	symbol string,
+) {
+	for _, value := range slices.Backward(thesis.Causal) {
+		outcome, ok := evidence.asCausal(value)
+
+		if !ok || outcome.Symbol != symbol {
+			continue
+		}
+
+		projected.CausalReady = outcome.Ready
+		projected.CausalExpectedReturn = outcome.ExpectedReturn
+		return
+	}
+}
+
+func (evidence Evidence) cognition(
+	projected *types.StopEvidence,
+	thesis *types.Thesis,
+	symbol string,
+) {
+	value, found := thesis.Cognition.Load(symbol)
+
+	if !found {
+		return
+	}
+
+	cognition, ok := value.(types.Cognition)
+
+	if !ok {
+		return
+	}
+
+	projected.CognitionReady = cognition.Ready
+	projected.CognitionConfidence = cognition.Confidence
+	projected.CognitionWinner = cognition.Winner
+	projected.CognitionAmbiguous = cognition.Ambiguous
+}
+
+func (evidence Evidence) manifold(
+	projected *types.StopEvidence,
+	thesis *types.Thesis,
+	symbol string,
+) {
+	value, found := thesis.Manifold.Load(symbol)
+
+	if !found {
+		return
+	}
+
+	state, ok := value.(manifold.State)
+
+	if !ok {
+		return
+	}
+
+	if state.GasReady() {
+		projected.Spread = state.Spread / state.ReferencePrice
+		projected.SellCapacity = state.SellCapacity
+	}
+
+	if state.Epoch > 0 {
+		projected.ForecastEpoch = state.Epoch
+	}
+}
+
+func (evidence Evidence) retreat(
+	projected *types.StopEvidence,
+	thesis *types.Thesis,
+	symbol string,
+) {
+	for _, measurement := range thesis.Measurements {
+		if measurement == nil ||
+			measurement.Symbol != symbol ||
+			measurement.Metric != types.MetricRetreatingQuantity ||
+			measurement.Normalized == nil {
+			continue
+		}
+
+		if *measurement.Normalized > projected.RetreatPressure {
+			projected.RetreatPressure = *measurement.Normalized
+		}
+	}
+}
+
+func (evidence Evidence) residual(incrementalMSE, uncertainty float64) float64 {
 	if uncertainty <= 0 || incrementalMSE <= 0 {
 		return 0
 	}
@@ -121,10 +202,7 @@ func normalizedResidual(incrementalMSE, uncertainty float64) float64 {
 	return math.Sqrt(incrementalMSE) / uncertainty
 }
 
-/*
-asResonance normalizes pointer or value ResonanceOutcome payloads from Thesis.
-*/
-func asResonance(value any) (logic.ResonanceOutcome, bool) {
+func (evidence Evidence) asResonance(value any) (logic.ResonanceOutcome, bool) {
 	switch outcome := value.(type) {
 	case *logic.ResonanceOutcome:
 		if outcome == nil {
@@ -139,10 +217,7 @@ func asResonance(value any) (logic.ResonanceOutcome, bool) {
 	}
 }
 
-/*
-asCausal normalizes pointer or value CausalOutcome payloads from Thesis.
-*/
-func asCausal(value any) (logic.CausalOutcome, bool) {
+func (evidence Evidence) asCausal(value any) (logic.CausalOutcome, bool) {
 	switch outcome := value.(type) {
 	case *logic.CausalOutcome:
 		if outcome == nil {

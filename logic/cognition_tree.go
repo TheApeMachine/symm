@@ -1,6 +1,8 @@
 package logic
 
 import (
+	"strings"
+
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/types"
 )
@@ -30,20 +32,37 @@ func (analyzer *Analyzer) cognitionVisualization(
 	}
 
 	classes = cognitionClasses(classification)
-	beamWidth = cognitionBeamWidth(predictions)
+	symbolPrefix := cognitionSymbolPrefix(parts)
+	tip := analyzer.predictChildren(string(symbolPrefix), cognitionTreeDepth()*cognitionTreeDepth())
+
+	if len(tip) == 0 {
+		tip = predictions
+	}
+
+	beamWidth = analyzer.treeExpandWidth(cognitionBeamWidth(tip))
 	maxHops = cognitionTreeDepth()
-	branches, nodeCount = analyzer.cognitionBranches(analyzer.treeExpandWidth(beamWidth))
-	// Beam search starts at the empty sensory prefix so paths diverge across the
-	// radix tree. Searching one hop from the nearly-complete parent made every
-	// beam look like the same long snake.
+	branches, nodeCount = analyzer.cognitionBranches(beamWidth)
+	// Beam search is scoped under the symbol hop so each coin explores its own
+	// namespace. Searching the empty root made every symbol share one global MAP.
 	beams, lookaheadScore, lookaheadPaths = analyzer.cognitionBeams(
-		nil, beamWidth, maxHops, predictions,
+		symbolPrefix, beamWidth, maxHops, tip,
 	)
 
 	_ = parent
-	_ = parts
 
 	return branches, beams, classes, beamWidth, maxHops, nodeCount, lookaheadScore, lookaheadPaths
+}
+
+/*
+cognitionSymbolPrefix returns the leading symbol-* token so beam search stays
+inside one coin's radix namespace.
+*/
+func cognitionSymbolPrefix(parts []string) []byte {
+	if len(parts) == 0 || !strings.HasPrefix(parts[0], "symbol-") {
+		return nil
+	}
+
+	return []byte(parts[0])
 }
 
 func cognitionClasses(

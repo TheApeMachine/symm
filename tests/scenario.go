@@ -3,8 +3,6 @@ package tests
 import (
 	"iter"
 	"math"
-
-	"github.com/bytedance/sonic"
 )
 
 /*
@@ -175,67 +173,80 @@ func BookImbalance(
 	}
 }
 
-func shapeFrame(frame Frame, priceMul, volumeMul float64) Frame {
-	if priceMul == 1 && volumeMul == 1 {
-		return frame
+/*
+BidFlicker multiplies ticker bid (not last, not volume) by the cycling
+multipliers from frame at onward. Quote-only chatter without a print.
+*/
+func BidFlicker(
+	frames iter.Seq[Frame],
+	at int,
+	bidMuls []float64,
+) iter.Seq[Frame] {
+	if len(bidMuls) == 0 {
+		return frames
 	}
 
-	var payload map[string]any
+	return func(yield func(Frame) bool) {
+		index := 0
 
-	if err := sonic.Unmarshal(frame.Payload, &payload); err != nil {
-		panic(err)
-	}
+		for frame := range frames {
+			shaped := frame
 
-	scaleFrameFields(payload, priceMul, volumeMul, 0, 0)
+			if frame.Channel == "ticker" && index >= at {
+				mul := bidMuls[(index-at)%len(bidMuls)]
+				shaped = shapeTickerBid(frame, mul)
+			}
 
-	return Frame{
-		Channel: frame.Channel,
-		Type:    frame.Type,
-		Payload: marshalFrame(payload),
-	}
-}
+			index++
 
-func shapeTradeAggression(frame Frame, qtyMul float64) Frame {
-	var payload map[string]any
-
-	if err := sonic.Unmarshal(frame.Payload, &payload); err != nil {
-		panic(err)
-	}
-
-	for _, row := range frameRows(payload) {
-		row["side"] = "buy"
-
-		if qtyMul != 1 {
-			if qty, ok := row["qty"].(float64); ok {
-				row["qty"] = roundField(qty * qtyMul)
+			if !yield(shaped) {
+				return
 			}
 		}
 	}
+}
 
-	return Frame{
-		Channel: frame.Channel,
-		Type:    frame.Type,
-		Payload: marshalFrame(payload),
+/*
+TouchCancel collapses best-bid resting qty from frame at onward while leaving
+trade flow untouched — vanishing touch with no prints.
+*/
+func TouchCancel(
+	frames iter.Seq[Frame],
+	at int,
+	remainFraction float64,
+) iter.Seq[Frame] {
+	remain := math.Max(remainFraction, 0)
+
+	return func(yield func(Frame) bool) {
+		index := 0
+
+		for frame := range frames {
+			shaped := frame
+
+			if frame.Channel == "book" && index >= at {
+				shaped = shapeTouchCancel(frame, remain)
+			}
+
+			index++
+
+			if !yield(shaped) {
+				return
+			}
+		}
 	}
 }
 
-func shapeBookQty(frame Frame, bidMul, askMul float64) Frame {
-	var payload map[string]any
-
-	if err := sonic.Unmarshal(frame.Payload, &payload); err != nil {
-		panic(err)
-	}
-
-	for _, row := range frameRows(payload) {
-		scaleLevels(row, "bids", bidMul)
-		scaleLevels(row, "asks", askMul)
-	}
-
-	return Frame{
-		Channel: frame.Channel,
-		Type:    frame.Type,
-		Payload: marshalFrame(payload),
-	}
+/*
+QuoteRetreat couples TouchCancel with BidFlicker for cancel-driven bid swings.
+*/
+func QuoteRetreat(
+	ticker iter.Seq[Frame],
+	book iter.Seq[Frame],
+	at int,
+	bidMuls []float64,
+	remainFraction float64,
+) (iter.Seq[Frame], iter.Seq[Frame]) {
+	return BidFlicker(ticker, at, bidMuls), TouchCancel(book, at, remainFraction)
 }
 
 /*
@@ -259,55 +270,5 @@ func ThinSubject(
 				return
 			}
 		}
-	}
-}
-
-func shapeSubjectQty(frame Frame, symbol string, qtyMul float64) Frame {
-	var payload map[string]any
-
-	if err := sonic.Unmarshal(frame.Payload, &payload); err != nil {
-		panic(err)
-	}
-
-	for _, row := range frameRows(payload) {
-		if row["symbol"] != symbol {
-			continue
-		}
-
-		scaleRowFields(row, qtyMul, []string{"bid_qty", "ask_qty"})
-	}
-
-	return Frame{
-		Channel: frame.Channel,
-		Type:    frame.Type,
-		Payload: marshalFrame(payload),
-	}
-}
-
-func scaleLevels(row map[string]any, side string, mul float64) {
-	if mul == 1 {
-		return
-	}
-
-	levels, ok := row[side].([]any)
-
-	if !ok {
-		return
-	}
-
-	for _, raw := range levels {
-		level, ok := raw.(map[string]any)
-
-		if !ok {
-			continue
-		}
-
-		qty, ok := level["qty"].(float64)
-
-		if !ok {
-			continue
-		}
-
-		level["qty"] = roundField(math.Max(qty*mul, 0))
 	}
 }

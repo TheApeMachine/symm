@@ -97,7 +97,7 @@ func (balance *Balance) Frame() []byte {
 			return true
 		}
 
-		if frame := holding.Stoploss.Frame(holding.Symbol); frame != nil {
+		if frame := holding.StopFrame(); frame != nil {
 			stops = append(stops, frame)
 		}
 

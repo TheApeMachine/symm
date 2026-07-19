@@ -17,10 +17,13 @@ system:
       buffer: 4096
 
 cognitive:
+  # Keep the DMT radix tree fully in process. Empty persist_dir / in_memory
+  # skips the WAL so TrainSensorySequence and episodic commits do not hit disk.
+  in_memory: true
   persist_dir: ~/.symm/cognitive
   tick_budget: 10ms
   # Rotate the cognitive store aside on boot so a bloated WAL cannot poison the
-  # next run. Discards persisted Thesis recovery from that directory.
+  # next run. No-op when in_memory is set.
   reset_on_boot: true
 
 market:

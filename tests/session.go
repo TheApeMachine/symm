@@ -3,17 +3,16 @@ package tests
 import (
 	"context"
 	"iter"
+	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/strategy"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 )
@@ -29,19 +28,20 @@ must falsify calm versus stressed PeakMetric/PeakSourceMetric outcomes.
 type Session struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
-	mock     *MockAPI
 	api      *websocket.API
-	paper    *websocket.Paper
-	crypto   *trader.Crypto
-	planner  *strategy.Planner
-	desk     *broker.Desk
-	price    *broker.Price
-	balance  *broker.Balance
 	channel  chan []byte
 	clock    time.Time
 	interval time.Duration
 	tree     *dmt.Tree
-	books    *SessionLevel3
+
+	Mock    *MockAPI
+	Paper   *websocket.Paper
+	Crypto  *trader.Crypto
+	Planner *strategy.Planner
+	Desk    *broker.Desk
+	Price   *broker.Price
+	Balance *broker.Balance
+	Level3  *SessionLevel3
 }
 
 /*
@@ -78,8 +78,12 @@ func NewSession(
 ) (*Session, error) {
 	testingTB.Helper()
 
-	restoreViper := configureSessionViper(testingTB)
-	testingTB.Cleanup(restoreViper)
+	env := NewSessionEnv()
+	testingTB.Cleanup(env.Configure(testingTB))
+
+	// Isolate paper CLI before Balance.Initialize so SubscribeBalance cannot
+	// adopt the operator's live paper wallet into OpenPositions.
+	InstallPaperCLI(testingTB, filepath.Join(testingTB.TempDir(), "paper-state.json"))
 
 	sessionCtx, cancel := context.WithCancel(ctx)
 	channel := make(chan []byte, 256)
@@ -170,7 +174,7 @@ func NewSession(
 		errnie.Error(tree.Close())
 	})
 
-	crypto, err := wireSessionCrypto(
+	crypto, err := env.Crypto(
 		sessionCtx,
 		api,
 		price,
@@ -202,19 +206,19 @@ func NewSession(
 	session := &Session{
 		ctx:      sessionCtx,
 		cancel:   cancel,
-		mock:     mock,
 		api:      api,
-		paper:    paper,
-		crypto:   crypto,
-		planner:  planner,
-		desk:     desk,
-		price:    price,
-		balance:  balance,
 		channel:  channel,
 		clock:    clock,
 		interval: interval,
 		tree:     tree,
-		books:    books,
+		Mock:     mock,
+		Paper:    paper,
+		Crypto:   crypto,
+		Planner:  planner,
+		Desk:     desk,
+		Price:    price,
+		Balance:  balance,
+		Level3:   books,
 	}
 
 	testingTB.Cleanup(func() {
@@ -222,77 +226,6 @@ func NewSession(
 	})
 
 	return session, nil
-}
-
-func configureSessionViper(testingTB testing.TB) func() {
-	previousModel := viper.Get("trading.model")
-	previousData := viper.Get("system.data_path")
-	previousTimeline := viper.Get("signals.feed_timeline_capacity")
-	previousTrack := viper.Get("signals.feed_track_capacity")
-	previousSlots := viper.Get("trading.slots.normal")
-	previousReserved := viper.Get("trading.slots.reserved")
-	previousQuote := viper.Get("market.quote_currency")
-	previousBatch := viper.Get("market.subscribe_batch")
-	previousPace := viper.Get("market.subscribe_pace")
-	previousFraction := viper.Get("trading.allocation.max_fraction")
-	previousInterval := viper.Get("signals.fluid.integration_interval")
-
-	viper.Set("trading.model", "paper")
-	viper.Set("system.data_path", testingTB.TempDir())
-	viper.Set("signals.feed_timeline_capacity", 128)
-	viper.Set("signals.feed_track_capacity", 128)
-	viper.Set("trading.slots.normal", 2)
-	viper.Set("trading.slots.reserved", 2)
-	viper.Set("trading.allocation.max_fraction", 0.20)
-	viper.Set("market.quote_currency", "USD")
-	viper.Set("market.subscribe_batch", 200)
-	viper.Set("market.subscribe_pace", "20ms")
-	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-
-	return func() {
-		viper.Set("trading.model", previousModel)
-		viper.Set("system.data_path", previousData)
-		viper.Set("signals.feed_timeline_capacity", previousTimeline)
-		viper.Set("signals.feed_track_capacity", previousTrack)
-		viper.Set("trading.slots.normal", previousSlots)
-		viper.Set("trading.slots.reserved", previousReserved)
-		viper.Set("market.quote_currency", previousQuote)
-		viper.Set("market.subscribe_batch", previousBatch)
-		viper.Set("market.subscribe_pace", previousPace)
-		viper.Set("trading.allocation.max_fraction", previousFraction)
-		viper.Set("signals.fluid.integration_interval", previousInterval)
-	}
-}
-
-func wireSessionCrypto(
-	ctx context.Context,
-	api *websocket.API,
-	price *broker.Price,
-	balance *broker.Balance,
-	desk *broker.Desk,
-	instrument *broker.Instrument,
-	planner *strategy.Planner,
-	tree *dmt.Tree,
-	channel chan []byte,
-) (*trader.Crypto, error) {
-	thesis := types.NewThesis(channel, nil)
-	booter := system.NewBooter(ctx, channel)
-
-	return trader.NewCrypto(
-		ctx,
-		booter,
-		api,
-		price,
-		balance,
-		desk,
-		instrument,
-		nil,
-		planner,
-		tree,
-		thesis,
-		nil,
-		nil,
-	)
 }
 
 /*
@@ -305,8 +238,8 @@ func (session *Session) Close() {
 
 	session.cancel()
 
-	if session.crypto != nil {
-		errnie.Error(session.crypto.Close())
+	if session.Crypto != nil {
+		errnie.Error(session.Crypto.Close())
 	}
 
 	if session.api != nil {
@@ -315,55 +248,12 @@ func (session *Session) Close() {
 }
 
 /*
-Mock returns the Conn emulator used to inject public market frames.
-*/
-func (session *Session) Mock() *MockAPI {
-	return session.mock
-}
-
-/*
-Crypto exposes the runtime under test for direct Tick assertions.
-*/
-func (session *Session) Crypto() *trader.Crypto {
-	return session.crypto
-}
-
-/*
-Desk exposes the paper desk for open-position assertions.
-*/
-func (session *Session) Desk() *broker.Desk {
-	return session.desk
-}
-
-/*
-Price exposes the broker fee/ticker surface for Decide friction seeding.
-*/
-func (session *Session) Price() *broker.Price {
-	return session.price
-}
-
-/*
-Balance exposes quote capital for AvailableQuote assertions after balance
-frames are emitted through the Conn emulator.
-*/
-func (session *Session) Balance() *broker.Balance {
-	return session.balance
-}
-
-/*
-Planner exposes the strategy planner wired into Crypto.Tick.
-*/
-func (session *Session) Planner() *strategy.Planner {
-	return session.planner
-}
-
-/*
 RunDecide applies the same Plan path Crypto.Tick uses after a market Play, so
 reserved/rotate assertions can run on a thesis seeded from the emulator cut
 without requiring the GPU analyzer to invent forecasts.
 */
 func (session *Session) RunDecide(thesis *types.Thesis) error {
-	if session == nil || session.crypto == nil {
+	if session == nil || session.Crypto == nil {
 		return errnie.Err(
 			errnie.NotFound,
 			"tests: session crypto unavailable",
@@ -379,7 +269,7 @@ func (session *Session) RunDecide(thesis *types.Thesis) error {
 		)
 	}
 
-	session.crypto.Plan(thesis)
+	session.Crypto.Plan(thesis)
 
 	return nil
 }
@@ -393,23 +283,9 @@ func (session *Session) RunTrade(thesis *types.Thesis) error {
 		return err
 	}
 
-	session.crypto.Trade(thesis)
+	session.Crypto.Trade(thesis)
 
 	return nil
-}
-
-/*
-Paper exposes the paper simulator attached to the websocket API.
-*/
-func (session *Session) Paper() *websocket.Paper {
-	return session.paper
-}
-
-/*
-Level3 exposes harness Level3 books when enabled.
-*/
-func (session *Session) Level3() *SessionLevel3 {
-	return session.books
 }
 
 /*
@@ -418,12 +294,12 @@ handlers (Market, Price, …). Level3 frames are applied under the Session L3
 write lease when Level3 was enabled.
 */
 func (session *Session) Emit(frame Frame) {
-	if frame.Channel == "level3" && session.books != nil {
-		errnie.Error(session.books.Apply(frame.Payload))
+	if frame.Channel == "level3" && session.Level3 != nil {
+		errnie.Error(session.Level3.Apply(frame.Payload))
 		return
 	}
 
-	session.mock.Emit(frame.Channel, frame.Payload)
+	session.Mock.Emit(frame.Channel, frame.Payload)
 }
 
 /*
@@ -435,7 +311,7 @@ func (session *Session) Advance(frames ...Frame) (*types.Thesis, error) {
 		session.Emit(frame)
 	}
 
-	thesis, err := session.crypto.Tick(session.clock)
+	thesis, err := session.Crypto.Tick(session.clock)
 	session.clock = session.clock.Add(session.interval)
 
 	return thesis, err
@@ -459,7 +335,7 @@ func (session *Session) Play(frames iter.Seq[Frame]) ([]*types.Thesis, error) {
 			continue
 		}
 
-		thesis, err := session.crypto.Tick(session.clock)
+		thesis, err := session.Crypto.Tick(session.clock)
 		session.clock = session.clock.Add(session.interval)
 
 		if err != nil {
@@ -477,7 +353,7 @@ func (session *Session) Play(frames iter.Seq[Frame]) ([]*types.Thesis, error) {
 		return theses, nil
 	}
 
-	thesis, err := session.crypto.Tick(session.clock)
+	thesis, err := session.Crypto.Tick(session.clock)
 	session.clock = session.clock.Add(session.interval)
 
 	if err != nil {

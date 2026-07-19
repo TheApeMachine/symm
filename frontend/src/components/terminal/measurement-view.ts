@@ -60,6 +60,44 @@ export const headlineReading = (
 };
 
 /*
+metricKey is the wire/store lookup for one metric identity, including side when
+the buffer row carries a compact metrics map (metric:side).
+*/
+const metricKey = (metric: string, side = ""): string =>
+	side === "" ? metric : `${metric}:${side}`;
+
+/*
+readingFromRow returns a flat metric view of one CircularBuffer row. Compact
+wire rows store values under metrics; flat rows already carry metric + raw.
+*/
+const readingFromRow = (
+	measurement: Measurement,
+	metric: string,
+	side = "",
+): Measurement | undefined => {
+	if (
+		measurement.metric === metric &&
+		(side === "" || (measurement.side ?? "") === side)
+	) {
+		return measurement;
+	}
+
+	const raw = measurement.metrics?.[metricKey(metric, side)];
+
+	if (typeof raw !== "number" || !Number.isFinite(raw)) {
+		return undefined;
+	}
+
+	return {
+		...measurement,
+		metric,
+		side: side === "" ? measurement.side : side,
+		raw,
+		normalized: measurement.normalized ?? null,
+	};
+};
+
+/*
 latestByMetric finds the most recent measurement matching a metric and side.
 Side is part of identity because directional metrics (e.g. toxicity's bid/ask
 best price) share a metric name.
@@ -70,14 +108,10 @@ export const latestByMetric = (
 	side = "",
 ): Measurement | undefined => {
 	for (let index = values.length - 1; index >= 0; index -= 1) {
-		const measurement = values[index];
+		const reading = readingFromRow(values[index], metric, side);
 
-		if (measurement.metric !== metric) {
-			continue;
-		}
-
-		if (side === "" || (measurement.side ?? "") === side) {
-			return measurement;
+		if (reading !== undefined) {
+			return reading;
 		}
 	}
 
@@ -94,11 +128,43 @@ export const seriesByMetric = (
 	side = "",
 ): number[] =>
 	values.flatMap((measurement) => {
-		if (measurement.metric !== metric || (measurement.side ?? "") !== side) {
-			return [];
+		const reading = readingFromRow(measurement, metric, side);
+
+		return reading !== undefined && Number.isFinite(reading.raw)
+			? [reading.raw]
+			: [];
+	});
+
+/*
+rowsFromBuffer projects each CircularBuffer entry into flat metric rows so
+detail grids can iterate metric identity whether the store held a compact
+metrics map or already-flat rows.
+*/
+export const rowsFromBuffer = (values: Measurement[]): Measurement[] =>
+	values.flatMap((measurement) => {
+		if (measurement.metric !== undefined || measurement.metrics === undefined) {
+			return [measurement];
 		}
 
-		return Number.isFinite(measurement.raw) ? [measurement.raw] : [];
+		return Object.entries(measurement.metrics).flatMap(([key, raw]) => {
+			if (typeof raw !== "number" || !Number.isFinite(raw)) {
+				return [];
+			}
+
+			const split = key.indexOf(":");
+			const metric = split === -1 ? key : key.slice(0, split);
+			const side = split === -1 ? undefined : key.slice(split + 1);
+
+			return [
+				{
+					...measurement,
+					metric,
+					side,
+					raw,
+					normalized: measurement.normalized ?? null,
+				},
+			];
+		});
 	});
 
 /*
@@ -106,13 +172,14 @@ latestEpoch returns every measurement that shares the most recent observation
 time in a flat measurement list.
 */
 export const latestEpoch = (values: Measurement[]): Measurement[] => {
-	const at = values.at(-1)?.at;
+	const rows = rowsFromBuffer(values);
+	const at = rows.at(-1)?.at;
 
 	if (at === undefined) {
 		return [];
 	}
 
-	return values.filter((measurement) => measurement.at === at);
+	return rows.filter((measurement) => measurement.at === at);
 };
 
 /*

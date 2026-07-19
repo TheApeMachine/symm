@@ -43,18 +43,38 @@ export const resetHawkesFitRetention = (): void => {
 
 /*
 reading selects one directional metric from a complete observation epoch.
+Rows may be flat (metric + raw) or compact wire maps under metrics.
 */
 const reading = (
 	epoch: MeasurementEpoch,
 	metric: string,
 	side = "",
 ): Measurement | undefined => {
+	const key = side === "" ? metric : `${metric}:${side}`;
+
 	for (let index = epoch.readings.length - 1; index >= 0; index -= 1) {
 		const measurement = epoch.readings[index];
 
-		if (measurement.metric === metric && (measurement.side ?? "") === side) {
+		if (
+			measurement.metric === metric &&
+			(measurement.side ?? "") === side
+		) {
 			return measurement;
 		}
+
+		const mapped = measurement.metrics?.[key];
+
+		if (typeof mapped !== "number" || !Number.isFinite(mapped)) {
+			continue;
+		}
+
+		return {
+			...measurement,
+			metric,
+			side: side === "" ? measurement.side : side,
+			raw: mapped,
+			normalized: measurement.normalized ?? null,
+		};
 	}
 
 	return undefined;

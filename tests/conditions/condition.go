@@ -2,6 +2,7 @@ package conditions
 
 import (
 	"iter"
+	"math"
 
 	"github.com/theapemachine/symm/tests"
 	bookfixture "github.com/theapemachine/symm/tests/fixtures/book"
@@ -170,6 +171,36 @@ func ThinHerd(horizon int, qtyMul float64) *tests.Market {
 			subjectSymbol,
 			qtyMul,
 		)),
+		calmTrade(horizon),
+		calmBook(horizon),
+	)
+}
+
+/*
+PhantomDrawdown cancels the best bid wall and flickers ticker bid without
+changing trade volume — quote-only adverse marks for exit honesty tests.
+*/
+func PhantomDrawdown(horizon int, cancelAt int, bidDrop float64) *tests.Market {
+	drop := math.Max(bidDrop, 0)
+	// Multipliers stay ≤ 1 so bid never crosses ask on the calm tape.
+	ticker, book := tests.QuoteRetreat(
+		tests.FramesOf(calmTicker(horizon)),
+		twoSidedBooks(horizon),
+		cancelAt,
+		[]float64{1, 1 - drop, 1 - drop/2, 1 - drop},
+		0.001,
+	)
+
+	return base(newShaped(ticker), calmTrade(horizon), newShaped(book))
+}
+
+/*
+CalibratedLift applies a modest price rise from frame at onward so ratchet
+reachability can be exercised under a calibrated forecast band.
+*/
+func CalibratedLift(horizon int, at int, priceMul float64) *tests.Market {
+	return base(
+		newShaped(tests.Spike(tests.FramesOf(calmTicker(horizon)), at, priceMul, 1)),
 		calmTrade(horizon),
 		calmBook(horizon),
 	)

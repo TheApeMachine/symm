@@ -13,7 +13,7 @@ capacity is free — not forecast order.
 func TestAdmitRanksByUtilityWithFreeSlots(t *testing.T) {
 	t.Parallel()
 
-	planner := testPlannerSlots(1, 0, 1000)
+	planner := decideFixture.Slots(1, 0, 1000)
 	thesis := types.NewThesis(nil, nil)
 	low := decideForecast("LOW/USD", 0.04, 0.01)
 	high := decideForecast("HIGH/USD", 0.10, 0.01)
@@ -47,10 +47,10 @@ weakest incumbent when rotate surplus is positive.
 func TestDecideRotatesWhenChallengerClearsWeakest(t *testing.T) {
 	t.Parallel()
 
-	planner := testPlanner()
+	planner := decideFixture.Planner()
 	thesis := types.NewThesis(nil, nil)
-	weakLot := testHolding("WEAK/USD", 100, 1)
-	keepLot := testHolding("KEEP/USD", 100, 1)
+	weakLot := decideFixture.Holding("WEAK/USD", 100, 1)
+	keepLot := decideFixture.Holding("KEEP/USD", 100, 1)
 	thesis.Holdings.Store("WEAK/USD", weakLot)
 	thesis.Holdings.Store("KEEP/USD", keepLot)
 
@@ -61,9 +61,9 @@ func TestDecideRotatesWhenChallengerClearsWeakest(t *testing.T) {
 	thesis.Cognition.Store("NEXT/USD", buyCognition("NEXT/USD"))
 	thesis.Manifold.Store("NEXT/USD", readyBasin("NEXT/USD", 0.2))
 
-	planner = testPlannerSlots(2, 0, 1000)
-	seedOpenLot(planner, weakLot)
-	seedOpenLot(planner, keepLot)
+	planner = decideFixture.Slots(2, 0, 1000)
+	decideFixture.Seed(planner, weakLot)
+	decideFixture.Seed(planner, keepLot)
 	planner.Decide(thesis)
 
 	exited := false
@@ -101,9 +101,9 @@ challenger does not clear hold utility plus exit cost.
 func TestDecideWaitsWhenRotateSurplusNonPositive(t *testing.T) {
 	t.Parallel()
 
-	planner := testPlanner()
+	planner := decideFixture.Planner()
 	thesis := types.NewThesis(nil, nil)
-	holdLot := testHolding("HOLD/USD", 100, 1)
+	holdLot := decideFixture.Holding("HOLD/USD", 100, 1)
 	thesis.Holdings.Store("HOLD/USD", holdLot)
 
 	// hold margin 0.09; challenger utility after friction ~0.04 - costs < hold+exit
@@ -112,8 +112,8 @@ func TestDecideWaitsWhenRotateSurplusNonPositive(t *testing.T) {
 	thesis.Forecasts = append(thesis.Forecasts, hold, challenger)
 	thesis.Cognition.Store("MEH/USD", buyCognition("MEH/USD"))
 
-	planner = testPlannerSlots(1, 0, 1000)
-	seedOpenLot(planner, holdLot)
+	planner = decideFixture.Slots(1, 0, 1000)
+	decideFixture.Seed(planner, holdLot)
 	planner.Decide(thesis)
 
 	sawWait := false
@@ -143,11 +143,11 @@ TestRotateSurplusMatchesContract locks the Δ definition used by admit.
 func TestRotateSurplusMatchesContract(t *testing.T) {
 	t.Parallel()
 
-	if got := rotateSurplus(0.08, 0.03, 0.01); got != 0.04 {
+	if got := NewRotate().Surplus(0.08, 0.03, 0.01); got != 0.04 {
 		t.Fatalf("want 0.04, got %v", got)
 	}
 
-	if got := rotateSurplus(0.03, 0.03, 0.01); got >= 0 {
+	if got := NewRotate().Surplus(0.03, 0.03, 0.01); got >= 0 {
 		t.Fatalf("want negative surplus, got %v", got)
 	}
 }
@@ -156,15 +156,15 @@ func TestRotateSurplusMatchesContract(t *testing.T) {
 BenchmarkDecideRotate measures a full-book rotate evaluation path.
 */
 func BenchmarkDecideRotate(b *testing.B) {
-	planner := testPlanner()
+	planner := decideFixture.Planner()
 
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for index := 0; b.Loop(); index++ {
 		thesis := types.NewThesis(nil, nil)
-		thesis.Holdings.Store("WEAK/USD", testHolding("WEAK/USD", 100, 1))
-		thesis.Holdings.Store("KEEP/USD", testHolding("KEEP/USD", 100, 1))
+		thesis.Holdings.Store("WEAK/USD", decideFixture.Holding("WEAK/USD", 100, 1))
+		thesis.Holdings.Store("KEEP/USD", decideFixture.Holding("KEEP/USD", 100, 1))
 		thesis.Forecasts = append(thesis.Forecasts,
 			decideForecast("WEAK/USD", 0.02, 0.01),
 			decideForecast("KEEP/USD", 0.08, 0.01),
