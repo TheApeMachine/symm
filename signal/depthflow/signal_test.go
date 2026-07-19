@@ -56,8 +56,8 @@ func depthflowFrame(rows ...kraken.BookData) *types.MarketFrame {
 	}
 }
 
-func TestSignal_MeasureDetectsLoadedImbalance(testingTB *testing.T) {
-	Convey("Given repeated bid-heavy book frames", testingTB, func() {
+func TestSignal_MeasureDetectsLoadedImbalance(t *testing.T) {
+	Convey("Given repeated bid-heavy book frames", t, func() {
 		signal := &Signal{
 			ctx:      context.Background(),
 			sample:   flow.NewSample(),
@@ -96,49 +96,57 @@ func sessionSignals(
 	return []types.Signal{NewSignal(ctx, api, instrument, channel)}
 }
 
-func TestSignal_MeasureFromMarket(testingTB *testing.T) {
-	Convey("Given depthflow inside a paper Session market", testingTB, func() {
-		calmSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
-		loadSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
+/*
+TestSignal_MeasureFromMarket proves depthflow on the mock Conn Session path:
+an imbalanced book must emit LoadedScore/Strength, exceeding a balanced book
+on Strength — not a relative-only smoke check against calm UPDATE books.
+*/
+func TestSignal_MeasureFromMarket(t *testing.T) {
+	symbol := conditions.Subject()
+	options := tests.SessionOptions{Signals: sessionSignals}
 
-		Convey("When balanced and bid-loaded books play through Cut", func() {
-			// Calm UPDATE books are bid-only and look "loaded"; compare two-sided
-			// balanced snapshots against an intentional bid overweight instead.
-			calmTheses, err := calmSession.Play(
-				conditions.Imbalance(24, 0, 1, 1).Frames(),
-			)
-			So(err, ShouldBeNil)
-			loadTheses, err := loadSession.Play(
-				conditions.Imbalance(24, 0, 6, 0.15).Frames(),
-			)
-			So(err, ShouldBeNil)
+	imbalanceFamily := []tests.SourceClaim{
+		{Source: types.SourceDepthFlow, Metric: types.MetricLoadedScore, Symbol: symbol, Bound: tests.BoundPositive},
+		{Source: types.SourceDepthFlow, Metric: types.MetricStrength, Symbol: symbol, Bound: tests.BoundPositive},
+	}
 
-			balanced, hasBalanced := tests.PeakSourceMetric(
-				calmTheses,
-				types.SourceDepthFlow,
-				conditions.Subject(),
-				types.MetricStrength,
-			)
-			loaded, hasLoaded := tests.PeakSourceMetric(
-				loadTheses,
-				types.SourceDepthFlow,
-				conditions.Subject(),
-				types.MetricStrength,
-			)
-
-			Convey("Then bid-loaded books lift strength versus balanced depth", func() {
-				So(hasLoaded, ShouldBeTrue)
-				So(hasBalanced, ShouldBeTrue)
-				So(loaded, ShouldBeGreaterThan, balanced)
-			})
-		})
+	t.Run("tape_imbalance", func(t *testing.T) {
+		tests.PlayMarketClaims(
+			t, options, conditions.TapeImbalance().Frames(), imbalanceFamily...,
+		)
 	})
+
+	t.Run("imbalance_exceeds_balanced_strength", func(t *testing.T) {
+		balanced := tests.PlayMarketClaims(
+			t, options, conditions.TapeBalancedBook().Frames(),
+		)
+		loaded := tests.PlayMarketClaims(
+			t, options, conditions.TapeImbalance().Frames(), imbalanceFamily...,
+		)
+		tests.RequireSourceExceeds(
+			t, loaded, balanced,
+			types.SourceDepthFlow, symbol, types.MetricStrength,
+		)
+	})
+}
+
+func BenchmarkSignal_MeasureFromMarket(benchmark *testing.B) {
+	session, err := tests.NewSession(context.Background(), benchmark, tests.SessionOptions{
+		Signals: sessionSignals,
+	})
+
+	if err != nil {
+		benchmark.Fatal(err)
+	}
+
+	frames := conditions.TapeImbalance().Frames()
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		if _, err := session.Play(frames); err != nil {
+			benchmark.Fatal(err)
+		}
+	}
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {

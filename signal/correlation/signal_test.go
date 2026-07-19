@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests"
@@ -21,49 +20,57 @@ func sessionSignals(
 	return []types.Signal{NewSignal(ctx, api, channel)}
 }
 
-func TestSignal_MeasureFromMarket(testingTB *testing.T) {
-	Convey("Given correlation inside a paper Session cohort market", testingTB, func() {
-		herdSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
-		noiseSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
+/*
+TestSignal_MeasureFromMarket proves correlation on the mock Conn Session path:
+sector-lift must emit herd/strength peaks with herd dominating noise on that
+tape, and unstructured noise must emit NoiseScore — absolute claims, not smoke.
+*/
+func TestSignal_MeasureFromMarket(t *testing.T) {
+	symbol := conditions.Subject()
+	options := tests.SessionOptions{Signals: sessionSignals}
 
-		Convey("When herd and noise cohorts play through Cut", func() {
-			herdTheses, err := herdSession.Play(conditions.Herd(32).Frames())
-			So(err, ShouldBeNil)
-			noiseTheses, err := noiseSession.Play(conditions.Noise(32).Frames())
-			So(err, ShouldBeNil)
+	t.Run("tape_sector_lift", func(t *testing.T) {
+		herd := tests.PlayMarketClaims(t, options, conditions.TapeSectorLift().Frames(),
+			tests.SourceClaim{
+				Source: types.SourceCorrelation, Metric: types.MetricHerdScore,
+				Symbol: symbol, Bound: tests.BoundPositive,
+			},
+			tests.SourceClaim{
+				Source: types.SourceCorrelation, Metric: types.MetricStrength,
+				Symbol: symbol, Bound: tests.BoundPositive,
+			},
+		)
 
-			herd, hasHerd := tests.PeakSourceMetric(
-				herdTheses,
-				types.SourceCorrelation,
-				conditions.Subject(),
-				types.MetricHerdScore,
-			)
-			noiseOnHerd, _ := tests.PeakSourceMetric(
-				herdTheses,
-				types.SourceCorrelation,
-				conditions.Subject(),
-				types.MetricNoiseScore,
-			)
-			noise, hasNoise := tests.PeakSourceMetric(
-				noiseTheses,
-				types.SourceCorrelation,
-				conditions.Subject(),
-				types.MetricNoiseScore,
-			)
+		herdScore, hasHerd := tests.PeakSourceMetric(
+			herd, types.SourceCorrelation, symbol, types.MetricHerdScore,
+		)
+		noiseOnHerd, hasNoise := tests.PeakSourceMetric(
+			herd, types.SourceCorrelation, symbol, types.MetricNoiseScore,
+		)
 
-			Convey("Then herd and noise paths diverge directionally", func() {
-				So(hasHerd, ShouldBeTrue)
-				So(hasNoise, ShouldBeTrue)
-				So(herd, ShouldBeGreaterThan, noiseOnHerd)
-				So(noise, ShouldBeGreaterThan, noiseOnHerd)
-			})
-		})
+		if !hasHerd {
+			t.Fatal("want HerdScore on sector-lift tape")
+		}
+
+		if !hasNoise {
+			t.Fatal("want NoiseScore on sector-lift tape")
+		}
+
+		if herdScore <= noiseOnHerd {
+			t.Fatalf(
+				"want HerdScore (%g) > NoiseScore (%g) on sector-lift",
+				herdScore, noiseOnHerd,
+			)
+		}
+	})
+
+	t.Run("tape_noise", func(t *testing.T) {
+		tests.PlayMarketClaims(t, options, conditions.TapeNoise().Frames(),
+			tests.SourceClaim{
+				Source: types.SourceCorrelation, Metric: types.MetricNoiseScore,
+				Symbol: symbol, Bound: tests.BoundPositive,
+			},
+		)
 	})
 }
 
@@ -76,10 +83,11 @@ func BenchmarkSignal_MeasureFromMarket(benchmark *testing.B) {
 		benchmark.Fatal(err)
 	}
 
+	frames := conditions.TapeSectorLift().Frames()
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		if _, err := session.Play(conditions.Herd(16).Frames()); err != nil {
+		if _, err := session.Play(frames); err != nil {
 			benchmark.Fatal(err)
 		}
 	}

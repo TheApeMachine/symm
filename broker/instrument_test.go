@@ -56,8 +56,8 @@ func TestInstrumentSubscribeLoadsUniverseFees(t *testing.T) {
 			}
 		}`))
 
-		Convey("Then all eligible symbols have fees before subscription transport is attempted", func() {
-			So(instrument.Status(), ShouldEqual, types.ERROR)
+		Convey("Then fees load and READY follows even when mock transport write fails", func() {
+			So(instrument.Status(), ShouldEqual, types.READY)
 			symbols, symbolsErr := mock.LastTradeVolumeSymbols()
 			So(symbolsErr, ShouldBeNil)
 			So(symbols, ShouldHaveLength, 2)

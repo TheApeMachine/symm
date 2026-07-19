@@ -2,6 +2,7 @@ package toxicity
 
 import (
 	"context"
+	"iter"
 	"testing"
 	"time"
 
@@ -35,8 +36,8 @@ func newSignal() *Signal {
 	}
 }
 
-func TestSignal_CalculateUsesTradeEventTime(testingTB *testing.T) {
-	Convey("Given trades with explicit event timestamps", testingTB, func() {
+func TestSignal_CalculateUsesTradeEventTime(t *testing.T) {
+	Convey("Given trades with explicit event timestamps", t, func() {
 		eventAt := time.Unix(42, 500_000_000).UTC()
 		signal := newSignal()
 
@@ -64,8 +65,8 @@ func TestSignal_CalculateUsesTradeEventTime(testingTB *testing.T) {
 	})
 }
 
-func TestSignal_CalculateSkipsTradeWithoutTimestamp(testingTB *testing.T) {
-	Convey("Given a trade row without event time", testingTB, func() {
+func TestSignal_CalculateSkipsTradeWithoutTimestamp(t *testing.T) {
+	Convey("Given a trade row without event time", t, func() {
 		signal := newSignal()
 
 		measurements, err := signal.Calculate(frameFrom(kraken.TradeData{
@@ -81,8 +82,8 @@ func TestSignal_CalculateSkipsTradeWithoutTimestamp(testingTB *testing.T) {
 	})
 }
 
-func TestSignal_touchHonestyEmitsCancelledQuantity(testingTB *testing.T) {
-	Convey("Given a prior touch snapshot and a retreating bid", testingTB, func() {
+func TestSignal_touchHonestyEmitsCancelledQuantity(t *testing.T) {
+	Convey("Given a prior touch snapshot and a retreating bid", t, func() {
 		eventAt := time.Unix(50, 0).UTC()
 		signal := &Signal{}
 		row := &symbolEvidence{
@@ -131,59 +132,6 @@ func latestMetric(
 	return nil, false
 }
 
-/*
-peakToxicityFillVolume returns the greatest Level3 fill volume for the subject.
-*/
-func peakToxicityFillVolume(theses []*types.Thesis) (float64, bool) {
-	return peakToxicityFillVolumeTail(theses, 0)
-}
-
-func peakToxicityFillVolumeTail(
-	theses []*types.Thesis,
-	skipFraction float64,
-) (float64, bool) {
-	if skipFraction < 0 {
-		skipFraction = 0
-	}
-
-	if skipFraction > 0.9 {
-		skipFraction = 0.9
-	}
-
-	start := int(float64(len(theses)) * skipFraction)
-	peak := 0.0
-	found := false
-	initialized := false
-
-	for _, thesis := range theses[start:] {
-		if thesis == nil {
-			continue
-		}
-
-		for _, measurement := range thesis.Measurements {
-			if measurement.Source != types.SourceToxicity ||
-				measurement.Symbol != conditions.Subject() ||
-				measurement.Metric != types.MetricFillVolume {
-				continue
-			}
-
-			found = true
-
-			if !initialized {
-				peak = measurement.Raw
-				initialized = true
-				continue
-			}
-
-			if measurement.Raw > peak {
-				peak = measurement.Raw
-			}
-		}
-	}
-
-	return peak, found
-}
-
 func tradeFixturePayload() []byte {
 	for frame := range tradefixture.NewFixture(tradefixture.UPDATE, 1).Frames() {
 		return frame.Payload
@@ -201,63 +149,122 @@ func sessionSignals(
 	return []types.Signal{NewSignal(ctx, api, channel)}
 }
 
-func TestSignal_MeasureFromMarket(testingTB *testing.T) {
-	Convey("Given toxicity inside a paper Session with Level3 touch", testingTB, func() {
-		calmSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-			Level3:  true,
-		})
-		So(err, ShouldBeNil)
-		hotSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-			Level3:  true,
-		})
-		So(err, ShouldBeNil)
+/*
+seedToxicitySession boots a Level3 Session and seeds a two-sided touch so
+toxicity PeekBook evidence can accumulate during Play.
+*/
+func seedToxicitySession(t testing.TB) *tests.Session {
+	t.Helper()
 
-		seedAt := time.Date(2026, 7, 17, 1, 0, 0, 0, time.UTC)
-		trade := kraken.NewTrade(tradeFixturePayload())
-		tradeRow := trade.Data[0]
-		bidPrice := tradeRow.Price
-		askPrice := decimal.NewFromFloat64(tradeRow.Price.Float64() + 0.0001)
-		So(calmSession.Level3.SeedTouch(
-			conditions.Subject(), &bidPrice, askPrice, decimal.NewFromFloat64(1000), seedAt,
-		), ShouldBeNil)
-		So(hotSession.Level3.SeedTouch(
-			conditions.Subject(), &bidPrice, askPrice, decimal.NewFromFloat64(1000), seedAt,
-		), ShouldBeNil)
-
-		Convey("When calm and aggression tapes play through Cut", func() {
-			calmTheses, err := calmSession.Play(conditions.Calm(24).Frames())
-			So(err, ShouldBeNil)
-			hotTheses, err := hotSession.Play(
-				conditions.Aggression(24, 0, 20).Frames(),
-			)
-			So(err, ShouldBeNil)
-
-			_, hasCalmTouch := tests.PeakSourceMetric(
-				calmTheses,
-				types.SourceToxicity,
-				conditions.Subject(),
-				types.MetricBestPrice,
-			)
-			_, hasHotTouch := tests.PeakSourceMetric(
-				hotTheses,
-				types.SourceToxicity,
-				conditions.Subject(),
-				types.MetricBestPrice,
-			)
-			calmFill, hasCalmFill := peakToxicityFillVolume(calmTheses)
-			hotFill, hasHotFill := peakToxicityFillVolume(hotTheses)
-
-			Convey("Then aggression lifts fill evidence under PeekBook", func() {
-				So(hasCalmTouch, ShouldBeTrue)
-				So(hasHotTouch, ShouldBeTrue)
-				So(hasCalmFill, ShouldBeTrue)
-				So(hasHotFill, ShouldBeTrue)
-				So(hotFill, ShouldBeGreaterThan, calmFill)
-			})
-		})
+	session, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
+		Signals: sessionSignals,
+		Level3:  true,
 	})
+
+	if err != nil {
+		t.Fatalf("boot: %v", err)
+	}
+
+	seedAt := time.Date(2026, 7, 17, 1, 0, 0, 0, time.UTC)
+	trade := kraken.NewTrade(tradeFixturePayload())
+	tradeRow := trade.Data[0]
+	bidPrice := tradeRow.Price
+	askPrice := decimal.NewFromFloat64(tradeRow.Price.Float64() + 0.0001)
+
+	if err := session.Level3.SeedTouch(
+		conditions.Subject(), &bidPrice, askPrice, decimal.NewFromFloat64(1000), seedAt,
+	); err != nil {
+		t.Fatalf("seed touch: %v", err)
+	}
+
+	return session
+}
+
+/*
+playToxicityClaims plays frames on a seeded Level3 Session and asserts claims.
+*/
+func playToxicityClaims(
+	t testing.TB,
+	frames iter.Seq[tests.Frame],
+	claims ...tests.SourceClaim,
+) []*types.Thesis {
+	t.Helper()
+
+	session := seedToxicitySession(t)
+	theses, err := session.Play(frames)
+
+	if err != nil {
+		t.Fatalf("play: %v", err)
+	}
+
+	tests.RequireSourceClaims(t, theses, claims...)
+
+	return theses
+}
+
+/*
+TestSignal_MeasureFromMarket proves toxicity on the mock Conn Session path with
+Level3 SeedTouch: toxic chase must emit BestPrice, FillVolume, and TradeVolume
+peaks that exceed calm, while phantom quote still publishes touch BestPrice.
+Cancel/retreat honesty remains covered by TestSignal_touchHonestyEmitsCancelledQuantity
+until the phantom tape drives Level3 quantity retreats.
+*/
+func TestSignal_MeasureFromMarket(t *testing.T) {
+	symbol := conditions.Subject()
+
+	toxicFamily := []tests.SourceClaim{
+		{Source: types.SourceToxicity, Metric: types.MetricBestPrice, Symbol: symbol, Bound: tests.BoundPositive},
+		{Source: types.SourceToxicity, Metric: types.MetricFillVolume, Symbol: symbol, Bound: tests.BoundPositive},
+		{Source: types.SourceToxicity, Metric: types.MetricTradeVolume, Symbol: symbol, Bound: tests.BoundPositive},
+	}
+
+	t.Run("tape_toxic_chase", func(t *testing.T) {
+		playToxicityClaims(t, conditions.TapeToxicChase().Frames(), toxicFamily...)
+	})
+
+	t.Run("toxic_exceeds_calm_fill_and_trade_volume", func(t *testing.T) {
+		calm := playToxicityClaims(t, conditions.TapeCalm().Frames(),
+			tests.SourceClaim{
+				Source: types.SourceToxicity, Metric: types.MetricTradeVolume,
+				Symbol: symbol, Bound: tests.BoundPositive,
+			},
+		)
+		hot := playToxicityClaims(t, conditions.TapeToxicChase().Frames(), toxicFamily...)
+
+		tests.RequireSourceExceeds(
+			t, hot, calm,
+			types.SourceToxicity, symbol, types.MetricTradeVolume,
+		)
+		tests.RequireSourceExceeds(
+			t, hot, calm,
+			types.SourceToxicity, symbol, types.MetricFillVolume,
+		)
+	})
+
+	t.Run("tape_phantom_keeps_touch_price", func(t *testing.T) {
+		playToxicityClaims(t, conditions.TapePhantomQuote().Frames(),
+			tests.SourceClaim{
+				Source: types.SourceToxicity, Metric: types.MetricBestPrice,
+				Symbol: symbol, Bound: tests.BoundPositive,
+			},
+			tests.SourceClaim{
+				Source: types.SourceToxicity, Metric: types.MetricTouchQuantity,
+				Symbol: symbol, Bound: tests.BoundPositive,
+			},
+		)
+	})
+}
+
+func BenchmarkSignal_MeasureFromMarket(benchmark *testing.B) {
+	session := seedToxicitySession(benchmark)
+	frames := conditions.TapeToxicChase().Frames()
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		if _, err := session.Play(frames); err != nil {
+			benchmark.Fatal(err)
+		}
+	}
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {

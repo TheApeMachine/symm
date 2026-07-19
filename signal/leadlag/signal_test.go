@@ -73,8 +73,8 @@ func seedLaggedPaths(
 	return 100 + float64(samples-1)*0.5, 100 + float64(sourceIndex)*0.5, at
 }
 
-func TestSection_FeaturesDetectsDelayedFollower(testingTB *testing.T) {
-	Convey("Given a follower that leads the anchor in wall-clock time", testingTB, func() {
+func TestSection_FeaturesDetectsDelayedFollower(t *testing.T) {
+	Convey("Given a follower that leads the anchor in wall-clock time", t, func() {
 		section := NewSection()
 		section.SetAnchor("BTC/USD")
 
@@ -105,8 +105,8 @@ func TestSection_FeaturesDetectsDelayedFollower(testingTB *testing.T) {
 	})
 }
 
-func TestSection_FeaturesUsesMoveBaseline(testingTB *testing.T) {
-	Convey("Given a flat anchor after a volatile prefix", testingTB, func() {
+func TestSection_FeaturesUsesMoveBaseline(t *testing.T) {
+	Convey("Given a flat anchor after a volatile prefix", t, func() {
 		section := NewSection()
 		section.SetAnchor("BTC/USD")
 
@@ -140,8 +140,8 @@ func TestSection_FeaturesUsesMoveBaseline(testingTB *testing.T) {
 	})
 }
 
-func TestSignal_MeasureEmitsLeadlag(testingTB *testing.T) {
-	Convey("Given a seeded leadlag section and leader rows", testingTB, func() {
+func TestSignal_MeasureEmitsLeadlag(t *testing.T) {
+	Convey("Given a seeded leadlag section and leader rows", t, func() {
 		signal := &Signal{
 			ctx:     context.Background(),
 			section: NewSection(),
@@ -176,8 +176,8 @@ func TestSignal_MeasureEmitsLeadlag(testingTB *testing.T) {
 	})
 }
 
-func TestSignal_MeasureEmitsWithoutLeader(testingTB *testing.T) {
-	Convey("Given a flat cohort with no cross-section leader", testingTB, func() {
+func TestSignal_MeasureEmitsWithoutLeader(t *testing.T) {
+	Convey("Given a flat cohort with no cross-section leader", t, func() {
 		signal := &Signal{
 			ctx:     context.Background(),
 			section: NewSection(),
@@ -214,8 +214,8 @@ func TestSignal_MeasureEmitsWithoutLeader(testingTB *testing.T) {
 	})
 }
 
-func TestSignal_MeasureSkipsIncompleteRow(testingTB *testing.T) {
-	Convey("Given a follower row without a last price", testingTB, func() {
+func TestSignal_MeasureSkipsIncompleteRow(t *testing.T) {
+	Convey("Given a follower row without a last price", t, func() {
 		signal := &Signal{
 			ctx:     context.Background(),
 			section: NewSection(),
@@ -258,43 +258,65 @@ func sessionSignals(
 	return []types.Signal{NewSignal(ctx, api, channel)}
 }
 
-func TestSignal_MeasureFromMarket(testingTB *testing.T) {
-	Convey("Given leadlag inside a paper Session cohort market", testingTB, func() {
-		herdSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
-		lagSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
+/*
+TestSignal_MeasureFromMarket proves leadlag on the mock Conn Session path:
+lag tapes leave the subject without a tradeable lead claim while the follower
+carries strength; co-moving herd publishes Sync without a lagged Strength edge.
+*/
+func TestSignal_MeasureFromMarket(t *testing.T) {
+	subject := conditions.Subject()
+	follower := "ETH/USD"
+	options := tests.SessionOptions{Signals: sessionSignals}
 
-		Convey("When herd and lagged cohorts play through Cut", func() {
-			herdTheses, err := herdSession.Play(conditions.Herd(32).Frames())
-			So(err, ShouldBeNil)
-			lagTheses, err := lagSession.Play(conditions.Lag(32, 4).Frames())
-			So(err, ShouldBeNil)
-
-			herd, hasHerd := tests.PeakSourceMetric(
-				herdTheses,
-				types.SourceLeadLag,
-				"ETH/USD",
-				types.MetricStrength,
-			)
-			lagged, hasLag := tests.PeakSourceMetric(
-				lagTheses,
-				types.SourceLeadLag,
-				"ETH/USD",
-				types.MetricStrength,
-			)
-
-			Convey("Then a delayed follower differs from co-moving herd strength", func() {
-				So(hasLag, ShouldBeTrue)
-				So(hasHerd, ShouldBeTrue)
-				So(math.Abs(lagged-herd), ShouldBeGreaterThan, 0)
-			})
-		})
+	t.Run("tape_lag", func(t *testing.T) {
+		tests.PlayMarketClaims(t, options, conditions.TapeLag().Frames(),
+			tests.SourceClaim{
+				Source: types.SourceLeadLag, Metric: types.MetricStrength,
+				Symbol: subject, Bound: tests.BoundZero,
+			},
+			tests.SourceClaim{
+				Source: types.SourceLeadLag, Metric: types.MetricStrength,
+				Symbol: follower, Bound: tests.BoundPositive,
+			},
+			tests.SourceClaim{
+				Source: types.SourceLeadLag, Metric: types.MetricSampleSupport,
+				Symbol: follower, Bound: tests.BoundPositive,
+			},
+		)
 	})
+
+	t.Run("tape_sector_lift", func(t *testing.T) {
+		// Co-moving herd publishes leadlag rows without a lagged Strength edge.
+		tests.PlayMarketClaims(t, options, conditions.TapeSectorLift().Frames(),
+			tests.SourceClaim{
+				Source: types.SourceLeadLag, Metric: types.MetricStrength,
+				Symbol: follower, Bound: tests.BoundZero,
+			},
+			tests.SourceClaim{
+				Source: types.SourceLeadLag, Metric: types.MetricStrength,
+				Symbol: subject, Bound: tests.BoundZero,
+			},
+		)
+	})
+}
+
+func BenchmarkSignal_MeasureFromMarket(benchmark *testing.B) {
+	session, err := tests.NewSession(context.Background(), benchmark, tests.SessionOptions{
+		Signals: sessionSignals,
+	})
+
+	if err != nil {
+		benchmark.Fatal(err)
+	}
+
+	frames := conditions.TapeLag().Frames()
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		if _, err := session.Play(frames); err != nil {
+			benchmark.Fatal(err)
+		}
+	}
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {

@@ -31,8 +31,8 @@ func NewSessionEnv() SessionEnv {
 /*
 Configure installs paper Session viper defaults and returns a restore func.
 */
-func (env SessionEnv) Configure(testingTB testing.TB) func() {
-	testingTB.Helper()
+func (env SessionEnv) Configure(t testing.TB) func() {
+	t.Helper()
 
 	previousModel := viper.Get("trading.model")
 	previousData := viper.Get("system.data_path")
@@ -47,7 +47,7 @@ func (env SessionEnv) Configure(testingTB testing.TB) func() {
 	previousInterval := viper.Get("signals.fluid.integration_interval")
 
 	viper.Set("trading.model", "paper")
-	viper.Set("system.data_path", testingTB.TempDir())
+	viper.Set("system.data_path", t.TempDir())
 	viper.Set("signals.feed_timeline_capacity", 128)
 	viper.Set("signals.feed_track_capacity", 128)
 	viper.Set("trading.slots.normal", 2)

@@ -2,28 +2,32 @@ package tests
 
 import (
 	"context"
+	_ "embed"
 	"iter"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/stack"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 )
 
+//go:embed fixtures/instrument/fixtures/snapshot.json
+var instrumentSnapshotBytes []byte
+
 /*
-Session is a controllable paper-market harness. It injects MockConn transports
-through websocket.NewAPI, feeds fixture frames via Emit, and advances the real
-Crypto.Tick path so signals measure through Market.Cut rather than hand-built
-frames. Add a condition by composing NewMarket feeds with scenario shapers
-(Spike, TradeAggression, BookDecay, Cohort, …) and calling Play. Market tests
-must falsify calm versus stressed PeakMetric/PeakSourceMetric outcomes.
+Session is a thin driver over mock Conns + stack.Boot — the same production
+graph as cmd/root.go, with producers substituted for live sockets. Feed
+opportunity/trap tapes via Emit/Play; advance with Crypto.Tick. Strategy-only
+truths given seeded forecasts use CommitStrategy and must say so.
 */
 type Session struct {
 	ctx      context.Context
@@ -33,6 +37,7 @@ type Session struct {
 	clock    time.Time
 	interval time.Duration
 	tree     *dmt.Tree
+	stack    *stack.Stack
 
 	Mock    *MockAPI
 	Paper   *websocket.Paper
@@ -45,9 +50,8 @@ type Session struct {
 }
 
 /*
-SignalFactory builds the signal set once the Session has a live API, instrument,
-and UI channel. Callers supply it so the tests package never imports concrete
-signals (and so signal package tests can use Session without an import cycle).
+SignalFactory builds the signal set once Instrument exists. Callers supply it so
+the tests package never imports concrete signals (avoids import cycles).
 */
 type SignalFactory func(
 	ctx context.Context,
@@ -57,9 +61,7 @@ type SignalFactory func(
 ) []types.Signal
 
 /*
-SessionOptions configures which signals participate in a Session. Signals must
-be provided — the harness stays signal-agnostic so packages under signal/ can
-drive Session without cycling imports through tests.
+SessionOptions configures which signals participate. Signals must be provided.
 */
 type SessionOptions struct {
 	Signals  SignalFactory
@@ -69,54 +71,34 @@ type SessionOptions struct {
 }
 
 /*
-NewSession builds a paper stack against temporary data and cognitive paths.
+NewSession wires mock Conns into stack.Boot — Conn swap only, production graph.
 */
 func NewSession(
 	ctx context.Context,
-	testingTB testing.TB,
+	t testing.TB,
 	options SessionOptions,
 ) (*Session, error) {
-	testingTB.Helper()
+	t.Helper()
 
 	env := NewSessionEnv()
-	testingTB.Cleanup(env.Configure(testingTB))
+	t.Cleanup(env.Configure(t))
 
-	// Isolate paper CLI before Balance.Initialize so SubscribeBalance cannot
-	// adopt the operator's live paper wallet into OpenPositions.
-	InstallPaperCLI(testingTB, filepath.Join(testingTB.TempDir(), "paper-state.json"))
+	InstallPaperCLI(t, filepath.Join(t.TempDir(), "paper-state.json"))
 
 	sessionCtx, cancel := context.WithCancel(ctx)
 	channel := make(chan []byte, 256)
 	mock := NewMockAPI()
+
+	if err := configureDefaultFees(mock); err != nil {
+		cancel()
+		return nil, err
+	}
+
 	api, paper, err := mock.Wire(sessionCtx)
 
 	if err != nil {
 		cancel()
 		return nil, err
-	}
-
-	price := broker.NewPrice(api)
-
-	if err := price.Initialize(); err != nil {
-		cancel()
-		return nil, errnie.Err(errnie.Internal, "tests: price initialize", err)
-	}
-
-	instrument := broker.NewInstrument(api, price, channel)
-	api.On("instrument", instrument.On)
-
-	balance := broker.NewBalance(api, nil, channel)
-
-	if err := balance.Initialize(); err != nil {
-		cancel()
-		return nil, errnie.Err(errnie.Internal, "tests: balance initialize", err)
-	}
-
-	desk := broker.NewDesk(api, instrument, price, balance)
-
-	if err := desk.Initialize(); err != nil {
-		cancel()
-		return nil, errnie.Err(errnie.Internal, "tests: desk initialize", err)
 	}
 
 	if options.Signals == nil {
@@ -128,67 +110,31 @@ func NewSession(
 		)
 	}
 
+	tree := dmt.NewTree(t.TempDir())
+
+	t.Cleanup(func() {
+		errnie.Error(tree.Close())
+	})
+
+	wired, err := stack.Boot(sessionCtx, api, stack.Options{
+		Paper:   paper,
+		Channel: channel,
+		Tree:    tree,
+		Signals: stack.SignalFactory(options.Signals),
+		FeedInstrument: func() {
+			mock.Emit("instrument", instrumentSnapshotBytes)
+		},
+	})
+
+	if err != nil {
+		cancel()
+		return nil, errnie.Err(errnie.Internal, "tests: stack boot", err)
+	}
+
 	var books *SessionLevel3
 
 	if options.Level3 {
 		books = NewSessionLevel3(sessionCtx, api)
-	}
-
-	signals := options.Signals(sessionCtx, api, instrument, channel)
-
-	if len(signals) == 0 {
-		cancel()
-		return nil, errnie.Err(
-			errnie.Validation,
-			"tests: SessionOptions.Signals returned no signals",
-			nil,
-		)
-	}
-
-	analyzer, err := logic.NewAnalyzer(sessionCtx, nil, api, nil, nil, nil)
-
-	if err != nil {
-		cancel()
-		return nil, errnie.Err(errnie.Internal, "tests: analyzer initialize", err)
-	}
-
-	planner := strategy.NewPlanner(
-		sessionCtx,
-		channel,
-		api,
-		desk,
-		instrument,
-		price,
-		balance,
-		signals,
-		analyzer,
-		strategy.NewAllocator(
-			sessionCtx, balance, instrument, price,
-		),
-		nil,
-	)
-
-	tree := dmt.NewTree(testingTB.TempDir())
-
-	testingTB.Cleanup(func() {
-		errnie.Error(tree.Close())
-	})
-
-	crypto, err := env.Crypto(
-		sessionCtx,
-		api,
-		price,
-		balance,
-		desk,
-		instrument,
-		planner,
-		tree,
-		channel,
-	)
-
-	if err != nil {
-		cancel()
-		return nil, err
 	}
 
 	clock := options.Clock
@@ -211,17 +157,18 @@ func NewSession(
 		clock:    clock,
 		interval: interval,
 		tree:     tree,
+		stack:    wired,
 		Mock:     mock,
 		Paper:    paper,
-		Crypto:   crypto,
-		Planner:  planner,
-		Desk:     desk,
-		Price:    price,
-		Balance:  balance,
+		Crypto:   wired.Crypto,
+		Planner:  wired.Planner,
+		Desk:     wired.Desk,
+		Price:    wired.Price,
+		Balance:  wired.Balance,
 		Level3:   books,
 	}
 
-	testingTB.Cleanup(func() {
+	t.Cleanup(func() {
 		session.Close()
 	})
 
@@ -238,6 +185,11 @@ func (session *Session) Close() {
 
 	session.cancel()
 
+	if session.stack != nil {
+		session.stack.Close()
+		return
+	}
+
 	if session.Crypto != nil {
 		errnie.Error(session.Crypto.Close())
 	}
@@ -248,11 +200,11 @@ func (session *Session) Close() {
 }
 
 /*
-RunDecide applies the same Plan path Crypto.Tick uses after a market Play, so
-reserved/rotate assertions can run on a thesis seeded from the emulator cut
-without requiring the GPU analyzer to invent forecasts.
+CommitStrategy runs Plan then Trade on an already-cut thesis. Use only when the
+scenario's known truth is strategy/wallet behavior given seeded forecasts — not
+as a substitute for Crypto.Tick market proof.
 */
-func (session *Session) RunDecide(thesis *types.Thesis) error {
+func (session *Session) CommitStrategy(thesis *types.Thesis) error {
 	if session == nil || session.Crypto == nil {
 		return errnie.Err(
 			errnie.NotFound,
@@ -264,22 +216,12 @@ func (session *Session) RunDecide(thesis *types.Thesis) error {
 	if thesis == nil {
 		return errnie.Err(
 			errnie.Validation,
-			"tests: thesis required for decide",
+			"tests: thesis required for CommitStrategy",
 			nil,
 		)
 	}
 
-	session.Crypto.Plan(thesis)
-
-	return nil
-}
-
-/*
-RunTrade runs Plan then Trade — the same submission half of Crypto.Tick after a
-cut — so Session tests can prove enter/exit fills without inventing a Cut frame.
-*/
-func (session *Session) RunTrade(thesis *types.Thesis) error {
-	if err := session.RunDecide(thesis); err != nil {
+	if err := session.Crypto.Plan(thesis); err != nil {
 		return err
 	}
 
@@ -290,8 +232,7 @@ func (session *Session) RunTrade(thesis *types.Thesis) error {
 
 /*
 Emit delivers one public frame through the Conn emulator into registered
-handlers (Market, Price, …). Level3 frames are applied under the Session L3
-write lease when Level3 was enabled.
+handlers. Level3 frames use the Session L3 write lease when enabled.
 */
 func (session *Session) Emit(frame Frame) {
 	if frame.Channel == "level3" && session.Level3 != nil {
@@ -319,9 +260,8 @@ func (session *Session) Advance(frames ...Frame) (*types.Thesis, error) {
 
 /*
 Play emits every frame from a market timeline and runs Crypto.Tick when a
-ticker frame arrives so quote signals warm across the stream. A final Tick
-runs only when the stream had pending non-ticker frames and never completed a
-ticker-driven tick, so trailing books cannot wipe a measured thesis.
+ticker frame arrives so the real Cut→Update→Plan→trade path warms across the
+stream.
 */
 func (session *Session) Play(frames iter.Seq[Frame]) ([]*types.Thesis, error) {
 	theses := make([]*types.Thesis, 0)
@@ -365,4 +305,18 @@ func (session *Session) Play(frames iter.Seq[Frame]) ([]*types.Thesis, error) {
 	}
 
 	return theses, nil
+}
+
+func configureDefaultFees(mock *MockAPI) error {
+	fee := kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.26)}
+	fees := map[string]kraken.TradeVolumeFee{
+		"BTC/USD":   fee,
+		"MATIC/USD": fee,
+		"ETH/USD":   fee,
+		"WEAK/USD":  fee,
+	}
+
+	return mock.SetTradeVolumeResponse(&kraken.TradeVolume{
+		Result: kraken.TradeVolumeResult{Fees: fees},
+	})
 }

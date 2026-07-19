@@ -23,8 +23,9 @@ const (
 
 /*
 DecisionScenario is one market-simulation case for enter admission and optional
-exit lock-in. Markets come from conditions.*; forecasts are seeded so Decide is
-exercised under each tape's warmed Cut without GPU analyzer invention.
+exit lock-in. Markets come from conditions.*; forecasts are seeded then applied
+via CommitStrategy (strategy-given-forecast control surface) after Play warms
+the Cut through Crypto.Tick.
 */
 type DecisionScenario struct {
 	Name             string
@@ -84,10 +85,10 @@ Run plays the market, admits (or rejects) an enter, then drives the configured
 exit phase through Plan+Trade and paper fills.
 */
 func (scenario DecisionScenario) Run(
-	testingTB testing.TB,
+	t testing.TB,
 	signals SignalFactory,
 ) (DecisionResult, error) {
-	testingTB.Helper()
+	t.Helper()
 
 	result := DecisionResult{Name: scenario.Name}
 
@@ -97,7 +98,7 @@ func (scenario DecisionScenario) Run(
 		)
 	}
 
-	session, err := NewSession(context.Background(), testingTB, SessionOptions{
+	session, err := NewSession(context.Background(), t, SessionOptions{
 		Signals: signals,
 	})
 
@@ -124,13 +125,18 @@ func (scenario DecisionScenario) Run(
 	)
 	SeedEarlyCognition(thesis, scenario.Symbol)
 
-	if err := session.RunDecide(thesis); err != nil {
+	if err := session.CommitStrategy(thesis); err != nil {
 		return result, err
 	}
 
-	for _, decision := range thesis.Decisions {
+	var enter *types.Decision
+
+	for index := range thesis.Decisions {
+		decision := &thesis.Decisions[index]
+
 		if decision.Symbol == scenario.Symbol && decision.Action == types.ActionEnter {
 			result.Entered = true
+			enter = decision
 			break
 		}
 	}
@@ -145,24 +151,36 @@ func (scenario DecisionScenario) Run(
 		return result, nil
 	}
 
-	return scenario.exit(testingTB, session, result)
+	return scenario.exit(t, session, result, enter)
 }
 
 func (scenario DecisionScenario) exit(
-	testingTB testing.TB,
+	t testing.TB,
 	session *Session,
 	result DecisionResult,
+	enter *types.Decision,
 ) (DecisionResult, error) {
-	testingTB.Helper()
+	t.Helper()
 
-	lot, statePath, err := session.SeedOpenLot(testingTB, scenario.Symbol, 100, 0.02)
+	qty := 100.0
+
+	if enter != nil && enter.ProposedQuantity != nil && enter.ProposedQuantity.Sign() > 0 {
+		qty = enter.ProposedQuantity.Float64()
+	}
+
+	lot, statePath, err := session.SeedOpenLot(t, scenario.Symbol, qty, 0.02)
 
 	if err != nil {
 		return result, err
 	}
 
 	entry := lot.EntryPrice.Float64()
-	result.CashAfterEnter = 10_000 - 100*entry
+	result.CashAfterEnter = 10_000 - qty*entry
+
+	if cash, cashErr := session.Balance.AvailableQuote(); cashErr == nil {
+		result.CashAfterEnter = cash
+	}
+
 	peakMul := scenario.PeakMul
 
 	if peakMul <= 0 {
@@ -190,7 +208,7 @@ func (scenario DecisionScenario) exit(
 		return result, err
 	}
 
-	SetPaperPrice(testingTB, statePath, scenario.Symbol, mark)
+	SetPaperPrice(t, statePath, scenario.Symbol, mark)
 	exitThesis := types.NewThesis(nil, nil)
 	exitUncertainty := scenario.ExitUncertainty
 
@@ -210,7 +228,7 @@ func (scenario DecisionScenario) exit(
 
 	exitThesis.At = time.Unix(1, 0).UTC()
 
-	if err := session.RunTrade(exitThesis); err != nil {
+	if err := session.CommitStrategy(exitThesis); err != nil {
 		return result, err
 	}
 

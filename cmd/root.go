@@ -18,21 +18,8 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/signal/correlation"
-	"github.com/theapemachine/symm/signal/cvd"
-	"github.com/theapemachine/symm/signal/depthflow"
-	"github.com/theapemachine/symm/signal/exhaust"
-	"github.com/theapemachine/symm/signal/fluid"
-	"github.com/theapemachine/symm/signal/hawkes"
-	"github.com/theapemachine/symm/signal/leadlag"
-	"github.com/theapemachine/symm/signal/liquidity"
-	"github.com/theapemachine/symm/signal/pumpdump"
-	"github.com/theapemachine/symm/signal/sentiment"
-	"github.com/theapemachine/symm/signal/toxicity"
-	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/stack"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -199,126 +186,52 @@ var (
 				return true
 			})
 
-			price := broker.NewPrice(api)
-			instrument := broker.NewInstrument(api, price, channel)
-			balance := broker.NewBalance(api, nil, channel)
-			desk := broker.NewDesk(api, instrument, price, balance)
-			warmupReady := func() bool {
-				return booter.Ready(system.StageWarmup)
-			}
-			uiHub, err := ui.NewHub(ctx, price, balance, thesis, channel, warmupReady)
+			wired, err := stack.Boot(ctx, api, stack.Options{
+				Booter:         booter,
+				Paper:          paper,
+				Signals:        productionSignals,
+				Channel:        channel,
+				Tree:           tree,
+				Thesis:         thesis,
+				Recorder:       recorder,
+				PreflightExtra: []types.StatusReporter{simulator, public, private},
+				AttachUI: func(
+					stackBooter *system.Booter,
+					price *broker.Price,
+					balance *broker.Balance,
+					stackThesis *types.Thesis,
+					stackChannel chan []byte,
+				) (*ui.Hub, error) {
+					warmupReady := func() bool {
+						return stackBooter.Ready(system.StageWarmup)
+					}
+					hub, hubErr := ui.NewHub(
+						ctx, price, balance, stackThesis, stackChannel, warmupReady,
+					)
 
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"failed to create UI hub",
-					err,
-				))
-			}
+					if hubErr != nil {
+						return nil, hubErr
+					}
 
-			defer uiHub.Close()
-			errnie.AttachWriter(ui.NewErrorBridge(uiHub, warmupReady))
+					errnie.AttachWriter(ui.NewErrorBridge(hub, warmupReady))
 
-			hawkesSignal := hawkes.NewSignal(ctx, api, channel)
-			analyzer, err := logic.NewAnalyzer(ctx, booter, api, hawkesSignal, tree, channel)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"failed to create analyzer",
-					err,
-				))
-			}
-
-			analyzer.SetRecorder(recorder)
-
-			planner := strategy.NewPlanner(
-				ctx,
-				channel,
-				api,
-				desk,
-				instrument,
-				price,
-				balance,
-				[]types.Signal{
-					pumpdump.NewSignal(ctx, api, channel),
-					liquidity.NewSignal(ctx, api, channel),
-					toxicity.NewSignal(ctx, api, channel),
-					leadlag.NewSignal(ctx, api, channel),
-					cvd.NewSignal(ctx, api, channel),
-					correlation.NewSignal(ctx, api, channel),
-					exhaust.NewSignal(ctx, api, instrument, channel),
-					sentiment.NewSignal(ctx, api, channel),
-					depthflow.NewSignal(ctx, api, instrument, channel),
-					fluid.NewSignal(ctx, api, instrument, channel),
-					hawkesSignal,
+					return hub, nil
 				},
-				analyzer,
-				strategy.NewAllocator(ctx, balance, instrument, price),
-				recorder,
-			)
-
-			crypto, err := trader.NewCrypto(
-				ctx,
-				booter,
-				api,
-				price,
-				balance,
-				desk,
-				instrument,
-				analyzer,
-				planner,
-				tree,
-				thesis,
-				uiHub,
-				recorder,
-			)
+			})
 
 			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"failed to create crypto",
-					err,
-				))
+				return errnie.Error(err)
 			}
 
-			defer crypto.Close()
+			defer wired.Close()
 
-			booter.AddStages(
-				system.NewStage(
-					system.StagePreflight,
-					simulator,
-					public,
-					private,
-					paper,
-					api,
-					instrument,
-					balance,
-					price,
-					desk,
-				),
-				system.NewStage(
-					system.StageWarmup,
-					crypto,
-				),
-				system.NewStage(
-					system.StageReady,
-					analyzer,
-					planner,
-				),
-			)
-
-			if err := booter.Start(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"failed to boot",
-					err,
-				))
+			if wired.UIHub != nil {
+				defer wired.UIHub.Close()
 			}
 
-			crypto.Run()
+			wired.Crypto.Run()
 
-			return uiHub.Serve()
+			return wired.UIHub.Serve()
 		},
 	}
 )

@@ -12,10 +12,10 @@ InstallPaperCLI drops a stateful `kraken` shim ahead of PATH so Session paper
 Buy/Sell/Balance round-trips without touching the operator's real paper wallet.
 Prices are fixed unless SetPaperPrice is used via the state file.
 */
-func InstallPaperCLI(testingTB testing.TB, statePath string) {
-	testingTB.Helper()
+func InstallPaperCLI(t testing.TB, statePath string) {
+	t.Helper()
 
-	dir := testingTB.TempDir()
+	dir := t.TempDir()
 	bin := filepath.Join(dir, "kraken")
 	script := `#!/usr/bin/env python3
 import json, os, sys, time
@@ -111,26 +111,26 @@ if __name__ == "__main__":
     main()
 `
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		testingTB.Fatal(err)
+		t.Fatal(err)
 	}
 
 	if err := os.WriteFile(statePath, []byte(
 		`{"USD":50000.0,"assets":{},"prices":{"MATIC/USD":1.0},"n":0}`,
 	), 0o644); err != nil {
-		testingTB.Fatal(err)
+		t.Fatal(err)
 	}
 
-	testingTB.Setenv("SYMM_PAPER_STATE", statePath)
-	testingTB.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("SYMM_PAPER_STATE", statePath)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 /*
 SetPaperPrice updates the shim's mark for symbol so a later sell can lock a
 profit relative to entry.
 */
-func SetPaperPrice(testingTB testing.TB, statePath, symbol string, mark float64) {
-	testingTB.Helper()
-	mutatePaperState(testingTB, statePath, func(state map[string]any) {
+func SetPaperPrice(t testing.TB, statePath, symbol string, mark float64) {
+	t.Helper()
+	mutatePaperState(t, statePath, func(state map[string]any) {
 		prices, _ := state["prices"].(map[string]any)
 
 		if prices == nil {
@@ -146,9 +146,9 @@ func SetPaperPrice(testingTB testing.TB, statePath, symbol string, mark float64)
 SetPaperCash aligns the shim wallet with SeedQuoteCapital so Desk sizing and
 paper AddOrder spend the same quote pool.
 */
-func SetPaperCash(testingTB testing.TB, statePath string, cash float64) {
-	testingTB.Helper()
-	mutatePaperState(testingTB, statePath, func(state map[string]any) {
+func SetPaperCash(t testing.TB, statePath string, cash float64) {
+	t.Helper()
+	mutatePaperState(t, statePath, func(state map[string]any) {
 		state["USD"] = cash
 	})
 }
@@ -156,9 +156,9 @@ func SetPaperCash(testingTB testing.TB, statePath string, cash float64) {
 /*
 SetPaperAsset sets a base-asset inventory row on the shim wallet.
 */
-func SetPaperAsset(testingTB testing.TB, statePath, asset string, qty float64) {
-	testingTB.Helper()
-	mutatePaperState(testingTB, statePath, func(state map[string]any) {
+func SetPaperAsset(t testing.TB, statePath, asset string, qty float64) {
+	t.Helper()
+	mutatePaperState(t, statePath, func(state map[string]any) {
 		assets, _ := state["assets"].(map[string]any)
 
 		if assets == nil {
@@ -171,22 +171,22 @@ func SetPaperAsset(testingTB testing.TB, statePath, asset string, qty float64) {
 }
 
 func mutatePaperState(
-	testingTB testing.TB,
+	t testing.TB,
 	statePath string,
 	mutate func(map[string]any),
 ) {
-	testingTB.Helper()
+	t.Helper()
 
 	raw, err := os.ReadFile(statePath)
 
 	if err != nil {
-		testingTB.Fatal(err)
+		t.Fatal(err)
 	}
 
 	var state map[string]any
 
 	if err := json.Unmarshal(raw, &state); err != nil {
-		testingTB.Fatal(err)
+		t.Fatal(err)
 	}
 
 	mutate(state)
@@ -194,10 +194,10 @@ func mutatePaperState(
 	out, err := json.Marshal(state)
 
 	if err != nil {
-		testingTB.Fatal(err)
+		t.Fatal(err)
 	}
 
 	if err := os.WriteFile(statePath, out, 0o644); err != nil {
-		testingTB.Fatal(err)
+		t.Fatal(err)
 	}
 }

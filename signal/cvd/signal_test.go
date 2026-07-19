@@ -49,8 +49,8 @@ func frameFor(rows ...kraken.TradeData) *types.MarketFrame {
 	}
 }
 
-func TestSignal_Measure(testingTB *testing.T) {
-	Convey("Given a CVD signal", testingTB, func() {
+func TestSignal_Measure(t *testing.T) {
+	Convey("Given a CVD signal", t, func() {
 		signal := newSignal()
 
 		Convey("When measuring repeated buy trades with rising price", func() {
@@ -75,8 +75,8 @@ func TestSignal_Measure(testingTB *testing.T) {
 	})
 }
 
-func TestSignal_MeasureFlowProfiles(testingTB *testing.T) {
-	Convey("Given controlled trade-flow sequences", testingTB, func() {
+func TestSignal_MeasureFlowProfiles(t *testing.T) {
+	Convey("Given controlled trade-flow sequences", t, func() {
 		type flowCase struct {
 			name      string
 			rows      []kraken.TradeData
@@ -196,39 +196,66 @@ func sessionSignals(
 	return []types.Signal{NewSignal(ctx, api, channel)}
 }
 
-func TestSignal_MeasureFromMarket(testingTB *testing.T) {
-	Convey("Given CVD inside a paper Session market", testingTB, func() {
-		calmSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
-		hotSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
+/*
+TestSignal_MeasureFromMarket proves CVD on the mock Conn Session path:
+toxic chase must emit Drive/Strength (and Absorption when present), and Drive
+must exceed calm — not a relative-only smoke check.
+*/
+func TestSignal_MeasureFromMarket(t *testing.T) {
+	symbol := conditions.Subject()
+	options := tests.SessionOptions{Signals: sessionSignals}
 
-		Convey("When calm and aggression trade tapes play through Cut", func() {
-			calmTheses, err := calmSession.Play(conditions.Calm(32).Frames())
-			So(err, ShouldBeNil)
-			hotTheses, err := hotSession.Play(
-				conditions.Aggression(32, 8, 8).Frames(),
-			)
-			So(err, ShouldBeNil)
+	toxicFamily := []tests.SourceClaim{
+		{Source: types.SourceCVD, Metric: types.MetricDrive, Symbol: symbol, Bound: tests.BoundPositive},
+		{Source: types.SourceCVD, Metric: types.MetricStrength, Symbol: symbol, Bound: tests.BoundPositive},
+	}
 
-			calm, hasCalm := tests.PeakSourceMetric(
-				calmTheses, types.SourceCVD, conditions.Subject(), types.MetricDrive,
-			)
-			hot, hasHot := tests.PeakSourceMetric(
-				hotTheses, types.SourceCVD, conditions.Subject(), types.MetricDrive,
-			)
+	t.Run("tape_toxic_chase", func(t *testing.T) {
+		hot := tests.PlayMarketClaims(
+			t, options, conditions.TapeToxicChase().Frames(), toxicFamily...,
+		)
 
-			Convey("Then buy aggression lifts drive versus calm sells", func() {
-				So(hasCalm, ShouldBeTrue)
-				So(hasHot, ShouldBeTrue)
-				So(hot, ShouldBeGreaterThan, calm)
+		absorption, ok := tests.PeakSourceMetric(
+			hot, types.SourceCVD, symbol, types.MetricAbsorption,
+		)
+
+		if ok && absorption > 0 {
+			tests.RequireSourceClaims(t, hot, tests.SourceClaim{
+				Source: types.SourceCVD, Metric: types.MetricAbsorption,
+				Symbol: symbol, Bound: tests.BoundPositive,
 			})
-		})
+		}
 	})
+
+	t.Run("toxic_exceeds_calm_drive", func(t *testing.T) {
+		calm := tests.PlayMarketClaims(t, options, conditions.TapeCalm().Frames())
+		hot := tests.PlayMarketClaims(
+			t, options, conditions.TapeToxicChase().Frames(), toxicFamily...,
+		)
+		tests.RequireSourceExceeds(
+			t, hot, calm,
+			types.SourceCVD, symbol, types.MetricDrive,
+		)
+	})
+}
+
+func BenchmarkSignal_MeasureFromMarket(benchmark *testing.B) {
+	session, err := tests.NewSession(context.Background(), benchmark, tests.SessionOptions{
+		Signals: sessionSignals,
+	})
+
+	if err != nil {
+		benchmark.Fatal(err)
+	}
+
+	frames := conditions.TapeToxicChase().Frames()
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		if _, err := session.Play(frames); err != nil {
+			benchmark.Fatal(err)
+		}
+	}
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {

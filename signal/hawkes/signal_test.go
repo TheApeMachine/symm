@@ -96,8 +96,8 @@ func tradeRow(symbol, side string, price float64, quantity float64, at time.Time
 	}
 }
 
-func TestSignalOnTrade(testingTB *testing.T) {
-	Convey("Given a Hawkes signal driven by the central market cut", testingTB, func() {
+func TestSignalOnTrade(t *testing.T) {
+	Convey("Given a Hawkes signal driven by the central market cut", t, func() {
 		signal := newTestSignal()
 		at := time.Date(2023, 9, 25, 9, 4, 31, 0, time.UTC)
 		row := tradeRow("BTC/USD", "buy", 100.5, 1.25, at)
@@ -144,8 +144,8 @@ func TestSignalOnTrade(testingTB *testing.T) {
 	})
 }
 
-func TestSignalMeasure(testingTB *testing.T) {
-	Convey("Given a Hawkes signal with enough marked arrivals to identify a stream", testingTB, func() {
+func TestSignalMeasure(t *testing.T) {
+	Convey("Given a Hawkes signal with enough marked arrivals to identify a stream", t, func() {
 		signal := newTestSignal()
 		start := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 		sides := []string{"buy", "sell", "buy", "sell", "buy", "sell"}
@@ -179,43 +179,78 @@ func sessionSignals(
 	return []types.Signal{NewSignal(ctx, api, channel)}
 }
 
-func TestSignal_MeasureFromMarket(testingTB *testing.T) {
-	Convey("Given Hawkes inside a paper Session market", testingTB, func() {
-		calmSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
-		hotSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
+/*
+TestSignal_MeasureFromMarket proves Hawkes on the mock Conn Session path:
+toxic chase must emit EventCount (catalog PeakSourceMetric) and side-aware
+buy EventCount, exceeding calm — not a relative-only smoke check.
+*/
+func TestSignal_MeasureFromMarket(t *testing.T) {
+	symbol := conditions.Subject()
+	options := tests.SessionOptions{Signals: sessionSignals}
 
-		Convey("When calm and aggression tapes play through Cut", func() {
-			calmTheses, err := calmSession.Play(conditions.Calm(32).Frames())
-			So(err, ShouldBeNil)
-			hotTheses, err := hotSession.Play(
-				conditions.Aggression(32, 4, 12).Frames(),
-			)
-			So(err, ShouldBeNil)
+	t.Run("tape_toxic_chase", func(t *testing.T) {
+		hot := tests.PlayMarketClaims(t, options, conditions.TapeToxicChase().Frames(),
+			tests.SourceClaim{
+				Source: types.SourceHawkes, Metric: types.MetricEventCount,
+				Symbol: symbol, Bound: tests.BoundPositive,
+			},
+		)
 
-			calmBuy, hasCalm := peakHawkesSideMetric(
-				calmTheses,
-				types.SideBuy,
-				types.MetricEventCount,
-			)
-			hotBuy, hasHot := peakHawkesSideMetric(
-				hotTheses,
-				types.SideBuy,
-				types.MetricEventCount,
-			)
+		buyCount, ok := peakHawkesSideMetric(hot, types.SideBuy, types.MetricEventCount)
 
-			Convey("Then aggression raises buy event-count evidence versus calm", func() {
-				So(hasCalm, ShouldBeTrue)
-				So(hasHot, ShouldBeTrue)
-				So(hotBuy, ShouldBeGreaterThan, calmBuy)
-			})
-		})
+		if !ok || buyCount <= 0 {
+			t.Fatalf("want buy EventCount > 0 on toxic chase (ok=%v peak=%g)", ok, buyCount)
+		}
 	})
+
+	t.Run("toxic_exceeds_calm_buy_event_count", func(t *testing.T) {
+		// Unsigned PeakSourceMetric EventCount saturates equally on calm vs chase;
+		// side-aware buy EventCount is the meaningful contrast.
+		calm := tests.PlayMarketClaims(t, options, conditions.TapeCalm().Frames())
+		hot := tests.PlayMarketClaims(t, options, conditions.TapeToxicChase().Frames(),
+			tests.SourceClaim{
+				Source: types.SourceHawkes, Metric: types.MetricEventCount,
+				Symbol: symbol, Bound: tests.BoundPositive,
+			},
+		)
+
+		calmBuy, hasCalm := peakHawkesSideMetric(calm, types.SideBuy, types.MetricEventCount)
+		hotBuy, hasHot := peakHawkesSideMetric(hot, types.SideBuy, types.MetricEventCount)
+
+		if !hasHot {
+			t.Fatal("want buy EventCount on toxic chase")
+		}
+
+		if !hasCalm {
+			t.Fatal("want buy EventCount on calm")
+		}
+
+		if hotBuy <= calmBuy {
+			t.Fatalf(
+				"want toxic buy EventCount (%g) > calm (%g)",
+				hotBuy, calmBuy,
+			)
+		}
+	})
+}
+
+func BenchmarkSignal_MeasureFromMarket(benchmark *testing.B) {
+	session, err := tests.NewSession(context.Background(), benchmark, tests.SessionOptions{
+		Signals: sessionSignals,
+	})
+
+	if err != nil {
+		benchmark.Fatal(err)
+	}
+
+	frames := conditions.TapeToxicChase().Frames()
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		if _, err := session.Play(frames); err != nil {
+			benchmark.Fatal(err)
+		}
+	}
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {

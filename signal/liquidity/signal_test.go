@@ -62,8 +62,8 @@ func measure(signal *Signal, rows ...kraken.TickerData) []*types.Measurement {
 	return measurements
 }
 
-func TestSignal_MeasureRequiresTwoExecutablePeers(testingTB *testing.T) {
-	Convey("Given a cross-section with only one observed symbol", testingTB, func() {
+func TestSignal_MeasureRequiresTwoExecutablePeers(t *testing.T) {
+	Convey("Given a cross-section with only one observed symbol", t, func() {
 		signal := &Signal{}
 
 		result := measure(signal,
@@ -82,8 +82,8 @@ func TestSignal_MeasureRequiresTwoExecutablePeers(testingTB *testing.T) {
 	})
 }
 
-func TestSignal_MeasureUsesExecutableValueNotRawVolume(testingTB *testing.T) {
-	Convey("Given two penny-priced peers with huge raw volume but tiny quote notional", testingTB, func() {
+func TestSignal_MeasureUsesExecutableValueNotRawVolume(t *testing.T) {
+	Convey("Given two penny-priced peers with huge raw volume but tiny quote notional", t, func() {
 		signal := &Signal{}
 
 		result := measure(signal,
@@ -106,8 +106,8 @@ func TestSignal_MeasureUsesExecutableValueNotRawVolume(testingTB *testing.T) {
 	})
 }
 
-func TestSignal_MeasureAtPeerMedianIsBalanced(testingTB *testing.T) {
-	Convey("Given a subject whose notional and depth match its peers exactly", testingTB, func() {
+func TestSignal_MeasureAtPeerMedianIsBalanced(t *testing.T) {
+	Convey("Given a subject whose notional and depth match its peers exactly", t, func() {
 		signal := &Signal{}
 
 		result := measure(signal,
@@ -128,8 +128,8 @@ func TestSignal_MeasureAtPeerMedianIsBalanced(testingTB *testing.T) {
 	})
 }
 
-func TestSignal_MeasureDoesNotMixTurnoverIntoTouchDepth(testingTB *testing.T) {
-	Convey("Given high reported turnover but below-median executable touch depth", testingTB, func() {
+func TestSignal_MeasureDoesNotMixTurnoverIntoTouchDepth(t *testing.T) {
+	Convey("Given high reported turnover but below-median executable touch depth", t, func() {
 		signal := &Signal{}
 
 		result := measure(signal,
@@ -150,8 +150,8 @@ func TestSignal_MeasureDoesNotMixTurnoverIntoTouchDepth(testingTB *testing.T) {
 	})
 }
 
-func TestSignal_MeasureDoesNotRequireReportedTurnover(testingTB *testing.T) {
-	Convey("Given executable peers without reported turnover", testingTB, func() {
+func TestSignal_MeasureDoesNotRequireReportedTurnover(t *testing.T) {
+	Convey("Given executable peers without reported turnover", t, func() {
 		signal := &Signal{}
 
 		result := measure(signal,
@@ -171,8 +171,8 @@ func TestSignal_MeasureDoesNotRequireReportedTurnover(testingTB *testing.T) {
 	})
 }
 
-func TestSignal_MeasureSkipsNonExecutableSubject(testingTB *testing.T) {
-	Convey("Given a subject with a one-sided quote among executable peers", testingTB, func() {
+func TestSignal_MeasureSkipsNonExecutableSubject(t *testing.T) {
+	Convey("Given a subject with a one-sided quote among executable peers", t, func() {
 		signal := &Signal{}
 
 		result := measure(signal,
@@ -207,45 +207,53 @@ func sessionSignals(
 	return []types.Signal{NewSignal(ctx, api, channel)}
 }
 
-func TestSignal_MeasureFromMarket(testingTB *testing.T) {
-	Convey("Given liquidity inside a paper Session cohort market", testingTB, func() {
-		herdSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
-		thinSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
+/*
+TestSignal_MeasureFromMarket proves liquidity on the mock Conn Session path:
+a thin-book tape must emit scarcity and relative-touch evidence, and scarcity
+must exceed a sector-lift (herd) peer — not a relative-only smoke check.
+*/
+func TestSignal_MeasureFromMarket(t *testing.T) {
+	symbol := conditions.Subject()
+	options := tests.SessionOptions{Signals: sessionSignals}
 
-		Convey("When herd and thin-subject cohorts play through Cut", func() {
-			herdTheses, err := herdSession.Play(conditions.Herd(24).Frames())
-			So(err, ShouldBeNil)
-			thinTheses, err := thinSession.Play(
-				conditions.ThinHerd(24, 0.15).Frames(),
-			)
-			So(err, ShouldBeNil)
+	thinFamily := []tests.SourceClaim{
+		{Source: types.SourceLiquidity, Metric: types.MetricScarcityScore, Symbol: symbol, Bound: tests.BoundPositive},
+		{Source: types.SourceLiquidity, Metric: types.MetricRelativeTouchDepth, Symbol: symbol, Bound: tests.BoundPresent},
+	}
 
-			herd, hasHerd := tests.PeakSourceMetric(
-				herdTheses,
-				types.SourceLiquidity,
-				conditions.Subject(),
-				types.MetricScarcityScore,
-			)
-			thin, hasThin := tests.PeakSourceMetric(
-				thinTheses,
-				types.SourceLiquidity,
-				conditions.Subject(),
-				types.MetricScarcityScore,
-			)
-
-			Convey("Then a starved subject raises scarcity versus the herd", func() {
-				So(hasHerd, ShouldBeTrue)
-				So(hasThin, ShouldBeTrue)
-				So(thin, ShouldBeGreaterThan, herd)
-			})
-		})
+	t.Run("tape_thin_book", func(t *testing.T) {
+		tests.PlayMarketClaims(t, options, conditions.TapeThinBook().Frames(), thinFamily...)
 	})
+
+	t.Run("thin_exceeds_herd_scarcity", func(t *testing.T) {
+		herd := tests.PlayMarketClaims(t, options, conditions.TapeSectorLift().Frames())
+		thin := tests.PlayMarketClaims(
+			t, options, conditions.TapeThinBook().Frames(), thinFamily...,
+		)
+		tests.RequireSourceExceeds(
+			t, thin, herd,
+			types.SourceLiquidity, symbol, types.MetricScarcityScore,
+		)
+	})
+}
+
+func BenchmarkSignal_MeasureFromMarket(benchmark *testing.B) {
+	session, err := tests.NewSession(context.Background(), benchmark, tests.SessionOptions{
+		Signals: sessionSignals,
+	})
+
+	if err != nil {
+		benchmark.Fatal(err)
+	}
+
+	frames := conditions.TapeThinBook().Frames()
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		if _, err := session.Play(frames); err != nil {
+			benchmark.Fatal(err)
+		}
+	}
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {

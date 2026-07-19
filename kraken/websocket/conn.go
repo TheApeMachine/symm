@@ -345,7 +345,8 @@ func (api *API) SubscribeInstruments() error {
 	api.subs.instruments = true
 	api.subs.mu.Unlock()
 
-	return errnie.Error(api.public.Client().SubInstruments())
+	// Conn.Write so mock producers and live sockets share one subscribe path.
+	return errnie.Error(api.public.Write(kraken.NewInstrumentSubscription()))
 }
 
 func (api *API) SubscribeTicker(pairs []string) error {

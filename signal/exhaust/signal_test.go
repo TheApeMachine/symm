@@ -62,8 +62,8 @@ func exhaustFrame(books ...kraken.BookData) *types.MarketFrame {
 	}
 }
 
-func TestSignal_MeasureDetectsMechanicalDecay(testingTB *testing.T) {
-	Convey("Given deteriorating bid depth on repeated book frames", testingTB, func() {
+func TestSignal_MeasureDetectsMechanicalDecay(t *testing.T) {
+	Convey("Given deteriorating bid depth on repeated book frames", t, func() {
 		signal := newExhaustSignal()
 		quantities := []float64{20, 18, 16, 14, 12, 10, 8, 6, 4, 2}
 
@@ -90,8 +90,8 @@ func TestSignal_MeasureDetectsMechanicalDecay(testingTB *testing.T) {
 	})
 }
 
-func TestSignal_MeasureSkipsBookWithoutIncrement(testingTB *testing.T) {
-	Convey("Given a book row without price increment", testingTB, func() {
+func TestSignal_MeasureSkipsBookWithoutIncrement(t *testing.T) {
+	Convey("Given a book row without price increment", t, func() {
 		signal := newExhaustSignal()
 		row := exhaustBookRow("BTC/USD", 10, 10)
 		row.PriceIncrement = krakendecimal.NewFromFloat64(0)
@@ -115,45 +115,58 @@ func sessionSignals(
 	return []types.Signal{NewSignal(ctx, api, instrument, channel)}
 }
 
-func TestSignal_MeasureFromMarket(testingTB *testing.T) {
-	Convey("Given exhaust inside a paper Session market", testingTB, func() {
-		calmSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
-		decaySession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
+/*
+TestSignal_MeasureFromMarket proves exhaust on the mock Conn Session path:
+exhaustion and vacuum tapes must emit SourceExhaustion family peaks, and
+exhaustion mechanical must exceed calm — not a relative-only smoke check.
+*/
+func TestSignal_MeasureFromMarket(t *testing.T) {
+	symbol := conditions.Subject()
+	options := tests.SessionOptions{Signals: sessionSignals}
 
-		Convey("When calm and decaying books play through Cut", func() {
-			calmTheses, err := calmSession.Play(conditions.Calm(24).Frames())
-			So(err, ShouldBeNil)
-			decayTheses, err := decaySession.Play(
-				conditions.Decay(24, 0, 0.9).Frames(),
-			)
-			So(err, ShouldBeNil)
+	exhaustFamily := []tests.SourceClaim{
+		{Source: types.SourceExhaustion, Metric: types.MetricMechanical, Symbol: symbol, Bound: tests.BoundPositive},
+		{Source: types.SourceExhaustion, Metric: types.MetricUrgency, Symbol: symbol, Bound: tests.BoundPositive},
+		{Source: types.SourceExhaustion, Metric: types.MetricStrength, Symbol: symbol, Bound: tests.BoundPositive},
+	}
 
-			calm, hasCalm := tests.PeakSourceMetric(
-				calmTheses,
-				types.SourceExhaustion,
-				conditions.Subject(),
-				types.MetricMechanical,
-			)
-			decayed, hasDecay := tests.PeakSourceMetric(
-				decayTheses,
-				types.SourceExhaustion,
-				conditions.Subject(),
-				types.MetricMechanical,
-			)
-
-			Convey("Then book decay lifts mechanical exhaust versus calm", func() {
-				So(hasCalm, ShouldBeTrue)
-				So(hasDecay, ShouldBeTrue)
-				So(decayed, ShouldBeGreaterThan, calm)
-			})
-		})
+	t.Run("tape_exhaustion", func(t *testing.T) {
+		tests.PlayMarketClaims(t, options, conditions.TapeExhaustion().Frames(), exhaustFamily...)
 	})
+
+	t.Run("tape_vacuum", func(t *testing.T) {
+		tests.PlayMarketClaims(t, options, conditions.TapeVacuum().Frames(), exhaustFamily...)
+	})
+
+	t.Run("exhaustion_exceeds_calm_mechanical", func(t *testing.T) {
+		calm := tests.PlayMarketClaims(t, options, conditions.TapeCalm().Frames())
+		stressed := tests.PlayMarketClaims(
+			t, options, conditions.TapeExhaustion().Frames(), exhaustFamily...,
+		)
+		tests.RequireSourceExceeds(
+			t, stressed, calm,
+			types.SourceExhaustion, symbol, types.MetricMechanical,
+		)
+	})
+}
+
+func BenchmarkSignal_MeasureFromMarket(benchmark *testing.B) {
+	session, err := tests.NewSession(context.Background(), benchmark, tests.SessionOptions{
+		Signals: sessionSignals,
+	})
+
+	if err != nil {
+		benchmark.Fatal(err)
+	}
+
+	frames := conditions.TapeExhaustion().Frames()
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		if _, err := session.Play(frames); err != nil {
+			benchmark.Fatal(err)
+		}
+	}
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {

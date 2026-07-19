@@ -41,6 +41,18 @@ Work is complete only when verified. You must provide proof of execution in your
 * **Benchmarks:** A performance benchmark must exist and be executed for any data-processing or signal-calculation changes.
 * **Verification Output:** You must paste the literal, unmodified stdout output of the test and benchmark runs in your response.
 
+### Market-facing verification (simulation)
+
+Market-facing behavior (signals, logic from market data, strategy decide/allocate/rotate/admit, order path) is proved through the **production boot path** with mock Conns as the only substitution:
+
+1. **Transparent source:** `tests/mockapi` Conns → `websocket.NewAPI` → [`stack.Boot`](stack/boot.go) (same graph as [`cmd/root.go`](cmd/root.go)).
+2. **Controllable tapes:** opportunity/trap catalog in [`tests/catalog`](tests/catalog) + multi-leg producers in [`tests/conditions`](tests/conditions) — pumps, coils, exhaustion, vacuums, sector lifts, thin-book traps, and adversarial twins.
+3. **Drive:** `Crypto.Tick` / `Play` (Cut → Update → Plan → trade). Do not invent a parallel Planner harness. `CommitStrategy` is only for strategy/wallet truths **given** seeded forecasts, and must be labeled as such.
+4. **Known outcomes:** assert stage truths (measure / decide / size / wallet), not merely “calm metric &lt; stressed metric.” Measure bounds may be `positive`, `present` (signed non-zero), or `zero` (e.g. subject has no lead claim).
+5. **Use the catalog:** `tests/catalog` proves signals (`ProveMeasure` / `signals_test`), Analyzer side-effects on `Crypto.LastThesis` (`logic_test`), and strategy admit/size/rotate (`ProveStrategy` / `strategy_test`). Infrastructure without these proofs is incomplete.
+6. **Signal packages own market proofs:** each `signal/*/signal_test.go` (or `market_test.go`) must boot `tests.NewSession` with that signal only, play `conditions.Tape*` streams, and assert absolute `tests.SourceClaim` outcomes (family peaks + stressed-vs-calm exceeds). Relative calm&lt;stress alone is insufficient. Catalog proofs do not replace package-local Session proofs.
+7. Pure unit math (decimal sizing scans, etc.) may remain; they do not replace Session/catalog proof for system behavior.
+
 ### Preventative Rules:
 
 * **No Fabrication:** If tool or environment limitations prevent you from executing tests or benchmarks, state: `VERIFICATION LIMITATION: UNABLE TO RUN TESTS` and list the exact terminal commands you would run. Do not write mock or simulated test results.

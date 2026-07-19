@@ -64,43 +64,51 @@ func sessionSignals(
 	return []types.Signal{NewSignal(ctx, api, channel)}
 }
 
-func TestSignal_MeasureFromMarket(testingTB *testing.T) {
-	Convey("Given pumpdump inside a paper Session market", testingTB, func() {
-		calmSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
-		pumpSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
+/*
+TestSignal_MeasureFromMarket proves pumpdump on the mock Conn Session path:
+catalog pump/coil tapes must emit SourcePumpDump family peaks, and pump must
+exceed calm on RVOL — not a relative-only calm-vs-stress smoke check.
+*/
+func TestSignal_MeasureFromMarket(t *testing.T) {
+	symbol := conditions.Subject()
+	options := tests.SessionOptions{Signals: sessionSignals}
 
-		Convey("When calm and pumped conditions play through Cut", func() {
-			calmTheses, err := calmSession.Play(conditions.Calm(32).Frames())
-			So(err, ShouldBeNil)
-			pumpTheses, err := pumpSession.Play(
-				conditions.Pump(32, 16, 1.25, 8).Frames(),
-			)
-			So(err, ShouldBeNil)
+	pumpFamily := []tests.SourceClaim{
+		{Source: types.SourcePumpDump, Metric: types.MetricRVOL, Symbol: symbol, Bound: tests.BoundPositive},
+		{Source: types.SourcePumpDump, Metric: types.MetricIgnition, Symbol: symbol, Bound: tests.BoundPositive},
+		{Source: types.SourcePumpDump, Metric: types.MetricStrength, Symbol: symbol, Bound: tests.BoundPositive},
+		{Source: types.SourcePumpDump, Metric: types.MetricPrecursor, Symbol: symbol, Bound: tests.BoundPositive},
+	}
 
-			calm, hasCalm := tests.PeakMetric(
-				calmTheses, "MATIC/USD", types.MetricRVOL,
-			)
-			pumped, hasPumped := tests.PeakMetric(
-				pumpTheses, "MATIC/USD", types.MetricRVOL,
-			)
+	t.Run("tape_pump", func(t *testing.T) {
+		tests.PlayMarketClaims(t, options, conditions.TapePump().Frames(), pumpFamily...)
+	})
 
-			Convey("Then the pumped stream should lift relative volume", func() {
-				So(hasCalm, ShouldBeTrue)
-				So(hasPumped, ShouldBeTrue)
-				So(pumped, ShouldBeGreaterThan, calm)
-			})
-		})
+	t.Run("tape_coil", func(t *testing.T) {
+		// Coil uses a longer setup before breakout; RVOL/Ignition/Strength are
+		// the durable peaks. Compression may stay at zero until the break leg.
+		tests.PlayMarketClaims(t, options, conditions.TapeCoil().Frames(), pumpFamily...)
+	})
+
+	t.Run("pump_exceeds_calm_rvol", func(t *testing.T) {
+		calm := tests.PlayMarketClaims(t, options, conditions.TapeCalm().Frames(),
+			tests.SourceClaim{
+				Source: types.SourcePumpDump, Metric: types.MetricRVOL,
+				Symbol: symbol, Bound: tests.BoundPositive,
+			},
+		)
+		pumped := tests.PlayMarketClaims(
+			t, options, conditions.TapePump().Frames(), pumpFamily...,
+		)
+		tests.RequireSourceExceeds(
+			t, pumped, calm,
+			types.SourcePumpDump, symbol, types.MetricRVOL,
+		)
 	})
 }
 
-func TestSignal_MeasureSkipsIncompleteRow(testingTB *testing.T) {
-	Convey("Given a partial Kraken ticker row", testingTB, func() {
+func TestSignal_MeasureSkipsIncompleteRow(t *testing.T) {
+	Convey("Given a partial Kraken ticker row", t, func() {
 		signal := newSignal()
 
 		Convey("When measure runs", func() {
@@ -119,8 +127,8 @@ func TestSignal_MeasureSkipsIncompleteRow(testingTB *testing.T) {
 	})
 }
 
-func TestSignal_MeasureEmitsWhileCalibrating(testingTB *testing.T) {
-	Convey("Given a complete ticker that has not yet formed ignition baselines", testingTB, func() {
+func TestSignal_MeasureEmitsWhileCalibrating(t *testing.T) {
+	Convey("Given a complete ticker that has not yet formed ignition baselines", t, func() {
 		signal := newSignal()
 		at := time.Date(2026, 7, 17, 1, 3, 45, 0, time.UTC)
 		row := kraken.TickerData{
@@ -169,8 +177,8 @@ func TestSignal_MeasureEmitsWhileCalibrating(testingTB *testing.T) {
 	})
 }
 
-func TestSignal_Measure(testingTB *testing.T) {
-	Convey("Given a replayed ticker timeline", testingTB, func() {
+func TestSignal_Measure(t *testing.T) {
+	Convey("Given a replayed ticker timeline", t, func() {
 		signal := newSignal()
 		fixture := tickerfixture.NewFixture(tickerfixture.UPDATE, 32)
 
@@ -188,6 +196,25 @@ func TestSignal_Measure(testingTB *testing.T) {
 			So(ignition, ShouldBeGreaterThan, 0)
 		})
 	})
+}
+
+func BenchmarkSignal_MeasureFromMarket(benchmark *testing.B) {
+	session, err := tests.NewSession(context.Background(), benchmark, tests.SessionOptions{
+		Signals: sessionSignals,
+	})
+
+	if err != nil {
+		benchmark.Fatal(err)
+	}
+
+	frames := conditions.TapePump().Frames()
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		if _, err := session.Play(frames); err != nil {
+			benchmark.Fatal(err)
+		}
+	}
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {

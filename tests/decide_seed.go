@@ -209,12 +209,12 @@ func SeedRetreat(thesis *types.Thesis, symbol string, pressure float64) {
 PlayOpen plays a market, seeds fees/capital, and installs a bound open lot.
 */
 func (session *Session) PlayOpen(
-	testingTB testing.TB,
+	t testing.TB,
 	market *Market,
 	symbol string,
 	qty, trail float64,
 ) (*types.Holding, string, error) {
-	testingTB.Helper()
+	t.Helper()
 
 	if session == nil || market == nil {
 		return nil, "", errnie.Err(errnie.NotFound, "tests: session or market unavailable", nil)
@@ -234,25 +234,25 @@ func (session *Session) PlayOpen(
 
 	session.Desk.SetSlots(2, 2)
 
-	return session.SeedOpenLot(testingTB, symbol, qty, trail)
+	return session.SeedOpenLot(t, symbol, qty, trail)
 }
 
 /*
 SeedOpenLot installs a bound open Holding on Balance and adopts it on Desk.
 */
 func (session *Session) SeedOpenLot(
-	testingTB testing.TB,
+	t testing.TB,
 	symbol string,
 	qty, trail float64,
 ) (*types.Holding, string, error) {
-	testingTB.Helper()
+	t.Helper()
 
 	if session == nil {
 		return nil, "", errnie.Err(errnie.NotFound, "tests: session unavailable", nil)
 	}
 
-	statePath := filepath.Join(testingTB.TempDir(), "paper-state.json")
-	InstallPaperCLI(testingTB, statePath)
+	statePath := filepath.Join(t.TempDir(), "paper-state.json")
+	InstallPaperCLI(t, statePath)
 
 	entry := 1.0
 
@@ -268,9 +268,9 @@ func (session *Session) SeedOpenLot(
 		return nil, "", err
 	}
 
-	SetPaperCash(testingTB, statePath, cashAfterEnter)
-	SetPaperAsset(testingTB, statePath, baseAsset(symbol), qty)
-	SetPaperPrice(testingTB, statePath, symbol, entry)
+	SetPaperCash(t, statePath, cashAfterEnter)
+	SetPaperAsset(t, statePath, baseAsset(symbol), qty)
+	SetPaperPrice(t, statePath, symbol, entry)
 
 	at := time.Unix(1, 0).UTC()
 	stop := types.NewStoploss(context.Background())

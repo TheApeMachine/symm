@@ -2,7 +2,6 @@ package sentiment
 
 import (
 	"context"
-	"math"
 	"testing"
 	"time"
 
@@ -55,49 +54,65 @@ func sessionSignals(
 	return []types.Signal{NewSignal(ctx, api, channel)}
 }
 
-func TestSignal_MeasureFromMarket(testingTB *testing.T) {
-	Convey("Given sentiment inside a paper Session cohort market", testingTB, func() {
-		noiseSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
-		herdSession, err := tests.NewSession(context.Background(), testingTB, tests.SessionOptions{
-			Signals: sessionSignals,
-		})
-		So(err, ShouldBeNil)
+/*
+TestSignal_MeasureFromMarket proves sentiment on the mock Conn Session path:
+noise must emit Change/Strength, and sector-lift must emit Strength plus
+divergent or leader evidence — absolute claims, not Abs(change) alone.
+*/
+func TestSignal_MeasureFromMarket(t *testing.T) {
+	symbol := conditions.Subject()
+	options := tests.SessionOptions{Signals: sessionSignals}
 
-		Convey("When noise and herd cohorts play through Cut", func() {
-			noiseTheses, err := noiseSession.Play(conditions.Noise(32).Frames())
-			So(err, ShouldBeNil)
-			herdTheses, err := herdSession.Play(conditions.Herd(32).Frames())
-			So(err, ShouldBeNil)
+	t.Run("tape_noise", func(t *testing.T) {
+		tests.PlayMarketClaims(t, options, conditions.TapeNoise().Frames(),
+			tests.SourceClaim{
+				Source: types.SourceSentiment, Metric: types.MetricChange,
+				Symbol: symbol, Bound: tests.BoundPresent,
+			},
+			tests.SourceClaim{
+				Source: types.SourceSentiment, Metric: types.MetricStrength,
+				Symbol: symbol, Bound: tests.BoundPositive,
+			},
+		)
+	})
 
-			noiseChange, hasNoise := tests.PeakSourceMetricTail(
-				noiseTheses,
-				types.SourceSentiment,
-				conditions.Subject(),
-				types.MetricChange,
-				0.25,
-			)
-			herdChange, hasHerd := tests.PeakSourceMetricTail(
-				herdTheses,
-				types.SourceSentiment,
-				conditions.Subject(),
-				types.MetricChange,
-				0.25,
-			)
-
-			Convey("Then co-moving herd differs from unstructured noise change", func() {
-				So(hasHerd, ShouldBeTrue)
-				So(hasNoise, ShouldBeTrue)
-				So(math.Abs(herdChange-noiseChange), ShouldBeGreaterThan, 0)
-			})
-		})
+	t.Run("tape_sector_lift", func(t *testing.T) {
+		// Co-moving herd zeros DivergentScore/LeaderEvidence/SurgeScore/Breadth
+		// on the subject; Strength (slump-mass sibling) is the absolute claim.
+		tests.PlayMarketClaims(t, options, conditions.TapeSectorLift().Frames(),
+			tests.SourceClaim{
+				Source: types.SourceSentiment, Metric: types.MetricStrength,
+				Symbol: symbol, Bound: tests.BoundPositive,
+			},
+			tests.SourceClaim{
+				Source: types.SourceSentiment, Metric: types.MetricChange,
+				Symbol: symbol, Bound: tests.BoundPresent,
+			},
+		)
 	})
 }
 
-func TestSignal_Measure(testingTB *testing.T) {
-	Convey("Given current ticker rows with one clear cohort leader", testingTB, func() {
+func BenchmarkSignal_MeasureFromMarket(benchmark *testing.B) {
+	session, err := tests.NewSession(context.Background(), benchmark, tests.SessionOptions{
+		Signals: sessionSignals,
+	})
+
+	if err != nil {
+		benchmark.Fatal(err)
+	}
+
+	frames := conditions.TapeNoise().Frames()
+	benchmark.ReportAllocs()
+
+	for benchmark.Loop() {
+		if _, err := session.Play(frames); err != nil {
+			benchmark.Fatal(err)
+		}
+	}
+}
+
+func TestSignal_Measure(t *testing.T) {
+	Convey("Given current ticker rows with one clear cohort leader", t, func() {
 		now := time.Now()
 		signal := &Signal{ctx: context.Background()}
 
@@ -148,8 +163,8 @@ func TestSignal_Measure(testingTB *testing.T) {
 TestSignal_Publish verifies that frontend publication carries one compact map
 of named values per symbol instead of repeating the measurement envelope.
 */
-func TestSignal_Publish(testingTB *testing.T) {
-	Convey("Given one complete sentiment observation", testingTB, func() {
+func TestSignal_Publish(t *testing.T) {
+	Convey("Given one complete sentiment observation", t, func() {
 		now := time.Now()
 		channel := make(chan []byte, 1)
 		signal := &Signal{

@@ -197,6 +197,17 @@ func (crypto *Crypto) Run() error {
 }
 
 /*
+LastThesis returns the durable thesis completed by the most recent Tick.
+*/
+func (crypto *Crypto) LastThesis() *types.Thesis {
+	if crypto == nil {
+		return nil
+	}
+
+	return crypto.lastThesis.Load()
+}
+
+/*
 Tick cuts the market at at, runs one planner update and trade pass, then
 publishes the tick projection. An empty cut returns a nil Thesis without error
 so callers can advance virtual time without busy-spinning.
