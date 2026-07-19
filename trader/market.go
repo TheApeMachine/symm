@@ -231,7 +231,16 @@ func (market *Market) dirtyWake() {
 }
 
 /*
-WaitDirty blocks until ingress arrives, the budget elapses, or Market closes.
+defaultCoalesceWindow caps how long WaitDirty keeps merging a burst of ingress
+into one Cut after the first observation arrives, so a fast run of ticker, trade,
+and book messages produces a single Cut instead of one per message. It defaults
+to the tick-budget floor and is overridable through signals.coalesce_window.
+*/
+const defaultCoalesceWindow = 10 * time.Millisecond
+
+/*
+WaitDirty blocks until the first ingress arrives, the budget elapses, or Market
+closes, then coalesces the trailing burst so one Cut covers a whole message run.
 */
 func (market *Market) WaitDirty(budget time.Duration) {
 	if market == nil {
@@ -239,7 +248,7 @@ func (market *Market) WaitDirty(budget time.Duration) {
 	}
 
 	if budget <= 0 {
-		budget = 10 * time.Millisecond
+		budget = defaultCoalesceWindow
 	}
 
 	var done <-chan struct{}
@@ -254,14 +263,66 @@ func (market *Market) WaitDirty(budget time.Duration) {
 		dirty = market.dirty
 	}
 
-	timer := time.NewTimer(budget)
-	defer timer.Stop()
+	deadline := time.NewTimer(budget)
+	defer deadline.Stop()
 
 	select {
 	case <-done:
+		return
+	case <-deadline.C:
+		return
 	case <-dirty:
-	case <-timer.C:
 	}
+
+	market.coalesce(budget, done, dirty, deadline.C)
+}
+
+/*
+coalesce drains the trailing ingress burst after the first dirty signal,
+extending a short quiet window on each new observation and returning once the
+stream stays quiet for that window or the overall budget deadline elapses.
+*/
+func (market *Market) coalesce(
+	budget time.Duration,
+	done <-chan struct{},
+	dirty <-chan struct{},
+	deadline <-chan time.Time,
+) {
+	window := coalesceWindow(budget)
+	quiet := time.NewTimer(window)
+	defer quiet.Stop()
+
+	for {
+		select {
+		case <-done:
+			return
+		case <-deadline:
+			return
+		case <-dirty:
+			if !quiet.Stop() {
+				<-quiet.C
+			}
+
+			quiet.Reset(window)
+		case <-quiet.C:
+			return
+		}
+	}
+}
+
+/*
+coalesceWindow derives the burst-merge window as the smaller of the tick budget
+and the configured coalesce window so coalescing never delays a Cut past one
+planner budget.
+*/
+func coalesceWindow(budget time.Duration) time.Duration {
+	window := viper.GetDuration("signals.coalesce_window")
+
+	if window <= 0 {
+		window = defaultCoalesceWindow
+	}
+
+	return min(budget, window)
 }
 
 /*
@@ -305,10 +366,15 @@ func (market *Market) Cut(at time.Time) (*types.MarketFrame, error) {
 		return &types.MarketFrame{CrossSection: types.NewCrossSection()}, nil
 	}
 
-	tickerRows, err := market.tickers.Frame(at)
+	var tickerRows []kraken.TickerData
+	var err error
 
-	if err != nil {
-		return nil, errnie.Err(errnie.Internal, "market: read ticker frame", err)
+	if tickerProgress {
+		tickerRows, err = market.tickers.Frame(at)
+
+		if err != nil {
+			return nil, errnie.Err(errnie.Internal, "market: read ticker frame", err)
+		}
 	}
 
 	trades, err := market.trades.Batch(at)
@@ -332,29 +398,50 @@ func (market *Market) Cut(at time.Time) (*types.MarketFrame, error) {
 	}
 
 	if !tickerProgress {
-		tickerRows = market.tickersFor(tickerRows, trades.Rows, books.Rows)
+		tickerRows, err = market.tickers.FrameSymbols(
+			at, activeSymbols(trades.Rows, books.Rows),
+		)
+
+		if err != nil {
+			return nil, errnie.Err(errnie.Internal, "market: read active ticker frame", err)
+		}
 	}
 
 	crossSection := types.NewCrossSection()
 	crossSection.Measure(tickerRows)
+
+	var advanced types.StreamInterest
+
+	if tickerProgress {
+		advanced |= types.StreamTicker
+	}
+
+	if tradeProgress {
+		advanced |= types.StreamTrade
+	}
+
+	if bookProgress {
+		advanced |= types.StreamBook
+	}
 
 	return &types.MarketFrame{
 		Tickers:      tickerRows,
 		Trades:       trades.Rows,
 		Books:        books.Rows,
 		CrossSection: crossSection,
+		Advanced:     advanced,
 	}, nil
 }
 
 /*
-tickersFor keeps the retained quote rows whose symbols appear in the event cut
-so book-only or trade-only planner ticks do not resurface the whole universe.
+activeSymbols lists the symbols whose trade or book stream advanced this cut so a
+book-only or trade-only tick materializes only those tickers instead of the whole
+quote universe.
 */
-func (market *Market) tickersFor(
-	tickers []kraken.TickerData,
+func activeSymbols(
 	trades []kraken.TradeData,
 	books []kraken.BookData,
-) []kraken.TickerData {
+) []string {
 	needed := make(map[string]struct{}, len(trades)+len(books))
 
 	for _, trade := range trades {
@@ -365,17 +452,11 @@ func (market *Market) tickersFor(
 		needed[book.Symbol] = struct{}{}
 	}
 
-	if len(needed) == 0 {
-		return nil
+	symbols := make([]string, 0, len(needed))
+
+	for symbol := range needed {
+		symbols = append(symbols, symbol)
 	}
 
-	filtered := make([]kraken.TickerData, 0, len(needed))
-
-	for _, ticker := range tickers {
-		if _, found := needed[ticker.Symbol]; found {
-			filtered = append(filtered, ticker)
-		}
-	}
-
-	return filtered
+	return symbols
 }

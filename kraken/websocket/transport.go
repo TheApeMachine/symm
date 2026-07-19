@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -71,30 +70,14 @@ func (transport *Transport) wireCredentials(client *spot.WebSocket) {
 bindCallbacks registers connect, receive, and authenticated handlers on Live.
 */
 func (transport *Transport) bindCallbacks(live *Live) {
-	live.client.OnSent.Recurring(func(event *callback.Event[*kraken.WebSocketMessage]) {
-		if err := live.updateLevel3(event); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"websocket: level3 book update failed: "+err.Error(),
-				err,
-			))
-		}
-	})
-
 	live.client.OnReceived.Recurring(func(event *callback.Event[*kraken.WebSocketMessage]) {
 		raw := event.Data.Bytes()
 
-		if err := live.updateLevel3(event); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"websocket: level3 "+utils.GetString(
-					raw, "type",
-				)+" failed: "+err.Error(),
-				err,
-			))
-			live.invalidateLevel3Book(raw)
-
-			return
+		// Level3 book application is expensive (checksum + depth enforcement)
+		// and must never run on the socket reader. Hand the frame to the FIFO
+		// worker and let the reader keep draining subsequent frames.
+		if live.isLevel3 {
+			live.enqueueLevel3(raw)
 		}
 
 		live.route(raw)
@@ -256,4 +239,7 @@ func configureLevel3(live *Live) {
 			},
 		)
 	})
+
+	live.level3Queue = make(chan []byte, level3QueueDepth)
+	go live.drainLevel3()
 }

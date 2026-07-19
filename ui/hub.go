@@ -23,8 +23,11 @@ const writeBudget = 200 * time.Millisecond
 
 /*
 Hub owns the dashboard websocket and forwards typed backend frames to clients.
-A coalescer always drains Messages (even with no browser) and flushes
-latest-by-key snapshots on a fixed cadence so reconnects never replay a backlog.
+A coalescer always drains Messages (even with no browser) and flushes pending
+snapshots on a fixed cadence. It keeps two latest-by-key maps: current holds the
+last good frame per key and is never cleared, so a reconnecting client is seeded
+with a full picture; dirty holds only frames still awaiting delivery and is
+cleared once a live socket accepts them, so an idle stream never re-sends.
 */
 type Hub struct {
 	status     types.Status
@@ -36,7 +39,8 @@ type Hub struct {
 	balance    *broker.Balance
 	ready      func() bool
 	live       atomic.Pointer[websocket.Conn]
-	latest     sync.Map
+	current    sync.Map
+	dirty      sync.Map
 }
 
 func NewHub(
@@ -96,12 +100,12 @@ func NewHub(
 				}
 			}
 
-			hub.latest.Range(func(_, value any) bool {
-				frame, ok := value.([]byte)
+		hub.current.Range(func(_, value any) bool {
+			frame, ok := value.([]byte)
 
-				if !ok || len(frame) == 0 {
-					return true
-				}
+			if !ok || len(frame) == 0 {
+				return true
+			}
 
 				if err := hub.write(conn, frame); err != nil {
 					if hub.clientGone(err) {
@@ -156,12 +160,25 @@ func (hub *Hub) Serve() error {
 	return errnie.Error(hub.app.Listen(hub.listenAddr))
 }
 
+/*
+Close cancels the hub context and drops the live socket before app.Shutdown so
+the blocked "/ws" handler — which parks on ctx.Done — unblocks and lets the
+graceful shutdown complete. Shutting down first would wait forever on that
+handler, deadlocking teardown.
+*/
 func (hub *Hub) Close() error {
+	if hub.cancel != nil {
+		hub.cancel()
+	}
+
+	if conn := hub.live.Swap(nil); conn != nil {
+		errnie.Error(conn.Close())
+	}
+
 	if hub.app != nil {
 		errnie.Error(hub.app.Shutdown())
 	}
 
-	hub.cancel()
 	return nil
 }
 
@@ -186,8 +203,14 @@ func (hub *Hub) coalesce() {
 	}
 }
 
+/*
+ingest records a frame as both the retained current snapshot for its key and a
+dirty entry pending delivery to the live socket.
+*/
 func (hub *Hub) ingest(msg []byte) {
-	hub.latest.Store(frameKey(msg), msg)
+	key := frameKey(msg)
+	hub.current.Store(key, msg)
+	hub.dirty.Store(key, msg)
 }
 
 func (hub *Hub) drain() {
@@ -208,7 +231,7 @@ func (hub *Hub) flush() {
 		return
 	}
 
-	hub.latest.Range(func(key, value any) bool {
+	hub.dirty.Range(func(key, value any) bool {
 		frame, ok := value.([]byte)
 
 		if !ok {
@@ -221,12 +244,14 @@ func (hub *Hub) flush() {
 				return false
 			}
 
-			// Keep the snapshot for the next flush — tick frames are small and
-			// would otherwise keep updating while mark/PnL frames never land.
+			// Keep the pending frame for the next flush — tick frames are small
+			// and would otherwise keep updating while mark/PnL frames never land.
 			return true
 		}
 
-		hub.latest.Delete(key)
+		// Clear only the pending mark; current is retained so a reconnect is
+		// still seeded with this key's last good frame.
+		hub.dirty.Delete(key)
 
 		return true
 	})

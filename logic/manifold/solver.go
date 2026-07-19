@@ -141,10 +141,11 @@ func NewSolver(books BookSource) (*Solver, error) {
 }
 
 /*
-Update advances the GPU field for every booked symbol whose observed arrival
-intensity moved forward and stores the resulting readout on the thesis. A
-fitted Hawkes kernel refines the forcing but is not required to start the
-physical field. There is no resident-symbol ceiling.
+Update advances the GPU field for the selected active set — open and pending
+inventory, the UI focus symbol, then the highest-intensity booked candidates up
+to the configured budget — and stores each readout on the thesis. A fitted
+Hawkes kernel refines the forcing but is not required to start the field. Cold,
+non-protected fields are evicted once the resident count exceeds the budget.
 */
 func (solver *Solver) Update(
 	thesis *types.Thesis,
@@ -154,9 +155,39 @@ func (solver *Solver) Update(
 		return nil
 	}
 
-	candidates := make([]intensityCandidate, 0, len(hawkes.Symbols()))
+	candidates := solver.candidates(hawkes)
+	active := newActiveSet(thesis)
+	selected := active.selectAdvance(candidates)
 
-	for _, symbol := range hawkes.Symbols() {
+	errnie.Error(audit.Record(solver.recorder, "manifold_select", map[string]any{
+		"candidates": len(candidates),
+		"selected":   len(selected),
+		"budget":     active.budget,
+	}))
+
+	failures, advanced, latest := solver.advanceAll(thesis, selected)
+	active.evict(solver, latest)
+
+	errnie.Error(audit.Record(solver.recorder, "manifold", map[string]any{
+		"candidates": len(candidates),
+		"advanced":   advanced,
+		"failed":     len(failures),
+		"resident":   len(solver.symbols),
+	}))
+
+	return errors.Join(failures...)
+}
+
+/*
+candidates builds the intensity-ranked, book-grounded candidate list for one
+cut. Hawkes symbols without observed intensity or without a two-sided L3 touch
+are dropped before any field is stepped.
+*/
+func (solver *Solver) candidates(hawkes HawkesSource) []intensityCandidate {
+	symbols := hawkes.Symbols()
+	candidates := make([]intensityCandidate, 0, len(symbols))
+
+	for _, symbol := range symbols {
 		outcome, ok := hawkes.Outcome(symbol)
 
 		if !ok || !outcome.Readiness.Intensity {
@@ -185,37 +216,32 @@ func (solver *Solver) Update(
 		return candidates[left].intensity > candidates[right].intensity
 	})
 
-	candidates = bookReady(candidates, solver.books)
+	return bookReady(candidates, solver.books)
+}
 
-	errnie.Error(audit.Record(solver.recorder, "manifold_select", map[string]any{
-		"selected": len(candidates),
-	}))
-
+/*
+advanceAll steps each selected candidate, stores GasReady readouts on the
+thesis, and returns the advance failures, the count advanced, and the latest
+observed event time used to judge resident-field coldness during eviction.
+*/
+func (solver *Solver) advanceAll(
+	thesis *types.Thesis,
+	selected []intensityCandidate,
+) ([]error, int, time.Time) {
 	var failures []error
-	advanced := 0
 
-	for _, candidate := range candidates {
+	advanced := 0
+	latest := time.Time{}
+
+	for _, candidate := range selected {
+		if candidate.outcome.At.After(latest) {
+			latest = candidate.outcome.At
+		}
+
 		state, err := solver.advance(candidate.symbol, candidate.outcome)
 
 		if err != nil {
-			cause := err
-
-			for errors.Unwrap(cause) != nil {
-				cause = errors.Unwrap(cause)
-			}
-
-			failures = append(failures, errnie.Err(
-				errnie.Internal,
-				fmt.Sprintf("manifold: %s failed to advance field", candidate.symbol),
-				err,
-			).With("cause", cause.Error()))
-
-			errnie.Error(audit.Record(solver.recorder, "manifold_advance", map[string]any{
-				"symbol": candidate.symbol,
-				"ok":     false,
-				"error":  cause.Error(),
-			}))
-
+			failures = append(failures, solver.noteAdvanceFailure(candidate.symbol, err))
 			continue
 		}
 
@@ -231,13 +257,50 @@ func (solver *Solver) Update(
 		thesis.Manifold.Store(candidate.symbol, state)
 	}
 
-	errnie.Error(audit.Record(solver.recorder, "manifold", map[string]any{
-		"candidates": len(candidates),
-		"advanced":   advanced,
-		"failed":     len(failures),
+	return failures, advanced, latest
+}
+
+/*
+noteAdvanceFailure unwraps one advance error to its root cause, records a
+durable audit breadcrumb, and returns the annotated error for aggregation.
+*/
+func (solver *Solver) noteAdvanceFailure(symbol string, err error) error {
+	cause := err
+
+	for errors.Unwrap(cause) != nil {
+		cause = errors.Unwrap(cause)
+	}
+
+	errnie.Error(audit.Record(solver.recorder, "manifold_advance", map[string]any{
+		"symbol": symbol,
+		"ok":     false,
+		"error":  cause.Error(),
 	}))
 
-	return errors.Join(failures...)
+	return errnie.Err(
+		errnie.Internal,
+		fmt.Sprintf("manifold: %s failed to advance field", symbol),
+		err,
+	).With("cause", cause.Error())
+}
+
+/*
+release closes and removes one resident field so an evicted symbol frees its GPU
+allocation immediately.
+*/
+func (solver *Solver) release(symbol string) {
+	slot := solver.symbols[symbol]
+
+	if slot == nil {
+		return
+	}
+
+	if slot.handle != nil {
+		slot.handle.Close()
+		slot.handle = nil
+	}
+
+	delete(solver.symbols, symbol)
 }
 
 /*
@@ -251,6 +314,7 @@ func (solver *Solver) Close() {
 	for symbol, slot := range solver.symbols {
 		if slot != nil && slot.handle != nil {
 			slot.handle.Close()
+			slot.handle = nil
 		}
 
 		delete(solver.symbols, symbol)

@@ -55,6 +55,14 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 	}
 }
 
+/*
+Interest requires book and trade streams; exhaust merges book decay with
+executed trade pressure on one causal timeline per symbol.
+*/
+func (signal *Signal) Interest() types.StreamInterest {
+	return types.StreamBook | types.StreamTrade
+}
+
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	measurements, err := signal.Calculate(thesis.Market())
 

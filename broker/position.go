@@ -14,11 +14,13 @@ import (
 )
 
 const (
-	intentFlat          = ""
-	intentEntryPending  = "entry_pending"
-	intentOpen          = "open"
-	intentReducePending = "reduce_pending"
-	intentExitPending   = "exit_pending"
+	intentFlat         = ""
+	intentEntryPending = "entry_pending"
+	intentOpen         = "open"
+	// IntentReducePending is a partial sell awaiting fill acknowledgment.
+	IntentReducePending = "reduce_pending"
+	// IntentExitPending is a full exit sell awaiting fill acknowledgment.
+	IntentExitPending = "exit_pending"
 )
 
 type Position struct {
@@ -95,8 +97,8 @@ func (position *Position) Pending() bool {
 	intent, _ := position.intent.Load().(string)
 
 	return intent == intentEntryPending ||
-		intent == intentExitPending ||
-		intent == intentReducePending
+		intent == IntentExitPending ||
+		intent == IntentReducePending
 }
 
 /*
@@ -110,7 +112,7 @@ func (position *Position) PendingWire() types.PendingOrderWire {
 	intent, _ := position.intent.Load().(string)
 	side := "buy"
 
-	if intent == intentExitPending || intent == intentReducePending {
+	if intent == IntentExitPending || intent == IntentReducePending {
 		side = "sell"
 	}
 
@@ -127,6 +129,26 @@ func (position *Position) PendingWire() types.PendingOrderWire {
 		Quantity:      quantity,
 		Intent:        intent,
 		ReservationID: position.claim.ID(),
+	}
+}
+
+/*
+RestorePending re-arms an outstanding order intent on a recovered lot without
+touching the venue. Boot reconcile calls this when a durable pending wire still
+matches a resting exchange order, so Trader treats the lot as in-flight and does
+not re-Enter or re-Exit an order the venue already holds.
+*/
+func (position *Position) RestorePending(wire types.PendingOrderWire) {
+	if position == nil || wire.Intent == "" {
+		return
+	}
+
+	position.orderID = wire.OrderID
+	position.intent.Store(wire.Intent)
+	position.status = types.PENDING
+
+	if wire.ReservationID != "" {
+		position.claim.Bind(position.balance, wire.ReservationID)
 	}
 }
 
@@ -457,27 +479,46 @@ func (position *Position) EntryTrail(holding *types.Holding) float64 {
 	}
 
 	trail := feeTrail * 2
-	halfSpread := 0.0
 
-	if ticker, err := position.price.Get(holding.Symbol); err == nil &&
-		ticker != nil && ticker.Bid != nil && ticker.Ask != nil &&
-		ticker.Bid.Sign() > 0 && ticker.Ask.Sign() > 0 {
-		mid := position.price.Div(ticker.Bid.Add(ticker.Ask), two)
-
-		if mid != nil && mid.Sign() > 0 {
-			width := ticker.Ask.Sub(ticker.Bid)
-
-			if width != nil && width.Sign() > 0 {
-				halfSpread = position.price.Div(width, mid).Float64() / 2
-			}
-		}
-	}
-
-	if halfSpread > 0 {
+	if halfSpread := position.halfSpread(holding.Symbol); halfSpread > 0 {
 		trail += halfSpread
 	}
 
 	return trail
+}
+
+/*
+halfSpread returns half the touch-to-mid width in return space when Bid/Ask are
+warm and positive; otherwise zero so EntryTrail stays fee-only.
+*/
+func (position *Position) halfSpread(symbol string) float64 {
+	if position == nil || position.price == nil || symbol == "" {
+		return 0
+	}
+
+	ticker, err := position.price.Get(symbol)
+
+	if err != nil || ticker == nil || ticker.Bid == nil || ticker.Ask == nil {
+		return 0
+	}
+
+	if ticker.Bid.Sign() <= 0 || ticker.Ask.Sign() <= 0 {
+		return 0
+	}
+
+	mid := position.price.Div(ticker.Bid.Add(ticker.Ask), two)
+
+	if mid == nil || mid.Sign() <= 0 {
+		return 0
+	}
+
+	width := ticker.Ask.Sub(ticker.Bid)
+
+	if width == nil || width.Sign() <= 0 {
+		return 0
+	}
+
+	return position.price.Div(width, mid).Float64() / 2
 }
 
 /*
@@ -654,9 +695,9 @@ func (position *Position) Sell(quantity *decimal.Decimal) error {
 	position.status = types.PENDING
 
 	if quantity != nil {
-		position.intent.Store(intentReducePending)
+		position.intent.Store(IntentReducePending)
 	} else {
-		position.intent.Store(intentExitPending)
+		position.intent.Store(IntentExitPending)
 	}
 
 	if err := position.api.AddOrder(position.request); err != nil {

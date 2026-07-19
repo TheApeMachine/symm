@@ -40,11 +40,20 @@ type symbolConfig struct {
 
 var symbolConfigValue atomic.Pointer[symbolConfig]
 
-func loadSymbolConfig() (symbolConfig, error) {
-	if loaded := symbolConfigValue.Load(); loaded != nil {
-		return *loaded, nil
-	}
+/*
+resetSymbolConfig clears the last-loaded config snapshot. Tests that adjust
+viper call this so observers of symbolConfigValue see a fresh load.
+*/
+func resetSymbolConfig() {
+	symbolConfigValue.Store(nil)
+}
 
+/*
+loadSymbolConfig reads fluid cadence and lattice floors from viper on every
+call. Construction is once per symbol; caching the first writer poisoned Session
+proofs when unit tests mutated viper earlier in the same package run.
+*/
+func loadSymbolConfig() (symbolConfig, error) {
 	halfWidth := viper.GetInt("signals.fluid.grid_half_width")
 	idleThreshold := viper.GetDuration("signals.fluid.idle_threshold")
 	maxIntegrationSteps := viper.GetInt("signals.fluid.max_integration_steps")
@@ -86,9 +95,7 @@ func loadSymbolConfig() (symbolConfig, error) {
 		volumeBarsPerDay:    volumeBarsPerDay,
 	}
 
-	if symbolConfigValue.CompareAndSwap(nil, &built) {
-		return built, nil
-	}
+	symbolConfigValue.Store(&built)
 
-	return *symbolConfigValue.Load(), nil
+	return built, nil
 }

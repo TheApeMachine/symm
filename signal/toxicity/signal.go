@@ -54,6 +54,15 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 	}
 }
 
+/*
+Interest requires the public trade tape; toxicity accumulates per-symbol
+evidence from trades and corroborates each fill against the Level3 touch, which
+it reads directly through PeekBook rather than the public book cut.
+*/
+func (signal *Signal) Interest() types.StreamInterest {
+	return types.StreamTrade
+}
+
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	measurements, err := signal.Calculate(thesis.Market())
 

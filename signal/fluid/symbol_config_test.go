@@ -5,16 +5,16 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
 )
 
 func TestLoadSymbolConfigWithoutTickOverride(t *testing.T) {
 	Convey("Given no signals.fluid.tick_size override", t, func() {
-		viper.Set("signals.fluid.tick_size", 0)
-		viper.Set("signals.fluid.grid_half_width", 10)
-		viper.Set("signals.fluid.integration_interval", 0)
-		viper.Set("signals.volume_clock_bars_per_day", 288)
-		symbolConfigValue.Store(nil)
+		pinFluidViper(t, map[string]any{
+			"signals.fluid.tick_size":            0,
+			"signals.fluid.grid_half_width":      10,
+			"signals.fluid.integration_interval": 0,
+			"signals.volume_clock_bars_per_day":  288,
+		})
 
 		Convey("When loadSymbolConfig is called", func() {
 			config, err := loadSymbolConfig()
@@ -30,11 +30,12 @@ func TestLoadSymbolConfigWithoutTickOverride(t *testing.T) {
 
 func TestNewFluidSymbolDefersGridUntilBookTick(t *testing.T) {
 	Convey("Given no signals.fluid.tick_size override", t, func() {
-		viper.Set("signals.fluid.tick_size", 0)
-		viper.Set("signals.fluid.grid_half_width", 10)
-		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-		viper.Set("signals.volume_clock_bars_per_day", 288)
-		symbolConfigValue.Store(nil)
+		pinFluidViper(t, map[string]any{
+			"signals.fluid.tick_size":            0,
+			"signals.fluid.grid_half_width":      10,
+			"signals.fluid.integration_interval": 100 * time.Millisecond,
+			"signals.volume_clock_bars_per_day":  288,
+		})
 
 		symbol := "BTC/USD"
 		fixture := symbolBookFixture{symbol: symbol}

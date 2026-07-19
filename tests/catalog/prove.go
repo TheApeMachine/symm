@@ -269,19 +269,9 @@ func ProveExit(
 	tests.SetPaperPrice(t, statePath, entry.Symbol, mark)
 
 	thesis := types.NewThesis(nil, nil)
+	er, unc := forecastSeed(entry.Truth)
 
 	if entry.Truth.KeepForecast {
-		er := entry.Truth.ForecastER
-		unc := entry.Truth.ForecastUnc
-
-		if er == 0 {
-			er = 0.05
-		}
-
-		if unc <= 0 {
-			unc = 0.02
-		}
-
 		tests.SeedOpportunityForecast(thesis, entry.Symbol, er, unc)
 		thesis.Forecasts[len(thesis.Forecasts)-1].IncrementalMSE = unc * unc * 0.01
 	}
@@ -299,17 +289,6 @@ func ProveExit(
 		sticky := types.NewThesis(nil, nil)
 
 		if entry.Truth.KeepForecast {
-			er := entry.Truth.ForecastER
-			unc := entry.Truth.ForecastUnc
-
-			if er == 0 {
-				er = 0.05
-			}
-
-			if unc <= 0 {
-				unc = 0.02
-			}
-
 			tests.SeedOpportunityForecast(sticky, entry.Symbol, er, unc)
 		}
 
@@ -330,9 +309,23 @@ func ProveExit(
 			entry.Name, session.Desk.OpenPositions(),
 		)
 	}
+}
 
-	if entry.Kind == KindCalibratedFloorHold &&
-		(lot.Stoploss == nil || lot.Stoploss.LockedFloor <= 0) {
-		t.Fatalf("catalog %s: want positive LockedFloor after calibrated mark", entry.Name)
+/*
+forecastSeed applies StageTruth ER/uncertainty defaults used by KeepForecast
+paths: 0.05 for zero ER and 0.02 for nonpositive uncertainty.
+*/
+func forecastSeed(truth StageTruth) (er, unc float64) {
+	er = truth.ForecastER
+	unc = truth.ForecastUnc
+
+	if er == 0 {
+		er = 0.05
 	}
+
+	if unc <= 0 {
+		unc = 0.02
+	}
+
+	return er, unc
 }

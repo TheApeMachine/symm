@@ -393,8 +393,8 @@ func (session *Session) ObserveQuote(lot *types.Holding, bid, last float64) erro
 	}
 
 	lot.Mark = decimal.NewFromFloat64(bid)
-	// Session stop tests that pass distinct bid/last still regulate on the
-	// executable bid; production Marks.Apply uses StopMark (mid/last).
+	// ponytail: Session stop tests that pass distinct bid/last still regulate on
+	// the executable bid; production Marks.Apply uses StopMark (mid/last).
 	lot.StopMark = decimal.NewFromFloat64(bid)
 	session.Balance.Seed(lot)
 

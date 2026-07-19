@@ -9,8 +9,79 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/tests/mockapi"
 	"github.com/theapemachine/symm/types"
 )
+
+/*
+TestSyncInventoryReconcilesPendingBeforeTrading verifies boot enables trading
+only after the one-shot recovery restore reconciles pending intents against the
+exchange open-order set. Paper answers with an empty resting set, which is a
+successful reconcile, so the snapshot clears and trading unblocks.
+*/
+func TestSyncInventoryReconcilesPendingBeforeTrading(t *testing.T) {
+	previousQuote := viper.GetString("market.quote_currency")
+	viper.Set("market.quote_currency", "USD")
+	t.Cleanup(func() { viper.Set("market.quote_currency", previousQuote) })
+
+	Convey("Given recovery with a pending order and a paper wallet", t, func() {
+		ctx := context.Background()
+		mock := mockapi.NewMockAPI()
+		api, _, err := mock.Wire(ctx)
+		So(err, ShouldBeNil)
+
+		balance := broker.NewBalance(nil, nil, nil)
+		balance.BalanceAck([]byte(
+			`{"channel":"balances","type":"snapshot","sequence":1,"data":[{` +
+				`"asset":"USD","balance":"100","available":"100","reserved":"0"` +
+				`}]}`,
+		))
+		desk := broker.NewDesk(api, nil, nil, balance)
+
+		crypto := &Crypto{
+			api:     api,
+			balance: balance,
+			desk:    desk,
+			snapshot: &types.Recovery{
+				PendingOrders: map[string]types.PendingOrderWire{
+					"BTC/USD": {
+						Symbol:  "BTC/USD",
+						Side:    "buy",
+						OrderID: "boot-order",
+						Intent:  "entry_pending",
+					},
+				},
+			},
+			postMortem: &strategy.PostMortem{},
+		}
+		thesis := types.NewThesis(nil, nil)
+
+		crypto.syncInventory(thesis)
+
+		Convey("Then reconcile clears the snapshot and enables trading", func() {
+			So(crypto.snapshot, ShouldBeNil)
+			So(crypto.trading.Load(), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given a fresh boot with no recovery snapshot", t, func() {
+		balance := broker.NewBalance(nil, nil, nil)
+		balance.BalanceAck([]byte(
+			`{"channel":"balances","type":"snapshot","sequence":1,"data":[{` +
+				`"asset":"USD","balance":"100","available":"100","reserved":"0"` +
+				`}]}`,
+		))
+
+		crypto := &Crypto{balance: balance}
+		thesis := types.NewThesis(nil, nil)
+
+		crypto.syncInventory(thesis)
+
+		Convey("Then trading enables immediately once the wallet is ready", func() {
+			So(crypto.trading.Load(), ShouldBeTrue)
+		})
+	})
+}
 
 func TestSyncInventoryJournalsEntered(t *testing.T) {
 	previousQuote := viper.GetString("market.quote_currency")

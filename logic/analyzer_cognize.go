@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
@@ -203,8 +204,10 @@ func signedToken(value float64) string {
 }
 
 /*
-readCognition classifies the sensory sequence for strategy and attaches the
-Cortex radix/beam visualization so the cognitive tree is never an empty shell.
+readCognition classifies the sensory sequence for strategy on the hot path —
+winner, confidence, ambiguity, contrast, cohort, predictions, classes, and the
+lookahead strength category selection consumes — then attaches the full Cortex
+radix/beam visualization only for the focused symbol.
 */
 func (analyzer *Analyzer) readCognition(
 	state manifold.State,
@@ -218,10 +221,6 @@ func (analyzer *Analyzer) readCognition(
 	ambiguity := analyzer.tree.MeasureBranchAmbiguity(storageParent)
 	predictionBuffer := make([]dmt.LookaheadPrediction, 0, len(parts))
 	predictions := analyzer.tree.PredictNextSensoryTokens(parent, predictionBuffer)
-	branches, beams, classes, beamWidth, maxHops, nodeCount, lookaheadScore, lookaheadPaths :=
-		analyzer.cognitionVisualization(
-			sequence, parent, parts, classification, predictions,
-		)
 	reading := types.Cognition{
 		Source:           "dmt",
 		Symbol:           state.Symbol,
@@ -235,14 +234,8 @@ func (analyzer *Analyzer) readCognition(
 		Ambiguous:        ambiguity.Ambiguous,
 		Cohort:           analyzer.tree.GetSensoryWeight(sequence).Count,
 		Predictions:      make(map[string]float64, len(predictions)),
-		Branches:         branches,
-		Beams:            beams,
-		Classes:          classes,
-		BeamWidth:        beamWidth,
-		MaxHops:          maxHops,
-		NodeCount:        nodeCount,
-		LookaheadScore:   lookaheadScore,
-		LookaheadPaths:   lookaheadPaths,
+		Classes:          cognitionClasses(classification),
+		LookaheadScore:   analyzer.lookaheadScore(parts, predictions),
 		RegimePrefix:     string(parent),
 	}
 
@@ -258,7 +251,42 @@ func (analyzer *Analyzer) readCognition(
 		reading.Predictions[string(prediction.Token)] = prediction.Probability
 	}
 
+	analyzer.attachVisualization(&reading, sequence, parent, parts, classification, predictions)
+
 	return reading
+}
+
+/*
+attachVisualization materializes the Cortex radix and beam tree only for the UI
+focus symbol. Expanding the full branch fan-out and running beam search for every
+symbol every tick is the cold path; strategy already has its classification,
+ambiguity, contrast, and lookahead fields from readCognition's hot path.
+*/
+func (analyzer *Analyzer) attachVisualization(
+	reading *types.Cognition,
+	sequence []byte,
+	parent []byte,
+	parts []string,
+	classification dmt.ClassificationResult,
+	predictions []dmt.LookaheadPrediction,
+) {
+	if viper.GetString("ui.manifold_focus") != reading.Symbol {
+		return
+	}
+
+	branches, beams, classes, beamWidth, maxHops, nodeCount, lookaheadScore, lookaheadPaths :=
+		analyzer.cognitionVisualization(
+			sequence, parent, parts, classification, predictions,
+		)
+
+	reading.Branches = branches
+	reading.Beams = beams
+	reading.Classes = classes
+	reading.BeamWidth = beamWidth
+	reading.MaxHops = maxHops
+	reading.NodeCount = nodeCount
+	reading.LookaheadScore = lookaheadScore
+	reading.LookaheadPaths = lookaheadPaths
 }
 
 /*

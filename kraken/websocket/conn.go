@@ -274,6 +274,48 @@ func (api *API) TradesHistory() (*kraken.TradesHistory, error) {
 }
 
 /*
+OpenOrders returns currently resting orders keyed by their venue order id. Live
+boots read the private REST ledger; paper fills synchronously through Lifecycle
+so it never leaves an order resting and answers with an empty set.
+*/
+func (api *API) OpenOrders() (map[string]spot.Order, error) {
+	if !api.live {
+		return api.paper.OpenOrders()
+	}
+
+	return api.fetchLiveOpenOrders()
+}
+
+/*
+fetchLiveOpenOrders reads the private REST open-order ledger so boot reconcile
+can match durable pending intents against orders the venue still holds.
+*/
+func (api *API) fetchLiveOpenOrders() (map[string]spot.Order, error) {
+	if api.private == nil || api.private.Client() == nil ||
+		api.private.Client().REST == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"Kraken private REST client is unavailable",
+			nil,
+		))
+	}
+
+	response, err := api.private.Client().REST.OpenOrders(&spot.OpenOrdersRequest{
+		Trades: true,
+	})
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get open orders",
+			err,
+		))
+	}
+
+	return response.Result.Open, nil
+}
+
+/*
 fetchLiveTradesHistory walks Kraken trade-history pages until the reported
 count is covered or a short page is returned. Boot-time reconciliation needs
 the full ledger, not just the first REST page.

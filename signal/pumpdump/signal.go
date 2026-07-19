@@ -46,6 +46,14 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 	}
 }
 
+/*
+Interest requires ticker price, volume, and spread; pump ignition is measured
+entirely from the quote surface.
+*/
+func (signal *Signal) Interest() types.StreamInterest {
+	return types.StreamTicker
+}
+
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	measurements, err := signal.Calculate(thesis.Market())
 

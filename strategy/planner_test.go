@@ -4,8 +4,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
+
+/*
+populatedFrame carries one ticker row so FrameInterest is non-zero and the
+planner fans the cut out to interested signals. An empty cut deliberately skips
+every signal now that the StreamAll widening is gone.
+*/
+func populatedFrame() *types.MarketFrame {
+	return &types.MarketFrame{
+		Tickers: []kraken.TickerData{{Symbol: "AAA/USD"}},
+	}
+}
 
 /*
 stubSignal returns a fixed measurement batch so Update can be exercised without
@@ -40,7 +52,7 @@ func TestPlannerUpdateCollectsEverySignal(t *testing.T) {
 	done := make(chan *types.Thesis, 1)
 
 	go func() {
-		done <- planner.Update(nil, &types.MarketFrame{}, 1)
+		done <- planner.Update(nil, populatedFrame(), 1)
 	}()
 
 	select {
@@ -70,7 +82,7 @@ func BenchmarkPlannerUpdate(b *testing.B) {
 		stubSignal{measurements: []*types.Measurement{{Symbol: "BBB/USD"}}},
 		stubSignal{measurements: []*types.Measurement{{Symbol: "CCC/USD"}}},
 	)
-	frame := &types.MarketFrame{}
+	frame := populatedFrame()
 
 	b.ReportAllocs()
 	b.ResetTimer()

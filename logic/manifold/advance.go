@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
@@ -124,7 +125,8 @@ func (solver *Solver) advance(
 	slot.epoch++
 	buyIntensity, sellIntensity := intensities(outcome)
 
-	projection, projectionErr := projectField(handle, solver.config, len(oscillators))
+	focused := viper.GetString("ui.manifold_focus") == symbol
+	projection, projectionErr := projectField(handle, solver.config, len(oscillators), focused)
 
 	if projectionErr != nil {
 		errnie.Error(errnie.Err(
@@ -166,7 +168,8 @@ func (solver *Solver) advance(
 
 /*
 admit allocates a resident Field on the shared Metal engine for the requested
-symbol. Fields stay resident for the process lifetime — there is no eviction.
+symbol. Fields stay resident until the active-set budget is exceeded and the
+field goes cold, at which point Update evicts it through Solver.release.
 */
 func (solver *Solver) admit(symbol string) (*symbolSlot, error) {
 	if symbol == "" {

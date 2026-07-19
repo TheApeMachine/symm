@@ -185,6 +185,14 @@ func (signal *Signal) increment(symbol string) (*decimal.Decimal, error) {
 	return pair.PriceIncrement.Copy(), nil
 }
 
+/*
+Interest requires ticker, trade, and book streams; the mechanical metrics merge
+all three inputs into one causal event timeline per symbol.
+*/
+func (signal *Signal) Interest() types.StreamInterest {
+	return types.StreamAll
+}
+
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	measurements, err := signal.Calculate(thesis.Market())
 

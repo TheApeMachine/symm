@@ -121,7 +121,9 @@ func NewPlanner(
 }
 
 /*
-runWorker measures one job at a time until Planner.Close cancels the context.
+runWorker measures one job at a time until Planner.Close cancels the context. A
+panicking signal is contained by measure so one faulty signal never kills its
+worker or stalls the fan-in.
 */
 func (planner *Planner) runWorker(worker signalWorker) {
 	for {
@@ -129,12 +131,40 @@ func (planner *Planner) runWorker(worker signalWorker) {
 		case <-planner.ctx.Done():
 			return
 		case thesis := <-worker.jobs:
-			worker.out <- measured{
-				name: signalName(worker.signal),
-				rows: worker.signal.Measure(thesis),
-			}
+			worker.out <- planner.measure(worker, thesis)
 		}
 	}
+}
+
+/*
+measure runs one signal's Measure, recovering any panic into an empty measured
+batch with a durable errnie breadcrumb so the worker stays alive for the next
+cut instead of crashing the runtime.
+*/
+func (planner *Planner) measure(
+	worker signalWorker,
+	thesis *types.Thesis,
+) (result measured) {
+	result.name = signalName(worker.signal)
+
+	defer func() {
+		recovered := recover()
+
+		if recovered == nil {
+			return
+		}
+
+		result.rows = nil
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf("planner: signal %s panicked during measure", result.name),
+			nil,
+		).With("panic", fmt.Sprint(recovered)))
+	}()
+
+	result.rows = worker.signal.Measure(thesis)
+
+	return result
 }
 
 func (planner *Planner) Initialize() error {
@@ -183,11 +213,6 @@ func (planner *Planner) Update(
 	}))
 
 	interest := types.FrameInterest(frame)
-
-	if interest == 0 {
-		interest = types.StreamAll
-	}
-
 	counts := make(map[string]int, len(planner.workers))
 	active := make([]signalWorker, 0, len(planner.workers))
 	skipped := make([]string, 0)

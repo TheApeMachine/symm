@@ -92,10 +92,18 @@ export const categoriesForSymbol = (
 		}
 
 		for (const category of measurement.categories ?? []) {
-			merged.set(
-				category.type,
-				categoryFromMeasurement(measurement.symbol, category),
-			);
+			const existing = merged.get(category.type);
+			const measured = categoryFromMeasurement(measurement.symbol, category);
+
+			if (existing === undefined) {
+				merged.set(category.type, measured);
+				continue;
+			}
+
+			merged.set(category.type, {
+				...measured,
+				maturity: existing.maturity,
+			});
 		}
 	}
 

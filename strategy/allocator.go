@@ -67,6 +67,8 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		return err
 	}
 
+	forecasts := selectForecasts(thesis.Forecasts)
+
 	for index := range thesis.Decisions {
 		decision := &thesis.Decisions[index]
 
@@ -121,6 +123,8 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		if decision.Cause == "rotation" {
 			budget = slice.Copy()
 		}
+
+		budget = allocator.capacity(budget, forecasts[decision.Symbol])
 
 		if budget.Sign() <= 0 || budget.Cmp(minCost) < 0 {
 			_ = allocator.balance.Release(claim.ID)
@@ -184,6 +188,28 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 	}
 
 	return nil
+}
+
+/*
+capacity caps a sized budget at the forecast's visible buy capacity so a lot is
+never larger than the depth the book can absorb. A missing or non-positive
+capacity leaves the wallet-derived budget untouched.
+*/
+func (allocator *Allocator) capacity(
+	budget *decimal.Decimal,
+	forecast types.Forecasts,
+) *decimal.Decimal {
+	if forecast.BuyCapacity <= 0 {
+		return budget
+	}
+
+	ceiling := decimal.NewFromFloat64(forecast.BuyCapacity)
+
+	if budget.Cmp(ceiling) > 0 {
+		return ceiling
+	}
+
+	return budget
 }
 
 /*

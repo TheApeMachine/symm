@@ -72,6 +72,8 @@ func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 		return true
 	})
 
+	thesis.Categories = nil
+
 	if len(cognition) > 0 {
 		analyzer.publish(datura.Map[any]{"cognition": cognition})
 		analyzer.projectCategories(thesis, cognition)

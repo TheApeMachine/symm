@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -216,6 +217,43 @@ func (desk *Desk) PendingSymbols() map[string]types.PendingOrderWire {
 	}
 
 	return desk.marks.PendingSymbols()
+}
+
+/*
+ReconcilePending re-arms recovered pending intents against the live exchange
+open-order set. adoptOpen runs first so restart inventory has Position shells;
+each pending wire whose OrderID still resolves in the venue open set is restored
+on its Position so Trader will not re-submit. Wires with no matching open order
+are stale — they are left to executions and wallet sync, which the caller's
+lifecycle heal then advances toward managing.
+*/
+func (desk *Desk) ReconcilePending(
+	pending map[string]types.PendingOrderWire,
+	open map[string]spot.Order,
+) {
+	if desk == nil || len(pending) == 0 {
+		return
+	}
+
+	desk.adoptOpen()
+
+	for symbol, wire := range pending {
+		if wire.OrderID == "" {
+			continue
+		}
+
+		if _, resting := open[wire.OrderID]; !resting {
+			continue
+		}
+
+		position, ok := desk.Position(symbol)
+
+		if !ok {
+			continue
+		}
+
+		position.RestorePending(wire)
+	}
 }
 
 func (desk *Desk) Buy(

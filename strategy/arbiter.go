@@ -4,6 +4,7 @@ import (
 	"maps"
 	"sort"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
@@ -15,11 +16,12 @@ lookahead. Free slots fill by local enter utility; when full, rotate only if
 net edge beats the option value of waiting for a native clear.
 */
 type Arbiter struct {
-	desk    *broker.Desk
-	price   *broker.Price
-	balance *broker.Balance
-	admit   *Admit
-	rotate  Rotate
+	desk        *broker.Desk
+	price       *broker.Price
+	balance     *broker.Balance
+	admit       *Admit
+	rotate      Rotate
+	maxFraction float64
 }
 
 /*
@@ -34,11 +36,12 @@ func NewArbiter(
 	rotate Rotate,
 ) *Arbiter {
 	return &Arbiter{
-		desk:    desk,
-		price:   price,
-		balance: balance,
-		admit:   admit,
-		rotate:  rotate,
+		desk:        desk,
+		price:       price,
+		balance:     balance,
+		admit:       admit,
+		rotate:      rotate,
+		maxFraction: viper.GetFloat64("trading.allocation.max_fraction"),
 	}
 }
 
@@ -54,8 +57,12 @@ func (arbiter *Arbiter) Select(thesis *types.Thesis) {
 	candidates, rest := arbiter.peel(thesis.Decisions)
 	thesis.Decisions = rest
 
+	cash := arbiter.cash()
+	forecasts := selectForecasts(thesis.Forecasts)
+
 	sort.Slice(candidates, func(left, right int) bool {
-		return arbiter.dollar(candidates[left]) > arbiter.dollar(candidates[right])
+		return arbiter.dollar(candidates[left], cash, forecasts) >
+			arbiter.dollar(candidates[right], cash, forecasts)
 	})
 
 	rotatable := arbiter.rotatable(thesis)
@@ -158,22 +165,57 @@ func (arbiter *Arbiter) displace(
 	return true
 }
 
-func (arbiter *Arbiter) dollar(decision types.Decision) float64 {
-	notional := 0.0
+/*
+cash reports unreserved quote capital for prequoting fresh-enter notionals.
+Missing wallet state ranks by bare utility rather than inventing a dollar value.
+*/
+func (arbiter *Arbiter) cash() float64 {
+	available, err := arbiter.balance.AvailableCash()
 
-	if decision.ProposedNotional != nil {
-		notional = decision.ProposedNotional.Float64()
+	if err != nil || available == nil {
+		return 0
 	}
 
-	if notional <= 0 && decision.AvailableCapital != nil {
-		notional = decision.AvailableCapital.Float64()
-	}
+	return available.Float64()
+}
 
-	if notional <= 0 {
+/*
+dollar ranks a candidate by dollar-utility so a lower per-unit edge on a large
+deployable position can outrank a sharp edge on a thin one. Rotation challengers
+already carry a stamped ProposedNotional; fresh enters have none at Select time,
+so their notional is prequoted from unreserved cash and the symbol's visible buy
+capacity. When wallet cash is unavailable the whole set ranks by bare utility —
+one consistent scale, never bare utility mixed with dollar products in one sort.
+*/
+func (arbiter *Arbiter) dollar(
+	decision types.Decision,
+	cash float64,
+	forecasts map[string]types.Forecasts,
+) float64 {
+	if cash <= 0 {
 		return decision.Utility
 	}
 
-	return decision.Utility * notional
+	if decision.ProposedNotional != nil && decision.ProposedNotional.Sign() > 0 {
+		return decision.Utility * decision.ProposedNotional.Float64()
+	}
+
+	return decision.Utility * arbiter.feasible(cash, forecasts[decision.Symbol])
+}
+
+/*
+feasible prequotes the deployable notional for a fresh enter as max_fraction of
+unreserved cash, capped by the symbol's visible buy capacity so a thin book
+cannot inflate a candidate's rank beyond the depth it can absorb.
+*/
+func (arbiter *Arbiter) feasible(cash float64, forecast types.Forecasts) float64 {
+	notional := cash * arbiter.maxFraction
+
+	if forecast.BuyCapacity > 0 && forecast.BuyCapacity < notional {
+		return forecast.BuyCapacity
+	}
+
+	return notional
 }
 
 /*

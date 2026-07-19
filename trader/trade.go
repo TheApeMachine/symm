@@ -105,12 +105,14 @@ func (crypto *Crypto) submitEnters(
 		raw, ok := thesis.Holdings.Load(symbol)
 
 		if !ok {
+			crypto.rejectEnter(thesis, decision, types.LifecycleRejected)
 			continue
 		}
 
 		holding, ok := raw.(*types.Holding)
 
 		if !ok || holding == nil {
+			crypto.rejectEnter(thesis, decision, types.LifecycleRejected)
 			continue
 		}
 

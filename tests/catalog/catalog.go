@@ -96,6 +96,8 @@ type StageTruth struct {
 	StickyRetreat bool
 	// MinStopReturn when > 0 requires Stoploss.StopReturn >= MinStopReturn.
 	MinStopReturn float64
+	// RequireLockedFloor requires Stoploss.LockedFloor > 0 after regulate.
+	RequireLockedFloor bool
 }
 
 /*
@@ -315,12 +317,13 @@ func All() []Entry {
 			Kind: KindCalibratedFloorHold, Name: "calibrated_floor_hold", Symbol: "MATIC/USD",
 			Capital: 10_000, FeePct: 0.26,
 			Truth: StageTruth{
-				MustNotExit:   true,
-				MarkMul:       1.04,
-				TrailDistance: 0.02,
-				KeepForecast:  true,
-				ForecastER:    0.05,
-				ForecastUnc:   0.02,
+				MustNotExit:        true,
+				MarkMul:            1.04,
+				TrailDistance:      0.02,
+				KeepForecast:       true,
+				ForecastER:         0.05,
+				ForecastUnc:        0.02,
+				RequireLockedFloor: true,
 			},
 			Market: conditions.TapeCalibratedLift,
 		},

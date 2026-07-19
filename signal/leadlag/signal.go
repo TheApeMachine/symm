@@ -49,6 +49,14 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 	}
 }
 
+/*
+Interest requires the ticker stream; lead-lag correlates the cross-sectional
+quote surface between the leader and each follower.
+*/
+func (signal *Signal) Interest() types.StreamInterest {
+	return types.StreamTicker
+}
+
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	measurements, err := signal.Calculate(thesis.Market())
 

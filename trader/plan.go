@@ -4,6 +4,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -39,8 +40,9 @@ func (crypto *Crypto) syncInventory(thesis *types.Thesis) {
 	crypto.healCompletedEntries(thesis)
 
 	if crypto.snapshot != nil && crypto.balance != nil && crypto.balance.ModelReady() {
-		crypto.restoreRecovery(thesis)
-		crypto.snapshot = nil
+		if crypto.restoreRecovery(thesis) {
+			crypto.snapshot = nil
+		}
 	}
 
 	live := map[string]struct{}{}
@@ -59,18 +61,23 @@ func (crypto *Crypto) syncInventory(thesis *types.Thesis) {
 		_ = crypto.desk.OpenPositions()
 	}
 
-	if crypto.balance != nil && crypto.balance.ModelReady() {
+	// Trading stays gated until the one-shot recovery restore (which now also
+	// reconciles against live open orders) clears the snapshot. A boot with no
+	// recovery file starts with a nil snapshot and enables immediately.
+	if crypto.balance != nil && crypto.balance.ModelReady() && crypto.snapshot == nil {
 		crypto.trading.Store(true)
 	}
 }
 
 /*
 restoreRecovery applies durable holdings, reservations, and pending intents once
-the live wallet is ready. Strategy submission stays gated until this returns.
+the live wallet is ready, then reconciles those intents against the exchange
+open-order set. It reports whether reconcile was attempted so the caller only
+clears the snapshot (and unblocks trading) after a successful pass.
 */
-func (crypto *Crypto) restoreRecovery(thesis *types.Thesis) {
+func (crypto *Crypto) restoreRecovery(thesis *types.Thesis) bool {
 	if crypto.snapshot == nil || crypto.balance == nil {
-		return
+		return false
 	}
 
 	for symbol, recovered := range crypto.snapshot.Holdings {
@@ -95,13 +102,37 @@ func (crypto *Crypto) restoreRecovery(thesis *types.Thesis) {
 		phase := types.LifecycleEntrySubmitted
 
 		if pending.Side == "sell" ||
-			pending.Intent == "exit_pending" ||
-			pending.Intent == "reduce_pending" {
+			pending.Intent == broker.IntentExitPending ||
+			pending.Intent == broker.IntentReducePending {
 			phase = types.LifecycleExitSubmitted
 		}
 
 		thesis.NoteLifecycle(symbol, phase, thesis.At)
 	}
+
+	return crypto.reconcilePending()
+}
+
+/*
+reconcilePending re-arms recovered pending intents against the exchange open
+orders. Paper answers with an empty set (synchronous fills), which is a
+successful reconcile; a live REST failure returns false so the caller keeps the
+snapshot and retries on the next tick rather than enabling trading blind.
+*/
+func (crypto *Crypto) reconcilePending() bool {
+	if crypto.api == nil || crypto.desk == nil || crypto.snapshot == nil {
+		return true
+	}
+
+	open, err := crypto.api.OpenOrders()
+
+	if err != nil {
+		return false
+	}
+
+	crypto.desk.ReconcilePending(crypto.snapshot.PendingOrders, open)
+
+	return true
 }
 
 /*

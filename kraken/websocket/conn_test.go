@@ -200,6 +200,76 @@ func TestAPIBooks(t *testing.T) {
 }
 
 /*
+TestAPIApplyLevel3Peekable verifies the harness apply path stays synchronous:
+a book fed through ApplyLevel3 is immediately peekable once Apply returns, so
+Session tests never race the async reader worker before PeekBook.
+*/
+func TestAPIApplyLevel3Peekable(t *testing.T) {
+	Convey("Given an L3 transport attached to an API", t, func() {
+		live := New(context.Background(), nil, true, Level3WebSocketURL)
+		live.client.Reconnect = func() {}
+		defer live.Close()
+
+		api := &API{level3: NewLevel3Registry()}
+		api.level3.Attach("BTC/USD", live)
+
+		Convey("Then no book is peekable before any apply", func() {
+			So(api.PeekBook("BTC/USD", func(*book.Book) {}), ShouldBeFalse)
+		})
+
+		// Seed the scratch book exactly as UpdateL3 parses the frame (decimals
+		// from their string form) so the derived checksum matches the applied
+		// book — NewFromInt64 renders fixed-point trailing digits and would not.
+		bidPrice, err := decimal.NewFromString("100")
+		So(err, ShouldBeNil)
+		bidQuantity, err := decimal.NewFromString("1")
+		So(err, ShouldBeNil)
+
+		scratch := spot.NewBookManager()
+		scratchBook := scratch.CreateBook("BTC/USD", 10)
+		scratchBook.EnableMaxDepth = false
+		scratchBook.NoBookCrossing = false
+		scratchBook.Update(&book.UpdateOptions{
+			Direction: book.Bid,
+			ID:        "bid-1",
+			Price:     bidPrice,
+			Quantity:  bidQuantity,
+			Timestamp: time.Unix(1, 0),
+		})
+		checksum := scratchBook.L3Checksum("").LocalChecksum
+
+		So(live.ApplyLevel3([]byte(
+			`{"method":"subscribe","params":{"channel":"level3","symbol":["BTC/USD"],"depth":10}}`,
+		)), ShouldBeNil)
+
+		update := fmt.Appendf(nil, `{
+			"channel":"level3",
+			"type":"update",
+			"data":[{
+				"symbol":"BTC/USD",
+				"checksum":%s,
+				"bids":[{"event":"add","order_id":"bid-1","limit_price":100,"order_qty":1,"timestamp":"1970-01-01T00:00:01Z"}],
+				"asks":[]
+			}]
+		}`, checksum)
+
+		So(live.ApplyLevel3(update), ShouldBeNil)
+
+		Convey("Then the book is peekable synchronously after Apply", func() {
+			best := 0.0
+			ok := api.PeekBook("BTC/USD", func(symbolBook *book.Book) {
+				if bid := symbolBook.BestBid(); bid != nil {
+					best = bid.Price.Float64()
+				}
+			})
+
+			So(ok, ShouldBeTrue)
+			So(best, ShouldEqual, 100.0)
+		})
+	})
+}
+
+/*
 BenchmarkAPIPeekBook measures leased access to one SDK-managed book.
 */
 func BenchmarkAPIPeekBook(b *testing.B) {

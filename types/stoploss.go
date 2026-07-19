@@ -314,7 +314,7 @@ func (stoploss *Stoploss) NoteRetreat(pressure float64) {
 /*
 MarshalJSON encodes a JSON-safe stop surface. LockedFloor starts at −Inf after
 arm; non-finite geometry is zeroed so Holding snapshots cannot break websocket
-marshal.
+marshal. Retreat is persisted so recovery restarts keep the sincerity gate.
 */
 func (stoploss Stoploss) MarshalJSON() ([]byte, error) {
 	type wire struct {
@@ -327,6 +327,7 @@ func (stoploss Stoploss) MarshalJSON() ([]byte, error) {
 		StopReturn    float64 `json:"stopReturn"`
 		PeakReturn    float64 `json:"peakReturn"`
 		MarkReturn    float64 `json:"markReturn"`
+		Retreat       float64 `json:"retreat"`
 	}
 
 	return sonic.Marshal(wire{
@@ -339,7 +340,50 @@ func (stoploss Stoploss) MarshalJSON() ([]byte, error) {
 		StopReturn:    finiteFloat(stoploss.StopReturn),
 		PeakReturn:    finiteFloat(stoploss.PeakReturn),
 		MarkReturn:    finiteFloat(stoploss.MarkReturn),
+		Retreat:       finiteFloat(stoploss.retreat),
 	})
+}
+
+/*
+UnmarshalJSON restores the stop surface including the private retreat gate so
+JSON recovery does not default sincerity pressure to zero.
+*/
+func (stoploss *Stoploss) UnmarshalJSON(payload []byte) error {
+	if stoploss == nil {
+		return nil
+	}
+
+	type wire struct {
+		Action        string  `json:"action"`
+		Reason        string  `json:"reason"`
+		Weight        float64 `json:"weight"`
+		LockedFloor   float64 `json:"lockedFloor"`
+		FloorDistance float64 `json:"floorDistance"`
+		TrailDistance float64 `json:"trailDistance"`
+		StopReturn    float64 `json:"stopReturn"`
+		PeakReturn    float64 `json:"peakReturn"`
+		MarkReturn    float64 `json:"markReturn"`
+		Retreat       float64 `json:"retreat"`
+	}
+
+	var frame wire
+
+	if err := sonic.Unmarshal(payload, &frame); err != nil {
+		return err
+	}
+
+	stoploss.Action = frame.Action
+	stoploss.Reason = frame.Reason
+	stoploss.Weight = finiteFloat(frame.Weight)
+	stoploss.LockedFloor = finiteFloat(frame.LockedFloor)
+	stoploss.FloorDistance = finiteFloat(frame.FloorDistance)
+	stoploss.TrailDistance = finiteFloat(frame.TrailDistance)
+	stoploss.StopReturn = finiteFloat(frame.StopReturn)
+	stoploss.PeakReturn = finiteFloat(frame.PeakReturn)
+	stoploss.MarkReturn = finiteFloat(frame.MarkReturn)
+	stoploss.retreat = finiteFloat(frame.Retreat)
+
+	return nil
 }
 
 func (stoploss *Stoploss) settle(action, reason string, markReturn float64) *Stoploss {

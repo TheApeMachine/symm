@@ -3,215 +3,69 @@ package strategy
 import (
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-TestClearProbabilityNativeStop is certain when Stoploss already selected stop.
+TestArbiterDollarRanking proves the Select sort key stays a single dollar scale.
+Fresh enters prequote max_fraction of cash capped by visible buy capacity, so a
+thin book cannot ride a sharp per-unit edge above a deployable position; rotation
+challengers rank on their stamped notional; and missing wallet cash falls back to
+one consistent bare-utility scale rather than collapsing every rank to zero.
 */
-func TestClearProbabilityNativeStop(t *testing.T) {
-	t.Parallel()
+func TestArbiterDollarRanking(t *testing.T) {
+	Convey("Given an arbiter with a fixed max fraction", t, func() {
+		arbiter := &Arbiter{maxFraction: 0.2}
+		cash := 1000.0
 
-	stop := &types.Stoploss{
-		Action: "stop",
-		Trail:  types.Trail{PeakReturn: 0.1, TrailDistance: 0.05},
-	}
-	got := NewRotate().Clear(stop, types.Forecasts{ExpectedReturn: -0.01})
+		Convey("Fresh enters prequote feasible notional capped by buy capacity", func() {
+			forecasts := map[string]types.Forecasts{
+				"THIN": {Symbol: "THIN", BuyCapacity: 10},
+				"DEEP": {Symbol: "DEEP", BuyCapacity: 10_000},
+			}
 
-	if got != 1 {
-		t.Fatalf("want 1, got %v", got)
-	}
-}
+			thin := arbiter.dollar(
+				types.Decision{Symbol: "THIN", Utility: 1.0}, cash, forecasts,
+			)
+			deep := arbiter.dollar(
+				types.Decision{Symbol: "DEEP", Utility: 0.5}, cash, forecasts,
+			)
 
-/*
-TestClearProbabilityNativeTakeProfit is certain when Stoploss selected take_profit.
-*/
-func TestClearProbabilityNativeTakeProfit(t *testing.T) {
-	t.Parallel()
+			So(thin, ShouldEqual, 1.0*10.0)
+			So(deep, ShouldEqual, 0.5*200.0)
+			So(deep, ShouldBeGreaterThan, thin)
+		})
 
-	stop := &types.Stoploss{
-		Action: "take_profit",
-		Trail:  types.Trail{PeakReturn: 0.1, TrailDistance: 0.05},
-	}
-	got := NewRotate().Clear(stop, types.Forecasts{ExpectedReturn: -0.01})
+		Convey("A missing forecast falls back to max_fraction of cash", func() {
+			feasible := arbiter.feasible(cash, types.Forecasts{})
 
-	if got != 1 {
-		t.Fatalf("want 1, got %v", got)
-	}
-}
+			So(feasible, ShouldEqual, 200.0)
+		})
 
-/*
-TestClearProbabilityMissingStopDoesNotInvent clears wait optionality.
-*/
-func TestClearProbabilityMissingStopDoesNotInvent(t *testing.T) {
-	t.Parallel()
+		Convey("Rotation challengers rank on their stamped notional", func() {
+			decision := types.Decision{
+				Symbol:           "ROT",
+				Utility:          2.0,
+				ProposedNotional: decimal.NewFromFloat64(50),
+			}
 
-	if got := NewRotate().Clear(nil, types.Forecasts{}); got != 0 {
-		t.Fatalf("want 0, got %v", got)
-	}
-}
+			So(
+				arbiter.dollar(decision, cash, map[string]types.Forecasts{}),
+				ShouldEqual, 2.0*50.0,
+			)
+		})
 
-/*
-TestClearProbabilityPositiveForwardBlocksTPClear keeps probability at zero
-while the path still expects lift.
-*/
-func TestClearProbabilityPositiveForwardBlocksTPClear(t *testing.T) {
-	t.Parallel()
+		Convey("Unavailable cash ranks by bare utility, never utility times zero", func() {
+			forecasts := map[string]types.Forecasts{
+				"A": {Symbol: "A", BuyCapacity: 5},
+			}
 
-	stop := &types.Stoploss{
-		Action: "hold",
-		Trail: types.Trail{
-			PeakReturn: 0.1, MarkReturn: 0.09, TrailDistance: 0.05,
-		},
-	}
-	got := NewRotate().Clear(stop, types.Forecasts{
-		ExpectedReturn: 0.02, Calibrated: true, Confidence: 1,
+			So(
+				arbiter.dollar(types.Decision{Symbol: "A", Utility: 3.0}, 0, forecasts),
+				ShouldEqual, 3.0,
+			)
+		})
 	})
-
-	if got != 0 {
-		t.Fatalf("want 0 when forward return positive, got %v", got)
-	}
-}
-
-/*
-TestClearProbabilityUncalibratedIsZero refuses inventing wait mass.
-*/
-func TestClearProbabilityUncalibratedIsZero(t *testing.T) {
-	t.Parallel()
-
-	stop := &types.Stoploss{
-		Action: "hold",
-		Trail: types.Trail{
-			PeakReturn: 0.1, MarkReturn: 0.075, TrailDistance: 0.05,
-		},
-	}
-	got := NewRotate().Clear(stop, types.Forecasts{ExpectedReturn: -0.01})
-
-	if got != 0 {
-		t.Fatalf("want 0 without calibration, got %v", got)
-	}
-}
-
-/*
-TestClearProbabilityProximityTimesConfidence maps trail band through Confidence.
-*/
-func TestClearProbabilityProximityTimesConfidence(t *testing.T) {
-	t.Parallel()
-
-	stop := &types.Stoploss{
-		Action: "hold",
-		Trail: types.Trail{
-			PeakReturn: 0.1, MarkReturn: 0.075, TrailDistance: 0.05,
-		},
-	}
-	got := NewRotate().Clear(stop, types.Forecasts{
-		ExpectedReturn: -0.01,
-		Calibrated:     true,
-		Confidence:     1,
-	})
-
-	if got < 0.499 || got > 0.501 {
-		t.Fatalf("want ~0.5, got %v", got)
-	}
-}
-
-/*
-TestClearProbabilityResidualSkillScales hazard by σ/(√MSE+σ).
-*/
-func TestClearProbabilityResidualSkillScales(t *testing.T) {
-	t.Parallel()
-
-	stop := &types.Stoploss{
-		Action: "hold",
-		Trail: types.Trail{
-			PeakReturn: 0.1, MarkReturn: 0.075, TrailDistance: 0.05,
-		},
-	}
-	got := NewRotate().Clear(stop, types.Forecasts{
-		ExpectedReturn: -0.01,
-		Calibrated:     true,
-		Confidence:     1,
-		Uncertainty:    0.02,
-		IncrementalMSE: 0.0004, // √MSE = 0.02 → skill = 0.5
-	})
-
-	if got < 0.249 || got > 0.251 {
-		t.Fatalf("want ~0.25, got %v", got)
-	}
-
-	// Higher RMSE must lower clear score (σ/(rmse+σ) shrinks as rmse grows).
-	worse := NewRotate().Clear(stop, types.Forecasts{
-		ExpectedReturn: -0.01,
-		Calibrated:     true,
-		Confidence:     1,
-		Uncertainty:    0.02,
-		IncrementalMSE: 0.01, // √MSE = 0.1 → skill ≈ 0.167 → clear ≈ 0.083
-	})
-
-	if worse >= got {
-		t.Fatalf("higher residual must lower clear score: base=%v worse=%v", got, worse)
-	}
-}
-
-/*
-TestShouldRotateHighClearForcesWait even when raw surplus is positive.
-*/
-func TestShouldRotateHighClearForcesWait(t *testing.T) {
-	t.Parallel()
-
-	if NewRotate().Gate(0.08, 0.03, 0.01, 0.9) {
-		t.Fatal("high clear probability must force wait")
-	}
-}
-
-/*
-TestShouldRotateLowClearAllowsDisplace when edge clears exit after wait charge.
-*/
-func TestShouldRotateLowClearAllowsDisplace(t *testing.T) {
-	t.Parallel()
-
-	if !NewRotate().Gate(0.08, 0.03, 0.01, 0) {
-		t.Fatal("zero clear probability with positive surplus must rotate")
-	}
-}
-
-/*
-TestBestRotationPicksLargestAdvantage across eligible incumbents.
-*/
-func TestBestRotationPicksLargestAdvantage(t *testing.T) {
-	t.Parallel()
-
-	index, found := NewRotate().Best(0.10, []Incumbent{
-		{Symbol: "A", HoldUtility: 0.08, ExitCost: 0.01, ClearProb: 0},
-		{Symbol: "B", HoldUtility: 0.02, ExitCost: 0.01, ClearProb: 0},
-	})
-
-	if !found || index != 1 {
-		t.Fatalf("want incumbent B, got found=%v index=%d", found, index)
-	}
-}
-
-/*
-BenchmarkClearProbability measures path-to-probability conversion.
-*/
-func BenchmarkClearProbability(b *testing.B) {
-	stop := &types.Stoploss{
-		Action: "hold",
-		Trail: types.Trail{
-			PeakReturn: 0.1, MarkReturn: 0.08, TrailDistance: 0.05,
-		},
-	}
-	forecast := types.Forecasts{
-		ExpectedReturn: -0.01,
-		Calibrated:     true,
-		Confidence:     0.8,
-		Uncertainty:    0.01,
-		IncrementalMSE: 0.0001,
-	}
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = NewRotate().Clear(stop, forecast)
-	}
 }

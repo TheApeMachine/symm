@@ -258,6 +258,90 @@ func (feed *MarketFeed[T]) Frame(at time.Time) ([]T, error) {
 }
 
 /*
+FrameSymbols returns the newest retained row for each requested symbol through
+the captured cut, materializing only those tracks instead of the whole quote
+universe Frame walks. Market.Cut uses it when only trades or books advanced so a
+book-only cycle does not resurface every symbol's ticker. The cursor advances to
+the cut high-water so event readers do not replay the same ingress.
+*/
+func (feed *MarketFeed[T]) FrameSymbols(
+	at time.Time,
+	symbols []string,
+) ([]T, error) {
+	if feed == nil {
+		return nil, fmt.Errorf("types: market feed is required")
+	}
+
+	if feed.err != nil {
+		return nil, feed.err
+	}
+
+	cut, err := feed.cutThrough(at)
+
+	if err != nil {
+		return nil, err
+	}
+
+	slots := make([]structure.ClockSlot[string, T], 0, len(symbols))
+
+	for _, symbol := range symbols {
+		slot, found := feed.newestThrough(symbol, cut)
+
+		if !found {
+			continue
+		}
+
+		slots = append(slots, slot)
+	}
+
+	sort.Slice(slots, func(left int, right int) bool {
+		return slots[left].IngestSequence < slots[right].IngestSequence
+	})
+	feed.cursor.After = cut.Through
+
+	return feed.payloads(slots), nil
+}
+
+/*
+newestThrough selects one symbol's newest retained observation at or before the
+cut by walking only that symbol's track, so a narrowed cut never materializes the
+full quote surface FrameThrough would build.
+*/
+func (feed *MarketFeed[T]) newestThrough(
+	symbol string,
+	cut structure.ClockCut,
+) (structure.ClockSlot[string, T], bool) {
+	track, ok := feed.clock.Track(symbol)
+
+	if !ok {
+		return structure.ClockSlot[string, T]{}, false
+	}
+
+	selected := structure.ClockSlot[string, T]{}
+	found := false
+
+	track.Select(0).Do(func(slot structure.ClockSlot[string, T]) {
+		if slot.IngestSequence > cut.Through || slot.Wall.After(cut.At) {
+			return
+		}
+
+		if found && slot.Wall.Before(selected.Wall) {
+			return
+		}
+
+		if found && slot.Wall.Equal(selected.Wall) &&
+			slot.IngestSequence < selected.IngestSequence {
+			return
+		}
+
+		selected = slot
+		found = true
+	})
+
+	return selected, found
+}
+
+/*
 Pending returns unseen retained rows without moving the consumer cursor. Tests
 and diagnostics can inspect logical queue state without clearing the journal.
 */

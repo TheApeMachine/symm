@@ -44,8 +44,8 @@ func TestSessionLockedInventoryStaysOpen(t *testing.T) {
 		err = session.SeedLockedLot(9_000, lot.Asset, 0.01)
 		So(err, ShouldBeNil)
 
-		holding, holdErr := session.Balance.Holding(symbol)
-		So(holdErr, ShouldBeNil)
+		holding, err := session.Balance.Holding(symbol)
+		So(err, ShouldBeNil)
 
 		Convey("Then Qty tracks Balance, SellableQty is zero, and the slot stays occupied", func() {
 			So(holding.Status, ShouldEqual, types.OPEN)
@@ -70,18 +70,18 @@ func TestSessionReservationSurvivesBalanceSnapshot(t *testing.T) {
 
 		So(session.SeedQuoteCapital(1_000), ShouldBeNil)
 
-		claim, bookErr := session.Balance.Book(decimal.NewFromFloat64(250), nil)
-		So(bookErr, ShouldBeNil)
+		claim, err := session.Balance.Book(decimal.NewFromFloat64(250), nil)
+		So(err, ShouldBeNil)
 		So(claim, ShouldNotBeNil)
 
-		before, cashErr := session.Balance.AvailableCash()
-		So(cashErr, ShouldBeNil)
+		before, err := session.Balance.AvailableCash()
+		So(err, ShouldBeNil)
 		So(before.Float64(), ShouldAlmostEqual, 750, 1e-9)
 
 		So(session.SeedQuoteCapital(1_000), ShouldBeNil)
 
-		after, cashErr := session.Balance.AvailableCash()
-		So(cashErr, ShouldBeNil)
+		after, err := session.Balance.AvailableCash()
+		So(err, ShouldBeNil)
 
 		Convey("Then effective available still subtracts the live claim", func() {
 			So(after.Float64(), ShouldAlmostEqual, 750, 1e-9)

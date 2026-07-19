@@ -21,12 +21,15 @@ type fieldProjection struct {
 
 /*
 projectField reads the post-step gas and pilot-wave projections plus oscillator
-carriers from the active GPU solver slot.
+carriers from the active GPU solver slot. The full grid readback is only paid
+for the focused symbol; non-focused symbols return the grid dimensions with no
+field arrays, since the terminal ships only their scalar Summary anyway.
 */
 func projectField(
 	handle *pmanifold.Solver,
 	config pmanifold.Config,
 	oscillatorCount int,
+	focused bool,
 ) (fieldProjection, error) {
 	projection := fieldProjection{
 		Grid: pmanifold.Grid{
@@ -36,7 +39,7 @@ func projectField(
 		},
 	}
 
-	if handle == nil {
+	if handle == nil || !focused {
 		return projection, nil
 	}
 

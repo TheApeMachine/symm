@@ -48,6 +48,14 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 }
 
 /*
+Interest requires the public trade tape; Hawkes measures the marked buy/sell
+arrival process from trades alone.
+*/
+func (signal *Signal) Interest() types.StreamInterest {
+	return types.StreamTrade
+}
+
+/*
 Measure supports direct replay against the legacy signal-local trade journal.
 The live runtime uses Calculate with the central immutable market cut.
 */

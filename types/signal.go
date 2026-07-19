@@ -42,11 +42,17 @@ func SignalInterest(signal Signal) StreamInterest {
 }
 
 /*
-FrameInterest derives the streams present in a market cut.
+FrameInterest derives which feeds advanced in a market cut. When Advanced is
+set it is authoritative; otherwise presence of rows is used for hand-built
+test frames that omit the mask.
 */
 func FrameInterest(frame *MarketFrame) StreamInterest {
 	if frame == nil {
 		return 0
+	}
+
+	if frame.Advanced != 0 {
+		return frame.Advanced
 	}
 
 	var mask StreamInterest

@@ -33,11 +33,7 @@ func (analyzer *Analyzer) cognitionVisualization(
 
 	classes = cognitionClasses(classification)
 	symbolPrefix := cognitionSymbolPrefix(parts)
-	tip := analyzer.predictChildren(string(symbolPrefix), cognitionTreeDepth()*cognitionTreeDepth())
-
-	if len(tip) == 0 {
-		tip = predictions
-	}
+	tip := analyzer.lookaheadTip(parts, predictions)
 
 	beamWidth = analyzer.treeExpandWidth(cognitionBeamWidth(tip))
 	maxHops = cognitionTreeDepth()
@@ -51,6 +47,45 @@ func (analyzer *Analyzer) cognitionVisualization(
 	_ = parent
 
 	return branches, beams, classes, beamWidth, maxHops, nodeCount, lookaheadScore, lookaheadPaths
+}
+
+/*
+lookaheadTip returns the symbol-scoped continuation predictions used to size the
+beam and to score category strength, falling back to the parent predictions when
+the symbol namespace has no learned children yet.
+*/
+func (analyzer *Analyzer) lookaheadTip(
+	parts []string,
+	predictions []dmt.LookaheadPrediction,
+) []dmt.LookaheadPrediction {
+	symbolPrefix := cognitionSymbolPrefix(parts)
+	tip := analyzer.predictChildren(
+		string(symbolPrefix), cognitionTreeDepth()*cognitionTreeDepth(),
+	)
+
+	if len(tip) == 0 {
+		return predictions
+	}
+
+	return tip
+}
+
+/*
+lookaheadScore sums the symbol-scoped continuation probabilities. Strategy reads
+it as category strength, so it stays on the hot path for every symbol while the
+full branch and beam visualization is materialized only for the focused symbol.
+*/
+func (analyzer *Analyzer) lookaheadScore(
+	parts []string,
+	predictions []dmt.LookaheadPrediction,
+) float64 {
+	score := 0.0
+
+	for _, prediction := range analyzer.lookaheadTip(parts, predictions) {
+		score += prediction.Probability
+	}
+
+	return score
 }
 
 /*

@@ -49,3 +49,31 @@ func ordersForSymbol(
 
 	return orders, midPrice, ready
 }
+
+/*
+touchReady reports whether one symbol's L3 book exposes a positive two-sided
+touch without copying its full order population. Update uses it to gate
+candidates before the single authoritative copy in advance, so readiness no
+longer costs a per-symbol level walk on every cut.
+*/
+func touchReady(source BookSource, symbol string) bool {
+	if source == nil || symbol == "" {
+		return false
+	}
+
+	ready := false
+
+	source.PeekBook(symbol, func(symbolBook *book.Book) {
+		bestBid := symbolBook.BestBid()
+		bestAsk := symbolBook.BestAsk()
+
+		if bestBid == nil || bestAsk == nil ||
+			bestBid.Price == nil || bestAsk.Price == nil {
+			return
+		}
+
+		ready = bestBid.Price.Float64() > 0 && bestAsk.Price.Float64() > 0
+	})
+
+	return ready
+}

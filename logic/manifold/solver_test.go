@@ -102,6 +102,8 @@ func TestSolverUpdate(t *testing.T) {
 func TestSolverAdvance(t *testing.T) {
 	viper.Set("market.l3_depth", 8)
 	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+	viper.Set("ui.manifold_focus", "BTC/USD")
+	t.Cleanup(func() { viper.Set("ui.manifold_focus", "") })
 
 	Convey("Given Hawkes excitation", t, func() {
 		solver, err := NewSolver(newTestBookSource("BTC/USD"))
@@ -197,6 +199,8 @@ func TestSolverAdvanceWaitsForMarketState(t *testing.T) {
 func TestSolverAdvanceAppliesAbsoluteHawkesForcing(t *testing.T) {
 	viper.Set("market.l3_depth", 8)
 	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+	viper.Set("ui.manifold_focus", "BTC/USD")
+	t.Cleanup(func() { viper.Set("ui.manifold_focus", "") })
 
 	Convey("Given the same L3 state up to a 117-unit absolute arrival impulse", t, func() {
 		solver, solverErr := NewSolver(newTestBookSource("BTC/USD"))

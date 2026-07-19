@@ -32,14 +32,16 @@ type Live struct {
 	cancel    context.CancelFunc
 	client    *spot.WebSocket
 	sync      *sync.Map
+	handlerMu sync.Mutex
 	nextID    atomic.Uint64
 	paper     *Paper
 	simulator *Simulator
-	books     *spot.BookManager
-	bookMu    sync.RWMutex
-	isLevel3  bool
-	symbols   []string
-	transport *Transport
+	books       *spot.BookManager
+	bookMu      sync.RWMutex
+	isLevel3    bool
+	symbols     []string
+	transport   *Transport
+	level3Queue chan []byte
 }
 
 /*
@@ -133,9 +135,11 @@ func (live *Live) route(raw []byte) {
 }
 
 func (live *Live) dispatch(channel string, raw []byte) {
+	live.handlerMu.Lock()
 	callbacks, ok := live.sync.Load(channel)
 
 	if !ok {
+		live.handlerMu.Unlock()
 		errnie.Error(errnie.Err(
 			errnie.Validation,
 			"websocket: channel "+channel+" not found",
@@ -145,7 +149,10 @@ func (live *Live) dispatch(channel string, raw []byte) {
 		return
 	}
 
-	for _, handler := range callbacks.([]channelHandler) {
+	handlers := append([]channelHandler(nil), callbacks.([]channelHandler)...)
+	live.handlerMu.Unlock()
+
+	for _, handler := range handlers {
 		handler.fn(raw)
 	}
 }
@@ -173,11 +180,18 @@ func (live *Live) On(
 
 	id := live.nextID.Add(1)
 	handler := channelHandler{id: id, fn: action}
-	callbacks, ok := live.sync.LoadOrStore(channel, []channelHandler{handler})
 
-	if ok {
-		live.sync.Store(channel, append(callbacks.([]channelHandler), handler))
+	live.handlerMu.Lock()
+	defer live.handlerMu.Unlock()
+
+	callbacks, ok := live.sync.Load(channel)
+
+	if !ok {
+		live.sync.Store(channel, []channelHandler{handler})
+		return id
 	}
+
+	live.sync.Store(channel, append(callbacks.([]channelHandler), handler))
 
 	return id
 }
@@ -189,6 +203,9 @@ func (live *Live) Unsubscribe(channel string, id uint64) {
 	if live == nil || id == 0 {
 		return
 	}
+
+	live.handlerMu.Lock()
+	defer live.handlerMu.Unlock()
 
 	callbacks, ok := live.sync.Load(channel)
 

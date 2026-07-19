@@ -3,6 +3,8 @@ package types
 import (
 	"math"
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 /*
@@ -51,60 +53,59 @@ Scale-tightening then a pullback cannot lower StopReturn below the prior live
 stop — the trailing ratchet must be monotone.
 */
 func TestTrailAdvanceNeverLoosensStopAfterFloor(t *testing.T) {
-	t.Parallel()
+	Convey("Given a trail that has earned a locked floor", t, func() {
+		trail := NewTrail()
+		trail.Bind(0.02)
+		trail.Advance(0.20)
 
-	trail := NewTrail()
-	trail.Bind(0.02)
-	trail.Advance(0.20)
+		So(trail.LockedFloor, ShouldBeGreaterThan, 0)
 
-	if trail.LockedFloor <= 0 {
-		t.Fatalf("want earned floor, got %v", trail.LockedFloor)
-	}
+		Convey("When Scale widens then Advance holds the peak", func() {
+			wide := trail.StopReturn
+			trail.Scale(StopEvidence{
+				Present:     true,
+				Uncertainty: 0.10,
+				Spread:      0.10,
+			}, 1)
+			trail.Advance(0.20)
+			tight := trail.StopReturn
 
-	wide := trail.StopReturn
-	trail.Scale(StopEvidence{
-		Present:     true,
-		Uncertainty: 0.10,
-		Spread:      0.10,
-	}, 1)
-	trail.Advance(0.20)
-	tight := trail.StopReturn
+			So(tight, ShouldBeGreaterThanOrEqualTo, wide)
 
-	if tight < wide {
-		t.Fatalf("wider scale must not drop stop below prior: wide=%v tight=%v", wide, tight)
-	}
+			Convey("And a later pullback must not loosen the raised stop", func() {
+				trail.Scale(StopEvidence{
+					Present:     true,
+					Uncertainty: 0.02,
+					Spread:      0.02,
+				}, 1)
+				trail.Advance(0.20)
+				raised := trail.StopReturn
+				trail.Advance(0.15)
 
-	trail.Scale(StopEvidence{
-		Present:     true,
-		Uncertainty: 0.02,
-		Spread:      0.02,
-	}, 1)
-	trail.Advance(0.20)
-	raised := trail.StopReturn
-	trail.Advance(0.15)
-
-	if trail.StopReturn < raised {
-		t.Fatalf(
-			"pullback must not loosen stop: raised=%v after=%v",
-			raised, trail.StopReturn,
-		)
-	}
+				So(trail.StopReturn, ShouldBeGreaterThanOrEqualTo, raised)
+			})
+		})
+	})
 }
 
 /*
 TestTrailScaleRejectsNonFinite keeps NaN weight from disabling Breached.
 */
 func TestTrailScaleRejectsNonFinite(t *testing.T) {
-	t.Parallel()
+	Convey("Given a bound trail", t, func() {
+		trail := NewTrail()
+		trail.Bind(0.02)
+		prior := trail.TrailDistance
 
-	trail := NewTrail()
-	trail.Bind(0.02)
-	prior := trail.TrailDistance
-	trail.Scale(StopEvidence{Present: true, Uncertainty: 0.01}, math.NaN())
+		Convey("When Scale receives a non-finite weight", func() {
+			trail.Scale(StopEvidence{Present: true, Uncertainty: 0.01}, math.NaN())
 
-	if trail.TrailDistance != prior || math.IsNaN(trail.TrailDistance) {
-		t.Fatalf("non-finite weight must leave TrailDistance=%v, got %v", prior, trail.TrailDistance)
-	}
+			Convey("Then TrailDistance is unchanged and finite", func() {
+				So(trail.TrailDistance, ShouldEqual, prior)
+				So(math.IsNaN(trail.TrailDistance), ShouldBeFalse)
+			})
+		})
+	})
 }
 
 /*
@@ -112,22 +113,22 @@ TestTrailScaleRespectsFloorDistance keeps high skill from undercutting the
 fill-time fee/spread survival band.
 */
 func TestTrailScaleRespectsFloorDistance(t *testing.T) {
-	t.Parallel()
+	Convey("Given a trail bound to a survival band", t, func() {
+		trail := NewTrail()
+		trail.Bind(0.0052)
 
-	trail := NewTrail()
-	trail.Bind(0.0052)
-	trail.Scale(StopEvidence{
-		Present:     true,
-		Uncertainty: 0.001,
-		Spread:      0.0005,
-	}, 1)
+		Convey("When Scale applies high skill with tight evidence", func() {
+			trail.Scale(StopEvidence{
+				Present:     true,
+				Uncertainty: 0.001,
+				Spread:      0.0005,
+			}, 1)
 
-	if trail.TrailDistance < 0.0052 {
-		t.Fatalf(
-			"Scale must not undercut FloorDistance: got %v floor %v",
-			trail.TrailDistance, trail.FloorDistance,
-		)
-	}
+			Convey("Then TrailDistance stays at or above FloorDistance", func() {
+				So(trail.TrailDistance, ShouldBeGreaterThanOrEqualTo, 0.0052)
+			})
+		})
+	})
 }
 
 /*

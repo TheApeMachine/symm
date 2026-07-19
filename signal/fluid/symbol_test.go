@@ -6,17 +6,17 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 )
 
 func TestFluidSymbolBookDerivedGrid(t *testing.T) {
 	Convey("Given no configured fluid grid width", t, func() {
-		viper.Set("signals.fluid.tick_size", 0)
-		viper.Set("signals.fluid.grid_half_width", 0)
-		viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-		viper.Set("signals.volume_clock_bars_per_day", 288)
-		symbolConfigValue.Store(nil)
+		pinFluidViper(t, map[string]any{
+			"signals.fluid.tick_size":            0,
+			"signals.fluid.grid_half_width":      0,
+			"signals.fluid.integration_interval": 100 * time.Millisecond,
+			"signals.volume_clock_bars_per_day":  288,
+		})
 
 		state, err := NewFluidSymbol("BTC/USD")
 

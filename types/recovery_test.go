@@ -106,8 +106,18 @@ func TestHoldingEnrich(t *testing.T) {
 				},
 			},
 		}
+		recovered.Stoploss.NoteRetreat(0.9)
 
-		live.Enrich(recovered)
+		payload, err := json.Marshal(Recovery{
+			Holdings: map[string]Holding{"ONDO/USD": recovered},
+		})
+		So(err, ShouldBeNil)
+
+		var roundtrip Recovery
+		So(json.Unmarshal(payload, &roundtrip), ShouldBeNil)
+		So(roundtrip.Holdings, ShouldContainKey, "ONDO/USD")
+
+		live.Enrich(roundtrip.Holdings["ONDO/USD"])
 
 		Convey("Then durable fields restore without resetting the trail", func() {
 			So(live.EntryPrice, ShouldNotBeNil)
@@ -117,6 +127,16 @@ func TestHoldingEnrich(t *testing.T) {
 			So(live.Stoploss.Armed(), ShouldBeTrue)
 			So(live.Stoploss.LockedFloor, ShouldEqual, 0.03)
 			So(live.Stoploss.PeakReturn, ShouldEqual, 0.08)
+		})
+
+		Convey("Then retreat survives JSON recovery", func() {
+			adverse := live.Stoploss.Update(StopEvidence{
+				Symbol: "ONDO/USD", Mark: 1.20, Entry: 1.25,
+				Uncertainty: 0.02, ExpectedReturn: 0.05, Present: true,
+			})
+
+			So(adverse.Action, ShouldEqual, "hold")
+			So(adverse.Reason, ShouldContainSubstring, "retreat")
 		})
 	})
 }

@@ -58,11 +58,17 @@ def fill(state, side, pair, volume):
     volume = float(volume)
     px = price(state, pair)
     base = pair.split("/")[0]
+    assets = state.setdefault("assets", {})
+    if side == "sell":
+        have = float(assets.get(base, 0.0))
+        # Sweep venue dust: a near-complete exit flattens the base row instead of
+        # leaving an untradeable sub-unit that would keep a closed lot open.
+        if 0.0 <= have - volume < 1e-6:
+            volume = have
     cost = volume * px
     fee = cost * 0.0026
     state["n"] = int(state.get("n", 0)) + 1
     n = state["n"]
-    assets = state.setdefault("assets", {})
     if side == "buy":
         if state["USD"] < cost + fee:
             print(json.dumps({"error": "insufficient", "message": "Insufficient USD"}), file=sys.stderr)

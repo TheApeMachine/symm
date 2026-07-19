@@ -226,19 +226,21 @@ func ObservationCount(measurements []*Measurement) int {
 		return 0
 	}
 
-	type pair struct {
+	// observationPair is the deduplication identity: one observation per
+	// source and symbol pair across the latest measurement cut.
+	type observationPair struct {
 		source SourceType
 		symbol string
 	}
 
-	seen := make(map[pair]struct{}, len(latest))
+	seen := make(map[observationPair]struct{}, len(latest))
 
 	for _, measurement := range latest {
 		if measurement == nil || measurement.Symbol == "" || measurement.Metric == "" {
 			continue
 		}
 
-		seen[pair{measurement.Source, measurement.Symbol}] = struct{}{}
+		seen[observationPair{measurement.Source, measurement.Symbol}] = struct{}{}
 	}
 
 	return len(seen)

@@ -144,15 +144,12 @@ func (crypto *Crypto) Status() types.Status {
 	return crypto.status
 }
 
+/*
+Run starts the checkpoint loop and the tick pump. Audit rotation is owned by the
+boot path before the recorder opens its file, so Run never rotates a live
+handle.
+*/
 func (crypto *Crypto) Run() error {
-	auditPath := filepath.Join(crypto.dataPath, "runtime-audit.jsonl")
-
-	if viper.GetBool("system.audit.rotate_on_boot") {
-		if err := audit.Rotate(auditPath); err != nil {
-			return err
-		}
-	}
-
 	go crypto.checkpointLoop()
 
 	go func() {

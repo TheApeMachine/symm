@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
@@ -26,6 +27,7 @@ type Paper struct {
 	cancel    context.CancelFunc
 	status    types.Status
 	sync      *sync.Map
+	handlerMu sync.Mutex
 	nextID    atomic.Uint64
 	simulator *Simulator
 	lifecycle *Lifecycle
@@ -72,11 +74,18 @@ func (paper *Paper) On(
 
 	id := paper.nextID.Add(1)
 	handler := channelHandler{id: id, fn: action}
-	callbacks, ok := paper.sync.LoadOrStore(channel, []channelHandler{handler})
 
-	if ok {
-		paper.sync.Store(channel, append(callbacks.([]channelHandler), handler))
+	paper.handlerMu.Lock()
+	defer paper.handlerMu.Unlock()
+
+	callbacks, ok := paper.sync.Load(channel)
+
+	if !ok {
+		paper.sync.Store(channel, []channelHandler{handler})
+		return id
 	}
+
+	paper.sync.Store(channel, append(callbacks.([]channelHandler), handler))
 
 	return id
 }
@@ -88,6 +97,9 @@ func (paper *Paper) Unsubscribe(channel string, id uint64) {
 	if paper == nil || id == 0 {
 		return
 	}
+
+	paper.handlerMu.Lock()
+	defer paper.handlerMu.Unlock()
 
 	callbacks, ok := paper.sync.Load(channel)
 
@@ -109,9 +121,11 @@ func (paper *Paper) Emit(channel string, payload json.Marshaler) error {
 		))
 	}
 
+	paper.handlerMu.Lock()
 	callbacks, ok := paper.sync.Load(channel)
 
 	if !ok {
+		paper.handlerMu.Unlock()
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to emit payload",
@@ -119,7 +133,10 @@ func (paper *Paper) Emit(channel string, payload json.Marshaler) error {
 		))
 	}
 
-	for _, handler := range callbacks.([]channelHandler) {
+	handlers := append([]channelHandler(nil), callbacks.([]channelHandler)...)
+	paper.handlerMu.Unlock()
+
+	for _, handler := range handlers {
 		handler.fn(raw)
 	}
 
@@ -157,6 +174,15 @@ func (paper *Paper) TradesHistory() (*kraken.TradesHistory, error) {
 	}
 
 	return kraken.NewTradesHistoryFromMap(model), nil
+}
+
+/*
+OpenOrders reports resting paper orders. Paper fills complete synchronously
+inside Lifecycle.Place, so no order is ever left outstanding and boot reconcile
+always sees an empty set.
+*/
+func (paper *Paper) OpenOrders() (map[string]spot.Order, error) {
+	return map[string]spot.Order{}, nil
 }
 
 func (paper *Paper) AddOrder(order *kraken.MarketOrder) error {

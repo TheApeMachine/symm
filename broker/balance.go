@@ -717,6 +717,10 @@ func (balance *Balance) reservation(
 	return available.SetScale(scale).Mul(fraction.SetScale(scale)), nil
 }
 
+/*
+Available reports whether effective free quote cash covers amount after live
+claims. Callers use it to refuse entries that would overdraw booked capital.
+*/
 func (balance *Balance) Available(amount *decimal.Decimal) bool {
 	if amount == nil || balance == nil {
 		return false

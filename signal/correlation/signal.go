@@ -52,6 +52,14 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 }
 
 /*
+Interest requires the ticker stream; correlation establishes price relationships
+across the cross-sectional quote surface.
+*/
+func (signal *Signal) Interest() types.StreamInterest {
+	return types.StreamTicker
+}
+
+/*
 Measure supports direct replay against the legacy signal-local journal. The
 live runtime uses Calculate with the central immutable market cut.
 */

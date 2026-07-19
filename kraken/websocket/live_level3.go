@@ -12,12 +12,66 @@ import (
 	"github.com/theapemachine/symm/kraken"
 )
 
+// level3QueueDepth buffers a burst of book frames between the socket reader and
+// the FIFO apply worker. It absorbs jitter without unbounded memory growth; a
+// sustained overflow applies natural backpressure on the reader rather than
+// silently dropping frames, since a dropped frame breaks the L3 checksum chain.
+const level3QueueDepth = 1024
+
 /*
 SubscribeLevel3 subscribes this authenticated transport to L3 via the SDK
 SubL3 helper, matching Kraken's official BookManager example.
 */
 func (live *Live) SubscribeLevel3(symbols []string, depth int) error {
 	return live.client.SubL3(symbols, depth)
+}
+
+/*
+enqueueLevel3 copies one raw L3 frame onto the FIFO worker queue so the socket
+reader never applies book updates itself. The copy is required because the SDK
+reader reuses its receive buffer once the callback returns. A full queue blocks
+the reader (backpressure) but never drops a frame, and shutdown unblocks through
+the transport context.
+*/
+func (live *Live) enqueueLevel3(raw []byte) {
+	if live == nil || live.level3Queue == nil || len(raw) == 0 {
+		return
+	}
+
+	frame := append([]byte(nil), raw...)
+
+	select {
+	case live.level3Queue <- frame:
+	case <-live.ctx.Done():
+	}
+}
+
+/*
+drainLevel3 is the single FIFO worker that applies queued L3 frames under the
+book write lease, preserving arrival order so checksums stay valid. A failed
+apply invalidates the affected books, matching the former reader behaviour. It
+exits when the transport context is cancelled on Close.
+*/
+func (live *Live) drainLevel3() {
+	for {
+		select {
+		case <-live.ctx.Done():
+			return
+		case raw := <-live.level3Queue:
+			event := &callback.Event[*sdkkraken.WebSocketMessage]{
+				Data: sdkkraken.NewWebSocketMessage(raw),
+			}
+
+			if err := live.updateLevel3(event); err != nil {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"websocket: level3 book update failed: "+err.Error(),
+					err,
+				))
+				live.invalidateLevel3Book(raw)
+			}
+		}
+	}
 }
 
 /*

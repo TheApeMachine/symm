@@ -18,21 +18,24 @@ const level3MaxSymbolsPerConnection = 200
 /*
 Level3Registry owns SDK BookManager transports keyed by subscription batch or
 harness lease. PeekBook and Books delegate here so conn.go stays focused on
-public/private routing.
+public/private routing. A symbol index maps each subscribed symbol to its owning
+transport so PeekBook resolves in O(1) instead of ranging every connection.
 */
 type Level3Registry struct {
 	conns *sync.Map
+	index *sync.Map
 }
 
 /*
 NewLevel3Registry constructs an empty Level3 transport index.
 */
 func NewLevel3Registry() *Level3Registry {
-	return &Level3Registry{conns: &sync.Map{}}
+	return &Level3Registry{conns: &sync.Map{}, index: &sync.Map{}}
 }
 
 /*
-Attach registers one Level3 Live transport under key.
+Attach registers one Level3 Live transport under key and indexes its symbols so
+subsequent PeekBook reads resolve directly to this transport.
 */
 func (registry *Level3Registry) Attach(key string, live *Live) {
 	if registry == nil || key == "" || live == nil || live.books == nil {
@@ -40,6 +43,21 @@ func (registry *Level3Registry) Attach(key string, live *Live) {
 	}
 
 	registry.conns.Store(key, live)
+	registry.indexSymbols(live)
+}
+
+/*
+indexSymbols records each of a transport's subscribed symbols in the O(1) lookup
+index. Books created after subscription resolve lazily through scanBook.
+*/
+func (registry *Level3Registry) indexSymbols(live *Live) {
+	for _, symbol := range live.symbols {
+		if symbol == "" {
+			continue
+		}
+
+		registry.index.Store(symbol, live)
+	}
 }
 
 /*
@@ -70,7 +88,10 @@ func (registry *Level3Registry) Subscribe(
 
 	if loaded {
 		live.Close()
+		return nil
 	}
+
+	registry.indexSymbols(live)
 
 	return nil
 }
@@ -143,7 +164,9 @@ func (registry *Level3Registry) Books() iter.Seq[*spot.BookManager] {
 }
 
 /*
-PeekBook invokes fn under the Level3 read lease for symbol.
+PeekBook invokes fn under the Level3 read lease for symbol, resolving the owning
+transport through the symbol index first and falling back to a full scan only
+when a book was created after subscription.
 */
 func (registry *Level3Registry) PeekBook(
 	symbol string,
@@ -153,6 +176,23 @@ func (registry *Level3Registry) PeekBook(
 		return false
 	}
 
+	if value, ok := registry.index.Load(symbol); ok {
+		if live, valid := value.(*Live); valid && live.peekBook(symbol, fn) {
+			return true
+		}
+	}
+
+	return registry.scanBook(symbol, fn)
+}
+
+/*
+scanBook ranges every transport for one symbol's book and caches the resolving
+transport in the symbol index so later reads take the O(1) path.
+*/
+func (registry *Level3Registry) scanBook(
+	symbol string,
+	fn func(*book.Book),
+) bool {
 	found := false
 
 	registry.conns.Range(func(_, value any) bool {
@@ -162,6 +202,7 @@ func (registry *Level3Registry) PeekBook(
 			return true
 		}
 
+		registry.index.Store(symbol, live)
 		found = true
 
 		return false

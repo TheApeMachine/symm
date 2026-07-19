@@ -10,12 +10,15 @@ import (
 /*
 MarketFrame is one immutable cut of centrally decoded public market data.
 Signals may read it concurrently; only the central feed constructs or mutates it.
+Advanced names which feeds progressed this cut — distinct from Tickers/Trades/
+Books length, which may carry retained context for a non-advanced stream.
 */
 type MarketFrame struct {
 	Tickers      []kraken.TickerData
 	Trades       []kraken.TradeData
 	Books        []kraken.BookData
 	CrossSection *CrossSection
+	Advanced     StreamInterest
 }
 
 func (frame *MarketFrame) IsEmpty() bool {

@@ -15,7 +15,9 @@ type intensityCandidate struct {
 
 /*
 bookReady keeps only symbols whose L3 book can ground the field. Hawkes
-intensity without a book leaves Candidate evaluation empty.
+intensity without a book leaves Candidate evaluation empty. Readiness is a cheap
+two-sided touch peek so the authoritative population is copied exactly once, in
+advance, rather than once here and again per stepped symbol.
 */
 func bookReady(
 	candidates []intensityCandidate,
@@ -28,7 +30,7 @@ func bookReady(
 	ready := make([]intensityCandidate, 0, len(candidates))
 
 	for _, candidate := range candidates {
-		if _, _, ok := ordersForSymbol(source, candidate.symbol); !ok {
+		if !touchReady(source, candidate.symbol) {
 			continue
 		}
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/logic/manifold"
@@ -215,6 +216,9 @@ func TestCognitionVisualization(t *testing.T) {
 }
 
 func TestAnalyzerCognizeExportsVisualization(t *testing.T) {
+	viper.Set("ui.manifold_focus", "BTC/USD")
+	t.Cleanup(func() { viper.Set("ui.manifold_focus", "") })
+
 	Convey("Given repeated physical evidence for one symbol", t, func() {
 		tree := dmt.NewTree("")
 		analyzer := &Analyzer{

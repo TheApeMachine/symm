@@ -10,7 +10,7 @@ import (
 
 func TestFluidSymbolPartialBookUpdatePreservesRestingSide(t *testing.T) {
 	Convey("Given a live book and a one-sided update", t, func() {
-		setFluidGridConfig()
+		setFluidGridConfig(t)
 
 		state, err := NewFluidSymbol("ETH/EUR")
 		So(err, ShouldBeNil)

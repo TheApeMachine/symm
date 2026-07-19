@@ -143,17 +143,24 @@ func (entry Entry) AssertExit(thesis *types.Thesis, lot *types.Holding) error {
 			)
 		}
 
-		if entry.Truth.MinStopReturn > 0 {
-			if lot == nil || lot.Stoploss == nil {
-				return fmt.Errorf("catalog %s: want stoploss for MinStopReturn", entry.Name)
-			}
+		if entry.Truth.MinStopReturn > 0 && (lot == nil || lot.Stoploss == nil) {
+			return fmt.Errorf("catalog %s: want stoploss for MinStopReturn", entry.Name)
+		}
 
-			if lot.Stoploss.StopReturn < entry.Truth.MinStopReturn {
-				return fmt.Errorf(
-					"catalog %s: StopReturn %g below MinStopReturn %g",
-					entry.Name, lot.Stoploss.StopReturn, entry.Truth.MinStopReturn,
-				)
-			}
+		if entry.Truth.MinStopReturn > 0 &&
+			lot.Stoploss.StopReturn < entry.Truth.MinStopReturn {
+			return fmt.Errorf(
+				"catalog %s: StopReturn %g below MinStopReturn %g",
+				entry.Name, lot.Stoploss.StopReturn, entry.Truth.MinStopReturn,
+			)
+		}
+
+		if entry.Truth.RequireLockedFloor &&
+			(lot == nil || lot.Stoploss == nil || lot.Stoploss.LockedFloor <= 0) {
+			return fmt.Errorf(
+				"catalog %s: want positive LockedFloor after calibrated mark",
+				entry.Name,
+			)
 		}
 
 		return nil

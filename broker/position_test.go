@@ -97,7 +97,7 @@ func TestPositionExecutionAck(t *testing.T) {
 			}}}
 			exitRequest := kraken.NewMarketOrder("sell", 0.00884981, "BTC/USD")
 			position.request = exitRequest
-			position.intent.Store(intentReducePending)
+			position.intent.Store(IntentReducePending)
 			position.OrderAck([]byte(`{"method":"add_order","result":{"order_id":"sell-partial"},"success":true,"req_id":` +
 				strconv.FormatInt(exitRequest.ReqID, 10) + `}`))
 			exit := &kraken.Execution{
@@ -139,7 +139,7 @@ func TestPositionExecutionAck(t *testing.T) {
 			}}}
 			exitRequest := kraken.NewMarketOrder("sell", 1, "BTC/USD")
 			position.request = exitRequest
-			position.intent.Store(intentExitPending)
+			position.intent.Store(IntentExitPending)
 			position.OrderAck([]byte(`{"method":"add_order","result":{"order_id":"sell-1"},"success":true,"req_id":` +
 				strconv.FormatInt(exitRequest.ReqID, 10) + `}`))
 			exit := &kraken.Execution{
@@ -385,7 +385,7 @@ func TestPositionPartialFillKeepsPending(t *testing.T) {
 			},
 			request: exitRequest,
 		}
-		position.intent.Store(intentExitPending)
+		position.intent.Store(IntentExitPending)
 		position.OrderAck([]byte(`{"method":"add_order","result":{"order_id":"sell-partial-live"},"success":true,"req_id":` +
 			strconv.FormatInt(exitRequest.ReqID, 10) + `}`))
 

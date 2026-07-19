@@ -127,9 +127,20 @@ var (
 				auditDir = dataPath
 			}
 
-			recorder, err := audit.NewRecorder(filepath.Join(
-				auditDir, "runtime-audit.jsonl",
-			))
+			auditPath := filepath.Join(auditDir, "runtime-audit.jsonl")
+
+			// Rotate before the recorder opens the file. Rotating an
+			// already-open handle would rename the live inode aside and leave
+			// the recorder appending to a stranded file.
+			if viper.GetBool("system.audit.rotate_on_boot") {
+				if err := audit.Rotate(auditPath); err != nil {
+					return errnie.Error(errnie.Err(
+						errnie.IO, "failed to rotate runtime audit", err,
+					))
+				}
+			}
+
+			recorder, err := audit.NewRecorder(auditPath)
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
@@ -233,7 +244,9 @@ var (
 
 			defer wired.UIHub.Close()
 
-			wired.Crypto.Run()
+			if err := wired.Crypto.Run(); err != nil {
+				return errnie.Error(err)
+			}
 
 			return wired.UIHub.Serve()
 		},

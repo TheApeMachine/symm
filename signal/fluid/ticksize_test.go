@@ -7,20 +7,8 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 )
-
-func resetFluidConfig() {
-	viper.Set("market.book_depth_levels", 25)
-	viper.Set("signals.fluid.tick_size", 0)
-	viper.Set("signals.fluid.grid_half_width", 0)
-	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-	viper.Set("signals.fluid.idle_threshold", 5*time.Second)
-	viper.Set("signals.fluid.max_integration_steps", 50)
-	viper.Set("signals.volume_clock_bars_per_day", 288)
-	symbolConfigValue.Store(nil)
-}
 
 func TestResolveBookTickSizePerSide(t *testing.T) {
 	Convey("Given bid and ask ladders with intra-side steps", t, func() {
@@ -124,7 +112,7 @@ func TestGridHalfWidthSafeConversion(t *testing.T) {
 
 func TestNewFluidGridRejectsOversizedLattice(t *testing.T) {
 	Convey("Given subscribed book depth", t, func() {
-		resetFluidConfig()
+		resetFluidConfig(t)
 
 		Convey("When half width exceeds the depth budget", func() {
 			_, err := newFluidGrid(0.01, 100, 100*time.Millisecond, 5*time.Second, 50)
@@ -139,7 +127,7 @@ func TestNewFluidGridRejectsOversizedLattice(t *testing.T) {
 
 func TestFluidBookSnapshotWithExchangeIncrement(t *testing.T) {
 	Convey("Given a live MATIC book snapshot and exchange increment", t, func() {
-		resetFluidConfig()
+		resetFluidConfig(t)
 
 		raw, readErr := os.ReadFile("../../tests/fixtures/book/fixtures/snapshot.json")
 		So(readErr, ShouldBeNil)
@@ -171,7 +159,7 @@ func TestFluidBookSnapshotWithExchangeIncrement(t *testing.T) {
 
 func TestFluidSymbolConfigureTickFromBookCapsWidth(t *testing.T) {
 	Convey("Given a wide book and exchange increment", t, func() {
-		resetFluidConfig()
+		resetFluidConfig(t)
 
 		state, err := NewFluidSymbol("ADV/USD")
 		So(err, ShouldBeNil)

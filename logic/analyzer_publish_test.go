@@ -39,3 +39,33 @@ func TestProjectCategoriesFromCognition(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkProjectCategories(b *testing.B) {
+	analyzer := &Analyzer{}
+	thesis := types.NewThesis(nil, nil)
+	cognition := []types.Cognition{
+		{
+			Symbol:         "PENGU/USD",
+			At:             time.Unix(1, 0).UTC(),
+			Winner:         "buy",
+			Ready:          true,
+			Confidence:     0.72,
+			EntropyBits:    1.25,
+			LookaheadScore: 0.4,
+			Cohort:         3,
+		},
+		{
+			Symbol: "SKIP/USD",
+			Winner: "buy",
+			Ready:  false,
+		},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		thesis.Categories = nil
+		analyzer.projectCategories(thesis, cognition)
+	}
+}

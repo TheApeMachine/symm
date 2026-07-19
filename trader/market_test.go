@@ -199,6 +199,82 @@ func TestMarket_OnBook(t *testing.T) {
 }
 
 /*
+TestMarket_WaitDirty verifies that WaitDirty returns one coalesced wake per
+ingress burst instead of firing on the first message, and that it extends the
+merge window while ingress keeps arriving up to the budget deadline.
+*/
+func TestMarket_WaitDirty(t *testing.T) {
+	previousTimeline := viper.Get("signals.feed_timeline_capacity")
+	previousTrack := viper.Get("signals.feed_track_capacity")
+	previousWindow := viper.Get("signals.coalesce_window")
+	t.Cleanup(func() {
+		viper.Set("signals.feed_timeline_capacity", previousTimeline)
+		viper.Set("signals.feed_track_capacity", previousTrack)
+		viper.Set("signals.coalesce_window", previousWindow)
+	})
+	viper.Set("signals.feed_timeline_capacity", 4)
+	viper.Set("signals.feed_track_capacity", 4)
+	viper.Set("signals.coalesce_window", 10*time.Millisecond)
+
+	Convey("Given a single buffered ingress signal", t, func() {
+		market, err := NewMarket(context.Background(), nil, nil)
+		So(err, ShouldBeNil)
+
+		market.dirtyWake()
+		start := time.Now()
+		market.WaitDirty(200 * time.Millisecond)
+		elapsed := time.Since(start)
+
+		Convey("It coalesces one wake well under the budget and drains the channel", func() {
+			So(elapsed, ShouldBeLessThan, 150*time.Millisecond)
+
+			select {
+			case <-market.dirty:
+				So("dirty channel should be drained", ShouldBeEmpty)
+			default:
+			}
+		})
+	})
+
+	Convey("Given ingress that keeps arriving inside the merge window", t, func() {
+		market, err := NewMarket(context.Background(), nil, nil)
+		So(err, ShouldBeNil)
+
+		stop := make(chan struct{})
+
+		go func() {
+			ticker := time.NewTicker(3 * time.Millisecond)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-stop:
+					return
+				case <-ticker.C:
+					market.dirtyWake()
+				}
+			}
+		}()
+
+		market.dirtyWake()
+		start := time.Now()
+
+		go func() {
+			time.Sleep(40 * time.Millisecond)
+			close(stop)
+		}()
+
+		market.WaitDirty(300 * time.Millisecond)
+		elapsed := time.Since(start)
+
+		Convey("It extends past a single window yet returns before the budget", func() {
+			So(elapsed, ShouldBeGreaterThan, 25*time.Millisecond)
+			So(elapsed, ShouldBeLessThan, 300*time.Millisecond)
+		})
+	})
+}
+
+/*
 BenchmarkMarket_Cut measures the complete central cut, including the shared
 cross-sectional projection consumed by concurrent signals.
 */
