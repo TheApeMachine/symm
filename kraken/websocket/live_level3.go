@@ -242,7 +242,7 @@ func (live *Live) invalidateLevel3Book(raw []byte) {
 
 /*
 SeedTouch installs a two-sided L3 touch for symbol under the write lease so
-toxicity harness tests can PeekBook without checksummed fixture replay.
+package tests can provide deterministic touch state without a venue connection.
 */
 func (live *Live) SeedTouch(
 	symbol string,

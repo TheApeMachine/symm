@@ -242,7 +242,10 @@ func (instrument *Instrument) Subscribe() error {
 		instrument.api.SubscribeTrade,
 		instrument.api.SubscribeBook,
 		instrument.api.SubscribeTicker,
-		instrument.api.SubscribeLevel3,
+	}
+
+	if viper.GetBool("market.l3_enabled") {
+		subscribers = append(subscribers, instrument.api.SubscribeLevel3)
 	}
 
 	for batch := range slices.Chunk(symbols, batchSize) {
@@ -251,9 +254,12 @@ func (instrument *Instrument) Subscribe() error {
 		}
 
 		for _, subscribe := range subscribers {
-			// Channel subscribe may no-op on mock Conns; producers still Emit.
 			if err := subscribe(batch); err != nil {
-				errnie.Error(err)
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"trader: market subscription failed",
+					err,
+				))
 			}
 		}
 

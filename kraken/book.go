@@ -152,7 +152,7 @@ func (bs BookSubscription) MarshalJSON() ([]byte, error) {
 		"params": map[string]any{
 			"channel": bs.Channel,
 			"symbol":  bs.Pairs,
-			"depth":   viper.GetInt("market.book_depth_levels"),
+			"depth":   viper.GetInt("market.book.depth"),
 		},
 	})
 }
@@ -176,7 +176,7 @@ func (bs BookUnsubscription) MarshalJSON() ([]byte, error) {
 		"params": map[string]any{
 			"channel": "book",
 			"symbol":  bs.Pairs,
-			"depth":   viper.GetInt("market.book_depth_levels"),
+			"depth":   viper.GetInt("market.book.depth"),
 		},
 	})
 }

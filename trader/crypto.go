@@ -28,30 +28,31 @@ It consumes market and private frames, publishes UI frames,
 and delegates measurement to Signal.
 */
 type Crypto struct {
-	booter         *system.Booter
-	status         types.Status
-	ctx            context.Context
-	cancel         context.CancelFunc
-	desk           *broker.Desk
-	price          *broker.Price
-	balance        *broker.Balance
-	api            *websocket.API
-	instrument     *broker.Instrument
-	tree           *dmt.Tree
-	tick           *atomic.Int64
-	planner        *strategy.Planner
-	postMortem     *strategy.PostMortem
-	analyzer       *logic.Analyzer
-	dataPath       string
-	uiHub          *ui.Hub
-	market         *Market
-	recorder       *audit.Recorder
-	lastThesis     atomic.Pointer[types.Thesis]
-	checkpointAt   atomic.Int64
-	checkpointSlot atomic.Pointer[types.Recovery]
-	snapshot       *types.Recovery
-	trading        atomic.Bool
-	pendingRetry   PendingRetry
+	booter          *system.Booter
+	status          types.Status
+	ctx             context.Context
+	cancel          context.CancelFunc
+	desk            *broker.Desk
+	price           *broker.Price
+	balance         *broker.Balance
+	api             *websocket.API
+	instrument      *broker.Instrument
+	tree            *dmt.Tree
+	tick            *atomic.Int64
+	planner         *strategy.Planner
+	postMortem      *strategy.PostMortem
+	analyzer        *logic.Analyzer
+	dataPath        string
+	uiHub           *ui.Hub
+	market          *Market
+	recorder        *audit.Recorder
+	lastThesis      atomic.Pointer[types.Thesis]
+	checkpointAt    atomic.Int64
+	checkpointSlot  atomic.Pointer[types.Recovery]
+	snapshot        atomic.Pointer[types.Recovery]
+	trading         atomic.Bool
+	pendingRetry    PendingRetry
+	reconcileFlight atomic.Bool
 }
 
 /*
@@ -121,9 +122,9 @@ func NewCrypto(
 		dataPath:   dataPath,
 		uiHub:      uiHub,
 		market:     market,
-		snapshot:   snapshot,
 		recorder:   recorder,
 	}
+	crypto.snapshot.Store(snapshot)
 
 	crypto.tick.Store(thesis.Tick)
 	crypto.lastThesis.Store(thesis)
@@ -288,7 +289,7 @@ func (crypto *Crypto) publishTick(thesis *types.Thesis) {
 	}
 
 	if crypto.desk != nil {
-		tick["open"] = crypto.desk.OpenPositions()
+		tick["open"] = crypto.desk.HoldingCount()
 	}
 
 	select {

@@ -5,11 +5,14 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
 )
 
 func TestResonanceUpdate(t *testing.T) {
+	withResonanceRLS(t)
+
 	Convey("Given a chronological sequence of finite manifold states", t, func() {
 		resonance := NewResonance(
 			"BTC/USD", manifold.DefaultBaselineHalflife(),
@@ -37,14 +40,22 @@ func TestResonanceUpdate(t *testing.T) {
 		})
 
 		Convey("Its maturity should grow from observed event-time coverage", func() {
-			nextIndex := producedAt + 1
-			state := causalState(
-				time.Unix(int64(nextIndex), 0),
-				100+float64(nextIndex),
-				uint64(nextIndex),
-			)
-			state.Reading.PressureGradX += float64(nextIndex) / 100
-			next, outcome := resonance.Update(state)
+			var next []*types.Measurement
+			var outcome *ResonanceOutcome
+
+			for nextIndex := producedAt + 1; nextIndex <= producedAt+32; nextIndex++ {
+				state := causalState(
+					time.Unix(int64(nextIndex), 0),
+					100+float64(nextIndex),
+					uint64(nextIndex),
+				)
+				state.Reading.PressureGradX += float64(nextIndex) / 100
+				next, outcome = resonance.Update(state)
+
+				if outcome != nil && outcome.ReturnReady {
+					break
+				}
+			}
 
 			So(next, ShouldHaveLength, 2)
 			So(outcome, ShouldNotBeNil)
@@ -53,6 +64,7 @@ func TestResonanceUpdate(t *testing.T) {
 			So(outcome.Target, ShouldEqual, resonanceReturnTarget)
 			So(outcome.ReturnReady, ShouldBeTrue)
 			So(outcome.CalibrationSamples, ShouldBeGreaterThan, 0)
+			So(outcome.IncrementalSkillLowerBound, ShouldBeGreaterThan, 0)
 			So(outcome.IncrementalMSE, ShouldBeGreaterThanOrEqualTo, 0)
 			So(outcome.Uncertainty, ShouldBeGreaterThanOrEqualTo, 0)
 		})
@@ -76,6 +88,8 @@ func TestResonanceUpdate(t *testing.T) {
 }
 
 func TestResonanceUpdateUsesConfiguredHalflife(t *testing.T) {
+	withResonanceRLS(t)
+
 	Convey("Given a resonance model with a two-second baseline halflife", t, func() {
 		resonance := NewResonance("BTC/USD", 2*time.Second)
 		resonance.Update(causalState(time.Unix(1, 0), 100, 1))
@@ -92,6 +106,7 @@ func TestResonanceUpdateUsesConfiguredHalflife(t *testing.T) {
 }
 
 func BenchmarkResonanceUpdate(b *testing.B) {
+	withResonanceRLS(b)
 	resonance := NewResonance(
 		"BTC/USD", manifold.DefaultBaselineHalflife(),
 	)
@@ -106,4 +121,23 @@ func BenchmarkResonanceUpdate(b *testing.B) {
 		state.Reading.PressureGradX += float64(index) / 100
 		resonance.Update(state)
 	}
+}
+
+/*
+withResonanceRLS pins the documented production return-head configuration and
+restores the process-wide test configuration afterward.
+*/
+func withResonanceRLS(t testing.TB) {
+	t.Helper()
+	previousVariance := viper.Get("market.forecast.rls.initial_variance")
+	previousForgetting := viper.Get("market.forecast.rls.forgetting_factor")
+	previousConfidence := viper.Get("market.forecast.rls.calibration_confidence")
+	viper.Set("market.forecast.rls.initial_variance", 1.0)
+	viper.Set("market.forecast.rls.forgetting_factor", 1.0)
+	viper.Set("market.forecast.rls.calibration_confidence", 0.95)
+	t.Cleanup(func() {
+		viper.Set("market.forecast.rls.initial_variance", previousVariance)
+		viper.Set("market.forecast.rls.forgetting_factor", previousForgetting)
+		viper.Set("market.forecast.rls.calibration_confidence", previousConfidence)
+	})
 }

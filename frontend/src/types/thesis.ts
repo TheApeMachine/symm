@@ -69,7 +69,7 @@ export type ThesisForecast = {
 	frictionReady: boolean;
 	calibrationSamples: number;
 	incrementalMSE: number;
-	incrementalMSELowerBound: number;
+	incrementalSkillLowerBound: number;
 	expectedReturn: number;
 	referencePrice: number;
 	buyCapacity: number;
@@ -113,8 +113,12 @@ export type ThesisCategory = {
 	missing?: string[];
 };
 
+export type GraphNodeKind = "measurement" | "category" | "concept";
+
 export type GraphNodeWire = {
 	key: string;
+	kind?: GraphNodeKind;
+	category?: string;
 	measurement: Record<string, unknown>;
 };
 

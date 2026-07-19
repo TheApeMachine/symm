@@ -38,7 +38,7 @@ func TestContinuationManageEmitsHoldForOccupiedForecast(t *testing.T) {
 			Symbol:             "PENGU/USD",
 			At:                 time.Unix(1, 0).UTC(),
 			Target:             "next_l3_epoch_mid_log_return",
-			ModelVersion:       "resonance_return_head_v1",
+			ModelVersion:       "resonance_return_head_v2_rls",
 			Ready:              true,
 			Calibrated:         true,
 			SourceEpoch:        1,

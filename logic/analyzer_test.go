@@ -51,6 +51,8 @@ func (scripted *scriptedHawkes) Outcome(symbol string) (excitation.Outcome, bool
 }
 
 func TestAnalyzerUpdate(t *testing.T) {
+	withResonanceRLS(t)
+
 	Convey("Given measurements for two symbols", t, func() {
 		thesis := types.NewThesis(nil, nil)
 		thesis.Measurements = append(thesis.Measurements,
@@ -179,9 +181,10 @@ func TestAnalyzerUpdate(t *testing.T) {
 			So(forecast, ShouldNotBeNil)
 			So(forecast.Source, ShouldEqual, "resonance+causal")
 			So(forecast.Target, ShouldEqual, "next_l3_epoch_mid_log_return")
-			So(forecast.ModelVersion, ShouldEqual, "resonance_return_head_v1")
+			So(forecast.ModelVersion, ShouldEqual, "resonance_return_head_v2_rls")
 			So(forecast.CalibrationSamples, ShouldBeGreaterThan, 0)
 			So(forecast.IncrementalMSE, ShouldBeGreaterThanOrEqualTo, 0)
+			So(forecast.IncrementalSkillLowerBound, ShouldBeGreaterThan, 0)
 			So(forecast.Uncertainty, ShouldBeGreaterThanOrEqualTo, 0)
 			So(forecast.Ready, ShouldBeTrue)
 			So(forecast.Calibrated, ShouldBeTrue)

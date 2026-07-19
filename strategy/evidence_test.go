@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/types"
 )
@@ -14,38 +15,37 @@ TestProjectPrefersResonanceOverForecast ensures logic-layer resonance scalars
 win when both forecast and resonance are present for the same symbol.
 */
 func TestProjectPrefersResonanceOverForecast(t *testing.T) {
-	t.Parallel()
+	Convey("Given forecast and resonance for one symbol", t, func() {
+		thesis := types.NewThesis(nil, nil)
+		thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
+			Symbol:         "AAA/USD",
+			ExpectedReturn: 0.01,
+			Uncertainty:    0.02,
+			IncrementalMSE: 0.03,
+			Ready:          true,
+			Calibrated:     true,
+		})
+		thesis.Resonance = append(thesis.Resonance, &logic.ResonanceOutcome{
+			Symbol:         "AAA/USD",
+			ExpectedReturn: 0.04,
+			Uncertainty:    0.05,
+			IncrementalMSE: 0.01,
+			ReturnReady:    true,
+		})
 
-	thesis := types.NewThesis(nil, nil)
-	thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
-		Symbol:         "AAA/USD",
-		ExpectedReturn: 0.01,
-		Uncertainty:    0.02,
-		IncrementalMSE: 0.03,
-		Ready:          true,
-		Calibrated:     true,
+		evidence := NewEvidence().Project(thesis, types.Holding{
+			Symbol:     "AAA/USD",
+			Mark:       decimal.NewFromFloat64(110),
+			StopMark:   decimal.NewFromFloat64(110),
+			EntryPrice: decimal.NewFromFloat64(100),
+		})
+
+		Convey("Then Present uses StopMark and prefers resonance", func() {
+			So(evidence.Present, ShouldBeTrue)
+			So(evidence.ExpectedReturn, ShouldEqual, 0.04)
+			So(evidence.Uncertainty, ShouldEqual, 0.05)
+		})
 	})
-	thesis.Resonance = append(thesis.Resonance, &logic.ResonanceOutcome{
-		Symbol:         "AAA/USD",
-		ExpectedReturn: 0.04,
-		Uncertainty:    0.05,
-		IncrementalMSE: 0.01,
-		ReturnReady:    true,
-	})
-
-	evidence := NewEvidence().Project(thesis, types.Holding{
-		Symbol:     "AAA/USD",
-		Mark:       decimal.NewFromFloat64(110),
-		EntryPrice: decimal.NewFromFloat64(100),
-	})
-
-	if !evidence.Present {
-		t.Fatal("expected present evidence")
-	}
-
-	if evidence.ExpectedReturn != 0.04 || evidence.Uncertainty != 0.05 {
-		t.Fatalf("resonance not preferred: %+v", evidence)
-	}
 }
 
 /*
@@ -53,77 +53,95 @@ TestProjectRetreatPressureFromToxicity copies retreating_quantity onto Evidence
 so Stoploss can gate quote-only marks.
 */
 func TestProjectRetreatPressureFromToxicity(t *testing.T) {
-	t.Parallel()
+	Convey("Given a toxicity retreat measurement", t, func() {
+		thesis := types.NewThesis(nil, nil)
+		pressure := 0.87
+		thesis.Measurements = append(thesis.Measurements, &types.Measurement{
+			Symbol:     "AAA/USD",
+			Metric:     types.MetricRetreatingQuantity,
+			Normalized: &pressure,
+			Raw:        870,
+		})
 
-	thesis := types.NewThesis(nil, nil)
-	pressure := 0.87
-	thesis.Measurements = append(thesis.Measurements, &types.Measurement{
-		Symbol:     "AAA/USD",
-		Metric:     types.MetricRetreatingQuantity,
-		Normalized: &pressure,
-		Raw:        870,
+		evidence := NewEvidence().Project(thesis, types.Holding{
+			Symbol:     "AAA/USD",
+			Mark:       decimal.NewFromFloat64(100),
+			StopMark:   decimal.NewFromFloat64(100),
+			EntryPrice: decimal.NewFromFloat64(100),
+		})
+
+		Convey("Then retreat pressure is projected", func() {
+			So(evidence.RetreatPressure, ShouldEqual, 0.87)
+		})
 	})
-
-	evidence := NewEvidence().Project(thesis, types.Holding{
-		Symbol:     "AAA/USD",
-		Mark:       decimal.NewFromFloat64(100),
-		EntryPrice: decimal.NewFromFloat64(100),
-	})
-
-	if evidence.RetreatPressure != 0.87 {
-		t.Fatalf("retreat pressure: want 0.87, got %v", evidence.RetreatPressure)
-	}
 }
 
 /*
 TestProjectForecastEpochFromSourceEpoch copies forecast provenance onto Evidence.
 */
 func TestProjectForecastEpochFromSourceEpoch(t *testing.T) {
-	t.Parallel()
+	Convey("Given a forecast with SourceEpoch", t, func() {
+		thesis := types.NewThesis(nil, nil)
+		thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
+			Symbol:         "AAA/USD",
+			SourceEpoch:    42,
+			ExpectedReturn: 0.01,
+			Uncertainty:    0.02,
+			IncrementalMSE: 0.01,
+			Ready:          true,
+			Calibrated:     true,
+		})
 
-	thesis := types.NewThesis(nil, nil)
-	thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
-		Symbol:         "AAA/USD",
-		SourceEpoch:    42,
-		ExpectedReturn: 0.01,
-		Uncertainty:    0.02,
-		IncrementalMSE: 0.01,
-		Ready:          true,
-		Calibrated:     true,
+		evidence := NewEvidence().Project(thesis, types.Holding{
+			Symbol:     "AAA/USD",
+			Mark:       decimal.NewFromFloat64(110),
+			StopMark:   decimal.NewFromFloat64(110),
+			EntryPrice: decimal.NewFromFloat64(100),
+		})
+
+		Convey("Then epoch and normalized residual are projected", func() {
+			So(evidence.ForecastEpoch, ShouldEqual, 42)
+			So(evidence.NormalizedResidual, ShouldEqual, 5)
+		})
 	})
+}
 
-	evidence := NewEvidence().Project(thesis, types.Holding{
-		Symbol:     "AAA/USD",
-		Mark:       decimal.NewFromFloat64(110),
-		EntryPrice: decimal.NewFromFloat64(100),
+/*
+TestProjectAbsentWithoutStopMark freezes Present when only bid Mark is set so
+ask-entry vs bid cannot invent a stop breach.
+*/
+func TestProjectAbsentWithoutStopMark(t *testing.T) {
+	Convey("Given inventory with bid Mark but no StopMark", t, func() {
+		thesis := types.NewThesis(nil, nil)
+		evidence := NewEvidence().Project(thesis, types.Holding{
+			Symbol:     "AAA/USD",
+			Mark:       decimal.NewFromFloat64(100),
+			EntryPrice: decimal.NewFromFloat64(100),
+			EntryAt:    ptrTime(time.Now()),
+		})
+
+		Convey("Then Present stays false", func() {
+			So(evidence.Present, ShouldBeFalse)
+		})
 	})
-
-	if evidence.ForecastEpoch != 42 {
-		t.Fatalf("forecast epoch: want 42, got %v", evidence.ForecastEpoch)
-	}
-
-	// sqrt(0.01) / 0.02 = 5
-	if evidence.NormalizedResidual != 5 {
-		t.Fatalf("normalized residual: want 5, got %v", evidence.NormalizedResidual)
-	}
 }
 
 /*
 TestProjectAbsentWithoutMark freezes Present when inventory lacks a mark.
 */
 func TestProjectAbsentWithoutMark(t *testing.T) {
-	t.Parallel()
+	Convey("Given inventory without StopMark", t, func() {
+		thesis := types.NewThesis(nil, nil)
+		evidence := NewEvidence().Project(thesis, types.Holding{
+			Symbol:     "AAA/USD",
+			EntryPrice: decimal.NewFromFloat64(100),
+			EntryAt:    ptrTime(time.Now()),
+		})
 
-	thesis := types.NewThesis(nil, nil)
-	evidence := NewEvidence().Project(thesis, types.Holding{
-		Symbol:     "AAA/USD",
-		EntryPrice: decimal.NewFromFloat64(100),
-		EntryAt:    ptrTime(time.Now()),
+		Convey("Then Present stays false", func() {
+			So(evidence.Present, ShouldBeFalse)
+		})
 	})
-
-	if evidence.Present {
-		t.Fatal("mark-less holding must not be present")
-	}
 }
 
 func ptrTime(value time.Time) *time.Time {
@@ -146,13 +164,14 @@ func BenchmarkProject(b *testing.B) {
 	holding := types.Holding{
 		Symbol:     "AAA/USD",
 		Mark:       decimal.NewFromFloat64(100),
+		StopMark:   decimal.NewFromFloat64(100),
 		EntryPrice: decimal.NewFromFloat64(100),
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for index := 0; b.Loop(); index++ {
+	for b.Loop() {
 		_ = NewEvidence().Project(thesis, holding)
 	}
 }

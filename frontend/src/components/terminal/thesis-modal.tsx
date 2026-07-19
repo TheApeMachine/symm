@@ -1,18 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
-import {
-	type ReactNode,
-	useCallback,
-	useEffect,
-	useRef,
-	useState,
-} from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { appStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import type { Holding, TickFrame } from "#/collections/types";
-import { resizeCanvas } from "#/components/terminal/canvas";
 import { fixed } from "#/components/terminal/decision-format";
-import { drawEvidenceGraph } from "#/components/terminal/evidence-graph-viz";
 import { LifecycleTrack } from "#/components/terminal/lifecycle-track";
+import { ThesisEvidenceCanvas } from "#/components/terminal/thesis-evidence-canvas";
 import {
 	accumulateThesisSnapshot,
 	type ThesisSnapshot,
@@ -32,6 +25,33 @@ import type {
 import { Badge } from "@/components/ui/badge";
 import { Flex } from "@/components/ui/flex";
 import { Panel } from "@/components/ui/panel";
+
+/*
+evidenceLabels turns measurement evidence keys (source/stream/metric/…) into
+compact source/metric labels, de-duplicated, capped so the row stays readable.
+*/
+const evidenceLabels = (keys: string[] | undefined): string[] => {
+	if (keys === undefined) {
+		return [];
+	}
+
+	const labels: string[] = [];
+	const seen = new Set<string>();
+
+	for (const key of keys) {
+		const parts = key.split("/");
+		const source = parts[0] ?? key;
+		const metric = parts[2] ?? source;
+		const label = metric === source ? source : `${source}/${metric}`;
+
+		if (!seen.has(label)) {
+			seen.add(label);
+			labels.push(label);
+		}
+	}
+
+	return labels.slice(0, 4);
+};
 
 const Section = ({
 	title,
@@ -54,48 +74,6 @@ const Section = ({
 		{children}
 	</Panel>
 );
-
-const ThesisEvidenceCanvas = ({ graph }: { graph: GraphFrame | null }) => {
-	const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-	const draw = useCallback(
-		(context: CanvasRenderingContext2D, width: number, height: number) => {
-			drawEvidenceGraph(context, width, height, graph);
-		},
-		[graph],
-	);
-
-	useEffect(() => {
-		const canvas = canvasRef.current;
-
-		if (canvas === null) {
-			return;
-		}
-
-		const render = () => {
-			const context = resizeCanvas(canvas);
-
-			if (context === null) {
-				return;
-			}
-
-			draw(context, canvas.clientWidth, canvas.clientHeight);
-		};
-
-		render();
-		const observer = new ResizeObserver(render);
-		observer.observe(canvas);
-
-		return () => observer.disconnect();
-	}, [draw]);
-
-	return (
-		<canvas
-			ref={canvasRef}
-			className="absolute inset-0 block size-full bg-(--sunken)"
-		/>
-	);
-};
 
 const ThesisDetailRail = ({ snapshot }: { snapshot: ThesisSnapshot }) => (
 	<Flex.Column className="min-h-0 gap-2 overflow-auto pr-1">
@@ -188,12 +166,24 @@ const ThesisDetailRail = ({ snapshot }: { snapshot: ThesisSnapshot }) => (
 					{snapshot.categories.slice(-6).map((category) => (
 						<div
 							key={`${category.type}:${category.confidence}`}
-							className="flex items-center justify-between gap-2 font-mono text-[10px]"
+							className="font-mono text-[10px]"
 						>
-							<span className="text-(--f1)">{category.type}</span>
-							<span className="text-(--acc)">
-								{category.confidence.toFixed(3)}
-							</span>
+							<div className="flex items-center justify-between gap-2">
+								<span className="text-(--f1)">{category.type}</span>
+								<span className="text-(--acc)">
+									{category.confidence.toFixed(3)}
+								</span>
+							</div>
+							{(category.supporting?.length ?? 0) > 0 && (
+								<div className="text-(--f3)">
+									+ {evidenceLabels(category.supporting).join(" · ")}
+								</div>
+							)}
+							{(category.opposing?.length ?? 0) > 0 && (
+								<div className="text-(--f4)">
+									− {evidenceLabels(category.opposing).join(" · ")}
+								</div>
+							)}
 						</div>
 					))}
 				</Flex.Column>
@@ -391,7 +381,7 @@ export const ThesisModal = () => {
 
 				<div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.55fr)_minmax(280px,360px)]">
 					<div className="relative min-h-0 border-(--line) border-r">
-						<ThesisEvidenceCanvas graph={snapshot.graph} />
+						<ThesisEvidenceCanvas symbol={snapshot.symbol} />
 						<div className="pointer-events-none absolute top-3.5 left-4">
 							<div className="font-semibold text-[10px] text-(--f2) uppercase tracking-[0.13em]">
 								Evidence graph

@@ -7,8 +7,10 @@ GraphNodeWire carries one measurement node and its stable evidence key on the
 websocket frame.
 */
 type GraphNodeWire struct {
-	Key         string      `json:"key"`
-	Measurement Measurement `json:"measurement"`
+	Key         string       `json:"key"`
+	Kind        NodeKind     `json:"kind"`
+	Category    CategoryType `json:"category,omitempty"`
+	Measurement Measurement  `json:"measurement"`
 }
 
 /*
@@ -46,6 +48,8 @@ func (evidenceGraph *Graph) Frame() GraphFrame {
 	for _, node := range evidenceGraph.Nodes() {
 		frame.Nodes = append(frame.Nodes, GraphNodeWire{
 			Key:         node.Key,
+			Kind:        node.Kind,
+			Category:    node.Category,
 			Measurement: node.Measurement,
 		})
 	}

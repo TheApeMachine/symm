@@ -55,8 +55,9 @@ func (subscription TradeSubscription) MarshalJSON() ([]byte, error) {
 	return sonic.Marshal(map[string]any{
 		"method": "subscribe",
 		"params": map[string]any{
-			"channel": "trade",
-			"symbol":  subscription.Pairs,
+			"channel":  "trade",
+			"symbol":   subscription.Pairs,
+			"snapshot": true,
 		},
 	})
 }

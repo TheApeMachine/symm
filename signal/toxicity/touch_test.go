@@ -84,8 +84,8 @@ func TestAttributeTouchSideOneTickSpread(t *testing.T) {
 	})
 }
 
-func TestAttributeTouchSideSessionSeedPrice(t *testing.T) {
-	Convey("Given the session seed touch and first fixture trade price", t, func() {
+func TestAttributeTouchSideSeedPrice(t *testing.T) {
+	Convey("Given an injected seed touch and first fixture trade price", t, func() {
 		payload := tradeFixturePayload()
 		tradeRow := kraken.NewTrade(payload).Data[0]
 		bidPrice := tradeRow.Price

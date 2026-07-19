@@ -278,12 +278,20 @@ func (api *API) TradesHistory() (*kraken.TradesHistory, error) {
 }
 
 /*
+Live reports whether this API speaks to the venue rather than the paper
+Simulator. Tick-path callers use it to keep live REST off the cut goroutine.
+*/
+func (api *API) Live() bool {
+	return api != nil && api.live
+}
+
+/*
 OpenOrders returns currently resting orders keyed by their venue order id. Live
 boots read the private REST ledger; paper fills synchronously through Lifecycle
 so it never leaves an order resting and answers with an empty set.
 */
 func (api *API) OpenOrders() (map[string]spot.Order, error) {
-	if !api.live {
+	if !api.Live() {
 		return api.paper.OpenOrders()
 	}
 
@@ -398,20 +406,13 @@ func (api *API) SubscribeInstruments() error {
 func (api *API) SubscribeTicker(pairs []string) error {
 	api.rememberSymbols(&api.subs.tickers, pairs)
 
-	return errnie.Error(api.public.Client().SubTicker(pairs))
+	return errnie.Error(api.public.Write(kraken.NewTickerSubscription(pairs)))
 }
 
 func (api *API) SubscribeTrade(pairs []string) error {
 	api.rememberSymbols(&api.subs.trades, pairs)
 
-	return errnie.Error(api.public.Client().SubTrades(
-		pairs,
-		map[string]any{
-			"params": map[string]any{
-				"snapshot": true,
-			},
-		},
-	))
+	return errnie.Error(api.public.Write(kraken.NewTradeSubscription(pairs)))
 }
 
 /*
@@ -424,15 +425,15 @@ func (api *API) Books() iter.Seq[*spot.BookManager] {
 }
 
 /*
-AttachLevel3 registers a Level3 Live transport so PeekBook and Session harness
-tests can feed SDK-managed books without opening a real L3 websocket.
+AttachLevel3 registers a Level3 transport so package tests can feed SDK-managed
+books without opening a venue connection.
 */
 func (api *API) AttachLevel3(live *Live) {
 	if api == nil {
 		return
 	}
 
-	api.level3.Attach("session-level3", live)
+	api.level3.Attach("injected-level3", live)
 }
 
 /*
@@ -450,9 +451,7 @@ func (api *API) PeekBook(symbol string, fn func(*book.Book)) bool {
 func (api *API) SubscribeBook(pairs []string) error {
 	api.rememberSymbols(&api.subs.books, pairs)
 
-	return errnie.Error(api.public.Client().SubBook(
-		pairs, viper.GetInt("market.book.depth"), nil,
-	))
+	return errnie.Error(api.public.Write(kraken.NewBookSubscription(pairs)))
 }
 
 /*
@@ -470,7 +469,9 @@ func (api *API) SubscribeBalance() error {
 	api.subs.mu.Unlock()
 
 	if api.live {
-		return errnie.Error(api.private.Client().SubBalances())
+		return errnie.Error(api.private.Write(
+			kraken.NewBalanceSubscription(api.private.Client().Token),
+		))
 	}
 
 	return api.paper.SubBalances()
@@ -482,12 +483,9 @@ func (api *API) SubscribeExecutions() error {
 	api.subs.mu.Unlock()
 
 	if api.live {
-		return errnie.Error(api.private.Client().SubExecutions(map[string]any{
-			"params": map[string]any{
-				"snap_orders": true,
-				"snap_trades": true,
-			},
-		}))
+		return errnie.Error(api.private.Write(
+			kraken.NewExecutionSubscription(api.private.Client().Token),
+		))
 	}
 
 	return api.paper.SubExecutions()

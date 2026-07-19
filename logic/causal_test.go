@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -22,9 +23,54 @@ func TestCausalUpdate(t *testing.T) {
 			So(hypothesis.Source, ShouldEqual, types.SourceCausal)
 			So(hypothesis.Symbol, ShouldEqual, "BTC/USD")
 			So(hypothesis.Claim, ShouldEqual, causalHypothesis)
-			So(hypothesis.Treatment, ShouldEqual, "bid_ask_touch_mass_imbalance")
+			So(hypothesis.Treatment, ShouldEqual, "buy_sell_arrival_intensity_imbalance")
 			So(hypothesis.Controls, ShouldHaveLength, len(causalControls))
 			So(hypothesis.Outcome, ShouldEqual, "next_l3_epoch_mid_log_return")
+		})
+	})
+}
+
+/*
+TestCausalUpdateIdentifiesArrivalEffect proves the named treatment against a
+controlled structural process whose next return is generated only by the prior
+buy/sell arrival imbalance while the physical controls vary independently.
+*/
+func TestCausalUpdateIdentifiesArrivalEffect(t *testing.T) {
+	Convey("Given next-epoch returns caused by prior arrival imbalance", t, func() {
+		causal := NewCausal("BTC/USD")
+		price := 100.0
+		treatments := []float64{-0.8, 0.35, -0.2, 0.7, -0.55, 0.15, 0.5, -0.4}
+		var outcome *CausalOutcome
+
+		for index := 1; index <= 64; index++ {
+			if index > 1 {
+				prior := treatments[(index-2)%len(treatments)]
+				price *= math.Exp(0.002 * prior)
+			}
+
+			treatment := treatments[(index-1)%len(treatments)]
+			state := causalState(time.Unix(int64(index), 0), price, uint64(index))
+			state.BuyIntensity = (1 + treatment) / 2
+			state.SellIntensity = (1 - treatment) / 2
+			state.Reading.PressureGradX = math.Sin(float64(index) * 0.37)
+			state.Reading.Divergence = math.Cos(float64(index) * 0.53)
+			state.StressAnisotropy = math.Abs(math.Sin(float64(index) * 0.29))
+			state.Reading.CoherenceMag2 = math.Abs(math.Cos(float64(index) * 0.41))
+			state.Reading.GuidanceSpeed = math.Abs(math.Sin(float64(index) * 0.67))
+			_, measured, err := causal.Update(state)
+			So(err, ShouldBeNil)
+
+			if measured != nil && measured.Ready {
+				outcome = measured
+			}
+		}
+
+		Convey("Then the causal ladder recovers the positive treatment direction", func() {
+			So(outcome, ShouldNotBeNil)
+			So(outcome.Reading.Association, ShouldBeGreaterThan, 0)
+			So(outcome.Reading.Intervention, ShouldBeGreaterThan, 0)
+			So(outcome.Reading.DoExpectation, ShouldBeGreaterThan, 0)
+			So(outcome.At, ShouldEqual, time.Unix(63, 0))
 		})
 	})
 }
@@ -50,23 +96,26 @@ func TestCausalUpdateRejectsRegressions(t *testing.T) {
 		skipped := NewCausal("ETH/USD")
 		_, _, skippedErr := skipped.Update(causalState(time.Unix(1, 0), 100, 1))
 		_, skippedOutcome, skippedErr := skipped.Update(causalState(time.Unix(3, 0), 102, 3))
+		_, regressedOutcome, regressedErr := skipped.Update(
+			causalState(time.Unix(2, 0), 101, 2),
+		)
 
-		var regressedOutcome *CausalOutcome
-
-		_, regressedOutcome, err = causal.Update(
+		_, resynced, err := causal.Update(
 			causalState(time.Unix(1, 0), 99, 1),
 		)
 
-		Convey("It should no-op repeated epochs, accept progress, and reject regressions", func() {
-			So(err, ShouldNotBeNil)
+		Convey("It should no-op repeats, accept progress, and resync after re-admit", func() {
+			So(err, ShouldBeNil)
 			So(duplicateOutcome, ShouldBeNil)
 			So(sameTimeOutcome, ShouldNotBeNil)
 			So(skippedErr, ShouldBeNil)
-			So(skippedOutcome.CalibrationSamples, ShouldEqual, uint64(0))
-			So(skipped.pending.epoch, ShouldEqual, uint64(3))
+			So(skippedOutcome, ShouldNotBeNil)
+			So(regressedErr, ShouldNotBeNil)
 			So(regressedOutcome, ShouldBeNil)
-			So(causal.pending.epoch, ShouldEqual, uint64(3))
-			So(causal.pending.at, ShouldEqual, time.Unix(2, 0))
+			So(skipped.pending.epoch, ShouldEqual, uint64(3))
+			So(resynced, ShouldNotBeNil)
+			So(causal.pending.epoch, ShouldEqual, uint64(1))
+			So(causal.pending.at, ShouldEqual, time.Unix(1, 0))
 		})
 	})
 }

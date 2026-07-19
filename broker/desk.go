@@ -82,6 +82,15 @@ func (desk *Desk) Initialize() error {
 }
 
 /*
+AdoptOpen wraps Balance-seeded restart inventory in Position shells so ticker
+marks and exits can reach recovered lots. Safe to call again after instrument
+metadata arrives — early Initialize often runs before Pair lookups succeed.
+*/
+func (desk *Desk) AdoptOpen() {
+	desk.adoptOpen()
+}
+
+/*
 adoptOpen wraps Balance-seeded restart inventory in Position shells so ticker
 marks and exits can reach recovered lots. Safe to call again after instrument
 metadata arrives — early Initialize often runs before Pair lookups succeed.
@@ -159,13 +168,22 @@ func (desk *Desk) Update() {
 /*
 OpenPositions counts open inventory that occupies a slot. Wallet holdings are
 the source of truth — position shells can lag adoptOpen or disappear on ERROR
-while paper balances remain.
+while paper balances remain. Update+AdoptOpen run so slot math sees fresh shells;
+tick publishing should use HoldingCount instead to avoid this work every cut.
 */
 func (desk *Desk) OpenPositions() int {
 	desk.Update()
 	desk.adoptOpen()
 
-	if desk.balance == nil {
+	return desk.HoldingCount()
+}
+
+/*
+HoldingCount returns the number of wallet lots without Update or adopt work so
+the tick publish path stays cheap under a hot quote stream.
+*/
+func (desk *Desk) HoldingCount() int {
+	if desk == nil || desk.balance == nil {
 		return 0
 	}
 

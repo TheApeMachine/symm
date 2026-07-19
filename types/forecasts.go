@@ -10,31 +10,31 @@ Forecasts holds calibrated observable predictions derived from typed physical re
 Strategy consumes these instead of raw projection labels.
 */
 type Forecasts struct {
-	Source                   string        `json:"source"`
-	Symbol                   string        `json:"symbol"`
-	At                       time.Time     `json:"at"`
-	ObservedInterval         time.Duration `json:"observedInterval"`
-	SourceEpoch              uint64        `json:"sourceEpoch"`
-	HorizonEvents            uint64        `json:"horizonEvents"`
-	ExpiresEpoch             uint64        `json:"expiresEpoch"`
-	Target                   string        `json:"target"`
-	ModelVersion             string        `json:"modelVersion"`
-	Ready                    bool          `json:"ready"`
-	Calibrated               bool          `json:"calibrated"`
-	FrictionReady            bool          `json:"frictionReady"`
-	CalibrationSamples       uint64        `json:"calibrationSamples"`
-	IncrementalMSE           float64       `json:"incrementalMSE" validate:"finite"`
-	IncrementalMSELowerBound float64       `json:"incrementalMSELowerBound" validate:"finite"`
-	ExpectedReturn           float64       `json:"expectedReturn" validate:"finite"`
-	ReferencePrice           float64       `json:"referencePrice" validate:"finite"`
-	BuyCapacity              float64       `json:"buyCapacity" validate:"finite"`
-	SellCapacity             float64       `json:"sellCapacity" validate:"finite"`
-	ExpectedFees             float64       `json:"expectedFees" validate:"finite,nonnegative"`
-	ExpectedSpread           float64       `json:"expectedSpread" validate:"finite,nonnegative"`
-	ExpectedImpact           float64       `json:"expectedImpact" validate:"finite,nonnegative"`
-	ExpectedAdverseSelection float64       `json:"expectedAdverseSelection" validate:"finite,nonnegative"`
-	Uncertainty              float64       `json:"uncertainty" validate:"finite,nonnegative"`
-	Confidence               float64       `json:"confidence" validate:"finite,min=0,max=1"`
+	Source                     string        `json:"source"`
+	Symbol                     string        `json:"symbol"`
+	At                         time.Time     `json:"at"`
+	ObservedInterval           time.Duration `json:"observedInterval"`
+	SourceEpoch                uint64        `json:"sourceEpoch"`
+	HorizonEvents              uint64        `json:"horizonEvents"`
+	ExpiresEpoch               uint64        `json:"expiresEpoch"`
+	Target                     string        `json:"target"`
+	ModelVersion               string        `json:"modelVersion"`
+	Ready                      bool          `json:"ready"`
+	Calibrated                 bool          `json:"calibrated"`
+	FrictionReady              bool          `json:"frictionReady"`
+	CalibrationSamples         uint64        `json:"calibrationSamples"`
+	IncrementalMSE             float64       `json:"incrementalMSE" validate:"finite"`
+	IncrementalSkillLowerBound float64       `json:"incrementalSkillLowerBound" validate:"finite"`
+	ExpectedReturn             float64       `json:"expectedReturn" validate:"finite"`
+	ReferencePrice             float64       `json:"referencePrice" validate:"finite"`
+	BuyCapacity                float64       `json:"buyCapacity" validate:"finite"`
+	SellCapacity               float64       `json:"sellCapacity" validate:"finite"`
+	ExpectedFees               float64       `json:"expectedFees" validate:"finite,nonnegative"`
+	ExpectedSpread             float64       `json:"expectedSpread" validate:"finite,nonnegative"`
+	ExpectedImpact             float64       `json:"expectedImpact" validate:"finite,nonnegative"`
+	ExpectedAdverseSelection   float64       `json:"expectedAdverseSelection" validate:"finite,nonnegative"`
+	Uncertainty                float64       `json:"uncertainty" validate:"finite,nonnegative"`
+	Confidence                 float64       `json:"confidence" validate:"finite,min=0,max=1"`
 }
 
 /*
@@ -56,6 +56,12 @@ func (forecasts Forecasts) Eligible() bool {
 		return false
 	}
 
+	// The one-sided Student-t skill bound requires at least two resolved
+	// strict-prior forecasts. A label alone cannot make a forecast calibrated.
+	if forecasts.CalibrationSamples < 2 || forecasts.IncrementalSkillLowerBound <= 0 {
+		return false
+	}
+
 	values := []float64{
 		forecasts.ExpectedReturn,
 		forecasts.ReferencePrice,
@@ -68,7 +74,7 @@ func (forecasts Forecasts) Eligible() bool {
 		forecasts.Uncertainty,
 		forecasts.Confidence,
 		forecasts.IncrementalMSE,
-		forecasts.IncrementalMSELowerBound,
+		forecasts.IncrementalSkillLowerBound,
 	}
 
 	for _, value := range values {

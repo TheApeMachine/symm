@@ -10,14 +10,12 @@ import (
 
 /*
 fluidViperMu serializes viper Set/Cleanup across fluid package tests.
-ponytail: package-global lock cannot isolate concurrent packages that share
-viper; upgrade path is a per-test viper instance or datura-scoped config so
-fluid proofs stop contending on process-wide state.
+Viper is process-global, so these tests must not mutate fluid keys concurrently.
 */
 var fluidViperMu sync.Mutex
 
 /*
-withFluidInterval pins the integration cadence for Session proofs.
+withFluidInterval pins the integration cadence for market proofs.
 */
 func withFluidInterval(t testing.TB) {
 	t.Helper()

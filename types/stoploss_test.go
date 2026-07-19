@@ -2,9 +2,42 @@ package types
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
+
+/*
+TestStoplossUnmarshalJSONPreservesUnlockedFloor proves recovery does not turn an
+unearned ratchet floor into a break-even stop.
+*/
+func TestStoplossUnmarshalJSONPreservesUnlockedFloor(t *testing.T) {
+	Convey("Given a newly bound stop serialized before any profitable lift", t, func() {
+		bound := NewStoploss(context.Background())
+		bound.Bind(100, 0.02)
+		payload, err := json.Marshal(bound)
+		So(err, ShouldBeNil)
+
+		var recovered Stoploss
+		So(json.Unmarshal(payload, &recovered), ShouldBeNil)
+		restored := NewStoploss(context.Background())
+		restored.Restore(100, &recovered)
+
+		Convey("Then a flat mark remains above the adverse survival floor", func() {
+			So(math.IsInf(restored.LockedFloor, -1), ShouldBeTrue)
+			verdict := restored.Update(StopEvidence{
+				Symbol:  "AAA/USD",
+				Mark:    100,
+				Entry:   100,
+				Present: true,
+			})
+			So(verdict.Action, ShouldEqual, "hold")
+			So(verdict.StopReturn, ShouldEqual, -0.02)
+		})
+	})
+}
 
 func testEvidence(mark, entry, uncertainty, expected, mse float64) StopEvidence {
 	return testEvidenceAtEpoch(mark, entry, uncertainty, expected, mse, 1)
@@ -38,83 +71,127 @@ func testEvidenceAtEpoch(
 TestStoplossHoldsThroughValley ensures a dip above the live stop does not exit.
 */
 func TestStoplossHoldsThroughValley(t *testing.T) {
-	t.Parallel()
+	Convey("Given a lift then a valley above the live stop", t, func() {
+		stop := NewStoploss(context.Background())
+		_ = stop.Update(testEvidence(100, 100, 0.05, 0.02, 0.02))
+		lift := stop.Update(testEvidence(103, 100, 0.05, 0.02, 0.02))
+		valley := stop.Update(testEvidence(99, 100, 0.05, 0.01, 0.03))
 
-	stop := NewStoploss(context.Background())
-	_ = stop.Update(testEvidence(100, 100, 0.05, 0.02, 0.02))
-	lift := stop.Update(testEvidence(103, 100, 0.05, 0.02, 0.02))
-	valley := stop.Update(testEvidence(99, 100, 0.05, 0.01, 0.03))
-
-	if valley.Action != "hold" {
-		t.Fatalf("valley: want hold, got %s (%s)", valley.Action, valley.Reason)
-	}
-
-	if valley.LockedFloor < lift.LockedFloor {
-		t.Fatalf("lockedFloor regressed: before=%v after=%v", lift.LockedFloor, valley.LockedFloor)
-	}
+		Convey("Then Action stays hold and LockedFloor does not regress", func() {
+			So(valley.Action, ShouldEqual, "hold")
+			So(valley.LockedFloor, ShouldBeGreaterThanOrEqualTo, lift.LockedFloor)
+		})
+	})
 }
 
 /*
 TestStoplossFiresWhenMarkBreachesFloor proves the ratchet exit path.
 */
 func TestStoplossFiresWhenMarkBreachesFloor(t *testing.T) {
-	t.Parallel()
+	Convey("Given a peak then a mark through the locked floor", t, func() {
+		stop := NewStoploss(context.Background())
+		_ = stop.Update(testEvidence(100, 100, 0.02, 0.03, 0.0001))
+		_ = stop.Update(testEvidence(110, 100, 0.02, 0.03, 0.0001))
+		breached := stop.Update(testEvidence(101, 100, 0.02, 0.03, 0.0001))
 
-	stop := NewStoploss(context.Background())
-	_ = stop.Update(testEvidence(100, 100, 0.02, 0.03, 0.0001))
-	_ = stop.Update(testEvidence(110, 100, 0.02, 0.03, 0.0001))
-	breached := stop.Update(testEvidence(101, 100, 0.02, 0.03, 0.0001))
-
-	if breached.Action != "stop" {
-		t.Fatalf("want stop after breach, got %s (%s)", breached.Action, breached.Reason)
-	}
+		Convey("Then Action is stop", func() {
+			So(breached.Action, ShouldEqual, "stop")
+		})
+	})
 }
 
 /*
 TestStoplossTakeProfitNearPeakWithDeadForward fires TP near peak with dead forward.
 */
 func TestStoplossTakeProfitNearPeakWithDeadForward(t *testing.T) {
-	t.Parallel()
+	Convey("Given a peak and a non-positive forward path near the peak", t, func() {
+		stop := NewStoploss(context.Background())
+		_ = stop.Update(testEvidence(100, 100, 0.01, 0.04, 0.005))
+		_ = stop.Update(testEvidence(108, 100, 0.01, 0.03, 0.005))
+		profit := stop.Update(testEvidence(107.5, 100, 0.01, -0.01, 0.005))
 
-	stop := NewStoploss(context.Background())
-	_ = stop.Update(testEvidence(100, 100, 0.01, 0.04, 0.005))
-	_ = stop.Update(testEvidence(108, 100, 0.01, 0.03, 0.005))
-	profit := stop.Update(testEvidence(107.5, 100, 0.01, -0.01, 0.005))
-
-	if profit.Action != "take_profit" {
-		t.Fatalf("want take_profit, got %s (%s)", profit.Action, profit.Reason)
-	}
+		Convey("Then Action is take_profit", func() {
+			So(profit.Action, ShouldEqual, "take_profit")
+		})
+	})
 }
 
 /*
 TestStoplossBindLivesAtEntry proves fill-time Bind publishes a stop without σ.
 */
 func TestStoplossBindLivesAtEntry(t *testing.T) {
-	t.Parallel()
+	Convey("Given a Bind at entry with fee/spread distance", t, func() {
+		stop := NewStoploss(context.Background())
+		stop.Bind(100, 0.002)
 
-	stop := NewStoploss(context.Background())
-	stop.Bind(100, 0.002)
+		Convey("Then the regulator is armed with that adverse band", func() {
+			So(stop.Armed(), ShouldBeTrue)
+			So(stop.StopPrice(), ShouldBeGreaterThan, 0)
+			So(stop.StopReturn, ShouldEqual, -0.002)
+		})
+	})
+}
 
-	if !stop.Armed() || stop.StopPrice() <= 0 || stop.StopReturn != -0.002 {
-		t.Fatalf("bound stop invalid: armed=%v price=%v return=%v",
-			stop.Armed(), stop.StopPrice(), stop.StopReturn)
-	}
+/*
+TestStoplossWidenSurvivalWhileUnlocked raises the cold-bind floor before a
+LockedFloor is earned and refuses to loosen once the ratchet owns geometry.
+*/
+func TestStoplossWidenSurvivalWhileUnlocked(t *testing.T) {
+	Convey("Given a fee-thin cold bind", t, func() {
+		stop := NewStoploss(context.Background())
+		stop.Bind(100, 0.005)
+
+		Convey("When live EntryTrail is wider while unlocked", func() {
+			stop.WidenSurvival(0.02)
+			So(stop.FloorDistance, ShouldEqual, 0.02)
+			So(stop.TrailDistance, ShouldEqual, 0.02)
+			So(stop.StopReturn, ShouldEqual, -0.02)
+
+			hold := stop.Update(StopEvidence{
+				Symbol: "AAA/USD", Mark: 99.0, Entry: 100, Present: true,
+			})
+			So(hold.Action, ShouldEqual, "hold")
+		})
+
+		Convey("When LockedFloor is earned, further widen is a no-op", func() {
+			lift := NewStoploss(context.Background())
+			_ = lift.Update(testEvidence(100, 100, 0.02, 0.05, 0.0004))
+			peaked := lift.Update(testEvidence(104, 100, 0.02, 0.05, 0.0004))
+			So(math.IsInf(peaked.LockedFloor, -1), ShouldBeFalse)
+
+			before := lift.FloorDistance
+			lift.WidenSurvival(before + 0.05)
+			So(lift.FloorDistance, ShouldEqual, before)
+		})
+
+		Convey("When mark is sincerely through the armed floor", func() {
+			deep := NewStoploss(context.Background())
+			deep.Bind(100, 0.02)
+			deep.WidenSurvival(0.02)
+			stopped := deep.Update(StopEvidence{
+				Symbol: "AAA/USD", Mark: 95, Entry: 100, Present: true,
+			})
+			So(stopped.Action, ShouldEqual, "stop")
+		})
+	})
 }
 
 /*
 TestStoplossLivesOnSpreadAlone keeps an open lot protected from book width.
 */
 func TestStoplossLivesOnSpreadAlone(t *testing.T) {
-	t.Parallel()
+	Convey("Given spread-only Present evidence at entry", t, func() {
+		stop := NewStoploss(context.Background())
+		first := stop.Update(StopEvidence{
+			Symbol: "AAA/USD", Mark: 100.1, Entry: 100, Spread: 0.001, Present: true,
+		})
 
-	stop := NewStoploss(context.Background())
-	first := stop.Update(StopEvidence{
-		Symbol: "AAA/USD", Mark: 100.1, Entry: 100, Spread: 0.001, Present: true,
+		Convey("Then the stop lives", func() {
+			So(first.Action, ShouldEqual, "hold")
+			So(stop.Armed(), ShouldBeTrue)
+			So(stop.StopPrice(), ShouldBeGreaterThan, 0)
+		})
 	})
-
-	if first.Action != "hold" || !stop.armed || stop.StopPrice() <= 0 {
-		t.Fatalf("spread-only must live: action=%s armed=%v", first.Action, stop.armed)
-	}
 }
 
 /*
@@ -122,73 +199,78 @@ TestStoplossLockedFloorRatchetsUnderCalibratedForecast proves a peak inside
 the forecast band can leave −Inf under signal-share Weight.
 */
 func TestStoplossLockedFloorRatchetsUnderCalibratedForecast(t *testing.T) {
-	t.Parallel()
+	Convey("Given a calibrated lift", t, func() {
+		stop := NewStoploss(context.Background())
+		_ = stop.Update(testEvidence(100, 100, 0.02, 0.05, 0.0004))
+		lift := stop.Update(testEvidence(104, 100, 0.02, 0.05, 0.0004))
 
-	stop := NewStoploss(context.Background())
-	_ = stop.Update(testEvidence(100, 100, 0.02, 0.05, 0.0004))
-	lift := stop.Update(testEvidence(104, 100, 0.02, 0.05, 0.0004))
-
-	if math.IsInf(lift.LockedFloor, -1) || lift.LockedFloor <= 0 {
-		t.Fatalf("calibrated peak must lock floor: trail=%v weight=%v peak=%v floor=%v",
-			lift.TrailDistance, lift.Weight, lift.PeakReturn, lift.LockedFloor)
-	}
+		Convey("Then LockedFloor is finite and positive", func() {
+			So(math.IsInf(lift.LockedFloor, -1), ShouldBeFalse)
+			So(lift.LockedFloor, ShouldBeGreaterThan, 0)
+		})
+	})
 }
 
 /*
 TestStoplossUpdateFreezesUnderRetreat ensures RetreatPressure freezes geometry.
 */
 func TestStoplossUpdateFreezesUnderRetreat(t *testing.T) {
-	t.Parallel()
+	Convey("Given retreat pressure on an adverse mark", t, func() {
+		stop := NewStoploss(context.Background())
+		stop.Bind(100, 0.002)
+		_ = stop.Update(StopEvidence{
+			Symbol: "AAA/USD", Mark: 100, Entry: 100,
+			Uncertainty: 0.02, ExpectedReturn: 0.05,
+			RetreatPressure: 0.9, RetreatReady: true, Present: true,
+		})
+		adverse := stop.Update(StopEvidence{
+			Symbol: "AAA/USD", Mark: 98.5, Entry: 100,
+			Uncertainty: 0.02, ExpectedReturn: 0.05,
+			RetreatPressure: 0.9, RetreatReady: true, Present: true,
+		})
 
-	stop := NewStoploss(context.Background())
-	stop.Bind(100, 0.002)
-	_ = stop.Update(StopEvidence{
-		Symbol: "AAA/USD", Mark: 100, Entry: 100,
-		Uncertainty: 0.02, ExpectedReturn: 0.05, RetreatPressure: 0.9, Present: true,
+		Convey("Then Action holds and LockedFloor stays unlocked", func() {
+			So(adverse.Action, ShouldEqual, "hold")
+			So(math.IsInf(stop.LockedFloor, -1), ShouldBeTrue)
+			So(adverse.MarkReturn, ShouldBeLessThan, 0)
+		})
 	})
-	adverse := stop.Update(StopEvidence{
-		Symbol: "AAA/USD", Mark: 98.5, Entry: 100,
-		Uncertainty: 0.02, ExpectedReturn: 0.05, RetreatPressure: 0.9, Present: true,
-	})
-
-	if adverse.Action != "hold" || !math.IsInf(stop.LockedFloor, -1) || adverse.MarkReturn >= 0 {
-		t.Fatalf("retreat freeze failed: action=%s floor=%v mark=%v",
-			adverse.Action, stop.LockedFloor, adverse.MarkReturn)
-	}
 }
 
 /*
 TestStoplossObserveMarkDoesNotEmitStop keeps tick geometry silent for exits.
 */
 func TestStoplossObserveMarkDoesNotEmitStop(t *testing.T) {
-	t.Parallel()
+	Convey("Given ObserveMark through the live stop", t, func() {
+		stop := NewStoploss(context.Background())
+		stop.Bind(100, 0.01)
+		stop.ObserveMark(98)
 
-	stop := NewStoploss(context.Background())
-	stop.Bind(100, 0.01)
-	stop.ObserveMark(98)
-
-	if stop.Action == "stop" || stop.Action == "take_profit" || stop.MarkReturn >= 0 {
-		t.Fatalf("ObserveMark must not exit: action=%s mark=%v", stop.Action, stop.MarkReturn)
-	}
+		Convey("Then Action is not an exit", func() {
+			So(stop.Action, ShouldNotEqual, "stop")
+			So(stop.Action, ShouldNotEqual, "take_profit")
+			So(stop.MarkReturn, ShouldBeLessThan, 0)
+		})
+	})
 }
 
 /*
 TestStoplossFreezesWithoutEvidence keeps floors intact across a nil frame.
 */
 func TestStoplossFreezesWithoutEvidence(t *testing.T) {
-	t.Parallel()
+	Convey("Given a live surface then Present false", t, func() {
+		stop := NewStoploss(context.Background())
+		_ = stop.Update(testEvidence(100, 100, 0.03, 0.02, 0.01))
+		live := stop.Update(testEvidence(106, 100, 0.03, 0.02, 0.01))
+		frozen := stop.Update(StopEvidence{Symbol: "AAA/USD", Present: false})
 
-	stop := NewStoploss(context.Background())
-	_ = stop.Update(testEvidence(100, 100, 0.03, 0.02, 0.01))
-	live := stop.Update(testEvidence(106, 100, 0.03, 0.02, 0.01))
-	frozen := stop.Update(StopEvidence{Symbol: "AAA/USD", Present: false})
-
-	if frozen.Action != "hold" ||
-		frozen.LockedFloor != live.LockedFloor ||
-		frozen.Weight != live.Weight ||
-		frozen.MarkReturn != live.MarkReturn {
-		t.Fatalf("freeze mutated surface: live=%+v frozen=%+v", live, frozen)
-	}
+		Convey("Then geometry is unchanged", func() {
+			So(frozen.Action, ShouldEqual, "hold")
+			So(frozen.LockedFloor, ShouldEqual, live.LockedFloor)
+			So(frozen.Weight, ShouldEqual, live.Weight)
+			So(frozen.MarkReturn, ShouldEqual, live.MarkReturn)
+		})
+	})
 }
 
 /*

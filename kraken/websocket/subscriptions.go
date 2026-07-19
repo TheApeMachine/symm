@@ -91,7 +91,7 @@ func (api *API) replayPublic() error {
 	api.subs.mu.Unlock()
 
 	if instruments {
-		if err := api.public.Client().SubInstruments(); err != nil {
+		if err := api.public.Write(kraken.NewInstrumentSubscription()); err != nil {
 			return err
 		}
 	}
@@ -99,24 +99,19 @@ func (api *API) replayPublic() error {
 	batchSize := api.subscribeBatchSize()
 
 	for batch := range slices.Chunk(tickers, batchSize) {
-		if err := api.public.Client().SubTicker(batch); err != nil {
+		if err := api.public.Write(kraken.NewTickerSubscription(batch)); err != nil {
 			return err
 		}
 	}
 
 	for batch := range slices.Chunk(trades, batchSize) {
-		if err := api.public.Client().SubTrades(
-			batch,
-			map[string]any{"params": map[string]any{"snapshot": true}},
-		); err != nil {
+		if err := api.public.Write(kraken.NewTradeSubscription(batch)); err != nil {
 			return err
 		}
 	}
 
-	depth := viper.GetInt("market.book.depth")
-
 	for batch := range slices.Chunk(books, batchSize) {
-		if err := api.public.Client().SubBook(batch, depth, nil); err != nil {
+		if err := api.public.Write(kraken.NewBookSubscription(batch)); err != nil {
 			return err
 		}
 	}
@@ -139,18 +134,17 @@ func (api *API) replayPrivate() error {
 	}
 
 	if balances {
-		if err := api.private.Client().SubBalances(); err != nil {
+		if err := api.private.Write(
+			kraken.NewBalanceSubscription(api.private.Client().Token),
+		); err != nil {
 			return err
 		}
 	}
 
 	if executions {
-		if err := api.private.Client().SubExecutions(map[string]any{
-			"params": map[string]any{
-				"snap_orders": true,
-				"snap_trades": true,
-			},
-		}); err != nil {
+		if err := api.private.Write(
+			kraken.NewExecutionSubscription(api.private.Client().Token),
+		); err != nil {
 			return err
 		}
 	}

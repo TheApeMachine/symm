@@ -105,15 +105,47 @@ func (analyzer *Analyzer) projectCategories(
 			continue
 		}
 
-		thesis.Categories = append(thesis.Categories, types.Category{
+		category := types.Category{
 			Symbol:     reading.Symbol,
 			Type:       types.CategoryType(reading.Winner),
 			Confidence: reading.Confidence,
 			Surprisal:  reading.EntropyBits,
 			Strength:   reading.LookaheadScore,
 			Maturity:   float64(reading.Cohort),
-		})
+		}
+
+		analyzer.attachCategoryEvidence(thesis, &category)
+		thesis.Categories = append(thesis.Categories, category)
 	}
+}
+
+/*
+attachCategoryEvidence reads the symbol's composed evidence graph and fills the
+category's Supporting, Opposing, and Missing measurement keys so the terminal
+shows which signals justify the classification rather than a bare label.
+*/
+func (analyzer *Analyzer) attachCategoryEvidence(
+	thesis *types.Thesis,
+	category *types.Category,
+) {
+	if thesis == nil || thesis.Graphs == nil || category.Symbol == "" {
+		return
+	}
+
+	value, found := thesis.Graphs.Load(category.Symbol)
+
+	if !found {
+		return
+	}
+
+	evidenceGraph, ok := value.(*types.Graph)
+
+	if !ok || evidenceGraph == nil {
+		return
+	}
+
+	category.Supporting, category.Opposing, category.Missing =
+		evidenceGraph.CategoryEvidence(category.Type)
 }
 
 /*

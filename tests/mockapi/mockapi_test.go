@@ -1,9 +1,11 @@
 package mockapi
 
 import (
+	"errors"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken"
 )
 
 /*
@@ -26,6 +28,28 @@ func TestMockConnUnsubscribeDropsExactHandler(t *testing.T) {
 		Convey("Then only the remaining handler receives the frame", func() {
 			So(firstHits, ShouldEqual, 0)
 			So(secondHits, ShouldEqual, 1)
+		})
+	})
+}
+
+/*
+TestMockConnWriteRecordsRequests proves the producer boundary observes outbound
+subscriptions and can expose transport failures to production callers.
+*/
+func TestMockConnWriteRecordsRequests(t *testing.T) {
+	Convey("Given a mock connection configured to fail writes", t, func() {
+		conn := &MockConn{}
+		writeErr := errors.New("write failed")
+		conn.FailWrites(writeErr)
+
+		Convey("When production sends a ticker subscription", func() {
+			err := conn.Write(kraken.NewTickerSubscription([]string{"BTC/USD"}))
+
+			Convey("Then the request is recorded and the failure is returned", func() {
+				So(err, ShouldEqual, writeErr)
+				So(conn.Writes(), ShouldHaveLength, 1)
+				So(string(conn.Writes()[0]), ShouldContainSubstring, `"channel":"ticker"`)
+			})
 		})
 	})
 }

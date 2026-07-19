@@ -10,17 +10,11 @@ func TapeCalm() *tests.Market {
 }
 
 /*
-TapePump is a multi-leg pump: calm setup, vertical ignition, sustained volume.
+TapePumpDump is a multi-leg calibration, ignition, continuation, and rejection
+tape whose ticker volume follows Kraken's cumulative-volume semantics.
 */
-func TapePump() *tests.Market {
-	return Pump(32, 12, 1.25, 8)
-}
-
-/*
-TapeCoil compresses then breaks — longer horizon ignition after setup.
-*/
-func TapeCoil() *tests.Market {
-	return Pump(40, 28, 1.18, 6)
+func TapePumpDump() *tests.Market {
+	return PumpDump()
 }
 
 /*
@@ -28,13 +22,6 @@ TapeExhaustion withdraws book depth into mechanical exhaustion structure.
 */
 func TapeExhaustion() *tests.Market {
 	return Decay(32, 0, 0.9)
-}
-
-/*
-TapeVacuum withdraws resting depth while the tape continues.
-*/
-func TapeVacuum() *tests.Market {
-	return Decay(32, 8, 0.85)
 }
 
 /*
@@ -59,25 +46,38 @@ func TapeNoise() *tests.Market {
 }
 
 /*
-TapePhantomQuote retreats quotes without trade confirmation.
+TapeAlpha is a peer-aligned subject path with distinctly greater return energy.
 */
-func TapePhantomQuote() *tests.Market {
-	return PhantomDrawdown(32, 10, 0.04)
+func TapeAlpha() *tests.Market {
+	return Alpha(32)
 }
 
 /*
-TapeToxicChase is buy aggression without supportive book. qtyMul is high enough
-that Level3 fill evidence diverges from calm SeedTouch baselines.
+TapeDivergence raises the subject while the peer cohort falls.
+*/
+func TapeDivergence() *tests.Market {
+	return Divergence(32)
+}
+
+/*
+TapeSlump lowers the entire cohort without manufacturing a standout leader.
+*/
+func TapeSlump() *tests.Market {
+	return Slump(32)
+}
+
+/*
+TapeStall establishes a leader and then stops it while peers keep moving.
+*/
+func TapeStall() *tests.Market {
+	return Stall(48)
+}
+
+/*
+TapeToxicChase is buy aggression without supportive book.
 */
 func TapeToxicChase() *tests.Market {
 	return Aggression(32, 0, 20)
-}
-
-/*
-TapePumpThenReversal ignites then flips.
-*/
-func TapePumpThenReversal() *tests.Market {
-	return Reversal(36, 20, 0.02)
 }
 
 /*
@@ -85,28 +85,6 @@ TapeLag is follower lag without a tradeable lead claim for the subject.
 */
 func TapeLag() *tests.Market {
 	return Lag(32, 4)
-}
-
-/*
-TapeShallowAdverse is a mild quote retreat (~0.8%) for exit-honesty holds —
-the audit-trail band where exit-happy stops used to fire.
-*/
-func TapeShallowAdverse() *tests.Market {
-	return PhantomDrawdown(32, 10, 0.008)
-}
-
-/*
-TapeDrawdownStop is a sincere multi-leg drawdown for stop Regulate proofs.
-*/
-func TapeDrawdownStop() *tests.Market {
-	return Drawdown(32, 0.12, 10)
-}
-
-/*
-TapeCalibratedLift is a modest marked-up tape for locked-floor hold proofs.
-*/
-func TapeCalibratedLift() *tests.Market {
-	return CalibratedLift(32, 8, 1.04)
 }
 
 /*

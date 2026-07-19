@@ -55,12 +55,13 @@ func (continuity Continuity) Manage(thesis *types.Thesis) {
 	for holding := range continuity.balance.Holdings() {
 		lot := holding
 
-		if lot.Status == types.CLOSED {
+		if lot.Status != types.OPEN {
 			continue
 		}
 
 		if position, ok := continuity.desk.Position(lot.Symbol); ok {
 			if stop := position.Stop(); stop != nil {
+				stop.WidenSurvival(position.EntryTrail(&lot))
 				stop.Regulate(
 					thesis, lot, continuity.evidence.Project(thesis, lot),
 				)

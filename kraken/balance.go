@@ -38,9 +38,37 @@ type BalanceData struct {
 }
 
 type Wallet struct {
-	Type    string          `json:"type"`
-	ID      string          `json:"id"`
+	Type    string           `json:"type"`
+	ID      string           `json:"id"`
 	Balance *decimal.Decimal `json:"balance"`
+}
+
+/*
+BalanceSubscription requests the authenticated wallet stream through the same
+transport abstraction used by public market subscriptions.
+*/
+type BalanceSubscription struct {
+	Token string
+}
+
+/*
+NewBalanceSubscription binds the current authenticated websocket token.
+*/
+func NewBalanceSubscription(token string) BalanceSubscription {
+	return BalanceSubscription{Token: token}
+}
+
+/*
+MarshalJSON encodes Kraken's private balances subscription request.
+*/
+func (subscription BalanceSubscription) MarshalJSON() ([]byte, error) {
+	return sonic.Marshal(map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel": "balances",
+			"token":   subscription.Token,
+		},
+	})
 }
 
 func NewBalance(buf []byte) *Balance {

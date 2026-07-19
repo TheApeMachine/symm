@@ -1,13 +1,20 @@
 /*
-Category is the legacy signal classification retained while the remaining
-signals move to numerical measurements. Typed measurements deliberately omit
-it because interpretation belongs after signal conditioning.
+Category is a logic-layer classification for one symbol. Interpretation happens
+after signal conditioning: the analyzer classifies from cognition and attaches
+the measurement evidence that supports, opposes, or is missing for the category
+from the symbol's composed evidence graph. Supporting/opposing/missing carry the
+measurement keys behind the label so the terminal shows why a category is lit.
 */
 export type Category = {
+	symbol?: string;
 	type: string;
 	confidence: number;
 	surprisal: number;
 	strength: number;
+	maturity?: number;
+	supporting?: string[];
+	opposing?: string[];
+	missing?: string[];
 };
 
 export type MeasurementUncertainty = {

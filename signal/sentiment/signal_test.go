@@ -2,18 +2,22 @@ package sentiment
 
 import (
 	"context"
+	"iter"
 	"testing"
 	"time"
 
 	"github.com/bytedance/sonic"
 	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/tests/conditions"
+	"github.com/theapemachine/symm/tests/mockapi"
+	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -45,116 +49,161 @@ func frameFrom(rows ...kraken.TickerData) *types.MarketFrame {
 	}
 }
 
-func sessionSignals(
-	ctx context.Context,
-	api *websocket.API,
-	_ *broker.Instrument,
-	channel chan []byte,
-) []types.Signal {
-	return []types.Signal{NewSignal(ctx, api, channel)}
+func measureMarket(t testing.TB, frames iter.Seq[tests.Frame]) []*types.Measurement {
+	t.Helper()
+	previousTimeline := viper.Get("signals.feed_timeline_capacity")
+	previousTrack := viper.Get("signals.feed_track_capacity")
+	viper.Set("signals.feed_timeline_capacity", 128)
+	viper.Set("signals.feed_track_capacity", 128)
+	t.Cleanup(func() {
+		viper.Set("signals.feed_timeline_capacity", previousTimeline)
+		viper.Set("signals.feed_track_capacity", previousTrack)
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	mock := mockapi.NewMockAPI()
+	api := websocket.NewAPI(ctx, mock.Public(), mock.Private(), nil)
+	t.Cleanup(api.Close)
+	instrument := broker.NewInstrument(api, broker.NewPrice(api), nil)
+	api.On("instrument", instrument.On)
+	market, err := trader.NewMarket(ctx, api, instrument)
+	So(err, ShouldBeNil)
+	t.Cleanup(market.Close)
+	signal := NewSignal(ctx, api, nil)
+	measurements := make([]*types.Measurement, 0)
+	cutAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	for frame := range frames {
+		mock.Emit(frame.Channel, frame.Payload)
+		cut, cutErr := market.Cut(cutAt)
+		So(cutErr, ShouldBeNil)
+		cutAt = cutAt.Add(time.Second)
+
+		if cut.IsEmpty() {
+			continue
+		}
+
+		if types.SignalInterest(signal)&types.FrameInterest(cut) == 0 {
+			continue
+		}
+
+		measurements = append(
+			measurements,
+			signal.Measure(types.NewThesis(nil, cut))...,
+		)
+	}
+
+	return measurements
 }
 
 /*
-TestSignal_MeasureFromMarket proves sentiment on the mock Conn Session path:
-noise must emit Change/Strength, and sector-lift must emit Strength plus
-divergent or leader evidence — absolute claims, not Abs(change) alone.
+lastSentimentEpoch returns the final subject bundle without mixing metric peaks
+from different market states.
 */
-func TestSignal_MeasureFromMarket(t *testing.T) {
-	symbol := conditions.Subject()
-	options := tests.SessionOptions{Signals: sessionSignals}
+func lastSentimentEpoch(
+	measurements []*types.Measurement,
+	symbol string,
+) map[types.MetricType]*types.Measurement {
+	var at time.Time
 
-	t.Run("tape_noise", func(t *testing.T) {
-		tests.PlayMarketClaims(t, options, conditions.TapeNoise().Frames(),
-			tests.SourceClaim{
-				Source: types.SourceSentiment, Metric: types.MetricChange,
-				Symbol: symbol, Bound: tests.BoundPresent,
-			},
-			tests.SourceClaim{
-				Source: types.SourceSentiment, Metric: types.MetricStrength,
-				Symbol: symbol, Bound: tests.BoundPositive,
-			},
-		)
-	})
+	for index := len(measurements) - 1; index >= 0; index-- {
+		measurement := measurements[index]
 
-	t.Run("tape_sector_lift", func(t *testing.T) {
-		// Co-moving herd zeros DivergentScore/LeaderEvidence/SurgeScore/Breadth
-		// on the subject; Strength (slump-mass sibling) is the absolute claim.
-		tests.PlayMarketClaims(t, options, conditions.TapeSectorLift().Frames(),
-			tests.SourceClaim{
-				Source: types.SourceSentiment, Metric: types.MetricStrength,
-				Symbol: symbol, Bound: tests.BoundPositive,
-			},
-			tests.SourceClaim{
-				Source: types.SourceSentiment, Metric: types.MetricChange,
-				Symbol: symbol, Bound: tests.BoundPresent,
-			},
-		)
-	})
-}
-
-func BenchmarkSignal_MeasureFromMarket(benchmark *testing.B) {
-	session, err := tests.NewSession(context.Background(), benchmark, tests.SessionOptions{
-		Signals: sessionSignals,
-	})
-
-	if err != nil {
-		benchmark.Fatal(err)
-	}
-
-	frames := conditions.TapeNoise().Frames()
-	benchmark.ReportAllocs()
-
-	for benchmark.Loop() {
-		if _, err := session.Play(frames); err != nil {
-			benchmark.Fatal(err)
+		if measurement.Source == types.SourceSentiment &&
+			measurement.Symbol == symbol && measurement.Metric == types.MetricStrength {
+			at = measurement.At
+			break
 		}
 	}
+
+	epoch := make(map[types.MetricType]*types.Measurement)
+
+	for _, measurement := range measurements {
+		if measurement.Source == types.SourceSentiment &&
+			measurement.Symbol == symbol && measurement.At.Equal(at) {
+			epoch[measurement.Metric] = measurement
+		}
+	}
+
+	return epoch
 }
 
-func TestSignal_Measure(t *testing.T) {
-	Convey("Given current ticker rows with one clear cohort leader", t, func() {
-		now := time.Now()
-		signal := &Signal{ctx: context.Background()}
-
-		frame := frameFrom(
-			kraken.TickerData{
-				Symbol:    "BTC/USD",
-				ChangePct: 5,
-				Last:      krakendecimal.NewFromFloat64(105),
-				Volume:    10,
-				Timestamp: now,
-			},
-			kraken.TickerData{
-				Symbol:    "ETH/USD",
-				ChangePct: 2,
-				Last:      krakendecimal.NewFromFloat64(102),
-				Volume:    10,
-				Timestamp: now.Add(time.Nanosecond),
-			},
-			kraken.TickerData{
-				Symbol:    "SOL/USD",
-				ChangePct: -1,
-				Last:      krakendecimal.NewFromFloat64(99),
-				Volume:    10,
-				Timestamp: now,
-			},
+/*
+TestSignal_MeasureFromMarket proves sentiment separates broad risk-on,
+single-symbol divergence, and systemic decline through the production feed.
+*/
+func TestSignal_MeasureFromMarket(t *testing.T) {
+	Convey("Given independently defined breadth and leadership regimes", t, func() {
+		symbol := conditions.Subject()
+		riskOn := lastSentimentEpoch(
+			measureMarket(t, conditions.TapeAlpha().Frames()), symbol,
 		)
+		divergent := lastSentimentEpoch(
+			measureMarket(t, conditions.TapeDivergence().Frames()), symbol,
+		)
+		slump := lastSentimentEpoch(
+			measureMarket(t, conditions.TapeSlump().Frames()), symbol,
+		)
+		metrics := []types.MetricType{
+			types.MetricChange,
+			types.MetricBreadth,
+			types.MetricLeaderStrength,
+			types.MetricLeaderEvidence,
+			types.MetricRelativeLead,
+			types.MetricSurgeScore,
+			types.MetricDivergentScore,
+			types.MetricSlumpScore,
+			types.MetricStrength,
+		}
 
-		result, err := signal.Calculate(frame)
-		So(err, ShouldBeNil)
+		Convey("Then every regime emits the complete valid metric contract", func() {
+			for _, epoch := range []map[types.MetricType]*types.Measurement{
+				riskOn, divergent, slump,
+			} {
+				So(epoch, ShouldHaveLength, len(metrics))
 
-		Convey("It should publish breadth and leader scores without categories", func() {
-			breadth, ok := lastMeasurement(result, "BTC/USD", types.MetricBreadth)
-			So(ok, ShouldBeTrue)
-			So(breadth.Raw, ShouldAlmostEqual, 2.0/3.0, 0.0001)
+				for _, metric := range metrics {
+					measurement := epoch[metric]
+					So(measurement, ShouldNotBeNil)
+					So(measurement.Source, ShouldEqual, types.SourceSentiment)
+					So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
+					So(measurement.ValidateStruct(), ShouldBeNil)
+				}
+			}
+		})
 
-			surge, ok := lastMeasurement(result, "BTC/USD", types.MetricSurgeScore)
-			So(ok, ShouldBeTrue)
-			So(surge.Raw, ShouldBeGreaterThan, 0)
+		Convey("Then a rising cohort with a stronger leader is risk-on", func() {
+			So(riskOn[types.MetricChange].Raw, ShouldBeGreaterThan, 0)
+			So(riskOn[types.MetricBreadth].Raw, ShouldAlmostEqual, 1, 1e-12)
+			So(riskOn[types.MetricLeaderStrength].Raw, ShouldBeGreaterThan, 0)
+			So(riskOn[types.MetricLeaderEvidence].Raw, ShouldBeGreaterThan, 1)
+			So(riskOn[types.MetricRelativeLead].Raw, ShouldEqual, 1)
+			So(riskOn[types.MetricSurgeScore].Raw, ShouldBeGreaterThan, 0)
+			So(riskOn[types.MetricDivergentScore].Raw, ShouldEqual, 0)
+			So(riskOn[types.MetricSlumpScore].Raw, ShouldEqual, 0)
+			So(riskOn[types.MetricStrength].Raw, ShouldAlmostEqual, riskOn[types.MetricSurgeScore].Raw, 1e-12)
+		})
 
-			strength, ok := lastMeasurement(result, "BTC/USD", types.MetricStrength)
-			So(ok, ShouldBeTrue)
-			So(strength.Raw, ShouldBeLessThanOrEqualTo, 1)
+		Convey("Then a rising leader against falling peers is divergent", func() {
+			So(divergent[types.MetricChange].Raw, ShouldBeGreaterThan, 0)
+			So(divergent[types.MetricBreadth].Raw, ShouldAlmostEqual, 1.0/3.0, 1e-12)
+			So(divergent[types.MetricRelativeLead].Raw, ShouldEqual, 1)
+			So(divergent[types.MetricDivergentScore].Raw, ShouldBeGreaterThan, divergent[types.MetricSurgeScore].Raw)
+			So(divergent[types.MetricDivergentScore].Raw, ShouldBeGreaterThan, divergent[types.MetricSlumpScore].Raw)
+			So(divergent[types.MetricStrength].Raw, ShouldAlmostEqual, divergent[types.MetricDivergentScore].Raw, 1e-12)
+		})
+
+		Convey("Then a uniformly falling leaderless cohort is a systemic slump", func() {
+			So(slump[types.MetricChange].Raw, ShouldBeLessThan, 0)
+			So(slump[types.MetricBreadth].Raw, ShouldEqual, 0)
+			So(slump[types.MetricLeaderStrength].Raw, ShouldEqual, 0)
+			So(slump[types.MetricLeaderEvidence].Raw, ShouldEqual, 0)
+			So(slump[types.MetricRelativeLead].Raw, ShouldEqual, 0)
+			So(slump[types.MetricSurgeScore].Raw, ShouldEqual, 0)
+			So(slump[types.MetricDivergentScore].Raw, ShouldEqual, 0)
+			So(slump[types.MetricSlumpScore].Raw, ShouldEqual, 1)
+			So(slump[types.MetricStrength].Raw, ShouldEqual, 1)
 		})
 	})
 }
@@ -277,7 +326,9 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _ = signal.Calculate(frame)
+		if _, err := signal.Calculate(frame); err != nil {
+			benchmark.Fatal(err)
+		}
 	}
 }
 

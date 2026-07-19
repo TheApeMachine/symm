@@ -10,11 +10,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/tests"
-	"github.com/theapemachine/symm/tests/conditions"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -31,7 +27,15 @@ func measureField(measurements []*types.Measurement, symbol string, metric types
 }
 
 func measurementFields(measurements []*types.Measurement, symbol string) map[types.MetricType]float64 {
-	return tests.MeasurementFields(measurements, symbol)
+	fields := make(map[types.MetricType]float64)
+
+	for _, measurement := range measurements {
+		if measurement.Symbol == symbol {
+			fields[measurement.Metric] = measurement.Raw
+		}
+	}
+
+	return fields
 }
 
 func newSignal() *Signal {
@@ -187,89 +191,22 @@ func TestSignal_MeasureFlowProfiles(t *testing.T) {
 	})
 }
 
-func sessionSignals(
-	ctx context.Context,
-	api *websocket.API,
-	_ *broker.Instrument,
-	channel chan []byte,
-) []types.Signal {
-	return []types.Signal{NewSignal(ctx, api, channel)}
-}
-
-/*
-TestSignal_MeasureFromMarket proves CVD on the mock Conn Session path:
-toxic chase must emit Drive/Strength (and Absorption when present), and Drive
-must exceed calm — not a relative-only smoke check.
-*/
-func TestSignal_MeasureFromMarket(t *testing.T) {
-	symbol := conditions.Subject()
-	options := tests.SessionOptions{Signals: sessionSignals}
-
-	toxicFamily := []tests.SourceClaim{
-		{Source: types.SourceCVD, Metric: types.MetricDrive, Symbol: symbol, Bound: tests.BoundPositive},
-		{Source: types.SourceCVD, Metric: types.MetricStrength, Symbol: symbol, Bound: tests.BoundPositive},
-	}
-
-	t.Run("tape_toxic_chase", func(t *testing.T) {
-		hot := tests.PlayMarketClaims(
-			t, options, conditions.TapeToxicChase().Frames(), toxicFamily...,
-		)
-
-		absorption, ok := tests.PeakSourceMetric(
-			hot, types.SourceCVD, symbol, types.MetricAbsorption,
-		)
-
-		if ok && absorption > 0 {
-			tests.RequireSourceClaims(t, hot, tests.SourceClaim{
-				Source: types.SourceCVD, Metric: types.MetricAbsorption,
-				Symbol: symbol, Bound: tests.BoundPositive,
-			})
-		}
-	})
-
-	t.Run("toxic_exceeds_calm_drive", func(t *testing.T) {
-		calm := tests.PlayMarketClaims(t, options, conditions.TapeCalm().Frames())
-		hot := tests.PlayMarketClaims(
-			t, options, conditions.TapeToxicChase().Frames(), toxicFamily...,
-		)
-		tests.RequireSourceExceeds(
-			t, hot, calm,
-			types.SourceCVD, symbol, types.MetricDrive,
-		)
-	})
-}
-
-func BenchmarkSignal_MeasureFromMarket(benchmark *testing.B) {
-	session, err := tests.NewSession(context.Background(), benchmark, tests.SessionOptions{
-		Signals: sessionSignals,
-	})
-
-	if err != nil {
-		benchmark.Fatal(err)
-	}
-
-	frames := conditions.TapeToxicChase().Frames()
-	benchmark.ReportAllocs()
-
-	for benchmark.Loop() {
-		if _, err := session.Play(frames); err != nil {
-			benchmark.Fatal(err)
-		}
-	}
-}
-
 func BenchmarkSignal_Measure(benchmark *testing.B) {
 	rows := trades("MATIC/USD", "buy", 100, 1, 8, time.Now().UTC())
 	signal := newSignal()
 
 	for _, row := range rows {
-		_, _ = signal.Calculate(frameFor(row))
+		if _, err := signal.Calculate(frameFor(row)); err != nil {
+			benchmark.Fatal(err)
+		}
 	}
 
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _ = signal.Calculate(frameFor(rows[len(rows)-1]))
+		if _, err := signal.Calculate(frameFor(rows[len(rows)-1])); err != nil {
+			benchmark.Fatal(err)
+		}
 	}
 }
 

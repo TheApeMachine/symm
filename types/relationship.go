@@ -44,7 +44,65 @@ func (evidenceGraph *Graph) Compose() {
 		}
 	}
 
+	evidenceGraph.composeCategories()
 	evidenceGraph.prune()
+}
+
+/*
+composeCategories relates each measurement to the category hypotheses it is
+evidence for or against. A measurement whose normalized magnitude is meaningful
+casts a Supports edge to every category its metric supports and a Contradicts
+edge to every category its metric opposes, per CategoryAffinity. This is the
+cross-observable structure the graph exists to show: many signals converging on,
+or disputing, the same category.
+*/
+func (evidenceGraph *Graph) composeCategories() {
+	for _, node := range evidenceGraph.Nodes() {
+		if node.Kind != NodeMeasurement {
+			continue
+		}
+
+		measurement := node.Measurement
+
+		if measurement.Validity.State != ValidityValid {
+			continue
+		}
+
+		affinity, ok := AffinityFor(measurement.Metric)
+
+		if !ok {
+			continue
+		}
+
+		if !categoryEvidenceActive(measurement.Normalized) {
+			continue
+		}
+
+		observedFrom, _ := measurement.Interval()
+
+		for _, category := range affinity.Supports {
+			categoryKey := evidenceGraph.ensureCategory(category, measurement.At)
+			evidenceGraph.Relate(
+				node.Key, categoryKey, Supports, measurement.At, observedFrom,
+			)
+		}
+
+		for _, category := range affinity.Opposes {
+			categoryKey := evidenceGraph.ensureCategory(category, measurement.At)
+			evidenceGraph.Relate(
+				node.Key, categoryKey, Contradicts, measurement.At, observedFrom,
+			)
+		}
+	}
+}
+
+/*
+categoryEvidenceActive reports whether a normalized reading is on strongly enough
+to count as evidence. A nil or zero reading has no direction and stays out of the
+category graph so absent evidence never lights a hypothesis.
+*/
+func categoryEvidenceActive(normalized *float64) bool {
+	return normalized != nil && *normalized > 0
 }
 
 /*

@@ -100,9 +100,10 @@ func (thesis *Thesis) ResetCut(frame *MarketFrame, tick int64) {
 
 	thesis.marketFrame = frame
 	thesis.Tick = tick
-	thesis.At = time.Now().UTC()
+	thesis.At = time.Time{}
 
 	if frame != nil {
+		thesis.At = frame.At
 		thesis.CrossSection = frame.CrossSection
 	}
 
@@ -353,11 +354,7 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 		graph := NewGraph(frame.Symbol)
 
 		for _, node := range frame.Nodes {
-			measurement := node.Measurement
-
-			if err := graph.AddNode(&measurement); err != nil {
-				return err
-			}
+			graph.RestoreNode(node.Key, node.Kind, node.Category, node.Measurement)
 		}
 
 		for _, edge := range frame.Edges {

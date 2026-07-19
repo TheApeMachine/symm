@@ -2,7 +2,9 @@ package broker_test
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
@@ -22,16 +24,19 @@ func TestInstrumentSubscribeLoadsUniverseFees(t *testing.T) {
 	previousBatch := viper.Get("market.subscribe_batch")
 	previousPace := viper.Get("market.subscribe_pace")
 	previousQuote := viper.Get("market.quote_currency")
+	previousLevel3 := viper.Get("market.l3_enabled")
 	t.Cleanup(func() {
 		viper.Set("market.subscribe_batch", previousBatch)
 		viper.Set("market.subscribe_pace", previousPace)
 		viper.Set("market.quote_currency", previousQuote)
+		viper.Set("market.l3_enabled", previousLevel3)
 	})
 
 	Convey("Given two online USD instruments with complete Kraken fees", t, func() {
 		viper.Set("market.quote_currency", "USD")
 		viper.Set("market.subscribe_batch", 200)
 		viper.Set("market.subscribe_pace", "0ms")
+		viper.Set("market.l3_enabled", false)
 		mock := mockapi.NewMockAPI()
 		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
 			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFee{
@@ -56,8 +61,9 @@ func TestInstrumentSubscribeLoadsUniverseFees(t *testing.T) {
 			}
 		}`))
 
-		Convey("Then fees load and READY follows even when mock transport write fails", func() {
+		Convey("Then fees load and every public subscription crosses the Conn", func() {
 			So(instrument.Status(), ShouldEqual, types.READY)
+			So(mock.Public().Writes(), ShouldHaveLength, 3)
 			symbols, symbolsErr := mock.LastTradeVolumeSymbols()
 			So(symbolsErr, ShouldBeNil)
 			So(symbols, ShouldHaveLength, 2)
@@ -70,6 +76,47 @@ func TestInstrumentSubscribeLoadsUniverseFees(t *testing.T) {
 
 			So(feeErr, ShouldBeNil)
 			So(zecFee.Fee.Float64(), ShouldEqual, 0.26)
+		})
+	})
+}
+
+func TestInstrumentSubscribeConnectionFailure(t *testing.T) {
+	previousBatch := viper.Get("market.subscribe_batch")
+	previousPace := viper.Get("market.subscribe_pace")
+	previousQuote := viper.Get("market.quote_currency")
+	previousLevel3 := viper.Get("market.l3_enabled")
+	t.Cleanup(func() {
+		viper.Set("market.subscribe_batch", previousBatch)
+		viper.Set("market.subscribe_pace", previousPace)
+		viper.Set("market.quote_currency", previousQuote)
+		viper.Set("market.l3_enabled", previousLevel3)
+	})
+	viper.Set("market.quote_currency", "USD")
+	viper.Set("market.subscribe_batch", 200)
+	viper.Set("market.subscribe_pace", time.Duration(0))
+	viper.Set("market.l3_enabled", false)
+
+	Convey("Given an instrument universe whose Conn rejects subscriptions", t, func() {
+		mock := mockapi.NewMockAPI()
+		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
+			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFee{
+				"XXBTZUSD": {Fee: decimal.NewFromFloat64(0.26)},
+			}},
+		}), ShouldBeNil)
+		mock.Public().FailWrites(errors.New("subscription rejected"))
+		api := websocket.NewAPI(
+			context.Background(), mock.Public(), mock.Private(), nil,
+		)
+		So(api.Initialize(), ShouldBeNil)
+		instrument := broker.NewInstrument(api, broker.NewPrice(api), nil)
+
+		instrument.On([]byte(`{
+			"channel":"instrument","type":"snapshot","data":{"pairs":[{
+				"symbol":"BTC/USD","quote":"USD","status":"online"
+			}]}}`))
+
+		Convey("Then the broker refuses to report READY", func() {
+			So(instrument.Status(), ShouldEqual, types.ERROR)
 		})
 	})
 }

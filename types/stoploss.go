@@ -3,7 +3,6 @@ package types
 import (
 	"context"
 	"math"
-	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -86,7 +85,11 @@ func (stoploss *Stoploss) Restore(entry float64, recovered *Stoploss) {
 	stoploss.Trail = recovered.Trail
 	stoploss.Skill = recovered.Skill
 	stoploss.Weight = finiteFloat(stoploss.Weight)
-	stoploss.LockedFloor = finiteFloat(stoploss.LockedFloor)
+
+	if !math.IsInf(stoploss.LockedFloor, -1) {
+		stoploss.LockedFloor = finiteFloat(stoploss.LockedFloor)
+	}
+
 	stoploss.TrailDistance = finiteFloat(stoploss.TrailDistance)
 	stoploss.FloorDistance = finiteFloat(stoploss.FloorDistance)
 	stoploss.StopReturn = finiteFloat(stoploss.StopReturn)
@@ -111,6 +114,38 @@ func (stoploss *Stoploss) Close() {
 	if stoploss.cancel != nil {
 		stoploss.cancel()
 	}
+}
+
+/*
+WidenSurvival raises the unlocked fill-time survival band when live fee and
+half-spread evidence exceeds the cold-bind floor. Once LockedFloor is earned the
+ratchet owns geometry and this is a no-op so sincere drawdown exits stay tight.
+*/
+func (stoploss *Stoploss) WidenSurvival(distance float64) {
+	if stoploss == nil || !stoploss.armed {
+		return
+	}
+
+	if distance <= 0 || math.IsNaN(distance) || math.IsInf(distance, 0) {
+		return
+	}
+
+	if !math.IsInf(stoploss.LockedFloor, -1) {
+		return
+	}
+
+	if distance <= stoploss.FloorDistance {
+		return
+	}
+
+	stoploss.FloorDistance = distance
+
+	if stoploss.TrailDistance < distance {
+		stoploss.TrailDistance = distance
+	}
+
+	stoploss.StopReturn = -stoploss.TrailDistance
+	stoploss.Reason = "survival band widened from live entry trail"
 }
 
 /*
@@ -265,7 +300,7 @@ func (stoploss *Stoploss) Regulate(
 	thesis.Decisions = append(thesis.Decisions, Decision{
 		Action:           "exit",
 		Symbol:           holding.Symbol,
-		At:               time.Now().UTC(),
+		At:               thesis.At,
 		Utility:          stoploss.StopReturn,
 		Alternatives:     map[string]float64{stoploss.Action: stoploss.StopReturn},
 		ProposedQuantity: holding.Qty,
@@ -273,7 +308,7 @@ func (stoploss *Stoploss) Regulate(
 		Cause:            stoploss.Action,
 		Reason:           stoploss.Reason,
 	})
-	thesis.NoteLifecycle(holding.Symbol, LifecycleExitSelected, time.Now().UTC())
+	thesis.NoteLifecycle(holding.Symbol, LifecycleExitSelected, thesis.At)
 }
 
 /*
@@ -313,9 +348,9 @@ func (stoploss *Stoploss) NoteRetreat(pressure float64) {
 }
 
 /*
-MarshalJSON encodes a JSON-safe stop surface. LockedFloor starts at −Inf after
-arm; non-finite geometry is zeroed so Holding snapshots cannot break websocket
-marshal. Retreat is persisted so recovery restarts keep the sincerity gate.
+MarshalJSON encodes a JSON-safe stop surface. FloorLocked preserves the
+meaning of the non-finite unlocked sentinel while scalar geometry remains JSON
+finite. Retreat is persisted so recovery restarts keep the sincerity gate.
 */
 func (stoploss Stoploss) MarshalJSON() ([]byte, error) {
 	type wire struct {
@@ -323,6 +358,7 @@ func (stoploss Stoploss) MarshalJSON() ([]byte, error) {
 		Reason        string  `json:"reason"`
 		Weight        float64 `json:"weight"`
 		LockedFloor   float64 `json:"lockedFloor"`
+		FloorLocked   bool    `json:"floorLocked"`
 		FloorDistance float64 `json:"floorDistance"`
 		TrailDistance float64 `json:"trailDistance"`
 		StopReturn    float64 `json:"stopReturn"`
@@ -336,6 +372,7 @@ func (stoploss Stoploss) MarshalJSON() ([]byte, error) {
 		Reason:        stoploss.Reason,
 		Weight:        finiteFloat(stoploss.Weight),
 		LockedFloor:   finiteFloat(stoploss.LockedFloor),
+		FloorLocked:   !math.IsInf(stoploss.LockedFloor, -1),
 		FloorDistance: finiteFloat(stoploss.FloorDistance),
 		TrailDistance: finiteFloat(stoploss.TrailDistance),
 		StopReturn:    finiteFloat(stoploss.StopReturn),
@@ -346,8 +383,8 @@ func (stoploss Stoploss) MarshalJSON() ([]byte, error) {
 }
 
 /*
-UnmarshalJSON restores the stop surface including the private retreat gate so
-JSON recovery does not default sincerity pressure to zero.
+UnmarshalJSON restores the stop surface, unlocked-floor state, and private
+retreat gate without inventing a break-even ratchet or clearing sincerity.
 */
 func (stoploss *Stoploss) UnmarshalJSON(payload []byte) error {
 	if stoploss == nil {
@@ -363,6 +400,7 @@ func (stoploss *Stoploss) UnmarshalJSON(payload []byte) error {
 		Reason        string  `json:"reason"`
 		Weight        float64 `json:"weight"`
 		LockedFloor   float64 `json:"lockedFloor"`
+		FloorLocked   bool    `json:"floorLocked"`
 		FloorDistance float64 `json:"floorDistance"`
 		TrailDistance float64 `json:"trailDistance"`
 		StopReturn    float64 `json:"stopReturn"`
@@ -381,6 +419,11 @@ func (stoploss *Stoploss) UnmarshalJSON(payload []byte) error {
 	stoploss.Reason = frame.Reason
 	stoploss.Weight = finiteFloat(frame.Weight)
 	stoploss.LockedFloor = finiteFloat(frame.LockedFloor)
+
+	if !frame.FloorLocked && frame.LockedFloor <= 0 {
+		stoploss.LockedFloor = math.Inf(-1)
+	}
+
 	stoploss.FloorDistance = finiteFloat(frame.FloorDistance)
 	stoploss.TrailDistance = finiteFloat(frame.TrailDistance)
 	stoploss.StopReturn = finiteFloat(frame.StopReturn)

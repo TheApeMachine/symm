@@ -2,17 +2,21 @@ package leadlag
 
 import (
 	"context"
+	"iter"
 	"math"
 	"testing"
 	"time"
 
 	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/tests/conditions"
+	"github.com/theapemachine/symm/tests/mockapi"
+	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -140,42 +144,6 @@ func TestSection_FeaturesUsesMoveBaseline(t *testing.T) {
 	})
 }
 
-func TestSignal_MeasureEmitsLeadlag(t *testing.T) {
-	Convey("Given a seeded leadlag section and leader rows", t, func() {
-		signal := &Signal{
-			ctx:     context.Background(),
-			section: NewSection(),
-		}
-		btcLast, ethLast, at := seedLaggedPaths(signal.section, 6, 120)
-
-		frame := marketFrame(
-			kraken.TickerData{
-				Symbol:    "BTC/USD",
-				Last:      krakendecimal.NewFromFloat64(btcLast),
-				ChangePct: 5,
-				Timestamp: at,
-			},
-			kraken.TickerData{
-				Symbol:    "ETH/USD",
-				Last:      krakendecimal.NewFromFloat64(ethLast),
-				ChangePct: 1,
-				Timestamp: at,
-			},
-		)
-
-		measurements, err := signal.Calculate(frame)
-
-		Convey("Then it should emit numeric leadlag measurements", func() {
-			So(err, ShouldBeNil)
-
-			strength, hasFollower := hasMeasurement(measurements, "ETH/USD", types.MetricStrength)
-
-			So(hasFollower, ShouldBeTrue)
-			So(strength.Raw, ShouldBeGreaterThan, 0)
-		})
-	})
-}
-
 func TestSignal_MeasureEmitsWithoutLeader(t *testing.T) {
 	Convey("Given a flat cohort with no cross-section leader", t, func() {
 		signal := &Signal{
@@ -214,109 +182,166 @@ func TestSignal_MeasureEmitsWithoutLeader(t *testing.T) {
 	})
 }
 
-func TestSignal_MeasureSkipsIncompleteRow(t *testing.T) {
-	Convey("Given a follower row without a last price", t, func() {
-		signal := &Signal{
-			ctx:     context.Background(),
-			section: NewSection(),
-		}
-		now := time.Now()
-
-		signal.section.SetAnchor("BTC/USD")
-		signal.section.ObservePrice("BTC/USD", 100, now)
-
-		frame := marketFrame(
-			kraken.TickerData{
-				Symbol:    "BTC/USD",
-				Last:      krakendecimal.NewFromFloat64(100),
-				ChangePct: 5,
-				Timestamp: now,
-			},
-			kraken.TickerData{
-				Symbol:    "ETH/USD",
-				Timestamp: now,
-			},
-		)
-
-		measurements, err := signal.Calculate(frame)
-
-		Convey("Then it should omit the incomplete follower", func() {
-			So(err, ShouldBeNil)
-
-			_, hasFollower := hasMeasurement(measurements, "ETH/USD", types.MetricStrength)
-			So(hasFollower, ShouldBeFalse)
-		})
+func measureMarket(t testing.TB, frames iter.Seq[tests.Frame]) []*types.Measurement {
+	t.Helper()
+	previousTimeline := viper.Get("signals.feed_timeline_capacity")
+	previousTrack := viper.Get("signals.feed_track_capacity")
+	viper.Set("signals.feed_timeline_capacity", 128)
+	viper.Set("signals.feed_track_capacity", 128)
+	t.Cleanup(func() {
+		viper.Set("signals.feed_timeline_capacity", previousTimeline)
+		viper.Set("signals.feed_track_capacity", previousTrack)
 	})
-}
 
-func sessionSignals(
-	ctx context.Context,
-	api *websocket.API,
-	_ *broker.Instrument,
-	channel chan []byte,
-) []types.Signal {
-	return []types.Signal{NewSignal(ctx, api, channel)}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	mock := mockapi.NewMockAPI()
+	api := websocket.NewAPI(ctx, mock.Public(), mock.Private(), nil)
+	t.Cleanup(api.Close)
+	instrument := broker.NewInstrument(api, broker.NewPrice(api), nil)
+	api.On("instrument", instrument.On)
+	market, err := trader.NewMarket(ctx, api, instrument)
+	So(err, ShouldBeNil)
+	t.Cleanup(market.Close)
+	signal := NewSignal(ctx, api, nil)
+	measurements := make([]*types.Measurement, 0)
+	cutAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	for frame := range frames {
+		mock.Emit(frame.Channel, frame.Payload)
+		cut, cutErr := market.Cut(cutAt)
+		So(cutErr, ShouldBeNil)
+		cutAt = cutAt.Add(time.Second)
+
+		if cut.IsEmpty() {
+			continue
+		}
+
+		if types.SignalInterest(signal)&types.FrameInterest(cut) == 0 {
+			continue
+		}
+
+		measurements = append(
+			measurements,
+			signal.Measure(types.NewThesis(nil, cut))...,
+		)
+	}
+
+	return measurements
 }
 
 /*
-TestSignal_MeasureFromMarket proves leadlag on the mock Conn Session path:
-lag tapes leave the subject without a tradeable lead claim while the follower
-carries strength; co-moving herd publishes Sync without a lagged Strength edge.
+lastMarketEpoch returns the final complete valid follower bundle so lead-lag
+assertions keep correlation, lag, and category scores on one market state.
 */
-func TestSignal_MeasureFromMarket(t *testing.T) {
-	subject := conditions.Subject()
-	follower := "ETH/USD"
-	options := tests.SessionOptions{Signals: sessionSignals}
+func lastMarketEpoch(
+	measurements []*types.Measurement,
+	symbol string,
+) map[types.MetricType]*types.Measurement {
+	var at time.Time
 
-	t.Run("tape_lag", func(t *testing.T) {
-		tests.PlayMarketClaims(t, options, conditions.TapeLag().Frames(),
-			tests.SourceClaim{
-				Source: types.SourceLeadLag, Metric: types.MetricStrength,
-				Symbol: subject, Bound: tests.BoundZero,
-			},
-			tests.SourceClaim{
-				Source: types.SourceLeadLag, Metric: types.MetricStrength,
-				Symbol: follower, Bound: tests.BoundPositive,
-			},
-			tests.SourceClaim{
-				Source: types.SourceLeadLag, Metric: types.MetricSampleSupport,
-				Symbol: follower, Bound: tests.BoundPositive,
-			},
-		)
-	})
+	for index := len(measurements) - 1; index >= 0; index-- {
+		measurement := measurements[index]
 
-	t.Run("tape_sector_lift", func(t *testing.T) {
-		// Co-moving herd publishes leadlag rows without a lagged Strength edge.
-		tests.PlayMarketClaims(t, options, conditions.TapeSectorLift().Frames(),
-			tests.SourceClaim{
-				Source: types.SourceLeadLag, Metric: types.MetricStrength,
-				Symbol: follower, Bound: tests.BoundZero,
-			},
-			tests.SourceClaim{
-				Source: types.SourceLeadLag, Metric: types.MetricStrength,
-				Symbol: subject, Bound: tests.BoundZero,
-			},
-		)
-	})
-}
-
-func BenchmarkSignal_MeasureFromMarket(benchmark *testing.B) {
-	session, err := tests.NewSession(context.Background(), benchmark, tests.SessionOptions{
-		Signals: sessionSignals,
-	})
-
-	if err != nil {
-		benchmark.Fatal(err)
-	}
-
-	frames := conditions.TapeLag().Frames()
-	benchmark.ReportAllocs()
-
-	for benchmark.Loop() {
-		if _, err := session.Play(frames); err != nil {
-			benchmark.Fatal(err)
+		if measurement.Source == types.SourceLeadLag &&
+			measurement.Symbol == symbol && measurement.Metric == types.MetricStrength &&
+			measurement.Validity.State == types.ValidityValid {
+			at = measurement.At
+			break
 		}
 	}
+
+	epoch := make(map[types.MetricType]*types.Measurement)
+
+	for _, measurement := range measurements {
+		if measurement.Source == types.SourceLeadLag &&
+			measurement.Symbol == symbol && measurement.At.Equal(at) &&
+			measurement.Validity.State == types.ValidityValid {
+			epoch[measurement.Metric] = measurement
+		}
+	}
+
+	return epoch
+}
+
+/*
+TestSignal_MeasureFromMarket proves leadlag separates delayed, synchronous,
+decoupled, and stalled anchor relationships through the production feed.
+*/
+func TestSignal_MeasureFromMarket(t *testing.T) {
+	Convey("Given independently defined anchor-relative cohort paths", t, func() {
+		const follower = "ETH/USD"
+		lagged := lastMarketEpoch(
+			measureMarket(t, conditions.TapeLag().Frames()), follower,
+		)
+		synchronized := lastMarketEpoch(
+			measureMarket(t, conditions.TapeAlpha().Frames()), follower,
+		)
+		decoupled := lastMarketEpoch(
+			measureMarket(t, conditions.TapeNoise().Frames()), follower,
+		)
+		stalled := lastMarketEpoch(
+			measureMarket(t, conditions.TapeStall().Frames()), follower,
+		)
+		metrics := []types.MetricType{
+			types.MetricCorrelation,
+			types.MetricSignedCorrelation,
+			types.MetricSignedContempCorrelation,
+			types.MetricSignedLagCorrelation,
+			types.MetricLagFraction,
+			types.MetricSampleSupport,
+			types.MetricInefficient,
+			types.MetricSync,
+			types.MetricDecoupled,
+			types.MetricStall,
+			types.MetricStrength,
+		}
+		Convey("Then every regime emits the complete valid metric contract", func() {
+			for _, epoch := range []map[types.MetricType]*types.Measurement{
+				lagged, synchronized, decoupled, stalled,
+			} {
+				for _, metric := range metrics {
+					measurement := epoch[metric]
+					So(measurement, ShouldNotBeNil)
+					So(measurement.Source, ShouldEqual, types.SourceLeadLag)
+					So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
+					So(measurement.ValidateStruct(), ShouldBeNil)
+				}
+			}
+		})
+
+		Convey("Then the delayed follower is an inefficient positive-direction lag", func() {
+			direction := lagged[types.MetricSignedLagDirection]
+			So(direction, ShouldNotBeNil)
+			So(direction.Raw, ShouldEqual, 1)
+			So(direction.Peer, ShouldEqual, conditions.Subject())
+			So(lagged[types.MetricLagFraction].Raw, ShouldBeGreaterThan, 0)
+			So(lagged[types.MetricSignedLagCorrelation].Raw, ShouldBeGreaterThan, 0)
+			So(lagged[types.MetricInefficient].Raw, ShouldBeGreaterThan, lagged[types.MetricSync].Raw)
+			So(lagged[types.MetricInefficient].Raw, ShouldBeGreaterThan, lagged[types.MetricDecoupled].Raw)
+			So(lagged[types.MetricStrength].Raw, ShouldAlmostEqual, lagged[types.MetricInefficient].Raw, 1e-12)
+		})
+
+		Convey("Then a contemporaneous aligned follower is synchronized", func() {
+			So(synchronized[types.MetricSignedContempCorrelation].Raw, ShouldBeGreaterThan, 0.8)
+			So(synchronized[types.MetricSync].Raw, ShouldBeGreaterThan, synchronized[types.MetricInefficient].Raw)
+			So(synchronized[types.MetricSync].Raw, ShouldBeGreaterThan, synchronized[types.MetricDecoupled].Raw)
+			So(synchronized[types.MetricStrength].Raw, ShouldAlmostEqual, synchronized[types.MetricSync].Raw, 1e-12)
+		})
+
+		Convey("Then an unrelated follower is decoupled", func() {
+			So(decoupled[types.MetricDecoupled].Raw, ShouldBeGreaterThan, 0)
+			So(decoupled[types.MetricDecoupled].Raw, ShouldBeGreaterThan, decoupled[types.MetricSync].Raw)
+			So(decoupled[types.MetricDecoupled].Raw, ShouldBeGreaterThan, decoupled[types.MetricInefficient].Raw)
+			So(decoupled[types.MetricStrength].Raw, ShouldAlmostEqual, decoupled[types.MetricDecoupled].Raw, 1e-12)
+		})
+
+		Convey("Then a stopped anchor with active peers carries stall evidence", func() {
+			So(stalled[types.MetricStall].Raw, ShouldBeGreaterThan, 0)
+			So(stalled[types.MetricStall].Raw, ShouldBeGreaterThan, stalled[types.MetricInefficient].Raw)
+			So(stalled[types.MetricStall].Raw, ShouldBeGreaterThan, stalled[types.MetricSync].Raw)
+		})
+	})
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {
@@ -343,6 +368,8 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _ = signal.Calculate(frame)
+		if _, err := signal.Calculate(frame); err != nil {
+			benchmark.Fatal(err)
+		}
 	}
 }

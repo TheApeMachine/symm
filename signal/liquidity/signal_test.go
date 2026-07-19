@@ -2,16 +2,20 @@ package liquidity
 
 import (
 	"context"
+	"iter"
 	"testing"
 	"time"
 
 	krakendecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/tests/conditions"
+	"github.com/theapemachine/symm/tests/mockapi"
+	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -198,62 +202,143 @@ func TestSignal_MeasureSkipsNonExecutableSubject(t *testing.T) {
 	})
 }
 
-func sessionSignals(
-	ctx context.Context,
-	api *websocket.API,
-	_ *broker.Instrument,
-	channel chan []byte,
-) []types.Signal {
-	return []types.Signal{NewSignal(ctx, api, channel)}
+func measureMarket(t testing.TB, frames iter.Seq[tests.Frame]) []*types.Measurement {
+	t.Helper()
+	previousTimeline := viper.Get("signals.feed_timeline_capacity")
+	previousTrack := viper.Get("signals.feed_track_capacity")
+	viper.Set("signals.feed_timeline_capacity", 128)
+	viper.Set("signals.feed_track_capacity", 128)
+	t.Cleanup(func() {
+		viper.Set("signals.feed_timeline_capacity", previousTimeline)
+		viper.Set("signals.feed_track_capacity", previousTrack)
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	mock := mockapi.NewMockAPI()
+	api := websocket.NewAPI(ctx, mock.Public(), mock.Private(), nil)
+	t.Cleanup(api.Close)
+	instrument := broker.NewInstrument(api, broker.NewPrice(api), nil)
+	api.On("instrument", instrument.On)
+	market, err := trader.NewMarket(ctx, api, instrument)
+	So(err, ShouldBeNil)
+	t.Cleanup(market.Close)
+	signal := NewSignal(ctx, api, nil)
+	measurements := make([]*types.Measurement, 0)
+	cutAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	for frame := range frames {
+		mock.Emit(frame.Channel, frame.Payload)
+		cut, cutErr := market.Cut(cutAt)
+		So(cutErr, ShouldBeNil)
+		cutAt = cutAt.Add(time.Second)
+
+		if cut.IsEmpty() {
+			continue
+		}
+
+		if types.SignalInterest(signal)&types.FrameInterest(cut) == 0 {
+			continue
+		}
+
+		measurements = append(
+			measurements,
+			signal.Measure(types.NewThesis(nil, cut))...,
+		)
+	}
+
+	return measurements
 }
 
 /*
-TestSignal_MeasureFromMarket proves liquidity on the mock Conn Session path:
-a thin-book tape must emit scarcity and relative-touch evidence, and scarcity
-must exceed a sector-lift (herd) peer — not a relative-only smoke check.
+liquidityEpoch returns the last coherent subject observation that includes a
+peer scarcity score, excluding later provisional single-row feed cuts.
 */
-func TestSignal_MeasureFromMarket(t *testing.T) {
-	symbol := conditions.Subject()
-	options := tests.SessionOptions{Signals: sessionSignals}
+func liquidityEpoch(
+	measurements []*types.Measurement,
+	symbol string,
+) map[types.MetricType]*types.Measurement {
+	var at time.Time
 
-	thinFamily := []tests.SourceClaim{
-		{Source: types.SourceLiquidity, Metric: types.MetricScarcityScore, Symbol: symbol, Bound: tests.BoundPositive},
-		{Source: types.SourceLiquidity, Metric: types.MetricRelativeTouchDepth, Symbol: symbol, Bound: tests.BoundPresent},
-	}
+	for index := len(measurements) - 1; index >= 0; index-- {
+		measurement := measurements[index]
 
-	t.Run("tape_thin_book", func(t *testing.T) {
-		tests.PlayMarketClaims(t, options, conditions.TapeThinBook().Frames(), thinFamily...)
-	})
-
-	t.Run("thin_exceeds_herd_scarcity", func(t *testing.T) {
-		herd := tests.PlayMarketClaims(t, options, conditions.TapeSectorLift().Frames())
-		thin := tests.PlayMarketClaims(
-			t, options, conditions.TapeThinBook().Frames(), thinFamily...,
-		)
-		tests.RequireSourceExceeds(
-			t, thin, herd,
-			types.SourceLiquidity, symbol, types.MetricScarcityScore,
-		)
-	})
-}
-
-func BenchmarkSignal_MeasureFromMarket(benchmark *testing.B) {
-	session, err := tests.NewSession(context.Background(), benchmark, tests.SessionOptions{
-		Signals: sessionSignals,
-	})
-
-	if err != nil {
-		benchmark.Fatal(err)
-	}
-
-	frames := conditions.TapeThinBook().Frames()
-	benchmark.ReportAllocs()
-
-	for benchmark.Loop() {
-		if _, err := session.Play(frames); err != nil {
-			benchmark.Fatal(err)
+		if measurement.Symbol == symbol && measurement.Metric == types.MetricScarcityScore {
+			at = measurement.At
+			break
 		}
 	}
+
+	epoch := make(map[types.MetricType]*types.Measurement)
+
+	for _, measurement := range measurements {
+		if measurement.Symbol == symbol && measurement.At.Equal(at) &&
+			measurement.Validity.State == types.ValidityValid {
+			epoch[measurement.Metric] = measurement
+		}
+	}
+
+	return epoch
+}
+
+/*
+TestSignal_MeasureFromMarket proves the production feed keeps executable touch
+depth separate from reported turnover and measures scarcity against the cohort.
+*/
+func TestSignal_MeasureFromMarket(t *testing.T) {
+	Convey("Given identical turnover cohorts with healthy and starved subject quotes", t, func() {
+		symbol := conditions.Subject()
+		healthy := measureMarket(t, conditions.TapeSectorLift().Frames())
+		starved := measureMarket(t, conditions.TapeThinBook().Frames())
+
+		Convey("When the final cohort observations are measured", func() {
+			healthyEpoch := liquidityEpoch(healthy, symbol)
+			starvedEpoch := liquidityEpoch(starved, symbol)
+			healthyDepth := healthyEpoch[types.MetricExecutableTouchDepth]
+			starvedDepth := starvedEpoch[types.MetricExecutableTouchDepth]
+			healthyRelative := healthyEpoch[types.MetricRelativeTouchDepth]
+			starvedRelative := starvedEpoch[types.MetricRelativeTouchDepth]
+			healthyScarcity := healthyEpoch[types.MetricScarcityScore]
+			starvedScarcity := starvedEpoch[types.MetricScarcityScore]
+			healthyMedian := healthyEpoch[types.MetricExecutableTouchDepthMedian]
+			starvedMedian := starvedEpoch[types.MetricExecutableTouchDepthMedian]
+			healthyTurnover := healthyEpoch[types.MetricReportedVolumeNotional]
+			starvedTurnover := starvedEpoch[types.MetricReportedVolumeNotional]
+			healthyTurnoverMedian := healthyEpoch[types.MetricReportedVolumeNotionalMedian]
+			starvedTurnoverMedian := starvedEpoch[types.MetricReportedVolumeNotionalMedian]
+
+			Convey("Then every promised liquidity measurement is present and valid", func() {
+				for _, measurement := range []*types.Measurement{
+					healthyDepth, starvedDepth,
+					healthyRelative, starvedRelative,
+					healthyScarcity, starvedScarcity,
+					healthyMedian, starvedMedian,
+					healthyTurnover, starvedTurnover,
+					healthyTurnoverMedian, starvedTurnoverMedian,
+				} {
+					So(measurement, ShouldNotBeNil)
+					So(measurement.Source, ShouldEqual, types.SourceLiquidity)
+					So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
+					So(measurement.ValidateStruct(), ShouldBeNil)
+				}
+			})
+
+			Convey("Then healthy depth is neutral while starved depth is scarce", func() {
+				So(healthyRelative.Raw, ShouldAlmostEqual, 1, 1e-9)
+				So(healthyScarcity.Raw, ShouldAlmostEqual, 0, 1e-9)
+				So(starvedRelative.Raw, ShouldBeGreaterThan, 0)
+				So(starvedRelative.Raw, ShouldBeLessThan, 0.1)
+				So(starvedScarcity.Raw, ShouldBeGreaterThan, 0.9)
+				So(starvedDepth.Raw, ShouldBeLessThan, healthyDepth.Raw)
+			})
+
+			Convey("Then starving quotes cannot alter peer depth or turnover context", func() {
+				So(starvedMedian.Raw, ShouldAlmostEqual, healthyMedian.Raw, 1e-9)
+				So(starvedTurnover.Raw, ShouldAlmostEqual, healthyTurnover.Raw, 1e-9)
+				So(starvedTurnoverMedian.Raw, ShouldAlmostEqual, healthyTurnoverMedian.Raw, 1e-9)
+			})
+		})
+	})
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {
@@ -267,6 +352,8 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _ = signal.Calculate(frame)
+		if _, err := signal.Calculate(frame); err != nil {
+			benchmark.Fatal(err)
+		}
 	}
 }

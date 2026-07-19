@@ -13,6 +13,7 @@ const (
 	SourceLiquidity   SourceType = "liquidity"
 	SourcePumpDump    SourceType = "pumpdump"
 	SourceCausal      SourceType = "causal"
+	SourceCategory    SourceType = "category"
 	SourceResonance   SourceType = "resonance"
 	SourceSentiment   SourceType = "sentiment"
 	SourceToxicity    SourceType = "toxicity"

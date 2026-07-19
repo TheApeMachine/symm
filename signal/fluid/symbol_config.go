@@ -50,7 +50,7 @@ func resetSymbolConfig() {
 
 /*
 loadSymbolConfig reads fluid cadence and lattice floors from viper on every
-call. Construction is once per symbol; caching the first writer poisoned Session
+call. Construction is once per symbol; caching the first writer poisoned package
 proofs when unit tests mutated viper earlier in the same package run.
 */
 func loadSymbolConfig() (symbolConfig, error) {

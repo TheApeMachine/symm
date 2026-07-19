@@ -17,7 +17,7 @@ const level3MaxSymbolsPerConnection = 200
 
 /*
 Level3Registry owns SDK BookManager transports keyed by subscription batch or
-harness lease. PeekBook and Books delegate here so conn.go stays focused on
+injected transport. PeekBook and Books delegate here so conn.go stays focused on
 public/private routing. A symbol index maps each subscribed symbol to its owning
 transport so PeekBook resolves in O(1) instead of ranging every connection.
 */
@@ -240,7 +240,10 @@ func (registry *Level3Registry) Books() iter.Seq[*spot.BookManager] {
 /*
 PeekBook invokes fn under the Level3 read lease for symbol, resolving the owning
 transport through the symbol index first and falling back to a full scan only
-when a book was created after subscription.
+when the symbol was never indexed (book created after subscription). An indexed
+Live that simply has no book yet must not be deleted or scanned — that thrash
+turns every touchReady miss into an O(conns) walk and collapses tick rate.
+Stale owners are removed by Detach/unindexSymbols on close or replacement.
 */
 func (registry *Level3Registry) PeekBook(
 	symbol string,
@@ -253,13 +256,10 @@ func (registry *Level3Registry) PeekBook(
 	if value, ok := registry.index.Load(symbol); ok {
 		live, valid := value.(*Live)
 
-		if valid && live.peekBook(symbol, fn) {
-			return true
-		}
-
-		// Drop stale owners (closed/replaced) so the index cannot grow forever.
-		if current, still := registry.index.Load(symbol); still && current == value {
+		if !valid || live == nil {
 			registry.index.Delete(symbol)
+		} else {
+			return live.peekBook(symbol, fn)
 		}
 	}
 

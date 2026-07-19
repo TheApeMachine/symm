@@ -227,7 +227,7 @@ func (arbiter *Arbiter) rotatable(thesis *types.Thesis) []Incumbent {
 	rows := make([]Incumbent, 0)
 
 	for holding := range arbiter.balance.Holdings() {
-		if holding.Status == types.CLOSED {
+		if holding.Status != types.OPEN {
 			continue
 		}
 

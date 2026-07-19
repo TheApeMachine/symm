@@ -73,6 +73,11 @@ func (analyzer *Analyzer) observe(
 
 	if resonance == nil {
 		resonance = NewResonance(state.Symbol, manifold.DefaultBaselineHalflife())
+
+		if resonance == nil {
+			return
+		}
+
 		analyzer.resonance[state.Symbol] = resonance
 	}
 
@@ -117,38 +122,35 @@ func (analyzer *Analyzer) forecast(
 	if resonanceOutcome == nil || causalOutcome == nil ||
 		!resonanceOutcome.ReturnReady ||
 		resonanceOutcome.CalibrationSamples == 0 ||
-		!causalOutcome.Ready || causalOutcome.CalibrationSamples == 0 {
+		!causalOutcome.Ready {
 		return
 	}
 
 	// Candidate notional is capped at the best ask, so the forecast does not
 	// claim depth-crossing impact beyond the directly observed touch spread.
 	forecast := types.Forecasts{
-		Source:           "resonance+causal",
-		Symbol:           state.Symbol,
-		At:               state.At,
-		ObservedInterval: state.Duration,
-		SourceEpoch:      state.Epoch,
-		HorizonEvents:    1,
-		ExpiresEpoch:     state.Epoch + 1,
-		Target:           resonanceOutcome.Target,
-		ModelVersion:     "resonance_return_head_v1",
-		Ready:            true,
-		Calibrated:       true,
-		CalibrationSamples: min(
-			resonanceOutcome.CalibrationSamples,
-			causalOutcome.CalibrationSamples,
-		),
-		IncrementalMSE:           resonanceOutcome.IncrementalMSE,
-		IncrementalMSELowerBound: 0,
-		ExpectedReturn:           resonanceOutcome.ExpectedReturn,
-		ReferencePrice:           state.ReferencePrice,
-		BuyCapacity:              state.BuyCapacity,
-		SellCapacity:             state.SellCapacity,
-		ExpectedSpread:           state.Spread,
-		ExpectedImpact:           analyzer.forecastImpact(state),
-		ExpectedAdverseSelection: analyzer.forecastAdverse(state),
-		Uncertainty:              resonanceOutcome.Uncertainty,
+		Source:                     "resonance+causal",
+		Symbol:                     state.Symbol,
+		At:                         state.At,
+		ObservedInterval:           state.Duration,
+		SourceEpoch:                state.Epoch,
+		HorizonEvents:              1,
+		ExpiresEpoch:               state.Epoch + 1,
+		Target:                     resonanceOutcome.Target,
+		ModelVersion:               "resonance_return_head_v2_rls",
+		Ready:                      true,
+		Calibrated:                 true,
+		CalibrationSamples:         resonanceOutcome.CalibrationSamples,
+		IncrementalMSE:             resonanceOutcome.IncrementalMSE,
+		IncrementalSkillLowerBound: resonanceOutcome.IncrementalSkillLowerBound,
+		ExpectedReturn:             resonanceOutcome.ExpectedReturn,
+		ReferencePrice:             state.ReferencePrice,
+		BuyCapacity:                state.BuyCapacity,
+		SellCapacity:               state.SellCapacity,
+		ExpectedSpread:             state.Spread,
+		ExpectedImpact:             analyzer.forecastImpact(state),
+		ExpectedAdverseSelection:   analyzer.forecastAdverse(state),
+		Uncertainty:                resonanceOutcome.Uncertainty,
 		Confidence: math.Min(
 			causalOutcome.Reading.Confidence,
 			math.Exp(-math.Abs(resonanceOutcome.Surprise)),

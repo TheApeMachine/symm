@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -37,59 +35,89 @@ func TestAPIStatus(t *testing.T) {
 	})
 }
 
-/*
-TestAPISubscribeTradeRequestsSnapshot verifies restart subscriptions request
-Kraken's current trade window so arrival state does not wait for future fills.
-*/
-func TestAPISubscribeTradeRequestsSnapshot(t *testing.T) {
-	Convey("Given a connected public Kraken websocket", t, func() {
-		requests := make(chan map[string]any, 1)
-		upgrader := gorillawebsocket.Upgrader{}
-		server := httptest.NewServer(http.HandlerFunc(func(
-			response http.ResponseWriter,
-			request *http.Request,
-		) {
-			connection, err := upgrader.Upgrade(response, request, nil)
+func TestAPISubscribeInstruments(t *testing.T) {
+	Convey("Given an injected public connection", t, func() {
+		public := &stubConn{}
+		api := &API{public: public}
+		So(api.SubscribeInstruments(), ShouldBeNil)
+		So(public.writes, ShouldHaveLength, 1)
+		So(string(public.writes[0]), ShouldContainSubstring, `"channel":"instrument"`)
+	})
+}
 
-			if err != nil {
-				return
-			}
+func TestAPISubscribeTicker(t *testing.T) {
+	Convey("Given an injected public connection", t, func() {
+		public := &stubConn{}
+		api := &API{public: public}
+		So(api.SubscribeTicker([]string{"BTC/USD"}), ShouldBeNil)
+		So(public.writes, ShouldHaveLength, 1)
+		So(string(public.writes[0]), ShouldContainSubstring, `"channel":"ticker"`)
+		So(string(public.writes[0]), ShouldContainSubstring, `"BTC/USD"`)
+	})
+}
 
-			defer connection.Close()
-			message := map[string]any{}
-
-			if connection.ReadJSON(&message) == nil {
-				requests <- message
-			}
-
-			connection.ReadMessage()
-		}))
-		defer server.Close()
-
-		client := spot.NewWebSocket()
-		client.URL = "ws" + strings.TrimPrefix(server.URL, "http")
-		So(client.Connect(), ShouldBeNil)
-
-		api := &API{public: &stubConn{client: client}}
+func TestAPISubscribeTrade(t *testing.T) {
+	Convey("Given an injected public connection", t, func() {
+		public := &stubConn{}
+		api := &API{public: public}
 		So(api.SubscribeTrade([]string{"BTC/USD"}), ShouldBeNil)
-
-		var request map[string]any
-
-		select {
-		case request = <-requests:
-		case <-time.After(time.Second):
-			t.Fatal("timed out waiting for trade subscription")
-		}
+		So(public.writes, ShouldHaveLength, 1)
+		request := map[string]any{}
+		So(json.Unmarshal(public.writes[0], &request), ShouldBeNil)
 
 		params := request["params"].(map[string]any)
 
-		Convey("It should request Kraken's current trade window", func() {
+		Convey("It should send the snapshot request through Conn", func() {
 			So(params["channel"], ShouldEqual, "trade")
 			So(params["symbol"], ShouldResemble, []any{"BTC/USD"})
 			So(params["snapshot"], ShouldEqual, true)
 		})
+	})
+}
 
-		So(client.Disconnect(), ShouldBeNil)
+func TestAPISubscribeBook(t *testing.T) {
+	previousDepth := viper.Get("market.book.depth")
+	t.Cleanup(func() { viper.Set("market.book.depth", previousDepth) })
+	viper.Set("market.book.depth", 25)
+
+	Convey("Given an injected public connection", t, func() {
+		public := &stubConn{}
+		api := &API{public: public}
+		So(api.SubscribeBook([]string{"BTC/USD"}), ShouldBeNil)
+		So(public.writes, ShouldHaveLength, 1)
+		request := map[string]any{}
+		So(json.Unmarshal(public.writes[0], &request), ShouldBeNil)
+		params := request["params"].(map[string]any)
+		So(params["channel"], ShouldEqual, "book")
+		So(params["symbol"], ShouldResemble, []any{"BTC/USD"})
+		So(params["depth"], ShouldEqual, float64(25))
+	})
+}
+
+func TestAPISubscribeBalance(t *testing.T) {
+	Convey("Given an injected authenticated connection", t, func() {
+		client := spot.NewWebSocket()
+		client.Token = "private-token"
+		private := &stubConn{client: client}
+		api := &API{private: private, live: true}
+		So(api.SubscribeBalance(), ShouldBeNil)
+		So(private.writes, ShouldHaveLength, 1)
+		So(string(private.writes[0]), ShouldContainSubstring, `"channel":"balances"`)
+		So(string(private.writes[0]), ShouldContainSubstring, `"token":"private-token"`)
+	})
+}
+
+func TestAPISubscribeExecutions(t *testing.T) {
+	Convey("Given an injected authenticated connection", t, func() {
+		client := spot.NewWebSocket()
+		client.Token = "private-token"
+		private := &stubConn{client: client}
+		api := &API{private: private, live: true}
+		So(api.SubscribeExecutions(), ShouldBeNil)
+		So(private.writes, ShouldHaveLength, 1)
+		So(string(private.writes[0]), ShouldContainSubstring, `"channel":"executions"`)
+		So(string(private.writes[0]), ShouldContainSubstring, `"snap_orders":true`)
+		So(string(private.writes[0]), ShouldContainSubstring, `"snap_trades":true`)
 	})
 }
 
@@ -200,9 +228,9 @@ func TestAPIBooks(t *testing.T) {
 }
 
 /*
-TestAPIApplyLevel3Peekable verifies the harness apply path stays synchronous:
+TestAPIApplyLevel3Peekable verifies the injected apply path stays synchronous:
 a book fed through ApplyLevel3 is immediately peekable once Apply returns, so
-Session tests never race the async reader worker before PeekBook.
+package tests never race the async reader worker before PeekBook.
 */
 func TestAPIApplyLevel3Peekable(t *testing.T) {
 	Convey("Given an L3 transport attached to an API", t, func() {
@@ -504,6 +532,7 @@ func newTestSimulator() *Simulator {
 type stubConn struct {
 	channels     map[string][]func([]byte)
 	client       *spot.WebSocket
+	writes       [][]byte
 	postResponse []byte
 	postPath     string
 	postParams   json.Marshaler
@@ -537,7 +566,17 @@ func (stub *stubConn) Unsubscribe(channel string, id uint64) {
 	stub.channels[channel] = append(handlers[:index], handlers[index+1:]...)
 }
 
-func (stub *stubConn) Write(params json.Marshaler) error { return nil }
+func (stub *stubConn) Write(params json.Marshaler) error {
+	raw, err := params.MarshalJSON()
+
+	if err != nil {
+		return err
+	}
+
+	stub.writes = append(stub.writes, raw)
+
+	return nil
+}
 
 func (stub *stubConn) Close() { stub.closeCount++ }
 

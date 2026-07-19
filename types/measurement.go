@@ -73,6 +73,7 @@ const (
 	MetricSignedContempCorrelation MetricType = "signed_contemp_correlation"
 	MetricSignedLagCorrelation     MetricType = "signed_lag_correlation"
 	MetricLagFraction              MetricType = "lag_fraction"
+	MetricSignedLagDirection       MetricType = "signed_lag_direction"
 	MetricSampleSupport            MetricType = "sample_support"
 	MetricInefficient              MetricType = "inefficient"
 	MetricSync                     MetricType = "sync"
@@ -321,6 +322,7 @@ type Measurement struct {
 	Subject      SubjectType             `json:"subject,omitempty"`
 	Stream       StreamType              `json:"stream,omitempty"`
 	Symbol       string                  `json:"symbol" validate:"required"`
+	Peer         string                  `json:"peer,omitempty"`
 	Side         MeasurementSide         `json:"side,omitempty"`
 	At           time.Time               `json:"at" validate:"required"`
 	ObservedFrom time.Time               `json:"observedFrom,omitempty"`

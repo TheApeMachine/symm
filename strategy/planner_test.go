@@ -15,6 +15,7 @@ planner fans the cut only to ticker-interested signals.
 */
 func populatedFrame() *types.MarketFrame {
 	return &types.MarketFrame{
+		At:      time.Unix(1, 0).UTC(),
 		Tickers: []kraken.TickerData{{Symbol: "AAA/USD"}},
 	}
 }

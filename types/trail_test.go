@@ -9,42 +9,70 @@ import (
 
 /*
 TestTrailAdvanceLocksFloorAfterEarnedCushion proves Advance leaves −Inf until
-peak clears trail distance, then locks a positive floor.
+peak clears the survival band, then locks a positive floor.
 */
 func TestTrailAdvanceLocksFloorAfterEarnedCushion(t *testing.T) {
-	t.Parallel()
+	Convey("Given a bound trail and a peak still inside the survival band", t, func() {
+		trail := NewTrail()
+		trail.Bind(0.02)
+		trail.Advance(0.01)
 
-	trail := NewTrail()
-	trail.Bind(0.02)
-	trail.Advance(0.01)
+		Convey("Then LockedFloor stays unlocked but the stop has already risen", func() {
+			So(math.IsInf(trail.LockedFloor, -1), ShouldBeTrue)
+			So(trail.StopReturn, ShouldBeGreaterThan, -0.02)
+			So(trail.StopReturn, ShouldAlmostEqual, -0.01, 1e-12)
+		})
 
-	if !math.IsInf(trail.LockedFloor, -1) {
-		t.Fatalf("unearned peak must keep -Inf floor, got %v", trail.LockedFloor)
-	}
+		Convey("When peak clears the survival band", func() {
+			trail.Advance(0.05)
 
-	trail.Advance(0.05)
+			Convey("Then LockedFloor locks above entry", func() {
+				So(trail.LockedFloor, ShouldBeGreaterThan, 0)
+				So(trail.StopReturn, ShouldBeGreaterThan, 0)
+			})
+		})
+	})
+}
 
-	if trail.LockedFloor <= 0 {
-		t.Fatalf("earned peak must lock floor, got %v", trail.LockedFloor)
-	}
+/*
+TestTrailAdvanceRatchetsBelowEntryOnPartialPeak proves a BILL-like runner on a
+wide survival band raises StopReturn toward entry before the floor locks above
+zero — the stop must not stay glued at −TrailDistance until a full-band peak.
+*/
+func TestTrailAdvanceRatchetsBelowEntryOnPartialPeak(t *testing.T) {
+	Convey("Given a wide fill-time survival band", t, func() {
+		trail := NewTrail()
+		trail.Bind(0.057)
+
+		Convey("When mark peaks at +2.2% (below the 5.7% band)", func() {
+			trail.Advance(0.022)
+
+			Convey("Then the stop ratchets up under the peak without locking above entry", func() {
+				So(math.IsInf(trail.LockedFloor, -1), ShouldBeTrue)
+				So(trail.StopReturn, ShouldAlmostEqual, 0.022-0.057, 1e-12)
+				So(trail.StopReturn, ShouldBeGreaterThan, -0.057)
+				So(trail.StopReturn, ShouldBeLessThan, 0)
+			})
+		})
+	})
 }
 
 /*
 TestTrailBreachedReportsCrossThroughLiveStop checks the breach predicate.
 */
 func TestTrailBreachedReportsCrossThroughLiveStop(t *testing.T) {
-	t.Parallel()
+	Convey("Given a bound trail", t, func() {
+		trail := NewTrail()
+		trail.Bind(0.02)
 
-	trail := NewTrail()
-	trail.Bind(0.02)
+		Convey("Then marks above the stop do not breach", func() {
+			So(trail.Breached(-0.01), ShouldBeFalse)
+		})
 
-	if trail.Breached(-0.01) {
-		t.Fatal("mark above stop must not breach")
-	}
-
-	if !trail.Breached(-0.03) {
-		t.Fatal("mark through stop must breach")
-	}
+		Convey("And marks through the stop breach", func() {
+			So(trail.Breached(-0.03), ShouldBeTrue)
+		})
+	})
 }
 
 /*

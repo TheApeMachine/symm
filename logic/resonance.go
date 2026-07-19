@@ -7,7 +7,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
-	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
 )
@@ -34,23 +33,19 @@ var resonanceObservableKeys = []string{
 	"stress_anisotropy",
 }
 
+/*
+Resonance learns the manifold's unsupervised physical representation and owns
+a configured strict-prior RLS head for the next L3 midpoint return.
+*/
 type Resonance struct {
 	symbol      string
 	manifold    *learning.ResonanceManifold
+	returns     *returnHead
 	baselines   map[string]*adaptive.TimeElastic
 	halflife    time.Duration
 	startedAt   time.Time
 	lastEventAt time.Time
 	samples     uint64
-	pending     []float64
-	pendingMid  float64
-	prediction  float64
-	predicted   bool
-	mse         *statistic.Mean
-	errors      *adaptive.Variance
-	returnMSE   float64
-	uncertainty float64
-	calibration uint64
 }
 
 /*
@@ -80,15 +75,28 @@ func NewResonance(
 			"logic resonance: failed to initialize manifold",
 			err,
 		))
+
+		return nil
+	}
+
+	returns, err := newReturnHead()
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"logic resonance: invalid return-head configuration",
+			err,
+		))
+
+		return nil
 	}
 
 	resonance := &Resonance{
 		symbol:    symbol,
 		manifold:  manifoldOut,
+		returns:   returns,
 		baselines: map[string]*adaptive.TimeElastic{},
 		halflife:  halflife,
-		mse:       statistic.NewMean(),
-		errors:    adaptive.NewVariance(),
 	}
 
 	return resonance
@@ -139,7 +147,7 @@ func (resonance *Resonance) Update(
 
 	resonance.advanceEventAt(stepAt)
 
-	if err := resonance.learnReturn(state); err != nil {
+	if err := resonance.returns.Resolve(state.ReferencePrice); err != nil {
 		errnie.Error(err)
 		return nil, nil
 	}
@@ -165,36 +173,38 @@ func (resonance *Resonance) Update(
 	}
 
 	resonance.samples++
-	prediction := resonance.manifold.TaskPrediction()
+	prediction, err := resonance.returns.Predict(observables, state.ReferencePrice)
 
-	if len(prediction) != 1 || !finite(prediction[0]) {
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"logic resonance: return prediction failed",
+			err,
+		))
+
 		return nil, nil
 	}
-
-	resonance.pending = append(resonance.pending[:0], observables...)
-	resonance.pendingMid = state.ReferencePrice
-	resonance.prediction = prediction[0]
-	resonance.predicted = true
 
 	latent := resonance.manifold.LatentState()
 	layers, surprise, energy := resonance.manifold.WireSnapshot()
 
 	outcome := ResonanceOutcome{
-		Source:             "resonance",
-		Symbol:             resonance.symbol,
-		At:                 stepAt,
-		Samples:            resonance.samples,
-		Observables:        observables,
-		Latent:             latent,
-		Layers:             layers,
-		Energy:             energy,
-		Surprise:           surprise,
-		Target:             resonanceReturnTarget,
-		ExpectedReturn:     prediction[0],
-		ReturnReady:        resonance.calibration > 0,
-		IncrementalMSE:     resonance.returnMSE,
-		Uncertainty:        resonance.uncertainty,
-		CalibrationSamples: resonance.calibration,
+		Source:                     "resonance",
+		Symbol:                     resonance.symbol,
+		At:                         stepAt,
+		Samples:                    resonance.samples,
+		Observables:                observables,
+		Latent:                     latent,
+		Layers:                     layers,
+		Energy:                     energy,
+		Surprise:                   surprise,
+		Target:                     resonanceReturnTarget,
+		ExpectedReturn:             prediction,
+		ReturnReady:                resonance.returns.Ready(),
+		IncrementalMSE:             resonance.returns.meanMSE,
+		IncrementalSkillLowerBound: resonance.returns.skillLower,
+		Uncertainty:                resonance.returns.uncertainty,
+		CalibrationSamples:         resonance.returns.samples,
 	}
 
 	if !outcome.IsFinite() {
@@ -243,92 +253,6 @@ func (resonance *Resonance) Update(
 			Raw: outcome.Surprise, Maturity: maturity, Validity: validity, Scale: scale,
 		},
 	}, &outcome
-}
-
-/*
-learnReturn resolves the prior task-head prediction against the next observed
-midpoint before teaching that strictly prior latent state its realized target.
-*/
-func (resonance *Resonance) learnReturn(state manifold.State) error {
-	if len(resonance.pending) == 0 {
-		return nil
-	}
-
-	if !(resonance.pendingMid > 0) || !(state.ReferencePrice > 0) {
-		return errnie.Err(
-			errnie.Validation,
-			"logic resonance: midpoint prices must be strictly positive for log return",
-			nil,
-		)
-	}
-
-	ratio := state.ReferencePrice / resonance.pendingMid
-
-	if !(ratio > 0) {
-		return errnie.Err(
-			errnie.Validation,
-			"logic resonance: log-return argument must be strictly positive",
-			nil,
-		)
-	}
-
-	target := math.Log(ratio)
-
-	if !finite(target) {
-		return errnie.Err(
-			errnie.Validation,
-			"logic resonance: realized midpoint return is not finite",
-			nil,
-		)
-	}
-
-	if resonance.predicted {
-		residual := target - resonance.prediction
-		mse, err := resonance.mse.Measure(residual * residual)
-
-		if err != nil {
-			return errnie.Err(
-				errnie.UnprocessableContent,
-				"logic resonance: return MSE update failed",
-				err,
-			)
-		}
-
-		variance, err := resonance.errors.Measure(residual)
-
-		if err != nil {
-			return errnie.Err(
-				errnie.UnprocessableContent,
-				"logic resonance: return uncertainty update failed",
-				err,
-			)
-		}
-
-		resonance.calibration = uint64(mse.Count)
-		resonance.returnMSE = mse.Value
-
-		if variance.Ready {
-			resonance.uncertainty = math.Sqrt(math.Max(variance.Value, 0))
-		}
-	}
-
-	if err := resonance.manifold.Settle(resonance.pending, false); err != nil {
-		return errnie.Err(
-			errnie.UnprocessableContent,
-			"logic resonance: prior return state failed to settle",
-			err,
-		)
-	}
-
-	if err := resonance.manifold.Learn([]float64{target}); err != nil {
-		return errnie.Err(
-			errnie.UnprocessableContent,
-			"logic resonance: return learn failed",
-			err,
-		)
-	}
-
-	return nil
 }
 
 func (resonance *Resonance) normalize(
@@ -412,21 +336,22 @@ ResonanceOutcome is the online predictive-coding measurement for one manifold
 state, including the chronologically trained next-midpoint return task head.
 */
 type ResonanceOutcome struct {
-	Source             string                        `json:"source"`
-	Symbol             string                        `json:"symbol"`
-	At                 time.Time                     `json:"at"`
-	Samples            uint64                        `json:"samples"`
-	Observables        []float64                     `json:"observables"`
-	Latent             []float64                     `json:"latent"`
-	Layers             []learning.ResonanceLayerWire `json:"layers"`
-	Energy             float64                       `json:"energy"`
-	Surprise           float64                       `json:"surprise"`
-	Target             string                        `json:"target"`
-	ExpectedReturn     float64                       `json:"expectedReturn"`
-	ReturnReady        bool                          `json:"returnReady"`
-	IncrementalMSE     float64                       `json:"incrementalMSE"`
-	Uncertainty        float64                       `json:"uncertainty"`
-	CalibrationSamples uint64                        `json:"calibrationSamples"`
+	Source                     string                        `json:"source"`
+	Symbol                     string                        `json:"symbol"`
+	At                         time.Time                     `json:"at"`
+	Samples                    uint64                        `json:"samples"`
+	Observables                []float64                     `json:"observables"`
+	Latent                     []float64                     `json:"latent"`
+	Layers                     []learning.ResonanceLayerWire `json:"layers"`
+	Energy                     float64                       `json:"energy"`
+	Surprise                   float64                       `json:"surprise"`
+	Target                     string                        `json:"target"`
+	ExpectedReturn             float64                       `json:"expectedReturn"`
+	ReturnReady                bool                          `json:"returnReady"`
+	IncrementalMSE             float64                       `json:"incrementalMSE"`
+	IncrementalSkillLowerBound float64                       `json:"incrementalSkillLowerBound"`
+	Uncertainty                float64                       `json:"uncertainty"`
+	CalibrationSamples         uint64                        `json:"calibrationSamples"`
 }
 
 func (outcome ResonanceOutcome) IsFinite() bool {
@@ -441,6 +366,7 @@ func (outcome ResonanceOutcome) IsFinite() bool {
 		finite(outcome.Surprise) &&
 		finite(outcome.ExpectedReturn) &&
 		finite(outcome.IncrementalMSE) &&
+		finite(outcome.IncrementalSkillLowerBound) &&
 		finite(outcome.Uncertainty)
 }
 

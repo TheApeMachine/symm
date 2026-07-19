@@ -64,6 +64,26 @@ func TestThesisMarshalJSON(t *testing.T) {
 }
 
 /*
+TestThesisResetCutUsesMarketTime proves virtual and live cuts share the
+authoritative time passed to Market.Cut rather than reading the wall clock.
+*/
+func TestThesisResetCutUsesMarketTime(t *testing.T) {
+	Convey("Given a market frame with an explicit cut time", t, func() {
+		at := time.Unix(123, 456).UTC()
+		thesis := NewThesis(nil, nil)
+		thesis.ResetCut(&MarketFrame{
+			At:           at,
+			CrossSection: NewCrossSection(),
+		}, 9)
+
+		Convey("Then the Thesis and downstream decisions share market time", func() {
+			So(thesis.At, ShouldEqual, at)
+			So(thesis.Tick, ShouldEqual, int64(9))
+		})
+	})
+}
+
+/*
 BenchmarkThesisMarshalJSON measures the checkpoint encoding used once per tick.
 */
 func BenchmarkThesisMarshalJSON(b *testing.B) {

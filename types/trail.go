@@ -40,28 +40,44 @@ func (trail *Trail) Bind(distance float64) {
 }
 
 /*
-Advance records markReturn, ratchets the floor after an earned cushion, and
-sets the live stop. Until that cushion exists the stop is −trail. Once a floor
-exists StopReturn never loosens — pullbacks and Scale shrinks cannot give back
-drawdown room the ratchet already claimed.
+Advance records markReturn, ratchets the live stop up under the peak, and locks
+a floor once peak has cleared the fill-time survival band. Until that lock the
+stop may still sit below entry, but it rises as peak rises (PeakReturn −
+TrailDistance) so a +2% runner on a 5% survival band is not stuck at −5%. Once
+LockedFloor is earned StopReturn never loosens — pullbacks and Scale widens
+cannot give back drawdown room the ratchet already claimed.
 */
 func (trail *Trail) Advance(markReturn float64) {
-	trail.MarkReturn = markReturn
-	trail.PeakReturn = math.Max(trail.PeakReturn, markReturn)
-	candidate := trail.PeakReturn - trail.TrailDistance
-
-	if candidate > 0 {
-		trail.LockedFloor = math.Max(trail.LockedFloor, candidate)
+	if trail.TrailDistance <= 0 || math.IsNaN(trail.TrailDistance) ||
+		math.IsInf(trail.TrailDistance, 0) {
+		return
 	}
 
-	next := -trail.TrailDistance
+	trail.MarkReturn = markReturn
+	trail.PeakReturn = math.Max(trail.PeakReturn, markReturn)
+
+	raised := trail.PeakReturn - trail.TrailDistance
+	next := math.Max(-trail.TrailDistance, raised)
+
+	survival := trail.FloorDistance
+
+	if survival <= 0 {
+		survival = trail.TrailDistance
+	}
+
+	if trail.PeakReturn > survival {
+		candidate := trail.PeakReturn - trail.TrailDistance
+
+		if candidate > 0 {
+			trail.LockedFloor = math.Max(trail.LockedFloor, candidate)
+		}
+	}
 
 	if !math.IsInf(trail.LockedFloor, -1) {
 		next = math.Max(trail.LockedFloor, markReturn-trail.TrailDistance)
-		next = math.Max(trail.StopReturn, next)
 	}
 
-	trail.StopReturn = next
+	trail.StopReturn = math.Max(trail.StopReturn, next)
 }
 
 /*

@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/symm/kraken"
@@ -14,6 +15,7 @@ Advanced names which feeds progressed this cut — distinct from Tickers/Trades/
 Books length, which may carry retained context for a non-advanced stream.
 */
 type MarketFrame struct {
+	At           time.Time
 	Tickers      []kraken.TickerData
 	Trades       []kraken.TradeData
 	Books        []kraken.BookData

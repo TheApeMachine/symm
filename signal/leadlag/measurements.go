@@ -68,6 +68,8 @@ type correlationSelection struct {
 	signedContempCorrelation float64
 	signedLagCorrelation     float64
 	lagFraction              float64
+	lagBars                  int
+	lagDirection             float64
 }
 
 /*
@@ -87,6 +89,13 @@ func (signal *Signal) selectCorrelations(
 		}
 
 		selected.signedLagCorrelation = features.LagCorr
+		selected.lagBars = features.LagBars
+
+		if features.LagBars > 0 {
+			selected.lagDirection = 1
+		} else if features.LagBars < 0 {
+			selected.lagDirection = -1
+		}
 	}
 
 	if features.ContempOK {
@@ -205,6 +214,7 @@ buildScoreMeasurements materializes the lead-lag metric bundle for one row.
 */
 func buildScoreMeasurements(
 	symbol string,
+	anchor string,
 	at time.Time,
 	selected correlationSelection,
 	sampleSupport float64,
@@ -231,7 +241,7 @@ func buildScoreMeasurements(
 		{types.MetricStall, weights.stall},
 		{types.MetricStrength, weights.strength},
 	}
-	measurements := make([]*types.Measurement, 0, len(readings))
+	measurements := make([]*types.Measurement, 0, len(readings)+1)
 
 	for _, item := range readings {
 		measurements = append(measurements, &types.Measurement{
@@ -243,6 +253,24 @@ func buildScoreMeasurements(
 			Unit:     types.UnitDimensionless,
 			Raw:      item.raw,
 			Validity: validity,
+		})
+	}
+
+	// Signed lead-lag direction against the live anchor: +1 anchor leads this
+	// follower, -1 this follower leads the anchor. Peer names the counterpart
+	// so the analyzer can draw a directed Leads/Lags edge between their nodes.
+	if anchor != "" && anchor != symbol && selected.lagDirection != 0 {
+		measurements = append(measurements, &types.Measurement{
+			Source:     types.SourceLeadLag,
+			Metric:     types.MetricSignedLagDirection,
+			Stream:     types.LeadLag,
+			Symbol:     symbol,
+			Peer:       anchor,
+			At:         at,
+			Unit:       types.UnitDimensionless,
+			Raw:        selected.lagDirection,
+			Normalized: types.NormalizeFinite(selected.lagDirection),
+			Validity:   validity,
 		})
 	}
 
@@ -261,8 +289,11 @@ func (signal *Signal) score(
 	selected := signal.selectCorrelations(features)
 	sampleSupport := sampleSupportFraction(features.SampleCount)
 	weights := weightEvidence(features, selected, sampleSupport)
+	anchor := signal.section.AnchorSymbol()
 
-	return buildScoreMeasurements(symbol, at, selected, sampleSupport, weights)
+	return buildScoreMeasurements(
+		symbol, anchor, at, selected, sampleSupport, weights,
+	)
 }
 
 /*

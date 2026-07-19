@@ -51,18 +51,6 @@ func Calm(horizon int) *tests.Market {
 }
 
 /*
-Pump overlays a vertical price and volume surge from frame at onward onto the
-calm multi-stream market.
-*/
-func Pump(horizon int, at int, priceMul float64, volumeMul float64) *tests.Market {
-	return base(
-		newShaped(tests.Spike(tests.FramesOf(calmTicker(horizon)), at, priceMul, volumeMul)),
-		calmTrade(horizon),
-		calmBook(horizon),
-	)
-}
-
-/*
 Drawdown ramps price down over the first over frames and holds it — sustained
 bleed used for exit/exhaustion style assertions.
 */
@@ -155,6 +143,53 @@ herd from unstructured cohort motion.
 func Noise(horizon int) *tests.Market {
 	return base(
 		cohortFixture(horizon, tests.CohortNoise, 0),
+		calmTrade(horizon),
+		calmBook(horizon),
+	)
+}
+
+/*
+Alpha emits a cohort whose subject follows the peer direction with greater
+return energy, separating relative outperformance from unrelated noise.
+*/
+func Alpha(horizon int) *tests.Market {
+	return base(
+		cohortFixture(horizon, tests.CohortAlpha, 0),
+		calmTrade(horizon),
+		calmBook(horizon),
+	)
+}
+
+/*
+Divergence emits a rising subject against two falling peers so correlation and
+sentiment can test signed disagreement rather than mere movement magnitude.
+*/
+func Divergence(horizon int) *tests.Market {
+	return base(
+		cohortFixture(horizon, tests.CohortDivergent, 0),
+		calmTrade(horizon),
+		calmBook(horizon),
+	)
+}
+
+/*
+Slump emits a uniformly falling cohort with no artificial standout leader.
+*/
+func Slump(horizon int) *tests.Market {
+	return base(
+		cohortFixture(horizon, tests.CohortSlump, 0),
+		calmTrade(horizon),
+		calmBook(horizon),
+	)
+}
+
+/*
+Stall establishes a clear cohort leader, then holds it flat while smaller peer
+paths continue moving so anchor-stall evidence can be distinguished from quiet.
+*/
+func Stall(horizon int) *tests.Market {
+	return base(
+		cohortFixture(horizon, tests.CohortStall, 0),
 		calmTrade(horizon),
 		calmBook(horizon),
 	)

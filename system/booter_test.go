@@ -7,7 +7,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -23,15 +22,15 @@ func TestBooterReadyBeforeStages(t *testing.T) {
 
 func TestBooterReady(t *testing.T) {
 	Convey("Given a booter with a preflight stage and a warmup stage", t, func() {
-		api := tests.NewMockReporter(types.READY)
+		api := newMockReporter(types.READY)
 
-		instrument := tests.NewMockReporter(types.INITIALIZING)
+		instrument := newMockReporter(types.INITIALIZING)
 		instrument.SetReadyOnInitialize(true)
 
-		signal := tests.NewMockReporter(types.INITIALIZING)
+		signal := newMockReporter(types.INITIALIZING)
 		signal.SetReadyOnInitialize(true)
 
-		ready := tests.NewMockReporter(types.INITIALIZING)
+		ready := newMockReporter(types.INITIALIZING)
 		ready.SetReadyOnInitialize(true)
 
 		booter := system.NewBooter(context.Background(), nil)
@@ -80,7 +79,7 @@ func TestBooterReady(t *testing.T) {
 
 func TestBooterError(t *testing.T) {
 	Convey("Given a booter with a reporter that fails to initialize", t, func() {
-		failing := tests.NewMockReporter(types.INITIALIZING)
+		failing := newMockReporter(types.INITIALIZING)
 		failing.SetInitializeError(errors.New("boom"))
 
 		booter := system.NewBooter(context.Background(), nil)

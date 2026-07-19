@@ -26,11 +26,27 @@ const (
 )
 
 /*
+NodeKind distinguishes a measurement node from a synthetic category node. A
+category node has no reading of its own; it is the hypothesis that measurement
+nodes support or contradict.
+*/
+type NodeKind string
+
+const (
+	NodeMeasurement NodeKind = "measurement"
+	NodeCategory    NodeKind = "category"
+	NodeConcept     NodeKind = "concept"
+)
+
+/*
 Node retains one immutable measurement only while it participates in a typed
-evidence relationship.
+evidence relationship. A category node carries a descriptive Measurement shell
+(Source category, Metric = category type) so the wire and UI treat it uniformly.
 */
 type Node struct {
 	Key         string
+	Kind        NodeKind
+	Category    CategoryType
 	Measurement Measurement
 }
 
@@ -106,13 +122,68 @@ func (evidenceGraph *Graph) AddNode(measurement *Measurement) error {
 		retained.Uncertainty = &uncertainty
 	}
 
-	evidenceGraph.nodes[key] = &Node{Key: key, Measurement: retained}
+	evidenceGraph.nodes[key] = &Node{
+		Key: key, Kind: NodeMeasurement, Measurement: retained,
+	}
 
 	if evidenceGraph.At.IsZero() || measurement.At.After(evidenceGraph.At) {
 		evidenceGraph.At = measurement.At
 	}
 
 	return nil
+}
+
+/*
+RestoreNode reinstates one node under its original wire key when a graph is
+rebuilt from a snapshot frame. Unlike AddNode it does not recompute the key or
+validate a reading, so category and concept nodes round-trip faithfully and the
+edge references from the frame still resolve.
+*/
+func (evidenceGraph *Graph) RestoreNode(
+	key string,
+	kind NodeKind,
+	category CategoryType,
+	measurement Measurement,
+) {
+	if key == "" {
+		return
+	}
+
+	if _, exists := evidenceGraph.nodes[key]; exists {
+		return
+	}
+
+	if kind == "" {
+		kind = NodeMeasurement
+	}
+
+	evidenceGraph.nodes[key] = &Node{
+		Key: key, Kind: kind, Category: category, Measurement: measurement,
+	}
+
+	if evidenceGraph.At.IsZero() || measurement.At.After(evidenceGraph.At) {
+		evidenceGraph.At = measurement.At
+	}
+}
+
+/*
+StagePeerNode inserts a referenced measurement owned by another symbol's graph
+so a cross-symbol relationship (lead-lag direction) can be drawn to it with a
+real key. The peer keeps its own Symbol; it is evidence borrowed into this
+graph, not a reading of this symbol. Returns the stable key to relate against.
+*/
+func (evidenceGraph *Graph) StagePeerNode(measurement Measurement) string {
+	key := MeasurementKey(&measurement)
+
+	if _, exists := evidenceGraph.nodes[key]; exists {
+		return key
+	}
+
+	evidenceGraph.nodes[key] = &Node{
+		Key: key, Kind: NodeMeasurement, Measurement: measurement,
+	}
+
+	return key
 }
 
 /*
@@ -171,6 +242,75 @@ func (evidenceGraph *Graph) Edges() []*Edge {
 }
 
 /*
+CategoryEvidence walks the composed edges for one category hypothesis and
+returns the measurement keys supporting it, opposing it, and the metrics whose
+affinity names this category but which produced no active reading this tick
+(Missing). It is the per-category evidence surface the terminal renders.
+*/
+func (evidenceGraph *Graph) CategoryEvidence(category CategoryType) (
+	supporting []string, opposing []string, missing []string,
+) {
+	categoryKey := CategoryKey(category)
+	present := make(map[string]struct{})
+
+	for _, edge := range evidenceGraph.edges {
+		if edge.To != categoryKey {
+			continue
+		}
+
+		switch edge.Type {
+		case Supports:
+			supporting = append(supporting, edge.From)
+			present[edge.From] = struct{}{}
+		case Contradicts:
+			opposing = append(opposing, edge.From)
+			present[edge.From] = struct{}{}
+		}
+	}
+
+	for _, node := range evidenceGraph.nodes {
+		if node.Kind != NodeMeasurement {
+			continue
+		}
+
+		affinity, ok := AffinityFor(node.Measurement.Metric)
+
+		if !ok {
+			continue
+		}
+
+		if _, seen := present[node.Key]; seen {
+			continue
+		}
+
+		if categoryListed(affinity, category) {
+			missing = append(missing, node.Key)
+		}
+	}
+
+	return supporting, opposing, missing
+}
+
+/*
+categoryListed reports whether an affinity names the category on either side.
+*/
+func categoryListed(affinity MetricAffinity, category CategoryType) bool {
+	for _, candidate := range affinity.Supports {
+		if candidate == category {
+			return true
+		}
+	}
+
+	for _, candidate := range affinity.Opposes {
+		if candidate == category {
+			return true
+		}
+	}
+
+	return false
+}
+
+/*
 prune removes staged measurements that did not participate in a relationship.
 */
 func (evidenceGraph *Graph) prune() {
@@ -223,6 +363,96 @@ func MeasurementKey(measurement *Measurement) string {
 	writeInt(measurement.Scale.Through.UnixNano())
 
 	return key.String()
+}
+
+/*
+CategoryKey is the stable evidence reference for a category hypothesis node.
+*/
+func CategoryKey(category CategoryType) string {
+	return string(SourceCategory) + "/" + string(category)
+}
+
+/*
+ensureCategory stages a synthetic category node once per composition so
+measurement nodes can attach Supports and Contradicts edges to it. The category
+node carries a descriptive Measurement shell rather than a reading of its own.
+*/
+func (evidenceGraph *Graph) ensureCategory(category CategoryType, at time.Time) string {
+	key := CategoryKey(category)
+
+	if _, exists := evidenceGraph.nodes[key]; exists {
+		return key
+	}
+
+	evidenceGraph.nodes[key] = &Node{
+		Key:      key,
+		Kind:     NodeCategory,
+		Category: category,
+		Measurement: Measurement{
+			Source: SourceCategory,
+			Metric: MetricType(category),
+			Symbol: evidenceGraph.Symbol,
+			At:     at,
+		},
+	}
+
+	return key
+}
+
+/*
+ConceptKey is the stable evidence reference for a named causal concept node
+(a treatment or outcome variable from a causal hypothesis).
+*/
+func ConceptKey(name string) string {
+	return string(SourceCausal) + "/" + name
+}
+
+/*
+ensureConcept stages a synthetic concept node once so a causal Conditions edge
+can reference a named treatment or outcome variable.
+*/
+func (evidenceGraph *Graph) ensureConcept(name string, at time.Time) string {
+	key := ConceptKey(name)
+
+	if _, exists := evidenceGraph.nodes[key]; exists {
+		return key
+	}
+
+	evidenceGraph.nodes[key] = &Node{
+		Key:  key,
+		Kind: NodeConcept,
+		Measurement: Measurement{
+			Source: SourceCausal,
+			Metric: MetricType(name),
+			Symbol: evidenceGraph.Symbol,
+			At:     at,
+		},
+	}
+
+	return key
+}
+
+/*
+RelateConditions records a directed causal claim that a treatment variable
+conditions an outcome variable, staging both concept nodes. It is the graph
+projection of a ready causal hypothesis.
+*/
+func (evidenceGraph *Graph) RelateConditions(
+	treatment string,
+	outcome string,
+	at time.Time,
+	observedFrom time.Time,
+) bool {
+	if treatment == "" || outcome == "" {
+		return false
+	}
+
+	treatmentKey := evidenceGraph.ensureConcept(treatment, at)
+	outcomeKey := evidenceGraph.ensureConcept(outcome, at)
+
+	return evidenceGraph.Relate(
+		treatmentKey, outcomeKey, Conditions, at, observedFrom,
+	)
 }
 
 func edgeKey(

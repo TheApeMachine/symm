@@ -2,19 +2,83 @@ package system_test
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
 )
 
+type mockReporter struct {
+	mutex             sync.Mutex
+	status            types.Status
+	initializeErr     error
+	initializeCalls   int
+	readyOnInitialize bool
+}
+
+func newMockReporter(status types.Status) *mockReporter {
+	return &mockReporter{status: status}
+}
+
+func (reporter *mockReporter) Status() types.Status {
+	reporter.mutex.Lock()
+	defer reporter.mutex.Unlock()
+
+	return reporter.status
+}
+
+func (reporter *mockReporter) SetStatus(status types.Status) {
+	reporter.mutex.Lock()
+	defer reporter.mutex.Unlock()
+
+	reporter.status = status
+}
+
+func (reporter *mockReporter) Initialize() error {
+	reporter.mutex.Lock()
+	defer reporter.mutex.Unlock()
+	reporter.initializeCalls++
+
+	if reporter.initializeErr != nil {
+		reporter.status = types.ERROR
+		return reporter.initializeErr
+	}
+
+	if reporter.readyOnInitialize {
+		reporter.status = types.READY
+	}
+
+	return nil
+}
+
+func (reporter *mockReporter) SetInitializeError(err error) {
+	reporter.mutex.Lock()
+	defer reporter.mutex.Unlock()
+
+	reporter.initializeErr = err
+}
+
+func (reporter *mockReporter) SetReadyOnInitialize(ready bool) {
+	reporter.mutex.Lock()
+	defer reporter.mutex.Unlock()
+
+	reporter.readyOnInitialize = ready
+}
+
+func (reporter *mockReporter) InitializeCalls() int {
+	reporter.mutex.Lock()
+	defer reporter.mutex.Unlock()
+
+	return reporter.initializeCalls
+}
+
 func TestStageStatus(t *testing.T) {
 	Convey("Given a stage with two reporters that have not reported READY yet", t, func() {
-		first := tests.NewMockReporter(types.INITIALIZING)
-		second := tests.NewMockReporter(types.INITIALIZING)
+		first := newMockReporter(types.INITIALIZING)
+		second := newMockReporter(types.INITIALIZING)
 		stage := system.NewStage(system.StagePreflight, first, second)
 
 		Convey("Then the stage reports INITIALIZING", func() {
@@ -43,10 +107,10 @@ func TestStageStatus(t *testing.T) {
 
 func TestStageInitialize(t *testing.T) {
 	Convey("Given a stage whose reporters become ready through their own Initialize", t, func() {
-		first := tests.NewMockReporter(types.INITIALIZING)
+		first := newMockReporter(types.INITIALIZING)
 		first.SetReadyOnInitialize(true)
 
-		second := tests.NewMockReporter(types.INITIALIZING)
+		second := newMockReporter(types.INITIALIZING)
 		second.SetReadyOnInitialize(true)
 
 		stage := system.NewStage(system.StagePreflight, first, second)
@@ -71,9 +135,9 @@ func TestStageInitialize(t *testing.T) {
 	})
 
 	Convey("Given a reporter that only becomes ready after a later event", t, func() {
-		first := tests.NewMockReporter(types.PENDING)
+		first := newMockReporter(types.PENDING)
 
-		second := tests.NewMockReporter(types.INITIALIZING)
+		second := newMockReporter(types.INITIALIZING)
 		second.SetReadyOnInitialize(true)
 
 		stage := system.NewStage(system.StagePreflight, first, second)
@@ -99,10 +163,10 @@ func TestStageInitialize(t *testing.T) {
 	})
 
 	Convey("Given a reporter whose Initialize fails", t, func() {
-		failing := tests.NewMockReporter(types.INITIALIZING)
+		failing := newMockReporter(types.INITIALIZING)
 		failing.SetInitializeError(errors.New("boom"))
 
-		never := tests.NewMockReporter(types.INITIALIZING)
+		never := newMockReporter(types.INITIALIZING)
 		never.SetReadyOnInitialize(true)
 
 		stage := system.NewStage(system.StagePreflight, failing, never)

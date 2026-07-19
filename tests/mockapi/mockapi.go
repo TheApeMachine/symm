@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -24,27 +25,19 @@ websocket.Conn so tests can inject it through websocket.NewAPI exactly as root
 does.
 */
 type MockConn struct {
+	mu           sync.Mutex
 	channels     map[string][]mockHandler
 	nextID       uint64
 	client       *spot.WebSocket
+	writes       [][]byte
+	writeErr     error
 	postResponse []byte
-	postPath     string
-	postParams   json.Marshaler
-	postCalls    []MockPostCall
-	closeCount   int
+	postSymbols  []string
 }
 
 type mockHandler struct {
 	id uint64
 	fn func([]byte)
-}
-
-/*
-MockPostCall records one REST post issued through a mock transport.
-*/
-type MockPostCall struct {
-	Path   string
-	Params json.Marshaler
 }
 
 /*
@@ -62,6 +55,9 @@ func (conn *MockConn) On(channel string, action func([]byte)) uint64 {
 	if conn == nil || action == nil {
 		return 0
 	}
+
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
 
 	if conn.channels == nil {
 		conn.channels = map[string][]mockHandler{}
@@ -83,7 +79,14 @@ id so position teardown can drop ticker listeners without clearing unrelated
 consumers.
 */
 func (conn *MockConn) Unsubscribe(channel string, id uint64) {
-	if conn == nil || id == 0 || conn.channels == nil {
+	if conn == nil || id == 0 {
+		return
+	}
+
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	if conn.channels == nil {
 		return
 	}
 
@@ -107,37 +110,72 @@ func (conn *MockConn) Unsubscribe(channel string, id uint64) {
 }
 
 /*
-Write is a no-op transport write for emulator parity.
-
-ponytail: requests are broadly accepted even though the REST client supports
-only two endpoints; configurable failures and request/response fixtures are
-the upgrade path.
+Write records one outbound websocket request and returns the configured error.
+Tests can therefore verify that production subscriptions and orders crossed the
+injected Conn boundary instead of disappearing into an SDK client.
 */
 func (conn *MockConn) Write(params json.Marshaler) error {
-	return nil
+	if conn == nil || params == nil {
+		return errnie.Err(
+			errnie.Validation,
+			"tests/mockapi: websocket request is required",
+			nil,
+		)
+	}
+
+	raw, err := params.MarshalJSON()
+
+	if err != nil {
+		return errnie.Err(
+			errnie.Validation,
+			"tests/mockapi: websocket request marshal failed",
+			err,
+		)
+	}
+
+	conn.mu.Lock()
+	conn.writes = append(conn.writes, append([]byte(nil), raw...))
+	err = conn.writeErr
+	conn.mu.Unlock()
+
+	return err
 }
 
 /*
-Close records one close attempt.
+Close satisfies Conn; the in-memory producer owns no external resources.
 */
-func (conn *MockConn) Close() {
-	conn.closeCount++
-}
+func (conn *MockConn) Close() {}
 
 /*
 Post records the REST call and returns the configured response.
-
-ponytail: requests are broadly accepted even though the REST client supports
-only two endpoints; configurable failures and request/response fixtures are
-the upgrade path.
 */
 func (conn *MockConn) Post(path string, params json.Marshaler) ([]byte, error) {
-	conn.postPath = path
-	conn.postParams = params
-	conn.postCalls = append(conn.postCalls, MockPostCall{
-		Path:   path,
-		Params: params,
-	})
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	if path == krakenws.TradeVolumeEndpoint {
+		raw, err := params.MarshalJSON()
+
+		if err != nil {
+			return nil, errnie.Err(
+				errnie.Validation,
+				"tests/mockapi: trade volume request marshal failed",
+				err,
+			)
+		}
+
+		request := &kraken.TradeVolumeRequest{}
+
+		if err := sonic.Unmarshal(raw, request); err != nil {
+			return nil, errnie.Err(
+				errnie.Validation,
+				"tests/mockapi: trade volume request decode failed",
+				err,
+			)
+		}
+
+		conn.postSymbols = strings.Split(request.Pair, ",")
+	}
 
 	return conn.postResponse, nil
 }
@@ -146,15 +184,55 @@ func (conn *MockConn) Post(path string, params json.Marshaler) ([]byte, error) {
 Emit delivers one payload to every handler registered for channel.
 */
 func (conn *MockConn) Emit(channel string, payload []byte) {
+	conn.mu.Lock()
 	handlers, ok := conn.channels[channel]
 
 	if !ok {
+		conn.mu.Unlock()
 		return
 	}
+
+	handlers = append([]mockHandler(nil), handlers...)
+	conn.mu.Unlock()
 
 	for _, handler := range handlers {
 		handler.fn(payload)
 	}
+}
+
+/*
+Writes returns independent copies of the websocket requests sent through this
+connection, preserving their production order for assertions.
+*/
+func (conn *MockConn) Writes() [][]byte {
+	if conn == nil {
+		return nil
+	}
+
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	writes := make([][]byte, len(conn.writes))
+
+	for index := range conn.writes {
+		writes[index] = append([]byte(nil), conn.writes[index]...)
+	}
+
+	return writes
+}
+
+/*
+FailWrites configures the websocket error returned after each request is
+recorded, allowing package tests to prove subscription failures are propagated.
+*/
+func (conn *MockConn) FailWrites(err error) {
+	if conn == nil {
+		return
+	}
+
+	conn.mu.Lock()
+	conn.writeErr = err
+	conn.mu.Unlock()
 }
 
 /*
@@ -257,7 +335,9 @@ func (mock *MockAPI) SetTradeVolumeResponse(tradeVolume *kraken.TradeVolume) err
 		))
 	}
 
+	mock.private.mu.Lock()
 	mock.private.postResponse = raw
+	mock.private.mu.Unlock()
 
 	return nil
 }
@@ -266,52 +346,15 @@ func (mock *MockAPI) SetTradeVolumeResponse(tradeVolume *kraken.TradeVolume) err
 LastTradeVolumeSymbols returns the pair list from the latest TradeVolume post.
 */
 func (mock *MockAPI) LastTradeVolumeSymbols() ([]string, error) {
-	for index := len(mock.private.postCalls) - 1; index >= 0; index-- {
-		call := mock.private.postCalls[index]
+	mock.private.mu.Lock()
+	symbols := append([]string(nil), mock.private.postSymbols...)
+	mock.private.mu.Unlock()
 
-		if call.Path != krakenws.TradeVolumeEndpoint {
-			continue
-		}
-
-		symbols, err := tradeVolumeSymbols(call.Params)
-
-		if err != nil {
-			return nil, err
-		}
-
-		return symbols, nil
-	}
-
-	return nil, nil
-}
-
-func tradeVolumeSymbols(params json.Marshaler) ([]string, error) {
-	raw, err := params.MarshalJSON()
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"tests/mockapi: trade volume request marshal failed",
-			err,
-		))
-	}
-
-	request := &kraken.TradeVolumeRequest{}
-	err = sonic.Unmarshal(raw, request)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"tests/mockapi: trade volume request decode failed",
-			err,
-		))
-	}
-
-	if request.Pair == "" {
+	if len(symbols) == 1 && symbols[0] == "" {
 		return nil, nil
 	}
 
-	return strings.Split(request.Pair, ","), nil
+	return symbols, nil
 }
 
 func mockNormalizerClient() *spot.WebSocket {

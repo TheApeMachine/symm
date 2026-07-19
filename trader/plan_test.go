@@ -42,24 +42,24 @@ func TestSyncInventoryReconcilesPendingBeforeTrading(t *testing.T) {
 			api:     api,
 			balance: balance,
 			desk:    desk,
-			snapshot: &types.Recovery{
-				PendingOrders: map[string]types.PendingOrderWire{
-					"BTC/USD": {
-						Symbol:  "BTC/USD",
-						Side:    "buy",
-						OrderID: "boot-order",
-						Intent:  "entry_pending",
-					},
+		}
+		crypto.snapshot.Store(&types.Recovery{
+			PendingOrders: map[string]types.PendingOrderWire{
+				"BTC/USD": {
+					Symbol:  "BTC/USD",
+					Side:    "buy",
+					OrderID: "boot-order",
+					Intent:  "entry_pending",
 				},
 			},
-			postMortem: &strategy.PostMortem{},
-		}
+		})
+		crypto.postMortem = &strategy.PostMortem{}
 		thesis := types.NewThesis(nil, nil)
 
 		crypto.syncInventory(thesis)
 
 		Convey("Then reconcile clears the snapshot and enables trading", func() {
-			So(crypto.snapshot, ShouldBeNil)
+			So(crypto.snapshot.Load(), ShouldBeNil)
 			So(crypto.trading.Load(), ShouldBeTrue)
 		})
 	})
@@ -135,20 +135,20 @@ func TestSyncInventoryWalletAuthority(t *testing.T) {
 		))
 
 		crypto := &Crypto{
-			balance: balance,
-			snapshot: &types.Recovery{
-				Holdings: map[string]types.Holding{
-					"ONDO/USD": {
-						Symbol:     "ONDO/USD",
-						Asset:      "ONDO",
-						Qty:        decimal.NewFromFloat64(113.9),
-						Status:     types.OPEN,
-						EntryPrice: decimal.NewFromFloat64(0.4),
-					},
-				},
-			},
+			balance:    balance,
 			postMortem: &strategy.PostMortem{},
 		}
+		crypto.snapshot.Store(&types.Recovery{
+			Holdings: map[string]types.Holding{
+				"ONDO/USD": {
+					Symbol:     "ONDO/USD",
+					Asset:      "ONDO",
+					Qty:        decimal.NewFromFloat64(113.9),
+					Status:     types.OPEN,
+					EntryPrice: decimal.NewFromFloat64(0.4),
+				},
+			},
+		})
 
 		thesis := types.NewThesis(nil, nil)
 		thesis.Holdings.Store("ONDO/USD", &types.Holding{
@@ -161,7 +161,7 @@ func TestSyncInventoryWalletAuthority(t *testing.T) {
 		crypto.syncInventory(thesis)
 
 		Convey("Then recovery does not reintroduce qty and PostMortem evaluates", func() {
-			So(crypto.snapshot, ShouldBeNil)
+			So(crypto.snapshot.Load(), ShouldBeNil)
 			phase, ok := thesis.Lifecycle.Load("ONDO/USD")
 			So(ok, ShouldBeTrue)
 			So(phase, ShouldEqual, types.LifecycleEvaluated)
@@ -186,16 +186,16 @@ func TestSyncInventoryEnrichesWalletLot(t *testing.T) {
 
 		crypto := &Crypto{
 			balance: balance,
-			snapshot: &types.Recovery{
-				Holdings: map[string]types.Holding{
-					"ONDO/USD": {
-						Symbol:     "ONDO/USD",
-						EntryPrice: decimal.NewFromFloat64(0.55),
-						Stoploss:   &types.Stoploss{Skill: types.Skill{Weight: 0.7}},
-					},
+		}
+		crypto.snapshot.Store(&types.Recovery{
+			Holdings: map[string]types.Holding{
+				"ONDO/USD": {
+					Symbol:     "ONDO/USD",
+					EntryPrice: decimal.NewFromFloat64(0.55),
+					Stoploss:   &types.Stoploss{Skill: types.Skill{Weight: 0.7}},
 				},
 			},
-		}
+		})
 		thesis := types.NewThesis(nil, nil)
 
 		crypto.syncInventory(thesis)
@@ -207,7 +207,7 @@ func TestSyncInventoryEnrichesWalletLot(t *testing.T) {
 			So(holding.EntryPrice.Float64(), ShouldEqual, 0.55)
 			So(holding.Stoploss, ShouldNotBeNil)
 			So(holding.Stoploss.Weight, ShouldEqual, 0.7)
-			So(crypto.snapshot, ShouldBeNil)
+			So(crypto.snapshot.Load(), ShouldBeNil)
 		})
 	})
 }

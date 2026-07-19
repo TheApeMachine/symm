@@ -184,7 +184,6 @@ func (holding Holding) durable() Holding {
 		stop.ctx = nil
 		stop.cancel = nil
 		stop.Weight = finiteFloat(stop.Weight)
-		stop.LockedFloor = finiteFloat(stop.LockedFloor)
 		stop.TrailDistance = finiteFloat(stop.TrailDistance)
 		stop.StopReturn = finiteFloat(stop.StopReturn)
 		stop.PeakReturn = finiteFloat(stop.PeakReturn)

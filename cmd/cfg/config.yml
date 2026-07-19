@@ -52,6 +52,9 @@ market:
     rls:
       initial_variance: 1.0
       forgetting_factor: 1.0
+      # One-sided Student-t confidence used for the lower bound of incremental
+      # squared-error skill over a zero-return baseline.
+      calibration_confidence: 0.95
   manifold:
     # Maximum chronological lifetime observations retained per admitted symbol.
     lifetime_capacity: 4096

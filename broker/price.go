@@ -673,11 +673,12 @@ func (price *Price) Mark(
 
 /*
 geometryMark prefers touch mid for stop geometry so bid–ask cross after an ask
-entry is not treated as adverse alpha. Falls back to last, then holding.Mark.
+entry is not treated as adverse alpha. Falls back to last only — never bid —
+so a missing ask cannot invent a spread-wide stop breach.
 */
 func (price *Price) geometryMark(
 	ticker *kraken.TickerData,
-	holding *types.Holding,
+	_ *types.Holding,
 ) *decimal.Decimal {
 	if price != nil && ticker != nil && ticker.Bid != nil && ticker.Ask != nil &&
 		ticker.Bid.Sign() > 0 && ticker.Ask.Sign() > 0 {
@@ -690,10 +691,6 @@ func (price *Price) geometryMark(
 
 	if ticker != nil && ticker.Last != nil && ticker.Last.Sign() > 0 {
 		return ticker.Last.Copy()
-	}
-
-	if holding != nil && holding.Mark != nil {
-		return holding.Mark.Copy()
 	}
 
 	return nil

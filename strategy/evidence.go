@@ -36,12 +36,8 @@ func (evidence Evidence) Project(
 		return projected
 	}
 
-	// Prefer StopMark (mid/last) for regulator geometry; fall back to bid Mark.
+	// StopMark (mid/last) only — bid Mark is flatten-now PnL, not stop geometry.
 	markDecimal := holding.StopMark
-
-	if markDecimal == nil {
-		markDecimal = holding.Mark
-	}
 
 	if markDecimal == nil {
 		return projected

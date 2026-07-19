@@ -21,6 +21,14 @@ const (
 	CohortLag
 	// CohortNoise applies independent deterministic drifts per symbol.
 	CohortNoise
+	// CohortAlpha moves the subject with its peers but at greater return energy.
+	CohortAlpha
+	// CohortDivergent moves the subject up while both peers move down.
+	CohortDivergent
+	// CohortSlump moves every symbol down together without inventing a leader.
+	CohortSlump
+	// CohortStall establishes a leader, then stops it while peers remain active.
+	CohortStall
 )
 
 /*
@@ -98,6 +106,7 @@ func (cohort *Cohort) Frames() iter.Seq[Frame] {
 				mul := cohort.priceMul(step, symbolIndex)
 				scaleRowFields(row, mul, priceFields["ticker"])
 				scaleRowFields(row, 1+0.02*float64(step), volumeFields["ticker"])
+				row["change_pct"] = (mul - 1) * 100
 
 				if stamp, ok := row["timestamp"].(string); ok {
 					row["timestamp"] = advanceTimestamp(
@@ -141,27 +150,56 @@ func (cohort *Cohort) priceMul(step int, symbolIndex int) float64 {
 		return 1 + 0.01*float64(step)
 	case CohortLag:
 		if symbolIndex == 0 {
-			return 1 + 0.015*float64(step)
+			return cohort.lagPriceMul(step)
 		}
 
 		delayed := step - cohort.lagFrames
 
 		if delayed < 0 {
-			return 1
+			delayed = 0
 		}
 
-		return 1 + 0.015*float64(delayed)
+		return cohort.lagPriceMul(delayed)
 	case CohortNoise:
 		phase := float64(symbolIndex+1) * 1.7
-		// ponytail: step-scaled sinusoidal drift is capped so long horizons cannot
-		// drive thin symbols to non-positive prices under independent noise paths.
+		// Cap the oscillation so long paths cannot produce non-positive prices.
 		drift := 0.008 * float64(step) * math.Sin(phase+float64(step)*0.35)
 		const noiseDriftCeiling = 0.15
 
 		return 1 + math.Max(-noiseDriftCeiling, math.Min(noiseDriftCeiling, drift))
+	case CohortAlpha:
+		if symbolIndex == 0 {
+			return 1 + 0.03*float64(step)
+		}
+
+		return 1 + 0.005*float64(step)
+	case CohortDivergent:
+		if symbolIndex == 0 {
+			return 1 + 0.02*float64(step)
+		}
+
+		return 1 - 0.01*float64(step)
+	case CohortSlump:
+		return 1 - 0.01*float64(step)
+	case CohortStall:
+		if symbolIndex == 0 {
+			return 1 + 0.01*float64(min(step, cohort.horizon/2))
+		}
+
+		phase := float64(symbolIndex+1) * 1.3
+		return 1 + 0.002*float64(step)*math.Sin(phase+float64(step)*0.55)
 	default:
 		return 1
 	}
+}
+
+/*
+lagPriceMul creates a drifting but non-linear leader path whose delayed copy
+has identifiable timing; a straight ramp would remain contemporaneously
+correlated after an intercept shift and would not constitute a lead-lag proof.
+*/
+func (cohort *Cohort) lagPriceMul(step int) float64 {
+	return 1 + 0.004*float64(step) + 0.02*math.Sin(float64(step)*0.7)
 }
 
 func cloneMap(base map[string]any) map[string]any {

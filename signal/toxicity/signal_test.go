@@ -8,12 +8,15 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/tests/conditions"
 	tradefixture "github.com/theapemachine/symm/tests/fixtures/trade"
+	"github.com/theapemachine/symm/tests/mockapi"
+	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -140,131 +143,152 @@ func tradeFixturePayload() []byte {
 	panic("tests: trade fixture missing")
 }
 
-func sessionSignals(
-	ctx context.Context,
-	api *websocket.API,
-	_ *broker.Instrument,
-	channel chan []byte,
-) []types.Signal {
-	return []types.Signal{NewSignal(ctx, api, channel)}
-}
-
-/*
-seedToxicitySession boots a Level3 Session and seeds a two-sided touch so
-toxicity PeekBook evidence can accumulate during Play.
-*/
-func seedToxicitySession(t testing.TB) *tests.Session {
+func measureMarket(
+	t testing.TB,
+	frames iter.Seq[tests.Frame],
+	retreat bool,
+) []*types.Measurement {
 	t.Helper()
-
-	session, err := tests.NewSession(context.Background(), t, tests.SessionOptions{
-		Signals: sessionSignals,
-		Level3:  true,
+	previousTimeline := viper.Get("signals.feed_timeline_capacity")
+	previousTrack := viper.Get("signals.feed_track_capacity")
+	viper.Set("signals.feed_timeline_capacity", 128)
+	viper.Set("signals.feed_track_capacity", 128)
+	t.Cleanup(func() {
+		viper.Set("signals.feed_timeline_capacity", previousTimeline)
+		viper.Set("signals.feed_track_capacity", previousTrack)
 	})
 
-	if err != nil {
-		t.Fatalf("boot: %v", err)
-	}
-
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	mock := mockapi.NewMockAPI()
+	api := websocket.NewAPI(ctx, mock.Public(), mock.Private(), nil)
+	t.Cleanup(api.Close)
+	level3 := websocket.New(ctx, nil, true, websocket.Level3WebSocketURL)
+	api.AttachLevel3(level3)
 	seedAt := time.Date(2026, 7, 17, 1, 0, 0, 0, time.UTC)
 	trade := kraken.NewTrade(tradeFixturePayload())
 	tradeRow := trade.Data[0]
 	bidPrice := tradeRow.Price
 	askPrice := decimal.NewFromFloat64(tradeRow.Price.Float64() + 0.0001)
+	level3.SeedTouch(
+		conditions.Subject(), &bidPrice, askPrice,
+		decimal.NewFromFloat64(1000), seedAt,
+	)
+	instrument := broker.NewInstrument(api, broker.NewPrice(api), nil)
+	api.On("instrument", instrument.On)
+	market, err := trader.NewMarket(ctx, api, instrument)
+	So(err, ShouldBeNil)
+	t.Cleanup(market.Close)
+	signal := NewSignal(ctx, api, nil)
+	measurements := make([]*types.Measurement, 0)
+	cutAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	tradeFrame := 0
 
-	if err := session.Level3.SeedTouch(
-		conditions.Subject(), &bidPrice, askPrice, decimal.NewFromFloat64(1000), seedAt,
-	); err != nil {
-		t.Fatalf("seed touch: %v", err)
+	for frame := range frames {
+		if frame.Channel == "trade" {
+			if retreat && tradeFrame == 1 {
+				level3.SeedTouch(
+					conditions.Subject(), &bidPrice, askPrice,
+					decimal.NewFromFloat64(100), seedAt.Add(time.Second),
+				)
+			}
+
+			tradeFrame++
+		}
+
+		mock.Emit(frame.Channel, frame.Payload)
+		cut, cutErr := market.Cut(cutAt)
+		So(cutErr, ShouldBeNil)
+		cutAt = cutAt.Add(time.Second)
+
+		if cut.IsEmpty() {
+			continue
+		}
+
+		if types.SignalInterest(signal)&types.FrameInterest(cut) == 0 {
+			continue
+		}
+
+		measurements = append(
+			measurements,
+			signal.Measure(types.NewThesis(nil, cut))...,
+		)
 	}
 
-	return session
+	return measurements
 }
 
 /*
-playToxicityClaims plays frames on a seeded Level3 Session and asserts claims.
-*/
-func playToxicityClaims(
-	t testing.TB,
-	frames iter.Seq[tests.Frame],
-	claims ...tests.SourceClaim,
-) []*types.Thesis {
-	t.Helper()
-
-	session := seedToxicitySession(t)
-	theses, err := session.Play(frames)
-
-	if err != nil {
-		t.Fatalf("play: %v", err)
-	}
-
-	tests.RequireSourceClaims(t, theses, claims...)
-
-	return theses
-}
-
-/*
-TestSignal_MeasureFromMarket proves toxicity on the mock Conn Session path with
-Level3 SeedTouch: toxic chase must emit BestPrice, FillVolume, and TradeVolume
-peaks that exceed calm, while phantom quote still publishes touch BestPrice.
-Cancel/retreat honesty remains covered by TestSignal_touchHonestyEmitsCancelledQuantity
-until the phantom tape drives Level3 quantity retreats.
+TestSignal_MeasureFromMarket proves toxicity distinguishes executions from
+cancel-driven touch retreat through the production trade feed and Level3 book.
 */
 func TestSignal_MeasureFromMarket(t *testing.T) {
-	symbol := conditions.Subject()
+	Convey("Given two equal trades around a Level3 touch that later retreats", t, func() {
+		trade := kraken.NewTrade(tradeFixturePayload()).Data[0]
+		start := time.Date(2026, 7, 17, 1, 0, 1, 0, time.UTC)
+		measurements := measureMarket(t, conditions.TradePath(
+			[]float64{trade.Price.Float64(), trade.Price.Float64()},
+			[]float64{10, 10},
+			[]string{"buy", "buy"},
+			[]time.Time{start, start.Add(time.Second)},
+		).Frames(), true)
 
-	toxicFamily := []tests.SourceClaim{
-		{Source: types.SourceToxicity, Metric: types.MetricBestPrice, Symbol: symbol, Bound: tests.BoundPositive},
-		{Source: types.SourceToxicity, Metric: types.MetricFillVolume, Symbol: symbol, Bound: tests.BoundPositive},
-		{Source: types.SourceToxicity, Metric: types.MetricTradeVolume, Symbol: symbol, Bound: tests.BoundPositive},
-	}
+		Convey("Then the tape, touch, fill, cancellation, and retreat facts are all emitted", func() {
+			volume, hasVolume := latestMetric(
+				measurements, types.MetricTradeVolume, types.SideNone,
+			)
+			fill, hasFill := latestMetric(
+				measurements, types.MetricFillVolume, types.SideBuy,
+			)
+			bidPrice, hasBidPrice := latestMetric(
+				measurements, types.MetricBestPrice, types.SideBuy,
+			)
+			askPrice, hasAskPrice := latestMetric(
+				measurements, types.MetricBestPrice, types.SideSell,
+			)
+			bidTouch, hasBidTouch := latestMetric(
+				measurements, types.MetricTouchQuantity, types.SideBuy,
+			)
+			askTouch, hasAskTouch := latestMetric(
+				measurements, types.MetricTouchQuantity, types.SideSell,
+			)
+			bidCancelled, hasBidCancelled := latestMetric(
+				measurements, types.MetricCancelledQuantity, types.SideBuy,
+			)
+			askCancelled, hasAskCancelled := latestMetric(
+				measurements, types.MetricCancelledQuantity, types.SideSell,
+			)
+			retreating, hasRetreat := latestMetric(
+				measurements, types.MetricRetreatingQuantity, types.SideSell,
+			)
 
-	t.Run("tape_toxic_chase", func(t *testing.T) {
-		playToxicityClaims(t, conditions.TapeToxicChase().Frames(), toxicFamily...)
+			So([]bool{
+				hasVolume, hasFill, hasBidPrice, hasAskPrice,
+				hasBidTouch, hasAskTouch, hasBidCancelled,
+				hasAskCancelled, hasRetreat,
+			}, ShouldResemble, []bool{
+				true, true, true, true, true, true, true, true, true,
+			})
+
+			for _, measurement := range []*types.Measurement{
+				volume, fill, bidPrice, askPrice, bidTouch, askTouch,
+				bidCancelled, askCancelled, retreating,
+			} {
+				So(measurement.Source, ShouldEqual, types.SourceToxicity)
+				So(measurement.ValidateStruct(), ShouldBeNil)
+			}
+
+			So(volume.Raw, ShouldEqual, 10)
+			So(fill.Raw, ShouldAlmostEqual, trade.Price.Float64()*10, 1e-12)
+			So(askPrice.Raw-bidPrice.Raw, ShouldAlmostEqual, 0.0001, 1e-12)
+			So(bidTouch.Raw, ShouldEqual, 100)
+			So(askTouch.Raw, ShouldEqual, 100)
+			So(bidCancelled.Raw, ShouldEqual, 890)
+			So(askCancelled.Raw, ShouldEqual, 900)
+			So(retreating.Raw, ShouldEqual, askCancelled.Raw)
+			So(*retreating.Normalized, ShouldAlmostEqual, 0.9, 1e-12)
+		})
 	})
-
-	t.Run("toxic_exceeds_calm_fill_and_trade_volume", func(t *testing.T) {
-		calm := playToxicityClaims(t, conditions.TapeCalm().Frames(),
-			tests.SourceClaim{
-				Source: types.SourceToxicity, Metric: types.MetricTradeVolume,
-				Symbol: symbol, Bound: tests.BoundPositive,
-			},
-		)
-		hot := playToxicityClaims(t, conditions.TapeToxicChase().Frames(), toxicFamily...)
-
-		tests.RequireSourceExceeds(
-			t, hot, calm,
-			types.SourceToxicity, symbol, types.MetricTradeVolume,
-		)
-		tests.RequireSourceExceeds(
-			t, hot, calm,
-			types.SourceToxicity, symbol, types.MetricFillVolume,
-		)
-	})
-
-	t.Run("tape_phantom_keeps_touch_price", func(t *testing.T) {
-		playToxicityClaims(t, conditions.TapePhantomQuote().Frames(),
-			tests.SourceClaim{
-				Source: types.SourceToxicity, Metric: types.MetricBestPrice,
-				Symbol: symbol, Bound: tests.BoundPositive,
-			},
-			tests.SourceClaim{
-				Source: types.SourceToxicity, Metric: types.MetricTouchQuantity,
-				Symbol: symbol, Bound: tests.BoundPositive,
-			},
-		)
-	})
-}
-
-func BenchmarkSignal_MeasureFromMarket(benchmark *testing.B) {
-	session := seedToxicitySession(benchmark)
-	frames := conditions.TapeToxicChase().Frames()
-	benchmark.ReportAllocs()
-
-	for benchmark.Loop() {
-		if _, err := session.Play(frames); err != nil {
-			benchmark.Fatal(err)
-		}
-	}
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {
@@ -280,6 +304,8 @@ func BenchmarkSignal_Measure(benchmark *testing.B) {
 	})
 
 	for benchmark.Loop() {
-		_, _ = signal.Calculate(frame)
+		if _, err := signal.Calculate(frame); err != nil {
+			benchmark.Fatal(err)
+		}
 	}
 }

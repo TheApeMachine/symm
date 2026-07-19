@@ -50,7 +50,9 @@ func (balance *Balance) Initialize() error {
 	balance.api.On("balances", balance.BalanceAck)
 
 	if errnie.Error(balance.api.SubscribeBalance()) != nil {
+		balance.mu.Lock()
 		balance.status = types.ERROR
+		balance.mu.Unlock()
 
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -59,13 +61,18 @@ func (balance *Balance) Initialize() error {
 		))
 	}
 
+	balance.mu.Lock()
 	balance.status = types.READY
+	balance.mu.Unlock()
 	balance.Publish()
 
 	return nil
 }
 
 func (balance *Balance) Status() types.Status {
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
+
 	return balance.status
 }
 
@@ -126,7 +133,7 @@ on websocket connect should Write Frame() directly — a saturated channel drops
 this non-blocking send. Empty payloads (marshal failure) are never enqueued.
 */
 func (balance *Balance) Publish() {
-	if balance.ui == nil || balance.status != types.READY || balance.model == nil {
+	if balance.ui == nil {
 		return
 	}
 

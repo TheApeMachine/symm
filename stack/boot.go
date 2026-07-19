@@ -2,7 +2,6 @@ package stack
 
 import (
 	"context"
-	"time"
 
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
@@ -52,9 +51,8 @@ type SignalFactory func(
 ) []types.Signal
 
 /*
-Options configures shared boot. Callers supply the Conn-backed API (and paper)
-plus a SignalFactory; FeedInstrument unblocks Instrument.READY under mock Conns
-by delivering a snapshot while Booter waits on Subscribe.
+Options configures shared boot. Callers supply the Conn-backed API, optional
+paper transport, and the signal factory used by production.
 */
 type Options struct {
 	Booter         *system.Booter
@@ -66,7 +64,6 @@ type Options struct {
 	Recorder       *audit.Recorder
 	UIHub          *ui.Hub
 	PreflightExtra []types.StatusReporter
-	FeedInstrument func()
 	Hawkes         manifold.HawkesSource
 	AttachUI       func(
 		booter *system.Booter,
@@ -211,8 +208,12 @@ func Boot(ctx context.Context, api *websocket.API, options Options) (*Stack, err
 	}
 
 	preflight := append([]types.StatusReporter{}, options.PreflightExtra...)
+
+	if options.Paper != nil {
+		preflight = append(preflight, options.Paper)
+	}
+
 	preflight = append(preflight,
-		options.Paper,
 		api,
 		instrument,
 		balance,
@@ -221,14 +222,10 @@ func Boot(ctx context.Context, api *websocket.API, options Options) (*Stack, err
 	)
 
 	booter.AddStages(
-		system.NewStage(system.StagePreflight, filterReporters(preflight)...),
+		system.NewStage(system.StagePreflight, preflight...),
 		system.NewStage(system.StageWarmup, crypto),
 		system.NewStage(system.StageReady, analyzer, planner),
 	)
-
-	if options.FeedInstrument != nil {
-		go feedUntilReady(instrument, options.FeedInstrument)
-	}
 
 	if err := booter.Start(); err != nil {
 		_ = crypto.Close()
@@ -252,56 +249,5 @@ func (stack *Stack) Close() {
 
 	if stack.API != nil {
 		stack.API.Close()
-	}
-}
-
-/*
-ThesisNow returns the durable thesis last completed by Crypto.Tick.
-*/
-func (stack *Stack) ThesisNow() *types.Thesis {
-	if stack == nil || stack.Crypto == nil {
-		return nil
-	}
-
-	return stack.Crypto.LastThesis()
-}
-
-func filterReporters(reporters []types.StatusReporter) []types.StatusReporter {
-	out := make([]types.StatusReporter, 0, len(reporters))
-
-	for _, reporter := range reporters {
-		if reporter == nil {
-			continue
-		}
-
-		out = append(out, reporter)
-	}
-
-	return out
-}
-
-/*
-feedUntilReady repeatedly invokes feed until the instrument reports READY or
-ERROR, or until the wait expires. Preflight must observe a terminal instrument
-status before the stack advances; a single feed pass is not enough when the
-broker still needs several poll cycles to settle.
-*/
-func feedUntilReady(instrument *broker.Instrument, feed func()) {
-	if instrument == nil || feed == nil {
-		return
-	}
-
-	// Fixed 5s window / 5ms poll are intentional boot-time constants for now;
-	// derive or configure them later from instrument cadence rather than hard-coding.
-	deadline := time.Now().Add(5 * time.Second)
-
-	for time.Now().Before(deadline) {
-		feed()
-
-		if instrument.Status() == types.READY || instrument.Status() == types.ERROR {
-			return
-		}
-
-		time.Sleep(5 * time.Millisecond)
 	}
 }

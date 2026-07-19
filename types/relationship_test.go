@@ -180,6 +180,75 @@ func TestGraphCompose(t *testing.T) {
 	})
 }
 
+func TestComposeCategories(t *testing.T) {
+	Convey("Given distinct depthflow metrics from one signal in a tick", t, func() {
+		graph := NewGraph("BTC/USD")
+		at := time.Unix(100, 0)
+		loaded := 0.8
+		spoof := 0.7
+
+		mustAdd := func(metric MetricType, normalized *float64) {
+			So(graph.AddNode(&Measurement{
+				Source: SourceDepthFlow, Stream: DepthFlow, Metric: metric,
+				Subject: SubjectBookImbalance, Symbol: "BTC/USD",
+				At: at, ObservedFrom: at.Add(-time.Second),
+				Unit: UnitDimensionless, Normalized: normalized,
+				Validity: MeasurementValidity{State: ValidityValid},
+			}), ShouldBeNil)
+		}
+
+		mustAdd(MetricLoadedScore, &loaded)
+		mustAdd(MetricSpoofScore, &spoof)
+
+		graph.Compose()
+
+		Convey("Then measurements relate to category hypotheses, not to themselves", func() {
+			var supports, contradicts int
+			categoryNodes := map[string]bool{}
+
+			for _, node := range graph.Nodes() {
+				if node.Kind == NodeCategory {
+					categoryNodes[string(node.Category)] = true
+				}
+			}
+
+			for _, edge := range graph.Edges() {
+				So(edge.From, ShouldNotEqual, edge.To)
+
+				switch edge.Type {
+				case Supports:
+					supports++
+				case Contradicts:
+					contradicts++
+				}
+			}
+
+			So(categoryNodes[string(LoadedImbalance)], ShouldBeTrue)
+			So(categoryNodes[string(SpoofTrap)], ShouldBeTrue)
+			So(supports, ShouldBeGreaterThan, 0)
+			So(contradicts, ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given a zero-valued reading", t, func() {
+		graph := NewGraph("BTC/USD")
+		at := time.Unix(100, 0)
+		zero := 0.0
+		So(graph.AddNode(&Measurement{
+			Source: SourceDepthFlow, Stream: DepthFlow, Metric: MetricLoadedScore,
+			Subject: SubjectBookImbalance, Symbol: "BTC/USD", At: at,
+			Unit: UnitDimensionless, Normalized: &zero,
+			Validity: MeasurementValidity{State: ValidityValid},
+		}), ShouldBeNil)
+
+		graph.Compose()
+
+		Convey("Then absent evidence lights no category", func() {
+			So(graph.Edges(), ShouldBeEmpty)
+		})
+	})
+}
+
 func edgeTypes(edges []*Edge) []EdgeType {
 	types := make([]EdgeType, 0, len(edges))
 

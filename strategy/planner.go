@@ -386,6 +386,10 @@ publishMeasurements emits one combined measurement frame after fan-in so the
 terminal never replaces a partial signal snapshot with another in the same cut.
 */
 func (planner *Planner) publishMeasurements(thesis *types.Thesis) {
+	if thesis == nil || len(thesis.Measurements) == 0 {
+		return
+	}
+
 	if err := planner.validate(map[string]any{
 		"thesis":       thesis,
 		"measurements": thesis.Measurements,

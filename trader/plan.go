@@ -39,9 +39,11 @@ func (crypto *Crypto) syncInventory(thesis *types.Thesis) {
 	crypto.healAbandonedExits(thesis)
 	crypto.healCompletedEntries(thesis)
 
-	if crypto.snapshot != nil && crypto.balance != nil && crypto.balance.ModelReady() {
-		if crypto.restoreRecovery(thesis) {
-			crypto.snapshot = nil
+	snapshot := crypto.snapshot.Load()
+
+	if snapshot != nil && crypto.balance != nil && crypto.balance.ModelReady() {
+		if crypto.restoreRecovery(thesis, snapshot) {
+			crypto.snapshot.CompareAndSwap(snapshot, nil)
 		}
 	}
 
@@ -58,13 +60,13 @@ func (crypto *Crypto) syncInventory(thesis *types.Thesis) {
 	crypto.closeMissing(thesis, live)
 
 	if crypto.desk != nil {
-		_ = crypto.desk.OpenPositions()
+		crypto.desk.AdoptOpen()
 	}
 
 	// Trading stays gated until the one-shot recovery restore (which now also
 	// reconciles against live open orders) clears the snapshot. A boot with no
 	// recovery file starts with a nil snapshot and enables immediately.
-	if crypto.balance != nil && crypto.balance.ModelReady() && crypto.snapshot == nil {
+	if crypto.balance != nil && crypto.balance.ModelReady() && crypto.snapshot.Load() == nil {
 		crypto.trading.Store(true)
 	}
 }
@@ -75,16 +77,19 @@ the live wallet is ready, then reconciles those intents against the exchange
 open-order set. It reports whether reconcile was attempted so the caller only
 clears the snapshot (and unblocks trading) after a successful pass.
 */
-func (crypto *Crypto) restoreRecovery(thesis *types.Thesis) bool {
-	if crypto.snapshot == nil || crypto.balance == nil {
+func (crypto *Crypto) restoreRecovery(
+	thesis *types.Thesis,
+	snapshot *types.Recovery,
+) bool {
+	if snapshot == nil || crypto.balance == nil {
 		return false
 	}
 
-	for symbol, recovered := range crypto.snapshot.Holdings {
+	for symbol, recovered := range snapshot.Holdings {
 		crypto.balance.Enrich(symbol, recovered)
 	}
 
-	for _, row := range crypto.snapshot.Reservations {
+	for _, row := range snapshot.Reservations {
 		if row.ID == "" || row.Amount <= 0 {
 			continue
 		}
@@ -94,7 +99,7 @@ func (crypto *Crypto) restoreRecovery(thesis *types.Thesis) bool {
 		)
 	}
 
-	for symbol, pending := range crypto.snapshot.PendingOrders {
+	for symbol, pending := range snapshot.PendingOrders {
 		if symbol == "" {
 			continue
 		}

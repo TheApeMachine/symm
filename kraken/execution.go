@@ -16,6 +16,36 @@ type Execution struct {
 	Sequence int             `json:"sequence"`
 }
 
+/*
+ExecutionSubscription requests authenticated order and fill updates through
+the injected websocket transport.
+*/
+type ExecutionSubscription struct {
+	Token string
+}
+
+/*
+NewExecutionSubscription binds the current authenticated websocket token.
+*/
+func NewExecutionSubscription(token string) ExecutionSubscription {
+	return ExecutionSubscription{Token: token}
+}
+
+/*
+MarshalJSON encodes the execution snapshots needed to reconstruct order state.
+*/
+func (subscription ExecutionSubscription) MarshalJSON() ([]byte, error) {
+	return sonic.Marshal(map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel":     "executions",
+			"snap_orders": true,
+			"snap_trades": true,
+			"token":       subscription.Token,
+		},
+	})
+}
+
 type ExecutionData struct {
 	OrderID      string           `json:"order_id"`
 	OrderUserref int              `json:"order_userref"`

@@ -22,6 +22,15 @@ func TestForecastsEligible(t *testing.T) {
 				So(forecast.Eligible(), ShouldBeFalse)
 			})
 		})
+
+		Convey("When resolved skill evidence is absent", func() {
+			forecast.CalibrationSamples = 0
+			forecast.IncrementalSkillLowerBound = 0
+
+			Convey("Then a calibrated label cannot make it usable", func() {
+				So(forecast.Eligible(), ShouldBeFalse)
+			})
+		})
 	})
 }
 
@@ -48,22 +57,36 @@ func BenchmarkForecastsExecutableReturn(b *testing.B) {
 	}
 }
 
+/*
+BenchmarkForecastsEligible measures the complete forecast provenance and
+calibration boundary used before strategy selection.
+*/
+func BenchmarkForecastsEligible(b *testing.B) {
+	forecast := eligibleForecast()
+
+	for b.Loop() {
+		_ = forecast.Eligible()
+	}
+}
+
 func eligibleForecast() Forecasts {
 	return Forecasts{
-		Source:         "manifold_forecast",
-		Symbol:         "BTC/USD",
-		At:             time.Unix(1, 0),
-		SourceEpoch:    1,
-		HorizonEvents:  1,
-		ExpiresEpoch:   2,
-		Target:         "next_l3_epoch_mid_log_return",
-		ModelVersion:   "test",
-		Ready:          true,
-		Calibrated:     true,
-		FrictionReady:  true,
-		ReferencePrice: 100,
-		BuyCapacity:    1000,
-		SellCapacity:   1000,
-		Confidence:     0.5,
+		Source:                     "manifold_forecast",
+		Symbol:                     "BTC/USD",
+		At:                         time.Unix(1, 0),
+		SourceEpoch:                1,
+		HorizonEvents:              1,
+		ExpiresEpoch:               2,
+		Target:                     "next_l3_epoch_mid_log_return",
+		ModelVersion:               "test",
+		Ready:                      true,
+		Calibrated:                 true,
+		FrictionReady:              true,
+		CalibrationSamples:         8,
+		IncrementalSkillLowerBound: 0.0001,
+		ReferencePrice:             100,
+		BuyCapacity:                1000,
+		SellCapacity:               1000,
+		Confidence:                 0.5,
 	}
 }

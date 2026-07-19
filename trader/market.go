@@ -363,7 +363,10 @@ func (market *Market) Cut(at time.Time) (*types.MarketFrame, error) {
 	bookProgress := market.books.Progress()
 
 	if !tickerProgress && !tradeProgress && !bookProgress {
-		return &types.MarketFrame{CrossSection: types.NewCrossSection()}, nil
+		return &types.MarketFrame{
+			At:           at,
+			CrossSection: types.NewCrossSection(),
+		}, nil
 	}
 
 	var tickerRows []kraken.TickerData
@@ -425,6 +428,7 @@ func (market *Market) Cut(at time.Time) (*types.MarketFrame, error) {
 	}
 
 	return &types.MarketFrame{
+		At:           at,
 		Tickers:      tickerRows,
 		Trades:       trades.Rows,
 		Books:        books.Rows,
