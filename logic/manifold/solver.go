@@ -165,7 +165,8 @@ func (solver *Solver) Update(
 		"budget":     active.budget,
 	}))
 
-	failures, advanced, latest := solver.advanceAll(thesis, selected)
+	focus := viper.GetString("ui.manifold_focus")
+	failures, advanced, latest := solver.advanceAll(thesis, selected, focus)
 	active.evict(solver, latest)
 
 	errnie.Error(audit.Record(solver.recorder, "manifold", map[string]any{
@@ -227,6 +228,7 @@ observed event time used to judge resident-field coldness during eviction.
 func (solver *Solver) advanceAll(
 	thesis *types.Thesis,
 	selected []intensityCandidate,
+	focus string,
 ) ([]error, int, time.Time) {
 	var failures []error
 
@@ -238,7 +240,7 @@ func (solver *Solver) advanceAll(
 			latest = candidate.outcome.At
 		}
 
-		state, err := solver.advance(candidate.symbol, candidate.outcome)
+		state, err := solver.advance(candidate.symbol, candidate.outcome, focus)
 
 		if err != nil {
 			failures = append(failures, solver.noteAdvanceFailure(candidate.symbol, err))

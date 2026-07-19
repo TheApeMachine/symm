@@ -61,9 +61,10 @@ def fill(state, side, pair, volume):
     assets = state.setdefault("assets", {})
     if side == "sell":
         have = float(assets.get(base, 0.0))
-        # Sweep venue dust: a near-complete exit flattens the base row instead of
-        # leaving an untradeable sub-unit that would keep a closed lot open.
-        if 0.0 <= have - volume < 1e-6:
+        # Sweep venue dust: a near-complete undersell or tiny oversell flattens
+        # the base row instead of leaving an untradeable sub-unit (or rejecting
+        # a full exit that overshoots by floating-point dust).
+        if 0.0 <= have - volume < 1e-6 or 0.0 < volume - have < 1e-6:
             volume = have
     cost = volume * px
     fee = cost * 0.0026

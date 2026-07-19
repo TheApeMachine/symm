@@ -51,6 +51,7 @@ type Crypto struct {
 	checkpointSlot atomic.Pointer[types.Recovery]
 	snapshot       *types.Recovery
 	trading        atomic.Bool
+	pendingRetry   PendingRetry
 }
 
 /*

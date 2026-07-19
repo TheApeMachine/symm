@@ -35,11 +35,18 @@ func NewLevel3Registry() *Level3Registry {
 
 /*
 Attach registers one Level3 Live transport under key and indexes its symbols so
-subsequent PeekBook reads resolve directly to this transport.
+subsequent PeekBook reads resolve directly to this transport. A prior Live on
+the same key is unindexed so registry.index cannot retain stale owners.
 */
 func (registry *Level3Registry) Attach(key string, live *Live) {
 	if registry == nil || key == "" || live == nil || live.books == nil {
 		return
+	}
+
+	if previous, loaded := registry.conns.Load(key); loaded {
+		if old, ok := previous.(*Live); ok && old != live {
+			registry.unindexSymbols(old)
+		}
 	}
 
 	registry.conns.Store(key, live)
@@ -47,16 +54,82 @@ func (registry *Level3Registry) Attach(key string, live *Live) {
 }
 
 /*
+Detach removes one Level3 transport, clears its symbol index entries, and closes
+the Live so PeekBook cannot resolve books through a dead connection.
+*/
+func (registry *Level3Registry) Detach(key string) {
+	if registry == nil || key == "" {
+		return
+	}
+
+	value, ok := registry.conns.LoadAndDelete(key)
+
+	if !ok {
+		return
+	}
+
+	live, ok := value.(*Live)
+
+	if !ok || live == nil {
+		return
+	}
+
+	registry.unindexSymbols(live)
+	live.Close()
+}
+
+/*
+Close detaches every Level3 transport owned by the registry.
+*/
+func (registry *Level3Registry) Close() {
+	if registry == nil {
+		return
+	}
+
+	registry.conns.Range(func(key, _ any) bool {
+		if text, ok := key.(string); ok {
+			registry.Detach(text)
+		}
+
+		return true
+	})
+}
+
+/*
 indexSymbols records each of a transport's subscribed symbols in the O(1) lookup
 index. Books created after subscription resolve lazily through scanBook.
 */
 func (registry *Level3Registry) indexSymbols(live *Live) {
+	if registry == nil || live == nil {
+		return
+	}
+
 	for _, symbol := range live.symbols {
 		if symbol == "" {
 			continue
 		}
 
 		registry.index.Store(symbol, live)
+	}
+}
+
+/*
+unindexSymbols drops index entries that still point at live so a closed or
+replaced transport cannot keep the map growing with stale owners.
+*/
+func (registry *Level3Registry) unindexSymbols(live *Live) {
+	if registry == nil || live == nil {
+		return
+	}
+
+	for _, symbol := range live.symbols {
+		if symbol == "" {
+			continue
+		}
+
+		if current, ok := registry.index.Load(symbol); ok && current == live {
+			registry.index.Delete(symbol)
+		}
 	}
 }
 
@@ -87,6 +160,7 @@ func (registry *Level3Registry) Subscribe(
 	_, loaded := registry.conns.LoadOrStore(key, live)
 
 	if loaded {
+		// Never indexed; close the unused transport without touching the index.
 		live.Close()
 		return nil
 	}
@@ -177,8 +251,15 @@ func (registry *Level3Registry) PeekBook(
 	}
 
 	if value, ok := registry.index.Load(symbol); ok {
-		if live, valid := value.(*Live); valid && live.peekBook(symbol, fn) {
+		live, valid := value.(*Live)
+
+		if valid && live.peekBook(symbol, fn) {
 			return true
+		}
+
+		// Drop stale owners (closed/replaced) so the index cannot grow forever.
+		if current, still := registry.index.Load(symbol); still && current == value {
+			registry.index.Delete(symbol)
 		}
 	}
 

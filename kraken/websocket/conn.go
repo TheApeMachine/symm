@@ -128,6 +128,10 @@ func (api *API) Status() types.Status {
 func (api *API) Close() {
 	api.public.Close()
 	api.private.Close()
+
+	if api.level3 != nil {
+		api.level3.Close()
+	}
 }
 
 /*

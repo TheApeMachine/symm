@@ -55,8 +55,10 @@ type signalWorker struct {
 }
 
 type measured struct {
-	name string
-	rows []*types.Measurement
+	name   string
+	rows   []*types.Measurement
+	failed bool
+	panic  string
 }
 
 /*
@@ -137,9 +139,9 @@ func (planner *Planner) runWorker(worker signalWorker) {
 }
 
 /*
-measure runs one signal's Measure, recovering any panic into an empty measured
+measure runs one signal's Measure, recovering any panic into a failed measured
 batch with a durable errnie breadcrumb so the worker stays alive for the next
-cut instead of crashing the runtime.
+cut while Update can refuse to publish or analyze a compromised thesis.
 */
 func (planner *Planner) measure(
 	worker signalWorker,
@@ -155,11 +157,13 @@ func (planner *Planner) measure(
 		}
 
 		result.rows = nil
+		result.failed = true
+		result.panic = fmt.Sprint(recovered)
 		errnie.Error(errnie.Err(
 			errnie.Internal,
 			fmt.Sprintf("planner: signal %s panicked during measure", result.name),
 			nil,
-		).With("panic", fmt.Sprint(recovered)))
+		).With("panic", result.panic))
 	}()
 
 	result.rows = worker.signal.Measure(thesis)
@@ -231,17 +235,26 @@ func (planner *Planner) Update(
 		}
 	}
 
+	failed := make([]string, 0)
+
 	for _, worker := range active {
 		batch := <-worker.out
+
+		if batch.failed {
+			failed = append(failed, batch.name)
+			continue
+		}
+
 		counts[batch.name] += len(batch.rows)
 		thesis.Measurements = append(thesis.Measurements, batch.rows...)
 	}
 
-	if len(skipped) > 0 {
+	if len(skipped) > 0 || len(failed) > 0 {
 		thesis.NoteIncomplete()
 		thesis.Measurements = nil
 		errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "measure_incomplete", map[string]any{
 			"skipped": skipped,
+			"failed":  failed,
 			"ns":      time.Since(started).Nanoseconds(),
 		}))
 

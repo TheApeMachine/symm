@@ -102,8 +102,9 @@ func TestSolverUpdate(t *testing.T) {
 func TestSolverAdvance(t *testing.T) {
 	viper.Set("market.l3_depth", 8)
 	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+	previousFocus := viper.Get("ui.manifold_focus")
 	viper.Set("ui.manifold_focus", "BTC/USD")
-	t.Cleanup(func() { viper.Set("ui.manifold_focus", "") })
+	t.Cleanup(func() { viper.Set("ui.manifold_focus", previousFocus) })
 
 	Convey("Given Hawkes excitation", t, func() {
 		solver, err := NewSolver(newTestBookSource("BTC/USD"))
@@ -114,10 +115,12 @@ func TestSolverAdvance(t *testing.T) {
 		state, advanceErr := solver.advance(
 			"BTC/USD",
 			solverOutcome(at, 4, 2),
+			viper.GetString("ui.manifold_focus"),
 		)
 		stale, staleErr := solver.advance(
 			"BTC/USD",
 			solverOutcome(at, 4, 2),
+			viper.GetString("ui.manifold_focus"),
 		)
 
 		Convey("It should return a finite GPU readout", func() {
@@ -186,6 +189,7 @@ func TestSolverAdvanceWaitsForMarketState(t *testing.T) {
 		state, advanceErr := solver.advance(
 			"ETH/USD",
 			solverOutcome(time.Unix(1, 0), 4, 2),
+			viper.GetString("ui.manifold_focus"),
 		)
 
 		Convey("It should wait without allocating a Field", func() {
@@ -199,8 +203,9 @@ func TestSolverAdvanceWaitsForMarketState(t *testing.T) {
 func TestSolverAdvanceAppliesAbsoluteHawkesForcing(t *testing.T) {
 	viper.Set("market.l3_depth", 8)
 	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+	previousFocus := viper.Get("ui.manifold_focus")
 	viper.Set("ui.manifold_focus", "BTC/USD")
-	t.Cleanup(func() { viper.Set("ui.manifold_focus", "") })
+	t.Cleanup(func() { viper.Set("ui.manifold_focus", previousFocus) })
 
 	Convey("Given the same L3 state up to a 117-unit absolute arrival impulse", t, func() {
 		solver, solverErr := NewSolver(newTestBookSource("BTC/USD"))
@@ -209,10 +214,13 @@ func TestSolverAdvanceAppliesAbsoluteHawkesForcing(t *testing.T) {
 
 		at := time.Unix(1, 0)
 		quietState, quietAdvanceErr := solver.advance(
-			"BTC/USD", solverOutcome(at, 2, 1),
+			"BTC/USD",
+			solverOutcome(at, 2, 1),
+			viper.GetString("ui.manifold_focus"),
 		)
 		activeState, activeAdvanceErr := solver.advance(
 			"BTC/USD", solverOutcome(at.Add(time.Second), 140, 70),
+			viper.GetString("ui.manifold_focus"),
 		)
 
 		Convey("It should respond without encoding forcing into carrier coordinates", func() {
@@ -246,6 +254,7 @@ func TestSolverAdvanceAdaptsToForcing(t *testing.T) {
 		state, advanceErr := solver.advance(
 			"BTC/USD",
 			solverOutcome(time.Unix(1, 0), 1_000_000, 500_000),
+			viper.GetString("ui.manifold_focus"),
 		)
 
 		Convey("It should derive a stable advective step and keep the gas finite", func() {
@@ -267,14 +276,17 @@ func TestSolverAdvanceKeepsMultipleSymbols(t *testing.T) {
 		_, firstErr := solver.advance(
 			"BTC/USD",
 			solverOutcome(time.Unix(1, 0), 4, 2),
+			viper.GetString("ui.manifold_focus"),
 		)
 		state, secondErr := solver.advance(
 			"ETH/USD",
 			solverOutcome(time.Unix(2, 0), 4, 2),
+			viper.GetString("ui.manifold_focus"),
 		)
 		restored, restoredErr := solver.advance(
 			"BTC/USD",
 			solverOutcome(time.Unix(3, 0), 4, 2),
+			viper.GetString("ui.manifold_focus"),
 		)
 
 		Convey("It should keep every Field resident", func() {
@@ -332,10 +344,12 @@ func TestSolverSharedEngineFields(t *testing.T) {
 		bitcoin, bitcoinErr := solver.advance(
 			"BTC/USD",
 			solverOutcome(time.Unix(1, 0), 4, 2),
+			viper.GetString("ui.manifold_focus"),
 		)
 		ether, etherErr := solver.advance(
 			"ETH/USD",
 			solverOutcome(time.Unix(1, 0), 8, 4),
+			viper.GetString("ui.manifold_focus"),
 		)
 
 		Convey("It should keep two resident Fields on the same engine", func() {
@@ -368,7 +382,7 @@ func BenchmarkSolverAdvance(b *testing.B) {
 	for b.Loop() {
 		outcome := solverOutcome(at, 4, 2)
 
-		if _, advanceErr := solver.advance("BTC/USD", outcome); advanceErr != nil {
+		if _, advanceErr := solver.advance("BTC/USD", outcome, viper.GetString("ui.manifold_focus")); advanceErr != nil {
 			b.Fatal(advanceErr)
 		}
 

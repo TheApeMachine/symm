@@ -114,28 +114,6 @@ func (crypto *Crypto) restoreRecovery(thesis *types.Thesis) bool {
 }
 
 /*
-reconcilePending re-arms recovered pending intents against the exchange open
-orders. Paper answers with an empty set (synchronous fills), which is a
-successful reconcile; a live REST failure returns false so the caller keeps the
-snapshot and retries on the next tick rather than enabling trading blind.
-*/
-func (crypto *Crypto) reconcilePending() bool {
-	if crypto.api == nil || crypto.desk == nil || crypto.snapshot == nil {
-		return true
-	}
-
-	open, err := crypto.api.OpenOrders()
-
-	if err != nil {
-		return false
-	}
-
-	crypto.desk.ReconcilePending(crypto.snapshot.PendingOrders, open)
-
-	return true
-}
-
-/*
 closeMissing advances lifecycle for symbols no longer in the wallet and runs
 PostMortem when ready.
 */

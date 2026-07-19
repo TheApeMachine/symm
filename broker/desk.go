@@ -246,9 +246,15 @@ func (desk *Desk) ReconcilePending(
 			continue
 		}
 
-		position, ok := desk.Position(symbol)
+		value, ok := desk.positions.Load(symbol)
 
 		if !ok {
+			continue
+		}
+
+		position, ok := value.(*Position)
+
+		if !ok || position == nil {
 			continue
 		}
 

@@ -223,7 +223,8 @@ func (transport *Transport) fireReconnect() error {
 
 /*
 configureLevel3 installs the SDK BookManager the way Kraken's official L3
-example does: create books on subscribe, then feed frames through Update.
+example does: create books from the outbound subscribe (OnSent), then apply
+inbound frames through the FIFO worker.
 */
 func configureLevel3(live *Live) {
 	live.books = spot.NewBookManager()
@@ -238,6 +239,10 @@ func configureLevel3(live *Live) {
 				managed.EnforceDepth()
 			},
 		)
+	})
+
+	live.client.OnSent.Recurring(func(event *callback.Event[*kraken.WebSocketMessage]) {
+		live.ingestLevel3Sent(event)
 	})
 
 	live.level3Queue = make(chan []byte, level3QueueDepth)

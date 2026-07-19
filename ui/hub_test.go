@@ -3,9 +3,13 @@ package ui
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
+	"time"
 
+	gorillawebsocket "github.com/gorilla/websocket"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -78,17 +82,64 @@ TestHubCloseCancelsBeforeShutdown proves Close cancels the hub context so the
 that handler forever — the deadlock this teardown path must never reintroduce.
 */
 func TestHubCloseCancelsBeforeShutdown(t *testing.T) {
-	Convey("Given a hub with a cancelable context and no live socket", t, func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		hub := &Hub{
-			status:   types.READY,
-			Messages: make(chan []byte, 1),
-			ctx:      ctx,
-			cancel:   cancel,
+	Convey("Given a hub with a live /ws client", t, func() {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		So(err, ShouldBeNil)
+		addr := listener.Addr().String()
+		So(listener.Close(), ShouldBeNil)
+
+		previousAddr := viper.Get("ui.addr")
+		viper.Set("ui.addr", addr)
+		t.Cleanup(func() { viper.Set("ui.addr", previousAddr) })
+
+		hub, err := NewHub(
+			context.Background(),
+			nil,
+			nil,
+			nil,
+			make(chan []byte, 1),
+			func() bool { return true },
+		)
+		So(err, ShouldBeNil)
+		So(hub.Initialize(), ShouldBeNil)
+
+		serveErr := make(chan error, 1)
+
+		go func() {
+			serveErr <- hub.Serve()
+		}()
+
+		url := "ws://" + addr + "/ws"
+		var conn *gorillawebsocket.Conn
+		deadline := time.Now().Add(2 * time.Second)
+
+		for time.Now().Before(deadline) {
+			conn, _, err = gorillawebsocket.DefaultDialer.Dial(url, nil)
+
+			if err == nil {
+				break
+			}
+
+			time.Sleep(10 * time.Millisecond)
 		}
 
+		So(err, ShouldBeNil)
+		So(conn, ShouldNotBeNil)
+		defer conn.Close()
+
 		Convey("Close cancels the context and returns without blocking", func() {
-			So(hub.Close(), ShouldBeNil)
+			done := make(chan error, 1)
+
+			go func() {
+				done <- hub.Close()
+			}()
+
+			select {
+			case closeErr := <-done:
+				So(closeErr, ShouldBeNil)
+			case <-time.After(2 * time.Second):
+				t.Fatal("Close blocked waiting on the live /ws handler")
+			}
 
 			select {
 			case <-hub.ctx.Done():

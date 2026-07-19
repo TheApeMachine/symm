@@ -269,7 +269,7 @@ func ProveExit(
 	tests.SetPaperPrice(t, statePath, entry.Symbol, mark)
 
 	thesis := types.NewThesis(nil, nil)
-	er, unc := forecastSeed(entry.Truth)
+	er, unc := entry.Truth.forecastSeed()
 
 	if entry.Truth.KeepForecast {
 		tests.SeedOpportunityForecast(thesis, entry.Symbol, er, unc)
@@ -315,7 +315,7 @@ func ProveExit(
 forecastSeed applies StageTruth ER/uncertainty defaults used by KeepForecast
 paths: 0.05 for zero ER and 0.02 for nonpositive uncertainty.
 */
-func forecastSeed(truth StageTruth) (er, unc float64) {
+func (truth StageTruth) forecastSeed() (er, unc float64) {
 	er = truth.ForecastER
 	unc = truth.ForecastUnc
 

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
@@ -14,11 +13,14 @@ import (
 
 /*
 advance steps one symbol's GPU field from a Hawkes outcome, or republishes the
-last GasReady projection when the excitation epoch has not moved.
+last GasReady projection when the excitation epoch has not moved. focus is the
+cut-wide ui.manifold_focus resolved once by Update and threaded through
+advanceAll so each symbol does not re-read viper.
 */
 func (solver *Solver) advance(
 	symbol string,
 	outcome excitation.Outcome,
+	focus string,
 ) (State, error) {
 	slot := solver.symbols[symbol]
 
@@ -125,7 +127,7 @@ func (solver *Solver) advance(
 	slot.epoch++
 	buyIntensity, sellIntensity := intensities(outcome)
 
-	focused := viper.GetString("ui.manifold_focus") == symbol
+	focused := focus != "" && focus == symbol
 	projection, projectionErr := projectField(handle, solver.config, len(oscillators), focused)
 
 	if projectionErr != nil {

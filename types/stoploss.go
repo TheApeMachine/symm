@@ -7,6 +7,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -350,7 +351,11 @@ JSON recovery does not default sincerity pressure to zero.
 */
 func (stoploss *Stoploss) UnmarshalJSON(payload []byte) error {
 	if stoploss == nil {
-		return nil
+		return errnie.Err(
+			errnie.Validation,
+			"stoploss: UnmarshalJSON on nil receiver",
+			nil,
+		)
 	}
 
 	type wire struct {

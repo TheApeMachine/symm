@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
@@ -19,11 +20,45 @@ import (
 const level3QueueDepth = 1024
 
 /*
-SubscribeLevel3 subscribes this authenticated transport to L3 via the SDK
-SubL3 helper, matching Kraken's official BookManager example.
+SubscribeLevel3 ensures each symbol has a BookManager entry, then subscribes via
+the SDK SubL3 helper. Books must exist before the first snapshot/update arrives;
+Kraken's example creates them from the outbound subscribe (OnSent) — we do both.
 */
 func (live *Live) SubscribeLevel3(symbols []string, depth int) error {
+	if live == nil || live.client == nil {
+		return errnie.Err(errnie.NotFound, "websocket: level3 transport unavailable", nil)
+	}
+
+	if depth <= 0 {
+		depth = 10
+	}
+
+	live.ensureLevel3Books(symbols, depth)
+
 	return live.client.SubL3(symbols, depth)
+}
+
+/*
+ensureLevel3Books creates missing SDK books under the write lease so inbound
+frames never hit "not found in library" before the subscribe ack path runs.
+*/
+func (live *Live) ensureLevel3Books(symbols []string, depth int) {
+	if live == nil || live.books == nil || depth <= 0 {
+		return
+	}
+
+	live.bookMu.Lock()
+	defer live.bookMu.Unlock()
+
+	for _, symbol := range symbols {
+		if symbol == "" || live.books.GetBook(symbol) != nil {
+			continue
+		}
+
+		managed := live.books.CreateBook(symbol, depth)
+		managed.EnableMaxDepth = false
+		managed.NoBookCrossing = false
+	}
 }
 
 /*
@@ -76,11 +111,13 @@ func (live *Live) drainLevel3() {
 
 /*
 updateLevel3 feeds one websocket message into the SDK BookManager under the
-write lease so PeekBook readers never range Side.Levels mid-mutation.
+write lease so PeekBook readers never range Side.Levels mid-mutation. The SDK
+can panic on delete/modify against a missing price level (empty book after a
+failed apply); recover turns that into an error so the FIFO worker stays alive.
 */
 func (live *Live) updateLevel3(
 	event *callback.Event[*sdkkraken.WebSocketMessage],
-) error {
+) (err error) {
 	if !live.isLevel3 || live.books == nil || event == nil {
 		return nil
 	}
@@ -88,7 +125,41 @@ func (live *Live) updateLevel3(
 	live.bookMu.Lock()
 	defer live.bookMu.Unlock()
 
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("websocket: level3 apply panic: %v", recovered),
+				nil,
+			)
+		}
+	}()
+
 	return live.books.Update(event)
+}
+
+/*
+ingestLevel3Sent feeds outbound websocket frames into BookManager. Kraken's L3
+example creates books from the subscribe request on OnSent; without this path,
+snapshots race in against an empty library.
+*/
+func (live *Live) ingestLevel3Sent(
+	event *callback.Event[*sdkkraken.WebSocketMessage],
+) {
+	if live == nil || !live.isLevel3 || live.books == nil || event == nil {
+		return
+	}
+
+	live.bookMu.Lock()
+	defer live.bookMu.Unlock()
+
+	if err := live.books.Update(event); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"websocket: level3 sent-frame book ingest failed: "+err.Error(),
+			err,
+		))
+	}
 }
 
 /*
