@@ -113,44 +113,30 @@ func SaveRecovery(dir string, recovery *Recovery) error {
 }
 
 /*
-CaptureRecovery builds a compact restart payload from live Thesis inventory.
+CaptureRecovery builds a compact restart payload from open wallet lots.
 Non-finite floats are zeroed so encoding/json cannot reject the checkpoint.
 */
-func CaptureRecovery(thesis *Thesis, pending map[string]string, reservations []ReservationWire) *Recovery {
-	if thesis == nil {
-		return nil
-	}
-
+func CaptureRecovery(
+	tick int64,
+	open map[string]Holding,
+	pending map[string]string,
+	reservations []ReservationWire,
+) *Recovery {
 	holdings := map[string]Holding{}
 
-	if thesis.Holdings != nil {
-		thesis.Holdings.Range(func(key, value any) bool {
-			symbol, ok := key.(string)
+	for symbol, holding := range open {
+		if holding.Status == CLOSED || !holding.qtyPositive() {
+			continue
+		}
 
-			if !ok {
-				return true
-			}
-
-			switch holding := value.(type) {
-			case *Holding:
-				if holding != nil && holding.Status != CLOSED && holding.qtyPositive() {
-					holdings[symbol] = holding.durable()
-				}
-			case Holding:
-				if holding.Status != CLOSED && holding.qtyPositive() {
-					holdings[symbol] = holding.durable()
-				}
-			}
-
-			return true
-		})
+		holdings[symbol] = holding.durable()
 	}
 
 	return &Recovery{
 		Holdings:      holdings,
 		PendingOrders: pending,
 		Reservations:  reservations,
-		Tick:          thesis.Tick,
+		Tick:          tick,
 	}
 }
 

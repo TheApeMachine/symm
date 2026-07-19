@@ -302,3 +302,93 @@ func BenchmarkPriceTickerAck(b *testing.B) {
 		price.TickerAck(frame)
 	}
 }
+
+func TestPriceQuantityBillFitsCashSlice(t *testing.T) {
+	Convey("Given BILL/USD ask and a max_fraction cash slice", t, func() {
+		price := broker.NewPrice(nil)
+		So(price.RememberFee("BILL/USD", kraken.TradeVolumeFee{
+			Fee: decimal.NewFromFloat64(0.40),
+		}), ShouldBeNil)
+		price.TickerAck([]byte(`{
+			"channel":"ticker","type":"update",
+			"data":[{"symbol":"BILL/USD","ask":"0.02424","bid":"0.02421","last":"0.02437"}]
+		}`))
+
+		pair := &kraken.InstrumentPair{
+			Symbol:         "BILL/USD",
+			QtyMin:         100,
+			QtyIncrement:   0.00001,
+			QtyPrecision:   5,
+			PricePrecision: 5,
+			CostPrecision:  5,
+			CostMin:        decimal.NewFromFloat64(0.5),
+		}
+		budget := decimal.NewFromFloat64(23.746)
+
+		quantity, err := price.Quantity(pair, budget)
+
+		Convey("Then Quantity fits inside the slice", func() {
+			So(err, ShouldBeNil)
+			So(quantity, ShouldNotBeNil)
+			cost, costErr := price.Taker(pair, quantity)
+			So(costErr, ShouldBeNil)
+			So(cost.Cmp(budget) <= 0, ShouldBeTrue)
+		})
+	})
+}
+
+func TestPriceQuantityRejectsBudgetBelowMinimum(t *testing.T) {
+	Convey("Given a budget that cannot fund QtyMin", t, func() {
+		price := broker.NewPrice(nil)
+		So(price.RememberFee("BILL/USD", kraken.TradeVolumeFee{
+			Fee: decimal.NewFromFloat64(0.40),
+		}), ShouldBeNil)
+		price.TickerAck([]byte(`{
+			"channel":"ticker","type":"update",
+			"data":[{"symbol":"BILL/USD","ask":"0.02424","bid":"0.02421","last":"0.02437"}]
+		}`))
+
+		pair := &kraken.InstrumentPair{
+			Symbol:         "BILL/USD",
+			QtyMin:         100,
+			QtyIncrement:   0.00001,
+			QtyPrecision:   5,
+			PricePrecision: 5,
+			CostPrecision:  5,
+		}
+
+		quantity, err := price.Quantity(pair, decimal.NewFromFloat64(0.1))
+
+		Convey("Then Quantity fails before upsizing into an unaffordable lot", func() {
+			So(quantity, ShouldBeNil)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "below instrument minimum")
+		})
+	})
+}
+
+func BenchmarkPriceQuantity(b *testing.B) {
+	price := broker.NewPrice(nil)
+	_ = price.RememberFee("BILL/USD", kraken.TradeVolumeFee{
+		Fee: decimal.NewFromFloat64(0.40),
+	})
+	price.TickerAck([]byte(`{
+		"channel":"ticker","type":"update",
+		"data":[{"symbol":"BILL/USD","ask":"0.02424","bid":"0.02421","last":"0.02437"}]
+	}`))
+	pair := &kraken.InstrumentPair{
+		Symbol:         "BILL/USD",
+		QtyMin:         100,
+		QtyIncrement:   0.00001,
+		QtyPrecision:   5,
+		PricePrecision: 5,
+		CostPrecision:  5,
+	}
+	budget := decimal.NewFromFloat64(23.746)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.Quantity(pair, budget)
+	}
+}

@@ -40,7 +40,7 @@ func TestPlannerUpdateCollectsEverySignal(t *testing.T) {
 	done := make(chan *types.Thesis, 1)
 
 	go func() {
-		done <- planner.Update(&types.MarketFrame{}, 1)
+		done <- planner.Update(nil, &types.MarketFrame{}, 1)
 	}()
 
 	select {
@@ -76,6 +76,6 @@ func BenchmarkPlannerUpdate(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		planner.Update(frame, 1)
+		planner.Update(nil, frame, 1)
 	}
 }

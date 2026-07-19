@@ -9,7 +9,6 @@ import {
 	causalStrength,
 } from "#/components/terminal/causal-view";
 import { resonancePredict } from "#/components/terminal/decision-candidate";
-import { Panel } from "@/components/ui/panel";
 
 type History<T> = { values: () => T[] };
 

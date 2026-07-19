@@ -2,7 +2,14 @@ import type { CausalFrame } from "#/collections/types";
 import type { ManifoldFrame } from "#/collections/types";
 import type { ResonanceFrame } from "#/collections/types";
 import {
+	causalAssociation,
+	causalCategory,
+	causalConfidence,
+	causalContagion,
 	causalEntryBaseline,
+	causalIntervention,
+	causalNoise,
+	causalRatio,
 	causalReading,
 	causalStrength,
 } from "#/components/terminal/causal-view";
@@ -147,4 +154,94 @@ export const manifoldField = (
 	const reading = manifoldReading(frame);
 
 	return readingNumber(reading, "coherenceMag2", "CoherenceMag2");
+};
+
+const finite = (value: unknown): number => {
+	const number = typeof value === "number" ? value : Number(value);
+
+	return Number.isFinite(number) ? number : 0;
+};
+
+const ratio = (value: unknown): number =>
+	Math.min(1, Math.max(0, finite(value)));
+
+const present = (value: number | null): number => (value === null ? 0 : value);
+
+export type CandidateModel = {
+	symbol: string;
+	support: number;
+	score: number;
+	verdict: CandidateVerdict;
+	why: string;
+	inPlay: boolean;
+	edge: number;
+	branch: string;
+	bars: Array<{ src: string; value: number }>;
+	waterfall: Array<{ src: string; delta: number }>;
+	probes: Array<{ label: string; value: number }>;
+	hasDecision: boolean;
+};
+
+/*
+buildCandidate composes ladder frames into the row model DecisionsSurface paints
+through DOM refs so React only remounts when the symbol set changes.
+*/
+export const buildCandidate = (
+	symbol: string,
+	decision: StrategyDecision | undefined,
+	causal: CausalFrame | undefined,
+	resonance: ResonanceFrame | undefined,
+	manifold: ManifoldFrame | undefined,
+): CandidateModel => {
+	const causalStrengthValue = causalStrength(causal);
+	const causalBaselineValue = causalEntryBaseline(causal);
+	const predict = resonancePredict(resonance);
+	const field = manifoldField(manifold);
+	const predictEdge = resonanceEdge(resonance);
+	const score =
+		decision?.utility ??
+		Math.min(ratio(present(predict)), causalRatio(causalConfidence(causal)));
+	const support = [causal, resonance, manifold].filter(Boolean).length;
+	const judgement = judgeCandidate(decision, support, causalCleared(causal), {
+		causal: causal === undefined,
+		resonance: resonance === undefined,
+		manifold: manifold === undefined,
+	});
+	const bars = [
+		{ src: "causal", value: causalStrengthValue, ok: causal !== undefined },
+		{ src: "predict", value: present(predict), ok: resonance !== undefined },
+		{ src: "manifold", value: present(field), ok: manifold !== undefined },
+	].filter((bar) => bar.ok);
+
+	return {
+		symbol,
+		support,
+		score,
+		verdict: judgement.verdict,
+		why: judgement.why,
+		inPlay: judgement.inPlay,
+		edge: pearlEdge(causal),
+		hasDecision: decision !== undefined,
+		branch:
+			decision?.cause ??
+			[
+				manifold?.category,
+				resonance?.category,
+				causal === undefined ? "" : String(causalCategory(causal)),
+			]
+				.filter(Boolean)
+				.join(" / "),
+		bars: bars.map(({ src, value }) => ({ src, value })),
+		waterfall: [
+			{ src: "causal", delta: causalStrengthValue - causalBaselineValue },
+			{ src: "predict", delta: present(predictEdge) },
+			{ src: "field", delta: present(field) },
+		],
+		probes: [
+			{ label: "beta", value: causalAssociation(causal) },
+			{ label: "panic", value: causalContagion(causal) },
+			{ label: "residual", value: causalNoise(causal) },
+			{ label: "intervention", value: causalIntervention(causal) },
+		],
+	};
 };

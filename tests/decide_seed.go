@@ -128,8 +128,8 @@ func SeedEarlyCognition(thesis *types.Thesis, symbol string) {
 }
 
 /*
-SeedMatureHolding places an open thesis holding and mirrors it onto Balance so
-Desk.OpenPositions and rotate arbitration see a real occupied slot.
+SeedMatureHolding places an open lot on Balance and marks Thesis lifecycle
+managing. Thesis.Holdings stays for Admit-created lots only.
 */
 func (session *Session) SeedMatureHolding(
 	thesis *types.Thesis,
@@ -141,17 +141,20 @@ func (session *Session) SeedMatureHolding(
 	}
 
 	holding := &types.Holding{
-		Symbol: symbol,
-		Asset:  baseAsset(symbol),
-		Qty:    decimal.NewFromFloat64(notional),
-		Mark:   decimal.NewFromFloat64(1),
-		Status: types.OPEN,
+		Symbol:     symbol,
+		Asset:      baseAsset(symbol),
+		Qty:        decimal.NewFromFloat64(notional),
+		Mark:       decimal.NewFromFloat64(1),
+		EntryPrice: decimal.NewFromFloat64(1),
+		Status:     types.OPEN,
+		Stoploss:   types.NewStoploss(context.Background()),
 	}
-	thesis.Holdings.Store(symbol, holding)
 
 	if session != nil && session.Balance != nil {
 		session.Balance.Seed(holding)
 	}
+
+	thesis.NoteLifecycle(symbol, types.LifecycleManaging, thesis.At)
 }
 
 func readyBasin(symbol string, coherence float64) symmmanifold.State {

@@ -74,7 +74,25 @@ func (crypto *Crypto) flushCheckpoint() {
 		}
 	}
 
-	recovery := types.CaptureRecovery(thesis, pending, reservations)
+	open := map[string]types.Holding{}
+
+	if crypto.balance != nil {
+		for holding := range crypto.balance.Holdings() {
+			lot := holding
+
+			if crypto.desk != nil {
+				if position, ok := crypto.desk.Position(lot.Symbol); ok {
+					if stop := position.Stop(); stop != nil {
+						lot.Stoploss = stop
+					}
+				}
+			}
+
+			open[lot.Symbol] = lot
+		}
+	}
+
+	recovery := types.CaptureRecovery(thesis.Tick, open, pending, reservations)
 
 	if err := types.SaveRecovery(crypto.dataPath, recovery); err != nil {
 		errnie.Error(errnie.Err(

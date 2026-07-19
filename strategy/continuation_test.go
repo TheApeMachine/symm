@@ -11,7 +11,7 @@ import (
 
 func TestContinuationUtilityIsKeepScore(t *testing.T) {
 	Convey("Given a managing forecast with uncertainty", t, func() {
-		continuity := NewContinuity(nil, NewRotate(), NewEvidence())
+		continuity := NewContinuity(nil, nil, nil, NewRotate(), NewEvidence())
 		forecast := types.Forecasts{
 			Symbol:         "IDEX/USD",
 			At:             time.Unix(1, 0).UTC(),

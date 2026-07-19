@@ -345,7 +345,7 @@ func (session *Session) Play(frames iter.Seq[Frame]) ([]*types.Thesis, error) {
 		pending = false
 
 		if thesis != nil {
-			theses = append(theses, thesis)
+			theses = append(theses, thesis.CutSnapshot())
 		}
 	}
 
@@ -361,7 +361,7 @@ func (session *Session) Play(frames iter.Seq[Frame]) ([]*types.Thesis, error) {
 	}
 
 	if thesis != nil {
-		theses = append(theses, thesis)
+		theses = append(theses, thesis.CutSnapshot())
 	}
 
 	return theses, nil

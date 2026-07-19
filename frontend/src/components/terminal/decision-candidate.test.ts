@@ -4,6 +4,7 @@ import type { ManifoldFrame } from "#/collections/types";
 import type { ResonanceFrame } from "#/collections/types";
 import type { StrategyDecision } from "#/types/thesis";
 import {
+	buildCandidate,
 	causalCleared,
 	judgeCandidate,
 	manifoldField,
@@ -113,6 +114,62 @@ describe("resonancePredict", () => {
 				expectedReturn: 0.012,
 			} as ResonanceFrame),
 		).toBe(0.012);
+	});
+});
+
+describe("buildCandidate", () => {
+	it("marks waiting when ladder frames are absent", () => {
+		const model = buildCandidate(
+			"BTC/USD",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+		);
+
+		expect(model).toMatchObject({
+			symbol: "BTC/USD",
+			support: 0,
+			verdict: "waiting",
+			why: "waiting causal",
+			inPlay: false,
+			hasDecision: false,
+		});
+		expect(model.bars).toEqual([]);
+	});
+
+	it("prefers strategy utility when a decision is present", () => {
+		const decision = {
+			symbol: "BTC/USD",
+			action: "enter",
+			utility: 0.82,
+			reason: "edge clears",
+			cause: "resonance+causal",
+		} as StrategyDecision;
+
+		const model = buildCandidate(
+			"BTC/USD",
+			decision,
+			causalFrame(0.9, 0.2),
+			{
+				source: "resonance",
+				symbol: "BTC/USD",
+				at: "2026-07-18T00:00:00Z",
+				surprise: 0,
+			} as ResonanceFrame,
+			{
+				source: "manifold",
+				symbol: "BTC/USD",
+				at: "2026-07-18T00:00:00Z",
+				reading: { coherenceMag2: 0.5 },
+			} as ManifoldFrame,
+		);
+
+		expect(model.score).toBe(0.82);
+		expect(model.verdict).toBe("allow");
+		expect(model.inPlay).toBe(true);
+		expect(model.hasDecision).toBe(true);
+		expect(model.support).toBe(3);
 	});
 });
 

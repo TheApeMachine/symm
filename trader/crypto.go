@@ -50,7 +50,6 @@ type Crypto struct {
 	checkpointAt   atomic.Int64
 	checkpointSlot atomic.Pointer[types.Thesis]
 	snapshot       *types.Recovery
-	phases         map[string]string
 }
 
 /*
@@ -228,7 +227,7 @@ func (crypto *Crypto) Tick(at time.Time) (*types.Thesis, error) {
 		"books":   len(frame.Books),
 	}))
 
-	thesis := crypto.planner.Update(frame, tick)
+	thesis := crypto.planner.Update(crypto.lastThesis.Load(), frame, tick)
 
 	if err := crypto.Plan(thesis); err != nil {
 		crypto.status = types.ERROR

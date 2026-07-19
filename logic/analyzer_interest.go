@@ -8,9 +8,10 @@ import (
 )
 
 /*
-Interest returns open inventory first, then every Hawkes intensity leader.
-L3 books for the quote universe are subscribed once with instruments; this
-list is for analysis priority, not transport expansion.
+Interest returns open inventory first (Thesis lifecycle managing/entered lots),
+then every Hawkes intensity leader. L3 books for the quote universe are
+subscribed once with instruments; this list is for analysis priority, not
+transport expansion.
 */
 func (analyzer *Analyzer) Interest(thesis *types.Thesis) []string {
 	if analyzer == nil || analyzer.hawkes == nil {
@@ -26,7 +27,37 @@ func (analyzer *Analyzer) Interest(thesis *types.Thesis) []string {
 	selected := make([]string, 0)
 	seen := make(map[string]struct{})
 
-	if thesis != nil {
+	if thesis != nil && thesis.Lifecycle != nil {
+		thesis.Lifecycle.Range(func(key, value any) bool {
+			symbol, ok := key.(string)
+
+			if !ok || symbol == "" {
+				return true
+			}
+
+			phase, _ := value.(string)
+
+			switch phase {
+			case types.LifecycleEntered, types.LifecycleManaging,
+				types.LifecycleExitSelected, types.LifecycleExitSubmitted,
+				types.LifecyclePartiallyEntered, types.LifecyclePartiallyExited,
+				types.LifecycleEntrySubmitted:
+			default:
+				return true
+			}
+
+			if _, exists := seen[symbol]; exists {
+				return true
+			}
+
+			seen[symbol] = struct{}{}
+			selected = append(selected, symbol)
+
+			return true
+		})
+	}
+
+	if thesis != nil && thesis.Holdings != nil {
 		thesis.Holdings.Range(func(key, value any) bool {
 			symbol, ok := key.(string)
 

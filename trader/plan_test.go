@@ -8,10 +8,11 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
-func TestSeedOpenJournalsEntered(t *testing.T) {
+func TestSyncInventoryJournalsEntered(t *testing.T) {
 	previousQuote := viper.GetString("market.quote_currency")
 	viper.Set("market.quote_currency", "USD")
 	t.Cleanup(func() { viper.Set("market.quote_currency", previousQuote) })
@@ -29,22 +30,27 @@ func TestSeedOpenJournalsEntered(t *testing.T) {
 		crypto := &Crypto{balance: balance}
 		thesis := types.NewThesis(nil, nil)
 
-		crypto.seedOpen(thesis)
+		crypto.syncInventory(thesis)
 
 		Convey("Then lifecycle is managing after the entered transition", func() {
 			phase, ok := thesis.Lifecycle.Load("BTC/USD")
 			So(ok, ShouldBeTrue)
 			So(phase, ShouldEqual, types.LifecycleManaging)
 
-			crypto.seedOpen(thesis)
+			crypto.syncInventory(thesis)
 			phase, ok = thesis.Lifecycle.Load("BTC/USD")
 			So(ok, ShouldBeTrue)
 			So(phase, ShouldEqual, types.LifecycleManaging)
 		})
+
+		Convey("And Thesis.Holdings is not a wallet mirror", func() {
+			_, ok := thesis.Holdings.Load("BTC/USD")
+			So(ok, ShouldBeFalse)
+		})
 	})
 }
 
-func TestSeedOpenWalletAuthority(t *testing.T) {
+func TestSyncInventoryWalletAuthority(t *testing.T) {
 	previousQuote := viper.GetString("market.quote_currency")
 	viper.Set("market.quote_currency", "USD")
 	t.Cleanup(func() { viper.Set("market.quote_currency", previousQuote) })
@@ -70,6 +76,7 @@ func TestSeedOpenWalletAuthority(t *testing.T) {
 					},
 				},
 			},
+			postMortem: &strategy.PostMortem{},
 		}
 
 		thesis := types.NewThesis(nil, nil)
@@ -78,25 +85,20 @@ func TestSeedOpenWalletAuthority(t *testing.T) {
 			Qty:    decimal.NewFromFloat64(113.9),
 			Status: types.OPEN,
 		})
+		thesis.Lifecycle.Store("ONDO/USD", types.LifecycleManaging)
 
-		crypto.seedOpen(thesis)
+		crypto.syncInventory(thesis)
 
-		Convey("Then thesis inventory follows the wallet, not recovery", func() {
-			_, ok := thesis.Holdings.Load("ONDO/USD")
-			So(ok, ShouldBeFalse)
+		Convey("Then recovery does not reintroduce qty and PostMortem evaluates", func() {
 			So(crypto.snapshot, ShouldBeNil)
-
-			count := 0
-			thesis.Holdings.Range(func(key, value any) bool {
-				count++
-				return true
-			})
-			So(count, ShouldEqual, 0)
+			phase, ok := thesis.Lifecycle.Load("ONDO/USD")
+			So(ok, ShouldBeTrue)
+			So(phase, ShouldEqual, types.LifecycleEvaluated)
 		})
 	})
 }
 
-func TestSeedOpenEnrichesWalletLot(t *testing.T) {
+func TestSyncInventoryEnrichesWalletLot(t *testing.T) {
 	previousQuote := viper.GetString("market.quote_currency")
 	viper.Set("market.quote_currency", "USD")
 	t.Cleanup(func() { viper.Set("market.quote_currency", previousQuote) })
@@ -125,12 +127,11 @@ func TestSeedOpenEnrichesWalletLot(t *testing.T) {
 		}
 		thesis := types.NewThesis(nil, nil)
 
-		crypto.seedOpen(thesis)
+		crypto.syncInventory(thesis)
 
-		Convey("Then entry economics land on the wallet-backed shell", func() {
-			value, ok := thesis.Holdings.Load("ONDO/USD")
-			So(ok, ShouldBeTrue)
-			holding := value.(*types.Holding)
+		Convey("Then entry economics land on the Balance lot", func() {
+			holding, err := balance.Holding("ONDO/USD")
+			So(err, ShouldBeNil)
 			So(holding.EntryPrice, ShouldNotBeNil)
 			So(holding.EntryPrice.Float64(), ShouldEqual, 0.55)
 			So(holding.Stoploss, ShouldNotBeNil)
@@ -155,29 +156,23 @@ func TestMarkOpenPreservesExitSubmitted(t *testing.T) {
 				`}]}`,
 		))
 
-		crypto := &Crypto{
-			balance: balance,
-			phases: map[string]string{
-				"BTC/USD": types.LifecycleExitSubmitted,
-			},
-		}
+		crypto := &Crypto{balance: balance}
 		thesis := types.NewThesis(nil, nil)
+		thesis.Lifecycle.Store("BTC/USD", types.LifecycleExitSubmitted)
 
-		crypto.seedOpen(thesis)
+		crypto.syncInventory(thesis)
 
 		Convey("Then exit_submitted survives when Desk cannot confirm abandonment", func() {
 			phase, ok := thesis.Lifecycle.Load("BTC/USD")
 			So(ok, ShouldBeTrue)
 			So(phase, ShouldEqual, types.LifecycleExitSubmitted)
-			So(crypto.phases["BTC/USD"], ShouldEqual, types.LifecycleExitSubmitted)
 		})
 	})
 }
 
 /*
 TestHealAbandonedExitsReopensStuckRail clears ExitSubmitted when the lot is
-still open and Desk has no pending order — the stuck EXIT SUBMITTED rail after
-failed paper sells.
+still open and Desk has no pending order.
 */
 func TestHealAbandonedExitsReopensStuckRail(t *testing.T) {
 	previousQuote := viper.GetString("market.quote_currency")
@@ -198,16 +193,13 @@ func TestHealAbandonedExitsReopensStuckRail(t *testing.T) {
 		crypto := &Crypto{
 			balance: balance,
 			desk:    desk,
-			phases: map[string]string{
-				"ETH/USD": types.LifecycleExitSubmitted,
-			},
 		}
 		thesis := types.NewThesis(nil, nil)
+		thesis.Lifecycle.Store("ETH/USD", types.LifecycleExitSubmitted)
 
-		crypto.seedOpen(thesis)
+		crypto.syncInventory(thesis)
 
 		Convey("Then the phase returns to managing so Regulate can re-fire", func() {
-			So(crypto.phases["ETH/USD"], ShouldEqual, types.LifecycleManaging)
 			phase, ok := thesis.Lifecycle.Load("ETH/USD")
 			So(ok, ShouldBeTrue)
 			So(phase, ShouldEqual, types.LifecycleManaging)
@@ -215,7 +207,7 @@ func TestHealAbandonedExitsReopensStuckRail(t *testing.T) {
 	})
 }
 
-func BenchmarkSeedOpen(b *testing.B) {
+func BenchmarkSyncInventory(b *testing.B) {
 	previousQuote := viper.GetString("market.quote_currency")
 	viper.Set("market.quote_currency", "USD")
 	b.Cleanup(func() { viper.Set("market.quote_currency", previousQuote) })
@@ -234,6 +226,6 @@ func BenchmarkSeedOpen(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		crypto.seedOpen(thesis)
+		crypto.syncInventory(thesis)
 	}
 }

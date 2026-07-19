@@ -116,6 +116,29 @@ func (thesis *Thesis) ResetCut(frame *MarketFrame, tick int64) {
 	thesis.Positions = &sync.Map{}
 }
 
+/*
+CutSnapshot copies this cut's measurements and forecasts for history callers
+that must not observe later ResetCut replacements on the durable Thesis.
+*/
+func (thesis *Thesis) CutSnapshot() *Thesis {
+	if thesis == nil {
+		return nil
+	}
+
+	snapshot := NewThesis(thesis.uiHub, thesis.marketFrame)
+	snapshot.Tick = thesis.Tick
+	snapshot.At = thesis.At
+	snapshot.CrossSection = thesis.CrossSection
+	snapshot.Measurements = append([]*Measurement{}, thesis.Measurements...)
+	snapshot.Forecasts = append([]Forecasts{}, thesis.Forecasts...)
+	snapshot.Decisions = append([]Decision{}, thesis.Decisions...)
+	snapshot.Findings = append([]Finding{}, thesis.Findings...)
+	snapshot.Hypotheses = append([]Hypothesis{}, thesis.Hypotheses...)
+	snapshot.Categories = append([]Category{}, thesis.Categories...)
+
+	return snapshot
+}
+
 func (thesis *Thesis) Save(dir string) error {
 	target := filepath.Join(dir, ThesisKey+".json")
 	json, err := thesis.MarshalJSON()

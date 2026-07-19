@@ -85,20 +85,12 @@ func (crypto *Crypto) submitSells(
 			// Lot gone or venue rejected size: stop re-arming ActionExit every tick.
 			if _, open := crypto.desk.Position(symbol); !open {
 				thesis.NoteLifecycle(symbol, types.LifecycleExitSubmitted, thesis.At)
-
-				if crypto.phases != nil {
-					crypto.phases[symbol] = types.LifecycleExitSubmitted
-				}
 			}
 
 			continue
 		}
 
 		thesis.NoteLifecycle(symbol, types.LifecycleExitSubmitted, thesis.At)
-
-		if crypto.phases != nil {
-			crypto.phases[symbol] = types.LifecycleExitSubmitted
-		}
 
 		if quantity == nil {
 			freeing++
@@ -172,12 +164,6 @@ func (crypto *Crypto) submitEnters(
 
 		thesis.Positions.Store(holding.Symbol, position)
 		thesis.NoteLifecycle(holding.Symbol, types.LifecycleEntrySubmitted, thesis.At)
-
-		if crypto.phases == nil {
-			crypto.phases = map[string]string{}
-		}
-
-		crypto.phases[holding.Symbol] = types.LifecycleEntrySubmitted
 
 		if freeing > 0 {
 			freeing--

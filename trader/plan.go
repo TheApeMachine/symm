@@ -7,7 +7,8 @@ import (
 )
 
 /*
-Plan seeds open inventory, runs Planner.Decide, and publishes strategy frames.
+Plan syncs wallet lifecycle onto the durable Thesis, runs Planner.Decide, and
+publishes strategy frames. Thesis.Holdings stays Admit-created only.
 */
 func (crypto *Crypto) Plan(thesis *types.Thesis) error {
 	if thesis == nil || crypto.planner == nil {
@@ -18,61 +19,43 @@ func (crypto *Crypto) Plan(thesis *types.Thesis) error {
 		))
 	}
 
-	crypto.seedOpen(thesis)
+	crypto.syncInventory(thesis)
 	crypto.planner.Decide(thesis)
 
 	return nil
 }
 
 /*
-seedOpen rebuilds Thesis.Holdings from the live wallet only. Durable recovery
-may enrich entry economics on wallet-backed lots; it must never reintroduce a
-symbol the exchange no longer holds.
+syncInventory enriches Balance from recovery, restores lifecycle for live wallet
+lots, and advances flat symbols through close and PostMortem. It never copies
+wallet inventory onto Thesis.Holdings.
 */
-func (crypto *Crypto) seedOpen(thesis *types.Thesis) {
+func (crypto *Crypto) syncInventory(thesis *types.Thesis) {
 	if thesis == nil {
 		return
 	}
 
-	crypto.healAbandonedExits()
+	crypto.healAbandonedExits(thesis)
 
 	if crypto.snapshot != nil && crypto.balance != nil && crypto.balance.ModelReady() {
 		for symbol, recovered := range crypto.snapshot.Holdings {
 			crypto.balance.Enrich(symbol, recovered)
 		}
 
-		// One-shot: never reintroduce recovered lots after wallet has spoken.
 		crypto.snapshot = nil
 	}
-
-	thesis.Holdings.Range(func(key, value any) bool {
-		thesis.Holdings.Delete(key)
-		return true
-	})
 
 	live := map[string]struct{}{}
 
 	if crypto.balance != nil {
 		for holding := range crypto.balance.Holdings() {
-			seed := holding
+			lot := holding
 			live[holding.Symbol] = struct{}{}
-			thesis.Holdings.Store(holding.Symbol, &seed)
-			crypto.markOpen(thesis, &seed)
+			crypto.markOpen(thesis, &lot)
 		}
 	}
 
-	for symbol, phase := range crypto.phases {
-		if _, ok := live[symbol]; ok {
-			continue
-		}
-
-		if phase == types.LifecycleClosed {
-			continue
-		}
-
-		thesis.NoteLifecycle(symbol, types.LifecycleClosed, thesis.At)
-		crypto.phases[symbol] = types.LifecycleClosed
-	}
+	crypto.closeMissing(thesis, live)
 
 	if crypto.desk != nil {
 		_ = crypto.desk.OpenPositions()
@@ -80,58 +63,105 @@ func (crypto *Crypto) seedOpen(thesis *types.Thesis) {
 }
 
 /*
-healAbandonedExits re-arms ExitSubmitted symbols that still hold open inventory
-with no pending venue order. Yesterday's failed paper exits left the lifecycle
-rail stuck on EXIT SUBMITTED forever because submitSells skips that phase and
-Regulate will not re-append ActionExit while it remains set.
+closeMissing advances lifecycle for symbols no longer in the wallet and runs
+PostMortem when ready.
 */
-func (crypto *Crypto) healAbandonedExits() {
-	if crypto == nil || crypto.desk == nil || crypto.balance == nil ||
-		len(crypto.phases) == 0 {
+func (crypto *Crypto) closeMissing(
+	thesis *types.Thesis,
+	live map[string]struct{},
+) {
+	if thesis == nil || thesis.Lifecycle == nil {
 		return
 	}
 
-	for symbol, phase := range crypto.phases {
+	thesis.Lifecycle.Range(func(key, value any) bool {
+		symbol, ok := key.(string)
+
+		if !ok {
+			return true
+		}
+
+		if _, open := live[symbol]; open {
+			return true
+		}
+
+		phase, _ := value.(string)
+
+		switch phase {
+		case types.LifecycleClosed, types.LifecyclePostExitObservation,
+			types.LifecyclePostMortemReady, types.LifecycleEvaluated,
+			types.LifecycleExpired, types.LifecycleRejected, types.LifecycleInvalid:
+			return true
+		}
+
+		thesis.NoteLifecycle(symbol, types.LifecycleClosed, thesis.At)
+		thesis.NoteLifecycle(symbol, types.LifecyclePostMortemReady, thesis.At)
+
+		if crypto.postMortem != nil {
+			errnie.Error(crypto.postMortem.Evaluate(thesis, symbol))
+		}
+
+		return true
+	})
+}
+
+/*
+healAbandonedExits re-arms ExitSubmitted symbols that still hold open inventory
+with no pending venue order.
+*/
+func (crypto *Crypto) healAbandonedExits(thesis *types.Thesis) {
+	if crypto == nil || crypto.desk == nil || crypto.balance == nil ||
+		thesis == nil || thesis.Lifecycle == nil {
+		return
+	}
+
+	thesis.Lifecycle.Range(func(key, value any) bool {
+		symbol, ok := key.(string)
+
+		if !ok {
+			return true
+		}
+
+		phase, _ := value.(string)
+
 		if phase != types.LifecycleExitSubmitted {
-			continue
+			return true
 		}
 
 		if crypto.desk.Pending(symbol) {
-			continue
+			return true
 		}
 
 		holding, err := crypto.balance.Holding(symbol)
 
 		if err != nil || holding.Status == types.CLOSED {
-			continue
+			return true
 		}
 
 		if holding.Qty == nil || holding.Qty.Sign() <= 0 {
-			continue
+			return true
 		}
 
-		crypto.phases[symbol] = types.LifecycleManaging
-	}
+		thesis.Lifecycle.Store(symbol, types.LifecycleManaging)
+
+		return true
+	})
 }
 
 /*
-markOpen places wallet-backed inventory into the managing lifecycle and journals
-a one-shot entered observation so the audit rail can explain restart inventory.
-In-flight entry/exit phases are restored onto each fresh Thesis so stoploss and
-trade submission do not re-fire every tick.
+markOpen places live wallet lots into the managing lifecycle on the durable
+Thesis. In-flight entry/exit phases are left alone so stoploss and trade
+submission do not re-fire every tick. Stoploss Bind runs on Position.
 */
 func (crypto *Crypto) markOpen(thesis *types.Thesis, holding *types.Holding) {
 	if thesis == nil || holding == nil || holding.Symbol == "" {
 		return
 	}
 
-	if crypto.phases == nil {
-		crypto.phases = map[string]string{}
-	}
+	priorValue, found := thesis.Lifecycle.Load(holding.Symbol)
+	prior, _ := priorValue.(string)
 
-	prior := crypto.phases[holding.Symbol]
-
-	if prior == "" {
+	if !found || prior == "" {
 		at := thesis.At
 
 		if holding.EntryAt != nil {
@@ -139,18 +169,28 @@ func (crypto *Crypto) markOpen(thesis *types.Thesis, holding *types.Holding) {
 		}
 
 		thesis.NoteLifecycle(holding.Symbol, types.LifecycleEntered, at)
-		crypto.phases[holding.Symbol] = types.LifecycleEntered
 		prior = types.LifecycleEntered
 	}
 
-	if holding.Stoploss != nil && holding.EntryPrice != nil {
-		trail := holding.Stoploss.TrailDistance
+	if crypto.desk != nil {
+		if position, ok := crypto.desk.Position(holding.Symbol); ok {
+			position.TakeStop(holding)
 
-		if trail <= 0 && holding.Stoploss.StopReturn < 0 {
-			trail = -holding.Stoploss.StopReturn
+			if holding.EntryPrice != nil {
+				trail := 0.0
+
+				if stop := position.Stop(); stop != nil {
+					trail = stop.TrailDistance
+
+					if trail <= 0 && stop.StopReturn < 0 {
+						trail = -stop.StopReturn
+					}
+				}
+
+				position.BindStop(holding.EntryPrice.Float64(), trail)
+				holding.Stoploss = position.Stop()
+			}
 		}
-
-		holding.Stoploss.Bind(holding.EntryPrice.Float64(), trail)
 	}
 
 	switch prior {
@@ -163,7 +203,6 @@ func (crypto *Crypto) markOpen(thesis *types.Thesis, holding *types.Holding) {
 	}
 
 	thesis.Lifecycle.Store(holding.Symbol, types.LifecycleManaging)
-	crypto.phases[holding.Symbol] = types.LifecycleManaging
 }
 
 /*

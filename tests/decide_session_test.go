@@ -94,7 +94,9 @@ func TestSessionPumpRotateWhenChallengerClearsWeakest(t *testing.T) {
 
 		So(session.SeedTakerFee("MATIC/USD", 0.26), ShouldBeNil)
 		So(session.SeedTakerFee("WEAK/USD", 0.26), ShouldBeNil)
-		So(session.SeedQuoteCapital(0), ShouldBeNil)
+		// Quote covers rotation Book of the incumbent notional; slots stay full
+		// so MATIC cannot enter without displacing WEAK.
+		So(session.SeedQuoteCapital(100), ShouldBeNil)
 
 		thesis := types.NewThesis(nil, nil)
 		session.SeedMatureHolding(thesis, "WEAK/USD", 100)

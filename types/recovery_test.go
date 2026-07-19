@@ -5,7 +5,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -17,23 +16,21 @@ func TestCaptureRecoveryNaNSafe(t *testing.T) {
 		qty := decimal.NewFromFloat64(1.5)
 		weight := math.NaN()
 		peak := math.Inf(1)
-		thesis := &Thesis{
-			Tick:     9,
-			Holdings: &sync.Map{},
-		}
-		thesis.Holdings.Store("ONDO/USD", &Holding{
-			Symbol: "ONDO/USD",
-			Asset:  "ONDO",
-			Qty:    qty,
-			Status: OPEN,
-			Stoploss: &Stoploss{
-				Skill: Skill{Weight: weight},
-				Trail: Trail{PeakReturn: peak},
+		open := map[string]Holding{
+			"ONDO/USD": {
+				Symbol: "ONDO/USD",
+				Asset:  "ONDO",
+				Qty:    qty,
+				Status: OPEN,
+				Stoploss: &Stoploss{
+					Skill: Skill{Weight: weight},
+					Trail: Trail{PeakReturn: peak},
+				},
 			},
-		})
+		}
 
 		Convey("When CaptureRecovery builds the checkpoint", func() {
-			recovery := CaptureRecovery(thesis, nil, nil)
+			recovery := CaptureRecovery(9, open, nil, nil)
 
 			Convey("Then encoding/json accepts the payload", func() {
 				So(recovery, ShouldNotBeNil)
@@ -112,16 +109,17 @@ func TestHoldingEnrich(t *testing.T) {
 
 func BenchmarkCaptureRecovery(b *testing.B) {
 	qty := decimal.NewFromFloat64(1)
-	thesis := &Thesis{Holdings: &sync.Map{}}
-	thesis.Holdings.Store("BTC/USD", &Holding{
-		Symbol: "BTC/USD", Qty: qty, Status: OPEN,
-		Stoploss: &Stoploss{Skill: Skill{Weight: 0.5}},
-	})
+	open := map[string]Holding{
+		"BTC/USD": {
+			Symbol: "BTC/USD", Qty: qty, Status: OPEN,
+			Stoploss: &Stoploss{Skill: Skill{Weight: 0.5}},
+		},
+	}
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = CaptureRecovery(thesis, map[string]string{"BTC/USD": "oid"}, nil)
+		_ = CaptureRecovery(1, open, map[string]string{"BTC/USD": "oid"}, nil)
 	}
 }
 

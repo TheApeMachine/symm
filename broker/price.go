@@ -692,23 +692,75 @@ func (price *Price) Quantity(
 		))
 	}
 
+	if budget == nil || budget.Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantity: non-positive budget for "+pair.Symbol,
+			nil,
+		))
+	}
+
+	if pair.CostMin != nil && pair.CostMin.Sign() > 0 && budget.Cmp(pair.CostMin) < 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantity: budget "+budget.String()+" below cost_min "+
+				pair.CostMin.String()+" for "+pair.Symbol,
+			nil,
+		))
+	}
+
 	unit := ticker.Ask.Copy()
 
 	if fee, feeErr := price.Fraction(pair.Symbol); feeErr == nil && fee != nil {
 		unit = price.Mul(ticker.Ask, decimal.NewFromInt64(1).Add(fee))
 	}
 
-	quantity := price.Quantize(pair, price.Div(budget, unit))
-	minimum := decimal.NewFromFloat64(pair.QtyMin)
+	minimum := price.Quantize(pair, decimal.NewFromFloat64(pair.QtyMin))
 
-	if quantity == nil || quantity.Cmp(minimum) < 0 {
-		quantity = price.Quantize(pair, minimum)
+	if minimum == nil || minimum.Sign() <= 0 {
+		minimum = price.Quantize(pair, decimal.NewFromFloat64(pair.QtyIncrement))
 	}
 
-	// Decimal quantize can leave a hair over budget after fees; shrink until
-	// Taker fits or the instrument minimum cannot.
-	for range 4 {
-		cost, costErr := price.Taker(pair, quantity)
+	if minimum == nil || minimum.Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantity: instrument minimum unavailable for "+pair.Symbol,
+			nil,
+		))
+	}
+
+	minCost, minErr := price.Taker(pair, minimum)
+
+	if minErr != nil || minCost == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"quantity: taker cost unavailable for "+pair.Symbol,
+			minErr,
+		))
+	}
+
+	if minCost.Cmp(budget) > 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantity: budget "+budget.String()+" below instrument minimum cost "+
+				minCost.String()+" for "+pair.Symbol,
+			nil,
+		))
+	}
+
+	quantity := price.Quantize(pair, price.Div(budget, unit))
+
+	if quantity == nil || quantity.Cmp(minimum) < 0 {
+		quantity = minimum.Copy()
+	}
+
+	// Fee/cost quantization can leave the first guess a hair over budget.
+	// Shrink by ratio, and when that stalls, step down one qty_increment.
+	var cost *decimal.Decimal
+
+	for range 8 {
+		var costErr error
+		cost, costErr = price.Taker(pair, quantity)
 
 		if costErr != nil || cost == nil {
 			return nil, errnie.Error(errnie.Err(
@@ -722,22 +774,45 @@ func (price *Price) Quantity(
 			return quantity, nil
 		}
 
-		quantity = price.Quantize(pair, price.Mul(quantity, price.Div(budget, cost)))
+		shrunk := price.Quantize(pair, price.Mul(quantity, price.Div(budget, cost)))
 
-		if quantity == nil || quantity.Cmp(minimum) < 0 {
+		if shrunk == nil || shrunk.Cmp(minimum) < 0 {
 			return nil, errnie.Error(errnie.Err(
 				errnie.Validation,
-				"quantity: budget below instrument minimum for "+pair.Symbol,
+				"quantity: budget "+budget.String()+" below instrument minimum for "+
+					pair.Symbol+" (cost "+cost.String()+")",
 				nil,
 			))
 		}
+
+		if shrunk.Cmp(quantity) >= 0 {
+			if pair.QtyIncrement <= 0 {
+				break
+			}
+
+			step := decimal.NewFromFloat64(pair.QtyIncrement)
+			shrunk = price.Quantize(pair, quantity.Sub(step))
+
+			if shrunk == nil || shrunk.Sign() <= 0 || shrunk.Cmp(minimum) < 0 {
+				return nil, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"quantity: budget "+budget.String()+" below instrument minimum for "+
+						pair.Symbol+" (cost "+cost.String()+")",
+					nil,
+				))
+			}
+		}
+
+		quantity = shrunk
 	}
 
-	return nil, errnie.Error(errnie.Err(
-		errnie.Validation,
-		"quantity: could not fit budget for "+pair.Symbol,
-		nil,
-	))
+	detail := "quantity: could not fit budget " + budget.String() + " for " + pair.Symbol
+
+	if cost != nil {
+		detail += " (last cost " + cost.String() + ", qty " + quantity.String() + ")"
+	}
+
+	return nil, errnie.Error(errnie.Err(errnie.Validation, detail, nil))
 }
 
 /*
