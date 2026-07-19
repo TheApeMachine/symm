@@ -1,6 +1,7 @@
+import { useSelector } from "@tanstack/react-store";
 import { useRef } from "react";
-import { manifoldStore } from "#/collections/manifold";
-import { resonanceStore } from "#/collections/resonance";
+import { appStore } from "#/collections/app";
+import type { ManifoldFrame, ResonanceFrame } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
 import {
 	fluidGridDimensions,
@@ -11,6 +12,7 @@ import {
 	terminalFluidFieldStats,
 } from "#/components/terminal/fluid-field";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 
 /*
 LiveManifoldMeta paints pilot-wave canvas metadata without React reconciliation.
@@ -20,16 +22,21 @@ export const LiveManifoldMeta = ({ focusSymbol }: { focusSymbol: string }) => {
 	const outliersRef = useRef<HTMLDivElement>(null);
 	const peakRef = useRef<HTMLDivElement>(null);
 	const waitingRef = useRef<HTMLDivElement>(null);
+	const online = useSelector(appStore, (state) => state.online);
+	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
 
 	useDirectStorePaint(
-		() => {
-			const manifold =
-				manifoldStore.state.manifold[focusSymbol]?.values().at(-1) ?? null;
-			const contour = terminalStore.state.fieldStyle === "Contour";
-			const waiting = manifold === null;
-			const display = terminalFluidDisplayLatticeFromFrame(manifold);
+		getWorker(),
+		[{ store: "manifold", key: focusSymbol }],
+		(buffers) => {
+			const manifold = (buffers[`manifold:${focusSymbol}`] ?? []).at(
+				-1,
+			) as ManifoldFrame | undefined;
+			const contour = fieldStyle === "Contour";
+			const waiting = manifold === undefined;
+			const display = terminalFluidDisplayLatticeFromFrame(manifold ?? null);
 			const field = isFluidFieldMatrix(display) ? display : [];
-			const { columns, rows } = fluidGridDimensions(manifold, field);
+			const { columns, rows } = fluidGridDimensions(manifold ?? null, field);
 			const stats = terminalFluidFieldStats(field, contour);
 
 			if (waitingRef.current !== null) {
@@ -57,8 +64,7 @@ export const LiveManifoldMeta = ({ focusSymbol }: { focusSymbol: string }) => {
 					: `peak ${stats.peak.toFixed(2)}`;
 			}
 		},
-		[manifoldStore, terminalStore],
-		[focusSymbol],
+		[online, focusSymbol, fieldStyle],
 	);
 
 	return (
@@ -80,19 +86,24 @@ export const LiveResonanceFooter = ({
 	focusSymbol: string;
 }) => {
 	const footerRef = useRef<HTMLSpanElement>(null);
+	const online = useSelector(appStore, (state) => state.online);
 
 	useDirectStorePaint(
-		() => {
-			const resonance =
-				resonanceStore.state.resonance[focusSymbol]?.values().at(-1) ?? null;
+		getWorker(),
+		[{ store: "resonance", key: focusSymbol }],
+		(buffers) => {
+			const resonance = (buffers[`resonance:${focusSymbol}`] ?? []).at(
+				-1,
+			) as ResonanceFrame | undefined;
 
 			if (footerRef.current !== null) {
 				footerRef.current.textContent =
-					resonance === null ? "waiting" : `symbol ${String(resonance.symbol)}`;
+					resonance === undefined
+						? "waiting"
+						: `symbol ${String(resonance.symbol)}`;
 			}
 		},
-		[resonanceStore],
-		[focusSymbol],
+		[online, focusSymbol],
 	);
 
 	return <span ref={footerRef} />;
@@ -107,21 +118,24 @@ export const LiveResonanceTitle = ({
 	focusSymbol: string;
 }) => {
 	const titleRef = useRef<HTMLSpanElement>(null);
+	const online = useSelector(appStore, (state) => state.online);
 
 	useDirectStorePaint(
-		() => {
-			const resonance =
-				resonanceStore.state.resonance[focusSymbol]?.values().at(-1) ?? null;
+		getWorker(),
+		[{ store: "resonance", key: focusSymbol }],
+		(buffers) => {
+			const resonance = (buffers[`resonance:${focusSymbol}`] ?? []).at(
+				-1,
+			) as ResonanceFrame | undefined;
 
 			if (titleRef.current !== null) {
 				titleRef.current.textContent =
-					resonance === null
+					resonance === undefined
 						? "waiting"
 						: `${String(resonance.samples)} samples`;
 			}
 		},
-		[resonanceStore],
-		[focusSymbol],
+		[online, focusSymbol],
 	);
 
 	return <span ref={titleRef} />;

@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"math"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -60,9 +61,15 @@ func (crypto *Crypto) flushCheckpoint() {
 				continue
 			}
 
+			amount := row.Amount.Float64()
+
+			if math.IsNaN(amount) || math.IsInf(amount, 0) {
+				amount = 0
+			}
+
 			reservations = append(reservations, types.ReservationWire{
 				ID:     row.ID,
-				Amount: row.Amount.Float64(),
+				Amount: amount,
 			})
 		}
 	}

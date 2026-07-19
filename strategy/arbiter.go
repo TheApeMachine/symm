@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"math"
 	"sort"
 
 	"github.com/theapemachine/errnie"
@@ -123,7 +124,7 @@ func (arbiter *Arbiter) displace(
 
 	edge := decision.Utility - incumbent.HoldUtility
 	rotateValue := edge - incumbent.ExitCost
-	waitValue := edge * incumbent.ClearScore
+	waitValue := edge * incumbent.ClearProb
 
 	if decision.Alternatives == nil {
 		decision.Alternatives = map[string]float64{}
@@ -134,7 +135,7 @@ func (arbiter *Arbiter) displace(
 	decision.Reason = "challenger clears one-step wait threshold against " + incumbent.Symbol
 	decision.Alternatives["hold_incumbent"] = incumbent.HoldUtility
 	decision.Alternatives["exit_cost"] = incumbent.ExitCost
-	decision.Alternatives["clear_score"] = incumbent.ClearScore
+	decision.Alternatives["clear_prob"] = incumbent.ClearProb
 	decision.Alternatives["rotate_value"] = rotateValue
 	decision.Alternatives["wait_value"] = waitValue
 	decision.Alternatives["rotate_surplus"] = rotateSurplus(
@@ -229,7 +230,7 @@ func (arbiter *Arbiter) rotatable(thesis *types.Thesis) []Incumbent {
 			Notional:    notional,
 			Qty:         qty,
 			Mark:        mark,
-			ClearScore:  clearScore(holding.Stoploss, forecast),
+			ClearProb:   clearProbability(holding.Stoploss, forecast),
 		})
 
 		return true
@@ -239,10 +240,12 @@ func (arbiter *Arbiter) rotatable(thesis *types.Thesis) []Incumbent {
 }
 
 /*
-clearScore is the one-horizon mass that an incumbent frees its slot natively
-(stop/take-profit) without a forced rotate exit. Not a calibrated probability.
+clearProbability is the calibrated one-horizon P(native clear): stop or
+take-profit frees the slot without a forced rotate. Trail proximity supplies
+geometry; forecast Confidence (online calibration) and residual skill
+√MSE/(√MSE+σ) scale that geometry into a probability in [0,1].
 */
-func clearScore(stop *types.Stoploss, forecast types.Forecasts) float64 {
+func clearProbability(stop *types.Stoploss, forecast types.Forecasts) float64 {
 	if stop == nil {
 		return 0
 	}
@@ -259,6 +262,10 @@ func clearScore(stop *types.Stoploss, forecast types.Forecasts) float64 {
 		return 0
 	}
 
+	if !forecast.Calibrated || forecast.Confidence <= 0 {
+		return 0
+	}
+
 	giveback := stop.PeakReturn - stop.MarkReturn
 
 	if giveback < 0 {
@@ -272,49 +279,68 @@ func clearScore(stop *types.Stoploss, forecast types.Forecasts) float64 {
 	}
 
 	if proximity > 1 {
+		proximity = 1
+	}
+
+	confidence := forecast.Confidence
+
+	if confidence > 1 {
+		confidence = 1
+	}
+
+	skill := 1.0
+
+	if forecast.Uncertainty > 0 && forecast.IncrementalMSE > 0 {
+		rmse := math.Sqrt(forecast.IncrementalMSE)
+		skill = rmse / (rmse + forecast.Uncertainty)
+	}
+
+	probability := proximity * confidence * skill
+
+	if probability > 1 {
 		return 1
 	}
 
-	return proximity
+	return probability
 }
 
 /*
 shouldRotate reports whether enter beats keep after exit friction once the
 option value of a native clear is charged against the edge.
 */
-func shouldRotate(enter, keep, exitCost, clearScore float64) bool {
+func shouldRotate(enter, keep, exitCost, clearProb float64) bool {
 	edge := enter - keep
 
 	if edge <= 0 {
 		return false
 	}
 
-	if clearScore < 0 {
-		clearScore = 0
+	if clearProb < 0 {
+		clearProb = 0
 	}
 
-	if clearScore > 1 {
-		clearScore = 1
+	if clearProb > 1 {
+		clearProb = 1
 	}
 
-	return edge*(1-clearScore) > exitCost
+	return edge*(1-clearProb) > exitCost
 }
 
 /*
 rotationAdvantage is the one-step surplus of displacing an incumbent.
 */
-func rotationAdvantage(enter, keep, exitCost, clearScore float64) float64 {
+func rotationAdvantage(enter, keep, exitCost, clearProb float64) float64 {
 	edge := enter - keep
 
-	if clearScore < 0 {
-		clearScore = 0
+	if clearProb < 0 {
+		clearProb = 0
 	}
 
-	if clearScore > 1 {
-		clearScore = 1
+	if clearProb > 1 {
+		clearProb = 1
 	}
 
-	return edge*(1-clearScore) - exitCost
+	return edge*(1-clearProb) - exitCost
 }
 
 /*
@@ -333,7 +359,7 @@ func bestRotation(enter float64, incumbents []Incumbent) (int, bool) {
 			enter,
 			incumbents[index].HoldUtility,
 			incumbents[index].ExitCost,
-			incumbents[index].ClearScore,
+			incumbents[index].ClearProb,
 		)
 
 		if advantage <= 0 {

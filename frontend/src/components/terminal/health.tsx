@@ -1,14 +1,16 @@
 import { useSelector } from "@tanstack/react-store";
 import { useRef } from "react";
 import { appStore } from "#/collections/app";
-import type { DashboardFrame } from "#/collections/frames";
 import {
-	flattenMeasurementBuffer,
-	measurementsStore,
 	measurementTickCount,
+	measurementsForSource,
+	measurementsForSymbol,
 } from "#/collections/measurements";
-import { tickStore } from "#/collections/tick";
-import { sourceHasUniverseFrames } from "#/components/terminal/measurement-sources";
+import type { DashboardFrame, Measurement, TickFrame } from "#/collections/types";
+import {
+	backendMeasurementSources,
+	sourceHasUniverseFrames,
+} from "#/components/terminal/measurement-sources";
 import {
 	headlineReading,
 	percentOf,
@@ -17,6 +19,7 @@ import {
 import { paintInlineMeter } from "#/components/terminal/metric-paint";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { requirePositive } from "#/lib/domain";
+import { getWorker } from "#/providers/websocket";
 import { Badge } from "@/components/ui/badge";
 import { Flex } from "@/components/ui/flex";
 import { Meter } from "@/components/ui/meter";
@@ -41,10 +44,6 @@ export type HealthSummary = {
 	completed: boolean;
 };
 
-/*
-engineHealthLabel prefers completed planner ticks over focus-scoped kernel
-standby so a silent BTC focus cannot paint the engine as dead while ticks run.
-*/
 /*
 tickCompleted prefers an explicit completed flag (including false) and only
 infers completion from a numeric count when the flag is absent.
@@ -76,15 +75,9 @@ export const engineHealthLabel = (
 };
 
 export const terminalHealthSummary = (
-	readings: typeof measurementsStore.state,
+	measurements: Measurement[],
 	focusSymbol: string,
-	sources = [
-		...new Set(
-			Object.values(readings.measurements).flatMap((sourceMap) =>
-				Object.keys(sourceMap),
-			),
-		),
-	],
+	sources = backendMeasurementSources(measurements),
 	tick: DashboardFrame | null = null,
 ): HealthSummary => {
 	const total = sources.length;
@@ -96,23 +89,18 @@ export const terminalHealthSummary = (
 	let firing = 0;
 
 	for (const source of sources) {
-		const buffer =
-			focusSymbol === "stream"
-				? undefined
-				: readings.measurements[focusSymbol]?.[source];
+		const sourceRows = measurementsForSource(measurements, source);
 		const history =
 			focusSymbol === "stream"
-				? Object.values(readings.measurements).flatMap((sourceMap) =>
-						flattenMeasurementBuffer(sourceMap[source]),
-					)
-				: flattenMeasurementBuffer(buffer);
+				? sourceRows
+				: measurementsForSymbol(sourceRows, focusSymbol);
 		const latest = headlineReading(history, source);
 		const status =
 			focusSymbol === "stream"
 				? resolveKernelStatus(latest, history.length > 0)
 				: resolveKernelStatus(
 						latest,
-						sourceHasUniverseFrames(readings, source),
+						sourceHasUniverseFrames(measurements, source),
 					);
 
 		if (status === "fault") {
@@ -135,8 +123,8 @@ export const terminalHealthSummary = (
 		if (
 			focusSymbol === "stream"
 				? history.length > 0
-				: measurementTickCount(buffer) > 0 ||
-					sourceHasUniverseFrames(readings, source)
+				: measurementTickCount(history) > 0 ||
+					sourceHasUniverseFrames(measurements, source)
 		) {
 			firing += 1;
 		}
@@ -188,6 +176,7 @@ HealthPanel paints system-health readouts directly from the measurement store.
 */
 export const HealthPanel = ({ sources }: { sources?: string[] }) => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const online = useSelector(appStore, (state) => state.online);
 	const badgeRef = useRef<HTMLSpanElement>(null);
 	const healthyRef = useRef<HTMLDivElement>(null);
 	const avgRef = useRef<HTMLDivElement>(null);
@@ -198,12 +187,17 @@ export const HealthPanel = ({ sources }: { sources?: string[] }) => {
 	const degradedMeterRef = useRef<HTMLDivElement>(null);
 
 	useDirectStorePaint(
-		() => {
+		getWorker(),
+		[
+			{ store: "measurements", key: "" },
+			{ store: "tick", key: "" },
+		],
+		(buffers) => {
 			const health = terminalHealthSummary(
-				measurementsStore.state,
+				(buffers["measurements:"] ?? []) as Measurement[],
 				focusSymbol,
 				sources,
-				tickStore.state.frame,
+				((buffers["tick:"] ?? []).at(-1) as TickFrame | undefined) ?? null,
 			);
 
 			if (badgeRef.current !== null) {
@@ -278,8 +272,7 @@ export const HealthPanel = ({ sources }: { sources?: string[] }) => {
 				);
 			}
 		},
-		[measurementsStore, tickStore],
-		[focusSymbol, sources],
+		[online, focusSymbol, sources],
 	);
 
 	return (

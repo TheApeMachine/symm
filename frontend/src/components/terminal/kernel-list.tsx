@@ -1,15 +1,15 @@
 import { useSelector } from "@tanstack/react-store";
+import { useState } from "react";
 import { appStore } from "#/collections/app";
-import { measurementsStore } from "#/collections/measurements";
+import type { Measurement } from "#/types/measurement";
 import { KernelListRow } from "#/components/terminal/kernel-list-row";
-import {
-	backendMeasurementSources,
-	sameSources,
-} from "#/components/terminal/measurement-sources";
+import { backendMeasurementSources } from "#/components/terminal/measurement-sources";
+import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 
 /*
-KernelList renders one direct-painted row per backend source. The parent only
-subscribes to source-key changes so tick cadence never re-renders the list shell.
+KernelList renders one direct-painted row per backend source. Source keys come
+from worker measurement snapshots so tick cadence never re-renders from stores.
 */
 export const KernelList = ({
 	compact = false,
@@ -19,11 +19,27 @@ export const KernelList = ({
 	sources?: string[];
 }) => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const storeSources = useSelector(
-		measurementsStore,
-		backendMeasurementSources,
-		{ compare: sameSources },
+	const online = useSelector(appStore, (state) => state.online);
+	const [storeSources, setStoreSources] = useState<string[]>([]);
+
+	useDirectStorePaint(
+		getWorker(),
+		[{ store: "measurements", key: "" }],
+		(buffers) => {
+			const next = backendMeasurementSources(
+				(buffers["measurements:"] ?? []) as Measurement[],
+			);
+
+			setStoreSources((previous) =>
+				previous.length === next.length &&
+				previous.every((source, index) => source === next[index])
+					? previous
+					: next,
+			);
+		},
+		[online],
 	);
+
 	const sources = inputSources ?? storeSources;
 
 	if (sources.length === 0) {

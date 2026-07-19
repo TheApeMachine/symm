@@ -1,101 +1,108 @@
-import { batch } from "@tanstack/store";
-import { appStore } from "#/collections/app";
-import { balancesStore } from "#/collections/balances";
-import { categoriesStore } from "#/collections/categories";
-import { causalStore } from "#/collections/causal";
-import { cognitiveStore } from "#/collections/cognitive";
-import { decisionStore } from "#/collections/decisions";
-import { diagnosticsStore } from "#/collections/diagnostics";
-import { executionsStore } from "#/collections/executions";
-import { findingsStore } from "#/collections/findings";
-import { forecastsStore } from "#/collections/forecasts";
-import { graphsStore } from "#/collections/graphs";
-import { hypothesesStore } from "#/collections/hypotheses";
-import { instrumentsStore } from "#/collections/instruments";
-import { lifecycleStore } from "#/collections/lifecycle";
-import { manifoldStore } from "#/collections/manifold";
-import { expandWireMeasurements } from "#/collections/measurement-wire";
-import { measurementsStore } from "#/collections/measurements";
-import { ordersStore } from "#/collections/orders";
-import { positionsStore } from "#/collections/positions";
-import { resonanceStore } from "#/collections/resonance";
-import { stopsStore } from "#/collections/stops";
-import { tickStore } from "#/collections/tick";
-import { tradeJournalStore } from "#/collections/trade-journal";
+import { createKeyedStore } from "#/collections/store";
+import type {
+	Balance,
+	CausalFrame,
+	CognitiveReading,
+	DiagnosticsFrame,
+	Execution,
+	Finding,
+	GraphFrame,
+	Holding,
+	Instrument,
+	LifecycleRow,
+	ManifoldFrame,
+	Order,
+	ResonanceFrame,
+	Stop,
+	StrategyDecision,
+	ThesisForecast,
+	ThesisHypothesis,
+	TickFrame,
+} from "#/collections/types";
+import { isPlainObject } from "#/providers/ws-frame-merge";
+import type { Category, Measurement } from "#/types/measurement";
+import type { Subscription } from "@tanstack/store";
 
-type FrameStore = {
-	actions: {
-		updateFrame: (frame: unknown) => void;
-	};
-};
+const DEFAULT_BUFFER = 50;
 
 export const frameStores = {
-	balances: balancesStore,
-	categories: categoriesStore,
-	causal: causalStore,
-	cognitive: cognitiveStore,
-	decisions: decisionStore,
-	diagnostics: diagnosticsStore,
-	findings: findingsStore,
-	forecasts: forecastsStore,
-	graphs: graphsStore,
-	hypotheses: hypothesesStore,
-	lifecycle: lifecycleStore,
-	tradeJournal: tradeJournalStore,
-	positions: positionsStore,
-	stops: stopsStore,
-	executions: executionsStore,
-	instruments: instrumentsStore,
-	measurements: measurementsStore,
-	manifold: manifoldStore,
-	orders: ordersStore,
-	resonance: resonanceStore,
-	tick: tickStore,
-} as Record<string, FrameStore>;
+	balances: createKeyedStore<Balance>()("balances", 1, (row) => row.asset),
+	categories: createKeyedStore<Category>()(
+		"categories",
+		DEFAULT_BUFFER,
+		(row) => row.type,
+	),
+	causal: createKeyedStore<CausalFrame>()("causal", DEFAULT_BUFFER, (row) => row.symbol),
+	cognitive: createKeyedStore<CognitiveReading>()("cognitive", DEFAULT_BUFFER, (row) => row.symbol),
+	decisions: createKeyedStore<StrategyDecision>()("decisions", DEFAULT_BUFFER, (row) => row.symbol),
+	diagnostics: createKeyedStore<DiagnosticsFrame>()("diagnostics", DEFAULT_BUFFER),
+	findings: createKeyedStore<Finding>()("findings", DEFAULT_BUFFER, (row) => row.symbol),
+	forecasts: createKeyedStore<ThesisForecast>()("forecasts", DEFAULT_BUFFER, (row) => row.symbol),
+	graphs: createKeyedStore<GraphFrame>()("graphs", DEFAULT_BUFFER, (row) => row.symbol),
+	hypotheses: createKeyedStore<ThesisHypothesis>()("hypotheses", DEFAULT_BUFFER, (row) => row.symbol),
+	lifecycle: createKeyedStore<LifecycleRow>()("lifecycle", DEFAULT_BUFFER, (row) => row.symbol),
+	holdings: createKeyedStore<Holding>()("holdings", DEFAULT_BUFFER, (row) => row.symbol),
+	stops: createKeyedStore<Stop>()("stops", 1, (row) => row.symbol),
+	executions: createKeyedStore<Execution>()("executions", DEFAULT_BUFFER),
+	instruments: createKeyedStore<Instrument>()("instruments", DEFAULT_BUFFER, (row) => row.symbol),
+	measurements: createKeyedStore<Measurement>()(
+		"measurements",
+		50,
+		(row) => row.symbol,
+		(row) => row.source,
+	),
+	manifold: createKeyedStore<ManifoldFrame>()("manifold", DEFAULT_BUFFER, (row) => row.symbol),
+	orders: createKeyedStore<Order>()("orders", DEFAULT_BUFFER, (row) => row.pair),
+	resonance: createKeyedStore<ResonanceFrame>()("resonance", DEFAULT_BUFFER, (row) => row.symbol),
+	tick: createKeyedStore<TickFrame>()("tick", DEFAULT_BUFFER),
+};
+
+export const subscribe = <TState, T>(
+	store: {
+		subscribe: (listener: (state: TState) => void) => Subscription;
+	},
+	pick: (state: TState) => { values: () => T[] } | undefined,
+	send: (rows: T[]) => void,
+): Subscription =>
+	store.subscribe((state) => {
+		send(pick(state)?.values() ?? []);
+	});
 
 /*
-applyFramePayload routes one coalesced worker payload into the TanStack stores
-that already own each backend frame key. Tick updates first so the counter never
-waits behind a large measurements ingest. Nested wire metrics maps expand into
-flat readings before the measurements store sees them.
+applyFramePayload writes a coalesced websocket object into the keyed stores.
+Error frames are returned so the worker can post them to the UI thread.
 */
-export const applyFramePayload = (parsedData: Record<string, unknown>) => {
-	batch(() => {
-		if (parsedData.error !== undefined) {
-			const frame = parsedData.error;
+export const applyFramePayload = (
+	payload: Record<string, unknown>,
+): Record<string, unknown> | null => {
+	if (isPlainObject(payload.error)) {
+		return payload.error;
+	}
 
-			if (
-				frame !== null &&
-				typeof frame === "object" &&
-				!Array.isArray(frame)
-			) {
-				appStore.actions.updateError(frame as Record<string, unknown>);
-			}
+	for (const [name, value] of Object.entries(payload)) {
+		const store = frameStores[name as keyof typeof frameStores];
+
+		if (store === undefined) {
+			continue;
 		}
 
-		if (parsedData.tick !== undefined) {
-			frameStores.tick.actions.updateFrame(parsedData.tick);
+		const rows = Array.isArray(value)
+			? value
+			: isPlainObject(value) &&
+					Object.values(value).every((entry) => isPlainObject(entry))
+				? Object.values(value)
+				: value != null
+					? [value]
+					: [];
+
+		if (rows.length === 0) {
+			continue;
 		}
 
-		if (Array.isArray(parsedData.measurements)) {
-			measurementsStore.actions.updateFrame(
-				expandWireMeasurements(parsedData.measurements),
-			);
-		}
+		(store.actions as { updateFrame: (rows: unknown[]) => void }).updateFrame(
+			rows,
+		);
+	}
 
-		for (const [key, data] of Object.entries(parsedData)) {
-			if (key === "measurements" || key === "tick" || key === "error") {
-				continue;
-			}
-
-			const storeKey = key === "cognition" ? "cognitive" : key;
-
-			if (frameStores[storeKey]?.actions) {
-				frameStores[storeKey].actions.updateFrame(data);
-				continue;
-			}
-
-			console.warn(`No store found matching frame key: "${key}"`);
-		}
-	});
+	return null;
 };

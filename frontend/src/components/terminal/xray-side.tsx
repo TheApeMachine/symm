@@ -1,13 +1,13 @@
+import { useSelector } from "@tanstack/react-store";
 import { useRef } from "react";
 import { appStore } from "#/collections/app";
-import {
-	type CognitiveReading,
-	cognitiveScopes,
-	cognitiveStore,
-} from "#/collections/cognitive";
-import { manifoldStore } from "#/collections/manifold";
-import { measurementsStore } from "#/collections/measurements";
-import { resonanceStore } from "#/collections/resonance";
+import { measurementsForSource } from "#/collections/measurements";
+import type {
+	CognitiveReading,
+	ManifoldFrame,
+	Measurement,
+	ResonanceFrame,
+} from "#/collections/types";
 import {
 	isFluidFieldMatrix,
 	meanGuidanceSpeed,
@@ -23,6 +23,7 @@ import {
 	stringMetric,
 } from "#/components/terminal/xray-view";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 
 const numberMatrix = (value: unknown): number[][] =>
 	Array.isArray(value)
@@ -46,19 +47,31 @@ const frameMatrix = (frame: unknown, key: string): number[][] | undefined => {
 	return isFluidFieldMatrix(matrix) ? matrix : undefined;
 };
 
-const isConcreteSymbol = (symbol: string): boolean => symbol !== "";
+/*
+cognitiveScopes lists symbols that currently own a cognitive reading.
+*/
+export const cognitiveScopes = (readings: CognitiveReading[]): string[] =>
+	[
+		...new Set(
+			readings
+				.map((reading) => reading.symbol || reading.scope || "")
+				.filter((scope) => scope !== ""),
+		),
+	].sort();
 
 const cognitiveForSymbol = (
-	readings: Record<string, CognitiveReading>,
+	readings: CognitiveReading[],
 	symbol: string,
 ): CognitiveReading | null => {
-	if (isConcreteSymbol(symbol)) {
-		return readings[symbol] ?? null;
+	if (symbol !== "") {
+		return readings.find((reading) => reading.symbol === symbol) ?? null;
 	}
 
 	const [scope] = cognitiveScopes(readings);
 
-	return scope === undefined ? null : readings[scope];
+	return scope === undefined
+		? null
+		: (readings.find((reading) => reading.symbol === scope) ?? null);
 };
 
 type FactRefs = {
@@ -68,64 +81,6 @@ type FactRefs = {
 	surprise: HTMLSpanElement | null;
 	events: HTMLSpanElement | null;
 	branching: HTMLSpanElement | null;
-};
-
-const paintFacts = (refs: FactRefs): void => {
-	const symbol = appStore.state.focusSymbol;
-	const resonance =
-		resonanceStore.state.resonance[symbol]?.values().at(-1) ?? null;
-	const manifold =
-		manifoldStore.state.manifold[symbol]?.values().at(-1) ?? null;
-	const reading = manifoldReading(manifold);
-	const hawkes = hawkesMetricsFromBuffer(
-		measurementsStore.state.measurements[symbol]?.hawkes,
-	);
-	const cascade = cascadeLabel(hawkes.branching);
-	const cognitive = cognitiveForSymbol(cognitiveStore.state.readings, symbol);
-	const coherenceMag2 = finiteMetric(reading?.coherenceMag2);
-	const coherence =
-		coherenceMag2 === null
-			? "—"
-			: coherenceMag2 >= 0.4
-				? "laminar"
-				: "turbulent";
-	const surprise = finiteMetric(resonance?.surprise);
-	const events = hawkesEventCount(
-		measurementsStore.state.measurements[symbol]?.hawkes,
-	);
-
-	if (refs.regime !== null) {
-		refs.regime.textContent =
-			cognitive?.regimePrefix || stringMetric(resonance?.category) || "—";
-	}
-
-	if (refs.coherence !== null) {
-		refs.coherence.textContent = coherence;
-		refs.coherence.style.color =
-			coherence === "laminar"
-				? "var(--info)"
-				: coherence === "turbulent"
-					? "var(--down)"
-					: "var(--f4)";
-	}
-
-	if (refs.energy !== null) {
-		refs.energy.textContent = formatMetric(finiteMetric(resonance?.energy));
-	}
-
-	if (refs.surprise !== null) {
-		refs.surprise.textContent =
-			surprise === null ? "—" : `${surprise.toFixed(2)}× thr`;
-	}
-
-	if (refs.events !== null) {
-		refs.events.textContent = events === 0 ? "—" : String(events);
-	}
-
-	if (refs.branching !== null) {
-		refs.branching.textContent = formatMetric(hawkes.branching);
-		refs.branching.style.color = cascade.color;
-	}
 };
 
 /*
@@ -138,25 +93,87 @@ export const XrayFactsPanel = () => {
 	const surpriseRef = useRef<HTMLSpanElement>(null);
 	const eventsRef = useRef<HTMLSpanElement>(null);
 	const branchingRef = useRef<HTMLSpanElement>(null);
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const online = useSelector(appStore, (state) => state.online);
 
 	useDirectStorePaint(
-		() =>
-			paintFacts({
+		getWorker(),
+		[
+			{ store: "resonance", key: focusSymbol },
+			{ store: "manifold", key: focusSymbol },
+			{ store: "measurements", key: focusSymbol },
+			{ store: "cognitive", key: "" },
+		],
+		(buffers) => {
+			const refs: FactRefs = {
 				regime: regimeRef.current,
 				coherence: coherenceRef.current,
 				energy: energyRef.current,
 				surprise: surpriseRef.current,
 				events: eventsRef.current,
 				branching: branchingRef.current,
-			}),
-		[
-			resonanceStore,
-			manifoldStore,
-			measurementsStore,
-			cognitiveStore,
-			appStore,
-		],
-		[],
+			};
+			const resonance = (
+				(buffers[`resonance:${focusSymbol}`] ?? []).at(-1) ?? null
+			) as ResonanceFrame | null;
+			const manifold = (
+				(buffers[`manifold:${focusSymbol}`] ?? []).at(-1) ?? null
+			) as ManifoldFrame | null;
+			const hawkesFrames = measurementsForSource(
+				(buffers[`measurements:${focusSymbol}`] ?? []) as Measurement[],
+				"hawkes",
+			);
+			const reading = manifoldReading(manifold);
+			const hawkes = hawkesMetricsFromBuffer(hawkesFrames);
+			const cascade = cascadeLabel(hawkes.branching);
+			const cognitive = cognitiveForSymbol(
+				(buffers["cognitive:"] ?? []) as CognitiveReading[],
+				focusSymbol,
+			);
+			const coherenceMag2 = finiteMetric(reading?.coherenceMag2);
+			const coherence =
+				coherenceMag2 === null
+					? "—"
+					: coherenceMag2 >= 0.4
+						? "laminar"
+						: "turbulent";
+			const surprise = finiteMetric(resonance?.surprise);
+			const events = hawkesEventCount(hawkesFrames);
+
+			if (refs.regime !== null) {
+				refs.regime.textContent =
+					cognitive?.regimePrefix || stringMetric(resonance?.category) || "—";
+			}
+
+			if (refs.coherence !== null) {
+				refs.coherence.textContent = coherence;
+				refs.coherence.style.color =
+					coherence === "laminar"
+						? "var(--info)"
+						: coherence === "turbulent"
+							? "var(--down)"
+							: "var(--f4)";
+			}
+
+			if (refs.energy !== null) {
+				refs.energy.textContent = formatMetric(finiteMetric(resonance?.energy));
+			}
+
+			if (refs.surprise !== null) {
+				refs.surprise.textContent =
+					surprise === null ? "—" : `${surprise.toFixed(2)}× thr`;
+			}
+
+			if (refs.events !== null) {
+				refs.events.textContent = events === 0 ? "—" : String(events);
+			}
+
+			if (refs.branching !== null) {
+				refs.branching.textContent = formatMetric(hawkes.branching);
+				refs.branching.style.color = cascade.color;
+			}
+		},
+		[online, focusSymbol],
 	);
 
 	return (
@@ -198,60 +215,6 @@ type ManifoldRefs = {
 	fill: HTMLDivElement | null;
 };
 
-const paintManifold = (refs: ManifoldRefs): void => {
-	const symbol = appStore.state.focusSymbol;
-	const frame = manifoldStore.state.manifold[symbol]?.values().at(-1) ?? null;
-	const reading = manifoldReading(frame);
-	const hawkes = hawkesMetricsFromBuffer(
-		measurementsStore.state.measurements[symbol]?.hawkes,
-	);
-	const momentumShare =
-		finiteMetric(reading?.coherenceMag2) ??
-		hawkes.radius ??
-		hawkes.branching ??
-		0;
-
-	if (refs.divergence !== null) {
-		refs.divergence.textContent = signedMetric(
-			finiteMetric(reading?.divergence),
-		);
-	}
-
-	if (refs.coherence !== null) {
-		refs.coherence.textContent = formatMetric(
-			finiteMetric(reading?.coherenceMag2),
-		);
-	}
-
-	if (refs.guidance !== null) {
-		const latticeGuidance = meanGuidanceSpeed(
-			frameMatrix(frame, "guidanceVelX"),
-			frameMatrix(frame, "guidanceVelZ"),
-		);
-		refs.guidance.textContent = formatMetric(
-			finiteMetric(reading?.guidanceSpeed) ?? latticeGuidance,
-		);
-	}
-
-	if (refs.viscosity !== null) {
-		refs.viscosity.textContent = formatMetric(
-			finiteMetric(reading?.viscosityProxy),
-		);
-	}
-
-	if (refs.momentum !== null) {
-		refs.momentum.textContent = `${momentumShare.toFixed(2)} / 0.40`;
-		refs.momentum.style.color =
-			momentumShare >= 0.4 ? "var(--up)" : "var(--f3)";
-	}
-
-	if (refs.fill !== null) {
-		refs.fill.style.width = `${Math.min(100, momentumShare * 100)}%`;
-		refs.fill.style.background =
-			momentumShare >= 0.4 ? "var(--success)" : "var(--info)";
-	}
-};
-
 /*
 XrayManifoldPanel paints nested manifold.reading scalars from the store.
 */
@@ -262,19 +225,81 @@ export const XrayManifoldPanel = () => {
 	const viscosityRef = useRef<HTMLSpanElement>(null);
 	const momentumRef = useRef<HTMLSpanElement>(null);
 	const fillRef = useRef<HTMLDivElement>(null);
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const online = useSelector(appStore, (state) => state.online);
 
 	useDirectStorePaint(
-		() =>
-			paintManifold({
+		getWorker(),
+		[
+			{ store: "manifold", key: focusSymbol },
+			{ store: "measurements", key: focusSymbol },
+		],
+		(buffers) => {
+			const refs: ManifoldRefs = {
 				divergence: divergenceRef.current,
 				coherence: coherenceRef.current,
 				guidance: guidanceRef.current,
 				viscosity: viscosityRef.current,
 				momentum: momentumRef.current,
 				fill: fillRef.current,
-			}),
-		[manifoldStore, measurementsStore, appStore],
-		[],
+			};
+			const frame = (
+				(buffers[`manifold:${focusSymbol}`] ?? []).at(-1) ?? null
+			) as ManifoldFrame | null;
+			const reading = manifoldReading(frame);
+			const hawkes = hawkesMetricsFromBuffer(
+				measurementsForSource(
+					(buffers[`measurements:${focusSymbol}`] ?? []) as Measurement[],
+					"hawkes",
+				),
+			);
+			const momentumShare =
+				finiteMetric(reading?.coherenceMag2) ??
+				hawkes.radius ??
+				hawkes.branching ??
+				0;
+
+			if (refs.divergence !== null) {
+				refs.divergence.textContent = signedMetric(
+					finiteMetric(reading?.divergence),
+				);
+			}
+
+			if (refs.coherence !== null) {
+				refs.coherence.textContent = formatMetric(
+					finiteMetric(reading?.coherenceMag2),
+				);
+			}
+
+			if (refs.guidance !== null) {
+				const latticeGuidance = meanGuidanceSpeed(
+					frameMatrix(frame, "guidanceVelX"),
+					frameMatrix(frame, "guidanceVelZ"),
+				);
+				refs.guidance.textContent = formatMetric(
+					finiteMetric(reading?.guidanceSpeed) ?? latticeGuidance,
+				);
+			}
+
+			if (refs.viscosity !== null) {
+				refs.viscosity.textContent = formatMetric(
+					finiteMetric(reading?.viscosityProxy),
+				);
+			}
+
+			if (refs.momentum !== null) {
+				refs.momentum.textContent = `${momentumShare.toFixed(2)} / 0.40`;
+				refs.momentum.style.color =
+					momentumShare >= 0.4 ? "var(--up)" : "var(--f3)";
+			}
+
+			if (refs.fill !== null) {
+				refs.fill.style.width = `${Math.min(100, momentumShare * 100)}%`;
+				refs.fill.style.background =
+					momentumShare >= 0.4 ? "var(--success)" : "var(--info)";
+			}
+		},
+		[online, focusSymbol],
 	);
 
 	return (

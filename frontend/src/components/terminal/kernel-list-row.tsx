@@ -1,10 +1,13 @@
+import { useSelector } from "@tanstack/react-store";
 import { memo, useRef } from "react";
+import { appStore } from "#/collections/app";
 import {
+	flattenMeasurementBuffer,
 	headlineSeriesFromBuffer,
-	latestMeasurementReadings,
 	latestPublishedStamp,
-	measurementsStore,
+	measurementsForSource,
 } from "#/collections/measurements";
+import type { Measurement } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
@@ -24,6 +27,7 @@ import {
 	stampOf,
 } from "#/components/terminal/measurement-view";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 import { Badge, badgeVariants } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
@@ -42,32 +46,35 @@ type KernelListRowRefs = {
 const paintKernelListRow = (
 	refs: KernelListRowRefs,
 	source: string,
-	focusSymbol: string,
+	focusHistory: Measurement[],
+	universe: Measurement[],
+	inspectorSource: string | null | undefined,
+	selectedSource: string,
 ): void => {
-	const buffer = measurementsStore.state.measurements[focusSymbol]?.[source];
-	const epoch = latestMeasurementReadings(buffer);
+	const history = flattenMeasurementBuffer(focusHistory);
 	const headline = headlineMetric(source);
-	const latest = headlineReading(epoch, source);
+	const latest = headlineReading(history, source);
 	const activeMetric = latest?.metric ?? headline;
 	const status = resolveKernelStatus(
 		latest,
-		sourceHasUniverseFrames(measurementsStore.state, source),
+		sourceHasUniverseFrames(universe, source),
 	);
 	const statusMeta = kernelStatusMeta(status);
 	const spark = kernelSparkPaths(
 		activeMetric === null || activeMetric === undefined
 			? []
-			: headlineSeriesFromBuffer(buffer, activeMetric),
+			: headlineSeriesFromBuffer(history, activeMetric),
 		status,
 	);
 	const percent = latest === undefined ? 0 : percentOf(latest);
 	const readout =
 		headline === null
-			? `${epoch.length} readings`
-			: latest === undefined || activeMetric === undefined
+			? `${history.length} readings`
+			: latest === undefined ||
+				  activeMetric === undefined ||
+				  activeMetric === null
 				? "—"
 				: `${metricLabel(activeMetric)} ${formatRaw(latest)}`;
-	const { inspectorSource, selectedSource } = terminalStore.state;
 	const active = inspectorSource === source || selectedSource === source;
 
 	if (refs.button !== null) {
@@ -99,7 +106,7 @@ const paintKernelListRow = (
 
 	if (refs.age !== null) {
 		refs.age.textContent = ageText(
-			stampOf(latestPublishedStamp(buffer) ?? latest?.at),
+			stampOf(latestPublishedStamp(history) ?? latest?.at),
 		);
 	}
 
@@ -149,9 +156,23 @@ export const KernelListRow = memo(
 		const compactReadoutRef = useRef<HTMLDivElement>(null);
 		const copy = kernelCopy(source, source);
 		const { inspectSource, selectSource } = terminalStore.actions;
+		const online = useSelector(appStore, (state) => state.online);
+		const inspectorSource = useSelector(
+			terminalStore,
+			(state) => state.inspectorSource,
+		);
+		const selectedSource = useSelector(
+			terminalStore,
+			(state) => state.selectedSource,
+		);
 
 		useDirectStorePaint(
-			() =>
+			getWorker(),
+			[
+				{ store: "measurements", key: focusSymbol },
+				{ store: "measurements", key: "" },
+			],
+			(buffers) => {
 				paintKernelListRow(
 					{
 						button: buttonRef.current,
@@ -165,10 +186,16 @@ export const KernelListRow = memo(
 						compactReadout: compactReadoutRef.current,
 					},
 					source,
-					focusSymbol,
-				),
-			[measurementsStore, terminalStore],
-			[source, focusSymbol, compact],
+					measurementsForSource(
+						(buffers[`measurements:${focusSymbol}`] ?? []) as Measurement[],
+						source,
+					),
+					(buffers["measurements:"] ?? []) as Measurement[],
+					inspectorSource,
+					selectedSource,
+				);
+			},
+			[online, source, focusSymbol, compact, inspectorSource, selectedSource],
 		);
 
 		return (

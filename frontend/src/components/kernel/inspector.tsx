@@ -4,9 +4,10 @@ import { appStore } from "#/collections/app";
 import {
 	flattenMeasurementBuffer,
 	latestMeasurementReadings,
-	measurementsStore,
 	measurementTickCount,
+	measurementsForSource,
 } from "#/collections/measurements";
+import type { Measurement } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
@@ -22,6 +23,7 @@ import { paintMetricGrid } from "#/components/terminal/metric-paint";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { requireSampleSize } from "#/lib/domain";
 import { cn } from "#/lib/utils";
+import { getWorker } from "#/providers/websocket";
 import { panelVariants } from "@/components/ui/panel";
 
 type InspectorPaintRefs = {
@@ -36,15 +38,14 @@ type InspectorPaintRefs = {
 const paintInspector = (
 	refs: InspectorPaintRefs,
 	source: string,
-	focusSymbol: string,
+	history: Measurement[],
 ): void => {
-	const buffer = measurementsStore.state.measurements[focusSymbol]?.[source];
-	const history = flattenMeasurementBuffer(buffer);
 	const headline = headlineMetric(source);
+	const latestEpoch = latestMeasurementReadings(history);
 	const latest =
 		headline === null
-			? latestMeasurementReadings(buffer).at(-1)
-			: latestByMetric(latestMeasurementReadings(buffer), headline);
+			? latestEpoch.at(-1)
+			: latestByMetric(latestEpoch, headline);
 
 	if (latest === undefined) {
 		return;
@@ -54,14 +55,14 @@ const paintInspector = (
 	const statusMeta = kernelStatusMeta(status);
 	const seriesSource = headline ?? history.at(-1)?.metric;
 	const series =
-		seriesSource === undefined || buffer === undefined
+		seriesSource === undefined
 			? []
-			: buffer.values().flatMap((epoch) => {
-					const measurement = latestByMetric(epoch.readings, seriesSource);
+			: history.flatMap((measurement) => {
+					if (measurement.metric !== seriesSource) {
+						return [];
+					}
 
-					return measurement !== undefined && Number.isFinite(measurement.raw)
-						? [measurement]
-						: [];
+					return Number.isFinite(measurement.raw) ? [measurement] : [];
 				});
 	const rawValues = series.map((measurement) => measurement.raw);
 	const minimum = rawValues.length > 0 ? Math.min(...rawValues) : 0;
@@ -125,7 +126,7 @@ const paintInspector = (
 	}
 
 	if (refs.observed !== null) {
-		refs.observed.textContent = `observed ${observed} · ${measurementTickCount(buffer)} samples`;
+		refs.observed.textContent = `observed ${observed} · ${measurementTickCount(history)} samples`;
 	}
 };
 
@@ -146,11 +147,14 @@ const KernelInspectorPanel = ({
 	const metricsGridRef = useRef<HTMLDivElement>(null);
 	const activeSymbolRef = useRef<HTMLDivElement>(null);
 	const observedRef = useRef<HTMLDivElement>(null);
+	const online = useSelector(appStore, (state) => state.online);
 	const { closeInspect, inspectSource } = terminalStore.actions;
 	const copy = kernelCopy(source, source);
 
 	useDirectStorePaint(
-		() =>
+		getWorker(),
+		[{ store: "measurements", key: focusSymbol }],
+		(buffers) => {
 			paintInspector(
 				{
 					badge: badgeRef.current,
@@ -161,10 +165,15 @@ const KernelInspectorPanel = ({
 					observed: observedRef.current,
 				},
 				source,
-				focusSymbol,
-			),
-		[measurementsStore],
-		[source, focusSymbol],
+				flattenMeasurementBuffer(
+					measurementsForSource(
+						(buffers[`measurements:${focusSymbol}`] ?? []) as Measurement[],
+						source,
+					),
+				),
+			);
+		},
+		[online, source, focusSymbol],
 	);
 
 	return (

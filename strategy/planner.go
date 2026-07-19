@@ -155,6 +155,7 @@ func (planner *Planner) Update(frame *types.MarketFrame, tick int64) *types.Thes
 	thesis := types.NewThesis(planner.uiHub, frame)
 	thesis.CrossSection = frame.CrossSection
 	thesis.Tick = tick
+	planner.bindHoldings(thesis)
 	started := time.Now()
 
 	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "measure_begin", map[string]any{
@@ -210,6 +211,21 @@ func (planner *Planner) Update(frame *types.MarketFrame, tick int64) *types.Thes
 	}
 
 	return thesis
+}
+
+/*
+bindHoldings copies broker-open inventory onto the Thesis before measure and
+analyze so open lots are visible to manifold and Decide.
+*/
+func (planner *Planner) bindHoldings(thesis *types.Thesis) {
+	if planner == nil || planner.balance == nil || thesis == nil {
+		return
+	}
+
+	for holding := range planner.balance.Holdings() {
+		seed := holding
+		thesis.Holdings.Store(holding.Symbol, &seed)
+	}
 }
 
 /*
@@ -298,7 +314,7 @@ func (planner *Planner) commitRotations(thesis *types.Thesis) {
 			Reason:            "displaced by higher-utility challenger " + decision.Symbol,
 		})
 
-		thesis.Lifecycle.Store(decision.Displaces, types.LifecycleExitSelected)
+		thesis.NoteLifecycle(decision.Displaces, types.LifecycleExitSelected, decision.At)
 	}
 
 	thesis.Decisions = append(thesis.Decisions, exits...)

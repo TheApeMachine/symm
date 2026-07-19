@@ -121,11 +121,19 @@ func (instrument *Instrument) Publish() {
 		return
 	}
 
-	select {
-	case instrument.uiHub <- datura.Map[any]{
+	frame := datura.Map[any]{
 		"instruments": pairs,
-	}.Marshal():
+	}.Marshal()
+
+	select {
+	case instrument.uiHub <- frame:
 	default:
+		// Hub coalesce owns latest-by-key; retry once so a full channel does
+		// not permanently strand the command-palette universe at a tiny snapshot.
+		select {
+		case instrument.uiHub <- frame:
+		default:
+		}
 	}
 }
 
@@ -195,29 +203,27 @@ func (instrument *Instrument) Subscribe() error {
 	symbols := make([]string, 0)
 	seen := make(map[string]struct{})
 
-	for _, pair := range instrument.Pairs() {
+	instrument.cache.Range(func(_, value any) bool {
+		pair := value.(*kraken.InstrumentPair)
+
 		if pair.Quote != instrument.quote || pair.Status != "online" {
-			continue
+			return true
 		}
 
 		if _, duplicate := seen[pair.Symbol]; duplicate {
-			continue
+			return true
 		}
 
 		seen[pair.Symbol] = struct{}{}
 		symbols = append(symbols, pair.Symbol)
-	}
+
+		return true
+	})
 
 	if len(symbols) == 0 {
 		instrument.status.Store(types.INITIALIZING)
 		return nil
 	}
-
-	// Lead majors first so BTC/ETH L2/L3 and trades authenticate and warm before
-	// the long tail of thin USD pairs consumes the subscribe budget.
-	sort.SliceStable(symbols, func(left, right int) bool {
-		return subscribeRank(symbols[left]) < subscribeRank(symbols[right])
-	})
 
 	batchSize := viper.GetInt("market.subscribe_batch")
 
@@ -236,6 +242,7 @@ func (instrument *Instrument) Subscribe() error {
 		instrument.api.SubscribeTrade,
 		instrument.api.SubscribeBook,
 		instrument.api.SubscribeTicker,
+		instrument.api.SubscribeLevel3,
 	}
 
 	for batch := range slices.Chunk(symbols, batchSize) {
@@ -252,49 +259,7 @@ func (instrument *Instrument) Subscribe() error {
 		time.Sleep(pace)
 	}
 
-	if viper.GetBool("market.l3_enabled") {
-		ceiling := viper.GetInt("market.l3_universe")
-
-		if ceiling < 1 {
-			ceiling = 16
-		}
-
-		l3 := symbols
-
-		if len(l3) > ceiling {
-			l3 = l3[:ceiling]
-		}
-
-		for batch := range slices.Chunk(l3, batchSize) {
-			if err := instrument.api.SubscribeLevel3(batch); err != nil {
-				return errnie.Error(err)
-			}
-
-			time.Sleep(pace)
-		}
-	}
-
 	instrument.status.Store(types.READY)
 
 	return nil
-}
-
-/*
-subscribeRank orders majors ahead of the long USD tail so high-liquidity books
-and trades warm first under Kraken's subscribe pacing budget.
-
-ponytail: the fixed major-symbol ranking is only a bootstrap ceiling; live
-liquidity ranking or configuration-driven ordering is the intended upgrade path.
-*/
-func subscribeRank(symbol string) int {
-	switch symbol {
-	case "BTC/USD":
-		return 0
-	case "ETH/USD":
-		return 1
-	case "SOL/USD":
-		return 2
-	default:
-		return 100
-	}
 }

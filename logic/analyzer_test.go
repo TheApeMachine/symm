@@ -2,6 +2,7 @@ package logic
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -191,7 +192,8 @@ func TestAnalyzerUpdate(t *testing.T) {
 
 func TestAnalyzerUpdateComposesRelationships(t *testing.T) {
 	Convey("Given comparable typed measurements on one thesis", t, func() {
-		thesis := types.NewThesis(nil, nil)
+		ui := make(chan []byte, 4)
+		thesis := types.NewThesis(ui, nil)
 		positive := 0.5
 		negative := -0.5
 		thesis.Measurements = append(thesis.Measurements,
@@ -210,7 +212,7 @@ func TestAnalyzerUpdateComposesRelationships(t *testing.T) {
 				Validity: types.MeasurementValidity{State: types.ValidityValid},
 			},
 		)
-		analyzer := &Analyzer{}
+		analyzer := &Analyzer{ui: ui}
 
 		analyzer.Update(thesis)
 
@@ -220,6 +222,21 @@ func TestAnalyzerUpdateComposesRelationships(t *testing.T) {
 			evidenceGraph := graph.(*types.Graph)
 			So(evidenceGraph.Edges(), ShouldNotBeEmpty)
 			So(evidenceGraph.Edges()[0].Type, ShouldEqual, types.Contradicts)
+		})
+
+		Convey("It should publish a graphs frame for the terminal", func() {
+			var payload string
+
+			for len(ui) > 0 {
+				frame := string(<-ui)
+
+				if strings.Contains(frame, `"graphs"`) {
+					payload = frame
+				}
+			}
+
+			So(payload, ShouldContainSubstring, `"graphs"`)
+			So(payload, ShouldContainSubstring, `"BTC/USD"`)
 		})
 	})
 }

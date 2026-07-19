@@ -110,6 +110,12 @@ func (analyzer *Analyzer) cognize(
 
 	reading := analyzer.readCognition(state, parts, sequence, parent)
 	thesis.Cognition.Store(state.Symbol, reading)
+
+	if analyzer.cognition == nil {
+		analyzer.cognition = make(map[string]types.Cognition)
+	}
+
+	analyzer.cognition[state.Symbol] = reading
 	analyzer.tree.TrainSensorySequence(sequence)
 
 	if _, _, err := analyzer.tree.CommitToEpisodicBuffer(
@@ -194,8 +200,8 @@ func signedToken(value float64) string {
 }
 
 /*
-readCognition classifies the sensory sequence for strategy. Tree visualization
-is intentionally omitted from this hot path.
+readCognition classifies the sensory sequence for strategy and attaches the
+Cortex radix/beam visualization so the cognitive tree is never an empty shell.
 */
 func (analyzer *Analyzer) readCognition(
 	state manifold.State,
@@ -209,6 +215,10 @@ func (analyzer *Analyzer) readCognition(
 	ambiguity := analyzer.tree.MeasureBranchAmbiguity(storageParent)
 	predictionBuffer := make([]dmt.LookaheadPrediction, 0, len(parts))
 	predictions := analyzer.tree.PredictNextSensoryTokens(parent, predictionBuffer)
+	branches, beams, classes, beamWidth, maxHops, nodeCount, lookaheadScore, lookaheadPaths :=
+		analyzer.cognitionVisualization(
+			sequence, parent, parts, classification, predictions,
+		)
 	reading := types.Cognition{
 		Source:           "dmt",
 		Symbol:           state.Symbol,
@@ -222,6 +232,15 @@ func (analyzer *Analyzer) readCognition(
 		Ambiguous:        ambiguity.Ambiguous,
 		Cohort:           analyzer.tree.GetSensoryWeight(sequence).Count,
 		Predictions:      make(map[string]float64, len(predictions)),
+		Branches:         branches,
+		Beams:            beams,
+		Classes:          classes,
+		BeamWidth:        beamWidth,
+		MaxHops:          maxHops,
+		NodeCount:        nodeCount,
+		LookaheadScore:   lookaheadScore,
+		LookaheadPaths:   lookaheadPaths,
+		RegimePrefix:     string(parent),
 	}
 
 	if len(classification.Scores) > 1 {
@@ -235,10 +254,6 @@ func (analyzer *Analyzer) readCognition(
 	for _, prediction := range predictions {
 		reading.Predictions[string(prediction.Token)] = prediction.Probability
 	}
-
-	// Tree visualization stays off the classify hot path; Cortex can request
-	// branch expansion separately without blocking strategy.
-	reading.RegimePrefix = string(parent)
 
 	return reading
 }

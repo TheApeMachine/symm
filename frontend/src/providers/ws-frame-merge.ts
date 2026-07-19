@@ -3,7 +3,7 @@ export const isPlainObject = (
 ): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
-const orderedEventArrays = new Set(["tradeJournal", "findings"]);
+const orderedEventArrays = new Set(["findings"]);
 
 /*
 mergeFrameEntry coalesces one keyed backend payload inside a 16ms worker window.

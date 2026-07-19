@@ -1,12 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { appStore } from "#/collections/app";
-import { causalStore } from "#/collections/causal";
-import {
-	type CognitiveReading,
-	cognitiveScopes,
-	cognitiveStore,
-} from "#/collections/cognitive";
+import type { CausalFrame, CognitiveReading } from "#/collections/types";
 import {
 	causalAssociation,
 	causalCategory,
@@ -26,6 +21,7 @@ import {
 } from "#/components/terminal/cognitive-entropy";
 import { fixed } from "#/components/terminal/decision-format";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 import { Flex } from "@/components/ui/flex";
 import { Meter } from "@/components/ui/meter";
 import { Panel } from "@/components/ui/panel";
@@ -35,7 +31,7 @@ type Rung = {
 	rung: number;
 	name: string;
 	desc: string;
-	value: (frame: ReturnType<typeof latestCausalFrame>) => number;
+	value: (frame: CausalFrame | undefined) => number;
 	variant: Variant;
 };
 
@@ -94,8 +90,10 @@ const rungToneClass = (variant: Variant): string => {
 	return "font-mono text-[11px] text-(--info)";
 };
 
-const paintCausalLadder = (refs: CausalLadderRefs, scope: string): void => {
-	const frame = latestCausalFrame(scope);
+const paintCausalLadder = (
+	refs: CausalLadderRefs,
+	frame: CausalFrame | undefined,
+): void => {
 	const waiting = frame === undefined;
 
 	if (refs.waiting !== null) {
@@ -145,6 +143,19 @@ const paintCausalLadder = (refs: CausalLadderRefs, scope: string): void => {
 const isConcreteSymbol = (symbol: string | undefined): symbol is string =>
 	symbol !== undefined && symbol !== "" && symbol !== "stream";
 
+/*
+cognitiveScopes lists symbols that currently own a cognitive reading.
+*/
+export const cognitiveScopes = (readings: CognitiveReading[]): string[] =>
+	[
+		...new Set(
+			readings
+				.map((reading) => reading.symbol || reading.scope || "")
+				.filter((scope) => scope !== ""),
+		),
+	].sort();
+
+
 export type CognitiveBeamModel = {
 	sequenceTitle: string;
 	cohort: string;
@@ -160,16 +171,20 @@ export type CognitiveBeamModel = {
 };
 
 export const cognitiveReadingFor = (
-	readings: Record<string, CognitiveReading>,
+	readings: CognitiveReading[] | Record<string, CognitiveReading>,
 	symbol?: string,
 ): CognitiveReading | null => {
+	const rows = Array.isArray(readings) ? readings : Object.values(readings);
+
 	if (isConcreteSymbol(symbol)) {
-		return readings[symbol] ?? null;
+		return rows.find((reading) => reading.symbol === symbol) ?? null;
 	}
 
-	const [scope] = cognitiveScopes(readings);
+	const [scope] = cognitiveScopes(rows);
 
-	return scope === undefined ? null : readings[scope];
+	return scope === undefined
+		? null
+		: (rows.find((reading) => reading.symbol === scope) ?? null);
 };
 
 export const cognitiveBeamModel = (
@@ -265,8 +280,14 @@ export const CausalLadder = ({ symbol }: { symbol?: string }) => {
 	const baselineRef = useRef<HTMLSpanElement>(null);
 	const panicRef = useRef<HTMLSpanElement>(null);
 
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const online = useSelector(appStore, (state) => state.online);
+	const scope = isConcreteSymbol(symbol) ? symbol : focusSymbol;
+
 	useDirectStorePaint(
-		() =>
+		getWorker(),
+		[{ store: "causal", key: scope }],
+		(buffers) =>
 			paintCausalLadder(
 				{
 					waiting: waitingRef.current,
@@ -281,10 +302,11 @@ export const CausalLadder = ({ symbol }: { symbol?: string }) => {
 						panic: panicRef.current,
 					},
 				},
-				isConcreteSymbol(symbol) ? symbol : appStore.state.focusSymbol,
+				latestCausalFrame(
+					(buffers[`causal:${scope}`] ?? []) as CausalFrame[],
+				),
 			),
-		[causalStore, appStore],
-		[symbol],
+		[online, symbol, scope],
 	);
 
 	return (
@@ -372,6 +394,7 @@ type DecisionsEntryLineRefs = {
 function paintDecisionsEntryLine(
 	refs: DecisionsEntryLineRefs,
 	symbol: string | undefined,
+	rows: CausalFrame[] | undefined,
 ): void {
 	const visible = symbol !== undefined;
 
@@ -383,7 +406,7 @@ function paintDecisionsEntryLine(
 		return;
 	}
 
-	const frame = latestCausalFrame(symbol ?? "");
+	const frame = latestCausalFrame(rows);
 	const entryLine = causalEntryBaseline(frame);
 	const entryScore = causalStrength(frame);
 	const entryConfidence = causalConfidence(frame);
@@ -413,8 +436,12 @@ export const LiveDecisionsEntryLine = ({
 	const strengthRef = useRef<HTMLSpanElement>(null);
 	const confidenceRef = useRef<HTMLSpanElement>(null);
 
+	const online = useSelector(appStore, (state) => state.online);
+
 	useDirectStorePaint(
-		() =>
+		getWorker(),
+		[{ store: "causal", key: symbol ?? "" }],
+		(buffers) =>
 			paintDecisionsEntryLine(
 				{
 					panel: panelRef.current,
@@ -423,9 +450,9 @@ export const LiveDecisionsEntryLine = ({
 					confidence: confidenceRef.current,
 				},
 				symbol,
+				(buffers[`causal:${symbol ?? ""}`] ?? []) as CausalFrame[],
 			),
-		[causalStore, appStore],
-		[symbol],
+		[online, symbol],
 	);
 
 	return (
@@ -450,8 +477,24 @@ export const LiveDecisionsEntryLine = ({
 };
 
 export const CognitiveBeam = ({ symbol }: { symbol?: string }) => {
-	const readings = useSelector(cognitiveStore, (state) => state.readings);
-	const model = cognitiveBeamModel(cognitiveReadingFor(readings, symbol));
+	const online = useSelector(appStore, (state) => state.online);
+	const [model, setModel] = useState<CognitiveBeamModel | null>(null);
+
+	useDirectStorePaint(
+		getWorker(),
+		[{ store: "cognitive", key: "" }],
+		(buffers) => {
+			setModel(
+				cognitiveBeamModel(
+					cognitiveReadingFor(
+						(buffers["cognitive:"] ?? []) as CognitiveReading[],
+						symbol,
+					),
+				),
+			);
+		},
+		[online, symbol],
+	);
 
 	if (model === null) {
 		return (

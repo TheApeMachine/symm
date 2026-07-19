@@ -36,29 +36,6 @@ export type StrategyDecision = {
 };
 
 /*
-TradeObservation mirrors the backend immutable broker and position facts that
-append to one thesis lifecycle in publication order.
-*/
-export type TradeObservation = {
-	kind: string;
-	action?: string;
-	symbol: string;
-	side?: string;
-	status?: string;
-	orderId?: string;
-	executionId?: string;
-	quantity?: string;
-	price?: string;
-	cost?: string;
-	fee?: string;
-	pnl?: string;
-	returnPct?: number;
-	decision: number;
-	error?: string;
-	at: string;
-};
-
-/*
 Finding mirrors the backend PostMortem evidence record attributed to one system
 layer so proposed adjustments stay separate from live model state.
 */

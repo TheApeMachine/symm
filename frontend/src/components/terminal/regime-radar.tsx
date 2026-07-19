@@ -1,24 +1,24 @@
+import { useSelector } from "@tanstack/react-store";
 import { useRef } from "react";
-import {
-	flattenMeasurementBuffer,
-	measurementsStore,
-} from "#/collections/measurements";
+import { appStore } from "#/collections/app";
+import { measurementsForSource } from "#/collections/measurements";
+import type { Measurement } from "#/collections/types";
+import { backendMeasurementSources } from "#/components/terminal/measurement-sources";
 import {
 	latestByMetric,
 	percentOf,
 } from "#/components/terminal/measurement-view";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 import { Flex } from "@/components/ui/flex";
 import { Panel } from "@/components/ui/panel";
 
 /*
 regimeAxes projects typed numerical measurements onto the five fields in the
 backend Regime contract, then averages each field across reporting symbols.
-Turbulence supplies volatility, pump trend supplies trend, and signed CVD
-pressure supplies bullish, bearish, and stochastic-balance evidence.
 */
 export const regimeAxes = (
-	readings: typeof measurementsStore.state,
+	measurements: Measurement[],
 	sources: string[],
 ): Array<{ label: string; value: number }> => {
 	const available = new Set(sources);
@@ -31,11 +31,15 @@ export const regimeAxes = (
 	let directionalCount = 0;
 	let choppy = 0;
 	let choppyCount = 0;
+	const symbols = [
+		...new Set(measurements.map((row) => row.symbol).filter(Boolean)),
+	];
 
-	for (const sourceMap of Object.values(readings.measurements)) {
+	for (const symbol of symbols) {
+		const symbolRows = measurements.filter((row) => row.symbol === symbol);
 		const turbulence = available.has("fluid")
 			? latestByMetric(
-					flattenMeasurementBuffer(sourceMap.fluid),
+					measurementsForSource(symbolRows, "fluid"),
 					"turbulent_score",
 				)
 			: undefined;
@@ -46,7 +50,7 @@ export const regimeAxes = (
 		}
 
 		const trend = available.has("pumpdump")
-			? latestByMetric(flattenMeasurementBuffer(sourceMap.pumpdump), "trend")
+			? latestByMetric(measurementsForSource(symbolRows, "pumpdump"), "trend")
 			: undefined;
 
 		if (trend !== undefined && trend.validity.state !== "invalid") {
@@ -58,7 +62,7 @@ export const regimeAxes = (
 			continue;
 		}
 
-		const flow = flattenMeasurementBuffer(sourceMap.cvd);
+		const flow = measurementsForSource(symbolRows, "cvd");
 		const net = latestByMetric(flow, "net");
 		const netFraction = latestByMetric(flow, "net_fraction");
 		const balance = latestByMetric(flow, "balance");
@@ -114,18 +118,15 @@ snapshots so the right rail stays off the React render path.
 export const RadarPanel = ({ sources }: { sources?: string[] }) => {
 	const radarFillRef = useRef<SVGPolygonElement>(null);
 	const axisLabelRefs = useRef<Array<SVGTextElement | null>>([]);
+	const online = useSelector(appStore, (state) => state.online);
 
 	useDirectStorePaint(
-		() => {
-			const readings = measurementsStore.state;
-			const candidates = sources ?? [
-				...new Set(
-					Object.values(readings.measurements).flatMap((sourceMap) =>
-						Object.keys(sourceMap),
-					),
-				),
-			];
-			const axes = regimeAxes(readings, candidates);
+		getWorker(),
+		[{ store: "measurements", key: "" }],
+		(buffers) => {
+			const measurements = (buffers["measurements:"] ?? []) as Measurement[];
+			const candidates = sources ?? backendMeasurementSources(measurements);
+			const axes = regimeAxes(measurements, candidates);
 			const points = RADAR_UNITS.map(
 				([x, y], index) =>
 					`${110 + x * 84 * (axes[index]?.value ?? 0)},${
@@ -149,8 +150,7 @@ export const RadarPanel = ({ sources }: { sources?: string[] }) => {
 				label.setAttribute("y", String(105 + y * 98));
 			}
 		},
-		[measurementsStore],
-		[sources],
+		[online, sources],
 	);
 
 	return (

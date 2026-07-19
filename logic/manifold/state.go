@@ -28,8 +28,8 @@ type State struct {
 	SpectralRadius   float64           `json:"spectralRadius"`
 	Reading          pmanifold.Reading `json:"reading"`
 	OscillatorCount  int               `json:"oscillatorCount"`
-	// Replay marks a cache republish of an unchanged epoch so resonance and
-	// cognition skip retrain/WAL while UI can still paint the field.
+	// Replay marks an unchanged excitation epoch. The field may still paint;
+	// analyzer does not invent a fresh forecast from a prior calibration.
 	Replay       bool                 `json:"replay,omitempty"`
 	Grid         pmanifold.Grid       `json:"grid,omitempty"`
 	Rho          [][]float64          `json:"rho,omitempty"`

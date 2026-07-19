@@ -3,9 +3,11 @@ import { useRef } from "react";
 import { appStore } from "#/collections/app";
 import {
 	flattenMeasurementBuffer,
-	measurementsStore,
 	measurementTickCount,
+	measurementsForSource,
+	measurementsForSymbol,
 } from "#/collections/measurements";
+import type { Measurement } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
 import { buildHeatmapCells } from "#/components/kernel/heatmap";
 import {
@@ -26,6 +28,7 @@ import {
 	paintMetricGrid,
 } from "#/components/terminal/metric-paint";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 import { Flex } from "@/components/ui/flex";
 
 type SignalDetailRefs = {
@@ -44,33 +47,24 @@ type SignalDetailRefs = {
 const paintSignalDetail = (
 	refs: SignalDetailRefs,
 	source: string,
-	focusSymbol: string,
+	universe: Measurement[],
+	focusRows: Measurement[],
 ): void => {
-	const measurements = measurementsStore.state.measurements;
-	const buffer = measurements[focusSymbol]?.[source];
-	const history = flattenMeasurementBuffer(buffer);
+	const history = flattenMeasurementBuffer(
+		measurementsForSource(focusRows, source),
+	);
 	const headline = headlineMetric(source);
 	const latest =
 		headline === null ? history.at(-1) : latestByMetric(history, headline);
 	const epoch = orderedEpoch(history, headline);
 	const status = resolveStatus(latest);
 	const observedStamp = stampOf(latest?.at);
-	const active = Object.values(measurements).reduce(
-		(sum, sources) => sum + measurementTickCount(sources[source]),
-		0,
+	const active = measurementTickCount(
+		measurementsForSource(universe, source),
 	);
-	const total = Object.values(measurements).reduce(
-		(sum, sources) =>
-			sum +
-			Object.values(sources).reduce(
-				(sourceSum, sourceHistory) =>
-					sourceSum + measurementTickCount(sourceHistory),
-				0,
-			),
-		0,
-	);
+	const total = measurementTickCount(universe);
 	const heatmap =
-		headline === null ? [] : buildHeatmapCells(measurements, source, headline);
+		headline === null ? [] : buildHeatmapCells(universe, source, headline);
 
 	if (refs.waitingPanel !== null) {
 		refs.waitingPanel.style.display = epoch.length === 0 ? "" : "none";
@@ -133,6 +127,7 @@ export const SignalDetail = () => {
 		(state) => state.selectedSource,
 	);
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const online = useSelector(appStore, (state) => state.online);
 	const badgeRef = useRef<HTMLSpanElement>(null);
 	const waitingPanelRef = useRef<HTMLDivElement>(null);
 	const metricsGridRef = useRef<HTMLDivElement>(null);
@@ -146,7 +141,12 @@ export const SignalDetail = () => {
 	const copy = kernelCopy(selectedSource, selectedSource);
 
 	useDirectStorePaint(
-		() =>
+		getWorker(),
+		[
+			{ store: "measurements", key: "" },
+			{ store: "measurements", key: focusSymbol },
+		],
+		(buffers) => {
 			paintSignalDetail(
 				{
 					badge: badgeRef.current,
@@ -161,10 +161,14 @@ export const SignalDetail = () => {
 					heatmapGrid: heatmapGridRef.current,
 				},
 				selectedSource,
-				focusSymbol,
-			),
-		[measurementsStore],
-		[selectedSource, focusSymbol],
+				(buffers["measurements:"] ?? []) as Measurement[],
+				measurementsForSymbol(
+					(buffers[`measurements:${focusSymbol}`] ?? []) as Measurement[],
+					focusSymbol,
+				),
+			);
+		},
+		[online, selectedSource, focusSymbol],
 	);
 
 	return (

@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { appStore } from "#/collections/app";
-import { applyFramePayload } from "#/providers/ws-stores";
 
 const socketUrl =
 	import.meta.env.VITE_SYMM_WS_URL?.trim() || "ws://127.0.0.1:8765/ws";
@@ -8,10 +7,13 @@ const socketUrl =
 type WorkerOutbound =
 	| { type: "READY" }
 	| { type: "ONLINE"; online: boolean }
-	| { type: "DATA_UPDATE"; payload: Record<string, unknown> }
-	| { type: "ERROR"; message: string };
+	| { type: "ERROR"; message: string }
+	| { type: "ERROR_FRAME"; frame: Record<string, unknown> };
 
-let worker: Worker | null = null;
+	
+	
+let worker: Worker | null = null;	
+export const getWorker = () => worker;
 
 const disconnectTransport = () => {
 	if (worker !== null) {
@@ -25,7 +27,10 @@ const handleWorkerMessage = (event: MessageEvent<WorkerOutbound>) => {
 	const message = event.data;
 
 	if (message.type === "READY") {
-		worker?.postMessage({ type: "CONNECT", url: socketUrl });
+		if (worker !== null) {
+			worker.postMessage({ type: "CONNECT", url: socketUrl });
+		}
+
 		return;
 	}
 
@@ -34,8 +39,8 @@ const handleWorkerMessage = (event: MessageEvent<WorkerOutbound>) => {
 		return;
 	}
 
-	if (message.type === "DATA_UPDATE") {
-		applyFramePayload(message.payload);
+	if (message.type === "ERROR_FRAME") {
+		appStore.actions.updateError(message.frame);
 		return;
 	}
 
@@ -61,8 +66,8 @@ const connect = () => {
 
 /*
 WsFeed boots the websocket worker once. The worker owns the socket, decodes
-every backend frame, and pushes coalesced payloads into the TanStack stores in
-16ms increments. This is the only transport path.
+frames, and retains desk state. Main-thread mirrors subscribe over MessageChannel;
+app/terminal stay on the UI thread.
 */
 export const WsFeed = () => {
 	useEffect(() => {
@@ -75,5 +80,3 @@ export const WsFeed = () => {
 
 	return null;
 };
-
-export { applyFramePayload };

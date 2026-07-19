@@ -1,14 +1,9 @@
 import { describe, expect, it } from "vitest";
-import {
-	type CognitiveReading,
-	cognitiveScopes,
-} from "#/collections/cognitive";
-import { activeScopeFor } from "#/routes/cortex";
+import type { CognitiveReading } from "#/collections/types";
+import { activeScopeFor, cognitiveScopes } from "#/routes/cortex";
 
-const reading = (
-	scope: string,
-	classConfidence: number,
-): CognitiveReading => ({
+const reading = (scope: string, classConfidence: number): CognitiveReading => ({
+	symbol: scope,
 	scope,
 	sequence: "",
 	regimePrefix: "",
@@ -27,19 +22,19 @@ const reading = (
 
 describe("cortex", () => {
 	it("uses app focus before selected scope", () => {
-		const readings = {
-			"ETH/USD": reading("ETH/USD", 0.9),
-			"BTC/USD": reading("BTC/USD", 0.2),
-		};
+		const scopes = ["BTC/USD", "ETH/USD"];
 
-		expect(
-			activeScopeFor(
-				readings,
-				"ETH/USD",
-				"BTC/USD",
-				["BTC/USD", "ETH/USD"],
-			),
-		).toBe("BTC/USD");
+		expect(activeScopeFor(new Set(scopes), "BTC/USD", scopes)).toBe(
+			"BTC/USD",
+		);
+	});
+
+	it("falls back when focus has no cognitive reading yet", () => {
+		const scopes = ["ETH/USD"];
+
+		expect(activeScopeFor(new Set(scopes), "BTC/USD", scopes)).toBe(
+			"ETH/USD",
+		);
 	});
 
 	it("keeps cognitive scopes stable instead of confidence sorted", () => {

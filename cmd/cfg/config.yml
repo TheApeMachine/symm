@@ -27,7 +27,6 @@ market:
   quote_currency: USD
   book_depth_levels: 25
   baseline_halflife: 30s
-  manifold_max_symbols: 64
   l3_enabled: true
   l3_depth: 10
   # Kraken's standard L3 subscription-rate budget. Depth determines the cost

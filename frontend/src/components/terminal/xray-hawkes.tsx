@@ -1,6 +1,11 @@
+import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
 import { appStore } from "#/collections/app";
-import { measurementsStore } from "#/collections/measurements";
+import {
+	epochsFromMeasurements,
+	measurementsForSource,
+} from "#/collections/measurements";
+import type { Measurement } from "#/collections/types";
 import {
 	clearCanvas,
 	drawGrid,
@@ -15,6 +20,7 @@ import {
 	hawkesMetricsFromBuffer,
 } from "#/components/terminal/xray-view";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 
 /*
 XrayHawkesPanel paints a dense Hawkes intensity path: arrival impulses and the
@@ -25,147 +31,155 @@ export const XrayHawkesPanel = () => {
 	const branchingRef = useRef<HTMLSpanElement>(null);
 	const intensityRef = useRef<HTMLSpanElement>(null);
 	const cascadeRef = useRef<HTMLDivElement>(null);
+	const paintRef = useRef<() => void>(() => undefined);
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const online = useSelector(appStore, (state) => state.online);
 
-	const paint = () => {
-		const canvas = canvasRef.current;
+	useDirectStorePaint(
+		getWorker(),
+		[{ store: "measurements", key: focusSymbol }],
+		(buffers) => {
+			const canvas = canvasRef.current;
 
-		if (canvas === null) {
-			return;
-		}
+			if (canvas === null) {
+				return;
+			}
 
-		const context = resizeCanvas(canvas);
+			const context = resizeCanvas(canvas);
 
-		if (context === null) {
-			return;
-		}
+			if (context === null) {
+				return;
+			}
 
-		const symbol = appStore.state.focusSymbol;
-		const buffer = measurementsStore.state.measurements[symbol]?.hawkes;
-		const metrics = hawkesMetricsFromBuffer(buffer);
-		const cascade = cascadeLabel(metrics.branching);
-		const series = hawkesSeriesFromBuffer(buffer);
-		const width = canvas.clientWidth;
-		const height = canvas.clientHeight;
-
-		if (branchingRef.current !== null) {
-			branchingRef.current.textContent = formatMetric(metrics.branching);
-			branchingRef.current.style.color = cascade.color;
-		}
-
-		if (intensityRef.current !== null) {
-			intensityRef.current.textContent = formatMetric(metrics.intensity, 2);
-		}
-
-		if (cascadeRef.current !== null) {
-			cascadeRef.current.textContent = `cascade ${cascade.label}`;
-			cascadeRef.current.style.color = cascade.color;
-		}
-
-		if (series === null || series.samples.length < 2) {
-			drawXrayWaiting(
-				context,
-				width,
-				height,
-				"waiting for fitted hawkes intensity",
+			const frames = measurementsForSource(
+				(buffers[`measurements:${focusSymbol}`] ?? []) as Measurement[],
+				"hawkes",
 			);
-			return;
-		}
+			const epochs = epochsFromMeasurements(frames);
+			const metrics = hawkesMetricsFromBuffer(frames);
+			const cascade = cascadeLabel(metrics.branching);
+			const series = hawkesSeriesFromBuffer(epochs);
+			const width = canvas.clientWidth;
+			const height = canvas.clientHeight;
 
-		clearCanvas(context, width, height);
-		drawGrid(context, width, height, 18);
-
-		const padX = 14;
-		const padTop = 30;
-		const padBottom = 26;
-		const innerWidth = Math.max(1, width - padX * 2);
-		const base = height - padBottom;
-		const maxIntensity =
-			Math.max(series.baseline * 1.2, ...series.samples) * 1.1;
-		const xFor = (index: number): number =>
-			padX + (index / (series.samples.length - 1)) * innerWidth;
-		const yFor = (intensity: number): number =>
-			base - (intensity / maxIntensity) * (base - padTop);
-		const latest = series.samples[series.samples.length - 1] ?? series.baseline;
-
-		context.strokeStyle = "rgba(232, 163, 61, 0.28)";
-		context.setLineDash([3, 3]);
-		context.lineWidth = 1;
-		context.beginPath();
-		context.moveTo(padX, yFor(series.baseline));
-		context.lineTo(width - padX, yFor(series.baseline));
-		context.stroke();
-		context.setLineDash([]);
-
-		context.beginPath();
-		context.moveTo(xFor(0), base);
-
-		for (let index = 0; index < series.samples.length; index += 1) {
-			context.lineTo(xFor(index), yFor(series.samples[index] ?? 0));
-		}
-
-		context.lineTo(xFor(series.samples.length - 1), base);
-		context.closePath();
-		context.fillStyle = "rgba(232, 163, 61, 0.14)";
-		context.fill();
-
-		context.strokeStyle = TERMINAL_COLORS.amber;
-		context.lineWidth = 1.6;
-		context.beginPath();
-
-		for (let index = 0; index < series.samples.length; index += 1) {
-			const x = xFor(index);
-			const y = yFor(series.samples[index] ?? 0);
-
-			if (index === 0) {
-				context.moveTo(x, y);
-				continue;
+			if (branchingRef.current !== null) {
+				branchingRef.current.textContent = formatMetric(metrics.branching);
+				branchingRef.current.style.color = cascade.color;
 			}
 
-			context.lineTo(x, y);
-		}
-
-		context.stroke();
-
-		const duration = Math.max(1, series.throughAt - series.fromAt);
-		context.strokeStyle = "#7FBACB";
-		context.lineWidth = 1;
-
-		for (const eventAt of series.events) {
-			const age = series.throughAt - eventAt;
-
-			if (age < 0 || age > duration) {
-				continue;
+			if (intensityRef.current !== null) {
+				intensityRef.current.textContent = formatMetric(metrics.intensity, 2);
 			}
 
-			const x = padX + ((eventAt - series.fromAt) / duration) * innerWidth;
-			context.globalAlpha = Math.max(0.2, 1 - age / duration);
+			if (cascadeRef.current !== null) {
+				cascadeRef.current.textContent = `cascade ${cascade.label}`;
+				cascadeRef.current.style.color = cascade.color;
+			}
+
+			if (series === null || series.samples.length < 2) {
+				drawXrayWaiting(
+					context,
+					width,
+					height,
+					"waiting for fitted hawkes intensity",
+				);
+				return;
+			}
+
+			clearCanvas(context, width, height);
+			drawGrid(context, width, height, 18);
+
+			const padX = 14;
+			const padTop = 30;
+			const padBottom = 26;
+			const innerWidth = Math.max(1, width - padX * 2);
+			const base = height - padBottom;
+			const excess = series.samples.map((sample) =>
+				Math.max(0, sample - series.baseline),
+			);
+			const maxExcess = Math.max(1e-9, ...excess) * 1.15;
+			const xFor = (index: number): number =>
+				padX + (index / (series.samples.length - 1)) * innerWidth;
+			const yFor = (value: number): number =>
+				base - (value / maxExcess) * (base - padTop);
+			const latest = series.samples[series.samples.length - 1] ?? series.baseline;
+			const latestExcess = excess[excess.length - 1] ?? 0;
+
 			context.beginPath();
-			context.moveTo(x, base);
-			context.lineTo(x, base + 8);
+			context.moveTo(xFor(0), base);
+
+			for (let index = 0; index < excess.length; index += 1) {
+				context.lineTo(xFor(index), yFor(excess[index] ?? 0));
+			}
+
+			context.lineTo(xFor(excess.length - 1), base);
+			context.closePath();
+			context.fillStyle = "rgba(232, 163, 61, 0.14)";
+			context.fill();
+
+			context.strokeStyle = TERMINAL_COLORS.amber;
+			context.lineWidth = 1.6;
+			context.beginPath();
+
+			for (let index = 0; index < excess.length; index += 1) {
+				const x = xFor(index);
+				const y = yFor(excess[index] ?? 0);
+
+				if (index === 0) {
+					context.moveTo(x, y);
+					continue;
+				}
+
+				context.lineTo(x, y);
+			}
+
 			context.stroke();
-		}
 
-		context.globalAlpha = 1;
-		context.fillStyle = TERMINAL_COLORS.amber;
-		context.shadowBlur = 10;
-		context.shadowColor = TERMINAL_COLORS.amber;
-		context.beginPath();
-		context.arc(
-			xFor(series.samples.length - 1),
-			yFor(latest),
-			3.5,
-			0,
-			Math.PI * 2,
-		);
-		context.fill();
-		context.shadowBlur = 0;
-		context.fillStyle = TERMINAL_COLORS.muted;
-		context.font = "10px JetBrains Mono, monospace";
-		context.fillText(`λ ${latest.toFixed(2)}`, 18, height - 9);
-	};
+			const duration = Math.max(1, series.throughAt - series.fromAt);
+			context.strokeStyle = "#7FBACB";
+			context.lineWidth = 1;
 
-	const paintRef = useRef(paint);
-	useDirectStorePaint(paint, [measurementsStore, appStore], []);
+			for (const eventAt of series.events) {
+				const age = series.throughAt - eventAt;
+
+				if (age < 0 || age > duration) {
+					continue;
+				}
+
+				const x = padX + ((eventAt - series.fromAt) / duration) * innerWidth;
+				context.globalAlpha = Math.max(0.2, 1 - age / duration);
+				context.beginPath();
+				context.moveTo(x, base);
+				context.lineTo(x, base + 8);
+				context.stroke();
+			}
+
+			context.globalAlpha = 1;
+			context.fillStyle = TERMINAL_COLORS.amber;
+			context.shadowBlur = 10;
+			context.shadowColor = TERMINAL_COLORS.amber;
+			context.beginPath();
+			context.arc(
+				xFor(excess.length - 1),
+				yFor(latestExcess),
+				3.5,
+				0,
+				Math.PI * 2,
+			);
+			context.fill();
+			context.shadowBlur = 0;
+			context.fillStyle = TERMINAL_COLORS.muted;
+			context.font = "10px JetBrains Mono, monospace";
+			context.fillText(
+				`λ−μ ${latestExcess.toFixed(2)}  λ ${latest.toFixed(2)}  μ ${series.baseline.toFixed(2)}`,
+				18,
+				height - 9,
+			);
+		},
+		[online, focusSymbol],
+	);
+
+	paintRef.current = () => undefined;
 
 	useEffect(() => {
 		const canvas = canvasRef.current;

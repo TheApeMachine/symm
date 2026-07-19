@@ -1,17 +1,20 @@
 import { type DependencyList, useEffect, useRef } from "react";
+import { useSelector } from "@tanstack/react-store";
+import { appStore } from "#/collections/app";
 import { resizeMockupCanvas } from "#/components/terminal/canvas";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 
-type StoreSubscription = {
-	subscribe: (listener: () => void) => {
-		unsubscribe: () => void;
-	};
+type Watch = {
+	store: string;
+	key: string;
 };
 
 type CanvasDraw = (
 	context: CanvasRenderingContext2D,
 	width: number,
 	height: number,
+	buffers: Record<string, unknown[]>,
 ) => void;
 
 /*
@@ -19,22 +22,25 @@ MockupFluidCanvas repaints with the tmp terminal canvas sizing contract.
 */
 export const MockupFluidCanvas = ({
 	draw,
-	stores,
+	watches,
 	deps,
 	className,
 }: {
 	draw: CanvasDraw;
-	stores: StoreSubscription[];
+	watches: Watch[];
 	deps?: DependencyList;
 	className?: string;
 }) => {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const drawRef = useRef(draw);
+	const online = useSelector(appStore, (state) => state.online);
 
 	drawRef.current = draw;
 
 	useDirectStorePaint(
-		() => {
+		getWorker(),
+		watches,
+		(buffers) => {
 			const canvas = canvasRef.current;
 
 			if (canvas === null) {
@@ -47,10 +53,14 @@ export const MockupFluidCanvas = ({
 				return;
 			}
 
-			drawRef.current(context, canvas.clientWidth, canvas.clientHeight);
+			drawRef.current(
+				context,
+				canvas.clientWidth,
+				canvas.clientHeight,
+				buffers,
+			);
 		},
-		stores,
-		deps ?? [],
+		[online, ...(deps ?? [])],
 	);
 
 	useEffect(() => {
@@ -67,7 +77,7 @@ export const MockupFluidCanvas = ({
 				return;
 			}
 
-			drawRef.current(context, canvas.clientWidth, canvas.clientHeight);
+			drawRef.current(context, canvas.clientWidth, canvas.clientHeight, {});
 		};
 
 		const observer = new ResizeObserver(render);

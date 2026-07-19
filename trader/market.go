@@ -24,9 +24,6 @@ type Market struct {
 	books      *types.MarketFeed[kraken.BookData]
 	ctx        context.Context
 	cancel     context.CancelFunc
-	tickersIn  chan []byte
-	tradesIn   chan []byte
-	booksIn    chan []byte
 	resyncIn   chan string
 	dirty      chan struct{}
 }
@@ -42,6 +39,8 @@ func NewMarket(
 ) (*Market, error) {
 	timelineCapacity := viper.GetInt("signals.feed_timeline_capacity")
 	trackCapacity := viper.GetInt("signals.feed_track_capacity")
+	ctx, cancel := context.WithCancel(ctx)
+
 	market := &Market{
 		instrument: instrument,
 		api:        api,
@@ -57,10 +56,14 @@ func NewMarket(
 			timelineCapacity,
 			trackCapacity,
 		),
-		dirty: make(chan struct{}, 1),
+		ctx:      ctx,
+		cancel:   cancel,
+		resyncIn: make(chan string, 64),
+		dirty:    make(chan struct{}, 1),
 	}
 
 	if _, err := market.tickers.Pending(time.Now().UTC()); err != nil {
+		cancel()
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"market: invalid feed configuration",
@@ -68,7 +71,12 @@ func NewMarket(
 		))
 	}
 
-	market.bindIngress(ctx, api)
+	if api != nil {
+		go market.resync()
+		api.On("ticker", market.OnTicker)
+		api.On("trade", market.OnTrade)
+		api.On("book", market.OnBook)
+	}
 
 	return market, nil
 }
@@ -102,6 +110,8 @@ func (market *Market) OnTicker(data []byte) {
 			continue
 		}
 	}
+
+	market.dirtyWake()
 }
 
 /*
@@ -133,6 +143,8 @@ func (market *Market) OnTrade(data []byte) {
 			continue
 		}
 	}
+
+	market.dirtyWake()
 }
 
 /*
@@ -200,6 +212,68 @@ func (market *Market) OnBook(data []byte) {
 			continue
 		}
 	}
+
+	market.dirtyWake()
+}
+
+/*
+dirtyWake signals ingress so the tick loop can coalesce one Cut.
+*/
+func (market *Market) dirtyWake() {
+	if market == nil || market.dirty == nil {
+		return
+	}
+
+	select {
+	case market.dirty <- struct{}{}:
+	default:
+	}
+}
+
+/*
+WaitDirty blocks until ingress arrives, the budget elapses, or Market closes.
+*/
+func (market *Market) WaitDirty(budget time.Duration) {
+	if market == nil {
+		return
+	}
+
+	if budget <= 0 {
+		budget = 10 * time.Millisecond
+	}
+
+	var done <-chan struct{}
+
+	if market.ctx != nil {
+		done = market.ctx.Done()
+	}
+
+	var dirty <-chan struct{}
+
+	if market.dirty != nil {
+		dirty = market.dirty
+	}
+
+	timer := time.NewTimer(budget)
+	defer timer.Stop()
+
+	select {
+	case <-done:
+	case <-dirty:
+	case <-timer.C:
+	}
+}
+
+/*
+Close cancels ingress workers.
+*/
+func (market *Market) Close() {
+	if market == nil || market.cancel == nil {
+		return
+	}
+
+	market.cancel()
+	market.cancel = nil
 }
 
 /*

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -17,6 +18,8 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )
+
+const writeBudget = 200 * time.Millisecond
 
 /*
 Hub owns the dashboard websocket and forwards typed backend frames to clients.
@@ -82,7 +85,7 @@ func NewHub(
 		if conn.Conn != nil {
 			if hub.balance != nil {
 				if frame := hub.balance.Frame(); len(frame) > 0 {
-					if err := conn.Conn.WriteMessage(websocket.TextMessage, frame); err != nil {
+					if err := hub.write(conn, frame); err != nil {
 						if hub.clientGone(err) {
 							return
 						}
@@ -100,7 +103,7 @@ func NewHub(
 					return true
 				}
 
-				if err := conn.Conn.WriteMessage(websocket.TextMessage, frame); err != nil {
+				if err := hub.write(conn, frame); err != nil {
 					if hub.clientGone(err) {
 						return false
 					}
@@ -131,6 +134,14 @@ func (hub *Hub) open() bool {
 }
 
 func (hub *Hub) Initialize() error {
+	if hub == nil {
+		return nil
+	}
+
+	if hub.status == types.READY {
+		return nil
+	}
+
 	errnie.Info("initializing UI hub")
 	hub.status = types.READY
 	go hub.coalesce()
@@ -138,6 +149,10 @@ func (hub *Hub) Initialize() error {
 }
 
 func (hub *Hub) Serve() error {
+	if err := hub.Initialize(); err != nil {
+		return err
+	}
+
 	return errnie.Error(hub.app.Listen(hub.listenAddr))
 }
 
@@ -151,8 +166,8 @@ func (hub *Hub) Close() error {
 }
 
 /*
-coalesce drains producer frames continuously and flushes latest-by-key to the
-connected client every 16ms.
+coalesce drains producer frames in bursts and flushes latest-by-key every 16ms.
+Write deadlines keep a slow browser from stalling the drain loop for seconds.
 */
 func (hub *Hub) coalesce() {
 	ticker := time.NewTicker(16 * time.Millisecond)
@@ -163,58 +178,90 @@ func (hub *Hub) coalesce() {
 		case <-hub.ctx.Done():
 			return
 		case msg := <-hub.Messages:
-			hub.latest.Store(frameKey(msg), msg)
+			hub.ingest(msg)
+			hub.drain()
 		case <-ticker.C:
-			conn := hub.live.Load()
-
-			if conn == nil || conn.Conn == nil {
-				continue
-			}
-
-			hub.latest.Range(func(key, value any) bool {
-				frame, ok := value.([]byte)
-
-				if !ok {
-					return true
-				}
-
-				if err := conn.Conn.WriteMessage(websocket.TextMessage, frame); err != nil {
-					if hub.clientGone(err) {
-						hub.live.CompareAndSwap(conn, nil)
-						return false
-					}
-
-					errnie.Error(err)
-					return false
-				}
-
-				hub.latest.Delete(key)
-
-				return true
-			})
+			hub.flush()
 		}
 	}
 }
 
-func frameKey(msg []byte) string {
-	var frame map[string]any
+func (hub *Hub) ingest(msg []byte) {
+	hub.latest.Store(frameKey(msg), msg)
+}
 
-	if err := sonic.Unmarshal(msg, &frame); err != nil || len(frame) == 0 {
-		return "raw"
-	}
-
-	for _, key := range []string{
-		"measurements", "manifold", "cognition", "forecasts",
-		"decisions", "positions", "balances", "tick", "resonance",
-		"causal", "hypotheses",
-	} {
-		if _, ok := frame[key]; ok {
-			return key
+func (hub *Hub) drain() {
+	for {
+		select {
+		case msg := <-hub.Messages:
+			hub.ingest(msg)
+		default:
+			return
 		}
 	}
+}
 
-	for key := range frame {
-		return key
+func (hub *Hub) flush() {
+	conn := hub.live.Load()
+
+	if conn == nil || conn.Conn == nil {
+		return
+	}
+
+	hub.latest.Range(func(key, value any) bool {
+		frame, ok := value.([]byte)
+
+		if !ok {
+			return true
+		}
+
+		if err := hub.write(conn, frame); err != nil {
+			if hub.clientGone(err) {
+				hub.live.CompareAndSwap(conn, nil)
+				return false
+			}
+
+			// Keep the snapshot for the next flush — tick frames are small and
+			// would otherwise keep updating while mark/PnL frames never land.
+			return true
+		}
+
+		hub.latest.Delete(key)
+
+		return true
+	})
+}
+
+/*
+write bounds each send so a stalled client cannot freeze the coalescer.
+Seed runs before live is published; afterward only coalesce writes.
+*/
+func (hub *Hub) write(conn *websocket.Conn, frame []byte) error {
+	if hub == nil || conn == nil || conn.Conn == nil {
+		return errors.New("ui: websocket unavailable")
+	}
+
+	if err := conn.Conn.SetWriteDeadline(time.Now().Add(writeBudget)); err != nil {
+		return err
+	}
+
+	return conn.Conn.WriteMessage(websocket.TextMessage, frame)
+}
+
+func frameKey(msg []byte) string {
+	// Prefer desk inventory over tick so mark/PnL snapshots are not collapsed
+	// under the high-frequency tick key when a payload carries both shapes.
+	for _, key := range []string{
+		"holdings", "balances", "instruments", "measurements", "manifold",
+		"cognition", "forecasts", "decisions", "resonance", "causal",
+		"hypotheses", "graphs", "lifecycle", "findings",
+		"categories", "stops", "executions", "orders", "tick",
+	} {
+		needle := []byte(`"` + key + `":`)
+
+		if bytes.Contains(msg, needle) {
+			return key
+		}
 	}
 
 	return "raw"

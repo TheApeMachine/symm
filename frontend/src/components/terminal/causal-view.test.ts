@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CausalFrame } from "#/collections/causal";
+import type { CausalFrame } from "#/collections/types";
 import {
 	causalAssociation,
 	causalEntryBaseline,

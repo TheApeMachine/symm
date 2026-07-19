@@ -70,8 +70,8 @@ func (balance *Balance) Status() types.Status {
 }
 
 /*
-Frame marshals the current quote snapshot and open holdings for the terminal.
-Nil when Balance is not ready to publish a coherent desk view.
+Frame marshals the current quote snapshot, holdings, and stop surfaces for the
+terminal. Nil when Balance is not ready to publish a coherent desk view.
 */
 func (balance *Balance) Frame() []byte {
 	balance.mu.Lock()
@@ -81,24 +81,45 @@ func (balance *Balance) Frame() []byte {
 		return nil
 	}
 
-	positions := make([]*types.Holding, 0)
+	holdings := make([]*types.Holding, 0)
+	stops := make([]map[string]any, 0)
 
-	balance.holdings.Range(func(key, value any) bool {
-		holding := value.(*types.Holding)
-		positions = append(positions, holding)
+	balance.holdings.Range(func(_, value any) bool {
+		holding, ok := value.(*types.Holding)
+
+		if !ok || holding == nil {
+			return true
+		}
+
+		holdings = append(holdings, holding)
+
+		if holding.Status == types.CLOSED || holding.Stoploss == nil {
+			return true
+		}
+
+		if frame := holding.Stoploss.Frame(holding.Symbol); frame != nil {
+			stops = append(stops, frame)
+		}
+
 		return true
 	})
 
-	return datura.Map[any]{
-		"balances":  balance.snapshotLocked(),
-		"positions": positions,
-	}.Marshal()
+	payload := datura.Map[any]{
+		"balances": balance.snapshotLocked(),
+		"holdings": holdings,
+	}
+
+	if len(stops) > 0 {
+		payload["stops"] = stops
+	}
+
+	return payload.Marshal()
 }
 
 /*
 Publish enqueues a desk snapshot on the UI channel. Callers that must deliver
 on websocket connect should Write Frame() directly — a saturated channel drops
-this non-blocking send.
+this non-blocking send. Empty payloads (marshal failure) are never enqueued.
 */
 func (balance *Balance) Publish() {
 	if balance.ui == nil || balance.status != types.READY || balance.model == nil {
@@ -109,8 +130,14 @@ func (balance *Balance) Publish() {
 		return
 	}
 
+	frame := balance.Frame()
+
+	if len(frame) == 0 {
+		return
+	}
+
 	select {
-	case balance.ui <- balance.Frame():
+	case balance.ui <- frame:
 	default:
 	}
 }
@@ -232,12 +259,16 @@ func (balance *Balance) BalanceAck(buf []byte) {
 }
 
 /*
-syncWallet mirrors non-quote asset balances onto open Holding rows.
+syncWallet mirrors non-quote Available balances onto Holding rows. Zero
+Available marks the lot CLOSED — status is the authority, not deletion — so the
+desk and audit rails can still see the shell after the wallet flattens.
 */
 func (balance *Balance) syncWallet() {
 	if balance == nil || balance.model == nil {
 		return
 	}
+
+	seen := make(map[string]struct{}, len(balance.model.Data))
 
 	for _, row := range balance.model.Data {
 		if row.Asset == "" || row.Asset == balance.quote {
@@ -245,22 +276,22 @@ func (balance *Balance) syncWallet() {
 		}
 
 		symbol := row.Asset + "/" + balance.quote
+		seen[symbol] = struct{}{}
 
-		if row.Balance == nil || row.Balance.Sign() <= 0 {
-			balance.holdings.Delete(symbol)
+		qty := row.Available
+
+		if qty == nil || qty.Sign() <= 0 {
+			balance.closeHolding(symbol)
 			continue
 		}
 
-		qty := row.Balance.Copy()
+		qty = qty.Copy()
 
 		if value, ok := balance.holdings.Load(symbol); ok {
 			holding := value.(*types.Holding)
 			holding.Qty = qty
 			holding.Asset = row.Asset
-
-			if holding.Status == types.CLOSED || holding.Status == "" {
-				holding.Status = types.OPEN
-			}
+			holding.Status = types.OPEN
 
 			continue
 		}
@@ -270,6 +301,44 @@ func (balance *Balance) syncWallet() {
 		holding.Status = types.OPEN
 		balance.holdings.Store(symbol, holding)
 	}
+
+	balance.holdings.Range(func(key, value any) bool {
+		symbol, ok := key.(string)
+
+		if !ok {
+			return true
+		}
+
+		if _, present := seen[symbol]; present {
+			return true
+		}
+
+		balance.closeHolding(symbol)
+
+		return true
+	})
+}
+
+/*
+closeHolding transitions a wallet shell to CLOSED without deleting it.
+*/
+func (balance *Balance) closeHolding(symbol string) {
+	if balance == nil || symbol == "" {
+		return
+	}
+
+	value, ok := balance.holdings.Load(symbol)
+
+	if !ok {
+		return
+	}
+
+	holding := value.(*types.Holding)
+	holding.Status = types.CLOSED
+
+	if holding.Qty == nil || holding.Qty.Sign() != 0 {
+		holding.Qty = decimal.NewFromFloat64(0)
+	}
 }
 
 /*
@@ -277,8 +346,16 @@ Resync clears cached Kraken balance state and requests a fresh snapshot
 subscription after reconciliation detects missing or inconsistent holdings.
 */
 func (balance *Balance) Resync() error {
+	if balance == nil {
+		return nil
+	}
+
 	balance.model = nil
 	balance.status = types.PENDING
+
+	if balance.api == nil {
+		return nil
+	}
 
 	if err := balance.api.SubscribeBalance(); err != nil {
 		balance.status = types.ERROR
@@ -354,8 +431,82 @@ func (balance *Balance) Holding(symbol string) (types.Holding, error) {
 }
 
 /*
-Remember stores an open holding when restart recovery still knows the lot but
-the wallet map lost its shell.
+Seed installs a wallet-backed open lot for fixtures. It upserts the base asset
+into the live snapshot so Remember and Desk slot counts stay wallet-authoritative.
+*/
+func (balance *Balance) Seed(holding *types.Holding) {
+	if balance == nil || holding == nil || holding.Symbol == "" {
+		return
+	}
+
+	asset := holding.Asset
+
+	if asset == "" {
+		asset = strings.TrimSuffix(holding.Symbol, "/"+balance.quote)
+	}
+
+	if asset == "" || asset == balance.quote {
+		return
+	}
+
+	holding.Asset = asset
+
+	if holding.Qty == nil || holding.Qty.Sign() <= 0 {
+		return
+	}
+
+	qty := holding.Qty.Copy()
+
+	if balance.model == nil {
+		balance.model = &kraken.Balance{Type: "snapshot", Data: []kraken.BalanceData{}}
+		balance.status = types.READY
+	}
+
+	replaced := false
+
+	for index := range balance.model.Data {
+		if balance.model.Data[index].Asset != asset {
+			continue
+		}
+
+		balance.model.Data[index].Balance = qty
+		balance.model.Data[index].Available = qty.Copy()
+		replaced = true
+		break
+	}
+
+	if !replaced {
+		balance.model.Data = append(balance.model.Data, kraken.BalanceData{
+			Asset:     asset,
+			Balance:   qty,
+			Available: qty.Copy(),
+		})
+	}
+
+	balance.holdings.Store(holding.Symbol, holding)
+}
+
+/*
+Enrich merges durable recovery economics onto a wallet-backed open lot.
+*/
+func (balance *Balance) Enrich(symbol string, recovered types.Holding) {
+	if balance == nil || symbol == "" {
+		return
+	}
+
+	value, ok := balance.holdings.Load(symbol)
+
+	if !ok {
+		return
+	}
+
+	value.(*types.Holding).Enrich(recovered)
+}
+
+/*
+Remember stores an open holding only when the live wallet still shows positive
+qty for that asset. Recovery metadata must not invent inventory the exchange
+has already flattened.
 */
 func (balance *Balance) Remember(holding *types.Holding) {
 	if balance == nil || holding == nil || holding.Symbol == "" {
@@ -370,7 +521,50 @@ func (balance *Balance) Remember(holding *types.Holding) {
 		return
 	}
 
+	// Wallet authority applies only after a live snapshot exists. Fixture
+	// paths with a nil model may still seed holdings for unit tests.
+	if balance.model != nil && !balance.walletHolds(holding) {
+		return
+	}
+
 	balance.holdings.Store(holding.Symbol, holding)
+}
+
+/*
+ModelReady reports whether a live balance snapshot has been applied.
+*/
+func (balance *Balance) ModelReady() bool {
+	return balance != nil && balance.model != nil && balance.status == types.READY
+}
+
+/*
+walletHolds reports whether the latest balance snapshot still carries positive
+qty for the holding's base asset.
+*/
+func (balance *Balance) walletHolds(holding *types.Holding) bool {
+	if balance.model == nil || holding == nil {
+		return false
+	}
+
+	asset := holding.Asset
+
+	if asset == "" {
+		asset = strings.TrimSuffix(holding.Symbol, "/"+balance.quote)
+	}
+
+	if asset == "" || asset == balance.quote {
+		return false
+	}
+
+	for _, row := range balance.model.Data {
+		if row.Asset != asset {
+			continue
+		}
+
+		return row.Balance != nil && row.Balance.Sign() > 0
+	}
+
+	return false
 }
 
 /*
@@ -542,6 +736,36 @@ func (balance *Balance) Available(amount *decimal.Decimal) bool {
 	}
 
 	return false
+}
+
+/*
+AssetAvailable returns the sellable qty for a base asset from the live wallet
+snapshot. Missing rows are not found rather than silently zero.
+*/
+func (balance *Balance) AssetAvailable(asset string) (*decimal.Decimal, error) {
+	if balance == nil || asset == "" {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"asset available balance missing",
+			nil,
+		))
+	}
+
+	row, err := balance.Get(asset)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if row.Available == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"asset available balance missing for "+asset,
+			nil,
+		))
+	}
+
+	return row.Available.Copy(), nil
 }
 
 /*

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { Circular } from "#/collections/circular";
-import type { Measurement, MeasurementEpoch } from "#/collections/measurements";
+import type { Measurement, MeasurementEpoch } from "#/collections/types";
 import {
 	hawkesCurveFromBuffer,
 	hawkesIntensityAt,

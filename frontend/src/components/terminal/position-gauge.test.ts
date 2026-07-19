@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { Position } from "#/collections/positions";
-import type { Stop } from "#/collections/stops";
+import type { Holding } from "#/collections/types";
+import type { Stop } from "#/collections/types";
 import { positionGaugeGeometry } from "./position-gauge";
 
-const position = (mark: number, returnPct: number): Position => ({
+const position = (mark: number, returnPct: number): Holding => ({
 	symbol: "XLM/USD",
 	qty: 10,
 	entry_price: 100,

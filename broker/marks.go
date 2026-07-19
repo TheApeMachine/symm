@@ -43,14 +43,23 @@ func (marks *Marks) Apply(symbol string) {
 
 	holding, ok := holdingValue.(*types.Holding)
 
-	if !ok || holding == nil {
+	if !ok || holding == nil || holding.Status == types.CLOSED {
 		return
 	}
 
+	if holding.Qty == nil || holding.Qty.Sign() <= 0 {
+		return
+	}
+
+	prior := holding.Mark
 	_ = position.price.Mark(position.pair, holding)
 
 	if holding.Stoploss != nil && holding.Mark != nil {
 		holding.Stoploss.ObserveMark(holding.Mark.Float64())
+	}
+
+	if prior != nil && holding.Mark != nil && prior.Cmp(holding.Mark) == 0 {
+		return
 	}
 
 	position.balance.Publish()

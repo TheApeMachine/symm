@@ -154,13 +154,14 @@ func rememberTestPairs(instrument *broker.Instrument, price *broker.Price) {
 
 /*
 seedOpenLot puts a thesis holding onto Balance so Desk.OpenPositions counts it.
+Wallet qty is seeded so Remember-style authority stays honest under test.
 */
 func seedOpenLot(planner *Planner, holding *types.Holding) {
 	if planner == nil || planner.balance == nil || holding == nil {
 		return
 	}
 
-	planner.balance.Remember(holding)
+	planner.balance.Seed(holding)
 }
 
 /*

@@ -1,16 +1,26 @@
 import { useSelector } from "@tanstack/react-store";
-import {
-	flattenMeasurementBuffer,
-	measurementsStore,
-} from "#/collections/measurements";
+import { useState } from "react";
 import { terminalStore } from "#/collections/terminal";
+import type { Measurement } from "#/types/measurement";
+import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { requireSampleSize } from "#/lib/domain";
+import { getWorker } from "#/providers/websocket";
 
 export const KernelRow = ({ source }: { source: string }) => {
 	const focusSymbol = useSelector(terminalStore, (state) => state.focusSymbol);
-	const history = useSelector(measurementsStore, (state) =>
-		flattenMeasurementBuffer(state.measurements[focusSymbol]?.[source]),
+	const [history, setHistory] = useState<Measurement[]>([]);
+
+	useDirectStorePaint(
+		getWorker(),
+		[{ store: "measurements", key: focusSymbol }],
+		(buffers) => {
+			const rows = (buffers[`measurements:${focusSymbol}`] ??
+				[]) as Measurement[];
+			setHistory(rows.filter((row) => row.source === source));
+		},
+		[focusSymbol, source],
 	);
+
 	const measurement = history.at(-1);
 	const confidence = measurement?.categories?.at(0)?.confidence ?? 0;
 	const points =

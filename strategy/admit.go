@@ -65,12 +65,12 @@ func (planner *Planner) persistRejectedEntry(
 		surplus := rotateSurplus(prior, incumbent.HoldUtility, incumbent.ExitCost)
 		decision.Alternatives["hold_incumbent"] = incumbent.HoldUtility
 		decision.Alternatives["exit_cost"] = incumbent.ExitCost
-		decision.Alternatives["clear_score"] = incumbent.ClearScore
+		decision.Alternatives["clear_prob"] = incumbent.ClearProb
 		decision.Alternatives["rotate_value"] = edge - incumbent.ExitCost
-		decision.Alternatives["wait_value"] = edge * incumbent.ClearScore
+		decision.Alternatives["wait_value"] = edge * incumbent.ClearProb
 		decision.Alternatives["rotate_surplus"] = surplus
 
-		if !shouldRotate(prior, incumbent.HoldUtility, incumbent.ExitCost, incumbent.ClearScore) {
+		if !shouldRotate(prior, incumbent.HoldUtility, incumbent.ExitCost, incumbent.ClearProb) {
 			decision.Cause = "rotate_wait"
 			decision.Reason = "challenger does not clear one-step wait threshold against weakest incumbent"
 		}
@@ -89,7 +89,7 @@ func (planner *Planner) persistAcceptedEntry(
 	opportunity bool,
 ) {
 	planner.stampCapital(&decision)
-	thesis.Lifecycle.Store(decision.Symbol, types.LifecycleEntrySelected)
+	thesis.NoteLifecycle(decision.Symbol, types.LifecycleEntrySelected, decision.At)
 	thesis.Decisions = append(thesis.Decisions, decision)
 
 	holding := types.NewHolding(planner.ctx, decision.Symbol, decision.ProposedQuantity)

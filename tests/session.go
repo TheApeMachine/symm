@@ -236,7 +236,6 @@ func configureSessionViper(testingTB testing.TB) func() {
 	previousPace := viper.Get("market.subscribe_pace")
 	previousFraction := viper.Get("trading.allocation.max_fraction")
 	previousInterval := viper.Get("signals.fluid.integration_interval")
-	previousManifold := viper.Get("market.manifold_max_symbols")
 
 	viper.Set("trading.model", "paper")
 	viper.Set("system.data_path", testingTB.TempDir())
@@ -249,7 +248,6 @@ func configureSessionViper(testingTB testing.TB) func() {
 	viper.Set("market.subscribe_batch", 200)
 	viper.Set("market.subscribe_pace", "20ms")
 	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-	viper.Set("market.manifold_max_symbols", 8)
 
 	return func() {
 		viper.Set("trading.model", previousModel)
@@ -263,7 +261,6 @@ func configureSessionViper(testingTB testing.TB) func() {
 		viper.Set("market.subscribe_pace", previousPace)
 		viper.Set("trading.allocation.max_fraction", previousFraction)
 		viper.Set("signals.fluid.integration_interval", previousInterval)
-		viper.Set("market.manifold_max_symbols", previousManifold)
 	}
 }
 
@@ -383,6 +380,20 @@ func (session *Session) RunDecide(thesis *types.Thesis) error {
 	}
 
 	session.crypto.Plan(thesis)
+
+	return nil
+}
+
+/*
+RunTrade runs Plan then Trade — the same submission half of Crypto.Tick after a
+cut — so Session tests can prove enter/exit fills without inventing a Cut frame.
+*/
+func (session *Session) RunTrade(thesis *types.Thesis) error {
+	if err := session.RunDecide(thesis); err != nil {
+		return err
+	}
+
+	session.crypto.Trade(thesis)
 
 	return nil
 }

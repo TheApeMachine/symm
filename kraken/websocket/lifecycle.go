@@ -78,5 +78,8 @@ func (lifecycle *Lifecycle) Place(model datura.Map[any], reqID int64) error {
 		return err
 	}
 
-	return lifecycle.Balance("update")
+	// Paper `balance` is a full wallet dump that omits zero assets. Emitting it
+	// as an incremental update leaves stale positive rows in Balance.model and
+	// keeps phantom OPEN lots (inflating equity by their cost basis).
+	return lifecycle.Balance("snapshot")
 }

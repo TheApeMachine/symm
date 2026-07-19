@@ -16,7 +16,6 @@ describe("walletMetrics", () => {
 						mark: 61000,
 						pnl: 10,
 						return_pct: 1 / 60,
-						executions: [{}],
 					},
 				],
 			),

@@ -1,6 +1,4 @@
-import type { CircularBuffer } from "#/collections/circular";
-import type { MeasurementEpoch } from "#/collections/measurements";
-import { flattenMeasurementBuffer } from "#/collections/measurements";
+import type { Measurement } from "#/collections/types";
 import {
 	latestByMetric,
 	percentOf,
@@ -12,8 +10,6 @@ export type HeatmapCell = {
 	value: number;
 };
 
-type SourceHistory = CircularBuffer<MeasurementEpoch> | undefined;
-
 /*
 heatmapLabel shortens a pair symbol to its base asset for the cell caption.
 */
@@ -22,19 +18,27 @@ export const heatmapLabel = (symbol: string): string =>
 
 /*
 buildHeatmapCells collects the latest headline metric per symbol that has a
-reading for the selected source. The grid column count is fixed in the view;
-row count follows however many symbols the backend has reported.
+reading for the selected source from a flat measurement snapshot.
 */
 export const buildHeatmapCells = (
-	measurements: Record<string, Record<string, SourceHistory>>,
+	measurements: Measurement[],
 	source: string,
 	headline: string,
-): HeatmapCell[] =>
-	Object.entries(measurements).flatMap(([symbol, sources]) => {
-		const frame = latestByMetric(
-			flattenMeasurementBuffer(sources[source]),
-			headline,
-		);
+): HeatmapCell[] => {
+	const bySymbol = new Map<string, Measurement[]>();
+
+	for (const measurement of measurements) {
+		if (measurement.source !== source) {
+			continue;
+		}
+
+		const rows = bySymbol.get(measurement.symbol) ?? [];
+		rows.push(measurement);
+		bySymbol.set(measurement.symbol, rows);
+	}
+
+	return [...bySymbol.entries()].flatMap(([symbol, rows]) => {
+		const frame = latestByMetric(rows, headline);
 
 		if (frame === undefined) {
 			return [];
@@ -48,3 +52,4 @@ export const buildHeatmapCells = (
 			},
 		];
 	});
+};

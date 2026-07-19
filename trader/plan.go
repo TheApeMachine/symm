@@ -20,45 +20,58 @@ func (crypto *Crypto) Plan(thesis *types.Thesis) error {
 
 	crypto.seedOpen(thesis)
 	crypto.planner.Decide(thesis)
-	crypto.publishStrategy(thesis)
 
 	return nil
 }
 
 /*
-seedOpen copies broker-open inventory onto Thesis.Holdings so Decide's
-continuation branch sees real positions, then merges durable recovery state
-back onto Balance so Desk can adopt sellable shells.
+seedOpen rebuilds Thesis.Holdings from the live wallet only. Durable recovery
+may enrich entry economics on wallet-backed lots; it must never reintroduce a
+symbol the exchange no longer holds.
 */
 func (crypto *Crypto) seedOpen(thesis *types.Thesis) {
+	if thesis == nil {
+		return
+	}
+
+	crypto.healAbandonedExits()
+
+	if crypto.snapshot != nil && crypto.balance != nil && crypto.balance.ModelReady() {
+		for symbol, recovered := range crypto.snapshot.Holdings {
+			crypto.balance.Enrich(symbol, recovered)
+		}
+
+		// One-shot: never reintroduce recovered lots after wallet has spoken.
+		crypto.snapshot = nil
+	}
+
+	thesis.Holdings.Range(func(key, value any) bool {
+		thesis.Holdings.Delete(key)
+		return true
+	})
+
+	live := map[string]struct{}{}
+
 	if crypto.balance != nil {
 		for holding := range crypto.balance.Holdings() {
 			seed := holding
+			live[holding.Symbol] = struct{}{}
 			thesis.Holdings.Store(holding.Symbol, &seed)
+			crypto.markOpen(thesis, &seed)
 		}
 	}
 
-	if crypto.recovery != nil && crypto.recovery.Holdings != nil {
-		crypto.recovery.Holdings.Range(func(key, value any) bool {
-			if _, exists := thesis.Holdings.Load(key); exists {
-				return true
-			}
+	for symbol, phase := range crypto.phases {
+		if _, ok := live[symbol]; ok {
+			continue
+		}
 
-			switch holding := value.(type) {
-			case *types.Holding:
-				thesis.Holdings.Store(key, holding)
-				crypto.restoreHolding(holding)
-			case types.Holding:
-				seed := holding
-				thesis.Holdings.Store(key, &seed)
-				crypto.restoreHolding(&seed)
-			}
+		if phase == types.LifecycleClosed {
+			continue
+		}
 
-			return true
-		})
-
-		// One-shot: never reintroduce recovered lots after the first seed.
-		crypto.recovery = nil
+		thesis.NoteLifecycle(symbol, types.LifecycleClosed, thesis.At)
+		crypto.phases[symbol] = types.LifecycleClosed
 	}
 
 	if crypto.desk != nil {
@@ -67,15 +80,90 @@ func (crypto *Crypto) seedOpen(thesis *types.Thesis) {
 }
 
 /*
-restoreHolding puts a recovered open lot onto Balance when the wallet map lost
-the shell after a partial-exit bug or restart race.
+healAbandonedExits re-arms ExitSubmitted symbols that still hold open inventory
+with no pending venue order. Yesterday's failed paper exits left the lifecycle
+rail stuck on EXIT SUBMITTED forever because submitSells skips that phase and
+Regulate will not re-append ActionExit while it remains set.
 */
-func (crypto *Crypto) restoreHolding(holding *types.Holding) {
-	if crypto.balance == nil {
+func (crypto *Crypto) healAbandonedExits() {
+	if crypto == nil || crypto.desk == nil || crypto.balance == nil ||
+		len(crypto.phases) == 0 {
 		return
 	}
 
-	crypto.balance.Remember(holding)
+	for symbol, phase := range crypto.phases {
+		if phase != types.LifecycleExitSubmitted {
+			continue
+		}
+
+		if crypto.desk.Pending(symbol) {
+			continue
+		}
+
+		holding, err := crypto.balance.Holding(symbol)
+
+		if err != nil || holding.Status == types.CLOSED {
+			continue
+		}
+
+		if holding.Qty == nil || holding.Qty.Sign() <= 0 {
+			continue
+		}
+
+		crypto.phases[symbol] = types.LifecycleManaging
+	}
+}
+
+/*
+markOpen places wallet-backed inventory into the managing lifecycle and journals
+a one-shot entered observation so the audit rail can explain restart inventory.
+In-flight entry/exit phases are restored onto each fresh Thesis so stoploss and
+trade submission do not re-fire every tick.
+*/
+func (crypto *Crypto) markOpen(thesis *types.Thesis, holding *types.Holding) {
+	if thesis == nil || holding == nil || holding.Symbol == "" {
+		return
+	}
+
+	if crypto.phases == nil {
+		crypto.phases = map[string]string{}
+	}
+
+	prior := crypto.phases[holding.Symbol]
+
+	if prior == "" {
+		at := thesis.At
+
+		if holding.EntryAt != nil {
+			at = holding.EntryAt.UTC()
+		}
+
+		thesis.NoteLifecycle(holding.Symbol, types.LifecycleEntered, at)
+		crypto.phases[holding.Symbol] = types.LifecycleEntered
+		prior = types.LifecycleEntered
+	}
+
+	if holding.Stoploss != nil && holding.EntryPrice != nil {
+		trail := holding.Stoploss.TrailDistance
+
+		if trail <= 0 && holding.Stoploss.StopReturn < 0 {
+			trail = -holding.Stoploss.StopReturn
+		}
+
+		holding.Stoploss.Bind(holding.EntryPrice.Float64(), trail)
+	}
+
+	switch prior {
+	case types.LifecycleExitSelected, types.LifecycleExitSubmitted,
+		types.LifecycleEntrySubmitted, types.LifecyclePartiallyExited,
+		types.LifecyclePartiallyEntered:
+		thesis.Lifecycle.Store(holding.Symbol, prior)
+
+		return
+	}
+
+	thesis.Lifecycle.Store(holding.Symbol, types.LifecycleManaging)
+	crypto.phases[holding.Symbol] = types.LifecycleManaging
 }
 
 /*
@@ -111,18 +199,71 @@ func (crypto *Crypto) constraints() (float64, int, int, error) {
 }
 
 /*
-publishStrategy forwards decision frames so the terminal sees strategy output
-after Analyzer already published forecasts.
+publishStrategy forwards decision and lifecycle frames so the terminal sees
+strategy output after Analyzer already published forecasts and graphs.
 */
 func (crypto *Crypto) publishStrategy(thesis *types.Thesis) {
-	if crypto.uiHub == nil || len(thesis.Decisions) == 0 {
+	if crypto.uiHub == nil || thesis == nil {
+		return
+	}
+
+	if len(thesis.Decisions) > 0 {
+		crypto.emit(datura.Map[any]{"decisions": thesis.Decisions})
+	}
+
+	lifecycle := make([]datura.Map[any], 0)
+
+	thesis.Lifecycle.Range(func(key, value any) bool {
+		symbol, ok := key.(string)
+
+		if !ok {
+			return true
+		}
+
+		status, ok := value.(string)
+
+		if !ok || status == "" {
+			return true
+		}
+
+		lifecycle = append(lifecycle, datura.Map[any]{
+			"symbol": symbol,
+			"state":  status,
+		})
+
+		return true
+	})
+
+	if len(lifecycle) > 0 {
+		crypto.emit(datura.Map[any]{"lifecycle": lifecycle})
+	}
+
+	if len(thesis.Findings) > 0 {
+		crypto.emit(datura.Map[any]{"findings": thesis.Findings})
+	}
+
+	if len(thesis.Categories) > 0 {
+		crypto.emit(datura.Map[any]{"categories": thesis.Categories})
+	}
+}
+
+/*
+emit enqueues one UI frame without blocking the trade path. Empty marshal
+results (non-finite payloads) are dropped so the browser never sees truncated JSON.
+*/
+func (crypto *Crypto) emit(frame datura.Map[any]) {
+	if crypto.uiHub == nil || frame == nil {
+		return
+	}
+
+	payload := frame.Marshal()
+
+	if len(payload) == 0 {
 		return
 	}
 
 	select {
-	case crypto.uiHub.Messages <- datura.Map[any]{
-		"decisions": thesis.Decisions,
-	}.Marshal():
+	case crypto.uiHub.Messages <- payload:
 	default:
 	}
 }

@@ -11,27 +11,7 @@ import (
 )
 
 /*
-TestIngressBufferSizeFloor keeps the public decode offload from collapsing to a
-single-slot queue when config is undersized.
-*/
-func TestIngressBufferSizeFloor(t *testing.T) {
-	previous := viper.Get("system.websocket.channel.buffer")
-	t.Cleanup(func() { viper.Set("system.websocket.channel.buffer", previous) })
-
-	Convey("Given a tiny configured buffer", t, func() {
-		viper.Set("system.websocket.channel.buffer", 1)
-		So(ingressBufferSize(), ShouldEqual, 64)
-	})
-
-	Convey("Given a large configured buffer", t, func() {
-		viper.Set("system.websocket.channel.buffer", 4096)
-		So(ingressBufferSize(), ShouldEqual, 4096)
-	})
-}
-
-/*
-BenchmarkMarketOnTrade measures decode-and-retain cost on the ingress worker
-path so queue offload regressions show up in allocation pressure.
+BenchmarkMarketOnTrade measures decode-and-retain cost on the handler path.
 */
 func BenchmarkMarketOnTrade(b *testing.B) {
 	previousTimeline := viper.Get("signals.feed_timeline_capacity")
@@ -68,10 +48,9 @@ func BenchmarkMarketOnTrade(b *testing.B) {
 }
 
 /*
-TestMarketIngressAsyncTrade verifies handler registration, queued dispatch,
-Cut visibility, and clean shutdown after Close.
+TestMarketTradeHandler verifies registration, Cut visibility, and Close.
 */
-func TestMarketIngressAsyncTrade(t *testing.T) {
+func TestMarketTradeHandler(t *testing.T) {
 	previousTimeline := viper.Get("signals.feed_timeline_capacity")
 	previousTrack := viper.Get("signals.feed_track_capacity")
 	t.Cleanup(func() { viper.Set("signals.feed_timeline_capacity", previousTimeline) })
@@ -93,28 +72,15 @@ func TestMarketIngressAsyncTrade(t *testing.T) {
 
 		mock.Emit("trade", payload)
 
-		Convey("When the worker retains the trade and Market closes", func() {
-			deadline := time.Now().Add(2 * time.Second)
-
-			for {
-				frame, cutErr := market.Cut(cutAt)
-
-				if cutErr == nil && len(frame.Trades) == 1 {
-					break
-				}
-
-				if time.Now().After(deadline) {
-					So("trade cut", ShouldEqual, "received within deadline")
-					break
-				}
-
-				time.Sleep(10 * time.Millisecond)
-			}
+		Convey("When the handler retains the trade and Market closes", func() {
+			frame, cutErr := market.Cut(cutAt)
+			So(cutErr, ShouldBeNil)
+			So(len(frame.Trades), ShouldEqual, 1)
 
 			market.Close()
 			mock.Emit("trade", payload)
 
-			Convey("Then dispatch stops without blocking the emitter", func() {
+			Convey("Then Close cancels the ingress context", func() {
 				So(market.ctx.Err(), ShouldEqual, context.Canceled)
 			})
 		})

@@ -1,13 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { appStore } from "#/collections/app";
-import {
-	type CognitiveReading,
-	cognitiveScopes,
-	cognitiveStore,
-} from "#/collections/cognitive";
-import { instrumentsStore } from "#/collections/instruments";
+import type { CognitiveReading, Instrument } from "#/collections/types";
 import { resizeCanvas } from "#/components/terminal/canvas";
 import { drawCognitiveTree } from "#/components/terminal/cognitive-viz";
 import { CortexLeafRoster } from "#/components/terminal/cortex-draw";
@@ -15,9 +10,18 @@ import {
 	CortexBeamList,
 	CortexSidePanels,
 } from "#/components/terminal/cortex-panels";
+import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 
 const isConcreteScope = (scope: string): boolean =>
 	scope !== "" && scope !== "stream";
+
+/*
+cognitiveScopes lists stable lexical scopes from a symbol-keyed reading map.
+*/
+export const cognitiveScopes = (
+	readings: Record<string, CognitiveReading>,
+): string[] => Object.keys(readings).sort();
 
 const CortexCanvas = ({ reading }: { reading: CognitiveReading | null }) => {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -74,38 +78,59 @@ const CortexCanvas = ({ reading }: { reading: CognitiveReading | null }) => {
 };
 
 export const activeScopeFor = (
-	readings: Record<string, CognitiveReading>,
-	selectedScope: string | null,
+	available: Set<string>,
 	focusSymbol: string,
 	scopes: string[],
 ): string | null => {
-	if (isConcreteScope(focusSymbol)) {
-		return readings[focusSymbol] === undefined ? null : focusSymbol;
-	}
-
-	if (selectedScope !== null) {
-		return readings[selectedScope] === undefined ? null : selectedScope;
+	if (isConcreteScope(focusSymbol) && available.has(focusSymbol)) {
+		return focusSymbol;
 	}
 
 	return scopes[0] ?? null;
 };
 
 const RouteComponent = () => {
-	const readings = useSelector(cognitiveStore, (state) => state.readings);
-	const selectedScope = useSelector(
-		cognitiveStore,
-		(state) => state.selectedScope,
-	);
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const instrumentSymbols = useSelector(
-		instrumentsStore,
-		(state) => state.symbols,
-	);
+	const online = useSelector(appStore, (state) => state.online);
 	const { updateFocusSymbol } = appStore.actions;
+	const [cognitive, setCognitive] = useState<
+		Record<string, CognitiveReading>
+	>({});
+	const [instrumentSymbols, setInstrumentSymbols] = useState<string[]>([]);
+
+	useDirectStorePaint(
+		getWorker(),
+		[
+			{ store: "cognitive", key: "" },
+			{ store: "instruments", key: "" },
+		],
+		(buffers) => {
+			const readings = (buffers["cognitive:"] ?? []) as CognitiveReading[];
+			const bySymbol: Record<string, CognitiveReading> = {};
+
+			for (const reading of readings) {
+				const key = reading.symbol || reading.scope || "";
+
+				if (key !== "") {
+					bySymbol[key] = reading;
+				}
+			}
+
+			setCognitive(bySymbol);
+			setInstrumentSymbols(
+				((buffers["instruments:"] ?? []) as Instrument[])
+					.map((instrument) => instrument.symbol)
+					.sort(),
+			);
+		},
+		[online],
+	);
+
 	const scopes = useMemo(() => {
-		const readingScopes = cognitiveScopes(readings);
-		const instrumentScopes = instrumentSymbols.filter(
-			(symbol) => readings[symbol] !== undefined,
+		const readingScopes = cognitiveScopes(cognitive);
+		const available = new Set(readingScopes);
+		const instrumentScopes = instrumentSymbols.filter((symbol) =>
+			available.has(symbol),
 		);
 		const instrumentScopeSet = new Set(instrumentScopes);
 
@@ -113,14 +138,9 @@ const RouteComponent = () => {
 			...instrumentScopes,
 			...readingScopes.filter((scope) => !instrumentScopeSet.has(scope)),
 		];
-	}, [instrumentSymbols, readings]);
-	const activeScope = activeScopeFor(
-		readings,
-		selectedScope,
-		focusSymbol,
-		scopes,
-	);
-	const reading = activeScope === null ? null : (readings[activeScope] ?? null);
+	}, [instrumentSymbols, cognitive]);
+	const activeScope = activeScopeFor(new Set(scopes), focusSymbol, scopes);
+	const reading = activeScope === null ? null : (cognitive[activeScope] ?? null);
 	const treeMeta =
 		reading === null
 			? ""

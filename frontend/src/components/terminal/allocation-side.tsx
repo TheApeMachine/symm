@@ -1,9 +1,9 @@
-import type { Balance } from "#/collections/balances";
-import type { CausalFrame } from "#/collections/causal";
-import type { ManifoldFrame } from "#/collections/manifold";
-import type { Order } from "#/collections/orders";
-import type { Position } from "#/collections/positions";
-import type { ResonanceFrame } from "#/collections/resonance";
+import type { Balance } from "#/collections/types";
+import type { CausalFrame } from "#/collections/types";
+import type { Holding } from "#/collections/types";
+import type { ManifoldFrame } from "#/collections/types";
+import type { Order } from "#/collections/types";
+import type { ResonanceFrame } from "#/collections/types";
 import {
 	causalConfidence,
 	causalEntryBaseline,
@@ -21,7 +21,7 @@ type AllocationInput = {
 	balances: Balance[];
 	causal: Record<string, History<CausalFrame>>;
 	manifold: Record<string, History<ManifoldFrame>>;
-	positions: Position[];
+	holdings: Holding[];
 	resonance: Record<string, History<ResonanceFrame>>;
 };
 
@@ -100,7 +100,7 @@ export const allocationSummary = ({
 	balances,
 	causal,
 	manifold,
-	positions,
+	holdings,
 	resonance,
 }: AllocationInput): AllocationSummary => {
 	const known = new Set([
@@ -115,9 +115,9 @@ export const allocationSummary = ({
 	const quote = quoteAsset(focusSymbol);
 	const deployable = balanceAmount(balances, quote, "available");
 	const reserved = balanceAmount(balances, quote, "reserved");
-	const deployed = positions
-		.filter((position) => quoteAsset(position.symbol) === quote)
-		.reduce((sum, position) => sum + position.qty * position.mark, 0);
+	const deployed = holdings
+		.filter((holding) => quoteAsset(holding.symbol) === quote)
+		.reduce((sum, holding) => sum + holding.qty * holding.mark, 0);
 	const rows = orderedSymbols.map((symbol) => {
 		const causalFrame = latest(causal[symbol]);
 		const manifoldFrame = latest(manifold[symbol]);
@@ -193,7 +193,7 @@ export const allocationSummary = ({
 		mad: dispersion,
 		median: med,
 		medianPct,
-		positionCount: positions.length,
+		positionCount: holdings.length,
 		quote,
 		reserved,
 		rows,

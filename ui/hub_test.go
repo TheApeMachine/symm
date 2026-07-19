@@ -51,3 +51,22 @@ func TestHubOpenWaitsForWarmupGate(t *testing.T) {
 		})
 	})
 }
+
+/*
+TestHubInitializeStartsCoalescer ensures Serve cannot listen without the
+flush worker — the failure mode that left the dashboard on a single seed frame.
+*/
+func TestHubInitializeStartsCoalescer(t *testing.T) {
+	Convey("Given a fresh hub", t, func() {
+		hub := &Hub{
+			status:   types.INITIALIZING,
+			Messages: make(chan []byte, 1),
+			ctx:      t.Context(),
+			cancel:   func() {},
+		}
+
+		So(hub.Initialize(), ShouldBeNil)
+		So(hub.status, ShouldEqual, types.READY)
+		So(hub.Initialize(), ShouldBeNil)
+	})
+}

@@ -1,11 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
-import {
-	decisionStore,
-	latestStrategyDecisions,
-} from "#/collections/decisions";
+import { useState } from "react";
+import { appStore } from "#/collections/app";
+import type { StrategyDecision } from "#/types/thesis";
 import { fixed } from "#/components/terminal/decision-format";
 import { TerminalSection } from "#/components/terminal/panels";
-import type { StrategyDecision } from "#/types/thesis";
+import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 import { Badge } from "@/components/ui/badge";
 import { Panel } from "@/components/ui/panel";
 
@@ -20,9 +20,30 @@ StrategyDecisionRows renders backend strategy decisions beside gate verdicts so
 utility, alternatives, and cause remain visible without inferring them locally.
 */
 export const StrategyDecisionRows = ({ symbol }: { symbol?: string }) => {
-	const decisions = useSelector(decisionStore, (state) =>
-		latestStrategyDecisions(state.decisions),
+	const online = useSelector(appStore, (state) => state.online);
+	const [decisions, setDecisions] = useState<StrategyDecision[]>([]);
+
+	useDirectStorePaint(
+		getWorker(),
+		[{ store: "decisions", key: "" }],
+		(buffers) => {
+			const next = (buffers["decisions:"] ?? []) as StrategyDecision[];
+
+			setDecisions((previous) =>
+				previous.length === next.length &&
+				previous.every(
+					(row, index) =>
+						row.symbol === next[index]?.symbol &&
+						row.action === next[index]?.action &&
+						row.at === next[index]?.at,
+				)
+					? previous
+					: next,
+			);
+		},
+		[online],
 	);
+
 	const rows = symbol
 		? decisions.filter((decision) => decision.symbol === symbol)
 		: decisions;

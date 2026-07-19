@@ -10,6 +10,7 @@ import {
 	metricLabel,
 	orderedEpoch,
 	resolveKernelStatus,
+	sideLabel,
 } from "./measurement-view";
 
 const measurement = (
@@ -132,6 +133,15 @@ describe("orderedEpoch", () => {
 		expect(metricLabel("reported_volume_notional")).toBe(
 			"Reported Volume Notional",
 		);
+	});
+
+	it("labels hawkes cross-kernel sides instead of blank duplicates", () => {
+		expect(sideLabel("buy")).toBe("Bid");
+		expect(sideLabel("sell")).toBe("Ask");
+		expect(sideLabel("buy_to_buy")).toBe("Buy→Buy");
+		expect(sideLabel("sell_to_buy")).toBe("Sell→Buy");
+		expect(sideLabel("buy_to_sell")).toBe("Buy→Sell");
+		expect(sideLabel("sell_to_sell")).toBe("Sell→Sell");
 	});
 });
 

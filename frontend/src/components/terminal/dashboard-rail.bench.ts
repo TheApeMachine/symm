@@ -1,28 +1,25 @@
 import { bench, describe } from "vitest";
-import type { TradeObservation } from "#/types/thesis";
-import { auditObservations, tradeObservationAuditRow } from "./dashboard-rail";
+import type { Holding } from "#/collections/types";
+import { auditHoldings, holdingAuditRow } from "./dashboard-rail";
 
-const observations: TradeObservation[] = Array.from(
-	{ length: 128 },
-	(_, index) => ({
-		kind: index % 4 === 0 ? "lifecycle_transition" : "execution",
-		symbol: index % 2 === 0 ? "BTC/USD" : "ETH/USD",
-		status: index % 3 === 0 ? "filled" : "partially_filled",
-		action: index % 5 === 0 ? "exit" : "enter",
-		side: index % 2 === 0 ? "buy" : "sell",
-		decision: index,
-		at: `2026-07-12T04:05:${String(index % 60).padStart(2, "0")}Z`,
-		quantity: "0.01",
-		price: "61420",
-	}),
-);
+const holdings: Holding[] = Array.from({ length: 64 }, (_, index) => ({
+	symbol: `SYM-${index}/USD`,
+	qty: index % 2 === 0 ? 0 : 1,
+	entry_price: 1,
+	entry_fee: 0,
+	exit_fee: 0,
+	mark: 1,
+	pnl: index * 0.01,
+	return_pct: 0.01,
+	status: index % 2 === 0 ? "closed" : "open",
+}));
 
-describe("dashboard-rail audit", () => {
-	bench("filters and formats trade journal audit rows", () => {
-		const auditRows = auditObservations(observations);
+describe("dashboard-rail audit holdings", () => {
+	bench("filters and formats closed lots", () => {
+		const closed = auditHoldings(holdings);
 
-		for (const observation of auditRows) {
-			tradeObservationAuditRow(observation);
+		for (const holding of closed) {
+			holdingAuditRow(holding);
 		}
 	});
 });

@@ -43,6 +43,7 @@ fixed formats a score to three decimals, the precision the tmp terminal used for
 combined scores and edges.
 */
 export const fixed = (value: number): string => {
+	if (!Number.isFinite(value)) return "—";
 	if (value === 0) return "0.000";
 	// Sub-cent prices need more precision to avoid showing 0.000
 	if (Math.abs(value) < 0.1) return value.toFixed(6);

@@ -2,8 +2,8 @@ import { Link } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
 import { appStore } from "#/collections/app";
-import type { Balance } from "#/collections/balances";
-import type { Position } from "#/collections/positions";
+import type { Balance } from "#/collections/types";
+import type { Holding } from "#/collections/types";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import {
 	LiveEngineClock,
@@ -24,9 +24,14 @@ type WalletMetrics = {
 	equity: number;
 };
 
+const isOpenLot = (holding: Holding): boolean =>
+	holding.qty > 0 &&
+	holding.status !== "closed" &&
+	holding.status !== "canceled";
+
 export const walletMetrics = (
 	balances: Balance[],
-	positions: Position[],
+	holdings: Holding[],
 ): WalletMetrics | null => {
 	if (balances.length === 0) {
 		return null;
@@ -37,12 +42,7 @@ export const walletMetrics = (
 	}
 
 	const balance = balances[0];
-	const funded = positions.filter(
-		(position) =>
-			position.qty > 0 &&
-			Array.isArray(position.executions) &&
-			position.executions.length > 0,
-	);
+	const funded = holdings.filter(isOpenLot);
 	const unrealized = funded.reduce(
 		(total, position) => total + position.pnl,
 		0,

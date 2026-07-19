@@ -14,7 +14,7 @@ type Incumbent struct {
 	Notional    float64
 	Qty         float64
 	Mark        float64
-	ClearScore  float64
+	ClearProb   float64
 	Displaced   bool
 }
 

@@ -1,18 +1,23 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
+import { useState } from "react";
 import { appStore } from "#/collections/app";
-import { balancesStore } from "#/collections/balances";
-import { causalStore } from "#/collections/causal";
-import { instrumentsStore } from "#/collections/instruments";
-import { manifoldStore } from "#/collections/manifold";
-import { ordersStore } from "#/collections/orders";
-import { positionsStore } from "#/collections/positions";
-import { resonanceStore } from "#/collections/resonance";
+import type {
+	Balance,
+	CausalFrame,
+	Holding,
+	Instrument,
+	ManifoldFrame,
+	Order,
+	ResonanceFrame,
+} from "#/collections/types";
 import {
 	AllocationMain,
 	AllocationSidePanel,
 	allocationSummary,
 } from "#/components/terminal/allocation-side";
+import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 
 const AllocMetric = ({
 	label,
@@ -36,21 +41,77 @@ const AllocMetric = ({
 	</div>
 );
 
+type History<T> = { values: () => T[] };
+
+const asHistory = <T extends { symbol: string }>(
+	rows: T[],
+): Record<string, History<T>> => {
+	const map: Record<string, T[]> = {};
+
+	for (const row of rows) {
+		(map[row.symbol] ??= []).push(row);
+	}
+
+	return Object.fromEntries(
+		Object.entries(map).map(([symbol, values]) => [
+			symbol,
+			{ values: () => values },
+		]),
+	);
+};
+
 const RouteComponent = () => {
-	useSelector(causalStore, (state) => state.version);
-	useSelector(manifoldStore, (state) => state.version);
-	useSelector(resonanceStore, (state) => state.version);
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const online = useSelector(appStore, (state) => state.online);
+	const [symbols, setSymbols] = useState<string[]>([]);
+	const [balances, setBalances] = useState<Balance[]>([]);
+	const [holdings, setHoldings] = useState<Holding[]>([]);
+	const [orders, setOrders] = useState<Order[]>([]);
+	const [causal, setCausal] = useState<Record<string, History<CausalFrame>>>(
+		{},
+	);
+	const [manifold, setManifold] = useState<
+		Record<string, History<ManifoldFrame>>
+	>({});
+	const [resonance, setResonance] = useState<
+		Record<string, History<ResonanceFrame>>
+	>({});
+
+	useDirectStorePaint(
+		getWorker(),
+		[
+			{ store: "instruments", key: "" },
+			{ store: "balances", key: "" },
+			{ store: "holdings", key: "" },
+			{ store: "orders", key: "" },
+			{ store: "causal", key: "" },
+			{ store: "manifold", key: "" },
+			{ store: "resonance", key: "" },
+		],
+		(buffers) => {
+			const instruments = (buffers["instruments:"] ?? []) as Instrument[];
+			setSymbols(instruments.map((instrument) => instrument.symbol).sort());
+			setBalances((buffers["balances:"] ?? []) as Balance[]);
+			setHoldings((buffers["holdings:"] ?? []) as Holding[]);
+			setOrders((buffers["orders:"] ?? []) as Order[]);
+			setCausal(asHistory((buffers["causal:"] ?? []) as CausalFrame[]));
+			setManifold(asHistory((buffers["manifold:"] ?? []) as ManifoldFrame[]));
+			setResonance(
+				asHistory((buffers["resonance:"] ?? []) as ResonanceFrame[]),
+			);
+		},
+		[online],
+	);
 
 	const alloc = allocationSummary({
-		focusSymbol: useSelector(appStore, (state) => state.focusSymbol),
-		symbols: useSelector(instrumentsStore, (state) => state.symbols),
-		balances: useSelector(balancesStore, (state) => state.balances),
-		causal: causalStore.state.causal,
-		manifold: manifoldStore.state.manifold,
-		positions: useSelector(positionsStore, (state) => state.positions),
-		resonance: resonanceStore.state.resonance,
+		focusSymbol,
+		symbols,
+		balances,
+		causal,
+		manifold,
+		holdings,
+		resonance,
 	});
-	const orders = useSelector(ordersStore, (state) => state.orders);
 	const money = (value: number) => `${value.toFixed(2)} ${alloc.quote}`;
 
 	return (

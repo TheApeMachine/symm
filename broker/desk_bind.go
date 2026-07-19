@@ -27,7 +27,7 @@ func (desk *Desk) evict(symbol string) {
 		position.Close()
 	}
 
-	if desk.balance != nil && desk.balance.holdings != nil {
-		desk.balance.holdings.Delete(symbol)
+	if desk.balance != nil {
+		desk.balance.closeHolding(symbol)
 	}
 }

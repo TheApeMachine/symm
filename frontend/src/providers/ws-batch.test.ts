@@ -11,7 +11,7 @@ describe("FrameBatcher", () => {
 
 		batcher.enqueue({ tick: { count: 1 } });
 		batcher.enqueue({ tick: { open: 2 } });
-		batcher.enqueue({ positions: [{ symbol: "BTC/USD" }] });
+		batcher.enqueue({ holdings: [{ symbol: "BTC/USD" }] });
 
 		expect(flushed).toHaveLength(0);
 
@@ -20,7 +20,7 @@ describe("FrameBatcher", () => {
 		expect(flushed).toHaveLength(1);
 		expect(flushed[0]).toEqual({
 			tick: { count: 1, open: 2 },
-			positions: [{ symbol: "BTC/USD" }],
+			holdings: [{ symbol: "BTC/USD" }],
 		});
 
 		batcher.dispose();

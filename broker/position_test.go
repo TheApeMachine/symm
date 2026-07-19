@@ -147,9 +147,10 @@ func TestPositionExecutionAck(t *testing.T) {
 
 			So(exitErr, ShouldBeNil)
 			position.ExecutionAck(exitBuffer)
-			_, holdingErr := balance.Holding("BTC/USD")
+			closed, holdingErr := balance.Holding("BTC/USD")
 
-			So(holdingErr, ShouldNotBeNil)
+			So(holdingErr, ShouldBeNil)
+			So(closed.Status, ShouldEqual, types.CLOSED)
 			So(position.Status(), ShouldEqual, types.CLOSED)
 			So(position.executions, ShouldHaveLength, 2)
 		})
@@ -192,7 +193,18 @@ func TestPositionExitQuantity(t *testing.T) {
 		holding.Asset = "BTC"
 		holding.Status = types.OPEN
 		holdings.Store("BTC/USD", holding)
-		balance := &Balance{quote: "USD", holdings: holdings}
+		balance := &Balance{
+			quote:    "USD",
+			holdings: holdings,
+			status:   types.READY,
+			model: &kraken.Balance{
+				Type: "snapshot",
+				Data: []kraken.BalanceData{{
+					Asset: "BTC", Balance: decimal.NewFromInt64(1),
+					Available: decimal.NewFromInt64(1),
+				}},
+			},
+		}
 		pair := &kraken.InstrumentPair{
 			Symbol: "BTC/USD", Base: "BTC",
 			QtyIncrement: 0.00000001, QtyMin: 0.00000001,
@@ -211,6 +223,110 @@ func TestPositionExitQuantity(t *testing.T) {
 					So(err.Error(), ShouldContainSubstring, "failed to place market order")
 				}
 			})
+		})
+	})
+}
+
+/*
+TestPositionSellMissingWalletFlattensGhost ensures a local OPEN shell without a
+wallet Available row is closed instead of sent to the venue as a sell.
+*/
+func TestPositionSellMissingWalletFlattensGhost(t *testing.T) {
+	Convey("Given an OPEN holding without a wallet Available row", t, func() {
+		ctx := context.Background()
+		holdings := &sync.Map{}
+		holding := types.NewHolding(ctx, "ETH/USD", decimal.NewFromFloat64(0.0015))
+		holding.Asset = "ETH"
+		holding.Status = types.OPEN
+		holdings.Store("ETH/USD", holding)
+		balance := &Balance{
+			quote:    "USD",
+			holdings: holdings,
+			model: &kraken.Balance{
+				Type: "snapshot",
+				Data: []kraken.BalanceData{{
+					Asset: "USD", Balance: decimal.NewFromInt64(100),
+					Available: decimal.NewFromInt64(100),
+				}},
+			},
+			status: types.READY,
+		}
+		position := &Position{
+			status:  types.OPEN,
+			balance: balance,
+			pair: &kraken.InstrumentPair{
+				Symbol: "ETH/USD", Base: "ETH",
+				QtyIncrement: 0.00000001, QtyMin: 0.00000001,
+			},
+		}
+
+		err := position.Sell(nil)
+
+		Convey("Then the ghost lot is flattened and no pending exit remains", func() {
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "no wallet availability")
+			So(holding.Status, ShouldEqual, types.CLOSED)
+			So(holding.Qty.Sign(), ShouldEqual, 0)
+			So(position.Pending(), ShouldBeFalse)
+		})
+	})
+}
+
+/*
+TestPositionSellVenueRejectFlattensStaleAvailable ensures a venue rejection
+closes the lot even when the local wallet snapshot still shows Available > 0.
+*/
+func TestPositionSellVenueRejectFlattensStaleAvailable(t *testing.T) {
+	Convey("Given a stale wallet Available and a venue that rejects the sell", t, func() {
+		ctx := context.Background()
+		mock := mockapi.NewMockAPI()
+		paper := websocket.NewPaper(
+			ctx, websocket.NewLatencySimulator(system.NewBooter(ctx, nil)),
+		)
+		api := websocket.NewAPI(ctx, mock.Public(), mock.Private(), paper)
+		holdings := &sync.Map{}
+		holding := types.NewHolding(ctx, "ETH/USD", decimal.NewFromFloat64(0.0015))
+		holding.Asset = "ETH"
+		holding.Status = types.OPEN
+		holdings.Store("ETH/USD", holding)
+		balance := &Balance{
+			quote:    "USD",
+			holdings: holdings,
+			api:      api,
+			model: &kraken.Balance{
+				Type: "snapshot",
+				Data: []kraken.BalanceData{
+					{
+						Asset: "USD", Balance: decimal.NewFromInt64(100),
+						Available: decimal.NewFromInt64(100),
+					},
+					{
+						Asset: "ETH", Balance: decimal.NewFromFloat64(0.0015),
+						Available: decimal.NewFromFloat64(0.0015),
+					},
+				},
+			},
+			status: types.READY,
+		}
+		position := &Position{
+			status:  types.OPEN,
+			balance: balance,
+			api:     api,
+			pair: &kraken.InstrumentPair{
+				Symbol: "ETH/USD", Base: "ETH",
+				QtyIncrement: 0.00000001, QtyMin: 0.00000001,
+			},
+		}
+
+		err := position.Sell(nil)
+
+		Convey("Then the lot is closed so Decide cannot re-arm the sell", func() {
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "failed to place market order")
+			So(holding.Status, ShouldEqual, types.CLOSED)
+			So(holding.Qty.Sign(), ShouldEqual, 0)
+			So(position.Pending(), ShouldBeFalse)
+			So(position.Status(), ShouldEqual, types.ERROR)
 		})
 	})
 }

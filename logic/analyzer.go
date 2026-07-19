@@ -30,6 +30,7 @@ type Analyzer struct {
 	recorder  *audit.Recorder
 	resonance map[string]*Resonance
 	causal    map[string]*Causal
+	cognition map[string]types.Cognition
 	rem       *remSleep
 }
 
@@ -74,8 +75,14 @@ func (analyzer *Analyzer) publish(frame datura.Map[any]) {
 		return
 	}
 
+	payload := frame.Marshal()
+
+	if len(payload) == 0 {
+		return
+	}
+
 	select {
-	case analyzer.ui <- frame.Marshal():
+	case analyzer.ui <- payload:
 	default:
 	}
 }
@@ -107,6 +114,7 @@ func NewAnalyzer(
 		ui:        ui,
 		resonance: make(map[string]*Resonance),
 		causal:    make(map[string]*Causal),
+		cognition: make(map[string]types.Cognition),
 		rem:       newREMSleep(ctx, tree),
 	}, nil
 }
@@ -153,6 +161,7 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 	states := analyzer.observeStates(thesis)
 	analyzer.publishMeasured(thesis, states)
 	analyzer.composeGraphs(thesis)
+	analyzer.publishGraphs(thesis)
 	remObservations, remRequested := analyzer.cognizeStates(thesis, states)
 	analyzer.consolidate(thesis, remObservations, remRequested)
 	analyzer.publishCognition(thesis)

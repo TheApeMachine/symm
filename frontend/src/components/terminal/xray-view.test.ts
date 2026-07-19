@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Circular } from "#/collections/circular";
-import type { Measurement, MeasurementEpoch } from "#/collections/measurements";
+import type { Measurement } from "#/collections/types";
 import {
 	hawkesMetricsFromBuffer,
 	hawkesMetricsFromFrames,
@@ -89,40 +88,30 @@ describe("xray-view", () => {
 	});
 
 	it("reads hawkes metrics from retained observation epochs", () => {
-		const buffer = Circular<MeasurementEpoch>(50);
+		const frames = [
+			hawkesMeasurement("1", "conditional_intensity", "buy", 0.3),
+			hawkesMeasurement("1", "conditional_intensity", "sell", 0.2),
+			hawkesMeasurement("1", "baseline_intensity", "buy", 0.05),
+			hawkesMeasurement("1", "baseline_intensity", "sell", 0.04),
+			hawkesMeasurement("1", "spectral_radius", "", 0.8),
+		];
 
-		buffer.push({
-			at: "1",
-			publishedAt: "1",
-			readings: [
-				hawkesMeasurement("1", "conditional_intensity", "buy", 0.3),
-				hawkesMeasurement("1", "conditional_intensity", "sell", 0.2),
-				hawkesMeasurement("1", "baseline_intensity", "buy", 0.05),
-				hawkesMeasurement("1", "baseline_intensity", "sell", 0.04),
-				hawkesMeasurement("1", "spectral_radius", "", 0.8),
-			],
-		});
-
-		expect(hawkesMetricsFromBuffer(buffer)).toMatchObject({
+		expect(hawkesMetricsFromBuffer(frames)).toMatchObject({
 			intensity: 0.5,
 			branching: 0.8,
 		});
 	});
 
 	it("reads latent histories from live resonance frames", () => {
-		const latent = latentPointsFromFrames({
-			"BTC/USD": {
-				values: () => [
-					{
-						source: "resonance",
-						symbol: "BTC/USD",
-						at: "2",
-						category: "equilibrium",
-						latent: [0.2, -0.4, 0.8],
-					},
-				],
+		const latent = latentPointsFromFrames([
+			{
+				source: "resonance",
+				symbol: "BTC/USD",
+				at: "2",
+				category: "equilibrium",
+				latent: [0.2, -0.4, 0.8],
 			},
-		});
+		]);
 
 		expect(latent).toEqual([
 			{

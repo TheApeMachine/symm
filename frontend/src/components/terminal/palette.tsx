@@ -1,10 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { appStore } from "#/collections/app";
-import { instrumentsStore } from "#/collections/instruments";
-import { measurementsStore } from "#/collections/measurements";
+import type { Instrument, Measurement } from "#/collections/types";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { paletteGroupVariant } from "#/components/terminal/badge-tone";
+import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 import { Badge } from "@/components/ui/badge";
 
 const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
@@ -107,16 +108,37 @@ export const CommandPalette = ({
 	onRun: (surface: TerminalSurface, source?: string, symbol?: string) => void;
 }) => {
 	const app = useSelector(appStore, (state) => state);
-	const instrumentSymbols = useSelector(
-		instrumentsStore,
-		(state) => state.symbols,
-	);
-	const measuredSymbols = useSelector(measurementsStore, (state) =>
-		Object.keys(state.measurements).sort(),
-	);
 	const terminal = useSelector(terminalStore, (state) => state);
+	const online = useSelector(appStore, (state) => state.online);
+	const [instrumentSymbols, setInstrumentSymbols] = useState<string[]>([]);
+	const [measuredSymbols, setMeasuredSymbols] = useState<string[]>([]);
 	const { closePalette, setPaletteQuery } = terminalStore.actions;
 	const inputRef = useRef<HTMLInputElement | null>(null);
+
+	useDirectStorePaint(
+		getWorker(),
+		[
+			{ store: "instruments", key: "" },
+			{ store: "measurements", key: "" },
+		],
+		(buffers) => {
+			setInstrumentSymbols(
+				((buffers["instruments:"] ?? []) as Instrument[])
+					.map((instrument) => instrument.symbol)
+					.sort(),
+			);
+			setMeasuredSymbols(
+				[
+					...new Set(
+						((buffers["measurements:"] ?? []) as Measurement[]).map(
+							(measurement) => measurement.symbol,
+						),
+					),
+				].sort(),
+			);
+		},
+		[online],
+	);
 
 	useEffect(() => {
 		if (!terminal.paletteOpen) {

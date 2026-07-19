@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { CausalFrame } from "#/collections/causal";
-import type { ManifoldFrame } from "#/collections/manifold";
-import type { ResonanceFrame } from "#/collections/resonance";
+import type { CausalFrame } from "#/collections/types";
+import type { ManifoldFrame } from "#/collections/types";
+import type { ResonanceFrame } from "#/collections/types";
 import type { StrategyDecision } from "#/types/thesis";
 import {
 	causalCleared,

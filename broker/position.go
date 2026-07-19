@@ -154,6 +154,7 @@ func (position *Position) OrderAck(buf []byte) {
 
 	if errnie.Error(kraken.Validate(orderAck)) != nil {
 		position.status = types.ERROR
+		position.intent.Store(intentFlat)
 		position.claim.Release()
 		return
 	}
@@ -327,9 +328,16 @@ func (position *Position) Exit() error {
 
 /*
 Sell submits a market sell. Nil quantity sells the full live lot; a positive
-quantity reduces.
+quantity reduces. Outstanding exit/reduce intents are not re-armed. Missing or
+zero wallet Available flattens the lot without contacting the venue; a rejected
+AddOrder clears the shell the same way Enter cleans up a failed buy so Decide
+cannot hammer paper/live with the same ghost size every tick.
 */
 func (position *Position) Sell(quantity *decimal.Decimal) error {
+	if position.Pending() {
+		return nil
+	}
+
 	holding, err := position.balance.Holding(position.pair.Symbol)
 
 	if err != nil {
@@ -347,11 +355,44 @@ func (position *Position) Sell(quantity *decimal.Decimal) error {
 	}
 
 	if size == nil || size.Sign() <= 0 {
+		position.terminal()
+
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"sell quantity must be positive for "+position.pair.Symbol,
 			nil,
 		))
+	}
+
+	available, availableErr := position.balance.AssetAvailable(holding.Asset)
+
+	if availableErr != nil {
+		// Missing wallet row means the lot is not sellable — flatten the ghost
+		// shell instead of sending holding.Qty into a venue that already has zero.
+		position.balance.closeHolding(position.pair.Symbol)
+		position.terminal()
+		_ = position.balance.Resync()
+
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"no wallet availability to sell "+position.pair.Symbol,
+			availableErr,
+		))
+	}
+
+	if available.Sign() <= 0 {
+		position.balance.closeHolding(position.pair.Symbol)
+		position.terminal()
+
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"no sellable "+holding.Asset+" available for "+position.pair.Symbol,
+			nil,
+		))
+	}
+
+	if size.Sub(available).Sign() > 0 {
+		size = available
 	}
 
 	position.request = kraken.NewMarketOrder(
@@ -368,8 +409,14 @@ func (position *Position) Sell(quantity *decimal.Decimal) error {
 	}
 
 	if err := position.api.AddOrder(position.request); err != nil {
-		position.status = types.OPEN
-		position.intent.Store(intentOpen)
+		// Match Enter: venue rejection clears the lot so Decide cannot re-arm
+		// the same sell every tick against paper/live balances that already
+		// report flat (stale local Available must not keep a ghost OPEN shell).
+		position.status = types.ERROR
+		position.intent.Store(intentFlat)
+		position.balance.closeHolding(position.pair.Symbol)
+		position.terminal()
+		_ = position.balance.Resync()
 
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -392,7 +439,7 @@ func (position *Position) terminal() {
 	}
 
 	if position.balance != nil && position.pair != nil {
-		position.balance.holdings.Delete(position.pair.Symbol)
+		position.balance.closeHolding(position.pair.Symbol)
 	}
 
 	position.Close()

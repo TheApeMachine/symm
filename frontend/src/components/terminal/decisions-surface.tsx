@@ -1,15 +1,14 @@
 import { useSelector } from "@tanstack/react-store";
 import { useState } from "react";
 import { appStore } from "#/collections/app";
-import { causalStore } from "#/collections/causal";
-import {
-	decisionStore,
-	latestStrategyDecisions,
-} from "#/collections/decisions";
-import { instrumentsStore } from "#/collections/instruments";
-import { manifoldStore } from "#/collections/manifold";
-import { measurementsStore } from "#/collections/measurements";
-import { resonanceStore } from "#/collections/resonance";
+import type {
+	CausalFrame,
+	Instrument,
+	ManifoldFrame,
+	Measurement,
+	ResonanceFrame,
+} from "#/collections/types";
+import type { StrategyDecision } from "#/types/thesis";
 import {
 	verdictBadgeClassName,
 	verdictToVariant,
@@ -25,7 +24,9 @@ import {
 	causalRatio,
 	causalStrength,
 } from "#/components/terminal/causal-view";
+import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { cn } from "#/lib/utils";
+import { getWorker } from "#/providers/websocket";
 import { Badge } from "@/components/ui/badge";
 import { Meter } from "@/components/ui/meter";
 import { Panel } from "@/components/ui/panel";
@@ -41,6 +42,18 @@ import { fixed } from "./decision-format";
 import { DecisionSideRail, LiveDecisionsEntryLine } from "./decision-side";
 import { StrategyDecisionRows } from "./strategy-decisions";
 
+const latestBySymbol = <T extends { symbol: string }>(
+	rows: T[],
+): Record<string, T> => {
+	const map: Record<string, T> = {};
+
+	for (const row of rows) {
+		map[row.symbol] = row;
+	}
+
+	return map;
+};
+
 const finite = (value: unknown): number => {
 	const number = typeof value === "number" ? value : Number(value);
 
@@ -55,31 +68,62 @@ const present = (value: number | null): number => (value === null ? 0 : value);
 export const DecisionsSurface = () => {
 	const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const strategyDecisions = useSelector(decisionStore, (state) =>
-		latestStrategyDecisions(state.decisions),
-	);
-	const decisionsBySymbol = strategyDecisions.reduce(
-		(out, decision) => {
-			out[decision.symbol] = decision;
+	const online = useSelector(appStore, (state) => state.online);
+	const [strategyDecisions, setStrategyDecisions] = useState<
+		StrategyDecision[]
+	>([]);
+	const [causalBySymbol, setCausalBySymbol] = useState<
+		Record<string, CausalFrame>
+	>({});
+	const [manifoldBySymbol, setManifoldBySymbol] = useState<
+		Record<string, ManifoldFrame>
+	>({});
+	const [resonanceBySymbol, setResonanceBySymbol] = useState<
+		Record<string, ResonanceFrame>
+	>({});
+	const [measured, setMeasured] = useState(0);
+	const [instrumentSymbols, setInstrumentSymbols] = useState<string[]>([]);
 
-			return out;
+	useDirectStorePaint(
+		getWorker(),
+		[
+			{ store: "decisions", key: "" },
+			{ store: "causal", key: "" },
+			{ store: "manifold", key: "" },
+			{ store: "resonance", key: "" },
+			{ store: "measurements", key: "" },
+			{ store: "instruments", key: "" },
+		],
+		(buffers) => {
+			setStrategyDecisions(
+				(buffers["decisions:"] ?? []) as StrategyDecision[],
+			);
+			setCausalBySymbol(
+				latestBySymbol((buffers["causal:"] ?? []) as CausalFrame[]),
+			);
+			setManifoldBySymbol(
+				latestBySymbol((buffers["manifold:"] ?? []) as ManifoldFrame[]),
+			);
+			setResonanceBySymbol(
+				latestBySymbol((buffers["resonance:"] ?? []) as ResonanceFrame[]),
+			);
+			setMeasured(
+				new Set(
+					((buffers["measurements:"] ?? []) as Measurement[]).map(
+						(measurement) => measurement.symbol,
+					),
+				).size,
+			);
+			setInstrumentSymbols(
+				((buffers["instruments:"] ?? []) as Instrument[])
+					.map((instrument) => instrument.symbol)
+					.sort(),
+			);
 		},
-		{} as Record<string, (typeof strategyDecisions)[number]>,
+		[online],
 	);
-	useSelector(causalStore, (state) => state.version);
-	useSelector(manifoldStore, (state) => state.version);
-	useSelector(resonanceStore, (state) => state.version);
-	const causalBySymbol = causalStore.state.causal;
-	const manifoldBySymbol = manifoldStore.state.manifold;
-	const resonanceBySymbol = resonanceStore.state.resonance;
-	const measurementsBySymbol = useSelector(
-		measurementsStore,
-		(state) => state.measurements,
-	);
-	const instrumentSymbols = useSelector(
-		instrumentsStore,
-		(state) => state.symbols,
-	);
+
+	const decisionsBySymbol = latestBySymbol(strategyDecisions);
 	const symbolSet = new Set(
 		[
 			...Object.keys(causalBySymbol),
@@ -96,9 +140,9 @@ export const DecisionsSurface = () => {
 	];
 	const candidates = symbols.map((symbol) => {
 		const decision = decisionsBySymbol[symbol];
-		const causal = causalBySymbol[symbol]?.values().at(-1);
-		const resonance = resonanceBySymbol[symbol]?.values().at(-1);
-		const manifold = manifoldBySymbol[symbol]?.values().at(-1);
+		const causal = causalBySymbol[symbol];
+		const resonance = resonanceBySymbol[symbol];
+		const manifold = manifoldBySymbol[symbol];
 		const causalStrengthValue = causalStrength(causal);
 		const causalBaselineValue = causalEntryBaseline(causal);
 		const predict = resonancePredict(resonance);
@@ -170,8 +214,9 @@ export const DecisionsSurface = () => {
 		candidates.find((candidate) => candidate.symbol === selectedSymbol) ??
 		candidates.find((candidate) => candidate.symbol === focusSymbol) ??
 		candidates[0];
-	const scanned = instrumentSymbols.length || symbols.length;
-	const quoted = Object.keys(measurementsBySymbol).length;
+	// Field = symbols with causal/resonance/manifold (the list below).
+	// Measured = symbols that emitted any signal frame. Do not conflate them.
+	const field = candidates.length;
 	const inPlay = candidates.filter((candidate) => candidate.inPlay).length;
 	const allowed = candidates.filter(
 		(candidate) => candidate.verdict === "allow",
@@ -183,25 +228,25 @@ export const DecisionsSurface = () => {
 				<div className="mb-[18px] grid grid-cols-4 gap-2.5">
 					<div className="rounded border border-(--line) bg-(--surface) px-3 py-2.5">
 						<div className="text-[9.5px] text-(--f4) uppercase tracking-widest">
-							Scanned
+							Field
 						</div>
 						<div className="mt-0.5 font-mono font-semibold text-[26px] leading-[1.1] text-(--acc)">
-							{scanned}
+							{field}
 						</div>
 						<div className="mt-px font-mono text-[9.5px] text-(--f4)">
-							universe
+							evaluated
 						</div>
 					</div>
 
 					<div className="rounded border border-(--line) bg-(--surface) px-3 py-2.5">
 						<div className="text-[9.5px] text-(--f4) uppercase tracking-widest">
-							Quoted
+							Measured
 						</div>
 						<div className="mt-0.5 font-mono font-semibold text-[26px] leading-[1.1] text-(--info)">
-							{quoted}
+							{measured}
 						</div>
 						<div className="mt-px font-mono text-[9.5px] text-(--f4)">
-							fresh ticks
+							signal symbols
 						</div>
 					</div>
 

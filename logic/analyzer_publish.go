@@ -78,3 +78,39 @@ func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 		analyzer.publish(datura.Map[any]{"forecasts": thesis.Forecasts})
 	}
 }
+
+/*
+publishGraphs emits composed evidence-graph wire frames so the thesis modal can
+render measurement relationships for the focused symbol.
+*/
+func (analyzer *Analyzer) publishGraphs(thesis *types.Thesis) {
+	if thesis == nil || thesis.Graphs == nil {
+		return
+	}
+
+	frames := make([]types.GraphFrame, 0)
+
+	thesis.Graphs.Range(func(_, value any) bool {
+		evidenceGraph, ok := value.(*types.Graph)
+
+		if !ok || evidenceGraph == nil {
+			return true
+		}
+
+		frame := evidenceGraph.Frame()
+
+		if len(frame.Nodes) == 0 {
+			return true
+		}
+
+		frames = append(frames, frame)
+
+		return true
+	})
+
+	if len(frames) == 0 {
+		return
+	}
+
+	analyzer.publish(datura.Map[any]{"graphs": frames})
+}

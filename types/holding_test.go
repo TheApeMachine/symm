@@ -1,60 +1,67 @@
 package types
 
 import (
-	"context"
+	"encoding/json"
+	"math"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/errnie"
 )
 
-/*
-TestNewHoldingSeedsPendingStoploss verifies construction leaves inventory pending
-with a live regulator attached before any fill arrives.
-*/
-func TestNewHoldingSeedsPendingStoploss(t *testing.T) {
-	Convey("Given NewHolding for a sized lot", t, func() {
-		holding := NewHolding(
-			context.Background(),
-			"BTC/USD",
-			decimal.NewFromFloat64(0.25),
-		)
+func TestHoldingMarshalJSON(t *testing.T) {
+	Convey("Given an open lot with non-finite stop geometry", t, func() {
+		pct := 0.005
+		stop := NewStoploss(t.Context())
+		stop.Bind(100, 0.01)
+		stop.LockedFloor = math.Inf(-1)
+		stop.Weight = math.NaN()
+		stop.PeakReturn = math.Inf(1)
 
-		So(holding.Symbol, ShouldEqual, "BTC/USD")
-		So(holding.Qty.Float64(), ShouldEqual, 0.25)
-		So(holding.Status, ShouldEqual, PENDING)
-		So(holding.Stoploss, ShouldNotBeNil)
-		So(holding.IsOpportunity, ShouldBeFalse)
-	})
-}
-
-/*
-TestHoldingValidateAcceptsFractionalQty verifies errnie.Validate accepts a
-sub-unit lot so trade does not reject sized crypto entries as invalid.
-*/
-func TestHoldingValidateAcceptsFractionalQty(t *testing.T) {
-	Convey("Given a holding sized below one base unit", t, func() {
 		holding := Holding{
-			Symbol: "BTC/USD",
-			Qty:    decimal.NewFromFloat64(0.001),
+			Symbol:     "BTC/USD",
+			Qty:        decimal.NewFromFloat64(0.01),
+			EntryPrice: decimal.NewFromFloat64(100),
+			Mark:       decimal.NewFromFloat64(101),
+			PnL:        decimal.NewFromFloat64(0.5),
+			ReturnPct:  &pct,
+			Status:     OPEN,
+			Stoploss:   stop,
 		}
 
-		Convey("When Validate runs", func() {
-			err := errnie.Validate(&holding)
+		payload, err := json.Marshal(holding)
 
-			Convey("Then fractional positive qty is accepted", func() {
-				So(err, ShouldBeNil)
-			})
+		Convey("It should emit finite JSON with derived stop_price", func() {
+			So(err, ShouldBeNil)
+			So(json.Valid(payload), ShouldBeTrue)
+			So(string(payload), ShouldContainSubstring, `"pnl":0.5`)
+			So(string(payload), ShouldContainSubstring, `"stop_price":99`)
+			So(string(payload), ShouldNotContainSubstring, `Inf`)
+			So(string(payload), ShouldNotContainSubstring, `NaN`)
 		})
 	})
 }
 
-/*
-TestHoldingValidateRejectsMissingQty verifies required qty fails when unset.
-*/
-func TestHoldingValidateRejectsMissingQty(t *testing.T) {
-	Convey("Given a holding without qty", t, func() {
-		So(errnie.Validate(&Holding{Symbol: "BTC/USD"}), ShouldNotBeNil)
-	})
+func BenchmarkHoldingMarshalJSON(b *testing.B) {
+	pct := 0.005
+	stop := NewStoploss(b.Context())
+	stop.Bind(100, 0.01)
+	holding := Holding{
+		Symbol:     "BTC/USD",
+		Qty:        decimal.NewFromFloat64(0.01),
+		EntryPrice: decimal.NewFromFloat64(100),
+		Mark:       decimal.NewFromFloat64(101),
+		PnL:        decimal.NewFromFloat64(0.5),
+		ReturnPct:  &pct,
+		Status:     OPEN,
+		Stoploss:   stop,
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if _, err := json.Marshal(holding); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

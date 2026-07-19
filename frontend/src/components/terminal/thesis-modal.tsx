@@ -1,16 +1,22 @@
 import { useSelector } from "@tanstack/react-store";
-import { type ReactNode, useCallback, useEffect, useRef } from "react";
-import { categoriesStore } from "#/collections/categories";
-import { decisionStore } from "#/collections/decisions";
-import { findingsStore } from "#/collections/findings";
-import { forecastsStore } from "#/collections/forecasts";
-import { graphsStore, latestGraphFrame } from "#/collections/graphs";
-import { hypothesesStore } from "#/collections/hypotheses";
-import { lifecycleStore } from "#/collections/lifecycle";
-import { measurementsStore } from "#/collections/measurements";
+import {
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
+import { appStore } from "#/collections/app";
+import type { Holding, TickFrame } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
-import { tickStore } from "#/collections/tick";
-import { tradeJournalStore } from "#/collections/trade-journal";
+import type { Category, Measurement } from "#/types/measurement";
+import type {
+	Finding,
+	GraphFrame,
+	StrategyDecision,
+	ThesisForecast,
+	ThesisHypothesis,
+} from "#/types/thesis";
 import { resizeCanvas } from "#/components/terminal/canvas";
 import { fixed } from "#/components/terminal/decision-format";
 import {
@@ -23,13 +29,12 @@ import {
 	type ThesisSnapshot,
 	thesisSnapshotFor,
 } from "#/components/terminal/thesis-snapshot";
+import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { cn } from "#/lib/utils";
+import { getWorker } from "#/providers/websocket";
 import { Badge } from "@/components/ui/badge";
 import { Flex } from "@/components/ui/flex";
 import { Panel } from "@/components/ui/panel";
-
-const formatTime = (value: string): string =>
-	value.length >= 19 ? value.slice(11, 19) : value;
 
 const Section = ({
 	title,
@@ -53,16 +58,9 @@ const Section = ({
 	</Panel>
 );
 
-const ThesisEvidenceCanvas = ({ symbol }: { symbol: string }) => {
-	const graph = useSelector(
-		graphsStore,
-		(state) => latestGraphFrame(state.graphs, symbol),
-		{
-			compare: (left, right) =>
-				graphTopologyKey(left) === graphTopologyKey(right),
-		},
-	);
+const ThesisEvidenceCanvas = ({ graph }: { graph: GraphFrame | null }) => {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
+	const topology = graphTopologyKey(graph);
 
 	const draw = useCallback(
 		(context: CanvasRenderingContext2D, width: number, height: number) => {
@@ -93,7 +91,7 @@ const ThesisEvidenceCanvas = ({ symbol }: { symbol: string }) => {
 		observer.observe(canvas);
 
 		return () => observer.disconnect();
-	}, [draw]);
+	}, [draw, topology]);
 
 	return (
 		<canvas
@@ -126,9 +124,19 @@ const ThesisDetailRail = ({ snapshot }: { snapshot: ThesisSnapshot }) => (
 						</span>
 					</div>
 					<div>
-						notional{" "}
+						proposed{" "}
 						<span className="text-(--acc)">
 							{fixed(snapshot.decision.proposedNotional)}
+						</span>
+					</div>
+					<div>
+						return{" "}
+						<span className="text-(--f1)">
+							{fixed(snapshot.decision.expectedReturn)}
+						</span>
+						{" · conf "}
+						<span className="text-(--f1)">
+							{fixed(snapshot.decision.confidence)}
 						</span>
 					</div>
 					<div className="text-(--f4)">{snapshot.decision.cause}</div>
@@ -196,33 +204,26 @@ const ThesisDetailRail = ({ snapshot }: { snapshot: ThesisSnapshot }) => (
 			)}
 		</Section>
 
-		<Section
-			title="Trade journal"
-			meta={`${snapshot.observations.length} events`}
-		>
-			{snapshot.observations.length === 0 ? (
-				<div className="font-mono text-[10px] text-(--f4)">no observations</div>
+		<Section title="Holdings" meta={`${snapshot.holdings.length} lots`}>
+			{snapshot.holdings.length === 0 ? (
+				<div className="font-mono text-[10px] text-(--f4)">no holdings</div>
 			) : (
-				snapshot.observations.slice(-6).map((observation) => (
+				snapshot.holdings.map((holding) => (
 					<div
-						key={`${observation.symbol}:${observation.kind}:${observation.at}:${observation.orderId ?? ""}:${observation.executionId ?? ""}:${observation.decision}`}
+						key={`${holding.symbol}:${String(holding.status)}`}
 						className="border-(--line) border-t py-1.5 font-mono text-[10px] first:border-t-0 first:pt-0"
 					>
 						<div className="flex items-center justify-between gap-2">
-							<span className="text-(--f1)">{observation.kind}</span>
-							<span className="text-(--f4)">{formatTime(observation.at)}</span>
+							<span className="text-(--f1)">
+								{typeof holding.status === "string"
+									? holding.status
+									: "unknown"}
+							</span>
+							<span className="text-(--f4)">qty {fixed(holding.qty)}</span>
 						</div>
 						<div className="text-(--f3)">
-							{[
-								observation.action,
-								observation.status,
-								observation.side,
-								observation.quantity && observation.price
-									? `${observation.quantity} @ ${observation.price}`
-									: "",
-							]
-								.filter((part) => typeof part === "string" && part.length > 0)
-								.join(" · ")}
+							mark {fixed(holding.mark)} · pnl {fixed(holding.pnl)} · return{" "}
+							{fixed(holding.return_pct)}
 						</div>
 					</div>
 				))
@@ -249,18 +250,10 @@ const ThesisDetailRail = ({ snapshot }: { snapshot: ThesisSnapshot }) => (
 	</Flex.Column>
 );
 
-const useThesisRefresh = (symbol: string | null): void => {
-	useSelector(measurementsStore, (state) =>
-		symbol === null ? 0 : state.measurements[symbol],
-	);
-	useSelector(forecastsStore, (state) => state.version);
-	useSelector(hypothesesStore, (state) => state.version);
-	useSelector(categoriesStore, (state) => state.version);
-	useSelector(decisionStore, (state) => state.decisions[symbol ?? ""]);
-	useSelector(lifecycleStore, (state) => state.lifecycle[symbol ?? ""]);
-	useSelector(tradeJournalStore, (state) => state.version);
-	useSelector(findingsStore, (state) => state.findings.length());
-	useSelector(tickStore, (state) => state.frame);
+const tickCount = (frame: TickFrame | undefined): number | null => {
+	const tick = frame?.count;
+
+	return typeof tick === "number" && Number.isFinite(tick) ? tick : null;
 };
 
 /*
@@ -272,18 +265,79 @@ export const ThesisModal = () => {
 		terminalStore,
 		(state) => state.thesisSymbol,
 	);
-	useThesisRefresh(thesisSymbol);
+	const online = useSelector(appStore, (state) => state.online);
+	const [snapshot, setSnapshot] = useState<ThesisSnapshot | null>(null);
 	const retainedRef = useRef<ThesisSnapshot | null>(null);
 
-	if (thesisSymbol === null) {
-		retainedRef.current = null;
+	useDirectStorePaint(
+		getWorker(),
+		[
+			{ store: "measurements", key: thesisSymbol ?? "" },
+			{ store: "forecasts", key: "" },
+			{ store: "hypotheses", key: "" },
+			{ store: "categories", key: "" },
+			{ store: "decisions", key: thesisSymbol ?? "" },
+			{ store: "lifecycle", key: thesisSymbol ?? "" },
+			{ store: "holdings", key: "" },
+			{ store: "findings", key: "" },
+			{ store: "graphs", key: thesisSymbol ?? "" },
+			{ store: "tick", key: "" },
+		],
+		(buffers) => {
+			if (thesisSymbol === null) {
+				retainedRef.current = null;
+				setSnapshot(null);
+				return;
+			}
 
+			const decisions = (buffers[`decisions:${thesisSymbol}`] ??
+				buffers["decisions:"] ??
+				[]) as StrategyDecision[];
+			const lifecycle = (
+				buffers[`lifecycle:${thesisSymbol}`] ??
+				buffers["lifecycle:"] ??
+				[]
+			) as Array<{ symbol: string; state: string }>;
+			const graphs = (buffers[`graphs:${thesisSymbol}`] ??
+				buffers["graphs:"] ??
+				[]) as GraphFrame[];
+			const live = thesisSnapshotFor({
+				symbol: thesisSymbol,
+				tick: tickCount(
+					(buffers["tick:"] as TickFrame[] | undefined)?.at(-1),
+				),
+				lifecycle:
+					lifecycle.find((row) => row.symbol === thesisSymbol)?.state ?? null,
+				graph:
+					graphs.find((frame) => frame.symbol === thesisSymbol) ??
+					graphs.at(-1) ??
+					null,
+				measurements: (buffers[`measurements:${thesisSymbol}`] ??
+					buffers["measurements:"] ??
+					[]) as Measurement[],
+				decision:
+					decisions.find((decision) => decision.symbol === thesisSymbol) ??
+					decisions.at(-1) ??
+					null,
+				forecasts: (buffers["forecasts:"] ?? []) as ThesisForecast[],
+				hypotheses: (buffers["hypotheses:"] ?? []) as ThesisHypothesis[],
+				categories: (buffers["categories:"] ?? []) as Array<
+					Category & { symbol?: string }
+				>,
+				holdings: (buffers["holdings:"] ?? []) as Holding[],
+				findings: (buffers["findings:"] ?? []) as Finding[],
+			});
+			const next = accumulateThesisSnapshot(retainedRef.current, live);
+			retainedRef.current = next;
+			setSnapshot(next);
+		},
+		[thesisSymbol, online],
+	);
+
+	if (thesisSymbol === null || snapshot === null) {
 		return null;
 	}
 
-	const liveSnapshot = thesisSnapshotFor(thesisSymbol);
-	const snapshot = accumulateThesisSnapshot(retainedRef.current, liveSnapshot);
-	retainedRef.current = snapshot;
 	const { closeThesis } = terminalStore.actions;
 
 	return (
@@ -339,7 +393,7 @@ export const ThesisModal = () => {
 
 				<div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.55fr)_minmax(280px,360px)]">
 					<div className="relative min-h-0 border-(--line) border-r">
-						<ThesisEvidenceCanvas symbol={thesisSymbol} />
+						<ThesisEvidenceCanvas graph={snapshot.graph} />
 						<div className="pointer-events-none absolute top-3.5 left-4">
 							<div className="font-semibold text-[10px] text-(--f2) uppercase tracking-[0.13em]">
 								Evidence graph
@@ -349,7 +403,7 @@ export const ThesisModal = () => {
 							</div>
 						</div>
 					</div>
-					<div className="min-h-0 overflow-hidden p-3.5">
+					<div className="min-h-0 overflow-y-auto p-3.5">
 						<ThesisDetailRail snapshot={snapshot} />
 					</div>
 				</div>

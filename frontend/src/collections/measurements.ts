@@ -1,110 +1,77 @@
-import { createStore } from "@tanstack/react-store";
-import { appStore } from "#/collections/app";
-import { retainHawkesModelEpoch } from "#/components/terminal/hawkes-fit";
-import {
-	dedupeEpoch,
-	latestByMetric,
-} from "#/components/terminal/measurement-view";
-import type { Measurement } from "#/types/measurement";
-import { Circular, type CircularBuffer } from "./circular";
-
-export type { Category, Measurement } from "#/types/measurement";
+import type { CircularBuffer } from "#/collections/circular";
+import type { Measurement, MeasurementEpoch } from "#/collections/types";
+import { seriesByMetric } from "#/components/terminal/measurement-view";
 
 /*
-MeasurementEpoch is one backend observation batch for a symbol and source.
-publishedAt records when the slot was written so kernel freshness can reflect
-UI ingest time without re-copying the full measurement universe each tick.
-*/
-export type MeasurementEpoch = {
-	at: string;
-	readings: Measurement[];
-	publishedAt: string;
-};
-
-type PendingEpoch = {
-	symbol: string;
-	source: string;
-	readings: Measurement[];
-};
-
-const FOCUS_HISTORY_LIMIT = 50;
-const CROSS_SECTION_HISTORY_LIMIT = 1;
-
-export const measurementGroupKey = (symbol: string, source: string): string =>
-	`${symbol}\u0000${source}`;
-
-const pendingGroupKey = measurementGroupKey;
-
-/*
-epochAt chooses the observation timestamp shared by one measurement epoch.
-*/
-const epochAt = (readings: Measurement[]): string => {
-	let latest = readings[0]?.at ?? "";
-
-	for (const reading of readings) {
-		if (reading.at > latest) {
-			latest = reading.at;
-		}
-	}
-
-	return latest;
-};
-
-/*
-headlineSeriesFromBuffer returns one headline sample per retained observation
-epoch, oldest first, so sparklines preserve distinct market events delivered
-together in one Thesis frame.
-*/
-export const headlineSeriesFromBuffer = (
-	buffer: CircularBuffer<MeasurementEpoch> | undefined,
-	headline: string,
-	side = "",
-): number[] => {
-	if (buffer === undefined) {
-		return [];
-	}
-
-	return buffer.values().flatMap((epoch) => {
-		const measurement = latestByMetric(epoch.readings, headline, side);
-
-		return measurement !== undefined && Number.isFinite(measurement.raw)
-			? [measurement.raw]
-			: [];
-	});
-};
-
-/*
-flattenMeasurementBuffer expands retained observation ticks into the flat
-measurement list sparklines and epoch helpers expect.
+flattenMeasurementBuffer returns retained measurements from a leaf buffer or
+passes through an already-flat array delivered by the worker paint channel.
 */
 export const flattenMeasurementBuffer = (
-	buffer: CircularBuffer<MeasurementEpoch> | undefined,
+	buffer: CircularBuffer<Measurement> | Measurement[] | undefined,
 ): Measurement[] => {
 	if (buffer === undefined) {
 		return [];
 	}
 
-	return buffer.values().flatMap((epoch) => epoch.readings);
+	if (Array.isArray(buffer)) {
+		return buffer;
+	}
+
+	return buffer.values();
 };
 
 /*
-latestMeasurementReadings returns the newest complete observation tick.
-*/
-export const latestMeasurementReadings = (
-	buffer: CircularBuffer<MeasurementEpoch> | undefined,
-): Measurement[] => buffer?.values().at(-1)?.readings ?? [];
-
-/*
-measurementTickCount reports how many observation ticks the buffer retains.
+measurementTickCount reports how many observation timestamps a flat buffer
+retains. Flat Measurement rows share an `at` stamp within one backend epoch.
 */
 export const measurementTickCount = (
-	buffer: CircularBuffer<MeasurementEpoch> | undefined,
-): number => buffer?.length() ?? 0;
+	buffer: CircularBuffer<Measurement> | Measurement[] | undefined,
+): number => {
+	const rows = flattenMeasurementBuffer(buffer);
+
+	if (rows.length === 0) {
+		return 0;
+	}
+
+	return new Set(rows.map((row) => row.at)).size;
+};
 
 /*
-measurementEpochs groups the original records by their backend observation
-time. A numerical signal emits one record per metric, so an epoch is the
-smallest complete readout while every record remains unchanged in the store.
+latestMeasurementReadings returns every measurement that shares the newest
+observation timestamp in a flat history.
+*/
+export const latestMeasurementReadings = (
+	buffer: CircularBuffer<Measurement> | Measurement[] | undefined,
+): Measurement[] => {
+	const rows = flattenMeasurementBuffer(buffer);
+	const at = rows.at(-1)?.at;
+
+	if (at === undefined) {
+		return [];
+	}
+
+	return rows.filter((row) => row.at === at);
+};
+
+/*
+headlineSeriesFromBuffer returns one headline sample per retained observation
+epoch so sparklines preserve distinct market events.
+*/
+export const headlineSeriesFromBuffer = (
+	buffer: CircularBuffer<Measurement> | Measurement[] | undefined,
+	headline: string,
+	side = "",
+): number[] => seriesByMetric(flattenMeasurementBuffer(buffer), headline, side);
+
+/*
+latestPublishedStamp reads the observation time of the newest retained row.
+*/
+export const latestPublishedStamp = (
+	buffer: CircularBuffer<Measurement> | Measurement[] | undefined,
+): string | undefined => flattenMeasurementBuffer(buffer).at(-1)?.at;
+
+/*
+measurementEpochs groups flat records by backend observation time.
 */
 export const measurementEpochs = (
 	measurements: Measurement[],
@@ -121,8 +88,7 @@ export const measurementEpochs = (
 };
 
 /*
-measurementRaw reads one typed numerical value from an epoch. Metric and side
-are both part of identity because directional Hawkes values share metric names.
+measurementRaw reads one typed numerical value from an epoch.
 */
 export const measurementRaw = (
 	epoch: Measurement[],
@@ -143,123 +109,30 @@ export const measurementRaw = (
 };
 
 /*
-latestPublishedStamp reads the thesis-frame time of the newest retained slot.
+epochsFromMeasurements rebuilds MeasurementEpoch slots for Hawkes fit helpers
+that still join multi-metric frames by observation time.
 */
-export const latestPublishedStamp = (
-	buffer: CircularBuffer<MeasurementEpoch> | undefined,
-): string | undefined => buffer?.values().at(-1)?.publishedAt;
+export const epochsFromMeasurements = (
+	frames: Measurement[],
+): MeasurementEpoch[] =>
+	measurementEpochs(frames).map((readings) => ({
+		at: readings[0]?.at ?? "",
+		readings,
+		publishedAt: readings.at(-1)?.at ?? readings[0]?.at ?? "",
+	}));
 
 /*
-pushMeasurementEpoch appends one observation epoch without collapsing distinct
-market events that arrived together in one Thesis frame.
+measurementsForSource keeps rows that belong to one signal source.
 */
-const pushMeasurementEpoch = (
-	buffer: CircularBuffer<MeasurementEpoch>,
-	readings: Measurement[],
-): void => {
-	if (readings.length === 0) {
-		return;
-	}
-
-	buffer.push({
-		at: epochAt(readings),
-		readings: dedupeEpoch(readings),
-		publishedAt: new Date().toISOString(),
-	});
-};
+export const measurementsForSource = (
+	frames: Measurement[],
+	source: string,
+): Measurement[] => frames.filter((row) => row.source === source);
 
 /*
-measurementBuffer keeps history only for the focused symbol. Cross-section
-symbols retain their latest epoch, which is sufficient for heatmaps and avoids
-multiplying the full market universe by the sparkline history length.
+measurementsForSymbol keeps rows for one traded pair.
 */
-const measurementBuffer = (
-	current: CircularBuffer<MeasurementEpoch> | undefined,
+export const measurementsForSymbol = (
+	frames: Measurement[],
 	symbol: string,
-): CircularBuffer<MeasurementEpoch> => {
-	const capacity =
-		symbol === appStore.state.focusSymbol
-			? FOCUS_HISTORY_LIMIT
-			: CROSS_SECTION_HISTORY_LIMIT;
-
-	if (current?.capacity() === capacity) {
-		return current;
-	}
-
-	const buffer = Circular<MeasurementEpoch>(capacity);
-
-	for (const epoch of current?.values().slice(-capacity) ?? []) {
-		buffer.push(epoch);
-	}
-
-	return buffer;
-};
-
-/*
-measurementsStore retains backend measurements exactly as received. Buffers
-mutate in place and version bumps notify subscribers without cloning the full
-symbol universe on every websocket batch.
-*/
-export const measurementsStore = createStore(
-	{
-		measurements: {} as Record<
-			string,
-			Record<string, CircularBuffer<MeasurementEpoch>>
-		>,
-		version: 0,
-	},
-	({ setState }) => ({
-		updateFrame: (frames: Measurement[]) =>
-			setState((prev) => {
-				if (frames.length === 0) {
-					return prev;
-				}
-
-				const pending = new Map<string, PendingEpoch>();
-
-				for (const frame of frames) {
-					const groupKey = pendingGroupKey(frame.symbol, frame.source);
-					const key = `${groupKey}\u0000${frame.at}`;
-					const group = pending.get(key) ?? {
-						symbol: frame.symbol,
-						source: frame.source,
-						readings: [],
-					};
-
-					group.readings.push(frame);
-					pending.set(key, group);
-				}
-
-				const measurements = prev.measurements;
-
-				for (const group of pending.values()) {
-					if (!measurements[group.symbol]) {
-						measurements[group.symbol] = {};
-					}
-
-					measurements[group.symbol][group.source] = measurementBuffer(
-						measurements[group.symbol][group.source],
-						group.symbol,
-					);
-
-					pushMeasurementEpoch(
-						measurements[group.symbol][group.source],
-						group.readings,
-					);
-
-					if (group.source === "hawkes") {
-						retainHawkesModelEpoch({
-							at: epochAt(group.readings),
-							publishedAt: new Date().toISOString(),
-							readings: dedupeEpoch(group.readings),
-						});
-					}
-				}
-
-				return {
-					measurements,
-					version: prev.version + 1,
-				};
-			}),
-	}),
-);
+): Measurement[] => frames.filter((row) => row.symbol === symbol);

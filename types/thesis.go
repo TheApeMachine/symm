@@ -311,3 +311,15 @@ Market returns the central immutable market cut for this thesis.
 func (thesis *Thesis) Market() *MarketFrame {
 	return thesis.marketFrame
 }
+
+/*
+NoteLifecycle records a symbol phase transition. Desk inventory keeps its own
+Holding.Status; this map is the strategy phase, not a second journal.
+*/
+func (thesis *Thesis) NoteLifecycle(symbol, status string, _ time.Time) {
+	if thesis == nil || symbol == "" || status == "" {
+		return
+	}
+
+	thesis.Lifecycle.Store(symbol, status)
+}

@@ -1,6 +1,6 @@
 import { bench, describe } from "vitest";
 import { Circular } from "#/collections/circular";
-import type { Measurement, MeasurementEpoch } from "#/collections/measurements";
+import type { Measurement, MeasurementEpoch } from "#/collections/types";
 import { hawkesCurveFromBuffer, hawkesSeriesFromBuffer } from "./hawkes-curve";
 
 const fitFrom = "2026-07-14T17:00:00.000Z";

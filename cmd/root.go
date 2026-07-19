@@ -145,8 +145,6 @@ var (
 			api := websocket.NewAPI(ctx, public, private, paper)
 			defer api.Close()
 
-			holdings := make([]types.Holding, 0)
-
 			if strings.HasPrefix(dataPath, "~/") {
 				home, err := os.UserHomeDir()
 
@@ -178,20 +176,16 @@ var (
 				))
 			}
 
+			// Wallet is inventory authority. thesis.json may still carry stale
+			// OPEN lots from prior runs; purge them before Balance/UI seed.
 			thesis.Holdings.Range(func(key, value any) bool {
-				switch holding := value.(type) {
-				case *types.Holding:
-					holdings = append(holdings, *holding)
-				case types.Holding:
-					holdings = append(holdings, holding)
-				}
-
+				thesis.Holdings.Delete(key)
 				return true
 			})
 
 			price := broker.NewPrice(api)
 			instrument := broker.NewInstrument(api, price, channel)
-			balance := broker.NewBalance(api, holdings, channel)
+			balance := broker.NewBalance(api, nil, channel)
 			desk := broker.NewDesk(api, instrument, price, balance)
 			warmupReady := func() bool {
 				return booter.Ready(system.StageWarmup)
@@ -219,6 +213,8 @@ var (
 					err,
 				))
 			}
+
+			analyzer.SetRecorder(recorder)
 
 			planner := strategy.NewPlanner(
 				ctx,

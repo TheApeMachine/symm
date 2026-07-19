@@ -1,9 +1,11 @@
+import { useSelector } from "@tanstack/react-store";
 import { memo, useRef } from "react";
-import { type Position, positionsStore } from "#/collections/positions";
-import { type Stop, stopsStore } from "#/collections/stops";
+import { appStore } from "#/collections/app";
+import type { Holding, Stop } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
 import { fixed } from "#/components/terminal/decision-format";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 
 import { Panel } from "@/components/ui/panel";
 
@@ -22,7 +24,7 @@ const positiveFinite = (value: number): number | null =>
 positionStop prefers stop fields published on the Holding/position frame, then
 falls back to the legacy symbol-keyed stops map.
 */
-const positionStop = (position: Position, legacy?: Stop): Stop | undefined => {
+const positionStop = (position: Holding, legacy?: Stop): Stop | undefined => {
 	const stopPrice = position.stop_price;
 	const stopReturn = position.stop_return;
 	const peakReturn = position.peak_return;
@@ -79,7 +81,7 @@ export type PriceGaugeGeometry = {
 };
 
 export const positionGaugeGeometry = (
-	position: Position,
+	position: Holding,
 	stop?: Stop,
 ): PriceGaugeGeometry | null => {
 	const entry = positiveFinite(position.entry_price);
@@ -192,18 +194,15 @@ const setMarkerPosition = (
 
 const paintPositionGauge = (
 	refs: PositionGaugeRefs,
-	symbol: string,
+	position: Holding | undefined,
+	legacyStop: Stop | undefined,
 	quote: string,
 ) => {
-	const position = positionsStore.state.positions.find(
-		(candidate) => candidate.symbol === symbol,
-	);
-
 	if (!position) {
 		return;
 	}
 
-	const stop = positionStop(position, stopsStore.state.stops[symbol]);
+	const stop = positionStop(position, legacyStop);
 	// Color each figure by its own sign — fee-dragged PnL can be red while
 	// return_pct is green when price lifted but fees dominate dollars.
 	const pnlTone =
@@ -227,7 +226,7 @@ const paintPositionGauge = (
 
 	const hasMomentum = stop?.momentum_active;
 	const health = hasMomentum
-		? Math.max(0, Math.min(1, stop.momentum_health))
+		? Math.max(0, Math.min(1, stop.momentum_health ?? 0))
 		: 0;
 	const momentumTone =
 		health > 0.5 ? upTone : health > 0.2 ? warnTone : downTone;
@@ -300,7 +299,10 @@ const paintPositionGauge = (
 		refs.stagnationWrap.style.display = hasStagnation ? "" : "none";
 
 		if (hasStagnation) {
-			const stagnationHealth = Math.max(0, Math.min(1, stop.stagnation_health));
+			const stagnationHealth = Math.max(
+				0,
+				Math.min(1, stop.stagnation_health ?? 0),
+			);
 			const stagnationTone = stop.stagnation_pending
 				? accentTone
 				: stagnationHealth > 0.5
@@ -335,8 +337,15 @@ export const PositionGauge = memo(
 		const stagnationBarRef = useRef<HTMLDivElement>(null);
 		const stagnationFlashRef = useRef<HTMLSpanElement>(null);
 
+		const online = useSelector(appStore, (state) => state.online);
+
 		useDirectStorePaint(
-			() =>
+			getWorker(),
+			[
+				{ store: "holdings", key: symbol },
+				{ store: "stops", key: symbol },
+			],
+			(buffers) =>
 				paintPositionGauge(
 					{
 						track: trackRef.current,
@@ -354,11 +363,11 @@ export const PositionGauge = memo(
 						stagnationBar: stagnationBarRef.current,
 						stagnationFlash: stagnationFlashRef.current,
 					},
-					symbol,
+					(buffers[`holdings:${symbol}`] ?? []).at(-1) as Holding | undefined,
+					(buffers[`stops:${symbol}`] ?? []).at(-1) as Stop | undefined,
 					quote,
 				),
-			[positionsStore, stopsStore],
-			[symbol, quote],
+			[online, symbol, quote],
 		);
 
 		return (

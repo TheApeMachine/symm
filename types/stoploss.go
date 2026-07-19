@@ -5,6 +5,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 )
 
@@ -73,8 +74,37 @@ type Stoploss struct {
 }
 
 /*
-NewStoploss constructs an unarmed regulator. Weight starts unset until the
-first Present Evidence supplies cognition or forecast confidence.
+MarshalJSON encodes a JSON-safe stop surface. LockedFloor starts at −Inf after
+arm; non-finite geometry is zeroed so Holding snapshots cannot break websocket
+marshal.
+*/
+func (stoploss Stoploss) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		Action        string  `json:"action"`
+		Reason        string  `json:"reason"`
+		Weight        float64 `json:"weight"`
+		LockedFloor   float64 `json:"lockedFloor"`
+		TrailDistance float64 `json:"trailDistance"`
+		StopReturn    float64 `json:"stopReturn"`
+		PeakReturn    float64 `json:"peakReturn"`
+		MarkReturn    float64 `json:"markReturn"`
+	}
+
+	return sonic.Marshal(wire{
+		Action:        stoploss.Action,
+		Reason:        stoploss.Reason,
+		Weight:        finiteFloat(stoploss.Weight),
+		LockedFloor:   finiteFloat(stoploss.LockedFloor),
+		TrailDistance: finiteFloat(stoploss.TrailDistance),
+		StopReturn:    finiteFloat(stoploss.StopReturn),
+		PeakReturn:    finiteFloat(stoploss.PeakReturn),
+		MarkReturn:    finiteFloat(stoploss.MarkReturn),
+	})
+}
+
+/*
+NewStoploss constructs a regulator shell. Bind latches entry at fill so an open
+lot is never unprotected waiting for forecast σ.
 */
 func NewStoploss(ctx context.Context) *Stoploss {
 	ctx, cancel := context.WithCancel(ctx)
@@ -83,7 +113,38 @@ func NewStoploss(ctx context.Context) *Stoploss {
 		ctx:    ctx,
 		cancel: cancel,
 		Action: "hold",
-		Reason: "unarmed",
+		Reason: "unbound",
+		Weight: 1,
+	}
+}
+
+/*
+Bind latches entry and an initial adverse trail at fill. Trail may be fee or
+spread width in return space; later Update only rescales, never waits to exist.
+*/
+func (stoploss *Stoploss) Bind(entry, trail float64) {
+	if stoploss == nil || entry <= 0 {
+		return
+	}
+
+	if stoploss.armed && stoploss.entry > 0 {
+		return
+	}
+
+	stoploss.armed = true
+	stoploss.entry = entry
+	stoploss.LockedFloor = math.Inf(-1)
+	stoploss.PeakReturn = 0
+	stoploss.Action = "hold"
+	stoploss.Reason = "bound at entry"
+
+	if stoploss.Weight <= 0 || math.IsNaN(stoploss.Weight) || math.IsInf(stoploss.Weight, 0) {
+		stoploss.Weight = 1
+	}
+
+	if trail > 0 && !math.IsNaN(trail) && !math.IsInf(trail, 0) {
+		stoploss.TrailDistance = trail
+		stoploss.StopReturn = -trail
 	}
 }
 
@@ -97,50 +158,65 @@ func (stoploss *Stoploss) Close() {
 }
 
 /*
-Frame projects the live stop surface for the terminal gauge. stop_price is the
-absolute floor implied by entry×(1+stopReturn) once armed; unarmed regulators
-omit a positive floor so the UI hides the stop marker.
+Armed reports whether the regulator has latched an entry and live floor.
+*/
+func (stoploss *Stoploss) Armed() bool {
+	return stoploss != nil && stoploss.armed
+}
+
+/*
+StopPrice returns the absolute floor implied by entry×(1+stopReturn).
+Non-finite geometry returns 0 so the UI hides a broken marker.
+*/
+func (stoploss *Stoploss) StopPrice() float64 {
+	if stoploss == nil || !stoploss.armed || stoploss.entry <= 0 {
+		return 0
+	}
+
+	if math.IsNaN(stoploss.StopReturn) || math.IsInf(stoploss.StopReturn, 0) {
+		return 0
+	}
+
+	price := stoploss.entry * (1 + stoploss.StopReturn)
+
+	if math.IsNaN(price) || math.IsInf(price, 0) {
+		return 0
+	}
+
+	return price
+}
+
+/*
+Frame projects the live stop surface for the terminal gauge. Bound lots always
+publish a stop_price once StopReturn is finite. All floats are finite so
+websocket marshal cannot reject an Inf lockedFloor.
 */
 func (stoploss *Stoploss) Frame(symbol string) map[string]any {
 	if stoploss == nil || symbol == "" {
 		return nil
 	}
 
-	frame := map[string]any{
+	return map[string]any{
 		"symbol":      symbol,
-		"peak_return": stoploss.PeakReturn,
-		"stop_return": stoploss.StopReturn,
+		"peak_return": finiteFloat(stoploss.PeakReturn),
+		"stop_return": finiteFloat(stoploss.StopReturn),
 		"armed":       stoploss.armed,
-		"stop_price":  0.0,
+		"stop_price":  stoploss.StopPrice(),
 	}
-
-	if stoploss.armed && stoploss.entry > 0 && !math.IsInf(stoploss.StopReturn, 0) {
-		frame["stop_price"] = stoploss.entry * (1 + stoploss.StopReturn)
-	}
-
-	return frame
 }
 
 /*
 Update consumes one Evidence cut and refreshes the public stop surface. Absent
-Evidence freezes prior floors and weight so nil frames cannot ratchet or
-unwind the stop through missing data.
+Evidence freezes prior floors and weight. Present prices always latch entry —
+spread, σ, or prior Bind trail size the band; nothing waits to "arm".
 */
 func (stoploss *Stoploss) Update(evidence StopEvidence) *Stoploss {
 	if !evidence.Present {
 		return stoploss.snapshot("hold", "evidence absent; frozen", 0)
 	}
 
-	armScale := stoploss.trail.armScale(evidence)
-
-	if armScale <= 0 {
-		if !stoploss.armed {
-			return stoploss.snapshot("hold", "waiting for trail scale", 0)
-		}
-
-		markReturn := (evidence.Mark - stoploss.entry) / stoploss.entry
-
-		return stoploss.snapshot("hold", "trail scale absent; frozen", markReturn)
+	if evidence.Entry <= 0 || evidence.Mark <= 0 {
+		return stoploss.snapshot("hold", "prices absent; frozen", 0)
 	}
 
 	if !stoploss.armed {
@@ -150,10 +226,16 @@ func (stoploss *Stoploss) Update(evidence StopEvidence) *Stoploss {
 	markReturn := (evidence.Mark - stoploss.entry) / stoploss.entry
 	stoploss.PeakReturn = math.Max(stoploss.PeakReturn, markReturn)
 	stoploss.skill.reweight(stoploss, evidence)
-	stoploss.TrailDistance = stoploss.trail.trailScale(evidence, armScale) / stoploss.Weight
+
+	scale := stoploss.trail.liveScale(evidence)
+
+	if scale > 0 {
+		stoploss.TrailDistance = stoploss.trail.trailScale(evidence, scale) / stoploss.Weight
+	}
+
 	stoploss.trail.ratchet(stoploss, markReturn)
 
-	if markReturn <= stoploss.StopReturn {
+	if stoploss.TrailDistance > 0 && markReturn <= stoploss.StopReturn {
 		return stoploss.snapshot(
 			"stop", "mark returned through live stop", markReturn,
 		)
@@ -167,7 +249,7 @@ func (stoploss *Stoploss) Update(evidence StopEvidence) *Stoploss {
 		)
 	}
 
-	return stoploss.snapshot("hold", "stop armed; path intact", markReturn)
+	return stoploss.snapshot("hold", "stop live; path intact", markReturn)
 }
 
 /*
@@ -211,12 +293,12 @@ func (stoploss *Stoploss) Regulate(
 		Reason:           verdict.Reason,
 	})
 
-	thesis.Lifecycle.Store(holding.Symbol, LifecycleExitSelected)
+	thesis.NoteLifecycle(holding.Symbol, LifecycleExitSelected, time.Now().UTC())
 }
 
 /*
-ObserveMark ratchets an already-armed stop from a live mark print so Holding
-tick updates move the floor without waiting for the next Thesis cut.
+ObserveMark ratchets a bound stop from a live mark print so Holding tick
+updates move the floor without waiting for the next Thesis cut.
 */
 func (stoploss *Stoploss) ObserveMark(mark float64) {
 	if stoploss == nil || !stoploss.armed || stoploss.entry <= 0 || mark <= 0 {
@@ -228,26 +310,29 @@ func (stoploss *Stoploss) ObserveMark(mark float64) {
 	stoploss.trail.ratchet(stoploss, markReturn)
 	stoploss.MarkReturn = markReturn
 
-	if markReturn <= stoploss.StopReturn {
+	if stoploss.TrailDistance > 0 && markReturn <= stoploss.StopReturn {
 		stoploss.Action = "stop"
 		stoploss.Reason = "mark breached live stop on tick"
 		return
 	}
 
 	stoploss.Action = "hold"
-	stoploss.Reason = "stop armed; path intact"
+	stoploss.Reason = "stop live; path intact"
 }
 
 /*
-arm latches entry and seeds weight on the first Present Evidence cut that
-carries a defensible arm scale.
+arm latches entry on the first Present cut with prices when Bind did not run
+at fill (restart shells). Weight seeds from evidence; trail may already exist.
 */
 func (stoploss *Stoploss) arm(evidence StopEvidence) {
-	stoploss.armed = true
-	stoploss.entry = evidence.Entry
+	trail := stoploss.TrailDistance
+
+	if trail <= 0 {
+		trail = stoploss.trail.liveScale(evidence)
+	}
+
+	stoploss.Bind(evidence.Entry, trail)
 	stoploss.Weight = stoploss.skill.seed(evidence)
-	stoploss.LockedFloor = math.Inf(-1)
-	stoploss.PeakReturn = 0
 }
 
 /*
@@ -310,31 +395,37 @@ func (skill *Skill) seed(evidence StopEvidence) float64 {
 }
 
 /*
-armScale is the return-space σ that may arm the regulator. Spread alone is
-never enough — that path produced knife-edge trails on thin books.
+liveScale is the return-space width available now: forecast σ, residual RMSE,
+or visible spread. Spread is a real execution band, not a reason to stay naked.
 */
-func (trail *Trail) armScale(evidence StopEvidence) float64 {
+func (trail *Trail) liveScale(evidence StopEvidence) float64 {
+	scale := 0.0
+
 	if evidence.Uncertainty > 0 {
-		return evidence.Uncertainty
+		scale = evidence.Uncertainty
 	}
 
 	if evidence.ReturnReady && evidence.IncrementalMSE > 0 {
-		return math.Sqrt(evidence.IncrementalMSE)
+		scale = math.Max(scale, math.Sqrt(evidence.IncrementalMSE))
 	}
 
-	return 0
+	if evidence.Spread > 0 {
+		scale = math.Max(scale, evidence.Spread)
+	}
+
+	return scale
 }
 
 /*
-trailScale widens the armed trail by live spread when that exceeds arm σ, so
-execution friction loosens the band without being allowed to arm it.
+trailScale widens the live trail by spread when that exceeds σ so execution
+friction loosens the band without inventing a narrower stop than the book.
 */
-func (trail *Trail) trailScale(evidence StopEvidence, armScale float64) float64 {
-	if evidence.Spread > armScale {
+func (trail *Trail) trailScale(evidence StopEvidence, scale float64) float64 {
+	if evidence.Spread > scale {
 		return evidence.Spread
 	}
 
-	return armScale
+	return scale
 }
 
 /*
@@ -391,7 +482,7 @@ func (trail *Trail) takeProfit(
 	}
 
 	proximity := stoploss.PeakReturn - markReturn
-	nearPeak := proximity <= trail.trailScale(evidence, trail.armScale(evidence))
+	nearPeak := proximity <= trail.trailScale(evidence, trail.liveScale(evidence))
 
 	if !nearPeak {
 		return false

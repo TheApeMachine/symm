@@ -7,6 +7,15 @@ import (
 )
 
 /*
+Trade submits Decide exits/reduces through Desk first, then enters, so freeing
+slot intents are counted before BuyAfter. Session harnesses call this after Plan
+to prove fill paths without requiring a full Market.Cut.
+*/
+func (crypto *Crypto) Trade(thesis *types.Thesis) {
+	crypto.trade(thesis)
+}
+
+/*
 trade submits Decide exits/reduces through Desk first, then enters, so freeing
 slot intents are counted before BuyAfter.
 */
@@ -56,6 +65,16 @@ func (crypto *Crypto) submitSells(
 			continue
 		}
 
+		if crypto.desk.Pending(symbol) {
+			continue
+		}
+
+		if phase, found := thesis.Lifecycle.Load(symbol); found {
+			if phase == types.LifecycleExitSubmitted {
+				continue
+			}
+		}
+
 		if err := crypto.desk.Sell(symbol, quantity); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
@@ -63,10 +82,23 @@ func (crypto *Crypto) submitSells(
 				err,
 			))
 
+			// Lot gone or venue rejected size: stop re-arming ActionExit every tick.
+			if _, open := crypto.desk.Position(symbol); !open {
+				thesis.NoteLifecycle(symbol, types.LifecycleExitSubmitted, thesis.At)
+
+				if crypto.phases != nil {
+					crypto.phases[symbol] = types.LifecycleExitSubmitted
+				}
+			}
+
 			continue
 		}
 
-		thesis.Lifecycle.Store(symbol, types.LifecycleExitSubmitted)
+		thesis.NoteLifecycle(symbol, types.LifecycleExitSubmitted, thesis.At)
+
+		if crypto.phases != nil {
+			crypto.phases[symbol] = types.LifecycleExitSubmitted
+		}
 
 		if quantity == nil {
 			freeing++
@@ -139,7 +171,13 @@ func (crypto *Crypto) submitEnters(
 		}
 
 		thesis.Positions.Store(holding.Symbol, position)
-		thesis.Lifecycle.Store(holding.Symbol, types.LifecycleEntrySubmitted)
+		thesis.NoteLifecycle(holding.Symbol, types.LifecycleEntrySubmitted, thesis.At)
+
+		if crypto.phases == nil {
+			crypto.phases = map[string]string{}
+		}
+
+		crypto.phases[holding.Symbol] = types.LifecycleEntrySubmitted
 
 		if freeing > 0 {
 			freeing--

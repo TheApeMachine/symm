@@ -1,45 +1,22 @@
 import { useSelector } from "@tanstack/react-store";
 import { useMemo, useState } from "react";
 import { appStore } from "#/collections/app";
-import { findingsList, findingsStore } from "#/collections/findings";
-import { lifecycleStore } from "#/collections/lifecycle";
-import {
-	tradeJournalStore,
-	tradeJournalValues,
-} from "#/collections/trade-journal";
+import type { Holding, LifecycleRow } from "#/collections/types";
+import { fixed } from "#/components/terminal/decision-format";
 import { LifecycleTrack } from "#/components/terminal/lifecycle-track";
 import { TerminalSection } from "#/components/terminal/panels";
+import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { cn } from "#/lib/utils";
-import type { Finding, TradeObservation } from "#/types/thesis";
+import { getWorker } from "#/providers/websocket";
+import type { Finding } from "#/types/thesis";
 import { Badge } from "@/components/ui/badge";
 import { Meter } from "@/components/ui/meter";
 import { Panel } from "@/components/ui/panel";
 
-const formatTime = (value: string): string =>
-	value.length >= 19 ? value.slice(11, 19) : value;
-
-const observationSummary = (observation: TradeObservation): string => {
-	const parts = [
-		observation.kind,
-		observation.action,
-		observation.side,
-		observation.status,
-	].filter((part) => typeof part === "string" && part.length > 0);
-
-	if (observation.quantity && observation.price) {
-		parts.push(`${observation.quantity} @ ${observation.price}`);
-	}
-
-	if (observation.pnl) {
-		parts.push(`pnl ${observation.pnl}`);
-	}
-
-	if (observation.error) {
-		parts.push(observation.error);
-	}
-
-	return parts.join(" · ");
-};
+const isOpenLot = (holding: Holding): boolean =>
+	holding.qty > 0 &&
+	holding.status !== "closed" &&
+	holding.status !== "canceled";
 
 const FindingCard = ({ finding }: { finding: Finding }) => {
 	const effectPercent = Math.min(
@@ -88,45 +65,66 @@ const FindingCard = ({ finding }: { finding: Finding }) => {
 };
 
 /*
-JournalSurface visualizes thesis lifecycle state, immutable trade observations,
-and PostMortem findings as three linked rails so backend-only data is inspectable.
+JournalSurface visualizes thesis lifecycle state, retained holdings by status,
+and PostMortem findings. Holdings are the inventory authority — there is no
+parallel trade-journal frame.
 */
 export const JournalSurface = () => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
 	const online = useSelector(appStore, (state) => state.online);
-	useSelector(lifecycleStore, (state) => state.version);
-	const lifecycle = lifecycleStore.state.lifecycle;
-	const observations = useSelector(tradeJournalStore, (state) =>
-		tradeJournalValues(state.journal),
-	);
-	const findings = useSelector(findingsStore, (state) =>
-		findingsList(state.findings),
-	);
+	const [lifecycleRows, setLifecycleRows] = useState<LifecycleRow[]>([]);
+	const [holdings, setHoldings] = useState<Holding[]>([]);
+	const [findings, setFindings] = useState<Finding[]>([]);
 	const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+
+	useDirectStorePaint(
+		getWorker(),
+		[
+			{ store: "lifecycle", key: "" },
+			{ store: "holdings", key: "" },
+			{ store: "findings", key: "" },
+		],
+		(buffers) => {
+			setLifecycleRows((buffers["lifecycle:"] ?? []) as LifecycleRow[]);
+			setHoldings((buffers["holdings:"] ?? []) as Holding[]);
+			setFindings((buffers["findings:"] ?? []) as Finding[]);
+		},
+		[online],
+	);
+
+	const lifecycleBySymbol = useMemo(() => {
+		const map: Record<string, string> = {};
+
+		for (const row of lifecycleRows) {
+			map[row.symbol] = row.state;
+		}
+
+		return map;
+	}, [lifecycleRows]);
 
 	const symbols = useMemo(() => {
 		const symbolSet = new Set<string>([
-			...Object.keys(lifecycle),
-			...observations.map((observation) => observation.symbol),
+			...lifecycleRows.map((row) => row.symbol),
+			...holdings.map((holding) => holding.symbol),
 		]);
 
 		return [...symbolSet].sort();
-	}, [lifecycle, observations]);
+	}, [lifecycleRows, holdings]);
 
 	const activeSymbol =
 		selectedSymbol ??
 		(symbols.includes(focusSymbol) ? focusSymbol : symbols[0]) ??
 		null;
 
-	const filteredObservations = useMemo(() => {
+	const filteredHoldings = useMemo(() => {
 		const rows = activeSymbol
-			? observations.filter(
-					(observation) => observation.symbol === activeSymbol,
-				)
-			: observations;
+			? holdings.filter((holding) => holding.symbol === activeSymbol)
+			: holdings;
 
-		return [...rows].sort((left, right) => left.at.localeCompare(right.at));
-	}, [activeSymbol, observations]);
+		return [...rows].sort((left, right) =>
+			left.symbol.localeCompare(right.symbol),
+		);
+	}, [activeSymbol, holdings]);
 
 	const activeFindings = useMemo(() => {
 		if (!activeSymbol) {
@@ -172,7 +170,7 @@ export const JournalSurface = () => {
 							>
 								<LifecycleTrack
 									symbol={symbol}
-									state={lifecycle[symbol] ?? "observing"}
+									state={lifecycleBySymbol[symbol] ?? "observing"}
 								/>
 							</button>
 						))}
@@ -183,54 +181,46 @@ export const JournalSurface = () => {
 			<div className="min-h-0 overflow-auto px-4 py-[18px]">
 				<div className="mb-3 flex items-baseline justify-between">
 					<span className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
-						Trade journal
+						Holdings
 					</span>
 					<span className="font-mono text-[9.5px] text-(--f4)">
-						{activeSymbol ?? "all symbols"} · {filteredObservations.length}{" "}
-						events
+						{activeSymbol ?? "all symbols"} · {filteredHoldings.length} lots
 					</span>
 				</div>
 				<div className="flex flex-col gap-2">
-					{filteredObservations.length === 0 ? (
+					{filteredHoldings.length === 0 ? (
 						<Panel
 							variant="surface"
 							size="bare"
 							className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
 						>
-							{online
-								? "no broker events recorded"
-								: "waiting for trade journal frames"}
+							{online ? "no holdings retained" : "waiting for position frames"}
 						</Panel>
 					) : null}
-					{filteredObservations.map((observation) => (
+					{filteredHoldings.map((holding) => (
 						<Panel
-							key={`${observation.symbol}:${observation.kind}:${observation.at}:${observation.orderId ?? ""}:${observation.executionId ?? ""}:${observation.decision}`}
+							key={`${holding.symbol}:${String(holding.status)}:${holding.qty}`}
 							variant="surface"
 							size="bare"
-							className="grid grid-cols-[64px_1fr_auto] items-start gap-3 px-3 py-2.5"
+							className="grid grid-cols-[1fr_auto] items-start gap-3 px-3 py-2.5"
 						>
-							<span className="font-mono text-[10px] text-(--f4)">
-								{formatTime(observation.at)}
-							</span>
 							<div className="min-w-0">
 								<div className="font-mono font-semibold text-[12px] text-(--f1)">
-									{observation.symbol}
+									{holding.symbol}
 								</div>
 								<div className="mt-0.5 truncate font-mono text-[10px] text-(--f3)">
-									{observationSummary(observation)}
+									qty {fixed(holding.qty)} · mark {fixed(holding.mark)} · pnl{" "}
+									{fixed(holding.pnl)}
+									{isOpenLot(holding) ? "" : " · closed"}
 								</div>
 							</div>
 							<Badge
-								label={observation.kind}
-								variant={
-									observation.kind === "lifecycle_transition"
-										? "info"
-										: observation.kind === "final_outcome"
-											? "success"
-											: observation.error
-												? "error"
-												: "warning"
+								label={
+									typeof holding.status === "string"
+										? holding.status
+										: "unknown"
 								}
+								variant={isOpenLot(holding) ? "success" : "info"}
 								size="xs"
 							/>
 						</Panel>

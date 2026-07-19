@@ -1,13 +1,8 @@
-import type { CircularBuffer } from "#/collections/circular";
 import {
-	type Measurement,
-	type MeasurementEpoch,
 	measurementEpochs,
 	measurementRaw,
-	measurementTickCount,
 } from "#/collections/measurements";
-import type { ResonanceFrame } from "#/collections/resonance";
-import { latestHawkesRaw } from "#/components/terminal/hawkes-fit";
+import type { Measurement, ResonanceFrame } from "#/collections/types";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { requirePositiveLength } from "#/lib/domain";
 
@@ -124,64 +119,53 @@ const hawkesMetrics = (epoch: Measurement[]): HawkesMetrics => {
 };
 
 /*
-hawkesMetricsFromBuffer reads current intensity while retaining fitted
-parameters emitted for the active model epoch.
+hawkesMetricsFromFrames reads Hawkes intensity metrics from a flat measurement
+history for one symbol/source without store access.
 */
-export const hawkesMetricsFromBuffer = (
-	buffer: CircularBuffer<MeasurementEpoch> | undefined,
-): HawkesMetrics => {
-	const readings = buffer?.values().at(-1)?.readings;
-
-	if (readings === undefined) {
-		return {
-			intensity: null,
-			branching: null,
-			radius: null,
-			asymmetry: null,
-			buyIntensity: null,
-			sellIntensity: null,
-			exo: null,
-		};
-	}
-
-	const current = hawkesMetrics(readings);
-	const radius = latestHawkesRaw(buffer, "spectral_radius");
-
-	return {
-		...current,
-		branching: radius,
-		radius,
-		exo: sumValues(
-			latestHawkesRaw(buffer, "baseline_intensity", "buy"),
-			latestHawkesRaw(buffer, "baseline_intensity", "sell"),
-		),
-	};
-};
-
 export const hawkesMetricsFromFrames = (
 	frames: Measurement[],
 ): HawkesMetrics => {
 	const epoch = measurementEpochs(frames).at(-1);
 
 	return epoch === undefined
-		? hawkesMetricsFromBuffer(undefined)
+		? {
+				intensity: null,
+				branching: null,
+				radius: null,
+				asymmetry: null,
+				buyIntensity: null,
+				sellIntensity: null,
+				exo: null,
+			}
 		: hawkesMetrics(epoch);
 };
 
-export const hawkesEventCount = (
-	buffer: CircularBuffer<MeasurementEpoch> | undefined,
-): number => measurementTickCount(buffer);
+/*
+hawkesMetricsFromBuffer is the array-facing alias used by paint paths that
+already filtered Hawkes rows from a worker snapshot.
+*/
+export const hawkesMetricsFromBuffer = (
+	frames: Measurement[] | undefined,
+): HawkesMetrics => hawkesMetricsFromFrames(frames ?? []);
+
+export const hawkesEventCount = (frames: Measurement[] | undefined): number =>
+	frames?.length ?? 0;
 
 /*
 latentPointsFromFrames projects each symbol's latest resonance latent pair for
 the universe scatter without inventing coordinates.
 */
 export const latentPointsFromFrames = (
-	frames: Record<string, { values: () => ResonanceFrame[] }>,
-): LatentPoint[] =>
-	Object.entries(frames).flatMap(([symbol, history]) => {
-		const frame = history.values().at(-1);
-		const latent = numberArray(frame?.latent);
+	frames: ResonanceFrame[],
+): LatentPoint[] => {
+	const latest = new Map<string, ResonanceFrame>();
+
+	for (const frame of frames) {
+		latest.set(frame.symbol, frame);
+	}
+
+	return [...latest.entries()].flatMap(([symbol, frame]) => {
+		const latent = numberArray(frame.latent);
 
 		if (latent.length < 2) {
 			return [];
@@ -189,14 +173,15 @@ export const latentPointsFromFrames = (
 
 		return [
 			{
-				key: `${symbol}:${String(frame?.at ?? "")}`,
+				key: `${symbol}:${String(frame.at ?? "")}`,
 				symbol,
 				x: latent[0] ?? 0,
 				y: latent[1] ?? 0,
-				category: stringValue(frame?.category),
+				category: stringValue(frame.category),
 			},
 		];
 	});
+};
 
 export const cascadeLabel = (
 	branching: number | null,

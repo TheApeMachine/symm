@@ -49,7 +49,8 @@ type Crypto struct {
 	lastThesis     atomic.Pointer[types.Thesis]
 	checkpointAt   atomic.Int64
 	checkpointSlot atomic.Pointer[types.Thesis]
-	recovery       *types.Thesis
+	snapshot       *types.Recovery
+	phases         map[string]string
 }
 
 /*
@@ -94,6 +95,13 @@ func NewCrypto(
 		return nil, err
 	}
 
+	snapshot, err := types.LoadRecovery(dataPath)
+
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
 	crypto := &Crypto{
 		ctx:        ctx,
 		cancel:     cancel,
@@ -112,7 +120,7 @@ func NewCrypto(
 		dataPath:   dataPath,
 		uiHub:      uiHub,
 		market:     market,
-		recovery:   thesis,
+		snapshot:   snapshot,
 		recorder:   recorder,
 	}
 
@@ -229,6 +237,7 @@ func (crypto *Crypto) Tick(at time.Time) (*types.Thesis, error) {
 	}
 
 	crypto.trade(thesis)
+	crypto.publishStrategy(thesis)
 	crypto.lastThesis.Store(thesis)
 	crypto.checkpoint(thesis)
 	crypto.publishTick(thesis)

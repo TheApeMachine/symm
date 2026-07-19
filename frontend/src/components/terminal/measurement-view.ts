@@ -301,11 +301,21 @@ export const metricLabel = (metric: string | undefined): string => {
 		.join(" ");
 };
 
-export const sideLabel = (side: string | undefined): string => {
-	if (side === "buy") return "Bid";
-	if (side === "sell") return "Ask";
+const SIDE_LABELS: Record<string, string> = {
+	buy: "Bid",
+	sell: "Ask",
+	buy_to_buy: "Buy→Buy",
+	sell_to_buy: "Sell→Buy",
+	buy_to_sell: "Buy→Sell",
+	sell_to_sell: "Sell→Sell",
+};
 
-	return "";
+export const sideLabel = (side: string | undefined): string => {
+	if (side === undefined || side === "") {
+		return "";
+	}
+
+	return SIDE_LABELS[side] ?? side.replaceAll("_", "→");
 };
 
 export const stampOf = (at: string | undefined): number =>

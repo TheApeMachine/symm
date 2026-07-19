@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"math"
 	"math/big"
 	"strings"
 	"sync"
@@ -453,6 +454,8 @@ func (price *Price) fillEntry(
 		holding.EntryFee = data.FeeUsdEquiv.Copy()
 	}
 
+	price.bindStop(holding)
+
 	if holding.EntryAt != nil {
 		return
 	}
@@ -464,6 +467,29 @@ func (price *Price) fillEntry(
 	}
 
 	holding.EntryAt = &at
+}
+
+/*
+bindStop latches the lot's regulator at entry using paid fee width in return
+space so the desk is never open without a live stop while forecasts catch up.
+*/
+func (price *Price) bindStop(holding *types.Holding) {
+	if holding == nil || holding.Stoploss == nil ||
+		holding.EntryPrice == nil || holding.EntryPrice.Sign() <= 0 {
+		return
+	}
+
+	trail := 0.0
+
+	if holding.EntryFee != nil && holding.Qty != nil && holding.Qty.Sign() > 0 {
+		notional := price.Mul(holding.EntryPrice, holding.Qty)
+
+		if notional != nil && notional.Sign() > 0 {
+			trail = price.Div(holding.EntryFee, notional).Float64()
+		}
+	}
+
+	holding.Stoploss.Bind(holding.EntryPrice.Float64(), trail)
 }
 
 func (price *Price) fillExit(
@@ -528,7 +554,24 @@ func (price *Price) WithFriction(
 		)
 	}
 
-	exitNotional := price.Notional(instrument, ticker.Bid, quantity)
+	return price.frictionAt(instrument, quantity, entry, entryFee, ticker.Bid)
+}
+
+/*
+frictionAt scores flatten-now PnL at an explicit executable bid.
+*/
+func (price *Price) frictionAt(
+	instrument *kraken.InstrumentPair,
+	quantity *decimal.Decimal,
+	entry *decimal.Decimal,
+	entryFee *decimal.Decimal,
+	bid *decimal.Decimal,
+) (*decimal.Decimal, error) {
+	if quantity == nil || entry == nil || bid == nil || quantity.Sign() <= 0 {
+		return nil, nil
+	}
+
+	exitNotional := price.Notional(instrument, bid, quantity)
 	exitFee := price.Fee(instrument, exitNotional)
 
 	if exitFee == nil {
@@ -549,7 +592,9 @@ func (price *Price) WithFriction(
 }
 
 /*
-Mark stamps executable bid, flatten-now PnL, and return onto a holding.
+Mark stamps executable bid, flatten-now PnL, and return onto a holding. When the
+ticker book is not yet warm after a fill, the last trade mark on the holding is
+used so the desk does not publish a zero-PnL shell until the next tick.
 */
 func (price *Price) Mark(
 	instrument *kraken.InstrumentPair,
@@ -562,17 +607,29 @@ func (price *Price) Mark(
 	holding.PnL = nil
 	holding.ReturnPct = nil
 
-	ticker, err := price.Get(instrument.Symbol)
+	bid := (*decimal.Decimal)(nil)
+	ticker, tickerErr := price.Get(instrument.Symbol)
 
-	if err == nil && ticker != nil && ticker.Bid != nil {
+	if tickerErr == nil && ticker != nil && ticker.Bid != nil {
+		bid = ticker.Bid
 		holding.Mark = ticker.Bid.Copy()
 	}
 
-	pnl, err := price.WithFriction(
+	if bid == nil {
+		bid = holding.Mark
+	}
+
+	if bid == nil || holding.EntryPrice == nil ||
+		holding.Qty == nil || holding.Qty.Sign() <= 0 {
+		return tickerErr
+	}
+
+	pnl, err := price.frictionAt(
 		instrument,
 		holding.Qty,
 		holding.EntryPrice,
 		holding.EntryFee,
+		bid,
 	)
 
 	if err != nil || pnl == nil {
@@ -591,6 +648,11 @@ func (price *Price) Mark(
 	}
 
 	pct := price.Div(pnl, basis).Float64()
+
+	if math.IsNaN(pct) || math.IsInf(pct, 0) {
+		return nil
+	}
+
 	holding.ReturnPct = &pct
 
 	return nil

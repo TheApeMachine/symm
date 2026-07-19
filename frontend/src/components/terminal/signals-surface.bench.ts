@@ -1,6 +1,6 @@
 import { bench, describe } from "vitest";
 import { DEFAULT_KERNELS } from "#/collections/app";
-import { measurementsStore } from "#/collections/measurements";
+import type { Measurement } from "#/types/measurement";
 import { regimeAxes } from "./regime-radar";
 import { signalsSurfaceSources } from "./signals-surface";
 
@@ -16,7 +16,7 @@ const measurement = {
 	scale: { kind: "observation_window", from: at, through: at },
 };
 
-measurementsStore.actions.updateFrame([
+const fixtures: Measurement[] = [
 	{
 		...measurement,
 		source: "fluid",
@@ -46,7 +46,7 @@ measurementsStore.actions.updateFrame([
 		raw: 0.3,
 		normalized: 0.3,
 	},
-]);
+];
 
 describe("signalsSurfaceSources", () => {
 	bench("merges configured kernels with backend sources", () => {
@@ -54,6 +54,6 @@ describe("signalsSurfaceSources", () => {
 	});
 
 	bench("projects typed measurements onto market regime axes", () => {
-		regimeAxes(measurementsStore.state, ["fluid", "pumpdump", "cvd"]);
+		regimeAxes(fixtures, ["fluid", "pumpdump", "cvd"]);
 	});
 });

@@ -1,14 +1,16 @@
 import { useSelector } from "@tanstack/react-store";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { appStore } from "#/collections/app";
-import { manifoldStore } from "#/collections/manifold";
 import {
-	flattenMeasurementBuffer,
 	measurementEpochs,
 	measurementRaw,
-	measurementsStore,
+	measurementsForSource,
 } from "#/collections/measurements";
-import { resonanceStore } from "#/collections/resonance";
+import type {
+	ManifoldFrame,
+	Measurement,
+	ResonanceFrame,
+} from "#/collections/types";
 import {
 	clearCanvas,
 	drawGrid,
@@ -25,13 +27,13 @@ import {
 	resolvePilotDisplayLattice,
 	type TerminalFluidParticle,
 } from "#/components/terminal/fluid-field";
-import { MockupFluidCanvas } from "#/components/terminal/mockup-fluid-canvas";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import {
 	requireNonZero,
 	requirePositiveLength,
 	requireSampleSize,
 } from "#/lib/domain";
+import { getWorker } from "#/providers/websocket";
 
 type Draw = (
 	context: CanvasRenderingContext2D,
@@ -273,11 +275,31 @@ export const TerminalFluidChart = ({
 }: {
 	contour?: boolean;
 }) => {
-	const draw = useCallback<Draw>(
-		(context, width, height) => {
-			const focusSymbol = appStore.state.focusSymbol;
-			const frame =
-				manifoldStore.state.manifold[focusSymbol]?.values().at(-1) ?? null;
+	const canvasRef = useRef<HTMLCanvasElement>(null);
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const online = useSelector(appStore, (state) => state.online);
+
+	useDirectStorePaint(
+		getWorker(),
+		[{ store: "manifold", key: focusSymbol }],
+		(buffers) => {
+			const canvas = canvasRef.current;
+
+			if (canvas === null) {
+				return;
+			}
+
+			const context = resizeCanvas(canvas);
+
+			if (context === null) {
+				return;
+			}
+
+			const width = canvas.clientWidth;
+			const height = canvas.clientHeight;
+			const frame = ((buffers[`manifold:${focusSymbol}`] ?? []).at(
+				-1,
+			) ?? null) as ManifoldFrame | null;
 			const rho = frameMatrix(frame);
 			const psiMag2 = frameAuxMatrix(frame, "psiMag2");
 			const particles = terminalFluidParticlesFromFrame(frame);
@@ -322,16 +344,10 @@ export const TerminalFluidChart = ({
 
 			drawFluidParticles(context, width, height, particles, columns, rows);
 		},
-		[contour],
+		[online, focusSymbol, contour],
 	);
 
-	return (
-		<MockupFluidCanvas
-			draw={draw}
-			stores={[manifoldStore, appStore]}
-			deps={[contour]}
-		/>
-	);
+	return <canvas ref={canvasRef} className="block size-full" />;
 };
 
 /*
@@ -342,10 +358,8 @@ const paintTerminalPredictionChart = (
 	context: CanvasRenderingContext2D,
 	width: number,
 	height: number,
+	frames: ResonanceFrame[],
 ): void => {
-	const focusSymbol = appStore.state.focusSymbol;
-	const frames = resonanceStore.state.resonance[focusSymbol]?.values() ?? [];
-
 	if (frames.length < 2) {
 		drawWaiting(context, width, height, "waiting for resonance history");
 		return;
@@ -457,9 +471,14 @@ const paintTerminalPredictionChart = (
 
 export const TerminalPredictionChart = () => {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
+	const framesRef = useRef<ResonanceFrame[]>([]);
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const online = useSelector(appStore, (state) => state.online);
 
 	useDirectStorePaint(
-		() => {
+		getWorker(),
+		[{ store: "resonance", key: focusSymbol }],
+		(buffers) => {
 			const canvas = canvasRef.current;
 
 			if (canvas === null) {
@@ -472,14 +491,16 @@ export const TerminalPredictionChart = () => {
 				return;
 			}
 
+			framesRef.current = (buffers[`resonance:${focusSymbol}`] ??
+				[]) as ResonanceFrame[];
 			paintTerminalPredictionChart(
 				context,
 				canvas.clientWidth,
 				canvas.clientHeight,
+				framesRef.current,
 			);
 		},
-		[resonanceStore, appStore],
-		[],
+		[online, focusSymbol],
 	);
 
 	useEffect(() => {
@@ -500,6 +521,7 @@ export const TerminalPredictionChart = () => {
 				context,
 				canvas.clientWidth,
 				canvas.clientHeight,
+				framesRef.current,
 			);
 		};
 
@@ -514,34 +536,47 @@ export const TerminalPredictionChart = () => {
 
 export const TerminalHawkesChart = () => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const history = useSelector(measurementsStore, (state) =>
-		flattenMeasurementBuffer(state.measurements[focusSymbol]?.hawkes),
+	const online = useSelector(appStore, (state) => state.online);
+	const [values, setValues] = useState<number[]>([]);
+
+	useDirectStorePaint(
+		getWorker(),
+		[{ store: "measurements", key: focusSymbol }],
+		(buffers) => {
+			const history = measurementsForSource(
+				(buffers[`measurements:${focusSymbol}`] ?? []) as Measurement[],
+				"hawkes",
+			);
+			const epoch = measurementEpochs(history).at(-1);
+			const typedValues =
+				epoch === undefined
+					? []
+					: numberArray([
+							measurementRaw(epoch, "baseline_intensity", "buy"),
+							measurementRaw(epoch, "baseline_intensity", "sell"),
+							measurementRaw(epoch, "conditional_intensity", "buy") ??
+								measurementRaw(epoch, "arrival_rate", "buy"),
+							measurementRaw(epoch, "conditional_intensity", "sell") ??
+								measurementRaw(epoch, "arrival_rate", "sell"),
+							measurementRaw(epoch, "spectral_radius"),
+						]);
+			const output = epoch?.at(-1)?.metrics;
+			setValues(
+				typedValues.length > 0
+					? typedValues
+					: numberArray([
+							output?.baseline,
+							output?.intensity,
+							output?.buyIntensity,
+							output?.sellIntensity,
+							output?.branching,
+							output?.radius,
+						]),
+			);
+		},
+		[online, focusSymbol],
 	);
-	const epoch = measurementEpochs(history).at(-1);
-	const typedValues =
-		epoch === undefined
-			? []
-			: numberArray([
-					measurementRaw(epoch, "baseline_intensity", "buy"),
-					measurementRaw(epoch, "baseline_intensity", "sell"),
-					measurementRaw(epoch, "conditional_intensity", "buy") ??
-						measurementRaw(epoch, "arrival_rate", "buy"),
-					measurementRaw(epoch, "conditional_intensity", "sell") ??
-						measurementRaw(epoch, "arrival_rate", "sell"),
-					measurementRaw(epoch, "spectral_radius"),
-				]);
-	const output = epoch?.at(-1)?.metrics;
-	const values =
-		typedValues.length > 0
-			? typedValues
-			: numberArray([
-					output?.baseline,
-					output?.intensity,
-					output?.buyIntensity,
-					output?.sellIntensity,
-					output?.branching,
-					output?.radius,
-				]);
+
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
 			if (values.length === 0) {
@@ -569,11 +604,20 @@ export const terminalResonanceLayerMatrixFromFrame = (
 
 export const TerminalManifoldChart = () => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const frame = useSelector(
-		manifoldStore,
-		(state) => state.manifold[focusSymbol]?.values().at(-1) ?? null,
+	const online = useSelector(appStore, (state) => state.online);
+	const [matrix, setMatrix] = useState<number[][]>([]);
+
+	useDirectStorePaint(
+		getWorker(),
+		[{ store: "manifold", key: focusSymbol }],
+		(buffers) => {
+			const frame = ((buffers[`manifold:${focusSymbol}`] ?? []).at(-1) ??
+				null) as ManifoldFrame | null;
+			setMatrix(frameMatrix(frame));
+		},
+		[online, focusSymbol],
 	);
-	const matrix = frameMatrix(frame);
+
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
 			if (matrix.length === 0) {
@@ -591,11 +635,20 @@ export const TerminalManifoldChart = () => {
 
 export const TerminalResonanceChart = () => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const frame = useSelector(
-		resonanceStore,
-		(state) => state.resonance[focusSymbol]?.values().at(-1) ?? null,
+	const online = useSelector(appStore, (state) => state.online);
+	const [matrix, setMatrix] = useState<number[][]>([]);
+
+	useDirectStorePaint(
+		getWorker(),
+		[{ store: "resonance", key: focusSymbol }],
+		(buffers) => {
+			const frame = ((buffers[`resonance:${focusSymbol}`] ?? []).at(-1) ??
+				null) as ResonanceFrame | null;
+			setMatrix(terminalResonanceLayerMatrixFromFrame(frame));
+		},
+		[online, focusSymbol],
 	);
-	const matrix = terminalResonanceLayerMatrixFromFrame(frame);
+
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
 			if (matrix.length === 0) {
@@ -624,24 +677,29 @@ export const TerminalSignalHeatmap = ({
 }: {
 	kind: "confidence" | "surprise";
 }) => {
-	const readings = useSelector(measurementsStore, (state) => state);
-	const matrix = useMemo(
-		() =>
-			Object.values(readings.measurements).flatMap((sources) =>
-				Object.values(sources).flatMap((history) =>
-					flattenMeasurementBuffer(history).flatMap((frame) => {
-						const category = frame.categories?.at(0);
-						const value =
-							kind === "confidence"
-								? category?.confidence
-								: category?.surprisal;
+	const online = useSelector(appStore, (state) => state.online);
+	const [matrix, setMatrix] = useState<number[][]>([]);
 
-						return typeof value === "number" ? [[value]] : [];
-					}),
-				),
-			),
-		[readings, kind],
+	useDirectStorePaint(
+		getWorker(),
+		[{ store: "measurements", key: "" }],
+		(buffers) => {
+			const measurements = (buffers["measurements:"] ?? []) as Measurement[];
+			setMatrix(
+				measurements.flatMap((frame) => {
+					const category = frame.categories?.at(0);
+					const value =
+						kind === "confidence"
+							? category?.confidence
+							: category?.surprisal;
+
+					return typeof value === "number" ? [[value]] : [];
+				}),
+			);
+		},
+		[online, kind],
 	);
+
 	const draw = useCallback<Draw>(
 		(context, width, height) => {
 			if (matrix.length === 0) {

@@ -1,10 +1,12 @@
+import { useSelector } from "@tanstack/react-store";
 import { useRef } from "react";
 import { appStore } from "#/collections/app";
-import { resonanceStore } from "#/collections/resonance";
+import type { ResonanceFrame } from "#/collections/types";
 import { heatColor } from "#/components/terminal/canvas";
 import { layerCellsFromState } from "#/components/terminal/xray-layers";
 import { xrayLayersFromResonance } from "#/components/terminal/xray-view";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 
 /*
 layerErrorTone maps prediction-error magnitude onto terminal semantic colors.
@@ -109,24 +111,27 @@ export const XrayHierarchyPanel = () => {
 	const waitingRef = useRef<HTMLDivElement>(null);
 	const rowsRef = useRef<HTMLDivElement>(null);
 
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const online = useSelector(appStore, (state) => state.online);
+
 	useDirectStorePaint(
-		() => {
-			const symbol = appStore.state.focusSymbol;
-			const frame =
-				resonanceStore.state.resonance[symbol]?.values().at(-1) ?? null;
+		getWorker(),
+		[{ store: "resonance", key: focusSymbol }],
+		(buffers) => {
+			const frame = ((buffers[`resonance:${focusSymbol}`] ?? []).at(-1) ??
+				null) as ResonanceFrame | null;
 			const layers = xrayLayersFromResonance(frame);
 
 			if (symbolRef.current !== null) {
-				symbolRef.current.textContent = symbol;
-				symbolRef.current.dataset.symbol = symbol;
+				symbolRef.current.textContent = focusSymbol;
+				symbolRef.current.dataset.symbol = focusSymbol;
 			}
 
 			if (waitingRef.current !== null && rowsRef.current !== null) {
 				paintHierarchyRows(rowsRef.current, waitingRef.current, layers);
 			}
 		},
-		[resonanceStore, appStore],
-		[],
+		[online, focusSymbol],
 	);
 
 	return (

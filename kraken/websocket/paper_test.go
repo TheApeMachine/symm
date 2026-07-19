@@ -66,7 +66,7 @@ esac
 			So(execution.Data[0].Symbol, ShouldEqual, "BTC/USD")
 			So(execution.Data[0].FeeUsdEquiv.Float64(), ShouldAlmostEqual, 0.5056802650744, 1e-8)
 			So(balance, ShouldNotBeNil)
-			So(balance.Type, ShouldEqual, "update")
+			So(balance.Type, ShouldEqual, "snapshot")
 			So(balance.Data, ShouldHaveLength, 1)
 			So(balance.Data[0].Asset, ShouldEqual, "USD")
 			So(balance.Data[0].Balance.Float64(), ShouldEqual, 100.0)

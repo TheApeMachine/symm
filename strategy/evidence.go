@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"slices"
 	"math"
 
 	"github.com/theapemachine/symm/logic"
@@ -69,8 +70,8 @@ func Project(thesis *types.Thesis, holding types.Holding) types.StopEvidence {
 		break
 	}
 
-	for index := len(thesis.Causal) - 1; index >= 0; index-- {
-		outcome, ok := asCausal(thesis.Causal[index])
+	for _, v := range slices.Backward(thesis.Causal) {
+		outcome, ok := asCausal(v)
 
 		if !ok || outcome.Symbol != holding.Symbol {
 			continue

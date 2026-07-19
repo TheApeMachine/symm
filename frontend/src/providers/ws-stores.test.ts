@@ -1,12 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { appStore } from "#/collections/app";
-import { applyFramePayload } from "#/providers/ws-stores";
+import {
+	applyFramePayload,
+	frameStores,
+	subscribe,
+} from "#/providers/ws-stores";
 
-describe("applyFramePayload error frames", () => {
-	it("routes backend error frames into appStore.error", () => {
-		appStore.actions.clearError();
+const holding = {
+	symbol: "BTC/USD",
+	qty: 0.01,
+	entry_price: 61000,
+	entry_fee: 1.586,
+	exit_fee: 1.597,
+	mark: 61420,
+	pnl: 4.2,
+	return_pct: 0.0068852459,
+};
 
-		applyFramePayload({
+describe("ws-stores", () => {
+	it("skips stores on error frames", () => {
+		frameStores.tick.actions.reset();
+
+		const error = applyFramePayload({
 			error: {
 				level: "error",
 				error: "get websockets token: EAPI:Invalid nonce",
@@ -14,16 +28,31 @@ describe("applyFramePayload error frames", () => {
 			},
 		});
 
-		expect(appStore.state.error).toEqual({
+		expect(error).toEqual({
 			level: "error",
 			error: "get websockets token: EAPI:Invalid nonce",
 			caller: "websocket/live.go:134",
 		});
+		expect(frameStores.tick.state.version).toBe(0);
 	});
 
-	it("clears the overlay state", () => {
-		appStore.actions.updateError({ message: "temporary" });
-		appStore.actions.clearError();
-		expect(appStore.state.error).toBeNull();
+	it("streams the circular buffer on subscribe", () => {
+		frameStores.holdings.actions.reset();
+
+		const seen: unknown[][] = [];
+		const subscription = subscribe(
+			frameStores.holdings,
+			(state) => state.holdings["BTC/USD"],
+			(rows) => {
+				seen.push(rows);
+			},
+		);
+
+		applyFramePayload({ holdings: [holding] });
+
+		expect(seen).toHaveLength(1);
+		expect(seen[0]?.[0]).toMatchObject({ symbol: "BTC/USD", qty: 0.01 });
+
+		subscription.unsubscribe();
 	});
 });

@@ -71,7 +71,7 @@ const frame = {
 			reserved: 20,
 		},
 	],
-	positions: [
+	holdings: [
 		{
 			symbol: "BTC/USD",
 			qty: 0.01,
@@ -103,20 +103,13 @@ const frame = {
 	},
 	executions: [
 		{
-			channel: "executions",
-			type: "update",
-			sequence: 1,
-			data: [
-				{
-					exec_id: "E1",
-					exec_type: "trade",
-					order_id: "O1",
-					symbol: "BTC/USD",
-					side: "buy",
-					last_qty: 0.01,
-					last_price: 61420,
-				},
-			],
+			exec_id: "E1",
+			exec_type: "trade",
+			order_id: "O1",
+			symbol: "BTC/USD",
+			side: "buy",
+			last_qty: 0.01,
+			last_price: 61420,
 		},
 	],
 	decisions: [
@@ -153,15 +146,6 @@ const frame = {
 		},
 	],
 	lifecycle: { "BTC/USD": "managing" },
-	tradeJournal: [
-		{
-			kind: "lifecycle_transition",
-			symbol: "BTC/USD",
-			status: "entered",
-			at: "2026-01-01T00:00:01Z",
-			decision: 0,
-		},
-	],
 	findings: [
 		{
 			symbol: "BTC/USD",

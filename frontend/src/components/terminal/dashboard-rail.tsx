@@ -1,31 +1,25 @@
 import { useSelector } from "@tanstack/react-store";
-import { memo, useRef } from "react";
-import {
-	decisionStore,
-	latestStrategyDecisions,
-} from "#/collections/decisions";
-import { positionsStore } from "#/collections/positions";
-import {
-	tradeJournalStore,
-	tradeJournalValues,
-	tradeObservationKey,
-} from "#/collections/trade-journal";
+import { memo, useRef, useState } from "react";
+import { appStore } from "#/collections/app";
+import type { Holding, LifecycleRow, StrategyDecision } from "#/collections/types";
 import { ColumnHeader } from "#/components/dashboard/header";
 import { fixed } from "#/components/terminal/decision-format";
 import { PositionGauge } from "#/components/terminal/position-gauge";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { cn } from "#/lib/utils";
-import type { StrategyDecision, TradeObservation } from "#/types/thesis";
+import { getWorker } from "#/providers/websocket";
 
 const sameSymbols = (left: string[], right: string[]): boolean =>
 	left.length === right.length &&
 	left.every((symbol, index) => symbol === right[index]);
 
+const isOpenLot = (holding: Holding): boolean =>
+	holding.qty > 0 &&
+	holding.status !== "closed" &&
+	holding.status !== "canceled";
+
 /*
 decisionFraction is the Allocator-sized notional share of available capital.
-Unset when the decision has no sized lot yet. Wire decimals may still arrive as
-strings before ingest normalization, so both sides are coerced before the
-finite-positive gate — paint returns null instead of throwing DomainError.
 */
 export const decisionFraction = (decision: StrategyDecision): number | null => {
 	const notional = Number(decision.proposedNotional);
@@ -58,9 +52,10 @@ type DecisionRowRefs = {
 	action: HTMLSpanElement | null;
 };
 
-const paintDecisionRow = (refs: DecisionRowRefs, symbol: string): void => {
-	const decision = decisionStore.state.decisions[symbol]?.values().at(-1);
-
+const paintDecisionRow = (
+	refs: DecisionRowRefs,
+	decision: StrategyDecision | undefined,
+): void => {
 	if (decision === undefined) {
 		return;
 	}
@@ -92,19 +87,18 @@ const paintDecisionRow = (refs: DecisionRowRefs, symbol: string): void => {
 	}
 };
 
-/*
-DecisionRow keeps one stable symbol shell mounted while direct paint refreshes the
-latest circular decision without React reconciliation on every thesis tick.
-*/
 const DecisionRow = memo(({ symbol }: { symbol: string }) => {
 	const symbolRef = useRef<HTMLDivElement>(null);
 	const metaRef = useRef<HTMLDivElement>(null);
 	const combRef = useRef<HTMLSpanElement>(null);
 	const fractionRef = useRef<HTMLSpanElement>(null);
 	const actionRef = useRef<HTMLSpanElement>(null);
+	const online = useSelector(appStore, (state) => state.online);
 
 	useDirectStorePaint(
-		() =>
+		getWorker(),
+		[{ store: "decisions", key: symbol }],
+		(buffers) =>
 			paintDecisionRow(
 				{
 					symbol: symbolRef.current,
@@ -113,10 +107,11 @@ const DecisionRow = memo(({ symbol }: { symbol: string }) => {
 					fraction: fractionRef.current,
 					action: actionRef.current,
 				},
-				symbol,
+				(buffers[`decisions:${symbol}`] ?? []).at(-1) as
+					| StrategyDecision
+					| undefined,
 			),
-		[decisionStore],
-		[symbol],
+		[online, symbol],
 	);
 
 	return (
@@ -137,33 +132,24 @@ const DecisionRow = memo(({ symbol }: { symbol: string }) => {
 	);
 });
 
-const LiveDecisionEmpty = () => {
-	const emptyRef = useRef<HTMLDivElement>(null);
+const LiveDecisionEmpty = ({ empty, observed }: { empty: boolean; observed: boolean }) => (
+	<div
+		className="px-4 py-5 font-mono text-[11px] text-(--f4)"
+		style={{ display: empty ? "" : "none" }}
+	>
+		{observed ? "no current decisions" : "waiting for decision frames"}
+	</div>
+);
 
-	useDirectStorePaint(
-		() => {
-			if (emptyRef.current === null) {
-				return;
-			}
-
-			const empty = Object.keys(decisionStore.state.decisions).length === 0;
-			emptyRef.current.style.display = empty ? "" : "none";
-			emptyRef.current.textContent = decisionStore.state.observed
-				? "no current decisions"
-				: "waiting for decision frames";
-		},
-		[decisionStore],
-		[],
-	);
-
-	return (
-		<div ref={emptyRef} className="px-4 py-5 font-mono text-[11px] text-(--f4)">
-			waiting for decision frames
-		</div>
-	);
-};
-
-const LiveDecisionRows = ({ symbols }: { symbols: string[] }) => (
+const LiveDecisionRows = ({
+	symbols,
+	empty,
+	observed,
+}: {
+	symbols: string[];
+	empty: boolean;
+	observed: boolean;
+}) => (
 	<div className="min-h-0 flex-1 overflow-auto">
 		<div className="grid grid-cols-[78px_58px_minmax(84px,1fr)_72px] gap-2 border-(--line) border-b px-3 py-2 font-mono text-[9px] text-(--f4) uppercase">
 			<span>Symbol</span>
@@ -171,7 +157,7 @@ const LiveDecisionRows = ({ symbols }: { symbols: string[] }) => (
 			<span className="text-right">Fraction</span>
 			<span className="text-right">Action</span>
 		</div>
-		<LiveDecisionEmpty />
+		<LiveDecisionEmpty empty={empty} observed={observed} />
 		{symbols.map((symbol) => (
 			<DecisionRow key={symbol} symbol={symbol} />
 		))}
@@ -184,132 +170,36 @@ type AuditRow = {
 	meta: string;
 };
 
-const auditEntryLifecycle = new Set(["partially_entered", "entered"]);
+export const isClosedLot = (position: Holding): boolean => {
+	const status = position.status;
 
-const auditExitLifecycle = new Set(["partially_exited", "closed"]);
-
-const isEntryObservation = (observation: TradeObservation): boolean => {
-	if (
-		(observation.kind === "execution_error" ||
-			observation.kind === "broker_rejection") &&
-		observation.action === "enter"
-	) {
-		return true;
-	}
-
-	if (observation.kind === "execution" && observation.side === "buy") {
-		return true;
-	}
-
-	if (
-		observation.kind === "lifecycle_transition" &&
-		typeof observation.status === "string"
-	) {
-		return auditEntryLifecycle.has(observation.status);
-	}
-
-	return false;
-};
-
-const isExitObservation = (observation: TradeObservation): boolean => {
-	if (
-		(observation.kind === "execution_error" ||
-			observation.kind === "broker_rejection") &&
-		(observation.action === "exit" || observation.action === "reduce")
-	) {
-		return true;
-	}
-
-	if (observation.kind === "final_outcome") {
-		return true;
-	}
-
-	if (observation.kind === "execution" && observation.side === "sell") {
-		return true;
-	}
-
-	if (
-		observation.kind === "lifecycle_transition" &&
-		typeof observation.status === "string"
-	) {
-		return auditExitLifecycle.has(observation.status);
-	}
-
-	return false;
+	return typeof status === "string" && status === "closed";
 };
 
 /*
-isAuditObservation keeps dashboard audit rows limited to entry and exit events so
-the right rail can explain opens and closes without broker noise.
+holdingAuditRow formats one retained holding for the dashboard audit rail.
 */
-export const isAuditObservation = (observation: TradeObservation): boolean =>
-	isEntryObservation(observation) || isExitObservation(observation);
-
-const auditReason = (observation: TradeObservation): string => {
-	if (
-		(observation.kind === "execution_error" ||
-			observation.kind === "broker_rejection") &&
-		typeof observation.error === "string" &&
-		observation.error.length > 0
-	) {
-		return observation.error;
-	}
-
-	if (typeof observation.status === "string" && observation.status.length > 0) {
-		return observation.status;
-	}
-
-	if (isExitObservation(observation)) {
-		return "exit";
-	}
-
-	if (isEntryObservation(observation)) {
-		return "enter";
-	}
-
-	return observation.kind.replaceAll("_", " ");
-};
-
-/*
-tradeObservationAuditRow formats one immutable thesis trade journal row for the
-dashboard audit rail using the same broker facts published by the backend.
-*/
-export const tradeObservationAuditRow = (
-	observation: TradeObservation,
+export const holdingAuditRow = (
+	position: Holding,
+	lifecycle?: string,
 ): AuditRow => {
-	const timestamp =
-		observation.at.length >= 19 ? observation.at.slice(11, 19) : observation.at;
-	const identifier =
-		observation.executionId ??
-		observation.orderId ??
-		String(observation.decision);
-	const trade =
-		observation.quantity && observation.price
-			? `${observation.quantity} @ ${fixed(Number(observation.price))}`
-			: "";
-	const meta = [
-		observation.kind,
-		observation.action,
-		observation.side,
-		observation.symbol,
-		trade,
-		observation.error,
-	].filter((value) => typeof value === "string" && value.length > 0);
+	const phase =
+		lifecycle ??
+		(typeof position.status === "string" ? position.status : "closed");
+	const pnl = Number.isFinite(position.pnl) ? fixed(position.pnl) : "—";
+	const ret = Number.isFinite(position.return_pct)
+		? `${(position.return_pct * 100).toFixed(2)}%`
+		: "—";
 
 	return {
-		reason: auditReason(observation),
-		reference: [`#${identifier}`, timestamp].filter(Boolean).join(" · "),
-		meta: meta.join(" · "),
+		reason: phase,
+		reference: position.symbol,
+		meta: `pnl ${pnl} · return ${ret}`,
 	};
 };
 
-/*
-auditObservations retains only entry and exit journal rows for the dashboard
-audit trail, in publication order.
- */
-export const auditObservations = (
-	observations: TradeObservation[],
-): TradeObservation[] => observations.filter(isAuditObservation);
+export const auditHoldings = (holdings: Holding[]): Holding[] =>
+	holdings.filter(isClosedLot);
 
 const PositionRows = ({
 	symbols,
@@ -323,7 +213,7 @@ const PositionRows = ({
 	<div className="min-h-0 flex-1 overflow-auto p-1.5">
 		{symbols.length === 0 ? (
 			<div className="px-4 py-5 font-mono text-[11px] text-(--f4)">
-				{observed ? "no open positions" : "waiting for position frames"}
+				{observed ? "no open holdings" : "waiting for holdings frames"}
 			</div>
 		) : null}
 		{symbols.slice(-8).map((symbol) => (
@@ -333,26 +223,26 @@ const PositionRows = ({
 );
 
 const AuditRows = ({
-	observations,
+	holdings,
+	lifecycle,
 	observed,
 }: {
-	observations: TradeObservation[];
+	holdings: Holding[];
+	lifecycle: Record<string, string>;
 	observed: boolean;
 }) => (
 	<div className="min-h-0 flex-1 overflow-auto py-0.5">
-		{observations.length === 0 ? (
+		{holdings.length === 0 ? (
 			<div className="px-4 py-5 font-mono text-[11px] text-(--f4)">
-				{observed
-					? "no trade activity yet"
-					: "waiting for trade journal frames"}
+				{observed ? "no closed lots yet" : "waiting for position frames"}
 			</div>
 		) : null}
-		{observations.map((observation) => {
-			const row = tradeObservationAuditRow(observation);
+		{holdings.map((holding) => {
+			const row = holdingAuditRow(holding, lifecycle[holding.symbol]);
 
 			return (
 				<div
-					key={tradeObservationKey(observation)}
+					key={`${holding.symbol}:${String(holding.status)}`}
 					className="border-(--line) border-b px-3 py-1.5"
 				>
 					<div className="flex items-start justify-between gap-2">
@@ -372,141 +262,123 @@ const AuditRows = ({
 	</div>
 );
 
-const LiveDecisionMeta = () => {
-	const allowRef = useRef<HTMLSpanElement>(null);
-	const denyRef = useRef<HTMLSpanElement>(null);
+const LiveDecisionMeta = ({
+	active,
+	passive,
+}: {
+	active: number;
+	passive: number;
+}) => (
+	<span>
+		{active} active · {passive} passive
+	</span>
+);
+
+const LivePositionMeta = ({
+	symbols,
+	quote,
+	net,
+}: {
+	symbols: string[];
+	quote: string;
+	net: number;
+}) => (
+	<span>
+		{symbols.length === 0 ? null : `net ${net.toFixed(4)} ${quote} · `}
+		{symbols.length} open
+	</span>
+);
+
+export const DashboardRail = () => {
+	const online = useSelector(appStore, (state) => state.online);
+	const [decisionSymbols, setDecisionSymbols] = useState<string[]>([]);
+	const [decisionObserved, setDecisionObserved] = useState(false);
+	const [decisionActive, setDecisionActive] = useState(0);
+	const [decisionPassive, setDecisionPassive] = useState(0);
+	const [symbols, setSymbols] = useState<string[]>([]);
+	const [observed, setObserved] = useState(false);
+	const [quote, setQuote] = useState("USD");
+	const [net, setNet] = useState(0);
+	const [closedLots, setClosedLots] = useState<Holding[]>([]);
+	const [lifecycle, setLifecycle] = useState<Record<string, string>>({});
 
 	useDirectStorePaint(
-		() => {
-			const decisions = latestStrategyDecisions(decisionStore.state.decisions);
+		getWorker(),
+		[
+			{ store: "decisions", key: "" },
+			{ store: "holdings", key: "" },
+			{ store: "lifecycle", key: "" },
+		],
+		(buffers) => {
+			const decisions = (buffers["decisions:"] ?? []) as StrategyDecision[];
+			const holdings = (buffers["holdings:"] ?? []) as Holding[];
+			const lifecycleRows = (buffers["lifecycle:"] ?? []) as LifecycleRow[];
+			const nextDecisionSymbols = [
+				...new Set(decisions.map((decision) => decision.symbol)),
+			].sort();
 			const active = decisions.filter(
 				(decision) => decision.action === "enter" || decision.action === "exit",
 			);
 			const passive = decisions.filter(
 				(decision) => decision.action !== "enter" && decision.action !== "exit",
 			);
+			const open = holdings.filter(isOpenLot);
+			const nextSymbols = open.map((holding) => holding.symbol);
+			const nextNet = open.reduce((sum, holding) => sum + (holding.pnl ?? 0), 0);
+			const nextQuote = open[0]?.symbol.split("/")[1] ?? "USD";
+			const nextLifecycle = Object.fromEntries(
+				lifecycleRows.map((row) => [row.symbol, String(row.state)]),
+			);
 
-			if (allowRef.current !== null) {
-				allowRef.current.textContent = String(active.length);
-			}
-
-			if (denyRef.current !== null) {
-				denyRef.current.textContent = String(passive.length);
-			}
+			setDecisionObserved(true);
+			setDecisionActive(active.length);
+			setDecisionPassive(passive.length);
+			setDecisionSymbols((prev) =>
+				sameSymbols(prev, nextDecisionSymbols) ? prev : nextDecisionSymbols,
+			);
+			setObserved(true);
+			setSymbols((prev) => (sameSymbols(prev, nextSymbols) ? prev : nextSymbols));
+			setQuote(nextQuote);
+			setNet(nextNet);
+			setClosedLots(auditHoldings(holdings));
+			setLifecycle(nextLifecycle);
 		},
-		[decisionStore],
-		[],
-	);
-
-	return (
-		<span>
-			<span ref={allowRef} /> active · <span ref={denyRef} /> passive
-		</span>
-	);
-};
-
-const LivePositionMeta = ({
-	symbols,
-	quote,
-}: {
-	symbols: string[];
-	quote: string;
-}) => {
-	const prefixRef = useRef<HTMLSpanElement>(null);
-	const countRef = useRef<HTMLSpanElement>(null);
-
-	useDirectStorePaint(
-		() => {
-			const net = positionsStore.state.positions
-				.filter((position) => symbols.includes(position.symbol))
-				.reduce((sum, position) => sum + position.pnl, 0);
-
-			if (prefixRef.current !== null) {
-				prefixRef.current.textContent =
-					symbols.length === 0 ? "" : `net ${net.toFixed(4)} ${quote} · `;
-				prefixRef.current.style.display = symbols.length === 0 ? "none" : "";
-			}
-
-			if (countRef.current !== null) {
-				countRef.current.textContent = `${symbols.length} open`;
-			}
-		},
-		[positionsStore],
-		[symbols.length, quote],
-	);
-
-	return (
-		<span>
-			<span ref={prefixRef} />
-			<span ref={countRef} />
-		</span>
-	);
-};
-
-export const DashboardRail = () => {
-	const decisionSymbols = useSelector(
-		decisionStore,
-		(state) => Object.keys(state.decisions).sort(),
-		{ compare: sameSymbols },
-	);
-
-	/*
-	symbols only changes reference when a position opens or closes, not on
-	every mark/pnl tick, so it is the one piece of positions state safe to
-	drive React re-renders and row mount/unmount from. Each PositionGauge
-	reads its own live values straight from the stores.
-	*/
-	const symbols = useSelector(
-		positionsStore,
-		(state) =>
-			state.positions
-				.filter(
-					(position) =>
-						position.qty > 0 &&
-						Array.isArray(position.executions) &&
-						position.executions.length > 0,
-				)
-				.map((position) => position.symbol),
-		{ compare: sameSymbols },
-	);
-	const observed = useSelector(positionsStore, (state) => state.observed);
-	const quoteSymbol = useSelector(
-		positionsStore,
-		(state) =>
-			state.positions.find(
-				(position) =>
-					position.qty > 0 &&
-					Array.isArray(position.executions) &&
-					position.executions.length > 0,
-			)?.symbol,
-	);
-	const quote = quoteSymbol?.split("/")[1] ?? "USD";
-	const auditRows = useSelector(tradeJournalStore, (state) =>
-		auditObservations(tradeJournalValues(state.journal)),
-	);
-	const journalObserved = useSelector(
-		tradeJournalStore,
-		(state) => state.observed,
+		[online],
 	);
 
 	return (
 		<div className="flex min-h-0 flex-col bg-(--surface)">
 			<div className="flex min-h-0 flex-[1.15] flex-col border-(--line) border-b">
-				<ColumnHeader title="Decisions" meta={<LiveDecisionMeta />} />
-				<LiveDecisionRows symbols={decisionSymbols} />
+				<ColumnHeader
+					title="Decisions"
+					meta={
+						<LiveDecisionMeta
+							active={decisionActive}
+							passive={decisionPassive}
+						/>
+					}
+				/>
+				<LiveDecisionRows
+					symbols={decisionSymbols}
+					empty={decisionSymbols.length === 0}
+					observed={decisionObserved}
+				/>
 			</div>
 			<div className="flex min-h-0 flex-1 flex-col border-(--line) border-b">
 				<ColumnHeader
 					title="Open positions"
-					meta={<LivePositionMeta symbols={symbols} quote={quote} />}
+					meta={
+						<LivePositionMeta symbols={symbols} quote={quote} net={net} />
+					}
 				/>
 				<PositionRows symbols={symbols} quote={quote} observed={observed} />
 			</div>
 			<div className="flex min-h-0 flex-1 flex-col">
 				<ColumnHeader title="Audit trail" />
 				<AuditRows
-					observations={[...auditRows].reverse()}
-					observed={journalObserved}
+					holdings={[...closedLots].reverse()}
+					lifecycle={lifecycle}
+					observed={observed}
 				/>
 			</div>
 		</div>

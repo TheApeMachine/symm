@@ -1,19 +1,4 @@
-import { categoriesStore, categoryValues } from "#/collections/categories";
-import { decisionStore } from "#/collections/decisions";
-import { findingsList, findingsStore } from "#/collections/findings";
-import { forecastsStore, forecastValues } from "#/collections/forecasts";
-import { graphsStore, latestGraphFrame } from "#/collections/graphs";
-import { hypothesesStore, hypothesisValues } from "#/collections/hypotheses";
-import { lifecycleStore } from "#/collections/lifecycle";
-import {
-	flattenMeasurementBuffer,
-	measurementsStore,
-} from "#/collections/measurements";
-import { tickStore } from "#/collections/tick";
-import {
-	tradeJournalStore,
-	tradeJournalValues,
-} from "#/collections/trade-journal";
+import type { Holding } from "#/collections/types";
 import type { Category, Measurement } from "#/types/measurement";
 import type {
 	Finding,
@@ -22,7 +7,6 @@ import type {
 	ThesisCategory,
 	ThesisForecast,
 	ThesisHypothesis,
-	TradeObservation,
 } from "#/types/thesis";
 
 export type ThesisSnapshot = {
@@ -35,26 +19,26 @@ export type ThesisSnapshot = {
 	forecasts: ThesisForecast[];
 	hypotheses: ThesisHypothesis[];
 	categories: ThesisCategory[];
-	observations: TradeObservation[];
+	holdings: Holding[];
 	findings: Finding[];
 };
 
-const tickCount = (frame: Record<string, unknown> | null): number | null => {
-	const tick = frame?.count;
-
-	return typeof tick === "number" && Number.isFinite(tick) ? tick : null;
-};
-
-const measurementsForSymbol = (symbol: string): Measurement[] => {
-	const sources = measurementsStore.state.measurements[symbol];
-
-	if (sources === undefined) {
-		return [];
-	}
-
-	return Object.values(sources).flatMap((buffer) =>
-		flattenMeasurementBuffer(buffer),
-	);
+/*
+ThesisSnapshotInput is the flat buffer material needed to assemble one modal
+snapshot without reading frame stores.
+*/
+export type ThesisSnapshotInput = {
+	symbol: string;
+	tick: number | null;
+	lifecycle: string | null;
+	graph: GraphFrame | null;
+	measurements: Measurement[];
+	decision: StrategyDecision | null;
+	forecasts: ThesisForecast[];
+	hypotheses: ThesisHypothesis[];
+	categories: Array<Category & { symbol?: string }>;
+	holdings: Holding[];
+	findings: Finding[];
 };
 
 const categoryFromMeasurement = (
@@ -70,14 +54,17 @@ const categoryFromMeasurement = (
 });
 
 /*
-categoriesForSymbol merges thesis.Categories wire rows with legacy measurement
+categoriesForSymbol merges thesis category wire rows with legacy measurement
 categories so classification evidence survives partial thesis tick frames.
 */
-export const categoriesForSymbol = (symbol: string): ThesisCategory[] => {
-	const measurements = measurementsForSymbol(symbol);
+export const categoriesForSymbol = (
+	symbol: string,
+	categories: Array<Category & { symbol?: string }>,
+	measurements: Measurement[],
+): ThesisCategory[] => {
 	const merged = new Map<string, ThesisCategory>();
 
-	for (const category of categoryValues(categoriesStore.state.categories)) {
+	for (const category of categories) {
 		if (
 			category.symbol !== undefined &&
 			category.symbol !== "" &&
@@ -86,10 +73,21 @@ export const categoriesForSymbol = (symbol: string): ThesisCategory[] => {
 			continue;
 		}
 
-		merged.set(category.type, category);
+		merged.set(category.type, {
+			symbol,
+			type: category.type,
+			confidence: category.confidence,
+			surprisal: category.surprisal,
+			strength: category.strength,
+			maturity: 0,
+		});
 	}
 
 	for (const measurement of measurements) {
+		if (measurement.symbol !== symbol) {
+			continue;
+		}
+
 		for (const category of measurement.categories ?? []) {
 			merged.set(
 				category.type,
@@ -128,10 +126,10 @@ export const accumulateThesisSnapshot = (
 			incoming.categories.length > 0
 				? incoming.categories
 				: previous.categories,
-		observations:
-			incoming.observations.length >= previous.observations.length
-				? incoming.observations
-				: previous.observations,
+		holdings:
+			incoming.holdings.length >= previous.holdings.length
+				? incoming.holdings
+				: previous.holdings,
 		findings:
 			incoming.findings.length >= previous.findings.length
 				? incoming.findings
@@ -139,30 +137,36 @@ export const accumulateThesisSnapshot = (
 	};
 };
 
-export const thesisSnapshotFor = (symbol: string): ThesisSnapshot => {
-	const decision =
-		decisionStore.state.decisions[symbol]?.values().at(-1) ?? null;
-	const measurements = measurementsForSymbol(symbol);
-
-	return {
-		symbol,
-		tick: tickCount(tickStore.state.frame),
-		lifecycle: lifecycleStore.state.lifecycle[symbol] ?? null,
-		graph: latestGraphFrame(graphsStore.state.graphs, symbol),
-		measurements,
-		decision,
-		forecasts: forecastValues(forecastsStore.state.forecasts).filter(
-			(forecast) => forecast.symbol === symbol,
-		),
-		hypotheses: hypothesisValues(hypothesesStore.state.hypotheses).filter(
-			(hypothesis) => hypothesis.symbol === symbol,
-		),
-		categories: categoriesForSymbol(symbol),
-		observations: tradeJournalValues(tradeJournalStore.state.journal).filter(
-			(observation) => observation.symbol === symbol,
-		),
-		findings: findingsList(findingsStore.state.findings).filter(
-			(finding) => finding.symbol === symbol,
-		),
-	};
-};
+/*
+thesisSnapshotFor assembles one modal snapshot from already-materialized buffer
+rows for the focused symbol.
+*/
+export const thesisSnapshotFor = (
+	input: ThesisSnapshotInput,
+): ThesisSnapshot => ({
+	symbol: input.symbol,
+	tick: input.tick,
+	lifecycle: input.lifecycle,
+	graph: input.graph,
+	measurements: input.measurements.filter(
+		(measurement) => measurement.symbol === input.symbol,
+	),
+	decision: input.decision,
+	forecasts: input.forecasts.filter(
+		(forecast) => forecast.symbol === input.symbol,
+	),
+	hypotheses: input.hypotheses.filter(
+		(hypothesis) => hypothesis.symbol === input.symbol,
+	),
+	categories: categoriesForSymbol(
+		input.symbol,
+		input.categories,
+		input.measurements,
+	),
+	holdings: input.holdings.filter(
+		(holding) => holding.symbol === input.symbol,
+	),
+	findings: input.findings.filter(
+		(finding) => finding.symbol === input.symbol,
+	),
+});

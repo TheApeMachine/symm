@@ -1,40 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { createFrameCollection } from "./frames";
+import { latestOf } from "./circular";
+import { createKeyedStore } from "./store";
 
-describe("createFrameCollection", () => {
-	it("retains frames in a bounded circular buffer", () => {
-		const store = createFrameCollection(3);
+describe("createKeyedStore via frames regression", () => {
+	it("retains bounded history under one key", () => {
+		const store = createKeyedStore<{ n: number }>()(
+			"tick",
+			3,
+			() => "current",
+		);
 
-		store.actions.updateFrames([
-			{ source: "tick", count: 1 },
-			{ source: "tick", count: 2 },
-			{ source: "tick", count: 3 },
-			{ source: "tick", count: 4 },
+		store.actions.updateFrame([{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }]);
+
+		expect(latestOf(store.state.tick.current)?.n).toBe(4);
+		expect(store.state.tick.current?.values()).toEqual([
+			{ n: 2 },
+			{ n: 3 },
+			{ n: 4 },
 		]);
-
-		expect(store.state.frames.values()).toEqual([
-			{ source: "tick", count: 2 },
-			{ source: "tick", count: 3 },
-			{ source: "tick", count: 4 },
-		]);
-		expect(store.state.frame).toEqual({ source: "tick", count: 4 });
-	});
-
-	it("indexes appended frames by symbol and source", () => {
-		const store = createFrameCollection(2);
-
-		store.actions.updateFrame({
-			source: "resonance",
-			symbol: "BTC/USD",
-			at: "2026-07-14T12:00:00Z",
-		});
-		store.actions.updateFrame({
-			source: "resonance",
-			symbol: "ETH/USD",
-			at: "2026-07-14T12:00:01Z",
-		});
-
-		expect(store.state.bySymbol["BTC/USD"]?.values()).toHaveLength(1);
-		expect(store.state.bySource.resonance?.values()).toHaveLength(2);
 	});
 });

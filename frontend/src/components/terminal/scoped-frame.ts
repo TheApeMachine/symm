@@ -1,5 +1,5 @@
 import type { CircularBuffer } from "#/collections/circular";
-import type { DashboardFrame } from "#/collections/frames";
+import type { DashboardFrame } from "#/collections/types";
 
 export type ScopedFrameMode = "concrete" | "stream_preview" | "missing";
 

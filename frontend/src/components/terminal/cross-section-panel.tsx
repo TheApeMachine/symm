@@ -1,7 +1,10 @@
+import { useSelector } from "@tanstack/react-store";
 import { useRef } from "react";
-import { diagnosticsStore } from "#/collections/diagnostics";
+import { appStore } from "#/collections/app";
+import type { DiagnosticsFrame } from "#/collections/types";
 import { paintInlineMeter } from "#/components/terminal/metric-paint";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 import { Panel } from "@/components/ui/panel";
 
 export type CrossSectionReadout = {
@@ -160,12 +163,18 @@ export const CrossSectionPanel = () => {
 	const notionalRef = useRef<HTMLDivElement>(null);
 	const depthRef = useRef<HTMLDivElement>(null);
 	const lastReadoutRef = useRef<CrossSectionReadout | null>(null);
+	const online = useSelector(appStore, (state) => state.online);
 
 	useDirectStorePaint(
-		() => {
+		getWorker(),
+		[{ store: "diagnostics", key: "" }],
+		(buffers) => {
+			const frame = (buffers["diagnostics:"] ?? []).at(-1) as
+				| DiagnosticsFrame
+				| undefined;
 			const readout = retainCrossSectionReadout(
 				lastReadoutRef.current,
-				crossSectionReadoutFromFrame(diagnosticsStore.state.frame),
+				crossSectionReadoutFromFrame(frame ?? null),
 			);
 			lastReadoutRef.current = readout;
 			const broad = readout.breadthPercent >= 50;
@@ -222,8 +231,7 @@ export const CrossSectionPanel = () => {
 			);
 			paintStat(depthRef.current, compactNumber(readout.medianExecutableDepth));
 		},
-		[diagnosticsStore],
-		[],
+		[online],
 	);
 
 	return (

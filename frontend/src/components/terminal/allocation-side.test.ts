@@ -48,7 +48,7 @@ describe("allocationSummary", () => {
 				"ETH/USD": history({ source: "manifold", symbol: "ETH/USD", at: "1" }),
 				"SOL/USD": history({ source: "manifold", symbol: "SOL/USD", at: "1" }),
 			},
-			positions: [
+			holdings: [
 				{
 					symbol: "BTC/USD",
 					qty: 0.5,
@@ -65,19 +65,19 @@ describe("allocationSummary", () => {
 					source: "resonance",
 					symbol: "BTC/USD",
 					at: "1",
-					confidence: 0.2,
+					surprise: -Math.log(0.2),
 				}),
 				"ETH/USD": history({
 					source: "resonance",
 					symbol: "ETH/USD",
 					at: "1",
-					confidence: 0.6,
+					surprise: -Math.log(0.6),
 				}),
 				"SOL/USD": history({
 					source: "resonance",
 					symbol: "SOL/USD",
 					at: "1",
-					confidence: 0.95,
+					surprise: -Math.log(0.95),
 				}),
 			},
 		});

@@ -1,6 +1,7 @@
+import { useSelector } from "@tanstack/react-store";
 import { useRef } from "react";
 import { appStore } from "#/collections/app";
-import { resonanceStore } from "#/collections/resonance";
+import type { ResonanceFrame } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
 import {
 	clearCanvas,
@@ -18,6 +19,7 @@ import {
 	latentPointsFromFrames,
 } from "#/components/terminal/xray-view";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 
 /*
 XrayLatentPanel paints the resonance latent scatter across symbols.
@@ -25,100 +27,106 @@ XrayLatentPanel paints the resonance latent scatter across symbols.
 export const XrayLatentPanel = () => {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const pointsRef = useRef<LatentPoint[]>([]);
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const online = useSelector(appStore, (state) => state.online);
 
-	const paint = () => {
-		const canvas = canvasRef.current;
+	useDirectStorePaint(
+		getWorker(),
+		[{ store: "resonance", key: "" }],
+		(buffers) => {
+			const canvas = canvasRef.current;
 
-		if (canvas === null) {
-			return;
-		}
-
-		const context = resizeCanvas(canvas);
-
-		if (context === null) {
-			return;
-		}
-
-		const activeSymbol = appStore.state.focusSymbol;
-		const points = latentPointsFromFrames(resonanceStore.state.resonance);
-		pointsRef.current = points;
-		const width = canvas.clientWidth;
-		const height = canvas.clientHeight;
-
-		if (points.length === 0) {
-			drawXrayWaiting(context, width, height, "waiting for latent carriers");
-			return;
-		}
-
-		clearCanvas(context, width, height);
-
-		const pad = 28;
-		let xRange: ReturnType<typeof latentRange>;
-		let yRange: ReturnType<typeof latentRange>;
-
-		try {
-			xRange = latentRange(points, "x");
-			yRange = latentRange(points, "y");
-		} catch {
-			drawXrayWaiting(context, width, height, "waiting for latent span");
-			return;
-		}
-
-		context.strokeStyle = TERMINAL_COLORS.line;
-		context.lineWidth = 1;
-
-		for (let index = 0; index <= 4; index += 1) {
-			const x = pad + index * ((width - pad * 2) / 4);
-			const y = pad + index * ((height - pad * 2) / 4);
-
-			context.beginPath();
-			context.moveTo(x, pad);
-			context.lineTo(x, height - pad);
-			context.stroke();
-			context.beginPath();
-			context.moveTo(pad, y);
-			context.lineTo(width - pad, y);
-			context.stroke();
-		}
-
-		for (const point of points) {
-			const focus = point.symbol === activeSymbol;
-			const x =
-				pad + ((point.x - xRange.min) / xRange.span) * (width - pad * 2);
-			const y =
-				height -
-				pad -
-				((point.y - yRange.min) / yRange.span) * (height - pad * 2);
-			const color = categoryColor(point.category, focus);
-
-			context.fillStyle = color;
-			context.globalAlpha = focus ? 1 : 0.72;
-			context.shadowBlur = focus ? 12 : 4;
-			context.shadowColor = color;
-			context.beginPath();
-			context.arc(x, y, focus ? 5 : 3.5, 0, Math.PI * 2);
-			context.fill();
-			context.shadowBlur = 0;
-			context.globalAlpha = 1;
-
-			if (focus) {
-				context.strokeStyle = TERMINAL_COLORS.amber;
-				context.lineWidth = 1.5;
-				context.beginPath();
-				context.arc(x, y, 9, 0, Math.PI * 2);
-				context.stroke();
-				context.fillStyle = TERMINAL_COLORS.foreground;
-				context.font = "9px JetBrains Mono, monospace";
-				context.fillText(
-					point.symbol.split("/")[0] ?? point.symbol,
-					x + 11,
-					y + 4,
-				);
+			if (canvas === null) {
+				return;
 			}
-		}
-	};
 
-	useDirectStorePaint(paint, [resonanceStore, appStore], []);
+			const context = resizeCanvas(canvas);
+
+			if (context === null) {
+				return;
+			}
+
+			const points = latentPointsFromFrames(
+				(buffers["resonance:"] ?? []) as ResonanceFrame[],
+			);
+			pointsRef.current = points;
+			const width = canvas.clientWidth;
+			const height = canvas.clientHeight;
+
+			if (points.length === 0) {
+				drawXrayWaiting(context, width, height, "waiting for latent carriers");
+				return;
+			}
+
+			clearCanvas(context, width, height);
+
+			const pad = 28;
+			let xRange: ReturnType<typeof latentRange>;
+			let yRange: ReturnType<typeof latentRange>;
+
+			try {
+				xRange = latentRange(points, "x");
+				yRange = latentRange(points, "y");
+			} catch {
+				drawXrayWaiting(context, width, height, "waiting for latent span");
+				return;
+			}
+
+			context.strokeStyle = TERMINAL_COLORS.line;
+			context.lineWidth = 1;
+
+			for (let index = 0; index <= 4; index += 1) {
+				const x = pad + index * ((width - pad * 2) / 4);
+				const y = pad + index * ((height - pad * 2) / 4);
+
+				context.beginPath();
+				context.moveTo(x, pad);
+				context.lineTo(x, height - pad);
+				context.stroke();
+				context.beginPath();
+				context.moveTo(pad, y);
+				context.lineTo(width - pad, y);
+				context.stroke();
+			}
+
+			for (const point of points) {
+				const focus = point.symbol === focusSymbol;
+				const x =
+					pad + ((point.x - xRange.min) / xRange.span) * (width - pad * 2);
+				const y =
+					height -
+					pad -
+					((point.y - yRange.min) / yRange.span) * (height - pad * 2);
+				const color = categoryColor(point.category, focus);
+
+				context.fillStyle = color;
+				context.globalAlpha = focus ? 1 : 0.72;
+				context.shadowBlur = focus ? 12 : 4;
+				context.shadowColor = color;
+				context.beginPath();
+				context.arc(x, y, focus ? 5 : 3.5, 0, Math.PI * 2);
+				context.fill();
+				context.shadowBlur = 0;
+				context.globalAlpha = 1;
+
+				if (focus) {
+					context.strokeStyle = TERMINAL_COLORS.amber;
+					context.lineWidth = 1.5;
+					context.beginPath();
+					context.arc(x, y, 9, 0, Math.PI * 2);
+					context.stroke();
+					context.fillStyle = TERMINAL_COLORS.foreground;
+					context.font = "9px JetBrains Mono, monospace";
+					context.fillText(
+						point.symbol.split("/")[0] ?? point.symbol,
+						x + 11,
+						y + 4,
+					);
+				}
+			}
+		},
+		[online, focusSymbol],
+	);
 
 	return (
 		<canvas

@@ -53,7 +53,7 @@ describe("allocationSummary", () => {
 			],
 			causal,
 			manifold,
-			positions: [],
+			holdings: [],
 			resonance,
 		});
 	});

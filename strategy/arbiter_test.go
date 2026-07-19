@@ -7,13 +7,13 @@ import (
 )
 
 /*
-TestClearScoreNativeStop is certain when Stoploss already selected stop.
+TestClearProbabilityNativeStop is certain when Stoploss already selected stop.
 */
-func TestClearScoreNativeStop(t *testing.T) {
+func TestClearProbabilityNativeStop(t *testing.T) {
 	t.Parallel()
 
 	stop := &types.Stoploss{Action: "stop", PeakReturn: 0.1, TrailDistance: 0.05}
-	got := clearScore(stop, types.Forecasts{ExpectedReturn: -0.01})
+	got := clearProbability(stop, types.Forecasts{ExpectedReturn: -0.01})
 
 	if got != 1 {
 		t.Fatalf("want 1, got %v", got)
@@ -21,13 +21,13 @@ func TestClearScoreNativeStop(t *testing.T) {
 }
 
 /*
-TestClearScoreNativeTakeProfit is certain when Stoploss selected take_profit.
+TestClearProbabilityNativeTakeProfit is certain when Stoploss selected take_profit.
 */
-func TestClearScoreNativeTakeProfit(t *testing.T) {
+func TestClearProbabilityNativeTakeProfit(t *testing.T) {
 	t.Parallel()
 
 	stop := &types.Stoploss{Action: "take_profit", PeakReturn: 0.1, TrailDistance: 0.05}
-	got := clearScore(stop, types.Forecasts{ExpectedReturn: -0.01})
+	got := clearProbability(stop, types.Forecasts{ExpectedReturn: -0.01})
 
 	if got != 1 {
 		t.Fatalf("want 1, got %v", got)
@@ -35,27 +35,29 @@ func TestClearScoreNativeTakeProfit(t *testing.T) {
 }
 
 /*
-TestClearScoreMissingStopDoesNotInvent clears wait optionality.
+TestClearProbabilityMissingStopDoesNotInvent clears wait optionality.
 */
-func TestClearScoreMissingStopDoesNotInvent(t *testing.T) {
+func TestClearProbabilityMissingStopDoesNotInvent(t *testing.T) {
 	t.Parallel()
 
-	if got := clearScore(nil, types.Forecasts{}); got != 0 {
+	if got := clearProbability(nil, types.Forecasts{}); got != 0 {
 		t.Fatalf("want 0, got %v", got)
 	}
 }
 
 /*
-TestClearScorePositiveForwardBlocksTPClear keeps score at zero while the
-path still expects lift.
+TestClearProbabilityPositiveForwardBlocksTPClear keeps probability at zero
+while the path still expects lift.
 */
-func TestClearScorePositiveForwardBlocksTPClear(t *testing.T) {
+func TestClearProbabilityPositiveForwardBlocksTPClear(t *testing.T) {
 	t.Parallel()
 
 	stop := &types.Stoploss{
 		Action: "hold", PeakReturn: 0.1, MarkReturn: 0.09, TrailDistance: 0.05,
 	}
-	got := clearScore(stop, types.Forecasts{ExpectedReturn: 0.02})
+	got := clearProbability(stop, types.Forecasts{
+		ExpectedReturn: 0.02, Calibrated: true, Confidence: 1,
+	})
 
 	if got != 0 {
 		t.Fatalf("want 0 when forward return positive, got %v", got)
@@ -63,18 +65,60 @@ func TestClearScorePositiveForwardBlocksTPClear(t *testing.T) {
 }
 
 /*
-TestClearScoreProximityMapsTrailBand scales clear mass by peak proximity.
+TestClearProbabilityUncalibratedIsZero refuses inventing wait mass.
 */
-func TestClearScoreProximityMapsTrailBand(t *testing.T) {
+func TestClearProbabilityUncalibratedIsZero(t *testing.T) {
 	t.Parallel()
 
 	stop := &types.Stoploss{
 		Action: "hold", PeakReturn: 0.1, MarkReturn: 0.075, TrailDistance: 0.05,
 	}
-	got := clearScore(stop, types.Forecasts{ExpectedReturn: -0.01})
+	got := clearProbability(stop, types.Forecasts{ExpectedReturn: -0.01})
+
+	if got != 0 {
+		t.Fatalf("want 0 without calibration, got %v", got)
+	}
+}
+
+/*
+TestClearProbabilityProximityTimesConfidence maps trail band through Confidence.
+*/
+func TestClearProbabilityProximityTimesConfidence(t *testing.T) {
+	t.Parallel()
+
+	stop := &types.Stoploss{
+		Action: "hold", PeakReturn: 0.1, MarkReturn: 0.075, TrailDistance: 0.05,
+	}
+	got := clearProbability(stop, types.Forecasts{
+		ExpectedReturn: -0.01,
+		Calibrated:     true,
+		Confidence:     1,
+	})
 
 	if got < 0.499 || got > 0.501 {
 		t.Fatalf("want ~0.5, got %v", got)
+	}
+}
+
+/*
+TestClearProbabilityResidualSkillScales hazard by √MSE/(√MSE+σ).
+*/
+func TestClearProbabilityResidualSkillScales(t *testing.T) {
+	t.Parallel()
+
+	stop := &types.Stoploss{
+		Action: "hold", PeakReturn: 0.1, MarkReturn: 0.075, TrailDistance: 0.05,
+	}
+	got := clearProbability(stop, types.Forecasts{
+		ExpectedReturn: -0.01,
+		Calibrated:     true,
+		Confidence:     1,
+		Uncertainty:    0.02,
+		IncrementalMSE: 0.0004, // √MSE = 0.02 → skill = 0.5
+	})
+
+	if got < 0.249 || got > 0.251 {
+		t.Fatalf("want ~0.25, got %v", got)
 	}
 }
 
@@ -85,7 +129,7 @@ func TestShouldRotateHighClearForcesWait(t *testing.T) {
 	t.Parallel()
 
 	if shouldRotate(0.08, 0.03, 0.01, 0.9) {
-		t.Fatal("high clear score must force wait")
+		t.Fatal("high clear probability must force wait")
 	}
 }
 
@@ -96,7 +140,7 @@ func TestShouldRotateLowClearAllowsDisplace(t *testing.T) {
 	t.Parallel()
 
 	if !shouldRotate(0.08, 0.03, 0.01, 0) {
-		t.Fatal("zero clear score with positive surplus must rotate")
+		t.Fatal("zero clear probability with positive surplus must rotate")
 	}
 }
 
@@ -107,8 +151,8 @@ func TestBestRotationPicksLargestAdvantage(t *testing.T) {
 	t.Parallel()
 
 	index, found := bestRotation(0.10, []Incumbent{
-		{Symbol: "A", HoldUtility: 0.08, ExitCost: 0.01, ClearScore: 0},
-		{Symbol: "B", HoldUtility: 0.02, ExitCost: 0.01, ClearScore: 0},
+		{Symbol: "A", HoldUtility: 0.08, ExitCost: 0.01, ClearProb: 0},
+		{Symbol: "B", HoldUtility: 0.02, ExitCost: 0.01, ClearProb: 0},
 	})
 
 	if !found || index != 1 {
@@ -117,17 +161,23 @@ func TestBestRotationPicksLargestAdvantage(t *testing.T) {
 }
 
 /*
-BenchmarkClearScore measures path-to-score conversion.
+BenchmarkClearProbability measures path-to-probability conversion.
 */
-func BenchmarkClearScore(b *testing.B) {
+func BenchmarkClearProbability(b *testing.B) {
 	stop := &types.Stoploss{
 		Action: "hold", PeakReturn: 0.1, MarkReturn: 0.08, TrailDistance: 0.05,
 	}
-	forecast := types.Forecasts{ExpectedReturn: -0.01}
+	forecast := types.Forecasts{
+		ExpectedReturn: -0.01,
+		Calibrated:     true,
+		Confidence:     0.8,
+		Uncertainty:    0.01,
+		IncrementalMSE: 0.0001,
+	}
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = clearScore(stop, forecast)
+		_ = clearProbability(stop, forecast)
 	}
 }

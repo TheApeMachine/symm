@@ -1,19 +1,23 @@
 import { describe, expect, it } from "vitest";
-import type { StrategyDecision, TradeObservation } from "#/types/thesis";
+import type { Holding } from "#/collections/types";
+import type { StrategyDecision } from "#/types/thesis";
 import {
-	auditObservations,
+	auditHoldings,
 	decisionFraction,
-	isAuditObservation,
-	tradeObservationAuditRow,
+	holdingAuditRow,
+	isClosedLot,
 } from "./dashboard-rail";
 
-const observation = (
-	overrides: Partial<TradeObservation>,
-): TradeObservation => ({
-	kind: "execution",
+const samplePosition = (overrides: Partial<Holding> = {}): Holding => ({
 	symbol: "BTC/USD",
-	decision: 0,
-	at: "2026-07-12T04:05:06Z",
+	qty: 0,
+	entry_price: 100,
+	entry_fee: 0.1,
+	exit_fee: 0.1,
+	mark: 101,
+	pnl: 0.5,
+	return_pct: 0.01,
+	status: "closed",
 	...overrides,
 });
 
@@ -75,101 +79,31 @@ describe("decisionFraction", () => {
 	});
 });
 
-describe("isAuditObservation", () => {
-	it("accepts entry and exit journal rows only", () => {
-		expect(
-			isAuditObservation(
-				observation({ kind: "execution", side: "buy", status: "filled" }),
-			),
-		).toBe(true);
-		expect(
-			isAuditObservation(
-				observation({ kind: "execution", side: "sell", status: "filled" }),
-			),
-		).toBe(true);
-		expect(
-			isAuditObservation(
-				observation({
-					kind: "lifecycle_transition",
-					status: "entered",
-				}),
-			),
-		).toBe(true);
-		expect(
-			isAuditObservation(
-				observation({
-					kind: "lifecycle_transition",
-					status: "closed",
-				}),
-			),
-		).toBe(true);
-		expect(
-			isAuditObservation(
-				observation({ kind: "broker_acceptance", action: "enter" }),
-			),
-		).toBe(false);
-		expect(
-			isAuditObservation(
-				observation({
-					kind: "lifecycle_transition",
-					status: "managing",
-				}),
-			),
-		).toBe(false);
+describe("isClosedLot", () => {
+	it("accepts closed holdings only", () => {
+		expect(isClosedLot(samplePosition({ status: "closed" }))).toBe(true);
+		expect(isClosedLot(samplePosition({ status: "open", qty: 1 }))).toBe(false);
 	});
 });
 
-describe("auditObservations", () => {
-	it("drops non-entry and non-exit journal rows", () => {
+describe("auditHoldings", () => {
+	it("keeps closed lots only", () => {
 		expect(
-			auditObservations([
-				observation({ kind: "intent_submission", action: "enter" }),
-				observation({ kind: "execution", side: "buy", status: "filled" }),
-				observation({
-					kind: "lifecycle_transition",
-					status: "managing",
-				}),
-				observation({ kind: "execution", side: "sell", status: "filled" }),
+			auditHoldings([
+				samplePosition({ symbol: "BTC/USD", status: "closed" }),
+				samplePosition({ symbol: "ETH/USD", status: "open", qty: 1 }),
 			]),
-		).toEqual([
-			observation({ kind: "execution", side: "buy", status: "filled" }),
-			observation({ kind: "execution", side: "sell", status: "filled" }),
-		]);
+		).toEqual([samplePosition({ symbol: "BTC/USD", status: "closed" })]);
 	});
 });
 
-describe("tradeObservationAuditRow", () => {
-	it("formats an entry fill as an audit row", () => {
-		expect(
-			tradeObservationAuditRow(
-				observation({
-					kind: "execution",
-					status: "filled",
-					side: "buy",
-					executionId: "E1",
-					quantity: "0.01",
-					price: "61420",
-				}),
-			),
-		).toEqual({
-			reason: "filled",
-			reference: "#E1 · 04:05:06",
-			meta: "execution · buy · BTC/USD · 0.01 @ 61420.000",
-		});
-	});
+describe("holdingAuditRow", () => {
+	it("formats a closed lot as an audit row", () => {
+		const row = holdingAuditRow(
+			samplePosition({ symbol: "BTC/USD", status: "closed", pnl: 0.5 }),
+		);
 
-	it("formats an exit lifecycle transition as an audit row", () => {
-		expect(
-			tradeObservationAuditRow(
-				observation({
-					kind: "lifecycle_transition",
-					status: "closed",
-				}),
-			),
-		).toEqual({
-			reason: "closed",
-			reference: "#0 · 04:05:06",
-			meta: "lifecycle_transition · BTC/USD",
-		});
+		expect(row.reference).toBe("BTC/USD");
+		expect(row.meta).toContain("pnl");
 	});
 });

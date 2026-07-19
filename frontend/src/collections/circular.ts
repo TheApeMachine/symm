@@ -54,3 +54,23 @@ export const Circular = <T>(positions: number): CircularBuffer<T> => {
 
 	return { push, replaceTail, values, length, capacity: () => positions };
 };
+
+/*
+latestOf returns the newest retained value in a circular buffer.
+*/
+export const latestOf = <T>(buffer?: CircularBuffer<T>): T | undefined =>
+	buffer?.values().at(-1);
+
+/*
+latestValues returns the newest retained value for each key, sorted by key.
+*/
+export const latestValues = <T>(
+	index: Record<string, CircularBuffer<T>>,
+): T[] =>
+	Object.keys(index)
+		.sort()
+		.flatMap((key) => {
+			const value = latestOf(index[key]);
+
+			return value === undefined ? [] : [value];
+		});

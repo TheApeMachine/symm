@@ -1,13 +1,34 @@
-import { type CausalFrame, causalStore } from "#/collections/causal";
+import type { CausalFrame } from "#/collections/types";
 
 const finite = (value: unknown): number | null =>
 	typeof value === "number" && Number.isFinite(value) ? value : null;
 
 /*
-latestCausalFrame returns one symbol's newest causal outcome from the store.
+latestCausalFrame returns the newest causal outcome from a flat buffer snapshot.
+When symbol is provided, the newest matching row wins; otherwise the buffer tail.
 */
-export const latestCausalFrame = (symbol: string): CausalFrame | undefined =>
-	causalStore.state.causal[symbol]?.values().at(-1);
+export const latestCausalFrame = (
+	frames: readonly CausalFrame[] | undefined,
+	symbol?: string,
+): CausalFrame | undefined => {
+	if (frames === undefined || frames.length === 0) {
+		return undefined;
+	}
+
+	if (symbol === undefined || symbol === "") {
+		return frames.at(-1);
+	}
+
+	for (let index = frames.length - 1; index >= 0; index -= 1) {
+		const frame = frames[index];
+
+		if (frame?.symbol === symbol) {
+			return frame;
+		}
+	}
+
+	return frames.at(-1);
+};
 
 export const causalReading = (
 	frame: CausalFrame | undefined,

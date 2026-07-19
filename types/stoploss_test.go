@@ -80,14 +80,18 @@ func TestStoplossFiresWhenMarkBreachesFloor(t *testing.T) {
 
 	stop := NewStoploss(context.Background())
 	entry := 100.0
+	// Tight residual RMSE so trail can earn a positive floor on the lift.
+	_ = stop.Update(testEvidence(100, entry, 0.02, 0.03, 0.0001))
+	_ = stop.Update(testEvidence(110, entry, 0.02, 0.03, 0.0001))
 
-	_ = stop.Update(testEvidence(100, entry, 0.02, 0.03, 0.01))
-	_ = stop.Update(testEvidence(110, entry, 0.02, 0.03, 0.01))
-
-	breached := stop.Update(testEvidence(101, entry, 0.02, 0.0, 0.01))
+	breached := stop.Update(testEvidence(101, entry, 0.02, 0.03, 0.0001))
 
 	if breached.Action != "stop" {
-		t.Fatalf("want stop after breach, got %s (%s)", breached.Action, breached.Reason)
+		t.Fatalf(
+			"want stop after breach, got %s (%s) stop=%v mark=%v trail=%v floor=%v",
+			breached.Action, breached.Reason, stop.StopReturn, breached.MarkReturn,
+			stop.TrailDistance, stop.LockedFloor,
+		)
 	}
 }
 
@@ -115,31 +119,33 @@ func TestStoplossTakeProfitNearPeakWithDeadForward(t *testing.T) {
 }
 
 /*
-TestStoplossWaitsWithoutTrailScale proves vacuum σ cannot arm a knife-edge stop.
+TestStoplossBindLivesAtEntry proves fill-time Bind publishes a stop without
+waiting for forecast σ.
 */
-func TestStoplossWaitsWithoutTrailScale(t *testing.T) {
+func TestStoplossBindLivesAtEntry(t *testing.T) {
 	t.Parallel()
 
 	stop := NewStoploss(context.Background())
-	first := stop.Update(StopEvidence{
-		Symbol:              "AAA/USD",
-		Mark:                99.9,
-		Entry:               100,
-		CognitionReady:      true,
-		CognitionConfidence: 0.95,
-		Present:             true,
-	})
+	stop.Bind(100, 0.002)
 
-	if first.Action != "hold" {
-		t.Fatalf("want hold without scale, got %s (%s)", first.Action, first.Reason)
+	if !stop.Armed() {
+		t.Fatal("bound stop must be armed")
+	}
+
+	if stop.StopPrice() <= 0 {
+		t.Fatalf("bound stop must publish a floor, got %v", stop.StopPrice())
+	}
+
+	if stop.StopReturn != -0.002 {
+		t.Fatalf("want stopReturn -0.002, got %v", stop.StopReturn)
 	}
 }
 
 /*
-TestStoplossDoesNotArmOnSpreadAlone keeps thin-book spread from arming a
-knife-edge trail before forecast σ exists.
+TestStoplossLivesOnSpreadAlone keeps an open lot protected from book width
+when forecast σ has not arrived yet.
 */
-func TestStoplossDoesNotArmOnSpreadAlone(t *testing.T) {
+func TestStoplossLivesOnSpreadAlone(t *testing.T) {
 	t.Parallel()
 
 	stop := NewStoploss(context.Background())
@@ -151,8 +157,12 @@ func TestStoplossDoesNotArmOnSpreadAlone(t *testing.T) {
 		Present: true,
 	})
 
-	if first.Action != "hold" || stop.armed {
-		t.Fatalf("spread-only must not arm: action=%s armed=%v", first.Action, stop.armed)
+	if first.Action != "hold" || !stop.armed {
+		t.Fatalf("spread-only must live: action=%s armed=%v", first.Action, stop.armed)
+	}
+
+	if stop.StopPrice() <= 0 {
+		t.Fatalf("spread-bound stop must publish a floor, got %v", stop.StopPrice())
 	}
 }
 

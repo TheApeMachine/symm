@@ -1,5 +1,5 @@
 import type { CircularBuffer } from "#/collections/circular";
-import type { MeasurementEpoch } from "#/collections/measurements";
+import type { MeasurementEpoch } from "#/collections/types";
 import {
 	collectFitState,
 	type HawkesObservation,
@@ -72,7 +72,7 @@ hawkesSeriesFromBuffer builds a dense intensity series over a window long enough
 for several half-lives of decay so impulses do not collapse to a single pixel.
 */
 export const hawkesSeriesFromBuffer = (
-	buffer: CircularBuffer<MeasurementEpoch> | undefined,
+	buffer: CircularBuffer<MeasurementEpoch> | MeasurementEpoch[] | undefined,
 	now = Date.now(),
 	sampleCount = 220,
 ): HawkesSeries | null => {

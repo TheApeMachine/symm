@@ -41,7 +41,6 @@ func (source staticHawkesSource) Outcome(symbol string) (excitation.Outcome, boo
 func TestSolverUpdate(t *testing.T) {
 	viper.Set("market.l3_depth", 8)
 	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-	viper.Set("market.manifold_max_symbols", 8)
 
 	Convey("Given observed arrival intensity before Hawkes fit", t, func() {
 		solver, err := NewSolver(newTestBookSource("BTC/USD"))
@@ -68,8 +67,7 @@ func TestSolverUpdate(t *testing.T) {
 		})
 	})
 
-	Convey("Given more empirical intensities than the GPU working set", t, func() {
-		viper.Set("market.manifold_max_symbols", 1)
+	Convey("Given multiple booked intensity leaders", t, func() {
 		solver, err := NewSolver(newTestBookSource("BTC/USD", "ETH/USD"))
 		So(err, ShouldBeNil)
 		defer solver.Close()
@@ -91,37 +89,11 @@ func TestSolverUpdate(t *testing.T) {
 		_, bitcoinFound := thesis.Manifold.Load("BTC/USD")
 		_, etherFound := thesis.Manifold.Load("ETH/USD")
 
-		Convey("It should advance the strongest observed forcing without capacity churn", func() {
+		Convey("It should advance every booked leader", func() {
 			So(err, ShouldBeNil)
-			So(bitcoinFound, ShouldBeFalse)
+			So(bitcoinFound, ShouldBeTrue)
 			So(etherFound, ShouldBeTrue)
-			So(solver.symbols, ShouldHaveLength, 1)
-		})
-	})
-
-	Convey("Given more candidates than GPU capacity", t, func() {
-		viper.Set("market.manifold_max_symbols", 1)
-		solver, err := NewSolver(newTestBookSource("BTC/USD", "ETH/USD"))
-		So(err, ShouldBeNil)
-		defer solver.Close()
-
-		thesis := types.NewThesis(nil, nil)
-		bitcoin := solverOutcome(time.Unix(1, 0), 2, 1)
-		ether := solverOutcome(time.Unix(1, 0), 8, 4)
-		err = solver.Update(thesis, staticHawkesSource{
-			symbols: []string{"BTC/USD", "ETH/USD"},
-			outcomes: map[string]excitation.Outcome{
-				"BTC/USD": bitcoin,
-				"ETH/USD": ether,
-			},
-		})
-		_, bitcoinFound := thesis.Manifold.Load("BTC/USD")
-		_, etherFound := thesis.Manifold.Load("ETH/USD")
-
-		Convey("It should keep the strongest intensity only", func() {
-			So(err, ShouldBeNil)
-			So(bitcoinFound, ShouldBeFalse)
-			So(etherFound, ShouldBeTrue)
+			So(solver.symbols, ShouldHaveLength, 2)
 		})
 	})
 
@@ -130,7 +102,6 @@ func TestSolverUpdate(t *testing.T) {
 func TestSolverAdvance(t *testing.T) {
 	viper.Set("market.l3_depth", 8)
 	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-	viper.Set("market.manifold_max_symbols", 8)
 
 	Convey("Given Hawkes excitation", t, func() {
 		solver, err := NewSolver(newTestBookSource("BTC/USD"))
@@ -167,7 +138,6 @@ func TestSolverAdvance(t *testing.T) {
 func TestSolverUpdateRepublishesQuietManifold(t *testing.T) {
 	viper.Set("market.l3_depth", 8)
 	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-	viper.Set("market.manifold_max_symbols", 8)
 
 	Convey("Given a GasReady field and a quiet Hawkes outcome", t, func() {
 		books := newTestBookSource("BTC/USD")
@@ -205,7 +175,6 @@ func TestSolverUpdateRepublishesQuietManifold(t *testing.T) {
 func TestSolverAdvanceWaitsForMarketState(t *testing.T) {
 	viper.Set("market.l3_depth", 8)
 	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-	viper.Set("market.manifold_max_symbols", 8)
 
 	Convey("Given Hawkes state before its authoritative L3 book", t, func() {
 		solver, err := NewSolver(newTestBookSource("BTC/USD"))
@@ -217,7 +186,7 @@ func TestSolverAdvanceWaitsForMarketState(t *testing.T) {
 			solverOutcome(time.Unix(1, 0), 4, 2),
 		)
 
-		Convey("It should wait without consuming GPU symbol capacity", func() {
+		Convey("It should wait without allocating a Field", func() {
 			So(advanceErr, ShouldBeNil)
 			So(state.GasReady(), ShouldBeFalse)
 			So(solver.symbols, ShouldBeEmpty)
@@ -228,7 +197,6 @@ func TestSolverAdvanceWaitsForMarketState(t *testing.T) {
 func TestSolverAdvanceAppliesAbsoluteHawkesForcing(t *testing.T) {
 	viper.Set("market.l3_depth", 8)
 	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-	viper.Set("market.manifold_max_symbols", 8)
 
 	Convey("Given the same L3 state up to a 117-unit absolute arrival impulse", t, func() {
 		solver, solverErr := NewSolver(newTestBookSource("BTC/USD"))
@@ -265,7 +233,6 @@ func TestSolverAdvanceAppliesAbsoluteHawkesForcing(t *testing.T) {
 func TestSolverAdvanceAdaptsToForcing(t *testing.T) {
 	viper.Set("market.l3_depth", 8)
 	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-	viper.Set("market.manifold_max_symbols", 8)
 
 	Convey("Given arrival forcing whose carrier speed exceeds the configured step", t, func() {
 		solver, err := NewSolver(newTestBookSource("BTC/USD"))
@@ -284,12 +251,11 @@ func TestSolverAdvanceAdaptsToForcing(t *testing.T) {
 	})
 }
 
-func TestSolverAdvanceReplacesOldestSymbolAtCapacity(t *testing.T) {
+func TestSolverAdvanceKeepsMultipleSymbols(t *testing.T) {
 	viper.Set("market.l3_depth", 8)
 	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-	viper.Set("market.manifold_max_symbols", 1)
 
-	Convey("Given more active symbols than the configured GPU working set", t, func() {
+	Convey("Given successive advances on distinct booked symbols", t, func() {
 		solver, err := NewSolver(newTestBookSource("BTC/USD", "ETH/USD"))
 		So(err, ShouldBeNil)
 		defer solver.Close()
@@ -307,7 +273,7 @@ func TestSolverAdvanceReplacesOldestSymbolAtCapacity(t *testing.T) {
 			solverOutcome(time.Unix(3, 0), 4, 2),
 		)
 
-		Convey("It should replace the stale field and advance the current symbol", func() {
+		Convey("It should keep every Field resident", func() {
 			So(firstErr, ShouldBeNil)
 			So(secondErr, ShouldBeNil)
 			So(restoredErr, ShouldBeNil)
@@ -315,8 +281,7 @@ func TestSolverAdvanceReplacesOldestSymbolAtCapacity(t *testing.T) {
 			So(restored.GasReady(), ShouldBeTrue)
 			So(restored.Epoch, ShouldEqual, 2)
 			So(solver.symbols["BTC/USD"].handle, ShouldNotBeNil)
-			So(solver.symbols, ShouldContainKey, "ETH/USD")
-			So(solver.symbols["ETH/USD"].handle, ShouldBeNil)
+			So(solver.symbols["ETH/USD"].handle, ShouldNotBeNil)
 		})
 	})
 }
@@ -349,10 +314,41 @@ func solverOutcome(at time.Time, buyRate, sellRate float64) excitation.Outcome {
 	}
 }
 
+func TestSolverSharedEngineFields(t *testing.T) {
+	viper.Set("market.l3_depth", 8)
+	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+
+	Convey("Given one shared Metal engine", t, func() {
+		solver, err := NewSolver(newTestBookSource("BTC/USD", "ETH/USD"))
+		So(err, ShouldBeNil)
+		defer solver.Close()
+
+		So(solver.engine, ShouldNotBeNil)
+
+		bitcoin, bitcoinErr := solver.advance(
+			"BTC/USD",
+			solverOutcome(time.Unix(1, 0), 4, 2),
+		)
+		ether, etherErr := solver.advance(
+			"ETH/USD",
+			solverOutcome(time.Unix(1, 0), 8, 4),
+		)
+
+		Convey("It should keep two resident Fields on the same engine", func() {
+			So(bitcoinErr, ShouldBeNil)
+			So(etherErr, ShouldBeNil)
+			So(bitcoin.GasReady(), ShouldBeTrue)
+			So(ether.GasReady(), ShouldBeTrue)
+			So(solver.symbols, ShouldHaveLength, 2)
+			So(solver.symbols["BTC/USD"].handle.ResidentBytes(), ShouldBeGreaterThan, 0)
+			So(solver.symbols["ETH/USD"].handle.ResidentBytes(), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
 func BenchmarkSolverAdvance(b *testing.B) {
 	viper.Set("market.l3_depth", 8)
 	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-	viper.Set("market.manifold_max_symbols", 8)
 
 	solver, err := NewSolver(newTestBookSource("BTC/USD"))
 
@@ -373,5 +369,26 @@ func BenchmarkSolverAdvance(b *testing.B) {
 		}
 
 		at = at.Add(time.Nanosecond)
+	}
+}
+
+/*
+TestSolverProductionBoot constructs the shared engine at the runtime 64³ grid —
+the path that previously SIGSEGV'd on start.
+*/
+func TestSolverProductionBoot(t *testing.T) {
+	viper.Set("market.l3_depth", 10)
+	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+
+	solver, err := NewSolver(newTestBookSource("BTC/USD"))
+
+	if err != nil {
+		t.Fatalf("NewSolver: %v", err)
+	}
+
+	defer solver.Close()
+
+	if solver.engine == nil {
+		t.Fatal("engine missing")
 	}
 }

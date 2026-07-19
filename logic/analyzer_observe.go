@@ -32,9 +32,14 @@ func (analyzer *Analyzer) observeStates(thesis *types.Thesis) []manifold.State {
 
 		states = append(states, state)
 
-		if !state.Replay {
-			analyzer.observe(thesis, state)
+		// Unchanged excitation epochs still paint the field for UI; they do not
+		// mint a forecast. Cached republish of yesterday's calibration is not
+		// an observation.
+		if state.Replay {
+			return true
 		}
+
+		analyzer.observe(thesis, state)
 
 		return true
 	})
@@ -118,7 +123,7 @@ func (analyzer *Analyzer) forecast(
 
 	// Candidate notional is capped at the best ask, so the forecast does not
 	// claim depth-crossing impact beyond the directly observed touch spread.
-	thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
+	forecast := types.Forecasts{
 		Source:           "resonance+causal",
 		Symbol:           state.Symbol,
 		At:               state.At,
@@ -148,7 +153,9 @@ func (analyzer *Analyzer) forecast(
 			causalOutcome.Reading.Confidence,
 			math.Exp(-math.Abs(resonanceOutcome.Surprise)),
 		),
-	})
+	}
+
+	thesis.Forecasts = append(thesis.Forecasts, forecast)
 }
 
 /*

@@ -10,7 +10,7 @@ const payload = {
 		quotes_ready: 8,
 		quotes_total: 10,
 	},
-	positions: [
+	holdings: [
 		{
 			symbol: "BTC/USD",
 			qty: 0.01,
@@ -52,7 +52,7 @@ describe("ws batching", () => {
 		for (let index = 0; index < 32; index += 1) {
 			batcher.enqueue({
 				tick: { count: index, open: index % 3 },
-				positions: payload.positions,
+				holdings: payload.holdings,
 			});
 		}
 

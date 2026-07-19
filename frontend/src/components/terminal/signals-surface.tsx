@@ -1,18 +1,17 @@
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { appStore } from "#/collections/app";
-import { measurementsStore } from "#/collections/measurements";
 import { terminalStore } from "#/collections/terminal";
+import type { Measurement } from "#/types/measurement";
 import { SignalDetail } from "#/components/kernel/detail";
 import { CrossSectionPanel } from "#/components/terminal/cross-section-panel";
 import { HealthPanel } from "#/components/terminal/health";
 import { KernelList } from "#/components/terminal/kernel-list";
 import { orderedKernelSources } from "#/components/terminal/kernel-meta";
-import {
-	backendMeasurementSources,
-	sameSources,
-} from "#/components/terminal/measurement-sources";
+import { backendMeasurementSources } from "#/components/terminal/measurement-sources";
 import { RadarPanel } from "#/components/terminal/regime-radar";
+import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 
 export const signalsSurfaceSources = (
 	kernels: string[],
@@ -26,15 +25,31 @@ every live readout inside the surface bypasses React via direct store paint.
 */
 export const SignalsSurface = () => {
 	const kernels = useSelector(appStore, (state) => state.kernels);
-	const backendSources = useSelector(
-		measurementsStore,
-		backendMeasurementSources,
-		{ compare: sameSources },
-	);
+	const online = useSelector(appStore, (state) => state.online);
 	const selectedSource = useSelector(
 		terminalStore,
 		(state) => state.selectedSource,
 	);
+	const [backendSources, setBackendSources] = useState<string[]>([]);
+
+	useDirectStorePaint(
+		getWorker(),
+		[{ store: "measurements", key: "" }],
+		(buffers) => {
+			const next = backendMeasurementSources(
+				(buffers["measurements:"] ?? []) as Measurement[],
+			);
+
+			setBackendSources((previous) =>
+				previous.length === next.length &&
+				previous.every((source, index) => source === next[index])
+					? previous
+					: next,
+			);
+		},
+		[online],
+	);
+
 	const sources = useMemo(
 		() => signalsSurfaceSources(kernels, backendSources),
 		[kernels, backendSources],

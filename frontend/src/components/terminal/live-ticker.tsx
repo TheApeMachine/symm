@@ -1,11 +1,11 @@
+import { useSelector } from "@tanstack/react-store";
 import { type RefObject, useEffect, useRef } from "react";
 import { appStore } from "#/collections/app";
-import { type Balance, balancesStore } from "#/collections/balances";
-import { type Position, positionsStore } from "#/collections/positions";
-import { tickStore } from "#/collections/tick";
+import type { Balance, Holding } from "#/collections/types";
 import { formatUptime } from "#/components/terminal/kernel-meta";
 import { walletMetrics } from "#/components/terminal/panels";
 import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { getWorker } from "#/providers/websocket";
 import { Flex } from "@/components/ui/flex";
 
 const setText = (element: HTMLElement | null, value: string) => {
@@ -20,6 +20,54 @@ const setTone = (element: HTMLElement | null, tone: string) => {
 	}
 };
 
+const setVisibility = (element: HTMLElement | null, visible: boolean) => {
+	if (element !== null) {
+		element.style.display = visible ? "" : "none";
+	}
+};
+
+type WalletPaintRefs = {
+	cash: HTMLSpanElement | null;
+	equity: HTMLSpanElement | null;
+	lambo: HTMLImageElement | null;
+	tick: HTMLSpanElement | null;
+	open: HTMLSpanElement | null;
+};
+
+const paintWalletMetrics = (
+	refs: WalletPaintRefs,
+	balances: Balance[],
+	holdings: Holding[],
+) => {
+	const wallet = walletMetrics(balances, holdings);
+	const cashValue = wallet ? `${wallet.cash.toFixed(2)} ${wallet.asset}` : "—";
+	// Equity tone follows price P&L (mark vs entry), not fee-dragged unrealized
+	// dollars — entry fees alone would paint a green book red.
+	const pricePnl = holdings.reduce((total, holding) => {
+		if (
+			!(holding.qty > 0) ||
+			!(holding.entry_price > 0) ||
+			!(holding.mark > 0)
+		) {
+			return total;
+		}
+
+		return total + (holding.mark - holding.entry_price) * holding.qty;
+	}, 0);
+	const inProfit = pricePnl > 0;
+	const equityValue = wallet
+		? `${wallet.equity.toFixed(2)} ${wallet.asset}`
+		: "—";
+
+	setText(refs.cash, cashValue);
+	setText(refs.equity, equityValue);
+	setTone(
+		refs.equity,
+		pricePnl > 0 ? "var(--up)" : pricePnl < 0 ? "var(--down)" : "var(--f3)",
+	);
+	setVisibility(refs.lambo, inProfit);
+};
+
 /*
 LivePulseTicker paints the dashboard pulse strip directly from store snapshots so
 tick cadence updates never traverse React reconciliation.
@@ -31,19 +79,28 @@ export const LivePulseTicker = () => {
 	const candRef = useRef<HTMLSpanElement>(null);
 	const openRef = useRef<HTMLSpanElement>(null);
 	const quotesRef = useRef<HTMLSpanElement>(null);
+	const online = useSelector(appStore, (state) => state.online);
 
 	useDirectStorePaint(
-		() => {
-			const tick = tickStore.state.frame;
-			const online = appStore.state.online;
+		getWorker(),
+		[{ store: "tick", key: "" }],
+		(buffers) => {
+			const tick = buffers["tick:"]?.at(-1) as {
+				count?: number;
+				completed?: boolean;
+				phase?: string;
+				measurements?: number;
+				candidates?: number;
+				open?: number;
+				ns?: number;
+				quotes_ready?: number;
+				quotes_total?: number;
+			};
+
 			setText(tickRef.current, `#${String(tick?.count ?? 0)}`);
 			setText(
 				phaseRef.current,
-				online
-					? String(
-							tick?.completed === true ? "complete" : (tick?.phase ?? "stream"),
-						)
-					: "offline",
+				tick?.completed === true ? "complete" : (tick?.phase ?? "stream"),
 			);
 			setText(measRef.current, String(tick?.measurements ?? "—"));
 			setText(candRef.current, String(tick?.candidates ?? "—"));
@@ -52,13 +109,13 @@ export const LivePulseTicker = () => {
 				quotesRef.current,
 				typeof tick?.ns === "number"
 					? `${Math.round(tick.ns / 1_000_000)}ms`
-					: tick?.quotes_ready !== undefined && tick?.quotes_total !== undefined
+					: tick?.quotes_ready !== undefined &&
+							tick?.quotes_total !== undefined
 						? `${String(tick.quotes_ready)}/${String(tick.quotes_total)}`
 						: "—",
 			);
 		},
-		[tickStore, appStore],
-		[],
+		[online],
 	);
 
 	return (
@@ -83,69 +140,21 @@ export const LivePulseTicker = () => {
 	);
 };
 
-const setVisibility = (element: HTMLElement | null, visible: boolean) => {
-	if (element !== null) {
-		element.style.display = visible ? "" : "none";
-	}
-};
-
-type WalletPaintRefs = {
-	cash: HTMLSpanElement | null;
-	equity: HTMLSpanElement | null;
-	lambo: HTMLImageElement | null;
-	tick: HTMLSpanElement | null;
-	open: HTMLSpanElement | null;
-};
-
-const paintWalletMetrics = (
-	refs: WalletPaintRefs,
-	balances: Balance[],
-	positions: Position[],
-) => {
-	const wallet = walletMetrics(balances, positions);
-	const tick = tickStore.state.frame;
-	const cashValue = wallet ? `${wallet.cash.toFixed(2)} ${wallet.asset}` : "—";
-	// Equity tone follows price P&L (mark vs entry), not fee-dragged unrealized
-	// dollars — entry fees alone would paint a green book red.
-	const pricePnl = positions.reduce((total, position) => {
-		if (
-			!(position.qty > 0) ||
-			!(position.entry_price > 0) ||
-			!(position.mark > 0)
-		) {
-			return total;
-		}
-
-		return total + (position.mark - position.entry_price) * position.qty;
-	}, 0);
-	const inProfit = pricePnl > 0;
-	const equityValue = wallet
-		? `${wallet.equity.toFixed(2)} ${wallet.asset}`
-		: "—";
-
-	setText(refs.cash, cashValue);
-	setText(refs.equity, equityValue);
-	setTone(
-		refs.equity,
-		pricePnl > 0 ? "var(--up)" : pricePnl < 0 ? "var(--down)" : "var(--f3)",
-	);
-	setVisibility(refs.lambo, inProfit);
-	setText(refs.tick, tick?.count !== undefined ? String(tick.count) : "…");
-	setText(refs.open, String(tick?.open ?? 0));
-};
-
 /*
 LiveOpenCount paints the open-position counter directly from tick snapshots.
 */
 export const LiveOpenCount = () => {
 	const openRef = useRef<HTMLSpanElement>(null);
+	const online = useSelector(appStore, (state) => state.online);
 
 	useDirectStorePaint(
-		() => {
-			setText(openRef.current, String(tickStore.state.frame?.open ?? 0));
+		getWorker(),
+		[{ store: "tick", key: "" }],
+		(buffers) => {
+			const tick = buffers["tick:"]?.at(-1) as { open?: number };
+			setText(openRef.current, String(tick?.open ?? 0));
 		},
-		[tickStore],
-		[],
+		[online],
 	);
 
 	return (
@@ -163,9 +172,20 @@ export const LiveWalletMetrics = () => {
 	const equityRef = useRef<HTMLSpanElement>(null);
 	const lamboRef = useRef<HTMLImageElement>(null);
 	const tickRef = useRef<HTMLSpanElement>(null);
+	const online = useSelector(appStore, (state) => state.online);
 
 	useDirectStorePaint(
-		() => {
+		getWorker(),
+		[
+			{ store: "balances", key: "" },
+			{ store: "holdings", key: "" },
+			{ store: "tick", key: "" },
+		],
+		(buffers) => {
+			const balances = (buffers["balances:"] ?? []) as Balance[];
+			const holdings = (buffers["holdings:"] ?? []) as Holding[];
+			const tick = buffers["tick:"]?.at(-1) as { count?: number };
+
 			paintWalletMetrics(
 				{
 					cash: cashRef.current,
@@ -174,12 +194,12 @@ export const LiveWalletMetrics = () => {
 					tick: tickRef.current,
 					open: null,
 				},
-				balancesStore.state.balances,
-				positionsStore.state.positions,
+				balances,
+				holdings,
 			);
+			setText(tickRef.current, String(tick?.count ?? 0));
 		},
-		[balancesStore, positionsStore, tickStore],
-		[],
+		[online],
 	);
 
 	return (
@@ -248,33 +268,42 @@ export const LiveEngineTicker = () => {
 	const openRef = useRef<HTMLDivElement>(null);
 	const measRef = useRef<HTMLDivElement>(null);
 	const latencyRef = useRef<HTMLDivElement>(null);
+	const online = useSelector(appStore, (state) => state.online);
 
 	useDirectStorePaint(
-		() => {
-			const online = appStore.state.online;
-			const tick = tickStore.state.frame;
-			const storyTicks = tick?.count ?? 0;
-			const enginePhase =
-				tick?.completed === true ? "complete" : ((tick?.phase as string) ?? "");
-			const candidates = (tick?.candidates as number) ?? 0;
-			const open = (tick?.open as number) ?? 0;
-			const measurements =
-				typeof tick?.measurements === "number" ? tick.measurements : null;
-			const ns = typeof tick?.ns === "number" ? tick.ns : null;
-			const latencyMs = ns === null ? null : Math.round(ns / 1_000_000);
+		getWorker(),
+		[{ store: "tick", key: "" }],
+		(buffers) => {
+			const tick = buffers["tick:"]?.at(-1) as {
+				count?: number;
+				completed?: boolean;
+				phase?: string;
+				candidates?: number;
+				open?: number;
+				measurements?: number;
+				ns?: number;
+			};
 
-			setText(seqRef.current, `#${storyTicks}`);
-			setText(phaseRef.current, online ? enginePhase || "stream" : "offline");
-			setText(candRef.current, candidates.toString());
-			setText(openRef.current, open.toString());
+			setText(seqRef.current, `#${tick?.count ?? 0}`);
 			setText(
-				measRef.current,
-				measurements === null ? "—" : String(measurements),
+				phaseRef.current,
+				online
+					? tick?.completed === true
+						? "complete"
+						: (tick?.phase ?? "stream")
+					: "offline",
 			);
-			setText(latencyRef.current, latencyMs === null ? "—" : `${latencyMs}ms`);
+			setText(candRef.current, tick?.candidates?.toString() ?? "—");
+			setText(openRef.current, tick?.open?.toString() ?? "—");
+			setText(measRef.current, tick?.measurements?.toString() ?? "—");
+			setText(
+				latencyRef.current,
+				typeof tick?.ns === "number"
+					? `${Math.round(tick.ns / 1_000_000)}ms`
+					: "—",
+			);
 		},
-		[tickStore, appStore],
-		[],
+		[online],
 	);
 
 	return (

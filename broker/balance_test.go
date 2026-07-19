@@ -69,7 +69,7 @@ func TestBalancePublish(t *testing.T) {
 			So(len(messages), ShouldEqual, 1)
 			frame := string(<-messages)
 			So(frame, ShouldContainSubstring, `"balances"`)
-			So(frame, ShouldContainSubstring, `"positions"`)
+			So(frame, ShouldContainSubstring, `"holdings"`)
 			So(frame, ShouldContainSubstring, `"BTC/USD"`)
 			So(frame, ShouldContainSubstring, `"balance":100`)
 			So(frame, ShouldContainSubstring, `"available":90`)
@@ -94,6 +94,174 @@ func TestBalanceFrameRequiresModel(t *testing.T) {
 
 		Convey("Then Publish refuses to publish", func() {
 			balance.Publish()
+		})
+	})
+}
+
+func TestSyncWalletUsesAvailable(t *testing.T) {
+	Convey("Given locked base inventory with zero Available", t, func() {
+		holdings := &sync.Map{}
+		holdings.Store("BTC/USD", &types.Holding{
+			Symbol: "BTC/USD",
+			Asset:  "BTC",
+			Qty:    decimal.NewFromFloat64(0.0004675),
+			Status: types.OPEN,
+		})
+		cash := decimal.NewFromFloat64(100)
+		locked := decimal.NewFromFloat64(0.0004675)
+		zero := decimal.NewFromFloat64(0)
+		balance := &Balance{
+			status:   types.READY,
+			quote:    "USD",
+			holdings: holdings,
+			model: &kraken.Balance{Data: []kraken.BalanceData{
+				{Asset: "USD", Balance: cash, Available: cash},
+				{Asset: "BTC", Balance: locked, Available: zero},
+			}},
+		}
+
+		balance.syncWallet()
+
+		Convey("Then the unsellable lot is closed, not deleted", func() {
+			value, ok := balance.holdings.Load("BTC/USD")
+			So(ok, ShouldBeTrue)
+			So(value.(*types.Holding).Status, ShouldEqual, types.CLOSED)
+			So(value.(*types.Holding).Qty.Sign(), ShouldEqual, 0)
+		})
+	})
+}
+
+func TestSyncWalletClosesAbsent(t *testing.T) {
+	Convey("Given a phantom lot absent from the wallet snapshot", t, func() {
+		holdings := &sync.Map{}
+		holdings.Store("ONDO/USD", &types.Holding{
+			Symbol: "ONDO/USD",
+			Asset:  "ONDO",
+			Qty:    decimal.NewFromFloat64(113.9),
+			Status: types.OPEN,
+		})
+		cash := decimal.NewFromFloat64(199.41)
+		balance := &Balance{
+			status:   types.READY,
+			quote:    "USD",
+			holdings: holdings,
+			model: &kraken.Balance{Data: []kraken.BalanceData{{
+				Asset: "USD", Balance: cash, Available: cash,
+			}}},
+		}
+
+		balance.syncWallet()
+
+		Convey("Then the phantom lot is closed and retained", func() {
+			value, ok := balance.holdings.Load("ONDO/USD")
+			So(ok, ShouldBeTrue)
+			So(value.(*types.Holding).Status, ShouldEqual, types.CLOSED)
+		})
+	})
+}
+
+/*
+TestBalanceAckPaperSnapshotDropsOmittedAssets covers the paper wallet shape:
+`kraken paper balance` returns only non-zero assets. After a sell the next frame
+must replace the model (snapshot) so stale positive Available rows cannot keep
+phantom OPEN lots alive and inflate equity.
+*/
+func TestBalanceAckPaperSnapshotDropsOmittedAssets(t *testing.T) {
+	Convey("Given a wallet that still carries a sold base asset", t, func() {
+		ethQty := decimal.NewFromFloat64(0.01669712)
+		usd := decimal.NewFromFloat64(165.0)
+		holdings := &sync.Map{}
+		holdings.Store("ETH/USD", &types.Holding{
+			Symbol:     "ETH/USD",
+			Asset:      "ETH",
+			Qty:        ethQty.Copy(),
+			EntryPrice: decimal.NewFromFloat64(1859.86),
+			Status:     types.OPEN,
+		})
+		balance := &Balance{
+			status:   types.READY,
+			quote:    "USD",
+			holdings: holdings,
+			model: &kraken.Balance{
+				Type:     "snapshot",
+				Sequence: 1,
+				Data: []kraken.BalanceData{
+					{Asset: "USD", Balance: usd, Available: usd},
+					{Asset: "ETH", Balance: ethQty, Available: ethQty.Copy()},
+				},
+			},
+		}
+
+		Convey("When a paper-style cash-only snapshot arrives", func() {
+			cash := decimal.NewFromFloat64(196.76)
+			payload, err := (&kraken.Balance{
+				Channel:  "balances",
+				Type:     "snapshot",
+				Sequence: 2,
+				Data: []kraken.BalanceData{{
+					Asset: "USD", Balance: cash, Available: cash,
+				}},
+			}).MarshalJSON()
+			So(err, ShouldBeNil)
+
+			balance.BalanceAck(payload)
+
+			Convey("Then the omitted base asset lot is closed", func() {
+				value, ok := balance.holdings.Load("ETH/USD")
+				So(ok, ShouldBeTrue)
+				So(value.(*types.Holding).Status, ShouldEqual, types.CLOSED)
+				So(value.(*types.Holding).Qty.Sign(), ShouldEqual, 0)
+				So(len(balance.model.Data), ShouldEqual, 1)
+				So(balance.model.Data[0].Asset, ShouldEqual, "USD")
+			})
+		})
+
+		Convey("When the same cash-only frame arrives as an update instead", func() {
+			cash := decimal.NewFromFloat64(196.76)
+			payload, err := (&kraken.Balance{
+				Channel:  "balances",
+				Type:     "update",
+				Sequence: 2,
+				Data: []kraken.BalanceData{{
+					Asset: "USD", Balance: cash, Available: cash,
+				}},
+			}).MarshalJSON()
+			So(err, ShouldBeNil)
+
+			balance.BalanceAck(payload)
+
+			Convey("Then the stale ETH row keeps the phantom lot open", func() {
+				value, ok := balance.holdings.Load("ETH/USD")
+				So(ok, ShouldBeTrue)
+				So(value.(*types.Holding).Status, ShouldEqual, types.OPEN)
+				So(value.(*types.Holding).Qty.Sign(), ShouldEqual, 1)
+			})
+		})
+	})
+}
+
+func TestRememberRequiresWalletQty(t *testing.T) {
+	Convey("Given a live wallet without the recovered asset", t, func() {
+		cash := decimal.NewFromFloat64(100)
+		balance := &Balance{
+			status:   types.READY,
+			quote:    "USD",
+			holdings: &sync.Map{},
+			model: &kraken.Balance{Data: []kraken.BalanceData{{
+				Asset: "USD", Balance: cash, Available: cash,
+			}}},
+		}
+
+		balance.Remember(&types.Holding{
+			Symbol: "ONDO/USD",
+			Asset:  "ONDO",
+			Qty:    decimal.NewFromFloat64(10),
+			Status: types.OPEN,
+		})
+
+		Convey("Then Remember refuses to invent inventory", func() {
+			_, ok := balance.holdings.Load("ONDO/USD")
+			So(ok, ShouldBeFalse)
 		})
 	})
 }

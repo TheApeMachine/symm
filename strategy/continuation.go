@@ -41,6 +41,10 @@ func (planner *Planner) manage(thesis *types.Thesis) {
 			return true
 		}
 
+		if !forecast.Eligible() {
+			return true
+		}
+
 		fee := 0.0
 
 		if fraction, err := planner.price.Fraction(holding.Symbol); err == nil {
@@ -64,17 +68,17 @@ func exiting(thesis *types.Thesis, symbol string) bool {
 }
 
 /*
-continuation compares hold against liquidity-forced reduction only. Full exits
-belong to Stoploss (stop / take_profit); Decide must not compete on expected-
-return color once inventory is live.
+continuation compares keep-score against liquidity-forced reduction only. Full
+exits belong to Stoploss. Keep-score is expected return net of uncertainty —
+the same holdUtility rotate uses — never raw predicted return.
 */
 func (planner *Planner) continuation(
 	forecast types.Forecasts,
 	fee float64,
 	holding *types.Holding,
 ) types.Decision {
-	hold := forecast.ExpectedReturn
-	exit := -(fee + forecast.ExpectedSpread/2)
+	hold := planner.holdUtility(forecast)
+	exit := -planner.exitCost(forecast, fee)
 	action := types.ActionHold
 	utility := hold
 	reason := "stoploss owns full exit; continuation holds"
@@ -97,18 +101,31 @@ func (planner *Planner) continuation(
 		}
 	}
 
+	proposedNotional := 0.0
+
+	if action == types.ActionReduce {
+		proposedNotional = mark * quantity
+	}
+
 	return types.Decision{
 		Action:            action,
 		Symbol:            forecast.Symbol,
 		At:                forecast.At,
 		Utility:           utility,
 		Alternatives:      alternatives,
+		ProposedNotional:  decimal.NewFromFloat64(proposedNotional),
 		ProposedQuantity:  decimal.NewFromFloat64(quantity),
+		ExpectedReturn:    decimal.NewFromFloat64(forecast.ExpectedReturn),
 		ExpectedFees:      decimal.NewFromFloat64(fee),
 		ExpectedSpread:    decimal.NewFromFloat64(forecast.ExpectedSpread / 2),
+		ExpectedImpact:    decimal.NewFromFloat64(forecast.ExpectedImpact),
+		AdverseSelection:  forecast.ExpectedAdverseSelection,
+		Uncertainty:       forecast.Uncertainty,
+		Confidence:        forecast.Confidence,
 		ReferencePrice:    decimal.NewFromFloat64(forecast.ReferencePrice),
 		ValidThroughEpoch: forecast.ExpiresEpoch,
 		ForecastSource:    forecast.Source,
+		ForecastEpoch:     forecast.SourceEpoch,
 		Cause:             "continuation",
 		Reason:            reason,
 	}

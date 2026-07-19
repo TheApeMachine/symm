@@ -1,5 +1,5 @@
 import type { CircularBuffer } from "#/collections/circular";
-import type { Measurement, MeasurementEpoch } from "#/collections/measurements";
+import type { Measurement, MeasurementEpoch } from "#/collections/types";
 
 /*
 HawkesModel is the fitted univariate process shared by one parameter epoch.
@@ -147,7 +147,7 @@ export const retainHawkesModelEpoch = (epoch: MeasurementEpoch): void => {
 		}
 
 		values.set(
-			parameterKey(measurement.metric, measurement.side ?? ""),
+			parameterKey(measurement.metric ?? "", measurement.side ?? ""),
 			measurement.raw,
 		);
 	}
@@ -199,12 +199,22 @@ latestHawkesRaw carries fitted parameters forward within the active fit epoch.
 Matching fit origin prevents a missing current parameter from silently falling
 back to a stale model, while retention survives sparse ModelUpdated epochs.
 */
+const epochList = (
+	buffer: CircularBuffer<MeasurementEpoch> | MeasurementEpoch[] | undefined,
+): MeasurementEpoch[] => {
+	if (buffer === undefined) {
+		return [];
+	}
+
+	return Array.isArray(buffer) ? buffer : buffer.values();
+};
+
 export const latestHawkesRaw = (
-	buffer: CircularBuffer<MeasurementEpoch> | undefined,
+	buffer: CircularBuffer<MeasurementEpoch> | MeasurementEpoch[] | undefined,
 	metric: string,
 	side = "",
 ): number | null => {
-	const epochs = buffer?.values() ?? [];
+	const epochs = epochList(buffer);
 	let currentFit = "";
 	let symbol = "";
 
@@ -250,9 +260,9 @@ export const latestHawkesRaw = (
 collectFitState gathers the active fit model and its intensity observations.
 */
 export const collectFitState = (
-	buffer: CircularBuffer<MeasurementEpoch> | undefined,
+	buffer: CircularBuffer<MeasurementEpoch> | MeasurementEpoch[] | undefined,
 ): HawkesFitState | null => {
-	const epochs = buffer?.values() ?? [];
+	const epochs = epochList(buffer);
 	const models = new Map<string, HawkesModel>();
 	const observations: HawkesObservation[] = [];
 

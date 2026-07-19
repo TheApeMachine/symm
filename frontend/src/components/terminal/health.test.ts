@@ -1,40 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { Circular } from "#/collections/circular";
-import type { MeasurementEpoch } from "#/collections/measurements";
+import type { Measurement } from "#/collections/types";
 import { terminalHealthSummary } from "./health";
 import { regimeAxes } from "./regime-radar";
 
+const reading = (
+	source: string,
+	symbol: string,
+	metric: string,
+	raw: number,
+	normalized: number | null = null,
+): Measurement => ({
+	source,
+	metric,
+	symbol,
+	at: "2026-07-06T10:00:00Z",
+	raw,
+	normalized,
+	uncertainty: null,
+	validity: { state: "valid", readiness: "observation" },
+	scale: { kind: "observation_window", from: "", through: "" },
+});
+
 describe("terminalHealthSummary", () => {
 	it("counts backend measurement frames as firing", () => {
-		const history = Circular<MeasurementEpoch>(4);
-
-		history.push({
-			at: "2026-07-06T10:00:00Z",
-			publishedAt: "2026-07-06T10:00:00Z",
-			readings: [
-				{
-					source: "depthflow",
-					metric: "strength",
-					symbol: "BTC/USD",
-					at: "2026-07-06T10:00:00Z",
-					raw: 0.21,
-					normalized: null,
-					uncertainty: null,
-					validity: { state: "valid", readiness: "observation" },
-					scale: { kind: "", from: "", through: "" },
-				},
-			],
-		});
-
 		const summary = terminalHealthSummary(
-			{
-				measurements: {
-					"BTC/USD": {
-						depthflow: history,
-					},
-				},
-				version: 1,
-			},
+			[reading("depthflow", "BTC/USD", "strength", 0.21)],
 			"BTC/USD",
 			["depthflow", "fluid"],
 			{ count: 12, completed: true, ns: 45_000_000 },
@@ -51,10 +41,7 @@ describe("terminalHealthSummary", () => {
 
 	it("honors explicit completed false over tick count", () => {
 		const summary = terminalHealthSummary(
-			{
-				measurements: {},
-				version: 1,
-			},
+			[],
 			"BTC/USD",
 			["depthflow"],
 			{ count: 12, completed: false, ns: 12_000_000 },
@@ -65,35 +52,8 @@ describe("terminalHealthSummary", () => {
 	});
 
 	it("does not call a silent focus STANDBY when the universe is live", () => {
-		const history = Circular<MeasurementEpoch>(4);
-
-		history.push({
-			at: "2026-07-06T10:00:00Z",
-			publishedAt: "2026-07-06T10:00:00Z",
-			readings: [
-				{
-					source: "depthflow",
-					metric: "strength",
-					symbol: "ETH/USD",
-					at: "2026-07-06T10:00:00Z",
-					raw: 0.21,
-					normalized: null,
-					uncertainty: null,
-					validity: { state: "valid", readiness: "observation" },
-					scale: { kind: "", from: "", through: "" },
-				},
-			],
-		});
-
 		const summary = terminalHealthSummary(
-			{
-				measurements: {
-					"ETH/USD": {
-						depthflow: history,
-					},
-				},
-				version: 1,
-			},
+			[reading("depthflow", "ETH/USD", "strength", 0.21)],
 			"BTC/USD",
 			["depthflow"],
 			{ count: 3, completed: true, ns: 12_000_000 },
@@ -105,92 +65,15 @@ describe("terminalHealthSummary", () => {
 	});
 
 	it("projects numerical measurements onto the backend regime axes", () => {
-		const fluid = Circular<MeasurementEpoch>(4);
-		const pumpdump = Circular<MeasurementEpoch>(4);
-		const cvd = Circular<MeasurementEpoch>(4);
-		const validity = { state: "valid", readiness: "observation" };
-		const scale = { kind: "observation_window", from: "", through: "" };
-
-		fluid.push({
-			at: "2026-07-15T09:00:00Z",
-			publishedAt: "2026-07-15T09:00:00Z",
-			readings: [
-				{
-					source: "fluid",
-					metric: "turbulent_score",
-					symbol: "BTC/USD",
-					at: "2026-07-15T09:00:00Z",
-					raw: 0.8,
-					normalized: 0.8,
-					uncertainty: null,
-					validity,
-					scale,
-				},
-			],
-		});
-		pumpdump.push({
-			at: "2026-07-15T09:00:00Z",
-			publishedAt: "2026-07-15T09:00:00Z",
-			readings: [
-				{
-					source: "pumpdump",
-					metric: "trend",
-					symbol: "BTC/USD",
-					at: "2026-07-15T09:00:00Z",
-					raw: 0.6,
-					normalized: 0.6,
-					uncertainty: null,
-					validity,
-					scale,
-				},
-			],
-		});
-		cvd.push({
-			at: "2026-07-15T09:00:00Z",
-			publishedAt: "2026-07-15T09:00:00Z",
-			readings: [
-				{
-					source: "cvd",
-					metric: "net",
-					symbol: "BTC/USD",
-					at: "2026-07-15T09:00:00Z",
-					raw: -12,
-					normalized: null,
-					uncertainty: null,
-					validity,
-					scale,
-				},
-				{
-					source: "cvd",
-					metric: "net_fraction",
-					symbol: "BTC/USD",
-					at: "2026-07-15T09:00:00Z",
-					raw: 0.7,
-					normalized: 0.7,
-					uncertainty: null,
-					validity,
-					scale,
-				},
-				{
-					source: "cvd",
-					metric: "balance",
-					symbol: "BTC/USD",
-					at: "2026-07-15T09:00:00Z",
-					raw: 0.3,
-					normalized: 0.3,
-					uncertainty: null,
-					validity,
-					scale,
-				},
-			],
-		});
-
 		expect(
 			regimeAxes(
-				{
-					measurements: { "BTC/USD": { fluid, pumpdump, cvd } },
-					version: 1,
-				},
+				[
+					reading("fluid", "BTC/USD", "turbulent_score", 0.8, 0.8),
+					reading("pumpdump", "BTC/USD", "trend", 0.6, 0.6),
+					reading("cvd", "BTC/USD", "net", -12),
+					reading("cvd", "BTC/USD", "net_fraction", 0.7, 0.7),
+					reading("cvd", "BTC/USD", "balance", 0.3, 0.3),
+				],
 				["fluid", "pumpdump", "cvd"],
 			),
 		).toEqual([
