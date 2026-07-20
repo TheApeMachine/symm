@@ -199,11 +199,11 @@ func (allocator *Allocator) capacity(
 	budget *decimal.Decimal,
 	forecast types.Forecasts,
 ) *decimal.Decimal {
-	if forecast.BuyCapacity <= 0 {
+	if forecast.BuyCapacity == nil || forecast.BuyCapacity.Sign() <= 0 {
 		return budget
 	}
 
-	ceiling := decimal.NewFromFloat64(forecast.BuyCapacity)
+	ceiling := forecast.BuyCapacity.Copy()
 
 	if budget.Cmp(ceiling) > 0 {
 		return ceiling

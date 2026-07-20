@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
+	pmanifold "github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
 )
@@ -216,9 +216,6 @@ func TestCognitionVisualization(t *testing.T) {
 }
 
 func TestAnalyzerCognizeExportsVisualization(t *testing.T) {
-	viper.Set("ui.manifold_focus", "BTC/USD")
-	t.Cleanup(func() { viper.Set("ui.manifold_focus", "") })
-
 	Convey("Given repeated physical evidence for one symbol", t, func() {
 		tree := dmt.NewTree("")
 		analyzer := &Analyzer{
@@ -226,10 +223,11 @@ func TestAnalyzerCognizeExportsVisualization(t *testing.T) {
 			resonance: map[string]*Resonance{"BTC/USD": {}},
 			causal:    map[string]*Causal{"BTC/USD": NewCausal("BTC/USD")},
 		}
+		analyzer.Focus("BTC/USD")
 		state := manifold.State{
 			Symbol: "BTC/USD", At: time.Unix(1, 0), Duration: time.Second,
-			Epoch: 1, ReferencePrice: 100, InvalidReason: manifold.Valid,
-			Spread: 0.01, BuyCapacity: 1000, SellCapacity: 1000,
+			Epoch: 1, ReferencePrice: decimal.NewFromInt64(100), InvalidReason: manifold.Valid,
+			Spread: 0.01, BuyCapacity: decimal.NewFromInt64(1000), SellCapacity: decimal.NewFromInt64(1000),
 			BuyIntensity: 2, SellIntensity: 1,
 			Reading: pmanifold.Reading{
 				PressureGradX: 1, Divergence: -1, CoherenceMag2: 1,
@@ -260,6 +258,52 @@ func TestAnalyzerCognizeExportsVisualization(t *testing.T) {
 			So(reading.MaxHops, ShouldEqual, cognitionTreeDepth())
 			So(reading.NodeCount, ShouldEqual, len(reading.Branches))
 			So(reading.RegimePrefix, ShouldNotBeEmpty)
+		})
+	})
+}
+
+/*
+TestAnalyzerRecall proves a newly focused replay can render the learned Cortex
+without training the tree or presenting the cached field as a market event.
+*/
+func TestAnalyzerRecall(t *testing.T) {
+	Convey("Given an unfocused market observation already learned by DMT", t, func() {
+		tree := dmt.NewTree("")
+		analyzer := &Analyzer{
+			tree:      tree,
+			resonance: make(map[string]*Resonance),
+			causal:    make(map[string]*Causal),
+			cognition: make(map[string]types.Cognition),
+		}
+		state := manifold.State{
+			Symbol: "BTC/USD", At: time.Unix(1, 0), Duration: time.Second,
+			Epoch: 1, ReferencePrice: decimal.NewFromInt64(100), InvalidReason: manifold.Valid,
+			Spread: 0.01, BuyCapacity: decimal.NewFromInt64(1000), SellCapacity: decimal.NewFromInt64(1000),
+			BuyIntensity: 2, SellIntensity: 1,
+			Reading: pmanifold.Reading{
+				PressureGradX: 1, Divergence: -1, CoherenceMag2: 1,
+				GuidanceSpeed: 1,
+			},
+		}
+		observed := types.NewThesis(nil, nil)
+		observed.Manifold.Store(state.Symbol, state)
+		analyzer.Update(observed)
+
+		analyzer.Focus(state.Symbol)
+		state.Replay = true
+		replayed := types.NewThesis(nil, nil)
+		replayed.Manifold.Store(state.Symbol, state)
+		analyzer.Update(replayed)
+		value, found := replayed.Cognition.Load(state.Symbol)
+
+		Convey("Then it exports visualization without another learning cohort", func() {
+			So(found, ShouldBeTrue)
+			reading := value.(types.Cognition)
+			So(reading.Cohort, ShouldEqual, 1)
+			So(reading.Branches, ShouldNotBeEmpty)
+			So(reading.Beams, ShouldNotBeEmpty)
+			So(replayed.Forecasts, ShouldBeEmpty)
+			So(replayed.Causal, ShouldBeEmpty)
 		})
 	})
 }

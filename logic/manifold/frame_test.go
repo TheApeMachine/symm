@@ -3,55 +3,38 @@ package manifold
 import (
 	"testing"
 
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
+	. "github.com/smartystreets/goconvey/convey"
+	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 )
 
-func TestParticlesFromOscillators(t *testing.T) {
-	config := pmanifold.Config{
-		GridX:   16,
-		GridY:   3,
-		GridZ:   8,
-		DomainX: 16,
-		DomainY: 3,
-		DomainZ: 8,
-	}
+func TestProjectionRows(t *testing.T) {
+	Convey("Given a flattened X-Z field", t, func() {
+		grid := pfluid.Grid{X: 2, Y: 1, Z: 2, Spacing: 0.5}
 
-	particles := particlesFromOscillators([]pmanifold.Oscillator{
-		{
-			Phase:     1.2,
-			Omega:     2.5,
-			Amplitude: 0.8,
-			PosX:      8.5,
-			PosY:      1.5,
-			PosZ:      4.5,
-			Heat:      0.3,
-			VelX:      0.1,
-			VelY:      0.2,
-			VelZ:      0.3,
-		},
-	}, config)
-
-	if len(particles) != 1 {
-		t.Fatalf("particles = %d, want 1", len(particles))
-	}
-
-	particle := particles[0]
-
-	if particle.Role != "particle" {
-		t.Fatalf("role = %q, want particle", particle.Role)
-	}
-
-	if particle.CellX != 8 || particle.CellY != 1 || particle.CellZ != 4 {
-		t.Fatalf("cells = (%v,%v,%v), want (8,1,4)", particle.CellX, particle.CellY, particle.CellZ)
-	}
-
-	if particle.Speed <= 0 {
-		t.Fatalf("speed = %v, want finite positive", particle.Speed)
-	}
+		Convey("It should preserve row-major physical values", func() {
+			So(projectionRows([]float32{1, 2, 3, 4}, grid), ShouldResemble,
+				[][]float64{{1, 2}, {3, 4}})
+		})
+	})
 }
 
-func TestCellCoordinate(t *testing.T) {
-	if got := cellCoordinate(8.5, 16, 16); got != 8 {
-		t.Fatalf("cell coordinate = %v, want 8", got)
-	}
+func TestRenderParticles(t *testing.T) {
+	Convey("Given a post-step physical observation", t, func() {
+		grid := pfluid.Grid{X: 2, Y: 2, Z: 2, Spacing: 0.5}
+		particles := []pfluid.Particle{{
+			Position: pfluid.Vector{X: 0.25, Y: 0.5, Z: 0.75},
+			Velocity: pfluid.Vector{X: 3, Y: 4},
+			Energy:   9,
+		}}
+		rendered := renderParticles(particles, grid)
+
+		Convey("It should expose cell position, oscillator amplitude, and speed", func() {
+			So(rendered, ShouldHaveLength, 1)
+			So(rendered[0].CellX, ShouldEqual, 0.5)
+			So(rendered[0].CellY, ShouldEqual, 1)
+			So(rendered[0].CellZ, ShouldEqual, 1.5)
+			So(rendered[0].Amplitude, ShouldEqual, 3)
+			So(rendered[0].Speed, ShouldEqual, 5)
+		})
+	})
 }

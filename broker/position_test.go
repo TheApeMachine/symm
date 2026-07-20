@@ -66,7 +66,8 @@ func TestPositionExecutionAck(t *testing.T) {
 			Data: []kraken.ExecutionData{{
 				OrderID: "order-1", ExecID: "buy-1", ExecType: "trade",
 				Symbol: "BTC/USD", Side: "buy", OrderType: "market",
-				LastQty: 1, CumQty: 1, OrderStatus: "filled",
+				LastQty: decimal.NewFromInt64(1), CumQty: decimal.NewFromInt64(1),
+				OrderStatus: "filled",
 				LastPrice:   decimal.NewFromInt64(100),
 				AvgPrice:    decimal.NewFromInt64(100),
 				Cost:        decimal.NewFromInt64(100),
@@ -105,7 +106,9 @@ func TestPositionExecutionAck(t *testing.T) {
 				Data: []kraken.ExecutionData{{
 					OrderID: "sell-partial", ExecID: "sell-partial-fill",
 					ExecType: "trade", Symbol: "BTC/USD", Side: "sell",
-					OrderType: "market", LastQty: 0.00884981, CumQty: 0.00884981,
+					OrderType:   "market",
+					LastQty:     decimal.NewFromFloat64(0.00884981),
+					CumQty:      decimal.NewFromFloat64(0.00884981),
 					OrderStatus: "filled",
 					LastPrice:   decimal.NewFromInt64(101),
 					AvgPrice:    decimal.NewFromInt64(101),
@@ -147,7 +150,8 @@ func TestPositionExecutionAck(t *testing.T) {
 				Data: []kraken.ExecutionData{{
 					OrderID: "sell-1", ExecID: "sell-fill", ExecType: "trade",
 					Symbol: "BTC/USD", Side: "sell", OrderType: "market",
-					LastQty: 1, CumQty: 1, OrderStatus: "filled",
+					LastQty: decimal.NewFromInt64(1), CumQty: decimal.NewFromInt64(1),
+					OrderStatus: "filled",
 					LastPrice:   decimal.NewFromInt64(101),
 					AvgPrice:    decimal.NewFromInt64(101),
 					Cost:        decimal.NewFromInt64(101),
@@ -394,7 +398,9 @@ func TestPositionPartialFillKeepsPending(t *testing.T) {
 			Data: []kraken.ExecutionData{{
 				OrderID: "sell-partial-live", ExecID: "partial-1",
 				ExecType: "trade", Symbol: "BTC/USD", Side: "sell",
-				OrderType: "market", LastQty: 0.3, CumQty: 0.3,
+				OrderType:   "market",
+				LastQty:     decimal.NewFromFloat64(0.3),
+				CumQty:      decimal.NewFromFloat64(0.3),
 				OrderStatus: "partially filled",
 				LastPrice:   decimal.NewFromInt64(100),
 				AvgPrice:    decimal.NewFromInt64(100),
@@ -449,7 +455,7 @@ func BenchmarkPositionExecutionAck(b *testing.B) {
 		Data: []kraken.ExecutionData{{
 			OrderID: "order-1", ExecID: "buy-1", ExecType: "trade",
 			Symbol: "BTC/USD", Side: "buy", OrderStatus: "filled",
-			LastQty: 1, LastPrice: decimal.NewFromInt64(100),
+			LastQty: decimal.NewFromInt64(1), LastPrice: decimal.NewFromInt64(100),
 			Cost:        decimal.NewFromInt64(100),
 			FeeUsdEquiv: decimal.NewFromFloat64(0.26), Timestamp: time.Unix(1, 0),
 		}},

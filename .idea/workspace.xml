@@ -6,16 +6,122 @@
   <component name="ChangeListManager">
     <list default="true" id="222fb375-f277-43aa-975e-7757d7d88eae" name="Changes" comment="Add support for thesis graphs, forecasts, and hypotheses in frame serialization logic&#10;&#10;- Updated `frame` logic in the `Thesis` struct to include `Graphs`, `Forecasts`, `Hypotheses`, and `Categories` for enhanced data representation.&#10;- Improved test coverage in `thesis_test.go` to validate new serialization fields.&#10;- Enhanced `JournalSurface` in the frontend to utilize `tradeJournalValues` and `findingsList` for better state extraction.&#10;- Introduced `CircularBuffer` in collections for bounded buffer management, improving memory efficiency.&#10;- Refactored lifecycle and findings stores to integrate circular buffers for retaining snapshots.&#10;- Improved `Audit trail` in `dashboard-rail` to filter and format trade observations for clarity.&#10;- Added benchmark and unit tests in broker position logic to validate ticker acknowledgment.&#10;- Extended Thesis types with new data structures for forecasts, hypotheses, and categories to support detailed analytics.">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/desk.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/desk.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/reconcile_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/reconcile_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/cmd/root.go" beforeDir="false" afterPath="$PROJECT_DIR$/cmd/root.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/cmd/signals.go" beforeDir="false" afterPath="$PROJECT_DIR$/cmd/signals.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/collections/circular.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/circular.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/collections/store.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/store.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/kernel/detail.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/kernel/detail.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/kernel/heatmap.test.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/kernel/heatmap.test.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/kernel/heatmap.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/kernel/heatmap.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/kernel/inspector.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/kernel/inspector.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/kernel/row.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/allocation-paint.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/allocation-paint.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/allocation-panels.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/allocation-panels.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/candidate-row.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/candidate-row.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/charts.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/charts.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/cognitive-beam.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/cognitive-beam.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/cortex-panels.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/cortex-panels.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/cross-section-panel.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/cross-section-panel.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/dashboard-rail.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/dashboard-rail.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/decision-side.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/decision-side.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/decisions-surface.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/decisions-surface.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/evidence-graph-viz.test.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/evidence-graph-viz.test.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/evidence-graph-viz.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/evidence-graph-viz.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/health.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/health.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/journal-surface.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/journal-surface.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/kernel-list-row.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/kernel-list-row.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/kernel-list.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/kernel-list.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/lifecycle-track.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/lifecycle-track.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/live-canvas.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/live-chart-meta.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/live-chart-meta.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/live-ticker.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/live-ticker.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/measurement-sources.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/measurement-sources.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/metric-paint.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/metric-paint.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/mockup-fluid-canvas.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/palette.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/palette.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/position-gauge.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/position-gauge.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/regime-radar.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/regime-radar.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/signals-surface.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/signals-surface.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/strategy-decisions.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/strategy-decisions.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/thesis-evidence-canvas.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/thesis-evidence-canvas.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/thesis-graph-inspector.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/thesis-graph-inspector.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/thesis-modal.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/thesis-modal.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/xray-hawkes.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/xray-hawkes.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/xray-hierarchy.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/xray-hierarchy.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/xray-latent.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/xray-latent.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/xray-panels.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/xray-panels.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/xray-side.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/xray-side.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/xray-view.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/xray-view.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/ui/badge.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/ui/badge.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/ui/stat.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/ui/stat.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/hooks/use-direct-store-paint.ts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/providers/websocket.bench.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/providers/websocket.bench.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/providers/websocket.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/providers/websocket.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/providers/ws-batch.bench.ts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/providers/ws-batch.test.ts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/providers/ws-batch.ts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/providers/ws-frame-merge.test.ts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/providers/ws-frame-merge.ts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/providers/ws-stores.test.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/providers/ws-stores.test.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/providers/ws-stores.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/providers/ws-stores.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/providers/ws-worker.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/providers/ws-worker.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/routes/-cortex.test.ts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/routes/__root.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/routes/__root.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/routes/allocation.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/routes/allocation.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/routes/cortex.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/routes/cortex.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/level3.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/level3.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/level3_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/level3_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/websocket/level3.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/websocket/level3.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/websocket/live.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/websocket/live.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/websocket/live_level3.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/websocket/live_level3.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/websocket/live_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/websocket/live_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kraken/websocket/transport.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/websocket/transport.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/logic/analyzer.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/logic/cognition_tree.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/cognition_tree.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/analyzer_cognize.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer_cognize.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/analyzer_directed_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer_directed_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/analyzer_graph.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer_graph.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/analyzer_manifold.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer_manifold.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/analyzer_publish.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer_publish.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/logic/cognition_tree_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/cognition_tree_test.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/logic/manifold/inject.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/inject.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/logic/manifold/inject_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/inject_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/active.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/active.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/active_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/active_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/advance.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/advance.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/logic/manifold/solver.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/solver.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategy/planner.go" beforeDir="false" afterPath="$PROJECT_DIR$/strategy/planner.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategy/planner_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/strategy/planner_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/solver_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/solver_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/market_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/market_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/return.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/return.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/return_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/return_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/leadlag/measurements.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/leadlag/measurements.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/pumpdump/market_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/pumpdump/market_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/pumpdump/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/pumpdump/signal.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/pumpdump/signal_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/pumpdump/signal_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stack/boot.go" beforeDir="false" afterPath="$PROJECT_DIR$/stack/boot.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stack/boot_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/stack/boot_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/strategy/continuation_market_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/strategy/continuation_market_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/strategy/market_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/strategy/market_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/conditions/pumpdump.go" beforeDir="false" afterPath="$PROJECT_DIR$/tests/conditions/pumpdump.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/conditions/tapes.go" beforeDir="false" afterPath="$PROJECT_DIR$/tests/conditions/tapes.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/trader/crypto.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/crypto.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/crypto_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/crypto_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/market.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/market.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/market_cadence_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/market_cadence_test.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/trader/market_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/market_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/pending.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/pending.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/affinity.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/affinity.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/graph.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/graph.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/graph_wire.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/graph_wire.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/graph_wire_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/graph_wire_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/relationship.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/relationship.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/relationship_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/relationship_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/stoploss.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/stoploss.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/stoploss_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/stoploss_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/thesis.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/thesis.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/thesis_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/thesis_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/ui/hub.go" beforeDir="false" afterPath="$PROJECT_DIR$/ui/hub.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/ui/hub_frame_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/ui/hub_test.go" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -23,40 +129,40 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="636" />
+    <option name="cachedIndexableFilesCount" value="776" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="GOROOT" url="file://$PROJECT_DIR$/../../../../pkg/mod/golang.org/toolchain@v0.0.1-go1.26.3.darwin-arm64" />
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
-  <component name="KubernetesApiPersistence"><![CDATA[{}]]></component>
-  <component name="KubernetesApiProvider"><![CDATA[{
-  "isMigrated": true
-}]]></component>
+  <component name="KubernetesApiPersistence">{}</component>
+  <component name="KubernetesApiProvider">{
+  &quot;isMigrated&quot;: true
+}</component>
   <component name="McpProjectServerCommands">
     <commands />
     <urls />
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.0000000000000002" />
-      <entry key="MS500" value="1.0007514683692191" />
-      <entry key="S2" value="1.1655685582011637" />
-      <entry key="S5" value="1.4890359120044279" />
-      <entry key="S10" value="1.759749917681206" />
-      <entry key="S30" value="2.512790429993475" />
-      <entry key="S60" value="3.0600965656983665" />
-      <entry key="M2" value="3.4658369678090293" />
-      <entry key="M5" value="3.768437075860394" />
-      <entry key="M10" value="3.8810000232063024" />
-      <entry key="M15" value="3.9199366970948764" />
-      <entry key="M30" value="3.9678697456284975" />
-      <entry key="H1" value="4.36550482046579" />
-      <entry key="H2" value="6.624817236272566" />
-      <entry key="H4" value="10.881681709966243" />
-      <entry key="D1" value="19.335724326937928" />
-      <entry key="W1" value="21.592785020274246" />
+      <entry key="MS100" value="1.0" />
+      <entry key="MS500" value="1.0000000211319333" />
+      <entry key="S2" value="1.012115670416515" />
+      <entry key="S5" value="1.198278381409742" />
+      <entry key="S10" value="1.6646222647839506" />
+      <entry key="S30" value="3.3616964609472926" />
+      <entry key="S60" value="5.078228312364806" />
+      <entry key="M2" value="6.833573779445689" />
+      <entry key="M5" value="8.492852644636983" />
+      <entry key="M10" value="9.198077122565296" />
+      <entry key="M15" value="9.45392249790307" />
+      <entry key="M30" value="9.728976908145025" />
+      <entry key="H1" value="10.23698130877316" />
+      <entry key="H2" value="12.537268347568556" />
+      <entry key="H4" value="16.816076149014794" />
+      <entry key="D1" value="25.3175599866124" />
+      <entry key="W1" value="27.589914175477723" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
@@ -64,81 +170,81 @@
       <entry key="S2" value="0.0" />
       <entry key="S5" value="0.0" />
       <entry key="S10" value="0.0" />
-      <entry key="S30" value="2.786015457009095E-203" />
-      <entry key="S60" value="5.278271930290344E-102" />
-      <entry key="M2" value="2.2974490049379438E-51" />
-      <entry key="M5" value="5.55262510286394E-21" />
-      <entry key="M10" value="7.451593858272165E-11" />
-      <entry key="M15" value="1.770786153468049E-7" />
-      <entry key="M30" value="4.2080709992442484E-4" />
-      <entry key="H1" value="0.02051358330288555" />
-      <entry key="H2" value="0.14322563772902372" />
-      <entry key="H4" value="0.3784516319544993" />
-      <entry key="D1" value="0.8504884049074138" />
-      <entry key="W1" value="0.9771306319674237" />
+      <entry key="S30" value="2.387992033507204E-204" />
+      <entry key="S60" value="1.5453129241377632E-102" />
+      <entry key="M2" value="1.2431061596411485E-51" />
+      <entry key="M5" value="4.343134583798706E-21" />
+      <entry key="M10" value="6.590246265352088E-11" />
+      <entry key="M15" value="1.6315526605523618E-7" />
+      <entry key="M30" value="4.0392482723303376E-4" />
+      <entry key="H1" value="0.020097881162775187" />
+      <entry key="H2" value="0.14176699602790202" />
+      <entry key="H4" value="0.3765195825291191" />
+      <entry key="D1" value="0.8497632167418432" />
+      <entry key="W1" value="0.9770115638029279" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="0.006661210091937383" />
-      <entry key="MS500" value="0.3677798098173156" />
-      <entry key="S2" value="0.9434077978895214" />
-      <entry key="S5" value="1.3928994765439637" />
-      <entry key="S10" value="1.708150602942714" />
-      <entry key="S30" value="2.48889753273145" />
-      <entry key="S60" value="3.045430624932482" />
-      <entry key="M2" value="3.4574844240944684" />
-      <entry key="M5" value="3.764791169267917" />
-      <entry key="M10" value="3.879120340178081" />
-      <entry key="M15" value="3.9186706668258284" />
-      <entry key="M30" value="3.9676463628289285" />
-      <entry key="H1" value="4.385593650165915" />
-      <entry key="H2" value="6.767529253116752" />
-      <entry key="H4" value="11.259592069240261" />
-      <entry key="D1" value="20.18602831242131" />
-      <entry key="W1" value="22.569885712973793" />
+      <entry key="MS100" value="0.9460576467255959" />
+      <entry key="MS500" value="0.9889709372797989" />
+      <entry key="S2" value="1.0093115844421714" />
+      <entry key="S5" value="1.1966827244065683" />
+      <entry key="S10" value="1.6625575484553965" />
+      <entry key="S30" value="3.3567943923011274" />
+      <entry key="S60" value="5.071550528592279" />
+      <entry key="M2" value="6.82747510828698" />
+      <entry key="M5" value="8.489247311669265" />
+      <entry key="M10" value="9.196014604532431" />
+      <entry key="M15" value="9.45248384242697" />
+      <entry key="M30" value="9.728623622585424" />
+      <entry key="H1" value="10.256592904366066" />
+      <entry key="H2" value="12.67849170543625" />
+      <entry key="H4" value="17.19203955329683" />
+      <entry key="D1" value="26.167135990135378" />
+      <entry key="W1" value="28.566895381930305" />
     </decayedShown>
   </component>
   <component name="ProblemsViewState">
-    <option name="selectedTabId" value="AISelfReview" />
+    <option name="selectedTabId" value="ProjectErrors" />
   </component>
-  <component name="ProjectColorInfo"><![CDATA[{
-  "associatedIndex": 7,
-  "fromUser": false
-}]]></component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 7,
+  &quot;fromUser&quot;: false
+}</component>
   <component name="ProjectId" id="3GV8Xj4jEjxmnIlvtFEsvQLOkSB" />
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ASKED_SHARE_PROJECT_CONFIGURATION_FILES": "true",
-    "Go Build.go build github.com/theapemachine/symm.executor": "Profiler#5",
-    "Go Test.go test symm.executor": "Run",
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "RunOnceActivity.GoLinterPluginOnboardingV2": "true",
-    "RunOnceActivity.GoLinterPluginStorageMigration": "true",
-    "RunOnceActivity.MCP Project settings loaded": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.go.analysis.ui.options.defaults": "true",
-    "RunOnceActivity.go.formatter.settings.were.checked": "true",
-    "RunOnceActivity.go.modules.go.list.on.any.changes.was.set": "true",
-    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "codeWithMe.voiceChat.enabledByDefault": "false",
-    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
-    "git-widget-placeholder": "master",
-    "go.sdk.automatically.set": "true",
-    "junie.onboarding.icon.badge.shown": "true",
-    "last_opened_file_path": "/Users/theapemachine",
-    "node.js.detected.package.eslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "nodejs_package_manager_path": "pnpm",
-    "run.code.analysis.last.selected.profile": "pProject Default",
-    "settings.editor.selected.configurable": "settings.qodana",
-    "to.speed.mode.migration.done": "true",
-    "ts.external.directory.path": "/Users/theapemachine/go/src/github.com/theapemachine/symm/.pnpm-store/v10/projects/fe23cbc9f508f93c645d0baca457da49/node_modules/typescript/lib"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ASKED_SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
+    &quot;Go Build.go build github.com/theapemachine/symm.executor&quot;: &quot;Profiler#5&quot;,
+    &quot;Go Test.go test symm.executor&quot;: &quot;Run&quot;,
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.GoLinterPluginOnboardingV2&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.GoLinterPluginStorageMigration&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.go.analysis.ui.options.defaults&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.go.formatter.settings.were.checked&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.go.modules.go.list.on.any.changes.was.set&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;master&quot;,
+    &quot;go.sdk.automatically.set&quot;: &quot;true&quot;,
+    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/Users/theapemachine&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;pnpm&quot;,
+    &quot;run.code.analysis.last.selected.profile&quot;: &quot;pProject Default&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;settings.qodana&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
+    &quot;ts.external.directory.path&quot;: &quot;/Users/theapemachine/go/src/github.com/theapemachine/symm/.pnpm-store/v10/projects/fe23cbc9f508f93c645d0baca457da49/node_modules/typescript/lib&quot;
   }
-}]]></component>
+}</component>
   <component name="QodanaReportsService">
     <option name="descriptions">
       <ReportDescription localRun="true" path="/private/var/folders/30/bdbpd0hj5wddgkxyx8pbc0mc0000gn/T/qodana_output/qodana.sarif.json" reportGuid="72e66224-8a8e-42da-b1da-f21932a8a1e6" reportId="symm/qodana/2026-07-14" />

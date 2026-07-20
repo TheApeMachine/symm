@@ -42,29 +42,20 @@ func NewAdmit(
 Scale sets proposed notional to the capital freed by a displaced incumbent so
 Allocator redeploys that lot instead of inventing a max_fraction size.
 */
-func (admit *Admit) Scale(decision *types.Decision, notional float64) {
+func (admit *Admit) Scale(
+	decision *types.Decision,
+	notional *decimal.Decimal,
+) {
 	if err := admit.validate(map[string]any{"decision": decision}); err != nil {
 		return
 	}
 
-	if notional <= 0 {
+	if notional == nil || notional.Sign() <= 0 {
 		return
 	}
 
-	redeploy := decimal.NewFromFloat64(notional)
-
-	if decision.ProposedNotional != nil && decision.ProposedNotional.Sign() > 0 &&
-		decision.ProposedQuantity != nil {
-		decision.ProposedQuantity = decision.ProposedQuantity.Mul(
-			redeploy.Div(decision.ProposedNotional),
-		)
-	}
-
-	if (decision.ProposedQuantity == nil || decision.ProposedQuantity.Sign() <= 0) &&
-		decision.ReferencePrice != nil && decision.ReferencePrice.Sign() > 0 {
-		decision.ProposedQuantity = redeploy.Div(decision.ReferencePrice)
-	}
-
+	redeploy := notional.Copy()
+	decision.ProposedQuantity = nil
 	decision.ProposedNotional = redeploy
 }
 
@@ -165,13 +156,13 @@ func (admit *Admit) Capital(decision *types.Decision) {
 		return
 	}
 
-	cash, err := admit.balance.AvailableQuote()
+	cash, err := admit.balance.AvailableCash()
 
-	if err != nil {
+	if err != nil || cash == nil {
 		return
 	}
 
-	decision.AvailableCapital = decimal.NewFromFloat64(cash)
+	decision.AvailableCapital = cash
 	decision.SlotCapacity = admit.desk.MaxSlots()
 	decision.OpenPositions = admit.desk.OpenPositions()
 }

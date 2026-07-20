@@ -199,22 +199,18 @@ func TestMarket_OnBook(t *testing.T) {
 }
 
 /*
-TestMarket_WaitDirty verifies that WaitDirty returns one coalesced wake per
-ingress burst instead of firing on the first message, and that it extends the
-merge window while ingress keeps arriving up to the budget deadline.
+TestMarket_WaitDirty verifies that WaitDirty consumes existing ingress without
+also swallowing the next independently observable market change.
 */
 func TestMarket_WaitDirty(t *testing.T) {
 	previousTimeline := viper.Get("signals.feed_timeline_capacity")
 	previousTrack := viper.Get("signals.feed_track_capacity")
-	previousWindow := viper.Get("signals.coalesce_window")
 	t.Cleanup(func() {
 		viper.Set("signals.feed_timeline_capacity", previousTimeline)
 		viper.Set("signals.feed_track_capacity", previousTrack)
-		viper.Set("signals.coalesce_window", previousWindow)
 	})
 	viper.Set("signals.feed_timeline_capacity", 4)
 	viper.Set("signals.feed_track_capacity", 4)
-	viper.Set("signals.coalesce_window", 10*time.Millisecond)
 
 	Convey("Given a single buffered ingress signal", t, func() {
 		market, err := NewMarket(context.Background(), nil, nil)
@@ -225,7 +221,7 @@ func TestMarket_WaitDirty(t *testing.T) {
 		market.WaitDirty(200 * time.Millisecond)
 		elapsed := time.Since(start)
 
-		Convey("It coalesces one wake well under the budget and drains the channel", func() {
+		Convey("It consumes the wake without waiting for the idle budget", func() {
 			So(elapsed, ShouldBeLessThan, 150*time.Millisecond)
 
 			select {
@@ -236,42 +232,44 @@ func TestMarket_WaitDirty(t *testing.T) {
 		})
 	})
 
-	Convey("Given ingress that keeps arriving inside the merge window", t, func() {
+	Convey("Given two independently observable ingress signals", t, func() {
 		market, err := NewMarket(context.Background(), nil, nil)
 		So(err, ShouldBeNil)
 
-		stop := make(chan struct{})
-
-		go func() {
-			ticker := time.NewTicker(3 * time.Millisecond)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-stop:
-					return
-				case <-ticker.C:
-					market.dirtyWake()
-				}
-			}
-		}()
-
 		market.dirtyWake()
-		start := time.Now()
+		market.WaitDirty(time.Second)
+		market.dirtyWake()
+		market.WaitDirty(time.Second)
 
-		go func() {
-			time.Sleep(40 * time.Millisecond)
-			close(stop)
-		}()
-
-		market.WaitDirty(300 * time.Millisecond)
-		elapsed := time.Since(start)
-
-		Convey("It extends past a single window yet returns before the budget", func() {
-			So(elapsed, ShouldBeGreaterThan, 25*time.Millisecond)
-			So(elapsed, ShouldBeLessThan, 300*time.Millisecond)
+		Convey("It consumes exactly one wake for each observation", func() {
+			So(len(market.dirty), ShouldEqual, 0)
 		})
 	})
+}
+
+/*
+BenchmarkMarket_WaitDirty measures the live notification path with ingress
+already buffered, which is the steady-state case under an active market.
+*/
+func BenchmarkMarket_WaitDirty(b *testing.B) {
+	previousTimeline := viper.Get("signals.feed_timeline_capacity")
+	previousTrack := viper.Get("signals.feed_track_capacity")
+	b.Cleanup(func() { viper.Set("signals.feed_timeline_capacity", previousTimeline) })
+	b.Cleanup(func() { viper.Set("signals.feed_track_capacity", previousTrack) })
+	viper.Set("signals.feed_timeline_capacity", 4)
+	viper.Set("signals.feed_track_capacity", 4)
+	market, err := NewMarket(context.Background(), nil, nil)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		market.dirtyWake()
+		market.WaitDirty(time.Second)
+	}
 }
 
 /*

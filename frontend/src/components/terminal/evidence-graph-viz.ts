@@ -61,7 +61,7 @@ const stableHash = (key: string): number => {
 
 const stableUnit = (key: string): number => stableHash(key) / 0xffffffff;
 
-const measurementString = (
+export const measurementString = (
 	measurement: Record<string, unknown>,
 	field: string,
 ): string => {
@@ -70,7 +70,7 @@ const measurementString = (
 	return typeof value === "string" ? value : "";
 };
 
-const measurementNumber = (
+export const measurementNumber = (
 	measurement: Record<string, unknown>,
 	field: string,
 ): number | null => {
@@ -389,20 +389,26 @@ export const layoutEvidenceGraph = (
 };
 
 /*
-graphVisualKey fingerprints topology (node keys + typed edges) so the canvas only
-repaints when structure changes, not on timestamp-only churn.
+graphVisualKey fingerprints semantic topology so the canvas only repaints when
+node roles or typed relationships change, not when MeasurementKey timestamps do.
 */
 export const graphVisualKey = (graph: GraphFrame | null): string => {
 	if (graph === null) {
 		return "";
 	}
 
+	const identities = new Map(
+		graph.nodes.map((node) => [node.key, nodeIdentity(node)]),
+	);
 	const nodes = graph.nodes
-		.map((node) => `${node.key}:${nodeKind(node)}`)
+		.map((node) => `${nodeIdentity(node)}:${nodeKind(node)}`)
 		.sort()
 		.join("\0");
 	const edges = graph.edges
-		.map((edge) => `${edge.from}\t${edge.to}\t${edge.type}`)
+		.map(
+			(edge) =>
+				`${identities.get(edge.from) ?? ""}\t${identities.get(edge.to) ?? ""}\t${edge.type}`,
+		)
 		.sort()
 		.join("\0");
 

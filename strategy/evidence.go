@@ -52,6 +52,7 @@ func (evidence Evidence) Project(
 
 	projected.Mark = mark
 	projected.Entry = entry
+	projected.ReferencePrice = markDecimal.Copy()
 	projected.Present = true
 
 	if thesis == nil {

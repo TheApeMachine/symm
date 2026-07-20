@@ -39,7 +39,7 @@ type FluidSymbol struct {
 	ask                float64
 	spreadBPS          float64
 	flux               *fluxAccumulator
-	grid               *FluidGrid
+	grid               *Grid
 	bufferedTrades     []bufferedTrade
 	lastEventAt        time.Time
 	dynamics           fluidDynamics
@@ -154,10 +154,12 @@ func (state *FluidSymbol) configureTickFromBook(
 }
 
 func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
-	symbolConfig, configErr := loadSymbolConfig()
+	symbolConfig, err := loadSymbolConfig()
 
-	if configErr != nil {
-		return nil, configErr
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal, "fluid: failed to load symbol config", err,
+		))
 	}
 
 	state := &FluidSymbol{
@@ -170,16 +172,16 @@ func NewFluidSymbol(symbol string) (*FluidSymbol, error) {
 		return state, nil
 	}
 
-	grid, err := newFluidGrid(
-		symbolConfig.tickSizeFallback,
-		symbolConfig.gridHalfWidth,
-		symbolConfig.integrationInterval,
-		symbolConfig.idleThreshold,
-		symbolConfig.maxIntegrationSteps,
+	grid, err := newGrid(
+		state.config.tickSizeFallback,
+		state.config.gridHalfWidth,
+		state.config,
 	)
 
 	if err != nil {
-		return nil, err
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal, "fluid: failed to create grid", err,
+		))
 	}
 
 	state.grid = grid
@@ -225,16 +227,12 @@ func (state *FluidSymbol) configureGrid(
 		return fmt.Errorf("fluid: signals.fluid.integration_interval must be positive")
 	}
 
-	grid, err := newFluidGrid(
-		priceIncrement,
-		halfWidth,
-		integrationInterval,
-		state.config.idleThreshold,
-		state.config.maxIntegrationSteps,
-	)
+	grid, err := newGrid(priceIncrement, halfWidth, state.config)
 
 	if err != nil {
-		return err
+		return errnie.Error(errnie.Err(
+			errnie.Internal, "fluid: failed to create grid", err,
+		))
 	}
 
 	state.grid = grid
@@ -730,13 +728,8 @@ func priceMemoryFromSamples(samples []float64) float64 {
 	maxVal := samples[0]
 
 	for _, sample := range samples {
-		if sample < minVal {
-			minVal = sample
-		}
-
-		if sample > maxVal {
-			maxVal = sample
-		}
+		minVal = math.Min(minVal, sample)
+		maxVal = math.Max(maxVal, sample)
 	}
 
 	span := maxVal - minVal

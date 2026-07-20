@@ -1,232 +1,364 @@
 package manifold
 
 import (
+	"hash/fnv"
 	"math"
 	"sort"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 	"gonum.org/v1/gonum/stat"
 )
 
-var goldenRatio = (1 + math.Sqrt(5)) / 2
-
 /*
-mappedOrder carries one L3 order in dimensionless manifold coordinates.
-*/
-type mappedOrder struct {
-	mass     float64
-	posX     float64
-	posY     float64
-	posZ     float64
-	velX     float64
-	velY     float64
-	velZ     float64
-	omega    float64
-	phase    float64
-	heat     float64
-	sequence uint64
-}
-
-/*
-coordinateEpoch tracks prior order coordinates so event-time velocity is causal.
+coordinateEpoch retains empirical scales and prior positions for velocity.
 */
 type coordinateEpoch struct {
 	at           time.Time
 	midPrice     float64
+	reference    *decimal.Decimal
 	spread       float64
-	buyCapacity  float64
-	sellCapacity float64
-	positions    map[string][3]float64
+	buyCapacity  *decimal.Decimal
+	sellCapacity *decimal.Decimal
+	positions    map[string]pfluid.Vector
 }
 
 /*
-mapOrders transforms resting L3 orders into dimensionless coordinates and spectral
-modes using market-derived scales from the active population.
+Map converts L3 price, size, survival, identity, and side into observations.
 */
-func mapOrders(
-	config pmanifold.Config,
-	orders []physicalOrder,
-	midPrice float64,
-	at time.Time,
-	prior *coordinateEpoch,
-) ([]mappedOrder, *coordinateEpoch, bool) {
+func (prior *coordinateEpoch) Map(
+	config pfluid.Config,
+	candidate intensityCandidate,
+) ([]pfluid.Particle, *coordinateEpoch, bool) {
+	orders := candidate.orders
+	midPrice := candidate.midPrice
+	at := candidate.outcome.At
+
 	if midPrice <= 0 || len(orders) == 0 || at.IsZero() {
 		return nil, prior, false
 	}
 
+	logPrices, logSizes, ages, touch, ready := marketScales(orders, midPrice, at)
+
+	if !ready {
+		return nil, prior, false
+	}
+
+	priceScale := empiricalScale(logPrices)
+	sizeMean := stat.Mean(logSizes, nil)
+	sizeScale := empiricalScale(logSizes)
+
+	if priceScale <= 0 || sizeScale <= 0 {
+		return nil, prior, false
+	}
+
+	sort.Float64s(ages)
+	reference := touch.reference()
+	next := &coordinateEpoch{
+		at:        at,
+		midPrice:  midPrice,
+		reference: reference,
+		spread:    touch.spread(reference),
+		buyCapacity: touch.notional(
+			touch.askPriceMoney,
+			touch.askQuantity,
+		),
+		sellCapacity: touch.notional(
+			touch.bidPriceMoney,
+			touch.bidQuantity,
+		),
+		positions: make(map[string]pfluid.Vector, len(orders)),
+	}
+	particles := make([]pfluid.Particle, 0, len(orders))
+
+	for _, order := range orders {
+		heat, thermal := candidate.heat(order.side, touch)
+
+		if !thermal {
+			return nil, prior, false
+		}
+
+		particle, ok := prior.mapOrder(
+			config,
+			candidate.symbol,
+			order,
+			midPrice,
+			priceScale,
+			sizeMean,
+			sizeScale,
+			ages,
+			at,
+			heat,
+		)
+
+		if !ok {
+			continue
+		}
+
+		next.positions[order.orderID] = particle.Position
+		particles = append(particles, particle)
+	}
+
+	return particles, next, len(particles) > 0
+}
+
+/*
+marketTouch retains geometric inputs and exact executable touch values.
+*/
+type marketTouch struct {
+	bidPrice      float64
+	askPrice      float64
+	bidPriceMoney *decimal.Decimal
+	askPriceMoney *decimal.Decimal
+	bidQuantity   *decimal.Decimal
+	askQuantity   *decimal.Decimal
+	bidOrders     int
+	askOrders     int
+}
+
+/*
+reference returns the exact touch midpoint at its derived decimal scale.
+*/
+func (touch marketTouch) reference() *decimal.Decimal {
+	scale := max(
+		touch.bidPriceMoney.GetScale(),
+		touch.askPriceMoney.GetScale(),
+	) + 1
+
+	return touch.bidPriceMoney.Add(touch.askPriceMoney).
+		SetScale(scale).
+		Div(decimal.NewFromInt64(2))
+}
+
+/*
+spread computes exact touch width/reference before the dimensionless boundary.
+*/
+func (touch marketTouch) spread(reference *decimal.Decimal) float64 {
+	width := touch.askPriceMoney.Sub(touch.bidPriceMoney)
+	scale := max(
+		int64(decimal.DefaultScale),
+		width.GetScale(),
+		reference.GetScale(),
+	)
+
+	return width.SetScale(scale).Div(reference.SetScale(scale)).Float64()
+}
+
+/*
+notional multiplies exact fixed-point price and quantity at their combined
+scale, which represents their finite decimal product without truncating a
+fine-grained quantity. Integer products retain one fractional place to avoid
+the SDK's incorrect scale-zero banker rounding.
+*/
+func (touch marketTouch) notional(
+	price *decimal.Decimal,
+	quantity *decimal.Decimal,
+) *decimal.Decimal {
+	scale := max(int64(1), price.GetScale()+quantity.GetScale())
+
+	return price.SetScale(scale).Mul(quantity.SetScale(scale))
+}
+
+/*
+heat returns expected aggressive arrivals per resting order over the observed
+Hawkes horizon. Buys deposit thermal energy into asks and sells into bids, so
+the gas receives the measured event flow without assigning every market a
+fixed temperature or allowing book population size to multiply total energy.
+*/
+func (candidate intensityCandidate) heat(
+	side book.BookDirection,
+	touch marketTouch,
+) (float32, bool) {
+	horizon := candidate.outcome.Horizon.Seconds()
+	buyIntensity, sellIntensity := intensities(candidate.outcome)
+	arrivalRate := sellIntensity
+	orderCount := touch.bidOrders
+
+	if side == book.Ask {
+		arrivalRate = buyIntensity
+		orderCount = touch.askOrders
+	}
+
+	if orderCount <= 0 || horizon <= 0 || arrivalRate < 0 {
+		return 0, false
+	}
+
+	heat := arrivalRate * horizon / float64(orderCount)
+
+	if math.IsNaN(heat) || math.IsInf(heat, 0) {
+		return 0, false
+	}
+
+	return float32(heat), true
+}
+
+/*
+marketScales collects the empirical distributions and exact two-sided touch
+needed to map a complete book without assuming a universal symbol scale.
+*/
+func marketScales(
+	orders []physicalOrder,
+	midPrice float64,
+	at time.Time,
+) ([]float64, []float64, []float64, marketTouch, bool) {
 	logPrices := make([]float64, 0, len(orders))
 	logSizes := make([]float64, 0, len(orders))
 	ages := make([]float64, 0, len(orders))
-	totalMass := 0.0
-	bestBid := 0.0
-	bestAsk := 0.0
-	bestBidQuantity := 0.0
-	bestAskQuantity := 0.0
+	touch := marketTouch{
+		bidQuantity: decimal.NewFromInt64(0),
+		askQuantity: decimal.NewFromInt64(0),
+	}
 
 	for _, order := range orders {
 		if order.quantity <= 0 || order.price <= 0 {
 			continue
 		}
 
-		signedLogPrice := math.Log(order.price / midPrice)
-
-		logPrices = append(logPrices, signedLogPrice)
-		logSizes = append(logSizes, math.Log(1+order.quantity))
+		logPrices = append(logPrices, math.Log(order.price/midPrice))
+		logSizes = append(logSizes, math.Log1p(order.quantity))
 		ages = append(ages, at.Sub(order.timestamp).Seconds())
-		totalMass += order.quantity
-
-		if order.side == book.Bid && order.price >= bestBid {
-			if order.price > bestBid {
-				bestBid = order.price
-				bestBidQuantity = 0
-			}
-
-			bestBidQuantity += order.quantity
-		}
-
-		if order.side == book.Ask && (bestAsk == 0 || order.price <= bestAsk) {
-			if bestAsk == 0 || order.price < bestAsk {
-				bestAsk = order.price
-				bestAskQuantity = 0
-			}
-
-			bestAskQuantity += order.quantity
-		}
+		touch.observe(order)
 	}
 
-	if totalMass <= 0 || len(logPrices) == 0 || bestBid <= 0 ||
-		bestAsk <= bestBid || bestBidQuantity <= 0 || bestAskQuantity <= 0 {
-		return nil, prior, false
-	}
-
-	priceScale := stat.StdDev(logPrices, nil)
-
-	if priceScale <= 0 {
-		priceScale = (math.Abs(stat.Quantile(0, stat.Empirical, logPrices, nil)) +
-			math.Abs(stat.Quantile(1, stat.Empirical, logPrices, nil))) / 2
-	}
-
-	if priceScale <= 0 {
-		return nil, prior, false
-	}
-
-	sizeMean := stat.Mean(logSizes, nil)
-	sizeScale := stat.StdDev(logSizes, nil)
-
-	if sizeScale <= 0 {
-		sizeScale = sizeMean
-	}
-
-	if sizeScale <= 0 {
-		return nil, prior, false
-	}
-
-	sortedAges := append([]float64(nil), ages...)
-	sort.Float64s(sortedAges)
-
-	omegaMin := config.GateWidthMin()
-	omegaMax := config.GateWidthMax()
-
-	if omegaMax <= omegaMin {
-		return nil, prior, false
-	}
-
-	nextEpoch := &coordinateEpoch{
-		at:           at,
-		midPrice:     midPrice,
-		spread:       (bestAsk - bestBid) / midPrice,
-		buyCapacity:  bestAsk * bestAskQuantity,
-		sellCapacity: bestBid * bestBidQuantity,
-		positions:    make(map[string][3]float64, len(orders)),
-	}
-
-	deltaT := 0.0
-
-	if prior != nil && !prior.at.IsZero() && at.After(prior.at) {
-		deltaT = at.Sub(prior.at).Seconds()
-	}
-
-	mapped := make([]mappedOrder, 0, len(orders))
-
-	for index, order := range orders {
-		if order.quantity <= 0 || order.price <= 0 {
-			continue
-		}
-
-		signedLogPrice := math.Log(order.price / midPrice)
-
-		logSize := math.Log(1 + order.quantity)
-		age := at.Sub(order.timestamp).Seconds()
-		posX := domainCoordinate(signedLogPrice/priceScale, config.DomainX)
-		posY := domainCoordinate((logSize-sizeMean)/sizeScale, config.DomainY)
-		posZ := survivalCoordinate(age, sortedAges) * config.DomainZ
-
-		velX, velY, velZ := 0.0, 0.0, 0.0
-
-		if prior != nil && deltaT > 0 {
-			if previous, ok := prior.positions[order.orderID]; ok {
-				velX = (posX - previous[0]) / deltaT
-				velY = (posY - previous[1]) / deltaT
-				velZ = (posZ - previous[2]) / deltaT
-			}
-		}
-
-		nextEpoch.positions[order.orderID] = [3]float64{posX, posY, posZ}
-
-		// Near-touch size updates and cancels faster than deep book; map that
-		// urgency onto the configured gate-width band without consulting IDs.
-		touchProximity := 1 - math.Abs(math.Tanh(signedLogPrice/priceScale))
-		omega := omegaMin + touchProximity*(omegaMax-omegaMin)
-		// Bid/ask opposition plus sequence diversity so co-located cohorts
-		// interfere instead of sharing one global phase.
-		phase := goldenPhase(uint64(index) + 1)
-
-		if order.side == book.Ask {
-			phase += math.Pi
-		}
-
-		mass := order.quantity / totalMass
-
-		mapped = append(mapped, mappedOrder{
-			mass:     mass,
-			posX:     posX,
-			posY:     posY,
-			posZ:     posZ,
-			velX:     velX,
-			velY:     velY,
-			velZ:     velZ,
-			omega:    omega,
-			phase:    phase,
-			heat:     mass,
-			sequence: uint64(index) + 1,
-		})
-	}
-
-	if len(mapped) == 0 {
-		return nil, prior, false
-	}
-
-	return mapped, nextEpoch, true
+	ready := len(logPrices) > 0 && touch.bidPrice > 0 &&
+		touch.askPrice > touch.bidPrice && touch.bidPriceMoney != nil &&
+		touch.askPriceMoney != nil && touch.bidQuantity.Sign() > 0 &&
+		touch.askQuantity.Sign() > 0
+	return logPrices, logSizes, ages, touch, ready
 }
 
 /*
-domainCoordinate maps an unbounded z-score onto (0, domain) centered at
-domain/2 via tanh, so the ±sigma bulk of orders spreads across the whole grid
-axis instead of collapsing into a stripe around the domain center. A z-score of
-0 (an order at the mid) lands exactly at domain/2, preserving the buy/sell split
-inject.go derives from PosX >= DomainX/2.
+observe updates one side of the best touch and accumulates its exact quantity.
 */
-func domainCoordinate(zscore float64, domain float64) float64 {
-	return (math.Tanh(zscore) + 1) / 2 * domain
-}
-
-func survivalCoordinate(age float64, sortedAges []float64) float64 {
-	if len(sortedAges) == 0 {
-		return 0
+func (touch *marketTouch) observe(order physicalOrder) {
+	if order.side == book.Bid {
+		touch.bidOrders++
 	}
 
+	if order.side == book.Ask {
+		touch.askOrders++
+	}
+
+	if order.side == book.Bid && order.price >= touch.bidPrice {
+		if order.price > touch.bidPrice {
+			touch.bidPrice = order.price
+			touch.bidPriceMoney = order.priceMoney
+			touch.bidQuantity = decimal.NewFromInt64(0)
+		}
+
+		touch.bidQuantity = touch.bidQuantity.Add(order.quantityMoney)
+	}
+
+	if order.side == book.Ask && (touch.askPrice == 0 || order.price <= touch.askPrice) {
+		if touch.askPrice == 0 || order.price < touch.askPrice {
+			touch.askPrice = order.price
+			touch.askPriceMoney = order.priceMoney
+			touch.askQuantity = decimal.NewFromInt64(0)
+		}
+
+		touch.askQuantity = touch.askQuantity.Add(order.quantityMoney)
+	}
+}
+
+/*
+mapOrder maps one valid order into coupled geometry, thermodynamics, and wave
+coordinates while preserving the original Sensorium unit-energy convention.
+*/
+func (prior *coordinateEpoch) mapOrder(
+	config pfluid.Config,
+	symbol string,
+	order physicalOrder,
+	midPrice float64,
+	priceScale float64,
+	sizeMean float64,
+	sizeScale float64,
+	ages []float64,
+	at time.Time,
+	heat float32,
+) (pfluid.Particle, bool) {
+	if order.quantity <= 0 || order.price <= 0 {
+		return pfluid.Particle{}, false
+	}
+
+	priceCoordinate := math.Log(order.price/midPrice) / priceScale
+	position := pfluid.Vector{
+		X: float32(unitCoordinate(priceCoordinate)),
+		Y: float32(unitCoordinate((math.Log1p(order.quantity) - sizeMean) / sizeScale)),
+		Z: float32(survivalCoordinate(at.Sub(order.timestamp).Seconds(), ages)),
+	}
+	velocity := prior.velocity(order.orderID, position, at)
+	phase := stablePhase(symbol, order.orderID)
+
+	if order.side == book.Ask {
+		phase += math.Pi
+	}
+
+	return pfluid.Particle{
+		Position: position,
+		Velocity: velocity,
+		Mass:     1,
+		Heat:     heat,
+		Energy:   1,
+		Phase:    float32(math.Remainder(phase, 2*math.Pi)),
+		Omega: float32(config.OmegaMin) + float32(unitCoordinate(priceCoordinate))*
+			(config.OmegaMax-config.OmegaMin),
+	}, true
+}
+
+/*
+velocity derives order motion over real event time and takes the shortest
+periodic displacement on each normalized axis.
+*/
+func (prior *coordinateEpoch) velocity(
+	orderID string,
+	position pfluid.Vector,
+	at time.Time,
+) pfluid.Vector {
+	if prior == nil || !at.After(prior.at) {
+		return pfluid.Vector{}
+	}
+
+	previous, ok := prior.positions[orderID]
+
+	if !ok {
+		return pfluid.Vector{}
+	}
+
+	seconds := float32(at.Sub(prior.at).Seconds())
+	return pfluid.Vector{
+		X: periodicDelta(position.X, previous.X) / seconds,
+		Y: periodicDelta(position.Y, previous.Y) / seconds,
+		Z: periodicDelta(position.Z, previous.Z) / seconds,
+	}
+}
+
+/*
+empiricalScale uses observed dispersion, or the observed magnitude when the
+population is degenerate, and never inserts a synthetic scale.
+*/
+func empiricalScale(values []float64) float64 {
+	scale := stat.StdDev(values, nil)
+
+	if scale > 0 {
+		return scale
+	}
+
+	return math.Abs(stat.Mean(values, nil))
+}
+
+/*
+unitCoordinate maps an unbounded empirical coordinate into the open unit torus.
+*/
+func unitCoordinate(value float64) float64 {
+	return (math.Tanh(value) + 1) / 2
+}
+
+/*
+survivalCoordinate maps order age to its empirical cumulative rank.
+*/
+func survivalCoordinate(age float64, sortedAges []float64) float64 {
 	rank := sort.Search(len(sortedAges), func(index int) bool {
 		return sortedAges[index] > age
 	})
@@ -234,8 +366,33 @@ func survivalCoordinate(age float64, sortedAges []float64) float64 {
 	return float64(rank) / float64(len(sortedAges))
 }
 
-func goldenPhase(sequence uint64) float64 {
-	fraction := float64(sequence)*goldenRatio - math.Floor(float64(sequence)*goldenRatio)
+/*
+stablePhase derives repeatable phase identity from symbol and order ID so map
+iteration and intensity rank cannot rotate an oscillator between epochs.
+*/
+func stablePhase(symbol, orderID string) float64 {
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(symbol))
+	_, _ = hasher.Write([]byte{0})
+	_, _ = hasher.Write([]byte(orderID))
+	fraction := float64(hasher.Sum64()) / float64(math.MaxUint64)
 
 	return 2 * math.Pi * fraction
+}
+
+/*
+periodicDelta returns the shortest displacement on a unit-periodic axis.
+*/
+func periodicDelta(current, previous float32) float32 {
+	delta := current - previous
+
+	if delta > 0.5 {
+		return delta - 1
+	}
+
+	if delta < -0.5 {
+		return delta + 1
+	}
+
+	return delta
 }

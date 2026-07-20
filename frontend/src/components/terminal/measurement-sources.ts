@@ -1,4 +1,3 @@
-import { measurementTickCount } from "#/collections/measurements";
 import type { Measurement } from "#/types/measurement";
 import { orderedKernelSources } from "#/components/terminal/kernel-meta";
 
@@ -29,9 +28,7 @@ export const sourceHasUniverseFrames = (
 	measurements: Measurement[],
 	source: string,
 ): boolean =>
-	measurementTickCount(
-		measurements.filter((measurement) => measurement.source === source),
-	) > 0;
+	measurements.some((measurement) => measurement.source === source);
 
 /*
 liveFocusSymbol keeps the explicit preferred focus. Auto-picking the first live

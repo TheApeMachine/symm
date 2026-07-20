@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -84,9 +85,9 @@ func eligibleForecast() Forecasts {
 		FrictionReady:              true,
 		CalibrationSamples:         8,
 		IncrementalSkillLowerBound: 0.0001,
-		ReferencePrice:             100,
-		BuyCapacity:                1000,
-		SellCapacity:               1000,
+		ReferencePrice:             decimal.NewFromInt64(100),
+		BuyCapacity:                decimal.NewFromInt64(1000),
+		SellCapacity:               decimal.NewFromInt64(1000),
 		Confidence:                 0.5,
 	}
 }

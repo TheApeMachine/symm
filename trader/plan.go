@@ -1,7 +1,6 @@
 package trader
 
 import (
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
@@ -90,13 +89,11 @@ func (crypto *Crypto) restoreRecovery(
 	}
 
 	for _, row := range snapshot.Reservations {
-		if row.ID == "" || row.Amount <= 0 {
+		if row.ID == "" || row.Amount == nil || row.Amount.Sign() <= 0 {
 			continue
 		}
 
-		_ = crypto.balance.RestoreClaim(
-			row.ID, decimal.NewFromFloat64(row.Amount),
-		)
+		_ = crypto.balance.RestoreClaim(row.ID, row.Amount)
 	}
 
 	for symbol, pending := range snapshot.PendingOrders {

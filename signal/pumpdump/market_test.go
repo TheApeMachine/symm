@@ -43,7 +43,7 @@ func measureMarket(t testing.TB, frames iter.Seq[tests.Frame]) [][]*types.Measur
 	market, err := trader.NewMarket(ctx, api, instrument)
 	So(err, ShouldBeNil)
 	t.Cleanup(market.Close)
-	signal := NewSignal(ctx, api, nil)
+	signal := NewSignal(ctx, api, nil, viper.GetInt("signals.feed_track_capacity"))
 	epochs := make([][]*types.Measurement, 0)
 	cutAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -79,6 +79,58 @@ func indexEpoch(epoch []*types.Measurement) map[types.MetricType]*types.Measurem
 	}
 
 	return indexed
+}
+
+/*
+TestSignal_PumpDumpSimulationDetectsIgnition drives the canonical pump-and-dump
+simulation through the production websocket and Market path and proves two
+things the per-ticker-advance model failed: the panel never fully collapses to
+zero (the live spread is always reported), and the volume-clock ignition and
+strength scores actually light up on the pump legs.
+*/
+func TestSignal_PumpDumpSimulationDetectsIgnition(t *testing.T) {
+	Convey("Given the canonical pump-and-dump simulation", t, func() {
+		epochs := measureMarket(t, conditions.PumpDump().Frames())
+
+		So(len(epochs), ShouldBeGreaterThan, 0)
+
+		var maxIgnition, maxStrength, maxRVOL, maxExhaustion float64
+		fullyZero := 0
+
+		for _, epoch := range epochs {
+			indexed := indexEpoch(epoch)
+			nonZero := false
+
+			for _, measurement := range epoch {
+				if measurement.Raw != 0 {
+					nonZero = true
+				}
+			}
+
+			if !nonZero {
+				fullyZero++
+			}
+
+			maxIgnition = math.Max(maxIgnition, indexed[types.MetricIgnition].Raw)
+			maxStrength = math.Max(maxStrength, indexed[types.MetricStrength].Raw)
+			maxRVOL = math.Max(maxRVOL, indexed[types.MetricRVOL].Raw)
+			maxExhaustion = math.Max(maxExhaustion, indexed[types.MetricExhaustion].Raw)
+		}
+
+		Convey("Then no epoch collapses every metric to zero", func() {
+			So(fullyZero, ShouldEqual, 0)
+		})
+
+		Convey("Then the pump legs raise ignition, strength, and relative volume", func() {
+			So(maxRVOL, ShouldBeGreaterThan, 0)
+			So(maxIgnition, ShouldBeGreaterThan, 0)
+			So(maxStrength, ShouldBeGreaterThan, 0)
+		})
+
+		Convey("Then the dump leg registers exhaustion", func() {
+			So(maxExhaustion, ShouldBeGreaterThan, 0)
+		})
+	})
 }
 
 /*
@@ -276,8 +328,11 @@ func TestSignal_MeasureFromMarketRequiresJointEvidence(t *testing.T) {
 			So(priceOnly[types.MetricPrecursor].Raw, ShouldBeGreaterThan, 0)
 			So(joint[types.MetricRVOL].Raw,
 				ShouldBeGreaterThan, priceOnly[types.MetricRVOL].Raw)
+			// On the volume clock, price displacement is measured per equal-volume
+			// bar, so a volume-backed lift is a stronger precursor than the same
+			// nominal move printed on little or no volume.
 			So(joint[types.MetricPrecursor].Raw,
-				ShouldAlmostEqual, priceOnly[types.MetricPrecursor].Raw)
+				ShouldBeGreaterThanOrEqualTo, priceOnly[types.MetricPrecursor].Raw)
 			So(joint[types.MetricIgnition].Raw,
 				ShouldBeGreaterThan, priceOnly[types.MetricIgnition].Raw)
 			So(joint[types.MetricTrend].Raw,

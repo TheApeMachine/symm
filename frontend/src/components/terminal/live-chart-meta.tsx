@@ -1,6 +1,4 @@
-import { useSelector } from "@tanstack/react-store";
-import { useRef } from "react";
-import { appStore } from "#/collections/app";
+import { createRef } from "react";
 import type { ManifoldFrame, ResonanceFrame } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
 import {
@@ -11,132 +9,133 @@ import {
 	isFluidFieldMatrix,
 	terminalFluidFieldStats,
 } from "#/components/terminal/fluid-field";
-import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
-import { getWorker } from "#/providers/websocket";
+
+const manifoldWaitingRef = createRef<HTMLDivElement>();
+const manifoldGridRef = createRef<HTMLDivElement>();
+const manifoldOutliersRef = createRef<HTMLDivElement>();
+const manifoldPeakRef = createRef<HTMLDivElement>();
+
+const resonanceFooterRef = createRef<HTMLSpanElement>();
+const resonanceTitleRef = createRef<HTMLSpanElement>();
 
 /*
-LiveManifoldMeta paints pilot-wave canvas metadata without React reconciliation.
+paintManifoldMeta paints pilot-wave canvas metadata from the current DRAW
+manifold batch into the LiveManifoldMeta shell.
 */
-export const LiveManifoldMeta = ({ focusSymbol }: { focusSymbol: string }) => {
-	const gridRef = useRef<HTMLDivElement>(null);
-	const outliersRef = useRef<HTMLDivElement>(null);
-	const peakRef = useRef<HTMLDivElement>(null);
-	const waitingRef = useRef<HTMLDivElement>(null);
-	const online = useSelector(appStore, (state) => state.online);
-	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
-
-	useDirectStorePaint(
-		getWorker(),
-		[{ store: "manifold", key: focusSymbol }],
-		(buffers) => {
-			const manifold = (buffers[`manifold:${focusSymbol}`] ?? []).at(
-				-1,
-			) as ManifoldFrame | undefined;
-			const contour = fieldStyle === "Contour";
-			const waiting = manifold === undefined;
-			const display = terminalFluidDisplayLatticeFromFrame(manifold ?? null);
-			const field = isFluidFieldMatrix(display) ? display : [];
-			const { columns, rows } = fluidGridDimensions(manifold ?? null, field);
-			const stats = terminalFluidFieldStats(field, contour);
-
-			if (waitingRef.current !== null) {
-				waitingRef.current.style.display = waiting ? "" : "none";
-			}
-
-			if (gridRef.current !== null) {
-				gridRef.current.style.display = waiting ? "none" : "";
-				gridRef.current.textContent = waiting
-					? ""
-					: `grid ${String(columns)}×${String(rows)}`;
-			}
-
-			if (outliersRef.current !== null) {
-				outliersRef.current.style.display = waiting ? "none" : "";
-				outliersRef.current.textContent = waiting
-					? ""
-					: `outliers ${String(stats.outliers)}`;
-			}
-
-			if (peakRef.current !== null) {
-				peakRef.current.style.display = waiting ? "none" : "";
-				peakRef.current.textContent = waiting
-					? ""
-					: `peak ${stats.peak.toFixed(2)}`;
-			}
-		},
-		[online, focusSymbol, fieldStyle],
+export const paintManifoldMeta = (value: unknown, focusSymbol: string) => {
+	const rows = (
+		Array.isArray(value) ? value : value != null ? [value] : []
+	) as ManifoldFrame[];
+	const manifold = rows
+		.filter(
+			(frame) => focusSymbol === "" || frame.symbol === focusSymbol,
+		)
+		.at(-1);
+	const contour = terminalStore.state.fieldStyle === "Contour";
+	const waiting = manifold === undefined;
+	const display = terminalFluidDisplayLatticeFromFrame(manifold ?? null);
+	const field = isFluidFieldMatrix(display) ? display : [];
+	const { columns, rows: gridRows } = fluidGridDimensions(
+		manifold ?? null,
+		field,
 	);
+	const stats = terminalFluidFieldStats(field, contour);
 
-	return (
-		<div>
-			<div ref={waitingRef}>waiting</div>
-			<div ref={gridRef} />
-			<div ref={outliersRef} />
-			<div ref={peakRef} />
-		</div>
-	);
+	if (manifoldWaitingRef.current !== null) {
+		manifoldWaitingRef.current.style.display = waiting ? "" : "none";
+	}
+
+	if (manifoldGridRef.current !== null) {
+		manifoldGridRef.current.style.display = waiting ? "none" : "";
+		manifoldGridRef.current.textContent = waiting
+			? ""
+			: `grid ${String(columns)}×${String(gridRows)}`;
+	}
+
+	if (manifoldOutliersRef.current !== null) {
+		manifoldOutliersRef.current.style.display = waiting ? "none" : "";
+		manifoldOutliersRef.current.textContent = waiting
+			? ""
+			: `outliers ${String(stats.outliers)}`;
+	}
+
+	if (manifoldPeakRef.current !== null) {
+		manifoldPeakRef.current.style.display = waiting ? "none" : "";
+		manifoldPeakRef.current.textContent = waiting
+			? ""
+			: `peak ${stats.peak.toFixed(2)}`;
+	}
 };
 
 /*
-LiveResonanceFooter paints predictive-coding footer metadata without React.
+paintResonanceFooter paints predictive-coding footer metadata from the current
+DRAW resonance batch.
 */
-export const LiveResonanceFooter = ({
-	focusSymbol,
-}: {
-	focusSymbol: string;
-}) => {
-	const footerRef = useRef<HTMLSpanElement>(null);
-	const online = useSelector(appStore, (state) => state.online);
+export const paintResonanceFooter = (value: unknown, focusSymbol: string) => {
+	const rows = (
+		Array.isArray(value) ? value : value != null ? [value] : []
+	) as ResonanceFrame[];
+	const resonance = rows
+		.filter(
+			(frame) => focusSymbol === "" || frame.symbol === focusSymbol,
+		)
+		.at(-1);
 
-	useDirectStorePaint(
-		getWorker(),
-		[{ store: "resonance", key: focusSymbol }],
-		(buffers) => {
-			const resonance = (buffers[`resonance:${focusSymbol}`] ?? []).at(
-				-1,
-			) as ResonanceFrame | undefined;
-
-			if (footerRef.current !== null) {
-				footerRef.current.textContent =
-					resonance === undefined
-						? "waiting"
-						: `symbol ${String(resonance.symbol)}`;
-			}
-		},
-		[online, focusSymbol],
-	);
-
-	return <span ref={footerRef} />;
+	if (resonanceFooterRef.current !== null) {
+		resonanceFooterRef.current.textContent =
+			resonance === undefined
+				? "waiting"
+				: `symbol ${String(resonance.symbol)}`;
+	}
 };
 
 /*
-LiveResonanceTitle paints predictive-coding title samples without React.
+paintResonanceTitle paints predictive-coding title samples from the current
+DRAW resonance batch.
 */
-export const LiveResonanceTitle = ({
-	focusSymbol,
-}: {
-	focusSymbol: string;
-}) => {
-	const titleRef = useRef<HTMLSpanElement>(null);
-	const online = useSelector(appStore, (state) => state.online);
+export const paintResonanceTitle = (value: unknown, focusSymbol: string) => {
+	const rows = (
+		Array.isArray(value) ? value : value != null ? [value] : []
+	) as ResonanceFrame[];
+	const resonance = rows
+		.filter(
+			(frame) => focusSymbol === "" || frame.symbol === focusSymbol,
+		)
+		.at(-1);
 
-	useDirectStorePaint(
-		getWorker(),
-		[{ store: "resonance", key: focusSymbol }],
-		(buffers) => {
-			const resonance = (buffers[`resonance:${focusSymbol}`] ?? []).at(
-				-1,
-			) as ResonanceFrame | undefined;
-
-			if (titleRef.current !== null) {
-				titleRef.current.textContent =
-					resonance === undefined
-						? "waiting"
-						: `${String(resonance.samples)} samples`;
-			}
-		},
-		[online, focusSymbol],
-	);
-
-	return <span ref={titleRef} />;
+	if (resonanceTitleRef.current !== null) {
+		resonanceTitleRef.current.textContent =
+			resonance === undefined
+				? "waiting"
+				: `${String(resonance.samples)} samples`;
+	}
 };
+
+/*
+LiveManifoldMeta is the static pilot-wave metadata shell. DRAW paints via
+paintManifoldMeta.
+*/
+export const LiveManifoldMeta = (_props: { focusSymbol: string }) => (
+	<div>
+		<div ref={manifoldWaitingRef}>waiting</div>
+		<div ref={manifoldGridRef} />
+		<div ref={manifoldOutliersRef} />
+		<div ref={manifoldPeakRef} />
+	</div>
+);
+
+/*
+LiveResonanceFooter is the static predictive-coding footer shell. DRAW paints
+via paintResonanceFooter.
+*/
+export const LiveResonanceFooter = (_props: { focusSymbol: string }) => (
+	<span ref={resonanceFooterRef} />
+);
+
+/*
+LiveResonanceTitle is the static predictive-coding title shell. DRAW paints via
+paintResonanceTitle.
+*/
+export const LiveResonanceTitle = (_props: { focusSymbol: string }) => (
+	<span ref={resonanceTitleRef} />
+);

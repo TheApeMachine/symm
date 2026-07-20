@@ -263,6 +263,27 @@ describe("graphVisualKey", () => {
 
 		expect(graphVisualKey(after)).toBe(graphVisualKey(before));
 	});
+
+	it("ignores MeasurementKey churn in nodes and edge endpoints", () => {
+		const before = categoryGraph();
+		const replacements = new Map(
+			before.nodes.map((node) => [node.key, `${node.key}/next-tick`]),
+		);
+		const after: GraphFrame = {
+			...before,
+			nodes: before.nodes.map((node) => ({
+				...node,
+				key: replacements.get(node.key) ?? node.key,
+			})),
+			edges: before.edges.map((edge) => ({
+				...edge,
+				from: replacements.get(edge.from) ?? edge.from,
+				to: replacements.get(edge.to) ?? edge.to,
+			})),
+		};
+
+		expect(graphVisualKey(after)).toBe(graphVisualKey(before));
+	});
 });
 
 describe("hitTest", () => {

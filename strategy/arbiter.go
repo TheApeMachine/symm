@@ -4,6 +4,7 @@ import (
 	"maps"
 	"sort"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
@@ -21,7 +22,7 @@ type Arbiter struct {
 	balance     *broker.Balance
 	admit       *Admit
 	rotate      Rotate
-	maxFraction float64
+	maxFraction *decimal.Decimal
 }
 
 /*
@@ -36,12 +37,14 @@ func NewArbiter(
 	rotate Rotate,
 ) *Arbiter {
 	return &Arbiter{
-		desk:        desk,
-		price:       price,
-		balance:     balance,
-		admit:       admit,
-		rotate:      rotate,
-		maxFraction: viper.GetFloat64("trading.allocation.max_fraction"),
+		desk:    desk,
+		price:   price,
+		balance: balance,
+		admit:   admit,
+		rotate:  rotate,
+		maxFraction: decimal.NewFromFloat64(
+			viper.GetFloat64("trading.allocation.max_fraction"),
+		),
 	}
 }
 
@@ -61,8 +64,10 @@ func (arbiter *Arbiter) Select(thesis *types.Thesis) {
 	forecasts := selectForecasts(thesis.Forecasts)
 
 	sort.Slice(candidates, func(left, right int) bool {
-		return arbiter.dollar(candidates[left], cash, forecasts) >
-			arbiter.dollar(candidates[right], cash, forecasts)
+		leftValue := arbiter.dollar(candidates[left], cash, forecasts)
+		rightValue := arbiter.dollar(candidates[right], cash, forecasts)
+
+		return leftValue.Cmp(rightValue) > 0
 	})
 
 	rotatable := arbiter.rotatable(thesis)
@@ -131,7 +136,7 @@ func (arbiter *Arbiter) displace(
 
 	incumbent := &incumbents[index]
 
-	if incumbent.Notional <= 0 {
+	if incumbent.Notional == nil || incumbent.Notional.Sign() <= 0 {
 		return false
 	}
 
@@ -157,8 +162,8 @@ func (arbiter *Arbiter) displace(
 	decision.Alternatives["rotate_surplus"] = arbiter.rotate.Surplus(
 		decision.Utility, incumbent.HoldUtility, incumbent.ExitCost,
 	)
-	decision.Alternatives["incumbent_qty"] = incumbent.Qty
-	decision.Alternatives["incumbent_mark"] = incumbent.Mark
+	decision.DisplacedQuantity = incumbent.Qty.Copy()
+	decision.DisplacedPrice = incumbent.Mark.Copy()
 
 	arbiter.admit.Accept(thesis, *decision, opportunity)
 
@@ -169,14 +174,14 @@ func (arbiter *Arbiter) displace(
 cash reports unreserved quote capital for prequoting fresh-enter notionals.
 Missing wallet state ranks by bare utility rather than inventing a dollar value.
 */
-func (arbiter *Arbiter) cash() float64 {
+func (arbiter *Arbiter) cash() *decimal.Decimal {
 	available, err := arbiter.balance.AvailableCash()
 
 	if err != nil || available == nil {
-		return 0
+		return nil
 	}
 
-	return available.Float64()
+	return available
 }
 
 /*
@@ -189,18 +194,23 @@ one consistent scale, never bare utility mixed with dollar products in one sort.
 */
 func (arbiter *Arbiter) dollar(
 	decision types.Decision,
-	cash float64,
+	cash *decimal.Decimal,
 	forecasts map[string]types.Forecasts,
-) float64 {
-	if cash <= 0 {
-		return decision.Utility
+) *decimal.Decimal {
+	utility := decimal.NewFromFloat64(decision.Utility)
+
+	if cash == nil || cash.Sign() <= 0 {
+		return utility
 	}
 
 	if decision.ProposedNotional != nil && decision.ProposedNotional.Sign() > 0 {
-		return decision.Utility * decision.ProposedNotional.Float64()
+		return arbiter.price.Mul(utility, decision.ProposedNotional)
 	}
 
-	return decision.Utility * arbiter.feasible(cash, forecasts[decision.Symbol])
+	return arbiter.price.Mul(utility, arbiter.feasible(
+		cash,
+		forecasts[decision.Symbol],
+	))
 }
 
 /*
@@ -208,11 +218,15 @@ feasible prequotes the deployable notional for a fresh enter as max_fraction of
 unreserved cash, capped by the symbol's visible buy capacity so a thin book
 cannot inflate a candidate's rank beyond the depth it can absorb.
 */
-func (arbiter *Arbiter) feasible(cash float64, forecast types.Forecasts) float64 {
-	notional := cash * arbiter.maxFraction
+func (arbiter *Arbiter) feasible(
+	cash *decimal.Decimal,
+	forecast types.Forecasts,
+) *decimal.Decimal {
+	notional := arbiter.price.Mul(cash, arbiter.maxFraction)
 
-	if forecast.BuyCapacity > 0 && forecast.BuyCapacity < notional {
-		return forecast.BuyCapacity
+	if forecast.BuyCapacity != nil && forecast.BuyCapacity.Sign() > 0 &&
+		forecast.BuyCapacity.Cmp(notional) < 0 {
+		return forecast.BuyCapacity.Copy()
 	}
 
 	return notional
@@ -258,14 +272,18 @@ func (arbiter *Arbiter) rotatable(thesis *types.Thesis) []Incumbent {
 			continue
 		}
 
-		notional := 0.0
-		qty := 0.0
-		mark := 0.0
+		notional := decimal.NewFromInt64(0)
+		var quantity *decimal.Decimal
+		var mark *decimal.Decimal
 
 		if holding.Mark != nil && holding.Qty != nil {
-			mark = holding.Mark.Float64()
-			qty = holding.Qty.Float64()
-			notional = mark * qty
+			mark = holding.Mark.Copy()
+			quantity = holding.Qty.Copy()
+			notional = arbiter.price.Mul(mark, quantity)
+		}
+
+		if mark == nil || quantity == nil || notional.Sign() <= 0 {
+			continue
 		}
 
 		var stop *types.Stoploss
@@ -279,7 +297,7 @@ func (arbiter *Arbiter) rotatable(thesis *types.Thesis) []Incumbent {
 			HoldUtility: arbiter.rotate.Hold(forecast),
 			ExitCost:    arbiter.rotate.Exit(forecast, fraction.Float64()),
 			Notional:    notional,
-			Qty:         qty,
+			Qty:         quantity,
 			Mark:        mark,
 			ClearProb:   arbiter.rotate.Clear(stop, forecast),
 		})
@@ -314,10 +332,11 @@ func (arbiter *Arbiter) peel(decisions []types.Decision) (enters, rest []types.D
 
 func (arbiter *Arbiter) validate(mandatory map[string]any) error {
 	check := map[string]any{
-		"desk":    arbiter.desk,
-		"price":   arbiter.price,
-		"balance": arbiter.balance,
-		"admit":   arbiter.admit,
+		"desk":     arbiter.desk,
+		"price":    arbiter.price,
+		"balance":  arbiter.balance,
+		"admit":    arbiter.admit,
+		"fraction": arbiter.maxFraction,
 	}
 
 	maps.Copy(check, mandatory)

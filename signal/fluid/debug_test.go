@@ -9,9 +9,7 @@ import (
 )
 
 func TestFluidSymbolPartialBookUpdatePreservesRestingSide(t *testing.T) {
-	Convey("Given a live book and a one-sided update", t, func() {
-		setFluidGridConfig(t)
-
+	Convey("Given a live book and a one-sided update", t, withFluidGrid(nil, func() {
 		state, err := NewFluidSymbol("ETH/EUR")
 		So(err, ShouldBeNil)
 
@@ -36,7 +34,7 @@ func TestFluidSymbolPartialBookUpdatePreservesRestingSide(t *testing.T) {
 			So(state.book.Asks[0].Price.Float64(), ShouldAlmostEqual, 100.01, 1e-12)
 			So(state.book.Asks[0].Qty, ShouldAlmostEqual, 5, 1e-12)
 		})
-	})
+	}))
 }
 
 func TestFluidSymbolUpdateBeforeSnapshotWaits(t *testing.T) {

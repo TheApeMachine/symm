@@ -6,7 +6,7 @@ import "math"
 inferVelocityField recovers the spatially varying quote-drift velocity from
 inter-cell mass flux and mid-price advection.
 */
-func (grid *FluidGrid) inferVelocityField(currentMid, dt float64) {
+func (grid *Grid) inferVelocityField(currentMid, dt float64) {
 	cellCount := len(grid.velocity)
 
 	grid.midPriceVelocity = grid.resolveVelocity(
@@ -80,7 +80,7 @@ resolveVelocity projects an inferred velocity onto the spatial range resolved by
 one lattice observation. Motion beyond the full grid span during dt is aliased by
 the finite book window and cannot be distinguished from boundary exit.
 */
-func (grid *FluidGrid) resolveVelocity(velocity, dt float64) float64 {
+func (grid *Grid) resolveVelocity(velocity, dt float64) float64 {
 	limit := grid.spatialSpan() / dt
 
 	return math.Max(-limit, math.Min(velocity, limit))
@@ -90,7 +90,7 @@ func (grid *FluidGrid) resolveVelocity(velocity, dt float64) float64 {
 spatialSpan returns the represented price span so transport limits remain tied
 to grid resolution.
 */
-func (grid *FluidGrid) spatialSpan() float64 {
+func (grid *Grid) spatialSpan() float64 {
 	return float64(len(grid.velocity)-1) * grid.tickSize
 }
 
@@ -98,7 +98,7 @@ func (grid *FluidGrid) spatialSpan() float64 {
 estimateDiffusionCoefficient derives diffusion from observed grid dynamics so
 integration uses the market's current smoothing scale.
 */
-func (grid *FluidGrid) estimateDiffusionCoefficient() float64 {
+func (grid *Grid) estimateDiffusionCoefficient() float64 {
 	cellCount := len(grid.velocity)
 
 	if cellCount < 3 {

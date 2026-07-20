@@ -3,7 +3,6 @@ package fluid
 import (
 	"os"
 	"testing"
-	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
@@ -111,24 +110,25 @@ func TestGridHalfWidthSafeConversion(t *testing.T) {
 }
 
 func TestNewFluidGridRejectsOversizedLattice(t *testing.T) {
-	Convey("Given subscribed book depth", t, func() {
-		resetFluidConfig(t)
-
+	Convey("Given subscribed book depth", t, withFluidGrid(map[string]any{
+		"signals.fluid.grid_half_width": 26,
+	}, func() {
 		Convey("When half width exceeds the depth budget", func() {
-			_, err := newFluidGrid(0.01, 100, 100*time.Millisecond, 5*time.Second, 50)
+			_, err := NewGrid()
 
 			Convey("Then grid construction should fail cleanly", func() {
 				So(err, ShouldNotBeNil)
 				So(err.Error(), ShouldContainSubstring, "book depth")
 			})
 		})
-	})
+	}))
 }
 
 func TestFluidBookSnapshotWithExchangeIncrement(t *testing.T) {
-	Convey("Given a live MATIC book snapshot and exchange increment", t, func() {
-		resetFluidConfig(t)
-
+	Convey("Given a live MATIC book snapshot and exchange increment", t, withFluidGrid(map[string]any{
+		"signals.fluid.tick_size":       0,
+		"signals.fluid.grid_half_width": 0,
+	}, func() {
 		raw, readErr := os.ReadFile("../../tests/fixtures/book/fixtures/snapshot.json")
 		So(readErr, ShouldBeNil)
 
@@ -154,13 +154,14 @@ func TestFluidBookSnapshotWithExchangeIncrement(t *testing.T) {
 				So(state.grid.halfWidth, ShouldBeLessThanOrEqualTo, 25)
 			})
 		})
-	})
+	}))
 }
 
 func TestFluidSymbolConfigureTickFromBookCapsWidth(t *testing.T) {
-	Convey("Given a wide book and exchange increment", t, func() {
-		resetFluidConfig(t)
-
+	Convey("Given a wide book and exchange increment", t, withFluidGrid(map[string]any{
+		"signals.fluid.tick_size":       0,
+		"signals.fluid.grid_half_width": 0,
+	}, func() {
 		state, err := NewFluidSymbol("ADV/USD")
 		So(err, ShouldBeNil)
 
@@ -183,5 +184,5 @@ func TestFluidSymbolConfigureTickFromBookCapsWidth(t *testing.T) {
 				So(state.grid.halfWidth, ShouldEqual, 2)
 			})
 		})
-	})
+	}))
 }

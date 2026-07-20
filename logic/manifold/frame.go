@@ -1,133 +1,260 @@
 package manifold
 
 import (
-	"fmt"
 	"math"
+	"time"
 
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/geometry"
+	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 )
 
 /*
-fieldProjection is the GPU price-time slice the terminal pilot-wave canvas paints.
+project records the resident spectrum after advances and reads the larger X-Z
+projection only when the browser requests a focus.
 */
-type fieldProjection struct {
-	Rho          [][]float64
-	PsiMag2      [][]float64
-	GuidanceVelX [][]float64
-	GuidanceVelZ [][]float64
-	Particles    []pmanifold.Particle
-	Grid         pmanifold.Grid
+func (solver *Solver) project(
+	focus string,
+	at time.Time,
+	advanced bool,
+) (pfluid.Projection, []pfluid.WaveMode, []PhaseResponse, error) {
+	if len(solver.particles) == 0 {
+		return pfluid.Projection{Grid: solver.config.Grid}, nil, nil, nil
+	}
+
+	wave, scan, err := solver.phase(at, advanced, focus != "")
+
+	if err != nil {
+		return pfluid.Projection{}, nil, nil, err
+	}
+
+	if focus == "" {
+		return pfluid.Projection{Grid: solver.config.Grid}, nil, nil, nil
+	}
+
+	projection, err := solver.domain.Projection()
+
+	if err != nil {
+		return pfluid.Projection{}, nil, nil, errnie.Err(
+			errnie.Internal,
+			"manifold: failed to read shared field projection",
+			err,
+		)
+	}
+
+	return projection, wave, scan, nil
 }
 
 /*
-projectField reads the post-step gas and pilot-wave projections plus oscillator
-carriers from the active GPU solver slot. The full grid readback is only paid
-for the focused symbol; non-focused symbols return the grid dimensions with no
-field arrays, since the terminal ships only their scalar Summary anyway.
+phase records the current resident omega field as a PhaseDial and, when a
+focused view requests it, scans one complete mode-derived turn against prior
+market states while excluding the current observation from its own results.
 */
-func projectField(
-	handle *pmanifold.Solver,
-	config pmanifold.Config,
-	oscillatorCount int,
-	focused bool,
-) (fieldProjection, error) {
-	projection := fieldProjection{
-		Grid: pmanifold.Grid{
-			X: config.GridX,
-			Y: config.GridY,
-			Z: config.GridZ,
-		},
+func (solver *Solver) phase(
+	at time.Time,
+	advanced bool,
+	scan bool,
+) ([]pfluid.WaveMode, []PhaseResponse, error) {
+	if !advanced && !scan {
+		return nil, nil, nil
 	}
 
-	if handle == nil || !focused {
-		return projection, nil
-	}
-
-	rho, err := handle.ReadRhoProjection()
+	wave, err := solver.domain.Wave()
 
 	if err != nil {
-		return fieldProjection{}, fmt.Errorf("manifold: read rho projection: %w", err)
+		return nil, nil, errnie.Err(
+			errnie.Internal,
+			"manifold: failed to read shared omega spectrum",
+			err,
+		)
 	}
 
-	pilotWave, err := handle.ReadPilotWaveProjection()
+	dial := make(geometry.PhaseDial, len(wave))
+	hasAmplitude := false
 
-	if err != nil {
-		return fieldProjection{}, fmt.Errorf("manifold: read pilot-wave projection: %w", err)
+	for index, mode := range wave {
+		dial[index] = complex(float64(mode.Real), float64(mode.Imaginary))
+		hasAmplitude = hasAmplitude || mode.Real != 0 || mode.Imaginary != 0
 	}
 
-	oscillators := make([]pmanifold.Oscillator, 0)
+	if !hasAmplitude {
+		return wave, nil, nil
+	}
 
-	if oscillatorCount > 0 {
-		oscillators, err = handle.ReadOscillators(oscillatorCount)
-
-		if err != nil {
-			return fieldProjection{}, fmt.Errorf("manifold: read oscillators: %w", err)
+	if advanced {
+		if err := solver.spectrum.Insert(geometry.CorpusEntry[struct{}]{
+			Dial: dial,
+			At:   at,
+		}); err != nil {
+			return nil, nil, errnie.Err(
+				errnie.UnprocessableContent,
+				"manifold: failed to retain resident phase dial",
+				err,
+			)
 		}
 	}
 
-	projection.Rho = rho
-	projection.PsiMag2 = pilotWave.Mag2
-	projection.GuidanceVelX = pilotWave.VelX
-	projection.GuidanceVelZ = pilotWave.VelZ
-	projection.Particles = particlesFromOscillators(oscillators, config)
+	if !scan || solver.spectrum.Size() < 2 {
+		return wave, nil, nil
+	}
 
-	return projection, nil
+	phaseScan, err := solver.scan(dial, at)
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return wave, phaseScan, nil
 }
 
 /*
-particlesFromOscillators maps post-step oscillator state into dashboard particles
-using the same toroidal cell indexing the GPU solver uses.
+scan samples one complete turn at the resident omega resolution and returns the
+strongest prior response at each angle without manufacturing an outcome label.
 */
-func particlesFromOscillators(
-	oscillators []pmanifold.Oscillator,
-	config pmanifold.Config,
-) []pmanifold.Particle {
-	particles := make([]pmanifold.Particle, 0, len(oscillators))
+func (solver *Solver) scan(
+	dial geometry.PhaseDial,
+	at time.Time,
+) ([]PhaseResponse, error) {
+	modeCount := len(dial)
+	angles := make([]float64, modeCount)
 
-	for _, oscillator := range oscillators {
-		if oscillator.Amplitude <= 0 {
+	for index := range angles {
+		angles[index] = 2 * math.Pi * float64(index) / float64(modeCount)
+	}
+
+	responses, err := solver.spectrum.ScanPhasesExcluding(dial, angles, 1, at)
+
+	if err != nil {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"manifold: failed to scan resident phase dial",
+			err,
+		)
+	}
+
+	phaseScan := make([]PhaseResponse, 0, len(responses))
+
+	for index, matches := range responses {
+		if len(matches) == 0 {
 			continue
 		}
 
-		particles = append(particles, pmanifold.Particle{
-			Role:      "particle",
-			CellX:     cellCoordinate(oscillator.PosX, config.DomainX, config.GridX),
-			CellY:     cellCoordinate(oscillator.PosY, config.DomainY, config.GridY),
-			CellZ:     cellCoordinate(oscillator.PosZ, config.DomainZ, config.GridZ),
-			Phase:     oscillator.Phase,
-			Omega:     oscillator.Omega,
-			Amplitude: oscillator.Amplitude,
-			Heat:      oscillator.Heat,
-			VelX:      oscillator.VelX,
-			VelY:      oscillator.VelY,
-			VelZ:      oscillator.VelZ,
-			Speed: math.Sqrt(
-				oscillator.VelX*oscillator.VelX +
-					oscillator.VelY*oscillator.VelY +
-					oscillator.VelZ*oscillator.VelZ,
-			),
+		phaseScan = append(phaseScan, PhaseResponse{
+			Angle:      angles[index],
+			Similarity: matches[0].Similarity,
+			ObservedAt: matches[0].At,
 		})
 	}
 
-	return particles
+	return phaseScan, nil
 }
 
-func cellCoordinate(position, domain float64, grid uint32) float64 {
-	if grid == 0 || domain <= 0 {
-		return 0
+/*
+paint attaches the shared field and the focused symbol's latest observations to
+one state without duplicating the full universe into every Thesis entry.
+*/
+func (solver *Solver) paint(
+	state *State,
+	projection pfluid.Projection,
+	wave []pfluid.WaveMode,
+	phaseScan []PhaseResponse,
+	slot *symbolSlot,
+) {
+	if state == nil || slot == nil || slot.start < 0 || slot.end < slot.start ||
+		slot.end > len(solver.particles) || len(projection.Density) == 0 {
+		return
 	}
 
-	index := int(math.Floor(position * float64(grid) / domain))
+	state.Grid = projection.Grid
+	state.Rho = projectionRows(projection.Density, projection.Grid)
+	state.PsiMag2 = projectionRows(projection.Coherence, projection.Grid)
+	state.GuidanceVelX = projectionRows(projection.GuidanceX, projection.Grid)
+	state.GuidanceVelZ = projectionRows(projection.GuidanceZ, projection.Grid)
+	state.Particles = renderParticles(
+		solver.particles[slot.start:slot.end],
+		projection.Grid,
+	)
+	state.Wave = wave
+	state.PhaseScan = phaseScan
+	state.PhaseReady = len(wave) > 0 && len(phaseScan) == len(wave)
+	state.PhaseReason = solver.phaseReason(state.PhaseReady, wave)
+}
 
-	if index < 0 {
-		index = 0
+/*
+phaseReason explains why a focused wave cannot yet be scanned. A zero-amplitude
+wave has no defined phase direction; a nonzero wave needs an earlier corpus
+observation before its phase response has a meaningful comparison target.
+*/
+func (solver *Solver) phaseReason(
+	ready bool,
+	wave []pfluid.WaveMode,
+) string {
+	if ready {
+		return ""
 	}
 
-	maxIndex := int(grid) - 1
-
-	if index > maxIndex {
-		index = maxIndex
+	for _, mode := range wave {
+		if mode.Real != 0 || mode.Imaginary != 0 {
+			return "awaiting a prior nonzero phase observation"
+		}
 	}
 
-	return float64(index)
+	return "resident wave amplitude is zero"
+}
+
+/*
+projectionRows converts the Metal row-major X-Z projection into dashboard rows
+without changing its values or applying display normalization.
+*/
+func projectionRows(values []float32, grid pfluid.Grid) [][]float64 {
+	if len(values) != grid.X*grid.Z {
+		return nil
+	}
+
+	rows := make([][]float64, grid.Z)
+
+	for cellZ := range grid.Z {
+		rows[cellZ] = make([]float64, grid.X)
+
+		for cellX := range grid.X {
+			rows[cellZ][cellX] = float64(values[cellX+cellZ*grid.X])
+		}
+	}
+
+	return rows
+}
+
+/*
+renderParticles converts the focused symbol's latest physical observations to
+the established cell-based dashboard payload.
+*/
+func renderParticles(
+	particles []pfluid.Particle,
+	grid pfluid.Grid,
+) []Particle {
+	rendered := make([]Particle, len(particles))
+
+	for index, particle := range particles {
+		velocityX := float64(particle.Velocity.X)
+		velocityY := float64(particle.Velocity.Y)
+		velocityZ := float64(particle.Velocity.Z)
+		rendered[index] = Particle{
+			Role:      "particle",
+			CellX:     float64(particle.Position.X / grid.Spacing),
+			CellY:     float64(particle.Position.Y / grid.Spacing),
+			CellZ:     float64(particle.Position.Z / grid.Spacing),
+			Phase:     float64(particle.Phase),
+			Omega:     float64(particle.Omega),
+			Amplitude: math.Sqrt(float64(particle.Energy)),
+			Heat:      float64(particle.Heat),
+			VelX:      velocityX,
+			VelY:      velocityY,
+			VelZ:      velocityZ,
+			Speed: math.Sqrt(
+				velocityX*velocityX + velocityY*velocityY + velocityZ*velocityZ,
+			),
+		}
+	}
+
+	return rendered
 }

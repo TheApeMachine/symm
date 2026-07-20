@@ -68,6 +68,26 @@ func TestGraphFrame(t *testing.T) {
 	})
 }
 
+/*
+TestEvidenceComposerRestoreNode proves malformed and conflicting wire identities are
+rejected instead of silently changing the reconstructed graph topology.
+*/
+func TestEvidenceComposerRestoreNode(t *testing.T) {
+	Convey("Given a graph reconstructed from wire nodes", t, func() {
+		graph := NewGraph("BTC/USD")
+		measurement := Measurement{Symbol: "BTC/USD"}
+
+		Convey("It rejects an empty key", func() {
+			So(graph.Evidence.RestoreNode("", NodeMeasurement, "", measurement), ShouldNotBeNil)
+		})
+
+		Convey("It rejects a duplicate key", func() {
+			So(graph.Evidence.RestoreNode("node", NodeMeasurement, "", measurement), ShouldBeNil)
+			So(graph.Evidence.RestoreNode("node", NodeMeasurement, "", measurement), ShouldNotBeNil)
+		})
+	})
+}
+
 func BenchmarkGraphFrame(b *testing.B) {
 	graph := NewGraph("BTC/USD")
 	at := time.Unix(10, 0)

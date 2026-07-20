@@ -16,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/stack"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/tests/conditions"
 	"github.com/theapemachine/symm/tests/mockapi"
@@ -65,8 +66,8 @@ func TestArbiter_SelectFromMarket(t *testing.T) {
 		So(hasChallenger, ShouldBeTrue)
 		So(hasIncumbent, ShouldBeTrue)
 		So(challenger.ExpectedReturn, ShouldBeGreaterThan, incumbent.ExpectedReturn)
-		So(entry.ProposedNotional.Float64(), ShouldBeLessThanOrEqualTo,
-			challenger.BuyCapacity)
+		So(entry.ProposedNotional.Cmp(challenger.BuyCapacity),
+			ShouldBeLessThanOrEqualTo, 0)
 
 		So(orderRequests(result.privateRequests, "sell"), ShouldEqual, 1)
 		So(orderRequests(result.privateRequests, "buy"), ShouldEqual, 0)
@@ -149,7 +150,11 @@ func playRotationMarket(t *testing.T) *rotationMarketResult {
 			{"asset":"USD","balance":"1000","available":"1000","reserved":"0"},
 			{"asset":"MATIC","balance":"100","available":"100","reserved":"0"}
 		]}`))
+	channel := make(chan []byte, 64)
 	wired, err := stack.Boot(ctx, api, stack.Options{
+		Booter:  system.NewBooter(ctx, channel),
+		Channel: channel,
+		Thesis:  types.NewThesis(channel, nil),
 		Signals: func(
 			ctx context.Context,
 			api *websocket.API,

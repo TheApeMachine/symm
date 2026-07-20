@@ -5,17 +5,18 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
 )
 
 /*
-FluidGrid is a 1D finite-volume LOB hydrodynamics solver.
+Grid is a 1D finite-volume LOB hydrodynamics solver.
 
 It integrates ∂ρ/∂t + ∇·(ρv) = λ_add − λ_cancel − λ_execute with Rusanov fluxes
 and RK2 on a fixed exchange-time lattice. Touch divergence is ∇·(ρv).
 */
-type FluidGrid struct {
+type Grid struct {
 	tickSize            float64
 	halfWidth           int
 	midIndex            int
@@ -55,74 +56,86 @@ type FluidGrid struct {
 }
 
 /*
-NewFluidGrid builds the solver from signals.fluid configuration.
+NewGrid builds the solver from signals.fluid configuration.
 */
-func NewFluidGrid() (*FluidGrid, error) {
-	symbolConfig, configErr := loadSymbolConfig()
+func NewGrid() (*Grid, error) {
+	symbolConfig, err := loadSymbolConfig()
 
-	if configErr != nil {
-		return nil, configErr
+	if err != nil {
+		return nil, err
 	}
 
-	return newFluidGrid(
+	return newGrid(
 		symbolConfig.tickSizeFallback,
 		symbolConfig.gridHalfWidth,
-		symbolConfig.integrationInterval,
-		symbolConfig.idleThreshold,
-		symbolConfig.maxIntegrationSteps,
+		symbolConfig,
 	)
 }
 
-func newFluidGrid(
+/*
+newGrid builds a lattice from already resolved symbol configuration so live
+exchange metadata is not discarded by rereading global fallback settings.
+*/
+func newGrid(
 	tickSize float64,
 	halfWidth int,
-	integrationInterval time.Duration,
-	idleThreshold time.Duration,
-	maxIntegrationSteps int,
-) (*FluidGrid, error) {
+	symbolConfig symbolConfig,
+) (*Grid, error) {
 	if tickSize <= 0 {
-		return nil, fmt.Errorf("fluid: grid tick size must be positive")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "fluid: grid tick size must be positive", nil,
+		))
 	}
 
 	if halfWidth <= 0 {
-		return nil, fmt.Errorf("fluid: grid half width must be positive")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "fluid: grid half width must be positive", nil,
+		))
 	}
 
 	if halfWidth > (math.MaxInt-1)/2 {
-		return nil, fmt.Errorf("fluid: grid half width out of int range")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "fluid: grid half width out of int range", nil,
+		))
 	}
 
 	cellCount := halfWidth*2 + 1
 
 	if cellCount <= 0 {
-		return nil, fmt.Errorf("fluid: grid cell count invalid")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "fluid: grid cell count invalid", nil,
+		))
 	}
 
-	maxCells := maxGridCellCount(configuredBookDepthLevels())
+	maxCells := maxGridCellCount(symbolConfig.bookDepthLevels)
 
 	if maxCells > 0 && cellCount > maxCells {
-		return nil, fmt.Errorf("fluid: grid cell count exceeds subscribed book depth")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "fluid: grid cell count exceeds subscribed book depth", nil,
+		))
 	}
 
-	if integrationInterval <= 0 {
-		return nil, fmt.Errorf("fluid: grid integration interval must be positive")
+	if symbolConfig.integrationInterval <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "fluid: grid integration interval must be positive", nil,
+		))
 	}
 
-	if idleThreshold <= 0 {
-		idleThreshold = integrationInterval * maxIntegrationStepsFloor
+	if symbolConfig.idleThreshold <= 0 {
+		symbolConfig.idleThreshold = symbolConfig.integrationInterval * time.Duration(symbolConfig.maxIntegrationSteps)
 	}
 
-	if maxIntegrationSteps <= 0 {
-		maxIntegrationSteps = maxIntegrationStepsFloor
+	if symbolConfig.maxIntegrationSteps <= 0 {
+		symbolConfig.maxIntegrationSteps = maxIntegrationStepsFloor
 	}
 
-	return &FluidGrid{
+	return &Grid{
 		tickSize:                     tickSize,
 		halfWidth:                    halfWidth,
 		midIndex:                     halfWidth,
-		integrationInterval:          integrationInterval,
-		idleThreshold:                idleThreshold,
-		maxIntegrationSteps:          maxIntegrationSteps,
+		integrationInterval:          symbolConfig.integrationInterval,
+		idleThreshold:                symbolConfig.idleThreshold,
+		maxIntegrationSteps:          symbolConfig.maxIntegrationSteps,
 		rho:                          make([]float64, cellCount),
 		velocity:                     make([]float64, cellCount),
 		rhoStage:                     make([]float64, cellCount),
@@ -146,7 +159,7 @@ func newFluidGrid(
 ready reports whether the grid has enough integrated state to publish a fluid
 reading.
 */
-func (grid *FluidGrid) ready() bool {
+func (grid *Grid) ready() bool {
 	return grid.stepCount >= 1
 }
 
@@ -154,7 +167,7 @@ func (grid *FluidGrid) ready() bool {
 steps returns completed grid integrations so measurement maturity reflects
 actual observations.
 */
-func (grid *FluidGrid) steps() int {
+func (grid *Grid) steps() int {
 	return grid.stepCount
 }
 
@@ -162,7 +175,7 @@ func (grid *FluidGrid) steps() int {
 ingestBook applies an order-book update to density and source fields so the
 grid represents current resting liquidity.
 */
-func (grid *FluidGrid) ingestBook(
+func (grid *Grid) ingestBook(
 	bids, asks []kraken.BookLevel,
 	midPrice float64,
 	at time.Time,
@@ -240,7 +253,7 @@ func (grid *FluidGrid) ingestBook(
 resetToCurrentBook reinitializes density from the current book after
 discontinuity so stale solver state cannot contaminate a new epoch.
 */
-func (grid *FluidGrid) resetToCurrentBook(at time.Time, midPrice float64) {
+func (grid *Grid) resetToCurrentBook(at time.Time, midPrice float64) {
 	copy(grid.rho, grid.filteredObservedRho)
 	copy(grid.prevObservedRho, grid.observedRho)
 	copy(grid.remappedRho, grid.filteredObservedRho)
@@ -253,7 +266,7 @@ func (grid *FluidGrid) resetToCurrentBook(at time.Time, midPrice float64) {
 ingestTrade applies executed flow to the grid so observed removals affect
 velocity and reaction sources.
 */
-func (grid *FluidGrid) ingestTrade(
+func (grid *Grid) ingestTrade(
 	tradePrice, qty float64,
 	at time.Time,
 ) error {
@@ -288,7 +301,7 @@ func (grid *FluidGrid) ingestTrade(
 clearField zeros a reusable grid field so the next integration step does not
 retain prior transient values.
 */
-func (grid *FluidGrid) clearField(field []float64) {
+func (grid *Grid) clearField(field []float64) {
 	for index := range field {
 		field[index] = 0
 	}
@@ -298,7 +311,7 @@ func (grid *FluidGrid) clearField(field []float64) {
 projectObserved projects observed book density onto the grid so empirical
 levels anchor solver state.
 */
-func (grid *FluidGrid) projectObserved(
+func (grid *Grid) projectObserved(
 	bids, asks []kraken.BookLevel,
 	midPrice float64,
 ) {
@@ -332,7 +345,7 @@ func (grid *FluidGrid) projectObserved(
 filterSparseDensity removes unsupported isolated density cells so numerical
 artifacts are not treated as liquidity.
 */
-func (grid *FluidGrid) filterSparseDensity(density []float64) {
+func (grid *Grid) filterSparseDensity(density []float64) {
 	if len(density) < 3 || len(grid.filterScratch) != len(density) {
 		return
 	}
@@ -405,7 +418,7 @@ func positiveFinite(value float64) float64 {
 priceIndex maps a market price to its grid cell so book and trade events share
 one spatial coordinate system.
 */
-func (grid *FluidGrid) priceIndex(midPrice, price float64) int {
+func (grid *Grid) priceIndex(midPrice, price float64) int {
 	offset := int(math.Round((price - midPrice) / grid.tickSize))
 	index := grid.midIndex + offset
 
@@ -420,7 +433,7 @@ func (grid *FluidGrid) priceIndex(midPrice, price float64) int {
 prepareSourcesForIntegration finalizes accumulated source terms so each solver
 step consumes one coherent interval.
 */
-func (grid *FluidGrid) prepareSourcesForIntegration() {
+func (grid *Grid) prepareSourcesForIntegration() {
 	invInterval := 1.0 / grid.integrationInterval.Seconds()
 
 	for index := range grid.sources {
@@ -432,7 +445,7 @@ func (grid *FluidGrid) prepareSourcesForIntegration() {
 measureReplenishment derives touch replenishment rates from observed source
 changes so liquidity recovery remains data-driven.
 */
-func (grid *FluidGrid) measureReplenishment(spread float64) {
+func (grid *Grid) measureReplenishment(spread float64) {
 	replenished := 0.0
 	consumed := 0.0
 	touchBand := touchBandCells(spread, grid.tickSize, grid.halfWidth)
@@ -466,7 +479,7 @@ func (grid *FluidGrid) measureReplenishment(spread float64) {
 midAddRateAtTouch returns the current near-touch addition rate published as
 fluid evidence.
 */
-func (grid *FluidGrid) midAddRateAtTouch() float64 {
+func (grid *Grid) midAddRateAtTouch() float64 {
 	return grid.midAddRate
 }
 
@@ -474,7 +487,7 @@ func (grid *FluidGrid) midAddRateAtTouch() float64 {
 midExecuteRateAtTouch returns the current near-touch execution rate published
 as fluid evidence.
 */
-func (grid *FluidGrid) midExecuteRateAtTouch() float64 {
+func (grid *Grid) midExecuteRateAtTouch() float64 {
 	return grid.midExecuteRate
 }
 
@@ -482,7 +495,7 @@ func (grid *FluidGrid) midExecuteRateAtTouch() float64 {
 touchBandActivityRates aggregates addition and execution inside the observed
 spread band so touch activity uses the instrument's scale.
 */
-func (grid *FluidGrid) touchBandActivityRates(spread float64) (addRate, executeRate float64) {
+func (grid *Grid) touchBandActivityRates(spread float64) (addRate, executeRate float64) {
 	touchBand := touchBandCells(spread, grid.tickSize, grid.halfWidth)
 	invInterval := 1.0 / grid.integrationInterval.Seconds()
 
@@ -506,7 +519,7 @@ this step, not a separately reasoned proxy for it. Positive means the
 touch cell is a net exporter (the book is thinning there); negative means
 it is a net importer (the book is thickening there).
 */
-func (grid *FluidGrid) measureMidDivergence() {
+func (grid *Grid) measureMidDivergence() {
 	index := grid.midIndex
 
 	if index <= 0 || index >= len(grid.rho)-1 {
@@ -524,7 +537,7 @@ func (grid *FluidGrid) measureMidDivergence() {
 midVelocityDivergence calculates velocity divergence around the midpoint so
 local compression and expansion remain spatially grounded.
 */
-func (grid *FluidGrid) midVelocityDivergence() float64 {
+func (grid *Grid) midVelocityDivergence() float64 {
 	return grid.midDivergence
 }
 
@@ -532,7 +545,7 @@ func (grid *FluidGrid) midVelocityDivergence() float64 {
 viscosity derives effective market viscosity from observed density and
 velocity gradients so resistance is not fixed.
 */
-func (grid *FluidGrid) viscosity() float64 {
+func (grid *Grid) viscosity() float64 {
 	return grid.replenishmentRate
 }
 
@@ -548,7 +561,7 @@ func touchSpreadFromBook(bids, asks []kraken.BookLevel) float64 {
 rhoGradFloor derives a local density-gradient floor so viscosity remains tied
 to observable book structure.
 */
-func (grid *FluidGrid) rhoGradFloor(index int) float64 {
+func (grid *Grid) rhoGradFloor(index int) float64 {
 	if index < 0 || index >= len(grid.observedRho) {
 		return rhoFloor
 	}
@@ -578,7 +591,7 @@ func (grid *FluidGrid) rhoGradFloor(index int) float64 {
 medianObservedRho returns median observed density so sparse cells do not
 dictate the grid's reference scale.
 */
-func (grid *FluidGrid) medianObservedRho() float64 {
+func (grid *Grid) medianObservedRho() float64 {
 	if len(grid.observedRho) == 0 {
 		return 0
 	}
@@ -603,7 +616,7 @@ func (grid *FluidGrid) medianObservedRho() float64 {
 reynolds calculates the current market Reynolds quantity from observed spread
 and derived viscosity.
 */
-func (grid *FluidGrid) reynolds(spread float64) float64 {
+func (grid *Grid) reynolds(spread float64) float64 {
 	return grid.reynoldsAgainst(spread, grid.replenishmentRate)
 }
 
@@ -611,7 +624,7 @@ func (grid *FluidGrid) reynolds(spread float64) float64 {
 reynoldsAgainst calculates Reynolds against explicit viscosity so callers can
 compare compatible fluid regimes.
 */
-func (grid *FluidGrid) reynoldsAgainst(spread, viscosity float64) float64 {
+func (grid *Grid) reynoldsAgainst(spread, viscosity float64) float64 {
 	if spread <= 0 {
 		return math.NaN()
 	}
@@ -652,7 +665,7 @@ func (grid *FluidGrid) reynoldsAgainst(spread, viscosity float64) float64 {
 /*
 midVelocityCurvature is |d²v/dx²| at the touch on the 1D book lattice.
 */
-func (grid *FluidGrid) midVelocityCurvature() float64 {
+func (grid *Grid) midVelocityCurvature() float64 {
 	index := grid.midIndex
 
 	if index <= 0 || index >= len(grid.velocity)-1 {
@@ -673,7 +686,7 @@ func (grid *FluidGrid) midVelocityCurvature() float64 {
 /*
 turbulenceIntensity is the RMS velocity fluctuation across the projected book field.
 */
-func (grid *FluidGrid) turbulenceIntensity() float64 {
+func (grid *Grid) turbulenceIntensity() float64 {
 	cellCount := len(grid.velocity)
 
 	if cellCount == 0 {

@@ -20,11 +20,11 @@ type Options struct {
 	ExecID      string
 	Symbol      string
 	Side        string
-	LastQty     float64
+	LastQty     string
 	LastPrice   string
 	Cost        string
 	OrderStatus string
-	CumQty      float64
+	CumQty      string
 	CumCost     string
 	AvgPrice    string
 	FeeUsdEquiv string
@@ -37,8 +37,8 @@ BuyFill returns the cumulative buy fill used by broker execution tests.
 func BuyFill() Options {
 	return Options{
 		OrderID: "order-1", ExecID: "fill-2", Symbol: "BTC/USD", Side: "buy",
-		LastQty: 1, LastPrice: "110", Cost: "110", OrderStatus: "filled",
-		CumQty: 2, CumCost: "210", AvgPrice: "105",
+		LastQty: "1", LastPrice: "110", Cost: "110", OrderStatus: "filled",
+		CumQty: "2", CumCost: "210", AvgPrice: "105",
 		Timestamp: "2026-07-14T10:00:00Z",
 	}
 }
@@ -49,8 +49,8 @@ ExitFill returns the final sell fill used by broker close tests.
 func ExitFill() Options {
 	return Options{
 		OrderID: "exit-1", ExecID: "exit-fill", Symbol: "BTC/USD", Side: "sell",
-		LastQty: 1, LastPrice: "110", Cost: "110", OrderStatus: "filled",
-		CumQty: 1, CumCost: "110", AvgPrice: "110", FeeUsdEquiv: "1",
+		LastQty: "1", LastPrice: "110", Cost: "110", OrderStatus: "filled",
+		CumQty: "1", CumCost: "110", AvgPrice: "110", FeeUsdEquiv: "1",
 		Timestamp: "2026-07-14T10:00:00Z",
 	}
 }
@@ -61,8 +61,8 @@ ReduceFill returns the partial sell fill used by broker reduction tests.
 func ReduceFill() Options {
 	return Options{
 		OrderID: "reduce-1", ExecID: "reduce-fill", Symbol: "BTC/USD", Side: "sell",
-		LastQty: 1, LastPrice: "110", Cost: "110", OrderStatus: "filled",
-		CumQty: 1, CumCost: "110", AvgPrice: "110", FeeUsdEquiv: "1",
+		LastQty: "1", LastPrice: "110", Cost: "110", OrderStatus: "filled",
+		CumQty: "1", CumCost: "110", AvgPrice: "110", FeeUsdEquiv: "1",
 		Timestamp: "2026-07-14T10:00:00Z",
 	}
 }

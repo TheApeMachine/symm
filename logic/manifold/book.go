@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 )
 
 /*
@@ -20,11 +21,13 @@ type BookSource interface {
 physicalOrder is one resting limit order extracted from the authoritative SDK book.
 */
 type physicalOrder struct {
-	orderID   string
-	side      book.BookDirection
-	price     float64
-	quantity  float64
-	timestamp time.Time
+	orderID       string
+	side          book.BookDirection
+	price         float64
+	quantity      float64
+	priceMoney    *decimal.Decimal
+	quantityMoney *decimal.Decimal
+	timestamp     time.Time
 }
 
 /*
@@ -79,11 +82,13 @@ func ordersFromSide(side *book.Side) []physicalOrder {
 			}
 
 			orders = append(orders, physicalOrder{
-				orderID:   order.ID,
-				side:      side.Direction,
-				price:     order.LimitPrice.Float64(),
-				quantity:  quantity,
-				timestamp: order.Timestamp,
+				orderID:       order.ID,
+				side:          side.Direction,
+				price:         order.LimitPrice.Float64(),
+				quantity:      quantity,
+				priceMoney:    order.LimitPrice.Copy(),
+				quantityMoney: order.Quantity.Copy(),
+				timestamp:     order.Timestamp,
 			})
 		}
 	}

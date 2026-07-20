@@ -16,7 +16,7 @@ import (
 )
 
 /*
-Exhaust is the Exit Thesis perspective, tracking microstructure decay to advise
+Signal is the Exit Thesis perspective, tracking microstructure decay to advise
 on the urgency of closing an open position. Categories belong in logic; this
 signal emits numerical scores only.
 */

@@ -10,7 +10,7 @@ import (
 )
 
 /*
-LeadLag is the Anchor perspective, measuring temporal correlation between the
+Signal is the Anchor perspective, measuring temporal correlation between the
 cross-section leader and each follower. Categories belong in logic; this signal
 emits numerical scores only.
 */
@@ -64,7 +64,6 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		errnie.Error(err)
 		return nil
 	}
-
 
 	return measurements
 }

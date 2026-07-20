@@ -9,19 +9,15 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/theapemachine/nomagique/geometry"
+	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/signal/compute"
 	"github.com/theapemachine/symm/types"
 )
 
-const (
-	defaultGridResolution = 64
-	defaultMaxModes       = 128
-)
-
 /*
-HawkesSource exposes the latest Hawkes excitation outcome per symbol.
+HawkesSource exposes the latest empirical arrival process for every symbol.
 */
 type HawkesSource interface {
 	Symbols() []string
@@ -29,163 +25,143 @@ type HawkesSource interface {
 }
 
 /*
-Solver owns one shared Metal engine and per-symbol resident Fields, advancing
-the market-grounded L3 carrier field under Hawkes-derived temporal controls.
+intensityCandidate is one book-grounded market source entering the next shared
+domain step.
 */
-type Solver struct {
-	config   pmanifold.Config
-	engine   *pmanifold.Engine
-	symbols  map[string]*symbolSlot
-	books    BookSource
-	recorder *audit.Recorder
+type intensityCandidate struct {
+	symbol   string
+	outcome  excitation.Outcome
+	orders   []physicalOrder
+	midPrice float64
 }
 
 /*
-SetRecorder attaches the runtime audit stream so forcing rescale and advance
-failures leave a durable breadcrumb without blocking the GPU hot path.
+Solver owns one resident Sensorium domain for the complete market universe.
+Symbols contribute observations to the same gas and wave fields; they are not
+split into independent simulations that cannot interfere.
 */
-func (solver *Solver) SetRecorder(recorder *audit.Recorder) {
-	if solver == nil {
-		return
-	}
-
-	solver.recorder = recorder
+type Solver struct {
+	config    pfluid.Config
+	domain    *pfluid.Domain
+	spectrum  *geometry.Corpus[struct{}]
+	particles []pfluid.Particle
+	symbols   map[string]*symbolSlot
+	active    map[string]struct{}
+	books     BookSource
+	recorder  *audit.Recorder
 }
 
+/*
+symbolSlot remembers a symbol's last market epoch and its most recently
+appended particle range so unchanged source epochs can be replayed honestly.
+*/
 type symbolSlot struct {
-	handle *pmanifold.Solver
 	epoch  uint64
 	at     time.Time
 	events int
 	coords *coordinateEpoch
-	// last is the most recent GasReady projection. Thesis is rebuilt every Cut,
-	// so a quiet Hawkes outcome must republish this instead of vanishing from
-	// the UI between trade arrivals.
-	last State
+	start  int
+	end    int
+	orders []string
+	state  map[string]pfluid.Particle
+	last   State
 }
 
 /*
-NewSolver constructs the shared GPU manifold engine from market configuration.
+NewSolver creates the single shared Metal domain and a spectral corpus bounded
+by the same explicit event-history capacity as the live market feed.
 */
-func NewSolver(books BookSource) (*Solver, error) {
-	grid := uint32(defaultGridResolution)
+func NewSolver(books BookSource, historyCapacity int) (*Solver, error) {
+	config := pfluid.DefaultConfig()
+	configuredDelta := viper.GetDuration("signals.fluid.integration_interval")
 
-	deltaT := viper.GetDuration(
-		"signals.fluid.integration_interval",
-	)
-
-	if deltaT <= 0 {
-		idleThreshold := viper.GetDuration("signals.fluid.idle_threshold")
-		maxIntegrationSteps := viper.GetInt("signals.fluid.max_integration_steps")
-
-		if idleThreshold <= 0 || maxIntegrationSteps <= 0 {
-			return nil, errnie.Err(
-				errnie.Validation,
-				"manifold: integration interval requires idle threshold and max steps",
-				nil,
-			)
-		}
-
-		deltaT = idleThreshold / time.Duration(maxIntegrationSteps)
+	if configuredDelta > 0 && configuredDelta.Seconds() < float64(config.MaxDelta) {
+		config.MaxDelta = float32(configuredDelta.Seconds())
 	}
 
-	config, err := pmanifold.NewConfig(
-		grid,
-		grid,
-		grid,
-		1,
-		int(grid/2),
-		deltaT.Seconds(),
-		5.0/3.0,
-		defaultMaxModes,
-	)
+	spectrum, err := geometry.NewCorpus[struct{}](historyCapacity)
 
 	if err != nil {
 		return nil, errnie.Err(
-			errnie.Internal,
-			"manifold: invalid engine configuration",
+			errnie.Validation,
+			"manifold: invalid spectral history capacity",
 			err,
 		)
 	}
 
-	pmanifold.DefaultMarketGasBoundaries().Apply(&config)
-
-	var engine *pmanifold.Engine
-
+	var domain *pfluid.Domain
 	err = compute.WithMetalInit(func() error {
-		created, createErr := pmanifold.NewEngine(config)
+		created, createErr := pfluid.NewDomain(config)
 
 		if createErr != nil {
 			return createErr
 		}
 
-		engine = created
-
+		domain = created
 		return nil
 	})
 
 	if err != nil {
 		return nil, errnie.Err(
 			errnie.Internal,
-			"manifold: failed to create shared Metal engine",
+			"manifold: failed to create shared Sensorium domain",
 			err,
 		)
 	}
 
 	return &Solver{
-		config:  config,
-		engine:  engine,
-		symbols: make(map[string]*symbolSlot),
-		books:   books,
+		config:   config,
+		domain:   domain,
+		spectrum: spectrum,
+		symbols:  make(map[string]*symbolSlot),
+		active:   make(map[string]struct{}),
+		books:    books,
 	}, nil
 }
 
 /*
-Update advances the GPU field for the selected active set — open and pending
-inventory, the UI focus symbol, then the highest-intensity booked candidates up
-to the configured budget — and stores each readout on the thesis. A fitted
-Hawkes kernel refines the forcing but is not required to start the field. Cold,
-non-protected fields are evicted once the resident count exceeds the budget.
+SetRecorder attaches the runtime audit stream to shared-domain advances.
+*/
+func (solver *Solver) SetRecorder(recorder *audit.Recorder) {
+	if solver != nil {
+		solver.recorder = recorder
+	}
+}
+
+/*
+Update assembles every book-grounded market population, advances the shared
+domain once when any source epoch changes, and publishes symbol views of that
+same physical state.
 */
 func (solver *Solver) Update(
 	thesis *types.Thesis,
 	hawkes HawkesSource,
+	focus string,
 ) error {
 	if solver == nil || thesis == nil || hawkes == nil {
 		return nil
 	}
 
 	candidates := solver.candidates(hawkes)
-	active := newActiveSet(thesis)
-	selected := active.selectAdvance(candidates)
-
-	errnie.Error(audit.Record(solver.recorder, "manifold_select", map[string]any{
-		"candidates": len(candidates),
-		"selected":   len(selected),
-		"budget":     active.budget,
-	}))
-
-	focus := viper.GetString("ui.manifold_focus")
-	failures, advanced, latest := solver.advanceAll(thesis, selected, focus)
-	active.evict(solver, latest)
-
+	result := solver.advance(thesis, candidates, focus)
 	errnie.Error(audit.Record(solver.recorder, "manifold", map[string]any{
 		"candidates": len(candidates),
-		"advanced":   advanced,
-		"failed":     len(failures),
-		"resident":   len(solver.symbols),
+		"advanced":   result.advanced,
+		"replayed":   result.replayed,
+		"particles":  len(solver.particles),
+		"failed":     len(result.failures),
 	}))
 
-	return errors.Join(failures...)
+	return errors.Join(result.failures...)
 }
 
 /*
-candidates builds the intensity-ranked, book-grounded candidate list for one
-cut. Hawkes symbols without observed intensity or without a two-sided L3 touch
-are dropped before any field is stepped.
+candidates returns every symbol with observed intensity and a two-sided L3
+book. Alphabetical order keeps particle identity independent of map ordering.
 */
 func (solver *Solver) candidates(hawkes HawkesSource) []intensityCandidate {
-	symbols := hawkes.Symbols()
+	symbols := append([]string(nil), hawkes.Symbols()...)
+	sort.Strings(symbols)
 	candidates := make([]intensityCandidate, 0, len(symbols))
 
 	for _, symbol := range symbols {
@@ -196,75 +172,30 @@ func (solver *Solver) candidates(hawkes HawkesSource) []intensityCandidate {
 		}
 
 		buyIntensity, sellIntensity := intensities(outcome)
-		intensity := buyIntensity + sellIntensity
 
-		if intensity <= 0 {
+		if buyIntensity+sellIntensity <= 0 {
+			continue
+		}
+
+		orders, midPrice, ready := ordersForSymbol(solver.books, symbol)
+
+		if !ready {
 			continue
 		}
 
 		candidates = append(candidates, intensityCandidate{
-			symbol:    symbol,
-			outcome:   outcome,
-			intensity: intensity,
+			symbol:   symbol,
+			outcome:  outcome,
+			orders:   orders,
+			midPrice: midPrice,
 		})
 	}
 
-	sort.Slice(candidates, func(left, right int) bool {
-		if candidates[left].intensity == candidates[right].intensity {
-			return candidates[left].symbol < candidates[right].symbol
-		}
-
-		return candidates[left].intensity > candidates[right].intensity
-	})
-
-	return bookReady(candidates, solver.books)
+	return candidates
 }
 
 /*
-advanceAll steps each selected candidate, stores GasReady readouts on the
-thesis, and returns the advance failures, the count advanced, and the latest
-observed event time used to judge resident-field coldness during eviction.
-*/
-func (solver *Solver) advanceAll(
-	thesis *types.Thesis,
-	selected []intensityCandidate,
-	focus string,
-) ([]error, int, time.Time) {
-	var failures []error
-
-	advanced := 0
-	latest := time.Time{}
-
-	for _, candidate := range selected {
-		if candidate.outcome.At.After(latest) {
-			latest = candidate.outcome.At
-		}
-
-		state, err := solver.advance(candidate.symbol, candidate.outcome, focus)
-
-		if err != nil {
-			failures = append(failures, solver.noteAdvanceFailure(candidate.symbol, err))
-			continue
-		}
-
-		if !state.GasReady() {
-			continue
-		}
-
-		if slot := solver.symbols[candidate.symbol]; slot != nil {
-			slot.last = state
-		}
-
-		advanced++
-		thesis.Manifold.Store(candidate.symbol, state)
-	}
-
-	return failures, advanced, latest
-}
-
-/*
-noteAdvanceFailure unwraps one advance error to its root cause, records a
-durable audit breadcrumb, and returns the annotated error for aggregation.
+noteAdvanceFailure records the root cause of one rejected market population.
 */
 func (solver *Solver) noteAdvanceFailure(symbol string, err error) error {
 	cause := err
@@ -281,49 +212,22 @@ func (solver *Solver) noteAdvanceFailure(symbol string, err error) error {
 
 	return errnie.Err(
 		errnie.Internal,
-		fmt.Sprintf("manifold: %s failed to advance field", symbol),
+		fmt.Sprintf("manifold: %s failed to enter shared domain", symbol),
 		err,
 	).With("cause", cause.Error())
 }
 
 /*
-release closes and removes one resident field so an evicted symbol frees its GPU
-allocation immediately.
-*/
-func (solver *Solver) release(symbol string) {
-	slot := solver.symbols[symbol]
-
-	if slot == nil {
-		return
-	}
-
-	if slot.handle != nil {
-		slot.handle.Close()
-		slot.handle = nil
-	}
-
-	delete(solver.symbols, symbol)
-}
-
-/*
-Close releases every resident Field, then the shared engine token.
+Close releases the one resident domain and all accumulated observations.
 */
 func (solver *Solver) Close() {
-	if solver == nil {
+	if solver == nil || solver.domain == nil {
 		return
 	}
 
-	for symbol, slot := range solver.symbols {
-		if slot != nil && slot.handle != nil {
-			slot.handle.Close()
-			slot.handle = nil
-		}
-
-		delete(solver.symbols, symbol)
-	}
-
-	if solver.engine != nil {
-		solver.engine.Close()
-		solver.engine = nil
-	}
+	errnie.Error(solver.domain.Close())
+	solver.domain = nil
+	solver.particles = nil
+	clear(solver.symbols)
+	clear(solver.active)
 }

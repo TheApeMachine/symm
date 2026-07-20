@@ -1,12 +1,12 @@
-import { useSelector } from "@tanstack/react-store";
-import { useRef } from "react";
-import { appStore } from "#/collections/app";
+import { createRef } from "react";
 import type { ResonanceFrame } from "#/collections/types";
 import { heatColor } from "#/components/terminal/canvas";
 import { layerCellsFromState } from "#/components/terminal/xray-layers";
 import { xrayLayersFromResonance } from "#/components/terminal/xray-view";
-import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
-import { getWorker } from "#/providers/websocket";
+
+const symbolRef = createRef<HTMLSpanElement>();
+const waitingRef = createRef<HTMLDivElement>();
+const rowsRef = createRef<HTMLDivElement>();
 
 /*
 layerErrorTone maps prediction-error magnitude onto terminal semantic colors.
@@ -103,57 +103,54 @@ const paintHierarchyRows = (
 };
 
 /*
-XrayHierarchyPanel paints resonance predictive-coding layers from the store
-without deriving fake hierarchy from manifold density.
+paintXrayHierarchy paints the current DRAW batch of resonance layers into the
+hierarchy host. Only this batch is used — nothing is retained in JS.
 */
-export const XrayHierarchyPanel = () => {
-	const symbolRef = useRef<HTMLSpanElement>(null);
-	const waitingRef = useRef<HTMLDivElement>(null);
-	const rowsRef = useRef<HTMLDivElement>(null);
+export const paintXrayHierarchy = (value: unknown, focusSymbol: string) => {
+	const frames = (
+		Array.isArray(value) ? value : value != null ? [value] : []
+	) as ResonanceFrame[];
+	const frame =
+		frames.find(
+			(entry) => focusSymbol === "" || entry.symbol === focusSymbol,
+		) ??
+		frames.at(-1) ??
+		null;
+	const layers = xrayLayersFromResonance(frame);
 
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const online = useSelector(appStore, (state) => state.online);
+	if (symbolRef.current !== null) {
+		symbolRef.current.textContent = focusSymbol;
+		symbolRef.current.dataset.symbol = focusSymbol;
+	}
 
-	useDirectStorePaint(
-		getWorker(),
-		[{ store: "resonance", key: focusSymbol }],
-		(buffers) => {
-			const frame = ((buffers[`resonance:${focusSymbol}`] ?? []).at(-1) ??
-				null) as ResonanceFrame | null;
-			const layers = xrayLayersFromResonance(frame);
-
-			if (symbolRef.current !== null) {
-				symbolRef.current.textContent = focusSymbol;
-				symbolRef.current.dataset.symbol = focusSymbol;
-			}
-
-			if (waitingRef.current !== null && rowsRef.current !== null) {
-				paintHierarchyRows(rowsRef.current, waitingRef.current, layers);
-			}
-		},
-		[online, focusSymbol],
-	);
-
-	return (
-		<div className="shrink-0 px-[18px] py-4">
-			<div className="flex items-baseline justify-between gap-3">
-				<span className="font-serif font-semibold text-[22px] text-(--f1) leading-[1.1]">
-					Predictive-coding hierarchy
-				</span>
-				<span
-					ref={symbolRef}
-					className="shrink-0 cursor-pointer font-mono text-[11px] text-(--f3)"
-				/>
-			</div>
-			<div className="mt-1 font-mono text-[10px] text-(--f4)">
-				resonance layers only · prediction error ε · not manifold / ρ
-			</div>
-			<div className="mt-4">
-				<div ref={waitingRef} className="font-mono text-[10px] text-(--f4)">
-					waiting for resonance layers
-				</div>
-				<div ref={rowsRef} className="flex flex-col gap-2" />
-			</div>
-		</div>
-	);
+	if (waitingRef.current !== null && rowsRef.current !== null) {
+		paintHierarchyRows(rowsRef.current, waitingRef.current, layers);
+	}
 };
+
+/*
+XrayHierarchyPanel is the static predictive-coding hierarchy shell. DRAW paints
+via paintXrayHierarchy.
+*/
+export const XrayHierarchyPanel = () => (
+	<div className="shrink-0 px-[18px] py-4">
+		<div className="flex items-baseline justify-between gap-3">
+			<span className="font-serif font-semibold text-[22px] text-(--f1) leading-[1.1]">
+				Predictive-coding hierarchy
+			</span>
+			<span
+				ref={symbolRef}
+				className="shrink-0 cursor-pointer font-mono text-[11px] text-(--f3)"
+			/>
+		</div>
+		<div className="mt-1 font-mono text-[10px] text-(--f4)">
+			resonance layers only · prediction error ε · not manifold / ρ
+		</div>
+		<div className="mt-4">
+			<div ref={waitingRef} className="font-mono text-[10px] text-(--f4)">
+				waiting for resonance layers
+			</div>
+			<div ref={rowsRef} className="flex flex-col gap-2" />
+		</div>
+	</div>
+);

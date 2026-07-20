@@ -5,7 +5,6 @@ import (
 	"math"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 )
 
@@ -144,7 +143,13 @@ func (stoploss *Stoploss) WidenSurvival(distance float64) {
 		stoploss.TrailDistance = distance
 	}
 
-	stoploss.StopReturn = -stoploss.TrailDistance
+	next := -stoploss.TrailDistance
+
+	if stoploss.PeakReturn > 0 {
+		next = math.Max(stoploss.StopReturn, next)
+	}
+
+	stoploss.StopReturn = next
 	stoploss.Reason = "survival band widened from live entry trail"
 }
 
@@ -297,6 +302,16 @@ func (stoploss *Stoploss) Regulate(
 		return
 	}
 
+	if evidence.ReferencePrice == nil || evidence.ReferencePrice.Sign() <= 0 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"stoploss: exact reference price required for exit decision",
+			nil,
+		))
+
+		return
+	}
+
 	thesis.Decisions = append(thesis.Decisions, Decision{
 		Action:           "exit",
 		Symbol:           holding.Symbol,
@@ -304,7 +319,7 @@ func (stoploss *Stoploss) Regulate(
 		Utility:          stoploss.StopReturn,
 		Alternatives:     map[string]float64{stoploss.Action: stoploss.StopReturn},
 		ProposedQuantity: holding.Qty,
-		ReferencePrice:   decimal.NewFromFloat64(evidence.Mark),
+		ReferencePrice:   evidence.ReferencePrice.Copy(),
 		Cause:            stoploss.Action,
 		Reason:           stoploss.Reason,
 	})

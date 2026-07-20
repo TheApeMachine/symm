@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/logic/manifold"
@@ -169,13 +170,23 @@ ponytail: spread-times-utilization is a coarse friction proxy; upgrade path is
 manifold gas-derived impact from calibrated depth consumption models.
 */
 func (analyzer *Analyzer) forecastImpact(state manifold.State) float64 {
-	depth := state.BuyCapacity + state.SellCapacity
-
-	if state.BuyCapacity <= 0 || depth <= 0 || state.Spread < 0 {
+	if state.BuyCapacity == nil || state.BuyCapacity.Sign() <= 0 ||
+		state.SellCapacity == nil || state.SellCapacity.Sign() <= 0 ||
+		state.Spread < 0 {
 		return 0
 	}
 
-	return state.Spread * (state.BuyCapacity / depth)
+	depth := state.BuyCapacity.Add(state.SellCapacity)
+	scale := max(
+		int64(decimal.DefaultScale),
+		state.BuyCapacity.GetScale(),
+		depth.GetScale(),
+	)
+	share := state.BuyCapacity.SetScale(scale).
+		Div(depth.SetScale(scale)).
+		Float64()
+
+	return state.Spread * share
 }
 
 /*

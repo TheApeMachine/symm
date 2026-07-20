@@ -15,6 +15,7 @@ graphs that produce no edges after Compose.
 */
 func (analyzer *Analyzer) composeGraphs(thesis *types.Thesis) {
 	graphsStarted := time.Now()
+	grouped := make(map[string][]*types.Measurement)
 
 	for _, measurement := range thesis.Measurements {
 		if measurement == nil {
@@ -27,19 +28,21 @@ func (analyzer *Analyzer) composeGraphs(thesis *types.Thesis) {
 			continue
 		}
 
-		value, found := thesis.Graphs.Load(measurement.Symbol)
+		grouped[measurement.Symbol] = append(
+			grouped[measurement.Symbol],
+			measurement,
+		)
+	}
 
-		if !found {
-			value = types.NewGraph(measurement.Symbol)
-			thesis.Graphs.Store(measurement.Symbol, value)
-		}
+	for symbol, measurements := range grouped {
+		evidenceGraph := types.NewGraph(symbol)
 
-		evidenceGraph := value.(*types.Graph)
-
-		if err := evidenceGraph.AddNode(measurement); err != nil {
+		if err := evidenceGraph.Evidence.AddMeasurements(measurements); err != nil {
 			errnie.Error(err)
 			continue
 		}
+
+		thesis.Graphs.Store(symbol, evidenceGraph)
 	}
 
 	thesis.Graphs.Range(func(_, value any) bool {
@@ -103,6 +106,10 @@ func (analyzer *Analyzer) relateLeadLagEdge(
 	follower *types.Graph,
 	node *types.Node,
 ) {
+	if *node.Measurement.Normalized == 0 {
+		return
+	}
+
 	peerValue, found := thesis.Graphs.Load(node.Measurement.Peer)
 
 	if !found {
@@ -121,7 +128,7 @@ func (analyzer *Analyzer) relateLeadLagEdge(
 		return
 	}
 
-	anchorKey := follower.StagePeerNode(anchorNode.Measurement)
+	anchorKey := follower.Evidence.StagePeerNode(anchorNode.Measurement)
 	observedFrom, _ := node.Measurement.Interval()
 	at := node.Measurement.At
 
@@ -169,7 +176,7 @@ func (analyzer *Analyzer) relateCausal(thesis *types.Thesis) {
 			continue
 		}
 
-		evidenceGraph.RelateConditions(
+		evidenceGraph.Evidence.RelateConditions(
 			hypothesis.Treatment, hypothesis.Outcome,
 			hypothesis.At, hypothesis.At,
 		)

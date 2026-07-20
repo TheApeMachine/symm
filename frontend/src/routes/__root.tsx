@@ -10,6 +10,7 @@ import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
 import { appStore } from "#/collections/app";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
+import { openInspectorShell } from "#/components/terminal/kernel-list";
 import { CommandPalette } from "#/components/terminal/palette";
 import { TerminalNav, TerminalTopBar } from "#/components/terminal/panels";
 import { SymbolFocusLayer } from "#/components/terminal/symbol-focus";
@@ -63,7 +64,6 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 	const errorDialogRef = useRef<HTMLDialogElement>(null);
 	const dismissRef = useRef<HTMLButtonElement>(null);
 	const {
-		inspectSource,
 		openPalette,
 		closePalette,
 		bumpPaletteIndex,
@@ -99,7 +99,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 		focusSymbol?: string,
 	) => {
 		if (source) {
-			inspectSource(source);
+			openInspectorShell(source);
 		}
 
 		if (focusSymbol) {

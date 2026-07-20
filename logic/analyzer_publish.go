@@ -3,7 +3,6 @@ package logic
 import (
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
@@ -22,7 +21,7 @@ func (analyzer *Analyzer) publishMeasured(
 	publishStarted := time.Now()
 
 	if len(states) > 0 {
-		focus := viper.GetString("ui.manifold_focus")
+		focus := analyzer.Focused()
 		frame := make([]any, 0, len(states))
 
 		for _, state := range states {
@@ -145,7 +144,7 @@ func (analyzer *Analyzer) attachCategoryEvidence(
 	}
 
 	category.Supporting, category.Opposing, category.Missing =
-		evidenceGraph.CategoryEvidence(category.Type)
+		evidenceGraph.Evidence.CategoryEvidence(category.Type)
 }
 
 /*

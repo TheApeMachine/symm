@@ -116,17 +116,10 @@ func (position *Position) PendingWire() types.PendingOrderWire {
 		side = "sell"
 	}
 
-	quantity := 0.0
-
-	if position.request != nil {
-		quantity = position.request.Params.OrderQty
-	}
-
 	return types.PendingOrderWire{
 		Symbol:        position.pair.Symbol,
 		Side:          side,
 		OrderID:       position.orderID,
-		Quantity:      quantity,
 		Intent:        intent,
 		ReservationID: position.claim.ID(),
 	}

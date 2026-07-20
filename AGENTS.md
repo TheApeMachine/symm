@@ -268,9 +268,105 @@ errnie.Error(errnie.Err(
 ))
 ```
 
+## Testing
+
 > !IMPORTANT! When it comes to tests, you should **always** use Goconvey, tests should mirror the code structure regarding filenames and methods, and use BDD style nested scenarios.
 
 > Another thing about testing in this specific project is to always use the full market simulation system in ./tests/ to validate signals, decision making mechanisms, and anything else trading related, which is everything.
+
+Follow the best-practices from Goconvey when it comes to decorators, setup, and teardown.
+
+```go
+package main
+
+import (
+	"database/sql"
+	"testing"
+
+	_ "github.com/lib/pq"
+	. "github.com/smartystreets/goconvey/convey"
+)
+
+func WithTransaction(db *sql.DB, f func(tx *sql.Tx)) func() {
+	return func() {
+		tx, err := db.Begin()
+		So(err, ShouldBeNil)
+
+		Reset(func() {
+			/* Verify that the transaction is alive by executing a command */
+			_, err := tx.Exec("SELECT 1")
+			So(err, ShouldBeNil)
+
+			tx.Rollback()
+		})
+
+		/* Here we invoke the actual test-closure and provide the transaction */
+		f(tx)
+	}
+}
+
+func TestUsers(t *testing.T) {
+	db, err := sql.Open("postgres", "postgres://localhost?sslmode=disable")
+	if err != nil {
+		panic(err)
+	}
+
+	Convey("Given a user in the database", t, WithTransaction(db, func(tx *sql.Tx) {
+		_, err := tx.Exec(`INSERT INTO "Users" ("id", "name") VALUES (1, 'Test User')`)
+		So(err, ShouldBeNil)
+
+		Convey("Attempting to retrieve the user should return the user", func() {
+			 var name string
+
+			 data := tx.QueryRow(`SELECT "name" FROM "Users" WHERE "id" = 1`)
+			 err = data.Scan(&name)
+
+			 So(err, ShouldBeNil)
+			 So(name, ShouldEqual, "Test User")
+		})
+	}))
+}
+
+/* Required table to run the test:
+CREATE TABLE "public"."Users" ( 
+	"id" INTEGER NOT NULL UNIQUE, 
+	"name" CHARACTER VARYING( 2044 ) NOT NULL
+);
+*/
+
+Convey("Setup", func() {
+    foo := &Bar{}
+    Convey("This creates a new variable foo in this scope", func() {
+        foo := &Bar{}
+    }
+    Convey("This assigns a new value to the previous declared foo", func() {
+        foo = &Bar{}
+    }
+}
+
+Convey("Top-level", t, func() {
+
+    // setup (run before each `Convey` at this scope):
+    db.Open()
+    db.Initialize()
+
+    Convey("Test a query", t, func() {
+        db.Query()
+        // TODO: assertions here
+    })
+
+    Convey("Test inserts", t, func() {
+        db.Insert()
+        // TODO: assertions here
+    })
+
+    Reset(func() {
+        // This reset is run after each `Convey` at the same scope.
+        db.Close()
+    })
+
+})
+```
 
 ---
 
@@ -284,3 +380,50 @@ errnie.Error(errnie.Err(
 ### Compiler Configuration & Linker Errors
 
 * **dropg Linker Error:** If you encounter a `dropg` linker error, refer to the `Makefile` located in the project root to ensure environment flags and compiler options match the project targets. Do not bypass build constraints with temporary flags.
+
+To fix this, your AGENTS.md file must act as an anti-bloat compiler. AI models default to deep nesting, defensive boilerplate, and proxy methods because they prioritize safety over ergonomics.
+Create a file named AGENTS.md in your project root with the exact configuration below to hard-enforce flat architecture and proper composition.
+
+---
+
+## 🚨 Anti-Slop Directive: Core Philosophy
+
+* Value Clarity Over Guarding: Do not write defensive boilerplate for impossible edge cases.
+* Flatter is Better: If a function or method merely calls another function with no added logic, delete it.
+* Ergonomics Win: Code must be brief, direct, and immediately readable.
+
+### 🐹 Go Architectural Constraints## 1. Zero Proxy Methods & Strict Composition
+
+* No Passthroughs: Never write wrapper/helper methods on a struct that simply call a method on an embedded or composed field.
+* Expose Embedded Fields: Use Go's implicit embedding. Let the consumer call the nested method directly.
+* No Artificial Layers: Do not create Service interfaces or Helper structs unless there are at least two distinct, active implementations.
+
+### 2. Deflationary Error Handling
+
+* Do not create multi-layered validation builders for simple struct checks.
+* Handle errors early and return immediately to keep the happy path unindented.
+
+---
+
+### ⚛️ React & TypeScript Constraints## 3. Pure Component Composition
+
+* No Wrapper Prop Hell: Do not pass 15 configuration props down a tree to avoid creating a new component.
+* Use children: Pass React elements as props or use the children prop to compose layouts cleanly.
+* No useHelper Hooks: Forbid local custom hooks that merely wrap a single basic useState or useEffect without shared, stateful logic.
+
+### 4. Direct State and Type Handling
+
+* Do not mirror props into local state unless explicitly updating a decoupled draft.
+* Avoid utility/helper files for primitive data transformations. Inline simple array mappings (.map(), .filter()) directly in the component.
+
+---
+
+## 🛠️ Verification Checklist (Run Before Every Output)
+
+Before presenting code or saving files, you must answer "No" to these three questions:
+
+   1. Is there a function here that exists solely to pass data to another function?
+   2. Did I create a new type or interface when a primitive or standard library type would suffice?
+   3. Am I nesting data structures when a flat layout can achieve the exact same behavior?
+
+If you violate these constraints, the code will be rejected.

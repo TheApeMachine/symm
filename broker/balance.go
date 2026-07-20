@@ -711,15 +711,10 @@ func (balance *Balance) reservation(
 		))
 	}
 
-	// Kraken Mul truncates the right factor to the left scale; lift first so
-	// max_fraction 0.20 against an integer Available does not collapse to 0.
-	scale := available.GetScale()
-
-	if fraction.GetScale() > scale {
-		scale = fraction.GetScale()
-	}
-
-	scale += 8
+	// A finite fixed-point product needs at most the sum of its operand scales.
+	// Scale one is the minimum because the SDK's scale-zero banker rounding
+	// misclassifies exact odd integers as half-way values.
+	scale := max(int64(1), available.GetScale()+fraction.GetScale())
 
 	return available.SetScale(scale).Mul(fraction.SetScale(scale)), nil
 }

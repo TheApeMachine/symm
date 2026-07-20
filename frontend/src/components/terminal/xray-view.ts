@@ -1,7 +1,3 @@
-import {
-	measurementEpochs,
-	measurementRaw,
-} from "#/collections/measurements";
 import type { Measurement, ResonanceFrame } from "#/collections/types";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { requirePositiveLength } from "#/lib/domain";
@@ -50,6 +46,46 @@ const sumValues = (...values: Array<number | null>): number | null => {
 	}
 
 	return available.reduce((sum, value) => sum + value, 0);
+};
+
+const measurementEpochs = (measurements: Measurement[]): Measurement[][] => {
+	const epochs = new Map<string, Measurement[]>();
+
+	for (const measurement of measurements) {
+		const epoch = epochs.get(measurement.at) ?? [];
+		epoch.push(measurement);
+		epochs.set(measurement.at, epoch);
+	}
+
+	return [...epochs.values()];
+};
+
+const measurementRaw = (
+	epoch: Measurement[],
+	metric: string,
+	side = "",
+): number | null => {
+	const key = side === "" ? metric : `${metric}:${side}`;
+
+	for (let index = epoch.length - 1; index >= 0; index -= 1) {
+		const measurement = epoch[index];
+
+		if (
+			measurement.metric === metric &&
+			(measurement.side ?? "") === side &&
+			Number.isFinite(measurement.raw)
+		) {
+			return measurement.raw;
+		}
+
+		const raw = measurement.metrics?.[key];
+
+		if (typeof raw === "number" && Number.isFinite(raw)) {
+			return raw;
+		}
+	}
+
+	return null;
 };
 
 const layerError = (

@@ -3,6 +3,8 @@ package types
 import (
 	"math"
 	"time"
+
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 )
 
 /*
@@ -10,31 +12,31 @@ Forecasts holds calibrated observable predictions derived from typed physical re
 Strategy consumes these instead of raw projection labels.
 */
 type Forecasts struct {
-	Source                     string        `json:"source"`
-	Symbol                     string        `json:"symbol"`
-	At                         time.Time     `json:"at"`
-	ObservedInterval           time.Duration `json:"observedInterval"`
-	SourceEpoch                uint64        `json:"sourceEpoch"`
-	HorizonEvents              uint64        `json:"horizonEvents"`
-	ExpiresEpoch               uint64        `json:"expiresEpoch"`
-	Target                     string        `json:"target"`
-	ModelVersion               string        `json:"modelVersion"`
-	Ready                      bool          `json:"ready"`
-	Calibrated                 bool          `json:"calibrated"`
-	FrictionReady              bool          `json:"frictionReady"`
-	CalibrationSamples         uint64        `json:"calibrationSamples"`
-	IncrementalMSE             float64       `json:"incrementalMSE" validate:"finite"`
-	IncrementalSkillLowerBound float64       `json:"incrementalSkillLowerBound" validate:"finite"`
-	ExpectedReturn             float64       `json:"expectedReturn" validate:"finite"`
-	ReferencePrice             float64       `json:"referencePrice" validate:"finite"`
-	BuyCapacity                float64       `json:"buyCapacity" validate:"finite"`
-	SellCapacity               float64       `json:"sellCapacity" validate:"finite"`
-	ExpectedFees               float64       `json:"expectedFees" validate:"finite,nonnegative"`
-	ExpectedSpread             float64       `json:"expectedSpread" validate:"finite,nonnegative"`
-	ExpectedImpact             float64       `json:"expectedImpact" validate:"finite,nonnegative"`
-	ExpectedAdverseSelection   float64       `json:"expectedAdverseSelection" validate:"finite,nonnegative"`
-	Uncertainty                float64       `json:"uncertainty" validate:"finite,nonnegative"`
-	Confidence                 float64       `json:"confidence" validate:"finite,min=0,max=1"`
+	Source                     string           `json:"source"`
+	Symbol                     string           `json:"symbol"`
+	At                         time.Time        `json:"at"`
+	ObservedInterval           time.Duration    `json:"observedInterval"`
+	SourceEpoch                uint64           `json:"sourceEpoch"`
+	HorizonEvents              uint64           `json:"horizonEvents"`
+	ExpiresEpoch               uint64           `json:"expiresEpoch"`
+	Target                     string           `json:"target"`
+	ModelVersion               string           `json:"modelVersion"`
+	Ready                      bool             `json:"ready"`
+	Calibrated                 bool             `json:"calibrated"`
+	FrictionReady              bool             `json:"frictionReady"`
+	CalibrationSamples         uint64           `json:"calibrationSamples"`
+	IncrementalMSE             float64          `json:"incrementalMSE" validate:"finite"`
+	IncrementalSkillLowerBound float64          `json:"incrementalSkillLowerBound" validate:"finite"`
+	ExpectedReturn             float64          `json:"expectedReturn" validate:"finite"`
+	ReferencePrice             *decimal.Decimal `json:"referencePrice" validate:"required"`
+	BuyCapacity                *decimal.Decimal `json:"buyCapacity" validate:"required"`
+	SellCapacity               *decimal.Decimal `json:"sellCapacity" validate:"required"`
+	ExpectedFees               float64          `json:"expectedFees" validate:"finite,nonnegative"`
+	ExpectedSpread             float64          `json:"expectedSpread" validate:"finite,nonnegative"`
+	ExpectedImpact             float64          `json:"expectedImpact" validate:"finite,nonnegative"`
+	ExpectedAdverseSelection   float64          `json:"expectedAdverseSelection" validate:"finite,nonnegative"`
+	Uncertainty                float64          `json:"uncertainty" validate:"finite,nonnegative"`
+	Confidence                 float64          `json:"confidence" validate:"finite,min=0,max=1"`
 }
 
 /*
@@ -64,9 +66,6 @@ func (forecasts Forecasts) Eligible() bool {
 
 	values := []float64{
 		forecasts.ExpectedReturn,
-		forecasts.ReferencePrice,
-		forecasts.BuyCapacity,
-		forecasts.SellCapacity,
 		forecasts.ExpectedFees,
 		forecasts.ExpectedSpread,
 		forecasts.ExpectedImpact,
@@ -84,9 +83,9 @@ func (forecasts Forecasts) Eligible() bool {
 	}
 
 	return forecasts.ExpectedFees >= 0 &&
-		forecasts.ReferencePrice > 0 &&
-		forecasts.BuyCapacity > 0 &&
-		forecasts.SellCapacity > 0 &&
+		forecasts.ReferencePrice != nil && forecasts.ReferencePrice.Sign() > 0 &&
+		forecasts.BuyCapacity != nil && forecasts.BuyCapacity.Sign() > 0 &&
+		forecasts.SellCapacity != nil && forecasts.SellCapacity.Sign() > 0 &&
 		forecasts.ExpectedSpread >= 0 &&
 		forecasts.ExpectedImpact >= 0 &&
 		forecasts.ExpectedAdverseSelection >= 0 &&

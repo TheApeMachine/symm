@@ -8,14 +8,13 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/nomagique/hawkes"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-staticHawkesSource exposes one deterministic excitation outcome to Solver tests.
+staticHawkesSource exposes deterministic market epochs to shared-domain tests.
 */
 type staticHawkesSource struct {
 	symbols  []string
@@ -23,281 +22,129 @@ type staticHawkesSource struct {
 }
 
 /*
-Symbols returns the configured test symbol.
+Symbols returns every configured test market.
 */
 func (source staticHawkesSource) Symbols() []string {
 	return source.symbols
 }
 
 /*
-Outcome returns the configured outcome for its test symbol.
+Outcome returns one configured empirical arrival process.
 */
 func (source staticHawkesSource) Outcome(symbol string) (excitation.Outcome, bool) {
 	outcome, found := source.outcomes[symbol]
-
 	return outcome, found
 }
 
-func TestSolverUpdate(t *testing.T) {
-	viper.Set("market.l3_depth", 8)
-	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-
-	Convey("Given observed arrival intensity before Hawkes fit", t, func() {
-		solver, err := NewSolver(newTestBookSource("BTC/USD"))
+func TestSolver_Update(t *testing.T) {
+	Convey("Given two booked markets entering one shared domain", t, func() {
+		solver, err := NewSolver(newTestBookSource("BTC/USD", "ETH/USD"), 8)
 		So(err, ShouldBeNil)
-		defer solver.Close()
-
-		outcome := solverOutcome(time.Unix(1, 0), 4, 2)
-		outcome.Readiness.HawkesFit = false
-		outcome.Fit = hawkes.BivariateFit{}
-		thesis := types.NewThesis(nil, nil)
-
-		err = solver.Update(thesis, staticHawkesSource{
-			symbols: []string{"BTC/USD"},
+		Reset(solver.Close)
+		at := time.Unix(3, 0)
+		source := staticHawkesSource{
+			symbols: []string{"ETH/USD", "BTC/USD"},
 			outcomes: map[string]excitation.Outcome{
-				"BTC/USD": outcome,
+				"BTC/USD": solverOutcome(at, 4, 2),
+				"ETH/USD": solverOutcome(at, 8, 4),
 			},
-		})
-		state, found := thesis.Manifold.Load("BTC/USD")
-
-		Convey("It should start the field from empirical forcing", func() {
-			So(err, ShouldBeNil)
-			So(found, ShouldBeTrue)
-			So(state.(State).GasReady(), ShouldBeTrue)
-		})
-	})
-
-	Convey("Given multiple booked intensity leaders", t, func() {
-		solver, err := NewSolver(newTestBookSource("BTC/USD", "ETH/USD"))
-		So(err, ShouldBeNil)
-		defer solver.Close()
-
+		}
 		thesis := types.NewThesis(nil, nil)
-		bitcoin := solverOutcome(time.Unix(1, 0), 2, 1)
-		bitcoin.Readiness.HawkesFit = false
-		bitcoin.Fit = hawkes.BivariateFit{}
-		ether := solverOutcome(time.Unix(1, 0), 8, 4)
-		ether.Readiness.HawkesFit = false
-		ether.Fit = hawkes.BivariateFit{}
-		err = solver.Update(thesis, staticHawkesSource{
-			symbols: []string{"BTC/USD", "ETH/USD"},
-			outcomes: map[string]excitation.Outcome{
-				"BTC/USD": bitcoin,
-				"ETH/USD": ether,
-			},
-		})
-		_, bitcoinFound := thesis.Manifold.Load("BTC/USD")
-		_, etherFound := thesis.Manifold.Load("ETH/USD")
-
-		Convey("It should advance every booked leader", func() {
-			So(err, ShouldBeNil)
-			So(bitcoinFound, ShouldBeTrue)
-			So(etherFound, ShouldBeTrue)
-			So(solver.symbols, ShouldHaveLength, 2)
-		})
-	})
-
-}
-
-func TestSolverAdvance(t *testing.T) {
-	viper.Set("market.l3_depth", 8)
-	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-	previousFocus := viper.Get("ui.manifold_focus")
-	viper.Set("ui.manifold_focus", "BTC/USD")
-	t.Cleanup(func() { viper.Set("ui.manifold_focus", previousFocus) })
-
-	Convey("Given Hawkes excitation", t, func() {
-		solver, err := NewSolver(newTestBookSource("BTC/USD"))
+		err = solver.Update(thesis, source, "BTC/USD")
 		So(err, ShouldBeNil)
-		defer solver.Close()
 
-		at := time.Unix(1, 0)
-		state, advanceErr := solver.advance(
-			"BTC/USD",
-			solverOutcome(at, 4, 2),
-			viper.GetString("ui.manifold_focus"),
-		)
-		stale, staleErr := solver.advance(
-			"BTC/USD",
-			solverOutcome(at, 4, 2),
-			viper.GetString("ui.manifold_focus"),
-		)
+		if err != nil {
+			return
+		}
 
-		Convey("It should return a finite GPU readout", func() {
-			So(advanceErr, ShouldBeNil)
-			So(state.GasReady(), ShouldBeTrue)
-			So(state.Epoch, ShouldEqual, 1)
-			So(state.Source, ShouldEqual, "manifold")
-			So(state.Reading.CoherenceMag2, ShouldBeGreaterThan, 0)
-			So(len(state.Rho), ShouldBeGreaterThan, 0)
-			So(len(state.PsiMag2), ShouldBeGreaterThan, 0)
-			So(len(state.Particles), ShouldBeGreaterThan, 0)
-			So(staleErr, ShouldBeNil)
-			So(stale.GasReady(), ShouldBeTrue)
-			So(stale.Epoch, ShouldEqual, state.Epoch)
-			So(stale.Rho, ShouldResemble, state.Rho)
+		bitcoinValue, bitcoinFound := thesis.Manifold.Load("BTC/USD")
+		etherValue, etherFound := thesis.Manifold.Load("ETH/USD")
+		So(bitcoinFound, ShouldBeTrue)
+		So(etherFound, ShouldBeTrue)
+
+		if !bitcoinFound || !etherFound {
+			return
+		}
+
+		bitcoin := bitcoinValue.(State)
+		ether := etherValue.(State)
+
+		Convey("It should advance both symbols through the same physical reading", func() {
+			So(bitcoin.GasReady(), ShouldBeTrue)
+			So(ether.GasReady(), ShouldBeTrue)
+			So(bitcoin.Reading, ShouldResemble, ether.Reading)
+			So(solver.particles, ShouldHaveLength, 4)
+			So(solver.domain, ShouldNotBeNil)
 		})
-	})
-}
 
-func TestSolverUpdateRepublishesQuietManifold(t *testing.T) {
-	viper.Set("market.l3_depth", 8)
-	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+		Convey("It should project the shared field only onto the focused view", func() {
+			So(bitcoin.Rho, ShouldNotBeEmpty)
+			So(bitcoin.PsiMag2, ShouldNotBeEmpty)
+			So(bitcoin.Particles, ShouldHaveLength, 2)
+			So(bitcoin.Wave, ShouldHaveLength, solver.config.Grid.X)
+			So(bitcoin.PhaseReady, ShouldBeFalse)
+			So(bitcoin.PhaseReason, ShouldEqual, "awaiting a prior nonzero phase observation")
+			So(ether.Rho, ShouldBeEmpty)
+			So(ether.Particles, ShouldBeEmpty)
+			So(ether.Wave, ShouldBeEmpty)
+		})
 
-	Convey("Given a GasReady field and a quiet Hawkes outcome", t, func() {
-		books := newTestBookSource("BTC/USD")
-		solver, err := NewSolver(books)
-		So(err, ShouldBeNil)
-		defer solver.Close()
-
-		at := time.Unix(1, 0)
-		outcome := solverOutcome(at, 4, 2)
-		first := types.NewThesis(nil, nil)
-		So(solver.Update(first, staticHawkesSource{
-			symbols:  []string{"BTC/USD"},
-			outcomes: map[string]excitation.Outcome{"BTC/USD": outcome},
-		}), ShouldBeNil)
-
-		value, found := first.Manifold.Load("BTC/USD")
-		So(found, ShouldBeTrue)
-		So(value.(State).GasReady(), ShouldBeTrue)
-
-		second := types.NewThesis(nil, nil)
-		So(solver.Update(second, staticHawkesSource{
-			symbols:  []string{"BTC/USD"},
-			outcomes: map[string]excitation.Outcome{"BTC/USD": outcome},
-		}), ShouldBeNil)
-
-		Convey("Then the next Thesis still carries the manifold field", func() {
-			replay, found := second.Manifold.Load("BTC/USD")
+		Convey("It should scan the current phase dial against prior resident waves", func() {
+			laterAt := at.Add(time.Second)
+			source.outcomes["BTC/USD"] = solverOutcome(laterAt, 16, 2)
+			source.outcomes["ETH/USD"] = solverOutcome(laterAt, 4, 8)
+			next := types.NewThesis(nil, nil)
+			So(solver.Update(next, source, "BTC/USD"), ShouldBeNil)
+			value, found := next.Manifold.Load("BTC/USD")
 			So(found, ShouldBeTrue)
-			So(replay.(State).GasReady(), ShouldBeTrue)
-			So(replay.(State).Epoch, ShouldEqual, value.(State).Epoch)
-		})
-	})
-}
 
-func TestSolverAdvanceWaitsForMarketState(t *testing.T) {
-	viper.Set("market.l3_depth", 8)
-	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-
-	Convey("Given Hawkes state before its authoritative L3 book", t, func() {
-		solver, err := NewSolver(newTestBookSource("BTC/USD"))
-		So(err, ShouldBeNil)
-		defer solver.Close()
-
-		state, advanceErr := solver.advance(
-			"ETH/USD",
-			solverOutcome(time.Unix(1, 0), 4, 2),
-			viper.GetString("ui.manifold_focus"),
-		)
-
-		Convey("It should wait without allocating a Field", func() {
-			So(advanceErr, ShouldBeNil)
-			So(state.GasReady(), ShouldBeFalse)
-			So(solver.symbols, ShouldBeEmpty)
-		})
-	})
-}
-
-func TestSolverAdvanceAppliesAbsoluteHawkesForcing(t *testing.T) {
-	viper.Set("market.l3_depth", 8)
-	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-	previousFocus := viper.Get("ui.manifold_focus")
-	viper.Set("ui.manifold_focus", "BTC/USD")
-	t.Cleanup(func() { viper.Set("ui.manifold_focus", previousFocus) })
-
-	Convey("Given the same L3 state up to a 117-unit absolute arrival impulse", t, func() {
-		solver, solverErr := NewSolver(newTestBookSource("BTC/USD"))
-		So(solverErr, ShouldBeNil)
-		defer solver.Close()
-
-		at := time.Unix(1, 0)
-		quietState, quietAdvanceErr := solver.advance(
-			"BTC/USD",
-			solverOutcome(at, 2, 1),
-			viper.GetString("ui.manifold_focus"),
-		)
-		activeState, activeAdvanceErr := solver.advance(
-			"BTC/USD", solverOutcome(at.Add(time.Second), 140, 70),
-			viper.GetString("ui.manifold_focus"),
-		)
-
-		Convey("It should respond without encoding forcing into carrier coordinates", func() {
-			So(quietAdvanceErr, ShouldBeNil)
-			So(activeAdvanceErr, ShouldBeNil)
-			So(quietState.GasReady(), ShouldBeTrue)
-			So(activeState.GasReady(), ShouldBeTrue)
-			gasDelta := math.Abs(activeState.Reading.GuidanceSpeed-quietState.Reading.GuidanceSpeed) +
-				math.Abs(activeState.Reading.PressureGradX-quietState.Reading.PressureGradX) +
-				math.Abs(activeState.Reading.Divergence-quietState.Reading.Divergence) +
-				math.Abs(activeState.Reading.CoherenceMag2-quietState.Reading.CoherenceMag2)
-			for row := range quietState.Rho {
-				for col := range quietState.Rho[row] {
-					gasDelta += math.Abs(activeState.Rho[row][col] - quietState.Rho[row][col])
-				}
+			if !found {
+				return
 			}
-			So(gasDelta, ShouldBeGreaterThan, 0)
+
+			state := value.(State)
+			So(state.Wave, ShouldHaveLength, solver.config.Grid.X)
+			So(state.PhaseReady, ShouldBeTrue)
+			So(state.PhaseReason, ShouldBeEmpty)
+			So(state.PhaseScan, ShouldHaveLength, len(state.Wave))
+
+			for _, response := range state.PhaseScan {
+				So(math.IsNaN(response.Similarity), ShouldBeFalse)
+				So(math.IsInf(response.Similarity, 0), ShouldBeFalse)
+				So(response.ObservedAt, ShouldEqual, at)
+			}
+		})
+
+		Convey("It should replay unchanged source epochs without duplicating particles", func() {
+			next := types.NewThesis(nil, nil)
+			So(solver.Update(next, source, "ETH/USD"), ShouldBeNil)
+			value, found := next.Manifold.Load("ETH/USD")
+			replay := value.(State)
+			So(found, ShouldBeTrue)
+			So(replay.Replay, ShouldBeTrue)
+			So(replay.Epoch, ShouldEqual, ether.Epoch)
+			So(replay.Rho, ShouldNotBeEmpty)
+			So(replay.Particles, ShouldHaveLength, 2)
+			So(replay.Wave, ShouldNotBeEmpty)
+			So(solver.particles, ShouldHaveLength, 4)
 		})
 	})
 }
 
-func TestSolverAdvanceAdaptsToForcing(t *testing.T) {
-	viper.Set("market.l3_depth", 8)
-	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-
-	Convey("Given arrival forcing whose carrier speed exceeds the configured step", t, func() {
-		solver, err := NewSolver(newTestBookSource("BTC/USD"))
+func TestSolver_Candidates(t *testing.T) {
+	Convey("Given intensity for a market without an authoritative L3 book", t, func() {
+		solver, err := NewSolver(newTestBookSource("BTC/USD"), 8)
 		So(err, ShouldBeNil)
-		defer solver.Close()
+		Reset(solver.Close)
+		source := staticHawkesSource{
+			symbols: []string{"ETH/USD"},
+			outcomes: map[string]excitation.Outcome{
+				"ETH/USD": solverOutcome(time.Unix(3, 0), 4, 2),
+			},
+		}
 
-		state, advanceErr := solver.advance(
-			"BTC/USD",
-			solverOutcome(time.Unix(1, 0), 1_000_000, 500_000),
-			viper.GetString("ui.manifold_focus"),
-		)
-
-		Convey("It should derive a stable advective step and keep the gas finite", func() {
-			So(advanceErr, ShouldBeNil)
-			So(state.GasReady(), ShouldBeTrue)
-		})
-	})
-}
-
-func TestSolverAdvanceKeepsMultipleSymbols(t *testing.T) {
-	viper.Set("market.l3_depth", 8)
-	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-
-	Convey("Given successive advances on distinct booked symbols", t, func() {
-		solver, err := NewSolver(newTestBookSource("BTC/USD", "ETH/USD"))
-		So(err, ShouldBeNil)
-		defer solver.Close()
-
-		_, firstErr := solver.advance(
-			"BTC/USD",
-			solverOutcome(time.Unix(1, 0), 4, 2),
-			viper.GetString("ui.manifold_focus"),
-		)
-		state, secondErr := solver.advance(
-			"ETH/USD",
-			solverOutcome(time.Unix(2, 0), 4, 2),
-			viper.GetString("ui.manifold_focus"),
-		)
-		restored, restoredErr := solver.advance(
-			"BTC/USD",
-			solverOutcome(time.Unix(3, 0), 4, 2),
-			viper.GetString("ui.manifold_focus"),
-		)
-
-		Convey("It should keep every Field resident", func() {
-			So(firstErr, ShouldBeNil)
-			So(secondErr, ShouldBeNil)
-			So(restoredErr, ShouldBeNil)
-			So(state.GasReady(), ShouldBeTrue)
-			So(restored.GasReady(), ShouldBeTrue)
-			So(restored.Epoch, ShouldEqual, 2)
-			So(solver.symbols["BTC/USD"].handle, ShouldNotBeNil)
-			So(solver.symbols["ETH/USD"].handle, ShouldNotBeNil)
+		Convey("It should not invent a physical population", func() {
+			So(solver.candidates(source), ShouldBeEmpty)
 		})
 	})
 }
@@ -327,86 +174,5 @@ func solverOutcome(at time.Time, buyRate, sellRate float64) excitation.Outcome {
 			IntensityY:     sellRate,
 			SpectralRadius: 0.35,
 		},
-	}
-}
-
-func TestSolverSharedEngineFields(t *testing.T) {
-	viper.Set("market.l3_depth", 8)
-	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-
-	Convey("Given one shared Metal engine", t, func() {
-		solver, err := NewSolver(newTestBookSource("BTC/USD", "ETH/USD"))
-		So(err, ShouldBeNil)
-		defer solver.Close()
-
-		So(solver.engine, ShouldNotBeNil)
-
-		bitcoin, bitcoinErr := solver.advance(
-			"BTC/USD",
-			solverOutcome(time.Unix(1, 0), 4, 2),
-			viper.GetString("ui.manifold_focus"),
-		)
-		ether, etherErr := solver.advance(
-			"ETH/USD",
-			solverOutcome(time.Unix(1, 0), 8, 4),
-			viper.GetString("ui.manifold_focus"),
-		)
-
-		Convey("It should keep two resident Fields on the same engine", func() {
-			So(bitcoinErr, ShouldBeNil)
-			So(etherErr, ShouldBeNil)
-			So(bitcoin.GasReady(), ShouldBeTrue)
-			So(ether.GasReady(), ShouldBeTrue)
-			So(solver.symbols, ShouldHaveLength, 2)
-			So(solver.symbols["BTC/USD"].handle.ResidentBytes(), ShouldBeGreaterThan, 0)
-			So(solver.symbols["ETH/USD"].handle.ResidentBytes(), ShouldBeGreaterThan, 0)
-		})
-	})
-}
-
-func BenchmarkSolverAdvance(b *testing.B) {
-	viper.Set("market.l3_depth", 8)
-	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-
-	solver, err := NewSolver(newTestBookSource("BTC/USD"))
-
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	defer solver.Close()
-
-	at := time.Unix(1, 0)
-	b.ReportAllocs()
-
-	for b.Loop() {
-		outcome := solverOutcome(at, 4, 2)
-
-		if _, advanceErr := solver.advance("BTC/USD", outcome, viper.GetString("ui.manifold_focus")); advanceErr != nil {
-			b.Fatal(advanceErr)
-		}
-
-		at = at.Add(time.Nanosecond)
-	}
-}
-
-/*
-TestSolverProductionBoot constructs the shared engine at the runtime 64³ grid —
-the path that previously SIGSEGV'd on start.
-*/
-func TestSolverProductionBoot(t *testing.T) {
-	viper.Set("market.l3_depth", 10)
-	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-
-	solver, err := NewSolver(newTestBookSource("BTC/USD"))
-
-	if err != nil {
-		t.Fatalf("NewSolver: %v", err)
-	}
-
-	defer solver.Close()
-
-	if solver.engine == nil {
-		t.Fatal("engine missing")
 	}
 }

@@ -11,10 +11,10 @@ Decision records the action strategy selected and the alternatives it compared.
 It is owned by one Thesis so intended behavior remains separate from execution.
 */
 type Decision struct {
-	Action            Action             `json:"action" validate:"required,oneof=enter|exit|reduce|hold|nothing"`
-	Symbol            string             `json:"symbol" validate:"required"`
-	At                time.Time          `json:"at" validate:"required"`
-	Utility           float64            `json:"utility" validate:"finite"`
+	Action  Action    `json:"action" validate:"required,oneof=enter|exit|reduce|hold|nothing"`
+	Symbol  string    `json:"symbol" validate:"required"`
+	At      time.Time `json:"at" validate:"required"`
+	Utility float64   `json:"utility" validate:"finite"`
 	// AllocationHaircut is 1−cognitive confidence (capital haircut), not a
 	// calibrated loss probability. Prefer forecast Uncertainty for risk math.
 	AllocationHaircut float64            `json:"allocation_haircut" validate:"finite,nonnegative"`
@@ -44,5 +44,7 @@ type Decision struct {
 	Cause             string             `json:"cause"`
 	Reason            string             `json:"reason"`
 	Displaces         string             `json:"displaces,omitempty"`
+	DisplacedQuantity *decimal.Decimal   `json:"displacedQuantity,omitempty"`
+	DisplacedPrice    *decimal.Decimal   `json:"displacedPrice,omitempty"`
 	ReservationID     string             `json:"reservationId,omitempty"`
 }

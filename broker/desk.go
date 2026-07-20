@@ -2,6 +2,7 @@ package broker
 
 import (
 	"slices"
+	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -242,18 +243,19 @@ ReconcilePending re-arms recovered pending intents against the live exchange
 open-order set. adoptOpen runs first so restart inventory has Position shells;
 each pending wire whose OrderID still resolves in the venue open set is restored
 on its Position so Trader will not re-submit. Wires with no matching open order
-are stale — they are left to executions and wallet sync, which the caller's
-lifecycle heal then advances toward managing.
+are explicitly resolved as stale by the exchange ledger. It returns resting
+order IDs that could not be attached so recovery remains gated for retry.
 */
 func (desk *Desk) ReconcilePending(
 	pending map[string]types.PendingOrderWire,
 	open map[string]spot.Order,
-) {
+) []string {
 	if desk == nil || len(pending) == 0 {
-		return
+		return nil
 	}
 
 	desk.adoptOpen()
+	unresolved := make([]string, 0)
 
 	for symbol, wire := range pending {
 		if wire.OrderID == "" {
@@ -267,17 +269,23 @@ func (desk *Desk) ReconcilePending(
 		value, ok := desk.positions.Load(symbol)
 
 		if !ok {
+			unresolved = append(unresolved, wire.OrderID)
 			continue
 		}
 
 		position, ok := value.(*Position)
 
 		if !ok || position == nil {
+			unresolved = append(unresolved, wire.OrderID)
 			continue
 		}
 
 		position.RestorePending(wire)
 	}
+
+	sort.Strings(unresolved)
+
+	return unresolved
 }
 
 func (desk *Desk) Buy(

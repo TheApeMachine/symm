@@ -91,10 +91,8 @@ func (signal *Signal) selectCorrelations(
 		selected.signedLagCorrelation = features.LagCorr
 		selected.lagBars = features.LagBars
 
-		if features.LagBars > 0 {
-			selected.lagDirection = 1
-		} else if features.LagBars < 0 {
-			selected.lagDirection = -1
+		if features.LagBars != 0 {
+			selected.lagDirection = math.Copysign(1, float64(features.LagBars))
 		}
 	}
 

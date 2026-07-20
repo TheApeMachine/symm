@@ -2,8 +2,11 @@ package logic
 
 import (
 	"context"
+	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
@@ -17,7 +20,8 @@ import (
 /*
 Analyzer coordinates the composed analysis responsibilities after every signal
 has measured the current Thesis. The manifold solver owns the Hawkes-driven GPU
-field step, while the Analyzer builds each symbol's typed evidence topology.
+step over the shared market population, while the Analyzer builds each symbol's
+typed evidence topology.
 */
 type Analyzer struct {
 	ctx       context.Context
@@ -32,59 +36,7 @@ type Analyzer struct {
 	causal    map[string]*Causal
 	cognition map[string]types.Cognition
 	rem       *remSleep
-}
-
-/*
-stageGate exposes boot readiness without coupling Analyzer to boot orchestration.
-*/
-type stageGate interface {
-	Ready(system.StageType) bool
-}
-
-/*
-SetRecorder attaches the runtime audit stream to the analyzer, manifold solver,
-and REM scheduler so phase breadcrumbs survive a freeze.
-*/
-func (analyzer *Analyzer) SetRecorder(recorder *audit.Recorder) {
-	if analyzer == nil {
-		return
-	}
-
-	analyzer.recorder = recorder
-
-	if analyzer.manifold != nil {
-		analyzer.manifold.SetRecorder(recorder)
-	}
-
-	if analyzer.rem != nil {
-		analyzer.rem.SetRecorder(recorder)
-	}
-}
-
-/*
-publish sends one small datura frame to the UI when the channel can accept it.
-Marshal runs only after the send slot is claimed so saturated buffers do not
-pay serialization cost for dropped frames.
-*/
-func (analyzer *Analyzer) publish(frame datura.Map[any]) {
-	if analyzer.ui == nil {
-		return
-	}
-
-	if len(analyzer.ui) >= cap(analyzer.ui) && cap(analyzer.ui) > 0 {
-		return
-	}
-
-	payload := frame.Marshal()
-
-	if len(payload) == 0 {
-		return
-	}
-
-	select {
-	case analyzer.ui <- payload:
-	default:
-	}
+	focus     atomic.Pointer[string]
 }
 
 /*
@@ -97,8 +49,12 @@ func NewAnalyzer(
 	hawkes manifold.HawkesSource,
 	tree *dmt.Tree,
 	ui chan []byte,
+	recorder *audit.Recorder,
 ) (*Analyzer, error) {
-	solver, err := manifold.NewSolver(api)
+	solver, err := manifold.NewSolver(
+		api,
+		viper.GetInt("signals.feed_track_capacity"),
+	)
 
 	if err != nil {
 		return nil, errnie.Err(errnie.Internal, "logic analyzer: manifold init failed", err)
@@ -112,6 +68,7 @@ func NewAnalyzer(
 		hawkes:    hawkes,
 		tree:      tree,
 		ui:        ui,
+		recorder:  recorder,
 		resonance: make(map[string]*Resonance),
 		causal:    make(map[string]*Causal),
 		cognition: make(map[string]types.Cognition),
@@ -146,6 +103,70 @@ func (analyzer *Analyzer) Close() {
 
 	if analyzer.manifold != nil {
 		analyzer.manifold.Close()
+	}
+}
+
+/*
+stageGate exposes boot readiness without coupling Analyzer to boot orchestration.
+*/
+type stageGate interface {
+	Ready(system.StageType) bool
+}
+
+/*
+SetRecorder attaches the runtime audit stream to the analyzer, manifold solver,
+and REM scheduler so phase breadcrumbs survive a freeze.
+*/
+func (analyzer *Analyzer) SetRecorder(recorder *audit.Recorder) {
+	analyzer.recorder = recorder
+
+	if analyzer.manifold != nil {
+		analyzer.manifold.SetRecorder(recorder)
+	}
+
+	if analyzer.rem != nil {
+		analyzer.rem.SetRecorder(recorder)
+	}
+}
+
+/*
+Focus atomically selects the market symbol whose expensive field and cognitive
+visualizations the browser requests. Runtime UI state stays out of Viper so a
+websocket click cannot race configuration reads performed by the trading loop.
+*/
+func (analyzer *Analyzer) Focus(symbol string) {
+	normalized := strings.ToUpper(strings.TrimSpace(symbol))
+
+	if normalized == "" {
+		return
+	}
+
+	analyzer.focus.Store(&normalized)
+}
+
+/*
+Focused returns the current browser focus snapshot for one analysis cut. An
+empty value means no client has requested a full visualization yet.
+*/
+func (analyzer *Analyzer) Focused() string {
+	focus := analyzer.focus.Load()
+
+	if focus == nil {
+		return ""
+	}
+
+	return *focus
+}
+
+/*
+publish sends one small datura frame to the UI when the channel can accept it.
+Marshal runs only after the send slot is claimed so saturated buffers do not
+pay serialization cost for dropped frames.
+*/
+func (analyzer *Analyzer) publish(frame datura.Map[any]) {
+	select {
+	case analyzer.ui <- frame.Marshal():
+	default:
 	}
 }
 

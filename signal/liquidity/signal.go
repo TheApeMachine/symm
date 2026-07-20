@@ -12,9 +12,9 @@ import (
 )
 
 /*
-Liquidity is the Scarcity perspective, identifying opportunities where current
+Signal is the Scarcity perspective, identifying opportunities where current
 executable touch depth is thin relative to peers. Reported-volume notional is
-retained as separate turnover context and never mixed into the book-depth score.
+retained as a separate turnover context and never mixed into the book-depth score.
 */
 type Signal struct {
 	ctx    context.Context

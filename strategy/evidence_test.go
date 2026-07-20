@@ -32,16 +32,19 @@ func TestProjectPrefersResonanceOverForecast(t *testing.T) {
 			IncrementalMSE: 0.01,
 			ReturnReady:    true,
 		})
+		mark, err := decimal.NewFromString("110.123456789123456789")
+		So(err, ShouldBeNil)
 
 		evidence := NewEvidence().Project(thesis, types.Holding{
 			Symbol:     "AAA/USD",
-			Mark:       decimal.NewFromFloat64(110),
-			StopMark:   decimal.NewFromFloat64(110),
+			Mark:       mark,
+			StopMark:   mark,
 			EntryPrice: decimal.NewFromFloat64(100),
 		})
 
 		Convey("Then Present uses StopMark and prefers resonance", func() {
 			So(evidence.Present, ShouldBeTrue)
+			So(evidence.ReferencePrice.String(), ShouldEqual, mark.String())
 			So(evidence.ExpectedReturn, ShouldEqual, 0.04)
 			So(evidence.Uncertainty, ShouldEqual, 0.05)
 		})

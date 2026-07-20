@@ -1,9 +1,24 @@
 package types
 
 import (
-	"sort"
+	"strconv"
 	"time"
 )
+
+/*
+edgeKey returns the stable identity used to deduplicate one typed relationship.
+*/
+func edgeKey(
+	from string,
+	to string,
+	edgeType EdgeType,
+	at time.Time,
+	observedFrom time.Time,
+) string {
+	return from + "\x00" + to + "\x00" + string(edgeType) + "\x00" +
+		strconv.FormatInt(at.UnixNano(), 10) + "\x00" +
+		strconv.FormatInt(observedFrom.UnixNano(), 10)
+}
 
 /*
 Compose derives the current relationship between the two newest observations
@@ -12,88 +27,14 @@ do not belong in the live graph once a newer direct relationship supersedes
 them.
 */
 func (evidenceGraph *Graph) Compose() {
-	observables := make(map[string][]*Node)
-
-	for _, node := range evidenceGraph.Nodes() {
-		measurement := node.Measurement
-
-		if measurement.Metric == "" || measurement.Subject == "" {
-			continue
-		}
-
-		key := string(measurement.Metric) + "\x00" +
-			string(measurement.Subject) + "\x00" + string(measurement.Side)
-		observables[key] = append(observables[key], node)
-	}
-
-	for _, observable := range observables {
-		sort.Slice(observable, func(olderIndex, newerIndex int) bool {
-			older := observable[olderIndex]
-			newer := observable[newerIndex]
-
-			if older.Measurement.At.Equal(newer.Measurement.At) {
-				return older.Key < newer.Key
-			}
-
-			return older.Measurement.At.Before(newer.Measurement.At)
-		})
-
-		if len(observable) > 1 {
-			latest := len(observable) - 1
-			evidenceGraph.compose(observable[latest-1], observable[latest])
+	for _, window := range evidenceGraph.Evidence.observations {
+		if window.older != nil && window.newer != nil {
+			evidenceGraph.compose(window.older, window.newer)
 		}
 	}
 
-	evidenceGraph.composeCategories()
+	evidenceGraph.Evidence.composeCategories()
 	evidenceGraph.prune()
-}
-
-/*
-composeCategories relates each measurement to the category hypotheses it is
-evidence for or against. A measurement whose normalized magnitude is meaningful
-casts a Supports edge to every category its metric supports and a Contradicts
-edge to every category its metric opposes, per CategoryAffinity. This is the
-cross-observable structure the graph exists to show: many signals converging on,
-or disputing, the same category.
-*/
-func (evidenceGraph *Graph) composeCategories() {
-	for _, node := range evidenceGraph.Nodes() {
-		if node.Kind != NodeMeasurement {
-			continue
-		}
-
-		measurement := node.Measurement
-
-		if measurement.Validity.State != ValidityValid {
-			continue
-		}
-
-		affinity, ok := AffinityFor(measurement.Metric)
-
-		if !ok {
-			continue
-		}
-
-		if !categoryEvidenceActive(measurement.Normalized) {
-			continue
-		}
-
-		observedFrom, _ := measurement.Interval()
-
-		for _, category := range affinity.Supports {
-			categoryKey := evidenceGraph.ensureCategory(category, measurement.At)
-			evidenceGraph.Relate(
-				node.Key, categoryKey, Supports, measurement.At, observedFrom,
-			)
-		}
-
-		for _, category := range affinity.Opposes {
-			categoryKey := evidenceGraph.ensureCategory(category, measurement.At)
-			evidenceGraph.Relate(
-				node.Key, categoryKey, Contradicts, measurement.At, observedFrom,
-			)
-		}
-	}
 }
 
 /*

@@ -12,6 +12,26 @@ type MetricAffinity struct {
 }
 
 /*
+Lists reports whether this affinity names category as supporting or opposing
+evidence, which defines whether its metric is missing from a category proof.
+*/
+func (affinity MetricAffinity) Lists(category CategoryType) bool {
+	for _, candidate := range affinity.Supports {
+		if candidate == category {
+			return true
+		}
+	}
+
+	for _, candidate := range affinity.Opposes {
+		if candidate == category {
+			return true
+		}
+	}
+
+	return false
+}
+
+/*
 CategoryAffinity maps each signal-emitted MetricType onto the categories it
 supports or opposes. It is the cross-observable structure the evidence graph is
 built from: a category is a hypothesis, and every measurement listed here is

@@ -1,5 +1,4 @@
-import { useSelector } from "@tanstack/react-store";
-import { useRef } from "react";
+import { createRef } from "react";
 import { appStore } from "#/collections/app";
 import type { CausalFrame } from "#/collections/types";
 import {
@@ -17,8 +16,6 @@ import {
 } from "#/components/terminal/causal-view";
 import { CognitiveBeam } from "#/components/terminal/cognitive-beam";
 import { fixed } from "#/components/terminal/decision-format";
-import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
-import { getWorker } from "#/providers/websocket";
 import { Panel } from "@/components/ui/panel";
 import type { Variant } from "@/components/ui/types";
 
@@ -61,17 +58,47 @@ const FOOTER_FIELDS = [
 	{ key: "panic", label: "panic", value: causalContagion },
 ] as const;
 
-type CausalLadderRefs = {
-	waiting: HTMLDivElement | null;
-	panel: HTMLDivElement | null;
-	subtitle: HTMLSpanElement | null;
-	rungValues: Array<HTMLSpanElement | null>;
-	rungFills: Array<HTMLDivElement | null>;
-	footerValues: Record<
-		(typeof FOOTER_FIELDS)[number]["key"],
-		HTMLSpanElement | null
-	>;
+const ladderWaitingRef = createRef<HTMLDivElement>();
+const ladderPanelRef = createRef<HTMLDivElement>();
+const ladderSubtitleRef = createRef<HTMLSpanElement>();
+const ladderRungValueRefs = [
+	createRef<HTMLSpanElement>(),
+	createRef<HTMLSpanElement>(),
+	createRef<HTMLSpanElement>(),
+] as const;
+const ladderRungFillRefs = [
+	createRef<HTMLDivElement>(),
+	createRef<HTMLDivElement>(),
+	createRef<HTMLDivElement>(),
+] as const;
+const ladderUpliftRef = createRef<HTMLSpanElement>();
+const ladderResidualRef = createRef<HTMLSpanElement>();
+const ladderBaselineRef = createRef<HTMLSpanElement>();
+const ladderPanicRef = createRef<HTMLSpanElement>();
+
+const entryPanelRef = createRef<HTMLDivElement>();
+const entryLineRef = createRef<HTMLSpanElement>();
+const entryStrengthRef = createRef<HTMLSpanElement>();
+const entryConfidenceRef = createRef<HTMLSpanElement>();
+
+let ladderSymbol: string | undefined;
+let entryLineSymbol: string | undefined;
+let decisionsScopeSymbol: string | undefined;
+
+/*
+setDecisionsScopeSymbol pins the active candidate for decision-rail paints.
+*/
+export const setDecisionsScopeSymbol = (symbol: string | undefined): void => {
+	decisionsScopeSymbol = symbol;
+	entryLineSymbol = symbol;
+	ladderSymbol = symbol;
 };
+
+/*
+readDecisionsScopeSymbol returns the pinned candidate scope for DRAW paints.
+*/
+export const readDecisionsScopeSymbol = (): string | undefined =>
+	decisionsScopeSymbol;
 
 const rungToneClass = (variant: Variant): string => {
 	if (variant === "success") {
@@ -85,39 +112,41 @@ const rungToneClass = (variant: Variant): string => {
 	return "font-mono text-[11px] text-(--info)";
 };
 
-const paintCausalLadder = (
-	refs: CausalLadderRefs,
-	frame: CausalFrame | undefined,
-): void => {
+const isConcreteSymbol = (symbol: string | undefined): symbol is string =>
+	symbol !== undefined && symbol !== "" && symbol !== "stream";
+
+const writeCausalLadder = (frame: CausalFrame | undefined): void => {
 	const waiting = frame === undefined;
 
-	if (refs.waiting !== null) {
-		refs.waiting.style.display = waiting ? "" : "none";
+	if (ladderWaitingRef.current !== null) {
+		ladderWaitingRef.current.style.display = waiting ? "" : "none";
 	}
 
-	if (refs.panel !== null) {
-		refs.panel.style.display = waiting ? "none" : "";
+	if (ladderPanelRef.current !== null) {
+		ladderPanelRef.current.style.display = waiting ? "none" : "";
 	}
 
 	if (waiting) {
 		return;
 	}
 
-	if (refs.subtitle !== null) {
-		refs.subtitle.textContent = `pearl do-calculus · ${String(causalCategory(frame))}`;
+	if (ladderSubtitleRef.current !== null) {
+		ladderSubtitleRef.current.textContent = `pearl do-calculus · ${String(causalCategory(frame))}`;
 	}
 
 	for (const [index, rung] of RUNGS.entries()) {
 		const value = causalUnit(rung.value(frame));
+		const valueRef = ladderRungValueRefs[index]?.current;
+		const fillRef = ladderRungFillRefs[index]?.current;
 
-		if (refs.rungValues[index] !== null) {
-			refs.rungValues[index].textContent = value.toFixed(3);
-			refs.rungValues[index].className = rungToneClass(rung.variant);
+		if (valueRef !== null && valueRef !== undefined) {
+			valueRef.textContent = value.toFixed(3);
+			valueRef.className = rungToneClass(rung.variant);
 		}
 
-		if (refs.rungFills[index] !== null) {
-			refs.rungFills[index].style.width = `${value * 100}%`;
-			refs.rungFills[index].style.background =
+		if (fillRef !== null && fillRef !== undefined) {
+			fillRef.style.width = `${value * 100}%`;
+			fillRef.style.background =
 				rung.variant === "success"
 					? "var(--success)"
 					: rung.variant === "warning"
@@ -126,8 +155,15 @@ const paintCausalLadder = (
 		}
 	}
 
+	const footerRefs = {
+		uplift: ladderUpliftRef.current,
+		residual: ladderResidualRef.current,
+		baseline: ladderBaselineRef.current,
+		panic: ladderPanicRef.current,
+	} as const;
+
 	for (const field of FOOTER_FIELDS) {
-		const node = refs.footerValues[field.key];
+		const node = footerRefs[field.key];
 
 		if (node !== null) {
 			node.textContent = field.value(frame).toFixed(3);
@@ -135,56 +171,43 @@ const paintCausalLadder = (
 	}
 };
 
-const isConcreteSymbol = (symbol: string | undefined): symbol is string =>
-	symbol !== undefined && symbol !== "" && symbol !== "stream";
+/*
+paintCausalLadder paints Pearl ladder readings from the current DRAW causal batch
+into the static CausalLadder shell. Unmatched batches leave the prior paint.
+*/
+export const paintCausalLadder = (value: unknown, focusSymbol: string) => {
+	const rows = (
+		Array.isArray(value) ? value : value != null ? [value] : []
+	) as CausalFrame[];
+	const scope = isConcreteSymbol(ladderSymbol)
+		? ladderSymbol
+		: isConcreteSymbol(decisionsScopeSymbol)
+			? decisionsScopeSymbol
+			: isConcreteSymbol(focusSymbol)
+				? focusSymbol
+				: appStore.state.focusSymbol;
+
+	if (!isConcreteSymbol(scope)) {
+		writeCausalLadder(latestCausalFrame(rows));
+		return;
+	}
+
+	for (let index = rows.length - 1; index >= 0; index -= 1) {
+		const frame = rows[index];
+
+		if (frame?.symbol === scope) {
+			writeCausalLadder(frame);
+			return;
+		}
+	}
+};
 
 /*
-CausalLadder paints Pearl ladder readings from causalStore without React
-reconciliation on each websocket tick.
+CausalLadder is the static Pearl ladder shell. DRAW paints via paintCausalLadder.
 */
-export const CausalLadder = ({ symbol }: { symbol?: string }) => {
-	const waitingRef = useRef<HTMLDivElement>(null);
-	const panelRef = useRef<HTMLDivElement>(null);
-	const subtitleRef = useRef<HTMLSpanElement>(null);
-	const rungValueRefs = useRef<Array<HTMLSpanElement | null>>([]);
-	const rungFillRefs = useRef<Array<HTMLDivElement | null>>([]);
-	const upliftRef = useRef<HTMLSpanElement>(null);
-	const residualRef = useRef<HTMLSpanElement>(null);
-	const baselineRef = useRef<HTMLSpanElement>(null);
-	const panicRef = useRef<HTMLSpanElement>(null);
-
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const online = useSelector(appStore, (state) => state.online);
-	const scope = isConcreteSymbol(symbol) ? symbol : focusSymbol;
-
-	useDirectStorePaint(
-		getWorker(),
-		[{ store: "causal", key: scope }],
-		(buffers) =>
-			paintCausalLadder(
-				{
-					waiting: waitingRef.current,
-					panel: panelRef.current,
-					subtitle: subtitleRef.current,
-					rungValues: rungValueRefs.current,
-					rungFills: rungFillRefs.current,
-					footerValues: {
-						uplift: upliftRef.current,
-						residual: residualRef.current,
-						baseline: baselineRef.current,
-						panic: panicRef.current,
-					},
-				},
-				latestCausalFrame(
-					(buffers[`causal:${scope}`] ?? []) as CausalFrame[],
-				),
-			),
-		[online, symbol, scope],
-	);
-
-	return (
+export const CausalLadder = () => (
 		<Panel>
-			<div ref={waitingRef}>
+			<div ref={ladderWaitingRef}>
 				<div className="font-semibold text-[12px] text-(--f1)">
 					Causal ladder
 				</div>
@@ -193,12 +216,12 @@ export const CausalLadder = ({ symbol }: { symbol?: string }) => {
 				</div>
 			</div>
 
-			<div ref={panelRef} style={{ display: "none" }}>
+			<div ref={ladderPanelRef} style={{ display: "none" }}>
 				<div className="font-semibold text-[12px] text-(--f1)">
 					Causal ladder
 				</div>
 				<div className="mt-0.5 mb-3 font-mono text-[9.5px] text-(--f4)">
-					<span ref={subtitleRef} />
+					<span ref={ladderSubtitleRef} />
 				</div>
 
 				<div className="flex flex-col gap-2.5">
@@ -211,20 +234,14 @@ export const CausalLadder = ({ symbol }: { symbol?: string }) => {
 								<span className="font-semibold text-[11.5px] text-(--f1)">
 									{rung.rung}. {rung.name}
 								</span>
-								<span
-									ref={(node) => {
-										rungValueRefs.current[index] = node;
-									}}
-								/>
+								<span ref={ladderRungValueRefs[index]} />
 							</div>
 							<div className="my-1.5 font-mono text-[9px] text-(--f4)">
 								{rung.desc}
 							</div>
 							<div className="h-[5px] overflow-hidden rounded-[3px] bg-(--line)">
 								<div
-									ref={(node) => {
-										rungFillRefs.current[index] = node;
-									}}
+									ref={ladderRungFillRefs[index]}
 									className="h-full bg-(--info) transition-[width] duration-500 ease-out"
 									style={{ width: "0%" }}
 								/>
@@ -240,12 +257,12 @@ export const CausalLadder = ({ symbol }: { symbol?: string }) => {
 							<span
 								ref={
 									field.key === "uplift"
-										? upliftRef
+										? ladderUpliftRef
 										: field.key === "residual"
-											? residualRef
+											? ladderResidualRef
 											: field.key === "baseline"
-												? baselineRef
-												: panicRef
+												? ladderBaselineRef
+												: ladderPanicRef
 								}
 								className="text-(--f1)"
 							/>
@@ -254,104 +271,102 @@ export const CausalLadder = ({ symbol }: { symbol?: string }) => {
 				</div>
 			</div>
 		</Panel>
-	);
-};
+);
 
-type DecisionsEntryLineRefs = {
-	panel: HTMLDivElement | null;
-	entryLine: HTMLSpanElement | null;
-	strength: HTMLSpanElement | null;
-	confidence: HTMLSpanElement | null;
-};
-
-function paintDecisionsEntryLine(
-	refs: DecisionsEntryLineRefs,
+const writeDecisionsEntryLine = (
 	symbol: string | undefined,
-	rows: CausalFrame[] | undefined,
-): void {
+	rows: CausalFrame[],
+): void => {
 	const visible = symbol !== undefined;
 
-	if (refs.panel !== null) {
-		refs.panel.style.display = visible ? "" : "none";
+	if (entryPanelRef.current !== null) {
+		entryPanelRef.current.style.display = visible ? "" : "none";
 	}
 
 	if (!visible) {
 		return;
 	}
 
-	const frame = latestCausalFrame(rows);
+	const frame = latestCausalFrame(rows, symbol);
 	const entryLine = causalEntryBaseline(frame);
 	const entryScore = causalStrength(frame);
 	const entryConfidence = causalConfidence(frame);
 
-	if (refs.entryLine !== null) {
-		refs.entryLine.textContent = fixed(entryLine);
+	if (entryLineRef.current !== null) {
+		entryLineRef.current.textContent = fixed(entryLine);
 	}
 
-	if (refs.strength !== null) {
-		refs.strength.textContent = fixed(entryScore);
+	if (entryStrengthRef.current !== null) {
+		entryStrengthRef.current.textContent = fixed(entryScore);
 	}
 
-	if (refs.confidence !== null) {
-		refs.confidence.textContent = fixed(entryConfidence);
+	if (entryConfidenceRef.current !== null) {
+		entryConfidenceRef.current.textContent = fixed(entryConfidence);
 	}
-}
+};
 
-// LiveDecisionsEntryLine paints the selected candidate entry gate without React
-// reconciliation when causal frames advance.
-export const LiveDecisionsEntryLine = ({
-	symbol,
-}: {
-	symbol: string | undefined;
-}) => {
-	const panelRef = useRef<HTMLDivElement>(null);
-	const entryLineRef = useRef<HTMLSpanElement>(null);
-	const strengthRef = useRef<HTMLSpanElement>(null);
-	const confidenceRef = useRef<HTMLSpanElement>(null);
+/*
+paintDecisionsEntryLine paints the selected candidate entry gate from the
+current DRAW causal batch. Unmatched batches leave the prior gate values.
+*/
+export const paintDecisionsEntryLine = (
+	value: unknown,
+	_focusSymbol: string,
+) => {
+	const rows = (
+		Array.isArray(value) ? value : value != null ? [value] : []
+	) as CausalFrame[];
 
-	const online = useSelector(appStore, (state) => state.online);
+	if (entryLineSymbol === undefined && decisionsScopeSymbol === undefined) {
+		writeDecisionsEntryLine(undefined, []);
+		return;
+	}
 
-	useDirectStorePaint(
-		getWorker(),
-		[{ store: "causal", key: symbol ?? "" }],
-		(buffers) =>
-			paintDecisionsEntryLine(
-				{
-					panel: panelRef.current,
-					entryLine: entryLineRef.current,
-					strength: strengthRef.current,
-					confidence: confidenceRef.current,
-				},
-				symbol,
-				(buffers[`causal:${symbol ?? ""}`] ?? []) as CausalFrame[],
-			),
-		[online, symbol],
-	);
+	const scope = isConcreteSymbol(entryLineSymbol)
+		? entryLineSymbol
+		: decisionsScopeSymbol;
 
-	return (
-		<div ref={panelRef} style={{ display: "none" }}>
+	if (entryPanelRef.current !== null) {
+		entryPanelRef.current.style.display = "";
+	}
+
+	for (let index = rows.length - 1; index >= 0; index -= 1) {
+		const frame = rows[index];
+
+		if (frame?.symbol === scope) {
+			writeDecisionsEntryLine(scope, [frame]);
+			return;
+		}
+	}
+};
+
+/*
+LiveDecisionsEntryLine is the static entry-gate shell. DRAW paints via
+paintDecisionsEntryLine.
+*/
+export const LiveDecisionsEntryLine = () => (
+	<div ref={entryPanelRef} style={{ display: "none" }}>
 			<Panel className="mb-3.5 flex items-center gap-3.5 px-3 py-2 font-mono text-[11.5px]">
 				<span className="text-(--f3)">entry line</span>
 				<span ref={entryLineRef} className="font-semibold text-(--acc)" />
 				<span className="text-(--f4)">·</span>
 				<span className="text-(--f3)">
-					strength <span ref={strengthRef} />
+					strength <span ref={entryStrengthRef} />
 				</span>
 				<span className="text-(--f4)">·</span>
 				<span className="text-(--f3)">
-					confidence <span ref={confidenceRef} />
+					confidence <span ref={entryConfidenceRef} />
 				</span>
 				<span className="ml-auto text-(--f4)">
 					support gate ≥ 2 · strategy utility wins
 				</span>
-			</Panel>
-		</div>
-	);
-};
+		</Panel>
+	</div>
+);
 
-export const DecisionSideRail = ({ symbol }: { symbol?: string }) => (
+export const DecisionSideRail = () => (
 	<>
-		<CausalLadder symbol={symbol} />
-		<CognitiveBeam symbol={symbol} />
+		<CausalLadder />
+		<CognitiveBeam />
 	</>
 );

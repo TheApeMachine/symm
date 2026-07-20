@@ -1,6 +1,11 @@
 package conditions
 
-import "github.com/theapemachine/symm/tests"
+import (
+	"iter"
+	"time"
+
+	"github.com/theapemachine/symm/tests"
+)
 
 /*
 TapeCalm is a multi-leg calm baseline for contrast against opportunity tapes.
@@ -99,4 +104,65 @@ TapeBalancedBook is a two-sided balanced book contrast for depthflow.
 */
 func TapeBalancedBook() *tests.Market {
 	return Imbalance(32, 0, 1, 1)
+}
+
+/*
+TapeTakeProfit raises the subject well beyond its armed survival band, then
+introduces a shallow sincere fade while price remains near the peak. The fade
+is long enough to expose forward weakening without crossing the locked floor.
+*/
+func TapeTakeProfit() iter.Seq[tests.Frame] {
+	const (
+		horizon       = 80
+		liftFrames    = 48
+		entryPrice    = 0.10035
+		liftReturn    = 0.08
+		fadeReturn    = 0.004
+		touchSpread   = 0.0002
+		touchDepth    = 1000.0
+		tradeQuantity = 10.0
+	)
+	startedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	prices := make([]float64, horizon)
+	quantities := make([]float64, horizon)
+	spreads := make([]float64, horizon)
+	depths := make([]float64, horizon)
+	sides := make([]string, horizon)
+	bids := make([][]float64, horizon)
+	asks := make([][]float64, horizon)
+	stamps := make([]time.Time, horizon)
+
+	for index := range horizon {
+		liftProgress := float64(min(index, liftFrames-1)) / float64(liftFrames-1)
+		pathReturn := liftReturn * liftProgress
+		sides[index] = "buy"
+
+		if index >= liftFrames {
+			fadeProgress := float64(index-liftFrames+1) / float64(horizon-liftFrames)
+			pathReturn = liftReturn - fadeReturn*fadeProgress
+			sides[index] = "sell"
+		}
+
+		if index%4 == 3 {
+			switch sides[index] {
+			case "buy":
+				sides[index] = "sell"
+			case "sell":
+				sides[index] = "buy"
+			}
+		}
+
+		prices[index] = entryPrice * (1 + pathReturn)
+		quantities[index] = tradeQuantity
+		spreads[index] = touchSpread
+		depths[index] = touchDepth
+		bids[index] = []float64{touchDepth, touchDepth / 3}
+		asks[index] = []float64{touchDepth, touchDepth / 3}
+		stamps[index] = startedAt.Add(time.Duration(index) * time.Second)
+	}
+
+	level3 := Level3Path(prices, bids, asks, stamps)
+	market := MarketPathWithSides(prices, quantities, sides, spreads, depths)
+
+	return tests.RoundRobin(level3.Frames(), market.Frames())
 }

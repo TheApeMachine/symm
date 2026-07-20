@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
@@ -29,6 +28,7 @@ func (analyzer *Analyzer) cognizeStates(
 
 	for _, state := range states {
 		if state.Replay {
+			analyzer.recall(thesis, state)
 			continue
 		}
 
@@ -58,6 +58,49 @@ func (analyzer *Analyzer) cognizeStates(
 	}))
 
 	return remObservations, remRequested
+}
+
+/*
+recall republishes the focused symbol's cognitive visualization from the current
+trained tree when its physical state is an unchanged replay. It does not train,
+commit an episode, or advance a causal model, so presentation cannot fabricate a
+market observation.
+*/
+func (analyzer *Analyzer) recall(
+	thesis *types.Thesis,
+	state manifold.State,
+) {
+	if analyzer.tree == nil || analyzer.Focused() != state.Symbol {
+		return
+	}
+
+	reading, found := analyzer.cognition[state.Symbol]
+
+	if found && reading.At.Equal(state.At) && len(reading.Branches) > 0 {
+		thesis.Cognition.Store(state.Symbol, reading)
+		return
+	}
+
+	parts, sequence := analyzer.sensorySequence(thesis, state)
+
+	if len(sequence) == 0 {
+		return
+	}
+
+	parent := sequence
+
+	if boundary := bytes.LastIndexByte(sequence, '_'); boundary > 0 {
+		parent = sequence[:boundary]
+	}
+
+	reading = analyzer.readCognition(state, parts, sequence, parent)
+	thesis.Cognition.Store(state.Symbol, reading)
+
+	if analyzer.cognition == nil {
+		analyzer.cognition = make(map[string]types.Cognition)
+	}
+
+	analyzer.cognition[state.Symbol] = reading
 }
 
 /*
@@ -270,7 +313,7 @@ func (analyzer *Analyzer) attachVisualization(
 	classification dmt.ClassificationResult,
 	predictions []dmt.LookaheadPrediction,
 ) {
-	if viper.GetString("ui.manifold_focus") != reading.Symbol {
+	if analyzer.Focused() != reading.Symbol {
 		return
 	}
 

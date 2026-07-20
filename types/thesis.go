@@ -354,7 +354,14 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 		graph := NewGraph(frame.Symbol)
 
 		for _, node := range frame.Nodes {
-			graph.RestoreNode(node.Key, node.Kind, node.Category, node.Measurement)
+			if err := graph.Evidence.RestoreNode(
+				node.Key,
+				node.Kind,
+				node.Category,
+				node.Measurement,
+			); err != nil {
+				return err
+			}
 		}
 
 		for _, edge := range frame.Edges {

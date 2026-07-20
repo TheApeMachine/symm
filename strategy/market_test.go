@@ -16,29 +16,27 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/signal/cvd"
+	"github.com/theapemachine/symm/signal/ensemble"
 	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/stack"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/tests/conditions"
 	"github.com/theapemachine/symm/tests/mockapi"
 	"github.com/theapemachine/symm/types"
 )
 
-/*
-strategyMarketResult retains decisions and wallet effects observed from one
-production-stack replay. It performs no alternate strategy calculation.
-*/
+/* strategyMarketResult retains production decisions and wallet effects. */
 type strategyMarketResult struct {
 	decisions       []types.Decision
 	forecasts       []types.Forecasts
-	availableQuote  float64
+	availableCash   *decimal.Decimal
+	holding         *types.Holding
+	lifecycle       string
 	privateRequests [][]byte
 }
 
-/*
-TestPlanner_DecideFromMarket proves admission and sizing against independently
-defined executable, opposing, and capacity-trapped market regimes.
-*/
+/* TestPlanner_DecideFromMarket proves market admission through wallet fill. */
 func TestPlanner_DecideFromMarket(t *testing.T) {
 	buy := playStrategyMarket(t, strategyFrames(1, 60))
 	sell := playStrategyMarket(t, strategyFrames(-1, 240))
@@ -54,32 +52,238 @@ func TestPlanner_DecideFromMarket(t *testing.T) {
 		So(buyEnter.ProposedNotional.Sign(), ShouldBeGreaterThan, 0)
 		So(buyEnter.ReservationID, ShouldNotBeBlank)
 		So(buyEnter.Utility, ShouldBeGreaterThan, 0)
-		So(buy.availableQuote, ShouldBeLessThan, 1000)
+		So(buy.availableCash.Cmp(
+			decimal.NewFromInt64(1000).Sub(buyEnter.ProposedNotional),
+		), ShouldEqual, 0)
+		So(buy.holding, ShouldNotBeNil)
+		So(buy.holding.Qty.Cmp(buyEnter.ProposedQuantity), ShouldEqual, 0)
+		So(buy.holding.Status, ShouldEqual, types.OPEN)
+		So(buy.lifecycle, ShouldEqual, types.LifecycleManaging)
 		So(orderRequests(buy.privateRequests, "buy"), ShouldEqual, 1)
-		So(decisionCount(buy.decisions, types.ActionHold), ShouldEqual, 0)
 
-		buyForecast, hasBuyForecast := latestForecast(buy.forecasts)
-		So(hasBuyForecast, ShouldBeTrue)
+		So(buy.forecasts, ShouldNotBeEmpty)
+		buyForecast := buy.forecasts[len(buy.forecasts)-1]
 		So(buyForecast.ExpectedReturn, ShouldBeGreaterThan, 0)
-		So(buyEnter.ProposedNotional.Float64(), ShouldBeLessThanOrEqualTo,
-			buyForecast.BuyCapacity)
+		So(buyEnter.ProposedNotional.Cmp(
+			buyForecast.BuyCapacity,
+		), ShouldBeLessThanOrEqualTo, 0)
 
 		_, hasSellEnter := decisionFor(sell.decisions, types.ActionEnter)
 		So(hasSellEnter, ShouldBeFalse)
 		So(orderRequests(sell.privateRequests, "buy"), ShouldEqual, 0)
-		sellForecast, hasSellForecast := latestForecast(sell.forecasts)
-		So(hasSellForecast, ShouldBeTrue)
+		So(sell.forecasts, ShouldNotBeEmpty)
+		sellForecast := sell.forecasts[len(sell.forecasts)-1]
 		So(sellForecast.ExpectedReturn, ShouldBeLessThan, 0)
 
 		_, hasThinEnter := decisionFor(thin.decisions, types.ActionEnter)
 		So(hasThinEnter, ShouldBeFalse)
 		So(orderRequests(thin.privateRequests, "buy"), ShouldEqual, 0)
-		So(thin.availableQuote, ShouldEqual, float64(1000))
-		thinDecision, hasThinDecision := symbolDecision(thin.decisions)
+		So(thin.availableCash.Cmp(decimal.NewFromInt64(1000)), ShouldEqual, 0)
+		thinDecision, hasThinDecision := decisionFor(
+			thin.decisions, types.ActionNothing,
+		)
 		So(hasThinDecision, ShouldBeTrue)
 		So(thinDecision.Action, ShouldEqual, types.ActionNothing)
 		So(thinDecision.Reason, ShouldContainSubstring, "minimum")
 	})
+}
+
+/*
+TestPlanner_FullEnsembleDecidesFromMarket runs the exact buy regime that the
+curated two-signal test enters on, but through the full production signal
+ensemble. It asserts the composed system still decides, and on failure it
+attributes where the entry funnel narrowed by tallying reject reasons — the
+seam and aggregate behavior no per-component test observes.
+*/
+func TestPlanner_FullEnsembleDecidesFromMarket(t *testing.T) {
+	attribute := func(result *strategyMarketResult) (int, map[string]int) {
+		reasons := map[string]int{}
+		enters := 0
+
+		for _, decision := range result.decisions {
+			switch decision.Action {
+			case types.ActionEnter:
+				enters++
+			case types.ActionNothing:
+				reasons[decision.Cause]++
+			}
+		}
+
+		return enters, reasons
+	}
+
+	subset := playStrategyMarketWith(t, strategyFrames(1, 60), func(
+		ctx context.Context,
+		api *websocket.API,
+		_ *broker.Instrument,
+		channel chan []byte,
+	) []types.Signal {
+		return []types.Signal{
+			cvd.NewSignal(ctx, api, channel),
+			hawkes.NewSignal(ctx, api, channel),
+		}
+	})
+	rampEnters, rampReasons := attribute(subset)
+
+	fullRamp := playStrategyMarketWith(t, strategyFrames(1, 60), ensemble.Production)
+	fullRampEnters, fullRampReasons := attribute(fullRamp)
+
+	pumpDump := playStrategyMarketWith(t, strategyPumpDumpFrames(), ensemble.Production)
+	pumpEnters, pumpReasons := attribute(pumpDump)
+
+	t.Logf("2-signal ramp : enters=%d rejects=%v", rampEnters, rampReasons)
+	t.Logf("ensemble ramp : enters=%d rejects=%v", fullRampEnters, fullRampReasons)
+	t.Logf("ensemble pump : enters=%d rejects=%v", pumpEnters, pumpReasons)
+
+	Convey("Given the same buy ramp through subset then full ensemble", t, func() {
+		Convey("Then the full ensemble decides at least as the subset does", func() {
+			So(fullRampEnters, ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given a realistic pump-and-dump through the full ensemble", t, func() {
+		Convey("Then the composed system enters during the pump", func() {
+			So(pumpEnters, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+/*
+strategyTrendFrames is strategyFrames with an explicit per-step log slope, so a
+sweep can locate the trend strength at which the ensemble stops entering.
+*/
+func strategyTrendFrames(slope float64) iter.Seq[tests.Frame] {
+	const horizon = 64
+	startedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	prices := make([]float64, horizon)
+	quantities := make([]float64, horizon)
+	spreads := make([]float64, horizon)
+	depths := make([]float64, horizon)
+	sides := make([]string, horizon)
+	bids := make([][]float64, horizon)
+	asks := make([][]float64, horizon)
+	stamps := make([]time.Time, horizon)
+
+	for index := range horizon {
+		prices[index] = 0.5667 * math.Exp(slope*float64(index))
+		quantities[index] = 10
+		spreads[index] = 0.0002
+		depths[index] = 500
+		stamps[index] = startedAt.Add(time.Duration(index) * time.Second)
+		bids[index] = []float64{240, 80}
+		asks[index] = []float64{60, 20}
+		sides[index] = "buy"
+
+		if index%4 == 3 {
+			sides[index] = "sell"
+		}
+	}
+
+	level3 := conditions.Level3Path(prices, bids, asks, stamps)
+	market := conditions.MarketPathWithSides(prices, quantities, sides, spreads, depths)
+
+	return tests.RoundRobin(level3.Frames(), market.Frames())
+}
+
+/*
+TestPlanner_EnsembleDecisionBoundary sweeps trend strength through the full
+production ensemble and reports the weakest uptrend that still enters — the
+decision boundary. It characterizes the composed system instead of asserting a
+single curated outcome, so a regression that silently raises the bar shows up as
+a moved boundary rather than a still-green component test.
+*/
+func TestPlanner_EnsembleDecisionBoundary(t *testing.T) {
+	slopes := []float64{0.0, 0.002, 0.005, 0.01, 0.02, 0.04}
+	boundary := math.NaN()
+	entered := make([]bool, len(slopes))
+
+	for index, slope := range slopes {
+		result := playStrategyMarketWith(t, strategyTrendFrames(slope), ensemble.Production)
+		_, hasEnter := decisionFor(result.decisions, types.ActionEnter)
+		entered[index] = hasEnter
+
+		if hasEnter && math.IsNaN(boundary) {
+			boundary = slope
+		}
+
+		t.Logf("slope=%.3f enters=%v", slope, hasEnter)
+	}
+
+	t.Logf("decision boundary: weakest entering slope=%.3f", boundary)
+
+	Convey("Given a trend-strength sweep through the full ensemble", t, func() {
+		Convey("Then a flat market does not enter", func() {
+			So(entered[0], ShouldBeFalse)
+		})
+		Convey("Then a strong trend does enter", func() {
+			So(entered[len(entered)-1], ShouldBeTrue)
+		})
+	})
+}
+
+/*
+strategyPumpDumpFrames shapes the regime on the user's OXT chart: an
+accelerating pump on rising executed volume with an executable thin ask, then a
+sharp dump. It feeds both L3 and public streams so cognition, manifold, and the
+forecast all see the same coherent event.
+*/
+func strategyPumpDumpFrames() iter.Seq[tests.Frame] {
+	const (
+		pump    = 40
+		dump    = 24
+		horizon = pump + dump
+	)
+	startedAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	prices := make([]float64, horizon)
+	quantities := make([]float64, horizon)
+	spreads := make([]float64, horizon)
+	depths := make([]float64, horizon)
+	sides := make([]string, horizon)
+	bids := make([][]float64, horizon)
+	asks := make([][]float64, horizon)
+	stamps := make([]time.Time, horizon)
+	price := 0.5667
+
+	for index := range horizon {
+		pumping := index < pump
+
+		if pumping {
+			price *= 1.045
+		} else {
+			price *= 0.95
+		}
+
+		prices[index] = price
+		quantities[index] = 10 + float64(index)
+		spreads[index] = 0.0002
+		depths[index] = 500
+		stamps[index] = startedAt.Add(time.Duration(index) * time.Second)
+
+		if pumping {
+			bids[index] = []float64{240, 80}
+			asks[index] = []float64{60, 20}
+			sides[index] = "buy"
+
+			if index%4 == 3 {
+				sides[index] = "sell"
+			}
+
+			continue
+		}
+
+		bids[index] = []float64{60, 20}
+		asks[index] = []float64{240, 80}
+		sides[index] = "sell"
+
+		if index%4 == 3 {
+			sides[index] = "buy"
+		}
+	}
+
+	level3 := conditions.Level3Path(prices, bids, asks, stamps)
+	market := conditions.MarketPathWithSides(prices, quantities, sides, spreads, depths)
+
+	return tests.RoundRobin(level3.Frames(), market.Frames())
 }
 
 /*
@@ -131,13 +335,33 @@ func strategyFrames(direction float64, askQuantity float64) iter.Seq[tests.Frame
 	return tests.RoundRobin(level3.Frames(), market.Frames())
 }
 
-/*
-playStrategyMarket boots the production graph around mock Conns, drives normal
-Crypto.Tick planning, and captures the resulting decisions and wallet claim.
-*/
+/* playStrategyMarket drives one regime through production Tick and trade. */
 func playStrategyMarket(
 	t *testing.T,
 	frames iter.Seq[tests.Frame],
+) *strategyMarketResult {
+	return playStrategyMarketWith(t, frames, func(
+		ctx context.Context,
+		api *websocket.API,
+		_ *broker.Instrument,
+		channel chan []byte,
+	) []types.Signal {
+		return []types.Signal{
+			cvd.NewSignal(ctx, api, channel),
+			hawkes.NewSignal(ctx, api, channel),
+		}
+	})
+}
+
+/*
+playStrategyMarketWith drives one regime through production Tick and trade using
+the caller's signal set, so a test can exercise the full production ensemble
+rather than a curated subset.
+*/
+func playStrategyMarketWith(
+	t *testing.T,
+	frames iter.Seq[tests.Frame],
+	signals stack.SignalFactory,
 ) *strategyMarketResult {
 	t.Helper()
 	configureStrategyMarket(t)
@@ -169,19 +393,13 @@ func playStrategyMarket(
 		}
 	})
 	bootFrames := serveStrategyBoot(ctx, mock, nil)
+	channel := make(chan []byte, 64)
 	wired, err := stack.Boot(ctx, api, stack.Options{
-		Signals: func(
-			ctx context.Context,
-			api *websocket.API,
-			_ *broker.Instrument,
-			channel chan []byte,
-		) []types.Signal {
-			return []types.Signal{
-				cvd.NewSignal(ctx, api, channel),
-				hawkes.NewSignal(ctx, api, channel),
-			}
-		},
-		Tree: tree,
+		Booter:  system.NewBooter(ctx, channel),
+		Channel: channel,
+		Thesis:  types.NewThesis(channel, nil),
+		Signals: signals,
+		Tree:    tree,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -196,6 +414,7 @@ func playStrategyMarket(
 
 	result := &strategyMarketResult{}
 	cutAt := time.Date(2024, 1, 1, 1, 0, 0, 0, time.UTC)
+	var latestTicker []byte
 
 	for frame := range frames {
 		if frame.Channel == "level3" {
@@ -207,6 +426,11 @@ func playStrategyMarket(
 		}
 
 		mock.Emit(frame.Channel, frame.Payload)
+
+		if frame.Channel == "ticker" {
+			latestTicker = frame.Payload
+		}
+
 		thesis, tickErr := wired.Crypto.Tick(cutAt)
 		if tickErr != nil {
 			t.Fatal(tickErr)
@@ -221,21 +445,53 @@ func playStrategyMarket(
 		result.forecasts = append(result.forecasts, thesis.Forecasts...)
 	}
 
-	result.availableQuote, err = wired.Balance.AvailableQuote()
+	result.privateRequests = mock.Private().Writes()
+	entry, hasEntry := decisionFor(result.decisions, types.ActionEnter)
+
+	if hasEntry {
+		for _, request := range result.privateRequests {
+			if !bytes.Contains(request, []byte(`"method":"add_order"`)) ||
+				!bytes.Contains(request, []byte(`"side":"buy"`)) {
+				continue
+			}
+
+			for _, frame := range conditions.EntryFill(
+				request, entry, decimal.NewFromInt64(1000),
+			) {
+				mock.Private().Emit(frame.Channel, frame.Payload)
+			}
+
+			mock.Emit("ticker", latestTicker)
+			_, err = wired.Crypto.Tick(cutAt)
+			break
+		}
+	}
+
+	result.availableCash, err = wired.Balance.AvailableCash()
 
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	result.privateRequests = mock.Private().Writes()
+	if hasEntry {
+		holding, holdingErr := wired.Balance.Holding(conditions.Subject())
+
+		if holdingErr != nil {
+			t.Fatal(holdingErr)
+		}
+
+		result.holding = &holding
+	}
+
+	if latest := wired.Crypto.LastThesis(); latest != nil {
+		phase, _ := latest.Lifecycle.Load(conditions.Subject())
+		result.lifecycle, _ = phase.(string)
+	}
 
 	return result
 }
 
-/*
-configureStrategyMarket pins deterministic production settings and restores the
-process-wide configuration after each replay.
-*/
+/* configureStrategyMarket pins and restores deterministic production settings. */
 func configureStrategyMarket(t *testing.T) string {
 	t.Helper()
 	dataPath := t.TempDir()
@@ -272,10 +528,7 @@ func configureStrategyMarket(t *testing.T) string {
 	return dataPath
 }
 
-/*
-serveStrategyBoot emits only the instrument and quote-wallet snapshots required
-by the ordinary production boot stages.
-*/
+/* serveStrategyBoot emits the snapshots required by production boot stages. */
 func serveStrategyBoot(
 	ctx context.Context,
 	mock *mockapi.MockAPI,
@@ -343,43 +596,6 @@ func decisionFor(decisions []types.Decision, action types.Action) (types.Decisio
 	}
 
 	return types.Decision{}, false
-}
-
-/* decisionCount reports how often one action was selected across the replay. */
-func decisionCount(decisions []types.Decision, action types.Action) int {
-	count := 0
-
-	for _, decision := range decisions {
-		if decision.Action == action {
-			count++
-		}
-	}
-
-	return count
-}
-
-/* symbolDecision returns the latest decision for the controlled subject. */
-func symbolDecision(decisions []types.Decision) (types.Decision, bool) {
-	for index := len(decisions) - 1; index >= 0; index-- {
-		if decisions[index].Symbol == conditions.Subject() {
-			return decisions[index], true
-		}
-	}
-
-	return types.Decision{}, false
-}
-
-/*
-latestForecast returns the latest forecast for the controlled subject.
-*/
-func latestForecast(forecasts []types.Forecasts) (types.Forecasts, bool) {
-	for index := len(forecasts) - 1; index >= 0; index-- {
-		if forecasts[index].Symbol == conditions.Subject() {
-			return forecasts[index], true
-		}
-	}
-
-	return types.Forecasts{}, false
 }
 
 /*

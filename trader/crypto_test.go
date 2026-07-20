@@ -60,7 +60,7 @@ func TestNewCrypto(t *testing.T) {
 	Convey("Given NewCrypto wiring", t, func() {
 		ctx := context.Background()
 		booter := system.NewBooter(ctx, nil)
-		analyzer, err := logic.NewAnalyzer(ctx, booter, nil, nil, nil, nil)
+		analyzer, err := logic.NewAnalyzer(ctx, booter, nil, nil, nil, nil, nil)
 		So(err, ShouldBeNil)
 		planner := testPlanner(ctx, nil, analyzer)
 		tree := dmt.NewTree(t.TempDir())
@@ -120,7 +120,7 @@ func TestCryptoRun(t *testing.T) {
 		ctx := context.Background()
 		channel := make(chan []byte, 128)
 		booter := system.NewBooter(ctx, channel)
-		analyzer, err := logic.NewAnalyzer(ctx, booter, nil, nil, nil, nil)
+		analyzer, err := logic.NewAnalyzer(ctx, booter, nil, nil, nil, nil, nil)
 		So(err, ShouldBeNil)
 		planner := testPlanner(ctx, channel, analyzer)
 		tree := dmt.NewTree(t.TempDir())
@@ -140,7 +140,7 @@ func TestCryptoRun(t *testing.T) {
 				`}]}`,
 		))
 		desk := broker.NewDesk(nil, nil, nil, balance)
-		hub, err := ui.NewHub(ctx, nil, balance, thesis, channel, nil)
+		hub, err := ui.NewHub(ctx, nil, balance, channel)
 		So(err, ShouldBeNil)
 		t.Cleanup(func() {
 			if err := hub.Close(); err != nil {
@@ -167,8 +167,9 @@ func TestCryptoRun(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		t.Cleanup(func() {
-			crypto.cancel()
-			<-crypto.ctx.Done()
+			if err := crypto.Close(); err != nil {
+				t.Error(err)
+			}
 		})
 
 		booter.AddStages(

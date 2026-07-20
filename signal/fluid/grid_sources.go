@@ -4,7 +4,7 @@ package fluid
 accumulateReactionSources decomposes book deltas into add, cancel, and execute
 terms after Lagrangian remapping. Trades pre-register execute volume by price.
 */
-func (grid *FluidGrid) accumulateReactionSources(currentMid float64) {
+func (grid *Grid) accumulateReactionSources(currentMid float64) {
 	grid.lagrangianRemap(grid.prevObservedRho, grid.prevMidPrice, currentMid)
 
 	for index := range grid.observedRho {
@@ -37,7 +37,7 @@ func (grid *FluidGrid) accumulateReactionSources(currentMid float64) {
 clearReactionAccumulators clears consumed reaction totals so events are
 applied exactly once.
 */
-func (grid *FluidGrid) clearReactionAccumulators() {
+func (grid *Grid) clearReactionAccumulators() {
 	grid.clearField(grid.sourceAccumulator)
 	grid.clearField(grid.addAccumulator)
 	grid.clearField(grid.cancelAccumulator)
@@ -49,7 +49,7 @@ func (grid *FluidGrid) clearReactionAccumulators() {
 midSourceBalance returns net near-mid reaction balance so published flow
 distinguishes addition from removal.
 */
-func (grid *FluidGrid) midSourceBalance() float64 {
+func (grid *Grid) midSourceBalance() float64 {
 	index := grid.midIndex
 
 	return grid.addAccumulator[index] - grid.cancelAccumulator[index] -

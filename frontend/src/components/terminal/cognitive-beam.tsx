@@ -1,13 +1,11 @@
-import { useSelector } from "@tanstack/react-store";
-import { useRef } from "react";
+import { createRef } from "react";
 import { appStore } from "#/collections/app";
 import type { CognitiveReading } from "#/collections/types";
+import { readDecisionsScopeSymbol } from "#/components/terminal/decision-side";
 import {
 	formatBeamSequence,
 	formatEntropyGate,
 } from "#/components/terminal/cognitive-entropy";
-import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
-import { getWorker } from "#/providers/websocket";
 import { meterTrackVariants } from "@/components/ui/meter";
 import { Panel } from "@/components/ui/panel";
 import type { Variant } from "@/components/ui/types";
@@ -148,14 +146,10 @@ const setText = (node: Element | null | undefined, value: string): void => {
 
 const METER_KEYS = ["entropy", "confidence", "lookahead"] as const;
 
-/*
-paintCognitiveBeam writes live DMT beam readings into a mounted shell so
-websocket cadence never re-renders the CognitiveBeam React tree.
-*/
-export const paintCognitiveBeam = (
-	root: HTMLElement | null,
-	model: CognitiveBeamModel | null,
-): void => {
+const beamRootRef = createRef<HTMLDivElement>();
+const paintBeamModel = (model: CognitiveBeamModel | null): void => {
+	const root = beamRootRef.current;
+
 	if (root === null) {
 		return;
 	}
@@ -214,31 +208,30 @@ export const paintCognitiveBeam = (
 };
 
 /*
-CognitiveBeam paints DMT beam diagnostics from the cognitive store without
-React reconciliation on each websocket tick.
+paintCognitiveBeam paints DMT beam diagnostics from the current DRAW cognition
+batch into the CognitiveBeam shell. Prefers the mounted symbol prop when set.
 */
-export const CognitiveBeam = ({ symbol }: { symbol?: string }) => {
-	const rootRef = useRef<HTMLDivElement>(null);
-	const online = useSelector(appStore, (state) => state.online);
+export const paintCognitiveBeam = (value: unknown, focusSymbol: string) => {
+	const readings = (
+		Array.isArray(value) ? value : value != null ? [value] : []
+	) as CognitiveReading[];
+	const symbol = isConcreteSymbol(readDecisionsScopeSymbol())
+		? readDecisionsScopeSymbol()
+		: isConcreteSymbol(focusSymbol)
+			? focusSymbol
+			: appStore.state.focusSymbol;
 
-	useDirectStorePaint(
-		getWorker(),
-		[{ store: "cognitive", key: "" }],
-		(buffers) =>
-			paintCognitiveBeam(
-				rootRef.current,
-				cognitiveBeamModel(
-					cognitiveReadingFor(
-						(buffers["cognitive:"] ?? []) as CognitiveReading[],
-						symbol,
-					),
-				),
-			),
-		[online, symbol],
+	paintBeamModel(
+		cognitiveBeamModel(cognitiveReadingFor(readings, symbol)),
 	);
+};
 
-	return (
-		<div ref={rootRef} className="mt-3.5">
+/*
+CognitiveBeam is the static DMT beam shell. DRAW paints via paintCognitiveBeam.
+Optional symbol is cached so decision-rail scope wins over app focus.
+*/
+export const CognitiveBeam = () => (
+		<div ref={beamRootRef} className="mt-3.5">
 			<Panel data-beam="waiting">
 				<div className="font-semibold text-[12px] text-(--f1)">
 					Cognitive beam
@@ -308,5 +301,4 @@ export const CognitiveBeam = ({ symbol }: { symbol?: string }) => {
 				</div>
 			</Panel>
 		</div>
-	);
-};
+);

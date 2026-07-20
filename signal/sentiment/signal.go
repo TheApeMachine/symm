@@ -11,7 +11,7 @@ import (
 )
 
 /*
-Sentiment measures global market conviction from breadth and leadership
+Signal measures global market conviction from breadth and leadership
 performance. Categories belong in logic; this signal emits numerical scores only.
 */
 type Signal struct {

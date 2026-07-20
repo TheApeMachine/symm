@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -76,7 +77,7 @@ func (transport *Transport) bindCallbacks(live *Live) {
 		// Level3 book application is expensive (checksum + depth enforcement)
 		// and must never run on the socket reader. Hand the frame to the FIFO
 		// worker and let the reader keep draining subsequent frames.
-		if live.isLevel3 {
+		if live.isLevel3 && utils.GetString(raw, "channel") == "level3" {
 			live.enqueueLevel3(raw)
 		}
 
@@ -222,23 +223,19 @@ func (transport *Transport) fireReconnect() error {
 }
 
 /*
-configureLevel3 installs the SDK BookManager the way Kraken's official L3
-example does: create books from the outbound subscribe (OnSent), then apply
-inbound frames through the FIFO worker.
+configureLevel3 installs the SDK BookManager for indexed book storage and an
+exact-text ledger for inbound checksum validation. Outbound subscribe frames
+still create books through the SDK's supported OnSent path.
 */
 func configureLevel3(live *Live) {
 	live.books = spot.NewBookManager()
+	live.level3Ledger = newLevel3Ledger()
 	live.books.OnCreateBook.Recurring(func(event *callback.Event[*book.Book]) {
 		managed := event.Data
 
-		// Kraken frames are atomic, so depth cannot be enforced per order.
+		// Kraken frames are atomic; level3Ledger enforces depth after checksum.
 		managed.EnableMaxDepth = false
 		managed.NoBookCrossing = false
-		managed.OnChecksummed.Recurring(
-			func(*callback.Event[*book.ChecksumResult]) {
-				managed.EnforceDepth()
-			},
-		)
 	})
 
 	live.client.OnSent.Recurring(func(event *callback.Event[*kraken.WebSocketMessage]) {

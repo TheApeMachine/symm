@@ -217,7 +217,7 @@ var (
 						return stackBooter.Ready(system.StageWarmup)
 					}
 					hub, hubErr := ui.NewHub(
-						ctx, price, balance, stackThesis, stackChannel, warmupReady,
+						ctx, price, balance, stackChannel,
 					)
 
 					if hubErr != nil {

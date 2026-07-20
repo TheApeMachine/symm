@@ -54,14 +54,14 @@ type ExecutionData struct {
 	TradeID      int              `json:"trade_id"`
 	Symbol       string           `json:"symbol"`
 	Side         string           `json:"side"`
-	LastQty      float64          `json:"last_qty"`
+	LastQty      *decimal.Decimal `json:"last_qty"`
 	LastPrice    *decimal.Decimal `json:"last_price"`
 	LiquidityInd string           `json:"liquidity_ind"`
 	Cost         *decimal.Decimal `json:"cost"`
 	OrderType    string           `json:"order_type"`
 	Timestamp    time.Time        `json:"timestamp"`
 	OrderStatus  string           `json:"order_status"`
-	CumQty       float64          `json:"cum_qty"`
+	CumQty       *decimal.Decimal `json:"cum_qty"`
 	CumCost      *decimal.Decimal `json:"cum_cost"`
 	AvgPrice     *decimal.Decimal `json:"avg_price"`
 	FeeUsdEquiv  *decimal.Decimal `json:"fee_usd_equiv"`
@@ -228,11 +228,11 @@ func NewExecutionFromMap(model datura.Map[any]) *Execution {
 			ExecType:    execType,
 			Symbol:      pair,
 			Side:        side,
-			LastQty:     volume,
+			LastQty:     decimal.NewFromFloat64(volume),
 			LastPrice:   decimal.NewFromFloat64(price),
 			Cost:        decimal.NewFromFloat64(cost),
 			OrderStatus: orderStatus,
-			CumQty:      volume,
+			CumQty:      decimal.NewFromFloat64(volume),
 			CumCost:     decimal.NewFromFloat64(cost),
 			AvgPrice:    decimal.NewFromFloat64(price),
 			FeeUsdEquiv: decimal.NewFromFloat64(fee),

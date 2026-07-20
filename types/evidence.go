@@ -1,5 +1,7 @@
 package types
 
+import "github.com/krakenfx/api-go/v2/pkg/decimal"
+
 /*
 StopEvidence is the thin numeric projection Stoploss consumes from one Thesis
 cut (or a mark-only tick). Missing input leaves Present false so the regulator
@@ -9,6 +11,7 @@ type StopEvidence struct {
 	Symbol               string
 	Mark                 float64
 	Entry                float64
+	ReferencePrice       *decimal.Decimal
 	ForecastEpoch        uint64
 	NormalizedResidual   float64
 	ExpectedReturn       float64
@@ -22,7 +25,7 @@ type StopEvidence struct {
 	CognitionWinner      string
 	CognitionAmbiguous   bool
 	Spread               float64
-	SellCapacity         float64
+	SellCapacity         *decimal.Decimal
 	// RetreatPressure is cancelled touch qty / prior touch (toxicity). When
 	// positive, mark moves are quote-only and must not drive stop geometry.
 	RetreatPressure float64

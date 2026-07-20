@@ -3,7 +3,6 @@ package kraken
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -28,20 +27,19 @@ type Level3Data struct {
 }
 
 type Level3Order struct {
-	Event      string    `json:"event,omitempty"`
-	OrderID    string    `json:"order_id"`
-	LimitPrice float64   `json:"limit_price"`
-	OrderQty   float64   `json:"order_qty"`
-	Timestamp  time.Time `json:"timestamp"`
+	Event      string           `json:"event,omitempty"`
+	OrderID    string           `json:"order_id"`
+	LimitPrice *decimal.Decimal `json:"limit_price"`
+	OrderQty   *decimal.Decimal `json:"order_qty"`
+	Timestamp  time.Time        `json:"timestamp"`
 	limitPrice string
 	orderQty   string
 }
 
 /*
-UnmarshalJSON retains Kraken's exact fixed-point price and quantity text for
-checksum construction while continuing to expose float64 values to market
-calculations. A float64 cannot retain significant trailing zeroes from the
-wire, and those zeroes are part of Kraken's level3 checksum input.
+UnmarshalJSON retains Kraken's exact fixed-point price and quantity for both
+book arithmetic and checksum construction. A float64 cannot represent every
+monetary value or retain the trailing zeroes Kraken includes in its L3 checksum.
 */
 func (order *Level3Order) UnmarshalJSON(data []byte) error {
 	wire := struct {
@@ -93,33 +91,29 @@ func (order Level3Order) ChecksumOrderQty() string {
 	return order.orderQty
 }
 
-func parseLevel3Decimal(raw json.RawMessage) (float64, string, error) {
+func parseLevel3Decimal(
+	raw json.RawMessage,
+) (*decimal.Decimal, string, error) {
 	if len(raw) == 0 || string(raw) == "null" {
-		return 0, "", nil
+		return nil, "", nil
 	}
 
 	text := string(raw)
 
 	if raw[0] == '"' {
 		if err := sonic.Unmarshal(raw, &text); err != nil {
-			return 0, "", err
+			return nil, "", err
 		}
+	}
+
+	value, err := decimal.NewFromString(text)
+
+	if err != nil {
+		return nil, "", err
 	}
 
 	if strings.ContainsAny(text, "eE") {
-		fixed, err := decimal.NewFromString(text)
-
-		if err != nil {
-			return 0, "", err
-		}
-
-		return fixed.Float64(), fixed.String(), nil
-	}
-
-	value, err := strconv.ParseFloat(text, 64)
-
-	if err != nil {
-		return 0, "", err
+		text = value.String()
 	}
 
 	return value, text, nil

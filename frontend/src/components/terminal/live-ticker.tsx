@@ -1,11 +1,8 @@
-import { useSelector } from "@tanstack/react-store";
-import { type RefObject, useEffect, useRef } from "react";
+import { createRef } from "react";
 import { appStore } from "#/collections/app";
 import type { Balance, Holding } from "#/collections/types";
 import { formatUptime } from "#/components/terminal/kernel-meta";
 import { walletMetrics } from "#/components/terminal/panels";
-import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
-import { getWorker } from "#/providers/websocket";
 import { Flex } from "@/components/ui/flex";
 
 const setText = (element: HTMLElement | null, value: string) => {
@@ -26,24 +23,154 @@ const setVisibility = (element: HTMLElement | null, visible: boolean) => {
 	}
 };
 
-type WalletPaintRefs = {
-	cash: HTMLSpanElement | null;
-	equity: HTMLSpanElement | null;
-	lambo: HTMLImageElement | null;
-	tick: HTMLSpanElement | null;
-	open: HTMLSpanElement | null;
+const asRows = <T,>(value: unknown): T[] =>
+	(Array.isArray(value) ? value : value != null ? [value] : []) as T[];
+
+const latest = <T,>(value: unknown): T | undefined =>
+	asRows<T>(value).at(-1);
+
+const pulseTickRef = createRef<HTMLSpanElement>();
+const pulsePhaseRef = createRef<HTMLSpanElement>();
+const pulseMeasRef = createRef<HTMLSpanElement>();
+const pulseCandRef = createRef<HTMLSpanElement>();
+const pulseOpenRef = createRef<HTMLSpanElement>();
+const pulseQuotesRef = createRef<HTMLSpanElement>();
+
+const openCountRef = createRef<HTMLSpanElement>();
+
+const walletCashRef = createRef<HTMLSpanElement>();
+const walletEquityRef = createRef<HTMLSpanElement>();
+const walletLamboRef = createRef<HTMLImageElement>();
+const walletTickRef = createRef<HTMLSpanElement>();
+
+const engineSeqRef = createRef<HTMLDivElement>();
+const enginePhaseRef = createRef<HTMLDivElement>();
+const engineCandRef = createRef<HTMLDivElement>();
+const engineOpenRef = createRef<HTMLDivElement>();
+const engineMeasRef = createRef<HTMLDivElement>();
+const engineLatencyRef = createRef<HTMLDivElement>();
+
+const clockRef = createRef<HTMLDivElement>();
+const uptimeRef = createRef<HTMLDivElement>();
+
+let lastBalances: Balance[] = [];
+let lastHoldings: Holding[] = [];
+let clockTimer: number | null = null;
+
+type TickRow = {
+	count?: number;
+	completed?: boolean;
+	phase?: string;
+	measurements?: number;
+	candidates?: number;
+	open?: number;
+	ns?: number;
+	quotes_ready?: number;
+	quotes_total?: number;
 };
 
-const paintWalletMetrics = (
-	refs: WalletPaintRefs,
-	balances: Balance[],
-	holdings: Holding[],
-) => {
-	const wallet = walletMetrics(balances, holdings);
+/*
+paintPulseTick paints the dashboard pulse strip from the current DRAW tick.
+*/
+export const paintPulseTick = (value: unknown) => {
+	const tick = latest<TickRow>(value);
+
+	setText(pulseTickRef.current, `#${String(tick?.count ?? 0)}`);
+	setText(
+		pulsePhaseRef.current,
+		tick?.completed === true ? "complete" : (tick?.phase ?? "stream"),
+	);
+	setText(pulseMeasRef.current, String(tick?.measurements ?? "—"));
+	setText(pulseCandRef.current, String(tick?.candidates ?? "—"));
+	setText(pulseOpenRef.current, String(tick?.open ?? "—"));
+	setText(
+		pulseQuotesRef.current,
+		typeof tick?.ns === "number"
+			? `${Math.round(tick.ns / 1_000_000)}ms`
+			: tick?.quotes_ready !== undefined &&
+					tick?.quotes_total !== undefined
+				? `${String(tick.quotes_ready)}/${String(tick.quotes_total)}`
+				: "—",
+	);
+};
+
+/*
+paintOpenCount paints the open-position counter from the current DRAW tick.
+*/
+export const paintOpenCount = (value: unknown) => {
+	setText(openCountRef.current, String(latest<TickRow>(value)?.open ?? 0));
+};
+
+/*
+engineClockText formats the current UTC wall clock for the engine footer.
+*/
+export const engineClockText = (at = new Date()): string =>
+	`${at.toISOString().slice(11, 19)} UTC`;
+
+/*
+engineUptimeText formats session uptime from appStore.startedAtMs.
+*/
+export const engineUptimeText = (startedAtMs: number | null): string =>
+	`uptime ${formatUptime(startedAtMs)}`;
+
+/*
+paintEngineClock paints UTC wall time and session uptime into the clock shell.
+*/
+export const paintEngineClock = () => {
+	setText(clockRef.current, engineClockText());
+	setText(uptimeRef.current, engineUptimeText(appStore.state.startedAtMs));
+};
+
+const bindClock = (host: HTMLElement | null) => {
+	if (host === null) {
+		if (clockTimer !== null) {
+			window.clearInterval(clockTimer);
+			clockTimer = null;
+		}
+
+		return;
+	}
+
+	if (clockTimer !== null) {
+		return;
+	}
+
+	paintEngineClock();
+	clockTimer = window.setInterval(paintEngineClock, 1000);
+};
+
+/*
+paintEngineTick paints the nav engine readout from the current DRAW tick.
+*/
+export const paintEngineTick = (value: unknown) => {
+	const tick = latest<TickRow>(value);
+	const online = appStore.state.online;
+
+	setText(engineSeqRef.current, `#${tick?.count ?? 0}`);
+	setText(
+		enginePhaseRef.current,
+		online
+			? tick?.completed === true
+				? "complete"
+				: (tick?.phase ?? "stream")
+			: "offline",
+	);
+	setText(engineCandRef.current, tick?.candidates?.toString() ?? "—");
+	setText(engineOpenRef.current, tick?.open?.toString() ?? "—");
+	setText(engineMeasRef.current, tick?.measurements?.toString() ?? "—");
+	setText(
+		engineLatencyRef.current,
+		typeof tick?.ns === "number"
+			? `${Math.round(tick.ns / 1_000_000)}ms`
+			: "—",
+	);
+	paintEngineClock();
+};
+
+const paintWallet = () => {
+	const wallet = walletMetrics(lastBalances, lastHoldings);
 	const cashValue = wallet ? `${wallet.cash.toFixed(2)} ${wallet.asset}` : "—";
-	// Equity tone follows price P&L (mark vs entry), not fee-dragged unrealized
-	// dollars — entry fees alone would paint a green book red.
-	const pricePnl = holdings.reduce((total, holding) => {
+	const pricePnl = lastHoldings.reduce((total, holding) => {
 		if (
 			!(holding.qty > 0) ||
 			!(holding.entry_price > 0) ||
@@ -54,321 +181,157 @@ const paintWalletMetrics = (
 
 		return total + (holding.mark - holding.entry_price) * holding.qty;
 	}, 0);
-	const inProfit = pricePnl > 0;
 	const equityValue = wallet
 		? `${wallet.equity.toFixed(2)} ${wallet.asset}`
 		: "—";
 
-	setText(refs.cash, cashValue);
-	setText(refs.equity, equityValue);
+	setText(walletCashRef.current, cashValue);
+	setText(walletEquityRef.current, equityValue);
 	setTone(
-		refs.equity,
+		walletEquityRef.current,
 		pricePnl > 0 ? "var(--up)" : pricePnl < 0 ? "var(--down)" : "var(--f3)",
 	);
-	setVisibility(refs.lambo, inProfit);
+	setVisibility(walletLamboRef.current, pricePnl > 0);
 };
 
 /*
-LivePulseTicker paints the dashboard pulse strip directly from store snapshots so
-tick cadence updates never traverse React reconciliation.
+paintWalletBalances refreshes wallet cash/equity from the current DRAW balances.
 */
-export const LivePulseTicker = () => {
-	const tickRef = useRef<HTMLSpanElement>(null);
-	const phaseRef = useRef<HTMLSpanElement>(null);
-	const measRef = useRef<HTMLSpanElement>(null);
-	const candRef = useRef<HTMLSpanElement>(null);
-	const openRef = useRef<HTMLSpanElement>(null);
-	const quotesRef = useRef<HTMLSpanElement>(null);
-	const online = useSelector(appStore, (state) => state.online);
-
-	useDirectStorePaint(
-		getWorker(),
-		[{ store: "tick", key: "" }],
-		(buffers) => {
-			const tick = buffers["tick:"]?.at(-1) as {
-				count?: number;
-				completed?: boolean;
-				phase?: string;
-				measurements?: number;
-				candidates?: number;
-				open?: number;
-				ns?: number;
-				quotes_ready?: number;
-				quotes_total?: number;
-			};
-
-			setText(tickRef.current, `#${String(tick?.count ?? 0)}`);
-			setText(
-				phaseRef.current,
-				tick?.completed === true ? "complete" : (tick?.phase ?? "stream"),
-			);
-			setText(measRef.current, String(tick?.measurements ?? "—"));
-			setText(candRef.current, String(tick?.candidates ?? "—"));
-			setText(openRef.current, String(tick?.open ?? "—"));
-			setText(
-				quotesRef.current,
-				typeof tick?.ns === "number"
-					? `${Math.round(tick.ns / 1_000_000)}ms`
-					: tick?.quotes_ready !== undefined &&
-							tick?.quotes_total !== undefined
-						? `${String(tick.quotes_ready)}/${String(tick.quotes_total)}`
-						: "—",
-			);
-		},
-		[online],
-	);
-
-	return (
-		<div className="flex h-8 shrink-0 items-center gap-4 border-(--line) border-b bg-(--sunken) px-3.5 font-mono text-[11px] text-(--f3)">
-			<span ref={tickRef} className="font-semibold text-(--f1)" />
-			<span>
-				phase <span ref={phaseRef} className="text-(--acc)" />
-			</span>
-			<span>
-				meas <span ref={measRef} />
-			</span>
-			<span>
-				cand <span ref={candRef} />
-			</span>
-			<span>
-				open <span ref={openRef} />
-			</span>
-			<span>
-				tick <span ref={quotesRef} />
-			</span>
-		</div>
-	);
+export const paintWalletBalances = (value: unknown) => {
+	lastBalances = asRows<Balance>(value);
+	paintWallet();
 };
 
 /*
-LiveOpenCount paints the open-position counter directly from tick snapshots.
+paintWalletHoldings refreshes wallet cash/equity from the current DRAW holdings.
 */
-export const LiveOpenCount = () => {
-	const openRef = useRef<HTMLSpanElement>(null);
-	const online = useSelector(appStore, (state) => state.online);
+export const paintWalletHoldings = (value: unknown) => {
+	lastHoldings = asRows<Holding>(value);
+	paintWallet();
+};
 
-	useDirectStorePaint(
-		getWorker(),
-		[{ store: "tick", key: "" }],
-		(buffers) => {
-			const tick = buffers["tick:"]?.at(-1) as { open?: number };
-			setText(openRef.current, String(tick?.open ?? 0));
-		},
-		[online],
-	);
+/*
+paintWalletTick paints the wallet tick counter from the current DRAW tick.
+*/
+export const paintWalletTick = (value: unknown) => {
+	setText(walletTickRef.current, String(latest<TickRow>(value)?.count ?? 0));
+};
 
-	return (
-		<span className="font-mono text-[12px] text-(--f3)">
-			<span ref={openRef} /> open positions
+/*
+LivePulseTicker is the static pulse-strip shell. DRAW paints via paintPulseTick.
+*/
+export const LivePulseTicker = () => (
+	<div className="flex h-8 shrink-0 items-center gap-4 border-(--line) border-b bg-(--sunken) px-3.5 font-mono text-[11px] text-(--f3)">
+		<span ref={pulseTickRef} className="font-semibold text-(--f1)" />
+		<span>
+			phase <span ref={pulsePhaseRef} className="text-(--acc)" />
 		</span>
-	);
-};
-
-/*
-LiveWalletMetrics paints wallet and tick counters directly from store snapshots.
-*/
-export const LiveWalletMetrics = () => {
-	const cashRef = useRef<HTMLSpanElement>(null);
-	const equityRef = useRef<HTMLSpanElement>(null);
-	const lamboRef = useRef<HTMLImageElement>(null);
-	const tickRef = useRef<HTMLSpanElement>(null);
-	const online = useSelector(appStore, (state) => state.online);
-
-	useDirectStorePaint(
-		getWorker(),
-		[
-			{ store: "balances", key: "" },
-			{ store: "holdings", key: "" },
-			{ store: "tick", key: "" },
-		],
-		(buffers) => {
-			const balances = (buffers["balances:"] ?? []) as Balance[];
-			const holdings = (buffers["holdings:"] ?? []) as Holding[];
-			const tick = buffers["tick:"]?.at(-1) as { count?: number };
-
-			paintWalletMetrics(
-				{
-					cash: cashRef.current,
-					equity: equityRef.current,
-					lambo: lamboRef.current,
-					tick: tickRef.current,
-					open: null,
-				},
-				balances,
-				holdings,
-			);
-			setText(tickRef.current, String(tick?.count ?? 0));
-		},
-		[online],
-	);
-
-	return (
-		<>
-			<LiveTopMetric label="Cash" valueRef={cashRef} strong />
-			<div className="relative flex flex-col items-end gap-px">
-				<img
-					ref={lamboRef}
-					src="/lambo.png"
-					alt=""
-					aria-hidden="true"
-					className="pointer-events-none absolute -top-1.5 right-0 h-11 opacity-60"
-					style={{ display: "none" }}
-				/>
-				<span className="text-[9px] text-(--f4) uppercase tracking-widest">
-					Equity
-				</span>
-				<span
-					ref={equityRef}
-					className="relative font-mono text-[12px] font-semibold"
-				/>
-			</div>
-			<LiveTopMetric label="Tick" valueRef={tickRef} accent />
-		</>
-	);
-};
-
-const LiveTopMetric = ({
-	label,
-	valueRef,
-	accent = false,
-	strong = false,
-}: {
-	label: string;
-	valueRef: RefObject<HTMLSpanElement | null>;
-	accent?: boolean;
-	strong?: boolean;
-}) => (
-	<div className="flex flex-col items-end gap-px">
-		<span className="text-[9px] text-(--f4) uppercase tracking-widest">
-			{label}
+		<span>
+			meas <span ref={pulseMeasRef} />
 		</span>
-		<span
-			ref={valueRef}
-			className={[
-				"font-mono text-[12px]",
-				accent ? "font-semibold text-(--acc)" : "",
-				strong && !accent ? "font-medium text-(--f1)" : "",
-				!accent && !strong ? "font-medium text-(--f2)" : "",
-			]
-				.filter(Boolean)
-				.join(" ")}
-		/>
+		<span>
+			cand <span ref={pulseCandRef} />
+		</span>
+		<span>
+			open <span ref={pulseOpenRef} />
+		</span>
+		<span>
+			tick <span ref={pulseQuotesRef} />
+		</span>
 	</div>
 );
 
 /*
-LiveEngineTicker paints the nav engine readout directly from tick snapshots.
-cand/open are position counts (zeros are honest). tick latency and measurement
-counts come from publishTick; retired quotes/fluid bars are not invented.
+LiveOpenCount is the static open-position counter shell.
 */
-export const LiveEngineTicker = () => {
-	const seqRef = useRef<HTMLDivElement>(null);
-	const phaseRef = useRef<HTMLDivElement>(null);
-	const candRef = useRef<HTMLDivElement>(null);
-	const openRef = useRef<HTMLDivElement>(null);
-	const measRef = useRef<HTMLDivElement>(null);
-	const latencyRef = useRef<HTMLDivElement>(null);
-	const online = useSelector(appStore, (state) => state.online);
-
-	useDirectStorePaint(
-		getWorker(),
-		[{ store: "tick", key: "" }],
-		(buffers) => {
-			const tick = buffers["tick:"]?.at(-1) as {
-				count?: number;
-				completed?: boolean;
-				phase?: string;
-				candidates?: number;
-				open?: number;
-				measurements?: number;
-				ns?: number;
-			};
-
-			setText(seqRef.current, `#${tick?.count ?? 0}`);
-			setText(
-				phaseRef.current,
-				online
-					? tick?.completed === true
-						? "complete"
-						: (tick?.phase ?? "stream")
-					: "offline",
-			);
-			setText(candRef.current, tick?.candidates?.toString() ?? "—");
-			setText(openRef.current, tick?.open?.toString() ?? "—");
-			setText(measRef.current, tick?.measurements?.toString() ?? "—");
-			setText(
-				latencyRef.current,
-				typeof tick?.ns === "number"
-					? `${Math.round(tick.ns / 1_000_000)}ms`
-					: "—",
-			);
-		},
-		[online],
-	);
-
-	return (
-		<Flex.Column className="mx-2 border border-(--line) rounded-[3px] bg-(--sunken) p-2.5 font-mono text-[11px] leading-[1.7]">
-			<Flex.Row justify="between">
-				<Flex className="text-(--f4)">seq</Flex>
-				<Flex ref={seqRef} className="text-(--f1)" />
-			</Flex.Row>
-			<Flex.Row justify="between">
-				<Flex className="text-(--f4)">phase</Flex>
-				<Flex ref={phaseRef} className="text-(--acc)" />
-			</Flex.Row>
-			<Flex.Row justify="between">
-				<Flex className="text-(--f4)">cand</Flex>
-				<Flex ref={candRef} className="text-(--f1)" />
-			</Flex.Row>
-			<Flex.Row justify="between">
-				<Flex className="text-(--f4)">open</Flex>
-				<Flex ref={openRef} className="text-(--f1)" />
-			</Flex.Row>
-			<Flex.Row justify="between">
-				<Flex className="text-(--f4)">meas</Flex>
-				<Flex ref={measRef} className="text-(--f1)" />
-			</Flex.Row>
-			<Flex.Row justify="between">
-				<Flex className="text-(--f4)">tick</Flex>
-				<Flex ref={latencyRef} className="text-(--f1)" />
-			</Flex.Row>
-		</Flex.Column>
-	);
-};
+export const LiveOpenCount = () => (
+	<span className="font-mono text-[12px] text-(--f3)">
+		<span ref={openCountRef} /> open positions
+	</span>
+);
 
 /*
-LiveEngineClock paints UTC clock and session uptime from appStore.startedAtMs.
+LiveWalletMetrics is the static wallet metric shell.
 */
-export const LiveEngineClock = () => {
-	const clockRef = useRef<HTMLDivElement>(null);
-	const uptimeRef = useRef<HTMLDivElement>(null);
+export const LiveWalletMetrics = () => (
+	<>
+		<div className="flex flex-col items-end gap-px">
+			<span className="text-[9px] text-(--f4) uppercase tracking-widest">
+				Cash
+			</span>
+			<span
+				ref={walletCashRef}
+				className="font-mono text-[12px] font-medium text-(--f1)"
+			/>
+		</div>
+		<div className="relative flex flex-col items-end gap-px">
+			<img
+				ref={walletLamboRef}
+				src="/lambo.png"
+				alt=""
+				aria-hidden="true"
+				className="pointer-events-none absolute -top-1.5 right-0 h-11 opacity-60"
+				style={{ display: "none" }}
+			/>
+			<span className="text-[9px] text-(--f4) uppercase tracking-widest">
+				Equity
+			</span>
+			<span
+				ref={walletEquityRef}
+				className="relative font-mono text-[12px] font-semibold"
+			/>
+		</div>
+		<div className="flex flex-col items-end gap-px">
+			<span className="text-[9px] text-(--f4) uppercase tracking-widest">
+				Tick
+			</span>
+			<span
+				ref={walletTickRef}
+				className="font-mono text-[12px] font-semibold text-(--acc)"
+			/>
+		</div>
+	</>
+);
 
-	useEffect(() => {
-		const paint = () => {
-			setText(
-				clockRef.current,
-				`${new Date().toISOString().slice(11, 19)} UTC`,
-			);
-			setText(
-				uptimeRef.current,
-				`uptime ${formatUptime(appStore.state.startedAtMs)}`,
-			);
-		};
+/*
+LiveEngineTicker is the static nav engine readout shell.
+*/
+export const LiveEngineTicker = () => (
+	<Flex.Column className="mx-2 border border-(--line) rounded-[3px] bg-(--sunken) p-2.5 font-mono text-[11px] leading-[1.7]">
+		<Flex.Row justify="between">
+			<Flex className="text-(--f4)">seq</Flex>
+			<Flex ref={engineSeqRef} className="text-(--f1)" />
+		</Flex.Row>
+		<Flex.Row justify="between">
+			<Flex className="text-(--f4)">phase</Flex>
+			<Flex ref={enginePhaseRef} className="text-(--acc)" />
+		</Flex.Row>
+		<Flex.Row justify="between">
+			<Flex className="text-(--f4)">cand</Flex>
+			<Flex ref={engineCandRef} className="text-(--f1)" />
+		</Flex.Row>
+		<Flex.Row justify="between">
+			<Flex className="text-(--f4)">open</Flex>
+			<Flex ref={engineOpenRef} className="text-(--f1)" />
+		</Flex.Row>
+		<Flex.Row justify="between">
+			<Flex className="text-(--f4)">meas</Flex>
+			<Flex ref={engineMeasRef} className="text-(--f1)" />
+		</Flex.Row>
+		<Flex.Row justify="between">
+			<Flex className="text-(--f4)">tick</Flex>
+			<Flex ref={engineLatencyRef} className="text-(--f1)" />
+		</Flex.Row>
+	</Flex.Column>
+);
 
-		paint();
-		const interval = window.setInterval(paint, 1000);
-		const subscription = appStore.subscribe(paint);
-
-		return () => {
-			window.clearInterval(interval);
-			subscription.unsubscribe();
-		};
-	}, []);
-
-	return (
-		<>
-			<Flex ref={clockRef} />
-			<Flex ref={uptimeRef}>uptime —</Flex>
-		</>
-	);
-};
+/*
+LiveEngineClock is the static UTC / uptime shell. bindClock owns the 1s timer;
+DRAW also refreshes via paintEngineTick → paintEngineClock.
+*/
+export const LiveEngineClock = () => (
+	<div ref={bindClock}>
+		<Flex ref={clockRef} />
+		<Flex ref={uptimeRef}>uptime —</Flex>
+	</div>
+);

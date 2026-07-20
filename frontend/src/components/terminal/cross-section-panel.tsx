@@ -1,10 +1,6 @@
-import { useSelector } from "@tanstack/react-store";
-import { useRef } from "react";
-import { appStore } from "#/collections/app";
+import { createRef } from "react";
 import type { DiagnosticsFrame } from "#/collections/types";
 import { paintInlineMeter } from "#/components/terminal/metric-paint";
-import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
-import { getWorker } from "#/providers/websocket";
 import { Panel } from "@/components/ui/panel";
 
 export type CrossSectionReadout = {
@@ -150,163 +146,155 @@ export const retainCrossSectionReadout = (
 	return previous;
 };
 
-/*
-CrossSectionPanel paints diagnostics readouts directly from the diagnostics store.
-*/
-export const CrossSectionPanel = () => {
-	const badgeRef = useRef<HTMLSpanElement>(null);
-	const subtitleRef = useRef<HTMLDivElement>(null);
-	const leaderRef = useRef<HTMLSpanElement>(null);
-	const thresholdRef = useRef<HTMLSpanElement>(null);
-	const breadthMeterRef = useRef<HTMLDivElement>(null);
-	const volumeRef = useRef<HTMLDivElement>(null);
-	const notionalRef = useRef<HTMLDivElement>(null);
-	const depthRef = useRef<HTMLDivElement>(null);
-	const lastReadoutRef = useRef<CrossSectionReadout | null>(null);
-	const online = useSelector(appStore, (state) => state.online);
+const badgeRef = createRef<HTMLSpanElement>();
+const subtitleRef = createRef<HTMLDivElement>();
+const leaderRef = createRef<HTMLSpanElement>();
+const thresholdRef = createRef<HTMLSpanElement>();
+const breadthMeterRef = createRef<HTMLDivElement>();
+const volumeRef = createRef<HTMLDivElement>();
+const notionalRef = createRef<HTMLDivElement>();
+const depthRef = createRef<HTMLDivElement>();
 
-	useDirectStorePaint(
-		getWorker(),
-		[{ store: "diagnostics", key: "" }],
-		(buffers) => {
-			const frame = (buffers["diagnostics:"] ?? []).at(-1) as
-				| DiagnosticsFrame
-				| undefined;
-			const readout = retainCrossSectionReadout(
-				lastReadoutRef.current,
-				crossSectionReadoutFromFrame(frame ?? null),
-			);
-			lastReadoutRef.current = readout;
-			const broad = readout.breadthPercent >= 50;
+let lastReadout: CrossSectionReadout | null = null;
 
-			if (badgeRef.current !== null) {
-				badgeRef.current.textContent = broad ? "broad" : "thin";
-				badgeRef.current.style.color = broad
-					? "var(--success)"
-					: "var(--warning)";
-				badgeRef.current.style.background = broad
-					? "color-mix(in srgb, var(--success) 12%, transparent)"
-					: "color-mix(in srgb, var(--warning) 12%, transparent)";
-				badgeRef.current.style.borderColor = broad
-					? "color-mix(in srgb, var(--success) 38%, transparent)"
-					: "color-mix(in srgb, var(--warning) 38%, transparent)";
-			}
+const paintStat = (node: HTMLDivElement | null, value: string) => {
+	const valueNode = node?.querySelector<HTMLElement>("[data-stat-value='true']");
 
-			if (subtitleRef.current !== null) {
-				subtitleRef.current.textContent = `breadth · leadership · liquidity axes · ${readout.symbolCount} symbols`;
-			}
-
-			if (leaderRef.current !== null) {
-				leaderRef.current.textContent = readout.leader || "—";
-			}
-
-			if (thresholdRef.current !== null) {
-				thresholdRef.current.textContent = `thr ${readout.leadershipThresholdPercent.toFixed(2)}%`;
-			}
-
-			if (breadthMeterRef.current !== null) {
-				paintInlineMeter(
-					breadthMeterRef.current,
-					"Breadth",
-					`${Math.round(readout.breadthPercent)}%`,
-					readout.breadthPercent,
-					broad ? "success" : "warning",
-				);
-			}
-
-			const paintStat = (node: HTMLDivElement | null, value: string) => {
-				const valueNode = node?.querySelector<HTMLElement>(
-					"[data-stat-value='true']",
-				);
-
-				if (valueNode !== null && valueNode !== undefined) {
-					valueNode.textContent = value;
-				}
-			};
-
-			paintStat(volumeRef.current, compactNumber(readout.medianVolume));
-			paintStat(
-				notionalRef.current,
-				compactNumber(readout.medianQuoteNotional),
-			);
-			paintStat(depthRef.current, compactNumber(readout.medianExecutableDepth));
-		},
-		[online],
-	);
-
-	return (
-		<Panel size="lg">
-			<div className="flex items-center justify-between">
-				<span className="font-semibold text-(--f1) text-xs">Cross-section</span>
-				<span
-					ref={badgeRef}
-					className="rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
-				/>
-			</div>
-			<div
-				ref={subtitleRef}
-				className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)"
-			/>
-			<div className="flex items-center justify-between">
-				<span className="font-mono text-[11px] text-(--f2)">
-					leader <span ref={leaderRef} className="text-(--acc)" />
-				</span>
-				<span
-					ref={thresholdRef}
-					className="font-mono text-[10px] text-(--f4)"
-				/>
-			</div>
-			<div className="mt-2.5">
-				<div
-					ref={breadthMeterRef}
-					className="flex items-center gap-2"
-					role="progressbar"
-					aria-valuemin={0}
-					aria-valuemax={100}
-				>
-					<span
-						data-inline-label="true"
-						className="w-[54px] shrink-0 font-mono text-[9px] text-(--f4)"
-					/>
-					<div
-						data-inline-track="true"
-						className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line) [--meter-tone:var(--info)]"
-					>
-						<div data-inline-fill="true" className="h-full bg-(--meter-tone)" />
-					</div>
-					<span
-						data-inline-value="true"
-						className="w-[18px] shrink-0 text-right font-mono text-[9px] text-(--f2)"
-					/>
-				</div>
-			</div>
-			<div className="mt-[13px] flex justify-between gap-3">
-				<div ref={volumeRef} className="min-w-0 flex-1">
-					<div
-						data-stat-value="true"
-						className="font-mono text-lg text-(--f1) leading-none"
-					/>
-					<div className="mt-1 font-mono text-[9px] text-(--f4)">
-						med volume
-					</div>
-				</div>
-				<div ref={notionalRef} className="min-w-0 flex-1 text-center">
-					<div
-						data-stat-value="true"
-						className="font-mono text-lg text-(--f1) leading-none"
-					/>
-					<div className="mt-1 font-mono text-[9px] text-(--f4)">
-						med notional
-					</div>
-				</div>
-				<div ref={depthRef} className="min-w-0 flex-1 text-right">
-					<div
-						data-stat-value="true"
-						className="font-mono text-lg text-(--f1) leading-none"
-					/>
-					<div className="mt-1 font-mono text-[9px] text-(--f4)">med depth</div>
-				</div>
-			</div>
-		</Panel>
-	);
+	if (valueNode !== null && valueNode !== undefined) {
+		valueNode.textContent = value;
+	}
 };
+
+/*
+paintCrossSection paints diagnostics readouts from the current DRAW diagnostics
+batch into the CrossSectionPanel shell.
+*/
+export const paintCrossSection = (value: unknown, _focusSymbol: string) => {
+	const rows = Array.isArray(value) ? value : value != null ? [value] : [];
+	const frame = rows.at(-1) as DiagnosticsFrame | undefined;
+	const readout = retainCrossSectionReadout(
+		lastReadout,
+		crossSectionReadoutFromFrame(frame ?? null),
+	);
+	lastReadout = readout;
+	const broad = readout.breadthPercent >= 50;
+
+	if (badgeRef.current !== null) {
+		badgeRef.current.textContent = broad ? "broad" : "thin";
+		badgeRef.current.style.color = broad
+			? "var(--success)"
+			: "var(--warning)";
+		badgeRef.current.style.background = broad
+			? "color-mix(in srgb, var(--success) 12%, transparent)"
+			: "color-mix(in srgb, var(--warning) 12%, transparent)";
+		badgeRef.current.style.borderColor = broad
+			? "color-mix(in srgb, var(--success) 38%, transparent)"
+			: "color-mix(in srgb, var(--warning) 38%, transparent)";
+	}
+
+	if (subtitleRef.current !== null) {
+		subtitleRef.current.textContent = `breadth · leadership · liquidity axes · ${readout.symbolCount} symbols`;
+	}
+
+	if (leaderRef.current !== null) {
+		leaderRef.current.textContent = readout.leader || "—";
+	}
+
+	if (thresholdRef.current !== null) {
+		thresholdRef.current.textContent = `thr ${readout.leadershipThresholdPercent.toFixed(2)}%`;
+	}
+
+	if (breadthMeterRef.current !== null) {
+		paintInlineMeter(
+			breadthMeterRef.current,
+			"Breadth",
+			`${Math.round(readout.breadthPercent)}%`,
+			readout.breadthPercent,
+			broad ? "success" : "warning",
+		);
+	}
+
+	paintStat(volumeRef.current, compactNumber(readout.medianVolume));
+	paintStat(notionalRef.current, compactNumber(readout.medianQuoteNotional));
+	paintStat(depthRef.current, compactNumber(readout.medianExecutableDepth));
+};
+
+/*
+CrossSectionPanel is the static cross-section shell. DRAW paints via
+paintCrossSection.
+*/
+export const CrossSectionPanel = () => (
+	<Panel size="lg">
+		<div className="flex items-center justify-between">
+			<span className="font-semibold text-(--f1) text-xs">Cross-section</span>
+			<span
+				ref={badgeRef}
+				className="rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
+			/>
+		</div>
+		<div
+			ref={subtitleRef}
+			className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)"
+		/>
+		<div className="flex items-center justify-between">
+			<span className="font-mono text-[11px] text-(--f2)">
+				leader <span ref={leaderRef} className="text-(--acc)" />
+			</span>
+			<span
+				ref={thresholdRef}
+				className="font-mono text-[10px] text-(--f4)"
+			/>
+		</div>
+		<div className="mt-2.5">
+			<div
+				ref={breadthMeterRef}
+				className="flex items-center gap-2"
+				role="progressbar"
+				aria-valuemin={0}
+				aria-valuemax={100}
+			>
+				<span
+					data-inline-label="true"
+					className="w-[54px] shrink-0 font-mono text-[9px] text-(--f4)"
+				/>
+				<div
+					data-inline-track="true"
+					className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line) [--meter-tone:var(--info)]"
+				>
+					<div data-inline-fill="true" className="h-full bg-(--meter-tone)" />
+				</div>
+				<span
+					data-inline-value="true"
+					className="w-[18px] shrink-0 text-right font-mono text-[9px] text-(--f2)"
+				/>
+			</div>
+		</div>
+		<div className="mt-[13px] flex justify-between gap-3">
+			<div ref={volumeRef} className="min-w-0 flex-1">
+				<div
+					data-stat-value="true"
+					className="font-mono text-lg text-(--f1) leading-none"
+				/>
+				<div className="mt-1 font-mono text-[9px] text-(--f4)">
+					med volume
+				</div>
+			</div>
+			<div ref={notionalRef} className="min-w-0 flex-1 text-center">
+				<div
+					data-stat-value="true"
+					className="font-mono text-lg text-(--f1) leading-none"
+				/>
+				<div className="mt-1 font-mono text-[9px] text-(--f4)">
+					med notional
+				</div>
+			</div>
+			<div ref={depthRef} className="min-w-0 flex-1 text-right">
+				<div
+					data-stat-value="true"
+					className="font-mono text-lg text-(--f1) leading-none"
+				/>
+				<div className="mt-1 font-mono text-[9px] text-(--f4)">med depth</div>
+			</div>
+		</div>
+	</Panel>
+);

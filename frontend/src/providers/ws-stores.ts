@@ -1,135 +1,247 @@
-import type { Subscription } from "@tanstack/store";
-import { createKeyedStore } from "#/collections/store";
-import type {
-	Balance,
-	CausalFrame,
-	CognitiveReading,
-	DiagnosticsFrame,
-	Execution,
-	Finding,
-	GraphFrame,
-	Holding,
-	Instrument,
-	LifecycleRow,
-	ManifoldFrame,
-	Order,
-	ResonanceFrame,
-	Stop,
-	StrategyDecision,
-	ThesisForecast,
-	ThesisHypothesis,
-	TickFrame,
-} from "#/collections/types";
-import { isPlainObject } from "#/providers/ws-frame-merge";
-import type { Category, Measurement } from "#/types/measurement";
+import { appStore } from "#/collections/app";
+import { paintTerminalFluidChart } from "#/components/charts/fluid";
+import { paintHawkes } from "#/components/charts/hawkes";
+import { paintTerminalManifoldChart } from "#/components/charts/manifold";
+import { paintTerminalPredictionChart } from "#/components/charts/prediction";
+import { paintTerminalResonanceChart } from "#/components/charts/resonance";
+import { paintTerminalSignalHeatmap } from "#/components/charts/signal-heatmap";
+import { paintSignalDetailMeasurements } from "#/components/kernel/detail";
+import { paintCandidateCausal, paintCandidateDecisions, paintCandidateManifold, paintCandidateResonance } from "#/components/terminal/candidate-row";
+import { paintCognitiveBeam } from "#/components/terminal/cognitive-beam";
+import { paintCrossSection } from "#/components/terminal/cross-section-panel";
+import {
+	paintDashboardHoldings,
+	paintDashboardLifecycle,
+	paintDecisionRows,
+} from "#/components/terminal/dashboard-rail";
+import {
+	paintCausalLadder,
+	paintDecisionsEntryLine,
+} from "#/components/terminal/decision-side";
+import {
+	paintDecisions,
+	paintDecisionsCausal,
+	paintDecisionsInstruments,
+	paintDecisionsManifold,
+	paintDecisionsMeasurements,
+	paintDecisionsResonance,
+} from "#/components/terminal/decisions-surface";
+import {
+	paintHealthMeasurements,
+	paintHealthTick,
+} from "#/components/terminal/health";
+import {
+	paintJournalFindings,
+	paintJournalHoldings,
+	paintJournalLifecycle,
+} from "#/components/terminal/journal-surface";
+import { paintKernelList } from "#/components/terminal/kernel-list";
+import {
+	paintManifoldMeta,
+	paintResonanceFooter,
+	paintResonanceTitle,
+} from "#/components/terminal/live-chart-meta";
+import {
+	paintEngineTick,
+	paintOpenCount,
+	paintPulseTick,
+	paintWalletBalances,
+	paintWalletHoldings,
+	paintWalletTick,
+} from "#/components/terminal/live-ticker";
+import {
+	paintPaletteInstruments,
+	paintPaletteMeasurements,
+} from "#/components/terminal/palette";
+import {
+	paintPositionHoldings,
+	paintPositionStops,
+} from "#/components/terminal/position-gauge";
+import { paintRegimeRadar } from "#/components/terminal/regime-radar";
+import { paintStrategyDecisions } from "#/components/terminal/strategy-decisions";
+import { paintThesis } from "#/components/terminal/thesis-modal";
+import { paintXrayHawkes } from "#/components/terminal/xray-hawkes";
+import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
+import { paintXrayLatent } from "#/components/terminal/xray-latent";
+import {
+	paintXrayFactsCognition,
+	paintXrayFactsManifold,
+	paintXrayFactsMeasurements,
+	paintXrayFactsResonance,
+	paintXrayManifold,
+	paintXrayManifoldMeasurements,
+} from "#/components/terminal/xray-side";
+import {
+	paintAllocationBalances,
+	paintAllocationCausal,
+	paintAllocationHoldings,
+	paintAllocationInstruments,
+	paintAllocationManifold,
+	paintAllocationResonance,
+} from "#/routes/allocation";
+import { paintCortex } from "#/routes/cortex";
 
-const DEFAULT_BUFFER = 50;
+type Paint = (value: unknown, focusSymbol: string) => void;
 
-export const frameStores = {
-	balances: createKeyedStore<Balance>()("balances", 1, (row) => row.asset),
-	categories: createKeyedStore<Category & { symbol?: string }>()(
-		"categories",
-		DEFAULT_BUFFER,
-		(row) => row.symbol ?? "",
-		(row) => row.type,
-	),
-	causal: createKeyedStore<CausalFrame>()("causal", DEFAULT_BUFFER, (row) => row.symbol),
-	cognitive: createKeyedStore<CognitiveReading>()(
-		"cognitive",
-		DEFAULT_BUFFER,
-		(row) => row.symbol,
-	),
-	decisions: createKeyedStore<StrategyDecision>()(
-		"decisions",
-		DEFAULT_BUFFER,
-		(row) => row.symbol,
-	),
-	diagnostics: createKeyedStore<DiagnosticsFrame>()("diagnostics", DEFAULT_BUFFER),
-	findings: createKeyedStore<Finding>()("findings", DEFAULT_BUFFER, (row) => row.symbol),
-	forecasts: createKeyedStore<ThesisForecast>()(
-		"forecasts",
-		DEFAULT_BUFFER,
-		(row) => row.symbol,
-	),
-	graphs: createKeyedStore<GraphFrame>()("graphs", DEFAULT_BUFFER, (row) => row.symbol),
-	hypotheses: createKeyedStore<ThesisHypothesis>()(
-		"hypotheses",
-		DEFAULT_BUFFER,
-		(row) => row.symbol,
-	),
-	lifecycle: createKeyedStore<LifecycleRow>()(
-		"lifecycle",
-		DEFAULT_BUFFER,
-		(row) => row.symbol,
-	),
-	holdings: createKeyedStore<Holding>()("holdings", DEFAULT_BUFFER, (row) => row.symbol),
-	stops: createKeyedStore<Stop>()("stops", 1, (row) => row.symbol),
-	executions: createKeyedStore<Execution>()("executions", DEFAULT_BUFFER),
-	instruments: createKeyedStore<Instrument>()("instruments", DEFAULT_BUFFER, (row) => row.symbol),
-	measurements: createKeyedStore<Measurement>()(
-		"measurements",
-		50,
-		(row) => row.symbol,
-		(row) => row.source,
-	),
-	manifold: createKeyedStore<ManifoldFrame>()("manifold", DEFAULT_BUFFER, (row) => row.symbol),
-	orders: createKeyedStore<Order>()("orders", DEFAULT_BUFFER, (row) => row.pair),
-	resonance: createKeyedStore<ResonanceFrame>()(
-		"resonance",
-		DEFAULT_BUFFER,
-		(row) => row.symbol,
-	),
-	tick: createKeyedStore<TickFrame>()("tick", DEFAULT_BUFFER),
+type Drawer = {
+	paint: Paint;
+	keys?: Record<string, Paint>;
 };
 
-export const subscribe = <TState, T>(
-	store: {
-		subscribe: (listener: (state: TState) => void) => Subscription;
+/*
+drawers map each backend wire key to its paint function(s). The worker forwards
+the whole frame; attach walks top-level keys and paints only registered ones.
+*/
+export const drawers = {
+	measurements: {
+		paint: paintKernelList,
+		keys: {
+			hawkes: paintHawkes,
+			signalDetail: paintSignalDetailMeasurements,
+			regimeRadar: paintRegimeRadar,
+			health: paintHealthMeasurements,
+			signalHeatmap: paintTerminalSignalHeatmap,
+			xrayHawkes: paintXrayHawkes,
+			xrayFacts: paintXrayFactsMeasurements,
+			xrayManifold: paintXrayManifoldMeasurements,
+			decisions: paintDecisionsMeasurements,
+			palette: paintPaletteMeasurements,
+		},
 	},
-	pick: (state: TState) => { values: () => T[] } | undefined,
-	send: (rows: T[]) => void,
-): Subscription =>
-	store.subscribe((state) => {
-		send(pick(state)?.values() ?? []);
-	});
+	tick: {
+		paint: paintPulseTick as Paint,
+		keys: {
+			open: paintOpenCount as Paint,
+			engine: paintEngineTick as Paint,
+			wallet: paintWalletTick as Paint,
+			health: paintHealthTick,
+		},
+	},
+	balances: {
+		paint: paintWalletBalances as Paint,
+		keys: {
+			allocation: paintAllocationBalances,
+		},
+	},
+	holdings: {
+		paint: paintWalletHoldings as Paint,
+		keys: {
+			journal: paintJournalHoldings,
+			dashboard: paintDashboardHoldings,
+			position: paintPositionHoldings,
+			allocation: paintAllocationHoldings,
+		},
+	},
+	stops: {
+		paint: paintPositionStops,
+	},
+	lifecycle: {
+		paint: paintJournalLifecycle,
+		keys: {
+			dashboard: paintDashboardLifecycle,
+		},
+	},
+	findings: {
+		paint: paintJournalFindings,
+	},
+	decisions: {
+		paint: paintStrategyDecisions,
+		keys: {
+			rows: paintDecisionRows,
+			candidate: paintCandidateDecisions,
+			surface: paintDecisions,
+		},
+	},
+	causal: {
+		paint: paintCausalLadder,
+		keys: {
+			entry: paintDecisionsEntryLine,
+			candidate: paintCandidateCausal,
+			surface: paintDecisionsCausal,
+			allocation: paintAllocationCausal,
+		},
+	},
+	resonance: {
+		paint: paintXrayLatent,
+		keys: {
+			hierarchy: paintXrayHierarchy,
+			prediction: paintTerminalPredictionChart,
+			chart: paintTerminalResonanceChart,
+			footer: paintResonanceFooter,
+			title: paintResonanceTitle,
+			facts: paintXrayFactsResonance,
+			candidate: paintCandidateResonance,
+			surface: paintDecisionsResonance,
+			allocation: paintAllocationResonance,
+		},
+	},
+	manifold: {
+		paint: paintTerminalFluidChart,
+		keys: {
+			chart: paintTerminalManifoldChart,
+			meta: paintManifoldMeta,
+			facts: paintXrayFactsManifold,
+			xray: paintXrayManifold,
+			candidate: paintCandidateManifold,
+			surface: paintDecisionsManifold,
+			allocation: paintAllocationManifold,
+		},
+	},
+	cognition: {
+		paint: paintCortex,
+		keys: {
+			beam: paintCognitiveBeam,
+			facts: paintXrayFactsCognition,
+		},
+	},
+	instruments: {
+		paint: paintAllocationInstruments,
+		keys: {
+			surface: paintDecisionsInstruments,
+			palette: paintPaletteInstruments,
+		},
+	},
+	diagnostics: {
+		paint: paintCrossSection,
+	},
+} satisfies Record<string, Drawer>;
 
 /*
-applyFramePayload writes a coalesced websocket object into the keyed stores.
-Error frames are returned so the worker can post them to the UI thread.
+attach dispatches DRAW frames to drawers, then paintThesis for the thesis shell.
 */
-export const applyFramePayload = (
-	payload: Record<string, unknown>,
-): Record<string, unknown> | null => {
-	if (isPlainObject(payload.error)) {
-		return payload.error;
-	}
+export const attach = (worker: Worker) => {
+	worker.addEventListener("message", (event: MessageEvent) => {
+		const message = event.data as {
+			type?: string;
+			frame?: Record<string, unknown>;
+		};
 
-	for (const [name, value] of Object.entries(payload)) {
-		// Backend publishCognition emits "cognition"; UI stores subscribe as "cognitive".
-		const storeName = name === "cognition" ? "cognitive" : name;
-		const store = frameStores[storeName as keyof typeof frameStores];
-
-		if (store === undefined) {
-			continue;
+		if (message.type !== "DRAW" || message.frame === undefined) {
+			return;
 		}
 
-		const rows = Array.isArray(value)
-			? value
-			: isPlainObject(value) &&
-					Object.values(value).every((entry) => isPlainObject(entry))
-				? Object.values(value)
-				: value != null
-					? [value]
-					: [];
+		const focusSymbol = appStore.state.focusSymbol;
 
-		if (rows.length === 0) {
-			continue;
+		for (const [name, value] of Object.entries(message.frame)) {
+			const drawer = drawers[name as keyof typeof drawers] as
+				| Drawer
+				| undefined;
+
+			if (drawer === undefined) {
+				continue;
+			}
+
+			drawer.paint(value, focusSymbol);
+
+			if (drawer.keys === undefined) {
+				continue;
+			}
+
+			for (const paint of Object.values(drawer.keys)) {
+				paint(value, focusSymbol);
+			}
 		}
 
-		(store.actions as { updateFrame: (rows: unknown[]) => void }).updateFrame(
-			rows,
-		);
-	}
-
-	return null;
+		paintThesis(message.frame, focusSymbol);
+	});
 };

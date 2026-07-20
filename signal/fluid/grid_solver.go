@@ -22,7 +22,7 @@ faceFluxDivergence both derive from these two faces so the divergence a
 signal reads is exactly the divergence the solver integrated, not a
 separately reasoned approximation of it.
 */
-func (grid *FluidGrid) faceFluxPair(rho []float64, index int) (faceLeft, faceRight float64) {
+func (grid *Grid) faceFluxPair(rho []float64, index int) (faceLeft, faceRight float64) {
 	rhoLeft := rho[index-1]
 	rhoCenter := rho[index]
 	rhoRight := rho[index+1]
@@ -50,7 +50,7 @@ mass is leaving the cell through advection, positive when the cell is a
 net exporter (outflow face flux exceeds inflow) and negative when it is a
 net importer.
 */
-func (grid *FluidGrid) faceFluxDivergence(rho []float64, index int) float64 {
+func (grid *Grid) faceFluxDivergence(rho []float64, index int) float64 {
 	faceLeft, faceRight := grid.faceFluxPair(rho, index)
 
 	return (faceRight - faceLeft) / grid.tickSize
@@ -60,7 +60,7 @@ func (grid *FluidGrid) faceFluxDivergence(rho []float64, index int) float64 {
 computeRHS assembles the density equation's right-hand side from transport,
 diffusion, and reaction sources.
 */
-func (grid *FluidGrid) computeRHS(
+func (grid *Grid) computeRHS(
 	rho []float64,
 	rhs []float64,
 	sources []float64,
@@ -86,7 +86,7 @@ func (grid *FluidGrid) computeRHS(
 applyNeumannBoundary copies interior density to boundary cells so the solver
 enforces zero normal density gradient.
 */
-func (grid *FluidGrid) applyNeumannBoundary(rho []float64) {
+func (grid *Grid) applyNeumannBoundary(rho []float64) {
 	cellCount := len(rho)
 
 	if cellCount < 2 {
@@ -101,7 +101,7 @@ func (grid *FluidGrid) applyNeumannBoundary(rho []float64) {
 integrateRK2 advances density with a second-order Runge-Kutta step so
 transport error remains controlled.
 */
-func (grid *FluidGrid) integrateRK2(dt float64) {
+func (grid *Grid) integrateRK2(dt float64) {
 	grid.computeRHS(grid.rho, grid.rhoK1, grid.sources)
 
 	cellCount := len(grid.rho)
@@ -125,7 +125,7 @@ func (grid *FluidGrid) integrateRK2(dt float64) {
 integrateInterval advances one observation interval with the SSP-RK2 stability
 bound for the combined Rusanov advection and central diffusion operators.
 */
-func (grid *FluidGrid) integrateInterval(dt float64) error {
+func (grid *Grid) integrateInterval(dt float64) error {
 	maxVelocity := 0.0
 
 	for _, velocity := range grid.velocity {

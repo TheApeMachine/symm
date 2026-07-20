@@ -34,8 +34,8 @@ func TestNewLevel3DataSlice(t *testing.T) {
 			So(level3.Symbol, ShouldEqual, "BTC/USD")
 			So(level3.Checksum, ShouldEqual, uint32(291736120))
 			So(level3.Bids[0].OrderID, ShouldEqual, "OQCLML-BW3P3-BUCMWZ")
-			So(level3.Bids[0].LimitPrice, ShouldAlmostEqual, 43125.3)
-			So(level3.Bids[0].OrderQty, ShouldAlmostEqual, 0.15)
+			So(level3.Bids[0].LimitPrice.String(), ShouldEqual, "43125.3")
+			So(level3.Bids[0].OrderQty.String(), ShouldEqual, "0.15")
 		})
 	})
 }
@@ -55,8 +55,8 @@ func TestLevel3OrderUnmarshalJSON(t *testing.T) {
 
 			Convey("Then calculation values and checksum text remain distinct and exact", func() {
 				So(err, ShouldBeNil)
-				So(order.LimitPrice, ShouldAlmostEqual, 43125.3)
-				So(order.OrderQty, ShouldAlmostEqual, 0.15)
+				So(order.LimitPrice.String(), ShouldEqual, "43125.300")
+				So(order.OrderQty.String(), ShouldEqual, "0.15000000")
 				So(order.ChecksumLimitPrice(), ShouldEqual, "43125.300")
 				So(order.ChecksumOrderQty(), ShouldEqual, "0.15000000")
 			})
@@ -75,7 +75,7 @@ func TestLevel3OrderUnmarshalJSON(t *testing.T) {
 
 			Convey("Then it is canonicalized to deterministic fixed-point checksum text", func() {
 				So(err, ShouldBeNil)
-				So(order.LimitPrice, ShouldEqual, 100)
+				So(order.LimitPrice.String(), ShouldEqual, "100")
 				So(order.ChecksumLimitPrice(), ShouldEqual, "100")
 			})
 		})

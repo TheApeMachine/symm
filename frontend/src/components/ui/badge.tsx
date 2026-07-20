@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from "class-variance-authority";
-import { type ComponentPropsWithoutRef, forwardRef } from "react";
+import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
 import type { Size } from "./types";
 
@@ -55,7 +55,7 @@ export const badgeVariants = cva(
 
 type BadgeVariantProps = VariantProps<typeof badgeVariants>;
 
-export type BadgeProps = Omit<ComponentPropsWithoutRef<"span">, "children"> &
+export type BadgeProps = Omit<ComponentProps<"span">, "children"> &
 	BadgeVariantProps & {
 		label: string;
 		dot?: boolean;
@@ -64,27 +64,33 @@ export type BadgeProps = Omit<ComponentPropsWithoutRef<"span">, "children"> &
 /*
 Badge is a compact status pill with semantic color variants and optional dot.
 */
-export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(
-	({ label, variant, size, dot = false, className, ...props }, ref) => {
-		const resolvedSize = (size ?? "s") as Size;
+export const Badge = ({
+	ref,
+	label,
+	variant,
+	size,
+	dot = false,
+	className,
+	...props
+}: BadgeProps) => {
+	const resolvedSize = (size ?? "s") as Size;
 
-		return (
-			<span
-				ref={ref}
-				className={cn(badgeVariants({ variant, size }), className)}
-				{...props}
-			>
-				{dot ? (
-					<span
-						className={cn(
-							"shrink-0 rounded-full bg-(--badge-tone)",
-							BADGE_DOT_SIZE[resolvedSize],
-						)}
-						aria-hidden
-					/>
-				) : null}
-				{label}
-			</span>
-		);
-	},
-);
+	return (
+		<span
+			ref={ref}
+			className={cn(badgeVariants({ variant, size }), className)}
+			{...props}
+		>
+			{dot ? (
+				<span
+					className={cn(
+						"shrink-0 rounded-full bg-(--badge-tone)",
+						BADGE_DOT_SIZE[resolvedSize],
+					)}
+					aria-hidden
+				/>
+			) : null}
+			{label}
+		</span>
+	);
+};

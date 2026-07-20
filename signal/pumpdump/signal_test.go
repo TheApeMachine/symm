@@ -64,7 +64,7 @@ func drive(
 }
 
 func newSignal() *Signal {
-	return NewSignal(context.Background(), nil, nil)
+	return NewSignal(context.Background(), nil, nil, 128)
 }
 
 /*

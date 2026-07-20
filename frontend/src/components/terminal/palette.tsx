@@ -1,11 +1,9 @@
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { appStore } from "#/collections/app";
 import type { Instrument, Measurement } from "#/collections/types";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { paletteGroupVariant } from "#/components/terminal/badge-tone";
-import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
-import { getWorker } from "#/providers/websocket";
 import { Badge } from "@/components/ui/badge";
 
 const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
@@ -25,6 +23,54 @@ const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 	{ id: "cortex", label: "Cognitive tree", hint: "Reasoning graph" },
 	{ id: "allocation", label: "Allocation", hint: "Capital & exposure" },
 ];
+
+let lastInstrumentSymbols: string[] = [];
+let lastMeasuredSymbols: string[] = [];
+
+const asRows = <T,>(value: unknown): T[] =>
+	(Array.isArray(value) ? value : value != null ? [value] : []) as T[];
+
+const sameSymbols = (left: string[], right: string[]): boolean =>
+	left.length === right.length &&
+	left.every((symbol, index) => symbol === right[index]);
+
+/*
+paintPaletteInstruments discovers instrument symbols from the current DRAW batch.
+*/
+export const paintPaletteInstruments = (
+	value: unknown,
+	_focusSymbol: string,
+) => {
+	const next = asRows<Instrument>(value)
+		.map((instrument) => instrument.symbol)
+		.sort();
+
+	if (sameSymbols(lastInstrumentSymbols, next)) {
+		return;
+	}
+
+	lastInstrumentSymbols = next;
+};
+
+/*
+paintPaletteMeasurements discovers measured symbols from the current DRAW batch.
+*/
+export const paintPaletteMeasurements = (
+	value: unknown,
+	_focusSymbol: string,
+) => {
+	const next = [
+		...new Set(
+			asRows<Measurement>(value).map((measurement) => measurement.symbol),
+		),
+	].sort();
+
+	if (sameSymbols(lastMeasuredSymbols, next)) {
+		return;
+	}
+
+	lastMeasuredSymbols = next;
+};
 
 const SearchIcon = () => (
 	<svg
@@ -100,6 +146,10 @@ type PaletteCommand = {
 	active: boolean;
 };
 
+/*
+CommandPalette is the static jump shell. DRAW discovers symbols via
+paintPaletteInstruments and paintPaletteMeasurements.
+*/
 export const CommandPalette = ({
 	activeSurface,
 	onRun,
@@ -109,36 +159,8 @@ export const CommandPalette = ({
 }) => {
 	const app = useSelector(appStore, (state) => state);
 	const terminal = useSelector(terminalStore, (state) => state);
-	const online = useSelector(appStore, (state) => state.online);
-	const [instrumentSymbols, setInstrumentSymbols] = useState<string[]>([]);
-	const [measuredSymbols, setMeasuredSymbols] = useState<string[]>([]);
 	const { closePalette, setPaletteQuery } = terminalStore.actions;
 	const inputRef = useRef<HTMLInputElement | null>(null);
-
-	useDirectStorePaint(
-		getWorker(),
-		[
-			{ store: "instruments", key: "" },
-			{ store: "measurements", key: "" },
-		],
-		(buffers) => {
-			setInstrumentSymbols(
-				((buffers["instruments:"] ?? []) as Instrument[])
-					.map((instrument) => instrument.symbol)
-					.sort(),
-			);
-			setMeasuredSymbols(
-				[
-					...new Set(
-						((buffers["measurements:"] ?? []) as Measurement[]).map(
-							(measurement) => measurement.symbol,
-						),
-					),
-				].sort(),
-			);
-		},
-		[online],
-	);
 
 	useEffect(() => {
 		if (!terminal.paletteOpen) {
@@ -153,7 +175,7 @@ export const CommandPalette = ({
 	}
 
 	const symbolUniverse = [
-		...new Set([...instrumentSymbols, ...measuredSymbols]),
+		...new Set([...lastInstrumentSymbols, ...lastMeasuredSymbols]),
 	].sort();
 
 	const commands: PaletteCommand[] = [
@@ -268,7 +290,11 @@ export const CommandPalette = ({
 										key={command.key}
 										type="button"
 										onClick={() =>
-											onRun(command.surface, command.source, command.symbol)
+											onRun(
+												command.surface,
+												command.source,
+												command.symbol,
+											)
 										}
 										className="flex cursor-pointer items-center gap-2.5 rounded-[4px] border px-3 py-2.5 text-left hover:bg-(--raised)"
 										style={{

@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/physics"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -15,14 +15,14 @@ Book owns fluid book measurement so order-book dynamics stay separate from
 signal orchestration and downstream interpretation.
 */
 type Book struct {
-	registry  *Registry
-	fluidflow *equation.Fluidflow
+	registry *Registry
+	flow     *physics.Flow
 }
 
 func NewBook(registry *Registry) *Book {
 	return &Book{
-		registry:  registry,
-		fluidflow: equation.NewFluidflow(),
+		registry: registry,
+		flow:     physics.NewFlow(),
 	}
 }
 
@@ -105,7 +105,7 @@ func (book *Book) measurementsFromReading(
 	reading fluidReading,
 	eventAt time.Time,
 ) ([]*types.Measurement, error) {
-	output, err := book.fluidflow.Measure(book.fluidflowInput(reading))
+	output, err := book.flow.Measure(book.flowInput(reading))
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
@@ -179,10 +179,10 @@ func (book *Book) measurementsFromReading(
 }
 
 /*
-fluidflowInput maps empirical book dynamics and their per-symbol baselines into
+flowInput maps empirical book dynamics and their per-symbol baselines into
 dimensionless fluid-state evidence.
 */
-func (book *Book) fluidflowInput(reading fluidReading) equation.FluidflowInput {
+func (book *Book) flowInput(reading fluidReading) physics.FlowInput {
 	divergence := math.Abs(reading.divergence)
 	velocityCurvature := math.Abs(reading.velocityCurvature)
 	turbulence := math.Abs(reading.turbulence)
@@ -199,7 +199,7 @@ func (book *Book) fluidflowInput(reading fluidReading) equation.FluidflowInput {
 		0.5, reading.dynamics.turbulenceHistory, turbulence,
 	)
 
-	return equation.FluidflowInput{
+	return physics.FlowInput{
 		Reynolds:           book.finitePositive(reading.reynolds),
 		Divergence:         book.finitePositive(divergence),
 		Viscosity:          book.finitePositive(reading.viscosity),

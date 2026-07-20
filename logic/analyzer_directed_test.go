@@ -69,6 +69,36 @@ func TestRelateLeadLag(t *testing.T) {
 			So(lags, ShouldEqual, 1)
 		})
 	})
+
+	Convey("Given a follower with no signed lag direction", t, func() {
+		analyzer := &Analyzer{}
+		thesis := types.NewThesis(nil, nil)
+		at := time.Unix(200, 0)
+		anchorGraph := types.NewGraph("BTC/USD")
+		addLeadLagStrength(anchorGraph, "BTC/USD", at)
+		thesis.Graphs.Store("BTC/USD", anchorGraph)
+
+		followerGraph := types.NewGraph("ETH/USD")
+		zero := 0.0
+		So(followerGraph.AddNode(&types.Measurement{
+			Source:     types.SourceLeadLag,
+			Stream:     types.LeadLag,
+			Metric:     types.MetricSignedLagDirection,
+			Symbol:     "ETH/USD",
+			Peer:       "BTC/USD",
+			At:         at,
+			Unit:       types.UnitDimensionless,
+			Normalized: &zero,
+			Validity:   types.MeasurementValidity{State: types.ValidityValid},
+		}), ShouldBeNil)
+		thesis.Graphs.Store("ETH/USD", followerGraph)
+
+		analyzer.relateLeadLag(thesis)
+
+		Convey("Then no lead or lag relationship is invented", func() {
+			So(followerGraph.Edges(), ShouldBeEmpty)
+		})
+	})
 }
 
 func TestRelateCausal(t *testing.T) {

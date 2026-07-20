@@ -1,15 +1,10 @@
-import { useSelector } from "@tanstack/react-store";
-import { useRef } from "react";
-import { appStore } from "#/collections/app";
-import { measurementsForSource } from "#/collections/measurements";
-import type { Measurement } from "#/collections/types";
+import { createRef } from "react";
+import type { Measurement } from "#/types/measurement";
 import { backendMeasurementSources } from "#/components/terminal/measurement-sources";
 import {
 	latestByMetric,
 	percentOf,
 } from "#/components/terminal/measurement-view";
-import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
-import { getWorker } from "#/providers/websocket";
 import { Flex } from "@/components/ui/flex";
 import { Panel } from "@/components/ui/panel";
 
@@ -39,7 +34,7 @@ export const regimeAxes = (
 		const symbolRows = measurements.filter((row) => row.symbol === symbol);
 		const turbulence = available.has("fluid")
 			? latestByMetric(
-					measurementsForSource(symbolRows, "fluid"),
+					symbolRows.filter((row) => row.source === "fluid"),
 					"turbulent_score",
 				)
 			: undefined;
@@ -50,7 +45,10 @@ export const regimeAxes = (
 		}
 
 		const trend = available.has("pumpdump")
-			? latestByMetric(measurementsForSource(symbolRows, "pumpdump"), "trend")
+			? latestByMetric(
+					symbolRows.filter((row) => row.source === "pumpdump"),
+					"trend",
+				)
 			: undefined;
 
 		if (trend !== undefined && trend.validity.state !== "invalid") {
@@ -62,7 +60,7 @@ export const regimeAxes = (
 			continue;
 		}
 
-		const flow = measurementsForSource(symbolRows, "cvd");
+		const flow = symbolRows.filter((row) => row.source === "cvd");
 		const net = latestByMetric(flow, "net");
 		const netFraction = latestByMetric(flow, "net_fraction");
 		const balance = latestByMetric(flow, "balance");
@@ -111,101 +109,96 @@ const RADAR_UNITS: Array<[number, number]> = [
 	[-0.951, -0.309],
 ];
 
+const radarFillRef = createRef<SVGPolygonElement>();
+const axisLabelRefs = RADAR_UNITS.map(() => createRef<SVGTextElement>());
+
 /*
-RadarPanel paints the five-axis market regime directly from typed measurement
-snapshots so the right rail stays off the React render path.
+paintRegimeRadar paints the five-axis market regime from the current DRAW
+measurements batch into the RadarPanel shell.
 */
-export const RadarPanel = ({ sources }: { sources?: string[] }) => {
-	const radarFillRef = useRef<SVGPolygonElement>(null);
-	const axisLabelRefs = useRef<Array<SVGTextElement | null>>([]);
-	const online = useSelector(appStore, (state) => state.online);
+export const paintRegimeRadar = (value: unknown, _focusSymbol: string) => {
+	const measurements = (
+		Array.isArray(value) ? value : value != null ? [value] : []
+	) as Measurement[];
+	const candidates = backendMeasurementSources(measurements);
+	const axes = regimeAxes(measurements, candidates);
+	const points = RADAR_UNITS.map(
+		([x, y], index) =>
+			`${110 + x * 84 * (axes[index]?.value ?? 0)},${
+				105 + y * 84 * (axes[index]?.value ?? 0)
+			}`,
+	).join(" ");
 
-	useDirectStorePaint(
-		getWorker(),
-		[{ store: "measurements", key: "" }],
-		(buffers) => {
-			const measurements = (buffers["measurements:"] ?? []) as Measurement[];
-			const candidates = sources ?? backendMeasurementSources(measurements);
-			const axes = regimeAxes(measurements, candidates);
-			const points = RADAR_UNITS.map(
-				([x, y], index) =>
-					`${110 + x * 84 * (axes[index]?.value ?? 0)},${
-						105 + y * 84 * (axes[index]?.value ?? 0)
-					}`,
-			).join(" ");
+	if (radarFillRef.current !== null) {
+		radarFillRef.current.setAttribute("points", points);
+	}
 
-			if (radarFillRef.current !== null) {
-				radarFillRef.current.setAttribute("points", points);
-			}
+	for (const [index, [x, y]] of RADAR_UNITS.entries()) {
+		const label = axisLabelRefs[index]?.current;
 
-			for (const [index, [x, y]] of RADAR_UNITS.entries()) {
-				const label = axisLabelRefs.current[index];
+		if (label === null || label === undefined) {
+			continue;
+		}
 
-				if (label === null || label === undefined) {
-					continue;
-				}
-
-				label.textContent = axes[index]?.label ?? "—";
-				label.setAttribute("x", String(110 + x * 98));
-				label.setAttribute("y", String(105 + y * 98));
-			}
-		},
-		[online, sources],
-	);
-
-	return (
-		<Panel size="lg">
-			<Flex className="mb-2 font-semibold text-(--f1) text-xs">Regime radar</Flex>
-			<Flex className="mb-2 font-mono text-[9.5px] text-(--f4)">
-				cross-section mean · market
-			</Flex>
-			<svg viewBox="0 0 220 210" className="block w-full">
-				<title>Regime radar</title>
-				<polygon
-					points="110,21 190,79 159,173 61,173 30,79"
-					fill="none"
-					stroke="#3a342b"
-				/>
-				<polygon
-					points="110,49 163,87 142,154 78,154 57,87"
-					fill="none"
-					stroke="#2b251e"
-				/>
-				<polygon
-					points="110,77 137,94 126,134 94,134 83,94"
-					fill="none"
-					stroke="#2b251e"
-				/>
-				{RADAR_UNITS.map(([x, y]) => (
-					<line
-						key={`${x}:${y}`}
-						x1="110"
-						y1="105"
-						x2={110 + x * 84}
-						y2={105 + y * 84}
-						stroke="#2b251e"
-					/>
-				))}
-				<polygon
-					ref={radarFillRef}
-					fill="rgba(232,163,61,0.22)"
-					stroke="#e8a33d"
-					strokeWidth="1.6"
-				/>
-				{RADAR_UNITS.map(([x, y], index) => (
-					<text
-						key={`${x}:${y}`}
-						ref={(element) => {
-							axisLabelRefs.current[index] = element;
-						}}
-						x={110 + x * 98}
-						y={105 + y * 98}
-						textAnchor="middle"
-						fontSize="9"
-						fill="#938a7e"
-					/>
-				))}
-			</svg>
-		</Panel>
-	);
+		label.textContent = axes[index]?.label ?? "—";
+		label.setAttribute("x", String(110 + x * 98));
+		label.setAttribute("y", String(105 + y * 98));
+	}
 };
+
+/*
+RadarPanel is the static regime-radar shell. DRAW paints via paintRegimeRadar.
+*/
+export const RadarPanel = () => (
+	<Panel size="lg">
+		<Flex className="mb-2 font-semibold text-(--f1) text-xs">Regime radar</Flex>
+		<Flex className="mb-2 font-mono text-[9.5px] text-(--f4)">
+			cross-section mean · market
+		</Flex>
+		<svg viewBox="0 0 220 210" className="block w-full">
+			<title>Regime radar</title>
+			<polygon
+				points="110,21 190,79 159,173 61,173 30,79"
+				fill="none"
+				stroke="#3a342b"
+			/>
+			<polygon
+				points="110,49 163,87 142,154 78,154 57,87"
+				fill="none"
+				stroke="#2b251e"
+			/>
+			<polygon
+				points="110,77 137,94 126,134 94,134 83,94"
+				fill="none"
+				stroke="#2b251e"
+			/>
+			{RADAR_UNITS.map(([x, y]) => (
+				<line
+					key={`${x}:${y}`}
+					x1="110"
+					y1="105"
+					x2={110 + x * 84}
+					y2={105 + y * 84}
+					stroke="#2b251e"
+				/>
+			))}
+			<polygon
+				ref={radarFillRef}
+				fill="rgba(232,163,61,0.22)"
+				stroke="#e8a33d"
+				strokeWidth="1.6"
+			/>
+			{RADAR_UNITS.map(([x, y], index) => (
+				<text
+					key={`${x}:${y}`}
+					ref={axisLabelRefs[index]}
+					x={110 + x * 98}
+					y={105 + y * 98}
+					textAnchor="middle"
+					fontSize="9"
+					fill="#938a7e"
+				/>
+			))}
+		</svg>
+	</Panel>
+);

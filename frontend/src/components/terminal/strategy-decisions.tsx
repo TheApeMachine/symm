@@ -1,17 +1,28 @@
-import { useSelector } from "@tanstack/react-store";
-import { useRef, useState } from "react";
-import { appStore } from "#/collections/app";
+import { createRef } from "react";
 import type { StrategyDecision } from "#/types/thesis";
+import { readDecisionsScopeSymbol } from "#/components/terminal/decision-side";
 import { fixed } from "#/components/terminal/decision-format";
 import { TerminalSection } from "#/components/terminal/panels";
-import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
-import { getWorker } from "#/providers/websocket";
 import { badgeVariants } from "@/components/ui/badge";
 import { Panel } from "@/components/ui/panel";
 
-const sameKeys = (left: string[], right: string[]): boolean =>
-	left.length === right.length &&
-	left.every((key, index) => key === right[index]);
+const strategyRootRef = createRef<HTMLDivElement>();
+const strategyListRef = createRef<HTMLDivElement>();
+
+type StrategyRowParts = {
+	card: HTMLElement;
+	symbol: HTMLElement;
+	action: HTMLElement;
+	utility: HTMLElement;
+	reason: HTMLElement;
+	notional: HTMLElement;
+	confidence: HTMLElement;
+	expected: HTMLElement;
+	classEl: HTMLElement;
+	alts: HTMLElement;
+};
+
+const strategyRows = new Map<string, StrategyRowParts>();
 
 const decisionKey = (decision: StrategyDecision): string =>
 	`${decision.symbol}:${decision.action}:${decision.at}`;
@@ -43,23 +54,143 @@ const actionVariant = (
 	return "info";
 };
 
-/*
-paintStrategyDecisions writes utility and attribution into mounted decision
-shells so websocket cadence never re-renders StrategyDecisionRows.
-*/
-export const paintStrategyDecisions = (
-	root: HTMLElement | null,
+const bindStrategyRow = (key: string): StrategyRowParts => {
+	const card = document.createElement("div");
+	card.dataset.strategyRow = key;
+	card.className =
+		"border border-(--line) bg-(--surface) rounded-[3px] px-3 py-2.5";
+
+	const head = document.createElement("div");
+	head.className = "flex items-center justify-between gap-2";
+
+	const symbol = document.createElement("div");
+	symbol.dataset.strategy = "symbol";
+	symbol.className = "font-mono font-semibold text-[12px] text-(--f1)";
+
+	const action = document.createElement("span");
+	action.dataset.strategy = "action";
+	head.append(symbol, action);
+
+	const utility = document.createElement("div");
+	utility.dataset.strategy = "utility";
+	utility.className = "mt-1 font-mono text-[10px] text-(--f3)";
+
+	const reason = document.createElement("div");
+	reason.dataset.strategy = "reason";
+	reason.className = "mt-1 font-mono text-[9.5px] text-(--f4)";
+
+	const grid = document.createElement("div");
+	grid.className =
+		"mt-2 grid grid-cols-2 gap-1.5 font-mono text-[9.5px]";
+
+	const notionalLabel = document.createElement("div");
+	notionalLabel.className = "text-(--f4)";
+	notionalLabel.textContent = "notional";
+
+	const notional = document.createElement("div");
+	notional.dataset.strategy = "notional";
+	notional.className = "text-right text-(--f2)";
+
+	const confidenceLabel = document.createElement("div");
+	confidenceLabel.className = "text-(--f4)";
+	confidenceLabel.textContent = "confidence";
+
+	const confidence = document.createElement("div");
+	confidence.dataset.strategy = "confidence";
+	confidence.className = "text-right text-(--f2)";
+
+	const expectedLabel = document.createElement("div");
+	expectedLabel.className = "text-(--f4)";
+	expectedLabel.textContent = "expected return";
+
+	const expected = document.createElement("div");
+	expected.dataset.strategy = "expected";
+	expected.className = "text-right text-(--f2)";
+
+	const classLabel = document.createElement("div");
+	classLabel.className = "text-(--f4)";
+	classLabel.textContent = "class";
+
+	const classEl = document.createElement("div");
+	classEl.dataset.strategy = "class";
+	classEl.className = "text-right text-(--f2)";
+
+	grid.append(
+		notionalLabel,
+		notional,
+		confidenceLabel,
+		confidence,
+		expectedLabel,
+		expected,
+		classLabel,
+		classEl,
+	);
+
+	const alts = document.createElement("div");
+	alts.dataset.strategy = "alts";
+	alts.className =
+		"mt-2 border-(--line) border-t pt-2 font-mono text-[9px] text-(--f4)";
+	alts.style.display = "none";
+
+	card.append(head, utility, reason, grid, alts);
+
+	return {
+		card,
+		symbol,
+		action,
+		utility,
+		reason,
+		notional,
+		confidence,
+		expected,
+		classEl,
+		alts,
+	};
+};
+
+const paintStrategyRow = (
+	parts: StrategyRowParts,
+	decision: StrategyDecision,
+): void => {
+	setText(parts.symbol, decision.symbol);
+
+	parts.action.textContent = decision.action;
+	parts.action.className = badgeVariants({
+		variant: actionVariant(decision.action),
+		size: "xs",
+	});
+
+	setText(
+		parts.utility,
+		`utility ${fixed(decision.utility)} · ${decision.cause}`,
+	);
+	setText(parts.reason, decision.reason);
+	setText(parts.notional, fixed(decision.proposedNotional));
+	setText(parts.confidence, fixed(decision.confidence));
+	setText(parts.expected, fixed(decision.expectedReturn));
+	setText(parts.classEl, decision.allocationClass);
+
+	const alts = alternativeEntries(decision);
+	parts.alts.style.display = alts === "" ? "none" : "";
+	parts.alts.textContent = alts === "" ? "" : `alt · ${alts}`;
+};
+
+const writeStrategyDecisions = (
 	decisions: StrategyDecision[],
 	symbol: string | undefined,
 ): void => {
-	if (root === null) {
+	const root = strategyRootRef.current;
+	const list = strategyListRef.current;
+
+	if (root === null || list === null) {
 		return;
 	}
 
 	const rows = symbol
 		? decisions.filter((decision) => decision.symbol === symbol)
 		: decisions;
-	const keys = new Set(rows.map((decision) => decisionKey(decision)));
+	const nextKeys = new Set(rows.map((decision) => decisionKey(decision)));
+	const ordered: HTMLElement[] = [];
 
 	setText(
 		root.querySelector("[data-strategy='meta']"),
@@ -72,99 +203,65 @@ export const paintStrategyDecisions = (
 		empty.style.display = rows.length === 0 ? "" : "none";
 	}
 
-	for (const node of root.querySelectorAll("[data-strategy-row]")) {
-		if (!(node instanceof HTMLElement)) {
-			continue;
+	for (const decision of rows) {
+		const key = decisionKey(decision);
+		let parts = strategyRows.get(key);
+
+		if (parts === undefined) {
+			parts = bindStrategyRow(key);
+			strategyRows.set(key, parts);
 		}
 
-		const key = node.getAttribute("data-strategy-row") ?? "";
-		node.style.display = keys.has(key) ? "" : "none";
+		paintStrategyRow(parts, decision);
+		ordered.push(parts.card);
 	}
 
-	for (const decision of rows) {
-		const row = root.querySelector(
-			`[data-strategy-row="${CSS.escape(decisionKey(decision))}"]`,
-		);
-
-		if (!(row instanceof HTMLElement)) {
+	for (const [key, parts] of strategyRows) {
+		if (nextKeys.has(key)) {
 			continue;
 		}
 
-		setText(row.querySelector("[data-strategy='symbol']"), decision.symbol);
+		parts.card.remove();
+		strategyRows.delete(key);
+	}
 
-		const action = row.querySelector("[data-strategy='action']");
+	const orderMatches =
+		ordered.length === list.children.length &&
+		ordered.every((card, index) => list.children[index] === card);
 
-		if (action instanceof HTMLElement) {
-			action.textContent = decision.action;
-			action.className = badgeVariants({
-				variant: actionVariant(decision.action),
-				size: "xs",
-			});
-		}
-
-		setText(
-			row.querySelector("[data-strategy='utility']"),
-			`utility ${fixed(decision.utility)} · ${decision.cause}`,
-		);
-		setText(row.querySelector("[data-strategy='reason']"), decision.reason);
-		setText(
-			row.querySelector("[data-strategy='notional']"),
-			fixed(decision.proposedNotional),
-		);
-		setText(
-			row.querySelector("[data-strategy='confidence']"),
-			fixed(decision.confidence),
-		);
-		setText(
-			row.querySelector("[data-strategy='expected']"),
-			fixed(decision.expectedReturn),
-		);
-		setText(
-			row.querySelector("[data-strategy='class']"),
-			decision.allocationClass,
-		);
-
-		const alts = alternativeEntries(decision);
-		const altNode = row.querySelector("[data-strategy='alts']");
-
-		if (altNode instanceof HTMLElement) {
-			altNode.style.display = alts === "" ? "none" : "";
-			altNode.textContent = alts === "" ? "" : `alt · ${alts}`;
-		}
+	if (!orderMatches) {
+		list.replaceChildren(...ordered);
 	}
 };
 
 /*
-StrategyDecisionRows mounts decision shells by identity and paints live utility
-fields from the decisions store without React reconciliation each tick.
+paintStrategyDecisions paints the current DRAW decisions batch into the static
+StrategyDecisionRows shell, creating row shells only when identities change.
 */
-export const StrategyDecisionRows = ({ symbol }: { symbol?: string }) => {
-	const online = useSelector(appStore, (state) => state.online);
-	const rootRef = useRef<HTMLDivElement>(null);
-	const [keys, setKeys] = useState<string[]>([]);
+export const paintStrategyDecisions = (
+	value: unknown,
+	focusSymbol: string,
+) => {
+	const decisions = (
+		Array.isArray(value) ? value : value != null ? [value] : []
+	) as StrategyDecision[];
+	const scope = readDecisionsScopeSymbol();
+	const symbol =
+		scope !== undefined && scope !== ""
+			? scope
+			: focusSymbol === ""
+				? undefined
+				: focusSymbol;
 
-	useDirectStorePaint(
-		getWorker(),
-		[{ store: "decisions", key: "" }],
-		(buffers) => {
-			const decisions = (buffers["decisions:"] ?? []) as StrategyDecision[];
-			const scoped = symbol
-				? decisions.filter((decision) => decision.symbol === symbol)
-				: decisions;
-			const nextKeys = [
-				...new Set(scoped.map((decision) => decisionKey(decision))),
-			].sort();
+	writeStrategyDecisions(decisions, symbol);
+};
 
-			setKeys((previous) =>
-				sameKeys(previous, nextKeys) ? previous : nextKeys,
-			);
-			paintStrategyDecisions(rootRef.current, decisions, symbol);
-		},
-		[online, symbol],
-	);
-
-	return (
-		<div ref={rootRef}>
+/*
+StrategyDecisionRows is the static strategy-intent shell. DRAW paints live fields
+via paintStrategyDecisions without React reconciliation each tick.
+*/
+export const StrategyDecisionRows = () => (
+	<div ref={strategyRootRef}>
 			<TerminalSection
 				title="Strategy intent"
 				meta={<span data-strategy="meta">0 decisions</span>}
@@ -179,63 +276,11 @@ export const StrategyDecisionRows = ({ symbol }: { symbol?: string }) => {
 					>
 						waiting for strategy decision frames
 					</Panel>
-					<div className="flex flex-col gap-2">
-						{keys.map((key) => (
-							<Panel
-								key={key}
-								variant="surface"
-								size="bare"
-								data-strategy-row={key}
-								className="px-3 py-2.5"
-								style={{ display: "none" }}
-							>
-								<div className="flex items-center justify-between gap-2">
-									<div
-										data-strategy="symbol"
-										className="font-mono font-semibold text-[12px] text-(--f1)"
-									/>
-									<span data-strategy="action" />
-								</div>
-								<div
-									data-strategy="utility"
-									className="mt-1 font-mono text-[10px] text-(--f3)"
-								/>
-								<div
-									data-strategy="reason"
-									className="mt-1 font-mono text-[9.5px] text-(--f4)"
-								/>
-								<div className="mt-2 grid grid-cols-2 gap-1.5 font-mono text-[9.5px]">
-									<div className="text-(--f4)">notional</div>
-									<div
-										data-strategy="notional"
-										className="text-right text-(--f2)"
-									/>
-									<div className="text-(--f4)">confidence</div>
-									<div
-										data-strategy="confidence"
-										className="text-right text-(--f2)"
-									/>
-									<div className="text-(--f4)">expected return</div>
-									<div
-										data-strategy="expected"
-										className="text-right text-(--f2)"
-									/>
-									<div className="text-(--f4)">class</div>
-									<div
-										data-strategy="class"
-										className="text-right text-(--f2)"
-									/>
-								</div>
-								<div
-									data-strategy="alts"
-									className="mt-2 border-(--line) border-t pt-2 font-mono text-[9px] text-(--f4)"
-									style={{ display: "none" }}
-								/>
-							</Panel>
-						))}
-					</div>
+					<div
+						ref={strategyListRef}
+						className="flex flex-col gap-2"
+					/>
 				</div>
 			</TerminalSection>
 		</div>
-	);
-};
+);

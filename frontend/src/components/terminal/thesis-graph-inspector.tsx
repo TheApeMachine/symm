@@ -1,24 +1,11 @@
 import {
 	type GraphHit,
+	measurementNumber,
+	measurementString,
 	nodeKind,
 	nodeLabel,
 } from "#/components/terminal/evidence-graph-viz";
 import type { GraphNodeWire } from "#/types/thesis";
-
-const str = (measurement: Record<string, unknown>, field: string): string => {
-	const value = measurement[field];
-
-	return typeof value === "string" ? value : "";
-};
-
-const num = (
-	measurement: Record<string, unknown>,
-	field: string,
-): number | null => {
-	const value = measurement[field];
-
-	return typeof value === "number" && Number.isFinite(value) ? value : null;
-};
 
 const Row = ({ label, value }: { label: string; value: string }) => (
 	<div className="flex justify-between gap-3">
@@ -32,8 +19,8 @@ const validityLabel = (measurement: Record<string, unknown>): string => {
 
 	if (typeof validity === "object" && validity !== null) {
 		const record = validity as Record<string, unknown>;
-		const state = str(record, "state");
-		const reason = str(record, "reason");
+		const state = measurementString(record, "state");
+		const reason = measurementString(record, "reason");
 
 		return reason ? `${state} — ${reason}` : state;
 	}
@@ -46,8 +33,8 @@ const uncertaintyLabel = (measurement: Record<string, unknown>): string => {
 
 	if (typeof uncertainty === "object" && uncertainty !== null) {
 		const record = uncertainty as Record<string, unknown>;
-		const lower = num(record, "lower");
-		const upper = num(record, "upper");
+		const lower = measurementNumber(record, "lower");
+		const upper = measurementNumber(record, "upper");
 
 		if (lower !== null && upper !== null) {
 			return `[${lower.toFixed(4)}, ${upper.toFixed(4)}]`;
@@ -60,11 +47,11 @@ const uncertaintyLabel = (measurement: Record<string, unknown>): string => {
 const NodeDetail = ({ node }: { node: GraphNodeWire }) => {
 	const measurement = node.measurement;
 	const kind = nodeKind(node);
-	const normalized = num(measurement, "normalized");
-	const raw = num(measurement, "raw");
-	const maturity = num(measurement, "maturity");
-	const at = str(measurement, "at");
-	const peer = str(measurement, "peer");
+	const normalized = measurementNumber(measurement, "normalized");
+	const raw = measurementNumber(measurement, "raw");
+	const maturity = measurementNumber(measurement, "maturity");
+	const at = measurementString(measurement, "at");
+	const peer = measurementString(measurement, "peer");
 	const validity = validityLabel(measurement);
 	const uncertainty = uncertaintyLabel(measurement);
 
@@ -76,12 +63,12 @@ const NodeDetail = ({ node }: { node: GraphNodeWire }) => {
 			</div>
 			{kind === "measurement" ? (
 				<>
-					<Row label="source" value={str(measurement, "source")} />
-					{str(measurement, "subject") && (
-						<Row label="subject" value={str(measurement, "subject")} />
+					<Row label="source" value={measurementString(measurement, "source")} />
+					{measurementString(measurement, "subject") && (
+						<Row label="subject" value={measurementString(measurement, "subject")} />
 					)}
-					{str(measurement, "side") && (
-						<Row label="side" value={str(measurement, "side")} />
+					{measurementString(measurement, "side") && (
+						<Row label="side" value={measurementString(measurement, "side")} />
 					)}
 					{raw !== null && <Row label="raw" value={raw.toFixed(4)} />}
 					{normalized !== null && (

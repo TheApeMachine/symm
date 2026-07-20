@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -59,6 +60,34 @@ func TestThesisMarshalJSON(t *testing.T) {
 			restoredGraph, graphFound := restored.Graphs.Load("BTC/USD")
 			So(graphFound, ShouldBeTrue)
 			So(restoredGraph.(*Graph).Nodes(), ShouldHaveLength, 1)
+		})
+	})
+}
+
+/*
+TestThesisUnmarshalRejectsDuplicateGraphNodes proves checkpoint recovery
+propagates graph identity conflicts instead of accepting ambiguous edge targets.
+*/
+func TestThesisUnmarshalRejectsDuplicateGraphNodes(t *testing.T) {
+	Convey("Given a checkpoint with duplicate graph node keys", t, func() {
+		payload, err := json.Marshal(map[string]any{
+			"graphs": map[string]GraphFrame{
+				"BTC/USD": {
+					Symbol: "BTC/USD",
+					Nodes: []GraphNodeWire{
+						{Key: "duplicate", Measurement: Measurement{Symbol: "BTC/USD"}},
+						{Key: "duplicate", Measurement: Measurement{Symbol: "BTC/USD"}},
+					},
+				},
+			},
+		})
+		So(err, ShouldBeNil)
+
+		var thesis Thesis
+		err = sonic.Unmarshal(payload, &thesis)
+
+		Convey("Then recovery reports the conflicting identity", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

@@ -30,25 +30,25 @@ const sampleDecision = (
 	utility: 0.42,
 	alternatives: {},
 	allocationClass: "core",
-	proposedNotional: 100,
-	proposedQuantity: 0.01,
-	referencePrice: 61000,
+	proposedNotional: "100",
+	proposedQuantity: "0.01",
+	referencePrice: "61000",
 	validThroughEpoch: 3,
 	forecastSource: "resonance",
 	forecastModel: "online",
 	forecastEpoch: 2,
 	calibrationCount: 4,
-	expectedReturn: 0.01,
-	expectedFees: 0.0002,
-	expectedSpread: 0.0001,
-	expectedImpact: 0.0003,
+	expectedReturn: "0.01",
+	expectedFees: "0.0002",
+	expectedSpread: "0.0001",
+	expectedImpact: "0.0003",
 	adverseSelection: 0.0001,
 	uncertainty: 0.05,
 	confidence: 0.8,
 	opportunityMargin: 0.01,
 	cognitiveLead: 0.2,
 	basinConfidence: 0.6,
-	availableCapital: 1000,
+	availableCapital: "1000",
 	openPositions: 1,
 	slotCapacity: 4,
 	cause: "edge_clear",
@@ -63,7 +63,7 @@ describe("decisionFraction", () => {
 
 	it("returns null for non-finite capital instead of throwing", () => {
 		expect(
-			decisionFraction(sampleDecision({ availableCapital: Number.NaN })),
+			decisionFraction(sampleDecision({ availableCapital: "NaN" })),
 		).toBeNull();
 	});
 
@@ -71,8 +71,8 @@ describe("decisionFraction", () => {
 		expect(
 			decisionFraction(
 				sampleDecision({
-					availableCapital: "1000.00" as unknown as number,
-					proposedNotional: "100" as unknown as number,
+					availableCapital: "1000.00",
+					proposedNotional: "100",
 				}),
 			),
 		).toBeCloseTo(0.1);

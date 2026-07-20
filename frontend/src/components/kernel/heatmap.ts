@@ -37,19 +37,21 @@ export const buildHeatmapCells = (
 		bySymbol.set(measurement.symbol, rows);
 	}
 
-	return [...bySymbol.entries()].flatMap(([symbol, rows]) => {
-		const frame = latestByMetric(rows, headline);
+	return [...bySymbol.entries()]
+		.sort(([left], [right]) => left.localeCompare(right))
+		.flatMap(([symbol, rows]) => {
+			const frame = latestByMetric(rows, headline);
 
-		if (frame === undefined) {
-			return [];
-		}
+			if (frame === undefined) {
+				return [];
+			}
 
-		return [
-			{
-				symbol,
-				label: heatmapLabel(symbol),
-				value: percentOf(frame) / 100,
-			},
-		];
-	});
+			return [
+				{
+					symbol,
+					label: heatmapLabel(symbol),
+					value: percentOf(frame) / 100,
+				},
+			];
+		});
 };

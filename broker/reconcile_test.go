@@ -86,19 +86,36 @@ func TestDeskReconcilePending(t *testing.T) {
 		}
 
 		Convey("When the wire matches a resting exchange order", func() {
-			desk.ReconcilePending(pending, map[string]spot.Order{"open-1": {}})
+			unresolved := desk.ReconcilePending(
+				pending,
+				map[string]spot.Order{"open-1": {}},
+			)
 
 			Convey("Then the position is re-armed as pending without re-entry", func() {
+				So(unresolved, ShouldBeEmpty)
 				So(position.Pending(), ShouldBeTrue)
 				So(position.orderID, ShouldEqual, "open-1")
 			})
 		})
 
 		Convey("When no resting order matches the wire", func() {
-			desk.ReconcilePending(pending, map[string]spot.Order{})
+			unresolved := desk.ReconcilePending(pending, map[string]spot.Order{})
 
 			Convey("Then the stale intent is left for executions sync", func() {
+				So(unresolved, ShouldBeEmpty)
 				So(position.Pending(), ShouldBeFalse)
+			})
+		})
+
+		Convey("When a resting order has no adoptable position", func() {
+			positions.Delete("BTC/USD")
+			unresolved := desk.ReconcilePending(
+				pending,
+				map[string]spot.Order{"open-1": {}},
+			)
+
+			Convey("Then its order ID remains unresolved for recovery retry", func() {
+				So(unresolved, ShouldResemble, []string{"open-1"})
 			})
 		})
 	})

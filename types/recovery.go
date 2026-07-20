@@ -26,23 +26,55 @@ type Recovery struct {
 }
 
 /*
+recoveryHolding preserves Holding's Decimal fields for durable checkpoints.
+The ordinary Holding JSON projection intentionally serves browser display and
+must not define the precision of restart accounting.
+*/
+type recoveryHolding Holding
+
+/*
+MarshalJSON writes durable holdings through their native Decimal encoders while
+retaining the existing compact Recovery envelope.
+*/
+func (recovery Recovery) MarshalJSON() ([]byte, error) {
+	holdings := make(map[string]recoveryHolding, len(recovery.Holdings))
+
+	for symbol, holding := range recovery.Holdings {
+		holdings[symbol] = recoveryHolding(holding)
+	}
+
+	type recoveryWire struct {
+		Holdings      map[string]recoveryHolding  `json:"holdings"`
+		PendingOrders map[string]PendingOrderWire `json:"pendingOrders"`
+		Reservations  []ReservationWire           `json:"reservations"`
+		Tick          int64                       `json:"tick"`
+	}
+
+	return json.Marshal(recoveryWire{
+		Holdings:      holdings,
+		PendingOrders: recovery.PendingOrders,
+		Reservations:  recovery.Reservations,
+		Tick:          recovery.Tick,
+	})
+}
+
+/*
 PendingOrderWire records an outstanding broker intent for restart reconcile.
 */
 type PendingOrderWire struct {
-	Symbol        string  `json:"symbol"`
-	Side          string  `json:"side"`
-	OrderID       string  `json:"orderId,omitempty"`
-	Quantity      float64 `json:"quantity,omitempty"`
-	Intent        string  `json:"intent"`
-	ReservationID string  `json:"reservationId,omitempty"`
+	Symbol        string `json:"symbol"`
+	Side          string `json:"side"`
+	OrderID       string `json:"orderId,omitempty"`
+	Intent        string `json:"intent"`
+	ReservationID string `json:"reservationId,omitempty"`
 }
 
 /*
 ReservationWire is the durable form of a Balance Book claim.
 */
 type ReservationWire struct {
-	ID     string  `json:"id"`
-	Amount float64 `json:"amount"`
+	ID     string           `json:"id"`
+	Amount *decimal.Decimal `json:"amount"`
 }
 
 /*

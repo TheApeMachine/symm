@@ -258,7 +258,9 @@ func (registry *Level3Registry) PeekBook(
 
 		if !valid || live == nil {
 			registry.index.Delete(symbol)
-		} else {
+		}
+
+		if valid && live != nil {
 			return live.peekBook(symbol, fn)
 		}
 	}

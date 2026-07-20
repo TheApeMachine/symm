@@ -124,28 +124,38 @@ func (continuity Continuity) Score(
 	utility := hold
 	reason := "stoploss owns full exit; continuation holds"
 	alternatives := map[string]float64{"hold": hold}
-	quantity := 0.0
-	mark := holding.Mark.Float64()
-	qty := holding.Qty.Float64()
-	notional := mark * qty
+	quantity := decimal.NewFromInt64(0)
+	notional := continuity.notional(holding.Mark, holding.Qty)
 
-	if notional > forecast.SellCapacity && notional > 0 && forecast.SellCapacity > 0 {
-		fraction := forecast.SellCapacity / notional
+	if forecast.SellCapacity != nil && forecast.SellCapacity.Sign() > 0 &&
+		notional.Sign() > 0 && notional.Cmp(forecast.SellCapacity) > 0 {
+		quantity = continuity.price.DivFloor(
+			forecast.SellCapacity,
+			holding.Mark,
+			holding.Qty.GetScale(),
+		)
+		scale := max(
+			int64(decimal.DefaultScale),
+			quantity.GetScale(),
+			holding.Qty.GetScale(),
+		)
+		fraction := quantity.SetScale(scale).
+			Div(holding.Qty.SetScale(scale)).
+			Float64()
 		reduce := fraction*exit + (1-fraction)*hold
 		alternatives["reduce"] = reduce
 
 		if reduce > utility {
 			action = types.ActionReduce
 			utility = reduce
-			quantity = qty * fraction
 			reason = "visible bid capacity supports reduction but not complete exit"
 		}
 	}
 
-	proposedNotional := 0.0
+	proposedNotional := decimal.NewFromInt64(0)
 
 	if action == types.ActionReduce {
-		proposedNotional = mark * quantity
+		proposedNotional = continuity.notional(holding.Mark, quantity)
 	}
 
 	return types.Decision{
@@ -154,8 +164,8 @@ func (continuity Continuity) Score(
 		At:                forecast.At,
 		Utility:           utility,
 		Alternatives:      alternatives,
-		ProposedNotional:  decimal.NewFromFloat64(proposedNotional),
-		ProposedQuantity:  decimal.NewFromFloat64(quantity),
+		ProposedNotional:  proposedNotional,
+		ProposedQuantity:  quantity,
 		ExpectedReturn:    decimal.NewFromFloat64(forecast.ExpectedReturn),
 		ExpectedFees:      decimal.NewFromFloat64(fee),
 		ExpectedSpread:    decimal.NewFromFloat64(forecast.ExpectedSpread / 2),
@@ -163,13 +173,26 @@ func (continuity Continuity) Score(
 		AdverseSelection:  forecast.ExpectedAdverseSelection,
 		Uncertainty:       forecast.Uncertainty,
 		Confidence:        forecast.Confidence,
-		ReferencePrice:    decimal.NewFromFloat64(forecast.ReferencePrice),
+		ReferencePrice:    forecast.ReferencePrice.Copy(),
 		ValidThroughEpoch: forecast.ExpiresEpoch,
 		ForecastSource:    forecast.Source,
 		ForecastEpoch:     forecast.SourceEpoch,
 		Cause:             "continuation",
 		Reason:            reason,
 	}
+}
+
+/*
+notional multiplies a finite fixed-point price and quantity at their combined
+scale so fine quantity precision is not rounded to the price's coarser scale.
+Integer products retain one fractional place to avoid the SDK's incorrect
+scale-zero banker rounding.
+*/
+func (continuity Continuity) notional(
+	price *decimal.Decimal,
+	quantity *decimal.Decimal,
+) *decimal.Decimal {
+	return continuity.price.Mul(price, quantity)
 }
 
 /*

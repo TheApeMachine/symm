@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/stack"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/tests/conditions"
 	"github.com/theapemachine/symm/tests/mockapi"
 	"github.com/theapemachine/symm/types"
@@ -70,6 +71,8 @@ func TestBoot(t *testing.T) {
 
 		go func() {
 			instrumentSent := false
+			// ponytail: this mock Conn exposes no write notification, so the test
+			// intentionally polls; an event-driven write notification is the upgrade.
 			ticker := time.NewTicker(time.Millisecond)
 			defer ticker.Stop()
 
@@ -112,14 +115,23 @@ func TestBoot(t *testing.T) {
 			}
 		}()
 
+		channel := make(chan []byte, 64)
 		wired, err := stack.Boot(ctx, api, stack.Options{
+			Booter:  system.NewBooter(ctx, channel),
+			Channel: channel,
+			Thesis:  types.NewThesis(channel, nil),
 			Signals: func(
 				ctx context.Context,
 				api *websocket.API,
 				_ *broker.Instrument,
 				channel chan []byte,
 			) []types.Signal {
-				return []types.Signal{pumpdump.NewSignal(ctx, api, channel)}
+				return []types.Signal{pumpdump.NewSignal(
+					ctx,
+					api,
+					channel,
+					viper.GetInt("signals.feed_track_capacity"),
+				)}
 			},
 			Tree: tree,
 		})

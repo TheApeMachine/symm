@@ -260,9 +260,11 @@ func bookPayload(
 		"channel": "book",
 		"type":    typ,
 		"data": []map[string]any{{
-			"symbol":    symbol,
-			"bids":      bids,
-			"asks":      asks,
+			"symbol": symbol,
+			"bids":   bids,
+			"asks":   asks,
+			// ponytail: this sequence is an intentional fixture simplification;
+			// replace it with Kraken's real CRC checksum when book validation consumes it.
 			"checksum":  index + 1,
 			"timestamp": at,
 		}},

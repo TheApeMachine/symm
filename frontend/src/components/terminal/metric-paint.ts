@@ -137,23 +137,25 @@ export const paintMetricGrid = (
 		orderedRows.push(row);
 	}
 
-	for (const [key, row] of existing) {
-		if (!nextKeys.has(key)) {
-			row.remove();
+	for (const row of orderedRows) {
+		if (row.parentElement !== grid) {
+			grid.append(row);
 		}
 	}
 
-	const orderMatches =
-		orderedRows.length === grid.children.length &&
-		orderedRows.every((row, index) => grid.children[index] === row);
+	for (const [key, row] of existing) {
+		if (nextKeys.has(key)) {
+			continue;
+		}
 
-	if (!orderMatches) {
-		grid.replaceChildren(...orderedRows);
+		row.remove();
 	}
 };
 
 /*
-paintHeatmapGrid reconciles cross-section heatmap cells without React children.
+paintHeatmapGrid updates tiles in place. New symbols append; stale symbols
+remove. DOM order is never reshuffled on DRAW — batch order must not rebuild
+the grid.
 */
 export const paintHeatmapGrid = (
 	grid: HTMLElement,
@@ -170,7 +172,6 @@ export const paintHeatmapGrid = (
 	}
 
 	const nextSymbols = new Set<string>();
-	const orderedTiles: HTMLElement[] = [];
 
 	for (const cell of cells) {
 		nextSymbols.add(cell.symbol);
@@ -184,23 +185,24 @@ export const paintHeatmapGrid = (
 				"flex aspect-square cursor-pointer items-center justify-center rounded-[2px] font-mono text-[8px]";
 			tile.setAttribute("data-symbol", cell.symbol);
 			existing.set(cell.symbol, tile);
+			grid.append(tile);
 		}
 
-		tile.textContent = cell.label;
+		if (tile.textContent !== cell.label) {
+			tile.textContent = cell.label;
+		}
+
 		tile.title = `${cell.symbol} · ${percent}%`;
 		tile.style.background = colormapCss(cell.value);
 		tile.style.color = heatmapForeground(cell.value);
-		orderedTiles.push(tile);
 	}
 
 	for (const [symbol, tile] of existing) {
-		if (!nextSymbols.has(symbol)) {
-			tile.remove();
+		if (nextSymbols.has(symbol)) {
+			continue;
 		}
-	}
 
-	for (const tile of orderedTiles) {
-		grid.appendChild(tile);
+		tile.remove();
 	}
 };
 

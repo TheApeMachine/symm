@@ -4,11 +4,44 @@ import (
 	"math"
 	"time"
 
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/nomagique/algorithm/excitation"
+	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 )
 
 /*
-State is the typed physical readout produced after one Hawkes-driven GPU step.
+Particle is the dashboard view of one focused symbol observation after the
+shared Sensorium step. Cell coordinates preserve the established wire format.
+*/
+type Particle struct {
+	Role      string  `json:"role"`
+	CellX     float64 `json:"cell_x"`
+	CellY     float64 `json:"cell_y"`
+	CellZ     float64 `json:"cell_z"`
+	Phase     float64 `json:"phase"`
+	Omega     float64 `json:"omega"`
+	Amplitude float64 `json:"amplitude"`
+	Heat      float64 `json:"heat"`
+	VelX      float64 `json:"vel_x"`
+	VelY      float64 `json:"vel_y"`
+	VelZ      float64 `json:"vel_z"`
+	Speed     float64 `json:"speed"`
+}
+
+/*
+PhaseResponse is the strongest historical corpus response at one global phase
+rotation of the current resident wave. Similarity remains signed so destructive
+interference is not presented as affinity.
+*/
+type PhaseResponse struct {
+	Angle      float64   `json:"angle"`
+	Similarity float64   `json:"similarity"`
+	ObservedAt time.Time `json:"observedAt"`
+}
+
+/*
+State combines symbol-local market facts with a reading of the one shared
+physical field advanced by the complete observed universe.
 */
 type State struct {
 	Source           string            `json:"source"`
@@ -16,32 +49,86 @@ type State struct {
 	At               time.Time         `json:"at"`
 	Duration         time.Duration     `json:"duration"`
 	Epoch            uint64            `json:"epoch"`
-	ReferencePrice   float64           `json:"referencePrice"`
+	ReferencePrice   *decimal.Decimal  `json:"referencePrice"`
 	Spread           float64           `json:"spread"`
-	BuyCapacity      float64           `json:"buyCapacity"`
-	SellCapacity     float64           `json:"sellCapacity"`
+	BuyCapacity      *decimal.Decimal  `json:"buyCapacity"`
+	SellCapacity     *decimal.Decimal  `json:"sellCapacity"`
 	InvalidReason    string            `json:"invalidReason,omitempty"`
 	StressAnisotropy float64           `json:"stressAnisotropy"`
 	Subdivisions     uint32            `json:"subdivisions"`
 	BuyIntensity     float64           `json:"buyIntensity"`
 	SellIntensity    float64           `json:"sellIntensity"`
 	SpectralRadius   float64           `json:"spectralRadius"`
-	Reading          pmanifold.Reading `json:"reading"`
+	Reading          pfluid.Reading    `json:"reading"`
 	OscillatorCount  int               `json:"oscillatorCount"`
-	// Replay marks an unchanged excitation epoch. The field may still paint;
-	// analyzer does not invent a fresh forecast from a prior calibration.
-	Replay       bool                 `json:"replay,omitempty"`
-	Grid         pmanifold.Grid       `json:"grid,omitempty"`
-	Rho          [][]float64          `json:"rho,omitempty"`
-	PsiMag2      [][]float64          `json:"psiMag2,omitempty"`
-	GuidanceVelX [][]float64          `json:"guidanceVelX,omitempty"`
-	GuidanceVelZ [][]float64          `json:"guidanceVelZ,omitempty"`
-	Particles    []pmanifold.Particle `json:"particles,omitempty"`
+	Replay           bool              `json:"replay,omitempty"`
+	Grid             pfluid.Grid       `json:"grid,omitempty"`
+	Rho              [][]float64       `json:"rho,omitempty"`
+	PsiMag2          [][]float64       `json:"psiMag2,omitempty"`
+	GuidanceVelX     [][]float64       `json:"guidanceVelX,omitempty"`
+	GuidanceVelZ     [][]float64       `json:"guidanceVelZ,omitempty"`
+	Particles        []Particle        `json:"particles,omitempty"`
+	Wave             []pfluid.WaveMode `json:"wave,omitempty"`
+	PhaseReady       bool              `json:"phaseReady"`
+	PhaseReason      string            `json:"phaseReason,omitempty"`
+	PhaseScan        []PhaseResponse   `json:"phaseScan,omitempty"`
 }
 
 /*
-IsFinite reports whether every numerical field required by downstream models
-is a finite real number.
+view constructs the symbol-local market metadata around a shared physical
+reading. Touch notionals were multiplied exactly with Kraken decimals; this
+market state and forecast contracts preserve those exact values for sizing.
+*/
+func (slot *symbolSlot) view(
+	candidate intensityCandidate,
+	outcome excitation.Outcome,
+	reading pfluid.Reading,
+	diagnostics pfluid.Diagnostics,
+	grid pfluid.Grid,
+	advanced bool,
+) State {
+	if !advanced {
+		state := slot.last
+		state.Reading = reading
+		state.Replay = true
+		slot.last.Reading = reading
+		return state
+	}
+
+	buyIntensity, sellIntensity := intensities(outcome)
+	interval := outcome.Horizon
+
+	if interval <= 0 && !slot.last.At.IsZero() {
+		interval = outcome.At.Sub(slot.last.At)
+	}
+
+	state := State{
+		Source:           "manifold",
+		Symbol:           candidate.symbol,
+		At:               outcome.At,
+		Duration:         interval,
+		Epoch:            slot.epoch,
+		ReferencePrice:   slot.coords.reference.Copy(),
+		Spread:           slot.coords.spread,
+		BuyCapacity:      slot.coords.buyCapacity.Copy(),
+		SellCapacity:     slot.coords.sellCapacity.Copy(),
+		InvalidReason:    Valid,
+		StressAnisotropy: stressAnisotropy(outcome),
+		Subdivisions:     diagnostics.Halvings + 1,
+		BuyIntensity:     buyIntensity,
+		SellIntensity:    sellIntensity,
+		SpectralRadius:   outcome.Fit.SpectralRadius,
+		Reading:          reading,
+		OscillatorCount:  slot.end - slot.start,
+		Grid:             grid,
+	}
+	slot.last = state
+	return state
+}
+
+/*
+IsFinite reports whether the complete scalar state is physically admissible
+for downstream causal and predictive models.
 */
 func (state State) IsFinite() bool {
 	if state.At.IsZero() || state.Epoch == 0 {
@@ -50,46 +137,44 @@ func (state State) IsFinite() bool {
 
 	for _, value := range []float64{
 		state.StressAnisotropy,
-		state.ReferencePrice,
 		state.Spread,
-		state.BuyCapacity,
-		state.SellCapacity,
 		state.BuyIntensity,
 		state.SellIntensity,
 		state.SpectralRadius,
-		state.Reading.PressureGradX,
-		state.Reading.Divergence,
-		state.Reading.CoherenceMag2,
-		state.Reading.GuidanceSpeed,
 	} {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return false
 		}
 	}
 
-	return state.ReferencePrice > 0 && state.Spread > 0 &&
-		state.BuyCapacity > 0 && state.SellCapacity > 0 &&
+	return state.ReferencePrice != nil && state.ReferencePrice.Sign() > 0 &&
+		state.BuyCapacity != nil && state.BuyCapacity.Sign() > 0 &&
+		state.SellCapacity != nil && state.SellCapacity.Sign() > 0 &&
+		state.Spread > 0 &&
 		state.Reading.IsFinite()
 }
 
 /*
-GasReady reports whether the GPU gas step produced a finite physical readout.
+GasReady reports whether a finite shared-domain state grounds this symbol.
 */
 func (state State) GasReady() bool {
 	return state.InvalidReason == Valid && state.IsFinite()
 }
 
 /*
-Summary drops grid, field, and particle payloads so the UI can paint scalars
-without re-shipping multi-megabyte manifolds each tick.
+Summary removes projection payloads while retaining all scalar physics.
 */
 func (state State) Summary() State {
-	state.Grid = pmanifold.Grid{}
+	state.Grid = pfluid.Grid{}
 	state.Rho = nil
 	state.PsiMag2 = nil
 	state.GuidanceVelX = nil
 	state.GuidanceVelZ = nil
 	state.Particles = nil
+	state.Wave = nil
+	state.PhaseReady = false
+	state.PhaseReason = ""
+	state.PhaseScan = nil
 
 	return state
 }

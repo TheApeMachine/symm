@@ -7,7 +7,7 @@ import (
 
 /*
 MetricType identifies the numerical quantity a signal measured. It keeps
-measurement identity independent from the signal implementation that produced
+measurement identity independent of the signal implementation that produced
 the value, which lets logic compare compatible evidence without interpreting a
 source name as a market state.
 */

@@ -3,6 +3,7 @@ package logic
 import (
 	"math"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
@@ -20,7 +21,7 @@ type returnHead struct {
 	learner     *learning.RLS
 	confidence  float64
 	pending     []float64
-	pendingMid  float64
+	pendingMid  *decimal.Decimal
 	prediction  float64
 	predicted   bool
 	mse         *statistic.Mean
@@ -74,12 +75,13 @@ func newReturnHead() (*returnHead, error) {
 Resolve scores the prior prediction against the newly observed midpoint, then
 teaches that strictly prior feature row its realized log return.
 */
-func (head *returnHead) Resolve(midPrice float64) error {
+func (head *returnHead) Resolve(midPrice *decimal.Decimal) error {
 	if len(head.pending) == 0 {
 		return nil
 	}
 
-	if head.pendingMid <= 0 || midPrice <= 0 {
+	if head.pendingMid == nil || head.pendingMid.Sign() <= 0 ||
+		midPrice == nil || midPrice.Sign() <= 0 {
 		return errnie.Err(
 			errnie.Validation,
 			"logic return: midpoint prices must be strictly positive",
@@ -87,7 +89,15 @@ func (head *returnHead) Resolve(midPrice float64) error {
 		)
 	}
 
-	target := math.Log(midPrice / head.pendingMid)
+	scale := max(
+		int64(decimal.DefaultScale),
+		midPrice.GetScale(),
+		head.pendingMid.GetScale(),
+	)
+	ratio := midPrice.SetScale(scale).
+		Div(head.pendingMid.SetScale(scale)).
+		Float64()
+	target := math.Log(ratio)
 
 	if !finite(target) {
 		return errnie.Err(
@@ -112,6 +122,9 @@ func (head *returnHead) Resolve(midPrice float64) error {
 		)
 	}
 
+	head.pending = head.pending[:0]
+	head.predicted = false
+
 	return nil
 }
 
@@ -121,8 +134,16 @@ and retains it for resolution by the next L3 epoch.
 */
 func (head *returnHead) Predict(
 	features []float64,
-	midPrice float64,
+	midPrice *decimal.Decimal,
 ) (float64, error) {
+	if midPrice == nil || midPrice.Sign() <= 0 {
+		return 0, errnie.Err(
+			errnie.Validation,
+			"logic return: midpoint price must be strictly positive",
+			nil,
+		)
+	}
+
 	output, err := head.learner.Predict(features)
 
 	if err != nil || !finite(output.Value) {
@@ -134,7 +155,7 @@ func (head *returnHead) Predict(
 	}
 
 	head.pending = append(head.pending[:0], features...)
-	head.pendingMid = midPrice
+	head.pendingMid = midPrice.Copy()
 	head.prediction = output.Value
 	head.predicted = true
 

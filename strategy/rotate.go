@@ -3,6 +3,7 @@ package strategy
 import (
 	"math"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -15,9 +16,9 @@ type Incumbent struct {
 	Symbol      string
 	HoldUtility float64
 	ExitCost    float64
-	Notional    float64
-	Qty         float64
-	Mark        float64
+	Notional    *decimal.Decimal
+	Qty         *decimal.Decimal
+	Mark        *decimal.Decimal
 	ClearProb   float64
 	Displaced   bool
 }

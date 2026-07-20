@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
@@ -356,8 +355,12 @@ func (planner *Planner) commitRotations(thesis *types.Thesis) {
 			continue
 		}
 
-		qty := decision.Alternatives["incumbent_qty"]
-		mark := decision.Alternatives["incumbent_mark"]
+		if decision.DisplacedQuantity == nil || decision.DisplacedPrice == nil {
+			decision.Action = types.ActionNothing
+			decision.Reason = "rotation source money is unavailable"
+
+			continue
+		}
 
 		exits = append(exits, types.Decision{
 			Action:  types.ActionExit,
@@ -368,8 +371,8 @@ func (planner *Planner) commitRotations(thesis *types.Thesis) {
 				"exit": -decision.Alternatives["exit_cost"],
 				"hold": decision.Alternatives["hold_incumbent"],
 			},
-			ProposedQuantity:  decimal.NewFromFloat64(qty),
-			ReferencePrice:    decimal.NewFromFloat64(mark),
+			ProposedQuantity:  decision.DisplacedQuantity.Copy(),
+			ReferencePrice:    decision.DisplacedPrice.Copy(),
 			ValidThroughEpoch: decision.ValidThroughEpoch,
 			Cause:             "rotation",
 			Reason:            "displaced by higher-utility challenger " + decision.Symbol,

@@ -217,7 +217,9 @@ func (market *Market) OnBook(data []byte) {
 }
 
 /*
-dirtyWake signals ingress so the tick loop can coalesce one Cut.
+dirtyWake signals ingress so the tick loop can take one atomic Cut. The
+single-slot channel naturally merges observations that arrive before the loop
+can consume them without imposing a wall-clock delay on every market update.
 */
 func (market *Market) dirtyWake() {
 	if market == nil || market.dirty == nil {
@@ -231,24 +233,14 @@ func (market *Market) dirtyWake() {
 }
 
 /*
-defaultCoalesceWindow caps how long WaitDirty keeps merging a burst of ingress
-into one Cut after the first observation arrives, so a fast run of ticker, trade,
-and book messages produces a single Cut instead of one per message. It defaults
-to the tick-budget floor and is overridable through signals.coalesce_window.
-*/
-const defaultCoalesceWindow = 10 * time.Millisecond
-
-/*
 WaitDirty blocks until the first ingress arrives, the budget elapses, or Market
-closes, then coalesces the trailing burst so one Cut covers a whole message run.
+closes. It returns immediately for buffered ingress because MarketFeed.Capture
+already forms the atomic cut and the dirty channel already coalesces updates
+that outrun the consumer.
 */
 func (market *Market) WaitDirty(budget time.Duration) {
 	if market == nil {
 		return
-	}
-
-	if budget <= 0 {
-		budget = defaultCoalesceWindow
 	}
 
 	var done <-chan struct{}
@@ -263,6 +255,23 @@ func (market *Market) WaitDirty(budget time.Duration) {
 		dirty = market.dirty
 	}
 
+	select {
+	case <-done:
+		return
+	case <-dirty:
+		return
+	default:
+	}
+
+	if budget <= 0 {
+		select {
+		case <-done:
+		case <-dirty:
+		}
+
+		return
+	}
+
 	deadline := time.NewTimer(budget)
 	defer deadline.Stop()
 
@@ -272,57 +281,8 @@ func (market *Market) WaitDirty(budget time.Duration) {
 	case <-deadline.C:
 		return
 	case <-dirty:
+		return
 	}
-
-	market.coalesce(budget, done, dirty, deadline.C)
-}
-
-/*
-coalesce drains the trailing ingress burst after the first dirty signal,
-extending a short quiet window on each new observation and returning once the
-stream stays quiet for that window or the overall budget deadline elapses.
-*/
-func (market *Market) coalesce(
-	budget time.Duration,
-	done <-chan struct{},
-	dirty <-chan struct{},
-	deadline <-chan time.Time,
-) {
-	window := coalesceWindow(budget)
-	quiet := time.NewTimer(window)
-	defer quiet.Stop()
-
-	for {
-		select {
-		case <-done:
-			return
-		case <-deadline:
-			return
-		case <-dirty:
-			if !quiet.Stop() {
-				<-quiet.C
-			}
-
-			quiet.Reset(window)
-		case <-quiet.C:
-			return
-		}
-	}
-}
-
-/*
-coalesceWindow derives the burst-merge window as the smaller of the tick budget
-and the configured coalesce window so coalescing never delays a Cut past one
-planner budget.
-*/
-func coalesceWindow(budget time.Duration) time.Duration {
-	window := viper.GetDuration("signals.coalesce_window")
-
-	if window <= 0 {
-		window = defaultCoalesceWindow
-	}
-
-	return min(budget, window)
 }
 
 /*

@@ -32,7 +32,7 @@ func TestAdmitRanksByUtilityWithFreeSlots(t *testing.T) {
 	}
 
 	if !entered["HIGH/USD"] {
-		t.Fatal("highest utility must take the free slot")
+		t.Fatalf("highest utility must take the free slot: decisions=%+v", thesis.Decisions)
 	}
 
 	if entered["LOW/USD"] {

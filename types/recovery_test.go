@@ -49,9 +49,15 @@ func TestCaptureRecoveryNaNSafe(t *testing.T) {
 func TestSaveLoadRecovery(t *testing.T) {
 	Convey("Given a durable recovery directory", t, func() {
 		dir := t.TempDir()
-		qty := decimal.NewFromFloat64(2)
+		qty, err := decimal.NewFromString("2.123456789123456789")
+		So(err, ShouldBeNil)
+		reservation, err := decimal.NewFromString("0.123456789123456789")
+		So(err, ShouldBeNil)
 		original := &Recovery{
 			Tick: 3,
+			Reservations: []ReservationWire{
+				{ID: "exact", Amount: reservation},
+			},
 			Holdings: map[string]Holding{
 				"UAI/USD": {
 					Symbol: "UAI/USD",
@@ -71,6 +77,9 @@ func TestSaveLoadRecovery(t *testing.T) {
 			So(loaded.Tick, ShouldEqual, 3)
 			So(loaded.Holdings, ShouldContainKey, "UAI/USD")
 			So(loaded.Holdings["UAI/USD"].Asset, ShouldEqual, "UAI")
+			So(loaded.Holdings["UAI/USD"].Qty.String(), ShouldEqual, qty.String())
+			So(loaded.Reservations, ShouldHaveLength, 1)
+			So(loaded.Reservations[0].Amount.String(), ShouldEqual, reservation.String())
 		})
 
 		Convey("When the file is missing", func() {

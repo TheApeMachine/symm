@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -237,7 +238,7 @@ func TestDecideCapsProposedNotionalByAvailableCash(t *testing.T) {
 
 	hold := decideForecast("FAT/USD", 0.10, 0.01)
 	challenger := decideForecast("XRP/USD", 0.04, 0.01)
-	challenger.BuyCapacity = 10_000
+	challenger.BuyCapacity = decimal.NewFromInt64(10_000)
 	thesis.Forecasts = append(thesis.Forecasts, hold, challenger)
 	thesis.Cognition.Store("XRP/USD", buyCognition("XRP/USD"))
 
@@ -333,9 +334,9 @@ func decideForecast(symbol string, expected, uncertainty float64) types.Forecast
 		CalibrationSamples:         8,
 		IncrementalSkillLowerBound: 0.0001,
 		ExpectedReturn:             expected,
-		ReferencePrice:             1,
-		BuyCapacity:                10_000,
-		SellCapacity:               10_000,
+		ReferencePrice:             decimal.NewFromInt64(1),
+		BuyCapacity:                decimal.NewFromInt64(10_000),
+		SellCapacity:               decimal.NewFromInt64(10_000),
 		ExpectedFees:               0.001,
 		ExpectedSpread:             0.001,
 		ExpectedImpact:             0,

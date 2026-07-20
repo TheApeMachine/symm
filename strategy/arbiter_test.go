@@ -5,6 +5,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -17,13 +18,16 @@ one consistent bare-utility scale rather than collapsing every rank to zero.
 */
 func TestArbiterDollarRanking(t *testing.T) {
 	Convey("Given an arbiter with a fixed max fraction", t, func() {
-		arbiter := &Arbiter{maxFraction: 0.2}
-		cash := 1000.0
+		arbiter := &Arbiter{
+			price:       &broker.Price{},
+			maxFraction: decimal.NewFromFloat64(0.2),
+		}
+		cash := decimal.NewFromInt64(1000)
 
 		Convey("Fresh enters prequote feasible notional capped by buy capacity", func() {
 			forecasts := map[string]types.Forecasts{
-				"THIN": {Symbol: "THIN", BuyCapacity: 10},
-				"DEEP": {Symbol: "DEEP", BuyCapacity: 10_000},
+				"THIN": {Symbol: "THIN", BuyCapacity: decimal.NewFromInt64(10)},
+				"DEEP": {Symbol: "DEEP", BuyCapacity: decimal.NewFromInt64(10_000)},
 			}
 
 			thin := arbiter.dollar(
@@ -33,15 +37,15 @@ func TestArbiterDollarRanking(t *testing.T) {
 				types.Decision{Symbol: "DEEP", Utility: 0.5}, cash, forecasts,
 			)
 
-			So(thin, ShouldEqual, 1.0*10.0)
-			So(deep, ShouldEqual, 0.5*200.0)
-			So(deep, ShouldBeGreaterThan, thin)
+			So(thin.Cmp(decimal.NewFromInt64(10)), ShouldEqual, 0)
+			So(deep.Cmp(decimal.NewFromInt64(100)), ShouldEqual, 0)
+			So(deep.Cmp(thin), ShouldBeGreaterThan, 0)
 		})
 
 		Convey("A missing forecast falls back to max_fraction of cash", func() {
 			feasible := arbiter.feasible(cash, types.Forecasts{})
 
-			So(feasible, ShouldEqual, 200.0)
+			So(feasible.Cmp(decimal.NewFromInt64(200)), ShouldEqual, 0)
 		})
 
 		Convey("Rotation challengers rank on their stamped notional", func() {
@@ -51,21 +55,19 @@ func TestArbiterDollarRanking(t *testing.T) {
 				ProposedNotional: decimal.NewFromFloat64(50),
 			}
 
-			So(
-				arbiter.dollar(decision, cash, map[string]types.Forecasts{}),
-				ShouldEqual, 2.0*50.0,
-			)
+			value := arbiter.dollar(decision, cash, map[string]types.Forecasts{})
+			So(value.Cmp(decimal.NewFromInt64(100)), ShouldEqual, 0)
 		})
 
 		Convey("Unavailable cash ranks by bare utility, never utility times zero", func() {
 			forecasts := map[string]types.Forecasts{
-				"A": {Symbol: "A", BuyCapacity: 5},
+				"A": {Symbol: "A", BuyCapacity: decimal.NewFromInt64(5)},
 			}
 
-			So(
-				arbiter.dollar(types.Decision{Symbol: "A", Utility: 3.0}, 0, forecasts),
-				ShouldEqual, 3.0,
+			value := arbiter.dollar(
+				types.Decision{Symbol: "A", Utility: 3.0}, nil, forecasts,
 			)
+			So(value.Cmp(decimal.NewFromInt64(3)), ShouldEqual, 0)
 		})
 	})
 }

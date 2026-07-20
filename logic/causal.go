@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/logic/manifold"
@@ -36,7 +37,7 @@ manifold epoch, where its realized return completes the causal sample.
 */
 type causalObservation struct {
 	features []float64
-	midPrice float64
+	midPrice *decimal.Decimal
 	epoch    uint64
 	at       time.Time
 }
@@ -92,8 +93,8 @@ func (causal *Causal) Update(
 			))
 		}
 
-		// Resident manifold field was evicted and re-admitted, so epoch 1 starts
-		// a new causal alignment and cannot resolve the orphaned prior row.
+		// A symbol can leave the shared observed universe and later return at a
+		// fresh epoch 1; that new admission cannot resolve the orphaned prior row.
 		causal.pending = nil
 	}
 
@@ -153,7 +154,9 @@ func (causal *Causal) observe(
 	if causal.pending != nil && state.Epoch == causal.pending.epoch+1 {
 		outcome.At = causal.pending.at
 
-		if !(causal.pending.midPrice > 0) || !(state.ReferencePrice > 0) {
+		if causal.pending.midPrice == nil || causal.pending.midPrice.Sign() <= 0 ||
+			state.ReferencePrice == nil ||
+			state.ReferencePrice.Sign() <= 0 {
 			return CausalOutcome{}, errnie.Err(
 				errnie.Validation,
 				"logic causal: midpoint prices must be strictly positive for log return",
@@ -161,7 +164,14 @@ func (causal *Causal) observe(
 			)
 		}
 
-		ratio := state.ReferencePrice / causal.pending.midPrice
+		scale := max(
+			int64(decimal.DefaultScale),
+			state.ReferencePrice.GetScale(),
+			causal.pending.midPrice.GetScale(),
+		)
+		ratio := state.ReferencePrice.SetScale(scale).
+			Div(causal.pending.midPrice.SetScale(scale)).
+			Float64()
 
 		if !(ratio > 0) {
 			return CausalOutcome{}, errnie.Err(
@@ -195,7 +205,7 @@ func (causal *Causal) observe(
 
 	causal.pending = &causalObservation{
 		features: append([]float64(nil), features...),
-		midPrice: state.ReferencePrice,
+		midPrice: state.ReferencePrice.Copy(),
 		epoch:    state.Epoch,
 		at:       state.At,
 	}
@@ -208,7 +218,8 @@ func (causal *Causal) observe(
 }
 
 func (causal *Causal) features(state manifold.State) ([]float64, bool) {
-	if !state.GasReady() || state.ReferencePrice <= 0 {
+	if !state.GasReady() || state.ReferencePrice == nil ||
+		state.ReferencePrice.Sign() <= 0 {
 		return nil, false
 	}
 

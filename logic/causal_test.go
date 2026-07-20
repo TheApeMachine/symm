@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
@@ -142,10 +143,10 @@ func causalState(at time.Time, midPrice float64, epoch uint64) manifold.State {
 		Symbol:           "BTC/USD",
 		At:               at,
 		Epoch:            epoch,
-		ReferencePrice:   midPrice,
+		ReferencePrice:   decimal.NewFromFloat64(midPrice),
 		Spread:           0.01,
-		BuyCapacity:      1000,
-		SellCapacity:     1000,
+		BuyCapacity:      decimal.NewFromInt64(1000),
+		SellCapacity:     decimal.NewFromInt64(1000),
 		Duration:         time.Second,
 		InvalidReason:    manifold.Valid,
 		StressAnisotropy: 0.1,

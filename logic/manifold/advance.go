@@ -2,262 +2,371 @@ package manifold
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
-	"github.com/theapemachine/symm/audit"
-	"github.com/theapemachine/symm/signal/compute"
+	pfluid "github.com/theapemachine/nomagique/physics/fluid"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
-advance steps one symbol's GPU field from a Hawkes outcome, or republishes the
-last GasReady projection when the excitation epoch has not moved. focus is the
-cut-wide ui.manifold_focus resolved once by Update and threaded through
-advanceAll so each symbol does not re-read viper.
+advanceResult describes one shared physical step and every source epoch that
+was either represented by it or replayed from it.
 */
-func (solver *Solver) advance(
-	symbol string,
-	outcome excitation.Outcome,
-	focus string,
-) (State, error) {
-	slot := solver.symbols[symbol]
-
-	if slot != nil && (outcome.At.Before(slot.at) ||
-		(outcome.At.Equal(slot.at) && outcome.EventCount == slot.events)) {
-		if slot.last.GasReady() {
-			replay := slot.last
-			replay.Replay = true
-			return replay, nil
-		}
-
-		return State{}, nil
-	}
-
-	var prior *coordinateEpoch
-
-	if slot != nil {
-		prior = slot.coords
-	}
-
-	oscillators, coordEpoch, ready, err := solver.populationOscillators(
-		symbol, outcome.At, prior,
-	)
-
-	if err != nil {
-		return State{}, err
-	}
-
-	if !ready {
-		return State{}, nil
-	}
-
-	if slot == nil || slot.handle == nil {
-		slot, err = solver.admit(symbol)
-
-		if err != nil {
-			return State{}, err
-		}
-	}
-
-	handle := slot.handle
-	interval := eventInterval(solver.config, slot.at, outcome)
-	slot.at = outcome.At
-	slot.events = outcome.EventCount
-	characteristicSpeed, scale, err := applyForcing(
-		solver.config,
-		outcome,
-		interval,
-		oscillators,
-	)
-
-	if err != nil {
-		return State{}, err
-	}
-
-	if scale < 1 {
-		errnie.Error(audit.Record(solver.recorder, "manifold_force", map[string]any{
-			"symbol": symbol,
-			"scale":  scale,
-			"speed":  characteristicSpeed,
-		}))
-	}
-
-	controls := runtimeControls(
-		solver.config,
-		outcome,
-		interval,
-	)
-	advectiveDeltaT := solver.config.AdvectiveDeltaT(characteristicSpeed)
-
-	if advectiveDeltaT <= 0 {
-		return State{}, errnie.Err(
-			errnie.Validation,
-			"manifold: carrier state produced no stable integration step",
-			nil,
-		)
-	}
-
-	if advectiveDeltaT < controls.DeltaT {
-		controls.DeltaT = advectiveDeltaT
-	}
-
-	if err := handle.SetControls(controls); err != nil {
-		return State{}, err
-	}
-
-	if err := inject(
-		handle,
-		oscillators,
-	); err != nil {
-		return State{}, err
-	}
-
-	reading, err := handle.Step()
-
-	if err != nil {
-		handle.Close()
-		slot.handle = nil
-
-		return State{}, err
-	}
-
-	slot.coords = coordEpoch
-	slot.epoch++
-	buyIntensity, sellIntensity := intensities(outcome)
-
-	focused := focus != "" && focus == symbol
-	projection, projectionErr := projectField(handle, solver.config, len(oscillators), focused)
-
-	if projectionErr != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf("manifold: %s failed to read field projection", symbol),
-			projectionErr,
-		))
-	}
-
-	state := State{
-		Source:           "manifold",
-		Symbol:           symbol,
-		At:               outcome.At,
-		Duration:         interval,
-		Epoch:            slot.epoch,
-		ReferencePrice:   coordEpoch.midPrice,
-		Spread:           coordEpoch.spread,
-		BuyCapacity:      coordEpoch.buyCapacity,
-		SellCapacity:     coordEpoch.sellCapacity,
-		InvalidReason:    Valid,
-		StressAnisotropy: stressAnisotropy(outcome),
-		Subdivisions:     1,
-		BuyIntensity:     buyIntensity,
-		SellIntensity:    sellIntensity,
-		SpectralRadius:   outcome.Fit.SpectralRadius,
-		Reading:          reading,
-		OscillatorCount:  len(oscillators),
-		Grid:             projection.Grid,
-		Rho:              projection.Rho,
-		PsiMag2:          projection.PsiMag2,
-		GuidanceVelX:     projection.GuidanceVelX,
-		GuidanceVelZ:     projection.GuidanceVelZ,
-		Particles:        projection.Particles,
-	}
-	slot.last = state
-
-	return state, nil
+type advanceResult struct {
+	failures []error
+	advanced int
+	replayed int
 }
 
 /*
-admit allocates a resident Field on the shared Metal engine for the requested
-symbol. Fields stay resident until the active-set budget is exceeded and the
-field goes cold, at which point Update evicts it through Solver.release.
+advance detects changed source epochs, assembles the complete current universe,
+performs at most one GPU step, and publishes views of the resulting shared field.
 */
-func (solver *Solver) admit(symbol string) (*symbolSlot, error) {
-	if symbol == "" {
-		return nil, errnie.Err(
-			errnie.Internal,
-			"manifold: symbol is required",
-			nil,
-		)
-	}
+func (solver *Solver) advance(
+	thesis *types.Thesis,
+	candidates []intensityCandidate,
+	focus string,
+) advanceResult {
+	result := advanceResult{}
+	changed := make(map[string]excitation.Outcome)
 
-	if solver.engine == nil {
-		return nil, errnie.Err(
-			errnie.Internal,
-			"manifold: shared engine is not initialized",
-			nil,
-		)
-	}
-
-	slot, ok := solver.symbols[symbol]
-
-	if ok && slot.handle != nil {
-		return slot, nil
-	}
-
-	err := compute.WithMetalInit(func() error {
-		handle, err := solver.engine.NewField()
-
-		if err != nil {
-			return err
+	for _, candidate := range candidates {
+		if candidate.changed(solver.symbols[candidate.symbol]) {
+			changed[candidate.symbol] = candidate.outcome
 		}
+	}
 
-		if slot == nil {
-			slot = &symbolSlot{}
-			solver.symbols[symbol] = slot
+	populationChanged := solver.universeChanged(candidates)
+	shouldStep := len(changed) > 0 || populationChanged
+
+	if shouldStep {
+		result.failures = append(result.failures, solver.populate(candidates, changed)...)
+
+		if len(result.failures) > 0 {
+			return result
 		}
+	}
 
-		slot.handle = handle
-
-		return nil
-	})
+	reading, diagnostics, err := solver.step(shouldStep && len(solver.particles) > 0)
 
 	if err != nil {
-		return nil, errnie.Err(
+		result.failures = append(result.failures, err)
+		return result
+	}
+
+	if shouldStep && len(solver.particles) > 0 {
+		solver.retain(candidates)
+	}
+
+	solver.publish(
+		thesis,
+		candidates,
+		changed,
+		reading,
+		diagnostics,
+		focus,
+		len(changed) > 0,
+		&result,
+	)
+	return result
+}
+
+/*
+publish materializes symbol views from one shared reading and attaches the full
+field only to the requested focus symbol.
+*/
+func (solver *Solver) publish(
+	thesis *types.Thesis,
+	candidates []intensityCandidate,
+	changed map[string]excitation.Outcome,
+	reading pfluid.Reading,
+	diagnostics pfluid.Diagnostics,
+	focus string,
+	advanced bool,
+	result *advanceResult,
+) {
+	observedAt := time.Time{}
+
+	for _, candidate := range candidates {
+		if candidate.outcome.At.After(observedAt) {
+			observedAt = candidate.outcome.At
+		}
+	}
+
+	projection, wave, phaseScan, err := solver.project(
+		focus,
+		observedAt,
+		advanced,
+	)
+
+	if err != nil {
+		result.failures = append(result.failures, err)
+	}
+
+	for _, candidate := range candidates {
+		slot := solver.symbols[candidate.symbol]
+
+		if slot == nil {
+			continue
+		}
+
+		outcome, advanced := changed[candidate.symbol]
+		state := slot.view(
+			candidate,
+			outcome,
+			reading,
+			diagnostics,
+			solver.config.Grid,
+			advanced,
+		)
+
+		if advanced {
+			result.advanced++
+		} else if state.GasReady() {
+			result.replayed++
+		}
+
+		if focus == candidate.symbol && err == nil {
+			solver.paint(&state, projection, wave, phaseScan, slot)
+		}
+
+		if state.GasReady() {
+			thesis.Manifold.Store(candidate.symbol, state)
+		}
+	}
+}
+
+/*
+populate maps the complete current universe and preserves the evolved phase and
+energy of surviving order identities before the next shared physical step.
+*/
+func (solver *Solver) populate(
+	candidates []intensityCandidate,
+	changed map[string]excitation.Outcome,
+) []error {
+	population := make([]pfluid.Particle, 0, len(solver.particles))
+	failures := make([]error, 0)
+	nextSlots := make(map[string]*symbolSlot, len(candidates))
+
+	for _, candidate := range candidates {
+		slot := solver.symbols[candidate.symbol].clone()
+		particles, err := slot.observe(
+			solver.config, candidate, len(population), changed,
+		)
+
+		if err != nil {
+			failures = append(failures, solver.noteAdvanceFailure(candidate.symbol, err))
+			continue
+		}
+
+		nextSlots[candidate.symbol] = slot
+		population = append(population, particles...)
+	}
+
+	if len(failures) > 0 {
+		return failures
+	}
+
+	solver.particles = population
+	solver.active = make(map[string]struct{}, len(candidates))
+
+	for _, candidate := range candidates {
+		solver.active[candidate.symbol] = struct{}{}
+		solver.symbols[candidate.symbol] = nextSlots[candidate.symbol]
+	}
+
+	return failures
+}
+
+/*
+clone creates a transactional symbol slot whose resident particle map is read
+only until the complete universe has mapped successfully.
+*/
+func (slot *symbolSlot) clone() *symbolSlot {
+	if slot == nil {
+		return &symbolSlot{state: make(map[string]pfluid.Particle)}
+	}
+
+	cloned := *slot
+	return &cloned
+}
+
+/*
+observe maps one symbol into a staged population range and advances its source
+epoch only when the Hawkes observation changed.
+*/
+func (slot *symbolSlot) observe(
+	config pfluid.Config,
+	candidate intensityCandidate,
+	start int,
+	changed map[string]excitation.Outcome,
+) ([]pfluid.Particle, error) {
+	particles, epoch, mapped := slot.coords.Map(config, candidate)
+
+	if !mapped {
+		return nil, fmt.Errorf("L3 population has no physical coordinates")
+	}
+
+	slot.start = start
+	slot.end = start + len(particles)
+	slot.orders = make([]string, len(particles))
+	slot.coords = epoch
+
+	for index := range particles {
+		orderID := candidate.orders[index].orderID
+		slot.orders[index] = orderID
+		particles[index] = slot.preserve(orderID, particles[index])
+	}
+
+	if outcome, advanced := changed[candidate.symbol]; advanced {
+		slot.at = outcome.At
+		slot.events = outcome.EventCount
+		slot.epoch++
+	}
+
+	return particles, nil
+}
+
+/*
+universeChanged reports whether symbol admission or removal changes the
+complete population even when every surviving source epoch is unchanged.
+*/
+func (solver *Solver) universeChanged(candidates []intensityCandidate) bool {
+	if len(candidates) != len(solver.active) {
+		return true
+	}
+
+	for _, candidate := range candidates {
+		if _, active := solver.active[candidate.symbol]; !active {
+			return true
+		}
+	}
+
+	return false
+}
+
+/*
+preserve transfers resident thermodynamic and phase state to the freshly
+observed geometry of an order that survived from the preceding population.
+*/
+func (slot *symbolSlot) preserve(
+	orderID string,
+	observation pfluid.Particle,
+) pfluid.Particle {
+	resident, found := slot.state[orderID]
+
+	if !found {
+		return observation
+	}
+
+	observation.Heat = resident.Heat
+	observation.Energy = resident.Energy
+	observation.Phase = resident.Phase
+	return observation
+}
+
+/*
+retain indexes the post-step particle state by stable order identity so the next
+complete population can remove canceled orders without losing surviving phase.
+*/
+func (solver *Solver) retain(candidates []intensityCandidate) {
+	for _, candidate := range candidates {
+		slot := solver.symbols[candidate.symbol]
+
+		if slot == nil || slot.end > len(solver.particles) {
+			continue
+		}
+
+		slot.state = make(map[string]pfluid.Particle, len(slot.orders))
+
+		for index, orderID := range slot.orders {
+			slot.state[orderID] = solver.particles[slot.start+index]
+		}
+	}
+}
+
+/*
+step advances the shared domain when new observations exist, then reads the
+same physical reductions used by every symbol view.
+*/
+func (solver *Solver) step(changed bool) (
+	pfluid.Reading,
+	pfluid.Diagnostics,
+	error,
+) {
+	if solver.domain == nil {
+		return pfluid.Reading{}, pfluid.Diagnostics{}, errnie.Err(
 			errnie.Internal,
-			"manifold: failed to allocate field",
+			"manifold: shared Sensorium domain is closed",
+			nil,
+		)
+	}
+
+	if !changed {
+		if len(solver.particles) == 0 {
+			return pfluid.Reading{}, pfluid.Diagnostics{}, nil
+		}
+
+		reading, err := solver.domain.Reading()
+		return reading, pfluid.Diagnostics{}, err
+	}
+
+	diagnostics, err := solver.domain.Step(solver.particles)
+
+	if err != nil {
+		return pfluid.Reading{}, diagnostics, errnie.Err(
+			errnie.Internal,
+			"manifold: shared Sensorium step failed",
 			err,
 		)
 	}
 
-	return slot, nil
+	reading, err := solver.domain.Reading()
+
+	if err != nil {
+		return pfluid.Reading{}, diagnostics, err
+	}
+
+	return reading, diagnostics, nil
 }
 
 /*
-populationOscillators maps the current L3 book into injection cohorts for one
-symbol, reusing the prior coordinate epoch when the book has not re-anchored.
+changed reports whether a source epoch has not yet entered the shared domain.
 */
-func (solver *Solver) populationOscillators(
-	symbol string,
-	at time.Time,
-	prior *coordinateEpoch,
-) ([]pmanifold.Oscillator, *coordinateEpoch, bool, error) {
-	if solver.books == nil {
-		return nil, prior, false, errnie.Err(
-			errnie.Internal,
-			"manifold: L3 book source is not configured",
-			nil,
-		)
+func (candidate intensityCandidate) changed(slot *symbolSlot) bool {
+	if slot == nil || !slot.last.GasReady() {
+		return true
 	}
 
-	orders, midPrice, ok := ordersForSymbol(solver.books, symbol)
+	return candidate.outcome.At.After(slot.at) ||
+		(candidate.outcome.At.Equal(slot.at) && candidate.outcome.EventCount != slot.events)
+}
 
-	if !ok {
-		return nil, prior, false, nil
+/*
+intensities selects fitted Hawkes intensity only when that fit is ready;
+otherwise it retains the directly observed arrival rates.
+*/
+func intensities(outcome excitation.Outcome) (float64, float64) {
+	if outcome.Readiness.HawkesFit {
+		return outcome.Fit.IntensityX, outcome.Fit.IntensityY
 	}
 
-	mapped, coordEpoch, ready := mapOrders(solver.config, orders, midPrice, at, prior)
+	return outcome.BuyArrivalRate, outcome.SellArrivalRate
+}
 
-	if !ready {
-		return nil, prior, false, nil
+/*
+stressAnisotropy is the dimensionless imbalance between fitted self-excitation
+terms and remains zero before those terms exist.
+*/
+func stressAnisotropy(outcome excitation.Outcome) float64 {
+	selfSum := outcome.Fit.AlphaXX + outcome.Fit.AlphaYY
+
+	if selfSum <= 0 {
+		return 0
 	}
 
-	oscillators := cohortsFromMappedOrders(solver.config, mapped)
-
-	if len(oscillators) == 0 {
-		return nil, prior, false, nil
-	}
-
-	return oscillators, coordEpoch, true, nil
+	return math.Abs(outcome.Fit.AlphaXX-outcome.Fit.AlphaYY) / selfSum
 }

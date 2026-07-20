@@ -8,14 +8,24 @@ a nested Record; the final key selects the CircularBuffer the row is pushed into
 export type KeyExtractor<T> = (row: T) => string;
 
 /*
-Depth1 is one CircularBuffer per key value.
+NestedNode is a string-keyed tree of nested maps / leaf buffers. `array` must
+also appear in the index union — TypeScript requires every named property to be
+assignable to `[key: string]`.
+*/
+export type NestedNode<T> = {
+	[key: string]: NestedNode<T> | CircularBuffer<T> | (() => unknown[]);
+	array: () => unknown[];
+};
+
+/*
+Depth1 is one CircularBuffer per key value (NestedNode with leaf buffers).
 */
 export type Depth1<T> = Record<string, CircularBuffer<T>>;
 
 /*
-Depth2 nests an outer Record of inner Records, each holding a CircularBuffer.
+Depth2 nests maps of maps of CircularBuffers (NestedNode of NestedNodes).
 */
-export type Depth2<T> = Record<string, Record<string, CircularBuffer<T>>>;
+export type Depth2<T> = Record<string, Depth1<T>>;
 
 /*
 KeyedState is the state every keyed store exposes. `version` is the notify
@@ -34,9 +44,52 @@ export type KeyedActions<T> = {
 	reset: () => void;
 };
 
-export type NestedNode<T> = {
-	[key: string]: NestedNode<T> | CircularBuffer<T>;
+/*
+Nested builds one nest map with a non-enumerable array() that flattens every
+leaf buffer under this node (one level of children may be nested maps themselves).
+*/
+export const Nested = <T>(): NestedNode<T> => {
+	const node = {} as NestedNode<T>;
+
+	Object.defineProperty(node, "array", {
+		enumerable: false,
+		value: (): unknown[] => {
+			const rows: unknown[] = [];
+
+			for (const child of Object.values(node)) {
+				if (
+					typeof (child as CircularBuffer<T>).values === "function"
+				) {
+					rows.push(...(child as CircularBuffer<T>).values());
+					continue;
+				}
+
+				if (typeof (child as NestedNode<T>).array === "function") {
+					rows.push(...(child as NestedNode<T>).array());
+				}
+			}
+
+			return rows;
+		},
+	});
+
+	return node;
 };
+
+/*
+FrameStoreState is the widened state shape used when looking up a store by wire
+name. Specific stores stay precise at typed call sites; dynamic dispatch needs
+one common Store parameter.
+*/
+export type FrameStoreState = {
+	version: number;
+	[key: string]: number | NestedNode<unknown> | CircularBuffer<unknown>;
+};
+
+/*
+FrameStore is TanStack Store widened for string-keyed frameStores lookup.
+*/
+export type FrameStore = Store<FrameStoreState, KeyedActions<unknown>>;
 
 type ImplState<T> = {
 	version: number;
@@ -62,7 +115,7 @@ const push = <T>(
 		}
 
 		if (node[key] === undefined) {
-			node[key] = {};
+			node[key] = Nested<T>();
 		}
 
 		node = node[key] as NestedNode<T>;
@@ -111,15 +164,12 @@ export const createKeyedStore = <T>() => {
 		name: Name,
 		limit: number,
 		...keys: Array<KeyExtractor<T>>
-	): Store<
-		KeyedState<Name, NestedNode<T> | CircularBuffer<T>>,
-		KeyedActions<T>
-	> {
+	): unknown {
 		const flat = keys.length === 0;
 
 		const empty = (): ImplState<T> => ({
 			version: 0,
-			[name]: flat ? Circular<T>(limit) : {},
+			[name]: flat ? Circular<T>(limit) : Nested<T>(),
 		});
 
 		return createStore(empty(), ({ setState }) => ({

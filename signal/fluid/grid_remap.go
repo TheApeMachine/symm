@@ -8,7 +8,7 @@ const rhoFloor = 1e-12
 lagrangianRemap shifts the previous density field by mid-price motion so book
 deltas isolate reaction terms from advection.
 */
-func (grid *FluidGrid) lagrangianRemap(
+func (grid *Grid) lagrangianRemap(
 	prevRho []float64,
 	prevMid, currentMid float64,
 ) {

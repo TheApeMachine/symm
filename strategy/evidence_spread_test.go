@@ -6,7 +6,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
+	pmanifold "github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
 )
@@ -24,10 +24,10 @@ func TestProjectManifoldSpreadStaysReturnSpace(t *testing.T) {
 			At:             time.Unix(1, 0).UTC(),
 			Duration:       time.Second,
 			Epoch:          1,
-			ReferencePrice: 100,
+			ReferencePrice: decimal.NewFromInt64(100),
 			Spread:         0.004,
-			BuyCapacity:    50,
-			SellCapacity:   50,
+			BuyCapacity:    decimal.NewFromInt64(50),
+			SellCapacity:   decimal.NewFromInt64(50),
 			InvalidReason:  manifold.Valid,
 			BuyIntensity:   1,
 			SellIntensity:  0.5,

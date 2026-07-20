@@ -178,6 +178,42 @@ func TestGraphCompose(t *testing.T) {
 			So(graph.Nodes()[1].Measurement.At.Unix(), ShouldBeGreaterThanOrEqualTo, int64(999))
 		})
 	})
+
+	Convey("Given a busy category-affinity stream for one observable", t, func() {
+		graph := NewGraph("BTC/USD")
+		normalized := 0.5
+
+		for index := range 1_000 {
+			at := time.Unix(int64(index+1), 0)
+			So(graph.AddNode(&Measurement{
+				Source:       SourceDepthFlow,
+				Stream:       DepthFlow,
+				Metric:       MetricLoadedScore,
+				Subject:      SubjectBookImbalance,
+				Symbol:       "BTC/USD",
+				At:           at,
+				ObservedFrom: at.Add(-time.Second),
+				Unit:         UnitDimensionless,
+				Normalized:   &normalized,
+				Validity:     MeasurementValidity{State: ValidityValid},
+			}), ShouldBeNil)
+		}
+
+		graph.Compose()
+
+		Convey("Then only current evidence and its direct predecessor survive", func() {
+			measurementNodes := 0
+
+			for _, node := range graph.Nodes() {
+				if node.Kind == NodeMeasurement {
+					measurementNodes++
+				}
+			}
+
+			So(measurementNodes, ShouldEqual, 2)
+			So(graph.Nodes(), ShouldHaveLength, 4)
+		})
+	})
 }
 
 func TestComposeCategories(t *testing.T) {
@@ -245,6 +281,30 @@ func TestComposeCategories(t *testing.T) {
 
 		Convey("Then absent evidence lights no category", func() {
 			So(graph.Edges(), ShouldBeEmpty)
+		})
+	})
+
+	Convey("Given one active metric for a category with other expected metrics", t, func() {
+		graph := NewGraph("BTC/USD")
+		loaded := 0.8
+		So(graph.AddNode(&Measurement{
+			Source:     SourceDepthFlow,
+			Stream:     DepthFlow,
+			Metric:     MetricLoadedScore,
+			Subject:    SubjectBookImbalance,
+			Symbol:     "BTC/USD",
+			At:         time.Unix(100, 0),
+			Unit:       UnitDimensionless,
+			Normalized: &loaded,
+			Validity:   MeasurementValidity{State: ValidityValid},
+		}), ShouldBeNil)
+		graph.Compose()
+
+		Convey("Then absent affinity metrics are reported even without nodes", func() {
+			supporting, opposing, missing := graph.Evidence.CategoryEvidence(LoadedImbalance)
+			So(supporting, ShouldHaveLength, 1)
+			So(opposing, ShouldBeEmpty)
+			So(missing, ShouldContain, string(MetricNeutralScore))
 		})
 	})
 }

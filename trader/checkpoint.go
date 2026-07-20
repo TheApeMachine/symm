@@ -1,7 +1,6 @@
 package trader
 
 import (
-	"math"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -74,15 +73,9 @@ func (crypto *Crypto) captureRecovery(tick int64) *types.Recovery {
 				continue
 			}
 
-			amount := row.Amount.Float64()
-
-			if math.IsNaN(amount) || math.IsInf(amount, 0) {
-				amount = 0
-			}
-
 			reservations = append(reservations, types.ReservationWire{
 				ID:     row.ID,
-				Amount: amount,
+				Amount: row.Amount.Copy(),
 			})
 		}
 	}

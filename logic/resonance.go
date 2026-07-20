@@ -173,7 +173,10 @@ func (resonance *Resonance) Update(
 	}
 
 	resonance.samples++
-	prediction, err := resonance.returns.Predict(observables, state.ReferencePrice)
+	prediction, err := resonance.returns.Predict(
+		observables,
+		state.ReferencePrice,
+	)
 
 	if err != nil {
 		errnie.Error(errnie.Err(

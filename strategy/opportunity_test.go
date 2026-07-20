@@ -4,7 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theapemachine/nomagique/physics/manifold"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/nomagique/physics/fluid"
 	symmmanifold "github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
 )
@@ -179,15 +180,15 @@ func readyBasin(symbol string, coherence float64) symmmanifold.State {
 		At:             time.Unix(1, 0).UTC(),
 		Duration:       time.Second,
 		Epoch:          1,
-		ReferencePrice: 1,
+		ReferencePrice: decimal.NewFromInt64(1),
 		Spread:         0.001,
-		BuyCapacity:    1000,
-		SellCapacity:   1000,
+		BuyCapacity:    decimal.NewFromInt64(1000),
+		SellCapacity:   decimal.NewFromInt64(1000),
 		InvalidReason:  symmmanifold.Valid,
 		BuyIntensity:   1,
 		SellIntensity:  0.5,
 		SpectralRadius: 0.1,
-		Reading: manifold.Reading{
+		Reading: fluid.Reading{
 			PressureGradX: 0.1,
 			Divergence:    -0.1,
 			CoherenceMag2: coherence,

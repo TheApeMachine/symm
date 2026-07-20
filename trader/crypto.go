@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -53,6 +54,7 @@ type Crypto struct {
 	trading         atomic.Bool
 	pendingRetry    PendingRetry
 	reconcileFlight atomic.Bool
+	runtime         sync.WaitGroup
 }
 
 /*
@@ -152,9 +154,15 @@ boot path before the recorder opens its file, so Run never rotates a live
 handle.
 */
 func (crypto *Crypto) Run() error {
-	go crypto.checkpointLoop()
+	crypto.runtime.Add(2)
 
 	go func() {
+		defer crypto.runtime.Done()
+		crypto.checkpointLoop()
+	}()
+
+	go func() {
+		defer crypto.runtime.Done()
 		errnie.Info("crypto runtime started")
 
 		if crypto.recorder != nil {
@@ -303,6 +311,7 @@ Close flushes the durable Thesis checkpoint then stops composed resources.
 */
 func (crypto *Crypto) Close() error {
 	crypto.cancel()
+	crypto.runtime.Wait()
 
 	if latest := crypto.lastThesis.Load(); latest != nil {
 		if err := latest.Save(crypto.dataPath); err != nil {

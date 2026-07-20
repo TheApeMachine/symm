@@ -9,10 +9,8 @@ import (
 )
 
 func TestFluidGridIngestBook(t *testing.T) {
-	Convey("Given grid config and a book frame", t, func() {
-		setFluidGridConfig(t)
-
-		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+	Convey("Given grid config and a book frame", t, withFluidGrid(nil, func() {
+		grid, err := NewGrid()
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -35,14 +33,12 @@ func TestFluidGridIngestBook(t *testing.T) {
 			So(grid.midVelocityCurvature(), ShouldBeGreaterThanOrEqualTo, 0)
 			So(grid.turbulenceIntensity(), ShouldBeGreaterThanOrEqualTo, 0)
 		})
-	})
+	}))
 }
 
 func TestFluidGridRK2ZeroSource(t *testing.T) {
-	Convey("Given a stationary book across one integration interval", t, func() {
-		setFluidGridConfig(t)
-
-		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+	Convey("Given a stationary book across one integration interval", t, withFluidGrid(nil, func() {
+		grid, err := NewGrid()
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -61,14 +57,12 @@ func TestFluidGridRK2ZeroSource(t *testing.T) {
 				So(grid.rho[index], ShouldAlmostEqual, before[index], 1e-9)
 			}
 		})
-	})
+	}))
 }
 
 func TestFluidGridSourceDecomposition(t *testing.T) {
-	Convey("Given a trade followed by book depletion at the touch", t, func() {
-		setFluidGridConfig(t)
-
-		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+	Convey("Given a trade followed by book depletion at the touch", t, withFluidGrid(nil, func() {
+		grid, err := NewGrid()
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -87,14 +81,12 @@ func TestFluidGridSourceDecomposition(t *testing.T) {
 			So(grid.attributedExecuteAccumulator[askIndex], ShouldEqual, 2)
 			So(grid.cancelAccumulator[askIndex], ShouldEqual, 0)
 		})
-	})
+	}))
 }
 
 func TestFluidGridSparseDensityFilter(t *testing.T) {
-	Convey("Given an isolated lattice density spike", t, func() {
-		setFluidGridConfig(t)
-
-		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+	Convey("Given an isolated lattice density spike", t, withFluidGrid(nil, func() {
+		grid, err := NewGrid()
 		So(err, ShouldBeNil)
 
 		index := grid.midIndex
@@ -109,14 +101,12 @@ func TestFluidGridSparseDensityFilter(t *testing.T) {
 			So(grid.observedRho[index+1], ShouldBeGreaterThan, 0)
 			So(densityMass(grid.observedRho), ShouldAlmostEqual, before, 1e-9)
 		})
-	})
+	}))
 }
 
 func TestFluidGridLagrangianRemapPreservesMassAtBoundary(t *testing.T) {
-	Convey("Given prior density shifted outside the current lattice", t, func() {
-		setFluidGridConfig(t)
-
-		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+	Convey("Given prior density shifted outside the current lattice", t, withFluidGrid(nil, func() {
+		grid, err := NewGrid()
 		So(err, ShouldBeNil)
 
 		prev := make([]float64, len(grid.rho))
@@ -138,14 +128,14 @@ func TestFluidGridLagrangianRemapPreservesMassAtBoundary(t *testing.T) {
 			So(densityMass(grid.remappedRho), ShouldAlmostEqual, before, 1e-9)
 			So(grid.remappedRho[0], ShouldBeGreaterThan, 0)
 		})
-	})
+	}))
 }
 
 func TestFluidGridIngestBookResetsAfterIdleGap(t *testing.T) {
-	Convey("Given a book gap longer than the idle threshold", t, func() {
-		setFluidGridConfig(t)
-
-		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 500*time.Millisecond, 50)
+	Convey("Given a book gap longer than the idle threshold", t, withFluidGrid(map[string]any{
+		"signals.fluid.idle_threshold": 500 * time.Millisecond,
+	}, func() {
+		grid, err := NewGrid()
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -160,14 +150,14 @@ func TestFluidGridIngestBookResetsAfterIdleGap(t *testing.T) {
 			So(grid.lastIntegrateAt, ShouldResemble, at.Add(time.Second))
 			So(densityMass(grid.rho), ShouldAlmostEqual, densityMass(grid.filteredObservedRho), 1e-9)
 		})
-	})
+	}))
 }
 
 func TestFluidGridIngestBookCapsCatchUpSteps(t *testing.T) {
-	Convey("Given a non-idle gap larger than the configured step budget", t, func() {
-		setFluidGridConfig(t)
-
-		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 3)
+	Convey("Given a non-idle gap larger than the configured step budget", t, withFluidGrid(map[string]any{
+		"signals.fluid.max_integration_steps": 3,
+	}, func() {
+		grid, err := NewGrid()
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -182,14 +172,12 @@ func TestFluidGridIngestBookCapsCatchUpSteps(t *testing.T) {
 			So(grid.stepCount, ShouldEqual, 3)
 			So(grid.lastIntegrateAt, ShouldResemble, nextAt)
 		})
-	})
+	}))
 }
 
 func TestFluidGridSpatialVelocity(t *testing.T) {
-	Convey("Given asymmetric depth migration across the touch", t, func() {
-		setFluidGridConfig(t)
-
-		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+	Convey("Given asymmetric depth migration across the touch", t, withFluidGrid(nil, func() {
+		grid, err := NewGrid()
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -209,14 +197,12 @@ func TestFluidGridSpatialVelocity(t *testing.T) {
 		Convey("It should infer distinct velocities across cells", func() {
 			So(grid.velocity[grid.midIndex-1], ShouldNotEqual, grid.velocity[grid.midIndex+1])
 		})
-	})
+	}))
 }
 
 func TestFluidGridIngestBookSkipsDuplicateTimestamp(t *testing.T) {
-	Convey("Given a book frame already ingested at the same timestamp", t, func() {
-		setFluidGridConfig(t)
-
-		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+	Convey("Given a book frame already ingested at the same timestamp", t, withFluidGrid(nil, func() {
+		grid, err := NewGrid()
 		So(err, ShouldBeNil)
 
 		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -225,14 +211,12 @@ func TestFluidGridIngestBookSkipsDuplicateTimestamp(t *testing.T) {
 
 		So(grid.ingestBook(bids, asks, 100, at), ShouldBeNil)
 		So(grid.ingestBook(bids, asks, 100, at), ShouldBeNil)
-	})
+	}))
 }
 
 func TestFluidGridMomentumDivergence(t *testing.T) {
-	Convey("Given a density gradient advected by a uniform touch-region velocity field", t, func() {
-		setFluidGridConfig(t)
-
-		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+	Convey("Given a density gradient advected by a uniform touch-region velocity field", t, withFluidGrid(nil, func() {
+		grid, err := NewGrid()
 		So(err, ShouldBeNil)
 
 		index := grid.midIndex
@@ -248,12 +232,10 @@ func TestFluidGridMomentumDivergence(t *testing.T) {
 		Convey("It should report a positive divergence: rightward flow exports mass out of a cell sitting in rising density", func() {
 			So(grid.midVelocityDivergence(), ShouldAlmostEqual, 20, 1e-9)
 		})
-	})
+	}))
 
-	Convey("Given the same density gradient with the flow direction reversed", t, func() {
-		setFluidGridConfig(t)
-
-		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+	Convey("Given the same density gradient with the flow direction reversed", t, withFluidGrid(nil, func() {
+		grid, err := NewGrid()
 		So(err, ShouldBeNil)
 
 		index := grid.midIndex
@@ -269,14 +251,12 @@ func TestFluidGridMomentumDivergence(t *testing.T) {
 		Convey("It should flip sign: leftward flow now imports mass into the touch cell", func() {
 			So(grid.midVelocityDivergence(), ShouldAlmostEqual, -20, 1e-9)
 		})
-	})
+	}))
 }
 
 func TestFluidGridRK2NeumannBoundary(t *testing.T) {
-	Convey("Given non-uniform boundary density with advection", t, func() {
-		setFluidGridConfig(t)
-
-		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+	Convey("Given non-uniform boundary density with advection", t, withFluidGrid(nil, func() {
+		grid, err := NewGrid()
 		So(err, ShouldBeNil)
 
 		for index := range grid.rho {
@@ -294,14 +274,12 @@ func TestFluidGridRK2NeumannBoundary(t *testing.T) {
 			So(grid.rho[0], ShouldEqual, grid.rho[1])
 			So(grid.rho[lastIndex], ShouldEqual, grid.rho[lastIndex-1])
 		})
-	})
+	}))
 }
 
 func TestFluidGridReplenishmentRatio(t *testing.T) {
-	Convey("Given matched add and execute rates at the touch", t, func() {
-		setFluidGridConfig(t)
-
-		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+	Convey("Given matched add and execute rates at the touch", t, withFluidGrid(nil, func() {
+		grid, err := NewGrid()
 		So(err, ShouldBeNil)
 
 		grid.sources = make([]float64, len(grid.rho))
@@ -318,13 +296,12 @@ func TestFluidGridReplenishmentRatio(t *testing.T) {
 			So(grid.midAddRateAtTouch(), ShouldBeGreaterThan, 0)
 			So(grid.midExecuteRateAtTouch(), ShouldBeGreaterThan, 0)
 		})
-	})
+	}))
 }
 
 func TestFluidGridReplenishmentRequiresConsumption(t *testing.T) {
-	Convey("Given touch replenishment without observed consumption", t, func() {
-		setFluidGridConfig(t)
-		grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+	Convey("Given touch replenishment without observed consumption", t, withFluidGrid(nil, func() {
+		grid, err := NewGrid()
 		So(err, ShouldBeNil)
 		grid.sources[grid.midIndex] = 4
 
@@ -333,13 +310,13 @@ func TestFluidGridReplenishmentRequiresConsumption(t *testing.T) {
 		Convey("It should not mix replenished quantity into the viscosity ratio", func() {
 			So(grid.viscosity(), ShouldEqual, 0)
 		})
-	})
+	}))
 }
 
 func BenchmarkFluidGridIntegrateRK2(b *testing.B) {
-	setFluidGridConfig(b)
+	configureFluidBenchmark(fluidGridSettings(nil))
 
-	grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+	grid, err := NewGrid()
 
 	if err != nil {
 		b.Fatal(err)
@@ -358,9 +335,9 @@ func BenchmarkFluidGridIntegrateRK2(b *testing.B) {
 }
 
 func BenchmarkFluidGridIngestBook(b *testing.B) {
-	setFluidGridConfig(b)
+	configureFluidBenchmark(fluidGridSettings(nil))
 
-	grid, err := newFluidGrid(0.01, 10, 100*time.Millisecond, 5*time.Second, 50)
+	grid, err := NewGrid()
 
 	if err != nil {
 		b.Fatal(err)

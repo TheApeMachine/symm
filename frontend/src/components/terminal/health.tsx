@@ -1,12 +1,6 @@
-import { useSelector } from "@tanstack/react-store";
-import { useRef } from "react";
-import { appStore } from "#/collections/app";
-import {
-	measurementTickCount,
-	measurementsForSource,
-	measurementsForSymbol,
-} from "#/collections/measurements";
-import type { DashboardFrame, Measurement, TickFrame } from "#/collections/types";
+import { createRef } from "react";
+import type { DashboardFrame, TickFrame } from "#/collections/types";
+import type { Measurement } from "#/types/measurement";
 import {
 	backendMeasurementSources,
 	sourceHasUniverseFrames,
@@ -17,9 +11,7 @@ import {
 	resolveKernelStatus,
 } from "#/components/terminal/measurement-view";
 import { paintInlineMeter } from "#/components/terminal/metric-paint";
-import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
 import { requirePositive } from "#/lib/domain";
-import { getWorker } from "#/providers/websocket";
 import { Badge } from "@/components/ui/badge";
 import { Flex } from "@/components/ui/flex";
 import { Meter } from "@/components/ui/meter";
@@ -74,6 +66,18 @@ export const engineHealthLabel = (
 	return { label: "Live", variant: "success" };
 };
 
+/*
+measurementTickCount reports how many observation timestamps a flat buffer
+retains.
+*/
+const measurementTickCount = (rows: Measurement[]): number => {
+	if (rows.length === 0) {
+		return 0;
+	}
+
+	return new Set(rows.map((row) => row.at)).size;
+};
+
 export const terminalHealthSummary = (
 	measurements: Measurement[],
 	focusSymbol: string,
@@ -89,11 +93,11 @@ export const terminalHealthSummary = (
 	let firing = 0;
 
 	for (const source of sources) {
-		const sourceRows = measurementsForSource(measurements, source);
+		const sourceRows = measurements.filter((row) => row.source === source);
 		const history =
 			focusSymbol === "stream"
 				? sourceRows
-				: measurementsForSymbol(sourceRows, focusSymbol);
+				: sourceRows.filter((row) => row.symbol === focusSymbol);
 		const latest = headlineReading(history, source);
 		const status =
 			focusSymbol === "stream"
@@ -171,176 +175,193 @@ const VARIANT_TONE: Record<Variant, string> = {
 	disabled: "var(--f3)",
 };
 
-/*
-HealthPanel paints system-health readouts directly from the measurement store.
-*/
-export const HealthPanel = ({ sources }: { sources?: string[] }) => {
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const online = useSelector(appStore, (state) => state.online);
-	const badgeRef = useRef<HTMLSpanElement>(null);
-	const healthyRef = useRef<HTMLDivElement>(null);
-	const avgRef = useRef<HTMLDivElement>(null);
-	const firingRef = useRef<HTMLDivElement>(null);
-	const tickRef = useRef<HTMLDivElement>(null);
-	const healthyMeterRef = useRef<HTMLDivElement>(null);
-	const warmingMeterRef = useRef<HTMLDivElement>(null);
-	const degradedMeterRef = useRef<HTMLDivElement>(null);
+const badgeRef = createRef<HTMLSpanElement>();
+const healthyRef = createRef<HTMLDivElement>();
+const avgRef = createRef<HTMLDivElement>();
+const firingRef = createRef<HTMLDivElement>();
+const tickRef = createRef<HTMLDivElement>();
+const healthyMeterRef = createRef<HTMLDivElement>();
+const warmingMeterRef = createRef<HTMLDivElement>();
+const degradedMeterRef = createRef<HTMLDivElement>();
 
-	useDirectStorePaint(
-		getWorker(),
-		[
-			{ store: "measurements", key: "" },
-			{ store: "tick", key: "" },
-		],
-		(buffers) => {
-			const health = terminalHealthSummary(
-				(buffers["measurements:"] ?? []) as Measurement[],
-				focusSymbol,
-				sources,
-				((buffers["tick:"] ?? []).at(-1) as TickFrame | undefined) ?? null,
-			);
+let lastMeasurements: Measurement[] = [];
+let lastTick: TickFrame | null = null;
+let lastFocusSymbol = "";
 
-			if (badgeRef.current !== null) {
-				badgeRef.current.textContent = health.label;
-				badgeRef.current.style.color = VARIANT_TONE[health.variant];
-				badgeRef.current.style.background = `color-mix(in srgb, ${VARIANT_TONE[health.variant]} 12%, transparent)`;
-				badgeRef.current.style.borderColor = `color-mix(in srgb, ${VARIANT_TONE[health.variant]} 38%, transparent)`;
-			}
+const paintStat = (
+	node: HTMLDivElement | null,
+	value: string,
+	variant?: Variant,
+) => {
+	if (node === null) {
+		return;
+	}
 
-			const paintStat = (
-				node: HTMLDivElement | null,
-				value: string,
-				variant?: Variant,
-			) => {
-				if (node === null) {
-					return;
-				}
+	const valueNode = node.querySelector<HTMLElement>("[data-stat-value='true']");
 
-				const valueNode = node.querySelector<HTMLElement>(
-					"[data-stat-value='true']",
-				);
+	if (valueNode === null) {
+		return;
+	}
 
-				if (valueNode === null) {
-					return;
-				}
+	valueNode.textContent = value;
 
-				valueNode.textContent = value;
-
-				if (variant !== undefined) {
-					valueNode.style.color = VARIANT_TONE[variant];
-				}
-			};
-
-			paintStat(healthyRef.current, `${health.measured}/${health.total}`);
-			paintStat(avgRef.current, `${health.avg}%`);
-			paintStat(firingRef.current, String(health.firing), "warning");
-			paintStat(
-				tickRef.current,
-				health.tickMs === null ? "—" : `${health.tickMs}ms`,
-				health.completed ? "success" : "warning",
-			);
-
-			const [healthyBar, warmingBar, degradedBar] = health.bars;
-
-			if (healthyBar !== undefined && healthyMeterRef.current !== null) {
-				paintInlineMeter(
-					healthyMeterRef.current,
-					healthyBar.label,
-					String(healthyBar.count),
-					healthyBar.percent,
-					healthyBar.variant as "success" | "warning" | "error",
-				);
-			}
-
-			if (warmingBar !== undefined && warmingMeterRef.current !== null) {
-				paintInlineMeter(
-					warmingMeterRef.current,
-					warmingBar.label,
-					String(warmingBar.count),
-					warmingBar.percent,
-					warmingBar.variant as "success" | "warning" | "error",
-				);
-			}
-
-			if (degradedBar !== undefined && degradedMeterRef.current !== null) {
-				paintInlineMeter(
-					degradedMeterRef.current,
-					degradedBar.label,
-					String(degradedBar.count),
-					degradedBar.percent,
-					degradedBar.variant as "success" | "warning" | "error",
-				);
-			}
-		},
-		[online, focusSymbol, sources],
-	);
-
-	return (
-		<Panel size="lg">
-			<Flex.Row align="center" justify="between">
-				<Flex className="font-semibold text-(--f1) text-xs">System health</Flex>
-				<Badge
-					ref={badgeRef}
-					label=""
-					className="rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
-				/>
-			</Flex.Row>
-			<Flex.Row className="mt-3 gap-[18px]">
-				<Stat
-					ref={tickRef}
-					value=""
-					label="tick"
-					emphasis="default"
-					valueClassName="font-normal"
-				/>
-				<Stat
-					ref={healthyRef}
-					value=""
-					label="healthy"
-					emphasis="default"
-					valueClassName="font-normal text-(--f1)"
-				/>
-				<Stat
-					ref={avgRef}
-					value=""
-					label="avg strength"
-					emphasis="default"
-					valueClassName="font-normal text-(--f1)"
-				/>
-				<Stat
-					ref={firingRef}
-					value=""
-					label="firing"
-					emphasis="default"
-					valueClassName="font-normal"
-				/>
-			</Flex.Row>
-			<Flex.Column className="mt-[13px] gap-1.5">
-				<Meter
-					ref={healthyMeterRef}
-					layout="inline"
-					size="xs"
-					percent={0}
-					label=""
-					value=""
-				/>
-				<Meter
-					ref={warmingMeterRef}
-					layout="inline"
-					size="xs"
-					percent={0}
-					label=""
-					value=""
-				/>
-				<Meter
-					ref={degradedMeterRef}
-					layout="inline"
-					size="xs"
-					percent={0}
-					label=""
-					value=""
-				/>
-			</Flex.Column>
-		</Panel>
-	);
+	if (variant !== undefined) {
+		valueNode.style.color = VARIANT_TONE[variant];
+	}
 };
+
+const paintHealth = () => {
+	const health = terminalHealthSummary(
+		lastMeasurements,
+		lastFocusSymbol,
+		undefined,
+		lastTick,
+	);
+
+	if (badgeRef.current !== null) {
+		badgeRef.current.textContent = health.label;
+		badgeRef.current.style.color = VARIANT_TONE[health.variant];
+		badgeRef.current.style.background = `color-mix(in srgb, ${VARIANT_TONE[health.variant]} 12%, transparent)`;
+		badgeRef.current.style.borderColor = `color-mix(in srgb, ${VARIANT_TONE[health.variant]} 38%, transparent)`;
+	}
+
+	paintStat(healthyRef.current, `${health.measured}/${health.total}`);
+	paintStat(avgRef.current, `${health.avg}%`);
+	paintStat(firingRef.current, String(health.firing), "warning");
+	paintStat(
+		tickRef.current,
+		health.tickMs === null ? "—" : `${health.tickMs}ms`,
+		health.completed ? "success" : "warning",
+	);
+
+	const [healthyBar, warmingBar, degradedBar] = health.bars;
+
+	if (healthyBar !== undefined && healthyMeterRef.current !== null) {
+		paintInlineMeter(
+			healthyMeterRef.current,
+			healthyBar.label,
+			String(healthyBar.count),
+			healthyBar.percent,
+			healthyBar.variant as "success" | "warning" | "error",
+		);
+	}
+
+	if (warmingBar !== undefined && warmingMeterRef.current !== null) {
+		paintInlineMeter(
+			warmingMeterRef.current,
+			warmingBar.label,
+			String(warmingBar.count),
+			warmingBar.percent,
+			warmingBar.variant as "success" | "warning" | "error",
+		);
+	}
+
+	if (degradedBar !== undefined && degradedMeterRef.current !== null) {
+		paintInlineMeter(
+			degradedMeterRef.current,
+			degradedBar.label,
+			String(degradedBar.count),
+			degradedBar.percent,
+			degradedBar.variant as "success" | "warning" | "error",
+		);
+	}
+};
+
+/*
+paintHealthMeasurements refreshes system health from the current DRAW
+measurements batch and the cached tick.
+*/
+export const paintHealthMeasurements = (
+	value: unknown,
+	focusSymbol: string,
+) => {
+	lastMeasurements = (
+		Array.isArray(value) ? value : value != null ? [value] : []
+	) as Measurement[];
+	lastFocusSymbol = focusSymbol;
+	paintHealth();
+};
+
+/*
+paintHealthTick refreshes system health from the current DRAW tick and the
+cached measurements.
+*/
+export const paintHealthTick = (value: unknown, focusSymbol: string) => {
+	const rows = Array.isArray(value) ? value : value != null ? [value] : [];
+	lastTick = (rows.at(-1) as TickFrame | undefined) ?? null;
+	lastFocusSymbol = focusSymbol;
+	paintHealth();
+};
+
+/*
+HealthPanel is the static system-health shell. DRAW paints via
+paintHealthMeasurements and paintHealthTick.
+*/
+export const HealthPanel = () => (
+	<Panel size="lg">
+		<Flex.Row align="center" justify="between">
+			<Flex className="font-semibold text-(--f1) text-xs">System health</Flex>
+			<Badge
+				ref={badgeRef}
+				label=""
+				className="rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
+			/>
+		</Flex.Row>
+		<Flex.Row className="mt-3 gap-[18px]">
+			<Stat
+				ref={tickRef}
+				value=""
+				label="tick"
+				emphasis="default"
+				valueClassName="font-normal"
+			/>
+			<Stat
+				ref={healthyRef}
+				value=""
+				label="healthy"
+				emphasis="default"
+				valueClassName="font-normal text-(--f1)"
+			/>
+			<Stat
+				ref={avgRef}
+				value=""
+				label="avg strength"
+				emphasis="default"
+				valueClassName="font-normal text-(--f1)"
+			/>
+			<Stat
+				ref={firingRef}
+				value=""
+				label="firing"
+				emphasis="default"
+				valueClassName="font-normal"
+			/>
+		</Flex.Row>
+		<Flex.Column className="mt-[13px] gap-1.5">
+			<Meter
+				ref={healthyMeterRef}
+				layout="inline"
+				size="xs"
+				percent={0}
+				label=""
+				value=""
+			/>
+			<Meter
+				ref={warmingMeterRef}
+				layout="inline"
+				size="xs"
+				percent={0}
+				label=""
+				value=""
+			/>
+			<Meter
+				ref={degradedMeterRef}
+				layout="inline"
+				size="xs"
+				percent={0}
+				label=""
+				value=""
+			/>
+		</Flex.Column>
+	</Panel>
+);

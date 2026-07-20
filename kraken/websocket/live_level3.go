@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/utils"
 )
 
 // level3QueueDepth buffers a burst of book frames between the socket reader and
@@ -110,15 +111,16 @@ func (live *Live) drainLevel3() {
 }
 
 /*
-updateLevel3 feeds one websocket message into the SDK BookManager under the
-write lease so PeekBook readers never range Side.Levels mid-mutation. The SDK
-can panic on delete/modify against a missing price level (empty book after a
-failed apply); recover turns that into an error so the FIFO worker stays alive.
+updateLevel3 applies one websocket message through the exact-text ledger under
+the SDK book write lease so PeekBook readers never range Side.Levels during
+mutation. The SDK book can panic on delete/modify against a missing level;
+recover turns that into an error so the FIFO worker stays alive.
 */
 func (live *Live) updateLevel3(
 	event *callback.Event[*sdkkraken.WebSocketMessage],
 ) (err error) {
-	if !live.isLevel3 || live.books == nil || event == nil {
+	if !live.isLevel3 || live.books == nil || live.level3Ledger == nil ||
+		event == nil || event.Data == nil {
 		return nil
 	}
 
@@ -135,7 +137,7 @@ func (live *Live) updateLevel3(
 		}
 	}()
 
-	return live.books.Update(event)
+	return live.level3Ledger.Apply(live.books, event.Data.Bytes())
 }
 
 /*
@@ -200,9 +202,16 @@ func (live *Live) ApplyLevel3(payload []byte) error {
 		)
 	}
 
-	return live.updateLevel3(&callback.Event[*sdkkraken.WebSocketMessage]{
+	event := &callback.Event[*sdkkraken.WebSocketMessage]{
 		Data: sdkkraken.NewWebSocketMessage(payload),
-	})
+	}
+
+	if utils.GetString(payload, "method") == "subscribe" {
+		live.ingestLevel3Sent(event)
+		return nil
+	}
+
+	return live.updateLevel3(event)
 }
 
 /*
@@ -234,6 +243,7 @@ func (live *Live) invalidateLevel3Book(raw []byte) {
 			continue
 		}
 
+		delete(live.level3Ledger.orders, data.Symbol)
 		managed := live.books.CreateBook(data.Symbol, depth)
 		managed.EnableMaxDepth = false
 		managed.NoBookCrossing = false

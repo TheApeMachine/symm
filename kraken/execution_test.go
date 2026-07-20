@@ -25,7 +25,7 @@ func TestNewExecutionFromMap(t *testing.T) {
 			fill := execution.Data[0]
 			So(fill.ExecID, ShouldEqual, "PAPER-00042")
 			So(fill.Symbol, ShouldEqual, "BTC/USD")
-			So(fill.LastQty, ShouldEqual, 0.00299963)
+			So(fill.LastQty.String(), ShouldEqual, "0.00299963")
 			So(fill.Cost.Float64(), ShouldEqual, 194.492409644)
 			So(fill.FeeUsdEquiv.Float64(), ShouldEqual, 0.5056802650744)
 		})

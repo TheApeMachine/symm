@@ -348,20 +348,18 @@ For example:
 	Quantity: 0.1 BTC
 	Notional: 5,000 USD
 
-The instrument supplies the only valid price and cost precision. The quantity
-is scaled to the instrument's cost precision before multiplication, and the
-result remains at that authoritative cost precision.
+The instrument supplies the only valid price and cost precision. Price is the
+receiver so a quantity's executable floor-rounding policy cannot leak into
+quote-currency rounding. The result remains at authoritative cost precision.
 */
 func (price *Price) Notional(
 	instrument *kraken.InstrumentPair,
 	rate *decimal.Decimal,
 	quantity *decimal.Decimal,
 ) *decimal.Decimal {
-	return quantity.SetScale(int64(
-		instrument.CostPrecision,
-	)).Mul(rate.SetScale(int64(
-		instrument.PricePrecision,
-	))).SetScale(int64(instrument.CostPrecision))
+	costScale := int64(instrument.CostPrecision)
+
+	return price.Mul(rate, quantity).SetScale(costScale)
 }
 
 /*
@@ -393,8 +391,12 @@ func (price *Price) Fee(
 	fraction := tradeVolume.Fee.SetScale(feePrecision).Div(
 		decimal.NewFromInt64(100).SetScale(feePrecision),
 	)
+	costScale := int64(instrument.CostPrecision)
+	calculationScale := max(costScale, feePrecision)
 
-	return fraction.Mul(amount).SetScale(int64(instrument.CostPrecision))
+	return amount.SetScale(calculationScale).
+		Mul(fraction.SetScale(calculationScale)).
+		SetScale(costScale)
 }
 
 /*
@@ -513,7 +515,17 @@ func (price *Price) fillExit(
 	// Inventory qty is owned by Balance.syncWallet from exchange Balance.
 	// Executions only update exit economics and prorate remaining entry fee.
 	before := holding.Qty.Copy()
-	remaining := before.Sub(decimal.NewFromFloat64(data.LastQty))
+	remaining := before.Copy()
+
+	if data.LastQty == nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"execution fill missing exact last quantity for "+holding.Symbol,
+			nil,
+		))
+	} else {
+		remaining = before.Sub(data.LastQty)
+	}
 
 	if remaining.Sign() < 0 {
 		remaining = decimal.NewFromInt64(0)
@@ -909,23 +921,51 @@ func (price *Price) Quantize(
 }
 
 /*
-Mul multiplies after lifting both factors to a shared scale so a fractional
-right-hand value is not truncated to zero against an integer left.
+Mul multiplies at the sum of the operand scales, which exactly represents a
+finite fixed-point product. Integer products retain one fractional place
+because Kraken decimal's scale-zero banker rounding misclassifies exact odd
+integers as half-way values.
 */
 func (price *Price) Mul(left, right *decimal.Decimal) *decimal.Decimal {
-	scale := price.alignScale(left, right)
+	scale := max(int64(1), left.GetScale()+right.GetScale())
 
 	return left.SetScale(scale).Mul(right.SetScale(scale))
 }
 
 /*
-Div divides after the same scale lift so a sub-unit divisor cannot collapse
-to zero when the dividend carries a coarser scale.
+Div divides at the greater of the operands' precision and Decimal's documented
+default precision. Callers that need an exchange-executable scale quantize the
+result against the instrument after division.
 */
 func (price *Price) Div(left, right *decimal.Decimal) *decimal.Decimal {
-	scale := price.alignScale(left, right)
+	scale := max(
+		int64(decimal.DefaultScale),
+		left.GetScale(),
+		right.GetScale(),
+	)
 
 	return left.SetScale(scale).Div(right.SetScale(scale))
+}
+
+/*
+DivFloor divides fixed-point values and floors the result at the caller's
+executable scale. This is used for sell quantities where rounding upward would
+exceed the money or liquidity boundary that funded the order.
+*/
+func (price *Price) DivFloor(
+	left *decimal.Decimal,
+	right *decimal.Decimal,
+	scale int64,
+) *decimal.Decimal {
+	workingScale := max(scale, left.GetScale(), right.GetScale())
+	dividend := left.SetRounding(
+		func(integer *big.Int, factor *big.Int) *big.Int {
+			return new(big.Int).Quo(integer, factor)
+		},
+	).SetScale(workingScale)
+	quotient := dividend.Div(right.SetScale(workingScale))
+
+	return price.floorScale(quotient, scale)
 }
 
 /*
@@ -936,14 +976,4 @@ func (price *Price) floorScale(value *decimal.Decimal, scale int64) *decimal.Dec
 	return value.Copy().SetRounding(func(integer *big.Int, factor *big.Int) *big.Int {
 		return new(big.Int).Quo(integer, factor)
 	}).SetScale(scale)
-}
-
-func (price *Price) alignScale(left, right *decimal.Decimal) int64 {
-	scale := left.GetScale()
-
-	if right.GetScale() > scale {
-		scale = right.GetScale()
-	}
-
-	return scale + 8
 }

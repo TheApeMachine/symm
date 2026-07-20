@@ -55,8 +55,29 @@ describe("buildHeatmapCells", () => {
 		const cells = buildHeatmapCells(measurements, "liquidity", "strength");
 
 		expect(cells).toHaveLength(30);
-		expect(cells[0]?.symbol).toBe("SYM0/EUR");
-		expect(cells.at(-1)?.symbol).toBe("SYM29/EUR");
+		expect(cells.map((cell) => cell.symbol)).toEqual(
+			[...cells.map((cell) => cell.symbol)].sort((left, right) =>
+				left.localeCompare(right),
+			),
+		);
+	});
+
+	it("keeps a stable symbol order regardless of batch order", () => {
+		const cells = buildHeatmapCells(
+			[
+				measurement("ETH/EUR", 0.41),
+				measurement("BTC/EUR", 0.82),
+				measurement("AAA/EUR", 0.1),
+			],
+			"liquidity",
+			"strength",
+		);
+
+		expect(cells.map((cell) => cell.symbol)).toEqual([
+			"AAA/EUR",
+			"BTC/EUR",
+			"ETH/EUR",
+		]);
 	});
 
 	it("skips symbols without a headline reading for the selected source", () => {

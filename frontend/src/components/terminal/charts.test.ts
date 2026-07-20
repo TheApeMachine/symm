@@ -3,6 +3,9 @@ import {
 	terminalFluidDisplayLatticeFromFrame,
 	terminalFluidMatrixFromFrame,
 	terminalFluidParticlesFromFrame,
+	terminalPhaseScanFromFrame,
+	terminalPhaseStatusFromFrame,
+	terminalWaveModesFromFrame,
 } from "./charts";
 
 describe("terminalFluidParticlesFromFrame", () => {
@@ -102,5 +105,51 @@ describe("terminalFluidMatrixFromFrame", () => {
 				coherenceMag2: 0.3,
 			}),
 		).toEqual([[0.6, 0.4, 0.1, -0.2, 0.3]]);
+	});
+});
+
+describe("terminal phase dial frame", () => {
+	it("preserves complex modes and signed scanner responses", () => {
+		const frame = {
+			phaseReady: true,
+			phaseReason: "",
+			wave: [
+				{ omega: -1, real: 0.5, imaginary: -0.25, linewidth: 0.1 },
+				{ omega: 1, real: -0.5, imaginary: 0.25, linewidth: 0.2 },
+			],
+			phaseScan: [
+				{ angle: 0, similarity: 0.8, observedAt: "2026-07-20T12:00:00Z" },
+				{
+					angle: Math.PI,
+					similarity: -0.8,
+					observedAt: "2026-07-20T12:00:00Z",
+				},
+			],
+		};
+
+		expect(terminalWaveModesFromFrame(frame)).toEqual(frame.wave);
+		expect(terminalPhaseScanFromFrame(frame)).toEqual(frame.phaseScan);
+		expect(terminalPhaseStatusFromFrame(frame)).toEqual({
+			ready: true,
+			reason: "",
+		});
+	});
+
+	it("rejects incomplete modes and scan rows", () => {
+		expect(
+			terminalWaveModesFromFrame({ wave: [{ real: 1, imaginary: 0 }] }),
+		).toEqual([]);
+		expect(terminalPhaseScanFromFrame({ phaseScan: [{ angle: 0 }] })).toEqual(
+			[],
+		);
+		expect(
+			terminalPhaseStatusFromFrame({
+				phaseReady: false,
+				phaseReason: "awaiting a prior nonzero phase observation",
+			}),
+		).toEqual({
+			ready: false,
+			reason: "awaiting a prior nonzero phase observation",
+		});
 	});
 });

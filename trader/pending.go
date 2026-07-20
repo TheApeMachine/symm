@@ -47,7 +47,8 @@ func (crypto *Crypto) reconcilePending() bool {
 
 /*
 finishPendingReconcile performs one OpenOrders pass and clears the recovery
-snapshot only after a successful desk re-arm.
+snapshot only after every resting recovered order is re-armed or the exchange
+ledger explicitly establishes that it is no longer open.
 */
 func (crypto *Crypto) finishPendingReconcile(snapshot *types.Recovery) bool {
 	if crypto == nil || crypto.api == nil || crypto.desk == nil {
@@ -65,7 +66,13 @@ func (crypto *Crypto) finishPendingReconcile(snapshot *types.Recovery) bool {
 		return false
 	}
 
-	crypto.desk.ReconcilePending(snapshot.PendingOrders, open)
+	unresolved := crypto.desk.ReconcilePending(snapshot.PendingOrders, open)
+
+	if len(unresolved) > 0 {
+		crypto.pendingRetry.Schedule(time.Now())
+		return false
+	}
+
 	crypto.pendingRetry.Clear()
 	crypto.snapshot.CompareAndSwap(snapshot, nil)
 	crypto.trading.Store(true)

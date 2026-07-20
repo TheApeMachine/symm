@@ -164,6 +164,20 @@ func TestStoplossWidenSurvivalWhileUnlocked(t *testing.T) {
 			So(lift.FloorDistance, ShouldEqual, before)
 		})
 
+		Convey("When an unlocked stop already ratcheted under a partial peak", func() {
+			partial := NewStoploss(context.Background())
+			partial.Bind(100, 0.05)
+			partial.Trail.Advance(0.02)
+			So(math.IsInf(partial.LockedFloor, -1), ShouldBeTrue)
+			before := partial.StopReturn
+
+			partial.WidenSurvival(0.08)
+
+			So(partial.FloorDistance, ShouldEqual, 0.08)
+			So(partial.TrailDistance, ShouldEqual, 0.08)
+			So(partial.StopReturn, ShouldBeGreaterThanOrEqualTo, before)
+		})
+
 		Convey("When mark is sincerely through the armed floor", func() {
 			deep := NewStoploss(context.Background())
 			deep.Bind(100, 0.02)

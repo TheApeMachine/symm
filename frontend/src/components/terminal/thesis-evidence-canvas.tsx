@@ -1,6 +1,4 @@
-import { useSelector } from "@tanstack/react-store";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { appStore } from "#/collections/app";
+import { createRef, useCallback, useEffect, useState } from "react";
 import { resizeCanvas } from "#/components/terminal/canvas";
 import {
 	buildScene,
@@ -13,8 +11,6 @@ import {
 	nodeIdentity,
 } from "#/components/terminal/evidence-graph-viz";
 import { GraphInspector } from "#/components/terminal/thesis-graph-inspector";
-import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
-import { getWorker } from "#/providers/websocket";
 import type { GraphFrame } from "#/types/thesis";
 
 type HoverState = {
@@ -25,169 +21,144 @@ type HoverState = {
 
 const TWEEN_MS = 420;
 
+const canvasRef = createRef<HTMLCanvasElement>();
+let graph: GraphFrame | null = null;
+let targetScene: GraphScene | null = null;
+let renderScene: GraphScene | null = null;
+let renderedByIdentity = new Map<string, GraphNodePosition>();
+let topologyKey = "";
+let hoverKey: string | null = null;
+let animation: number | null = null;
+let tweenStart = 0;
+let fromByIdentity = new Map<string, GraphNodePosition>();
+
+const asRows = <T,>(value: unknown): T[] =>
+	(Array.isArray(value) ? value : value != null ? [value] : []) as T[];
+
 const easeInOut = (t: number): number =>
 	t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
 
 /*
-ThesisEvidenceCanvas paints the symbol's evidence graph and resolves pointer
-hover into a node/edge inspector. Layout targets are recomputed per frame from
-stable node identity, and rendered positions are eased toward those targets so a
-tick that adds or drops nodes glides instead of snapping — the graph reads as one
-evolving structure rather than a fresh scatter each tick.
+draw paints the current render scene onto the bound canvas.
 */
-export const ThesisEvidenceCanvas = ({ symbol }: { symbol: string }) => {
-	const canvasRef = useRef<HTMLCanvasElement | null>(null);
-	const graphRef = useRef<GraphFrame | null>(null);
-	const targetSceneRef = useRef<GraphScene | null>(null);
-	const renderSceneRef = useRef<GraphScene | null>(null);
-	// Rendered positions carried across frames by stable identity, so tweening
-	// survives the per-tick MeasurementKey churn.
-	const renderedByIdentityRef = useRef<Map<string, GraphNodePosition>>(new Map());
-	const topologyKeyRef = useRef("");
-	const hoverKeyRef = useRef<string | null>(null);
-	const animationRef = useRef<number | null>(null);
-	const tweenStartRef = useRef(0);
-	const fromByIdentityRef = useRef<Map<string, GraphNodePosition>>(new Map());
-	const online = useSelector(appStore, (state) => state.online);
-	const [hover, setHover] = useState<HoverState | null>(null);
+const draw = (nextHoverKey: string | null) => {
+	const canvas = canvasRef.current;
 
-	// Draws the render scene (already-interpolated positions) to the canvas.
-	const draw = useCallback((hoverKey: string | null) => {
-		const canvas = canvasRef.current;
+	if (canvas === null) {
+		return;
+	}
 
-		if (canvas === null) {
-			return;
+	const width = canvas.clientWidth;
+	const height = canvas.clientHeight;
+	const context = resizeCanvas(canvas);
+
+	if (context === null) {
+		return;
+	}
+
+	drawEvidenceGraph(context, width, height, graph, renderScene, nextHoverKey);
+};
+
+/*
+composeRenderScene builds the render scene at tween progress p (0..1).
+*/
+const composeRenderScene = (progress: number) => {
+	if (targetScene === null) {
+		renderScene = null;
+		return;
+	}
+
+	const positions = new Map<string, GraphNodePosition>();
+	const rendered = new Map<string, GraphNodePosition>();
+	const eased = easeInOut(progress);
+
+	for (const [key, node] of targetScene.nodes) {
+		const identity = nodeIdentity(node);
+		const to = targetScene.positions.get(key);
+
+		if (to === undefined) {
+			continue;
 		}
 
-		const width = canvas.clientWidth;
-		const height = canvas.clientHeight;
-		const context = resizeCanvas(canvas);
-
-		if (context === null) {
-			return;
-		}
-
-		drawEvidenceGraph(
-			context,
-			width,
-			height,
-			graphRef.current,
-			renderSceneRef.current,
-			hoverKey,
-		);
-	}, []);
-
-	// Builds the render scene at tween progress p (0..1) from the remembered
-	// origin positions toward the target layout, keyed by node identity so nodes
-	// keep continuity even as their per-tick keys change.
-	const composeRenderScene = useCallback((progress: number) => {
-		const target = targetSceneRef.current;
-
-		if (target === null) {
-			renderSceneRef.current = null;
-
-			return;
-		}
-
-		const positions = new Map<string, GraphNodePosition>();
-		const rendered = new Map<string, GraphNodePosition>();
-		const eased = easeInOut(progress);
-
-		for (const [key, node] of target.nodes) {
-			const identity = nodeIdentity(node);
-			const to = target.positions.get(key);
-
-			if (to === undefined) {
-				continue;
-			}
-
-			const from = fromByIdentityRef.current.get(identity) ?? to;
-			const position = {
-				x: from.x + (to.x - from.x) * eased,
-				y: from.y + (to.y - from.y) * eased,
-			};
-
-			positions.set(key, position);
-			rendered.set(identity, position);
-		}
-
-		renderSceneRef.current = {
-			positions,
-			nodes: target.nodes,
-			width: target.width,
-			height: target.height,
+		const from = fromByIdentity.get(identity) ?? to;
+		const position = {
+			x: from.x + (to.x - from.x) * eased,
+			y: from.y + (to.y - from.y) * eased,
 		};
-		renderedByIdentityRef.current = rendered;
-	}, []);
 
-	const animate = useCallback(
-		(now: number) => {
-			const elapsed = now - tweenStartRef.current;
-			const progress = Math.min(1, elapsed / TWEEN_MS);
+		positions.set(key, position);
+		rendered.set(identity, position);
+	}
 
-			composeRenderScene(progress);
-			draw(hoverKeyRef.current);
+	renderScene = {
+		positions,
+		nodes: targetScene.nodes,
+		width: targetScene.width,
+		height: targetScene.height,
+	};
+	renderedByIdentity = rendered;
+};
 
-			if (progress < 1) {
-				animationRef.current = requestAnimationFrame(animate);
-			} else {
-				animationRef.current = null;
-			}
-		},
-		[composeRenderScene, draw],
-	);
+const animate = (now: number) => {
+	const elapsed = now - tweenStart;
+	const progress = Math.min(1, elapsed / TWEEN_MS);
 
-	// Recomputes the target layout and, if topology changed, starts a tween from
-	// the currently rendered positions to the new target.
-	const retarget = useCallback(
-		(force: boolean) => {
-			const canvas = canvasRef.current;
+	composeRenderScene(progress);
+	draw(hoverKey);
 
-			if (canvas === null) {
-				return;
-			}
+	if (progress < 1) {
+		animation = requestAnimationFrame(animate);
+		return;
+	}
 
-			const width = canvas.clientWidth;
-			const height = canvas.clientHeight;
-			const graph = graphRef.current;
-			const nextTopology = `${graphVisualKey(graph)}:${Math.round(width)}:${Math.round(height)}`;
+	animation = null;
+};
 
-			if (!force && nextTopology === topologyKeyRef.current) {
-				return;
-			}
+/*
+retarget recomputes the layout and starts a tween when topology changes.
+*/
+const retarget = (force: boolean) => {
+	const canvas = canvasRef.current;
 
-			topologyKeyRef.current = nextTopology;
-			targetSceneRef.current =
-				graph === null ? null : buildScene(graph, width, height);
+	if (canvas === null) {
+		return;
+	}
 
-			// Origin = where each identity is rendered right now (empty on first
-			// frame, so new nodes simply appear at their target).
-			fromByIdentityRef.current = new Map(renderedByIdentityRef.current);
-			tweenStartRef.current = performance.now();
+	const width = canvas.clientWidth;
+	const height = canvas.clientHeight;
+	const nextTopology = `${graphVisualKey(graph)}:${Math.round(width)}:${Math.round(height)}`;
 
-			if (animationRef.current !== null) {
-				cancelAnimationFrame(animationRef.current);
-			}
+	if (!force && nextTopology === topologyKey) {
+		return;
+	}
 
-			animationRef.current = requestAnimationFrame(animate);
-		},
-		[animate],
-	);
+	topologyKey = nextTopology;
+	targetScene = graph === null ? null : buildScene(graph, width, height);
+	fromByIdentity = new Map(renderedByIdentity);
+	tweenStart = performance.now();
 
-	useDirectStorePaint(
-		getWorker(),
-		[{ store: "graphs", key: symbol }],
-		(buffers) => {
-			const graphs = (buffers[`graphs:${symbol}`] ??
-				buffers["graphs:"] ??
-				[]) as GraphFrame[];
+	if (animation !== null) {
+		cancelAnimationFrame(animation);
+	}
 
-			graphRef.current =
-				graphs.find((frame) => frame.symbol === symbol) ?? null;
-			retarget(false);
-		},
-		[symbol, online, retarget],
-	);
+	animation = requestAnimationFrame(animate);
+};
+
+/*
+paintThesisEvidence paints the current DRAW graphs batch for the bound symbol.
+*/
+export const paintThesisEvidence = (value: unknown, focusSymbol: string) => {
+	const graphs = asRows<GraphFrame>(value);
+
+	graph = graphs.find((frame) => frame.symbol === focusSymbol) ?? null;
+	retarget(false);
+};
+
+/*
+ThesisEvidenceCanvas is the static evidence-graph shell. paintThesis drives it.
+*/
+export const ThesisEvidenceCanvas = () => {
+	const [hover, setHover] = useState<HoverState | null>(null);
 
 	useEffect(() => {
 		const canvas = canvasRef.current;
@@ -199,21 +170,22 @@ export const ThesisEvidenceCanvas = ({ symbol }: { symbol: string }) => {
 		const onResize = () => retarget(true);
 		const observer = new ResizeObserver(onResize);
 		observer.observe(canvas);
+		retarget(true);
 
 		return () => {
 			observer.disconnect();
 
-			if (animationRef.current !== null) {
-				cancelAnimationFrame(animationRef.current);
+			if (animation !== null) {
+				cancelAnimationFrame(animation);
+				animation = null;
 			}
 		};
-	}, [retarget]);
+	}, []);
 
 	const onPointerMove = useCallback(
 		(event: React.PointerEvent<HTMLCanvasElement>) => {
 			const canvas = canvasRef.current;
-			const graph = graphRef.current;
-			const scene = renderSceneRef.current;
+			const scene = renderScene;
 
 			if (canvas === null || graph === null || scene === null) {
 				return;
@@ -226,32 +198,30 @@ export const ThesisEvidenceCanvas = ({ symbol }: { symbol: string }) => {
 			const nextHoverKey =
 				hit !== null && hit.kind === "node" ? hit.node.key : null;
 
-			if (nextHoverKey !== hoverKeyRef.current) {
-				hoverKeyRef.current = nextHoverKey;
+			if (nextHoverKey !== hoverKey) {
+				hoverKey = nextHoverKey;
 
-				// Only force an immediate redraw when no tween is in flight; the
-				// animation loop already repaints with the current hover key.
-				if (animationRef.current === null) {
+				if (animation === null) {
 					draw(nextHoverKey);
 				}
 			}
 
 			setHover(hit === null ? null : { hit, x, y });
 		},
-		[draw],
+		[],
 	);
 
 	const onPointerLeave = useCallback(() => {
-		if (hoverKeyRef.current !== null) {
-			hoverKeyRef.current = null;
+		if (hoverKey !== null) {
+			hoverKey = null;
 
-			if (animationRef.current === null) {
+			if (animation === null) {
 				draw(null);
 			}
 		}
 
 		setHover(null);
-	}, [draw]);
+	}, []);
 
 	return (
 		<div className="absolute inset-0">

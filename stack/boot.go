@@ -78,60 +78,51 @@ type Options struct {
 Boot wires Price through Crypto exactly as production does after NewAPI, then
 runs Booter stages so the stack is ready for Crypto.Tick / Crypto.Run.
 */
-func Boot(ctx context.Context, api *websocket.API, options Options) (*Stack, error) {
-	if api == nil {
-		return nil, errnie.Err(errnie.Validation, "stack: api required", nil)
-	}
-
-	if options.Signals == nil {
-		return nil, errnie.Err(errnie.Validation, "stack: signals required", nil)
-	}
-
-	channel := options.Channel
-
-	if channel == nil {
-		channel = make(chan []byte, 256)
-	}
-
-	booter := options.Booter
-
-	if booter == nil {
-		booter = system.NewBooter(ctx, channel)
-	}
-
-	tree := options.Tree
-
-	if tree == nil {
-		tree = dmt.NewTree("")
-	}
-
-	thesis := options.Thesis
-
-	if thesis == nil {
-		thesis = types.NewThesis(channel, nil)
+func Boot(
+	ctx context.Context,
+	api *websocket.API,
+	options Options,
+) (*Stack, error) {
+	if err := errnie.Error(errnie.Require(map[string]any{
+		"api":     api,
+		"booter":  options.Booter,
+		"channel": options.Channel,
+		"signals": options.Signals,
+		"thesis":  options.Thesis,
+		"tree":    options.Tree,
+	})); err != nil {
+		return nil, err
 	}
 
 	price := broker.NewPrice(api)
-	instrument := broker.NewInstrument(api, price, channel)
-	balance := broker.NewBalance(api, nil, channel)
+	instrument := broker.NewInstrument(api, price, options.Channel)
+	balance := broker.NewBalance(api, nil, options.Channel)
 	desk := broker.NewDesk(api, instrument, price, balance)
 
 	uiHub := options.UIHub
 
 	if options.AttachUI != nil {
-		hub, hubErr := options.AttachUI(booter, price, balance, thesis, channel)
+		hub, err := options.AttachUI(
+			options.Booter, price, balance, options.Thesis, options.Channel,
+		)
 
-		if hubErr != nil {
-			return nil, errnie.Err(errnie.Internal, "stack: ui hub", hubErr)
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Internal, "stack: ui hub", err,
+			))
 		}
 
 		uiHub = hub
 	}
 
-	signals := options.Signals(ctx, api, instrument, channel)
+	signals := options.Signals(
+		ctx, api, instrument, options.Channel,
+	)
 
 	if len(signals) == 0 {
-		return nil, errnie.Err(errnie.Validation, "stack: signals factory returned none", nil)
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "stack: signals factory returned none", nil,
+		))
 	}
 
 	hawkes := options.Hawkes
@@ -145,19 +136,25 @@ func Boot(ctx context.Context, api *websocket.API, options Options) (*Stack, err
 		}
 	}
 
-	analyzer, err := logic.NewAnalyzer(ctx, booter, api, hawkes, tree, channel)
+	analyzer, err := logic.NewAnalyzer(
+		ctx,
+		options.Booter,
+		api,
+		hawkes,
+		options.Tree,
+		options.Channel,
+		options.Recorder,
+	)
 
 	if err != nil {
-		return nil, errnie.Err(errnie.Internal, "stack: analyzer", err)
-	}
-
-	if options.Recorder != nil {
-		analyzer.SetRecorder(options.Recorder)
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal, "stack: analyzer", err,
+		))
 	}
 
 	planner := strategy.NewPlanner(
 		ctx,
-		channel,
+		options.Channel,
 		api,
 		desk,
 		instrument,
@@ -171,7 +168,7 @@ func Boot(ctx context.Context, api *websocket.API, options Options) (*Stack, err
 
 	crypto, err := trader.NewCrypto(
 		ctx,
-		booter,
+		options.Booter,
 		api,
 		price,
 		balance,
@@ -179,8 +176,8 @@ func Boot(ctx context.Context, api *websocket.API, options Options) (*Stack, err
 		instrument,
 		analyzer,
 		planner,
-		tree,
-		thesis,
+		options.Tree,
+		options.Thesis,
 		uiHub,
 		options.Recorder,
 	)
@@ -190,12 +187,12 @@ func Boot(ctx context.Context, api *websocket.API, options Options) (*Stack, err
 	}
 
 	stack := &Stack{
-		Booter:     booter,
+		Booter:     options.Booter,
 		API:        api,
 		Paper:      options.Paper,
-		Channel:    channel,
-		Tree:       tree,
-		Thesis:     thesis,
+		Channel:    options.Channel,
+		Tree:       options.Tree,
+		Thesis:     options.Thesis,
 		Price:      price,
 		Instrument: instrument,
 		Balance:    balance,
@@ -221,13 +218,13 @@ func Boot(ctx context.Context, api *websocket.API, options Options) (*Stack, err
 		desk,
 	)
 
-	booter.AddStages(
+	options.Booter.AddStages(
 		system.NewStage(system.StagePreflight, preflight...),
 		system.NewStage(system.StageWarmup, crypto),
 		system.NewStage(system.StageReady, analyzer, planner),
 	)
 
-	if err := booter.Start(); err != nil {
+	if err := options.Booter.Start(); err != nil {
 		_ = crypto.Close()
 		return nil, errnie.Err(errnie.Internal, "stack: boot", err)
 	}
@@ -239,10 +236,6 @@ func Boot(ctx context.Context, api *websocket.API, options Options) (*Stack, err
 Close releases crypto and API resources owned by the stack.
 */
 func (stack *Stack) Close() {
-	if stack == nil {
-		return
-	}
-
 	if stack.Crypto != nil {
 		errnie.Error(stack.Crypto.Close())
 	}

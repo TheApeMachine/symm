@@ -28,16 +28,21 @@ type Signal struct {
 }
 
 /*
-NewSignal creates an empty per-symbol pump state that will calibrate only from
-the production trade, book, and ticker streams it observes.
+NewSignal creates an empty per-symbol pump state whose baseline capacity is the
+same explicit retention bound used by the production market feed.
 */
-func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
+func NewSignal(
+	ctx context.Context,
+	api *websocket.API,
+	ui chan []byte,
+	baselineCapacity int,
+) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
 		ctx:      ctx,
 		cancel:   cancel,
-		ignition: equation.NewIgnition(),
+		ignition: equation.NewIgnition(baselineCapacity),
 		volume:   make(map[string]float64),
 		books:    make(map[string]*flow.Book),
 		ui:       ui,
@@ -126,6 +131,7 @@ func (signal *Signal) Calculate(
 			Last:   row.Last.Float64(),
 			Bid:    bid,
 			Ask:    ask,
+			At:     row.Timestamp,
 		})
 
 		if err != nil {

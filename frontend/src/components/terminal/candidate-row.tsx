@@ -1,375 +1,376 @@
-import { useSelector } from "@tanstack/react-store";
-import { memo, useRef } from "react";
-import { appStore } from "#/collections/app";
 import type {
 	CausalFrame,
 	ManifoldFrame,
 	ResonanceFrame,
 } from "#/collections/types";
-import type { StrategyDecision } from "#/types/thesis";
-import {
-	verdictBadgeClassName,
-	verdictToVariant,
-} from "#/components/terminal/badge-tone";
-import {
-	type CandidateModel,
-	buildCandidate,
-} from "#/components/terminal/decision-candidate";
-import { fixed } from "#/components/terminal/decision-format";
-import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import { writeCandidateRow } from "#/components/terminal/candidate-paint";
+import { buildCandidate } from "#/components/terminal/decision-candidate";
 import { cn } from "#/lib/utils";
-import { getWorker } from "#/providers/websocket";
-import { badgeVariants } from "@/components/ui/badge";
+import type { StrategyDecision } from "#/types/thesis";
 import { meterTrackVariants } from "@/components/ui/meter";
 
-const ratio = (value: number): number => Math.min(1, Math.max(0, value));
+export const candidateRows = new Map<string, HTMLButtonElement>();
 
-const setText = (node: Element | null | undefined, value: string): void => {
-	if (node instanceof HTMLElement) {
-		node.textContent = value;
-	}
-};
+const lastDecisions: Record<string, StrategyDecision | undefined> = {};
+const lastCausal: Record<string, CausalFrame | undefined> = {};
+const lastManifold: Record<string, ManifoldFrame | undefined> = {};
+const lastResonance: Record<string, ResonanceFrame | undefined> = {};
 
-const meterVariant = (
-	value: number,
-): "disabled" | "warning" | "info" => {
-	if (value === 0) {
-		return "disabled";
-	}
+const paintBound = (symbol: string) => {
+	const root = candidateRows.get(symbol);
 
-	if (ratio(value) > 0.6) {
-		return "warning";
-	}
-
-	return "info";
-};
-
-const scoreVariant = (
-	verdict: string,
-): "success" | "error" | "info" => {
-	if (verdict === "allow") {
-		return "success";
-	}
-
-	if (verdict === "blocked") {
-		return "error";
-	}
-
-	return "info";
-};
-
-const paintMeter = (
-	root: Element | null | undefined,
-	value: number,
-	variant: "disabled" | "warning" | "info" | "success" | "error",
-): void => {
-	if (!(root instanceof HTMLElement)) {
+	if (root === undefined) {
 		return;
 	}
 
-	setText(root.querySelector("[data-meter='value']"), fixed(value));
+	writeCandidateRow(
+		root,
+		buildCandidate(
+			symbol,
+			lastDecisions[symbol],
+			lastCausal[symbol],
+			lastResonance[symbol],
+			lastManifold[symbol],
+		),
+	);
+};
 
-	const track = root.querySelector("[data-meter='track']");
-	const fill = root.querySelector("[data-meter='fill']");
+const mergeAndPaint = <T extends { symbol: string }>(
+	value: unknown,
+	sink: Record<string, T | undefined>,
+) => {
+	const rows = (
+		Array.isArray(value) ? value : value != null ? [value] : []
+	) as T[];
 
-	if (track instanceof HTMLElement) {
-		const size = track.dataset.meterSize === "m" ? "m" : "s";
-
-		track.className = cn(
-			meterTrackVariants({ variant, size }),
-			track.dataset.meterLayout === "inline" ? "flex-1" : "",
-		);
-	}
-
-	if (fill instanceof HTMLElement) {
-		fill.style.width = `${Math.round(ratio(value) * 100)}%`;
+	for (const row of rows) {
+		sink[row.symbol] = row;
+		paintBound(row.symbol);
 	}
 };
 
-const paintCandidateRow = (
+const createInlineMeterShell = (src: string): HTMLElement => {
+	const bar = document.createElement("div");
+	bar.dataset.candidateBar = src;
+	bar.className = "flex min-w-0 items-center gap-2 font-mono text-[9px]";
+	bar.style.display = "none";
+
+	const label = document.createElement("span");
+	label.className = "w-16 text-(--f4)";
+	label.textContent = src;
+
+	const track = document.createElement("div");
+	track.dataset.meter = "track";
+	track.dataset.meterLayout = "inline";
+	track.className = cn(
+		meterTrackVariants({ variant: "info", size: "s" }),
+		"flex-1",
+	);
+
+	const fill = document.createElement("div");
+	fill.dataset.meter = "fill";
+	fill.className = "h-full bg-(--meter-tone)";
+	fill.style.width = "0%";
+	track.append(fill);
+
+	const value = document.createElement("span");
+	value.dataset.meter = "value";
+	value.className = "w-[30px] text-(--f3)";
+
+	bar.append(label, track, value);
+
+	return bar;
+};
+
+/*
+createCandidateRowShell builds one candidate ladder button with the markers
+writeCandidateRow expects.
+*/
+const createCandidateRowShell = (
+	symbol: string,
+	onSelect: (symbol: string) => void,
+): HTMLButtonElement => {
+	const button = document.createElement("button");
+	button.type = "button";
+	button.dataset.candidate = symbol;
+	button.dataset.symbol = symbol;
+	button.className =
+		"cursor-pointer overflow-hidden rounded border border-(--line) bg-(--surface) text-left font-[inherit]";
+	button.addEventListener("click", () => onSelect(symbol));
+
+	const grid = document.createElement("div");
+	grid.className =
+		"grid grid-cols-[78px_1fr_132px_92px] items-center gap-3 px-3 py-2.5";
+
+	const symbolCol = document.createElement("div");
+	const symbolLabel = document.createElement("div");
+	symbolLabel.className = "font-mono font-semibold text-[13px] text-(--f1)";
+	symbolLabel.textContent = symbol;
+
+	const support = document.createElement("div");
+	support.dataset.candidate = "support";
+	support.className = "font-mono text-[9px] text-(--f4)";
+	symbolCol.append(symbolLabel, support);
+
+	const barsCol = document.createElement("div");
+	barsCol.className = "flex min-w-0 flex-col gap-1 font-mono text-[9px]";
+
+	const barsWaiting = document.createElement("div");
+	barsWaiting.dataset.candidate = "bars-waiting";
+	barsWaiting.className = "text-(--f4)";
+	barsWaiting.textContent = "waiting for ladder frames";
+	barsCol.append(
+		barsWaiting,
+		createInlineMeterShell("causal"),
+		createInlineMeterShell("predict"),
+		createInlineMeterShell("manifold"),
+	);
+
+	const scoreCol = document.createElement("div");
+	const score = document.createElement("div");
+	score.dataset.candidate = "score";
+
+	const scoreHeader = document.createElement("div");
+	scoreHeader.className =
+		"mb-1 flex justify-between font-mono text-[9.5px] text-(--f4)";
+
+	const scoreLabel = document.createElement("span");
+	scoreLabel.dataset.meter = "label";
+	scoreLabel.textContent = "combined";
+
+	const scoreValue = document.createElement("span");
+	scoreValue.dataset.meter = "value";
+	scoreValue.className = "text-(--f1)";
+	scoreHeader.append(scoreLabel, scoreValue);
+
+	const scoreTrack = document.createElement("div");
+	scoreTrack.dataset.meter = "track";
+	scoreTrack.dataset.meterSize = "m";
+	scoreTrack.className = cn(meterTrackVariants({ variant: "info", size: "m" }));
+
+	const scoreFill = document.createElement("div");
+	scoreFill.dataset.meter = "fill";
+	scoreFill.className = "h-full bg-(--meter-tone)";
+	scoreFill.style.width = "0%";
+	scoreTrack.append(scoreFill);
+	score.append(scoreHeader, scoreTrack);
+
+	const edge = document.createElement("div");
+	edge.dataset.candidate = "edge";
+	edge.className = "mt-1 font-mono text-[9px]";
+	scoreCol.append(score, edge);
+
+	const verdictCol = document.createElement("div");
+	verdictCol.className = "text-right";
+
+	const verdict = document.createElement("span");
+	verdict.dataset.candidate = "verdict";
+
+	const why = document.createElement("div");
+	why.dataset.candidate = "why";
+	why.className = "mt-1 font-mono text-[9px] text-(--f4)";
+	verdictCol.append(verdict, why);
+
+	grid.append(symbolCol, barsCol, scoreCol, verdictCol);
+	button.append(grid);
+
+	const detail = document.createElement("div");
+	detail.dataset.candidate = "detail";
+	detail.className =
+		"grid grid-cols-2 gap-5 border-(--line) border-t bg-(--sunken) px-3.5 py-3 font-mono text-[9.5px]";
+	detail.style.display = "none";
+
+	const attribution = document.createElement("div");
+	const attributionTitle = document.createElement("div");
+	attributionTitle.className =
+		"mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-widest";
+	attributionTitle.textContent = "Score attribution";
+
+	const waterfall = document.createElement("div");
+	waterfall.className = "flex flex-col gap-1.5";
+
+	for (const src of ["causal", "predict", "field"] as const) {
+		const row = document.createElement("div");
+		row.dataset.waterfall = src;
+		row.className = "flex items-center gap-2";
+
+		const label = document.createElement("span");
+		label.className = "w-[60px] text-(--f4)";
+		label.textContent = src;
+
+		const track = document.createElement("div");
+		track.className = "relative h-3 flex-1 rounded-sm bg-(--line)";
+
+		const midline = document.createElement("div");
+		midline.className = "absolute top-0 bottom-0 left-1/2 w-px bg-(--f4)";
+
+		const bar = document.createElement("div");
+		bar.dataset.waterfall = "bar";
+		bar.className = "absolute top-px bottom-px rounded-[1px]";
+
+		const delta = document.createElement("span");
+		delta.dataset.waterfall = "delta";
+		delta.className = "w-[50px] text-right";
+
+		track.append(midline, bar);
+		row.append(label, track, delta);
+		waterfall.append(row);
+	}
+
+	const branch = document.createElement("div");
+	branch.dataset.candidate = "branch";
+	branch.className = "mt-2 text-[9px] text-(--f4)";
+	attribution.append(attributionTitle, waterfall, branch);
+
+	const probesCol = document.createElement("div");
+	const probesTitle = document.createElement("div");
+	probesTitle.className =
+		"mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-widest";
+	probesTitle.textContent = "Counterfactual probes · do(·)";
+
+	const probes = document.createElement("div");
+	probes.className = "flex flex-col gap-1.5";
+
+	for (const label of ["beta", "panic", "residual", "intervention"]) {
+		const row = document.createElement("div");
+		row.className =
+			"flex items-center justify-between gap-2 rounded-sm border border-(--line) bg-(--surface) px-2 py-1.5";
+
+		const name = document.createElement("span");
+		name.className = "text-(--f2)";
+		name.textContent = label;
+
+		const value = document.createElement("span");
+		value.dataset.probe = label;
+		value.className = "text-(--f1)";
+
+		row.append(name, value);
+		probes.append(row);
+	}
+
+	probesCol.append(probesTitle, probes);
+	detail.append(attribution, probesCol);
+	button.append(detail);
+
+	candidateRows.set(symbol, button);
+	paintBound(symbol);
+
+	return button;
+};
+
+/*
+syncCandidateRowShells creates or removes candidate rows when symbols appear.
+*/
+export const syncCandidateRowShells = (
 	root: HTMLElement | null,
-	model: CandidateModel,
+	symbols: string[],
+	onSelect: (symbol: string) => void,
 ): void => {
 	if (root === null) {
 		return;
 	}
 
-	setText(
-		root.querySelector("[data-candidate='support']"),
-		`×${model.support} src`,
-	);
+	const host = root.querySelector("[data-decision-host='candidates']");
 
-	const waiting = root.querySelector("[data-candidate='bars-waiting']");
-
-	if (waiting instanceof HTMLElement) {
-		waiting.style.display = model.bars.length === 0 ? "" : "none";
+	if (!(host instanceof HTMLElement)) {
+		return;
 	}
 
-	for (const src of ["causal", "predict", "manifold"] as const) {
-		const bar = root.querySelector(`[data-candidate-bar='${src}']`);
+	const next = new Set(symbols);
+	const ordered: HTMLElement[] = [];
 
-		if (!(bar instanceof HTMLElement)) {
+	for (const symbol of symbols) {
+		let row = candidateRows.get(symbol);
+
+		if (row === undefined) {
+			row = createCandidateRowShell(symbol, onSelect);
+		}
+
+		ordered.push(row);
+	}
+
+	for (const symbol of [...candidateRows.keys()]) {
+		if (next.has(symbol)) {
 			continue;
 		}
 
-		const live = model.bars.find((row) => row.src === src);
-
-		bar.style.display = live === undefined ? "none" : "";
-
-		if (live === undefined) {
-			continue;
-		}
-
-		paintMeter(bar, live.value, meterVariant(live.value));
+		candidateRows.get(symbol)?.remove();
+		candidateRows.delete(symbol);
 	}
 
-	const scoreMeter = root.querySelector("[data-candidate='score']");
-
-	paintMeter(scoreMeter, model.score, scoreVariant(model.verdict));
-	setText(
-		scoreMeter?.querySelector("[data-meter='label']"),
-		model.hasDecision ? "utility" : "combined",
-	);
-
-	const edge = root.querySelector("[data-candidate='edge']");
-
-	if (edge instanceof HTMLElement) {
-		edge.textContent = `pearl Δ ${fixed(model.edge)}`;
-		edge.style.color = model.edge >= 0 ? "var(--up)" : "var(--down)";
-	}
-
-	const badge = root.querySelector("[data-candidate='verdict']");
-
-	if (badge instanceof HTMLElement) {
-		badge.textContent = model.verdict;
-		badge.className = cn(
-			badgeVariants({ variant: verdictToVariant(model.verdict) }),
-			verdictBadgeClassName(model.verdict),
+	const waiting = host.querySelector("[data-decision='waiting']");
+	const orderMatches =
+		ordered.length === host.querySelectorAll("[data-candidate]").length &&
+		ordered.every(
+			(row, index) => host.querySelectorAll("[data-candidate]")[index] === row,
 		);
-	}
 
-	setText(root.querySelector("[data-candidate='why']"), model.why);
-	setText(
-		root.querySelector("[data-candidate='branch']"),
-		`branch · ${model.branch}`,
-	);
-
-	for (const row of model.waterfall) {
-		const node = root.querySelector(`[data-waterfall='${row.src}']`);
-
-		if (!(node instanceof HTMLElement)) {
-			continue;
-		}
-
-		const width = Math.min(46, Math.abs(row.delta) * 100);
-		const positive = row.delta >= 0;
-		const bar = node.querySelector("[data-waterfall='bar']");
-		const label = node.querySelector("[data-waterfall='delta']");
-
-		if (bar instanceof HTMLElement) {
-			bar.style.left = `${positive ? 50 : 50 - width}%`;
-			bar.style.width = `${width}%`;
-			bar.style.background = positive ? "var(--up)" : "var(--down)";
-		}
-
-		if (label instanceof HTMLElement) {
-			label.textContent = `${positive ? "+" : "−"}${Math.abs(row.delta).toFixed(3)}`;
-			label.style.color = positive ? "var(--up)" : "var(--down)";
-		}
-	}
-
-	for (const probe of model.probes) {
-		setText(
-			root.querySelector(`[data-probe='${probe.label}']`),
-			fixed(probe.value),
-		);
+	if (!orderMatches) {
+		host.replaceChildren(...(waiting ? [waiting] : []), ...ordered);
 	}
 };
 
-const InlineMeterShell = ({ src }: { src: string }) => (
-	<div
-		data-candidate-bar={src}
-		className="flex min-w-0 items-center gap-2 font-mono text-[9px]"
-		style={{ display: "none" }}
-	>
-		<span className="w-16 text-(--f4)">{src}</span>
-		<div
-			data-meter="track"
-			data-meter-layout="inline"
-			className={cn(meterTrackVariants({ variant: "info", size: "s" }), "flex-1")}
-		>
-			<div
-				data-meter="fill"
-				className="h-full bg-(--meter-tone)"
-				style={{ width: "0%" }}
-			/>
-		</div>
-		<span data-meter="value" className="w-[30px] text-(--f3)" />
-	</div>
-);
+/*
+paintCandidateSelection toggles row chrome and detail panels for the active symbol.
+*/
+export const paintCandidateSelection = (
+	selectedSymbol: string | null,
+): void => {
+	for (const [symbol, row] of candidateRows) {
+		const selected = symbol === selectedSymbol;
+
+		row.className = cn(
+			"cursor-pointer overflow-hidden rounded border bg-(--surface) text-left font-[inherit]",
+			selected
+				? "border-[color-mix(in_srgb,var(--up)_30%,transparent)]"
+				: "border-(--line)",
+		);
+
+		const detail = row.querySelector("[data-candidate='detail']");
+
+		if (detail instanceof HTMLElement) {
+			detail.style.display = selected ? "" : "none";
+		}
+	}
+};
 
 /*
-CandidateRow paints one symbol's ladder attribution from store buffers without
-re-rendering the decisions list on every websocket tick.
+paintCandidateDecisions merges the DRAW decisions batch into lastDecisions and
+repaints every bound CandidateRow whose symbol appears in the batch.
 */
-export const CandidateRow = memo(
-	({
-		symbol,
-		selected,
-		onSelect,
-	}: {
-		symbol: string;
-		selected: boolean;
-		onSelect: (symbol: string) => void;
-	}) => {
-		const rootRef = useRef<HTMLButtonElement>(null);
-		const online = useSelector(appStore, (state) => state.online);
+export const paintCandidateDecisions = (
+	value: unknown,
+	_focusSymbol: string,
+) => {
+	mergeAndPaint<StrategyDecision>(value, lastDecisions);
+};
 
-		useDirectStorePaint(
-			getWorker(),
-			[
-				{ store: "decisions", key: symbol },
-				{ store: "causal", key: symbol },
-				{ store: "manifold", key: symbol },
-				{ store: "resonance", key: symbol },
-			],
-			(buffers) =>
-				paintCandidateRow(
-					rootRef.current,
-					buildCandidate(
-						symbol,
-						(buffers[`decisions:${symbol}`] ?? []).at(-1) as
-							| StrategyDecision
-							| undefined,
-						(buffers[`causal:${symbol}`] ?? []).at(-1) as
-							| CausalFrame
-							| undefined,
-						(buffers[`resonance:${symbol}`] ?? []).at(-1) as
-							| ResonanceFrame
-							| undefined,
-						(buffers[`manifold:${symbol}`] ?? []).at(-1) as
-							| ManifoldFrame
-							| undefined,
-					),
-				),
-			[online, symbol],
-		);
+/*
+paintCandidateCausal merges the DRAW causal batch into lastCausal and repaints
+matching bound CandidateRow shells.
+*/
+export const paintCandidateCausal = (value: unknown, _focusSymbol: string) => {
+	mergeAndPaint<CausalFrame>(value, lastCausal);
+};
 
-		return (
-			<button
-				ref={rootRef}
-				type="button"
-				data-candidate={symbol}
-				data-symbol={symbol}
-				onClick={() => onSelect(symbol)}
-				className={cn(
-					"cursor-pointer overflow-hidden rounded border bg-(--surface) text-left font-[inherit]",
-					selected
-						? "border-[color-mix(in_srgb,var(--up)_30%,transparent)]"
-						: "border-(--line)",
-				)}
-			>
-				<div className="grid grid-cols-[78px_1fr_132px_92px] items-center gap-3 px-3 py-2.5">
-					<div>
-						<div className="font-mono font-semibold text-[13px] text-(--f1)">
-							{symbol}
-						</div>
-						<div
-							data-candidate="support"
-							className="font-mono text-[9px] text-(--f4)"
-						/>
-					</div>
-					<div className="flex min-w-0 flex-col gap-1 font-mono text-[9px]">
-						<div data-candidate="bars-waiting" className="text-(--f4)">
-							waiting for ladder frames
-						</div>
-						<InlineMeterShell src="causal" />
-						<InlineMeterShell src="predict" />
-						<InlineMeterShell src="manifold" />
-					</div>
-					<div>
-						<div data-candidate="score">
-							<div className="mb-1 flex justify-between font-mono text-[9.5px] text-(--f4)">
-								<span data-meter="label">combined</span>
-								<span data-meter="value" className="text-(--f1)" />
-							</div>
-							<div
-								data-meter="track"
-								data-meter-size="m"
-								className={cn(
-									meterTrackVariants({ variant: "info", size: "m" }),
-								)}
-							>
-								<div
-									data-meter="fill"
-									className="h-full bg-(--meter-tone)"
-									style={{ width: "0%" }}
-								/>
-							</div>
-						</div>
-						<div data-candidate="edge" className="mt-1 font-mono text-[9px]" />
-					</div>
-					<div className="text-right">
-						<span data-candidate="verdict" />
-						<div
-							data-candidate="why"
-							className="mt-1 font-mono text-[9px] text-(--f4)"
-						/>
-					</div>
-				</div>
-				<div
-					className="grid grid-cols-2 gap-5 border-(--line) border-t bg-(--sunken) px-3.5 py-3 font-mono text-[9.5px]"
-					style={{ display: selected ? "" : "none" }}
-				>
-					<div>
-						<div className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-widest">
-							Score attribution
-						</div>
-						<div className="flex flex-col gap-1.5">
-							{(["causal", "predict", "field"] as const).map((src) => (
-								<div
-									key={src}
-									data-waterfall={src}
-									className="flex items-center gap-2"
-								>
-									<span className="w-[60px] text-(--f4)">{src}</span>
-									<div className="relative h-3 flex-1 rounded-sm bg-(--line)">
-										<div className="absolute top-0 bottom-0 left-1/2 w-px bg-(--f4)" />
-										<div
-											data-waterfall="bar"
-											className="absolute top-px bottom-px rounded-[1px]"
-										/>
-									</div>
-									<span
-										data-waterfall="delta"
-										className="w-[50px] text-right"
-									/>
-								</div>
-							))}
-						</div>
-						<div
-							data-candidate="branch"
-							className="mt-2 text-[9px] text-(--f4)"
-						/>
-					</div>
-					<div>
-						<div className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-widest">
-							Counterfactual probes · do(·)
-						</div>
-						<div className="flex flex-col gap-1.5">
-							{["beta", "panic", "residual", "intervention"].map((label) => (
-								<div
-									key={label}
-									className="flex items-center justify-between gap-2 rounded-sm border border-(--line) bg-(--surface) px-2 py-1.5"
-								>
-									<span className="text-(--f2)">{label}</span>
-									<span data-probe={label} className="text-(--f1)" />
-								</div>
-							))}
-						</div>
-					</div>
-				</div>
-			</button>
-		);
-	},
-);
+/*
+paintCandidateManifold merges the DRAW manifold batch into lastManifold and
+repaints matching bound CandidateRow shells.
+*/
+export const paintCandidateManifold = (
+	value: unknown,
+	_focusSymbol: string,
+) => {
+	mergeAndPaint<ManifoldFrame>(value, lastManifold);
+};
+
+/*
+paintCandidateResonance merges the DRAW resonance batch into lastResonance and
+repaints matching bound CandidateRow shells.
+*/
+export const paintCandidateResonance = (
+	value: unknown,
+	_focusSymbol: string,
+) => {
+	mergeAndPaint<ResonanceFrame>(value, lastResonance);
+};

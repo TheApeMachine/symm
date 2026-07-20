@@ -16,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/stack"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/tests/conditions"
 	"github.com/theapemachine/symm/tests/mockapi"
@@ -23,21 +24,24 @@ import (
 )
 
 /*
-continuationMarketResult retains the open-lot decision and transport outcome
-from one controlled production-stack replay.
+continuationMarketResult retains the open-lot decision, fill, wallet, and
+lifecycle outcome from one controlled production-stack replay.
 */
 type continuationMarketResult struct {
 	decisions       []types.Decision
 	exitThesisAt    time.Time
 	retreatPressure float64
 	holding         types.Holding
+	availableCash   *decimal.Decimal
+	expectedExitFee *decimal.Decimal
+	openPositions   int
 	lifecycle       string
 	privateRequests [][]byte
 }
 
 /*
-TestContinuity_ManageFromMarket proves quote-only adversity is held while a
-sincere traded drawdown through an armed floor selects and submits one exit.
+TestContinuity_ManageFromMarket proves quote retreat holds, sincere drawdown
+stops, and a profitable peak with weakening forward support takes profit.
 */
 func TestContinuity_ManageFromMarket(t *testing.T) {
 	phantom := playOpenStrategyMarket(
@@ -46,8 +50,9 @@ func TestContinuity_ManageFromMarket(t *testing.T) {
 	drawdown := playOpenStrategyMarket(
 		t, conditions.Drawdown(32, 0.08, 8).Frames(),
 	)
+	profit := playOpenStrategyMarket(t, conditions.TapeTakeProfit())
 
-	Convey("Given adverse quote retreat and a sincere traded drawdown", t, func() {
+	Convey("Given phantom retreat, sincere loss, and profitable weakening", t, func() {
 		_, phantomExit := decisionFor(phantom.decisions, types.ActionExit)
 		So(phantomExit, ShouldBeFalse)
 		So(phantom.retreatPressure, ShouldBeGreaterThan, 0)
@@ -61,10 +66,43 @@ func TestContinuity_ManageFromMarket(t *testing.T) {
 		So(exit.Symbol, ShouldEqual, conditions.Subject())
 		So(exit.Cause, ShouldEqual, "stop")
 		So(exit.ProposedQuantity, ShouldNotBeNil)
-		So(exit.ProposedQuantity.Float64(), ShouldEqual, float64(100))
+		So(exit.ProposedQuantity.Cmp(decimal.NewFromInt64(100)), ShouldEqual, 0)
 		So(exit.At, ShouldEqual, drawdown.exitThesisAt)
 		So(orderRequests(drawdown.privateRequests, "sell"), ShouldEqual, 1)
-		So(drawdown.lifecycle, ShouldEqual, types.LifecycleExitSubmitted)
+		So(drawdown.holding.Status, ShouldEqual, types.CLOSED)
+		So(drawdown.holding.Qty.Sign(), ShouldEqual, 0)
+		So(drawdown.holding.SellableQty.Sign(), ShouldEqual, 0)
+		So(drawdown.holding.ExitPrice, ShouldNotBeNil)
+		So(drawdown.holding.ExitFee, ShouldNotBeNil)
+		So(drawdown.holding.ExitPrice.Cmp(exit.ReferencePrice), ShouldEqual, 0)
+		So(drawdown.holding.ExitFee.Cmp(drawdown.expectedExitFee), ShouldEqual, 0)
+		expectedCash := decimal.NewFromInt64(1000).
+			Add(exit.ReferencePrice.Mul(exit.ProposedQuantity)).
+			Sub(drawdown.expectedExitFee)
+		So(drawdown.availableCash.Cmp(expectedCash), ShouldEqual, 0)
+		So(drawdown.openPositions, ShouldEqual, 0)
+		So(drawdown.lifecycle, ShouldEqual, types.LifecycleEvaluated)
+
+		takeProfit, hasTakeProfit := decisionFor(profit.decisions, types.ActionExit)
+		So(hasTakeProfit, ShouldBeTrue)
+		So(takeProfit.Cause, ShouldEqual, "take_profit")
+		So(takeProfit.ProposedQuantity.Cmp(decimal.NewFromInt64(100)), ShouldEqual, 0)
+		So(orderRequests(profit.privateRequests, "sell"), ShouldEqual, 1)
+		So(profit.holding.Status, ShouldEqual, types.CLOSED)
+		So(profit.holding.Stoploss, ShouldNotBeNil)
+		So(profit.holding.Stoploss.LockedFloor, ShouldBeGreaterThan, 0)
+		So(profit.holding.ExitPrice, ShouldNotBeNil)
+		So(profit.holding.ExitFee, ShouldNotBeNil)
+		So(profit.holding.ExitPrice.Cmp(takeProfit.ReferencePrice), ShouldEqual, 0)
+		So(profit.holding.ExitFee.Cmp(profit.expectedExitFee), ShouldEqual, 0)
+		So(profit.holding.ExitPrice.Cmp(profit.holding.EntryPrice), ShouldBeGreaterThan, 0)
+		So(profit.holding.Qty.Sign(), ShouldEqual, 0)
+		expectedProfitCash := decimal.NewFromInt64(1000).
+			Add(takeProfit.ReferencePrice.Mul(takeProfit.ProposedQuantity)).
+			Sub(profit.expectedExitFee)
+		So(profit.availableCash.Cmp(expectedProfitCash), ShouldEqual, 0)
+		So(profit.openPositions, ShouldEqual, 0)
+		So(profit.lifecycle, ShouldEqual, types.LifecycleEvaluated)
 	})
 }
 
@@ -172,7 +210,11 @@ func playOpenStrategyMarket(
 			{"asset":"USD","balance":"1000","available":"1000","reserved":"0"},
 			{"asset":"MATIC","balance":"100","available":"100","reserved":"0"}
 		]}`))
+	channel := make(chan []byte, 64)
 	wired, err := stack.Boot(ctx, api, stack.Options{
+		Booter:  system.NewBooter(ctx, channel),
+		Channel: channel,
+		Thesis:  types.NewThesis(channel, nil),
 		Signals: func(
 			ctx context.Context,
 			api *websocket.API,
@@ -202,6 +244,7 @@ func playOpenStrategyMarket(
 
 	result := &continuationMarketResult{}
 	cutAt := time.Date(2024, 1, 1, 1, 0, 0, 0, time.UTC)
+	var latestTicker []byte
 
 	for frame := range frames {
 		if frame.Channel == "level3" {
@@ -213,6 +256,11 @@ func playOpenStrategyMarket(
 		}
 
 		mock.Emit(frame.Channel, frame.Payload)
+
+		if frame.Channel == "ticker" {
+			latestTicker = frame.Payload
+		}
+
 		thesis, tickErr := wired.Crypto.Tick(cutAt)
 
 		if tickErr != nil {
@@ -246,6 +294,42 @@ func playOpenStrategyMarket(
 		}
 	}
 
+	result.privateRequests = mock.Private().Writes()
+	exit, hasExit := decisionFor(result.decisions, types.ActionExit)
+
+	if hasExit {
+		pair, pairErr := wired.Instrument.Pair(exit.Symbol)
+
+		if pairErr != nil {
+			t.Fatal(pairErr)
+		}
+
+		proceeds := exit.ReferencePrice.Mul(exit.ProposedQuantity)
+		fee := wired.Price.Fee(pair, proceeds)
+
+		if fee == nil {
+			t.Fatal("exit fee unavailable")
+		}
+
+		result.expectedExitFee = fee
+
+		for _, request := range result.privateRequests {
+			if orderRequests([][]byte{request}, "sell") == 0 {
+				continue
+			}
+
+			for _, frame := range conditions.ExitFill(
+				request, exit, decimal.NewFromInt64(1000), fee,
+			) {
+				mock.Private().Emit(frame.Channel, frame.Payload)
+			}
+
+			mock.Emit("ticker", latestTicker)
+			_, err = wired.Crypto.Tick(cutAt)
+			break
+		}
+	}
+
 	result.holding, err = wired.Balance.Holding(conditions.Subject())
 
 	if err != nil {
@@ -258,7 +342,13 @@ func playOpenStrategyMarket(
 		}
 	}
 
-	result.privateRequests = mock.Private().Writes()
+	result.availableCash, err = wired.Balance.AvailableCash()
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result.openPositions = wired.Desk.OpenPositions()
 
 	return result
 }

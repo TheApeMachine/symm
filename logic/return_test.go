@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -26,7 +27,7 @@ func TestReturnHeadPredict(t *testing.T) {
 				midPrice *= math.Exp(0.001 * priorDirection)
 			}
 
-			So(head.Resolve(midPrice), ShouldBeNil)
+			So(head.Resolve(decimal.NewFromFloat64(midPrice)), ShouldBeNil)
 			direction := 1.0
 
 			if index%2 == 1 {
@@ -34,7 +35,8 @@ func TestReturnHeadPredict(t *testing.T) {
 			}
 
 			prediction, err = head.Predict(
-				[]float64{direction, 0, 0, 0, 0}, midPrice,
+				[]float64{direction, 0, 0, 0, 0},
+				decimal.NewFromFloat64(midPrice),
 			)
 			So(err, ShouldBeNil)
 			priorDirection = direction
@@ -46,6 +48,35 @@ func TestReturnHeadPredict(t *testing.T) {
 			So(head.samples, ShouldEqual, uint64(95))
 			So(head.meanMSE, ShouldBeGreaterThanOrEqualTo, 0)
 			So(head.skillLower, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+/*
+TestReturnHeadResolveConsumesPending proves one realized target is calibrated
+and learned only once unless a new prediction establishes another pending row.
+*/
+func TestReturnHeadResolveConsumesPending(t *testing.T) {
+	withResonanceRLS(t)
+
+	Convey("Given one pending strict-prior prediction", t, func() {
+		head, err := newReturnHead()
+		So(err, ShouldBeNil)
+		_, err = head.Predict(
+			[]float64{1, 0, 0, 0, 0}, decimal.NewFromInt64(100),
+		)
+		So(err, ShouldBeNil)
+
+		Convey("When its next midpoint is resolved", func() {
+			So(head.Resolve(decimal.NewFromInt64(101)), ShouldBeNil)
+			samples := head.samples
+
+			Convey("Then the row is consumed and cannot be learned twice", func() {
+				So(head.pending, ShouldBeEmpty)
+				So(head.predicted, ShouldBeFalse)
+				So(head.Resolve(decimal.NewFromInt64(102)), ShouldBeNil)
+				So(head.samples, ShouldEqual, samples)
+			})
 		})
 	})
 }
@@ -65,7 +96,7 @@ func BenchmarkReturnHeadPredict(b *testing.B) {
 	midPrice := 100.0
 	features := []float64{1, 0, 0, 0, 0}
 
-	if _, err := head.Predict(features, midPrice); err != nil {
+	if _, err := head.Predict(features, decimal.NewFromFloat64(midPrice)); err != nil {
 		b.Fatal(err)
 	}
 
@@ -74,11 +105,13 @@ func BenchmarkReturnHeadPredict(b *testing.B) {
 	for b.Loop() {
 		midPrice *= math.Exp(0.0001)
 
-		if err := head.Resolve(midPrice); err != nil {
+		price := decimal.NewFromFloat64(midPrice)
+
+		if err := head.Resolve(price); err != nil {
 			b.Fatal(err)
 		}
 
-		if _, err := head.Predict(features, midPrice); err != nil {
+		if _, err := head.Predict(features, price); err != nil {
 			b.Fatal(err)
 		}
 	}

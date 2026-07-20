@@ -4,12 +4,18 @@ import {
 	money,
 	visibleRowSymbols,
 } from "#/components/terminal/allocation-side";
+import { syncAllocShells } from "#/components/terminal/allocation-shells";
 
 const setText = (node: Element | null | undefined, value: string): void => {
 	if (node instanceof HTMLElement) {
 		node.textContent = value;
 	}
 };
+
+const shellSymbols = (alloc: AllocationSummary): string[] =>
+	[
+		...new Set([...visibleRowSymbols(alloc), ...allocatedSymbols(alloc)]),
+	].sort();
 
 /*
 paintAllocationSurface writes live ladder numbers into a mounted shell so
@@ -22,6 +28,9 @@ export const paintAllocationSurface = (
 	if (root === null) {
 		return;
 	}
+
+	const symbols = shellSymbols(alloc);
+	syncAllocShells(root, symbols);
 
 	const deployedPercent =
 		alloc.deployable > 0

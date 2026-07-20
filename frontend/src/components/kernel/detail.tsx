@@ -1,19 +1,8 @@
-import { useSelector } from "@tanstack/react-store";
-import { useRef } from "react";
-import { appStore } from "#/collections/app";
-import {
-	flattenMeasurementBuffer,
-	measurementTickCount,
-	measurementsForSource,
-	measurementsForSymbol,
-} from "#/collections/measurements";
+import { createRef } from "react";
 import type { Measurement } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
 import { buildHeatmapCells } from "#/components/kernel/heatmap";
-import {
-	kernelCopy,
-	kernelStatusMeta,
-} from "#/components/terminal/kernel-meta";
+import { kernelStatusMeta } from "#/components/terminal/kernel-meta";
 import {
 	ageText,
 	headlineMetric,
@@ -27,32 +16,59 @@ import {
 	paintHeatmapGrid,
 	paintMetricGrid,
 } from "#/components/terminal/metric-paint";
-import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
-import { getWorker } from "#/providers/websocket";
 import { Flex } from "@/components/ui/flex";
 
-type SignalDetailRefs = {
-	badge: HTMLSpanElement | null;
-	waitingPanel: HTMLDivElement | null;
-	metricsGrid: HTMLDivElement | null;
-	activeReadings: HTMLSpanElement | null;
-	metricsCount: HTMLSpanElement | null;
-	observed: HTMLSpanElement | null;
-	validity: HTMLSpanElement | null;
-	heatmapSection: HTMLDivElement | null;
-	heatmapTitle: HTMLSpanElement | null;
-	heatmapGrid: HTMLDivElement | null;
+const titleRef = createRef<HTMLSpanElement>();
+const waitingPanelRef = createRef<HTMLDivElement>();
+const metricsGridRef = createRef<HTMLDivElement>();
+const activeReadingsRef = createRef<HTMLSpanElement>();
+const metricsCountRef = createRef<HTMLSpanElement>();
+const observedRef = createRef<HTMLSpanElement>();
+const validityRef = createRef<HTMLSpanElement>();
+const heatmapSectionRef = createRef<HTMLDivElement>();
+const heatmapTitleRef = createRef<HTMLDivElement>();
+const heatmapGridRef = createRef<HTMLDivElement>();
+const badgeRef = createRef<HTMLSpanElement>();
+
+const asRows = <T,>(value: unknown): T[] =>
+	(Array.isArray(value) ? value : value != null ? [value] : []) as T[];
+
+let lastUniverse: Measurement[] = [];
+let lastFocusSymbol = "";
+
+const measurementTickCount = (rows: Measurement[]): number => {
+	if (rows.length === 0) {
+		return 0;
+	}
+
+	return new Set(rows.map((row) => row.at)).size;
 };
 
-const paintSignalDetail = (
-	refs: SignalDetailRefs,
-	source: string,
-	universe: Measurement[],
-	focusRows: Measurement[],
-): void => {
-	const history = flattenMeasurementBuffer(
-		measurementsForSource(focusRows, source),
-	);
+/*
+repaintSignalDetail paints SignalDetail from the retained DRAW batch after a
+source click (no store subscription).
+*/
+export const repaintSignalDetail = () => {
+	paintSignalDetailMeasurements(lastUniverse, lastFocusSymbol);
+};
+
+/*
+paintSignalDetailMeasurements paints SignalDetail from the current DRAW
+measurements batch and focusSymbol.
+*/
+export const paintSignalDetailMeasurements = (
+	value: unknown,
+	focusSymbol: string,
+) => {
+	lastUniverse = asRows<Measurement>(value);
+	lastFocusSymbol = focusSymbol;
+	const source = terminalStore.state.selectedSource;
+	const universe = lastUniverse;
+	const focusRows =
+		focusSymbol === ""
+			? universe
+			: universe.filter((row) => row.symbol === focusSymbol);
+	const history = focusRows.filter((row) => row.source === source);
 	const headline = headlineMetric(source);
 	const latest =
 		headline === null ? history.at(-1) : latestByMetric(history, headline);
@@ -60,179 +76,125 @@ const paintSignalDetail = (
 	const status = resolveStatus(latest);
 	const observedStamp = stampOf(latest?.at);
 	const active = measurementTickCount(
-		measurementsForSource(universe, source),
+		universe.filter((row) => row.source === source),
 	);
 	const total = measurementTickCount(universe);
 	const heatmap =
 		headline === null ? [] : buildHeatmapCells(universe, source, headline);
 
-	if (refs.waitingPanel !== null) {
-		refs.waitingPanel.style.display = epoch.length === 0 ? "" : "none";
+	if (titleRef.current !== null) {
+		titleRef.current.textContent = source;
 	}
 
-	if (refs.metricsGrid !== null) {
-		refs.metricsGrid.style.display = epoch.length === 0 ? "none" : "";
-		paintMetricGrid(refs.metricsGrid, history, headline);
+	if (waitingPanelRef.current !== null) {
+		waitingPanelRef.current.style.display = epoch.length === 0 ? "" : "none";
+		waitingPanelRef.current.textContent = `waiting for backend ${source} measurement`;
 	}
 
-	if (refs.badge !== null) {
+	if (metricsGridRef.current !== null) {
+		metricsGridRef.current.style.display = epoch.length === 0 ? "none" : "";
+		paintMetricGrid(metricsGridRef.current, history, headline);
+	}
+
+	if (badgeRef.current !== null) {
 		const statusMeta = kernelStatusMeta(status);
-		refs.badge.textContent = statusMeta.label;
-		refs.badge.style.color = statusMeta.fg;
-		refs.badge.style.background = statusMeta.bg;
-		refs.badge.style.borderColor = statusMeta.bd;
+		badgeRef.current.textContent = statusMeta.label;
+		badgeRef.current.style.color = statusMeta.fg;
+		badgeRef.current.style.background = statusMeta.bg;
+		badgeRef.current.style.borderColor = statusMeta.bd;
 	}
 
-	if (refs.activeReadings !== null) {
-		refs.activeReadings.textContent = `${active.toLocaleString()} / ${total.toLocaleString()}`;
+	if (activeReadingsRef.current !== null) {
+		activeReadingsRef.current.textContent = `${active.toLocaleString()} / ${total.toLocaleString()}`;
 	}
 
-	if (refs.metricsCount !== null) {
-		refs.metricsCount.textContent = String(epoch.length);
+	if (metricsCountRef.current !== null) {
+		metricsCountRef.current.textContent = String(epoch.length);
 	}
 
-	if (refs.observed !== null) {
-		refs.observed.textContent = Number.isFinite(observedStamp)
+	if (observedRef.current !== null) {
+		observedRef.current.textContent = Number.isFinite(observedStamp)
 			? `${new Date(observedStamp).toLocaleTimeString("en-US", {
 					hour12: false,
 				})} / ${ageText(observedStamp)}`
 			: "— / —";
 	}
 
-	if (refs.validity !== null) {
-		refs.validity.textContent =
+	if (validityRef.current !== null) {
+		validityRef.current.textContent =
 			latest?.validity?.reason || latest?.validity?.state || "—";
 	}
 
-	if (refs.heatmapSection !== null) {
-		refs.heatmapSection.style.display = headline === null ? "none" : "";
+	if (heatmapSectionRef.current !== null) {
+		heatmapSectionRef.current.style.display =
+			headline === null ? "none" : "";
 	}
 
-	if (refs.heatmapTitle !== null && headline !== null) {
-		refs.heatmapTitle.textContent = `Cross-section · ${metricLabel(headline)} heatmap`;
+	if (heatmapTitleRef.current !== null && headline !== null) {
+		heatmapTitleRef.current.textContent = `Cross-section · ${metricLabel(headline)} heatmap`;
 	}
 
-	if (refs.heatmapGrid !== null && headline !== null) {
-		paintHeatmapGrid(refs.heatmapGrid, heatmap);
+	if (heatmapGridRef.current !== null && headline !== null) {
+		paintHeatmapGrid(heatmapGridRef.current, heatmap);
 	}
 };
 
 /*
-SignalDetail renders a static signal-insight shell and paints every live
-measurement readout directly from the measurement store.
+SignalDetail is the static signal-insight shell. DRAW paints via
+paintSignalDetailMeasurements(value, focusSymbol).
 */
-export const SignalDetail = () => {
-	const selectedSource = useSelector(
-		terminalStore,
-		(state) => state.selectedSource,
-	);
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const online = useSelector(appStore, (state) => state.online);
-	const badgeRef = useRef<HTMLSpanElement>(null);
-	const waitingPanelRef = useRef<HTMLDivElement>(null);
-	const metricsGridRef = useRef<HTMLDivElement>(null);
-	const activeReadingsRef = useRef<HTMLSpanElement>(null);
-	const metricsCountRef = useRef<HTMLSpanElement>(null);
-	const observedRef = useRef<HTMLSpanElement>(null);
-	const validityRef = useRef<HTMLSpanElement>(null);
-	const heatmapSectionRef = useRef<HTMLDivElement>(null);
-	const heatmapTitleRef = useRef<HTMLDivElement>(null);
-	const heatmapGridRef = useRef<HTMLDivElement>(null);
-	const copy = kernelCopy(selectedSource, selectedSource);
-
-	useDirectStorePaint(
-		getWorker(),
-		[
-			{ store: "measurements", key: "" },
-			{ store: "measurements", key: focusSymbol },
-		],
-		(buffers) => {
-			paintSignalDetail(
-				{
-					badge: badgeRef.current,
-					waitingPanel: waitingPanelRef.current,
-					metricsGrid: metricsGridRef.current,
-					activeReadings: activeReadingsRef.current,
-					metricsCount: metricsCountRef.current,
-					observed: observedRef.current,
-					validity: validityRef.current,
-					heatmapSection: heatmapSectionRef.current,
-					heatmapTitle: heatmapTitleRef.current,
-					heatmapGrid: heatmapGridRef.current,
-				},
-				selectedSource,
-				(buffers["measurements:"] ?? []) as Measurement[],
-				measurementsForSymbol(
-					(buffers[`measurements:${focusSymbol}`] ?? []) as Measurement[],
-					focusSymbol,
-				),
-			);
-		},
-		[online, selectedSource, focusSymbol],
-	);
-
-	return (
-		<Flex.Column className="min-h-0 overflow-auto px-5 py-[18px]">
-			<Flex.Row className="items-start justify-between gap-3">
-				<Flex.Column>
-					<Flex className="font-serif font-semibold text-[24px] text-(--f1) leading-[1.1]">
-						{copy.name}
-					</Flex>
-					<Flex className="mt-1 font-mono text-[11px] text-(--f3)">
-						{copy.sub}
-					</Flex>
-				</Flex.Column>
-				<span
-					ref={badgeRef}
-					className="shrink-0 rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
-				/>
-			</Flex.Row>
-			<Flex className="mt-3.5 max-w-[560px] font-serif text-[15px] text-(--f2) leading-[1.55]">
-				{copy.blurb}
-			</Flex>
-			<div
-				ref={waitingPanelRef}
-				className="mt-[18px] rounded-[3px] border border-(--line) bg-(--sunken) px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
-			>
-				waiting for backend {selectedSource} measurement
+export const SignalDetail = () => (
+	<Flex.Column className="min-h-0 overflow-auto px-5 py-[18px]">
+		<Flex.Row className="items-start justify-between gap-3">
+			<span
+				ref={titleRef}
+				className="font-serif font-semibold text-[24px] text-(--f1) leading-[1.1]"
+			/>
+			<span
+				ref={badgeRef}
+				className="shrink-0 rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
+			/>
+		</Flex.Row>
+		<div
+			ref={waitingPanelRef}
+			className="mt-[18px] rounded-[3px] border border-(--line) bg-(--sunken) px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
+		/>
+		<div
+			ref={metricsGridRef}
+			className="mt-[18px] grid gap-x-[22px] gap-y-3"
+			style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
+		/>
+		<div
+			className="mt-5 grid gap-x-[22px] gap-y-2 border-(--line) border-t pt-3.5 font-mono text-xs"
+			style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
+		>
+			<div className="flex justify-between">
+				<span className="text-(--f3)">Active readings</span>
+				<span ref={activeReadingsRef} className="text-(--f1)" />
 			</div>
+			<div className="flex justify-between">
+				<span className="text-(--f3)">Metrics this tick</span>
+				<span ref={metricsCountRef} className="text-(--f1)" />
+			</div>
+			<div className="flex justify-between">
+				<span className="text-(--f3)">Observed</span>
+				<span ref={observedRef} className="text-(--f1)" />
+			</div>
+			<div className="flex justify-between">
+				<span className="text-(--f3)">Validity</span>
+				<span ref={validityRef} className="text-(--f1)" />
+			</div>
+		</div>
+		<div ref={heatmapSectionRef} className="mt-[18px]">
 			<div
-				ref={metricsGridRef}
-				className="mt-[18px] grid gap-x-[22px] gap-y-3"
-				style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
+				ref={heatmapTitleRef}
+				className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]"
 			/>
 			<div
-				className="mt-5 grid gap-x-[22px] gap-y-2 border-(--line) border-t pt-3.5 font-mono text-xs"
-				style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
-			>
-				<div className="flex justify-between">
-					<span className="text-(--f3)">Active readings</span>
-					<span ref={activeReadingsRef} className="text-(--f1)" />
-				</div>
-				<div className="flex justify-between">
-					<span className="text-(--f3)">Metrics this tick</span>
-					<span ref={metricsCountRef} className="text-(--f1)" />
-				</div>
-				<div className="flex justify-between">
-					<span className="text-(--f3)">Observed</span>
-					<span ref={observedRef} className="text-(--f1)" />
-				</div>
-				<div className="flex justify-between">
-					<span className="text-(--f3)">Validity</span>
-					<span ref={validityRef} className="text-(--f1)" />
-				</div>
-			</div>
-			<div ref={heatmapSectionRef} className="mt-[18px]">
-				<div
-					ref={heatmapTitleRef}
-					className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]"
-				/>
-				<div
-					ref={heatmapGridRef}
-					className="grid gap-[3px]"
-					style={{ gridTemplateColumns: "repeat(12, minmax(0, 1fr))" }}
-				/>
-			</div>
-		</Flex.Column>
-	);
-};
+				ref={heatmapGridRef}
+				className="grid gap-[3px]"
+				style={{ gridTemplateColumns: "repeat(12, minmax(0, 1fr))" }}
+			/>
+		</div>
+	</Flex.Column>
+);

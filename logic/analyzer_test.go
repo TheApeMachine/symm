@@ -6,10 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
+	pmanifold "github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
@@ -91,8 +92,8 @@ func TestAnalyzerUpdate(t *testing.T) {
 		}
 		state := manifold.State{
 			Symbol: "BTC/USD", At: time.Unix(1, 0), Duration: time.Second,
-			Epoch: 1, ReferencePrice: 100, InvalidReason: manifold.Valid,
-			Spread: 0.01, BuyCapacity: 1000, SellCapacity: 1000,
+			Epoch: 1, ReferencePrice: decimal.NewFromInt64(100), InvalidReason: manifold.Valid,
+			Spread: 0.01, BuyCapacity: decimal.NewFromInt64(1000), SellCapacity: decimal.NewFromInt64(1000),
 			BuyIntensity: 2, SellIntensity: 1,
 			Reading: pmanifold.Reading{
 				PressureGradX: 1, Divergence: -1, CoherenceMag2: 1,
@@ -298,8 +299,8 @@ func BenchmarkAnalyzerCognize(b *testing.B) {
 	analyzer := &Analyzer{tree: dmt.NewTree("")}
 	state := manifold.State{
 		Symbol: "BTC/USD", At: time.Unix(1, 0), Duration: time.Second,
-		Epoch: 1, ReferencePrice: 100, InvalidReason: manifold.Valid,
-		Spread: 0.01, BuyCapacity: 1000, SellCapacity: 1000,
+		Epoch: 1, ReferencePrice: decimal.NewFromInt64(100), InvalidReason: manifold.Valid,
+		Spread: 0.01, BuyCapacity: decimal.NewFromInt64(1000), SellCapacity: decimal.NewFromInt64(1000),
 		BuyIntensity: 2, SellIntensity: 1,
 		Reading: pmanifold.Reading{
 			PressureGradX: 1, Divergence: -1, CoherenceMag2: 1,

@@ -12,7 +12,7 @@ import (
 )
 
 /*
-Toxicity tracks whether near-touch liquidity is sincere, retreating, or bluffing
+Signal tracks whether near-touch liquidity is sincere, retreating, or bluffing
 from level3 order events corroborated by the public trade tape.
 */
 type Signal struct {

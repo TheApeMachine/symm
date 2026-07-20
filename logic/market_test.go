@@ -18,6 +18,7 @@ import (
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/stack"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/tests/conditions"
 	"github.com/theapemachine/symm/tests/mockapi"
@@ -46,13 +47,17 @@ func TestAnalyzer_UpdateFromMarket(t *testing.T) {
 	Convey("Given mirrored buy-support and sell-pressure markets", t, func() {
 		So(buy.state.GasReady(), ShouldBeTrue)
 		So(sell.state.GasReady(), ShouldBeTrue)
+		So(buy.state.Wave, ShouldNotBeEmpty)
+		So(sell.state.Wave, ShouldNotBeEmpty)
+		So(buy.state.PhaseScan, ShouldHaveLength, len(buy.state.Wave))
+		So(sell.state.PhaseScan, ShouldHaveLength, len(sell.state.Wave))
 		So(buy.state.BuyIntensity, ShouldBeGreaterThan, buy.state.SellIntensity)
 		So(sell.state.SellIntensity, ShouldBeGreaterThan, sell.state.BuyIntensity)
 		So(buy.state.StressAnisotropy, ShouldBeGreaterThanOrEqualTo, 0)
 		So(sell.state.StressAnisotropy, ShouldBeGreaterThanOrEqualTo, 0)
-		So(buy.state.SellCapacity, ShouldBeGreaterThan, buy.state.BuyCapacity)
-		So(sell.state.BuyCapacity, ShouldBeGreaterThan, sell.state.SellCapacity)
-		So(buy.state.ReferencePrice, ShouldBeGreaterThan, sell.state.ReferencePrice)
+		So(buy.state.SellCapacity.Cmp(buy.state.BuyCapacity), ShouldBeGreaterThan, 0)
+		So(sell.state.BuyCapacity.Cmp(sell.state.SellCapacity), ShouldBeGreaterThan, 0)
+		So(buy.state.ReferencePrice.Cmp(sell.state.ReferencePrice), ShouldBeGreaterThan, 0)
 
 		So(buy.cognition.Ready, ShouldBeTrue)
 		So(sell.cognition.Ready, ShouldBeTrue)
@@ -214,7 +219,13 @@ func playLogicMarket(
 		}
 	})
 	bootFrames := serveLogicBoot(ctx, mock)
+	channel := make(chan []byte, viper.GetInt("system.websocket.channel.buffer"))
+	booter := system.NewBooter(ctx, channel)
+	thesis := types.NewThesis(channel, nil)
 	wired, err := stack.Boot(ctx, api, stack.Options{
+		Booter:  booter,
+		Channel: channel,
+		Thesis:  thesis,
 		Signals: func(
 			ctx context.Context,
 			api *websocket.API,
@@ -240,6 +251,7 @@ func playLogicMarket(
 	}
 
 	t.Cleanup(wired.Close)
+	wired.Analyzer.Focus(conditions.Subject())
 	result := &logicMarketResult{}
 	cutAt := time.Date(2024, 1, 1, 1, 0, 0, 0, time.UTC)
 
@@ -299,6 +311,8 @@ func configureLogicMarket(t *testing.T) {
 	t.Helper()
 	settings := map[string]any{
 		"trading.model":                              "live",
+		"trading.slots.normal":                       1,
+		"trading.slots.reserved":                     0,
 		"market.quote_currency":                      "USD",
 		"market.subscribe_batch":                     200,
 		"market.subscribe_pace":                      time.Duration(0),
@@ -309,6 +323,7 @@ func configureLogicMarket(t *testing.T) {
 		"signals.fluid.integration_interval":         100 * time.Millisecond,
 		"signals.feed_timeline_capacity":             256,
 		"signals.feed_track_capacity":                256,
+		"system.websocket.channel.buffer":            64,
 		"system.data_path":                           t.TempDir(),
 	}
 	previous := make(map[string]any, len(settings))

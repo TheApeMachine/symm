@@ -10,14 +10,11 @@ import (
 )
 
 func TestFluidSymbolBookDerivedGrid(t *testing.T) {
-	Convey("Given no configured fluid grid width", t, func() {
-		pinFluidViper(t, map[string]any{
-			"signals.fluid.tick_size":            0,
-			"signals.fluid.grid_half_width":      0,
-			"signals.fluid.integration_interval": 100 * time.Millisecond,
-			"signals.volume_clock_bars_per_day":  288,
-		})
-
+	Convey("Given no configured fluid grid width", t, withFluidGrid(map[string]any{
+		"signals.fluid.tick_size":           0,
+		"signals.fluid.grid_half_width":     0,
+		"signals.volume_clock_bars_per_day": 288,
+	}, func() {
 		state, err := NewFluidSymbol("BTC/USD")
 
 		Convey("When the first book snapshot arrives", func() {
@@ -42,7 +39,7 @@ func TestFluidSymbolBookDerivedGrid(t *testing.T) {
 				So(state.grid.halfWidth, ShouldEqual, 2)
 			})
 		})
-	})
+	}))
 }
 
 func TestPriceMemoryFromSamples(t *testing.T) {

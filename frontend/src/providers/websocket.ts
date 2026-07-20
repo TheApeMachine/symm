@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { appStore } from "#/collections/app";
+import { attach } from "#/providers/ws-stores";
 
 const socketUrl =
 	import.meta.env.VITE_SYMM_WS_URL?.trim() || "ws://127.0.0.1:8765/ws";
@@ -10,10 +11,7 @@ type WorkerOutbound =
 	| { type: "ERROR"; message: string }
 	| { type: "ERROR_FRAME"; frame: Record<string, unknown> };
 
-	
-	
-let worker: Worker | null = null;	
-export const getWorker = () => worker;
+let worker: Worker | null = null;
 
 const disconnectTransport = () => {
 	if (worker !== null) {
@@ -29,6 +27,10 @@ const handleWorkerMessage = (event: MessageEvent<WorkerOutbound>) => {
 	if (message.type === "READY") {
 		if (worker !== null) {
 			worker.postMessage({ type: "CONNECT", url: socketUrl });
+			worker.postMessage({
+				type: "FOCUS",
+				symbol: appStore.state.focusSymbol,
+			});
 		}
 
 		return;
@@ -56,6 +58,7 @@ const connect = () => {
 		type: "module",
 	});
 
+	attach(worker);
 	worker.addEventListener("message", handleWorkerMessage);
 	worker.addEventListener("error", (event) => {
 		console.error("WS worker failed:", event.message);
@@ -65,15 +68,21 @@ const connect = () => {
 };
 
 /*
-WsFeed boots the websocket worker once. The worker owns the socket, decodes
-frames, and retains desk state. Main-thread mirrors subscribe over MessageChannel;
-app/terminal stay on the UI thread.
+WsFeed boots the websocket worker once. The worker owns the socket and forwards
+DRAW frames; attach dispatches wire keys to paint functions.
 */
 export const WsFeed = () => {
 	useEffect(() => {
 		connect();
+		const subscription = appStore.subscribe(() => {
+			worker?.postMessage({
+				type: "FOCUS",
+				symbol: appStore.state.focusSymbol,
+			});
+		});
 
 		return () => {
+			subscription.unsubscribe();
 			disconnectTransport();
 		};
 	}, []);

@@ -105,10 +105,10 @@ export type Execution = {
 	order_status?: string;
 	exec_type?: string;
 	timestamp?: string;
-	last_qty?: number;
+	last_qty?: string;
 	last_price?: number;
 	cost?: number;
-	cum_qty?: number;
+	cum_qty?: string;
 	cum_cost?: number;
 	avg_price?: number;
 	fee_usd_equiv?: number;

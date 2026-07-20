@@ -49,6 +49,7 @@ func TestLiveUpdateLevel3(t *testing.T) {
 		live := New(context.Background(), nil, true, Level3WebSocketURL)
 		live.client.Reconnect = func() {}
 		managed := live.books.CreateBook("BTC/USD", 10)
+		live.level3Ledger.orders["BTC/USD"] = make(map[string]level3Order)
 		So(managed.EnableMaxDepth, ShouldBeFalse)
 		So(managed.NoBookCrossing, ShouldBeFalse)
 		quantity, err := decimal.NewFromString("1")
@@ -65,6 +66,10 @@ func TestLiveUpdateLevel3(t *testing.T) {
 				Quantity:  quantity,
 				Timestamp: time.Unix(int64(price), 0),
 			})
+			live.level3Ledger.orders["BTC/USD"]["bid-"+strconv.Itoa(price)] = level3Order{
+				price:    strconv.Itoa(price),
+				quantity: "1",
+			}
 		}
 
 		restingAskPrice, err := decimal.NewFromString("102")
@@ -77,6 +82,10 @@ func TestLiveUpdateLevel3(t *testing.T) {
 			Quantity:  quantity,
 			Timestamp: time.Unix(1, 0),
 		})
+		live.level3Ledger.orders["BTC/USD"]["resting-ask"] = level3Order{
+			price:    "102",
+			quantity: "1",
+		}
 
 		checksum := crc32.ChecksumIEEE([]byte(
 			"1031" + "1001" + "991" + "981" + "971" +

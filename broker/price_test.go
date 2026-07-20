@@ -14,6 +14,73 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+TestPrice_DivFloor proves liquidity-capped sell quantities never round above
+the exact quote capacity that funds them.
+*/
+func TestPrice_DivFloor(t *testing.T) {
+	Convey("Given quote capacity that does not divide evenly by its mark", t, func() {
+		price := broker.NewPrice(nil)
+		capacity := decimal.NewFromInt64(10)
+		mark := decimal.NewFromInt64(3)
+
+		Convey("It should floor the executable quantity at the requested scale", func() {
+			quantity := price.DivFloor(capacity, mark, 3)
+			So(quantity.String(), ShouldEqual, "3.333")
+			So(price.Mul(mark, quantity).Cmp(capacity), ShouldBeLessThanOrEqualTo, 0)
+		})
+	})
+}
+
+/*
+TestPrice_Notional proves executable quantity flooring cannot change the
+rounding policy used by downstream quote-currency fee accounting.
+*/
+func TestPrice_Notional(t *testing.T) {
+	Convey("Given equal quantities with banker's and executable floor rounding", t, func() {
+		price := broker.NewPrice(nil)
+		So(price.RememberFee("BILL/USD", kraken.TradeVolumeFee{
+			Fee: decimal.NewFromFloat64(0.40),
+		}), ShouldBeNil)
+		pair := &kraken.InstrumentPair{
+			Symbol:         "BILL/USD",
+			PricePrecision: 5,
+			CostPrecision:  5,
+		}
+		rate, err := decimal.NewFromString("0.02424")
+		So(err, ShouldBeNil)
+		bankerQuantity, err := decimal.NewFromString("100.00000")
+		So(err, ShouldBeNil)
+		flooredQuantity := price.DivFloor(
+			decimal.NewFromInt64(300),
+			decimal.NewFromInt64(3),
+			5,
+		)
+
+		Convey("It should keep quantity rounding out of quote-currency fees", func() {
+			bankerNotional := price.Notional(pair, rate, bankerQuantity)
+			flooredNotional := price.Notional(pair, rate, flooredQuantity)
+			bankerFee := price.Fee(pair, bankerNotional)
+			flooredFee := price.Fee(pair, flooredNotional)
+
+			So(flooredNotional.Cmp(bankerNotional), ShouldEqual, 0)
+			So(flooredFee.Cmp(bankerFee), ShouldEqual, 0)
+			So(flooredFee.String(), ShouldEqual, "0.00970")
+		})
+
+		Convey("It should round only after multiplying the complete operands", func() {
+			preciseRate, parseErr := decimal.NewFromString("1.23456")
+			So(parseErr, ShouldBeNil)
+			preciseQuantity, parseErr := decimal.NewFromString("0.12345678")
+			So(parseErr, ShouldBeNil)
+
+			notional := price.Notional(pair, preciseRate, preciseQuantity)
+
+			So(notional.String(), ShouldEqual, "0.15241")
+		})
+	})
+}
+
 func TestPriceTickerAck(t *testing.T) {
 	Convey("Given a ticker envelope", t, func() {
 		price := broker.NewPrice(nil)

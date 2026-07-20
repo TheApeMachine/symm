@@ -41,11 +41,11 @@ func (evidenceGraph *Graph) Frame() GraphFrame {
 	frame := GraphFrame{
 		Symbol: evidenceGraph.Symbol,
 		At:     evidenceGraph.At,
-		Nodes:  make([]GraphNodeWire, 0),
-		Edges:  make([]GraphEdgeWire, 0),
+		Nodes:  make([]GraphNodeWire, 0, len(evidenceGraph.nodes)),
+		Edges:  make([]GraphEdgeWire, 0, len(evidenceGraph.edges)),
 	}
 
-	for _, node := range evidenceGraph.Nodes() {
+	for _, node := range evidenceGraph.nodes {
 		frame.Nodes = append(frame.Nodes, GraphNodeWire{
 			Key:         node.Key,
 			Kind:        node.Kind,
@@ -54,10 +54,13 @@ func (evidenceGraph *Graph) Frame() GraphFrame {
 		})
 	}
 
-	for _, edge := range evidenceGraph.Edges() {
+	for _, edge := range evidenceGraph.edges {
 		frame.Edges = append(frame.Edges, GraphEdgeWire{
-			From: edge.From, To: edge.To, Type: edge.Type,
-			At: edge.At, ObservedFrom: edge.ObservedFrom,
+			From:         edge.From,
+			To:           edge.To,
+			Type:         edge.Type,
+			At:           edge.At,
+			ObservedFrom: edge.ObservedFrom,
 		})
 	}
 

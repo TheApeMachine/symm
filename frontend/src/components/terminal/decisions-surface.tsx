@@ -1,5 +1,4 @@
-import { useSelector } from "@tanstack/react-store";
-import { useRef, useState } from "react";
+import { createRef } from "react";
 import { appStore } from "#/collections/app";
 import type {
 	CausalFrame,
@@ -9,18 +8,32 @@ import type {
 	ResonanceFrame,
 } from "#/collections/types";
 import type { StrategyDecision } from "#/types/thesis";
-import { CandidateRow } from "#/components/terminal/candidate-row";
+import {
+	paintCandidateSelection,
+	syncCandidateRowShells,
+} from "#/components/terminal/candidate-row";
 import { buildCandidate } from "#/components/terminal/decision-candidate";
-import { useDirectStorePaint } from "#/hooks/use-direct-store-paint";
+import {
+	DecisionSideRail,
+	LiveDecisionsEntryLine,
+	setDecisionsScopeSymbol,
+} from "#/components/terminal/decision-side";
+import { StrategyDecisionRows } from "#/components/terminal/strategy-decisions";
 import { cn } from "#/lib/utils";
-import { getWorker } from "#/providers/websocket";
 import { Panel } from "@/components/ui/panel";
-import { DecisionSideRail, LiveDecisionsEntryLine } from "./decision-side";
-import { StrategyDecisionRows } from "./strategy-decisions";
 
-const sameSymbols = (left: string[], right: string[]): boolean =>
-	left.length === right.length &&
-	left.every((symbol, index) => symbol === right[index]);
+const rootRef = createRef<HTMLDivElement>();
+
+let lastDecisions: StrategyDecision[] = [];
+let lastCausal: CausalFrame[] = [];
+let lastManifold: ManifoldFrame[] = [];
+let lastResonance: ResonanceFrame[] = [];
+let lastMeasurements: Measurement[] = [];
+let lastInstruments: Instrument[] = [];
+let selectedSymbol: string | null = null;
+
+const asRows = <T,>(value: unknown): T[] =>
+	(Array.isArray(value) ? value : value != null ? [value] : []) as T[];
 
 const latestBySymbol = <T extends { symbol: string }>(
 	rows: T[],
@@ -40,7 +53,15 @@ const setText = (node: Element | null | undefined, value: string): void => {
 	}
 };
 
-const paintDecisionStats = (
+const selectCandidate = (symbol: string) => {
+	selectedSymbol = selectedSymbol === symbol ? null : symbol;
+	paint();
+};
+
+/*
+paintDecisionStats writes field / measured / in-play / allowed into the shell.
+*/
+export const paintDecisionStats = (
 	root: HTMLElement | null,
 	stats: { field: number; measured: number; inPlay: number; allowed: number },
 ): void => {
@@ -74,169 +95,195 @@ const STAT_CARDS = [
 ] as const;
 
 /*
-DecisionsSurface evaluates live ladder candidates. Symbol shells remount only
-when the candidate set changes; live scores paint through DOM refs each tick.
+paint rebuilds decision stats from module caches and paints the shell.
 */
-export const DecisionsSurface = () => {
-	const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const online = useSelector(appStore, (state) => state.online);
-	const rootRef = useRef<HTMLDivElement>(null);
-	const [symbols, setSymbols] = useState<string[]>([]);
-
-	useDirectStorePaint(
-		getWorker(),
+const paint = () => {
+	const root = rootRef.current;
+	const decisions = latestBySymbol(lastDecisions);
+	const causal = latestBySymbol(lastCausal);
+	const manifold = latestBySymbol(lastManifold);
+	const resonance = latestBySymbol(lastResonance);
+	const instrumentSymbols = lastInstruments
+		.map((instrument) => instrument.symbol)
+		.sort();
+	const symbolSet = new Set(
 		[
-			{ store: "decisions", key: "" },
-			{ store: "causal", key: "" },
-			{ store: "manifold", key: "" },
-			{ store: "resonance", key: "" },
-			{ store: "measurements", key: "" },
-			{ store: "instruments", key: "" },
-		],
-		(buffers) => {
-			const decisions = latestBySymbol(
-				(buffers["decisions:"] ?? []) as StrategyDecision[],
-			);
-			const causal = latestBySymbol(
-				(buffers["causal:"] ?? []) as CausalFrame[],
-			);
-			const manifold = latestBySymbol(
-				(buffers["manifold:"] ?? []) as ManifoldFrame[],
-			);
-			const resonance = latestBySymbol(
-				(buffers["resonance:"] ?? []) as ResonanceFrame[],
-			);
-			const instrumentSymbols = (
-				(buffers["instruments:"] ?? []) as Instrument[]
-			)
-				.map((instrument) => instrument.symbol)
-				.sort();
-			const symbolSet = new Set(
-				[
-					...Object.keys(causal),
-					...Object.keys(resonance),
-					...Object.keys(manifold),
-					...Object.keys(decisions),
-				].filter((symbol) => symbol.includes("/")),
-			);
-			const nextSymbols = [
-				...instrumentSymbols.filter((symbol) => symbolSet.has(symbol)),
-				...[...symbolSet]
-					.filter((symbol) => !instrumentSymbols.includes(symbol))
-					.sort(),
-			];
-			const measured = new Set(
-				((buffers["measurements:"] ?? []) as Measurement[]).map(
-					(measurement) => measurement.symbol,
-				),
-			).size;
-			let inPlay = 0;
-			let allowed = 0;
-
-			for (const symbol of nextSymbols) {
-				const model = buildCandidate(
-					symbol,
-					decisions[symbol],
-					causal[symbol],
-					resonance[symbol],
-					manifold[symbol],
-				);
-
-				if (model.inPlay) {
-					inPlay += 1;
-				}
-
-				if (model.verdict === "allow") {
-					allowed += 1;
-				}
-			}
-
-			setSymbols((previous) =>
-				sameSymbols(previous, nextSymbols) ? previous : nextSymbols,
-			);
-			paintDecisionStats(rootRef.current, {
-				field: nextSymbols.length,
-				measured,
-				inPlay,
-				allowed,
-			});
-		},
-		[online],
+			...Object.keys(causal),
+			...Object.keys(resonance),
+			...Object.keys(manifold),
+			...Object.keys(decisions),
+		].filter((symbol) => symbol.includes("/")),
 	);
+	const nextSymbols = [
+		...instrumentSymbols.filter((symbol) => symbolSet.has(symbol)),
+		...[...symbolSet]
+			.filter((symbol) => !instrumentSymbols.includes(symbol))
+			.sort(),
+	];
+	const measured = new Set(
+		lastMeasurements.map((measurement) => measurement.symbol),
+	).size;
+	let inPlay = 0;
+	let allowed = 0;
 
-	const current =
+	for (const symbol of nextSymbols) {
+		const model = buildCandidate(
+			symbol,
+			decisions[symbol],
+			causal[symbol],
+			resonance[symbol],
+			manifold[symbol],
+		);
+
+		if (model.inPlay) {
+			inPlay += 1;
+		}
+
+		if (model.verdict === "allow") {
+			allowed += 1;
+		}
+	}
+
+	const focusSymbol = appStore.state.focusSymbol;
+	const currentSymbol =
 		selectedSymbol ??
-		(symbols.includes(focusSymbol) ? focusSymbol : symbols[0]);
+		(nextSymbols.includes(focusSymbol) ? focusSymbol : nextSymbols[0]);
 
-	return (
-		<div
-			ref={rootRef}
-			className="grid h-full min-h-0 min-w-[1040px] grid-cols-[minmax(640px,1fr)_332px]"
-		>
-			<div className="min-h-0 overflow-auto px-5 py-[18px]">
-				<div className="mb-[18px] grid grid-cols-4 gap-2.5">
-					{STAT_CARDS.map(([key, title, subtitle, tone]) => (
-						<div
-							key={key}
-							className="rounded border border-(--line) bg-(--surface) px-3 py-2.5"
-						>
-							<div className="text-[9.5px] text-(--f4) uppercase tracking-widest">
-								{title}
-							</div>
-							<div
-								data-decision={key}
-								className={cn(
-									"mt-0.5 font-mono font-semibold text-[26px] leading-[1.1]",
-									tone,
-								)}
-							>
-								0
-							</div>
-							<div className="mt-px font-mono text-[9.5px] text-(--f4)">
-								{subtitle}
-							</div>
-						</div>
-					))}
-				</div>
+	setDecisionsScopeSymbol(currentSymbol);
+	syncCandidateRowShells(root, nextSymbols, selectCandidate);
+	paintCandidateSelection(selectedSymbol);
+	paintDecisionStats(root, {
+		field: nextSymbols.length,
+		measured,
+		inPlay,
+		allowed,
+	});
+};
 
-				<LiveDecisionsEntryLine symbol={current} />
+/*
+paintDecisions refreshes decision stats from the current DRAW decisions batch.
+*/
+export const paintDecisions = (value: unknown, _focusSymbol: string) => {
+	lastDecisions = asRows<StrategyDecision>(value);
+	paint();
+};
 
-				<div className="mb-2 flex items-baseline justify-between">
-					<span className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
-						Candidate evaluation
-					</span>
-					<span className="font-mono text-[9.5px] text-(--f4)">
-						click a row to inspect attribution + counterfactuals
-					</span>
-				</div>
+/*
+paintDecisionsCausal refreshes decision stats from the current DRAW causal batch.
+*/
+export const paintDecisionsCausal = (value: unknown, _focusSymbol: string) => {
+	lastCausal = asRows<CausalFrame>(value);
+	paint();
+};
 
-				<div className="flex flex-col gap-[7px]">
-					<Panel
-						variant="surface"
-						size="bare"
-						data-decision="waiting"
-						className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
+/*
+paintDecisionsManifold refreshes decision stats from the current DRAW manifold batch.
+*/
+export const paintDecisionsManifold = (
+	value: unknown,
+	_focusSymbol: string,
+) => {
+	lastManifold = asRows<ManifoldFrame>(value);
+	paint();
+};
+
+/*
+paintDecisionsResonance refreshes decision stats from the current DRAW resonance batch.
+*/
+export const paintDecisionsResonance = (
+	value: unknown,
+	_focusSymbol: string,
+) => {
+	lastResonance = asRows<ResonanceFrame>(value);
+	paint();
+};
+
+/*
+paintDecisionsMeasurements refreshes decision stats from the current DRAW measurements.
+*/
+export const paintDecisionsMeasurements = (
+	value: unknown,
+	_focusSymbol: string,
+) => {
+	lastMeasurements = asRows<Measurement>(value);
+	paint();
+};
+
+/*
+paintDecisionsInstruments refreshes decision stats from the current DRAW instruments.
+*/
+export const paintDecisionsInstruments = (
+	value: unknown,
+	_focusSymbol: string,
+) => {
+	lastInstruments = asRows<Instrument>(value);
+	paint();
+};
+
+/*
+DecisionsSurface is the static candidate-ladder shell. DRAW paints stats via
+paintDecisions* exports without React reconciliation each tick.
+*/
+export const DecisionsSurface = () => (
+	<div
+		ref={rootRef}
+		className="grid h-full min-h-0 min-w-[1040px] grid-cols-[minmax(640px,1fr)_332px]"
+	>
+		<div className="min-h-0 overflow-auto px-5 py-[18px]">
+			<div className="mb-[18px] grid grid-cols-4 gap-2.5">
+				{STAT_CARDS.map(([key, title, subtitle, tone]) => (
+					<div
+						key={key}
+						className="rounded border border-(--line) bg-(--surface) px-3 py-2.5"
 					>
-						waiting for backend decision frames
-					</Panel>
-					{symbols.map((symbol) => (
-						<CandidateRow
-							key={symbol}
-							symbol={symbol}
-							selected={symbol === current}
-							onSelect={(next) =>
-								setSelectedSymbol(selectedSymbol === next ? null : next)
-							}
-						/>
-					))}
-				</div>
+						<div className="text-[9.5px] text-(--f4) uppercase tracking-widest">
+							{title}
+						</div>
+						<div
+							data-decision={key}
+							className={cn(
+								"mt-0.5 font-mono font-semibold text-[26px] leading-[1.1]",
+								tone,
+							)}
+						>
+							0
+						</div>
+						<div className="mt-px font-mono text-[9.5px] text-(--f4)">
+							{subtitle}
+						</div>
+					</div>
+				))}
 			</div>
 
-			<div className="min-h-0 overflow-auto border-(--line) border-l bg-(--surface) p-3.5">
-				<DecisionSideRail symbol={current} />
-				<StrategyDecisionRows symbol={current} />
+			<LiveDecisionsEntryLine />
+
+			<div className="mb-2 flex items-baseline justify-between">
+				<span className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+					Candidate evaluation
+				</span>
+				<span className="font-mono text-[9.5px] text-(--f4)">
+					click a row to inspect attribution + counterfactuals
+				</span>
+			</div>
+
+			<div
+				className="flex flex-col gap-[7px]"
+				data-decision-host="candidates"
+			>
+				<Panel
+					variant="surface"
+					size="bare"
+					data-decision="waiting"
+					className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
+				>
+					waiting for backend decision frames
+				</Panel>
 			</div>
 		</div>
-	);
-};
+
+		<div className="min-h-0 overflow-auto border-(--line) border-l bg-(--surface) p-3.5">
+			<DecisionSideRail />
+			<StrategyDecisionRows />
+		</div>
+	</div>
+);

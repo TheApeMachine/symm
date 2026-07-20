@@ -20,23 +20,20 @@ import (
 
 func measureMarket(t testing.TB, frames iter.Seq[tests.Frame]) []*types.Measurement {
 	t.Helper()
-	withFluidInterval(t)
-	pinFluidViper(t, map[string]any{
-		"signals.feed_timeline_capacity": 128,
-		"signals.feed_track_capacity":    128,
-	})
-
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 	mock := mockapi.NewMockAPI()
 	api := websocket.NewAPI(ctx, mock.Public(), mock.Private(), nil)
-	t.Cleanup(api.Close)
 	instrument := broker.NewInstrument(api, broker.NewPrice(api), nil)
 	api.On("instrument", instrument.On)
 	market, err := trader.NewMarket(ctx, api, instrument)
 	So(err, ShouldBeNil)
-	t.Cleanup(market.Close)
 	signal := NewSignal(ctx, api, instrument, nil)
+	Reset(func() {
+		So(signal.Close(), ShouldBeNil)
+		market.Close()
+		api.Close()
+		cancel()
+	})
 	measurements := make([]*types.Measurement, 0)
 	cutAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -100,7 +97,11 @@ TestSignal_MeasureFromMarket proves fluid publishes its complete mechanical
 state for stable, churning, and depleted production market paths.
 */
 func TestSignal_MeasureFromMarket(t *testing.T) {
-	Convey("Given stable, churning, and depth-depleted markets", t, func() {
+	Convey("Given stable, churning, and depth-depleted markets", t, withFluidConfig(map[string]any{
+		"signals.fluid.integration_interval": 100 * time.Millisecond,
+		"signals.feed_timeline_capacity":     128,
+		"signals.feed_track_capacity":        128,
+	}, func() {
 		symbol := conditions.Subject()
 		stableMeasurements := measureMarket(t, conditions.TapeCalm().Frames())
 		churningMeasurements := measureMarket(t, conditions.MarketPath(
@@ -150,11 +151,14 @@ func TestSignal_MeasureFromMarket(t *testing.T) {
 			So(churning[types.MetricMemory].Raw, ShouldBeGreaterThan, 0)
 			So(depleted[types.MetricReynolds].Raw, ShouldBeGreaterThan, churning[types.MetricReynolds].Raw)
 		})
-	})
+	}))
 }
 
 func BenchmarkSignal_Measure(benchmark *testing.B) {
-	withFluidInterval(benchmark)
+	configureFluidBenchmark(fluidGridSettings(map[string]any{
+		"signals.fluid.tick_size":       0,
+		"signals.fluid.grid_half_width": 0,
+	}))
 	signal := NewSignal(context.Background(), nil, nil, nil)
 	at := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
 	fixture := &symbolBookFixture{symbol: "BTC/USD"}

@@ -27,21 +27,22 @@ Live is the spot websocket and REST transport. Authentication, reconnect
 replay, and callback wiring are owned by the composed Transport.
 */
 type Live struct {
-	status    atomic.Value
-	ctx       context.Context
-	cancel    context.CancelFunc
-	client    *spot.WebSocket
-	sync      *sync.Map
-	handlerMu sync.Mutex
-	nextID    atomic.Uint64
-	paper     *Paper
-	simulator *Simulator
-	books       *spot.BookManager
-	bookMu      sync.RWMutex
-	isLevel3    bool
-	symbols     []string
-	transport   *Transport
-	level3Queue chan []byte
+	status       atomic.Value
+	ctx          context.Context
+	cancel       context.CancelFunc
+	client       *spot.WebSocket
+	sync         *sync.Map
+	handlerMu    sync.Mutex
+	nextID       atomic.Uint64
+	paper        *Paper
+	simulator    *Simulator
+	books        *spot.BookManager
+	bookMu       sync.RWMutex
+	isLevel3     bool
+	symbols      []string
+	transport    *Transport
+	level3Queue  chan []byte
+	level3Ledger *level3Ledger
 }
 
 /*
