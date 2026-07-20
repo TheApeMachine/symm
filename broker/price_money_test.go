@@ -26,8 +26,8 @@ func billPair() moneyPair {
 		feePct: 0.40,
 		pair: kraken.InstrumentPair{
 			Symbol:         "BILL/USD",
-			QtyMin:         100,
-			QtyIncrement:   0.00001,
+			QtyMin:         decimal.NewFromInt64(100),
+			QtyIncrement:   decimal.NewFromFloat64(0.00001),
 			QtyPrecision:   5,
 			PricePrecision: 5,
 			CostPrecision:  5,
@@ -43,8 +43,8 @@ func btcPair() moneyPair {
 		feePct: 0.26,
 		pair: kraken.InstrumentPair{
 			Symbol:         "BTC/USD",
-			QtyMin:         0.0001,
-			QtyIncrement:   0.00000001,
+			QtyMin:         decimal.NewFromFloat64(0.0001),
+			QtyIncrement:   decimal.NewFromFloat64(0.00000001),
 			QtyPrecision:   8,
 			PricePrecision: 1,
 			CostPrecision:  5,
@@ -60,8 +60,8 @@ func coarseLotPair() moneyPair {
 		feePct: 0.26,
 		pair: kraken.InstrumentPair{
 			Symbol:         "COARSE/USD",
-			QtyMin:         1,
-			QtyIncrement:   1,
+			QtyMin:         decimal.NewFromInt64(1),
+			QtyIncrement:   decimal.NewFromInt64(1),
 			QtyPrecision:   0,
 			PricePrecision: 2,
 			CostPrecision:  2,
@@ -106,7 +106,7 @@ func assertQuantityFits(
 		t.Fatalf("Quantity(%s) returned empty qty without error", budget)
 	}
 
-	minimum := decimal.NewFromFloat64(pair.QtyMin)
+	minimum := pair.QtyMin
 
 	if quantity.Cmp(minimum) < 0 {
 		t.Fatalf(
@@ -144,7 +144,7 @@ func TestQuantityNeverExceedsBudget(t *testing.T) {
 			price := moneyPrice(fixture)
 			pair := fixture.pair
 			minCost, err := price.Taker(
-				&pair, decimal.NewFromFloat64(pair.QtyMin),
+				&pair, pair.QtyMin,
 			)
 
 			if err != nil {
@@ -192,7 +192,7 @@ func TestQuantityRejectsUnfundableMinimum(t *testing.T) {
 	fixture := billPair()
 	price := moneyPrice(fixture)
 	pair := fixture.pair
-	minCost, err := price.Taker(&pair, decimal.NewFromFloat64(pair.QtyMin))
+	minCost, err := price.Taker(&pair, pair.QtyMin)
 
 	if err != nil {
 		t.Fatal(err)
@@ -286,18 +286,18 @@ func TestTakerIsNotionalPlusFee(t *testing.T) {
 	for _, fixture := range []moneyPair{billPair(), btcPair(), coarseLotPair()} {
 		price := moneyPrice(fixture)
 		pair := fixture.pair
-		quantities := []float64{
+		quantities := []*decimal.Decimal{
 			pair.QtyMin,
-			pair.QtyMin * 2,
-			pair.QtyMin + pair.QtyIncrement,
-			123.456789,
-			1000,
+			price.Mul(pair.QtyMin, decimal.NewFromInt64(2)),
+			pair.QtyMin.Add(pair.QtyIncrement),
+			decimal.NewFromFloat64(123.456789),
+			decimal.NewFromInt64(1000),
 		}
 
 		for _, raw := range quantities {
-			qty := price.Quantize(&pair, decimal.NewFromFloat64(raw))
+			qty := price.Quantize(&pair, raw)
 
-			if qty == nil || qty.Cmp(decimal.NewFromFloat64(pair.QtyMin)) < 0 {
+			if qty == nil || qty.Cmp(pair.QtyMin) < 0 {
 				continue
 			}
 

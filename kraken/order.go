@@ -1,19 +1,27 @@
 package kraken
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
+/*
+Order is the generic authenticated Kraken request envelope.
+*/
 type Order struct {
 	Method string `json:"method"`
 	Params any    `json:"params"`
 	ReqID  int64  `json:"req_id"`
 }
 
+/*
+MarshalJSON encodes the generic order envelope for the websocket transport.
+*/
 func (order *Order) MarshalJSON() ([]byte, error) {
 	return sonic.Marshal(struct {
 		Method string `json:"method"`
@@ -26,11 +34,17 @@ func (order *Order) MarshalJSON() ([]byte, error) {
 	})
 }
 
+/*
+OrderResponseResult identifies the venue order created by Kraken.
+*/
 type OrderResponseResult struct {
 	OrderID      string `json:"order_id"`
 	OrderUserref int    `json:"order_userref"`
 }
 
+/*
+OrderResponse is Kraken's acknowledgement of an order request.
+*/
 type OrderResponse struct {
 	Method  string              `json:"method"`
 	Result  OrderResponseResult `json:"result"`
@@ -41,45 +55,67 @@ type OrderResponse struct {
 	TimeOut time.Time           `json:"time_out"`
 }
 
+/*
+NewOrderResponse decodes one order acknowledgement from Kraken.
+*/
 func NewOrderResponse(buf []byte) *OrderResponse {
 	data := &OrderResponse{}
 	errnie.Error(sonic.Unmarshal(buf, data))
 	return data
 }
 
+/*
+MarshalJSON encodes an order acknowledgement for paper and test transports.
+*/
 func (order *OrderResponse) MarshalJSON() ([]byte, error) {
 	type alias OrderResponse
 	return sonic.Marshal((*alias)(order))
 }
 
+/*
+Action returns the transport method used to route this acknowledgement.
+*/
 func (order *OrderResponse) Action() string {
 	return order.Method
 }
 
+/*
+IsSuccess reports whether Kraken accepted the order request.
+*/
 func (order *OrderResponse) IsSuccess() bool {
 	return order.Success
 }
 
+/*
+LimitOrder is an exact fixed-point limit order request envelope.
+*/
 type LimitOrder struct {
 	Method string           `json:"method"`
 	Params LimitOrderParams `json:"params"`
 	ReqID  int64            `json:"req_id"`
 }
 
+/*
+LimitOrderParams carries exact decimal text as JSON numbers so the venue sees
+numeric fields without an intervening float64 conversion.
+*/
 type LimitOrderParams struct {
-	OrderType    string  `json:"order_type"`
-	Side         string  `json:"side"`
-	LimitPrice   float64 `json:"limit_price,omitempty"`
-	OrderUserref int     `json:"order_userref"`
-	OrderQty     float64 `json:"order_qty"`
-	Symbol       string  `json:"symbol"`
-	Token        string  `json:"token"`
+	OrderType    string      `json:"order_type"`
+	Side         string      `json:"side"`
+	LimitPrice   json.Number `json:"limit_price,omitempty"`
+	OrderUserref int         `json:"order_userref"`
+	OrderQty     json.Number `json:"order_qty"`
+	Symbol       string      `json:"symbol"`
+	Token        string      `json:"token"`
 }
 
+/*
+NewLimitOrder creates a limit request from exact decimal price and quantity.
+*/
 func NewLimitOrder(
 	side string,
-	limitPrice float64,
-	orderQty float64,
+	limitPrice *decimal.Decimal,
+	orderQty *decimal.Decimal,
 	symbol string,
 ) *LimitOrder {
 	return &LimitOrder{
@@ -87,31 +123,40 @@ func NewLimitOrder(
 		Params: LimitOrderParams{
 			OrderType:  "limit",
 			Side:       side,
-			LimitPrice: limitPrice,
-			OrderQty:   orderQty,
+			LimitPrice: json.Number(limitPrice.String()),
+			OrderQty:   json.Number(orderQty.String()),
 			Symbol:     symbol,
 		},
 		ReqID: orderRequestID.Next(),
 	}
 }
 
+/*
+MarketOrder is an exact fixed-point market order request envelope.
+*/
 type MarketOrder struct {
 	Method string            `json:"method"`
 	Params MarketOrderParams `json:"params"`
 	ReqID  int64             `json:"req_id"`
 }
 
+/*
+MarketOrderParams retains executable quantity text as a JSON number.
+*/
 type MarketOrderParams struct {
-	OrderType  string  `json:"order_type"`
-	Side       string  `json:"side"`
-	OrderQty   float64 `json:"order_qty"`
-	Symbol     string  `json:"symbol"`
-	LimitPrice float64 `json:"limit_price,omitempty"`
+	OrderType  string      `json:"order_type"`
+	Side       string      `json:"side"`
+	OrderQty   json.Number `json:"order_qty"`
+	Symbol     string      `json:"symbol"`
+	LimitPrice json.Number `json:"limit_price,omitempty"`
 }
 
+/*
+NewMarketOrder creates a market request without converting quantity to float64.
+*/
 func NewMarketOrder(
 	side string,
-	orderQty float64,
+	orderQty *decimal.Decimal,
 	symbol string,
 ) *MarketOrder {
 	return &MarketOrder{
@@ -119,23 +164,32 @@ func NewMarketOrder(
 		Params: MarketOrderParams{
 			OrderType: "market",
 			Side:      side,
-			OrderQty:  orderQty,
+			OrderQty:  json.Number(orderQty.String()),
 			Symbol:    symbol,
 		},
 		ReqID: orderRequestID.Next(),
 	}
 }
 
+/*
+MarshalJSON encodes the exact market order for Kraken's numeric wire schema.
+*/
 func (order *MarketOrder) MarshalJSON() ([]byte, error) {
 	type alias MarketOrder
 	return sonic.Marshal((*alias)(order))
 }
 
+/*
+MarshalJSON encodes the exact limit order for Kraken's numeric wire schema.
+*/
 func (order *LimitOrder) MarshalJSON() ([]byte, error) {
 	type alias LimitOrder
 	return sonic.Marshal((*alias)(order))
 }
 
+/*
+NewOrderResponseFromMap adapts a paper fill acknowledgement to Kraken's model.
+*/
 func NewOrderResponseFromMap(model datura.Map[any], reqID int64) *OrderResponse {
 	orderID, _ := model["order_id"].(string)
 

@@ -131,7 +131,8 @@ func (fixture *Fixture) pairs(instrument *broker.Instrument, price *broker.Price
 		base := symbol[:len(symbol)-4]
 		instrument.Remember(&kraken.InstrumentPair{
 			Symbol: symbol, Base: base, Quote: "USD", Status: "online",
-			QtyMin: 0.0001, QtyIncrement: 0.0001, QtyPrecision: 4,
+			QtyMin:       decimal.NewFromFloat64(0.0001),
+			QtyIncrement: decimal.NewFromFloat64(0.0001), QtyPrecision: 4,
 			CostMin: decimal.NewFromFloat64(0.01), CostPrecision: 8,
 		})
 		price.TickerAck([]byte(

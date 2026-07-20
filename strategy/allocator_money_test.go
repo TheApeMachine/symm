@@ -45,7 +45,7 @@ func newAllocatorMoneyEnv(
 	})
 
 	balance := broker.NewBalance(nil, nil, nil)
-	balance.BalanceAck(fmt.Appendf(nil, 
+	balance.BalanceAck(fmt.Appendf(nil,
 		`{"channel":"balances","type":"snapshot","sequence":1,"data":[{`+
 			`"asset":"USD","balance":"%0.8f","available":"%0.8f","reserved":"0"}]}`,
 		cash, cash,
@@ -57,8 +57,8 @@ func newAllocatorMoneyEnv(
 		Base:           "BASE",
 		Quote:          "USD",
 		Status:         "online",
-		QtyMin:         qtyMin,
-		QtyIncrement:   qtyIncrement,
+		QtyMin:         decimal.NewFromFloat64(qtyMin),
+		QtyIncrement:   decimal.NewFromFloat64(qtyIncrement),
 		QtyPrecision:   qtyPrecision,
 		CostPrecision:  5,
 		PricePrecision: 5,
@@ -69,7 +69,7 @@ func newAllocatorMoneyEnv(
 	_ = price.RememberFee(symbol, kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.40),
 	})
-	price.TickerAck(fmt.Appendf(nil, 
+	price.TickerAck(fmt.Appendf(nil,
 		`{"channel":"ticker","type":"update","data":[{`+
 			`"symbol":"%s","ask":"%s","bid":"%s","last":"%s"}]}`,
 		symbol, ask, ask, ask,
@@ -89,10 +89,10 @@ func newAllocatorMoneyEnv(
 func (env *allocatorMoneyEnv) enter(risk float64) *types.Thesis {
 	thesis := types.NewThesis(nil, nil)
 	thesis.Decisions = append(thesis.Decisions, types.Decision{
-		Action: types.ActionEnter,
-		Symbol: env.symbol,
-		AllocationHaircut:   risk,
-		At:     time.Unix(1, 0).UTC(),
+		Action:            types.ActionEnter,
+		Symbol:            env.symbol,
+		AllocationHaircut: risk,
+		At:                time.Unix(1, 0).UTC(),
 	})
 	thesis.Holdings.Store(env.symbol, &types.Holding{
 		Symbol: env.symbol,
@@ -236,13 +236,19 @@ func TestAllocateReleasesOnUnfundableMinimum(t *testing.T) {
 		t.Fatal("want holding deleted when minimum exceeds slice")
 	}
 
-	available, err := env.balance.AvailableQuote()
+	available, err := env.balance.AvailableCash()
 
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if available < 0.99 {
+	minimumAvailable, err := decimal.NewFromString("0.99")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if available.Cmp(minimumAvailable) < 0 {
 		t.Fatalf("reservation leaked: available=%v", available)
 	}
 }
@@ -307,7 +313,8 @@ func BenchmarkAllocateBillSlice(b *testing.B) {
 	instrument := broker.NewInstrument(nil, nil, nil)
 	instrument.Remember(&kraken.InstrumentPair{
 		Symbol: "BILL/USD", Base: "BILL", Quote: "USD", Status: "online",
-		QtyMin: 100, QtyIncrement: 0.00001, QtyPrecision: 5,
+		QtyMin:       decimal.NewFromInt64(100),
+		QtyIncrement: decimal.NewFromFloat64(0.00001), QtyPrecision: 5,
 		CostPrecision: 5, PricePrecision: 5,
 		CostMin: decimal.NewFromFloat64(0.5),
 	})

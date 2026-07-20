@@ -17,8 +17,8 @@ import (
 /*
 EntryFill converts one submitted synthetic buy into the private Kraken facts a
 filled venue order produces: acknowledgement, execution, and authoritative
-wallet snapshot. Monetary arithmetic remains decimal; float conversion occurs
-only for Kraken's wire quantity field.
+wallet snapshot. Monetary arithmetic and the submitted wire quantity remain
+exact decimal values throughout the transition.
 */
 func EntryFill(
 	request []byte,
@@ -31,14 +31,24 @@ func EntryFill(
 		panic(errnie.Err(errnie.Validation, "conditions: order request invalid", err))
 	}
 
+	requestQuantity, err := decimal.NewFromString(order.Params.OrderQty.String())
+
+	if err != nil {
+		panic(errnie.Err(errnie.Validation, "conditions: order quantity invalid", err))
+	}
+
 	if order.Method != "add_order" || order.Params.Side != "buy" ||
-		order.Params.Symbol != decision.Symbol || order.Params.OrderQty <= 0 {
+		order.Params.Symbol != decision.Symbol || requestQuantity.Sign() <= 0 {
 		panic(errnie.Err(errnie.Validation, "conditions: buy order does not match decision", nil))
 	}
 
 	if decision.ProposedQuantity == nil || decision.ProposedNotional == nil ||
 		decision.ReferencePrice == nil || cashBefore == nil {
 		panic(errnie.Err(errnie.Validation, "conditions: complete decimal fill facts required", nil))
+	}
+
+	if requestQuantity.Cmp(decision.ProposedQuantity) != 0 {
+		panic(errnie.Err(errnie.Validation, "conditions: buy quantity does not match decision", nil))
 	}
 
 	base, quote, found := strings.Cut(decision.Symbol, "/")
@@ -48,7 +58,12 @@ func EntryFill(
 		panic(errnie.Err(errnie.Validation, "conditions: fill wallet facts invalid", nil))
 	}
 
-	cost := decision.ReferencePrice.Mul(decision.ProposedQuantity)
+	productScale := max(
+		int64(1),
+		decision.ReferencePrice.GetScale()+decision.ProposedQuantity.GetScale(),
+	)
+	cost := decision.ReferencePrice.SetScale(productScale).
+		Mul(decision.ProposedQuantity.SetScale(productScale))
 	fee := decision.ProposedNotional.Sub(cost)
 
 	if fee.Sign() < 0 || decision.At.IsZero() {
@@ -129,14 +144,24 @@ func ExitFill(
 		panic(errnie.Err(errnie.Validation, "conditions: exit order request invalid", err))
 	}
 
+	requestQuantity, err := decimal.NewFromString(order.Params.OrderQty.String())
+
+	if err != nil {
+		panic(errnie.Err(errnie.Validation, "conditions: exit order quantity invalid", err))
+	}
+
 	if order.Method != "add_order" || order.Params.Side != "sell" ||
-		order.Params.Symbol != decision.Symbol || order.Params.OrderQty <= 0 {
+		order.Params.Symbol != decision.Symbol || requestQuantity.Sign() <= 0 {
 		panic(errnie.Err(errnie.Validation, "conditions: sell order does not match decision", nil))
 	}
 
 	if decision.ProposedQuantity == nil || decision.ReferencePrice == nil ||
 		cashBefore == nil || fee == nil || fee.Sign() < 0 || decision.At.IsZero() {
 		panic(errnie.Err(errnie.Validation, "conditions: complete decimal exit facts required", nil))
+	}
+
+	if requestQuantity.Cmp(decision.ProposedQuantity) != 0 {
+		panic(errnie.Err(errnie.Validation, "conditions: sell quantity does not match decision", nil))
 	}
 
 	_, quote, found := strings.Cut(decision.Symbol, "/")
@@ -146,7 +171,12 @@ func ExitFill(
 	}
 
 	const orderID = "synthetic-exit-1"
-	proceeds := decision.ReferencePrice.Mul(decision.ProposedQuantity)
+	productScale := max(
+		int64(1),
+		decision.ReferencePrice.GetScale()+decision.ProposedQuantity.GetScale(),
+	)
+	proceeds := decision.ReferencePrice.SetScale(productScale).
+		Mul(decision.ProposedQuantity.SetScale(productScale))
 	execution := executionfixture.Frame(executionfixture.Options{
 		OrderID:     orderID,
 		ExecID:      "synthetic-exit-fill-1",

@@ -1,151 +1,70 @@
 import { createRef } from "react";
-import type { ResonanceFrame } from "#/collections/types";
 import {
-	clearCanvas,
-	drawGrid,
-	drawPolyline,
-	resizeCanvas,
-	TERMINAL_COLORS,
-} from "#/components/terminal/canvas";
-import { requireNonZero, requireSampleSize } from "#/lib/domain";
+	Circular,
+	type CircularBuffer,
+	latestOf,
+} from "#/collections/circular";
+import type { ResonanceFrame } from "#/collections/types";
+import { drawPredictiveCodingChart } from "#/components/charts/prediction/canvas";
+import { resizeCanvas } from "#/components/terminal/canvas";
 
 const predictionCanvasRef = createRef<HTMLCanvasElement>();
-
-const drawWaiting = (
-	context: CanvasRenderingContext2D,
-	width: number,
-	height: number,
-	message: string,
-) => {
-	clearCanvas(context, width, height);
-	drawGrid(context, width, height);
-	context.fillStyle = TERMINAL_COLORS.muted;
-	context.font = "11px JetBrains Mono, monospace";
-	context.fillText(message, 18, 52);
-};
+let predictionHistory = Circular<ResonanceFrame>(0);
+let predictionHistoryCapacity = 0;
+let predictionHistoryFocus = "";
 
 /*
-drawTerminalPredictionSparkline paints actual versus predicted sensory state
-from a resonance frame batch already filtered for the focus symbol.
+updatePredictionHistory applies websocket delta semantics to one bounded chart
+history. A repeated symbol/timestamp updates the current observation; a new
+timestamp appends. The circular capacity is derived by the painter from the
+number of horizontal pixels available, so retained samples remain drawable.
 */
-const drawTerminalPredictionSparkline = (
-	context: CanvasRenderingContext2D,
-	width: number,
-	height: number,
+export const updatePredictionHistory = (
+	history: CircularBuffer<ResonanceFrame>,
 	frames: ResonanceFrame[],
 ): void => {
-	if (frames.length < 2) {
-		drawWaiting(context, width, height, "waiting for resonance history");
-		return;
-	}
+	for (const frame of frames) {
+		const latest = latestOf(history);
 
-	clearCanvas(context, width, height);
-	drawGrid(context, width, height, 18);
-
-	const values = frames.flatMap((frame) => {
-		const layer = frame.layers?.[0];
-
-		if (layer === undefined) {
-			return [];
+		if (latest?.symbol === frame.symbol && latest.at === frame.at) {
+			history.replaceTail(frame);
+			continue;
 		}
 
-		return [...layer.state, ...layer.prediction].filter(Number.isFinite);
-	});
-
-	if (values.length === 0) {
-		return;
-	}
-
-	let min = Math.min(...values);
-	let max = Math.max(...values);
-	const span = max > min ? max - min : 1;
-	const margin = span * 0.08;
-	min -= margin;
-	max += margin;
-	const paddedSpan = max > min ? max - min : 1;
-	const paddingX = 18;
-	const plotWidth = Math.max(1, width - paddingX * 2);
-	const plotHeight = Math.max(1, height - 46);
-	requireSampleSize(frames.length, 2, "resonance sparkline");
-	const denominator = requireNonZero(
-		frames.length - 1,
-		"resonance sparkline denominator",
-	);
-	const xFor = (index: number) => paddingX + (index / denominator) * plotWidth;
-	const yFor = (value: number) =>
-		height - 26 - ((value - min) / paddedSpan) * plotHeight;
-	const actualPoints = frames.flatMap((frame, index) => {
-		const state = frame.layers?.[0]?.state ?? [];
-		const finite = state.filter(Number.isFinite);
-
-		if (finite.length === 0) {
-			return [];
-		}
-
-		const actual =
-			finite.reduce((sum, entry) => sum + entry, 0) / finite.length;
-
-		return [{ x: xFor(index), y: yFor(actual) }];
-	});
-	const predictionPoints = frames.flatMap((frame, index) => {
-		const prediction = frame.layers?.[0]?.prediction ?? [];
-		const finite = prediction.filter(Number.isFinite);
-
-		if (finite.length === 0) {
-			return [];
-		}
-
-		const value = finite.reduce((sum, entry) => sum + entry, 0) / finite.length;
-
-		return [{ x: xFor(index), y: yFor(value) }];
-	});
-
-	if (actualPoints.length === 0 || predictionPoints.length === 0) {
-		drawWaiting(context, width, height, "waiting for resonance layers");
-		return;
-	}
-
-	context.fillStyle = "rgba(232, 163, 61, 0.18)";
-	context.beginPath();
-	for (const [index, point] of actualPoints.entries()) {
-		if (index === 0) {
-			context.moveTo(point.x, point.y);
-		} else {
-			context.lineTo(point.x, point.y);
-		}
-	}
-	for (let index = predictionPoints.length - 1; index >= 0; index -= 1) {
-		const point = predictionPoints[index];
-		context.lineTo(point.x, point.y);
-	}
-	context.closePath();
-	context.fill();
-
-	drawPolyline(context, actualPoints, TERMINAL_COLORS.foreground);
-	drawPolyline(context, predictionPoints, TERMINAL_COLORS.cyan, true);
-
-	const latest = frames.at(-1);
-	const latestActual = actualPoints.at(-1);
-	const surprise = latest?.surprise;
-
-	if (
-		latestActual !== undefined &&
-		typeof surprise === "number" &&
-		Number.isFinite(surprise)
-	) {
-		context.fillStyle = TERMINAL_COLORS.amber;
-		context.beginPath();
-		context.arc(latestActual.x, latestActual.y, 2.6, 0, Math.PI * 2);
-		context.fill();
-		context.fillStyle = TERMINAL_COLORS.muted;
-		context.font = "10px JetBrains Mono, monospace";
-		context.fillText(`ε ${surprise.toFixed(4)}`, 18, height - 8);
+		history.push(frame);
 	}
 };
 
 /*
-paintTerminalPredictionChart draws the current DRAW batch of resonance frames
-into predictionCanvasRef. Only this batch is used — nothing is retained in JS.
+resizePredictionHistory keeps the newest drawable samples when canvas width or
+focus changes. A focus change deliberately starts a new series so symbols are
+never joined by a meaningless line segment.
+*/
+const resizePredictionHistory = (
+	focusSymbol: string,
+	capacity: number,
+): void => {
+	if (
+		focusSymbol === predictionHistoryFocus &&
+		capacity === predictionHistoryCapacity
+	) {
+		return;
+	}
+
+	const retained =
+		focusSymbol === predictionHistoryFocus
+			? predictionHistory.values().slice(-capacity)
+			: [];
+	predictionHistory = Circular<ResonanceFrame>(capacity);
+	updatePredictionHistory(predictionHistory, retained);
+	predictionHistoryCapacity = capacity;
+	predictionHistoryFocus = focusSymbol;
+};
+
+/*
+paintTerminalPredictionChart appends resonance deltas for the focused symbol
+and repaints its bounded time series. Unrelated symbol deltas leave the current
+series intact instead of replacing it with an empty DRAW batch.
 */
 export const paintTerminalPredictionChart = (
 	value: unknown,
@@ -169,12 +88,15 @@ export const paintTerminalPredictionChart = (
 	const focused = frames.filter(
 		(frame) => focusSymbol === "" || frame.symbol === focusSymbol,
 	);
+	const capacity = Math.max(2, Math.floor(canvas.clientWidth));
+	resizePredictionHistory(focusSymbol, capacity);
+	updatePredictionHistory(predictionHistory, focused);
 
-	drawTerminalPredictionSparkline(
+	drawPredictiveCodingChart(
 		context,
 		canvas.clientWidth,
 		canvas.clientHeight,
-		focused,
+		predictionHistory.values(),
 	);
 };
 

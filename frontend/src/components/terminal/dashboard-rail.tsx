@@ -4,7 +4,7 @@ import type { StrategyDecision } from "#/types/thesis";
 import { ColumnHeader } from "#/components/dashboard/header";
 import { DashboardAuditSync } from "#/components/terminal/dashboard-audit";
 import { DashboardShellSync } from "#/components/terminal/dashboard-shells";
-import { paintDecisionSymbol } from "#/components/terminal/decision-row";
+import { buildDecisionLogRow } from "#/components/terminal/decision-row";
 
 export {
 	auditHoldings,
@@ -33,7 +33,14 @@ const auditSync = new DashboardAuditSync();
 
 let lastHoldings: Holding[] = [];
 let lastLifecycle: Record<string, string> = {};
-let lastDecisionSymbols: string[] = [];
+
+// The decisions panel is an append-only log: every decision the engine emits is
+// kept as its own row, newest first, capped so the DOM never grows unbounded.
+const DECISION_LOG_CAP = 200;
+const decisionLogKeys = new Set<string>();
+const decisionLog: { key: string; el: HTMLElement; active: boolean }[] = [];
+let decisionActiveCount = 0;
+let decisionPassiveCount = 0;
 
 const setText = (element: HTMLElement | null, value: string) => {
 	if (element !== null) {
@@ -41,48 +48,69 @@ const setText = (element: HTMLElement | null, value: string) => {
 	}
 };
 
+const decisionLogKey = (decision: StrategyDecision): string =>
+	`${decision.symbol}:${decision.action}:${decision.at}:${decision.cause}:${decision.utility}`;
+
 /*
-paintDecisionRows paints the DRAW decisions batch into bound decision shells
-and refreshes the dashboard decisions meta strip.
+paintDecisionRows appends each emitted decision to the log as its own row so the
+panel accumulates history across ticks instead of replacing the current batch.
 */
 export const paintDecisionRows = (value: unknown, _focusSymbol: string) => {
 	const decisions = (
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as StrategyDecision[];
-	const nextSymbols = [
-		...new Set(decisions.map((decision) => decision.symbol)),
-	].sort();
-	const active = decisions.filter(
-		(decision) => decision.action === "enter" || decision.action === "exit",
-	);
-	const passive = decisions.filter(
-		(decision) => decision.action !== "enter" && decision.action !== "exit",
-	);
+	const list = decisionListRef.current;
 
-	if (
-		nextSymbols.length !== lastDecisionSymbols.length ||
-		nextSymbols.some(
-			(symbol, index) => symbol !== lastDecisionSymbols[index],
-		)
-	) {
-		lastDecisionSymbols = nextSymbols;
-		shellSync.syncDecisionShells(nextSymbols, decisionListRef.current);
-	}
-
-	setText(decisionActiveRef.current, String(active.length));
-	setText(decisionPassiveRef.current, String(passive.length));
-
-	if (decisionEmptyRef.current !== null) {
-		decisionEmptyRef.current.style.display =
-			nextSymbols.length === 0 ? "" : "none";
-		decisionEmptyRef.current.textContent =
-			decisions.length === 0
-				? "waiting for decision frames"
-				: "no current decisions";
+	if (list === null) {
+		return;
 	}
 
 	for (const decision of decisions) {
-		paintDecisionSymbol(decision);
+		const key = decisionLogKey(decision);
+
+		if (decisionLogKeys.has(key)) {
+			continue;
+		}
+
+		decisionLogKeys.add(key);
+
+		const active =
+			decision.action === "enter" || decision.action === "exit";
+		const row = buildDecisionLogRow(decision);
+		list.prepend(row);
+		decisionLog.push({ key, el: row, active });
+
+		if (active) {
+			decisionActiveCount += 1;
+		} else {
+			decisionPassiveCount += 1;
+		}
+
+		while (decisionLog.length > DECISION_LOG_CAP) {
+			const oldest = decisionLog.shift();
+
+			if (oldest === undefined) {
+				break;
+			}
+
+			oldest.el.remove();
+			decisionLogKeys.delete(oldest.key);
+
+			if (oldest.active) {
+				decisionActiveCount -= 1;
+			} else {
+				decisionPassiveCount -= 1;
+			}
+		}
+	}
+
+	setText(decisionActiveRef.current, String(decisionActiveCount));
+	setText(decisionPassiveRef.current, String(decisionPassiveCount));
+
+	if (decisionEmptyRef.current !== null) {
+		decisionEmptyRef.current.style.display =
+			decisionLog.length === 0 ? "" : "none";
+		decisionEmptyRef.current.textContent = "waiting for decision frames";
 	}
 };
 

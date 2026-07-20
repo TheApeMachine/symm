@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 )
@@ -51,7 +52,9 @@ esac
 			events = append(events, "balance")
 		})
 
-		order := kraken.NewMarketOrder("sell", 0.00299963, "BTC/USD")
+		order := kraken.NewMarketOrder(
+			"sell", decimal.NewFromFloat64(0.00299963), "BTC/USD",
+		)
 		err := paper.AddOrder(order)
 
 		Convey("Then the emitted fill reconciles with the internal symbol", func() {

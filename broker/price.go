@@ -790,16 +790,20 @@ func (price *Price) Quantity(
 		unit = price.Mul(ticker.Ask, decimal.NewFromInt64(1).Add(fee))
 	}
 
-	minimum := price.Quantize(pair, decimal.NewFromFloat64(pair.QtyMin))
-
-	if minimum == nil || minimum.Sign() <= 0 {
-		minimum = price.Quantize(pair, decimal.NewFromFloat64(pair.QtyIncrement))
+	if pair.QtyMin == nil || pair.QtyMin.Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantity: instrument qty_min unavailable for "+pair.Symbol,
+			nil,
+		))
 	}
+
+	minimum := price.Quantize(pair, pair.QtyMin)
 
 	if minimum == nil || minimum.Sign() <= 0 {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"quantity: instrument minimum unavailable for "+pair.Symbol,
+			"quantity: instrument qty_min is not executable for "+pair.Symbol,
 			nil,
 		))
 	}
@@ -861,12 +865,11 @@ func (price *Price) Quantity(
 		}
 
 		if shrunk.Cmp(quantity) >= 0 {
-			if pair.QtyIncrement <= 0 {
+			if pair.QtyIncrement == nil || pair.QtyIncrement.Sign() <= 0 {
 				break
 			}
 
-			step := decimal.NewFromFloat64(pair.QtyIncrement)
-			shrunk = price.Quantize(pair, quantity.Sub(step))
+			shrunk = price.Quantize(pair, quantity.Sub(pair.QtyIncrement))
 
 			if shrunk == nil || shrunk.Sign() <= 0 || shrunk.Cmp(minimum) < 0 {
 				return nil, errnie.Error(errnie.Err(
@@ -904,13 +907,9 @@ func (price *Price) Quantize(
 
 	result := quantity.Copy()
 
-	if pair.QtyIncrement > 0 {
-		increment := decimal.NewFromFloat64(pair.QtyIncrement)
-
-		if increment.Sign() > 0 {
-			steps := price.floorScale(price.Div(result, increment), 0)
-			result = price.Mul(steps, increment)
-		}
+	if pair.QtyIncrement != nil && pair.QtyIncrement.Sign() > 0 {
+		steps := price.floorScale(price.Div(result, pair.QtyIncrement), 0)
+		result = price.Mul(steps, pair.QtyIncrement)
 	}
 
 	if pair.QtyPrecision >= 0 {

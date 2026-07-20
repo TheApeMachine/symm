@@ -63,21 +63,21 @@ const RouteComponent = () => {
 									<LiveResonanceTitle focusSymbol={focusSymbol} />
 								</>
 							}
-							meta="online hierarchy · sensory reconstruction"
+							meta="hierarchy layers · adjacent top-down links · calibrated return head"
 							footer={<LiveResonanceFooter focusSymbol={focusSymbol} />}
 							topRight={
 								<div className="flex gap-3 text-left">
 									<span className="inline-flex items-center gap-1.5">
-										<span className="inline-block h-px w-3 bg-(--f1)" />
-										actual
+										<span className="inline-block h-px w-3 bg-(--acc)" />
+										layer ε
 									</span>
 									<span className="inline-flex items-center gap-1.5">
 										<span className="inline-block h-px w-3 bg-info" />
-										prediction
+										state / prediction
 									</span>
 									<span className="inline-flex items-center gap-1.5">
-										<span className="size-2 bg-[color-mix(in_srgb,var(--acc)_30%,transparent)]" />
-										error
+										<span className="size-2 bg-[color-mix(in_srgb,var(--up)_30%,transparent)]" />
+										return ±σ
 									</span>
 								</div>
 							}

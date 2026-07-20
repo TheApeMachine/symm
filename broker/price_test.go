@@ -383,8 +383,8 @@ func TestPriceQuantityBillFitsCashSlice(t *testing.T) {
 
 		pair := &kraken.InstrumentPair{
 			Symbol:         "BILL/USD",
-			QtyMin:         100,
-			QtyIncrement:   0.00001,
+			QtyMin:         decimal.NewFromInt64(100),
+			QtyIncrement:   decimal.NewFromFloat64(0.00001),
 			QtyPrecision:   5,
 			PricePrecision: 5,
 			CostPrecision:  5,
@@ -417,8 +417,8 @@ func TestPriceQuantityRejectsBudgetBelowMinimum(t *testing.T) {
 
 		pair := &kraken.InstrumentPair{
 			Symbol:         "BILL/USD",
-			QtyMin:         100,
-			QtyIncrement:   0.00001,
+			QtyMin:         decimal.NewFromInt64(100),
+			QtyIncrement:   decimal.NewFromFloat64(0.00001),
 			QtyPrecision:   5,
 			PricePrecision: 5,
 			CostPrecision:  5,
@@ -430,6 +430,30 @@ func TestPriceQuantityRejectsBudgetBelowMinimum(t *testing.T) {
 			So(quantity, ShouldBeNil)
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "below instrument minimum")
+		})
+	})
+
+	Convey("Given an instrument without an exact qty_min", t, func() {
+		price := broker.NewPrice(nil)
+		So(price.RememberFee("BILL/USD", kraken.TradeVolumeFee{
+			Fee: decimal.NewFromFloat64(0.40),
+		}), ShouldBeNil)
+		price.TickerAck([]byte(`{
+			"channel":"ticker","type":"update",
+			"data":[{"symbol":"BILL/USD","ask":"0.02424"}]
+		}`))
+		pair := &kraken.InstrumentPair{
+			Symbol:        "BILL/USD",
+			QtyPrecision:  5,
+			CostPrecision: 5,
+		}
+
+		quantity, err := price.Quantity(pair, decimal.NewFromInt64(1))
+
+		Convey("Then Quantity refuses to invent an executable minimum", func() {
+			So(quantity, ShouldBeNil)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "qty_min unavailable")
 		})
 	})
 }
@@ -445,8 +469,8 @@ func BenchmarkPriceQuantity(b *testing.B) {
 	}`))
 	pair := &kraken.InstrumentPair{
 		Symbol:         "BILL/USD",
-		QtyMin:         100,
-		QtyIncrement:   0.00001,
+		QtyMin:         decimal.NewFromInt64(100),
+		QtyIncrement:   decimal.NewFromFloat64(0.00001),
 		QtyPrecision:   5,
 		PricePrecision: 5,
 		CostPrecision:  5,

@@ -297,6 +297,11 @@ func (balance *Balance) syncWallet() {
 		}
 
 		qty = qty.Copy()
+
+		// Settled base inventory means the entry filled and wallet sync now owns
+		// the cash; retire any lingering local claim so it cannot double-count.
+		balance.consumeClaimsForSymbolLocked(symbol)
+
 		sellable := decimal.NewFromInt64(0)
 
 		if row.Available != nil {
@@ -798,20 +803,6 @@ func (balance *Balance) AvailableCash() (*decimal.Decimal, error) {
 	}
 
 	return effective.Copy(), nil
-}
-
-/*
-AvailableQuote returns the unreserved quote-currency capital as float64 for
-Decide slot budgets that still consume float decision fields.
-*/
-func (balance *Balance) AvailableQuote() (float64, error) {
-	cash, err := balance.AvailableCash()
-
-	if err != nil {
-		return 0, err
-	}
-
-	return cash.Float64(), nil
 }
 
 func (balance *Balance) validate(mandatory map[string]any) error {

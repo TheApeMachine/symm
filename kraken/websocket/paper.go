@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -189,14 +188,14 @@ func (paper *Paper) AddOrder(order *kraken.MarketOrder) error {
 	command := []string{
 		order.Params.Side,
 		order.Params.Symbol,
-		strconv.FormatFloat(order.Params.OrderQty, 'f', -1, 64),
+		order.Params.OrderQty.String(),
 	}
 
 	if order.Params.OrderType == "limit" {
 		command = append(
 			command,
 			"--type", "limit",
-			"--price", strconv.FormatFloat(order.Params.LimitPrice, 'f', -1, 64),
+			"--price", order.Params.LimitPrice.String(),
 		)
 	}
 

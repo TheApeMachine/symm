@@ -80,6 +80,18 @@ describe("terminalFluidDisplayLatticeFromFrame", () => {
 			[0.045000000000000005, 0.4],
 		]);
 	});
+
+	it("does not misrepresent a scalar summary as a projected field", () => {
+		expect(
+			terminalFluidDisplayLatticeFromFrame({
+				reading: {
+					pressureGradX: 0.1,
+					divergence: -0.2,
+					coherenceMag2: 0.3,
+				},
+			}),
+		).toEqual([]);
+	});
 });
 
 describe("terminalFluidMatrixFromFrame", () => {

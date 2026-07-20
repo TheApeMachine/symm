@@ -154,3 +154,44 @@ export const paintDecisionSymbol = (decision: StrategyDecision) => {
 		writeDecisionRow(parts, decision);
 	}
 };
+
+/*
+buildDecisionLogRow builds one standalone, fully painted decision row for the
+append-only decisions log. It is keyed by the decision itself rather than the
+symbol, so repeated decisions for the same symbol accumulate as history instead
+of replacing one shared shell.
+*/
+export const buildDecisionLogRow = (
+	decision: StrategyDecision,
+): HTMLElement => {
+	const root = document.createElement("div");
+	root.className = decisionRowClassName;
+
+	const symbolWrap = document.createElement("div");
+	symbolWrap.className = "min-w-0";
+
+	const symbolEl = document.createElement("div");
+	symbolEl.className = "truncate font-semibold text-(--f1)";
+
+	const meta = document.createElement("div");
+	meta.className = "truncate text-[9px] text-(--f4)";
+
+	symbolWrap.append(symbolEl, meta);
+
+	const comb = document.createElement("span");
+	comb.className = "text-right text-(--f2)";
+
+	const fraction = document.createElement("span");
+	fraction.className = "truncate text-right text-(--f2)";
+
+	const actionWrap = document.createElement("span");
+	actionWrap.className = "text-right";
+
+	const action = document.createElement("span");
+	actionWrap.append(action);
+
+	root.append(symbolWrap, comb, fraction, actionWrap);
+	writeDecisionRow({ symbolEl, meta, comb, fraction, action }, decision);
+
+	return root;
+};

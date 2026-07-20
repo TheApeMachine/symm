@@ -22,7 +22,7 @@ func TestBookReleaseConsume(t *testing.T) {
 	}
 	balance.quote = "USD"
 
-	claim, err := balance.Book(decimal.NewFromFloat64(100), nil)
+	claim, err := balance.Book(decimal.NewFromFloat64(100), nil, "")
 
 	if err != nil || claim == nil || claim.ID == "" {
 		t.Fatalf("Book failed: %v %#v", err, claim)
@@ -40,7 +40,7 @@ func TestBookReleaseConsume(t *testing.T) {
 		t.Fatal("Funded after Release must be false")
 	}
 
-	claim, err = balance.Book(decimal.NewFromFloat64(50), nil)
+	claim, err = balance.Book(decimal.NewFromFloat64(50), nil, "")
 
 	if err != nil {
 		t.Fatalf("re-Book failed: %v", err)
@@ -72,7 +72,7 @@ func TestBookSurvivesExchangeSnapshot(t *testing.T) {
 		}},
 	}
 
-	claim, err := balance.Book(decimal.NewFromFloat64(250), nil)
+	claim, err := balance.Book(decimal.NewFromFloat64(250), nil, "")
 
 	if err != nil {
 		t.Fatalf("Book failed: %v", err)
@@ -103,7 +103,7 @@ func TestBookSurvivesExchangeSnapshot(t *testing.T) {
 		t.Fatal("claim must survive exchange snapshot")
 	}
 
-	second, err := balance.Book(decimal.NewFromFloat64(800), nil)
+	second, err := balance.Book(decimal.NewFromFloat64(800), nil, "")
 
 	if err == nil || second != nil {
 		t.Fatal("second Book must respect remaining effective available")

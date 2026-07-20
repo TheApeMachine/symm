@@ -17,7 +17,9 @@ identity and emits an exact decimal wallet transition.
 */
 func TestEntryFill(t *testing.T) {
 	Convey("Given a sized entry and its submitted Kraken request", t, func() {
-		request := kraken.NewMarketOrder("buy", 10, conditions.Subject())
+		request := kraken.NewMarketOrder(
+			"buy", decimal.NewFromInt64(10), conditions.Subject(),
+		)
 		raw, err := request.MarshalJSON()
 		So(err, ShouldBeNil)
 		decision := types.Decision{
@@ -55,7 +57,9 @@ decimal proceeds net of the supplied venue fee.
 */
 func TestExitFill(t *testing.T) {
 	Convey("Given an exit decision and its submitted Kraken request", t, func() {
-		request := kraken.NewMarketOrder("sell", 10, conditions.Subject())
+		request := kraken.NewMarketOrder(
+			"sell", decimal.NewFromInt64(10), conditions.Subject(),
+		)
 		raw, err := request.MarshalJSON()
 		So(err, ShouldBeNil)
 		decision := types.Decision{

@@ -152,6 +152,10 @@ func Boot(
 		))
 	}
 
+	if uiHub != nil {
+		uiHub.BindFocus(analyzer.Focus)
+	}
+
 	planner := strategy.NewPlanner(
 		ctx,
 		options.Channel,

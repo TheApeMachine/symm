@@ -223,6 +223,7 @@ export type ResonanceFrame = Record<string, unknown> & {
 	expectedReturn?: number;
 	returnReady?: boolean;
 	incrementalMSE?: number;
+	incrementalSkillLowerBound?: number;
 	uncertainty?: number;
 	calibrationSamples?: number;
 };

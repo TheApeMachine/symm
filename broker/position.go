@@ -575,7 +575,7 @@ func (position *Position) Enter() error {
 
 	position.request = kraken.NewMarketOrder(
 		"buy",
-		holding.Qty.Float64(),
+		holding.Qty,
 		holding.Symbol,
 	)
 
@@ -682,7 +682,7 @@ func (position *Position) Sell(quantity *decimal.Decimal) error {
 
 	position.request = kraken.NewMarketOrder(
 		"sell",
-		size.Float64(),
+		size,
 		holding.Symbol,
 	)
 	position.status = types.PENDING

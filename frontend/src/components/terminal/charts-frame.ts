@@ -312,7 +312,7 @@ pilot-wave canvas.
 export const terminalFluidDisplayLatticeFromFrame = (
 	frame: Record<string, unknown> | null | undefined,
 ): number[][] => {
-	const rho = frameMatrix(frame);
+	const rho = frameAuxMatrix(frame, "rho");
 	const psiMag2 = frameAuxMatrix(frame, "psiMag2");
 	const lattice = isFluidFieldMatrix(rho) ? rho : [];
 

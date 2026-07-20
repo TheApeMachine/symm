@@ -17,6 +17,7 @@ and Book/Release only touch the claim ledger.
 type Reservation struct {
 	ID     string
 	Amount *decimal.Decimal
+	Symbol string
 }
 
 var reservationSeq atomic.Uint64
@@ -27,6 +28,7 @@ Effective available is exchange Available minus active local reservations.
 */
 func (balance *Balance) Book(
 	amount, fraction *decimal.Decimal,
+	symbol string,
 ) (*Reservation, error) {
 	if balance == nil {
 		return nil, errnie.Error(errnie.Err(
@@ -75,10 +77,28 @@ func (balance *Balance) Book(
 		reservationSeq.Add(1),
 	)
 
-	row := &Reservation{ID: id, Amount: reserved.Copy()}
+	row := &Reservation{ID: id, Amount: reserved.Copy(), Symbol: symbol}
 	balance.books[id] = row
 
-	return &Reservation{ID: id, Amount: reserved.Copy()}, nil
+	return &Reservation{ID: id, Amount: reserved.Copy(), Symbol: symbol}, nil
+}
+
+/*
+consumeClaimsForSymbolLocked drops every book claim tagged with symbol once the
+wallet snapshot confirms that symbol's base inventory has settled. Wallet sync
+then owns the cash, so a filled entry whose execution frame was missed or raced
+cannot leave its reservation locked forever. Caller holds balance.mu.
+*/
+func (balance *Balance) consumeClaimsForSymbolLocked(symbol string) {
+	if balance == nil || symbol == "" || balance.books == nil {
+		return
+	}
+
+	for id, row := range balance.books {
+		if row != nil && row.Symbol == symbol {
+			delete(balance.books, id)
+		}
+	}
 }
 
 /*

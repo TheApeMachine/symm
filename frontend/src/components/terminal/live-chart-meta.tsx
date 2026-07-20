@@ -14,27 +14,34 @@ const manifoldWaitingRef = createRef<HTMLDivElement>();
 const manifoldGridRef = createRef<HTMLDivElement>();
 const manifoldOutliersRef = createRef<HTMLDivElement>();
 const manifoldPeakRef = createRef<HTMLDivElement>();
+let manifoldMetaFocus = "";
 
 const resonanceFooterRef = createRef<HTMLSpanElement>();
 const resonanceTitleRef = createRef<HTMLSpanElement>();
 
 /*
-paintManifoldMeta paints pilot-wave canvas metadata from the current DRAW
-manifold batch into the LiveManifoldMeta shell.
+paintManifoldMeta updates metadata only from a complete focused projection.
+Summary deltas cannot replace valid grid statistics with a misleading 0×0
+field, while a focus change returns the shell to an explicit waiting state.
 */
 export const paintManifoldMeta = (value: unknown, focusSymbol: string) => {
+	const focusChanged = manifoldMetaFocus !== focusSymbol;
+	manifoldMetaFocus = focusSymbol;
 	const rows = (
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as ManifoldFrame[];
 	const manifold = rows
-		.filter(
-			(frame) => focusSymbol === "" || frame.symbol === focusSymbol,
-		)
+		.filter((frame) => focusSymbol === "" || frame.symbol === focusSymbol)
 		.at(-1);
-	const contour = terminalStore.state.fieldStyle === "Contour";
-	const waiting = manifold === undefined;
 	const display = terminalFluidDisplayLatticeFromFrame(manifold ?? null);
 	const field = isFluidFieldMatrix(display) ? display : [];
+
+	if (field.length === 0 && !focusChanged) {
+		return;
+	}
+
+	const contour = terminalStore.state.fieldStyle === "Contour";
+	const waiting = field.length === 0;
 	const { columns, rows: gridRows } = fluidGridDimensions(
 		manifold ?? null,
 		field,
@@ -76,9 +83,7 @@ export const paintResonanceFooter = (value: unknown, focusSymbol: string) => {
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as ResonanceFrame[];
 	const resonance = rows
-		.filter(
-			(frame) => focusSymbol === "" || frame.symbol === focusSymbol,
-		)
+		.filter((frame) => focusSymbol === "" || frame.symbol === focusSymbol)
 		.at(-1);
 
 	if (resonanceFooterRef.current !== null) {
@@ -98,9 +103,7 @@ export const paintResonanceTitle = (value: unknown, focusSymbol: string) => {
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as ResonanceFrame[];
 	const resonance = rows
-		.filter(
-			(frame) => focusSymbol === "" || frame.symbol === focusSymbol,
-		)
+		.filter((frame) => focusSymbol === "" || frame.symbol === focusSymbol)
 		.at(-1);
 
 	if (resonanceTitleRef.current !== null) {

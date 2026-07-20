@@ -88,8 +88,16 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			continue
 		}
 
+		if pair.QtyMin == nil || pair.QtyMin.Sign() <= 0 {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"allocator: instrument qty_min unavailable for "+decision.Symbol,
+				nil,
+			))
+		}
+
 		minCost, err := allocator.price.Taker(
-			pair, decimal.NewFromFloat64(pair.QtyMin),
+			pair, pair.QtyMin,
 		)
 
 		if err != nil || minCost == nil {
@@ -165,7 +173,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		if cost.Cmp(slice) < 0 {
 			_ = allocator.balance.Release(claim.ID)
 
-			claim, err = allocator.balance.Book(cost, nil)
+			claim, err = allocator.balance.Book(cost, nil, decision.Symbol)
 
 			if err != nil || claim == nil {
 				thesis.Holdings.Delete(decision.Symbol)
@@ -221,10 +229,10 @@ func (allocator *Allocator) book(
 	if decision.Cause == "rotation" &&
 		decision.ProposedNotional != nil &&
 		decision.ProposedNotional.Sign() > 0 {
-		return allocator.balance.Book(decision.ProposedNotional, nil)
+		return allocator.balance.Book(decision.ProposedNotional, nil, decision.Symbol)
 	}
 
-	return allocator.balance.Book(nil, allocator.maxFraction)
+	return allocator.balance.Book(nil, allocator.maxFraction, decision.Symbol)
 }
 
 func (allocator *Allocator) validate(mandatory map[string]any) error {

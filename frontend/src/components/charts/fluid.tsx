@@ -10,7 +10,6 @@ import {
 	finiteNumber,
 	fluidGridDimensions,
 	frameAuxMatrix,
-	frameMatrix,
 	frameReading,
 	type TerminalPhaseResponse,
 	type TerminalPhaseStatus,
@@ -29,6 +28,7 @@ import {
 
 const fluidCanvasRef = createRef<HTMLCanvasElement>();
 let fluidContour = false;
+let fluidFocus = "";
 
 /*
 drawPhaseDial overlays the resident complex modes and their historical corpus
@@ -124,8 +124,9 @@ const drawWaiting = (
 };
 
 /*
-paintTerminalFluidChart draws the current DRAW batch of manifold frames into
-fluidCanvasRef. Only this batch is used — nothing is retained in JS.
+paintTerminalFluidChart updates the current focused manifold projection. A
+summary-only delta cannot erase the last complete field; changing focus clears
+the prior symbol while the backend prepares the newly requested projection.
 */
 export const paintTerminalFluidChart = (
 	value: unknown,
@@ -145,16 +146,26 @@ export const paintTerminalFluidChart = (
 
 	const width = canvas.clientWidth;
 	const height = canvas.clientHeight;
+	const focusChanged = fluidFocus !== focusSymbol;
+
+	if (focusChanged) {
+		fluidFocus = focusSymbol;
+		drawWaiting(context, width, height, "waiting for pilot-wave field");
+	}
+
 	const frames = (
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as ManifoldFrame[];
 	const frame =
 		frames.find(
 			(entry) => focusSymbol === "" || entry.symbol === focusSymbol,
-		) ??
-		frames.at(-1) ??
-		null;
-	const rho = frameMatrix(frame);
+		) ?? (focusSymbol === "" ? (frames.at(-1) ?? null) : null);
+
+	if (frame === null) {
+		return;
+	}
+
+	const rho = frameAuxMatrix(frame, "rho");
 	const psiMag2 = frameAuxMatrix(frame, "psiMag2");
 	const particles = terminalFluidParticlesFromFrame(frame);
 	const display = resolvePilotDisplayLattice(
@@ -168,7 +179,6 @@ export const paintTerminalFluidChart = (
 	const phaseStatus = terminalPhaseStatusFromFrame(frame);
 
 	if (display.length === 0 && particles.length === 0) {
-		drawWaiting(context, width, height, "waiting for pilot-wave field");
 		return;
 	}
 

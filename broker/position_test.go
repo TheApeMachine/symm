@@ -47,13 +47,16 @@ func TestPositionExecutionAck(t *testing.T) {
 		holding.Asset = "BTC"
 		holdings.Store("BTC/USD", holding)
 		balance := &Balance{quote: "USD", holdings: holdings}
-		request := kraken.NewMarketOrder("buy", 1, "BTC/USD")
+		request := kraken.NewMarketOrder(
+			"buy", decimal.NewFromInt64(1), "BTC/USD",
+		)
 		position := &Position{
 			status: types.PENDING,
 			price:  price, balance: balance,
 			pair: &kraken.InstrumentPair{
 				Symbol: "BTC/USD", Base: "BTC",
-				QtyIncrement: 0.00000001, QtyMin: 0.00000001,
+				QtyIncrement:  decimal.NewFromFloat64(0.00000001),
+				QtyMin:        decimal.NewFromFloat64(0.00000001),
 				CostPrecision: 8,
 			},
 			request: request,
@@ -96,7 +99,9 @@ func TestPositionExecutionAck(t *testing.T) {
 			balance.model = &kraken.Balance{Data: []kraken.BalanceData{{
 				Asset: "BTC", Balance: remainder, Available: remainder,
 			}}}
-			exitRequest := kraken.NewMarketOrder("sell", 0.00884981, "BTC/USD")
+			exitRequest := kraken.NewMarketOrder(
+				"sell", decimal.NewFromFloat64(0.00884981), "BTC/USD",
+			)
 			position.request = exitRequest
 			position.intent.Store(IntentReducePending)
 			position.OrderAck([]byte(`{"method":"add_order","result":{"order_id":"sell-partial"},"success":true,"req_id":` +
@@ -140,7 +145,9 @@ func TestPositionExecutionAck(t *testing.T) {
 			balance.model = &kraken.Balance{Data: []kraken.BalanceData{{
 				Asset: "BTC", Balance: owned, Available: owned,
 			}}}
-			exitRequest := kraken.NewMarketOrder("sell", 1, "BTC/USD")
+			exitRequest := kraken.NewMarketOrder(
+				"sell", decimal.NewFromInt64(1), "BTC/USD",
+			)
 			position.request = exitRequest
 			position.intent.Store(IntentExitPending)
 			position.OrderAck([]byte(`{"method":"add_order","result":{"order_id":"sell-1"},"success":true,"req_id":` +
@@ -178,7 +185,9 @@ func TestPositionExecutionAck(t *testing.T) {
 		})
 
 		Convey("It should keep the holding open when an exit is canceled", func() {
-			exitRequest := kraken.NewMarketOrder("sell", 1, "BTC/USD")
+			exitRequest := kraken.NewMarketOrder(
+				"sell", decimal.NewFromInt64(1), "BTC/USD",
+			)
 			position.request = exitRequest
 			position.OrderAck([]byte(`{"method":"add_order","result":{"order_id":"sell-1"},"success":true,"req_id":` +
 				strconv.FormatInt(exitRequest.ReqID, 10) + `}`))
@@ -229,7 +238,8 @@ func TestPositionExitQuantity(t *testing.T) {
 		}
 		pair := &kraken.InstrumentPair{
 			Symbol: "BTC/USD", Base: "BTC",
-			QtyIncrement: 0.00000001, QtyMin: 0.00000001,
+			QtyIncrement: decimal.NewFromFloat64(0.00000001),
+			QtyMin:       decimal.NewFromFloat64(0.00000001),
 		}
 
 		Convey("When Exit closes the position", func() {
@@ -239,7 +249,7 @@ func TestPositionExitQuantity(t *testing.T) {
 
 			Convey("Then the sell order uses the full filled balance", func() {
 				So(position.request, ShouldNotBeNil)
-				So(position.request.Params.OrderQty, ShouldEqual, 1.0)
+				So(position.request.Params.OrderQty.String(), ShouldEqual, "1.000000000000")
 				So(position.Pending(), ShouldBeFalse)
 				So(holding.Status, ShouldEqual, types.OPEN)
 
@@ -281,7 +291,8 @@ func TestPositionSellMissingWalletFlattensGhost(t *testing.T) {
 			balance: balance,
 			pair: &kraken.InstrumentPair{
 				Symbol: "ETH/USD", Base: "ETH",
-				QtyIncrement: 0.00000001, QtyMin: 0.00000001,
+				QtyIncrement: decimal.NewFromFloat64(0.00000001),
+				QtyMin:       decimal.NewFromFloat64(0.00000001),
 			},
 		}
 
@@ -339,7 +350,8 @@ func TestPositionSellVenueRejectPreservesInventory(t *testing.T) {
 			api:     api,
 			pair: &kraken.InstrumentPair{
 				Symbol: "ETH/USD", Base: "ETH",
-				QtyIncrement: 0.00000001, QtyMin: 0.00000001,
+				QtyIncrement: decimal.NewFromFloat64(0.00000001),
+				QtyMin:       decimal.NewFromFloat64(0.00000001),
 			},
 		}
 
@@ -379,13 +391,16 @@ func TestPositionPartialFillKeepsPending(t *testing.T) {
 				Asset: "BTC", Balance: owned, Available: decimal.NewFromFloat64(0.4),
 			}}},
 		}
-		exitRequest := kraken.NewMarketOrder("sell", 0.6, "BTC/USD")
+		exitRequest := kraken.NewMarketOrder(
+			"sell", decimal.NewFromFloat64(0.6), "BTC/USD",
+		)
 		position := &Position{
 			status:  types.PENDING,
 			balance: balance,
 			pair: &kraken.InstrumentPair{
 				Symbol: "BTC/USD", Base: "BTC",
-				QtyIncrement: 0.00000001, QtyMin: 0.00000001,
+				QtyIncrement: decimal.NewFromFloat64(0.00000001),
+				QtyMin:       decimal.NewFromFloat64(0.00000001),
 			},
 			request: exitRequest,
 		}

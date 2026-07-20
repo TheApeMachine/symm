@@ -16,13 +16,18 @@ type InstrumentData struct {
 	Pairs []InstrumentPair `json:"pairs"`
 }
 
+/*
+InstrumentPair carries Kraken's execution rules. Fixed-point price, cost, and
+quantity boundaries remain Decimal so sizing never reconstructs venue rules
+from binary floating-point values.
+*/
 type InstrumentPair struct {
 	Symbol             string           `json:"symbol"`
 	Base               string           `json:"base"`
 	Quote              string           `json:"quote"`
 	Status             string           `json:"status"`
 	QtyPrecision       int              `json:"qty_precision"`
-	QtyIncrement       float64          `json:"qty_increment"`
+	QtyIncrement       *decimal.Decimal `json:"qty_increment"`
 	PricePrecision     int              `json:"price_precision"`
 	CostPrecision      int              `json:"cost_precision"`
 	Marginable         bool             `json:"marginable"`
@@ -33,7 +38,7 @@ type InstrumentPair struct {
 	PositionLimitShort int              `json:"position_limit_short"`
 	TickSize           decimal.Decimal  `json:"tick_size"`
 	PriceIncrement     decimal.Decimal  `json:"price_increment"`
-	QtyMin             float64          `json:"qty_min"`
+	QtyMin             *decimal.Decimal `json:"qty_min"`
 }
 
 type InstrumentSubscription struct{}
