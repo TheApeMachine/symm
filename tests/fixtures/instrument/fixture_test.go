@@ -53,23 +53,3 @@ func TestNewFixture(t *testing.T) {
 		})
 	})
 }
-
-func TestFixtureFrames(t *testing.T) {
-	Convey("Given an instrument update fixture", t, func() {
-		fixture := NewFixture(UPDATE, 2)
-
-		Convey("When frames are requested", func() {
-			count := 0
-
-			for frame := range fixture.Frames() {
-				So(frame.Channel, ShouldEqual, "instrument")
-				So(frame.Type, ShouldEqual, "update")
-				count++
-			}
-
-			Convey("Then every generated frame should be typed", func() {
-				So(count, ShouldEqual, 2)
-			})
-		})
-	})
-}

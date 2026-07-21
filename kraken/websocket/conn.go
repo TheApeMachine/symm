@@ -53,14 +53,16 @@ type API struct {
 	normalizer *spot.Normalizer
 	public     Conn
 	private    Conn
-	paper      *Paper
+	paper      Conn
 	live       bool
+	paperMode  bool
 	level3     *Level3Registry
+	level3Conn Conn
 	subs       subscriptionIntent
 }
 
 func NewAPI(
-	ctx context.Context, public, private Conn, paper *Paper,
+	ctx context.Context, public, private, paper Conn,
 ) *API {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -73,6 +75,7 @@ func NewAPI(
 		private:    private,
 		paper:      paper,
 		live:       viper.GetViper().GetString("trading.model") == "live",
+		paperMode:  viper.GetViper().GetString("trading.model") == "paper",
 		level3:     NewLevel3Registry(),
 	}
 	api.bindReconnect()
@@ -104,6 +107,16 @@ func (api *API) Initialize() error {
 		))
 	}
 
+	if api.paperMode && api.paper == nil {
+		api.status = types.ERROR
+
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cannot initialize paper trading without a paper transport",
+			nil,
+		))
+	}
+
 	if err := api.normalizer.Use(api.public.Client().REST); err != nil {
 		api.status = types.ERROR
 
@@ -128,6 +141,10 @@ func (api *API) Status() types.Status {
 func (api *API) Close() {
 	api.public.Close()
 	api.private.Close()
+
+	if api.paper != nil {
+		api.paper.Close()
+	}
 
 	if api.level3 != nil {
 		api.level3.Close()
@@ -261,7 +278,19 @@ func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error)
 
 func (api *API) TradesHistory() (*kraken.TradesHistory, error) {
 	if !api.live {
-		return api.paper.TradesHistory()
+		ledger, ok := api.paper.(interface {
+			TradesHistory() (*kraken.TradesHistory, error)
+		})
+
+		if !ok {
+			return nil, errnie.Error(errnie.Err(
+				errnie.NotImplemented,
+				"paper transport does not provide trade history",
+				nil,
+			))
+		}
+
+		return ledger.TradesHistory()
 	}
 
 	trades, err := api.fetchLiveTradesHistory()
@@ -292,7 +321,19 @@ so it never leaves an order resting and answers with an empty set.
 */
 func (api *API) OpenOrders() (map[string]spot.Order, error) {
 	if !api.Live() {
-		return api.paper.OpenOrders()
+		ledger, ok := api.paper.(interface {
+			OpenOrders() (map[string]spot.Order, error)
+		})
+
+		if !ok {
+			return nil, errnie.Error(errnie.Err(
+				errnie.NotImplemented,
+				"paper transport does not provide open orders",
+				nil,
+			))
+		}
+
+		return ledger.OpenOrders()
 	}
 
 	return api.fetchLiveOpenOrders()
@@ -425,15 +466,23 @@ func (api *API) Books() iter.Seq[*spot.BookManager] {
 }
 
 /*
-AttachLevel3 registers a Level3 transport so package tests can feed SDK-managed
-books without opening a venue connection.
+InjectLevel3 binds an ordinary Conn to the production Level3 book processor.
 */
-func (api *API) AttachLevel3(live *Live) {
-	if api == nil {
+func (api *API) InjectLevel3(conn Conn, symbols []string) {
+	if api == nil || conn == nil {
 		return
 	}
 
+	live := newLevel3Consumer(
+		api.ctx,
+		symbols,
+		viper.GetInt("market.l3_depth"),
+	)
+	api.level3Conn = conn
 	api.level3.Attach("injected-level3", live)
+	conn.On("level3", func(payload []byte) {
+		errnie.Error(live.ApplyLevel3(payload))
+	})
 }
 
 /*
@@ -460,6 +509,15 @@ The transport subscribes after authentication and repeats that same request
 after reconnect, so this method must not send a second competing subscription.
 */
 func (api *API) SubscribeLevel3(pairs []string) error {
+	if api.level3Conn != nil {
+		return errnie.Error(api.level3Conn.Write(
+			kraken.NewLevel3Subscription(
+				pairs,
+				viper.GetInt("market.l3_depth"),
+			),
+		))
+	}
+
 	return errnie.Error(api.level3.SubscribeAll(api.ctx, pairs))
 }
 
@@ -474,7 +532,9 @@ func (api *API) SubscribeBalance() error {
 		))
 	}
 
-	return api.paper.SubBalances()
+	return errnie.Error(api.paper.Write(
+		kraken.NewBalanceSubscription(""),
+	))
 }
 
 func (api *API) SubscribeExecutions() error {
@@ -488,7 +548,9 @@ func (api *API) SubscribeExecutions() error {
 		))
 	}
 
-	return api.paper.SubExecutions()
+	return errnie.Error(api.paper.Write(
+		kraken.NewExecutionSubscription(""),
+	))
 }
 
 func (api *API) AddOrder(order *kraken.MarketOrder) error {
@@ -496,5 +558,5 @@ func (api *API) AddOrder(order *kraken.MarketOrder) error {
 		return api.private.Write(order)
 	}
 
-	return api.paper.AddOrder(order)
+	return api.paper.Write(order)
 }

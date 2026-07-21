@@ -34,6 +34,8 @@ type Paper struct {
 	auth      bool
 }
 
+var _ Conn = (*Paper)(nil)
+
 /*
 NewPaper opens the paper spot transport.
 */
@@ -62,6 +64,62 @@ func (paper *Paper) Initialize() error {
 
 func (paper *Paper) Status() types.Status {
 	return paper.simulator.Status()
+}
+
+/*
+Client satisfies Conn; paper transport never owns a venue REST client.
+*/
+func (paper *Paper) Client() *spot.WebSocket {
+	return nil
+}
+
+/*
+Write routes the same subscription and order envelopes used by live transports
+through the paper simulator.
+*/
+func (paper *Paper) Write(params json.Marshaler) error {
+	raw, err := params.MarshalJSON()
+
+	if err != nil {
+		return errnie.Err(errnie.Validation, "paper request marshal failed", err)
+	}
+
+	request := struct {
+		Method string `json:"method"`
+		Params struct {
+			Channel string `json:"channel"`
+		} `json:"params"`
+	}{}
+
+	if err := sonic.Unmarshal(raw, &request); err != nil {
+		return errnie.Err(errnie.Validation, "paper request decode failed", err)
+	}
+
+	if request.Method == "add_order" {
+		order := &kraken.MarketOrder{}
+
+		if err := sonic.Unmarshal(raw, order); err != nil {
+			return errnie.Err(errnie.Validation, "paper order decode failed", err)
+		}
+
+		return paper.AddOrder(order)
+	}
+
+	switch request.Params.Channel {
+	case "balances":
+		return paper.SubBalances()
+	case "executions":
+		return paper.SubExecutions()
+	default:
+		return errnie.Err(errnie.NotImplemented, "paper request is not implemented", nil)
+	}
+}
+
+/*
+Post satisfies Conn; paper REST operations remain explicit typed methods.
+*/
+func (paper *Paper) Post(string, json.Marshaler) ([]byte, error) {
+	return nil, errnie.Err(errnie.NotImplemented, "paper REST post is not implemented", nil)
 }
 
 func (paper *Paper) On(

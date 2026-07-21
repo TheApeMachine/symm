@@ -214,11 +214,12 @@ full filled holding balance before the transport accepts or rejects it.
 func TestPositionExitQuantity(t *testing.T) {
 	Convey("Given an open position with one filled unit", t, func() {
 		ctx := context.Background()
-		mock := mockapi.NewMockAPI()
+		public := mockapi.NewConn()
+		private := mockapi.NewConn()
 		paper := websocket.NewPaper(
 			ctx, websocket.NewLatencySimulator(system.NewBooter(ctx, nil)),
 		)
-		api := websocket.NewAPI(ctx, mock.Public(), mock.Private(), paper)
+		api := websocket.NewAPI(ctx, public, private, paper)
 		holdings := &sync.Map{}
 		holding := types.NewHolding(ctx, "BTC/USD", decimal.NewFromInt64(1))
 		holding.Asset = "BTC"
@@ -315,11 +316,12 @@ owned inventory open and only clears the failed exit intent.
 func TestPositionSellVenueRejectPreservesInventory(t *testing.T) {
 	Convey("Given owned inventory and a venue that rejects the sell", t, func() {
 		ctx := context.Background()
-		mock := mockapi.NewMockAPI()
+		public := mockapi.NewConn()
+		private := mockapi.NewConn()
 		paper := websocket.NewPaper(
 			ctx, websocket.NewLatencySimulator(system.NewBooter(ctx, nil)),
 		)
-		api := websocket.NewAPI(ctx, mock.Public(), mock.Private(), paper)
+		api := websocket.NewAPI(ctx, public, private, paper)
 		holdings := &sync.Map{}
 		holding := types.NewHolding(ctx, "ETH/USD", decimal.NewFromFloat64(0.0015))
 		holding.Asset = "ETH"

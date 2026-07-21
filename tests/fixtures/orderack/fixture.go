@@ -6,7 +6,6 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/tests"
 )
 
 //go:embed fixtures/*.json
@@ -48,7 +47,13 @@ func Frame(options Options) []byte {
 
 	result["order_id"] = options.OrderID
 
-	return tests.MarshalFrame(payload)
+	encoded, err := sonic.Marshal(payload)
+
+	if err != nil {
+		panic(errnie.Err(errnie.Validation, "orderack fixture encode failed", err))
+	}
+
+	return encoded
 }
 
 /*

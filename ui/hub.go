@@ -37,7 +37,7 @@ func NewHub(
 	price *broker.Price,
 	balance *broker.Balance,
 	channel chan []byte,
-) (*Hub, error) {
+) *Hub {
 	ctx, cancel := context.WithCancel(ctx)
 
 	hub := &Hub{
@@ -114,7 +114,7 @@ func NewHub(
 		}
 	}))
 
-	return hub, nil
+	return hub
 }
 
 /*

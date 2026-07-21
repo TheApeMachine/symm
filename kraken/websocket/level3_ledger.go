@@ -81,6 +81,8 @@ func (ledger *level3Ledger) applyBook(
 		}
 
 		managed = manager.CreateBook(data.Symbol, managed.MaxDepth)
+		managed.EnableMaxDepth = false
+		managed.NoBookCrossing = false
 		ledger.orders[data.Symbol] = make(map[string]level3Order)
 	}
 

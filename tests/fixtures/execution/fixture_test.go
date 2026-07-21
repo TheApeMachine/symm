@@ -29,21 +29,3 @@ func TestExecutionFrame(t *testing.T) {
 		}
 	})
 }
-
-func TestExecutionFixtureFrames(t *testing.T) {
-	Convey("Given an execution fixture sequence", t, func() {
-		fixture := executionfixture.NewFixture(executionfixture.BuyFill())
-		count := 0
-
-		for frame := range fixture.Frames() {
-			count++
-
-			So(frame.Channel, ShouldEqual, "executions")
-			So(frame.Payload, ShouldNotBeEmpty)
-		}
-
-		Convey("Then frames preserve the execution channel envelope", func() {
-			So(count, ShouldEqual, 1)
-		})
-	})
-}

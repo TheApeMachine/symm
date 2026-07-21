@@ -2,11 +2,12 @@ package instrument
 
 import (
 	"embed"
+	"fmt"
 	"iter"
+	"strings"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/tests"
 )
 
 //go:embed fixtures/*.json
@@ -39,6 +40,62 @@ func NewFixture(typ FixtureType, horizon int) *Fixture {
 	}
 
 	return fixture.sequencer(raw)
+}
+
+/*
+NewMarket injects the requested simulated symbols into the Kraken instrument
+snapshot template and returns a ready-to-consume fixture.
+*/
+func NewMarket(symbols []string, priceIncrement float64) *Fixture {
+	raw, err := fixtureFiles.ReadFile("fixtures/" + string(SNAPSHOT) + ".json")
+
+	if err != nil {
+		panic(errnie.Err(errnie.Validation, "instrument fixture load failed", err))
+	}
+
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(raw, &payload); err != nil {
+		panic(errnie.Err(errnie.Validation, "instrument fixture decode failed", err))
+	}
+
+	data := payload["data"].(map[string]any)
+	template := data["pairs"].([]any)[0].(map[string]any)
+	pairs := make([]map[string]any, len(symbols))
+
+	for index, symbol := range symbols {
+		pair := make(map[string]any, len(template))
+
+		for key, value := range template {
+			pair[key] = value
+		}
+
+		parts := strings.Split(symbol, "/")
+
+		if len(parts) != 2 {
+			panic(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("instrument fixture invalid symbol %q", symbol),
+				nil,
+			))
+		}
+
+		pair["symbol"] = symbol
+		pair["base"] = parts[0]
+		pair["quote"] = parts[1]
+		pair["tick_size"] = priceIncrement
+		pair["price_increment"] = priceIncrement
+		pairs[index] = pair
+	}
+
+	data["pairs"] = pairs
+	encoded, err := sonic.Marshal(payload)
+
+	if err != nil {
+		panic(errnie.Err(errnie.Validation, "instrument fixture encode failed", err))
+	}
+
+	return &Fixture{sequence: [][]byte{encoded}}
 }
 
 func (fixture *Fixture) sequencer(raw []byte) *Fixture {
@@ -81,10 +138,6 @@ func (fixture *Fixture) Generate() iter.Seq[[]byte] {
 			}
 		}
 	}
-}
-
-func (fixture *Fixture) Frames() iter.Seq[tests.Frame] {
-	return tests.FrameSequence(fixture.Generate())
 }
 
 func clone(base map[string]any) map[string]any {

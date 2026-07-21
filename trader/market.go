@@ -104,6 +104,22 @@ func (market *Market) OnBook(data []byte) {
 		return
 	}
 
+	for index := range frame.Data {
+		pair, err := market.instrument.Pair(frame.Data[index].Symbol)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"market: book instrument metadata missing",
+				err,
+			))
+
+			return
+		}
+
+		frame.Data[index].PriceIncrement = &pair.PriceIncrement
+	}
+
 	market.books = append(market.books, frame.Data...)
 }
 

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"embed"
 	"fmt"
 	"net/http"
@@ -13,15 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/audit"
-	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/stack"
-	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -40,9 +32,6 @@ var (
 		Short: "S.Y.M.M. is not financial advice.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := context.WithCancel(cmd.Context())
-			defer cancel()
-
 			errnie.Apply(&errnie.Config{
 				Level: viper.GetString("system.log.level"),
 			})
@@ -50,205 +39,7 @@ var (
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
 			startPprof()
 
-			buffer := viper.GetInt("system.websocket.channel.buffer")
-			errnie.Info(fmt.Sprintf("starting ui channel with a buffer of %d", buffer))
-			channel := make(chan []byte, buffer)
-
-			booter := system.NewBooter(ctx, channel)
-			inMemory := viper.GetBool("cognitive.in_memory")
-			persistDir := strings.TrimSpace(viper.GetString("cognitive.persist_dir"))
-
-			if !inMemory {
-				if persistDir == "" {
-					return errnie.Error(errnie.Err(
-						errnie.Validation,
-						"cognitive.persist_dir is required unless cognitive.in_memory is set",
-						nil,
-					))
-				}
-
-				if strings.HasPrefix(persistDir, "~/") {
-					home, err := os.UserHomeDir()
-
-					if err != nil {
-						return errnie.Error(errnie.Err(
-							errnie.IO, "failed to resolve cognitive.persist_dir", err,
-						))
-					}
-
-					persistDir = filepath.Join(home, strings.TrimPrefix(persistDir, "~/"))
-				}
-
-				if !filepath.IsAbs(persistDir) {
-					return errnie.Error(errnie.Err(
-						errnie.Validation,
-						"cognitive.persist_dir must be absolute or home-relative",
-						nil,
-					))
-				}
-
-				if err := rotateCognitive(persistDir); err != nil {
-					return errnie.Error(err)
-				}
-			}
-
-			treeDir := persistDir
-
-			if inMemory {
-				treeDir = ""
-				errnie.Info("cognitive tree running in-memory (no DMT WAL)")
-			}
-
-			tree := dmt.NewTree(treeDir)
-
-			defer func() {
-				errnie.Error(tree.Close())
-			}()
-
-			simulator := websocket.NewLatencySimulator(booter)
-
-			dataPath := strings.TrimSpace(viper.GetString("system.data_path"))
-
-			if strings.HasPrefix(dataPath, "~/") {
-				home, err := os.UserHomeDir()
-
-				if err != nil {
-					return errnie.Error(errnie.Err(
-						errnie.IO, "failed to resolve system.data_path", err,
-					))
-				}
-
-				dataPath = filepath.Join(home, strings.TrimPrefix(dataPath, "~/"))
-			}
-
-			auditDir := persistDir
-
-			if inMemory || auditDir == "" {
-				auditDir = dataPath
-			}
-
-			auditPath := filepath.Join(auditDir, "runtime-audit.jsonl")
-
-			// Rotate before the recorder opens the file. Rotating an
-			// already-open handle would rename the live inode aside and leave
-			// the recorder appending to a stranded file.
-			if viper.GetBool("system.audit.rotate_on_boot") {
-				if err := audit.Rotate(auditPath); err != nil {
-					return errnie.Error(errnie.Err(
-						errnie.IO, "failed to rotate runtime audit", err,
-					))
-				}
-			}
-
-			recorder, err := audit.NewRecorder(auditPath)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.IO, "failed to create runtime audit recorder", err,
-				))
-			}
-
-			public := websocket.New(
-				ctx,
-				simulator,
-				false,
-				websocket.PublicWebSocketURL,
-			)
-
-			private := websocket.New(
-				ctx,
-				simulator,
-				true,
-				websocket.PrivateWebSocketURL,
-			)
-
-			var paper *websocket.Paper
-
-			if viper.GetString("trading.model") == "paper" {
-				paper = websocket.NewPaper(ctx, simulator)
-			}
-
-			api := websocket.NewAPI(ctx, public, private, paper)
-			defer api.Close()
-
-			if err := os.MkdirAll(dataPath, 0o700); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.IO, "failed to create data directory", err,
-				))
-			}
-
-			thesis := types.NewThesis(channel, nil)
-			encoded, err := os.ReadFile(filepath.Join(dataPath, "thesis.json"))
-
-			if err == nil {
-				thesis = restoreThesis(
-					thesis, channel, encoded, "failed to unmarshal optional thesis",
-				)
-			} else if !os.IsNotExist(err) {
-				errnie.Error(errnie.Err(
-					errnie.IO, "failed to read optional thesis from data directory", err,
-				))
-			}
-
-			// Wallet is inventory authority. thesis.json may still carry stale
-			// OPEN lots from prior runs; purge them before Balance/UI seed.
-			thesis.Holdings.Range(func(key, value any) bool {
-				thesis.Holdings.Delete(key)
-				return true
-			})
-
-			wired, err := stack.Boot(ctx, api, stack.Options{
-				Booter:         booter,
-				Paper:          paper,
-				Signals:        productionSignals,
-				Channel:        channel,
-				Tree:           tree,
-				Thesis:         thesis,
-				Recorder:       recorder,
-				PreflightExtra: []types.StatusReporter{simulator, public, private},
-				AttachUI: func(
-					stackBooter *system.Booter,
-					price *broker.Price,
-					balance *broker.Balance,
-					stackThesis *types.Thesis,
-					stackChannel chan []byte,
-				) (*ui.Hub, error) {
-					warmupReady := func() bool {
-						return stackBooter.Ready(system.StageWarmup)
-					}
-					hub, hubErr := ui.NewHub(
-						ctx, price, balance, stackChannel,
-					)
-
-					if hubErr != nil {
-						return nil, hubErr
-					}
-
-					errnie.AttachWriter(ui.NewErrorBridge(hub, warmupReady))
-
-					return hub, nil
-				},
-			})
-
-			if err != nil {
-				return errnie.Error(err)
-			}
-
-			defer wired.Close()
-
-			if wired.UIHub == nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal, "ui hub missing after boot", nil,
-				))
-			}
-
-			defer wired.UIHub.Close()
-
-			if err := wired.Crypto.Run(); err != nil {
-				return errnie.Error(err)
-			}
-
-			return wired.UIHub.Serve()
+			return stack.NewBooter(cmd.Context()).Start()
 		},
 	}
 )

@@ -6,7 +6,6 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/tests"
 )
 
 //go:embed fixtures/*.json
@@ -115,7 +114,13 @@ func Frame(options Options) []byte {
 		row["timestamp"] = options.Timestamp
 	}
 
-	return tests.MarshalFrame(payload)
+	encoded, err := sonic.Marshal(payload)
+
+	if err != nil {
+		panic(errnie.Err(errnie.Validation, "execution fixture encode failed", err))
+	}
+
+	return encoded
 }
 
 /*
@@ -146,8 +151,4 @@ func (fixture *Fixture) Generate() iter.Seq[[]byte] {
 			}
 		}
 	}
-}
-
-func (fixture *Fixture) Frames() iter.Seq[tests.Frame] {
-	return tests.FrameSequence(fixture.Generate())
 }

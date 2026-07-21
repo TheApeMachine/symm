@@ -21,9 +21,10 @@ ticker frames warm a wide book after a fee-only cold bind.
 func TestContinuityManageHoldsWarmMidAfterColdBind(t *testing.T) {
 	Convey("Given Desk/Balance/Price wired through Paper Simulator", t, func() {
 		ctx := context.Background()
-		mock := mockapi.NewMockAPI()
+		public := mockapi.NewConn()
+		private := mockapi.NewConn()
 		paper := websocket.NewPaper(ctx, websocket.NewSimulator())
-		api := websocket.NewAPI(ctx, mock.Public(), mock.Private(), paper)
+		api := websocket.NewAPI(ctx, public, private, paper)
 		price := broker.NewPrice(api)
 		So(price.RememberFee("VANRY/USD", kraken.TradeVolumeFee{
 			Fee: decimal.NewFromFloat64(0.26),

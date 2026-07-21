@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
@@ -37,15 +38,18 @@ func TestInstrumentSubscribeLoadsUniverseFees(t *testing.T) {
 		viper.Set("market.subscribe_batch", 200)
 		viper.Set("market.subscribe_pace", "0ms")
 		viper.Set("market.l3_enabled", false)
-		mock := mockapi.NewMockAPI()
-		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
+		public := mockapi.NewConn()
+		private := mockapi.NewConn()
+		response, encodeErr := sonic.Marshal(&kraken.TradeVolume{
 			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFee{
 				"XXBTZUSD": {Fee: decimal.NewFromFloat64(0.26)},
 				"ZECUSD":   {Fee: decimal.NewFromFloat64(0.26)},
 			}},
-		}), ShouldBeNil)
+		})
+		So(encodeErr, ShouldBeNil)
+		private.RespondPost(websocket.TradeVolumeEndpoint, response)
 		api := websocket.NewAPI(
-			context.Background(), mock.Public(), mock.Private(), nil,
+			context.Background(), public, private, nil,
 		)
 		So(api.Initialize(), ShouldBeNil)
 		price := broker.NewPrice(api)
@@ -63,12 +67,13 @@ func TestInstrumentSubscribeLoadsUniverseFees(t *testing.T) {
 
 		Convey("Then fees load and every public subscription crosses the Conn", func() {
 			So(instrument.Status(), ShouldEqual, types.READY)
-			So(mock.Public().Writes(), ShouldHaveLength, 3)
-			symbols, symbolsErr := mock.LastTradeVolumeSymbols()
-			So(symbolsErr, ShouldBeNil)
-			So(symbols, ShouldHaveLength, 2)
-			So(symbols, ShouldContain, "BTC/USD")
-			So(symbols, ShouldContain, "ZEC/USD")
+			So(public.Writes(), ShouldHaveLength, 3)
+			posts := private.Posts()
+			So(posts, ShouldHaveLength, 1)
+			var request kraken.TradeVolumeRequest
+			So(sonic.Unmarshal(posts[0], &request), ShouldBeNil)
+			So(request.Pair, ShouldContainSubstring, "BTC/USD")
+			So(request.Pair, ShouldContainSubstring, "ZEC/USD")
 			btcFee, feeErr := price.FeeRate("BTC/USD")
 			So(feeErr, ShouldBeNil)
 			So(btcFee.Fee.Float64(), ShouldEqual, 0.26)
@@ -97,15 +102,18 @@ func TestInstrumentSubscribeConnectionFailure(t *testing.T) {
 	viper.Set("market.l3_enabled", false)
 
 	Convey("Given an instrument universe whose Conn rejects subscriptions", t, func() {
-		mock := mockapi.NewMockAPI()
-		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
+		public := mockapi.NewConn()
+		private := mockapi.NewConn()
+		response, encodeErr := sonic.Marshal(&kraken.TradeVolume{
 			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFee{
 				"XXBTZUSD": {Fee: decimal.NewFromFloat64(0.26)},
 			}},
-		}), ShouldBeNil)
-		mock.Public().FailWrites(errors.New("subscription rejected"))
+		})
+		So(encodeErr, ShouldBeNil)
+		private.RespondPost(websocket.TradeVolumeEndpoint, response)
+		public.FailWrites(errors.New("subscription rejected"))
 		api := websocket.NewAPI(
-			context.Background(), mock.Public(), mock.Private(), nil,
+			context.Background(), public, private, nil,
 		)
 		So(api.Initialize(), ShouldBeNil)
 		instrument := broker.NewInstrument(api, broker.NewPrice(api), nil)
@@ -123,9 +131,10 @@ func TestInstrumentSubscribeConnectionFailure(t *testing.T) {
 
 func TestInstrumentOn(t *testing.T) {
 	Convey("Given an instrument snapshot frame", t, func() {
-		mock := mockapi.NewMockAPI()
+		public := mockapi.NewConn()
+		private := mockapi.NewConn()
 		api := websocket.NewAPI(
-			context.Background(), mock.Public(), mock.Private(), nil,
+			context.Background(), public, private, nil,
 		)
 		So(api.Initialize(), ShouldBeNil)
 		price := broker.NewPrice(api)
@@ -158,9 +167,10 @@ func BenchmarkInstrumentOn(b *testing.B) {
 	previousBatch := viper.Get("market.subscribe_batch")
 	b.Cleanup(func() { viper.Set("market.subscribe_batch", previousBatch) })
 	viper.Set("market.subscribe_batch", 0)
-	mock := mockapi.NewMockAPI()
+	public := mockapi.NewConn()
+	private := mockapi.NewConn()
 	api := websocket.NewAPI(
-		context.Background(), mock.Public(), mock.Private(), nil,
+		context.Background(), public, private, nil,
 	)
 	_ = api.Initialize()
 	price := broker.NewPrice(api)
@@ -190,9 +200,10 @@ func TestInstrumentPublishEmitsUniverse(t *testing.T) {
 		viper.Set("market.quote_currency", "USD")
 		viper.Set("market.subscribe_batch", 0)
 		hub := make(chan []byte, 1)
-		mock := mockapi.NewMockAPI()
+		public := mockapi.NewConn()
+		private := mockapi.NewConn()
 		api := websocket.NewAPI(
-			context.Background(), mock.Public(), mock.Private(), nil,
+			context.Background(), public, private, nil,
 		)
 		So(api.Initialize(), ShouldBeNil)
 		price := broker.NewPrice(api)
@@ -228,9 +239,10 @@ func TestInstrumentSubscribeRejectsInvalidBatchSize(t *testing.T) {
 	Convey("Given an invalid subscribe batch size", t, func() {
 		viper.Set("market.quote_currency", "USD")
 		viper.Set("market.subscribe_batch", 0)
-		mock := mockapi.NewMockAPI()
+		public := mockapi.NewConn()
+		private := mockapi.NewConn()
 		api := websocket.NewAPI(
-			context.Background(), mock.Public(), mock.Private(), nil,
+			context.Background(), public, private, nil,
 		)
 		So(api.Initialize(), ShouldBeNil)
 		price := broker.NewPrice(api)

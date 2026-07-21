@@ -1,18 +1,34 @@
 package websocket
 
 import (
+	"context"
 	"fmt"
-	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
+
+/*
+newLevel3Consumer creates the ordinary production book processor for one Conn.
+*/
+func newLevel3Consumer(
+	ctx context.Context,
+	symbols []string,
+	depth int,
+) *Live {
+	live := New(ctx, nil, true, Level3WebSocketURL)
+	live.symbols = append([]string(nil), symbols...)
+	live.ensureLevel3Books(symbols, depth)
+	live.status.Store(types.READY)
+
+	return live
+}
 
 // level3QueueDepth buffers a burst of book frames between the socket reader and
 // the FIFO apply worker. It absorbs jitter without unbounded memory growth; a
@@ -248,47 +264,4 @@ func (live *Live) invalidateLevel3Book(raw []byte) {
 		managed.EnableMaxDepth = false
 		managed.NoBookCrossing = false
 	}
-}
-
-/*
-SeedTouch installs a two-sided L3 touch for symbol under the write lease so
-package tests can provide deterministic touch state without a venue connection.
-*/
-func (live *Live) SeedTouch(
-	symbol string,
-	bid *decimal.Decimal,
-	ask *decimal.Decimal,
-	quantity *decimal.Decimal,
-	at time.Time,
-) {
-	if live == nil || live.books == nil || symbol == "" || bid == nil || ask == nil {
-		return
-	}
-
-	live.bookMu.Lock()
-	defer live.bookMu.Unlock()
-
-	symbolBook := live.books.GetBook(symbol)
-
-	if symbolBook == nil {
-		symbolBook = live.books.CreateBook(symbol, 10)
-		symbolBook.EnableMaxDepth = false
-		symbolBook.NoBookCrossing = false
-	}
-
-	symbolBook.Update(&book.UpdateOptions{
-		Direction: book.Bid,
-		ID:        "seed-bid",
-		Price:     bid,
-		Quantity:  quantity,
-		Timestamp: at,
-	})
-
-	symbolBook.Update(&book.UpdateOptions{
-		Direction: book.Ask,
-		ID:        "seed-ask",
-		Price:     ask,
-		Quantity:  quantity,
-		Timestamp: at,
-	})
 }

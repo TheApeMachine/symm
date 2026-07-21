@@ -2,9 +2,9 @@ package heartbeat
 
 import (
 	"embed"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/tests"
 	"iter"
+
+	"github.com/theapemachine/errnie"
 )
 
 //go:embed fixtures/*.json
@@ -50,8 +50,4 @@ func (fixture *Fixture) Generate() iter.Seq[[]byte] {
 			}
 		}
 	}
-}
-
-func (fixture *Fixture) Frames() iter.Seq[tests.Frame] {
-	return tests.FrameSequence(fixture.Generate())
 }

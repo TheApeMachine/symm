@@ -1,123 +1,161 @@
 package tests
 
-import "iter"
+import (
+	"context"
+	"fmt"
+	"iter"
+
+	"github.com/theapemachine/errnie"
+	balancesfixture "github.com/theapemachine/symm/tests/fixtures/balances"
+	bookfixture "github.com/theapemachine/symm/tests/fixtures/book"
+	instrumentfixture "github.com/theapemachine/symm/tests/fixtures/instrument"
+	level3fixture "github.com/theapemachine/symm/tests/fixtures/level3"
+	marketsignal "github.com/theapemachine/symm/tests/fixtures/signal"
+	tickerfixture "github.com/theapemachine/symm/tests/fixtures/ticker"
+	tradefixture "github.com/theapemachine/symm/tests/fixtures/trade"
+	tradevolumefixture "github.com/theapemachine/symm/tests/fixtures/tradevolume"
+	"github.com/theapemachine/symm/tests/mockapi"
+)
 
 /*
-Market composes fixture streams into one replayable timeline.
-Prefix frames emit in full before the round-robin rotation begins.
+MarketState names the deterministic state communicated to every fixture.
+*/
+type MarketState = marketsignal.State
+
+const (
+	MarketStateBaseline = marketsignal.Baseline
+	MarketStateFastPump = marketsignal.FastPump
+	MarketStateSlowPump = marketsignal.SlowPump
+	MarketStateFastDump = marketsignal.FastDump
+	MarketStateSlowDump = marketsignal.SlowDump
+)
+
+/*
+Market ranges ready fixture payloads into the fake Kraken connections.
 */
 type Market struct {
-	prefix  []iter.Seq[Frame]
-	streams []iter.Seq[Frame]
+	cancel  context.CancelFunc
+	Public  *mockapi.MockConn
+	Private *mockapi.MockConn
+	Paper   *mockapi.MockConn
+	Level3  *mockapi.MockConn
+	Symbols []string
+	State   MarketState
+
+	signal *marketsignal.Signal
+	ticker *tickerfixture.Fixture
+	trade  *tradefixture.Fixture
+	book   *bookfixture.Fixture
+	level3 *level3fixture.Fixture
 }
 
 /*
-NewMarket creates an empty market timeline.
+NewMarket creates fixture-fed connections for exactly symbolCount symbols.
 */
-func NewMarket() *Market {
-	return &Market{}
-}
+func NewMarket(ctx context.Context, symbolCount int) *Market {
+	if symbolCount < 1 {
+		panic(errnie.Err(errnie.Validation, "tests: symbol count must be positive", nil))
+	}
 
-/*
-Prefix appends Generate payloads as typed frames before round-robin begins.
-*/
-func (market *Market) Prefix(fixture PayloadFixture) *Market {
-	market.prefix = append(market.prefix, FrameSequence(fixture.Generate()))
+	ctx, cancel := context.WithCancel(ctx)
+	symbols := make([]string, symbolCount)
+
+	for index := range symbolCount {
+		symbols[index] = fmt.Sprintf("SIM%d/USD", index+1)
+	}
+
+	signal := marketsignal.New(symbols)
+	market := &Market{
+		cancel:  cancel,
+		Public:  mockapi.NewConn(),
+		Private: mockapi.NewConn(),
+		Paper:   mockapi.NewConn(),
+		Level3:  mockapi.NewConn(),
+		Symbols: symbols,
+		State:   MarketStateBaseline,
+		signal:  signal,
+		ticker:  tickerfixture.NewMarket(symbols, signal),
+		trade:   tradefixture.NewMarket(symbols, signal),
+		book:    bookfixture.NewMarket(symbols, signal),
+		level3:  level3fixture.NewMarket(symbols, signal),
+	}
+	market.configure()
 
 	return market
 }
 
 /*
-Feed joins Generate payloads into the round-robin rotation as typed frames.
+Transition communicates a semantic state to each fixture and emits every frame.
 */
-func (market *Market) Feed(fixture PayloadFixture) *Market {
-	market.streams = append(market.streams, FrameSequence(fixture.Generate()))
+func (market *Market) Transition(state MarketState) {
+	market.signal.Transition(state)
+	tickerNext, tickerStop := iter.Pull(market.ticker.Generate())
+	tradeNext, tradeStop := iter.Pull(market.trade.Generate())
+	bookNext, bookStop := iter.Pull(market.book.Generate())
+	level3Next, level3Stop := iter.Pull(market.level3.Generate())
+	defer tickerStop()
+	defer tradeStop()
+	defer bookStop()
+	defer level3Stop()
 
-	return market
+	for tickerPayload, more := tickerNext(); more; tickerPayload, more = tickerNext() {
+		tradePayload, _ := tradeNext()
+		bookPayload, _ := bookNext()
+		level3Payload, _ := level3Next()
+		market.Public.Emit("ticker", tickerPayload)
+		market.Public.Emit("trade", tradePayload)
+		market.Public.Emit("book", bookPayload)
+		market.Level3.Emit("level3", level3Payload)
+	}
+
+	market.State = state
 }
 
 /*
-Frames yields prefix streams first, then round-robin updates.
+configure assigns fixture streams to the Kraken subscription and REST routes.
 */
-func (market *Market) Frames() iter.Seq[Frame] {
-	return func(yield func(Frame) bool) {
-		for _, prefix := range market.prefix {
-			for frame := range prefix {
-				if !yield(frame) {
-					return
-				}
-			}
-		}
+func (market *Market) configure() {
+	for payload := range instrumentfixture.NewMarket(
+		market.Symbols,
+		marketsignal.PriceIncrement,
+	).Generate() {
+		market.Public.Respond("instrument", payload)
+	}
 
-		for frame := range RoundRobin(market.streams...) {
-			if !yield(frame) {
-				return
-			}
-		}
+	market.signal.Transition(MarketStateBaseline)
+
+	for payload := range market.ticker.Generate() {
+		market.Public.Respond("ticker", payload)
+	}
+
+	for payload := range market.trade.Generate() {
+		market.Public.Respond("trade", payload)
+	}
+
+	for payload := range market.book.Generate() {
+		market.Public.Respond("book", payload)
+	}
+
+	for payload := range market.level3.Generate() {
+		market.Level3.Respond("level3", payload)
+	}
+
+	for payload := range balancesfixture.NewMarket("USD").Generate() {
+		market.Paper.Respond("balances", payload)
+	}
+
+	for payload := range tradevolumefixture.NewMarket(market.Symbols).Generate() {
+		market.Private.RespondPost("/0/private/TradeVolume", payload)
 	}
 }
 
 /*
-Replay drives handlers through the composed market timeline.
+Close releases the four in-memory connections and simulated market context.
 */
-func (market *Market) Replay(handlers Handlers) {
-	Replay(handlers, market.Frames())
-}
-
-/*
-RoundRobin interleaves frame streams one frame at a time.
-*/
-func RoundRobin(streams ...iter.Seq[Frame]) iter.Seq[Frame] {
-	return func(yield func(Frame) bool) {
-		if len(streams) == 0 {
-			return
-		}
-
-		pulls := make([]streamPull, len(streams))
-
-		for index, stream := range streams {
-			next, stop := iter.Pull(stream)
-			pulls[index] = streamPull{next: next, stop: stop, live: true}
-		}
-
-		defer func() {
-			for _, pull := range pulls {
-				pull.stop()
-			}
-		}()
-
-		alive := len(pulls)
-		index := 0
-
-		for alive > 0 {
-			pull := &pulls[index]
-
-			if !pull.live {
-				index = (index + 1) % len(pulls)
-				continue
-			}
-
-			frame, ok := pull.next()
-
-			if !ok {
-				pull.live = false
-				alive--
-				index = (index + 1) % len(pulls)
-
-				continue
-			}
-
-			if !yield(frame) {
-				return
-			}
-
-			index = (index + 1) % len(pulls)
-		}
-	}
-}
-
-type streamPull struct {
-	next func() (Frame, bool)
-	stop func()
-	live bool
+func (market *Market) Close() {
+	market.Public.Close()
+	market.Private.Close()
+	market.Paper.Close()
+	market.Level3.Close()
+	market.cancel()
 }

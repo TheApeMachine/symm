@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
@@ -126,9 +127,10 @@ func TestPriceFraction(t *testing.T) {
 
 func TestPriceSnapshot(t *testing.T) {
 	Convey("Given an initializing Price", t, func() {
-		mock := mockapi.NewMockAPI()
+		public := mockapi.NewConn()
+		private := mockapi.NewConn()
 		price := broker.NewPrice(websocket.NewAPI(
-			context.Background(), mock.Public(), mock.Private(), nil,
+			context.Background(), public, private, nil,
 		))
 
 		Convey("When its ticker callback is registered", func() {
@@ -169,13 +171,16 @@ func TestPriceSnapshot(t *testing.T) {
 
 func TestPriceGetFees(t *testing.T) {
 	Convey("Given a Kraken-keyed fee tier for one requested symbol", t, func() {
-		mock := mockapi.NewMockAPI()
-		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
+		public := mockapi.NewConn()
+		private := mockapi.NewConn()
+		response, encodeErr := sonic.Marshal(&kraken.TradeVolume{
 			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFee{
 				"XXBTZUSD": {Fee: decimal.NewFromFloat64(0.26)},
 			}},
-		}), ShouldBeNil)
-		api := websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil)
+		})
+		So(encodeErr, ShouldBeNil)
+		private.RespondPost(websocket.TradeVolumeEndpoint, response)
+		api := websocket.NewAPI(context.Background(), public, private, nil)
 		So(api.Initialize(), ShouldBeNil)
 		price := broker.NewPrice(api)
 
@@ -184,9 +189,11 @@ func TestPriceGetFees(t *testing.T) {
 
 			Convey("Then only that complete tier is committed before Price becomes ready", func() {
 				So(err, ShouldBeNil)
-				symbols, symbolsErr := mock.LastTradeVolumeSymbols()
-				So(symbolsErr, ShouldBeNil)
-				So(symbols, ShouldResemble, []string{"BTC/USD"})
+				posts := private.Posts()
+				So(posts, ShouldHaveLength, 1)
+				var request kraken.TradeVolumeRequest
+				So(sonic.Unmarshal(posts[0], &request), ShouldBeNil)
+				So(request.Pair, ShouldEqual, "BTC/USD")
 				So(price.Status(), ShouldEqual, types.READY)
 
 				btcFee, err := price.FeeRate("BTC/USD")
@@ -197,11 +204,14 @@ func TestPriceGetFees(t *testing.T) {
 	})
 
 	Convey("Given a fee response missing one requested symbol", t, func() {
-		mock := mockapi.NewMockAPI()
-		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
+		public := mockapi.NewConn()
+		private := mockapi.NewConn()
+		response, encodeErr := sonic.Marshal(&kraken.TradeVolume{
 			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFee{}},
-		}), ShouldBeNil)
-		api := websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil)
+		})
+		So(encodeErr, ShouldBeNil)
+		private.RespondPost(websocket.TradeVolumeEndpoint, response)
+		api := websocket.NewAPI(context.Background(), public, private, nil)
 		So(api.Initialize(), ShouldBeNil)
 		price := broker.NewPrice(api)
 
@@ -220,13 +230,16 @@ func TestPriceGetFees(t *testing.T) {
 	})
 
 	Convey("Given a malformed fee for one requested symbol", t, func() {
-		mock := mockapi.NewMockAPI()
-		So(mock.SetTradeVolumeResponse(&kraken.TradeVolume{
+		public := mockapi.NewConn()
+		private := mockapi.NewConn()
+		response, encodeErr := sonic.Marshal(&kraken.TradeVolume{
 			Result: kraken.TradeVolumeResult{Fees: map[string]kraken.TradeVolumeFee{
 				"XXBTZUSD": {},
 			}},
-		}), ShouldBeNil)
-		api := websocket.NewAPI(context.Background(), mock.Public(), mock.Private(), nil)
+		})
+		So(encodeErr, ShouldBeNil)
+		private.RespondPost(websocket.TradeVolumeEndpoint, response)
+		api := websocket.NewAPI(context.Background(), public, private, nil)
 		So(api.Initialize(), ShouldBeNil)
 		price := broker.NewPrice(api)
 

@@ -1,11 +1,11 @@
 package mockapi
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken"
 )
 
 /*
@@ -43,7 +43,9 @@ func TestMockConnWriteRecordsRequests(t *testing.T) {
 		conn.FailWrites(writeErr)
 
 		Convey("When production sends a ticker subscription", func() {
-			err := conn.Write(kraken.NewTickerSubscription([]string{"BTC/USD"}))
+			err := conn.Write(json.RawMessage(
+				`{"method":"subscribe","params":{"channel":"ticker","symbol":["BTC/USD"]}}`,
+			))
 
 			Convey("Then the request is recorded and the failure is returned", func() {
 				So(err, ShouldEqual, writeErr)

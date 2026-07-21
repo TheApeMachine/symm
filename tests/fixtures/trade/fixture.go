@@ -8,7 +8,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/tests"
+	marketsignal "github.com/theapemachine/symm/tests/fixtures/signal"
 )
 
 //go:embed fixtures/*.json
@@ -24,6 +24,11 @@ const (
 type Fixture struct {
 	horizon  int
 	sequence [][]byte
+	template []byte
+	signal   *marketsignal.Signal
+	previous map[string]float64
+	tradeID  uint64
+	typ      FixtureType
 }
 
 func NewFixture(typ FixtureType, horizon int) *Fixture {
@@ -41,6 +46,34 @@ func NewFixture(typ FixtureType, horizon int) *Fixture {
 	}
 
 	return fixture.sequencer(raw)
+}
+
+/*
+NewMarket creates a trade fixture that renders one Kraken trade per simulated
+symbol from each shared market state.
+*/
+func NewMarket(symbols []string, signal *marketsignal.Signal) *Fixture {
+	raw, err := fixtureFiles.ReadFile("fixtures/" + string(SNAPSHOT) + ".json")
+
+	if err != nil {
+		panic(errnie.Err(errnie.Validation, "trade fixture load failed", err))
+	}
+
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(raw, &payload); err != nil {
+		panic(errnie.Err(errnie.Validation, "trade fixture decode failed", err))
+	}
+
+	row := payload["data"].([]any)[0].(map[string]any)
+
+	return &Fixture{
+		template: raw,
+		signal:   signal,
+		previous: make(map[string]float64, len(symbols)),
+		tradeID:  uint64(row["trade_id"].(float64)),
+		typ:      SNAPSHOT,
+	}
 }
 
 func (fixture *Fixture) sequencer(raw []byte) *Fixture {
@@ -79,6 +112,16 @@ func (fixture *Fixture) sequencer(raw []byte) *Fixture {
 }
 
 func (fixture *Fixture) Generate() iter.Seq[[]byte] {
+	if fixture.signal != nil {
+		return func(yield func([]byte) bool) {
+			for samples := range fixture.signal.Generate() {
+				if !yield(fixture.render(samples)) {
+					return
+				}
+			}
+		}
+	}
+
 	return func(yield func([]byte) bool) {
 		for _, seq := range fixture.sequence {
 			if !yield(seq) {
@@ -88,8 +131,53 @@ func (fixture *Fixture) Generate() iter.Seq[[]byte] {
 	}
 }
 
-func (fixture *Fixture) Frames() iter.Seq[tests.Frame] {
-	return tests.FrameSequence(fixture.Generate())
+/*
+render injects the current state into the Kraken trade template.
+*/
+func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(fixture.template, &payload); err != nil {
+		panic(errnie.Err(errnie.Validation, "trade fixture decode failed", err))
+	}
+
+	rows := make([]map[string]any, len(samples))
+
+	for index, sample := range samples {
+		row := map[string]any{}
+
+		for key, value := range payload["data"].([]any)[0].(map[string]any) {
+			row[key] = value
+		}
+
+		side := "buy"
+
+		if previous := fixture.previous[sample.Symbol]; previous > sample.Price {
+			side = "sell"
+		}
+
+		fixture.tradeID++
+		row["symbol"] = sample.Symbol
+		row["side"] = side
+		row["price"] = sample.Price
+		row["qty"] = sample.Volume
+		row["trade_id"] = fixture.tradeID
+		row["timestamp"] = sample.At
+		rows[index] = row
+		fixture.previous[sample.Symbol] = sample.Price
+	}
+
+	payload["data"] = rows
+	payload["type"] = string(fixture.typ)
+	encoded, err := sonic.Marshal(payload)
+
+	if err != nil {
+		panic(errnie.Err(errnie.Validation, "trade fixture encode failed", err))
+	}
+
+	fixture.typ = UPDATE
+
+	return encoded
 }
 
 func advance(value string, delta time.Duration) string {

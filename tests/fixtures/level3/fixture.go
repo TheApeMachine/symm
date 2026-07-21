@@ -2,13 +2,18 @@ package level3
 
 import (
 	"embed"
+	"encoding/json"
+	"hash/crc32"
 	"iter"
+	"maps"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/tests"
+	marketsignal "github.com/theapemachine/symm/tests/fixtures/signal"
 )
 
 //go:embed fixtures/*.json
@@ -24,6 +29,10 @@ const (
 type Fixture struct {
 	horizon  int
 	sequence [][]byte
+	template []byte
+	signal   *marketsignal.Signal
+	typ      FixtureType
+	previous map[string]map[string]any
 }
 
 func NewFixture(typ FixtureType, horizon int) *Fixture {
@@ -41,6 +50,25 @@ func NewFixture(typ FixtureType, horizon int) *Fixture {
 	}
 
 	return fixture.sequencer(raw)
+}
+
+/*
+NewMarket creates a checksum-valid Level3 snapshot fixture for every simulated
+symbol and shared market state.
+*/
+func NewMarket(symbols []string, signal *marketsignal.Signal) *Fixture {
+	raw, err := fixtureFiles.ReadFile("fixtures/" + string(SNAPSHOT) + ".json")
+
+	if err != nil {
+		panic(errnie.Err(errnie.Validation, "level3 fixture load failed", err))
+	}
+
+	return &Fixture{
+		template: raw,
+		signal:   signal,
+		typ:      SNAPSHOT,
+		previous: make(map[string]map[string]any, len(symbols)),
+	}
 }
 
 func (fixture *Fixture) sequencer(raw []byte) *Fixture {
@@ -78,6 +106,16 @@ func (fixture *Fixture) sequencer(raw []byte) *Fixture {
 }
 
 func (fixture *Fixture) Generate() iter.Seq[[]byte] {
+	if fixture.signal != nil {
+		return func(yield func([]byte) bool) {
+			for samples := range fixture.signal.Generate() {
+				if !yield(fixture.render(samples)) {
+					return
+				}
+			}
+		}
+	}
+
 	return func(yield func([]byte) bool) {
 		for _, seq := range fixture.sequence {
 			if !yield(seq) {
@@ -87,8 +125,160 @@ func (fixture *Fixture) Generate() iter.Seq[[]byte] {
 	}
 }
 
-func (fixture *Fixture) Frames() iter.Seq[tests.Frame] {
-	return tests.FrameSequence(fixture.Generate())
+/*
+Depth returns the number of price levels represented by the Level3 template.
+*/
+func (fixture *Fixture) Depth() int {
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(fixture.template, &payload); err != nil {
+		panic(errnie.Err(errnie.Validation, "level3 fixture decode failed", err))
+	}
+
+	row := payload["data"].([]any)[0].(map[string]any)
+
+	return max(len(row["bids"].([]any)), len(row["asks"].([]any)))
+}
+
+/*
+render injects the current state into checksum-valid Kraken Level3 snapshots.
+*/
+func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(fixture.template, &payload); err != nil {
+		panic(errnie.Err(errnie.Validation, "level3 fixture decode failed", err))
+	}
+
+	template := payload["data"].([]any)[0].(map[string]any)
+	rows := make([]map[string]any, len(samples))
+
+	for index, sample := range samples {
+		row := clone(template)
+
+		increment := marketsignal.PriceIncrement
+		quantity := sample.Volume * 100
+		fixture.inject(row, "bids", sample.Price-increment, -increment, quantity, sample.At)
+		fixture.inject(row, "asks", sample.Price+increment, increment, quantity, sample.At)
+		row["symbol"] = sample.Symbol
+		row["timestamp"] = sample.At
+		row["checksum"] = fixture.checksum(row)
+		resting := row
+
+		if fixture.typ == UPDATE {
+			row = fixture.update(fixture.previous[sample.Symbol], row)
+		}
+
+		fixture.previous[sample.Symbol] = resting
+		rows[index] = row
+	}
+
+	payload["data"] = rows
+	payload["type"] = string(fixture.typ)
+	encoded, err := sonic.Marshal(payload)
+
+	if err != nil {
+		panic(errnie.Err(errnie.Validation, "level3 fixture encode failed", err))
+	}
+
+	fixture.typ = UPDATE
+
+	return encoded
+}
+
+/*
+inject writes one complete resting side while preserving template order identities.
+*/
+func (fixture *Fixture) inject(
+	row map[string]any,
+	side string,
+	price float64,
+	increment float64,
+	quantity float64,
+	at time.Time,
+) {
+	orders := row[side].([]any)
+
+	for index, entry := range orders {
+		order := entry.(map[string]any)
+		order["limit_price"] = json.Number(strconv.FormatFloat(
+			round(price+increment*float64(index)),
+			'f',
+			8,
+			64,
+		))
+		order["order_qty"] = json.Number(strconv.FormatFloat(
+			round(quantity/float64(len(orders))),
+			'f',
+			8,
+			64,
+		))
+		order["timestamp"] = at
+		delete(order, "event")
+	}
+}
+
+/*
+update converts two complete resting states into Kraken delete and add events.
+*/
+func (fixture *Fixture) update(
+	previous map[string]any,
+	current map[string]any,
+) map[string]any {
+	row := map[string]any{
+		"symbol":    current["symbol"],
+		"timestamp": current["timestamp"],
+		"checksum":  current["checksum"],
+	}
+
+	for _, side := range []string{"bids", "asks"} {
+		events := make([]any, 0, len(previous[side].([]any))+len(current[side].([]any)))
+
+		for _, entry := range previous[side].([]any) {
+			order := maps.Clone(entry.(map[string]any))
+			order["event"] = "delete"
+			events = append(events, order)
+		}
+
+		for _, entry := range current[side].([]any) {
+			order := maps.Clone(entry.(map[string]any))
+			order["event"] = "add"
+			events = append(events, order)
+		}
+
+		row[side] = events
+	}
+
+	return row
+}
+
+/*
+checksum derives Kraken's CRC over best asks followed by best bids.
+*/
+func (fixture *Fixture) checksum(row map[string]any) uint32 {
+	checksum := uint32(0)
+
+	for _, side := range []string{"asks", "bids"} {
+		for _, entry := range row[side].([]any) {
+			order := entry.(map[string]any)
+			checksum = fixture.write(checksum, order["limit_price"].(json.Number).String())
+			checksum = fixture.write(checksum, order["order_qty"].(json.Number).String())
+		}
+	}
+
+	return checksum
+}
+
+/*
+write adds one Kraken-normalized decimal to the rolling Level3 CRC.
+*/
+func (fixture *Fixture) write(checksum uint32, value string) uint32 {
+	text := strings.TrimLeft(
+		strings.ReplaceAll(value, ".", ""),
+		"0",
+	)
+
+	return crc32.Update(checksum, crc32.IEEETable, []byte(text))
 }
 
 func advanceLevels(row map[string]any, side string, step int, direction float64) {

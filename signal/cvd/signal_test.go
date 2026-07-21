@@ -1,6 +1,7 @@
 package cvd
 
 import (
+	"slices"
 	"context"
 	"fmt"
 	"testing"
@@ -15,8 +16,8 @@ import (
 )
 
 func measureField(measurements []*types.Measurement, symbol string, metric types.MetricType) (*types.Measurement, bool) {
-	for index := len(measurements) - 1; index >= 0; index-- {
-		measurement := measurements[index]
+	for _, measurement := range slices.Backward(measurements) {
+		
 
 		if measurement.Symbol == symbol && measurement.Metric == metric {
 			return measurement, true

@@ -11,7 +11,6 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/tests"
 )
 
 //go:embed fixtures/*.json
@@ -56,6 +55,43 @@ func NewFixture(typ FixtureType, horizon int) *Fixture {
 	}
 
 	return fixture.sequencer(raw)
+}
+
+/*
+NewMarket filters the Kraken balance snapshot template to the simulated quote
+wallet so the real paper boot starts from explicit fixture inventory.
+*/
+func NewMarket(quote string) *Fixture {
+	raw, err := fixtureFiles.ReadFile("fixtures/" + string(SNAPSHOT) + ".json")
+
+	if err != nil {
+		panic(errnie.Err(errnie.Validation, "balances fixture load failed", err))
+	}
+
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(raw, &payload); err != nil {
+		panic(errnie.Err(errnie.Validation, "balances fixture decode failed", err))
+	}
+
+	for _, entry := range payload["data"].([]any) {
+		row := entry.(map[string]any)
+
+		if row["asset"] != quote {
+			continue
+		}
+
+		payload["data"] = []any{row}
+		encoded, encodeErr := sonic.Marshal(payload)
+
+		if encodeErr != nil {
+			panic(errnie.Err(errnie.Validation, "balances fixture encode failed", encodeErr))
+		}
+
+		return &Fixture{sequence: [][]byte{encoded}}
+	}
+
+	panic(errnie.Err(errnie.NotFound, "balances fixture quote wallet missing", nil))
 }
 
 /*
@@ -175,8 +211,4 @@ func (fixture *Fixture) Generate() iter.Seq[[]byte] {
 			}
 		}
 	}
-}
-
-func (fixture *Fixture) Frames() iter.Seq[tests.Frame] {
-	return tests.FrameSequence(fixture.Generate())
 }

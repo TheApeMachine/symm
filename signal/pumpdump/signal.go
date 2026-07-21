@@ -2,6 +2,8 @@ package pumpdump
 
 import (
 	"context"
+	"slices"
+	"sort"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -92,70 +94,117 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Calculate(
 	frame *types.MarketFrame,
 ) ([]*types.Measurement, error) {
-	if err := signal.ingest(frame.Trades, frame.Books); err != nil {
-		return nil, err
-	}
-
 	if types.FrameInterest(frame)&types.StreamTicker == 0 {
+		if err := signal.ingest(frame.Trades, frame.Books); err != nil {
+			return nil, err
+		}
+
 		return nil, nil
 	}
 
-	rows := frame.Tickers
-	out := make([]*types.Measurement, 0, len(rows))
+	tickers := slices.Clone(frame.Tickers)
+	trades := slices.Clone(frame.Trades)
+	books := slices.Clone(frame.Books)
+	sort.SliceStable(tickers, func(left, right int) bool {
+		return tickers[left].Timestamp.Before(tickers[right].Timestamp)
+	})
+	sort.SliceStable(trades, func(left, right int) bool {
+		return trades[left].Timestamp.Before(trades[right].Timestamp)
+	})
+	sort.SliceStable(books, func(left, right int) bool {
+		return books[left].Timestamp.Before(books[right].Timestamp)
+	})
 
-	for _, row := range rows {
-		if row.Symbol == "" || row.Last == nil || row.Last.Sign() <= 0 {
-			continue
+	out := make([]*types.Measurement, 0, len(tickers))
+	tradeIndex := 0
+	bookIndex := 0
+
+	for _, row := range tickers {
+		for tradeIndex < len(trades) &&
+			!trades[tradeIndex].Timestamp.After(row.Timestamp) {
+			if err := signal.ingest(trades[tradeIndex:tradeIndex+1], nil); err != nil {
+				return nil, err
+			}
+
+			tradeIndex++
 		}
 
-		book := signal.books[row.Symbol]
-		volume := signal.volume[row.Symbol]
+		for bookIndex < len(books) &&
+			!books[bookIndex].Timestamp.After(row.Timestamp) {
+			if err := signal.ingest(nil, books[bookIndex:bookIndex+1]); err != nil {
+				return nil, err
+			}
 
-		if book == nil || volume <= 0 {
-			continue
+			bookIndex++
 		}
 
-		mid := book.Mid()
-		spread := book.Spread()
-
-		if mid <= 0 || spread <= 0 {
-			continue
-		}
-
-		bid := mid - spread/2
-		ask := mid + spread/2
-
-		output, ready, maturity, err := signal.ignition.Measure(equation.IgnitionInput{
-			Symbol: row.Symbol,
-			Volume: volume,
-			Last:   row.Last.Float64(),
-			Bid:    bid,
-			Ask:    ask,
-			At:     row.Timestamp,
-		})
+		measurements, err := signal.measure(row)
 
 		if err != nil {
-			panic(errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				err.Error(),
-				err,
-			)))
-		}
-
-		measurements, err := ignitionMeasurements(
-			row.Symbol, row.Timestamp, output, maturity, ready,
-			bid, ask,
-		)
-
-		if err != nil {
-			errnie.Error(errnie.Err(errnie.Validation, err.Error(), err))
-			continue
+			return nil, err
 		}
 
 		out = append(out, measurements...)
 	}
 
+	if err := signal.ingest(trades[tradeIndex:], books[bookIndex:]); err != nil {
+		return nil, err
+	}
+
 	return out, nil
+}
+
+/*
+measure derives one ticker observation from the causally preceding tape state.
+*/
+func (signal *Signal) measure(row kraken.TickerData) ([]*types.Measurement, error) {
+	if row.Symbol == "" || row.Last == nil || row.Last.Sign() <= 0 {
+		return nil, nil
+	}
+
+	book := signal.books[row.Symbol]
+	volume := signal.volume[row.Symbol]
+
+	if book == nil || volume <= 0 {
+		return nil, nil
+	}
+
+	mid := book.Mid()
+	spread := book.Spread()
+
+	if mid <= 0 || spread <= 0 {
+		return nil, nil
+	}
+
+	bid := mid - spread/2
+	ask := mid + spread/2
+
+	output, ready, maturity, err := signal.ignition.Measure(equation.IgnitionInput{
+		Symbol: row.Symbol,
+		Volume: volume,
+		Last:   row.Last.Float64(),
+		Bid:    bid,
+		Ask:    ask,
+		At:     row.Timestamp,
+	})
+
+	if err != nil {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			err.Error(),
+			err,
+		)
+	}
+
+	return ignitionMeasurements(
+		row.Symbol,
+		row.Timestamp,
+		output,
+		maturity,
+		ready,
+		bid,
+		ask,
+	)
 }
 
 /*

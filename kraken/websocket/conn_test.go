@@ -19,6 +19,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
+	level3fixture "github.com/theapemachine/symm/tests/fixtures/level3"
+	marketsignal "github.com/theapemachine/symm/tests/fixtures/signal"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -294,6 +296,33 @@ func TestAPIApplyLevel3Peekable(t *testing.T) {
 			So(ok, ShouldBeTrue)
 			So(best, ShouldEqual, 100.0)
 		})
+	})
+}
+
+/*
+TestAPIInjectLevel3 proves generated Kraken snapshots and updates preserve the
+production Level3 checksum chain across consecutive market states.
+*/
+func TestAPIInjectLevel3(t *testing.T) {
+	Convey("Given a fixture-driven Level3 connection", t, func() {
+		symbols := []string{"SIM1/USD"}
+		signal := marketsignal.New(symbols)
+		fixture := level3fixture.NewMarket(symbols, signal)
+		live := newLevel3Consumer(context.Background(), symbols, 10)
+		defer live.Close()
+
+		for _, state := range []marketsignal.State{
+			marketsignal.Baseline,
+			marketsignal.Baseline,
+			marketsignal.FastPump,
+		} {
+			signal.Transition(state)
+
+			for payload := range fixture.Generate() {
+				err := live.ApplyLevel3(payload)
+				SoMsg(string(payload), err, ShouldBeNil)
+			}
+		}
 	})
 }
 

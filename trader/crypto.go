@@ -51,6 +51,7 @@ type Crypto struct {
 	checkpointAt   atomic.Int64
 	checkpointSlot atomic.Pointer[types.Recovery]
 	snapshot       atomic.Pointer[types.Recovery]
+	thesis         atomic.Pointer[types.Thesis]
 	trading        atomic.Bool
 }
 
@@ -125,6 +126,7 @@ func NewCrypto(
 	}
 
 	crypto.snapshot.Store(snapshot)
+	crypto.thesis.Store(thesis)
 	crypto.tick.Store(thesis.Tick)
 
 	return crypto, nil
@@ -176,53 +178,79 @@ func (crypto *Crypto) Run() error {
 				continue
 			}
 
-			frame, err := crypto.market.Cut()
+			err := crypto.Tick()
 
 			if errnie.IsPreconditionFailed(err) {
 				time.Sleep(budget)
 				continue
 			}
 
-			tick := crypto.tick.Add(1)
-
-			errnie.Error(audit.Phase(crypto.recorder, tick, "cut", map[string]any{
-				"tickers": len(frame.Tickers),
-				"trades":  len(frame.Trades),
-				"books":   len(frame.Books),
-			}))
-
-			thesis := crypto.planner.Update(nil, frame, tick)
-
-			candidates := 0
-
-			thesis.Positions.Range(func(key, value any) bool {
-				candidates++
-				return true
-			})
-
-			select {
-			case crypto.uiHub.Messages <- datura.Map[any]{"tick": datura.Map[any]{
-				"count":        thesis.Tick,
-				"measurements": types.ObservationCount(thesis.Measurements),
-				"candidates":   candidates,
-				"open":         crypto.desk.HoldingCount(),
-				"completed":    true,
-				"phase":        "complete",
-			}}.Marshal():
-			default:
+			if err != nil {
+				errnie.Error(err)
+				crypto.status = types.ERROR
+				return
 			}
-
-			errnie.Error(audit.Record(crypto.recorder, "tick", map[string]any{
-				"tick":         thesis.Tick,
-				"measurements": types.ObservationCount(thesis.Measurements),
-				"decisions":    len(thesis.Decisions),
-				"forecasts":    len(thesis.Forecasts),
-				"completed":    true,
-			}))
 		}
 	}()
 
 	return nil
+}
+
+/*
+Tick processes one complete ingress cut through the production planner. Run and
+the deterministic market decorator share this exact system transition.
+*/
+func (crypto *Crypto) Tick() error {
+	frame, err := crypto.market.Cut()
+
+	if err != nil {
+		return err
+	}
+
+	tick := crypto.tick.Add(1)
+	errnie.Error(audit.Phase(crypto.recorder, tick, "cut", map[string]any{
+		"tickers": len(frame.Tickers),
+		"trades":  len(frame.Trades),
+		"books":   len(frame.Books),
+	}))
+
+	thesis := crypto.planner.Update(nil, frame, tick)
+	crypto.thesis.Store(thesis)
+	candidates := 0
+
+	thesis.Positions.Range(func(key, value any) bool {
+		candidates++
+		return true
+	})
+
+	select {
+	case crypto.uiHub.Messages <- datura.Map[any]{"tick": datura.Map[any]{
+		"count":        thesis.Tick,
+		"measurements": types.ObservationCount(thesis.Measurements),
+		"candidates":   candidates,
+		"open":         crypto.desk.HoldingCount(),
+		"completed":    true,
+		"phase":        "complete",
+	}}.Marshal():
+	default:
+	}
+
+	errnie.Error(audit.Record(crypto.recorder, "tick", map[string]any{
+		"tick":         thesis.Tick,
+		"measurements": types.ObservationCount(thesis.Measurements),
+		"decisions":    len(thesis.Decisions),
+		"forecasts":    len(thesis.Forecasts),
+		"completed":    true,
+	}))
+
+	return nil
+}
+
+/*
+Thesis returns the latest completed planner result published by Tick.
+*/
+func (crypto *Crypto) Thesis() *types.Thesis {
+	return crypto.thesis.Load()
 }
 
 /*

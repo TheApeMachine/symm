@@ -5,6 +5,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
+	marketsignal "github.com/theapemachine/symm/tests/fixtures/signal"
 )
 
 func TestNewFixture(t *testing.T) {
@@ -54,22 +55,21 @@ func TestNewFixture(t *testing.T) {
 	})
 }
 
-func TestFixtureFrames(t *testing.T) {
-	Convey("Given a level3 update fixture", t, func() {
-		fixture := NewFixture(UPDATE, 2)
+/*
+BenchmarkFixture_Generate measures exact-decimal Level3 transition rendering.
+*/
+func BenchmarkFixture_Generate(b *testing.B) {
+	signal := marketsignal.New([]string{"SIM1/USD", "SIM2/USD", "SIM3/USD"})
+	fixture := NewMarket([]string{"SIM1/USD", "SIM2/USD", "SIM3/USD"}, signal)
+	b.ReportAllocs()
 
-		Convey("When frames are requested", func() {
-			count := 0
+	for b.Loop() {
+		signal.Transition(marketsignal.Baseline)
 
-			for frame := range fixture.Frames() {
-				So(frame.Channel, ShouldEqual, "level3")
-				So(frame.Type, ShouldEqual, "update")
-				count++
+		for payload := range fixture.Generate() {
+			if len(payload) == 0 {
+				b.Fatal("empty Level3 payload")
 			}
-
-			Convey("Then every generated frame should be typed", func() {
-				So(count, ShouldEqual, 2)
-			})
-		})
-	})
+		}
+	}
 }

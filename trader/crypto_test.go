@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
@@ -140,8 +139,7 @@ func TestCryptoRun(t *testing.T) {
 				`}]}`,
 		))
 		desk := broker.NewDesk(nil, nil, nil, balance)
-		hub, err := ui.NewHub(ctx, nil, balance, channel)
-		So(err, ShouldBeNil)
+		hub := ui.NewHub(ctx, nil, balance, channel)
 		t.Cleanup(func() {
 			if err := hub.Close(); err != nil {
 				t.Error(err)
@@ -202,13 +200,14 @@ func TestCryptoRun(t *testing.T) {
 			}`))
 			deadline := time.Now().Add(time.Second)
 
-			for crypto.tick.Load() == 0 && time.Now().Before(deadline) {
+			for crypto.Thesis().Tick == 0 && time.Now().Before(deadline) {
 				runtime.Gosched()
 			}
 
 			Convey("Then the runtime reports ready and advances the tick", func() {
 				So(crypto.Status(), ShouldEqual, types.READY)
 				So(crypto.tick.Load(), ShouldEqual, 1)
+				So(crypto.Thesis().Tick, ShouldEqual, 1)
 
 				published := int64(0)
 				deadline = time.Now().Add(time.Second)
@@ -234,49 +233,6 @@ func TestCryptoRun(t *testing.T) {
 
 				So(published, ShouldEqual, 1)
 			})
-		})
-	})
-}
-
-/*
-TestCryptoTradePointerHoldings proves enter submission reads the pointer shape
-admit/planner store on Thesis.Holdings — a value assertion panics at runtime.
-*/
-func TestCryptoTradePointerHoldings(t *testing.T) {
-	previousDepth := viper.Get("market.l3_depth")
-	previousInterval := viper.Get("signals.fluid.integration_interval")
-	previousTrack := viper.Get("signals.feed_track_capacity")
-	t.Cleanup(func() { viper.Set("market.l3_depth", previousDepth) })
-	t.Cleanup(func() { viper.Set("signals.fluid.integration_interval", previousInterval) })
-	t.Cleanup(func() { viper.Set("signals.feed_track_capacity", previousTrack) })
-	viper.Set("market.l3_depth", 10)
-	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
-	viper.Set("signals.feed_track_capacity", 128)
-
-	Convey("Given an enter decision backed by a pointer holding", t, func() {
-		ctx := context.Background()
-		booter := system.NewBooter(ctx, nil)
-		analyzer, err := logic.NewAnalyzer(ctx, booter, nil, nil, nil, nil, nil)
-		So(err, ShouldBeNil)
-
-		crypto := &Crypto{
-			desk:    broker.NewDesk(nil, nil, nil, nil),
-			planner: testPlanner(ctx, nil, analyzer),
-		}
-		thesis := types.NewThesis(nil, nil)
-		holding := types.NewHolding(
-			ctx,
-			"BTC/USD",
-			decimal.NewFromFloat64(0.01),
-		)
-		thesis.Holdings.Store("BTC/USD", holding)
-		thesis.Decisions = []types.Decision{{
-			Symbol: "BTC/USD",
-			Action: "enter",
-		}}
-
-		Convey("When trade submits the enter", func() {
-			So(func() { crypto.planner.Update(thesis, nil, 0) }, ShouldNotPanic)
 		})
 	})
 }
