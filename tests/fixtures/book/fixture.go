@@ -5,6 +5,7 @@ import (
 	"hash/crc32"
 	"iter"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,7 +30,7 @@ type Fixture struct {
 	sequence [][]byte
 	template []byte
 	signal   *marketsignal.Signal
-	previous map[string]float64
+	previous map[string]map[string]any
 	typ      FixtureType
 }
 
@@ -64,7 +65,7 @@ func NewMarket(symbols []string, signal *marketsignal.Signal) *Fixture {
 	return &Fixture{
 		template: raw,
 		signal:   signal,
-		previous: make(map[string]float64, len(symbols)),
+		previous: make(map[string]map[string]any, len(symbols)),
 		typ:      SNAPSHOT,
 	}
 }
@@ -139,47 +140,19 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 
 	for index, sample := range samples {
 		row := clone(template)
-		bid := sample.Price - marketsignal.PriceIncrement
-		ask := sample.Price + marketsignal.PriceIncrement
-		increment := marketsignal.PriceIncrement
-		quantity := sample.Volume * 100
-
 		row["symbol"] = sample.Symbol
-		fixture.inject(row, "bids", bid, -increment, quantity)
-		fixture.inject(row, "asks", ask, increment, quantity)
+		fixture.inject(row, "bids", sample.Bids)
+		fixture.inject(row, "asks", sample.Asks)
 		row["timestamp"] = sample.At
 		row["checksum"] = fixture.checksum(row)
+		current := clone(row)
 
 		if fixture.typ == UPDATE {
-			previous := clone(template)
-			fixture.inject(
-				previous,
-				"bids",
-				fixture.previous[sample.Symbol]-marketsignal.PriceIncrement,
-				-marketsignal.PriceIncrement,
-				quantity,
-			)
-			fixture.inject(
-				previous,
-				"asks",
-				fixture.previous[sample.Symbol]+marketsignal.PriceIncrement,
-				marketsignal.PriceIncrement,
-				quantity,
-			)
-
-			for _, side := range []string{"bids", "asks"} {
-				deletes := previous[side].([]any)
-
-				for _, entry := range deletes {
-					entry.(map[string]any)["qty"] = 0.0
-				}
-
-				row[side] = append(deletes, row[side].([]any)...)
-			}
+			row = fixture.delta(fixture.previous[sample.Symbol], current)
 		}
 
 		rows[index] = row
-		fixture.previous[sample.Symbol] = sample.Price
+		fixture.previous[sample.Symbol] = current
 	}
 
 	payload["data"] = rows
@@ -196,24 +169,83 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 }
 
 /*
-inject moves one complete template side while retaining its depth and relative
-liquidity distribution.
+inject aggregates the authoritative Level3 orders into Kraken L2 price levels.
 */
 func (fixture *Fixture) inject(
 	row map[string]any,
 	side string,
-	price float64,
-	increment float64,
-	quantity float64,
+	orders []marketsignal.Order,
 ) {
-	levels := row[side].([]any)
-	scale := quantity / number(levels[0].(map[string]any), "qty")
+	aggregated := make(map[float64]float64, len(orders))
 
-	for index, entry := range levels {
-		level := entry.(map[string]any)
-		level["price"] = round(price + increment*float64(index))
-		level["qty"] = round(number(level, "qty") * scale)
+	for _, order := range orders {
+		aggregated[order.Price] += order.Qty
 	}
+
+	prices := make([]float64, 0, len(aggregated))
+
+	for price := range aggregated {
+		prices = append(prices, price)
+	}
+
+	sort.Float64s(prices)
+
+	if side == "bids" {
+		sort.Sort(sort.Reverse(sort.Float64Slice(prices)))
+	}
+
+	levels := make([]any, len(prices))
+
+	for index, price := range prices {
+		levels[index] = map[string]any{"price": price, "qty": round(aggregated[price])}
+	}
+
+	row[side] = levels
+}
+
+/*
+delta emits only changed and removed L2 price levels from two coherent states.
+*/
+func (fixture *Fixture) delta(
+	previous map[string]any,
+	current map[string]any,
+) map[string]any {
+	update := map[string]any{
+		"symbol":    current["symbol"],
+		"timestamp": current["timestamp"],
+		"checksum":  current["checksum"],
+	}
+
+	for _, side := range []string{"bids", "asks"} {
+		prior := map[float64]float64{}
+
+		for _, entry := range previous[side].([]any) {
+			level := entry.(map[string]any)
+			prior[number(level, "price")] = number(level, "qty")
+		}
+
+		changes := make([]any, 0)
+
+		for _, entry := range current[side].([]any) {
+			level := entry.(map[string]any)
+			price := number(level, "price")
+			quantity := number(level, "qty")
+
+			if prior[price] != quantity {
+				changes = append(changes, level)
+			}
+
+			delete(prior, price)
+		}
+
+		for price := range prior {
+			changes = append(changes, map[string]any{"price": price, "qty": 0.0})
+		}
+
+		update[side] = changes
+	}
+
+	return update
 }
 
 /*

@@ -7,6 +7,7 @@ import (
 	"iter"
 	"math"
 	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -32,6 +33,58 @@ of testing scenarios.
 type Fixture struct {
 	horizon  int
 	sequence [][]byte
+}
+
+/*
+Frame injects the current paper ledger into the Kraken balance template.
+*/
+func Frame(balances map[string]float64, typ FixtureType) []byte {
+	raw, err := fixtureFiles.ReadFile("fixtures/" + string(SNAPSHOT) + ".json")
+
+	if err != nil {
+		panic(errnie.Err(errnie.Validation, "balances fixture load failed", err))
+	}
+
+	var payload map[string]any
+
+	if err := sonic.Unmarshal(raw, &payload); err != nil {
+		panic(errnie.Err(errnie.Validation, "balances fixture decode failed", err))
+	}
+
+	assets := make([]string, 0, len(balances))
+
+	for asset := range balances {
+		assets = append(assets, asset)
+	}
+
+	sort.Strings(assets)
+	rows := make([]map[string]any, len(assets))
+
+	for index, asset := range assets {
+		balance := balances[asset]
+		rows[index] = map[string]any{
+			"asset":       asset,
+			"asset_class": "currency",
+			"balance":     balance,
+			"available":   balance,
+			"reserved":    0,
+			"wallets": []map[string]any{{
+				"type":    "spot",
+				"id":      "main",
+				"balance": balance,
+			}},
+		}
+	}
+
+	payload["data"] = rows
+	payload["type"] = string(typ)
+	encoded, err := sonic.Marshal(payload)
+
+	if err != nil {
+		panic(errnie.Err(errnie.Validation, "balances fixture encode failed", err))
+	}
+
+	return encoded
 }
 
 func NewFixture(typ FixtureType, horizon int) *Fixture {
@@ -80,6 +133,9 @@ func NewMarket(quote string) *Fixture {
 		if row["asset"] != quote {
 			continue
 		}
+
+		row["available"] = row["balance"]
+		row["reserved"] = 0.0
 
 		payload["data"] = []any{row}
 		encoded, encodeErr := sonic.Marshal(payload)

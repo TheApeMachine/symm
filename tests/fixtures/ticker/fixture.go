@@ -3,7 +3,6 @@ package ticker
 import (
 	"embed"
 	"iter"
-	"math"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -29,8 +28,6 @@ type Fixture struct {
 	sequence [][]byte
 	template []byte
 	signal   *marketsignal.Signal
-	volume   map[string]float64
-	opening  map[string]float64
 	typ      FixtureType
 }
 
@@ -56,7 +53,7 @@ func NewFixture(typ FixtureType, horizon int) *Fixture {
 NewMarket creates a ticker fixture that injects shared market states into the
 Kraken update template for every simulated symbol.
 */
-func NewMarket(symbols []string, signal *marketsignal.Signal) *Fixture {
+func NewMarket(_ []string, signal *marketsignal.Signal) *Fixture {
 	raw, err := fixtureFiles.ReadFile("fixtures/" + string(SNAPSHOT) + ".json")
 
 	if err != nil {
@@ -66,8 +63,6 @@ func NewMarket(symbols []string, signal *marketsignal.Signal) *Fixture {
 	return &Fixture{
 		template: raw,
 		signal:   signal,
-		volume:   make(map[string]float64, len(symbols)),
-		opening:  make(map[string]float64, len(symbols)),
 		typ:      SNAPSHOT,
 	}
 }
@@ -106,8 +101,6 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 	}
 
 	rows := make([]map[string]any, len(samples))
-	spread := 2 * marketsignal.PriceIncrement
-
 	for index, sample := range samples {
 		row := map[string]any{}
 
@@ -115,29 +108,20 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 			row[key] = value
 		}
 
-		if fixture.opening[sample.Symbol] == 0 {
-			fixture.opening[sample.Symbol] = sample.Price
-		}
-
-		fixture.volume[sample.Symbol] += sample.Volume
-		opening := fixture.opening[sample.Symbol]
-		change := sample.Price - opening
-		bid := math.Round(
-			(sample.Price-spread/2)/marketsignal.PriceIncrement,
-		) * marketsignal.PriceIncrement
-		ask := math.Round(
-			(sample.Price+spread/2)/marketsignal.PriceIncrement,
-		) * marketsignal.PriceIncrement
+		opening := sample.Statistics.Open
+		change := sample.TradePrice - opening
+		bid, bidQty := touch(sample.Bids, "buy")
+		ask, askQty := touch(sample.Asks, "sell")
 		row["symbol"] = sample.Symbol
 		row["bid"] = bid
-		row["bid_qty"] = sample.Volume
+		row["bid_qty"] = bidQty
 		row["ask"] = ask
-		row["ask_qty"] = sample.Volume
-		row["last"] = sample.Price
-		row["volume"] = fixture.volume[sample.Symbol]
-		row["vwap"] = sample.Price
-		row["low"] = math.Min(opening, sample.Price)
-		row["high"] = math.Max(opening, sample.Price)
+		row["ask_qty"] = askQty
+		row["last"] = sample.TradePrice
+		row["volume"] = sample.Statistics.Volume
+		row["vwap"] = sample.Statistics.VWAP
+		row["low"] = sample.Statistics.Low
+		row["high"] = sample.Statistics.High
 		row["change"] = change
 		row["change_pct"] = change / opening * 100
 		row["timestamp"] = sample.At
@@ -155,6 +139,29 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 	fixture.typ = UPDATE
 
 	return encoded
+}
+
+/*
+touch aggregates every authoritative order resting at the best price.
+*/
+func touch(orders []marketsignal.Order, side string) (float64, float64) {
+	price := orders[0].Price
+
+	for _, order := range orders[1:] {
+		if side == "buy" && order.Price > price || side == "sell" && order.Price < price {
+			price = order.Price
+		}
+	}
+
+	quantity := 0.0
+
+	for _, order := range orders {
+		if order.Price == price {
+			quantity += order.Qty
+		}
+	}
+
+	return price, quantity
 }
 
 /*

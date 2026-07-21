@@ -7,6 +7,7 @@ import (
 	"iter"
 	"maps"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -156,10 +157,8 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 	for index, sample := range samples {
 		row := clone(template)
 
-		increment := marketsignal.PriceIncrement
-		quantity := sample.Volume * 100
-		fixture.inject(row, "bids", sample.Price-increment, -increment, quantity, sample.At)
-		fixture.inject(row, "asks", sample.Price+increment, increment, quantity, sample.At)
+		fixture.inject(row, "bids", sample.Bids)
+		fixture.inject(row, "asks", sample.Asks)
 		row["symbol"] = sample.Symbol
 		row["timestamp"] = sample.At
 		row["checksum"] = fixture.checksum(row)
@@ -187,35 +186,55 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 }
 
 /*
-inject writes one complete resting side while preserving template order identities.
+inject writes one authoritative resting side into the Kraken JSON template.
 */
 func (fixture *Fixture) inject(
 	row map[string]any,
 	side string,
-	price float64,
-	increment float64,
-	quantity float64,
-	at time.Time,
+	orders []marketsignal.Order,
 ) {
-	orders := row[side].([]any)
+	orders = append([]marketsignal.Order(nil), orders...)
+	slices.SortFunc(orders, func(left, right marketsignal.Order) int {
+		if side == "bids" {
+			return -cmp(left.Price, right.Price)
+		}
 
-	for index, entry := range orders {
-		order := entry.(map[string]any)
+		return cmp(left.Price, right.Price)
+	})
+	encoded := make([]any, len(orders))
+
+	for index, source := range orders {
+		order := map[string]any{}
+		order["order_id"] = source.ID
 		order["limit_price"] = json.Number(strconv.FormatFloat(
-			round(price+increment*float64(index)),
+			source.Price,
 			'f',
 			8,
 			64,
 		))
 		order["order_qty"] = json.Number(strconv.FormatFloat(
-			round(quantity/float64(len(orders))),
+			source.Qty,
 			'f',
 			8,
 			64,
 		))
-		order["timestamp"] = at
-		delete(order, "event")
+		order["timestamp"] = source.At
+		encoded[index] = order
 	}
+
+	row[side] = encoded
+}
+
+func cmp(left, right float64) int {
+	if left < right {
+		return -1
+	}
+
+	if left > right {
+		return 1
+	}
+
+	return 0
 }
 
 /*
@@ -232,18 +251,39 @@ func (fixture *Fixture) update(
 	}
 
 	for _, side := range []string{"bids", "asks"} {
-		events := make([]any, 0, len(previous[side].([]any))+len(current[side].([]any)))
+		prior := make(map[string]map[string]any)
 
 		for _, entry := range previous[side].([]any) {
-			order := maps.Clone(entry.(map[string]any))
-			order["event"] = "delete"
-			events = append(events, order)
+			order := entry.(map[string]any)
+			prior[order["order_id"].(string)] = order
 		}
 
+		events := make([]any, 0)
+
 		for _, entry := range current[side].([]any) {
-			order := maps.Clone(entry.(map[string]any))
-			order["event"] = "add"
-			events = append(events, order)
+			order := entry.(map[string]any)
+			orderID := order["order_id"].(string)
+			before, exists := prior[orderID]
+			event := "add"
+
+			if exists {
+				event = "modify"
+			}
+
+			if !exists || before["limit_price"] != order["limit_price"] ||
+				before["order_qty"] != order["order_qty"] {
+				changed := maps.Clone(order)
+				changed["event"] = event
+				events = append(events, changed)
+			}
+
+			delete(prior, orderID)
+		}
+
+		for _, order := range prior {
+			removed := maps.Clone(order)
+			removed["event"] = "delete"
+			events = append(events, removed)
 		}
 
 		row[side] = events

@@ -316,7 +316,7 @@ func TestAPIInjectLevel3(t *testing.T) {
 			marketsignal.Baseline,
 			marketsignal.FastPump,
 		} {
-			signal.Transition(state)
+			So(signal.Transition(state), ShouldBeNil)
 
 			for payload := range fixture.Generate() {
 				err := live.ApplyLevel3(payload)

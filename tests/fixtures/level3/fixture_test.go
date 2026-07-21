@@ -64,7 +64,7 @@ func BenchmarkFixture_Generate(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		signal.Transition(marketsignal.Baseline)
+		So(signal.Transition(marketsignal.Baseline), ShouldBeNil)
 
 		for payload := range fixture.Generate() {
 			if len(payload) == 0 {

@@ -62,6 +62,14 @@ func NewMarket(symbols []string, priceIncrement float64) *Fixture {
 	data := payload["data"].(map[string]any)
 	template := data["pairs"].([]any)[0].(map[string]any)
 	pairs := make([]map[string]any, len(symbols))
+	assets := map[string]map[string]any{}
+	pricePrecision := 0
+	priceText := fmt.Sprintf("%.10f", priceIncrement)
+	priceText = strings.TrimRight(priceText, "0")
+
+	if point := strings.IndexByte(priceText, '.'); point >= 0 {
+		pricePrecision = len(priceText) - point - 1
+	}
 
 	for index, symbol := range symbols {
 		pair := make(map[string]any, len(template))
@@ -83,11 +91,31 @@ func NewMarket(symbols []string, priceIncrement float64) *Fixture {
 		pair["symbol"] = symbol
 		pair["base"] = parts[0]
 		pair["quote"] = parts[1]
+		pair["price_precision"] = pricePrecision
 		pair["tick_size"] = priceIncrement
 		pair["price_increment"] = priceIncrement
 		pairs[index] = pair
+
+		for _, id := range parts {
+			assets[id] = map[string]any{
+				"id":                id,
+				"status":            "enabled",
+				"precision":         8,
+				"precision_display": 2,
+				"borrowable":        false,
+				"collateral_value":  0.0,
+				"margin_rate":       0.0,
+			}
+		}
 	}
 
+	assetRows := make([]map[string]any, 0, len(assets))
+
+	for _, row := range assets {
+		assetRows = append(assetRows, row)
+	}
+
+	data["assets"] = assetRows
 	data["pairs"] = pairs
 	encoded, err := sonic.Marshal(payload)
 

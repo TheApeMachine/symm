@@ -12,210 +12,304 @@ import (
 
 type metricValues = map[types.MetricType]map[string]float64
 
+const (
+	baselineStep = -1
+	currentStep  = -2
+	firstStep    = 0
+)
+
 /*
-TestMeasure proves a fixture-driven pump reaches the real pumpdump
-signal through the production boot graph and produces ignition for every
-simulated symbol.
+metricReference identifies the snapshot and metric supplying an expectation.
+*/
+type metricReference struct {
+	step   int
+	metric types.MetricType
+}
+
+/*
+metricMaximum expresses the production composite contract without assuming
+which evidence family dominates a particular market step.
+*/
+type metricMaximum []types.MetricType
+
+/*
+metricExpectation pairs one GoConvey assertion with a literal or metric reference.
+*/
+type metricExpectation struct {
+	metric   types.MetricType
+	assert   Assertion
+	expected any
+}
+
+/*
+TestMeasure proves every pump transition against the pumpdump measurements
+produced through the complete production boot graph.
 */
 func TestMeasure(t *testing.T) {
 	metrics := []types.MetricType{
-		types.MetricRVOL,
-		types.MetricPrecursor,
-		types.MetricSpread,
-		types.MetricCompression,
-		types.MetricIgnition,
-		types.MetricTrend,
-		types.MetricExhaustion,
-		types.MetricStrength,
+		types.MetricRVOL, types.MetricPrecursor, types.MetricSpread,
+		types.MetricCompression, types.MetricIgnition, types.MetricTrend,
+		types.MetricExhaustion, types.MetricStrength,
+	}
+	baseline := []metricExpectation{
+		{types.MetricRVOL, ShouldBeGreaterThan, 0.0},
+		{types.MetricPrecursor, ShouldBeGreaterThanOrEqualTo, 0.0},
+		{types.MetricSpread, ShouldBeGreaterThan, 0.0},
+		{types.MetricCompression, ShouldEqual, 0.0},
+		{types.MetricIgnition, ShouldBeGreaterThanOrEqualTo, 0.0},
+		{types.MetricTrend, ShouldBeGreaterThanOrEqualTo, 0.0},
+		{types.MetricExhaustion, ShouldBeGreaterThanOrEqualTo, 0.0},
+		{types.MetricStrength, ShouldEqual, metricMaximum{
+			types.MetricCompression, types.MetricIgnition,
+			types.MetricTrend, types.MetricExhaustion,
+		}},
 	}
 	cases := []struct {
 		name   string
 		states []tests.MarketState
-		assert func(metricValues, []metricValues, []metricValues, []string)
+		peaks  []metricExpectation
+		latest []metricExpectation
 	}{
 		{
-			name:   "When the market transitions into a fast pump it should detect ignition",
+			name:   "When a fast pump ignites",
 			states: []tests.MarketState{tests.MarketStateFastPump},
-			assert: func(calm metricValues, peaks, _ []metricValues, symbols []string) {
-				pump := peaks[0]
-
-				for _, symbol := range symbols {
-					So(pump[types.MetricRVOL][symbol], ShouldBeGreaterThan, calm[types.MetricRVOL][symbol])
-					So(pump[types.MetricPrecursor][symbol], ShouldBeGreaterThan, calm[types.MetricPrecursor][symbol])
-					So(pump[types.MetricSpread][symbol], ShouldAlmostEqual, calm[types.MetricSpread][symbol])
-					So(pump[types.MetricCompression][symbol], ShouldEqual, 0)
-					So(pump[types.MetricIgnition][symbol], ShouldBeGreaterThan, calm[types.MetricIgnition][symbol])
-					So(pump[types.MetricTrend][symbol], ShouldBeGreaterThan, calm[types.MetricTrend][symbol])
-					So(pump[types.MetricExhaustion][symbol], ShouldBeGreaterThanOrEqualTo, 0)
-					So(pump[types.MetricStrength][symbol], ShouldEqual, pump[types.MetricIgnition][symbol])
-				}
+			peaks: []metricExpectation{
+				{types.MetricRVOL, ShouldBeGreaterThan, metricReference{baselineStep, types.MetricRVOL}},
+				{types.MetricPrecursor, ShouldBeGreaterThan, metricReference{baselineStep, types.MetricPrecursor}},
+				{types.MetricSpread, ShouldAlmostEqual, metricReference{baselineStep, types.MetricSpread}},
+				{types.MetricCompression, ShouldEqual, 0.0},
+				{types.MetricIgnition, ShouldBeGreaterThan, metricReference{baselineStep, types.MetricIgnition}},
+				{types.MetricTrend, ShouldBeGreaterThan, metricReference{baselineStep, types.MetricTrend}},
+				{types.MetricExhaustion, ShouldBeGreaterThanOrEqualTo, 0.0},
+				{types.MetricStrength, ShouldEqual, metricMaximum{
+					types.MetricCompression, types.MetricIgnition,
+					types.MetricTrend, types.MetricExhaustion,
+				}},
 			},
 		},
 		{
-			name: "When a fast pump transitions into a fast dump it should replace lift with rejection",
+			name: "When a fast pump becomes a fast dump",
 			states: []tests.MarketState{
-				tests.MarketStateFastPump,
-				tests.MarketStateFastDump,
+				tests.MarketStateFastPump, tests.MarketStateFastDump,
 			},
-			assert: func(_ metricValues, peaks, latest []metricValues, symbols []string) {
-				pump, dump := peaks[0], peaks[1]
-
-				for _, symbol := range symbols {
-					So(dump[types.MetricRVOL][symbol], ShouldBeGreaterThan, 0)
-					So(latest[1][types.MetricRVOL][symbol], ShouldBeLessThan, pump[types.MetricRVOL][symbol])
-					So(dump[types.MetricPrecursor][symbol], ShouldBeLessThan, pump[types.MetricPrecursor][symbol])
-					So(dump[types.MetricSpread][symbol], ShouldAlmostEqual, pump[types.MetricSpread][symbol])
-					So(dump[types.MetricCompression][symbol], ShouldEqual, 0)
-					So(dump[types.MetricIgnition][symbol], ShouldBeLessThan, pump[types.MetricIgnition][symbol])
-					So(dump[types.MetricTrend][symbol], ShouldBeLessThan, pump[types.MetricTrend][symbol])
-					So(dump[types.MetricExhaustion][symbol], ShouldBeGreaterThan, 0)
-					So(dump[types.MetricStrength][symbol], ShouldEqual, dump[types.MetricExhaustion][symbol])
-				}
+			peaks: []metricExpectation{
+				{types.MetricRVOL, ShouldBeGreaterThan, 0.0},
+				{types.MetricPrecursor, ShouldBeLessThan, metricReference{firstStep, types.MetricPrecursor}},
+				{types.MetricSpread, ShouldAlmostEqual, metricReference{firstStep, types.MetricSpread}},
+				{types.MetricCompression, ShouldEqual, 0.0},
+				{types.MetricIgnition, ShouldBeLessThan, metricReference{firstStep, types.MetricIgnition}},
+				{types.MetricTrend, ShouldBeLessThan, metricReference{firstStep, types.MetricTrend}},
+				{types.MetricExhaustion, ShouldBeGreaterThan, 0.0},
+				{types.MetricStrength, ShouldEqual, metricMaximum{
+					types.MetricCompression, types.MetricIgnition,
+					types.MetricTrend, types.MetricExhaustion,
+				}},
+			},
+			latest: []metricExpectation{
+				{types.MetricRVOL, ShouldBeLessThan, metricReference{firstStep, types.MetricRVOL}},
+				{types.MetricStrength, ShouldEqual, metricMaximum{
+					types.MetricCompression, types.MetricIgnition,
+					types.MetricTrend, types.MetricExhaustion,
+				}},
 			},
 		},
 		{
-			name: "When a fast pump transitions into a slow dump it should detect pump exhaustion",
+			name: "When a fast pump exhausts into a slow dump",
 			states: []tests.MarketState{
-				tests.MarketStateFastPump,
-				tests.MarketStateSlowDump,
+				tests.MarketStateFastPump, tests.MarketStateSlowDump,
 			},
-			assert: func(_ metricValues, peaks, _ []metricValues, symbols []string) {
-				pump, dump := peaks[0], peaks[1]
-
-				for _, symbol := range symbols {
-					So(dump[types.MetricRVOL][symbol], ShouldBeLessThan, pump[types.MetricRVOL][symbol])
-					So(dump[types.MetricPrecursor][symbol], ShouldBeLessThan, pump[types.MetricPrecursor][symbol])
-					So(dump[types.MetricSpread][symbol], ShouldAlmostEqual, pump[types.MetricSpread][symbol])
-					So(dump[types.MetricCompression][symbol], ShouldEqual, 0)
-					So(dump[types.MetricIgnition][symbol], ShouldBeLessThan, pump[types.MetricIgnition][symbol])
-					So(dump[types.MetricTrend][symbol], ShouldBeLessThan, pump[types.MetricTrend][symbol])
-					So(dump[types.MetricExhaustion][symbol], ShouldBeGreaterThan, 0)
-					So(dump[types.MetricStrength][symbol], ShouldEqual, dump[types.MetricExhaustion][symbol])
-					So(dump[types.MetricStrength][symbol], ShouldBeLessThan, pump[types.MetricStrength][symbol])
-				}
+			peaks: []metricExpectation{
+				{types.MetricRVOL, ShouldBeLessThan, metricReference{firstStep, types.MetricRVOL}},
+				{types.MetricPrecursor, ShouldBeLessThan, metricReference{firstStep, types.MetricPrecursor}},
+				{types.MetricSpread, ShouldAlmostEqual, metricReference{firstStep, types.MetricSpread}},
+				{types.MetricCompression, ShouldEqual, 0.0},
+				{types.MetricIgnition, ShouldBeLessThan, metricReference{firstStep, types.MetricIgnition}},
+				{types.MetricTrend, ShouldBeLessThan, metricReference{firstStep, types.MetricTrend}},
+				{types.MetricExhaustion, ShouldBeGreaterThan, 0.0},
+				{types.MetricStrength, ShouldEqual, metricMaximum{
+					types.MetricCompression, types.MetricIgnition,
+					types.MetricTrend, types.MetricExhaustion,
+				}},
+				{types.MetricStrength, ShouldBeLessThan, metricReference{firstStep, types.MetricStrength}},
+			},
+			latest: []metricExpectation{
+				{types.MetricStrength, ShouldEqual, metricMaximum{
+					types.MetricCompression, types.MetricIgnition,
+					types.MetricTrend, types.MetricExhaustion,
+				}},
 			},
 		},
 		{
-			name:   "When the market transitions into a slow pump it should detect sustained ignition",
+			name:   "When a slow pump sustains ignition",
 			states: []tests.MarketState{tests.MarketStateSlowPump},
-			assert: func(calm metricValues, peaks, _ []metricValues, symbols []string) {
-				pump := peaks[0]
-
-				for _, symbol := range symbols {
-					So(pump[types.MetricRVOL][symbol], ShouldBeGreaterThan, 0)
-					So(pump[types.MetricPrecursor][symbol], ShouldBeGreaterThan, calm[types.MetricPrecursor][symbol])
-					So(pump[types.MetricSpread][symbol], ShouldAlmostEqual, calm[types.MetricSpread][symbol])
-					So(pump[types.MetricCompression][symbol], ShouldEqual, 0)
-					So(pump[types.MetricIgnition][symbol], ShouldBeGreaterThan, calm[types.MetricIgnition][symbol])
-					So(pump[types.MetricTrend][symbol], ShouldBeGreaterThan, calm[types.MetricTrend][symbol])
-					So(pump[types.MetricExhaustion][symbol], ShouldBeGreaterThanOrEqualTo, 0)
-					So(pump[types.MetricStrength][symbol], ShouldEqual, pump[types.MetricIgnition][symbol])
-				}
+			peaks: []metricExpectation{
+				{types.MetricRVOL, ShouldBeGreaterThan, 0.0},
+				{types.MetricPrecursor, ShouldBeGreaterThan, metricReference{baselineStep, types.MetricPrecursor}},
+				{types.MetricSpread, ShouldAlmostEqual, metricReference{baselineStep, types.MetricSpread}},
+				{types.MetricCompression, ShouldEqual, 0.0},
+				{types.MetricIgnition, ShouldBeGreaterThan, metricReference{baselineStep, types.MetricIgnition}},
+				{types.MetricTrend, ShouldBeGreaterThan, metricReference{baselineStep, types.MetricTrend}},
+				{types.MetricExhaustion, ShouldBeGreaterThanOrEqualTo, 0.0},
+				{types.MetricStrength, ShouldEqual, metricMaximum{
+					types.MetricCompression, types.MetricIgnition,
+					types.MetricTrend, types.MetricExhaustion,
+				}},
 			},
 		},
 		{
-			name:   "When the market transitions into a slow dump it should not classify rejection as ignition",
+			name:   "When a slow dump rejects without ignition",
 			states: []tests.MarketState{tests.MarketStateSlowDump},
-			assert: func(calm metricValues, peaks, _ []metricValues, symbols []string) {
-				dump := peaks[0]
-
-				for _, symbol := range symbols {
-					So(dump[types.MetricRVOL][symbol], ShouldBeGreaterThan, 0)
-					So(dump[types.MetricPrecursor][symbol], ShouldEqual, 0)
-					So(dump[types.MetricSpread][symbol], ShouldAlmostEqual, calm[types.MetricSpread][symbol])
-					So(dump[types.MetricCompression][symbol], ShouldEqual, 0)
-					So(dump[types.MetricIgnition][symbol], ShouldEqual, 0)
-					So(dump[types.MetricTrend][symbol], ShouldEqual, 0)
-					So(dump[types.MetricExhaustion][symbol], ShouldBeGreaterThan, 0)
-					So(dump[types.MetricStrength][symbol], ShouldEqual, dump[types.MetricExhaustion][symbol])
-				}
+			peaks: []metricExpectation{
+				{types.MetricRVOL, ShouldBeGreaterThan, 0.0},
+				{types.MetricPrecursor, ShouldEqual, 0.0},
+				{types.MetricSpread, ShouldAlmostEqual, metricReference{baselineStep, types.MetricSpread}},
+				{types.MetricCompression, ShouldEqual, 0.0},
+				{types.MetricIgnition, ShouldEqual, 0.0},
+				{types.MetricTrend, ShouldEqual, 0.0},
+				{types.MetricExhaustion, ShouldBeGreaterThan, 0.0},
+				{types.MetricStrength, ShouldEqual, metricMaximum{
+					types.MetricCompression, types.MetricIgnition,
+					types.MetricTrend, types.MetricExhaustion,
+				}},
+			},
+			latest: []metricExpectation{
+				{types.MetricStrength, ShouldEqual, metricMaximum{
+					types.MetricCompression, types.MetricIgnition,
+					types.MetricTrend, types.MetricExhaustion,
+				}},
 			},
 		},
 		{
-			name: "When a slow dump reverses into a fast pump it should retain rejection until clearing the baseline",
+			name: "When a slow dump reverses into a fast pump",
 			states: []tests.MarketState{
-				tests.MarketStateSlowDump,
-				tests.MarketStateFastPump,
+				tests.MarketStateSlowDump, tests.MarketStateFastPump,
 			},
-			assert: func(_ metricValues, peaks, _ []metricValues, symbols []string) {
-				rejection, recovery := peaks[0], peaks[1]
-
-				for _, symbol := range symbols {
-					So(recovery[types.MetricRVOL][symbol], ShouldBeGreaterThan, rejection[types.MetricRVOL][symbol])
-					So(recovery[types.MetricPrecursor][symbol], ShouldEqual, 0)
-					So(recovery[types.MetricSpread][symbol], ShouldAlmostEqual, rejection[types.MetricSpread][symbol])
-					So(recovery[types.MetricCompression][symbol], ShouldEqual, 0)
-					So(recovery[types.MetricIgnition][symbol], ShouldEqual, 0)
-					So(recovery[types.MetricTrend][symbol], ShouldEqual, 0)
-					So(recovery[types.MetricExhaustion][symbol], ShouldBeGreaterThan, 0)
-					So(recovery[types.MetricStrength][symbol], ShouldEqual, recovery[types.MetricExhaustion][symbol])
-				}
+			peaks: []metricExpectation{
+				{types.MetricRVOL, ShouldBeGreaterThan, metricReference{firstStep, types.MetricRVOL}},
+				{types.MetricPrecursor, ShouldEqual, 0.0},
+				{types.MetricSpread, ShouldAlmostEqual, metricReference{firstStep, types.MetricSpread}},
+				{types.MetricCompression, ShouldEqual, 0.0},
+				{types.MetricIgnition, ShouldEqual, 0.0},
+				{types.MetricTrend, ShouldEqual, 0.0},
+				{types.MetricExhaustion, ShouldBeGreaterThan, 0.0},
+				{types.MetricStrength, ShouldEqual, metricMaximum{
+					types.MetricCompression, types.MetricIgnition,
+					types.MetricTrend, types.MetricExhaustion,
+				}},
+			},
+			latest: []metricExpectation{
+				{types.MetricStrength, ShouldEqual, metricMaximum{
+					types.MetricCompression, types.MetricIgnition,
+					types.MetricTrend, types.MetricExhaustion,
+				}},
 			},
 		},
 	}
 
-	Convey("Given a baseline market state", t, func() {
+	Convey("Given a baseline market", t, func() {
 		market := tests.NewMarket(t.Context(), 3)
+		So(market.Bootstrap(), ShouldBeNil)
 		wired, err := stack.NewBooter(t.Context()).Test(market)
 		So(err, ShouldBeNil)
+		Reset(func() { wired.Close(); market.Close() })
 
-		Reset(func() {
-			wired.Close()
-			market.Close()
-		})
+		So(market.Warmup(wired.Crypto.Tick), ShouldBeNil)
+		calm := utils.LatestMeasurements(
+			wired.Crypto.Thesis().Measurements, types.SourcePumpDump, metrics,
+		)
 
-		tests.WithMarket(market, []tests.MarketState{tests.MarketStateBaseline}, func() {
-			So(wired.Crypto.Tick(), ShouldBeNil)
-			calm := utils.LatestMeasurements(
-				wired.Crypto.Thesis().Measurements,
-				types.SourcePumpDump,
-				metrics,
-			)
-
-			for _, metric := range metrics {
-				So(calm[metric], ShouldHaveLength, len(market.Symbols))
-			}
+		for _, expectation := range baseline {
+			metric := expectation.metric
+			So(calm[metric], ShouldHaveLength, len(market.Symbols))
 
 			for _, symbol := range market.Symbols {
-				So(calm[types.MetricRVOL][symbol], ShouldBeGreaterThan, 0)
-				So(calm[types.MetricPrecursor][symbol], ShouldBeGreaterThanOrEqualTo, 0)
-				So(calm[types.MetricSpread][symbol], ShouldBeGreaterThan, 0)
-				So(calm[types.MetricCompression][symbol], ShouldEqual, 0)
-				So(calm[types.MetricIgnition][symbol], ShouldBeGreaterThanOrEqualTo, 0)
-				So(calm[types.MetricTrend][symbol], ShouldBeGreaterThanOrEqualTo, 0)
-				So(calm[types.MetricExhaustion][symbol], ShouldBeGreaterThanOrEqualTo, 0)
-				So(calm[types.MetricStrength][symbol], ShouldBeGreaterThanOrEqualTo, calm[types.MetricIgnition][symbol])
-			}
+				expected := expectation.expected
 
-			for _, testCase := range cases {
-				Convey(testCase.name, func() {
-					peaks := make([]metricValues, 0, len(testCase.states))
-					latest := make([]metricValues, 0, len(testCase.states))
+				if reference, ok := expected.(metricReference); ok {
+					expected = calm[reference.metric][symbol]
+				}
 
-					for _, state := range testCase.states {
-						market.Transition(state)
-						So(wired.Crypto.Tick(), ShouldBeNil)
-						measurements := wired.Crypto.Thesis().Measurements
-						peaks = append(peaks, utils.PeakMeasurements(
-							measurements,
-							types.SourcePumpDump,
-							metrics,
-						))
-						latest = append(latest, utils.LatestMeasurements(
-							measurements,
-							types.SourcePumpDump,
-							metrics,
-						))
+				if maximum, ok := expected.(metricMaximum); ok {
+					expected = 0.0
+
+					for _, source := range maximum {
+						expected = max(expected.(float64), calm[source][symbol])
 					}
+				}
 
-					for _, metric := range metrics {
-						So(peaks[len(peaks)-1][metric], ShouldHaveLength, len(market.Symbols))
-					}
-
-					testCase.assert(calm, peaks, latest, market.Symbols)
-				})
+				So(calm[metric][symbol], expectation.assert, expected)
 			}
-		})()
+		}
+
+		for _, testCase := range cases {
+			Convey(testCase.name, func() {
+				peaks := make([]metricValues, 0, len(testCase.states))
+				latest := make([]metricValues, 0, len(testCase.states))
+
+				for _, state := range testCase.states {
+					measurements := []*types.Measurement{}
+					So(market.Transition(state, func() error {
+						err := wired.Crypto.Tick()
+						measurements = append(
+							measurements,
+							wired.Crypto.Thesis().Measurements...,
+						)
+						return err
+					}), ShouldBeNil)
+					peaks = append(peaks, utils.PeakMeasurements(measurements, types.SourcePumpDump, metrics))
+					latest = append(latest, utils.LatestMeasurements(
+						wired.Crypto.Thesis().Measurements,
+						types.SourcePumpDump,
+						metrics,
+					))
+				}
+
+				for _, assertions := range []struct {
+					actual       metricValues
+					expectations []metricExpectation
+				}{
+					{peaks[len(peaks)-1], testCase.peaks},
+					{latest[len(latest)-1], testCase.latest},
+				} {
+					for _, expectation := range assertions.expectations {
+						metric := expectation.metric
+						So(assertions.actual[metric], ShouldHaveLength, len(market.Symbols))
+
+						for _, symbol := range market.Symbols {
+							expected := expectation.expected
+
+							if reference, ok := expected.(metricReference); ok {
+								var values metricValues
+
+								switch reference.step {
+								case baselineStep:
+									values = calm
+								case currentStep:
+									values = assertions.actual
+								default:
+									values = peaks[reference.step]
+								}
+
+								expected = values[reference.metric][symbol]
+							}
+
+							if maximum, ok := expected.(metricMaximum); ok {
+								expected = 0.0
+
+								for _, source := range maximum {
+									expected = max(
+										expected.(float64),
+										assertions.actual[source][symbol],
+									)
+								}
+							}
+
+							So(assertions.actual[metric][symbol], expectation.assert, expected)
+						}
+					}
+				}
+			})
+		}
 	})
 }
 
@@ -224,6 +318,11 @@ BenchmarkMeasure exercises one full production tick against generated markets.
 */
 func BenchmarkMeasure(b *testing.B) {
 	market := tests.NewMarket(b.Context(), 3)
+
+	if err := market.Bootstrap(); err != nil {
+		b.Fatal(err)
+	}
+
 	wired, err := stack.NewBooter(b.Context()).Test(market)
 
 	if err != nil {
@@ -236,9 +335,7 @@ func BenchmarkMeasure(b *testing.B) {
 	state := tests.MarketStateFastPump
 
 	for b.Loop() {
-		market.Transition(state)
-
-		if err := wired.Crypto.Tick(); err != nil {
+		if err := market.Transition(state, wired.Crypto.Tick); err != nil {
 			b.Fatal(err)
 		}
 

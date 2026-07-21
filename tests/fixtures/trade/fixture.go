@@ -26,8 +26,6 @@ type Fixture struct {
 	sequence [][]byte
 	template []byte
 	signal   *marketsignal.Signal
-	previous map[string]float64
-	tradeID  uint64
 	typ      FixtureType
 }
 
@@ -52,26 +50,16 @@ func NewFixture(typ FixtureType, horizon int) *Fixture {
 NewMarket creates a trade fixture that renders one Kraken trade per simulated
 symbol from each shared market state.
 */
-func NewMarket(symbols []string, signal *marketsignal.Signal) *Fixture {
+func NewMarket(_ []string, signal *marketsignal.Signal) *Fixture {
 	raw, err := fixtureFiles.ReadFile("fixtures/" + string(SNAPSHOT) + ".json")
 
 	if err != nil {
 		panic(errnie.Err(errnie.Validation, "trade fixture load failed", err))
 	}
 
-	var payload map[string]any
-
-	if err := sonic.Unmarshal(raw, &payload); err != nil {
-		panic(errnie.Err(errnie.Validation, "trade fixture decode failed", err))
-	}
-
-	row := payload["data"].([]any)[0].(map[string]any)
-
 	return &Fixture{
 		template: raw,
 		signal:   signal,
-		previous: make(map[string]float64, len(symbols)),
-		tradeID:  uint64(row["trade_id"].(float64)),
 		typ:      SNAPSHOT,
 	}
 }
@@ -141,30 +129,26 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 		panic(errnie.Err(errnie.Validation, "trade fixture decode failed", err))
 	}
 
-	rows := make([]map[string]any, len(samples))
+	rows := make([]map[string]any, 0, len(samples))
 
-	for index, sample := range samples {
+	for _, sample := range samples {
+		if !sample.Traded {
+			continue
+		}
+
 		row := map[string]any{}
 
 		for key, value := range payload["data"].([]any)[0].(map[string]any) {
 			row[key] = value
 		}
 
-		side := "buy"
-
-		if previous := fixture.previous[sample.Symbol]; previous > sample.Price {
-			side = "sell"
-		}
-
-		fixture.tradeID++
 		row["symbol"] = sample.Symbol
-		row["side"] = side
-		row["price"] = sample.Price
+		row["side"] = sample.Side
+		row["price"] = sample.TradePrice
 		row["qty"] = sample.Volume
-		row["trade_id"] = fixture.tradeID
+		row["trade_id"] = sample.TradeID
 		row["timestamp"] = sample.At
-		rows[index] = row
-		fixture.previous[sample.Symbol] = sample.Price
+		rows = append(rows, row)
 	}
 
 	payload["data"] = rows

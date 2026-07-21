@@ -2,7 +2,6 @@ package signal
 
 import (
 	"iter"
-	"math"
 	"time"
 )
 
@@ -35,112 +34,181 @@ const (
 var epoch = time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)
 
 /*
+Order is one authoritative resting Level3 order from which the fixtures derive
+both Kraken book feeds and the ticker touch.
+*/
+type Order struct {
+	ID    string
+	Side  string
+	Price float64
+	Qty   float64
+	At    time.Time
+}
+
+/*
+Statistics contains the trade-derived session values written into ticker
+frames so no downstream fixture independently invents market history.
+*/
+type Statistics struct {
+	Open   float64
+	High   float64
+	Low    float64
+	Volume float64
+	VWAP   float64
+}
+
+/*
+Quote is the current executable touch used by the simulated paper venue.
+*/
+type Quote struct {
+	Bid float64
+	Ask float64
+}
+
+/*
 Sample is one shared per-symbol market value written into every JSON template.
 */
 type Sample struct {
-	Symbol string
-	Price  float64
-	Volume float64
-	At     time.Time
+	Symbol     string
+	Side       string
+	Price      float64
+	TradePrice float64
+	Volume     float64
+	TradeID    uint64
+	BookVolume float64
+	At         time.Time
+	Traded     bool
+	Bids       []Order
+	Asks       []Order
+	Statistics Statistics
+}
+
+type symbolState struct {
+	mid      float64
+	bids     []Order
+	asks     []Order
+	volume   float64
+	notional float64
+	open     float64
+	high     float64
+	low      float64
+	lastSide string
+	last     float64
+	lastQty  float64
+	tradeID  uint64
 }
 
 /*
 Signal generates replayable per-symbol market tapes for the current transition.
 */
 type Signal struct {
-	symbols []string
-	levels  map[string]float64
-	at      time.Time
-	phase   int
-	state   State
-	tape    [][]Sample
+	symbols   []string
+	markets   map[string]*symbolState
+	at        time.Time
+	phase     int
+	state     State
+	tape      [][]Sample
+	nextID    uint64
+	nextTrade uint64
 }
 
 /*
 New creates one deterministic signal shared by all fixtures in a market.
 */
 func New(symbols []string) *Signal {
-	levels := make(map[string]float64, len(symbols))
+	return NewAt(symbols, epoch)
+}
+
+/*
+NewAt creates a deterministic signal at an explicit event time so tests can
+align a simulated clock without relying on wall time.
+*/
+func NewAt(symbols []string, at time.Time) *Signal {
+	signal := &Signal{
+		symbols: append([]string(nil), symbols...),
+		markets: make(map[string]*symbolState, len(symbols)),
+		at:      at,
+	}
 
 	for _, symbol := range symbols {
-		levels[symbol] = initialPrice
+		signal.markets[symbol] = &symbolState{mid: initialPrice}
+		signal.seed(symbol)
 	}
 
-	return &Signal{
-		symbols: append([]string(nil), symbols...),
-		levels:  levels,
-		at:      epoch,
+	return signal
+}
+
+/*
+Bootstrap exposes one current-state sample without advancing the scenario clock
+or warming any signal history.
+*/
+func (signal *Signal) Bootstrap() {
+	samples := make([]Sample, len(signal.symbols))
+
+	for index, symbol := range signal.symbols {
+		side := "buy"
+
+		if index%2 != 0 {
+			side = "sell"
+		}
+
+		_, err := signal.execute(symbol, side, idleVolume)
+
+		if err != nil {
+			panic(err)
+		}
+
+		samples[index] = signal.sample(symbol, true)
 	}
+
+	signal.tape = [][]Sample{samples}
+}
+
+/*
+Now returns the deterministic event time of the current simulated state.
+*/
+func (signal *Signal) Now() time.Time {
+	return signal.at
+}
+
+/*
+Quote returns the executable touch derived from the authoritative L3 state.
+*/
+func (signal *Signal) Quote(symbol string) (Quote, bool) {
+	market, exists := signal.markets[symbol]
+
+	if !exists || len(market.bids) == 0 || len(market.asks) == 0 {
+		return Quote{}, false
+	}
+
+	return Quote{
+		Bid: market.bids[touchIndex(market.bids, "buy")].Price,
+		Ask: market.asks[touchIndex(market.asks, "sell")].Price,
+	}, true
 }
 
 /*
 Transition generates a finite event leg followed by idle samples at its result.
 */
-func (signal *Signal) Transition(state State) {
-	signal.state = state
-	signal.tape = signal.tape[:0]
-	leg := state.observations()
-	total := leg
+func (signal *Signal) Transition(state State) error {
+	steps, err := signal.Scenario(state)
 
-	if state != Baseline {
-		total += settleObservations
+	if err != nil {
+		return err
 	}
 
-	start := make(map[string]float64, len(signal.levels))
-	target := make(map[string]float64, len(signal.levels))
+	tape := make([][]Sample, 0, len(steps))
 
-	for symbol, level := range signal.levels {
-		start[symbol] = level
-		target[symbol] = level * (1 + state.direction()*eventMoveFraction)
-
-		if state == Baseline {
-			target[symbol] = level
-		}
-	}
-
-	for index := range total {
-		interval := time.Second
-
-		if index < leg {
-			interval = state.interval()
+	for _, step := range steps {
+		if err := signal.Apply(step); err != nil {
+			return err
 		}
 
-		signal.at = signal.at.Add(interval)
-		step := make([]Sample, len(signal.symbols))
-
-		for symbolIndex, symbol := range signal.symbols {
-			center := target[symbol]
-
-			if state != Baseline && index < leg {
-				progress := float64(index+1) / float64(leg)
-				progress = progress * progress * (3 - 2*progress)
-				center = start[symbol] + (target[symbol]-start[symbol])*progress
-			}
-
-			wave := math.Sin(float64(signal.phase + index + symbolIndex))
-			price := center * (1 + idleAmplitudeFraction*wave)
-			volume := idleVolume * (1 + idleVolumeWaveFraction*math.Abs(wave))
-
-			if state != Baseline && index < leg {
-				volume = state.volume()
-			}
-
-			step[symbolIndex] = Sample{
-				Symbol: symbol,
-				Price:  math.Round(price/PriceIncrement) * PriceIncrement,
-				Volume: volume,
-				At:     signal.at,
-			}
-		}
-
-		signal.tape = append(signal.tape, step)
+		tape = append(tape, signal.tape[0])
 	}
 
-	for symbol, level := range target {
-		signal.levels[symbol] = level
-	}
-
-	signal.phase += total
+	signal.tape = tape
+	return nil
 }
 
 /*
@@ -175,6 +243,13 @@ func (state State) observations() int {
 	default:
 		return idleObservations
 	}
+}
+
+/*
+valid rejects unknown regimes before they can emit a zero-direction event.
+*/
+func (state State) valid() bool {
+	return state >= Baseline && state <= SlowDump
 }
 
 /*

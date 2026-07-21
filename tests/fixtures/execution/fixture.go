@@ -23,6 +23,8 @@ type Options struct {
 	LastPrice   string
 	Cost        string
 	OrderStatus string
+	OrderType   string
+	ExecType    string
 	CumQty      string
 	CumCost     string
 	AvgPrice    string
@@ -102,6 +104,14 @@ func Frame(options Options) []byte {
 	row["last_price"] = options.LastPrice
 	row["cost"] = options.Cost
 	row["order_status"] = options.OrderStatus
+
+	if options.OrderType != "" {
+		row["order_type"] = options.OrderType
+	}
+
+	if options.ExecType != "" {
+		row["exec_type"] = options.ExecType
+	}
 	row["cum_qty"] = options.CumQty
 	row["cum_cost"] = options.CumCost
 	row["avg_price"] = options.AvgPrice
