@@ -116,7 +116,9 @@ export const paintXrayFactsResonance = (
 	}
 
 	if (energyRef.current !== null) {
-		energyRef.current.textContent = formatMetric(finiteMetric(resonance?.energy));
+		energyRef.current.textContent = formatMetric(
+			finiteMetric(resonance?.energy),
+		);
 	}
 
 	if (surpriseRef.current !== null) {
@@ -129,10 +131,7 @@ export const paintXrayFactsResonance = (
 paintXrayFactsManifold paints coherence from the current DRAW manifold batch
 into the facts panel.
 */
-export const paintXrayFactsManifold = (
-	value: unknown,
-	focusSymbol: string,
-) => {
+export const paintXrayFactsManifold = (value: unknown, focusSymbol: string) => {
 	const manifold = focusedFrame<ManifoldFrame>(value, focusSymbol);
 	const reading = manifoldReading(manifold);
 	const coherenceMag2 = finiteMetric(reading?.coherenceMag2);
@@ -155,8 +154,8 @@ export const paintXrayFactsManifold = (
 };
 
 /*
-paintXrayFactsMeasurements paints flow-event and branching facts from the
-current DRAW hawkes measurement batch.
+paintXrayFactsMeasurements paints cumulative flow-event and current branching
+facts from retained Hawkes measurement history.
 */
 export const paintXrayFactsMeasurements = (
 	value: unknown,
@@ -290,8 +289,8 @@ export const paintXrayManifold = (value: unknown, focusSymbol: string) => {
 };
 
 /*
-paintXrayManifoldMeasurements updates momentum eigenmode from the current DRAW
-hawkes batch when manifold coherence is unavailable in that tick.
+paintXrayManifoldMeasurements updates momentum eigenmode from retained Hawkes
+history when manifold coherence is unavailable.
 */
 export const paintXrayManifoldMeasurements = (
 	value: unknown,

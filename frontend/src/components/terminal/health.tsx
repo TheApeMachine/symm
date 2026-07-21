@@ -268,8 +268,8 @@ const paintHealth = () => {
 };
 
 /*
-paintHealthMeasurements refreshes system health from the current DRAW
-measurements batch and the cached tick.
+paintHealthMeasurements refreshes system health from retained measurement
+history and the cached engine tick.
 */
 export const paintHealthMeasurements = (
 	value: unknown,

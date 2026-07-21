@@ -2,9 +2,13 @@ import { createRef } from "react";
 import type { ManifoldFrame, ResonanceFrame } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
 import {
+	finiteNumber,
+	frameAuxMatrix,
 	fluidGridDimensions,
 	terminalFluidDisplayLatticeFromFrame,
-} from "#/components/terminal/charts";
+	terminalFluidParticlesFromFrame,
+} from "#/components/terminal/charts-frame";
+import { aggregateFluidParticles } from "#/components/terminal/fluid-particles";
 import {
 	isFluidFieldMatrix,
 	terminalFluidFieldStats,
@@ -12,12 +16,21 @@ import {
 
 const manifoldWaitingRef = createRef<HTMLDivElement>();
 const manifoldGridRef = createRef<HTMLDivElement>();
-const manifoldOutliersRef = createRef<HTMLDivElement>();
-const manifoldPeakRef = createRef<HTMLDivElement>();
+const manifoldPopulationRef = createRef<HTMLDivElement>();
+const manifoldProjectionRef = createRef<HTMLDivElement>();
+const manifoldCoherenceRef = createRef<HTMLDivElement>();
+const manifoldGasRef = createRef<HTMLDivElement>();
 let manifoldMetaFocus = "";
+let manifoldMetaLayer = terminalStore.state.fieldLayer;
 
 const resonanceFooterRef = createRef<HTMLSpanElement>();
 const resonanceTitleRef = createRef<HTMLSpanElement>();
+
+const formatFieldMaximum = (value: number): string =>
+	new Intl.NumberFormat("en", {
+		maximumSignificantDigits: 3,
+		notation: "scientific",
+	}).format(value);
 
 /*
 paintManifoldMeta updates metadata only from a complete focused projection.
@@ -27,50 +40,71 @@ field, while a focus change returns the shell to an explicit waiting state.
 export const paintManifoldMeta = (value: unknown, focusSymbol: string) => {
 	const focusChanged = manifoldMetaFocus !== focusSymbol;
 	manifoldMetaFocus = focusSymbol;
+	const layer = terminalStore.state.fieldLayer;
+	const layerChanged = manifoldMetaLayer !== layer;
+	manifoldMetaLayer = layer;
 	const rows = (
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as ManifoldFrame[];
 	const manifold = rows
 		.filter((frame) => focusSymbol === "" || frame.symbol === focusSymbol)
 		.at(-1);
-	const display = terminalFluidDisplayLatticeFromFrame(manifold ?? null);
+	const display = terminalFluidDisplayLatticeFromFrame(manifold ?? null, layer);
 	const field = isFluidFieldMatrix(display) ? display : [];
 
-	if (field.length === 0 && !focusChanged) {
+	if (field.length === 0 && !focusChanged && !layerChanged) {
 		return;
 	}
 
-	const contour = terminalStore.state.fieldStyle === "Contour";
 	const waiting = field.length === 0;
 	const { columns, rows: gridRows } = fluidGridDimensions(
 		manifold ?? null,
 		field,
 	);
-	const stats = terminalFluidFieldStats(field, contour);
+	const particles = terminalFluidParticlesFromFrame(manifold ?? null);
+	const particleCells = aggregateFluidParticles(particles, columns, gridRows);
+	const coherence = terminalFluidFieldStats(
+		frameAuxMatrix(manifold ?? null, "psiMag2"),
+	);
+	const gas = terminalFluidFieldStats(frameAuxMatrix(manifold ?? null, "rho"));
+	const focusedCount = finiteNumber(manifold?.oscillatorCount);
+	const sharedCount = finiteNumber(manifold?.sharedOscillatorCount);
+	const focusedLabel = String(focusedCount ?? particles.length);
+	const sharedLabel =
+		sharedCount === null ? "unavailable" : String(sharedCount);
+	const hidden = waiting ? "none" : "";
+	const lines = [
+		[manifoldWaitingRef, waiting ? "" : "none", "waiting"],
+		[manifoldGridRef, hidden, `grid ${String(columns)}×${String(gridRows)}`],
+		[
+			manifoldPopulationRef,
+			hidden,
+			`particles ${focusedLabel} focused · ${sharedLabel} shared`,
+		],
+		[
+			manifoldProjectionRef,
+			hidden,
+			`focused projection ${String(particleCells.length)} occupied X–Z cells`,
+		],
+		[
+			manifoldCoherenceRef,
+			hidden,
+			`|ψ|² ${String(coherence.occupied)} active · max ${formatFieldMaximum(coherence.maximum)}`,
+		],
+		[
+			manifoldGasRef,
+			hidden,
+			`gas ρ ${String(gas.occupied)} active · max ${formatFieldMaximum(gas.maximum)}`,
+		],
+	] as const;
 
-	if (manifoldWaitingRef.current !== null) {
-		manifoldWaitingRef.current.style.display = waiting ? "" : "none";
-	}
+	for (const [ref, display, text] of lines) {
+		if (ref.current === null) {
+			continue;
+		}
 
-	if (manifoldGridRef.current !== null) {
-		manifoldGridRef.current.style.display = waiting ? "none" : "";
-		manifoldGridRef.current.textContent = waiting
-			? ""
-			: `grid ${String(columns)}×${String(gridRows)}`;
-	}
-
-	if (manifoldOutliersRef.current !== null) {
-		manifoldOutliersRef.current.style.display = waiting ? "none" : "";
-		manifoldOutliersRef.current.textContent = waiting
-			? ""
-			: `outliers ${String(stats.outliers)}`;
-	}
-
-	if (manifoldPeakRef.current !== null) {
-		manifoldPeakRef.current.style.display = waiting ? "none" : "";
-		manifoldPeakRef.current.textContent = waiting
-			? ""
-			: `peak ${stats.peak.toFixed(2)}`;
+		ref.current.style.display = display;
+		ref.current.textContent = text;
 	}
 };
 
@@ -122,8 +156,10 @@ export const LiveManifoldMeta = (_props: { focusSymbol: string }) => (
 	<div>
 		<div ref={manifoldWaitingRef}>waiting</div>
 		<div ref={manifoldGridRef} />
-		<div ref={manifoldOutliersRef} />
-		<div ref={manifoldPeakRef} />
+		<div ref={manifoldPopulationRef} />
+		<div ref={manifoldProjectionRef} />
+		<div ref={manifoldCoherenceRef} />
+		<div ref={manifoldGasRef} />
 	</div>
 );
 

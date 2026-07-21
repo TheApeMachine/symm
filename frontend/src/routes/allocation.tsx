@@ -100,7 +100,7 @@ export const paintAllocationHoldings = (
 };
 
 /*
-paintAllocationCausal refreshes allocation from the current DRAW causal batch.
+paintAllocationCausal refreshes allocation from retained causal history.
 */
 export const paintAllocationCausal = (value: unknown, _focusSymbol: string) => {
 	lastCausal = asRows<CausalFrame>(value);
@@ -108,7 +108,7 @@ export const paintAllocationCausal = (value: unknown, _focusSymbol: string) => {
 };
 
 /*
-paintAllocationManifold refreshes allocation from the current DRAW manifold batch.
+paintAllocationManifold refreshes allocation from retained manifold history.
 */
 export const paintAllocationManifold = (
 	value: unknown,
@@ -119,7 +119,7 @@ export const paintAllocationManifold = (
 };
 
 /*
-paintAllocationResonance refreshes allocation from the current DRAW resonance batch.
+paintAllocationResonance refreshes allocation from retained resonance history.
 */
 export const paintAllocationResonance = (
 	value: unknown,

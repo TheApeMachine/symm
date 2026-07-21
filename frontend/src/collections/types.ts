@@ -200,6 +200,8 @@ export type ManifoldFrame = Record<string, unknown> & {
 	source: string;
 	symbol: string;
 	at: string;
+	oscillatorCount?: number;
+	sharedOscillatorCount?: number;
 };
 
 export type ResonanceLayer = {

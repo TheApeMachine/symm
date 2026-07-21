@@ -6,7 +6,12 @@ import { paintTerminalPredictionChart } from "#/components/charts/prediction";
 import { paintTerminalResonanceChart } from "#/components/charts/resonance";
 import { paintTerminalSignalHeatmap } from "#/components/charts/signal-heatmap";
 import { paintSignalDetailMeasurements } from "#/components/kernel/detail";
-import { paintCandidateCausal, paintCandidateDecisions, paintCandidateManifold, paintCandidateResonance } from "#/components/terminal/candidate-row";
+import {
+	paintCandidateCausal,
+	paintCandidateDecisions,
+	paintCandidateManifold,
+	paintCandidateResonance,
+} from "#/components/terminal/candidate-row";
 import { paintCognitiveBeam } from "#/components/terminal/cognitive-beam";
 import { paintCrossSection } from "#/components/terminal/cross-section-panel";
 import {
@@ -80,12 +85,43 @@ import {
 	paintAllocationResonance,
 } from "#/routes/allocation";
 import { paintCortex } from "#/routes/cortex";
+import { FrameHistory } from "#/providers/frame-history";
 
+/*
+Paint is one imperative target for a backend frame and the current UI focus.
+*/
 type Paint = (value: unknown, focusSymbol: string) => void;
 
+/*
+HistoryPaint marks a target that consumes the retained temporal projection of
+a stream rather than only the delta carried by the current websocket frame.
+*/
+type HistoryPaint = {
+	paint: Paint;
+	input: "history";
+};
+
+/*
+Drawer owns the primary delta painter and any secondary painters with explicit
+input semantics.
+*/
 type Drawer = {
 	paint: Paint;
-	keys?: Record<string, Paint>;
+	keys?: Record<string, Paint | HistoryPaint>;
+};
+
+/*
+viewportHistoryCapacity retains at most one observation per horizontal CSS
+pixel for each entity, matching the maximum temporal detail a chart can show.
+*/
+export const viewportHistoryCapacity = (): number => {
+	const width = globalThis.innerWidth;
+
+	if (!Number.isFinite(width) || width < 1) {
+		throw new Error(`invalid viewport width for frame history: ${width}`);
+	}
+
+	return Math.floor(width);
 };
 
 /*
@@ -96,15 +132,30 @@ export const drawers = {
 	measurements: {
 		paint: paintKernelList,
 		keys: {
-			hawkes: paintHawkes,
-			signalDetail: paintSignalDetailMeasurements,
-			regimeRadar: paintRegimeRadar,
-			health: paintHealthMeasurements,
-			signalHeatmap: paintTerminalSignalHeatmap,
-			xrayHawkes: paintXrayHawkes,
-			xrayFacts: paintXrayFactsMeasurements,
-			xrayManifold: paintXrayManifoldMeasurements,
-			decisions: paintDecisionsMeasurements,
+			hawkes: { paint: paintHawkes, input: "history" },
+			signalDetail: {
+				paint: paintSignalDetailMeasurements,
+				input: "history",
+			},
+			regimeRadar: { paint: paintRegimeRadar, input: "history" },
+			health: { paint: paintHealthMeasurements, input: "history" },
+			signalHeatmap: {
+				paint: paintTerminalSignalHeatmap,
+				input: "history",
+			},
+			xrayHawkes: { paint: paintXrayHawkes, input: "history" },
+			xrayFacts: {
+				paint: paintXrayFactsMeasurements,
+				input: "history",
+			},
+			xrayManifold: {
+				paint: paintXrayManifoldMeasurements,
+				input: "history",
+			},
+			decisions: {
+				paint: paintDecisionsMeasurements,
+				input: "history",
+			},
 			palette: paintPaletteMeasurements,
 		},
 	},
@@ -158,7 +209,7 @@ export const drawers = {
 			entry: paintDecisionsEntryLine,
 			candidate: paintCandidateCausal,
 			surface: paintDecisionsCausal,
-			allocation: paintAllocationCausal,
+			allocation: { paint: paintAllocationCausal, input: "history" },
 		},
 	},
 	resonance: {
@@ -172,7 +223,10 @@ export const drawers = {
 			facts: paintXrayFactsResonance,
 			candidate: paintCandidateResonance,
 			surface: paintDecisionsResonance,
-			allocation: paintAllocationResonance,
+			allocation: {
+				paint: paintAllocationResonance,
+				input: "history",
+			},
 		},
 	},
 	manifold: {
@@ -184,7 +238,10 @@ export const drawers = {
 			xray: paintXrayManifold,
 			candidate: paintCandidateManifold,
 			surface: paintDecisionsManifold,
-			allocation: paintAllocationManifold,
+			allocation: {
+				paint: paintAllocationManifold,
+				input: "history",
+			},
 		},
 	},
 	cognition: {
@@ -209,7 +266,10 @@ export const drawers = {
 /*
 attach dispatches DRAW frames to drawers, then paintThesis for the thesis shell.
 */
-export const attach = (worker: Worker) => {
+export const attach = (
+	worker: Worker,
+	history = new FrameHistory(viewportHistoryCapacity),
+) => {
 	worker.addEventListener("message", (event: MessageEvent) => {
 		const message = event.data as {
 			type?: string;
@@ -237,8 +297,15 @@ export const attach = (worker: Worker) => {
 				continue;
 			}
 
-			for (const paint of Object.values(drawer.keys)) {
-				paint(value, focusSymbol);
+			const retained = history.retain(name, value);
+
+			for (const target of Object.values(drawer.keys)) {
+				if (typeof target === "function") {
+					target(value, focusSymbol);
+					continue;
+				}
+
+				target.paint(retained, focusSymbol);
 			}
 		}
 

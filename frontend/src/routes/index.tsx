@@ -26,6 +26,7 @@ const RouteComponent = () => {
 	const kernels = useSelector(appStore, (state) => state.kernels);
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
 	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
+	const fieldLayer = useSelector(terminalStore, (state) => state.fieldLayer);
 
 	return (
 		<Flex.Column fullWidth className="h-full min-w-[1120px]">
@@ -49,12 +50,15 @@ const RouteComponent = () => {
 					<Flex.Column className="min-h-0 border-(--line) border-r bg-(--sunken)">
 						<Canvas
 							title="Pilot-wave field"
-							meta="|ψ|² · guidance current · particles · price × time"
+							meta="shared |ψ|² / ρ · focused particles · X relative log price · Z empirical order-age rank · max over Y log size"
 							topRight={<LiveManifoldMeta focusSymbol={focusSymbol} />}
-							legend={<FluidLegend />}
+							legend={<FluidLegend layer={fieldLayer} />}
 							className="flex-[1.45]"
 						>
-							<TerminalFluidChart contour={fieldStyle === "Contour"} />
+							<TerminalFluidChart
+								contour={fieldStyle === "Contour"}
+								layer={fieldLayer}
+							/>
 						</Canvas>
 						<Canvas
 							title={

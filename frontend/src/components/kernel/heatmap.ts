@@ -18,7 +18,7 @@ export const heatmapLabel = (symbol: string): string =>
 
 /*
 buildHeatmapCells collects the latest headline metric per symbol that has a
-reading for the selected source from a flat measurement snapshot.
+reading for the selected source from flat measurement history.
 */
 export const buildHeatmapCells = (
 	measurements: Measurement[],

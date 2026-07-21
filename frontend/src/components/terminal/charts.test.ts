@@ -60,7 +60,7 @@ describe("terminalFluidParticlesFromFrame", () => {
 });
 
 describe("terminalFluidDisplayLatticeFromFrame", () => {
-	it("returns the gas-blended pilot lattice when both fields exist", () => {
+	it("returns physical layers without numerically blending their units", () => {
 		const psiMag2 = [
 			[0.5, 0.1],
 			[0, 0.4],
@@ -75,10 +75,13 @@ describe("terminalFluidDisplayLatticeFromFrame", () => {
 				rho,
 				psiMag2,
 			}),
-		).toEqual([
-			[0.5, 0.1],
-			[0.045000000000000005, 0.4],
-		]);
+		).toEqual(psiMag2);
+		expect(
+			terminalFluidDisplayLatticeFromFrame({ rho, psiMag2 }, "Gas"),
+		).toEqual(rho);
+		expect(
+			terminalFluidDisplayLatticeFromFrame({ rho, psiMag2 }, "Coherence"),
+		).toEqual(psiMag2);
 	});
 
 	it("does not misrepresent a scalar summary as a projected field", () => {

@@ -174,6 +174,7 @@ func (solver *Solver) paint(
 		solver.particles[slot.start:slot.end],
 		projection.Grid,
 	)
+	state.SharedOscillatorCount = len(solver.particles)
 	state.Wave = wave
 	state.PhaseScan = phaseScan
 	state.PhaseReady = len(wave) > 0 && len(phaseScan) == len(wave)

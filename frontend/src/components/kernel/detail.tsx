@@ -45,16 +45,16 @@ const measurementTickCount = (rows: Measurement[]): number => {
 };
 
 /*
-repaintSignalDetail paints SignalDetail from the retained DRAW batch after a
-source click (no store subscription).
+repaintSignalDetail paints SignalDetail from retained measurement history after
+a source click without requiring a store subscription.
 */
 export const repaintSignalDetail = () => {
 	paintSignalDetailMeasurements(lastUniverse, lastFocusSymbol);
 };
 
 /*
-paintSignalDetailMeasurements paints SignalDetail from the current DRAW
-measurements batch and focusSymbol.
+paintSignalDetailMeasurements paints SignalDetail from ordered measurement
+history and the current focusSymbol.
 */
 export const paintSignalDetailMeasurements = (
 	value: unknown,
@@ -126,8 +126,7 @@ export const paintSignalDetailMeasurements = (
 	}
 
 	if (heatmapSectionRef.current !== null) {
-		heatmapSectionRef.current.style.display =
-			headline === null ? "none" : "";
+		heatmapSectionRef.current.style.display = headline === null ? "none" : "";
 	}
 
 	if (heatmapTitleRef.current !== null && headline !== null) {

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-	blendGasIntoPilot,
 	buildGuidanceFlowLattice,
 	buildPilotFlowLattice,
 	isFluidFieldMatrix,
@@ -8,6 +7,7 @@ import {
 	normalizeFlowLattice,
 	normalizeFluidLattice,
 	resampleFluidLattice,
+	resolveFluidDisplayLattice,
 	resolvePilotDisplayLattice,
 	sampleBilinearLattice,
 	terminalFluidFieldStats,
@@ -177,8 +177,8 @@ describe("resolvePilotDisplayLattice", () => {
 	});
 });
 
-describe("blendGasIntoPilot", () => {
-	it("lets sparse ρ fill where |ψ|² is thin without owning bright cells", () => {
+describe("resolveFluidDisplayLattice", () => {
+	it("keeps coherence and gas as separately inspectable quantities", () => {
 		const psiMag2 = [
 			[0.5, 0.1],
 			[0, 0.4],
@@ -188,12 +188,9 @@ describe("blendGasIntoPilot", () => {
 			[0.6, 0.1],
 		];
 
-		const blended = blendGasIntoPilot(psiMag2, rho);
-
-		expect(blended[0][0]).toBeCloseTo(0.5);
-		expect(blended[0][1]).toBeCloseTo(0.36);
-		expect(blended[1][0]).toBeCloseTo(0.27);
-		expect(blended[1][1]).toBeCloseTo(0.4);
+		expect(resolveFluidDisplayLattice(rho, psiMag2, "Composite")).toBe(psiMag2);
+		expect(resolveFluidDisplayLattice(rho, psiMag2, "Coherence")).toBe(psiMag2);
+		expect(resolveFluidDisplayLattice(rho, psiMag2, "Gas")).toBe(rho);
 	});
 });
 
@@ -216,34 +213,21 @@ describe("normalizeFlowLattice", () => {
 });
 
 describe("terminalFluidFieldStats", () => {
-	it("reports grid size, peak, and mad-based outliers", () => {
-		expect(terminalFluidFieldStats(matrix)).toMatchObject({
+	it("reports raw grid occupancy and maximum magnitude", () => {
+		expect(terminalFluidFieldStats(matrix)).toEqual({
 			columns: 3,
 			rows: 3,
-			outliers: 2,
+			maximum: 1,
+			occupied: 7,
 		});
-		expect(terminalFluidFieldStats(matrix).peak).toBeGreaterThan(0.8);
 	});
 
 	it("returns zeroed stats for empty matrices", () => {
 		expect(terminalFluidFieldStats([])).toEqual({
 			columns: 0,
 			rows: 0,
-			peak: 0,
-			outliers: 0,
-		});
-	});
-
-	it("applies contour quantization in contour mode", () => {
-		const contourMatrix = [
-			[0.11, 0.23],
-			[0.35, 0.47],
-		];
-
-		expect(terminalFluidFieldStats(contourMatrix, true)).toMatchObject({
-			columns: 2,
-			rows: 2,
-			peak: 0.96,
+			maximum: 0,
+			occupied: 0,
 		});
 	});
 });

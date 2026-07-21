@@ -1,8 +1,9 @@
 import { clearCanvas, drawGrid } from "#/components/terminal/canvas";
-import { mad, median } from "#/components/terminal/decision-format";
+import type { TerminalFluidParticle } from "#/components/terminal/fluid-particles";
+import type { FluidFieldLayer } from "#/collections/terminal";
+import { median } from "#/components/terminal/decision-format";
 import { colormap } from "#/lib/colormap";
 
-const OUTLIER_MAD = 1.5; // ponytail: fixed MAD multiplier; upgrade path is per-symbol adaptive tail estimation from live deposit dispersion.
 const DISPLAY_GAMMA = 0.55; // ponytail: fixed display gamma so midtones enter the mockup teal band; upgrade path is per-symbol histogram equalization from live lattice occupancy.
 
 const finiteValues = (matrix: number[][]): number[] =>
@@ -67,22 +68,6 @@ const normalizeMatrix = (
 	contour: boolean,
 ): { normalized: number[][]; peak: number } =>
 	normalizeFluidLattice(matrix, contour);
-
-export type TerminalFluidParticle = {
-	source: string;
-	role: string;
-	cellX: number;
-	cellY: number;
-	cellZ: number;
-	phase: number;
-	omega: number;
-	amplitude: number;
-	heat: number;
-	velX: number;
-	velY: number;
-	velZ: number;
-	speed: number;
-};
 
 type FlowLattice = {
 	flowX: number[][];
@@ -235,6 +220,27 @@ export const resolvePilotDisplayLattice = (
 	}
 
 	return [];
+};
+
+/*
+resolveFluidDisplayLattice selects one physical projection without mixing its
+units with the other. Composite uses coherence as its base and draws gas as a
+separately colored overlay.
+*/
+export const resolveFluidDisplayLattice = (
+	rho: number[][],
+	psiMag2: number[][],
+	layer: FluidFieldLayer,
+): number[][] => {
+	if (layer === "Gas") {
+		return isFluidFieldMatrix(rho) ? rho : [];
+	}
+
+	if (layer === "Coherence") {
+		return isFluidFieldMatrix(psiMag2) ? psiMag2 : [];
+	}
+
+	return resolvePilotDisplayLattice(rho, psiMag2);
 };
 
 /*
@@ -492,8 +498,8 @@ export const drawFluidFlowOverlay = (
 export type TerminalFluidFieldStats = {
 	columns: number;
 	rows: number;
-	peak: number;
-	outliers: number;
+	maximum: number;
+	occupied: number;
 };
 
 export type TerminalFluidFieldDrawOptions = {
@@ -501,20 +507,9 @@ export type TerminalFluidFieldDrawOptions = {
 	pressureGradX?: number;
 	pressureGradZ?: number;
 	psiMag2?: number[][];
+	layer?: FluidFieldLayer;
 	guidanceVelX?: number[][];
 	guidanceVelZ?: number[][];
-};
-
-const outlierCount = (values: number[]): number => {
-	if (values.length === 0) {
-		return 0;
-	}
-
-	const center = median(values);
-	const dispersion = mad(values);
-	const threshold = center + OUTLIER_MAD * dispersion;
-
-	return values.filter((value) => value > threshold).length;
 };
 
 type FluidPaintBuffer = {
@@ -782,64 +777,32 @@ export const isFluidFieldMatrix = (matrix: number[][]): boolean => {
 };
 
 /*
-terminalFluidFieldStats derives the terminal field readout from one rho projection.
+terminalFluidFieldStats reports raw occupancy and magnitude without presenting
+display-normalized values as physical measurements.
 */
 export const terminalFluidFieldStats = (
 	matrix: number[][],
-	contour = false,
 ): TerminalFluidFieldStats => {
 	const rows = matrix.length;
 	const columns = matrix[0]?.length ?? 0;
 
 	if (!isFluidFieldMatrix(matrix)) {
-		return { columns: 0, rows: 0, peak: 0, outliers: 0 };
+		return { columns: 0, rows: 0, maximum: 0, occupied: 0 };
 	}
 
-	const { peak } = normalizeMatrix(matrix, contour);
+	const values = finiteValues(matrix);
 
 	return {
 		columns,
 		rows,
-		peak,
-		outliers: outlierCount(finiteValues(matrix)),
+		maximum: values.length > 0 ? Math.max(...values) : 0,
+		occupied: values.filter((value) => value > 0).length,
 	};
 };
 
 /*
-blendGasIntoPilot keeps |ψ|² as the cloud owner while letting sparse ρ deposits
-contribute mass where the coherence field is thin, matching one mockup colormap.
-*/
-export const blendGasIntoPilot = (
-	psiMag2: number[][],
-	rho: number[][],
-): number[][] => {
-	if (!isFluidFieldMatrix(psiMag2)) {
-		return isFluidFieldMatrix(rho) ? rho : [];
-	}
-
-	if (!isFluidFieldMatrix(rho)) {
-		return psiMag2;
-	}
-
-	const rows = psiMag2.length;
-	const columns = psiMag2[0]?.length ?? 0;
-	const alignedRho = latticeMatchesShape(rho, rows, columns)
-		? rho
-		: resampleFluidLattice(rho, rows, columns);
-
-	return psiMag2.map((row, rowIndex) =>
-		row.map((psi, columnIndex) => {
-			const gas = alignedRho[rowIndex]?.[columnIndex] ?? 0;
-			// ponytail: fixed gas contribution under |ψ|²; upgrade path is coherence-weighted mixing from live |ψ|²/ρ ratio statistics.
-
-			return Math.max(psi, gas * 0.45);
-		}),
-	);
-};
-
-/*
-drawFluidField paints the pilot-wave cloud with the frontend/tmp block heatmap
-style, then lays a light guidance current and mockup-scale particle markers.
+drawFluidField paints the selected physical projection, adds gas as a distinct
+overlay in composite mode, then lays the measured guidance current above it.
 */
 export const drawFluidField = (
 	context: CanvasRenderingContext2D,
@@ -851,23 +814,32 @@ export const drawFluidField = (
 ): TerminalFluidFieldStats => {
 	clearCanvas(context, width, height);
 
-	const pilot = resolvePilotDisplayLattice(matrix, options.psiMag2);
-	const primary =
-		options.psiMag2 && isFluidFieldMatrix(options.psiMag2)
-			? blendGasIntoPilot(options.psiMag2, matrix)
-			: pilot;
+	const layer = options.layer ?? "Composite";
+	const primary = resolveFluidDisplayLattice(
+		matrix,
+		options.psiMag2 ?? [],
+		layer,
+	);
 
 	if (!isFluidFieldMatrix(primary)) {
 		drawGrid(context, width, height);
 
-		return { columns: 0, rows: 0, peak: 0, outliers: 0 };
+		return { columns: 0, rows: 0, maximum: 0, occupied: 0 };
 	}
 
-	const { normalized, peak } = normalizeMatrix(primary, contour);
+	const { normalized } = normalizeMatrix(primary, contour);
 	const rows = primary.length;
 	const columns = primary[0]?.length ?? 0;
 
 	drawBlockFluidField(context, width, height, normalized);
+
+	if (
+		layer === "Composite" &&
+		isFluidFieldMatrix(matrix) &&
+		isFluidFieldMatrix(options.psiMag2 ?? [])
+	) {
+		drawGasDensityOverlay(context, width, height, matrix);
+	}
 
 	const guidanceFlow = resolveGuidanceFlowLattice(
 		primary,
@@ -884,52 +856,5 @@ export const drawFluidField = (
 		normalizeFlowLattice(guidanceFlow),
 	);
 
-	return {
-		columns,
-		rows,
-		peak,
-		outliers: outlierCount(finiteValues(primary)),
-	};
+	return terminalFluidFieldStats(primary);
 };
-
-/*
-drawFluidParticles paints mockup-scale particle markers (accent glow + white core)
-for the strongest oscillators on the price-time slice.
-*/
-export const drawFluidParticles = (
-	context: CanvasRenderingContext2D,
-	width: number,
-	height: number,
-	particles: TerminalFluidParticle[],
-	columns: number,
-	rows: number,
-) => {
-	const markers = particles
-		.filter((particle) => particle.amplitude > 0)
-		.sort((left, right) => right.amplitude - left.amplitude)
-		// ponytail: fixed particle ceiling matching the tmp mockup carrier count; upgrade path is amplitude-ranked budgeting from live lattice occupancy.
-		.slice(0, 3);
-
-	for (const particle of markers) {
-		const x = (particle.cellX / Math.max(columns - 1, 1)) * width;
-		const y = (particle.cellZ / Math.max(rows - 1, 1)) * height;
-		const glow = context.createRadialGradient(x, y, 0, x, y, 22);
-
-		glow.addColorStop(0, "rgba(232, 163, 61, 0.95)");
-		glow.addColorStop(1, "rgba(0,0,0,0)");
-		context.fillStyle = glow;
-		context.beginPath();
-		context.arc(x, y, 22, 0, Math.PI * 2);
-		context.fill();
-
-		context.fillStyle = "#fff";
-		context.beginPath();
-		context.arc(x, y, 2.4, 0, Math.PI * 2);
-		context.fill();
-	}
-};
-
-/*
-drawFluidWhaleCarriers remains as a compatibility alias for particle markers.
-*/
-export const drawFluidWhaleCarriers = drawFluidParticles;

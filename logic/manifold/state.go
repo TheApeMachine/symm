@@ -44,34 +44,35 @@ State combines symbol-local market facts with a reading of the one shared
 physical field advanced by the complete observed universe.
 */
 type State struct {
-	Source           string            `json:"source"`
-	Symbol           string            `json:"symbol"`
-	At               time.Time         `json:"at"`
-	Duration         time.Duration     `json:"duration"`
-	Epoch            uint64            `json:"epoch"`
-	ReferencePrice   *decimal.Decimal  `json:"referencePrice"`
-	Spread           float64           `json:"spread"`
-	BuyCapacity      *decimal.Decimal  `json:"buyCapacity"`
-	SellCapacity     *decimal.Decimal  `json:"sellCapacity"`
-	InvalidReason    string            `json:"invalidReason,omitempty"`
-	StressAnisotropy float64           `json:"stressAnisotropy"`
-	Subdivisions     uint32            `json:"subdivisions"`
-	BuyIntensity     float64           `json:"buyIntensity"`
-	SellIntensity    float64           `json:"sellIntensity"`
-	SpectralRadius   float64           `json:"spectralRadius"`
-	Reading          pfluid.Reading    `json:"reading"`
-	OscillatorCount  int               `json:"oscillatorCount"`
-	Replay           bool              `json:"replay,omitempty"`
-	Grid             pfluid.Grid       `json:"grid,omitempty"`
-	Rho              [][]float64       `json:"rho,omitempty"`
-	PsiMag2          [][]float64       `json:"psiMag2,omitempty"`
-	GuidanceVelX     [][]float64       `json:"guidanceVelX,omitempty"`
-	GuidanceVelZ     [][]float64       `json:"guidanceVelZ,omitempty"`
-	Particles        []Particle        `json:"particles,omitempty"`
-	Wave             []pfluid.WaveMode `json:"wave,omitempty"`
-	PhaseReady       bool              `json:"phaseReady"`
-	PhaseReason      string            `json:"phaseReason,omitempty"`
-	PhaseScan        []PhaseResponse   `json:"phaseScan,omitempty"`
+	Source                string            `json:"source"`
+	Symbol                string            `json:"symbol"`
+	At                    time.Time         `json:"at"`
+	Duration              time.Duration     `json:"duration"`
+	Epoch                 uint64            `json:"epoch"`
+	ReferencePrice        *decimal.Decimal  `json:"referencePrice"`
+	Spread                float64           `json:"spread"`
+	BuyCapacity           *decimal.Decimal  `json:"buyCapacity"`
+	SellCapacity          *decimal.Decimal  `json:"sellCapacity"`
+	InvalidReason         string            `json:"invalidReason,omitempty"`
+	StressAnisotropy      float64           `json:"stressAnisotropy"`
+	Subdivisions          uint32            `json:"subdivisions"`
+	BuyIntensity          float64           `json:"buyIntensity"`
+	SellIntensity         float64           `json:"sellIntensity"`
+	SpectralRadius        float64           `json:"spectralRadius"`
+	Reading               pfluid.Reading    `json:"reading"`
+	OscillatorCount       int               `json:"oscillatorCount"`
+	SharedOscillatorCount int               `json:"sharedOscillatorCount"`
+	Replay                bool              `json:"replay,omitempty"`
+	Grid                  pfluid.Grid       `json:"grid,omitempty"`
+	Rho                   [][]float64       `json:"rho,omitempty"`
+	PsiMag2               [][]float64       `json:"psiMag2,omitempty"`
+	GuidanceVelX          [][]float64       `json:"guidanceVelX,omitempty"`
+	GuidanceVelZ          [][]float64       `json:"guidanceVelZ,omitempty"`
+	Particles             []Particle        `json:"particles,omitempty"`
+	Wave                  []pfluid.WaveMode `json:"wave,omitempty"`
+	PhaseReady            bool              `json:"phaseReady"`
+	PhaseReason           string            `json:"phaseReason,omitempty"`
+	PhaseScan             []PhaseResponse   `json:"phaseScan,omitempty"`
 }
 
 /*

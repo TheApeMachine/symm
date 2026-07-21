@@ -1,9 +1,9 @@
 import {
-	blendGasIntoPilot,
 	isFluidFieldMatrix,
-	resolvePilotDisplayLattice,
-	type TerminalFluidParticle,
+	resolveFluidDisplayLattice,
 } from "#/components/terminal/fluid-field";
+import type { FluidFieldLayer } from "#/collections/terminal";
+import type { TerminalFluidParticle } from "#/components/terminal/fluid-particles";
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
 	value !== null && typeof value === "object" && !Array.isArray(value)
@@ -306,19 +306,16 @@ export const terminalFluidPsiMatrixFromFrame = (
 ): number[][] => frameAuxMatrix(frame, "psiMag2");
 
 /*
-terminalFluidDisplayLatticeFromFrame blends gas/pilot fields for the dashboard
-pilot-wave canvas.
+terminalFluidDisplayLatticeFromFrame selects the requested physical field layer
+without combining gas density and coherence into one scalar lattice.
 */
 export const terminalFluidDisplayLatticeFromFrame = (
 	frame: Record<string, unknown> | null | undefined,
+	layer: FluidFieldLayer = "Composite",
 ): number[][] => {
 	const rho = frameAuxMatrix(frame, "rho");
 	const psiMag2 = frameAuxMatrix(frame, "psiMag2");
 	const lattice = isFluidFieldMatrix(rho) ? rho : [];
 
-	if (psiMag2 && isFluidFieldMatrix(psiMag2)) {
-		return blendGasIntoPilot(psiMag2, lattice);
-	}
-
-	return resolvePilotDisplayLattice(lattice, psiMag2);
+	return resolveFluidDisplayLattice(lattice, psiMag2, layer);
 };

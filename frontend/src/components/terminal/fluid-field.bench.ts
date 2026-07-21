@@ -29,12 +29,8 @@ const matrix = Array.from({ length: 38 }, (_, row) =>
 );
 
 describe("fluid-field", () => {
-	bench("derives peak and outlier stats for a 64x38 rho projection", () => {
+	bench("derives raw occupancy stats for a 64x38 rho projection", () => {
 		terminalFluidFieldStats(matrix);
-	});
-
-	bench("normalizes and quantizes a 64x38 contour field", () => {
-		terminalFluidFieldStats(matrix, true);
 	});
 
 	bench(

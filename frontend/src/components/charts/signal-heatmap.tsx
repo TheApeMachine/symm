@@ -25,8 +25,8 @@ const drawWaiting = (
 };
 
 /*
-paintTerminalSignalHeatmap draws the current DRAW batch of measurement category
-scores into signalHeatmapCanvasRef. Only this batch is used.
+paintTerminalSignalHeatmap draws retained measurement-category scores as an
+oldest-first heatmap in signalHeatmapCanvasRef.
 */
 export const paintTerminalSignalHeatmap = (
 	value: unknown,

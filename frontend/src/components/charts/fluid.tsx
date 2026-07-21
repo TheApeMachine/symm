@@ -1,5 +1,6 @@
 import { createRef } from "react";
 import type { ManifoldFrame } from "#/collections/types";
+import type { FluidFieldLayer } from "#/collections/terminal";
 import {
 	clearCanvas,
 	drawGrid,
@@ -21,13 +22,14 @@ import {
 } from "#/components/terminal/charts-frame";
 import {
 	drawFluidField,
-	drawFluidParticles,
 	isFluidFieldMatrix,
-	resolvePilotDisplayLattice,
+	resolveFluidDisplayLattice,
 } from "#/components/terminal/fluid-field";
+import { drawFluidParticles } from "#/components/terminal/fluid-particles";
 
 const fluidCanvasRef = createRef<HTMLCanvasElement>();
 let fluidContour = false;
+let fluidLayer: FluidFieldLayer = "Composite";
 let fluidFocus = "";
 
 /*
@@ -168,9 +170,10 @@ export const paintTerminalFluidChart = (
 	const rho = frameAuxMatrix(frame, "rho");
 	const psiMag2 = frameAuxMatrix(frame, "psiMag2");
 	const particles = terminalFluidParticlesFromFrame(frame);
-	const display = resolvePilotDisplayLattice(
+	const display = resolveFluidDisplayLattice(
 		isFluidFieldMatrix(rho) ? rho : [],
 		psiMag2,
+		fluidLayer,
 	);
 	const { columns, rows } = fluidGridDimensions(frame, display);
 	const reading = frameReading(frame);
@@ -200,6 +203,7 @@ export const paintTerminalFluidChart = (
 					finiteNumber(reading?.pressureGradZ) ??
 					0,
 				psiMag2,
+				layer: fluidLayer,
 				guidanceVelX: frameAuxMatrix(frame, "guidanceVelX"),
 				guidanceVelZ: frameAuxMatrix(frame, "guidanceVelZ"),
 			},
@@ -218,10 +222,13 @@ TerminalFluidChart is the static canvas shell. DRAW paints via paintTerminalFlui
 */
 export const TerminalFluidChart = ({
 	contour = false,
+	layer = "Composite",
 }: {
 	contour?: boolean;
+	layer?: FluidFieldLayer;
 }) => {
 	fluidContour = contour;
+	fluidLayer = layer;
 
 	return <canvas ref={fluidCanvasRef} className="block size-full" />;
 };

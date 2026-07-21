@@ -199,7 +199,8 @@ export const paintDecisionsResonance = (
 };
 
 /*
-paintDecisionsMeasurements refreshes decision stats from the current DRAW measurements.
+paintDecisionsMeasurements refreshes decision coverage from retained
+measurement history.
 */
 export const paintDecisionsMeasurements = (
 	value: unknown,

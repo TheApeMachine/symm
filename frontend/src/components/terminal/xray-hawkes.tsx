@@ -20,8 +20,8 @@ const intensityRef = createRef<HTMLSpanElement>();
 const cascadeRef = createRef<HTMLDivElement>();
 
 /*
-paintXrayHawkes draws the current DRAW batch of hawkes measurements into the
-x-ray intensity canvas and metric readouts. Only this batch is used.
+paintXrayHawkes reconstructs Hawkes intensity from retained measurement epochs
+and draws the resulting temporal curve and current metric readouts.
 */
 export const paintXrayHawkes = (value: unknown, focusSymbol: string) => {
 	const canvas = hawkesCanvasRef.current;
@@ -98,8 +98,8 @@ export const paintXrayHawkes = (value: unknown, focusSymbol: string) => {
 	// Draw (λ − μ) / μ so spike height is excitation in baseline units,
 	// not a window-max auto-scale that reflows every paint.
 	const unit = series.baseline > 0 ? series.baseline : 1;
-	const normalized = series.samples.map((sample) =>
-		Math.max(0, sample - series.baseline) / unit,
+	const normalized = series.samples.map(
+		(sample) => Math.max(0, sample - series.baseline) / unit,
 	);
 	const framePeak = Math.max(series.peakExcess / unit, ...normalized, 0);
 	const yMax = Math.max(1, framePeak) * 1.15;
@@ -211,7 +211,10 @@ export const XrayHawkesPanel = () => (
 			</div>
 		</div>
 		<div className="relative min-h-0 flex-1">
-			<canvas ref={hawkesCanvasRef} className="absolute inset-0 block size-full" />
+			<canvas
+				ref={hawkesCanvasRef}
+				className="absolute inset-0 block size-full"
+			/>
 		</div>
 	</div>
 );

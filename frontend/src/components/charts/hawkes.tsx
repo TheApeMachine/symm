@@ -11,8 +11,8 @@ import type { Measurement } from "#/types/measurement";
 const hawkesCanvasRef = createRef<HTMLCanvasElement>();
 
 /*
-paintHawkes draws the current DRAW batch of hawkes measurements into
-hawkesCanvasRef. Only this batch is used — nothing is retained in JS.
+paintHawkes draws the latest Hawkes epoch selected from retained measurement
+history into hawkesCanvasRef.
 */
 export const paintHawkes = (value: unknown, focusSymbol: string) => {
 	const canvas = hawkesCanvasRef.current;

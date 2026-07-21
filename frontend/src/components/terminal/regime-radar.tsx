@@ -113,8 +113,8 @@ const radarFillRef = createRef<SVGPolygonElement>();
 const axisLabelRefs = RADAR_UNITS.map(() => createRef<SVGTextElement>());
 
 /*
-paintRegimeRadar paints the five-axis market regime from the current DRAW
-measurements batch into the RadarPanel shell.
+paintRegimeRadar paints the five-axis market regime from the newest reading per
+metric in retained cross-sectional measurement history.
 */
 export const paintRegimeRadar = (value: unknown, _focusSymbol: string) => {
 	const measurements = (
