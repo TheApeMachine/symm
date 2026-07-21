@@ -71,9 +71,12 @@ func (analyzer *Analyzer) lookaheadTip(
 }
 
 /*
-lookaheadScore sums the symbol-scoped continuation probabilities. Strategy reads
-it as category strength, so it stays on the hot path for every symbol while the
-full branch and beam visualization is materialized only for the focused symbol.
+lookaheadScore sums the symbol-scoped continuation probabilities. It is the
+learned continuation mass shown as category strength on the terminal rail; no
+decision stage consumes it, and any threshold on it would be an invented
+constant, so it stays a presentation surface computed on the hot path for
+every symbol while the full branch and beam visualization is materialized only
+for the focused symbol.
 */
 func (analyzer *Analyzer) lookaheadScore(
 	parts []string,

@@ -3,7 +3,6 @@ package manifold
 import (
 	"fmt"
 	"math"
-	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
@@ -68,7 +67,6 @@ func (solver *Solver) advance(
 		reading,
 		diagnostics,
 		focus,
-		len(changed) > 0,
 		&result,
 	)
 	return result
@@ -85,21 +83,24 @@ func (solver *Solver) publish(
 	reading pfluid.Reading,
 	diagnostics pfluid.Diagnostics,
 	focus string,
-	advanced bool,
 	result *advanceResult,
 ) {
-	observedAt := time.Time{}
+	focusedAt := changed[focus].At
+	_, focusedAdvanced := changed[focus]
 
-	for _, candidate := range candidates {
-		if candidate.outcome.At.After(observedAt) {
-			observedAt = candidate.outcome.At
+	if focusedAt.IsZero() {
+		for _, candidate := range candidates {
+			if candidate.symbol == focus {
+				focusedAt = candidate.outcome.At
+				break
+			}
 		}
 	}
 
 	projection, wave, phaseScan, err := solver.project(
 		focus,
-		observedAt,
-		advanced,
+		focusedAt,
+		focusedAdvanced,
 	)
 
 	if err != nil {

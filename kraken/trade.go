@@ -39,6 +39,10 @@ func NewTrade(buf []byte) *Trade {
 	return &trade
 }
 
+func (trade *Trade) IsSuccess() bool {
+	return len(trade.Data) > 0
+}
+
 func (trade *Trade) Action() string {
 	return "trade"
 }

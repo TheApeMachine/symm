@@ -9,85 +9,99 @@ import (
 )
 
 /*
-TestReturnHeadPredict proves strict-prior direction learning and rejects the
-former behavior where opposite return processes received the same sign.
+TestReturnLadderPredict proves strict-prior direction learning on the fastest
+rung: alternating one-epoch return processes must produce a ready ladder whose
+newest prediction follows its own row without future leakage.
 */
-func TestReturnHeadPredict(t *testing.T) {
+func TestReturnLadderPredict(t *testing.T) {
 	withResonanceRLS(t)
 
 	Convey("Given alternating physical states with known next-return direction", t, func() {
-		head, err := newReturnHead()
+		ladder, err := newReturnLadder()
 		So(err, ShouldBeNil)
 		midPrice := 100.0
 		priorDirection := 0.0
-		prediction := 0.0
 
 		for index := range 96 {
 			if index > 0 {
 				midPrice *= math.Exp(0.001 * priorDirection)
 			}
 
-			So(head.Resolve(decimal.NewFromFloat64(midPrice)), ShouldBeNil)
 			direction := 1.0
 
 			if index%2 == 1 {
 				direction = -1
 			}
 
-			prediction, err = head.Predict(
+			So(ladder.Advance(
 				[]float64{direction, 0, 0, 0, 0},
 				decimal.NewFromFloat64(midPrice),
-			)
-			So(err, ShouldBeNil)
+			), ShouldBeNil)
 			priorDirection = direction
 		}
 
-		Convey("Then the current prediction follows its row without future leakage", func() {
-			So(prediction, ShouldBeLessThan, 0)
-			So(head.Ready(), ShouldBeTrue)
-			So(head.samples, ShouldEqual, uint64(95))
-			So(head.meanMSE, ShouldBeGreaterThanOrEqualTo, 0)
-			So(head.skillLower, ShouldBeGreaterThan, 0)
+		Convey("Then the ladder is ready and the newest prediction is negative", func() {
+			forecast := ladder.Forecast()
+
+			So(forecast.Ready, ShouldBeTrue)
+			So(forecast.HorizonEvents, ShouldEqual, uint64(1))
+			So(forecast.ExpectedReturn, ShouldBeLessThan, 0)
+			So(forecast.SkillLower, ShouldBeGreaterThan, 0)
+			So(forecast.MeanMSE, ShouldBeGreaterThanOrEqualTo, 0)
 		})
 	})
 }
 
 /*
-TestReturnHeadResolveConsumesPending proves one realized target is calibrated
-and learned only once unless a new prediction establishes another pending row.
+TestReturnLadderSelectsDeepHorizon proves the multi-resolution point of the
+ladder: a drift whose per-epoch return is dominated by exactly alternating
+noise is unpredictable one event ahead, but the noise cancels over two events,
+so the two-epoch rung proves far stronger skill and selection must leave the
+next-event horizon. This is the staircase blindness regression guard.
 */
-func TestReturnHeadResolveConsumesPending(t *testing.T) {
+func TestReturnLadderSelectsDeepHorizon(t *testing.T) {
 	withResonanceRLS(t)
 
-	Convey("Given one pending strict-prior prediction", t, func() {
-		head, err := newReturnHead()
+	Convey("Given drift hidden under exactly alternating one-epoch noise", t, func() {
+		ladder, err := newReturnLadder()
 		So(err, ShouldBeNil)
-		_, err = head.Predict(
-			[]float64{1, 0, 0, 0, 0}, decimal.NewFromInt64(100),
-		)
-		So(err, ShouldBeNil)
+		midPrice := 100.0
 
-		Convey("When its next midpoint is resolved", func() {
-			So(head.Resolve(decimal.NewFromInt64(101)), ShouldBeNil)
-			samples := head.samples
+		for index := range 256 {
+			if index > 0 {
+				noise := 0.01
 
-			Convey("Then the row is consumed and cannot be learned twice", func() {
-				So(head.pending, ShouldBeEmpty)
-				So(head.predicted, ShouldBeFalse)
-				So(head.Resolve(decimal.NewFromInt64(102)), ShouldBeNil)
-				So(head.samples, ShouldEqual, samples)
-			})
+				if index%2 == 0 {
+					noise = -0.01
+				}
+
+				midPrice *= math.Exp(0.002 + noise)
+			}
+
+			So(ladder.Advance(
+				[]float64{1, 0, 0, 0, 0},
+				decimal.NewFromFloat64(midPrice),
+			), ShouldBeNil)
+		}
+
+		Convey("Then selection proves skill beyond the next event", func() {
+			forecast := ladder.Forecast()
+
+			So(forecast.Ready, ShouldBeTrue)
+			So(forecast.HorizonEvents, ShouldBeGreaterThanOrEqualTo, uint64(2))
+			So(forecast.ExpectedReturn, ShouldBeGreaterThan, 0)
+			So(forecast.SkillLower, ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
 /*
-BenchmarkReturnHeadPredict measures one real resolve-and-predict calibration
-step with the configured RLS learner and confidence bound.
+BenchmarkReturnLadderAdvance measures one full ladder step: resolving every
+due rung, teaching, and re-predicting all horizons for the new row.
 */
-func BenchmarkReturnHeadPredict(b *testing.B) {
+func BenchmarkReturnLadderAdvance(b *testing.B) {
 	withResonanceRLS(b)
-	head, err := newReturnHead()
+	ladder, err := newReturnLadder()
 
 	if err != nil {
 		b.Fatal(err)
@@ -95,23 +109,14 @@ func BenchmarkReturnHeadPredict(b *testing.B) {
 
 	midPrice := 100.0
 	features := []float64{1, 0, 0, 0, 0}
-
-	if _, err := head.Predict(features, decimal.NewFromFloat64(midPrice)); err != nil {
-		b.Fatal(err)
-	}
-
 	b.ReportAllocs()
 
 	for b.Loop() {
 		midPrice *= math.Exp(0.0001)
 
-		price := decimal.NewFromFloat64(midPrice)
-
-		if err := head.Resolve(price); err != nil {
-			b.Fatal(err)
-		}
-
-		if _, err := head.Predict(features, price); err != nil {
+		if err := ladder.Advance(
+			features, decimal.NewFromFloat64(midPrice),
+		); err != nil {
 			b.Fatal(err)
 		}
 	}

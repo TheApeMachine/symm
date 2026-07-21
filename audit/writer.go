@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -33,6 +34,7 @@ type Recorder struct {
 	fh       *os.File
 	ring     *structure.MPMCRing[[]byte]
 	done     chan struct{}
+	dropped  atomic.Uint64
 }
 
 func NewRecorder(filename string) (*Recorder, error) {
@@ -106,6 +108,8 @@ func (recorder *Recorder) Write(event any) error {
 	payload = append(payload, '\n')
 
 	if !recorder.ring.Push(payload) {
+		recorder.dropped.Add(1)
+
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"audit: recorder ring is full, event dropped",
@@ -125,6 +129,36 @@ func (recorder *Recorder) drain() {
 	defer close(recorder.done)
 
 	writer := bufio.NewWriter(recorder.fh)
+	pendingDropped := uint64(0)
+	recordOverflow := func() {
+		pendingDropped += recorder.dropped.Swap(0)
+
+		if pendingDropped == 0 {
+			return
+		}
+
+		payload, err := sonic.Marshal(map[string]any{
+			"channel": "diagnostic",
+			"type":    "audit_overflow",
+			"value": map[string]any{
+				"dropped": pendingDropped,
+			},
+		})
+
+		if err != nil {
+			errnie.Error(err)
+			return
+		}
+
+		payload = append(payload, '\n')
+
+		if _, err = writer.Write(payload); err != nil {
+			errnie.Error(err)
+			return
+		}
+
+		pendingDropped = 0
+	}
 
 	flush := func() {
 		if err := writer.Flush(); err != nil {
@@ -136,6 +170,8 @@ func (recorder *Recorder) drain() {
 		payload := recorder.ring.Pop()
 
 		if payload == nil {
+			recordOverflow()
+
 			select {
 			case <-recorder.ctx.Done():
 				// Drain any final rows the producers pushed before Close.
@@ -143,6 +179,7 @@ func (recorder *Recorder) drain() {
 					remaining := recorder.ring.Pop()
 
 					if remaining == nil {
+						recordOverflow()
 						flush()
 						return
 					}

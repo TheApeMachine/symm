@@ -15,8 +15,12 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-// two is the mid divisor reused on the mark hot path.
-var two = decimal.NewFromInt64(2)
+var (
+	// two is the mid divisor reused on the mark hot path.
+	two = decimal.NewFromInt64(2)
+	// hundred converts Kraken's percentage fee into a unit fraction.
+	hundred = decimal.NewFromInt64(100)
+)
 
 /*
 Price is the broker price surface for symm. It is the single source of
@@ -297,9 +301,7 @@ func (price *Price) Fraction(symbol string) (*decimal.Decimal, error) {
 
 	feePrecision := tradeVolume.Fee.GetScale() + 2
 
-	return tradeVolume.Fee.SetScale(feePrecision).Div(
-		decimal.NewFromInt64(100).SetScale(feePrecision),
-	), nil
+	return tradeVolume.Fee.SetScale(feePrecision).Div(hundred), nil
 }
 
 /*
@@ -388,14 +390,12 @@ func (price *Price) Fee(
 	}
 
 	feePrecision := tradeVolume.Fee.GetScale() + 2
-	fraction := tradeVolume.Fee.SetScale(feePrecision).Div(
-		decimal.NewFromInt64(100).SetScale(feePrecision),
-	)
+	fraction := tradeVolume.Fee.SetScale(feePrecision).Div(hundred)
 	costScale := int64(instrument.CostPrecision)
 	calculationScale := max(costScale, feePrecision)
 
 	return amount.SetScale(calculationScale).
-		Mul(fraction.SetScale(calculationScale)).
+		Mul(fraction).
 		SetScale(costScale)
 }
 
@@ -928,7 +928,7 @@ integers as half-way values.
 func (price *Price) Mul(left, right *decimal.Decimal) *decimal.Decimal {
 	scale := max(int64(1), left.GetScale()+right.GetScale())
 
-	return left.SetScale(scale).Mul(right.SetScale(scale))
+	return left.SetScale(scale).Mul(right)
 }
 
 /*
@@ -943,7 +943,7 @@ func (price *Price) Div(left, right *decimal.Decimal) *decimal.Decimal {
 		right.GetScale(),
 	)
 
-	return left.SetScale(scale).Div(right.SetScale(scale))
+	return left.SetScale(scale).Div(right)
 }
 
 /*
@@ -962,7 +962,7 @@ func (price *Price) DivFloor(
 			return new(big.Int).Quo(integer, factor)
 		},
 	).SetScale(workingScale)
-	quotient := dividend.Div(right.SetScale(workingScale))
+	quotient := dividend.Div(right)
 
 	return price.floorScale(quotient, scale)
 }

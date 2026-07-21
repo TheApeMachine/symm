@@ -40,7 +40,12 @@ func (analyzer *Analyzer) cognizeStates(
 		value, found := thesis.Cognition.Load(state.Symbol)
 
 		if found {
-			remRequested = remRequested || value.(types.Cognition).Ambiguous
+			reading := value.(types.Cognition)
+			remRequested = remRequested || reading.Ambiguous
+
+			if analyzer.manifold != nil {
+				errnie.Error(analyzer.manifold.CommitPhase(reading))
+			}
 		}
 	}
 
@@ -248,9 +253,9 @@ func signedToken(value float64) string {
 
 /*
 readCognition classifies the sensory sequence for strategy on the hot path —
-winner, confidence, ambiguity, contrast, cohort, predictions, classes, and the
-lookahead strength category selection consumes — then attaches the full Cortex
-radix/beam visualization only for the focused symbol.
+winner, confidence, ambiguity, contrast, cohort, predictions, and classes —
+plus the lookahead strength the terminal shows as category strength, then
+attaches the full Cortex radix/beam visualization only for the focused symbol.
 */
 func (analyzer *Analyzer) readCognition(
 	state manifold.State,

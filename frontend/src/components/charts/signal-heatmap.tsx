@@ -7,6 +7,7 @@ import {
 	resizeCanvas,
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
+import { frameRows } from "#/providers/frame-history";
 
 const signalHeatmapCanvasRef = createRef<HTMLCanvasElement>();
 let signalHeatmapKind: "confidence" | "surprise" = "confidence";
@@ -46,9 +47,7 @@ export const paintTerminalSignalHeatmap = (
 
 	const width = canvas.clientWidth;
 	const height = canvas.clientHeight;
-	const measurements = (
-		Array.isArray(value) ? value : value != null ? [value] : []
-	) as Measurement[];
+	const measurements = frameRows<Measurement>(value);
 	const matrix = measurements.flatMap((frame) => {
 		const category = frame.categories?.at(0);
 		const entry =

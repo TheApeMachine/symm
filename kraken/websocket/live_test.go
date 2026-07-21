@@ -150,6 +150,9 @@ func TestLiveUpdateLevel3(t *testing.T) {
 				So(managed.Bids.Levels, ShouldHaveLength, 10)
 				So(managed.BestBid().Price.Float64(), ShouldEqual, 104.0)
 				So(managed.WorstBid().Price.Float64(), ShouldEqual, 92.0)
+				So(live.level3Ledger.orders["BTC/USD"], ShouldHaveLength, 11)
+				_, retained := live.level3Ledger.orders["BTC/USD"]["bid-91"]
+				So(retained, ShouldBeFalse)
 			})
 		})
 	})

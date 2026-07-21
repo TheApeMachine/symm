@@ -23,12 +23,6 @@ type MarketFrame struct {
 	Advanced     StreamInterest
 }
 
-func (frame *MarketFrame) IsEmpty() bool {
-	return len(frame.Tickers) == 0 &&
-		len(frame.Trades) == 0 &&
-		len(frame.Books) == 0
-}
-
 /*
 BookLevels projects one decoded book row into tick-normalized bid and ask
 levels. It is pure row conversion, so book-driven signals share one extraction

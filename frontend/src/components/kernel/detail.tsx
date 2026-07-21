@@ -16,6 +16,7 @@ import {
 	paintHeatmapGrid,
 	paintMetricGrid,
 } from "#/components/terminal/metric-paint";
+import { frameRows } from "#/providers/frame-history";
 import { Flex } from "@/components/ui/flex";
 
 const titleRef = createRef<HTMLSpanElement>();
@@ -29,9 +30,6 @@ const heatmapSectionRef = createRef<HTMLDivElement>();
 const heatmapTitleRef = createRef<HTMLDivElement>();
 const heatmapGridRef = createRef<HTMLDivElement>();
 const badgeRef = createRef<HTMLSpanElement>();
-
-const asRows = <T,>(value: unknown): T[] =>
-	(Array.isArray(value) ? value : value != null ? [value] : []) as T[];
 
 let lastUniverse: Measurement[] = [];
 let lastFocusSymbol = "";
@@ -60,8 +58,13 @@ export const paintSignalDetailMeasurements = (
 	value: unknown,
 	focusSymbol: string,
 ) => {
-	lastUniverse = asRows<Measurement>(value);
+	lastUniverse = frameRows<Measurement>(value);
 	lastFocusSymbol = focusSymbol;
+
+	if (titleRef.current === null) {
+		return;
+	}
+
 	const source = terminalStore.state.selectedSource;
 	const universe = lastUniverse;
 	const focusRows =

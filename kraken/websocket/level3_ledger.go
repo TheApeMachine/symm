@@ -114,9 +114,54 @@ func (ledger *level3Ledger) applyBook(
 		)
 	}
 
+	ledger.pruneDepth(managed, data.Symbol)
 	managed.EnforceDepth()
 
 	return nil
+}
+
+/*
+pruneDepth removes exact checksum rows for price levels leaving the subscribed
+book before the SDK discards those levels. Kraken no longer sends deletes for
+orders outside the requested depth, so retaining them would make the ledger
+grow independently of the authoritative live book.
+*/
+func (ledger *level3Ledger) pruneDepth(
+	managed *book.Book,
+	symbol string,
+) {
+	if managed == nil || managed.MaxDepth <= 0 || ledger.orders[symbol] == nil {
+		return
+	}
+
+	ledger.pruneSide(managed.BestBid(), false, managed.MaxDepth, symbol)
+	ledger.pruneSide(managed.BestAsk(), true, managed.MaxDepth, symbol)
+}
+
+/*
+pruneSide walks from touch to tail and drops every exact order beyond maxDepth.
+*/
+func (ledger *level3Ledger) pruneSide(
+	level *book.Level,
+	higher bool,
+	maxDepth int,
+	symbol string,
+) {
+	for depth := 0; level != nil; depth++ {
+		next := level.Lower
+
+		if higher {
+			next = level.Higher
+		}
+
+		if depth >= maxDepth {
+			for _, order := range level.Queue() {
+				delete(ledger.orders[symbol], order.ID)
+			}
+		}
+
+		level = next
+	}
 }
 
 /*

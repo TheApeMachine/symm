@@ -387,10 +387,8 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 		thesis.CrossSection = NewCrossSection()
 	}
 
-	thesis.CrossSection.index = make(map[string]int, len(thesis.CrossSection.Metrics))
-
-	for index, metric := range thesis.CrossSection.Metrics {
-		thesis.CrossSection.index[metric.Symbol] = index
+	if thesis.CrossSection.Metrics == nil {
+		thesis.CrossSection.Metrics = &sync.Map{}
 	}
 
 	return nil

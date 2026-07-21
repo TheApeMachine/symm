@@ -101,17 +101,18 @@ func (signal *Signal) Calculate(
 		latestAtBySymbol[symbol] = row.Timestamp
 	}
 
-	for _, metric := range frame.CrossSection.Metrics {
+	frame.CrossSection.Metrics.Range(func(_, value any) bool {
+		metric := value.(types.SymbolMetric)
 		scores, ok := scoresBySymbol[metric.Symbol]
 
 		if !ok {
-			continue
+			return true
 		}
 
 		at, ok := latestAtBySymbol[metric.Symbol]
 
 		if !ok || at.IsZero() {
-			continue
+			return true
 		}
 
 		validity := types.MeasurementValidity{
@@ -213,7 +214,8 @@ func (signal *Signal) Calculate(
 		}
 
 		out = append(out, measurements...)
-	}
+		return true
+	})
 
 	return out, nil
 }

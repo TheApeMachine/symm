@@ -7,7 +7,6 @@ import type {
 	Measurement,
 	ResonanceFrame,
 } from "#/collections/types";
-import type { StrategyDecision } from "#/types/thesis";
 import {
 	paintCandidateSelection,
 	syncCandidateRowShells,
@@ -20,6 +19,8 @@ import {
 } from "#/components/terminal/decision-side";
 import { StrategyDecisionRows } from "#/components/terminal/strategy-decisions";
 import { cn } from "#/lib/utils";
+import { frameRows } from "#/providers/frame-history";
+import type { StrategyDecision } from "#/types/thesis";
 import { Panel } from "@/components/ui/panel";
 
 const rootRef = createRef<HTMLDivElement>();
@@ -99,6 +100,11 @@ paint rebuilds decision stats from module caches and paints the shell.
 */
 const paint = () => {
 	const root = rootRef.current;
+
+	if (root === null) {
+		return;
+	}
+
 	const decisions = latestBySymbol(lastDecisions);
 	const causal = latestBySymbol(lastCausal);
 	const manifold = latestBySymbol(lastManifold);
@@ -199,14 +205,14 @@ export const paintDecisionsResonance = (
 };
 
 /*
-paintDecisionsMeasurements refreshes decision coverage from retained
-measurement history.
+paintDecisionsMeasurements refreshes decision coverage from each entity's
+latest retained measurement.
 */
 export const paintDecisionsMeasurements = (
 	value: unknown,
 	_focusSymbol: string,
 ) => {
-	lastMeasurements = asRows<Measurement>(value);
+	lastMeasurements = frameRows<Measurement>(value);
 	paint();
 };
 
@@ -228,10 +234,10 @@ paintDecisions* exports without React reconciliation each tick.
 export const DecisionsSurface = () => (
 	<div
 		ref={rootRef}
-		className="grid h-full min-h-0 min-w-[1040px] grid-cols-[minmax(640px,1fr)_332px]"
+		className="grid h-full min-h-0 min-w-260 grid-cols-[minmax(640px,1fr)_332px]"
 	>
-		<div className="min-h-0 overflow-auto px-5 py-[18px]">
-			<div className="mb-[18px] grid grid-cols-4 gap-2.5">
+		<div className="min-h-0 overflow-auto px-5 py-4.5">
+			<div className="mb-4.5 grid grid-cols-4 gap-2.5">
 				{STAT_CARDS.map(([key, title, subtitle, tone]) => (
 					<div
 						key={key}
@@ -267,10 +273,7 @@ export const DecisionsSurface = () => (
 				</span>
 			</div>
 
-			<div
-				className="flex flex-col gap-[7px]"
-				data-decision-host="candidates"
-			>
+			<div className="flex flex-col gap-1.75" data-decision-host="candidates">
 				<Panel
 					variant="surface"
 					size="bare"

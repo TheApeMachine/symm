@@ -13,6 +13,7 @@ import {
 	formatMetric,
 	hawkesMetricsFromBuffer,
 } from "#/components/terminal/xray-view";
+import { frameRows } from "#/providers/frame-history";
 
 const hawkesCanvasRef = createRef<HTMLCanvasElement>();
 const branchingRef = createRef<HTMLSpanElement>();
@@ -36,9 +37,7 @@ export const paintXrayHawkes = (value: unknown, focusSymbol: string) => {
 		return;
 	}
 
-	const measurements = (
-		Array.isArray(value) ? value : value != null ? [value] : []
-	) as Measurement[];
+	const measurements = frameRows<Measurement>(value);
 	const frames = measurements.filter(
 		(measurement) =>
 			measurement.source === "hawkes" &&

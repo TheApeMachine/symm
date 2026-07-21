@@ -2,9 +2,10 @@ package types
 
 import (
 	"math"
-	"strings"
+	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
 )
@@ -24,21 +25,19 @@ type SymbolMetric struct {
 }
 
 /*
-CrossSection contains the current market cut's peer metrics. The central feed
-calculates it once and concurrent signals share it as immutable context.
+CrossSection contains the retained peer metrics for the central market feed.
+Measure upserts by symbol; Breadth and Leadership observe the live cohort.
 */
 type CrossSection struct {
-	Metrics []SymbolMetric `json:"metrics"`
-	index   map[string]int
+	Metrics *sync.Map `json:"metrics"`
 }
 
 /*
-NewCrossSection creates empty cross-sectional state for one Thesis tick.
+NewCrossSection creates empty cross-sectional state for the market feed.
 */
 func NewCrossSection() *CrossSection {
 	return &CrossSection{
-		Metrics: make([]SymbolMetric, 0),
-		index:   make(map[string]int),
+		Metrics: &sync.Map{},
 	}
 }
 
@@ -48,59 +47,16 @@ Later observations replace the same symbol rather than weighting it twice.
 */
 func (crossSection *CrossSection) Measure(rows []kraken.TickerData) {
 	for _, row := range rows {
-		symbol := strings.TrimSpace(row.Symbol)
-
-		if symbol == "" || row.Timestamp.IsZero() || row.Last == nil || row.Last.Sign() <= 0 {
-			continue
-		}
-
 		metric := SymbolMetric{
-			Symbol:          symbol,
+			Symbol:          row.Symbol,
 			At:              row.Timestamp,
 			Volume:          row.Volume,
-			QuoteNotional:   QuoteNotional(row),
-			ExecutableDepth: ExecutableDepth(row),
+			QuoteNotional:   crossSection.QuoteNotional(row),
+			ExecutableDepth: crossSection.ExecutableDepth(row),
 			LatestChange:    row.ChangePct / 100,
 		}
-		index, exists := crossSection.index[symbol]
 
-		if exists {
-			if !row.Timestamp.After(crossSection.Metrics[index].At) {
-				continue
-			}
-
-			crossSection.Metrics[index] = metric
-
-			continue
-		}
-
-		crossSection.index[symbol] = len(crossSection.Metrics)
-		crossSection.Metrics = append(crossSection.Metrics, metric)
-	}
-}
-
-/*
-Merge retains the newest metric for each symbol when persisted or replayed
-cross-sectional state is combined.
-*/
-func (crossSection *CrossSection) Merge(incoming *CrossSection) {
-	if incoming == nil {
-		return
-	}
-
-	for _, metric := range incoming.Metrics {
-		index, exists := crossSection.index[metric.Symbol]
-
-		if exists {
-			if metric.At.After(crossSection.Metrics[index].At) {
-				crossSection.Metrics[index] = metric
-			}
-
-			continue
-		}
-
-		crossSection.index[metric.Symbol] = len(crossSection.Metrics)
-		crossSection.Metrics = append(crossSection.Metrics, metric)
+		crossSection.Metrics.Store(row.Symbol, metric)
 	}
 }
 
@@ -108,19 +64,23 @@ func (crossSection *CrossSection) Merge(incoming *CrossSection) {
 Breadth calculates the fraction of current symbols with positive change.
 */
 func (crossSection *CrossSection) Breadth() float64 {
-	if len(crossSection.Metrics) == 0 {
+	positive := 0
+	count := 0
+
+	crossSection.Metrics.Range(func(_, value any) bool {
+		if value.(SymbolMetric).LatestChange > 0 {
+			positive++
+		}
+
+		count++
+		return true
+	})
+
+	if count == 0 {
 		return 0
 	}
 
-	positive := 0
-
-	for _, metric := range crossSection.Metrics {
-		if metric.LatestChange > 0 {
-			positive++
-		}
-	}
-
-	return float64(positive) / float64(len(crossSection.Metrics))
+	return float64(positive) / float64(count)
 }
 
 /*
@@ -128,23 +88,22 @@ Leadership returns the symbol with the greatest current absolute change when
 it exceeds the cohort's median absolute change.
 */
 func (crossSection *CrossSection) Leadership() (string, float64) {
-	if len(crossSection.Metrics) < 2 {
-		return "", 0
-	}
-
-	changes := make([]float64, len(crossSection.Metrics))
+	changes := make([]float64, 0)
 	leader := ""
 	leaderChange := 0.0
 
-	for index, metric := range crossSection.Metrics {
+	crossSection.Metrics.Range(func(_, value any) bool {
+		metric := value.(SymbolMetric)
 		change := math.Abs(metric.LatestChange)
-		changes[index] = change
+		changes = append(changes, change)
 
 		if change > leaderChange {
 			leader = metric.Symbol
 			leaderChange = change
 		}
-	}
+
+		return true
+	})
 
 	threshold, ok := statistic.MedianAbsoluteOf(changes)
 
@@ -159,41 +118,73 @@ func (crossSection *CrossSection) Leadership() (string, float64) {
 QuoteNotional values reported volume at VWAP, or at the latest trade when the
 exchange has not yet published VWAP.
 */
-func QuoteNotional(row kraken.TickerData) float64 {
+func (crossSection *CrossSection) QuoteNotional(row kraken.TickerData) float64 {
 	rate := row.Vwap
 
 	if rate <= 0 {
+		if row.Last == nil {
+			return 0
+		}
+
 		rate = row.Last.Float64()
 	}
 
-	if rate <= 0 || row.Volume <= 0 {
-		return 0
-	}
-
-	return row.Volume * rate
+	return math.Max(0, row.Volume*rate)
 }
 
 /*
 ExecutableDepth values the smaller side of the current top-of-book quantity at
 the midpoint because only matched two-sided depth is immediately executable.
 */
-func ExecutableDepth(row kraken.TickerData) float64 {
+func (crossSection *CrossSection) ExecutableDepth(row kraken.TickerData) float64 {
 	if row.Bid == nil || row.Ask == nil {
 		return 0
 	}
 
-	bid := row.Bid.Float64()
-	ask := row.Ask.Float64()
+	return math.Max(0, math.Min(
+		row.BidQty, row.AskQty,
+	)*(row.Bid.Float64()+row.Ask.Float64())/2)
+}
 
-	if bid <= 0 || ask <= 0 {
-		return 0
+/*
+MarshalJSON encodes peer metrics as a JSON array so thesis checkpoints and UI
+frames keep a stable wire shape.
+*/
+func (crossSection *CrossSection) MarshalJSON() ([]byte, error) {
+	metrics := make([]SymbolMetric, 0)
+
+	if crossSection != nil && crossSection.Metrics != nil {
+		crossSection.Metrics.Range(func(_, value any) bool {
+			metrics = append(metrics, value.(SymbolMetric))
+			return true
+		})
 	}
 
-	quantity := min(row.BidQty, row.AskQty)
+	return sonic.Marshal(struct {
+		Metrics []SymbolMetric `json:"metrics"`
+	}{
+		Metrics: metrics,
+	})
+}
 
-	if quantity <= 0 {
-		return 0
+/*
+UnmarshalJSON restores peer metrics into the concurrent map from the array wire
+shape used by thesis checkpoints.
+*/
+func (crossSection *CrossSection) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Metrics []SymbolMetric `json:"metrics"`
 	}
 
-	return quantity * (bid + ask) / 2
+	if err := sonic.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+
+	crossSection.Metrics = &sync.Map{}
+
+	for _, metric := range wire.Metrics {
+		crossSection.Metrics.Store(metric.Symbol, metric)
+	}
+
+	return nil
 }

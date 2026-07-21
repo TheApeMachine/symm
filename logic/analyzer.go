@@ -96,7 +96,7 @@ func (analyzer *Analyzer) Status() types.Status {
 /*
 Close drains REM and releases the manifold solver.
 */
-func (analyzer *Analyzer) Close() {
+func (analyzer *Analyzer) Close() error {
 	if analyzer.rem != nil {
 		analyzer.rem.Close()
 	}
@@ -104,6 +104,8 @@ func (analyzer *Analyzer) Close() {
 	if analyzer.manifold != nil {
 		analyzer.manifold.Close()
 	}
+
+	return nil
 }
 
 /*

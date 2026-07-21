@@ -1,10 +1,6 @@
-import type { AllocationSummary } from "#/components/terminal/allocation-side";
-import {
-	allocatedSymbols,
-	money,
-	visibleRowSymbols,
-} from "#/components/terminal/allocation-side";
 import { syncAllocShells } from "#/components/terminal/allocation-shells";
+import type { AllocationSummary } from "#/components/terminal/allocation-side";
+import { allocatedSymbols, money } from "#/components/terminal/allocation-side";
 
 const setText = (node: Element | null | undefined, value: string): void => {
 	if (node instanceof HTMLElement) {
@@ -13,9 +9,7 @@ const setText = (node: Element | null | undefined, value: string): void => {
 };
 
 const shellSymbols = (alloc: AllocationSummary): string[] =>
-	[
-		...new Set([...visibleRowSymbols(alloc), ...allocatedSymbols(alloc)]),
-	].sort();
+	alloc.rows.map((row) => row.symbol);
 
 /*
 paintAllocationSurface writes live ladder numbers into a mounted shell so
@@ -93,7 +87,7 @@ export const paintAllocationSurface = (
 	const waiting = root.querySelector("[data-alloc='waiting']");
 
 	if (waiting instanceof HTMLElement) {
-		waiting.style.display = visibleRowSymbols(alloc).length === 0 ? "" : "none";
+		waiting.style.display = alloc.rows.length === 0 ? "" : "none";
 	}
 
 	const sizingEmpty = root.querySelector("[data-alloc='sizing-empty']");
@@ -108,7 +102,7 @@ export const paintAllocationSurface = (
 		const main = root.querySelector(`[data-alloc-row='${escaped}']`);
 
 		if (main instanceof HTMLElement) {
-			main.style.display = row.allocated || row.inPlay ? "" : "none";
+			main.style.display = "";
 			setText(
 				main.querySelector("[data-alloc='edge']"),
 				[row.edge >= 0 ? "+" : "-", Math.abs(row.edge).toFixed(3)].join(""),

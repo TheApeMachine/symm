@@ -7,6 +7,7 @@ import {
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
 import type { Measurement } from "#/types/measurement";
+import { frameRows } from "#/providers/frame-history";
 
 const hawkesCanvasRef = createRef<HTMLCanvasElement>();
 
@@ -29,9 +30,7 @@ export const paintHawkes = (value: unknown, focusSymbol: string) => {
 
 	const width = canvas.clientWidth;
 	const height = canvas.clientHeight;
-	const measurements = (
-		Array.isArray(value) ? value : value != null ? [value] : []
-	) as Measurement[];
+	const measurements = frameRows<Measurement>(value);
 	const hawkes = measurements.filter(
 		(measurement) =>
 			measurement.source === "hawkes" &&

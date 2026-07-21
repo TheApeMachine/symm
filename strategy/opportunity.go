@@ -3,8 +3,10 @@ package strategy
 import (
 	"context"
 	"maps"
+	"strings"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
@@ -12,16 +14,16 @@ import (
 )
 
 /*
-Opportunity turns logic outputs into enter decisions.
-Fee rates come from Price.Fraction; flatten-now lot PnL stays on WithFriction.
+Opportunity turns logic outputs into friction-aware enter decisions.
 */
 type Opportunity struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	price    *broker.Price
-	balance  *broker.Balance
-	recorder *audit.Recorder
-	uiHub    chan<- []byte
+	ctx         context.Context
+	cancel      context.CancelFunc
+	price       *broker.Price
+	balance     *broker.Balance
+	recorder    *audit.Recorder
+	uiHub       chan<- []byte
+	maxFraction *decimal.Decimal
 }
 
 /*
@@ -42,11 +44,14 @@ func NewOpportunity(
 		balance:  balance,
 		recorder: recorder,
 		uiHub:    uiHub,
+		maxFraction: decimal.NewFromFloat64(
+			viper.GetFloat64("trading.allocation.max_fraction"),
+		),
 	}
 }
 
 /*
-StampFriction writes Price.Fraction fees onto every forecast so Continuity can
+StampFriction writes fees and impact onto every forecast so Continuity can
 score occupied lots before Measure skips them for fresh enters.
 */
 func (opportunity *Opportunity) StampFriction(thesis *types.Thesis) {
@@ -55,17 +60,60 @@ func (opportunity *Opportunity) StampFriction(thesis *types.Thesis) {
 	}
 
 	for index := range thesis.Forecasts {
-		forecast := &thesis.Forecasts[index]
-		fraction, err := opportunity.price.Fraction(forecast.Symbol)
-
-		if err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		forecast.ExpectedFees = fraction.Float64()
-		forecast.FrictionReady = true
+		opportunity.friction(&thesis.Forecasts[index])
 	}
+}
+
+/*
+friction stamps fees and touch-consumption impact onto one forecast. Impact is
+the spread scaled by max_fraction of unreserved cash against BuyCapacity.
+Unknown cash prices the full-touch bound because sizing is capped at the touch.
+*/
+func (opportunity *Opportunity) friction(forecast *types.Forecasts) {
+	fraction, err := opportunity.price.Fraction(forecast.Symbol)
+
+	if err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	forecast.ExpectedFees = fraction.Float64()
+	forecast.ExpectedImpact = forecast.ExpectedSpread *
+		opportunity.utilization(forecast)
+	forecast.FrictionReady = true
+}
+
+/*
+utilization is the share of the visible ask touch a fresh enter would consume,
+clamped to the full touch. It mirrors Arbiter.feasible: max_fraction of
+unreserved cash, against the forecast's BuyCapacity.
+*/
+func (opportunity *Opportunity) utilization(forecast *types.Forecasts) float64 {
+	if forecast.BuyCapacity == nil || forecast.BuyCapacity.Sign() <= 0 {
+		return 1
+	}
+
+	cash, err := opportunity.balance.AvailableCash()
+
+	if err != nil || cash == nil || cash.Sign() <= 0 {
+		return 1
+	}
+
+	feasible := opportunity.price.Mul(cash, opportunity.maxFraction)
+
+	if feasible.Cmp(forecast.BuyCapacity) >= 0 {
+		return 1
+	}
+
+	scale := max(
+		int64(decimal.DefaultScale),
+		feasible.GetScale(),
+		forecast.BuyCapacity.GetScale(),
+	)
+
+	return feasible.SetScale(scale).
+		Div(forecast.BuyCapacity.SetScale(scale)).
+		Float64()
 }
 
 /*
@@ -91,15 +139,7 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 		}
 
 		if !forecast.FrictionReady {
-			fraction, err := opportunity.price.Fraction(forecast.Symbol)
-
-			if err != nil {
-				errnie.Error(err)
-				continue
-			}
-
-			forecast.ExpectedFees = fraction.Float64()
-			forecast.FrictionReady = true
+			opportunity.friction(forecast)
 		}
 
 		if !forecast.Eligible() {
@@ -164,6 +204,22 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			continue
 		}
 
+		evidence, vetoed := opportunity.stance(thesis, forecast.Symbol)
+
+		if vetoed {
+			rejected := opportunity.reject(
+				*forecast, 0, "evidence_opposition",
+				"active evidence does not clear a long entry: "+
+					strings.Join(evidence.Opposes, ", "),
+			)
+			rejected.Alternatives["evidence_favors"] = float64(len(evidence.Favors))
+			rejected.Alternatives["evidence_opposes"] = float64(len(evidence.Opposes))
+			rejected.Alternatives["evidence_vetoes"] = float64(len(evidence.Vetoes))
+			thesis.Decisions = append(thesis.Decisions, rejected)
+
+			continue
+		}
+
 		reading := measureOpportunity(*forecast, cognition, thesis)
 		utility := reading.Margin - 2*forecast.ExpectedFees - forecast.ExpectedSpread -
 			forecast.ExpectedImpact - forecast.ExpectedAdverseSelection
@@ -205,7 +261,13 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			Utility:           utility,
 			AllocationHaircut: haircut,
 			AllocationClass:   allocation,
-			Alternatives:      map[string]float64{"enter": utility, "nothing": 0},
+			Alternatives: map[string]float64{
+				"enter":            utility,
+				"nothing":          0,
+				"evidence_favors":  float64(len(evidence.Favors)),
+				"evidence_opposes": float64(len(evidence.Opposes)),
+				"evidence_vetoes":  float64(len(evidence.Vetoes)),
+			},
 			ExpectedFees:      decimal.NewFromFloat64(2 * forecast.ExpectedFees),
 			ExpectedSpread:    decimal.NewFromFloat64(forecast.ExpectedSpread),
 			ReferencePrice:    forecast.ReferencePrice.Copy(),
@@ -220,6 +282,34 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			Reason:            "executable utility exceeds doing nothing",
 		})
 	}
+}
+
+/*
+stance reads the symbol's composed evidence graph for the category phenomena
+bearing on a long entry. Established deception, liquidity vacuum, collapse, or
+active reversal veto directly; other opposing context vetoes only when it
+outnumbers favoring phenomena. Missing structure remains neutral.
+*/
+func (opportunity *Opportunity) stance(
+	thesis *types.Thesis,
+	symbol string,
+) (types.EntryEvidence, bool) {
+	value, found := thesis.Graphs.Load(symbol)
+
+	if !found {
+		return types.EntryEvidence{}, false
+	}
+
+	evidenceGraph, ok := value.(*types.Graph)
+
+	if !ok || evidenceGraph == nil {
+		return types.EntryEvidence{}, false
+	}
+
+	evidence := evidenceGraph.LongEntryEvidence()
+
+	return evidence,
+		len(evidence.Vetoes) > 0 || len(evidence.Opposes) > len(evidence.Favors)
 }
 
 /*

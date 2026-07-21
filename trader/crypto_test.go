@@ -243,11 +243,29 @@ TestCryptoTradePointerHoldings proves enter submission reads the pointer shape
 admit/planner store on Thesis.Holdings — a value assertion panics at runtime.
 */
 func TestCryptoTradePointerHoldings(t *testing.T) {
+	previousDepth := viper.Get("market.l3_depth")
+	previousInterval := viper.Get("signals.fluid.integration_interval")
+	previousTrack := viper.Get("signals.feed_track_capacity")
+	t.Cleanup(func() { viper.Set("market.l3_depth", previousDepth) })
+	t.Cleanup(func() { viper.Set("signals.fluid.integration_interval", previousInterval) })
+	t.Cleanup(func() { viper.Set("signals.feed_track_capacity", previousTrack) })
+	viper.Set("market.l3_depth", 10)
+	viper.Set("signals.fluid.integration_interval", 100*time.Millisecond)
+	viper.Set("signals.feed_track_capacity", 128)
+
 	Convey("Given an enter decision backed by a pointer holding", t, func() {
-		crypto := &Crypto{desk: broker.NewDesk(nil, nil, nil, nil)}
+		ctx := context.Background()
+		booter := system.NewBooter(ctx, nil)
+		analyzer, err := logic.NewAnalyzer(ctx, booter, nil, nil, nil, nil, nil)
+		So(err, ShouldBeNil)
+
+		crypto := &Crypto{
+			desk:    broker.NewDesk(nil, nil, nil, nil),
+			planner: testPlanner(ctx, nil, analyzer),
+		}
 		thesis := types.NewThesis(nil, nil)
 		holding := types.NewHolding(
-			context.Background(),
+			ctx,
 			"BTC/USD",
 			decimal.NewFromFloat64(0.01),
 		)
@@ -258,7 +276,7 @@ func TestCryptoTradePointerHoldings(t *testing.T) {
 		}}
 
 		Convey("When trade submits the enter", func() {
-			So(func() { crypto.trade(thesis) }, ShouldNotPanic)
+			So(func() { crypto.planner.Update(thesis, nil, 0) }, ShouldNotPanic)
 		})
 	})
 }

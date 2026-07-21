@@ -105,63 +105,6 @@ func (prior *coordinateEpoch) Map(
 }
 
 /*
-marketTouch retains geometric inputs and exact executable touch values.
-*/
-type marketTouch struct {
-	bidPrice      float64
-	askPrice      float64
-	bidPriceMoney *decimal.Decimal
-	askPriceMoney *decimal.Decimal
-	bidQuantity   *decimal.Decimal
-	askQuantity   *decimal.Decimal
-	bidOrders     int
-	askOrders     int
-}
-
-/*
-reference returns the exact touch midpoint at its derived decimal scale.
-*/
-func (touch marketTouch) reference() *decimal.Decimal {
-	scale := max(
-		touch.bidPriceMoney.GetScale(),
-		touch.askPriceMoney.GetScale(),
-	) + 1
-
-	return touch.bidPriceMoney.Add(touch.askPriceMoney).
-		SetScale(scale).
-		Div(decimal.NewFromInt64(2))
-}
-
-/*
-spread computes exact touch width/reference before the dimensionless boundary.
-*/
-func (touch marketTouch) spread(reference *decimal.Decimal) float64 {
-	width := touch.askPriceMoney.Sub(touch.bidPriceMoney)
-	scale := max(
-		int64(decimal.DefaultScale),
-		width.GetScale(),
-		reference.GetScale(),
-	)
-
-	return width.SetScale(scale).Div(reference.SetScale(scale)).Float64()
-}
-
-/*
-notional multiplies exact fixed-point price and quantity at their combined
-scale, which represents their finite decimal product without truncating a
-fine-grained quantity. Integer products retain one fractional place to avoid
-the SDK's incorrect scale-zero banker rounding.
-*/
-func (touch marketTouch) notional(
-	price *decimal.Decimal,
-	quantity *decimal.Decimal,
-) *decimal.Decimal {
-	scale := max(int64(1), price.GetScale()+quantity.GetScale())
-
-	return price.SetScale(scale).Mul(quantity.SetScale(scale))
-}
-
-/*
 heat returns expected aggressive arrivals per resting order over the observed
 Hawkes horizon. Buys deposit thermal energy into asks and sells into bids, so
 the gas receives the measured event flow without assigning every market a
@@ -227,39 +170,6 @@ func marketScales(
 		touch.askPriceMoney != nil && touch.bidQuantity.Sign() > 0 &&
 		touch.askQuantity.Sign() > 0
 	return logPrices, logSizes, ages, touch, ready
-}
-
-/*
-observe updates one side of the best touch and accumulates its exact quantity.
-*/
-func (touch *marketTouch) observe(order physicalOrder) {
-	if order.side == book.Bid {
-		touch.bidOrders++
-	}
-
-	if order.side == book.Ask {
-		touch.askOrders++
-	}
-
-	if order.side == book.Bid && order.price >= touch.bidPrice {
-		if order.price > touch.bidPrice {
-			touch.bidPrice = order.price
-			touch.bidPriceMoney = order.priceMoney
-			touch.bidQuantity = decimal.NewFromInt64(0)
-		}
-
-		touch.bidQuantity = touch.bidQuantity.Add(order.quantityMoney)
-	}
-
-	if order.side == book.Ask && (touch.askPrice == 0 || order.price <= touch.askPrice) {
-		if touch.askPrice == 0 || order.price < touch.askPrice {
-			touch.askPrice = order.price
-			touch.askPriceMoney = order.priceMoney
-			touch.askQuantity = decimal.NewFromInt64(0)
-		}
-
-		touch.askQuantity = touch.askQuantity.Add(order.quantityMoney)
-	}
 }
 
 /*

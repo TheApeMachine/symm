@@ -28,6 +28,11 @@ func TestCausalUpdate(t *testing.T) {
 			So(hypothesis.Controls, ShouldHaveLength, len(causalControls))
 			So(hypothesis.Outcome, ShouldEqual, "next_l3_epoch_mid_log_return")
 		})
+
+		Convey("It should claim no informed flow before the model is ready", func() {
+			So(outcome.Ready, ShouldBeFalse)
+			So(outcome.InformedFlow, ShouldEqual, 0)
+		})
 	})
 }
 
@@ -72,6 +77,17 @@ func TestCausalUpdateIdentifiesArrivalEffect(t *testing.T) {
 			So(outcome.Reading.Intervention, ShouldBeGreaterThan, 0)
 			So(outcome.Reading.DoExpectation, ShouldBeGreaterThan, 0)
 			So(outcome.At, ShouldEqual, time.Unix(63, 0))
+		})
+
+		Convey("Then informed flow is the current imbalance scaled by model confidence", func() {
+			So(outcome, ShouldNotBeNil)
+			So(outcome.InformedFlow, ShouldBeGreaterThan, 0)
+			So(outcome.InformedFlow, ShouldBeLessThanOrEqualTo, 1)
+
+			// The final resolved outcome staged the epoch-64 state, whose
+			// treatment is treatments[63%8]=-0.4, so |imbalance| is 0.4.
+			So(outcome.InformedFlow, ShouldAlmostEqual,
+				0.4*outcome.Reading.Confidence, 1e-12)
 		})
 	})
 }

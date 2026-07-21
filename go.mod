@@ -79,6 +79,8 @@ require (
 
 replace github.com/bytedance/sonic => ../sonic
 
+replace github.com/krakenfx/api-go/v2 => ../api-go
+
 replace github.com/theapemachine/datura => ../datura
 
 replace github.com/theapemachine/errnie => ../errnie

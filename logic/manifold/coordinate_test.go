@@ -2,6 +2,7 @@ package manifold
 
 import (
 	"math"
+	"runtime"
 	"testing"
 	"time"
 
@@ -89,6 +90,90 @@ func TestMarketTouch_Notional(t *testing.T) {
 				"0.0000000000827115")
 		})
 	})
+}
+
+/*
+TestMarketTouch_reference proves mixed price scales are aligned before addition
+and subtraction, so receiver-scale rounding cannot erase finer tick precision.
+*/
+func TestMarketTouch_reference(t *testing.T) {
+	Convey("Given bid and ask prices with different fixed-point scales", t, func() {
+		bid, bidErr := decimal.NewFromString("1.2")
+		ask, askErr := decimal.NewFromString("1.234")
+		So(bidErr, ShouldBeNil)
+		So(askErr, ShouldBeNil)
+		touch := marketTouch{
+			bidPriceMoney: bid,
+			askPriceMoney: ask,
+		}
+
+		Convey("Then midpoint and spread retain the finer ask scale", func() {
+			reference := touch.reference()
+
+			So(reference.String(), ShouldEqual, "1.2170")
+			So(touch.spread(reference), ShouldAlmostEqual, 0.034/1.217, 1e-12)
+		})
+	})
+}
+
+/*
+TestMarketTouch_observe proves touch aggregation aligns quantity scales before
+addition, including precision finer than Decimal's default constructor scale.
+*/
+func TestMarketTouch_observe(t *testing.T) {
+	Convey("Given two fine-grained orders at the same best bid", t, func() {
+		price, priceErr := decimal.NewFromString("1.2")
+		quantity, quantityErr := decimal.NewFromString("0.00000000000005")
+		So(priceErr, ShouldBeNil)
+		So(quantityErr, ShouldBeNil)
+		touch := marketTouch{
+			bidQuantity: decimal.NewFromInt64(0),
+			askQuantity: decimal.NewFromInt64(0),
+		}
+		order := physicalOrder{
+			side:          book.Bid,
+			price:         1.2,
+			quantity:      0.00000000000005,
+			priceMoney:    price,
+			quantityMoney: quantity,
+		}
+
+		touch.observe(order)
+		touch.observe(order)
+
+		Convey("Then neither contribution is rounded to the receiver scale", func() {
+			So(touch.bidQuantity.String(), ShouldEqual, "0.00000000000010")
+		})
+	})
+}
+
+/*
+BenchmarkMarketTouchArithmetic measures the exact fixed-point boundary that is
+executed once for every mapped L3 population.
+*/
+func BenchmarkMarketTouchArithmetic(b *testing.B) {
+	bid, _ := decimal.NewFromString("61234.12")
+	ask, _ := decimal.NewFromString("61234.123")
+	quantity, _ := decimal.NewFromString("0.00006789")
+	touch := marketTouch{
+		bidPriceMoney: bid,
+		askPriceMoney: ask,
+	}
+	var reference *decimal.Decimal
+	var spread float64
+	var notional *decimal.Decimal
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		reference = touch.reference()
+		spread = touch.spread(reference)
+		notional = touch.notional(ask, quantity)
+	}
+
+	runtime.KeepAlive(reference)
+	runtime.KeepAlive(spread)
+	runtime.KeepAlive(notional)
 }
 
 func TestStablePhase(t *testing.T) {

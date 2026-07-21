@@ -28,10 +28,25 @@ const frames = Array.from({ length: 32 }, (_, tick) =>
 
 describe("FrameHistory", () => {
 	bench("retains a realistic cross-section of measurement ticks", () => {
-		const history = new FrameHistory(() => 640);
+		const history = new FrameHistory(
+			() => 640,
+			() => "SYM0/USD",
+		);
 
 		for (const frame of frames) {
 			history.retain("measurements", frame);
+		}
+	});
+
+	bench("retains and projects an active measurement-history surface", () => {
+		const history = new FrameHistory(
+			() => 640,
+			() => "SYM0/USD",
+		);
+
+		for (const frame of frames) {
+			history.retain("measurements", frame);
+			history.project("measurements", "history");
 		}
 	});
 });

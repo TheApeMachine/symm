@@ -2,6 +2,7 @@ package audit
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"math"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/errnie"
 )
 
@@ -158,6 +160,43 @@ func TestRecorderWriteFailureRecordsOperationalMetric(t *testing.T) {
 			convey.So(errors.As(writeErr, &closedErr), convey.ShouldBeTrue)
 			convey.So(closedErr.Kind, convey.ShouldEqual, errnie.IO)
 			convey.So(closedErr.Message, convey.ShouldEqual, "audit: recorder is closed")
+		})
+	})
+}
+
+/*
+TestRecorderOverflowRecordsLoss proves a saturated hot-path ring remains
+non-blocking while the single consumer writes one authoritative aggregate row
+for the diagnostic events that could not enter the ring.
+*/
+func TestRecorderOverflowRecordsLoss(t *testing.T) {
+	convey.Convey("Given a recorder whose ring is already saturated", t, func() {
+		path := filepath.Join(t.TempDir(), "audit.jsonl")
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o644)
+		convey.So(err, convey.ShouldBeNil)
+		ctx, cancel := context.WithCancel(context.Background())
+		ring, err := structure.NewMPMCRing[[]byte](ctx, 2)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(ring.Push([]byte("{\"sequence\":1}\n")), convey.ShouldBeTrue)
+		convey.So(ring.Push([]byte("{\"sequence\":2}\n")), convey.ShouldBeTrue)
+		recorder := &Recorder{
+			ctx:    ctx,
+			cancel: cancel,
+			fh:     file,
+			ring:   ring,
+			done:   make(chan struct{}),
+		}
+
+		convey.So(recorder.Write(map[string]any{"sequence": 3}), convey.ShouldNotBeNil)
+		go recorder.drain()
+		convey.So(recorder.Close(), convey.ShouldBeNil)
+
+		rows, err := os.ReadFile(path)
+		convey.So(err, convey.ShouldBeNil)
+
+		convey.Convey("Then the persisted timeline declares the loss", func() {
+			convey.So(string(rows), convey.ShouldContainSubstring, `"type":"audit_overflow"`)
+			convey.So(string(rows), convey.ShouldContainSubstring, `"dropped":1`)
 		})
 	})
 }

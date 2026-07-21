@@ -98,6 +98,51 @@ func TestBalanceFrameRequiresModel(t *testing.T) {
 	})
 }
 
+/*
+TestBalance_Resync proves reconciliation retains confirmed inventory for exits
+while stale quote cash is unavailable to new reservations until a snapshot
+returns the wallet to READY.
+*/
+func TestBalance_Resync(t *testing.T) {
+	Convey("Given a confirmed wallet entering snapshot resynchronization", t, func() {
+		cash := decimal.NewFromFloat64(100)
+		inventory := decimal.NewFromFloat64(2)
+		balance := &Balance{
+			status:   types.READY,
+			quote:    "USD",
+			holdings: &sync.Map{},
+			books:    map[string]*Reservation{},
+			model: &kraken.Balance{Data: []kraken.BalanceData{
+				{Asset: "USD", Balance: cash, Available: cash},
+				{Asset: "BTC", Balance: inventory, Available: inventory},
+			}},
+		}
+
+		So(balance.Resync(), ShouldBeNil)
+
+		Convey("Then confirmed inventory remains available for reduction", func() {
+			available, err := balance.AssetAvailable("BTC")
+
+			So(err, ShouldBeNil)
+			So(available.Float64(), ShouldEqual, 2.0)
+			So(balance.model, ShouldNotBeNil)
+		})
+
+		Convey("Then stale quote cash cannot fund new exposure", func() {
+			available, err := balance.AvailableCash()
+
+			So(available, ShouldBeNil)
+			So(err, ShouldNotBeNil)
+			So(balance.Available(decimal.NewFromFloat64(1)), ShouldBeFalse)
+			claim, claimErr := balance.Book(
+				decimal.NewFromFloat64(1), nil, "BTC/USD",
+			)
+			So(claim, ShouldBeNil)
+			So(claimErr, ShouldNotBeNil)
+		})
+	})
+}
+
 func TestSyncWalletUsesAvailable(t *testing.T) {
 	Convey("Given locked base inventory with zero Available", t, func() {
 		holdings := &sync.Map{}

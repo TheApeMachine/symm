@@ -76,11 +76,13 @@ func (signal *Signal) Calculate(
 ) ([]*types.Measurement, error) {
 	rows := frame.Tickers
 	out := make([]*types.Measurement, 0, len(rows))
-	metrics := frame.CrossSection.Metrics
-	notionalPeers := make([]float64, 0, len(metrics))
-	depthPeers := make([]float64, 0, len(metrics))
+	crossSection := frame.CrossSection
+	notionalPeers := make([]float64, 0)
+	depthPeers := make([]float64, 0)
 
-	for _, metric := range metrics {
+	crossSection.Metrics.Range(func(_, value any) bool {
+		metric := value.(types.SymbolMetric)
+
 		if metric.QuoteNotional > 0 {
 			notionalPeers = append(notionalPeers, metric.QuoteNotional)
 		}
@@ -88,7 +90,9 @@ func (signal *Signal) Calculate(
 		if metric.ExecutableDepth > 0 {
 			depthPeers = append(depthPeers, metric.ExecutableDepth)
 		}
-	}
+
+		return true
+	})
 
 	depthMedian, depthOK := statistic.MedianOf(depthPeers)
 	peerReady := len(depthPeers) >= 2 && depthOK && depthMedian > 0
@@ -103,7 +107,7 @@ func (signal *Signal) Calculate(
 	}
 
 	for _, row := range rows {
-		executableDepth := types.ExecutableDepth(row)
+		executableDepth := crossSection.ExecutableDepth(row)
 
 		if executableDepth <= 0 {
 			continue
@@ -137,7 +141,7 @@ func (signal *Signal) Calculate(
 			)
 		}
 
-		reportedNotional := types.QuoteNotional(row)
+		reportedNotional := crossSection.QuoteNotional(row)
 
 		if peerReady && reportedNotional > 0 && hasNotionalMedian && notionalMedian > 0 {
 			specs = append(specs,

@@ -12,6 +12,7 @@ import {
 } from "#/components/terminal/measurement-view";
 import { paintInlineMeter } from "#/components/terminal/metric-paint";
 import { requirePositive } from "#/lib/domain";
+import { frameRows } from "#/providers/frame-history";
 import { Badge } from "@/components/ui/badge";
 import { Flex } from "@/components/ui/flex";
 import { Meter } from "@/components/ui/meter";
@@ -211,6 +212,10 @@ const paintStat = (
 };
 
 const paintHealth = () => {
+	if (badgeRef.current === null) {
+		return;
+	}
+
 	const health = terminalHealthSummary(
 		lastMeasurements,
 		lastFocusSymbol,
@@ -268,16 +273,14 @@ const paintHealth = () => {
 };
 
 /*
-paintHealthMeasurements refreshes system health from retained measurement
-history and the cached engine tick.
+paintHealthMeasurements refreshes system health from the latest retained
+measurement per entity and the cached engine tick.
 */
 export const paintHealthMeasurements = (
 	value: unknown,
 	focusSymbol: string,
 ) => {
-	lastMeasurements = (
-		Array.isArray(value) ? value : value != null ? [value] : []
-	) as Measurement[];
+	lastMeasurements = frameRows<Measurement>(value);
 	lastFocusSymbol = focusSymbol;
 	paintHealth();
 };

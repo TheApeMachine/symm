@@ -29,14 +29,28 @@ type Particle struct {
 }
 
 /*
-PhaseResponse is the strongest historical corpus response at one global phase
-rotation of the current resident wave. Similarity remains signed so destructive
-interference is not presented as affinity.
+PhaseOutcome is the DMT attractor classification that was actually available
+for a focused market state when its resident field snapshot was retained. Its
+support and ambiguity make the categorical phase sectors auditable.
+*/
+type PhaseOutcome struct {
+	Symbol     string  `json:"symbol"`
+	Class      string  `json:"class"`
+	Confidence float64 `json:"confidence"`
+	Ambiguous  bool    `json:"ambiguous"`
+	Cohort     uint64  `json:"cohort"`
+}
+
+/*
+PhaseResponse is the strongest outcome-labeled historical corpus response at
+one global phase rotation of the current resident wave. Similarity remains
+signed so destructive interference is not presented as affinity.
 */
 type PhaseResponse struct {
-	Angle      float64   `json:"angle"`
-	Similarity float64   `json:"similarity"`
-	ObservedAt time.Time `json:"observedAt"`
+	Angle      float64      `json:"angle"`
+	Similarity float64      `json:"similarity"`
+	ObservedAt time.Time    `json:"observedAt"`
+	Outcome    PhaseOutcome `json:"outcome"`
 }
 
 /*

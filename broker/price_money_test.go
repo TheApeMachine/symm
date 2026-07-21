@@ -2,6 +2,7 @@ package broker_test
 
 import (
 	"fmt"
+	"runtime"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -386,4 +387,26 @@ func BenchmarkQuantityMoneyScan(b *testing.B) {
 	for b.Loop() {
 		_, _ = price.Quantity(&pair, budget)
 	}
+}
+
+/*
+BenchmarkPriceMulDiv measures exact mixed-scale broker multiplication and
+division through the receiver-scaled Kraken decimal fork.
+*/
+func BenchmarkPriceMulDiv(b *testing.B) {
+	price := broker.NewPrice(nil)
+	left, _ := decimal.NewFromString("61234.123")
+	right, _ := decimal.NewFromString("0.00006789")
+	var product *decimal.Decimal
+	var quotient *decimal.Decimal
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		product = price.Mul(left, right)
+		quotient = price.Div(product, left)
+	}
+
+	runtime.KeepAlive(product)
+	runtime.KeepAlive(quotient)
 }

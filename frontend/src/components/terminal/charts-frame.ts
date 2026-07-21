@@ -34,6 +34,15 @@ export type TerminalPhaseResponse = {
 	angle: number;
 	similarity: number;
 	observedAt: string;
+	outcome: TerminalPhaseOutcome;
+};
+
+export type TerminalPhaseOutcome = {
+	symbol: string;
+	className: string;
+	confidence: number;
+	ambiguous: boolean;
+	cohort: number;
 };
 
 export type TerminalPhaseStatus = {
@@ -238,7 +247,7 @@ export const terminalWaveModesFromFrame = (
 
 /*
 terminalPhaseScanFromFrame reads signed corpus responses over the backend's
-mode-derived angular path so destructive interference remains visible.
+mode-derived angular path together with the DMT outcome that owns each sector.
 */
 export const terminalPhaseScanFromFrame = (
 	frame: Record<string, unknown> | null | undefined,
@@ -247,12 +256,39 @@ export const terminalPhaseScanFromFrame = (
 		const angle = finiteNumber(record.angle);
 		const similarity = finiteNumber(record.similarity);
 		const observedAt = stringValue(record.observedAt);
+		const outcome = asRecord(record.outcome);
+		const symbol = stringValue(outcome?.symbol);
+		const className = stringValue(outcome?.class);
+		const confidence = finiteNumber(outcome?.confidence);
+		const cohort = finiteNumber(outcome?.cohort);
 
-		if (angle === null || similarity === null || observedAt === "") {
+		if (
+			angle === null ||
+			similarity === null ||
+			observedAt === "" ||
+			symbol === "" ||
+			className === "" ||
+			confidence === null ||
+			cohort === null ||
+			typeof outcome?.ambiguous !== "boolean"
+		) {
 			return [];
 		}
 
-		return [{ angle, similarity, observedAt }];
+		return [
+			{
+				angle,
+				similarity,
+				observedAt,
+				outcome: {
+					symbol,
+					className,
+					confidence,
+					ambiguous: outcome.ambiguous,
+					cohort,
+				},
+			},
+		];
 	});
 
 /*

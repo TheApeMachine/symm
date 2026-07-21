@@ -51,6 +51,10 @@ func NewBook(buf []byte) *Book {
 	return &book
 }
 
+func (book *Book) IsSuccess() bool {
+	return len(book.Data) > 0
+}
+
 func (book *Book) Action() string {
 	return "book"
 }

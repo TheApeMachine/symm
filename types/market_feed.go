@@ -29,6 +29,7 @@ type MarketBatch[T any] struct {
 	Rows    []T
 	From    uint64
 	Through uint64
+	Missed  uint64
 }
 
 /*
@@ -172,10 +173,21 @@ func (feed *MarketFeed[T]) Batch(at time.Time) (MarketBatch[T], error) {
 		return MarketBatch[T]{}, err
 	}
 
+	missed := uint64(0)
+
+	if len(slots) == 0 && next.After > feed.cursor.After {
+		missed = next.After - feed.cursor.After
+	}
+
+	if len(slots) > 0 && slots[0].IngestSequence > feed.cursor.After+1 {
+		missed = slots[0].IngestSequence - feed.cursor.After - 1
+	}
+
 	return MarketBatch[T]{
 		Rows:    feed.payloads(slots),
 		From:    feed.cursor.After,
 		Through: next.After,
+		Missed:  missed,
 	}, nil
 }
 

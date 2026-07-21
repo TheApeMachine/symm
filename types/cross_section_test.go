@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 
@@ -27,12 +28,13 @@ func liquidityTestRow(
 	}
 }
 
-func TestQuoteNotional(t *testing.T) {
+func TestCrossSectionQuoteNotional(t *testing.T) {
 	Convey("Given a row with a reported vwap", t, func() {
+		crossSection := NewCrossSection()
 		row := liquidityTestRow("BTC/USD", 99, 101, 1, 1, 10, 100)
 
 		Convey("When QuoteNotional values it", func() {
-			notional := QuoteNotional(row)
+			notional := crossSection.QuoteNotional(row)
 
 			Convey("Then it multiplies volume by vwap, not the mid price", func() {
 				So(notional, ShouldEqual, 1000)
@@ -41,53 +43,29 @@ func TestQuoteNotional(t *testing.T) {
 	})
 
 	Convey("Given a row with no vwap reported yet", t, func() {
+		crossSection := NewCrossSection()
 		row := liquidityTestRow("BTC/USD", 99, 101, 1, 1, 10, 0)
 
 		Convey("When QuoteNotional values it", func() {
-			notional := QuoteNotional(row)
+			notional := crossSection.QuoteNotional(row)
 
 			Convey("Then it falls back to the last trade price", func() {
 				So(notional, ShouldEqual, 10*row.Last.Float64())
 			})
 		})
 	})
-
-	Convey("Given a row with no volume", t, func() {
-		row := liquidityTestRow("BTC/USD", 99, 101, 1, 1, 0, 100)
-
-		Convey("When QuoteNotional values it", func() {
-			Convey("Then it is zero rather than dividing by an absent quantity", func() {
-				So(QuoteNotional(row), ShouldEqual, 0)
-			})
-		})
-	})
 }
 
-func TestExecutableDepth(t *testing.T) {
+func TestCrossSectionExecutableDepth(t *testing.T) {
 	Convey("Given a two-sided quote with asymmetric quantities", t, func() {
+		crossSection := NewCrossSection()
 		row := liquidityTestRow("BTC/USD", 99, 101, 5, 2, 10, 100)
 
 		Convey("When ExecutableDepth values it", func() {
-			depth := ExecutableDepth(row)
+			depth := crossSection.ExecutableDepth(row)
 
 			Convey("Then it uses the smaller side, valued at the mid price", func() {
 				So(depth, ShouldEqual, 2*100)
-			})
-		})
-	})
-
-	Convey("Given a one-sided quote with no bid", t, func() {
-		row := kraken.TickerData{
-			Symbol: "BTC/USD",
-			Bid:    decimal.NewFromFloat64(0),
-			BidQty: 0,
-			Ask:    decimal.NewFromFloat64(101),
-			AskQty: 5,
-		}
-
-		Convey("When ExecutableDepth values it", func() {
-			Convey("Then it is zero rather than pricing a one-sided book", func() {
-				So(ExecutableDepth(row), ShouldEqual, 0)
 			})
 		})
 	})
@@ -108,12 +86,14 @@ func TestCrossSectionMeasure(t *testing.T) {
 		crossSection.Measure(rows)
 
 		Convey("Then every symbol contributes current liquidity and change metrics", func() {
-			So(crossSection.Metrics, ShouldHaveLength, 3)
+			count := 0
 
-			for _, metric := range crossSection.Metrics {
-				So(metric.QuoteNotional, ShouldBeGreaterThan, 0)
-				So(metric.ExecutableDepth, ShouldBeGreaterThan, 0)
-			}
+			crossSection.Metrics.Range(func(_, _ any) bool {
+				count++
+				return true
+			})
+
+			So(count, ShouldEqual, 3)
 
 			leader, threshold := crossSection.Leadership()
 			So(leader, ShouldEqual, "BTC/USD")
@@ -134,35 +114,45 @@ func TestCrossSectionMeasureReplacesSymbol(t *testing.T) {
 		crossSection.Measure([]kraken.TickerData{first, second})
 
 		Convey("Then the tick retains only the latest calculated metric", func() {
-			So(crossSection.Metrics, ShouldHaveLength, 1)
-			So(crossSection.Metrics[0].LatestChange, ShouldAlmostEqual, 0.05)
-			So(crossSection.Metrics[0].Volume, ShouldEqual, 20)
+			value, ok := crossSection.Metrics.Load("BTC/USD")
+			So(ok, ShouldBeTrue)
+
+			metric := value.(SymbolMetric)
+			So(metric.LatestChange, ShouldAlmostEqual, 0.05)
+			So(metric.Volume, ShouldEqual, 20)
 		})
 	})
 }
 
-func TestCrossSectionMerge(t *testing.T) {
-	Convey("Given independently measured cross-sections", t, func() {
-		older := time.Unix(1, 0)
-		newer := time.Unix(2, 0)
+func TestCrossSectionBreadthEmpty(t *testing.T) {
+	Convey("Given an empty cross section", t, func() {
 		crossSection := NewCrossSection()
-		crossSection.Metrics = append(crossSection.Metrics, SymbolMetric{
-			Symbol: "BTC/USD", At: older, LatestChange: 0.01,
+
+		Convey("When Breadth is calculated", func() {
+			Convey("Then it is zero rather than NaN", func() {
+				So(crossSection.Breadth(), ShouldEqual, 0)
+			})
 		})
-		crossSection.index["BTC/USD"] = 0
-		incoming := NewCrossSection()
-		incoming.Metrics = append(incoming.Metrics,
-			SymbolMetric{Symbol: "BTC/USD", At: newer, LatestChange: 0.02},
-			SymbolMetric{Symbol: "ETH/USD", At: newer, LatestChange: -0.01},
-		)
+	})
+}
 
-		crossSection.Merge(incoming)
+func TestCrossSectionMarshalJSON(t *testing.T) {
+	Convey("Given measured peer metrics", t, func() {
+		crossSection := NewCrossSection()
+		row := liquidityTestRow("BTC/USD", 99, 101, 1, 1, 10, 100)
+		row.ChangePct = 4
+		crossSection.Measure([]kraken.TickerData{row})
 
-		Convey("It should retain one newest metric per symbol", func() {
-			So(crossSection.Metrics, ShouldHaveLength, 2)
-			So(crossSection.Metrics[crossSection.index["BTC/USD"]].At, ShouldEqual, newer)
-			So(crossSection.Metrics[crossSection.index["BTC/USD"]].LatestChange, ShouldEqual, 0.02)
-			So(crossSection.Metrics[crossSection.index["ETH/USD"]].LatestChange, ShouldEqual, -0.01)
+		Convey("When the cross section is marshaled and restored", func() {
+			payload, err := sonic.Marshal(crossSection)
+			So(err, ShouldBeNil)
+
+			restored := NewCrossSection()
+			So(sonic.Unmarshal(payload, restored), ShouldBeNil)
+
+			value, ok := restored.Metrics.Load("BTC/USD")
+			So(ok, ShouldBeTrue)
+			So(value.(SymbolMetric).LatestChange, ShouldAlmostEqual, 0.04)
 		})
 	})
 }

@@ -107,6 +107,37 @@ func TapeBalancedBook() *tests.Market {
 }
 
 /*
+TapeSpoofedPump is the honest pump's adversarial twin: identical tape
+signature with quotes that reload on each step and drain while it holds.
+*/
+func TapeSpoofedPump() iter.Seq[tests.Frame] {
+	return SpoofedPump()
+}
+
+/*
+TapeVacuum bleeds both sides of the book to a sliver under a flat tape.
+*/
+func TapeVacuum() iter.Seq[tests.Frame] {
+	return Vacuum()
+}
+
+/*
+TapeCoil contracts a two-sided oscillation on steady depth toward ignition.
+*/
+func TapeCoil() iter.Seq[tests.Frame] {
+	return Coil()
+}
+
+/*
+TapeStaircase is the sustained multi-leg grind: fourteen ~6% legs separated by
+pauses with shallow pullbacks, the ESPORTS-style day whose edge only exists
+beyond the next event.
+*/
+func TapeStaircase() iter.Seq[tests.Frame] {
+	return Staircase(0.06, 14, 8, 8)
+}
+
+/*
 TapeTakeProfit raises the subject well beyond its armed survival band, then
 introduces a shallow sincere fade while price remains near the peak. The fade
 is long enough to expose forward weakening without crossing the locked floor.

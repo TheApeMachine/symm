@@ -40,7 +40,7 @@ a configured strict-prior RLS head for the next L3 midpoint return.
 type Resonance struct {
 	symbol      string
 	manifold    *learning.ResonanceManifold
-	returns     *returnHead
+	returns     *returnLadder
 	baselines   map[string]*adaptive.TimeElastic
 	halflife    time.Duration
 	startedAt   time.Time
@@ -79,7 +79,7 @@ func NewResonance(
 		return nil
 	}
 
-	returns, err := newReturnHead()
+	returns, err := newReturnLadder()
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -147,11 +147,6 @@ func (resonance *Resonance) Update(
 
 	resonance.advanceEventAt(stepAt)
 
-	if err := resonance.returns.Resolve(state.ReferencePrice); err != nil {
-		errnie.Error(err)
-		return nil, nil
-	}
-
 	if err := resonance.manifold.Settle(observables, false); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
@@ -173,21 +168,24 @@ func (resonance *Resonance) Update(
 	}
 
 	resonance.samples++
-	prediction, err := resonance.returns.Predict(
-		observables,
-		state.ReferencePrice,
-	)
 
-	if err != nil {
+	if state.ReferencePrice == nil || state.ReferencePrice.Sign() <= 0 {
+		return nil, nil
+	}
+
+	if err := resonance.returns.Advance(
+		observables, state.ReferencePrice,
+	); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			"logic resonance: return prediction failed",
+			"logic resonance: return ladder advance failed",
 			err,
 		))
 
 		return nil, nil
 	}
 
+	forecast := resonance.returns.Forecast()
 	latent := resonance.manifold.LatentState()
 	layers, surprise, energy := resonance.manifold.WireSnapshot()
 
@@ -202,12 +200,13 @@ func (resonance *Resonance) Update(
 		Energy:                     energy,
 		Surprise:                   surprise,
 		Target:                     resonanceReturnTarget,
-		ExpectedReturn:             prediction,
-		ReturnReady:                resonance.returns.Ready(),
-		IncrementalMSE:             resonance.returns.meanMSE,
-		IncrementalSkillLowerBound: resonance.returns.skillLower,
-		Uncertainty:                resonance.returns.uncertainty,
-		CalibrationSamples:         resonance.returns.samples,
+		ExpectedReturn:             forecast.ExpectedReturn,
+		ReturnReady:                forecast.Ready,
+		HorizonEvents:              forecast.HorizonEvents,
+		IncrementalMSE:             forecast.MeanMSE,
+		IncrementalSkillLowerBound: forecast.SkillLower,
+		Uncertainty:                forecast.Uncertainty,
+		CalibrationSamples:         forecast.Samples,
 	}
 
 	if !outcome.IsFinite() {
@@ -351,6 +350,7 @@ type ResonanceOutcome struct {
 	Target                     string                        `json:"target"`
 	ExpectedReturn             float64                       `json:"expectedReturn"`
 	ReturnReady                bool                          `json:"returnReady"`
+	HorizonEvents              uint64                        `json:"horizonEvents"`
 	IncrementalMSE             float64                       `json:"incrementalMSE"`
 	IncrementalSkillLowerBound float64                       `json:"incrementalSkillLowerBound"`
 	Uncertainty                float64                       `json:"uncertainty"`

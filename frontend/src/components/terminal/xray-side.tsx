@@ -19,6 +19,7 @@ import {
 	signedMetric,
 	stringMetric,
 } from "#/components/terminal/xray-view";
+import { frameRows } from "#/providers/frame-history";
 
 const regimeRef = createRef<HTMLSpanElement>();
 const coherenceFactRef = createRef<HTMLSpanElement>();
@@ -161,9 +162,11 @@ export const paintXrayFactsMeasurements = (
 	value: unknown,
 	focusSymbol: string,
 ) => {
-	const measurements = (
-		Array.isArray(value) ? value : value != null ? [value] : []
-	) as Measurement[];
+	if (eventsRef.current === null) {
+		return;
+	}
+
+	const measurements = frameRows<Measurement>(value);
 	const hawkesFrames = measurements.filter(
 		(measurement) =>
 			measurement.source === "hawkes" &&
@@ -289,16 +292,18 @@ export const paintXrayManifold = (value: unknown, focusSymbol: string) => {
 };
 
 /*
-paintXrayManifoldMeasurements updates momentum eigenmode from retained Hawkes
-history when manifold coherence is unavailable.
+paintXrayManifoldMeasurements updates momentum eigenmode from the latest
+retained Hawkes measurements when manifold coherence is unavailable.
 */
 export const paintXrayManifoldMeasurements = (
 	value: unknown,
 	focusSymbol: string,
 ) => {
-	const measurements = (
-		Array.isArray(value) ? value : value != null ? [value] : []
-	) as Measurement[];
+	if (momentumRef.current === null) {
+		return;
+	}
+
+	const measurements = frameRows<Measurement>(value);
 	const hawkes = hawkesMetricsFromBuffer(
 		measurements.filter(
 			(measurement) =>

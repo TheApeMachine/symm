@@ -85,7 +85,8 @@ func TestSolver_Update(t *testing.T) {
 			So(bitcoin.SharedOscillatorCount, ShouldEqual, 4)
 			So(bitcoin.Wave, ShouldHaveLength, solver.config.Grid.X)
 			So(bitcoin.PhaseReady, ShouldBeFalse)
-			So(bitcoin.PhaseReason, ShouldEqual, "awaiting a prior nonzero phase observation")
+			So(bitcoin.PhaseReason, ShouldEqual,
+				"awaiting a prior outcome-labeled phase observation")
 			So(ether.Rho, ShouldBeEmpty)
 			So(ether.Particles, ShouldBeEmpty)
 			So(ether.SharedOscillatorCount, ShouldEqual, 0)
@@ -93,6 +94,14 @@ func TestSolver_Update(t *testing.T) {
 		})
 
 		Convey("It should scan the current phase dial against prior resident waves", func() {
+			So(solver.CommitPhase(types.Cognition{
+				Symbol:     "BTC/USD",
+				At:         at,
+				Winner:     "buy",
+				Ready:      true,
+				Confidence: 0.75,
+				Cohort:     4,
+			}), ShouldBeNil)
 			laterAt := at.Add(time.Second)
 			source.outcomes["BTC/USD"] = solverOutcome(laterAt, 16, 2)
 			source.outcomes["ETH/USD"] = solverOutcome(laterAt, 4, 8)
@@ -115,6 +124,12 @@ func TestSolver_Update(t *testing.T) {
 				So(math.IsNaN(response.Similarity), ShouldBeFalse)
 				So(math.IsInf(response.Similarity, 0), ShouldBeFalse)
 				So(response.ObservedAt, ShouldEqual, at)
+				So(response.Outcome, ShouldResemble, PhaseOutcome{
+					Symbol:     "BTC/USD",
+					Class:      "buy",
+					Confidence: 0.75,
+					Cohort:     4,
+				})
 			}
 		})
 

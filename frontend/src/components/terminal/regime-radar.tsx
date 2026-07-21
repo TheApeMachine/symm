@@ -5,6 +5,7 @@ import {
 	latestByMetric,
 	percentOf,
 } from "#/components/terminal/measurement-view";
+import { frameRows } from "#/providers/frame-history";
 import { Flex } from "@/components/ui/flex";
 import { Panel } from "@/components/ui/panel";
 
@@ -113,13 +114,15 @@ const radarFillRef = createRef<SVGPolygonElement>();
 const axisLabelRefs = RADAR_UNITS.map(() => createRef<SVGTextElement>());
 
 /*
-paintRegimeRadar paints the five-axis market regime from the newest reading per
-metric in retained cross-sectional measurement history.
+paintRegimeRadar paints the five-axis market regime from the latest retained
+cross-sectional measurement per entity.
 */
 export const paintRegimeRadar = (value: unknown, _focusSymbol: string) => {
-	const measurements = (
-		Array.isArray(value) ? value : value != null ? [value] : []
-	) as Measurement[];
+	if (radarFillRef.current === null) {
+		return;
+	}
+
+	const measurements = frameRows<Measurement>(value);
 	const candidates = backendMeasurementSources(measurements);
 	const axes = regimeAxes(measurements, candidates);
 	const points = RADAR_UNITS.map(
@@ -129,9 +132,7 @@ export const paintRegimeRadar = (value: unknown, _focusSymbol: string) => {
 			}`,
 	).join(" ");
 
-	if (radarFillRef.current !== null) {
-		radarFillRef.current.setAttribute("points", points);
-	}
+	radarFillRef.current.setAttribute("points", points);
 
 	for (const [index, [x, y]] of RADAR_UNITS.entries()) {
 		const label = axisLabelRefs[index]?.current;

@@ -176,10 +176,18 @@ func (rem *remSleep) execute(
 		"through": through.UnixNano(),
 	}))
 
-	rem.tree.ExecuteREMSleepConsolidation(
+	err := rem.tree.ExecuteREMSleepConsolidation(
 		uint64(from.UnixNano()),
 		uint64(through.UnixNano()),
 	)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"logic rem: consolidation failed",
+			err,
+		))
+	}
 
 	errnie.Error(audit.Phase(rem.recorder, tick, "rem", map[string]any{
 		"pending": pending,

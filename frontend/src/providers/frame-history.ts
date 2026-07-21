@@ -9,46 +9,77 @@ TemporalPolicy defines stable entity identity and required wire fields.
 type TemporalPolicy = {
 	identity: readonly string[];
 	required: readonly string[];
+	retention: "focus" | "latest";
+};
+
+/*
+frameRows normalizes a retained projection or ordinary wire value into the
+array shape consumed by painters.
+*/
+export const frameRows = <T>(value: unknown): T[] => {
+	return (Array.isArray(value) ? value : value != null ? [value] : []) as T[];
 };
 
 const TEMPORAL_POLICIES: Record<string, TemporalPolicy> = {
 	measurements: {
 		identity: ["symbol", "source", "metric", "side", "subject", "stream"],
 		required: ["symbol", "source"],
+		retention: "focus",
 	},
-	causal: { identity: ["symbol"], required: ["symbol"] },
-	manifold: { identity: ["symbol"], required: ["symbol"] },
-	resonance: { identity: ["symbol"], required: ["symbol"] },
+	causal: {
+		identity: ["symbol"],
+		required: ["symbol"],
+		retention: "latest",
+	},
+	manifold: {
+		identity: ["symbol"],
+		required: ["symbol"],
+		retention: "latest",
+	},
+	resonance: {
+		identity: ["symbol"],
+		required: ["symbol"],
+		retention: "focus",
+	},
+	cognition: {
+		identity: ["symbol"],
+		required: ["symbol"],
+		retention: "latest",
+	},
 };
 
 /*
 FrameHistory retains ordered observations for backend streams whose ticks are
-deltas rather than complete UI history. Each entity owns its own capacity so a
-busy symbol cannot evict quieter symbols, and timestamp replay updates the
-existing observation instead of manufacturing duplicate events.
+deltas rather than complete UI history. Focused measurement entities retain the
+visible temporal budget, cross-sectional entities retain their latest row, and
+timestamp replay updates observations instead of manufacturing duplicate events.
 */
 export class FrameHistory {
 	private readonly streams = new Map<string, Map<string, TemporalRecord[]>>();
 
 	/*
-	The capacity supplier is evaluated on every update so retention follows the
-	current rendering budget when the viewport changes.
+	The capacity and focus suppliers are evaluated on every update so retention
+	follows the rendering budget and only the symbol temporal charts can inspect.
 	*/
-	constructor(private readonly capacity: () => number) {}
+	constructor(
+		private readonly capacity: () => number,
+		private readonly focus: () => string = () => "",
+	) {}
 
 	/*
-	retain merges one wire value into its configured temporal stream and returns
-	the entire ordered history. Snapshot streams pass through untouched.
+	retain merges one wire value into its configured temporal stream. Snapshot
+	streams are intentionally ignored because their painters consume raw frames.
 	*/
-	retain(stream: string, value: unknown): unknown {
+	retain(stream: string, value: unknown): void {
 		const policy = TEMPORAL_POLICIES[stream];
 
 		if (policy === undefined) {
-			return value;
+			return;
 		}
 
 		const rows = (Array.isArray(value) ? value : [value]) as unknown[];
 		const capacity = this.capacity();
+		const focusSymbol = this.focus();
 
 		if (!Number.isInteger(capacity) || capacity < 1) {
 			throw new Error(`invalid ${stream} history capacity: ${capacity}`);
@@ -81,36 +112,60 @@ export class FrameHistory {
 				policy.identity.map((field) => row[field] ?? null),
 			);
 			const series = entities.get(identity) ?? [];
-			const existing = series.findIndex((entry) => entry.at === timestamp);
+			let lower = 0;
+			let upper = series.length;
 
-			if (existing >= 0) {
-				series[existing] = row as TemporalRecord;
+			while (lower < upper) {
+				const middle = Math.floor((lower + upper) / 2);
+
+				if ((series[middle]?.at ?? "") < timestamp) {
+					lower = middle + 1;
+					continue;
+				}
+
+				upper = middle;
+			}
+
+			if (series[lower]?.at === timestamp) {
+				series[lower] = row as TemporalRecord;
 			} else {
-				const insertion = series.findIndex((entry) => entry.at > timestamp);
-				series.splice(
-					insertion < 0 ? series.length : insertion,
-					0,
-					row as TemporalRecord,
-				);
+				series.splice(lower, 0, row as TemporalRecord);
 			}
 
 			entities.set(identity, series);
+			const limit =
+				policy.retention === "focus" && row.symbol === focusSymbol
+					? capacity
+					: 1;
+			series.splice(0, Math.max(0, series.length - limit));
 		}
-
-		for (const series of entities.values()) {
-			series.splice(0, Math.max(0, series.length - capacity));
-		}
-
-		return this.values(stream);
 	}
 
 	/*
-	values returns one flat oldest-first projection for existing painters, which
-	keeps history ownership out of individual React and canvas components.
+	project returns the requested retained view for every target on one dispatch.
+	The dispatcher memoizes this array so sibling painters share the projection.
+	*/
+	project(stream: string, input: "history" | "latest"): TemporalRecord[] {
+		return input === "history" ? this.values(stream) : this.latest(stream);
+	}
+
+	/*
+	values returns a flat projection whose observations remain oldest-first within
+	each entity, keeping history ownership out of individual UI components.
 	*/
 	values(stream: string): TemporalRecord[] {
-		return [...(this.streams.get(stream)?.values() ?? [])]
-			.flat()
-			.sort((left, right) => left.at.localeCompare(right.at));
+		return [...(this.streams.get(stream)?.values() ?? [])].flat();
+	}
+
+	/*
+	latest returns the newest observation for every entity in a stream so
+	cross-sectional views do not repeatedly scan full temporal history.
+	*/
+	latest(stream: string): TemporalRecord[] {
+		return [...(this.streams.get(stream)?.values() ?? [])].flatMap((series) => {
+			const row = series.at(-1);
+
+			return row === undefined ? [] : [row];
+		});
 	}
 }

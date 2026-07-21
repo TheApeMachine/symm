@@ -214,6 +214,16 @@ func (causal *Causal) observe(
 		outcome.ExpectedReturn = outcome.Reading.DoExpectation
 	}
 
+	if outcome.Ready && finite(outcome.Reading.Confidence) {
+		// Flow is informed when a causal link from arrival imbalance to the
+		// next return is established AND the current arrivals are one-sided:
+		// the model's category-share confidence times the present imbalance
+		// magnitude, both in [0,1], so the product is a joint probability
+		// with no free constants.
+		outcome.InformedFlow = math.Abs(features[causalTreatmentIndex]) *
+			math.Max(outcome.Reading.Confidence, 0)
+	}
+
 	return outcome, nil
 }
 
@@ -243,6 +253,10 @@ func (causal *Causal) features(state manifold.State) ([]float64, bool) {
 
 /*
 CausalOutcome is a named, future-outcome causal hypothesis measurement.
+InformedFlow is the probability the current arrival flow is informed — the
+established strength of the imbalance→return causal link scaled by how
+one-sided the present arrivals are — which the analyzer prices as adverse
+selection against the observed touch cost.
 */
 type CausalOutcome struct {
 	Source         string                `json:"source"`
@@ -256,4 +270,5 @@ type CausalOutcome struct {
 	Target         string                `json:"target"`
 	Reading        algorithm.PearlOutput `json:"reading"`
 	ExpectedReturn float64               `json:"expectedReturn"`
+	InformedFlow   float64               `json:"informedFlow"`
 }

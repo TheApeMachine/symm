@@ -367,23 +367,29 @@ func (balance *Balance) closeHolding(symbol string) {
 }
 
 /*
-Resync clears cached Kraken balance state and requests a fresh snapshot
-subscription after reconciliation detects missing or inconsistent holdings.
+Resync retains the last confirmed Kraken snapshot for risk-reducing inventory
+access, marks quote capital unavailable, and requests a fresh snapshot. A
+validated snapshot returns the balance to READY; new reservations cannot use
+stale cash while resynchronization is pending.
 */
 func (balance *Balance) Resync() error {
 	if balance == nil {
 		return nil
 	}
 
-	balance.model = nil
+	balance.mu.Lock()
 	balance.status = types.PENDING
+	api := balance.api
+	balance.mu.Unlock()
 
-	if balance.api == nil {
+	if api == nil {
 		return nil
 	}
 
-	if err := balance.api.SubscribeBalance(); err != nil {
+	if err := api.SubscribeBalance(); err != nil {
+		balance.mu.Lock()
 		balance.status = types.ERROR
+		balance.mu.Unlock()
 
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -396,6 +402,17 @@ func (balance *Balance) Resync() error {
 }
 
 func (balance *Balance) Get(symbol string) (*kraken.BalanceData, error) {
+	if balance == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"balance model not available",
+			nil,
+		))
+	}
+
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
+
 	if balance.model == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.NotFound,
@@ -664,6 +681,14 @@ func (balance *Balance) effectiveAvailableLocked() (*decimal.Decimal, error) {
 		))
 	}
 
+	if balance.status != types.READY {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Conflict,
+			"quote balance unavailable while snapshot resync is pending",
+			nil,
+		))
+	}
+
 	for _, row := range balance.model.Data {
 		if row.Asset != balance.quote || row.Available == nil {
 			continue
@@ -721,7 +746,7 @@ func (balance *Balance) reservation(
 	// misclassifies exact odd integers as half-way values.
 	scale := max(int64(1), available.GetScale()+fraction.GetScale())
 
-	return available.SetScale(scale).Mul(fraction.SetScale(scale)), nil
+	return available.SetScale(scale).Mul(fraction), nil
 }
 
 /*

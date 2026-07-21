@@ -22,7 +22,7 @@ func (solver *Solver) project(
 		return pfluid.Projection{Grid: solver.config.Grid}, nil, nil, nil
 	}
 
-	wave, scan, err := solver.phase(at, advanced, focus != "")
+	wave, scan, err := solver.phase(focus, at, advanced)
 
 	if err != nil {
 		return pfluid.Projection{}, nil, nil, err
@@ -46,16 +46,16 @@ func (solver *Solver) project(
 }
 
 /*
-phase records the current resident omega field as a PhaseDial and, when a
-focused view requests it, scans one complete mode-derived turn against prior
-market states while excluding the current observation from its own results.
+phase stages the current resident omega field until cognition commits a label
+for the same focused epoch, then scans one complete mode-derived turn against
+already labeled market states for that symbol.
 */
 func (solver *Solver) phase(
+	focus string,
 	at time.Time,
 	advanced bool,
-	scan bool,
 ) ([]pfluid.WaveMode, []PhaseResponse, error) {
-	if !advanced && !scan {
+	if focus == "" {
 		return nil, nil, nil
 	}
 
@@ -82,71 +82,16 @@ func (solver *Solver) phase(
 	}
 
 	if advanced {
-		if err := solver.spectrum.Insert(geometry.CorpusEntry[struct{}]{
-			Dial: dial,
-			At:   at,
-		}); err != nil {
-			return nil, nil, errnie.Err(
-				errnie.UnprocessableContent,
-				"manifold: failed to retain resident phase dial",
-				err,
-			)
-		}
+		solver.Stage(focus, at, dial)
 	}
 
-	if !scan || solver.spectrum.Size() < 2 {
-		return wave, nil, nil
-	}
-
-	phaseScan, err := solver.scan(dial, at)
+	phaseScan, err := solver.Responses(focus, dial, at)
 
 	if err != nil {
 		return nil, nil, err
 	}
 
 	return wave, phaseScan, nil
-}
-
-/*
-scan samples one complete turn at the resident omega resolution and returns the
-strongest prior response at each angle without manufacturing an outcome label.
-*/
-func (solver *Solver) scan(
-	dial geometry.PhaseDial,
-	at time.Time,
-) ([]PhaseResponse, error) {
-	modeCount := len(dial)
-	angles := make([]float64, modeCount)
-
-	for index := range angles {
-		angles[index] = 2 * math.Pi * float64(index) / float64(modeCount)
-	}
-
-	responses, err := solver.spectrum.ScanPhasesExcluding(dial, angles, 1, at)
-
-	if err != nil {
-		return nil, errnie.Err(
-			errnie.UnprocessableContent,
-			"manifold: failed to scan resident phase dial",
-			err,
-		)
-	}
-
-	phaseScan := make([]PhaseResponse, 0, len(responses))
-
-	for index, matches := range responses {
-		if len(matches) == 0 {
-			continue
-		}
-
-		phaseScan = append(phaseScan, PhaseResponse{
-			Angle:      angles[index],
-			Similarity: matches[0].Similarity,
-			ObservedAt: matches[0].At,
-		})
-	}
-
-	return phaseScan, nil
 }
 
 /*
@@ -196,7 +141,7 @@ func (solver *Solver) phaseReason(
 
 	for _, mode := range wave {
 		if mode.Real != 0 || mode.Imaginary != 0 {
-			return "awaiting a prior nonzero phase observation"
+			return "awaiting a prior outcome-labeled phase observation"
 		}
 	}
 

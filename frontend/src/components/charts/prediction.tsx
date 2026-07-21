@@ -10,8 +10,6 @@ import { resizeCanvas } from "#/components/terminal/canvas";
 
 const predictionCanvasRef = createRef<HTMLCanvasElement>();
 let predictionHistory = Circular<ResonanceFrame>(0);
-let predictionHistoryCapacity = 0;
-let predictionHistoryFocus = "";
 
 /*
 updatePredictionHistory applies websocket delta semantics to one bounded chart
@@ -36,35 +34,21 @@ export const updatePredictionHistory = (
 };
 
 /*
-resizePredictionHistory keeps the newest drawable samples when canvas width or
-focus changes. A focus change deliberately starts a new series so symbols are
-never joined by a meaningless line segment.
+replacePredictionHistory rebuilds the bounded canvas series from the central
+retained projection. Rebuilding prevents an older retained prefix from being
+re-appended whenever a new websocket observation arrives.
 */
-const resizePredictionHistory = (
-	focusSymbol: string,
+const replacePredictionHistory = (
 	capacity: number,
+	frames: ResonanceFrame[],
 ): void => {
-	if (
-		focusSymbol === predictionHistoryFocus &&
-		capacity === predictionHistoryCapacity
-	) {
-		return;
-	}
-
-	const retained =
-		focusSymbol === predictionHistoryFocus
-			? predictionHistory.values().slice(-capacity)
-			: [];
 	predictionHistory = Circular<ResonanceFrame>(capacity);
-	updatePredictionHistory(predictionHistory, retained);
-	predictionHistoryCapacity = capacity;
-	predictionHistoryFocus = focusSymbol;
+	updatePredictionHistory(predictionHistory, frames.slice(-capacity));
 };
 
 /*
-paintTerminalPredictionChart appends resonance deltas for the focused symbol
-and repaints its bounded time series. Unrelated symbol deltas leave the current
-series intact instead of replacing it with an empty DRAW batch.
+paintTerminalPredictionChart replaces its canvas series from the centrally
+retained focused resonance history, so websocket deltas append exactly once.
 */
 export const paintTerminalPredictionChart = (
 	value: unknown,
@@ -89,8 +73,7 @@ export const paintTerminalPredictionChart = (
 		(frame) => focusSymbol === "" || frame.symbol === focusSymbol,
 	);
 	const capacity = Math.max(2, Math.floor(canvas.clientWidth));
-	resizePredictionHistory(focusSymbol, capacity);
-	updatePredictionHistory(predictionHistory, focused);
+	replacePredictionHistory(capacity, focused);
 
 	drawPredictiveCodingChart(
 		context,

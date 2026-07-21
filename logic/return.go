@@ -13,17 +13,14 @@ import (
 )
 
 /*
-returnHead owns the strictly chronological next-midpoint RLS learner and its
-out-of-sample error and incremental-skill calibration. Resonance supplies only
-the normalized physical feature row; this object owns forecast truth.
+returnHead owns one strictly chronological midpoint-return RLS learner and its
+out-of-sample error and incremental-skill calibration. The ladder supplies the
+feature row, the strict-prior prediction made when that row was observed, and
+the realized future midpoint; this object owns forecast truth for its horizon.
 */
 type returnHead struct {
 	learner     *learning.RLS
 	confidence  float64
-	pending     []float64
-	pendingMid  *decimal.Decimal
-	prediction  float64
-	predicted   bool
 	mse         *statistic.Mean
 	errors      *adaptive.Variance
 	skill       *adaptive.Variance
@@ -72,15 +69,18 @@ func newReturnHead() (*returnHead, error) {
 }
 
 /*
-Resolve scores the prior prediction against the newly observed midpoint, then
-teaches that strictly prior feature row its realized log return.
+ResolveAgainst scores the strict-prior prediction made for one historical row
+against the midpoint now realized at this head's horizon, then teaches the
+learner that row's realized log return.
 */
-func (head *returnHead) Resolve(midPrice *decimal.Decimal) error {
-	if len(head.pending) == 0 {
-		return nil
-	}
-
-	if head.pendingMid == nil || head.pendingMid.Sign() <= 0 ||
+func (head *returnHead) ResolveAgainst(
+	features []float64,
+	priorMid *decimal.Decimal,
+	midPrice *decimal.Decimal,
+	prediction float64,
+	predicted bool,
+) error {
+	if priorMid == nil || priorMid.Sign() <= 0 ||
 		midPrice == nil || midPrice.Sign() <= 0 {
 		return errnie.Err(
 			errnie.Validation,
@@ -92,10 +92,10 @@ func (head *returnHead) Resolve(midPrice *decimal.Decimal) error {
 	scale := max(
 		int64(decimal.DefaultScale),
 		midPrice.GetScale(),
-		head.pendingMid.GetScale(),
+		priorMid.GetScale(),
 	)
 	ratio := midPrice.SetScale(scale).
-		Div(head.pendingMid.SetScale(scale)).
+		Div(priorMid.SetScale(scale)).
 		Float64()
 	target := math.Log(ratio)
 
@@ -107,12 +107,14 @@ func (head *returnHead) Resolve(midPrice *decimal.Decimal) error {
 		)
 	}
 
-	if err := head.calibrate(target); err != nil {
-		return err
+	if predicted {
+		if err := head.calibrate(target, prediction); err != nil {
+			return err
+		}
 	}
 
 	if _, err := head.learner.Measure(learning.RLSSample{
-		Features: head.pending,
+		Features: features,
 		Target:   target,
 	}); err != nil {
 		return errnie.Err(
@@ -122,28 +124,14 @@ func (head *returnHead) Resolve(midPrice *decimal.Decimal) error {
 		)
 	}
 
-	head.pending = head.pending[:0]
-	head.predicted = false
-
 	return nil
 }
 
 /*
-Predict evaluates the current physical row without observing its future target
-and retains it for resolution by the next L3 epoch.
+PredictRow evaluates one physical row without observing its future target; the
+ladder retains the value so resolution scores exactly what was claimed.
 */
-func (head *returnHead) Predict(
-	features []float64,
-	midPrice *decimal.Decimal,
-) (float64, error) {
-	if midPrice == nil || midPrice.Sign() <= 0 {
-		return 0, errnie.Err(
-			errnie.Validation,
-			"logic return: midpoint price must be strictly positive",
-			nil,
-		)
-	}
-
+func (head *returnHead) PredictRow(features []float64) (float64, error) {
 	output, err := head.learner.Predict(features)
 
 	if err != nil || !finite(output.Value) {
@@ -154,11 +142,6 @@ func (head *returnHead) Predict(
 		)
 	}
 
-	head.pending = append(head.pending[:0], features...)
-	head.pendingMid = midPrice.Copy()
-	head.prediction = output.Value
-	head.predicted = true
-
 	return output.Value, nil
 }
 
@@ -166,12 +149,8 @@ func (head *returnHead) Predict(
 calibrate updates strict-prior squared error and the lower confidence bound of
 improvement over a zero-return baseline.
 */
-func (head *returnHead) calibrate(target float64) error {
-	if !head.predicted {
-		return nil
-	}
-
-	residual := target - head.prediction
+func (head *returnHead) calibrate(target float64, prediction float64) error {
+	residual := target - prediction
 	mse, err := head.mse.Measure(residual * residual)
 
 	if err != nil {

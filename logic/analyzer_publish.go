@@ -120,8 +120,11 @@ func (analyzer *Analyzer) projectCategories(
 
 /*
 attachCategoryEvidence reads the symbol's composed evidence graph and fills the
-category's Supporting, Opposing, and Missing measurement keys so the terminal
-shows which signals justify the classification rather than a bare label.
+category's Supporting and Opposing lists with the active directional phenomena
+bearing on the winner. Winner rows are cognition attractors (buy/sell/balanced),
+not graph category nodes, so the evidence is the graph's long-stance reading:
+straight for a buy winner, mirrored for a sell winner, absent for balanced —
+never a fabricated proof for a label the graph does not model.
 */
 func (analyzer *Analyzer) attachCategoryEvidence(
 	thesis *types.Thesis,
@@ -143,8 +146,14 @@ func (analyzer *Analyzer) attachCategoryEvidence(
 		return
 	}
 
-	category.Supporting, category.Opposing, category.Missing =
-		evidenceGraph.Evidence.CategoryEvidence(category.Type)
+	evidence := evidenceGraph.LongEntryEvidence()
+
+	switch category.Type {
+	case "buy":
+		category.Supporting, category.Opposing = evidence.Favors, evidence.Opposes
+	case "sell":
+		category.Supporting, category.Opposing = evidence.Opposes, evidence.Favors
+	}
 }
 
 /*

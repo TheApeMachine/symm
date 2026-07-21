@@ -187,8 +187,9 @@ func (planner *Planner) Status() types.Status {
 /*
 Close cancels pending Planner work during runtime shutdown.
 */
-func (planner *Planner) Close() {
+func (planner *Planner) Close() error {
 	planner.cancel()
+	return nil
 }
 
 /*

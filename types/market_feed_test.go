@@ -122,6 +122,65 @@ func TestMarketFeed_Drain(t *testing.T) {
 	})
 }
 
+/*
+TestMarketFeed_BatchGap verifies that bounded retention reports the precise
+unseen ingress loss instead of presenting an incomplete event stream as whole.
+*/
+func TestMarketFeed_BatchGap(t *testing.T) {
+	Convey("Given an unseen event window larger than the timeline", t, func() {
+		feed := NewMarketFeed[marketFeedRow](2, 2)
+		start := time.Unix(100, 0).UTC()
+
+		for index := range 3 {
+			So(feed.Observe(
+				"BTC/USD",
+				start,
+				marketFeedRow{value: index},
+			), ShouldBeNil)
+		}
+
+		batch, err := feed.Batch(start)
+
+		Convey("The retained rows declare the overwritten prefix", func() {
+			So(err, ShouldBeNil)
+			So(batch.Rows, ShouldHaveLength, 2)
+			So(batch.Missed, ShouldEqual, uint64(1))
+			So(batch.From, ShouldEqual, uint64(0))
+			So(batch.Through, ShouldEqual, uint64(3))
+		})
+	})
+}
+
+/*
+TestMarketFeed_BatchCapturedGap verifies that ingress after a cut cannot hide a
+fully overwritten captured range merely because no eligible slot remains.
+*/
+func TestMarketFeed_BatchCapturedGap(t *testing.T) {
+	Convey("Given a captured range overwritten by post-cut ingress", t, func() {
+		feed := NewMarketFeed[marketFeedRow](2, 2)
+		start := time.Unix(100, 0).UTC()
+
+		for value := range 2 {
+			So(feed.Observe("BTC/USD", start, marketFeedRow{value: value}), ShouldBeNil)
+		}
+
+		So(feed.Capture(start), ShouldBeNil)
+
+		for value := 2; value < 4; value++ {
+			So(feed.Observe("BTC/USD", start, marketFeedRow{value: value}), ShouldBeNil)
+		}
+
+		batch, err := feed.Batch(start)
+
+		Convey("The empty retained range reports every missed captured event", func() {
+			So(err, ShouldBeNil)
+			So(batch.Rows, ShouldBeEmpty)
+			So(batch.Missed, ShouldEqual, uint64(2))
+			So(batch.Through, ShouldEqual, uint64(2))
+		})
+	})
+}
+
 func BenchmarkMarketFeed_Drain8192(b *testing.B) {
 	start := time.Unix(100, 0).UTC()
 	feed := NewMarketFeed[marketFeedRow](8192, 128)

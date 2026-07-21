@@ -4,7 +4,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/logic/manifold"
@@ -129,14 +128,16 @@ func (analyzer *Analyzer) forecast(
 
 	// Candidate notional is capped at the best ask, so the forecast does not
 	// claim depth-crossing impact beyond the directly observed touch spread.
+	// ExpectedImpact is stamped by strategy friction, where deployable cash
+	// determines the fraction of the visible touch an entry actually consumes.
 	forecast := types.Forecasts{
 		Source:                     "resonance+causal",
 		Symbol:                     state.Symbol,
 		At:                         state.At,
 		ObservedInterval:           state.Duration,
 		SourceEpoch:                state.Epoch,
-		HorizonEvents:              1,
-		ExpiresEpoch:               state.Epoch + 1,
+		HorizonEvents:              resonanceOutcome.HorizonEvents,
+		ExpiresEpoch:               state.Epoch + resonanceOutcome.HorizonEvents,
 		Target:                     resonanceOutcome.Target,
 		ModelVersion:               "resonance_return_head_v2_rls",
 		Ready:                      true,
@@ -149,8 +150,7 @@ func (analyzer *Analyzer) forecast(
 		BuyCapacity:                state.BuyCapacity,
 		SellCapacity:               state.SellCapacity,
 		ExpectedSpread:             state.Spread,
-		ExpectedImpact:             analyzer.forecastImpact(state),
-		ExpectedAdverseSelection:   analyzer.forecastAdverse(state),
+		ExpectedAdverseSelection:   analyzer.forecastAdverse(state, causalOutcome),
 		Uncertainty:                resonanceOutcome.Uncertainty,
 		Confidence: math.Min(
 			causalOutcome.Reading.Confidence,
@@ -162,47 +162,19 @@ func (analyzer *Analyzer) forecast(
 }
 
 /*
-forecastImpact is temporary impact as capacity utilization times the observed
-spread. Candidate size is capped at BuyCapacity, so the ratio is the share of
-two-sided visible depth consumed by a full-touch entry.
-
-ponytail: spread-times-utilization is a coarse friction proxy; upgrade path is
-manifold gas-derived impact from calibrated depth consumption models.
+forecastAdverse prices adverse selection as the causal head's informed-flow
+probability times the observed touch cost, the Glosten-Milgrom decomposition:
+a taker's expected loss to informed counterparties is the chance the present
+flow is informed times the spread that compensates the quoting side for it.
+Both factors are derived — no interim heuristic remains in the utility.
 */
-func (analyzer *Analyzer) forecastImpact(state manifold.State) float64 {
-	if state.BuyCapacity == nil || state.BuyCapacity.Sign() <= 0 ||
-		state.SellCapacity == nil || state.SellCapacity.Sign() <= 0 ||
-		state.Spread < 0 {
+func (analyzer *Analyzer) forecastAdverse(
+	state manifold.State,
+	causalOutcome *CausalOutcome,
+) float64 {
+	if state.Spread <= 0 || !finite(causalOutcome.InformedFlow) {
 		return 0
 	}
 
-	depth := state.BuyCapacity.Add(state.SellCapacity)
-	scale := max(
-		int64(decimal.DefaultScale),
-		state.BuyCapacity.GetScale(),
-		depth.GetScale(),
-	)
-	share := state.BuyCapacity.SetScale(scale).
-		Div(depth.SetScale(scale)).
-		Float64()
-
-	return state.Spread * share
-}
-
-/*
-forecastAdverse is informed-flow drag from manifold stress scaled by the
-observed spread so adverse selection stays in return units.
-
-ponytail: stress-anisotropy times spread is an interim adverse-selection
-heuristic; upgrade path is causal-head informed-flow probability scaled by
-observed touch cost.
-*/
-func (analyzer *Analyzer) forecastAdverse(state manifold.State) float64 {
-	stress := math.Abs(state.StressAnisotropy)
-
-	if stress <= 0 || state.Spread < 0 {
-		return 0
-	}
-
-	return stress * state.Spread
+	return causalOutcome.InformedFlow * state.Spread
 }

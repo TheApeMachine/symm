@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
-	"github.com/theapemachine/nomagique/geometry"
 	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/signal/compute"
@@ -41,13 +40,13 @@ Symbols contribute observations to the same gas and wave fields; they are not
 split into independent simulations that cannot interfere.
 */
 type Solver struct {
+	*PhaseCorpus
 	config    pfluid.Config
 	domain    *pfluid.Domain
-	spectrum  *geometry.Corpus[struct{}]
 	particles []pfluid.Particle
 	symbols   map[string]*symbolSlot
 	active    map[string]struct{}
-	books     BookSource
+	books     *bookSampler
 	recorder  *audit.Recorder
 }
 
@@ -79,14 +78,10 @@ func NewSolver(books BookSource, historyCapacity int) (*Solver, error) {
 		config.MaxDelta = float32(configuredDelta.Seconds())
 	}
 
-	spectrum, err := geometry.NewCorpus[struct{}](historyCapacity)
+	phaseCorpus, err := NewPhaseCorpus(historyCapacity)
 
 	if err != nil {
-		return nil, errnie.Err(
-			errnie.Validation,
-			"manifold: invalid spectral history capacity",
-			err,
-		)
+		return nil, err
 	}
 
 	var domain *pfluid.Domain
@@ -110,12 +105,12 @@ func NewSolver(books BookSource, historyCapacity int) (*Solver, error) {
 	}
 
 	return &Solver{
-		config:   config,
-		domain:   domain,
-		spectrum: spectrum,
-		symbols:  make(map[string]*symbolSlot),
-		active:   make(map[string]struct{}),
-		books:    books,
+		PhaseCorpus: phaseCorpus,
+		config:      config,
+		domain:      domain,
+		symbols:     make(map[string]*symbolSlot),
+		active:      make(map[string]struct{}),
+		books:       newBookSampler(books),
 	}, nil
 }
 
@@ -177,7 +172,7 @@ func (solver *Solver) candidates(hawkes HawkesSource) []intensityCandidate {
 			continue
 		}
 
-		orders, midPrice, ready := ordersForSymbol(solver.books, symbol)
+		orders, midPrice, ready := solver.books.Orders(symbol)
 
 		if !ready {
 			continue
@@ -230,4 +225,5 @@ func (solver *Solver) Close() {
 	solver.particles = nil
 	clear(solver.symbols)
 	clear(solver.active)
+	solver.PhaseCorpus = nil
 }
