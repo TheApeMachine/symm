@@ -19,6 +19,9 @@ import (
 //go:embed fixtures/*.json
 var fixtureFiles embed.FS
 
+/*
+FixtureType selects the Kraken Level3 envelope represented by a fixture.
+*/
 type FixtureType string
 
 const (
@@ -26,6 +29,9 @@ const (
 	UPDATE   FixtureType = "update"
 )
 
+/*
+Fixture yields template-backed standalone or market-driven Level3 frames.
+*/
 type Fixture struct {
 	horizon  int
 	sequence [][]byte
@@ -35,7 +41,12 @@ type Fixture struct {
 	previous map[string]map[string]any
 }
 
-func NewFixture(typ FixtureType, horizon int) *Fixture {
+/*
+NewDecoderFixture repeats embedded Level3 wire examples for parser tests. Full
+market tests use NewMarket, which owns a coherent order ledger and valid CRC;
+this constructor does not present its repeated updates as an exchange replay.
+*/
+func NewDecoderFixture(typ FixtureType, horizon int) *Fixture {
 	raw, err := fixtureFiles.ReadFile("fixtures/" + string(typ) + ".json")
 
 	if err != nil {
@@ -71,6 +82,9 @@ func NewMarket(symbols []string, signal *marketsignal.Signal) *Fixture {
 	}
 }
 
+/*
+Generate yields ready Kraken Level3 payloads in deterministic order.
+*/
 func (fixture *Fixture) Generate() iter.Seq[[]byte] {
 	if fixture.signal != nil {
 		return func(yield func([]byte) bool) {

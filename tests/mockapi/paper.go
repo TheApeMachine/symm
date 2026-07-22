@@ -96,6 +96,10 @@ func (conn *MockConn) MatchPaper() error {
 	}
 
 	for _, frame := range frames {
+		if !conn.Subscribed(frame.channel) {
+			continue
+		}
+
 		if err := conn.Queue(frame.channel, frame.payload); err != nil {
 			return err
 		}
@@ -130,17 +134,44 @@ Match evaluates resting limits against the latest deterministic touch.
 func (paper *Paper) Match() ([]outbound, error) {
 	paper.mu.Lock()
 	defer paper.mu.Unlock()
-	frames := []outbound{}
-	remaining := make([]string, 0, len(paper.order))
+	draft := Paper{
+		options:     paper.options,
+		balances:    make(map[string]float64, len(paper.balances)),
+		reserved:    make(map[string]float64, len(paper.reserved)),
+		open:        make(map[string]paperOrder, len(paper.open)),
+		order:       append([]string(nil), paper.order...),
+		nextID:      paper.nextID,
+		nextExec:    paper.nextExec,
+		nextBalance: paper.nextBalance,
+	}
 
-	for _, orderID := range paper.order {
-		order, exists := paper.open[orderID]
+	for asset, balance := range paper.balances {
+		draft.balances[asset] = balance
+	}
+
+	for asset, reserved := range paper.reserved {
+		draft.reserved[asset] = reserved
+	}
+
+	for orderID, order := range paper.open {
+		draft.open[orderID] = order
+	}
+
+	frames := []outbound{}
+	remaining := make([]string, 0, len(draft.order))
+	liquidity := map[string]*struct {
+		bid float64
+		ask float64
+	}{}
+
+	for _, orderID := range draft.order {
+		order, exists := draft.open[orderID]
 
 		if !exists {
 			continue
 		}
 
-		bid, bidQty, ask, askQty, exists := paper.options.Quote(order.symbol)
+		bid, bidQty, ask, askQty, exists := draft.options.Quote(order.symbol)
 
 		if !exists || order.side == "buy" && order.limit < ask ||
 			order.side == "sell" && order.limit > bid {
@@ -148,8 +179,18 @@ func (paper *Paper) Match() ([]outbound, error) {
 			continue
 		}
 
-		if order.side == "buy" && order.quantity > askQty ||
-			order.side == "sell" && order.quantity > bidQty {
+		budget := liquidity[order.symbol]
+
+		if budget == nil {
+			budget = &struct {
+				bid float64
+				ask float64
+			}{bid: bidQty, ask: askQty}
+			liquidity[order.symbol] = budget
+		}
+
+		if order.side == "buy" && order.quantity > budget.ask ||
+			order.side == "sell" && order.quantity > budget.bid {
 			return nil, errnie.Err(
 				errnie.Validation,
 				"tests/mockapi: resting order exceeds touch liquidity",
@@ -157,11 +198,27 @@ func (paper *Paper) Match() ([]outbound, error) {
 			)
 		}
 
-		frames = append(frames, paper.fill(order, bid, ask)...)
-		delete(paper.open, orderID)
+		frames = append(frames, draft.fill(order, bid, ask)...)
+		delete(draft.open, orderID)
+
+		if order.side == "buy" {
+			budget.ask -= order.quantity
+		}
+
+		if order.side == "sell" {
+			budget.bid -= order.quantity
+		}
 	}
 
-	paper.order = remaining
+	draft.order = remaining
+	paper.balances = draft.balances
+	paper.reserved = draft.reserved
+	paper.open = draft.open
+	paper.order = draft.order
+	paper.nextID = draft.nextID
+	paper.nextExec = draft.nextExec
+	paper.nextBalance = draft.nextBalance
+
 	return frames, nil
 }
 

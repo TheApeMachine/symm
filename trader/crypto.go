@@ -30,29 +30,24 @@ It consumes market and private frames, publishes UI frames,
 and delegates measurement to Signal.
 */
 type Crypto struct {
-	booter         *system.Booter
-	status         types.Status
-	ctx            context.Context
-	cancel         context.CancelFunc
-	desk           *broker.Desk
-	price          *broker.Price
-	balance        *broker.Balance
-	api            *websocket.API
-	instrument     *broker.Instrument
-	tree           *dmt.Tree
-	tick           *atomic.Int64
-	planner        *strategy.Planner
-	postMortem     *strategy.PostMortem
-	analyzer       *logic.Analyzer
-	dataPath       string
-	uiHub          *ui.Hub
-	market         *Market
-	recorder       *audit.Recorder
-	checkpointAt   atomic.Int64
-	checkpointSlot atomic.Pointer[types.Recovery]
-	snapshot       atomic.Pointer[types.Recovery]
-	thesis         atomic.Pointer[types.Thesis]
-	trading        atomic.Bool
+	booter     *system.Booter
+	status     types.Status
+	ctx        context.Context
+	cancel     context.CancelFunc
+	desk       *broker.Desk
+	price      *broker.Price
+	balance    *broker.Balance
+	api        *websocket.API
+	instrument *broker.Instrument
+	tree       *dmt.Tree
+	tick       *atomic.Int64
+	planner    *strategy.Planner
+	postMortem *strategy.PostMortem
+	analyzer   *logic.Analyzer
+	dataPath   string
+	uiHub      *ui.Hub
+	market     *Market
+	recorder   *audit.Recorder
 }
 
 /*
@@ -69,7 +64,6 @@ func NewCrypto(
 	analyzer *logic.Analyzer,
 	planner *strategy.Planner,
 	tree *dmt.Tree,
-	thesis *types.Thesis,
 	uiHub *ui.Hub,
 	recorder *audit.Recorder,
 ) (*Crypto, error) {
@@ -97,13 +91,6 @@ func NewCrypto(
 		return nil, err
 	}
 
-	snapshot, err := types.LoadRecovery(dataPath)
-
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-
 	crypto := &Crypto{
 		ctx:        ctx,
 		cancel:     cancel,
@@ -124,10 +111,6 @@ func NewCrypto(
 		market:     market,
 		recorder:   recorder,
 	}
-
-	crypto.snapshot.Store(snapshot)
-	crypto.thesis.Store(thesis)
-	crypto.tick.Store(thesis.Tick)
 
 	return crypto, nil
 }
@@ -178,7 +161,7 @@ func (crypto *Crypto) Run() error {
 				continue
 			}
 
-			err := crypto.Tick()
+			_, err := crypto.Tick()
 
 			if errnie.IsPreconditionFailed(err) {
 				time.Sleep(budget)
@@ -197,14 +180,14 @@ func (crypto *Crypto) Run() error {
 }
 
 /*
-Tick processes one complete ingress cut through the production planner. Run and
-the deterministic market decorator share this exact system transition.
+Tick processes one complete ingress cut through the production planner and
+returns the thesis for that tick. Thesis is never retained on Crypto.
 */
-func (crypto *Crypto) Tick() error {
+func (crypto *Crypto) Tick() (*types.Thesis, error) {
 	frame, err := crypto.market.Cut()
 
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	tick := crypto.tick.Add(1)
@@ -215,7 +198,6 @@ func (crypto *Crypto) Tick() error {
 	}))
 
 	thesis := crypto.planner.Update(nil, frame, tick)
-	crypto.thesis.Store(thesis)
 	candidates := 0
 
 	thesis.Positions.Range(func(key, value any) bool {
@@ -243,18 +225,20 @@ func (crypto *Crypto) Tick() error {
 		"completed":    true,
 	}))
 
-	return nil
+	return thesis, nil
 }
 
 /*
-Thesis returns the latest completed planner result published by Tick.
+Step runs one Tick and discards the thesis. Market Warmup/Transition need a
+func() error callback.
 */
-func (crypto *Crypto) Thesis() *types.Thesis {
-	return crypto.thesis.Load()
+func (crypto *Crypto) Step() error {
+	_, err := crypto.Tick()
+	return err
 }
 
 /*
-Close flushes the durable Thesis checkpoint then stops composed resources.
+Close stops composed resources.
 */
 func (crypto *Crypto) Close() (err error) {
 	crypto.cancel()

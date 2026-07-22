@@ -1,6 +1,7 @@
 package fluid
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -30,38 +31,47 @@ func (registry *Registry) Close() {
 SetInstrumentTickSize records exchange tick size for a symbol so its grid uses
 authoritative instrument metadata.
 */
-func (registry *Registry) SetInstrumentTickSize(symbol string, priceIncrement float64) {
+func (registry *Registry) SetInstrumentTickSize(
+	symbol string,
+	priceIncrement float64,
+) error {
 	if registry == nil || symbol == "" || priceIncrement <= 0 {
-		return
+		return fmt.Errorf("fluid: positive instrument tick size and symbol required")
 	}
 
-	state := registry.loadSymbol(symbol)
+	state, err := registry.loadSymbol(symbol)
 
-	if state == nil {
-		return
+	if err != nil {
+		return err
 	}
 
 	state.setInstrumentTickSize(priceIncrement)
+
+	return nil
 }
 
 /*
 loadSymbol returns or creates registered symbol state so ingestion paths share
 one fluid model per market.
 */
-func (registry *Registry) loadSymbol(symbol string) *FluidSymbol {
+func (registry *Registry) loadSymbol(symbol string) (*FluidSymbol, error) {
 	if raw, ok := registry.symbols.Load(symbol); ok {
-		return raw.(*FluidSymbol)
+		return raw.(*FluidSymbol), nil
 	}
 
 	state, err := NewFluidSymbol(symbol)
 
-	if errnie.Error(err) != nil {
-		return nil
+	if err != nil {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"fluid: create symbol state for "+symbol,
+			err,
+		)
 	}
 
 	raw, _ := registry.symbols.LoadOrStore(symbol, state)
 
-	return raw.(*FluidSymbol)
+	return raw.(*FluidSymbol), nil
 }
 
 /*

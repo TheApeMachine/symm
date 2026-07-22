@@ -10,40 +10,32 @@ import (
 )
 
 /*
-Continuity projects stop evidence and keep/reduce decisions for open wallet
-lots before entry scoring. Stoploss lives on Position; Continuity may only
-hold or reduce.
+Continuity scores keep/reduce decisions for open wallet lots before entry
+scoring. Full exits belong to Stoploss on Position via ticker updates.
 */
 type Continuity struct {
-	price    *broker.Price
-	balance  *broker.Balance
-	desk     *broker.Desk
-	rotate   Rotate
-	evidence Evidence
+	price   *broker.Price
+	balance *broker.Balance
+	rotate  Rotate
 }
 
 /*
-NewContinuity wires price fees, wallet qty, Desk positions, rotate keep-scores,
-and stop evidence.
+NewContinuity wires price fees, wallet qty, and rotate keep-scores.
 */
 func NewContinuity(
 	price *broker.Price,
 	balance *broker.Balance,
-	desk *broker.Desk,
 	rotate Rotate,
-	evidence Evidence,
 ) Continuity {
 	return Continuity{
-		price:    price,
-		balance:  balance,
-		desk:     desk,
-		rotate:   rotate,
-		evidence: evidence,
+		price:   price,
+		balance: balance,
+		rotate:  rotate,
 	}
 }
 
 /*
-Manage projects stop evidence and continuation for every open Balance lot.
+Manage scores continuation for every open Balance lot.
 */
 func (continuity Continuity) Manage(thesis *types.Thesis) {
 	if err := continuity.validate(map[string]any{"thesis": thesis}); err != nil {
@@ -57,15 +49,6 @@ func (continuity Continuity) Manage(thesis *types.Thesis) {
 
 		if lot.Status != types.OPEN {
 			continue
-		}
-
-		if position, ok := continuity.desk.Position(lot.Symbol); ok {
-			if stop := position.Stop(); stop != nil {
-				stop.WidenSurvival(position.EntryTrail(&lot))
-				stop.Regulate(
-					thesis, lot, continuity.evidence.Project(thesis, lot),
-				)
-			}
 		}
 
 		if continuity.exiting(thesis, lot.Symbol) {
@@ -129,7 +112,7 @@ func (continuity Continuity) Score(
 
 	if forecast.SellCapacity != nil && forecast.SellCapacity.Sign() > 0 &&
 		notional.Sign() > 0 && notional.Cmp(forecast.SellCapacity) > 0 {
-		quantity = continuity.price.DivFloor(
+		quantity = decimal.ExactDivFloor(
 			forecast.SellCapacity,
 			holding.Mark,
 			holding.Qty.GetScale(),
@@ -192,7 +175,7 @@ func (continuity Continuity) notional(
 	price *decimal.Decimal,
 	quantity *decimal.Decimal,
 ) *decimal.Decimal {
-	return continuity.price.Mul(price, quantity)
+	return decimal.ExactMul(price, quantity)
 }
 
 /*
@@ -246,7 +229,6 @@ func (continuity Continuity) validate(mandatory map[string]any) error {
 	check := map[string]any{
 		"price":   continuity.price,
 		"balance": continuity.balance,
-		"desk":    continuity.desk,
 	}
 
 	maps.Copy(check, mandatory)

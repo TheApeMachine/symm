@@ -175,7 +175,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 							<div className="flex min-h-0 flex-1">
 								<TerminalNav active={surface} />
 								<main className="min-w-0 flex-1 overflow-auto bg-[#0e0c0a]">
-									<div className="h-full min-h-[720px]">{children}</div>
+									<div className="h-full min-h-180">{children}</div>
 								</main>
 							</div>
 						</SymbolFocusLayer>

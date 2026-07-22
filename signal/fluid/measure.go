@@ -3,7 +3,6 @@ package fluid
 import (
 	"fmt"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -15,9 +14,13 @@ order and publishes only the measurements produced by Fluid's calculators.
 func (signal *Signal) Calculate(
 	frame *types.MarketFrame,
 ) ([]*types.Measurement, error) {
+	if frame == nil {
+		return nil, fmt.Errorf("fluid: market frame required")
+	}
+
 	events := signal.events(frame.Tickers, frame.Trades, frame.Books)
-	measurements := signal.apply(events)
-	return measurements, nil
+
+	return signal.apply(events)
 }
 
 /*
@@ -73,21 +76,20 @@ func (signal *Signal) events(
 apply feeds the already ordered timeline into Fluid's composed entity
 calculators and retains every valid measurement emitted by book events.
 */
-func (signal *Signal) apply(events []types.Event) []*types.Measurement {
+func (signal *Signal) apply(events []types.Event) ([]*types.Measurement, error) {
 	measurements := make([]*types.Measurement, 0, len(events))
 
 	for _, event := range events {
 		measured, err := signal.measure(event)
 
 		if err != nil {
-			errnie.Error(err)
 			continue
 		}
 
 		measurements = append(measurements, measured...)
 	}
 
-	return measurements
+	return measurements, nil
 }
 
 /*

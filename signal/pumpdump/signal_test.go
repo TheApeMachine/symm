@@ -1,7 +1,9 @@
 package pumpdump_test
 
 import (
+	"math"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/stack"
@@ -10,11 +12,13 @@ import (
 	"github.com/theapemachine/symm/utils"
 )
 
+/*
+metricValues groups one signal's raw values by metric and market symbol.
+*/
 type metricValues = map[types.MetricType]map[string]float64
 
 /*
-marketOutcome contains the strongest and final pumpdump evidence emitted by one
-production-booted market tape.
+marketOutcome retains both transition peaks and the latest closed volume bar.
 */
 type marketOutcome struct {
 	peak   metricValues
@@ -31,17 +35,19 @@ type marketProof struct {
 }
 
 /*
-metricComparison states one causal distinction the pumpdump signal must retain.
+metricRelation declares metrics compared across controlled market tapes.
 */
-type metricComparison struct {
-	stronger string
-	weaker   string
-	metric   types.MetricType
+type metricRelation struct {
+	left    string
+	right   string
+	metrics []types.MetricType
 }
 
 /*
-TestMeasure proves pumpdump distinguishes price lift, volume lift, compression,
-rejection, and symbol isolation through the complete production boot graph.
+TestMeasure proves pumpdump separates cadence, displacement, executed volume,
+spread compression, rejection, direction, and symbol isolation through the
+production boot graph. Every proof validates all eight metrics at both its peak
+and latest new volume bar.
 */
 func TestMeasure(t *testing.T) {
 	metrics := []types.MetricType{
@@ -60,186 +66,269 @@ func TestMeasure(t *testing.T) {
 		types.MetricTrend,
 		types.MetricExhaustion,
 	}
+	priceFamilies := []types.MetricType{
+		types.MetricPrecursor,
+		types.MetricIgnition,
+		types.MetricTrend,
+		types.MetricExhaustion,
+	}
+	lift := []types.MetricType{
+		types.MetricRVOL,
+		types.MetricPrecursor,
+		types.MetricIgnition,
+		types.MetricTrend,
+		types.MetricStrength,
+	}
+	priceLift := lift[1:]
+	fastRejection := []tests.MarketState{
+		tests.MarketStateFastPump,
+		tests.MarketStateFastDump,
+	}
+	slowRejection := []tests.MarketState{
+		tests.MarketStateFastPump,
+		tests.MarketStateSlowDump,
+	}
+	reversal := []tests.MarketState{
+		tests.MarketStateSlowDump,
+		tests.MarketStateFastPump,
+	}
 
-	Convey("Given causal and adversarial market tapes", t, func() {
+	Convey("Given matched pump-cycle market tapes", t, func() {
 		proofs := []marketProof{
+			{"baseline", []tests.MarketState{tests.MarketStateBaseline}, nil},
 			{"fast pump", []tests.MarketState{tests.MarketStateFastPump}, nil},
+			{"fast dump", []tests.MarketState{tests.MarketStateFastDump}, nil},
 			{"slow pump", []tests.MarketState{tests.MarketStateSlowPump}, nil},
-			{"fast rejection", []tests.MarketState{
-				tests.MarketStateFastPump,
-				tests.MarketStateFastDump,
-			}, nil},
-			{"slow rejection", []tests.MarketState{
-				tests.MarketStateFastPump,
-				tests.MarketStateSlowDump,
-			}, nil},
 			{"slow dump", []tests.MarketState{tests.MarketStateSlowDump}, nil},
-			{"reversal", []tests.MarketState{
-				tests.MarketStateSlowDump,
-				tests.MarketStateFastPump,
-			}, nil},
-			{"absorption", []tests.MarketState{tests.MarketStateVolumeAbsorption}, nil},
+			{"slow cadence lift", []tests.MarketState{tests.MarketStateSlowCadenceLift}, nil},
+			{"small lift", []tests.MarketState{tests.MarketStateSmallLift}, nil},
 			{"low-volume lift", []tests.MarketState{tests.MarketStateLowVolumeLift}, nil},
+			{"absorption", []tests.MarketState{tests.MarketStateVolumeAbsorption}, nil},
 			{"compression", []tests.MarketState{tests.MarketStateSpreadCompression}, nil},
+			{"spread control", []tests.MarketState{tests.MarketStateSpreadControl}, nil},
+			{"fast rejection", fastRejection, nil},
+			{"slow rejection", slowRejection, nil},
+			{"reversal", reversal, nil},
 			{"isolated pump", []tests.MarketState{tests.MarketStateFastPump}, []string{"SIM1/USD"}},
 		}
 		outcomes := make(map[string]marketOutcome, len(proofs))
+		symbols := []string{}
 
 		for _, proof := range proofs {
 			market := tests.NewMarket(t.Context(), 3)
-			So(market.Bootstrap(), ShouldBeNil)
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			So(market.Warmup(wired.Crypto.Tick), ShouldBeNil)
+			var thesis *types.Thesis
+			So(market.Warmup(func() error {
+				var err error
+				thesis, err = wired.Crypto.Tick()
+				return err
+			}), ShouldBeNil)
 			measurements := []*types.Measurement{}
+			maturity := make(map[string]float64, len(market.Symbols))
 
-			for index, state := range proof.states {
-				capture := index == len(proof.states)-1
+			for _, measurement := range thesis.Measurements {
+				if measurement.Source == types.SourcePumpDump {
+					maturity[measurement.Symbol] = measurement.Maturity
+				}
+			}
+
+			for _, state := range proof.states[:len(proof.states)-1] {
 				So(market.Transition(state, func() error {
-					err := wired.Crypto.Tick()
-
-					if capture {
-						measurements = append(
-							measurements,
-							wired.Crypto.Thesis().Measurements...,
-						)
-					}
-
+					var err error
+					thesis, err = wired.Crypto.Tick()
 					return err
 				}, proof.symbols...), ShouldBeNil)
 			}
 
+			for _, measurement := range thesis.Measurements {
+				if measurement.Source == types.SourcePumpDump {
+					maturity[measurement.Symbol] = measurement.Maturity
+				}
+			}
+
+			So(market.Transition(
+				proof.states[len(proof.states)-1], func() error {
+					var err error
+					thesis, err = wired.Crypto.Tick()
+
+					if err != nil {
+						return err
+					}
+
+					current := thesis.Measurements
+					advanced := make(map[string]bool, len(market.Symbols))
+
+					for _, measurement := range current {
+						if measurement.Source != types.SourcePumpDump {
+							continue
+						}
+
+						So(measurement.ValidateStruct(), ShouldBeNil)
+						So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
+
+						if measurement.Maturity > maturity[measurement.Symbol] {
+							advanced[measurement.Symbol] = true
+							maturity[measurement.Symbol] = measurement.Maturity
+						}
+
+						if measurement.Raw == 0 {
+							So(measurement.Normalized, ShouldBeNil)
+							continue
+						}
+
+						So(measurement.Normalized, ShouldNotBeNil)
+						So(math.IsNaN(*measurement.Normalized), ShouldBeFalse)
+						So(math.IsInf(*measurement.Normalized, 0), ShouldBeFalse)
+					}
+
+					for _, measurement := range current {
+						if measurement.Source == types.SourcePumpDump &&
+							advanced[measurement.Symbol] {
+							measurements = append(measurements, measurement)
+						}
+					}
+
+					return nil
+				}, proof.symbols...,
+			), ShouldBeNil)
+
 			outcomes[proof.name] = marketOutcome{
 				peak: utils.PeakMeasurements(
-					measurements,
-					types.SourcePumpDump,
-					metrics,
+					measurements, types.SourcePumpDump, metrics,
 				),
 				latest: utils.LatestMeasurements(
-					wired.Crypto.Thesis().Measurements,
-					types.SourcePumpDump,
-					metrics,
+					measurements, types.SourcePumpDump, metrics,
 				),
 			}
-			wired.Close()
+
+			if len(symbols) == 0 {
+				symbols = append(symbols, market.Symbols...)
+			}
+
+			So(wired.Close(), ShouldBeNil)
 			market.Close()
 		}
 
-		for _, outcome := range outcomes {
-			for _, values := range []metricValues{outcome.peak, outcome.latest} {
-				for _, metric := range metrics {
-					So(values[metric], ShouldHaveLength, 3)
-				}
-
-				for _, symbol := range []string{"SIM1/USD", "SIM2/USD", "SIM3/USD"} {
-					So(values[types.MetricRVOL][symbol], ShouldBeGreaterThan, 0)
-					So(values[types.MetricPrecursor][symbol], ShouldBeGreaterThanOrEqualTo, 0)
-					So(values[types.MetricSpread][symbol], ShouldBeGreaterThan, 0)
-					strength := 0.0
-
-					for _, family := range families {
-						So(values[family][symbol], ShouldBeGreaterThanOrEqualTo, 0)
-						strength = max(strength, values[family][symbol])
+		Convey("It should distinguish every causal market regime", func() {
+			for name, outcome := range outcomes {
+				for _, values := range []metricValues{outcome.peak, outcome.latest} {
+					for _, metric := range metrics {
+						SoMsg(name+" "+string(metric), values[metric],
+							ShouldHaveLength, len(symbols))
 					}
 
-					So(values[types.MetricStrength][symbol], ShouldEqual, strength)
+					for _, symbol := range symbols {
+						for _, metric := range metrics {
+							value := values[metric][symbol]
+							So(math.IsNaN(value), ShouldBeFalse)
+							So(math.IsInf(value, 0), ShouldBeFalse)
+							So(value, ShouldBeGreaterThanOrEqualTo, 0)
+						}
+
+						So(values[types.MetricRVOL][symbol], ShouldBeGreaterThan, 0)
+						So(values[types.MetricSpread][symbol], ShouldBeGreaterThan, 0)
+						strength := 0.0
+
+						for _, family := range families {
+							strength = max(strength, values[family][symbol])
+						}
+
+						So(values[types.MetricStrength][symbol], ShouldEqual, strength)
+					}
 				}
 			}
-		}
 
-		for _, comparison := range []metricComparison{
-			{"fast pump", "slow pump", types.MetricRVOL},
-			{"fast pump", "slow pump", types.MetricIgnition},
-			{"fast pump", "slow pump", types.MetricStrength},
-			{"fast pump", "absorption", types.MetricPrecursor},
-			{"fast pump", "absorption", types.MetricIgnition},
-			{"fast pump", "absorption", types.MetricTrend},
-			{"fast pump", "absorption", types.MetricStrength},
-			{"fast pump", "low-volume lift", types.MetricRVOL},
-			{"fast pump", "low-volume lift", types.MetricIgnition},
-			{"fast pump", "low-volume lift", types.MetricStrength},
-			{"compression", "fast pump", types.MetricCompression},
-			{"fast rejection", "fast pump", types.MetricExhaustion},
-			{"slow rejection", "fast pump", types.MetricExhaustion},
-			{"fast pump", "fast rejection", types.MetricPrecursor},
-			{"fast pump", "fast rejection", types.MetricIgnition},
-			{"fast pump", "fast rejection", types.MetricTrend},
-			{"fast pump", "fast rejection", types.MetricStrength},
-			{"fast pump", "slow rejection", types.MetricPrecursor},
-			{"fast pump", "slow rejection", types.MetricIgnition},
-			{"fast pump", "slow rejection", types.MetricTrend},
-			{"fast pump", "slow rejection", types.MetricStrength},
-			{"fast pump", "compression", types.MetricRVOL},
-			{"fast pump", "compression", types.MetricPrecursor},
-			{"fast pump", "compression", types.MetricIgnition},
-			{"fast pump", "compression", types.MetricTrend},
-			{"fast pump", "compression", types.MetricStrength},
-			{"fast rejection", "compression", types.MetricExhaustion},
-			{"reversal", "slow dump", types.MetricPrecursor},
-			{"reversal", "slow dump", types.MetricIgnition},
-			{"reversal", "slow dump", types.MetricTrend},
-			{"reversal", "slow dump", types.MetricStrength},
-		} {
-			for _, symbol := range []string{"SIM1/USD", "SIM2/USD", "SIM3/USD"} {
-				So(
-					outcomes[comparison.stronger].peak[comparison.metric][symbol],
+			comparisons := []metricRelation{
+				{"fast pump", "baseline", lift},
+				{"slow pump", "baseline", lift},
+				{"fast pump", "fast dump", priceLift},
+				{"slow dump", "baseline", []types.MetricType{types.MetricExhaustion}},
+				{"fast pump", "slow cadence lift", []types.MetricType{
+					types.MetricRVOL, types.MetricIgnition, types.MetricTrend, types.MetricStrength,
+				}},
+				{"fast pump", "small lift", priceLift},
+				{"fast pump", "low-volume lift", []types.MetricType{
+					types.MetricRVOL, types.MetricIgnition, types.MetricStrength,
+				}},
+				{"fast pump", "absorption", priceLift},
+				{"fast rejection", "fast pump", []types.MetricType{types.MetricExhaustion}},
+				{"slow rejection", "fast pump", []types.MetricType{types.MetricExhaustion}},
+				{"reversal", "slow dump", priceLift},
+			}
+
+			for _, relation := range comparisons {
+				for _, metric := range relation.metrics {
+					for _, symbol := range symbols {
+						SoMsg(
+							relation.left+" "+string(metric)+" > "+relation.right,
+							outcomes[relation.left].peak[metric][symbol],
+							ShouldBeGreaterThan,
+							outcomes[relation.right].peak[metric][symbol],
+						)
+					}
+				}
+			}
+
+			matches := []metricRelation{
+				{"fast pump", "fast dump", []types.MetricType{
+					types.MetricRVOL, types.MetricSpread,
+				}},
+				{"slow pump", "slow dump", []types.MetricType{
+					types.MetricRVOL, types.MetricSpread,
+				}},
+				{"fast pump", "slow cadence lift", []types.MetricType{types.MetricPrecursor}},
+				{"fast pump", "small lift", []types.MetricType{types.MetricRVOL}},
+				{"fast pump", "absorption", []types.MetricType{types.MetricRVOL}},
+				{"compression", "spread control", []types.MetricType{types.MetricRVOL}},
+			}
+
+			for _, relation := range matches {
+				leftValues := []metricValues{
+					outcomes[relation.left].peak,
+					outcomes[relation.left].latest,
+				}
+				rightValues := []metricValues{
+					outcomes[relation.right].peak,
+					outcomes[relation.right].latest,
+				}
+
+				for index, left := range leftValues {
+					for _, metric := range relation.metrics {
+						for _, symbol := range symbols {
+							So(left[metric][symbol], ShouldAlmostEqual,
+								rightValues[index][metric][symbol])
+						}
+					}
+				}
+			}
+
+			for _, symbol := range symbols {
+				for _, name := range []string{"absorption", "compression", "spread control"} {
+					for _, metric := range priceFamilies {
+						So(outcomes[name].latest[metric][symbol], ShouldEqual, 0.0)
+					}
+				}
+
+				So(outcomes["fast dump"].peak[types.MetricExhaustion][symbol],
+					ShouldBeGreaterThan, 0)
+				So(outcomes["compression"].peak[types.MetricCompression][symbol],
 					ShouldBeGreaterThan,
-					outcomes[comparison.weaker].peak[comparison.metric][symbol],
-				)
+					outcomes["spread control"].peak[types.MetricCompression][symbol])
+				So(outcomes["compression"].latest[types.MetricCompression][symbol],
+					ShouldBeGreaterThan,
+					outcomes["spread control"].latest[types.MetricCompression][symbol])
 			}
-		}
 
-		for _, symbol := range []string{"SIM1/USD", "SIM2/USD", "SIM3/USD"} {
-			for _, name := range []string{"fast pump", "slow pump", "reversal"} {
-				for _, metric := range []types.MetricType{
-					types.MetricRVOL,
-					types.MetricPrecursor,
-					types.MetricIgnition,
-					types.MetricTrend,
-					types.MetricStrength,
-				} {
-					So(outcomes[name].peak[metric][symbol], ShouldBeGreaterThan, 1.0)
+			isolated := outcomes["isolated pump"].peak
+
+			for _, control := range symbols[1:] {
+				for _, metric := range lift {
+					So(isolated[metric][symbols[0]], ShouldBeGreaterThan,
+						isolated[metric][control])
 				}
 			}
-
-			for _, name := range []string{"fast rejection", "slow rejection", "slow dump"} {
-				So(outcomes[name].peak[types.MetricExhaustion][symbol], ShouldBeGreaterThan, 0)
-
-				for _, metric := range []types.MetricType{
-					types.MetricPrecursor,
-					types.MetricIgnition,
-					types.MetricTrend,
-					types.MetricStrength,
-				} {
-					So(outcomes[name].peak[metric][symbol], ShouldBeLessThan, 1.0)
-				}
-			}
-
-			So(
-				outcomes["absorption"].peak[types.MetricRVOL][symbol],
-				ShouldAlmostEqual,
-				outcomes["fast pump"].peak[types.MetricRVOL][symbol],
-			)
-			So(
-				outcomes["compression"].latest[types.MetricSpread][symbol],
-				ShouldBeLessThan,
-				outcomes["fast pump"].latest[types.MetricSpread][symbol],
-			)
-		}
-
-		isolated := outcomes["isolated pump"].peak
-
-		for _, control := range []string{"SIM2/USD", "SIM3/USD"} {
-			for _, metric := range []types.MetricType{
-				types.MetricRVOL,
-				types.MetricPrecursor,
-				types.MetricIgnition,
-				types.MetricTrend,
-				types.MetricStrength,
-			} {
-				So(isolated[metric]["SIM1/USD"], ShouldBeGreaterThan, isolated[metric][control])
-			}
-		}
+		})
 	})
 }
 
@@ -249,31 +338,44 @@ BenchmarkMeasure exercises one full production tick against generated markets.
 func BenchmarkMeasure(b *testing.B) {
 	market := tests.NewMarket(b.Context(), 3)
 
-	if err := market.Bootstrap(); err != nil {
-		b.Fatal(err)
-	}
-
 	wired, err := stack.NewBooter(b.Context()).Test(market)
 
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	defer wired.Close()
-	defer market.Close()
-	b.ReportAllocs()
-	state := tests.MarketStateFastPump
-
-	for b.Loop() {
-		if err := market.Transition(state, wired.Crypto.Tick); err != nil {
+	defer func() {
+		if err := wired.Close(); err != nil {
 			b.Fatal(err)
 		}
+	}()
+	defer market.Close()
+	b.ReportAllocs()
 
-		if state == tests.MarketStateFastPump {
-			state = tests.MarketStateFastDump
-			continue
+	for b.Loop() {
+		if err := market.Apply(tests.MarketStep{
+			Advance: 250 * time.Millisecond,
+			Actions: []tests.MarketAction{
+				{
+					Kind:   tests.MarketTrade,
+					Symbol: "SIM1/USD",
+					Side:   "buy",
+					Qty:    100,
+				},
+				{
+					Kind:   tests.MarketRefill,
+					Symbol: "SIM1/USD",
+					Side:   "sell",
+					Qty:    100,
+				},
+				{
+					Kind:   tests.MarketMoveMid,
+					Symbol: "SIM1/USD",
+					Ticks:  1,
+				},
+			},
+		}, wired.Crypto.Step); err != nil {
+			b.Fatal(err)
 		}
-
-		state = tests.MarketStateFastPump
 	}
 }

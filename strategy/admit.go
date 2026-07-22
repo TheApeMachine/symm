@@ -156,14 +156,14 @@ func (admit *Admit) Capital(decision *types.Decision) {
 		return
 	}
 
-	cash, err := admit.balance.AvailableCash()
+	cash, err := admit.balance.AssetAvailable("USD")
 
 	if err != nil || cash == nil {
 		return
 	}
 
 	decision.AvailableCapital = cash
-	decision.SlotCapacity = admit.desk.MaxSlots()
+	decision.SlotCapacity = admit.desk.MaxSlots(false)
 	decision.OpenPositions = admit.desk.OpenPositions()
 }
 

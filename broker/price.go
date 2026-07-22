@@ -524,12 +524,15 @@ func (price *Price) fillExit(
 			nil,
 		))
 	} else {
-		remaining = before.Sub(data.LastQty)
+		scale := max(before.GetScale(), data.LastQty.GetScale())
+		remaining = before.SetScale(scale).Sub(data.LastQty)
 	}
 
 	if remaining.Sign() < 0 {
 		remaining = decimal.NewFromInt64(0)
 	}
+
+	holding.Qty = remaining
 
 	if holding.EntryFee != nil {
 		holding.EntryFee = price.Prorate(holding.EntryFee, remaining, before)

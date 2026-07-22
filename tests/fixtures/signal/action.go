@@ -82,7 +82,8 @@ func (signal *Signal) apply(step Step) error {
 				action.Ticks, action.Ticks,
 			)
 		case Trade:
-			if action.Qty <= 0 || action.Side != "buy" && action.Side != "sell" {
+			if !onQuantityGrid(action.Qty) ||
+				action.Side != "buy" && action.Side != "sell" {
 				return fmt.Errorf("signal: valid trade side and quantity required")
 			}
 
@@ -96,7 +97,7 @@ func (signal *Signal) apply(step Step) error {
 
 			fills[action.Symbol] = append(fills[action.Symbol], matched...)
 		case Add:
-			if action.Price <= 0 || action.Qty <= 0 || !validSide(action.Side) ||
+			if action.Price <= 0 || !onQuantityGrid(action.Qty) || !validSide(action.Side) ||
 				!onTick(action.Price) {
 				return fmt.Errorf("signal: valid add side, price, and quantity required")
 			}
@@ -110,7 +111,7 @@ func (signal *Signal) apply(step Step) error {
 				return fmt.Errorf("signal: resting order %q not found", action.OrderID)
 			}
 		case Refill:
-			if action.Qty <= 0 || !validSide(action.Side) {
+			if !onQuantityGrid(action.Qty) || !validSide(action.Side) {
 				return fmt.Errorf("signal: valid refill side and quantity required")
 			}
 

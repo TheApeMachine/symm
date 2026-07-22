@@ -2,6 +2,7 @@ package types
 
 import (
 	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -22,6 +23,7 @@ type SymbolMetric struct {
 	QuoteNotional   float64   `json:"quoteNotional"`
 	ExecutableDepth float64   `json:"executableDepth"`
 	LatestChange    float64   `json:"latestChange"`
+	RelativeSpread  float64   `json:"relativeSpread"`
 }
 
 /*
@@ -47,6 +49,16 @@ Later observations replace the same symbol rather than weighting it twice.
 */
 func (crossSection *CrossSection) Measure(rows []kraken.TickerData) {
 	for _, row := range rows {
+		relativeSpread := 0.0
+
+		if row.Bid != nil && row.Ask != nil {
+			midpoint := (row.Bid.Float64() + row.Ask.Float64()) / 2
+
+			if midpoint > 0 {
+				relativeSpread = (row.Ask.Float64() - row.Bid.Float64()) / midpoint
+			}
+		}
+
 		metric := SymbolMetric{
 			Symbol:          row.Symbol,
 			At:              row.Timestamp,
@@ -54,6 +66,7 @@ func (crossSection *CrossSection) Measure(rows []kraken.TickerData) {
 			QuoteNotional:   crossSection.QuoteNotional(row),
 			ExecutableDepth: crossSection.ExecutableDepth(row),
 			LatestChange:    row.ChangePct / 100,
+			RelativeSpread:  relativeSpread,
 		}
 
 		crossSection.Metrics.Store(row.Symbol, metric)
@@ -88,12 +101,20 @@ Leadership returns the symbol with the greatest current absolute change when
 it exceeds the cohort's median absolute change.
 */
 func (crossSection *CrossSection) Leadership() (string, float64) {
-	changes := make([]float64, 0)
+	metrics := make([]SymbolMetric, 0)
+
+	crossSection.Metrics.Range(func(_, value any) bool {
+		metrics = append(metrics, value.(SymbolMetric))
+		return true
+	})
+	sort.Slice(metrics, func(left, right int) bool {
+		return metrics[left].Symbol < metrics[right].Symbol
+	})
+	changes := make([]float64, 0, len(metrics))
 	leader := ""
 	leaderChange := 0.0
 
-	crossSection.Metrics.Range(func(_, value any) bool {
-		metric := value.(SymbolMetric)
+	for _, metric := range metrics {
 		change := math.Abs(metric.LatestChange)
 		changes = append(changes, change)
 
@@ -102,12 +123,11 @@ func (crossSection *CrossSection) Leadership() (string, float64) {
 			leaderChange = change
 		}
 
-		return true
-	})
+	}
 
 	threshold, ok := statistic.MedianAbsoluteOf(changes)
 
-	if !ok || threshold <= 0 || leaderChange <= threshold {
+	if !ok || leaderChange <= threshold {
 		return "", threshold
 	}
 

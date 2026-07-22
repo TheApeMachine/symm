@@ -12,9 +12,7 @@ import (
 
 func TestContinuationUtilityIsKeepScore(t *testing.T) {
 	Convey("Given a managing forecast with uncertainty", t, func() {
-		continuity := NewContinuity(
-			broker.NewPrice(nil), nil, nil, NewRotate(), NewEvidence(),
-		)
+		continuity := NewContinuity(broker.NewPrice(nil), nil, NewRotate())
 		forecast := types.Forecasts{
 			Symbol:         "IDEX/USD",
 			At:             time.Unix(1, 0).UTC(),
@@ -52,9 +50,7 @@ func TestContinuationUtilityIsKeepScore(t *testing.T) {
 
 func TestContinuity_Score(t *testing.T) {
 	Convey("Given visible bid capacity that covers exactly one third of a holding", t, func() {
-		continuity := NewContinuity(
-			broker.NewPrice(nil), nil, nil, NewRotate(), NewEvidence(),
-		)
+		continuity := NewContinuity(broker.NewPrice(nil), nil, NewRotate())
 		quantity, err := decimal.NewFromString("10.000")
 		So(err, ShouldBeNil)
 		holding := &types.Holding{

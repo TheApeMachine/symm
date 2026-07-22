@@ -1,6 +1,10 @@
 package utils
 
-import "github.com/theapemachine/symm/types"
+import (
+	"math"
+
+	"github.com/theapemachine/symm/types"
+)
 
 /*
 LatestMeasurements reduces the newest complete measurement epoch to values
@@ -32,6 +36,42 @@ func PeakMeasurements(
 	metrics []types.MetricType,
 ) map[types.MetricType]map[string]float64 {
 	return measurementValues(measurements, source, metrics, true)
+}
+
+/*
+PeakMagnitudeMeasurements retains the signed observation with the greatest
+absolute magnitude for each requested metric and symbol. It is distinct from
+PeakMeasurements because signed evidence such as divergence and source balance
+would otherwise discard a stronger negative excursion in favor of zero.
+*/
+func PeakMagnitudeMeasurements(
+	measurements []*types.Measurement,
+	source types.SourceType,
+	metrics []types.MetricType,
+) map[types.MetricType]map[string]float64 {
+	values := make(map[types.MetricType]map[string]float64, len(metrics))
+
+	for _, metric := range metrics {
+		values[metric] = map[string]float64{}
+	}
+
+	for _, measurement := range measurements {
+		metricValues, requested := values[measurement.Metric]
+
+		if measurement.Source != source || !requested {
+			continue
+		}
+
+		value, found := metricValues[measurement.Symbol]
+
+		if found && math.Abs(value) >= math.Abs(measurement.Raw) {
+			continue
+		}
+
+		metricValues[measurement.Symbol] = measurement.Raw
+	}
+
+	return values
 }
 
 /*

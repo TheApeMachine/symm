@@ -82,6 +82,43 @@ func TestFluidGridSourceDecomposition(t *testing.T) {
 			So(grid.cancelAccumulator[askIndex], ShouldEqual, 0)
 		})
 	}))
+
+	Convey("Given execution depletion spanning multiple integration steps", t, withFluidGrid(nil, func() {
+		grid, err := NewGrid()
+		So(err, ShouldBeNil)
+
+		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+		bids := []kraken.BookLevel{testBookLevel("99.99", 5)}
+		asks := []kraken.BookLevel{testBookLevel("100.01", 4)}
+		So(grid.ingestBook(bids, asks, 100, at), ShouldBeNil)
+		So(grid.ingestTrade(100.01, 2, at.Add(10*time.Millisecond)), ShouldBeNil)
+		depletedAsks := []kraken.BookLevel{testBookLevel("100.01", 2)}
+		So(grid.ingestBook(bids, depletedAsks, 100, at.Add(time.Second)), ShouldBeNil)
+
+		Convey("It should retain the observed execution through catch-up integration", func() {
+			So(grid.midExecuteRateAtTouch(), ShouldEqual, 2)
+			So(grid.midSourceBalance(), ShouldEqual, -2)
+		})
+	}))
+
+	Convey("Given an execution immediately replenished at the same price", t, withFluidGrid(nil, func() {
+		grid, err := NewGrid()
+		So(err, ShouldBeNil)
+
+		at := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+		bids := []kraken.BookLevel{testBookLevel("99.99", 5)}
+		asks := []kraken.BookLevel{testBookLevel("100.01", 4)}
+		So(grid.ingestBook(bids, asks, 100, at), ShouldBeNil)
+		So(grid.ingestTrade(100.01, 2, at.Add(10*time.Millisecond)), ShouldBeNil)
+		So(grid.ingestBook(bids, asks, 100, at.Add(time.Second)), ShouldBeNil)
+
+		Convey("It should reconcile unchanged depth as matched execution and addition", func() {
+			So(grid.midExecuteRateAtTouch(), ShouldEqual, 2)
+			So(grid.midAddRateAtTouch(), ShouldEqual, 2)
+			So(grid.midSourceBalance(), ShouldEqual, 0)
+			So(grid.viscosity(), ShouldEqual, 1)
+		})
+	}))
 }
 
 func TestFluidGridSparseDensityFilter(t *testing.T) {
@@ -252,6 +289,26 @@ func TestFluidGridMomentumDivergence(t *testing.T) {
 			So(grid.midVelocityDivergence(), ShouldAlmostEqual, -20, 1e-9)
 		})
 	}))
+
+	Convey("Given an empty midpoint between resting touch density", t, withFluidGrid(nil, func() {
+		grid, err := NewGrid()
+		So(err, ShouldBeNil)
+
+		index := grid.midIndex
+		grid.rho[index-1] = 8
+		grid.rho[index+1] = 12
+		grid.observedRho[index-1] = 8
+		grid.observedRho[index+1] = 12
+		grid.velocity[index-1] = 1
+		grid.velocity[index] = 1
+		grid.velocity[index+1] = 1
+
+		grid.measureMidDivergence()
+
+		Convey("It should normalize against observed depth instead of an empty-cell floor", func() {
+			So(grid.midVelocityDivergence(), ShouldAlmostEqual, -80, 1e-9)
+		})
+	}))
 }
 
 func TestFluidGridRK2NeumannBoundary(t *testing.T) {
@@ -289,7 +346,7 @@ func TestFluidGridReplenishmentRatio(t *testing.T) {
 		grid.sources[grid.midIndex-1] = 4
 		grid.sources[grid.midIndex+1] = -4
 
-		grid.measureReplenishment(0.02)
+		grid.measureReplenishment(0.02, grid.integrationInterval.Seconds())
 
 		Convey("It should use replenished over consumed as viscosity", func() {
 			So(grid.viscosity(), ShouldEqual, 1)
@@ -303,9 +360,10 @@ func TestFluidGridReplenishmentRequiresConsumption(t *testing.T) {
 	Convey("Given touch replenishment without observed consumption", t, withFluidGrid(nil, func() {
 		grid, err := NewGrid()
 		So(err, ShouldBeNil)
-		grid.sources[grid.midIndex] = 4
+		grid.addAccumulator[grid.midIndex] = 4
+		grid.sourceAccumulator[grid.midIndex] = 4
 
-		grid.measureReplenishment(0.02)
+		grid.measureReplenishment(0.02, grid.integrationInterval.Seconds())
 
 		Convey("It should not mix replenished quantity into the viscosity ratio", func() {
 			So(grid.viscosity(), ShouldEqual, 0)

@@ -9,8 +9,9 @@ import (
 wireFrame is the shared Kraken channel envelope decoded by the invariant gate.
 */
 type wireFrame[T any] struct {
-	Type string `json:"type"`
-	Data []T    `json:"data"`
+	Channel string `json:"channel"`
+	Type    string `json:"type"`
+	Data    []T    `json:"data"`
 }
 
 /*
@@ -80,6 +81,8 @@ type wireTicker struct {
 	VWAP      float64     `json:"vwap"`
 	Low       json.Number `json:"low"`
 	High      json.Number `json:"high"`
+	Change    float64     `json:"change"`
+	ChangePct float64     `json:"change_pct"`
 	Timestamp time.Time   `json:"timestamp"`
 }
 
@@ -87,21 +90,10 @@ type wireTicker struct {
 orderState retains exact L3 text for lifecycle and checksum reconstruction.
 */
 type orderState struct {
-	id       string
-	price    string
-	qty      string
-	priority uint64
-}
-
-/*
-tickerState retains the independent accumulated trade facts used to verify
-the generated ticker projection.
-*/
-type tickerState struct {
-	volume   float64
-	notional float64
-	high     float64
-	low      float64
-	tradeID  int64
-	at       time.Time
+	id         string
+	price      string
+	qty        string
+	priceValue float64
+	qtyValue   float64
+	priority   uint64
 }

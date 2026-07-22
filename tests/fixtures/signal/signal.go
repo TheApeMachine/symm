@@ -22,6 +22,13 @@ const (
 	ThinLiquidity
 	LoadedLiquidity
 	LiquidityRetreat
+	SpoofLiquidity
+	DepthThinning
+	SlowCadenceLift
+	SmallDisplacementLift
+	SpreadControl
+	LeaderFollower
+	AdverseDivergence
 )
 
 const (
@@ -31,8 +38,10 @@ const (
 	settleObservations     = 4
 	initialPrice           = 100.0
 	PriceIncrement         = 0.01
+	QuantityIncrement      = 0.00000001
 	idleAmplitudeFraction  = 0.0005
 	eventMoveFraction      = 0.12
+	smallMoveFraction      = eventMoveFraction / 4
 	idleVolume             = 10.0
 	idleVolumeWaveFraction = 0.2
 	bookLevels             = 2
@@ -41,6 +50,7 @@ const (
 	spreadCycleLength      = 4
 	spreadWidenPhase       = 0
 	spreadTightenPhase     = 2
+	leaderLagObservations  = fastLegObservations / 2
 )
 
 var epoch = time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)
@@ -59,7 +69,7 @@ type Order struct {
 }
 
 /*
-Statistics contains the trade-derived session values written into ticker
+Statistics contains the trade-derived cumulative values written into ticker
 frames so no downstream fixture independently invents market history.
 */
 type Statistics struct {
@@ -112,7 +122,7 @@ type Sample struct {
 }
 
 /*
-symbolState owns the one authoritative book and trade session for a symbol.
+symbolState owns the authoritative book and cumulative trade state for a symbol.
 */
 type symbolState struct {
 	bids     []Order
@@ -192,6 +202,20 @@ func (signal *Signal) Bootstrap() {
 		)
 
 		if err != nil {
+			panic(err)
+		}
+
+		restingSide := "sell"
+
+		if side == "sell" {
+			restingSide = "buy"
+		}
+
+		if err := signal.markets[symbol].refill(
+			restingSide,
+			idleVolume,
+			signal.at,
+		); err != nil {
 			panic(err)
 		}
 
@@ -306,7 +330,9 @@ func (state State) observations() int {
 	switch state {
 	case SlowPump, SlowDump:
 		return slowLegObservations
-	case FastPump, FastDump, VolumeAbsorption, LowVolumeLift, SpreadCompression:
+	case FastPump, FastDump, VolumeAbsorption, LowVolumeLift, SpreadCompression,
+		SlowCadenceLift, SmallDisplacementLift, SpreadControl, LeaderFollower,
+		AdverseDivergence:
 		return fastLegObservations
 	default:
 		return idleObservations
@@ -317,7 +343,7 @@ func (state State) observations() int {
 valid rejects unknown regimes before they can emit a zero-direction event.
 */
 func (state State) valid() bool {
-	return state >= Baseline && state <= LiquidityRetreat
+	return state >= Baseline && state <= AdverseDivergence
 }
 
 /*
@@ -325,7 +351,8 @@ interval returns the sampling cadence of the active event leg.
 */
 func (state State) interval() time.Duration {
 	switch state {
-	case FastPump, FastDump, VolumeAbsorption, LowVolumeLift:
+	case FastPump, FastDump, VolumeAbsorption, LowVolumeLift,
+		SmallDisplacementLift, LeaderFollower, AdverseDivergence:
 		return 250 * time.Millisecond
 	default:
 		return time.Second
@@ -337,7 +364,8 @@ direction returns the signed displacement of the selected event.
 */
 func (state State) direction() float64 {
 	switch state {
-	case FastPump, SlowPump, LowVolumeLift:
+	case FastPump, SlowPump, LowVolumeLift, SlowCadenceLift,
+		SmallDisplacementLift, LeaderFollower, AdverseDivergence:
 		return 1
 	case FastDump, SlowDump:
 		return -1
@@ -351,7 +379,8 @@ volume returns the executed quantity generated during the active event leg.
 */
 func (state State) volume() float64 {
 	switch state {
-	case FastPump, FastDump, VolumeAbsorption:
+	case FastPump, FastDump, VolumeAbsorption, SlowCadenceLift,
+		SmallDisplacementLift, LeaderFollower, AdverseDivergence:
 		return 100
 	case SlowPump, SlowDump:
 		return 30

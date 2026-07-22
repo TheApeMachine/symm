@@ -1,5 +1,6 @@
 system:
   data_path: ~/.symm/data
+  checkpoint_interval: 1s
   audit:
     # Rename runtime-audit.jsonl aside on boot so diagnostics start clean.
     rotate_on_boot: true

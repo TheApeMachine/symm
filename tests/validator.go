@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"strconv"
+	"time"
 )
 
 /*
@@ -16,6 +16,7 @@ type Validator struct {
 	books        map[string]map[string]map[float64]float64
 	orders       map[string]map[string]map[string]orderState
 	ticker       map[string]tickerState
+	observed     map[string]time.Time
 	nextPriority uint64
 }
 
@@ -24,9 +25,10 @@ NewValidator creates an empty invariant gate for one deterministic venue.
 */
 func NewValidator() *Validator {
 	return &Validator{
-		books:  map[string]map[string]map[float64]float64{},
-		orders: map[string]map[string]map[string]orderState{},
-		ticker: map[string]tickerState{},
+		books:    map[string]map[string]map[float64]float64{},
+		orders:   map[string]map[string]map[string]orderState{},
+		ticker:   map[string]tickerState{},
+		observed: map[string]time.Time{},
 	}
 }
 
@@ -54,16 +56,29 @@ func (validator *Validator) validate(payloads frameSet) error {
 	var level3 wireFrame[wireLevel3]
 
 	for _, input := range []struct {
+		channel string
 		payload []byte
 		frame   any
 	}{
-		{payloads.ticker, &ticker},
-		{payloads.trade, &trades},
-		{payloads.book, &book},
-		{payloads.level3, &level3},
+		{"ticker", payloads.ticker, &ticker},
+		{"trade", payloads.trade, &trades},
+		{"book", payloads.book, &book},
+		{"level3", payloads.level3, &level3},
 	} {
 		if len(input.payload) == 0 {
 			continue
+		}
+
+		header := wireFrame[json.RawMessage]{}
+
+		if err := json.Unmarshal(input.payload, &header); err != nil {
+			return fmt.Errorf("tests: decode simulated %s envelope: %w", input.channel, err)
+		}
+
+		if header.Channel != input.channel ||
+			header.Type != "snapshot" && header.Type != "update" ||
+			len(header.Data) == 0 {
+			return fmt.Errorf("tests: invalid simulated %s envelope", input.channel)
 		}
 
 		decoder := json.NewDecoder(bytes.NewReader(input.payload))
@@ -72,6 +87,9 @@ func (validator *Validator) validate(payloads frameSet) error {
 		if err := decoder.Decode(input.frame); err != nil {
 			return fmt.Errorf("tests: decode simulated frame: %w", err)
 		}
+	}
+	if err := validator.validateTimes(ticker.Data, trades.Data, book.Data, level3.Data); err != nil {
+		return err
 	}
 
 	tradesBySymbol := make(map[string][]wireTrade, len(trades.Data))
@@ -157,6 +175,25 @@ func (validator *Validator) applyLevel3(frameType string, row wireLevel3) error 
 		for _, order := range orders {
 			current := validator.orders[row.Symbol][side]
 			_, exists := current[order.OrderID]
+			price, err := order.Price.Float64()
+
+			if err != nil {
+				return fmt.Errorf(
+					"tests: invalid L3 price for %s: %w",
+					order.OrderID,
+					err,
+				)
+			}
+
+			quantity, err := order.Qty.Float64()
+
+			if err != nil {
+				return fmt.Errorf(
+					"tests: invalid L3 quantity for %s: %w",
+					order.OrderID,
+					err,
+				)
+			}
 
 			switch order.Event {
 			case "":
@@ -190,10 +227,12 @@ func (validator *Validator) applyLevel3(frameType string, row wireLevel3) error 
 			}
 
 			current[order.OrderID] = orderState{
-				id:       order.OrderID,
-				price:    order.Price.String(),
-				qty:      order.Qty.String(),
-				priority: priority,
+				id:         order.OrderID,
+				price:      order.Price.String(),
+				qty:        order.Qty.String(),
+				priceValue: price,
+				qtyValue:   quantity,
+				priority:   priority,
 			}
 		}
 	}
@@ -227,8 +266,17 @@ func (validator *Validator) applyBook(frameType string, row wireBook) error {
 		levels := input.levels
 
 		for _, level := range levels {
-			price, _ := level.Price.Float64()
-			quantity, _ := level.Qty.Float64()
+			price, err := level.Price.Float64()
+
+			if err != nil {
+				return fmt.Errorf("tests: invalid L2 price for %s: %w", row.Symbol, err)
+			}
+
+			quantity, err := level.Qty.Float64()
+
+			if err != nil {
+				return fmt.Errorf("tests: invalid L2 quantity for %s: %w", row.Symbol, err)
+			}
 
 			if quantity == 0 {
 				delete(validator.books[row.Symbol][side], price)
@@ -260,9 +308,23 @@ func (validator *Validator) validateSymbol(
 	symbol := ticker.Symbol
 	bid, bidQty := validator.touch(symbol, "bids", true)
 	ask, askQty := validator.touch(symbol, "asks", false)
-	tickerBid, _ := ticker.Bid.Float64()
-	tickerAsk, _ := ticker.Ask.Float64()
-	tickerLast, _ := ticker.Last.Float64()
+	tickerBid, err := ticker.Bid.Float64()
+
+	if err != nil {
+		return fmt.Errorf("tests: invalid ticker bid for %s: %w", symbol, err)
+	}
+
+	tickerAsk, err := ticker.Ask.Float64()
+
+	if err != nil {
+		return fmt.Errorf("tests: invalid ticker ask for %s: %w", symbol, err)
+	}
+
+	tickerLast, err := ticker.Last.Float64()
+
+	if err != nil {
+		return fmt.Errorf("tests: invalid ticker last for %s: %w", symbol, err)
+	}
 
 	if bid >= ask || math.Abs(tickerBid-bid) > 1e-8 ||
 		math.Abs(tickerAsk-ask) > 1e-8 ||
@@ -275,7 +337,11 @@ func (validator *Validator) validateSymbol(
 		return validator.validateTicker(ticker, nil)
 	}
 
-	tradePrice, _ := trades[len(trades)-1].Price.Float64()
+	tradePrice, err := trades[len(trades)-1].Price.Float64()
+
+	if err != nil {
+		return fmt.Errorf("tests: invalid trade price for %s: %w", symbol, err)
+	}
 
 	if math.Abs(tickerLast-tradePrice) > 1e-8 {
 		return fmt.Errorf("tests: ticker last and trade price disagree for %s", symbol)
@@ -292,9 +358,7 @@ func (validator *Validator) validateAggregates(symbol string) error {
 
 	for side, orders := range validator.orders[symbol] {
 		for _, order := range orders {
-			price, _ := strconv.ParseFloat(order.price, 64)
-			quantity, _ := strconv.ParseFloat(order.qty, 64)
-			aggregated[side][price] += quantity
+			aggregated[side][order.priceValue] += order.qtyValue
 		}
 	}
 
@@ -310,59 +374,5 @@ func (validator *Validator) validateAggregates(symbol string) error {
 		}
 	}
 
-	return nil
-}
-
-/*
-validateTicker independently reconstructs cumulative trade statistics.
-*/
-func (validator *Validator) validateTicker(
-	ticker wireTicker,
-	trades []wireTrade,
-) error {
-	state := validator.ticker[ticker.Symbol]
-	high, _ := ticker.High.Float64()
-	low, _ := ticker.Low.Float64()
-
-	if len(trades) == 0 {
-		if math.Abs(ticker.Volume-state.volume) > 1e-8 ||
-			math.Abs(ticker.VWAP-state.notional/state.volume) > 1e-8 ||
-			high != state.high || low != state.low {
-			return fmt.Errorf("tests: ticker changed without a trade for %s", ticker.Symbol)
-		}
-
-		return nil
-	}
-
-	for _, trade := range trades {
-		tradePrice, _ := trade.Price.Float64()
-
-		if trade.TradeID <= state.tradeID ||
-			!state.at.IsZero() && trade.Timestamp.Before(state.at) {
-			return fmt.Errorf("tests: trade sequence is not monotonic for %s", ticker.Symbol)
-		}
-
-		state.volume += trade.Qty
-		state.notional += tradePrice * trade.Qty
-
-		if state.high == 0 || tradePrice > state.high {
-			state.high = tradePrice
-		}
-
-		if state.low == 0 || tradePrice < state.low {
-			state.low = tradePrice
-		}
-
-		state.tradeID = trade.TradeID
-		state.at = trade.Timestamp
-	}
-
-	if math.Abs(ticker.Volume-state.volume) > 1e-8 ||
-		math.Abs(ticker.VWAP-state.notional/state.volume) > 1e-8 ||
-		high != state.high || low != state.low {
-		return fmt.Errorf("tests: ticker statistics do not reconcile for %s", ticker.Symbol)
-	}
-
-	validator.ticker[ticker.Symbol] = state
 	return nil
 }

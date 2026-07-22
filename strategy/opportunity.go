@@ -93,13 +93,13 @@ func (opportunity *Opportunity) utilization(forecast *types.Forecasts) float64 {
 		return 1
 	}
 
-	cash, err := opportunity.balance.AvailableCash()
+	cash, err := opportunity.balance.AssetAvailable("USD")
 
 	if err != nil || cash == nil || cash.Sign() <= 0 {
 		return 1
 	}
 
-	feasible := opportunity.price.Mul(cash, opportunity.maxFraction)
+	feasible := decimal.ExactMul(cash, opportunity.maxFraction)
 
 	if feasible.Cmp(forecast.BuyCapacity) >= 0 {
 		return 1
@@ -153,7 +153,6 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 				*forecast, 0, "cognitive_not_ready",
 				"cognitive memory is not ready for this evidence sequence",
 			))
-
 			continue
 		}
 
@@ -164,7 +163,6 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 				*forecast, 0, "cognitive_not_ready",
 				"cognitive memory is not ready for this evidence sequence",
 			))
-
 			continue
 		}
 
@@ -173,7 +171,6 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 				*forecast, 0, "cognitive_ambiguity",
 				"cognitive memory is ambiguous for this evidence sequence",
 			))
-
 			continue
 		}
 
@@ -182,7 +179,6 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 				*forecast, 0, "cognitive_opposition",
 				"cognitive memory does not support a buy entry",
 			))
-
 			continue
 		}
 
@@ -191,7 +187,6 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 				*forecast, 0, "cognitive_no_confidence",
 				"cognitive buy support has no confidence",
 			))
-
 			continue
 		}
 
@@ -200,7 +195,6 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 				*forecast, 0, "forecast_no_confidence",
 				"forecast confidence is not positive",
 			))
-
 			continue
 		}
 
@@ -216,7 +210,6 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			rejected.Alternatives["evidence_opposes"] = float64(len(evidence.Opposes))
 			rejected.Alternatives["evidence_vetoes"] = float64(len(evidence.Vetoes))
 			thesis.Decisions = append(thesis.Decisions, rejected)
-
 			continue
 		}
 
@@ -229,7 +222,6 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 				*forecast, utility, "infeasible",
 				"expected executable utility does not exceed doing nothing",
 			))
-
 			continue
 		}
 
@@ -238,7 +230,6 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 				*forecast, utility, "cognitive_weak",
 				"cognitive confidence does not clear forecast noise share",
 			))
-
 			continue
 		}
 
@@ -270,10 +261,16 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			},
 			ExpectedFees:      decimal.NewFromFloat64(2 * forecast.ExpectedFees),
 			ExpectedSpread:    decimal.NewFromFloat64(forecast.ExpectedSpread),
+			ExpectedReturn:    decimal.NewFromFloat64(forecast.ExpectedReturn),
+			ExpectedImpact:    decimal.NewFromFloat64(forecast.ExpectedImpact),
+			AdverseSelection:  forecast.ExpectedAdverseSelection,
+			Uncertainty:       forecast.Uncertainty,
 			ReferencePrice:    forecast.ReferencePrice.Copy(),
 			ValidThroughEpoch: forecast.ExpiresEpoch,
 			ForecastSource:    forecast.Source,
+			ForecastModel:     forecast.ModelVersion,
 			ForecastEpoch:     forecast.SourceEpoch,
+			CalibrationCount:  forecast.CalibrationSamples,
 			Confidence:        cognition.Confidence,
 			OpportunityMargin: reading.Margin,
 			CognitiveLead:     reading.Lead,
@@ -307,7 +304,6 @@ func (opportunity *Opportunity) stance(
 	}
 
 	evidence := evidenceGraph.LongEntryEvidence()
-
 	return evidence,
 		len(evidence.Vetoes) > 0 || len(evidence.Opposes) > len(evidence.Favors)
 }
@@ -329,6 +325,15 @@ func (opportunity *Opportunity) reject(
 		ReferencePrice:    forecast.ReferencePrice.Copy(),
 		ValidThroughEpoch: forecast.ExpiresEpoch,
 		ForecastSource:    forecast.Source,
+		ForecastModel:     forecast.ModelVersion,
+		ForecastEpoch:     forecast.SourceEpoch,
+		CalibrationCount:  forecast.CalibrationSamples,
+		ExpectedReturn:    decimal.NewFromFloat64(forecast.ExpectedReturn),
+		ExpectedFees:      decimal.NewFromFloat64(2 * forecast.ExpectedFees),
+		ExpectedSpread:    decimal.NewFromFloat64(forecast.ExpectedSpread),
+		ExpectedImpact:    decimal.NewFromFloat64(forecast.ExpectedImpact),
+		AdverseSelection:  forecast.ExpectedAdverseSelection,
+		Uncertainty:       forecast.Uncertainty,
 		Cause:             cause,
 		Reason:            reason,
 	}
@@ -373,7 +378,6 @@ func (opportunity *Opportunity) occupied(thesis *types.Thesis) map[string]struct
 		}
 
 		blocked[holding.Symbol] = struct{}{}
-
 		return true
 	})
 
@@ -390,9 +394,7 @@ func (opportunity *Opportunity) occupied(thesis *types.Thesis) map[string]struct
 			types.LifecyclePartiallyEntered, types.LifecycleManaging:
 			blocked[symbol] = struct{}{}
 		}
-
 		return true
 	})
-
 	return blocked
 }

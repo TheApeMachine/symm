@@ -2,13 +2,13 @@ package cvd
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -18,22 +18,28 @@ price response. Categories belong in logic; this signal emits numerical scores
 only.
 */
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	sample *algorithm.TradeFlowSample
-	flow   *equation.Flow
-	ui     chan []byte
+	ctx       context.Context
+	cancel    context.CancelFunc
+	sample    *algorithm.TradeFlowSample
+	flow      *equation.Flow
+	midpoints map[string]float64
+	ui        chan []byte
 }
 
-func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
+/*
+NewSignal creates the CVD perspective with independent rolling state for each
+symbol so one market's aggressor history cannot leak into another's evidence.
+*/
+func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		sample: algorithm.NewTradeFlowSample(),
-		flow:   equation.NewFlow(),
-		ui:     ui,
+		ctx:       ctx,
+		cancel:    cancel,
+		sample:    algorithm.NewTradeFlowSample(),
+		flow:      equation.NewFlow(),
+		midpoints: make(map[string]float64),
+		ui:        ui,
 	}
 }
 
@@ -44,32 +50,26 @@ measured its evidence, mirroring broker.Balance.Publish.
 func (signal *Signal) Publish(measurements []*types.Measurement) {
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": types.WireMeasurements(measurements),
+		"measurements": types.ForPublish(measurements),
 	}.Marshal():
 	default:
 	}
 }
 
 /*
-Interest requires aggressor trade flow.
+Interest requires aggressor trades and the executable midpoint that separates
+price response from bid-ask execution bounce.
 */
 func (signal *Signal) Interest() types.StreamInterest {
-	return types.StreamTrade
+	return types.StreamTrade | types.StreamTicker
 }
 
 /*
-Measure supports direct replay against the legacy signal-local journal. The
-live runtime uses Calculate with the central immutable market cut.
+Measure returns typed measurements for the cut, or an error when the
+cut cannot be measured honestly.
 */
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	measurements, err := signal.Calculate(thesis.Market())
-
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	return measurements
+func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, error) {
+	return signal.Calculate(thesis.Market())
 }
 
 /*
@@ -79,48 +79,91 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Calculate(
 	frame *types.MarketFrame,
 ) ([]*types.Measurement, error) {
+	if frame == nil {
+		return nil, fmt.Errorf("cvd: market frame required")
+	}
+
 	trades := frame.Trades
 	out := make([]*types.Measurement, 0, len(trades))
+
+	for _, row := range frame.Tickers {
+		if row.Symbol == "" || row.Timestamp.IsZero() {
+			continue
+		}
+
+		if row.Bid == nil || row.Ask == nil {
+			continue
+		}
+
+		if row.Bid.Sign() <= 0 || row.Ask.Cmp(row.Bid) <= 0 {
+			continue
+		}
+
+		signal.midpoints[row.Symbol] = (row.Bid.Float64() + row.Ask.Float64()) / 2
+	}
 
 	for _, row := range trades {
 		if row.Symbol == "" || row.Price.Sign() <= 0 || row.Qty <= 0 {
 			continue
 		}
 
-		input, ready, maturity, err := signal.sample.Measure(algorithm.TradeFlowInput{
-			Symbol:   row.Symbol,
-			Price:    row.Price.Float64(),
-			Quantity: row.Qty,
-			Side:     row.Side,
-		})
+		midpoint, exists := signal.midpoints[row.Symbol]
 
-		if err != nil {
-			panic(errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				err.Error(),
-				err,
-			)))
-		}
-
-		if !ready {
+		if !exists {
 			continue
 		}
 
-		output, err := signal.flow.Measure(input)
+		measurements, err := signal.measureTrade(row, midpoint)
 
 		if err != nil {
-			panic(errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				err.Error(),
-				err,
-			)))
+			continue
 		}
 
-		measurements := signal.cvdMeasurements(row, output, maturity)
 		out = append(out, measurements...)
 	}
 
 	return out, nil
+}
+
+/*
+measureTrade separates execution notional from midpoint response before
+classifying one aggressor observation through the adaptive CVD window.
+*/
+func (signal *Signal) measureTrade(
+	row kraken.TradeData,
+	midpoint float64,
+) ([]*types.Measurement, error) {
+	input, ready, maturity, err := signal.sample.Measure(algorithm.TradeFlowInput{
+		Symbol:        row.Symbol,
+		Price:         row.Price.Float64(),
+		ResponsePrice: midpoint,
+		Quantity:      row.Qty,
+		Side:          row.Side,
+	})
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			err.Error(),
+			err,
+		))
+	}
+
+	if !ready {
+		return nil, nil
+	}
+
+	output, err := signal.flow.Measure(input)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			err.Error(),
+			err,
+		))
+	}
+
+	return signal.cvdMeasurements(row, output, maturity), nil
 }
 
 /*
@@ -186,13 +229,8 @@ func (signal *Signal) cvdMeasurements(
 Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
-func (signal *Signal) Close() (err error) {
-	err = errnie.Error(errnie.Err(
-		errnie.Internal,
-		"signal: close failed",
-		nil,
-	))
-
+func (signal *Signal) Close() error {
 	signal.cancel()
-	return err
+
+	return nil
 }

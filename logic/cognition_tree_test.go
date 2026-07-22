@@ -6,12 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura/dmt"
-	pmanifold "github.com/theapemachine/nomagique/physics/fluid"
-	"github.com/theapemachine/symm/logic/manifold"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -20,46 +16,45 @@ measurement-token cardinality. A freeze after manifold on busy ticks was
 ExecuteBeamSearch(parent, width, len(parts)).
 */
 func TestCognitionVisualizationStaysBounded(t *testing.T) {
-	tree := dmt.NewTree("")
-	parts := make([]string, 0, 80)
-	parts = append(parts, "symbol-vvv-usd")
+	Convey("Given a trained sequence wider than the beam-search depth", t, func() {
+		tree := dmt.NewTree("")
+		parts := []string{"symbol-vvv-usd"}
 
-	for index := 0; index < 64; index++ {
-		parts = append(parts, fmt.Sprintf("exhaust-metric-%d-positive", index))
-	}
+		for index := range 64 {
+			parts = append(parts, fmt.Sprintf("exhaust-metric-%d-positive", index))
+		}
 
-	sequence := []byte(strings.Join(parts, "_"))
-	parent := []byte(strings.Join(parts[:len(parts)-1], "_"))
-	analyzer := &Analyzer{tree: tree}
+		sequence := []byte(strings.Join(parts, "_"))
+		parent := []byte(strings.Join(parts[:len(parts)-1], "_"))
+		analyzer := &Analyzer{tree: tree}
+		tree.TrainSensorySequence(sequence)
 
-	tree.TrainSensorySequence(sequence)
+		for index := range 32 {
+			alternate := append([]string{}, parts...)
+			alternate[len(alternate)-1] = fmt.Sprintf(
+				"exhaust-metric-%d-negative", index,
+			)
+			tree.TrainSensorySequence([]byte(strings.Join(alternate, "_")))
+		}
 
-	for index := 0; index < 32; index++ {
-		alternate := append([]string{}, parts...)
-		alternate[len(alternate)-1] = fmt.Sprintf(
-			"exhaust-metric-%d-negative", index,
-		)
-		tree.TrainSensorySequence([]byte(strings.Join(alternate, "_")))
-	}
+		var scratch dmt.ClassificationScratch
+		classification := tree.Classify(sequence, &scratch)
+		predictions := tree.PredictNextSensoryTokens(parent, nil)
+		done := make(chan struct{})
 
-	var scratch dmt.ClassificationScratch
-	classification := tree.Classify(sequence, &scratch)
-	predictions := tree.PredictNextSensoryTokens(parent, nil)
+		go func() {
+			_, _, _, _, _, _, _, _ = analyzer.cognitionVisualization(
+				sequence, parent, parts, classification, predictions,
+			)
+			close(done)
+		}()
 
-	done := make(chan struct{})
-
-	go func() {
-		_, _, _, _, _, _, _, _ = analyzer.cognitionVisualization(
-			sequence, parent, parts, classification, predictions,
-		)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("cognitionVisualization hung with wide measurement token set")
-	}
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("cognitionVisualization hung with wide measurement token set")
+		}
+	})
 }
 
 /*
@@ -211,99 +206,6 @@ func TestCognitionVisualization(t *testing.T) {
 			So(lookaheadPaths, ShouldEqual, len(beams))
 			So(lookaheadScore, ShouldBeGreaterThan, 0)
 			So(classes, ShouldNotBeNil)
-		})
-	})
-}
-
-func TestAnalyzerCognizeExportsVisualization(t *testing.T) {
-	Convey("Given repeated physical evidence for one symbol", t, func() {
-		tree := dmt.NewTree("")
-		analyzer := &Analyzer{
-			tree:      tree,
-			resonance: map[string]*Resonance{"BTC/USD": {}},
-			causal:    map[string]*Causal{"BTC/USD": NewCausal("BTC/USD")},
-		}
-		analyzer.Focus("BTC/USD")
-		state := manifold.State{
-			Symbol: "BTC/USD", At: time.Unix(1, 0), Duration: time.Second,
-			Epoch: 1, ReferencePrice: decimal.NewFromInt64(100), InvalidReason: manifold.Valid,
-			Spread: 0.01, BuyCapacity: decimal.NewFromInt64(1000), SellCapacity: decimal.NewFromInt64(1000),
-			BuyIntensity: 2, SellIntensity: 1,
-			Reading: pmanifold.Reading{
-				PressureGradX: 1, Divergence: -1, CoherenceMag2: 1,
-				GuidanceSpeed: 1,
-			},
-		}
-
-		first := types.NewThesis(nil, nil)
-		first.Manifold.Store(state.Symbol, state)
-		analyzer.Update(first)
-
-		state.At = state.At.Add(time.Second)
-		state.Epoch++
-		second := types.NewThesis(nil, nil)
-		second.Manifold.Store(state.Symbol, state)
-		analyzer.Update(second)
-		secondValue, found := second.Cognition.Load(state.Symbol)
-
-		Convey("It should publish tree visualization fields on the Thesis", func() {
-			So(found, ShouldBeTrue)
-
-			reading := secondValue.(types.Cognition)
-			So(reading.Ready, ShouldBeTrue)
-			So(len(reading.Branches), ShouldBeGreaterThan, 0)
-			So(len(reading.Beams), ShouldBeGreaterThan, 0)
-			So(len(reading.Classes), ShouldBeGreaterThan, 0)
-			So(reading.BeamWidth, ShouldBeGreaterThan, 0)
-			So(reading.MaxHops, ShouldEqual, cognitionTreeDepth())
-			So(reading.NodeCount, ShouldEqual, len(reading.Branches))
-			So(reading.RegimePrefix, ShouldNotBeEmpty)
-		})
-	})
-}
-
-/*
-TestAnalyzerRecall proves a newly focused replay can render the learned Cortex
-without training the tree or presenting the cached field as a market event.
-*/
-func TestAnalyzerRecall(t *testing.T) {
-	Convey("Given an unfocused market observation already learned by DMT", t, func() {
-		tree := dmt.NewTree("")
-		analyzer := &Analyzer{
-			tree:      tree,
-			resonance: make(map[string]*Resonance),
-			causal:    make(map[string]*Causal),
-			cognition: make(map[string]types.Cognition),
-		}
-		state := manifold.State{
-			Symbol: "BTC/USD", At: time.Unix(1, 0), Duration: time.Second,
-			Epoch: 1, ReferencePrice: decimal.NewFromInt64(100), InvalidReason: manifold.Valid,
-			Spread: 0.01, BuyCapacity: decimal.NewFromInt64(1000), SellCapacity: decimal.NewFromInt64(1000),
-			BuyIntensity: 2, SellIntensity: 1,
-			Reading: pmanifold.Reading{
-				PressureGradX: 1, Divergence: -1, CoherenceMag2: 1,
-				GuidanceSpeed: 1,
-			},
-		}
-		observed := types.NewThesis(nil, nil)
-		observed.Manifold.Store(state.Symbol, state)
-		analyzer.Update(observed)
-
-		analyzer.Focus(state.Symbol)
-		state.Replay = true
-		replayed := types.NewThesis(nil, nil)
-		replayed.Manifold.Store(state.Symbol, state)
-		analyzer.Update(replayed)
-		value, found := replayed.Cognition.Load(state.Symbol)
-
-		Convey("Then it exports visualization without another learning cohort", func() {
-			So(found, ShouldBeTrue)
-			reading := value.(types.Cognition)
-			So(reading.Cohort, ShouldEqual, 1)
-			So(reading.Branches, ShouldNotBeEmpty)
-			So(reading.Beams, ShouldNotBeEmpty)
-			So(replayed.Forecasts, ShouldBeEmpty)
-			So(replayed.Causal, ShouldBeEmpty)
 		})
 	})
 }

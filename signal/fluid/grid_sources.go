@@ -5,28 +5,22 @@ accumulateReactionSources decomposes book deltas into add, cancel, and execute
 terms after Lagrangian remapping. Trades pre-register execute volume by price.
 */
 func (grid *Grid) accumulateReactionSources(currentMid float64) {
-	grid.lagrangianRemap(grid.prevObservedRho, grid.prevMidPrice, currentMid)
+	grid.lagrangianRemap(grid.prevObservedRho, grid.lastMidPrice, currentMid)
 
 	for index := range grid.observedRho {
 		delta := grid.observedRho[index] - grid.remappedRho[index]
+		executed := grid.tradeExecuteAccumulator[index]
+		residual := delta + executed
 
-		if delta > 0 {
-			grid.addAccumulator[index] += delta
+		grid.attributedExecuteAccumulator[index] += executed
+		grid.tradeExecuteAccumulator[index] = 0
+
+		if residual >= 0 {
+			grid.addAccumulator[index] += residual
 		}
 
-		if delta < 0 {
-			removal := -delta
-			executed := removal
-
-			if executed > grid.tradeExecuteAccumulator[index] {
-				executed = grid.tradeExecuteAccumulator[index]
-			}
-
-			cancelled := removal - executed
-
-			grid.tradeExecuteAccumulator[index] -= executed
-			grid.attributedExecuteAccumulator[index] += executed
-			grid.cancelAccumulator[index] += cancelled
+		if residual < 0 {
+			grid.cancelAccumulator[index] -= residual
 		}
 
 		grid.sourceAccumulator[index] += delta
@@ -50,8 +44,5 @@ midSourceBalance returns net near-mid reaction balance so published flow
 distinguishes addition from removal.
 */
 func (grid *Grid) midSourceBalance() float64 {
-	index := grid.midIndex
-
-	return grid.addAccumulator[index] - grid.cancelAccumulator[index] -
-		grid.attributedExecuteAccumulator[index]
+	return grid.sourceBalance
 }

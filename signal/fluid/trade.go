@@ -31,13 +31,13 @@ func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) 
 		))
 	}
 
-	state := trade.registry.loadSymbol(row.Symbol)
+	state, err := trade.registry.loadSymbol(row.Symbol)
 
-	if state == nil {
+	if err != nil {
 		return nil, errnie.Err(
 			errnie.UnprocessableContent,
-			"fluid: symbol state required",
-			nil,
+			"fluid: trade symbol state required",
+			err,
 		)
 	}
 
@@ -51,7 +51,7 @@ func (trade *Trade) Measure(row kraken.TradeData) ([]*types.Measurement, error) 
 
 	if err := state.FeedTrade(
 		row.Timestamp.UTC(), row.Price.Float64(), row.Qty, row.Side,
-	); errnie.Error(err) != nil {
+	); err != nil {
 		return nil, errnie.Err(
 			errnie.UnprocessableContent,
 			err.Error(),

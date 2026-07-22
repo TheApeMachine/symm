@@ -37,6 +37,10 @@ MarshalJSON writes durable holdings through their native Decimal encoders while
 retaining the existing compact Recovery envelope.
 */
 func (recovery Recovery) MarshalJSON() ([]byte, error) {
+	if err := recovery.validate(); err != nil {
+		return nil, err
+	}
+
 	holdings := make(map[string]recoveryHolding, len(recovery.Holdings))
 
 	for symbol, holding := range recovery.Holdings {
@@ -75,6 +79,7 @@ ReservationWire is the durable form of a Balance Book claim.
 type ReservationWire struct {
 	ID     string           `json:"id"`
 	Amount *decimal.Decimal `json:"amount"`
+	Symbol string           `json:"symbol"`
 }
 
 /*
@@ -114,10 +119,10 @@ func SaveRecovery(dir string, recovery *Recovery) error {
 	}
 
 	target := filepath.Join(dir, RecoveryKey+".json")
-	payload, err := json.Marshal(recovery)
+	payload, err := recovery.MarshalJSON()
 
 	if err != nil {
-		return errnie.Error(errnie.Err(errnie.IO, "recovery marshal failed", err))
+		return err
 	}
 
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -158,15 +163,33 @@ func SaveRecovery(dir string, recovery *Recovery) error {
 }
 
 /*
-CaptureRecovery builds a compact restart payload from open wallet lots.
-Non-finite floats are zeroed so encoding/json cannot reject the checkpoint.
+validate proves every holding can be represented durably without changing a
+non-finite value; map identity supplies the symbol when a wire omitted it.
+*/
+func (recovery Recovery) validate() error {
+	for symbol, holding := range recovery.Holdings {
+		if holding.Symbol == "" {
+			holding.Symbol = symbol
+		}
+
+		if _, err := holding.durable(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+/*
+CaptureRecovery builds a compact restart payload from open wallet lots and
+rejects non-finite stop state instead of changing its economic meaning.
 */
 func CaptureRecovery(
 	tick int64,
 	open map[string]Holding,
 	pending map[string]PendingOrderWire,
 	reservations []ReservationWire,
-) *Recovery {
+) (*Recovery, error) {
 	holdings := map[string]Holding{}
 
 	for symbol, holding := range open {
@@ -174,7 +197,13 @@ func CaptureRecovery(
 			continue
 		}
 
-		holdings[symbol] = holding.durable()
+		durable, err := holding.durable()
+
+		if err != nil {
+			return nil, err
+		}
+
+		holdings[symbol] = durable
 	}
 
 	return &Recovery{
@@ -182,7 +211,7 @@ func CaptureRecovery(
 		PendingOrders: pending,
 		Reservations:  reservations,
 		Tick:          tick,
-	}
+	}, nil
 }
 
 /*
@@ -204,9 +233,10 @@ func (holding Holding) qtyPositive() bool {
 }
 
 /*
-durable copies a holding into a JSON-safe value for recovery checkpoints.
+durable copies a holding into a recovery value after proving every persisted
+float is finite; the unlocked negative-infinity floor remains a domain sentinel.
 */
-func (holding Holding) durable() Holding {
+func (holding Holding) durable() (Holding, error) {
 	out := holding
 	out.ctx = nil
 	out.cancel = nil
@@ -215,20 +245,67 @@ func (holding Holding) durable() Holding {
 		stop := *out.Stoploss
 		stop.ctx = nil
 		stop.cancel = nil
-		stop.Weight = finiteFloat(stop.Weight)
-		stop.TrailDistance = finiteFloat(stop.TrailDistance)
-		stop.StopReturn = finiteFloat(stop.StopReturn)
-		stop.PeakReturn = finiteFloat(stop.PeakReturn)
-		stop.MarkReturn = finiteFloat(stop.MarkReturn)
+		values := []struct {
+			name  string
+			value float64
+		}{
+			{
+				name:  "weight",
+				value: stop.Weight,
+			},
+			{
+				name:  "locked floor",
+				value: stop.LockedFloor,
+			},
+			{
+				name:  "floor distance",
+				value: stop.FloorDistance,
+			},
+			{
+				name:  "trail distance",
+				value: stop.TrailDistance,
+			},
+			{
+				name:  "stop return",
+				value: stop.StopReturn,
+			},
+			{
+				name:  "peak return",
+				value: stop.PeakReturn,
+			},
+			{
+				name:  "mark return",
+				value: stop.MarkReturn,
+			},
+			{
+				name:  "retreat",
+				value: stop.Retreat,
+			},
+		}
+
+		for _, field := range values {
+			if math.IsNaN(field.value) || math.IsInf(field.value, 0) {
+				return Holding{}, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"recovery: non-finite "+field.name+" for "+holding.Symbol,
+					nil,
+				))
+			}
+		}
+
 		out.Stoploss = &stop
 	}
 
-	if out.ReturnPct != nil {
-		value := finiteFloat(*out.ReturnPct)
-		out.ReturnPct = &value
+	if out.ReturnPct != nil &&
+		(math.IsNaN(*out.ReturnPct) || math.IsInf(*out.ReturnPct, 0)) {
+		return Holding{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"recovery: non-finite return for "+holding.Symbol,
+			nil,
+		))
 	}
 
-	return out
+	return out, nil
 }
 
 /*

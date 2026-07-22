@@ -2,7 +2,7 @@ import type { Holding } from "#/collections/types";
 import type { Category, Measurement } from "#/types/measurement";
 import type {
 	Finding,
-	GraphFrame,
+	Graph,
 	StrategyDecision,
 	ThesisCategory,
 	ThesisForecast,
@@ -13,7 +13,7 @@ export type ThesisSnapshot = {
 	symbol: string;
 	tick: number | null;
 	lifecycle: string | null;
-	graph: GraphFrame | null;
+	graph: Graph | null;
 	measurements: Measurement[];
 	decision: StrategyDecision | null;
 	forecasts: ThesisForecast[];
@@ -31,7 +31,7 @@ export type ThesisSnapshotInput = {
 	symbol: string;
 	tick: number | null;
 	lifecycle: string | null;
-	graph: GraphFrame | null;
+	graph: Graph | null;
 	measurements: Measurement[];
 	decision: StrategyDecision | null;
 	forecasts: ThesisForecast[];

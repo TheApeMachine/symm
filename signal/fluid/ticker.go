@@ -31,17 +31,17 @@ func (ticker *Ticker) Measure(row kraken.TickerData) ([]*types.Measurement, erro
 		))
 	}
 
-	state := ticker.registry.loadSymbol(row.Symbol)
+	state, err := ticker.registry.loadSymbol(row.Symbol)
 
-	if state == nil {
+	if err != nil {
 		return nil, errnie.Err(
 			errnie.UnprocessableContent,
-			"fluid: symbol state required",
-			nil,
+			"fluid: ticker symbol state required",
+			err,
 		)
 	}
 
-	if err := state.FeedTicker(row, row.Timestamp.UTC()); errnie.Error(err) != nil {
+	if err := state.FeedTicker(row, row.Timestamp.UTC()); err != nil {
 		return nil, errnie.Err(
 			errnie.UnprocessableContent,
 			err.Error(),

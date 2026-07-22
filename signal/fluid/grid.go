@@ -51,6 +51,7 @@ type Grid struct {
 	midDivergence     float64
 	midAddRate        float64
 	midExecuteRate    float64
+	sourceBalance     float64
 	stepCount         int
 	lastSubsteps      int
 }
@@ -107,14 +108,6 @@ func newGrid(
 		))
 	}
 
-	maxCells := maxGridCellCount(symbolConfig.bookDepthLevels)
-
-	if maxCells > 0 && cellCount > maxCells {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation, "fluid: grid cell count exceeds subscribed book depth", nil,
-		))
-	}
-
 	if symbolConfig.integrationInterval <= 0 {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation, "fluid: grid integration interval must be positive", nil,
@@ -122,11 +115,15 @@ func newGrid(
 	}
 
 	if symbolConfig.idleThreshold <= 0 {
-		symbolConfig.idleThreshold = symbolConfig.integrationInterval * time.Duration(symbolConfig.maxIntegrationSteps)
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "fluid: grid idle threshold must be positive", nil,
+		))
 	}
 
 	if symbolConfig.maxIntegrationSteps <= 0 {
-		symbolConfig.maxIntegrationSteps = maxIntegrationStepsFloor
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "fluid: grid integration step limit must be positive", nil,
+		))
 	}
 
 	return &Grid{
@@ -214,35 +211,39 @@ func (grid *Grid) ingestBook(
 		return nil
 	}
 
-	stepsRun := 0
-	for !at.Before(grid.lastIntegrateAt.Add(grid.integrationInterval)) {
-		if stepsRun >= grid.maxIntegrationSteps {
-			grid.lastIntegrateAt = at
-			grid.prevMidPrice = midPrice
-			grid.clearReactionAccumulators()
-			break
-		}
+	elapsed := at.Sub(grid.lastIntegrateAt)
 
-		dt := grid.integrationInterval.Seconds()
+	if elapsed < grid.integrationInterval {
+		copy(grid.prevObservedRho, grid.observedRho)
 
-		grid.prepareSourcesForIntegration()
-		grid.inferVelocityField(midPrice, dt)
-		grid.diffusionCoeff = grid.estimateDiffusionCoefficient()
+		return nil
+	}
 
+	steps := int(math.Ceil(float64(elapsed) / float64(grid.integrationInterval)))
+
+	if steps > grid.maxIntegrationSteps {
+		steps = grid.maxIntegrationSteps
+	}
+
+	observationSeconds := elapsed.Seconds()
+	dt := observationSeconds / float64(steps)
+	grid.prepareSourcesForIntegration(observationSeconds)
+	grid.inferVelocityField(midPrice, observationSeconds)
+	grid.diffusionCoeff = grid.estimateDiffusionCoefficient()
+
+	for range steps {
 		if err := grid.integrateInterval(dt); err != nil {
 			return err
 		}
 
-		grid.measureReplenishment(touchSpread)
-		grid.measureMidDivergence()
-
-		grid.lastIntegrateAt = grid.lastIntegrateAt.Add(grid.integrationInterval)
-		grid.prevMidPrice = midPrice
 		grid.stepCount++
-		stepsRun++
-
-		grid.clearReactionAccumulators()
 	}
+
+	grid.measureReplenishment(touchSpread, observationSeconds)
+	grid.measureMidDivergence()
+	grid.lastIntegrateAt = at
+	grid.prevMidPrice = midPrice
+	grid.clearReactionAccumulators()
 
 	copy(grid.prevObservedRho, grid.observedRho)
 
@@ -433,10 +434,10 @@ func (grid *Grid) priceIndex(midPrice, price float64) int {
 prepareSourcesForIntegration finalizes accumulated source terms so each solver
 step consumes one coherent interval.
 */
-func (grid *Grid) prepareSourcesForIntegration() {
-	invInterval := 1.0 / grid.integrationInterval.Seconds()
+func (grid *Grid) prepareSourcesForIntegration(observationSeconds float64) {
+	invInterval := 1.0 / observationSeconds
 
-	for index := range grid.sources {
+	for index := range grid.sourceAccumulator {
 		grid.sources[index] = grid.sourceAccumulator[index] * invInterval
 	}
 }
@@ -445,24 +446,25 @@ func (grid *Grid) prepareSourcesForIntegration() {
 measureReplenishment derives touch replenishment rates from observed source
 changes so liquidity recovery remains data-driven.
 */
-func (grid *Grid) measureReplenishment(spread float64) {
+func (grid *Grid) measureReplenishment(spread, observationSeconds float64) {
 	replenished := 0.0
 	consumed := 0.0
 	touchBand := touchBandCells(spread, grid.tickSize, grid.halfWidth)
 
-	grid.midAddRate, grid.midExecuteRate = grid.touchBandActivityRates(spread)
+	grid.midAddRate, grid.midExecuteRate = grid.touchBandActivityRates(
+		spread,
+		observationSeconds,
+	)
+	grid.sourceBalance = 0
 
-	for index, rate := range grid.sources {
-		if rate > 0 {
-			if absInt(index-grid.midIndex) <= touchBand {
-				replenished += rate
-			}
+	invObservation := 1.0 / observationSeconds
 
-			continue
-		}
-
-		if rate < 0 && absInt(index-grid.midIndex) <= touchBand {
-			consumed += -rate
+	for index := range grid.sourceAccumulator {
+		if absInt(index-grid.midIndex) <= touchBand {
+			grid.sourceBalance += grid.sourceAccumulator[index]
+			replenished += grid.addAccumulator[index] * invObservation
+			consumed += (grid.cancelAccumulator[index] +
+				grid.attributedExecuteAccumulator[index]) * invObservation
 		}
 	}
 
@@ -495,9 +497,12 @@ func (grid *Grid) midExecuteRateAtTouch() float64 {
 touchBandActivityRates aggregates addition and execution inside the observed
 spread band so touch activity uses the instrument's scale.
 */
-func (grid *Grid) touchBandActivityRates(spread float64) (addRate, executeRate float64) {
+func (grid *Grid) touchBandActivityRates(
+	spread,
+	observationSeconds float64,
+) (addRate, executeRate float64) {
 	touchBand := touchBandCells(spread, grid.tickSize, grid.halfWidth)
-	invInterval := 1.0 / grid.integrationInterval.Seconds()
+	invInterval := 1.0 / observationSeconds
 
 	for cellIndex := range grid.addAccumulator {
 		if absInt(cellIndex-grid.midIndex) > touchBand {
@@ -512,12 +517,10 @@ func (grid *Grid) touchBandActivityRates(spread float64) (addRate, executeRate f
 }
 
 /*
-measureMidDivergence evaluates the signed, density-normalized ∇·(ρv) at
-the touch cell using the same Rusanov face fluxes the RK2 integrator just
-advected grid.rho with, so this is the model's own flux divergence for
-this step, not a separately reasoned proxy for it. Positive means the
-touch cell is a net exporter (the book is thinning there); negative means
-it is a net importer (the book is thickening there).
+measureMidDivergence evaluates signed ∇·(ρv) at the empty midpoint using
+the observed resting-density median as its normalization scale. It uses the
+same Rusanov face fluxes as the RK2 solver, preserving the solver's direction
+without dividing by the structurally empty cell between bid and ask.
 */
 func (grid *Grid) measureMidDivergence() {
 	index := grid.midIndex
@@ -528,7 +531,10 @@ func (grid *Grid) measureMidDivergence() {
 		return
 	}
 
-	touchDensity := math.Max(grid.rho[index], rhoFloor)
+	touchDensity := math.Max(
+		grid.rho[index],
+		math.Max(grid.medianObservedRho(), rhoFloor),
+	)
 
 	grid.midDivergence = grid.faceFluxDivergence(grid.rho, index) / touchDensity
 }

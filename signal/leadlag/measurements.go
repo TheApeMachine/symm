@@ -16,6 +16,16 @@ func (signal *Signal) measureFrame(
 	rows := frame.Tickers
 	out := make([]*types.Measurement, 0, len(rows))
 
+	anchor, _ := frame.CrossSection.Leadership()
+
+	if anchor == "" {
+		signal.section.ClearAnchor()
+	}
+
+	if anchor != "" {
+		signal.section.SetAnchor(anchor)
+	}
+
 	for _, row := range rows {
 		if row.Timestamp.IsZero() || row.Symbol == "" || row.Last == nil {
 			continue
@@ -28,12 +38,6 @@ func (signal *Signal) measureFrame(
 		}
 
 		signal.section.ObservePrice(row.Symbol, lastPrice, row.Timestamp)
-	}
-
-	if anchor, _ := frame.CrossSection.Leadership(); anchor != "" {
-		signal.section.SetAnchor(anchor)
-	} else {
-		signal.section.ClearAnchor()
 	}
 
 	for _, row := range rows {
@@ -169,7 +173,7 @@ func weightEvidence(
 	selected correlationSelection,
 	sampleSupport float64,
 ) evidenceWeights {
-	anchorActive := 0.1
+	anchorActive := 0.0
 
 	if features.MoveMoved ||
 		(features.StallMargin > 0 && selected.lagFraction > 0) ||

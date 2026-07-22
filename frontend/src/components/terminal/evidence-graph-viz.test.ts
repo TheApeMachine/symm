@@ -12,9 +12,9 @@ import {
 	reciprocalPairs,
 } from "#/components/terminal/evidence-graph-viz";
 import type {
-	GraphEdgeWire,
-	GraphFrame,
-	GraphNodeWire,
+	GraphEdge,
+	Graph,
+	GraphNode,
 } from "#/types/thesis";
 
 /*
@@ -22,7 +22,7 @@ categoryGraph models the real category-centered shape: two measurements draw
 Supports/Contradicts edges to a category hypothesis hub, and a directed causal
 Conditions edge links two concept nodes.
 */
-const categoryGraph = (): GraphFrame => ({
+const categoryGraph = (): Graph => ({
 	symbol: "BTC/USD",
 	at: "2026-07-14T12:00:00Z",
 	nodes: [
@@ -113,17 +113,17 @@ describe("nodeKind", () => {
 	it("classifies by explicit wire kind", () => {
 		const graph = categoryGraph();
 
-		expect(nodeKind(graph.nodes[0] as GraphNodeWire)).toBe("measurement");
-		expect(nodeKind(graph.nodes[2] as GraphNodeWire)).toBe("category");
-		expect(nodeKind(graph.nodes[3] as GraphNodeWire)).toBe("concept");
+		expect(nodeKind(graph.nodes[0] as GraphNode)).toBe("measurement");
+		expect(nodeKind(graph.nodes[2] as GraphNode)).toBe("category");
+		expect(nodeKind(graph.nodes[3] as GraphNode)).toBe("concept");
 	});
 
 	it("falls back to descriptive source when kind is absent", () => {
-		const legacyCategory: GraphNodeWire = {
+		const legacyCategory: GraphNode = {
 			key: "category/turbulent",
 			measurement: { source: "category", metric: "turbulent" },
 		};
-		const legacyMeasurement: GraphNodeWire = {
+		const legacyMeasurement: GraphNode = {
 			key: "hawkes/x",
 			measurement: { source: "hawkes", metric: "arrival_rate" },
 		};
@@ -137,8 +137,8 @@ describe("nodeLabel", () => {
 	it("labels categories by subject and measurements by source/metric", () => {
 		const graph = categoryGraph();
 
-		expect(nodeLabel(graph.nodes[2] as GraphNodeWire)).toBe("loaded_imbalance");
-		expect(nodeLabel(graph.nodes[0] as GraphNodeWire)).toBe(
+		expect(nodeLabel(graph.nodes[2] as GraphNode)).toBe("loaded_imbalance");
+		expect(nodeLabel(graph.nodes[0] as GraphNode)).toBe(
 			"depthflow/loaded_score",
 		);
 	});
@@ -196,7 +196,7 @@ describe("layoutEvidenceGraph", () => {
 		// measurement keys carry a new timestamp suffix (as MeasurementKey does).
 		const rekey = (key: string) =>
 			key.startsWith("depthflow/") ? key.replace(/\/1$/, "/2") : key;
-		const after: GraphFrame = {
+		const after: Graph = {
 			...before,
 			at: "2026-07-14T12:00:01Z",
 			nodes: before.nodes.map((node) => ({ ...node, key: rekey(node.key) })),
@@ -221,7 +221,7 @@ describe("layoutEvidenceGraph", () => {
 
 	it("keeps hub slots when an unrelated hub appears next tick", () => {
 		const before = categoryGraph();
-		const withExtraHub: GraphFrame = {
+		const withExtraHub: Graph = {
 			...before,
 			nodes: [
 				...before.nodes,
@@ -247,7 +247,7 @@ describe("layoutEvidenceGraph", () => {
 describe("graphVisualKey", () => {
 	it("changes when an edge type changes", () => {
 		const supports = categoryGraph();
-		const contradicts: GraphFrame = {
+		const contradicts: Graph = {
 			...supports,
 			edges: supports.edges.map((edge, index) =>
 				index === 0 ? { ...edge, type: "leads" } : edge,
@@ -259,7 +259,7 @@ describe("graphVisualKey", () => {
 
 	it("ignores frame timestamp churn", () => {
 		const before = categoryGraph();
-		const after: GraphFrame = { ...before, at: "2026-07-14T12:05:00Z" };
+		const after: Graph = { ...before, at: "2026-07-14T12:05:00Z" };
 
 		expect(graphVisualKey(after)).toBe(graphVisualKey(before));
 	});
@@ -269,7 +269,7 @@ describe("graphVisualKey", () => {
 		const replacements = new Map(
 			before.nodes.map((node) => [node.key, `${node.key}/next-tick`]),
 		);
-		const after: GraphFrame = {
+		const after: Graph = {
 			...before,
 			nodes: before.nodes.map((node) => ({
 				...node,
@@ -306,7 +306,7 @@ describe("hitTest", () => {
 	it("resolves the nearest edge when no node is under the pointer", () => {
 		// Hand-place two well-separated nodes so the assertion tests hitTest's
 		// edge resolution, not incidental layout geometry.
-		const graph: GraphFrame = {
+		const graph: Graph = {
 			symbol: "BTC/USD",
 			at: "2026-07-14T12:00:00Z",
 			nodes: [
@@ -359,7 +359,7 @@ describe("hitTest", () => {
 });
 
 describe("reciprocal edges", () => {
-	const leadsLagsGraph = (): GraphFrame => ({
+	const leadsLagsGraph = (): Graph => ({
 		symbol: "ETH/USD",
 		at: "2026-07-14T12:00:00Z",
 		nodes: [
@@ -401,7 +401,7 @@ describe("reciprocal edges", () => {
 
 	it("does not flag a single edge between a pair", () => {
 		const graph = leadsLagsGraph();
-		graph.edges = [graph.edges[0] as GraphEdgeWire];
+		graph.edges = [graph.edges[0] as GraphEdge];
 
 		expect(reciprocalPairs(graph).size).toBe(0);
 	});
@@ -409,14 +409,14 @@ describe("reciprocal edges", () => {
 	it("bows the two directions to opposite sides of the chord", () => {
 		const from = { x: 100, y: 200 };
 		const to = { x: 500, y: 200 };
-		const leads: GraphEdgeWire = {
+		const leads: GraphEdge = {
 			from: "anchor",
 			to: "follower",
 			type: "leads",
 			at: "",
 			observedFrom: "",
 		};
-		const lags: GraphEdgeWire = {
+		const lags: GraphEdge = {
 			from: "follower",
 			to: "anchor",
 			type: "lags",
@@ -450,7 +450,7 @@ describe("reciprocal edges", () => {
 		const from = { x: 100, y: 200 };
 		const to = { x: 500, y: 200 };
 		const control = edgeControlPoint(
-			graph.edges[0] as GraphEdgeWire,
+			graph.edges[0] as GraphEdge,
 			from,
 			to,
 			true,

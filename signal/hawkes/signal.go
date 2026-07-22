@@ -8,7 +8,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -26,7 +25,6 @@ exists.
 type Signal struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
-	api      *websocket.API
 	sample   *excitation.Sample
 	process  *excitation.Process
 	evidence *Evidence
@@ -41,7 +39,7 @@ measured its evidence, mirroring broker.Balance.Publish.
 func (signal *Signal) Publish(measurements []*types.Measurement) {
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": types.WireMeasurements(measurements),
+		"measurements": types.ForPublish(measurements),
 	}.Marshal():
 	default:
 	}
@@ -56,31 +54,23 @@ func (signal *Signal) Interest() types.StreamInterest {
 }
 
 /*
-Measure supports direct replay against the legacy signal-local trade journal.
-The live runtime uses Calculate with the central immutable market cut.
+Measure returns typed measurements for the cut, or an error when the
+cut cannot be measured honestly.
 */
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	measurements, err := signal.Calculate(thesis.Market())
-
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	return measurements
+func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, error) {
+	return signal.Calculate(thesis.Market())
 }
 
 /*
 NewSignal constructs the symbol-local excitation measurement pipeline. Its
 trade component is the sole owner of the mutable marked-arrival history.
 */
-func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
+func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
 		ctx:      ctx,
 		cancel:   cancel,
-		api:      api,
 		sample:   excitation.NewSample(),
 		process:  excitation.NewProcess(),
 		evidence: NewEvidence(),
@@ -129,19 +119,18 @@ func (signal *Signal) Calculate(
 	out := make([]*types.Measurement, 0, len(rows))
 
 	signal.mu.Lock()
+	defer signal.mu.Unlock()
 
 	for _, row := range rows {
 		measurements, err := signal.measure(row)
 
 		if err != nil {
-			errnie.Error(err)
-			continue
+			return nil, err
 		}
 
 		out = append(out, measurements...)
 	}
 
-	signal.mu.Unlock()
 	return out, nil
 }
 

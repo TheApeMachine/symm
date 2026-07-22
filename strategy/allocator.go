@@ -12,10 +12,9 @@ import (
 )
 
 /*
-Allocator sizes enter decisions as max_fraction of Available quote cash,
-shrunk by the decision risk factor (0–1). Rotation challengers Book the
-incumbent notional stamped by Arbiter instead of inventing a new slice.
-Action demotion belongs to Planner after Allocate.
+Allocator sizes enter decisions as max_fraction of quote cash, then shrinks
+that slice by the decision risk factor (0–1). Action demotion belongs to
+Planner after Allocate.
 */
 type Allocator struct {
 	ctx         context.Context
@@ -59,15 +58,36 @@ func (allocator *Allocator) Close() {
 }
 
 /*
-Allocate sizes each enter decision and Books a Reservation. Rotation reuses
-ProposedNotional from Admit.Scale; free-slot enters take max_fraction.
+Allocate sizes each enter decision from max_fraction of quote cash, scaled by
+AllocationHaircut. Decisions that cannot clear the instrument minimum are
+dropped from Thesis holdings.
 */
 func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 	if err := allocator.validate(map[string]any{"thesis": thesis}); err != nil {
 		return err
 	}
 
-	forecasts := selectForecasts(thesis.Forecasts)
+	cash, err := allocator.balance.AssetAvailable(
+		viper.GetString("market.quote_currency"),
+	)
+
+	if err != nil || cash == nil || cash.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"allocator: quote cash unavailable",
+			err,
+		))
+	}
+
+	slice := decimal.ExactMul(cash, allocator.maxFraction)
+
+	if slice == nil || slice.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"allocator: wallet slice unavailable",
+			nil,
+		))
+	}
 
 	for index := range thesis.Decisions {
 		decision := &thesis.Decisions[index]
@@ -96,9 +116,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			))
 		}
 
-		minCost, err := allocator.price.Taker(
-			pair, pair.QtyMin,
-		)
+		minCost, err := allocator.price.Taker(pair, pair.QtyMin)
 
 		if err != nil || minCost == nil {
 			return errnie.Error(errnie.Err(
@@ -108,34 +126,16 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			))
 		}
 
-		claim, err := allocator.book(decision)
-
-		if err != nil || claim == nil {
-			thesis.Holdings.Delete(decision.Symbol)
-			decision.Reason = "wallet slice unavailable"
-			continue
-		}
-
-		slice := claim.Amount
-
 		if minCost.Cmp(slice) > 0 {
-			_ = allocator.balance.Release(claim.ID)
 			thesis.Holdings.Delete(decision.Symbol)
 			decision.Reason = "minimum exceeds wallet slice"
 			continue
 		}
 
 		risk := decimal.NewFromFloat64(decision.AllocationHaircut)
-		budget := slice.Sub(allocator.price.Mul(slice, risk))
-
-		if decision.Cause == "rotation" {
-			budget = slice.Copy()
-		}
-
-		budget = allocator.capacity(budget, forecasts[decision.Symbol])
+		budget := slice.Copy().Sub(decimal.ExactMul(slice.Copy(), risk))
 
 		if budget.Sign() <= 0 || budget.Cmp(minCost) < 0 {
-			_ = allocator.balance.Release(claim.ID)
 			thesis.Holdings.Delete(decision.Symbol)
 			decision.Reason = "risk-adjusted budget below minimum"
 			continue
@@ -144,7 +144,6 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		quantity, err := allocator.price.Quantity(pair, budget)
 
 		if err != nil || quantity == nil {
-			_ = allocator.balance.Release(claim.ID)
 			thesis.Holdings.Delete(decision.Symbol)
 			decision.Reason = "quantity unavailable"
 			continue
@@ -153,16 +152,20 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		cost, err := allocator.price.Taker(pair, quantity)
 
 		if err != nil || cost == nil || cost.Cmp(budget) > 0 {
-			_ = allocator.balance.Release(claim.ID)
 			thesis.Holdings.Delete(decision.Symbol)
 			decision.Reason = "taker cost unavailable"
+			continue
+		}
+
+		if !allocator.balance.Available(cost) {
+			thesis.Holdings.Delete(decision.Symbol)
+			decision.Reason = "insufficient balance"
 			continue
 		}
 
 		ask, err := allocator.price.ReferencePrice(pair)
 
 		if err != nil {
-			_ = allocator.balance.Release(claim.ID)
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
 				"allocator: reference price unavailable",
@@ -170,22 +173,9 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			))
 		}
 
-		if cost.Cmp(slice) < 0 {
-			_ = allocator.balance.Release(claim.ID)
-
-			claim, err = allocator.balance.Book(cost, nil, decision.Symbol)
-
-			if err != nil || claim == nil {
-				thesis.Holdings.Delete(decision.Symbol)
-				decision.Reason = "wallet slice unavailable"
-				continue
-			}
-		}
-
 		decision.ProposedQuantity = quantity
 		decision.ProposedNotional = cost
 		decision.ReferencePrice = ask
-		decision.ReservationID = claim.ID
 		decision.Reason = "sized from wallet slice"
 
 		if value, ok := thesis.Holdings.Load(decision.Symbol); ok {
@@ -196,43 +186,6 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 	}
 
 	return nil
-}
-
-/*
-capacity caps a sized budget at the forecast's visible buy capacity so a lot is
-never larger than the depth the book can absorb. A missing or non-positive
-capacity leaves the wallet-derived budget untouched.
-*/
-func (allocator *Allocator) capacity(
-	budget *decimal.Decimal,
-	forecast types.Forecasts,
-) *decimal.Decimal {
-	if forecast.BuyCapacity == nil || forecast.BuyCapacity.Sign() <= 0 {
-		return budget
-	}
-
-	ceiling := forecast.BuyCapacity.Copy()
-
-	if budget.Cmp(ceiling) > 0 {
-		return ceiling
-	}
-
-	return budget
-}
-
-/*
-book claims rotation notional when Arbiter stamped it, otherwise max_fraction.
-*/
-func (allocator *Allocator) book(
-	decision *types.Decision,
-) (*broker.Reservation, error) {
-	if decision.Cause == "rotation" &&
-		decision.ProposedNotional != nil &&
-		decision.ProposedNotional.Sign() > 0 {
-		return allocator.balance.Book(decision.ProposedNotional, nil, decision.Symbol)
-	}
-
-	return allocator.balance.Book(nil, allocator.maxFraction, decision.Symbol)
 }
 
 func (allocator *Allocator) validate(mandatory map[string]any) error {

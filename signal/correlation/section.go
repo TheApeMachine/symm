@@ -1,6 +1,7 @@
 package correlation
 
 import (
+	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -37,7 +38,7 @@ for every symbol updated by that batch.
 */
 func (section *Section) Measure(
 	rows []kraken.TickerData,
-) map[string]map[string]float64 {
+) (map[string]map[string]float64, error) {
 	updated := make(map[string]struct{})
 
 	for _, row := range rows {
@@ -57,7 +58,11 @@ func (section *Section) Measure(
 			At:    row.Timestamp,
 			Value: row.Last.Float64(),
 		})
-		section.trim(symbol)
+
+		if err := section.trim(symbol); err != nil {
+			return nil, err
+		}
+
 		updated[symbol] = struct{}{}
 	}
 
@@ -71,18 +76,18 @@ func (section *Section) Measure(
 		}
 	}
 
-	return results
+	return results, nil
 }
 
 /*
 trim retains the adaptive long window derived from the symbol's observed
 returns, keeping history bounded without imposing one market-wide horizon.
 */
-func (section *Section) trim(symbol string) {
+func (section *Section) trim(symbol string) error {
 	samples := section.samples[symbol]
 
 	if len(samples) < 3 {
-		return
+		return nil
 	}
 
 	section.retention = section.returns(samples, section.retention)
@@ -92,11 +97,21 @@ func (section *Section) trim(symbol string) {
 		0,
 	)
 
-	if err != nil || longWindow <= 0 || len(samples) <= longWindow+1 {
-		return
+	if err != nil {
+		return fmt.Errorf("correlation: resolve %s retention: %w", symbol, err)
+	}
+
+	if longWindow <= 0 {
+		return fmt.Errorf("correlation: %s retention must be positive", symbol)
+	}
+
+	if len(samples) <= longWindow+1 {
+		return nil
 	}
 
 	section.samples[symbol] = samples[len(samples)-longWindow-1:]
+
+	return nil
 }
 
 /*
@@ -158,7 +173,7 @@ func (section *Section) scores(symbol string) (map[string]float64, bool) {
 	herdScore := math.Max(0, signed) / (1 + excessEnergy)
 	alphaScore := excessMass / (1 + math.Max(0, signed))
 	noiseScore := math.Max(0, 1-correlation) / (1 + excessEnergy + energyDeficit)
-	stressScore := 1 - (1-math.Max(0, -signed))*(1-excessMass)
+	stressScore := math.Max(0, -signed)
 	strength := max(max(herdScore, alphaScore), max(noiseScore, stressScore))
 
 	if strength <= 0 {

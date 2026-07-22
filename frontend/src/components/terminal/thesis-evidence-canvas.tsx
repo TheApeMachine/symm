@@ -11,7 +11,7 @@ import {
 	nodeIdentity,
 } from "#/components/terminal/evidence-graph-viz";
 import { GraphInspector } from "#/components/terminal/thesis-graph-inspector";
-import type { GraphFrame } from "#/types/thesis";
+import type { Graph } from "#/types/thesis";
 
 type HoverState = {
 	hit: GraphHit;
@@ -22,7 +22,7 @@ type HoverState = {
 const TWEEN_MS = 420;
 
 const canvasRef = createRef<HTMLCanvasElement>();
-let graph: GraphFrame | null = null;
+let graph: Graph | null = null;
 let targetScene: GraphScene | null = null;
 let renderScene: GraphScene | null = null;
 let renderedByIdentity = new Map<string, GraphNodePosition>();
@@ -148,7 +148,7 @@ const retarget = (force: boolean) => {
 paintThesisEvidence paints the current DRAW graphs batch for the bound symbol.
 */
 export const paintThesisEvidence = (value: unknown, focusSymbol: string) => {
-	const graphs = asRows<GraphFrame>(value);
+	const graphs = asRows<Graph>(value);
 
 	graph = graphs.find((frame) => frame.symbol === focusSymbol) ?? null;
 	retarget(false);

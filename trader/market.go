@@ -3,7 +3,6 @@ package trader
 import (
 	"context"
 	"slices"
-	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -154,11 +153,36 @@ func (market *Market) Cut() (*types.MarketFrame, error) {
 	}
 
 	frame := &types.MarketFrame{
-		At:           time.Now().UTC(),
 		Tickers:      slices.Clone(market.tickers),
 		Trades:       slices.Clone(market.trades),
 		Books:        slices.Clone(market.books),
 		CrossSection: market.crossSection,
+	}
+
+	for _, row := range frame.Tickers {
+		if row.Timestamp.After(frame.At) {
+			frame.At = row.Timestamp
+		}
+	}
+
+	for _, row := range frame.Trades {
+		if row.Timestamp.After(frame.At) {
+			frame.At = row.Timestamp
+		}
+	}
+
+	for _, row := range frame.Books {
+		if row.Timestamp.After(frame.At) {
+			frame.At = row.Timestamp
+		}
+	}
+
+	if frame.At.IsZero() {
+		return nil, errnie.Err(
+			errnie.Validation,
+			"market: cut has no event timestamp",
+			nil,
+		)
 	}
 
 	market.tickers = market.tickers[:0]

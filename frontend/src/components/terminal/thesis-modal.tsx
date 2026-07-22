@@ -14,7 +14,7 @@ import { cn } from "#/lib/utils";
 import type { Category, Measurement } from "#/types/measurement";
 import type {
 	Finding,
-	GraphFrame,
+	Graph,
 	StrategyDecision,
 	ThesisForecast,
 	ThesisHypothesis,
@@ -40,7 +40,7 @@ let decisions: StrategyDecision[] = [];
 let lifecycle: Array<{ symbol: string; state: string }> = [];
 let holdings: Holding[] = [];
 let findings: Finding[] = [];
-let graphs: GraphFrame[] = [];
+let graphs: Graph[] = [];
 let tick: TickFrame | undefined;
 
 const asRows = <T,>(value: unknown): T[] =>
@@ -108,7 +108,7 @@ export const paintThesis = (
 	}
 
 	if (frame.graphs !== undefined) {
-		graphs = asRows<GraphFrame>(frame.graphs);
+		graphs = asRows<Graph>(frame.graphs);
 	}
 
 	if (frame.tick !== undefined) {

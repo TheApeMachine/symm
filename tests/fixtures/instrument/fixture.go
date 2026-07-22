@@ -1,7 +1,9 @@
 package instrument
 
 import (
+	"bytes"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"iter"
 	"sort"
@@ -56,7 +58,10 @@ func NewMarket(symbols []string, priceIncrement float64) *Fixture {
 
 	var payload map[string]any
 
-	if err := sonic.Unmarshal(raw, &payload); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+
+	if err := decoder.Decode(&payload); err != nil {
 		panic(errnie.Err(errnie.Validation, "instrument fixture decode failed", err))
 	}
 
@@ -93,8 +98,8 @@ func NewMarket(symbols []string, priceIncrement float64) *Fixture {
 		pair["base"] = parts[0]
 		pair["quote"] = parts[1]
 		pair["price_precision"] = pricePrecision
-		pair["tick_size"] = priceIncrement
-		pair["price_increment"] = priceIncrement
+		pair["tick_size"] = json.Number(priceText)
+		pair["price_increment"] = json.Number(priceText)
 		pairs[index] = pair
 
 		for _, id := range parts {
@@ -125,7 +130,7 @@ func NewMarket(symbols []string, priceIncrement float64) *Fixture {
 
 	data["assets"] = assetRows
 	data["pairs"] = pairs
-	encoded, err := sonic.Marshal(payload)
+	encoded, err := json.Marshal(payload)
 
 	if err != nil {
 		panic(errnie.Err(errnie.Validation, "instrument fixture encode failed", err))

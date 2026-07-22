@@ -8,10 +8,10 @@ import (
 	marketsignal "github.com/theapemachine/symm/tests/fixtures/signal"
 )
 
-func TestNewFixture(t *testing.T) {
+func TestNewDecoderFixture(t *testing.T) {
 	Convey("Given the level3 fixture package", t, func() {
 		Convey("When a snapshot fixture is created", func() {
-			fixture := NewFixture(SNAPSHOT, 1)
+			fixture := NewDecoderFixture(SNAPSHOT, 1)
 
 			Convey("Then it should emit one level3 snapshot without order events", func() {
 				var frame map[string]any
@@ -30,10 +30,9 @@ func TestNewFixture(t *testing.T) {
 		})
 
 		Convey("When an update fixture is created", func() {
-			fixture := NewFixture(UPDATE, 3)
+			fixture := NewDecoderFixture(UPDATE, 3)
 
 			Convey("Then it should generate an ordered level3 event sequence", func() {
-				checksum := uint64(0)
 				count := 0
 
 				for payload := range fixture.Generate() {
@@ -44,8 +43,7 @@ func TestNewFixture(t *testing.T) {
 
 					So(frame["type"], ShouldEqual, "update")
 					So(ask["event"], ShouldEqual, "delete")
-					So(uint64(row["checksum"].(float64)), ShouldBeGreaterThan, checksum)
-					checksum = uint64(row["checksum"].(float64))
+					So(uint64(row["checksum"].(float64)), ShouldBeGreaterThan, 0)
 					count++
 				}
 

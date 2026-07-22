@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"strconv"
 )
 
 /*
@@ -38,9 +37,14 @@ func (validator *Validator) validateExecutions(
 			return fmt.Errorf("tests: %s trade exceeded resting liquidity for %s", trade.Side, symbol)
 		}
 
-		price, _ := trade.Price.Float64()
-		quantity, _ := strconv.ParseFloat(queues[side][0].qty, 64)
-		orderPrice, _ := strconv.ParseFloat(queues[side][0].price, 64)
+		price, err := trade.Price.Float64()
+
+		if err != nil {
+			return fmt.Errorf("tests: invalid trade price for %s: %w", symbol, err)
+		}
+
+		quantity := queues[side][0].qtyValue
+		orderPrice := queues[side][0].priceValue
 
 		if math.Abs(price-orderPrice) > 1e-8 || trade.Qty > quantity {
 			return fmt.Errorf("tests: %s trade did not consume the pre-step queue for %s", trade.Side, symbol)
@@ -53,7 +57,7 @@ func (validator *Validator) validateExecutions(
 			continue
 		}
 
-		queues[side][0].qty = strconv.FormatFloat(quantity, 'f', 8, 64)
+		queues[side][0].qtyValue = quantity
 	}
 
 	return nil
@@ -63,12 +67,9 @@ func (validator *Validator) validateExecutions(
 compareOrders applies price-time priority to one reconstructed Level3 side.
 */
 func compareOrders(side string, left orderState, right orderState) int {
-	leftPrice, _ := strconv.ParseFloat(left.price, 64)
-	rightPrice, _ := strconv.ParseFloat(right.price, 64)
-
-	if leftPrice != rightPrice {
-		if side == "bids" && leftPrice > rightPrice ||
-			side == "asks" && leftPrice < rightPrice {
+	if left.priceValue != right.priceValue {
+		if side == "bids" && left.priceValue > right.priceValue ||
+			side == "asks" && left.priceValue < right.priceValue {
 			return -1
 		}
 

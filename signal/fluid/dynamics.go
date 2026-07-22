@@ -1,6 +1,7 @@
 package fluid
 
 import (
+	"fmt"
 	"math"
 	"time"
 
@@ -32,20 +33,41 @@ caller's guards; callers pass already-validated values.
 func (dynamics *fluidDynamics) record(
 	at time.Time,
 	reynolds, divergence, viscosity, velocityCurvature, turbulence float64,
-) {
-	dynamics.stamps = append(dynamics.stamps, float64(at.UnixNano()))
+) error {
+	if at.IsZero() {
+		return fmt.Errorf("fluid: dynamics observation time required")
+	}
 
-	dynamics.reynoldsHistory = appendFinite(dynamics.reynoldsHistory, reynolds, true)
-	dynamics.divergenceHistory = appendFinite(dynamics.divergenceHistory, divergence, true)
-	dynamics.viscosityHistory = appendFinite(dynamics.viscosityHistory, viscosity, false)
-	dynamics.velocityCurvatureHistory = appendFinite(
+	values := []struct {
+		name         string
+		value        float64
+		positiveOnly bool
+	}{
+		{"reynolds", reynolds, false},
+		{"divergence", divergence, false},
+		{"viscosity", viscosity, true},
+		{"velocity curvature", velocityCurvature, false},
+		{"turbulence", turbulence, false},
+	}
+
+	for _, observed := range values {
+		if math.IsNaN(observed.value) || math.IsInf(observed.value, 0) ||
+			observed.value < 0 || observed.positiveOnly && observed.value == 0 {
+			return fmt.Errorf("fluid: %s dynamics value is invalid", observed.name)
+		}
+	}
+
+	dynamics.stamps = append(dynamics.stamps, float64(at.UnixNano()))
+	dynamics.reynoldsHistory = append(dynamics.reynoldsHistory, reynolds)
+	dynamics.divergenceHistory = append(dynamics.divergenceHistory, divergence)
+	dynamics.viscosityHistory = append(dynamics.viscosityHistory, viscosity)
+	dynamics.velocityCurvatureHistory = append(
 		dynamics.velocityCurvatureHistory,
 		velocityCurvature,
-		true,
 	)
-	dynamics.turbulenceHistory = appendFinite(dynamics.turbulenceHistory, turbulence, true)
+	dynamics.turbulenceHistory = append(dynamics.turbulenceHistory, turbulence)
 
-	dynamics.trim()
+	return dynamics.trim()
 }
 
 /*
@@ -74,11 +96,15 @@ func (dynamics *fluidDynamics) earliestStamp() time.Time {
 /*
 trim keeps each series to the window depth derived from the shared stamp trail.
 */
-func (dynamics *fluidDynamics) trim() {
+func (dynamics *fluidDynamics) trim() error {
 	_, keep, err := statistic.ResolveWindows(dynamics.stamps, 0, 0)
 
-	if err != nil || keep <= 0 {
-		return
+	if err != nil {
+		return fmt.Errorf("fluid: resolve dynamics retention: %w", err)
+	}
+
+	if keep <= 0 {
+		return fmt.Errorf("fluid: dynamics retention must be positive")
 	}
 
 	tail := func(values []float64) []float64 {
@@ -95,16 +121,6 @@ func (dynamics *fluidDynamics) trim() {
 	dynamics.viscosityHistory = tail(dynamics.viscosityHistory)
 	dynamics.velocityCurvatureHistory = tail(dynamics.velocityCurvatureHistory)
 	dynamics.turbulenceHistory = tail(dynamics.turbulenceHistory)
-}
 
-func appendFinite(values []float64, value float64, allowZero bool) []float64 {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return values
-	}
-
-	if (allowZero && value < 0) || (!allowZero && value <= 0) {
-		return values
-	}
-
-	return append(values, value)
+	return nil
 }

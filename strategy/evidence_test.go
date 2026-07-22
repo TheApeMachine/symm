@@ -59,12 +59,20 @@ func TestProjectRetreatPressureFromToxicity(t *testing.T) {
 	Convey("Given a toxicity retreat measurement", t, func() {
 		thesis := types.NewThesis(nil, nil)
 		pressure := 0.87
-		thesis.Measurements = append(thesis.Measurements, &types.Measurement{
-			Symbol:     "AAA/USD",
-			Metric:     types.MetricRetreatingQuantity,
-			Normalized: &pressure,
-			Raw:        870,
-		})
+		thesis.Measurements = append(thesis.Measurements,
+			&types.Measurement{
+				Source: types.SourceToxicity,
+				Symbol: "AAA/USD",
+				Metric: types.MetricTouchQuantity,
+			},
+			&types.Measurement{
+				Source:     types.SourceToxicity,
+				Symbol:     "AAA/USD",
+				Metric:     types.MetricRetreatingQuantity,
+				Normalized: &pressure,
+				Raw:        870,
+			},
+		)
 
 		evidence := NewEvidence().Project(thesis, types.Holding{
 			Symbol:     "AAA/USD",
@@ -74,7 +82,28 @@ func TestProjectRetreatPressureFromToxicity(t *testing.T) {
 		})
 
 		Convey("Then retreat pressure is projected", func() {
+			So(evidence.RetreatReady, ShouldBeTrue)
 			So(evidence.RetreatPressure, ShouldEqual, 0.87)
+		})
+	})
+
+	Convey("Given a current toxicity touch without any retreat", t, func() {
+		thesis := types.NewThesis(nil, nil)
+		thesis.Measurements = append(thesis.Measurements, &types.Measurement{
+			Source: types.SourceToxicity,
+			Symbol: "AAA/USD",
+			Metric: types.MetricTouchQuantity,
+		})
+
+		evidence := NewEvidence().Project(thesis, types.Holding{
+			Symbol:     "AAA/USD",
+			StopMark:   decimal.NewFromFloat64(95),
+			EntryPrice: decimal.NewFromFloat64(100),
+		})
+
+		Convey("Then the prior retreat gate can clear at this observed touch", func() {
+			So(evidence.RetreatReady, ShouldBeTrue)
+			So(evidence.RetreatPressure, ShouldEqual, 0)
 		})
 	})
 }

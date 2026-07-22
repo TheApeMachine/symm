@@ -193,12 +193,18 @@ func (evidence Evidence) retreat(
 	for _, measurement := range thesis.Measurements {
 		if measurement == nil ||
 			measurement.Symbol != symbol ||
-			measurement.Metric != types.MetricRetreatingQuantity ||
-			measurement.Normalized == nil {
+			measurement.Source != types.SourceToxicity {
 			continue
 		}
 
-		projected.RetreatReady = true
+		if measurement.Metric == types.MetricTouchQuantity {
+			projected.RetreatReady = true
+		}
+
+		if measurement.Metric != types.MetricRetreatingQuantity ||
+			measurement.Normalized == nil {
+			continue
+		}
 
 		if *measurement.Normalized > projected.RetreatPressure {
 			projected.RetreatPressure = *measurement.Normalized

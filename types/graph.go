@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -41,24 +42,24 @@ const (
 /*
 Node retains one immutable measurement only while it participates in a typed
 evidence relationship. A category node carries a descriptive Measurement shell
-(Source category, Metric = category type) so the wire and UI treat it uniformly.
+(Source category, Metric = category type) so the UI treats it uniformly.
 */
 type Node struct {
-	Key         string
-	Kind        NodeKind
-	Category    CategoryType
-	Measurement Measurement
+	Key         string       `json:"key"`
+	Kind        NodeKind     `json:"kind"`
+	Category    CategoryType `json:"category,omitempty"`
+	Measurement Measurement  `json:"measurement"`
 }
 
 /*
 Edge connects two evidence keys with its relationship and observed interval.
 */
 type Edge struct {
-	From         string
-	To           string
-	Type         EdgeType
-	At           time.Time
-	ObservedFrom time.Time
+	From         string    `json:"from"`
+	To           string    `json:"to"`
+	Type         EdgeType  `json:"type"`
+	At           time.Time `json:"at"`
+	ObservedFrom time.Time `json:"observedFrom"`
 }
 
 /*
@@ -197,6 +198,78 @@ Edges returns the typed relationships currently owned by the graph.
 */
 func (evidenceGraph *Graph) Edges() []*Edge {
 	return evidenceGraph.edges
+}
+
+/*
+MarshalJSON encodes the symbol-local topology with nodes as a JSON array.
+*/
+func (evidenceGraph *Graph) MarshalJSON() ([]byte, error) {
+	nodes := make([]*Node, 0, len(evidenceGraph.nodes))
+
+	for _, node := range evidenceGraph.nodes {
+		nodes = append(nodes, node)
+	}
+
+	return json.Marshal(struct {
+		Symbol string    `json:"symbol"`
+		At     time.Time `json:"at"`
+		Nodes  []*Node   `json:"nodes"`
+		Edges  []*Edge   `json:"edges"`
+	}{
+		Symbol: evidenceGraph.Symbol,
+		At:     evidenceGraph.At,
+		Nodes:  nodes,
+		Edges:  evidenceGraph.edges,
+	})
+}
+
+/*
+UnmarshalJSON rebuilds a live graph (lookup maps and Evidence composer) from a
+persisted topology snapshot.
+*/
+func (evidenceGraph *Graph) UnmarshalJSON(payload []byte) error {
+	var frame struct {
+		Symbol string    `json:"symbol"`
+		At     time.Time `json:"at"`
+		Nodes  []*Node   `json:"nodes"`
+		Edges  []*Edge   `json:"edges"`
+	}
+
+	if err := json.Unmarshal(payload, &frame); err != nil {
+		return err
+	}
+
+	*evidenceGraph = Graph{
+		Symbol: frame.Symbol,
+		At:     frame.At,
+		nodes:  make(map[string]*Node),
+		edges:  make([]*Edge, 0, len(frame.Edges)),
+		seen:   make(map[string]struct{}),
+	}
+	evidenceGraph.Evidence = newEvidenceComposer(evidenceGraph)
+
+	for _, node := range frame.Nodes {
+		if err := evidenceGraph.Evidence.RestoreNode(
+			node.Key,
+			node.Kind,
+			node.Category,
+			node.Measurement,
+		); err != nil {
+			return err
+		}
+	}
+
+	for _, edge := range frame.Edges {
+		evidenceGraph.Relate(
+			edge.From,
+			edge.To,
+			edge.Type,
+			edge.At,
+			edge.ObservedFrom,
+		)
+	}
+
+	return nil
 }
 
 /*

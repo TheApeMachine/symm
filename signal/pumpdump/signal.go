@@ -2,6 +2,7 @@ package pumpdump
 
 import (
 	"context"
+	"math"
 	"slices"
 	"sort"
 
@@ -10,23 +11,23 @@ import (
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Signal owns pump-cycle measurements derived from executed trade lift,
-reconstructed book spread, and ticker price movement. It reads each market
+Signal owns pump-cycle measurements derived from executed trade lift and the
+reconstructed book's midpoint and spread. It reads each market
 fact from its authoritative stream without treating them as independent
 corroborating signals.
 */
 type Signal struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	ignition *equation.Ignition
-	volume   map[string]float64
-	books    map[string]*flow.Book
-	ui       chan []byte
+	ctx        context.Context
+	cancel     context.CancelFunc
+	ignition   *equation.Ignition
+	volume     map[string]float64
+	books      map[string]*flow.Book
+	increments map[string]float64
+	ui         chan []byte
 }
 
 /*
@@ -35,19 +36,19 @@ same explicit retention bound used by the production market feed.
 */
 func NewSignal(
 	ctx context.Context,
-	api *websocket.API,
 	ui chan []byte,
 	baselineCapacity int,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
-		ctx:      ctx,
-		cancel:   cancel,
-		ignition: equation.NewIgnition(baselineCapacity),
-		volume:   make(map[string]float64),
-		books:    make(map[string]*flow.Book),
-		ui:       ui,
+		ctx:        ctx,
+		cancel:     cancel,
+		ignition:   equation.NewIgnition(baselineCapacity),
+		volume:     make(map[string]float64),
+		books:      make(map[string]*flow.Book),
+		increments: make(map[string]float64),
+		ui:         ui,
 	}
 }
 
@@ -58,33 +59,26 @@ measured its evidence, mirroring broker.Balance.Publish.
 func (signal *Signal) Publish(measurements []*types.Measurement) {
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": types.WireMeasurements(measurements),
+		"measurements": types.ForPublish(measurements),
 	}.Marshal():
 	default:
 	}
 }
 
 /*
-Interest requires executed trades for lift, the reconstructed book for spread,
-and ticker prices for precursor and rejection.
+Interest requires executed trades for lift, the reconstructed book for price
+displacement and spread, and ticker observations to close each market sample.
 */
 func (signal *Signal) Interest() types.StreamInterest {
 	return types.StreamAll
 }
 
 /*
-Measure applies the current immutable market cut and publishes no replacement
-value when a required source is missing or invalid.
+Measure returns typed measurements for the cut, or an error when the
+cut cannot be measured honestly.
 */
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	measurements, err := signal.Calculate(thesis.Market())
-
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	return measurements
+func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, error) {
+	return signal.Calculate(thesis.Market())
 }
 
 /*
@@ -170,10 +164,24 @@ func (signal *Signal) measure(row kraken.TickerData) ([]*types.Measurement, erro
 	}
 
 	mid := book.Mid()
-	spread := book.Spread()
+	increment := signal.increments[row.Symbol]
 
-	if mid <= 0 || spread <= 0 {
-		return nil, nil
+	if mid <= 0 || increment <= 0 {
+		return nil, errnie.Err(
+			errnie.Validation,
+			"pumpdump: positive midpoint and price increment required",
+			nil,
+		)
+	}
+
+	spread := math.Round(book.Spread()/increment) * increment
+
+	if spread <= 0 {
+		return nil, errnie.Err(
+			errnie.Validation,
+			"pumpdump: positive executable spread required",
+			nil,
+		)
 	}
 
 	bid := mid - spread/2
@@ -182,7 +190,7 @@ func (signal *Signal) measure(row kraken.TickerData) ([]*types.Measurement, erro
 	output, ready, maturity, err := signal.ignition.Measure(equation.IgnitionInput{
 		Symbol: row.Symbol,
 		Volume: volume,
-		Last:   row.Last.Float64(),
+		Last:   mid,
 		Bid:    bid,
 		Ask:    ask,
 		At:     row.Timestamp,
@@ -238,6 +246,7 @@ func (signal *Signal) ingest(
 		}
 
 		book := signal.books[row.Symbol]
+		signal.increments[row.Symbol] = row.PriceIncrement.Float64()
 
 		if book == nil || row.Type == "snapshot" {
 			book = flow.NewBook()
@@ -273,13 +282,8 @@ func (signal *Signal) ingest(
 Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
-func (signal *Signal) Close() (err error) {
-	err = errnie.Error(errnie.Err(
-		errnie.Internal,
-		"signal: close failed",
-		nil,
-	))
-
+func (signal *Signal) Close() error {
 	signal.cancel()
-	return err
+
+	return nil
 }

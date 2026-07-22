@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const bookChecksumDepth = 10
+
 /*
 touch returns the best reconstructed price and its aggregate quantity.
 */
@@ -40,15 +42,12 @@ func (validator *Validator) level3Checksum(symbol string) uint32 {
 		}
 
 		sort.Slice(orders, func(left, right int) bool {
-			leftPrice, _ := strconv.ParseFloat(orders[left].price, 64)
-			rightPrice, _ := strconv.ParseFloat(orders[right].price, 64)
-
-			if leftPrice != rightPrice {
+			if orders[left].priceValue != orders[right].priceValue {
 				if side == "bids" {
-					return leftPrice > rightPrice
+					return orders[left].priceValue > orders[right].priceValue
 				}
 
-				return leftPrice < rightPrice
+				return orders[left].priceValue < orders[right].priceValue
 			}
 
 			if orders[left].priority != orders[right].priority {
@@ -100,7 +99,11 @@ func (validator *Validator) bookChecksum(symbol string) uint32 {
 			sort.Sort(sort.Reverse(sort.Float64Slice(prices)))
 		}
 
-		for _, price := range prices {
+		for index, price := range prices {
+			if index == bookChecksumDepth {
+				break
+			}
+
 			for _, value := range []float64{price, validator.books[symbol][side][price]} {
 				text := strconv.FormatFloat(value, 'f', -1, 64)
 				normalized := strings.TrimLeft(strings.ReplaceAll(text, ".", ""), "0")

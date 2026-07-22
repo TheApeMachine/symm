@@ -178,3 +178,194 @@ func BenchmarkFilterLatest(b *testing.B) {
 		}
 	}
 }
+
+func TestForPublish(t *testing.T) {
+	Convey("Given flat typed rows for two symbols from one signal", t, func() {
+		at := time.Unix(100, 0).UTC()
+		rows := []*Measurement{
+			{
+				Source: SourceSentiment, Stream: Sentiment, Symbol: "BTC/USD",
+				Metric: MetricBreadth, At: at, Raw: 1,
+				Validity: MeasurementValidity{State: ValidityValid, Readiness: ReadinessObservation},
+			},
+			{
+				Source: SourceSentiment, Stream: Sentiment, Symbol: "BTC/USD",
+				Metric: MetricStrength, At: at, Raw: 0.4,
+				Validity: MeasurementValidity{State: ValidityValid, Readiness: ReadinessObservation},
+			},
+			{
+				Source: SourceSentiment, Stream: Sentiment, Symbol: "ETH/USD",
+				Metric: MetricBreadth, At: at, Raw: 0.5,
+				Validity: MeasurementValidity{State: ValidityValid, Readiness: ReadinessObservation},
+			},
+			{
+				Source: SourceSentiment, Stream: Sentiment, Symbol: "ETH/USD",
+				Metric: MetricStrength, At: at, Raw: 0.2,
+				Validity: MeasurementValidity{State: ValidityValid, Readiness: ReadinessObservation},
+			},
+		}
+
+		published := ForPublish(rows)
+
+		Convey("It keeps typed rows for both symbols", func() {
+			So(published, ShouldHaveLength, 4)
+			So(ObservationCount(rows), ShouldEqual, 2)
+			So(published[0].Metric, ShouldEqual, MetricBreadth)
+			So(published[0].Raw, ShouldEqual, 1.0)
+			So(published[0].Symbol, ShouldEqual, "BTC/USD")
+		})
+	})
+
+	Convey("Given directional Hawkes metrics that share a metric name", t, func() {
+		at := time.Unix(100, 0).UTC()
+		rows := []*Measurement{
+			{
+				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
+				Metric: MetricArrivalRate, Side: SideBuy, At: at, Raw: 1.5,
+			},
+			{
+				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
+				Metric: MetricArrivalRate, Side: SideSell, At: at, Raw: 0.7,
+			},
+		}
+
+		published := ForPublish(rows)
+
+		Convey("It keeps buy and sell as distinct typed rows", func() {
+			So(published, ShouldHaveLength, 2)
+			So(published[0].Side, ShouldEqual, SideBuy)
+			So(published[0].Raw, ShouldEqual, 1.5)
+			So(published[1].Side, ShouldEqual, SideSell)
+			So(published[1].Raw, ShouldEqual, 0.7)
+		})
+	})
+
+	Convey("Given an older epoch for one symbol", t, func() {
+		rows := []*Measurement{
+			{
+				Source: SourcePumpDump, Symbol: "BTC/USD",
+				Metric: MetricStrength, At: time.Unix(1, 0), Raw: 0.1,
+			},
+			{
+				Source: SourcePumpDump, Symbol: "BTC/USD",
+				Metric: MetricStrength, At: time.Unix(2, 0), Raw: 0.9,
+			},
+		}
+
+		published := ForPublish(rows)
+
+		Convey("It keeps only the newest complete epoch", func() {
+			So(published, ShouldHaveLength, 1)
+			So(published[0].Raw, ShouldEqual, 0.9)
+		})
+	})
+
+	Convey("Given a Hawkes fit epoch older than the live intensity", t, func() {
+		fitFrom := time.Unix(80, 0).UTC()
+		fitAt := time.Unix(100, 0).UTC()
+		evalAt := time.Unix(140, 0).UTC()
+		rows := []*Measurement{
+			{
+				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
+				Metric: MetricBaselineIntensity, Side: SideBuy, At: fitAt, Raw: 0.6,
+				Scale: ScaleReference{
+					Kind: ScaleObservationWindow, From: fitFrom, Through: fitAt,
+				},
+			},
+			{
+				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
+				Metric: MetricBaselineIntensity, Side: SideSell, At: fitAt, Raw: 0.4,
+				Scale: ScaleReference{
+					Kind: ScaleObservationWindow, From: fitFrom, Through: fitAt,
+				},
+			},
+			{
+				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
+				Metric: MetricDecayRate, At: fitAt, Raw: 1.5,
+				Scale: ScaleReference{
+					Kind: ScaleObservationWindow, From: fitFrom, Through: fitAt,
+				},
+			},
+			{
+				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
+				Metric: MetricSpectralRadius, At: fitAt, Raw: 0.72,
+				Scale: ScaleReference{
+					Kind: ScaleObservationWindow, From: fitFrom, Through: fitAt,
+				},
+			},
+			{
+				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
+				Metric: MetricConditionalIntensity, Side: SideBuy, At: evalAt, Raw: 0.9,
+				Scale: ScaleReference{
+					Kind: ScaleObservationWindow, From: fitFrom, Through: evalAt,
+				},
+			},
+			{
+				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
+				Metric: MetricConditionalIntensity, Side: SideSell, At: evalAt, Raw: 0.6,
+				Scale: ScaleReference{
+					Kind: ScaleObservationWindow, From: fitFrom, Through: evalAt,
+				},
+			},
+		}
+
+		published := ForPublish(rows)
+
+		Convey("It publishes the fit parameters beside the live intensity", func() {
+			So(published, ShouldHaveLength, 6)
+
+			var decay, intensity *Measurement
+
+			for _, row := range published {
+				switch row.Metric {
+				case MetricDecayRate:
+					decay = row
+				case MetricConditionalIntensity:
+					if row.Side == SideBuy {
+						intensity = row
+					}
+				}
+			}
+
+			So(decay, ShouldNotBeNil)
+			So(intensity, ShouldNotBeNil)
+			So(decay.Raw, ShouldEqual, 1.5)
+			So(intensity.Raw, ShouldEqual, 0.9)
+			So(decay.Scale.Through, ShouldEqual, fitAt)
+			So(intensity.Scale.Through, ShouldEqual, evalAt)
+		})
+	})
+}
+
+func BenchmarkObservationCount(b *testing.B) {
+	const (
+		symbolCount = 256
+		metricCount = 9
+	)
+
+	rows := make([]*Measurement, 0, symbolCount*metricCount)
+	at := time.Unix(100, 0).UTC()
+
+	for symbolIndex := range symbolCount {
+		symbol := "PAIR-" + strconv.Itoa(symbolIndex)
+
+		for metricIndex := range metricCount {
+			rows = append(rows, &Measurement{
+				Source: SourceSentiment,
+				Stream: Sentiment,
+				Symbol: symbol,
+				Metric: MetricStrength,
+				At:     at,
+				Raw:    float64(metricIndex),
+			})
+		}
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if ObservationCount(rows) != symbolCount {
+			b.Fatal("observation count drifted")
+		}
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -16,11 +17,14 @@ func (signal *Signal) emitSymbolMeasurements(
 	row *symbolEvidence,
 	out *[]*types.Measurement,
 	nextTouch map[string]touchSnapshot,
-) {
-	maturity := float64(row.tradeCount) / float64(row.tradeCount+1)
-	obsCtx := newObservationContext(row.latestAt, row.tradeCount)
+) error {
+	evidenceCount := row.tradeCount + row.bookCount
+	maturity := float64(evidenceCount) / float64(evidenceCount+1)
+	obsCtx := newObservationContext(row.latestAt, evidenceCount)
 
-	*out = append(*out, tapeMeasurements(symbol, row, maturity, obsCtx)...)
+	if row.tradeCount > 0 {
+		*out = append(*out, tapeMeasurements(symbol, row, maturity, obsCtx)...)
+	}
 
 	signal.level3.PeekBook(symbol, func(symbolBook *book.Book) {
 		if symbolBook.Name != symbol {
@@ -37,6 +41,8 @@ func (signal *Signal) emitSymbolMeasurements(
 		askQuantity := ask.Quantity.Float64()
 
 		nextTouch[symbol] = touchSnapshot{
+			bidPrice:    *bid.Price,
+			askPrice:    *ask.Price,
 			bidQuantity: bidQuantity,
 			askQuantity: askQuantity,
 			observedAt:  row.latestAt,
@@ -50,6 +56,8 @@ func (signal *Signal) emitSymbolMeasurements(
 			symbol,
 			row,
 			signal.priorTouch[symbol],
+			bid.Price,
+			ask.Price,
 			bidQuantity,
 			askQuantity,
 			maturity,
@@ -57,6 +65,8 @@ func (signal *Signal) emitSymbolMeasurements(
 
 		*out = append(*out, honesty...)
 	})
+
+	return nil
 }
 
 /*
@@ -208,6 +218,8 @@ func (signal *Signal) touchHonesty(
 	symbol string,
 	row *symbolEvidence,
 	prior touchSnapshot,
+	bidPrice *decimal.Decimal,
+	askPrice *decimal.Decimal,
 	bidQuantity float64,
 	askQuantity float64,
 	maturity float64,
@@ -216,10 +228,19 @@ func (signal *Signal) touchHonesty(
 		return nil
 	}
 
-	bidCancelled := cancelledQuantity(prior.bidQuantity, bidQuantity, row.bidExecuted)
-	askCancelled := cancelledQuantity(prior.askQuantity, askQuantity, row.askExecuted)
+	bidRetreated := bidPrice.Cmp(&prior.bidPrice) < 0
+	askRetreated := askPrice.Cmp(&prior.askPrice) > 0
+	bidCancelled := cancelledQuantity(
+		prior.bidQuantity, bidQuantity, row.bidExecuted, bidRetreated,
+	)
+	askCancelled := cancelledQuantity(
+		prior.askQuantity, askQuantity, row.askExecuted, askRetreated,
+	)
 	measurements := make([]*types.Measurement, 0, 4)
-	obsCtx := newObservationContext(row.latestAt, row.tradeCount)
+	obsCtx := newObservationContext(
+		row.latestAt,
+		row.tradeCount+row.bookCount,
+	)
 
 	if bidCancelled > 0 {
 		measurements = append(measurements, &types.Measurement{
@@ -284,11 +305,20 @@ func (signal *Signal) touchHonesty(
 	return measurements
 }
 
+/*
+cancelledQuantity removes known executions from a touch-size decline so only
+unexplained withdrawal is classified as cancellation.
+*/
 func cancelledQuantity(
 	priorQuantity float64,
 	currentQuantity float64,
 	executedQuantity float64,
+	retreated bool,
 ) float64 {
+	if retreated {
+		return math.Max(0, priorQuantity-executedQuantity)
+	}
+
 	removal := priorQuantity - currentQuantity
 
 	if removal <= 0 {
@@ -298,6 +328,10 @@ func cancelledQuantity(
 	return math.Max(0, removal-executedQuantity)
 }
 
+/*
+dominantRetreat selects the side with the larger withdrawn fraction so unequal
+touch sizes remain comparable without collapsing side identity.
+*/
 func dominantRetreat(
 	bidCancelled float64,
 	askCancelled float64,
@@ -318,6 +352,9 @@ func dominantRetreat(
 	return types.SideBuy, bidCancelled, priorBid
 }
 
+/*
+retreatPressure expresses withdrawn quantity relative to its own prior touch.
+*/
 func retreatPressure(cancelled float64, priorTouch float64) float64 {
 	if cancelled <= 0 || priorTouch <= 0 {
 		return 0

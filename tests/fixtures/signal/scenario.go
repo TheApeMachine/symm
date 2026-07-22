@@ -33,10 +33,24 @@ func (signal *Signal) Scenario(state State, symbols ...string) ([]Step, error) {
 	}
 
 	if state.isBookCondition() {
-		return signal.bookCondition(state, selected), nil
+		steps := signal.bookCondition(state, selected)
+		draft := signal.clone()
+
+		for _, step := range steps {
+			if err := draft.Apply(step); err != nil {
+				return nil, err
+			}
+		}
+
+		return steps, nil
 	}
 
 	leg := state.observations()
+
+	if state == LeaderFollower {
+		leg += (len(signal.symbols) - 1) * leaderLagObservations
+	}
+
 	total := leg
 
 	if state != Baseline {
@@ -46,10 +60,25 @@ func (signal *Signal) Scenario(state State, symbols ...string) ([]Step, error) {
 	levels := make(map[string]float64, len(signal.markets))
 	targets := make(map[string]float64, len(signal.markets))
 
-	for symbol, market := range signal.markets {
+	for symbolIndex, symbol := range signal.symbols {
+		market := signal.markets[symbol]
 		level := market.mid()
 		levels[symbol] = level
-		targets[symbol] = level * (1 + state.direction()*eventMoveFraction)
+		moveFraction := state.direction() * eventMoveFraction
+
+		if state == SmallDisplacementLift {
+			moveFraction = smallMoveFraction
+		}
+
+		if state == LeaderFollower {
+			moveFraction = eventMoveFraction / float64(symbolIndex+1)
+		}
+
+		if state == AdverseDivergence && symbolIndex == 0 {
+			moveFraction = -eventMoveFraction
+		}
+
+		targets[symbol] = level * (1 + moveFraction)
 
 		if state == Baseline || !selected[symbol] {
 			targets[symbol] = level
@@ -57,6 +86,7 @@ func (signal *Signal) Scenario(state State, symbols ...string) ([]Step, error) {
 	}
 
 	steps := make([]Step, total)
+	draft := signal.clone()
 
 	for index := range total {
 		advance := time.Second
@@ -68,11 +98,24 @@ func (signal *Signal) Scenario(state State, symbols ...string) ([]Step, error) {
 		actions := make([]Action, 0, len(signal.symbols)*2)
 
 		for symbolIndex, symbol := range signal.symbols {
-			active := state != Baseline && selected[symbol] && index < leg
+			start := 0
+			activeObservations := leg
+
+			if state == LeaderFollower {
+				start = symbolIndex * leaderLagObservations
+				activeObservations = fastLegObservations
+			}
+
+			active := state != Baseline && selected[symbol] &&
+				index >= start && index < start+activeObservations
 			center := targets[symbol]
 
+			if state == LeaderFollower && index < start {
+				center = signal.markets[symbol].mid()
+			}
+
 			if active {
-				progress := float64(index+1) / float64(leg)
+				progress := float64(index-start+1) / float64(activeObservations)
 				progress = progress * progress * (3 - 2*progress)
 				mid := signal.markets[symbol].mid()
 				center = mid + (targets[symbol]-mid)*progress
@@ -80,18 +123,28 @@ func (signal *Signal) Scenario(state State, symbols ...string) ([]Step, error) {
 
 			wave := math.Sin(float64(signal.phase + index + symbolIndex))
 			desired := center * (1 + idleAmplitudeFraction*wave)
+
+			if (state == VolumeAbsorption || state == SpreadCompression ||
+				state == SpreadControl) && selected[symbol] {
+				desired = levels[symbol]
+			}
+
 			desired = math.Round(desired/PriceIncrement) * PriceIncrement
 			ticks := int64(math.Round((desired - levels[symbol]) / PriceIncrement))
 			levels[symbol] += float64(ticks) * PriceIncrement
 			side := "buy"
 
-			if state == FastDump || state == SlowDump ||
-				(!active || state == SpreadCompression) &&
-					(index+symbolIndex)%2 != 0 {
+			if active && (state == FastDump || state == SlowDump ||
+				state == AdverseDivergence && symbolIndex == 0) {
 				side = "sell"
 			}
 
-			volume := idleVolume * (1 + idleVolumeWaveFraction*math.Abs(wave))
+			if (!active || state == SpreadCompression) &&
+				(index+symbolIndex)%2 != 0 {
+				side = "sell"
+			}
+
+			volume := round(idleVolume * (1 + idleVolumeWaveFraction*math.Abs(wave)))
 
 			if active {
 				volume = state.volume()
@@ -99,6 +152,15 @@ func (signal *Signal) Scenario(state State, symbols ...string) ([]Step, error) {
 
 			actions = append(actions, Action{
 				Kind: Trade, Symbol: symbol, Side: side, Qty: volume,
+			})
+			liquiditySide := "sell"
+
+			if side == "sell" {
+				liquiditySide = "buy"
+			}
+
+			actions = append(actions, Action{
+				Kind: Refill, Symbol: symbol, Side: liquiditySide, Qty: volume,
 			})
 			actions = append(actions, Action{
 				Kind: MoveMid, Symbol: symbol, Ticks: ticks,
@@ -112,7 +174,9 @@ func (signal *Signal) Scenario(state State, symbols ...string) ([]Step, error) {
 				})
 			}
 
-			if !compressing {
+			absorbing := state == VolumeAbsorption && selected[symbol]
+
+			if !compressing && !absorbing {
 				switch index % spreadCycleLength {
 				case spreadWidenPhase:
 					actions = append(actions, Action{
@@ -127,6 +191,10 @@ func (signal *Signal) Scenario(state State, symbols ...string) ([]Step, error) {
 		}
 
 		steps[index] = Step{Advance: advance, Actions: actions}
+
+		if err := draft.Apply(steps[index]); err != nil {
+			return nil, err
+		}
 	}
 
 	return steps, nil

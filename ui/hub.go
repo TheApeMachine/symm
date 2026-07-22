@@ -27,9 +27,7 @@ type Hub struct {
 	listenAddr  string
 	Messages    chan []byte
 	price       *broker.Price
-	balance     *broker.Balance
 	subscribers *sync.Map
-	focus       func(string)
 }
 
 func NewHub(
@@ -53,7 +51,6 @@ func NewHub(
 			WriteBufferSize: 4 * 1024 * 1024,
 		}),
 		price:       price,
-		balance:     balance,
 		subscribers: &sync.Map{},
 	}
 
@@ -68,19 +65,6 @@ func NewHub(
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		defer conn.Close()
-		go hub.read(conn)
-
-		if hub.balance != nil {
-			if frame := hub.balance.Frame(); len(frame) > 0 {
-				if err := conn.Conn.WriteMessage(websocket.TextMessage, frame); err != nil {
-					if errors.Is(err, syscall.EPIPE) {
-						return
-					}
-
-					errnie.Error(err)
-				}
-			}
-		}
 
 		for {
 			select {
@@ -115,60 +99,6 @@ func NewHub(
 	}))
 
 	return hub
-}
-
-/*
-BindFocus connects browser symbol selection to the analysis projection owner.
-The stack binds this before Serve, so full field data is produced only for the
-one symbol the dashboard actually requests.
-*/
-func (hub *Hub) BindFocus(focus func(string)) {
-	hub.focus = focus
-}
-
-/*
-read consumes browser control messages independently from the outbound frame
-loop. Websocket permits one concurrent reader and writer; keeping those roles
-separate prevents a quiet market from blocking a focus change.
-*/
-func (hub *Hub) read(conn *websocket.Conn) {
-	for {
-		_, message, err := conn.Conn.ReadMessage()
-
-		if err != nil {
-			return
-		}
-
-		if err := hub.focusMessage(message); err != nil {
-			errnie.Error(err)
-		}
-	}
-}
-
-/*
-focusMessage validates one browser control frame before changing analysis
-focus. Invalid or unbound commands are errors rather than silent no-ops because
-without this link the backend intentionally omits the expensive field payload.
-*/
-func (hub *Hub) focusMessage(message []byte) error {
-	command := struct {
-		Focus string `json:"focus"`
-	}{}
-
-	if err := sonic.Unmarshal(message, &command); err != nil {
-		return errnie.Err(errnie.Validation, "ui hub: invalid focus command", err)
-	}
-
-	if command.Focus == "" {
-		return errnie.Err(errnie.Validation, "ui hub: focus symbol is empty", nil)
-	}
-
-	if hub.focus == nil {
-		return errnie.Err(errnie.Internal, "ui hub: focus handler is not bound", nil)
-	}
-
-	hub.focus(command.Focus)
-	return nil
 }
 
 func (hub *Hub) Serve() error {

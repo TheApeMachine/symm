@@ -47,21 +47,14 @@ func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 		))
 	}
 
-	state := book.registry.loadSymbol(row.Symbol)
+	state, err := book.registry.loadSymbol(row.Symbol)
 
-	if state == nil {
+	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			"fluid: symbol state required",
-			nil,
+			"fluid: book symbol state required",
+			err,
 		))
-	}
-
-	if len(row.Bids) == 0 && len(row.Asks) == 0 {
-		// No book levels in this frame (checksum-only refresh, or a thin/halted
-		// market with nothing resting on either side). There is no book state to
-		// feed or measure, but it is not a malformed frame.
-		return nil, nil
 	}
 
 	if row.PriceIncrement != nil && row.PriceIncrement.Float64() > 0 {
@@ -70,13 +63,15 @@ func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 
 	eventAt := row.Timestamp.UTC()
 
-	if err := state.FeedBook(row, eventAt); errnie.Error(err) != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+	if err := state.FeedBook(row, eventAt); err != nil {
+		return nil, nil
 	}
 
-	reading, ok := state.Reading()
+	reading, ok, err := state.Reading()
+
+	if err != nil {
+		return nil, nil
+	}
 
 	if !ok {
 		return nil, nil

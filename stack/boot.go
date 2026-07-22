@@ -2,12 +2,9 @@ package stack
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"strings"
+	"errors"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
@@ -44,7 +41,6 @@ type Booter struct {
 	cancel  context.CancelFunc
 	channel chan []byte
 	stages  *system.Booter
-	test    bool
 }
 
 /*
@@ -52,20 +48,32 @@ NewBooter creates the one production composition root.
 */
 func NewBooter(ctx context.Context) *Booter {
 	ctx, cancel := context.WithCancel(ctx)
-	channel := make(chan []byte, viper.GetInt("system.websocket.channel.buffer"))
 
 	return &Booter{
-		ctx:     ctx,
-		cancel:  cancel,
-		channel: channel,
-		stages:  system.NewBooter(ctx, channel),
+		ctx:    ctx,
+		cancel: cancel,
 	}
+}
+
+/*
+compose creates the shared boot primitives only after their runtime
+configuration is final, keeping live and deterministic test construction on
+the same composition path.
+*/
+func (booter *Booter) compose() {
+	booter.channel = make(
+		chan []byte,
+		viper.GetInt("system.websocket.channel.buffer"),
+	)
+
+	booter.stages = system.NewBooter(booter.ctx, booter.channel)
 }
 
 /*
 Start constructs the live transports, boots the complete graph, and serves it.
 */
 func (booter *Booter) Start() error {
+	booter.compose()
 	simulator := websocket.NewLatencySimulator(booter.stages)
 	public := websocket.New(
 		booter.ctx, simulator, false, websocket.PublicWebSocketURL,
@@ -95,7 +103,9 @@ func (booter *Booter) Start() error {
 		return errnie.Error(err)
 	}
 
-	defer wired.Close()
+	defer func() {
+		errnie.Error(wired.Close())
+	}()
 
 	if err := wired.Crypto.Run(); err != nil {
 		return errnie.Error(err)
@@ -108,37 +118,77 @@ func (booter *Booter) Start() error {
 Test boots the complete production graph against a fixture-driven market.
 */
 func (booter *Booter) Test(market *tests.Market) (*Stack, error) {
-	booter.test = true
-	viper.Set("trading.model", "paper")
-	viper.Set("cognitive.in_memory", true)
-	viper.Set("system.data_path", "")
-	viper.Set("system.audit.rotate_on_boot", false)
-	viper.Set("market.quote_currency", "USD")
-	viper.Set("market.subscribe_batch", len(market.Symbols))
-	viper.Set("market.subscribe_pace", 0)
-	viper.Set("market.l3_enabled", true)
-	viper.Set("market.l3_depth", 10)
-	viper.Set("market.l3_rate_limit", 200)
-	viper.Set("market.baseline_halflife", 30*time.Second)
-	viper.Set("market.forecast.rls.initial_variance", 1.0)
-	viper.Set("market.forecast.rls.forgetting_factor", 1.0)
-	viper.Set("market.forecast.rls.calibration_confidence", 0.95)
-	viper.Set("signals.feed_timeline_capacity", 4096)
-	viper.Set("signals.feed_track_capacity", 512)
-	viper.Set("signals.fluid.grid_half_width", 0)
-	viper.Set("signals.fluid.integration_interval", 0)
-	viper.Set("signals.fluid.idle_threshold", 5*time.Second)
-	viper.Set("signals.fluid.max_integration_steps", 50)
-	viper.Set("trading.slots.normal", 2)
-	viper.Set("trading.slots.reserved", 2)
+	restore := booter.configureTest(len(market.Symbols))
+	booter.compose()
 
-	return booter.boot(
+	if err := market.Bootstrap(); err != nil {
+		restore()
+		return nil, errnie.Error(err)
+	}
+
+	wired, err := booter.boot(
 		market.Public,
 		market.Private,
 		market.Paper,
 		market.Level3,
 		market.Symbols,
 	)
+
+	if err != nil {
+		restore()
+		return nil, err
+	}
+
+	wired.restore = restore
+
+	return wired, nil
+}
+
+/*
+configureTest applies deterministic runtime configuration for one simulated
+stack and returns the exact restoration applied when that stack closes.
+*/
+func (booter *Booter) configureTest(symbolCount int) func() {
+	settings := map[string]any{
+		"system.websocket.channel.buffer":            4096,
+		"trading.model":                              "paper",
+		"trading.allocation.max_fraction":            0.2,
+		"trading.slots.normal":                       2,
+		"trading.slots.reserved":                     2,
+		"cognitive.in_memory":                        true,
+		"cognitive.tick_budget":                      10 * time.Millisecond,
+		"system.data_path":                           "",
+		"system.audit.rotate_on_boot":                false,
+		"market.quote_currency":                      "USD",
+		"market.subscribe_batch":                     symbolCount,
+		"market.subscribe_pace":                      0,
+		"market.l3_enabled":                          true,
+		"market.l3_depth":                            10,
+		"market.l3_rate_limit":                       200,
+		"market.baseline_halflife":                   30 * time.Second,
+		"market.forecast.rls.initial_variance":       1.0,
+		"market.forecast.rls.forgetting_factor":      1.0,
+		"market.forecast.rls.calibration_confidence": 0.95,
+		"signals.feed_timeline_capacity":             4096,
+		"signals.feed_track_capacity":                512,
+		"signals.volume_clock_bars_per_day":          0,
+		"signals.fluid.grid_half_width":              0,
+		"signals.fluid.integration_interval":         0,
+		"signals.fluid.idle_threshold":               5 * time.Second,
+		"signals.fluid.max_integration_steps":        50,
+	}
+	previous := make(map[string]any, len(settings))
+
+	for key, value := range settings {
+		previous[key] = viper.Get(key)
+		viper.Set(key, value)
+	}
+
+	return func() {
+		for key, value := range previous {
+			viper.Set(key, value)
+		}
+	}
 }
 
 /*
@@ -149,7 +199,6 @@ type Stack struct {
 	Booter     *system.Booter
 	Channel    chan []byte
 	Tree       *dmt.Tree
-	Thesis     *types.Thesis
 	Price      *broker.Price
 	Instrument *broker.Instrument
 	Balance    *broker.Balance
@@ -159,6 +208,7 @@ type Stack struct {
 	Crypto     *trader.Crypto
 	UIHub      *ui.Hub
 	Recorder   *audit.Recorder
+	restore    func()
 }
 
 /*
@@ -172,40 +222,46 @@ func (booter *Booter) boot(
 	symbols []string,
 	preflight ...types.StatusReporter,
 ) (*Stack, error) {
-	tree, dataPath, recorder, err := booter.storage()
-
-	if err != nil {
-		return nil, err
-	}
-
 	api := websocket.NewAPI(booter.ctx, public, private, paper)
 
 	if level3 != nil {
 		api.InjectLevel3(level3, symbols)
 	}
+
+	tree := dmt.NewTree("")
+
 	price := broker.NewPrice(api)
 	instrument := broker.NewInstrument(api, price, booter.channel)
 	balance := broker.NewBalance(api, nil, booter.channel)
 	desk := broker.NewDesk(api, instrument, price, balance)
-	thesis := booter.thesis(dataPath)
 	hub := ui.NewHub(booter.ctx, price, balance, booter.channel)
-	hawkesSignal := hawkes.NewSignal(booter.ctx, api, booter.channel)
+	hawkesSignal := hawkes.NewSignal(booter.ctx, booter.channel)
+
+	depthflowSignal, err := depthflow.NewSignal(
+		booter.ctx,
+		booter.channel,
+		viper.GetInt("signals.feed_track_capacity"),
+	)
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
 	signals := []types.Signal{
 		pumpdump.NewSignal(
 			booter.ctx,
-			api,
 			booter.channel,
 			viper.GetInt("signals.feed_track_capacity"),
 		),
-		liquidity.NewSignal(booter.ctx, api, booter.channel),
+		liquidity.NewSignal(booter.ctx, booter.channel),
 		toxicity.NewSignal(booter.ctx, api, booter.channel),
-		leadlag.NewSignal(booter.ctx, api, booter.channel),
-		cvd.NewSignal(booter.ctx, api, booter.channel),
-		correlation.NewSignal(booter.ctx, api, booter.channel),
-		exhaust.NewSignal(booter.ctx, api, instrument, booter.channel),
-		sentiment.NewSignal(booter.ctx, api, booter.channel),
-		depthflow.NewSignal(booter.ctx, api, instrument, booter.channel),
-		fluid.NewSignal(booter.ctx, api, instrument, booter.channel),
+		leadlag.NewSignal(booter.ctx, booter.channel),
+		cvd.NewSignal(booter.ctx, booter.channel),
+		correlation.NewSignal(booter.ctx, booter.channel),
+		exhaust.NewSignal(booter.ctx, booter.channel),
+		sentiment.NewSignal(booter.ctx, booter.channel),
+		depthflowSignal,
+		fluid.NewSignal(booter.ctx, booter.channel),
 		hawkesSignal,
 	}
 	analyzer, err := logic.NewAnalyzer(
@@ -215,14 +271,13 @@ func (booter *Booter) boot(
 		hawkesSignal,
 		tree,
 		booter.channel,
-		recorder,
+		nil,
 	)
 
 	if err != nil {
 		return nil, errnie.Error(err)
 	}
 
-	hub.BindFocus(analyzer.Focus)
 	planner := strategy.NewPlanner(
 		booter.ctx,
 		booter.channel,
@@ -234,8 +289,9 @@ func (booter *Booter) boot(
 		signals,
 		analyzer,
 		strategy.NewAllocator(booter.ctx, balance, instrument, price),
-		recorder,
+		nil,
 	)
+
 	crypto, err := trader.NewCrypto(
 		booter.ctx,
 		booter.stages,
@@ -247,9 +303,8 @@ func (booter *Booter) boot(
 		analyzer,
 		planner,
 		tree,
-		thesis,
 		hub,
-		recorder,
+		nil,
 	)
 
 	if err != nil {
@@ -261,7 +316,6 @@ func (booter *Booter) boot(
 		Booter:     booter.stages,
 		Channel:    booter.channel,
 		Tree:       tree,
-		Thesis:     thesis,
 		Price:      price,
 		Instrument: instrument,
 		Balance:    balance,
@@ -270,14 +324,14 @@ func (booter *Booter) boot(
 		Planner:    planner,
 		Crypto:     crypto,
 		UIHub:      hub,
-		Recorder:   recorder,
+		Recorder:   nil,
 	}
 
 	if reporter, ok := paper.(types.StatusReporter); ok {
 		preflight = append(preflight, reporter)
 	}
 
-	preflight = append(preflight, api, instrument, balance, price, desk)
+	preflight = append(preflight, api, price, instrument, balance, desk)
 	booter.stages.AddStages(
 		system.NewStage(system.StagePreflight, preflight...),
 		system.NewStage(system.StageWarmup, crypto),
@@ -285,137 +339,19 @@ func (booter *Booter) boot(
 	)
 
 	if err := booter.stages.Start(); err != nil {
-		wired.Close()
-		return nil, errnie.Error(err)
+		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
 
 	return wired, nil
 }
 
 /*
-storage opens the configured cognitive tree, data directory, and audit stream.
+Close releases every resource owned by the assembled production graph and
+returns all lifecycle failures after configuration has been restored.
 */
-func (booter *Booter) storage() (*dmt.Tree, string, *audit.Recorder, error) {
-	if booter.test {
-		recorder, err := audit.NewRecorder(os.DevNull)
-
-		return dmt.NewTree(""), "", recorder, err
-	}
-
-	persistDir, err := configuredPath("cognitive.persist_dir")
-
-	if err != nil {
-		return nil, "", nil, err
-	}
-
-	inMemory := viper.GetBool("cognitive.in_memory")
-
-	if !inMemory && persistDir == "" {
-		return nil, "", nil, errnie.Err(
-			errnie.Validation,
-			"cognitive.persist_dir is required unless cognitive.in_memory is set",
-			nil,
-		)
-	}
-
-	if !inMemory && viper.GetBool("cognitive.reset_on_boot") {
-		if _, statErr := os.Stat(persistDir); statErr == nil {
-			if err := os.Rename(persistDir, audit.RotatedPath(persistDir)); err != nil {
-				return nil, "", nil, errnie.Err(
-					errnie.IO, "failed to rotate cognitive store", err,
-				)
-			}
-		} else if !os.IsNotExist(statErr) {
-			return nil, "", nil, errnie.Err(
-				errnie.IO, "failed to inspect cognitive store", statErr,
-			)
-		}
-	}
-
-	dataPath, err := configuredPath("system.data_path")
-
-	if err != nil {
-		return nil, "", nil, err
-	}
-
-	if err := os.MkdirAll(dataPath, 0o700); err != nil {
-		return nil, "", nil, errnie.Err(
-			errnie.IO, "failed to create data directory", err,
-		)
-	}
-
-	auditDir := persistDir
-
-	if inMemory || auditDir == "" {
-		auditDir = dataPath
-	}
-
-	auditPath := filepath.Join(auditDir, "runtime-audit.jsonl")
-
-	if viper.GetBool("system.audit.rotate_on_boot") {
-		if err := audit.Rotate(auditPath); err != nil {
-			return nil, "", nil, errnie.Err(
-				errnie.IO, "failed to rotate runtime audit", err,
-			)
-		}
-	}
-
-	recorder, err := audit.NewRecorder(auditPath)
-
-	if err != nil {
-		return nil, "", nil, errnie.Err(
-			errnie.IO, "failed to create runtime audit recorder", err,
-		)
-	}
-
-	treeDir := persistDir
-
-	if inMemory {
-		treeDir = ""
-	}
-
-	return dmt.NewTree(treeDir), dataPath, recorder, nil
-}
-
-/*
-thesis restores the optional prior thesis and removes stale inventory lots.
-*/
-func (booter *Booter) thesis(dataPath string) *types.Thesis {
-	thesis := types.NewThesis(booter.channel, nil)
-	encoded, err := os.ReadFile(filepath.Join(dataPath, "thesis.json"))
-
-	if err == nil {
-		restored := types.NewThesis(booter.channel, nil)
-
-		if err := sonic.Unmarshal(encoded, restored); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"failed to unmarshal optional thesis",
-				err,
-			))
-		} else {
-			thesis = restored
-		}
-	} else if !os.IsNotExist(err) {
-		errnie.Error(errnie.Err(
-			errnie.IO, "failed to read optional thesis", err,
-		))
-	}
-
-	thesis.Holdings.Range(func(key, value any) bool {
-		thesis.Holdings.Delete(key)
-		return true
-	})
-
-	return thesis
-}
-
-/*
-Close releases every resource owned by the assembled production graph.
-*/
-func (stack *Stack) Close() {
+func (stack *Stack) Close() (err error) {
 	if stack.Crypto != nil {
-		errnie.Error(stack.Crypto.Close())
+		err = errors.Join(err, stack.Crypto.Close())
 	}
 
 	if stack.API != nil {
@@ -423,41 +359,21 @@ func (stack *Stack) Close() {
 	}
 
 	if stack.UIHub != nil {
-		errnie.Error(stack.UIHub.Close())
+		err = errors.Join(err, stack.UIHub.Close())
 	}
 
 	if stack.Tree != nil {
-		errnie.Error(stack.Tree.Close())
+		err = errors.Join(err, stack.Tree.Close())
 	}
 
 	if stack.Recorder != nil {
-		errnie.Error(stack.Recorder.Close())
-	}
-}
-
-/*
-configuredPath resolves one absolute or home-relative configured directory.
-*/
-func configuredPath(key string) (string, error) {
-	path := strings.TrimSpace(viper.GetString(key))
-
-	if strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-
-		if err != nil {
-			return "", errnie.Err(errnie.IO, "failed to resolve "+key, err)
-		}
-
-		path = filepath.Join(home, strings.TrimPrefix(path, "~/"))
+		err = errors.Join(err, stack.Recorder.Close())
 	}
 
-	if path != "" && !filepath.IsAbs(path) {
-		return "", errnie.Err(
-			errnie.Validation,
-			key+" must be absolute or home-relative",
-			nil,
-		)
+	if stack.restore != nil {
+		stack.restore()
+		stack.restore = nil
 	}
 
-	return path, nil
+	return err
 }

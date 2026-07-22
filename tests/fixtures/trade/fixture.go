@@ -15,6 +15,9 @@ import (
 //go:embed fixtures/*.json
 var fixtureFiles embed.FS
 
+/*
+FixtureType selects the Kraken trade envelope represented by a fixture.
+*/
 type FixtureType string
 
 const (
@@ -22,6 +25,9 @@ const (
 	UPDATE   FixtureType = "update"
 )
 
+/*
+Fixture yields template-backed standalone or market-driven trade frames.
+*/
 type Fixture struct {
 	horizon  int
 	sequence [][]byte
@@ -30,6 +36,9 @@ type Fixture struct {
 	typ      FixtureType
 }
 
+/*
+NewFixture loads one trade snapshot or a deterministic update sequence.
+*/
 func NewFixture(typ FixtureType, horizon int) *Fixture {
 	raw, err := fixtureFiles.ReadFile("fixtures/" + string(typ) + ".json")
 
@@ -100,6 +109,9 @@ func (fixture *Fixture) sequencer(raw []byte) *Fixture {
 	return fixture
 }
 
+/*
+Generate yields ready Kraken trade payloads in deterministic order.
+*/
 func (fixture *Fixture) Generate() iter.Seq[[]byte] {
 	if fixture.signal != nil {
 		return func(yield func([]byte) bool) {

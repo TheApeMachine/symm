@@ -60,6 +60,31 @@ func TestPeakMeasurements(t *testing.T) {
 }
 
 /*
+TestPeakMagnitudeMeasurements proves signed evidence is selected by excursion
+size without losing the sign that gives the measurement its meaning.
+*/
+func TestPeakMagnitudeMeasurements(t *testing.T) {
+	measurements := []*types.Measurement{
+		{Source: types.SourceFluid, Metric: types.MetricSourceBalance, Symbol: "SIM1/USD", Raw: 0},
+		{Source: types.SourceFluid, Metric: types.MetricSourceBalance, Symbol: "SIM1/USD", Raw: -3},
+		{Source: types.SourceFluid, Metric: types.MetricSourceBalance, Symbol: "SIM1/USD", Raw: 2},
+		{Source: types.SourceCVD, Metric: types.MetricSourceBalance, Symbol: "SIM1/USD", Raw: 4},
+	}
+
+	Convey("Given signed measurements with positive and negative excursions", t, func() {
+		values := utils.PeakMagnitudeMeasurements(
+			measurements,
+			types.SourceFluid,
+			[]types.MetricType{types.MetricSourceBalance},
+		)
+
+		Convey("It should retain the largest requested magnitude and its sign", func() {
+			So(values[types.MetricSourceBalance]["SIM1/USD"], ShouldEqual, -3)
+		})
+	})
+}
+
+/*
 BenchmarkPeakMeasurements measures the reducer against a realistic multi-symbol
 signal batch used by the market-facing tests.
 */
@@ -84,6 +109,35 @@ func BenchmarkPeakMeasurements(b *testing.B) {
 			measurements,
 			types.SourcePumpDump,
 			[]types.MetricType{types.MetricStrength},
+		)
+	}
+}
+
+/*
+BenchmarkPeakMagnitudeMeasurements measures signed-excursion reduction over a
+realistic multi-symbol signal batch.
+*/
+func BenchmarkPeakMagnitudeMeasurements(b *testing.B) {
+	measurements := make([]*types.Measurement, 0, 3*32)
+
+	for observation := range 32 {
+		for _, symbol := range []string{"SIM1/USD", "SIM2/USD", "SIM3/USD"} {
+			measurements = append(measurements, &types.Measurement{
+				Source: types.SourceFluid,
+				Metric: types.MetricSourceBalance,
+				Symbol: symbol,
+				Raw:    float64(observation - 16),
+			})
+		}
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		utils.PeakMagnitudeMeasurements(
+			measurements,
+			types.SourceFluid,
+			[]types.MetricType{types.MetricSourceBalance},
 		)
 	}
 }

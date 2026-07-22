@@ -2,7 +2,6 @@ package types
 
 import (
 	"encoding/json"
-	"math"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -10,13 +9,10 @@ import (
 )
 
 func TestHoldingMarshalJSON(t *testing.T) {
-	Convey("Given an open lot with non-finite stop geometry", t, func() {
+	Convey("Given an open lot with a bound stop", t, func() {
 		pct := 0.005
 		stop := NewStoploss(t.Context())
 		stop.Bind(100, 0.01)
-		stop.LockedFloor = math.Inf(-1)
-		stop.Weight = math.NaN()
-		stop.PeakReturn = math.Inf(1)
 
 		holding := Holding{
 			Symbol:     "BTC/USD",
@@ -36,8 +32,7 @@ func TestHoldingMarshalJSON(t *testing.T) {
 			So(json.Valid(payload), ShouldBeTrue)
 			So(string(payload), ShouldContainSubstring, `"pnl":0.5`)
 			So(string(payload), ShouldContainSubstring, `"stop_price":99`)
-			So(string(payload), ShouldNotContainSubstring, `Inf`)
-			So(string(payload), ShouldNotContainSubstring, `NaN`)
+			So(string(payload), ShouldContainSubstring, `"lockedFloor":0`)
 		})
 	})
 }

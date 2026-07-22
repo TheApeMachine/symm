@@ -5,7 +5,6 @@ import (
 	"math"
 	"sort"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -108,36 +107,7 @@ func safeIntCeil(value float64) (int, bool) {
 		return 0, false
 	}
 
-	return int(math.Ceil(value)), true
-}
-
-func capGridHalfWidth(
-	derived int,
-	configuredMax int,
-	bidLevels int,
-	askLevels int,
-) int {
-	capacity := configuredMax
-
-	levelCap := bidLevels
-
-	if askLevels > levelCap {
-		levelCap = askLevels
-	}
-
-	if levelCap > 0 && (capacity <= 0 || levelCap < capacity) {
-		capacity = levelCap
-	}
-
-	if derived <= 0 {
-		return capacity
-	}
-
-	if capacity <= 0 || derived < capacity {
-		return derived
-	}
-
-	return capacity
+	return int(math.Ceil(math.Nextafter(value, math.Inf(-1)))), true
 }
 
 func gridHalfWidthFromBook(
@@ -166,26 +136,4 @@ func gridHalfWidthFromBook(
 	}
 
 	return halfWidth
-}
-
-func maxGridCellCount(bookDepth int) int {
-	if bookDepth <= 0 {
-		return 0
-	}
-
-	if bookDepth > (math.MaxInt-1)/2 {
-		return 0
-	}
-
-	return bookDepth*2 + 1
-}
-
-func configuredBookDepthLevels() int {
-	bookDepth := viper.GetInt("market.book_depth_levels")
-
-	if bookDepth <= 0 {
-		return 0
-	}
-
-	return bookDepth
 }

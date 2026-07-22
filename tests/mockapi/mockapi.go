@@ -96,7 +96,19 @@ func (conn *MockConn) Write(params json.Marshaler) error {
 	}
 
 	for _, response := range responses {
-		conn.Emit(request.Params.Channel, filterSymbols(response, symbols))
+		filtered, matched, err := filterSymbols(
+			request.Params.Channel,
+			response,
+			symbols,
+		)
+
+		if err != nil {
+			return err
+		}
+
+		if matched {
+			conn.Emit(request.Params.Channel, filtered)
+		}
 	}
 
 	return nil
@@ -111,13 +123,23 @@ func (conn *MockConn) Publish(channel string, payload []byte) error {
 		return io.ErrClosedPipe
 	}
 
-	symbols := conn.Subscriptions(channel)
-
-	if len(symbols) == 0 {
+	if !conn.Subscribed(channel) {
 		return nil
 	}
 
-	return conn.Queue(channel, filterSymbols(payload, symbols))
+	symbols := conn.Subscriptions(channel)
+
+	filtered, matched, err := filterSymbols(channel, payload, symbols)
+
+	if err != nil {
+		return err
+	}
+
+	if !matched {
+		return nil
+	}
+
+	return conn.Queue(channel, filtered)
 }
 
 /*
@@ -245,6 +267,10 @@ func (conn *MockConn) order(raw []byte) error {
 	}
 
 	for _, frame := range frames {
+		if frame.channel != "add_order" && !conn.Subscribed(frame.channel) {
+			continue
+		}
+
 		if err := conn.Queue(frame.channel, frame.payload); err != nil {
 			return err
 		}

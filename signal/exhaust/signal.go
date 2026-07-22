@@ -9,16 +9,14 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Signal is the Exit Thesis perspective, tracking microstructure decay to advise
-on the urgency of closing an open position. Categories belong in logic; this
-signal emits numerical scores only.
+Signal tracks side-specific microstructure decay that can advise whether a long
+or short position should exit. It emits numerical family scores, their fused
+urgency, and the winning numerical family identifier for downstream logic.
 */
 type Signal struct {
 	ctx    context.Context
@@ -28,9 +26,12 @@ type Signal struct {
 	ui     chan []byte
 }
 
-func NewSignal(
-	ctx context.Context, api *websocket.API, instrument *broker.Instrument, ui chan []byte,
-) *Signal {
+/*
+NewSignal constructs the market-wide exhaustion observer. Position inventory is
+deliberately absent: the signal measures both hypothetical exit sides, leaving
+the consumer to select the side matching its position.
+*/
+func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
@@ -49,7 +50,7 @@ measured its evidence, mirroring broker.Balance.Publish.
 func (signal *Signal) Publish(measurements []*types.Measurement) {
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": types.WireMeasurements(measurements),
+		"measurements": types.ForPublish(measurements),
 	}.Marshal():
 	default:
 	}
@@ -63,15 +64,12 @@ func (signal *Signal) Interest() types.StreamInterest {
 	return types.StreamBook | types.StreamTrade
 }
 
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	measurements, err := signal.Calculate(thesis.Market())
-
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	return measurements
+/*
+Measure returns typed measurements for the cut, or an error when the
+cut cannot be measured honestly.
+*/
+func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, error) {
+	return signal.Calculate(thesis.Market())
 }
 
 /*
@@ -82,16 +80,26 @@ func (signal *Signal) Calculate(
 	frame *types.MarketFrame,
 ) ([]*types.Measurement, error) {
 	events := exhaustEvents(frame.Books, frame.Trades)
-	out := make([]*types.Measurement, 0, 8*len(events))
+	out := make([]*types.Measurement, 0, 16*len(events))
 
 	for _, event := range events {
 		if event.Stream == "book" {
-			measurements := signal.measureBook(event.Row.(kraken.BookData))
+			measurements, err := signal.measureBook(event.Row.(kraken.BookData))
+
+			if err != nil {
+				continue
+			}
+
 			out = append(out, measurements...)
 			continue
 		}
 
-		measurements := signal.measureTrade(event.Row.(kraken.TradeData))
+		measurements, err := signal.measureTrade(event.Row.(kraken.TradeData))
+
+		if err != nil {
+			continue
+		}
+
 		out = append(out, measurements...)
 	}
 
@@ -102,30 +110,21 @@ func (signal *Signal) Calculate(
 measureBook applies one book event to the shared decay sample at its causal
 position in the merged entity timeline.
 */
-func (signal *Signal) measureBook(row kraken.BookData) []*types.Measurement {
-	if row.Symbol == "" {
-		return nil
-	}
-
-	if row.PriceIncrement == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"exhaust: price increment required for "+row.Symbol,
-			nil,
-		))
-
-		return nil
+func (signal *Signal) measureBook(
+	row kraken.BookData,
+) ([]*types.Measurement, error) {
+	if row.Symbol == "" || row.Timestamp.IsZero() || row.PriceIncrement == nil {
+		return nil, nil
 	}
 
 	if row.PriceIncrement.Sign() <= 0 {
-		return nil
+		return nil, nil
 	}
 
 	bids, asks, err := types.BookLevels(row)
 
 	if err != nil {
-		errnie.Error(err)
-		return nil
+		return nil, err
 	}
 
 	input, ready, maturity, err := signal.sample.MeasureBook(flow.BookInput{
@@ -136,31 +135,32 @@ func (signal *Signal) measureBook(row kraken.BookData) []*types.Measurement {
 	})
 
 	if err != nil {
-		errnie.Error(err)
-		return nil
+		return nil, err
 	}
 
 	if !ready {
-		return nil
+		return nil, nil
 	}
 
 	output, err := signal.decay.Measure(input)
 
 	if err != nil {
-		errnie.Error(err)
-		return nil
+		return nil, err
 	}
 
-	return signal.measurements(row.Symbol, row.Timestamp, output, maturity)
+	return signal.measurements(row.Symbol, row.Timestamp, output, maturity), nil
 }
 
 /*
 measureTrade applies one trade event to the shared decay sample at its causal
 position in the merged entity timeline.
 */
-func (signal *Signal) measureTrade(row kraken.TradeData) []*types.Measurement {
-	if row.Symbol == "" || row.Price.Sign() <= 0 || row.Qty <= 0 {
-		return nil
+func (signal *Signal) measureTrade(
+	row kraken.TradeData,
+) ([]*types.Measurement, error) {
+	if row.Symbol == "" || row.Timestamp.IsZero() || row.Price.Sign() <= 0 ||
+		row.Qty <= 0 || row.Side != "buy" && row.Side != "sell" {
+		return nil, nil
 	}
 
 	input, ready, maturity, err := signal.sample.MeasureTrade(flow.TradeInput{
@@ -171,22 +171,20 @@ func (signal *Signal) measureTrade(row kraken.TradeData) []*types.Measurement {
 	})
 
 	if err != nil {
-		errnie.Error(err)
-		return nil
+		return nil, err
 	}
 
 	if !ready {
-		return nil
+		return nil, nil
 	}
 
 	output, err := signal.decay.Measure(input)
 
 	if err != nil {
-		errnie.Error(err)
-		return nil
+		return nil, err
 	}
 
-	return signal.measurements(row.Symbol, row.Timestamp, output, maturity)
+	return signal.measurements(row.Symbol, row.Timestamp, output, maturity), nil
 }
 
 /*
@@ -234,6 +232,26 @@ same metric set for a symbol.
 func (signal *Signal) measurements(
 	symbol string, at time.Time, output equation.DecayOutput, maturity float64,
 ) []*types.Measurement {
+	measurements := signal.sideMeasurements(
+		symbol, at, output.Long, types.SideBuy, maturity,
+	)
+
+	return append(measurements, signal.sideMeasurements(
+		symbol, at, output.Short, types.SideSell, maturity,
+	)...)
+}
+
+/*
+sideMeasurements preserves which held position side the decay evidence would
+advise exiting, rather than merging contradictory long and short conditions.
+*/
+func (signal *Signal) sideMeasurements(
+	symbol string,
+	at time.Time,
+	output equation.DecaySideOutput,
+	side types.MeasurementSide,
+	maturity float64,
+) []*types.Measurement {
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,
 		Readiness: types.ReadinessObservation,
@@ -259,6 +277,7 @@ func (signal *Signal) measurements(
 			Metric:       spec.metric,
 			Stream:       types.Exhaust,
 			Symbol:       symbol,
+			Side:         side,
 			At:           at,
 			ObservedFrom: at,
 			Unit:         types.UnitDimensionless,
@@ -276,13 +295,8 @@ func (signal *Signal) measurements(
 Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
-func (signal *Signal) Close() (err error) {
-	err = errnie.Error(errnie.Err(
-		errnie.Internal,
-		"signal: close failed",
-		nil,
-	))
-
+func (signal *Signal) Close() error {
 	signal.cancel()
-	return err
+
+	return nil
 }

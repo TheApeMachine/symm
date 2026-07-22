@@ -66,6 +66,11 @@ func TestMockConnWriteHonorsVenueBoundary(t *testing.T) {
 			So(received, ShouldHaveLength, 2)
 			So(string(received[1]), ShouldContainSubstring, `"symbol":"SIM1/USD"`)
 			So(string(received[1]), ShouldNotContainSubstring, `"symbol":"SIM2/USD"`)
+			So(conn.Publish("ticker", []byte(
+				`{"channel":"ticker","type":"update","data":[{"symbol":"SIM2/USD"}]}`,
+			)), ShouldBeNil)
+			So(conn.Drain(), ShouldBeNil)
+			So(received, ShouldHaveLength, 2)
 			So(conn.Write(json.RawMessage(
 				`{"method":"unsubscribe","params":{"channel":"ticker","symbol":["SIM1/USD"]}}`,
 			)), ShouldBeNil)
@@ -73,6 +78,44 @@ func TestMockConnWriteHonorsVenueBoundary(t *testing.T) {
 			So(conn.Drain(), ShouldBeNil)
 			So(received, ShouldHaveLength, 2)
 		})
+	})
+
+	Convey("Given a symbol-less private channel", t, func() {
+		conn := NewConn()
+		received := [][]byte{}
+		payload := []byte(`{"channel":"balances","type":"update","data":[]}`)
+		conn.On("balances", func(frame []byte) { received = append(received, frame) })
+
+		Convey("Updates should begin only after its subscription is accepted", func() {
+			So(conn.Publish("balances", payload), ShouldBeNil)
+			So(conn.Drain(), ShouldBeNil)
+			So(received, ShouldBeEmpty)
+			So(conn.Write(json.RawMessage(
+				`{"method":"subscribe","params":{"channel":"balances"}}`,
+			)), ShouldBeNil)
+			So(conn.Subscribed("balances"), ShouldBeTrue)
+			So(conn.Publish("balances", payload), ShouldBeNil)
+			So(conn.Drain(), ShouldBeNil)
+			So(received, ShouldHaveLength, 1)
+		})
+	})
+
+	Convey("Given malformed configured venue responses", t, func() {
+		for _, payload := range [][]byte{
+			[]byte(`{"channel":"ticker"`),
+			[]byte(`{"channel":"ticker","type":"snapshot"}`),
+		} {
+			conn := NewConn("SIM1/USD")
+			conn.Respond("ticker", payload)
+			received := 0
+			conn.On("ticker", func([]byte) { received++ })
+
+			So(conn.Write(json.RawMessage(
+				`{"method":"subscribe","params":{"channel":"ticker",`+
+					`"symbol":["SIM1/USD"]}}`,
+			)), ShouldNotBeNil)
+			So(received, ShouldEqual, 0)
+		}
 	})
 }
 

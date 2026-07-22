@@ -65,9 +65,9 @@ func BenchmarkMarketOrderMarshalJSON(b *testing.B) {
 
 	order := NewMarketOrder("buy", quantity, "BTC/USD")
 	b.ReportAllocs()
-	b.ResetTimer()
+	
 
-	for range b.N {
+	for b.Loop() {
 		if _, marshalErr := order.MarshalJSON(); marshalErr != nil {
 			b.Fatal(marshalErr)
 		}

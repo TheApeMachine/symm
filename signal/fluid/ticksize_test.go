@@ -40,16 +40,17 @@ func TestResolveBookTickSizePerSide(t *testing.T) {
 }
 
 func TestSetInstrumentTickSize(t *testing.T) {
-	Convey("Given a symbol waiting for tick resolution", t, func() {
+	Convey("Given a symbol waiting for tick resolution", t, withFluidGrid(nil, func() {
 		registry := NewSyncRegistry()
-		registry.SetInstrumentTickSize("BTC/EUR", 0.1)
+		So(registry.SetInstrumentTickSize("BTC/EUR", 0.1), ShouldBeNil)
 
-		state := registry.loadSymbol("BTC/EUR")
+		state, err := registry.loadSymbol("BTC/EUR")
+		So(err, ShouldBeNil)
 
 		Convey("It should store the exchange increment for later book configuration", func() {
 			So(state.instrumentTickSize, ShouldAlmostEqual, 0.1, 1e-12)
 		})
-	})
+	}))
 }
 
 func BenchmarkResolveBookTickSize(b *testing.B) {
@@ -80,12 +81,19 @@ func TestResolveBookTickSizePrefersInstrument(t *testing.T) {
 	})
 }
 
-func TestCapGridHalfWidth(t *testing.T) {
-	Convey("Given a derived width larger than subscribed depth", t, func() {
-		capped := capGridHalfWidth(5000, 25, 10, 10)
+func TestGridHalfWidthFromBookPreservesObservedSpan(t *testing.T) {
+	Convey("Given sparse levels spanning more ticks than resting rows", t, func() {
+		bids := []kraken.BookLevel{
+			{Price: *decimal.NewFromFloat64(99.98)},
+			{Price: *decimal.NewFromFloat64(99.97)},
+		}
+		asks := []kraken.BookLevel{
+			{Price: *decimal.NewFromFloat64(100.02)},
+			{Price: *decimal.NewFromFloat64(100.03)},
+		}
 
-		Convey("Then it should cap to the book depth budget", func() {
-			So(capped, ShouldEqual, 10)
+		Convey("Then it should preserve the complete observed tick span", func() {
+			So(gridHalfWidthFromBook(bids, asks, 0.01), ShouldBeGreaterThanOrEqualTo, 3)
 		})
 	})
 }
@@ -109,16 +117,16 @@ func TestGridHalfWidthSafeConversion(t *testing.T) {
 	})
 }
 
-func TestNewFluidGridRejectsOversizedLattice(t *testing.T) {
+func TestNewFluidGridAcceptsConfiguredSpatialWidth(t *testing.T) {
 	Convey("Given subscribed book depth", t, withFluidGrid(map[string]any{
 		"signals.fluid.grid_half_width": 26,
 	}, func() {
-		Convey("When half width exceeds the depth budget", func() {
-			_, err := NewGrid()
+		Convey("When spatial width exceeds the number of subscribed rows", func() {
+			grid, err := NewGrid()
 
-			Convey("Then grid construction should fail cleanly", func() {
-				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldContainSubstring, "book depth")
+			Convey("Then row count should not truncate the tick lattice", func() {
+				So(err, ShouldBeNil)
+				So(grid.halfWidth, ShouldEqual, 26)
 			})
 		})
 	}))
@@ -149,7 +157,8 @@ func TestFluidBookSnapshotWithExchangeIncrement(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(measurements, ShouldBeNil)
 
-				state := registry.loadSymbol(row.Symbol)
+				state, stateErr := registry.loadSymbol(row.Symbol)
+				So(stateErr, ShouldBeNil)
 				So(state.grid, ShouldNotBeNil)
 				So(state.grid.halfWidth, ShouldBeLessThanOrEqualTo, 25)
 			})
@@ -157,7 +166,7 @@ func TestFluidBookSnapshotWithExchangeIncrement(t *testing.T) {
 	}))
 }
 
-func TestFluidSymbolConfigureTickFromBookCapsWidth(t *testing.T) {
+func TestFluidSymbolConfigureTickFromBookPreservesWidth(t *testing.T) {
 	Convey("Given a wide book and exchange increment", t, withFluidGrid(map[string]any{
 		"signals.fluid.tick_size":       0,
 		"signals.fluid.grid_half_width": 0,
@@ -178,10 +187,10 @@ func TestFluidSymbolConfigureTickFromBookCapsWidth(t *testing.T) {
 		Convey("When the first snapshot configures the lattice", func() {
 			configErr := state.configureTickFromBook(bids, asks)
 
-			Convey("Then the half width should stay within subscribed depth", func() {
+			Convey("Then the half width should preserve the observed price span", func() {
 				So(configErr, ShouldBeNil)
 				So(state.grid, ShouldNotBeNil)
-				So(state.grid.halfWidth, ShouldEqual, 2)
+				So(state.grid.halfWidth, ShouldEqual, 5005)
 			})
 		})
 	}))

@@ -1,7 +1,7 @@
 package kraken
 
 import (
-	"math"
+	"math/big"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -105,11 +105,12 @@ func (data *BookDataSlice) Decode(buf []byte) error {
 	return nil
 }
 
+/*
+PriceTick resolves an exchange price onto its exact declared increment using
+fixed-point rationals so off-lattice values cannot be rounded into validity.
+*/
 func PriceTick(price decimal.Decimal, increment decimal.Decimal) (int64, error) {
-	p := price.Float64()
-	inc := increment.Float64()
-
-	if p <= 0 || inc <= 0 {
+	if price.Sign() <= 0 || increment.Sign() <= 0 {
 		return 0, errnie.Err(
 			errnie.Validation,
 			"kraken: positive price and increment required",
@@ -117,23 +118,17 @@ func PriceTick(price decimal.Decimal, increment decimal.Decimal) (int64, error) 
 		)
 	}
 
-	ratio := p / inc
-	tick := math.Round(ratio)
+	ratio := new(big.Rat).Quo(price.Rat(), increment.Rat())
 
-	// In floating point math, check if ratio is extremely close to an integer
-	if math.Abs(ratio-tick) > 1e-5 {
-		// Just return the tick anyway, but don't error out, it's just floating point imprecision
-		// We trust Kraken's increment if it's "close enough"
-		if math.Abs(ratio-tick) > 0.01 {
-			return 0, errnie.Err(
-				errnie.Validation,
-				"kraken: price is not an integer tick",
-				nil,
-			)
-		}
+	if ratio.Denom().Cmp(big.NewInt(1)) != 0 || !ratio.Num().IsInt64() {
+		return 0, errnie.Err(
+			errnie.Validation,
+			"kraken: price is not an integer tick",
+			nil,
+		)
 	}
 
-	return int64(tick), nil
+	return ratio.Num().Int64(), nil
 }
 
 type BookSubscription struct {

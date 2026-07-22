@@ -254,7 +254,7 @@ ordinary JSON objects. The live Thesis remains the only state model.
 func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 	type alias Thesis
 	signals := make(map[string]any)
-	graphs := make(map[string]GraphFrame)
+	graphs := make(map[string]*Graph)
 	lifecycle := make(map[string]string)
 	manifold := make(map[string]any)
 	cognition := make(map[string]Cognition)
@@ -278,7 +278,7 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 	})
 
 	thesis.Graphs.Range(func(key, value any) bool {
-		graphs[key.(string)] = value.(*Graph).Frame()
+		graphs[key.(string)] = value.(*Graph)
 		return true
 	})
 
@@ -299,13 +299,13 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 
 	return sonic.Marshal(struct {
 		*alias
-		Signals   map[string]any        `json:"signals"`
-		Graphs    map[string]GraphFrame `json:"graphs"`
-		Lifecycle map[string]string     `json:"lifecycle"`
-		Manifold  map[string]any        `json:"manifold"`
-		Cognition map[string]Cognition  `json:"cognition"`
-		Positions map[string]bool       `json:"positions"`
-		Holdings  map[string]Holding    `json:"holdings"`
+		Signals   map[string]any       `json:"signals"`
+		Graphs    map[string]*Graph    `json:"graphs"`
+		Lifecycle map[string]string    `json:"lifecycle"`
+		Manifold  map[string]any       `json:"manifold"`
+		Cognition map[string]Cognition `json:"cognition"`
+		Positions map[string]bool      `json:"positions"`
+		Holdings  map[string]Holding   `json:"holdings"`
 	}{
 		alias: (*alias)(thesis), Signals: signals, Graphs: graphs,
 		Lifecycle: lifecycle, Manifold: manifold, Cognition: cognition,
@@ -321,13 +321,13 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 	type alias Thesis
 	decoded := struct {
 		*alias
-		Signals   map[string]any        `json:"signals"`
-		Graphs    map[string]GraphFrame `json:"graphs"`
-		Lifecycle map[string]string     `json:"lifecycle"`
-		Manifold  map[string]any        `json:"manifold"`
-		Cognition map[string]Cognition  `json:"cognition"`
-		Positions map[string]bool       `json:"positions"`
-		Holdings  map[string]Holding    `json:"holdings"`
+		Signals   map[string]any       `json:"signals"`
+		Graphs    map[string]*Graph    `json:"graphs"`
+		Lifecycle map[string]string    `json:"lifecycle"`
+		Manifold  map[string]any       `json:"manifold"`
+		Cognition map[string]Cognition `json:"cognition"`
+		Positions map[string]bool      `json:"positions"`
+		Holdings  map[string]Holding   `json:"holdings"`
 	}{alias: (*alias)(thesis)}
 
 	if err := sonic.Unmarshal(data, &decoded); err != nil {
@@ -350,24 +350,7 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 		thesis.Positions.Store(key, nil)
 	}
 
-	for key, frame := range decoded.Graphs {
-		graph := NewGraph(frame.Symbol)
-
-		for _, node := range frame.Nodes {
-			if err := graph.Evidence.RestoreNode(
-				node.Key,
-				node.Kind,
-				node.Category,
-				node.Measurement,
-			); err != nil {
-				return err
-			}
-		}
-
-		for _, edge := range frame.Edges {
-			graph.Relate(edge.From, edge.To, edge.Type, edge.At, edge.ObservedFrom)
-		}
-
+	for key, graph := range decoded.Graphs {
 		thesis.Graphs.Store(key, graph)
 	}
 

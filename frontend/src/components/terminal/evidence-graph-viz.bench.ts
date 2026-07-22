@@ -1,8 +1,8 @@
 import { bench, describe } from "vitest";
 import { layoutEvidenceGraph } from "#/components/terminal/evidence-graph-viz";
-import type { GraphFrame } from "#/types/thesis";
+import type { Graph } from "#/types/thesis";
 
-const graph: GraphFrame = {
+const graph: Graph = {
 	symbol: "BTC/USD",
 	at: "2026-07-14T12:00:00Z",
 	nodes: Array.from({ length: 24 }, (_, index) => ({

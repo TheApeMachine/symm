@@ -1,55 +1,89 @@
-package logic
+package logic_test
 
 import (
 	"testing"
+	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/algorithm/excitation"
+	"github.com/theapemachine/symm/stack"
+	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
 )
 
-type stubHawkes struct {
-	symbols  []string
-	outcomes map[string]excitation.Outcome
-}
-
-func (source stubHawkes) Symbols() []string { return source.symbols }
-
-func (source stubHawkes) Outcome(symbol string) (excitation.Outcome, bool) {
-	outcome, found := source.outcomes[symbol]
-
-	return outcome, found
-}
-
+/*
+TestAnalyzerInterest proves inventory priority and Hawkes intensity ordering
+from the production graph's actual wallet and fixture-driven arrival process.
+*/
 func TestAnalyzerInterest(t *testing.T) {
-	Convey("Given open inventory and stronger flat Hawkes leaders", t, func() {
-		weak := excitation.Outcome{Readiness: excitation.Readiness{Intensity: true}}
-		weak.BuyArrivalRate = 1
-		strong := excitation.Outcome{Readiness: excitation.Readiness{Intensity: true}}
-		strong.BuyArrivalRate = 9
-		mid := excitation.Outcome{Readiness: excitation.Readiness{Intensity: true}}
-		mid.BuyArrivalRate = 4
+	Convey("Given one symbol receiving a faster simulated arrival stream", t, func() {
+		market := tests.NewMarket(t.Context(), 3)
+		wired, err := stack.NewBooter(t.Context()).Test(market)
+		So(err, ShouldBeNil)
+		Reset(func() {
+			So(wired.Close(), ShouldBeNil)
+			market.Close()
+		})
+		var thesis *types.Thesis
+		So(market.Warmup(func() error {
+			var err error
+			thesis, err = wired.Crypto.Tick()
+			return err
+		}), ShouldBeNil)
+		leader := market.Symbols[2]
 
-		analyzer := &Analyzer{
-			hawkes: stubHawkes{
-				symbols: []string{"AAA/USD", "ONDO/USD", "ZZZ/USD"},
-				outcomes: map[string]excitation.Outcome{
-					"AAA/USD":  strong,
-					"ONDO/USD": weak,
-					"ZZZ/USD":  mid,
+		for range 4 {
+			So(market.Apply(tests.MarketStep{
+				Advance: time.Second / 4,
+				Actions: []tests.MarketAction{
+					{
+						Kind:   tests.MarketTrade,
+						Symbol: leader,
+						Side:   "buy",
+						Qty:    1,
+					},
+					{
+						Kind:   tests.MarketRefill,
+						Symbol: leader,
+						Side:   "sell",
+						Qty:    1,
+					},
 				},
-			},
+			}, func() error {
+				var err error
+				thesis, err = wired.Crypto.Tick()
+				return err
+			}), ShouldBeNil)
 		}
-		thesis := types.NewThesis(nil, nil)
-		thesis.Holdings.Store("ONDO/USD", &types.Holding{
-			Symbol: "ONDO/USD",
-			Status: types.OPEN,
+
+		interest := wired.Analyzer.Interest(thesis)
+
+		Convey("Its measured arrival intensity should put that symbol first", func() {
+			So(interest, ShouldHaveLength, len(market.Symbols))
+			So(interest[0], ShouldEqual, leader)
 		})
 
-		interest := analyzer.Interest(thesis)
+		Convey("An actual open wallet lot should remain ahead of that leader", func() {
+			inventory := market.Symbols[1]
+			position, err := wired.Desk.Buy(
+				types.NewHolding(
+					t.Context(),
+					inventory,
+					decimal.NewFromInt64(1),
+				),
+				false,
+			)
+			So(err, ShouldBeNil)
+			So(market.Paper.Drain(), ShouldBeNil)
+			So(position.Status(), ShouldEqual, types.OPEN)
+			holding, err := wired.Balance.Holding(inventory)
+			So(err, ShouldBeNil)
+			thesis.Holdings.Store(inventory, &holding)
 
-		Convey("It should pin the open lot then fill by intensity", func() {
-			So(interest, ShouldResemble, []string{"ONDO/USD", "AAA/USD", "ZZZ/USD"})
+			interest = wired.Analyzer.Interest(thesis)
+			So(interest, ShouldHaveLength, len(market.Symbols))
+			So(interest[0], ShouldEqual, inventory)
+			So(interest[1], ShouldEqual, leader)
 		})
 	})
 }

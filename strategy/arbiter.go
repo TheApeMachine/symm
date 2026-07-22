@@ -5,29 +5,25 @@ import (
 	"sort"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Arbiter selects portfolio actions under slot constraints by one-step
-lookahead. Free slots fill by local enter utility; when full, rotate only if
-net edge beats the option value of waiting for a native clear.
+Arbiter ranks enter candidates by utility, fills free slots, and rotates when
+a challenger clears the one-step wait gate against an open incumbent.
 */
 type Arbiter struct {
-	desk        *broker.Desk
-	price       *broker.Price
-	balance     *broker.Balance
-	admit       *Admit
-	rotate      Rotate
-	maxFraction *decimal.Decimal
+	desk    *broker.Desk
+	price   *broker.Price
+	balance *broker.Balance
+	admit   *Admit
+	rotate  Rotate
 }
 
 /*
-NewArbiter wires Desk slot arithmetic, wallet qty, Admit persistence, and
-Rotate gates.
+NewArbiter wires slot checks, wallet inventory, Admit persistence, and Rotate.
 */
 func NewArbiter(
 	desk *broker.Desk,
@@ -42,52 +38,48 @@ func NewArbiter(
 		balance: balance,
 		admit:   admit,
 		rotate:  rotate,
-		maxFraction: decimal.NewFromFloat64(
-			viper.GetFloat64("trading.allocation.max_fraction"),
-		),
 	}
 }
 
 /*
-Select peels Measure enter candidates, admits into free slots, and otherwise
-rotates or waits using the Bellman one-step gate.
+Select sorts enter candidates by utility, admits into free slots, and otherwise
+rotates or rejects.
 */
 func (arbiter *Arbiter) Select(thesis *types.Thesis) {
 	if err := arbiter.validate(map[string]any{"thesis": thesis}); err != nil {
 		return
 	}
 
-	candidates, rest := arbiter.peel(thesis.Decisions)
-	thesis.Decisions = rest
+	enters := make([]types.Decision, 0, len(thesis.Decisions))
+	rest := make([]types.Decision, 0, len(thesis.Decisions))
 
-	cash := arbiter.cash()
-	forecasts := selectForecasts(thesis.Forecasts)
-
-	sort.Slice(candidates, func(left, right int) bool {
-		leftValue := arbiter.dollar(candidates[left], cash, forecasts)
-		rightValue := arbiter.dollar(candidates[right], cash, forecasts)
-
-		return leftValue.Cmp(rightValue) > 0
-	})
-
-	rotatable := arbiter.rotatable(thesis)
-	open := arbiter.desk.OpenPositions()
-	freeNormal, freeReserved := arbiter.desk.Free(open)
-	admittedNormal := 0
-	admittedReserved := 0
-
-	for _, decision := range candidates {
-		if arbiter.desk.Pending(decision.Symbol) {
-			arbiter.admit.Reject(
-				thesis, decision, decision.AllocationClass == "reserved",
-				freeNormal, admittedNormal, rotatable,
-			)
+	for _, decision := range thesis.Decisions {
+		if decision.Action == types.ActionEnter {
+			enters = append(enters, decision)
 			continue
 		}
 
+		rest = append(rest, decision)
+	}
+
+	thesis.Decisions = rest
+
+	sort.Slice(enters, func(left, right int) bool {
+		return enters[left].Utility > enters[right].Utility
+	})
+
+	incumbents := arbiter.incumbents(thesis)
+	open := arbiter.desk.OpenPositions()
+	maxNormal := arbiter.desk.MaxSlots(false)
+	maxAll := arbiter.desk.MaxSlots(true)
+	admittedNormal := 0
+	admittedReserved := 0
+
+	for _, decision := range enters {
 		opportunity := decision.AllocationClass == "reserved"
-		useNormal := admittedNormal < freeNormal
-		useReserved := opportunity && admittedReserved < freeReserved
+		useNormal := open+admittedNormal < maxNormal
+		useReserved := opportunity &&
+			open+admittedNormal+admittedReserved < maxAll
 
 		if useNormal || useReserved {
 			if useNormal {
@@ -103,12 +95,13 @@ func (arbiter *Arbiter) Select(thesis *types.Thesis) {
 			continue
 		}
 
-		if arbiter.displace(thesis, &decision, rotatable) {
+		if arbiter.displace(thesis, &decision, incumbents) {
 			continue
 		}
 
 		arbiter.admit.Reject(
-			thesis, decision, opportunity, freeNormal, admittedNormal, rotatable,
+			thesis, decision, opportunity,
+			maxNormal-open, admittedNormal, incumbents,
 		)
 	}
 }
@@ -123,11 +116,6 @@ func (arbiter *Arbiter) displace(
 	incumbents []Incumbent,
 ) bool {
 	opportunity := decision.AllocationClass == "reserved"
-
-	if !arbiter.desk.HasSlotAfter(opportunity, 1) {
-		return false
-	}
-
 	index, found := arbiter.rotate.Best(decision.Utility, incumbents)
 
 	if !found {
@@ -153,7 +141,8 @@ func (arbiter *Arbiter) displace(
 
 	decision.Cause = "rotation"
 	decision.Displaces = incumbent.Symbol
-	decision.Reason = "challenger clears one-step wait threshold against " + incumbent.Symbol
+	decision.Reason = "challenger clears one-step wait threshold against " +
+		incumbent.Symbol
 	decision.Alternatives["hold_incumbent"] = incumbent.HoldUtility
 	decision.Alternatives["exit_cost"] = incumbent.ExitCost
 	decision.Alternatives["clear_prob"] = incumbent.ClearProb
@@ -171,72 +160,10 @@ func (arbiter *Arbiter) displace(
 }
 
 /*
-cash reports unreserved quote capital for prequoting fresh-enter notionals.
-Missing wallet state ranks by bare utility rather than inventing a dollar value.
+incumbents lists open holdings with enough forecast and fee evidence for rotate
+comparison.
 */
-func (arbiter *Arbiter) cash() *decimal.Decimal {
-	available, err := arbiter.balance.AvailableCash()
-
-	if err != nil || available == nil {
-		return nil
-	}
-
-	return available
-}
-
-/*
-dollar ranks a candidate by dollar-utility so a lower per-unit edge on a large
-deployable position can outrank a sharp edge on a thin one. Rotation challengers
-already carry a stamped ProposedNotional; fresh enters have none at Select time,
-so their notional is prequoted from unreserved cash and the symbol's visible buy
-capacity. When wallet cash is unavailable the whole set ranks by bare utility —
-one consistent scale, never bare utility mixed with dollar products in one sort.
-*/
-func (arbiter *Arbiter) dollar(
-	decision types.Decision,
-	cash *decimal.Decimal,
-	forecasts map[string]types.Forecasts,
-) *decimal.Decimal {
-	utility := decimal.NewFromFloat64(decision.Utility)
-
-	if cash == nil || cash.Sign() <= 0 {
-		return utility
-	}
-
-	if decision.ProposedNotional != nil && decision.ProposedNotional.Sign() > 0 {
-		return arbiter.price.Mul(utility, decision.ProposedNotional)
-	}
-
-	return arbiter.price.Mul(utility, arbiter.feasible(
-		cash,
-		forecasts[decision.Symbol],
-	))
-}
-
-/*
-feasible prequotes the deployable notional for a fresh enter as max_fraction of
-unreserved cash, capped by the symbol's visible buy capacity so a thin book
-cannot inflate a candidate's rank beyond the depth it can absorb.
-*/
-func (arbiter *Arbiter) feasible(
-	cash *decimal.Decimal,
-	forecast types.Forecasts,
-) *decimal.Decimal {
-	notional := arbiter.price.Mul(cash, arbiter.maxFraction)
-
-	if forecast.BuyCapacity != nil && forecast.BuyCapacity.Sign() > 0 &&
-		forecast.BuyCapacity.Cmp(notional) < 0 {
-		return forecast.BuyCapacity.Copy()
-	}
-
-	return notional
-}
-
-/*
-rotatable projects open Balance lots that have fee and forecast evidence
-complete enough for rotate comparison. Slot capacity uses Desk.OpenPositions.
-*/
-func (arbiter *Arbiter) rotatable(thesis *types.Thesis) []Incumbent {
+func (arbiter *Arbiter) incumbents(thesis *types.Thesis) []Incumbent {
 	forecasts := selectForecasts(thesis.Forecasts)
 	rows := make([]Incumbent, 0)
 
@@ -246,10 +173,6 @@ func (arbiter *Arbiter) rotatable(thesis *types.Thesis) []Incumbent {
 		}
 
 		if arbiter.exiting(thesis, holding.Symbol) {
-			continue
-		}
-
-		if arbiter.desk.Pending(holding.Symbol) {
 			continue
 		}
 
@@ -272,24 +195,16 @@ func (arbiter *Arbiter) rotatable(thesis *types.Thesis) []Incumbent {
 			continue
 		}
 
-		notional := decimal.NewFromInt64(0)
-		var quantity *decimal.Decimal
-		var mark *decimal.Decimal
-
-		if holding.Mark != nil && holding.Qty != nil {
-			mark = holding.Mark.Copy()
-			quantity = holding.Qty.Copy()
-			notional = arbiter.price.Mul(mark, quantity)
-		}
-
-		if mark == nil || quantity == nil || notional.Sign() <= 0 {
+		if holding.Mark == nil || holding.Qty == nil {
 			continue
 		}
 
-		var stop *types.Stoploss
+		mark := holding.Mark.Copy()
+		quantity := holding.Qty.Copy()
+		notional := decimal.ExactMul(mark, quantity)
 
-		if position, ok := arbiter.desk.Position(holding.Symbol); ok {
-			stop = position.Stop()
+		if notional == nil || notional.Sign() <= 0 {
+			continue
 		}
 
 		rows = append(rows, Incumbent{
@@ -299,7 +214,7 @@ func (arbiter *Arbiter) rotatable(thesis *types.Thesis) []Incumbent {
 			Notional:    notional,
 			Qty:         quantity,
 			Mark:        mark,
-			ClearProb:   arbiter.rotate.Clear(stop, forecast),
+			ClearProb:   arbiter.rotate.Clear(holding.Stoploss, forecast),
 		})
 	}
 
@@ -314,29 +229,12 @@ func (arbiter *Arbiter) exiting(thesis *types.Thesis, symbol string) bool {
 			phase == types.LifecycleExitSubmitted)
 }
 
-func (arbiter *Arbiter) peel(decisions []types.Decision) (enters, rest []types.Decision) {
-	enters = make([]types.Decision, 0, len(decisions))
-	rest = make([]types.Decision, 0, len(decisions))
-
-	for _, decision := range decisions {
-		if decision.Action == types.ActionEnter {
-			enters = append(enters, decision)
-			continue
-		}
-
-		rest = append(rest, decision)
-	}
-
-	return enters, rest
-}
-
 func (arbiter *Arbiter) validate(mandatory map[string]any) error {
 	check := map[string]any{
-		"desk":     arbiter.desk,
-		"price":    arbiter.price,
-		"balance":  arbiter.balance,
-		"admit":    arbiter.admit,
-		"fraction": arbiter.maxFraction,
+		"desk":    arbiter.desk,
+		"price":   arbiter.price,
+		"balance": arbiter.balance,
+		"admit":   arbiter.admit,
 	}
 
 	maps.Copy(check, mandatory)

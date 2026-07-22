@@ -133,13 +133,7 @@ func (state *FluidSymbol) configureTickFromBook(
 	halfWidth := state.config.gridHalfWidth
 
 	if halfWidth <= 0 {
-		derived := gridHalfWidthFromBook(bids, asks, tickSize)
-		halfWidth = capGridHalfWidth(
-			derived,
-			state.config.bookDepthLevels,
-			len(bids),
-			len(asks),
-		)
+		halfWidth = gridHalfWidthFromBook(bids, asks, tickSize)
 	}
 
 	if halfWidth <= 0 {
@@ -270,7 +264,10 @@ func (state *FluidSymbol) FeedTicker(row kraken.TickerData, at time.Time) error 
 
 	if lastPrice > 0 {
 		state.last = lastPrice
-		state.recordPriceMemory(lastPrice)
+
+		if err := state.recordPriceMemory(lastPrice); err != nil {
+			return err
+		}
 	}
 
 	bidPrice := row.Bid.Float64()
@@ -296,7 +293,11 @@ func (state *FluidSymbol) FeedBook(update kraken.BookData, at time.Time) error {
 	return state.feedBookLocked(update, at)
 }
 
-func applyBookDeltas(current []kraken.BookLevel, deltas []kraken.BookLevel, isAsk bool) []kraken.BookLevel {
+func applyBookDeltas(
+	current []kraken.BookLevel,
+	deltas []kraken.BookLevel,
+	isAsk bool,
+) []kraken.BookLevel {
 	if len(deltas) == 0 {
 		return current
 	}
@@ -321,15 +322,17 @@ func applyBookDeltas(current []kraken.BookLevel, deltas []kraken.BookLevel, isAs
 
 	if isAsk {
 		// Asks: ascending (lowest price first)
-		slices.SortFunc(result, func(a, b kraken.BookLevel) int {
-			return a.Price.Cmp(&b.Price)
+		slices.SortFunc(result, func(left, right kraken.BookLevel) int {
+			return left.Price.Cmp(&right.Price)
 		})
-	} else {
-		// Bids: descending (highest price first)
-		slices.SortFunc(result, func(a, b kraken.BookLevel) int {
-			return b.Price.Cmp(&a.Price)
-		})
+
+		return result
 	}
+
+	// Bids: descending (highest price first)
+	slices.SortFunc(result, func(left, right kraken.BookLevel) int {
+		return right.Price.Cmp(&left.Price)
+	})
 
 	return result
 }
@@ -561,30 +564,30 @@ func (state *FluidSymbol) Row() map[string]any {
 Reading returns a coherent fluid reading only after the symbol has sufficient
 initialized state.
 */
-func (state *FluidSymbol) Reading() (fluidReading, bool) {
+func (state *FluidSymbol) Reading() (fluidReading, bool, error) {
 	if state.last <= 0 || state.lastEventAt.IsZero() {
-		return fluidReading{}, false
+		return fluidReading{}, false, nil
 	}
 
 	if state.spreadBPS <= 0 {
-		return fluidReading{}, false
+		return fluidReading{}, false, nil
 	}
 
 	if state.grid == nil || !state.grid.ready() {
-		return fluidReading{}, false
+		return fluidReading{}, false, nil
 	}
 
 	spread := state.ask - state.bid
 
 	if spread <= 0 {
-		return fluidReading{}, false
+		return fluidReading{}, false, nil
 	}
 
 	divergence := state.grid.midVelocityDivergence()
 	viscosity := state.fluidViscosity(spread)
 
 	if math.IsNaN(viscosity) || math.IsInf(viscosity, 0) || viscosity < 0 {
-		return fluidReading{}, false
+		return fluidReading{}, false, fmt.Errorf("fluid: invalid viscosity reading")
 	}
 
 	// Zero touch-band replenishment this step forces an undefined
@@ -600,21 +603,32 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 	}
 
 	if math.IsNaN(reynolds) || math.IsInf(reynolds, 0) || reynolds < 0 {
-		return fluidReading{}, false
+		return fluidReading{}, false, fmt.Errorf("fluid: invalid Reynolds reading")
 	}
 
 	if math.IsNaN(divergence) || math.IsInf(divergence, 0) {
-		return fluidReading{}, false
+		return fluidReading{}, false, fmt.Errorf("fluid: invalid divergence reading")
 	}
 
-	state.dynamics.record(
+	velocityCurvature := math.Abs(state.grid.midVelocityCurvature())
+	turbulence := state.grid.turbulenceIntensity()
+
+	if err := state.dynamics.record(
 		state.lastEventAt,
 		reynolds,
 		math.Abs(divergence),
 		viscosity,
-		math.Abs(state.grid.midVelocityCurvature()),
-		state.grid.turbulenceIntensity(),
-	)
+		velocityCurvature,
+		turbulence,
+	); err != nil {
+		return fluidReading{}, false, err
+	}
+
+	memory, err := priceMemoryFromSamples(state.memorySamples)
+
+	if err != nil {
+		return fluidReading{}, false, err
+	}
 
 	return fluidReading{
 		symbol:            state.symbol,
@@ -625,15 +639,15 @@ func (state *FluidSymbol) Reading() (fluidReading, bool) {
 		reynolds:          reynolds,
 		divergence:        divergence,
 		viscosity:         viscosity,
-		velocityCurvature: math.Abs(state.grid.midVelocityCurvature()),
-		turbulence:        state.grid.turbulenceIntensity(),
+		velocityCurvature: velocityCurvature,
+		turbulence:        turbulence,
 		sourceBalance:     state.grid.midSourceBalance(),
-		memory:            priceMemoryFromSamples(state.memorySamples),
+		memory:            memory,
 		midAddRate:        state.grid.midAddRateAtTouch(),
 		midExecuteRate:    state.grid.midExecuteRateAtTouch(),
 		dynamics:          state.dynamics,
 		gridSteps:         state.grid.steps(),
-	}, true
+	}, true, nil
 }
 
 /*
@@ -701,27 +715,27 @@ func (state *FluidSymbol) spreadViscosity(spread float64) float64 {
 	return mid / spread
 }
 
-const fluidMemorySampleCap = 32
-
 /*
 recordPriceMemory updates retained price history so adaptive dynamics use
 observed movement rather than a fixed window.
 */
-func (state *FluidSymbol) recordPriceMemory(price float64) {
+func (state *FluidSymbol) recordPriceMemory(price float64) error {
 	if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
-		return
+		return fmt.Errorf("fluid: price memory observation must be positive and finite")
 	}
 
 	state.memorySamples = append(state.memorySamples, price)
 
-	if len(state.memorySamples) > fluidMemorySampleCap {
-		state.memorySamples = state.memorySamples[len(state.memorySamples)-fluidMemorySampleCap:]
+	if len(state.memorySamples) > state.config.historyCapacity {
+		state.memorySamples = state.memorySamples[len(state.memorySamples)-state.config.historyCapacity:]
 	}
+
+	return nil
 }
 
-func priceMemoryFromSamples(samples []float64) float64 {
+func priceMemoryFromSamples(samples []float64) (float64, error) {
 	if len(samples) < 3 {
-		return 0
+		return 0, nil
 	}
 
 	minVal := samples[0]
@@ -735,7 +749,7 @@ func priceMemoryFromSamples(samples []float64) float64 {
 	span := maxVal - minVal
 
 	if span <= 0 {
-		return 0
+		return 0, nil
 	}
 
 	normalized := make([]float64, len(samples))
@@ -746,9 +760,13 @@ func priceMemoryFromSamples(samples []float64) float64 {
 
 	value, ready, err := adaptive.FractionalDifferenceValue(normalized)
 
-	if err != nil || !ready {
-		return 0
+	if err != nil {
+		return 0, fmt.Errorf("fluid: calculate price memory: %w", err)
 	}
 
-	return math.Abs(value)
+	if !ready {
+		return 0, nil
+	}
+
+	return math.Abs(value), nil
 }

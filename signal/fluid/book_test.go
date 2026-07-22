@@ -11,7 +11,7 @@ import (
 )
 
 func TestBookMeasureWaitsForMarketState(t *testing.T) {
-	Convey("Given a book without ticker-fed volume", t, func() {
+	Convey("Given a book without ticker-fed volume", t, withFluidGrid(nil, func() {
 		registry := NewSyncRegistry()
 		book := NewBook(registry)
 		eventAt := time.Date(2026, 7, 10, 4, 0, 0, 0, time.UTC)
@@ -85,7 +85,7 @@ func TestBookMeasureWaitsForMarketState(t *testing.T) {
 				So(seen[types.MetricMidAddRate].Unit, ShouldEqual, types.UnitBaseCurrencyPerSecond)
 			})
 		})
-	})
+	}))
 }
 
 func TestBookMeasureOutOfOrderHistoryInterval(t *testing.T) {
@@ -134,7 +134,7 @@ func TestBookMeasureOutOfOrderHistoryInterval(t *testing.T) {
 }
 
 func TestBookMeasureSkipsEmptyLevels(t *testing.T) {
-	Convey("Given a book update with no levels on either side", t, func() {
+	Convey("Given a book update with no levels on either side", t, withFluidGrid(nil, func() {
 		registry := NewSyncRegistry()
 		book := NewBook(registry)
 		eventAt := time.Date(2026, 7, 10, 4, 0, 0, 0, time.UTC)
@@ -166,7 +166,8 @@ func TestBookMeasureSkipsEmptyLevels(t *testing.T) {
 			})
 			So(snapshotErr, ShouldBeNil)
 
-			state := registry.loadSymbol("BTC/USD")
+			state, stateErr := registry.loadSymbol("BTC/USD")
+			So(stateErr, ShouldBeNil)
 			bidsBefore := len(state.book.Bids)
 			asksBefore := len(state.book.Asks)
 
@@ -182,5 +183,5 @@ func TestBookMeasureSkipsEmptyLevels(t *testing.T) {
 				So(len(state.book.Asks), ShouldEqual, asksBefore)
 			})
 		})
-	})
+	}))
 }

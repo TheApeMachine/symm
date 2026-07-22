@@ -9,10 +9,13 @@ import (
 
 func TestLoadSymbolConfigWithoutTickOverride(t *testing.T) {
 	Convey("Given no signals.fluid.tick_size override", t, withFluidConfig(map[string]any{
-		"signals.fluid.tick_size":            0,
-		"signals.fluid.grid_half_width":      10,
-		"signals.fluid.integration_interval": 0,
-		"signals.volume_clock_bars_per_day":  288,
+		"signals.fluid.tick_size":             0,
+		"signals.fluid.grid_half_width":       10,
+		"signals.fluid.integration_interval":  0,
+		"signals.fluid.idle_threshold":        5 * time.Second,
+		"signals.fluid.max_integration_steps": 50,
+		"signals.feed_track_capacity":         512,
+		"signals.volume_clock_bars_per_day":   288,
 	}, func() {
 		Convey("When loadSymbolConfig is called", func() {
 			config, err := loadSymbolConfig()
@@ -28,10 +31,13 @@ func TestLoadSymbolConfigWithoutTickOverride(t *testing.T) {
 
 func TestNewFluidSymbolDefersGridUntilBookTick(t *testing.T) {
 	Convey("Given no signals.fluid.tick_size override", t, withFluidConfig(map[string]any{
-		"signals.fluid.tick_size":            0,
-		"signals.fluid.grid_half_width":      10,
-		"signals.fluid.integration_interval": 100 * time.Millisecond,
-		"signals.volume_clock_bars_per_day":  288,
+		"signals.fluid.tick_size":             0,
+		"signals.fluid.grid_half_width":       10,
+		"signals.fluid.integration_interval":  100 * time.Millisecond,
+		"signals.fluid.idle_threshold":        5 * time.Second,
+		"signals.fluid.max_integration_steps": 50,
+		"signals.feed_track_capacity":         512,
+		"signals.volume_clock_bars_per_day":   288,
 	}, func() {
 		symbol := "BTC/USD"
 		fixture := symbolBookFixture{symbol: symbol}

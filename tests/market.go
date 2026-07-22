@@ -16,45 +16,6 @@ import (
 	"github.com/theapemachine/symm/tests/mockapi"
 )
 
-/*
-MarketState names the deterministic state communicated to every fixture.
-MarketAction and MarketStep expose economic inputs without fixture imports.
-*/
-type MarketState = marketsignal.State
-type MarketAction = marketsignal.Action
-type MarketStep = marketsignal.Step
-
-const (
-	MarketStateBaseline          = marketsignal.Baseline
-	MarketStateFastPump          = marketsignal.FastPump
-	MarketStateSlowPump          = marketsignal.SlowPump
-	MarketStateFastDump          = marketsignal.FastDump
-	MarketStateSlowDump          = marketsignal.SlowDump
-	MarketStateVolumeAbsorption  = marketsignal.VolumeAbsorption
-	MarketStateLowVolumeLift     = marketsignal.LowVolumeLift
-	MarketStateSpreadCompression = marketsignal.SpreadCompression
-	MarketStateThinLiquidity     = marketsignal.ThinLiquidity
-	MarketStateLoadedLiquidity   = marketsignal.LoadedLiquidity
-	MarketStateLiquidityRetreat  = marketsignal.LiquidityRetreat
-	MarketMoveMid                = marketsignal.MoveMid
-	MarketTrade                  = marketsignal.Trade
-	MarketAdd                    = marketsignal.Add
-	MarketCancel                 = marketsignal.Cancel
-	MarketRefill                 = marketsignal.Refill
-	MarketWidenSpread            = marketsignal.WidenSpread
-	MarketTightenSpread          = marketsignal.TightenSpread
-)
-
-/*
-MarketOptions supplies the deterministic start time shared by every generated
-wire source while preserving the one-line default constructor used by tests.
-*/
-type MarketOptions struct {
-	Start time.Time
-}
-
-var defaultMarketStart = time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)
-
 const (
 	defaultPaperQuoteBalance = 80595.4943
 	defaultPaperMakerFee     = 0.0016
@@ -147,6 +108,10 @@ Bootstrap installs exactly one current-state snapshot per subscribed market
 channel without advancing time or warming signal history.
 */
 func (market *Market) Bootstrap() error {
+	if err := market.ctx.Err(); err != nil {
+		return errnie.Err(errnie.Internal, "tests: market closed", err)
+	}
+
 	if market.bootstrapped {
 		return errnie.Err(errnie.Validation, "tests: market already bootstrapped", nil)
 	}
@@ -186,6 +151,14 @@ func (market *Market) Bootstrap() error {
 Warmup explicitly replays a quiet market one observation at a time.
 */
 func (market *Market) Warmup(afterStep func() error) error {
+	if !market.bootstrapped {
+		return errnie.Err(
+			errnie.Validation,
+			"tests: market must be bootstrapped before warming",
+			nil,
+		)
+	}
+
 	return market.Transition(MarketStateBaseline, afterStep)
 }
 
@@ -196,6 +169,14 @@ event to selected symbols while every other market continues idling.
 func (market *Market) Transition(
 	state MarketState, afterStep func() error, symbols ...string,
 ) error {
+	if !market.bootstrapped {
+		return errnie.Err(
+			errnie.Validation,
+			"tests: market must be bootstrapped before transitioning",
+			nil,
+		)
+	}
+
 	if afterStep == nil {
 		return errnie.Err(errnie.Validation, "tests: transition step callback required", nil)
 	}
@@ -225,12 +206,38 @@ func (market *Market) Apply(
 	step marketsignal.Step,
 	afterStep func() error,
 ) (err error) {
+	if !market.bootstrapped {
+		return errnie.Err(
+			errnie.Validation,
+			"tests: market must be bootstrapped before applying events",
+			nil,
+		)
+	}
+
 	if err := market.ctx.Err(); err != nil {
 		return errnie.Err(errnie.Internal, "tests: market closed", err)
 	}
 
 	if market.failed != nil {
 		return errnie.Err(errnie.Internal, "tests: market failed", market.failed)
+	}
+
+	for _, transport := range []struct {
+		name string
+		conn *mockapi.MockConn
+	}{
+		{"public", market.Public},
+		{"paper", market.Paper},
+		{"level3", market.Level3},
+	} {
+		if err := transport.conn.Err(); err != nil {
+			market.failed = err
+			return errnie.Err(
+				errnie.Validation,
+				"tests: production "+transport.name+" rejected frame",
+				err,
+			)
+		}
 	}
 
 	if afterStep == nil {
@@ -298,6 +305,10 @@ func (market *Market) Apply(
 		return errnie.Err(errnie.IO, "tests: drain public frames", err)
 	}
 
+	if err := market.Public.Err(); err != nil {
+		return errnie.Err(errnie.Validation, "tests: production public rejected frame", err)
+	}
+
 	if err := market.Paper.MatchPaper(); err != nil {
 		return errnie.Err(errnie.Internal, "tests: match resting paper orders", err)
 	}
@@ -306,12 +317,20 @@ func (market *Market) Apply(
 		return errnie.Err(errnie.IO, "tests: drain private frames", err)
 	}
 
+	if err := market.Paper.Err(); err != nil {
+		return errnie.Err(errnie.Validation, "tests: production private rejected frame", err)
+	}
+
 	if err := afterStep(); err != nil {
 		return errnie.Err(errnie.Internal, "tests: market step failed", err)
 	}
 
 	if err := market.Paper.Drain(); err != nil {
 		return errnie.Err(errnie.IO, "tests: drain order responses", err)
+	}
+
+	if err := market.Paper.Err(); err != nil {
+		return errnie.Err(errnie.Validation, "tests: production order response rejected", err)
 	}
 
 	return nil

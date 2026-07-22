@@ -4,33 +4,36 @@ import (
 	"context"
 	"math"
 
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 )
 
 /*
-Stoploss is a numerical exit regulator for one open position. It composes
-Trail geometry and Skill weight, and fires take-profit when peak proximity
-meets a non-positive forward path or residual blowout — without named regimes.
-Action/Reason are the live verdict surface for journals and UI.
+Stoploss exits an open lot at a lower floor or an upper take. The floor
+ratchets up under a peak; the band widens or narrows from live evidence.
+LockedFloor is zero until a peak earns a ratchet. Action/Reason are the live
+verdict for journals and UI.
 */
 type Stoploss struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	armed   bool
-	entry   float64
-	retreat float64
+	ctx    context.Context
+	cancel context.CancelFunc
+	armed  bool
+	entry  float64
+	epoch  uint64
 
-	Trail
-	Skill
-
-	Action string `json:"action"`
-	Reason string `json:"reason"`
+	Weight        float64 `json:"weight"`
+	LockedFloor   float64 `json:"lockedFloor"`
+	FloorDistance float64 `json:"floorDistance"`
+	TrailDistance float64 `json:"trailDistance"`
+	StopReturn    float64 `json:"stopReturn"`
+	PeakReturn    float64 `json:"peakReturn"`
+	MarkReturn    float64 `json:"markReturn"`
+	Retreat       float64 `json:"retreat"`
+	Action        string  `json:"action"`
+	Reason        string  `json:"reason"`
 }
 
 /*
-NewStoploss constructs a regulator shell. Bind latches entry at fill so an open
-lot is never unprotected waiting for forecast σ.
+NewStoploss constructs an unbound regulator. Bind arms it at fill.
 */
 func NewStoploss(ctx context.Context) *Stoploss {
 	ctx, cancel := context.WithCancel(ctx)
@@ -38,17 +41,14 @@ func NewStoploss(ctx context.Context) *Stoploss {
 	return &Stoploss{
 		ctx:    ctx,
 		cancel: cancel,
-		Trail:  NewTrail(),
-		Skill:  NewSkill(),
+		Weight: 1,
 		Action: "hold",
 		Reason: "unbound",
 	}
 }
 
 /*
-Bind latches entry and an initial adverse trail at fill. Trail may be fee or
-spread width in return space; later Update only rescales, never waits to exist.
-A non-positive or non-finite distance refuses to arm so Breached cannot go blind.
+Bind arms the stop at entry with an initial adverse band (fee/spread width).
 */
 func (stoploss *Stoploss) Bind(entry, distance float64) {
 	if stoploss == nil || entry <= 0 || (stoploss.armed && stoploss.entry > 0) {
@@ -63,15 +63,18 @@ func (stoploss *Stoploss) Bind(entry, distance float64) {
 
 	stoploss.armed = true
 	stoploss.entry = entry
+	stoploss.LockedFloor = 0
+	stoploss.PeakReturn = 0
+	stoploss.MarkReturn = 0
+	stoploss.FloorDistance = distance
+	stoploss.TrailDistance = distance
+	stoploss.StopReturn = -distance
 	stoploss.Action = "hold"
 	stoploss.Reason = "bound at entry"
-	stoploss.Trail.Bind(distance)
 }
 
 /*
-Restore arms a regulator from durable recovery state without resetting Trail
-geometry. Bind is for fresh fills only — recovery must keep LockedFloor and
-peak/mark returns.
+Restore arms from durable recovery state without resetting ratchet geometry.
 */
 func (stoploss *Stoploss) Restore(entry float64, recovered *Stoploss) {
 	if stoploss == nil || recovered == nil || entry <= 0 {
@@ -80,20 +83,15 @@ func (stoploss *Stoploss) Restore(entry float64, recovered *Stoploss) {
 
 	stoploss.armed = true
 	stoploss.entry = entry
-	stoploss.retreat = recovered.retreat
-	stoploss.Trail = recovered.Trail
-	stoploss.Skill = recovered.Skill
-	stoploss.Weight = finiteFloat(stoploss.Weight)
-
-	if !math.IsInf(stoploss.LockedFloor, -1) {
-		stoploss.LockedFloor = finiteFloat(stoploss.LockedFloor)
-	}
-
-	stoploss.TrailDistance = finiteFloat(stoploss.TrailDistance)
-	stoploss.FloorDistance = finiteFloat(stoploss.FloorDistance)
-	stoploss.StopReturn = finiteFloat(stoploss.StopReturn)
-	stoploss.PeakReturn = finiteFloat(stoploss.PeakReturn)
-	stoploss.MarkReturn = finiteFloat(stoploss.MarkReturn)
+	stoploss.epoch = recovered.epoch
+	stoploss.Weight = recovered.Weight
+	stoploss.LockedFloor = recovered.LockedFloor
+	stoploss.FloorDistance = recovered.FloorDistance
+	stoploss.TrailDistance = recovered.TrailDistance
+	stoploss.StopReturn = recovered.StopReturn
+	stoploss.PeakReturn = recovered.PeakReturn
+	stoploss.MarkReturn = recovered.MarkReturn
+	stoploss.Retreat = recovered.Retreat
 	stoploss.Action = recovered.Action
 	stoploss.Reason = recovered.Reason
 
@@ -116,9 +114,35 @@ func (stoploss *Stoploss) Close() {
 }
 
 /*
-WidenSurvival raises the unlocked fill-time survival band when live fee and
-half-spread evidence exceeds the cold-bind floor. Once LockedFloor is earned the
-ratchet owns geometry and this is a no-op so sincere drawdown exits stay tight.
+Armed reports whether entry and a live floor are latched.
+*/
+func (stoploss *Stoploss) Armed() bool {
+	return stoploss != nil && stoploss.armed
+}
+
+/*
+StopPrice is the absolute floor: entry×(1+stopReturn).
+*/
+func (stoploss *Stoploss) StopPrice() float64 {
+	if stoploss == nil || !stoploss.armed || stoploss.entry <= 0 {
+		return 0
+	}
+
+	if math.IsNaN(stoploss.StopReturn) || math.IsInf(stoploss.StopReturn, 0) {
+		return 0
+	}
+
+	price := stoploss.entry * (1 + stoploss.StopReturn)
+
+	if math.IsNaN(price) || math.IsInf(price, 0) {
+		return 0
+	}
+
+	return price
+}
+
+/*
+WidenSurvival raises the unlocked fill-time band when live width exceeds it.
 */
 func (stoploss *Stoploss) WidenSurvival(distance float64) {
 	if stoploss == nil || !stoploss.armed {
@@ -129,7 +153,7 @@ func (stoploss *Stoploss) WidenSurvival(distance float64) {
 		return
 	}
 
-	if !math.IsInf(stoploss.LockedFloor, -1) {
+	if stoploss.LockedFloor > 0 {
 		return
 	}
 
@@ -154,71 +178,8 @@ func (stoploss *Stoploss) WidenSurvival(distance float64) {
 }
 
 /*
-healWidth restores a positive finite TrailDistance from live evidence when an
-armed lot lost its survival band (NaN scale or zero-width recovery bind).
-*/
-func (stoploss *Stoploss) healWidth(evidence StopEvidence) {
-	if stoploss == nil || !stoploss.armed {
-		return
-	}
-
-	if stoploss.TrailDistance > 0 &&
-		!math.IsNaN(stoploss.TrailDistance) &&
-		!math.IsInf(stoploss.TrailDistance, 0) {
-		return
-	}
-
-	distance := stoploss.Trail.LiveScale(evidence)
-
-	if distance <= 0 || math.IsNaN(distance) || math.IsInf(distance, 0) {
-		return
-	}
-
-	if stoploss.FloorDistance <= 0 {
-		stoploss.FloorDistance = distance
-	}
-
-	stoploss.TrailDistance = distance
-
-	if stoploss.StopReturn == 0 || math.IsNaN(stoploss.StopReturn) ||
-		math.IsInf(stoploss.StopReturn, 0) {
-		stoploss.StopReturn = -distance
-	}
-
-	stoploss.Reason = "trail width healed from live evidence"
-}
-
-/*
-Armed reports whether the regulator has latched an entry and live floor.
-*/
-func (stoploss *Stoploss) Armed() bool {
-	return stoploss != nil && stoploss.armed
-}
-
-/*
-StopPrice returns the absolute floor implied by entry×(1+stopReturn).
-Non-finite geometry returns 0 so the UI hides a broken marker.
-*/
-func (stoploss *Stoploss) StopPrice() float64 {
-	if stoploss == nil || !stoploss.armed || stoploss.entry <= 0 {
-		return 0
-	}
-
-	if math.IsNaN(stoploss.StopReturn) || math.IsInf(stoploss.StopReturn, 0) {
-		return 0
-	}
-
-	price := stoploss.entry * (1 + stoploss.StopReturn)
-
-	if math.IsNaN(price) || math.IsInf(price, 0) {
-		return 0
-	}
-
-	return price
-}
-
-/*
-Update consumes one Evidence cut and refreshes the public stop surface.
+Update applies one evidence cut: arm if needed, rescale the band, ratchet the
+floor, and set stop / take_profit / hold.
 */
 func (stoploss *Stoploss) Update(evidence StopEvidence) *Stoploss {
 	if !evidence.Present {
@@ -233,24 +194,22 @@ func (stoploss *Stoploss) Update(evidence StopEvidence) *Stoploss {
 		distance := stoploss.TrailDistance
 
 		if distance <= 0 || math.IsNaN(distance) || math.IsInf(distance, 0) {
-			distance = stoploss.Trail.LiveScale(evidence)
+			distance = liveWidth(evidence)
 		}
 
 		stoploss.Bind(evidence.Entry, distance)
-		stoploss.Skill.Seed(evidence)
+		stoploss.seedWeight(evidence)
 	}
 
-	if stoploss.armed {
-		stoploss.healWidth(evidence)
-	}
+	stoploss.heal(evidence)
 
 	if evidence.RetreatReady {
-		stoploss.retreat = math.Max(0, evidence.RetreatPressure)
+		stoploss.Retreat = math.Max(0, evidence.RetreatPressure)
 	}
 
 	markReturn := (evidence.Mark - stoploss.entry) / stoploss.entry
 
-	if stoploss.retreat > 0 {
+	if stoploss.Retreat > 0 {
 		return stoploss.settle("hold", "retreat-driven mark; geometry frozen", markReturn)
 	}
 
@@ -258,15 +217,15 @@ func (stoploss *Stoploss) Update(evidence StopEvidence) *Stoploss {
 		return stoploss.settle("hold", "stop unbound; trail width absent", markReturn)
 	}
 
-	stoploss.Skill.Reweight(evidence)
-	stoploss.Trail.Scale(evidence, stoploss.Weight)
-	stoploss.Trail.Advance(markReturn)
+	stoploss.reweight(evidence)
+	stoploss.rescale(evidence)
+	stoploss.ratchet(markReturn)
 
-	if stoploss.Trail.Breached(markReturn) {
+	if stoploss.breached(markReturn) {
 		return stoploss.settle("stop", "mark returned through live stop", markReturn)
 	}
 
-	if stoploss.Trail.TakeProfit(evidence, markReturn) {
+	if stoploss.takeProfit(evidence, markReturn) {
 		return stoploss.settle(
 			"take_profit",
 			"peak proximity with non-positive forward path",
@@ -278,8 +237,7 @@ func (stoploss *Stoploss) Update(evidence StopEvidence) *Stoploss {
 }
 
 /*
-Regulate applies one StopEvidence cut and appends an exit Decision when stop
-or take_profit fires. Trade remains the sole order submission path.
+Regulate appends an exit Decision when Update fires stop or take_profit.
 */
 func (stoploss *Stoploss) Regulate(
 	thesis *Thesis,
@@ -327,8 +285,8 @@ func (stoploss *Stoploss) Regulate(
 }
 
 /*
-ObserveMark ratchets a bound stop from a live mark print. It never sets Action
-to stop or take_profit — only Regulate emits exit Decisions.
+ObserveMark ratchets from a live mark. It never emits exit Actions — Regulate
+does that on an evidence cut.
 */
 func (stoploss *Stoploss) ObserveMark(mark float64) {
 	if stoploss == nil || !stoploss.armed || stoploss.entry <= 0 || mark <= 0 {
@@ -339,114 +297,26 @@ func (stoploss *Stoploss) ObserveMark(mark float64) {
 	stoploss.MarkReturn = markReturn
 	stoploss.Action = "hold"
 
-	if stoploss.retreat > 0 {
+	if stoploss.Retreat > 0 {
 		stoploss.Reason = "retreat-gated mark; await sincere print"
 		return
 	}
 
-	stoploss.Trail.Advance(markReturn)
+	stoploss.ratchet(markReturn)
 	stoploss.Reason = "stop live; path intact"
 
-	if stoploss.Trail.Breached(markReturn) {
+	if stoploss.breached(markReturn) {
 		stoploss.Reason = "mark breached live stop; await regulate"
 	}
 }
 
 /*
-NoteRetreat latches toxicity retreat pressure between Thesis cuts so tick
-marks from Marks.Apply share the same sincerity gate as Update.
+NoteRetreat latches toxicity retreat so tick marks share Update's sincerity gate.
 */
 func (stoploss *Stoploss) NoteRetreat(pressure float64) {
 	if stoploss != nil {
-		stoploss.retreat = math.Max(0, pressure)
+		stoploss.Retreat = math.Max(0, pressure)
 	}
-}
-
-/*
-MarshalJSON encodes a JSON-safe stop surface. FloorLocked preserves the
-meaning of the non-finite unlocked sentinel while scalar geometry remains JSON
-finite. Retreat is persisted so recovery restarts keep the sincerity gate.
-*/
-func (stoploss Stoploss) MarshalJSON() ([]byte, error) {
-	type wire struct {
-		Action        string  `json:"action"`
-		Reason        string  `json:"reason"`
-		Weight        float64 `json:"weight"`
-		LockedFloor   float64 `json:"lockedFloor"`
-		FloorLocked   bool    `json:"floorLocked"`
-		FloorDistance float64 `json:"floorDistance"`
-		TrailDistance float64 `json:"trailDistance"`
-		StopReturn    float64 `json:"stopReturn"`
-		PeakReturn    float64 `json:"peakReturn"`
-		MarkReturn    float64 `json:"markReturn"`
-		Retreat       float64 `json:"retreat"`
-	}
-
-	return sonic.Marshal(wire{
-		Action:        stoploss.Action,
-		Reason:        stoploss.Reason,
-		Weight:        finiteFloat(stoploss.Weight),
-		LockedFloor:   finiteFloat(stoploss.LockedFloor),
-		FloorLocked:   !math.IsInf(stoploss.LockedFloor, -1),
-		FloorDistance: finiteFloat(stoploss.FloorDistance),
-		TrailDistance: finiteFloat(stoploss.TrailDistance),
-		StopReturn:    finiteFloat(stoploss.StopReturn),
-		PeakReturn:    finiteFloat(stoploss.PeakReturn),
-		MarkReturn:    finiteFloat(stoploss.MarkReturn),
-		Retreat:       finiteFloat(stoploss.retreat),
-	})
-}
-
-/*
-UnmarshalJSON restores the stop surface, unlocked-floor state, and private
-retreat gate without inventing a break-even ratchet or clearing sincerity.
-*/
-func (stoploss *Stoploss) UnmarshalJSON(payload []byte) error {
-	if stoploss == nil {
-		return errnie.Err(
-			errnie.Validation,
-			"stoploss: UnmarshalJSON on nil receiver",
-			nil,
-		)
-	}
-
-	type wire struct {
-		Action        string  `json:"action"`
-		Reason        string  `json:"reason"`
-		Weight        float64 `json:"weight"`
-		LockedFloor   float64 `json:"lockedFloor"`
-		FloorLocked   bool    `json:"floorLocked"`
-		FloorDistance float64 `json:"floorDistance"`
-		TrailDistance float64 `json:"trailDistance"`
-		StopReturn    float64 `json:"stopReturn"`
-		PeakReturn    float64 `json:"peakReturn"`
-		MarkReturn    float64 `json:"markReturn"`
-		Retreat       float64 `json:"retreat"`
-	}
-
-	var frame wire
-
-	if err := sonic.Unmarshal(payload, &frame); err != nil {
-		return err
-	}
-
-	stoploss.Action = frame.Action
-	stoploss.Reason = frame.Reason
-	stoploss.Weight = finiteFloat(frame.Weight)
-	stoploss.LockedFloor = finiteFloat(frame.LockedFloor)
-
-	if !frame.FloorLocked && frame.LockedFloor <= 0 {
-		stoploss.LockedFloor = math.Inf(-1)
-	}
-
-	stoploss.FloorDistance = finiteFloat(frame.FloorDistance)
-	stoploss.TrailDistance = finiteFloat(frame.TrailDistance)
-	stoploss.StopReturn = finiteFloat(frame.StopReturn)
-	stoploss.PeakReturn = finiteFloat(frame.PeakReturn)
-	stoploss.MarkReturn = finiteFloat(frame.MarkReturn)
-	stoploss.retreat = finiteFloat(frame.Retreat)
-
-	return nil
 }
 
 func (stoploss *Stoploss) settle(action, reason string, markReturn float64) *Stoploss {
@@ -456,3 +326,193 @@ func (stoploss *Stoploss) settle(action, reason string, markReturn float64) *Sto
 
 	return stoploss
 }
+
+func (stoploss *Stoploss) heal(evidence StopEvidence) {
+	if !stoploss.armed {
+		return
+	}
+
+	if stoploss.TrailDistance > 0 &&
+		!math.IsNaN(stoploss.TrailDistance) &&
+		!math.IsInf(stoploss.TrailDistance, 0) {
+		return
+	}
+
+	distance := liveWidth(evidence)
+
+	if distance <= 0 || math.IsNaN(distance) || math.IsInf(distance, 0) {
+		return
+	}
+
+	if stoploss.FloorDistance <= 0 {
+		stoploss.FloorDistance = distance
+	}
+
+	stoploss.TrailDistance = distance
+
+	if stoploss.StopReturn == 0 || math.IsNaN(stoploss.StopReturn) ||
+		math.IsInf(stoploss.StopReturn, 0) {
+		stoploss.StopReturn = -distance
+	}
+
+	stoploss.Reason = "trail width healed from live evidence"
+}
+
+func (stoploss *Stoploss) seedWeight(evidence StopEvidence) {
+	if evidence.Uncertainty > 0 {
+		magnitude := math.Abs(evidence.ExpectedReturn) + evidence.Uncertainty
+		share := math.Abs(evidence.ExpectedReturn) / magnitude
+
+		if share <= 0 {
+			stoploss.Weight = 1
+			return
+		}
+
+		stoploss.Weight = share
+		return
+	}
+
+	if evidence.CognitionReady &&
+		evidence.CognitionConfidence > 0 &&
+		evidence.CognitionConfidence <= 1 {
+		stoploss.Weight = evidence.CognitionConfidence
+		return
+	}
+
+	stoploss.Weight = 1
+}
+
+func (stoploss *Stoploss) reweight(evidence StopEvidence) {
+	if !evidence.ReturnReady || evidence.ForecastEpoch == stoploss.epoch {
+		return
+	}
+
+	stoploss.epoch = evidence.ForecastEpoch
+	residualSkill := 1.0
+
+	if evidence.NormalizedResidual > 0 {
+		residualSkill = 1 / (1 + evidence.NormalizedResidual)
+	}
+
+	delta := residualSkill - stoploss.Weight
+
+	if delta >= 0 {
+		stoploss.Weight += delta * residualSkill * residualSkill
+	}
+
+	if delta < 0 {
+		stoploss.Weight += delta * (1 - residualSkill)
+	}
+
+	stoploss.Weight = math.Min(1, math.Max(math.Nextafter(0, 1), stoploss.Weight))
+}
+
+func (stoploss *Stoploss) rescale(evidence StopEvidence) {
+	scale := liveWidth(evidence)
+
+	if scale <= 0 || stoploss.Weight <= 0 ||
+		math.IsNaN(stoploss.Weight) || math.IsInf(stoploss.Weight, 0) {
+		return
+	}
+
+	if math.IsNaN(scale) || math.IsInf(scale, 0) {
+		return
+	}
+
+	if evidence.Spread > scale {
+		scale = evidence.Spread
+	}
+
+	next := scale / stoploss.Weight
+
+	if math.IsNaN(next) || math.IsInf(next, 0) || next <= 0 {
+		return
+	}
+
+	if stoploss.FloorDistance > 0 && next < stoploss.FloorDistance {
+		next = stoploss.FloorDistance
+	}
+
+	stoploss.TrailDistance = next
+}
+
+func (stoploss *Stoploss) ratchet(markReturn float64) {
+	if stoploss.TrailDistance <= 0 || math.IsNaN(stoploss.TrailDistance) ||
+		math.IsInf(stoploss.TrailDistance, 0) {
+		return
+	}
+
+	stoploss.MarkReturn = markReturn
+	stoploss.PeakReturn = math.Max(stoploss.PeakReturn, markReturn)
+
+	raised := stoploss.PeakReturn - stoploss.TrailDistance
+	next := math.Max(-stoploss.TrailDistance, raised)
+	survival := stoploss.FloorDistance
+
+	if survival <= 0 {
+		survival = stoploss.TrailDistance
+	}
+
+	if stoploss.PeakReturn > survival {
+		candidate := stoploss.PeakReturn - stoploss.TrailDistance
+
+		if candidate > 0 {
+			stoploss.LockedFloor = math.Max(stoploss.LockedFloor, candidate)
+		}
+	}
+
+	if stoploss.LockedFloor > 0 {
+		next = math.Max(stoploss.LockedFloor, markReturn-stoploss.TrailDistance)
+	}
+
+	stoploss.StopReturn = math.Max(stoploss.StopReturn, next)
+}
+
+func (stoploss *Stoploss) breached(markReturn float64) bool {
+	return stoploss.TrailDistance > 0 && markReturn <= stoploss.StopReturn
+}
+
+func (stoploss *Stoploss) takeProfit(evidence StopEvidence, markReturn float64) bool {
+	if stoploss.PeakReturn <= 0 {
+		return false
+	}
+
+	band := liveWidth(evidence)
+
+	if evidence.Spread > band {
+		band = evidence.Spread
+	}
+
+	if stoploss.PeakReturn-markReturn > band {
+		return false
+	}
+
+	if evidence.ReturnReady && evidence.ExpectedReturn <= 0 {
+		return true
+	}
+
+	if evidence.NormalizedResidual > 1 {
+		return true
+	}
+
+	return evidence.CausalReady && evidence.CausalExpectedReturn < 0
+}
+
+func liveWidth(evidence StopEvidence) float64 {
+	scale := 0.0
+
+	if evidence.Uncertainty > 0 {
+		scale = evidence.Uncertainty
+	}
+
+	if evidence.ReturnReady && evidence.IncrementalMSE > 0 {
+		scale = math.Max(scale, math.Sqrt(evidence.IncrementalMSE))
+	}
+
+	if evidence.Spread > 0 {
+		scale = math.Max(scale, evidence.Spread)
+	}
+
+	return scale
+}
+

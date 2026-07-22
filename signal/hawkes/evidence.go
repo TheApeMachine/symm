@@ -12,7 +12,9 @@ Evidence maps estimator output onto the shared numerical measurement contract.
 It emits separate measurements because model parameters with different units,
 sides, and subjects must remain independently addressable by logic.
 */
-type Evidence struct{}
+type Evidence struct {
+	normalize normalizer
+}
 
 /*
 NewEvidence returns a stateless Hawkes evidence mapper.
@@ -23,9 +25,8 @@ func NewEvidence() *Evidence {
 
 /*
 Measure emits empirical evidence first, then conditional intensities and the
-retained fit parameters once HawkesFit is true. Parameter rows stay anchored to
-the fit epoch (At/Scale = FitAt) so evaluation ticks do not masquerade as
-refits, while the UI wire can still carry μ, β, and η beside live λ(t).
+retained fit once HawkesFit is true. Static parameters stay anchored to their
+fit epoch while likelihood comparisons use the current evaluation interval.
 */
 func (evidence *Evidence) Measure(
 	symbol string,
@@ -173,8 +174,8 @@ func (evidence *Evidence) conditional(
 }
 
 /*
-model publishes fitted Hawkes parameters so downstream logic can inspect the
-model producing intensities.
+model publishes fitted Hawkes parameters and current fit-quality comparisons
+without assigning the evaluation statistics to the older parameter epoch.
 */
 func (evidence *Evidence) model(
 	symbol string,
@@ -230,8 +231,8 @@ func (evidence *Evidence) model(
 }
 
 /*
-modelValue builds one fitted parameter measurement with its fit epoch and
-readiness attached.
+modelValue anchors parameters to their fit epoch and likelihood comparisons to
+the current stream on which that retained fit was evaluated.
 */
 func (evidence *Evidence) modelValue(
 	symbol string,
@@ -249,20 +250,40 @@ func (evidence *Evidence) modelValue(
 			Reason:    outcome.Readiness.Reason,
 		},
 	)
+	if subject == types.SubjectHawkesFit {
+		evidence.applyFitEvaluation(measurement, outcome)
+
+		return measurement
+	}
+
 	evidence.applyFitEpoch(measurement, outcome)
 
 	return measurement
 }
 
 /*
-applyFitEpoch anchors fitted-parameter evidence to the retained fit interval so
-parameter rows keep FitAt as as-of instead of masquerading as evaluation ticks.
+applyFitEpoch anchors fitted parameters to their retained interval, deriving a
+missing origin from the observation horizon without moving the fit epoch.
 */
 func (evidence *Evidence) applyFitEpoch(
 	measurement *types.Measurement,
 	outcome excitation.Outcome,
 ) {
-	from, through := evidence.fitEpochBounds(outcome)
+	from := outcome.FitObservedFrom
+	through := outcome.FitAt
+
+	if from.IsZero() {
+		from = outcome.ObservedFrom
+	}
+
+	if through.IsZero() {
+		through = outcome.At
+	}
+
+	if from.IsZero() && !through.IsZero() {
+		from = through.Add(-outcome.Horizon)
+	}
+
 	measurement.ObservedFrom = from
 	measurement.At = through
 	measurement.Horizon = through.Sub(from)
@@ -304,32 +325,6 @@ func (evidence *Evidence) applyFitEvaluation(
 }
 
 /*
-fitEpochBounds resolves the retained Hawkes fit interval, falling back to the
-current observation window when fit provenance has not been stamped yet.
-Missing origin is derived from Horizon; inverted ends are left for validation.
-*/
-func (evidence *Evidence) fitEpochBounds(
-	outcome excitation.Outcome,
-) (time.Time, time.Time) {
-	from := outcome.FitObservedFrom
-	through := outcome.FitAt
-
-	if from.IsZero() {
-		from = outcome.ObservedFrom
-	}
-
-	if through.IsZero() {
-		through = outcome.At
-	}
-
-	if from.IsZero() && !through.IsZero() {
-		from = through.Add(-outcome.Horizon)
-	}
-
-	return from, through
-}
-
-/*
 measurement assembles one Hawkes measurement from evidence already owned by
 the signal.
 */
@@ -357,7 +352,7 @@ func (evidence *Evidence) measurement(
 		Horizon:      through.Sub(from),
 		Unit:         unit,
 		Raw:          raw,
-		Normalized:   evidence.normalized(outcome, metric, side, unit, raw),
+		Normalized:   evidence.normalize.value(outcome, metric, side, unit, raw),
 		Maturity:     outcome.Maturity,
 		Validity:     validity,
 		Scale: types.ScaleReference{
@@ -383,76 +378,4 @@ func (evidence *Evidence) observationInterval(
 	}
 
 	return from, through
-}
-
-/*
-normalized normalizes a Hawkes value against a compatible empirical reference
-when that reference exists.
-*/
-func (evidence *Evidence) normalized(
-	outcome excitation.Outcome,
-	metric types.MetricType,
-	side types.MeasurementSide,
-	unit types.MeasurementUnit,
-	raw float64,
-) *float64 {
-	if unit == types.UnitDimensionless {
-		return types.NormalizeFinite(raw)
-	}
-
-	if unit != types.UnitEventsPerSecond {
-		return nil
-	}
-
-	switch metric {
-	case types.MetricArrivalRate:
-		return evidence.arrivalNormalized(side, outcome, raw)
-	case types.MetricConditionalIntensity:
-		return evidence.intensityNormalized(side, outcome, raw)
-	case types.MetricBaselineIntensity:
-		return types.NormalizeFinite(raw)
-	default:
-		return nil
-	}
-}
-
-/*
-arrivalNormalized normalizes arrival rate against process baseline so excess
-activity is comparable within a fit epoch.
-*/
-func (evidence *Evidence) arrivalNormalized(
-	side types.MeasurementSide,
-	outcome excitation.Outcome,
-	raw float64,
-) *float64 {
-	if !outcome.Readiness.HawkesFit {
-		total := outcome.BuyArrivalRate + outcome.SellArrivalRate
-
-		if total <= 0 {
-			return nil
-		}
-
-		return types.NormalizeDeviation(raw, total/2)
-	}
-
-	return evidence.intensityNormalized(side, outcome, raw)
-}
-
-/*
-intensityNormalized normalizes conditional intensity against its arrival
-baseline so excitation remains directional.
-*/
-func (evidence *Evidence) intensityNormalized(
-	side types.MeasurementSide,
-	outcome excitation.Outcome,
-	raw float64,
-) *float64 {
-	switch side {
-	case types.SideBuy:
-		return types.NormalizeDeviation(raw, outcome.Fit.MuX)
-	case types.SideSell:
-		return types.NormalizeDeviation(raw, outcome.Fit.MuY)
-	default:
-		return nil
-	}
 }

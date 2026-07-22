@@ -2,7 +2,9 @@ package strategy
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"strings"
 	"time"
@@ -56,8 +58,7 @@ type signalWorker struct {
 type measured struct {
 	name   string
 	rows   []*types.Measurement
-	failed bool
-	panic  string
+	err    error
 }
 
 /*
@@ -101,7 +102,7 @@ func NewPlanner(
 			ctx, cancel, price, balance, recorder, uiHub,
 		),
 		admit:      admit,
-		continuity: NewContinuity(price, balance, desk, rotate, evidence),
+		continuity: NewContinuity(price, balance, rotate),
 		evidence:   evidence,
 		rotate:     rotate,
 		arbiter:    NewArbiter(desk, price, balance, admit, rotate),
@@ -122,9 +123,7 @@ func NewPlanner(
 }
 
 /*
-runWorker measures one job at a time until Planner.Close cancels the context. A
-panicking signal is contained by measure so one faulty signal never kills its
-worker or stalls the fan-in.
+runWorker measures one job at a time until Planner.Close cancels the context.
 */
 func (planner *Planner) runWorker(worker signalWorker) {
 	for {
@@ -138,36 +137,27 @@ func (planner *Planner) runWorker(worker signalWorker) {
 }
 
 /*
-measure runs one signal's Measure, recovering any panic into a failed measured
-batch with a durable errnie breadcrumb so the worker stays alive for the next
-cut while Update can refuse to publish or analyze a compromised thesis.
+measure runs one signal's Measure and records a failed batch when Calculate
+rejects the cut.
 */
 func (planner *Planner) measure(
 	worker signalWorker,
 	thesis *types.Thesis,
-) (result measured) {
-	result.name = signalName(worker.signal)
+) measured {
+	name := signalName(worker.signal)
+	rows, err := worker.signal.Measure(thesis)
 
-	defer func() {
-		recovered := recover()
-
-		if recovered == nil {
-			return
-		}
-
-		result.rows = nil
-		result.failed = true
-		result.panic = fmt.Sprint(recovered)
+	if err != nil {
 		errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf("planner: signal %s panicked during measure", result.name),
-			nil,
-		).With("panic", result.panic))
-	}()
+			errnie.Validation,
+			"planner: signal "+name+" failed measure",
+			err,
+		))
 
-	result.rows = worker.signal.Measure(thesis)
+		return measured{name: name, err: err}
+	}
 
-	return result
+	return measured{name: name, rows: rows}
 }
 
 func (planner *Planner) Initialize() error {
@@ -189,7 +179,17 @@ Close cancels pending Planner work during runtime shutdown.
 */
 func (planner *Planner) Close() error {
 	planner.cancel()
-	return nil
+	var err error
+
+	for _, signal := range planner.signals {
+		closer, ok := signal.(io.Closer)
+
+		if ok {
+			err = errors.Join(err, closer.Close())
+		}
+	}
+
+	return err
 }
 
 /*
@@ -240,7 +240,7 @@ func (planner *Planner) Update(
 	for _, worker := range active {
 		batch := <-worker.out
 
-		if batch.failed {
+		if batch.err != nil {
 			failed = append(failed, batch.name)
 			continue
 		}
@@ -322,8 +322,8 @@ func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 }
 
 /*
-commitRotations appends rotation exits only after the challenger Books a
-Reservation, and demotes unsized enters so Trade never submits naked sells.
+commitRotations appends rotation exits only after the challenger is sized, and
+demotes unsized enters so Trade never submits naked sells.
 */
 func (planner *Planner) commitRotations(thesis *types.Thesis) {
 	if err := planner.validate(map[string]any{"thesis": thesis}); err != nil {
@@ -335,7 +335,7 @@ func (planner *Planner) commitRotations(thesis *types.Thesis) {
 	for index := range thesis.Decisions {
 		decision := &thesis.Decisions[index]
 
-		if decision.Action == types.ActionEnter && decision.ReservationID == "" {
+		if decision.Action == types.ActionEnter && decision.ProposedQuantity == nil {
 			decision.Action = types.ActionNothing
 			decision.Displaces = ""
 			decision.ProposedQuantity = nil
@@ -352,7 +352,7 @@ func (planner *Planner) commitRotations(thesis *types.Thesis) {
 		if decision.Action != types.ActionEnter ||
 			decision.Cause != "rotation" ||
 			decision.Displaces == "" ||
-			decision.ReservationID == "" {
+			decision.ProposedQuantity == nil {
 			continue
 		}
 
@@ -403,7 +403,7 @@ func (planner *Planner) publishMeasurements(thesis *types.Thesis) {
 
 	select {
 	case planner.uiHub <- datura.Map[any]{
-		"measurements": types.WireMeasurements(thesis.Measurements),
+		"measurements": types.ForPublish(thesis.Measurements),
 	}.Marshal():
 	default:
 	}

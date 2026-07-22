@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/theapemachine/errnie"
@@ -54,24 +55,48 @@ func (paper *Paper) Handle(raw []byte) ([]outbound, error) {
 
 	paper.mu.Lock()
 	defer paper.mu.Unlock()
-	paper.nextID++
+	quantity, err := number(request.Params.OrderQty)
+
+	if err != nil {
+		return nil, errnie.Err(errnie.Validation, "tests/mockapi: invalid order quantity", err)
+	}
+
+	limit := 0.0
+
+	if request.Params.LimitPrice != "" {
+		limit, err = number(request.Params.LimitPrice)
+
+		if err != nil {
+			return nil, errnie.Err(errnie.Validation, "tests/mockapi: invalid limit price", err)
+		}
+	}
+
 	order := paperOrder{
-		id:       fmt.Sprintf("PAPER-%05d", paper.nextID),
 		reqID:    request.ReqID,
 		symbol:   request.Params.Symbol,
 		side:     request.Params.Side,
 		typ:      request.Params.OrderType,
-		quantity: number(request.Params.OrderQty),
-		limit:    number(request.Params.LimitPrice),
+		quantity: quantity,
+		limit:    limit,
 	}
-	bid, _, ask, _, _ := paper.options.Quote(order.symbol)
+	bid, bidQty, ask, askQty, exists := paper.options.Quote(order.symbol)
 	order.maker = order.typ == "limit" &&
 		!(order.side == "buy" && order.limit >= ask ||
 			order.side == "sell" && order.limit <= bid)
 
-	if err := paper.validate(order); err != nil {
+	if err := paper.validate(
+		order,
+		bid,
+		bidQty,
+		ask,
+		askQty,
+		exists,
+	); err != nil {
 		return nil, err
 	}
+
+	paper.nextID++
+	order.id = fmt.Sprintf("PAPER-%05d", paper.nextID)
 
 	frames := []outbound{{
 		channel: "add_order",
@@ -96,7 +121,14 @@ func (paper *Paper) Handle(raw []byte) ([]outbound, error) {
 /*
 validate rejects orders that cannot be executed or funded by the paper ledger.
 */
-func (paper *Paper) validate(order paperOrder) error {
+func (paper *Paper) validate(
+	order paperOrder,
+	bid float64,
+	bidQty float64,
+	ask float64,
+	askQty float64,
+	exists bool,
+) error {
 	if order.symbol == "" || order.quantity <= 0 ||
 		order.side != "buy" && order.side != "sell" ||
 		order.typ != "market" && order.typ != "limit" {
@@ -107,9 +139,9 @@ func (paper *Paper) validate(order paperOrder) error {
 		return errnie.Err(errnie.Validation, "tests/mockapi: limit price required", nil)
 	}
 
-	bid, bidQty, ask, askQty, exists := paper.options.Quote(order.symbol)
-
-	if !exists || bid <= 0 || ask <= bid {
+	if !exists || bid <= 0 || ask <= bid ||
+		math.IsInf(bid, 0) || math.IsInf(ask, 0) ||
+		math.IsNaN(bid) || math.IsNaN(ask) {
 		return errnie.Err(errnie.Validation, "tests/mockapi: executable quote required", nil)
 	}
 
@@ -160,7 +192,12 @@ func decodeOrder(raw []byte) (orderRequest, error) {
 /*
 number parses an optional exact wire number.
 */
-func number(value json.Number) float64 {
-	parsed, _ := value.Float64()
-	return parsed
+func number(value json.Number) (float64, error) {
+	parsed, err := value.Float64()
+
+	if err != nil || math.IsInf(parsed, 0) || math.IsNaN(parsed) {
+		return 0, errnie.Err(errnie.Validation, "tests/mockapi: finite number required", err)
+	}
+
+	return parsed, nil
 }

@@ -1,7 +1,7 @@
 import type { Category, Measurement } from "#/types/measurement";
 import type {
 	Finding,
-	GraphFrame,
+	Graph,
 	LifecycleState,
 	StrategyDecision,
 	ThesisCategory,
@@ -13,7 +13,7 @@ export type {
 	Category,
 	Measurement,
 	Finding,
-	GraphFrame,
+	Graph,
 	LifecycleState,
 	StrategyDecision,
 	ThesisCategory,

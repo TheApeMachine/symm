@@ -1,6 +1,8 @@
 package instrument
 
 import (
+	"bytes"
+	"encoding/json"
 	"testing"
 
 	"github.com/bytedance/sonic"
@@ -49,6 +51,26 @@ func TestNewFixture(t *testing.T) {
 				}
 
 				So(count, ShouldEqual, 3)
+			})
+		})
+
+		Convey("When a simulated market snapshot is created", func() {
+			fixture := NewMarket([]string{"SIM1/USD"}, 0.01)
+
+			Convey("Then Kraken decimal increments retain their exact JSON values", func() {
+				var frame map[string]any
+
+				for payload := range fixture.Generate() {
+					decoder := json.NewDecoder(bytes.NewReader(payload))
+					decoder.UseNumber()
+					So(decoder.Decode(&frame), ShouldBeNil)
+				}
+
+				data := frame["data"].(map[string]any)
+				pair := data["pairs"].([]any)[0].(map[string]any)
+				So(pair["qty_increment"].(json.Number).String(), ShouldEqual, "0.00000001")
+				So(pair["tick_size"].(json.Number).String(), ShouldEqual, "0.01")
+				So(pair["price_increment"].(json.Number).String(), ShouldEqual, "0.01")
 			})
 		})
 	})

@@ -30,7 +30,6 @@ func (fixture *Fixture) sequencer(raw []byte) *Fixture {
 		for _, row := range rows(step) {
 			advanceLevels(row, "bids", index, -1)
 			advanceLevels(row, "asks", index, 1)
-			row["checksum"] = uint64(number(row, "checksum")) + uint64(index+1)
 		}
 
 		marshaled, err := sonic.Marshal(step)

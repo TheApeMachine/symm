@@ -10,19 +10,41 @@ import (
 filterSymbols restricts a configured snapshot to the symbols in the request
 while retaining the exact JSON numbers used by Kraken book checksums.
 */
-func filterSymbols(payload []byte, symbols []string) []byte {
-	if len(symbols) == 0 {
-		return append([]byte(nil), payload...)
-	}
-
+func filterSymbols(
+	channel string,
+	payload []byte,
+	symbols []string,
+) ([]byte, bool, error) {
 	frame := struct {
-		Channel string            `json:"channel"`
-		Type    string            `json:"type"`
-		Data    []json.RawMessage `json:"data"`
+		Channel string          `json:"channel"`
+		Type    string          `json:"type"`
+		Data    json.RawMessage `json:"data"`
 	}{}
 
-	if err := json.Unmarshal(payload, &frame); err != nil || frame.Data == nil {
-		return append([]byte(nil), payload...)
+	if err := json.Unmarshal(payload, &frame); err != nil {
+		return nil, false, errnie.Err(errnie.Validation, "tests/mockapi: decode response", err)
+	}
+
+	if frame.Channel != channel || frame.Type == "" || len(frame.Data) == 0 {
+		return nil, false, errnie.Err(
+			errnie.Validation,
+			"tests/mockapi: response envelope incomplete",
+			nil,
+		)
+	}
+
+	if len(symbols) == 0 {
+		return append([]byte(nil), payload...), true, nil
+	}
+
+	rows := []json.RawMessage{}
+
+	if err := json.Unmarshal(frame.Data, &rows); err != nil {
+		return nil, false, errnie.Err(
+			errnie.Validation,
+			"tests/mockapi: symbol response data must be an array",
+			err,
+		)
 	}
 
 	requested := make(map[string]struct{}, len(symbols))
@@ -31,15 +53,19 @@ func filterSymbols(payload []byte, symbols []string) []byte {
 		requested[symbol] = struct{}{}
 	}
 
-	filtered := make([]json.RawMessage, 0, len(frame.Data))
+	filtered := make([]json.RawMessage, 0, len(rows))
 
-	for _, row := range frame.Data {
+	for _, row := range rows {
 		identity := struct {
 			Symbol string `json:"symbol"`
 		}{}
 
 		if err := json.Unmarshal(row, &identity); err != nil {
-			panic(errnie.Err(errnie.Validation, "tests/mockapi: filter symbol", err))
+			return nil, false, errnie.Err(
+				errnie.Validation,
+				"tests/mockapi: filter symbol",
+				err,
+			)
 		}
 
 		if _, ok := requested[identity.Symbol]; ok {
@@ -47,12 +73,23 @@ func filterSymbols(payload []byte, symbols []string) []byte {
 		}
 	}
 
-	frame.Data = filtered
-	encoded, err := json.Marshal(frame)
-
-	if err != nil {
-		panic(errnie.Err(errnie.Internal, "tests/mockapi: filter response", err))
+	if len(filtered) == 0 {
+		return nil, false, nil
 	}
 
-	return encoded
+	encoded, err := json.Marshal(struct {
+		Channel string            `json:"channel"`
+		Type    string            `json:"type"`
+		Data    []json.RawMessage `json:"data"`
+	}{
+		Channel: frame.Channel,
+		Type:    frame.Type,
+		Data:    filtered,
+	})
+
+	if err != nil {
+		return nil, false, errnie.Err(errnie.Internal, "tests/mockapi: filter response", err)
+	}
+
+	return encoded, true, nil
 }

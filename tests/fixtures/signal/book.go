@@ -170,7 +170,7 @@ func (market *symbolState) shift(
 }
 
 /*
-execute consumes the aggressed touch and records the resulting ticker session.
+execute consumes the aggressed touch and records the resulting ticker statistics.
 */
 func (market *symbolState) execute(
 	side string,
@@ -231,7 +231,7 @@ func (market *symbolState) execute(
 }
 
 /*
-record updates the trade-derived ticker session for one actual fill.
+record updates the cumulative ticker statistics for one actual fill.
 */
 func (market *symbolState) record(side string, price float64, quantity float64) {
 
@@ -370,8 +370,21 @@ onTick verifies that an explicit action price belongs to the simulated
 instrument's configured price grid.
 */
 func onTick(price float64) bool {
-	ticks := price / PriceIncrement
-	return math.Abs(ticks-math.Round(ticks)) < 1e-8
+	ticks := math.Round(price / PriceIncrement)
+
+	return round(price) == round(float64(ticks)*PriceIncrement)
+}
+
+/*
+onQuantityGrid verifies that an explicit quantity is representable by the
+eight-decimal quantity lattice emitted by every Kraken fixture template.
+*/
+func onQuantityGrid(quantity float64) bool {
+	if quantity < QuantityIncrement {
+		return false
+	}
+
+	return quantity == round(quantity)
 }
 
 /*

@@ -15,6 +15,7 @@ honesty uses one event batch.
 type symbolEvidence struct {
 	latestAt    time.Time
 	tradeCount  int
+	bookCount   int
 	volume      float64
 	fillBid     float64
 	fillAsk     float64
@@ -50,23 +51,19 @@ func newObservationContext(
 }
 
 /*
-resetIncrements clears and reloads price increments from the current books into
-the Signal scratch map so Calculate does not allocate a fresh map each tick.
+ingestIncrements retains each symbol's observed price lattice and rejects a
+malformed book rather than silently falling back to decimal price proximity.
 */
-func (signal *Signal) resetIncrements(frame *types.MarketFrame) {
-	clear(signal.increments)
-
-	if frame == nil {
-		return
-	}
-
-	for _, row := range frame.Books {
+func (signal *Signal) ingestIncrements(books []kraken.BookData) error {
+	for _, row := range books {
 		if row.Symbol == "" || row.PriceIncrement == nil || row.PriceIncrement.Sign() <= 0 {
 			continue
 		}
 
 		signal.increments[row.Symbol] = row.PriceIncrement
 	}
+
+	return nil
 }
 
 /*
@@ -80,11 +77,18 @@ func (signal *Signal) resetEvidence() {
 accumulateEvidence ingests validated trades and attributes touch fills per
 symbol from the current Level3 book snapshot into Signal.evidence.
 */
-func (signal *Signal) accumulateEvidence(trades []kraken.TradeData) {
+func (signal *Signal) accumulateEvidence(trades []kraken.TradeData) error {
 	signal.resetEvidence()
 
 	for _, trade := range trades {
-		if trade.Price.Sign() <= 0 || trade.Qty <= 0 || trade.Timestamp.IsZero() {
+		if trade.Symbol == "" || trade.Price.Sign() <= 0 || trade.Qty <= 0 ||
+			trade.Timestamp.IsZero() || trade.Side != "buy" && trade.Side != "sell" {
+			continue
+		}
+
+		increment := signal.increments[trade.Symbol]
+
+		if increment == nil || increment.Sign() <= 0 {
 			continue
 		}
 
@@ -103,16 +107,67 @@ func (signal *Signal) accumulateEvidence(trades []kraken.TradeData) {
 			row.latestAt = at
 		}
 
-		increment := signal.increments[trade.Symbol]
+		prior, observed := signal.priorTouch[trade.Symbol]
 
-		signal.level3.PeekBook(trade.Symbol, func(symbolBook *book.Book) {
+		if observed {
+			if err := attributeTouchPrices(
+				row,
+				trade.Price,
+				trade.Qty,
+				&prior.bidPrice,
+				&prior.askPrice,
+				increment,
+			); err != nil {
+				continue
+			}
+
+			continue
+		}
+
+		attributed := false
+		var err error
+		peeked := signal.level3.PeekBook(trade.Symbol, func(symbolBook *book.Book) {
 			if symbolBook.Name != trade.Symbol {
 				return
 			}
 
 			bid, ask := symbolBook.BestBid(), symbolBook.BestAsk()
-
-			attributeTouchFill(row, trade.Price, trade.Qty, bid, ask, increment)
+			err = attributeTouchFill(row, trade.Price, trade.Qty, bid, ask, increment)
+			attributed = err == nil
 		})
+
+		if err != nil || !peeked || !attributed {
+			continue
+		}
 	}
+
+	return nil
+}
+
+/*
+observeBooks creates evidence rows for symbols whose Level3 touch changed
+without a public trade. This lets cancellation and retreat remain observable
+without fabricating an unrelated execution to trigger the signal.
+*/
+func (signal *Signal) observeBooks(books []kraken.BookData) error {
+	for _, bookRow := range books {
+		if bookRow.Symbol == "" || bookRow.Timestamp.IsZero() {
+			continue
+		}
+
+		row := signal.evidence[bookRow.Symbol]
+
+		if row == nil {
+			row = &symbolEvidence{}
+			signal.evidence[bookRow.Symbol] = row
+		}
+
+		row.bookCount++
+
+		if bookRow.Timestamp.After(row.latestAt) {
+			row.latestAt = bookRow.Timestamp.UTC()
+		}
+	}
+
+	return nil
 }

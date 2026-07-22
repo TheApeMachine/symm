@@ -5,7 +5,7 @@ import {
 	nodeKind,
 	nodeLabel,
 } from "#/components/terminal/evidence-graph-viz";
-import type { GraphNodeWire } from "#/types/thesis";
+import type { GraphNode } from "#/types/thesis";
 
 const Row = ({ label, value }: { label: string; value: string }) => (
 	<div className="flex justify-between gap-3">
@@ -44,7 +44,7 @@ const uncertaintyLabel = (measurement: Record<string, unknown>): string => {
 	return "";
 };
 
-const NodeDetail = ({ node }: { node: GraphNodeWire }) => {
+const NodeDetail = ({ node }: { node: GraphNode }) => {
 	const measurement = node.measurement;
 	const kind = nodeKind(node);
 	const normalized = measurementNumber(measurement, "normalized");

@@ -36,7 +36,7 @@ func tradeRow(symbol, side string, price float64, quantity float64, at time.Time
 	}
 }
 
-func TestSignalOnTrade(t *testing.T) {
+func TestSignal_Calculate(t *testing.T) {
 	Convey("Given a Hawkes signal driven by the central market cut", t, func() {
 		signal := newTestSignal()
 		at := time.Date(2023, 9, 25, 9, 4, 31, 0, time.UTC)
@@ -59,15 +59,30 @@ func TestSignalOnTrade(t *testing.T) {
 			})
 		})
 
+		Convey("When a malformed marked arrival is calculated", func() {
+			invalid := row
+			invalid.Side = "hold"
+			measurements, err := signal.Calculate(frameOf(invalid))
+
+			Convey("Then the invalid input should be returned to the caller", func() {
+				So(err, ShouldNotBeNil)
+				So(measurements, ShouldBeEmpty)
+			})
+		})
+
 		Convey("When frame calculations overlap measurement drains", func() {
 			wait := sync.WaitGroup{}
+			var calculateErr error
 			wait.Add(2)
 
 			go func() {
 				defer wait.Done()
 
 				for range 100 {
-					signal.Calculate(frameOf(row))
+					if _, err := signal.Calculate(frameOf(row)); err != nil {
+						calculateErr = err
+						return
+					}
 				}
 			}()
 
@@ -75,40 +90,60 @@ func TestSignalOnTrade(t *testing.T) {
 				defer wait.Done()
 
 				for range 100 {
-					_ = signal.Measure(types.NewThesis(nil, frameOf(row)))
+					_, _ = signal.Measure(types.NewThesis(nil, frameOf(row)))
 				}
 			}()
 
 			wait.Wait()
+			So(calculateErr, ShouldBeNil)
 		})
 	})
 }
 
-func BenchmarkSignal_Measure(benchmark *testing.B) {
+func BenchmarkSignal_Calculate(benchmark *testing.B) {
 	signal := newTestSignal()
 	start := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 
-	for index := range 8 {
+	for index := range 16 {
+		side := "buy"
+
+		if index%2 == 0 {
+			side = "sell"
+		}
+
 		if _, err := signal.Calculate(frameOf(tradeRow(
 			"MATIC/USD",
-			"buy",
+			side,
 			0.56+float64(index)*0.001,
 			1+float64(index),
-			start.Add(time.Duration(index)*time.Second),
+			start.Add(time.Duration(index)*100*time.Millisecond),
 		))); err != nil {
 			benchmark.Fatal(err)
 		}
 	}
 
-	frame := frameOf(tradeRow(
-		"MATIC/USD", "buy", 0.57, 4, start.Add(9*time.Second),
-	))
-
 	benchmark.ReportAllocs()
+	index := 16
 
 	for benchmark.Loop() {
+		side := "buy"
+
+		if index%2 == 0 {
+			side = "sell"
+		}
+
+		frame := frameOf(tradeRow(
+			"MATIC/USD",
+			side,
+			0.56+float64(index)*0.001,
+			1+float64(index),
+			start.Add(time.Duration(index)*100*time.Millisecond),
+		))
+
 		if _, err := signal.Calculate(frame); err != nil {
 			benchmark.Fatal(err)
 		}
+
+		index++
 	}
 }

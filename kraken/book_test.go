@@ -3,6 +3,7 @@ package kraken
 import (
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -41,4 +42,59 @@ func TestNewBookDataSlice(t *testing.T) {
 			So(books[0].Type, ShouldEqual, "update")
 		})
 	})
+}
+
+/*
+TestPriceTick proves exact exchange-lattice conversion rejects nearby decimal
+prices instead of silently rounding them onto a valid tick.
+*/
+func TestPriceTick(t *testing.T) {
+	increment, err := decimal.NewFromString("0.01")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	Convey("Given Kraken's declared price increment", t, func() {
+		price, err := decimal.NewFromString("100.02")
+		So(err, ShouldBeNil)
+
+		Convey("An exact lattice price should resolve to its tick", func() {
+			tick, err := PriceTick(*price, *increment)
+			So(err, ShouldBeNil)
+			So(tick, ShouldEqual, int64(10002))
+		})
+
+		Convey("A nearby off-lattice price should be rejected", func() {
+			price, err := decimal.NewFromString("100.025")
+			So(err, ShouldBeNil)
+			_, err = PriceTick(*price, *increment)
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
+/*
+BenchmarkPriceTick measures exact exchange-lattice conversion.
+*/
+func BenchmarkPriceTick(b *testing.B) {
+	price, err := decimal.NewFromString("100.02")
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	increment, err := decimal.NewFromString("0.01")
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if _, err := PriceTick(*price, *increment); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

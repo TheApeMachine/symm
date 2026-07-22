@@ -36,5 +36,9 @@ func (validator *Validator) clone() *Validator {
 		draft.ticker[symbol] = ticker
 	}
 
+	for symbol, observed := range validator.observed {
+		draft.observed[symbol] = observed
+	}
+
 	return draft
 }

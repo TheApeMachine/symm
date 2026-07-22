@@ -5,10 +5,10 @@ import {
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
 import type {
-	GraphEdgeWire,
-	GraphFrame,
+	GraphEdge,
+	Graph,
 	GraphNodeKind,
-	GraphNodeWire,
+	GraphNode,
 } from "#/types/thesis";
 
 export type GraphNodePosition = {
@@ -22,13 +22,13 @@ rail can render an inspection tooltip for a node or an edge.
 */
 export type GraphNodeHit = {
 	kind: "node";
-	node: GraphNodeWire;
+	node: GraphNode;
 	position: GraphNodePosition;
 };
 
 export type GraphEdgeHit = {
 	kind: "edge";
-	edge: GraphEdgeWire;
+	edge: GraphEdge;
 	midpoint: GraphNodePosition;
 };
 
@@ -40,7 +40,7 @@ targets, so drawing and pointer resolution share one computation per frame.
 */
 export type GraphScene = {
 	positions: Map<string, GraphNodePosition>;
-	nodes: Map<string, GraphNodeWire>;
+	nodes: Map<string, GraphNode>;
 	width: number;
 	height: number;
 };
@@ -83,7 +83,7 @@ export const measurementNumber = (
 nodeKind resolves the node's role, preferring the explicit wire kind and falling
 back to the descriptive source so older frames still classify correctly.
 */
-export const nodeKind = (node: GraphNodeWire): GraphNodeKind => {
+export const nodeKind = (node: GraphNode): GraphNodeKind => {
 	if (node.kind === "category" || node.kind === "concept") {
 		return node.kind;
 	}
@@ -105,7 +105,7 @@ export const nodeKind = (node: GraphNodeWire): GraphNodeKind => {
 	return "measurement";
 };
 
-const isHypothesis = (node: GraphNodeWire): boolean =>
+const isHypothesis = (node: GraphNode): boolean =>
 	nodeKind(node) !== "measurement";
 
 /*
@@ -114,7 +114,7 @@ the per-tick MeasurementKey (which embeds At.UnixNano and so changes every tick)
 Layout seeds off this so depthflow/loaded_score keeps its slot each frame instead
 of teleporting. Category/concept nodes are already tick-stable by their key.
 */
-export const nodeIdentity = (node: GraphNodeWire): string => {
+export const nodeIdentity = (node: GraphNode): string => {
 	const kind = nodeKind(node);
 
 	if (kind === "category") {
@@ -140,7 +140,7 @@ export const nodeIdentity = (node: GraphNodeWire): string => {
 nodeLabel is the on-canvas text: category/concept nodes read as their subject,
 measurements as source/metric.
 */
-export const nodeLabel = (node: GraphNodeWire): string => {
+export const nodeLabel = (node: GraphNode): string => {
 	const measurement = node.measurement;
 
 	if (nodeKind(node) === "category") {
@@ -161,7 +161,7 @@ export const nodeLabel = (node: GraphNodeWire): string => {
 normalizedMagnitude maps a measurement's normalized reading onto 0..1 for value-
 driven fill intensity. Hypothesis nodes report full intensity.
 */
-const normalizedMagnitude = (node: GraphNodeWire): number => {
+const normalizedMagnitude = (node: GraphNode): number => {
 	if (isHypothesis(node)) {
 		return 1;
 	}
@@ -175,7 +175,7 @@ const normalizedMagnitude = (node: GraphNodeWire): number => {
 	return clamp01(Math.abs(normalized));
 };
 
-const validityState = (node: GraphNodeWire): string =>
+const validityState = (node: GraphNode): string =>
 	measurementString(node.measurement, "validity") ||
 	(typeof node.measurement.validity === "object" &&
 	node.measurement.validity !== null
@@ -185,7 +185,7 @@ const validityState = (node: GraphNodeWire): string =>
 			)
 		: "");
 
-const isDegraded = (node: GraphNodeWire): boolean => {
+const isDegraded = (node: GraphNode): boolean => {
 	const state = validityState(node);
 
 	return state === "provisional" || state === "invalid";
@@ -232,7 +232,7 @@ const LEGEND: Array<{ type: string; label: string }> = [
 ];
 
 type NodeGeometry = {
-	node: GraphNodeWire;
+	node: GraphNode;
 	hub: boolean;
 	degree: number;
 };
@@ -241,7 +241,7 @@ type NodeGeometry = {
 buildGeometry indexes nodes, marks hypothesis hubs, and counts each node's
 degree so layout can place high-degree hubs centrally and size nodes by reach.
 */
-const buildGeometry = (graph: GraphFrame): Map<string, NodeGeometry> => {
+const buildGeometry = (graph: Graph): Map<string, NodeGeometry> => {
 	const geometry = new Map<string, NodeGeometry>();
 
 	for (const node of graph.nodes) {
@@ -276,7 +276,7 @@ no hub attachment fall onto a stable outer ring. Layout is deterministic (seeded
 by node key) so it does not reshuffle on live ticks.
 */
 export const layoutEvidenceGraph = (
-	graph: GraphFrame,
+	graph: Graph,
 	width: number,
 	height: number,
 ): Map<string, GraphNodePosition> => {
@@ -392,7 +392,7 @@ export const layoutEvidenceGraph = (
 graphVisualKey fingerprints semantic topology so the canvas only repaints when
 node roles or typed relationships change, not when MeasurementKey timestamps do.
 */
-export const graphVisualKey = (graph: GraphFrame | null): string => {
+export const graphVisualKey = (graph: Graph | null): string => {
 	if (graph === null) {
 		return "";
 	}
@@ -428,13 +428,13 @@ const clampToBounds = (
 buildScene resolves positions once so drawing and pointer hit-testing agree.
 */
 export const buildScene = (
-	graph: GraphFrame,
+	graph: Graph,
 	width: number,
 	height: number,
 ): GraphScene => {
 	const raw = layoutEvidenceGraph(graph, width, height);
 	const positions = new Map<string, GraphNodePosition>();
-	const nodes = new Map<string, GraphNodeWire>();
+	const nodes = new Map<string, GraphNode>();
 
 	for (const node of graph.nodes) {
 		const position = raw.get(node.key);
@@ -495,7 +495,7 @@ one edge between the same two nodes (in either direction) — e.g. an anchor tha
 Leads a follower while the follower Lags it. Those edges are bowed apart so they
 do not draw on top of each other.
 */
-export const reciprocalPairs = (graph: GraphFrame): Set<string> => {
+export const reciprocalPairs = (graph: Graph): Set<string> => {
 	const counts = new Map<string, number>();
 
 	for (const edge of graph.edges) {
@@ -528,7 +528,7 @@ orientation (from<to vs from>to), so the two edges of a reciprocal pair curve to
 opposite sides deterministically. Straight edges return the midpoint.
 */
 export const edgeControlPoint = (
-	edge: GraphEdgeWire,
+	edge: GraphEdge,
 	from: GraphNodePosition,
 	to: GraphNodePosition,
 	bend: boolean,
@@ -575,7 +575,7 @@ const mixHex = (from: string, to: string, ratio: number): string => {
 	return `#${channel(fr, tr)}${channel(fg, tg)}${channel(fb, tb)}`;
 };
 
-const kindFill = (node: GraphNodeWire): string => {
+const kindFill = (node: GraphNode): string => {
 	const kind = nodeKind(node);
 
 	if (kind === "category") {
@@ -630,7 +630,7 @@ export const drawEvidenceGraph = (
 	context: CanvasRenderingContext2D,
 	width: number,
 	height: number,
-	graph: GraphFrame | null,
+	graph: Graph | null,
 	scene?: GraphScene | null,
 	hoverKey?: string | null,
 ): void => {
@@ -823,7 +823,7 @@ const drawDiamond = (
 };
 
 const isNeighbor = (
-	graph: GraphFrame,
+	graph: Graph,
 	anchorKey: string,
 	candidateKey: string,
 ): boolean => {
@@ -907,7 +907,7 @@ otherwise the nearest edge within tolerance, so hover inspection can show the
 right detail.
 */
 export const hitTest = (
-	graph: GraphFrame,
+	graph: Graph,
 	scene: GraphScene,
 	x: number,
 	y: number,

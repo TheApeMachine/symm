@@ -2,12 +2,11 @@ package correlation
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -27,7 +26,7 @@ type Signal struct {
 NewSignal creates correlation measurement state for central market cuts so
 successive ticks can establish real price relationships.
 */
-func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
+func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
@@ -45,7 +44,7 @@ measured its evidence, mirroring broker.Balance.Publish.
 func (signal *Signal) Publish(measurements []*types.Measurement) {
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": types.WireMeasurements(measurements),
+		"measurements": types.ForPublish(measurements),
 	}.Marshal():
 	default:
 	}
@@ -60,18 +59,11 @@ func (signal *Signal) Interest() types.StreamInterest {
 }
 
 /*
-Measure supports direct replay against the legacy signal-local journal. The
-live runtime uses Calculate with the central immutable market cut.
+Measure returns typed measurements for the cut, or an error when the
+cut cannot be measured honestly.
 */
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	measurements, err := signal.Calculate(thesis.Market())
-
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	return measurements
+func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, error) {
+	return signal.Calculate(thesis.Market())
 }
 
 /*
@@ -81,10 +73,22 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Calculate(
 	frame *types.MarketFrame,
 ) ([]*types.Measurement, error) {
+	if frame == nil {
+		return nil, fmt.Errorf("correlation: market frame required")
+	}
+
+	if frame.CrossSection == nil {
+		return nil, fmt.Errorf("correlation: cross section required")
+	}
+
 	rows := frame.Tickers
 	out := make([]*types.Measurement, 0, len(rows))
 
-	scoresBySymbol := signal.section.Measure(rows)
+	scoresBySymbol, err := signal.section.Measure(rows)
+
+	if err != nil {
+		return nil, err
+	}
 	latestAtBySymbol := make(map[string]time.Time, len(rows))
 
 	for _, row := range rows {
@@ -224,13 +228,8 @@ func (signal *Signal) Calculate(
 Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
-func (signal *Signal) Close() (err error) {
-	err = errnie.Error(errnie.Err(
-		errnie.Internal,
-		"signal: close failed",
-		nil,
-	))
-
+func (signal *Signal) Close() error {
 	signal.cancel()
-	return err
+
+	return nil
 }

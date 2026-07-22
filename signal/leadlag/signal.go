@@ -4,8 +4,6 @@ import (
 	"context"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -25,7 +23,7 @@ type Signal struct {
 NewSignal creates lead-lag measurement state for central market cuts so
 temporal relationships persist across Thesis ticks.
 */
-func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
+func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
@@ -43,7 +41,7 @@ measured its evidence, mirroring broker.Balance.Publish.
 func (signal *Signal) Publish(measurements []*types.Measurement) {
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": types.WireMeasurements(measurements),
+		"measurements": types.ForPublish(measurements),
 	}.Marshal():
 	default:
 	}
@@ -57,15 +55,12 @@ func (signal *Signal) Interest() types.StreamInterest {
 	return types.StreamTicker
 }
 
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	measurements, err := signal.Calculate(thesis.Market())
-
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	return measurements
+/*
+Measure returns typed measurements for the cut, or an error when the
+cut cannot be measured honestly.
+*/
+func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, error) {
+	return signal.Calculate(thesis.Market())
 }
 
 /*
@@ -82,13 +77,8 @@ func (signal *Signal) Calculate(
 Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
-func (signal *Signal) Close() (err error) {
-	err = errnie.Error(errnie.Err(
-		errnie.Internal,
-		"signal: close failed",
-		nil,
-	))
-
+func (signal *Signal) Close() error {
 	signal.cancel()
-	return err
+
+	return nil
 }

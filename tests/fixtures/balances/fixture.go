@@ -17,6 +17,9 @@ import (
 //go:embed fixtures/*.json
 var fixtureFiles embed.FS
 
+/*
+FixtureType selects the Kraken balance envelope represented by a fixture.
+*/
 type FixtureType string
 
 const (
@@ -94,24 +97,29 @@ func Frame(
 	return encoded
 }
 
+/*
+NewFixture loads a snapshot or a deterministic sequence of balance updates.
+*/
 func NewFixture(typ FixtureType, horizon int) *Fixture {
 	raw, err := fixtureFiles.ReadFile("fixtures/" + string(typ) + ".json")
+
 	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			err.Error(),
-			err,
-		))
+		panic(errnie.Err(errnie.Validation, "balances fixture load failed", err))
 	}
 
-	fixture := &Fixture{
-		horizon: horizon,
-	}
+	fixture := &Fixture{horizon: horizon}
 
 	if typ == SNAPSHOT {
-		fixture.sequence = make([][]byte, 1)
-		fixture.sequence[0] = raw
+		fixture.sequence = [][]byte{raw}
 		return fixture
+	}
+
+	if typ != UPDATE || horizon < 1 {
+		panic(errnie.Err(
+			errnie.Validation,
+			"balances fixture update horizon must be positive",
+			nil,
+		))
 	}
 
 	return fixture.sequencer(raw)
@@ -164,75 +172,79 @@ func (fixture *Fixture) sequencer(raw []byte) *Fixture {
 	var base map[string]any
 
 	if err := sonic.Unmarshal(raw, &base); err != nil {
-		errnie.Error(err)
-		return fixture
+		panic(errnie.Err(errnie.Validation, "balances fixture decode failed", err))
 	}
 
-	steps := fixture.horizon
-	fixture.sequence = make([][]byte, steps)
+	fixture.sequence = make([][]byte, fixture.horizon)
 
-	// Safely assert the 'data' array and the first item
 	rawData, ok := base["data"].([]any)
+
 	if !ok || len(rawData) == 0 {
-		return fixture
+		panic(errnie.Err(errnie.Validation, "balances fixture data missing", nil))
 	}
 
 	firstItem, ok := rawData[0].(map[string]any)
+
 	if !ok {
-		return fixture
+		panic(errnie.Err(errnie.Validation, "balances fixture row missing", nil))
 	}
 
-	// Extract starting state with type assertions
-	baseSeq, _ := base["sequence"].(float64)
-	currentBalance, _ := firstItem["balance"].(float64)
-	timestampStr, _ := firstItem["timestamp"].(string)
+	baseSequence, sequenceExists := base["sequence"].(float64)
+	currentBalance, balanceExists := firstItem["balance"].(float64)
+	timestamp, timestampExists := firstItem["timestamp"].(string)
 
-	currentTime, err := time.Parse(time.RFC3339, timestampStr)
+	if !sequenceExists || !balanceExists || !timestampExists {
+		panic(errnie.Err(
+			errnie.Validation,
+			"balances fixture sequence, balance, and timestamp required",
+			nil,
+		))
+	}
+
+	currentTime, err := time.Parse(time.RFC3339Nano, timestamp)
+
 	if err != nil {
-		// Fallback to current time if parsing fails
-		currentTime = time.Now()
+		panic(errnie.Err(errnie.Validation, "balances fixture timestamp invalid", err))
 	}
 
-	// Capture static fields to populate downstream updates
-	asset, _ := firstItem["asset"].(string)
-	assetClass, _ := firstItem["asset_class"].(string)
-	category, _ := firstItem["category"].(string)
-	walletType, _ := firstItem["wallet_type"].(string)
-	walletID, _ := firstItem["wallet_id"].(string)
+	asset, assetExists := firstItem["asset"].(string)
+	assetClass, assetClassExists := firstItem["asset_class"].(string)
+	category, categoryExists := firstItem["category"].(string)
+	walletType, walletTypeExists := firstItem["wallet_type"].(string)
+	walletID, walletIDExists := firstItem["wallet_id"].(string)
+
+	if !assetExists || !assetClassExists || !categoryExists ||
+		!walletTypeExists || !walletIDExists {
+		panic(errnie.Err(errnie.Validation, "balances fixture identity fields required", nil))
+	}
 
 	rng := rand.New(rand.NewSource(42))
 
-	for i := 0; i < steps; i++ {
-		// Move time forward by a pseudo-random interval (between 10s and 2m)
+	for index := range fixture.horizon {
 		durationSec := 10 + rng.Intn(110)
 		currentTime = currentTime.Add(time.Duration(durationSec) * time.Second)
+		direction := 1.0
 
-		// Generate random amounts without allowing a negative balance
-		var amount float64
+		if rng.Float64() >= 0.5 {
+			direction = -1
+		}
 
-		if rng.Float64() < 0.5 {
-			// Buy (up to 0.05 BTC)
-			amount = rng.Float64() * 0.05
-		} else {
-			// Sell (up to 0.05 BTC)
-			amount = -rng.Float64() * 0.05
-			if currentBalance+amount < 0 {
-				amount = -currentBalance * 0.5
-			}
+		amount := direction * rng.Float64() * 0.05
+
+		if direction < 0 && currentBalance+amount < 0 {
+			amount = -currentBalance * 0.5
 		}
 
 		fee := math.Abs(amount) * 0.0026
 		currentBalance += amount
 
-		// Round to 8 decimal places for crypto precision
 		amount = math.Round(amount*1e8) / 1e8
 		fee = math.Round(fee*1e8) / 1e8
 		currentBalance = math.Round(currentBalance*1e8) / 1e8
 
-		// Rebuild the data entry
 		stepData := map[string]any{
-			"ledger_id":   fmt.Sprintf("LID-%04d-%04d", i, rng.Intn(10000)),
-			"ref_id":      fmt.Sprintf("REF-%04d-%04d", i, rng.Intn(10000)),
+			"ledger_id":   fmt.Sprintf("LID-%04d-%04d", index, rng.Intn(10000)),
+			"ref_id":      fmt.Sprintf("REF-%04d-%04d", index, rng.Intn(10000)),
 			"timestamp":   currentTime.Format(time.RFC3339Nano),
 			"type":        "trade",
 			"asset":       asset,
@@ -245,19 +257,20 @@ func (fixture *Fixture) sequencer(raw []byte) *Fixture {
 			"balance":     currentBalance,
 		}
 
-		// Rebuild the outer envelope to ensure sequence changes on every iteration
 		step := map[string]any{
 			"channel":  base["channel"],
 			"type":     base["type"],
 			"data":     []any{stepData},
-			"sequence": int64(baseSeq) + int64(i),
+			"sequence": int64(baseSequence) + int64(index),
 		}
 
 		marshaled, err := json.Marshal(step)
+
 		if err != nil {
-			panic(err)
+			panic(errnie.Err(errnie.Validation, "balances fixture encode failed", err))
 		}
-		fixture.sequence[i] = marshaled
+
+		fixture.sequence[index] = marshaled
 	}
 
 	return fixture

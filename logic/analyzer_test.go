@@ -1,314 +1,398 @@
-package logic
+package logic_test
 
 import (
 	"math"
-	"strings"
 	"testing"
-	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/nomagique/algorithm/excitation"
-	pmanifold "github.com/theapemachine/nomagique/physics/fluid"
+	logic "github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/logic/manifold"
-	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/stack"
+	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
 )
 
-type readyStageGate struct{}
-
-func (readyStageGate) Ready(system.StageType) bool {
-	return true
+/*
+marketOutcome retains analyzer effects across every cut in one semantic market
+transition so transient classifications and settled state are both examined.
+*/
+type marketOutcome struct {
+	symbols     map[string]bool
+	edges       map[types.EdgeType]int
+	winners     map[types.CategoryType]int
+	minimumFlow float64
+	maximumFlow float64
+	advanced    int
+	replayed    int
+	cognitions  int
+	forecasts   int
+	forecastSum float64
+	forecastBy  map[string]float64
+	forecastN   map[string]int
+	categories  int
 }
 
-type scriptedHawkes struct {
-	symbol   string
-	outcomes []excitation.Outcome
-	index    int
+/*
+observeManifold verifies that the analyzer projects every simulated symbol into
+one physically valid state and records whether the Hawkes epoch really advanced.
+*/
+func (outcome *marketOutcome) observeManifold(
+	thesis *types.Thesis,
+	replay bool,
+) {
+	count := 0
+
+	thesis.Manifold.Range(func(_, value any) bool {
+		state, valid := value.(manifold.State)
+		So(valid, ShouldBeTrue)
+		So(outcome.symbols[state.Symbol], ShouldBeTrue)
+		So(state.Source, ShouldEqual, "manifold")
+		So(state.GasReady(), ShouldBeTrue)
+		So(state.Replay, ShouldEqual, replay)
+		So(state.BuyIntensity, ShouldBeGreaterThanOrEqualTo, 0)
+		So(state.SellIntensity, ShouldBeGreaterThanOrEqualTo, 0)
+
+		flow := state.BuyIntensity - state.SellIntensity
+		outcome.minimumFlow = min(outcome.minimumFlow, flow)
+		outcome.maximumFlow = max(outcome.maximumFlow, flow)
+		count++
+
+		if state.Replay {
+			outcome.replayed++
+			return true
+		}
+
+		outcome.advanced++
+		return true
+	})
+
+	So(count, ShouldEqual, len(outcome.symbols))
 }
 
-func (scripted *scriptedHawkes) Symbols() []string {
-	if scripted == nil {
-		return nil
+/*
+observeGraphs proves each symbol graph contains real, internally referenced
+relationships and accounts for every relationship type composed by Analyzer.
+*/
+func (outcome *marketOutcome) observeGraphs(thesis *types.Thesis) {
+	count := 0
+
+	thesis.Graphs.Range(func(_, value any) bool {
+		graph, valid := value.(*types.Graph)
+		So(valid, ShouldBeTrue)
+		So(outcome.symbols[graph.Symbol], ShouldBeTrue)
+		So(graph.Nodes(), ShouldNotBeEmpty)
+		So(graph.Edges(), ShouldNotBeEmpty)
+		nodes := make(map[string]bool, len(graph.Nodes()))
+
+		for _, node := range graph.Nodes() {
+			nodes[node.Key] = true
+		}
+
+		for _, edge := range graph.Edges() {
+			So(nodes[edge.From], ShouldBeTrue)
+			So(nodes[edge.To], ShouldBeTrue)
+			So(edge.At.IsZero(), ShouldBeFalse)
+			outcome.edges[edge.Type]++
+		}
+
+		count++
+		return true
+	})
+
+	So(count, ShouldEqual, len(outcome.symbols))
+}
+
+/*
+observeModels validates the analyzer's chronological resonance, causal, and
+forecast outputs. Replayed Hawkes epochs must not manufacture new observations.
+*/
+func (outcome *marketOutcome) observeModels(
+	thesis *types.Thesis,
+	replay bool,
+) {
+	if replay {
+		So(thesis.Resonance, ShouldBeEmpty)
+		So(thesis.Causal, ShouldBeEmpty)
+		So(thesis.Hypotheses, ShouldBeEmpty)
+		So(thesis.Forecasts, ShouldBeEmpty)
+		return
 	}
 
-	return []string{scripted.symbol}
-}
+	So(thesis.Resonance, ShouldHaveLength, len(outcome.symbols))
+	So(thesis.Causal, ShouldHaveLength, len(outcome.symbols))
+	So(thesis.Hypotheses, ShouldHaveLength, len(outcome.symbols))
 
-func (scripted *scriptedHawkes) Outcome(symbol string) (excitation.Outcome, bool) {
-	if scripted == nil || symbol != scripted.symbol || len(scripted.outcomes) == 0 {
-		return excitation.Outcome{}, false
+	for _, value := range thesis.Resonance {
+		reading, valid := value.(*logic.ResonanceOutcome)
+		So(valid, ShouldBeTrue)
+		So(outcome.symbols[reading.Symbol], ShouldBeTrue)
+		So(reading.Source, ShouldEqual, "resonance")
+		So(reading.Samples, ShouldBeGreaterThan, 0)
+		So(reading.IsFinite(), ShouldBeTrue)
 	}
 
-	if scripted.index >= len(scripted.outcomes) {
-		return scripted.outcomes[len(scripted.outcomes)-1], true
+	for _, value := range thesis.Causal {
+		reading, valid := value.(*logic.CausalOutcome)
+		So(valid, ShouldBeTrue)
+		So(outcome.symbols[reading.Symbol], ShouldBeTrue)
+		So(reading.Source, ShouldEqual, "causal")
+		So(reading.Samples, ShouldBeGreaterThan, 0)
+		So(reading.Treatment, ShouldNotBeEmpty)
+		So(reading.Target, ShouldNotBeEmpty)
+		So(reading.InformedFlow, ShouldBeBetweenOrEqual, 0, 1)
 	}
 
-	outcome := scripted.outcomes[scripted.index]
-	scripted.index++
+	for _, hypothesis := range thesis.Hypotheses {
+		So(hypothesis.Source, ShouldEqual, types.SourceCausal)
+		So(outcome.symbols[hypothesis.Symbol], ShouldBeTrue)
+		So(hypothesis.Samples, ShouldBeGreaterThan, 0)
+		So(hypothesis.Claim, ShouldNotBeEmpty)
+		So(hypothesis.Treatment, ShouldNotBeEmpty)
+		So(hypothesis.Outcome, ShouldNotBeEmpty)
+	}
 
-	return outcome, true
+	for _, forecast := range thesis.Forecasts {
+		So(forecast.Eligible(), ShouldBeTrue)
+		So(forecast.Source, ShouldEqual, "resonance+causal")
+		So(outcome.symbols[forecast.Symbol], ShouldBeTrue)
+		So(forecast.Target, ShouldEqual, "next_l3_epoch_mid_log_return")
+		So(math.IsNaN(forecast.ExpectedReturn), ShouldBeFalse)
+		So(math.IsInf(forecast.ExpectedReturn, 0), ShouldBeFalse)
+		outcome.forecastSum += forecast.ExpectedReturn
+		outcome.forecastBy[forecast.Symbol] += forecast.ExpectedReturn
+		outcome.forecastN[forecast.Symbol]++
+		outcome.forecasts++
+	}
 }
 
+/*
+observeCognition checks every DMT reading belongs to the projected market and
+ensures every category is the ready classification it claims to represent.
+*/
+func (outcome *marketOutcome) observeCognition(
+	thesis *types.Thesis,
+	focus string,
+) {
+	readings := make(map[string]types.Cognition)
+	ready := 0
+
+	thesis.Cognition.Range(func(_, value any) bool {
+		reading, valid := value.(types.Cognition)
+		So(valid, ShouldBeTrue)
+		So(outcome.symbols[reading.Symbol], ShouldBeTrue)
+		So(reading.Source, ShouldEqual, "dmt")
+		So(reading.At.IsZero(), ShouldBeFalse)
+		So(reading.Sequence, ShouldNotBeEmpty)
+		So(reading.Predictions, ShouldNotBeNil)
+		readings[reading.Symbol] = reading
+		outcome.cognitions++
+
+		if reading.Symbol == focus {
+			So(reading.Branches, ShouldNotBeEmpty)
+			So(reading.Beams, ShouldNotBeEmpty)
+			So(reading.NodeCount, ShouldEqual, len(reading.Branches))
+			So(reading.LookaheadPaths, ShouldEqual, len(reading.Beams))
+		}
+
+		if reading.Ready {
+			ready++
+			outcome.winners[types.CategoryType(reading.Winner)]++
+		}
+
+		return true
+	})
+
+	So(thesis.Categories, ShouldHaveLength, ready)
+
+	for _, category := range thesis.Categories {
+		reading, found := readings[category.Symbol]
+		So(found, ShouldBeTrue)
+		So(reading.Ready, ShouldBeTrue)
+		So(category.Type, ShouldEqual, types.CategoryType(reading.Winner))
+		So(category.Confidence, ShouldEqual, reading.Confidence)
+		So(category.Surprisal, ShouldEqual, reading.EntropyBits)
+		So(category.Strength, ShouldEqual, reading.LookaheadScore)
+		So(category.Maturity, ShouldEqual, float64(reading.Cohort))
+		outcome.categories++
+	}
+}
+
+/*
+TestAnalyzerUpdate drives the complete production graph through quiet,
+directional, and replay-only markets and verifies every Analyzer-owned Thesis
+surface against the causal state that produced it.
+*/
 func TestAnalyzerUpdate(t *testing.T) {
-	withResonanceRLS(t)
+	proofs := []struct {
+		name    string
+		state   tests.MarketState
+		replay  bool
+		prepare bool
+	}{
+		{"baseline", tests.MarketStateBaseline, false, false},
+		{"fast pump", tests.MarketStateFastPump, false, false},
+		{"fast dump", tests.MarketStateFastDump, false, false},
+		{"persistent adverse divergence", tests.MarketStateAdverseDivergence, false, true},
+		{"book-only replay", tests.MarketStateThinLiquidity, true, false},
+	}
 
-	Convey("Given measurements for two symbols", t, func() {
-		thesis := types.NewThesis(nil, nil)
-		thesis.Measurements = append(thesis.Measurements,
-			&types.Measurement{
-				Stream: types.Hawkes, Metric: types.MetricArrivalRate,
-				Symbol: "BTC/USD", At: time.Unix(1, 0),
-			},
-			&types.Measurement{
-				Stream: types.PumpDump, Metric: types.MetricRVOL,
-				Symbol: "ETH/USD", At: time.Unix(2, 0),
-			},
-		)
-		analyzer := &Analyzer{}
+	Convey("Given materially distinct fixture-driven markets", t, func() {
+		outcomes := make(map[string]*marketOutcome, len(proofs))
+		var marketSymbols []string
 
-		analyzer.Update(thesis)
+		for _, proof := range proofs {
+			market := tests.NewMarket(t.Context(), 3)
 
-		Convey("It should not retain measurements without relationships", func() {
-			graphCount := 0
-
-			thesis.Graphs.Range(func(_, _ any) bool {
-				graphCount++
-
-				return true
-			})
-
-			So(graphCount, ShouldEqual, 0)
-		})
-	})
-
-	Convey("Given repeated physical evidence for one symbol", t, func() {
-		tree := dmt.NewTree("")
-		analyzer := &Analyzer{
-			tree:      tree,
-			resonance: map[string]*Resonance{"BTC/USD": {}},
-			causal:    map[string]*Causal{"BTC/USD": NewCausal("BTC/USD")},
-		}
-		state := manifold.State{
-			Symbol: "BTC/USD", At: time.Unix(1, 0), Duration: time.Second,
-			Epoch: 1, ReferencePrice: decimal.NewFromInt64(100), InvalidReason: manifold.Valid,
-			Spread: 0.01, BuyCapacity: decimal.NewFromInt64(1000), SellCapacity: decimal.NewFromInt64(1000),
-			BuyIntensity: 2, SellIntensity: 1,
-			Reading: pmanifold.Reading{
-				PressureGradX: 1, Divergence: -1, CoherenceMag2: 1,
-				GuidanceSpeed: 1,
-			},
-		}
-
-		first := types.NewThesis(nil, nil)
-		first.Manifold.Store(state.Symbol, state)
-		analyzer.Update(first)
-		firstValue, found := first.Cognition.Load(state.Symbol)
-
-		Convey("It should expose the cold DMT reading on the Thesis", func() {
-			So(found, ShouldBeTrue)
-			reading := firstValue.(types.Cognition)
-			So(reading.Ready, ShouldBeFalse)
-			So(reading.REMReplays, ShouldEqual, 0)
-		})
-
-		state.At = state.At.Add(time.Second)
-		state.Epoch++
-		second := types.NewThesis(nil, nil)
-		second.Manifold.Store(state.Symbol, state)
-		analyzer.Update(second)
-		secondValue, found := second.Cognition.Load(state.Symbol)
-
-		Convey("It should classify the repeated sequence from existing memory", func() {
-			So(found, ShouldBeTrue)
-			reading := secondValue.(types.Cognition)
-			So(reading.Ready, ShouldBeTrue)
-			So(reading.Winner, ShouldEqual, "buy")
-			So(reading.Cohort, ShouldEqual, 1)
-		})
-	})
-
-	Convey("Given successive tick measurements for one symbol", t, func() {
-		analyzer := &Analyzer{}
-		positive := 0.5
-		first := types.NewThesis(nil, nil)
-		first.Measurements = append(first.Measurements, &types.Measurement{
-			Source: types.SourceHawkes, Stream: types.Hawkes,
-			Metric: types.MetricStrength, Subject: types.SubjectTradeArrivals,
-			Side: types.SideBuy, Symbol: "BTC/USD", At: time.Unix(1, 0),
-			Unit: types.UnitDimensionless, Normalized: &positive,
-			Validity: types.MeasurementValidity{State: types.ValidityValid},
-		})
-		analyzer.Update(first)
-		second := types.NewThesis(nil, nil)
-		second.Measurements = append(second.Measurements, &types.Measurement{
-			Source: types.SourceHawkes, Stream: types.Hawkes,
-			Metric: types.MetricStrength, Subject: types.SubjectTradeArrivals,
-			Side: types.SideBuy, Symbol: "BTC/USD", At: time.Unix(2, 0),
-			Unit: types.UnitDimensionless, Normalized: &positive,
-			Validity: types.MeasurementValidity{State: types.ValidityValid},
-		})
-
-		analyzer.Update(second)
-
-		Convey("It should omit a current tick without a relationship", func() {
-			_, found := second.Graphs.Load("BTC/USD")
-			So(found, ShouldBeFalse)
-		})
-	})
-
-	Convey("Given a changing sequence of next-epoch manifold outcomes", t, func() {
-		analyzer := &Analyzer{}
-		var forecast *types.Forecasts
-
-		for index := 1; index <= 64 && forecast == nil; index++ {
-			price := 100 + float64(index) + math.Sin(float64(index))
-			state := causalState(time.Unix(int64(index), 0), price, uint64(index))
-			state.Reading.PressureGradX += float64(index) / 100
-			state.Reading.Divergence += math.Cos(float64(index)) / 100
-			state.BuyIntensity += math.Sin(float64(index)) / 10
-			state.SellIntensity -= math.Sin(float64(index)) / 10
-			thesis := types.NewThesis(nil, nil)
-			thesis.Manifold.Store(state.Symbol, state)
-			analyzer.Update(thesis)
-
-			if len(thesis.Forecasts) > 0 {
-				forecast = &thesis.Forecasts[0]
+			if marketSymbols == nil {
+				marketSymbols = append([]string(nil), market.Symbols...)
 			}
-		}
 
-		Convey("It should publish a calibrated Resonance and Causal forecast", func() {
-			So(forecast, ShouldNotBeNil)
-			So(forecast.Source, ShouldEqual, "resonance+causal")
-			So(forecast.Target, ShouldEqual, "next_l3_epoch_mid_log_return")
-			So(forecast.ModelVersion, ShouldEqual, "resonance_return_head_v2_rls")
-			So(forecast.CalibrationSamples, ShouldBeGreaterThan, 0)
-			So(forecast.IncrementalMSE, ShouldBeGreaterThanOrEqualTo, 0)
-			So(forecast.IncrementalSkillLowerBound, ShouldBeGreaterThan, 0)
-			So(forecast.Uncertainty, ShouldBeGreaterThanOrEqualTo, 0)
-			So(forecast.Ready, ShouldBeTrue)
-			So(forecast.Calibrated, ShouldBeTrue)
-			So(forecast.FrictionReady, ShouldBeFalse)
-		})
-	})
-}
+			wired, err := stack.NewBooter(t.Context()).Test(market)
+			So(err, ShouldBeNil)
+			focus := market.Symbols[0]
+			wired.Analyzer.Focus(focus)
+			So(market.Warmup(wired.Crypto.Step), ShouldBeNil)
 
-func TestAnalyzerUpdateComposesRelationships(t *testing.T) {
-	Convey("Given comparable typed measurements on one thesis", t, func() {
-		ui := make(chan []byte, 4)
-		thesis := types.NewThesis(ui, nil)
-		positive := 0.5
-		negative := -0.5
-		thesis.Measurements = append(thesis.Measurements,
-			&types.Measurement{
-				Source: types.SourceHawkes, Stream: types.Hawkes,
-				Metric: types.MetricStrength, Subject: types.SubjectTradeArrivals,
-				Symbol: "BTC/USD", At: time.Unix(1, 0),
-				Unit: types.UnitDimensionless, Normalized: &positive,
-				Validity: types.MeasurementValidity{State: types.ValidityValid},
-			},
-			&types.Measurement{
-				Source: types.SourcePumpDump, Stream: types.PumpDump,
-				Metric: types.MetricStrength, Subject: types.SubjectTradeArrivals,
-				Symbol: "BTC/USD", At: time.Unix(1, 0),
-				Unit: types.UnitDimensionless, Normalized: &negative,
-				Validity: types.MeasurementValidity{State: types.ValidityValid},
-			},
-		)
-		analyzer := &Analyzer{ui: ui}
+			if proof.prepare {
+				So(market.Transition(proof.state, wired.Crypto.Step), ShouldBeNil)
+			}
 
-		analyzer.Update(thesis)
+			outcome := &marketOutcome{
+				symbols:     map[string]bool{},
+				edges:       map[types.EdgeType]int{},
+				winners:     map[types.CategoryType]int{},
+				minimumFlow: math.Inf(1),
+				maximumFlow: math.Inf(-1),
+				forecastBy:  map[string]float64{},
+				forecastN:   map[string]int{},
+			}
 
-		Convey("It should retain the contradiction on the symbol graph", func() {
-			graph, ok := thesis.Graphs.Load("BTC/USD")
-			So(ok, ShouldBeTrue)
-			evidenceGraph := graph.(*types.Graph)
-			So(evidenceGraph.Edges(), ShouldNotBeEmpty)
-			So(evidenceGraph.Edges()[0].Type, ShouldEqual, types.Contradicts)
-		})
+			for _, symbol := range market.Symbols {
+				outcome.symbols[symbol] = true
+			}
 
-		Convey("It should publish a graphs frame for the terminal", func() {
-			var payload string
+			So(market.Transition(proof.state, func() error {
+				thesis, err := wired.Crypto.Tick()
 
-			for len(ui) > 0 {
-				frame := string(<-ui)
-
-				if strings.Contains(frame, `"graphs"`) {
-					payload = frame
+				if err != nil {
+					return err
 				}
+				So(thesis.Incomplete(), ShouldBeFalse)
+				So(thesis.Measurements, ShouldNotBeEmpty)
+				So(thesis.At, ShouldResemble, market.Now())
+				outcome.observeManifold(thesis, proof.replay)
+				outcome.observeGraphs(thesis)
+				outcome.observeModels(thesis, proof.replay)
+				outcome.observeCognition(thesis, focus)
+				return nil
+			}), ShouldBeNil)
+
+			outcomes[proof.name] = outcome
+			So(wired.Close(), ShouldBeNil)
+			market.Close()
+		}
+
+		Convey("It should preserve direction, chronology, and evidence semantics", func() {
+			for _, name := range []string{
+				"baseline", "fast pump", "fast dump", "persistent adverse divergence",
+			} {
+				outcome := outcomes[name]
+				So(outcome.advanced, ShouldBeGreaterThan, 0)
+				So(outcome.replayed, ShouldEqual, 0)
+				So(outcome.edges[types.Supports], ShouldBeGreaterThan, 0)
+				So(outcome.edges[types.Contradicts], ShouldBeGreaterThan, 0)
+				So(outcome.edges[types.Conditions], ShouldBeGreaterThan, 0)
+				So(outcome.cognitions, ShouldBeGreaterThan, 0)
 			}
 
-			So(payload, ShouldContainSubstring, `"graphs"`)
-			So(payload, ShouldContainSubstring, `"BTC/USD"`)
+			baseline := outcomes["baseline"]
+			So(baseline.minimumFlow, ShouldBeLessThan, 0)
+			So(baseline.maximumFlow, ShouldBeGreaterThan, 0)
+			So(baseline.forecasts, ShouldEqual, 0)
+
+			pump := outcomes["fast pump"]
+			So(pump.minimumFlow, ShouldBeGreaterThanOrEqualTo, 0)
+			So(pump.maximumFlow, ShouldBeGreaterThan, 0)
+			So(pump.forecasts, ShouldBeGreaterThan, 0)
+			So(pump.forecastSum/float64(pump.forecasts), ShouldBeGreaterThan, 0)
+			So(pump.winners["sell"], ShouldEqual, 0)
+
+			dump := outcomes["fast dump"]
+			So(dump.minimumFlow, ShouldBeLessThan, 0)
+			So(dump.maximumFlow, ShouldBeLessThanOrEqualTo, 0)
+			So(dump.forecasts, ShouldBeGreaterThan, 0)
+			So(dump.forecastSum/float64(dump.forecasts), ShouldBeLessThan, 0)
+			So(
+				pump.forecastSum/float64(pump.forecasts),
+				ShouldBeGreaterThan,
+				dump.forecastSum/float64(dump.forecasts),
+			)
+			So(dump.winners["buy"], ShouldEqual, 0)
+
+			divergence := outcomes["persistent adverse divergence"]
+			So(divergence.minimumFlow, ShouldBeLessThan, 0)
+			So(divergence.maximumFlow, ShouldBeGreaterThan, 0)
+			So(divergence.forecasts, ShouldBeGreaterThan, 0)
+			So(divergence.forecastN[marketSymbols[0]], ShouldBeGreaterThan, 0)
+			So(
+				divergence.forecastBy[marketSymbols[0]]/
+					float64(divergence.forecastN[marketSymbols[0]]),
+				ShouldBeLessThan,
+				0,
+			)
+
+			for _, symbol := range marketSymbols[1:] {
+				So(divergence.forecastN[symbol], ShouldBeGreaterThan, 0)
+				So(
+					divergence.forecastBy[symbol]/
+						float64(divergence.forecastN[symbol]),
+					ShouldBeGreaterThan,
+					0,
+				)
+			}
+
+			replay := outcomes["book-only replay"]
+			So(replay.advanced, ShouldEqual, 0)
+			So(replay.replayed, ShouldEqual, len(replay.symbols))
+			So(replay.edges[types.Supports], ShouldBeGreaterThan, 0)
+			So(replay.edges[types.Contradicts], ShouldBeGreaterThan, 0)
+			So(replay.edges[types.Conditions], ShouldEqual, 0)
+			So(replay.forecasts, ShouldEqual, 0)
+			So(replay.categories, ShouldEqual, 0)
+			So(replay.cognitions, ShouldEqual, 1)
 		})
 	})
 }
 
-func TestAnalyzerConsolidate(t *testing.T) {
-	Convey("Given episodic observations pending behind the DMT ambiguity gate", t, func() {
-		tree := dmt.NewTree("")
-		analyzer := &Analyzer{tree: tree}
-		sequence := []byte("symbol-btc-usd_pressure-positive")
-		from := time.Unix(0, 100)
-		through := time.Unix(0, 200)
-		_, _, err := tree.CommitToEpisodicBuffer(uint64(from.UnixNano()), sequence)
-		So(err, ShouldBeNil)
-		_, _, err = tree.CommitToEpisodicBuffer(uint64(through.UnixNano()), sequence)
-		So(err, ShouldBeNil)
-		thesis := types.NewThesis(nil, nil)
-		thesis.Cognition.Store("BTC/USD", types.Cognition{Symbol: "BTC/USD"})
-
-		analyzer.consolidate(thesis, []time.Time{from, through}, false)
-
-		Convey("It should retain the interval without replaying it early", func() {
-			So(tree.GetSensoryWeight(sequence).Count, ShouldEqual, 0)
-			reading, _ := thesis.Cognition.Load("BTC/USD")
-			So(reading.(types.Cognition).REMReplays, ShouldEqual, 0)
-		})
-
-		analyzer.consolidate(thesis, nil, true)
-		analyzer.rem.Await()
-		analyzer.rem.Stamp(thesis)
-
-		Convey("It should replay the complete pending interval when requested", func() {
-			So(tree.GetSensoryWeight(sequence).Count, ShouldEqual, 2)
-			reading, _ := thesis.Cognition.Load("BTC/USD")
-			cognition := reading.(types.Cognition)
-			So(cognition.REMFrom, ShouldEqual, from)
-			So(cognition.REMThrough, ShouldEqual, through)
-			So(cognition.REMReplays, ShouldEqual, 2)
-		})
-	})
-}
-
+/*
+BenchmarkAnalyzerUpdate measures Analyzer through the same fixture-to-Crypto
+production path used by the market proof.
+*/
 func BenchmarkAnalyzerUpdate(b *testing.B) {
-	analyzer := &Analyzer{}
+	market := tests.NewMarket(b.Context(), 3)
+	wired, err := stack.NewBooter(b.Context()).Test(market)
 
-	for b.Loop() {
-		thesis := types.NewThesis(nil, nil)
-		thesis.Measurements = append(thesis.Measurements, &types.Measurement{
-			Stream: types.Hawkes, Metric: types.MetricArrivalRate,
-			Symbol: "BTC/USD", At: time.Unix(1, 0),
-		})
-		analyzer.Update(thesis)
-	}
-}
-
-func BenchmarkAnalyzerCognize(b *testing.B) {
-	analyzer := &Analyzer{tree: dmt.NewTree("")}
-	state := manifold.State{
-		Symbol: "BTC/USD", At: time.Unix(1, 0), Duration: time.Second,
-		Epoch: 1, ReferencePrice: decimal.NewFromInt64(100), InvalidReason: manifold.Valid,
-		Spread: 0.01, BuyCapacity: decimal.NewFromInt64(1000), SellCapacity: decimal.NewFromInt64(1000),
-		BuyIntensity: 2, SellIntensity: 1,
-		Reading: pmanifold.Reading{
-			PressureGradX: 1, Divergence: -1, CoherenceMag2: 1,
-			GuidanceSpeed: 1,
-		},
+	if err != nil {
+		b.Fatal(err)
 	}
 
+	defer func() {
+		if err := wired.Close(); err != nil {
+			b.Fatal(err)
+		}
+	}()
+	defer market.Close()
+
+	if err := market.Warmup(wired.Crypto.Step); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
 	for b.Loop() {
-		analyzer.cognize(types.NewThesis(nil, nil), state)
+		if err := market.Transition(tests.MarketStateBaseline, wired.Crypto.Step); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

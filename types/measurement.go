@@ -6,123 +6,6 @@ import (
 )
 
 /*
-MetricType identifies the numerical quantity a signal measured. It keeps
-measurement identity independent of the signal implementation that produced
-the value, which lets logic compare compatible evidence without interpreting a
-source name as a market state.
-*/
-type MetricType string
-
-const (
-	MetricEventCount           MetricType = "event_count"
-	MetricArrivalRate          MetricType = "arrival_rate"
-	MetricConditionalIntensity MetricType = "conditional_intensity"
-	MetricBaselineIntensity    MetricType = "baseline_intensity"
-	MetricExcitationAmplitude  MetricType = "excitation_amplitude"
-	MetricDecayRate            MetricType = "decay_rate"
-	MetricKernelMemory         MetricType = "kernel_memory"
-	MetricSpectralRadius       MetricType = "spectral_radius"
-	MetricHawkesPoissonDelta   MetricType = "hawkes_poisson_likelihood_delta"
-	MetricCrossSelfDelta       MetricType = "cross_self_likelihood_delta"
-	MetricImmediateOffspring   MetricType = "immediate_expected_offspring"
-	MetricTotalDescendants     MetricType = "expected_total_descendants"
-	MetricRVOL                 MetricType = "rvol"
-	MetricPrecursor            MetricType = "precursor"
-	MetricSpread               MetricType = "spread"
-	MetricCompression          MetricType = "compression"
-	MetricIgnition             MetricType = "ignition"
-	MetricTrend                MetricType = "trend"
-	MetricExhaustion           MetricType = "exhaustion"
-	MetricStrength             MetricType = "strength"
-	MetricValue                MetricType = "value"
-	MetricCategory             MetricType = "category"
-	MetricResonanceEnergy      MetricType = "resonance_energy"
-	MetricResonanceSurprise    MetricType = "resonance_surprise"
-
-	// exhaust (microstructure decay)
-	MetricMechanical MetricType = "mechanical"
-	MetricThermal    MetricType = "thermal"
-	MetricFragile    MetricType = "fragile"
-	MetricReversal   MetricType = "reversal"
-	MetricUrgency    MetricType = "urgency"
-
-	// depthflow (touch-level book imbalance)
-	MetricLoadedScore  MetricType = "loaded_score"
-	MetricSpoofScore   MetricType = "spoof_score"
-	MetricThinScore    MetricType = "thin_score"
-	MetricNeutralScore MetricType = "neutral_score"
-
-	// cvd (signed aggressor flow)
-	MetricAbsorption  MetricType = "absorption"
-	MetricDrive       MetricType = "drive"
-	MetricBalance     MetricType = "balance"
-	MetricStarvation  MetricType = "starvation"
-	MetricNet         MetricType = "net"
-	MetricNetFraction MetricType = "net_fraction"
-
-	// correlation and leadlag (cohort relation)
-	MetricCorrelation              MetricType = "correlation"
-	MetricSigned                   MetricType = "signed"
-	MetricRelativeEnergy           MetricType = "relative_energy"
-	MetricHerdScore                MetricType = "herd_score"
-	MetricAlphaScore               MetricType = "alpha_score"
-	MetricNoiseScore               MetricType = "noise_score"
-	MetricStressScore              MetricType = "stress_score"
-	MetricPeakScore                MetricType = "peak_score"
-	MetricSignedCorrelation        MetricType = "signed_correlation"
-	MetricSignedContempCorrelation MetricType = "signed_contemp_correlation"
-	MetricSignedLagCorrelation     MetricType = "signed_lag_correlation"
-	MetricLagFraction              MetricType = "lag_fraction"
-	MetricSignedLagDirection       MetricType = "signed_lag_direction"
-	MetricSampleSupport            MetricType = "sample_support"
-	MetricInefficient              MetricType = "inefficient"
-	MetricSync                     MetricType = "sync"
-	MetricDecoupled                MetricType = "decoupled"
-	MetricStall                    MetricType = "stall"
-
-	// sentiment (breadth and leadership)
-	MetricChange         MetricType = "change"
-	MetricBreadth        MetricType = "breadth"
-	MetricLeaderStrength MetricType = "leader_strength"
-	MetricLeaderEvidence MetricType = "leader_evidence"
-	MetricRelativeLead   MetricType = "relative_lead"
-	MetricSurgeScore     MetricType = "surge_score"
-	MetricDivergentScore MetricType = "divergent_score"
-	MetricSlumpScore     MetricType = "slump_score"
-
-	// liquidity (reported turnover and executable touch-depth scarcity)
-	MetricScarcityScore                MetricType = "scarcity_score"
-	MetricReportedVolumeNotional       MetricType = "reported_volume_notional"
-	MetricReportedVolumeNotionalMedian MetricType = "reported_volume_notional_median"
-	MetricExecutableTouchDepth         MetricType = "executable_touch_depth"
-	MetricExecutableTouchDepthMedian   MetricType = "executable_touch_depth_median"
-	MetricRelativeTouchDepth           MetricType = "relative_touch_depth"
-
-	// fluid (mechanical order-book dynamics)
-	MetricLaminarScore        MetricType = "laminar_score"
-	MetricTurbulentScore      MetricType = "turbulent_score"
-	MetricInertialScore       MetricType = "inertial_score"
-	MetricViscousScore        MetricType = "viscous_score"
-	MetricViscosity           MetricType = "viscosity"
-	MetricReynolds            MetricType = "reynolds"
-	MetricDivergenceV2        MetricType = "divergence_v2"
-	MetricVelocityCurvatureV2 MetricType = "velocity_curvature_v2"
-	MetricTurbulence          MetricType = "turbulence"
-	MetricSourceBalance       MetricType = "source_balance"
-	MetricMemory              MetricType = "memory"
-	MetricMidAddRate          MetricType = "mid_add_rate"
-	MetricMidExecuteRate      MetricType = "mid_execute_rate"
-
-	// toxicity (level3 touch liquidity honesty)
-	MetricTouchQuantity      MetricType = "touch_quantity"
-	MetricBestPrice          MetricType = "best_price"
-	MetricTradeVolume        MetricType = "trade_volume"
-	MetricFillVolume         MetricType = "fill_volume"
-	MetricRetreatingQuantity MetricType = "retreating_quantity"
-	MetricCancelledQuantity  MetricType = "cancelled_quantity"
-)
-
-/*
 SubjectType identifies the market object or model component described by a
 metric. Metrics with the same unit are not necessarily comparable when their
 subjects differ.
@@ -408,4 +291,101 @@ func FilterLatest(measurements []*Measurement) []*Measurement {
 	}
 
 	return filtered
+}
+
+/*
+ForPublish returns the newest epoch per symbol plus any older Hawkes fit-parameter
+rows that FilterLatest would drop, so the UI can keep decay curves beside live
+intensities. Rows stay typed Measurements — no nested projection.
+*/
+func ForPublish(measurements []*Measurement) []*Measurement {
+	latest := FilterLatest(measurements)
+
+	if len(latest) == 0 {
+		return nil
+	}
+
+	type epochKey struct {
+		source SourceType
+		symbol string
+		atNano int64
+	}
+
+	latestEpochs := make(map[epochKey]struct{}, len(latest))
+
+	for _, measurement := range latest {
+		latestEpochs[epochKey{
+			source: measurement.Source,
+			symbol: measurement.Symbol,
+			atNano: measurement.At.UTC().UnixNano(),
+		}] = struct{}{}
+	}
+
+	out := make([]*Measurement, 0, len(latest)+8)
+	out = append(out, latest...)
+
+	for _, measurement := range measurements {
+		if measurement == nil || !measurement.fitParameter() {
+			continue
+		}
+
+		key := epochKey{
+			source: measurement.Source,
+			symbol: measurement.Symbol,
+			atNano: measurement.At.UTC().UnixNano(),
+		}
+
+		if _, exists := latestEpochs[key]; exists {
+			continue
+		}
+
+		out = append(out, measurement)
+	}
+
+	return out
+}
+
+/*
+ObservationCount is how many source×symbol pairs the latest cut represents.
+*/
+func ObservationCount(measurements []*Measurement) int {
+	latest := FilterLatest(measurements)
+
+	if len(latest) == 0 {
+		return 0
+	}
+
+	type pair struct {
+		source SourceType
+		symbol string
+	}
+
+	seen := make(map[pair]struct{}, len(latest))
+
+	for _, measurement := range latest {
+		if measurement == nil || measurement.Symbol == "" || measurement.Metric == "" {
+			continue
+		}
+
+		seen[pair{measurement.Source, measurement.Symbol}] = struct{}{}
+	}
+
+	return len(seen)
+}
+
+func (measurement *Measurement) fitParameter() bool {
+	switch measurement.Metric {
+	case MetricBaselineIntensity,
+		MetricExcitationAmplitude,
+		MetricDecayRate,
+		MetricKernelMemory,
+		MetricSpectralRadius,
+		MetricHawkesPoissonDelta,
+		MetricCrossSelfDelta,
+		MetricImmediateOffspring,
+		MetricTotalDescendants:
+		return true
+	default:
+		return false
+	}
 }

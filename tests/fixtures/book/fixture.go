@@ -19,13 +19,20 @@ import (
 //go:embed fixtures/*.json
 var fixtureFiles embed.FS
 
+/*
+FixtureType selects the Kraken Level2 envelope represented by a fixture.
+*/
 type FixtureType string
 
 const (
-	SNAPSHOT FixtureType = "snapshot"
-	UPDATE   FixtureType = "update"
+	SNAPSHOT      FixtureType = "snapshot"
+	UPDATE        FixtureType = "update"
+	checksumDepth             = 10
 )
 
+/*
+Fixture yields template-backed standalone or market-driven Level2 frames.
+*/
 type Fixture struct {
 	horizon  int
 	sequence [][]byte
@@ -35,7 +42,12 @@ type Fixture struct {
 	typ      FixtureType
 }
 
-func NewFixture(typ FixtureType, horizon int) *Fixture {
+/*
+NewDecoderFixture repeats the embedded wire examples for parser tests. Dynamic
+market tests use NewMarket, whose checksums are derived from authoritative book
+state; this constructor does not claim its sequenced updates form a venue tape.
+*/
+func NewDecoderFixture(typ FixtureType, horizon int) *Fixture {
 	raw, err := fixtureFiles.ReadFile("fixtures/" + string(typ) + ".json")
 
 	if err != nil {
@@ -90,7 +102,6 @@ func (fixture *Fixture) sequencer(raw []byte) *Fixture {
 		for _, row := range rows(step) {
 			advanceLevels(row, "bids", i, -1)
 			advanceLevels(row, "asks", i, 1)
-			row["checksum"] = uint64(number(row, "checksum")) + uint64(i+1)
 			row["timestamp"] = advance(row["timestamp"].(string), time.Duration(i+1)*250*time.Millisecond)
 		}
 
@@ -106,6 +117,9 @@ func (fixture *Fixture) sequencer(raw []byte) *Fixture {
 	return fixture
 }
 
+/*
+Generate yields ready Kraken Level2 payloads in deterministic order.
+*/
 func (fixture *Fixture) Generate() iter.Seq[[]byte] {
 	if fixture.signal != nil {
 		return func(yield func([]byte) bool) {
@@ -277,7 +291,11 @@ func (fixture *Fixture) checksum(row map[string]any) uint32 {
 	checksum := uint32(0)
 
 	for _, side := range []string{"asks", "bids"} {
-		for _, entry := range row[side].([]any) {
+		for index, entry := range row[side].([]any) {
+			if index == checksumDepth {
+				break
+			}
+
 			level := entry.(map[string]any)
 			checksum = fixture.write(checksum, number(level, "price"))
 			checksum = fixture.write(checksum, number(level, "qty"))

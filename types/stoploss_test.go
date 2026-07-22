@@ -3,17 +3,16 @@ package types
 import (
 	"context"
 	"encoding/json"
-	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
 /*
-TestStoplossUnmarshalJSONPreservesUnlockedFloor proves recovery does not turn an
+TestStoplossRoundTripPreservesUnlockedFloor proves recovery does not turn an
 unearned ratchet floor into a break-even stop.
 */
-func TestStoplossUnmarshalJSONPreservesUnlockedFloor(t *testing.T) {
+func TestStoplossRoundTripPreservesUnlockedFloor(t *testing.T) {
 	Convey("Given a newly bound stop serialized before any profitable lift", t, func() {
 		bound := NewStoploss(context.Background())
 		bound.Bind(100, 0.02)
@@ -26,7 +25,7 @@ func TestStoplossUnmarshalJSONPreservesUnlockedFloor(t *testing.T) {
 		restored.Restore(100, &recovered)
 
 		Convey("Then a flat mark remains above the adverse survival floor", func() {
-			So(math.IsInf(restored.LockedFloor, -1), ShouldBeTrue)
+			So(restored.LockedFloor, ShouldEqual, 0)
 			verdict := restored.Update(StopEvidence{
 				Symbol:  "AAA/USD",
 				Mark:    100,
@@ -157,7 +156,7 @@ func TestStoplossWidenSurvivalWhileUnlocked(t *testing.T) {
 			lift := NewStoploss(context.Background())
 			_ = lift.Update(testEvidence(100, 100, 0.02, 0.05, 0.0004))
 			peaked := lift.Update(testEvidence(104, 100, 0.02, 0.05, 0.0004))
-			So(math.IsInf(peaked.LockedFloor, -1), ShouldBeFalse)
+			So(peaked.LockedFloor, ShouldBeGreaterThan, 0)
 
 			before := lift.FloorDistance
 			lift.WidenSurvival(before + 0.05)
@@ -167,8 +166,8 @@ func TestStoplossWidenSurvivalWhileUnlocked(t *testing.T) {
 		Convey("When an unlocked stop already ratcheted under a partial peak", func() {
 			partial := NewStoploss(context.Background())
 			partial.Bind(100, 0.05)
-			partial.Trail.Advance(0.02)
-			So(math.IsInf(partial.LockedFloor, -1), ShouldBeTrue)
+			partial.ObserveMark(102)
+			So(partial.LockedFloor, ShouldEqual, 0)
 			before := partial.StopReturn
 
 			partial.WidenSurvival(0.08)
@@ -219,7 +218,6 @@ func TestStoplossLockedFloorRatchetsUnderCalibratedForecast(t *testing.T) {
 		lift := stop.Update(testEvidence(104, 100, 0.02, 0.05, 0.0004))
 
 		Convey("Then LockedFloor is finite and positive", func() {
-			So(math.IsInf(lift.LockedFloor, -1), ShouldBeFalse)
 			So(lift.LockedFloor, ShouldBeGreaterThan, 0)
 		})
 	})
@@ -245,7 +243,7 @@ func TestStoplossUpdateFreezesUnderRetreat(t *testing.T) {
 
 		Convey("Then Action holds and LockedFloor stays unlocked", func() {
 			So(adverse.Action, ShouldEqual, "hold")
-			So(math.IsInf(stop.LockedFloor, -1), ShouldBeTrue)
+			So(stop.LockedFloor, ShouldEqual, 0)
 			So(adverse.MarkReturn, ShouldBeLessThan, 0)
 		})
 	})

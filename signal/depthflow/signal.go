@@ -2,15 +2,14 @@ package depthflow
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"time"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -27,18 +26,30 @@ type Signal struct {
 	ui       chan []byte
 }
 
+/*
+NewSignal creates depth-flow state shared by the causally ordered book and
+trade observations in each central market cut.
+*/
 func NewSignal(
-	ctx context.Context, api *websocket.API, instrument *broker.Instrument, ui chan []byte,
-) *Signal {
+	ctx context.Context,
+	ui chan []byte,
+	historyCapacity int,
+) (*Signal, error) {
 	ctx, cancel := context.WithCancel(ctx)
+	sample, err := flow.NewSample(historyCapacity)
+
+	if err != nil {
+		cancel()
+		return nil, err
+	}
 
 	return &Signal{
 		ctx:      ctx,
 		cancel:   cancel,
-		sample:   flow.NewSample(),
+		sample:   sample,
 		bookflow: equation.NewBookflow(),
 		ui:       ui,
-	}
+	}, nil
 }
 
 /*
@@ -48,7 +59,7 @@ measured its evidence, mirroring broker.Balance.Publish.
 func (signal *Signal) Publish(measurements []*types.Measurement) {
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": types.WireMeasurements(measurements),
+		"measurements": types.ForPublish(measurements),
 	}.Marshal():
 	default:
 	}
@@ -62,18 +73,11 @@ func (signal *Signal) Interest() types.StreamInterest {
 }
 
 /*
-Measure supports direct replay against legacy signal-local journals. The live
-runtime uses Calculate with the central immutable market cut.
+Measure returns typed measurements for the cut, or an error when the
+cut cannot be measured honestly.
 */
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	measurements, err := signal.Calculate(thesis.Market())
-
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	return measurements
+func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, error) {
+	return signal.Calculate(thesis.Market())
 }
 
 /*
@@ -83,17 +87,31 @@ so downstream logic consumes explicit evidence.
 func (signal *Signal) Calculate(
 	frame *types.MarketFrame,
 ) ([]*types.Measurement, error) {
+	if frame == nil {
+		return nil, fmt.Errorf("depthflow: market frame required")
+	}
+
 	events := depthEvents(frame.Books, frame.Trades)
 	out := make([]*types.Measurement, 0, len(events))
 
 	for _, event := range events {
 		if event.Stream == "book" {
-			measurements := signal.measureBook(event.Row.(kraken.BookData))
+			measurements, err := signal.measureBook(event.Row.(kraken.BookData))
+
+			if err != nil {
+				return nil, err
+			}
+
 			out = append(out, measurements...)
 			continue
 		}
 
-		measurements := signal.measureTrade(event.Row.(kraken.TradeData))
+		measurements, err := signal.measureTrade(event.Row.(kraken.TradeData))
+
+		if err != nil {
+			return nil, err
+		}
+
 		out = append(out, measurements...)
 	}
 
@@ -104,30 +122,33 @@ func (signal *Signal) Calculate(
 measureBook applies one book event to the shared flow sample and emits the
 resulting measurements only after both sample and equation report readiness.
 */
-func (signal *Signal) measureBook(row kraken.BookData) []*types.Measurement {
+func (signal *Signal) measureBook(
+	row kraken.BookData,
+) ([]*types.Measurement, error) {
 	if row.Symbol == "" {
-		return nil
+		return nil, fmt.Errorf("depthflow: book symbol required")
 	}
 
-	if row.PriceIncrement == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"depthflow: price increment required for "+row.Symbol,
-			nil,
-		))
-
-		return nil
+	if row.Timestamp.IsZero() {
+		return nil, fmt.Errorf("depthflow: book timestamp required for %s", row.Symbol)
 	}
 
-	if row.PriceIncrement.Sign() <= 0 {
-		return nil
+	if row.PriceIncrement == nil || row.PriceIncrement.Sign() <= 0 {
+		return nil, fmt.Errorf("depthflow: positive price increment required for %s", row.Symbol)
 	}
 
 	bids, asks, err := types.BookLevels(row)
 
 	if err != nil {
-		errnie.Error(err)
-		return nil
+		return nil, fmt.Errorf("depthflow: project %s book levels: %w", row.Symbol, err)
+	}
+
+	// Kraken book rows are atomic. Applying removals first prevents replacement
+	// array order from changing which prior level counts as the cancelled touch.
+	for _, levels := range [][]flow.BookLevel{bids, asks} {
+		sort.SliceStable(levels, func(left, right int) bool {
+			return levels[left].Quantity == 0 && levels[right].Quantity > 0
+		})
 	}
 
 	input, ready, maturity, err := signal.sample.MeasureBook(flow.BookInput{
@@ -138,35 +159,35 @@ func (signal *Signal) measureBook(row kraken.BookData) []*types.Measurement {
 	})
 
 	if err != nil {
-		errnie.Error(err)
-		return nil
+		return nil, fmt.Errorf("depthflow: measure %s book: %w", row.Symbol, err)
 	}
 
 	if !ready {
-		return nil
+		return nil, nil
 	}
 
 	output, err := signal.bookflow.Measure(input)
 
 	if err != nil {
-		errnie.Error(err)
-		return nil
+		return nil, fmt.Errorf("depthflow: classify %s book: %w", row.Symbol, err)
 	}
 
 	if !output.Ready {
-		return nil
+		return nil, nil
 	}
 
-	return signal.measurements(row.Symbol, row.Timestamp, output, maturity)
+	return signal.measurements(row.Symbol, row.Timestamp, output, maturity), nil
 }
 
 /*
 measureTrade applies one trade event to the shared flow sample at its causal
 position in the merged entity timeline.
 */
-func (signal *Signal) measureTrade(row kraken.TradeData) []*types.Measurement {
-	if row.Symbol == "" || row.Price.Sign() <= 0 || row.Qty <= 0 {
-		return nil
+func (signal *Signal) measureTrade(
+	row kraken.TradeData,
+) ([]*types.Measurement, error) {
+	if row.Symbol == "" || row.Price.Sign() <= 0 || row.Qty <= 0 || row.Timestamp.IsZero() {
+		return nil, fmt.Errorf("depthflow: complete positive trade required")
 	}
 
 	input, ready, maturity, err := signal.sample.MeasureTrade(flow.TradeInput{
@@ -177,26 +198,24 @@ func (signal *Signal) measureTrade(row kraken.TradeData) []*types.Measurement {
 	})
 
 	if err != nil {
-		errnie.Error(err)
-		return nil
+		return nil, fmt.Errorf("depthflow: measure %s trade: %w", row.Symbol, err)
 	}
 
 	if !ready {
-		return nil
+		return nil, nil
 	}
 
 	output, err := signal.bookflow.Measure(input)
 
 	if err != nil {
-		errnie.Error(err)
-		return nil
+		return nil, fmt.Errorf("depthflow: classify %s trade: %w", row.Symbol, err)
 	}
 
 	if !output.Ready {
-		return nil
+		return nil, nil
 	}
 
-	return signal.measurements(row.Symbol, row.Timestamp, output, maturity)
+	return signal.measurements(row.Symbol, row.Timestamp, output, maturity), nil
 }
 
 /*
@@ -290,13 +309,8 @@ func (signal *Signal) measurements(
 Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
-func (signal *Signal) Close() (err error) {
-	err = errnie.Error(errnie.Err(
-		errnie.Internal,
-		"signal: close failed",
-		nil,
-	))
-
+func (signal *Signal) Close() error {
 	signal.cancel()
-	return err
+
+	return nil
 }

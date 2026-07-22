@@ -157,37 +157,31 @@ func (analyzer *Analyzer) attachCategoryEvidence(
 }
 
 /*
-publishGraphs emits composed evidence-graph wire frames so the thesis modal can
-render measurement relationships for the focused symbol.
+publishGraphs emits composed evidence graphs so the thesis modal can render
+measurement relationships for the focused symbol.
 */
 func (analyzer *Analyzer) publishGraphs(thesis *types.Thesis) {
 	if thesis == nil || thesis.Graphs == nil {
 		return
 	}
 
-	frames := make([]types.GraphFrame, 0)
+	graphs := make([]*types.Graph, 0)
 
 	thesis.Graphs.Range(func(_, value any) bool {
 		evidenceGraph, ok := value.(*types.Graph)
 
-		if !ok || evidenceGraph == nil {
+		if !ok || evidenceGraph == nil || len(evidenceGraph.Nodes()) == 0 {
 			return true
 		}
 
-		frame := evidenceGraph.Frame()
-
-		if len(frame.Nodes) == 0 {
-			return true
-		}
-
-		frames = append(frames, frame)
+		graphs = append(graphs, evidenceGraph)
 
 		return true
 	})
 
-	if len(frames) == 0 {
+	if len(graphs) == 0 {
 		return
 	}
 
-	analyzer.publish(datura.Map[any]{"graphs": frames})
+	analyzer.publish(datura.Map[any]{"graphs": graphs})
 }

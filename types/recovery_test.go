@@ -11,7 +11,11 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestCaptureRecoveryNaNSafe(t *testing.T) {
+/*
+TestCaptureRecovery proves durable state rejects non-finite stop geometry
+instead of silently replacing economic values with zero.
+*/
+func TestCaptureRecovery(t *testing.T) {
 	Convey("Given an open holding with non-finite stop geometry", t, func() {
 		qty := decimal.NewFromFloat64(1.5)
 		weight := math.NaN()
@@ -23,24 +27,19 @@ func TestCaptureRecoveryNaNSafe(t *testing.T) {
 				Qty:    qty,
 				Status: OPEN,
 				Stoploss: &Stoploss{
-					Skill: Skill{Weight: weight},
-					Trail: Trail{PeakReturn: peak},
+					Weight:     weight,
+					PeakReturn: peak,
 				},
 			},
 		}
 
 		Convey("When CaptureRecovery builds the checkpoint", func() {
-			recovery := CaptureRecovery(9, open, nil, nil)
+			recovery, err := CaptureRecovery(9, open, nil, nil)
 
-			Convey("Then encoding/json accepts the payload", func() {
-				So(recovery, ShouldNotBeNil)
-				So(recovery.Holdings, ShouldContainKey, "ONDO/USD")
-				So(math.IsNaN(recovery.Holdings["ONDO/USD"].Stoploss.Weight), ShouldBeFalse)
-				So(math.IsInf(recovery.Holdings["ONDO/USD"].Stoploss.PeakReturn, 0), ShouldBeFalse)
-
-				payload, err := json.Marshal(recovery)
-				So(err, ShouldBeNil)
-				So(len(payload), ShouldBeGreaterThan, 0)
+			Convey("Then it should expose the invalid durable state", func() {
+				So(recovery, ShouldBeNil)
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "non-finite weight")
 			})
 		})
 	})
@@ -87,6 +86,21 @@ func TestSaveLoadRecovery(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(loaded, ShouldBeNil)
 		})
+
+		Convey("When manually assembled recovery contains a non-finite stop", func() {
+			original.Holdings["UAI/USD"] = Holding{
+				Symbol: "UAI/USD",
+				Qty:    qty,
+				Status: OPEN,
+				Stoploss: &Stoploss{
+					Weight: math.Inf(1),
+				},
+			}
+			err := SaveRecovery(dir, original)
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "non-finite weight")
+		})
 	})
 }
 
@@ -103,16 +117,14 @@ func TestHoldingEnrich(t *testing.T) {
 			Symbol:     "ONDO/USD",
 			EntryPrice: entry,
 			Stoploss: &Stoploss{
-				Skill:  Skill{Weight: 0.4},
-				Action: "hold",
-				Trail: Trail{
-					LockedFloor:   0.03,
-					PeakReturn:    0.08,
-					MarkReturn:    0.05,
-					TrailDistance: 0.02,
-					StopReturn:    0.03,
-					FloorDistance: 0.02,
-				},
+				Weight:        0.4,
+				Action:        "hold",
+				LockedFloor:   0.03,
+				PeakReturn:    0.08,
+				MarkReturn:    0.05,
+				TrailDistance: 0.02,
+				StopReturn:    0.03,
+				FloorDistance: 0.02,
 			},
 		}
 		recovered.Stoploss.NoteRetreat(0.9)
@@ -155,16 +167,20 @@ func BenchmarkCaptureRecovery(b *testing.B) {
 	open := map[string]Holding{
 		"BTC/USD": {
 			Symbol: "BTC/USD", Qty: qty, Status: OPEN,
-			Stoploss: &Stoploss{Skill: Skill{Weight: 0.5}},
+			Stoploss: &Stoploss{Weight: 0.5},
 		},
 	}
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = CaptureRecovery(1, open, map[string]PendingOrderWire{
+		_, err := CaptureRecovery(1, open, map[string]PendingOrderWire{
 			"BTC/USD": {Symbol: "BTC/USD", Side: "sell", OrderID: "oid", Intent: "exit_pending"},
 		}, nil)
+
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

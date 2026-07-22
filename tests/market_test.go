@@ -139,6 +139,22 @@ func TestMarket_Apply(t *testing.T) {
 			}, func() error { return nil }), ShouldNotBeNil)
 			So(market.Now(), ShouldEqual, start.Add(time.Second))
 		})
+
+		Convey("A production feed rejection makes later application fail-stop", func() {
+			consumerErr := errors.New("ticker rejected")
+			market.Public.On("ticker", func([]byte) { market.Public.Report(consumerErr) })
+			So(market.Apply(MarketStep{
+				Advance: time.Second,
+				Actions: []MarketAction{{
+					Kind: MarketTrade, Symbol: "SIM1/USD", Side: "buy", Qty: 1,
+				}},
+			}, func() error { return nil }), ShouldNotBeNil)
+			failedAt := market.Now()
+			So(market.Apply(MarketStep{
+				Advance: time.Second,
+			}, func() error { return nil }), ShouldNotBeNil)
+			So(market.Now(), ShouldEqual, failedAt)
+		})
 	})
 
 	Convey("Given two identical multi-symbol markets", t, func() {
@@ -195,6 +211,29 @@ func TestMarket_Apply(t *testing.T) {
 }
 
 /*
+TestMarket_Bootstrap proves no event can enter the simulated venue before its
+Kraken snapshots establish complete trade, ticker, book, and Level3 state.
+*/
+func TestMarket_Bootstrap(t *testing.T) {
+	Convey("Given a market whose source snapshots have not been installed", t, func() {
+		market := NewMarket(t.Context(), 1)
+		invocations := 0
+		callback := func() error {
+			invocations++
+			return nil
+		}
+
+		So(market.Apply(MarketStep{Advance: time.Second}, callback), ShouldNotBeNil)
+		So(market.Warmup(callback), ShouldNotBeNil)
+		So(market.Transition(MarketStateBaseline, callback), ShouldNotBeNil)
+		So(invocations, ShouldEqual, 0)
+
+		market.Close()
+		So(market.Bootstrap(), ShouldNotBeNil)
+	})
+}
+
+/*
 BenchmarkMarket_Apply measures one complete generated, validated, and delivered
 market step through the mock Conn boundary.
 */
@@ -213,8 +252,11 @@ func BenchmarkMarket_Apply(b *testing.B) {
 			Advance: time.Second,
 			Actions: []MarketAction{
 				{Kind: MarketTrade, Symbol: "SIM1/USD", Side: "buy", Qty: 1},
+				{Kind: MarketRefill, Symbol: "SIM1/USD", Side: "sell", Qty: 1},
 				{Kind: MarketTrade, Symbol: "SIM2/USD", Side: "sell", Qty: 1},
+				{Kind: MarketRefill, Symbol: "SIM2/USD", Side: "buy", Qty: 1},
 				{Kind: MarketTrade, Symbol: "SIM3/USD", Side: "buy", Qty: 1},
+				{Kind: MarketRefill, Symbol: "SIM3/USD", Side: "sell", Qty: 1},
 			},
 		}, func() error { return nil }); err != nil {
 			b.Fatal(err)

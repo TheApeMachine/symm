@@ -18,22 +18,9 @@ type Balance struct {
 }
 
 type BalanceData struct {
-	LedgerID   string           `json:"ledger_id"`
-	RefID      string           `json:"ref_id"`
-	Timestamp  time.Time        `json:"timestamp"`
-	Type       string           `json:"type"`
-	Subtype    string           `json:"subtype"`
 	Asset      string           `json:"asset"`
 	AssetClass string           `json:"asset_class"`
-	Category   string           `json:"category"`
-	WalletType string           `json:"wallet_type"`
-	WalletID   string           `json:"wallet_id"`
-	Amount     *decimal.Decimal `json:"amount"`
-	Fee        *decimal.Decimal `json:"fee"`
 	Balance    *decimal.Decimal `json:"balance"`
-	Available  *decimal.Decimal `json:"available"`
-	Reserved   *decimal.Decimal `json:"reserved"`
-	User       string           `json:"user"`
 	Wallets    []Wallet         `json:"wallets"`
 }
 
@@ -125,9 +112,7 @@ func NewBalanceFromMap(model datura.Map[any]) *Balance {
 		out.Data = append(out.Data, BalanceData{
 			Asset:      asset,
 			AssetClass: "currency",
-			Available:  decimal.NewFromFloat64(entry["available"].(float64)),
 			Balance:    total,
-			Reserved:   decimal.NewFromFloat64(entry["reserved"].(float64)),
 			Wallets: []Wallet{
 				{
 					Type:    "spot",

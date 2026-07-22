@@ -3,6 +3,7 @@ package mockapi
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"testing"
 	"time"
 
@@ -35,6 +36,14 @@ func TestPaperHandle(t *testing.T) {
 		conn.On("add_order", func(payload []byte) { acks = append(acks, payload) })
 		conn.On("executions", func(payload []byte) { executions = append(executions, payload) })
 		conn.On("balances", func(payload []byte) { balances = append(balances, payload) })
+		So(conn.Write(json.RawMessage(
+			`{"method":"subscribe","params":{"channel":"executions"}}`,
+		)), ShouldBeNil)
+		So(conn.Write(json.RawMessage(
+			`{"method":"subscribe","params":{"channel":"balances"}}`,
+		)), ShouldBeNil)
+		executions = nil
+		balances = nil
 
 		Convey("A market buy fills at the ask and updates both wallets", func() {
 			request := json.RawMessage(`{"method":"add_order","req_id":7,"params":{` +
@@ -131,6 +140,101 @@ func TestPaperHandle(t *testing.T) {
 			So(executions, ShouldHaveLength, 4)
 			So(string(executions[2]), ShouldContainSubstring, `"order_id":"PAPER-00001"`)
 			So(string(executions[3]), ShouldContainSubstring, `"order_id":"PAPER-00002"`)
+		})
+
+		Convey("A rejected request does not consume a venue order identity", func() {
+			So(conn.Write(json.RawMessage(
+				`{"method":"add_order","params":{"order_type":"limit",`+
+					`"side":"buy","limit_price":100,"order_qty":1e999,`+
+					`"symbol":"SIM1/USD"}}`,
+			)), ShouldNotBeNil)
+			So(conn.Write(json.RawMessage(
+				`{"method":"add_order","params":{"order_type":"limit",`+
+					`"side":"buy","limit_price":100,"order_qty":0,"symbol":"SIM1/USD"}}`,
+			)), ShouldNotBeNil)
+			So(conn.Write(json.RawMessage(
+				`{"method":"add_order","params":{"order_type":"limit",`+
+					`"side":"buy","limit_price":100,"order_qty":1,"symbol":"SIM1/USD"}}`,
+			)), ShouldBeNil)
+			open, err := conn.OpenOrders()
+			So(err, ShouldBeNil)
+			So(open, ShouldContainKey, "PAPER-00001")
+		})
+	})
+
+	Convey("Given paper handlers without accepted private subscriptions", t, func() {
+		conn := NewConn("SIM1/USD")
+		So(conn.EnablePaper(PaperOptions{
+			Quote: func(string) (float64, float64, float64, float64, bool) {
+				return 99, 10, 101, 10, true
+			},
+			Now:      time.Now,
+			Balances: map[string]float64{"USD": 1000},
+			MakerFee: 0.005,
+			TakerFee: 0.01,
+		}), ShouldBeNil)
+		acks := 0
+		executions := 0
+		balances := 0
+		conn.On("add_order", func([]byte) { acks++ })
+		conn.On("executions", func([]byte) { executions++ })
+		conn.On("balances", func([]byte) { balances++ })
+
+		Convey("An order response should not bypass the private venue boundary", func() {
+			So(conn.Write(json.RawMessage(
+				`{"method":"add_order","params":{"order_type":"market",`+
+					`"side":"buy","order_qty":1,"symbol":"SIM1/USD"}}`,
+			)), ShouldBeNil)
+			So(conn.Drain(), ShouldBeNil)
+			So(acks, ShouldEqual, 1)
+			So(executions, ShouldEqual, 0)
+			So(balances, ShouldEqual, 0)
+		})
+	})
+}
+
+/*
+TestPaperMatch proves a batch that exceeds shared touch depth leaves balances,
+reservations, open orders, and private sequence counters unchanged.
+*/
+func TestPaperMatch(t *testing.T) {
+	Convey("Given two resting orders whose total exceeds displayed liquidity", t, func() {
+		ask := 101.0
+		conn := NewConn("SIM1/USD")
+		So(conn.EnablePaper(PaperOptions{
+			Quote: func(string) (float64, float64, float64, float64, bool) {
+				return 99, 10, ask, 10, true
+			},
+			Now:      time.Now,
+			Balances: map[string]float64{"USD": 10_000},
+			MakerFee: 0.005,
+			TakerFee: 0.01,
+		}), ShouldBeNil)
+
+		for requestID := range 2 {
+			request := json.RawMessage(fmt.Sprintf(
+				`{"method":"add_order","req_id":%d,"params":{`+
+					`"order_type":"limit","side":"buy","limit_price":100,`+
+					`"order_qty":6,"symbol":"SIM1/USD"}}`,
+				requestID,
+			))
+			So(conn.Write(request), ShouldBeNil)
+			So(conn.Drain(), ShouldBeNil)
+		}
+
+		beforeBalances := maps.Clone(conn.paper.balances)
+		beforeReserved := maps.Clone(conn.paper.reserved)
+		beforeExecutions := conn.paper.nextExec
+		ask = 100
+
+		Convey("Matching should reject and roll back the complete batch", func() {
+			So(conn.MatchPaper(), ShouldNotBeNil)
+			So(conn.paper.balances, ShouldResemble, beforeBalances)
+			So(conn.paper.reserved, ShouldResemble, beforeReserved)
+			So(conn.paper.nextExec, ShouldEqual, beforeExecutions)
+			open, err := conn.OpenOrders()
+			So(err, ShouldBeNil)
+			So(open, ShouldHaveLength, 2)
 		})
 	})
 }

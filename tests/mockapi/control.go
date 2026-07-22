@@ -145,6 +145,17 @@ func (control *Control) Subscriptions(channel string) []string {
 }
 
 /*
+Subscribed reports whether the venue accepted a subscription for one channel,
+including private channels that do not carry a symbol list.
+*/
+func (control *Control) Subscribed(channel string) bool {
+	control.mu.Lock()
+	defer control.mu.Unlock()
+	_, exists := control.subscriptions[channel]
+	return exists
+}
+
+/*
 FailWrites injects an error before any subscription or order side effect.
 */
 func (control *Control) FailWrites(err error) {
@@ -195,8 +206,17 @@ func (control *Control) unsubscribe(channel string, symbols []string) {
 	control.mu.Lock()
 	defer control.mu.Unlock()
 
+	if len(symbols) == 0 {
+		delete(control.subscriptions, channel)
+		return
+	}
+
 	for _, symbol := range symbols {
 		delete(control.subscriptions[channel], symbol)
+	}
+
+	if len(control.subscriptions[channel]) == 0 {
+		delete(control.subscriptions, channel)
 	}
 }
 

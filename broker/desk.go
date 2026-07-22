@@ -2,12 +2,8 @@ package broker
 
 import (
 	"slices"
-	"sort"
 	"sync"
-	"sync/atomic"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -15,18 +11,14 @@ import (
 )
 
 type Desk struct {
-	status         types.Status
-	api            *websocket.API
-	instrument     *Instrument
-	price          *Price
-	balance        *Balance
-	positions      *sync.Map
-	marks          Marks
-	maxPositions   int
-	maxReserved    int
-	publishPending atomic.Bool
-	bound          atomic.Bool
-	onInventory    atomic.Value
+	status       types.Status
+	api          *websocket.API
+	instrument   *Instrument
+	price        *Price
+	balance      *Balance
+	positions    *sync.Map
+	maxPositions int
+	maxReserved  int
 }
 
 func NewDesk(
@@ -44,23 +36,16 @@ func NewDesk(
 		price:        price,
 		balance:      balance,
 		positions:    positions,
-		marks:        Marks{positions: positions},
 		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
 		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
 	}
 }
 
 /*
-Initialize binds desk-level order/execution/ticker handlers once,
-subscribes to executions, and adopts Balance-seeded holdings from restart.
+Initialize subscribes to executions and publishes the initial balance frame.
 */
 func (desk *Desk) Initialize() error {
 	errnie.Info("initializing desk")
-	desk.bind()
-
-	if desk.price != nil {
-		desk.price.RouteMarks(desk.Mark)
-	}
 
 	if err := desk.api.SubscribeExecutions(); err != nil {
 		desk.status = types.ERROR
@@ -72,7 +57,6 @@ func (desk *Desk) Initialize() error {
 		))
 	}
 
-	desk.adoptOpen()
 	desk.status = types.READY
 
 	if desk.balance != nil {
@@ -80,52 +64,6 @@ func (desk *Desk) Initialize() error {
 	}
 
 	return nil
-}
-
-/*
-AdoptOpen wraps Balance-seeded restart inventory in Position shells so ticker
-marks and exits can reach recovered lots. Safe to call again after instrument
-metadata arrives — early Initialize often runs before Pair lookups succeed.
-*/
-func (desk *Desk) AdoptOpen() {
-	desk.adoptOpen()
-}
-
-/*
-adoptOpen wraps Balance-seeded restart inventory in Position shells so ticker
-marks and exits can reach recovered lots. Safe to call again after instrument
-metadata arrives — early Initialize often runs before Pair lookups succeed.
-*/
-func (desk *Desk) adoptOpen() {
-	if desk == nil || desk.balance == nil || desk.instrument == nil {
-		return
-	}
-
-	for holding := range desk.balance.Holdings() {
-		if _, exists := desk.positions.Load(holding.Symbol); exists {
-			continue
-		}
-
-		pair, err := desk.instrument.Pair(holding.Symbol)
-
-		if err != nil {
-			continue
-		}
-
-		position := NewPosition(
-			desk.api,
-			desk.instrument,
-			desk.price,
-			desk.balance,
-			pair,
-		)
-		position.status = types.OPEN
-		position.onTerminal = desk.evict
-		lot := holding
-		position.TakeStop(&lot)
-		desk.balance.holdings.Store(holding.Symbol, &lot)
-		desk.positions.Store(holding.Symbol, position)
-	}
 }
 
 func (desk *Desk) Status() types.Status {
@@ -143,7 +81,8 @@ func (desk *Desk) Update() {
 		if slices.Contains([]types.Status{
 			types.CLOSED, types.ERROR, types.CANCELED,
 		}, position.Status()) {
-			desk.evict(position.pair.Symbol)
+			position.Close()
+			desk.positions.Delete(position.pair.Symbol)
 			return true
 		}
 
@@ -160,7 +99,7 @@ func (desk *Desk) Update() {
 		}
 
 		position.status = types.CLOSED
-		desk.evict(position.pair.Symbol)
+		desk.positions.Delete(position.pair.Symbol)
 
 		return true
 	})
@@ -174,8 +113,6 @@ tick publishing should use HoldingCount instead to avoid this work every cut.
 */
 func (desk *Desk) OpenPositions() int {
 	desk.Update()
-	desk.adoptOpen()
-
 	return desk.HoldingCount()
 }
 
@@ -197,196 +134,47 @@ func (desk *Desk) HoldingCount() int {
 	return count
 }
 
-/*
-Position returns the live position shell for symbol, adopting restart inventory
-when the instrument registry can resolve the pair.
-*/
 func (desk *Desk) Position(symbol string) (*Position, bool) {
-	if desk == nil || symbol == "" {
-		return nil, false
-	}
-
-	desk.adoptOpen()
 	value, ok := desk.positions.Load(symbol)
 
 	if !ok {
 		return nil, false
 	}
 
-	position, ok := value.(*Position)
-
-	return position, ok && position != nil
-}
-
-/*
-Pending reports whether symbol already has an outstanding broker order.
-*/
-func (desk *Desk) Pending(symbol string) bool {
-	position, ok := desk.Position(symbol)
-
-	return ok && desk.marks.Pending(position)
-}
-
-/*
-PendingSymbols returns outstanding entry/exit/reduce intents for recovery.
-*/
-func (desk *Desk) PendingSymbols() map[string]types.PendingOrderWire {
-	if desk == nil {
-		return map[string]types.PendingOrderWire{}
-	}
-
-	return desk.marks.PendingSymbols()
-}
-
-/*
-ReconcilePending re-arms recovered pending intents against the live exchange
-open-order set. adoptOpen runs first so restart inventory has Position shells;
-each pending wire whose OrderID still resolves in the venue open set is restored
-on its Position so Trader will not re-submit. Wires with no matching open order
-are explicitly resolved as stale by the exchange ledger. It returns resting
-order IDs that could not be attached so recovery remains gated for retry.
-*/
-func (desk *Desk) ReconcilePending(
-	pending map[string]types.PendingOrderWire,
-	open map[string]spot.Order,
-) []string {
-	if desk == nil || len(pending) == 0 {
-		return nil
-	}
-
-	desk.adoptOpen()
-	unresolved := make([]string, 0)
-
-	for symbol, wire := range pending {
-		if wire.OrderID == "" {
-			continue
-		}
-
-		if _, resting := open[wire.OrderID]; !resting {
-			continue
-		}
-
-		value, ok := desk.positions.Load(symbol)
-
-		if !ok {
-			unresolved = append(unresolved, wire.OrderID)
-			continue
-		}
-
-		position, ok := value.(*Position)
-
-		if !ok || position == nil {
-			unresolved = append(unresolved, wire.OrderID)
-			continue
-		}
-
-		position.RestorePending(wire)
-	}
-
-	sort.Strings(unresolved)
-
-	return unresolved
+	return value.(*Position), true
 }
 
 func (desk *Desk) Buy(
-	holding types.Holding,
+	holding *types.Holding,
 	opportunity bool,
 ) (*Position, error) {
-	return desk.BuyAfter(holding, opportunity, 0, "")
-}
-
-/*
-BuyAfter places an entry. freeing is retained for Arbiter selection probes; the
-trade path passes zero so challenger buys wait for real inventory exits (fill
-gate) rather than optimistic sell-submit credit.
-*/
-func (desk *Desk) BuyAfter(
-	holding types.Holding,
-	opportunity bool,
-	freeing int,
-	reservationID string,
-) (*Position, error) {
-	desk.bind()
-	openPositions := max(desk.OpenPositions()-freeing, 0)
-
-	if openPositions >= desk.maxPositions+desk.maxReserved {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"desk at max positions and reserved",
-			nil,
-		))
-	}
-
-	if openPositions >= desk.maxPositions && !opportunity {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"desk at max positions",
-			nil,
-		))
-	}
-
-	if _, exists := desk.positions.Load(holding.Symbol); exists {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"position already exists for "+holding.Symbol,
-			nil,
-		))
-	}
-
 	pair, err := desk.instrument.Pair(holding.Symbol)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to get instrument pair for "+holding.Symbol,
+			errnie.NotFound,
+			"desk: instrument pair unavailable for "+holding.Symbol,
 			err,
 		))
 	}
 
 	position := NewPosition(
-		desk.api,
-		desk.instrument,
-		desk.price,
-		desk.balance,
-		pair,
+		desk.api, desk.instrument, desk.price, desk.balance, pair,
 	)
-	position.onTerminal = desk.evict
-	position.claim.Bind(desk.balance, reservationID)
 
-	seed := holding
-	position.TakeStop(&seed)
-	desk.balance.holdings.Store(holding.Symbol, &seed)
-	desk.positions.Store(holding.Symbol, position)
-
-	if err := position.Enter(); err != nil {
-		position.claim.Release()
-		desk.evict(holding.Symbol)
-
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to enter position",
-			err,
-		))
+	if err := position.Enter(holding); err != nil {
+		return nil, err
 	}
+
+	desk.positions.Store(holding.Symbol, position)
 
 	return position, nil
 }
 
 /*
-Mark applies a Price-cache mark to an open lot after a single ticker decode.
+Sell exits the full desk-owned lot for symbol.
 */
-func (desk *Desk) Mark(symbol string) {
-	if desk == nil {
-		return
-	}
-
-	desk.marks.Apply(symbol)
-}
-
-/*
-Sell submits a full exit (nil quantity) or a partial reduce for a desk-owned lot.
-*/
-func (desk *Desk) Sell(symbol string, quantity *decimal.Decimal) error {
+func (desk *Desk) Sell(symbol string) error {
 	position, ok := desk.Position(symbol)
 
 	if !ok {
@@ -397,7 +185,7 @@ func (desk *Desk) Sell(symbol string, quantity *decimal.Decimal) error {
 		))
 	}
 
-	return position.Sell(quantity)
+	return position.Exit()
 }
 
 func (desk *Desk) Close() error {
@@ -405,86 +193,17 @@ func (desk *Desk) Close() error {
 }
 
 func (desk *Desk) HasSlot(opportunity bool) bool {
-	return desk.HasSlotAfter(opportunity, 0)
-}
-
-/*
-HasSlotAfter reports whether an enter fits after counting same-tick full exits
-as freed capacity — required for rotate to clear the slot ceiling in one tick.
-*/
-func (desk *Desk) HasSlotAfter(opportunity bool, freeing int) bool {
-	openPositions := max(desk.OpenPositions()-freeing, 0)
-
-	if openPositions >= desk.maxPositions+desk.maxReserved {
-		return false
+	if !opportunity {
+		return desk.OpenPositions() < desk.maxPositions
 	}
 
-	if openPositions >= desk.maxPositions && !opportunity {
-		return false
-	}
-
-	return true
+	return desk.OpenPositions() < desk.MaxSlots(opportunity)
 }
 
-/*
-SetSlots overrides normal and reserved capacity. Fixtures use this so parallel
-tests do not race on process-wide viper values after Desk construction.
-*/
-func (desk *Desk) SetSlots(normal, reserved int) {
-	if desk == nil {
-		return
-	}
-
-	desk.maxPositions = normal
-	desk.maxReserved = reserved
-}
-
-/*
-Free returns free normal and reserved slot counts given how many positions are
-already open. Desk owns the slot arithmetic so Planner never re-derives it.
-*/
-func (desk *Desk) Free(open int) (normal, reserved int) {
-	if desk == nil {
-		return 0, 0
-	}
-
-	normal = max(0, desk.NormalSlots()-open)
-	reserved = max(0, desk.MaxSlots()-open-normal)
-
-	return normal, reserved
-}
-
-/*
-MaxSlots returns the configured normal plus reserved capacity Decide may compete
-for. It is the ceiling, not the currently free count.
-*/
-func (desk *Desk) MaxSlots() int {
-	if desk == nil {
-		return 0
-	}
-
-	return desk.maxPositions + desk.maxReserved
-}
-
-/*
-NormalSlots returns the non-opportunity inventory ceiling.
-*/
-func (desk *Desk) NormalSlots() int {
-	if desk == nil {
-		return 0
+func (desk *Desk) MaxSlots(withReserved bool) int {
+	if withReserved {
+		return desk.maxPositions + desk.maxReserved
 	}
 
 	return desk.maxPositions
-}
-
-/*
-ReservedSlots returns overflow capacity that only opportunity entries may use
-once normal slots are full — the OXT-style ignition lane.
-*/
-func (desk *Desk) ReservedSlots() int {
-	if desk == nil {
-		return 0
-	}
-
-	return desk.maxReserved
 }

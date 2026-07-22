@@ -50,6 +50,7 @@ func fluidGridSettings(overrides map[string]any) map[string]any {
 		"signals.fluid.integration_interval":  100 * time.Millisecond,
 		"signals.fluid.idle_threshold":        5 * time.Second,
 		"signals.fluid.max_integration_steps": 50,
+		"signals.feed_track_capacity":         512,
 	}
 
 	for key, value := range overrides {

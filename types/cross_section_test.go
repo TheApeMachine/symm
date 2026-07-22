@@ -99,6 +99,10 @@ func TestCrossSectionMeasure(t *testing.T) {
 			So(leader, ShouldEqual, "BTC/USD")
 			So(threshold, ShouldAlmostEqual, 0.02)
 			So(crossSection.Breadth(), ShouldAlmostEqual, 2.0/3.0)
+
+			value, ok := crossSection.Metrics.Load("BTC/USD")
+			So(ok, ShouldBeTrue)
+			So(value.(SymbolMetric).RelativeSpread, ShouldAlmostEqual, 0.002)
 		})
 	})
 }
@@ -120,6 +124,28 @@ func TestCrossSectionMeasureReplacesSymbol(t *testing.T) {
 			metric := value.(SymbolMetric)
 			So(metric.LatestChange, ShouldAlmostEqual, 0.05)
 			So(metric.Volume, ShouldEqual, 20)
+		})
+	})
+}
+
+/*
+TestCrossSectionLeadership proves a moving symbol remains identifiable when
+the peer median is exactly zero rather than being erased with the scale.
+*/
+func TestCrossSectionLeadership(t *testing.T) {
+	Convey("Given one moving symbol and two unchanged peers", t, func() {
+		crossSection := NewCrossSection()
+		crossSection.Metrics.Store("BTC/USD", SymbolMetric{Symbol: "BTC/USD", LatestChange: 0.05})
+		crossSection.Metrics.Store("ETH/USD", SymbolMetric{Symbol: "ETH/USD"})
+		crossSection.Metrics.Store("SOL/USD", SymbolMetric{Symbol: "SOL/USD"})
+
+		Convey("When leadership is measured", func() {
+			leader, threshold := crossSection.Leadership()
+
+			Convey("Then the zero median should not hide the actual leader", func() {
+				So(leader, ShouldEqual, "BTC/USD")
+				So(threshold, ShouldEqual, 0)
+			})
 		})
 	})
 }

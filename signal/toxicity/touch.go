@@ -1,14 +1,15 @@
 package toxicity
 
 import (
+	"fmt"
+
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 )
 
 /*
-touchSide names which best touch level absorbed a trade when attribution is
-unambiguous within the symbol's price increment lattice.
+touchSide names the exact resting touch consumed by one public trade.
 */
 type touchSide int
 
@@ -19,162 +20,55 @@ const (
 )
 
 /*
-touchToleranceTicks returns the maximum tick distance that still counts as a
-touch fill. One live price increment maps to one tick on Kraken's lattice.
-The tolerance stays at one tick until per-symbol touch statistics exist.
-*/
-func touchToleranceTicks(increment *decimal.Decimal) int64 {
-	if increment == nil || increment.Sign() <= 0 {
-		return 0
-	}
-
-	return 1
-}
-
-/*
-tickDistanceFromTouch measures how many ticks separate tradePrice from
-touchPrice after both prices are normalized to increment.
-*/
-func tickDistanceFromTouch(
-	tradePrice decimal.Decimal,
-	touchPrice *decimal.Decimal,
-	increment decimal.Decimal,
-) (int64, bool) {
-	if touchPrice == nil {
-		return 0, false
-	}
-
-	tradeTick, tradeErr := kraken.PriceTick(tradePrice, increment)
-	touchTick, touchErr := kraken.PriceTick(*touchPrice, increment)
-
-	if tradeErr != nil || touchErr != nil {
-		return 0, false
-	}
-
-	delta := tradeTick - touchTick
-
-	if delta < 0 {
-		delta = -delta
-	}
-
-	return delta, true
-}
-
-/*
-sideWithinTouch reports whether tradePrice matches touchPrice within tolerance
-ticks, falling back to exact equality when either price is off the increment
-lattice.
-*/
-func sideWithinTouch(
-	tradePrice decimal.Decimal,
-	touchPrice *decimal.Decimal,
-	increment decimal.Decimal,
-	tolerance int64,
-) bool {
-	if touchPrice == nil {
-		return false
-	}
-
-	distance, ok := tickDistanceFromTouch(tradePrice, touchPrice, increment)
-
-	if ok {
-		return distance <= tolerance
-	}
-
-	return tradePrice.Cmp(touchPrice) == 0
-}
-
-/*
-withinTouchTolerance reports whether tradePrice is within one price increment
-of touchPrice on the symbol's tick lattice.
-*/
-func withinTouchTolerance(
-	tradePrice decimal.Decimal,
-	touchPrice *decimal.Decimal,
-	increment *decimal.Decimal,
-) bool {
-	if touchPrice == nil {
-		return false
-	}
-
-	if increment == nil || increment.Sign() <= 0 {
-		return tradePrice.Cmp(touchPrice) == 0
-	}
-
-	return sideWithinTouch(
-		tradePrice,
-		touchPrice,
-		*increment,
-		touchToleranceTicks(increment),
-	)
-}
-
-/*
-attributeTouchSide assigns a trade to bid or ask when it lies within one tick
-of a touch. Equal distances prefer ask so a trade at the exact mid of a
-one-tick spread credits the offer side once. That tie-break is intentional:
-without it, symmetric one-tick books would double-count ambiguous prints.
+attributeTouchSide maps a trade onto the exact executable bid or ask tick.
+Prints away from both touches remain valid trades but are not fabricated as
+touch fills; malformed off-lattice prices fail explicitly.
 */
 func attributeTouchSide(
 	tradePrice decimal.Decimal,
 	bidPrice *decimal.Decimal,
 	askPrice *decimal.Decimal,
 	increment *decimal.Decimal,
-) touchSide {
-	if increment == nil || increment.Sign() <= 0 {
-		bidExact := bidPrice != nil && tradePrice.Cmp(bidPrice) == 0
-		askExact := askPrice != nil && tradePrice.Cmp(askPrice) == 0
-
-		if bidExact && askExact {
-			return touchSideAsk
-		}
-
-		if askExact {
-			return touchSideAsk
-		}
-
-		if bidExact {
-			return touchSideBid
-		}
-
-		return touchSideNone
+) (touchSide, error) {
+	if bidPrice == nil || askPrice == nil || increment == nil || increment.Sign() <= 0 {
+		return touchSideNone, fmt.Errorf("toxicity: complete touch lattice required")
 	}
 
-	tolerance := touchToleranceTicks(increment)
-	bidWithin := sideWithinTouch(tradePrice, bidPrice, *increment, tolerance)
-	askWithin := sideWithinTouch(tradePrice, askPrice, *increment, tolerance)
+	tradeTick, err := kraken.PriceTick(tradePrice, *increment)
 
-	if !bidWithin && !askWithin {
-		return touchSideNone
+	if err != nil {
+		return touchSideNone, fmt.Errorf("toxicity: trade price off lattice: %w", err)
 	}
 
-	if bidWithin && !askWithin {
-		return touchSideBid
+	bidTick, err := kraken.PriceTick(*bidPrice, *increment)
+
+	if err != nil {
+		return touchSideNone, fmt.Errorf("toxicity: bid price off lattice: %w", err)
 	}
 
-	if askWithin && !bidWithin {
-		return touchSideAsk
+	askTick, err := kraken.PriceTick(*askPrice, *increment)
+
+	if err != nil {
+		return touchSideNone, fmt.Errorf("toxicity: ask price off lattice: %w", err)
 	}
 
-	bidDistance, bidOk := tickDistanceFromTouch(tradePrice, bidPrice, *increment)
-	askDistance, askOk := tickDistanceFromTouch(tradePrice, askPrice, *increment)
-
-	if bidOk && askOk {
-		if bidDistance < askDistance {
-			return touchSideBid
-		}
-
-		if askDistance < bidDistance {
-			return touchSideAsk
-		}
+	if bidTick >= askTick {
+		return touchSideNone, fmt.Errorf("toxicity: uncrossed touch required")
 	}
 
-	return touchSideAsk
+	if tradeTick == askTick {
+		return touchSideAsk, nil
+	}
+
+	if tradeTick == bidTick {
+		return touchSideBid, nil
+	}
+
+	return touchSideNone, nil
 }
 
 /*
-attributeTouchFill assigns one trade to at most one touch side and updates
-the symbol evidence counters used by touchHonesty.
+attributeTouchFill assigns one trade to at most one live touch side.
 */
 func attributeTouchFill(
 	row *symbolEvidence,
@@ -183,12 +77,45 @@ func attributeTouchFill(
 	bid *book.Level,
 	ask *book.Level,
 	increment *decimal.Decimal,
-) {
+) error {
 	if bid == nil || ask == nil {
-		return
+		return fmt.Errorf("toxicity: complete Level3 touch required")
 	}
 
-	side := attributeTouchSide(tradePrice, bid.Price, ask.Price, increment)
+	return attributeTouchPrices(
+		row,
+		tradePrice,
+		tradeQty,
+		bid.Price,
+		ask.Price,
+		increment,
+	)
+}
+
+/*
+attributeTouchPrices credits notional to the exact resting touch that was
+executable when the trade occurred. The prior snapshot is authoritative
+because Level3 may already contain the post-trade book at planner-cut time.
+*/
+func attributeTouchPrices(
+	row *symbolEvidence,
+	tradePrice decimal.Decimal,
+	tradeQty float64,
+	bidPrice *decimal.Decimal,
+	askPrice *decimal.Decimal,
+	increment *decimal.Decimal,
+) error {
+	side, err := attributeTouchSide(
+		tradePrice,
+		bidPrice,
+		askPrice,
+		increment,
+	)
+
+	if err != nil {
+		return err
+	}
+
 	notional := tradePrice.Float64() * tradeQty
 
 	if side == touchSideBid {
@@ -200,4 +127,6 @@ func attributeTouchFill(
 		row.fillAsk += notional
 		row.askExecuted += tradeQty
 	}
+
+	return nil
 }

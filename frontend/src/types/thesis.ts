@@ -117,14 +117,14 @@ export type ThesisCategory = {
 
 export type GraphNodeKind = "measurement" | "category" | "concept";
 
-export type GraphNodeWire = {
+export type GraphNode = {
 	key: string;
 	kind?: GraphNodeKind;
 	category?: string;
 	measurement: Record<string, unknown>;
 };
 
-export type GraphEdgeWire = {
+export type GraphEdge = {
 	from: string;
 	to: string;
 	type: string;
@@ -132,11 +132,11 @@ export type GraphEdgeWire = {
 	observedFrom: string;
 };
 
-export type GraphFrame = {
+export type Graph = {
 	symbol: string;
 	at: string;
-	nodes: GraphNodeWire[];
-	edges: GraphEdgeWire[];
+	nodes: GraphNode[];
+	edges: GraphEdge[];
 };
 
 /*
