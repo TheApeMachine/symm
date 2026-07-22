@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/bytedance/sonic"
@@ -15,10 +16,16 @@ import (
 	"github.com/theapemachine/symm/broker"
 )
 
-var cacheKeys = []string{"balances", "executions", "instruments", "positions", "tick"}
+var cacheKeys = []string{
+	"balances", "executions", "instruments", "positions", "tick",
+	"holdings", "measurements", "decisions", "lifecycle", "findings",
+}
 
 /*
 Hub owns the dashboard websocket and forwards typed backend frames to clients.
+subscribers retains the latest payload per cacheKeys entry so reconnect replays
+state; Messages are drained continuously so publishes are not stranded until a
+client attaches.
 */
 type Hub struct {
 	ctx         context.Context
@@ -28,6 +35,8 @@ type Hub struct {
 	Messages    chan []byte
 	price       *broker.Price
 	subscribers *sync.Map
+	client      atomic.Pointer[websocket.Conn]
+	writeMu     sync.Mutex
 }
 
 func NewHub(
@@ -64,41 +73,112 @@ func NewHub(
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
+		defer hub.client.CompareAndSwap(conn, nil)
 		defer conn.Close()
 
+		hub.client.Store(conn)
+		hub.replay()
+
 		for {
-			select {
-			case <-hub.ctx.Done():
+			if _, _, err := conn.ReadMessage(); err != nil {
 				return
-			case msg := <-hub.Messages:
-				// FOR THE FINAL TIME: THERE IS ONLY 1 CLIENT, THE FRONTEND,
-				// SO: NO, THERE IS NO SITUATION OF MULTIPLE CLIENTS COMPETING
-				// FOR THE SAME MESSAGE CHANNEL!
-
-				if conn.Conn == nil {
-					return
-				}
-
-				if err := conn.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-					for _, closeError := range []error{
-						syscall.EPIPE,
-						syscall.ECONNRESET,
-						io.EOF,
-						io.ErrClosedPipe,
-					} {
-						if errors.Is(err, closeError) {
-							return
-						}
-					}
-
-					errnie.Error(err)
-					return
-				}
 			}
 		}
 	}))
 
+	go hub.drain()
+
 	return hub
+}
+
+func (hub *Hub) drain() {
+	for {
+		select {
+		case <-hub.ctx.Done():
+			return
+		case msg, ok := <-hub.Messages:
+			if !ok {
+				return
+			}
+
+			hub.retain(msg)
+			hub.write(msg)
+		}
+	}
+}
+
+func (hub *Hub) retain(msg []byte) {
+	if len(msg) == 0 {
+		return
+	}
+
+	var frame map[string]sonic.NoCopyRawMessage
+
+	if err := sonic.Unmarshal(msg, &frame); err != nil {
+		return
+	}
+
+	for _, key := range cacheKeys {
+		value, ok := frame[key]
+
+		if !ok {
+			continue
+		}
+
+		payload, err := sonic.Marshal(map[string]sonic.NoCopyRawMessage{key: value})
+
+		if err != nil || len(payload) == 0 {
+			continue
+		}
+
+		hub.subscribers.Store(key, payload)
+	}
+}
+
+func (hub *Hub) replay() {
+	for _, key := range cacheKeys {
+		value, ok := hub.subscribers.Load(key)
+
+		if !ok {
+			continue
+		}
+
+		payload, ok := value.([]byte)
+
+		if !ok || len(payload) == 0 {
+			continue
+		}
+
+		hub.write(payload)
+	}
+}
+
+func (hub *Hub) write(msg []byte) {
+	conn := hub.client.Load()
+
+	if conn == nil || conn.Conn == nil || len(msg) == 0 {
+		return
+	}
+
+	hub.writeMu.Lock()
+	defer hub.writeMu.Unlock()
+
+	if err := conn.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+		for _, closeError := range []error{
+			syscall.EPIPE,
+			syscall.ECONNRESET,
+			io.EOF,
+			io.ErrClosedPipe,
+		} {
+			if errors.Is(err, closeError) {
+				hub.client.CompareAndSwap(conn, nil)
+				return
+			}
+		}
+
+		errnie.Error(err)
+		hub.client.CompareAndSwap(conn, nil)
+	}
 }
 
 func (hub *Hub) Serve() error {

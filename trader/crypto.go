@@ -16,6 +16,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/strategy"
@@ -25,9 +26,8 @@ import (
 )
 
 /*
-Crypto is the simple trading runtime.
-It consumes market and private frames, publishes UI frames,
-and delegates measurement to Signal.
+Crypto is the trading runtime. Handlers push rows to signals; Tick drains
+measurements into the planner and submits desk orders.
 */
 type Crypto struct {
 	booter     *system.Booter
@@ -46,12 +46,14 @@ type Crypto struct {
 	analyzer   *logic.Analyzer
 	dataPath   string
 	uiHub      *ui.Hub
-	market     *Market
 	recorder   *audit.Recorder
+	signals    []types.Signal
+	outs       []chan []*types.Measurement
+	lastThesis atomic.Pointer[types.Thesis]
 }
 
 /*
-NewCrypto wires the trading runtime around shared infrastructure.
+NewCrypto wires handlers onto the API and retains signals for Drain.
 */
 func NewCrypto(
 	ctx context.Context,
@@ -66,6 +68,7 @@ func NewCrypto(
 	tree *dmt.Tree,
 	uiHub *ui.Hub,
 	recorder *audit.Recorder,
+	signals []types.Signal,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -82,13 +85,6 @@ func NewCrypto(
 		}
 
 		dataPath = filepath.Join(home, strings.TrimPrefix(dataPath, "~/"))
-	}
-
-	market, err := NewMarket(ctx, api, instrument)
-
-	if err != nil {
-		cancel()
-		return nil, err
 	}
 
 	crypto := &Crypto{
@@ -108,8 +104,18 @@ func NewCrypto(
 		postMortem: &strategy.PostMortem{},
 		dataPath:   dataPath,
 		uiHub:      uiHub,
-		market:     market,
 		recorder:   recorder,
+		signals:    signals,
+	}
+
+	for _, signal := range signals {
+		crypto.outs = append(crypto.outs, signal.Measure())
+	}
+
+	if api != nil {
+		api.On("ticker", crypto.OnTicker)
+		api.On("book", crypto.OnBook)
+		api.On("trade", crypto.OnTrade)
 	}
 
 	return crypto, nil
@@ -121,18 +127,74 @@ func (crypto *Crypto) Initialize() error {
 	return nil
 }
 
-/*
-Status returns the current status of the crypto runtime.
-*/
 func (crypto *Crypto) Status() types.Status {
 	return crypto.status
 }
 
-/*
-Run starts the checkpoint loop and the tick pump. Audit rotation is owned by the
-boot path before the recorder opens its file, so Run never rotates a live
-handle.
-*/
+func (crypto *Crypto) OnTicker(data []byte) {
+	ticker := kraken.NewTicker(data)
+
+	if !ticker.IsSuccess() {
+		return
+	}
+
+	for _, signal := range crypto.signals {
+		select {
+		case <-crypto.ctx.Done():
+			return
+		case signal.Tickers() <- ticker.Data:
+		default:
+		}
+	}
+}
+
+func (crypto *Crypto) OnBook(data []byte) {
+	book := kraken.NewBook(data)
+
+	if !book.IsSuccess() {
+		return
+	}
+
+	if crypto.instrument != nil {
+		for index := range book.Data {
+			pair, err := crypto.instrument.Pair(book.Data[index].Symbol)
+
+			if err != nil {
+				errnie.Error(err)
+				return
+			}
+
+			book.Data[index].PriceIncrement = &pair.PriceIncrement
+		}
+	}
+
+	for _, signal := range crypto.signals {
+		select {
+		case <-crypto.ctx.Done():
+			return
+		case signal.Books() <- book.Data:
+		default:
+		}
+	}
+}
+
+func (crypto *Crypto) OnTrade(data []byte) {
+	trade := kraken.NewTrade(data)
+
+	if !trade.IsSuccess() {
+		return
+	}
+
+	for _, signal := range crypto.signals {
+		select {
+		case <-crypto.ctx.Done():
+			return
+		case signal.Trades() <- trade.Data:
+		default:
+		}
+	}
+}
+
 func (crypto *Crypto) Run() error {
 	go func() {
 		errnie.Info("crypto runtime started")
@@ -179,37 +241,112 @@ func (crypto *Crypto) Run() error {
 	return nil
 }
 
-/*
-Tick processes one complete ingress cut through the production planner and
-returns the thesis for that tick. Thesis is never retained on Crypto.
-*/
 func (crypto *Crypto) Tick() (*types.Thesis, error) {
-	frame, err := crypto.market.Cut()
+	rows := make([]*types.Measurement, 0)
 
-	if err != nil {
-		return nil, err
+	for _, out := range crypto.outs {
+		for draining := true; draining; {
+			select {
+			case batch := <-out:
+				rows = append(rows, batch...)
+			default:
+				draining = false
+			}
+		}
+	}
+
+	if len(rows) == 0 {
+		return nil, errnie.Err(
+			errnie.PreconditionFailed,
+			"crypto: no signal measurements",
+			nil,
+		)
 	}
 
 	tick := crypto.tick.Add(1)
-	errnie.Error(audit.Phase(crypto.recorder, tick, "cut", map[string]any{
-		"tickers": len(frame.Tickers),
-		"trades":  len(frame.Trades),
-		"books":   len(frame.Books),
-	}))
+	at := time.Time{}
 
-	thesis := crypto.planner.Update(nil, frame, tick)
-	candidates := 0
+	for _, row := range rows {
+		if row != nil && row.At.After(at) {
+			at = row.At
+		}
+	}
 
-	thesis.Positions.Range(func(key, value any) bool {
-		candidates++
-		return true
-	})
+	thesis := crypto.planner.Update(crypto.lastThesis.Load(), at, tick, rows)
+
+	if crypto.balance != nil {
+		for holding := range crypto.balance.Holdings() {
+			if _, found := thesis.Lifecycle.Load(holding.Symbol); !found {
+				thesis.NoteLifecycle(holding.Symbol, types.LifecycleManaging, thesis.At)
+			}
+		}
+	}
+
+	crypto.planner.Decide(thesis)
+
+	if crypto.desk != nil && crypto.balance != nil &&
+		crypto.balance.Status() == types.READY {
+		for _, decision := range thesis.Decisions {
+			switch decision.Action {
+			case types.ActionExit:
+				if phase, found := thesis.Lifecycle.Load(decision.Symbol); found {
+					if phase == types.LifecycleExitSubmitted {
+						continue
+					}
+				}
+
+				if err := crypto.desk.Sell(decision.Symbol); err != nil {
+					errnie.Error(err)
+					continue
+				}
+
+				thesis.NoteLifecycle(
+					decision.Symbol, types.LifecycleExitSubmitted, thesis.At,
+				)
+			case types.ActionEnter:
+				raw, ok := thesis.Holdings.Load(decision.Symbol)
+
+				if !ok {
+					continue
+				}
+
+				holding, ok := raw.(*types.Holding)
+
+				if !ok || holding == nil || !crypto.desk.HasSlot(holding.IsOpportunity) {
+					continue
+				}
+
+				position, err := crypto.desk.Buy(holding, holding.IsOpportunity)
+
+				if err != nil {
+					errnie.Error(err)
+					thesis.Holdings.Delete(decision.Symbol)
+					continue
+				}
+
+				thesis.Positions.Store(decision.Symbol, position)
+				thesis.NoteLifecycle(
+					decision.Symbol, types.LifecycleEntrySubmitted, thesis.At,
+				)
+			}
+		}
+	}
+
+	if len(thesis.Decisions) > 0 {
+		select {
+		case crypto.uiHub.Messages <- datura.Map[any]{
+			"decisions": thesis.Decisions,
+		}.Marshal():
+		default:
+		}
+	}
+
+	crypto.lastThesis.Store(thesis)
 
 	select {
 	case crypto.uiHub.Messages <- datura.Map[any]{"tick": datura.Map[any]{
 		"count":        thesis.Tick,
 		"measurements": types.ObservationCount(thesis.Measurements),
-		"candidates":   candidates,
 		"open":         crypto.desk.HoldingCount(),
 		"completed":    true,
 		"phase":        "complete",
@@ -217,34 +354,14 @@ func (crypto *Crypto) Tick() (*types.Thesis, error) {
 	default:
 	}
 
-	errnie.Error(audit.Record(crypto.recorder, "tick", map[string]any{
-		"tick":         thesis.Tick,
-		"measurements": types.ObservationCount(thesis.Measurements),
-		"decisions":    len(thesis.Decisions),
-		"forecasts":    len(thesis.Forecasts),
-		"completed":    true,
-	}))
-
 	return thesis, nil
 }
 
-/*
-Step runs one Tick and discards the thesis. Market Warmup/Transition need a
-func() error callback.
-*/
-func (crypto *Crypto) Step() error {
-	_, err := crypto.Tick()
-	return err
-}
-
-/*
-Close stops composed resources.
-*/
 func (crypto *Crypto) Close() (err error) {
 	crypto.cancel()
 
 	for _, closer := range []io.Closer{
-		crypto.market, crypto.planner, crypto.desk, crypto.analyzer,
+		crypto.planner, crypto.desk, crypto.analyzer,
 	} {
 		if closer != nil {
 			if closerErr := closer.Close(); closerErr != nil {
@@ -253,5 +370,5 @@ func (crypto *Crypto) Close() (err error) {
 		}
 	}
 
-	return nil
+	return err
 }

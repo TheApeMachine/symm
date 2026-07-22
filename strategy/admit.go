@@ -5,6 +5,7 @@ import (
 	"maps"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
@@ -156,7 +157,9 @@ func (admit *Admit) Capital(decision *types.Decision) {
 		return
 	}
 
-	cash, err := admit.balance.AssetAvailable("USD")
+	cash, err := admit.balance.AssetAvailable(
+		viper.GetString("market.quote_currency"),
+	)
 
 	if err != nil || cash == nil {
 		return

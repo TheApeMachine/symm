@@ -134,8 +134,10 @@ func (analyzer *Analyzer) consolidate(
 
 /*
 cognize turns the Thesis evidence for one manifold state into a deterministic
-DMT sensory sequence, reads learned cognition, and writes the decoupled result
-back onto the Thesis before learning the current observation.
+DMT sensory sequence, anchors the intensity-derived attractor on that sequence,
+then publishes the posterior classification strategy consumes. Publishing only
+the pre-train prior left Ready empty whenever the measurement bag changed,
+	because exact sequence repeats almost never occur on a live tape.
 */
 func (analyzer *Analyzer) cognize(
 	thesis *types.Thesis,
@@ -157,14 +159,10 @@ func (analyzer *Analyzer) cognize(
 		parent = sequence[:boundary]
 	}
 
-	reading := analyzer.readCognition(state, parts, sequence, parent)
-	thesis.Cognition.Store(state.Symbol, reading)
-
 	if analyzer.cognition == nil {
 		analyzer.cognition = make(map[string]types.Cognition)
 	}
 
-	analyzer.cognition[state.Symbol] = reading
 	analyzer.tree.TrainSensorySequence(sequence)
 
 	if _, _, err := analyzer.tree.CommitToEpisodicBuffer(
@@ -184,7 +182,15 @@ func (analyzer *Analyzer) cognize(
 		return false
 	}
 
-	return analyzer.trainAttractors(state, sequence)
+	if !analyzer.trainAttractors(state, sequence) {
+		return false
+	}
+
+	reading := analyzer.readCognition(state, parts, sequence, parent)
+	thesis.Cognition.Store(state.Symbol, reading)
+	analyzer.cognition[state.Symbol] = reading
+
+	return true
 }
 
 /*

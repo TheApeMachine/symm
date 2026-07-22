@@ -143,7 +143,7 @@ func TestCalculate(t *testing.T) {
 			market := tests.NewMarket(t.Context(), 3)
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			So(market.Warmup(wired.Crypto.Step), ShouldBeNil)
+			So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
 			measurements := []*types.Measurement{}
 
 			for index, state := range proof.states {
@@ -359,14 +359,15 @@ func TestCalculate(t *testing.T) {
 		})
 	})
 
-	Convey("Given an invalid market cut", t, func() {
+	Convey("Given an invalid trade row", t, func() {
 		signal := exhaust.NewSignal(t.Context(), nil)
-		thesis := types.NewThesis(nil, &types.MarketFrame{
-			Trades: []kraken.TradeData{{Symbol: "SIM1/USD"}},
-		})
 
 		Convey("It should skip unusable rows and return no measurements", func() {
-			rows, err := signal.Measure(thesis)
+			rows, err := signal.Calculate(
+				nil,
+				[]kraken.TradeData{{Symbol: "SIM1/USD"}},
+				nil,
+			)
 			So(err, ShouldBeNil)
 			So(rows, ShouldBeEmpty)
 		})
@@ -393,7 +394,7 @@ func BenchmarkCalculate(b *testing.B) {
 	}()
 	defer market.Close()
 
-	if err := market.Warmup(wired.Crypto.Step); err != nil {
+	if err := market.Warmup(tests.Consume(wired.Crypto.Tick)); err != nil {
 		b.Fatal(err)
 	}
 
@@ -421,7 +422,7 @@ func BenchmarkCalculate(b *testing.B) {
 					Ticks:  1,
 				},
 			},
-		}, wired.Crypto.Step); err != nil {
+		}, tests.Consume(wired.Crypto.Tick)); err != nil {
 			b.Fatal(err)
 		}
 	}

@@ -78,9 +78,9 @@ func TestCalculate(t *testing.T) {
 			market := tests.NewMarket(t.Context(), 3)
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			So(market.Warmup(wired.Crypto.Step), ShouldBeNil)
+			So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
 			for _, state := range proof.states[:len(proof.states)-1] {
-				So(market.Transition(state, wired.Crypto.Step, proof.symbols...), ShouldBeNil)
+				So(market.Transition(state, tests.Consume(wired.Crypto.Tick), proof.symbols...), ShouldBeNil)
 			}
 
 			from := market.Now()
@@ -321,48 +321,41 @@ func TestCalculate(t *testing.T) {
 		}
 
 		Convey("A trade should wait rather than fabricate a midpoint", func() {
-			measurements, err := signal.Calculate(&types.MarketFrame{
-				Trades: []kraken.TradeData{trade},
-			})
+			measurements, err := signal.Calculate(nil, []kraken.TradeData{trade}, nil)
 
 			So(err, ShouldBeNil)
 			So(measurements, ShouldBeEmpty)
 		})
 
 		Convey("A later complete touch should support a trade-only cut", func() {
-			_, err := signal.Calculate(&types.MarketFrame{
-				Tickers: []kraken.TickerData{
-					{
-						Symbol:    "SIM1/USD",
-						Bid:       decimal.NewFromFloat64(99.99),
-						Ask:       decimal.NewFromFloat64(100.01),
-						Timestamp: observedAt,
-					},
+			_, err := signal.Calculate([]kraken.TickerData{
+				{
+					Symbol:    "SIM1/USD",
+					Bid:       decimal.NewFromFloat64(99.99),
+					Ask:       decimal.NewFromFloat64(100.01),
+					Timestamp: observedAt,
 				},
-			})
+			}, nil, nil)
 			So(err, ShouldBeNil)
 
-			measurements, err := signal.Calculate(&types.MarketFrame{
-				Trades: []kraken.TradeData{trade},
-			})
+			measurements, err := signal.Calculate(nil, []kraken.TradeData{trade}, nil)
 
 			So(err, ShouldBeNil)
 			So(measurements, ShouldNotBeEmpty)
 		})
 
-		Convey("A present but crossed touch should remain an explicit error", func() {
-			_, err := signal.Calculate(&types.MarketFrame{
-				Tickers: []kraken.TickerData{
-					{
-						Symbol:    "SIM1/USD",
-						Bid:       decimal.NewFromFloat64(100.01),
-						Ask:       decimal.NewFromFloat64(99.99),
-						Timestamp: observedAt,
-					},
+		Convey("A present but crossed touch should be skipped without failing the cut", func() {
+			measurements, err := signal.Calculate([]kraken.TickerData{
+				{
+					Symbol:    "SIM1/USD",
+					Bid:       decimal.NewFromFloat64(100.01),
+					Ask:       decimal.NewFromFloat64(99.99),
+					Timestamp: observedAt,
 				},
-			})
+			}, nil, nil)
 
-			So(err, ShouldNotBeNil)
+			So(err, ShouldBeNil)
+			So(measurements, ShouldBeEmpty)
 		})
 	})
 }
@@ -396,7 +389,7 @@ func BenchmarkCalculate(b *testing.B) {
 				{Kind: tests.MarketRefill, Symbol: "SIM1/USD", Side: "sell", Qty: 100},
 				{Kind: tests.MarketMoveMid, Symbol: "SIM1/USD", Ticks: 1},
 			},
-		}, wired.Crypto.Step); err != nil {
+		}, tests.Consume(wired.Crypto.Tick)); err != nil {
 			b.Fatal(err)
 		}
 	}

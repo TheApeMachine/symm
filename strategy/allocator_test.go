@@ -41,7 +41,7 @@ func TestAllocatorSizesWalletSlice(t *testing.T) {
 	))
 
 	allocator := NewAllocator(context.Background(), balance, instrument, price)
-	thesis := types.NewThesis(nil, nil)
+	thesis := types.NewThesis(nil)
 	thesis.Decisions = append(thesis.Decisions, types.Decision{
 		Action: types.ActionEnter, Symbol: "LRC/USD", AllocationHaircut: 0,
 		At: time.Unix(1, 0).UTC(),
@@ -95,7 +95,7 @@ func TestAllocatorScalesByRisk(t *testing.T) {
 				`"symbol":"MATIC/USD","last":"0.10035","bid":"0.10025","ask":"0.10035"}]}`,
 		))
 		allocator := NewAllocator(context.Background(), balance, instrument, price)
-		thesis := types.NewThesis(nil, nil)
+		thesis := types.NewThesis(nil)
 		thesis.Decisions = append(thesis.Decisions, types.Decision{
 			Action: types.ActionEnter, Symbol: "MATIC/USD", AllocationHaircut: risk,
 		})
@@ -145,7 +145,7 @@ func TestAllocatorBailsWhenMinimumExceedsWalletSlice(t *testing.T) {
 	))
 
 	allocator := NewAllocator(context.Background(), balance, instrument, price)
-	thesis := types.NewThesis(nil, nil)
+	thesis := types.NewThesis(nil)
 	thesis.Decisions = append(thesis.Decisions, types.Decision{
 		Action: types.ActionEnter, Symbol: "LRC/USD",
 	})
@@ -186,7 +186,7 @@ func BenchmarkAllocatorAllocate(b *testing.B) {
 			`"symbol":"LRC/USD","last":"0.05","bid":"0.04999","ask":"0.05"}]}`,
 	))
 	allocator := NewAllocator(context.Background(), balance, instrument, price)
-	thesis := types.NewThesis(nil, nil)
+	thesis := types.NewThesis(nil)
 	thesis.Decisions = append(thesis.Decisions, types.Decision{
 		Action: types.ActionEnter, Symbol: "LRC/USD",
 	})

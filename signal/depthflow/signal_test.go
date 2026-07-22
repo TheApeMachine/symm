@@ -57,7 +57,7 @@ func TestCalculate(t *testing.T) {
 			market := tests.NewMarket(t.Context(), 3)
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			So(market.Warmup(wired.Crypto.Step), ShouldBeNil)
+			So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
 			measurements := []*types.Measurement{}
 			So(market.Transition(proof.state, func() error {
 				thesis, err := wired.Crypto.Tick()

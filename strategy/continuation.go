@@ -10,8 +10,8 @@ import (
 )
 
 /*
-Continuity scores keep/reduce decisions for open wallet lots before entry
-scoring. Full exits belong to Stoploss on Position via ticker updates.
+Continuity scores hold decisions for open wallet lots before entry scoring.
+Full exits belong to Stoploss.Regulate; positions are never partially reduced.
 */
 type Continuity struct {
 	price   *broker.Price
@@ -86,15 +86,14 @@ func (continuity Continuity) Manage(thesis *types.Thesis) {
 		}
 
 		decision := continuity.Score(forecast, fraction.Float64(), &lot)
-		decision.Cause = continuity.Cause(thesis, forecast, decision.Action)
+		decision.Cause = continuity.Cause(thesis, forecast)
 		thesis.Decisions = append(thesis.Decisions, decision)
 	}
 }
 
 /*
-Score compares keep-score against liquidity-forced reduction only. Full exits
-belong to Stoploss. Keep-score is expected return net of uncertainty — the same
-Hold rotate uses — never raw predicted return.
+Score publishes keep-score for an open lot. Stoploss owns full exit; this path
+never emits reduce or exit.
 */
 func (continuity Continuity) Score(
 	forecast types.Forecasts,
@@ -102,53 +101,18 @@ func (continuity Continuity) Score(
 	holding *types.Holding,
 ) types.Decision {
 	hold := continuity.rotate.Hold(forecast)
-	exit := -continuity.rotate.Exit(forecast, fee)
-	action := types.ActionHold
-	utility := hold
-	reason := "stoploss owns full exit; continuation holds"
-	alternatives := map[string]float64{"hold": hold}
-	quantity := decimal.NewFromInt64(0)
-	notional := continuity.notional(holding.Mark, holding.Qty)
-
-	if forecast.SellCapacity != nil && forecast.SellCapacity.Sign() > 0 &&
-		notional.Sign() > 0 && notional.Cmp(forecast.SellCapacity) > 0 {
-		quantity = decimal.ExactDivFloor(
-			forecast.SellCapacity,
-			holding.Mark,
-			holding.Qty.GetScale(),
-		)
-		scale := max(
-			int64(decimal.DefaultScale),
-			quantity.GetScale(),
-			holding.Qty.GetScale(),
-		)
-		fraction := quantity.SetScale(scale).
-			Div(holding.Qty.SetScale(scale)).
-			Float64()
-		reduce := fraction*exit + (1-fraction)*hold
-		alternatives["reduce"] = reduce
-
-		if reduce > utility {
-			action = types.ActionReduce
-			utility = reduce
-			reason = "visible bid capacity supports reduction but not complete exit"
-		}
-	}
-
-	proposedNotional := decimal.NewFromInt64(0)
-
-	if action == types.ActionReduce {
-		proposedNotional = continuity.notional(holding.Mark, quantity)
-	}
 
 	return types.Decision{
-		Action:            action,
-		Symbol:            forecast.Symbol,
-		At:                forecast.At,
-		Utility:           utility,
-		Alternatives:      alternatives,
-		ProposedNotional:  proposedNotional,
-		ProposedQuantity:  quantity,
+		Action:   types.ActionHold,
+		Symbol:   forecast.Symbol,
+		At:       forecast.At,
+		Utility:  hold,
+		Alternatives: map[string]float64{
+			"hold": hold,
+			"exit": -continuity.rotate.Exit(forecast, fee),
+		},
+		ProposedNotional:  decimal.NewFromInt64(0),
+		ProposedQuantity:  decimal.NewFromInt64(0),
 		ExpectedReturn:    decimal.NewFromFloat64(forecast.ExpectedReturn),
 		ExpectedFees:      decimal.NewFromFloat64(fee),
 		ExpectedSpread:    decimal.NewFromFloat64(forecast.ExpectedSpread / 2),
@@ -161,39 +125,17 @@ func (continuity Continuity) Score(
 		ForecastSource:    forecast.Source,
 		ForecastEpoch:     forecast.SourceEpoch,
 		Cause:             "continuation",
-		Reason:            reason,
+		Reason:            "stoploss owns full exit; continuation holds",
 	}
 }
 
 /*
-notional multiplies a finite fixed-point price and quantity at their combined
-scale so fine quantity precision is not rounded to the price's coarser scale.
-Integer products retain one fractional place to avoid the SDK's incorrect
-scale-zero banker rounding.
-*/
-func (continuity Continuity) notional(
-	price *decimal.Decimal,
-	quantity *decimal.Decimal,
-) *decimal.Decimal {
-	return decimal.ExactMul(price, quantity)
-}
-
-/*
-Cause identifies the evidence boundary behind a management action.
+Cause identifies the evidence boundary behind a hold decision.
 */
 func (continuity Continuity) Cause(
 	thesis *types.Thesis,
 	forecast types.Forecasts,
-	action types.Action,
 ) string {
-	if action == types.ActionHold {
-		return "continuation"
-	}
-
-	if action == types.ActionReduce {
-		return "liquidity_deterioration"
-	}
-
 	for index := len(thesis.Hypotheses) - 1; index >= 0; index-- {
 		hypothesis := thesis.Hypotheses[index]
 
@@ -214,7 +156,7 @@ func (continuity Continuity) Cause(
 		}
 	}
 
-	return "thesis_weakening"
+	return "continuation"
 }
 
 func (continuity Continuity) exiting(thesis *types.Thesis, symbol string) bool {

@@ -5,6 +5,7 @@ import (
 	"math"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -21,6 +22,9 @@ fact from its authoritative stream without treating them as independent
 corroborating signals.
 */
 type Signal struct {
+	tickerIn   chan []kraken.TickerData
+	bookIn     chan []kraken.BookData
+	tradeIn    chan []kraken.TradeData
 	ctx        context.Context
 	cancel     context.CancelFunc
 	ignition   *equation.Ignition
@@ -41,7 +45,10 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	return &Signal{
+	signal := &Signal{
+		tickerIn:   make(chan []kraken.TickerData, 64),
+		bookIn:     make(chan []kraken.BookData, 64),
+		tradeIn:    make(chan []kraken.TradeData, 64),
 		ctx:        ctx,
 		cancel:     cancel,
 		ignition:   equation.NewIgnition(baselineCapacity),
@@ -50,6 +57,8 @@ func NewSignal(
 		increments: make(map[string]float64),
 		ui:         ui,
 	}
+
+	return signal
 }
 
 /*
@@ -66,39 +75,25 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 }
 
 /*
-Interest requires executed trades for lift, the reconstructed book for price
-displacement and spread, and ticker observations to close each market sample.
-*/
-func (signal *Signal) Interest() types.StreamInterest {
-	return types.StreamAll
-}
-
-/*
-Measure returns typed measurements for the cut, or an error when the
-cut cannot be measured honestly.
-*/
-func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, error) {
-	return signal.Calculate(thesis.Market())
-}
-
-/*
 Calculate converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
 func (signal *Signal) Calculate(
-	frame *types.MarketFrame,
+	tickers []kraken.TickerData,
+	trades []kraken.TradeData,
+	books []kraken.BookData,
 ) ([]*types.Measurement, error) {
-	if types.FrameInterest(frame)&types.StreamTicker == 0 {
-		if err := signal.ingest(frame.Trades, frame.Books); err != nil {
+	if len(tickers) == 0 {
+		if err := signal.ingest(trades, books); err != nil {
 			return nil, err
 		}
 
 		return nil, nil
 	}
 
-	tickers := slices.Clone(frame.Tickers)
-	trades := slices.Clone(frame.Trades)
-	books := slices.Clone(frame.Books)
+	tickers = slices.Clone(tickers)
+	trades = slices.Clone(trades)
+	books = slices.Clone(books)
 	sort.SliceStable(tickers, func(left, right int) bool {
 		return tickers[left].Timestamp.Before(tickers[right].Timestamp)
 	})
@@ -253,7 +248,7 @@ func (signal *Signal) ingest(
 			signal.books[row.Symbol] = book
 		}
 
-		bids, asks, err := types.BookLevels(row)
+		bids, asks, err := kraken.BookLevels(row)
 
 		if err != nil {
 			return errnie.Err(errnie.Validation, "pumpdump: decode book levels", err)
@@ -284,6 +279,99 @@ active market-data producers.
 */
 func (signal *Signal) Close() error {
 	signal.cancel()
-
 	return nil
+}
+
+/*
+Tickers returns the ticker ingress channel.
+*/
+func (signal *Signal) Tickers() chan []kraken.TickerData {
+	return signal.tickerIn
+}
+
+/*
+Books returns the book ingress channel.
+*/
+func (signal *Signal) Books() chan []kraken.BookData {
+	return signal.bookIn
+}
+
+/*
+Trades returns the trade ingress channel.
+*/
+func (signal *Signal) Trades() chan []kraken.TradeData {
+	return signal.tradeIn
+}
+
+/*
+Measure consumes ingress channels and sends measurements on out.
+*/
+func (signal *Signal) Measure() chan []*types.Measurement {
+	out := make(chan []*types.Measurement, 64)
+
+	go func() {
+		defer close(out)
+
+		for {
+			select {
+			case <-signal.ctx.Done():
+				return
+			case rows := <-signal.tickerIn:
+				measured, err := signal.Calculate(rows, nil, nil)
+
+				if err != nil {
+					errnie.Error(err)
+					continue
+				}
+
+				if len(measured) == 0 {
+					continue
+				}
+
+				select {
+				case out <- measured:
+					signal.Publish(measured)
+				default:
+				}
+			case rows := <-signal.bookIn:
+				measured, err := signal.Calculate(nil, nil, rows)
+
+				if err != nil {
+					errnie.Error(err)
+					continue
+				}
+
+				if len(measured) == 0 {
+					continue
+				}
+
+				select {
+				case out <- measured:
+					signal.Publish(measured)
+				default:
+				}
+			case rows := <-signal.tradeIn:
+				measured, err := signal.Calculate(nil, rows, nil)
+
+				if err != nil {
+					errnie.Error(err)
+					continue
+				}
+
+				if len(measured) == 0 {
+					continue
+				}
+
+				select {
+				case out <- measured:
+					signal.Publish(measured)
+				default:
+				}
+			default:
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	}()
+
+	return out
 }

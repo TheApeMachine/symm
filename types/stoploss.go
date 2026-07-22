@@ -209,7 +209,15 @@ func (stoploss *Stoploss) Update(evidence StopEvidence) *Stoploss {
 
 	markReturn := (evidence.Mark - stoploss.entry) / stoploss.entry
 
-	if stoploss.Retreat > 0 {
+	// Retreat freezes geometry so a spoofed touch withdrawal cannot fake a stop
+	// out — but only while the forward path is not itself adverse. A calibrated
+	// negative forecast (or causal decline) means the mark fell because price is
+	// genuinely leaving, not because liquidity blinked, so the protective stop
+	// must remain able to fire through the withdrawal instead of freezing open.
+	adverseForward := evidence.ReturnReady && evidence.ExpectedReturn < 0 ||
+		evidence.CausalReady && evidence.CausalExpectedReturn < 0
+
+	if stoploss.Retreat > 0 && !adverseForward {
 		return stoploss.settle("hold", "retreat-driven mark; geometry frozen", markReturn)
 	}
 

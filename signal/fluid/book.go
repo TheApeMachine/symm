@@ -4,7 +4,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/physics"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
@@ -31,30 +30,14 @@ Measure converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
 func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
-	if row.Timestamp.IsZero() {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"fluid: book event timestamp required",
-			nil,
-		))
-	}
-
-	if row.Type == "" {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"fluid: book frame type required",
-			nil,
-		))
+	if row.Timestamp.IsZero() || row.Type == "" {
+		return nil, nil
 	}
 
 	state, err := book.registry.loadSymbol(row.Symbol)
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"fluid: book symbol state required",
-			err,
-		))
+		return nil, nil
 	}
 
 	if row.PriceIncrement != nil && row.PriceIncrement.Float64() > 0 {
@@ -84,9 +67,7 @@ func (book *Book) Measure(row kraken.BookData) ([]*types.Measurement, error) {
 	measurements, err := book.measurementsFromReading(reading, eventAt)
 
 	if err != nil || len(measurements) == 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+		return nil, nil
 	}
 
 	return measurements, nil
@@ -103,9 +84,7 @@ func (book *Book) measurementsFromReading(
 	output, err := book.flow.Measure(book.flowInput(reading))
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, err.Error(), err,
-		))
+		return nil, err
 	}
 
 	maturity := float64(reading.gridSteps) / float64(reading.gridSteps+1)

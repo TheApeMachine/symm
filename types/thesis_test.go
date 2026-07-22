@@ -9,7 +9,7 @@ import (
 
 func TestNoteLifecycle(t *testing.T) {
 	Convey("Given a thesis phase transition", t, func() {
-		thesis := NewThesis(nil, nil)
+		thesis := NewThesis(nil)
 		at := time.Unix(1, 0).UTC()
 		thesis.NoteLifecycle("BTC/USD", LifecycleEntered, at)
 
@@ -22,7 +22,7 @@ func TestNoteLifecycle(t *testing.T) {
 }
 
 func BenchmarkNoteLifecycle(b *testing.B) {
-	thesis := NewThesis(nil, nil)
+	thesis := NewThesis(nil)
 	at := time.Unix(1, 0).UTC()
 
 	b.ReportAllocs()

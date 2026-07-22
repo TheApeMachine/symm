@@ -1,5 +1,7 @@
 package types
 
+import "slices"
+
 /*
 MetricAffinity names the categories one measured quantity is evidence for and
 against. Supporting metrics justify a Supports edge to the category node;
@@ -16,19 +18,11 @@ Lists reports whether this affinity names category as supporting or opposing
 evidence, which defines whether its metric is missing from a category proof.
 */
 func (affinity MetricAffinity) Lists(category CategoryType) bool {
-	for _, candidate := range affinity.Supports {
-		if candidate == category {
-			return true
-		}
+	if slices.Contains(affinity.Supports, category) {
+		return true
 	}
 
-	for _, candidate := range affinity.Opposes {
-		if candidate == category {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(affinity.Opposes, category)
 }
 
 /*
@@ -234,7 +228,7 @@ var CategoryAffinity = map[MetricType]MetricAffinity{
 	},
 	MetricFillVolume: {
 		Supports: []CategoryType{HardSupport, RobustLiquidity},
-		Opposes:  []CategoryType{ToxicBluff},
+		Opposes:  []CategoryType{ToxicBluff, SpoofTrap},
 	},
 	MetricTouchQuantity: {
 		Supports: []CategoryType{HardSupport, MedianDepth},

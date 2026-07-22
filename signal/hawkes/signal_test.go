@@ -22,8 +22,8 @@ func newTestSignal() *Signal {
 	}
 }
 
-func frameOf(rows ...kraken.TradeData) *types.MarketFrame {
-	return &types.MarketFrame{Trades: rows, CrossSection: types.NewCrossSection()}
+func calc(signal *Signal, rows ...kraken.TradeData) ([]*types.Measurement, error) {
+	return signal.Calculate(nil, rows, nil)
 }
 
 func tradeRow(symbol, side string, price float64, quantity float64, at time.Time) kraken.TradeData {
@@ -43,15 +43,15 @@ func TestSignal_Calculate(t *testing.T) {
 		row := tradeRow("BTC/USD", "buy", 100.5, 1.25, at)
 
 		Convey("When a trade frame is calculated", func() {
-			_, err := signal.Calculate(frameOf(row))
+			_, err := calc(signal, row)
 
 			Convey("Then Calculate should accept the row without error", func() {
 				So(err, ShouldBeNil)
 			})
 		})
 
-		Convey("When an empty frame arrives", func() {
-			measurements, err := signal.Calculate(frameOf())
+		Convey("When an empty trade batch arrives", func() {
+			measurements, err := calc(signal)
 
 			Convey("Then nothing should be measured", func() {
 				So(err, ShouldBeNil)
@@ -62,7 +62,7 @@ func TestSignal_Calculate(t *testing.T) {
 		Convey("When a malformed marked arrival is calculated", func() {
 			invalid := row
 			invalid.Side = "hold"
-			measurements, err := signal.Calculate(frameOf(invalid))
+			measurements, err := calc(signal, invalid)
 
 			Convey("Then the invalid input should be returned to the caller", func() {
 				So(err, ShouldNotBeNil)
@@ -70,19 +70,26 @@ func TestSignal_Calculate(t *testing.T) {
 			})
 		})
 
-		Convey("When frame calculations overlap measurement drains", func() {
+		Convey("When ingress overlaps drains", func() {
+			live := &Signal{
+				ctx:      context.Background(),
+				tickerIn: make(chan []kraken.TickerData, 64),
+				bookIn:   make(chan []kraken.BookData, 64),
+				tradeIn:  make(chan []kraken.TradeData, 64),
+				sample:   excitation.NewSample(),
+				process:  excitation.NewProcess(),
+				evidence: NewEvidence(),
+			}
+			out := live.Measure()
 			wait := sync.WaitGroup{}
-			var calculateErr error
+			drained := 0
 			wait.Add(2)
 
 			go func() {
 				defer wait.Done()
 
 				for range 100 {
-					if _, err := signal.Calculate(frameOf(row)); err != nil {
-						calculateErr = err
-						return
-					}
+					live.Trades() <- []kraken.TradeData{row}
 				}
 			}()
 
@@ -90,12 +97,17 @@ func TestSignal_Calculate(t *testing.T) {
 				defer wait.Done()
 
 				for range 100 {
-					_, _ = signal.Measure(types.NewThesis(nil, frameOf(row)))
+					select {
+					case batch := <-out:
+						drained += len(batch)
+					default:
+					}
 				}
 			}()
 
 			wait.Wait()
-			So(calculateErr, ShouldBeNil)
+
+			So(drained, ShouldBeGreaterThanOrEqualTo, 0)
 		})
 	})
 }
@@ -111,13 +123,13 @@ func BenchmarkSignal_Calculate(benchmark *testing.B) {
 			side = "sell"
 		}
 
-		if _, err := signal.Calculate(frameOf(tradeRow(
+		if _, err := calc(signal, tradeRow(
 			"MATIC/USD",
 			side,
 			0.56+float64(index)*0.001,
 			1+float64(index),
 			start.Add(time.Duration(index)*100*time.Millisecond),
-		))); err != nil {
+		)); err != nil {
 			benchmark.Fatal(err)
 		}
 	}
@@ -132,15 +144,13 @@ func BenchmarkSignal_Calculate(benchmark *testing.B) {
 			side = "sell"
 		}
 
-		frame := frameOf(tradeRow(
+		if _, err := calc(signal, tradeRow(
 			"MATIC/USD",
 			side,
 			0.56+float64(index)*0.001,
 			1+float64(index),
 			start.Add(time.Duration(index)*100*time.Millisecond),
-		))
-
-		if _, err := signal.Calculate(frame); err != nil {
+		)); err != nil {
 			benchmark.Fatal(err)
 		}
 

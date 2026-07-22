@@ -7,6 +7,8 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/logic"
+	pmanifold "github.com/theapemachine/nomagique/physics/fluid"
+	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -16,7 +18,7 @@ win when both forecast and resonance are present for the same symbol.
 */
 func TestProjectPrefersResonanceOverForecast(t *testing.T) {
 	Convey("Given forecast and resonance for one symbol", t, func() {
-		thesis := types.NewThesis(nil, nil)
+		thesis := types.NewThesis(nil)
 		thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
 			Symbol:         "AAA/USD",
 			ExpectedReturn: 0.01,
@@ -57,7 +59,7 @@ so Stoploss can gate quote-only marks.
 */
 func TestProjectRetreatPressureFromToxicity(t *testing.T) {
 	Convey("Given a toxicity retreat measurement", t, func() {
-		thesis := types.NewThesis(nil, nil)
+		thesis := types.NewThesis(nil)
 		pressure := 0.87
 		thesis.Measurements = append(thesis.Measurements,
 			&types.Measurement{
@@ -88,7 +90,7 @@ func TestProjectRetreatPressureFromToxicity(t *testing.T) {
 	})
 
 	Convey("Given a current toxicity touch without any retreat", t, func() {
-		thesis := types.NewThesis(nil, nil)
+		thesis := types.NewThesis(nil)
 		thesis.Measurements = append(thesis.Measurements, &types.Measurement{
 			Source: types.SourceToxicity,
 			Symbol: "AAA/USD",
@@ -113,7 +115,7 @@ TestProjectForecastEpochFromSourceEpoch copies forecast provenance onto Evidence
 */
 func TestProjectForecastEpochFromSourceEpoch(t *testing.T) {
 	Convey("Given a forecast with SourceEpoch", t, func() {
-		thesis := types.NewThesis(nil, nil)
+		thesis := types.NewThesis(nil)
 		thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
 			Symbol:         "AAA/USD",
 			SourceEpoch:    42,
@@ -144,7 +146,7 @@ ask-entry vs bid cannot invent a stop breach.
 */
 func TestProjectAbsentWithoutStopMark(t *testing.T) {
 	Convey("Given inventory with bid Mark but no StopMark", t, func() {
-		thesis := types.NewThesis(nil, nil)
+		thesis := types.NewThesis(nil)
 		evidence := NewEvidence().Project(thesis, types.Holding{
 			Symbol:     "AAA/USD",
 			Mark:       decimal.NewFromFloat64(100),
@@ -163,7 +165,7 @@ TestProjectAbsentWithoutMark freezes Present when inventory lacks a mark.
 */
 func TestProjectAbsentWithoutMark(t *testing.T) {
 	Convey("Given inventory without StopMark", t, func() {
-		thesis := types.NewThesis(nil, nil)
+		thesis := types.NewThesis(nil)
 		evidence := NewEvidence().Project(thesis, types.Holding{
 			Symbol:     "AAA/USD",
 			EntryPrice: decimal.NewFromFloat64(100),
@@ -184,7 +186,7 @@ func ptrTime(value time.Time) *time.Time {
 BenchmarkProject measures Evidence projection cost on the regulate hot path.
 */
 func BenchmarkProject(b *testing.B) {
-	thesis := types.NewThesis(nil, nil)
+	thesis := types.NewThesis(nil)
 	thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
 		Symbol:         "AAA/USD",
 		ExpectedReturn: 0.01,
@@ -206,4 +208,42 @@ func BenchmarkProject(b *testing.B) {
 	for b.Loop() {
 		_ = NewEvidence().Project(thesis, holding)
 	}
+}
+
+func TestProjectManifoldSpreadStaysReturnSpace(t *testing.T) {
+	Convey("Given a GasReady manifold state with return-space spread", t, func() {
+		thesis := types.NewThesis(nil)
+		thesis.Manifold.Store("AAA/USD", manifold.State{
+			Source:         "manifold",
+			Symbol:         "AAA/USD",
+			At:             time.Unix(1, 0).UTC(),
+			Duration:       time.Second,
+			Epoch:          1,
+			ReferencePrice: decimal.NewFromInt64(100),
+			Spread:         0.004,
+			BuyCapacity:    decimal.NewFromInt64(50),
+			SellCapacity:   decimal.NewFromInt64(50),
+			InvalidReason:  manifold.Valid,
+			BuyIntensity:   1,
+			SellIntensity:  0.5,
+			SpectralRadius: 0.1,
+			Reading: pmanifold.Reading{
+				PressureGradX: 0.1,
+				Divergence:    -0.1,
+				CoherenceMag2: 0.5,
+				GuidanceSpeed: 0.1,
+			},
+		})
+
+		evidence := NewEvidence().Project(thesis, types.Holding{
+			Symbol:     "AAA/USD",
+			Mark:       decimal.NewFromFloat64(100),
+			StopMark:   decimal.NewFromFloat64(100),
+			EntryPrice: decimal.NewFromFloat64(100),
+		})
+
+		Convey("Then spread stays in return space", func() {
+			So(evidence.Spread, ShouldEqual, 0.004)
+		})
+	})
 }

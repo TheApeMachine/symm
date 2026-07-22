@@ -36,20 +36,22 @@ func TestContinuationUtilityIsKeepScore(t *testing.T) {
 
 		decision := continuity.Score(forecast, 0.0026, holding)
 
-		Convey("It should publish keep-score utility, not raw return", func() {
+		Convey("It should publish keep-score utility and never reduce", func() {
 			So(decision.Action, ShouldEqual, types.ActionHold)
 			So(decision.Utility, ShouldEqual, -0.2642)
-			So(decision.Utility, ShouldNotEqual, forecast.ExpectedReturn)
+			So(decision.Utility, ShouldEqual, decision.Alternatives["hold"])
+			So(decision.Alternatives["exit"], ShouldEqual, -continuity.rotate.Exit(forecast, 0.0026))
 			So(decision.ExpectedReturn.Float64(), ShouldEqual, -0.2142)
 			So(decision.Confidence, ShouldEqual, 0.42)
 			So(decision.Uncertainty, ShouldEqual, 0.05)
-			So(decision.ProposedNotional.Float64(), ShouldEqual, 0)
+			So(decision.ProposedNotional.Sign(), ShouldEqual, 0)
+			So(decision.ProposedQuantity.Sign(), ShouldEqual, 0)
 		})
 	})
 }
 
 func TestContinuity_Score(t *testing.T) {
-	Convey("Given visible bid capacity that covers exactly one third of a holding", t, func() {
+	Convey("Given visible bid capacity below the open notional", t, func() {
 		continuity := NewContinuity(broker.NewPrice(nil), nil, NewRotate())
 		quantity, err := decimal.NewFromString("10.000")
 		So(err, ShouldBeNil)
@@ -63,6 +65,7 @@ func TestContinuity_Score(t *testing.T) {
 			Symbol:         holding.Symbol,
 			At:             time.Unix(1, 0).UTC(),
 			ExpectedReturn: -1,
+			Uncertainty:    0,
 			SellCapacity:   decimal.NewFromInt64(10),
 			ReferencePrice: decimal.NewFromInt64(3),
 			Source:         "resonance+causal",
@@ -72,13 +75,11 @@ func TestContinuity_Score(t *testing.T) {
 
 		decision := continuity.Score(forecast, 0, holding)
 
-		Convey("It should floor exact quantity without exceeding that capacity", func() {
-			So(decision.Action, ShouldEqual, types.ActionReduce)
-			So(decision.ProposedQuantity.String(), ShouldEqual, "3.333")
-			So(decision.ProposedNotional.Cmp(decimal.NewFromFloat64(9.999)),
-				ShouldEqual, 0)
-			So(decision.ProposedNotional.Cmp(forecast.SellCapacity),
-				ShouldBeLessThanOrEqualTo, 0)
+		Convey("It still holds the full lot; Stoploss owns exit", func() {
+			So(decision.Action, ShouldEqual, types.ActionHold)
+			So(decision.ProposedQuantity.Sign(), ShouldEqual, 0)
+			So(decision.ProposedNotional.Sign(), ShouldEqual, 0)
+			So(decision.Reason, ShouldEqual, "stoploss owns full exit; continuation holds")
 		})
 	})
 }

@@ -181,3 +181,65 @@ func (rotate Rotate) Clear(stop *types.Stoploss, forecast types.Forecasts) float
 
 	return math.Min(1, proximity*confidence*skill)
 }
+
+/*
+Commit materializes rotation exits for sized enter decisions and drops unsized enters.
+*/
+func (rotate Rotate) Commit(thesis *types.Thesis) {
+	if thesis == nil {
+		return
+	}
+
+	exits := make([]types.Decision, 0)
+
+	for index := range thesis.Decisions {
+		decision := &thesis.Decisions[index]
+
+		if decision.Action == types.ActionEnter && decision.ProposedQuantity == nil {
+			decision.Action = types.ActionNothing
+			decision.Displaces = ""
+			decision.ProposedQuantity = nil
+			decision.ProposedNotional = nil
+			thesis.Holdings.Delete(decision.Symbol)
+
+			if decision.Reason == "" {
+				decision.Reason = "unsized"
+			}
+
+			continue
+		}
+
+		if decision.Action != types.ActionEnter ||
+			decision.Cause != "rotation" ||
+			decision.Displaces == "" ||
+			decision.ProposedQuantity == nil {
+			continue
+		}
+
+		if decision.DisplacedQuantity == nil || decision.DisplacedPrice == nil {
+			decision.Action = types.ActionNothing
+			decision.Reason = "rotation source money is unavailable"
+			continue
+		}
+
+		exits = append(exits, types.Decision{
+			Action:  types.ActionExit,
+			Symbol:  decision.Displaces,
+			At:      decision.At,
+			Utility: -decision.Alternatives["exit_cost"],
+			Alternatives: map[string]float64{
+				"exit": -decision.Alternatives["exit_cost"],
+				"hold": decision.Alternatives["hold_incumbent"],
+			},
+			ProposedQuantity:  decision.DisplacedQuantity.Copy(),
+			ReferencePrice:    decision.DisplacedPrice.Copy(),
+			ValidThroughEpoch: decision.ValidThroughEpoch,
+			Cause:             "rotation",
+			Reason:            "displaced by higher-utility challenger " + decision.Symbol,
+		})
+
+		thesis.NoteLifecycle(decision.Displaces, types.LifecycleExitSelected, decision.At)
+	}
+
+	thesis.Decisions = append(thesis.Decisions, exits...)
+}

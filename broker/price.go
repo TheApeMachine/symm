@@ -443,7 +443,7 @@ func (price *Price) Taker(
 
 /*
 Fill applies one execution print onto a holding: entry/exit cost basis, fee
-pro-rate on partial reduce, then Mark flatten-now PnL. Position calls this once.
+pro-rate on a partial fill, then Mark flatten-now PnL. Position calls this once.
 */
 func (price *Price) Fill(
 	instrument *kraken.InstrumentPair,

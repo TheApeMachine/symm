@@ -105,6 +105,11 @@ func tapeMeasurements(
 			At:       row.latestAt,
 			Unit:     types.UnitQuoteCurrency,
 			Raw:      row.fillBid,
+			// Honesty is executed base size versus observed trade size; notional
+			// fill value is retained as Raw for quote-space reporting only.
+			Normalized: types.NormalizeRatio(
+				row.bidExecuted, math.Max(row.volume, row.bidExecuted),
+			),
 			Maturity: maturity,
 			Validity: obsCtx.validity,
 			Scale:    obsCtx.scale,
@@ -122,6 +127,9 @@ func tapeMeasurements(
 			At:       row.latestAt,
 			Unit:     types.UnitQuoteCurrency,
 			Raw:      row.fillAsk,
+			Normalized: types.NormalizeRatio(
+				row.askExecuted, math.Max(row.volume, row.askExecuted),
+			),
 			Maturity: maturity,
 			Validity: obsCtx.validity,
 			Scale:    obsCtx.scale,
@@ -242,7 +250,10 @@ func (signal *Signal) touchHonesty(
 		row.tradeCount+row.bookCount,
 	)
 
-	if bidCancelled > 0 {
+	// Retreat already names the withdrawal mode; emitting CancelledQuantity for
+	// the same prior-touch residual would double-count one physical event into
+	// SpoofTrap/ToxicBluff supports.
+	if bidCancelled > 0 && !bidRetreated {
 		measurements = append(measurements, &types.Measurement{
 			Source:     types.SourceToxicity,
 			Stream:     types.Toxicity,
@@ -260,7 +271,7 @@ func (signal *Signal) touchHonesty(
 		})
 	}
 
-	if askCancelled > 0 {
+	if askCancelled > 0 && !askRetreated {
 		measurements = append(measurements, &types.Measurement{
 			Source:     types.SourceToxicity,
 			Stream:     types.Toxicity,

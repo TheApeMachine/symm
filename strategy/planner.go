@@ -2,11 +2,7 @@ package strategy
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"io"
 	"maps"
-	"strings"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -19,8 +15,7 @@ import (
 )
 
 /*
-Planner records the feasible action alternatives for each calibrated forecast
-and emits orders only for actions that cross the broker boundary.
+Planner records feasible actions from accumulated measurements.
 */
 type Planner struct {
 	ctx         context.Context
@@ -32,8 +27,6 @@ type Planner struct {
 	price       *broker.Price
 	balance     *broker.Balance
 	uiHub       chan<- []byte
-	signals     []types.Signal
-	workers     []signalWorker
 	analyzer    *logic.Analyzer
 	recorder    *audit.Recorder
 	allocator   *Allocator
@@ -45,26 +38,6 @@ type Planner struct {
 	arbiter     *Arbiter
 }
 
-/*
-signalWorker is one persistent Measure goroutine with a depth-one job slot so
-a slow signal never stacks duplicate cuts.
-*/
-type signalWorker struct {
-	signal types.Signal
-	jobs   chan *types.Thesis
-	out    chan measured
-}
-
-type measured struct {
-	name   string
-	rows   []*types.Measurement
-	err    error
-}
-
-/*
-NewPlanner creates one persistent channel worker per signal. Workers measure a
-shared immutable market cut concurrently while Planner alone assembles Thesis.
-*/
 func NewPlanner(
 	ctx context.Context,
 	uiHub chan<- []byte,
@@ -73,18 +46,15 @@ func NewPlanner(
 	instrument *broker.Instrument,
 	price *broker.Price,
 	balance *broker.Balance,
-	signals []types.Signal,
 	analyzer *logic.Analyzer,
 	allocator *Allocator,
 	recorder *audit.Recorder,
 ) *Planner {
 	ctx, cancel := context.WithCancel(ctx)
-
 	rotate := NewRotate()
-	evidence := NewEvidence()
 	admit := NewAdmit(ctx, balance, desk, rotate)
 
-	planner := &Planner{
+	return &Planner{
 		ctx:        ctx,
 		cancel:     cancel,
 		status:     types.READY,
@@ -95,7 +65,6 @@ func NewPlanner(
 		balance:    balance,
 		allocator:  allocator,
 		uiHub:      uiHub,
-		signals:    signals,
 		analyzer:   analyzer,
 		recorder:   recorder,
 		opportunity: NewOpportunity(
@@ -103,61 +72,10 @@ func NewPlanner(
 		),
 		admit:      admit,
 		continuity: NewContinuity(price, balance, rotate),
-		evidence:   evidence,
+		evidence:   NewEvidence(),
 		rotate:     rotate,
 		arbiter:    NewArbiter(desk, price, balance, admit, rotate),
 	}
-	planner.workers = make([]signalWorker, 0, len(signals))
-
-	for _, signal := range signals {
-		worker := signalWorker{
-			signal: signal,
-			jobs:   make(chan *types.Thesis, 1),
-			out:    make(chan measured, 1),
-		}
-		planner.workers = append(planner.workers, worker)
-		go planner.runWorker(worker)
-	}
-
-	return planner
-}
-
-/*
-runWorker measures one job at a time until Planner.Close cancels the context.
-*/
-func (planner *Planner) runWorker(worker signalWorker) {
-	for {
-		select {
-		case <-planner.ctx.Done():
-			return
-		case thesis := <-worker.jobs:
-			worker.out <- planner.measure(worker, thesis)
-		}
-	}
-}
-
-/*
-measure runs one signal's Measure and records a failed batch when Calculate
-rejects the cut.
-*/
-func (planner *Planner) measure(
-	worker signalWorker,
-	thesis *types.Thesis,
-) measured {
-	name := signalName(worker.signal)
-	rows, err := worker.signal.Measure(thesis)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"planner: signal "+name+" failed measure",
-			err,
-		))
-
-		return measured{name: name, err: err}
-	}
-
-	return measured{name: name, rows: rows}
 }
 
 func (planner *Planner) Initialize() error {
@@ -166,108 +84,40 @@ func (planner *Planner) Initialize() error {
 	return nil
 }
 
-/*
-Status reports whether the Planner itself is ready to evaluate evidence.
-Boot-stage admission remains a separate concern enforced by Update.
-*/
 func (planner *Planner) Status() types.Status {
 	return planner.status
 }
 
-/*
-Close cancels pending Planner work during runtime shutdown.
-*/
 func (planner *Planner) Close() error {
 	planner.cancel()
-	var err error
-
-	for _, signal := range planner.signals {
-		closer, ok := signal.(io.Closer)
-
-		if ok {
-			err = errors.Join(err, closer.Close())
-		}
-	}
-
-	return err
+	return nil
 }
 
 /*
-Update fans one immutable market cut through concurrent signal channels, then
-analyzes the durable Thesis. Per-tick evidence is replaced in place; Holdings
-and Lifecycle created by this Thesis are preserved.
+Update installs measurements onto the durable Thesis and runs the analyzer.
 */
 func (planner *Planner) Update(
 	thesis *types.Thesis,
-	frame *types.MarketFrame,
+	at time.Time,
 	tick int64,
+	rows []*types.Measurement,
 ) *types.Thesis {
 	if thesis == nil {
-		thesis = types.NewThesis(planner.uiHub, frame)
+		thesis = types.NewThesis(planner.uiHub)
 	}
 
-	thesis.ResetCut(frame, tick)
+	thesis.ResetTick(at, tick)
+	thesis.Measurements = rows
 	started := time.Now()
 
-	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "measure_begin", map[string]any{
-		"signals": len(planner.signals),
-		"tickers": len(frame.Tickers),
-		"trades":  len(frame.Trades),
-		"books":   len(frame.Books),
-	}))
-
-	interest := types.FrameInterest(frame)
-	counts := make(map[string]int, len(planner.workers))
-	active := make([]signalWorker, 0, len(planner.workers))
-	skipped := make([]string, 0)
-
-	for _, worker := range planner.workers {
-		if types.SignalInterest(worker.signal)&interest == 0 {
-			continue
-		}
-
+	if len(thesis.Measurements) > 0 {
 		select {
-		case worker.jobs <- thesis:
-			active = append(active, worker)
+		case planner.uiHub <- datura.Map[any]{
+			"measurements": types.ForPublish(thesis.Measurements),
+		}.Marshal():
 		default:
-			// Depth-one: still measuring prior cut — cut is incomplete.
-			skipped = append(skipped, signalName(worker.signal))
 		}
 	}
-
-	failed := make([]string, 0)
-
-	for _, worker := range active {
-		batch := <-worker.out
-
-		if batch.err != nil {
-			failed = append(failed, batch.name)
-			continue
-		}
-
-		counts[batch.name] += len(batch.rows)
-		thesis.Measurements = append(thesis.Measurements, batch.rows...)
-	}
-
-	if len(skipped) > 0 || len(failed) > 0 {
-		thesis.NoteIncomplete()
-		thesis.Measurements = nil
-		errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "measure_incomplete", map[string]any{
-			"skipped": skipped,
-			"failed":  failed,
-			"ns":      time.Since(started).Nanoseconds(),
-		}))
-
-		return thesis
-	}
-
-	planner.publishMeasurements(thesis)
-
-	errnie.Error(audit.Record(planner.recorder, "signal_counts", map[string]any{
-		"tick":   thesis.Tick,
-		"counts": counts,
-		"ns":     time.Since(started).Nanoseconds(),
-	}))
 
 	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "measure_end", map[string]any{
 		"measurements": len(thesis.Measurements),
@@ -281,25 +131,20 @@ func (planner *Planner) Update(
 	return thesis
 }
 
-/*
-Decide manages open inventory, scores flat-symbol entries, arbitrates slots,
-then sizes admitted enters.
-*/
 func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 	if err := planner.validate(map[string]any{"thesis": thesis}); err != nil {
 		return thesis
 	}
 
-	// Stamp fees on every forecast before Continuity so occupied/managing lots
-	// stay Eligible(); Measure still skips those symbols for fresh enters.
 	planner.opportunity.StampFriction(thesis)
 	planner.continuity.Manage(thesis)
+	planner.evidence.Regulate(thesis, planner.balance)
 
 	if thesis.Incomplete() {
 		thesis.Decisions = append(thesis.Decisions, types.Decision{
 			Action: types.ActionNothing,
 			Cause:  "measure_incomplete",
-			Reason: "interested signal skipped this cut; refuse fresh enters",
+			Reason: "accumulated evidence is marked incomplete; refuse fresh enters",
 		})
 
 		return thesis
@@ -309,144 +154,26 @@ func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 	planner.arbiter.Select(thesis)
 
 	if err := planner.allocator.Allocate(thesis); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to allocate",
-			err,
-		))
+		errnie.Error(errnie.Err(errnie.Internal, "failed to allocate", err))
 	}
 
-	planner.commitRotations(thesis)
+	planner.rotate.Commit(thesis)
 
 	return thesis
 }
 
-/*
-commitRotations appends rotation exits only after the challenger is sized, and
-demotes unsized enters so Trade never submits naked sells.
-*/
-func (planner *Planner) commitRotations(thesis *types.Thesis) {
-	if err := planner.validate(map[string]any{"thesis": thesis}); err != nil {
-		return
-	}
-
-	exits := make([]types.Decision, 0)
-
-	for index := range thesis.Decisions {
-		decision := &thesis.Decisions[index]
-
-		if decision.Action == types.ActionEnter && decision.ProposedQuantity == nil {
-			decision.Action = types.ActionNothing
-			decision.Displaces = ""
-			decision.ProposedQuantity = nil
-			decision.ProposedNotional = nil
-			thesis.Holdings.Delete(decision.Symbol)
-
-			if decision.Reason == "" {
-				decision.Reason = "unsized"
-			}
-
-			continue
-		}
-
-		if decision.Action != types.ActionEnter ||
-			decision.Cause != "rotation" ||
-			decision.Displaces == "" ||
-			decision.ProposedQuantity == nil {
-			continue
-		}
-
-		if decision.DisplacedQuantity == nil || decision.DisplacedPrice == nil {
-			decision.Action = types.ActionNothing
-			decision.Reason = "rotation source money is unavailable"
-
-			continue
-		}
-
-		exits = append(exits, types.Decision{
-			Action:  types.ActionExit,
-			Symbol:  decision.Displaces,
-			At:      decision.At,
-			Utility: -decision.Alternatives["exit_cost"],
-			Alternatives: map[string]float64{
-				"exit": -decision.Alternatives["exit_cost"],
-				"hold": decision.Alternatives["hold_incumbent"],
-			},
-			ProposedQuantity:  decision.DisplacedQuantity.Copy(),
-			ReferencePrice:    decision.DisplacedPrice.Copy(),
-			ValidThroughEpoch: decision.ValidThroughEpoch,
-			Cause:             "rotation",
-			Reason:            "displaced by higher-utility challenger " + decision.Symbol,
-		})
-
-		thesis.NoteLifecycle(decision.Displaces, types.LifecycleExitSelected, decision.At)
-	}
-
-	thesis.Decisions = append(thesis.Decisions, exits...)
-}
-
-/*
-publishMeasurements emits one combined measurement frame after fan-in so the
-terminal never replaces a partial signal snapshot with another in the same cut.
-*/
-func (planner *Planner) publishMeasurements(thesis *types.Thesis) {
-	if thesis == nil || len(thesis.Measurements) == 0 {
-		return
-	}
-
-	if err := planner.validate(map[string]any{
-		"thesis":       thesis,
-		"measurements": thesis.Measurements,
-	}); err != nil {
-		return
-	}
-
-	select {
-	case planner.uiHub <- datura.Map[any]{
-		"measurements": types.ForPublish(thesis.Measurements),
-	}.Marshal():
-	default:
-	}
-}
-
-/*
-signalName returns a stable short label for audit rows from the concrete signal
-type without requiring every signal package to advertise a name method.
-*/
-func signalName(signal types.Signal) string {
-	name := fmt.Sprintf("%T", signal)
-	name = strings.TrimPrefix(name, "*")
-
-	if index := strings.LastIndex(name, "."); index >= 0 {
-		packageName := name[:index]
-
-		if slash := strings.LastIndex(packageName, "/"); slash >= 0 {
-			packageName = packageName[slash+1:]
-		}
-
-		return packageName
-	}
-
-	return name
-}
-
-/*
-validate requires Planner surfaces. Call-site extras (e.g. thesis) merge in via
-mandatory. Signals and analyzer stay optional on Decide-only paths.
-*/
 func (planner *Planner) validate(mandatory map[string]any) error {
 	check := map[string]any{
+		"ctx":         planner.ctx,
+		"cancel":      planner.cancel,
 		"desk":        planner.desk,
-		"instrument":  planner.instrument,
-		"price":       planner.price,
 		"balance":     planner.balance,
-		"allocator":   planner.allocator,
 		"opportunity": planner.opportunity,
-		"arbiter":     planner.arbiter,
 		"admit":       planner.admit,
+		"arbiter":     planner.arbiter,
+		"allocator":   planner.allocator,
 		"uiHub":       planner.uiHub,
 	}
-
 	maps.Copy(check, mandatory)
 
 	return errnie.Error(errnie.Require(check))

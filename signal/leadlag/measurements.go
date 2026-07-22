@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -11,12 +12,13 @@ import (
 measureFrame ingests prices, refreshes the anchor, and scores each follower row.
 */
 func (signal *Signal) measureFrame(
-	frame *types.MarketFrame,
+	tickers []kraken.TickerData,
+	crossSection *types.CrossSection,
 ) ([]*types.Measurement, error) {
-	rows := frame.Tickers
+	rows := tickers
 	out := make([]*types.Measurement, 0, len(rows))
 
-	anchor, _ := frame.CrossSection.Leadership()
+	anchor, _ := crossSection.Leadership()
 
 	if anchor == "" {
 		signal.section.ClearAnchor()

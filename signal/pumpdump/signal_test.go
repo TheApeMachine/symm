@@ -374,7 +374,7 @@ func BenchmarkMeasure(b *testing.B) {
 					Ticks:  1,
 				},
 			},
-		}, wired.Crypto.Step); err != nil {
+		}, tests.Consume(wired.Crypto.Tick)); err != nil {
 			b.Fatal(err)
 		}
 	}

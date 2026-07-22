@@ -41,7 +41,6 @@ per-tick evidence in place so the object does not grow without bound.
 type Thesis struct {
 	checkpoint   atomic.Int64
 	uiHub        chan<- []byte
-	marketFrame  *MarketFrame
 	Tick         int64          `json:"tick"`
 	At           time.Time      `json:"at"`
 	Positions    *sync.Map      `json:"positions"`
@@ -59,19 +58,16 @@ type Thesis struct {
 	Cognition    *sync.Map      `json:"cognition"`
 	Resonance    []any          `json:"resonance"`
 	Causal       []any          `json:"causal"`
-	// cutIncomplete is set when an interested signal worker skipped this cut;
-	// Decide then manages open lots only and refuses fresh enters.
 	cutIncomplete bool
 }
 
 /*
-NewThesis creates a Thesis with empty durable maps and no cut evidence yet.
+NewThesis creates a Thesis with empty durable maps and no tick evidence yet.
 */
-func NewThesis(uiHub chan<- []byte, marketFrame *MarketFrame) *Thesis {
+func NewThesis(uiHub chan<- []byte) *Thesis {
 	return &Thesis{
 		uiHub:        uiHub,
 		At:           time.Now().UTC(),
-		marketFrame:  marketFrame,
 		Positions:    &sync.Map{},
 		Holdings:     &sync.Map{},
 		Decisions:    make([]Decision, 0),
@@ -90,23 +86,17 @@ func NewThesis(uiHub chan<- []byte, marketFrame *MarketFrame) *Thesis {
 }
 
 /*
-ResetCut replaces per-tick evidence for a new market cut while preserving
-Holdings, Lifecycle, and Findings owned by this Thesis.
+ResetTick replaces per-tick evidence while preserving Holdings, Lifecycle, and
+Findings owned by this Thesis.
 */
-func (thesis *Thesis) ResetCut(frame *MarketFrame, tick int64) {
+func (thesis *Thesis) ResetTick(at time.Time, tick int64) {
 	if thesis == nil {
 		return
 	}
 
-	thesis.marketFrame = frame
 	thesis.Tick = tick
-	thesis.At = time.Time{}
-
-	if frame != nil {
-		thesis.At = frame.At
-		thesis.CrossSection = frame.CrossSection
-	}
-
+	thesis.At = at
+	thesis.CrossSection = NewCrossSection()
 	thesis.Measurements = nil
 	thesis.Forecasts = thesis.Forecasts[:0]
 	thesis.Decisions = thesis.Decisions[:0]
@@ -152,15 +142,15 @@ func (thesis *Thesis) Incomplete() bool {
 }
 
 /*
-CutSnapshot copies this cut's measurements and forecasts for history callers
-that must not observe later ResetCut replacements on the durable Thesis.
+CutSnapshot copies this tick's measurements and forecasts for history callers
+that must not observe later ResetTick replacements on the durable Thesis.
 */
 func (thesis *Thesis) CutSnapshot() *Thesis {
 	if thesis == nil {
 		return nil
 	}
 
-	snapshot := NewThesis(thesis.uiHub, thesis.marketFrame)
+	snapshot := NewThesis(thesis.uiHub)
 	snapshot.Tick = thesis.Tick
 	snapshot.At = thesis.At
 	snapshot.CrossSection = thesis.CrossSection
@@ -375,13 +365,6 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
-}
-
-/*
-Market returns the central immutable market cut for this thesis.
-*/
-func (thesis *Thesis) Market() *MarketFrame {
-	return thesis.marketFrame
 }
 
 /*

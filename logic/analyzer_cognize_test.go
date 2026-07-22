@@ -27,7 +27,7 @@ func TestAnalyzerConsolidate(t *testing.T) {
 		So(err, ShouldBeNil)
 		_, _, err = tree.CommitToEpisodicBuffer(uint64(through.UnixNano()), sequence)
 		So(err, ShouldBeNil)
-		thesis := types.NewThesis(nil, nil)
+		thesis := types.NewThesis(nil)
 		thesis.Cognition.Store("BTC/USD", types.Cognition{Symbol: "BTC/USD"})
 
 		analyzer.consolidate(thesis, []time.Time{from, through}, false)
@@ -49,6 +49,49 @@ func TestAnalyzerConsolidate(t *testing.T) {
 			So(cognition.REMFrom, ShouldEqual, from)
 			So(cognition.REMThrough, ShouldEqual, through)
 			So(cognition.REMReplays, ShouldEqual, 2)
+		})
+	})
+}
+
+/*
+TestAnalyzerCognize proves one buy-dominant observation publishes a Ready buy
+winner after attractor training, so strategy is not gated on sequence repeats.
+*/
+func TestAnalyzerCognize(t *testing.T) {
+	Convey("Given a gas-ready buy-dominant manifold state", t, func() {
+		analyzer := &Analyzer{tree: dmt.NewTree("")}
+		thesis := types.NewThesis(nil)
+		state := manifold.State{
+			Symbol:         "BTC/USD",
+			At:             time.Unix(1, 0),
+			Duration:       time.Second,
+			Epoch:          1,
+			ReferencePrice: decimal.NewFromInt64(100),
+			InvalidReason:  manifold.Valid,
+			Spread:         0.01,
+			BuyCapacity:    decimal.NewFromInt64(1000),
+			SellCapacity:   decimal.NewFromInt64(1000),
+			BuyIntensity:   2,
+			SellIntensity:  1,
+			Reading: pmanifold.Reading{
+				PressureGradX: 1,
+				Divergence:    -1,
+				CoherenceMag2: 1,
+				GuidanceSpeed: 1,
+			},
+		}
+
+		Convey("When cognize anchors the attractor on this sequence", func() {
+			So(analyzer.cognize(thesis, state), ShouldBeTrue)
+
+			Convey("Then Thesis cognition is Ready with a buy winner", func() {
+				raw, found := thesis.Cognition.Load("BTC/USD")
+				So(found, ShouldBeTrue)
+				reading := raw.(types.Cognition)
+				So(reading.Ready, ShouldBeTrue)
+				So(reading.Winner, ShouldEqual, "buy")
+				So(reading.Confidence, ShouldBeGreaterThan, 0)
+			})
 		})
 	})
 }
@@ -80,6 +123,6 @@ func BenchmarkAnalyzerCognize(b *testing.B) {
 	}
 
 	for b.Loop() {
-		analyzer.cognize(types.NewThesis(nil, nil), state)
+		analyzer.cognize(types.NewThesis(nil), state)
 	}
 }

@@ -30,7 +30,7 @@ func TestArbiterSelect(t *testing.T) {
 		rotate := NewRotate()
 		admit := NewAdmit(context.Background(), balance, desk, rotate)
 		arbiter := NewArbiter(desk, broker.NewPrice(nil), balance, admit, rotate)
-		thesis := types.NewThesis(nil, nil)
+		thesis := types.NewThesis(nil)
 		thesis.Decisions = []types.Decision{
 			{Action: types.ActionEnter, Symbol: "LOW", Utility: 0.1},
 			{Action: types.ActionEnter, Symbol: "HIGH", Utility: 0.9},

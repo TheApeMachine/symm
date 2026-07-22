@@ -53,7 +53,7 @@ func TestBooter_Test(t *testing.T) {
 			So(wired.Close(), ShouldBeNil)
 			market.Close()
 		})
-		So(market.Warmup(wired.Crypto.Step), ShouldBeNil)
+		So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
 		symbol := market.Symbols[0]
 		quantity := decimal.NewFromInt64(1)
 
@@ -77,6 +77,77 @@ func TestBooter_Test(t *testing.T) {
 				So(market.Paper.Drain(), ShouldBeNil)
 				So(wired.Desk.OpenPositions(), ShouldEqual, 0)
 				So(position.Status(), ShouldEqual, types.CLOSED)
+			})
+		})
+	})
+}
+
+/*
+TestBooter_TickStrategy proves Crypto.Tick → Decide → Desk fill against a
+fixture pump tape on the production graph, then exits the filled lot.
+*/
+func TestBooter_TickStrategy(t *testing.T) {
+	Convey("Given a warmed production graph on a three-symbol tape", t, func() {
+		market := tests.NewMarket(t.Context(), 3)
+		wired, err := stack.NewBooter(t.Context()).Test(market)
+		So(err, ShouldBeNil)
+		Reset(func() {
+			So(wired.Close(), ShouldBeNil)
+			market.Close()
+		})
+
+		So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
+
+		Convey("When a fast pump plays through Tick", func() {
+			entered := false
+			var thesis *types.Thesis
+
+			So(market.Transition(tests.MarketStateFastPump, func() error {
+				if entered {
+					return nil
+				}
+
+				next, tickErr := wired.Crypto.Tick()
+
+				if tickErr != nil {
+					return tickErr
+				}
+
+				thesis = next
+				So(thesis.Incomplete(), ShouldBeFalse)
+
+				for _, decision := range thesis.Decisions {
+					if decision.Action != types.ActionEnter {
+						continue
+					}
+
+					So(market.Paper.Drain(), ShouldBeNil)
+					holding, holdErr := wired.Balance.Holding(decision.Symbol)
+					So(holdErr, ShouldBeNil)
+					So(holding.Qty, ShouldNotBeNil)
+					So(holding.Qty.Sign(), ShouldBeGreaterThan, 0)
+					entered = true
+				}
+
+				return nil
+			}), ShouldBeNil)
+
+			Convey("It opens inventory from strategy decisions and can exit it", func() {
+				So(thesis, ShouldNotBeNil)
+				So(thesis.Forecasts, ShouldNotBeEmpty)
+				So(entered, ShouldBeTrue)
+				So(wired.Desk.OpenPositions(), ShouldBeGreaterThan, 0)
+
+				sold := 0
+
+				for holding := range wired.Balance.Holdings() {
+					So(wired.Desk.Sell(holding.Symbol), ShouldBeNil)
+					sold++
+				}
+
+				So(sold, ShouldBeGreaterThan, 0)
+				So(market.Paper.Drain(), ShouldBeNil)
+				So(wired.Desk.OpenPositions(), ShouldEqual, 0)
 			})
 		})
 	})

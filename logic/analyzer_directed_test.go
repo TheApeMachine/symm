@@ -21,7 +21,7 @@ func addLeadLagStrength(graph *types.Graph, symbol string, at time.Time) {
 func TestRelateLeadLag(t *testing.T) {
 	Convey("Given an anchor and a follower whose direction names the anchor", t, func() {
 		analyzer := &Analyzer{}
-		thesis := types.NewThesis(nil, nil)
+		thesis := types.NewThesis(nil)
 		at := time.Unix(200, 0)
 
 		anchorGraph := types.NewGraph("BTC/USD")
@@ -72,7 +72,7 @@ func TestRelateLeadLag(t *testing.T) {
 
 	Convey("Given a follower with no signed lag direction", t, func() {
 		analyzer := &Analyzer{}
-		thesis := types.NewThesis(nil, nil)
+		thesis := types.NewThesis(nil)
 		at := time.Unix(200, 0)
 		anchorGraph := types.NewGraph("BTC/USD")
 		addLeadLagStrength(anchorGraph, "BTC/USD", at)
@@ -104,7 +104,7 @@ func TestRelateLeadLag(t *testing.T) {
 func TestRelateCausal(t *testing.T) {
 	Convey("Given a ready causal hypothesis with a finite effect", t, func() {
 		analyzer := &Analyzer{}
-		thesis := types.NewThesis(nil, nil)
+		thesis := types.NewThesis(nil)
 		at := time.Unix(300, 0)
 
 		graph := types.NewGraph("BTC/USD")
@@ -142,7 +142,7 @@ func TestRelateCausal(t *testing.T) {
 		})
 
 		Convey("Then a hypothesis with no effect draws no edge", func() {
-			flat := types.NewThesis(nil, nil)
+			flat := types.NewThesis(nil)
 			flatGraph := types.NewGraph("BTC/USD")
 			flat.Graphs.Store("BTC/USD", flatGraph)
 			flat.Hypotheses = append(flat.Hypotheses, types.Hypothesis{

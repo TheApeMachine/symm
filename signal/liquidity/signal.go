@@ -3,9 +3,14 @@ package liquidity
 import (
 	"context"
 	"math"
+	"sort"
+	"time"
+
+	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/statistic"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -15,9 +20,13 @@ executable touch depth is thin relative to peers. Reported-volume notional is
 retained as a separate turnover context and never mixed into the book-depth score.
 */
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	ui     chan []byte
+	tickerIn     chan []kraken.TickerData
+	bookIn       chan []kraken.BookData
+	tradeIn      chan []kraken.TradeData
+	ctx          context.Context
+	cancel       context.CancelFunc
+	ui           chan []byte
+	crossSection *types.CrossSection
 }
 
 /*
@@ -27,11 +36,17 @@ tick can compare executable liquidity across the observed cohort.
 func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	return &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		ui:     ui,
+	signal := &Signal{
+		tickerIn:     make(chan []kraken.TickerData, 64),
+		bookIn:       make(chan []kraken.BookData, 64),
+		tradeIn:      make(chan []kraken.TradeData, 64),
+		ctx:          ctx,
+		cancel:       cancel,
+		ui:           ui,
+		crossSection: types.NewCrossSection(),
 	}
+
+	return signal
 }
 
 /*
@@ -48,35 +63,29 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 }
 
 /*
-Interest requires ticker depth fields for cross-sectional scarcity.
-*/
-func (signal *Signal) Interest() types.StreamInterest {
-	return types.StreamTicker
-}
-
-/*
-Measure returns typed measurements for the cut, or an error when the
-cut cannot be measured honestly.
-*/
-func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, error) {
-	return signal.Calculate(thesis.Market())
-}
-
-/*
 Calculate converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
 func (signal *Signal) Calculate(
-	frame *types.MarketFrame,
+	tickers []kraken.TickerData,
+	trades []kraken.TradeData,
+	books []kraken.BookData,
 ) ([]*types.Measurement, error) {
-	rows := frame.Tickers
-	out := make([]*types.Measurement, 0, len(rows))
-	crossSection := frame.CrossSection
+	if len(tickers) == 0 {
+		return nil, nil
+	}
+
+	// Retain the full observed cohort so an isolated single-symbol event still
+	// reports every peer's latest executable liquidity in the same central cut.
+	signal.crossSection.Measure(tickers)
+
+	peers := make([]types.SymbolMetric, 0)
 	notionalPeers := make([]float64, 0)
 	depthPeers := make([]float64, 0)
 
-	crossSection.Metrics.Range(func(_, value any) bool {
+	signal.crossSection.Metrics.Range(func(_, value any) bool {
 		metric := value.(types.SymbolMetric)
+		peers = append(peers, metric)
 
 		if metric.QuoteNotional > 0 {
 			notionalPeers = append(notionalPeers, metric.QuoteNotional)
@@ -87,6 +96,10 @@ func (signal *Signal) Calculate(
 		}
 
 		return true
+	})
+
+	sort.Slice(peers, func(left, right int) bool {
+		return peers[left].Symbol < peers[right].Symbol
 	})
 
 	depthMedian, depthOK := statistic.MedianOf(depthPeers)
@@ -101,8 +114,10 @@ func (signal *Signal) Calculate(
 		normalized *float64
 	}
 
-	for _, row := range rows {
-		executableDepth := crossSection.ExecutableDepth(row)
+	out := make([]*types.Measurement, 0, len(peers))
+
+	for _, peer := range peers {
+		executableDepth := peer.ExecutableDepth
 
 		if executableDepth <= 0 {
 			continue
@@ -114,8 +129,8 @@ func (signal *Signal) Calculate(
 		}
 		scale := types.ScaleReference{
 			Kind:    types.ScaleObservationWindow,
-			From:    row.Timestamp,
-			Through: row.Timestamp,
+			From:    peer.At,
+			Through: peer.At,
 		}
 		specs := []measurementSpec{
 			{types.MetricExecutableTouchDepth, types.UnitQuoteCurrency, executableDepth, nil},
@@ -136,7 +151,7 @@ func (signal *Signal) Calculate(
 			)
 		}
 
-		reportedNotional := crossSection.QuoteNotional(row)
+		reportedNotional := peer.QuoteNotional
 
 		if peerReady && reportedNotional > 0 && hasNotionalMedian && notionalMedian > 0 {
 			specs = append(specs,
@@ -146,24 +161,20 @@ func (signal *Signal) Calculate(
 		}
 
 		for _, spec := range specs {
-			measurements := []*types.Measurement{
-				{
-					Source:     types.SourceLiquidity,
-					Stream:     types.Liquidity,
-					Metric:     spec.metric,
-					Subject:    types.SubjectPeerLiquidity,
-					Symbol:     row.Symbol,
-					At:         row.Timestamp,
-					Unit:       spec.unit,
-					Raw:        spec.raw,
-					Normalized: spec.normalized,
-					Maturity:   peerMaturity,
-					Validity:   validity,
-					Scale:      scale,
-				},
-			}
-
-			out = append(out, measurements...)
+			out = append(out, &types.Measurement{
+				Source:     types.SourceLiquidity,
+				Stream:     types.Liquidity,
+				Metric:     spec.metric,
+				Subject:    types.SubjectPeerLiquidity,
+				Symbol:     peer.Symbol,
+				At:         peer.At,
+				Unit:       spec.unit,
+				Raw:        spec.raw,
+				Normalized: spec.normalized,
+				Maturity:   peerMaturity,
+				Validity:   validity,
+				Scale:      scale,
+			})
 		}
 	}
 
@@ -178,4 +189,98 @@ func (signal *Signal) Close() error {
 	signal.cancel()
 
 	return nil
+}
+
+/*
+Tickers returns the ticker ingress channel.
+*/
+func (signal *Signal) Tickers() chan []kraken.TickerData {
+	return signal.tickerIn
+}
+
+/*
+Books returns the book ingress channel.
+*/
+func (signal *Signal) Books() chan []kraken.BookData {
+	return signal.bookIn
+}
+
+/*
+Trades returns the trade ingress channel.
+*/
+func (signal *Signal) Trades() chan []kraken.TradeData {
+	return signal.tradeIn
+}
+
+/*
+Measure consumes ingress channels and sends measurements on out.
+*/
+func (signal *Signal) Measure() chan []*types.Measurement {
+	out := make(chan []*types.Measurement, 64)
+
+	go func() {
+		defer close(out)
+
+		for {
+			select {
+			case <-signal.ctx.Done():
+				return
+			case rows := <-signal.tickerIn:
+				measured, err := signal.Calculate(rows, nil, nil)
+
+				if err != nil {
+					errnie.Error(err)
+					continue
+				}
+
+				if len(measured) == 0 {
+					continue
+				}
+
+				select {
+				case out <- measured:
+					signal.Publish(measured)
+				default:
+				}
+			case rows := <-signal.bookIn:
+				measured, err := signal.Calculate(nil, nil, rows)
+
+				if err != nil {
+					errnie.Error(err)
+					continue
+				}
+
+				if len(measured) == 0 {
+					continue
+				}
+
+				select {
+				case out <- measured:
+					signal.Publish(measured)
+				default:
+				}
+			case rows := <-signal.tradeIn:
+				measured, err := signal.Calculate(nil, rows, nil)
+
+				if err != nil {
+					errnie.Error(err)
+					continue
+				}
+
+				if len(measured) == 0 {
+					continue
+				}
+
+				select {
+				case out <- measured:
+					signal.Publish(measured)
+				default:
+				}
+			default:
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	}()
+
+	return out
 }

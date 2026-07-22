@@ -36,7 +36,7 @@ func (proof marketProof) Run(t *testing.T) (marketOutcome, []string) {
 	defer market.Close()
 
 	if proof.warm {
-		So(market.Warmup(wired.Crypto.Step), ShouldBeNil)
+		So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
 	}
 
 	outcome := marketOutcome{peak: make(evidenceValues)}

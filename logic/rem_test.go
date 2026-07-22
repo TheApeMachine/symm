@@ -32,7 +32,7 @@ func TestREMSleepRequestAsync(t *testing.T) {
 
 			Convey("Then sensory weights train without holding the caller", func() {
 				So(tree.GetSensoryWeight(sequence).Count, ShouldEqual, 2)
-				thesis := types.NewThesis(nil, nil)
+				thesis := types.NewThesis(nil)
 				thesis.Cognition.Store("ETH/USD", types.Cognition{Symbol: "ETH/USD"})
 				rem.Stamp(thesis)
 				reading, _ := thesis.Cognition.Load("ETH/USD")

@@ -202,6 +202,13 @@ Holding returns the holding for a given symbol.
 func (balance *Balance) Holding(symbol string) (types.Holding, error) {
 	value, ok := balance.holdings.Load(symbol)
 
+	// A closed lot is no longer inventory: Holdings() already skips it, so the
+	// single-symbol lookup must agree and report the lot as gone rather than
+	// handing back a flat, exited shell that reads as an open position.
+	if ok && value.(*types.Holding).Status == types.CLOSED {
+		ok = false
+	}
+
 	if !ok {
 		return types.Holding{}, errnie.Error(errnie.Err(
 			errnie.NotFound,

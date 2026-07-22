@@ -2,8 +2,12 @@ package fluid
 
 import (
 	"context"
+	"time"
+
+	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -11,6 +15,9 @@ import (
 Signal is a fluid signal that observes market data and calculates measurements.
 */
 type Signal struct {
+	tickerIn chan []kraken.TickerData
+	bookIn   chan []kraken.BookData
+	tradeIn  chan []kraken.TradeData
 	ctx      context.Context
 	cancel   context.CancelFunc
 	registry *Registry
@@ -18,22 +25,6 @@ type Signal struct {
 	trade    *Trade
 	book     *Book
 	ui       chan []byte
-}
-
-/*
-Interest requires ticker, trade, and book streams; the mechanical metrics merge
-all three inputs into one causal event timeline per symbol.
-*/
-func (signal *Signal) Interest() types.StreamInterest {
-	return types.StreamAll
-}
-
-/*
-Measure returns typed measurements for the cut, or an error when the cut
-cannot be measured honestly.
-*/
-func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, error) {
-	return signal.Calculate(thesis.Market())
 }
 
 /*
@@ -59,6 +50,9 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 	registry := NewSyncRegistry()
 
 	signal := &Signal{
+		tickerIn: make(chan []kraken.TickerData, 64),
+		bookIn:   make(chan []kraken.BookData, 64),
+		tradeIn:  make(chan []kraken.TradeData, 64),
 		ctx:      ctx,
 		cancel:   cancel,
 		registry: registry,
@@ -79,4 +73,98 @@ func (signal *Signal) Close() error {
 	signal.cancel()
 
 	return nil
+}
+
+/*
+Tickers returns the ticker ingress channel.
+*/
+func (signal *Signal) Tickers() chan []kraken.TickerData {
+	return signal.tickerIn
+}
+
+/*
+Books returns the book ingress channel.
+*/
+func (signal *Signal) Books() chan []kraken.BookData {
+	return signal.bookIn
+}
+
+/*
+Trades returns the trade ingress channel.
+*/
+func (signal *Signal) Trades() chan []kraken.TradeData {
+	return signal.tradeIn
+}
+
+/*
+Measure consumes ingress channels and sends measurements on out.
+*/
+func (signal *Signal) Measure() chan []*types.Measurement {
+	out := make(chan []*types.Measurement, 64)
+
+	go func() {
+		defer close(out)
+
+		for {
+			select {
+			case <-signal.ctx.Done():
+				return
+			case rows := <-signal.tickerIn:
+				measured, err := signal.Calculate(rows, nil, nil)
+
+				if err != nil {
+					errnie.Error(err)
+					continue
+				}
+
+				if len(measured) == 0 {
+					continue
+				}
+
+				select {
+				case out <- measured:
+					signal.Publish(measured)
+				default:
+				}
+			case rows := <-signal.bookIn:
+				measured, err := signal.Calculate(nil, nil, rows)
+
+				if err != nil {
+					errnie.Error(err)
+					continue
+				}
+
+				if len(measured) == 0 {
+					continue
+				}
+
+				select {
+				case out <- measured:
+					signal.Publish(measured)
+				default:
+				}
+			case rows := <-signal.tradeIn:
+				measured, err := signal.Calculate(nil, rows, nil)
+
+				if err != nil {
+					errnie.Error(err)
+					continue
+				}
+
+				if len(measured) == 0 {
+					continue
+				}
+
+				select {
+				case out <- measured:
+					signal.Publish(measured)
+				default:
+				}
+			default:
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	}()
+
+	return out
 }

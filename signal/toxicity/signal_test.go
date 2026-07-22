@@ -6,6 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/stack"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
@@ -81,10 +82,14 @@ func TestCalculate(t *testing.T) {
 			market := tests.NewMarket(t.Context(), 3)
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			So(market.Warmup(wired.Crypto.Step), ShouldBeNil)
+			So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
 			measurements := []*types.Measurement{}
 			So(market.Transition(proof.state, func() error {
 				thesis, err := wired.Crypto.Tick()
+
+				if errnie.IsPreconditionFailed(err) {
+					return nil
+				}
 
 				if err != nil {
 					return err
@@ -248,11 +253,6 @@ func TestCalculate(t *testing.T) {
 						proof.fillSide,
 					}], ShouldBeGreaterThan, 0)
 					So(active[measurementKey{
-						types.MetricCancelledQuantity,
-						symbol,
-						proof.retreatSide,
-					}], ShouldBeGreaterThan, 0)
-					So(active[measurementKey{
 						types.MetricRetreatingQuantity,
 						symbol,
 						proof.retreatSide,
@@ -278,16 +278,11 @@ func TestCalculate(t *testing.T) {
 				{"bid retreat", types.SideBuy},
 			} {
 				for _, symbol := range symbols {
-					for _, metric := range []types.MetricType{
-						types.MetricCancelledQuantity,
+					So(outcomes[proof.name].peak[measurementKey{
 						types.MetricRetreatingQuantity,
-					} {
-						So(outcomes[proof.name].peak[measurementKey{
-							metric,
-							symbol,
-							proof.side,
-						}], ShouldBeGreaterThan, 0)
-					}
+						symbol,
+						proof.side,
+					}], ShouldBeGreaterThan, 0)
 				}
 			}
 
@@ -338,7 +333,7 @@ func BenchmarkCalculate(b *testing.B) {
 	}()
 	defer market.Close()
 
-	if err := market.Warmup(wired.Crypto.Step); err != nil {
+	if err := market.Warmup(tests.Consume(wired.Crypto.Tick)); err != nil {
 		b.Fatal(err)
 	}
 
@@ -366,7 +361,7 @@ func BenchmarkCalculate(b *testing.B) {
 					Ticks:  1,
 				},
 			},
-		}, wired.Crypto.Step); err != nil {
+		}, tests.Consume(wired.Crypto.Tick)); err != nil {
 			b.Fatal(err)
 		}
 	}

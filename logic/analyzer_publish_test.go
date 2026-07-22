@@ -11,7 +11,7 @@ import (
 func TestProjectCategoriesFromCognition(t *testing.T) {
 	Convey("Given ready cognition winners on a thesis", t, func() {
 		analyzer := &Analyzer{}
-		thesis := types.NewThesis(nil, nil)
+		thesis := types.NewThesis(nil)
 		analyzer.projectCategories(thesis, []types.Cognition{
 			{
 				Symbol:         "PENGU/USD",
@@ -42,7 +42,7 @@ func TestProjectCategoriesFromCognition(t *testing.T) {
 
 func BenchmarkProjectCategories(b *testing.B) {
 	analyzer := &Analyzer{}
-	thesis := types.NewThesis(nil, nil)
+	thesis := types.NewThesis(nil)
 	cognition := []types.Cognition{
 		{
 			Symbol:         "PENGU/USD",

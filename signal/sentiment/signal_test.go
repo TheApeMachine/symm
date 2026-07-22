@@ -67,7 +67,7 @@ func TestCalculate(t *testing.T) {
 			market := tests.NewMarket(t.Context(), len(symbols))
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			So(market.Warmup(wired.Crypto.Step), ShouldBeNil)
+			So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
 			measurements := []*types.Measurement{}
 
 			for index, state := range proof.states {
@@ -230,7 +230,7 @@ func BenchmarkCalculate(b *testing.B) {
 		if err := market.Apply(tests.MarketStep{
 			Advance: time.Second,
 			Actions: actions,
-		}, wired.Crypto.Step); err != nil {
+		}, tests.Consume(wired.Crypto.Tick)); err != nil {
 			b.Fatal(err)
 		}
 	}

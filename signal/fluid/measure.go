@@ -12,13 +12,11 @@ Calculate applies one central immutable market cut in deterministic event-time
 order and publishes only the measurements produced by Fluid's calculators.
 */
 func (signal *Signal) Calculate(
-	frame *types.MarketFrame,
+	tickers []kraken.TickerData,
+	trades []kraken.TradeData,
+	books []kraken.BookData,
 ) ([]*types.Measurement, error) {
-	if frame == nil {
-		return nil, fmt.Errorf("fluid: market frame required")
-	}
-
-	events := signal.events(frame.Tickers, frame.Trades, frame.Books)
+	events := signal.events(tickers, trades, books)
 
 	return signal.apply(events)
 }

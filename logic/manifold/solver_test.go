@@ -49,7 +49,7 @@ func TestSolver_Update(t *testing.T) {
 				"ETH/USD": solverOutcome(at, 8, 4),
 			},
 		}
-		thesis := types.NewThesis(nil, nil)
+		thesis := types.NewThesis(nil)
 		err = solver.Update(thesis, source, "BTC/USD")
 		So(err, ShouldBeNil)
 
@@ -105,7 +105,7 @@ func TestSolver_Update(t *testing.T) {
 			laterAt := at.Add(time.Second)
 			source.outcomes["BTC/USD"] = solverOutcome(laterAt, 16, 2)
 			source.outcomes["ETH/USD"] = solverOutcome(laterAt, 4, 8)
-			next := types.NewThesis(nil, nil)
+			next := types.NewThesis(nil)
 			So(solver.Update(next, source, "BTC/USD"), ShouldBeNil)
 			value, found := next.Manifold.Load("BTC/USD")
 			So(found, ShouldBeTrue)
@@ -134,7 +134,7 @@ func TestSolver_Update(t *testing.T) {
 		})
 
 		Convey("It should replay unchanged source epochs without duplicating particles", func() {
-			next := types.NewThesis(nil, nil)
+			next := types.NewThesis(nil)
 			So(solver.Update(next, source, "ETH/USD"), ShouldBeNil)
 			value, found := next.Manifold.Load("ETH/USD")
 			replay := value.(State)

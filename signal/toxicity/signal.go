@@ -2,12 +2,14 @@ package toxicity
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"time"
 
+	"github.com/theapemachine/errnie"
+
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -17,11 +19,14 @@ Signal tracks whether near-touch liquidity is sincere, retreating, or bluffing
 from level3 order events corroborated by the public trade tape.
 */
 type Signal struct {
+	tickerIn     chan []kraken.TickerData
+	bookIn       chan []kraken.BookData
+	tradeIn      chan []kraken.TradeData
 	ctx          context.Context
 	cancel       context.CancelFunc
 	level3       *Level3
 	priorTouch   map[string]touchSnapshot
-	touchScratch map[string]touchSnapshot
+	pendingTouch map[string]touchSnapshot
 	evidence     map[string]*symbolEvidence
 	increments   map[string]*decimal.Decimal
 	ui           chan []byte
@@ -34,16 +39,21 @@ API so tests can replace only its connections, never its market mechanics.
 func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	return &Signal{
+	signal := &Signal{
+		tickerIn:     make(chan []kraken.TickerData, 64),
+		bookIn:       make(chan []kraken.BookData, 64),
+		tradeIn:      make(chan []kraken.TradeData, 64),
 		ctx:          ctx,
 		cancel:       cancel,
 		level3:       NewLevel3(api),
 		priorTouch:   map[string]touchSnapshot{},
-		touchScratch: map[string]touchSnapshot{},
+		pendingTouch: map[string]touchSnapshot{},
 		evidence:     map[string]*symbolEvidence{},
 		increments:   map[string]*decimal.Decimal{},
 		ui:           ui,
 	}
+
+	return signal
 }
 
 /*
@@ -57,23 +67,6 @@ func (signal *Signal) Publish(measurements []*types.Measurement) {
 	}.Marshal():
 	default:
 	}
-}
-
-/*
-Interest requires the public trade tape; toxicity accumulates per-symbol
-evidence from trades and corroborates each fill against the Level3 touch, which
-it reads directly through PeekBook rather than the public book cut.
-*/
-func (signal *Signal) Interest() types.StreamInterest {
-	return types.StreamTrade | types.StreamBook
-}
-
-/*
-Measure returns typed measurements for the cut, or an error when the
-cut cannot be measured honestly.
-*/
-func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, error) {
-	return signal.Calculate(thesis.Market())
 }
 
 /*
@@ -93,29 +86,34 @@ Calculate converts the receiver's current market input into typed measurements
 so downstream logic consumes explicit evidence.
 */
 func (signal *Signal) Calculate(
-	frame *types.MarketFrame,
+	tickers []kraken.TickerData,
+	trades []kraken.TradeData,
+	books []kraken.BookData,
 ) ([]*types.Measurement, error) {
-	if frame == nil {
-		return nil, fmt.Errorf("toxicity: market frame required")
-	}
-
 	signal.ensureScratch()
 
-	if err := signal.ingestIncrements(frame.Books); err != nil {
+	if err := signal.ingestIncrements(books); err != nil {
 		return nil, err
 	}
 
-	if err := signal.accumulateEvidence(frame.Trades); err != nil {
+	// A public trade and the book update that reflects it share one market
+	// timestamp but arrive as two separate cuts. Attribution must compare each
+	// trade against the touch that existed strictly before this instant, so a
+	// pending touch is only promoted to the authoritative prior once the cut
+	// clock advances past the moment it was observed.
+	cutAt := cutTimestamp(trades, books)
+	signal.promotePrior(cutAt)
+
+	if err := signal.accumulateEvidence(trades); err != nil {
 		return nil, err
 	}
 
-	if err := signal.observeBooks(frame.Books); err != nil {
+	if err := signal.observeBooks(books); err != nil {
 		return nil, err
 	}
 
 	out := make([]*types.Measurement, 0, len(signal.evidence)*8)
 	symbols := make([]string, 0, len(signal.evidence))
-	clear(signal.touchScratch)
 
 	for symbol := range signal.evidence {
 		symbols = append(symbols, symbol)
@@ -128,16 +126,54 @@ func (signal *Signal) Calculate(
 			symbol,
 			signal.evidence[symbol],
 			&out,
-			signal.touchScratch,
+			signal.pendingTouch,
 		); err != nil {
 			return nil, err
 		}
 	}
 
-	signal.priorTouch, signal.touchScratch = signal.touchScratch, signal.priorTouch
-	clear(signal.touchScratch)
-
 	return out, nil
+}
+
+/*
+cutTimestamp returns the latest source event time in this cut so pending touch
+snapshots are only promoted to prior once the observation clock advances.
+*/
+func cutTimestamp(trades []kraken.TradeData, books []kraken.BookData) time.Time {
+	cutAt := time.Time{}
+
+	for _, trade := range trades {
+		if at := trade.Timestamp.UTC(); at.After(cutAt) {
+			cutAt = at
+		}
+	}
+
+	for _, bookRow := range books {
+		if at := bookRow.Timestamp.UTC(); at.After(cutAt) {
+			cutAt = at
+		}
+	}
+
+	return cutAt
+}
+
+/*
+promotePrior advances each symbol's authoritative prior touch to its pending
+snapshot once the cut clock has moved strictly past when it was observed. A
+trade and the book update at the same instant therefore both attribute against
+the touch that preceded that instant rather than its own post-event book.
+*/
+func (signal *Signal) promotePrior(cutAt time.Time) {
+	if cutAt.IsZero() {
+		return
+	}
+
+	for symbol, snapshot := range signal.pendingTouch {
+		if snapshot.observedAt.Before(cutAt) {
+			signal.priorTouch[symbol] = snapshot
+			delete(signal.pendingTouch, symbol)
+		}
+	}
 }
 
 /*
@@ -148,8 +184,8 @@ func (signal *Signal) ensureScratch() {
 		signal.priorTouch = map[string]touchSnapshot{}
 	}
 
-	if signal.touchScratch == nil {
-		signal.touchScratch = map[string]touchSnapshot{}
+	if signal.pendingTouch == nil {
+		signal.pendingTouch = map[string]touchSnapshot{}
 	}
 
 	if signal.evidence == nil {
@@ -168,4 +204,98 @@ active market-data producers.
 func (signal *Signal) Close() error {
 	signal.cancel()
 	return nil
+}
+
+/*
+Tickers returns the ticker ingress channel.
+*/
+func (signal *Signal) Tickers() chan []kraken.TickerData {
+	return signal.tickerIn
+}
+
+/*
+Books returns the book ingress channel.
+*/
+func (signal *Signal) Books() chan []kraken.BookData {
+	return signal.bookIn
+}
+
+/*
+Trades returns the trade ingress channel.
+*/
+func (signal *Signal) Trades() chan []kraken.TradeData {
+	return signal.tradeIn
+}
+
+/*
+Measure consumes ingress channels and sends measurements on out.
+*/
+func (signal *Signal) Measure() chan []*types.Measurement {
+	out := make(chan []*types.Measurement, 64)
+
+	go func() {
+		defer close(out)
+
+		for {
+			select {
+			case <-signal.ctx.Done():
+				return
+			case rows := <-signal.tickerIn:
+				measured, err := signal.Calculate(rows, nil, nil)
+
+				if err != nil {
+					errnie.Error(err)
+					continue
+				}
+
+				if len(measured) == 0 {
+					continue
+				}
+
+				select {
+				case out <- measured:
+					signal.Publish(measured)
+				default:
+				}
+			case rows := <-signal.bookIn:
+				measured, err := signal.Calculate(nil, nil, rows)
+
+				if err != nil {
+					errnie.Error(err)
+					continue
+				}
+
+				if len(measured) == 0 {
+					continue
+				}
+
+				select {
+				case out <- measured:
+					signal.Publish(measured)
+				default:
+				}
+			case rows := <-signal.tradeIn:
+				measured, err := signal.Calculate(nil, rows, nil)
+
+				if err != nil {
+					errnie.Error(err)
+					continue
+				}
+
+				if len(measured) == 0 {
+					continue
+				}
+
+				select {
+				case out <- measured:
+					signal.Publish(measured)
+				default:
+				}
+			default:
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	}()
+
+	return out
 }

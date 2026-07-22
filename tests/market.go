@@ -280,8 +280,8 @@ func (market *Market) Apply(
 		channel string
 		payload []byte
 	}{
-		{"book", payloads.book},
 		{"trade", payloads.trade},
+		{"book", payloads.book},
 		{"ticker", payloads.ticker},
 	} {
 		if len(frame.payload) == 0 {

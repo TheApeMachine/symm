@@ -286,7 +286,6 @@ func (booter *Booter) boot(
 		instrument,
 		price,
 		balance,
-		signals,
 		analyzer,
 		strategy.NewAllocator(booter.ctx, balance, instrument, price),
 		nil,
@@ -305,6 +304,7 @@ func (booter *Booter) boot(
 		tree,
 		hub,
 		nil,
+		signals,
 	)
 
 	if err != nil {

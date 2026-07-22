@@ -65,22 +65,22 @@ func TestLongEntryEvidence(t *testing.T) {
 	Convey("Given contested evidence that nets to zero", t, func() {
 		graph := NewGraph("MATIC/USD")
 
-		// FillVolume supports HardSupport and contradicts ToxicBluff, while
-		// RetreatingQuantity supports ToxicBluff and contradicts HardSupport:
-		// each category holds exactly one support against one contradiction.
+		// FillVolume supports HardSupport and contradicts ToxicBluff/SpoofTrap,
+		// while RetreatingQuantity supports both deception categories and
+		// contradicts HardSupport: each contested category nets to zero.
 		So(graph.Evidence.AddMeasurements([]*Measurement{
 			stanceMeasurement("MATIC/USD", MetricRetreatingQuantity, at),
 			stanceMeasurement("MATIC/USD", MetricFillVolume, at),
 		}), ShouldBeNil)
 		graph.Compose()
 
-		Convey("Then only the contested phenomenon is absent", func() {
+		Convey("Then contested deception and support stay inactive", func() {
 			reading := graph.LongEntryEvidence()
 
 			So(reading.Favors, ShouldNotContain, string(HardSupport))
 			So(reading.Opposes, ShouldNotContain, string(ToxicBluff))
 			So(reading.Vetoes, ShouldNotContain, string(ToxicBluff))
-			So(reading.Vetoes, ShouldContain, string(SpoofTrap))
+			So(reading.Vetoes, ShouldNotContain, string(SpoofTrap))
 		})
 	})
 
