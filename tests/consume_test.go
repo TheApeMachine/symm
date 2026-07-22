@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -16,6 +17,18 @@ func TestConsume(t *testing.T) {
 			So(Consume(func() (*types.Thesis, error) {
 				return nil, want
 			})(), ShouldEqual, want)
+		})
+	})
+
+	Convey("Given a Tick with no measurements yet", t, func() {
+		Convey("It should treat PreconditionFailed as an idle step", func() {
+			So(Consume(func() (*types.Thesis, error) {
+				return nil, errnie.Err(
+					errnie.PreconditionFailed,
+					"crypto: no signal measurements",
+					nil,
+				)
+			})(), ShouldBeNil)
 		})
 	})
 

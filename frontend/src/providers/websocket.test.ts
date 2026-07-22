@@ -50,11 +50,11 @@ const { appStore } = await import("#/collections/app");
 const { WsFeed } = await import("#/providers/websocket");
 
 /*
-WsFeed sends the current symbol when its worker is ready and forwards later
-focus changes so backend field and cognition projections follow the UI.
+WsFeed connects the worker and never publishes focus upstream — symbol selection
+is a client paint concern only.
 */
 describe("WsFeed", () => {
-	it("publishes initial and changed focus symbols", () => {
+	it("connects without sending focus messages", () => {
 		appStore.actions.updateFocusSymbol("BTC/USD");
 		WsFeed();
 		const worker = MockWorker.instances.at(-1);
@@ -62,15 +62,29 @@ describe("WsFeed", () => {
 		expect(worker).toBeDefined();
 		worker?.emit("message", { type: "READY" });
 		expect(worker?.messages).toContainEqual({
-			type: "FOCUS",
-			symbol: "BTC/USD",
+			type: "CONNECT",
+			url: expect.any(String),
 		});
+		expect(
+			worker?.messages.some(
+				(message) =>
+					typeof message === "object" &&
+					message !== null &&
+					"type" in message &&
+					message.type === "FOCUS",
+			),
+		).toBe(false);
 
 		appStore.actions.updateFocusSymbol("ETH/USD");
-		expect(worker?.messages.at(-1)).toEqual({
-			type: "FOCUS",
-			symbol: "ETH/USD",
-		});
+		expect(
+			worker?.messages.some(
+				(message) =>
+					typeof message === "object" &&
+					message !== null &&
+					"type" in message &&
+					message.type === "FOCUS",
+			),
+		).toBe(false);
 
 		mockedReact.cleanup?.();
 	});

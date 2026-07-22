@@ -75,7 +75,7 @@ func (analyzer *Analyzer) recall(
 	thesis *types.Thesis,
 	state manifold.State,
 ) {
-	if analyzer.tree == nil || analyzer.Focused() != state.Symbol {
+	if analyzer.tree == nil {
 		return
 	}
 
@@ -324,10 +324,6 @@ func (analyzer *Analyzer) attachVisualization(
 	classification dmt.ClassificationResult,
 	predictions []dmt.LookaheadPrediction,
 ) {
-	if analyzer.Focused() != reading.Symbol {
-		return
-	}
-
 	branches, beams, classes, beamWidth, maxHops, nodeCount, lookaheadScore, lookaheadPaths :=
 		analyzer.cognitionVisualization(
 			sequence, parent, parts, classification, predictions,

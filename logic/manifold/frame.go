@@ -10,52 +10,48 @@ import (
 )
 
 /*
-project records the resident spectrum after advances and reads the larger X-Z
-projection only when the browser requests a focus.
+project reads the shared field projection and resident omega spectrum for every
+GasReady symbol view. Phase scans stay per-symbol in phase.
 */
-func (solver *Solver) project(
-	focus string,
-	at time.Time,
-	advanced bool,
-) (pfluid.Projection, []pfluid.WaveMode, []PhaseResponse, error) {
+func (solver *Solver) project() (pfluid.Projection, []pfluid.WaveMode, error) {
 	if len(solver.particles) == 0 {
-		return pfluid.Projection{Grid: solver.config.Grid}, nil, nil, nil
+		return pfluid.Projection{Grid: solver.config.Grid}, nil, nil
 	}
 
-	wave, scan, err := solver.phase(focus, at, advanced)
+	wave, err := solver.domain.Wave()
 
 	if err != nil {
-		return pfluid.Projection{}, nil, nil, err
-	}
-
-	if focus == "" {
-		return pfluid.Projection{Grid: solver.config.Grid}, nil, nil, nil
+		return pfluid.Projection{}, nil, errnie.Err(
+			errnie.Internal,
+			"manifold: failed to read shared omega spectrum",
+			err,
+		)
 	}
 
 	projection, err := solver.domain.Projection()
 
 	if err != nil {
-		return pfluid.Projection{}, nil, nil, errnie.Err(
+		return pfluid.Projection{}, nil, errnie.Err(
 			errnie.Internal,
 			"manifold: failed to read shared field projection",
 			err,
 		)
 	}
 
-	return projection, wave, scan, nil
+	return projection, wave, nil
 }
 
 /*
 phase stages the current resident omega field until cognition commits a label
-for the same focused epoch, then scans one complete mode-derived turn against
+for the same symbol epoch, then scans one complete mode-derived turn against
 already labeled market states for that symbol.
 */
 func (solver *Solver) phase(
-	focus string,
+	symbol string,
 	at time.Time,
 	advanced bool,
 ) ([]pfluid.WaveMode, []PhaseResponse, error) {
-	if focus == "" {
+	if symbol == "" {
 		return nil, nil, nil
 	}
 
@@ -82,10 +78,10 @@ func (solver *Solver) phase(
 	}
 
 	if advanced {
-		solver.Stage(focus, at, dial)
+		solver.Stage(symbol, at, dial)
 	}
 
-	phaseScan, err := solver.Responses(focus, dial, at)
+	phaseScan, err := solver.Responses(symbol, dial, at)
 
 	if err != nil {
 		return nil, nil, err
@@ -95,8 +91,8 @@ func (solver *Solver) phase(
 }
 
 /*
-paint attaches the shared field and the focused symbol's latest observations to
-one state without duplicating the full universe into every Thesis entry.
+paint attaches the shared field and one symbol's latest observations to a state
+view so the dashboard can render any symbol without a backend focus gate.
 */
 func (solver *Solver) paint(
 	state *State,
@@ -127,8 +123,8 @@ func (solver *Solver) paint(
 }
 
 /*
-phaseReason explains why a focused wave cannot yet be scanned. A zero-amplitude
-wave has no defined phase direction; a nonzero wave needs an earlier corpus
+phaseReason explains why a wave cannot yet be scanned. A zero-amplitude wave
+has no defined phase direction; a nonzero wave needs an earlier corpus
 observation before its phase response has a meaningful comparison target.
 */
 func (solver *Solver) phaseReason(
@@ -171,8 +167,8 @@ func projectionRows(values []float32, grid pfluid.Grid) [][]float64 {
 }
 
 /*
-renderParticles converts the focused symbol's latest physical observations to
-the established cell-based dashboard payload.
+renderParticles converts one symbol's latest physical observations to the
+established cell-based dashboard payload.
 */
 func renderParticles(
 	particles []pfluid.Particle,

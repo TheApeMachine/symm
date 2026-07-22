@@ -27,7 +27,6 @@ performs at most one GPU step, and publishes views of the resulting shared field
 func (solver *Solver) advance(
 	thesis *types.Thesis,
 	candidates []intensityCandidate,
-	focus string,
 ) advanceResult {
 	result := advanceResult{}
 	changed := make(map[string]excitation.Outcome)
@@ -66,15 +65,14 @@ func (solver *Solver) advance(
 		changed,
 		reading,
 		diagnostics,
-		focus,
 		&result,
 	)
 	return result
 }
 
 /*
-publish materializes symbol views from one shared reading and attaches the full
-field only to the requested focus symbol.
+publish materializes symbol views from one shared reading and attaches the
+field projection to every GasReady symbol so the UI can select client-side.
 */
 func (solver *Solver) publish(
 	thesis *types.Thesis,
@@ -82,26 +80,9 @@ func (solver *Solver) publish(
 	changed map[string]excitation.Outcome,
 	reading pfluid.Reading,
 	diagnostics pfluid.Diagnostics,
-	focus string,
 	result *advanceResult,
 ) {
-	focusedAt := changed[focus].At
-	_, focusedAdvanced := changed[focus]
-
-	if focusedAt.IsZero() {
-		for _, candidate := range candidates {
-			if candidate.symbol == focus {
-				focusedAt = candidate.outcome.At
-				break
-			}
-		}
-	}
-
-	projection, wave, phaseScan, err := solver.project(
-		focus,
-		focusedAt,
-		focusedAdvanced,
-	)
+	projection, wave, err := solver.project()
 
 	if err != nil {
 		result.failures = append(result.failures, err)
@@ -130,7 +111,19 @@ func (solver *Solver) publish(
 			result.replayed++
 		}
 
-		if focus == candidate.symbol && err == nil {
+		if err == nil && state.GasReady() {
+			at := outcome.At
+
+			if at.IsZero() {
+				at = candidate.outcome.At
+			}
+
+			_, phaseScan, phaseErr := solver.phase(candidate.symbol, at, advanced)
+
+			if phaseErr != nil {
+				result.failures = append(result.failures, phaseErr)
+			}
+
 			solver.paint(&state, projection, wave, phaseScan, slot)
 		}
 

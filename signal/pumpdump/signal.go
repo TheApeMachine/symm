@@ -5,7 +5,6 @@ import (
 	"math"
 	"slices"
 	"sort"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -25,6 +24,7 @@ type Signal struct {
 	tickerIn   chan []kraken.TickerData
 	bookIn     chan []kraken.BookData
 	tradeIn    chan []kraken.TradeData
+	ack     chan struct{}
 	ctx        context.Context
 	cancel     context.CancelFunc
 	ignition   *equation.Ignition
@@ -49,6 +49,7 @@ func NewSignal(
 		tickerIn:   make(chan []kraken.TickerData, 64),
 		bookIn:     make(chan []kraken.BookData, 64),
 		tradeIn:    make(chan []kraken.TradeData, 64),
+		ack:     make(chan struct{}, 256),
 		ctx:        ctx,
 		cancel:     cancel,
 		ignition:   equation.NewIgnition(baselineCapacity),
@@ -162,21 +163,13 @@ func (signal *Signal) measure(row kraken.TickerData) ([]*types.Measurement, erro
 	increment := signal.increments[row.Symbol]
 
 	if mid <= 0 || increment <= 0 {
-		return nil, errnie.Err(
-			errnie.Validation,
-			"pumpdump: positive midpoint and price increment required",
-			nil,
-		)
+		return nil, nil
 	}
 
 	spread := math.Round(book.Spread()/increment) * increment
 
 	if spread <= 0 {
-		return nil, errnie.Err(
-			errnie.Validation,
-			"pumpdump: positive executable spread required",
-			nil,
-		)
+		return nil, nil
 	}
 
 	bid := mid - spread/2
@@ -303,6 +296,15 @@ func (signal *Signal) Trades() chan []kraken.TradeData {
 	return signal.tradeIn
 }
 
+
+/*
+Ack signals that one ingress frame finished Calculate so Crypto can barrier
+before draining outs.
+*/
+func (signal *Signal) Ack() <-chan struct{} {
+	return signal.ack
+}
+
 /*
 Measure consumes ingress channels and sends measurements on out.
 */
@@ -321,54 +323,52 @@ func (signal *Signal) Measure() chan []*types.Measurement {
 
 				if err != nil {
 					errnie.Error(err)
+					signal.ack <- struct{}{}
 					continue
 				}
 
 				if len(measured) == 0 {
+					signal.ack <- struct{}{}
 					continue
 				}
 
-				select {
-				case out <- measured:
-					signal.Publish(measured)
-				default:
-				}
+				out <- measured
+				signal.Publish(measured)
+				signal.ack <- struct{}{}
 			case rows := <-signal.bookIn:
 				measured, err := signal.Calculate(nil, nil, rows)
 
 				if err != nil {
 					errnie.Error(err)
+					signal.ack <- struct{}{}
 					continue
 				}
 
 				if len(measured) == 0 {
+					signal.ack <- struct{}{}
 					continue
 				}
 
-				select {
-				case out <- measured:
-					signal.Publish(measured)
-				default:
-				}
+				out <- measured
+				signal.Publish(measured)
+				signal.ack <- struct{}{}
 			case rows := <-signal.tradeIn:
 				measured, err := signal.Calculate(nil, rows, nil)
 
 				if err != nil {
 					errnie.Error(err)
+					signal.ack <- struct{}{}
 					continue
 				}
 
 				if len(measured) == 0 {
+					signal.ack <- struct{}{}
 					continue
 				}
 
-				select {
-				case out <- measured:
-					signal.Publish(measured)
-				default:
-				}
-			default:
-				time.Sleep(10 * time.Millisecond)
+				out <- measured
+				signal.Publish(measured)
+				signal.ack <- struct{}{}
 			}
 		}
 	}()

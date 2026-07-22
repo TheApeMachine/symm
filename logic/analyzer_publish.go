@@ -12,7 +12,7 @@ import (
 
 /*
 publishMeasured emits manifold, resonance, causal, and hypothesis frames.
-Focused symbols keep full field payloads; the rest ship Summary scalars only.
+Every GasReady symbol keeps its full field payload; the UI filters client-side.
 */
 func (analyzer *Analyzer) publishMeasured(
 	thesis *types.Thesis,
@@ -21,16 +21,10 @@ func (analyzer *Analyzer) publishMeasured(
 	publishStarted := time.Now()
 
 	if len(states) > 0 {
-		focus := analyzer.Focused()
 		frame := make([]any, 0, len(states))
 
 		for _, state := range states {
-			if focus != "" && state.Symbol == focus {
-				frame = append(frame, state)
-				continue
-			}
-
-			frame = append(frame, state.Summary())
+			frame = append(frame, state)
 		}
 
 		analyzer.publish(datura.Map[any]{"manifold": frame})

@@ -2,8 +2,6 @@ package logic
 
 import (
 	"context"
-	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/spf13/viper"
@@ -36,7 +34,6 @@ type Analyzer struct {
 	causal    map[string]*Causal
 	cognition map[string]types.Cognition
 	rem       *remSleep
-	focus     atomic.Pointer[string]
 }
 
 /*
@@ -129,35 +126,6 @@ func (analyzer *Analyzer) SetRecorder(recorder *audit.Recorder) {
 	if analyzer.rem != nil {
 		analyzer.rem.SetRecorder(recorder)
 	}
-}
-
-/*
-Focus atomically selects the market symbol whose expensive field and cognitive
-visualizations the browser requests. Runtime UI state stays out of Viper so a
-websocket click cannot race configuration reads performed by the trading loop.
-*/
-func (analyzer *Analyzer) Focus(symbol string) {
-	normalized := strings.ToUpper(strings.TrimSpace(symbol))
-
-	if normalized == "" {
-		return
-	}
-
-	analyzer.focus.Store(&normalized)
-}
-
-/*
-Focused returns the current browser focus snapshot for one analysis cut. An
-empty value means no client has requested a full visualization yet.
-*/
-func (analyzer *Analyzer) Focused() string {
-	focus := analyzer.focus.Load()
-
-	if focus == nil {
-		return ""
-	}
-
-	return *focus
 }
 
 /*

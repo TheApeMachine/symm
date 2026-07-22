@@ -5,8 +5,7 @@ const RECONNECT_MAX_MS = 5000;
 
 type WorkerInbound =
 	| { type: "CONNECT"; url: string }
-	| { type: "DISCONNECT" }
-	| { type: "FOCUS"; symbol: string };
+	| { type: "DISCONNECT" };
 
 type WorkerOutbound =
 	| { type: "READY" }
@@ -20,7 +19,6 @@ let socketListeners: AbortController | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let attempt = 0;
 let activeUrl = "";
-let activeFocus = "";
 
 /*
 teardownSocket aborts the current connection's listeners (one AbortController per
@@ -56,17 +54,8 @@ const connect = (url: string) => {
 
 	socket.addEventListener(
 		"open",
-		(event) => {
+		() => {
 			attempt = 0;
-
-			if (
-				activeFocus !== "" &&
-				event.currentTarget instanceof WebSocket
-			) {
-				event.currentTarget.send(
-					JSON.stringify({ focus: activeFocus }),
-				);
-			}
 
 			self.postMessage({
 				type: "ONLINE",
@@ -176,22 +165,6 @@ self.addEventListener("message", (event: MessageEvent<WorkerInbound>) => {
 				type: "ONLINE",
 				online: false,
 			} satisfies WorkerOutbound);
-			return;
-		}
-
-		case "FOCUS": {
-			const symbol = message.symbol.trim().toUpperCase();
-
-			if (symbol === "" || symbol === activeFocus) {
-				return;
-			}
-
-			activeFocus = symbol;
-
-			if (socket?.readyState === WebSocket.OPEN) {
-				socket.send(JSON.stringify({ focus: activeFocus }));
-			}
-
 			return;
 		}
 

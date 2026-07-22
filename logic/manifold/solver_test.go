@@ -50,7 +50,7 @@ func TestSolver_Update(t *testing.T) {
 			},
 		}
 		thesis := types.NewThesis(nil)
-		err = solver.Update(thesis, source, "BTC/USD")
+		err = solver.Update(thesis, source)
 		So(err, ShouldBeNil)
 
 		if err != nil {
@@ -77,7 +77,7 @@ func TestSolver_Update(t *testing.T) {
 			So(solver.domain, ShouldNotBeNil)
 		})
 
-		Convey("It should project the shared field only onto the focused view", func() {
+		Convey("It should project the shared field onto every GasReady symbol", func() {
 			So(bitcoin.Rho, ShouldNotBeEmpty)
 			So(bitcoin.PsiMag2, ShouldNotBeEmpty)
 			So(bitcoin.Particles, ShouldHaveLength, 2)
@@ -87,10 +87,10 @@ func TestSolver_Update(t *testing.T) {
 			So(bitcoin.PhaseReady, ShouldBeFalse)
 			So(bitcoin.PhaseReason, ShouldEqual,
 				"awaiting a prior outcome-labeled phase observation")
-			So(ether.Rho, ShouldBeEmpty)
-			So(ether.Particles, ShouldBeEmpty)
-			So(ether.SharedOscillatorCount, ShouldEqual, 0)
-			So(ether.Wave, ShouldBeEmpty)
+			So(ether.Rho, ShouldNotBeEmpty)
+			So(ether.Particles, ShouldHaveLength, 2)
+			So(ether.SharedOscillatorCount, ShouldEqual, 4)
+			So(ether.Wave, ShouldNotBeEmpty)
 		})
 
 		Convey("It should scan the current phase dial against prior resident waves", func() {
@@ -106,7 +106,7 @@ func TestSolver_Update(t *testing.T) {
 			source.outcomes["BTC/USD"] = solverOutcome(laterAt, 16, 2)
 			source.outcomes["ETH/USD"] = solverOutcome(laterAt, 4, 8)
 			next := types.NewThesis(nil)
-			So(solver.Update(next, source, "BTC/USD"), ShouldBeNil)
+			So(solver.Update(next, source), ShouldBeNil)
 			value, found := next.Manifold.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 
@@ -135,7 +135,7 @@ func TestSolver_Update(t *testing.T) {
 
 		Convey("It should replay unchanged source epochs without duplicating particles", func() {
 			next := types.NewThesis(nil)
-			So(solver.Update(next, source, "ETH/USD"), ShouldBeNil)
+			So(solver.Update(next, source), ShouldBeNil)
 			value, found := next.Manifold.Load("ETH/USD")
 			replay := value.(State)
 			So(found, ShouldBeTrue)

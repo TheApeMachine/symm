@@ -3,7 +3,6 @@ package hawkes
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -27,6 +26,7 @@ type Signal struct {
 	tickerIn chan []kraken.TickerData
 	bookIn   chan []kraken.BookData
 	tradeIn  chan []kraken.TradeData
+	ack     chan struct{}
 	ctx      context.Context
 	cancel   context.CancelFunc
 	sample   *excitation.Sample
@@ -60,6 +60,7 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 		tickerIn: make(chan []kraken.TickerData, 64),
 		bookIn:   make(chan []kraken.BookData, 64),
 		tradeIn:  make(chan []kraken.TradeData, 64),
+		ack:     make(chan struct{}, 256),
 		ctx:      ctx,
 		cancel:   cancel,
 		sample:   excitation.NewSample(),
@@ -193,6 +194,15 @@ func (signal *Signal) Trades() chan []kraken.TradeData {
 	return signal.tradeIn
 }
 
+
+/*
+Ack signals that one ingress frame finished Calculate so Crypto can barrier
+before draining outs.
+*/
+func (signal *Signal) Ack() <-chan struct{} {
+	return signal.ack
+}
+
 /*
 Measure consumes ingress channels and sends measurements on out.
 */
@@ -211,54 +221,52 @@ func (signal *Signal) Measure() chan []*types.Measurement {
 
 				if err != nil {
 					errnie.Error(err)
+					signal.ack <- struct{}{}
 					continue
 				}
 
 				if len(measured) == 0 {
+					signal.ack <- struct{}{}
 					continue
 				}
 
-				select {
-				case out <- measured:
-					signal.Publish(measured)
-				default:
-				}
+				out <- measured
+				signal.Publish(measured)
+				signal.ack <- struct{}{}
 			case rows := <-signal.bookIn:
 				measured, err := signal.Calculate(nil, nil, rows)
 
 				if err != nil {
 					errnie.Error(err)
+					signal.ack <- struct{}{}
 					continue
 				}
 
 				if len(measured) == 0 {
+					signal.ack <- struct{}{}
 					continue
 				}
 
-				select {
-				case out <- measured:
-					signal.Publish(measured)
-				default:
-				}
+				out <- measured
+				signal.Publish(measured)
+				signal.ack <- struct{}{}
 			case rows := <-signal.tradeIn:
 				measured, err := signal.Calculate(nil, rows, nil)
 
 				if err != nil {
 					errnie.Error(err)
+					signal.ack <- struct{}{}
 					continue
 				}
 
 				if len(measured) == 0 {
+					signal.ack <- struct{}{}
 					continue
 				}
 
-				select {
-				case out <- measured:
-					signal.Publish(measured)
-				default:
-				}
-			default:
-				time.Sleep(10 * time.Millisecond)
+				out <- measured
+				signal.Publish(measured)
+				signal.ack <- struct{}{}
 			}
 		}
 	}()

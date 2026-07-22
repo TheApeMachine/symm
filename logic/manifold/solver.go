@@ -131,14 +131,13 @@ same physical state.
 func (solver *Solver) Update(
 	thesis *types.Thesis,
 	hawkes HawkesSource,
-	focus string,
 ) error {
 	if solver == nil || thesis == nil || hawkes == nil {
 		return nil
 	}
 
 	candidates := solver.candidates(hawkes)
-	result := solver.advance(thesis, candidates, focus)
+	result := solver.advance(thesis, candidates)
 	errnie.Error(audit.Record(solver.recorder, "manifold", map[string]any{
 		"candidates": len(candidates),
 		"advanced":   result.advanced,

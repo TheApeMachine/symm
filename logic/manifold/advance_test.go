@@ -26,7 +26,7 @@ func TestSolver_Advance(t *testing.T) {
 				"ETH/USD": solverOutcome(at, 8, 4),
 			},
 		})
-		result := solver.advance(first, initial, "")
+		result := solver.advance(first, initial)
 		So(result.failures, ShouldBeEmpty)
 		initialParticles := len(solver.particles)
 
@@ -39,7 +39,7 @@ func TestSolver_Advance(t *testing.T) {
 				"BTC/USD": initial[0].outcome,
 				"ETH/USD": later,
 			},
-		}), "")
+		}))
 		bitcoinValue, bitcoinFound := second.Manifold.Load("BTC/USD")
 		etherValue, etherFound := second.Manifold.Load("ETH/USD")
 		So(bitcoinFound, ShouldBeTrue)
@@ -72,7 +72,7 @@ func TestSolver_Advance(t *testing.T) {
 				outcomes: map[string]excitation.Outcome{
 					"BTC/USD": bitcoinLater,
 				},
-			}), "")
+			}))
 			So(result.failures, ShouldBeEmpty)
 			So(solver.particles, ShouldHaveLength, 2)
 			So(solver.active, ShouldHaveLength, 1)
@@ -120,7 +120,7 @@ func BenchmarkSolver_Advance(b *testing.B) {
 		result := solver.advance(thesis, solver.candidates(staticHawkesSource{
 			symbols:  []string{"BTC/USD"},
 			outcomes: map[string]excitation.Outcome{"BTC/USD": outcome},
-		}), "")
+		}))
 
 		if len(result.failures) > 0 {
 			b.Fatal(result.failures)
@@ -147,7 +147,7 @@ func BenchmarkSolver_PhaseProjection(b *testing.B) {
 	result := solver.advance(seed, solver.candidates(staticHawkesSource{
 		symbols:  []string{"BTC/USD"},
 		outcomes: map[string]excitation.Outcome{"BTC/USD": outcome},
-	}), "BTC/USD")
+	}))
 
 	if len(result.failures) > 0 {
 		b.Fatal(result.failures)
@@ -164,7 +164,7 @@ func BenchmarkSolver_PhaseProjection(b *testing.B) {
 		result = solver.advance(thesis, solver.candidates(staticHawkesSource{
 			symbols:  []string{"BTC/USD"},
 			outcomes: map[string]excitation.Outcome{"BTC/USD": outcome},
-		}), "BTC/USD")
+		}))
 
 		if len(result.failures) > 0 {
 			b.Fatal(result.failures)

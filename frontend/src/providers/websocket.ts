@@ -25,14 +25,7 @@ const handleWorkerMessage = (event: MessageEvent<WorkerOutbound>) => {
 	const message = event.data;
 
 	if (message.type === "READY") {
-		if (worker !== null) {
-			worker.postMessage({ type: "CONNECT", url: socketUrl });
-			worker.postMessage({
-				type: "FOCUS",
-				symbol: appStore.state.focusSymbol,
-			});
-		}
-
+		worker?.postMessage({ type: "CONNECT", url: socketUrl });
 		return;
 	}
 
@@ -69,20 +62,14 @@ const connect = () => {
 
 /*
 WsFeed boots the websocket worker once. The worker owns the socket and forwards
-DRAW frames; attach dispatches wire keys to paint functions.
+DRAW frames; attach dispatches wire keys to paint functions. Symbol focus stays
+client-side only — nothing is sent upstream.
 */
 export const WsFeed = () => {
 	useEffect(() => {
 		connect();
-		const subscription = appStore.subscribe(() => {
-			worker?.postMessage({
-				type: "FOCUS",
-				symbol: appStore.state.focusSymbol,
-			});
-		});
 
 		return () => {
-			subscription.unsubscribe();
 			disconnectTransport();
 		};
 	}, []);

@@ -143,7 +143,6 @@ func (crypto *Crypto) OnTicker(data []byte) {
 		case <-crypto.ctx.Done():
 			return
 		case signal.Tickers() <- ticker.Data:
-		default:
 		}
 	}
 }
@@ -173,7 +172,6 @@ func (crypto *Crypto) OnBook(data []byte) {
 		case <-crypto.ctx.Done():
 			return
 		case signal.Books() <- book.Data:
-		default:
 		}
 	}
 }
@@ -190,7 +188,6 @@ func (crypto *Crypto) OnTrade(data []byte) {
 		case <-crypto.ctx.Done():
 			return
 		case signal.Trades() <- trade.Data:
-		default:
 		}
 	}
 }

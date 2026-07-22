@@ -23,11 +23,7 @@ func (analyzer *Analyzer) stepManifold(thesis *types.Thesis) {
 	manifoldStarted := time.Now()
 	payload := map[string]any{"ok": true}
 
-	if err := analyzer.manifold.Update(
-		thesis,
-		analyzer.hawkes,
-		analyzer.Focused(),
-	); err != nil {
+	if err := analyzer.manifold.Update(thesis, analyzer.hawkes); err != nil {
 		errnie.Error(err)
 		payload["ok"] = false
 		payload["err"] = err.Error()

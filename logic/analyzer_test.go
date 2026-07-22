@@ -169,10 +169,7 @@ func (outcome *marketOutcome) observeModels(
 observeCognition checks every DMT reading belongs to the projected market and
 ensures every category is the ready classification it claims to represent.
 */
-func (outcome *marketOutcome) observeCognition(
-	thesis *types.Thesis,
-	focus string,
-) {
+func (outcome *marketOutcome) observeCognition(thesis *types.Thesis) {
 	readings := make(map[string]types.Cognition)
 	ready := 0
 
@@ -184,15 +181,12 @@ func (outcome *marketOutcome) observeCognition(
 		So(reading.At.IsZero(), ShouldBeFalse)
 		So(reading.Sequence, ShouldNotBeEmpty)
 		So(reading.Predictions, ShouldNotBeNil)
+		So(reading.Branches, ShouldNotBeEmpty)
+		So(reading.Beams, ShouldNotBeEmpty)
+		So(reading.NodeCount, ShouldEqual, len(reading.Branches))
+		So(reading.LookaheadPaths, ShouldEqual, len(reading.Beams))
 		readings[reading.Symbol] = reading
 		outcome.cognitions++
-
-		if reading.Symbol == focus {
-			So(reading.Branches, ShouldNotBeEmpty)
-			So(reading.Beams, ShouldNotBeEmpty)
-			So(reading.NodeCount, ShouldEqual, len(reading.Branches))
-			So(reading.LookaheadPaths, ShouldEqual, len(reading.Beams))
-		}
 
 		if reading.Ready {
 			ready++
@@ -249,8 +243,6 @@ func TestAnalyzerUpdate(t *testing.T) {
 
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			focus := market.Symbols[0]
-			wired.Analyzer.Focus(focus)
 			So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
 
 			if proof.prepare {
@@ -283,7 +275,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 				outcome.observeManifold(thesis, proof.replay)
 				outcome.observeGraphs(thesis)
 				outcome.observeModels(thesis, proof.replay)
-				outcome.observeCognition(thesis, focus)
+				outcome.observeCognition(thesis)
 				return nil
 			}), ShouldBeNil)
 
@@ -358,10 +350,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 			So(replay.edges[types.Contradicts], ShouldBeGreaterThan, 0)
 			So(replay.edges[types.Conditions], ShouldEqual, 0)
 			So(replay.forecasts, ShouldEqual, 0)
-			// Focus-only recall may republish a Ready winner from the trained
-			// tree; replay must not invent forecasts or multi-symbol cognition.
-			So(replay.categories, ShouldBeLessThanOrEqualTo, 1)
-			So(replay.cognitions, ShouldEqual, 1)
+			So(replay.cognitions, ShouldBeGreaterThan, 0)
 		})
 	})
 }
