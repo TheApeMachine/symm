@@ -69,6 +69,69 @@ func TestSignal_Transition(t *testing.T) {
 			}
 		})
 	})
+
+	Convey("Given causal twins on one selected symbol", t, func() {
+		symbols := []string{"SIM1/USD", "SIM2/USD"}
+		absorption := New(symbols)
+		lowVolumeLift := New(symbols)
+		compression := New(symbols)
+		initialQuote, exists := compression.Quote(symbols[0])
+		So(exists, ShouldBeTrue)
+		So(absorption.Transition(VolumeAbsorption, symbols[0]), ShouldBeNil)
+		So(lowVolumeLift.Transition(LowVolumeLift, symbols[0]), ShouldBeNil)
+		So(compression.Transition(SpreadCompression, symbols[0]), ShouldBeNil)
+		_, err := absorption.Scenario(FastPump, "UNKNOWN/USD")
+		So(err, ShouldNotBeNil)
+
+		var absorbed []Sample
+		var lifted []Sample
+
+		for samples := range absorption.Generate() {
+			absorbed = samples
+		}
+
+		for samples := range lowVolumeLift.Generate() {
+			lifted = samples
+		}
+
+		compressedQuote, exists := compression.Quote(symbols[0])
+		So(exists, ShouldBeTrue)
+
+		Convey("It should vary one economic cause without moving the controls", func() {
+			So(absorbed[0].Price, ShouldAlmostEqual, initialPrice, initialPrice*idleAmplitudeFraction*2)
+			So(lifted[0].Price, ShouldBeGreaterThan, initialPrice)
+			So(absorbed[0].Statistics.Volume, ShouldBeGreaterThan, lifted[0].Statistics.Volume)
+			So(absorbed[1].Price, ShouldAlmostEqual, initialPrice, initialPrice*idleAmplitudeFraction*2)
+			So(lifted[1].Price, ShouldAlmostEqual, initialPrice, initialPrice*idleAmplitudeFraction*2)
+			So(compressedQuote.Ask-compressedQuote.Bid, ShouldBeLessThan, initialQuote.Ask-initialQuote.Bid)
+		})
+	})
+
+	Convey("Given semantic liquidity conditions on one selected symbol", t, func() {
+		thin := New([]string{"SIM1/USD", "SIM2/USD"})
+		loaded := New([]string{"SIM1/USD", "SIM2/USD"})
+		retreat := New([]string{"SIM1/USD", "SIM2/USD"})
+		initial, exists := thin.Quote("SIM1/USD")
+		So(exists, ShouldBeTrue)
+		So(thin.Transition(ThinLiquidity, "SIM1/USD"), ShouldBeNil)
+		So(loaded.Transition(LoadedLiquidity, "SIM1/USD"), ShouldBeNil)
+		So(retreat.Transition(LiquidityRetreat, "SIM1/USD"), ShouldBeNil)
+		thinQuote, _ := thin.Quote("SIM1/USD")
+		loadedQuote, _ := loaded.Quote("SIM1/USD")
+		retreatQuote, _ := retreat.Quote("SIM1/USD")
+
+		Convey("They should thin, load, and retreat the real touch", func() {
+			So(thinQuote.AskQty, ShouldBeLessThan, initial.AskQty)
+			So(loadedQuote.BidQty, ShouldBeGreaterThan, initial.BidQty)
+			So(retreatQuote.Bid, ShouldEqual, initial.Bid)
+			So(retreatQuote.BidQty, ShouldBeLessThan, initial.BidQty)
+
+			for _, generated := range []*Signal{thin, loaded, retreat} {
+				control, _ := generated.Quote("SIM2/USD")
+				So(control, ShouldResemble, initial)
+			}
+		})
+	})
 }
 
 /*
@@ -164,6 +227,70 @@ func TestSignal_Apply(t *testing.T) {
 			}
 		})
 	})
+
+	Convey("Given an invalid multi-action draft", t, func() {
+		signal := New([]string{"SIM1/USD"})
+		signal.Bootstrap()
+		before := []Sample{}
+
+		for samples := range signal.Generate() {
+			before = samples
+		}
+
+		at := signal.Now()
+		err := signal.Apply(Step{
+			Advance: time.Second,
+			Actions: []Action{
+				{Kind: Refill, Symbol: "SIM1/USD", Side: "buy", Qty: 5},
+				{Kind: Refill, Symbol: "UNKNOWN/USD", Side: "buy", Qty: 5},
+			},
+		})
+
+		Convey("It should leave the complete venue unchanged", func() {
+			So(err, ShouldNotBeNil)
+			So(signal.Now(), ShouldEqual, at)
+
+			for samples := range signal.Generate() {
+				So(samples, ShouldResemble, before)
+			}
+		})
+
+		Convey("It should reject empty sides without panicking", func() {
+			cancels := []Action{}
+
+			for _, order := range before[0].Asks {
+				cancels = append(cancels, Action{
+					Kind: Cancel, Symbol: "SIM1/USD", OrderID: order.ID,
+				})
+			}
+
+			So(signal.Apply(Step{Advance: time.Second, Actions: cancels}), ShouldNotBeNil)
+			So(signal.Now(), ShouldEqual, at)
+		})
+
+		Convey("It should consume a complete touch and continue through the next level", func() {
+			quantity := before[0].Asks[0].Qty + 5
+			So(signal.Apply(Step{
+				Advance: time.Second,
+				Actions: []Action{{
+					Kind:   Trade,
+					Symbol: "SIM1/USD",
+					Side:   "buy",
+					Qty:    quantity,
+				}},
+			}), ShouldBeNil)
+
+			for samples := range signal.Generate() {
+				So(samples[0].Fills, ShouldHaveLength, 2)
+				So(samples[0].Fills[0].Price, ShouldEqual, before[0].Asks[0].Price)
+				So(samples[0].Fills[0].Qty, ShouldEqual, before[0].Asks[0].Qty)
+				So(samples[0].Fills[1].Price, ShouldEqual, before[0].Asks[1].Price)
+				So(samples[0].Fills[1].Qty, ShouldEqual, 5)
+				So(samples[0].Asks, ShouldHaveLength, 1)
+				So(samples[0].Asks[0].Qty, ShouldEqual, before[0].Asks[1].Qty-5)
+			}
+		})
+	})
 }
 
 /*
@@ -182,6 +309,31 @@ func BenchmarkSignal_Transition(b *testing.B) {
 			if samples[0].At.IsZero() {
 				b.Fatal("transition timestamp is zero")
 			}
+		}
+	}
+}
+
+/*
+BenchmarkSignal_Apply measures complete-touch removal and second-level filling.
+*/
+func BenchmarkSignal_Apply(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		signal := New([]string{"SIM1/USD"})
+		signal.Bootstrap()
+		quote, _ := signal.Quote("SIM1/USD")
+
+		if err := signal.Apply(Step{
+			Advance: time.Second,
+			Actions: []Action{{
+				Kind:   Trade,
+				Symbol: "SIM1/USD",
+				Side:   "buy",
+				Qty:    quote.AskQty + 5,
+			}},
+		}); err != nil {
+			b.Fatal(err)
 		}
 	}
 }

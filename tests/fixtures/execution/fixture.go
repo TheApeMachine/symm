@@ -2,6 +2,7 @@ package execution
 
 import (
 	"embed"
+	"encoding/json"
 	"iter"
 
 	"github.com/bytedance/sonic"
@@ -131,6 +132,37 @@ func Frame(options Options) []byte {
 	}
 
 	return encoded
+}
+
+/*
+Snapshot combines the current open-order projections into one Kraken frame.
+*/
+func Snapshot(options []Options) []byte {
+	data := []json.RawMessage{}
+
+	for _, option := range options {
+		frame := struct {
+			Data []json.RawMessage `json:"data"`
+		}{}
+
+		if err := json.Unmarshal(Frame(option), &frame); err != nil {
+			panic(errnie.Err(errnie.Validation, "execution snapshot decode failed", err))
+		}
+
+		data = append(data, frame.Data...)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"channel": "executions",
+		"type":    "snapshot",
+		"data":    data,
+	})
+
+	if err != nil {
+		panic(errnie.Err(errnie.Validation, "execution snapshot encode failed", err))
+	}
+
+	return payload
 }
 
 /*

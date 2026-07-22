@@ -2,6 +2,7 @@ package ticker
 
 import (
 	"embed"
+	"encoding/json"
 	"iter"
 	"time"
 
@@ -100,8 +101,13 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 		panic(errnie.Err(errnie.Validation, "ticker fixture decode failed", err))
 	}
 
-	rows := make([]map[string]any, len(samples))
-	for index, sample := range samples {
+	rows := make([]map[string]any, 0, len(samples))
+
+	for _, sample := range samples {
+		if fixture.typ == UPDATE && !sample.TouchChanged && !sample.Traded {
+			continue
+		}
+
 		row := map[string]any{}
 
 		for key, value := range payload["data"].([]any)[0].(map[string]any) {
@@ -125,12 +131,16 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 		row["change"] = change
 		row["change_pct"] = change / opening * 100
 		row["timestamp"] = sample.At
-		rows[index] = row
+		rows = append(rows, row)
+	}
+
+	if len(rows) == 0 {
+		return nil
 	}
 
 	payload["data"] = rows
 	payload["type"] = string(fixture.typ)
-	encoded, err := sonic.Marshal(payload)
+	encoded, err := json.Marshal(payload)
 
 	if err != nil {
 		panic(errnie.Err(errnie.Validation, "ticker fixture encode failed", err))

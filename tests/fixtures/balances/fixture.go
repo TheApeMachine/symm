@@ -38,7 +38,12 @@ type Fixture struct {
 /*
 Frame injects the current paper ledger into the Kraken balance template.
 */
-func Frame(balances map[string]float64, typ FixtureType) []byte {
+func Frame(
+	balances map[string]float64,
+	reserved map[string]float64,
+	typ FixtureType,
+	sequence int64,
+) []byte {
 	raw, err := fixtureFiles.ReadFile("fixtures/" + string(SNAPSHOT) + ".json")
 
 	if err != nil {
@@ -62,12 +67,13 @@ func Frame(balances map[string]float64, typ FixtureType) []byte {
 
 	for index, asset := range assets {
 		balance := balances[asset]
+		locked := reserved[asset]
 		rows[index] = map[string]any{
 			"asset":       asset,
 			"asset_class": "currency",
 			"balance":     balance,
-			"available":   balance,
-			"reserved":    0,
+			"available":   balance - locked,
+			"reserved":    locked,
 			"wallets": []map[string]any{{
 				"type":    "spot",
 				"id":      "main",
@@ -78,6 +84,7 @@ func Frame(balances map[string]float64, typ FixtureType) []byte {
 
 	payload["data"] = rows
 	payload["type"] = string(typ)
+	payload["sequence"] = sequence
 	encoded, err := sonic.Marshal(payload)
 
 	if err != nil {

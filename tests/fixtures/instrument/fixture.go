@@ -4,6 +4,7 @@ import (
 	"embed"
 	"fmt"
 	"iter"
+	"sort"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -110,9 +111,16 @@ func NewMarket(symbols []string, priceIncrement float64) *Fixture {
 	}
 
 	assetRows := make([]map[string]any, 0, len(assets))
+	assetIDs := make([]string, 0, len(assets))
 
-	for _, row := range assets {
-		assetRows = append(assetRows, row)
+	for assetID := range assets {
+		assetIDs = append(assetIDs, assetID)
+	}
+
+	sort.Strings(assetIDs)
+
+	for _, assetID := range assetIDs {
+		assetRows = append(assetRows, assets[assetID])
 	}
 
 	data["assets"] = assetRows

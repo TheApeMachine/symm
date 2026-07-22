@@ -61,7 +61,33 @@ func TestMockConnWriteHonorsVenueBoundary(t *testing.T) {
 			So(received, ShouldHaveLength, 1)
 			So(string(received[0]), ShouldContainSubstring, `"symbol":"SIM1/USD"`)
 			So(string(received[0]), ShouldNotContainSubstring, `"symbol":"SIM2/USD"`)
+			So(conn.Publish("ticker", payload), ShouldBeNil)
+			So(conn.Drain(), ShouldBeNil)
+			So(received, ShouldHaveLength, 2)
+			So(string(received[1]), ShouldContainSubstring, `"symbol":"SIM1/USD"`)
+			So(string(received[1]), ShouldNotContainSubstring, `"symbol":"SIM2/USD"`)
+			So(conn.Write(json.RawMessage(
+				`{"method":"unsubscribe","params":{"channel":"ticker","symbol":["SIM1/USD"]}}`,
+			)), ShouldBeNil)
+			So(conn.Publish("ticker", payload), ShouldBeNil)
+			So(conn.Drain(), ShouldBeNil)
+			So(received, ShouldHaveLength, 2)
 		})
+	})
+}
+
+/*
+TestMockConnWriteRejectsUnknownOperations proves unsupported venue operations
+cannot silently succeed.
+*/
+func TestMockConnWriteRejectsUnknownOperations(t *testing.T) {
+	Convey("Given unsupported websocket operations", t, func() {
+		conn := NewConn("SIM1/USD")
+
+		So(conn.Write(json.RawMessage(`{"method":"unknown"}`)), ShouldNotBeNil)
+		So(conn.Write(json.RawMessage(
+			`{"method":"subscribe","params":{"channel":"unknown","symbol":["SIM1/USD"]}}`,
+		)), ShouldNotBeNil)
 	})
 }
 

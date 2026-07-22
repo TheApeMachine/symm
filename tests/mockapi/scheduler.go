@@ -5,11 +5,17 @@ import (
 	"sync"
 )
 
+/*
+mockHandler pairs a callback with its exact unsubscribe identity.
+*/
 type mockHandler struct {
 	id uint64
 	fn func([]byte)
 }
 
+/*
+outbound is one queued channel payload awaiting an explicit drain.
+*/
 type outbound struct {
 	channel string
 	payload []byte
@@ -155,6 +161,9 @@ func (scheduler *Scheduler) Active() bool {
 	return !scheduler.closed
 }
 
+/*
+close rejects future delivery and clears all queued or registered work.
+*/
 func (scheduler *Scheduler) close() {
 	scheduler.mu.Lock()
 	scheduler.closed = true

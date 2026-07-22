@@ -4,11 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"hash/crc32"
 	"math"
-	"sort"
 	"strconv"
-	"strings"
 )
 
 /*
@@ -16,9 +13,10 @@ Validator reconstructs the emitted venue state and rejects cross-feed conflicts
 before any fixture payload reaches the production connection boundary.
 */
 type Validator struct {
-	books  map[string]map[string]map[float64]float64
-	orders map[string]map[string]map[string]orderState
-	ticker map[string]tickerState
+	books        map[string]map[string]map[float64]float64
+	orders       map[string]map[string]map[string]orderState
+	ticker       map[string]tickerState
+	nextPriority uint64
 }
 
 /*
@@ -36,6 +34,20 @@ func NewValidator() *Validator {
 Validate applies one coherent frame set and verifies its economic invariants.
 */
 func (validator *Validator) Validate(payloads frameSet) error {
+	draft := validator.clone()
+
+	if err := draft.validate(payloads); err != nil {
+		return err
+	}
+
+	*validator = *draft
+	return nil
+}
+
+/*
+validate applies a frame set only to an isolated validator draft.
+*/
+func (validator *Validator) validate(payloads frameSet) error {
 	var ticker wireFrame[wireTicker]
 	var trades wireFrame[wireTrade]
 	var book wireFrame[wireBook]
@@ -50,6 +62,10 @@ func (validator *Validator) Validate(payloads frameSet) error {
 		{payloads.book, &book},
 		{payloads.level3, &level3},
 	} {
+		if len(input.payload) == 0 {
+			continue
+		}
+
 		decoder := json.NewDecoder(bytes.NewReader(input.payload))
 		decoder.UseNumber()
 
@@ -58,37 +74,68 @@ func (validator *Validator) Validate(payloads frameSet) error {
 		}
 	}
 
-	if len(ticker.Data) != len(book.Data) || len(ticker.Data) != len(level3.Data) {
-		return fmt.Errorf("tests: simulated frame symbol counts differ")
+	tradesBySymbol := make(map[string][]wireTrade, len(trades.Data))
+
+	for _, trade := range trades.Data {
+		tradesBySymbol[trade.Symbol] = append(tradesBySymbol[trade.Symbol], trade)
 	}
 
-	tradesBySymbol := make(map[string]*wireTrade, len(trades.Data))
+	for symbol, executions := range tradesBySymbol {
+		if validator.orders[symbol] == nil {
+			continue
+		}
 
-	for index := range trades.Data {
-		trade := &trades.Data[index]
-		tradesBySymbol[trade.Symbol] = trade
+		if err := validator.validateExecutions(symbol, executions); err != nil {
+			return err
+		}
 	}
 
-	for index := range ticker.Data {
-		if err := validator.applyLevel3(level3.Type, level3.Data[index]); err != nil {
+	level3Symbols := make(map[string]bool, len(level3.Data))
+
+	for _, row := range level3.Data {
+		if err := validator.applyLevel3(level3.Type, row); err != nil {
 			return err
 		}
 
-		if err := validator.applyBook(book.Type, book.Data[index]); err != nil {
+		level3Symbols[row.Symbol] = true
+	}
+
+	for _, row := range book.Data {
+		if !level3Symbols[row.Symbol] {
+			return fmt.Errorf("tests: L2 update missing matching L3 state for %s", row.Symbol)
+		}
+
+		if err := validator.applyBook(book.Type, row); err != nil {
 			return err
 		}
 
-		if err := validator.validateSymbol(
-			ticker.Data[index], tradesBySymbol[ticker.Data[index].Symbol],
-			book.Data[index], level3.Data[index],
-		); err != nil {
+		if err := validator.validateAggregates(row.Symbol); err != nil {
 			return err
+		}
+	}
+
+	tickerSymbols := make(map[string]bool, len(ticker.Data))
+
+	for _, row := range ticker.Data {
+		if err := validator.validateSymbol(row, tradesBySymbol[row.Symbol]); err != nil {
+			return err
+		}
+
+		tickerSymbols[row.Symbol] = true
+	}
+
+	for symbol := range tradesBySymbol {
+		if !tickerSymbols[symbol] {
+			return fmt.Errorf("tests: trade update missing ticker for %s", symbol)
 		}
 	}
 
 	return nil
 }
 
+/*
+applyLevel3 reconstructs order lifecycles and verifies the resulting checksum.
+*/
 func (validator *Validator) applyLevel3(frameType string, row wireLevel3) error {
 	if frameType == "snapshot" || validator.orders[row.Symbol] == nil {
 		validator.orders[row.Symbol] = map[string]map[string]orderState{
@@ -97,7 +144,16 @@ func (validator *Validator) applyLevel3(frameType string, row wireLevel3) error 
 		}
 	}
 
-	for side, orders := range map[string][]wireOrder{"bids": row.Bids, "asks": row.Asks} {
+	for _, input := range []struct {
+		side   string
+		orders []wireOrder
+	}{
+		{"bids", row.Bids},
+		{"asks", row.Asks},
+	} {
+		side := input.side
+		orders := input.orders
+
 		for _, order := range orders {
 			current := validator.orders[row.Symbol][side]
 			_, exists := current[order.OrderID]
@@ -126,9 +182,18 @@ func (validator *Validator) applyLevel3(frameType string, row wireLevel3) error 
 				return fmt.Errorf("tests: unknown L3 event %q", order.Event)
 			}
 
+			priority := current[order.OrderID].priority
+
+			if !exists {
+				validator.nextPriority++
+				priority = validator.nextPriority
+			}
+
 			current[order.OrderID] = orderState{
-				price: order.Price.String(),
-				qty:   order.Qty.String(),
+				id:       order.OrderID,
+				price:    order.Price.String(),
+				qty:      order.Qty.String(),
+				priority: priority,
 			}
 		}
 	}
@@ -140,6 +205,9 @@ func (validator *Validator) applyLevel3(frameType string, row wireLevel3) error 
 	return nil
 }
 
+/*
+applyBook reconstructs Level2 deltas and verifies the resulting checksum.
+*/
 func (validator *Validator) applyBook(frameType string, row wireBook) error {
 	if frameType == "snapshot" || validator.books[row.Symbol] == nil {
 		validator.books[row.Symbol] = map[string]map[float64]float64{
@@ -148,7 +216,16 @@ func (validator *Validator) applyBook(frameType string, row wireBook) error {
 		}
 	}
 
-	for side, levels := range map[string][]wireLevel{"bids": row.Bids, "asks": row.Asks} {
+	for _, input := range []struct {
+		side   string
+		levels []wireLevel
+	}{
+		{"bids", row.Bids},
+		{"asks", row.Asks},
+	} {
+		side := input.side
+		levels := input.levels
+
 		for _, level := range levels {
 			price, _ := level.Price.Float64()
 			quantity, _ := level.Qty.Float64()
@@ -169,14 +246,14 @@ func (validator *Validator) applyBook(frameType string, row wireBook) error {
 	return nil
 }
 
+/*
+validateSymbol checks one symbol's cross-feed touch and trade invariants.
+*/
 func (validator *Validator) validateSymbol(
 	ticker wireTicker,
-	trade *wireTrade,
-	book wireBook,
-	level3 wireLevel3,
+	trades []wireTrade,
 ) error {
-	if ticker.Symbol != book.Symbol || ticker.Symbol != level3.Symbol ||
-		trade != nil && ticker.Symbol != trade.Symbol {
+	if len(trades) > 0 && ticker.Symbol != trades[0].Symbol {
 		return fmt.Errorf("tests: simulated frame symbols differ")
 	}
 
@@ -194,28 +271,22 @@ func (validator *Validator) validateSymbol(
 		return fmt.Errorf("tests: ticker and book touch disagree for %s", symbol)
 	}
 
-	if err := validator.validateAggregates(symbol); err != nil {
-		return err
+	if len(trades) == 0 {
+		return validator.validateTicker(ticker, nil)
 	}
 
-	if trade == nil {
-		return validator.validateTicker(ticker, nil, tickerLast)
-	}
-
-	tradePrice, _ := trade.Price.Float64()
-
-	if trade.Side == "buy" && math.Abs(tradePrice-ask) > 1e-8 ||
-		trade.Side == "sell" && math.Abs(tradePrice-bid) > 1e-8 {
-		return fmt.Errorf("tests: %s trade did not execute at touch for %s", trade.Side, symbol)
-	}
+	tradePrice, _ := trades[len(trades)-1].Price.Float64()
 
 	if math.Abs(tickerLast-tradePrice) > 1e-8 {
 		return fmt.Errorf("tests: ticker last and trade price disagree for %s", symbol)
 	}
 
-	return validator.validateTicker(ticker, trade, tradePrice)
+	return validator.validateTicker(ticker, trades)
 }
 
+/*
+validateAggregates proves Level2 exactly aggregates the reconstructed Level3.
+*/
 func (validator *Validator) validateAggregates(symbol string) error {
 	aggregated := map[string]map[float64]float64{"bids": {}, "asks": {}}
 
@@ -242,16 +313,18 @@ func (validator *Validator) validateAggregates(symbol string) error {
 	return nil
 }
 
+/*
+validateTicker independently reconstructs cumulative trade statistics.
+*/
 func (validator *Validator) validateTicker(
 	ticker wireTicker,
-	trade *wireTrade,
-	tradePrice float64,
+	trades []wireTrade,
 ) error {
 	state := validator.ticker[ticker.Symbol]
 	high, _ := ticker.High.Float64()
 	low, _ := ticker.Low.Float64()
 
-	if trade == nil {
+	if len(trades) == 0 {
 		if math.Abs(ticker.Volume-state.volume) > 1e-8 ||
 			math.Abs(ticker.VWAP-state.notional/state.volume) > 1e-8 ||
 			high != state.high || low != state.low {
@@ -261,19 +334,27 @@ func (validator *Validator) validateTicker(
 		return nil
 	}
 
-	if trade.TradeID <= state.tradeID || !state.at.IsZero() && !trade.Timestamp.After(state.at) {
-		return fmt.Errorf("tests: trade sequence is not monotonic for %s", ticker.Symbol)
-	}
+	for _, trade := range trades {
+		tradePrice, _ := trade.Price.Float64()
 
-	state.volume += trade.Qty
-	state.notional += tradePrice * trade.Qty
+		if trade.TradeID <= state.tradeID ||
+			!state.at.IsZero() && trade.Timestamp.Before(state.at) {
+			return fmt.Errorf("tests: trade sequence is not monotonic for %s", ticker.Symbol)
+		}
 
-	if state.high == 0 || tradePrice > state.high {
-		state.high = tradePrice
-	}
+		state.volume += trade.Qty
+		state.notional += tradePrice * trade.Qty
 
-	if state.low == 0 || tradePrice < state.low {
-		state.low = tradePrice
+		if state.high == 0 || tradePrice > state.high {
+			state.high = tradePrice
+		}
+
+		if state.low == 0 || tradePrice < state.low {
+			state.low = tradePrice
+		}
+
+		state.tradeID = trade.TradeID
+		state.at = trade.Timestamp
 	}
 
 	if math.Abs(ticker.Volume-state.volume) > 1e-8 ||
@@ -282,87 +363,6 @@ func (validator *Validator) validateTicker(
 		return fmt.Errorf("tests: ticker statistics do not reconcile for %s", ticker.Symbol)
 	}
 
-	state.tradeID = trade.TradeID
-	state.at = trade.Timestamp
 	validator.ticker[ticker.Symbol] = state
 	return nil
-}
-
-func (validator *Validator) touch(
-	symbol string,
-	side string,
-	highest bool,
-) (float64, float64) {
-	price := 0.0
-
-	for candidate := range validator.books[symbol][side] {
-		if price == 0 || highest && candidate > price || !highest && candidate < price {
-			price = candidate
-		}
-	}
-
-	return price, validator.books[symbol][side][price]
-}
-
-func (validator *Validator) level3Checksum(symbol string) uint32 {
-	checksum := uint32(0)
-
-	for _, side := range []string{"asks", "bids"} {
-		orders := make([]orderState, 0, len(validator.orders[symbol][side]))
-
-		for _, order := range validator.orders[symbol][side] {
-			orders = append(orders, order)
-		}
-
-		sort.Slice(orders, func(left, right int) bool {
-			leftPrice, _ := strconv.ParseFloat(orders[left].price, 64)
-			rightPrice, _ := strconv.ParseFloat(orders[right].price, 64)
-
-			if side == "bids" {
-				return leftPrice > rightPrice
-			}
-
-			return leftPrice < rightPrice
-		})
-
-		for _, order := range orders {
-			for _, value := range []string{order.price, order.qty} {
-				normalized := strings.TrimLeft(strings.ReplaceAll(value, ".", ""), "0")
-				checksum = crc32.Update(checksum, crc32.IEEETable, []byte(normalized))
-			}
-		}
-	}
-
-	return checksum
-}
-
-/*
-bookChecksum derives Kraken's CRC from the reconstructed L2 state.
-*/
-func (validator *Validator) bookChecksum(symbol string) uint32 {
-	checksum := uint32(0)
-
-	for _, side := range []string{"asks", "bids"} {
-		prices := make([]float64, 0, len(validator.books[symbol][side]))
-
-		for price := range validator.books[symbol][side] {
-			prices = append(prices, price)
-		}
-
-		sort.Float64s(prices)
-
-		if side == "bids" {
-			sort.Sort(sort.Reverse(sort.Float64Slice(prices)))
-		}
-
-		for _, price := range prices {
-			for _, value := range []float64{price, validator.books[symbol][side][price]} {
-				text := strconv.FormatFloat(value, 'f', -1, 64)
-				normalized := strings.TrimLeft(strings.ReplaceAll(text, ".", ""), "0")
-				checksum = crc32.Update(checksum, crc32.IEEETable, []byte(normalized))
-			}
-		}
-	}
-
-	return checksum
 }

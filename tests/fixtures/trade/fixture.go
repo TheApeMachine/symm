@@ -2,6 +2,7 @@ package trade
 
 import (
 	"embed"
+	"encoding/json"
 	"iter"
 	"math"
 	"time"
@@ -132,28 +133,42 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 	rows := make([]map[string]any, 0, len(samples))
 
 	for _, sample := range samples {
-		if !sample.Traded {
-			continue
+		fills := sample.Fills
+
+		if fixture.typ == SNAPSHOT && len(fills) == 0 && sample.TradeID > 0 {
+			fills = []marketsignal.Fill{{
+				Side:    sample.Side,
+				Price:   sample.TradePrice,
+				Qty:     sample.Volume,
+				TradeID: sample.TradeID,
+				At:      sample.At,
+			}}
 		}
 
-		row := map[string]any{}
+		for _, fill := range fills {
+			row := map[string]any{}
 
-		for key, value := range payload["data"].([]any)[0].(map[string]any) {
-			row[key] = value
+			for key, value := range payload["data"].([]any)[0].(map[string]any) {
+				row[key] = value
+			}
+
+			row["symbol"] = sample.Symbol
+			row["side"] = fill.Side
+			row["price"] = fill.Price
+			row["qty"] = fill.Qty
+			row["trade_id"] = fill.TradeID
+			row["timestamp"] = fill.At
+			rows = append(rows, row)
 		}
+	}
 
-		row["symbol"] = sample.Symbol
-		row["side"] = sample.Side
-		row["price"] = sample.TradePrice
-		row["qty"] = sample.Volume
-		row["trade_id"] = sample.TradeID
-		row["timestamp"] = sample.At
-		rows = append(rows, row)
+	if len(rows) == 0 {
+		return nil
 	}
 
 	payload["data"] = rows
 	payload["type"] = string(fixture.typ)
-	encoded, err := sonic.Marshal(payload)
+	encoded, err := json.Marshal(payload)
 
 	if err != nil {
 		panic(errnie.Err(errnie.Validation, "trade fixture encode failed", err))

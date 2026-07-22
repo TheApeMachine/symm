@@ -1,6 +1,7 @@
 package mockapi
 
 import (
+	"sort"
 	"sync"
 
 	"github.com/theapemachine/errnie"
@@ -15,10 +16,33 @@ type Control struct {
 	writes        [][]byte
 	posts         [][]byte
 	writeErr      error
+	callbackErr   error
 	responses     map[string][][]byte
 	current       map[string]func() []byte
 	postResponses map[string][]byte
 	subscriptions map[string]map[string]struct{}
+}
+
+/*
+Report captures a consumer failure at the transport delivery boundary.
+*/
+func (control *Control) Report(err error) {
+	control.mu.Lock()
+
+	if control.callbackErr == nil {
+		control.callbackErr = err
+	}
+
+	control.mu.Unlock()
+}
+
+/*
+Err returns the first consumer failure observed by this connection.
+*/
+func (control *Control) Err() error {
+	control.mu.Lock()
+	defer control.mu.Unlock()
+	return control.callbackErr
 }
 
 /*
@@ -115,6 +139,8 @@ func (control *Control) Subscriptions(channel string) []string {
 		symbols = append(symbols, symbol)
 	}
 
+	sort.Strings(symbols)
+
 	return symbols
 }
 
@@ -127,6 +153,9 @@ func (control *Control) FailWrites(err error) {
 	control.mu.Unlock()
 }
 
+/*
+record captures a websocket request before returning its injected failure.
+*/
 func (control *Control) record(raw []byte) error {
 	control.mu.Lock()
 	defer control.mu.Unlock()
@@ -134,6 +163,9 @@ func (control *Control) record(raw []byte) error {
 	return control.writeErr
 }
 
+/*
+subscribe records symbols and returns the configured static or current source.
+*/
 func (control *Control) subscribe(
 	channel string,
 	symbols []string,
@@ -156,6 +188,21 @@ func (control *Control) subscribe(
 	return clonePayloads(control.responses[channel]), control.current[channel]
 }
 
+/*
+unsubscribe removes only the requested symbols from one venue subscription.
+*/
+func (control *Control) unsubscribe(channel string, symbols []string) {
+	control.mu.Lock()
+	defer control.mu.Unlock()
+
+	for _, symbol := range symbols {
+		delete(control.subscriptions[channel], symbol)
+	}
+}
+
+/*
+post records one REST request and resolves its explicit fixture route.
+*/
 func (control *Control) post(path string, raw []byte) ([]byte, error) {
 	control.mu.Lock()
 	defer control.mu.Unlock()
@@ -173,14 +220,9 @@ func (control *Control) post(path string, raw []byte) ([]byte, error) {
 	return append([]byte(nil), payload...), nil
 }
 
-func (control *Control) close() {
-	control.mu.Lock()
-	control.responses = nil
-	control.current = nil
-	control.subscriptions = nil
-	control.mu.Unlock()
-}
-
+/*
+clonePayloads prevents callers from mutating recorded or configured frames.
+*/
 func clonePayloads(payloads [][]byte) [][]byte {
 	clones := make([][]byte, len(payloads))
 

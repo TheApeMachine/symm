@@ -1,16 +1,15 @@
 package level3
 
 import (
+	"cmp"
 	"embed"
 	"encoding/json"
 	"hash/crc32"
 	"iter"
 	"maps"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -72,40 +71,6 @@ func NewMarket(symbols []string, signal *marketsignal.Signal) *Fixture {
 	}
 }
 
-func (fixture *Fixture) sequencer(raw []byte) *Fixture {
-	if fixture.horizon < 1 {
-		panic(errnie.Err(errnie.Validation, "level3 fixture horizon must be positive", nil))
-	}
-
-	var base map[string]any
-
-	if err := sonic.Unmarshal(raw, &base); err != nil {
-		panic(errnie.Err(errnie.Validation, "level3 fixture decode failed", err))
-	}
-
-	fixture.sequence = make([][]byte, fixture.horizon)
-
-	for i := range fixture.horizon {
-		step := clone(base)
-
-		for _, row := range rows(step) {
-			advanceLevels(row, "bids", i, -1)
-			advanceLevels(row, "asks", i, 1)
-			row["checksum"] = uint64(number(row, "checksum")) + uint64(i+1)
-		}
-
-		marshaled, err := sonic.Marshal(step)
-
-		if err != nil {
-			panic(errnie.Err(errnie.Validation, "level3 fixture marshal failed", err))
-		}
-
-		fixture.sequence[i] = marshaled
-	}
-
-	return fixture
-}
-
 func (fixture *Fixture) Generate() iter.Seq[[]byte] {
 	if fixture.signal != nil {
 		return func(yield func([]byte) bool) {
@@ -152,9 +117,13 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 	}
 
 	template := payload["data"].([]any)[0].(map[string]any)
-	rows := make([]map[string]any, len(samples))
+	rows := make([]map[string]any, 0, len(samples))
 
-	for index, sample := range samples {
+	for _, sample := range samples {
+		if fixture.typ == UPDATE && !sample.BookChanged {
+			continue
+		}
+
 		row := clone(template)
 
 		fixture.inject(row, "bids", sample.Bids)
@@ -169,12 +138,16 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 		}
 
 		fixture.previous[sample.Symbol] = resting
-		rows[index] = row
+		rows = append(rows, row)
+	}
+
+	if len(rows) == 0 {
+		return nil
 	}
 
 	payload["data"] = rows
 	payload["type"] = string(fixture.typ)
-	encoded, err := sonic.Marshal(payload)
+	encoded, err := json.Marshal(payload)
 
 	if err != nil {
 		panic(errnie.Err(errnie.Validation, "level3 fixture encode failed", err))
@@ -195,11 +168,25 @@ func (fixture *Fixture) inject(
 ) {
 	orders = append([]marketsignal.Order(nil), orders...)
 	slices.SortFunc(orders, func(left, right marketsignal.Order) int {
+		priceOrder := cmp.Compare(left.Price, right.Price)
+
 		if side == "bids" {
-			return -cmp(left.Price, right.Price)
+			priceOrder = -priceOrder
 		}
 
-		return cmp(left.Price, right.Price)
+		if priceOrder != 0 {
+			return priceOrder
+		}
+
+		if left.Priority < right.Priority {
+			return -1
+		}
+
+		if left.Priority > right.Priority {
+			return 1
+		}
+
+		return strings.Compare(left.ID, right.ID)
 	})
 	encoded := make([]any, len(orders))
 
@@ -223,18 +210,6 @@ func (fixture *Fixture) inject(
 	}
 
 	row[side] = encoded
-}
-
-func cmp(left, right float64) int {
-	if left < right {
-		return -1
-	}
-
-	if left > right {
-		return 1
-	}
-
-	return 0
 }
 
 /*
@@ -280,9 +255,13 @@ func (fixture *Fixture) update(
 			delete(prior, orderID)
 		}
 
-		for _, order := range prior {
+		removedIDs := slices.Sorted(maps.Keys(prior))
+
+		for _, orderID := range removedIDs {
+			order := prior[orderID]
 			removed := maps.Clone(order)
 			removed["event"] = "delete"
+			removed["timestamp"] = current["timestamp"]
 			events = append(events, removed)
 		}
 
@@ -299,9 +278,23 @@ func (fixture *Fixture) checksum(row map[string]any) uint32 {
 	checksum := uint32(0)
 
 	for _, side := range []string{"asks", "bids"} {
+		levels := 0
+		lastPrice := ""
+
 		for _, entry := range row[side].([]any) {
 			order := entry.(map[string]any)
-			checksum = fixture.write(checksum, order["limit_price"].(json.Number).String())
+			price := order["limit_price"].(json.Number).String()
+
+			if price != lastPrice {
+				levels++
+				lastPrice = price
+			}
+
+			if levels > 10 {
+				break
+			}
+
+			checksum = fixture.write(checksum, price)
 			checksum = fixture.write(checksum, order["order_qty"].(json.Number).String())
 		}
 	}
@@ -319,59 +312,4 @@ func (fixture *Fixture) write(checksum uint32, value string) uint32 {
 	)
 
 	return crc32.Update(checksum, crc32.IEEETable, []byte(text))
-}
-
-func advanceLevels(row map[string]any, side string, step int, direction float64) {
-	levels := row[side].([]any)
-
-	for i, raw := range levels {
-		level := raw.(map[string]any)
-		level["limit_price"] = round(number(level, "limit_price") + direction*0.0001*float64(step+1+i))
-		level["order_qty"] = round(math.Max(number(level, "order_qty")*(1+0.01*float64(step+1)), 0))
-		level["timestamp"] = advance(level["timestamp"].(string), time.Duration(step+1)*250*time.Millisecond)
-	}
-}
-
-func advance(value string, delta time.Duration) string {
-	observed, err := time.Parse(time.RFC3339Nano, value)
-
-	if err != nil {
-		panic(errnie.Err(errnie.Validation, "level3 fixture timestamp parse failed", err))
-	}
-
-	return observed.Add(delta).Format(time.RFC3339Nano)
-}
-
-func round(value float64) float64 {
-	return math.Round(value*1e8) / 1e8
-}
-
-func clone(base map[string]any) map[string]any {
-	raw, err := sonic.Marshal(base)
-
-	if err != nil {
-		panic(errnie.Err(errnie.Validation, "level3 fixture clone failed", err))
-	}
-
-	var out map[string]any
-
-	if err := sonic.Unmarshal(raw, &out); err != nil {
-		panic(errnie.Err(errnie.Validation, "level3 fixture clone decode failed", err))
-	}
-
-	return out
-}
-
-func rows(frame map[string]any) []map[string]any {
-	out := []map[string]any{}
-
-	for _, item := range frame["data"].([]any) {
-		out = append(out, item.(map[string]any))
-	}
-
-	return out
-}
-
-func number(row map[string]any, key string) float64 {
-	return row[key].(float64)
 }

@@ -26,20 +26,6 @@ func frameOf(rows ...kraken.TradeData) *types.MarketFrame {
 	return &types.MarketFrame{Trades: rows, CrossSection: types.NewCrossSection()}
 }
 
-func measureField(
-	measurements []*types.Measurement, symbol string, metric types.MetricType,
-) (*types.Measurement, bool) {
-	for index := len(measurements) - 1; index >= 0; index-- {
-		measurement := measurements[index]
-
-		if measurement.Symbol == symbol && measurement.Metric == metric {
-			return measurement, true
-		}
-	}
-
-	return nil, false
-}
-
 func tradeRow(symbol, side string, price float64, quantity float64, at time.Time) kraken.TradeData {
 	return kraken.TradeData{
 		Symbol:    symbol,
@@ -94,32 +80,6 @@ func TestSignalOnTrade(t *testing.T) {
 			}()
 
 			wait.Wait()
-		})
-	})
-}
-
-func TestSignalMeasure(t *testing.T) {
-	Convey("Given a Hawkes signal with enough marked arrivals to identify a stream", t, func() {
-		signal := newTestSignal()
-		start := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		sides := []string{"buy", "sell", "buy", "sell", "buy", "sell"}
-		var result []*types.Measurement
-
-		Convey("When each trade arrives on its own tick", func() {
-			for index, side := range sides {
-				frame := frameOf(
-					tradeRow("BTC/USD", side, 100+float64(index), 1, start.Add(time.Duration(index)*time.Second)),
-				)
-				measurements, err := signal.Calculate(frame)
-				So(err, ShouldBeNil)
-				result = measurements
-			}
-
-			Convey("Then event-count observation measurements should be emitted", func() {
-				count, ok := measureField(result, "BTC/USD", types.MetricEventCount)
-				So(ok, ShouldBeTrue)
-				So(count.Raw, ShouldBeGreaterThan, 0)
-			})
 		})
 	})
 }

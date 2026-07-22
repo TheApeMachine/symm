@@ -84,7 +84,8 @@ func (conn *MockConn) Write(params json.Marshaler) error {
 		return conn.order(raw)
 	}
 
-	if request.Method != "subscribe" {
+	if request.Method == "unsubscribe" {
+		conn.unsubscribe(request.Params.Channel, symbols)
 		return nil
 	}
 
@@ -102,6 +103,24 @@ func (conn *MockConn) Write(params json.Marshaler) error {
 }
 
 /*
+Publish queues one market update filtered through the connection's current
+symbol subscription rather than bypassing the venue boundary.
+*/
+func (conn *MockConn) Publish(channel string, payload []byte) error {
+	if !conn.Active() {
+		return io.ErrClosedPipe
+	}
+
+	symbols := conn.Subscriptions(channel)
+
+	if len(symbols) == 0 {
+		return nil
+	}
+
+	return conn.Queue(channel, filterSymbols(payload, symbols))
+}
+
+/*
 Close disables all future scheduling and releases configured fixture state.
 */
 func (conn *MockConn) Close() {
@@ -110,7 +129,11 @@ func (conn *MockConn) Close() {
 	}
 
 	conn.Scheduler.close()
-	conn.Control.close()
+	conn.Control.mu.Lock()
+	conn.Control.responses = nil
+	conn.Control.current = nil
+	conn.Control.subscriptions = nil
+	conn.Control.mu.Unlock()
 	conn.paperMu.Lock()
 	conn.paper = nil
 	conn.paperMu.Unlock()
@@ -137,6 +160,9 @@ func (conn *MockConn) Post(path string, params json.Marshaler) ([]byte, error) {
 	return conn.post(path, raw)
 }
 
+/*
+wireRequest decodes the request fields needed by connection-level validation.
+*/
 type wireRequest struct {
 	Method string `json:"method"`
 	Params struct {
@@ -150,8 +176,34 @@ type wireRequest struct {
 validate enforces the subscription contract represented by the fake venue.
 */
 func (conn *MockConn) validate(request wireRequest, symbols []string) error {
-	if request.Method == "subscribe" && request.Params.Channel == "" {
+	if request.Method != "subscribe" && request.Method != "unsubscribe" &&
+		request.Method != "add_order" {
+		return errnie.Err(errnie.NotImplemented, "tests/mockapi: unknown method "+request.Method, nil)
+	}
+
+	if (request.Method == "subscribe" || request.Method == "unsubscribe") &&
+		request.Params.Channel == "" {
 		return errnie.Err(errnie.Validation, "tests/mockapi: subscription channel required", nil)
+	}
+
+	if request.Method == "subscribe" || request.Method == "unsubscribe" {
+		channels := map[string]struct{}{
+			"instrument": {},
+			"ticker":     {},
+			"trade":      {},
+			"book":       {},
+			"level3":     {},
+			"balances":   {},
+			"executions": {},
+		}
+
+		if _, exists := channels[request.Params.Channel]; !exists {
+			return errnie.Err(
+				errnie.NotFound,
+				"tests/mockapi: unknown subscription channel "+request.Params.Channel,
+				nil,
+			)
+		}
 	}
 
 	for _, symbol := range symbols {
@@ -213,7 +265,8 @@ func decodeRequest(raw []byte) (wireRequest, []string, error) {
 
 	symbols := []string{}
 
-	if request.Method == "subscribe" && len(request.Params.Symbol) > 0 {
+	if (request.Method == "subscribe" || request.Method == "unsubscribe") &&
+		len(request.Params.Symbol) > 0 {
 		if err := json.Unmarshal(request.Params.Symbol, &symbols); err != nil {
 			return request, nil, errnie.Err(
 				errnie.Validation,

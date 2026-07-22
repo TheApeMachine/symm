@@ -1,8 +1,6 @@
 package mockapi
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -13,7 +11,6 @@ import (
 	"github.com/theapemachine/errnie"
 	balancesfixture "github.com/theapemachine/symm/tests/fixtures/balances"
 	executionfixture "github.com/theapemachine/symm/tests/fixtures/execution"
-	orderackfixture "github.com/theapemachine/symm/tests/fixtures/orderack"
 )
 
 /*
@@ -21,45 +18,28 @@ PaperOptions provides the authoritative touch, ledger, fee, and event clock
 required by the deterministic paper venue.
 */
 type PaperOptions struct {
-	Quote    func(symbol string) (bid, ask float64, exists bool)
+	Quote    func(symbol string) (bid, bidQty, ask, askQty float64, exists bool)
 	Now      func() time.Time
 	Balances map[string]float64
-	FeeRate  float64
+	MakerFee float64
+	TakerFee float64
 }
 
 /*
-Paper matches market and simple limit orders against the simulated touch while
-maintaining balances and resting orders from the same economic state.
+Paper matches market and limit orders against displayed touch liquidity while
+maintaining reservations and balances. Own-order fills are intentionally
+non-impacting because public market impact is driven through Market actions.
 */
 type Paper struct {
-	mu       sync.Mutex
-	options  PaperOptions
-	balances map[string]float64
-	open     map[string]paperOrder
-	nextID   uint64
-	nextExec uint64
-}
-
-type paperOrder struct {
-	id       string
-	reqID    int64
-	symbol   string
-	side     string
-	typ      string
-	quantity float64
-	limit    float64
-}
-
-type orderRequest struct {
-	Method string `json:"method"`
-	ReqID  int64  `json:"req_id"`
-	Params struct {
-		OrderType  string      `json:"order_type"`
-		Side       string      `json:"side"`
-		OrderQty   json.Number `json:"order_qty"`
-		Symbol     string      `json:"symbol"`
-		LimitPrice json.Number `json:"limit_price"`
-	} `json:"params"`
+	mu          sync.Mutex
+	options     PaperOptions
+	balances    map[string]float64
+	reserved    map[string]float64
+	open        map[string]paperOrder
+	order       []string
+	nextID      uint64
+	nextExec    uint64
+	nextBalance int64
 }
 
 /*
@@ -68,7 +48,7 @@ path without replacing the injected Conn boundary.
 */
 func (conn *MockConn) EnablePaper(options PaperOptions) error {
 	if options.Quote == nil || options.Now == nil || len(options.Balances) == 0 ||
-		options.FeeRate < 0 {
+		options.MakerFee < 0 || options.TakerFee < 0 {
 		return errnie.Err(errnie.Validation, "tests/mockapi: complete paper options required", nil)
 	}
 
@@ -78,13 +58,17 @@ func (conn *MockConn) EnablePaper(options PaperOptions) error {
 		balances[asset] = balance
 	}
 
-	conn.paperMu.Lock()
-	conn.paper = &Paper{
+	paper := &Paper{
 		options:  options,
 		balances: balances,
+		reserved: map[string]float64{},
 		open:     map[string]paperOrder{},
 	}
+	conn.paperMu.Lock()
+	conn.paper = paper
 	conn.paperMu.Unlock()
+	conn.RespondCurrent("balances", paper.BalanceSnapshot)
+	conn.RespondCurrent("executions", paper.ExecutionSnapshot)
 	return nil
 }
 
@@ -141,73 +125,43 @@ func (conn *MockConn) OpenOrders() (map[string]spot.Order, error) {
 }
 
 /*
-Handle validates one add_order request and queues its acknowledgement plus any
-immediate crossing fill.
-*/
-func (paper *Paper) Handle(raw []byte) ([]outbound, error) {
-	request, err := decodeOrder(raw)
-
-	if err != nil {
-		return nil, err
-	}
-
-	paper.mu.Lock()
-	defer paper.mu.Unlock()
-	paper.nextID++
-	order := paperOrder{
-		id:       fmt.Sprintf("PAPER-%05d", paper.nextID),
-		reqID:    request.ReqID,
-		symbol:   request.Params.Symbol,
-		side:     request.Params.Side,
-		typ:      request.Params.OrderType,
-		quantity: number(request.Params.OrderQty),
-		limit:    number(request.Params.LimitPrice),
-	}
-
-	if err := paper.validate(order); err != nil {
-		return nil, err
-	}
-
-	frames := []outbound{{
-		channel: "add_order",
-		payload: orderackfixture.Frame(orderackfixture.Options{
-			ReqID:   order.reqID,
-			OrderID: order.id,
-			Success: true,
-		}),
-	}}
-	bid, ask, _ := paper.options.Quote(order.symbol)
-
-	if order.typ == "market" || order.side == "buy" && order.limit >= ask ||
-		order.side == "sell" && order.limit <= bid {
-		return append(frames, paper.fill(order, bid, ask)...), nil
-	}
-
-	paper.open[order.id] = order
-	frames = append(frames, paper.execution(order, 0, "new", "open"))
-	return frames, nil
-}
-
-/*
 Match evaluates resting limits against the latest deterministic touch.
 */
 func (paper *Paper) Match() ([]outbound, error) {
 	paper.mu.Lock()
 	defer paper.mu.Unlock()
 	frames := []outbound{}
+	remaining := make([]string, 0, len(paper.order))
 
-	for orderID, order := range paper.open {
-		bid, ask, exists := paper.options.Quote(order.symbol)
+	for _, orderID := range paper.order {
+		order, exists := paper.open[orderID]
+
+		if !exists {
+			continue
+		}
+
+		bid, bidQty, ask, askQty, exists := paper.options.Quote(order.symbol)
 
 		if !exists || order.side == "buy" && order.limit < ask ||
 			order.side == "sell" && order.limit > bid {
+			remaining = append(remaining, orderID)
 			continue
+		}
+
+		if order.side == "buy" && order.quantity > askQty ||
+			order.side == "sell" && order.quantity > bidQty {
+			return nil, errnie.Err(
+				errnie.Validation,
+				"tests/mockapi: resting order exceeds touch liquidity",
+				nil,
+			)
 		}
 
 		frames = append(frames, paper.fill(order, bid, ask)...)
 		delete(paper.open, orderID)
 	}
 
+	paper.order = remaining
 	return frames, nil
 }
 
@@ -219,16 +173,16 @@ func (paper *Paper) OpenOrders() map[string]spot.Order {
 	defer paper.mu.Unlock()
 	orders := make(map[string]spot.Order, len(paper.open))
 
-	for orderID := range paper.open {
-		orders[orderID] = spot.Order{}
+	for orderID, order := range paper.open {
+		orders[orderID] = order.snapshot()
 	}
 
 	return orders
 }
 
 /*
-fill applies one all-or-nothing touch execution and returns execution and
-balance frames derived from the updated ledger.
+fill applies one all-or-nothing non-impacting touch execution and returns
+execution and balance frames derived from the updated ledger.
 */
 func (paper *Paper) fill(order paperOrder, bid, ask float64) []outbound {
 	price := ask
@@ -239,7 +193,14 @@ func (paper *Paper) fill(order paperOrder, bid, ask float64) []outbound {
 
 	base, quote, _ := strings.Cut(order.symbol, "/")
 	cost := order.quantity * price
-	fee := cost * paper.options.FeeRate
+	feeRate := paper.options.TakerFee
+
+	if order.maker {
+		feeRate = paper.options.MakerFee
+		paper.release(order)
+	}
+
+	fee := cost * feeRate
 
 	if order.side == "buy" {
 		paper.balances[quote] -= cost + fee
@@ -255,7 +216,7 @@ func (paper *Paper) fill(order paperOrder, bid, ask float64) []outbound {
 		paper.execution(order, price, "trade", "filled"),
 		{
 			channel: "balances",
-			payload: balancesfixture.Frame(paper.balances, balancesfixture.UPDATE),
+			payload: paper.balanceFrame(balancesfixture.UPDATE),
 		},
 	}
 }
@@ -297,74 +258,8 @@ func (paper *Paper) execution(
 			CumQty:      text(quantity),
 			CumCost:     text(cost),
 			AvgPrice:    text(price),
-			FeeUsdEquiv: text(cost * paper.options.FeeRate),
+			FeeUsdEquiv: text(cost * paper.fee(order)),
 			Timestamp:   paper.options.Now().Format(time.RFC3339Nano),
 		}),
 	}
-}
-
-/*
-validate rejects orders that cannot be executed or represented by the current
-simulated market and ledger.
-*/
-func (paper *Paper) validate(order paperOrder) error {
-	if order.symbol == "" || order.quantity <= 0 ||
-		order.side != "buy" && order.side != "sell" ||
-		order.typ != "market" && order.typ != "limit" {
-		return errnie.Err(errnie.Validation, "tests/mockapi: valid order required", nil)
-	}
-
-	if order.typ == "limit" && order.limit <= 0 {
-		return errnie.Err(errnie.Validation, "tests/mockapi: limit price required", nil)
-	}
-
-	bid, ask, exists := paper.options.Quote(order.symbol)
-
-	if !exists || bid <= 0 || ask <= bid {
-		return errnie.Err(errnie.Validation, "tests/mockapi: executable quote required", nil)
-	}
-
-	base, quote, ok := strings.Cut(order.symbol, "/")
-
-	if !ok {
-		return errnie.Err(errnie.Validation, "tests/mockapi: normalized order symbol required", nil)
-	}
-
-	price := ask
-
-	if order.side == "sell" {
-		price = bid
-	}
-
-	if order.side == "buy" && paper.balances[quote] < order.quantity*price*(1+paper.options.FeeRate) ||
-		order.side == "sell" && paper.balances[base] < order.quantity {
-		return errnie.Err(errnie.Validation, "tests/mockapi: insufficient paper balance", nil)
-	}
-
-	return nil
-}
-
-/*
-decodeOrder preserves exact JSON numbers while parsing a generic add_order
-request accepted by the Conn interface.
-*/
-func decodeOrder(raw []byte) (orderRequest, error) {
-	request := orderRequest{}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-
-	if err := decoder.Decode(&request); err != nil {
-		return request, errnie.Err(errnie.Validation, "tests/mockapi: decode order", err)
-	}
-
-	return request, nil
-}
-
-/*
-number parses an optional exact wire number without converting through an
-untyped JSON map.
-*/
-func number(value json.Number) float64 {
-	parsed, _ := value.Float64()
-	return parsed
 }

@@ -16,6 +16,12 @@ const (
 	SlowPump
 	FastDump
 	SlowDump
+	VolumeAbsorption
+	LowVolumeLift
+	SpreadCompression
+	ThinLiquidity
+	LoadedLiquidity
+	LiquidityRetreat
 )
 
 const (
@@ -29,6 +35,12 @@ const (
 	eventMoveFraction      = 0.12
 	idleVolume             = 10.0
 	idleVolumeWaveFraction = 0.2
+	bookLevels             = 2
+	bestQuoteTicks         = 2
+	initialOrderQuantity   = 10_000.0
+	spreadCycleLength      = 4
+	spreadWidenPhase       = 0
+	spreadTightenPhase     = 2
 )
 
 var epoch = time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)
@@ -38,11 +50,12 @@ Order is one authoritative resting Level3 order from which the fixtures derive
 both Kraken book feeds and the ticker touch.
 */
 type Order struct {
-	ID    string
-	Side  string
-	Price float64
-	Qty   float64
-	At    time.Time
+	ID       string
+	Side     string
+	Price    float64
+	Qty      float64
+	Priority uint64
+	At       time.Time
 }
 
 /*
@@ -61,30 +74,47 @@ type Statistics struct {
 Quote is the current executable touch used by the simulated paper venue.
 */
 type Quote struct {
-	Bid float64
-	Ask float64
+	Bid    float64
+	BidQty float64
+	Ask    float64
+	AskQty float64
+}
+
+/*
+Fill is one real match against an authoritative resting order.
+*/
+type Fill struct {
+	Side    string
+	Price   float64
+	Qty     float64
+	TradeID uint64
+	At      time.Time
 }
 
 /*
 Sample is one shared per-symbol market value written into every JSON template.
 */
 type Sample struct {
-	Symbol     string
-	Side       string
-	Price      float64
-	TradePrice float64
-	Volume     float64
-	TradeID    uint64
-	BookVolume float64
-	At         time.Time
-	Traded     bool
-	Bids       []Order
-	Asks       []Order
-	Statistics Statistics
+	Symbol       string
+	Side         string
+	Price        float64
+	TradePrice   float64
+	Volume       float64
+	TradeID      uint64
+	At           time.Time
+	Traded       bool
+	Fills        []Fill
+	BookChanged  bool
+	TouchChanged bool
+	Bids         []Order
+	Asks         []Order
+	Statistics   Statistics
 }
 
+/*
+symbolState owns the one authoritative book and trade session for a symbol.
+*/
 type symbolState struct {
-	mid      float64
 	bids     []Order
 	asks     []Order
 	volume   float64
@@ -102,14 +132,15 @@ type symbolState struct {
 Signal generates replayable per-symbol market tapes for the current transition.
 */
 type Signal struct {
-	symbols   []string
-	markets   map[string]*symbolState
-	at        time.Time
-	phase     int
-	state     State
-	tape      [][]Sample
-	nextID    uint64
-	nextTrade uint64
+	symbols      []string
+	markets      map[string]*symbolState
+	at           time.Time
+	phase        int
+	state        State
+	tape         [][]Sample
+	nextID       uint64
+	nextTrade    uint64
+	bootstrapped bool
 }
 
 /*
@@ -131,18 +162,22 @@ func NewAt(symbols []string, at time.Time) *Signal {
 	}
 
 	for _, symbol := range symbols {
-		signal.markets[symbol] = &symbolState{mid: initialPrice}
-		signal.seed(symbol)
+		signal.markets[symbol] = &symbolState{}
+		signal.markets[symbol].seed(symbol, initialPrice, &signal.nextID, signal.at)
 	}
 
 	return signal
 }
 
 /*
-Bootstrap exposes one current-state sample without advancing the scenario clock
-or warming any signal history.
+Bootstrap idempotently seeds one historical print per symbol and exposes the
+resulting current-state sample without advancing the scenario clock.
 */
 func (signal *Signal) Bootstrap() {
+	if signal.bootstrapped {
+		return
+	}
+
 	samples := make([]Sample, len(signal.symbols))
 
 	for index, symbol := range signal.symbols {
@@ -152,16 +187,21 @@ func (signal *Signal) Bootstrap() {
 			side = "sell"
 		}
 
-		_, err := signal.execute(symbol, side, idleVolume)
+		prints, err := signal.markets[symbol].execute(
+			side, idleVolume, signal.at, &signal.nextTrade,
+		)
 
 		if err != nil {
 			panic(err)
 		}
 
-		samples[index] = signal.sample(symbol, true)
+		samples[index] = signal.markets[symbol].sample(
+			symbol, signal.at, prints, true, true,
+		)
 	}
 
 	signal.tape = [][]Sample{samples}
+	signal.bootstrapped = true
 }
 
 /*
@@ -177,21 +217,20 @@ Quote returns the executable touch derived from the authoritative L3 state.
 func (signal *Signal) Quote(symbol string) (Quote, bool) {
 	market, exists := signal.markets[symbol]
 
-	if !exists || len(market.bids) == 0 || len(market.asks) == 0 {
+	if !exists {
 		return Quote{}, false
 	}
 
-	return Quote{
-		Bid: market.bids[touchIndex(market.bids, "buy")].Price,
-		Ask: market.asks[touchIndex(market.asks, "sell")].Price,
-	}, true
+	return market.quote()
 }
 
 /*
 Transition generates a finite event leg followed by idle samples at its result.
+Optional symbols isolate the event while all other instruments remain idle.
 */
-func (signal *Signal) Transition(state State) error {
-	steps, err := signal.Scenario(state)
+func (signal *Signal) Transition(state State, symbols ...string) error {
+	draft := signal.clone()
+	steps, err := draft.Scenario(state, symbols...)
 
 	if err != nil {
 		return err
@@ -200,15 +239,44 @@ func (signal *Signal) Transition(state State) error {
 	tape := make([][]Sample, 0, len(steps))
 
 	for _, step := range steps {
-		if err := signal.Apply(step); err != nil {
+		if err := draft.Apply(step); err != nil {
 			return err
 		}
 
-		tape = append(tape, signal.tape[0])
+		tape = append(tape, draft.tape[0])
 	}
 
-	signal.tape = tape
+	draft.tape = tape
+	draft.state = state
+	*signal = *draft
 	return nil
+}
+
+/*
+Complete records a semantic state only after every generated step has reached
+its consumer successfully.
+*/
+func (signal *Signal) Complete(state State) {
+	signal.state = state
+}
+
+/*
+clone copies the small authoritative venue so a failed action cannot leak
+clock, order, counter, or tape mutations into the next test step.
+*/
+func (signal *Signal) clone() *Signal {
+	draft := *signal
+	draft.symbols = append([]string(nil), signal.symbols...)
+	draft.markets = make(map[string]*symbolState, len(signal.markets))
+
+	for symbol, market := range signal.markets {
+		copied := *market
+		copied.bids = append([]Order(nil), market.bids...)
+		copied.asks = append([]Order(nil), market.asks...)
+		draft.markets[symbol] = &copied
+	}
+
+	return &draft
 }
 
 /*
@@ -238,7 +306,7 @@ func (state State) observations() int {
 	switch state {
 	case SlowPump, SlowDump:
 		return slowLegObservations
-	case FastPump, FastDump:
+	case FastPump, FastDump, VolumeAbsorption, LowVolumeLift, SpreadCompression:
 		return fastLegObservations
 	default:
 		return idleObservations
@@ -249,7 +317,7 @@ func (state State) observations() int {
 valid rejects unknown regimes before they can emit a zero-direction event.
 */
 func (state State) valid() bool {
-	return state >= Baseline && state <= SlowDump
+	return state >= Baseline && state <= LiquidityRetreat
 }
 
 /*
@@ -257,7 +325,7 @@ interval returns the sampling cadence of the active event leg.
 */
 func (state State) interval() time.Duration {
 	switch state {
-	case FastPump, FastDump:
+	case FastPump, FastDump, VolumeAbsorption, LowVolumeLift:
 		return 250 * time.Millisecond
 	default:
 		return time.Second
@@ -269,7 +337,7 @@ direction returns the signed displacement of the selected event.
 */
 func (state State) direction() float64 {
 	switch state {
-	case FastPump, SlowPump:
+	case FastPump, SlowPump, LowVolumeLift:
 		return 1
 	case FastDump, SlowDump:
 		return -1
@@ -283,7 +351,7 @@ volume returns the executed quantity generated during the active event leg.
 */
 func (state State) volume() float64 {
 	switch state {
-	case FastPump, FastDump:
+	case FastPump, FastDump, VolumeAbsorption:
 		return 100
 	case SlowPump, SlowDump:
 		return 30

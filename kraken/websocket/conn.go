@@ -481,7 +481,13 @@ func (api *API) InjectLevel3(conn Conn, symbols []string) {
 	api.level3Conn = conn
 	api.level3.Attach("injected-level3", live)
 	conn.On("level3", func(payload []byte) {
-		errnie.Error(live.ApplyLevel3(payload))
+		err := live.ApplyLevel3(payload)
+
+		if reporter, ok := conn.(interface{ Report(error) }); ok && err != nil {
+			reporter.Report(err)
+		}
+
+		errnie.Error(err)
 	})
 }
 

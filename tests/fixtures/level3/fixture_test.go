@@ -64,7 +64,9 @@ func BenchmarkFixture_Generate(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		So(signal.Transition(marketsignal.Baseline), ShouldBeNil)
+		if err := signal.Transition(marketsignal.Baseline); err != nil {
+			b.Fatal(err)
+		}
 
 		for payload := range fixture.Generate() {
 			if len(payload) == 0 {

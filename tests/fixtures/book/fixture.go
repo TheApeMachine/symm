@@ -2,6 +2,7 @@ package book
 
 import (
 	"embed"
+	"encoding/json"
 	"hash/crc32"
 	"iter"
 	"math"
@@ -135,10 +136,14 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 		panic(errnie.Err(errnie.Validation, "book fixture decode failed", err))
 	}
 
-	rows := make([]map[string]any, len(samples))
+	rows := make([]map[string]any, 0, len(samples))
 	template := payload["data"].([]any)[0].(map[string]any)
 
-	for index, sample := range samples {
+	for _, sample := range samples {
+		if fixture.typ == UPDATE && !sample.BookChanged {
+			continue
+		}
+
 		row := clone(template)
 		row["symbol"] = sample.Symbol
 		fixture.inject(row, "bids", sample.Bids)
@@ -151,13 +156,17 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 			row = fixture.delta(fixture.previous[sample.Symbol], current)
 		}
 
-		rows[index] = row
+		rows = append(rows, row)
 		fixture.previous[sample.Symbol] = current
+	}
+
+	if len(rows) == 0 {
+		return nil
 	}
 
 	payload["data"] = rows
 	payload["type"] = string(fixture.typ)
-	encoded, err := sonic.Marshal(payload)
+	encoded, err := json.Marshal(payload)
 
 	if err != nil {
 		panic(errnie.Err(errnie.Validation, "book fixture encode failed", err))
@@ -238,7 +247,19 @@ func (fixture *Fixture) delta(
 			delete(prior, price)
 		}
 
+		removed := make([]float64, 0, len(prior))
+
 		for price := range prior {
+			removed = append(removed, price)
+		}
+
+		sort.Float64s(removed)
+
+		if side == "bids" {
+			sort.Sort(sort.Reverse(sort.Float64Slice(removed)))
+		}
+
+		for _, price := range removed {
 			changes = append(changes, map[string]any{"price": price, "qty": 0.0})
 		}
 

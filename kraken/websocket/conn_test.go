@@ -308,21 +308,53 @@ func TestAPIInjectLevel3(t *testing.T) {
 		symbols := []string{"SIM1/USD"}
 		signal := marketsignal.New(symbols)
 		fixture := level3fixture.NewMarket(symbols, signal)
-		live := newLevel3Consumer(context.Background(), symbols, 10)
-		defer live.Close()
+		conn := &stubConn{}
+		viper.Set("market.l3_depth", 10)
+		api := NewAPI(context.Background(), conn, conn, nil)
+		api.InjectLevel3(conn, symbols)
+		defer api.Close()
+		signal.Bootstrap()
 
-		for _, state := range []marketsignal.State{
-			marketsignal.Baseline,
-			marketsignal.Baseline,
-			marketsignal.FastPump,
-		} {
-			So(signal.Transition(state), ShouldBeNil)
-
-			for payload := range fixture.Generate() {
-				err := live.ApplyLevel3(payload)
-				SoMsg(string(payload), err, ShouldBeNil)
-			}
+		for payload := range fixture.Generate() {
+			conn.channels["level3"][0](payload)
 		}
+
+		quote, exists := signal.Quote(symbols[0])
+		So(exists, ShouldBeTrue)
+		So(signal.Apply(marketsignal.Step{
+			Advance: time.Second,
+			Actions: []marketsignal.Action{{
+				Kind:   marketsignal.Trade,
+				Symbol: symbols[0],
+				Side:   "buy",
+				Qty:    quote.AskQty + 5,
+			}},
+		}), ShouldBeNil)
+		var update []byte
+
+		for payload := range fixture.Generate() {
+			update = payload
+			conn.channels["level3"][0](payload)
+		}
+
+		Convey("A complete touch and second-level fill should reach the production ledger", func() {
+			So(conn.reported, ShouldBeNil)
+			best := 0.0
+			So(api.PeekBook(symbols[0], func(symbolBook *book.Book) {
+				best = symbolBook.BestAsk().Price.Float64()
+			}), ShouldBeTrue)
+			So(best, ShouldEqual, quote.Ask+marketsignal.PriceIncrement)
+		})
+
+		Convey("A production ledger rejection should reach the connection error sink", func() {
+			var corrupted map[string]any
+			So(json.Unmarshal(update, &corrupted), ShouldBeNil)
+			corrupted["data"].([]any)[0].(map[string]any)["checksum"] = 1
+			payload, err := json.Marshal(corrupted)
+			So(err, ShouldBeNil)
+			conn.channels["level3"][0](payload)
+			So(conn.reported, ShouldNotBeNil)
+		})
 	})
 }
 
@@ -566,7 +598,10 @@ type stubConn struct {
 	postPath     string
 	postParams   json.Marshaler
 	closeCount   int
+	reported     error
 }
+
+func (stub *stubConn) Report(err error) { stub.reported = err }
 
 func (stub *stubConn) Client() *spot.WebSocket { return stub.client }
 

@@ -87,8 +87,10 @@ type wireTicker struct {
 orderState retains exact L3 text for lifecycle and checksum reconstruction.
 */
 type orderState struct {
-	price string
-	qty   string
+	id       string
+	price    string
+	qty      string
+	priority uint64
 }
 
 /*
