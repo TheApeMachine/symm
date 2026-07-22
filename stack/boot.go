@@ -16,7 +16,6 @@ import (
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
 	"github.com/theapemachine/symm/signal/exhaust"
-	"github.com/theapemachine/symm/signal/fluid"
 	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/signal/leadlag"
 	"github.com/theapemachine/symm/signal/liquidity"
@@ -239,8 +238,8 @@ func (booter *Booter) boot(
 
 	depthflowSignal, err := depthflow.NewSignal(
 		booter.ctx,
-		booter.channel,
 		viper.GetInt("signals.feed_track_capacity"),
+		booter.channel,
 	)
 
 	if err != nil {
@@ -250,8 +249,8 @@ func (booter *Booter) boot(
 	signals := []types.Signal{
 		pumpdump.NewSignal(
 			booter.ctx,
-			booter.channel,
 			viper.GetInt("signals.feed_track_capacity"),
+			booter.channel,
 		),
 		liquidity.NewSignal(booter.ctx, booter.channel),
 		toxicity.NewSignal(booter.ctx, api, booter.channel),
@@ -261,7 +260,6 @@ func (booter *Booter) boot(
 		exhaust.NewSignal(booter.ctx, booter.channel),
 		sentiment.NewSignal(booter.ctx, booter.channel),
 		depthflowSignal,
-		fluid.NewSignal(booter.ctx, booter.channel),
 		hawkesSignal,
 	}
 	analyzer, err := logic.NewAnalyzer(
@@ -291,25 +289,18 @@ func (booter *Booter) boot(
 		nil,
 	)
 
-	crypto, err := trader.NewCrypto(
+	crypto := trader.NewCrypto(
 		booter.ctx,
 		booter.stages,
 		api,
-		price,
-		balance,
 		desk,
+		balance,
 		instrument,
 		analyzer,
-		planner,
-		tree,
 		hub,
-		nil,
+		planner,
 		signals,
 	)
-
-	if err != nil {
-		return nil, errnie.Error(err)
-	}
 
 	wired := &Stack{
 		API:        api,

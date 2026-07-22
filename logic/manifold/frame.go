@@ -10,18 +10,18 @@ import (
 )
 
 /*
-project reads the shared field projection and resident omega spectrum for every
-GasReady symbol view. Phase scans stay per-symbol in phase.
+project reads and converts the shared field projection and resident omega
+spectrum once for all GasReady symbol views. Phase scans stay per-symbol.
 */
-func (solver *Solver) project() (pfluid.Projection, []pfluid.WaveMode, error) {
+func (solver *Solver) project() (State, error) {
 	if len(solver.particles) == 0 {
-		return pfluid.Projection{Grid: solver.config.Grid}, nil, nil
+		return State{Grid: solver.config.Grid}, nil
 	}
 
 	wave, err := solver.domain.Wave()
 
 	if err != nil {
-		return pfluid.Projection{}, nil, errnie.Err(
+		return State{}, errnie.Err(
 			errnie.Internal,
 			"manifold: failed to read shared omega spectrum",
 			err,
@@ -31,14 +31,21 @@ func (solver *Solver) project() (pfluid.Projection, []pfluid.WaveMode, error) {
 	projection, err := solver.domain.Projection()
 
 	if err != nil {
-		return pfluid.Projection{}, nil, errnie.Err(
+		return State{}, errnie.Err(
 			errnie.Internal,
 			"manifold: failed to read shared field projection",
 			err,
 		)
 	}
 
-	return projection, wave, nil
+	return State{
+		Grid:         projection.Grid,
+		Rho:          projectionRows(projection.Density, projection.Grid),
+		PsiMag2:      projectionRows(projection.Coherence, projection.Grid),
+		GuidanceVelX: projectionRows(projection.GuidanceX, projection.Grid),
+		GuidanceVelZ: projectionRows(projection.GuidanceZ, projection.Grid),
+		Wave:         wave,
+	}, nil
 }
 
 /*
@@ -50,19 +57,10 @@ func (solver *Solver) phase(
 	symbol string,
 	at time.Time,
 	advanced bool,
-) ([]pfluid.WaveMode, []PhaseResponse, error) {
+	wave []pfluid.WaveMode,
+) ([]PhaseResponse, error) {
 	if symbol == "" {
-		return nil, nil, nil
-	}
-
-	wave, err := solver.domain.Wave()
-
-	if err != nil {
-		return nil, nil, errnie.Err(
-			errnie.Internal,
-			"manifold: failed to read shared omega spectrum",
-			err,
-		)
+		return nil, nil
 	}
 
 	dial := make(geometry.PhaseDial, len(wave))
@@ -74,7 +72,7 @@ func (solver *Solver) phase(
 	}
 
 	if !hasAmplitude {
-		return wave, nil, nil
+		return nil, nil
 	}
 
 	if advanced {
@@ -84,10 +82,10 @@ func (solver *Solver) phase(
 	phaseScan, err := solver.Responses(symbol, dial, at)
 
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return wave, phaseScan, nil
+	return phaseScan, nil
 }
 
 /*
@@ -96,30 +94,31 @@ view so the dashboard can render any symbol without a backend focus gate.
 */
 func (solver *Solver) paint(
 	state *State,
-	projection pfluid.Projection,
-	wave []pfluid.WaveMode,
+	projection *State,
 	phaseScan []PhaseResponse,
 	slot *symbolSlot,
 ) {
-	if state == nil || slot == nil || slot.start < 0 || slot.end < slot.start ||
-		slot.end > len(solver.particles) || len(projection.Density) == 0 {
+	if state == nil || projection == nil || slot == nil || slot.start < 0 ||
+		slot.end < slot.start || slot.end > len(solver.particles) ||
+		len(projection.Rho) == 0 {
 		return
 	}
 
 	state.Grid = projection.Grid
-	state.Rho = projectionRows(projection.Density, projection.Grid)
-	state.PsiMag2 = projectionRows(projection.Coherence, projection.Grid)
-	state.GuidanceVelX = projectionRows(projection.GuidanceX, projection.Grid)
-	state.GuidanceVelZ = projectionRows(projection.GuidanceZ, projection.Grid)
+	state.Rho = projection.Rho
+	state.PsiMag2 = projection.PsiMag2
+	state.GuidanceVelX = projection.GuidanceVelX
+	state.GuidanceVelZ = projection.GuidanceVelZ
 	state.Particles = renderParticles(
 		solver.particles[slot.start:slot.end],
 		projection.Grid,
 	)
 	state.SharedOscillatorCount = len(solver.particles)
-	state.Wave = wave
+	state.Wave = projection.Wave
 	state.PhaseScan = phaseScan
-	state.PhaseReady = len(wave) > 0 && len(phaseScan) == len(wave)
-	state.PhaseReason = solver.phaseReason(state.PhaseReady, wave)
+	state.PhaseReady = len(projection.Wave) > 0 &&
+		len(phaseScan) == len(projection.Wave)
+	state.PhaseReason = solver.phaseReason(state.PhaseReady, projection.Wave)
 }
 
 /*

@@ -55,26 +55,24 @@ func NewPlanner(
 	admit := NewAdmit(ctx, balance, desk, rotate)
 
 	return &Planner{
-		ctx:        ctx,
-		cancel:     cancel,
-		status:     types.READY,
-		api:        api,
-		desk:       desk,
-		instrument: instrument,
-		price:      price,
-		balance:    balance,
-		allocator:  allocator,
-		uiHub:      uiHub,
-		analyzer:   analyzer,
-		recorder:   recorder,
-		opportunity: NewOpportunity(
-			ctx, cancel, price, balance, recorder, uiHub,
-		),
-		admit:      admit,
-		continuity: NewContinuity(price, balance, rotate),
-		evidence:   NewEvidence(),
-		rotate:     rotate,
-		arbiter:    NewArbiter(desk, price, balance, admit, rotate),
+		ctx:         ctx,
+		cancel:      cancel,
+		status:      types.READY,
+		api:         api,
+		desk:        desk,
+		instrument:  instrument,
+		price:       price,
+		balance:     balance,
+		allocator:   allocator,
+		uiHub:       uiHub,
+		analyzer:    analyzer,
+		recorder:    recorder,
+		opportunity: NewOpportunity(price, balance),
+		admit:       admit,
+		continuity:  NewContinuity(price, balance, rotate),
+		evidence:    NewEvidence(),
+		rotate:      rotate,
+		arbiter:     NewArbiter(desk, price, balance, admit, rotate),
 	}
 }
 
@@ -131,9 +129,13 @@ func (planner *Planner) Update(
 	return thesis
 }
 
-func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
+/*
+Decide applies continuity, evidence, opportunity, admission, sizing, and
+rotation in order, returning allocation failures instead of hiding them.
+*/
+func (planner *Planner) Decide(thesis *types.Thesis) (*types.Thesis, error) {
 	if err := planner.validate(map[string]any{"thesis": thesis}); err != nil {
-		return thesis
+		return thesis, err
 	}
 
 	planner.opportunity.StampFriction(thesis)
@@ -147,19 +149,23 @@ func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 			Reason: "accumulated evidence is marked incomplete; refuse fresh enters",
 		})
 
-		return thesis
+		return thesis, nil
 	}
 
 	planner.opportunity.Measure(thesis)
 	planner.arbiter.Select(thesis)
 
 	if err := planner.allocator.Allocate(thesis); err != nil {
-		errnie.Error(errnie.Err(errnie.Internal, "failed to allocate", err))
+		return thesis, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to allocate",
+			err,
+		))
 	}
 
 	planner.rotate.Commit(thesis)
 
-	return thesis
+	return thesis, nil
 }
 
 func (planner *Planner) validate(mandatory map[string]any) error {

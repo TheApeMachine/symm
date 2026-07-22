@@ -10,8 +10,11 @@ import (
 
 	"github.com/bytedance/sonic"
 	gorillawebsocket "github.com/gorilla/websocket"
+	"github.com/krakenfx/api-go/v2/pkg/callback"
+	"github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
+	models "github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -27,22 +30,29 @@ Live is the spot websocket and REST transport. Authentication, reconnect
 replay, and callback wiring are owned by the composed Transport.
 */
 type Live struct {
-	status       atomic.Value
-	ctx          context.Context
-	cancel       context.CancelFunc
-	client       *spot.WebSocket
-	sync         *sync.Map
-	handlerMu    sync.Mutex
-	nextID       atomic.Uint64
-	paper        *Paper
-	simulator    *Simulator
-	books        *spot.BookManager
-	bookMu       sync.RWMutex
-	isLevel3     bool
-	symbols      []string
-	transport    *Transport
-	level3Queue  chan []byte
-	level3Ledger *level3Ledger
+	status        atomic.Value
+	ctx           context.Context
+	cancel        context.CancelFunc
+	client        *spot.WebSocket
+	sync          *sync.Map
+	handlerMu     sync.Mutex
+	nextID        atomic.Uint64
+	paper         *Paper
+	simulator     *Simulator
+	books         *spot.BookManager
+	bookMu        sync.RWMutex
+	isLevel3      bool
+	symbols       []string
+	transport     *Transport
+	level3Queue   chan []byte
+	level3Ledger  *level3Ledger
+	tickerChannel     chan []models.TickerData
+	bookChannel       chan []models.BookData
+	tradeChannel      chan []models.TradeData
+	balancesChannel   chan *models.Balance
+	executionsChannel chan *models.Execution
+	instrumentChannel chan models.InstrumentData
+	orderChannel      chan *models.OrderResponse
 }
 
 /*
@@ -59,12 +69,19 @@ func New(
 	transport := NewTransport(auth)
 
 	live := &Live{
-		ctx:       ctx,
-		cancel:    cancel,
-		simulator: simulator,
-		client:    spot.NewWebSocket(),
-		sync:      &sync.Map{},
-		transport: transport,
+		ctx:           ctx,
+		cancel:        cancel,
+		simulator:     simulator,
+		client:        spot.NewWebSocket(),
+		sync:          &sync.Map{},
+		transport:     transport,
+		tickerChannel:     make(chan []models.TickerData, 256),
+		bookChannel:       make(chan []models.BookData, 256),
+		tradeChannel:      make(chan []models.TradeData, 256),
+		balancesChannel:   make(chan *models.Balance, 256),
+		executionsChannel: make(chan *models.Execution, 256),
+		instrumentChannel: make(chan models.InstrumentData, 256),
+		orderChannel:      make(chan *models.OrderResponse, 256),
 	}
 	live.status.Store(types.INITIALIZING)
 	live.client.URL = endpoint
@@ -75,8 +92,37 @@ func New(
 	}
 
 	transport.wireCredentials(live.client)
-	transport.bindCallbacks(live)
 
+	live.client.OnReceived.Recurring(func(e *callback.Event[*kraken.WebSocketMessage]) {
+		mapped, err := e.Data.Map()
+
+		if err != nil {
+			errnie.Error(errnie.Err(errnie.Internal, "failed to map websocket message", err))
+			return
+		}
+
+		switch mapped["channel"] {
+		case "ticker":
+			live.tickerChannel <- mapped["data"].([]models.TickerData)
+		case "book":
+			live.bookChannel <- mapped["data"].([]models.BookData)
+		case "trade":
+			live.tradeChannel <- mapped["data"].([]models.TradeData)
+		case "balances":
+			live.balancesChannel <- models.NewBalance(e.Data.Bytes())
+		case "executions":
+			live.executionsChannel <- models.NewExecution(e.Data.Bytes())
+		case "instrument":
+			live.instrumentChannel <- models.NewInstrumentData(e.Data.Bytes())
+		default:
+			if mapped["method"] == "add_order" {
+				live.orderChannel <- models.NewOrderResponse(e.Data.Bytes())
+				return
+			}
+
+			errnie.Error(errnie.Err(errnie.Internal, "unknown websocket channel", nil))
+		}
+	})
 	return live
 }
 
@@ -105,6 +151,34 @@ func (live *Live) Initialize() error {
 	}
 
 	return nil
+}
+
+func (live *Live) TickerChannel() chan []models.TickerData {
+	return live.tickerChannel
+}
+
+func (live *Live) BookChannel() chan []models.BookData {
+	return live.bookChannel
+}
+
+func (live *Live) TradeChannel() chan []models.TradeData {
+	return live.tradeChannel
+}
+
+func (live *Live) BalancesChannel() chan *models.Balance {
+	return live.balancesChannel
+}
+
+func (live *Live) ExecutionsChannel() chan *models.Execution {
+	return live.executionsChannel
+}
+
+func (live *Live) InstrumentChannel() chan models.InstrumentData {
+	return live.instrumentChannel
+}
+
+func (live *Live) OrderChannel() chan *models.OrderResponse {
+	return live.orderChannel
 }
 
 func (live *Live) route(raw []byte) {
@@ -170,51 +244,6 @@ func (live *Live) Status() types.Status {
 
 func (live *Live) Client() *spot.WebSocket {
 	return live.client
-}
-
-func (live *Live) On(
-	channel string, action func([]byte),
-) uint64 {
-	if live == nil || action == nil {
-		return 0
-	}
-
-	id := live.nextID.Add(1)
-	handler := channelHandler{id: id, fn: action}
-
-	live.handlerMu.Lock()
-	defer live.handlerMu.Unlock()
-
-	callbacks, ok := live.sync.Load(channel)
-
-	if !ok {
-		live.sync.Store(channel, []channelHandler{handler})
-		return id
-	}
-
-	live.sync.Store(channel, append(callbacks.([]channelHandler), handler))
-
-	return id
-}
-
-/*
-Unsubscribe removes one handler previously registered with On for channel.
-*/
-func (live *Live) Unsubscribe(channel string, id uint64) {
-	if live == nil || id == 0 {
-		return
-	}
-
-	live.handlerMu.Lock()
-	defer live.handlerMu.Unlock()
-
-	callbacks, ok := live.sync.Load(channel)
-
-	if !ok {
-		return
-	}
-
-	live.sync.Store(channel, dropHandler(callbacks.([]channelHandler), id))
 }
 
 func (live *Live) Write(params json.Marshaler) error {

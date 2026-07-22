@@ -98,7 +98,10 @@ func (desk *Desk) Update() {
 			return true
 		}
 
+		position.mu.Lock()
 		position.status = types.CLOSED
+		position.mu.Unlock()
+		position.Close()
 		desk.positions.Delete(position.pair.Symbol)
 
 		return true
@@ -159,7 +162,7 @@ func (desk *Desk) Buy(
 	}
 
 	position := NewPosition(
-		desk.api, desk.instrument, desk.price, desk.balance, pair,
+		desk.api, desk.price, desk.balance, pair,
 	)
 
 	if err := position.Enter(holding); err != nil {

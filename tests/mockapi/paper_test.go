@@ -1,6 +1,7 @@
 package mockapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -10,22 +11,15 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-/*
-TestPaperHandle proves market and resting limit orders close the deterministic
-acknowledgement, execution, balance, and open-order loop.
-*/
+/* TestPaperHandle proves the deterministic order, execution, balance, and open loop. */
 func TestPaperHandle(t *testing.T) {
 	Convey("Given a paper venue at a controlled touch", t, func() {
 		bid := 99.0
 		ask := 101.0
 		conn := NewConn("SIM1/USD")
 		So(conn.EnablePaper(PaperOptions{
-			Quote: func(string) (float64, float64, float64, float64, bool) {
-				return bid, 10, ask, 10, true
-			},
-			Now: func() time.Time {
-				return time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)
-			},
+			Quote:    func(string) (float64, float64, float64, float64, bool) { return bid, 10, ask, 10, true },
+			Now:      func() time.Time { return time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC) },
 			Balances: map[string]float64{"USD": 1000},
 			MakerFee: 0.005,
 			TakerFee: 0.01,
@@ -36,12 +30,8 @@ func TestPaperHandle(t *testing.T) {
 		conn.On("add_order", func(payload []byte) { acks = append(acks, payload) })
 		conn.On("executions", func(payload []byte) { executions = append(executions, payload) })
 		conn.On("balances", func(payload []byte) { balances = append(balances, payload) })
-		So(conn.Write(json.RawMessage(
-			`{"method":"subscribe","params":{"channel":"executions"}}`,
-		)), ShouldBeNil)
-		So(conn.Write(json.RawMessage(
-			`{"method":"subscribe","params":{"channel":"balances"}}`,
-		)), ShouldBeNil)
+		So(conn.Write(json.RawMessage(`{"method":"subscribe","params":{"channel":"executions"}}`)), ShouldBeNil)
+		So(conn.Write(json.RawMessage(`{"method":"subscribe","params":{"channel":"balances"}}`)), ShouldBeNil)
 		executions = nil
 		balances = nil
 
@@ -75,9 +65,7 @@ func TestPaperHandle(t *testing.T) {
 			So(open["PAPER-00001"].Volume.Float64(), ShouldEqual, 1.0)
 			So(executions, ShouldHaveLength, 1)
 			So(string(executions[0]), ShouldContainSubstring, `"order_status":"open"`)
-			So(conn.Write(json.RawMessage(
-				`{"method":"subscribe","params":{"channel":"executions"}}`,
-			)), ShouldBeNil)
+			So(conn.Write(json.RawMessage(`{"method":"subscribe","params":{"channel":"executions"}}`)), ShouldBeNil)
 			So(executions, ShouldHaveLength, 2)
 			So(string(executions[1]), ShouldContainSubstring, `"type":"snapshot"`)
 			So(string(executions[1]), ShouldContainSubstring, `"order_id":"PAPER-00001"`)
@@ -95,10 +83,10 @@ func TestPaperHandle(t *testing.T) {
 		Convey("Resting limits reserve funds and prevent collective overcommitment", func() {
 			first := json.RawMessage(`{"method":"add_order","req_id":9,"params":{` +
 				`"order_type":"limit","side":"buy","limit_price":100,` +
-				`"order_qty":1,"symbol":"SIM1/USD"}}`)
+				`"order_qty":0.12345678,"symbol":"SIM1/USD"}}`)
 			second := json.RawMessage(`{"method":"add_order","req_id":10,"params":{` +
 				`"order_type":"limit","side":"buy","limit_price":100,` +
-				`"order_qty":9,"symbol":"SIM1/USD"}}`)
+				`"order_qty":10,"symbol":"SIM1/USD"}}`)
 			So(conn.Write(first), ShouldBeNil)
 			So(conn.Drain(), ShouldBeNil)
 			So(conn.Write(second), ShouldNotBeNil)
@@ -110,16 +98,18 @@ func TestPaperHandle(t *testing.T) {
 			So(current, ShouldHaveLength, 1)
 			var snapshot struct {
 				Data []struct {
-					Asset     string  `json:"asset"`
-					Available float64 `json:"available"`
-					Reserved  float64 `json:"reserved"`
+					Asset     string      `json:"asset"`
+					Available json.Number `json:"available"`
+					Reserved  json.Number `json:"reserved"`
 				} `json:"data"`
 			}
-			So(json.Unmarshal(current[0], &snapshot), ShouldBeNil)
+			decoder := json.NewDecoder(bytes.NewReader(current[0]))
+			decoder.UseNumber()
+			So(decoder.Decode(&snapshot), ShouldBeNil)
 			So(snapshot.Data, ShouldHaveLength, 1)
 			So(snapshot.Data[0].Asset, ShouldEqual, "USD")
-			So(snapshot.Data[0].Available, ShouldAlmostEqual, 899.5)
-			So(snapshot.Data[0].Reserved, ShouldAlmostEqual, 100.5)
+			So(snapshot.Data[0].Available.String(), ShouldEqual, "987.59259361")
+			So(snapshot.Data[0].Reserved.String(), ShouldEqual, "12.40740639")
 		})
 
 		Convey("Multiple crossing limits fill in insertion order", func() {
@@ -143,15 +133,12 @@ func TestPaperHandle(t *testing.T) {
 		})
 
 		Convey("A rejected request does not consume a venue order identity", func() {
-			So(conn.Write(json.RawMessage(
-				`{"method":"add_order","params":{"order_type":"limit",`+
-					`"side":"buy","limit_price":100,"order_qty":1e999,`+
-					`"symbol":"SIM1/USD"}}`,
-			)), ShouldNotBeNil)
-			So(conn.Write(json.RawMessage(
-				`{"method":"add_order","params":{"order_type":"limit",`+
-					`"side":"buy","limit_price":100,"order_qty":0,"symbol":"SIM1/USD"}}`,
-			)), ShouldNotBeNil)
+			for _, quantity := range []string{"1e999", "0.123456789", "0"} {
+				request := fmt.Sprintf(`{"method":"add_order","params":{"order_type":"limit",`+
+					`"side":"buy","limit_price":100,"order_qty":%s,"symbol":"SIM1/USD"}}`, quantity)
+				So(conn.Write(json.RawMessage(request)), ShouldNotBeNil)
+			}
+
 			So(conn.Write(json.RawMessage(
 				`{"method":"add_order","params":{"order_type":"limit",`+
 					`"side":"buy","limit_price":100,"order_qty":1,"symbol":"SIM1/USD"}}`,
@@ -162,12 +149,160 @@ func TestPaperHandle(t *testing.T) {
 		})
 	})
 
+	Convey("Given exact eight-decimal paper round trips", t, func() {
+		for _, testCase := range []struct {
+			caseName, quantity                 string
+			cycles                             int
+			initialQuote                       float64
+			rejected                           bool
+			buyCost, buyFee, sellCost, sellFee string
+			quoteBalances                      []string
+		}{
+			{
+				caseName:      "two 0.12345678-unit cycles",
+				quantity:      "0.12345678",
+				cycles:        2,
+				initialQuote:  1000,
+				buyCost:       "12.46913478",
+				buyFee:        "0.12469135",
+				sellCost:      "12.22222122",
+				sellFee:       "0.12222221",
+				quoteBalances: []string{"987.40617387", "999.50617288", "986.91234675", "999.01234576"},
+			},
+			{
+				caseName:     "three 0.87654321-unit cycles",
+				quantity:     "0.87654321",
+				cycles:       3,
+				initialQuote: 1000,
+				buyCost:      "88.53086421",
+				buyFee:       "0.88530864",
+				sellCost:     "86.77777779",
+				sellFee:      "0.86777778",
+				quoteBalances: []string{
+					"910.58382715", "996.49382716", "907.07765431",
+					"992.98765432", "903.57148147", "989.48148148",
+				},
+			},
+			{
+				caseName:      "exact required quote is accepted",
+				quantity:      "0.12345678",
+				cycles:        1,
+				initialQuote:  12.59382613,
+				buyCost:       "12.46913478",
+				buyFee:        "0.12469135",
+				sellCost:      "12.22222122",
+				sellFee:       "0.12222221",
+				quoteBalances: []string{"0.00000000", "12.09999901"},
+			},
+			{
+				caseName:     "one quote quantum short is rejected",
+				quantity:     "0.12345678",
+				initialQuote: 12.59382612,
+				rejected:     true,
+			},
+		} {
+			Convey(testCase.caseName, func() {
+				conn := NewConn("SIM1/USD")
+				So(conn.EnablePaper(PaperOptions{
+					Quote:    func(string) (float64, float64, float64, float64, bool) { return 99, 10, 101, 10, true },
+					Now:      time.Now,
+					Balances: map[string]float64{"USD": testCase.initialQuote},
+					TakerFee: 0.01,
+				}), ShouldBeNil)
+				executions := [][]byte{}
+				balances := [][]byte{}
+				conn.On("executions", func(payload []byte) { executions = append(executions, payload) })
+				conn.On("balances", func(payload []byte) { balances = append(balances, payload) })
+				So(conn.Write(json.RawMessage(`{"method":"subscribe","params":{"channel":"executions"}}`)), ShouldBeNil)
+				So(conn.Write(json.RawMessage(`{"method":"subscribe","params":{"channel":"balances"}}`)), ShouldBeNil)
+				executions = nil
+				balances = nil
+
+				if testCase.rejected {
+					request := json.RawMessage(fmt.Sprintf(
+						`{"method":"add_order","req_id":1,"params":{`+
+							`"order_type":"market","side":"buy",`+
+							`"order_qty":%s,"symbol":"SIM1/USD"}}`,
+						testCase.quantity,
+					))
+					So(conn.Write(request), ShouldNotBeNil)
+					So(executions, ShouldBeEmpty)
+					So(balances, ShouldBeEmpty)
+					So(fmt.Sprintf("%.8f", conn.paper.balances["USD"]), ShouldEqual, "12.59382612")
+					return
+				}
+
+				for cycle := range testCase.cycles {
+					for sideIndex, side := range []string{"buy", "sell"} {
+						requestID := cycle*2 + sideIndex + 1
+						request := json.RawMessage(fmt.Sprintf(
+							`{"method":"add_order","req_id":%d,"params":{`+
+								`"order_type":"market","side":"%s",`+
+								`"order_qty":%s,"symbol":"SIM1/USD"}}`,
+							requestID, side, testCase.quantity,
+						))
+						So(conn.Write(request), ShouldBeNil)
+						So(conn.Drain(), ShouldBeNil)
+					}
+				}
+
+				So(executions, ShouldHaveLength, testCase.cycles*2)
+				So(balances, ShouldHaveLength, testCase.cycles*2)
+
+				for frameIndex, payload := range executions {
+					var frame struct {
+						Data []struct {
+							OrderID     string `json:"order_id"`
+							ExecID      string `json:"exec_id"`
+							Side        string `json:"side"`
+							LastQty     string `json:"last_qty"`
+							LastPrice   string `json:"last_price"`
+							Cost        string `json:"cost"`
+							FeeUsdEquiv string `json:"fee_usd_equiv"`
+						} `json:"data"`
+					}
+					So(json.Unmarshal(payload, &frame), ShouldBeNil)
+					So(frame.Data, ShouldHaveLength, 1)
+					execution := frame.Data[0]
+					So(execution.OrderID, ShouldEqual, fmt.Sprintf("PAPER-%05d", frameIndex+1))
+					So(execution.ExecID, ShouldEqual, fmt.Sprintf("EXEC-%05d", frameIndex+1))
+					So(execution.LastQty, ShouldEqual, testCase.quantity)
+
+					expected := []string{"buy", "101.00000000", testCase.buyCost, testCase.buyFee}
+					if frameIndex%2 == 1 {
+						expected = []string{"sell", "99.00000000", testCase.sellCost, testCase.sellFee}
+					}
+
+					So([]string{
+						execution.Side, execution.LastPrice, execution.Cost, execution.FeeUsdEquiv,
+					}, ShouldResemble, expected)
+				}
+
+				for frameIndex, payload := range balances {
+					var frame struct {
+						Data []struct {
+							Asset   string      `json:"asset"`
+							Balance json.Number `json:"balance"`
+						} `json:"data"`
+					}
+					decoder := json.NewDecoder(bytes.NewReader(payload))
+					decoder.UseNumber()
+					So(decoder.Decode(&frame), ShouldBeNil)
+					So(frame.Data, ShouldHaveLength, 2)
+					So(frame.Data[0].Asset, ShouldEqual, "SIM1")
+					So(frame.Data[1].Asset, ShouldEqual, "USD")
+					expectedBase := []string{testCase.quantity, "0.00000000"}[frameIndex%2]
+					So(frame.Data[0].Balance.String(), ShouldEqual, expectedBase)
+					So(frame.Data[1].Balance.String(), ShouldEqual, testCase.quoteBalances[frameIndex])
+				}
+			})
+		}
+	})
+
 	Convey("Given paper handlers without accepted private subscriptions", t, func() {
 		conn := NewConn("SIM1/USD")
 		So(conn.EnablePaper(PaperOptions{
-			Quote: func(string) (float64, float64, float64, float64, bool) {
-				return 99, 10, 101, 10, true
-			},
+			Quote:    func(string) (float64, float64, float64, float64, bool) { return 99, 10, 101, 10, true },
 			Now:      time.Now,
 			Balances: map[string]float64{"USD": 1000},
 			MakerFee: 0.005,
@@ -193,18 +328,13 @@ func TestPaperHandle(t *testing.T) {
 	})
 }
 
-/*
-TestPaperMatch proves a batch that exceeds shared touch depth leaves balances,
-reservations, open orders, and private sequence counters unchanged.
-*/
+/* TestPaperMatch proves an over-depth batch rolls the complete paper ledger back. */
 func TestPaperMatch(t *testing.T) {
 	Convey("Given two resting orders whose total exceeds displayed liquidity", t, func() {
 		ask := 101.0
 		conn := NewConn("SIM1/USD")
 		So(conn.EnablePaper(PaperOptions{
-			Quote: func(string) (float64, float64, float64, float64, bool) {
-				return 99, 10, ask, 10, true
-			},
+			Quote:    func(string) (float64, float64, float64, float64, bool) { return 99, 10, ask, 10, true },
 			Now:      time.Now,
 			Balances: map[string]float64{"USD": 10_000},
 			MakerFee: 0.005,
@@ -239,20 +369,15 @@ func TestPaperMatch(t *testing.T) {
 	})
 }
 
-/*
-BenchmarkPaper_Handle measures validation, execution, and ledger rendering for
-one touch-sized paper order through the mock connection boundary.
-*/
+/* BenchmarkPaper_Handle measures one validated paper execution and ledger render. */
 func BenchmarkPaper_Handle(b *testing.B) {
 	conn := NewConn("SIM1/USD")
 	at := time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)
 
 	if err := conn.EnablePaper(PaperOptions{
-		Quote: func(string) (float64, float64, float64, float64, bool) {
-			return 99, 10_000, 101, 10_000, true
-		},
+		Quote:    func(string) (float64, float64, float64, float64, bool) { return 99, 10_000, 101, 10_000, true },
 		Now:      func() time.Time { return at },
-		Balances: map[string]float64{"USD": 1_000_000_000},
+		Balances: map[string]float64{"USD": 1_000_000},
 		MakerFee: 0.005,
 		TakerFee: 0.01,
 	}); err != nil {

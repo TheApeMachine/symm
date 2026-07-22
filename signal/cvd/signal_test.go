@@ -15,9 +15,7 @@ import (
 	"github.com/theapemachine/symm/utils"
 )
 
-/*
-metricValues indexes one CVD snapshot by metric and simulated symbol.
-*/
+/* metricValues indexes one CVD snapshot by metric and simulated symbol. */
 type metricValues = map[types.MetricType]map[string]float64
 
 /*
@@ -44,6 +42,7 @@ func TestCalculate(t *testing.T) {
 		types.MetricNet,
 	}
 	families := metrics[:4]
+	universe := []string{"SIM1/USD", "SIM2/USD", "SIM3/USD"}
 
 	Convey("Given directional, depleted, and adversarial flow tapes", t, func() {
 		proofs := []struct {
@@ -75,7 +74,7 @@ func TestCalculate(t *testing.T) {
 		outcomes := make(map[string]marketOutcome, len(proofs))
 
 		for _, proof := range proofs {
-			market := tests.NewMarket(t.Context(), 3)
+			market := tests.NewMarket(t.Context(), len(universe))
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
 			So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
@@ -84,9 +83,11 @@ func TestCalculate(t *testing.T) {
 			}
 
 			from := market.Now()
+			cuts := 0
 			measurements := []*types.Measurement{}
 			So(market.Transition(
 				proof.states[len(proof.states)-1], func() error {
+					cuts++
 					thesis, err := wired.Crypto.Tick()
 
 					if err != nil {
@@ -102,15 +103,14 @@ func TestCalculate(t *testing.T) {
 					return nil
 				}, proof.symbols...,
 			), ShouldBeNil)
-			So(measurements, ShouldNotBeEmpty)
+			So(measurements, ShouldHaveLength, cuts*len(universe)*len(metrics))
 
 			for _, measurement := range measurements {
 				So(measurement.ValidateStruct(), ShouldBeNil)
 				So(measurement.Stream, ShouldEqual, types.CVD)
 				So(measurement.Subject, ShouldEqual, types.SubjectAggressorFlow)
 				So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
-				So(measurement.Validity.Readiness, ShouldEqual,
-					types.ReadinessObservation)
+				So(measurement.Validity.Readiness, ShouldEqual, types.ReadinessObservation)
 				So(measurement.Maturity, ShouldBeBetween, 0, 1)
 
 				if measurement.Metric == types.MetricNet {
@@ -131,16 +131,12 @@ func TestCalculate(t *testing.T) {
 			}
 
 			outcomes[proof.name] = marketOutcome{
-				peak: utils.PeakMeasurements(measurements, types.SourceCVD, metrics),
-				latest: utils.LatestMeasurements(
-					measurements, types.SourceCVD, metrics,
-				),
+				peak:   utils.PeakMeasurements(measurements, types.SourceCVD, metrics),
+				latest: utils.LatestMeasurements(measurements, types.SourceCVD, metrics),
 			}
 			outcomes[proof.name].peak[types.MetricNet] =
 				utils.PeakMagnitudeMeasurements(
-					measurements,
-					types.SourceCVD,
-					[]types.MetricType{types.MetricNet},
+					measurements, types.SourceCVD, []types.MetricType{types.MetricNet},
 				)[types.MetricNet]
 			So(wired.Close(), ShouldBeNil)
 			market.Close()
@@ -149,10 +145,10 @@ func TestCalculate(t *testing.T) {
 		for _, outcome := range outcomes {
 			for _, values := range []metricValues{outcome.peak, outcome.latest} {
 				for _, metric := range metrics {
-					So(values[metric], ShouldHaveLength, 3)
+					So(values[metric], ShouldHaveLength, len(universe))
 				}
 
-				for _, symbol := range []string{"SIM1/USD", "SIM2/USD", "SIM3/USD"} {
+				for _, symbol := range universe {
 					strength := 0.0
 
 					for _, metric := range metrics {
@@ -161,7 +157,7 @@ func TestCalculate(t *testing.T) {
 					}
 
 					for _, metric := range families {
-						So(values[metric][symbol], ShouldBeGreaterThanOrEqualTo, 0)
+						So(values[metric][symbol], ShouldBeBetweenOrEqual, 0, 1)
 						strength = max(strength, values[metric][symbol])
 					}
 
@@ -202,15 +198,41 @@ func TestCalculate(t *testing.T) {
 				{outcome.peak, expectation.peak},
 				{outcome.latest, expectation.latest},
 			} {
-				for _, symbol := range []string{"SIM1/USD", "SIM2/USD", "SIM3/USD"} {
-					So(phase.values[phase.family][symbol], ShouldBeGreaterThan, 0)
+				for _, symbol := range universe {
+					So(phase.values[phase.family][symbol], ShouldEqual,
+						phase.values[types.MetricStrength][symbol])
 
 					for _, family := range families {
-						if family != phase.family {
-							So(phase.values[phase.family][symbol], ShouldBeGreaterThan,
-								phase.values[family][symbol])
+						if family == phase.family {
+							continue
 						}
+
+						So(phase.values[phase.family][symbol], ShouldBeGreaterThan,
+							phase.values[family][symbol])
 					}
+				}
+			}
+
+			for _, symbol := range universe {
+				latest := outcome.latest
+
+				for _, family := range families {
+					if family == expectation.latest ||
+						family == types.MetricBalance &&
+							expectation.latest != types.MetricStarvation {
+						continue
+					}
+
+					So(latest[family][symbol], ShouldEqual, 0.0)
+				}
+
+				switch expectation.latest {
+				case types.MetricAbsorption, types.MetricDrive:
+					So(latest[expectation.latest][symbol], ShouldEqual,
+						latest[types.MetricNetFraction][symbol])
+				case types.MetricBalance:
+					So(latest[types.MetricBalance][symbol], ShouldEqual,
+						1-latest[types.MetricNetFraction][symbol])
 				}
 			}
 
@@ -218,11 +240,11 @@ func TestCalculate(t *testing.T) {
 				continue
 			}
 
-			for _, symbol := range []string{"SIM1/USD", "SIM2/USD", "SIM3/USD"} {
-				So(outcome.peak[types.MetricNet][symbol]*
-					float64(expectation.netDirection), ShouldBeGreaterThan, 0)
-				So(outcome.latest[types.MetricNet][symbol]*
-					float64(expectation.netDirection), ShouldBeGreaterThan, 0)
+			for _, symbol := range universe {
+				for _, values := range []metricValues{outcome.peak, outcome.latest} {
+					net := values[types.MetricNet][symbol]
+					So(net/math.Abs(net), ShouldEqual, float64(expectation.netDirection))
+				}
 			}
 		}
 
@@ -249,29 +271,13 @@ func TestCalculate(t *testing.T) {
 				weaker = outcomes[comparison.weaker].latest
 			}
 
-			for _, symbol := range []string{"SIM1/USD", "SIM2/USD", "SIM3/USD"} {
+			for _, symbol := range universe {
 				So(stronger[comparison.metric][symbol], ShouldBeGreaterThan,
 					weaker[comparison.metric][symbol])
 			}
 		}
 
-		for _, symbol := range []string{"SIM1/USD", "SIM2/USD", "SIM3/USD"} {
-			for _, values := range []metricValues{
-				outcomes["fast pump"].peak, outcomes["fast pump"].latest,
-			} {
-				So(values[types.MetricDrive][symbol], ShouldEqual,
-					values[types.MetricNetFraction][symbol])
-			}
-
-			So(outcomes["absorption"].latest[types.MetricAbsorption][symbol],
-				ShouldEqual, outcomes["absorption"].latest[types.MetricNetFraction][symbol])
-
-			for _, name := range []string{"baseline", "compression", "low-volume lift"} {
-				latest := outcomes[name].latest
-				So(latest[types.MetricBalance][symbol], ShouldEqual,
-					1-latest[types.MetricNetFraction][symbol])
-			}
-
+		for _, symbol := range universe {
 			for _, metric := range metrics {
 				So(outcomes["fast pump"].peak[metric][symbol], ShouldEqual,
 					outcomes["slow cadence lift"].peak[metric][symbol])
@@ -285,32 +291,29 @@ func TestCalculate(t *testing.T) {
 				So(outcomes["fast pump"].peak[metric][symbol], ShouldEqual,
 					outcomes["fast dump"].peak[metric][symbol])
 			}
-
-			So(outcomes["baseline"].latest[types.MetricStarvation][symbol],
-				ShouldEqual, 0.0)
-			So(outcomes["compression"].latest[types.MetricStarvation][symbol],
-				ShouldEqual, 0.0)
 		}
 
 		for _, phase := range []metricValues{
 			outcomes["isolated pump"].peak, outcomes["isolated pump"].latest,
 		} {
-			So(phase[types.MetricDrive]["SIM1/USD"], ShouldBeGreaterThan, 0)
-			So(phase[types.MetricNet]["SIM1/USD"], ShouldBeGreaterThan, 0)
+			So(phase[types.MetricDrive]["SIM1/USD"], ShouldEqual,
+				phase[types.MetricNetFraction]["SIM1/USD"])
+			So(phase[types.MetricDrive]["SIM1/USD"], ShouldEqual,
+				phase[types.MetricStrength]["SIM1/USD"])
+			net := phase[types.MetricNet]["SIM1/USD"]
+			So(net/math.Abs(net), ShouldEqual, 1.0)
 
 			for _, control := range []string{"SIM2/USD", "SIM3/USD"} {
 				So(phase[types.MetricDrive][control], ShouldEqual, 0.0)
 				So(phase[types.MetricAbsorption][control], ShouldEqual, 0.0)
 				So(phase[types.MetricBalance][control], ShouldEqual,
 					phase[types.MetricStrength][control])
-				So(phase[types.MetricDrive]["SIM1/USD"], ShouldBeGreaterThan,
-					phase[types.MetricDrive][control])
 			}
 		}
 	})
 
 	Convey("Given sparse startup cuts before an executable touch exists", t, func() {
-		signal := cvd.NewSignal(t.Context(), make(chan []byte, 1))
+		signal := cvd.NewSignal(t.Context())
 		observedAt := time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)
 		trade := kraken.TradeData{
 			Symbol:    "SIM1/USD",
@@ -341,7 +344,7 @@ func TestCalculate(t *testing.T) {
 			measurements, err := signal.Calculate(nil, []kraken.TradeData{trade}, nil)
 
 			So(err, ShouldBeNil)
-			So(measurements, ShouldNotBeEmpty)
+			So(measurements, ShouldHaveLength, len(metrics))
 		})
 
 		Convey("A present but crossed touch should be skipped without failing the cut", func() {

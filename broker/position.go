@@ -1,27 +1,31 @@
 package broker
 
 import (
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"context"
+	"sync"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+Position owns one venue order lifecycle and its exact transport subscriptions.
+It releases those subscriptions when the lot closes so completed trades do not
+remain on future ticker and execution hot paths.
+*/
 type Position struct {
-	status     types.Status
-	api        *websocket.API
-	instrument *Instrument
-	price      *Price
-	balance    *Balance
-	pair       *kraken.InstrumentPair
-	request    *kraken.MarketOrder
-	order      *spot.Order
-	orderID    string
-	subOrder   uint64
-	subExec    uint64
-	subTicker  uint64
+	mu      sync.RWMutex
+	status  types.Status
+	api     *websocket.API
+	price   *Price
+	balance *Balance
+	pair    *kraken.InstrumentPair
+	request *kraken.MarketOrder
+	orderID string
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 /*
@@ -29,61 +33,97 @@ NewPosition registers order, execution, and ticker handlers for one lot.
 */
 func NewPosition(
 	api *websocket.API,
-	instrument *Instrument,
 	price *Price,
 	balance *Balance,
 	pair *kraken.InstrumentPair,
 ) *Position {
+	ctx, cancel := context.WithCancel(api.Context())
+
 	position := &Position{
-		status:     types.INITIALIZING,
-		api:        api,
-		instrument: instrument,
-		price:      price,
-		balance:    balance,
-		pair:       pair,
-		order: &spot.Order{
-			Description: &spot.OrderDescription{
-				Pair:      pair.Symbol,
-				Type:      "enter",
-				OrderType: "market",
-			},
-			Volume: decimal.NewFromFloat64(0),
-			Price:  decimal.NewFromFloat64(0),
-		},
+		status:  types.INITIALIZING,
+		api:     api,
+		price:   price,
+		balance: balance,
+		pair:    pair,
+		ctx:     ctx,
+		cancel:  cancel,
 	}
 
-	position.subOrder = position.api.On("add_order", position.OrderAck)
-	position.subExec = position.api.On("executions", position.ExecutionAck)
-	position.subTicker = position.api.On("ticker", position.TickerAck)
+	go position.consumeOrders()
+	go position.consumeExecutions()
+	go position.consumeTickers()
 
 	return position
 }
 
+/*
+consumeOrders ranges the typed order-acknowledgement stream until the position
+context is cancelled.
+*/
+func (position *Position) consumeOrders() {
+	channel := position.api.OrderChannel()
+
+	for {
+		select {
+		case <-position.ctx.Done():
+			return
+		case ack := <-channel:
+			position.OrderAck(ack)
+		}
+	}
+}
+
+/*
+consumeExecutions ranges the typed executions stream until the position context
+is cancelled.
+*/
+func (position *Position) consumeExecutions() {
+	channel := position.api.ExecutionsChannel()
+
+	for {
+		select {
+		case <-position.ctx.Done():
+			return
+		case execution := <-channel:
+			position.ExecutionAck(execution)
+		}
+	}
+}
+
+/*
+consumeTickers ranges the typed ticker stream until the position context is
+cancelled.
+*/
+func (position *Position) consumeTickers() {
+	channel := position.api.TickerChannel()
+
+	for {
+		select {
+		case <-position.ctx.Done():
+			return
+		case data := <-channel:
+			position.TickerAck(data)
+		}
+	}
+}
+
+/*
+Status reports the latest order or holding lifecycle observed from the venue.
+*/
 func (position *Position) Status() types.Status {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
 	return position.status
 }
 
 /*
-Close drops order, execution, and ticker handlers.
+Close stops the order, execution, and ticker consumer goroutines by cancelling
+the position context.
 */
 func (position *Position) Close() {
-	if position.status == types.CLOSED {
-		return
-	}
-
-	if position.subOrder != 0 {
-		position.api.Unsubscribe("add_order", position.subOrder)
-		position.subOrder = 0
-	}
-
-	if position.subExec != 0 {
-		position.api.Unsubscribe("executions", position.subExec)
-		position.subExec = 0
-	}
-
-	if position.subTicker != 0 {
-		position.api.Unsubscribe("ticker", position.subTicker)
-		position.subTicker = 0
+	if position.cancel != nil {
+		position.cancel()
 	}
 }
 
@@ -91,15 +131,9 @@ func (position *Position) Close() {
 TickerAck marks the open holding from this symbol's ticker print and feeds its
 Stoploss.
 */
-func (position *Position) TickerAck(buf []byte) {
-	ticker := kraken.NewTicker(buf)
-
-	if errnie.Error(kraken.Validate(ticker)) != nil {
-		return
-	}
-
-	for index := range ticker.Data {
-		if ticker.Data[index].Symbol != position.pair.Symbol {
+func (position *Position) TickerAck(data []kraken.TickerData) {
+	for index := range data {
+		if data[index].Symbol != position.pair.Symbol {
 			continue
 		}
 
@@ -111,15 +145,30 @@ func (position *Position) TickerAck(buf []byte) {
 
 		holding := value.(*types.Holding)
 
+		if holding.Stoploss == nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"holding has no stoploss for "+position.pair.Symbol,
+				nil,
+			))
+
+			return
+		}
+
+		holding.Stoploss.Lock()
+
 		if holding.Status != types.OPEN {
+			holding.Stoploss.Unlock()
 			return
 		}
 
 		_ = position.price.Mark(position.pair, holding)
 
-		if holding.Stoploss != nil && holding.StopMark != nil {
+		if holding.StopMark != nil {
 			holding.Stoploss.ObserveMark(holding.StopMark.Float64())
 		}
+
+		holding.Stoploss.Unlock()
 
 		position.balance.Publish()
 
@@ -127,8 +176,12 @@ func (position *Position) TickerAck(buf []byte) {
 	}
 }
 
-func (position *Position) OrderAck(buf []byte) {
-	orderAck := kraken.NewOrderResponse(buf)
+/*
+OrderAck binds the matching venue order identifier to this pending position.
+*/
+func (position *Position) OrderAck(orderAck *kraken.OrderResponse) {
+	position.mu.Lock()
+	defer position.mu.Unlock()
 
 	if position.request == nil || orderAck.ReqID != position.request.ReqID {
 		return
@@ -144,15 +197,21 @@ func (position *Position) OrderAck(buf []byte) {
 	position.status = types.PENDING
 }
 
-func (position *Position) ExecutionAck(buf []byte) {
-	execution := kraken.NewExecution(buf)
-
+/*
+ExecutionAck applies matching fills to wallet inventory and releases all
+subscriptions once the lot reaches a terminal state.
+*/
+func (position *Position) ExecutionAck(execution *kraken.Execution) {
 	if errnie.Error(kraken.Validate(execution)) != nil {
 		return
 	}
 
 	for _, data := range execution.Data {
-		if data.OrderID != position.orderID {
+		position.mu.RLock()
+		orderID := position.orderID
+		position.mu.RUnlock()
+
+		if data.OrderID != orderID {
 			continue
 		}
 
@@ -169,6 +228,18 @@ func (position *Position) ExecutionAck(buf []byte) {
 		}
 
 		holding := value.(*types.Holding)
+
+		if holding.Stoploss == nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"holding has no stoploss for "+data.Symbol,
+				nil,
+			))
+
+			continue
+		}
+
+		holding.Stoploss.Lock()
 		position.price.Fill(position.pair, holding, data)
 
 		status, ok := types.MarketStatuses[data.ExecType]
@@ -182,10 +253,13 @@ func (position *Position) ExecutionAck(buf []byte) {
 		}
 
 		holding.Status = status
+		holding.Stoploss.Unlock()
+		position.mu.Lock()
 		position.status = status
+		position.mu.Unlock()
 		position.balance.Publish()
 
-		if holding.Status == types.CLOSED || holding.Status == types.CANCELED {
+		if status == types.CLOSED || status == types.CANCELED {
 			position.Close()
 		}
 	}
@@ -195,6 +269,14 @@ func (position *Position) ExecutionAck(buf []byte) {
 Enter seeds the holding onto Balance and submits a market buy for its quantity.
 */
 func (position *Position) Enter(holding *types.Holding) error {
+	if holding == nil || holding.Stoploss == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"holding and stoploss are required for entry",
+			nil,
+		))
+	}
+
 	if holding.Asset == "" {
 		holding.Asset = position.pair.Base
 	}
@@ -223,17 +305,22 @@ func (position *Position) Enter(holding *types.Holding) error {
 		))
 	}
 
-	position.request = kraken.NewMarketOrder(
+	request := kraken.NewMarketOrder(
 		"buy",
 		holding.Qty,
 		holding.Symbol,
 	)
 
+	position.mu.Lock()
+	position.request = request
 	position.status = types.PENDING
+	position.mu.Unlock()
 
-	if err := position.api.AddOrder(position.request); err != nil {
+	if err := position.api.AddOrder(request); err != nil {
 		position.balance.holdings.Delete(holding.Symbol)
+		position.mu.Lock()
 		position.status = types.ERROR
+		position.mu.Unlock()
 
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -249,7 +336,7 @@ func (position *Position) Enter(holding *types.Holding) error {
 Exit submits a market sell for the full filled quantity.
 */
 func (position *Position) Exit() error {
-	if position.status == types.PENDING {
+	if position.Status() == types.PENDING {
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"position is pending",
@@ -299,15 +386,22 @@ func (position *Position) Exit() error {
 		))
 	}
 
-	position.request = kraken.NewMarketOrder(
+	request := kraken.NewMarketOrder(
 		"sell",
 		holding.Qty,
 		holding.Symbol,
 	)
 
+	position.mu.Lock()
+	position.request = request
 	position.status = types.PENDING
+	position.mu.Unlock()
 
-	if err := position.api.AddOrder(position.request); err != nil {
+	if err := position.api.AddOrder(request); err != nil {
+		position.mu.Lock()
+		position.status = types.ERROR
+		position.mu.Unlock()
+
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to place market sell order",

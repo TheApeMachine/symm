@@ -6,7 +6,6 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/stack"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
@@ -46,14 +45,6 @@ TestCalculate proves exact touch execution, cancellation, and retreat through
 the production boot graph without collapsing bid and ask evidence together.
 */
 func TestCalculate(t *testing.T) {
-	metrics := []types.MetricType{
-		types.MetricTradeVolume,
-		types.MetricFillVolume,
-		types.MetricBestPrice,
-		types.MetricTouchQuantity,
-		types.MetricCancelledQuantity,
-		types.MetricRetreatingQuantity,
-	}
 	sides := []types.MeasurementSide{types.SideBuy, types.SideSell}
 
 	Convey("Given execution, withdrawal, and adversarial Level3 tapes", t, func() {
@@ -87,10 +78,6 @@ func TestCalculate(t *testing.T) {
 			So(market.Transition(proof.state, func() error {
 				thesis, err := wired.Crypto.Tick()
 
-				if errnie.IsPreconditionFailed(err) {
-					return nil
-				}
-
 				if err != nil {
 					return err
 				}
@@ -104,7 +91,17 @@ func TestCalculate(t *testing.T) {
 					So(measurement.Validity.State, ShouldNotEqual, types.ValidityInvalid)
 					So(math.IsNaN(measurement.Raw), ShouldBeFalse)
 					So(math.IsInf(measurement.Raw, 0), ShouldBeFalse)
-					So(measurement.Raw, ShouldBeGreaterThan, 0)
+					So(measurement.Stream, ShouldEqual, types.Toxicity)
+					So(measurement.Scale.Kind, ShouldEqual, types.ScaleObservationWindow)
+					So(measurement.Metric, ShouldBeIn,
+						types.MetricTradeVolume,
+						types.MetricFillVolume,
+						types.MetricBestPrice,
+						types.MetricTouchQuantity,
+						types.MetricCancelledQuantity,
+						types.MetricRetreatingQuantity,
+					)
+
 					measurements = append(measurements, measurement)
 				}
 
@@ -170,94 +167,117 @@ func TestCalculate(t *testing.T) {
 		}
 
 		Convey("It should retain complete side-specific Level3 evidence", func() {
+			expectedTouches := map[string][2]float64{
+				"thin withdrawal": {10_000, 10},
+				"loaded control":  {50_170, 10_000},
+				"spoof addition":  {10_000, 50_000},
+			}
+
 			for _, proof := range proofs {
 				outcome := outcomes[proof.name]
+				touch := [2]float64{10_000, 10_000}
 
-				for _, values := range []map[measurementKey]float64{
-					outcome.peak,
-					outcome.latest,
-				} {
-					for _, symbol := range symbols {
-						for _, metric := range []types.MetricType{
-							types.MetricBestPrice,
-							types.MetricTouchQuantity,
-						} {
-							for _, side := range sides {
-								So(values[measurementKey{metric, symbol, side}], ShouldBeGreaterThan, 0)
-							}
+				if expected, exists := expectedTouches[proof.name]; exists {
+					touch = expected
+				}
+
+				for _, symbol := range symbols {
+					values := outcome.latest
+					bidPrice := values[measurementKey{types.MetricBestPrice, symbol, types.SideBuy}]
+					askPrice := values[measurementKey{types.MetricBestPrice, symbol, types.SideSell}]
+					So(bidPrice, ShouldBeLessThan, askPrice)
+					bidQuantity := values[measurementKey{types.MetricTouchQuantity, symbol, types.SideBuy}]
+					askQuantity := values[measurementKey{types.MetricTouchQuantity, symbol, types.SideSell}]
+					So(bidQuantity, ShouldEqual, touch[0])
+					So(askQuantity, ShouldEqual, touch[1])
+
+					_, hasTrade := values[measurementKey{
+						types.MetricTradeVolume, symbol, types.SideNone,
+					}]
+					So(hasTrade, ShouldEqual, proof.traded)
+					fillCount := 0
+
+					for _, side := range sides {
+						if _, exists := values[measurementKey{
+							types.MetricFillVolume, symbol, side,
+						}]; exists {
+							fillCount++
 						}
+					}
 
-						tradeKey := measurementKey{
-							types.MetricTradeVolume,
-							symbol,
-							types.SideNone,
-						}
-						_, hasTrade := values[tradeKey]
-						So(hasTrade, ShouldEqual, proof.traded)
-						fills := 0
+					So(fillCount == 1, ShouldEqual, proof.traded)
+				}
+			}
 
-						for _, side := range sides {
-							if _, exists := values[measurementKey{
-								types.MetricFillVolume,
-								symbol,
-								side,
-							}]; exists {
-								fills++
-							}
-						}
+			activeVolumes := map[string]float64{
+				"fast pump":         100,
+				"slow cadence lift": 100,
+				"small lift":        100,
+				"slow pump":         30,
+				"fast dump":         100,
+				"slow dump":         30,
+			}
+			activeSides := map[string]types.MeasurementSide{
+				"fast pump":         types.SideSell,
+				"slow cadence lift": types.SideSell,
+				"small lift":        types.SideSell,
+				"slow pump":         types.SideSell,
+				"fast dump":         types.SideBuy,
+				"slow dump":         types.SideBuy,
+			}
 
-						if proof.traded {
-							So(fills, ShouldBeGreaterThan, 0)
-							continue
-						}
+			for name, expectedVolume := range activeVolumes {
+				for _, symbol := range symbols {
+					active := outcomes[name].active
+					side := activeSides[name]
+					opposite := types.SideBuy
 
-						So(fills, ShouldEqual, 0)
+					if side == types.SideBuy {
+						opposite = types.SideSell
+					}
+
+					tradeKey := measurementKey{types.MetricTradeVolume, symbol, types.SideNone}
+					fillKey := measurementKey{types.MetricFillVolume, symbol, side}
+					oppositeFillKey := measurementKey{types.MetricFillVolume, symbol, opposite}
+					retreatKey := measurementKey{types.MetricRetreatingQuantity, symbol, side}
+					oppositeRetreatKey := measurementKey{
+						types.MetricRetreatingQuantity, symbol, opposite,
+					}
+					So(active[tradeKey], ShouldEqual, expectedVolume)
+					_, hasFill := active[fillKey]
+					So(hasFill, ShouldBeTrue)
+					_, hasOppositeFill := active[oppositeFillKey]
+					So(hasOppositeFill, ShouldBeFalse)
+					So(active[retreatKey], ShouldEqual, 10_000)
+					_, hasOppositeRetreat := active[oppositeRetreatKey]
+					So(hasOppositeRetreat, ShouldBeFalse)
+
+					for _, touchSide := range sides {
+						_, hasCancellation := active[measurementKey{
+							types.MetricCancelledQuantity, symbol, touchSide,
+						}]
+						So(hasCancellation, ShouldBeFalse)
 					}
 				}
 			}
 
 			for _, symbol := range symbols {
+				tradeKey := measurementKey{types.MetricTradeVolume, symbol, types.SideNone}
 				pump := outcomes["fast pump"].active
 				dump := outcomes["fast dump"].active
 				absorption := outcomes["absorption"].active
-				tradeKey := measurementKey{
-					types.MetricTradeVolume,
-					symbol,
-					types.SideNone,
-				}
-				So(pump[tradeKey], ShouldEqual, dump[tradeKey])
-				So(pump[tradeKey], ShouldEqual, absorption[tradeKey])
-				So(
-					pump[tradeKey],
-					ShouldBeGreaterThan,
-					outcomes["slow pump"].active[tradeKey],
-				)
-				So(
-					pump[tradeKey],
-					ShouldBeGreaterThan,
-					outcomes["low-volume lift"].active[tradeKey],
-				)
-
-				for _, proof := range []struct {
-					name        string
-					fillSide    types.MeasurementSide
-					retreatSide types.MeasurementSide
-				}{
-					{"fast pump", types.SideSell, types.SideSell},
-					{"fast dump", types.SideBuy, types.SideBuy},
-				} {
-					active := outcomes[proof.name].active
-					So(active[measurementKey{
-						types.MetricFillVolume,
-						symbol,
-						proof.fillSide,
-					}], ShouldBeGreaterThan, 0)
-					So(active[measurementKey{
-						types.MetricRetreatingQuantity,
-						symbol,
-						proof.retreatSide,
-					}], ShouldBeGreaterThan, 0)
-				}
+				pumpFillKey := measurementKey{types.MetricFillVolume, symbol, types.SideSell}
+				dumpFillKey := measurementKey{types.MetricFillVolume, symbol, types.SideBuy}
+				So(absorption[tradeKey], ShouldEqual, 100)
+				So(absorption[pumpFillKey], ShouldEqual, pump[pumpFillKey])
+				cadenceFill := outcomes["slow cadence lift"].active[pumpFillKey]
+				smallFill := outcomes["small lift"].active[pumpFillKey]
+				So(cadenceFill, ShouldEqual, pump[pumpFillKey])
+				So(smallFill, ShouldEqual, pump[pumpFillKey])
+				slowPumpPrice := outcomes["slow pump"].active[pumpFillKey] / 30
+				slowDumpPrice := outcomes["slow dump"].active[dumpFillKey] / 30
+				So(slowPumpPrice, ShouldAlmostEqual, pump[pumpFillKey]/100, 1e-12)
+				So(slowDumpPrice, ShouldAlmostEqual, dump[dumpFillKey]/100, 1e-12)
 
 				for _, metric := range []types.MetricType{
 					types.MetricCancelledQuantity,
@@ -270,19 +290,35 @@ func TestCalculate(t *testing.T) {
 				}
 			}
 
-			for _, proof := range []struct {
-				name string
-				side types.MeasurementSide
-			}{
-				{"thin withdrawal", types.SideSell},
-				{"bid retreat", types.SideBuy},
-			} {
-				for _, symbol := range symbols {
-					So(outcomes[proof.name].peak[measurementKey{
-						types.MetricRetreatingQuantity,
-						symbol,
-						proof.side,
-					}], ShouldBeGreaterThan, 0)
+			for _, symbol := range symbols {
+				thin := outcomes["thin withdrawal"].peak
+				So(thin[measurementKey{
+					types.MetricCancelledQuantity, symbol, types.SideSell,
+				}], ShouldEqual, 9_990)
+				So(thin[measurementKey{
+					types.MetricRetreatingQuantity, symbol, types.SideSell,
+				}], ShouldEqual, 9_990)
+
+				retreat := outcomes["bid retreat"].peak
+				So(retreat[measurementKey{
+					types.MetricRetreatingQuantity, symbol, types.SideBuy,
+				}], ShouldEqual, 10_000)
+
+				for _, key := range []measurementKey{
+					{types.MetricCancelledQuantity, symbol, types.SideBuy},
+					{types.MetricRetreatingQuantity, symbol, types.SideBuy},
+				} {
+					_, exists := thin[key]
+					So(exists, ShouldBeFalse)
+				}
+
+				for _, key := range []measurementKey{
+					{types.MetricCancelledQuantity, symbol, types.SideBuy},
+					{types.MetricCancelledQuantity, symbol, types.SideSell},
+					{types.MetricRetreatingQuantity, symbol, types.SideSell},
+				} {
+					_, exists := retreat[key]
+					So(exists, ShouldBeFalse)
 				}
 			}
 
@@ -292,23 +328,17 @@ func TestCalculate(t *testing.T) {
 				"depth addition",
 			} {
 				for _, symbol := range symbols {
-					for _, metric := range []types.MetricType{
-						types.MetricCancelledQuantity,
-						types.MetricRetreatingQuantity,
+					for _, key := range []measurementKey{
+						{types.MetricCancelledQuantity, symbol, types.SideBuy},
+						{types.MetricCancelledQuantity, symbol, types.SideSell},
+						{types.MetricRetreatingQuantity, symbol, types.SideBuy},
+						{types.MetricRetreatingQuantity, symbol, types.SideSell},
 					} {
-						for _, side := range sides {
-							_, exists := outcomes[name].peak[measurementKey{
-								metric,
-								symbol,
-								side,
-							}]
-							So(exists, ShouldBeFalse)
-						}
+						_, exists := outcomes[name].peak[key]
+						So(exists, ShouldBeFalse)
 					}
 				}
 			}
-
-			So(metrics, ShouldHaveLength, 6)
 		})
 	})
 }

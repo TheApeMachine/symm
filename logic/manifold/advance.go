@@ -82,7 +82,7 @@ func (solver *Solver) publish(
 	diagnostics pfluid.Diagnostics,
 	result *advanceResult,
 ) {
-	projection, wave, err := solver.project()
+	projection, err := solver.project()
 
 	if err != nil {
 		result.failures = append(result.failures, err)
@@ -118,13 +118,18 @@ func (solver *Solver) publish(
 				at = candidate.outcome.At
 			}
 
-			_, phaseScan, phaseErr := solver.phase(candidate.symbol, at, advanced)
+			phaseScan, phaseErr := solver.phase(
+				candidate.symbol,
+				at,
+				advanced,
+				projection.Wave,
+			)
 
 			if phaseErr != nil {
 				result.failures = append(result.failures, phaseErr)
 			}
 
-			solver.paint(&state, projection, wave, phaseScan, slot)
+			solver.paint(&state, &projection, phaseScan, slot)
 		}
 
 		if state.GasReady() {

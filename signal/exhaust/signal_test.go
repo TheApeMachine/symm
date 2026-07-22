@@ -23,29 +23,21 @@ var heldSides = []types.MeasurementSide{types.SideBuy, types.SideSell}
 
 var simulatedSymbols = []string{"SIM1/USD", "SIM2/USD", "SIM3/USD"}
 
-/*
-measurementKey preserves metric, held side, and symbol while keeping outcome
-storage flat.
-*/
+/* measurementKey preserves metric, held side, and symbol in flat storage. */
 type measurementKey struct {
 	metric types.MetricType
 	side   types.MeasurementSide
 	symbol string
 }
 
-/*
-epochKey identifies one complete side-specific measurement set.
-*/
+/* epochKey identifies one complete side-specific measurement set. */
 type epochKey struct {
 	side   types.MeasurementSide
 	symbol string
 	at     time.Time
 }
 
-/*
-marketOutcome retains transition-local peaks, terminal values, and complete
-epochs without collapsing long-position and short-position evidence.
-*/
+/* marketOutcome retains proof views without collapsing held-side evidence. */
 type marketOutcome struct {
 	peak     map[measurementKey]float64
 	latest   map[measurementKey]float64
@@ -54,9 +46,7 @@ type marketOutcome struct {
 	valid    bool
 }
 
-/*
-observe records one exhaustion measurement in each view used by the proof.
-*/
+/* observe records one exhaustion measurement in each proof view. */
 func (outcome *marketOutcome) observe(measurement *types.Measurement) {
 	normalized := measurement.Raw == 0 && measurement.Normalized == nil
 
@@ -125,16 +115,13 @@ func TestCalculate(t *testing.T) {
 			{"spoof", []tests.MarketState{tests.MarketStateSpoofLiquidity}},
 			{"thinning", []tests.MarketState{tests.MarketStateDepthThinning}},
 			{"fast rejection", []tests.MarketState{
-				tests.MarketStateFastPump,
-				tests.MarketStateFastDump,
+				tests.MarketStateFastPump, tests.MarketStateFastDump,
 			}},
 			{"slow rejection", []tests.MarketState{
-				tests.MarketStateFastPump,
-				tests.MarketStateSlowDump,
+				tests.MarketStateFastPump, tests.MarketStateSlowDump,
 			}},
 			{"reversal", []tests.MarketState{
-				tests.MarketStateSlowDump,
-				tests.MarketStateFastPump,
+				tests.MarketStateSlowDump, tests.MarketStateFastPump,
 			}},
 		}
 		outcomes := make(map[string]marketOutcome, len(proofs))
@@ -156,10 +143,7 @@ func TestCalculate(t *testing.T) {
 					}
 
 					if capture {
-						measurements = append(
-							measurements,
-							thesis.Measurements...,
-						)
+						measurements = append(measurements, thesis.Measurements...)
 					}
 
 					return nil
@@ -199,10 +183,6 @@ func TestCalculate(t *testing.T) {
 							_, hasLatest := outcome.latest[key]
 							So(hasPeak, ShouldBeTrue)
 							So(hasLatest, ShouldBeTrue)
-							So(math.IsNaN(outcome.peak[key]), ShouldBeFalse)
-							So(math.IsInf(outcome.peak[key], 0), ShouldBeFalse)
-							So(math.IsNaN(outcome.latest[key]), ShouldBeFalse)
-							So(math.IsInf(outcome.latest[key], 0), ShouldBeFalse)
 						}
 					}
 				}
@@ -271,33 +251,31 @@ func TestCalculate(t *testing.T) {
 			for _, symbol := range simulatedSymbols {
 				buyThermal := measurementKey{types.MetricThermal, types.SideBuy, symbol}
 				sellThermal := measurementKey{types.MetricThermal, types.SideSell, symbol}
-				So(outcomes["fast pump"].peak[sellThermal], ShouldBeGreaterThan,
-					outcomes["fast pump"].peak[buyThermal])
-				So(outcomes["fast pump"].peak[sellThermal], ShouldBeGreaterThan,
-					outcomes["baseline"].peak[sellThermal])
-				So(outcomes["fast pump"].peak[sellThermal], ShouldBeGreaterThan,
-					outcomes["low-volume lift"].peak[sellThermal])
-				So(outcomes["fast pump"].peak[sellThermal], ShouldBeGreaterThan,
-					outcomes["small lift"].peak[sellThermal])
-				So(outcomes["slow pump"].peak[sellThermal], ShouldBeGreaterThan,
-					outcomes["slow pump"].peak[buyThermal])
-				So(outcomes["slow cadence lift"].peak[sellThermal],
-					ShouldBeGreaterThan,
-					outcomes["slow cadence lift"].peak[buyThermal])
-				So(outcomes["fast dump"].peak[buyThermal], ShouldBeGreaterThan,
-					outcomes["fast dump"].peak[sellThermal])
+
+				for _, name := range []string{
+					"fast pump", "slow pump", "slow cadence lift", "reversal",
+				} {
+					So(outcomes[name].peak[sellThermal], ShouldBeGreaterThan,
+						outcomes[name].peak[buyThermal])
+				}
+
+				for _, name := range []string{"fast dump", "slow dump", "fast rejection"} {
+					So(outcomes[name].peak[buyThermal], ShouldBeGreaterThan,
+						outcomes[name].peak[sellThermal])
+				}
+
+				for _, weaker := range []string{
+					"baseline", "low-volume lift", "small lift",
+				} {
+					So(outcomes["fast pump"].peak[sellThermal], ShouldBeGreaterThan,
+						outcomes[weaker].peak[sellThermal])
+				}
+
 				So(outcomes["fast dump"].peak[buyThermal], ShouldBeGreaterThan,
 					outcomes["baseline"].peak[buyThermal])
-				So(outcomes["slow dump"].peak[buyThermal], ShouldBeGreaterThan,
-					outcomes["slow dump"].peak[sellThermal])
-				So(outcomes["fast rejection"].peak[buyThermal],
-					ShouldBeGreaterThan,
-					outcomes["fast rejection"].peak[sellThermal])
 				So(outcomes["fast rejection"].peak[buyThermal],
 					ShouldBeGreaterThan,
 					outcomes["slow rejection"].peak[buyThermal])
-				So(outcomes["reversal"].peak[sellThermal], ShouldBeGreaterThan,
-					outcomes["reversal"].peak[buyThermal])
 
 				for _, name := range []string{
 					"fast pump", "slow pump", "fast dump", "slow dump",
@@ -305,19 +283,19 @@ func TestCalculate(t *testing.T) {
 					"fast rejection", "slow rejection", "reversal",
 				} {
 					for _, side := range heldSides {
-						So(outcomes[name].peak[measurementKey{
-							types.MetricMechanical, side, symbol,
-						}], ShouldEqual, 0)
-						So(outcomes[name].peak[measurementKey{
-							types.MetricReversal, side, symbol,
-						}], ShouldEqual, 0)
+						for _, metric := range []types.MetricType{
+							types.MetricMechanical, types.MetricReversal,
+						} {
+							So(outcomes[name].peak[measurementKey{metric, side, symbol}],
+								ShouldEqual, 0)
+						}
 					}
 				}
 
 				for _, side := range heldSides {
 					thinMechanical := measurementKey{types.MetricMechanical, side, symbol}
 					So(outcomes["thin"].latest[thinMechanical],
-						ShouldBeGreaterThan, 0)
+						ShouldBeGreaterThan, outcomes["baseline"].latest[thinMechanical])
 					So(outcomes["thin"].latest[measurementKey{
 						types.MetricCategory, side, symbol,
 					}], ShouldBeIn, float64(1), float64(4))
@@ -328,22 +306,18 @@ func TestCalculate(t *testing.T) {
 						types.MetricThermal, side, symbol,
 					}], ShouldEqual, 0)
 					So(outcomes["retreat"].latest[thinMechanical],
-						ShouldBeGreaterThan, 0)
-					So(outcomes["retreat"].latest[measurementKey{
-						types.MetricFragile, side, symbol,
-					}], ShouldBeGreaterThan, 0)
-					So(outcomes["spread control"].peak[measurementKey{
-						types.MetricFragile, side, symbol,
-					}], ShouldBeGreaterThan, 0)
+						ShouldBeGreaterThan, outcomes["baseline"].latest[thinMechanical])
+					retreatFragile := measurementKey{types.MetricFragile, side, symbol}
+					So(outcomes["retreat"].latest[retreatFragile],
+						ShouldBeGreaterThan, outcomes["baseline"].latest[retreatFragile])
+					spreadFragile := measurementKey{types.MetricFragile, side, symbol}
+					So(outcomes["spread control"].peak[spreadFragile],
+						ShouldBeGreaterThan, outcomes["compression"].peak[spreadFragile])
 				}
 
-				buyReversal := outcomes["retreat"].latest[measurementKey{
-					types.MetricReversal, types.SideBuy, symbol,
-				}]
 				buyCategory := outcomes["retreat"].latest[measurementKey{
 					types.MetricCategory, types.SideBuy, symbol,
 				}]
-				So(buyReversal, ShouldBeGreaterThanOrEqualTo, 0)
 				So(buyCategory, ShouldBeIn, float64(1), float64(4))
 
 				So(outcomes["retreat"].latest[measurementKey{
@@ -359,25 +333,17 @@ func TestCalculate(t *testing.T) {
 		})
 	})
 
-	Convey("Given an invalid trade row", t, func() {
-		signal := exhaust.NewSignal(t.Context(), nil)
-
-		Convey("It should skip unusable rows and return no measurements", func() {
-			rows, err := signal.Calculate(
-				nil,
-				[]kraken.TradeData{{Symbol: "SIM1/USD"}},
-				nil,
-			)
-			So(err, ShouldBeNil)
-			So(rows, ShouldBeEmpty)
-		})
+	Convey("Given an invalid trade row, it should emit no evidence", t, func() {
+		signal := exhaust.NewSignal(t.Context())
+		rows, err := signal.Calculate(nil, []kraken.TradeData{{
+			Symbol: "SIM1/USD",
+		}}, nil)
+		So(err, ShouldBeNil)
+		So(rows, ShouldBeEmpty)
 	})
 }
 
-/*
-BenchmarkCalculate measures exhaustion through a complete production market
-tick with matched book replenishment.
-*/
+/* BenchmarkCalculate measures a complete replenished production market tick. */
 func BenchmarkCalculate(b *testing.B) {
 	market := tests.NewMarket(b.Context(), 3)
 

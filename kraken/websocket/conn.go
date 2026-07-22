@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	models "github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -26,8 +27,13 @@ Conn is the internal websocket and REST transport.
 */
 type Conn interface {
 	Client() *spot.WebSocket
-	On(channel string, action func([]byte)) uint64
-	Unsubscribe(channel string, id uint64)
+	TickerChannel() chan []models.TickerData
+	BookChannel() chan []models.BookData
+	TradeChannel() chan []models.TradeData
+	BalancesChannel() chan *kraken.Balance
+	ExecutionsChannel() chan *kraken.Execution
+	InstrumentChannel() chan kraken.InstrumentData
+	OrderChannel() chan *kraken.OrderResponse
 	Write(params json.Marshaler) error
 	Close()
 	Post(path string, params json.Marshaler) ([]byte, error)
@@ -152,65 +158,81 @@ func (api *API) Close() {
 }
 
 /*
-On registers a raw channel consumer on the transport that owns the channel and
-returns a subscription id for Unsubscribe. Level3 is deliberately absent
-because the SDK BookManager consumes those frames and exposes its books through
-Books.
+Context returns the API lifecycle context. Broker consumers range their typed
+channels in a goroutine that must stop when the transport is closed, so they
+select on this context's Done instead of a per-subscription teardown.
 */
-func (api *API) On(channel string, action func([]byte)) uint64 {
-	switch channel {
-	case "balances", "executions", "add_order":
-		if api.live {
-			return api.private.On(channel, action)
-		}
+func (api *API) Context() context.Context {
+	return api.ctx
+}
 
-		return api.paper.On(channel, action)
-	default:
-		return api.public.On(channel, action)
-	}
+func (api *API) TickerChannel() chan []models.TickerData {
+	return api.public.TickerChannel()
+}
+
+func (api *API) BookChannel() chan []models.BookData {
+	return api.public.BookChannel()
+}
+
+func (api *API) TradeChannel() chan []models.TradeData {
+	return api.public.TradeChannel()
 }
 
 /*
-Unsubscribe removes one previously registered channel consumer by the id On
-returned, so closed positions can leave the ticker path without leaking handlers.
+BalancesChannel exposes the typed private balances stream. Live routes it
+through the authenticated private transport; paper routes it through the paper
+transport so lifecycle balance frames reach the broker identically.
 */
-func (api *API) Unsubscribe(channel string, id uint64) {
-	if api == nil || id == 0 {
-		return
+func (api *API) BalancesChannel() chan *kraken.Balance {
+	if api.live {
+		return api.private.BalancesChannel()
 	}
 
-	switch channel {
-	case "balances", "executions", "add_order":
-		if api.live {
-			api.private.Unsubscribe(channel, id)
-			return
-		}
-
-		api.paper.Unsubscribe(channel, id)
-	default:
-		api.public.Unsubscribe(channel, id)
+	if api.paperMode {
+		return api.paper.BalancesChannel()
 	}
+
+	return api.public.BalancesChannel()
 }
 
 /*
-dropHandler removes the channelHandler with the given id.
+ExecutionsChannel exposes the typed private executions stream (order acks and
+fills) from whichever transport owns the private channel.
 */
-func dropHandler(handlers []channelHandler, id uint64) []channelHandler {
-	if id == 0 || len(handlers) == 0 {
-		return handlers
+func (api *API) ExecutionsChannel() chan *kraken.Execution {
+	if api.live {
+		return api.private.ExecutionsChannel()
 	}
 
-	next := make([]channelHandler, 0, len(handlers))
-
-	for _, handler := range handlers {
-		if handler.id == id {
-			continue
-		}
-
-		next = append(next, handler)
+	if api.paperMode {
+		return api.paper.ExecutionsChannel()
 	}
 
-	return next
+	return api.public.ExecutionsChannel()
+}
+
+/*
+InstrumentChannel exposes the typed instrument metadata stream from the public
+transport.
+*/
+func (api *API) InstrumentChannel() chan kraken.InstrumentData {
+	return api.public.InstrumentChannel()
+}
+
+/*
+OrderChannel exposes the typed order-acknowledgement stream (add_order method
+responses) from whichever transport owns the private channel.
+*/
+func (api *API) OrderChannel() chan *kraken.OrderResponse {
+	if api.live {
+		return api.private.OrderChannel()
+	}
+
+	if api.paperMode {
+		return api.paper.OrderChannel()
+	}
+
+	return api.public.OrderChannel()
 }
 
 func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error) {
@@ -480,7 +502,22 @@ func (api *API) InjectLevel3(conn Conn, symbols []string) {
 	)
 	api.level3Conn = conn
 	api.level3.Attach("injected-level3", live)
-	conn.On("level3", func(payload []byte) {
+
+	// Conn no longer carries a generic handler registry. Level3 frames reach
+	// the production book processor through whichever transport delivers them:
+	// fixture/mock transports expose an On registrar, so route their level3
+	// payloads straight into ApplyLevel3. The live venue transport applies
+	// level3 on its own socket worker and is passed as nil here, so there is
+	// nothing to register in that path.
+	registrar, ok := conn.(interface {
+		On(channel string, action func([]byte)) uint64
+	})
+
+	if !ok {
+		return
+	}
+
+	registrar.On("level3", func(payload []byte) {
 		err := live.ApplyLevel3(payload)
 
 		if reporter, ok := conn.(interface{ Report(error) }); ok && err != nil {

@@ -37,32 +37,36 @@ func TestCognitionVisualizationStaysBounded(t *testing.T) {
 			tree.TrainSensorySequence([]byte(strings.Join(alternate, "_")))
 		}
 
+		for index := range 200 {
+			tree.TrainSensorySequence([]byte(fmt.Sprintf(
+				"symbol-peer-%d_pressure-positive_divergence-negative_stress-positive",
+				index,
+			)))
+		}
+
 		var scratch dmt.ClassificationScratch
 		classification := tree.Classify(sequence, &scratch)
 		predictions := tree.PredictNextSensoryTokens(parent, nil)
-		done := make(chan struct{})
+		done := make(chan int)
 
 		go func() {
-			_, _, _, _, _, _, _, _ = analyzer.cognitionVisualization(
-				sequence, parent, parts, classification, predictions,
+			branches, _, _, _, _, _, _, _ := analyzer.cognitionVisualization(
+				sequence, parts, classification, predictions,
 			)
-			close(done)
+			done <- len(branches)
 		}()
 
 		select {
-		case <-done:
+		case count := <-done:
+			So(count, ShouldEqual, 4)
 		case <-time.After(2 * time.Second):
 			t.Fatal("cognitionVisualization hung with wide measurement token set")
 		}
 	})
 }
 
-/*
-TestCognitionBranchesForkFromRoot proves Cortex exports a real radix fork, not a
-sealed-bag spine with one-hop stubs. Sibling pressure tokens under the same
-symbol must both appear as depth-2 children.
-*/
-func TestCognitionBranchesForkFromRoot(t *testing.T) {
+/* TestAnalyzerCognitionBranches proves Cortex exports symbol-scoped radix forks. */
+func TestAnalyzerCognitionBranches(t *testing.T) {
 	Convey("Given trained sequences that diverge after the symbol hop", t, func() {
 		tree := dmt.NewTree("")
 		analyzer := &Analyzer{tree: tree}
@@ -78,15 +82,16 @@ func TestCognitionBranchesForkFromRoot(t *testing.T) {
 		))
 
 		tip := tree.PredictNextSensoryTokens(
-			[]byte("symbol-btc-usd_pressure-positive"),
+			[]byte("symbol-btc-usd"),
 			make([]dmt.LookaheadPrediction, 0, 4),
 		)
 		branches, count := analyzer.cognitionBranches(
-			analyzer.treeExpandWidth(cognitionBeamWidth(tip)),
+			[]byte("symbol-btc-usd"), cognitionBeamWidth(tip),
 		)
 
-		Convey("Then the root fans into multiple symbols and pressure forks", func() {
+		Convey("Then the root contains only the requested symbol and its pressure forks", func() {
 			So(count, ShouldEqual, len(branches))
+			So(branches[0].Prefix, ShouldEqual, "symbol-btc-usd")
 
 			childrenOf := map[int][]string{}
 
@@ -101,19 +106,13 @@ func TestCognitionBranchesForkFromRoot(t *testing.T) {
 				)
 			}
 
-			So(len(childrenOf[0]), ShouldBeGreaterThanOrEqualTo, 2)
-
-			btcID := -1
-
 			for _, branch := range branches {
-				if branch.Token == "symbol-btc-usd" {
-					btcID = branch.ID
-					break
-				}
+				So(branch.Prefix, ShouldNotContainSubstring, "symbol-eth-usd")
 			}
 
-			So(btcID, ShouldBeGreaterThanOrEqualTo, 0)
-			So(len(childrenOf[btcID]), ShouldBeGreaterThanOrEqualTo, 2)
+			So(childrenOf[0], ShouldResemble, []string{
+				"pressure-negative", "pressure-positive",
+			})
 		})
 	})
 }
@@ -146,10 +145,10 @@ func TestCognitionBeamsStaySymbolScoped(t *testing.T) {
 		ethTip := tree.PredictNextSensoryTokens([]byte("symbol-eth-usd"), nil)
 
 		_, btcBeams, _, _, _, _, _, _ := analyzer.cognitionVisualization(
-			btcSequence, []byte("symbol-btc-usd"), btcParts, btcClass, btcTip,
+			btcSequence, btcParts, btcClass, btcTip,
 		)
 		_, ethBeams, _, _, _, _, _, _ := analyzer.cognitionVisualization(
-			ethSequence, []byte("symbol-eth-usd"), ethParts, ethClass, ethTip,
+			ethSequence, ethParts, ethClass, ethTip,
 		)
 
 		Convey("Then each symbol's MAP beam stays inside its own namespace", func() {
@@ -180,13 +179,13 @@ func TestCognitionVisualization(t *testing.T) {
 
 		branches, beams, classes, beamWidth, maxHops, nodeCount, lookaheadScore, lookaheadPaths :=
 			analyzer.cognitionVisualization(
-				sequence, parent, parts, classification, predictions,
+				sequence, parts, classification, predictions,
 			)
 
 		Convey("It should export a bounded radix tree for Cortex", func() {
 			So(len(branches), ShouldBeGreaterThan, 1)
 			So(nodeCount, ShouldEqual, len(branches))
-			So(branches[0].Prefix, ShouldEqual, "")
+			So(branches[0].Prefix, ShouldEqual, "symbol-btc-usd")
 			So(beamWidth, ShouldBeGreaterThan, 0)
 			So(maxHops, ShouldEqual, cognitionTreeDepth())
 
@@ -221,13 +220,23 @@ func BenchmarkCognitionVisualization(b *testing.B) {
 	tree.TrainSensorySequence([]byte("symbol-eth-usd_pressure-negative_divergence-positive"))
 	tree.TrainSensorySequence([]byte("symbol-btc-usd_pressure-negative_divergence-positive"))
 
+	for index := range 200 {
+		for branch := range 9 {
+			tree.TrainSensorySequence([]byte(fmt.Sprintf(
+				"symbol-peer-%d_pressure-%d_divergence-negative_stress-positive",
+				index, branch,
+			)))
+		}
+	}
+
 	var scratch dmt.ClassificationScratch
 	classification := tree.Classify(sequence, &scratch)
 	predictions := tree.PredictNextSensoryTokens(parent, nil)
+	b.ReportAllocs()
 
 	for b.Loop() {
 		_, _, _, _, _, _, _, _ = analyzer.cognitionVisualization(
-			sequence, parent, parts, classification, predictions,
+			sequence, parts, classification, predictions,
 		)
 	}
 }

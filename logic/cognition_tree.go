@@ -13,7 +13,6 @@ posteriors that Cortex renders from one DMT reading.
 */
 func (analyzer *Analyzer) cognitionVisualization(
 	sequence []byte,
-	parent []byte,
 	parts []string,
 	classification dmt.ClassificationResult,
 	predictions []dmt.LookaheadPrediction,
@@ -35,16 +34,14 @@ func (analyzer *Analyzer) cognitionVisualization(
 	symbolPrefix := cognitionSymbolPrefix(parts)
 	tip := analyzer.lookaheadTip(parts, predictions)
 
-	beamWidth = analyzer.treeExpandWidth(cognitionBeamWidth(tip))
+	beamWidth = cognitionBeamWidth(tip)
 	maxHops = cognitionTreeDepth()
-	branches, nodeCount = analyzer.cognitionBranches(beamWidth)
+	branches, nodeCount = analyzer.cognitionBranches(symbolPrefix, beamWidth)
 	// Beam search is scoped under the symbol hop so each coin explores its own
 	// namespace. Searching the empty root made every symbol share one global MAP.
 	beams, lookaheadScore, lookaheadPaths = analyzer.cognitionBeams(
 		symbolPrefix, beamWidth, maxHops, tip,
 	)
-
-	_ = parent
 
 	return branches, beams, classes, beamWidth, maxHops, nodeCount, lookaheadScore, lookaheadPaths
 }
@@ -60,7 +57,7 @@ func (analyzer *Analyzer) lookaheadTip(
 ) []dmt.LookaheadPrediction {
 	symbolPrefix := cognitionSymbolPrefix(parts)
 	tip := analyzer.predictChildren(
-		string(symbolPrefix), cognitionTreeDepth()*cognitionTreeDepth(),
+		string(symbolPrefix), len(parts),
 	)
 
 	if len(tip) == 0 {
@@ -68,27 +65,6 @@ func (analyzer *Analyzer) lookaheadTip(
 	}
 
 	return tip
-}
-
-/*
-lookaheadScore sums the symbol-scoped continuation probabilities. It is the
-learned continuation mass shown as category strength on the terminal rail; no
-decision stage consumes it, and any threshold on it would be an invented
-constant, so it stays a presentation surface computed on the hot path for
-every symbol while the full branch and beam visualization is materialized only
-for the focused symbol.
-*/
-func (analyzer *Analyzer) lookaheadScore(
-	parts []string,
-	predictions []dmt.LookaheadPrediction,
-) float64 {
-	score := 0.0
-
-	for _, prediction := range analyzer.lookaheadTip(parts, predictions) {
-		score += prediction.Probability
-	}
-
-	return score
 }
 
 /*
@@ -165,25 +141,25 @@ type branchFrontier struct {
 }
 
 /*
-cognitionBranches expands the learned sensory radix tree from the root using
-PredictNextSensoryTokens at every node. Walking the sorted observation bag as a
-forced spine produced one amber path with stub side-segments; this grows real
-forks like the SYMM Terminal mockup.
+cognitionBranches expands one symbol's learned radix namespace. Scoping the
+root prevents every symbol from duplicating the complete market tree.
 */
 func (analyzer *Analyzer) cognitionBranches(
+	rootPrefix []byte,
 	tipWidth int,
 ) ([]types.CognitionBranch, int) {
-	rootWeight := analyzer.tree.GetSensoryWeight(nil)
+	prefix := string(rootPrefix)
+	rootWeight := analyzer.tree.GetSensoryWeight(rootPrefix)
 	branches := []types.CognitionBranch{{
 		ID:          0,
 		ParentID:    -1,
-		Token:       "\u2022",
-		Prefix:      "",
+		Token:       prefix,
+		Prefix:      prefix,
 		Depth:       0,
 		Probability: 1,
 		Count:       rootWeight.Count,
 	}}
-	prefixIndex := map[string]int{"": 0}
+	prefixIndex := map[string]int{prefix: 0}
 	nextID := 1
 	depthLimit := cognitionTreeDepth()
 	fanout := tipWidth
@@ -193,7 +169,7 @@ func (analyzer *Analyzer) cognitionBranches(
 	}
 
 	budget := cognitionNodeBudget(fanout, depthLimit)
-	frontier := []branchFrontier{{prefix: "", id: 0, depth: 0}}
+	frontier := []branchFrontier{{prefix: prefix, id: 0, depth: 0}}
 
 	for len(frontier) > 0 {
 		current := frontier[0]
@@ -254,32 +230,6 @@ func (analyzer *Analyzer) cognitionBranches(
 	}
 
 	return branches, len(branches)
-}
-
-/*
-treeExpandWidth chooses per-level fan-out for the Cortex radix view. Beam search
-keeps the tip width; when that tip collapses to a single continuation, the view
-lifts to the empty-prefix fork so sibling regimes still render.
-ponytail: lift bound is depth² so a dense symbol namespace cannot allocate an
-N³ node explosion; upgrade path is entropy-scaled fan-out from MeasureBranchAmbiguity.
-*/
-func (analyzer *Analyzer) treeExpandWidth(tipWidth int) int {
-	if tipWidth < 1 {
-		tipWidth = 1
-	}
-
-	if tipWidth > 1 {
-		return tipWidth
-	}
-
-	bound := cognitionTreeDepth() * cognitionTreeDepth()
-	rootChildren := analyzer.predictChildren("", bound)
-
-	if len(rootChildren) > tipWidth {
-		return len(rootChildren)
-	}
-
-	return tipWidth
 }
 
 func (analyzer *Analyzer) predictChildren(

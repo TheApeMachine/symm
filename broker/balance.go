@@ -17,6 +17,7 @@ import (
 )
 
 type Balance struct {
+	mu       sync.RWMutex
 	status   types.Status
 	api      *websocket.API
 	data     *sync.Map
@@ -47,10 +48,12 @@ func NewBalance(api *websocket.API, holdings []types.Holding, ui chan []byte) *B
 func (balance *Balance) Initialize() error {
 	errnie.Info("initializing balance")
 
-	balance.api.On("balances", balance.BalanceAck)
+	go balance.consume()
 
 	if errnie.Error(balance.api.SubscribeBalance()) != nil {
+		balance.mu.Lock()
 		balance.status = types.ERROR
+		balance.mu.Unlock()
 
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -59,13 +62,18 @@ func (balance *Balance) Initialize() error {
 		))
 	}
 
+	balance.mu.Lock()
 	balance.status = types.READY
+	balance.mu.Unlock()
 	balance.Publish()
 
 	return nil
 }
 
 func (balance *Balance) Status() types.Status {
+	balance.mu.RLock()
+	defer balance.mu.RUnlock()
+
 	return balance.status
 }
 
@@ -95,12 +103,30 @@ func (balance *Balance) Publish() {
 	}
 }
 
-func (balance *Balance) BalanceAck(buf []byte) {
-	incoming := kraken.NewBalance(buf)
+/*
+consume ranges the typed balances stream and applies each frame until the API
+lifecycle context is cancelled.
+*/
+func (balance *Balance) consume() {
+	ctx := balance.api.Context()
+	channel := balance.api.BalancesChannel()
 
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case incoming := <-channel:
+			balance.BalanceAck(incoming)
+		}
+	}
+}
+
+func (balance *Balance) BalanceAck(incoming *kraken.Balance) {
 	if errnie.Error(kraken.Validate(incoming)) != nil {
 		return
 	}
+
+	balance.mu.Lock()
 
 	if balance.data == nil || incoming.Type == "snapshot" {
 		for _, data := range incoming.Data {
@@ -108,12 +134,14 @@ func (balance *Balance) BalanceAck(buf []byte) {
 		}
 
 		balance.status = types.READY
+		balance.mu.Unlock()
 		balance.Publish()
 
 		return
 	}
 
 	if incoming.Sequence < balance.sequence {
+		balance.mu.Unlock()
 		errnie.Error(errnie.Err(
 			errnie.Validation,
 			"balance: older sequence received",
@@ -143,6 +171,7 @@ func (balance *Balance) BalanceAck(buf []byte) {
 
 	balance.sequence = incoming.Sequence
 	balance.status = types.READY
+	balance.mu.Unlock()
 
 	balance.Publish()
 }
@@ -183,15 +212,33 @@ func (balance *Balance) Holdings() iter.Seq[types.Holding] {
 		balance.holdings.Range(func(key, value any) bool {
 			holding := value.(*types.Holding)
 
+			if holding.Stoploss != nil {
+				holding.Stoploss.RLock()
+			}
+
 			if key.(string) != holding.Symbol {
+				if holding.Stoploss != nil {
+					holding.Stoploss.RUnlock()
+				}
+
 				return true
 			}
 
 			if holding.Status == types.CLOSED {
+				if holding.Stoploss != nil {
+					holding.Stoploss.RUnlock()
+				}
+
 				return true
 			}
 
-			return yield(*holding)
+			snapshot := *holding
+
+			if holding.Stoploss != nil {
+				holding.Stoploss.RUnlock()
+			}
+
+			return yield(snapshot)
 		})
 	}
 }
@@ -201,11 +248,23 @@ Holding returns the holding for a given symbol.
 */
 func (balance *Balance) Holding(symbol string) (types.Holding, error) {
 	value, ok := balance.holdings.Load(symbol)
+	var holding types.Holding
+
+	if ok {
+		live := value.(*types.Holding)
+
+		if live.Stoploss != nil {
+			live.Stoploss.RLock()
+			defer live.Stoploss.RUnlock()
+		}
+
+		holding = *live
+	}
 
 	// A closed lot is no longer inventory: Holdings() already skips it, so the
 	// single-symbol lookup must agree and report the lot as gone rather than
 	// handing back a flat, exited shell that reads as an open position.
-	if ok && value.(*types.Holding).Status == types.CLOSED {
+	if ok && holding.Status == types.CLOSED {
 		ok = false
 	}
 
@@ -217,7 +276,7 @@ func (balance *Balance) Holding(symbol string) (types.Holding, error) {
 		))
 	}
 
-	return *value.(*types.Holding), nil
+	return holding, nil
 }
 
 /*
@@ -256,52 +315,6 @@ func (balance *Balance) TradeMatchesSymbol(tradePair string, symbol string) bool
 	compact := base + balance.quote
 
 	return tradePair == compact || tradePair == base
-}
-
-/*
-reservation resolves either a fixed amount or a fraction of effective Available.
-Caller holds mu when fraction sizing needs the live claim ledger.
-*/
-func (balance *Balance) reservation(
-	amount, fraction *decimal.Decimal,
-) (*decimal.Decimal, error) {
-	if amount != nil {
-		if amount.Sign() <= 0 {
-			return nil, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"reserve amount must be positive",
-				nil,
-			))
-		}
-
-		return amount.Copy(), nil
-	}
-
-	if fraction == nil || fraction.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"reserve requires amount or positive fraction",
-			nil,
-		))
-	}
-
-	available, err := balance.Get(balance.quote)
-
-	if err != nil || available == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"available cash not found",
-			err,
-		))
-	}
-
-	// A finite fixed-point product needs at most the sum of its operand scales.
-	// Scale one is the minimum because the SDK's scale-zero banker rounding
-	// misclassifies exact odd integers as half-way values.
-	cash := available.Balance.Copy()
-	scale := max(int64(1), cash.GetScale()+fraction.GetScale())
-
-	return cash.Copy().SetScale(scale).Mul(fraction), nil
 }
 
 /*

@@ -5,8 +5,58 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
 )
+
+/*
+TestAnalyzerPublish proves saturated frames allocate nothing and direct manifold
+state slices retain the established serialized payload exactly.
+*/
+func TestAnalyzerPublish(t *testing.T) {
+	Convey("Given a saturated Analyzer publication channel", t, func() {
+		ui := make(chan []byte, 1)
+		occupied := []byte("occupied")
+		ui <- occupied
+		analyzer := &Analyzer{ui: ui}
+		frame := datura.Map[any]{"manifold": []manifold.State{{
+			Source: "manifold",
+			Symbol: "BTC/USD",
+		}}}
+
+		Convey("It should drop without serializing or replacing queued data", func() {
+			allocations := testing.AllocsPerRun(100, func() {
+				analyzer.publish(frame)
+			})
+
+			So(allocations, ShouldEqual, 0)
+			So(<-ui, ShouldResemble, occupied)
+		})
+	})
+
+	Convey("Given measured manifold states ready for publication", t, func() {
+		ui := make(chan []byte, 1)
+		analyzer := &Analyzer{ui: ui}
+		thesis := types.NewThesis(nil)
+		states := []manifold.State{{
+			Source: "manifold",
+			Symbol: "BTC/USD",
+		}}
+		boxed := make([]any, len(states))
+
+		for index := range states {
+			boxed[index] = states[index]
+		}
+
+		expected := datura.Map[any]{"manifold": boxed}.Marshal()
+		analyzer.publishMeasured(thesis, states)
+
+		Convey("It should preserve the established serialized payload exactly", func() {
+			So(<-ui, ShouldResemble, expected)
+		})
+	})
+}
 
 func TestProjectCategoriesFromCognition(t *testing.T) {
 	Convey("Given ready cognition winners on a thesis", t, func() {
@@ -67,5 +117,26 @@ func BenchmarkProjectCategories(b *testing.B) {
 	for b.Loop() {
 		thesis.Categories = nil
 		analyzer.projectCategories(thesis, cognition)
+	}
+}
+
+/*
+BenchmarkAnalyzerPublish measures the saturated UI path that must drop a frame
+without paying its serialization cost.
+*/
+func BenchmarkAnalyzerPublish(b *testing.B) {
+	ui := make(chan []byte, 1)
+	ui <- []byte("occupied")
+	frame := datura.Map[any]{"manifold": []manifold.State{{
+		Source: "manifold",
+		Symbol: "BTC/USD",
+	}}}
+	analyzer := &Analyzer{ui: ui}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		analyzer.publish(frame)
 	}
 }

@@ -1,39 +1,74 @@
 package ui
 
 import (
-	"context"
+	"sync"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+/*
+TestHubRetain proves the dashboard cache retains each supported top-level frame
+exactly while ignoring analyzer frames, nested lookalikes, and malformed input.
+*/
 func TestHubRetain(t *testing.T) {
-	Convey("Given a hub draining Messages", t, func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+	proofs := []struct {
+		name     string
+		payload  string
+		expected map[string]string
+	}{
+		{
+			name:    "analyzer frame",
+			payload: `{"manifold":[{"symbol":"SIM1/USD"}]}`,
+		},
+		{
+			name:    "nested cache key",
+			payload: `{"graphs":{"measurements":[]}}`,
+		},
+		{
+			name:    "malformed cache frame",
+			payload: `{"balances":`,
+		},
+		{
+			name:    "single cache frame",
+			payload: `{"balances":[{"asset":"USD","balance":1}]}`,
+			expected: map[string]string{
+				"balances": `{"balances":[{"asset":"USD","balance":1}]}`,
+			},
+		},
+		{
+			name:    "combined cache frame",
+			payload: `{"balances":[{"asset":"USD","balance":1}],"holdings":[{"symbol":"SIM1/USD"}]}`,
+			expected: map[string]string{
+				"balances": `{"balances":[{"asset":"USD","balance":1}]}`,
+				"holdings": `{"holdings":[{"symbol":"SIM1/USD"}]}`,
+			},
+		},
+	}
 
-		messages := make(chan []byte, 4)
-		hub := NewHub(ctx, nil, nil, messages)
-		defer hub.Close()
+	Convey("Given cacheable and non-cacheable dashboard frames", t, func() {
+		for _, proof := range proofs {
+			Convey(proof.name, func() {
+				hub := &Hub{subscribers: &sync.Map{}}
+				payload := []byte(proof.payload)
+				hub.retain(payload)
+				retained := 0
 
-		Convey("When a balances frame is published before a client connects", func() {
-			messages <- []byte(`{"balances":[{"asset":"USD","balance":1}]}`)
-
-			Convey("It retains the latest balances payload", func() {
-				deadline := time.Now().Add(time.Second)
-
-				for time.Now().Before(deadline) {
-					if value, ok := hub.subscribers.Load("balances"); ok {
-						So(string(value.([]byte)), ShouldContainSubstring, `"balances"`)
-						return
-					}
-
-					time.Sleep(5 * time.Millisecond)
+				if proof.name == "analyzer frame" {
+					allocations := testing.AllocsPerRun(100, func() {
+						hub.retain(payload)
+					})
+					So(allocations, ShouldEqual, 0)
 				}
 
-				So("retained", ShouldEqual, "missing")
+				hub.subscribers.Range(func(key, value any) bool {
+					retained++
+					So(string(value.([]byte)), ShouldEqual, proof.expected[key.(string)])
+					return true
+				})
+
+				So(retained, ShouldEqual, len(proof.expected))
 			})
-		})
+		}
 	})
 }

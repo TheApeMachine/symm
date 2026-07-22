@@ -24,6 +24,7 @@ func (analyzer *Analyzer) composeGraphs(thesis *types.Thesis) {
 				"analyzer received a nil measurement",
 				nil,
 			))
+			thesis.NoteIncomplete()
 
 			continue
 		}
@@ -39,6 +40,7 @@ func (analyzer *Analyzer) composeGraphs(thesis *types.Thesis) {
 
 		if err := evidenceGraph.Evidence.AddMeasurements(measurements); err != nil {
 			errnie.Error(err)
+			thesis.NoteIncomplete()
 			continue
 		}
 

@@ -7,8 +7,6 @@ import (
 	"errors"
 	"os/exec"
 	"strings"
-	"sync"
-	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -22,16 +20,20 @@ import (
 Paper is the simulated spot websocket and REST transport.
 */
 type Paper struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	status    types.Status
-	sync      *sync.Map
-	handlerMu sync.Mutex
-	nextID    atomic.Uint64
-	simulator *Simulator
-	lifecycle *Lifecycle
-	url       string
-	auth      bool
+	ctx           context.Context
+	cancel        context.CancelFunc
+	status        types.Status
+	simulator     *Simulator
+	lifecycle     *Lifecycle
+	url           string
+	auth          bool
+	tickerChannel     chan []kraken.TickerData
+	bookChannel       chan []kraken.BookData
+	tradeChannel      chan []kraken.TradeData
+	balancesChannel   chan *kraken.Balance
+	executionsChannel chan *kraken.Execution
+	instrumentChannel chan kraken.InstrumentData
+	orderChannel      chan *kraken.OrderResponse
 }
 
 var _ Conn = (*Paper)(nil)
@@ -46,11 +48,17 @@ func NewPaper(
 	ctx, cancel := context.WithCancel(ctx)
 
 	paper := &Paper{
-		ctx:       ctx,
-		cancel:    cancel,
-		status:    types.READY,
-		sync:      &sync.Map{},
-		simulator: simulator,
+		ctx:           ctx,
+		cancel:        cancel,
+		status:        types.READY,
+		simulator:     simulator,
+		tickerChannel:     make(chan []kraken.TickerData, 256),
+		bookChannel:       make(chan []kraken.BookData, 256),
+		tradeChannel:      make(chan []kraken.TradeData, 256),
+		balancesChannel:   make(chan *kraken.Balance, 256),
+		executionsChannel: make(chan *kraken.Execution, 256),
+		instrumentChannel: make(chan kraken.InstrumentData, 256),
+		orderChannel:      make(chan *kraken.OrderResponse, 256),
 	}
 
 	paper.lifecycle = NewLifecycle(paper)
@@ -122,51 +130,75 @@ func (paper *Paper) Post(string, json.Marshaler) ([]byte, error) {
 	return nil, errnie.Err(errnie.NotImplemented, "paper REST post is not implemented", nil)
 }
 
-func (paper *Paper) On(
-	channel string, action func([]byte),
-) uint64 {
-	if paper == nil || action == nil {
-		return 0
-	}
-
-	id := paper.nextID.Add(1)
-	handler := channelHandler{id: id, fn: action}
-
-	paper.handlerMu.Lock()
-	defer paper.handlerMu.Unlock()
-
-	callbacks, ok := paper.sync.Load(channel)
-
-	if !ok {
-		paper.sync.Store(channel, []channelHandler{handler})
-		return id
-	}
-
-	paper.sync.Store(channel, append(callbacks.([]channelHandler), handler))
-
-	return id
+/*
+TickerChannel exposes the typed ticker stream produced from emitted frames,
+matching the Live transport so downstream signals consume identical data.
+*/
+func (paper *Paper) TickerChannel() chan []kraken.TickerData {
+	return paper.tickerChannel
 }
 
 /*
-Unsubscribe removes one handler previously registered with On for channel.
+BookChannel exposes the typed book stream produced from emitted frames.
 */
-func (paper *Paper) Unsubscribe(channel string, id uint64) {
-	if paper == nil || id == 0 {
-		return
-	}
-
-	paper.handlerMu.Lock()
-	defer paper.handlerMu.Unlock()
-
-	callbacks, ok := paper.sync.Load(channel)
-
-	if !ok {
-		return
-	}
-
-	paper.sync.Store(channel, dropHandler(callbacks.([]channelHandler), id))
+func (paper *Paper) BookChannel() chan []kraken.BookData {
+	return paper.bookChannel
 }
 
+/*
+TradeChannel exposes the typed trade stream produced from emitted frames.
+*/
+func (paper *Paper) TradeChannel() chan []kraken.TradeData {
+	return paper.tradeChannel
+}
+
+/*
+BalancesChannel exposes the typed private balances stream produced by the paper
+lifecycle so the broker consumes venue and paper balances identically.
+*/
+func (paper *Paper) BalancesChannel() chan *kraken.Balance {
+	return paper.balancesChannel
+}
+
+/*
+ExecutionsChannel exposes the typed private executions stream produced by the
+paper lifecycle.
+*/
+func (paper *Paper) ExecutionsChannel() chan *kraken.Execution {
+	return paper.executionsChannel
+}
+
+/*
+InstrumentChannel exposes the typed instrument metadata stream. The paper
+transport produces no instrument frames; the channel exists to satisfy Conn.
+*/
+func (paper *Paper) InstrumentChannel() chan kraken.InstrumentData {
+	return paper.instrumentChannel
+}
+
+/*
+OrderChannel exposes the typed order-acknowledgement stream produced by the
+paper lifecycle for add_order responses.
+*/
+func (paper *Paper) OrderChannel() chan *kraken.OrderResponse {
+	return paper.orderChannel
+}
+
+/*
+Unsubscribe satisfies Conn. The paper transport delivers frames directly onto
+typed channels rather than per-subscription handlers, so there is nothing to
+drop; the method is a no-op.
+*/
+func (paper *Paper) Unsubscribe(channel string, id uint64) {}
+
+/*
+Emit delivers one simulated frame. Market-data channels are decoded into the
+same typed slices Live produces and pushed onto the matching channel so signals
+see identical data. Private lifecycle channels (balances, executions,
+add_order, instrument) are decoded with the same constructors Live uses and
+pushed onto their typed channels so the broker consumes venue and paper frames
+identically.
+*/
 func (paper *Paper) Emit(channel string, payload json.Marshaler) error {
 	raw, err := payload.MarshalJSON()
 
@@ -178,23 +210,21 @@ func (paper *Paper) Emit(channel string, payload json.Marshaler) error {
 		))
 	}
 
-	paper.handlerMu.Lock()
-	callbacks, ok := paper.sync.Load(channel)
-
-	if !ok {
-		paper.handlerMu.Unlock()
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to emit payload",
-			nil,
-		))
-	}
-
-	handlers := append([]channelHandler(nil), callbacks.([]channelHandler)...)
-	paper.handlerMu.Unlock()
-
-	for _, handler := range handlers {
-		handler.fn(raw)
+	switch channel {
+	case "ticker":
+		paper.tickerChannel <- kraken.NewTicker(raw).Data
+	case "book":
+		paper.bookChannel <- kraken.NewBook(raw).Data
+	case "trade":
+		paper.tradeChannel <- kraken.NewTrade(raw).Data
+	case "balances":
+		paper.balancesChannel <- kraken.NewBalance(raw)
+	case "executions":
+		paper.executionsChannel <- kraken.NewExecution(raw)
+	case "instrument":
+		paper.instrumentChannel <- kraken.NewInstrumentData(raw)
+	case "add_order":
+		paper.orderChannel <- kraken.NewOrderResponse(raw)
 	}
 
 	return nil

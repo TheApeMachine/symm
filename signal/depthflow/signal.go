@@ -6,9 +6,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/theapemachine/errnie"
-
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
@@ -24,7 +23,7 @@ type Signal struct {
 	tickerIn chan []kraken.TickerData
 	bookIn   chan []kraken.BookData
 	tradeIn  chan []kraken.TradeData
-	ack     chan struct{}
+	ack      chan struct{}
 	ctx      context.Context
 	cancel   context.CancelFunc
 	sample   *flow.Sample
@@ -38,22 +37,22 @@ trade observations in each central market cut.
 */
 func NewSignal(
 	ctx context.Context,
+	capacity int,
 	ui chan []byte,
-	historyCapacity int,
 ) (*Signal, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	sample, err := flow.NewSample(historyCapacity)
+	sample, err := flow.NewSample(capacity)
 
 	if err != nil {
-		cancel()
 		return nil, err
 	}
+
+	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
 		tickerIn: make(chan []kraken.TickerData, 64),
 		bookIn:   make(chan []kraken.BookData, 64),
 		tradeIn:  make(chan []kraken.TradeData, 64),
-		ack:     make(chan struct{}, 256),
+		ack:      make(chan struct{}, 256),
 		ctx:      ctx,
 		cancel:   cancel,
 		sample:   sample,
@@ -332,7 +331,6 @@ Trades returns the trade ingress channel.
 func (signal *Signal) Trades() chan []kraken.TradeData {
 	return signal.tradeIn
 }
-
 
 /*
 Ack signals that one ingress frame finished Calculate so Crypto can barrier

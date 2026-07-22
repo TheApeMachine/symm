@@ -4,9 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/theapemachine/errnie"
-
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
@@ -23,7 +22,7 @@ type Signal struct {
 	tickerIn chan []kraken.TickerData
 	bookIn   chan []kraken.BookData
 	tradeIn  chan []kraken.TradeData
-	ack     chan struct{}
+	ack      chan struct{}
 	ctx      context.Context
 	cancel   context.CancelFunc
 	sample   *algorithm.DecaySample
@@ -43,7 +42,7 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 		tickerIn: make(chan []kraken.TickerData, 64),
 		bookIn:   make(chan []kraken.BookData, 64),
 		tradeIn:  make(chan []kraken.TradeData, 64),
-		ack:     make(chan struct{}, 256),
+		ack:      make(chan struct{}, 256),
 		ctx:      ctx,
 		cancel:   cancel,
 		sample:   algorithm.NewDecaySample(),
@@ -318,7 +317,6 @@ Trades returns the trade ingress channel.
 func (signal *Signal) Trades() chan []kraken.TradeData {
 	return signal.tradeIn
 }
-
 
 /*
 Ack signals that one ingress frame finished Calculate so Crypto can barrier

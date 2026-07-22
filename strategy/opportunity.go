@@ -1,14 +1,11 @@
 package strategy
 
 import (
-	"context"
-	"maps"
 	"strings"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )
@@ -17,33 +14,18 @@ import (
 Opportunity turns logic outputs into friction-aware enter decisions.
 */
 type Opportunity struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
 	price       *broker.Price
 	balance     *broker.Balance
-	recorder    *audit.Recorder
-	uiHub       chan<- []byte
 	maxFraction *decimal.Decimal
 }
 
 /*
 NewOpportunity wires the surfaces Measure needs to score forecasts.
 */
-func NewOpportunity(
-	ctx context.Context,
-	cancel context.CancelFunc,
-	price *broker.Price,
-	balance *broker.Balance,
-	recorder *audit.Recorder,
-	uiHub chan<- []byte,
-) *Opportunity {
+func NewOpportunity(price *broker.Price, balance *broker.Balance) *Opportunity {
 	return &Opportunity{
-		ctx:      ctx,
-		cancel:   cancel,
-		price:    price,
-		balance:  balance,
-		recorder: recorder,
-		uiHub:    uiHub,
+		price:   price,
+		balance: balance,
 		maxFraction: decimal.NewFromFloat64(
 			viper.GetFloat64("trading.allocation.max_fraction"),
 		),
@@ -55,10 +37,6 @@ StampFriction writes fees and impact onto every forecast so Continuity can
 score occupied lots before Measure skips them for fresh enters.
 */
 func (opportunity *Opportunity) StampFriction(thesis *types.Thesis) {
-	if err := opportunity.validate(map[string]any{"thesis": thesis}); err != nil {
-		return
-	}
-
 	for index := range thesis.Forecasts {
 		opportunity.friction(&thesis.Forecasts[index])
 	}
@@ -93,7 +71,9 @@ func (opportunity *Opportunity) utilization(forecast *types.Forecasts) float64 {
 		return 1
 	}
 
-	cash, err := opportunity.balance.AssetAvailable("USD")
+	cash, err := opportunity.balance.AssetAvailable(
+		viper.GetString("market.quote_currency"),
+	)
 
 	if err != nil || cash == nil || cash.Sign() <= 0 {
 		return 1
@@ -120,19 +100,33 @@ func (opportunity *Opportunity) utilization(forecast *types.Forecasts) float64 {
 Measure scores executable utility and appends enter when utility clears doing
 nothing and cognition clears forecast noise. Cognitive and forecast rejects are
 recorded as explicit nothing decisions for audit. Occupied symbols are skipped
-for entry; Continuity already scored them after StampFriction.
+for entry; Continuity already scored them after StampFriction. An exited symbol
+must first reclaim its exact exit mark so adverse continuation cannot churn.
 */
 func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
-	if err := opportunity.validate(map[string]any{
-		"thesis": thesis,
-	}); err != nil {
-		return
-	}
-
 	blocked := opportunity.occupied(thesis)
 
 	for index := range thesis.Forecasts {
 		forecast := &thesis.Forecasts[index]
+		stopped := false
+		var stopMark *decimal.Decimal
+
+		if value, found := thesis.Holdings.Load(forecast.Symbol); found {
+			holding := value.(*types.Holding)
+
+			if holding.Stoploss != nil {
+				holding.Stoploss.RLock()
+				stopped = holding.Status == types.CLOSED &&
+					(holding.Stoploss.Action == "stop" ||
+						holding.Stoploss.Action == "take_profit")
+
+				if stopped && holding.StopMark != nil {
+					stopMark = holding.StopMark.Copy()
+				}
+
+				holding.Stoploss.RUnlock()
+			}
+		}
 
 		if _, skip := blocked[forecast.Symbol]; skip {
 			continue
@@ -144,6 +138,41 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 
 		if !forecast.Eligible() {
 			continue
+		}
+
+		if stopped {
+			ticker, err := opportunity.price.Get(forecast.Symbol)
+			reclaimMark := (*decimal.Decimal)(nil)
+
+			if err == nil && ticker != nil {
+				reclaimMark = ticker.Last
+
+				if ticker.Bid != nil && ticker.Ask != nil &&
+					ticker.Bid.Sign() > 0 && ticker.Ask.Sign() > 0 {
+					reclaimMark = opportunity.price.Div(
+						ticker.Bid.Add(ticker.Ask),
+						decimal.NewFromInt64(2),
+					)
+				}
+			}
+
+			if stopMark == nil || reclaimMark == nil {
+				thesis.Decisions = append(thesis.Decisions, opportunity.reject(
+					*forecast, 0, "post_exit_observation",
+					"exited lot has no exact reclaim boundary",
+				))
+				continue
+			}
+
+			if reclaimMark.Cmp(stopMark) <= 0 {
+				rejected := opportunity.reject(
+					*forecast, 0, "post_exit_observation",
+					"market has not reclaimed the exited lot boundary",
+				)
+				rejected.Alternatives["reclaim_price"] = stopMark.Float64()
+				thesis.Decisions = append(thesis.Decisions, rejected)
+				continue
+			}
 		}
 
 		cogVal, ok := thesis.Cognition.Load(forecast.Symbol)
@@ -239,11 +268,7 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			allocation = "reserved"
 		}
 
-		haircut := 1 - cognition.Confidence
-
-		if haircut < 0 {
-			haircut = 0
-		}
+		haircut := max(0, 1-cognition.Confidence)
 
 		thesis.Decisions = append(thesis.Decisions, types.Decision{
 			Action:            types.ActionEnter,
@@ -339,16 +364,6 @@ func (opportunity *Opportunity) reject(
 	}
 }
 
-func (opportunity *Opportunity) validate(mandatory map[string]any) error {
-	check := map[string]any{
-		"price":   opportunity.price,
-		"balance": opportunity.balance,
-	}
-	maps.Copy(check, mandatory)
-
-	return errnie.Error(errnie.Require(check))
-}
-
 /*
 occupied lists wallet-open symbols, Thesis-created pending lots, and in-flight
 lifecycle so Measure cannot propose a fresh enter against a live lot.
@@ -356,28 +371,30 @@ lifecycle so Measure cannot propose a fresh enter against a live lot.
 func (opportunity *Opportunity) occupied(thesis *types.Thesis) map[string]struct{} {
 	blocked := map[string]struct{}{}
 
-	if opportunity.balance != nil {
-		for holding := range opportunity.balance.Holdings() {
-			if holding.Status == types.CLOSED {
-				continue
-			}
-
-			blocked[holding.Symbol] = struct{}{}
+	for holding := range opportunity.balance.Holdings() {
+		if holding.Status == types.CLOSED {
+			continue
 		}
-	}
 
-	if thesis == nil {
-		return blocked
+		blocked[holding.Symbol] = struct{}{}
 	}
 
 	thesis.Holdings.Range(func(_, value any) bool {
 		holding, ok := value.(*types.Holding)
 
-		if !ok || holding == nil || holding.Status == types.CLOSED {
+		if !ok || holding == nil {
 			return true
 		}
 
-		blocked[holding.Symbol] = struct{}{}
+		if holding.Stoploss != nil {
+			holding.Stoploss.RLock()
+			defer holding.Stoploss.RUnlock()
+		}
+
+		if holding.Status != types.CLOSED {
+			blocked[holding.Symbol] = struct{}{}
+		}
+
 		return true
 	})
 

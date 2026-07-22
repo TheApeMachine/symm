@@ -2,6 +2,7 @@ package signal
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -164,30 +165,114 @@ func TestSignal_Transition(t *testing.T) {
 		})
 	})
 
-	Convey("Given semantic liquidity conditions on one selected symbol", t, func() {
-		thin := New([]string{"SIM1/USD", "SIM2/USD"})
-		loaded := New([]string{"SIM1/USD", "SIM2/USD"})
-		retreat := New([]string{"SIM1/USD", "SIM2/USD"})
-		initial, exists := thin.Quote("SIM1/USD")
-		So(exists, ShouldBeTrue)
-		So(thin.Transition(ThinLiquidity, "SIM1/USD"), ShouldBeNil)
-		So(loaded.Transition(LoadedLiquidity, "SIM1/USD"), ShouldBeNil)
-		So(retreat.Transition(LiquidityRetreat, "SIM1/USD"), ShouldBeNil)
-		thinQuote, _ := thin.Quote("SIM1/USD")
-		loadedQuote, _ := loaded.Quote("SIM1/USD")
-		retreatQuote, _ := retreat.Quote("SIM1/USD")
+	Convey("Given every semantic book adversary on one selected symbol", t, func() {
+		initial := Quote{
+			Bid:    initialPrice - bestQuoteTicks*PriceIncrement,
+			BidQty: initialOrderQuantity,
+			Ask:    initialPrice + bestQuoteTicks*PriceIncrement,
+			AskQty: initialOrderQuantity,
+		}
+		bookQuantity := initialOrderQuantity * bookLevels * 2
+		proofs := []struct {
+			name         string
+			state        State
+			steps        int
+			quote        Quote
+			control      Quote
+			bids         int
+			asks         int
+			touchEvery   bool
+			touchCycle   bool
+			traded       bool
+			controlsMove bool
+		}{
+			{"thin", ThinLiquidity, 1,
+				Quote{
+					Bid:    initial.Bid,
+					BidQty: initial.BidQty,
+					Ask:    initial.Ask,
+					AskQty: idleVolume,
+				}, initial,
+				bookLevels, bookLevels, true, false, false, false},
+			{"loaded", LoadedLiquidity, idleObservations + 2,
+				Quote{
+					Bid: initial.Bid,
+					BidQty: initial.BidQty + bookQuantity +
+						idleVolume*(idleObservations+1),
+					Ask:    initial.Ask,
+					AskQty: initial.AskQty,
+				}, initial,
+				bookLevels, bookLevels, true, false, false, false},
+			{"retreat", LiquidityRetreat, 1,
+				Quote{
+					Bid:    initial.Bid - PriceIncrement,
+					BidQty: initial.BidQty,
+					Ask:    initial.Ask,
+					AskQty: initial.AskQty,
+				}, initial,
+				bookLevels - 1, bookLevels, true, false, false, false},
+			{"spoof", SpoofLiquidity, 1,
+				Quote{
+					Bid:    initial.Bid,
+					BidQty: initial.BidQty,
+					Ask:    initial.Ask,
+					AskQty: initial.AskQty + bookQuantity,
+				}, initial,
+				bookLevels * 3, bookLevels, true, false, false, false},
+			{"depth thinning", DepthThinning, 1, initial, initial,
+				bookLevels * 5, bookLevels * 2, false, false, false, false},
+			{"spread control", SpreadControl, fastLegObservations + settleObservations,
+				initial, Quote{
+					Bid:    initial.Bid - 3*PriceIncrement,
+					BidQty: initial.BidQty,
+					Ask:    initial.Ask - 3*PriceIncrement,
+					AskQty: initial.AskQty,
+				}, bookLevels, bookLevels, false, true, true, true},
+		}
 
-		Convey("They should thin, load, and retreat the real touch", func() {
-			So(thinQuote.AskQty, ShouldBeLessThan, initial.AskQty)
-			So(loadedQuote.BidQty, ShouldBeGreaterThan, initial.BidQty)
-			So(retreatQuote.Bid, ShouldBeLessThan, initial.Bid)
-			So(retreatQuote.BidQty, ShouldEqual, initial.BidQty)
+		for _, proof := range proofs {
+			signal := New([]string{"SIM1/USD", "SIM2/USD"})
+			started := signal.Now()
+			So(signal.Transition(proof.state, "SIM1/USD"), ShouldBeNil)
+			tape := [][]Sample{}
 
-			for _, generated := range []*Signal{thin, loaded, retreat} {
-				control, _ := generated.Quote("SIM2/USD")
-				So(control, ShouldResemble, initial)
+			for samples := range signal.Generate() {
+				tape = append(tape, samples)
 			}
-		})
+
+			SoMsg(proof.name+" steps", tape, ShouldHaveLength, proof.steps)
+			So(signal.State(), ShouldEqual, proof.state)
+			So(signal.Now(), ShouldEqual,
+				started.Add(time.Duration(proof.steps)*time.Second))
+
+			for index, samples := range tape {
+				So(samples, ShouldHaveLength, 2)
+				So(samples[0].Symbol, ShouldEqual, "SIM1/USD")
+				So(samples[1].Symbol, ShouldEqual, "SIM2/USD")
+				So(samples[0].At, ShouldEqual,
+					started.Add(time.Duration(index+1)*time.Second))
+				So(samples[1].At, ShouldEqual, samples[0].At)
+				touchChanged := proof.touchEvery || proof.touchCycle && index%2 == 0
+				SoMsg(proof.name+" subject touch", samples[0].TouchChanged,
+					ShouldEqual, touchChanged)
+				So(samples[0].BookChanged, ShouldBeTrue)
+				So(samples[0].Traded, ShouldEqual, proof.traded)
+				SoMsg(proof.name+" control touch", samples[1].TouchChanged,
+					ShouldEqual, proof.controlsMove)
+				So(samples[1].BookChanged, ShouldEqual, proof.controlsMove)
+				So(samples[1].Traded, ShouldEqual, proof.traded)
+			}
+
+			quote, exists := signal.Quote("SIM1/USD")
+			So(exists, ShouldBeTrue)
+			SoMsg(proof.name+" subject quote", quote, ShouldResemble, proof.quote)
+			control, exists := signal.Quote("SIM2/USD")
+			So(exists, ShouldBeTrue)
+			SoMsg(proof.name+" control quote", control, ShouldResemble, proof.control)
+			last := tape[len(tape)-1][0]
+			So(last.Bids, ShouldHaveLength, proof.bids)
+			So(last.Asks, ShouldHaveLength, proof.asks)
+		}
 	})
 
 	Convey("Given matched directional scenario twins", t, func() {

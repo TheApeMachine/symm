@@ -2,6 +2,7 @@ package logic
 
 import (
 	"math"
+	"sort"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -11,13 +12,15 @@ import (
 )
 
 /*
-observeStates walks manifold state into resonance, causal, and forecast outputs.
+observeStates walks manifold state into resonance, causal, and forecast outputs
+in symbol order so shared cognition and ranked decisions cannot inherit the
+undefined iteration order of sync.Map.
 */
 func (analyzer *Analyzer) observeStates(thesis *types.Thesis) []manifold.State {
 	states := make([]manifold.State, 0)
 	observeStarted := time.Now()
 
-	thesis.Manifold.Range(func(key, value any) bool {
+	thesis.Manifold.Range(func(_, value any) bool {
 		state, ok := value.(manifold.State)
 
 		if !ok {
@@ -26,23 +29,29 @@ func (analyzer *Analyzer) observeStates(thesis *types.Thesis) []manifold.State {
 				"analyzer received invalid manifold state",
 				nil,
 			))
+			thesis.NoteIncomplete()
 
 			return true
 		}
 
 		states = append(states, state)
+		return true
+	})
 
+	sort.Slice(states, func(left, right int) bool {
+		return states[left].Symbol < states[right].Symbol
+	})
+
+	for _, state := range states {
 		// Unchanged excitation epochs still paint the field for UI; they do not
 		// mint a forecast. Cached republish of yesterday's calibration is not
 		// an observation.
 		if state.Replay {
-			return true
+			continue
 		}
 
 		analyzer.observe(thesis, state)
-
-		return true
-	})
+	}
 
 	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "observe", map[string]any{
 		"states": len(states),
@@ -99,6 +108,7 @@ func (analyzer *Analyzer) observe(
 
 	if err != nil {
 		errnie.Error(err)
+		thesis.NoteIncomplete()
 		return
 	}
 

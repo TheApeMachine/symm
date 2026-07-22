@@ -5,9 +5,8 @@ import (
 	"math"
 	"sort"
 
-	"github.com/theapemachine/errnie"
-
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
@@ -22,11 +21,11 @@ type Signal struct {
 	tickerIn     chan []kraken.TickerData
 	bookIn       chan []kraken.BookData
 	tradeIn      chan []kraken.TradeData
-	ack     chan struct{}
+	ack          chan struct{}
 	ctx          context.Context
 	cancel       context.CancelFunc
-	ui           chan []byte
 	crossSection *types.CrossSection
+	ui           chan []byte
 }
 
 /*
@@ -40,11 +39,11 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 		tickerIn:     make(chan []kraken.TickerData, 64),
 		bookIn:       make(chan []kraken.BookData, 64),
 		tradeIn:      make(chan []kraken.TradeData, 64),
-		ack:     make(chan struct{}, 256),
+		ack:          make(chan struct{}, 256),
 		ctx:          ctx,
 		cancel:       cancel,
-		ui:           ui,
 		crossSection: types.NewCrossSection(),
+		ui:           ui,
 	}
 
 	return signal
@@ -212,7 +211,6 @@ Trades returns the trade ingress channel.
 func (signal *Signal) Trades() chan []kraken.TradeData {
 	return signal.tradeIn
 }
-
 
 /*
 Ack signals that one ingress frame finished Calculate so Crypto can barrier

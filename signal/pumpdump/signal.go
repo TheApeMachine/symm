@@ -24,7 +24,7 @@ type Signal struct {
 	tickerIn   chan []kraken.TickerData
 	bookIn     chan []kraken.BookData
 	tradeIn    chan []kraken.TradeData
-	ack     chan struct{}
+	ack        chan struct{}
 	ctx        context.Context
 	cancel     context.CancelFunc
 	ignition   *equation.Ignition
@@ -40,8 +40,8 @@ same explicit retention bound used by the production market feed.
 */
 func NewSignal(
 	ctx context.Context,
-	ui chan []byte,
 	baselineCapacity int,
+	ui chan []byte,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -49,7 +49,7 @@ func NewSignal(
 		tickerIn:   make(chan []kraken.TickerData, 64),
 		bookIn:     make(chan []kraken.BookData, 64),
 		tradeIn:    make(chan []kraken.TradeData, 64),
-		ack:     make(chan struct{}, 256),
+		ack:        make(chan struct{}, 256),
 		ctx:        ctx,
 		cancel:     cancel,
 		ignition:   equation.NewIgnition(baselineCapacity),
@@ -272,6 +272,7 @@ active market-data producers.
 */
 func (signal *Signal) Close() error {
 	signal.cancel()
+
 	return nil
 }
 
@@ -295,7 +296,6 @@ Trades returns the trade ingress channel.
 func (signal *Signal) Trades() chan []kraken.TradeData {
 	return signal.tradeIn
 }
-
 
 /*
 Ack signals that one ingress frame finished Calculate so Crypto can barrier

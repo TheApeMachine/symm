@@ -13,7 +13,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -57,7 +56,7 @@ func (instrument *Instrument) Initialize() error {
 	errnie.Info("initializing instrument")
 	instrument.status.Store(types.PENDING)
 
-	instrument.api.On("instrument", instrument.On)
+	go instrument.consume()
 
 	if err := instrument.api.SubscribeInstruments(); err != nil {
 		instrument.status.Store(types.ERROR)
@@ -67,15 +66,31 @@ func (instrument *Instrument) Initialize() error {
 	return nil
 }
 
-func (instrument *Instrument) On(data []byte) {
-	frame := utils.Unmarshal[kraken.Instrument](data)
+/*
+consume ranges the typed instrument stream and applies each frame until the API
+lifecycle context is cancelled.
+*/
+func (instrument *Instrument) consume() {
+	ctx := instrument.api.Context()
+	channel := instrument.api.InstrumentChannel()
 
-	if len(frame.Data.Pairs) == 0 {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case data := <-channel:
+			instrument.On(data)
+		}
+	}
+}
+
+func (instrument *Instrument) On(data kraken.InstrumentData) {
+	if len(data.Pairs) == 0 {
 		return
 	}
 
-	for index := range frame.Data.Pairs {
-		pair := frame.Data.Pairs[index]
+	for index := range data.Pairs {
+		pair := data.Pairs[index]
 		instrument.cache.Store(pair.Symbol, &pair)
 	}
 

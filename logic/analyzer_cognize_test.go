@@ -93,6 +93,24 @@ func TestAnalyzerCognize(t *testing.T) {
 				So(reading.Confidence, ShouldBeGreaterThan, 0)
 			})
 		})
+
+		Convey("When REM is active on the immutable cognitive tree", func() {
+			analyzer.rem = newREMSleep(t.Context(), analyzer.tree)
+			analyzer.rem.mu.Lock()
+			analyzer.rem.busy = true
+			analyzer.rem.finished = make(chan struct{})
+			analyzer.rem.mu.Unlock()
+
+			observations, requested := analyzer.cognizeStates(
+				thesis, []manifold.State{state},
+			)
+
+			So(observations, ShouldResemble, []time.Time{state.At})
+			So(requested, ShouldBeFalse)
+			So(thesis.Incomplete(), ShouldBeFalse)
+			_, found := thesis.Cognition.Load(state.Symbol)
+			So(found, ShouldBeTrue)
+		})
 	})
 }
 

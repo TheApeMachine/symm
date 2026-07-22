@@ -25,6 +25,7 @@ func (analyzer *Analyzer) stepManifold(thesis *types.Thesis) {
 
 	if err := analyzer.manifold.Update(thesis, analyzer.hawkes); err != nil {
 		errnie.Error(err)
+		thesis.NoteIncomplete()
 		payload["ok"] = false
 		payload["err"] = err.Error()
 	}

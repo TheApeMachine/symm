@@ -237,14 +237,31 @@ durable copies a holding into a recovery value after proving every persisted
 float is finite; the unlocked negative-infinity floor remains a domain sentinel.
 */
 func (holding Holding) durable() (Holding, error) {
+	if holding.Stoploss != nil {
+		holding.Stoploss.RLock()
+		defer holding.Stoploss.RUnlock()
+	}
+
 	out := holding
 	out.ctx = nil
 	out.cancel = nil
 
 	if out.Stoploss != nil {
-		stop := *out.Stoploss
-		stop.ctx = nil
-		stop.cancel = nil
+		stop := Stoploss{
+			armed:         out.Stoploss.armed,
+			entry:         out.Stoploss.entry,
+			epoch:         out.Stoploss.epoch,
+			Weight:        out.Stoploss.Weight,
+			LockedFloor:   out.Stoploss.LockedFloor,
+			FloorDistance: out.Stoploss.FloorDistance,
+			TrailDistance: out.Stoploss.TrailDistance,
+			StopReturn:    out.Stoploss.StopReturn,
+			PeakReturn:    out.Stoploss.PeakReturn,
+			MarkReturn:    out.Stoploss.MarkReturn,
+			Retreat:       out.Stoploss.Retreat,
+			Action:        out.Stoploss.Action,
+			Reason:        out.Stoploss.Reason,
+		}
 		values := []struct {
 			name  string
 			value float64

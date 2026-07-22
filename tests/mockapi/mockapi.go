@@ -7,7 +7,11 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 )
+
+var _ websocket.Conn = (*MockConn)(nil)
 
 /*
 MockConn is a controllable Kraken transport composed from deterministic
@@ -16,10 +20,17 @@ scheduling and test-control surfaces while implementing websocket.Conn.
 type MockConn struct {
 	*Control
 	*Scheduler
-	client  *spot.WebSocket
-	allowed map[string]struct{}
-	paperMu sync.Mutex
-	paper   *Paper
+	client            *spot.WebSocket
+	allowed           map[string]struct{}
+	paperMu           sync.Mutex
+	paper             *Paper
+	tickerChannel     chan []kraken.TickerData
+	bookChannel       chan []kraken.BookData
+	tradeChannel      chan []kraken.TradeData
+	balancesChannel   chan *kraken.Balance
+	executionsChannel chan *kraken.Execution
+	instrumentChannel chan kraken.InstrumentData
+	orderChannel      chan *kraken.OrderResponse
 }
 
 /*
@@ -40,11 +51,67 @@ func NewConn(symbols ...string) *MockConn {
 	}
 
 	return &MockConn{
-		Control:   newControl(),
-		Scheduler: newScheduler(),
-		client:    mockNormalizerClient(symbols),
-		allowed:   allowed,
+		Control:           newControl(),
+		Scheduler:         newScheduler(),
+		client:            mockNormalizerClient(symbols),
+		allowed:           allowed,
+		tickerChannel:     make(chan []kraken.TickerData, 256),
+		bookChannel:       make(chan []kraken.BookData, 256),
+		tradeChannel:      make(chan []kraken.TradeData, 256),
+		balancesChannel:   make(chan *kraken.Balance, 256),
+		executionsChannel: make(chan *kraken.Execution, 256),
+		instrumentChannel: make(chan kraken.InstrumentData, 256),
+		orderChannel:      make(chan *kraken.OrderResponse, 256),
 	}
+}
+
+/*
+TickerChannel exposes the typed ticker stream produced from emitted frames.
+*/
+func (conn *MockConn) TickerChannel() chan []kraken.TickerData {
+	return conn.tickerChannel
+}
+
+/*
+BookChannel exposes the typed book stream produced from emitted frames.
+*/
+func (conn *MockConn) BookChannel() chan []kraken.BookData {
+	return conn.bookChannel
+}
+
+/*
+TradeChannel exposes the typed trade stream produced from emitted frames.
+*/
+func (conn *MockConn) TradeChannel() chan []kraken.TradeData {
+	return conn.tradeChannel
+}
+
+/*
+BalancesChannel exposes the typed private balances stream.
+*/
+func (conn *MockConn) BalancesChannel() chan *kraken.Balance {
+	return conn.balancesChannel
+}
+
+/*
+ExecutionsChannel exposes the typed private executions stream.
+*/
+func (conn *MockConn) ExecutionsChannel() chan *kraken.Execution {
+	return conn.executionsChannel
+}
+
+/*
+InstrumentChannel exposes the typed instrument metadata stream.
+*/
+func (conn *MockConn) InstrumentChannel() chan kraken.InstrumentData {
+	return conn.instrumentChannel
+}
+
+/*
+OrderChannel exposes the typed order-acknowledgement stream.
+*/
+func (conn *MockConn) OrderChannel() chan *kraken.OrderResponse {
+	return conn.orderChannel
 }
 
 /*
@@ -112,6 +179,72 @@ func (conn *MockConn) Write(params json.Marshaler) error {
 	}
 
 	return nil
+}
+
+/*
+Emit decodes one frame onto the matching typed channel so broker consumers read
+identical data to the live and paper transports, then delivers it to any legacy
+handlers registered on the composed Scheduler.
+*/
+func (conn *MockConn) Emit(channel string, payload []byte) {
+	conn.push(channel, payload)
+	conn.Scheduler.Emit(channel, payload)
+}
+
+/*
+Drain delivers every scheduled frame through the typed-channel Emit path.
+*/
+func (conn *MockConn) Drain() error {
+	conn.Scheduler.mu.Lock()
+
+	if conn.Scheduler.closed {
+		conn.Scheduler.mu.Unlock()
+		return io.ErrClosedPipe
+	}
+
+	queued := append([]outbound(nil), conn.Scheduler.queue...)
+	conn.Scheduler.queue = nil
+	conn.Scheduler.mu.Unlock()
+
+	for _, frame := range queued {
+		conn.Emit(frame.channel, frame.payload)
+	}
+
+	return nil
+}
+
+/*
+push decodes a frame with the same constructors the live transport uses and
+delivers it onto the matching typed channel without blocking the caller.
+*/
+func (conn *MockConn) push(channel string, payload []byte) {
+	switch channel {
+	case "ticker":
+		sendMock(conn.tickerChannel, kraken.NewTicker(payload).Data)
+	case "book":
+		sendMock(conn.bookChannel, kraken.NewBook(payload).Data)
+	case "trade":
+		sendMock(conn.tradeChannel, kraken.NewTrade(payload).Data)
+	case "balances":
+		sendMock(conn.balancesChannel, kraken.NewBalance(payload))
+	case "executions":
+		sendMock(conn.executionsChannel, kraken.NewExecution(payload))
+	case "instrument":
+		sendMock(conn.instrumentChannel, kraken.NewInstrumentData(payload))
+	case "add_order":
+		sendMock(conn.orderChannel, kraken.NewOrderResponse(payload))
+	}
+}
+
+/*
+sendMock performs a non-blocking delivery so a full test channel never deadlocks
+the deterministic scheduler.
+*/
+func sendMock[T any](channel chan T, value T) {
+	select {
+	case channel <- value:
+	default:
+	}
 }
 
 /*

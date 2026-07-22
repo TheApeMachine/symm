@@ -42,19 +42,44 @@ func NewArbiter(
 }
 
 /*
-Select sorts enter candidates by utility, admits into free slots, and otherwise
-rotates or rejects.
+Select sorts enter candidates by utility, retains selected entries until their
+symbol's forecast epoch expires, admits into free slots, and otherwise rotates
+or rejects.
 */
 func (arbiter *Arbiter) Select(thesis *types.Thesis) {
 	if err := arbiter.validate(map[string]any{"thesis": thesis}); err != nil {
 		return
 	}
 
+	forecasts := selectForecasts(thesis.Forecasts)
 	enters := make([]types.Decision, 0, len(thesis.Decisions))
 	rest := make([]types.Decision, 0, len(thesis.Decisions))
+	pending := 0
 
 	for _, decision := range thesis.Decisions {
 		if decision.Action == types.ActionEnter {
+			phase, found := thesis.Lifecycle.Load(decision.Symbol)
+
+			if found && phase == types.LifecycleEntrySelected {
+				forecast, observed := forecasts[decision.Symbol]
+
+				if observed && decision.ValidThroughEpoch < forecast.SourceEpoch {
+					decision.Action = types.ActionNothing
+					decision.Cause = "entry_expired"
+					decision.Reason = "selected forecast expired before a slot cleared"
+					thesis.Holdings.Delete(decision.Symbol)
+					thesis.NoteLifecycle(
+						decision.Symbol, types.LifecycleExpired, thesis.At,
+					)
+					rest = append(rest, decision)
+					continue
+				}
+
+				pending++
+				rest = append(rest, decision)
+				continue
+			}
+
 			enters = append(enters, decision)
 			continue
 		}
@@ -65,10 +90,14 @@ func (arbiter *Arbiter) Select(thesis *types.Thesis) {
 	thesis.Decisions = rest
 
 	sort.Slice(enters, func(left, right int) bool {
+		if enters[left].Utility == enters[right].Utility {
+			return enters[left].Symbol < enters[right].Symbol
+		}
+
 		return enters[left].Utility > enters[right].Utility
 	})
 
-	incumbents := arbiter.incumbents(thesis)
+	incumbents := arbiter.incumbents(thesis, forecasts)
 	open := arbiter.desk.OpenPositions()
 	maxNormal := arbiter.desk.MaxSlots(false)
 	maxAll := arbiter.desk.MaxSlots(true)
@@ -77,9 +106,9 @@ func (arbiter *Arbiter) Select(thesis *types.Thesis) {
 
 	for _, decision := range enters {
 		opportunity := decision.AllocationClass == "reserved"
-		useNormal := open+admittedNormal < maxNormal
+		useNormal := open+pending+admittedNormal < maxNormal
 		useReserved := opportunity &&
-			open+admittedNormal+admittedReserved < maxAll
+			open+pending+admittedNormal+admittedReserved < maxAll
 
 		if useNormal || useReserved {
 			if useNormal {
@@ -101,7 +130,7 @@ func (arbiter *Arbiter) Select(thesis *types.Thesis) {
 
 		arbiter.admit.Reject(
 			thesis, decision, opportunity,
-			maxNormal-open, admittedNormal, incumbents,
+			maxNormal-open-pending, admittedNormal, incumbents,
 		)
 	}
 }
@@ -128,12 +157,15 @@ func (arbiter *Arbiter) displace(
 		return false
 	}
 
-	arbiter.admit.Scale(decision, incumbent.Notional)
-	incumbent.Displaced = true
-
 	edge := decision.Utility - incumbent.HoldUtility
 	rotateValue := edge - incumbent.ExitCost
 	waitValue := edge * incumbent.ClearProb
+	redeploy := incumbent.Notional.Copy().Sub(decimal.ExactMul(
+		incumbent.Notional,
+		decimal.NewFromFloat64(incumbent.ExitCost),
+	))
+	arbiter.admit.Scale(decision, redeploy)
+	incumbent.Displaced = true
 
 	if decision.Alternatives == nil {
 		decision.Alternatives = map[string]float64{}
@@ -161,10 +193,13 @@ func (arbiter *Arbiter) displace(
 
 /*
 incumbents lists open holdings with enough forecast and fee evidence for rotate
-comparison.
+comparison. It consumes Select's forecast view so expiry and rotation use one
+source observation without selecting the same rows twice.
 */
-func (arbiter *Arbiter) incumbents(thesis *types.Thesis) []Incumbent {
-	forecasts := selectForecasts(thesis.Forecasts)
+func (arbiter *Arbiter) incumbents(
+	thesis *types.Thesis,
+	forecasts map[string]types.Forecasts,
+) []Incumbent {
 	rows := make([]Incumbent, 0)
 
 	for holding := range arbiter.balance.Holdings() {
@@ -217,6 +252,10 @@ func (arbiter *Arbiter) incumbents(thesis *types.Thesis) []Incumbent {
 			ClearProb:   arbiter.rotate.Clear(holding.Stoploss, forecast),
 		})
 	}
+
+	sort.Slice(rows, func(left, right int) bool {
+		return rows[left].Symbol < rows[right].Symbol
+	})
 
 	return rows
 }

@@ -95,3 +95,34 @@ func TestBooterError(t *testing.T) {
 		})
 	})
 }
+
+/*
+TestBooterStartCancellation proves a reporter that remains pending cannot trap
+the production boot sequence after its owning context is canceled.
+*/
+func TestBooterStartCancellation(t *testing.T) {
+	Convey("Given boot waiting on a pending reporter", t, func() {
+		ctx, cancel := context.WithCancel(t.Context())
+		uiHub := make(chan []byte, 1)
+		pending := newMockReporter(types.PENDING)
+		never := newMockReporter(types.INITIALIZING)
+		never.SetReadyOnInitialize(true)
+		booter := system.NewBooter(ctx, uiHub)
+		booter.AddStages(system.NewStage(system.StagePreflight, pending, never))
+		finished := make(chan error, 1)
+
+		go func() {
+			finished <- booter.Start()
+		}()
+
+		<-uiHub
+		cancel()
+		err := <-finished
+
+		Convey("Then Start returns cancellation without starting its dependent", func() {
+			So(errors.Is(err, context.Canceled), ShouldBeTrue)
+			So(pending.InitializeCalls(), ShouldEqual, 1)
+			So(never.InitializeCalls(), ShouldEqual, 0)
+		})
+	})
+}
