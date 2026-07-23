@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
@@ -114,10 +115,68 @@ func (crypto *Crypto) Apply(thesis *types.Thesis) {
 		}
 	}
 
+	decisions := len(thesis.Decisions)
+	crypto.publish(thesis, time.Since(started))
+	thesis.Decisions = thesis.Decisions[:0]
+
 	errnie.Error(audit.Phase(crypto.recorder, thesis.Tick, "desk", map[string]any{
 		"ns":        time.Since(started).Nanoseconds(),
-		"decisions": len(thesis.Decisions),
+		"decisions": decisions,
 	}))
+}
+
+/*
+publish forwards the engine tick plus decisions, lifecycle, and findings so the
+terminal pulse and rails leave their waiting states as soon as a cut completes.
+*/
+func (crypto *Crypto) publish(thesis *types.Thesis, elapsed time.Duration) {
+	if crypto.uiHub == nil || crypto.uiHub.Messages == nil || thesis == nil {
+		return
+	}
+
+	crypto.enqueue(datura.Map[any]{"tick": datura.Map[any]{
+		"count":        thesis.Tick,
+		"measurements": types.ObservationCount(thesis.Measurements),
+		"candidates":   len(thesis.Forecasts),
+		"open":         crypto.desk.HoldingCount(),
+		"ns":           elapsed.Nanoseconds(),
+		"completed":    true,
+		"phase":        "complete",
+	}})
+
+	if len(thesis.Decisions) > 0 {
+		crypto.enqueue(datura.Map[any]{"decisions": thesis.Decisions})
+	}
+
+	lifecycle := make([]datura.Map[any], 0)
+
+	thesis.Lifecycle.Range(func(key, value any) bool {
+		lifecycle = append(lifecycle, datura.Map[any]{
+			"symbol": key.(string),
+			"state":  value.(string),
+		})
+
+		return true
+	})
+
+	if len(lifecycle) > 0 {
+		crypto.enqueue(datura.Map[any]{"lifecycle": lifecycle})
+	}
+
+	if len(thesis.Findings) > 0 {
+		crypto.enqueue(datura.Map[any]{"findings": thesis.Findings})
+	}
+}
+
+/*
+enqueue non-blocking-publishes one UI frame; a full hub channel drops the frame
+rather than stalling the desk path.
+*/
+func (crypto *Crypto) enqueue(frame datura.Map[any]) {
+	select {
+	case crypto.uiHub.Messages <- frame.Marshal():
+	default:
+	}
 }
 
 func (crypto *Crypto) enter(thesis *types.Thesis, decision *types.Decision) {

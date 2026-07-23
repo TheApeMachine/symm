@@ -18,7 +18,7 @@ import (
 
 var cacheKeys = []string{
 	"balances", "executions", "instruments", "positions", "tick",
-	"holdings", "measurements", "decisions", "lifecycle", "findings",
+	"holdings", "stops", "measurements", "decisions", "lifecycle", "findings",
 }
 
 /*
@@ -34,6 +34,7 @@ type Hub struct {
 	listenAddr  string
 	Messages    chan []byte
 	price       *broker.Price
+	balance     *broker.Balance
 	subscribers *sync.Map
 	client      atomic.Pointer[websocket.Conn]
 	writeMu     sync.Mutex
@@ -60,6 +61,7 @@ func NewHub(
 			WriteBufferSize: 4 * 1024 * 1024,
 		}),
 		price:       price,
+		balance:     balance,
 		subscribers: &sync.Map{},
 	}
 
@@ -78,6 +80,7 @@ func NewHub(
 
 		hub.client.Store(conn)
 		hub.replay()
+		hub.writeWallet()
 
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
@@ -151,6 +154,48 @@ func (hub *Hub) replay() {
 
 		hub.write(payload)
 	}
+}
+
+/*
+writeWallet pushes a fresh Balance.Frame on connect so wallet/holdings are not
+stranded when earlier non-blocking Publishes were dropped on a full channel.
+*/
+func (hub *Hub) writeWallet() {
+	if hub.balance == nil {
+		return
+	}
+
+	frame := hub.balance.Frame()
+
+	if len(frame) == 0 {
+		return
+	}
+
+	hub.retain(frame)
+	hub.write(frame)
+}
+
+/*
+Cached returns the latest retained payload for one cache key after drain.
+*/
+func (hub *Hub) Cached(key string) []byte {
+	if hub == nil {
+		return nil
+	}
+
+	value, ok := hub.subscribers.Load(key)
+
+	if !ok {
+		return nil
+	}
+
+	payload, ok := value.([]byte)
+
+	if !ok {
+		return nil
+	}
+
+	return payload
 }
 
 func (hub *Hub) write(msg []byte) {

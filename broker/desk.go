@@ -48,7 +48,7 @@ func NewDesk(
 
 	desk.Actor = types.NewActor(ctx, map[string]types.Handler{
 		"ticker":     {Topic: "ticker", Fn: desk.onTicker},
-		"instrument": {Topic: "instrument", Fn: desk.instrument.On},
+		"instrument": {Topic: "instrument", Fn: desk.onInstrument},
 		"balances":   {Topic: "balances", Fn: desk.onBalances},
 		"executions": {Topic: "executions", Fn: desk.onExecutions},
 		"add_order":  {Topic: "add_order", Fn: desk.onOrder},
@@ -127,9 +127,44 @@ func (desk *Desk) onTicker(message any) any {
 	return nil
 }
 
+func (desk *Desk) onInstrument(message any) any {
+	desk.instrument.On(message)
+	desk.AdoptOpen()
+	return nil
+}
+
 func (desk *Desk) onBalances(message any) any {
 	desk.balance.BalanceAck(message.([]byte))
+	desk.AdoptOpen()
 	return nil
+}
+
+/*
+AdoptOpen creates Position shells for wallet lots that already exist at startup
+or arrive via balance sync, so marks and exits work without a prior Enter.
+*/
+func (desk *Desk) AdoptOpen() {
+	if desk == nil || desk.balance == nil || desk.instrument == nil {
+		return
+	}
+
+	for holding := range desk.balance.Holdings() {
+		if _, ok := desk.Position(holding.Symbol); ok {
+			continue
+		}
+
+		pair, err := desk.instrument.Pair(holding.Symbol)
+
+		if err != nil {
+			continue
+		}
+
+		position := NewPosition(
+			desk.api, desk.instrument, desk.price, desk.balance, pair,
+		)
+		position.status = types.OPEN
+		desk.positions.Store(holding.Symbol, position)
+	}
 }
 
 func (desk *Desk) onExecutions(message any) any {

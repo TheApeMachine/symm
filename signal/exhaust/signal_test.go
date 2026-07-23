@@ -1,7 +1,9 @@
 package exhaust_test
 
 import (
+	"context"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -143,28 +145,82 @@ func TestCalculate(t *testing.T) {
 			market := tests.NewMarket(t.Context(), 3)
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
-			measurements := []*types.Measurement{}
 
-			for index, state := range proof.states {
-				capture := index == len(proof.states)-1
-				So(market.Transition(state, func() error {
-					thesis, err := wired.Observe()
+			signal := exhaustionOf(wired.Signals)
+			book := signal.Subscribe("book")
+			trade := signal.Subscribe("trade")
+			ctx, cancel := context.WithCancel(t.Context())
+			var mu sync.Mutex
+			var seen []*types.Measurement
+			var last time.Time
+			var capture bool
 
-					if err != nil {
-						return err
+			go func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case message := <-book.Channel:
+						batch := exhaustionFrom(message)
+						mu.Lock()
+
+						if capture {
+							seen = append(seen, batch...)
+							last = time.Now()
+						}
+
+						mu.Unlock()
+					case message := <-trade.Channel:
+						batch := exhaustionFrom(message)
+						mu.Lock()
+
+						if capture {
+							seen = append(seen, batch...)
+							last = time.Now()
+						}
+
+						mu.Unlock()
 					}
+				}
+			}()
 
-					if capture {
-						measurements = append(
-							measurements,
-							thesis.Measurements...,
-						)
-					}
+			noop := func() error { return nil }
+			So(market.Warmup(noop), ShouldBeNil)
 
-					return nil
-				}), ShouldBeNil)
+			for _, state := range proof.states[:len(proof.states)-1] {
+				So(market.Transition(state, noop), ShouldBeNil)
 			}
+
+			mu.Lock()
+			seen = seen[:0]
+			last = time.Time{}
+			capture = true
+			mu.Unlock()
+
+			So(market.Transition(proof.states[len(proof.states)-1], noop), ShouldBeNil)
+
+			deadline := time.Now().Add(5 * time.Second)
+
+			for time.Now().Before(deadline) {
+				mu.Lock()
+				idle := len(seen) > 0 && !last.IsZero() &&
+					time.Since(last) > 500*time.Millisecond
+				mu.Unlock()
+
+				if idle {
+					break
+				}
+
+				time.Sleep(5 * time.Millisecond)
+			}
+
+			cancel()
+
+			mu.Lock()
+			measurements := append([]*types.Measurement(nil), seen...)
+			mu.Unlock()
+
+			So(measurements, ShouldNotBeEmpty)
 
 			outcome := marketOutcome{
 				peak:     map[measurementKey]float64{},
@@ -175,10 +231,6 @@ func TestCalculate(t *testing.T) {
 			}
 
 			for _, measurement := range measurements {
-				if measurement.Source != types.SourceExhaustion {
-					continue
-				}
-
 				outcome.observe(measurement)
 			}
 
@@ -394,7 +446,7 @@ func BenchmarkCalculate(b *testing.B) {
 	}()
 	defer market.Close()
 
-	if err := market.Warmup(tests.Consume(wired.Observe)); err != nil {
+	if err := market.Warmup(func() error { return nil }); err != nil {
 		b.Fatal(err)
 	}
 
@@ -422,8 +474,42 @@ func BenchmarkCalculate(b *testing.B) {
 					Ticks:  1,
 				},
 			},
-		}, tests.Consume(wired.Observe)); err != nil {
+		}, func() error { return nil }); err != nil {
 			b.Fatal(err)
 		}
 	}
+}
+
+/*
+exhaustionOf returns the boot-wired exhaustion signal.
+*/
+func exhaustionOf(signals []types.Signal) *exhaust.Signal {
+	for _, signal := range signals {
+		if named, ok := signal.(*exhaust.Signal); ok {
+			return named
+		}
+	}
+
+	panic("exhaust signal missing from boot")
+}
+
+/*
+exhaustionFrom reads SourceExhaustion measurements off a signal-published Thesis.
+*/
+func exhaustionFrom(message any) []*types.Measurement {
+	thesis, ok := message.(*types.Thesis)
+
+	if !ok {
+		return nil
+	}
+
+	out := make([]*types.Measurement, 0, len(thesis.Measurements))
+
+	for _, measurement := range thesis.Measurements {
+		if measurement.Source == types.SourceExhaustion {
+			out = append(out, measurement)
+		}
+	}
+
+	return out
 }

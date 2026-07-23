@@ -265,7 +265,5 @@ active market-data producers.
 */
 func (signal *Signal) Close() error {
 	signal.cancel()
-	signal.cancel()
-
 	return nil
 }

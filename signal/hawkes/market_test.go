@@ -36,7 +36,7 @@ func (proof marketProof) Run(t *testing.T) (marketOutcome, []string) {
 	defer market.Close()
 
 	if proof.warm {
-		So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
+		So(market.Warmup(tests.Idle), ShouldBeNil)
 	}
 
 	outcome := marketOutcome{peak: make(evidenceValues)}
@@ -44,11 +44,7 @@ func (proof marketProof) Run(t *testing.T) (marketOutcome, []string) {
 	for index, state := range proof.states {
 		capture := index == len(proof.states)-1
 		err = market.Transition(state, func() error {
-			thesis, err := wired.Observe()
-
-			if err != nil {
-				return err
-			}
+			thesis := wired.Thesis
 
 			if capture {
 				outcome.Capture(thesis.Measurements)

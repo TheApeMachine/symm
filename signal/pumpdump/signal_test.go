@@ -126,7 +126,6 @@ func TestMeasure(t *testing.T) {
 			var thesis *types.Thesis
 			So(market.Warmup(func() error {
 				var err error
-				thesis, err = wired.Observe()
 				return err
 			}), ShouldBeNil)
 			measurements := []*types.Measurement{}
@@ -140,9 +139,7 @@ func TestMeasure(t *testing.T) {
 
 			for _, state := range proof.states[:len(proof.states)-1] {
 				So(market.Transition(state, func() error {
-					var err error
-					thesis, err = wired.Observe()
-					return err
+					return nil
 				}, proof.symbols...), ShouldBeNil)
 			}
 
@@ -154,12 +151,7 @@ func TestMeasure(t *testing.T) {
 
 			So(market.Transition(
 				proof.states[len(proof.states)-1], func() error {
-					var err error
-					thesis, err = wired.Observe()
-
-					if err != nil {
-						return err
-					}
+					thesis := wired.Thesis
 
 					current := thesis.Measurements
 					advanced := make(map[string]bool, len(market.Symbols))
@@ -379,7 +371,7 @@ func BenchmarkMeasure(b *testing.B) {
 					Ticks:  1,
 				},
 			},
-		}, tests.Consume(wired.Observe)); err != nil {
+		}, tests.Idle); err != nil {
 			b.Fatal(err)
 		}
 	}

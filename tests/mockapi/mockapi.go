@@ -109,8 +109,8 @@ func (conn *MockConn) Emit(channel string, payload []byte) {
 
 /*
 Drain delivers every queued frame through MockConn.Emit so Actor roots see
-the same tape as production OnReceived → Send, then waits until those roots
-are empty so Desk and other subscribers have had a chance to consume.
+the same tape as production OnReceived → Send. add_order frames emit before
+executions so Desk can record OrderAck before ExecutionAck.
 */
 func (conn *MockConn) Drain() error {
 	if conn == nil {
@@ -128,8 +128,10 @@ func (conn *MockConn) Drain() error {
 	conn.queue.frames = nil
 	conn.queue.mu.Unlock()
 
-	// add_order acknowledgements must reach Desk before executions so
-	// Position.OrderAck records the order id ExecutionAck matches on.
+	if len(queued) == 0 {
+		return nil
+	}
+
 	early := make([]outbound, 0, len(queued))
 	late := make([]outbound, 0, len(queued))
 
@@ -146,48 +148,17 @@ func (conn *MockConn) Drain() error {
 		conn.Emit(frame.channel, frame.payload)
 	}
 
-	if err := conn.settle(); err != nil {
-		return err
+	if len(early) > 0 {
+		if err := conn.delivered(); err != nil {
+			return err
+		}
 	}
 
 	for _, frame := range late {
 		conn.Emit(frame.channel, frame.payload)
 	}
 
-	return conn.settle()
-}
-
-/*
-settle waits until every Actor root channel is empty after Emit.
-*/
-func (conn *MockConn) settle() error {
-	deadline := time.Now().Add(2 * time.Second)
-
-	for time.Now().Before(deadline) {
-		pending := false
-
-		for _, root := range conn.roots {
-			if len(root.Channel) > 0 {
-				pending = true
-				break
-			}
-		}
-
-		if !pending {
-			// Roots empty means the producer finished; give subscriber Actors
-			// one scheduling turn to finish handlers before Drain returns.
-			time.Sleep(50 * time.Millisecond)
-			return nil
-		}
-
-		time.Sleep(time.Millisecond)
-	}
-
-	return errnie.Err(
-		errnie.Timeout,
-		"tests/mockapi: Actor did not drain roots after Emit",
-		nil,
-	)
+	return conn.delivered()
 }
 
 func (conn *MockConn) feed(channel string, raw []byte) {
@@ -299,7 +270,49 @@ func (conn *MockConn) Write(params json.Marshaler) error {
 		}
 	}
 
-	return conn.settle()
+	// Subscription snapshots must reach Balance/Instrument before Status READY.
+	return conn.delivered()
+}
+
+/*
+delivered waits until Actor roots are empty after a subscribe Emit so boot
+preflight can observe READY. Market Drain does not use this — tests subscribe
+to the signal Actor for that.
+*/
+func (conn *MockConn) delivered() error {
+	deadline := time.Now().Add(10 * time.Second)
+	quiet := 0
+
+	for time.Now().Before(deadline) {
+		busy := false
+
+		for _, root := range conn.roots {
+			if len(root.Channel) > 0 {
+				busy = true
+				break
+			}
+		}
+
+		if busy {
+			quiet = 0
+			time.Sleep(time.Millisecond)
+			continue
+		}
+
+		quiet++
+
+		if quiet >= 3 {
+			return nil
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+
+	return errnie.Err(
+		errnie.Timeout,
+		"tests/mockapi: subscribe Emit not consumed",
+		nil,
+	)
 }
 
 /*
@@ -328,6 +341,13 @@ func (conn *MockConn) Publish(channel string, payload []byte) error {
 	}
 
 	return conn.Queue(channel, filtered)
+}
+
+/*
+Root returns the Actor fan-out for fixture market publish.
+*/
+func (conn *MockConn) Root() *types.Actor {
+	return conn.Actor
 }
 
 /*

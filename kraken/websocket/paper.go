@@ -168,6 +168,13 @@ func (paper *Paper) Emit(channel string, payload json.Marshaler) error {
 	return nil
 }
 
+/*
+Root returns the Actor fan-out for private channel publish.
+*/
+func (paper *Paper) Root() *types.Actor {
+	return paper.Actor
+}
+
 func (paper *Paper) Close() {
 	paper.cancel()
 }

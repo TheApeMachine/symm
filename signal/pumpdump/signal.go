@@ -5,6 +5,7 @@ import (
 	"math"
 	"slices"
 	"sort"
+	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
@@ -25,9 +26,9 @@ type Signal struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	ignition   *equation.Ignition
-	volume     map[string]float64
-	orderBooks map[string]*flow.Book
-	increments map[string]float64
+	volume     *sync.Map
+	orderBooks *sync.Map
+	increments *sync.Map
 	ui         chan []byte
 }
 
@@ -46,9 +47,9 @@ func NewSignal(
 		ctx:        ctx,
 		cancel:     cancel,
 		ignition:   equation.NewIgnition(baselineCapacity),
-		volume:     make(map[string]float64),
-		orderBooks: make(map[string]*flow.Book),
-		increments: make(map[string]float64),
+		volume:     &sync.Map{},
+		orderBooks: &sync.Map{},
+		increments: &sync.Map{},
 		ui:         ui,
 	}
 
@@ -209,15 +210,33 @@ func (signal *Signal) measure(row kraken.TickerData) ([]*types.Measurement, erro
 		return nil, nil
 	}
 
-	book := signal.orderBooks[row.Symbol]
-	volume := signal.volume[row.Symbol]
+	bookFound, ok := signal.orderBooks.Load(row.Symbol)
+
+	if !ok {
+		return nil, nil
+	}
+
+	book := bookFound.(*flow.Book)
+	found, ok := signal.volume.Load(row.Symbol)
+
+	if !ok {
+		return nil, nil
+	}
+
+	volume := found.(float64)
 
 	if book == nil || volume <= 0 {
 		return nil, nil
 	}
 
 	mid := book.Mid()
-	increment := signal.increments[row.Symbol]
+	incrementFound, ok := signal.increments.Load(row.Symbol)
+
+	if !ok {
+		return nil, nil
+	}
+
+	increment := incrementFound.(float64)
 
 	if mid <= 0 || increment <= 0 {
 		return nil, nil
@@ -278,7 +297,14 @@ func (signal *Signal) ingest(
 			)
 		}
 
-		signal.volume[trade.Symbol] += trade.Qty
+		found, ok := signal.volume.Load(trade.Symbol)
+		volume := 0.0
+
+		if ok {
+			volume = found.(float64)
+		}
+
+		signal.volume.Store(trade.Symbol, volume+trade.Qty)
 	}
 
 	for _, row := range books {
@@ -290,12 +316,18 @@ func (signal *Signal) ingest(
 			)
 		}
 
-		book := signal.orderBooks[row.Symbol]
-		signal.increments[row.Symbol] = row.PriceIncrement.Float64()
+		bookFound, ok := signal.orderBooks.Load(row.Symbol)
+		var book *flow.Book
+
+		if ok {
+			book = bookFound.(*flow.Book)
+		}
+
+		signal.increments.Store(row.Symbol, row.PriceIncrement.Float64())
 
 		if book == nil || row.Type == "snapshot" {
 			book = flow.NewBook()
-			signal.orderBooks[row.Symbol] = book
+			signal.orderBooks.Store(row.Symbol, book)
 		}
 
 		bids, asks, err := kraken.BookLevels(row)

@@ -26,7 +26,6 @@ import (
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/tests"
-	"github.com/theapemachine/symm/tests/mockapi"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
@@ -95,7 +94,6 @@ func (booter *Booter) Start() error {
 		paper,
 		nil,
 		nil,
-		false,
 		simulator,
 		public,
 		private,
@@ -130,7 +128,6 @@ func (booter *Booter) Test(market *tests.Market) (*Stack, error) {
 		market.Paper,
 		market.Level3,
 		market.Symbols,
-		true,
 	)
 
 	if err != nil {
@@ -219,9 +216,8 @@ type Stack struct {
 
 /*
 boot assembles and initializes the graph against the supplied Conn transports.
-When cutOwned is true (fixture tests), signals only append measurements and
-Observe runs analyzer → planner → desk so those stages do not race the Actor
-cascade on the shared Thesis.
+Fixture tests and live start share the same Actor cascade: signals measure into
+the shared Thesis, Hawkes advances analyzer → planner → crypto.
 */
 func (booter *Booter) boot(
 	public websocket.Conn,
@@ -229,13 +225,12 @@ func (booter *Booter) boot(
 	paper websocket.Conn,
 	level3 websocket.Conn,
 	symbols []string,
-	cutOwned bool,
 	preflight ...types.StatusReporter,
 ) (*Stack, error) {
 	api := websocket.NewAPI(booter.ctx, public, private, paper)
 
 	if level3 != nil {
-		api.InjectLevel3(publicActor(level3), level3, symbols)
+		api.InjectLevel3(level3.Root(), level3, symbols)
 	}
 
 	tree := dmt.NewTree("")
@@ -340,7 +335,7 @@ func (booter *Booter) boot(
 		preflight = append(preflight, reporter)
 	}
 
-	market := publicActor(public)
+	market := public.Root()
 
 	if market == nil {
 		return nil, errors.Join(
@@ -366,7 +361,7 @@ func (booter *Booter) boot(
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
 
-	if err := desk.Initialize(market, accountActor(api)); err != nil {
+	if err := desk.Initialize(market, api.Account().Root()); err != nil {
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
 
@@ -380,10 +375,6 @@ func (booter *Booter) boot(
 
 	for _, signal := range signals {
 		signal.Initialize(market, thesis)
-	}
-
-	if cutOwned {
-		return wired, nil
 	}
 
 	if err := analyzer.Initialize(
@@ -403,114 +394,6 @@ func (booter *Booter) boot(
 	}
 
 	return wired, nil
-}
-
-/*
-Observe waits for signal Actors to finish measuring the latest drained tape,
-then runs analyzer, planner, and desk apply on the shared Thesis.
-Thesis time follows the newest measurement At from the fixture tape.
-*/
-func (stack *Stack) Observe() (*types.Thesis, error) {
-	stack.settle()
-
-	measurements := stack.Thesis.SnapshotMeasurements()
-	tick := stack.Crypto.NextTick()
-	at := observationTime(measurements)
-	stack.Thesis.ResetTick(at, tick)
-	stack.Thesis.InstallMeasurements(measurements)
-
-	errnie.Error(audit.Phase(stack.Recorder, tick, "tick_begin", nil))
-
-	errnie.Error(audit.Phase(stack.Recorder, tick, "measure_end", map[string]any{
-		"measurements": len(stack.Thesis.Measurements),
-	}))
-
-	stack.Analyzer.Update(stack.Thesis)
-
-	errnie.Error(audit.Phase(stack.Recorder, tick, "decide_begin", nil))
-	stack.Planner.Decide(stack.Thesis)
-	errnie.Error(audit.Phase(stack.Recorder, tick, "decide_end", map[string]any{
-		"decisions": len(stack.Thesis.Decisions),
-	}))
-
-	stack.Crypto.Apply(stack.Thesis)
-	errnie.Error(audit.Phase(stack.Recorder, tick, "tick_end", nil))
-
-	return stack.Thesis, nil
-}
-
-/*
-observationTime picks the newest measurement timestamp so Thesis.At tracks the
-fixture tape rather than wall clock.
-*/
-func observationTime(measurements []*types.Measurement) time.Time {
-	at := time.Time{}
-
-	for _, measurement := range measurements {
-		if measurement == nil {
-			continue
-		}
-
-		if measurement.At.After(at) {
-			at = measurement.At
-		}
-	}
-
-	if at.IsZero() {
-		return time.Now().UTC()
-	}
-
-	return at
-}
-
-func (stack *Stack) settle() {
-	deadline := time.Now().Add(500 * time.Millisecond)
-	previous := -1
-	stable := 0
-
-	for time.Now().Before(deadline) {
-		count := len(stack.Thesis.SnapshotMeasurements())
-
-		if count == previous {
-			stable++
-
-			if stable >= 5 {
-				return
-			}
-		} else {
-			stable = 0
-			previous = count
-		}
-
-		time.Sleep(15 * time.Millisecond)
-	}
-}
-
-/*
-publicActor reads the embedded Actor from known public transports.
-*/
-func publicActor(conn websocket.Conn) *types.Actor {
-	switch transport := conn.(type) {
-	case *websocket.Live:
-		return transport.Actor
-	case *mockapi.MockConn:
-		return transport.Actor
-	case *websocket.Paper:
-		return transport.Actor
-	default:
-		return nil
-	}
-}
-
-/*
-accountActor reads the embedded Actor from the private or paper transport.
-*/
-func accountActor(api *websocket.API) *types.Actor {
-	if api == nil {
-		return nil
-	}
-
-	return publicActor(api.Account())
 }
 
 /*

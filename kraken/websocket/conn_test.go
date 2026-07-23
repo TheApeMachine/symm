@@ -619,6 +619,8 @@ func (stub *stubConn) Write(params json.Marshaler) error {
 
 func (stub *stubConn) Close() { stub.closeCount++ }
 
+func (stub *stubConn) Root() *types.Actor { return stub.Actor }
+
 func (stub *stubConn) Post(path string, params json.Marshaler) ([]byte, error) {
 	stub.postPath = path
 	stub.postParams = params

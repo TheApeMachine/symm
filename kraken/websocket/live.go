@@ -308,6 +308,13 @@ func (live *Live) Initialize() error {
 	return nil
 }
 
+/*
+Root returns the Actor fan-out for this session.
+*/
+func (live *Live) Root() *types.Actor {
+	return live.Actor
+}
+
 func (live *Live) Client() *spot.WebSocket {
 	return live.client
 }

@@ -94,6 +94,10 @@ func (outcome *marketOutcome) Capture(measurements []*types.Measurement) {
 		}
 	}
 
+	if rows == 0 {
+		return
+	}
+
 	outcome.latest = latest
 	outcome.batches = append(outcome.batches, latest)
 	outcome.rows = append(outcome.rows, rows)

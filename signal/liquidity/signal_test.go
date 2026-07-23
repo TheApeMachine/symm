@@ -66,11 +66,7 @@ func TestCalculate(t *testing.T) {
 			So(err, ShouldBeNil)
 			var calm metricValues
 			So(market.Warmup(func() error {
-				thesis, err := wired.Observe()
-
-				if err != nil {
-					return err
-				}
+				thesis := wired.Thesis
 
 				calm = tests.LatestMeasurements(
 					thesis.Measurements, types.SourceLiquidity, metrics,
@@ -79,11 +75,7 @@ func TestCalculate(t *testing.T) {
 			}), ShouldBeNil)
 			measurements := []*types.Measurement{}
 			So(market.Transition(proof.state, func() error {
-				thesis, err := wired.Observe()
-
-				if err != nil {
-					return err
-				}
+				thesis := wired.Thesis
 
 				measurements = append(measurements, thesis.Measurements...)
 				return nil

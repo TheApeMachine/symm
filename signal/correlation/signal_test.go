@@ -57,14 +57,10 @@ func TestCalculate(t *testing.T) {
 			market := tests.NewMarket(t.Context(), len(symbols))
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
+			So(market.Warmup(tests.Idle), ShouldBeNil)
 			measurements := []*types.Measurement{}
 			So(market.Transition(proof.state, func() error {
-				thesis, err := wired.Observe()
-
-				if err != nil {
-					return err
-				}
+				thesis := wired.Thesis
 
 				for _, measurement := range thesis.Measurements {
 					if measurement.Source != types.SourceCorrelation {
@@ -131,7 +127,7 @@ func BenchmarkCalculate(b *testing.B) {
 	defer wired.Close()
 	defer market.Close()
 
-	if err := market.Warmup(tests.Consume(wired.Observe)); err != nil {
+	if err := market.Warmup(tests.Idle); err != nil {
 		b.Fatal(err)
 	}
 
@@ -139,7 +135,7 @@ func BenchmarkCalculate(b *testing.B) {
 
 	for b.Loop() {
 		if err := market.Transition(tests.MarketStateFastPump, func() error {
-			_, err := wired.Observe()
+			_ = wired.Thesis
 			return err
 		}); err != nil {
 			b.Fatal(err)

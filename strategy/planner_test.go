@@ -6,20 +6,15 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/stack"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
 )
 
 func tick(wired *stack.Stack) (*types.Thesis, error) {
-	thesis, err := wired.Observe()
+	thesis := wired.Thesis
 
-	if errnie.IsPreconditionFailed(err) {
-		return thesis, nil
-	}
-
-	return thesis, err
+	return thesis, nil
 }
 
 func zero() *decimal.Decimal {
@@ -49,7 +44,7 @@ func TestUpdate(t *testing.T) {
 			market.Close()
 		})
 
-		So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
+		So(market.Warmup(tests.Idle), ShouldBeNil)
 
 		Convey("When a fast pump plays through Tick", func() {
 			var thesis *types.Thesis
@@ -112,7 +107,7 @@ func TestDecide(t *testing.T) {
 			market.Close()
 		})
 
-		So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
+		So(market.Warmup(tests.Idle), ShouldBeNil)
 
 		quote := viper.GetString("market.quote_currency")
 		So(quote, ShouldEqual, "USD")
@@ -355,7 +350,7 @@ func BenchmarkDecide(b *testing.B) {
 		market.Close()
 	}()
 
-	if err := market.Warmup(tests.Consume(wired.Observe)); err != nil {
+	if err := market.Warmup(tests.Idle); err != nil {
 		b.Fatal(err)
 	}
 

@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	orderackfixture "github.com/theapemachine/symm/tests/fixtures/orderack"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -45,6 +46,38 @@ func TestExecutionAck(t *testing.T) {
 
 		position.status = types.PENDING
 		position.orderID = "PAPER-00005"
+
+		Convey("When a fill arrives before OrderAck binds the venue id", func() {
+			position.orderID = ""
+			position.request = kraken.NewMarketOrder(
+				"buy", holding.Qty, holding.Symbol,
+			)
+
+			early := kraken.NewExecutionFromMap(datura.Map[any]{
+				"id": "PAPER-00004", "order_id": "PAPER-00005",
+				"pair": "NEARUSD", "side": "Buy", "volume": 20.90318866,
+				"price": 1.8956, "cost": 39.624084423896, "fee": 0.1030226195021296,
+				"status": "filled", "time": "2026-07-23T10:56:20Z",
+			})
+			earlyRaw, earlyErr := early.MarshalJSON()
+			So(earlyErr, ShouldBeNil)
+			position.ExecutionAck(earlyRaw)
+
+			Convey("Then the in-flight request still opens the lot", func() {
+				So(position.orderID, ShouldEqual, "PAPER-00005")
+				So(position.Status(), ShouldEqual, types.OPEN)
+				So(holding.Status, ShouldEqual, types.OPEN)
+
+				Convey("And a late OrderAck does not demote the open lot", func() {
+					position.OrderAck(orderackfixture.Frame(orderackfixture.Options{
+						ReqID:   position.request.ReqID,
+						OrderID: "PAPER-00005",
+						Success: true,
+					}))
+					So(position.Status(), ShouldEqual, types.OPEN)
+				})
+			})
+		})
 
 		Convey("When the venue reports the compact-pair Buy fill", func() {
 			execution := kraken.NewExecutionFromMap(datura.Map[any]{

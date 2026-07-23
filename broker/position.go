@@ -94,6 +94,10 @@ func (position *Position) Mark(symbol string) {
 	}
 }
 
+/*
+OrderAck binds the venue order id for the in-flight request. A fill that raced
+ahead of this ack already owns status, so the ack must not demote it.
+*/
 func (position *Position) OrderAck(buf []byte) {
 	orderAck := kraken.NewOrderResponse(buf)
 
@@ -108,6 +112,16 @@ func (position *Position) OrderAck(buf []byte) {
 	}
 
 	position.orderID = orderAck.Result.OrderID
+
+	// A fill may land before this ack when Actor topic order races; do not
+	// demote an already-open or closed lot back to PENDING.
+	if position.status == types.OPEN ||
+		position.status == types.CLOSED ||
+		position.status == types.CANCELED ||
+		position.status == types.FILLED {
+		return
+	}
+
 	position.status = types.PENDING
 }
 
@@ -119,19 +133,9 @@ func (position *Position) ExecutionAck(buf []byte) {
 	}
 
 	for _, data := range execution.Data {
-		if data.OrderID != position.orderID {
-			continue
-		}
-
 		holding := position.holding(data.Symbol)
 
-		if holding == nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"holding not found for "+data.Symbol,
-				nil,
-			))
-
+		if holding == nil || !position.accept(data.OrderID) {
 			continue
 		}
 
@@ -156,6 +160,24 @@ func (position *Position) ExecutionAck(buf []byte) {
 			position.Close()
 		}
 	}
+}
+
+/*
+accept reports whether this execution belongs to the position. When OrderAck has
+not yet bound orderID (Actor topic order can deliver executions first), the
+in-flight request claims the first fill for this lot.
+*/
+func (position *Position) accept(orderID string) bool {
+	if position.orderID != "" {
+		return orderID == position.orderID
+	}
+
+	if position.request == nil || orderID == "" {
+		return false
+	}
+
+	position.orderID = orderID
+	return true
 }
 
 /*

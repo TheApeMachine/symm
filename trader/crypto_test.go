@@ -2,6 +2,7 @@ package trader_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
@@ -23,7 +24,7 @@ func TestCryptoApplyEnterExit(t *testing.T) {
 			So(wired.Close(), ShouldBeNil)
 			market.Close()
 		})
-		So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
+		So(market.Warmup(tests.Idle), ShouldBeNil)
 		symbol := market.Symbols[0]
 		quantity := decimal.NewFromInt64(2)
 
@@ -46,10 +47,9 @@ func TestCryptoApplyEnterExit(t *testing.T) {
 				phase, found := thesis.Lifecycle.Load(symbol)
 				So(found, ShouldBeTrue)
 				So(phase, ShouldEqual, types.LifecycleEntrySubmitted)
+				open, opened := waitHolding(wired, symbol, types.OPEN)
+				So(opened, ShouldBeTrue)
 				So(wired.Desk.OpenPositions(), ShouldEqual, 1)
-				open, holdErr := wired.Balance.Holding(symbol)
-				So(holdErr, ShouldBeNil)
-				So(open.Status, ShouldEqual, types.OPEN)
 				So(open.Qty.Cmp(quantity), ShouldEqual, 0)
 				So(open.EntryPrice, ShouldNotBeNil)
 				So(open.EntryPrice.Sign(), ShouldEqual, 1)
@@ -69,14 +69,52 @@ func TestCryptoApplyEnterExit(t *testing.T) {
 						phase, found = thesis.Lifecycle.Load(symbol)
 						So(found, ShouldBeTrue)
 						So(phase, ShouldEqual, types.LifecycleExitSubmitted)
+						So(waitGone(wired, symbol), ShouldBeTrue)
 						So(wired.Desk.OpenPositions(), ShouldEqual, 0)
-						_, holdErr = wired.Balance.Holding(symbol)
-						So(holdErr, ShouldNotBeNil)
 					})
 				})
 			})
 		})
 	})
+}
+
+/*
+waitHolding polls Balance until the symbol reaches status or the deadline elapses.
+Drain only Enqueues Actor work; Desk ExecutionAck is what opens the lot.
+*/
+func waitHolding(
+	wired *stack.Stack, symbol string, status types.Status,
+) (types.Holding, bool) {
+	deadline := time.Now().Add(time.Second)
+
+	for time.Now().Before(deadline) {
+		holding, err := wired.Balance.Holding(symbol)
+
+		if err == nil && holding.Status == status {
+			return holding, true
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	return types.Holding{}, false
+}
+
+/*
+waitGone polls until Balance no longer reports an open lot for symbol.
+*/
+func waitGone(wired *stack.Stack, symbol string) bool {
+	deadline := time.Now().Add(time.Second)
+
+	for time.Now().Before(deadline) {
+		if _, err := wired.Balance.Holding(symbol); err != nil {
+			return true
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	return false
 }
 
 /*
@@ -95,7 +133,7 @@ func BenchmarkCryptoApplyEnter(b *testing.B) {
 		market.Close()
 	}()
 
-	if err := market.Warmup(tests.Consume(wired.Observe)); err != nil {
+	if err := market.Warmup(tests.Idle); err != nil {
 		b.Fatal(err)
 	}
 

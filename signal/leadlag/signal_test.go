@@ -69,17 +69,13 @@ func TestCalculate(t *testing.T) {
 			market := tests.NewMarket(t.Context(), 3)
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
+			So(market.Warmup(tests.Idle), ShouldBeNil)
 			measurements := []*types.Measurement{}
 
 			for index, state := range proof.states {
 				capture := index == len(proof.states)-1
 				So(market.Transition(state, func() error {
-					thesis, err := wired.Observe()
-
-					if err != nil {
-						return err
-					}
+					thesis := wired.Thesis
 
 					if capture {
 						measurements = append(measurements, thesis.Measurements...)

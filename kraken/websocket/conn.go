@@ -24,12 +24,15 @@ const (
 
 /*
 Conn is the internal websocket and REST transport.
+Root exposes the Actor fan-out every transport embeds so Boot and desk
+wiring never type-assert Live versus MockConn versus Paper.
 */
 type Conn interface {
 	Client() *spot.WebSocket
 	Write(params json.Marshaler) error
 	Post(path string, params json.Marshaler) ([]byte, error)
 	Close()
+	Root() *types.Actor
 }
 
 /*

@@ -82,10 +82,10 @@ func TestCalculate(t *testing.T) {
 			market := tests.NewMarket(t.Context(), 3)
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
+			So(market.Warmup(tests.Idle), ShouldBeNil)
 			measurements := []*types.Measurement{}
 			So(market.Transition(proof.state, func() error {
-				thesis, err := wired.Observe()
+				thesis := wired.Thesis
 
 				if errnie.IsPreconditionFailed(err) {
 					return nil
@@ -333,7 +333,7 @@ func BenchmarkCalculate(b *testing.B) {
 	}()
 	defer market.Close()
 
-	if err := market.Warmup(tests.Consume(wired.Observe)); err != nil {
+	if err := market.Warmup(tests.Idle); err != nil {
 		b.Fatal(err)
 	}
 
@@ -361,7 +361,7 @@ func BenchmarkCalculate(b *testing.B) {
 					Ticks:  1,
 				},
 			},
-		}, tests.Consume(wired.Observe)); err != nil {
+		}, tests.Idle); err != nil {
 			b.Fatal(err)
 		}
 	}

@@ -3,12 +3,10 @@ package broker
 import (
 	"iter"
 	"maps"
-	"slices"
 	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -71,28 +69,24 @@ func (balance *Balance) Status() types.Status {
 }
 
 /*
-Publish enqueues a desk snapshot on the UI channel. Callers that must deliver
-on websocket connect should Write Frame() directly — a saturated channel drops
-this non-blocking send. Empty payloads (marshal failure) are never enqueued.
+Publish enqueues Frame() on the UI channel. Callers that must deliver on
+websocket connect should write Frame() directly — a saturated channel drops
+this non-blocking send. Empty payloads are never enqueued.
 */
 func (balance *Balance) Publish() {
-	if balance.data == nil {
+	frame := balance.Frame()
+
+	if len(frame) == 0 || balance.ui == nil {
 		return
 	}
 
-	balances := make([]kraken.BalanceData, 0)
-
-	balance.data.Range(func(key, value any) bool {
-		balances = append(balances, *value.(*kraken.BalanceData))
-		return true
-	})
-
 	select {
-	case balance.ui <- datura.Map[any]{
-		"balances": balances,
-		"holdings": slices.Collect(balance.Holdings()),
-	}.Marshal():
+	case balance.ui <- frame:
 	default:
+		select {
+		case balance.ui <- frame:
+		default:
+		}
 	}
 }
 
@@ -104,10 +98,12 @@ func (balance *Balance) BalanceAck(buf []byte) {
 	}
 
 	if balance.data == nil || incoming.Type == "snapshot" {
-		for _, data := range incoming.Data {
+		for index := range incoming.Data {
+			data := incoming.Data[index]
 			balance.data.Store(data.Asset, &data)
 		}
 
+		balance.syncWallet()
 		balance.status = types.READY
 		balance.Publish()
 
@@ -124,27 +120,14 @@ func (balance *Balance) BalanceAck(buf []byte) {
 		return
 	}
 
-	for _, update := range incoming.Data {
-		replaced := false
-
-		balance.data.Range(func(key, value any) bool {
-			if key.(string) != update.Asset {
-				return true
-			}
-
-			balance.data.Store(key, &update)
-			replaced = true
-			return false
-		})
-
-		if !replaced {
-			balance.data.Store(update.Asset, &update)
-		}
+	for index := range incoming.Data {
+		update := incoming.Data[index]
+		balance.data.Store(update.Asset, &update)
 	}
 
 	balance.sequence = incoming.Sequence
+	balance.syncWallet()
 	balance.status = types.READY
-
 	balance.Publish()
 }
 
