@@ -257,7 +257,8 @@ export const kernelSparkPaths = (
 			? history.map((value) =>
 					maximum > minimum
 						? (value - minimum) / (maximum - minimum)
-						: // ponytail: window-relative min/max scaling; upgrade path is per-kernel rolling quantile normalization from measurement history.
+						: // ponytail: window-relative min/max scaling; upgrade path is per-kernel
+							// rolling quantile normalization from measurement history.
 							value > 0
 							? 0.5
 							: 0,

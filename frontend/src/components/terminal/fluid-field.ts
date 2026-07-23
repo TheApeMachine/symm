@@ -1,7 +1,7 @@
-import { clearCanvas, drawGrid } from "#/components/terminal/canvas";
-import type { TerminalFluidParticle } from "#/components/terminal/fluid-particles";
 import type { FluidFieldLayer } from "#/collections/terminal";
+import { clearCanvas, drawGrid } from "#/components/terminal/canvas";
 import { median } from "#/components/terminal/decision-format";
+import type { TerminalFluidParticle } from "#/components/terminal/fluid-particles";
 import { colormap } from "#/lib/colormap";
 
 const DISPLAY_GAMMA = 0.55; // ponytail: fixed display gamma so midtones enter the mockup teal band; upgrade path is per-symbol histogram equalization from live lattice occupancy.
@@ -441,7 +441,8 @@ export const drawFluidFlowOverlay = (
 
 	const cellWidth = width / columns;
 	const cellHeight = height / rows;
-	// ponytail: fixed sparse-flow stride and field/speed cutoffs; upgrade path is lattice-density-aware sampling from observed particle occupancy.
+	// ponytail: fixed sparse-flow stride and field/speed cutoffs; upgrade path is 
+	// lattice-density-aware sampling from observed particle occupancy.
 	const strideX = Math.max(1, Math.floor(columns / 24));
 	const strideY = Math.max(1, Math.floor(rows / 16));
 
@@ -456,7 +457,8 @@ export const drawFluidFlowOverlay = (
 		) {
 			const field = lattice[row]?.[column] ?? 0;
 
-			// ponytail: fixed field floor so streaks stay inside lit cloud cells like the tmp mockup; upgrade path is adaptive masking from live |ψ|² percentiles.
+			// ponytail: fixed field floor so streaks stay inside lit cloud cells like the tmp mockup; 
+			// upgrade path is adaptive masking from live |ψ|² percentiles.
 			if (field < 0.28) {
 				continue;
 			}
@@ -465,7 +467,8 @@ export const drawFluidFlowOverlay = (
 			const flowY = flow.flowY[row]?.[column] ?? 0;
 			const speed = Math.hypot(flowX, flowY);
 
-			// ponytail: fixed speed floor for guidance streaks; upgrade path is lattice-speed percentile gating from observed guidance magnitudes.
+			// ponytail: fixed speed floor for guidance streaks; upgrade path is lattice-speed 
+			// percentile gating from observed guidance magnitudes.
 			if (speed <= 0.08) {
 				continue;
 			}

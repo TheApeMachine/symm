@@ -177,14 +177,19 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 	started := time.Now()
 
 	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "analyze_begin", nil))
+
 	analyzer.stepManifold(thesis)
 	states := analyzer.observeStates(thesis)
+
 	analyzer.publishMeasured(thesis, states)
+
 	analyzer.composeGraphs(thesis)
 	analyzer.publishGraphs(thesis)
+
 	remObservations, remRequested := analyzer.cognizeStates(thesis, states)
 	analyzer.consolidate(thesis, remObservations, remRequested)
 	analyzer.publishCognition(thesis)
+
 	analyzer.finish(thesis, states, started)
 }
 

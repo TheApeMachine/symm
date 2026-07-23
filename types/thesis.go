@@ -39,25 +39,26 @@ holdings it created plus lifecycle and findings; each market cut replaces
 per-tick evidence in place so the object does not grow without bound.
 */
 type Thesis struct {
-	checkpoint   atomic.Int64
-	uiHub        chan<- []byte
-	Tick         int64          `json:"tick"`
-	At           time.Time      `json:"at"`
-	Positions    *sync.Map      `json:"positions"`
-	Holdings     *sync.Map      `json:"holdings"`
-	CrossSection *CrossSection  `json:"crossSection"`
-	Measurements []*Measurement `json:"measurements"`
-	Graphs       *sync.Map      `json:"graphs"`
-	Forecasts    []Forecasts    `json:"forecasts"`
-	Decisions    []Decision     `json:"decisions"`
-	Lifecycle    *sync.Map      `json:"lifecycle"`
-	Findings     []Finding      `json:"findings"`
-	Hypotheses   []Hypothesis   `json:"hypotheses"`
-	Categories   []Category     `json:"categories"`
-	Manifold     *sync.Map      `json:"manifold"`
-	Cognition    *sync.Map      `json:"cognition"`
-	Resonance    []any          `json:"resonance"`
-	Causal       []any          `json:"causal"`
+	checkpoint    atomic.Int64
+	uiHub         chan<- []byte
+	publish       sync.Mutex
+	Tick          int64         `json:"tick"`
+	At            time.Time     `json:"at"`
+	Positions     *sync.Map     `json:"positions"`
+	Holdings      *sync.Map     `json:"holdings"`
+	CrossSection  *CrossSection `json:"crossSection"`
+	Measurements  []*Measurement `json:"measurements"`
+	Graphs        *sync.Map     `json:"graphs"`
+	Forecasts     []Forecasts   `json:"forecasts"`
+	Decisions     []Decision    `json:"decisions"`
+	Lifecycle     *sync.Map     `json:"lifecycle"`
+	Findings      []Finding     `json:"findings"`
+	Hypotheses    []Hypothesis  `json:"hypotheses"`
+	Categories    []Category    `json:"categories"`
+	Manifold      *sync.Map     `json:"manifold"`
+	Cognition     *sync.Map     `json:"cognition"`
+	Resonance     []any         `json:"resonance"`
+	Causal        []any         `json:"causal"`
 	cutIncomplete bool
 }
 
@@ -98,7 +99,9 @@ func (thesis *Thesis) ResetTick(at time.Time, tick int64) {
 	thesis.Tick = tick
 	thesis.At = at
 	thesis.CrossSection = NewCrossSection()
+	thesis.publish.Lock()
 	thesis.Measurements = nil
+	thesis.publish.Unlock()
 	thesis.Forecasts = thesis.Forecasts[:0]
 	thesis.Decisions = thesis.Decisions[:0]
 	thesis.Hypotheses = thesis.Hypotheses[:0]
@@ -141,6 +144,93 @@ Incomplete reports whether the current cut skipped interested signal work.
 */
 func (thesis *Thesis) Incomplete() bool {
 	return thesis != nil && thesis.cutIncomplete
+}
+
+/*
+Publish upserts rows onto the Thesis by source/metric/side/symbol. The Thesis
+holds the current published surface only; objects that need history accumulate
+it themselves.
+*/
+func (thesis *Thesis) Publish(source SourceType, rows []*Measurement) {
+	if thesis == nil || len(rows) == 0 {
+		return
+	}
+
+	type identity struct {
+		metric MetricType
+		side   MeasurementSide
+		symbol string
+	}
+
+	incoming := make(map[identity]*Measurement, len(rows))
+	order := make([]identity, 0, len(rows))
+
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+
+		key := identity{row.Metric, row.Side, row.Symbol}
+
+		if _, seen := incoming[key]; !seen {
+			order = append(order, key)
+		}
+
+		incoming[key] = row
+	}
+
+	thesis.publish.Lock()
+	defer thesis.publish.Unlock()
+
+	kept := make([]*Measurement, 0, len(thesis.Measurements)+len(order))
+
+	for _, row := range thesis.Measurements {
+		if row == nil {
+			continue
+		}
+
+		if row.Source == source {
+			if _, hit := incoming[identity{row.Metric, row.Side, row.Symbol}]; hit {
+				continue
+			}
+		}
+
+		kept = append(kept, row)
+	}
+
+	for _, key := range order {
+		kept = append(kept, incoming[key])
+	}
+
+	thesis.Measurements = kept
+}
+
+/*
+SnapshotMeasurements copies the current published surface for readers that must
+not observe concurrent Publish mutations.
+*/
+func (thesis *Thesis) SnapshotMeasurements() []*Measurement {
+	if thesis == nil {
+		return nil
+	}
+
+	thesis.publish.Lock()
+	defer thesis.publish.Unlock()
+
+	return append([]*Measurement(nil), thesis.Measurements...)
+}
+
+/*
+InstallMeasurements replaces the published surface after a tick reset.
+*/
+func (thesis *Thesis) InstallMeasurements(rows []*Measurement) {
+	if thesis == nil {
+		return
+	}
+
+	thesis.publish.Lock()
+	thesis.Measurements = rows
+	thesis.publish.Unlock()
 }
 
 /*

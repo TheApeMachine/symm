@@ -136,7 +136,7 @@ func BenchmarkInstrumentOn(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		instrument.On(raw)
+		instrument.On(kraken.NewInstrument(raw))
 	}
 }
 
@@ -165,14 +165,14 @@ func TestInstrumentPublishEmitsUniverse(t *testing.T) {
 		price := broker.NewPrice(api)
 		instrument := broker.NewInstrument(api, price, hub)
 
-		instrument.On([]byte(`{
+		instrument.On(kraken.NewInstrument([]byte(`{
 			"channel":"instrument",
 			"type":"snapshot",
 			"data":{"pairs":[
 				{"symbol":"BTC/USD","base":"BTC","quote":"USD","status":"online"},
 				{"symbol":"ETH/EUR","base":"ETH","quote":"EUR","status":"online"}
 			]}
-		}`))
+		}`)))
 
 		Convey("Then only online quote-currency pairs are published", func() {
 			So(len(hub), ShouldEqual, 1)
@@ -207,11 +207,11 @@ func TestInstrumentSubscribeRejectsInvalidBatchSize(t *testing.T) {
 		So(api.Initialize(), ShouldBeNil)
 		price := broker.NewPrice(api)
 		instrument := broker.NewInstrument(api, price, nil)
-		instrument.On([]byte(`{
+		instrument.On(kraken.NewInstrument([]byte(`{
 			"channel":"instrument",
 			"type":"snapshot",
 			"data":{"pairs":[{"symbol":"BTC/USD","quote":"USD","status":"online"}]}
-		}`))
+		}`)))
 
 		Convey("Then subscription aborts before batching", func() {
 			So(instrument.Status(), ShouldEqual, types.ERROR)

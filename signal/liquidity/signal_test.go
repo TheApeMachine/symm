@@ -64,7 +64,7 @@ func TestCalculate(t *testing.T) {
 			market := tests.NewMarket(t.Context(), 3)
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			var calmThesis *types.Thesis
+			var calm metricValues
 			So(market.Warmup(func() error {
 				thesis, err := wired.Observe()
 
@@ -72,12 +72,11 @@ func TestCalculate(t *testing.T) {
 					return err
 				}
 
-				calmThesis = thesis
+				calm = tests.LatestMeasurements(
+					thesis.Measurements, types.SourceLiquidity, metrics,
+				)
 				return nil
 			}), ShouldBeNil)
-			calm := tests.LatestMeasurements(
-				calmThesis.Measurements, types.SourceLiquidity, metrics,
-			)
 			measurements := []*types.Measurement{}
 			So(market.Transition(proof.state, func() error {
 				thesis, err := wired.Observe()

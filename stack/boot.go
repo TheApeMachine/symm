@@ -408,15 +408,16 @@ func (booter *Booter) boot(
 /*
 Observe waits for signal Actors to finish measuring the latest drained tape,
 then runs analyzer, planner, and desk apply on the shared Thesis.
+Thesis time follows the newest measurement At from the fixture tape.
 */
 func (stack *Stack) Observe() (*types.Thesis, error) {
 	stack.settle()
 
-	measurements := append([]*types.Measurement(nil), stack.Thesis.Measurements...)
+	measurements := stack.Thesis.SnapshotMeasurements()
 	tick := stack.Crypto.NextTick()
-	at := time.Now().UTC()
+	at := observationTime(measurements)
 	stack.Thesis.ResetTick(at, tick)
-	stack.Thesis.Measurements = measurements
+	stack.Thesis.InstallMeasurements(measurements)
 
 	errnie.Error(audit.Phase(stack.Recorder, tick, "tick_begin", nil))
 
@@ -438,13 +439,37 @@ func (stack *Stack) Observe() (*types.Thesis, error) {
 	return stack.Thesis, nil
 }
 
+/*
+observationTime picks the newest measurement timestamp so Thesis.At tracks the
+fixture tape rather than wall clock.
+*/
+func observationTime(measurements []*types.Measurement) time.Time {
+	at := time.Time{}
+
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		if measurement.At.After(at) {
+			at = measurement.At
+		}
+	}
+
+	if at.IsZero() {
+		return time.Now().UTC()
+	}
+
+	return at
+}
+
 func (stack *Stack) settle() {
 	deadline := time.Now().Add(500 * time.Millisecond)
 	previous := -1
 	stable := 0
 
 	for time.Now().Before(deadline) {
-		count := len(stack.Thesis.Measurements)
+		count := len(stack.Thesis.SnapshotMeasurements())
 
 		if count == previous {
 			stable++

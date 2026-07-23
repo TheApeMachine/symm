@@ -77,11 +77,11 @@ func TestSignal_Calculate(t *testing.T) {
 
 			live := types.NewActor(context.Background(), nil)
 			root := types.NewSubscription[any]()
-			live.AddRoot("trade", &root)
+			live.AddRoot("trade", root)
 			ticker := types.NewSubscription[any]()
 			book := types.NewSubscription[any]()
-			live.AddRoot("ticker", &ticker)
-			live.AddRoot("book", &book)
+			live.AddRoot("ticker", ticker)
+			live.AddRoot("book", book)
 
 			signal := NewSignal(context.Background(), nil)
 			thesis := types.NewThesis(nil)

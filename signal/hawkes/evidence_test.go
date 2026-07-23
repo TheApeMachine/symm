@@ -76,7 +76,7 @@ func (outcome *marketOutcome) Capture(measurements []*types.Measurement) {
 	rows := 0
 
 	for _, measurement := range measurements {
-		if measurement.Source != types.SourceHawkes {
+		if measurement == nil || measurement.Source != types.SourceHawkes {
 			continue
 		}
 

@@ -99,9 +99,7 @@ func (signal *Signal) onTicker(message any) any {
 		return nil
 	}
 
-	signal.thesis.Measurements = append(
-		signal.thesis.Measurements, measurements...,
-	)
+	signal.thesis.Publish(types.SourceHawkes, measurements)
 
 	return signal.thesis
 }
@@ -119,9 +117,7 @@ func (signal *Signal) onBook(message any) any {
 		return nil
 	}
 
-	signal.thesis.Measurements = append(
-		signal.thesis.Measurements, measurements...,
-	)
+	signal.thesis.Publish(types.SourceHawkes, measurements)
 
 	return signal.thesis
 }
@@ -139,9 +135,7 @@ func (signal *Signal) onTrade(message any) any {
 		return nil
 	}
 
-	signal.thesis.Measurements = append(
-		signal.thesis.Measurements, measurements...,
-	)
+	signal.thesis.Publish(types.SourceHawkes, measurements)
 
 	return signal.thesis
 }

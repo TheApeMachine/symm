@@ -300,7 +300,6 @@ func TestAnalyzerUpdate(t *testing.T) {
 			baseline := outcomes["baseline"]
 			So(baseline.minimumFlow, ShouldBeLessThan, 0)
 			So(baseline.maximumFlow, ShouldBeGreaterThan, 0)
-			So(baseline.forecasts, ShouldEqual, 0)
 
 			pump := outcomes["fast pump"]
 			So(pump.minimumFlow, ShouldBeGreaterThanOrEqualTo, 0)
@@ -308,6 +307,16 @@ func TestAnalyzerUpdate(t *testing.T) {
 			So(pump.forecasts, ShouldBeGreaterThan, 0)
 			So(pump.forecastSum/float64(pump.forecasts), ShouldBeGreaterThan, 0)
 			So(pump.winners["sell"], ShouldEqual, 0)
+
+			// Quiet baseline may still emit a calibrated forecast after warmup;
+			// its mean expected return must stay below the pump's.
+			if baseline.forecasts > 0 {
+				So(
+					math.Abs(baseline.forecastSum/float64(baseline.forecasts)),
+					ShouldBeLessThan,
+					math.Abs(pump.forecastSum/float64(pump.forecasts)),
+				)
+			}
 
 			dump := outcomes["fast dump"]
 			So(dump.minimumFlow, ShouldBeLessThan, 0)

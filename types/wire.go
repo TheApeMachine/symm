@@ -71,6 +71,8 @@ func WireMeasurements(measurements []*Measurement, ui chan []byte) []datura.Map[
 		out = append(out, groups[key].frame())
 	}
 
+	// ponytail: UI delivery is best-effort; unavailable receivers drop frames.
+	// Upgrade to a bounded or acknowledged publisher if lossless delivery is required.
 	select {
 	case ui <- datura.Map[any]{
 		"measurements": out,

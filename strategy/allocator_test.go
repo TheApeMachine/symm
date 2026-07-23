@@ -24,13 +24,13 @@ func TestAllocatorSizesWalletSlice(t *testing.T) {
 			`"asset":"USD","balance":"5000","available":"5000","reserved":"0"}]}`,
 	))
 	instrument := broker.NewInstrument(nil, nil, nil)
-	instrument.On([]byte(
+	instrument.On(kraken.NewInstrument([]byte(
 		`{"channel":"instrument","type":"snapshot","data":{"pairs":[{` +
 			`"symbol":"LRC/USD","base":"LRC","quote":"USD","status":"online",` +
 			`"qty_min":50,"qty_increment":1,"qty_precision":0,` +
 			`"cost_min":"0.5","cost_precision":5,"tick_size":"0.00001",` +
 			`"price_increment":"0.00001","price_precision":5}]}}`,
-	))
+	)))
 	price := broker.NewPrice(nil)
 	_ = price.RememberFee("LRC/USD", kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.26),
@@ -54,15 +54,23 @@ func TestAllocatorSizesWalletSlice(t *testing.T) {
 		t.Fatalf("Allocate: %v", err)
 	}
 
+	// 5000 USD * 0.20 wallet slice at ask 0.05, after the 0.26% taker fee
+	// haircut on executable notional → exactly 19948 LRC.
 	if thesis.Decisions[0].ProposedQuantity == nil ||
-		thesis.Decisions[0].ProposedQuantity.Float64() < 50 {
-		t.Fatalf("want qty >= 50, got %v (%s)",
+		thesis.Decisions[0].ProposedQuantity.Float64() != 19948 {
+		t.Fatalf("want qty 19948, got %v (%s)",
 			thesis.Decisions[0].ProposedQuantity, thesis.Decisions[0].Reason)
 	}
 
+	if thesis.Decisions[0].ProposedNotional == nil ||
+		thesis.Decisions[0].ProposedNotional.Float64() != 999.99324 {
+		t.Fatalf("want notional 999.99324, got %v", thesis.Decisions[0].ProposedNotional)
+	}
+
 	if value, ok := thesis.Holdings.Load("LRC/USD"); !ok ||
-		value.(*types.Holding).Qty == nil {
-		t.Fatal("want holding qty written")
+		value.(*types.Holding).Qty == nil ||
+		value.(*types.Holding).Qty.Float64() != 19948 {
+		t.Fatal("want holding qty 19948 written")
 	}
 }
 
@@ -79,13 +87,13 @@ func TestAllocatorScalesByRisk(t *testing.T) {
 				`"asset":"USD","balance":"5000","available":"5000","reserved":"0"}]}`,
 		))
 		instrument := broker.NewInstrument(nil, nil, nil)
-		instrument.On([]byte(
+		instrument.On(kraken.NewInstrument([]byte(
 			`{"channel":"instrument","type":"snapshot","data":{"pairs":[{` +
 				`"symbol":"MATIC/USD","base":"MATIC","quote":"USD","status":"online",` +
 				`"qty_min":4,"qty_increment":0.00000001,"qty_precision":8,` +
 				`"cost_min":"0.43","cost_precision":6,"tick_size":"0.0001",` +
 				`"price_increment":"0.0001","price_precision":4}]}}`,
-		))
+		)))
 		price := broker.NewPrice(nil)
 		_ = price.RememberFee("MATIC/USD", kraken.TradeVolumeFee{
 			Fee: decimal.NewFromFloat64(0.26),
@@ -128,13 +136,13 @@ func TestAllocatorBailsWhenMinimumExceedsWalletSlice(t *testing.T) {
 			`"asset":"USD","balance":"10","available":"10","reserved":"0"}]}`,
 	))
 	instrument := broker.NewInstrument(nil, nil, nil)
-	instrument.On([]byte(
+	instrument.On(kraken.NewInstrument([]byte(
 		`{"channel":"instrument","type":"snapshot","data":{"pairs":[{` +
 			`"symbol":"LRC/USD","base":"LRC","quote":"USD","status":"online",` +
 			`"qty_min":50,"qty_increment":1,"qty_precision":0,` +
 			`"cost_min":"0.5","cost_precision":5,"tick_size":"0.00001",` +
 			`"price_increment":"0.00001","price_precision":5}]}}`,
-	))
+	)))
 	price := broker.NewPrice(nil)
 	_ = price.RememberFee("LRC/USD", kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.26),
@@ -170,13 +178,13 @@ func BenchmarkAllocatorAllocate(b *testing.B) {
 
 	balance := broker.NewBalance(nil, nil, nil)
 	instrument := broker.NewInstrument(nil, nil, nil)
-	instrument.On([]byte(
+	instrument.On(kraken.NewInstrument([]byte(
 		`{"channel":"instrument","type":"snapshot","data":{"pairs":[{` +
 			`"symbol":"LRC/USD","base":"LRC","quote":"USD","status":"online",` +
 			`"qty_min":50,"qty_increment":1,"qty_precision":0,` +
 			`"cost_min":"0.5","cost_precision":5,"tick_size":"0.00001",` +
 			`"price_increment":"0.00001","price_precision":5}]}}`,
-	))
+	)))
 	price := broker.NewPrice(nil)
 	_ = price.RememberFee("LRC/USD", kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.26),

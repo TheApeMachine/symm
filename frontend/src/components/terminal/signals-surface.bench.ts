@@ -4,7 +4,8 @@ import type { Measurement } from "#/types/measurement";
 import { regimeAxes } from "./regime-radar";
 import { signalsSurfaceSources } from "./signals-surface";
 
-// ponytail: static fixture timestamp and measurement shapes; upgrade path is varied timestamps and heterogeneous measurement payloads per kernel.
+// ponytail: static fixture timestamp and measurement shapes; upgrade path 
+// is varied timestamps and heterogeneous measurement payloads per kernel.
 const at = "2026-07-15T09:00:00Z";
 const measurement = {
 	symbol: "BTC/USD",

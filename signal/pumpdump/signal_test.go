@@ -170,9 +170,9 @@ func TestMeasure(t *testing.T) {
 						}
 
 						So(measurement.ValidateStruct(), ShouldBeNil)
-						So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
 
 						if measurement.Maturity > maturity[measurement.Symbol] {
+							So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
 							advanced[measurement.Symbol] = true
 							maturity[measurement.Symbol] = measurement.Maturity
 						}

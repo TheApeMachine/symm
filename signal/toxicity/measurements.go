@@ -5,7 +5,6 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -66,13 +65,6 @@ func (signal *Signal) emitSymbolMeasurements(
 
 		*out = append(*out, honesty...)
 	})
-
-	select {
-	case signal.ui <- datura.Map[any]{
-		"measurements": *out,
-	}.Marshal():
-	default:
-	}
 
 	return nil
 }
