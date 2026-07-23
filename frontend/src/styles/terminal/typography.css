@@ -1,0 +1,87 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&display=swap");
+
+.mono {
+	&.thin {
+		font-family: "IBM Plex Mono", monospace;
+		font-weight: 100;
+		font-style: normal;
+	}
+
+	&.extralight {
+		font-family: "IBM Plex Mono", monospace;
+		font-weight: 200;
+		font-style: normal;
+	}
+
+	&.light {
+		font-family: "IBM Plex Mono", monospace;
+		font-weight: 300;
+		font-style: normal;
+	}
+
+	&.regular {
+		font-family: "IBM Plex Mono", monospace;
+		font-weight: 400;
+		font-style: normal;
+	}
+
+	&.medium {
+		font-family: "IBM Plex Mono", monospace;
+		font-weight: 500;
+		font-style: normal;
+	}
+
+	&.semibold {
+		font-family: "IBM Plex Mono", monospace;
+		font-weight: 600;
+		font-style: normal;
+	}
+
+	&.bold {
+		font-family: "IBM Plex Mono", monospace;
+		font-weight: 700;
+		font-style: normal;
+	}
+
+	&.thin-italic {
+		font-family: "IBM Plex Mono", monospace;
+		font-weight: 100;
+		font-style: italic;
+	}
+
+	&.extralight-italic {
+		font-family: "IBM Plex Mono", monospace;
+		font-weight: 200;
+		font-style: italic;
+	}
+
+	&.light-italic {
+		font-family: "IBM Plex Mono", monospace;
+		font-weight: 300;
+		font-style: italic;
+	}
+
+	&.regular-italic {
+		font-family: "IBM Plex Mono", monospace;
+		font-weight: 400;
+		font-style: italic;
+	}
+
+	&.medium-italic {
+		font-family: "IBM Plex Mono", monospace;
+		font-weight: 500;
+		font-style: italic;
+	}
+
+	&.semibold-italic {
+		font-family: "IBM Plex Mono", monospace;
+		font-weight: 600;
+		font-style: italic;
+	}
+
+	&.bold-italic {
+		font-family: "IBM Plex Mono", monospace;
+		font-weight: 700;
+		font-style: italic;
+	}
+}
