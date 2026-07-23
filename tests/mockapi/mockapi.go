@@ -1,25 +1,31 @@
 package mockapi
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
 MockConn is a controllable Kraken transport composed from deterministic
-scheduling and test-control surfaces while implementing websocket.Conn.
+scheduling and Actor roots while implementing websocket.Conn.
 */
 type MockConn struct {
 	*Control
 	*Scheduler
+	*types.Actor
 	client  *spot.WebSocket
 	allowed map[string]struct{}
 	paperMu sync.Mutex
 	paper   *Paper
+	roots   map[string]*types.Subscription[any]
 }
 
 /*
@@ -33,17 +39,125 @@ func (conn *MockConn) Client() *spot.WebSocket {
 NewConn creates an isolated transport fake for the supplied symbol universe.
 */
 func NewConn(symbols ...string) *MockConn {
+	if viper.GetInt("system.actor.buffer") < 1 {
+		viper.Set("system.actor.buffer", 64)
+	}
+
 	allowed := make(map[string]struct{}, len(symbols))
 
 	for _, symbol := range symbols {
 		allowed[symbol] = struct{}{}
 	}
 
-	return &MockConn{
+	conn := &MockConn{
 		Control:   newControl(),
 		Scheduler: newScheduler(),
 		client:    mockNormalizerClient(symbols),
 		allowed:   allowed,
+		roots: map[string]*types.Subscription[any]{
+			"ticker":     rootSubscription(),
+			"book":       rootSubscription(),
+			"trade":      rootSubscription(),
+			"instrument": rootSubscription(),
+			"balances":   rootSubscription(),
+			"executions": rootSubscription(),
+			"add_order":  rootSubscription(),
+			"level3":     rootSubscription(),
+		},
+	}
+
+	conn.Actor = types.NewActor(context.Background(), nil)
+
+	for name, root := range conn.roots {
+		conn.AddRoot(name, root)
+	}
+
+	return conn
+}
+
+func rootSubscription() *types.Subscription[any] {
+	buffer := viper.GetInt("system.actor.buffer")
+
+	if buffer < 1 {
+		buffer = 64
+	}
+
+	return &types.Subscription[any]{
+		Channel: make(chan any, buffer),
+	}
+}
+
+/*
+Emit Sends decoded frames into Actor roots matching Live's typed ingress.
+*/
+func (conn *MockConn) Emit(channel string, payload []byte) {
+	conn.Scheduler.Emit(channel, payload)
+	conn.feed(channel, payload)
+}
+
+/*
+Drain delivers every queued frame through MockConn.Emit so Actor roots see
+the same tape as production OnReceived → Send.
+*/
+func (conn *MockConn) Drain() error {
+	if conn == nil || conn.Scheduler == nil {
+		return io.ErrClosedPipe
+	}
+
+	conn.Scheduler.mu.Lock()
+
+	if conn.Scheduler.closed {
+		conn.Scheduler.mu.Unlock()
+		return io.ErrClosedPipe
+	}
+
+	queued := append([]outbound(nil), conn.Scheduler.queue...)
+	conn.Scheduler.queue = nil
+	conn.Scheduler.mu.Unlock()
+
+	for _, frame := range queued {
+		conn.Emit(frame.channel, frame.payload)
+	}
+
+	return nil
+}
+
+func (conn *MockConn) feed(channel string, raw []byte) {
+	root, ok := conn.roots[channel]
+
+	if !ok {
+		return
+	}
+
+	switch channel {
+	case "ticker":
+		frame := kraken.NewTicker(raw)
+
+		if errnie.Error(kraken.Validate(frame)) != nil {
+			return
+		}
+
+		root.Send(frame)
+	case "book":
+		frame := kraken.NewBook(raw)
+
+		if errnie.Error(kraken.Validate(frame)) != nil {
+			return
+		}
+
+		root.Send(frame)
+	case "trade":
+		frame := kraken.NewTrade(raw)
+
+		if errnie.Error(kraken.Validate(frame)) != nil {
+			return
+		}
+
+		root.Send(frame)
+	case "instrument":
+		root.Send(kraken.NewInstrument(raw))
+	default:
+		root.Send(raw)
 	}
 }
 

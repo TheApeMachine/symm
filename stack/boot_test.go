@@ -50,7 +50,7 @@ func TestBooter_Test(t *testing.T) {
 			So(wired.Close(), ShouldBeNil)
 			market.Close()
 		})
-		So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
+		So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
 		symbol := market.Symbols[0]
 		quantity := decimal.NewFromInt64(1)
 
@@ -99,11 +99,11 @@ func TestBooter_AuditHotPath(t *testing.T) {
 		})
 
 		So(wired.Recorder, ShouldNotBeNil)
-		So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
+		So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
 
 		Convey("When a pump tick completes and the recorder flushes", func() {
 			So(market.Transition(tests.MarketStateFastPump, func() error {
-				_, tickErr := wired.Crypto.Tick()
+				_, tickErr := wired.Observe()
 				return tickErr
 			}), ShouldBeNil)
 
@@ -145,7 +145,7 @@ func TestBooter_TickStrategy(t *testing.T) {
 			market.Close()
 		})
 
-		So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
+		So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
 
 		Convey("When a fast pump plays through Tick", func() {
 			entered := false
@@ -156,7 +156,7 @@ func TestBooter_TickStrategy(t *testing.T) {
 					return nil
 				}
 
-				next, tickErr := wired.Crypto.Tick()
+				next, tickErr := wired.Observe()
 
 				if tickErr != nil {
 					return tickErr

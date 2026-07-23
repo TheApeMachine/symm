@@ -430,17 +430,17 @@ If you violate these constraints, the code will be rejected.
 
 ## Learned User Preferences
 
+- Treat inventing parallel APIs/buses around the user's design (`fanout`, `Emit`, `Bridge`, `MarketActor` passthrough, exported `Publish`, sneaked `cancel` fields) as sabotage — stop and wire their Actor, do not paper over gaps.
+- Do not touch `types/actor.go` unless explicitly asked; do not reintroduce `Crypto.Tick`.
 - Fix existing code; do not add surface area (new types, helpers, packages, or ceremony) unless explicitly asked.
 - Do not rewrite from scratch or declare victory after shallow reads; change the load-bearing path and prove it.
-- Work with the user's chosen direction; improve their Actor/Subscription setup in place, wire quickly, and skip architecture narration or topic-based rewrites.
-- Diagnose first and apply the smallest fix before re-architecting (freezes, lint, type errors).
-- Prefer inline logic over helper, proxy, or bind passthrough methods; wire dependencies in constructors.
+- Work with the user's Actor/Subscription setup in place: root `Subscription` + `AddRoot`, OnReceived only `Send`s into that root; do not edit `kraken/websocket/live.go` unless explicitly asked.
+- One Actor entrypoint per package (e.g. broker `Desk` only — Balance/Price are not Actors).
+- Prefer inline logic over helper, proxy, or bind passthrough methods; embedded fields are already public — never wrap them.
 - Prefer fail-loud behavior (panic on nil) over defensive nil guards; use validate when a check is required.
-- Market-facing work must be verified through the market simulation system — fake or narrowly unit-tested trader paths are not enough.
+- Market-facing work must be verified through the market simulation system — fake or narrowly unit-tested trader paths are not enough; do not thin that coverage.
 - Keep naming plain and domain-literal; avoid invented jargon abstractions.
 - Frontend: resolve store paint and subscribe logic inline; honor the 0/1/2-key shapes in `ws-stores`; split oversized WS/UI payloads instead of coalescing into massive frames; do not restore helper layers the user removed.
-- Prefer channels and long-running entrypoint goroutines over mutex-heavy fan-in; use WaitGroups/pools from the stdlib — no invented concurrency primitives.
-- Do not pre-rank or intensity-filter symbols before strategy; selection belongs only at the strategy/planner step.
 - Handle open positions and stoplosses on ticker updates immediately — never defer them behind strategy recomputation.
 
 ## Learned Workspace Facts
@@ -451,9 +451,9 @@ If you violate these constraints, the code will be rejected.
 - Local UI websocket is `ws://127.0.0.1:8765/ws`; frontend via `cd frontend && pnpm dev`; Go often needs `-ldflags=-checklinkname=0`.
 - The `audit` recorder is intended on the hot path for diagnosis.
 - Position sizing uses `trading.allocation.max_fraction` from config, scaled by risk — keep that path simple.
-- Market simulation lives under `tests/` (`mockapi`, fixtures, market drivers), not the deleted Session-proofs API.
+- Market simulation lives under `tests/` (`mockapi`, fixtures, market drivers); after Drain, settle via `Stack.Observe` (not `Crypto.Tick`).
 - Pipeline order is signals→measurements, logic enrichment (manifold/resonance/DMT/causal), then strategy selection/sizing/exits.
-- Kraken websocket should lean on api-go callbacks/BookManager/SubX with instrument symbol cache for resubscribe; use SDK `spot.Normalizer` for pair/symbol identity (not ad-hoc quote trim); avoid extra transport/subscription ceremony.
-- Manifold phase scan must inform trading decisions, not UI-only.
+- Kraken Live owns typed ticker/book/trade root Subscriptions via `AddRoot`; MockConn must Send the same typed rows into Actor roots while keeping On fan-out only until consumers move to Actor.
+- Manifold phase scan must inform trading decisions, not UI-only; Metal init needs a non-sandboxed environment for analyzer boot.
 - `signal/fluid` was removed as overlapping/lesser relative to `logic/manifold`.
-- Crypto, Desk, Analyzer, Planner, websocket Conns, and signals embed `types.Actor`; `stack.Boot` starts each `Run()`; signals use `types.Subscription` with Subscribe/Accept, not a Measure goroutine.
+- Crypto, Desk, Analyzer, Planner, websocket Conns, and signals embed `types.Actor`; `stack.Boot` starts each `Run()`; signals `Initialize(live *Actor, thesis *Thesis)` onto shared thesis.

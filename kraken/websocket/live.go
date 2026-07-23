@@ -16,6 +16,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -26,13 +27,20 @@ const (
 	Level3WebSocketURL  = "wss://ws-l3.kraken.com/v2"
 )
 
+var entityMap = map[string]func([]byte) any{
+	"ticker":     func(buf []byte) any { return kraken.NewTicker(buf) },
+	"book":       func(buf []byte) any { return kraken.NewBook(buf) },
+	"trade":      func(buf []byte) any { return kraken.NewTrade(buf) },
+	"level3":     func(buf []byte) any { return kraken.NewLevel3(buf) },
+	"instrument": func(buf []byte) any { return kraken.NewInstrument(buf) },
+}
+
 /*
 Live is one spot websocket session: SDK client, channel fan-out, auth/nonce,
 and Sub* resubscribe after the SDK reconnects.
 */
 type Live struct {
 	*types.Actor
-	fanout
 	status       types.Status
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -48,7 +56,7 @@ type Live struct {
 	ready        func() error
 	level3Queue  chan []byte
 	level3Ledger *level3Ledger
-	root         types.Subscription[any]
+	roots        map[string]*types.Subscription[any]
 }
 
 /*
@@ -63,19 +71,28 @@ func New(
 	ctx, cancel := context.WithCancel(ctx)
 
 	live := &Live{
-		fanout:    fanout{handlers: make(map[string][]channelHandler)},
 		ctx:       ctx,
 		cancel:    cancel,
 		status:    types.INITIALIZING,
 		simulator: simulator,
 		client:    spot.NewWebSocket(),
 		auth:      auth,
-		root:      types.NewSubscription[any](),
+		roots: map[string]*types.Subscription[any]{
+			"ticker":     types.NewSubscription[any](),
+			"book":       types.NewSubscription[any](),
+			"trade":      types.NewSubscription[any](),
+			"level3":     types.NewSubscription[any](),
+			"instrument": types.NewSubscription[any](),
+		},
 	}
 
 	live.Actor = types.NewActor(ctx, nil)
-	live.Actor.AddRoot("live", live.root)
 
+	for name, root := range live.roots {
+		live.AddRoot(name, root)
+	}
+
+	live.Actor.Initialize()
 	live.client.URL = endpoint
 
 	if auth {
@@ -91,8 +108,47 @@ func New(
 	}
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
-		live.root.Send(event.Data)
+		raw := event.Data.Bytes()
+
+		if live.isLevel3 && utils.GetString(raw, "channel") == "level3" {
+			live.enqueueLevel3(raw)
+		}
+
+		channel := utils.GetString(raw, "channel")
+
+		if channel == "" {
+			if method := utils.GetString(raw, "method"); method == "add_order" {
+				channel = method
+			}
+		}
+
+		if channel == "" {
+			if message := utils.GetString(raw, "error"); message != "" {
+				errnie.Error(errnie.Err(errnie.Validation, message, nil))
+			}
+
+			return
+		}
+
+		if channel == "status" || channel == "heartbeat" || (live.isLevel3 && channel == "level3") {
+			return
+		}
+
+		if entity, ok := entityMap[channel]; ok {
+			entity := entity(raw)
+			live.roots[channel].Send(entity)
+		}
 	})
+
+	live.client.OnConnected.Recurring(func(event *callback.Event[any]) {
+		live.onConnected()
+	})
+
+	if auth {
+		live.client.OnAuthenticated.Recurring(func(event *callback.Event[string]) {
+			live.onAuthenticated()
+		})
+	}
 
 	return live
 }

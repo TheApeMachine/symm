@@ -8,7 +8,6 @@ import (
 	"github.com/theapemachine/symm/stack"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 type metricValues = map[types.MetricType]map[string]float64
@@ -58,10 +57,10 @@ func TestCalculate(t *testing.T) {
 			market := tests.NewMarket(t.Context(), len(symbols))
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
+			So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
 			measurements := []*types.Measurement{}
 			So(market.Transition(proof.state, func() error {
-				thesis, err := wired.Crypto.Tick()
+				thesis, err := wired.Observe()
 
 				if err != nil {
 					return err
@@ -81,10 +80,10 @@ func TestCalculate(t *testing.T) {
 			}, proof.focus...), ShouldBeNil)
 
 			outcomes[proof.name] = marketOutcome{
-				peak: utils.PeakMeasurements(
+				peak: tests.PeakMeasurements(
 					measurements, types.SourceCorrelation, metrics,
 				),
-				latest: utils.LatestMeasurements(
+				latest: tests.LatestMeasurements(
 					measurements, types.SourceCorrelation, metrics,
 				),
 			}
@@ -132,7 +131,7 @@ func BenchmarkCalculate(b *testing.B) {
 	defer wired.Close()
 	defer market.Close()
 
-	if err := market.Warmup(tests.Consume(wired.Crypto.Tick)); err != nil {
+	if err := market.Warmup(tests.Consume(wired.Observe)); err != nil {
 		b.Fatal(err)
 	}
 
@@ -140,7 +139,7 @@ func BenchmarkCalculate(b *testing.B) {
 
 	for b.Loop() {
 		if err := market.Transition(tests.MarketStateFastPump, func() error {
-			_, err := wired.Crypto.Tick()
+			_, err := wired.Observe()
 			return err
 		}); err != nil {
 			b.Fatal(err)

@@ -6,14 +6,7 @@ import (
 )
 
 func Backoff(n int) int {
-	n = int(
-		math.Round((math.Pow(
-			math.Phi, float64(n),
-		) + math.Pow(
-			math.Phi-1, float64(n),
-		)) / math.Sqrt(5)),
-	)
-
-	time.Sleep(time.Duration(n) * time.Millisecond)
-	return n
+	next := int(math.Round(float64(n) * math.Phi))
+	time.Sleep(time.Duration(next) * time.Millisecond)
+	return next
 }

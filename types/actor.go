@@ -2,9 +2,10 @@ package types
 
 import (
 	"context"
-	"time"
+	"fmt"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/utils"
 )
 
@@ -18,11 +19,15 @@ type Subscription[T any] struct {
 /*
 NewSubscription opens one buffered typed channel.
 */
-func NewSubscription[T any]() Subscription[T] {
-	return Subscription[T]{
-		Channel: make(chan T, viper.GetViper().GetInt(
-			"system.actor.buffer",
-		)),
+func NewSubscription[T any]() *Subscription[T] {
+	buffer := viper.GetViper().GetInt("system.actor.buffer")
+
+	if buffer < 1 {
+		buffer = 64
+	}
+
+	return &Subscription[T]{
+		Channel: make(chan T, buffer),
 	}
 }
 
@@ -38,6 +43,7 @@ func (subscription *Subscription[T]) Send(message T) {
 			return
 		default:
 			retry = utils.Backoff(retry)
+			errnie.Warn(fmt.Sprintf("subscription buffer full, retrying: %d", retry))
 		}
 	}
 }
@@ -63,8 +69,8 @@ subscribers of that same topic.
 type Actor struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
-	subscriptions map[string]Subscription[any]
-	subscribers   map[string][]Subscription[any]
+	subscriptions map[string]*Subscription[any]
+	subscribers   map[string][]*Subscription[any]
 	handlers      map[string]Handler
 }
 
@@ -84,8 +90,8 @@ func NewActor(
 	return &Actor{
 		ctx:           ctx,
 		cancel:        cancel,
-		subscriptions: make(map[string]Subscription[any]),
-		subscribers:   make(map[string][]Subscription[any]),
+		subscriptions: make(map[string]*Subscription[any]),
+		subscribers:   make(map[string][]*Subscription[any]),
 		handlers:      handlers,
 	}
 }
@@ -93,7 +99,7 @@ func NewActor(
 /*
 AddRoot registers a producer-owned ingress subscription under name.
 */
-func (actor *Actor) AddRoot(name string, subscription Subscription[any]) {
+func (actor *Actor) AddRoot(name string, subscription *Subscription[any]) {
 	actor.subscriptions[name] = subscription
 }
 
@@ -101,7 +107,7 @@ func (actor *Actor) AddRoot(name string, subscription Subscription[any]) {
 Subscribe registers interest in this actor's topic and returns the shared
 channel used as the subscriber's inbound subscription.
 */
-func (actor *Actor) Subscribe(topic string) Subscription[any] {
+func (actor *Actor) Subscribe(topic string) *Subscription[any] {
 	subscription := NewSubscription[any]()
 	actor.subscribers[topic] = append(actor.subscribers[topic], subscription)
 
@@ -115,6 +121,8 @@ func (actor *Actor) Initialize(topics ...Topic) {
 	for _, topic := range topics {
 		actor.subscriptions[topic.Name] = topic.Actor.Subscribe(topic.Name)
 	}
+
+	actor.Run()
 }
 
 /*
@@ -158,7 +166,6 @@ func (actor *Actor) handle() {
 
 				actor.publish(topic, result)
 			default:
-				time.Sleep(10 * time.Millisecond)
 			}
 		}
 	}

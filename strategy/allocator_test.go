@@ -35,10 +35,10 @@ func TestAllocatorSizesWalletSlice(t *testing.T) {
 	_ = price.RememberFee("LRC/USD", kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.26),
 	})
-	price.TickerAck([]byte(
+	price.TickerAck(kraken.NewTicker([]byte(
 		`{"channel":"ticker","type":"update","data":[{` +
 			`"symbol":"LRC/USD","last":"0.05","bid":"0.04999","ask":"0.05"}]}`,
-	))
+	)))
 
 	allocator := NewAllocator(context.Background(), balance, instrument, price)
 	thesis := types.NewThesis(nil)
@@ -90,10 +90,10 @@ func TestAllocatorScalesByRisk(t *testing.T) {
 		_ = price.RememberFee("MATIC/USD", kraken.TradeVolumeFee{
 			Fee: decimal.NewFromFloat64(0.26),
 		})
-		price.TickerAck([]byte(
+		price.TickerAck(kraken.NewTicker([]byte(
 			`{"channel":"ticker","type":"update","data":[{` +
 				`"symbol":"MATIC/USD","last":"0.10035","bid":"0.10025","ask":"0.10035"}]}`,
-		))
+		)))
 		allocator := NewAllocator(context.Background(), balance, instrument, price)
 		thesis := types.NewThesis(nil)
 		thesis.Decisions = append(thesis.Decisions, types.Decision{
@@ -139,10 +139,10 @@ func TestAllocatorBailsWhenMinimumExceedsWalletSlice(t *testing.T) {
 	_ = price.RememberFee("LRC/USD", kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.26),
 	})
-	price.TickerAck([]byte(
+	price.TickerAck(kraken.NewTicker([]byte(
 		`{"channel":"ticker","type":"update","data":[{` +
 			`"symbol":"LRC/USD","last":"0.05","bid":"0.04999","ask":"0.05"}]}`,
-	))
+	)))
 
 	allocator := NewAllocator(context.Background(), balance, instrument, price)
 	thesis := types.NewThesis(nil)
@@ -181,10 +181,10 @@ func BenchmarkAllocatorAllocate(b *testing.B) {
 	_ = price.RememberFee("LRC/USD", kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.26),
 	})
-	price.TickerAck([]byte(
+	price.TickerAck(kraken.NewTicker([]byte(
 		`{"channel":"ticker","type":"update","data":[{` +
 			`"symbol":"LRC/USD","last":"0.05","bid":"0.04999","ask":"0.05"}]}`,
-	))
+	)))
 	allocator := NewAllocator(context.Background(), balance, instrument, price)
 	thesis := types.NewThesis(nil)
 	thesis.Decisions = append(thesis.Decisions, types.Decision{

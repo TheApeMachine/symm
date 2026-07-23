@@ -13,7 +13,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -51,7 +50,6 @@ func NewInstrument(
 	instrument.status.Store(types.INITIALIZING)
 
 	if instrument.api != nil {
-		instrument.api.On("instrument", instrument.On)
 		instrument.api.SetPublicResubscribe(instrument.Resubscribe)
 	}
 
@@ -75,11 +73,11 @@ func (instrument *Instrument) Initialize() error {
 	return nil
 }
 
-func (instrument *Instrument) On(data []byte) {
-	frame := utils.Unmarshal[kraken.Instrument](data)
+func (instrument *Instrument) On(message any) any {
+	frame := message.(*kraken.Instrument)
 
 	if len(frame.Data.Pairs) == 0 {
-		return
+		return nil
 	}
 
 	for index := range frame.Data.Pairs {
@@ -92,13 +90,15 @@ func (instrument *Instrument) On(data []byte) {
 	if slices.Contains([]types.Status{
 		types.READY, types.ERROR,
 	}, instrument.Status()) {
-		return
+		return nil
 	}
 
 	if err := instrument.Subscribe(); err != nil {
 		instrument.status.Store(types.ERROR)
 		errnie.Error(err)
 	}
+
+	return nil
 }
 
 /*

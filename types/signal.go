@@ -1,12 +1,10 @@
 package types
 
 /*
-Signal receives market rows on channels, measures them, and yields batches via
-Measure. HandleTicker/HandleBook/HandleTrade enqueue for MeasureLoop; Crypto
-uses offer() for latest-wins so the live websocket path never blocks. BindIngress
-attaches the WaitGroup Done each Measure finishes. Run starts MeasureLoop.
+Signal measures market rows delivered on Actor topics and appends onto a
+shared Thesis. Initialize attaches Live roots; Run starts the Actor loop.
 */
 type Signal interface {
-	Run()
 	Name() string
+	Initialize(live *Actor, thesis *Thesis)
 }

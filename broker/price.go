@@ -59,11 +59,6 @@ func NewPrice(
 
 	price.status.Store(types.INITIALIZING)
 
-	// Register before Desk/Crypto so mark cache is warm when lots ObserveMark.
-	if price.api != nil {
-		price.api.On("ticker", price.TickerAck)
-	}
-
 	return price
 }
 
@@ -95,12 +90,10 @@ func (price *Price) RouteMarks(mark func(symbol string)) {
 }
 
 /*
-TickerAck decodes a ticker envelope once, refreshes the cache, and fans marks
+TickerAck refreshes the mark cache from a typed ticker frame and fans marks
 to open lots without each Position re-decoding the envelope.
 */
-func (price *Price) TickerAck(buf []byte) {
-	ticker := kraken.NewTicker(buf)
-
+func (price *Price) TickerAck(ticker *kraken.Ticker) {
 	if errnie.Error(kraken.Validate(ticker)) != nil {
 		return
 	}

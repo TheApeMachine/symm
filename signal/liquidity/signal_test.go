@@ -8,7 +8,6 @@ import (
 	"github.com/theapemachine/symm/stack"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -67,7 +66,7 @@ func TestCalculate(t *testing.T) {
 			So(err, ShouldBeNil)
 			var calmThesis *types.Thesis
 			So(market.Warmup(func() error {
-				thesis, err := wired.Crypto.Tick()
+				thesis, err := wired.Observe()
 
 				if err != nil {
 					return err
@@ -76,12 +75,12 @@ func TestCalculate(t *testing.T) {
 				calmThesis = thesis
 				return nil
 			}), ShouldBeNil)
-			calm := utils.LatestMeasurements(
+			calm := tests.LatestMeasurements(
 				calmThesis.Measurements, types.SourceLiquidity, metrics,
 			)
 			measurements := []*types.Measurement{}
 			So(market.Transition(proof.state, func() error {
-				thesis, err := wired.Crypto.Tick()
+				thesis, err := wired.Observe()
 
 				if err != nil {
 					return err
@@ -92,8 +91,8 @@ func TestCalculate(t *testing.T) {
 			}, proof.symbols...), ShouldBeNil)
 			outcomes[proof.name] = marketOutcome{
 				calm:   calm,
-				peak:   utils.PeakMeasurements(measurements, types.SourceLiquidity, metrics),
-				latest: utils.LatestMeasurements(measurements, types.SourceLiquidity, metrics),
+				peak:   tests.PeakMeasurements(measurements, types.SourceLiquidity, metrics),
+				latest: tests.LatestMeasurements(measurements, types.SourceLiquidity, metrics),
 			}
 
 			checks := []struct {

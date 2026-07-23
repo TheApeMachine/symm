@@ -243,10 +243,10 @@ func TestAnalyzerUpdate(t *testing.T) {
 
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
+			So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
 
 			if proof.prepare {
-				So(market.Transition(proof.state, tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
+				So(market.Transition(proof.state, tests.Consume(wired.Observe)), ShouldBeNil)
 			}
 
 			outcome := &marketOutcome{
@@ -264,7 +264,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 			}
 
 			So(market.Transition(proof.state, func() error {
-				thesis, err := wired.Crypto.Tick()
+				thesis, err := wired.Observe()
 
 				if err != nil {
 					return err
@@ -374,7 +374,7 @@ func BenchmarkAnalyzerUpdate(b *testing.B) {
 	}()
 	defer market.Close()
 
-	if err := market.Warmup(tests.Consume(wired.Crypto.Tick)); err != nil {
+	if err := market.Warmup(tests.Consume(wired.Observe)); err != nil {
 		b.Fatal(err)
 	}
 
@@ -382,7 +382,7 @@ func BenchmarkAnalyzerUpdate(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		if err := market.Transition(tests.MarketStateBaseline, tests.Consume(wired.Crypto.Tick)); err != nil {
+		if err := market.Transition(tests.MarketStateBaseline, tests.Consume(wired.Observe)); err != nil {
 			b.Fatal(err)
 		}
 	}

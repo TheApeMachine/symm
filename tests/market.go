@@ -49,6 +49,8 @@ type Market struct {
 NewMarket creates fixture-fed connections for exactly symbolCount symbols.
 */
 func NewMarket(ctx context.Context, symbolCount int, options ...MarketOptions) *Market {
+	EnsureActorBuffer()
+
 	if symbolCount < 1 {
 		panic(errnie.Err(errnie.Validation, "tests: symbol count must be positive", nil))
 	}

@@ -27,11 +27,9 @@ Conn is the internal websocket and REST transport.
 */
 type Conn interface {
 	Client() *spot.WebSocket
-	On(channel string, action func([]byte)) uint64
-	Unsubscribe(channel string, id uint64)
 	Write(params json.Marshaler) error
-	Close()
 	Post(path string, params json.Marshaler) ([]byte, error)
+	Close()
 }
 
 /*
@@ -39,17 +37,17 @@ API is the single Kraken transport surface for symm.
 Callers subscribe, order, and listen through named methods only.
 */
 type API struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	status     types.Status
-	normalizer *spot.Normalizer
-	public     Conn
-	private    Conn
-	paper      Conn
-	live       bool
-	level3     *Level3Registry
-	level3Conn Conn
-	// publicResubscribe is Instrument.Resubscribe — symbols live there.
+	ctx               context.Context
+	cancel            context.CancelFunc
+	status            types.Status
+	normalizer        *spot.Normalizer
+	public            Conn
+	private           Conn
+	paper             Conn
+	live              bool
+	level3            *Level3Registry
+	level3Conn        Conn
+	level3Feed        *types.Actor
 	publicResubscribe func() error
 	wantBalances      bool
 	wantExecutions    bool
@@ -154,55 +152,6 @@ func (api *API) Close() {
 }
 
 /*
-Run starts Actor loops on public, private, and paper transports.
-*/
-func (api *API) Run() {
-	if live, ok := api.public.(*Live); ok {
-		live.Run()
-	}
-
-	if live, ok := api.private.(*Live); ok {
-		live.Run()
-	}
-
-	if paper, ok := api.paper.(*Paper); ok {
-		paper.Run()
-	}
-}
-
-/*
-On registers a raw channel consumer on the transport that owns the channel and
-returns a subscription id for Unsubscribe. Level3 is deliberately absent
-because the SDK BookManager consumes those frames and exposes its books through
-Books.
-*/
-func (api *API) On(channel string, action func([]byte)) uint64 {
-	switch channel {
-	case "balances", "executions", "add_order":
-		return api.account().On(channel, action)
-	default:
-		return api.public.On(channel, action)
-	}
-}
-
-/*
-Unsubscribe removes one previously registered channel consumer by the id On
-returned, so closed positions can leave the ticker path without leaking handlers.
-*/
-func (api *API) Unsubscribe(channel string, id uint64) {
-	if api == nil || id == 0 {
-		return
-	}
-
-	switch channel {
-	case "balances", "executions", "add_order":
-		api.account().Unsubscribe(channel, id)
-	default:
-		api.public.Unsubscribe(channel, id)
-	}
-}
-
-/*
 account is the private venue socket in live mode and the paper transport otherwise.
 */
 func (api *API) account() Conn {
@@ -211,6 +160,13 @@ func (api *API) account() Conn {
 	}
 
 	return api.paper
+}
+
+/*
+Account exposes the account transport Conn for Boot Actor wiring.
+*/
+func (api *API) Account() Conn {
+	return api.account()
 }
 
 func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error) {
@@ -437,15 +393,15 @@ func (api *API) fetchLiveTradesHistory() (map[string]spot.Trade, error) {
 
 func (api *API) SubscribeInstruments() error {
 	// Conn.Write so mock producers and live sockets share one subscribe path.
-	return errnie.Error(api.public.Write(kraken.NewInstrumentSubscription()))
+	return errnie.Error(api.public.Client().SubInstruments())
 }
 
 func (api *API) SubscribeTicker(pairs []string) error {
-	return errnie.Error(api.public.Write(kraken.NewTickerSubscription(pairs)))
+	return errnie.Error(api.public.Client().SubTicker(pairs))
 }
 
 func (api *API) SubscribeTrade(pairs []string) error {
-	return errnie.Error(api.public.Write(kraken.NewTradeSubscription(pairs)))
+	return errnie.Error(api.public.Client().SubTrades(pairs))
 }
 
 /*
@@ -458,10 +414,10 @@ func (api *API) Books() iter.Seq[*spot.BookManager] {
 }
 
 /*
-InjectLevel3 binds an ordinary Conn to the production Level3 book processor.
+InjectLevel3 binds a Conn's Actor level3 root to the production Level3 book processor.
 */
-func (api *API) InjectLevel3(conn Conn, symbols []string) {
-	if api == nil || conn == nil {
+func (api *API) InjectLevel3(market *types.Actor, conn Conn, symbols []string) {
+	if api == nil || conn == nil || market == nil {
 		return
 	}
 
@@ -472,15 +428,25 @@ func (api *API) InjectLevel3(conn Conn, symbols []string) {
 	)
 	api.level3Conn = conn
 	api.level3.Attach("injected-level3", live)
-	conn.On("level3", func(payload []byte) {
-		err := live.ApplyLevel3(payload)
 
-		if reporter, ok := conn.(interface{ Report(error) }); ok && err != nil {
-			reporter.Report(err)
-		}
+	feed := types.NewActor(api.ctx, map[string]types.Handler{
+		"level3": {
+			Topic: "level3",
+			Fn: func(message any) any {
+				err := live.ApplyLevel3(message.([]byte))
 
-		errnie.Error(err)
+				if reporter, ok := conn.(interface{ Report(error) }); ok && err != nil {
+					reporter.Report(err)
+				}
+
+				errnie.Error(err)
+
+				return nil
+			},
+		},
 	})
+	feed.Initialize(types.Topic{Name: "level3", Actor: market})
+	api.level3Feed = feed
 }
 
 /*

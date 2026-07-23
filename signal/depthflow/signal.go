@@ -72,13 +72,6 @@ func NewSignal(
 }
 
 /*
-Run accepts measurements and drains ingress in publish order on a MeasureLoop.
-*/
-func (signal *Signal) Run() {
-	signal.Actor.Run()
-}
-
-/*
 Name returns the signal source identity.
 */
 func (signal *Signal) Name() string {
@@ -100,7 +93,7 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 
 
 func (signal *Signal) onTicker(message any) any {
-	rows := message.([]kraken.TickerData)
+	rows := message.(*kraken.Ticker).Data
 	measurements, err := signal.Calculate(rows, nil, nil)
 
 	if err != nil {
@@ -118,7 +111,7 @@ func (signal *Signal) onTicker(message any) any {
 }
 
 func (signal *Signal) onBook(message any) any {
-	rows := message.([]kraken.BookData)
+	rows := message.(*kraken.Book).Data
 	measurements, err := signal.Calculate(nil, nil, rows)
 
 	if err != nil {
@@ -136,7 +129,7 @@ func (signal *Signal) onBook(message any) any {
 }
 
 func (signal *Signal) onTrade(message any) any {
-	rows := message.([]kraken.TradeData)
+	rows := message.(*kraken.Trade).Data
 	measurements, err := signal.Calculate(nil, rows, nil)
 
 	if err != nil {

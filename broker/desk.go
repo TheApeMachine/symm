@@ -12,6 +12,10 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+Desk is the broker Actor entrypoint. It alone Subscribes market and account
+topics and fans typed frames into Price, Balance, Instrument, and Positions.
+*/
 type Desk struct {
 	*types.Actor
 	status       types.Status
@@ -31,37 +35,53 @@ func NewDesk(
 	price *Price,
 	balance *Balance,
 ) *Desk {
-	positions := &sync.Map{}
-
 	desk := &Desk{
-		Actor:        types.NewActor(ctx, nil),
 		status:       types.INITIALIZING,
 		api:          api,
 		instrument:   instrument,
 		price:        price,
 		balance:      balance,
-		positions:    positions,
+		positions:    &sync.Map{},
 		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
 		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
 	}
+
+	desk.Actor = types.NewActor(ctx, map[string]types.Handler{
+		"ticker":     {Topic: "ticker", Fn: desk.onTicker},
+		"instrument": {Topic: "instrument", Fn: desk.instrument.On},
+		"balances":   {Topic: "balances", Fn: desk.onBalances},
+		"executions": {Topic: "executions", Fn: desk.onExecutions},
+		"add_order":  {Topic: "add_order", Fn: desk.onOrder},
+	})
 
 	return desk
 }
 
 /*
-Initialize subscribes to executions and publishes the initial balance frame.
+Initialize attaches Desk to the market and account Actors, subscribes to
+executions, and publishes the initial balance frame.
 */
-func (desk *Desk) Initialize() error {
+func (desk *Desk) Initialize(market *types.Actor, account *types.Actor) error {
 	errnie.Info("initializing desk")
 
-	if err := desk.api.SubscribeExecutions(); err != nil {
-		desk.status = types.ERROR
+	desk.Actor.Initialize(
+		types.Topic{Name: "ticker", Actor: market},
+		types.Topic{Name: "instrument", Actor: market},
+		types.Topic{Name: "balances", Actor: account},
+		types.Topic{Name: "executions", Actor: account},
+		types.Topic{Name: "add_order", Actor: account},
+	)
 
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to subscribe to executions",
-			err,
-		))
+	if desk.api != nil {
+		if err := desk.api.SubscribeExecutions(); err != nil {
+			desk.status = types.ERROR
+
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"failed to subscribe to executions",
+				err,
+			))
+		}
 	}
 
 	desk.status = types.READY
@@ -77,24 +97,14 @@ func (desk *Desk) Status() types.Status {
 	return desk.status
 }
 
-/*
-BindTicker marks open lots and observes stoplosses on every ticker print.
-Registered before Crypto.OnTicker so Regulate sees the mark before the cut.
-*/
-func (desk *Desk) BindTicker(api *websocket.API) {
-	if api == nil {
-		return
-	}
-
-	api.On("ticker", desk.onTicker)
-}
-
-func (desk *Desk) onTicker(raw []byte) {
-	ticker := kraken.NewTicker(raw)
+func (desk *Desk) onTicker(message any) any {
+	ticker := message.(*kraken.Ticker)
 
 	if errnie.Error(kraken.Validate(ticker)) != nil {
-		return
+		return nil
 	}
+
+	desk.price.TickerAck(ticker)
 
 	for index := range ticker.Data {
 		item := ticker.Data[index]
@@ -104,8 +114,37 @@ func (desk *Desk) onTicker(raw []byte) {
 			continue
 		}
 
-		position.TickerAck(raw)
+		position.Mark(item.Symbol)
 	}
+
+	return nil
+}
+
+func (desk *Desk) onBalances(message any) any {
+	desk.balance.BalanceAck(message.([]byte))
+	return nil
+}
+
+func (desk *Desk) onExecutions(message any) any {
+	raw := message.([]byte)
+
+	desk.positions.Range(func(_, value any) bool {
+		value.(*Position).ExecutionAck(raw)
+		return true
+	})
+
+	return nil
+}
+
+func (desk *Desk) onOrder(message any) any {
+	raw := message.([]byte)
+
+	desk.positions.Range(func(_, value any) bool {
+		value.(*Position).OrderAck(raw)
+		return true
+	})
+
+	return nil
 }
 
 /*

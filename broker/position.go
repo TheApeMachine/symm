@@ -21,12 +21,10 @@ type Position struct {
 	request    *kraken.MarketOrder
 	order      *spot.Order
 	orderID    string
-	subOrder   uint64
-	subExec    uint64
 }
 
 /*
-NewPosition registers order, execution, and ticker handlers for one lot.
+NewPosition constructs one lot shell; Desk routes order and execution frames.
 */
 func NewPosition(
 	api *websocket.API,
@@ -35,7 +33,7 @@ func NewPosition(
 	balance *Balance,
 	pair *kraken.InstrumentPair,
 ) *Position {
-	position := &Position{
+	return &Position{
 		status:     types.INITIALIZING,
 		api:        api,
 		instrument: instrument,
@@ -52,11 +50,6 @@ func NewPosition(
 			Price:  decimal.NewFromFloat64(0),
 		},
 	}
-
-	position.subOrder = position.api.On("add_order", position.OrderAck)
-	position.subExec = position.api.On("executions", position.ExecutionAck)
-
-	return position
 }
 
 func (position *Position) Status() types.Status {
@@ -64,59 +57,40 @@ func (position *Position) Status() types.Status {
 }
 
 /*
-Close drops order and execution handlers.
+Close marks the lot closed once Desk drops it from the open map.
 */
 func (position *Position) Close() {
 	if position.status == types.CLOSED {
 		return
 	}
 
-	if position.subOrder != 0 {
-		position.api.Unsubscribe("add_order", position.subOrder)
-		position.subOrder = 0
-	}
-
-	if position.subExec != 0 {
-		position.api.Unsubscribe("executions", position.subExec)
-		position.subExec = 0
-	}
+	position.status = types.CLOSED
 }
 
 /*
-TickerAck marks the open holding from this symbol's ticker print and feeds its
-Stoploss.
+Mark applies the latest mid for this lot and feeds its Stoploss.
 */
-func (position *Position) TickerAck(buf []byte) {
-	ticker := kraken.NewTicker(buf)
-
-	if errnie.Error(kraken.Validate(ticker)) != nil {
+func (position *Position) Mark(symbol string) {
+	if symbol != position.pair.Symbol {
 		return
 	}
 
-	for index := range ticker.Data {
-		if ticker.Data[index].Symbol != position.pair.Symbol {
-			continue
-		}
+	value, ok := position.balance.holdings.Load(position.pair.Symbol)
 
-		value, ok := position.balance.holdings.Load(position.pair.Symbol)
-
-		if !ok {
-			return
-		}
-
-		holding := value.(*types.Holding)
-
-		if holding.Status != types.OPEN {
-			return
-		}
-
-		_ = position.price.Mark(position.pair, holding)
-
-		if holding.Stoploss != nil && holding.StopMark != nil {
-			holding.Stoploss.ObserveMark(holding.StopMark.Float64())
-		}
-
+	if !ok {
 		return
+	}
+
+	holding := value.(*types.Holding)
+
+	if holding.Status != types.OPEN {
+		return
+	}
+
+	_ = position.price.Mark(position.pair, holding)
+
+	if holding.Stoploss != nil && holding.StopMark != nil {
+		holding.Stoploss.ObserveMark(holding.StopMark.Float64())
 	}
 }
 

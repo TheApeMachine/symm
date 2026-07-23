@@ -13,7 +13,6 @@ import (
 	"github.com/theapemachine/symm/stack"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -82,16 +81,16 @@ func TestCalculate(t *testing.T) {
 			market := tests.NewMarket(t.Context(), 3)
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
+			So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
 			for _, state := range proof.states[:len(proof.states)-1] {
-				So(market.Transition(state, tests.Consume(wired.Crypto.Tick), proof.symbols...), ShouldBeNil)
+				So(market.Transition(state, tests.Consume(wired.Observe), proof.symbols...), ShouldBeNil)
 			}
 
 			from := market.Now()
 			measurements := []*types.Measurement{}
 			So(market.Transition(
 				proof.states[len(proof.states)-1], func() error {
-					thesis, err := wired.Crypto.Tick()
+					thesis, err := wired.Observe()
 
 					if err != nil {
 						return err
@@ -135,13 +134,13 @@ func TestCalculate(t *testing.T) {
 			}
 
 			outcomes[proof.name] = marketOutcome{
-				peak: utils.PeakMeasurements(measurements, types.SourceCVD, metrics),
-				latest: utils.LatestMeasurements(
+				peak: tests.PeakMeasurements(measurements, types.SourceCVD, metrics),
+				latest: tests.LatestMeasurements(
 					measurements, types.SourceCVD, metrics,
 				),
 			}
 			outcomes[proof.name].peak[types.MetricNet] =
-				utils.PeakMagnitudeMeasurements(
+				tests.PeakMagnitudeMeasurements(
 					measurements,
 					types.SourceCVD,
 					[]types.MetricType{types.MetricNet},
@@ -393,7 +392,7 @@ func BenchmarkCalculate(b *testing.B) {
 				{Kind: tests.MarketRefill, Symbol: "SIM1/USD", Side: "sell", Qty: 100},
 				{Kind: tests.MarketMoveMid, Symbol: "SIM1/USD", Ticks: 1},
 			},
-		}, tests.Consume(wired.Crypto.Tick)); err != nil {
+		}, tests.Consume(wired.Observe)); err != nil {
 			b.Fatal(err)
 		}
 	}

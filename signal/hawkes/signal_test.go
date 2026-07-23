@@ -2,12 +2,12 @@ package hawkes
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
@@ -71,37 +71,28 @@ func TestSignal_Calculate(t *testing.T) {
 		})
 
 		Convey("When ingress overlaps drains", func() {
-			live := NewSignal(context.Background(), nil)
-			live.Run()
-			out := live.Measure()
-			wait := sync.WaitGroup{}
-			drained := 0
-			wait.Add(2)
+			previous := viper.GetInt("system.actor.buffer")
+			viper.Set("system.actor.buffer", 64)
+			Reset(func() { viper.Set("system.actor.buffer", previous) })
 
-			go func() {
-				defer wait.Done()
+			live := types.NewActor(context.Background(), nil)
+			root := types.NewSubscription[any]()
+			live.AddRoot("trade", &root)
+			ticker := types.NewSubscription[any]()
+			book := types.NewSubscription[any]()
+			live.AddRoot("ticker", &ticker)
+			live.AddRoot("book", &book)
 
-				for range 100 {
-					live.Trades() <- []kraken.TradeData{row}
-				}
-			}()
+			signal := NewSignal(context.Background(), nil)
+			thesis := types.NewThesis(nil)
+			signal.Initialize(live, thesis)
 
-			go func() {
-				defer wait.Done()
+			for range 32 {
+				root.Send(&kraken.Trade{Data: []kraken.TradeData{row}})
+			}
 
-				for range 100 {
-					select {
-					case batch := <-out:
-						drained += len(batch)
-					default:
-					}
-				}
-			}()
-
-			wait.Wait()
-			live.Close()
-
-			So(drained, ShouldBeGreaterThanOrEqualTo, 0)
+			time.Sleep(50 * time.Millisecond)
+			So(signal.Close(), ShouldBeNil)
 		})
 	})
 }

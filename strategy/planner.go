@@ -103,13 +103,6 @@ func (planner *Planner) Status() types.Status {
 	return planner.status
 }
 
-/*
-Run starts the Actor loop.
-*/
-func (planner *Planner) Run() {
-	planner.Actor.Run()
-}
-
 func (planner *Planner) Close() error {
 	planner.cancel()
 	return nil

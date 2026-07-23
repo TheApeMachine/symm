@@ -26,6 +26,7 @@ import (
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/mockapi"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
@@ -107,12 +108,6 @@ func (booter *Booter) Start() error {
 		errnie.Error(wired.Close())
 	}()
 
-	wired.Crypto.Run()
-	wired.Desk.Run()
-	wired.Analyzer.Run()
-	wired.Planner.Run()
-	wired.API.Run()
-
 	return wired.UIHub.Serve()
 }
 
@@ -159,6 +154,7 @@ func (booter *Booter) configureTest(symbolCount int) func() {
 
 	settings := map[string]any{
 		"system.websocket.channel.buffer":            4096,
+		"system.actor.buffer":                        64,
 		"trading.model":                              "paper",
 		"trading.allocation.max_fraction":            0.2,
 		"trading.slots.normal":                       2,
@@ -214,6 +210,8 @@ type Stack struct {
 	Crypto     *trader.Crypto
 	UIHub      *ui.Hub
 	Recorder   *audit.Recorder
+	Thesis     *types.Thesis
+	Signals    []types.Signal
 	restore    func()
 }
 
@@ -231,7 +229,7 @@ func (booter *Booter) boot(
 	api := websocket.NewAPI(booter.ctx, public, private, paper)
 
 	if level3 != nil {
-		api.InjectLevel3(level3, symbols)
+		api.InjectLevel3(publicActor(level3), level3, symbols)
 	}
 
 	tree := dmt.NewTree("")
@@ -247,6 +245,7 @@ func (booter *Booter) boot(
 	balance := broker.NewBalance(api, nil, booter.channel)
 	desk := broker.NewDesk(booter.ctx, api, instrument, price, balance)
 	hub := ui.NewHub(booter.ctx, price, balance, booter.channel)
+	thesis := types.NewThesis(booter.channel)
 	hawkesSignal := hawkes.NewSignal(booter.ctx, booter.channel)
 
 	depthflowSignal, err := depthflow.NewSignal(
@@ -306,6 +305,7 @@ func (booter *Booter) boot(
 		booter.ctx,
 		hub,
 		recorder,
+		desk,
 	)
 
 	if err != nil {
@@ -326,39 +326,151 @@ func (booter *Booter) boot(
 		Crypto:     crypto,
 		UIHub:      hub,
 		Recorder:   recorder,
+		Thesis:     thesis,
+		Signals:    signals,
 	}
 
 	if reporter, ok := paper.(types.StatusReporter); ok {
 		preflight = append(preflight, reporter)
 	}
 
-	preflight = append(preflight, api, price, instrument, balance, desk)
-	booter.stages.AddStages(
-		system.NewStage(system.StagePreflight, preflight...),
-		system.NewStage(system.StageWarmup, crypto),
-		system.NewStage(system.StageReady, analyzer, planner),
-	)
+	market := publicActor(public)
 
-	if err := booter.stages.Start(); err != nil {
+	if market == nil {
+		return nil, errors.Join(
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"boot: public transport has no Actor",
+				nil,
+			)),
+			wired.Close(),
+		)
+	}
+
+	// Desk must Actor.Initialize + Run before Instrument's stage wait, because
+	// Instrument reaches READY only through Desk's instrument handler.
+	transports := system.NewStage(
+		system.StagePreflight, append(preflight, api, price, balance)...,
+	)
+	instruments := system.NewStage(system.StagePreflight, instrument)
+	booter.stages.AddStages(transports, instruments)
+
+	if err := transports.Initialize(booter.channel); err != nil {
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
 
-	wired.startActors()
+	if err := desk.Initialize(market, accountActor(api)); err != nil {
+		return nil, errors.Join(errnie.Error(err), wired.Close())
+	}
+
+	if err := instruments.Initialize(booter.channel); err != nil {
+		return nil, errors.Join(errnie.Error(err), wired.Close())
+	}
+
+	for _, signal := range signals {
+		signal.Initialize(market, thesis)
+	}
+
+	if err := analyzer.Initialize(
+		types.Topic{Name: "ticker", Actor: hawkesSignal.Actor},
+		types.Topic{Name: "book", Actor: hawkesSignal.Actor},
+		types.Topic{Name: "trade", Actor: hawkesSignal.Actor},
+	); err != nil {
+		return nil, errors.Join(errnie.Error(err), wired.Close())
+	}
+
+	if err := planner.Initialize(analyzer); err != nil {
+		return nil, errors.Join(errnie.Error(err), wired.Close())
+	}
+
+	if err := crypto.Initialize(planner); err != nil {
+		return nil, errors.Join(errnie.Error(err), wired.Close())
+	}
 
 	return wired, nil
 }
 
 /*
-startActors drains every Actor inbox so market frames, marks, and strategy
-updates cannot block on an unread delivery during Test or live Start.
-Crypto.Actor runs without the cut loop; live Start still calls Crypto.Run.
+Observe waits for signal Actors to finish measuring the latest drained tape,
+then runs analyzer, planner, and desk apply on the shared Thesis.
 */
-func (stack *Stack) startActors() {
-	stack.API.Run()
-	stack.Desk.Run()
-	stack.Analyzer.Run()
-	stack.Planner.Run()
-	stack.Crypto.Actor.Run()
+func (stack *Stack) Observe() (*types.Thesis, error) {
+	stack.settle()
+
+	measurements := append([]*types.Measurement(nil), stack.Thesis.Measurements...)
+	tick := stack.Crypto.NextTick()
+	at := time.Now().UTC()
+	stack.Thesis.ResetTick(at, tick)
+	stack.Thesis.Measurements = measurements
+
+	errnie.Error(audit.Phase(stack.Recorder, tick, "tick_begin", nil))
+
+	errnie.Error(audit.Phase(stack.Recorder, tick, "measure_end", map[string]any{
+		"measurements": len(stack.Thesis.Measurements),
+	}))
+
+	stack.Analyzer.Update(stack.Thesis)
+
+	errnie.Error(audit.Phase(stack.Recorder, tick, "decide_begin", nil))
+	stack.Planner.Decide(stack.Thesis)
+	errnie.Error(audit.Phase(stack.Recorder, tick, "decide_end", map[string]any{
+		"decisions": len(stack.Thesis.Decisions),
+	}))
+
+	stack.Crypto.Apply(stack.Thesis)
+	errnie.Error(audit.Phase(stack.Recorder, tick, "tick_end", nil))
+
+	return stack.Thesis, nil
+}
+
+func (stack *Stack) settle() {
+	deadline := time.Now().Add(500 * time.Millisecond)
+	previous := -1
+	stable := 0
+
+	for time.Now().Before(deadline) {
+		count := len(stack.Thesis.Measurements)
+
+		if count == previous {
+			stable++
+
+			if stable >= 5 {
+				return
+			}
+		} else {
+			stable = 0
+			previous = count
+		}
+
+		time.Sleep(15 * time.Millisecond)
+	}
+}
+
+/*
+publicActor reads the embedded Actor from known public transports.
+*/
+func publicActor(conn websocket.Conn) *types.Actor {
+	switch transport := conn.(type) {
+	case *websocket.Live:
+		return transport.Actor
+	case *mockapi.MockConn:
+		return transport.Actor
+	case *websocket.Paper:
+		return transport.Actor
+	default:
+		return nil
+	}
+}
+
+/*
+accountActor reads the embedded Actor from the private or paper transport.
+*/
+func accountActor(api *websocket.API) *types.Actor {
+	if api == nil {
+		return nil
+	}
+
+	return publicActor(api.Account())
 }
 
 /*

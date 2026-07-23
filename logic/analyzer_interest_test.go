@@ -27,7 +27,7 @@ func TestAnalyzerInterest(t *testing.T) {
 		var thesis *types.Thesis
 		So(market.Warmup(func() error {
 			var err error
-			thesis, err = wired.Crypto.Tick()
+			thesis, err = wired.Observe()
 			return err
 		}), ShouldBeNil)
 		leader := market.Symbols[2]
@@ -51,7 +51,7 @@ func TestAnalyzerInterest(t *testing.T) {
 				},
 			}, func() error {
 				var err error
-				thesis, err = wired.Crypto.Tick()
+				thesis, err = wired.Observe()
 				return err
 			}), ShouldBeNil)
 		}

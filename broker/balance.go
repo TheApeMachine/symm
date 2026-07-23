@@ -51,9 +51,6 @@ func (balance *Balance) Initialize() error {
 		return nil
 	}
 
-	// Sync On so paper Drain applies balances before MatchPaper / Tick.
-	balance.api.On("balances", balance.BalanceAck)
-
 	if errnie.Error(balance.api.SubscribeBalance()) != nil {
 		balance.status = types.ERROR
 

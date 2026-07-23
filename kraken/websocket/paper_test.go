@@ -8,6 +8,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -17,6 +18,7 @@ from the submitted order while retaining the client fill's identity and fee.
 */
 func TestPaperAddOrder(t *testing.T) {
 	Convey("Given a paper client returning a compact Kraken pair", t, func() {
+		viper.Set("system.actor.buffer", 64)
 		path := filepath.Join(t.TempDir(), "kraken")
 		script := `#!/bin/sh
 case "$2" in
@@ -35,22 +37,9 @@ esac
 		t.Setenv("PATH", filepath.Dir(path)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 		paper := NewPaper(context.Background(), NewSimulator())
-		var execution *kraken.Execution
-		var orderAck *kraken.OrderResponse
-		var balance *kraken.Balance
-		events := make([]string, 0, 3)
-		paper.On("add_order", func(buffer []byte) {
-			orderAck = kraken.NewOrderResponse(buffer)
-			events = append(events, "ack")
-		})
-		paper.On("executions", func(buffer []byte) {
-			execution = kraken.NewExecution(buffer)
-			events = append(events, "execution")
-		})
-		paper.On("balances", func(buffer []byte) {
-			balance = kraken.NewBalance(buffer)
-			events = append(events, "balance")
-		})
+		ackSub := paper.Subscribe("add_order")
+		execSub := paper.Subscribe("executions")
+		balSub := paper.Subscribe("balances")
 
 		order := kraken.NewMarketOrder(
 			"sell", decimal.NewFromFloat64(0.00299963), "BTC/USD",
@@ -59,16 +48,17 @@ esac
 
 		Convey("Then the emitted fill reconciles with the internal symbol", func() {
 			So(err, ShouldBeNil)
-			So(events, ShouldResemble, []string{"ack", "execution", "balance"})
-			So(orderAck, ShouldNotBeNil)
+
+			orderAck := kraken.NewOrderResponse((<-ackSub.Channel).([]byte))
+			execution := kraken.NewExecution((<-execSub.Channel).([]byte))
+			balance := kraken.NewBalance((<-balSub.Channel).([]byte))
+
 			So(orderAck.ReqID, ShouldEqual, order.ReqID)
 			So(orderAck.Result.OrderID, ShouldEqual, "PAPER-00041")
-			So(execution, ShouldNotBeNil)
 			So(execution.Data, ShouldHaveLength, 1)
 			So(execution.Data[0].ExecID, ShouldEqual, "PAPER-00042")
 			So(execution.Data[0].Symbol, ShouldEqual, "BTC/USD")
 			So(execution.Data[0].FeeUsdEquiv.Float64(), ShouldAlmostEqual, 0.5056802650744, 1e-8)
-			So(balance, ShouldNotBeNil)
 			So(balance.Type, ShouldEqual, "snapshot")
 			So(balance.Data, ShouldHaveLength, 1)
 			So(balance.Data[0].Asset, ShouldEqual, "USD")

@@ -249,70 +249,7 @@ func BenchmarkLiveUpdateLevel3(b *testing.B) {
 	}
 }
 
-func TestLiveRoute(t *testing.T) {
-	Convey("Given callbacks registered on a live transport", t, func() {
-		live := &Live{fanout: fanout{handlers: make(map[string][]channelHandler)}, isLevel3: true}
-		tickerFrames := make([][]byte, 0, 1)
-		orderFrames := make([][]byte, 0, 1)
-		live.On("ticker", func(raw []byte) {
-			tickerFrames = append(tickerFrames, raw)
-		})
-		live.On("add_order", func(raw []byte) {
-			orderFrames = append(orderFrames, raw)
-		})
 
-		Convey("It should route data frames by their top-level channel", func() {
-			raw := []byte(`{"channel":"ticker","type":"update"}`)
-			live.route(raw)
-
-			So(tickerFrames, ShouldResemble, [][]byte{raw})
-		})
-
-		Convey("It should route add-order acknowledgements by method", func() {
-			raw := []byte(`{"method":"add_order","req_id":7,"success":true}`)
-			live.route(raw)
-
-			So(orderFrames, ShouldResemble, [][]byte{raw})
-		})
-
-		Convey("It should leave level3 market data with the SDK BookManager", func() {
-			raw := []byte(`{"channel":"level3","type":"update","data":[{"symbol":"BTC/USD"}]}`)
-			live.route(raw)
-		})
-
-		Convey("It should not route subscription acknowledgements as market data", func() {
-			raw := []byte(`{"method":"subscribe","result":{"channel":"level3"},"success":true}`)
-			live.route(raw)
-
-			So(tickerFrames, ShouldBeEmpty)
-		})
-
-		Convey("It should not route failed acknowledgements as market data", func() {
-			raw := []byte(`{"error":"invalid depth","result":{"channel":"level3"},"success":false}`)
-			live.route(raw)
-
-			So(tickerFrames, ShouldBeEmpty)
-		})
-
-		Convey("It should ignore status and heartbeat frames", func() {
-			live.route([]byte(`{"channel":"status"}`))
-			live.route([]byte(`{"channel":"heartbeat"}`))
-
-			So(tickerFrames, ShouldBeEmpty)
-		})
-	})
-}
-
-func BenchmarkLiveRoute(b *testing.B) {
-	live := &Live{fanout: fanout{handlers: make(map[string][]channelHandler)}, isLevel3: true}
-	raw := []byte(`{"channel":"level3","type":"update","data":[{"symbol":"BTC/USD"}]}`)
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	for b.Loop() {
-		live.route(raw)
-	}
-}
 
 func TestAuthNonceSurvivesRestart(t *testing.T) {
 	Convey("Given the auth nonce generator used for authenticated transports", t, func() {

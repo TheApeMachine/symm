@@ -10,6 +10,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
@@ -18,19 +19,21 @@ import (
 
 /*
 Paper is the simulated spot websocket and REST transport.
+Private frames enter Actor roots so Desk and tests Subscribe the same way
+Live exposes ticker/book/trade.
 */
 type Paper struct {
 	*types.Actor
-	fanout
 	ctx       context.Context
 	cancel    context.CancelFunc
 	simulator *Simulator
+	roots     map[string]*types.Subscription[any]
 }
 
 var _ Conn = (*Paper)(nil)
 
 /*
-NewPaper opens the paper spot transport.
+NewPaper opens the paper spot transport with Actor roots for private channels.
 */
 func NewPaper(
 	ctx context.Context,
@@ -39,14 +42,35 @@ func NewPaper(
 	ctx, cancel := context.WithCancel(ctx)
 
 	paper := &Paper{
-		Actor:     types.NewActor(ctx, nil),
-		fanout:    fanout{handlers: make(map[string][]channelHandler)},
 		ctx:       ctx,
 		cancel:    cancel,
 		simulator: simulator,
+		roots: map[string]*types.Subscription[any]{
+			"balances":   paperRoot(),
+			"executions": paperRoot(),
+			"add_order":  paperRoot(),
+		},
+	}
+
+	paper.Actor = types.NewActor(ctx, nil)
+
+	for name, root := range paper.roots {
+		paper.AddRoot(name, root)
 	}
 
 	return paper
+}
+
+func paperRoot() *types.Subscription[any] {
+	buffer := viper.GetInt("system.actor.buffer")
+
+	if buffer < 1 {
+		buffer = 64
+	}
+
+	return &types.Subscription[any]{
+		Channel: make(chan any, buffer),
+	}
 }
 
 func (paper *Paper) Initialize() error {
@@ -113,6 +137,9 @@ func (paper *Paper) Post(string, json.Marshaler) ([]byte, error) {
 	return nil, errnie.Err(errnie.NotImplemented, "paper REST post is not implemented", nil)
 }
 
+/*
+Emit Sends one private frame into the matching Actor root.
+*/
 func (paper *Paper) Emit(channel string, payload json.Marshaler) error {
 	raw, err := payload.MarshalJSON()
 
@@ -124,13 +151,17 @@ func (paper *Paper) Emit(channel string, payload json.Marshaler) error {
 		))
 	}
 
-	if !paper.emit(channel, raw) {
+	root, ok := paper.roots[channel]
+
+	if !ok {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
-			"failed to emit payload",
+			"paper has no Actor root for "+channel,
 			nil,
 		))
 	}
+
+	root.Send(raw)
 
 	return nil
 }

@@ -339,16 +339,19 @@ func TestAPIInjectLevel3(t *testing.T) {
 		symbols := []string{"SIM1/USD"}
 		signal := marketsignal.New(symbols)
 		fixture := level3fixture.NewMarket(symbols, signal)
-		conn := &stubConn{}
+		conn := newStubConn()
 		viper.Set("market.l3_depth", 10)
+		viper.Set("system.actor.buffer", 64)
 		api := NewAPI(context.Background(), conn, conn, nil)
-		api.InjectLevel3(conn, symbols)
+		api.InjectLevel3(conn.Actor, conn, symbols)
 		defer api.Close()
 		signal.Bootstrap()
 
 		for payload := range fixture.Generate() {
-			conn.channels["level3"][0](payload)
+			conn.level3.Send(payload)
 		}
+
+		time.Sleep(50 * time.Millisecond)
 
 		quote, exists := signal.Quote(symbols[0])
 		So(exists, ShouldBeTrue)
@@ -365,8 +368,10 @@ func TestAPIInjectLevel3(t *testing.T) {
 
 		for payload := range fixture.Generate() {
 			update = payload
-			conn.channels["level3"][0](payload)
+			conn.level3.Send(payload)
 		}
+
+		time.Sleep(50 * time.Millisecond)
 
 		Convey("A complete touch and second-level fill should reach the production ledger", func() {
 			So(conn.reported, ShouldBeNil)
@@ -383,7 +388,8 @@ func TestAPIInjectLevel3(t *testing.T) {
 			corrupted["data"].([]any)[0].(map[string]any)["checksum"] = 1
 			payload, err := json.Marshal(corrupted)
 			So(err, ShouldBeNil)
-			conn.channels["level3"][0](payload)
+			conn.level3.Send(payload)
+			time.Sleep(50 * time.Millisecond)
 			So(conn.reported, ShouldNotBeNil)
 		})
 	})
@@ -490,50 +496,6 @@ func BenchmarkAPITradeVolume(b *testing.B) {
 	}
 }
 
-func TestAPIOnRoutesChannels(t *testing.T) {
-	Convey("Given a live API with stub transports", t, func() {
-		viper.Set("trading.model", "live")
-
-		public := &stubConn{}
-		private := &stubConn{}
-		api := NewAPI(context.Background(), public, private, nil)
-
-		api.On("ticker", func([]byte) {})
-		api.On("balances", func([]byte) {})
-
-		Convey("Then each callback registers on its dedicated transport", func() {
-			So(len(public.channels["ticker"]), ShouldEqual, 1)
-			So(len(private.channels["balances"]), ShouldEqual, 1)
-			So(len(public.channels["level3"]), ShouldEqual, 0)
-		})
-	})
-
-	Convey("Given a paper API with stub transports", t, func() {
-		viper.Set("trading.model", "paper")
-
-		public := &stubConn{}
-		private := &stubConn{}
-		paper := NewPaper(context.Background(), newTestSimulator())
-		api := NewAPI(context.Background(), public, private, paper)
-
-		api.On("ticker", func([]byte) {})
-		api.On("balances", func([]byte) {})
-		api.On("executions", func([]byte) {})
-		api.On("add_order", func([]byte) {})
-
-		Convey("Then ticker registers on the public transport", func() {
-			So(len(public.channels["ticker"]), ShouldEqual, 1)
-		})
-
-		Convey("Then balances, executions, and add_order register on the paper transport instead", func() {
-			So(len(private.channels["balances"]), ShouldEqual, 0)
-			So(len(paper.handlers["balances"]), ShouldEqual, 1)
-			So(len(paper.handlers["executions"]), ShouldEqual, 1)
-			So(len(paper.handlers["add_order"]), ShouldEqual, 1)
-		})
-	})
-}
-
 /*
 TestAPILevel3BatchSize verifies that L3 connection batches honor Kraken's
 depth-weighted subscription-rate budget instead of counting symbols directly.
@@ -616,7 +578,8 @@ func newTestSimulator() *Simulator {
 }
 
 type stubConn struct {
-	channels     map[string][]func([]byte)
+	*types.Actor
+	level3       *types.Subscription[any]
 	client       *spot.WebSocket
 	writes       [][]byte
 	postResponse []byte
@@ -626,34 +589,21 @@ type stubConn struct {
 	reported     error
 }
 
+func newStubConn() *stubConn {
+	stub := &stubConn{
+		level3: &types.Subscription[any]{
+			Channel: make(chan any, 64),
+		},
+	}
+	stub.Actor = types.NewActor(context.Background(), nil)
+	stub.AddRoot("level3", stub.level3)
+
+	return stub
+}
+
 func (stub *stubConn) Report(err error) { stub.reported = err }
 
 func (stub *stubConn) Client() *spot.WebSocket { return stub.client }
-
-func (stub *stubConn) On(channel string, action func([]byte)) uint64 {
-	if stub.channels == nil {
-		stub.channels = map[string][]func([]byte){}
-	}
-
-	stub.channels[channel] = append(stub.channels[channel], action)
-
-	return uint64(len(stub.channels[channel]))
-}
-
-func (stub *stubConn) Unsubscribe(channel string, id uint64) {
-	if stub.channels == nil || id == 0 {
-		return
-	}
-
-	handlers := stub.channels[channel]
-
-	if int(id) > len(handlers) {
-		return
-	}
-
-	index := int(id) - 1
-	stub.channels[channel] = append(handlers[:index], handlers[index+1:]...)
-}
 
 func (stub *stubConn) Write(params json.Marshaler) error {
 	raw, err := params.MarshalJSON()

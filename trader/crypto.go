@@ -3,9 +3,11 @@ package trader
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
@@ -24,16 +26,17 @@ type Crypto struct {
 	dataPath string
 	uiHub    *ui.Hub
 	recorder *audit.Recorder
+	desk     *broker.Desk
 }
 
 /*
-NewCrypto constructs Crypto with market-topic handlers; Boot Initialize attaches
-the planner.
+NewCrypto constructs Crypto; Boot Initialize attaches planner and desk.
 */
 func NewCrypto(
 	ctx context.Context,
 	uiHub *ui.Hub,
 	recorder *audit.Recorder,
+	desk *broker.Desk,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -45,6 +48,7 @@ func NewCrypto(
 		dataPath: utils.ResolveDataPath(),
 		uiHub:    uiHub,
 		recorder: recorder,
+		desk:     desk,
 	}
 
 	crypto.Actor = types.NewActor(ctx, map[string]types.Handler{
@@ -75,15 +79,79 @@ func (crypto *Crypto) Status() types.Status {
 	return crypto.status
 }
 
-/*
-Run starts the Actor loop.
-*/
-func (crypto *Crypto) Run() {
-	crypto.Actor.Run()
+func (crypto *Crypto) thesis(message any) any {
+	thesis := message.(*types.Thesis)
+	crypto.Apply(thesis)
+
+	return thesis
 }
 
-func (crypto *Crypto) thesis(message any) any {
-	return message
+/*
+NextTick advances the observation counter for a new market cut.
+*/
+func (crypto *Crypto) NextTick() int64 {
+	return crypto.tick.Add(1)
+}
+
+/*
+Apply submits sized enter/exit decisions to the desk and records lifecycle.
+*/
+func (crypto *Crypto) Apply(thesis *types.Thesis) {
+	if thesis == nil || crypto.desk == nil {
+		return
+	}
+
+	started := time.Now()
+
+	for index := range thesis.Decisions {
+		decision := &thesis.Decisions[index]
+
+		switch decision.Action {
+		case types.ActionEnter:
+			crypto.enter(thesis, decision)
+		case types.ActionExit:
+			crypto.exit(thesis, decision)
+		}
+	}
+
+	errnie.Error(audit.Phase(crypto.recorder, thesis.Tick, "desk", map[string]any{
+		"ns":        time.Since(started).Nanoseconds(),
+		"decisions": len(thesis.Decisions),
+	}))
+}
+
+func (crypto *Crypto) enter(thesis *types.Thesis, decision *types.Decision) {
+	if decision.ProposedQuantity == nil || decision.ProposedQuantity.Sign() <= 0 {
+		return
+	}
+
+	value, ok := thesis.Holdings.Load(decision.Symbol)
+
+	if !ok {
+		return
+	}
+
+	holding := value.(*types.Holding)
+
+	if holding.Qty == nil || holding.Qty.Sign() <= 0 {
+		holding.Qty = decision.ProposedQuantity.Copy()
+	}
+
+	if _, err := crypto.desk.Buy(holding, holding.IsOpportunity); err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	thesis.NoteLifecycle(decision.Symbol, types.LifecycleEntrySubmitted, thesis.At)
+}
+
+func (crypto *Crypto) exit(thesis *types.Thesis, decision *types.Decision) {
+	if err := crypto.desk.Sell(decision.Symbol); err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	thesis.NoteLifecycle(decision.Symbol, types.LifecycleExitSubmitted, thesis.At)
 }
 
 func (crypto *Crypto) Close() (err error) {

@@ -13,7 +13,7 @@ import (
 )
 
 func tick(wired *stack.Stack) (*types.Thesis, error) {
-	thesis, err := wired.Crypto.Tick()
+	thesis, err := wired.Observe()
 
 	if errnie.IsPreconditionFailed(err) {
 		return thesis, nil
@@ -49,7 +49,7 @@ func TestUpdate(t *testing.T) {
 			market.Close()
 		})
 
-		So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
+		So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
 
 		Convey("When a fast pump plays through Tick", func() {
 			var thesis *types.Thesis
@@ -112,7 +112,7 @@ func TestDecide(t *testing.T) {
 			market.Close()
 		})
 
-		So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
+		So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
 
 		quote := viper.GetString("market.quote_currency")
 		So(quote, ShouldEqual, "USD")
@@ -355,7 +355,7 @@ func BenchmarkDecide(b *testing.B) {
 		market.Close()
 	}()
 
-	if err := market.Warmup(tests.Consume(wired.Crypto.Tick)); err != nil {
+	if err := market.Warmup(tests.Consume(wired.Observe)); err != nil {
 		b.Fatal(err)
 	}
 

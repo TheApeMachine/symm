@@ -111,13 +111,6 @@ func (analyzer *Analyzer) Status() types.Status {
 }
 
 /*
-Run starts the Actor loop.
-*/
-func (analyzer *Analyzer) Run() {
-	analyzer.Actor.Run()
-}
-
-/*
 Close drains REM and releases the manifold solver.
 */
 func (analyzer *Analyzer) Close() error {

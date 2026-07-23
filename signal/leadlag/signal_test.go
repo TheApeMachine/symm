@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/symm/stack"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 type metricValues = map[types.MetricType]map[string]float64
@@ -70,13 +69,13 @@ func TestCalculate(t *testing.T) {
 			market := tests.NewMarket(t.Context(), 3)
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
+			So(market.Warmup(tests.Consume(wired.Observe)), ShouldBeNil)
 			measurements := []*types.Measurement{}
 
 			for index, state := range proof.states {
 				capture := index == len(proof.states)-1
 				So(market.Transition(state, func() error {
-					thesis, err := wired.Crypto.Tick()
+					thesis, err := wired.Observe()
 
 					if err != nil {
 						return err
@@ -100,8 +99,8 @@ func TestCalculate(t *testing.T) {
 			}
 
 			outcomes[proof.name] = marketOutcome{
-				peak: utils.PeakMeasurements(measurements, types.SourceLeadLag, metrics),
-				latest: utils.LatestMeasurements(
+				peak: tests.PeakMeasurements(measurements, types.SourceLeadLag, metrics),
+				latest: tests.LatestMeasurements(
 					measurements, types.SourceLeadLag, metrics,
 				),
 				directions: directions,

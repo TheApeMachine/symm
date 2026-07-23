@@ -11,7 +11,7 @@ system:
     level: debug
   actor:
     retry_max: 21
-    buffer: 64
+    buffer: 1024
   websocket:
     channel:
       # Public book/trade/ticker ingress queues and UI fan-out. Undersizing
