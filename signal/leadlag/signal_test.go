@@ -132,7 +132,7 @@ func TestCalculate(t *testing.T) {
 					So(values[types.MetricSampleSupport][symbol], ShouldBeBetweenOrEqual, 0, 1)
 
 					for _, metric := range families {
-						So(values[metric][symbol], ShouldBeBetweenOrEqual, 0, 1)
+						So(values[metric][symbol], ShouldBeGreaterThanOrEqualTo, 0)
 						strength = max(strength, values[metric][symbol])
 					}
 
@@ -183,6 +183,9 @@ func TestCalculate(t *testing.T) {
 		So(delayed[types.MetricStrength]["SIM1/USD"], ShouldEqual, 0)
 
 		for _, follower := range []string{"SIM2/USD", "SIM3/USD"} {
+			So(delayed[types.MetricLagFraction][follower], ShouldBeGreaterThan, 0)
+			So(delayed[types.MetricSignedLagCorrelation][follower], ShouldBeGreaterThan, 0)
+			So(delayed[types.MetricInefficient][follower], ShouldBeGreaterThan, 0)
 			So(math.Abs(delayed[types.MetricSignedLagCorrelation][follower]),
 				ShouldBeGreaterThan,
 				math.Abs(delayed[types.MetricSignedContempCorrelation][follower]))

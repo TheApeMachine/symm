@@ -1,14 +1,12 @@
 package mockapi
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	balancesfixture "github.com/theapemachine/symm/tests/fixtures/balances"
@@ -52,18 +50,6 @@ func (conn *MockConn) EnablePaper(options PaperOptions) error {
 	if options.Quote == nil || options.Now == nil || len(options.Balances) == 0 ||
 		options.MakerFee < 0 || options.TakerFee < 0 {
 		return errnie.Err(errnie.Validation, "tests/mockapi: complete paper options required", nil)
-	}
-
-	values := []float64{options.MakerFee, options.TakerFee}
-
-	for _, balance := range options.Balances {
-		values = append(values, balance)
-	}
-
-	for _, value := range values {
-		if _, err := number(json.Number(strconv.FormatFloat(value, 'g', -1, 64))); err != nil {
-			return errnie.Err(errnie.Validation, "tests/mockapi: eight-decimal paper value required", err)
-		}
 	}
 
 	balances := make(map[string]float64, len(options.Balances))
@@ -263,23 +249,7 @@ func (paper *Paper) fill(order paperOrder, bid, ask float64) []outbound {
 	}
 
 	base, quote, _ := strings.Cut(order.symbol, "/")
-	quantity, err := decimal.NewFromString(strconv.FormatFloat(
-		order.quantity, 'f', 8, 64,
-	))
-
-	if err != nil {
-		panic(err)
-	}
-
-	executionPrice, err := decimal.NewFromString(strconv.FormatFloat(
-		price, 'f', 8, 64,
-	))
-
-	if err != nil {
-		panic(err)
-	}
-
-	cost := decimal.ExactMul(quantity, executionPrice).SetScale(8)
+	cost := order.quantity * price
 	feeRate := paper.options.TakerFee
 
 	if order.maker {
@@ -287,47 +257,20 @@ func (paper *Paper) fill(order paperOrder, bid, ask float64) []outbound {
 		paper.release(order)
 	}
 
-	feeFraction, err := decimal.NewFromString(strconv.FormatFloat(
-		feeRate, 'f', 8, 64,
-	))
-
-	if err != nil {
-		panic(err)
-	}
-
-	fee := decimal.ExactMul(cost, feeFraction).SetScale(8)
-	baseBalance, err := decimal.NewFromString(strconv.FormatFloat(
-		paper.balances[base], 'f', 8, 64,
-	))
-
-	if err != nil {
-		panic(err)
-	}
-
-	quoteBalance, err := decimal.NewFromString(strconv.FormatFloat(
-		paper.balances[quote], 'f', 8, 64,
-	))
-
-	if err != nil {
-		panic(err)
-	}
+	fee := cost * feeRate
 
 	if order.side == "buy" {
-		quoteBalance = quoteBalance.Sub(cost).Sub(fee)
-		baseBalance = baseBalance.Add(quantity)
-		paper.balances[quote] = quoteBalance.Float64()
-		paper.balances[base] = baseBalance.Float64()
+		paper.balances[quote] -= cost + fee
+		paper.balances[base] += order.quantity
 	}
 
 	if order.side == "sell" {
-		baseBalance = baseBalance.Sub(quantity)
-		quoteBalance = quoteBalance.Add(cost).Sub(fee)
-		paper.balances[base] = baseBalance.Float64()
-		paper.balances[quote] = quoteBalance.Float64()
+		paper.balances[base] -= order.quantity
+		paper.balances[quote] += cost - fee
 	}
 
 	return []outbound{
-		paper.execution(order, price, cost, fee, "trade", "filled"),
+		paper.execution(order, price, "trade", "filled"),
 		{
 			channel: "balances",
 			payload: paper.balanceFrame(balancesfixture.UPDATE),
@@ -341,30 +284,19 @@ execution injects one order state into the existing Kraken execution template.
 func (paper *Paper) execution(
 	order paperOrder,
 	price float64,
-	cost *decimal.Decimal,
-	fee *decimal.Decimal,
 	execType string,
 	status string,
 ) outbound {
 	paper.nextExec++
-	quantity, err := decimal.NewFromString(strconv.FormatFloat(
-		order.quantity, 'f', 8, 64,
-	))
-
-	if err != nil {
-		panic(err)
-	}
-
-	executionPrice, err := decimal.NewFromString(strconv.FormatFloat(
-		price, 'f', 8, 64,
-	))
-
-	if err != nil {
-		panic(err)
-	}
+	quantity := order.quantity
 
 	if execType == "new" {
-		quantity = decimal.NewFromInt64(0).SetScale(8)
+		quantity = 0
+	}
+
+	cost := quantity * price
+	text := func(value float64) string {
+		return strconv.FormatFloat(value, 'f', 8, 64)
 	}
 
 	return outbound{
@@ -374,16 +306,16 @@ func (paper *Paper) execution(
 			ExecID:      fmt.Sprintf("EXEC-%05d", paper.nextExec),
 			Symbol:      order.symbol,
 			Side:        order.side,
-			LastQty:     quantity.String(),
-			LastPrice:   executionPrice.String(),
-			Cost:        cost.String(),
+			LastQty:     text(quantity),
+			LastPrice:   text(price),
+			Cost:        text(cost),
 			OrderStatus: status,
 			OrderType:   order.typ,
 			ExecType:    execType,
-			CumQty:      quantity.String(),
-			CumCost:     cost.String(),
-			AvgPrice:    executionPrice.String(),
-			FeeUsdEquiv: fee.String(),
+			CumQty:      text(quantity),
+			CumCost:     text(cost),
+			AvgPrice:    text(price),
+			FeeUsdEquiv: text(cost * paper.fee(order)),
 			Timestamp:   paper.options.Now().Format(time.RFC3339Nano),
 		}),
 	}

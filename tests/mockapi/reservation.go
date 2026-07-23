@@ -2,7 +2,6 @@ package mockapi
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,24 +14,8 @@ import (
 /*
 available returns spendable ledger quantity after all resting reservations.
 */
-func (paper *Paper) available(asset string) *decimal.Decimal {
-	balance, err := decimal.NewFromString(strconv.FormatFloat(
-		paper.balances[asset], 'f', 8, 64,
-	))
-
-	if err != nil {
-		panic(err)
-	}
-
-	reserved, err := decimal.NewFromString(strconv.FormatFloat(
-		paper.reserved[asset], 'f', 8, 64,
-	))
-
-	if err != nil {
-		panic(err)
-	}
-
-	return balance.Sub(reserved)
+func (paper *Paper) available(asset string) float64 {
+	return paper.balances[asset] - paper.reserved[asset]
 }
 
 /*
@@ -55,54 +38,11 @@ func (paper *Paper) reserve(order paperOrder) paperOrder {
 	order.reserve = order.quantity
 
 	if order.side == "buy" {
-		quantity, err := decimal.NewFromString(strconv.FormatFloat(
-			order.quantity, 'f', 8, 64,
-		))
-
-		if err != nil {
-			panic(err)
-		}
-
-		limit, err := decimal.NewFromString(strconv.FormatFloat(
-			order.limit, 'f', 8, 64,
-		))
-
-		if err != nil {
-			panic(err)
-		}
-
-		feeRate, err := decimal.NewFromString(strconv.FormatFloat(
-			paper.options.MakerFee, 'f', 8, 64,
-		))
-
-		if err != nil {
-			panic(err)
-		}
-
-		notional := decimal.ExactMul(quantity, limit).SetScale(8)
 		order.reserveAsset = quote
-		order.reserve = notional.Add(
-			decimal.ExactMul(notional.Copy(), feeRate).SetScale(8),
-		).Float64()
+		order.reserve = order.quantity * order.limit * (1 + paper.options.MakerFee)
 	}
 
-	reserved, err := decimal.NewFromString(strconv.FormatFloat(
-		paper.reserved[order.reserveAsset], 'f', 8, 64,
-	))
-
-	if err != nil {
-		panic(err)
-	}
-
-	amount, err := decimal.NewFromString(strconv.FormatFloat(
-		order.reserve, 'f', 8, 64,
-	))
-
-	if err != nil {
-		panic(err)
-	}
-
-	paper.reserved[order.reserveAsset] = reserved.Add(amount).Float64()
+	paper.reserved[order.reserveAsset] += order.reserve
 	return order
 }
 
@@ -110,23 +50,7 @@ func (paper *Paper) reserve(order paperOrder) paperOrder {
 release unlocks the exact reservation before applying a resting fill.
 */
 func (paper *Paper) release(order paperOrder) {
-	reserved, err := decimal.NewFromString(strconv.FormatFloat(
-		paper.reserved[order.reserveAsset], 'f', 8, 64,
-	))
-
-	if err != nil {
-		panic(err)
-	}
-
-	amount, err := decimal.NewFromString(strconv.FormatFloat(
-		order.reserve, 'f', 8, 64,
-	))
-
-	if err != nil {
-		panic(err)
-	}
-
-	paper.reserved[order.reserveAsset] = reserved.Sub(amount).Float64()
+	paper.reserved[order.reserveAsset] -= order.reserve
 }
 
 /*

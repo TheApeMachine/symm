@@ -15,8 +15,8 @@ import (
 )
 
 /*
-cognizeStates runs DMT cognition for each current manifold state. The DMT tree
-publishes immutable roots, so REM and foreground learning do not block a cut.
+cognizeStates runs DMT cognition for each gas-ready state and collects REM
+observation times plus ambiguity requests.
 */
 func (analyzer *Analyzer) cognizeStates(
 	thesis *types.Thesis,
@@ -44,10 +44,7 @@ func (analyzer *Analyzer) cognizeStates(
 			remRequested = remRequested || reading.Ambiguous
 
 			if analyzer.manifold != nil {
-				if err := analyzer.manifold.CommitPhase(reading); err != nil {
-					errnie.Error(err)
-					thesis.NoteIncomplete()
-				}
+				errnie.Error(analyzer.manifold.CommitPhase(reading))
 			}
 		}
 	}
@@ -140,7 +137,6 @@ cognize turns the Thesis evidence for one manifold state into a deterministic
 DMT sensory sequence, anchors the intensity-derived attractor on that sequence,
 then publishes the posterior classification strategy consumes. Publishing only
 the pre-train prior left Ready empty whenever the measurement bag changed,
-
 	because exact sequence repeats almost never occur on a live tape.
 */
 func (analyzer *Analyzer) cognize(
@@ -182,12 +178,11 @@ func (analyzer *Analyzer) cognize(
 		errnie.Error(errnie.Err(errnie.IO, "logic cognize: episodic commit failed", err).
 			With("cause", cause.Error()).
 			With("symbol", state.Symbol))
-		thesis.NoteIncomplete()
 
 		return false
 	}
 
-	if !analyzer.trainAttractors(thesis, state, sequence) {
+	if !analyzer.trainAttractors(state, sequence) {
 		return false
 	}
 
@@ -265,8 +260,8 @@ func signedToken(value float64) string {
 /*
 readCognition classifies the sensory sequence for strategy on the hot path —
 winner, confidence, ambiguity, contrast, cohort, predictions, and classes —
-then attaches the Cortex radix/beam payload each symbol needs for client-side
-focus without recalculating classes or lookahead strength.
+plus the lookahead strength the terminal shows as category strength, then
+attaches the full Cortex radix/beam visualization only for the focused symbol.
 */
 func (analyzer *Analyzer) readCognition(
 	state manifold.State,
@@ -293,6 +288,8 @@ func (analyzer *Analyzer) readCognition(
 		Ambiguous:        ambiguity.Ambiguous,
 		Cohort:           analyzer.tree.GetSensoryWeight(sequence).Count,
 		Predictions:      make(map[string]float64, len(predictions)),
+		Classes:          cognitionClasses(classification),
+		LookaheadScore:   analyzer.lookaheadScore(parts, predictions),
 		RegimePrefix:     string(parent),
 	}
 
@@ -308,26 +305,28 @@ func (analyzer *Analyzer) readCognition(
 		reading.Predictions[string(prediction.Token)] = prediction.Probability
 	}
 
-	analyzer.attachVisualization(&reading, sequence, parts, classification, predictions)
+	analyzer.attachVisualization(&reading, sequence, parent, parts, classification, predictions)
 
 	return reading
 }
 
 /*
-attachVisualization materializes one symbol's Cortex radix and beam payload.
-The terminal chooses focus client-side, so every published symbol needs this
-surface; the returned classes and lookahead score are reused by strategy.
+attachVisualization materializes the Cortex radix and beam tree only for the UI
+focus symbol. Expanding the full branch fan-out and running beam search for every
+symbol every tick is the cold path; strategy already has its classification,
+ambiguity, contrast, and lookahead fields from readCognition's hot path.
 */
 func (analyzer *Analyzer) attachVisualization(
 	reading *types.Cognition,
 	sequence []byte,
+	parent []byte,
 	parts []string,
 	classification dmt.ClassificationResult,
 	predictions []dmt.LookaheadPrediction,
 ) {
 	branches, beams, classes, beamWidth, maxHops, nodeCount, lookaheadScore, lookaheadPaths :=
 		analyzer.cognitionVisualization(
-			sequence, parts, classification, predictions,
+			sequence, parent, parts, classification, predictions,
 		)
 
 	reading.Branches = branches
@@ -340,9 +339,10 @@ func (analyzer *Analyzer) attachVisualization(
 	reading.LookaheadPaths = lookaheadPaths
 }
 
-/* trainAttractors updates buy/sell/balanced basin weights for one sensory sequence. */
+/*
+trainAttractors updates buy/sell/balanced basin weights for the sensory sequence.
+*/
 func (analyzer *Analyzer) trainAttractors(
-	thesis *types.Thesis,
 	state manifold.State,
 	sequence []byte,
 ) bool {
@@ -380,8 +380,6 @@ func (analyzer *Analyzer) trainAttractors(
 			candidate, sequence, weights[index],
 		); err != nil {
 			errnie.Error(err)
-			thesis.NoteIncomplete()
-			return false
 		}
 	}
 

@@ -14,22 +14,23 @@ import (
 const (
 	ThesisKey = "thesis"
 
-	LifecycleObserving        = "observing"
-	LifecycleShaped           = "shaped"
-	LifecycleEntrySelected    = "entry_selected"
-	LifecycleEntrySubmitted   = "entry_submitted"
-	LifecyclePartiallyEntered = "partially_entered"
-	LifecycleEntered          = "entered"
-	LifecycleManaging         = "managing"
-	LifecycleExitSelected     = "exit_selected"
-	LifecycleExitSubmitted    = "exit_submitted"
-	LifecyclePartiallyExited  = "partially_exited"
-	LifecycleClosed           = "closed"
-	LifecyclePostMortemReady  = "postmortem_ready"
-	LifecycleEvaluated        = "evaluated"
-	LifecycleExpired          = "expired"
-	LifecycleRejected         = "rejected"
-	LifecycleInvalid          = "invalid"
+	LifecycleObserving           = "observing"
+	LifecycleShaped              = "shaped"
+	LifecycleEntrySelected       = "entry_selected"
+	LifecycleEntrySubmitted      = "entry_submitted"
+	LifecyclePartiallyEntered    = "partially_entered"
+	LifecycleEntered             = "entered"
+	LifecycleManaging            = "managing"
+	LifecycleExitSelected        = "exit_selected"
+	LifecycleExitSubmitted       = "exit_submitted"
+	LifecyclePartiallyExited     = "partially_exited"
+	LifecycleClosed              = "closed"
+	LifecyclePostExitObservation = "post_exit_observation"
+	LifecyclePostMortemReady     = "postmortem_ready"
+	LifecycleEvaluated           = "evaluated"
+	LifecycleExpired             = "expired"
+	LifecycleRejected            = "rejected"
+	LifecycleInvalid             = "invalid"
 )
 
 /*
@@ -38,25 +39,25 @@ holdings it created plus lifecycle and findings; each market cut replaces
 per-tick evidence in place so the object does not grow without bound.
 */
 type Thesis struct {
-	checkpoint    atomic.Int64
-	uiHub         chan<- []byte
-	Tick          int64          `json:"tick"`
-	At            time.Time      `json:"at"`
-	Positions     *sync.Map      `json:"positions"`
-	Holdings      *sync.Map      `json:"holdings"`
-	CrossSection  *CrossSection  `json:"crossSection"`
-	Measurements  []*Measurement `json:"measurements"`
-	Graphs        *sync.Map      `json:"graphs"`
-	Forecasts     []Forecasts    `json:"forecasts"`
-	Decisions     []Decision     `json:"decisions"`
-	Lifecycle     *sync.Map      `json:"lifecycle"`
-	Findings      []Finding      `json:"findings"`
-	Hypotheses    []Hypothesis   `json:"hypotheses"`
-	Categories    []Category     `json:"categories"`
-	Manifold      *sync.Map      `json:"manifold"`
-	Cognition     *sync.Map      `json:"cognition"`
-	Resonance     []any          `json:"resonance"`
-	Causal        []any          `json:"causal"`
+	checkpoint   atomic.Int64
+	uiHub        chan<- []byte
+	Tick         int64          `json:"tick"`
+	At           time.Time      `json:"at"`
+	Positions    *sync.Map      `json:"positions"`
+	Holdings     *sync.Map      `json:"holdings"`
+	CrossSection *CrossSection  `json:"crossSection"`
+	Measurements []*Measurement `json:"measurements"`
+	Graphs       *sync.Map      `json:"graphs"`
+	Forecasts    []Forecasts    `json:"forecasts"`
+	Decisions    []Decision     `json:"decisions"`
+	Lifecycle    *sync.Map      `json:"lifecycle"`
+	Findings     []Finding      `json:"findings"`
+	Hypotheses   []Hypothesis   `json:"hypotheses"`
+	Categories   []Category     `json:"categories"`
+	Manifold     *sync.Map      `json:"manifold"`
+	Cognition    *sync.Map      `json:"cognition"`
+	Resonance    []any          `json:"resonance"`
+	Causal       []any          `json:"causal"`
 	cutIncomplete bool
 }
 
@@ -93,31 +94,35 @@ func (thesis *Thesis) ResetTick(at time.Time, tick int64) {
 		return
 	}
 
-	pending := thesis.Decisions[:0]
-
-	for _, decision := range thesis.Decisions {
-		phase, found := thesis.Lifecycle.Load(decision.Symbol)
-
-		if decision.Action == ActionEnter && found && phase == LifecycleEntrySelected {
-			pending = append(pending, decision)
-		}
-	}
-
 	thesis.Tick = tick
 	thesis.At = at
 	thesis.CrossSection = NewCrossSection()
 	thesis.Measurements = nil
 	thesis.Forecasts = thesis.Forecasts[:0]
-	thesis.Decisions = pending
+	thesis.Decisions = thesis.Decisions[:0]
 	thesis.Hypotheses = thesis.Hypotheses[:0]
 	thesis.Categories = thesis.Categories[:0]
 	thesis.Resonance = thesis.Resonance[:0]
 	thesis.Causal = thesis.Causal[:0]
 	thesis.cutIncomplete = false
-	thesis.Graphs.Clear()
-	thesis.Manifold.Clear()
-	thesis.Cognition.Clear()
-	thesis.Positions.Clear()
+	clearSyncMap(thesis.Graphs)
+	clearSyncMap(thesis.Manifold)
+	clearSyncMap(thesis.Cognition)
+	clearSyncMap(thesis.Positions)
+}
+
+/*
+clearSyncMap drops every entry from map without reallocating the header.
+*/
+func clearSyncMap(values *sync.Map) {
+	if values == nil {
+		return
+	}
+
+	values.Range(func(key, _ any) bool {
+		values.Delete(key)
+		return true
+	})
 }
 
 /*
@@ -254,18 +259,8 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 	thesis.Holdings.Range(func(key, value any) bool {
 		switch holding := value.(type) {
 		case Holding:
-			if holding.Stoploss != nil {
-				holding.Stoploss.RLock()
-				defer holding.Stoploss.RUnlock()
-			}
-
 			holdings[key.(string)] = holding
 		case *Holding:
-			if holding.Stoploss != nil {
-				holding.Stoploss.RLock()
-				defer holding.Stoploss.RUnlock()
-			}
-
 			holdings[key.(string)] = *holding
 		}
 

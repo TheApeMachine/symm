@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	orderackfixture "github.com/theapemachine/symm/tests/fixtures/orderack"
 )
@@ -116,8 +114,7 @@ func (paper *Paper) Handle(raw []byte) ([]outbound, error) {
 	order = paper.reserve(order)
 	paper.open[order.id] = order
 	paper.order = append(paper.order, order.id)
-	zero := decimal.NewFromInt64(0).SetScale(8)
-	frames = append(frames, paper.execution(order, 0, zero, zero, "new", "open"))
+	frames = append(frames, paper.execution(order, 0, "new", "open"))
 	return frames, nil
 }
 
@@ -148,12 +145,6 @@ func (paper *Paper) validate(
 		return errnie.Err(errnie.Validation, "tests/mockapi: executable quote required", nil)
 	}
 
-	for _, value := range []float64{bid, bidQty, ask, askQty} {
-		if _, err := number(json.Number(strconv.FormatFloat(value, 'g', -1, 64))); err != nil {
-			return errnie.Err(errnie.Validation, "tests/mockapi: eight-decimal quote required", err)
-		}
-	}
-
 	if !order.maker && (order.side == "buy" && order.quantity > askQty ||
 		order.side == "sell" && order.quantity > bidQty) {
 		return errnie.Err(errnie.Validation, "tests/mockapi: order exceeds touch liquidity", nil)
@@ -175,40 +166,8 @@ func (paper *Paper) validate(
 		price = bid
 	}
 
-	quantity, err := decimal.NewFromString(strconv.FormatFloat(
-		order.quantity, 'f', 8, 64,
-	))
-
-	if err != nil {
-		return errnie.Err(errnie.Validation, "tests/mockapi: exact order quantity required", err)
-	}
-
-	required := quantity
-	available := paper.available(base)
-
-	if order.side == "buy" {
-		executionPrice, err := decimal.NewFromString(strconv.FormatFloat(
-			price, 'f', 8, 64,
-		))
-
-		if err != nil {
-			return errnie.Err(errnie.Validation, "tests/mockapi: exact order price required", err)
-		}
-
-		feeRate, err := decimal.NewFromString(strconv.FormatFloat(
-			paper.fee(order), 'f', 8, 64,
-		))
-
-		if err != nil {
-			return errnie.Err(errnie.Validation, "tests/mockapi: exact fee required", err)
-		}
-
-		cost := decimal.ExactMul(quantity, executionPrice).SetScale(8)
-		required = cost.Add(decimal.ExactMul(cost.Copy(), feeRate).SetScale(8))
-		available = paper.available(quote)
-	}
-
-	if available.Cmp(required) < 0 {
+	if order.side == "buy" && paper.available(quote) < order.quantity*price*(1+paper.fee(order)) ||
+		order.side == "sell" && paper.available(base) < order.quantity {
 		return errnie.Err(errnie.Validation, "tests/mockapi: insufficient paper balance", nil)
 	}
 
@@ -230,25 +189,14 @@ func decodeOrder(raw []byte) (orderRequest, error) {
 	return request, nil
 }
 
-/* number parses one wire number that the eight-decimal ledger can preserve. */
+/*
+number parses an optional exact wire number.
+*/
 func number(value json.Number) (float64, error) {
-	exact, err := decimal.NewFromString(value.String())
+	parsed, err := value.Float64()
 
-	if err != nil {
+	if err != nil || math.IsInf(parsed, 0) || math.IsNaN(parsed) {
 		return 0, errnie.Err(errnie.Validation, "tests/mockapi: finite number required", err)
-	}
-
-	parsed := exact.Float64()
-	quantized := exact.Copy().SetScale(8)
-	maxExact := math.Ldexp(1, 53) / math.Pow10(8)
-
-	if math.IsInf(parsed, 0) || math.IsNaN(parsed) ||
-		exact.Cmp(quantized) != 0 || math.Abs(parsed) > maxExact {
-		return 0, errnie.Err(
-			errnie.Validation,
-			"tests/mockapi: finite eight-decimal number required",
-			nil,
-		)
 	}
 
 	return parsed, nil

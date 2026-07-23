@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -40,10 +39,6 @@ type Hub struct {
 	writeMu     sync.Mutex
 }
 
-/*
-NewHub starts the dashboard message drain and websocket endpoint over the
-shared production channel.
-*/
 func NewHub(
 	ctx context.Context,
 	price *broker.Price,
@@ -96,10 +91,6 @@ func NewHub(
 	return hub
 }
 
-/*
-drain continuously retains reconnect state and forwards each frame to the
-currently attached client without making producers wait for a connection.
-*/
 func (hub *Hub) drain() {
 	for {
 		select {
@@ -116,25 +107,8 @@ func (hub *Hub) drain() {
 	}
 }
 
-/*
-retain caches only reconnect-visible top-level frames and rejects unrelated UI
-traffic before JSON decoding so analyzer publication does not tax the hot path.
-*/
 func (hub *Hub) retain(msg []byte) {
 	if len(msg) == 0 {
-		return
-	}
-
-	cacheable := false
-
-	for _, key := range cacheKeys {
-		if bytes.Contains(msg, []byte(key)) {
-			cacheable = true
-			break
-		}
-	}
-
-	if !cacheable {
 		return
 	}
 
@@ -161,9 +135,6 @@ func (hub *Hub) retain(msg []byte) {
 	}
 }
 
-/*
-replay writes the latest retained frame for each cache key to a new client.
-*/
 func (hub *Hub) replay() {
 	for _, key := range cacheKeys {
 		value, ok := hub.subscribers.Load(key)
@@ -182,9 +153,6 @@ func (hub *Hub) replay() {
 	}
 }
 
-/*
-write sends one frame to the active websocket and detaches closed clients.
-*/
 func (hub *Hub) write(msg []byte) {
 	conn := hub.client.Load()
 
@@ -213,16 +181,10 @@ func (hub *Hub) write(msg []byte) {
 	}
 }
 
-/*
-Serve listens for dashboard websocket connections on the configured address.
-*/
 func (hub *Hub) Serve() error {
 	return errnie.Error(hub.app.Listen(hub.listenAddr))
 }
 
-/*
-Close stops the websocket server and releases the background message drain.
-*/
 func (hub *Hub) Close() error {
 	if hub.app != nil {
 		errnie.Error(hub.app.Shutdown())

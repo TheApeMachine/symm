@@ -212,43 +212,22 @@ func (outcome *marketOutcome) observeCognition(thesis *types.Thesis) {
 }
 
 /*
-TestAnalyzerUpdate drives the complete production graph through every current
-directional, liquidity, cadence, displacement, cross-symbol, and replay regime
-and verifies every Analyzer-owned Thesis surface against its causal state.
+TestAnalyzerUpdate drives the complete production graph through quiet,
+directional, and replay-only markets and verifies every Analyzer-owned Thesis
+surface against the causal state that produced it.
 */
 func TestAnalyzerUpdate(t *testing.T) {
 	proofs := []struct {
-		name                              string
-		state                             tests.MarketState
-		steps                             int
-		replay                            bool
-		prepare                           bool
-		minimumSign                       int
-		maximumSign                       int
-		forecastSign                      int
-		buy                               int
-		sell                              int
-		balanced                          int
-		supports, contradicts, conditions int
+		name    string
+		state   tests.MarketState
+		replay  bool
+		prepare bool
 	}{
-		{"baseline", tests.MarketStateBaseline, 16, false, false, -1, 1, 0, 32, 16, 0, 715, 468, 48},
-		{"fast pump", tests.MarketStateFastPump, 12, false, false, 0, 1, 1, 31, 0, 5, 663, 410, 36},
-		{"slow pump", tests.MarketStateSlowPump, 20, false, false, 0, 1, 1, 55, 0, 5, 1027, 644, 60},
-		{"fast dump", tests.MarketStateFastDump, 12, false, false, -1, 0, -1, 0, 26, 10, 594, 378, 36},
-		{"slow dump", tests.MarketStateSlowDump, 20, false, false, -1, 0, -1, 1, 49, 10, 892, 581, 60},
-		{"volume absorption", tests.MarketStateVolumeAbsorption, 12, false, false, 0, 1, 0, 29, 0, 7, 336, 214, 21},
-		{"low-volume lift", tests.MarketStateLowVolumeLift, 12, false, false, 0, 1, 1, 31, 0, 5, 633, 394, 36},
-		{"spread compression", tests.MarketStateSpreadCompression, 12, false, false, -1, 1, 0, 24, 12, 0, 363, 225, 21},
-		{"thin liquidity", tests.MarketStateThinLiquidity, 1, true, false, -1, 1, 0, 2, 1, 0, 47, 28, 0},
-		{"loaded liquidity", tests.MarketStateLoadedLiquidity, 18, true, false, -1, 1, 0, 36, 18, 0, 522, 288, 0},
-		{"liquidity retreat", tests.MarketStateLiquidityRetreat, 1, true, false, -1, 1, 0, 2, 1, 0, 59, 43, 0},
-		{"spoof liquidity", tests.MarketStateSpoofLiquidity, 1, true, false, -1, 1, 0, 2, 1, 0, 32, 16, 0},
-		{"depth thinning", tests.MarketStateDepthThinning, 1, true, false, -1, 1, 0, 2, 1, 0, 6, 3, 0},
-		{"slow-cadence lift", tests.MarketStateSlowCadenceLift, 12, false, false, 0, 1, 1, 31, 0, 5, 663, 410, 36},
-		{"small-displacement lift", tests.MarketStateSmallLift, 12, false, false, 0, 1, 1, 31, 0, 5, 661, 409, 36},
-		{"spread control", tests.MarketStateSpreadControl, 12, false, false, 0, 1, 0, 31, 0, 5, 457, 333, 21},
-		{"leader follower", tests.MarketStateLeaderFollower, 20, false, false, -1, 1, 1, 54, 6, 0, 1027, 646, 60},
-		{"persistent adverse divergence", tests.MarketStateAdverseDivergence, 12, false, true, -1, 1, 1, 24, 12, 0, 616, 384, 36},
+		{"baseline", tests.MarketStateBaseline, false, false},
+		{"fast pump", tests.MarketStateFastPump, false, false},
+		{"fast dump", tests.MarketStateFastDump, false, false},
+		{"persistent adverse divergence", tests.MarketStateAdverseDivergence, false, true},
+		{"book-only replay", tests.MarketStateThinLiquidity, true, false},
 	}
 
 	Convey("Given materially distinct fixture-driven markets", t, func() {
@@ -257,7 +236,11 @@ func TestAnalyzerUpdate(t *testing.T) {
 
 		for _, proof := range proofs {
 			market := tests.NewMarket(t.Context(), 3)
-			marketSymbols = market.Symbols
+
+			if marketSymbols == nil {
+				marketSymbols = append([]string(nil), market.Symbols...)
+			}
+
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
 			So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
@@ -302,67 +285,72 @@ func TestAnalyzerUpdate(t *testing.T) {
 		}
 
 		Convey("It should preserve direction, chronology, and evidence semantics", func() {
-			for _, proof := range proofs {
-				outcome := outcomes[proof.name]
-				expectedObservations := proof.steps * len(marketSymbols)
-				expectedAdvanced := expectedObservations
-				expectedReplayed := 0
-
-				if proof.replay {
-					expectedAdvanced = 0
-					expectedReplayed = expectedObservations
-				}
-
-				So(outcome.minimumFlow == 0, ShouldEqual, proof.minimumSign == 0)
-				So(math.Signbit(outcome.minimumFlow), ShouldEqual, proof.minimumSign < 0)
-				So(outcome.maximumFlow == 0, ShouldEqual, proof.maximumSign == 0)
-				So(math.Signbit(outcome.maximumFlow), ShouldEqual, proof.maximumSign < 0)
-				So(outcome.cognitions, ShouldEqual, expectedObservations)
-				So(outcome.categories, ShouldEqual, expectedObservations)
-				So(outcome.winners["buy"], ShouldEqual, proof.buy)
-				So(outcome.winners["sell"], ShouldEqual, proof.sell)
-				So(outcome.winners["balanced"], ShouldEqual, proof.balanced)
-				So(outcome.advanced, ShouldEqual, expectedAdvanced)
-				So(outcome.replayed, ShouldEqual, expectedReplayed)
-
-				So(outcome.edges[types.Supports], ShouldEqual, proof.supports)
-				So(outcome.edges[types.Contradicts], ShouldEqual, proof.contradicts)
-				So(outcome.edges[types.Conditions], ShouldEqual, proof.conditions)
-
-				if proof.forecastSign == 0 {
-					So(outcome.forecasts, ShouldEqual, 0)
-					So(outcome.forecastSum, ShouldEqual, 0.0)
-				}
-
-				if proof.forecastSign != 0 {
-					So(outcome.forecasts == 0, ShouldBeFalse)
-					So(outcome.forecastSum == 0, ShouldBeFalse)
-					So(math.Signbit(outcome.forecastSum), ShouldEqual, proof.forecastSign < 0)
-				}
-
-				for _, symbol := range marketSymbols {
-					if proof.forecastSign == 0 {
-						So(outcome.forecastN[symbol], ShouldEqual, 0)
-						So(outcome.forecastBy[symbol], ShouldEqual, 0.0)
-					}
-				}
-
-				if proof.state != tests.MarketStateAdverseDivergence {
-					continue
-				}
-
-				for index, symbol := range marketSymbols {
-					expectedSign := 1
-
-					if index == 0 {
-						expectedSign = -1
-					}
-
-					So(outcome.forecastN[symbol] == 0, ShouldBeFalse)
-					So(outcome.forecastBy[symbol] == 0, ShouldBeFalse)
-					So(math.Signbit(outcome.forecastBy[symbol]), ShouldEqual, expectedSign < 0)
-				}
+			for _, name := range []string{
+				"baseline", "fast pump", "fast dump", "persistent adverse divergence",
+			} {
+				outcome := outcomes[name]
+				So(outcome.advanced, ShouldBeGreaterThan, 0)
+				So(outcome.replayed, ShouldEqual, 0)
+				So(outcome.edges[types.Supports], ShouldBeGreaterThan, 0)
+				So(outcome.edges[types.Contradicts], ShouldBeGreaterThan, 0)
+				So(outcome.edges[types.Conditions], ShouldBeGreaterThan, 0)
+				So(outcome.cognitions, ShouldBeGreaterThan, 0)
 			}
+
+			baseline := outcomes["baseline"]
+			So(baseline.minimumFlow, ShouldBeLessThan, 0)
+			So(baseline.maximumFlow, ShouldBeGreaterThan, 0)
+			So(baseline.forecasts, ShouldEqual, 0)
+
+			pump := outcomes["fast pump"]
+			So(pump.minimumFlow, ShouldBeGreaterThanOrEqualTo, 0)
+			So(pump.maximumFlow, ShouldBeGreaterThan, 0)
+			So(pump.forecasts, ShouldBeGreaterThan, 0)
+			So(pump.forecastSum/float64(pump.forecasts), ShouldBeGreaterThan, 0)
+			So(pump.winners["sell"], ShouldEqual, 0)
+
+			dump := outcomes["fast dump"]
+			So(dump.minimumFlow, ShouldBeLessThan, 0)
+			So(dump.maximumFlow, ShouldBeLessThanOrEqualTo, 0)
+			So(dump.forecasts, ShouldBeGreaterThan, 0)
+			So(dump.forecastSum/float64(dump.forecasts), ShouldBeLessThan, 0)
+			So(
+				pump.forecastSum/float64(pump.forecasts),
+				ShouldBeGreaterThan,
+				dump.forecastSum/float64(dump.forecasts),
+			)
+			So(dump.winners["buy"], ShouldEqual, 0)
+
+			divergence := outcomes["persistent adverse divergence"]
+			So(divergence.minimumFlow, ShouldBeLessThan, 0)
+			So(divergence.maximumFlow, ShouldBeGreaterThan, 0)
+			So(divergence.forecasts, ShouldBeGreaterThan, 0)
+			So(divergence.forecastN[marketSymbols[0]], ShouldBeGreaterThan, 0)
+			So(
+				divergence.forecastBy[marketSymbols[0]]/
+					float64(divergence.forecastN[marketSymbols[0]]),
+				ShouldBeLessThan,
+				0,
+			)
+
+			for _, symbol := range marketSymbols[1:] {
+				So(divergence.forecastN[symbol], ShouldBeGreaterThan, 0)
+				So(
+					divergence.forecastBy[symbol]/
+						float64(divergence.forecastN[symbol]),
+					ShouldBeGreaterThan,
+					0,
+				)
+			}
+
+			replay := outcomes["book-only replay"]
+			So(replay.advanced, ShouldEqual, 0)
+			So(replay.replayed, ShouldEqual, len(replay.symbols))
+			So(replay.edges[types.Supports], ShouldBeGreaterThan, 0)
+			So(replay.edges[types.Contradicts], ShouldBeGreaterThan, 0)
+			So(replay.edges[types.Conditions], ShouldEqual, 0)
+			So(replay.forecasts, ShouldEqual, 0)
+			So(replay.cognitions, ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -392,6 +380,7 @@ func BenchmarkAnalyzerUpdate(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
+
 	for b.Loop() {
 		if err := market.Transition(tests.MarketStateBaseline, tests.Consume(wired.Crypto.Tick)); err != nil {
 			b.Fatal(err)

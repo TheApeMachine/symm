@@ -67,49 +67,33 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		return err
 	}
 
-	var slice *decimal.Decimal
+	cash, err := allocator.balance.AssetAvailable(
+		viper.GetString("market.quote_currency"),
+	)
+
+	if err != nil || cash == nil || cash.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"allocator: quote cash unavailable",
+			err,
+		))
+	}
+
+	slice := decimal.ExactMul(cash, allocator.maxFraction)
+
+	if slice == nil || slice.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"allocator: wallet slice unavailable",
+			nil,
+		))
+	}
 
 	for index := range thesis.Decisions {
 		decision := &thesis.Decisions[index]
 
 		if decision.Action != types.ActionEnter {
 			continue
-		}
-
-		if decision.ProposedQuantity != nil && decision.ProposedQuantity.Sign() > 0 {
-			continue
-		}
-
-		allocation := decision.ProposedNotional
-
-		if decision.Cause != "rotation" || allocation == nil || allocation.Sign() <= 0 {
-			allocation = slice
-		}
-
-		if allocation == nil {
-			cash, err := allocator.balance.AssetAvailable(
-				viper.GetString("market.quote_currency"),
-			)
-
-			if err != nil || cash == nil || cash.Sign() <= 0 {
-				return errnie.Error(errnie.Err(
-					errnie.NotFound,
-					"allocator: quote cash unavailable",
-					err,
-				))
-			}
-
-			slice = decimal.ExactMul(cash, allocator.maxFraction)
-
-			if slice == nil || slice.Sign() <= 0 {
-				return errnie.Error(errnie.Err(
-					errnie.Validation,
-					"allocator: wallet slice unavailable",
-					nil,
-				))
-			}
-
-			allocation = slice
 		}
 
 		pair, err := allocator.instrument.Pair(decision.Symbol)
@@ -142,14 +126,14 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			))
 		}
 
-		if minCost.Cmp(allocation) > 0 {
+		if minCost.Cmp(slice) > 0 {
 			thesis.Holdings.Delete(decision.Symbol)
 			decision.Reason = "minimum exceeds wallet slice"
 			continue
 		}
 
 		risk := decimal.NewFromFloat64(decision.AllocationHaircut)
-		budget := allocation.Copy().Sub(decimal.ExactMul(allocation.Copy(), risk))
+		budget := slice.Copy().Sub(decimal.ExactMul(slice.Copy(), risk))
 
 		if budget.Sign() <= 0 || budget.Cmp(minCost) < 0 {
 			thesis.Holdings.Delete(decision.Symbol)
@@ -173,7 +157,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			continue
 		}
 
-		if decision.Cause != "rotation" && !allocator.balance.Available(cost) {
+		if !allocator.balance.Available(cost) {
 			thesis.Holdings.Delete(decision.Symbol)
 			decision.Reason = "insufficient balance"
 			continue
@@ -193,10 +177,6 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		decision.ProposedNotional = cost
 		decision.ReferencePrice = ask
 		decision.Reason = "sized from wallet slice"
-
-		if decision.Cause == "rotation" {
-			decision.Reason = "sized from displaced capital"
-		}
 
 		if value, ok := thesis.Holdings.Load(decision.Symbol); ok {
 			holding := value.(*types.Holding)

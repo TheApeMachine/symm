@@ -5,13 +5,10 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
 )
 
-/*
-TestConsume proves the market callback adapter preserves both Tick success and
-failure without treating a missing cut as an idle success.
-*/
 func TestConsume(t *testing.T) {
 	Convey("Given a Tick that returns an error", t, func() {
 		want := errors.New("tick failed")
@@ -20,6 +17,18 @@ func TestConsume(t *testing.T) {
 			So(Consume(func() (*types.Thesis, error) {
 				return nil, want
 			})(), ShouldEqual, want)
+		})
+	})
+
+	Convey("Given a Tick with no measurements yet", t, func() {
+		Convey("It should treat PreconditionFailed as an idle step", func() {
+			So(Consume(func() (*types.Thesis, error) {
+				return nil, errnie.Err(
+					errnie.PreconditionFailed,
+					"crypto: no signal measurements",
+					nil,
+				)
+			})(), ShouldBeNil)
 		})
 	})
 

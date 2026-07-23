@@ -21,7 +21,13 @@ func (analyzer *Analyzer) publishMeasured(
 	publishStarted := time.Now()
 
 	if len(states) > 0 {
-		analyzer.publish(datura.Map[any]{"manifold": states})
+		frame := make([]any, 0, len(states))
+
+		for _, state := range states {
+			frame = append(frame, state)
+		}
+
+		analyzer.publish(datura.Map[any]{"manifold": frame})
 	}
 
 	if len(thesis.Resonance) > 0 {

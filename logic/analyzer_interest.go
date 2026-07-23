@@ -67,19 +67,7 @@ func (analyzer *Analyzer) Interest(thesis *types.Thesis) []string {
 
 			switch holding := value.(type) {
 			case *types.Holding:
-				if holding == nil {
-					return true
-				}
-
-				closed := false
-
-				if holding.Stoploss != nil {
-					holding.Stoploss.RLock()
-					closed = holding.Status == types.CLOSED
-					holding.Stoploss.RUnlock()
-				}
-
-				if closed {
+				if holding == nil || holding.Status == types.CLOSED {
 					return true
 				}
 			case types.Holding:

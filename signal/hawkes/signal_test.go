@@ -1,6 +1,8 @@
 package hawkes
 
 import (
+	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 
 func newTestSignal() *Signal {
 	return &Signal{
+		ctx:      context.Background(),
 		sample:   excitation.NewSample(),
 		process:  excitation.NewProcess(),
 		evidence: NewEvidence(),
@@ -67,6 +70,45 @@ func TestSignal_Calculate(t *testing.T) {
 			})
 		})
 
+		Convey("When ingress overlaps drains", func() {
+			live := &Signal{
+				ctx:      context.Background(),
+				tickerIn: make(chan []kraken.TickerData, 64),
+				bookIn:   make(chan []kraken.BookData, 64),
+				tradeIn:  make(chan []kraken.TradeData, 64),
+				sample:   excitation.NewSample(),
+				process:  excitation.NewProcess(),
+				evidence: NewEvidence(),
+			}
+			out := live.Measure()
+			wait := sync.WaitGroup{}
+			drained := 0
+			wait.Add(2)
+
+			go func() {
+				defer wait.Done()
+
+				for range 100 {
+					live.Trades() <- []kraken.TradeData{row}
+				}
+			}()
+
+			go func() {
+				defer wait.Done()
+
+				for range 100 {
+					select {
+					case batch := <-out:
+						drained += len(batch)
+					default:
+					}
+				}
+			}()
+
+			wait.Wait()
+
+			So(drained, ShouldBeGreaterThanOrEqualTo, 0)
+		})
 	})
 }
 

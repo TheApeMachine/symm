@@ -147,9 +147,6 @@ func (rotate Rotate) Clear(stop *types.Stoploss, forecast types.Forecasts) float
 		return 0
 	}
 
-	stop.RLock()
-	defer stop.RUnlock()
-
 	if stop.Action == "stop" || stop.Action == "take_profit" {
 		return 1
 	}
@@ -204,9 +201,6 @@ func (rotate Rotate) Commit(thesis *types.Thesis) {
 			decision.ProposedQuantity = nil
 			decision.ProposedNotional = nil
 			thesis.Holdings.Delete(decision.Symbol)
-			thesis.NoteLifecycle(
-				decision.Symbol, types.LifecycleRejected, decision.At,
-			)
 
 			if decision.Reason == "" {
 				decision.Reason = "unsized"
@@ -225,18 +219,6 @@ func (rotate Rotate) Commit(thesis *types.Thesis) {
 		if decision.DisplacedQuantity == nil || decision.DisplacedPrice == nil {
 			decision.Action = types.ActionNothing
 			decision.Reason = "rotation source money is unavailable"
-			thesis.Holdings.Delete(decision.Symbol)
-			thesis.NoteLifecycle(
-				decision.Symbol, types.LifecycleRejected, decision.At,
-			)
-			continue
-		}
-
-		phase, found := thesis.Lifecycle.Load(decision.Displaces)
-
-		if found && (phase == types.LifecycleExitSelected ||
-			phase == types.LifecycleExitSubmitted ||
-			phase == types.LifecycleClosed) {
 			continue
 		}
 

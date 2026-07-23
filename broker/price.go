@@ -63,28 +63,10 @@ func NewPrice(
 }
 
 func (price *Price) Initialize() error {
-	go price.consume()
+	price.api.On("ticker", price.TickerAck)
 	price.status.Store(types.READY)
 
 	return nil
-}
-
-/*
-consume ranges the typed ticker stream and applies each frame until the API
-lifecycle context is cancelled.
-*/
-func (price *Price) consume() {
-	ctx := price.api.Context()
-	channel := price.api.TickerChannel()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case data := <-channel:
-			price.TickerAck(data)
-		}
-	}
 }
 
 func (price *Price) Status() types.Status {
@@ -112,8 +94,14 @@ func (price *Price) RouteMarks(mark func(symbol string)) {
 TickerAck decodes a ticker envelope once, refreshes the cache, and fans marks
 to open lots without each Position re-decoding the envelope.
 */
-func (price *Price) TickerAck(data []kraken.TickerData) {
-	for _, item := range data {
+func (price *Price) TickerAck(buf []byte) {
+	ticker := kraken.NewTicker(buf)
+
+	if errnie.Error(kraken.Validate(ticker)) != nil {
+		return
+	}
+
+	for _, item := range ticker.Data {
 		price.tickers.Store(
 			item.Symbol,
 			&item,

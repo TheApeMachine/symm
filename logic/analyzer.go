@@ -130,15 +130,10 @@ func (analyzer *Analyzer) SetRecorder(recorder *audit.Recorder) {
 
 /*
 publish sends one small datura frame to the UI when the channel can accept it.
-Marshal is skipped when the buffered channel is already saturated; the final
-nonblocking send handles a producer that fills the last slot concurrently.
+Marshal runs only after the send slot is claimed so saturated buffers do not
+pay serialization cost for dropped frames.
 */
 func (analyzer *Analyzer) publish(frame datura.Map[any]) {
-	if analyzer.ui == nil ||
-		cap(analyzer.ui) > 0 && len(analyzer.ui) == cap(analyzer.ui) {
-		return
-	}
-
 	select {
 	case analyzer.ui <- frame.Marshal():
 	default:

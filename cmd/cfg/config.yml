@@ -90,10 +90,6 @@ signals:
     # Zero derives tick size and grid half-width from the live book.
     tick_size: 0
     grid_half_width: 0
-    # Upper bound on a book-derived grid half-width. Without it, a wide book with
-    # a fine tick derives a multi-million-cell lattice (gigabytes per grid, whole
-    # solver looping over it per frame). Zero falls back to the built-in default.
-    grid_max_half_width: 256
     # Zero derives the cadence from idle_threshold / max_integration_steps.
     integration_interval: 0
     idle_threshold: 5s

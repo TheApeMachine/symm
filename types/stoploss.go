@@ -3,7 +3,6 @@ package types
 import (
 	"context"
 	"math"
-	"sync"
 
 	"github.com/theapemachine/errnie"
 )
@@ -15,11 +14,11 @@ LockedFloor is zero until a peak earns a ratchet. Action/Reason are the live
 verdict for journals and UI.
 */
 type Stoploss struct {
-	sync.RWMutex `json:"-"`
-	cancel       context.CancelFunc
-	armed        bool
-	entry        float64
-	epoch        uint64
+	ctx    context.Context
+	cancel context.CancelFunc
+	armed  bool
+	entry  float64
+	epoch  uint64
 
 	Weight        float64 `json:"weight"`
 	LockedFloor   float64 `json:"lockedFloor"`
@@ -37,9 +36,10 @@ type Stoploss struct {
 NewStoploss constructs an unbound regulator. Bind arms it at fill.
 */
 func NewStoploss(ctx context.Context) *Stoploss {
-	_, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(ctx)
 
 	return &Stoploss{
+		ctx:    ctx,
 		cancel: cancel,
 		Weight: 1,
 		Action: "hold",
@@ -117,28 +117,14 @@ func (stoploss *Stoploss) Close() {
 Armed reports whether entry and a live floor are latched.
 */
 func (stoploss *Stoploss) Armed() bool {
-	if stoploss == nil {
-		return false
-	}
-
-	stoploss.RLock()
-	defer stoploss.RUnlock()
-
-	return stoploss.armed
+	return stoploss != nil && stoploss.armed
 }
 
 /*
 StopPrice is the absolute floor: entry×(1+stopReturn).
 */
 func (stoploss *Stoploss) StopPrice() float64 {
-	if stoploss == nil {
-		return 0
-	}
-
-	stoploss.RLock()
-	defer stoploss.RUnlock()
-
-	if !stoploss.armed || stoploss.entry <= 0 {
+	if stoploss == nil || !stoploss.armed || stoploss.entry <= 0 {
 		return 0
 	}
 
@@ -159,14 +145,7 @@ func (stoploss *Stoploss) StopPrice() float64 {
 WidenSurvival raises the unlocked fill-time band when live width exceeds it.
 */
 func (stoploss *Stoploss) WidenSurvival(distance float64) {
-	if stoploss == nil {
-		return
-	}
-
-	stoploss.Lock()
-	defer stoploss.Unlock()
-
-	if !stoploss.armed {
+	if stoploss == nil || !stoploss.armed {
 		return
 	}
 
@@ -277,9 +256,6 @@ func (stoploss *Stoploss) Regulate(
 		return
 	}
 
-	stoploss.Lock()
-	defer stoploss.Unlock()
-
 	if phase, found := thesis.Lifecycle.Load(holding.Symbol); found {
 		if phase == LifecycleExitSelected || phase == LifecycleExitSubmitted {
 			return
@@ -346,13 +322,9 @@ func (stoploss *Stoploss) ObserveMark(mark float64) {
 NoteRetreat latches toxicity retreat so tick marks share Update's sincerity gate.
 */
 func (stoploss *Stoploss) NoteRetreat(pressure float64) {
-	if stoploss == nil {
-		return
+	if stoploss != nil {
+		stoploss.Retreat = math.Max(0, pressure)
 	}
-
-	stoploss.Lock()
-	defer stoploss.Unlock()
-	stoploss.Retreat = math.Max(0, pressure)
 }
 
 func (stoploss *Stoploss) settle(action, reason string, markReturn float64) *Stoploss {
@@ -551,3 +523,4 @@ func liveWidth(evidence StopEvidence) float64 {
 
 	return scale
 }
+

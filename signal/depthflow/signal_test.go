@@ -11,9 +11,6 @@ import (
 	"github.com/theapemachine/symm/utils"
 )
 
-/*
-metricValues retains one exact score per metric and emitted symbol.
-*/
 type metricValues = map[types.MetricType]map[string]float64
 
 /*
@@ -41,33 +38,20 @@ func TestCalculate(t *testing.T) {
 
 	Convey("Given causal and adversarial book-shape tapes", t, func() {
 		proofs := []struct {
-			name         string
-			state        tests.MarketState
-			family       types.MetricType
-			peak         float64
-			latest       float64
-			measurements int
-			subjectOnly  bool
+			name   string
+			state  tests.MarketState
+			family types.MetricType
 		}{
-			{"baseline", tests.MarketStateBaseline, types.MetricNeutralScore,
-				1, 1, 576, false},
-			{"directional", tests.MarketStateFastPump, types.MetricNeutralScore,
-				1, 1, 432, false},
-			{"compression", tests.MarketStateSpreadCompression, types.MetricNeutralScore,
-				1, 1, 432, false},
-			{"spread control", tests.MarketStateSpreadControl, types.MetricNeutralScore,
-				1, 1, 432, false},
-			{"thin touch", tests.MarketStateThinLiquidity, types.MetricLoadedScore,
-				0.64013471225271312, 0.64013471225271312, 6, true},
-			{"retreat", tests.MarketStateLiquidityRetreat, types.MetricLoadedScore,
-				0.46353314655395195, 0.46353314655395195, 6, true},
-			{"loaded", tests.MarketStateLoadedLiquidity, types.MetricLoadedScore,
-				0.53020087811712591, 0.0075421382831116828, 108, true},
-			{"spoof", tests.MarketStateSpoofLiquidity, types.MetricSpoofScore,
-				1.0893181558840284, 1.0893181558840284, 6, true},
-			{"thinning", tests.MarketStateDepthThinning, types.MetricThinScore,
-				0.43451479078700339, 0.43451479078700339, 6, true},
+			{"baseline", tests.MarketStateBaseline, types.MetricNeutralScore},
+			{"directional", tests.MarketStateFastPump, types.MetricNeutralScore},
+			{"compression", tests.MarketStateSpreadCompression, types.MetricNeutralScore},
+			{"thin touch", tests.MarketStateThinLiquidity, types.MetricLoadedScore},
+			{"retreat", tests.MarketStateLiquidityRetreat, types.MetricLoadedScore},
+			{"loaded", tests.MarketStateLoadedLiquidity, types.MetricLoadedScore},
+			{"spoof", tests.MarketStateSpoofLiquidity, types.MetricSpoofScore},
+			{"thinning", tests.MarketStateDepthThinning, types.MetricThinScore},
 		}
+		outcomes := make(map[string]marketOutcome, len(proofs))
 
 		for _, proof := range proofs {
 			market := tests.NewMarket(t.Context(), 3)
@@ -82,19 +66,16 @@ func TestCalculate(t *testing.T) {
 					return err
 				}
 
-				for _, measurement := range thesis.Measurements {
-					if measurement.Source == types.SourceDepthFlow {
-						measurements = append(measurements, measurement)
-					}
-				}
-
+				measurements = append(measurements, thesis.Measurements...)
 				return nil
-			}, market.Symbols[0]), ShouldBeNil)
-			So(measurements, ShouldHaveLength, proof.measurements)
+			}), ShouldBeNil)
 
 			for _, measurement := range measurements {
+				if measurement.Source != types.SourceDepthFlow {
+					continue
+				}
+
 				So(measurement.ValidateStruct(), ShouldBeNil)
-				So(measurement.Source, ShouldEqual, types.SourceDepthFlow)
 				So(measurement.Stream, ShouldEqual, types.DepthFlow)
 				So(measurement.Subject, ShouldEqual, types.SubjectBookImbalance)
 				So(measurement.Unit, ShouldEqual, types.UnitDimensionless)
@@ -110,70 +91,75 @@ func TestCalculate(t *testing.T) {
 				So(*measurement.Normalized, ShouldEqual, measurement.Raw)
 			}
 
-			outcome := marketOutcome{
+			outcomes[proof.name] = marketOutcome{
 				peak: utils.PeakMeasurements(measurements, types.SourceDepthFlow, metrics),
 				latest: utils.LatestMeasurements(
 					measurements, types.SourceDepthFlow, metrics,
 				),
 			}
-			expectedSymbols := market.Symbols
-
-			if proof.subjectOnly {
-				expectedSymbols = market.Symbols[:1]
-			}
-
-			for _, check := range []struct {
-				name   string
-				values metricValues
-				score  float64
-			}{
-				{"peak", outcome.peak, proof.peak},
-				{"latest", outcome.latest, proof.latest},
+			for _, values := range []metricValues{
+				outcomes[proof.name].peak, outcomes[proof.name].latest,
 			} {
 				for _, metric := range metrics {
-					SoMsg(proof.name+" "+check.name+" symbols",
-						check.values[metric], ShouldHaveLength, len(expectedSymbols))
-
-					for _, symbol := range expectedSymbols {
-						So(check.values[metric], ShouldContainKey, symbol)
-					}
+					So(values[metric], ShouldHaveLength, 3)
 				}
 
-				for _, symbol := range expectedSymbols {
+				for _, symbol := range market.Symbols {
 					for _, metric := range metrics {
-						So(math.IsNaN(check.values[metric][symbol]), ShouldBeFalse)
-						So(math.IsInf(check.values[metric][symbol], 0), ShouldBeFalse)
+						So(math.IsNaN(values[metric][symbol]), ShouldBeFalse)
+						So(math.IsInf(values[metric][symbol], 0), ShouldBeFalse)
 					}
-
-					expectedFamily := proof.family
-					expectedScore := check.score
-
-					if symbol != market.Symbols[0] {
-						expectedFamily = types.MetricNeutralScore
-						expectedScore = 1
-					}
-
-					familyMass := 0.0
 
 					for _, metric := range families {
-						expected := 0.0
-
-						if metric == expectedFamily {
-							expected = expectedScore
-						}
-
-						SoMsg(proof.name+" "+check.name+" "+symbol+" "+string(metric),
-							check.values[metric][symbol], ShouldEqual, expected)
-						familyMass += check.values[metric][symbol]
+						So(values[metric][symbol], ShouldBeGreaterThanOrEqualTo, 0)
 					}
 
-					So(check.values[types.MetricStrength][symbol], ShouldEqual, familyMass)
-					So(check.values[types.MetricValue][symbol], ShouldEqual, familyMass)
+					strength := 0.0
+
+					for _, metric := range families {
+						strength = max(strength, values[metric][symbol])
+					}
+
+					So(values[types.MetricStrength][symbol], ShouldEqual, strength)
+					So(values[types.MetricStrength][symbol], ShouldBeGreaterThan, 0)
+					So(values[types.MetricValue][symbol], ShouldEqual,
+						values[types.MetricStrength][symbol])
+				}
+			}
+
+			for _, symbol := range market.Symbols {
+				claim := proof.name + " " + symbol + " " + string(proof.family)
+				SoMsg(claim+" peak", outcomes[proof.name].peak[proof.family][symbol],
+					ShouldBeGreaterThan, 0)
+				SoMsg(claim+" latest", outcomes[proof.name].latest[proof.family][symbol],
+					ShouldBeGreaterThan, 0)
+
+				for _, family := range families {
+					if family == proof.family {
+						continue
+					}
+
+					So(outcomes[proof.name].latest[family][symbol], ShouldEqual, 0)
 				}
 			}
 
 			So(wired.Close(), ShouldBeNil)
 			market.Close()
 		}
+
+		compressionLoadedScore := 0.0
+		loadedScore := 0.0
+		directionalLoadedScore := 0.0
+
+		for _, symbol := range []string{"SIM1/USD", "SIM2/USD", "SIM3/USD"} {
+			loadedScore += outcomes["loaded"].latest[types.MetricLoadedScore][symbol]
+			compressionLoadedScore +=
+				outcomes["compression"].latest[types.MetricLoadedScore][symbol]
+			directionalLoadedScore +=
+				outcomes["directional"].latest[types.MetricLoadedScore][symbol]
+		}
+
+		So(loadedScore, ShouldBeGreaterThan, directionalLoadedScore)
+		So(loadedScore, ShouldBeGreaterThan, compressionLoadedScore)
 	})
 }

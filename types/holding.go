@@ -61,11 +61,6 @@ MarshalJSON encodes a JSON-safe desk/thesis surface. Decimal fields become
 finite floats and stop_price is derived from the bound regulator.
 */
 func (holding Holding) MarshalJSON() ([]byte, error) {
-	if holding.Stoploss != nil {
-		holding.Stoploss.RLock()
-		defer holding.Stoploss.RUnlock()
-	}
-
 	frame := datura.Map[any]{
 		"status":         holding.Status,
 		"symbol":         holding.Symbol,
@@ -89,15 +84,7 @@ func (holding Holding) MarshalJSON() ([]byte, error) {
 	}
 
 	if holding.Stoploss != nil {
-		stopPrice := 0.0
-
-		if holding.Stoploss.armed && holding.Stoploss.entry > 0 {
-			stopPrice = finiteFloat(
-				holding.Stoploss.entry * (1 + holding.Stoploss.StopReturn),
-			)
-		}
-
-		if stopPrice > 0 {
+		if stopPrice := holding.Stoploss.StopPrice(); stopPrice > 0 {
 			frame["stop_price"] = stopPrice
 		}
 	}
@@ -114,20 +101,13 @@ func (holding *Holding) StopFrame() map[string]any {
 	}
 
 	stop := holding.Stoploss
-	stop.RLock()
-	defer stop.RUnlock()
-	stopPrice := 0.0
-
-	if stop.armed && stop.entry > 0 {
-		stopPrice = stop.entry * (1 + stop.StopReturn)
-	}
 
 	return map[string]any{
 		"symbol":      holding.Symbol,
 		"peak_return": finiteFloat(stop.PeakReturn),
 		"stop_return": finiteFloat(stop.StopReturn),
-		"armed":       stop.armed,
-		"stop_price":  finiteFloat(stopPrice),
+		"armed":       stop.Armed(),
+		"stop_price":  stop.StopPrice(),
 	}
 }
 

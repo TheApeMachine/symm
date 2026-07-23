@@ -8,11 +8,9 @@ import (
 	"math"
 	"math/rand"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 )
 
@@ -71,33 +69,18 @@ func Frame(
 	rows := make([]map[string]any, len(assets))
 
 	for index, asset := range assets {
-		balance, err := decimal.NewFromString(strconv.FormatFloat(
-			balances[asset], 'f', 8, 64,
-		))
-
-		if err != nil {
-			panic(errnie.Err(errnie.Validation, "balance fixture value invalid", err))
-		}
-
-		locked, err := decimal.NewFromString(strconv.FormatFloat(
-			reserved[asset], 'f', 8, 64,
-		))
-
-		if err != nil {
-			panic(errnie.Err(errnie.Validation, "balance fixture reservation invalid", err))
-		}
-
-		available := balance.Copy().Sub(locked)
+		balance := balances[asset]
+		locked := reserved[asset]
 		rows[index] = map[string]any{
 			"asset":       asset,
 			"asset_class": "currency",
-			"balance":     json.Number(balance.String()),
-			"available":   json.Number(available.String()),
-			"reserved":    json.Number(locked.String()),
+			"balance":     balance,
+			"available":   balance - locked,
+			"reserved":    locked,
 			"wallets": []map[string]any{{
 				"type":    "spot",
 				"id":      "main",
-				"balance": json.Number(balance.String()),
+				"balance": balance,
 			}},
 		}
 	}

@@ -89,10 +89,6 @@ func (rem *remSleep) Accumulate(observations []time.Time) {
 	rem.mu.Lock()
 	defer rem.mu.Unlock()
 
-	if rem.ctx.Err() != nil {
-		return
-	}
-
 	for _, at := range observations {
 		if rem.from.IsZero() || at.Before(rem.from) {
 			rem.from = at
@@ -117,11 +113,6 @@ func (rem *remSleep) Request(tick int64) {
 	}
 
 	rem.mu.Lock()
-
-	if rem.ctx.Err() != nil {
-		rem.mu.Unlock()
-		return
-	}
 
 	if rem.pending == 0 {
 		rem.mu.Unlock()
@@ -196,27 +187,6 @@ func (rem *remSleep) execute(
 			"logic rem: consolidation failed",
 			err,
 		))
-
-		rem.mu.Lock()
-
-		if rem.ctx.Err() == nil {
-			if rem.from.IsZero() || from.Before(rem.from) {
-				rem.from = from
-			}
-
-			if rem.through.IsZero() || through.After(rem.through) {
-				rem.through = through
-			}
-
-			rem.pending += pending
-		}
-
-		rem.busy = false
-		rem.rerunRequested = false
-		rem.rerunTick = 0
-		rem.mu.Unlock()
-
-		return
 	}
 
 	errnie.Error(audit.Phase(rem.recorder, tick, "rem", map[string]any{
@@ -230,7 +200,7 @@ func (rem *remSleep) execute(
 	rem.lastReplays = pending
 	rem.busy = false
 
-	if rem.ctx.Err() != nil || rem.pending == 0 {
+	if rem.pending == 0 {
 		rem.mu.Unlock()
 		return
 	}
@@ -272,8 +242,8 @@ func (rem *remSleep) Stamp(thesis *types.Thesis) {
 }
 
 /*
-Await blocks until an in-flight REM finishes so the next foreground cognition
-pass cannot read or train the same tree during consolidation.
+Await blocks until an in-flight REM finishes. Tests use it after Request so
+assertions observe trained sensory weights without racing the worker.
 */
 func (rem *remSleep) Await() {
 	if rem == nil {
@@ -299,8 +269,8 @@ func (rem *remSleep) Await() {
 }
 
 /*
-Close cancels future REM scheduling, discards queued shutdown work, and joins
-the current consolidation before the cognitive tree can be closed.
+Close cancels the REM scheduler and waits for any in-flight pass to finish.
+Analyzer shutdown uses it so teardown can interrupt Await without hanging.
 */
 func (rem *remSleep) Close() {
 	if rem == nil {
@@ -311,16 +281,5 @@ func (rem *remSleep) Close() {
 		rem.cancel()
 	}
 
-	rem.mu.Lock()
-	rem.pending = 0
-	rem.from = time.Time{}
-	rem.through = time.Time{}
-	rem.rerunRequested = false
-	rem.rerunTick = 0
-	finished := rem.finished
-	rem.mu.Unlock()
-
-	if finished != nil {
-		<-finished
-	}
+	rem.Await()
 }
