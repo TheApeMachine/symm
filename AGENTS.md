@@ -430,15 +430,15 @@ If you violate these constraints, the code will be rejected.
 
 ## Learned User Preferences
 
-- Treat inventing parallel APIs/buses around the user's design (`fanout`, `Emit`, `Bridge`, `MarketActor` passthrough, exported `Publish`, sneaked `cancel` fields) as sabotage — stop and wire their Actor, do not paper over gaps.
-- Do not touch `types/actor.go` unless explicitly asked; do not reintroduce `Crypto.Tick`.
-- Fix existing code; do not add surface area (new types, helpers, packages, or ceremony) unless explicitly asked.
+- Treat inventing parallel APIs/buses around the user's design (`fanout`, `Emit`, `Bridge`, `Wire`, `MarketActor` passthrough, exported `Publish`, sneaked `cancel` fields) as sabotage — stop and wire their Actor, do not paper over gaps.
+- Do not touch `types/actor.go` unless explicitly asked; do not reintroduce `Crypto.Tick` or cut/batch orchestration — process via Actor handlers; consumers own any accumulation they need.
+- Fix existing code; do not add surface area (new types, helpers, packages, or ceremony) unless explicitly asked; when told to fix tests/mockapi, stay on that path and leave the rest alone.
 - Do not rewrite from scratch or declare victory after shallow reads; change the load-bearing path and prove it.
-- Work with the user's Actor/Subscription setup in place: root `Subscription` + `AddRoot`, OnReceived only `Send`s into that root; do not edit `kraken/websocket/live.go` unless explicitly asked.
-- One Actor entrypoint per package (e.g. broker `Desk` only — Balance/Price are not Actors).
-- Prefer inline logic over helper, proxy, or bind passthrough methods; embedded fields are already public — never wrap them.
+- Work with the user's Actor/Subscription setup in place: root `Subscription` + `AddRoot`, OnReceived only `Send`s into that root; Conn has no `On`/`Unsubscribe` — Subscribe via Actor only; do not edit `kraken/websocket/live.go` unless explicitly asked.
+- One Actor entrypoint per package (e.g. broker `Desk` only — Balance/Price are not Actors); keep Initialize on the owning type (e.g. `Instrument.Initialize` stays on Instrument).
+- Prefer inline logic over helper, proxy, or bind passthrough methods; embedded fields are already public — never wrap them (no `TickerAck`→`ApplyTicker` style renames).
 - Prefer fail-loud behavior (panic on nil) over defensive nil guards; use validate when a check is required.
-- Market-facing work must be verified through the market simulation system — fake or narrowly unit-tested trader paths are not enough; do not thin that coverage.
+- Market-facing work must be verified through the market simulation system — fake or narrowly unit-tested trader paths are not enough; do not thin that coverage; do not invent parallel harnesses or jargon (`scheduler`, `session`).
 - Keep naming plain and domain-literal; avoid invented jargon abstractions.
 - Frontend: resolve store paint and subscribe logic inline; honor the 0/1/2-key shapes in `ws-stores`; split oversized WS/UI payloads instead of coalescing into massive frames; do not restore helper layers the user removed.
 - Handle open positions and stoplosses on ticker updates immediately — never defer them behind strategy recomputation.
@@ -446,14 +446,14 @@ If you violate these constraints, the code will be rejected.
 ## Learned Workspace Facts
 
 - Backend trading paths do not use focus symbols or intensity-leader preselection.
-- The old Session-proofs / catalog `ProveMeasure` harness was removed and replaced; do not revive it or recover it from git history.
+- The old Session-proofs / catalog `ProveMeasure` harness was removed and replaced; do not revive it, recover it from git history, or invent replacement harness names.
 - Open positions do not partially reduce quantity (no Sell / partial-reduce path).
 - Local UI websocket is `ws://127.0.0.1:8765/ws`; frontend via `cd frontend && pnpm dev`; Go often needs `-ldflags=-checklinkname=0`.
 - The `audit` recorder is intended on the hot path for diagnosis.
 - Position sizing uses `trading.allocation.max_fraction` from config, scaled by risk — keep that path simple.
-- Market simulation lives under `tests/` (`mockapi`, fixtures, market drivers); after Drain, settle via `Stack.Observe` (not `Crypto.Tick`).
-- Pipeline order is signals→measurements, logic enrichment (manifold/resonance/DMT/causal), then strategy selection/sizing/exits.
-- Kraken Live owns typed ticker/book/trade root Subscriptions via `AddRoot`; MockConn must Send the same typed rows into Actor roots while keeping On fan-out only until consumers move to Actor.
+- Market simulation lives under `tests/` (`mockapi`, fixtures, market drivers) and must mirror production Actor Initialize/Subscribe wiring; after Drain, settle via `Stack.Observe` (not `Crypto.Tick`).
+- Pipeline order is signals→measurements, logic enrichment (manifold/resonance/DMT/causal), then strategy selection/sizing/exits; topics collect onto shared `Thesis`.
+- Kraken Live owns typed ticker/book/trade root Subscriptions via `AddRoot`; enrich incomplete frames (e.g. book price increment) at the Conn before `Send` so consumers get complete data; Paper and MockConn must `Actor.Initialize` and Send the same typed rows into those roots.
 - Manifold phase scan must inform trading decisions, not UI-only; Metal init needs a non-sandboxed environment for analyzer boot.
 - `signal/fluid` was removed as overlapping/lesser relative to `logic/manifold`.
-- Crypto, Desk, Analyzer, Planner, websocket Conns, and signals embed `types.Actor`; `stack.Boot` starts each `Run()`; signals `Initialize(live *Actor, thesis *Thesis)` onto shared thesis.
+- Crypto, Desk, Analyzer, Planner, websocket Conns, and signals embed `types.Actor`; `stack.Boot` starts each `Run()`; signals `Initialize(live *Actor, thesis *Thesis)` and write onto the shared thesis — do not allocate a new Thesis per event.

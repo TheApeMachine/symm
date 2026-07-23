@@ -121,8 +121,8 @@ func BenchmarkInstrumentOn(b *testing.B) {
 	previousBatch := viper.Get("market.subscribe_batch")
 	b.Cleanup(func() { viper.Set("market.subscribe_batch", previousBatch) })
 	viper.Set("market.subscribe_batch", 0)
-	public := mockapi.NewConn()
-	private := mockapi.NewConn()
+	public := mockapi.NewConn(b.Context())
+	private := mockapi.NewConn(b.Context())
 	api := websocket.NewAPI(
 		context.Background(), public, private, nil,
 	)
@@ -156,8 +156,8 @@ func TestInstrumentPublishEmitsUniverse(t *testing.T) {
 		viper.Set("market.quote_currency", "USD")
 		viper.Set("market.subscribe_batch", 0)
 		hub := make(chan []byte, 1)
-		public := mockapi.NewConn()
-		private := mockapi.NewConn()
+		public := mockapi.NewConn(t.Context())
+		private := mockapi.NewConn(t.Context())
 		api := websocket.NewAPI(
 			context.Background(), public, private, nil,
 		)
@@ -199,8 +199,8 @@ func TestInstrumentSubscribeRejectsInvalidBatchSize(t *testing.T) {
 	Convey("Given an invalid subscribe batch size", t, func() {
 		viper.Set("market.quote_currency", "USD")
 		viper.Set("market.subscribe_batch", 0)
-		public := mockapi.NewConn()
-		private := mockapi.NewConn()
+		public := mockapi.NewConn(t.Context())
+		private := mockapi.NewConn(t.Context())
 		api := websocket.NewAPI(
 			context.Background(), public, private, nil,
 		)

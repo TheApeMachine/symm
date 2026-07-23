@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -83,8 +83,6 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 		types.Topic{Name: "trade", Actor: live},
 	)
 }
-
-
 
 func (signal *Signal) onTicker(message any) any {
 	rows := message.(*kraken.Ticker).Data
@@ -186,6 +184,8 @@ func (signal *Signal) Calculate(
 			return nil, err
 		}
 	}
+
+	types.WireMeasurements(out, signal.ui)
 
 	return out, nil
 }

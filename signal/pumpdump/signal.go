@@ -196,6 +196,8 @@ func (signal *Signal) Calculate(
 		return nil, err
 	}
 
+	types.WireMeasurements(out, signal.ui)
+
 	return out, nil
 }
 

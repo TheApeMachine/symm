@@ -5,6 +5,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -66,6 +67,13 @@ func (signal *Signal) emitSymbolMeasurements(
 		*out = append(*out, honesty...)
 	})
 
+	select {
+	case signal.ui <- datura.Map[any]{
+		"measurements": *out,
+	}.Marshal():
+	default:
+	}
+
 	return nil
 }
 
@@ -96,15 +104,15 @@ func tapeMeasurements(
 
 	if row.fillBid > 0 {
 		measurements = append(measurements, &types.Measurement{
-			Source:   types.SourceToxicity,
-			Stream:   types.Toxicity,
-			Metric:   types.MetricFillVolume,
-			Subject:  types.SubjectLevel3Tape,
-			Symbol:   symbol,
-			Side:     types.SideBuy,
-			At:       row.latestAt,
-			Unit:     types.UnitQuoteCurrency,
-			Raw:      row.fillBid,
+			Source:  types.SourceToxicity,
+			Stream:  types.Toxicity,
+			Metric:  types.MetricFillVolume,
+			Subject: types.SubjectLevel3Tape,
+			Symbol:  symbol,
+			Side:    types.SideBuy,
+			At:      row.latestAt,
+			Unit:    types.UnitQuoteCurrency,
+			Raw:     row.fillBid,
 			// Honesty is executed base size versus observed trade size; notional
 			// fill value is retained as Raw for quote-space reporting only.
 			Normalized: types.NormalizeRatio(
@@ -118,15 +126,15 @@ func tapeMeasurements(
 
 	if row.fillAsk > 0 {
 		measurements = append(measurements, &types.Measurement{
-			Source:   types.SourceToxicity,
-			Stream:   types.Toxicity,
-			Metric:   types.MetricFillVolume,
-			Subject:  types.SubjectLevel3Tape,
-			Symbol:   symbol,
-			Side:     types.SideSell,
-			At:       row.latestAt,
-			Unit:     types.UnitQuoteCurrency,
-			Raw:      row.fillAsk,
+			Source:  types.SourceToxicity,
+			Stream:  types.Toxicity,
+			Metric:  types.MetricFillVolume,
+			Subject: types.SubjectLevel3Tape,
+			Symbol:  symbol,
+			Side:    types.SideSell,
+			At:      row.latestAt,
+			Unit:    types.UnitQuoteCurrency,
+			Raw:     row.fillAsk,
 			Normalized: types.NormalizeRatio(
 				row.askExecuted, math.Max(row.volume, row.askExecuted),
 			),

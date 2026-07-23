@@ -65,6 +65,8 @@ func (signal *Signal) measureFrame(
 		out = append(out, signal.score(row.Symbol, row.Timestamp, features)...)
 	}
 
+	types.WireMeasurements(out, signal.ui)
+
 	return out, nil
 }
 

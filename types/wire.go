@@ -38,7 +38,7 @@ scale beside the live intensity epoch so the UI can reconstruct decay curves.
 Thesis and evidence graphs keep the flat typed rows; only the UI publish path
 uses this projection.
 */
-func WireMeasurements(measurements []*Measurement) []datura.Map[any] {
+func WireMeasurements(measurements []*Measurement, ui chan []byte) []datura.Map[any] {
 	candidates := wireCandidates(measurements)
 
 	if len(candidates) == 0 {
@@ -69,6 +69,13 @@ func WireMeasurements(measurements []*Measurement) []datura.Map[any] {
 
 	for _, key := range order {
 		out = append(out, groups[key].frame())
+	}
+
+	select {
+	case ui <- datura.Map[any]{
+		"measurements": out,
+	}.Marshal():
+	default:
 	}
 
 	return out

@@ -58,6 +58,8 @@ func NewPaper(
 		paper.AddRoot(name, root)
 	}
 
+	paper.Actor.Initialize()
+
 	return paper
 }
 

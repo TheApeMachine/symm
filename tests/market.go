@@ -80,10 +80,10 @@ func NewMarket(ctx context.Context, symbolCount int, options ...MarketOptions) *
 	market := &Market{
 		ctx:     ctx,
 		cancel:  cancel,
-		Public:  mockapi.NewConn(symbols...),
-		Private: mockapi.NewConn(symbols...),
-		Paper:   mockapi.NewConn(symbols...),
-		Level3:  mockapi.NewConn(symbols...),
+		Public:  mockapi.NewConn(ctx, symbols...),
+		Private: mockapi.NewConn(ctx, symbols...),
+		Paper:   mockapi.NewConn(ctx, symbols...),
+		Level3:  mockapi.NewConn(ctx, symbols...),
 		Symbols: symbols,
 		State:   MarketStateBaseline,
 		signal:  signal,
@@ -364,6 +364,9 @@ func (market *Market) configure() {
 		marketsignal.PriceIncrement,
 	).Generate() {
 		market.Public.Respond("instrument", payload)
+		// Warm price-increment cache the same way a live instrument
+		// snapshot would, so later book frames are complete before Send.
+		market.Public.Emit("instrument", payload)
 	}
 
 	for payload := range tradevolumefixture.NewMarket(market.Symbols).Generate() {

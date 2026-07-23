@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAtMs": 1784808093160,
+  "updatedAtMs": 1784823531744,
   "transcripts": {
     "0140878a-6f41-4819-87c2-fd1407b636e0/0140878a-6f41-4819-87c2-fd1407b636e0.jsonl": {
       "mtimeMs": 1779587795615
@@ -2667,7 +2667,7 @@
       "mtimeMs": 1781823256510
     },
     "cf71b88e-4d47-4601-973d-73983483d534/cf71b88e-4d47-4601-973d-73983483d534.jsonl": {
-      "mtimeMs": 1784807986188
+      "mtimeMs": 1784823321113
     },
     "cf71b88e-4d47-4601-973d-73983483d534/subagents/3279b91c-c345-4ba1-b519-86248adb37df.jsonl": {
       "mtimeMs": 1784779678324
@@ -3042,7 +3042,25 @@
       "mtimeMs": 1784789107377
     },
     "cf71b88e-4d47-4601-973d-73983483d534/subagents/7ab88174-eaf9-4e69-bfad-cac8fea5206a.jsonl": {
-      "mtimeMs": 1784808018421
+      "mtimeMs": 1784808098287
+    },
+    "cf71b88e-4d47-4601-973d-73983483d534/subagents/5bcde249-a252-4d04-9883-542bd2d10f10.jsonl": {
+      "mtimeMs": 1784816523682
+    },
+    "cf71b88e-4d47-4601-973d-73983483d534/subagents/6462e553-30ba-4a8c-88c9-5ffe2ef4757f.jsonl": {
+      "mtimeMs": 1784815536201
+    },
+    "cf71b88e-4d47-4601-973d-73983483d534/subagents/2df1f8ce-8ad4-4af9-8483-9af15c44577f.jsonl": {
+      "mtimeMs": 1784814656982
+    },
+    "cf71b88e-4d47-4601-973d-73983483d534/subagents/3b688fe7-6b43-48c8-ad15-5c54a3507f9e.jsonl": {
+      "mtimeMs": 1784811707830
+    },
+    "cf71b88e-4d47-4601-973d-73983483d534/subagents/9e648d8b-8194-459c-a475-698dd93c36d2.jsonl": {
+      "mtimeMs": 1784823336983
+    },
+    "cf71b88e-4d47-4601-973d-73983483d534/subagents/14adf404-82fb-4569-88c5-73132091fbc9.jsonl": {
+      "mtimeMs": 1784822282835
     }
   }
 }

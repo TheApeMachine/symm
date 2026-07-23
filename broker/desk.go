@@ -64,13 +64,20 @@ executions, and publishes the initial balance frame.
 func (desk *Desk) Initialize(market *types.Actor, account *types.Actor) error {
 	errnie.Info("initializing desk")
 
-	desk.Actor.Initialize(
-		types.Topic{Name: "ticker", Actor: market},
-		types.Topic{Name: "instrument", Actor: market},
-		types.Topic{Name: "balances", Actor: account},
-		types.Topic{Name: "executions", Actor: account},
-		types.Topic{Name: "add_order", Actor: account},
-	)
+	topics := []types.Topic{
+		{Name: "ticker", Actor: market},
+		{Name: "instrument", Actor: market},
+	}
+
+	if account != nil {
+		topics = append(topics,
+			types.Topic{Name: "balances", Actor: account},
+			types.Topic{Name: "executions", Actor: account},
+			types.Topic{Name: "add_order", Actor: account},
+		)
+	}
+
+	desk.Actor.Initialize(topics...)
 
 	if desk.api != nil {
 		if err := desk.api.SubscribeExecutions(); err != nil {

@@ -393,15 +393,15 @@ func (api *API) fetchLiveTradesHistory() (map[string]spot.Trade, error) {
 
 func (api *API) SubscribeInstruments() error {
 	// Conn.Write so mock producers and live sockets share one subscribe path.
-	return errnie.Error(api.public.Client().SubInstruments())
+	return errnie.Error(api.public.Write(kraken.NewInstrumentSubscription()))
 }
 
 func (api *API) SubscribeTicker(pairs []string) error {
-	return errnie.Error(api.public.Client().SubTicker(pairs))
+	return errnie.Error(api.public.Write(kraken.NewTickerSubscription(pairs)))
 }
 
 func (api *API) SubscribeTrade(pairs []string) error {
-	return errnie.Error(api.public.Client().SubTrades(pairs))
+	return errnie.Error(api.public.Write(kraken.NewTradeSubscription(pairs)))
 }
 
 /*

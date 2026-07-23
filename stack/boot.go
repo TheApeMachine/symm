@@ -95,6 +95,7 @@ func (booter *Booter) Start() error {
 		paper,
 		nil,
 		nil,
+		false,
 		simulator,
 		public,
 		private,
@@ -129,6 +130,7 @@ func (booter *Booter) Test(market *tests.Market) (*Stack, error) {
 		market.Paper,
 		market.Level3,
 		market.Symbols,
+		true,
 	)
 
 	if err != nil {
@@ -217,6 +219,9 @@ type Stack struct {
 
 /*
 boot assembles and initializes the graph against the supplied Conn transports.
+When cutOwned is true (fixture tests), signals only append measurements and
+Observe runs analyzer → planner → desk so those stages do not race the Actor
+cascade on the shared Thesis.
 */
 func (booter *Booter) boot(
 	public websocket.Conn,
@@ -224,6 +229,7 @@ func (booter *Booter) boot(
 	paper websocket.Conn,
 	level3 websocket.Conn,
 	symbols []string,
+	cutOwned bool,
 	preflight ...types.StatusReporter,
 ) (*Stack, error) {
 	api := websocket.NewAPI(booter.ctx, public, private, paper)
@@ -347,13 +353,14 @@ func (booter *Booter) boot(
 		)
 	}
 
-	// Desk must Actor.Initialize + Run before Instrument's stage wait, because
-	// Instrument reaches READY only through Desk's instrument handler.
+	// Desk must be attached and Running before Balance/Instrument subscribe,
+	// or the first private/public snapshots publish to zero subscribers.
 	transports := system.NewStage(
-		system.StagePreflight, append(preflight, api, price, balance)...,
+		system.StagePreflight, append(preflight, api, price)...,
 	)
+	balances := system.NewStage(system.StagePreflight, balance)
 	instruments := system.NewStage(system.StagePreflight, instrument)
-	booter.stages.AddStages(transports, instruments)
+	booter.stages.AddStages(transports, balances, instruments)
 
 	if err := transports.Initialize(booter.channel); err != nil {
 		return nil, errors.Join(errnie.Error(err), wired.Close())
@@ -363,12 +370,20 @@ func (booter *Booter) boot(
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
 
+	if err := balances.Initialize(booter.channel); err != nil {
+		return nil, errors.Join(errnie.Error(err), wired.Close())
+	}
+
 	if err := instruments.Initialize(booter.channel); err != nil {
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
 
 	for _, signal := range signals {
 		signal.Initialize(market, thesis)
+	}
+
+	if cutOwned {
+		return wired, nil
 	}
 
 	if err := analyzer.Initialize(

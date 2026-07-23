@@ -51,6 +51,8 @@ func (balance *Balance) Initialize() error {
 		return nil
 	}
 
+	balance.status = types.PENDING
+
 	if errnie.Error(balance.api.SubscribeBalance()) != nil {
 		balance.status = types.ERROR
 
@@ -60,9 +62,6 @@ func (balance *Balance) Initialize() error {
 			nil,
 		))
 	}
-
-	balance.status = types.READY
-	balance.Publish()
 
 	return nil
 }

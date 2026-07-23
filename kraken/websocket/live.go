@@ -57,6 +57,7 @@ type Live struct {
 	level3Queue  chan []byte
 	level3Ledger *level3Ledger
 	roots        map[string]*types.Subscription[any]
+	increments   Increments
 }
 
 /*
@@ -136,6 +137,16 @@ func New(
 
 		if entity, ok := entityMap[channel]; ok {
 			entity := entity(raw)
+
+			switch channel {
+			case "instrument":
+				live.increments.Remember(entity.(*kraken.Instrument))
+			case "book":
+				if errnie.Error(live.increments.Stamp(entity.(*kraken.Book))) != nil {
+					return
+				}
+			}
+
 			live.roots[channel].Send(entity)
 		}
 	})

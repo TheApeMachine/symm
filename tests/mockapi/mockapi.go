@@ -5,27 +5,31 @@ import (
 	"encoding/json"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-MockConn is a controllable Kraken transport composed from deterministic
-scheduling and Actor roots while implementing websocket.Conn.
+MockConn is a controllable Kraken transport with Actor roots and an explicit
+frame queue, implementing websocket.Conn for the fixture market.
 */
 type MockConn struct {
 	*Control
-	*Scheduler
 	*types.Actor
-	client  *spot.WebSocket
-	allowed map[string]struct{}
-	paperMu sync.Mutex
-	paper   *Paper
-	roots   map[string]*types.Subscription[any]
+	queue      queue
+	client     *spot.WebSocket
+	allowed    map[string]struct{}
+	paperMu    sync.Mutex
+	paper      *Paper
+	roots      map[string]*types.Subscription[any]
+	increments websocket.Increments
+	cancel     context.CancelFunc
 }
 
 /*
@@ -37,12 +41,19 @@ func (conn *MockConn) Client() *spot.WebSocket {
 
 /*
 NewConn creates an isolated transport fake for the supplied symbol universe.
+It starts the Actor fan-out loop the same way Live and Paper do after AddRoot,
+so Subscribe/Write/Emit reach Desk and Signals through production wiring.
 */
-func NewConn(symbols ...string) *MockConn {
+func NewConn(ctx context.Context, symbols ...string) *MockConn {
 	if viper.GetInt("system.actor.buffer") < 1 {
 		viper.Set("system.actor.buffer", 64)
 	}
 
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
 	allowed := make(map[string]struct{}, len(symbols))
 
 	for _, symbol := range symbols {
@@ -50,10 +61,10 @@ func NewConn(symbols ...string) *MockConn {
 	}
 
 	conn := &MockConn{
-		Control:   newControl(),
-		Scheduler: newScheduler(),
-		client:    mockNormalizerClient(symbols),
-		allowed:   allowed,
+		Control: newControl(),
+		client:  mockNormalizerClient(symbols),
+		allowed: allowed,
+		cancel:  cancel,
 		roots: map[string]*types.Subscription[any]{
 			"ticker":     rootSubscription(),
 			"book":       rootSubscription(),
@@ -66,11 +77,13 @@ func NewConn(symbols ...string) *MockConn {
 		},
 	}
 
-	conn.Actor = types.NewActor(context.Background(), nil)
+	conn.Actor = types.NewActor(ctx, nil)
 
 	for name, root := range conn.roots {
 		conn.AddRoot(name, root)
 	}
+
+	conn.Actor.Initialize()
 
 	return conn
 }
@@ -88,38 +101,93 @@ func rootSubscription() *types.Subscription[any] {
 }
 
 /*
-Emit Sends decoded frames into Actor roots matching Live's typed ingress.
+Emit sends decoded frames into Actor roots matching Live's typed ingress.
 */
 func (conn *MockConn) Emit(channel string, payload []byte) {
-	conn.Scheduler.Emit(channel, payload)
 	conn.feed(channel, payload)
 }
 
 /*
 Drain delivers every queued frame through MockConn.Emit so Actor roots see
-the same tape as production OnReceived → Send.
+the same tape as production OnReceived → Send, then waits until those roots
+are empty so Desk and other subscribers have had a chance to consume.
 */
 func (conn *MockConn) Drain() error {
-	if conn == nil || conn.Scheduler == nil {
+	if conn == nil {
 		return io.ErrClosedPipe
 	}
 
-	conn.Scheduler.mu.Lock()
+	conn.queue.mu.Lock()
 
-	if conn.Scheduler.closed {
-		conn.Scheduler.mu.Unlock()
+	if conn.queue.closed {
+		conn.queue.mu.Unlock()
 		return io.ErrClosedPipe
 	}
 
-	queued := append([]outbound(nil), conn.Scheduler.queue...)
-	conn.Scheduler.queue = nil
-	conn.Scheduler.mu.Unlock()
+	queued := append([]outbound(nil), conn.queue.frames...)
+	conn.queue.frames = nil
+	conn.queue.mu.Unlock()
+
+	// add_order acknowledgements must reach Desk before executions so
+	// Position.OrderAck records the order id ExecutionAck matches on.
+	early := make([]outbound, 0, len(queued))
+	late := make([]outbound, 0, len(queued))
 
 	for _, frame := range queued {
+		if frame.channel == "add_order" {
+			early = append(early, frame)
+			continue
+		}
+
+		late = append(late, frame)
+	}
+
+	for _, frame := range early {
 		conn.Emit(frame.channel, frame.payload)
 	}
 
-	return nil
+	if err := conn.settle(); err != nil {
+		return err
+	}
+
+	for _, frame := range late {
+		conn.Emit(frame.channel, frame.payload)
+	}
+
+	return conn.settle()
+}
+
+/*
+settle waits until every Actor root channel is empty after Emit.
+*/
+func (conn *MockConn) settle() error {
+	deadline := time.Now().Add(2 * time.Second)
+
+	for time.Now().Before(deadline) {
+		pending := false
+
+		for _, root := range conn.roots {
+			if len(root.Channel) > 0 {
+				pending = true
+				break
+			}
+		}
+
+		if !pending {
+			// Roots empty means the producer finished; give subscriber Actors
+			// one scheduling turn to finish handlers before Drain returns.
+			time.Sleep(50 * time.Millisecond)
+			return nil
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+
+	return errnie.Err(
+		errnie.Timeout,
+		"tests/mockapi: Actor did not drain roots after Emit",
+		nil,
+	)
 }
 
 func (conn *MockConn) feed(channel string, raw []byte) {
@@ -145,6 +213,10 @@ func (conn *MockConn) feed(channel string, raw []byte) {
 			return
 		}
 
+		if errnie.Error(conn.increments.Stamp(frame)) != nil {
+			return
+		}
+
 		root.Send(frame)
 	case "trade":
 		frame := kraken.NewTrade(raw)
@@ -155,7 +227,9 @@ func (conn *MockConn) feed(channel string, raw []byte) {
 
 		root.Send(frame)
 	case "instrument":
-		root.Send(kraken.NewInstrument(raw))
+		frame := kraken.NewInstrument(raw)
+		conn.increments.Remember(frame)
+		root.Send(frame)
 	default:
 		root.Send(raw)
 	}
@@ -225,7 +299,7 @@ func (conn *MockConn) Write(params json.Marshaler) error {
 		}
 	}
 
-	return nil
+	return conn.settle()
 }
 
 /*
@@ -257,14 +331,18 @@ func (conn *MockConn) Publish(channel string, payload []byte) error {
 }
 
 /*
-Close disables all future scheduling and releases configured fixture state.
+Close rejects further queueing and releases configured fixture state.
 */
 func (conn *MockConn) Close() {
 	if conn == nil {
 		return
 	}
 
-	conn.Scheduler.close()
+	if conn.cancel != nil {
+		conn.cancel()
+	}
+
+	conn.closeQueue()
 	conn.Control.mu.Lock()
 	conn.Control.responses = nil
 	conn.Control.current = nil

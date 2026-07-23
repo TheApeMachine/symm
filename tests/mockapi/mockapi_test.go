@@ -16,7 +16,7 @@ requests cannot leak unrequested market frames onto Actor roots.
 */
 func TestMockConnWriteHonorsVenueBoundary(t *testing.T) {
 	Convey("Given a two-symbol venue response", t, func() {
-		conn := NewConn("SIM1/USD", "SIM2/USD")
+		conn := NewConn(t.Context(), "SIM1/USD", "SIM2/USD")
 		sub := conn.Subscribe("ticker")
 		payload := []byte(`{"channel":"ticker","type":"snapshot","data":[` +
 			`{"symbol":"SIM1/USD"},{"symbol":"SIM2/USD"}]}`)
@@ -57,7 +57,7 @@ func TestMockConnWriteHonorsVenueBoundary(t *testing.T) {
 	})
 
 	Convey("Given a symbol-less private channel", t, func() {
-		conn := NewConn()
+		conn := NewConn(t.Context())
 		sub := conn.Subscribe("balances")
 		payload := []byte(`{"channel":"balances","type":"update","data":[]}`)
 
@@ -80,7 +80,7 @@ func TestMockConnWriteHonorsVenueBoundary(t *testing.T) {
 			[]byte(`{"channel":"ticker"`),
 			[]byte(`{"channel":"ticker","type":"snapshot"}`),
 		} {
-			conn := NewConn("SIM1/USD")
+			conn := NewConn(t.Context(), "SIM1/USD")
 			sub := conn.Subscribe("ticker")
 			conn.Respond("ticker", payload)
 
@@ -99,7 +99,7 @@ cannot silently succeed.
 */
 func TestMockConnWriteRejectsUnknownOperations(t *testing.T) {
 	Convey("Given unsupported websocket operations", t, func() {
-		conn := NewConn("SIM1/USD")
+		conn := NewConn(t.Context(), "SIM1/USD")
 
 		So(conn.Write(json.RawMessage(`{"method":"unknown"}`)), ShouldNotBeNil)
 		So(conn.Write(json.RawMessage(
@@ -109,12 +109,12 @@ func TestMockConnWriteRejectsUnknownOperations(t *testing.T) {
 }
 
 /*
-TestMockConnDrainAndClose proves scheduled delivery is explicit and shutdown
+TestMockConnDrainAndClose proves queued delivery is explicit and shutdown
 rejects all subsequent transport activity.
 */
 func TestMockConnDrainAndClose(t *testing.T) {
 	Convey("Given a queued frame", t, func() {
-		conn := NewConn()
+		conn := NewConn(t.Context())
 		sub := conn.Subscribe("ticker")
 		So(conn.Queue("ticker", []byte(
 			`{"channel":"ticker","type":"update","data":[{"symbol":"SIM1/USD"}]}`,
@@ -137,7 +137,7 @@ func TestMockConnDrainAndClose(t *testing.T) {
 }
 func TestMockConnPostRejectsMissingRoute(t *testing.T) {
 	Convey("Given an unconfigured REST path", t, func() {
-		conn := NewConn()
+		conn := NewConn(t.Context())
 		_, err := conn.Post("/missing", json.RawMessage(`{}`))
 
 		So(err, ShouldNotBeNil)
@@ -150,7 +150,7 @@ subscriptions and can expose transport failures to production callers.
 */
 func TestMockConnWriteRecordsRequests(t *testing.T) {
 	Convey("Given a mock connection configured to fail writes", t, func() {
-		conn := NewConn()
+		conn := NewConn(t.Context())
 		writeErr := errors.New("write failed")
 		conn.FailWrites(writeErr)
 
@@ -167,3 +167,40 @@ func TestMockConnWriteRecordsRequests(t *testing.T) {
 		})
 	})
 }
+
+/*
+TestMockConnBookStampsIncrement proves books leave the mock venue only after
+instrument increments are applied, matching Live ingress.
+*/
+func TestMockConnBookStampsIncrement(t *testing.T) {
+	Convey("Given instrument and book fixtures on one mock venue", t, func() {
+		conn := NewConn(t.Context(), "SIM1/USD")
+		sub := conn.Subscribe("book")
+		conn.Respond("instrument", []byte(
+			`{"channel":"instrument","type":"snapshot","data":{"pairs":[{`+
+				`"symbol":"SIM1/USD","quote":"USD","status":"online",`+
+				`"price_increment":"0.01","tick_size":"0.01"}]}}`,
+		))
+		conn.Respond("book", []byte(
+			`{"channel":"book","type":"snapshot","data":[{`+
+				`"symbol":"SIM1/USD","bids":[{"price":"1.00","qty":1}],`+
+				`"asks":[{"price":"1.01","qty":1}]}]}`,
+		))
+
+		Convey("When instrument then book are subscribed", func() {
+			So(conn.Write(json.RawMessage(
+				`{"method":"subscribe","params":{"channel":"instrument"}}`,
+			)), ShouldBeNil)
+			So(conn.Write(json.RawMessage(
+				`{"method":"subscribe","params":{"channel":"book","symbol":["SIM1/USD"]}}`,
+			)), ShouldBeNil)
+
+			Convey("Then the book arrives stamped with the venue increment", func() {
+				frame := (<-sub.Channel).(*kraken.Book)
+				So(frame.Data[0].PriceIncrement, ShouldNotBeNil)
+				So(frame.Data[0].PriceIncrement.Float64(), ShouldEqual, 0.01)
+			})
+		})
+	})
+}
+

@@ -7,11 +7,47 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
-TestMarket_Apply proves explicit steps become coherent Kraken frames through
-the deterministic connection scheduler without requiring a trade per update.
+collect drains every ready message from an Actor subscription.
+*/
+func collect(sub *types.Subscription[any]) []any {
+	frames := make([]any, 0)
+
+	for {
+		select {
+		case frame := <-sub.Channel:
+			frames = append(frames, frame)
+		default:
+			return frames
+		}
+	}
+}
+
+/*
+await waits until at least n Actor frames arrive or the deadline expires.
+*/
+func await(sub *types.Subscription[any], n int) []any {
+	frames := make([]any, 0, n)
+	deadline := time.Now().Add(2 * time.Second)
+
+	for len(frames) < n && time.Now().Before(deadline) {
+		select {
+		case frame := <-sub.Channel:
+			frames = append(frames, frame)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	return frames
+}
+
+/*
+TestMarket_Apply proves explicit steps become coherent Kraken frames on the
+Actor roots without requiring a trade per update.
 */
 func TestMarket_Apply(t *testing.T) {
 	Convey("Given a bootstrapped two-symbol market at an explicit time", t, func() {
@@ -19,14 +55,12 @@ func TestMarket_Apply(t *testing.T) {
 		market := NewMarket(t.Context(), 2, MarketOptions{Start: start})
 		So(market.Bootstrap(), ShouldBeNil)
 		Reset(market.Close)
-		trades := [][]byte{}
-		books := [][]byte{}
-		tickers := [][]byte{}
-		level3 := [][]byte{}
-		market.Public.On("trade", func(payload []byte) { trades = append(trades, payload) })
-		market.Public.On("book", func(payload []byte) { books = append(books, payload) })
-		market.Public.On("ticker", func(payload []byte) { tickers = append(tickers, payload) })
-		market.Level3.On("level3", func(payload []byte) { level3 = append(level3, payload) })
+
+		tradeSub := market.Public.Subscribe("trade")
+		bookSub := market.Public.Subscribe("book")
+		tickerSub := market.Public.Subscribe("ticker")
+		level3Sub := market.Level3.Subscribe("level3")
+
 		So(market.Public.Write(json.RawMessage(
 			`{"method":"subscribe","params":{"channel":"trade","symbol":["SIM1/USD"]}}`,
 		)), ShouldBeNil)
@@ -39,10 +73,11 @@ func TestMarket_Apply(t *testing.T) {
 		So(market.Level3.Write(json.RawMessage(
 			`{"method":"subscribe","params":{"channel":"level3","symbol":["SIM1/USD"],"depth":10}}`,
 		)), ShouldBeNil)
-		trades = nil
-		books = nil
-		tickers = nil
-		level3 = nil
+
+		collect(tradeSub)
+		collect(bookSub)
+		collect(tickerSub)
+		collect(level3Sub)
 		steps := 0
 
 		Convey("A refill emits no fabricated trade frame and advances the clock once", func() {
@@ -58,22 +93,35 @@ func TestMarket_Apply(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(steps, ShouldEqual, 1)
 			So(market.Now(), ShouldEqual, start.Add(time.Second))
+
+			books := await(bookSub, 1)
+			trades := collect(tradeSub)
 			So(books, ShouldHaveLength, 1)
 			So(trades, ShouldBeEmpty)
+
+			book := books[0].(*kraken.Book)
+			So(book.Data[0].PriceIncrement, ShouldNotBeNil)
+			So(book.Data[0].PriceIncrement.Float64(), ShouldBeGreaterThan, 0)
 
 			So(market.Public.Write(json.RawMessage(
 				`{"method":"subscribe","params":{"channel":"book","symbol":["SIM1/USD"]}}`,
 			)), ShouldBeNil)
-			So(books, ShouldHaveLength, 2)
-			So(string(books[1]), ShouldContainSubstring, `"type":"snapshot"`)
-			So(string(books[1]), ShouldContainSubstring, `"symbol":"SIM1/USD"`)
-			So(string(books[1]), ShouldNotContainSubstring, `"symbol":"SIM2/USD"`)
+			books = await(bookSub, 1)
+			So(books, ShouldHaveLength, 1)
+			book = books[0].(*kraken.Book)
+			So(book.Type, ShouldEqual, "snapshot")
+			So(book.Data, ShouldHaveLength, 1)
+			So(book.Data[0].Symbol, ShouldEqual, "SIM1/USD")
+
 			So(market.Public.Write(json.RawMessage(
 				`{"method":"subscribe","params":{"channel":"trade","symbol":["SIM1/USD"]}}`,
 			)), ShouldBeNil)
+			trades = await(tradeSub, 1)
 			So(trades, ShouldHaveLength, 1)
-			So(string(trades[0]), ShouldContainSubstring, `"type":"snapshot"`)
-			So(string(trades[0]), ShouldContainSubstring, `"symbol":"SIM1/USD"`)
+			trade := trades[0].(*kraken.Trade)
+			So(trade.Type, ShouldEqual, "snapshot")
+			So(trade.Data, ShouldHaveLength, 1)
+			So(trade.Data[0].Symbol, ShouldEqual, "SIM1/USD")
 		})
 
 		Convey("An empty observation invokes the system without fabricating source frames", func() {
@@ -82,10 +130,11 @@ func TestMarket_Apply(t *testing.T) {
 				return nil
 			}), ShouldBeNil)
 			So(steps, ShouldEqual, 1)
-			So(trades, ShouldBeEmpty)
-			So(books, ShouldBeEmpty)
-			So(tickers, ShouldBeEmpty)
-			So(level3, ShouldBeEmpty)
+			time.Sleep(20 * time.Millisecond)
+			So(collect(tradeSub), ShouldBeEmpty)
+			So(collect(bookSub), ShouldBeEmpty)
+			So(collect(tickerSub), ShouldBeEmpty)
+			So(collect(level3Sub), ShouldBeEmpty)
 		})
 
 		Convey("A buy consumes its complete touch and continues through the next level", func() {
@@ -100,11 +149,11 @@ func TestMarket_Apply(t *testing.T) {
 					Qty:    quote.AskQty + 5,
 				}},
 			}, func() error { return nil }), ShouldBeNil)
+			trades := await(tradeSub, 1)
 			So(trades, ShouldHaveLength, 1)
-			var frame wireFrame[wireTrade]
-			So(json.Unmarshal(trades[0], &frame), ShouldBeNil)
-			So(frame.Data, ShouldHaveLength, 2)
-			So(frame.Data[0].Price, ShouldNotEqual, frame.Data[1].Price)
+			trade := trades[0].(*kraken.Trade)
+			So(trade.Data, ShouldHaveLength, 2)
+			So(trade.Data[0].Price.Float64(), ShouldNotEqual, trade.Data[1].Price.Float64())
 		})
 
 		Convey("Unknown states and closed markets fail before invoking the step", func() {
@@ -141,14 +190,15 @@ func TestMarket_Apply(t *testing.T) {
 		})
 
 		Convey("A production feed rejection makes later application fail-stop", func() {
-			consumerErr := errors.New("ticker rejected")
-			market.Public.On("ticker", func([]byte) { market.Public.Report(consumerErr) })
 			So(market.Apply(MarketStep{
 				Advance: time.Second,
 				Actions: []MarketAction{{
 					Kind: MarketTrade, Symbol: "SIM1/USD", Side: "buy", Qty: 1,
 				}},
-			}, func() error { return nil }), ShouldNotBeNil)
+			}, func() error {
+				market.Public.Report(errors.New("ticker rejected"))
+				return nil
+			}), ShouldBeNil)
 			failedAt := market.Now()
 			So(market.Apply(MarketStep{
 				Advance: time.Second,
@@ -158,41 +208,34 @@ func TestMarket_Apply(t *testing.T) {
 	})
 
 	Convey("Given two identical multi-symbol markets", t, func() {
-		run := func() [][]byte {
+		run := func() []string {
 			market := NewMarket(t.Context(), 3)
 			So(market.Bootstrap(), ShouldBeNil)
 			defer market.Close()
-			frames := [][]byte{}
 
-			for _, subscription := range []struct {
-				conn interface {
-					On(string, func([]byte)) uint64
-					Write(json.Marshaler) error
-				}
-				channel string
-				request json.RawMessage
-			}{
-				{market.Level3, "level3", json.RawMessage(
-					`{"method":"subscribe","params":{"channel":"level3","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"],"depth":10}}`,
-				)},
-				{market.Public, "book", json.RawMessage(
-					`{"method":"subscribe","params":{"channel":"book","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
-				)},
-				{market.Public, "trade", json.RawMessage(
-					`{"method":"subscribe","params":{"channel":"trade","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
-				)},
-				{market.Public, "ticker", json.RawMessage(
-					`{"method":"subscribe","params":{"channel":"ticker","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
-				)},
-			} {
-				channel := subscription.channel
-				subscription.conn.On(channel, func(payload []byte) {
-					frames = append(frames, append([]byte(channel+":"), payload...))
-				})
-				So(subscription.conn.Write(subscription.request), ShouldBeNil)
-			}
+			level3Sub := market.Level3.Subscribe("level3")
+			bookSub := market.Public.Subscribe("book")
+			tradeSub := market.Public.Subscribe("trade")
+			tickerSub := market.Public.Subscribe("ticker")
 
-			frames = nil
+			So(market.Level3.Write(json.RawMessage(
+				`{"method":"subscribe","params":{"channel":"level3","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"],"depth":10}}`,
+			)), ShouldBeNil)
+			So(market.Public.Write(json.RawMessage(
+				`{"method":"subscribe","params":{"channel":"book","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
+			)), ShouldBeNil)
+			So(market.Public.Write(json.RawMessage(
+				`{"method":"subscribe","params":{"channel":"trade","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
+			)), ShouldBeNil)
+			So(market.Public.Write(json.RawMessage(
+				`{"method":"subscribe","params":{"channel":"ticker","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
+			)), ShouldBeNil)
+
+			collect(level3Sub)
+			collect(bookSub)
+			collect(tradeSub)
+			collect(tickerSub)
+
 			So(market.Apply(MarketStep{
 				Advance: time.Second,
 				Actions: []MarketAction{
@@ -201,6 +244,31 @@ func TestMarket_Apply(t *testing.T) {
 					{Kind: MarketTrade, Symbol: "SIM3/USD", Side: "buy", Qty: 1},
 				},
 			}, func() error { return nil }), ShouldBeNil)
+
+			frames := make([]string, 0)
+
+			for _, frame := range await(level3Sub, 1) {
+				frames = append(frames, "level3:"+string(frame.([]byte)))
+			}
+
+			for _, frame := range await(bookSub, 1) {
+				raw, err := json.Marshal(frame.(*kraken.Book))
+				So(err, ShouldBeNil)
+				frames = append(frames, "book:"+string(raw))
+			}
+
+			for _, frame := range await(tradeSub, 1) {
+				raw, err := json.Marshal(frame.(*kraken.Trade))
+				So(err, ShouldBeNil)
+				frames = append(frames, "trade:"+string(raw))
+			}
+
+			for _, frame := range await(tickerSub, 1) {
+				raw, err := json.Marshal(frame.(*kraken.Ticker))
+				So(err, ShouldBeNil)
+				frames = append(frames, "ticker:"+string(raw))
+			}
+
 			return frames
 		}
 

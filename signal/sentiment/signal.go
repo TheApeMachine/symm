@@ -117,7 +117,6 @@ func (signal *Signal) onTrade(message any) any {
 	return signal.thesis
 }
 
-
 func (signal *Signal) Calculate(
 	tickers []kraken.TickerData,
 	trades []kraken.TradeData,
@@ -255,6 +254,8 @@ func (signal *Signal) Calculate(
 		}
 	}
 
+	types.WireMeasurements(out, signal.ui)
+
 	return out, nil
 }
 
@@ -268,4 +269,3 @@ func (signal *Signal) Close() error {
 
 	return nil
 }
-

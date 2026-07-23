@@ -66,7 +66,6 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 	)
 }
 
-
 func (signal *Signal) onTicker(message any) any {
 	rows := message.(*kraken.Ticker).Data
 	measurements, err := signal.Calculate(rows, nil, nil)
@@ -169,6 +168,8 @@ func (signal *Signal) Calculate(
 			out, symbol, at, validity, scores,
 		)
 	}
+
+	types.WireMeasurements(out, signal.ui)
 
 	return out, nil
 }
