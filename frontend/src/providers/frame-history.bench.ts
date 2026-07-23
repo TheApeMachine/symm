@@ -6,7 +6,6 @@ const sources = [
 	"causal",
 	"cvd",
 	"depthflow",
-	"fluid",
 	"hawkes",
 	"leadlag",
 	"liquidity",

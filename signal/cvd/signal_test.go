@@ -2,6 +2,7 @@ package cvd_test
 
 import (
 	"math"
+	"runtime"
 	"testing"
 	"time"
 
@@ -34,6 +35,9 @@ TestCalculate proves CVD distinguishes drive, balance, absorption, starvation,
 rejection, and isolated flow through the complete production boot graph.
 */
 func TestCalculate(t *testing.T) {
+	procs := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(procs)
+
 	metrics := []types.MetricType{
 		types.MetricAbsorption,
 		types.MetricDrive,

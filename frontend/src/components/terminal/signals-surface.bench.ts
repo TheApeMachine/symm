@@ -19,8 +19,8 @@ const measurement = {
 const fixtures: Measurement[] = [
 	{
 		...measurement,
-		source: "fluid",
-		metric: "turbulent_score",
+		source: "hawkes",
+		metric: "spectral_radius",
 		raw: 0.8,
 		normalized: 0.8,
 	},
@@ -54,6 +54,6 @@ describe("signalsSurfaceSources", () => {
 	});
 
 	bench("projects typed measurements onto market regime axes", () => {
-		regimeAxes(fixtures, ["fluid", "pumpdump", "cvd"]);
+		regimeAxes(fixtures, ["hawkes", "pumpdump", "cvd"]);
 	});
 });

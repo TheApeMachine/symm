@@ -4,7 +4,6 @@ import (
 	"iter"
 	"maps"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -47,6 +46,12 @@ func NewBalance(api *websocket.API, holdings []types.Holding, ui chan []byte) *B
 func (balance *Balance) Initialize() error {
 	errnie.Info("initializing balance")
 
+	if balance.api == nil {
+		balance.status = types.READY
+		return nil
+	}
+
+	// Sync On so paper Drain applies balances before MatchPaper / Tick.
 	balance.api.On("balances", balance.BalanceAck)
 
 	if errnie.Error(balance.api.SubscribeBalance()) != nil {
@@ -221,26 +226,12 @@ func (balance *Balance) Holding(symbol string) (types.Holding, error) {
 }
 
 /*
-Symbol normalizes a compact trade-history pair (e.g. "BTCUSD") into the
-slash-delimited symbol form (e.g. "BTC/USD") used everywhere else in
-symm: WS v2 ticker/book/instrument symbols, and Price's cache keys.
-
-It trims the quote currency as a suffix rather than replacing every
-occurrence, since an asset code that itself contains the quote code
-(USDC, USDT, PYUSD, ... against a USD quote) would otherwise lose its
-own quote substring too.
-
-If pair already carries a slash, it is assumed to be normalized and is
-returned unchanged.
+Symbol returns the canonical slash pair for a Kraken name via the SDK
+normalizer (NEARUSD → NEAR/USD). Quote-suffix trimming is not used — that
+mis-splits assets whose codes contain the quote (USDC, PYUSD, …).
 */
 func (balance *Balance) Symbol(pair string) string {
-	if strings.Contains(pair, "/") {
-		return pair
-	}
-
-	base := strings.TrimSuffix(pair, balance.quote)
-
-	return base + "/" + balance.quote
+	return balance.api.Name(pair)
 }
 
 /*
@@ -248,14 +239,7 @@ TradeMatchesSymbol reports whether a REST trade-history pair belongs to the
 normalized slash symbol used throughout symm.
 */
 func (balance *Balance) TradeMatchesSymbol(tradePair string, symbol string) bool {
-	if balance.Symbol(tradePair) == symbol {
-		return true
-	}
-
-	base := strings.TrimSuffix(symbol, "/"+balance.quote)
-	compact := base + balance.quote
-
-	return tradePair == compact || tradePair == base
+	return balance.api.Name(tradePair) == balance.api.Name(symbol)
 }
 
 /*

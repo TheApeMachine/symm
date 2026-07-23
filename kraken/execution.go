@@ -1,6 +1,7 @@
 package kraken
 
 import (
+	"strings"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -227,7 +228,7 @@ func NewExecutionFromMap(model datura.Map[any]) *Execution {
 			ExecID:      execID,
 			ExecType:    execType,
 			Symbol:      pair,
-			Side:        side,
+			Side:        strings.ToLower(side),
 			LastQty:     decimal.NewFromFloat64(volume),
 			LastPrice:   decimal.NewFromFloat64(price),
 			Cost:        decimal.NewFromFloat64(cost),

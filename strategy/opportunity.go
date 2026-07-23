@@ -214,8 +214,18 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 		}
 
 		reading := measureOpportunity(*forecast, cognition, thesis)
-		utility := reading.Margin - 2*forecast.ExpectedFees - forecast.ExpectedSpread -
-			forecast.ExpectedImpact - forecast.ExpectedAdverseSelection
+
+		if reading.PhaseOpposes() {
+			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
+				*forecast, 0, "phase_opposition",
+				"phase dial attractor conflicts with cognitive buy: "+reading.PhaseClass,
+			))
+			continue
+		}
+
+		// Enter pays the taker fee once; exit friction is scored when Continuity
+		// or Rotate liquidates. ExecutableReturn already encodes that one-way cut.
+		utility := forecast.ExecutableReturn() - forecast.Uncertainty
 
 		if utility <= 0 {
 			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
@@ -259,7 +269,7 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 				"evidence_opposes": float64(len(evidence.Opposes)),
 				"evidence_vetoes":  float64(len(evidence.Vetoes)),
 			},
-			ExpectedFees:      decimal.NewFromFloat64(2 * forecast.ExpectedFees),
+			ExpectedFees:      decimal.NewFromFloat64(forecast.ExpectedFees),
 			ExpectedSpread:    decimal.NewFromFloat64(forecast.ExpectedSpread),
 			ExpectedReturn:    decimal.NewFromFloat64(forecast.ExpectedReturn),
 			ExpectedImpact:    decimal.NewFromFloat64(forecast.ExpectedImpact),
@@ -329,7 +339,7 @@ func (opportunity *Opportunity) reject(
 		ForecastEpoch:     forecast.SourceEpoch,
 		CalibrationCount:  forecast.CalibrationSamples,
 		ExpectedReturn:    decimal.NewFromFloat64(forecast.ExpectedReturn),
-		ExpectedFees:      decimal.NewFromFloat64(2 * forecast.ExpectedFees),
+		ExpectedFees:      decimal.NewFromFloat64(forecast.ExpectedFees),
 		ExpectedSpread:    decimal.NewFromFloat64(forecast.ExpectedSpread),
 		ExpectedImpact:    decimal.NewFromFloat64(forecast.ExpectedImpact),
 		AdverseSelection:  forecast.ExpectedAdverseSelection,

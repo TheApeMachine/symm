@@ -2,11 +2,24 @@ package toxicity
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 )
+
+/*
+touchSnapshot freezes one symbol's best bid/ask so the next cut can attribute
+fills and cancellations against the touch that preceded the event clock.
+*/
+type touchSnapshot struct {
+	bidPrice    decimal.Decimal
+	askPrice    decimal.Decimal
+	bidQuantity float64
+	askQuantity float64
+	observedAt  time.Time
+}
 
 /*
 touchSide names the exact resting touch consumed by one public trade.

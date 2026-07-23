@@ -25,7 +25,7 @@ func newLevel3Consumer(
 	live := New(ctx, nil, true, Level3WebSocketURL)
 	live.symbols = append([]string(nil), symbols...)
 	live.ensureLevel3Books(symbols, depth)
-	live.status.Store(types.READY)
+	live.status = types.READY
 
 	return live
 }

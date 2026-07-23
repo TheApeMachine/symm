@@ -2,13 +2,10 @@ package correlation
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/theapemachine/errnie"
-
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -19,14 +16,12 @@ it, or without a stable relation to it. Categories belong in logic; this signal
 emits numerical scores only.
 */
 type Signal struct {
-	tickerIn chan []kraken.TickerData
-	bookIn   chan []kraken.BookData
-	tradeIn  chan []kraken.TradeData
-	ack     chan struct{}
-	ctx      context.Context
-	cancel   context.CancelFunc
-	section  *Section
-	ui       chan []byte
+	*types.Actor
+	thesis  *types.Thesis
+	ctx     context.Context
+	cancel  context.CancelFunc
+	section *Section
+	ui      chan []byte
 }
 
 /*
@@ -37,61 +32,120 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		tickerIn: make(chan []kraken.TickerData, 64),
-		bookIn:   make(chan []kraken.BookData, 64),
-		tradeIn:  make(chan []kraken.TradeData, 64),
-		ack:     make(chan struct{}, 256),
-		ctx:      ctx,
-		cancel:   cancel,
-		section:  NewSection(),
-		ui:       ui,
+		ctx:     ctx,
+		cancel:  cancel,
+		section: NewSection(),
+		ui:      ui,
 	}
+
+	signal.Actor = types.NewActor(ctx, map[string]types.Handler{
+		"ticker": {Topic: "thesis", Fn: signal.onTicker},
+		"book":   {Topic: "thesis", Fn: signal.onBook},
+		"trade":  {Topic: "thesis", Fn: signal.onTrade},
+	})
 
 	return signal
 }
 
 /*
-Publish sends one small datura frame to the UI the moment this signal has
-measured its evidence, mirroring broker.Balance.Publish.
+Run starts the Actor loop.
 */
-func (signal *Signal) Publish(measurements []*types.Measurement) {
-	select {
-	case signal.ui <- datura.Map[any]{
-		"measurements": types.ForPublish(measurements),
-	}.Marshal():
-	default:
-	}
+func (signal *Signal) Run() {
+	signal.Actor.Run()
 }
 
 /*
-Calculate converts the receiver's current market input into typed measurements
-so downstream logic consumes explicit evidence.
+Name returns the signal source identity.
 */
+func (signal *Signal) Name() string {
+	return string(types.SourceCorrelation)
+}
+
+/*
+Initialize wires ticker, book, and trade ingress from Live.
+*/
+func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
+	signal.thesis = thesis
+	signal.Actor.Initialize(
+		types.Topic{Name: "ticker", Actor: live},
+		types.Topic{Name: "book", Actor: live},
+		types.Topic{Name: "trade", Actor: live},
+	)
+}
+
+
+func (signal *Signal) onTicker(message any) any {
+	rows := message.([]kraken.TickerData)
+	measurements, err := signal.Calculate(rows, nil, nil)
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	if len(measurements) == 0 {
+		return nil
+	}
+
+	signal.thesis.Measurements = append(signal.thesis.Measurements, measurements...)
+
+	return signal.thesis
+}
+
+func (signal *Signal) onBook(message any) any {
+	rows := message.([]kraken.BookData)
+	measurements, err := signal.Calculate(nil, nil, rows)
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	if len(measurements) == 0 {
+		return nil
+	}
+
+	signal.thesis.Measurements = append(signal.thesis.Measurements, measurements...)
+
+	return signal.thesis
+}
+
+func (signal *Signal) onTrade(message any) any {
+	rows := message.([]kraken.TradeData)
+	measurements, err := signal.Calculate(nil, rows, nil)
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	if len(measurements) == 0 {
+		return nil
+	}
+
+	signal.thesis.Measurements = append(signal.thesis.Measurements, measurements...)
+
+	return signal.thesis
+}
+
 func (signal *Signal) Calculate(
 	tickers []kraken.TickerData,
 	trades []kraken.TradeData,
 	books []kraken.BookData,
 ) ([]*types.Measurement, error) {
-	crossSection := types.NewCrossSection()
-	if len(tickers) > 0 {
-		crossSection.Measure(tickers)
+	if len(tickers) == 0 {
+		return nil, nil
 	}
 
-	if crossSection == nil {
-		return nil, fmt.Errorf("correlation: cross section required")
-	}
+	scoresBySymbol, err := signal.section.Measure(tickers)
 
-	rows := tickers
-	out := make([]*types.Measurement, 0, len(rows))
-
-	scoresBySymbol, err := signal.section.Measure(rows)
-
-	if err != nil {
+	if err != nil || len(scoresBySymbol) == 0 {
 		return nil, err
 	}
-	latestAtBySymbol := make(map[string]time.Time, len(rows))
 
-	for _, row := range rows {
+	latestAtBySymbol := make(map[string]time.Time, len(tickers))
+
+	for _, row := range tickers {
 		symbol := strings.TrimSpace(row.Symbol)
 
 		if symbol == "" || row.Timestamp.IsZero() {
@@ -105,123 +159,66 @@ func (signal *Signal) Calculate(
 		latestAtBySymbol[symbol] = row.Timestamp
 	}
 
-	crossSection.Metrics.Range(func(_, value any) bool {
-		metric := value.(types.SymbolMetric)
-		scores, ok := scoresBySymbol[metric.Symbol]
+	out := make([]*types.Measurement, 0, len(scoresBySymbol)*9)
+	validity := types.MeasurementValidity{
+		State:     types.ValidityValid,
+		Readiness: types.ReadinessObservation,
+	}
 
-		if !ok {
-			return true
-		}
-
-		at, ok := latestAtBySymbol[metric.Symbol]
+	for symbol, scores := range scoresBySymbol {
+		at, ok := latestAtBySymbol[symbol]
 
 		if !ok || at.IsZero() {
-			return true
+			continue
 		}
 
-		validity := types.MeasurementValidity{
-			State:     types.ValidityValid,
-			Readiness: types.ReadinessObservation,
-		}
-
-		measurements := []*types.Measurement{
-			{
-				Source:   types.SourceCorrelation,
-				Metric:   types.MetricCorrelation,
-				Stream:   types.Correlation,
-				Symbol:   metric.Symbol,
-				At:       at,
-				Unit:     types.UnitDimensionless,
-				Raw:      scores["correlation"],
-				Validity: validity,
-			},
-			{
-				Source:   types.SourceCorrelation,
-				Metric:   types.MetricSigned,
-				Stream:   types.Correlation,
-				Symbol:   metric.Symbol,
-				At:       at,
-				Unit:     types.UnitDimensionless,
-				Raw:      scores["signed"],
-				Validity: validity,
-			},
-			{
-				Source:   types.SourceCorrelation,
-				Metric:   types.MetricRelativeEnergy,
-				Stream:   types.Correlation,
-				Symbol:   metric.Symbol,
-				At:       at,
-				Unit:     types.UnitDimensionless,
-				Raw:      scores["relativeEnergy"],
-				Validity: validity,
-			},
-			{
-				Source:   types.SourceCorrelation,
-				Metric:   types.MetricHerdScore,
-				Stream:   types.Correlation,
-				Symbol:   metric.Symbol,
-				At:       at,
-				Unit:     types.UnitDimensionless,
-				Raw:      scores["herdScore"],
-				Validity: validity,
-			},
-			{
-				Source:   types.SourceCorrelation,
-				Metric:   types.MetricAlphaScore,
-				Stream:   types.Correlation,
-				Symbol:   metric.Symbol,
-				At:       at,
-				Unit:     types.UnitDimensionless,
-				Raw:      scores["alphaScore"],
-				Validity: validity,
-			},
-			{
-				Source:   types.SourceCorrelation,
-				Metric:   types.MetricNoiseScore,
-				Stream:   types.Correlation,
-				Symbol:   metric.Symbol,
-				At:       at,
-				Unit:     types.UnitDimensionless,
-				Raw:      scores["noiseScore"],
-				Validity: validity,
-			},
-			{
-				Source:   types.SourceCorrelation,
-				Metric:   types.MetricStressScore,
-				Stream:   types.Correlation,
-				Symbol:   metric.Symbol,
-				At:       at,
-				Unit:     types.UnitDimensionless,
-				Raw:      scores["stressScore"],
-				Validity: validity,
-			},
-			{
-				Source:   types.SourceCorrelation,
-				Metric:   types.MetricPeakScore,
-				Stream:   types.Correlation,
-				Symbol:   metric.Symbol,
-				At:       at,
-				Unit:     types.UnitDimensionless,
-				Raw:      scores["peakScore"],
-				Validity: validity,
-			},
-			{
-				Source:   types.SourceCorrelation,
-				Metric:   types.MetricStrength,
-				Stream:   types.Correlation,
-				Symbol:   metric.Symbol,
-				At:       at,
-				Unit:     types.UnitDimensionless,
-				Raw:      scores["strength"],
-				Validity: validity,
-			},
-		}
-
-		out = append(out, measurements...)
-		return true
-	})
+		out = appendCorrelation(
+			out, symbol, at, validity, scores,
+		)
+	}
 
 	return out, nil
+}
+
+/*
+appendCorrelation writes the nine cohort evidence rows for one symbol.
+*/
+func appendCorrelation(
+	out []*types.Measurement,
+	symbol string,
+	at time.Time,
+	validity types.MeasurementValidity,
+	scores map[string]float64,
+) []*types.Measurement {
+	specs := []struct {
+		metric types.MetricType
+		key    string
+	}{
+		{types.MetricCorrelation, "correlation"},
+		{types.MetricSigned, "signed"},
+		{types.MetricRelativeEnergy, "relativeEnergy"},
+		{types.MetricHerdScore, "herdScore"},
+		{types.MetricAlphaScore, "alphaScore"},
+		{types.MetricNoiseScore, "noiseScore"},
+		{types.MetricStressScore, "stressScore"},
+		{types.MetricPeakScore, "peakScore"},
+		{types.MetricStrength, "strength"},
+	}
+
+	for _, spec := range specs {
+		out = append(out, &types.Measurement{
+			Source:   types.SourceCorrelation,
+			Metric:   spec.metric,
+			Stream:   types.Correlation,
+			Symbol:   symbol,
+			At:       at,
+			Unit:     types.UnitDimensionless,
+			Raw:      scores[spec.key],
+			Validity: validity,
+		})
+	}
+
+	return out
 }
 
 /*
@@ -230,107 +227,5 @@ active market-data producers.
 */
 func (signal *Signal) Close() error {
 	signal.cancel()
-
 	return nil
-}
-
-/*
-Tickers returns the ticker ingress channel.
-*/
-func (signal *Signal) Tickers() chan []kraken.TickerData {
-	return signal.tickerIn
-}
-
-/*
-Books returns the book ingress channel.
-*/
-func (signal *Signal) Books() chan []kraken.BookData {
-	return signal.bookIn
-}
-
-/*
-Trades returns the trade ingress channel.
-*/
-func (signal *Signal) Trades() chan []kraken.TradeData {
-	return signal.tradeIn
-}
-
-
-/*
-Ack signals that one ingress frame finished Calculate so Crypto can barrier
-before draining outs.
-*/
-func (signal *Signal) Ack() <-chan struct{} {
-	return signal.ack
-}
-
-/*
-Measure consumes ingress channels and sends measurements on out.
-*/
-func (signal *Signal) Measure() chan []*types.Measurement {
-	out := make(chan []*types.Measurement, 64)
-
-	go func() {
-		defer close(out)
-
-		for {
-			select {
-			case <-signal.ctx.Done():
-				return
-			case rows := <-signal.tickerIn:
-				measured, err := signal.Calculate(rows, nil, nil)
-
-				if err != nil {
-					errnie.Error(err)
-					signal.ack <- struct{}{}
-					continue
-				}
-
-				if len(measured) == 0 {
-					signal.ack <- struct{}{}
-					continue
-				}
-
-				out <- measured
-				signal.Publish(measured)
-				signal.ack <- struct{}{}
-			case rows := <-signal.bookIn:
-				measured, err := signal.Calculate(nil, nil, rows)
-
-				if err != nil {
-					errnie.Error(err)
-					signal.ack <- struct{}{}
-					continue
-				}
-
-				if len(measured) == 0 {
-					signal.ack <- struct{}{}
-					continue
-				}
-
-				out <- measured
-				signal.Publish(measured)
-				signal.ack <- struct{}{}
-			case rows := <-signal.tradeIn:
-				measured, err := signal.Calculate(nil, rows, nil)
-
-				if err != nil {
-					errnie.Error(err)
-					signal.ack <- struct{}{}
-					continue
-				}
-
-				if len(measured) == 0 {
-					signal.ack <- struct{}{}
-					continue
-				}
-
-				out <- measured
-				signal.Publish(measured)
-				signal.ack <- struct{}{}
-			}
-		}
-	}()
-
-	return out
 }

@@ -86,8 +86,9 @@ func NewThesis(uiHub chan<- []byte) *Thesis {
 }
 
 /*
-ResetTick replaces per-tick evidence while preserving Holdings, Lifecycle, and
-Findings owned by this Thesis.
+ResetTick replaces per-tick evidence while preserving Lifecycle phases that
+span orders (entry/exit submitted) and Findings owned by this Thesis. Holdings
+and Positions are rebuilt each cut from Admit and the desk.
 */
 func (thesis *Thesis) ResetTick(at time.Time, tick int64) {
 	if thesis == nil {
@@ -109,6 +110,7 @@ func (thesis *Thesis) ResetTick(at time.Time, tick int64) {
 	clearSyncMap(thesis.Manifold)
 	clearSyncMap(thesis.Cognition)
 	clearSyncMap(thesis.Positions)
+	clearSyncMap(thesis.Holdings)
 }
 
 /*

@@ -22,7 +22,9 @@ step over the shared market population, while the Analyzer builds each symbol's
 typed evidence topology.
 */
 type Analyzer struct {
+	*types.Actor
 	ctx       context.Context
+	cancel    context.CancelFunc
 	gate      stageGate
 	status    types.Status
 	manifold  *manifold.Solver
@@ -57,27 +59,45 @@ func NewAnalyzer(
 		return nil, errnie.Err(errnie.Internal, "logic analyzer: manifold init failed", err)
 	}
 
-	return &Analyzer{
+	ctx, cancel := context.WithCancel(ctx)
+
+	analyzer := &Analyzer{
 		ctx:       ctx,
+		cancel:    cancel,
 		gate:      gate,
 		status:    types.READY,
 		manifold:  solver,
 		hawkes:    hawkes,
 		tree:      tree,
 		ui:        ui,
-		recorder:  recorder,
 		resonance: make(map[string]*Resonance),
 		causal:    make(map[string]*Causal),
 		cognition: make(map[string]types.Cognition),
 		rem:       newREMSleep(ctx, tree),
-	}, nil
+	}
+
+	analyzer.Actor = types.NewActor(ctx, map[string]types.Handler{
+		"ticker": {Topic: "ticker", Fn: analyzer.thesis},
+		"book":   {Topic: "book", Fn: analyzer.thesis},
+		"trade":  {Topic: "trade", Fn: analyzer.thesis},
+	})
+	analyzer.SetRecorder(recorder)
+
+	return analyzer, nil
 }
 
 /*
-Initialize marks the analyzer ready for thesis updates.
+Initialize attaches analyzer to the first signal's ticker/book/trade topics.
 */
-func (analyzer *Analyzer) Initialize() error {
+func (analyzer *Analyzer) Initialize(signals ...types.Topic) error {
 	errnie.Info("initializing analyzer")
+
+	if len(signals) == 0 {
+		analyzer.status = types.READY
+		return nil
+	}
+
+	analyzer.Actor.Initialize(signals...)
 	analyzer.status = types.READY
 
 	return nil
@@ -91,9 +111,18 @@ func (analyzer *Analyzer) Status() types.Status {
 }
 
 /*
+Run starts the Actor loop.
+*/
+func (analyzer *Analyzer) Run() {
+	analyzer.Actor.Run()
+}
+
+/*
 Close drains REM and releases the manifold solver.
 */
 func (analyzer *Analyzer) Close() error {
+	analyzer.cancel()
+
 	if analyzer.rem != nil {
 		analyzer.rem.Close()
 	}
@@ -103,6 +132,13 @@ func (analyzer *Analyzer) Close() error {
 	}
 
 	return nil
+}
+
+func (analyzer *Analyzer) thesis(message any) any {
+	thesis := message.(*types.Thesis)
+	analyzer.Update(thesis)
+
+	return thesis
 }
 
 /*

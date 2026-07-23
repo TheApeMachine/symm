@@ -7,8 +7,6 @@ import (
 	"errors"
 	"os/exec"
 	"strings"
-	"sync"
-	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -22,16 +20,11 @@ import (
 Paper is the simulated spot websocket and REST transport.
 */
 type Paper struct {
+	*types.Actor
+	fanout
 	ctx       context.Context
 	cancel    context.CancelFunc
-	status    types.Status
-	sync      *sync.Map
-	handlerMu sync.Mutex
-	nextID    atomic.Uint64
 	simulator *Simulator
-	lifecycle *Lifecycle
-	url       string
-	auth      bool
 }
 
 var _ Conn = (*Paper)(nil)
@@ -46,19 +39,17 @@ func NewPaper(
 	ctx, cancel := context.WithCancel(ctx)
 
 	paper := &Paper{
+		Actor:     types.NewActor(ctx, nil),
+		fanout:    fanout{handlers: make(map[string][]channelHandler)},
 		ctx:       ctx,
 		cancel:    cancel,
-		status:    types.READY,
-		sync:      &sync.Map{},
 		simulator: simulator,
 	}
 
-	paper.lifecycle = NewLifecycle(paper)
 	return paper
 }
 
 func (paper *Paper) Initialize() error {
-	paper.status = types.READY
 	return nil
 }
 
@@ -107,9 +98,9 @@ func (paper *Paper) Write(params json.Marshaler) error {
 
 	switch request.Params.Channel {
 	case "balances":
-		return paper.SubBalances()
+		return paper.Balance("snapshot")
 	case "executions":
-		return paper.SubExecutions()
+		return nil
 	default:
 		return errnie.Err(errnie.NotImplemented, "paper request is not implemented", nil)
 	}
@@ -120,51 +111,6 @@ Post satisfies Conn; paper REST operations remain explicit typed methods.
 */
 func (paper *Paper) Post(string, json.Marshaler) ([]byte, error) {
 	return nil, errnie.Err(errnie.NotImplemented, "paper REST post is not implemented", nil)
-}
-
-func (paper *Paper) On(
-	channel string, action func([]byte),
-) uint64 {
-	if paper == nil || action == nil {
-		return 0
-	}
-
-	id := paper.nextID.Add(1)
-	handler := channelHandler{id: id, fn: action}
-
-	paper.handlerMu.Lock()
-	defer paper.handlerMu.Unlock()
-
-	callbacks, ok := paper.sync.Load(channel)
-
-	if !ok {
-		paper.sync.Store(channel, []channelHandler{handler})
-		return id
-	}
-
-	paper.sync.Store(channel, append(callbacks.([]channelHandler), handler))
-
-	return id
-}
-
-/*
-Unsubscribe removes one handler previously registered with On for channel.
-*/
-func (paper *Paper) Unsubscribe(channel string, id uint64) {
-	if paper == nil || id == 0 {
-		return
-	}
-
-	paper.handlerMu.Lock()
-	defer paper.handlerMu.Unlock()
-
-	callbacks, ok := paper.sync.Load(channel)
-
-	if !ok {
-		return
-	}
-
-	paper.sync.Store(channel, dropHandler(callbacks.([]channelHandler), id))
 }
 
 func (paper *Paper) Emit(channel string, payload json.Marshaler) error {
@@ -178,11 +124,7 @@ func (paper *Paper) Emit(channel string, payload json.Marshaler) error {
 		))
 	}
 
-	paper.handlerMu.Lock()
-	callbacks, ok := paper.sync.Load(channel)
-
-	if !ok {
-		paper.handlerMu.Unlock()
+	if !paper.emit(channel, raw) {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to emit payload",
@@ -190,26 +132,11 @@ func (paper *Paper) Emit(channel string, payload json.Marshaler) error {
 		))
 	}
 
-	handlers := append([]channelHandler(nil), callbacks.([]channelHandler)...)
-	paper.handlerMu.Unlock()
-
-	for _, handler := range handlers {
-		handler.fn(raw)
-	}
-
 	return nil
 }
 
 func (paper *Paper) Close() {
 	paper.cancel()
-}
-
-func (paper *Paper) SubBalances() error {
-	return paper.lifecycle.Balance("snapshot")
-}
-
-func (paper *Paper) SubExecutions() error {
-	return nil
 }
 
 func (paper *Paper) TradesHistory() (*kraken.TradesHistory, error) {
@@ -231,15 +158,6 @@ func (paper *Paper) TradesHistory() (*kraken.TradesHistory, error) {
 	}
 
 	return kraken.NewTradesHistoryFromMap(model), nil
-}
-
-/*
-OpenOrders reports resting paper orders. Paper fills complete synchronously
-inside Lifecycle.Place, so no order is ever left outstanding and boot reconcile
-always sees an empty set.
-*/
-func (paper *Paper) OpenOrders() (map[string]spot.Order, error) {
-	return map[string]spot.Order{}, nil
 }
 
 func (paper *Paper) AddOrder(order *kraken.MarketOrder) error {
@@ -274,7 +192,7 @@ func (paper *Paper) AddOrder(order *kraken.MarketOrder) error {
 
 	model["pair"] = order.Params.Symbol
 
-	return paper.lifecycle.Place(model, order.ReqID)
+	return paper.Place(model, order.ReqID)
 }
 
 func (paper *Paper) execute(entity string, command ...string) (datura.Map[any], error) {
@@ -337,4 +255,80 @@ func (paper *Paper) execute(entity string, command ...string) (datura.Map[any], 
 	}
 
 	return model, nil
+}
+
+/*
+Balance emits a paper wallet frame through the latency simulator.
+*/
+func (paper *Paper) Balance(frameType string) error {
+	var model datura.Map[any]
+	var err error
+
+	paper.simulator.Do(REST, func() {
+		model, err = paper.execute("balances", "balance")
+	})
+
+	if err != nil {
+		return err
+	}
+
+	balance := kraken.NewBalanceFromMap(model)
+	balance.Type = frameType
+
+	return paper.simulator.Emit(
+		paper, WEBSOCKET, "balances", balance,
+	)
+}
+
+/*
+Replay emits historical paper fills as execution frames.
+*/
+func (paper *Paper) Replay(trades []any) error {
+	for tradeIndex, tradeRaw := range trades {
+		trade, ok := tradeRaw.(map[string]any)
+
+		if !ok {
+			continue
+		}
+
+		execution := kraken.NewExecutionFromMap(datura.Map[any](trade))
+
+		if tradeIndex == 0 {
+			execution.Type = "snapshot"
+		}
+
+		err := paper.simulator.Emit(paper, WEBSOCKET, "executions", execution)
+
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+/*
+Place emits order ack, fill, and a balance snapshot for one paper order.
+*/
+func (paper *Paper) Place(model datura.Map[any], reqID int64) error {
+	orderAck := kraken.NewOrderResponseFromMap(model, reqID)
+
+	err := paper.simulator.Emit(paper, WEBSOCKET, "add_order", orderAck)
+
+	if err != nil {
+		return err
+	}
+
+	err = paper.simulator.Emit(
+		paper, WEBSOCKET, "executions", kraken.NewExecutionFromMap(model),
+	)
+
+	if err != nil {
+		return err
+	}
+
+	// Paper `balance` is a full wallet dump that omits zero assets. Emitting it
+	// as an incremental update leaves stale positive rows in Balance.model and
+	// keeps phantom OPEN lots (inflating equity by their cost basis).
+	return paper.Balance("snapshot")
 }

@@ -128,13 +128,13 @@ func TestCognitionBeamsStaySymbolScoped(t *testing.T) {
 				"symbol-btc-usd_cvd-absorption--positive_cvd-balance--positive",
 			))
 			tree.TrainSensorySequence([]byte(
-				"symbol-eth-usd_liquidity-scarcity-score--positive_fluid-reynolds--positive",
+				"symbol-eth-usd_liquidity-scarcity-score--positive_hawkes-spectral-radius--positive",
 			))
 		}
 
 		btcParts := []string{"symbol-btc-usd", "cvd-absorption--positive", "cvd-balance--positive"}
 		ethParts := []string{
-			"symbol-eth-usd", "liquidity-scarcity-score--positive", "fluid-reynolds--positive",
+			"symbol-eth-usd", "liquidity-scarcity-score--positive", "hawkes-spectral-radius--positive",
 		}
 		btcSequence := []byte(strings.Join(btcParts, "_"))
 		ethSequence := []byte(strings.Join(ethParts, "_"))

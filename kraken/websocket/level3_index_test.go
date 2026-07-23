@@ -37,9 +37,7 @@ func TestPeekBookIndexedMissDoesNotScanThrash(t *testing.T) {
 
 		Convey("Then every peek misses without clearing the index", func() {
 			So(misses, ShouldEqual, 10_000)
-			value, ok := registry.index.Load("VANRY/USD")
-			So(ok, ShouldBeTrue)
-			So(value, ShouldEqual, owner)
+			So(registry.index["VANRY/USD"], ShouldEqual, owner)
 		})
 
 		Convey("When the book appears on the indexed Live", func() {

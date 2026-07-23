@@ -4,13 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/bytedance/sonic"
 	gorillawebsocket "github.com/gorilla/websocket"
+	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/callback"
+	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -23,31 +27,32 @@ const (
 )
 
 /*
-Live is the spot websocket and REST transport. Authentication, reconnect
-replay, and callback wiring are owned by the composed Transport.
+Live is one spot websocket session: SDK client, channel fan-out, auth/nonce,
+and Sub* resubscribe after the SDK reconnects.
 */
 type Live struct {
-	status       atomic.Value
+	*types.Actor
+	fanout
+	status       types.Status
 	ctx          context.Context
 	cancel       context.CancelFunc
 	client       *spot.WebSocket
-	sync         *sync.Map
-	handlerMu    sync.Mutex
-	nextID       atomic.Uint64
-	paper        *Paper
 	simulator    *Simulator
 	books        *spot.BookManager
 	bookMu       sync.RWMutex
 	isLevel3     bool
 	symbols      []string
-	transport    *Transport
+	auth         bool
+	nonce        *AuthNonce
+	nonceErr     error
+	ready        func() error
 	level3Queue  chan []byte
 	level3Ledger *level3Ledger
+	root         types.Subscription[any]
 }
 
 /*
-New opens a spot websocket transport and delegates lifecycle wiring to
-Transport so connect, auth, and replay stay out of the construction path.
+New opens a spot websocket session and wires SDK callbacks in the constructor.
 */
 func New(
 	ctx context.Context,
@@ -56,46 +61,174 @@ func New(
 	endpoint string,
 ) *Live {
 	ctx, cancel := context.WithCancel(ctx)
-	transport := NewTransport(auth)
 
 	live := &Live{
+		fanout:    fanout{handlers: make(map[string][]channelHandler)},
 		ctx:       ctx,
 		cancel:    cancel,
+		status:    types.INITIALIZING,
 		simulator: simulator,
 		client:    spot.NewWebSocket(),
-		sync:      &sync.Map{},
-		transport: transport,
+		auth:      auth,
+		root:      types.NewSubscription[any](),
 	}
-	live.status.Store(types.INITIALIZING)
+
+	live.Actor = types.NewActor(ctx, nil)
+	live.Actor.AddRoot("live", live.root)
+
 	live.client.URL = endpoint
+
+	if auth {
+		nonce, err := processAuthNonce()
+		live.nonce = nonce
+		live.nonceErr = err
+		live.wireCredentials()
+	}
 
 	if endpoint == Level3WebSocketURL {
 		live.isLevel3 = true
-		configureLevel3(live)
+		live.configureLevel3()
 	}
 
-	transport.wireCredentials(live.client)
-	transport.bindCallbacks(live)
+	live.client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
+		live.root.Send(event.Data)
+	})
 
 	return live
 }
 
-/*
-OnReconnect registers a reconnect replay callback on the composed Transport.
-*/
-func (live *Live) OnReconnect(fn func() error) {
-	if live == nil || live.transport == nil {
+func (live *Live) Status() types.Status {
+	return live.status
+}
+
+func (live *Live) wireCredentials() {
+	if live.client == nil || !live.auth {
 		return
 	}
 
-	live.transport.OnReconnect(fn)
+	live.client.REST.PublicKey = os.Getenv("KRAKEN_API_KEY")
+	live.client.REST.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
+
+	if live.nonceErr != nil || live.nonce == nil {
+		return
+	}
+
+	// Private and every Level3 batch authenticate with the same key; they
+	// must share one monotonic nonce sequence or concurrent token fetches
+	// collide (EAPI:Invalid nonce).
+	live.client.REST.Nonce = live.nonce.Next
+}
+
+func (live *Live) onConnected() {
+	if !live.auth {
+		if live.ready != nil {
+			if err := live.ready(); err != nil {
+				live.status = types.ERROR
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"websocket: public resubscribe failed",
+					err,
+				))
+
+				return
+			}
+		}
+
+		live.status = types.READY
+
+		return
+	}
+
+	if errnie.Error(live.authenticate()) != nil {
+		live.status = types.ERROR
+	}
+}
+
+func (live *Live) onAuthenticated() {
+	if live.isLevel3 && len(live.symbols) > 0 && live.SubscribeLevel3(
+		live.symbols,
+		viper.GetInt("market.l3_depth"),
+	) != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"websocket: level3 book subscription failed",
+			nil,
+		))
+		live.status = types.ERROR
+
+		return
+	}
+
+	if live.ready != nil {
+		if err := live.ready(); err != nil {
+			live.status = types.ERROR
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"websocket: private resubscribe failed",
+				err,
+			))
+
+			return
+		}
+	}
+
+	live.status = types.READY
+}
+
+func (live *Live) authenticate() (err error) {
+	if live.nonceErr != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"websocket: auth nonce unavailable",
+			live.nonceErr,
+		))
+	}
+
+	if err = live.client.Authenticate(); err != nil && !strings.Contains(err.Error(), "Invalid nonce") {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"websocket: authentication failed",
+			err,
+		))
+	}
+
+	if err == nil {
+		return nil
+	}
+
+	if live.nonce != nil {
+		live.nonce.Bump()
+	}
+
+	return live.client.Authenticate()
+}
+
+/*
+configureLevel3 installs BookManager + exact-text ledger and starts the
+off-reader Level3 worker.
+*/
+func (live *Live) configureLevel3() {
+	live.books = spot.NewBookManager()
+	live.level3Ledger = newLevel3Ledger()
+	live.books.OnCreateBook.Recurring(func(event *callback.Event[*book.Book]) {
+		managed := event.Data
+		managed.EnableMaxDepth = false
+		managed.NoBookCrossing = false
+	})
+
+	live.client.OnSent.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
+		live.ingestLevel3Sent(event)
+	})
+
+	live.level3Queue = make(chan []byte, level3QueueDepth)
+	go live.drainLevel3()
 }
 
 func (live *Live) Initialize() error {
 	errnie.Info("initializing live")
 
 	if err := live.client.Connect(); err != nil {
-		live.status.Store(types.ERROR)
+		live.status = types.ERROR
 
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -104,117 +237,12 @@ func (live *Live) Initialize() error {
 		))
 	}
 
+	live.status = types.READY
 	return nil
-}
-
-func (live *Live) route(raw []byte) {
-	channel := utils.GetString(raw, "channel")
-
-	if channel == "" {
-		if method := utils.GetString(raw, "method"); method == "add_order" {
-			channel = method
-		}
-	}
-
-	if channel == "" {
-		if message := utils.GetString(raw, "error"); message != "" {
-			errnie.Error(errnie.Err(errnie.Validation, message, nil))
-		}
-
-		return
-	}
-
-	if channel == "status" || channel == "heartbeat" {
-		return
-	}
-
-	if live.isLevel3 && channel == "level3" {
-		return
-	}
-
-	live.dispatch(channel, raw)
-}
-
-func (live *Live) dispatch(channel string, raw []byte) {
-	live.handlerMu.Lock()
-	callbacks, ok := live.sync.Load(channel)
-
-	if !ok {
-		live.handlerMu.Unlock()
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"websocket: channel "+channel+" not found",
-			nil,
-		))
-
-		return
-	}
-
-	handlers := append([]channelHandler(nil), callbacks.([]channelHandler)...)
-	live.handlerMu.Unlock()
-
-	for _, handler := range handlers {
-		handler.fn(raw)
-	}
-}
-
-func (live *Live) Status() types.Status {
-	status := live.status.Load()
-
-	if status == nil {
-		return types.INITIALIZING
-	}
-
-	return status.(types.Status)
 }
 
 func (live *Live) Client() *spot.WebSocket {
 	return live.client
-}
-
-func (live *Live) On(
-	channel string, action func([]byte),
-) uint64 {
-	if live == nil || action == nil {
-		return 0
-	}
-
-	id := live.nextID.Add(1)
-	handler := channelHandler{id: id, fn: action}
-
-	live.handlerMu.Lock()
-	defer live.handlerMu.Unlock()
-
-	callbacks, ok := live.sync.Load(channel)
-
-	if !ok {
-		live.sync.Store(channel, []channelHandler{handler})
-		return id
-	}
-
-	live.sync.Store(channel, append(callbacks.([]channelHandler), handler))
-
-	return id
-}
-
-/*
-Unsubscribe removes one handler previously registered with On for channel.
-*/
-func (live *Live) Unsubscribe(channel string, id uint64) {
-	if live == nil || id == 0 {
-		return
-	}
-
-	live.handlerMu.Lock()
-	defer live.handlerMu.Unlock()
-
-	callbacks, ok := live.sync.Load(channel)
-
-	if !ok {
-		return
-	}
-
-	live.sync.Store(channel, dropHandler(callbacks.([]channelHandler), id))
 }
 
 func (live *Live) Write(params json.Marshaler) error {
@@ -228,19 +256,9 @@ func (live *Live) Write(params json.Marshaler) error {
 		))
 	}
 
-	methodNode, err := sonic.Get(raw, "method")
-
-	if err != nil || !methodNode.Exists() {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			err.Error(),
-			err,
-		))
-	}
-
 	started := time.Now()
 
-	writeErr := live.client.WriteMessage(
+	err = live.client.WriteMessage(
 		gorillawebsocket.TextMessage, raw,
 	)
 
@@ -248,7 +266,7 @@ func (live *Live) Write(params json.Marshaler) error {
 		live.simulator.Record(WEBSOCKET, time.Since(started))
 	}
 
-	return errnie.Error(writeErr)
+	return errnie.Error(err)
 }
 
 func (live *Live) do(options spot.RequestOptions) ([]byte, error) {
@@ -303,26 +321,11 @@ func (live *Live) do(options spot.RequestOptions) ([]byte, error) {
 	return resp.Body, nil
 }
 
-func (live *Live) Get(
-	path string, params json.Marshaler,
-) ([]byte, error) {
-	auth := live.transport != nil && live.transport.auth
-
-	return live.do(spot.RequestOptions{
-		Auth:   auth,
-		Path:   path,
-		Method: "GET",
-		Query:  params,
-	})
-}
-
 func (live *Live) Post(
 	path string, params json.Marshaler,
 ) ([]byte, error) {
-	auth := live.transport != nil && live.transport.auth
-
 	return live.do(spot.RequestOptions{
-		Auth:   auth,
+		Auth:   live.auth,
 		Path:   path,
 		Method: "POST",
 		Body:   params,
@@ -330,10 +333,6 @@ func (live *Live) Post(
 }
 
 func (live *Live) Close() {
-	if live.paper != nil {
-		live.paper.Close()
-	}
-
 	live.cancel()
 
 	if live.client.IsActive() {

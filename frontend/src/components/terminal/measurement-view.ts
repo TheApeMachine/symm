@@ -6,7 +6,6 @@ SOURCE_HEADLINE_METRIC selects the native metric that best summarizes sources
 whose primary reading is more specific than the shared strength metric.
 */
 const SOURCE_HEADLINE_METRIC: Record<string, string | null> = {
-	fluid: "reynolds",
 	hawkes: "conditional_intensity",
 	liquidity: "scarcity_score",
 	toxicity: "touch_quantity",

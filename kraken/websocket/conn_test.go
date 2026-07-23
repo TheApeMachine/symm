@@ -96,6 +96,37 @@ func TestAPISubscribeBook(t *testing.T) {
 	})
 }
 
+/*
+TestAPIResubscribeMarket proves reconnect re-issues instrument plus the three
+market channels for the cached symbol universe without a parallel intent cache.
+*/
+func TestAPIResubscribeMarket(t *testing.T) {
+	previousDepth := viper.Get("market.book.depth")
+	previousBatch := viper.Get("market.subscribe_batch")
+	t.Cleanup(func() {
+		viper.Set("market.book.depth", previousDepth)
+		viper.Set("market.subscribe_batch", previousBatch)
+	})
+	viper.Set("market.book.depth", 10)
+	viper.Set("market.subscribe_batch", 10)
+
+	Convey("Given symbols previously selected by Instrument", t, func() {
+		public := &stubConn{}
+		api := &API{public: public}
+		So(api.ResubscribeMarket([]string{"BTC/USD", "ETH/USD"}), ShouldBeNil)
+
+		Convey("It should write instrument then trade, book, and ticker", func() {
+			So(public.writes, ShouldHaveLength, 4)
+			So(string(public.writes[0]), ShouldContainSubstring, `"channel":"instrument"`)
+			So(string(public.writes[1]), ShouldContainSubstring, `"channel":"trade"`)
+			So(string(public.writes[2]), ShouldContainSubstring, `"channel":"book"`)
+			So(string(public.writes[3]), ShouldContainSubstring, `"channel":"ticker"`)
+			So(string(public.writes[1]), ShouldContainSubstring, `"BTC/USD"`)
+			So(string(public.writes[1]), ShouldContainSubstring, `"ETH/USD"`)
+		})
+	})
+}
+
 func TestAPISubscribeBalance(t *testing.T) {
 	Convey("Given an injected authenticated connection", t, func() {
 		client := spot.NewWebSocket()
@@ -496,15 +527,9 @@ func TestAPIOnRoutesChannels(t *testing.T) {
 
 		Convey("Then balances, executions, and add_order register on the paper transport instead", func() {
 			So(len(private.channels["balances"]), ShouldEqual, 0)
-
-			_, ok := paper.sync.Load("balances")
-			So(ok, ShouldBeTrue)
-
-			_, ok = paper.sync.Load("executions")
-			So(ok, ShouldBeTrue)
-
-			_, ok = paper.sync.Load("add_order")
-			So(ok, ShouldBeTrue)
+			So(len(paper.handlers["balances"]), ShouldEqual, 1)
+			So(len(paper.handlers["executions"]), ShouldEqual, 1)
+			So(len(paper.handlers["add_order"]), ShouldEqual, 1)
 		})
 	})
 }

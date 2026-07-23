@@ -59,11 +59,15 @@ func NewPrice(
 
 	price.status.Store(types.INITIALIZING)
 
+	// Register before Desk/Crypto so mark cache is warm when lots ObserveMark.
+	if price.api != nil {
+		price.api.On("ticker", price.TickerAck)
+	}
+
 	return price
 }
 
 func (price *Price) Initialize() error {
-	price.api.On("ticker", price.TickerAck)
 	price.status.Store(types.READY)
 
 	return nil
@@ -458,7 +462,7 @@ func (price *Price) Fill(
 		holding.Mark = data.LastPrice.Copy()
 	}
 
-	switch data.Side {
+	switch strings.ToLower(data.Side) {
 	case "buy":
 		price.fillEntry(holding, data)
 	case "sell":

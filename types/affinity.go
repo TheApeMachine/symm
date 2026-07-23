@@ -91,28 +91,6 @@ var CategoryAffinity = map[MetricType]MetricAffinity{
 		Opposes:  []CategoryType{Laminar},
 	},
 
-	// fluid (mechanical order-book dynamics)
-	MetricLaminarScore: {
-		Supports: []CategoryType{Laminar, LaminarResonance},
-		Opposes:  []CategoryType{Turbulent},
-	},
-	MetricTurbulentScore: {
-		Supports: []CategoryType{Turbulent, TurbulentResonance},
-		Opposes:  []CategoryType{Laminar},
-	},
-	MetricInertialScore: {
-		Supports: []CategoryType{Inertial},
-		Opposes:  []CategoryType{Viscous},
-	},
-	MetricViscousScore: {
-		Supports: []CategoryType{Viscous},
-		Opposes:  []CategoryType{Inertial},
-	},
-	MetricTurbulence: {
-		Supports: []CategoryType{Turbulent, TurbulentResonance},
-		Opposes:  []CategoryType{Laminar},
-	},
-
 	// hawkes (self-exciting arrivals)
 	MetricSpectralRadius: {
 		Supports: []CategoryType{Frenzy, Saturation, Turbulent},
@@ -216,6 +194,10 @@ var CategoryAffinity = map[MetricType]MetricAffinity{
 		Supports: []CategoryType{MedianDepth, RobustLiquidity},
 		Opposes:  []CategoryType{LiquidityVacuum},
 	},
+	MetricRelativeTouchDepth: {
+		Supports: []CategoryType{MedianDepth, RobustLiquidity},
+		Opposes:  []CategoryType{LiquidityVacuum, ExtremeScarcity, BookThinning},
+	},
 
 	// toxicity (level3 touch liquidity honesty)
 	MetricRetreatingQuantity: {
@@ -256,10 +238,8 @@ var CategoryAffinity = map[MetricType]MetricAffinity{
 		Supports: []CategoryType{Frenzy, RiskOnSurge},
 		Opposes:  []CategoryType{VolumeStarvation},
 	},
-	MetricSpread: {
-		Supports: []CategoryType{LiquidityVacuum, BookThinning},
-		Opposes:  []CategoryType{RobustLiquidity},
-	},
+	// MetricSpread is magnitude-only: ambient bid–ask width is not vacuum or
+	// thinning evidence. Those hypotheses come from thin/scarcity/toxicity scores.
 	MetricPrecursor: {
 		Supports: []CategoryType{VerticalIgnition, CoiledCompression},
 	},

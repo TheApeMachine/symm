@@ -3,6 +3,7 @@ package stack
 import (
 	"context"
 	"errors"
+	"os"
 	"time"
 
 	"github.com/spf13/viper"
@@ -16,7 +17,6 @@ import (
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
 	"github.com/theapemachine/symm/signal/exhaust"
-	"github.com/theapemachine/symm/signal/fluid"
 	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/signal/leadlag"
 	"github.com/theapemachine/symm/signal/liquidity"
@@ -107,9 +107,11 @@ func (booter *Booter) Start() error {
 		errnie.Error(wired.Close())
 	}()
 
-	if err := wired.Crypto.Run(); err != nil {
-		return errnie.Error(err)
-	}
+	wired.Crypto.Run()
+	wired.Desk.Run()
+	wired.Analyzer.Run()
+	wired.Planner.Run()
+	wired.API.Run()
 
 	return wired.UIHub.Serve()
 }
@@ -149,6 +151,12 @@ configureTest applies deterministic runtime configuration for one simulated
 stack and returns the exact restoration applied when that stack closes.
 */
 func (booter *Booter) configureTest(symbolCount int) func() {
+	auditDir, err := os.MkdirTemp("", "symm-audit-*")
+
+	if err != nil {
+		panic(err)
+	}
+
 	settings := map[string]any{
 		"system.websocket.channel.buffer":            4096,
 		"trading.model":                              "paper",
@@ -157,7 +165,7 @@ func (booter *Booter) configureTest(symbolCount int) func() {
 		"trading.slots.reserved":                     2,
 		"cognitive.in_memory":                        true,
 		"cognitive.tick_budget":                      10 * time.Millisecond,
-		"system.data_path":                           "",
+		"system.data_path":                           auditDir,
 		"system.audit.rotate_on_boot":                false,
 		"market.quote_currency":                      "USD",
 		"market.subscribe_batch":                     symbolCount,
@@ -171,11 +179,7 @@ func (booter *Booter) configureTest(symbolCount int) func() {
 		"market.forecast.rls.calibration_confidence": 0.95,
 		"signals.feed_timeline_capacity":             4096,
 		"signals.feed_track_capacity":                512,
-		"signals.volume_clock_bars_per_day":          0,
-		"signals.fluid.grid_half_width":              0,
-		"signals.fluid.integration_interval":         0,
-		"signals.fluid.idle_threshold":               5 * time.Second,
-		"signals.fluid.max_integration_steps":        50,
+		"market.manifold.integration_interval":       0,
 	}
 	previous := make(map[string]any, len(settings))
 
@@ -188,6 +192,8 @@ func (booter *Booter) configureTest(symbolCount int) func() {
 		for key, value := range previous {
 			viper.Set(key, value)
 		}
+
+		_ = os.RemoveAll(auditDir)
 	}
 }
 
@@ -230,10 +236,16 @@ func (booter *Booter) boot(
 
 	tree := dmt.NewTree("")
 
+	recorder, err := booter.openRecorder()
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
 	price := broker.NewPrice(api)
 	instrument := broker.NewInstrument(api, price, booter.channel)
 	balance := broker.NewBalance(api, nil, booter.channel)
-	desk := broker.NewDesk(api, instrument, price, balance)
+	desk := broker.NewDesk(booter.ctx, api, instrument, price, balance)
 	hub := ui.NewHub(booter.ctx, price, balance, booter.channel)
 	hawkesSignal := hawkes.NewSignal(booter.ctx, booter.channel)
 
@@ -244,7 +256,7 @@ func (booter *Booter) boot(
 	)
 
 	if err != nil {
-		return nil, errnie.Error(err)
+		return nil, errors.Join(errnie.Error(err), recorder.Close())
 	}
 
 	signals := []types.Signal{
@@ -261,7 +273,6 @@ func (booter *Booter) boot(
 		exhaust.NewSignal(booter.ctx, booter.channel),
 		sentiment.NewSignal(booter.ctx, booter.channel),
 		depthflowSignal,
-		fluid.NewSignal(booter.ctx, booter.channel),
 		hawkesSignal,
 	}
 	analyzer, err := logic.NewAnalyzer(
@@ -271,11 +282,11 @@ func (booter *Booter) boot(
 		hawkesSignal,
 		tree,
 		booter.channel,
-		nil,
+		recorder,
 	)
 
 	if err != nil {
-		return nil, errnie.Error(err)
+		return nil, errors.Join(errnie.Error(err), recorder.Close())
 	}
 
 	planner := strategy.NewPlanner(
@@ -288,27 +299,17 @@ func (booter *Booter) boot(
 		balance,
 		analyzer,
 		strategy.NewAllocator(booter.ctx, balance, instrument, price),
-		nil,
+		recorder,
 	)
 
 	crypto, err := trader.NewCrypto(
 		booter.ctx,
-		booter.stages,
-		api,
-		price,
-		balance,
-		desk,
-		instrument,
-		analyzer,
-		planner,
-		tree,
 		hub,
-		nil,
-		signals,
+		recorder,
 	)
 
 	if err != nil {
-		return nil, errnie.Error(err)
+		return nil, errors.Join(errnie.Error(err), recorder.Close())
 	}
 
 	wired := &Stack{
@@ -324,7 +325,7 @@ func (booter *Booter) boot(
 		Planner:    planner,
 		Crypto:     crypto,
 		UIHub:      hub,
-		Recorder:   nil,
+		Recorder:   recorder,
 	}
 
 	if reporter, ok := paper.(types.StatusReporter); ok {
@@ -342,7 +343,22 @@ func (booter *Booter) boot(
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
 
+	wired.startActors()
+
 	return wired, nil
+}
+
+/*
+startActors drains every Actor inbox so market frames, marks, and strategy
+updates cannot block on an unread delivery during Test or live Start.
+Crypto.Actor runs without the cut loop; live Start still calls Crypto.Run.
+*/
+func (stack *Stack) startActors() {
+	stack.API.Run()
+	stack.Desk.Run()
+	stack.Analyzer.Run()
+	stack.Planner.Run()
+	stack.Crypto.Actor.Run()
 }
 
 /*

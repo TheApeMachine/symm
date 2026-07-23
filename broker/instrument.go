@@ -50,6 +50,11 @@ func NewInstrument(
 	}
 	instrument.status.Store(types.INITIALIZING)
 
+	if instrument.api != nil {
+		instrument.api.On("instrument", instrument.On)
+		instrument.api.SetPublicResubscribe(instrument.Resubscribe)
+	}
+
 	return instrument
 }
 
@@ -57,7 +62,10 @@ func (instrument *Instrument) Initialize() error {
 	errnie.Info("initializing instrument")
 	instrument.status.Store(types.PENDING)
 
-	instrument.api.On("instrument", instrument.On)
+	if instrument.api == nil {
+		instrument.status.Store(types.READY)
+		return nil
+	}
 
 	if err := instrument.api.SubscribeInstruments(); err != nil {
 		instrument.status.Store(types.ERROR)
@@ -269,4 +277,32 @@ func (instrument *Instrument) Subscribe() error {
 	instrument.status.Store(types.READY)
 
 	return nil
+}
+
+/*
+Resubscribe re-issues instrument and market channel subscriptions after the
+SDK reconnects. No-ops until the first Subscribe has completed so the initial
+Live connect cannot race Instrument.Initialize and double-subscribe.
+*/
+func (instrument *Instrument) Resubscribe() error {
+	if instrument == nil || instrument.api == nil {
+		return nil
+	}
+
+	if instrument.Status() != types.READY {
+		return nil
+	}
+
+	return instrument.api.ResubscribeMarket(instrument.symbols)
+}
+
+/*
+Symbols returns the subscribed market universe, if Subscribe has completed.
+*/
+func (instrument *Instrument) Symbols() []string {
+	if instrument == nil {
+		return nil
+	}
+
+	return append([]string(nil), instrument.symbols...)
 }

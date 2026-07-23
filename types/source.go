@@ -7,7 +7,6 @@ const (
 	SourceCVD         SourceType = "cvd"
 	SourceDepthFlow   SourceType = "depthflow"
 	SourceExhaustion  SourceType = "exhaustion"
-	SourceFluid       SourceType = "fluid"
 	SourceHawkes      SourceType = "hawkes"
 	SourceLeadLag     SourceType = "leadlag"
 	SourceLiquidity   SourceType = "liquidity"

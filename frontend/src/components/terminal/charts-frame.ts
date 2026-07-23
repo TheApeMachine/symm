@@ -154,6 +154,52 @@ export const frameAuxMatrix = (
 	return [];
 };
 
+const SHARED_FIELD_KEYS = [
+	"rho",
+	"psiMag2",
+	"guidanceVelX",
+	"guidanceVelZ",
+	"wave",
+] as const;
+
+/*
+withSharedManifoldField overlays the batch's single shared Sensorium lattices
+onto the focused symbol row. Backend wireManifold keeps ρ/|ψ|² on one carrier
+only; the pilot-wave paint still needs those lattices under every focus.
+*/
+export const withSharedManifoldField = <
+	T extends Record<string, unknown> & { symbol?: string },
+>(
+	focus: T | null | undefined,
+	batch: readonly T[],
+): T | null => {
+	if (focus == null) {
+		return null;
+	}
+
+	if (isFluidFieldMatrix(frameAuxMatrix(focus, "rho"))) {
+		return focus;
+	}
+
+	const carrier = batch.find((frame) =>
+		isFluidFieldMatrix(frameAuxMatrix(frame, "rho")),
+	);
+
+	if (carrier == null) {
+		return focus;
+	}
+
+	const inherited = { ...focus };
+
+	for (const key of SHARED_FIELD_KEYS) {
+		if (carrier[key] !== undefined) {
+			inherited[key] = carrier[key];
+		}
+	}
+
+	return inherited;
+};
+
 /*
 finiteNumber keeps only finite numeric wire values.
 */

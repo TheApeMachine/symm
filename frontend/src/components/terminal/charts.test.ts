@@ -6,14 +6,55 @@ import {
 	terminalPhaseScanFromFrame,
 	terminalPhaseStatusFromFrame,
 	terminalWaveModesFromFrame,
+	withSharedManifoldField,
 } from "./charts";
+
+describe("withSharedManifoldField", () => {
+	it("inherits shared lattices from the carrier onto the focused row", () => {
+		const rho = [
+			[0.1, 0.2],
+			[0.3, 0.4],
+		];
+		const psiMag2 = [
+			[1, 0],
+			[0, 1],
+		];
+		const inherited = withSharedManifoldField(
+			{ source: "manifold", symbol: "BTC/USD", at: "1", phaseScan: [{ angle: 0 }] },
+			[
+				{
+					source: "manifold",
+					symbol: "ETH/USD",
+					at: "1",
+					rho,
+					psiMag2,
+					guidanceVelX: [[0.5]],
+					wave: [{ omega: 1 }],
+				},
+				{
+					source: "manifold",
+					symbol: "BTC/USD",
+					at: "1",
+					phaseScan: [{ angle: 0 }],
+				},
+			],
+		);
+
+		expect(inherited?.symbol).toBe("BTC/USD");
+		expect(inherited?.rho).toEqual(rho);
+		expect(inherited?.psiMag2).toEqual(psiMag2);
+		expect(inherited?.guidanceVelX).toEqual([[0.5]]);
+		expect(inherited?.wave).toEqual([{ omega: 1 }]);
+		expect(inherited?.phaseScan).toEqual([{ angle: 0 }]);
+	});
+});
 
 describe("terminalFluidParticlesFromFrame", () => {
 	it("reads post-step manifold particles instead of legacy carriers", () => {
 		const particles = terminalFluidParticlesFromFrame({
 			particles: [
 				{
-					source: "fluid",
+					source: "manifold",
 					role: "particle",
 					cell_x: 7,
 					cell_y: 2,
@@ -33,7 +74,7 @@ describe("terminalFluidParticlesFromFrame", () => {
 
 		expect(particles).toEqual([
 			{
-				source: "fluid",
+				source: "manifold",
 				role: "particle",
 				cellX: 7,
 				cellY: 2,

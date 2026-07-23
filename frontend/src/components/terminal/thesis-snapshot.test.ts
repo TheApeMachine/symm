@@ -9,7 +9,7 @@ describe("categoriesForSymbol", () => {
 				[],
 				[
 					{
-						source: "fluid",
+						source: "hawkes",
 						metric: "strength",
 						symbol: "BTC/USD",
 						at: "2026-07-14T12:00:00Z",
@@ -24,7 +24,7 @@ describe("categoriesForSymbol", () => {
 						},
 						categories: [
 							{
-								type: "laminar",
+								type: "frenzy",
 								confidence: 0.82,
 								surprisal: 0.1,
 								strength: 0.7,
@@ -36,7 +36,7 @@ describe("categoriesForSymbol", () => {
 		).toEqual([
 			{
 				symbol: "BTC/USD",
-				type: "laminar",
+				type: "frenzy",
 				confidence: 0.82,
 				surprisal: 0.1,
 				strength: 0.7,

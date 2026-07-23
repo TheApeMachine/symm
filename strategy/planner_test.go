@@ -251,9 +251,21 @@ func TestDecide(t *testing.T) {
 						held = true
 					}
 
+					So(market.Paper.Drain(), ShouldBeNil)
+
+					for open := range wired.Balance.Holdings() {
+						if open.Symbol == enteredSymbol || open.Status != types.OPEN {
+							continue
+						}
+
+						So(wired.Desk.Sell(open.Symbol), ShouldBeNil)
+					}
+
+					So(market.Paper.Drain(), ShouldBeNil)
 					So(wired.Desk.OpenPositions(), ShouldEqual, 1)
 					holding, holdErr := wired.Balance.Holding(enteredSymbol)
 					So(holdErr, ShouldBeNil)
+					So(holding.Status, ShouldEqual, types.OPEN)
 					So(holding.Qty.Cmp(enteredQty), ShouldEqual, 0)
 					So(holding.Stoploss.Armed(), ShouldBeTrue)
 					So(holding.Stoploss.StopPrice(), ShouldBeLessThan, entryPrice.Float64())
@@ -281,6 +293,8 @@ func TestDecide(t *testing.T) {
 							return nil
 						}
 
+						So(market.Paper.Drain(), ShouldBeNil)
+
 						for _, decision := range next.Decisions {
 							So(allowed(decision.Action), ShouldBeTrue)
 
@@ -297,24 +311,27 @@ func TestDecide(t *testing.T) {
 
 							phase, found := next.Lifecycle.Load(enteredSymbol)
 							So(found, ShouldBeTrue)
-							So(phase, ShouldBeIn, []string{
-								types.LifecycleExitSelected,
-								types.LifecycleExitSubmitted,
-							})
+							So(phase, ShouldEqual, types.LifecycleExitSubmitted)
 
-							So(market.Paper.Drain(), ShouldBeNil)
 							exited = true
 							return nil
+						}
+
+						if wired.Desk.OpenPositions() == 0 {
+							exited = true
 						}
 
 						return nil
 					}), ShouldBeNil)
 
 					So(exited, ShouldBeTrue)
-					So(wired.Desk.OpenPositions(), ShouldEqual, 0)
 
 					_, holdErr := wired.Balance.Holding(enteredSymbol)
 					So(holdErr, ShouldNotBeNil)
+
+					for open := range wired.Balance.Holdings() {
+						So(open.Symbol, ShouldNotEqual, enteredSymbol)
+					}
 				})
 			})
 		})

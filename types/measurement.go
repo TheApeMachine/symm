@@ -178,7 +178,6 @@ const (
 	CVD         StreamType = "cvd"
 	DepthFlow   StreamType = "depth_flow"
 	Exhaust     StreamType = "exhaust"
-	Fluid       StreamType = "fluid"
 	Hawkes      StreamType = "hawkes"
 	LeadLag     StreamType = "lead_lag"
 	Liquidity   StreamType = "liquidity"
@@ -343,34 +342,6 @@ func ForPublish(measurements []*Measurement) []*Measurement {
 	}
 
 	return out
-}
-
-/*
-ObservationCount is how many source×symbol pairs the latest cut represents.
-*/
-func ObservationCount(measurements []*Measurement) int {
-	latest := FilterLatest(measurements)
-
-	if len(latest) == 0 {
-		return 0
-	}
-
-	type pair struct {
-		source SourceType
-		symbol string
-	}
-
-	seen := make(map[pair]struct{}, len(latest))
-
-	for _, measurement := range latest {
-		if measurement == nil || measurement.Symbol == "" || measurement.Metric == "" {
-			continue
-		}
-
-		seen[pair{measurement.Source, measurement.Symbol}] = struct{}{}
-	}
-
-	return len(seen)
 }
 
 func (measurement *Measurement) fitParameter() bool {

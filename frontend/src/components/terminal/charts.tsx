@@ -37,6 +37,7 @@ export {
 	terminalPhaseStatusFromFrame,
 	terminalResonanceLayerMatrixFromFrame,
 	terminalWaveModesFromFrame,
+	withSharedManifoldField,
 } from "#/components/terminal/charts-frame";
 
 type Draw = (

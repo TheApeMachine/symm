@@ -25,14 +25,14 @@ import (
 func TestNewSetsAuthURL(t *testing.T) {
 	Convey("Given an authenticated live transport", t, func() {
 		live := &Live{
-			client:    spot.NewWebSocket(),
-			transport: NewTransport(true),
+			client: spot.NewWebSocket(),
+			auth:   true,
 		}
-		live.status.Store(types.INITIALIZING)
+		live.status = types.INITIALIZING
 		live.client.URL = PrivateWebSocketURL
 
 		live.client.OnAuthenticated.Recurring(func(event *callback.Event[string]) {
-			live.status.Store(types.READY)
+			live.status = types.READY
 		})
 
 		live.client.OnAuthenticated.Call("token")
@@ -251,7 +251,7 @@ func BenchmarkLiveUpdateLevel3(b *testing.B) {
 
 func TestLiveRoute(t *testing.T) {
 	Convey("Given callbacks registered on a live transport", t, func() {
-		live := &Live{sync: &sync.Map{}, isLevel3: true}
+		live := &Live{fanout: fanout{handlers: make(map[string][]channelHandler)}, isLevel3: true}
 		tickerFrames := make([][]byte, 0, 1)
 		orderFrames := make([][]byte, 0, 1)
 		live.On("ticker", func(raw []byte) {
@@ -304,7 +304,7 @@ func TestLiveRoute(t *testing.T) {
 }
 
 func BenchmarkLiveRoute(b *testing.B) {
-	live := &Live{sync: &sync.Map{}, isLevel3: true}
+	live := &Live{fanout: fanout{handlers: make(map[string][]channelHandler)}, isLevel3: true}
 	raw := []byte(`{"channel":"level3","type":"update","data":[{"symbol":"BTC/USD"}]}`)
 	b.ReportAllocs()
 	b.ResetTimer()

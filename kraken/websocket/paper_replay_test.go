@@ -9,10 +9,10 @@ import (
 )
 
 /*
-TestLifecycleReplay verifies that paper history emits the exchange fill once,
+TestPaperReplay verifies that paper history emits the exchange fill once,
 without inventing partial executions that are absent from the source record.
 */
-func TestLifecycleReplay(t *testing.T) {
+func TestPaperReplay(t *testing.T) {
 	Convey("Given one paper trade from exchange history", t, func() {
 		paper := NewPaper(context.Background(), NewSimulator())
 		var replayed *kraken.Execution
@@ -20,7 +20,7 @@ func TestLifecycleReplay(t *testing.T) {
 			replayed = kraken.NewExecution(buffer)
 		})
 
-		err := paper.lifecycle.Replay([]any{map[string]any{
+		err := paper.Replay([]any{map[string]any{
 			"id": "PAPER-00026", "order_id": "PAPER-00025",
 			"pair": "BTCUSD", "side": "buy", "volume": 0.0002,
 			"price": 64129.9, "cost": 12.82598, "fee": 0.033347548,
@@ -39,9 +39,9 @@ func TestLifecycleReplay(t *testing.T) {
 }
 
 /*
-BenchmarkLifecycleReplay measures conversion and emission of one real paper fill.
+BenchmarkPaperReplay measures conversion and emission of one real paper fill.
 */
-func BenchmarkLifecycleReplay(b *testing.B) {
+func BenchmarkPaperReplay(b *testing.B) {
 	paper := NewPaper(context.Background(), NewSimulator())
 	paper.On("executions", func([]byte) {})
 	trades := []any{map[string]any{
@@ -52,7 +52,7 @@ func BenchmarkLifecycleReplay(b *testing.B) {
 	}}
 
 	for b.Loop() {
-		if err := paper.lifecycle.Replay(trades); err != nil {
+		if err := paper.Replay(trades); err != nil {
 			b.Fatal(err)
 		}
 	}

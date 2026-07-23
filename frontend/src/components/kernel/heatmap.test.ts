@@ -82,7 +82,7 @@ describe("buildHeatmapCells", () => {
 
 	it("skips symbols without a headline reading for the selected source", () => {
 		const cells = buildHeatmapCells(
-			[measurement("ETH/EUR", 0.5, "strength", "fluid")],
+			[measurement("ETH/EUR", 0.5, "strength", "hawkes")],
 			"liquidity",
 			"strength",
 		);

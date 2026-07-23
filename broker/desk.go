@@ -1,16 +1,19 @@
 package broker
 
 import (
+	"context"
 	"slices"
 	"sync"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
 type Desk struct {
+	*types.Actor
 	status       types.Status
 	api          *websocket.API
 	instrument   *Instrument
@@ -22,6 +25,7 @@ type Desk struct {
 }
 
 func NewDesk(
+	ctx context.Context,
 	api *websocket.API,
 	instrument *Instrument,
 	price *Price,
@@ -29,7 +33,8 @@ func NewDesk(
 ) *Desk {
 	positions := &sync.Map{}
 
-	return &Desk{
+	desk := &Desk{
+		Actor:        types.NewActor(ctx, nil),
 		status:       types.INITIALIZING,
 		api:          api,
 		instrument:   instrument,
@@ -39,6 +44,8 @@ func NewDesk(
 		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
 		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
 	}
+
+	return desk
 }
 
 /*
@@ -68,6 +75,37 @@ func (desk *Desk) Initialize() error {
 
 func (desk *Desk) Status() types.Status {
 	return desk.status
+}
+
+/*
+BindTicker marks open lots and observes stoplosses on every ticker print.
+Registered before Crypto.OnTicker so Regulate sees the mark before the cut.
+*/
+func (desk *Desk) BindTicker(api *websocket.API) {
+	if api == nil {
+		return
+	}
+
+	api.On("ticker", desk.onTicker)
+}
+
+func (desk *Desk) onTicker(raw []byte) {
+	ticker := kraken.NewTicker(raw)
+
+	if errnie.Error(kraken.Validate(ticker)) != nil {
+		return
+	}
+
+	for index := range ticker.Data {
+		item := ticker.Data[index]
+		position, ok := desk.Position(item.Symbol)
+
+		if !ok || position == nil {
+			continue
+		}
+
+		position.TickerAck(raw)
+	}
 }
 
 /*

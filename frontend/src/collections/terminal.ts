@@ -25,7 +25,7 @@ export const terminalStore = createStore(
 		scanlines: true,
 		fieldStyle: "Heatmap" as "Heatmap" | "Contour",
 		fieldLayer: "Composite" as FluidFieldLayer,
-		selectedSource: "fluid",
+		selectedSource: "manifold",
 		inspectorSource: null as string | null,
 		paletteOpen: false,
 		paletteMode: "all" as "all" | "symbols",

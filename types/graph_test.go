@@ -199,7 +199,7 @@ func TestGraphRelationshipTypes(t *testing.T) {
 		graph := NewGraph("BTC/USD")
 		at := time.Unix(20, 0)
 		from := &Measurement{Symbol: "BTC/USD", At: at, Source: SourceHawkes}
-		to := &Measurement{Symbol: "BTC/USD", At: at, Source: SourceFluid}
+		to := &Measurement{Symbol: "BTC/USD", At: at, Source: SourceToxicity}
 		So(graph.AddNode(from), ShouldBeNil)
 		So(graph.AddNode(to), ShouldBeNil)
 		fromKey := MeasurementKey(from)
@@ -253,8 +253,8 @@ func TestGraphMarshalJSON(t *testing.T) {
 			Raw:     0.4,
 		}
 		second := &Measurement{
-			Source:  SourceFluid,
-			Stream:  Fluid,
+			Source:  SourceToxicity,
+			Stream:  Toxicity,
 			Metric:  MetricArrivalRate,
 			Subject: SubjectTradeArrivals,
 			Side:    SideSell,

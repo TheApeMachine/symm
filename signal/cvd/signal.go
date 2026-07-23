@@ -3,7 +3,6 @@ package cvd
 import (
 	"context"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
@@ -17,10 +16,8 @@ price response. Categories belong in logic; this signal emits numerical scores
 only.
 */
 type Signal struct {
-	tickerIn  chan []kraken.TickerData
-	bookIn    chan []kraken.BookData
-	tradeIn   chan []kraken.TradeData
-	ack     chan struct{}
+	*types.Actor
+	thesis    *types.Thesis
 	ctx       context.Context
 	cancel    context.CancelFunc
 	sample    *algorithm.TradeFlowSample
@@ -37,10 +34,6 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		tickerIn:  make(chan []kraken.TickerData, 64),
-		bookIn:    make(chan []kraken.BookData, 64),
-		tradeIn:   make(chan []kraken.TradeData, 64),
-		ack:     make(chan struct{}, 256),
 		ctx:       ctx,
 		cancel:    cancel,
 		sample:    algorithm.NewTradeFlowSample(),
@@ -49,26 +42,96 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 		ui:        ui,
 	}
 
+	signal.Actor = types.NewActor(ctx, map[string]types.Handler{
+		"ticker": {Topic: "thesis", Fn: signal.onTicker},
+		"book":   {Topic: "thesis", Fn: signal.onBook},
+		"trade":  {Topic: "thesis", Fn: signal.onTrade},
+	})
+
 	return signal
 }
 
 /*
-Publish sends one small datura frame to the UI the moment this signal has
-measured its evidence, mirroring broker.Balance.Publish.
+Run starts the Actor loop.
 */
-func (signal *Signal) Publish(measurements []*types.Measurement) {
-	select {
-	case signal.ui <- datura.Map[any]{
-		"measurements": types.ForPublish(measurements),
-	}.Marshal():
-	default:
-	}
+func (signal *Signal) Run() {
+	signal.Actor.Run()
 }
 
 /*
-Calculate converts the receiver's current market input into typed measurements
-so downstream logic consumes explicit evidence.
+Name returns the signal source identity.
 */
+func (signal *Signal) Name() string {
+	return string(types.SourceCVD)
+}
+
+/*
+Initialize wires ticker, book, and trade ingress from Live.
+*/
+func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
+	signal.thesis = thesis
+	signal.Actor.Initialize(
+		types.Topic{Name: "ticker", Actor: live},
+		types.Topic{Name: "book", Actor: live},
+		types.Topic{Name: "trade", Actor: live},
+	)
+}
+
+
+func (signal *Signal) onTicker(message any) any {
+	rows := message.([]kraken.TickerData)
+	measurements, err := signal.Calculate(rows, nil, nil)
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	if len(measurements) == 0 {
+		return nil
+	}
+
+	signal.thesis.Measurements = append(signal.thesis.Measurements, measurements...)
+
+	return signal.thesis
+}
+
+func (signal *Signal) onBook(message any) any {
+	rows := message.([]kraken.BookData)
+	measurements, err := signal.Calculate(nil, nil, rows)
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	if len(measurements) == 0 {
+		return nil
+	}
+
+	signal.thesis.Measurements = append(signal.thesis.Measurements, measurements...)
+
+	return signal.thesis
+}
+
+func (signal *Signal) onTrade(message any) any {
+	rows := message.([]kraken.TradeData)
+	measurements, err := signal.Calculate(nil, rows, nil)
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	if len(measurements) == 0 {
+		return nil
+	}
+
+	signal.thesis.Measurements = append(signal.thesis.Measurements, measurements...)
+
+	return signal.thesis
+}
+
 func (signal *Signal) Calculate(
 	tickers []kraken.TickerData,
 	trades []kraken.TradeData,
@@ -221,107 +284,5 @@ active market-data producers.
 */
 func (signal *Signal) Close() error {
 	signal.cancel()
-
 	return nil
-}
-
-/*
-Tickers returns the ticker ingress channel.
-*/
-func (signal *Signal) Tickers() chan []kraken.TickerData {
-	return signal.tickerIn
-}
-
-/*
-Books returns the book ingress channel.
-*/
-func (signal *Signal) Books() chan []kraken.BookData {
-	return signal.bookIn
-}
-
-/*
-Trades returns the trade ingress channel.
-*/
-func (signal *Signal) Trades() chan []kraken.TradeData {
-	return signal.tradeIn
-}
-
-
-/*
-Ack signals that one ingress frame finished Calculate so Crypto can barrier
-before draining outs.
-*/
-func (signal *Signal) Ack() <-chan struct{} {
-	return signal.ack
-}
-
-/*
-Measure consumes ingress channels and sends measurements on out.
-*/
-func (signal *Signal) Measure() chan []*types.Measurement {
-	out := make(chan []*types.Measurement, 64)
-
-	go func() {
-		defer close(out)
-
-		for {
-			select {
-			case <-signal.ctx.Done():
-				return
-			case rows := <-signal.tickerIn:
-				measured, err := signal.Calculate(rows, nil, nil)
-
-				if err != nil {
-					errnie.Error(err)
-					signal.ack <- struct{}{}
-					continue
-				}
-
-				if len(measured) == 0 {
-					signal.ack <- struct{}{}
-					continue
-				}
-
-				out <- measured
-				signal.Publish(measured)
-				signal.ack <- struct{}{}
-			case rows := <-signal.bookIn:
-				measured, err := signal.Calculate(nil, nil, rows)
-
-				if err != nil {
-					errnie.Error(err)
-					signal.ack <- struct{}{}
-					continue
-				}
-
-				if len(measured) == 0 {
-					signal.ack <- struct{}{}
-					continue
-				}
-
-				out <- measured
-				signal.Publish(measured)
-				signal.ack <- struct{}{}
-			case rows := <-signal.tradeIn:
-				measured, err := signal.Calculate(nil, rows, nil)
-
-				if err != nil {
-					errnie.Error(err)
-					signal.ack <- struct{}{}
-					continue
-				}
-
-				if len(measured) == 0 {
-					signal.ack <- struct{}{}
-					continue
-				}
-
-				out <- measured
-				signal.Publish(measured)
-				signal.ack <- struct{}{}
-			}
-		}
-	}()
-
-	return out
 }

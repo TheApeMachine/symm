@@ -26,7 +26,7 @@ describe("terminalHealthSummary", () => {
 		const summary = terminalHealthSummary(
 			[reading("depthflow", "BTC/USD", "strength", 0.21)],
 			"BTC/USD",
-			["depthflow", "fluid"],
+			["depthflow", "hawkes"],
 			{ count: 12, completed: true, ns: 45_000_000 },
 		);
 
@@ -68,13 +68,13 @@ describe("terminalHealthSummary", () => {
 		expect(
 			regimeAxes(
 				[
-					reading("fluid", "BTC/USD", "turbulent_score", 0.8, 0.8),
+					reading("hawkes", "BTC/USD", "spectral_radius", 0.8, 0.8),
 					reading("pumpdump", "BTC/USD", "trend", 0.6, 0.6),
 					reading("cvd", "BTC/USD", "net", -12),
 					reading("cvd", "BTC/USD", "net_fraction", 0.7, 0.7),
 					reading("cvd", "BTC/USD", "balance", 0.3, 0.3),
 				],
-				["fluid", "pumpdump", "cvd"],
+				["hawkes", "pumpdump", "cvd"],
 			),
 		).toEqual([
 			{ label: "volatility", value: 0.8 },

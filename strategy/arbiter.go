@@ -82,6 +82,17 @@ func (arbiter *Arbiter) Select(thesis *types.Thesis) {
 			open+admittedNormal+admittedReserved < maxAll
 
 		if useNormal || useReserved {
+			before := len(thesis.Decisions)
+			arbiter.admit.Accept(thesis, decision, opportunity)
+
+			if len(thesis.Decisions) == before {
+				continue
+			}
+
+			if thesis.Decisions[len(thesis.Decisions)-1].Action != types.ActionEnter {
+				continue
+			}
+
 			if useNormal {
 				admittedNormal++
 			}
@@ -89,8 +100,6 @@ func (arbiter *Arbiter) Select(thesis *types.Thesis) {
 			if !useNormal && useReserved {
 				admittedReserved++
 			}
-
-			arbiter.admit.Accept(thesis, decision, opportunity)
 
 			continue
 		}

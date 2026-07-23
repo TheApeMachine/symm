@@ -9,6 +9,9 @@ system:
     addr: 127.0.0.1:6060
   log:
     level: debug
+  actor:
+    retry_max: 21
+    buffer: 64
   websocket:
     channel:
       # Public book/trade/ticker ingress queues and UI fan-out. Undersizing
@@ -59,6 +62,8 @@ market:
   manifold:
     # Maximum chronological lifetime observations retained per admitted symbol.
     lifetime_capacity: 4096
+    # Zero keeps the solver MaxDelta from physics/fluid DefaultConfig.
+    integration_interval: 0
 
 ui:
   addr: 127.0.0.1:8765
@@ -84,13 +89,3 @@ signals:
   # ponytail: fixed capacity is an intentional simplification with memory and
   # burst limits; telemetry-driven or adaptive sizing is the upgrade path.
   feed_track_capacity: 512
-  # Zero derives bars/day from signals.fluid.integration_interval.
-  volume_clock_bars_per_day: 0
-  fluid:
-    # Zero derives tick size and grid half-width from the live book.
-    tick_size: 0
-    grid_half_width: 0
-    # Zero derives the cadence from idle_threshold / max_integration_steps.
-    integration_interval: 0
-    idle_threshold: 5s
-    max_integration_steps: 50

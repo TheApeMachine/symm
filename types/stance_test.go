@@ -84,6 +84,37 @@ func TestLongEntryEvidence(t *testing.T) {
 		})
 	})
 
+	Convey("Given ambient scarcity against healthy relative touch depth", t, func() {
+		graph := NewGraph("MATIC/USD")
+		scarcity := 0.01
+		relative := 0.99
+		So(graph.Evidence.AddMeasurements([]*Measurement{
+			stanceMeasurement("MATIC/USD", MetricIgnition, at),
+			{
+				Source: SourceLiquidity, Stream: Liquidity,
+				Metric: MetricScarcityScore, Subject: SubjectPeerLiquidity,
+				Symbol: "MATIC/USD", At: at, Unit: UnitDimensionless,
+				Raw: scarcity, Normalized: &scarcity,
+				Validity: MeasurementValidity{State: ValidityValid},
+			},
+			{
+				Source: SourceLiquidity, Stream: Liquidity,
+				Metric: MetricRelativeTouchDepth, Subject: SubjectPeerLiquidity,
+				Symbol: "MATIC/USD", At: at, Unit: UnitDimensionless,
+				Raw: relative, Normalized: &relative,
+				Validity: MeasurementValidity{State: ValidityValid},
+			},
+		}), ShouldBeNil)
+		graph.Compose()
+
+		Convey("Then vacuum stays inactive and ignition can favor the long", func() {
+			reading := graph.LongEntryEvidence()
+
+			So(reading.Vetoes, ShouldNotContain, string(LiquidityVacuum))
+			So(reading.Favors, ShouldContain, string(VerticalIgnition))
+		})
+	})
+
 	Convey("Given an empty graph", t, func() {
 		graph := NewGraph("MATIC/USD")
 

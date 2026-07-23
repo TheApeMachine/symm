@@ -77,7 +77,6 @@ export const KNOWN_SOURCES = [
 	"cvd",
 	"depthflow",
 	"exhaustion",
-	"fluid",
 	"hawkes",
 	"leadlag",
 	"liquidity",

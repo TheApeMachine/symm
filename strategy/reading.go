@@ -10,9 +10,9 @@ import (
 /*
 Reading is the decomposed admit state for one forecast. Margin is economic
 edge after uncertainty; Lead is how far cognition has committed ahead of the
-manifold basin on a shared [0,1) scale. Reserved overflow is for anticipatory
-edge only — high SNR, cognition ahead of the basin by more than noise, and a
-non-ambiguous short-horizon reading.
+manifold phase basin on a shared [0,1) scale. Reserved overflow is for
+anticipatory edge only — high SNR, cognition ahead of the phase compass by
+more than noise, and a non-ambiguous short-horizon reading.
 */
 type Reading struct {
 	Margin      float64
@@ -25,14 +25,17 @@ type Reading struct {
 	Uncertainty float64
 	Horizon     uint64
 	Noise       float64
+	PhaseClass       string
+	PhaseReady       bool
+	PhaseSimilarity  float64
 }
 
 /*
 Reserved reports whether this reading may consume overflow slots. Normal-lane
 enter only needs positive executable utility; reserved further demands that
 margin exceed residual uncertainty (SNR > 2), cognitive lead clear the same
-noise share CognitiveClears uses, the basin be ready, the horizon be the next
-event, and cognition be non-ambiguous with positive winner contrast.
+noise share CognitiveClears uses, the phase basin be ready, the horizon be the
+next event, and cognition be non-ambiguous with positive winner contrast.
 */
 func (reading Reading) Reserved() bool {
 	if reading.Ambiguous || !reading.BasinReady {
@@ -64,9 +67,24 @@ func (reading Reading) CognitiveClears(forecast types.Forecasts) bool {
 }
 
 /*
+PhaseOpposes reports whether the phase dial's strongest constructive alignment
+points at a sell-labeled attractor while cognition wants buy. Cold corpus,
+destructive interference, and balanced/neutral labels do not oppose — they leave
+BasinReady false without inventing a veto.
+*/
+func (reading Reading) PhaseOpposes() bool {
+	if !reading.PhaseReady || reading.PhaseSimilarity <= 0 {
+		return false
+	}
+
+	return reading.PhaseClass == "sell"
+}
+
+/*
 measureOpportunity builds OpportunityMargin and CognitiveLead from independent
 estimators. Margin is the SNR term that also enters utility; Lead ranks the
-reserved lane once utility has already cleared.
+reserved lane once utility has already cleared. Basin is the phase-dial
+attractor strength for the cognitive winner, not instantaneous field coherence.
 */
 func measureOpportunity(
 	forecast types.Forecasts,
@@ -83,9 +101,14 @@ func measureOpportunity(
 		Noise:       noiseShare(forecast),
 	}
 
-	basin, ready := basinConfidence(thesis, forecast.Symbol)
+	basin, ready, phaseClass, phaseReady, phaseSimilarity := basinConfidence(
+		thesis, forecast.Symbol, cognition.Winner,
+	)
 	reading.Basin = basin
 	reading.BasinReady = ready
+	reading.PhaseClass = phaseClass
+	reading.PhaseReady = phaseReady
+	reading.PhaseSimilarity = phaseSimilarity
 
 	if ready {
 		reading.Lead = cognition.Confidence - basin
@@ -109,32 +132,69 @@ func noiseShare(forecast types.Forecasts) float64 {
 }
 
 /*
-basinConfidence maps manifold coherence onto [0,1) so Lead compares like
-quantities. Missing or invalid manifold leaves BasinReady false so Lead stays
-neutral rather than inventing dynamics.
+basinConfidence reads the manifold phase compass the way the wave-field dial
+does: strongest signed scan response is the current attractor alignment. Basin
+is ready only when that alignment is constructive, non-ambiguous, and labeled
+with the same class cognition is acting on — otherwise Lead stays neutral
+rather than inventing a coherence stand-in. A cold PhaseCorpus leaves the
+basin unready so reserved overflow cannot fire without attractor memory.
 */
-func basinConfidence(thesis *types.Thesis, symbol string) (float64, bool) {
-	if thesis == nil || thesis.Manifold == nil {
-		return 0, false
+func basinConfidence(
+	thesis *types.Thesis,
+	symbol string,
+	winner string,
+) (float64, bool, string, bool, float64) {
+	if thesis == nil || thesis.Manifold == nil || winner == "" {
+		return 0, false, "", false, 0
 	}
 
 	value, found := thesis.Manifold.Load(symbol)
 
 	if !found {
-		return 0, false
+		return 0, false, "", false, 0
 	}
 
 	state, ok := value.(manifold.State)
 
 	if !ok || !state.GasReady() {
-		return 0, false
+		return 0, false, "", false, 0
 	}
 
-	coherence := state.Reading.CoherenceMag2
+	alignment, phaseReady := phaseCompass(state)
 
-	if math.IsNaN(coherence) || math.IsInf(coherence, 0) || coherence < 0 {
-		return 0, false
+	if !phaseReady {
+		return 0, false, "", false, 0
 	}
 
-	return coherence / (1 + coherence), true
+	if alignment.Outcome.Ambiguous || alignment.Similarity <= 0 {
+		return 0, false, alignment.Outcome.Class, true, alignment.Similarity
+	}
+
+	if alignment.Outcome.Class != winner {
+		return 0, false, alignment.Outcome.Class, true, alignment.Similarity
+	}
+
+	// Similarity is already the Hermitian overlap in (-1, 1]; constructive
+	// matches occupy (0, 1], so Lead stays on a shared unit interval.
+	return alignment.Similarity, true, alignment.Outcome.Class, true, alignment.Similarity
+}
+
+/*
+phaseCompass selects the strongest signed PhaseScan response — the same
+alignment the fluid chart's phase dial labels as the current compass reading.
+*/
+func phaseCompass(state manifold.State) (manifold.PhaseResponse, bool) {
+	if !state.PhaseReady || len(state.PhaseScan) == 0 {
+		return manifold.PhaseResponse{}, false
+	}
+
+	best := state.PhaseScan[0]
+
+	for _, response := range state.PhaseScan[1:] {
+		if response.Similarity > best.Similarity {
+			best = response
+		}
+	}
+
+	return best, true
 }

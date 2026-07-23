@@ -2,6 +2,7 @@ package pumpdump_test
 
 import (
 	"math"
+	"runtime"
 	"testing"
 	"time"
 
@@ -50,6 +51,11 @@ production boot graph. Every proof validates all eight metrics at both its peak
 and latest new volume bar.
 */
 func TestMeasure(t *testing.T) {
+	// Mirror peak equality is scheduling-sensitive under parallel package load;
+	// pin one P so MeasureLoop sees trade→book→ticker in lockstep with Drain.
+	procs := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(procs)
+
 	metrics := []types.MetricType{
 		types.MetricRVOL,
 		types.MetricPrecursor,

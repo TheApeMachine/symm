@@ -18,15 +18,18 @@ func TestArbiterSelect(t *testing.T) {
 	Convey("Given one free slot and two enter candidates", t, func() {
 		previousNormal := viper.GetInt("trading.slots.normal")
 		previousReserved := viper.GetInt("trading.slots.reserved")
+		previousQuote := viper.GetString("market.quote_currency")
 		viper.Set("trading.slots.normal", 1)
 		viper.Set("trading.slots.reserved", 0)
+		viper.Set("market.quote_currency", "USD")
 		Reset(func() {
 			viper.Set("trading.slots.normal", previousNormal)
 			viper.Set("trading.slots.reserved", previousReserved)
+			viper.Set("market.quote_currency", previousQuote)
 		})
 
 		balance := broker.NewBalance(nil, nil, make(chan []byte, 1))
-		desk := broker.NewDesk(nil, nil, nil, balance)
+		desk := broker.NewDesk(t.Context(), nil, nil, nil, balance)
 		rotate := NewRotate()
 		admit := NewAdmit(context.Background(), balance, desk, rotate)
 		arbiter := NewArbiter(desk, broker.NewPrice(nil), balance, admit, rotate)

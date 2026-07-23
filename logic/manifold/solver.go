@@ -72,7 +72,7 @@ by the same explicit event-history capacity as the live market feed.
 */
 func NewSolver(books BookSource, historyCapacity int) (*Solver, error) {
 	config := pfluid.DefaultConfig()
-	configuredDelta := viper.GetDuration("signals.fluid.integration_interval")
+	configuredDelta := viper.GetDuration("market.manifold.integration_interval")
 
 	if configuredDelta > 0 && configuredDelta.Seconds() < float64(config.MaxDelta) {
 		config.MaxDelta = float32(configuredDelta.Seconds())

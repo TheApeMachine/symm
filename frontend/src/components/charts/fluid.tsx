@@ -19,6 +19,7 @@ import {
 	terminalPhaseScanFromFrame,
 	terminalPhaseStatusFromFrame,
 	terminalWaveModesFromFrame,
+	withSharedManifoldField,
 } from "#/components/terminal/charts-frame";
 import {
 	drawFluidField,
@@ -273,10 +274,11 @@ export const paintTerminalFluidChart = (
 	const frames = (
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as ManifoldFrame[];
-	const frame =
+	const focused =
 		frames.find(
 			(entry) => focusSymbol === "" || entry.symbol === focusSymbol,
 		) ?? (focusSymbol === "" ? (frames.at(-1) ?? null) : null);
+	const frame = withSharedManifoldField(focused, frames);
 
 	if (frame === null) {
 		return;

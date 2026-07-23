@@ -1,6 +1,8 @@
 package broker
 
 import (
+	"strings"
+
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
@@ -21,7 +23,6 @@ type Position struct {
 	orderID    string
 	subOrder   uint64
 	subExec    uint64
-	subTicker  uint64
 }
 
 /*
@@ -54,7 +55,6 @@ func NewPosition(
 
 	position.subOrder = position.api.On("add_order", position.OrderAck)
 	position.subExec = position.api.On("executions", position.ExecutionAck)
-	position.subTicker = position.api.On("ticker", position.TickerAck)
 
 	return position
 }
@@ -64,7 +64,7 @@ func (position *Position) Status() types.Status {
 }
 
 /*
-Close drops order, execution, and ticker handlers.
+Close drops order and execution handlers.
 */
 func (position *Position) Close() {
 	if position.status == types.CLOSED {
@@ -79,11 +79,6 @@ func (position *Position) Close() {
 	if position.subExec != 0 {
 		position.api.Unsubscribe("executions", position.subExec)
 		position.subExec = 0
-	}
-
-	if position.subTicker != 0 {
-		position.api.Unsubscribe("ticker", position.subTicker)
-		position.subTicker = 0
 	}
 }
 
@@ -121,8 +116,6 @@ func (position *Position) TickerAck(buf []byte) {
 			holding.Stoploss.ObserveMark(holding.StopMark.Float64())
 		}
 
-		position.balance.Publish()
-
 		return
 	}
 }
@@ -156,9 +149,9 @@ func (position *Position) ExecutionAck(buf []byte) {
 			continue
 		}
 
-		value, ok := position.balance.holdings.Load(data.Symbol)
+		holding := position.holding(data.Symbol)
 
-		if !ok {
+		if holding == nil {
 			errnie.Error(errnie.Err(
 				errnie.Internal,
 				"holding not found for "+data.Symbol,
@@ -168,7 +161,7 @@ func (position *Position) ExecutionAck(buf []byte) {
 			continue
 		}
 
-		holding := value.(*types.Holding)
+		data.Side = strings.ToLower(data.Side)
 		position.price.Fill(position.pair, holding, data)
 
 		status, ok := types.MarketStatuses[data.ExecType]
@@ -189,6 +182,28 @@ func (position *Position) ExecutionAck(buf []byte) {
 			position.Close()
 		}
 	}
+}
+
+/*
+holding resolves the lot for an execution symbol. Compact paper/history pairs
+(NEARUSD) are canonicalized through the SDK normalizer on the API.
+*/
+func (position *Position) holding(symbol string) *types.Holding {
+	if value, ok := position.balance.holdings.Load(position.pair.Symbol); ok {
+		return value.(*types.Holding)
+	}
+
+	for _, key := range []string{symbol, position.api.Name(symbol)} {
+		if key == "" {
+			continue
+		}
+
+		if value, ok := position.balance.holdings.Load(key); ok {
+			return value.(*types.Holding)
+		}
+	}
+
+	return nil
 }
 
 /*
@@ -233,6 +248,7 @@ func (position *Position) Enter(holding *types.Holding) error {
 
 	if err := position.api.AddOrder(position.request); err != nil {
 		position.balance.holdings.Delete(holding.Symbol)
+		position.request = nil
 		position.status = types.ERROR
 
 		return errnie.Error(errnie.Err(
@@ -305,9 +321,13 @@ func (position *Position) Exit() error {
 		holding.Symbol,
 	)
 
+	prior := position.status
 	position.status = types.PENDING
 
 	if err := position.api.AddOrder(position.request); err != nil {
+		position.request = nil
+		position.status = prior
+
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to place market sell order",

@@ -12,7 +12,9 @@ import (
 
 /*
 publishMeasured emits manifold, resonance, causal, and hypothesis frames.
-Every GasReady symbol keeps its full field payload; the UI filters client-side.
+Manifold states go one symbol per UI message so the websocket/worker never
+clones a 100+ row lattice payload in a single DRAW. Shared Sensorium grids
+still ride only the first carrier row; the terminal inherits them onto focus.
 */
 func (analyzer *Analyzer) publishMeasured(
 	thesis *types.Thesis,
@@ -20,14 +22,10 @@ func (analyzer *Analyzer) publishMeasured(
 ) {
 	publishStarted := time.Now()
 
-	if len(states) > 0 {
-		frame := make([]any, 0, len(states))
-
-		for _, state := range states {
-			frame = append(frame, state)
-		}
-
-		analyzer.publish(datura.Map[any]{"manifold": frame})
+	for _, state := range wireManifold(states) {
+		analyzer.publish(datura.Map[any]{
+			"manifold": []manifold.State{state},
+		})
 	}
 
 	if len(thesis.Resonance) > 0 {
@@ -43,8 +41,42 @@ func (analyzer *Analyzer) publishMeasured(
 	}
 
 	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "publish", map[string]any{
-		"ns": time.Since(publishStarted).Nanoseconds(),
+		"ns":       time.Since(publishStarted).Nanoseconds(),
+		"manifold": len(states),
 	}))
+}
+
+/*
+wireManifold keeps shared Sensorium lattices on one carrier row and strips
+per-symbol particle clouds elsewhere. Symbol rows stay small so they can be
+published individually without OOM; the pilot-wave field is the shared lattice.
+*/
+func wireManifold(states []manifold.State) []manifold.State {
+	wired := make([]manifold.State, len(states))
+	fieldKept := false
+
+	for index, state := range states {
+		wired[index] = state
+		wired[index].Particles = nil
+
+		if len(state.Rho) == 0 {
+			continue
+		}
+
+		if fieldKept {
+			wired[index].Rho = nil
+			wired[index].PsiMag2 = nil
+			wired[index].GuidanceVelX = nil
+			wired[index].GuidanceVelZ = nil
+			wired[index].Wave = nil
+			continue
+		}
+
+		fieldKept = true
+		wired[index].Particles = state.Particles
+	}
+
+	return wired
 }
 
 /*

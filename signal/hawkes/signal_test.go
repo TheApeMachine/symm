@@ -71,15 +71,8 @@ func TestSignal_Calculate(t *testing.T) {
 		})
 
 		Convey("When ingress overlaps drains", func() {
-			live := &Signal{
-				ctx:      context.Background(),
-				tickerIn: make(chan []kraken.TickerData, 64),
-				bookIn:   make(chan []kraken.BookData, 64),
-				tradeIn:  make(chan []kraken.TradeData, 64),
-				sample:   excitation.NewSample(),
-				process:  excitation.NewProcess(),
-				evidence: NewEvidence(),
-			}
+			live := NewSignal(context.Background(), nil)
+			live.Run()
 			out := live.Measure()
 			wait := sync.WaitGroup{}
 			drained := 0
@@ -106,6 +99,7 @@ func TestSignal_Calculate(t *testing.T) {
 			}()
 
 			wait.Wait()
+			live.Close()
 
 			So(drained, ShouldBeGreaterThanOrEqualTo, 0)
 		})

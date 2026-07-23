@@ -7,6 +7,7 @@ import {
 	fluidGridDimensions,
 	terminalFluidDisplayLatticeFromFrame,
 	terminalFluidParticlesFromFrame,
+	withSharedManifoldField,
 } from "#/components/terminal/charts-frame";
 import { aggregateFluidParticles } from "#/components/terminal/fluid-particles";
 import {
@@ -46,9 +47,10 @@ export const paintManifoldMeta = (value: unknown, focusSymbol: string) => {
 	const rows = (
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as ManifoldFrame[];
-	const manifold = rows
+	const focused = rows
 		.filter((frame) => focusSymbol === "" || frame.symbol === focusSymbol)
 		.at(-1);
+	const manifold = withSharedManifoldField(focused ?? null, rows);
 	const display = terminalFluidDisplayLatticeFromFrame(manifold ?? null, layer);
 	const field = isFluidFieldMatrix(display) ? display : [];
 

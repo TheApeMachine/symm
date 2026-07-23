@@ -48,7 +48,7 @@ Migration tasks and acceptance: [`spec/SPEC.md`](spec/SPEC.md).
 ┌──────────────────────────────────────────────────────────────────┐
 │  signal/* — Measure only (reference: signal/toxicity/signal.go)  │
 │  pumpdump · depthflow · hawkes · leadlag · liquidity · sentiment │
-│  correlation · fluid · causal · cvd · exhaust · toxicity · …     │
+│  correlation · cvd · exhaust · toxicity · …                      │
 └──────────────┬───────────────────────────────────────────────────┘
                │  logic.Measurement {Source, Category, Confidence, Surprise}
                ▼
@@ -189,8 +189,6 @@ Each signal package:
 | **Liquidity**   | `signal/liquidity`   | `extreme_scarcity`, `median_depth`, `robust_liquidity`                              | trade         |
 | **Sentiment**   | `signal/sentiment`   | `risk_on_surge`, `divergent_move`, `systemic_slump`                                 | trade         |
 | **Correlation** | `signal/correlation` | `decoupled_alpha`, `stochastic_noise`, `divergent_stress`, `systemic_herd`          | trade         |
-| **Fluid**       | `signal/fluid`       | `laminar`, `turbulent`, `inertial`, `viscous`                                       | book, trade   |
-| **Causal**      | `signal/causal`      | `endogenous_alpha`, `systemic_beta`, `liquidity_shock`, `causal_noise`              | trade, book   |
 | **CVD**         | `signal/cvd`         | `hidden_absorption`, `aggressive_drive`, `stochastic_balance`, `volume_starvation`  | trade         |
 | **Toxicity**    | `signal/toxicity`    | `toxic_bluff`, `liquidity_vacuum`, `hard_support`                                   | book, trade   |
 | **Exhaust**     | `signal/exhaust`     | `mechanical_collapse`, `thermal_exhaustion`, `active_reversal`, `fragile_expansion` | book, trade   |
@@ -224,14 +222,6 @@ Breadth of positive returns across the universe; macro overlay.
 ### 🔗 Correlation
 
 Pearson cross-symbol return correlation; `SystemicHerd` as deny, `DecoupledAlpha` as entry cue.
-
-### 🌊 Fluid
-
-Book depth field dynamics: Reynolds number, divergence, vorticity. `Laminar` confirms trend; `Turbulent` is a universal deny.
-
-### 🧪 Causal
-
-Pearl's causal ladder on a microstructure DAG with Hayashi-Yoshida covariance and contagion-gated regime switching. `EndogenousAlpha` required in trend playbook.
 
 ### 📊 CVD
 

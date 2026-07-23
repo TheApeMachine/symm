@@ -5,7 +5,6 @@ import (
 	"maps"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
@@ -18,6 +17,7 @@ import (
 Planner records feasible actions from accumulated measurements.
 */
 type Planner struct {
+	*types.Actor
 	ctx         context.Context
 	cancel      context.CancelFunc
 	status      types.Status
@@ -54,7 +54,7 @@ func NewPlanner(
 	rotate := NewRotate()
 	admit := NewAdmit(ctx, balance, desk, rotate)
 
-	return &Planner{
+	planner := &Planner{
 		ctx:        ctx,
 		cancel:     cancel,
 		status:     types.READY,
@@ -76,10 +76,25 @@ func NewPlanner(
 		rotate:     rotate,
 		arbiter:    NewArbiter(desk, price, balance, admit, rotate),
 	}
+
+	planner.Actor = types.NewActor(ctx, map[string]types.Handler{
+		"ticker": {Topic: "ticker", Fn: planner.thesis},
+		"book":   {Topic: "book", Fn: planner.thesis},
+		"trade":  {Topic: "trade", Fn: planner.thesis},
+	})
+
+	return planner
 }
 
-func (planner *Planner) Initialize() error {
+func (planner *Planner) Initialize(analyzer *logic.Analyzer) error {
 	errnie.Info("initializing planner")
+
+	planner.Actor.Initialize(
+		types.Topic{Name: "ticker", Actor: analyzer.Actor},
+		types.Topic{Name: "book", Actor: analyzer.Actor},
+		types.Topic{Name: "trade", Actor: analyzer.Actor},
+	)
+
 	planner.status = types.READY
 	return nil
 }
@@ -88,9 +103,20 @@ func (planner *Planner) Status() types.Status {
 	return planner.status
 }
 
+/*
+Run starts the Actor loop.
+*/
+func (planner *Planner) Run() {
+	planner.Actor.Run()
+}
+
 func (planner *Planner) Close() error {
 	planner.cancel()
 	return nil
+}
+
+func (planner *Planner) thesis(message any) any {
+	return planner.Decide(message.(*types.Thesis))
 }
 
 /*
@@ -109,15 +135,6 @@ func (planner *Planner) Update(
 	thesis.ResetTick(at, tick)
 	thesis.Measurements = rows
 	started := time.Now()
-
-	if len(thesis.Measurements) > 0 {
-		select {
-		case planner.uiHub <- datura.Map[any]{
-			"measurements": types.ForPublish(thesis.Measurements),
-		}.Marshal():
-		default:
-		}
-	}
 
 	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "measure_end", map[string]any{
 		"measurements": len(thesis.Measurements),

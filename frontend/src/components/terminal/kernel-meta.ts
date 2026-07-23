@@ -18,7 +18,6 @@ export type KernelStatusMeta = {
 };
 
 export const TERMINAL_KERNEL_ORDER = [
-	"fluid",
 	"prediction",
 	"resonance",
 	"hawkes",
@@ -56,12 +55,6 @@ const KERNEL_COPY: Record<
 	string,
 	{ name: string; sub: string; blurb: string }
 > = {
-	fluid: {
-		name: "Fluid dynamics",
-		sub: "fluid · compressible gas",
-		blurb:
-			"Navier–Stokes gas density over the market cross-section. Sparse ρ deposits mark where mass has been injected and advected; turbulence flags regime breaks before price confirms.",
-	},
 	hawkes: {
 		name: "Hawkes process",
 		sub: "hawkes · branching η",

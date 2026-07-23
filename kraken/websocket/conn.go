@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"maps"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -34,15 +35,6 @@ type Conn interface {
 }
 
 /*
-channelHandler pairs a stable subscription id with its callback so Unsubscribe
-can drop one listener without comparing function values.
-*/
-type channelHandler struct {
-	id uint64
-	fn func([]byte)
-}
-
-/*
 API is the single Kraken transport surface for symm.
 Callers subscribe, order, and listen through named methods only.
 */
@@ -55,10 +47,12 @@ type API struct {
 	private    Conn
 	paper      Conn
 	live       bool
-	paperMode  bool
 	level3     *Level3Registry
 	level3Conn Conn
-	subs       subscriptionIntent
+	// publicResubscribe is Instrument.Resubscribe — symbols live there.
+	publicResubscribe func() error
+	wantBalances      bool
+	wantExecutions    bool
 }
 
 func NewAPI(
@@ -75,7 +69,6 @@ func NewAPI(
 		private:    private,
 		paper:      paper,
 		live:       viper.GetViper().GetString("trading.model") == "live",
-		paperMode:  viper.GetViper().GetString("trading.model") == "paper",
 		level3:     NewLevel3Registry(),
 	}
 	api.bindReconnect()
@@ -107,7 +100,7 @@ func (api *API) Initialize() error {
 		))
 	}
 
-	if api.paperMode && api.paper == nil {
+	if viper.GetString("trading.model") == "paper" && api.paper == nil {
 		api.status = types.ERROR
 
 		return errnie.Error(errnie.Err(
@@ -138,6 +131,15 @@ func (api *API) Status() types.Status {
 	return api.status
 }
 
+/*
+Name returns the canonical WS v2 asset or pair identity for a Kraken name,
+including compact paper/history forms like NEARUSD → NEAR/USD. It is the single
+surface over the SDK spot.Normalizer.
+*/
+func (api *API) Name(symbol string) string {
+	return api.normalizer.Name(symbol)
+}
+
 func (api *API) Close() {
 	api.public.Close()
 	api.private.Close()
@@ -152,6 +154,23 @@ func (api *API) Close() {
 }
 
 /*
+Run starts Actor loops on public, private, and paper transports.
+*/
+func (api *API) Run() {
+	if live, ok := api.public.(*Live); ok {
+		live.Run()
+	}
+
+	if live, ok := api.private.(*Live); ok {
+		live.Run()
+	}
+
+	if paper, ok := api.paper.(*Paper); ok {
+		paper.Run()
+	}
+}
+
+/*
 On registers a raw channel consumer on the transport that owns the channel and
 returns a subscription id for Unsubscribe. Level3 is deliberately absent
 because the SDK BookManager consumes those frames and exposes its books through
@@ -160,11 +179,7 @@ Books.
 func (api *API) On(channel string, action func([]byte)) uint64 {
 	switch channel {
 	case "balances", "executions", "add_order":
-		if api.live {
-			return api.private.On(channel, action)
-		}
-
-		return api.paper.On(channel, action)
+		return api.account().On(channel, action)
 	default:
 		return api.public.On(channel, action)
 	}
@@ -181,36 +196,21 @@ func (api *API) Unsubscribe(channel string, id uint64) {
 
 	switch channel {
 	case "balances", "executions", "add_order":
-		if api.live {
-			api.private.Unsubscribe(channel, id)
-			return
-		}
-
-		api.paper.Unsubscribe(channel, id)
+		api.account().Unsubscribe(channel, id)
 	default:
 		api.public.Unsubscribe(channel, id)
 	}
 }
 
 /*
-dropHandler removes the channelHandler with the given id.
+account is the private venue socket in live mode and the paper transport otherwise.
 */
-func dropHandler(handlers []channelHandler, id uint64) []channelHandler {
-	if id == 0 || len(handlers) == 0 {
-		return handlers
+func (api *API) account() Conn {
+	if api.live {
+		return api.private
 	}
 
-	next := make([]channelHandler, 0, len(handlers))
-
-	for _, handler := range handlers {
-		if handler.id == id {
-			continue
-		}
-
-		next = append(next, handler)
-	}
-
-	return next
+	return api.paper
 }
 
 func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error) {
@@ -316,8 +316,8 @@ func (api *API) Live() bool {
 
 /*
 OpenOrders returns currently resting orders keyed by their venue order id. Live
-boots read the private REST ledger; paper fills synchronously through Lifecycle
-so it never leaves an order resting and answers with an empty set.
+boots read the private REST ledger; paper fills synchronously through Place so
+it never leaves an order resting and answers with an empty set.
 */
 func (api *API) OpenOrders() (map[string]spot.Order, error) {
 	if !api.Live() {
@@ -436,23 +436,15 @@ func (api *API) fetchLiveTradesHistory() (map[string]spot.Trade, error) {
 }
 
 func (api *API) SubscribeInstruments() error {
-	api.subs.mu.Lock()
-	api.subs.instruments = true
-	api.subs.mu.Unlock()
-
 	// Conn.Write so mock producers and live sockets share one subscribe path.
 	return errnie.Error(api.public.Write(kraken.NewInstrumentSubscription()))
 }
 
 func (api *API) SubscribeTicker(pairs []string) error {
-	api.rememberSymbols(&api.subs.tickers, pairs)
-
 	return errnie.Error(api.public.Write(kraken.NewTickerSubscription(pairs)))
 }
 
 func (api *API) SubscribeTrade(pairs []string) error {
-	api.rememberSymbols(&api.subs.trades, pairs)
-
 	return errnie.Error(api.public.Write(kraken.NewTradeSubscription(pairs)))
 }
 
@@ -504,8 +496,6 @@ func (api *API) PeekBook(symbol string, fn func(*book.Book)) bool {
 }
 
 func (api *API) SubscribeBook(pairs []string) error {
-	api.rememberSymbols(&api.subs.books, pairs)
-
 	return errnie.Error(api.public.Write(kraken.NewBookSubscription(pairs)))
 }
 
@@ -528,41 +518,142 @@ func (api *API) SubscribeLevel3(pairs []string) error {
 }
 
 func (api *API) SubscribeBalance() error {
-	api.subs.mu.Lock()
-	api.subs.balances = true
-	api.subs.mu.Unlock()
+	api.wantBalances = true
+
+	token := ""
 
 	if api.live {
-		return errnie.Error(api.private.Write(
-			kraken.NewBalanceSubscription(api.private.Client().Token),
-		))
+		token = api.private.Client().Token
 	}
 
-	return errnie.Error(api.paper.Write(
-		kraken.NewBalanceSubscription(""),
-	))
+	return errnie.Error(api.account().Write(kraken.NewBalanceSubscription(token)))
 }
 
 func (api *API) SubscribeExecutions() error {
-	api.subs.mu.Lock()
-	api.subs.executions = true
-	api.subs.mu.Unlock()
+	api.wantExecutions = true
+
+	token := ""
 
 	if api.live {
-		return errnie.Error(api.private.Write(
-			kraken.NewExecutionSubscription(api.private.Client().Token),
-		))
+		token = api.private.Client().Token
 	}
 
-	return errnie.Error(api.paper.Write(
-		kraken.NewExecutionSubscription(""),
-	))
+	return errnie.Error(api.account().Write(kraken.NewExecutionSubscription(token)))
 }
 
 func (api *API) AddOrder(order *kraken.MarketOrder) error {
-	if api.live {
-		return api.private.Write(order)
+	return api.account().Write(order)
+}
+
+/*
+bindReconnect hooks public and private Lives so a new socket session re-subscribes.
+Listeners on OnReceived stay registered; only the Sub* RPCs must be repeated.
+*/
+func (api *API) bindReconnect() {
+	if api == nil {
+		return
 	}
 
-	return api.paper.Write(order)
+	if live, ok := api.public.(*Live); ok {
+		live.ready = api.resubscribePublic
+	}
+
+	if live, ok := api.private.(*Live); ok {
+		live.ready = api.resubscribePrivate
+	}
+}
+
+/*
+SetPublicResubscribe registers the market-universe resubscribe (Instrument).
+*/
+func (api *API) SetPublicResubscribe(fn func() error) {
+	if api == nil {
+		return
+	}
+
+	api.publicResubscribe = fn
+}
+
+func (api *API) resubscribePublic() error {
+	if api.publicResubscribe == nil {
+		return nil
+	}
+
+	return api.publicResubscribe()
+}
+
+func (api *API) resubscribePrivate() error {
+	if !api.live {
+		return nil
+	}
+
+	if api.wantBalances {
+		if err := api.SubscribeBalance(); err != nil {
+			return err
+		}
+	}
+
+	if api.wantExecutions {
+		if err := api.SubscribeExecutions(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (api *API) subscribeBatchSize() int {
+	batchSize := viper.GetInt("market.subscribe_batch")
+
+	if batchSize < 1 {
+		return 1
+	}
+
+	return batchSize
+}
+
+/*
+ResubscribeMarket re-issues instrument + trade/book/ticker for the cached
+symbol universe after reconnect.
+*/
+func (api *API) ResubscribeMarket(symbols []string) error {
+	if err := api.SubscribeInstruments(); err != nil {
+		return err
+	}
+
+	if len(symbols) == 0 {
+		return nil
+	}
+
+	batchSize := api.subscribeBatchSize()
+	subscribers := []func([]string) error{
+		api.SubscribeTrade,
+		api.SubscribeBook,
+		api.SubscribeTicker,
+	}
+
+	for batch := range slices.Chunk(symbols, batchSize) {
+		for _, subscribe := range subscribers {
+			if err := subscribe(batch); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+/*
+ResyncBook forces a public book resnapshot after a local checksum failure.
+*/
+func (api *API) ResyncBook(pairs []string) error {
+	if api == nil || api.public == nil || len(pairs) == 0 {
+		return nil
+	}
+
+	if err := api.public.Write(kraken.NewBookUnsubscription(pairs)); err != nil {
+		return err
+	}
+
+	return api.SubscribeBook(pairs)
 }

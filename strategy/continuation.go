@@ -63,10 +63,13 @@ func (continuity Continuity) Manage(thesis *types.Thesis) {
 
 		if !found || !forecast.Eligible() {
 			thesis.Decisions = append(thesis.Decisions, types.Decision{
-				Action: types.ActionHold,
-				Symbol: lot.Symbol,
-				Cause:  "continuation",
-				Reason: "awaiting eligible forecast for continuation scoring",
+				Action:           types.ActionHold,
+				Symbol:           lot.Symbol,
+				Cause:            "continuation",
+				Reason:           "awaiting eligible forecast for continuation scoring",
+				ProposedQuantity: decimal.NewFromInt64(0),
+				ProposedNotional: decimal.NewFromInt64(0),
+				Alternatives:     map[string]float64{"hold": 0},
 			})
 
 			continue
@@ -76,10 +79,13 @@ func (continuity Continuity) Manage(thesis *types.Thesis) {
 
 		if err != nil {
 			thesis.Decisions = append(thesis.Decisions, types.Decision{
-				Action: types.ActionHold,
-				Symbol: lot.Symbol,
-				Cause:  "continuation",
-				Reason: "fee schedule unavailable; refuse continuation score",
+				Action:           types.ActionHold,
+				Symbol:           lot.Symbol,
+				Cause:            "continuation",
+				Reason:           "fee schedule unavailable; refuse continuation score",
+				ProposedQuantity: decimal.NewFromInt64(0),
+				ProposedNotional: decimal.NewFromInt64(0),
+				Alternatives:     map[string]float64{"hold": 0},
 			})
 
 			continue

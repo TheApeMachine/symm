@@ -1,6 +1,8 @@
 package stack_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -18,9 +20,7 @@ Desk, Position, execution, and Balance loop against the simulated market.
 func TestBooter_Test(t *testing.T) {
 	Convey("Given ambient configuration that conflicts with the test market", t, func() {
 		previousBuffer := viper.Get("system.websocket.channel.buffer")
-		previousBars := viper.Get("signals.volume_clock_bars_per_day")
 		viper.Set("system.websocket.channel.buffer", 1)
-		viper.Set("signals.volume_clock_bars_per_day", 37)
 		market := tests.NewMarket(t.Context(), 1)
 		wired, err := stack.NewBooter(t.Context()).Test(market)
 		So(err, ShouldBeNil)
@@ -31,17 +31,14 @@ func TestBooter_Test(t *testing.T) {
 
 			market.Close()
 			viper.Set("system.websocket.channel.buffer", previousBuffer)
-			viper.Set("signals.volume_clock_bars_per_day", previousBars)
 		})
 
 		Convey("The graph should use only its deterministic test configuration", func() {
 			So(viper.GetInt("system.websocket.channel.buffer"), ShouldEqual, 4096)
 			So(cap(wired.Channel), ShouldEqual, 4096)
-			So(viper.GetFloat64("signals.volume_clock_bars_per_day"), ShouldEqual, 0.0)
 			So(wired.Close(), ShouldBeNil)
 			wired = nil
 			So(viper.GetInt("system.websocket.channel.buffer"), ShouldEqual, 1)
-			So(viper.GetFloat64("signals.volume_clock_bars_per_day"), ShouldEqual, 37.0)
 		})
 	})
 
@@ -83,6 +80,58 @@ func TestBooter_Test(t *testing.T) {
 }
 
 /*
+TestBooter_AuditHotPath proves the runtime recorder is wired through Tick so
+phase breadcrumbs and ingress drops land in runtime-audit.jsonl.
+*/
+func TestBooter_AuditHotPath(t *testing.T) {
+	Convey("Given a warmed production graph with a live audit recorder", t, func() {
+		market := tests.NewMarket(t.Context(), 3)
+		wired, err := stack.NewBooter(t.Context()).Test(market)
+		So(err, ShouldBeNil)
+
+		auditFile := filepath.Join(
+			viper.GetString("system.data_path"), "runtime-audit.jsonl",
+		)
+
+		Reset(func() {
+			So(wired.Close(), ShouldBeNil)
+			market.Close()
+		})
+
+		So(wired.Recorder, ShouldNotBeNil)
+		So(market.Warmup(tests.Consume(wired.Crypto.Tick)), ShouldBeNil)
+
+		Convey("When a pump tick completes and the recorder flushes", func() {
+			So(market.Transition(tests.MarketStateFastPump, func() error {
+				_, tickErr := wired.Crypto.Tick()
+				return tickErr
+			}), ShouldBeNil)
+
+			So(wired.Recorder.Close(), ShouldBeNil)
+			wired.Recorder = nil
+
+			body, readErr := os.ReadFile(auditFile)
+			So(readErr, ShouldBeNil)
+			log := string(body)
+
+			Convey("It records the Crypto and Analyzer phase spine", func() {
+				for _, phase := range []string{
+					"tick_begin",
+					"measure_end",
+					"analyze_begin",
+					"decide_begin",
+					"decide_end",
+					"desk",
+					"tick_end",
+				} {
+					So(log, ShouldContainSubstring, `"phase":"`+phase+`"`)
+				}
+			})
+		})
+	})
+}
+
+/*
 TestBooter_TickStrategy proves Crypto.Tick → Decide → Desk fill against a
 fixture pump tape on the production graph, then exits the filled lot.
 */
@@ -113,20 +162,29 @@ func TestBooter_TickStrategy(t *testing.T) {
 					return tickErr
 				}
 
+				if next == nil {
+					return nil
+				}
+
 				thesis = next
 				So(thesis.Incomplete(), ShouldBeFalse)
+				So(market.Paper.Drain(), ShouldBeNil)
 
 				for _, decision := range thesis.Decisions {
 					if decision.Action != types.ActionEnter {
 						continue
 					}
 
-					So(market.Paper.Drain(), ShouldBeNil)
+					phase, found := thesis.Lifecycle.Load(decision.Symbol)
+					So(found, ShouldBeTrue)
+					So(phase, ShouldEqual, types.LifecycleEntrySubmitted)
+
 					holding, holdErr := wired.Balance.Holding(decision.Symbol)
 					So(holdErr, ShouldBeNil)
 					So(holding.Qty, ShouldNotBeNil)
 					So(holding.Qty.Sign(), ShouldBeGreaterThan, 0)
 					entered = true
+					break
 				}
 
 				return nil

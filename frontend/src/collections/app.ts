@@ -5,7 +5,6 @@ export const DEFAULT_KERNELS = [
 	"cvd",
 	"depthflow",
 	"exhaustion",
-	"fluid",
 	"hawkes",
 	"leadlag",
 	"liquidity",

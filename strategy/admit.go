@@ -20,6 +20,7 @@ type Admit struct {
 	balance *broker.Balance
 	desk    *broker.Desk
 	rotate  Rotate
+	quote   string
 }
 
 /*
@@ -36,6 +37,9 @@ func NewAdmit(
 		balance: balance,
 		desk:    desk,
 		rotate:  rotate,
+		quote: viper.GetViper().GetString(
+			"market.quote_currency",
+		),
 	}
 }
 
@@ -47,17 +51,25 @@ func (admit *Admit) Scale(
 	decision *types.Decision,
 	notional *decimal.Decimal,
 ) {
-	if err := admit.validate(map[string]any{"decision": decision}); err != nil {
+	if err := admit.validate(map[string]any{
+		"decision": decision,
+		"notional": notional,
+	}); err != nil {
 		return
 	}
 
-	if notional == nil || notional.Sign() <= 0 {
+	if notional.Sign() <= 0 {
+		errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"notional is zero or negative",
+			nil,
+		))
+
 		return
 	}
 
-	redeploy := notional.Copy()
 	decision.ProposedQuantity = nil
-	decision.ProposedNotional = redeploy
+	decision.ProposedNotional = notional.Copy()
 }
 
 /*
@@ -73,7 +85,9 @@ func (admit *Admit) Reject(
 	admittedNormal int,
 	incumbents []Incumbent,
 ) {
-	if err := admit.validate(map[string]any{"thesis": thesis}); err != nil {
+	if err := admit.validate(map[string]any{
+		"thesis": thesis,
+	}); err != nil {
 		return
 	}
 
@@ -129,7 +143,17 @@ func (admit *Admit) Accept(
 	decision types.Decision,
 	opportunity bool,
 ) {
-	if err := admit.validate(map[string]any{"thesis": thesis}); err != nil {
+	if admit.quote == "" {
+		admit.quote = viper.GetString("market.quote_currency")
+	}
+
+	if err := admit.validate(map[string]any{
+		"thesis": thesis,
+	}); err != nil {
+		decision.Action = types.ActionNothing
+		decision.Cause = "admit_rejected"
+		decision.Reason = err.Error()
+		thesis.Decisions = append(thesis.Decisions, decision)
 		return
 	}
 
@@ -153,15 +177,20 @@ func (admit *Admit) Accept(
 Capital records wallet cash and slot occupancy visible at admit time.
 */
 func (admit *Admit) Capital(decision *types.Decision) {
-	if err := admit.validate(map[string]any{"decision": decision}); err != nil {
+	if err := admit.validate(map[string]any{
+		"decision": decision,
+	}); err != nil {
 		return
 	}
 
-	cash, err := admit.balance.AssetAvailable(
-		viper.GetString("market.quote_currency"),
-	)
+	cash, err := admit.balance.AssetAvailable(admit.quote)
 
 	if err != nil || cash == nil {
+		errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"failed to get available cash",
+			err,
+		))
 		return
 	}
 
@@ -171,9 +200,16 @@ func (admit *Admit) Capital(decision *types.Decision) {
 }
 
 func (admit *Admit) validate(mandatory map[string]any) error {
+	// context.Background() is a non-nil interface whose concrete value is an
+	// empty struct; errnie.Require treats that as missing via IsZero.
+	if admit.ctx == nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "ctx is required", nil))
+	}
+
 	check := map[string]any{
 		"balance": admit.balance,
 		"desk":    admit.desk,
+		"quote":   admit.quote,
 	}
 
 	maps.Copy(check, mandatory)

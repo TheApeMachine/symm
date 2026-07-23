@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"iter"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -22,15 +23,19 @@ public/private routing. A symbol index maps each subscribed symbol to its owning
 transport so PeekBook resolves in O(1) instead of ranging every connection.
 */
 type Level3Registry struct {
-	conns *sync.Map
-	index *sync.Map
+	mu    sync.RWMutex
+	conns map[string]*Live
+	index map[string]*Live
 }
 
 /*
 NewLevel3Registry constructs an empty Level3 transport index.
 */
 func NewLevel3Registry() *Level3Registry {
-	return &Level3Registry{conns: &sync.Map{}, index: &sync.Map{}}
+	return &Level3Registry{
+		conns: make(map[string]*Live),
+		index: make(map[string]*Live),
+	}
 }
 
 /*
@@ -43,14 +48,15 @@ func (registry *Level3Registry) Attach(key string, live *Live) {
 		return
 	}
 
-	if previous, loaded := registry.conns.Load(key); loaded {
-		if old, ok := previous.(*Live); ok && old != live {
-			registry.unindexSymbols(old)
-		}
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+
+	if old := registry.conns[key]; old != nil && old != live {
+		registry.unindexLocked(old)
 	}
 
-	registry.conns.Store(key, live)
-	registry.indexSymbols(live)
+	registry.conns[key] = live
+	registry.indexLocked(live)
 }
 
 /*
@@ -62,20 +68,19 @@ func (registry *Level3Registry) Detach(key string) {
 		return
 	}
 
-	value, ok := registry.conns.LoadAndDelete(key)
+	registry.mu.Lock()
+	live := registry.conns[key]
+	delete(registry.conns, key)
 
-	if !ok {
-		return
+	if live != nil {
+		registry.unindexLocked(live)
 	}
 
-	live, ok := value.(*Live)
+	registry.mu.Unlock()
 
-	if !ok || live == nil {
-		return
+	if live != nil {
+		live.Close()
 	}
-
-	registry.unindexSymbols(live)
-	live.Close()
 }
 
 /*
@@ -86,49 +91,33 @@ func (registry *Level3Registry) Close() {
 		return
 	}
 
-	registry.conns.Range(func(key, _ any) bool {
-		if text, ok := key.(string); ok {
-			registry.Detach(text)
-		}
+	registry.mu.Lock()
+	keys := slices.Collect(maps.Keys(registry.conns))
+	registry.mu.Unlock()
 
-		return true
-	})
+	for _, key := range keys {
+		registry.Detach(key)
+	}
 }
 
-/*
-indexSymbols records each of a transport's subscribed symbols in the O(1) lookup
-index. Books created after subscription resolve lazily through scanBook.
-*/
-func (registry *Level3Registry) indexSymbols(live *Live) {
-	if registry == nil || live == nil {
-		return
-	}
-
+func (registry *Level3Registry) indexLocked(live *Live) {
 	for _, symbol := range live.symbols {
 		if symbol == "" {
 			continue
 		}
 
-		registry.index.Store(symbol, live)
+		registry.index[symbol] = live
 	}
 }
 
-/*
-unindexSymbols drops index entries that still point at live so a closed or
-replaced transport cannot keep the map growing with stale owners.
-*/
-func (registry *Level3Registry) unindexSymbols(live *Live) {
-	if registry == nil || live == nil {
-		return
-	}
-
+func (registry *Level3Registry) unindexLocked(live *Live) {
 	for _, symbol := range live.symbols {
 		if symbol == "" {
 			continue
 		}
 
-		if current, ok := registry.index.Load(symbol); ok && current == live {
-			registry.index.Delete(symbol)
+		if registry.index[symbol] == live {
+			delete(registry.index, symbol)
 		}
 	}
 }
@@ -145,9 +134,14 @@ func (registry *Level3Registry) Subscribe(
 		return nil
 	}
 
-	if _, loaded := registry.conns.Load(key); loaded {
+	registry.mu.Lock()
+
+	if _, loaded := registry.conns[key]; loaded {
+		registry.mu.Unlock()
 		return nil
 	}
+
+	registry.mu.Unlock()
 
 	live := New(ctx, nil, true, Level3WebSocketURL)
 	live.symbols = symbols
@@ -157,15 +151,17 @@ func (registry *Level3Registry) Subscribe(
 		return err
 	}
 
-	_, loaded := registry.conns.LoadOrStore(key, live)
+	registry.mu.Lock()
 
-	if loaded {
-		// Never indexed; close the unused transport without touching the index.
+	if _, loaded := registry.conns[key]; loaded {
+		registry.mu.Unlock()
 		live.Close()
 		return nil
 	}
 
-	registry.indexSymbols(live)
+	registry.conns[key] = live
+	registry.indexLocked(live)
+	registry.mu.Unlock()
 
 	return nil
 }
@@ -228,12 +224,20 @@ func (registry *Level3Registry) Books() iter.Seq[*spot.BookManager] {
 			return
 		}
 
-		registry.conns.Range(func(key, value any) bool {
-			live := value.(*Live)
-			keepGoing := yield(live.books)
+		registry.mu.RLock()
+		books := make([]*spot.BookManager, 0, len(registry.conns))
 
-			return keepGoing
-		})
+		for _, live := range registry.conns {
+			books = append(books, live.books)
+		}
+
+		registry.mu.RUnlock()
+
+		for _, managed := range books {
+			if !yield(managed) {
+				return
+			}
+		}
 	}
 }
 
@@ -243,7 +247,7 @@ transport through the symbol index first and falling back to a full scan only
 when the symbol was never indexed (book created after subscription). An indexed
 Live that simply has no book yet must not be deleted or scanned — that thrash
 turns every touchReady miss into an O(conns) walk and collapses tick rate.
-Stale owners are removed by Detach/unindexSymbols on close or replacement.
+Stale owners are removed by Detach/unindexLocked on close or replacement.
 */
 func (registry *Level3Registry) PeekBook(
 	symbol string,
@@ -253,16 +257,12 @@ func (registry *Level3Registry) PeekBook(
 		return false
 	}
 
-	if value, ok := registry.index.Load(symbol); ok {
-		live, valid := value.(*Live)
+	registry.mu.RLock()
+	live := registry.index[symbol]
+	registry.mu.RUnlock()
 
-		if !valid || live == nil {
-			registry.index.Delete(symbol)
-		}
-
-		if valid && live != nil {
-			return live.peekBook(symbol, fn)
-		}
+	if live != nil {
+		return live.peekBook(symbol, fn)
 	}
 
 	return registry.scanBook(symbol, fn)
@@ -276,20 +276,21 @@ func (registry *Level3Registry) scanBook(
 	symbol string,
 	fn func(*book.Book),
 ) bool {
-	found := false
+	registry.mu.RLock()
+	lives := slices.Collect(maps.Values(registry.conns))
+	registry.mu.RUnlock()
 
-	registry.conns.Range(func(_, value any) bool {
-		live := value.(*Live)
-
+	for _, live := range lives {
 		if !live.peekBook(symbol, fn) {
-			return true
+			continue
 		}
 
-		registry.index.Store(symbol, live)
-		found = true
+		registry.mu.Lock()
+		registry.index[symbol] = live
+		registry.mu.Unlock()
 
-		return false
-	})
+		return true
+	}
 
-	return found
+	return false
 }

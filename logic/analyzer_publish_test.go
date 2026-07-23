@@ -1,10 +1,12 @@
 package logic
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -40,6 +42,64 @@ func TestProjectCategoriesFromCognition(t *testing.T) {
 	})
 }
 
+/*
+TestPublishMeasuredSplitsManifold proves each symbol is its own UI frame so the
+worker never clones a full-cohort manifold payload in one DRAW.
+*/
+func TestPublishMeasuredSplitsManifold(t *testing.T) {
+	Convey("Given three manifold states with lattices on the first", t, func() {
+		ui := make(chan []byte, 8)
+		analyzer := &Analyzer{ui: ui}
+		thesis := types.NewThesis(ui)
+		thesis.Tick = 3
+		states := []manifold.State{
+			{
+				Source:    "manifold",
+				Symbol:    "ETH/USD",
+				At:        time.Unix(1, 0).UTC(),
+				Rho:       [][]float64{{0.1, 0.2}},
+				PsiMag2:   [][]float64{{1, 0}},
+				Particles: []manifold.Particle{{Role: "particle"}},
+			},
+			{
+				Source:  "manifold",
+				Symbol:  "BTC/USD",
+				At:      time.Unix(1, 0).UTC(),
+				Rho:     [][]float64{{0.3, 0.4}},
+				PsiMag2: [][]float64{{0, 1}},
+			},
+			{
+				Source: "manifold",
+				Symbol: "SOL/USD",
+				At:     time.Unix(1, 0).UTC(),
+			},
+		}
+
+		Convey("When publishMeasured runs", func() {
+			analyzer.publishMeasured(thesis, states)
+
+			Convey("It emits one manifold frame per symbol", func() {
+				So(len(ui), ShouldEqual, 3)
+
+				for range 3 {
+					payload := <-ui
+					So(string(payload), ShouldContainSubstring, `"manifold":[`)
+					So(string(payload), ShouldNotContainSubstring, `"BTC/USD","SOL/USD"`)
+				}
+			})
+
+			Convey("It keeps shared lattices only on the carrier row", func() {
+				wired := wireManifold(states)
+				So(wired[0].Rho, ShouldNotBeEmpty)
+				So(wired[0].Particles, ShouldNotBeEmpty)
+				So(wired[1].Rho, ShouldBeNil)
+				So(wired[1].Particles, ShouldBeNil)
+				So(wired[2].Rho, ShouldBeNil)
+			})
+		})
+	})
+}
+
 func BenchmarkProjectCategories(b *testing.B) {
 	analyzer := &Analyzer{}
 	thesis := types.NewThesis(nil)
@@ -67,5 +127,41 @@ func BenchmarkProjectCategories(b *testing.B) {
 	for b.Loop() {
 		thesis.Categories = nil
 		analyzer.projectCategories(thesis, cognition)
+	}
+}
+
+/*
+BenchmarkPublishMeasured measures one-symbol-per-frame manifold fan-out.
+*/
+func BenchmarkPublishMeasured(b *testing.B) {
+	ui := make(chan []byte, 256)
+	analyzer := &Analyzer{ui: ui}
+	thesis := types.NewThesis(ui)
+	states := make([]manifold.State, 32)
+
+	for index := range states {
+		states[index] = manifold.State{
+			Source: "manifold",
+			Symbol: fmt.Sprintf("S%d/USD", index),
+			At:     time.Unix(int64(index+1), 0).UTC(),
+		}
+	}
+
+	states[0].Rho = [][]float64{{0.1, 0.2}, {0.3, 0.4}}
+	states[0].PsiMag2 = [][]float64{{1, 0}, {0, 1}}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		for draining := true; draining; {
+			select {
+			case <-ui:
+			default:
+				draining = false
+			}
+		}
+
+		analyzer.publishMeasured(thesis, states)
 	}
 }

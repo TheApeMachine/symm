@@ -33,10 +33,10 @@ export const regimeAxes = (
 
 	for (const symbol of symbols) {
 		const symbolRows = measurements.filter((row) => row.symbol === symbol);
-		const turbulence = available.has("fluid")
+		const turbulence = available.has("hawkes")
 			? latestByMetric(
-					symbolRows.filter((row) => row.source === "fluid"),
-					"turbulent_score",
+					symbolRows.filter((row) => row.source === "hawkes"),
+					"spectral_radius",
 				)
 			: undefined;
 
