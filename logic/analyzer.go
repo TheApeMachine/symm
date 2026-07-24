@@ -215,9 +215,10 @@ func (analyzer *Analyzer) SetRecorder(recorder *audit.Recorder) {
 }
 
 /*
-publish sends one small datura frame to the UI when the channel can accept it.
-Marshal runs only after the send slot is claimed so saturated buffers do not
-pay serialization cost for dropped frames.
+publish sends one small datura frame to the UI hub ingress. The send blocks
+until the drain accepts it so resonance, manifold, and cognition frames are
+never silently discarded under load — a full buffer stalls analysis honestly
+instead of leaving the terminal painted as "waiting."
 */
 func (analyzer *Analyzer) publish(frame datura.Map[any]) {
 	payload, err := frame.Marshal()
@@ -227,9 +228,14 @@ func (analyzer *Analyzer) publish(frame datura.Map[any]) {
 		return
 	}
 
+	if analyzer.ctx == nil {
+		analyzer.ui <- payload
+		return
+	}
+
 	select {
 	case analyzer.ui <- payload:
-	default:
+	case <-analyzer.ctx.Done():
 	}
 }
 

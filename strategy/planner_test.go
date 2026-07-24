@@ -395,3 +395,221 @@ func BenchmarkDecide(b *testing.B) {
 		}
 	}
 }
+
+/*
+TestDecideAcrossRegimes proves strategy actions stay inside the enter/hold/exit
+vocabulary across directional and adversarial tapes, with forecast polarity and
+sizing contracts that match the regime — not soft zero ceilings.
+*/
+func TestDecideAcrossRegimes(t *testing.T) {
+	Convey("A slow pump yields calibrated positive forecasts and legal actions", t, func() {
+		market := tests.NewMarket(t.Context(), 3)
+		wired, err := stack.NewBooter(t.Context()).Test(market)
+		So(err, ShouldBeNil)
+		Reset(func() {
+			So(wired.Close(), ShouldBeNil)
+			market.Close()
+		})
+
+		So(market.Warmup(tests.Idle), ShouldBeNil)
+		quote := viper.GetString("market.quote_currency")
+		cash, err := wired.Balance.AssetAvailable(quote)
+		So(err, ShouldBeNil)
+		maxFraction := viper.GetFloat64("trading.allocation.max_fraction")
+		walletSlice := decimal.ExactMul(cash, decimal.NewFromFloat64(maxFraction))
+
+		forecasts := 0
+		positive := 0
+		actions := map[types.Action]int{}
+
+		So(market.Transition(tests.MarketStateSlowPump, func() error {
+			thesis := wired.Thesis
+
+			if thesis == nil {
+				return nil
+			}
+
+			So(thesis.Incomplete(), ShouldBeFalse)
+
+			for _, forecast := range thesis.Forecasts {
+				So(forecast.Symbol, ShouldBeIn, market.Symbols)
+				So(forecast.Ready, ShouldBeTrue)
+				So(forecast.Calibrated, ShouldBeTrue)
+				So(forecast.ReferencePrice, ShouldNotBeNil)
+				So(forecast.ReferencePrice.Sign(), ShouldEqual, 1)
+				forecasts++
+
+				if forecast.ExpectedReturn > 0 {
+					positive++
+				}
+			}
+
+			for _, decision := range thesis.Decisions {
+				So(allowed(decision.Action), ShouldBeTrue)
+				actions[decision.Action]++
+
+				if decision.Action != types.ActionEnter {
+					continue
+				}
+
+				So(decision.ProposedNotional.Cmp(walletSlice), ShouldBeLessThanOrEqualTo, 0)
+				So(decision.ProposedQuantity.Sign(), ShouldEqual, 1)
+				So(decision.Utility, ShouldBeGreaterThan, 0)
+			}
+
+			So(market.Paper.Drain(), ShouldBeNil)
+
+			return nil
+		}), ShouldBeNil)
+
+		So(forecasts, ShouldBeGreaterThan, 0)
+		So(positive, ShouldBeGreaterThan, 0)
+		So(len(actions), ShouldBeGreaterThan, 0)
+	})
+
+	Convey("A fast dump produces negative expected returns without inventing enters", t, func() {
+		market := tests.NewMarket(t.Context(), 3)
+		wired, err := stack.NewBooter(t.Context()).Test(market)
+		So(err, ShouldBeNil)
+		Reset(func() {
+			So(wired.Close(), ShouldBeNil)
+			market.Close()
+		})
+
+		So(market.Warmup(tests.Idle), ShouldBeNil)
+
+		forecasts := 0
+		negative := 0
+		enters := 0
+
+		So(market.Transition(tests.MarketStateFastDump, func() error {
+			thesis := wired.Thesis
+
+			if thesis == nil {
+				return nil
+			}
+
+			for _, forecast := range thesis.Forecasts {
+				forecasts++
+
+				if forecast.ExpectedReturn < 0 {
+					negative++
+				}
+			}
+
+			for _, decision := range thesis.Decisions {
+				So(allowed(decision.Action), ShouldBeTrue)
+
+				if decision.Action == types.ActionEnter {
+					enters++
+				}
+			}
+
+			So(market.Paper.Drain(), ShouldBeNil)
+
+			return nil
+		}), ShouldBeNil)
+
+		So(forecasts, ShouldBeGreaterThan, 0)
+		So(negative, ShouldBeGreaterThan, 0)
+		So(enters, ShouldEqual, 0)
+	})
+
+	Convey("Adverse divergence keeps leader negative and followers positive", t, func() {
+		market := tests.NewMarket(t.Context(), 3)
+		wired, err := stack.NewBooter(t.Context()).Test(market)
+		So(err, ShouldBeNil)
+		Reset(func() {
+			So(wired.Close(), ShouldBeNil)
+			market.Close()
+		})
+
+		So(market.Warmup(tests.Idle), ShouldBeNil)
+		So(market.Transition(tests.MarketStateAdverseDivergence, tests.Idle), ShouldBeNil)
+
+		leaderNeg := false
+		followerPos := false
+
+		So(market.Transition(tests.MarketStateAdverseDivergence, func() error {
+			thesis := wired.Thesis
+
+			if thesis == nil {
+				return nil
+			}
+
+			bySymbol := map[string]float64{}
+			counts := map[string]int{}
+
+			for _, forecast := range thesis.Forecasts {
+				bySymbol[forecast.Symbol] += forecast.ExpectedReturn
+				counts[forecast.Symbol]++
+			}
+
+			if counts[market.Symbols[0]] > 0 &&
+				bySymbol[market.Symbols[0]]/float64(counts[market.Symbols[0]]) < 0 {
+				leaderNeg = true
+			}
+
+			for _, symbol := range market.Symbols[1:] {
+				if counts[symbol] > 0 &&
+					bySymbol[symbol]/float64(counts[symbol]) > 0 {
+					followerPos = true
+				}
+			}
+
+			for _, decision := range thesis.Decisions {
+				So(allowed(decision.Action), ShouldBeTrue)
+			}
+
+			So(market.Paper.Drain(), ShouldBeNil)
+
+			return nil
+		}), ShouldBeNil)
+
+		So(leaderNeg, ShouldBeTrue)
+		So(followerPos, ShouldBeTrue)
+	})
+
+	Convey("Thin liquidity does not mint forecasts or phantom enters", t, func() {
+		market := tests.NewMarket(t.Context(), 3)
+		wired, err := stack.NewBooter(t.Context()).Test(market)
+		So(err, ShouldBeNil)
+		Reset(func() {
+			So(wired.Close(), ShouldBeNil)
+			market.Close()
+		})
+
+		So(market.Warmup(tests.Idle), ShouldBeNil)
+
+		// Clear any warmup residue so the book-only leg is judged alone.
+		wired.Thesis.Forecasts = nil
+		wired.Thesis.Decisions = nil
+
+		forecasts := 0
+		enters := 0
+
+		So(market.Transition(tests.MarketStateThinLiquidity, func() error {
+			thesis := wired.Thesis
+
+			if thesis == nil {
+				return nil
+			}
+
+			forecasts += len(thesis.Forecasts)
+
+			for _, decision := range thesis.Decisions {
+				So(allowed(decision.Action), ShouldBeTrue)
+
+				if decision.Action == types.ActionEnter {
+					enters++
+				}
+			}
+
+			return nil
+		}), ShouldBeNil)
+
+		So(forecasts, ShouldEqual, 0)
+		So(enters, ShouldEqual, 0)
+	})
+}
+

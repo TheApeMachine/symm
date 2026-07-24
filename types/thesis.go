@@ -173,7 +173,8 @@ func (thesis *Thesis) Incomplete() bool {
 /*
 Publish upserts rows onto the Thesis by source/metric/side/symbol. The Thesis
 holds the current published surface only; objects that need history accumulate
-it themselves.
+it themselves. Existing identities are replaced in place so book-path publishes
+do not allocate a full copy of the measurement bag on every update.
 */
 func (thesis *Thesis) Publish(source SourceType, rows []*Measurement) {
 	if thesis == nil || len(rows) == 0 {
@@ -194,6 +195,7 @@ func (thesis *Thesis) Publish(source SourceType, rows []*Measurement) {
 			continue
 		}
 
+		row.Source = source
 		key := identity{row.Metric, row.Side, row.Symbol}
 
 		if _, seen := incoming[key]; !seen {
@@ -203,30 +205,38 @@ func (thesis *Thesis) Publish(source SourceType, rows []*Measurement) {
 		incoming[key] = row
 	}
 
+	if len(order) == 0 {
+		return
+	}
+
 	thesis.publish.Lock()
 	defer thesis.publish.Unlock()
 
-	kept := make([]*Measurement, 0, len(thesis.Measurements)+len(order))
+	replaced := make(map[identity]bool, len(order))
 
-	for _, row := range thesis.Measurements {
-		if row == nil {
+	for index, row := range thesis.Measurements {
+		if row == nil || row.Source != source {
 			continue
 		}
 
-		if row.Source == source {
-			if _, hit := incoming[identity{row.Metric, row.Side, row.Symbol}]; hit {
-				continue
-			}
+		key := identity{row.Metric, row.Side, row.Symbol}
+		next, hit := incoming[key]
+
+		if !hit {
+			continue
 		}
 
-		kept = append(kept, row)
+		thesis.Measurements[index] = next
+		replaced[key] = true
 	}
 
 	for _, key := range order {
-		kept = append(kept, incoming[key])
-	}
+		if replaced[key] {
+			continue
+		}
 
-	thesis.Measurements = kept
+		thesis.Measurements = append(thesis.Measurements, incoming[key])
+	}
 }
 
 /*

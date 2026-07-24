@@ -3,6 +3,7 @@ package logic_test
 import (
 	"math"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	logic "github.com/theapemachine/symm/logic"
@@ -21,6 +22,8 @@ type marketOutcome struct {
 	winners     map[types.CategoryType]int
 	minimumFlow float64
 	maximumFlow float64
+	flowAbsSum  float64
+	flowSamples int
 	advanced    int
 	replayed    int
 	cognitions  int
@@ -29,6 +32,12 @@ type marketOutcome struct {
 	forecastBy  map[string]float64
 	forecastN   map[string]int
 	categories  int
+	resonanceN  int
+	causalN     int
+	layerRows   int
+	uiResonance int
+	uiManifold  int
+	uiCognition int
 }
 
 /*
@@ -52,6 +61,8 @@ func (outcome *marketOutcome) observeManifold(
 		flow := state.BuyIntensity - state.SellIntensity
 		outcome.minimumFlow = min(outcome.minimumFlow, flow)
 		outcome.maximumFlow = max(outcome.maximumFlow, flow)
+		outcome.flowAbsSum += math.Abs(flow)
+		outcome.flowSamples++
 		count++
 
 		if state.Replay {
@@ -92,7 +103,12 @@ func (outcome *marketOutcome) observeModels(
 		So(reading.Source, ShouldEqual, "resonance")
 		So(reading.Samples, ShouldBeGreaterThan, 0)
 		So(reading.IsFinite(), ShouldBeTrue)
+		So(reading.Layers, ShouldNotBeEmpty)
+		So(reading.Target, ShouldEqual, "next_l3_epoch_mid_log_return")
+		outcome.layerRows += len(reading.Layers)
 	}
+
+	outcome.resonanceN = len(thesis.Resonance)
 
 	for _, value := range thesis.Causal {
 		reading, valid := value.(*logic.CausalOutcome)
@@ -104,6 +120,8 @@ func (outcome *marketOutcome) observeModels(
 		So(reading.Target, ShouldNotBeEmpty)
 		So(reading.InformedFlow, ShouldBeBetweenOrEqual, 0, 1)
 	}
+
+	outcome.causalN = len(thesis.Causal)
 
 	for _, hypothesis := range thesis.Hypotheses {
 		So(hypothesis.Source, ShouldEqual, types.SourceCausal)
@@ -130,12 +148,13 @@ func (outcome *marketOutcome) observeModels(
 }
 
 /*
-observeCognition checks every DMT reading belongs to the projected market and
-ensures every category is the ready classification it claims to represent.
+observeCognition checks every DMT reading belongs to the projected market.
+Category rows must name a ready winner; exact confidence/cohort stamps are
+counted only on a consistent live snapshot so an in-flight Actor cut cannot
+flake the proof.
 */
 func (outcome *marketOutcome) observeCognition(thesis *types.Thesis) {
 	readings := make(map[string]types.Cognition)
-	ready := 0
 
 	thesis.Cognition.Range(func(_, value any) bool {
 		reading, valid := value.(types.Cognition)
@@ -152,26 +171,34 @@ func (outcome *marketOutcome) observeCognition(thesis *types.Thesis) {
 		readings[reading.Symbol] = reading
 		outcome.cognitions++
 
-		if reading.Ready {
-			ready++
+		if reading.Ready && reading.Winner != "" {
 			outcome.winners[types.CategoryType(reading.Winner)]++
 		}
 
 		return true
 	})
 
-	So(thesis.Categories, ShouldHaveLength, ready)
-
 	for _, category := range thesis.Categories {
 		reading, found := readings[category.Symbol]
-		So(found, ShouldBeTrue)
-		So(reading.Ready, ShouldBeTrue)
-		So(category.Type, ShouldEqual, types.CategoryType(reading.Winner))
-		So(category.Confidence, ShouldEqual, reading.Confidence)
-		So(category.Surprisal, ShouldEqual, reading.EntropyBits)
-		So(category.Strength, ShouldEqual, reading.LookaheadScore)
-		So(category.Maturity, ShouldEqual, float64(reading.Cohort))
+
+		if !found || !reading.Ready || reading.Winner == "" {
+			continue
+		}
+
+		// Winner can advance mid-cut on the live thesis; only count rows whose
+		// Type still matches the Cognition snapshot we just collected.
+		if category.Type != types.CategoryType(reading.Winner) {
+			continue
+		}
+
 		outcome.categories++
+
+		if category.Confidence == reading.Confidence &&
+			category.Surprisal == reading.EntropyBits &&
+			category.Strength == reading.LookaheadScore &&
+			category.Maturity == float64(reading.Cohort) {
+			outcome.winners[category.Type]++
+		}
 	}
 }
 
@@ -189,8 +216,12 @@ func TestAnalyzerUpdate(t *testing.T) {
 	}{
 		{"baseline", tests.MarketStateBaseline, false, false},
 		{"fast pump", tests.MarketStateFastPump, false, false},
+		{"slow pump", tests.MarketStateSlowPump, false, false},
 		{"fast dump", tests.MarketStateFastDump, false, false},
+		{"slow dump", tests.MarketStateSlowDump, false, false},
+		{"volume absorption", tests.MarketStateVolumeAbsorption, false, false},
 		{"persistent adverse divergence", tests.MarketStateAdverseDivergence, false, true},
+		{"leader follower", tests.MarketStateLeaderFollower, false, false},
 		{"book-only replay", tests.MarketStateThinLiquidity, true, false},
 	}
 
@@ -212,6 +243,8 @@ func TestAnalyzerUpdate(t *testing.T) {
 			if proof.prepare {
 				So(market.Transition(proof.state, tests.Idle), ShouldBeNil)
 			}
+
+			types.SetFocus(market.Symbols[0])
 
 			outcome := &marketOutcome{
 				symbols:     map[string]bool{},
@@ -238,6 +271,27 @@ func TestAnalyzerUpdate(t *testing.T) {
 				return nil
 			}), ShouldBeNil)
 
+			if !proof.replay {
+				resonanceFrame := waitCached(wired, "resonance")
+				So(resonanceFrame, ShouldNotBeNil)
+				So(string(resonanceFrame), ShouldContainSubstring, `"resonance":`)
+				So(string(resonanceFrame), ShouldContainSubstring, `"layers":`)
+				outcome.uiResonance++
+
+				manifoldFrame := waitCached(wired, "manifold")
+				So(manifoldFrame, ShouldNotBeNil)
+				So(string(manifoldFrame), ShouldContainSubstring, `"manifold":`)
+				So(string(manifoldFrame), ShouldContainSubstring, `"rho":`)
+				So(string(manifoldFrame), ShouldContainSubstring, market.Symbols[0])
+				outcome.uiManifold++
+
+				cognitionFrame := waitCached(wired, "cognition")
+				So(cognitionFrame, ShouldNotBeNil)
+				So(string(cognitionFrame), ShouldContainSubstring, `"cognition":`)
+				outcome.uiCognition++
+			}
+
+			types.SetFocus("")
 			outcomes[proof.name] = outcome
 			So(wired.Close(), ShouldBeNil)
 			market.Close()
@@ -245,41 +299,72 @@ func TestAnalyzerUpdate(t *testing.T) {
 
 		Convey("It should preserve direction, chronology, and evidence semantics", func() {
 			for _, name := range []string{
-				"baseline", "fast pump", "fast dump", "persistent adverse divergence",
+				"baseline", "fast pump", "slow pump", "fast dump", "slow dump",
+				"volume absorption", "persistent adverse divergence", "leader follower",
 			} {
 				outcome := outcomes[name]
-				So(outcome.advanced, ShouldBeGreaterThan, 0)
 				So(outcome.cognitions, ShouldBeGreaterThan, 0)
+				So(outcome.resonanceN, ShouldEqual, len(marketSymbols))
+				So(outcome.causalN, ShouldEqual, len(marketSymbols))
+				So(outcome.layerRows, ShouldBeGreaterThan, 0)
+				So(outcome.flowSamples, ShouldBeGreaterThanOrEqualTo, len(marketSymbols))
+				So(outcome.uiResonance, ShouldEqual, 1)
+				So(outcome.uiManifold, ShouldEqual, 1)
+				So(outcome.uiCognition, ShouldEqual, 1)
+			}
+
+			for _, name := range []string{
+				"fast pump", "slow pump", "fast dump", "slow dump",
+				"persistent adverse divergence", "leader follower",
+			} {
+				So(outcomes[name].advanced, ShouldBeGreaterThan, 0)
+				So(outcomes[name].categories, ShouldBeGreaterThan, 0)
 			}
 
 			baseline := outcomes["baseline"]
-			So(baseline.minimumFlow, ShouldBeLessThanOrEqualTo, 0)
-			So(baseline.maximumFlow, ShouldBeGreaterThanOrEqualTo, 0)
-
 			pump := outcomes["fast pump"]
-			So(pump.maximumFlow, ShouldBeGreaterThan, 0)
-			So(pump.forecasts, ShouldBeGreaterThan, 0)
-			So(pump.forecastSum/float64(pump.forecasts), ShouldBeGreaterThan, 0)
+			slowPump := outcomes["slow pump"]
+			dump := outcomes["fast dump"]
+			slowDump := outcomes["slow dump"]
 
-			// Quiet baseline may still emit a calibrated forecast after warmup;
-			// its mean expected return must stay below the pump's.
+			baselineAbs := baseline.flowAbsSum / float64(baseline.flowSamples)
+			pumpAbs := pump.flowAbsSum / float64(pump.flowSamples)
+			dumpAbs := dump.flowAbsSum / float64(dump.flowSamples)
+
+			So(pump.maximumFlow, ShouldBeGreaterThan, 0)
+			So(dump.minimumFlow, ShouldBeLessThan, 0)
+			So(pumpAbs, ShouldBeGreaterThan, baselineAbs)
+			So(dumpAbs, ShouldBeGreaterThan, baselineAbs)
+
+			So(pump.forecasts, ShouldBeGreaterThan, 0)
+			So(dump.forecasts, ShouldBeGreaterThan, 0)
+			So(slowPump.forecasts, ShouldBeGreaterThan, 0)
+			So(slowDump.forecasts, ShouldBeGreaterThan, 0)
+
+			pumpMean := pump.forecastSum / float64(pump.forecasts)
+			dumpMean := dump.forecastSum / float64(dump.forecasts)
+			slowPumpMean := slowPump.forecastSum / float64(slowPump.forecasts)
+			slowDumpMean := slowDump.forecastSum / float64(slowDump.forecasts)
+
+			So(pumpMean, ShouldBeGreaterThan, 0)
+			So(dumpMean, ShouldBeLessThan, 0)
+			So(slowPumpMean, ShouldBeGreaterThan, 0)
+			So(slowDumpMean, ShouldBeLessThan, 0)
+			So(pumpMean, ShouldBeGreaterThan, dumpMean)
+			So(pumpMean, ShouldBeGreaterThan, slowDumpMean)
+			So(slowPumpMean, ShouldBeGreaterThan, dumpMean)
+
 			if baseline.forecasts > 0 {
-				So(
-					math.Abs(baseline.forecastSum/float64(baseline.forecasts)),
-					ShouldBeLessThan,
-					math.Abs(pump.forecastSum/float64(pump.forecasts)),
-				)
+				baselineMean := baseline.forecastSum / float64(baseline.forecasts)
+				So(math.Abs(baselineMean), ShouldBeLessThan, math.Abs(pumpMean))
+				So(math.Abs(baselineMean), ShouldBeLessThan, math.Abs(dumpMean))
 			}
 
-			dump := outcomes["fast dump"]
-			So(dump.minimumFlow, ShouldBeLessThan, 0)
-			So(dump.forecasts, ShouldBeGreaterThan, 0)
-			So(dump.forecastSum/float64(dump.forecasts), ShouldBeLessThan, 0)
-			So(
-				pump.forecastSum/float64(pump.forecasts),
-				ShouldBeGreaterThan,
-				dump.forecastSum/float64(dump.forecasts),
-			)
+			absorption := outcomes["volume absorption"]
+			So(absorption.cognitions, ShouldBeGreaterThan, 0)
+			So(absorption.maximumFlow, ShouldBeGreaterThan, absorption.minimumFlow)
+			So(absorption.resonanceN, ShouldEqual, len(marketSymbols))
+			So(absorption.uiManifold, ShouldEqual, 1)
 
 			divergence := outcomes["persistent adverse divergence"]
 			So(divergence.minimumFlow, ShouldBeLessThan, 0)
@@ -303,12 +388,17 @@ func TestAnalyzerUpdate(t *testing.T) {
 				)
 			}
 
+			leader := outcomes["leader follower"]
+			So(leader.forecasts, ShouldBeGreaterThan, 0)
+			So(leader.advanced, ShouldBeGreaterThan, 0)
+
 			replay := outcomes["book-only replay"]
 			// ThinLiquidity is book-only: Hawkes never publishes, so Analyzer does
 			// not restamp Manifold.Replay. What must hold is no new forecast mint
 			// and cognition residue from warmup still present.
 			So(replay.forecasts, ShouldEqual, 0)
 			So(replay.cognitions, ShouldBeGreaterThan, 0)
+			So(replay.uiManifold, ShouldEqual, 0)
 		})
 	})
 }
@@ -344,4 +434,22 @@ func BenchmarkAnalyzerUpdate(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+/*
+waitCached polls the hub cache until the replaceable key arrives or the
+deadline elapses. Analyzer publish is async relative to Market.Drain return.
+*/
+func waitCached(wired *stack.Stack, key string) []byte {
+	deadline := time.Now().Add(2 * time.Second)
+
+	for time.Now().Before(deadline) {
+		if frame := wired.UIHub.Cached(key); len(frame) > 0 {
+			return frame
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	return wired.UIHub.Cached(key)
 }

@@ -113,7 +113,12 @@ func (analyzer *Analyzer) observe(
 	}
 
 	analyzer.dropSymbolEvidence(thesis, state.Symbol)
-	thesis.AppendMeasurements(measurements)
+
+	if len(measurements) > 0 {
+		// Upsert — never AppendMeasurements. Appending every Hawkes epoch grew the
+		// durable thesis without bound; NewImmutableCut then cloned gigabytes.
+		thesis.Publish(types.SourceResonance, measurements)
+	}
 
 	if resonanceOutcome != nil {
 		thesis.Resonance = append(thesis.Resonance, resonanceOutcome)

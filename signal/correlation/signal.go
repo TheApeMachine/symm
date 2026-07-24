@@ -119,9 +119,13 @@ func (signal *Signal) Calculate(
 	}
 
 	for symbol, scores := range scoresBySymbol {
-		at, ok := latestAtBySymbol[symbol]
+		at := latestAtBySymbol[symbol]
 
-		if !ok || at.IsZero() {
+		if at.IsZero() {
+			at = signal.section.LastAt(symbol)
+		}
+
+		if at.IsZero() {
 			continue
 		}
 

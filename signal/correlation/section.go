@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	nomcorrelation "github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/statistic"
@@ -95,18 +96,34 @@ func (section *Section) Measure(
 		return nil, nil
 	}
 
-	updated := uniqueSymbols(section.scratch)
-	results := make(map[string]map[string]float64, len(updated))
+	results := make(map[string]map[string]float64, len(section.symbols))
 
-	for _, symbol := range updated {
+	for symbol := range section.symbols {
 		scores, ok := section.scores(symbol)
 
-		if ok {
-			results[symbol] = scores
+		if !ok {
+			continue
 		}
+
+		results[symbol] = scores
 	}
 
 	return results, nil
+}
+
+/*
+LastAt returns the newest sample time retained for symbol.
+Emission uses this for cohort peers that were scored but absent from the
+current ticker batch so focus-gated UI still receives a live reading.
+*/
+func (section *Section) LastAt(symbol string) time.Time {
+	state := section.symbols[symbol]
+
+	if state == nil || len(state.samples) == 0 {
+		return time.Time{}
+	}
+
+	return state.samples[len(state.samples)-1].At
 }
 
 /*
@@ -257,10 +274,8 @@ func (section *Section) scores(symbol string) (map[string]float64, bool) {
 	stressScore := math.Max(0, -signed)
 	strength := max(max(herdScore, alphaScore), max(noiseScore, stressScore))
 
-	if strength <= 0 {
-		return nil, false
-	}
-
+	// Zero strength is still a live cohort reading (quiet / locked peers).
+	// Suppressing it left the focused kernel on STANDBY forever in calm tapes.
 	return map[string]float64{
 		"correlation":    correlation,
 		"signed":         signed,

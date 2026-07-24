@@ -79,6 +79,37 @@ func TestPublish(t *testing.T) {
 	})
 }
 
+/*
+TestPublishResonanceStaysBounded proves repeated resonance publishes replace
+identities in place instead of appending a new pair every Hawkes epoch.
+*/
+func TestPublishResonanceStaysBounded(t *testing.T) {
+	Convey("Given resonance energy and surprise for one symbol", t, func() {
+		thesis := NewThesis()
+		at := time.Unix(1, 0).UTC()
+
+		for epoch := range 10_000 {
+			thesis.Publish(SourceResonance, []*Measurement{
+				{
+					Metric: MetricResonanceEnergy, Symbol: "SIM1/USD",
+					Raw: float64(epoch), At: at.Add(time.Duration(epoch)),
+				},
+				{
+					Metric: MetricResonanceSurprise, Symbol: "SIM1/USD",
+					Raw: float64(epoch) + 0.5, At: at.Add(time.Duration(epoch)),
+				},
+			})
+		}
+
+		Convey("Then the published surface stays two rows for that symbol", func() {
+			So(thesis.Measurements, ShouldHaveLength, 2)
+			So(thesis.Measurements[0].Source, ShouldEqual, SourceResonance)
+			So(thesis.Measurements[0].Raw, ShouldEqual, 9999)
+			So(thesis.Measurements[1].Raw, ShouldEqual, 9999.5)
+		})
+	})
+}
+
 func BenchmarkPublish(b *testing.B) {
 	thesis := NewThesis()
 	at := time.Unix(1, 0).UTC()

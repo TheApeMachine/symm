@@ -92,11 +92,15 @@ func (signal *Signal) onTicker(message any) any {
 		return nil
 	}
 
-	if len(measurements) == 0 {
-		return nil
+	if len(measurements) > 0 {
+		signal.thesis.Publish(types.SourceHawkes, measurements)
 	}
 
-	signal.thesis.Publish(types.SourceHawkes, measurements)
+	// Tickers do not feed arrivals today, but they are the market pulse. Without
+	// a cut here the cascade only advances on trades and starves on thin books.
+	if len(signal.Symbols()) == 0 {
+		return nil
+	}
 
 	return signal.cut()
 }

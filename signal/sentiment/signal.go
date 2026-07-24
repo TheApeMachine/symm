@@ -16,10 +16,11 @@ performance. Categories belong in logic; this signal emits numerical scores only
 */
 type Signal struct {
 	*types.Actor
-	thesis *types.Thesis
-	ctx    context.Context
-	cancel context.CancelFunc
-	ui     chan []byte
+	thesis       *types.Thesis
+	ctx          context.Context
+	cancel       context.CancelFunc
+	ui           chan []byte
+	crossSection *types.CrossSection
 }
 
 /*
@@ -30,9 +31,10 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		ui:     ui,
+		ctx:          ctx,
+		cancel:       cancel,
+		ui:           ui,
+		crossSection: types.NewCrossSection(),
 	}
 
 	signal.Actor = types.NewActor(ctx, map[string]types.Handler{
@@ -83,19 +85,18 @@ func (signal *Signal) Calculate(
 	trades []kraken.TradeData,
 	books []kraken.BookData,
 ) ([]*types.Measurement, error) {
-	crossSection := types.NewCrossSection()
 	if len(tickers) > 0 {
-		crossSection.Measure(tickers)
+		signal.crossSection.Measure(tickers)
 	}
 
-	out := make([]*types.Measurement, 0, len(tickers)*9)
+	out := make([]*types.Measurement, 0, 64)
 
-	if crossSection == nil {
+	if signal.crossSection == nil {
 		return out, nil
 	}
 
-	leader, leadershipThreshold := crossSection.Leadership()
-	breadth := crossSection.Breadth()
+	leader, leadershipThreshold := signal.crossSection.Leadership()
+	breadth := signal.crossSection.Breadth()
 	cohortSize := 0
 	leaderChange := 0.0
 	totalChange := 0.0
@@ -103,9 +104,11 @@ func (signal *Signal) Calculate(
 	positiveDisplacements := 0
 	negativeDisplacements := 0
 	minimumDisplacement := math.Inf(1)
+	peers := make([]types.SymbolMetric, 0, 64)
 
-	crossSection.Metrics.Range(func(_, value any) bool {
+	signal.crossSection.Metrics.Range(func(_, value any) bool {
 		metric := value.(types.SymbolMetric)
+		peers = append(peers, metric)
 		absoluteChange := math.Abs(metric.LatestChange)
 		displacement := absoluteChange - metric.RelativeSpread
 		cohortSize++
@@ -170,13 +173,16 @@ func (signal *Signal) Calculate(
 		validity.Reason = "peer return cohort unavailable"
 	}
 
-	for _, row := range tickers {
-		change := row.ChangePct / 100
+	// Emit the retained cohort, not only this message's rows, so a focused
+	// major still receives frames when an alt ticker arrives (same pattern as
+	// liquidity). Focus-gated WireMeasurements otherwise paints false STANDBY.
+	for _, peer := range peers {
+		change := peer.LatestChange
 		leaderStrength := 0.0
 		leaderEvidence := 0.0
 		relativeLead := 0.0
 		divergentScore := 0.0
-		isLeader := leader == row.Symbol && leaderMagnitude > 0
+		isLeader := leader == peer.Symbol && leaderMagnitude > 0
 
 		if isLeader {
 			leaderStrength = leaderMagnitude
@@ -206,8 +212,8 @@ func (signal *Signal) Calculate(
 				Source:   types.SourceSentiment,
 				Metric:   spec.metric,
 				Stream:   types.Sentiment,
-				Symbol:   row.Symbol,
-				At:       row.Timestamp,
+				Symbol:   peer.Symbol,
+				At:       peer.At,
 				Unit:     types.UnitDimensionless,
 				Raw:      spec.raw,
 				Validity: validity,

@@ -43,15 +43,11 @@ func TestProjectCategoriesFromCognition(t *testing.T) {
 }
 
 /*
-TestPublishMeasuredSplitsManifold proves each symbol is its own UI frame so the
-worker never clones a full-cohort manifold payload in one DRAW.
+TestWireManifoldPrefersFocusCarrier proves the pilot-wave batch keeps shared
+ρ/|ψ|² on the focused symbol in a single row so one UI frame paints the field.
 */
-func TestPublishMeasuredSplitsManifold(t *testing.T) {
-	Convey("Given three manifold states with lattices on the first", t, func() {
-		ui := make(chan []byte, 8)
-		analyzer := &Analyzer{ui: ui}
-		thesis := types.NewThesis()
-		thesis.Tick = 3
+func TestWireManifoldPrefersFocusCarrier(t *testing.T) {
+	Convey("Given three manifold states with lattices on ETH", t, func() {
 		states := []manifold.State{
 			{
 				Source:    "manifold",
@@ -62,11 +58,9 @@ func TestPublishMeasuredSplitsManifold(t *testing.T) {
 				Particles: []manifold.Particle{{Role: "particle"}},
 			},
 			{
-				Source:  "manifold",
-				Symbol:  "BTC/USD",
-				At:      time.Unix(1, 0).UTC(),
-				Rho:     [][]float64{{0.3, 0.4}},
-				PsiMag2: [][]float64{{0, 1}},
+				Source: "manifold",
+				Symbol: "BTC/USD",
+				At:     time.Unix(1, 0).UTC(),
 			},
 			{
 				Source: "manifold",
@@ -75,27 +69,112 @@ func TestPublishMeasuredSplitsManifold(t *testing.T) {
 			},
 		}
 
-		Convey("When publishMeasured runs", func() {
-			analyzer.publishMeasured(thesis, states)
+		Convey("When focus is BTC/USD", func() {
+			types.SetFocus("BTC/USD")
+			Reset(func() { types.SetFocus("") })
 
-			Convey("It emits one manifold frame per symbol", func() {
-				So(len(ui), ShouldEqual, 3)
+			wired := wireManifold(states)
+			So(wired, ShouldHaveLength, 1)
+			So(wired[0].Symbol, ShouldEqual, "BTC/USD")
+			So(wired[0].Rho, ShouldResemble, [][]float64{{0.1, 0.2}})
+			So(wired[0].PsiMag2, ShouldResemble, [][]float64{{1, 0}})
+			So(wired[0].Particles, ShouldBeNil)
+		})
 
-				for range 3 {
-					payload := <-ui
-					So(string(payload), ShouldContainSubstring, `"manifold":[`)
-					So(string(payload), ShouldNotContainSubstring, `"BTC/USD","SOL/USD"`)
-				}
-			})
+		Convey("When focus is unset", func() {
+			types.SetFocus("")
 
-			Convey("It keeps shared lattices only on the carrier row", func() {
-				wired := wireManifold(states)
-				So(wired[0].Rho, ShouldNotBeEmpty)
-				So(wired[0].Particles, ShouldNotBeEmpty)
-				So(wired[1].Rho, ShouldBeNil)
-				So(wired[1].Particles, ShouldBeNil)
-				So(wired[2].Rho, ShouldBeNil)
-			})
+			wired := wireManifold(states)
+			So(wired, ShouldHaveLength, 1)
+			So(wired[0].Symbol, ShouldEqual, "ETH/USD")
+			So(wired[0].Rho, ShouldNotBeEmpty)
+			So(wired[0].Particles, ShouldNotBeEmpty)
+		})
+	})
+}
+
+/*
+TestPublishMeasuredEmitsOrderedFrames proves resonance precedes the single
+focus-aware manifold frame so a saturated UI channel cannot starve charts.
+*/
+func TestPublishMeasuredEmitsOrderedFrames(t *testing.T) {
+	Convey("Given resonance plus three manifold states", t, func() {
+		ui := make(chan []byte, 8)
+		analyzer := &Analyzer{ui: ui}
+		thesis := types.NewThesis()
+		thesis.Tick = 3
+		thesis.Resonance = []any{
+			&ResonanceOutcome{Source: "resonance", Symbol: "ETH/USD", Samples: 4},
+		}
+		states := []manifold.State{
+			{
+				Source:  "manifold",
+				Symbol:  "ETH/USD",
+				At:      time.Unix(1, 0).UTC(),
+				Rho:     [][]float64{{0.1, 0.2}},
+				PsiMag2: [][]float64{{1, 0}},
+			},
+			{
+				Source: "manifold",
+				Symbol: "BTC/USD",
+				At:     time.Unix(1, 0).UTC(),
+			},
+		}
+
+		types.SetFocus("BTC/USD")
+		Reset(func() { types.SetFocus("") })
+
+		analyzer.publishMeasured(thesis, states)
+
+		Convey("It emits resonance then one manifold frame for focus", func() {
+			So(len(ui), ShouldEqual, 2)
+
+			resonance := string(<-ui)
+			So(resonance, ShouldContainSubstring, `"resonance":`)
+			So(resonance, ShouldContainSubstring, `"ETH/USD"`)
+
+			manifoldFrame := string(<-ui)
+			So(manifoldFrame, ShouldContainSubstring, `"manifold":[`)
+			So(manifoldFrame, ShouldContainSubstring, `"BTC/USD"`)
+			So(manifoldFrame, ShouldContainSubstring, `"rho":[[0.1,0.2]]`)
+			So(manifoldFrame, ShouldNotContainSubstring, `"ETH/USD"`)
+		})
+	})
+}
+
+/*
+TestPublishCognitionProjectsAllWinners proves strategy categories are not
+focus-gated even when the cognition UI frame is.
+*/
+func TestPublishCognitionProjectsAllWinners(t *testing.T) {
+	Convey("Given two ready cognition winners and a BTC focus", t, func() {
+		ui := make(chan []byte, 8)
+		analyzer := &Analyzer{ui: ui}
+		thesis := types.NewThesis()
+		thesis.Cognition.Store("ETH/USD", types.Cognition{
+			Source: "dmt", Symbol: "ETH/USD", Winner: "buy", Ready: true,
+			Confidence: 0.8, EntropyBits: 1, LookaheadScore: 0.5, Cohort: 2,
+		})
+		thesis.Cognition.Store("BTC/USD", types.Cognition{
+			Source: "dmt", Symbol: "BTC/USD", Winner: "sell", Ready: true,
+			Confidence: 0.6, EntropyBits: 2, LookaheadScore: 0.3, Cohort: 1,
+		})
+
+		types.SetFocus("BTC/USD")
+		Reset(func() { types.SetFocus("") })
+
+		analyzer.publishCognition(thesis)
+
+		Convey("Thesis categories cover every ready winner", func() {
+			So(thesis.Categories, ShouldHaveLength, 2)
+		})
+
+		Convey("UI cognition frame is focus-only", func() {
+			So(len(ui), ShouldBeGreaterThanOrEqualTo, 1)
+			frame := string(<-ui)
+			So(frame, ShouldContainSubstring, `"cognition":`)
+			So(frame, ShouldContainSubstring, `"BTC/USD"`)
+			So(frame, ShouldNotContainSubstring, `"ETH/USD"`)
 		})
 	})
 }
@@ -131,7 +210,7 @@ func BenchmarkProjectCategories(b *testing.B) {
 }
 
 /*
-BenchmarkPublishMeasured measures one-symbol-per-frame manifold fan-out.
+BenchmarkPublishMeasured measures the focus-aware single-frame manifold path.
 */
 func BenchmarkPublishMeasured(b *testing.B) {
 	ui := make(chan []byte, 256)

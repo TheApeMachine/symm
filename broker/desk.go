@@ -144,6 +144,8 @@ func (desk *Desk) onTicker(message any) any {
 
 	desk.price.TickerAck(ticker)
 
+	marked := false
+
 	for index := range ticker.Data {
 		item := ticker.Data[index]
 		position, ok := desk.positions[item.Symbol]
@@ -153,6 +155,11 @@ func (desk *Desk) onTicker(message any) any {
 		}
 
 		position.Mark(item.Symbol)
+		marked = true
+	}
+
+	if marked {
+		desk.balance.Publish()
 	}
 
 	return nil
