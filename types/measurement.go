@@ -311,8 +311,8 @@ func ObservationCount(measurements []*Measurement) int {
 
 /*
 ForPublish returns the newest epoch per symbol plus any older Hawkes fit-parameter
-rows that FilterLatest would drop, so the UI can keep decay curves beside live
-intensities. Rows stay typed Measurements — no nested projection.
+rows that FilterLatest would drop. Prefer AggregateMeasurements / WireMeasurements
+for the UI path; this keeps flat typed rows for non-wire consumers.
 */
 func ForPublish(measurements []*Measurement) []*Measurement {
 	latest := FilterLatest(measurements)

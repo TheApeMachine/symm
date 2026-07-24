@@ -1,10 +1,10 @@
 import type { Holding, Stop } from "#/collections/types";
 import { fixed } from "#/components/terminal/decision-format";
+import { buildPositionGaugePanel } from "#/components/terminal/position-gauge-shell";
 import {
 	positionGaugeGeometry,
 	positionStop,
 } from "#/components/terminal/position-geometry";
-import { buildPositionGaugePanel } from "#/components/terminal/position-gauge-shell";
 
 export type { PriceGaugeGeometry } from "#/components/terminal/position-geometry";
 export { positionGaugeGeometry } from "#/components/terminal/position-geometry";
@@ -78,9 +78,7 @@ const writePositionGauge = (
 				: neutralTone;
 	const geometry = positionGaugeGeometry(position, stop);
 	const rawMark =
-		Number.isFinite(position.mark) && position.mark > 0
-			? position.mark
-			: null;
+		Number.isFinite(position.mark) && position.mark > 0 ? position.mark : null;
 	const markLabel = rawMark === null ? "--" : fixed(rawMark);
 	const progressTone =
 		geometry !== null &&
@@ -149,7 +147,11 @@ const writePositionGauge = (
 
 	if (parts.returnPct) {
 		parts.returnPct.style.color = returnTone;
-		parts.returnPct.textContent = `${(position.return_pct * 100).toFixed(4)}%`;
+		const returnPct = Number.isFinite(position.return_pct)
+			? position.return_pct
+			: null;
+		parts.returnPct.textContent =
+			returnPct === null ? "—" : `${(returnPct * 100).toFixed(4)}%`;
 	}
 
 	if (parts.momentumWrap && parts.momentumBar) {
@@ -193,11 +195,7 @@ const paintBound = (symbol: string) => {
 	writePositionGauge(parts, lastHoldings[symbol], lastStops[symbol]);
 };
 
-const bindGauge = (
-	symbol: string,
-	quote: string,
-	root: HTMLElement | null,
-) => {
+const bindGauge = (symbol: string, quote: string, root: HTMLElement | null) => {
 	if (root === null) {
 		positionGauges.delete(symbol);
 		return;
@@ -249,10 +247,7 @@ export const removePositionGauge = (symbol: string): void => {
 paintPositionHoldings merges the DRAW holdings batch into lastHoldings and
 repaints every bound position gauge whose symbol appears in the batch.
 */
-export const paintPositionHoldings = (
-	value: unknown,
-	_focusSymbol: string,
-) => {
+export const paintPositionHoldings = (value: unknown, _focusSymbol: string) => {
 	const rows = (
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as Holding[];

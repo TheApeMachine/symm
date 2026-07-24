@@ -1,6 +1,8 @@
 package broker
 
 import (
+	"sync"
+
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/types"
 )
@@ -23,6 +25,7 @@ Ledger tracks open reservations keyed by intent ID. Desk mutates it on the
 serial broker path; readers observe Reserved totals for UI and Available.
 */
 type Ledger struct {
+	mu    sync.Mutex
 	byID  map[string]Reservation
 	cash  *decimal.Decimal
 	qty   map[string]*decimal.Decimal
@@ -95,6 +98,16 @@ func (ledger *Ledger) claim(reservation Reservation) error {
 		}
 	}
 
+	if hasQty && reservation.Asset == "" {
+		return types.ValidationError{
+			Component: "reservation",
+			Detail:    "asset required when qty is set",
+		}
+	}
+
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+
 	if _, exists := ledger.byID[reservation.IntentID]; exists {
 		return types.ConflictError{
 			Component: "reservation",
@@ -151,6 +164,9 @@ func (ledger *Ledger) Release(intentID string) error {
 }
 
 func (ledger *Ledger) release(intentID string) error {
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+
 	reservation, ok := ledger.byID[intentID]
 
 	if !ok {
@@ -185,7 +201,14 @@ func (ledger *Ledger) release(intentID string) error {
 ReservedCash is the sum of open cash claims.
 */
 func (ledger *Ledger) ReservedCash() *decimal.Decimal {
-	if ledger == nil || ledger.cash == nil {
+	if ledger == nil {
+		return decimal.NewFromInt64(0)
+	}
+
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+
+	if ledger.cash == nil {
 		return decimal.NewFromInt64(0)
 	}
 
@@ -199,6 +222,9 @@ func (ledger *Ledger) ReservedAsset(asset string) *decimal.Decimal {
 	if ledger == nil {
 		return decimal.NewFromInt64(0)
 	}
+
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
 
 	qty := ledger.qty[asset]
 
@@ -216,6 +242,9 @@ func (ledger *Ledger) ReservedSlots() int {
 	if ledger == nil {
 		return 0
 	}
+
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
 
 	return ledger.slots
 }

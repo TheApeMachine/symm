@@ -2,7 +2,6 @@ package stack
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -16,9 +15,9 @@ import (
 
 /*
 CutCoordinator owns cut identity: it waits for signal results (or explicit
-skips), freezes an ImmutableCut, resets the durable publish surface, and
-forwards the cut to Analyzer. Hawkes remains the cadence trigger; every
-registered source must Report for that CutID before finalize.
+skips), freezes an ImmutableCut, and forwards the cut to Analyzer. Hawkes
+remains the cadence trigger; every registered source must Report for that
+CutID before finalize. Barrier state lives on the composed cutBarrier.
 */
 type CutCoordinator struct {
 	*types.Actor
@@ -27,10 +26,7 @@ type CutCoordinator struct {
 	thesis   *types.Thesis
 	counter  types.CutCounter
 	tick     atomic.Int64
-	sources  []types.SourceType
-	mu       sync.Mutex
-	pending  map[types.CutID]map[types.SourceType]types.SignalResult
-	active   types.CutID
+	barrier  cutBarrier
 	recorder *audit.Recorder
 }
 
@@ -52,8 +48,7 @@ func NewCutCoordinator(
 		ctx:     ctx,
 		cancel:  cancel,
 		thesis:  thesis,
-		sources: append([]types.SourceType(nil), sources...),
-		pending: make(map[types.CutID]map[types.SourceType]types.SignalResult),
+		barrier: newCutBarrier(sources),
 	}
 
 	coordinator.Actor = types.NewActor(ctx, map[string]types.Handler{
@@ -73,13 +68,14 @@ func (coordinator *CutCoordinator) SetRecorder(recorder *audit.Recorder) {
 }
 
 /*
-Initialize attaches to Hawkes cadence topics.
+Initialize attaches to Hawkes cadence topics with a normal buffer so cut frames
+can queue while Analyzer drains depth-one, instead of reflecting cascade stalls
+straight back into Hawkes measurement.
 */
 func (coordinator *CutCoordinator) Initialize(hawkesActor *types.Actor) error {
 	errnie.Info("initializing cut coordinator")
 
-	coordinator.Actor.InitializeSize(
-		1,
+	coordinator.Actor.Initialize(
 		types.Topic{Name: "ticker", Actor: hawkesActor},
 		types.Topic{Name: "trade", Actor: hawkesActor},
 	)
@@ -91,25 +87,7 @@ func (coordinator *CutCoordinator) Initialize(hawkesActor *types.Actor) error {
 Report records one signal result for the active or specified cut.
 */
 func (coordinator *CutCoordinator) Report(result types.SignalResult) {
-	coordinator.mu.Lock()
-	defer coordinator.mu.Unlock()
-
-	if result.CutID == 0 {
-		result.CutID = coordinator.active
-	}
-
-	if result.CutID == 0 {
-		return
-	}
-
-	bucket, ok := coordinator.pending[result.CutID]
-
-	if !ok {
-		bucket = make(map[types.SourceType]types.SignalResult, len(coordinator.sources))
-		coordinator.pending[result.CutID] = bucket
-	}
-
-	bucket[result.Source] = result
+	coordinator.barrier.Report(result)
 }
 
 /*
@@ -139,15 +117,15 @@ func (coordinator *CutCoordinator) onResult(message any) any {
 
 func (coordinator *CutCoordinator) onHawkes(message any) any {
 	cutID := coordinator.begin(message)
-	coordinator.autoSkip(cutID)
+	coordinator.barrier.autoSkip(cutID)
 	coordinator.Report(types.SignalResult{
 		CutID:  cutID,
 		Source: types.SourceHawkes,
 		Status: types.SignalReady,
 	})
 
-	if !coordinator.ready(cutID) {
-		coordinator.fillMissing(cutID)
+	if !coordinator.barrier.ready(cutID) {
+		coordinator.barrier.fillMissing(cutID)
 	}
 
 	cut := coordinator.finalize(cutID)
@@ -169,68 +147,14 @@ func (coordinator *CutCoordinator) onHawkes(message any) any {
 }
 
 func (coordinator *CutCoordinator) begin(message any) types.CutID {
-	coordinator.mu.Lock()
-	defer coordinator.mu.Unlock()
-
 	cutID := coordinator.counter.Next()
-	coordinator.active = cutID
-	coordinator.pending[cutID] = make(
-		map[types.SourceType]types.SignalResult, len(coordinator.sources),
-	)
+	coordinator.barrier.open(cutID)
 
 	if thesis, ok := hawkesThesis(message); ok && thesis != nil {
 		coordinator.thesis = thesis
 	}
 
 	return cutID
-}
-
-func (coordinator *CutCoordinator) autoSkip(cutID types.CutID) {
-	// Sources other than Hawkes may not yet emit SignalResult; treat absent
-	// publish as Skip so the barrier still closes on Hawkes cadence.
-	coordinator.mu.Lock()
-	defer coordinator.mu.Unlock()
-
-	bucket := coordinator.pending[cutID]
-
-	for _, source := range coordinator.sources {
-		if source == types.SourceHawkes {
-			continue
-		}
-
-		if _, ok := bucket[source]; ok {
-			continue
-		}
-
-		bucket[source] = types.SignalResult{
-			CutID:  cutID,
-			Source: source,
-			Status: types.SignalSkip,
-		}
-	}
-}
-
-func (coordinator *CutCoordinator) fillMissing(cutID types.CutID) {
-	coordinator.autoSkip(cutID)
-}
-
-func (coordinator *CutCoordinator) ready(cutID types.CutID) bool {
-	coordinator.mu.Lock()
-	defer coordinator.mu.Unlock()
-
-	bucket := coordinator.pending[cutID]
-
-	if len(bucket) < len(coordinator.sources) {
-		return false
-	}
-
-	for _, source := range coordinator.sources {
-		if _, ok := bucket[source]; !ok {
-			return false
-		}
-	}
-
-	return true
 }
 
 func (coordinator *CutCoordinator) finalize(cutID types.CutID) *types.ImmutableCut {
@@ -252,10 +176,7 @@ func (coordinator *CutCoordinator) finalize(cutID types.CutID) *types.ImmutableC
 	}
 
 	cut := types.NewImmutableCut(cutID, tick, coordinator.thesis)
-
-	coordinator.mu.Lock()
-	delete(coordinator.pending, cutID)
-	coordinator.mu.Unlock()
+	coordinator.barrier.clear(cutID)
 
 	return cut
 }

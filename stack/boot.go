@@ -178,7 +178,7 @@ func (booter *Booter) configureTest(symbolCount int) func() {
 		"system.audit.rotate_on_boot":                false,
 		"market.quote_currency":                      "USD",
 		"market.subscribe_batch":                     symbolCount,
-		"market.subscribe_pace":                      0,
+		"market.subscribe_pace":                      20 * time.Millisecond,
 		"market.l3_enabled":                          true,
 		"market.l3_depth":                            10,
 		"market.l3_rate_limit":                       200,
@@ -281,7 +281,7 @@ func (booter *Booter) boot(
 		booter.ctx, api, instrument, price, balance, booter.config.Trading,
 	)
 	hub := ui.NewHub(booter.ctx, price, balance, booter.channel, booter.config.UI)
-	thesis := types.NewThesis(booter.channel)
+	thesis := types.NewThesis()
 	hawkesSignal := hawkes.NewSignal(booter.ctx, booter.channel)
 
 	trackCapacity := booter.config.Signals.FeedTrackCapacity
@@ -387,7 +387,6 @@ func (booter *Booter) boot(
 		cancel:      booter.cancel,
 		actors: []*types.Actor{
 			desk.Actor,
-			coordinator.Actor,
 			analyzer.Actor,
 			planner.Actor,
 			crypto.Actor,

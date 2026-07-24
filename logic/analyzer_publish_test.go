@@ -13,7 +13,7 @@ import (
 func TestProjectCategoriesFromCognition(t *testing.T) {
 	Convey("Given ready cognition winners on a thesis", t, func() {
 		analyzer := &Analyzer{}
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		analyzer.projectCategories(thesis, []types.Cognition{
 			{
 				Symbol:         "PENGU/USD",
@@ -50,7 +50,7 @@ func TestPublishMeasuredSplitsManifold(t *testing.T) {
 	Convey("Given three manifold states with lattices on the first", t, func() {
 		ui := make(chan []byte, 8)
 		analyzer := &Analyzer{ui: ui}
-		thesis := types.NewThesis(ui)
+		thesis := types.NewThesis()
 		thesis.Tick = 3
 		states := []manifold.State{
 			{
@@ -102,7 +102,7 @@ func TestPublishMeasuredSplitsManifold(t *testing.T) {
 
 func BenchmarkProjectCategories(b *testing.B) {
 	analyzer := &Analyzer{}
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis()
 	cognition := []types.Cognition{
 		{
 			Symbol:         "PENGU/USD",
@@ -136,7 +136,7 @@ BenchmarkPublishMeasured measures one-symbol-per-frame manifold fan-out.
 func BenchmarkPublishMeasured(b *testing.B) {
 	ui := make(chan []byte, 256)
 	analyzer := &Analyzer{ui: ui}
-	thesis := types.NewThesis(ui)
+	thesis := types.NewThesis()
 	states := make([]manifold.State, 32)
 
 	for index := range states {

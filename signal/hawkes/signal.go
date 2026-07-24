@@ -51,11 +51,11 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 
 	signal.Actor = types.NewActor(ctx, map[string]types.Handler{
 		"ticker": {
-			Topic: "thesis",
+			Topic: "ticker",
 			Fn:    signal.onTicker,
 		},
 		"trade": {
-			Topic: "thesis",
+			Topic: "trade",
 			Fn:    signal.onTrade,
 		},
 	})
@@ -71,14 +71,13 @@ func (signal *Signal) Name() string {
 }
 
 /*
-Initialize wires ticker and trade ingress from Live at depth one so Live cannot
-race ahead of Hawkes while Analyzer is still consuming a prior cut. Book traffic
-is not consumed — Hawkes measures marked trade arrivals only.
+Initialize wires ticker and trade ingress from Live. Cut serialisation stays on
+the Coordinator→Analyzer depth-one edge; Hawkes itself keeps a normal buffer so
+a busy cascade cannot stall Live's trade root and starve cadence.
 */
 func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 	signal.thesis = thesis
-	signal.Actor.InitializeSize(
-		1,
+	signal.Actor.Initialize(
 		types.Topic{Name: "ticker", Actor: live},
 		types.Topic{Name: "trade", Actor: live},
 	)

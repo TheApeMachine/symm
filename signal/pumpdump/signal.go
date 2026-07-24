@@ -307,49 +307,71 @@ func (signal *Signal) ingest(
 		signal.volume.Store(trade.Symbol, volume+trade.Qty)
 	}
 
-	for _, row := range books {
-		if row.Symbol == "" || row.PriceIncrement == nil || row.PriceIncrement.Sign() <= 0 {
-			return errnie.Err(
-				errnie.Validation,
-				"pumpdump: symbol and price increment required for book update",
-				nil,
-			)
+	if len(books) == 0 {
+		return nil
+	}
+
+	groups := types.ChunkRowsBySymbol(books, func(row kraken.BookData) string {
+		return row.Symbol
+	})
+
+	return types.RunSymbolGroupsParallel(groups, func(index int, rows []kraken.BookData) error {
+		for _, row := range rows {
+			if err := signal.ingestBook(row); err != nil {
+				return err
+			}
 		}
 
-		bookFound, ok := signal.orderBooks.Load(row.Symbol)
-		var book *flow.Book
+		return nil
+	})
+}
 
-		if ok {
-			book = bookFound.(*flow.Book)
-		}
+/*
+ingestBook applies one incremental or snapshot book row to the symbol-local
+order book state pump measurements consume.
+*/
+func (signal *Signal) ingestBook(row kraken.BookData) error {
+	if row.Symbol == "" || row.PriceIncrement == nil || row.PriceIncrement.Sign() <= 0 {
+		return errnie.Err(
+			errnie.Validation,
+			"pumpdump: symbol and price increment required for book update",
+			nil,
+		)
+	}
 
-		signal.increments.Store(row.Symbol, row.PriceIncrement.Float64())
+	bookFound, ok := signal.orderBooks.Load(row.Symbol)
+	var book *flow.Book
 
-		if book == nil || row.Type == "snapshot" {
-			book = flow.NewBook()
-			signal.orderBooks.Store(row.Symbol, book)
-		}
+	if ok {
+		book = bookFound.(*flow.Book)
+	}
 
-		bids, asks, err := kraken.BookLevels(row)
+	signal.increments.Store(row.Symbol, row.PriceIncrement.Float64())
 
-		if err != nil {
-			return errnie.Err(errnie.Validation, "pumpdump: decode book levels", err)
-		}
+	if book == nil || row.Type == "snapshot" {
+		book = flow.NewBook()
+		signal.orderBooks.Store(row.Symbol, book)
+	}
 
-		if err := book.Configure(flow.BookInput{
-			Symbol:   row.Symbol,
-			TickSize: row.PriceIncrement.Float64(),
-		}); err != nil {
-			return errnie.Err(errnie.Validation, "pumpdump: configure book", err)
-		}
+	bids, asks, err := kraken.BookLevels(row)
 
-		if _, err := book.ApplyLevels(bids, flow.SideBid); err != nil {
-			return errnie.Err(errnie.Validation, "pumpdump: apply bid levels", err)
-		}
+	if err != nil {
+		return errnie.Err(errnie.Validation, "pumpdump: decode book levels", err)
+	}
 
-		if _, err := book.ApplyLevels(asks, flow.SideAsk); err != nil {
-			return errnie.Err(errnie.Validation, "pumpdump: apply ask levels", err)
-		}
+	if err := book.Configure(flow.BookInput{
+		Symbol:   row.Symbol,
+		TickSize: row.PriceIncrement.Float64(),
+	}); err != nil {
+		return errnie.Err(errnie.Validation, "pumpdump: configure book", err)
+	}
+
+	if _, err := book.ApplyLevels(bids, flow.SideBid); err != nil {
+		return errnie.Err(errnie.Validation, "pumpdump: apply bid levels", err)
+	}
+
+	if _, err := book.ApplyLevels(asks, flow.SideAsk); err != nil {
+		return errnie.Err(errnie.Validation, "pumpdump: apply ask levels", err)
 	}
 
 	return nil

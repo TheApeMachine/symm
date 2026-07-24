@@ -36,6 +36,13 @@ func TestLedgerReserve(t *testing.T) {
 			So(ledger.ReservedCash().Sign(), ShouldEqual, 0)
 			So(ledger.ReservedSlots(), ShouldEqual, 0)
 		})
+
+		Convey("It rejects asset reservations with empty Asset", func() {
+			So(ledger.ReserveAsset(
+				"bare", "", decimal.NewFromFloat64(0.5),
+			), ShouldNotBeNil)
+			So(ledger.ReservedAsset("").Sign(), ShouldEqual, 0)
+		})
 	})
 }
 

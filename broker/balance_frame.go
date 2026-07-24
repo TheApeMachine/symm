@@ -15,7 +15,14 @@ Frame projects the desk wallet onto the terminal wire: one quote cash row,
 every retained lot (open and closed) for positions plus audit, and live stops.
 */
 func (balance *Balance) Frame() []byte {
-	if balance == nil || balance.data == nil {
+	if balance == nil {
+		return nil
+	}
+
+	balance.mu.RLock()
+	defer balance.mu.RUnlock()
+
+	if balance.data == nil {
 		return nil
 	}
 
@@ -133,6 +140,7 @@ func (balance *Balance) syncWallet() {
 
 		if err := balance.transitionHolding(holding, types.CLOSED); err != nil {
 			errnie.Error(err)
+			continue
 		}
 
 		holding.Qty = decimal.NewFromInt64(0)

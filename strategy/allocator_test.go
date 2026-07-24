@@ -67,7 +67,7 @@ func TestAllocatorSizesWalletSlice(t *testing.T) {
 	)
 
 	allocator := NewAllocator(context.Background(), balance, instrument, price)
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis()
 	thesis.Decisions = append(thesis.Decisions, types.Decision{
 		Action: types.ActionEnter, Symbol: "LRC/USD", AllocationHaircut: 0,
 		At: time.Unix(1, 0).UTC(),
@@ -123,7 +123,7 @@ func TestAllocatorScalesByRisk(t *testing.T) {
 			map[string]float64{"MATIC/USD": 0.26},
 		)
 		allocator := NewAllocator(context.Background(), balance, instrument, price)
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.Decisions = append(thesis.Decisions, types.Decision{
 			Action: types.ActionEnter, Symbol: "MATIC/USD", AllocationHaircut: risk,
 		})
@@ -167,7 +167,7 @@ func TestAllocatorBailsWhenMinimumExceedsWalletSlice(t *testing.T) {
 	)
 
 	allocator := NewAllocator(context.Background(), balance, instrument, price)
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis()
 	thesis.Decisions = append(thesis.Decisions, types.Decision{
 		Action: types.ActionEnter, Symbol: "LRC/USD",
 	})
@@ -212,7 +212,7 @@ func TestAllocatorTransactionLocalBudget(t *testing.T) {
 	)
 
 	allocator := NewAllocator(context.Background(), balance, instrument, price)
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis()
 	thesis.Decisions = append(thesis.Decisions,
 		types.Decision{
 			Action: types.ActionEnter, Symbol: "LRC/USD",
@@ -266,7 +266,7 @@ func TestAllocatorHonorsRotationNotional(t *testing.T) {
 
 	rotationBudget := decimal.NewFromFloat64(250)
 	allocator := NewAllocator(context.Background(), balance, instrument, price)
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis()
 	thesis.Decisions = append(thesis.Decisions, types.Decision{
 		Action:           types.ActionEnter,
 		Symbol:           "LRC/USD",
@@ -325,7 +325,7 @@ func TestAllocatorRejectsInvalidHaircutPerDecision(t *testing.T) {
 	)
 
 	allocator := NewAllocator(context.Background(), balance, instrument, price)
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis()
 	thesis.Decisions = append(thesis.Decisions,
 		types.Decision{
 			Action: types.ActionEnter, Symbol: "LRC/USD",
@@ -371,7 +371,7 @@ func BenchmarkAllocatorAllocate(b *testing.B) {
 		map[string]float64{"LRC/USD": 0.26},
 	)
 	allocator := NewAllocator(context.Background(), balance, instrument, price)
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis()
 	thesis.Decisions = append(thesis.Decisions, types.Decision{
 		Action: types.ActionEnter, Symbol: "LRC/USD",
 	})

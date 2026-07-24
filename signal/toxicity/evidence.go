@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -55,12 +56,37 @@ ingestIncrements retains each symbol's observed price lattice and rejects a
 malformed book rather than silently falling back to decimal price proximity.
 */
 func (signal *Signal) ingestIncrements(books []kraken.BookData) error {
-	for _, row := range books {
-		if row.Symbol == "" || row.PriceIncrement == nil || row.PriceIncrement.Sign() <= 0 {
+	if len(books) == 0 {
+		return nil
+	}
+
+	groups := types.ChunkRowsBySymbol(books, func(row kraken.BookData) string {
+		return row.Symbol
+	})
+	increments := make([]*decimal.Decimal, len(groups))
+
+	err := types.RunSymbolGroupsParallel(groups, func(index int, rows []kraken.BookData) error {
+		for _, row := range rows {
+			if row.Symbol == "" || row.PriceIncrement == nil || row.PriceIncrement.Sign() <= 0 {
+				continue
+			}
+
+			increments[index] = row.PriceIncrement
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return err
+	}
+
+	for index, group := range groups {
+		if increments[index] == nil {
 			continue
 		}
 
-		signal.increments[row.Symbol] = row.PriceIncrement
+		signal.increments[group.Symbol] = increments[index]
 	}
 
 	return nil
@@ -150,16 +176,58 @@ without a public trade. This lets cancellation and retreat remain observable
 without fabricating an unrelated execution to trigger the signal.
 */
 func (signal *Signal) observeBooks(books []kraken.BookData) error {
-	for _, bookRow := range books {
-		if bookRow.Symbol == "" || bookRow.Timestamp.IsZero() {
+	if len(books) == 0 {
+		return nil
+	}
+
+	groups := types.ChunkRowsBySymbol(books, func(row kraken.BookData) string {
+		return row.Symbol
+	})
+	updates := make([]*symbolEvidence, len(groups))
+
+	err := types.RunSymbolGroupsParallel(groups, func(index int, rows []kraken.BookData) error {
+		updates[index] = observeSymbolBooks(rows)
+
+		return nil
+	})
+
+	if err != nil {
+		return err
+	}
+
+	for index, group := range groups {
+		update := updates[index]
+
+		if update == nil || update.bookCount == 0 {
 			continue
 		}
 
-		row := signal.evidence[bookRow.Symbol]
+		row := signal.evidence[group.Symbol]
 
 		if row == nil {
-			row = &symbolEvidence{}
-			signal.evidence[bookRow.Symbol] = row
+			signal.evidence[group.Symbol] = update
+			continue
+		}
+
+		row.bookCount += update.bookCount
+
+		if update.latestAt.After(row.latestAt) {
+			row.latestAt = update.latestAt
+		}
+	}
+
+	return nil
+}
+
+/*
+observeSymbolBooks aggregates book-only evidence for one symbol's ordered rows.
+*/
+func observeSymbolBooks(rows []kraken.BookData) *symbolEvidence {
+	row := &symbolEvidence{}
+
+	for _, bookRow := range rows {
+		if bookRow.Symbol == "" || bookRow.Timestamp.IsZero() {
+			continue
 		}
 
 		row.bookCount++
@@ -169,5 +237,9 @@ func (signal *Signal) observeBooks(books []kraken.BookData) error {
 		}
 	}
 
-	return nil
+	if row.bookCount == 0 {
+		return nil
+	}
+
+	return row
 }

@@ -11,7 +11,7 @@ TestThesisPublishRaceStress proves concurrent Publish and SnapshotMeasurements
 do not race under the race detector.
 */
 func TestThesisPublishRaceStress(t *testing.T) {
-	thesis := NewThesis(nil)
+	thesis := NewThesis()
 	at := time.Unix(1, 0).UTC()
 	waitGroup := sync.WaitGroup{}
 

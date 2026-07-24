@@ -87,11 +87,53 @@ func TestActorClose(t *testing.T) {
 	})
 }
 
-func TestTrySend(t *testing.T) {
-	Convey("Given a full subscription", t, func() {
-		subscription := NewSubscriptionSize[any](1)
-		So(subscription.TrySend(1), ShouldBeTrue)
-		So(subscription.TrySend(2), ShouldBeFalse)
+func TestTryPublishDoesNotStallSibling(t *testing.T) {
+	Convey("Given a Live-style root fan-out with one saturated subscriber", t, func() {
+		ctx, cancel := context.WithCancel(t.Context())
+		Reset(cancel)
+
+		live := NewActor(ctx, nil)
+		root := NewSubscriptionSize[any](8)
+		live.AddRoot("book", root)
+		live.Start()
+
+		slow := live.SubscribeSize("book", 1)
+		fast := live.SubscribeSize("book", 8)
+		So(slow.TrySend("pad"), ShouldBeTrue)
+
+		Convey("It delivers to the fast subscriber without blocking on the slow one", func() {
+			done := make(chan struct{})
+
+			go func() {
+				for range 5 {
+					root.Send("book")
+				}
+
+				close(done)
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(500 * time.Millisecond):
+				So("fanout stalled", ShouldEqual, "")
+			}
+
+			received := 0
+			deadline := time.Now().Add(500 * time.Millisecond)
+
+			for received < 5 && time.Now().Before(deadline) {
+				select {
+				case <-fast.Channel:
+					received++
+				default:
+					time.Sleep(time.Millisecond)
+				}
+			}
+
+			So(received, ShouldEqual, 5)
+			So(live.Dropped(), ShouldBeGreaterThan, 0)
+			So(live.Close(), ShouldBeNil)
+		})
 	})
 }
 

@@ -12,8 +12,12 @@ type WorkerOutbound =
 	| { type: "ERROR_FRAME"; frame: Record<string, unknown> };
 
 let worker: Worker | null = null;
+let focusUnsubscribe: (() => void) | null = null;
 
 const disconnectTransport = () => {
+	focusUnsubscribe?.();
+	focusUnsubscribe = null;
+
 	if (worker !== null) {
 		worker.postMessage({ type: "DISCONNECT" });
 		worker.terminate();
@@ -21,16 +25,26 @@ const disconnectTransport = () => {
 	}
 };
 
+const publishFocus = (symbol: string) => {
+	worker?.postMessage({ type: "FOCUS", symbol });
+};
+
 const handleWorkerMessage = (event: MessageEvent<WorkerOutbound>) => {
 	const message = event.data;
 
 	if (message.type === "READY") {
 		worker?.postMessage({ type: "CONNECT", url: socketUrl });
+		publishFocus(appStore.state.focusSymbol);
 		return;
 	}
 
 	if (message.type === "ONLINE") {
 		appStore.actions.updateOnline(message.online);
+
+		if (message.online) {
+			publishFocus(appStore.state.focusSymbol);
+		}
+
 		return;
 	}
 
@@ -58,12 +72,25 @@ const connect = () => {
 		appStore.actions.updateOnline(false);
 		appStore.actions.updateError({ message: event.message });
 	});
+
+	let previous = appStore.state.focusSymbol;
+	const subscription = appStore.subscribe(() => {
+		const next = appStore.state.focusSymbol;
+
+		if (next === previous) {
+			return;
+		}
+
+		previous = next;
+		publishFocus(next);
+	});
+	focusUnsubscribe = () => subscription.unsubscribe();
 };
 
 /*
 WsFeed boots the websocket worker once. The worker owns the socket and forwards
-DRAW frames; attach dispatches wire keys to paint functions. Symbol focus stays
-client-side only — nothing is sent upstream.
+DRAW frames; attach dispatches wire keys to paint functions. Focus changes are
+sent upstream so signal-metric publishes can gate on the selected symbol.
 */
 export const WsFeed = () => {
 	useEffect(() => {

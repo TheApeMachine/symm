@@ -119,9 +119,13 @@ func NewHub(
 		hub.writeWallet(session)
 
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
+			_, payload, err := conn.ReadMessage()
+
+			if err != nil {
 				return
 			}
+
+			hub.applyClient(payload)
 		}
 	}))
 
@@ -177,10 +181,35 @@ func (hub *Hub) drain() {
 	}
 }
 
-func (hub *Hub) retain(generation uint64, msg []byte) []cachedFrame {
-	var frame map[string]sonic.NoCopyRawMessage
+/*
+applyClient handles dashboard→backend control frames. Focus updates gate
+signal-metric WireMeasurements without affecting balances or decisions.
+*/
+func (hub *Hub) applyClient(payload []byte) {
+	if len(payload) == 0 {
+		return
+	}
 
-	if err := sonic.Unmarshal(msg, &frame); err != nil {
+	var inbound struct {
+		Type   string `json:"type"`
+		Symbol string `json:"symbol"`
+	}
+
+	if err := sonic.Unmarshal(payload, &inbound); err != nil {
+		return
+	}
+
+	if inbound.Type != "focus" {
+		return
+	}
+
+	types.SetFocus(inbound.Symbol)
+}
+
+func (hub *Hub) retain(generation uint64, msg []byte) []cachedFrame {
+	frame, err := unwrapWirePayload(msg)
+
+	if err != nil || frame == nil {
 		return nil
 	}
 
@@ -357,7 +386,13 @@ func (hub *Hub) writeLoop(ctx context.Context, session *clientSession) {
 				return
 			}
 
-			if err := hub.writeMessage(session.conn, frame.payload); err != nil {
+			payload, err := wireFrame(frame)
+
+			if err != nil || len(payload) == 0 {
+				continue
+			}
+
+			if err := hub.writeMessage(session.conn, payload); err != nil {
 				session.cancel()
 				return
 			}
@@ -420,15 +455,3 @@ func (hub *Hub) Close() error {
 	return err
 }
 
-/*
-WirePublish wraps a payload under the current wire version for typed ingress.
-*/
-func WirePublish(generation uint64, payload map[string]any) ([]byte, error) {
-	envelope := types.NewWireEnvelope(generation, payload)
-
-	if !envelope.Compatible() {
-		return nil, types.VersionError{Want: types.WireVersion, Got: envelope.Version}
-	}
-
-	return sonic.Marshal(payload)
-}

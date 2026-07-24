@@ -18,7 +18,7 @@ win when both forecast and resonance are present for the same symbol.
 */
 func TestProjectPrefersResonanceOverForecast(t *testing.T) {
 	Convey("Given forecast and resonance for one symbol", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
 			Symbol:         "AAA/USD",
 			ExpectedReturn: 0.01,
@@ -59,7 +59,7 @@ so Stoploss can gate quote-only marks.
 */
 func TestProjectRetreatPressureFromToxicity(t *testing.T) {
 	Convey("Given a toxicity retreat measurement", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		pressure := 0.87
 		thesis.Measurements = append(thesis.Measurements,
 			&types.Measurement{
@@ -90,7 +90,7 @@ func TestProjectRetreatPressureFromToxicity(t *testing.T) {
 	})
 
 	Convey("Given a current toxicity touch without any retreat", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.Measurements = append(thesis.Measurements, &types.Measurement{
 			Source: types.SourceToxicity,
 			Symbol: "AAA/USD",
@@ -115,7 +115,7 @@ TestProjectForecastEpochFromSourceEpoch copies forecast provenance onto Evidence
 */
 func TestProjectForecastEpochFromSourceEpoch(t *testing.T) {
 	Convey("Given a forecast with SourceEpoch", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
 			Symbol:         "AAA/USD",
 			SourceEpoch:    42,
@@ -146,7 +146,7 @@ ask-entry vs bid cannot invent a stop breach.
 */
 func TestProjectAbsentWithoutStopMark(t *testing.T) {
 	Convey("Given inventory with bid Mark but no StopMark", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		evidence := NewEvidence().Project(thesis, types.Holding{
 			Symbol:     "AAA/USD",
 			Mark:       decimal.NewFromFloat64(100),
@@ -165,7 +165,7 @@ TestProjectAbsentWithoutMark freezes Present when inventory lacks a mark.
 */
 func TestProjectAbsentWithoutMark(t *testing.T) {
 	Convey("Given inventory without StopMark", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		evidence := NewEvidence().Project(thesis, types.Holding{
 			Symbol:     "AAA/USD",
 			EntryPrice: decimal.NewFromFloat64(100),
@@ -186,7 +186,7 @@ func ptrTime(value time.Time) *time.Time {
 BenchmarkProject measures Evidence projection cost on the regulate hot path.
 */
 func BenchmarkProject(b *testing.B) {
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis()
 	thesis.Forecasts = append(thesis.Forecasts, types.Forecasts{
 		Symbol:         "AAA/USD",
 		ExpectedReturn: 0.01,
@@ -212,7 +212,7 @@ func BenchmarkProject(b *testing.B) {
 
 func TestProjectManifoldSpreadStaysReturnSpace(t *testing.T) {
 	Convey("Given a GasReady manifold state with return-space spread", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.Manifold.Store("AAA/USD", manifold.State{
 			Source:         "manifold",
 			Symbol:         "AAA/USD",

@@ -43,17 +43,27 @@ func (envelope WireEnvelope) Compatible() bool {
 }
 
 /*
-WireMeasurements publishes a non-blocking UI frame for one signal's measurement
-batch. A full channel drops the frame rather than stalling measure.
+WireMeasurements publishes one focus-gated, aggregated UI frame for a signal's
+measurement batch. Flat thesis rows collapse into compact metrics maps so the
+socket carries one observation per source×symbol×at instead of one frame row
+per metric. A full channel drops the frame rather than stalling measure.
 */
 func WireMeasurements(rows []*Measurement, ui chan []byte) {
 	if len(rows) == 0 || ui == nil {
 		return
 	}
 
-	frame, err := sonic.Marshal(map[string]any{
-		"measurements": ForPublish(rows),
+	aggregated := AggregateMeasurements(Focused(rows))
+
+	if len(aggregated) == 0 {
+		return
+	}
+
+	envelope := NewWireEnvelope(0, map[string]any{
+		"measurements": aggregated,
 	})
+
+	frame, err := sonic.Marshal(envelope)
 
 	if err != nil {
 		return

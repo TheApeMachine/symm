@@ -1,28 +1,34 @@
 package websocket
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"os/exec"
+	"strings"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Paper is the simulated spot websocket and REST transport.
-Private frames enter Actor roots so Desk and tests Subscribe the same way
-Live exposes ticker/book/trade. Orders match in-process through Matcher.
+Paper is the simulated spot websocket and REST transport. It shells out to the
+native `kraken paper` CLI so balances, fills, and history stay owned by the
+venue ledger under Application Support — not an in-process invented matcher.
+Private frames enter Actor roots so Desk and tests Subscribe the same way Live
+exposes ticker/book/trade.
 */
 type Paper struct {
 	*types.Actor
 	ctx       context.Context
 	cancel    context.CancelFunc
 	simulator *Simulator
-	matcher   *Matcher
 	roots     map[string]*types.Subscription[any]
 }
 
@@ -38,23 +44,10 @@ func NewPaper(
 ) *Paper {
 	ctx, cancel := context.WithCancel(ctx)
 
-	quote := cfg.Market.QuoteCurrency
-
-	if quote == "" {
-		quote = "USD"
-	}
-
-	clock := Clock(WallClock{})
-
-	if simulator != nil && simulator.clock != nil {
-		clock = simulator.clock
-	}
-
 	paper := &Paper{
 		ctx:       ctx,
 		cancel:    cancel,
 		simulator: simulator,
-		matcher:   NewMatcher(clock, quote, 100_000, 0.0026),
 		roots: map[string]*types.Subscription[any]{
 			"balances":   paperRoot(cfg.System.ActorBuffer),
 			"executions": paperRoot(cfg.System.ActorBuffer),
@@ -84,7 +77,7 @@ func paperRoot(buffer int) *types.Subscription[any] {
 }
 
 /*
-Initialize marks the paper transport ready once its simulator is ready.
+Initialize is a no-op; readiness follows the injected simulator.
 */
 func (paper *Paper) Initialize() error {
 	return nil
@@ -105,15 +98,8 @@ func (paper *Paper) Client() *spot.WebSocket {
 }
 
 /*
-Matcher exposes the in-process exchange for tests that seed marks or balances.
-*/
-func (paper *Paper) Matcher() *Matcher {
-	return paper.matcher
-}
-
-/*
 Write routes the same subscription and order envelopes used by live transports
-through the paper simulator.
+through the paper CLI under simulator latency.
 */
 func (paper *Paper) Write(params json.Marshaler) error {
 	raw, err := params.MarshalJSON()
@@ -192,49 +178,68 @@ func (paper *Paper) Root() *types.Actor {
 Close cancels the paper actor context.
 */
 func (paper *Paper) Close() {
+	if paper.Actor != nil {
+		_ = paper.Actor.Close()
+	}
+
 	paper.cancel()
 }
 
 /*
-TradesHistory returns an empty history; paper fills are streamed as executions.
+TradesHistory loads paper fills from `kraken paper history`.
 */
 func (paper *Paper) TradesHistory() (*kraken.TradesHistory, error) {
-	return kraken.NewTradesHistoryFromMap(datura.Map[any]{}), nil
-}
-
-/*
-AddOrder fills through the in-process matcher under simulator latency.
-*/
-func (paper *Paper) AddOrder(order *kraken.MarketOrder) error {
-	quantity, err := ParseQuantity(string(order.Params.OrderQty))
-
-	if err != nil {
-		return err
-	}
-
-	limit := 0.0
-
-	if order.Params.OrderType == "limit" && string(order.Params.LimitPrice) != "" {
-		limit, err = ParseQuantity(string(order.Params.LimitPrice))
-
-		if err != nil {
-			return err
-		}
-	}
-
-	var model datura.Map[any]
+	var (
+		model datura.Map[any]
+		err   error
+	)
 
 	paper.simulator.Do(REST, func() {
-		model, err = paper.matcher.Fill(
-			order.Params.Side,
-			order.Params.Symbol,
-			quantity,
-			limit,
-		)
+		model, err = paper.execute("history", "history")
 	})
 
 	if err != nil {
-		return err
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get trades history",
+			err,
+		))
+	}
+
+	return kraken.NewTradesHistoryFromMap(model), nil
+}
+
+/*
+AddOrder places through `kraken paper buy|sell` under simulator latency.
+*/
+func (paper *Paper) AddOrder(order *kraken.MarketOrder) error {
+	command := []string{
+		order.Params.Side,
+		order.Params.Symbol,
+		order.Params.OrderQty.String(),
+	}
+
+	if order.Params.OrderType == "limit" {
+		command = append(
+			command,
+			"--type", "limit",
+			"--price", order.Params.LimitPrice.String(),
+		)
+	}
+
+	var model datura.Map[any]
+	var err error
+
+	paper.simulator.Do(REST, func() {
+		model, err = paper.execute("executions", command...)
+	})
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to place paper order",
+			err,
+		))
 	}
 
 	model["pair"] = order.Params.Symbol
@@ -242,15 +247,77 @@ func (paper *Paper) AddOrder(order *kraken.MarketOrder) error {
 	return paper.Place(model, order.ReqID)
 }
 
+func (paper *Paper) execute(entity string, command ...string) (datura.Map[any], error) {
+	input := []string{"paper"}
+	input = append(input, command...)
+	input = append(input, "--output", "json")
+
+	cmd := exec.CommandContext(paper.ctx, "kraken", input...)
+
+	if errors.Is(cmd.Err, exec.ErrDot) {
+		cmd.Err = nil
+	}
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	stdout, err := cmd.Output()
+
+	if err != nil {
+		details := strings.TrimSpace(stderr.String())
+
+		if details == "" {
+			details = strings.TrimSpace(string(stdout))
+		}
+
+		if details == "" {
+			details = err.Error()
+		}
+
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"kraken paper "+entity+" command failed: "+details,
+			err,
+		))
+	}
+
+	model := datura.Map[any]{}
+
+	if err := sonic.Unmarshal(stdout, &model); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to decode kraken paper "+entity,
+			err,
+		))
+	}
+
+	if errCategory, ok := model["error"].(string); ok && errCategory != "" {
+		message, _ := model["message"].(string)
+
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"kraken paper: "+message,
+			nil,
+		))
+	}
+
+	return model, nil
+}
+
 /*
-Balance emits a paper wallet frame through the latency simulator.
+Balance emits a paper wallet frame from `kraken paper balance`.
 */
 func (paper *Paper) Balance(frameType string) error {
 	var model datura.Map[any]
+	var err error
 
 	paper.simulator.Do(REST, func() {
-		model = paper.matcher.Balances()
+		model, err = paper.execute("balances", "balance")
 	})
+
+	if err != nil {
+		return err
+	}
 
 	balance := kraken.NewBalanceFromMap(model)
 	balance.Type = frameType
@@ -307,5 +374,8 @@ func (paper *Paper) Place(model datura.Map[any], reqID int64) error {
 		return err
 	}
 
+	// Paper balance is a full wallet dump that omits zero assets. Emitting it
+	// as an incremental update leaves stale positive rows in Balance and keeps
+	// phantom OPEN lots.
 	return paper.Balance("snapshot")
 }

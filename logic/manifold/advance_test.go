@@ -34,7 +34,7 @@ func TestSolver_Advance(t *testing.T) {
 		So(err, ShouldBeNil)
 		Reset(solver.Close)
 		at := time.Unix(3, 0)
-		first := types.NewThesis(nil)
+		first := types.NewThesis()
 		bitcoinSeed := solverOutcome(at, 4, 2)
 		result := solver.driveAdvance(first, staticHawkesSource{
 			symbols: []string{"BTC/USD", "ETH/USD"},
@@ -48,7 +48,7 @@ func TestSolver_Advance(t *testing.T) {
 
 		later := solverOutcome(at.Add(time.Second), 16, 4)
 		later.EventCount++
-		second := types.NewThesis(nil)
+		second := types.NewThesis()
 		result = solver.driveAdvance(second, staticHawkesSource{
 			symbols: []string{"BTC/USD", "ETH/USD"},
 			outcomes: map[string]excitation.Outcome{
@@ -87,7 +87,7 @@ func TestSolver_Advance(t *testing.T) {
 		Convey("It should retain history when a market leaves the live candidate set", func() {
 			bitcoinLater := solverOutcome(at.Add(2*time.Second), 6, 2)
 			bitcoinLater.EventCount++
-			third := types.NewThesis(nil)
+			third := types.NewThesis()
 			result = solver.driveAdvance(third, staticHawkesSource{
 				symbols: []string{"BTC/USD"},
 				outcomes: map[string]excitation.Outcome{
@@ -117,7 +117,7 @@ func BenchmarkSolver_Advance(b *testing.B) {
 		at = at.Add(time.Second)
 		outcome := solverOutcome(at, 4, 2)
 		outcome.EventCount = int(at.Unix())
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		result := solver.driveAdvance(thesis, staticHawkesSource{
 			symbols:  []string{"BTC/USD"},
 			outcomes: map[string]excitation.Outcome{"BTC/USD": outcome},
@@ -144,7 +144,7 @@ func BenchmarkSolver_PhaseProjection(b *testing.B) {
 	at := time.Unix(3, 0)
 	outcome := solverOutcome(at, 4, 2)
 	outcome.EventCount = 1
-	seed := types.NewThesis(nil)
+	seed := types.NewThesis()
 	result := solver.driveAdvance(seed, staticHawkesSource{
 		symbols:  []string{"BTC/USD"},
 		outcomes: map[string]excitation.Outcome{"BTC/USD": outcome},
@@ -161,7 +161,7 @@ func BenchmarkSolver_PhaseProjection(b *testing.B) {
 		at = at.Add(time.Second)
 		outcome = solverOutcome(at, 4, 2)
 		outcome.EventCount = int(at.Unix())
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		result = solver.driveAdvance(thesis, staticHawkesSource{
 			symbols:  []string{"BTC/USD"},
 			outcomes: map[string]excitation.Outcome{"BTC/USD": outcome},

@@ -1,5 +1,3 @@
-//go:build !race
-
 package stack_test
 
 import (
@@ -164,7 +162,7 @@ func TestBooter_TickStrategy(t *testing.T) {
 					holding, holdErr := wired.Balance.Holding(decision.Symbol)
 
 					if holdErr != nil || holding.Qty == nil || holding.Qty.Sign() <= 0 {
-						return nil
+						continue
 					}
 
 					entered = true

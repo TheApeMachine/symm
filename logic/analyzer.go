@@ -223,6 +223,7 @@ func (analyzer *Analyzer) publish(frame datura.Map[any]) {
 	payload, err := frame.Marshal()
 
 	if err != nil {
+		errnie.Error(err)
 		return
 	}
 

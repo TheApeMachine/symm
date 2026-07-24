@@ -150,29 +150,16 @@ func (signal *Signal) Calculate(
 	books []kraken.BookData,
 ) ([]*types.Measurement, error) {
 	events := depthEvents(books, trades)
-	out := make([]*types.Measurement, 0, len(events))
-
-	for _, event := range events {
+	out, err := types.MeasureEventsParallel(events, func(event types.Event) ([]*types.Measurement, error) {
 		if event.Stream == "book" {
-			measurements, err := signal.measureBook(event.Row.(kraken.BookData))
-
-			// One malformed or crossed venue book must not abort the cut for
-			// every other symbol; skip the unmeasurable event.
-			if err != nil {
-				continue
-			}
-
-			out = append(out, measurements...)
-			continue
+			return signal.measureBook(event.Row.(kraken.BookData))
 		}
 
-		measurements, err := signal.measureTrade(event.Row.(kraken.TradeData))
+		return signal.measureTrade(event.Row.(kraken.TradeData))
+	})
 
-		if err != nil {
-			continue
-		}
-
-		out = append(out, measurements...)
+	if err != nil {
+		return nil, err
 	}
 
 	types.WireMeasurements(out, signal.ui)

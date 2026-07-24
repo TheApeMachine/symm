@@ -38,7 +38,6 @@ per-tick evidence in place so the object does not grow without bound.
 */
 type Thesis struct {
 	checkpoint    atomic.Int64
-	uiHub         chan<- []byte
 	publish       sync.Mutex
 	Tick          int64          `json:"tick"`
 	At            time.Time      `json:"at"`
@@ -63,9 +62,8 @@ type Thesis struct {
 /*
 NewThesis creates a Thesis with empty durable maps and no tick evidence yet.
 */
-func NewThesis(uiHub chan<- []byte) *Thesis {
+func NewThesis() *Thesis {
 	return &Thesis{
-		uiHub:        uiHub,
 		At:           time.Now().UTC(),
 		Positions:    &sync.Map{},
 		Holdings:     &sync.Map{},
@@ -282,7 +280,7 @@ func (thesis *Thesis) CutSnapshot() *Thesis {
 		return nil
 	}
 
-	snapshot := NewThesis(thesis.uiHub)
+	snapshot := NewThesis()
 	snapshot.Tick = thesis.Tick
 	snapshot.At = thesis.At
 	snapshot.CrossSection = thesis.CrossSection

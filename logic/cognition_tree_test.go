@@ -17,7 +17,8 @@ ExecuteBeamSearch(parent, width, len(parts)).
 */
 func TestCognitionVisualizationStaysBounded(t *testing.T) {
 	Convey("Given a trained sequence wider than the beam-search depth", t, func() {
-		tree, _ := dmt.NewTree("")
+		tree, err := dmt.NewTree("")
+		So(err, ShouldBeNil)
 		parts := []string{"symbol-vvv-usd"}
 
 		for index := range 64 {
@@ -38,8 +39,8 @@ func TestCognitionVisualizationStaysBounded(t *testing.T) {
 		}
 
 		var scratch dmt.ClassificationScratch
-		classification, err := tree.Classify(sequence, &scratch)
-		So(err, ShouldBeNil)
+		classification, classifyErr := tree.Classify(sequence, &scratch)
+		So(classifyErr, ShouldBeNil)
 		predictions := tree.PredictNextSensoryTokens(parent, nil)
 		done := make(chan struct{})
 
@@ -65,7 +66,8 @@ symbol must both appear as depth-2 children.
 */
 func TestCognitionBranchesForkFromRoot(t *testing.T) {
 	Convey("Given trained sequences that diverge after the symbol hop", t, func() {
-		tree, _ := dmt.NewTree("")
+		tree, err := dmt.NewTree("")
+		So(err, ShouldBeNil)
 		analyzer := &Analyzer{tree: tree}
 
 		tree.TrainSensorySequence([]byte(
@@ -121,7 +123,8 @@ func TestCognitionBranchesForkFromRoot(t *testing.T) {
 
 func TestCognitionBeamsStaySymbolScoped(t *testing.T) {
 	Convey("Given two symbols trained on divergent sensory continuations", t, func() {
-		tree, _ := dmt.NewTree("")
+		tree, err := dmt.NewTree("")
+		So(err, ShouldBeNil)
 		analyzer := &Analyzer{tree: tree}
 
 		for range 8 {
@@ -167,7 +170,8 @@ func TestCognitionBeamsStaySymbolScoped(t *testing.T) {
 
 func TestCognitionVisualization(t *testing.T) {
 	Convey("Given a trained sensory sequence", t, func() {
-		tree, _ := dmt.NewTree("")
+		tree, err := dmt.NewTree("")
+		So(err, ShouldBeNil)
 		sequence := []byte("symbol-btc-usd_pressure-positive")
 		parts := []string{"symbol-btc-usd", "pressure-positive"}
 		parent := []byte("symbol-btc-usd")
@@ -215,7 +219,12 @@ func TestCognitionVisualization(t *testing.T) {
 }
 
 func BenchmarkCognitionVisualization(b *testing.B) {
-	tree, _ := dmt.NewTree("")
+	tree, err := dmt.NewTree("")
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
 	sequence := []byte("symbol-btc-usd_pressure-positive_divergence-negative")
 	parts := []string{"symbol-btc-usd", "pressure-positive", "divergence-negative"}
 	parent := []byte("symbol-btc-usd_pressure-positive")
@@ -227,7 +236,11 @@ func BenchmarkCognitionVisualization(b *testing.B) {
 
 	var scratch dmt.ClassificationScratch
 	classification, err := tree.Classify(sequence, &scratch)
-	So(err, ShouldBeNil)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
 	predictions := tree.PredictNextSensoryTokens(parent, nil)
 
 	for b.Loop() {

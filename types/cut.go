@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 )
 
 /*
@@ -102,15 +103,107 @@ func NewImmutableCut(id CutID, tick int64, thesis *Thesis) *ImmutableCut {
 		Tick:         tick,
 		At:           thesis.At,
 		Measurements: CloneMeasurements(thesis.SnapshotMeasurements()),
-		Forecasts:    append([]Forecasts(nil), thesis.Forecasts...),
-		Decisions:    append([]Decision(nil), thesis.Decisions...),
-		Hypotheses:   append([]Hypothesis(nil), thesis.Hypotheses...),
-		Categories:   append([]Category(nil), thesis.Categories...),
+		Forecasts:    cloneForecasts(thesis.Forecasts),
+		Decisions:    cloneDecisions(thesis.Decisions),
+		Hypotheses:   cloneHypotheses(thesis.Hypotheses),
+		Categories:   cloneCategories(thesis.Categories),
 		Resonance:    append([]any(nil), thesis.Resonance...),
 		Causal:       append([]any(nil), thesis.Causal...),
 		Incomplete:   thesis.Incomplete(),
 		Sequence:     uint64(tick),
 	}
+}
+
+func cloneDecisions(rows []Decision) []Decision {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	out := make([]Decision, len(rows))
+
+	for index, row := range rows {
+		out[index] = row
+
+		if row.Alternatives != nil {
+			alternatives := make(map[string]float64, len(row.Alternatives))
+
+			for key, value := range row.Alternatives {
+				alternatives[key] = value
+			}
+
+			out[index].Alternatives = alternatives
+		}
+
+		out[index].ProposedNotional = copyDecimal(row.ProposedNotional)
+		out[index].ProposedQuantity = copyDecimal(row.ProposedQuantity)
+		out[index].ReferencePrice = copyDecimal(row.ReferencePrice)
+		out[index].ExpectedReturn = copyDecimal(row.ExpectedReturn)
+		out[index].ExpectedFees = copyDecimal(row.ExpectedFees)
+		out[index].ExpectedSpread = copyDecimal(row.ExpectedSpread)
+		out[index].ExpectedImpact = copyDecimal(row.ExpectedImpact)
+		out[index].AvailableCapital = copyDecimal(row.AvailableCapital)
+		out[index].DisplacedQuantity = copyDecimal(row.DisplacedQuantity)
+		out[index].DisplacedPrice = copyDecimal(row.DisplacedPrice)
+	}
+
+	return out
+}
+
+func cloneForecasts(rows []Forecasts) []Forecasts {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	out := make([]Forecasts, len(rows))
+
+	for index, row := range rows {
+		out[index] = row
+		out[index].ReferencePrice = copyDecimal(row.ReferencePrice)
+		out[index].BuyCapacity = copyDecimal(row.BuyCapacity)
+		out[index].SellCapacity = copyDecimal(row.SellCapacity)
+	}
+
+	return out
+}
+
+func cloneHypotheses(rows []Hypothesis) []Hypothesis {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	out := make([]Hypothesis, len(rows))
+
+	for index, row := range rows {
+		out[index] = row
+		out[index].Controls = append([]string(nil), row.Controls...)
+	}
+
+	return out
+}
+
+func cloneCategories(rows []Category) []Category {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	out := make([]Category, len(rows))
+
+	for index, row := range rows {
+		out[index] = row
+		out[index].Supporting = append([]string(nil), row.Supporting...)
+		out[index].Opposing = append([]string(nil), row.Opposing...)
+		out[index].Missing = append([]string(nil), row.Missing...)
+	}
+
+	return out
+}
+
+func copyDecimal(value *decimal.Decimal) *decimal.Decimal {
+	if value == nil {
+		return nil
+	}
+
+	return value.Copy()
 }
 
 /*
@@ -133,10 +226,20 @@ func (cut *ImmutableCut) Checkpoint(dir string) error {
 	}
 
 	target := filepath.Join(dir, ThesisKey+".json")
+	temporaryPath, err := cut.writeTemp(dir, payload)
+
+	if err != nil {
+		return err
+	}
+
+	return cut.syncAndRename(dir, temporaryPath, target)
+}
+
+func (cut *ImmutableCut) writeTemp(dir string, payload []byte) (string, error) {
 	temporary, err := os.CreateTemp(dir, ThesisKey+"-*.tmp")
 
 	if err != nil {
-		return fmt.Errorf("cut: temp: %w", err)
+		return "", fmt.Errorf("cut: temp: %w", err)
 	}
 
 	temporaryPath := temporary.Name()
@@ -148,19 +251,23 @@ func (cut *ImmutableCut) Checkpoint(dir string) error {
 
 	if _, err := temporary.Write(payload); err != nil {
 		cleanup()
-		return fmt.Errorf("cut: write: %w", err)
+		return "", fmt.Errorf("cut: write: %w", err)
 	}
 
 	if err := temporary.Sync(); err != nil {
 		cleanup()
-		return fmt.Errorf("cut: sync file: %w", err)
+		return "", fmt.Errorf("cut: sync file: %w", err)
 	}
 
 	if err := temporary.Close(); err != nil {
 		_ = os.Remove(temporaryPath)
-		return fmt.Errorf("cut: close temp: %w", err)
+		return "", fmt.Errorf("cut: close temp: %w", err)
 	}
 
+	return temporaryPath, nil
+}
+
+func (cut *ImmutableCut) syncAndRename(dir, temporaryPath, target string) error {
 	if err := os.Rename(temporaryPath, target); err != nil {
 		_ = os.Remove(temporaryPath)
 		return fmt.Errorf("cut: rename: %w", err)

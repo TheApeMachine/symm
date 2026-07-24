@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -29,7 +30,7 @@ func NewBooter(ctx context.Context, uiHub chan []byte) *Booter {
 func (booter *Booter) Start() error {
 	for _, stage := range booter.stages {
 		if err := stage.Initialize(booter.ctx, booter.uiHub); err != nil {
-			return err
+			return errnie.Error(err)
 		}
 	}
 

@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"slices"
+	"strings"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
@@ -17,16 +18,18 @@ topics and owns plain position maps plus decode-once account routing indexes.
 */
 type Desk struct {
 	*types.Actor
-	status       types.Status
-	api          *websocket.API
-	instrument   *Instrument
-	price        *Price
-	balance      *Balance
-	positions    map[string]*Position
-	byReqID      map[int64]*Position
-	byOrderID    map[string]*Position
-	maxPositions int
-	maxReserved  int
+	status        types.Status
+	api           *websocket.API
+	instrument    *Instrument
+	price         *Price
+	balance       *Balance
+	positions     map[string]*Position
+	byReqID       map[int64]*Position
+	byOrderID     map[string]*Position
+	fillsBySymbol map[string][]Fill
+	historyReady  bool
+	maxPositions  int
+	maxReserved   int
 }
 
 /*
@@ -174,36 +177,124 @@ func (desk *Desk) onBalances(message any) any {
 
 /*
 AdoptOpen creates Position shells for wallet lots that already exist at startup
-or arrive via balance sync, so marks and exits work without a prior Enter.
+or arrive via balance sync, seeds entry economics from trade history, and marks
+so the UI never shows Entry 0 / NaN% for a venue-backed lot.
 */
 func (desk *Desk) AdoptOpen() {
 	if desk.balance == nil || desk.instrument == nil {
 		return
 	}
 
+	desk.loadFillHistory()
+	published := false
+
 	for holding := range desk.balance.Holdings() {
-		if _, ok := desk.positions[holding.Symbol]; ok {
+		lot, ok := desk.balance.LookupHolding(holding.Symbol)
+
+		if !ok {
 			continue
 		}
 
-		pair, err := desk.instrument.Pair(holding.Symbol)
+		if _, exists := desk.positions[lot.Symbol]; !exists {
+			pair, err := desk.instrument.Pair(lot.Symbol)
 
-		if err != nil {
-			continue
+			if err != nil {
+				continue
+			}
+
+			position := NewPosition(
+				desk.api, desk.instrument, desk.price, desk.balance, pair,
+			)
+
+			if err := position.setStatus(types.OPEN); err != nil {
+				errnie.Error(err)
+
+				continue
+			}
+
+			desk.positions[lot.Symbol] = position
 		}
 
-		position := NewPosition(
-			desk.api, desk.instrument, desk.price, desk.balance, pair,
-		)
-
-		if err := position.setStatus(types.OPEN); err != nil {
-			errnie.Error(err)
-
-			continue
+		if desk.seedEconomics(lot) {
+			published = true
 		}
 
-		desk.positions[holding.Symbol] = position
+		if position, exists := desk.positions[lot.Symbol]; exists {
+			position.Mark(lot.Symbol)
+		}
 	}
+
+	if published {
+		desk.balance.Publish()
+	}
+}
+
+/*
+loadFillHistory pulls venue trade history once and indexes fills by symbol so
+restarted inventory can recover entry price and fees.
+*/
+func (desk *Desk) loadFillHistory() {
+	if desk.historyReady || desk.api == nil {
+		return
+	}
+
+	history, err := desk.api.TradesHistory()
+
+	if err != nil {
+		errnie.Error(err)
+
+		return
+	}
+
+	if history == nil {
+		return
+	}
+
+	desk.fillsBySymbol = make(map[string][]Fill, len(history.Result.Trades))
+
+	for execID, trade := range history.Result.Trades {
+		symbol := desk.api.Name(trade.Pair)
+
+		if symbol == "" {
+			continue
+		}
+
+		fill := Fill{
+			ExecID: execID,
+			Side:   strings.ToLower(trade.Type),
+			Qty:    trade.Volume,
+			Price:  trade.Price,
+			Fee:    trade.Fee,
+		}
+
+		desk.fillsBySymbol[symbol] = append(desk.fillsBySymbol[symbol], fill)
+	}
+
+	desk.historyReady = true
+}
+
+/*
+seedEconomics derives EntryPrice/EntryFee from indexed fills when the wallet
+lot arrived without a live Enter path.
+*/
+func (desk *Desk) seedEconomics(holding *types.Holding) bool {
+	if holding == nil || desk.price == nil {
+		return false
+	}
+
+	if holding.EntryPrice != nil && holding.EntryPrice.Sign() > 0 {
+		return false
+	}
+
+	fills := desk.fillsBySymbol[holding.Symbol]
+
+	if len(fills) == 0 {
+		return false
+	}
+
+	desk.price.deriveEconomics(holding, fills)
+
+	return holding.EntryPrice != nil && holding.EntryPrice.Sign() > 0
 }
 
 /*

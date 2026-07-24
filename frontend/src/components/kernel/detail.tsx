@@ -10,6 +10,7 @@ import {
 	metricLabel,
 	orderedEpoch,
 	resolveStatus,
+	rowsFromBuffer,
 	stampOf,
 } from "#/components/terminal/measurement-view";
 import {
@@ -71,7 +72,7 @@ export const paintSignalDetailMeasurements = (
 		focusSymbol === ""
 			? universe
 			: universe.filter((row) => row.symbol === focusSymbol);
-	const history = focusRows.filter((row) => row.source === source);
+	const history = rowsFromBuffer(focusRows.filter((row) => row.source === source));
 	const headline = headlineMetric(source);
 	const latest =
 		headline === null ? history.at(-1) : latestByMetric(history, headline);

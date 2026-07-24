@@ -84,6 +84,10 @@ func (holding Holding) MarshalJSON() ([]byte, error) {
 		frame["return_pct"] = finiteFloat(*holding.ReturnPct)
 	}
 
+	if holding.ReservationID != "" {
+		frame["reservation_id"] = holding.ReservationID
+	}
+
 	if holding.Stoploss != nil {
 		if stopPrice := holding.Stoploss.StopPrice(); stopPrice > 0 {
 			frame["stop_price"] = stopPrice

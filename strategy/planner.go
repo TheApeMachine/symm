@@ -121,7 +121,7 @@ func (planner *Planner) Update(
 	rows []*types.Measurement,
 ) *types.Thesis {
 	if thesis == nil {
-		thesis = types.NewThesis(planner.uiHub)
+		thesis = types.NewThesis()
 	}
 
 	thesis.ResetTick(at, tick)

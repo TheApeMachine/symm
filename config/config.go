@@ -133,6 +133,34 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("config: ui.addr is required")
 	}
 
+	if config.Market.QuoteCurrency == "" {
+		return Config{}, fmt.Errorf("config: market.quote_currency is required")
+	}
+
+	if config.Market.SubscribeBatch < 1 {
+		return Config{}, fmt.Errorf("config: market.subscribe_batch must be >= 1")
+	}
+
+	if config.Market.SubscribePace <= 0 {
+		return Config{}, fmt.Errorf("config: market.subscribe_pace must be > 0")
+	}
+
+	if config.Market.BaselineHalflife <= 0 {
+		return Config{}, fmt.Errorf("config: market.baseline_halflife must be > 0")
+	}
+
+	if config.Trading.MaxFraction <= 0 || config.Trading.MaxFraction > 1 {
+		return Config{}, fmt.Errorf("config: trading.allocation.max_fraction must be in (0, 1]")
+	}
+
+	if config.Trading.SlotsNormal < 1 {
+		return Config{}, fmt.Errorf("config: trading.slots.normal must be >= 1")
+	}
+
+	if config.Trading.SlotsReserved < 0 {
+		return Config{}, fmt.Errorf("config: trading.slots.reserved must be >= 0")
+	}
+
 	return config, nil
 }
 
@@ -143,17 +171,20 @@ It does not read Viper so tests stay isolated from process-wide config state.
 func Fixture() Config {
 	return Config{
 		System: SystemConfig{
-			ActorBuffer:   64,
-			ChannelBuffer: 128,
+			ActorBuffer:     64,
+			ChannelBuffer:   128,
 			DataPath:        "/tmp/symm-test",
 			AuditRotate:     false,
+			CheckpointEvery: time.Second,
 		},
 		Market: MarketConfig{
-			QuoteCurrency:  "USD",
-			SubscribeBatch: 10,
-			L3Enabled:      true,
-			L3Depth:        10,
-			L3RateLimit:    200,
+			QuoteCurrency:    "USD",
+			SubscribeBatch:   10,
+			SubscribePace:    20 * time.Millisecond,
+			L3Enabled:        true,
+			L3Depth:          10,
+			L3RateLimit:      200,
+			BaselineHalflife: 30 * time.Second,
 		},
 		Trading: TradingConfig{
 			Model:         "paper",
@@ -165,7 +196,12 @@ func Fixture() Config {
 			Addr: "127.0.0.1:0",
 		},
 		Signals: SignalsConfig{
-			FeedTrackCapacity: 512,
+			FeedTimelineCapacity: 4096,
+			FeedTrackCapacity:    512,
+		},
+		Cognitive: CognitiveConfig{
+			InMemory:   true,
+			TickBudget: 10 * time.Millisecond,
 		},
 	}
 }

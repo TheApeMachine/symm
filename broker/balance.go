@@ -2,10 +2,9 @@ package broker
 
 import (
 	"iter"
-	"maps"
+	"sync"
 	"sync/atomic"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken"
@@ -16,10 +15,12 @@ import (
 /*
 Balance owns the wallet map and reservation ledger for the Desk event loop.
 Snapshots replace the entire asset map; updates require exact next-sequence.
+mu serializes wallet mutations against concurrent Frame/strategy reads.
 */
 type Balance struct {
 	status   atomic.Value
 	api      *websocket.API
+	mu       sync.RWMutex
 	data     map[string]*kraken.BalanceData
 	holdings map[string]*types.Holding
 	ledger   *Ledger
@@ -129,6 +130,8 @@ func (balance *Balance) BalanceAck(buf []byte) {
 		return
 	}
 
+	balance.mu.Lock()
+
 	if balance.data == nil {
 		balance.data = make(map[string]*kraken.BalanceData)
 	}
@@ -144,6 +147,7 @@ func (balance *Balance) BalanceAck(buf []byte) {
 		balance.data = replaced
 		balance.sequence = incoming.Sequence
 		balance.syncWallet()
+		balance.mu.Unlock()
 		balance.status.Store(types.READY)
 		balance.Publish()
 
@@ -151,6 +155,7 @@ func (balance *Balance) BalanceAck(buf []byte) {
 	}
 
 	if balance.sequence > 0 && incoming.Sequence != balance.sequence+1 {
+		balance.mu.Unlock()
 		errnie.Error(errnie.Err(
 			errnie.Validation,
 			"balance: sequence gap requires snapshot resync",
@@ -168,6 +173,7 @@ func (balance *Balance) BalanceAck(buf []byte) {
 
 	balance.sequence = incoming.Sequence
 	balance.syncWallet()
+	balance.mu.Unlock()
 	balance.status.Store(types.READY)
 	balance.Publish()
 }
@@ -200,6 +206,9 @@ func (balance *Balance) Get(symbol string) (*kraken.BalanceData, error) {
 		return nil, err
 	}
 
+	balance.mu.RLock()
+	defer balance.mu.RUnlock()
+
 	row, ok := balance.data[symbol]
 
 	if !ok {
@@ -218,6 +227,9 @@ Holdings yields open non-quote inventory lots as value copies.
 */
 func (balance *Balance) Holdings() iter.Seq[types.Holding] {
 	return func(yield func(types.Holding) bool) {
+		balance.mu.RLock()
+		defer balance.mu.RUnlock()
+
 		for symbol, holding := range balance.holdings {
 			if symbol != holding.Symbol {
 				continue
@@ -238,6 +250,9 @@ func (balance *Balance) Holdings() iter.Seq[types.Holding] {
 Holding returns a value copy of an open lot.
 */
 func (balance *Balance) Holding(symbol string) (types.Holding, error) {
+	balance.mu.RLock()
+	defer balance.mu.RUnlock()
+
 	holding, ok := balance.holdings[symbol]
 
 	if ok && holding.Status == types.CLOSED {
@@ -259,6 +274,9 @@ func (balance *Balance) Holding(symbol string) (types.Holding, error) {
 StoreHolding writes a lot into the wallet map (Desk enter / adopt path).
 */
 func (balance *Balance) StoreHolding(holding *types.Holding) {
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
+
 	balance.holdings[holding.Symbol] = holding
 }
 
@@ -266,6 +284,9 @@ func (balance *Balance) StoreHolding(holding *types.Holding) {
 DeleteHolding removes a pending lot that never filled.
 */
 func (balance *Balance) DeleteHolding(symbol string) {
+	balance.mu.Lock()
+	defer balance.mu.Unlock()
+
 	delete(balance.holdings, symbol)
 }
 
@@ -273,6 +294,9 @@ func (balance *Balance) DeleteHolding(symbol string) {
 LookupHolding returns the live lot pointer for Desk fill/mark paths.
 */
 func (balance *Balance) LookupHolding(symbol string) (*types.Holding, bool) {
+	balance.mu.RLock()
+	defer balance.mu.RUnlock()
+
 	holding, ok := balance.holdings[symbol]
 
 	return holding, ok
@@ -290,79 +314,4 @@ TradeMatchesSymbol reports whether a REST trade-history pair belongs to symbol.
 */
 func (balance *Balance) TradeMatchesSymbol(tradePair string, symbol string) bool {
 	return balance.api.Name(tradePair) == balance.api.Name(symbol)
-}
-
-/*
-Available reports whether free quote cash covers amount after live reservations.
-*/
-func (balance *Balance) Available(amount *decimal.Decimal) bool {
-	if balance.validate(map[string]any{
-		"amount": amount,
-	}) != nil {
-		return false
-	}
-
-	free, err := balance.FreeCash()
-
-	if err != nil {
-		errnie.Error(err)
-
-		return false
-	}
-
-	return free.Sub(amount).Sign() >= 0
-}
-
-/*
-FreeCash is exchange quote balance minus open cash reservations.
-*/
-func (balance *Balance) FreeCash() (*decimal.Decimal, error) {
-	row, err := balance.Get(balance.quote)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"quote balance not found",
-			err,
-		))
-	}
-
-	reserved := balance.ledger.ReservedCash()
-
-	return row.Balance.Copy().Sub(reserved), nil
-}
-
-/*
-AssetAvailable returns sellable base qty after subtracting sell reservations.
-*/
-func (balance *Balance) AssetAvailable(asset string) (*decimal.Decimal, error) {
-	if err := balance.validate(map[string]any{
-		"asset": asset,
-	}); err != nil {
-		return nil, err
-	}
-
-	row, err := balance.Get(asset)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"asset available balance missing for "+asset,
-			err,
-		))
-	}
-
-	reserved := balance.ledger.ReservedAsset(asset)
-
-	return row.Balance.Copy().Sub(reserved), nil
-}
-
-func (balance *Balance) validate(mandatory map[string]any) error {
-	check := map[string]any{
-		"data": balance.data,
-	}
-
-	maps.Copy(check, mandatory)
-
-	return errnie.Error(errnie.Require(check))
 }

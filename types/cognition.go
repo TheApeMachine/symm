@@ -44,6 +44,7 @@ type Cognition struct {
 	RegimePrefix     string             `json:"regimePrefix"`
 	Winner           string             `json:"winner"`
 	Ready            bool               `json:"ready"`
+	Error            string             `json:"error,omitempty"`
 	Confidence       float64            `json:"confidence"`
 	Contrast         float64            `json:"contrast"`
 	EntropyBits      float64            `json:"entropyBits"`

@@ -9,7 +9,7 @@ import (
 
 func TestNoteLifecycle(t *testing.T) {
 	Convey("Given a thesis phase transition", t, func() {
-		thesis := NewThesis(nil)
+		thesis := NewThesis()
 		at := time.Unix(1, 0).UTC()
 		thesis.NoteLifecycle("BTC/USD", LifecycleEntered, at)
 
@@ -24,7 +24,7 @@ func TestNoteLifecycle(t *testing.T) {
 func TestThesisSaveCheckpoint(t *testing.T) {
 	Convey("Given a finalized immutable cut", t, func() {
 		dir := t.TempDir()
-		thesis := NewThesis(nil)
+		thesis := NewThesis()
 		cut := &ImmutableCut{
 			ID:   2,
 			Tick: 4,
@@ -40,7 +40,7 @@ func TestThesisSaveCheckpoint(t *testing.T) {
 
 func TestPublish(t *testing.T) {
 	Convey("Given a thesis already carrying published source rows", t, func() {
-		thesis := NewThesis(nil)
+		thesis := NewThesis()
 		first := time.Unix(1, 0).UTC()
 		second := time.Unix(2, 0).UTC()
 		thesis.Publish(SourceHawkes, []*Measurement{
@@ -80,7 +80,7 @@ func TestPublish(t *testing.T) {
 }
 
 func BenchmarkPublish(b *testing.B) {
-	thesis := NewThesis(nil)
+	thesis := NewThesis()
 	at := time.Unix(1, 0).UTC()
 	rows := []*Measurement{{
 		Source: SourceHawkes, Metric: MetricEventCount,
@@ -95,7 +95,7 @@ func BenchmarkPublish(b *testing.B) {
 }
 
 func BenchmarkNoteLifecycle(b *testing.B) {
-	thesis := NewThesis(nil)
+	thesis := NewThesis()
 	at := time.Unix(1, 0).UTC()
 
 	b.ReportAllocs()

@@ -13,7 +13,7 @@ import (
 
 func TestBasinConfidence(t *testing.T) {
 	Convey("Given a GasReady manifold without a phase corpus", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.Manifold.Store("BTC/USD", gasState("BTC/USD", false, nil))
 
 		basin, ready, class, phaseReady, _ := basinConfidence(thesis, "BTC/USD", "buy")
@@ -27,7 +27,7 @@ func TestBasinConfidence(t *testing.T) {
 	})
 
 	Convey("Given a phase compass aligned with the cognitive winner", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.Manifold.Store("BTC/USD", gasState("BTC/USD", true, []manifold.PhaseResponse{
 			{Angle: 0.1, Similarity: 0.2, Outcome: manifold.PhaseOutcome{Class: "sell", Confidence: 0.9}},
 			{Angle: 1.2, Similarity: 0.8, Outcome: manifold.PhaseOutcome{Class: "buy", Confidence: 0.7}},
@@ -45,7 +45,7 @@ func TestBasinConfidence(t *testing.T) {
 	})
 
 	Convey("Given a phase compass whose strongest hit is an opposing class", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.Manifold.Store("ETH/USD", gasState("ETH/USD", true, []manifold.PhaseResponse{
 			{Angle: 0.5, Similarity: 0.9, Outcome: manifold.PhaseOutcome{Class: "sell", Confidence: 0.8}},
 		}))
@@ -64,7 +64,7 @@ func TestBasinConfidence(t *testing.T) {
 
 func TestMeasureOpportunityPhase(t *testing.T) {
 	Convey("Given destructive interference with a sell-labeled history", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.Manifold.Store("BTC/USD", gasState("BTC/USD", true, []manifold.PhaseResponse{
 			{Angle: 0, Similarity: -0.6, Outcome: manifold.PhaseOutcome{Class: "sell"}},
 		}))
@@ -86,7 +86,7 @@ func TestMeasureOpportunityPhase(t *testing.T) {
 	})
 
 	Convey("Given cognition buy against an opposing phase attractor", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.Manifold.Store("BTC/USD", gasState("BTC/USD", true, []manifold.PhaseResponse{
 			{Angle: 0, Similarity: 0.7, Outcome: manifold.PhaseOutcome{Class: "sell"}},
 		}))
@@ -108,7 +108,7 @@ func TestMeasureOpportunityPhase(t *testing.T) {
 	})
 
 	Convey("Given cognition buy aligned with a constructive phase basin", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.Manifold.Store("BTC/USD", gasState("BTC/USD", true, []manifold.PhaseResponse{
 			{Angle: 0, Similarity: 0.4, Outcome: manifold.PhaseOutcome{Class: "buy"}},
 		}))
@@ -134,7 +134,7 @@ func TestMeasureOpportunityPhase(t *testing.T) {
 }
 
 func BenchmarkBasinConfidence(b *testing.B) {
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis()
 	thesis.Manifold.Store("BTC/USD", gasState("BTC/USD", true, []manifold.PhaseResponse{
 		{Angle: 0, Similarity: 0.6, Outcome: manifold.PhaseOutcome{Class: "buy"}},
 		{Angle: 1, Similarity: 0.2, Outcome: manifold.PhaseOutcome{Class: "sell"}},

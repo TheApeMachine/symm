@@ -50,11 +50,11 @@ const { appStore } = await import("#/collections/app");
 const { WsFeed } = await import("#/providers/websocket");
 
 /*
-WsFeed connects the worker and never publishes focus upstream — symbol selection
-is a client paint concern only.
+WsFeed connects the worker and publishes focus upstream so signal metrics can
+gate on the selected symbol.
 */
 describe("WsFeed", () => {
-	it("connects without sending focus messages", () => {
+	it("connects and sends focus messages on ready and focus changes", () => {
 		appStore.actions.updateFocusSymbol("BTC/USD");
 		WsFeed();
 		const worker = MockWorker.instances.at(-1);
@@ -65,26 +65,16 @@ describe("WsFeed", () => {
 			type: "CONNECT",
 			url: expect.any(String),
 		});
-		expect(
-			worker?.messages.some(
-				(message) =>
-					typeof message === "object" &&
-					message !== null &&
-					"type" in message &&
-					message.type === "FOCUS",
-			),
-		).toBe(false);
+		expect(worker?.messages).toContainEqual({
+			type: "FOCUS",
+			symbol: "BTC/USD",
+		});
 
 		appStore.actions.updateFocusSymbol("ETH/USD");
-		expect(
-			worker?.messages.some(
-				(message) =>
-					typeof message === "object" &&
-					message !== null &&
-					"type" in message &&
-					message.type === "FOCUS",
-			),
-		).toBe(false);
+		expect(worker?.messages).toContainEqual({
+			type: "FOCUS",
+			symbol: "ETH/USD",
+		});
 
 		mockedReact.cleanup?.();
 	});

@@ -6,7 +6,8 @@ const WIRE_VERSION = 1;
 
 type WorkerInbound =
 	| { type: "CONNECT"; url: string }
-	| { type: "DISCONNECT" };
+	| { type: "DISCONNECT" }
+	| { type: "FOCUS"; symbol: string };
 
 type WorkerOutbound =
 	| { type: "READY" }
@@ -15,32 +16,31 @@ type WorkerOutbound =
 	| { type: "ERROR_FRAME"; frame: Record<string, unknown> }
 	| { type: "ERROR"; message: string };
 
-const REPLACEABLE_KEYS = new Set([
-	"balances",
-	"executions",
-	"instruments",
-	"positions",
-	"tick",
-	"holdings",
-	"stops",
-	"measurements",
-	"decisions",
-	"lifecycle",
-	"findings",
-	"causal",
-	"resonance",
-	"manifold",
-	"cognition",
-	"diagnostics",
-]);
-
 let socket: WebSocket | null = null;
 let socketListeners: AbortController | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let attempt = 0;
 let activeUrl = "";
 let pending: Record<string, unknown> = {};
+let pendingGeneration = new Map<string, number>();
+const appliedGeneration = new Map<string, number>();
 let rafHandle: number | null = null;
+let incompatible = false;
+let focusSymbol = "";
+
+/*
+sendFocus pushes the dashboard focus to the backend so signal-metric publishes
+can gate on the selected symbol. No-ops until the socket is open.
+*/
+const sendFocus = (symbol: string) => {
+	focusSymbol = symbol;
+
+	if (socket === null || socket.readyState !== WebSocket.OPEN) {
+		return;
+	}
+
+	socket.send(JSON.stringify({ type: "focus", symbol }));
+};
 
 /*
 teardownSocket aborts the current connection's listeners (one AbortController per
@@ -64,26 +64,38 @@ const teardownSocket = () => {
 
 /*
 validateFrame accepts versioned envelopes or legacy flat frames and returns the
-payload object painters consume. Incompatible versions are rejected at ingress.
+payload object painters consume plus the envelope generation when present.
 */
 const validateFrame = (
 	raw: Record<string, unknown>,
-): Record<string, unknown> | null => {
+): { payload: Record<string, unknown>; generation?: number } | null => {
 	if (typeof raw.v === "number") {
 		if (raw.v !== WIRE_VERSION) {
-			throw new Error(`wire version ${raw.v} incompatible with ${WIRE_VERSION}`);
+			throw new Error(
+				`wire version ${raw.v} incompatible with ${WIRE_VERSION}`,
+			);
 		}
 
 		const payload = raw.payload;
 
-		if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+		if (
+			payload === null ||
+			typeof payload !== "object" ||
+			Array.isArray(payload)
+		) {
 			throw new Error("wire payload must be an object");
 		}
 
-		return payload as Record<string, unknown>;
+		const generation =
+			typeof raw.g === "number" && Number.isFinite(raw.g) ? raw.g : undefined;
+
+		return {
+			payload: payload as Record<string, unknown>,
+			generation,
+		};
 	}
 
-	return raw;
+	return { payload: raw };
 };
 
 const flushPending = () => {
@@ -91,6 +103,16 @@ const flushPending = () => {
 
 	const frame = pending;
 	pending = {};
+
+	for (const [key, generation] of pendingGeneration) {
+		const prior = appliedGeneration.get(key) ?? 0;
+
+		if (generation >= prior) {
+			appliedGeneration.set(key, generation);
+		}
+	}
+
+	pendingGeneration = new Map();
 
 	if (Object.keys(frame).length === 0) {
 		return;
@@ -110,11 +132,21 @@ const scheduleFlush = () => {
 	rafHandle = self.requestAnimationFrame(flushPending);
 };
 
-const coalesceFrame = (frame: Record<string, unknown>) => {
+/*
+coalesceFrame replaces pending keys; generation-aware ordering drops frames that
+would regress same-key state already applied or queued at a newer generation.
+*/
+const coalesceFrame = (frame: Record<string, unknown>, generation?: number) => {
 	for (const [key, value] of Object.entries(frame)) {
-		if (REPLACEABLE_KEYS.has(key) || key === "error") {
-			pending[key] = value;
-			continue;
+		if (generation !== undefined) {
+			const applied = appliedGeneration.get(key) ?? 0;
+			const queued = pendingGeneration.get(key) ?? 0;
+
+			if (generation < applied || generation < queued) {
+				continue;
+			}
+
+			pendingGeneration.set(key, generation);
 		}
 
 		pending[key] = value;
@@ -131,6 +163,7 @@ const connect = (url: string) => {
 
 	activeUrl = url;
 	teardownSocket();
+	incompatible = false;
 
 	socketListeners = new AbortController();
 	socket = new WebSocket(url);
@@ -139,6 +172,11 @@ const connect = (url: string) => {
 		"open",
 		() => {
 			attempt = 0;
+			incompatible = false;
+
+			if (focusSymbol !== "") {
+				sendFocus(focusSymbol);
+			}
 
 			self.postMessage({
 				type: "ONLINE",
@@ -156,7 +194,7 @@ const connect = (url: string) => {
 				online: false,
 			} satisfies WorkerOutbound);
 
-			if (reconnectTimer !== null || activeUrl === "") {
+			if (reconnectTimer !== null || activeUrl === "" || incompatible) {
 				return;
 			}
 
@@ -193,16 +231,22 @@ const connect = (url: string) => {
 	socket.addEventListener(
 		"message",
 		(event) => {
+			if (incompatible) {
+				return;
+			}
+
 			try {
 				const parsed = JSON.parse(String(event.data)) as Record<
 					string,
 					unknown
 				>;
-				const frame = validateFrame(parsed);
+				const validated = validateFrame(parsed);
 
-				if (frame === null) {
+				if (validated === null) {
 					return;
 				}
+
+				const { payload: frame, generation } = validated;
 
 				if (
 					frame.error !== undefined &&
@@ -216,11 +260,17 @@ const connect = (url: string) => {
 					return;
 				}
 
-				coalesceFrame(frame);
+				coalesceFrame(frame, generation);
 			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+
+				if (message.includes("wire version")) {
+					incompatible = true;
+				}
+
 				self.postMessage({
 					type: "ERROR",
-					message: err instanceof Error ? err.message : String(err),
+					message,
 				} satisfies WorkerOutbound);
 			}
 		},
@@ -239,6 +289,7 @@ self.addEventListener("message", (event: MessageEvent<WorkerInbound>) => {
 
 		case "DISCONNECT": {
 			activeUrl = "";
+			incompatible = false;
 
 			if (reconnectTimer !== null) {
 				clearTimeout(reconnectTimer);
@@ -251,11 +302,17 @@ self.addEventListener("message", (event: MessageEvent<WorkerInbound>) => {
 			}
 
 			pending = {};
+			pendingGeneration = new Map();
 			teardownSocket();
 			self.postMessage({
 				type: "ONLINE",
 				online: false,
 			} satisfies WorkerOutbound);
+			return;
+		}
+
+		case "FOCUS": {
+			sendFocus(message.symbol);
 			return;
 		}
 

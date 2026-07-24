@@ -280,6 +280,7 @@ func (analyzer *Analyzer) readCognition(
 			At:       state.At,
 			Sequence: string(sequence),
 			Ready:    false,
+			Error:    err.Error(),
 		}
 	}
 

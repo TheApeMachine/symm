@@ -13,7 +13,7 @@ import (
 func TestCutOutcome(t *testing.T) {
 	Convey("Given a cut frozen from a live process", t, func() {
 		signal := NewSignal(t.Context(), nil)
-		signal.thesis = types.NewThesis(nil)
+		signal.thesis = types.NewThesis()
 		base := time.Unix(1, 0)
 
 		signal.mu.Lock()

@@ -115,13 +115,14 @@ func (price *Price) TickerAck(ticker *kraken.Ticker) {
 		return
 	}
 
+	price.mu.Lock()
+
 	for _, item := range ticker.Data {
 		copyItem := item
-		price.mu.Lock()
 		price.tickers[item.Symbol] = &copyItem
-		price.mu.Unlock()
 	}
 
+	price.mu.Unlock()
 	price.status.Store(types.READY)
 }
 

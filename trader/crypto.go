@@ -195,6 +195,7 @@ func (crypto *Crypto) enqueue(frame datura.Map[any]) {
 	payload, err := frame.Marshal()
 
 	if err != nil {
+		errnie.Error(err)
 		return
 	}
 

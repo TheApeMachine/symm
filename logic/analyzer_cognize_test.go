@@ -18,16 +18,17 @@ accumulation because it is independent of market ingress and signal behavior.
 */
 func TestAnalyzerConsolidate(t *testing.T) {
 	Convey("Given episodic observations pending behind the DMT ambiguity gate", t, func() {
-		tree, _ := dmt.NewTree("")
+		tree, err := dmt.NewTree("")
+		So(err, ShouldBeNil)
 		analyzer := &Analyzer{tree: tree}
 		sequence := []byte("symbol-btc-usd_pressure-positive")
 		from := time.Unix(0, 100)
 		through := time.Unix(0, 200)
-		_, _, err := tree.CommitToEpisodicBuffer(uint64(from.UnixNano()), sequence)
+		_, _, err = tree.CommitToEpisodicBuffer(uint64(from.UnixNano()), sequence)
 		So(err, ShouldBeNil)
 		_, _, err = tree.CommitToEpisodicBuffer(uint64(through.UnixNano()), sequence)
 		So(err, ShouldBeNil)
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.Cognition.Store("BTC/USD", types.Cognition{Symbol: "BTC/USD"})
 
 		analyzer.consolidate(thesis, []time.Time{from, through}, false)
@@ -59,9 +60,10 @@ winner after attractor training, so strategy is not gated on sequence repeats.
 */
 func TestAnalyzerCognize(t *testing.T) {
 	Convey("Given a gas-ready buy-dominant manifold state", t, func() {
-		tree, _ := dmt.NewTree("")
+		tree, err := dmt.NewTree("")
+		So(err, ShouldBeNil)
 		analyzer := &Analyzer{tree: tree}
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		state := manifold.State{
 			Symbol:         "BTC/USD",
 			At:             time.Unix(1, 0),
@@ -102,8 +104,13 @@ BenchmarkAnalyzerCognize retains the narrow calculation benchmark alongside the
 full production-path Analyzer benchmark.
 */
 func BenchmarkAnalyzerCognize(b *testing.B) {
-	tree, _ := dmt.NewTree("")
-		analyzer := &Analyzer{tree: tree}
+	tree, err := dmt.NewTree("")
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	analyzer := &Analyzer{tree: tree}
 	state := manifold.State{
 		Symbol:         "BTC/USD",
 		At:             time.Unix(1, 0),
@@ -125,6 +132,6 @@ func BenchmarkAnalyzerCognize(b *testing.B) {
 	}
 
 	for b.Loop() {
-		analyzer.cognize(types.NewThesis(nil), state)
+		analyzer.cognize(types.NewThesis(), state)
 	}
 }

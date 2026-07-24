@@ -38,7 +38,7 @@ Status key: `done` (already fixed in tree), `skip-stale` (citation obsolete; rep
 | 33 | done | Thesis checkpoint fsync via ImmutableCut.Checkpoint |
 | 34–36 | done | Hub coalesce / versioned envelopes started |
 | 37–38 | done | Frontend worker coalesce / FrameHistory LRU + epoch times |
-| 39–40 | done | Simulator per-stack + injected clock; in-process paper matcher |
+| 39–40 | done | Simulator per-stack + injected clock; paper transport restored to `kraken paper` CLI (in-process matcher rejected) |
 | 41 | done | Typed errors on reservation ledger (no hot-path errnie) |
 | 42 | done | WireVersion / WireEnvelope (Go) |
 | 43–60 | done | nomagique adaptive/book-flow/Hawkes path updates |

@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -109,91 +110,22 @@ func (allocator *Allocator) size(
 		return
 	}
 
-	haircut, haircutErr := allocator.haircut(decision.AllocationHaircut)
+	riskAdjusted, sliceErr := allocator.resolveSlice(decision, *budget)
 
-	if haircutErr != nil {
-		allocator.reject(thesis, decision, haircutErr.Error())
+	if sliceErr != "" {
+		allocator.reject(thesis, decision, sliceErr)
 		return
 	}
 
-	slice := *budget
+	quantity, cost, qtyErr := allocator.sizeQuantity(&pair, riskAdjusted, *budget, decision)
 
-	if decision.Cause == "rotation" &&
-		decision.ProposedNotional != nil &&
-		decision.ProposedNotional.Sign() > 0 {
-		slice = decision.ProposedNotional.Copy()
-	}
-
-	if decision.Cause != "rotation" {
-		walletSlice := decimal.ExactMul(slice, allocator.maxFraction)
-
-		if walletSlice == nil || walletSlice.Sign() <= 0 {
-			allocator.reject(thesis, decision, "wallet slice unavailable")
-			return
-		}
-
-		slice = walletSlice
-	}
-
-	riskAdjusted := slice.Copy().Sub(decimal.ExactMul(slice.Copy(), haircut))
-
-	if riskAdjusted.Sign() <= 0 {
-		allocator.reject(thesis, decision, "risk-adjusted budget below minimum")
+	if qtyErr != "" {
+		allocator.reject(thesis, decision, qtyErr)
 		return
 	}
 
-	minCost, minErr := allocator.price.Taker(&pair, pair.QtyMin)
-
-	if minErr != nil || minCost == nil {
-		allocator.reject(thesis, decision, "minimum cost unavailable")
+	if !allocator.reserveIntent(thesis, decision, budget, cost) {
 		return
-	}
-
-	if minCost.Cmp(riskAdjusted) > 0 {
-		allocator.reject(thesis, decision, "minimum exceeds wallet slice")
-		return
-	}
-
-	quantity, qtyErr := allocator.price.Quantity(&pair, riskAdjusted)
-
-	if qtyErr != nil || quantity == nil {
-		allocator.reject(thesis, decision, "quantity unavailable")
-		return
-	}
-
-	cost, costErr := allocator.price.Taker(&pair, quantity)
-
-	if costErr != nil || cost == nil || cost.Cmp(riskAdjusted) > 0 {
-		allocator.reject(thesis, decision, "taker cost unavailable")
-		return
-	}
-
-	if decision.Cause != "rotation" && cost.Cmp(*budget) > 0 {
-		allocator.reject(thesis, decision, "insufficient transaction budget")
-		return
-	}
-
-	if decision.Cause != "rotation" {
-		intentID := fmt.Sprintf(
-			"alloc:%s:%d", decision.Symbol, decision.At.UnixNano(),
-		)
-
-		if err := allocator.balance.Ledger().Reserve(
-			intentID, decision.Symbol, cost, false,
-		); err != nil {
-			allocator.reject(thesis, decision, err.Error())
-			return
-		}
-
-		decision.ReservationID = intentID
-
-		if value, ok := thesis.Holdings.Load(decision.Symbol); ok {
-			holding := value.(*types.Holding)
-			holding.ReservationID = intentID
-			thesis.Holdings.Store(decision.Symbol, holding)
-		}
-
-		*budget = (*budget).Sub(cost)
 	}
 
 	ask, askErr := allocator.price.ReferencePrice(&pair)
@@ -201,6 +133,11 @@ func (allocator *Allocator) size(
 	if askErr != nil {
 		if decision.ReservationID != "" {
 			_ = allocator.balance.Ledger().Release(decision.ReservationID)
+			decision.ReservationID = ""
+
+			if decision.Cause != "rotation" {
+				*budget = (*budget).Add(cost)
+			}
 		}
 
 		allocator.reject(thesis, decision, "reference price unavailable")
@@ -217,6 +154,111 @@ func (allocator *Allocator) size(
 		holding.Qty = quantity
 		thesis.Holdings.Store(decision.Symbol, holding)
 	}
+}
+
+func (allocator *Allocator) resolveSlice(
+	decision *types.Decision,
+	budget *decimal.Decimal,
+) (*decimal.Decimal, string) {
+	haircut, haircutErr := allocator.haircut(decision.AllocationHaircut)
+
+	if haircutErr != nil {
+		return nil, haircutErr.Error()
+	}
+
+	slice := budget
+
+	if decision.Cause == "rotation" &&
+		decision.ProposedNotional != nil &&
+		decision.ProposedNotional.Sign() > 0 {
+		slice = decision.ProposedNotional.Copy()
+	}
+
+	if decision.Cause != "rotation" {
+		walletSlice := decimal.ExactMul(slice, allocator.maxFraction)
+
+		if walletSlice == nil || walletSlice.Sign() <= 0 {
+			return nil, "wallet slice unavailable"
+		}
+
+		slice = walletSlice
+	}
+
+	riskAdjusted := slice.Copy().Sub(decimal.ExactMul(slice.Copy(), haircut))
+
+	if riskAdjusted.Sign() <= 0 {
+		return nil, "risk-adjusted budget below minimum"
+	}
+
+	return riskAdjusted, ""
+}
+
+func (allocator *Allocator) sizeQuantity(
+	pair *kraken.InstrumentPair,
+	riskAdjusted, budget *decimal.Decimal,
+	decision *types.Decision,
+) (*decimal.Decimal, *decimal.Decimal, string) {
+	minCost, minErr := allocator.price.Taker(pair, pair.QtyMin)
+
+	if minErr != nil || minCost == nil {
+		return nil, nil, "minimum cost unavailable"
+	}
+
+	if minCost.Cmp(riskAdjusted) > 0 {
+		return nil, nil, "minimum exceeds wallet slice"
+	}
+
+	quantity, qtyErr := allocator.price.Quantity(pair, riskAdjusted)
+
+	if qtyErr != nil || quantity == nil {
+		return nil, nil, "quantity unavailable"
+	}
+
+	cost, costErr := allocator.price.Taker(pair, quantity)
+
+	if costErr != nil || cost == nil || cost.Cmp(riskAdjusted) > 0 {
+		return nil, nil, "taker cost unavailable"
+	}
+
+	if decision.Cause != "rotation" && cost.Cmp(budget) > 0 {
+		return nil, nil, "insufficient transaction budget"
+	}
+
+	return quantity, cost, ""
+}
+
+func (allocator *Allocator) reserveIntent(
+	thesis *types.Thesis,
+	decision *types.Decision,
+	budget **decimal.Decimal,
+	cost *decimal.Decimal,
+) bool {
+	if decision.Cause == "rotation" {
+		return true
+	}
+
+	intentID := fmt.Sprintf(
+		"alloc:%s:%d", decision.Symbol, decision.At.UnixNano(),
+	)
+
+	if err := allocator.balance.Ledger().Reserve(
+		intentID, decision.Symbol, cost, false,
+	); err != nil {
+		allocator.reject(thesis, decision, err.Error())
+		return false
+	}
+
+	decision.ReservationID = intentID
+
+	if value, ok := thesis.Holdings.Load(decision.Symbol); ok {
+		holding := value.(*types.Holding)
+		holding.ReservationID = intentID
+		thesis.Holdings.Store(decision.Symbol, holding)
+	}
+
+	*budget = (*budget).Sub(cost)
+
+	return true
 }
 
 func (allocator *Allocator) haircut(value float64) (*decimal.Decimal, error) {

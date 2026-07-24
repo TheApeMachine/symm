@@ -45,7 +45,8 @@ type Recorder struct {
 	inFlight atomic.Int64
 	closing  atomic.Bool
 	closed   atomic.Bool
-	asyncErr atomic.Value
+	asyncMu  sync.Mutex
+	asyncErr error
 	closeMu  sync.Mutex
 }
 
@@ -217,13 +218,20 @@ func (recorder *Recorder) drain() {
 
 /*
 retainErr keeps the first asynchronous I/O failure for Close to return.
+A dedicated mutex preserves first-error-wins across mixed concrete error types
+where atomic.Value CompareAndSwap cannot compare interface equality reliably.
 */
 func (recorder *Recorder) retainErr(err error) {
 	if err == nil {
 		return
 	}
 
-	recorder.asyncErr.CompareAndSwap(nil, err)
+	recorder.asyncMu.Lock()
+	defer recorder.asyncMu.Unlock()
+
+	if recorder.asyncErr == nil {
+		recorder.asyncErr = err
+	}
 }
 
 /*
@@ -237,10 +245,12 @@ func (recorder *Recorder) Close() error {
 	}
 
 	recorder.closeMu.Lock()
-	defer recorder.closeMu.Unlock()
 
 	if recorder.closed.Load() {
-		return recorder.combinedErr(nil)
+		err := recorder.combinedErr(nil)
+		recorder.closeMu.Unlock()
+
+		return err
 	}
 
 	recorder.closing.Store(true)
@@ -250,7 +260,16 @@ func (recorder *Recorder) Close() error {
 	}
 
 	recorder.cancel()
+	recorder.closeMu.Unlock()
+
 	<-recorder.done
+
+	recorder.closeMu.Lock()
+	defer recorder.closeMu.Unlock()
+
+	if recorder.closed.Load() {
+		return recorder.combinedErr(nil)
+	}
 
 	var syncErr error
 	fh := recorder.fh
@@ -274,11 +293,9 @@ func (recorder *Recorder) Close() error {
 combinedErr joins the first async drain error with a close-path error.
 */
 func (recorder *Recorder) combinedErr(closeErr error) error {
-	var async error
-
-	if value := recorder.asyncErr.Load(); value != nil {
-		async, _ = value.(error)
-	}
+	recorder.asyncMu.Lock()
+	async := recorder.asyncErr
+	recorder.asyncMu.Unlock()
 
 	switch {
 	case async == nil:

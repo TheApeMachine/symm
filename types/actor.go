@@ -108,6 +108,7 @@ type Actor struct {
 	frozen        atomic.Bool
 	wg            sync.WaitGroup
 	seq           atomic.Uint64
+	dropped       atomic.Uint64
 }
 
 /*
@@ -226,12 +227,9 @@ func (actor *Actor) Start() {
 		actor.pump(topic)
 	}
 
-	actor.wg.Add(1)
-
-	go func() {
-		defer actor.wg.Done()
+	actor.wg.Go(func() {
 		actor.loop()
-	}()
+	})
 }
 
 /*
@@ -260,11 +258,8 @@ func (actor *Actor) pump(topic string) {
 		return
 	}
 
-	actor.wg.Add(1)
 
-	go func() {
-		defer actor.wg.Done()
-
+	actor.wg.Go(func() {
 		for {
 			select {
 			case <-actor.ctx.Done():
@@ -288,7 +283,7 @@ func (actor *Actor) pump(topic string) {
 				}
 			}
 		}
-	}()
+	})
 }
 
 func (actor *Actor) loop() {
@@ -310,7 +305,10 @@ func (actor *Actor) dispatch(envelope Envelope) {
 	handler, ok := actor.handlers[envelope.Topic]
 
 	if !ok {
-		actor.publish(envelope.Topic, envelope.Payload)
+		// Root fan-out (Live/Paper): never block ingress on a slow subscriber.
+		// Cascade actors always register handlers and keep blocking publish so
+		// cut identity stays serial where InitializeSize(1) is intentional.
+		actor.tryPublish(envelope.Topic, envelope.Payload)
 		return
 	}
 
@@ -323,6 +321,13 @@ func (actor *Actor) dispatch(envelope Envelope) {
 	actor.publish(envelope.Topic, result)
 }
 
+/*
+Dropped reports how many tryPublish subscriber enqueues were rejected.
+*/
+func (actor *Actor) Dropped() uint64 {
+	return actor.dropped.Load()
+}
+
 func (actor *Actor) publish(topic string, result any) {
 	actor.mu.Lock()
 	subscribers := append([]*Subscription[any](nil), actor.subscribers[topic]...)
@@ -333,6 +338,22 @@ func (actor *Actor) publish(topic string, result any) {
 		case <-actor.ctx.Done():
 			return
 		case subscriber.Channel <- result:
+		}
+	}
+}
+
+func (actor *Actor) tryPublish(topic string, result any) {
+	actor.mu.Lock()
+	subscribers := append([]*Subscription[any](nil), actor.subscribers[topic]...)
+	actor.mu.Unlock()
+
+	for _, subscriber := range subscribers {
+		select {
+		case <-actor.ctx.Done():
+			return
+		case subscriber.Channel <- result:
+		default:
+			actor.dropped.Add(1)
 		}
 	}
 }

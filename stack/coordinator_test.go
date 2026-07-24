@@ -14,7 +14,7 @@ func TestCutCoordinatorFinalize(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.Publish(types.SourceHawkes, []*types.Measurement{{
 			Source: types.SourceHawkes,
 			Metric: types.MetricEventCount,
@@ -57,7 +57,7 @@ func TestCutCoordinatorFinalize(t *testing.T) {
 func TestCutCoordinatorReport(t *testing.T) {
 	Convey("Given an active cut", t, func() {
 		ctx := context.Background()
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		coordinator := NewCutCoordinator(ctx, thesis, types.SourceHawkes, types.SourceCVD)
 		cutID := coordinator.begin(thesis)
 
@@ -68,16 +68,16 @@ func TestCutCoordinatorReport(t *testing.T) {
 		})
 
 		Convey("It records the result for that CutID", func() {
-			coordinator.mu.Lock()
-			defer coordinator.mu.Unlock()
-			So(coordinator.pending[cutID][types.SourceCVD].Status, ShouldEqual, types.SignalReady)
+			coordinator.barrier.mu.Lock()
+			defer coordinator.barrier.mu.Unlock()
+			So(coordinator.barrier.pending[cutID][types.SourceCVD].Status, ShouldEqual, types.SignalReady)
 		})
 	})
 }
 
 func BenchmarkCutCoordinatorFinalize(b *testing.B) {
 	ctx := context.Background()
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis()
 	coordinator := NewCutCoordinator(ctx, thesis, types.SourceHawkes)
 
 	b.ReportAllocs()
@@ -89,7 +89,7 @@ func BenchmarkCutCoordinatorFinalize(b *testing.B) {
 
 func TestImmutableCutClone(t *testing.T) {
 	Convey("Given measurements on a thesis", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.At = time.Now().UTC()
 		thesis.Publish(types.SourceHawkes, []*types.Measurement{{
 			Source: types.SourceHawkes,
