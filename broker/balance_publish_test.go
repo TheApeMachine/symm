@@ -8,28 +8,29 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/config"
 )
 
 func TestBalancePublishMarshalsHoldings(t *testing.T) {
 	Convey("Given a balance with quote cash and an open holding", t, func() {
 		ui := make(chan []byte, 1)
-		balance := NewBalance(nil, nil, ui)
+		balance := NewBalance(nil, nil, ui, config.Fixture().Market)
 		balance.quote = "USD"
-		balance.data.Store("USD", &kraken.BalanceData{
+		balance.data["USD"] = &kraken.BalanceData{
 			Asset:   "USD",
 			Balance: decimal.NewFromFloat64(1000),
-		})
-		balance.data.Store("BTC", &kraken.BalanceData{
+		}
+		balance.data["BTC"] = &kraken.BalanceData{
 			Asset:   "BTC",
 			Balance: decimal.NewFromFloat64(0.5),
-		})
+		}
 		qty := decimal.NewFromFloat64(0.5)
-		balance.holdings.Store("BTC/USD", &types.Holding{
+		balance.holdings["BTC/USD"] = &types.Holding{
 			Symbol: "BTC/USD",
 			Asset:  "BTC",
 			Qty:    qty,
 			Status: types.OPEN,
-		})
+		}
 		balance.Publish()
 
 		Convey("It enqueues a UI Frame with quote balances and holdings", func() {
@@ -60,7 +61,7 @@ func TestBalancePublishMarshalsHoldings(t *testing.T) {
 func TestBalanceSyncWalletSeedsExistingLots(t *testing.T) {
 	Convey("Given a wallet snapshot with non-quote inventory", t, func() {
 		ui := make(chan []byte, 1)
-		balance := NewBalance(nil, nil, ui)
+		balance := NewBalance(nil, nil, ui, config.Fixture().Market)
 		balance.quote = "USD"
 		frame := []byte(`{
 			"channel":"balances","type":"snapshot","sequence":1,
@@ -90,7 +91,7 @@ func TestBalanceSyncWalletSeedsExistingLots(t *testing.T) {
 func TestBalanceAckInitializesNilData(t *testing.T) {
 	Convey("Given a Balance whose data map was cleared", t, func() {
 		ui := make(chan []byte, 1)
-		balance := NewBalance(nil, nil, ui)
+		balance := NewBalance(nil, nil, ui, config.Fixture().Market)
 		balance.quote = "USD"
 		balance.data = nil
 		frame := []byte(`{
@@ -113,22 +114,22 @@ func TestBalanceAckInitializesNilData(t *testing.T) {
 
 func TestBalanceFrameIncludesClosedLotsForAudit(t *testing.T) {
 	Convey("Given an open lot and a closed lot", t, func() {
-		balance := NewBalance(nil, nil, make(chan []byte, 1))
+		balance := NewBalance(nil, nil, make(chan []byte, 1), config.Fixture().Market)
 		balance.quote = "USD"
-		balance.data.Store("USD", &kraken.BalanceData{
+		balance.data["USD"] = &kraken.BalanceData{
 			Asset:   "USD",
 			Balance: decimal.NewFromFloat64(500),
-		})
-		balance.holdings.Store("AAA/USD", &types.Holding{
+		}
+		balance.holdings["AAA/USD"] = &types.Holding{
 			Symbol: "AAA/USD",
 			Qty:    decimal.NewFromFloat64(1),
 			Status: types.OPEN,
-		})
-		balance.holdings.Store("BBB/USD", &types.Holding{
+		}
+		balance.holdings["BBB/USD"] = &types.Holding{
 			Symbol: "BBB/USD",
 			Qty:    decimal.NewFromFloat64(0),
 			Status: types.CLOSED,
-		})
+		}
 
 		Convey("Frame includes both lots so the audit rail can paint closed inventory", func() {
 			payload := string(balance.Frame())
@@ -140,17 +141,17 @@ func TestBalanceFrameIncludesClosedLotsForAudit(t *testing.T) {
 }
 
 func BenchmarkBalanceFrame(b *testing.B) {
-	balance := NewBalance(nil, nil, make(chan []byte, 1))
+	balance := NewBalance(nil, nil, make(chan []byte, 1), config.Fixture().Market)
 	balance.quote = "USD"
-	balance.data.Store("USD", &kraken.BalanceData{
+	balance.data["USD"] = &kraken.BalanceData{
 		Asset:   "USD",
 		Balance: decimal.NewFromFloat64(1000),
-	})
-	balance.holdings.Store("BTC/USD", &types.Holding{
+	}
+	balance.holdings["BTC/USD"] = &types.Holding{
 		Symbol: "BTC/USD",
 		Qty:    decimal.NewFromFloat64(1),
 		Status: types.OPEN,
-	})
+	}
 	b.ReportAllocs()
 
 	for b.Loop() {

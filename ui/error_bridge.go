@@ -78,7 +78,11 @@ func (bridge *ErrorBridge) Write(payload []byte) (int, error) {
 		return len(payload), nil
 	}
 
-	frame := datura.Map[any]{"error": safeErrorFields(fields)}.Marshal()
+	frame, err := datura.Map[any]{"error": safeErrorFields(fields)}.Marshal()
+
+	if err != nil {
+		return len(payload), err
+	}
 
 	select {
 	case bridge.messages <- frame:

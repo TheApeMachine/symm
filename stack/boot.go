@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/signal/correlation"
@@ -41,6 +42,7 @@ type Booter struct {
 	cancel  context.CancelFunc
 	channel chan []byte
 	stages  *system.Booter
+	config  config.Config
 }
 
 /*
@@ -60,21 +62,29 @@ compose creates the shared boot primitives only after their runtime
 configuration is final, keeping live and deterministic test construction on
 the same composition path.
 */
-func (booter *Booter) compose() {
-	booter.channel = make(
-		chan []byte,
-		viper.GetInt("system.websocket.channel.buffer"),
-	)
+func (booter *Booter) compose() error {
+	cfg, err := config.Load()
 
+	if err != nil {
+		return err
+	}
+
+	booter.config = cfg
+	booter.channel = make(chan []byte, cfg.System.ChannelBuffer)
 	booter.stages = system.NewBooter(booter.ctx, booter.channel)
+
+	return nil
 }
 
 /*
 Start constructs the live transports, boots the complete graph, and serves it.
 */
 func (booter *Booter) Start() error {
-	booter.compose()
-	simulator := websocket.NewLatencySimulator(booter.stages)
+	if err := booter.compose(); err != nil {
+		return errnie.Error(err)
+	}
+
+	simulator := websocket.NewLatencySimulator(booter.ctx, websocket.WallClock{}, 0)
 	public := websocket.New(
 		booter.ctx, simulator, false, websocket.PublicWebSocketURL,
 	)
@@ -84,8 +94,8 @@ func (booter *Booter) Start() error {
 
 	var paper websocket.Conn
 
-	if viper.GetString("trading.model") == "paper" {
-		paper = websocket.NewPaper(booter.ctx, simulator)
+	if booter.config.Trading.Model == "paper" {
+		paper = websocket.NewPaper(booter.ctx, simulator, booter.config)
 	}
 
 	wired, err := booter.boot(
@@ -115,7 +125,11 @@ Test boots the complete production graph against a fixture-driven market.
 */
 func (booter *Booter) Test(market *tests.Market) (*Stack, error) {
 	restore := booter.configureTest(len(market.Symbols))
-	booter.compose()
+
+	if err := booter.compose(); err != nil {
+		restore()
+		return nil, errnie.Error(err)
+	}
 
 	if err := market.Bootstrap(); err != nil {
 		restore()
@@ -175,6 +189,7 @@ func (booter *Booter) configureTest(symbolCount int) func() {
 		"signals.feed_timeline_capacity":             4096,
 		"signals.feed_track_capacity":                512,
 		"market.manifold.integration_interval":       0,
+		"ui.addr":                                    "127.0.0.1:0",
 	}
 	previous := make(map[string]any, len(settings))
 
@@ -193,32 +208,45 @@ func (booter *Booter) configureTest(symbolCount int) func() {
 }
 
 /*
+closer is one reverse-construction teardown step owned by Stack.
+*/
+type closer struct {
+	name string
+	fn   func() error
+}
+
+/*
 Stack exposes the production graph after Booter has initialized every stage.
 */
 type Stack struct {
-	API        *websocket.API
-	Booter     *system.Booter
-	Channel    chan []byte
-	Tree       *dmt.Tree
-	Price      *broker.Price
-	Instrument *broker.Instrument
-	Balance    *broker.Balance
-	Desk       *broker.Desk
-	Analyzer   *logic.Analyzer
-	Planner    *strategy.Planner
-	Crypto     *trader.Crypto
-	UIHub      *ui.Hub
-	Recorder   *audit.Recorder
-	Thesis     *types.Thesis
-	Signals    []types.Signal
-	cancel     context.CancelFunc
-	restore    func()
+	API         *websocket.API
+	Booter      *system.Booter
+	Channel     chan []byte
+	Tree        *dmt.Tree
+	Price       *broker.Price
+	Instrument  *broker.Instrument
+	Balance     *broker.Balance
+	Desk        *broker.Desk
+	Coordinator *CutCoordinator
+	Analyzer    *logic.Analyzer
+	Planner     *strategy.Planner
+	Crypto      *trader.Crypto
+	UIHub       *ui.Hub
+	Recorder    *audit.Recorder
+	Thesis      *types.Thesis
+	Signals     []types.Signal
+	config      config.Config
+	cancel      context.CancelFunc
+	restore     func()
+	closers     []closer
+	actors      []*types.Actor
 }
 
 /*
 boot assembles and initializes the graph against the supplied Conn transports.
 Fixture tests and live start share the same Actor cascade: signals measure into
-the shared Thesis, Hawkes advances analyzer → planner → crypto.
+the shared Thesis; Hawkes cadence enters CutCoordinator, which freezes an
+ImmutableCut and advances analyzer → planner → crypto.
 */
 func (booter *Booter) boot(
 	public websocket.Conn,
@@ -234,26 +262,34 @@ func (booter *Booter) boot(
 		api.InjectLevel3(level3.Root(), level3, symbols)
 	}
 
-	tree := dmt.NewTree("")
-
 	recorder, err := booter.openRecorder()
 
 	if err != nil {
 		return nil, errnie.Error(err)
 	}
 
+	tree, err := dmt.NewTree("")
+
+	if err != nil {
+		return nil, errors.Join(errnie.Error(err), recorder.Close())
+	}
+
 	price := broker.NewPrice(api)
-	instrument := broker.NewInstrument(api, price, booter.channel)
-	balance := broker.NewBalance(api, nil, booter.channel)
-	desk := broker.NewDesk(booter.ctx, api, instrument, price, balance)
-	hub := ui.NewHub(booter.ctx, price, balance, booter.channel)
+	instrument := broker.NewInstrument(api, price, booter.channel, booter.config.Market)
+	balance := broker.NewBalance(api, nil, booter.channel, booter.config.Market)
+	desk := broker.NewDesk(
+		booter.ctx, api, instrument, price, balance, booter.config.Trading,
+	)
+	hub := ui.NewHub(booter.ctx, price, balance, booter.channel, booter.config.UI)
 	thesis := types.NewThesis(booter.channel)
 	hawkesSignal := hawkes.NewSignal(booter.ctx, booter.channel)
+
+	trackCapacity := booter.config.Signals.FeedTrackCapacity
 
 	depthflowSignal, err := depthflow.NewSignal(
 		booter.ctx,
 		booter.channel,
-		viper.GetInt("signals.feed_track_capacity"),
+		trackCapacity,
 	)
 
 	if err != nil {
@@ -264,7 +300,7 @@ func (booter *Booter) boot(
 		pumpdump.NewSignal(
 			booter.ctx,
 			booter.channel,
-			viper.GetInt("signals.feed_track_capacity"),
+			trackCapacity,
 		),
 		liquidity.NewSignal(booter.ctx, booter.channel),
 		toxicity.NewSignal(booter.ctx, api, booter.channel),
@@ -314,23 +350,59 @@ func (booter *Booter) boot(
 		return nil, errors.Join(errnie.Error(err), recorder.Close())
 	}
 
+	coordinator := NewCutCoordinator(
+		booter.ctx,
+		thesis,
+		types.SourcePumpDump,
+		types.SourceLiquidity,
+		types.SourceToxicity,
+		types.SourceLeadLag,
+		types.SourceCVD,
+		types.SourceCorrelation,
+		types.SourceExhaustion,
+		types.SourceSentiment,
+		types.SourceDepthFlow,
+		types.SourceHawkes,
+	)
+	coordinator.SetRecorder(recorder)
+
 	wired := &Stack{
-		API:        api,
-		Booter:     booter.stages,
-		Channel:    booter.channel,
-		Tree:       tree,
-		Price:      price,
-		Instrument: instrument,
-		Balance:    balance,
-		Desk:       desk,
-		Analyzer:   analyzer,
-		Planner:    planner,
-		Crypto:     crypto,
-		UIHub:      hub,
-		Recorder:   recorder,
-		Thesis:     thesis,
-		Signals:    signals,
-		cancel:     booter.cancel,
+		API:         api,
+		Booter:      booter.stages,
+		Channel:     booter.channel,
+		Tree:        tree,
+		Price:       price,
+		Instrument:  instrument,
+		Balance:     balance,
+		Desk:        desk,
+		Coordinator: coordinator,
+		Analyzer:    analyzer,
+		Planner:     planner,
+		Crypto:      crypto,
+		UIHub:       hub,
+		Recorder:    recorder,
+		Thesis:      thesis,
+		Signals:     signals,
+		config:      booter.config,
+		cancel:      booter.cancel,
+		actors: []*types.Actor{
+			desk.Actor,
+			coordinator.Actor,
+			analyzer.Actor,
+			planner.Actor,
+			crypto.Actor,
+		},
+	}
+
+	wired.closers = []closer{
+		{name: "crypto", fn: crypto.Close},
+		{name: "planner", fn: planner.Close},
+		{name: "analyzer", fn: analyzer.Close},
+		{name: "coordinator", fn: coordinator.Close},
+		{name: "api", fn: func() error { api.Close(); return nil }},
+		{name: "hub", fn: hub.Close},
+		{name: "tree", fn: tree.Close},
+		{name: "recorder", fn: recorder.Close},
 	}
 
 	if reporter, ok := paper.(types.StatusReporter); ok {
@@ -359,7 +431,7 @@ func (booter *Booter) boot(
 	instruments := system.NewStage(system.StagePreflight, instrument)
 	booter.stages.AddStages(transports, balances, instruments)
 
-	if err := transports.Initialize(booter.channel); err != nil {
+	if err := transports.Initialize(booter.ctx, booter.channel); err != nil {
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
 
@@ -367,11 +439,11 @@ func (booter *Booter) boot(
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
 
-	if err := balances.Initialize(booter.channel); err != nil {
+	if err := balances.Initialize(booter.ctx, booter.channel); err != nil {
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
 
-	if err := instruments.Initialize(booter.channel); err != nil {
+	if err := instruments.Initialize(booter.ctx, booter.channel); err != nil {
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
 
@@ -379,9 +451,13 @@ func (booter *Booter) boot(
 		signal.Initialize(market, thesis)
 	}
 
+	if err := coordinator.Initialize(hawkesSignal.Actor); err != nil {
+		return nil, errors.Join(errnie.Error(err), wired.Close())
+	}
+
 	if err := analyzer.Initialize(
-		types.Topic{Name: "ticker", Actor: hawkesSignal.Actor},
-		types.Topic{Name: "trade", Actor: hawkesSignal.Actor},
+		types.Topic{Name: "ticker", Actor: coordinator.Actor},
+		types.Topic{Name: "trade", Actor: coordinator.Actor},
 	); err != nil {
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
@@ -398,10 +474,8 @@ func (booter *Booter) boot(
 }
 
 /*
-Close stops every Actor in the composition root, then releases owned resources.
-Cancel runs first so the graph stops taking new work; Analyzer.Close then waits
-for REM and for any in-flight manifold Step before tearing the Metal domain
-down.
+Close cancels the root context, waits for every registered actor and signal,
+then closes stateful dependencies in reverse construction order.
 */
 func (stack *Stack) Close() (err error) {
 	if stack.cancel != nil {
@@ -409,32 +483,20 @@ func (stack *Stack) Close() (err error) {
 		stack.cancel = nil
 	}
 
-	if stack.Crypto != nil {
-		err = errors.Join(err, stack.Crypto.Close())
+	for _, signal := range stack.Signals {
+		err = errors.Join(err, signal.Close())
 	}
 
-	if stack.Planner != nil {
-		err = errors.Join(err, stack.Planner.Close())
+	for _, actor := range stack.actors {
+		err = errors.Join(err, actor.Close())
 	}
 
-	if stack.Analyzer != nil {
-		err = errors.Join(err, stack.Analyzer.Close())
-	}
+	for _, step := range stack.closers {
+		if step.fn == nil {
+			continue
+		}
 
-	if stack.API != nil {
-		stack.API.Close()
-	}
-
-	if stack.UIHub != nil {
-		err = errors.Join(err, stack.UIHub.Close())
-	}
-
-	if stack.Tree != nil {
-		err = errors.Join(err, stack.Tree.Close())
-	}
-
-	if stack.Recorder != nil {
-		err = errors.Join(err, stack.Recorder.Close())
+		err = errors.Join(err, step.fn())
 	}
 
 	if stack.restore != nil {

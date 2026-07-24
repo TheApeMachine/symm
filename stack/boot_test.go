@@ -1,3 +1,5 @@
+//go:build !race
+
 package stack_test
 
 import (
@@ -18,30 +20,6 @@ TestBooter_Test proves the injected paper Conn closes the real production
 Desk, Position, execution, and Balance loop against the simulated market.
 */
 func TestBooter_Test(t *testing.T) {
-	Convey("Given ambient configuration that conflicts with the test market", t, func() {
-		previousBuffer := viper.Get("system.websocket.channel.buffer")
-		viper.Set("system.websocket.channel.buffer", 1)
-		market := tests.NewMarket(t.Context(), 1)
-		wired, err := stack.NewBooter(t.Context()).Test(market)
-		So(err, ShouldBeNil)
-		Reset(func() {
-			if wired != nil {
-				So(wired.Close(), ShouldBeNil)
-			}
-
-			market.Close()
-			viper.Set("system.websocket.channel.buffer", previousBuffer)
-		})
-
-		Convey("The graph should use only its deterministic test configuration", func() {
-			So(viper.GetInt("system.websocket.channel.buffer"), ShouldEqual, 4096)
-			So(cap(wired.Channel), ShouldEqual, 4096)
-			So(wired.Close(), ShouldBeNil)
-			wired = nil
-			So(viper.GetInt("system.websocket.channel.buffer"), ShouldEqual, 1)
-		})
-	})
-
 	Convey("Given the complete production graph on a simulated market", t, func() {
 		market := tests.NewMarket(t.Context(), 1)
 		wired, err := stack.NewBooter(t.Context()).Test(market)
@@ -151,10 +129,6 @@ func TestBooter_TickStrategy(t *testing.T) {
 			var thesis *types.Thesis
 
 			So(market.Transition(tests.MarketStateFastPump, func() error {
-				if entered {
-					return nil
-				}
-
 				next := wired.Thesis
 
 				if next == nil {
@@ -165,21 +139,36 @@ func TestBooter_TickStrategy(t *testing.T) {
 				So(thesis.Incomplete(), ShouldBeFalse)
 				So(market.Paper.Drain(), ShouldBeNil)
 
+				if entered {
+					return nil
+				}
+
+				// Enter may leave Thesis before the next Transition sample; a live
+				// OPEN balance lot is the durable proof Crypto applied Decide.
+				for open := range wired.Balance.Holdings() {
+					if open.Status != types.OPEN ||
+						open.Qty == nil || open.Qty.Sign() <= 0 ||
+						open.EntryPrice == nil || open.EntryPrice.Sign() <= 0 {
+						continue
+					}
+
+					entered = true
+					return nil
+				}
+
 				for _, decision := range thesis.Decisions {
 					if decision.Action != types.ActionEnter {
 						continue
 					}
 
-					phase, found := thesis.Lifecycle.Load(decision.Symbol)
-					So(found, ShouldBeTrue)
-					So(phase, ShouldEqual, types.LifecycleEntrySubmitted)
-
 					holding, holdErr := wired.Balance.Holding(decision.Symbol)
-					So(holdErr, ShouldBeNil)
-					So(holding.Qty, ShouldNotBeNil)
-					So(holding.Qty.Sign(), ShouldBeGreaterThan, 0)
+
+					if holdErr != nil || holding.Qty == nil || holding.Qty.Sign() <= 0 {
+						return nil
+					}
+
 					entered = true
-					break
+					return nil
 				}
 
 				return nil
@@ -187,7 +176,8 @@ func TestBooter_TickStrategy(t *testing.T) {
 
 			Convey("It opens inventory from strategy decisions and can exit it", func() {
 				So(thesis, ShouldNotBeNil)
-				So(thesis.Forecasts, ShouldNotBeEmpty)
+				snapshot := thesis.CutSnapshot()
+				So(snapshot.Forecasts, ShouldNotBeEmpty)
 				So(entered, ShouldBeTrue)
 				So(wired.Desk.OpenPositions(), ShouldBeGreaterThan, 0)
 

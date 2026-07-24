@@ -18,7 +18,7 @@ accumulation because it is independent of market ingress and signal behavior.
 */
 func TestAnalyzerConsolidate(t *testing.T) {
 	Convey("Given episodic observations pending behind the DMT ambiguity gate", t, func() {
-		tree := dmt.NewTree("")
+		tree, _ := dmt.NewTree("")
 		analyzer := &Analyzer{tree: tree}
 		sequence := []byte("symbol-btc-usd_pressure-positive")
 		from := time.Unix(0, 100)
@@ -59,7 +59,8 @@ winner after attractor training, so strategy is not gated on sequence repeats.
 */
 func TestAnalyzerCognize(t *testing.T) {
 	Convey("Given a gas-ready buy-dominant manifold state", t, func() {
-		analyzer := &Analyzer{tree: dmt.NewTree("")}
+		tree, _ := dmt.NewTree("")
+		analyzer := &Analyzer{tree: tree}
 		thesis := types.NewThesis(nil)
 		state := manifold.State{
 			Symbol:         "BTC/USD",
@@ -101,7 +102,8 @@ BenchmarkAnalyzerCognize retains the narrow calculation benchmark alongside the
 full production-path Analyzer benchmark.
 */
 func BenchmarkAnalyzerCognize(b *testing.B) {
-	analyzer := &Analyzer{tree: dmt.NewTree("")}
+	tree, _ := dmt.NewTree("")
+		analyzer := &Analyzer{tree: tree}
 	state := manifold.State{
 		Symbol:         "BTC/USD",
 		At:             time.Unix(1, 0),

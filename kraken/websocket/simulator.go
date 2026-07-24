@@ -2,13 +2,12 @@ package websocket
 
 import (
 	"container/ring"
+	"context"
 	"encoding/json"
 	"math/rand"
 	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -20,38 +19,54 @@ const (
 	FILL
 )
 
-var (
-	latencySimulator     *Simulator
-	latencySimulatorOnce sync.Once
-)
-
 /*
-NewLatencySimulator is the shared latency pool for public and private transports.
+Clock supplies deterministic waits for the paper/live latency simulator.
 */
-func NewLatencySimulator(booter *system.Booter) *Simulator {
-	latencySimulatorOnce.Do(func() {
-		latencySimulator = NewSimulator()
-		if err := latencySimulator.Initialize(); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal, err.Error(), err,
-			))
-		}
-	})
-
-	return latencySimulator
+type Clock interface {
+	Now() time.Time
+	Sleep(ctx context.Context, wait time.Duration) error
 }
 
 /*
-Simulator adds more realistic behavior to the paper emulation
-by recording real latencies and replaying them when the paper
-emulation is used. This allows for a much more realistic
-simulation of the market and avoids the optimism bias.
+WallClock uses the process clock for production latency replay.
+*/
+type WallClock struct{}
+
+/*
+Now returns wall time.
+*/
+func (WallClock) Now() time.Time {
+	return time.Now()
+}
+
+/*
+Sleep waits until duration elapses or the context ends.
+*/
+func (WallClock) Sleep(ctx context.Context, wait time.Duration) error {
+	if wait <= 0 {
+		return nil
+	}
+
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+/*
+Simulator adds realistic latency to paper emulation by recording real
+latencies and replaying them. One simulator belongs to one stack; it is never
+a process-wide singleton.
 */
 type Simulator struct {
-	booter *system.Booter
-	status types.Status
-	// ponytail: global lock serializes independent websocket, REST, and fill
-	// latency operations; per-ring locking is the intended upgrade path.
+	ctx           context.Context
+	clock         Clock
+	status        types.Status
 	mu            sync.Mutex
 	wsLatencies   *ring.Ring
 	restLatencies *ring.Ring
@@ -61,12 +76,25 @@ type Simulator struct {
 }
 
 /*
-NewSimulator constructs a latency simulator with an explicit replay seed.
+NewLatencySimulator constructs a per-stack simulator with an injected clock and
+seed. A nil clock uses WallClock. A non-positive seed derives from Now.
 */
-func NewSimulator() *Simulator {
-	seed := time.Now().UnixNano()
+func NewLatencySimulator(ctx context.Context, clock Clock, seed int64) *Simulator {
+	if clock == nil {
+		clock = WallClock{}
+	}
 
-	return &Simulator{
+	if seed <= 0 {
+		seed = clock.Now().UnixNano()
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	simulator := &Simulator{
+		ctx:           ctx,
+		clock:         clock,
 		status:        types.INITIALIZING,
 		wsLatencies:   ring.New(64),
 		restLatencies: ring.New(64),
@@ -74,6 +102,17 @@ func NewSimulator() *Simulator {
 		seed:          seed,
 		rng:           rand.New(rand.NewSource(seed)),
 	}
+
+	_ = simulator.Initialize()
+
+	return simulator
+}
+
+/*
+NewSimulator constructs a wall-clock simulator with a fresh seed for tests.
+*/
+func NewSimulator() *Simulator {
+	return NewLatencySimulator(context.Background(), WallClock{}, 0)
 }
 
 /*
@@ -83,17 +122,18 @@ func (simulator *Simulator) Seed() int64 {
 	return simulator.seed
 }
 
+/*
+Status reports simulator readiness.
+*/
 func (simulator *Simulator) Status() types.Status {
 	return simulator.status
 }
 
 /*
-Initialize seeds websocket and REST rings with bootstrap values until
-real public/private measurements arrive. Fill stays random only.
+Initialize seeds websocket and REST rings with bootstrap values until real
+public/private measurements arrive. Fill stays random only.
 */
 func (simulator *Simulator) Initialize() error {
-	errnie.Info("initializing simulator")
-
 	simulator.mu.Lock()
 	defer simulator.mu.Unlock()
 
@@ -119,6 +159,9 @@ func (simulator *Simulator) Initialize() error {
 	return nil
 }
 
+/*
+Do waits through the injected clock under the stack context, then runs fn.
+*/
 func (simulator *Simulator) Do(latencyType LatencyType, fn func()) {
 	var wait time.Duration
 
@@ -153,10 +196,13 @@ func (simulator *Simulator) Do(latencyType LatencyType, fn func()) {
 
 	simulator.mu.Unlock()
 
-	time.Sleep(wait)
+	_ = simulator.clock.Sleep(simulator.ctx, wait)
 	fn()
 }
 
+/*
+Emit applies latency then Sends a paper frame into the matching root.
+*/
 func (simulator *Simulator) Emit(
 	paper *Paper, latencyType LatencyType, channel string, payload json.Marshaler,
 ) error {
@@ -169,6 +215,9 @@ func (simulator *Simulator) Emit(
 	return err
 }
 
+/*
+Record stores an observed latency sample for later replay.
+*/
 func (simulator *Simulator) Record(latencyType LatencyType, latency time.Duration) {
 	simulator.mu.Lock()
 	defer simulator.mu.Unlock()
@@ -176,9 +225,7 @@ func (simulator *Simulator) Record(latencyType LatencyType, latency time.Duratio
 	switch latencyType {
 	case WEBSOCKET:
 		simulator.wsLatencies.Value = latency
-		simulator.wsLatencies = simulator.wsLatencies.Next()
 	case REST:
 		simulator.restLatencies.Value = latency
-		simulator.restLatencies = simulator.restLatencies.Next()
 	}
 }

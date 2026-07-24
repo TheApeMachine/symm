@@ -13,7 +13,7 @@ import (
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura/structure"
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestRecorderWriteRejectsNonFiniteFloat(t *testing.T) {
@@ -153,13 +153,12 @@ func TestRecorderWriteFailureRecordsOperationalMetric(t *testing.T) {
 
 		writeErr := recorder.Write(map[string]any{"closed": true})
 
-		convey.Convey("It should count the audit write failure", func() {
-			var closedErr *errnie.ErrnieError
+		convey.Convey("It should return a typed closed error", func() {
+			var closedErr types.ClosedError
 
 			convey.So(writeErr, convey.ShouldNotBeNil)
 			convey.So(errors.As(writeErr, &closedErr), convey.ShouldBeTrue)
-			convey.So(closedErr.Kind, convey.ShouldEqual, errnie.IO)
-			convey.So(closedErr.Message, convey.ShouldEqual, "audit: recorder is closed")
+			convey.So(closedErr.Component, convey.ShouldEqual, "audit")
 		})
 	})
 }

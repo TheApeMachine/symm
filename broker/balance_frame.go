@@ -6,7 +6,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -19,37 +19,43 @@ func (balance *Balance) Frame() []byte {
 		return nil
 	}
 
-	return datura.Map[any]{
+	frame, err := datura.Map[any]{
 		"balances": balance.quoteRows(),
 		"holdings": slices.Collect(balance.lots()),
 		"stops":    balance.stopRows(),
 	}.Marshal()
+
+	if err != nil {
+		return nil
+	}
+
+	return frame
 }
 
 /*
-quoteRows returns the single quote-currency cash row the wallet rail expects.
+quoteRows returns the quote cash row with available and reserved from the ledger.
 */
 func (balance *Balance) quoteRows() []datura.Map[any] {
-	value, ok := balance.data.Load(balance.quote)
+	row, ok := balance.data[balance.quote]
 
 	if !ok {
 		return []datura.Map[any]{}
 	}
 
-	row := value.(*kraken.BalanceData)
 	total := wireFloat(row.Balance)
+	reserved := wireFloat(balance.ledger.ReservedCash())
+	available := total - reserved
 
 	return []datura.Map[any]{{
 		"asset":     balance.quote,
 		"balance":   total,
-		"available": total,
-		"reserved":  0.0,
+		"available": available,
+		"reserved":  reserved,
 	}}
 }
 
 /*
 lots yields every retained holding, including closed lots for the audit rail.
-Strategy slot math keeps using Holdings(), which skips closed inventory.
 */
 func (balance *Balance) lots() iter.Seq[types.Holding] {
 	return func(yield func(types.Holding) bool) {
@@ -57,15 +63,15 @@ func (balance *Balance) lots() iter.Seq[types.Holding] {
 			return
 		}
 
-		balance.holdings.Range(func(key, value any) bool {
-			holding := value.(*types.Holding)
-
-			if key.(string) != holding.Symbol {
-				return true
+		for symbol, holding := range balance.holdings {
+			if symbol != holding.Symbol {
+				continue
 			}
 
-			return yield(*holding)
-		})
+			if !yield(*holding) {
+				return
+			}
+		}
 	}
 }
 
@@ -97,93 +103,118 @@ func (balance *Balance) syncWallet() {
 
 	seen := make(map[string]struct{})
 
-	balance.data.Range(func(key, value any) bool {
-		asset := key.(string)
-
+	for asset, row := range balance.data {
 		if asset == "" || asset == balance.quote {
-			return true
+			continue
 		}
-
-		row := value.(*kraken.BalanceData)
 
 		if row.Balance == nil || row.Balance.Sign() <= 0 {
 			balance.closeWalletLot(asset)
-			return true
+			continue
 		}
 
 		symbol := asset + "/" + balance.quote
 		seen[symbol] = struct{}{}
 		balance.upsertWalletLot(symbol, asset, row.Balance)
+	}
 
-		return true
-	})
-
-	balance.holdings.Range(func(key, value any) bool {
-		holding := value.(*types.Holding)
-
+	for symbol, holding := range balance.holdings {
 		if holding.Status != types.OPEN {
-			return true
+			continue
 		}
 
-		if _, ok := seen[key.(string)]; ok {
-			return true
+		if _, ok := seen[symbol]; ok {
+			continue
 		}
 
-		// Pending thesis enters are not wallet-backed until Desk fills them.
 		if holding.Asset == "" {
-			return true
+			continue
 		}
 
-		holding.Status = types.CLOSED
-		holding.Qty = decimal.NewFromInt64(0)
+		if err := balance.transitionHolding(holding, types.CLOSED); err != nil {
+			errnie.Error(err)
+		}
 
-		return true
-	})
+		holding.Qty = decimal.NewFromInt64(0)
+		holding.SellableQty = decimal.NewFromInt64(0)
+	}
 }
 
 /*
-upsertWalletLot opens or refreshes a wallet-backed holding so restart inventory
-and live balance sync keep Qty/Asset aligned with the exchange row.
+upsertWalletLot opens or refreshes a wallet-backed holding from exchange qty.
 */
 func (balance *Balance) upsertWalletLot(
 	symbol, asset string,
 	qty *decimal.Decimal,
 ) {
-	if value, ok := balance.holdings.Load(symbol); ok {
-		holding := value.(*types.Holding)
+	if holding, ok := balance.holdings[symbol]; ok {
 		holding.Qty = qty.Copy()
 		holding.Asset = asset
+		holding.SellableQty = balance.sellable(asset, qty)
 
 		if holding.Status == types.CLOSED || holding.Status == types.CANCELED {
-			holding.Status = types.OPEN
+			if err := balance.transitionHolding(holding, types.OPEN); err != nil {
+				errnie.Error(err)
+			}
 		}
 
 		return
 	}
 
-	balance.holdings.Store(symbol, &types.Holding{
-		Symbol: symbol,
-		Asset:  asset,
-		Qty:    qty.Copy(),
-		Status: types.OPEN,
-	})
+	balance.holdings[symbol] = &types.Holding{
+		Symbol:      symbol,
+		Asset:       asset,
+		Qty:         qty.Copy(),
+		SellableQty: balance.sellable(asset, qty),
+		Status:      types.OPEN,
+	}
+}
+
+func (balance *Balance) sellable(
+	asset string,
+	qty *decimal.Decimal,
+) *decimal.Decimal {
+	reserved := balance.ledger.ReservedAsset(asset)
+
+	return qty.Copy().Sub(reserved)
 }
 
 /*
-closeWalletLot marks a wallet-backed lot closed when its exchange qty has gone
-to zero so the desk and UI stop treating drained inventory as open.
+closeWalletLot marks a wallet-backed lot closed when exchange qty is zero.
 */
 func (balance *Balance) closeWalletLot(asset string) {
 	symbol := asset + "/" + balance.quote
-	value, ok := balance.holdings.Load(symbol)
+	holding, ok := balance.holdings[symbol]
 
 	if !ok {
 		return
 	}
 
-	holding := value.(*types.Holding)
-	holding.Status = types.CLOSED
+	if err := balance.transitionHolding(holding, types.CLOSED); err != nil {
+		errnie.Error(err)
+	}
+
 	holding.Qty = decimal.NewFromInt64(0)
+	holding.SellableQty = decimal.NewFromInt64(0)
+}
+
+/*
+transitionHolding applies one canonical holding lifecycle edge and fails loud on
+illegal transitions.
+*/
+func (balance *Balance) transitionHolding(
+	holding *types.Holding,
+	next types.Status,
+) error {
+	status, err := types.Transition(holding.Status, next)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	holding.Status = status
+
+	return nil
 }
 
 func wireFloat(value *decimal.Decimal) float64 {

@@ -132,7 +132,7 @@ func initConfig() {
 		}
 	}
 
-	viper.WatchConfig()
+	// Live watching is disabled until an atomic config generation swap exists.
 }
 
 const rootLong = `

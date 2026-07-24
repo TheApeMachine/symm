@@ -81,7 +81,6 @@ func (crypto *Crypto) Status() types.Status {
 
 func (crypto *Crypto) thesis(message any) any {
 	thesis := message.(*types.Thesis)
-	thesis.Tick = crypto.NextTick()
 	crypto.Apply(thesis)
 
 	return thesis
@@ -96,6 +95,7 @@ func (crypto *Crypto) NextTick() int64 {
 
 /*
 Apply submits sized enter/exit decisions to the desk and records lifecycle.
+Exits run before enters so rotation sagas free capital before the challenger.
 */
 func (crypto *Crypto) Apply(thesis *types.Thesis) {
 	if thesis == nil || crypto.desk == nil {
@@ -109,18 +109,36 @@ func (crypto *Crypto) Apply(thesis *types.Thesis) {
 	for index := range decisions {
 		decision := &decisions[index]
 
-		switch decision.Action {
-		case types.ActionEnter:
-			crypto.enter(thesis, decision)
-		case types.ActionExit:
+		if decision.Action == types.ActionExit {
 			crypto.exit(thesis, decision)
 		}
+	}
+
+	for index := range decisions {
+		decision := &decisions[index]
+
+		if decision.Action != types.ActionEnter {
+			continue
+		}
+
+		if decision.Displaces != "" {
+			if _, open := crypto.desk.Position(decision.Displaces); open {
+				// Wait for the displaced lot to leave before entering.
+				continue
+			}
+		}
+
+		crypto.enter(thesis, decision)
 	}
 
 	elapsed := time.Since(started)
 	crypto.publish(thesis, elapsed)
 
 	errnie.Error(audit.Phase(crypto.recorder, thesis.Tick, "desk", map[string]any{
+		"ns":        elapsed.Nanoseconds(),
+		"decisions": len(decisions),
+	}))
+	errnie.Error(audit.Phase(crypto.recorder, thesis.Tick, "tick_end", map[string]any{
 		"ns":        elapsed.Nanoseconds(),
 		"decisions": len(decisions),
 	}))
@@ -131,7 +149,7 @@ publish forwards the engine tick plus decisions, lifecycle, and findings so the
 terminal pulse and rails leave their waiting states as soon as a cut completes.
 */
 func (crypto *Crypto) publish(thesis *types.Thesis, elapsed time.Duration) {
-	if crypto.uiHub == nil || crypto.uiHub.Messages == nil || thesis == nil {
+	if crypto.uiHub == nil || thesis == nil {
 		return
 	}
 
@@ -170,14 +188,17 @@ func (crypto *Crypto) publish(thesis *types.Thesis, elapsed time.Duration) {
 }
 
 /*
-enqueue non-blocking-publishes one UI frame; a full hub channel drops the frame
-rather than stalling the desk path.
+enqueue publishes one UI frame through the hub so replaceable keys coalesce and
+a full ingress channel cannot strand the only drain behind a slow client.
 */
 func (crypto *Crypto) enqueue(frame datura.Map[any]) {
-	select {
-	case crypto.uiHub.Messages <- frame.Marshal():
-	default:
+	payload, err := frame.Marshal()
+
+	if err != nil {
+		return
 	}
+
+	crypto.uiHub.Publish(payload)
 }
 
 func (crypto *Crypto) enter(thesis *types.Thesis, decision *types.Decision) {

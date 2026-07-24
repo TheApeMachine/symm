@@ -221,7 +221,8 @@ func (signal *Signal) measureTrade(
 		Symbol:   row.Symbol,
 		Price:    row.Price.Float64(),
 		Quantity: row.Qty,
-		Side:     row.Side,
+		Side:     flow.TradeSide(row.Side),
+		At:       row.Timestamp,
 	})
 
 	if err != nil {

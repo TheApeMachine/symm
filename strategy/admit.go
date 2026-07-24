@@ -193,7 +193,7 @@ func (admit *Admit) Capital(decision *types.Decision) {
 		return
 	}
 
-	cash, err := admit.balance.AssetAvailable(admit.quote)
+	cash, err := admit.balance.FreeCash()
 
 	if err != nil || cash == nil {
 		errnie.Error(errnie.Err(

@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 )
@@ -16,13 +15,13 @@ aside any prior file when configured so a freeze diagnosis starts on a clean
 timeline.
 */
 func (booter *Booter) openRecorder() (*audit.Recorder, error) {
-	path, err := auditPath()
+	path, err := auditPath(booter.config.System.DataPath)
 
 	if err != nil {
 		return nil, err
 	}
 
-	if viper.GetBool("system.audit.rotate_on_boot") {
+	if booter.config.System.AuditRotate {
 		if err := audit.Rotate(path); err != nil {
 			return nil, errnie.Error(err)
 		}
@@ -35,8 +34,8 @@ func (booter *Booter) openRecorder() (*audit.Recorder, error) {
 auditPath resolves ~/.symm/data/runtime-audit.jsonl (or the configured
 system.data_path equivalent) so live and test boots share one file contract.
 */
-func auditPath() (string, error) {
-	dataPath := strings.TrimSpace(viper.GetString("system.data_path"))
+func auditPath(dataPath string) (string, error) {
+	dataPath = strings.TrimSpace(dataPath)
 
 	if strings.HasPrefix(dataPath, "~/") {
 		home, err := os.UserHomeDir()

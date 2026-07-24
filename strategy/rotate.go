@@ -241,5 +241,6 @@ func (rotate Rotate) Commit(thesis *types.Thesis) {
 		thesis.NoteLifecycle(decision.Displaces, types.LifecycleExitSelected, decision.At)
 	}
 
-	thesis.Decisions = append(thesis.Decisions, exits...)
+	// Exit decisions lead so Crypto applies the rotation saga exit-before-enter.
+	thesis.Decisions = append(exits, thesis.Decisions...)
 }

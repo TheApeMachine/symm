@@ -138,7 +138,6 @@ func (arbiter *Arbiter) displace(
 	}
 
 	arbiter.admit.Scale(decision, incumbent.Notional)
-	incumbent.Displaced = true
 
 	edge := decision.Utility - incumbent.HoldUtility
 	rotateValue := edge - incumbent.ExitCost
@@ -148,6 +147,8 @@ func (arbiter *Arbiter) displace(
 		decision.Alternatives = map[string]float64{}
 	}
 
+	// Provisional rotation metadata only — displacement commits in Rotate.Commit
+	// when the exit intent is materialized for the desk saga.
 	decision.Cause = "rotation"
 	decision.Displaces = incumbent.Symbol
 	decision.Reason = "challenger clears one-step wait threshold against " +
@@ -164,6 +165,7 @@ func (arbiter *Arbiter) displace(
 	decision.DisplacedPrice = incumbent.Mark.Copy()
 
 	arbiter.admit.Accept(thesis, *decision, opportunity)
+	incumbent.Displaced = true
 
 	return true
 }

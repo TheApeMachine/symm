@@ -147,7 +147,7 @@ type hawkesCut interface {
 }
 
 /*
-bind unwraps a Hawkes cut into Thesis plus the Outcome snapshot for this step.
+bind unwraps a cut frame or Hawkes cut into Thesis plus the Outcome snapshot.
 Bare Thesis messages still use the live Hawkes source (unit paths).
 */
 func (analyzer *Analyzer) bind(message any) (*types.Thesis, manifold.HawkesSource) {
@@ -220,8 +220,14 @@ Marshal runs only after the send slot is claimed so saturated buffers do not
 pay serialization cost for dropped frames.
 */
 func (analyzer *Analyzer) publish(frame datura.Map[any]) {
+	payload, err := frame.Marshal()
+
+	if err != nil {
+		return
+	}
+
 	select {
-	case analyzer.ui <- frame.Marshal():
+	case analyzer.ui <- payload:
 	default:
 	}
 }

@@ -113,7 +113,7 @@ func (analyzer *Analyzer) observe(
 	}
 
 	analyzer.dropSymbolEvidence(thesis, state.Symbol)
-	thesis.Measurements = append(thesis.Measurements, measurements...)
+	thesis.AppendMeasurements(measurements)
 
 	if resonanceOutcome != nil {
 		thesis.Resonance = append(thesis.Resonance, resonanceOutcome)

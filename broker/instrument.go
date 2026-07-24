@@ -3,29 +3,28 @@ package broker
 import (
 	"slices"
 	"sort"
-	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Instrument owns Kraken pair metadata and the subscription universe. Every
-online pair for the configured quote currency remains observable so strategy
-can discover opportunities across the whole tradable market.
+Instrument owns validated immutable pair snapshots and the subscription universe.
+Remember and On deep-copy decimals so callers cannot mutate cached precision.
 */
 type Instrument struct {
 	status  atomic.Value
 	api     *websocket.API
 	price   *Price
-	cache   *sync.Map
+	cache   map[string]kraken.InstrumentPair
 	quote   string
+	market  config.MarketConfig
 	uiHub   chan []byte
 	symbols []string
 	active  bool
@@ -39,13 +38,15 @@ func NewInstrument(
 	api *websocket.API,
 	price *Price,
 	channel chan []byte,
+	market config.MarketConfig,
 ) *Instrument {
 	instrument := &Instrument{
-		api:   api,
-		price: price,
-		cache: &sync.Map{},
-		quote: viper.GetString("market.quote_currency"),
-		uiHub: channel,
+		api:    api,
+		price:  price,
+		cache:  make(map[string]kraken.InstrumentPair),
+		quote:  market.QuoteCurrency,
+		market: market,
+		uiHub:  channel,
 	}
 	instrument.status.Store(types.INITIALIZING)
 
@@ -56,6 +57,9 @@ func NewInstrument(
 	return instrument
 }
 
+/*
+Initialize requests the instrument snapshot stream.
+*/
 func (instrument *Instrument) Initialize() error {
 	errnie.Info("initializing instrument")
 	instrument.status.Store(types.PENDING)
@@ -73,6 +77,9 @@ func (instrument *Instrument) Initialize() error {
 	return nil
 }
 
+/*
+On ingests one instrument frame, storing deep-copied pair snapshots by value.
+*/
 func (instrument *Instrument) On(message any) any {
 	frame := message.(*kraken.Instrument)
 
@@ -81,8 +88,8 @@ func (instrument *Instrument) On(message any) any {
 	}
 
 	for index := range frame.Data.Pairs {
-		pair := frame.Data.Pairs[index]
-		instrument.cache.Store(pair.Symbol, &pair)
+		pair := clonePair(frame.Data.Pairs[index])
+		instrument.cache[pair.Symbol] = pair
 	}
 
 	instrument.Publish()
@@ -102,8 +109,7 @@ func (instrument *Instrument) On(message any) any {
 }
 
 /*
-Publish forwards the online quote-currency instrument universe to the terminal
-so the command palette can search concrete symbols.
+Publish forwards the online quote-currency instrument universe to the terminal.
 */
 func (instrument *Instrument) Publish() {
 	if instrument == nil || instrument.uiHub == nil {
@@ -129,22 +135,23 @@ func (instrument *Instrument) Publish() {
 		return
 	}
 
-	frame := datura.Map[any]{
+	frame, err := datura.Map[any]{
 		"instruments": pairs,
 	}.Marshal()
+
+	if err != nil {
+		return
+	}
 
 	select {
 	case instrument.uiHub <- frame:
 	default:
-		// Hub coalesce owns latest-by-key; retry once so a full channel does
-		// not permanently strand the command-palette universe at a tiny snapshot.
-		select {
-		case instrument.uiHub <- frame:
-		default:
-		}
 	}
 }
 
+/*
+Status reports instrument readiness.
+*/
 func (instrument *Instrument) Status() types.Status {
 	status := instrument.status.Load()
 
@@ -156,15 +163,14 @@ func (instrument *Instrument) Status() types.Status {
 }
 
 /*
-Pairs returns the cached instrument pairs, if known.
+Pairs returns deep-copied instrument snapshots sorted by symbol.
 */
 func (instrument *Instrument) Pairs() []kraken.InstrumentPair {
-	pairs := make([]kraken.InstrumentPair, 0)
+	pairs := make([]kraken.InstrumentPair, 0, len(instrument.cache))
 
-	instrument.cache.Range(func(key, value any) bool {
-		pairs = append(pairs, *value.(*kraken.InstrumentPair))
-		return true
-	})
+	for _, pair := range instrument.cache {
+		pairs = append(pairs, clonePair(pair))
+	}
 
 	sort.Slice(pairs, func(left, right int) bool {
 		return pairs[left].Symbol < pairs[right].Symbol
@@ -174,33 +180,54 @@ func (instrument *Instrument) Pairs() []kraken.InstrumentPair {
 }
 
 /*
-Remember stores one pair for paper/fixture sizing without a live instrument feed.
+Remember stores one deep-copied pair for paper/fixture sizing.
 */
-func (instrument *Instrument) Remember(pair *kraken.InstrumentPair) {
-	if instrument == nil || pair == nil || pair.Symbol == "" {
+func (instrument *Instrument) Remember(pair kraken.InstrumentPair) {
+	if pair.Symbol == "" {
 		return
 	}
 
-	instrument.cache.Store(pair.Symbol, pair)
+	instrument.cache[pair.Symbol] = clonePair(pair)
 }
 
 /*
-Pair returns the cached instrument metadata for the symbol, if known.
+Pair returns a deep-copied instrument snapshot for the symbol.
 */
-func (instrument *Instrument) Pair(symbol string) (*kraken.InstrumentPair, error) {
-	value, ok := instrument.cache.Load(symbol)
+func (instrument *Instrument) Pair(symbol string) (kraken.InstrumentPair, error) {
+	pair, ok := instrument.cache[symbol]
 
 	if !ok {
-		return nil, errnie.Error(errnie.Err(
+		return kraken.InstrumentPair{}, errnie.Error(errnie.Err(
 			errnie.NotFound,
 			"trader: instrument pair not found",
 			nil,
 		))
 	}
 
-	return value.(*kraken.InstrumentPair), nil
+	return clonePair(pair), nil
 }
 
+func clonePair(pair kraken.InstrumentPair) kraken.InstrumentPair {
+	out := pair
+
+	if pair.QtyIncrement != nil {
+		out.QtyIncrement = pair.QtyIncrement.Copy()
+	}
+
+	if pair.CostMin != nil {
+		out.CostMin = pair.CostMin.Copy()
+	}
+
+	if pair.QtyMin != nil {
+		out.QtyMin = pair.QtyMin.Copy()
+	}
+
+	return out
+}
+
+/*
+Subscribe issues paced market-data batches for the online quote universe.
+*/
 func (instrument *Instrument) Subscribe() error {
 	if instrument.Status() == types.READY {
 		return nil
@@ -211,29 +238,25 @@ func (instrument *Instrument) Subscribe() error {
 	symbols := make([]string, 0)
 	seen := make(map[string]struct{})
 
-	instrument.cache.Range(func(_, value any) bool {
-		pair := value.(*kraken.InstrumentPair)
-
+	for _, pair := range instrument.cache {
 		if pair.Quote != instrument.quote || pair.Status != "online" {
-			return true
+			continue
 		}
 
 		if _, duplicate := seen[pair.Symbol]; duplicate {
-			return true
+			continue
 		}
 
 		seen[pair.Symbol] = struct{}{}
 		symbols = append(symbols, pair.Symbol)
-
-		return true
-	})
+	}
 
 	if len(symbols) == 0 {
 		instrument.status.Store(types.INITIALIZING)
 		return nil
 	}
 
-	batchSize := viper.GetInt("market.subscribe_batch")
+	batchSize := instrument.market.SubscribeBatch
 
 	if batchSize < 1 {
 		return errnie.Error(errnie.Err(
@@ -243,8 +266,8 @@ func (instrument *Instrument) Subscribe() error {
 		))
 	}
 
-	pace := viper.GetDuration("market.subscribe_pace")
-	instrument.symbols = symbols
+	pace := instrument.market.SubscribePace
+	instrument.symbols = append([]string(nil), symbols...)
 
 	subscribers := []func([]string) error{
 		instrument.api.SubscribeTrade,
@@ -252,7 +275,7 @@ func (instrument *Instrument) Subscribe() error {
 		instrument.api.SubscribeTicker,
 	}
 
-	if viper.GetBool("market.l3_enabled") {
+	if instrument.market.L3Enabled {
 		subscribers = append(subscribers, instrument.api.SubscribeLevel3)
 	}
 
@@ -280,9 +303,7 @@ func (instrument *Instrument) Subscribe() error {
 }
 
 /*
-Resubscribe re-issues instrument and market channel subscriptions after the
-SDK reconnects. No-ops until the first Subscribe has completed so the initial
-Live connect cannot race Instrument.Initialize and double-subscribe.
+Resubscribe re-issues instrument and market channel subscriptions after reconnect.
 */
 func (instrument *Instrument) Resubscribe() error {
 	if instrument == nil || instrument.api == nil {
@@ -297,7 +318,7 @@ func (instrument *Instrument) Resubscribe() error {
 }
 
 /*
-Symbols returns the subscribed market universe, if Subscribe has completed.
+Symbols returns a copy of the subscribed market universe.
 */
 func (instrument *Instrument) Symbols() []string {
 	if instrument == nil {

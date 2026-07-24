@@ -10,6 +10,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/stack"
@@ -130,7 +131,7 @@ func BenchmarkInstrumentOn(b *testing.B) {
 		b.Fatal(err)
 	}
 	price := broker.NewPrice(api)
-	instrument := broker.NewInstrument(api, price, nil)
+	instrument := broker.NewInstrument(api, price, nil, config.Fixture().Market)
 	raw := []byte(`{"channel":"instrument","type":"snapshot","data":{"pairs":[{"symbol":"BTC/USD","base":"BTC","quote":"USD","status":"online"}]}}`)
 
 	b.ReportAllocs()
@@ -163,7 +164,7 @@ func TestInstrumentPublishEmitsUniverse(t *testing.T) {
 		)
 		So(api.Initialize(), ShouldBeNil)
 		price := broker.NewPrice(api)
-		instrument := broker.NewInstrument(api, price, hub)
+		instrument := broker.NewInstrument(api, price, hub, config.Fixture().Market)
 
 		instrument.On(kraken.NewInstrument([]byte(`{
 			"channel":"instrument",
@@ -206,7 +207,7 @@ func TestInstrumentSubscribeRejectsInvalidBatchSize(t *testing.T) {
 		)
 		So(api.Initialize(), ShouldBeNil)
 		price := broker.NewPrice(api)
-		instrument := broker.NewInstrument(api, price, nil)
+		instrument := broker.NewInstrument(api, price, nil, config.Fixture().Market)
 		instrument.On(kraken.NewInstrument([]byte(`{
 			"channel":"instrument",
 			"type":"snapshot",

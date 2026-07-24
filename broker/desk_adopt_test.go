@@ -1,28 +1,28 @@
 package broker
 
 import (
-	"sync"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/config"
 )
 
 func TestDeskAdoptOpen(t *testing.T) {
 	Convey("Given wallet holdings and a matching instrument pair", t, func() {
-		balance := NewBalance(nil, nil, make(chan []byte, 1))
+		balance := NewBalance(nil, nil, make(chan []byte, 1), config.Fixture().Market)
 		balance.quote = "USD"
-		balance.holdings.Store("ETH/USD", &types.Holding{
+		balance.holdings["ETH/USD"] = &types.Holding{
 			Symbol: "ETH/USD",
 			Asset:  "ETH",
 			Qty:    decimal.NewFromFloat64(3),
 			Status: types.OPEN,
-		})
+		}
 
-		instrument := &Instrument{cache: &sync.Map{}}
-		instrument.Remember(&kraken.InstrumentPair{
+		instrument := &Instrument{cache: map[string]kraken.InstrumentPair{}}
+		instrument.Remember(kraken.InstrumentPair{
 			Symbol: "ETH/USD",
 			Base:   "ETH",
 			Quote:  "USD",
@@ -32,7 +32,7 @@ func TestDeskAdoptOpen(t *testing.T) {
 		desk := &Desk{
 			balance:    balance,
 			instrument: instrument,
-			positions:  &sync.Map{},
+			positions:  map[string]*Position{},
 		}
 
 		Convey("AdoptOpen creates a position shell for the existing lot", func() {

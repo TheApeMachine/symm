@@ -1,8 +1,6 @@
 package broker
 
 import (
-	"strings"
-
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
@@ -11,27 +9,46 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+Position is one lot shell owned by Desk. Order correlation uses request ID then
+exchange order ID; unmatched executions buffer until the ack binds them.
+*/
 type Position struct {
 	status     types.Status
 	api        *websocket.API
 	instrument *Instrument
 	price      *Price
 	balance    *Balance
-	pair       *kraken.InstrumentPair
+	pair       kraken.InstrumentPair
 	request    *kraken.MarketOrder
 	order      *spot.Order
 	orderID    string
+	intentID   string
+	fills      []Fill
+	seenExec   map[string]struct{}
+	buffered   []kraken.ExecutionData
 }
 
 /*
-NewPosition constructs one lot shell; Desk routes order and execution frames.
+Fill is one immutable execution print used to derive lot economics.
+*/
+type Fill struct {
+	ExecID string
+	Side   string
+	Qty    *decimal.Decimal
+	Price  *decimal.Decimal
+	Fee    *decimal.Decimal
+}
+
+/*
+NewPosition constructs one lot shell; Desk routes order and execution rows.
 */
 func NewPosition(
 	api *websocket.API,
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
-	pair *kraken.InstrumentPair,
+	pair kraken.InstrumentPair,
 ) *Position {
 	return &Position{
 		status:     types.INITIALIZING,
@@ -40,6 +57,7 @@ func NewPosition(
 		price:      price,
 		balance:    balance,
 		pair:       pair,
+		seenExec:   make(map[string]struct{}),
 		order: &spot.Order{
 			Description: &spot.OrderDescription{
 				Pair:      pair.Symbol,
@@ -52,6 +70,9 @@ func NewPosition(
 	}
 }
 
+/*
+Status reports the lot lifecycle.
+*/
 func (position *Position) Status() types.Status {
 	return position.status
 }
@@ -64,7 +85,30 @@ func (position *Position) Close() {
 		return
 	}
 
-	position.status = types.CLOSED
+	next, err := types.Transition(position.status, types.CLOSED)
+
+	if err != nil {
+		errnie.Error(err)
+
+		return
+	}
+
+	position.status = next
+}
+
+/*
+setStatus applies a canonical Transition and fails loud on illegal edges.
+*/
+func (position *Position) setStatus(next types.Status) error {
+	status, err := types.Transition(position.status, next)
+
+	if err != nil {
+		return err
+	}
+
+	position.status = status
+
+	return nil
 }
 
 /*
@@ -75,270 +119,23 @@ func (position *Position) Mark(symbol string) {
 		return
 	}
 
-	value, ok := position.balance.holdings.Load(position.pair.Symbol)
+	holding, ok := position.balance.LookupHolding(position.pair.Symbol)
 
 	if !ok {
 		return
 	}
 
-	holding := value.(*types.Holding)
-
 	if holding.Status != types.OPEN {
 		return
 	}
 
-	_ = position.price.Mark(position.pair, holding)
+	_ = position.price.Mark(&position.pair, holding)
 
 	if holding.Stoploss != nil && holding.StopMark != nil {
 		holding.Stoploss.ObserveMark(holding.StopMark.Float64())
 	}
 }
 
-/*
-OrderAck binds the venue order id for the in-flight request. A fill that raced
-ahead of this ack already owns status, so the ack must not demote it.
-*/
-func (position *Position) OrderAck(buf []byte) {
-	orderAck := kraken.NewOrderResponse(buf)
-
-	if position.request == nil || orderAck.ReqID != position.request.ReqID {
-		return
-	}
-
-	if errnie.Error(kraken.Validate(orderAck)) != nil {
-		position.request = nil
-		position.status = types.ERROR
-		return
-	}
-
-	position.orderID = orderAck.Result.OrderID
-
-	// A fill may land before this ack when Actor topic order races; do not
-	// demote an already-open or closed lot back to PENDING.
-	if position.status == types.OPEN ||
-		position.status == types.CLOSED ||
-		position.status == types.CANCELED ||
-		position.status == types.FILLED {
-		return
-	}
-
-	position.status = types.PENDING
-}
-
-func (position *Position) ExecutionAck(buf []byte) {
-	execution := kraken.NewExecution(buf)
-
-	if errnie.Error(kraken.Validate(execution)) != nil {
-		return
-	}
-
-	for _, data := range execution.Data {
-		holding := position.holding(data.Symbol)
-
-		if holding == nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"position: nil holding for execution symbol "+data.Symbol,
-				nil,
-			))
-			continue
-		}
-
-		if !position.accept(data.OrderID) {
-			continue
-		}
-
-		data.Side = strings.ToLower(data.Side)
-		position.price.Fill(position.pair, holding, data)
-
-		status, ok := types.MarketStatuses[data.ExecType]
-
-		if !ok {
-			status = types.Status(data.ExecType)
-		}
-
-		if holding.Qty == nil || holding.Qty.Sign() <= 0 {
-			status = types.CLOSED
-		}
-
-		holding.Status = status
-		position.status = status
-		position.balance.Publish()
-
-		if holding.Status == types.CLOSED || holding.Status == types.CANCELED {
-			position.Close()
-		}
-	}
-}
-
-/*
-accept reports whether this execution belongs to the position. When OrderAck has
-not yet bound orderID (Actor topic order can deliver executions first), the
-in-flight request claims the first fill for this lot.
-*/
-func (position *Position) accept(orderID string) bool {
-	if position.orderID != "" {
-		return orderID == position.orderID
-	}
-
-	if position.request == nil || orderID == "" {
-		return false
-	}
-
-	position.orderID = orderID
-	return true
-}
-
-/*
-holding resolves the lot for an execution symbol. Compact paper/history pairs
-(NEARUSD) are canonicalized through the SDK normalizer on the API.
-*/
-func (position *Position) holding(symbol string) *types.Holding {
-	if value, ok := position.balance.holdings.Load(position.pair.Symbol); ok {
-		return value.(*types.Holding)
-	}
-
-	for _, key := range []string{symbol, position.api.Name(symbol)} {
-		if key == "" {
-			continue
-		}
-
-		if value, ok := position.balance.holdings.Load(key); ok {
-			return value.(*types.Holding)
-		}
-	}
-
-	return nil
-}
-
-/*
-Enter seeds the holding onto Balance and submits a market buy for its quantity.
-*/
-func (position *Position) Enter(holding *types.Holding) error {
-	if holding.Asset == "" {
-		holding.Asset = position.pair.Base
-	}
-
-	position.balance.holdings.Store(holding.Symbol, holding)
-
-	amount, err := position.price.Taker(position.pair, holding.Qty)
-
-	if err != nil {
-		position.balance.holdings.Delete(holding.Symbol)
-
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to calculate taker cost: "+err.Error(),
-			err,
-		))
-	}
-
-	if !position.balance.Available(amount) {
-		position.balance.holdings.Delete(holding.Symbol)
-
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"insufficient balance",
-			nil,
-		))
-	}
-
-	position.request = kraken.NewMarketOrder(
-		"buy",
-		holding.Qty,
-		holding.Symbol,
-	)
-
-	position.status = types.PENDING
-
-	if err := position.api.AddOrder(position.request); err != nil {
-		position.balance.holdings.Delete(holding.Symbol)
-		position.request = nil
-		position.status = types.ERROR
-
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to place market order",
-			err,
-		))
-	}
-
-	return nil
-}
-
-/*
-Exit submits a market sell for the full filled quantity.
-*/
-func (position *Position) Exit() error {
-	if position.status == types.PENDING {
-		return errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"position is pending",
-			nil,
-		))
-	}
-
-	holding, err := position.balance.Holding(position.pair.Symbol)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"failed to get holding for "+position.pair.Symbol,
-			err,
-		))
-	}
-
-	if holding.Qty == nil || holding.Qty.Sign() <= 0 {
-		return errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"quantity must be positive for "+position.pair.Symbol,
-			nil,
-		))
-	}
-
-	asset := holding.Asset
-
-	if asset == "" {
-		asset = position.pair.Base
-	}
-
-	available, err := position.balance.AssetAvailable(asset)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"no wallet availability to sell "+position.pair.Symbol,
-			err,
-		))
-	}
-
-	if available.Sign() <= 0 {
-		return errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"no sellable "+asset+" available for "+position.pair.Symbol,
-			nil,
-		))
-	}
-
-	position.request = kraken.NewMarketOrder(
-		"sell",
-		holding.Qty,
-		holding.Symbol,
-	)
-
-	prior := position.status
-	position.status = types.PENDING
-
-	if err := position.api.AddOrder(position.request); err != nil {
-		position.request = nil
-		position.status = prior
-
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to place market sell order",
-			err,
-		))
-	}
-
-	return nil
+func (position *Position) Symbol() string {
+	return position.pair.Symbol
 }

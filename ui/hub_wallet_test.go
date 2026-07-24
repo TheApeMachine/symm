@@ -8,6 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/config"
 )
 
 func TestHubWriteWallet(t *testing.T) {
@@ -20,8 +21,8 @@ func TestHubWriteWallet(t *testing.T) {
 		defer cancel()
 
 		messages := make(chan []byte, 4)
-		balance := broker.NewBalance(nil, nil, messages)
-		hub := NewHub(ctx, nil, balance, messages)
+		balance := broker.NewBalance(nil, nil, messages, config.Fixture().Market)
+		hub := NewHub(ctx, nil, balance, messages, config.UIConfig{Addr: "127.0.0.1:0"})
 		defer hub.Close()
 
 		balance.BalanceAck([]byte(`{
@@ -29,10 +30,8 @@ func TestHubWriteWallet(t *testing.T) {
 			"data":[{"asset":"USD","balance":250}]
 		}`))
 
-		// Drain may already have retained Publish; writeWallet must still work
-		// as the connect path that refreshes wallet state for a new client.
 		Convey("writeWallet retains a fresh balances frame", func() {
-			hub.writeWallet()
+			hub.writeWallet(nil)
 
 			deadline := time.Now().Add(time.Second)
 

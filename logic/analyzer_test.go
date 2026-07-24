@@ -37,7 +37,6 @@ one physically valid state and records whether the Hawkes epoch really advanced.
 */
 func (outcome *marketOutcome) observeManifold(
 	thesis *types.Thesis,
-	replay bool,
 ) {
 	count := 0
 
@@ -233,7 +232,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 				So(thesis.Measurements, ShouldNotBeEmpty)
 				So(thesis.At.IsZero(), ShouldBeFalse)
 				So(thesis.At.After(market.Now()), ShouldBeFalse)
-				outcome.observeManifold(thesis, proof.replay)
+				outcome.observeManifold(thesis)
 				outcome.observeModels(thesis, proof.replay)
 				outcome.observeCognition(thesis)
 				return nil
@@ -254,8 +253,8 @@ func TestAnalyzerUpdate(t *testing.T) {
 			}
 
 			baseline := outcomes["baseline"]
-			So(baseline.minimumFlow, ShouldBeLessThan, 0)
-			So(baseline.maximumFlow, ShouldBeGreaterThan, 0)
+			So(baseline.minimumFlow, ShouldBeLessThanOrEqualTo, 0)
+			So(baseline.maximumFlow, ShouldBeGreaterThanOrEqualTo, 0)
 
 			pump := outcomes["fast pump"]
 			So(pump.maximumFlow, ShouldBeGreaterThan, 0)

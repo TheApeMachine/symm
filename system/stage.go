@@ -1,11 +1,10 @@
 package system
 
 import (
+	"context"
 	"sync/atomic"
-	"time"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -81,12 +80,15 @@ func (stage *Stage) Status() types.Status {
 }
 
 /*
-Initialize brings up every reporter in registration order. Each reporter's
-own Initialize runs, then Stage waits for that reporter to report READY
-before moving to the next one, so a dependent reporter can rely on
-ordering instead of polling its dependency's status itself.
+Initialize brings up every reporter in registration order. Each reporter's own
+Initialize runs, then Stage waits on a context-aware readiness future before
+moving to the next one so boot cannot hang without a deadline forever.
 */
-func (stage *Stage) Initialize(uiHub chan<- []byte) error {
+func (stage *Stage) Initialize(ctx context.Context, uiHub chan<- []byte) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	for _, reporter := range stage.reporters {
 		stage.Publish(uiHub, datura.Map[any]{
 			"stage":  stage.stageType.String(),
@@ -100,32 +102,47 @@ func (stage *Stage) Initialize(uiHub chan<- []byte) error {
 				"status": types.ERROR,
 			})
 
-			return errnie.Error(err)
+			return err
 		}
 
-		for reporter.Status() != types.READY {
-			if reporter.Status() == types.ERROR {
-				stage.status.Store(types.ERROR)
-				stage.Publish(uiHub, datura.Map[any]{
-					"stage":  stage.stageType.String(),
-					"status": types.ERROR,
-				})
+		if err := waitReporter(ctx, reporter); err != nil {
+			stage.status.Store(types.ERROR)
+			stage.Publish(uiHub, datura.Map[any]{
+				"stage":  stage.stageType.String(),
+				"status": types.ERROR,
+			})
 
-				return errnie.Error(errnie.Err(
-					errnie.Internal, "reporter failed to initialize", nil,
-				))
-			}
-
-			time.Sleep(10 * time.Millisecond)
+			return err
 		}
 	}
 
 	return nil
 }
 
+/*
+waitReporter prefers an explicit ReadyFuture when the reporter exposes one.
+*/
+func waitReporter(ctx context.Context, reporter types.StatusReporter) error {
+	if future, ok := reporter.(interface{ Ready() *types.ReadyFuture }); ok {
+		return future.Ready().Wait(ctx)
+	}
+
+	return types.WaitStatus(ctx, reporter)
+}
+
 func (stage *Stage) Publish(uiHub chan<- []byte, status datura.Map[any]) {
+	if uiHub == nil {
+		return
+	}
+
+	frame, err := status.Marshal()
+
+	if err != nil {
+		return
+	}
+
 	select {
-	case uiHub <- status.Marshal():
+	case uiHub <- frame:
 	default:
 	}
 }

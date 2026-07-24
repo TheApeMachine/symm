@@ -21,6 +21,23 @@ func TestNoteLifecycle(t *testing.T) {
 	})
 }
 
+func TestThesisSaveCheckpoint(t *testing.T) {
+	Convey("Given a finalized immutable cut", t, func() {
+		dir := t.TempDir()
+		thesis := NewThesis(nil)
+		cut := &ImmutableCut{
+			ID:   2,
+			Tick: 4,
+			At:   time.Unix(1, 0).UTC(),
+		}
+
+		Convey("Save delegates to cut checkpoint", func() {
+			So(thesis.Save(dir, cut), ShouldBeNil)
+			So(thesis.Save(dir, nil), ShouldNotBeNil)
+		})
+	})
+}
+
 func TestPublish(t *testing.T) {
 	Convey("Given a thesis already carrying published source rows", t, func() {
 		thesis := NewThesis(nil)

@@ -20,7 +20,7 @@ func TestInitializeSize(t *testing.T) {
 				Topic: "trade",
 				Fn: func(message any) any {
 					handled.Add(1)
-					time.Sleep(20 * time.Millisecond)
+					time.Sleep(5 * time.Millisecond)
 
 					return message
 				},
@@ -35,7 +35,7 @@ func TestInitializeSize(t *testing.T) {
 			},
 		})
 		producer.AddRoot("trade", NewSubscriptionSize[any](1))
-		producer.Run()
+		producer.Start()
 		consumer.InitializeSize(1, Topic{Name: "trade", Actor: producer})
 
 		Convey("It should apply backpressure so the consumer sees every send", func() {
@@ -51,6 +51,80 @@ func TestInitializeSize(t *testing.T) {
 			}
 
 			So(handled.Load(), ShouldEqual, int64(5))
+			So(consumer.Close(), ShouldBeNil)
+			So(producer.Close(), ShouldBeNil)
 		})
 	})
+}
+
+func TestActorClose(t *testing.T) {
+	Convey("Given a started actor", t, func() {
+		ctx := t.Context()
+		var ran atomic.Bool
+		actor := NewActor(ctx, map[string]Handler{
+			"trade": {
+				Topic: "trade",
+				Fn: func(message any) any {
+					ran.Store(true)
+
+					return nil
+				},
+			},
+		})
+		root := NewSubscriptionSize[any](1)
+		actor.AddRoot("trade", root)
+		actor.Start()
+		root.Send("ping")
+
+		deadline := time.Now().Add(time.Second)
+
+		for !ran.Load() && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+
+		So(ran.Load(), ShouldBeTrue)
+		So(actor.Close(), ShouldBeNil)
+	})
+}
+
+func TestTrySend(t *testing.T) {
+	Convey("Given a full subscription", t, func() {
+		subscription := NewSubscriptionSize[any](1)
+		So(subscription.TrySend(1), ShouldBeTrue)
+		So(subscription.TrySend(2), ShouldBeFalse)
+	})
+}
+
+func BenchmarkActorInbox(b *testing.B) {
+	ctx, cancel := context.WithCancel(b.Context())
+	defer cancel()
+
+	var handled atomic.Int64
+	actor := NewActor(ctx, map[string]Handler{
+		"trade": {
+			Topic: "trade",
+			Fn: func(message any) any {
+				handled.Add(1)
+
+				return nil
+			},
+		},
+	})
+	root := NewSubscriptionSize[any](1024)
+	actor.AddRoot("trade", root)
+	actor.Start()
+	defer actor.Close()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		root.Send(struct{}{})
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+
+	for handled.Load() < int64(b.N) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 }

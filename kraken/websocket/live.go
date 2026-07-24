@@ -54,6 +54,7 @@ type Live struct {
 	nonce        *AuthNonce
 	nonceErr     error
 	ready        func() error
+	readyGate    *types.ReadyFuture
 	level3Queue  chan []byte
 	level3Ledger *level3Ledger
 	roots        map[string]*types.Subscription[any]
@@ -78,6 +79,7 @@ func New(
 		simulator: simulator,
 		client:    spot.NewWebSocket(),
 		auth:      auth,
+		readyGate: types.NewReadyFuture(),
 		roots: map[string]*types.Subscription[any]{
 			"ticker":     types.NewSubscription[any](),
 			"book":       types.NewSubscription[any](),
@@ -147,7 +149,7 @@ func New(
 				}
 			}
 
-			live.roots[channel].Send(entity)
+			live.roots[channel].TrySend(entity)
 		}
 	})
 
@@ -191,6 +193,7 @@ func (live *Live) onConnected() {
 		if live.ready != nil {
 			if err := live.ready(); err != nil {
 				live.status = types.ERROR
+				live.readyGate.Resolve(err)
 				errnie.Error(errnie.Err(
 					errnie.Validation,
 					"websocket: public resubscribe failed",
@@ -202,12 +205,14 @@ func (live *Live) onConnected() {
 		}
 
 		live.status = types.READY
+		live.readyGate.Resolve(nil)
 
 		return
 	}
 
 	if errnie.Error(live.authenticate()) != nil {
 		live.status = types.ERROR
+		live.readyGate.Resolve(types.ClosedError{Component: "websocket:auth"})
 	}
 }
 
@@ -222,6 +227,7 @@ func (live *Live) onAuthenticated() {
 			nil,
 		))
 		live.status = types.ERROR
+		live.readyGate.Resolve(types.ClosedError{Component: "websocket:level3"})
 
 		return
 	}
@@ -229,6 +235,7 @@ func (live *Live) onAuthenticated() {
 	if live.ready != nil {
 		if err := live.ready(); err != nil {
 			live.status = types.ERROR
+			live.readyGate.Resolve(err)
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"websocket: private resubscribe failed",
@@ -240,6 +247,7 @@ func (live *Live) onAuthenticated() {
 	}
 
 	live.status = types.READY
+	live.readyGate.Resolve(nil)
 }
 
 func (live *Live) authenticate() (err error) {
@@ -296,6 +304,7 @@ func (live *Live) Initialize() error {
 
 	if err := live.client.Connect(); err != nil {
 		live.status = types.ERROR
+		live.readyGate.Resolve(err)
 
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -304,8 +313,21 @@ func (live *Live) Initialize() error {
 		))
 	}
 
-	live.status = types.READY
+	// READY is resolved only after connection, authentication when required,
+	// and acknowledgement of required subscriptions in onConnected / onAuthenticated.
+	live.status = types.PENDING
 	return nil
+}
+
+/*
+Ready returns the future that resolves once auth and required subs complete.
+*/
+func (live *Live) Ready() *types.ReadyFuture {
+	if live.readyGate == nil {
+		live.readyGate = types.NewReadyFuture()
+	}
+
+	return live.readyGate
 }
 
 /*

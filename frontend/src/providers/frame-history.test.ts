@@ -61,7 +61,7 @@ describe("FrameHistory", () => {
 		]);
 		const retained = history.values("measurements");
 
-		expect(retained.map((row) => row.raw)).toEqual([1, 2, 8]);
+		expect(retained.map((row) => row.raw)).toEqual([8, 1, 2]);
 	});
 
 	it("retains independent metrics reported at the same timestamp", () => {
@@ -115,7 +115,7 @@ describe("FrameHistory", () => {
 		]);
 
 		expect(history.values("measurements").map((row) => row.raw)).toEqual([
-			3, 8, 9,
+			8, 9, 3,
 		]);
 	});
 
@@ -161,7 +161,7 @@ describe("FrameHistory", () => {
 		]);
 
 		expect(history.latest("measurements").map((row) => row.raw)).toEqual([
-			2, 8,
+			8, 2,
 		]);
 	});
 
@@ -171,5 +171,35 @@ describe("FrameHistory", () => {
 		expect(() =>
 			history.retain("measurements", [{ symbol: "BTC/USD" }]),
 		).toThrow("measurements history row requires source");
+	});
+
+	it("evicts least-recent entities once cardinality exceeds the LRU bound", () => {
+		const history = new FrameHistory(
+			() => 2,
+			() => "BTC/USD",
+			2,
+		);
+
+		history.retain("measurements", [
+			measurement("2026-07-21T10:00:00Z", 1, "AAA/USD"),
+			measurement("2026-07-21T10:00:00Z", 2, "BBB/USD"),
+			measurement("2026-07-21T10:00:00Z", 3, "CCC/USD"),
+		]);
+
+		expect(history.values("measurements").map((row) => row.symbol)).toEqual([
+			"BBB/USD",
+			"CCC/USD",
+		]);
+	});
+
+	it("orders combined projections by epoch milliseconds", () => {
+		const history = focusedHistory(3);
+
+		history.retain("measurements", [
+			measurement("2026-07-21T10:00:02Z", 2),
+			measurement("2026-07-21T10:00:00Z", 8, "ETH/USD"),
+		]);
+
+		expect(history.values("measurements").map((row) => row.raw)).toEqual([8, 2]);
 	});
 });

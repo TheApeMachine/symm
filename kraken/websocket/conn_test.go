@@ -377,8 +377,15 @@ func TestAPIInjectLevel3(t *testing.T) {
 			So(conn.reported, ShouldBeNil)
 			best := 0.0
 			So(api.PeekBook(symbols[0], func(symbolBook *book.Book) {
-				best = symbolBook.BestAsk().Price.Float64()
+				ask := symbolBook.BestAsk()
+
+				if ask == nil || ask.Price == nil {
+					return
+				}
+
+				best = ask.Price.Float64()
 			}), ShouldBeTrue)
+			So(best, ShouldBeGreaterThan, 0)
 			So(best, ShouldEqual, quote.Ask+marketsignal.PriceIncrement)
 		})
 
@@ -565,16 +572,6 @@ func TestAPIClose(t *testing.T) {
 			})
 		})
 	})
-}
-
-func newTestSimulator() *Simulator {
-	simulator := NewSimulator()
-
-	if err := simulator.Initialize(); err != nil {
-		return nil
-	}
-
-	return simulator
 }
 
 type stubConn struct {

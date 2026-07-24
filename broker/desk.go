@@ -3,10 +3,9 @@ package broker
 import (
 	"context"
 	"slices"
-	"sync"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -14,7 +13,7 @@ import (
 
 /*
 Desk is the broker Actor entrypoint. It alone Subscribes market and account
-topics and fans typed frames into Price, Balance, Instrument, and Positions.
+topics and owns plain position maps plus decode-once account routing indexes.
 */
 type Desk struct {
 	*types.Actor
@@ -23,17 +22,23 @@ type Desk struct {
 	instrument   *Instrument
 	price        *Price
 	balance      *Balance
-	positions    *sync.Map
+	positions    map[string]*Position
+	byReqID      map[int64]*Position
+	byOrderID    map[string]*Position
 	maxPositions int
 	maxReserved  int
 }
 
+/*
+NewDesk constructs the serial broker owner.
+*/
 func NewDesk(
 	ctx context.Context,
 	api *websocket.API,
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
+	trading config.TradingConfig,
 ) *Desk {
 	desk := &Desk{
 		status:       types.INITIALIZING,
@@ -41,9 +46,11 @@ func NewDesk(
 		instrument:   instrument,
 		price:        price,
 		balance:      balance,
-		positions:    &sync.Map{},
-		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
-		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
+		positions:    make(map[string]*Position),
+		byReqID:      make(map[int64]*Position),
+		byOrderID:    make(map[string]*Position),
+		maxPositions: trading.SlotsNormal,
+		maxReserved:  trading.SlotsReserved,
 	}
 
 	desk.Actor = types.NewActor(ctx, map[string]types.Handler{
@@ -81,7 +88,7 @@ func (desk *Desk) Initialize(market *types.Actor, account *types.Actor) error {
 
 	if desk.api != nil {
 		if err := desk.api.SubscribeExecutions(); err != nil {
-			desk.status = types.ERROR
+			_ = desk.transitionStatus(types.ERROR)
 
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
@@ -91,7 +98,9 @@ func (desk *Desk) Initialize(market *types.Actor, account *types.Actor) error {
 		}
 	}
 
-	desk.status = types.READY
+	if err := desk.transitionStatus(types.READY); err != nil {
+		return err
+	}
 
 	if desk.balance != nil {
 		desk.balance.Publish()
@@ -100,6 +109,25 @@ func (desk *Desk) Initialize(market *types.Actor, account *types.Actor) error {
 	return nil
 }
 
+/*
+transitionStatus applies one canonical desk lifecycle edge and fails loud on
+illegal transitions.
+*/
+func (desk *Desk) transitionStatus(next types.Status) error {
+	status, err := types.Transition(desk.status, next)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	desk.status = status
+
+	return nil
+}
+
+/*
+Status reports desk readiness.
+*/
 func (desk *Desk) Status() types.Status {
 	return desk.status
 }
@@ -115,9 +143,9 @@ func (desk *Desk) onTicker(message any) any {
 
 	for index := range ticker.Data {
 		item := ticker.Data[index]
-		position, ok := desk.Position(item.Symbol)
+		position, ok := desk.positions[item.Symbol]
 
-		if !ok || position == nil {
+		if !ok {
 			continue
 		}
 
@@ -128,18 +156,19 @@ func (desk *Desk) onTicker(message any) any {
 }
 
 /*
-onInstrument forwards the instrument tick to desk.instrument.On and then adopts
-any newly visible open lots via desk.AdoptOpen.
+onInstrument forwards the instrument tick then adopts newly visible open lots.
 */
 func (desk *Desk) onInstrument(message any) any {
 	desk.instrument.On(message)
 	desk.AdoptOpen()
+
 	return nil
 }
 
 func (desk *Desk) onBalances(message any) any {
 	desk.balance.BalanceAck(message.([]byte))
 	desk.AdoptOpen()
+
 	return nil
 }
 
@@ -148,12 +177,12 @@ AdoptOpen creates Position shells for wallet lots that already exist at startup
 or arrive via balance sync, so marks and exits work without a prior Enter.
 */
 func (desk *Desk) AdoptOpen() {
-	if desk == nil || desk.balance == nil || desk.instrument == nil {
+	if desk.balance == nil || desk.instrument == nil {
 		return
 	}
 
 	for holding := range desk.balance.Holdings() {
-		if _, ok := desk.Position(holding.Symbol); ok {
+		if _, ok := desk.positions[holding.Symbol]; ok {
 			continue
 		}
 
@@ -166,85 +195,81 @@ func (desk *Desk) AdoptOpen() {
 		position := NewPosition(
 			desk.api, desk.instrument, desk.price, desk.balance, pair,
 		)
-		position.status = types.OPEN
-		desk.positions.Store(holding.Symbol, position)
+
+		if err := position.setStatus(types.OPEN); err != nil {
+			errnie.Error(err)
+
+			continue
+		}
+
+		desk.positions[holding.Symbol] = position
 	}
 }
 
-func (desk *Desk) onExecutions(message any) any {
-	raw := message.([]byte)
-
-	desk.positions.Range(func(_, value any) bool {
-		value.(*Position).ExecutionAck(raw)
-		return true
-	})
-
-	return nil
-}
-
-func (desk *Desk) onOrder(message any) any {
-	raw := message.([]byte)
-
-	desk.positions.Range(func(_, value any) bool {
-		value.(*Position).OrderAck(raw)
-		return true
-	})
-
-	return nil
-}
-
 /*
-Update checks all positions and removes any that have been
-closed or errored.
+Update removes closed or errored positions from the open map.
 */
 func (desk *Desk) Update() {
-	desk.positions.Range(func(_, value any) bool {
-		position := value.(*Position)
-
+	for symbol, position := range desk.positions {
 		if slices.Contains([]types.Status{
 			types.CLOSED, types.ERROR, types.CANCELED,
 		}, position.Status()) {
 			position.Close()
-			desk.positions.Delete(position.pair.Symbol)
-			return true
+			desk.forget(symbol, position)
+
+			continue
 		}
 
-		// Wallet Balance is inventory authority; Position status can lag a
-		// syncWallet flatten until the next execution print.
-		if desk.balance == nil || position.pair == nil {
-			return true
+		if desk.balance == nil {
+			continue
 		}
 
-		holding, err := desk.balance.Holding(position.pair.Symbol)
+		holding, err := desk.balance.Holding(position.Symbol())
 
 		if err != nil || holding.Status != types.CLOSED {
-			return true
+			continue
 		}
 
-		position.status = types.CLOSED
-		desk.positions.Delete(position.pair.Symbol)
+		if closeErr := position.setStatus(types.CLOSED); closeErr != nil {
+			errnie.Error(closeErr)
+		}
 
-		return true
-	})
+		desk.forget(symbol, position)
+	}
+}
+
+func (desk *Desk) forget(symbol string, position *Position) {
+	delete(desk.positions, symbol)
+
+	if position.request != nil {
+		delete(desk.byReqID, position.request.ReqID)
+	}
+
+	if position.orderID != "" {
+		delete(desk.byOrderID, position.orderID)
+	}
 }
 
 /*
-OpenPositions counts open inventory that occupies a slot. Wallet holdings are
-the source of truth — position shells can lag adoptOpen or disappear on ERROR
-while paper balances remain. Update+AdoptOpen run so slot math sees fresh shells;
-tick publishing should use HoldingCount instead to avoid this work every cut.
+OpenPositions counts open inventory plus pending slot reservations.
 */
 func (desk *Desk) OpenPositions() int {
 	desk.Update()
-	return desk.HoldingCount()
+
+	reserved := 0
+
+	if desk.balance != nil {
+		reserved = desk.balance.Ledger().ReservedSlots()
+	}
+
+	return desk.HoldingCount() + reserved
 }
 
 /*
-HoldingCount returns the number of wallet lots without Update or adopt work so
-the tick publish path stays cheap under a hot quote stream.
+HoldingCount returns the number of wallet lots without Update work.
 */
 func (desk *Desk) HoldingCount() int {
-	if desk == nil || desk.balance == nil {
+	if desk.balance == nil {
 		return 0
 	}
 
@@ -257,72 +282,38 @@ func (desk *Desk) HoldingCount() int {
 	return count
 }
 
+/*
+Position returns the open lot shell for symbol.
+*/
 func (desk *Desk) Position(symbol string) (*Position, bool) {
-	value, ok := desk.positions.Load(symbol)
+	position, ok := desk.positions[symbol]
 
-	if !ok {
-		return nil, false
-	}
-
-	return value.(*Position), true
-}
-
-func (desk *Desk) Buy(
-	holding *types.Holding,
-	opportunity bool,
-) (*Position, error) {
-	pair, err := desk.instrument.Pair(holding.Symbol)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"desk: instrument pair unavailable for "+holding.Symbol,
-			err,
-		))
-	}
-
-	position := NewPosition(
-		desk.api, desk.instrument, desk.price, desk.balance, pair,
-	)
-
-	if err := position.Enter(holding); err != nil {
-		return nil, err
-	}
-
-	desk.positions.Store(holding.Symbol, position)
-
-	return position, nil
+	return position, ok
 }
 
 /*
-Sell exits the full desk-owned lot for symbol.
+Close is retained for boot shutdown symmetry.
 */
-func (desk *Desk) Sell(symbol string) error {
-	position, ok := desk.Position(symbol)
-
-	if !ok {
-		return errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"desk: no open position for "+symbol,
-			nil,
-		))
-	}
-
-	return position.Exit()
-}
-
 func (desk *Desk) Close() error {
 	return nil
 }
 
+/*
+HasSlot reports whether an additional lot may open under slot capacity.
+*/
 func (desk *Desk) HasSlot(opportunity bool) bool {
+	occupied := desk.OpenPositions()
+
 	if !opportunity {
-		return desk.OpenPositions() < desk.maxPositions
+		return occupied < desk.maxPositions
 	}
 
-	return desk.OpenPositions() < desk.MaxSlots(opportunity)
+	return occupied < desk.MaxSlots(opportunity)
 }
 
+/*
+MaxSlots returns normal capacity, optionally including reserved opportunity slots.
+*/
 func (desk *Desk) MaxSlots(withReserved bool) int {
 	if withReserved {
 		return desk.maxPositions + desk.maxReserved

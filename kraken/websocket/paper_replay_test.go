@@ -6,6 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -16,7 +17,7 @@ without inventing partial executions that are absent from the source record.
 func TestPaperReplay(t *testing.T) {
 	Convey("Given one paper trade from exchange history", t, func() {
 		viper.Set("system.actor.buffer", 64)
-		paper := NewPaper(context.Background(), NewSimulator())
+		paper := NewPaper(context.Background(), NewSimulator(), config.Fixture())
 		sub := paper.Subscribe("executions")
 
 		err := paper.Replay([]any{map[string]any{
@@ -42,7 +43,7 @@ BenchmarkPaperReplay measures conversion and emission of one real paper fill.
 */
 func BenchmarkPaperReplay(b *testing.B) {
 	viper.Set("system.actor.buffer", 64)
-	paper := NewPaper(context.Background(), NewSimulator())
+	paper := NewPaper(context.Background(), NewSimulator(), config.Fixture())
 	sub := paper.Subscribe("executions")
 	trades := []any{map[string]any{
 		"id": "PAPER-00026", "order_id": "PAPER-00025",

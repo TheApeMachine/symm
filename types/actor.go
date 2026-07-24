@@ -2,7 +2,9 @@ package types
 
 import (
 	"context"
-	"runtime"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -49,6 +51,31 @@ func (subscription *Subscription[T]) Send(message T) {
 }
 
 /*
+TrySend enqueues without blocking. It returns false when the subscriber inbox is
+full so websocket readers can hand off without stalling the socket.
+*/
+func (subscription *Subscription[T]) TrySend(message T) bool {
+	select {
+	case subscription.Channel <- message:
+		return true
+	default:
+		return false
+	}
+}
+
+/*
+Envelope is one ordered inbox item: topic routing plus optional venue sequence
+and event time so an Actor consumes a single stream instead of busy-polling
+topic maps.
+*/
+type Envelope struct {
+	Topic          string
+	SourceSequence uint64
+	EventTime      time.Time
+	Payload        any
+}
+
+/*
 Topic names a pipe from an upstream Actor under Name.
 */
 type Topic struct {
@@ -56,6 +83,9 @@ type Topic struct {
 	Actor *Actor
 }
 
+/*
+Handler binds a topic name to the function that transforms one Envelope payload.
+*/
 type Handler struct {
 	Topic string
 	Fn    func(any) any
@@ -63,8 +93,8 @@ type Handler struct {
 
 /*
 Actor is embeddable as `*Actor` on entrypoints (Desk, Crypto, Signal, …).
-Run pops each subscription, runs the handler, and Sends the result to
-subscribers of that same topic.
+One goroutine blocks on a unified inbox; per-topic subscriptions pump into that
+inbox so idle actors sleep and cross-topic order follows arrival order.
 */
 type Actor struct {
 	ctx           context.Context
@@ -72,6 +102,12 @@ type Actor struct {
 	subscriptions map[string]*Subscription[any]
 	subscribers   map[string][]*Subscription[any]
 	handlers      map[string]Handler
+	inbox         chan Envelope
+	mu            sync.Mutex
+	started       atomic.Bool
+	frozen        atomic.Bool
+	wg            sync.WaitGroup
+	seq           atomic.Uint64
 }
 
 /*
@@ -87,12 +123,19 @@ func NewActor(
 		handlers = map[string]Handler{}
 	}
 
+	buffer := viper.GetViper().GetInt("system.actor.buffer")
+
+	if buffer < 1 {
+		buffer = 64
+	}
+
 	return &Actor{
 		ctx:           ctx,
 		cancel:        cancel,
 		subscriptions: make(map[string]*Subscription[any]),
 		subscribers:   make(map[string][]*Subscription[any]),
 		handlers:      handlers,
+		inbox:         make(chan Envelope, buffer),
 	}
 }
 
@@ -100,6 +143,13 @@ func NewActor(
 AddRoot registers a producer-owned ingress subscription under name.
 */
 func (actor *Actor) AddRoot(name string, subscription *Subscription[any]) {
+	actor.mu.Lock()
+	defer actor.mu.Unlock()
+
+	if actor.frozen.Load() {
+		panic("types.Actor: AddRoot after Start")
+	}
+
 	actor.subscriptions[name] = subscription
 }
 
@@ -113,8 +163,12 @@ func (actor *Actor) Subscribe(topic string) *Subscription[any] {
 
 /*
 SubscribeSize registers interest with an explicit inbound buffer depth.
+Subscribers may attach after Start; only the actor's own inbound roots freeze.
 */
 func (actor *Actor) SubscribeSize(topic string, buffer int) *Subscription[any] {
+	actor.mu.Lock()
+	defer actor.mu.Unlock()
+
 	subscription := NewSubscriptionSize[any](buffer)
 	actor.subscribers[topic] = append(actor.subscribers[topic], subscription)
 
@@ -133,83 +187,152 @@ InitializeSize attaches upstream topics with an explicit inbound buffer depth so
 a slow consumer can apply real backpressure instead of coalescing mutable state.
 */
 func (actor *Actor) InitializeSize(buffer int, topics ...Topic) {
+	if actor.frozen.Load() {
+		panic("types.Actor: InitializeSize after Start")
+	}
+
+	actor.mu.Lock()
+
 	for _, topic := range topics {
 		actor.subscriptions[topic.Name] = topic.Actor.SubscribeSize(
 			topic.Name, buffer,
 		)
 	}
 
-	actor.Run()
+	actor.mu.Unlock()
+	actor.Start()
 }
 
 /*
-Run starts the long-running loop that pops subscriptions into handlers.
+Start freezes topology, pumps each subscription into the unified inbox, and
+runs one blocking consumer. Repeated Start is a no-op.
+*/
+func (actor *Actor) Start() {
+	if !actor.started.CompareAndSwap(false, true) {
+		return
+	}
+
+	actor.frozen.Store(true)
+	actor.mu.Lock()
+	topics := make([]string, 0, len(actor.subscriptions))
+
+	for topic := range actor.subscriptions {
+		topics = append(topics, topic)
+	}
+
+	actor.mu.Unlock()
+
+	for _, topic := range topics {
+		actor.pump(topic)
+	}
+
+	actor.wg.Add(1)
+
+	go func() {
+		defer actor.wg.Done()
+		actor.loop()
+	}()
+}
+
+/*
+Run is retained for call sites; it starts the actor once.
 */
 func (actor *Actor) Run() {
+	actor.Start()
+}
+
+/*
+Close cancels the actor and waits until the inbox loop and pumps exit.
+*/
+func (actor *Actor) Close() error {
+	actor.cancel()
+	actor.wg.Wait()
+
+	return nil
+}
+
+func (actor *Actor) pump(topic string) {
+	actor.mu.Lock()
+	subscription := actor.subscriptions[topic]
+	actor.mu.Unlock()
+
+	if subscription == nil {
+		return
+	}
+
+	actor.wg.Add(1)
+
 	go func() {
+		defer actor.wg.Done()
+
 		for {
 			select {
 			case <-actor.ctx.Done():
 				return
-			default:
-				if !actor.handle() {
-					runtime.Gosched()
+			case message, ok := <-subscription.Channel:
+				if !ok {
+					return
+				}
+
+				envelope := Envelope{
+					Topic:          topic,
+					SourceSequence: actor.seq.Add(1),
+					EventTime:      time.Now().UTC(),
+					Payload:        message,
+				}
+
+				select {
+				case <-actor.ctx.Done():
+					return
+				case actor.inbox <- envelope:
 				}
 			}
 		}
 	}()
 }
 
-/*
-handle drains ready subscription messages round-robin until every topic is
-empty for one full pass. It returns true when any work ran so the idle path
-only yields after a fully empty poll.
-*/
-func (actor *Actor) handle() bool {
-	worked := false
-
+func (actor *Actor) loop() {
 	for {
-		progress := false
-
-		for topic, subscription := range actor.subscriptions {
-			select {
-			case <-actor.ctx.Done():
-				return worked
-			default:
+		select {
+		case <-actor.ctx.Done():
+			return
+		case envelope, ok := <-actor.inbox:
+			if !ok {
+				return
 			}
 
-			select {
-			case <-actor.ctx.Done():
-				return worked
-			case message := <-subscription.Channel:
-				progress = true
-				worked = true
-				handler, ok := actor.handlers[topic]
-
-				if !ok {
-					actor.publish(topic, message)
-					continue
-				}
-
-				result := handler.Fn(message)
-
-				if result == nil {
-					continue
-				}
-
-				actor.publish(topic, result)
-			default:
-			}
-		}
-
-		if !progress {
-			return worked
+			actor.dispatch(envelope)
 		}
 	}
 }
 
+func (actor *Actor) dispatch(envelope Envelope) {
+	handler, ok := actor.handlers[envelope.Topic]
+
+	if !ok {
+		actor.publish(envelope.Topic, envelope.Payload)
+		return
+	}
+
+	result := handler.Fn(envelope.Payload)
+
+	if result == nil {
+		return
+	}
+
+	actor.publish(envelope.Topic, result)
+}
+
 func (actor *Actor) publish(topic string, result any) {
-	for _, subscriber := range actor.subscribers[topic] {
-		subscriber.Send(result)
+	actor.mu.Lock()
+	subscribers := append([]*Subscription[any](nil), actor.subscribers[topic]...)
+	actor.mu.Unlock()
+
+	for _, subscriber := range subscribers {
+		select {
+		case <-actor.ctx.Done():
+			return
+		case subscriber.Channel <- result:
+		}
 	}
 }

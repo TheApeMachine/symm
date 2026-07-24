@@ -1,14 +1,12 @@
 package types
 
 import (
-	"os"
-	"path/filepath"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/errnie"
 )
 
 const (
@@ -262,6 +260,20 @@ func (thesis *Thesis) InstallMeasurements(rows []*Measurement) {
 }
 
 /*
+AppendMeasurements extends the published surface under the same lock Publish
+uses so analyzer enrichment cannot race concurrent signal upserts.
+*/
+func (thesis *Thesis) AppendMeasurements(rows []*Measurement) {
+	if thesis == nil || len(rows) == 0 {
+		return
+	}
+
+	thesis.publish.Lock()
+	thesis.Measurements = append(thesis.Measurements, rows...)
+	thesis.publish.Unlock()
+}
+
+/*
 CutSnapshot copies this tick's measurements and forecasts for history callers
 that must not observe later ResetTick replacements on the durable Thesis.
 */
@@ -284,77 +296,16 @@ func (thesis *Thesis) CutSnapshot() *Thesis {
 	return snapshot
 }
 
-func (thesis *Thesis) Save(dir string) error {
-	target := filepath.Join(dir, ThesisKey+".json")
-	json, err := thesis.MarshalJSON()
-
-	if err != nil {
-		return err
+/*
+Save persists an immutable completed-cut snapshot under dir. The live Thesis is
+not marshaled while mutable; callers must pass a finalized ImmutableCut.
+*/
+func (thesis *Thesis) Save(dir string, cut *ImmutableCut) error {
+	if cut == nil {
+		return fmt.Errorf("thesis: checkpoint requires ImmutableCut")
 	}
 
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"failed to create thesis directory",
-			err,
-		))
-	}
-
-	temporary, err := os.CreateTemp(dir, ThesisKey+"-*.tmp")
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"failed to create thesis temp file",
-			err,
-		))
-	}
-
-	temporaryPath := temporary.Name()
-
-	if _, err := temporary.Write(json); err != nil {
-		temporary.Close()
-		os.Remove(temporaryPath)
-
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"failed to write thesis checkpoint",
-			err,
-		))
-	}
-
-	if err := temporary.Sync(); err != nil {
-		temporary.Close()
-		os.Remove(temporaryPath)
-
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"failed to sync thesis checkpoint",
-			err,
-		))
-	}
-
-	if err := temporary.Close(); err != nil {
-		os.Remove(temporaryPath)
-
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"failed to close thesis temp file",
-			err,
-		))
-	}
-
-	if err := os.Rename(temporaryPath, target); err != nil {
-		os.Remove(temporaryPath)
-
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"failed to persist thesis checkpoint",
-			err,
-		))
-	}
-
-	return nil
+	return cut.Checkpoint(dir)
 }
 
 /*

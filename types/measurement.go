@@ -293,6 +293,23 @@ func FilterLatest(measurements []*Measurement) []*Measurement {
 }
 
 /*
+ObservationCount returns how many distinct symbols appear in the rows.
+*/
+func ObservationCount(measurements []*Measurement) int {
+	symbols := make(map[string]struct{}, len(measurements))
+
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		symbols[measurement.Symbol] = struct{}{}
+	}
+
+	return len(symbols)
+}
+
+/*
 ForPublish returns the newest epoch per symbol plus any older Hawkes fit-parameter
 rows that FilterLatest would drop, so the UI can keep decay curves beside live
 intensities. Rows stay typed Measurements — no nested projection.

@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura/structure"
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -20,6 +21,12 @@ contract. A full ring drops the event rather than stalling the producer, so
 diagnostic recording can never apply backpressure to the hot path.
 */
 const recorderCapacity = 1 << 16
+
+/*
+overflowInterval is how often the consumer emits one coalesced overflow row
+while drops accumulate, independent of whether the ring is empty.
+*/
+const overflowInterval = 100 * time.Millisecond
 
 /*
 Recorder is a generic jsonl data recorder. Producers Push encoded events onto a
@@ -35,8 +42,16 @@ type Recorder struct {
 	ring     *structure.MPMCRing[[]byte]
 	done     chan struct{}
 	dropped  atomic.Uint64
+	inFlight atomic.Int64
+	closing  atomic.Bool
+	closed   atomic.Bool
+	asyncErr atomic.Value
+	closeMu  sync.Mutex
 }
 
+/*
+NewRecorder opens the jsonl file and starts the single drain consumer.
+*/
 func NewRecorder(filename string) (*Recorder, error) {
 	if filename == "" {
 		return nil, fmt.Errorf("audit: filename is required")
@@ -62,7 +77,7 @@ func NewRecorder(filename string) (*Recorder, error) {
 
 	if err != nil {
 		cancel()
-		errnie.Error(fh.Close())
+		_ = fh.Close()
 
 		return nil, err
 	}
@@ -83,26 +98,26 @@ func NewRecorder(filename string) (*Recorder, error) {
 
 /*
 Write marshals event and Push'es the encoded row onto the lock-free ring. It
-never blocks: a full ring drops the row and reports it so the caller knows the
-audit stream is saturated, but the hot path is never stalled.
+never blocks: a full ring drops the row and returns SaturatedError so callers
+can count loss without hot-path logging. A closing gate rejects new writes once
+Close begins so accepted producers finish before drain quiesces.
 */
 func (recorder *Recorder) Write(event any) error {
-	if recorder == nil || recorder.ring == nil || recorder.ctx.Err() != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"audit: recorder is closed",
-			nil,
-		))
+	if recorder == nil || recorder.ring == nil || recorder.closing.Load() {
+		return types.ClosedError{Component: "audit"}
+	}
+
+	recorder.inFlight.Add(1)
+	defer recorder.inFlight.Add(-1)
+
+	if recorder.closing.Load() {
+		return types.ClosedError{Component: "audit"}
 	}
 
 	payload, err := sonic.Marshal(event)
 
 	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"audit: failed to marshal event",
-			err,
-		))
+		return fmt.Errorf("audit: marshal: %w", err)
 	}
 
 	payload = append(payload, '\n')
@@ -110,11 +125,7 @@ func (recorder *Recorder) Write(event any) error {
 	if !recorder.ring.Push(payload) {
 		recorder.dropped.Add(1)
 
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"audit: recorder ring is full, event dropped",
-			nil,
-		))
+		return types.SaturatedError{Component: "audit"}
 	}
 
 	return nil
@@ -122,14 +133,17 @@ func (recorder *Recorder) Write(event any) error {
 
 /*
 drain is the single consumer. It owns the file handle, Pop's encoded rows off
-the ring, and buffers writes to disk. It exits after the context is cancelled
-and the ring is empty, flushing whatever remains.
+the ring, and buffers writes to disk. Overflow is emitted on a bounded timer so
+sustained saturation still records loss. It exits after cancel and quiescence.
 */
 func (recorder *Recorder) drain() {
 	defer close(recorder.done)
 
 	writer := bufio.NewWriter(recorder.fh)
 	pendingDropped := uint64(0)
+	ticker := time.NewTicker(overflowInterval)
+	defer ticker.Stop()
+
 	recordOverflow := func() {
 		pendingDropped += recorder.dropped.Swap(0)
 
@@ -146,14 +160,14 @@ func (recorder *Recorder) drain() {
 		})
 
 		if err != nil {
-			errnie.Error(err)
+			recorder.retainErr(err)
 			return
 		}
 
 		payload = append(payload, '\n')
 
 		if _, err = writer.Write(payload); err != nil {
-			errnie.Error(err)
+			recorder.retainErr(err)
 			return
 		}
 
@@ -162,63 +176,116 @@ func (recorder *Recorder) drain() {
 
 	flush := func() {
 		if err := writer.Flush(); err != nil {
-			errnie.Error(err)
+			recorder.retainErr(err)
 		}
 	}
 
 	for {
-		payload := recorder.ring.Pop()
+		payload, ok := recorder.ring.Pop()
 
-		if payload == nil {
-			recordOverflow()
-
+		if !ok || payload == nil {
 			select {
 			case <-recorder.ctx.Done():
-				// Drain any final rows the producers pushed before Close.
 				for {
-					remaining := recorder.ring.Pop()
+					remaining, drained := recorder.ring.Pop()
 
-					if remaining == nil {
+					if !drained || remaining == nil {
 						recordOverflow()
 						flush()
 						return
 					}
 
 					if _, err := writer.Write(remaining); err != nil {
-						errnie.Error(err)
+						recorder.retainErr(err)
 					}
 				}
-			default:
+			case <-ticker.C:
+				recordOverflow()
 				flush()
+			default:
 				time.Sleep(10 * time.Millisecond)
-				continue
 			}
+
+			continue
 		}
 
 		if _, err := writer.Write(payload); err != nil {
-			errnie.Error(err)
+			recorder.retainErr(err)
 		}
 	}
 }
 
+/*
+retainErr keeps the first asynchronous I/O failure for Close to return.
+*/
+func (recorder *Recorder) retainErr(err error) {
+	if err == nil {
+		return
+	}
+
+	recorder.asyncErr.CompareAndSwap(nil, err)
+}
+
+/*
+Close stops new writers, waits for in-flight producers, drains to quiescence,
+fsyncs, and returns the first retained asynchronous error joined with close.
+Idempotent and safe under concurrent Close.
+*/
 func (recorder *Recorder) Close() error {
 	if recorder == nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"audit: recorder is closed",
-			nil,
-		))
+		return types.ClosedError{Component: "audit"}
+	}
+
+	recorder.closeMu.Lock()
+	defer recorder.closeMu.Unlock()
+
+	if recorder.closed.Load() {
+		return recorder.combinedErr(nil)
+	}
+
+	recorder.closing.Store(true)
+
+	for recorder.inFlight.Load() > 0 {
+		time.Sleep(time.Millisecond)
 	}
 
 	recorder.cancel()
 	<-recorder.done
 
+	var syncErr error
 	fh := recorder.fh
 	recorder.fh = nil
 
-	if fh == nil {
-		return nil
+	if fh != nil {
+		syncErr = fh.Sync()
+		closeErr := fh.Close()
+
+		if syncErr == nil {
+			syncErr = closeErr
+		}
 	}
 
-	return fh.Close()
+	recorder.closed.Store(true)
+
+	return recorder.combinedErr(syncErr)
+}
+
+/*
+combinedErr joins the first async drain error with a close-path error.
+*/
+func (recorder *Recorder) combinedErr(closeErr error) error {
+	var async error
+
+	if value := recorder.asyncErr.Load(); value != nil {
+		async, _ = value.(error)
+	}
+
+	switch {
+	case async == nil:
+		return closeErr
+	case closeErr == nil:
+		return async
+	default:
+		return fmt.Errorf("%w; close: %v", async, closeErr)
+	}
 }

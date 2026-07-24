@@ -145,6 +145,8 @@ func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 		return thesis
 	}
 
+	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "decide_begin", nil))
+
 	// Keep Enter rows Crypto has not yet opened on Balance. Clearing them while
 	// LifecycleEntrySelected + thesis Holdings remained blocked Measure forever.
 	planner.retainUnapplied(thesis)
@@ -160,6 +162,10 @@ func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 			Reason: "accumulated evidence is marked incomplete; refuse fresh enters",
 		})
 
+		errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "decide_end", map[string]any{
+			"decisions": len(thesis.Decisions),
+		}))
+
 		return thesis
 	}
 
@@ -171,6 +177,10 @@ func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 	}
 
 	planner.rotate.Commit(thesis)
+
+	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "decide_end", map[string]any{
+		"decisions": len(thesis.Decisions),
+	}))
 
 	return thesis
 }

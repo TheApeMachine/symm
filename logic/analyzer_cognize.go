@@ -202,12 +202,13 @@ func (analyzer *Analyzer) sensorySequence(
 	thesis *types.Thesis,
 	state manifold.State,
 ) ([]string, []byte) {
-	evidence := make([]string, 0, len(thesis.Measurements)+4)
-	seen := make(map[string]struct{}, len(thesis.Measurements)+4)
+	measurements := thesis.SnapshotMeasurements()
+	evidence := make([]string, 0, len(measurements)+4)
+	seen := make(map[string]struct{}, len(measurements)+4)
 	replacer := strings.NewReplacer("_", "-", "/", "-")
 	symbolToken := "symbol-" + replacer.Replace(state.Symbol)
 
-	for _, measurement := range thesis.Measurements {
+	for _, measurement := range measurements {
 		if measurement == nil || measurement.Symbol != state.Symbol ||
 			measurement.Normalized == nil ||
 			measurement.Validity.State != types.ValidityValid {
@@ -270,7 +271,18 @@ func (analyzer *Analyzer) readCognition(
 	parent []byte,
 ) types.Cognition {
 	var classificationScratch dmt.ClassificationScratch
-	classification := analyzer.tree.Classify(sequence, &classificationScratch)
+	classification, err := analyzer.tree.Classify(sequence, &classificationScratch)
+
+	if err != nil {
+		return types.Cognition{
+			Source:   "dmt",
+			Symbol:   state.Symbol,
+			At:       state.At,
+			Sequence: string(sequence),
+			Ready:    false,
+		}
+	}
+
 	storageParent := append([]byte("s/"), parent...)
 	ambiguity := analyzer.tree.MeasureBranchAmbiguity(storageParent)
 	predictionBuffer := make([]dmt.LookaheadPrediction, 0, len(parts))

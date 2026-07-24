@@ -12,7 +12,7 @@ import (
 
 func TestREMSleepRequestAsync(t *testing.T) {
 	Convey("Given pending episodic observations behind the ambiguity gate", t, func() {
-		tree := dmt.NewTree("")
+		tree, _ := dmt.NewTree("")
 		rem := newREMSleep(context.Background(), tree)
 		sequence := []byte("symbol-eth-usd_pressure-positive")
 		from := time.Unix(0, 100)

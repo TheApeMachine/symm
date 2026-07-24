@@ -32,6 +32,7 @@ type Holding struct {
 	Mark          *decimal.Decimal `json:"mark"`
 	StopMark      *decimal.Decimal `json:"stop_mark,omitempty"`
 	IsOpportunity bool             `json:"is_opportunity"`
+	ReservationID string           `json:"reservation_id,omitempty"`
 	Stoploss      *Stoploss        `json:"stoploss"`
 }
 
@@ -89,7 +90,13 @@ func (holding Holding) MarshalJSON() ([]byte, error) {
 		}
 	}
 
-	return frame.Marshal(), nil
+	payload, err := frame.Marshal()
+
+	if err != nil {
+		return nil, err
+	}
+
+	return payload, nil
 }
 
 /*

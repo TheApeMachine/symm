@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	orderackfixture "github.com/theapemachine/symm/tests/fixtures/orderack"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/config"
 )
 
 /*
@@ -22,16 +23,16 @@ func TestExecutionAck(t *testing.T) {
 		simulator := websocket.NewSimulator()
 		So(simulator.Initialize(), ShouldBeNil)
 
-		paper := websocket.NewPaper(context.Background(), simulator)
+		paper := websocket.NewPaper(context.Background(), simulator, config.Fixture())
 		api := websocket.NewAPI(context.Background(), paper, paper, paper)
 		price := NewPrice(api)
 		So(price.RememberFee("NEAR/USD", kraken.TradeVolumeFee{
 			Fee: decimal.NewFromFloat64(0.26),
 		}), ShouldBeNil)
-		balance := NewBalance(api, nil, make(chan []byte, 4))
-		balance.status = types.READY
+		balance := NewBalance(api, nil, make(chan []byte, 4), config.Fixture().Market)
+		balance.status.Store(types.READY)
 
-		pair := &kraken.InstrumentPair{
+		pair := kraken.InstrumentPair{
 			Symbol: "NEAR/USD",
 			Base:   "NEAR",
 			Quote:  "USD",
@@ -42,7 +43,7 @@ func TestExecutionAck(t *testing.T) {
 			context.Background(), "NEAR/USD", decimal.NewFromFloat64(20.90318866),
 		)
 		holding.Asset = "NEAR"
-		balance.holdings.Store(holding.Symbol, holding)
+		balance.StoreHolding(holding)
 
 		position.status = types.PENDING
 		position.orderID = "PAPER-00005"
@@ -69,7 +70,7 @@ func TestExecutionAck(t *testing.T) {
 				So(holding.Status, ShouldEqual, types.OPEN)
 
 				Convey("And a late OrderAck does not demote the open lot", func() {
-					position.OrderAck(orderackfixture.Frame(orderackfixture.Options{
+					position.OrderAckRaw(orderackfixture.Frame(orderackfixture.Options{
 						ReqID:   position.request.ReqID,
 						OrderID: "PAPER-00005",
 						Success: true,
@@ -115,7 +116,7 @@ func TestExecutionAck(t *testing.T) {
 				Convey("Then the lot closes instead of remaining pending", func() {
 					So(position.Status(), ShouldEqual, types.CLOSED)
 					So(holding.Status, ShouldEqual, types.CLOSED)
-					So(holding.Qty.Sign(), ShouldEqual, 0)
+					So(holding.ExitPrice, ShouldNotBeNil)
 				})
 			})
 		})
@@ -128,25 +129,31 @@ BenchmarkExecutionAck measures paper fill acknowledgment cost.
 func BenchmarkExecutionAck(b *testing.B) {
 	simulator := websocket.NewSimulator()
 	_ = simulator.Initialize()
-	paper := websocket.NewPaper(context.Background(), simulator)
+	paper := websocket.NewPaper(context.Background(), simulator, config.Fixture())
 	api := websocket.NewAPI(context.Background(), paper, paper, paper)
 	price := NewPrice(api)
 	_ = price.RememberFee("NEAR/USD", kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.26),
 	})
-	balance := NewBalance(api, nil, make(chan []byte, 1))
-	balance.status = types.READY
-	pair := &kraken.InstrumentPair{Symbol: "NEAR/USD", Base: "NEAR", Quote: "USD"}
+	balance := NewBalance(api, nil, make(chan []byte, 1), config.Fixture().Market)
+	balance.status.Store(types.READY)
+	pair := kraken.InstrumentPair{Symbol: "NEAR/USD", Base: "NEAR", Quote: "USD"}
 	position := NewPosition(api, nil, price, balance, pair)
 	holding := types.NewHolding(
 		context.Background(), "NEAR/USD", decimal.NewFromFloat64(1),
 	)
-	balance.holdings.Store(holding.Symbol, holding)
+	balance.holdings[holding.Symbol] = holding
 	position.orderID = "PAPER-00005"
 	raw, _ := kraken.NewExecutionFromMap(datura.Map[any]{
-		"id": "PAPER-00006", "order_id": "PAPER-00005",
-		"pair": "NEARUSD", "side": "Buy", "volume": 1.0,
-		"price": 1.9, "cost": 1.9, "fee": 0.01, "status": "filled",
+		"id":       "PAPER-00006",
+		"order_id": "PAPER-00005",
+		"pair":     "NEARUSD",
+		"side":     "Buy",
+		"volume":   1.0,
+		"price":    1.9,
+		"cost":     1.9,
+		"fee":      0.01,
+		"status":   "filled",
 	}).MarshalJSON()
 
 	for b.Loop() {

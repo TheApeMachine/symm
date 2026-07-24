@@ -39,10 +39,9 @@ Important considerations:
 type Price struct {
 	status  atomic.Value
 	api     *websocket.API
-	fees    *sync.Map
-	scales  *sync.Map
-	tickers *sync.Map
-	onMark  func(symbol string)
+	mu      sync.RWMutex
+	fees    map[string]kraken.TradeVolumeFee
+	tickers map[string]*kraken.TickerData
 }
 
 /*
@@ -53,8 +52,8 @@ func NewPrice(
 ) *Price {
 	price := &Price{
 		api:     api,
-		fees:    &sync.Map{},
-		tickers: &sync.Map{},
+		fees:    make(map[string]kraken.TradeVolumeFee),
+		tickers: make(map[string]*kraken.TickerData),
 	}
 
 	price.status.Store(types.INITIALIZING)
@@ -79,19 +78,37 @@ func (price *Price) Status() types.Status {
 }
 
 /*
-RouteMarks registers the single mark fan-out after Price decodes a ticker.
+Last returns the cached last trade price for symbol.
 */
-func (price *Price) RouteMarks(mark func(symbol string)) {
-	if price == nil {
-		return
+func (price *Price) Last(symbol string) (*decimal.Decimal, error) {
+	if price == nil || price.tickers == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound, "price: ticker cache unavailable", nil,
+		))
 	}
 
-	price.onMark = mark
+	price.mu.RLock()
+	ticker, ok := price.tickers[symbol]
+	price.mu.RUnlock()
+
+	if !ok {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound, "price: no ticker for "+symbol, nil,
+		))
+	}
+
+	if ticker == nil || ticker.Last == nil || ticker.Last.Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "price: last unavailable for "+symbol, nil,
+		))
+	}
+
+	return ticker.Last.Copy(), nil
 }
 
 /*
-TickerAck refreshes the mark cache from a typed ticker frame and fans marks
-to open lots without each Position re-decoding the envelope.
+TickerAck refreshes the mark cache from a typed ticker frame. Desk routes marks
+to open lots after this cache update.
 */
 func (price *Price) TickerAck(ticker *kraken.Ticker) {
 	if errnie.Error(kraken.Validate(ticker)) != nil {
@@ -99,15 +116,13 @@ func (price *Price) TickerAck(ticker *kraken.Ticker) {
 	}
 
 	for _, item := range ticker.Data {
-		price.tickers.Store(
-			item.Symbol,
-			&item,
-		)
-
-		if price.onMark != nil {
-			price.onMark(item.Symbol)
-		}
+		copyItem := item
+		price.mu.Lock()
+		price.tickers[item.Symbol] = &copyItem
+		price.mu.Unlock()
 	}
+
+	price.status.Store(types.READY)
 }
 
 /*
@@ -126,7 +141,9 @@ func (price *Price) Snapshot(
 	missing := make([]string, 0)
 
 	for _, symbol := range symbols {
-		value, ok := price.tickers.Load(symbol)
+		price.mu.RLock()
+		value, ok := price.tickers[symbol]
+		price.mu.RUnlock()
 
 		if !ok {
 			missing = append(
@@ -139,7 +156,7 @@ func (price *Price) Snapshot(
 
 		rows = append(
 			rows,
-			*value.(*kraken.TickerData),
+			*value,
 		)
 	}
 
@@ -155,23 +172,16 @@ func (price *Price) EachLast(visit func(symbol string, last float64)) {
 		return
 	}
 
-	price.tickers.Range(func(key, value any) bool {
-		symbol, ok := key.(string)
+	price.mu.RLock()
+	defer price.mu.RUnlock()
 
-		if !ok {
-			return true
-		}
-
-		ticker, ok := value.(*kraken.TickerData)
-
-		if !ok || ticker == nil || ticker.Last == nil || ticker.Last.Sign() <= 0 {
-			return true
+	for symbol, ticker := range price.tickers {
+		if ticker == nil || ticker.Last == nil || ticker.Last.Sign() <= 0 {
+			continue
 		}
 
 		visit(symbol, ticker.Last.Float64())
-
-		return true
-	})
+	}
 }
 
 /*
@@ -182,15 +192,9 @@ must not flood the UI error overlay through errnie.Error.
 func (price *Price) Get(
 	symbol string,
 ) (*kraken.TickerData, error) {
-	if price.Status() != types.READY {
-		return nil, errnie.Err(
-			errnie.NotImplemented,
-			"price not ready",
-			nil,
-		)
-	}
-
-	ticker, ok := price.tickers.Load(symbol)
+	price.mu.RLock()
+	ticker, ok := price.tickers[symbol]
+	price.mu.RUnlock()
 
 	if !ok {
 		return nil, errnie.Err(
@@ -200,7 +204,7 @@ func (price *Price) Get(
 		)
 	}
 
-	return ticker.(*kraken.TickerData), nil
+	return ticker, nil
 }
 
 /*
@@ -238,7 +242,7 @@ func (price *Price) GetFees(
 	}
 
 	for symbol, fee := range fees {
-		price.fees.Store(symbol, fee)
+		price.fees[symbol] = fee
 	}
 
 	price.status.Store(types.READY)
@@ -270,7 +274,7 @@ func (price *Price) RememberFee(
 		))
 	}
 
-	price.fees.Store(symbol, fee)
+	price.fees[symbol] = fee
 	price.status.Store(types.READY)
 
 	return nil
@@ -323,7 +327,9 @@ func (price *Price) FeeRate(
 		)
 	}
 
-	rate, ok := price.fees.Load(symbol)
+	price.mu.RLock()
+	rate, ok := price.fees[symbol]
+	price.mu.RUnlock()
 
 	if !ok {
 		return kraken.TradeVolumeFee{}, errnie.Error(
@@ -335,7 +341,7 @@ func (price *Price) FeeRate(
 		)
 	}
 
-	return rate.(kraken.TradeVolumeFee), nil
+	return rate, nil
 }
 
 /*
@@ -432,116 +438,131 @@ func (price *Price) Taker(
 		quantity,
 	)
 
-	return notional.Add(price.Fee(
-		instrument,
-		notional,
-	)), nil
+	fee := price.Fee(instrument, notional)
+
+	if fee == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to calculate taker fee for "+instrument.Symbol,
+			nil,
+		))
+	}
+
+	return notional.Add(fee), nil
 }
 
 /*
-Fill applies one execution print onto a holding: entry/exit cost basis, fee
-pro-rate on a partial fill, then Mark flatten-now PnL. Position calls this once.
+RecordFill appends one immutable fill and derives entry/exit economics from the
+ledger. Wallet Qty stays under Balance.syncWallet — fills never write inventory.
+*/
+func (price *Price) RecordFill(
+	instrument *kraken.InstrumentPair,
+	holding *types.Holding,
+	data kraken.ExecutionData,
+	ledger *[]Fill,
+) Fill {
+	fill := Fill{
+		ExecID: data.ExecID,
+		Side:   strings.ToLower(data.Side),
+	}
+
+	if data.LastQty != nil {
+		fill.Qty = data.LastQty.Copy()
+	}
+
+	if data.LastPrice != nil {
+		fill.Price = data.LastPrice.Copy()
+		holding.Mark = data.LastPrice.Copy()
+	}
+
+	if data.FeeUsdEquiv != nil {
+		fill.Fee = data.FeeUsdEquiv.Copy()
+	}
+
+	*ledger = append(*ledger, fill)
+	price.deriveEconomics(holding, *ledger)
+
+	if holding.Qty != nil && holding.Qty.Sign() > 0 {
+		_ = price.Mark(instrument, holding)
+	}
+
+	return fill
+}
+
+/*
+Fill applies one execution print onto a holding without a caller-owned ledger.
 */
 func (price *Price) Fill(
 	instrument *kraken.InstrumentPair,
 	holding *types.Holding,
 	data kraken.ExecutionData,
 ) {
-	if price == nil || instrument == nil || holding == nil {
-		return
-	}
-
-	if data.LastPrice != nil {
-		holding.Mark = data.LastPrice.Copy()
-	}
-
-	switch strings.ToLower(data.Side) {
-	case "buy":
-		price.fillEntry(holding, data)
-	case "sell":
-		price.fillExit(holding, data)
-	}
-
-	if holding.Qty == nil || holding.Qty.Sign() <= 0 {
-		return
-	}
-
-	_ = price.Mark(instrument, holding)
+	var ledger []Fill
+	price.RecordFill(instrument, holding, data, &ledger)
 }
 
-func (price *Price) fillEntry(
-	holding *types.Holding,
-	data kraken.ExecutionData,
-) {
-	switch {
-	case data.AvgPrice != nil:
-		holding.EntryPrice = data.AvgPrice.Copy()
-	case data.LastPrice != nil:
-		holding.EntryPrice = data.LastPrice.Copy()
+/*
+deriveEconomics recomputes weighted entry, cumulative fees, and exit marks from
+immutable fills. Inventory quantity is never written here.
+*/
+func (price *Price) deriveEconomics(holding *types.Holding, fills []Fill) {
+	var (
+		entryNotional *decimal.Decimal
+		entryQty      *decimal.Decimal
+		entryFee      *decimal.Decimal
+		exitNotional  *decimal.Decimal
+		exitQty       *decimal.Decimal
+		exitFee       *decimal.Decimal
+	)
+
+	for _, fill := range fills {
+		if fill.Qty == nil || fill.Price == nil {
+			continue
+		}
+
+		notional := price.Mul(fill.Price, fill.Qty)
+
+		switch fill.Side {
+		case "buy":
+			entryNotional = addNullable(entryNotional, notional)
+			entryQty = addNullable(entryQty, fill.Qty)
+			entryFee = addNullable(entryFee, fill.Fee)
+		case "sell":
+			exitNotional = addNullable(exitNotional, notional)
+			exitQty = addNullable(exitQty, fill.Qty)
+			exitFee = addNullable(exitFee, fill.Fee)
+		}
 	}
 
-	if data.FeeUsdEquiv != nil {
-		holding.EntryFee = data.FeeUsdEquiv.Copy()
+	if entryQty != nil && entryQty.Sign() > 0 && entryNotional != nil {
+		holding.EntryPrice = price.Div(entryNotional, entryQty)
 	}
 
-	if holding.EntryAt != nil {
-		return
+	if entryFee != nil {
+		holding.EntryFee = entryFee
 	}
 
-	at := data.Timestamp
-
-	if at.IsZero() {
-		at = time.Now().UTC()
+	if exitQty != nil && exitQty.Sign() > 0 && exitNotional != nil {
+		holding.ExitPrice = price.Div(exitNotional, exitQty)
+		at := time.Now().UTC()
+		holding.ExitAt = &at
 	}
 
-	holding.EntryAt = &at
+	if exitFee != nil {
+		holding.ExitFee = exitFee
+	}
 }
 
-func (price *Price) fillExit(
-	holding *types.Holding,
-	data kraken.ExecutionData,
-) {
-	if data.AvgPrice != nil {
-		holding.ExitPrice = data.AvgPrice.Copy()
+func addNullable(left, right *decimal.Decimal) *decimal.Decimal {
+	if right == nil {
+		return left
 	}
 
-	if data.FeeUsdEquiv != nil {
-		holding.ExitFee = data.FeeUsdEquiv.Copy()
+	if left == nil {
+		return right.Copy()
 	}
 
-	// Inventory qty is owned by Balance.syncWallet from exchange Balance.
-	// Executions only update exit economics and prorate remaining entry fee.
-	before := holding.Qty.Copy()
-	remaining := before.Copy()
-
-	if data.LastQty == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"execution fill missing exact last quantity for "+holding.Symbol,
-			nil,
-		))
-	} else {
-		scale := max(before.GetScale(), data.LastQty.GetScale())
-		remaining = before.SetScale(scale).Sub(data.LastQty)
-	}
-
-	if remaining.Sign() < 0 {
-		remaining = decimal.NewFromInt64(0)
-	}
-
-	holding.Qty = remaining
-
-	if holding.EntryFee != nil {
-		holding.EntryFee = price.Prorate(holding.EntryFee, remaining, before)
-	}
-
-	at := data.Timestamp
-
-	if at.IsZero() {
-		at = time.Now().UTC()
-	}
-
-	holding.ExitAt = &at
+	return left.Add(right)
 }
 
 /*
@@ -751,7 +772,8 @@ func (price *Price) ReferencePrice(
 
 /*
 Quantity converts a quote budget into an instrument-quantized base quantity at
-the live ask, after one taker fee, so a later Taker cost fits inside the budget.
+the live ask after a mandatory taker fee, using integer binary search on the
+qty_increment lattice for the largest affordable lot.
 */
 func (price *Price) Quantity(
 	pair *kraken.InstrumentPair,
@@ -784,16 +806,28 @@ func (price *Price) Quantity(
 		))
 	}
 
-	unit := ticker.Ask.Copy()
+	fee, feeErr := price.Fraction(pair.Symbol)
 
-	if fee, feeErr := price.Fraction(pair.Symbol); feeErr == nil && fee != nil {
-		unit = price.Mul(ticker.Ask, decimal.NewFromInt64(1).Add(fee))
+	if feeErr != nil || fee == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"quantity: taker fee mandatory for "+pair.Symbol,
+			feeErr,
+		))
 	}
 
 	if pair.QtyMin == nil || pair.QtyMin.Sign() <= 0 {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"quantity: instrument qty_min unavailable for "+pair.Symbol,
+			nil,
+		))
+	}
+
+	if pair.QtyIncrement == nil || pair.QtyIncrement.Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantity: instrument qty_increment unavailable for "+pair.Symbol,
 			nil,
 		))
 	}
@@ -827,19 +861,31 @@ func (price *Price) Quantity(
 		))
 	}
 
-	quantity := price.Quantize(pair, price.Div(budget, unit))
+	unit := price.Mul(ticker.Ask, decimal.NewFromInt64(1).Add(fee))
+	upper := price.Quantize(pair, price.Div(budget, unit))
 
-	if quantity == nil || quantity.Cmp(minimum) < 0 {
-		quantity = minimum.Copy()
+	if upper == nil || upper.Cmp(minimum) < 0 {
+		upper = minimum.Copy()
 	}
 
-	// Fee/cost quantization can leave the first guess a hair over budget.
-	// Shrink by ratio, and when that stalls, step down one qty_increment.
-	var cost *decimal.Decimal
+	minSteps := price.DivFloor(minimum, pair.QtyIncrement, 0)
+	maxSteps := price.DivFloor(upper, pair.QtyIncrement, 0)
 
-	for range 8 { // ponytail: fixed 8-iteration ceiling is intentional; could upgrade to convergence-based or adaptive termination
-		var costErr error
-		cost, costErr = price.Taker(pair, quantity)
+	if maxSteps.Cmp(minSteps) < 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantity: empty increment lattice for "+pair.Symbol,
+			nil,
+		))
+	}
+
+	low := minSteps.Int64()
+	high := maxSteps.Int64()
+
+	for low < high {
+		mid := (low + high + 1) / 2
+		candidate := price.Mul(decimal.NewFromInt64(mid), pair.QtyIncrement)
+		cost, costErr := price.Taker(pair, candidate)
 
 		if costErr != nil || cost == nil {
 			return nil, errnie.Error(errnie.Err(
@@ -850,47 +896,25 @@ func (price *Price) Quantity(
 		}
 
 		if cost.Cmp(budget) <= 0 {
-			return quantity, nil
+			low = mid
+			continue
 		}
 
-		shrunk := price.Quantize(pair, price.Mul(quantity, price.Div(budget, cost)))
-
-		if shrunk == nil || shrunk.Cmp(minimum) < 0 {
-			return nil, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"quantity: budget "+budget.String()+" below instrument minimum for "+
-					pair.Symbol+" (cost "+cost.String()+")",
-				nil,
-			))
-		}
-
-		if shrunk.Cmp(quantity) >= 0 {
-			if pair.QtyIncrement == nil || pair.QtyIncrement.Sign() <= 0 {
-				break
-			}
-
-			shrunk = price.Quantize(pair, quantity.Sub(pair.QtyIncrement))
-
-			if shrunk == nil || shrunk.Sign() <= 0 || shrunk.Cmp(minimum) < 0 {
-				return nil, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"quantity: budget "+budget.String()+" below instrument minimum for "+
-						pair.Symbol+" (cost "+cost.String()+")",
-					nil,
-				))
-			}
-		}
-
-		quantity = shrunk
+		high = mid - 1
 	}
 
-	detail := "quantity: could not fit budget " + budget.String() + " for " + pair.Symbol
+	quantity := price.Mul(decimal.NewFromInt64(low), pair.QtyIncrement)
+	cost, costErr := price.Taker(pair, quantity)
 
-	if cost != nil {
-		detail += " (last cost " + cost.String() + ", qty " + quantity.String() + ")"
+	if costErr != nil || cost == nil || cost.Cmp(budget) > 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"quantity: could not fit budget "+budget.String()+" for "+pair.Symbol,
+			costErr,
+		))
 	}
 
-	return nil, errnie.Error(errnie.Err(errnie.Validation, detail, nil))
+	return quantity, nil
 }
 
 /*
