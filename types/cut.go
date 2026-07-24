@@ -57,8 +57,9 @@ type ImmutableCut struct {
 }
 
 /*
-CloneMeasurements deep-copies measurement rows so later Publish cannot mutate a
-historical cut.
+CloneMeasurements deep-copies measurement rows. Prefer SnapshotMeasurements for
+cuts: Publish replaces row pointers rather than mutating published rows, so a
+shallow slice copy is the correct freeze.
 */
 func CloneMeasurements(rows []*Measurement) []*Measurement {
 	if len(rows) == 0 {
@@ -91,7 +92,9 @@ func CloneMeasurements(rows []*Measurement) []*Measurement {
 }
 
 /*
-NewImmutableCut builds a cut from the current thesis publish surface.
+NewImmutableCut builds a cut from the current thesis publish surface. Measurement
+rows are deep-copied so later Publish pointer replacements and any in-place
+enrichment cannot mutate a historical cut.
 */
 func NewImmutableCut(id CutID, tick int64, thesis *Thesis) *ImmutableCut {
 	if thesis == nil {

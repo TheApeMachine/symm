@@ -142,7 +142,7 @@ const writePositionGauge = (
 			stop !== undefined && geometry !== null && geometry.stopPct !== null
 				? ` / stop ${fixed(stop.stop_price)}`
 				: "";
-		parts.summary.textContent = `entry ${fixed(position.entry_price)} / mark ${markLabel}${stopSuffix}`;
+		parts.summary.textContent = `entry ${fixed(position.entry_price)} / bid ${markLabel}${stopSuffix}`;
 	}
 
 	if (parts.returnPct) {

@@ -26,6 +26,7 @@ type Signal struct {
 	pendingTouch map[string]touchSnapshot
 	evidence     map[string]*symbolEvidence
 	increments   map[string]*decimal.Decimal
+	lastCutAt    time.Time
 	ui           chan []byte
 }
 
@@ -157,7 +158,7 @@ func (signal *Signal) Calculate(
 	cutAt := cutTimestamp(trades, books)
 	signal.promotePrior(cutAt)
 
-	if err := signal.accumulateEvidence(trades); err != nil {
+	if err := signal.accumulateEvidence(trades, cutAt); err != nil {
 		return nil, err
 	}
 

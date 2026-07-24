@@ -101,10 +101,17 @@ func (signal *Signal) resetEvidence() {
 
 /*
 accumulateEvidence ingests validated trades and attributes touch fills per
-symbol from the current Level3 book snapshot into Signal.evidence.
+symbol from the current Level3 book snapshot into Signal.evidence. Trade and
+book cuts that share one market timestamp keep the same evidence bag so a
+book publish after a same-instant trade still emits trade volume.
 */
-func (signal *Signal) accumulateEvidence(trades []kraken.TradeData) error {
-	signal.resetEvidence()
+func (signal *Signal) accumulateEvidence(
+	trades []kraken.TradeData, cutAt time.Time,
+) error {
+	if signal.lastCutAt.IsZero() || cutAt.After(signal.lastCutAt) {
+		signal.resetEvidence()
+		signal.lastCutAt = cutAt
+	}
 
 	for _, trade := range trades {
 		if trade.Symbol == "" || trade.Price.Sign() <= 0 || trade.Qty <= 0 ||

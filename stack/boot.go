@@ -438,16 +438,19 @@ func (booter *Booter) boot(
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
 
+	// Signals must Subscribe before Instrument market subscribe+snapshot, or the
+	// first book frames publish to zero signal subscribers and exhaust/toxicity
+	// baselines never see resting depth.
+	for _, signal := range signals {
+		signal.Initialize(market, thesis)
+	}
+
 	if err := balances.Initialize(booter.ctx, booter.channel); err != nil {
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
 
 	if err := instruments.Initialize(booter.ctx, booter.channel); err != nil {
 		return nil, errors.Join(errnie.Error(err), wired.Close())
-	}
-
-	for _, signal := range signals {
-		signal.Initialize(market, thesis)
 	}
 
 	if err := coordinator.Initialize(hawkesSignal.Actor); err != nil {

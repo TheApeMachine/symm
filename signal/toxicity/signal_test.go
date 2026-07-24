@@ -95,7 +95,7 @@ func TestCalculate(t *testing.T) {
 					return err
 				}
 
-				for _, measurement := range thesis.Measurements {
+				for _, measurement := range thesis.SnapshotMeasurements() {
 					if measurement.Source != types.SourceToxicity {
 						continue
 					}

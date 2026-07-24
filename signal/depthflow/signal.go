@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -25,6 +26,7 @@ type Signal struct {
 	cancel   context.CancelFunc
 	sample   *flow.Sample
 	bookflow *equation.Bookflow
+	bookOut  atomic.Pointer[[]*types.Measurement]
 	ui       chan []byte
 }
 
@@ -99,6 +101,13 @@ func (signal *Signal) onTicker(message any) any {
 		return nil
 	}
 
+	// Book observations arrive far more often than tickers. Re-wire the last
+	// book batch on ticker cadence so a focused major is not left on STANDBY
+	// when only alt tickers arrive and prior book UI frames were dropped.
+	if retained := signal.bookOut.Load(); retained != nil && len(*retained) > 0 {
+		types.WireMeasurements(*retained, signal.ui)
+	}
+
 	if len(measurements) == 0 {
 		return nil
 	}
@@ -121,6 +130,7 @@ func (signal *Signal) onBook(message any) any {
 		return nil
 	}
 
+	signal.bookOut.Store(&measurements)
 	signal.thesis.Publish(types.SourceDepthFlow, measurements)
 
 	return signal.thesis

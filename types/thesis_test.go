@@ -76,6 +76,48 @@ func TestPublish(t *testing.T) {
 			So(byMetric[MetricArrivalRate], ShouldEqual, 0.5)
 			So(byMetric[MetricEventCount], ShouldEqual, 3)
 		})
+
+		Convey("Concurrent source publishes keep both surfaces", func() {
+			wait := make(chan struct{})
+			done := make(chan struct{}, 2)
+
+			go func() {
+				<-wait
+				for index := range 64 {
+					thesis.Publish(SourceToxicity, []*Measurement{{
+						Source: SourceToxicity, Metric: MetricStrength,
+						Symbol: "SIM1/USD", Raw: float64(index), At: second,
+					}})
+				}
+				done <- struct{}{}
+			}()
+
+			go func() {
+				<-wait
+				for index := range 64 {
+					thesis.Publish(SourceExhaustion, []*Measurement{{
+						Source: SourceExhaustion, Metric: MetricStrength,
+						Symbol: "SIM1/USD", Raw: float64(index) + 100, At: second,
+					}})
+				}
+				done <- struct{}{}
+			}()
+
+			close(wait)
+			<-done
+			<-done
+
+			bySource := map[SourceType]float64{}
+
+			for _, row := range thesis.SnapshotMeasurements() {
+				if row.Metric == MetricStrength {
+					bySource[row.Source] = row.Raw
+				}
+			}
+
+			So(bySource[SourceToxicity], ShouldBeGreaterThanOrEqualTo, 0)
+			So(bySource[SourceExhaustion], ShouldBeGreaterThanOrEqualTo, 100)
+		})
 	})
 }
 
@@ -106,6 +148,52 @@ func TestPublishResonanceStaysBounded(t *testing.T) {
 			So(thesis.Measurements[0].Source, ShouldEqual, SourceResonance)
 			So(thesis.Measurements[0].Raw, ShouldEqual, 9999)
 			So(thesis.Measurements[1].Raw, ShouldEqual, 9999.5)
+		})
+	})
+}
+
+/*
+TestPublishRetractsAbsentSymbolMetrics proves a later publish for the same
+source and symbol drops identities that are no longer in the incoming batch.
+*/
+func TestPublishRetractsAbsentSymbolMetrics(t *testing.T) {
+	Convey("Given a trade volume row already on the thesis", t, func() {
+		thesis := NewThesis()
+		at := time.Unix(1, 0).UTC()
+		thesis.Publish(SourceToxicity, []*Measurement{
+			{
+				Metric: MetricTradeVolume, Symbol: "SIM1/USD",
+				Raw: 4, At: at,
+			},
+			{
+				Metric: MetricTouchQuantity, Side: SideBuy, Symbol: "SIM1/USD",
+				Raw: 2, At: at,
+			},
+			{
+				Metric: MetricTouchQuantity, Side: SideBuy, Symbol: "SIM2/USD",
+				Raw: 3, At: at,
+			},
+		})
+
+		Convey("When a book-only publish arrives for the traded symbol", func() {
+			thesis.Publish(SourceToxicity, []*Measurement{{
+				Metric: MetricTouchQuantity, Side: SideBuy, Symbol: "SIM1/USD",
+				Raw: 1, At: at.Add(time.Second),
+			}})
+
+			Convey("Then trade volume is retracted while other symbols remain", func() {
+				So(thesis.Measurements, ShouldHaveLength, 2)
+
+				byKey := map[string]float64{}
+
+				for _, row := range thesis.Measurements {
+					byKey[string(row.Metric)+"|"+row.Symbol] = row.Raw
+				}
+
+				So(byKey[string(MetricTradeVolume)+"|SIM1/USD"], ShouldEqual, 0)
+				So(byKey[string(MetricTouchQuantity)+"|SIM1/USD"], ShouldEqual, 1)
+				So(byKey[string(MetricTouchQuantity)+"|SIM2/USD"], ShouldEqual, 3)
+			})
 		})
 	})
 }

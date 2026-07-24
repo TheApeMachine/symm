@@ -29,7 +29,7 @@ const paintHoldingRow = (row: HTMLElement, holding: Holding): void => {
 		row.querySelector("[data-journal='holding-meta']"),
 		[
 			`qty ${fixed(holding.qty)}`,
-			`mark ${fixed(holding.mark)}`,
+			`bid ${fixed(holding.mark)}`,
 			`pnl ${fixed(holding.pnl)}`,
 			isOpenLot(holding) ? "" : "closed",
 		]

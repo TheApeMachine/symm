@@ -38,7 +38,8 @@ per-tick evidence in place so the object does not grow without bound.
 */
 type Thesis struct {
 	checkpoint    atomic.Int64
-	publish       sync.Mutex
+	publish       sync.RWMutex
+	index         map[measureKey]int
 	Tick          int64          `json:"tick"`
 	At            time.Time      `json:"at"`
 	Positions     *sync.Map      `json:"positions"`
@@ -97,6 +98,7 @@ func (thesis *Thesis) ResetTick(at time.Time, tick int64) {
 	thesis.CrossSection = NewCrossSection()
 	thesis.publish.Lock()
 	thesis.Measurements = nil
+	thesis.index = nil
 	thesis.publish.Unlock()
 	thesis.Forecasts = thesis.Forecasts[:0]
 	thesis.Decisions = thesis.Decisions[:0]
@@ -171,85 +173,17 @@ func (thesis *Thesis) Incomplete() bool {
 }
 
 /*
-Publish upserts rows onto the Thesis by source/metric/side/symbol. The Thesis
-holds the current published surface only; objects that need history accumulate
-it themselves. Existing identities are replaced in place so book-path publishes
-do not allocate a full copy of the measurement bag on every update.
-*/
-func (thesis *Thesis) Publish(source SourceType, rows []*Measurement) {
-	if thesis == nil || len(rows) == 0 {
-		return
-	}
-
-	type identity struct {
-		metric MetricType
-		side   MeasurementSide
-		symbol string
-	}
-
-	incoming := make(map[identity]*Measurement, len(rows))
-	order := make([]identity, 0, len(rows))
-
-	for _, row := range rows {
-		if row == nil {
-			continue
-		}
-
-		row.Source = source
-		key := identity{row.Metric, row.Side, row.Symbol}
-
-		if _, seen := incoming[key]; !seen {
-			order = append(order, key)
-		}
-
-		incoming[key] = row
-	}
-
-	if len(order) == 0 {
-		return
-	}
-
-	thesis.publish.Lock()
-	defer thesis.publish.Unlock()
-
-	replaced := make(map[identity]bool, len(order))
-
-	for index, row := range thesis.Measurements {
-		if row == nil || row.Source != source {
-			continue
-		}
-
-		key := identity{row.Metric, row.Side, row.Symbol}
-		next, hit := incoming[key]
-
-		if !hit {
-			continue
-		}
-
-		thesis.Measurements[index] = next
-		replaced[key] = true
-	}
-
-	for _, key := range order {
-		if replaced[key] {
-			continue
-		}
-
-		thesis.Measurements = append(thesis.Measurements, incoming[key])
-	}
-}
-
-/*
-SnapshotMeasurements copies the current published surface for readers that must
-not observe concurrent Publish mutations.
+SnapshotMeasurements copies the published pointer slice for readers. Rows are
+immutable after Publish (upsert installs new pointers); concurrent Publish
+cannot mutate a snapshot's pointed-to rows.
 */
 func (thesis *Thesis) SnapshotMeasurements() []*Measurement {
 	if thesis == nil {
 		return nil
 	}
 
-	thesis.publish.Lock()
-	defer thesis.publish.Unlock()
+	thesis.publish.RLock()
+	defer thesis.publish.RUnlock()
 
 	return append([]*Measurement(nil), thesis.Measurements...)
 }
@@ -263,7 +197,8 @@ func (thesis *Thesis) InstallMeasurements(rows []*Measurement) {
 	}
 
 	thesis.publish.Lock()
-	thesis.Measurements = rows
+	thesis.Measurements = append([]*Measurement(nil), rows...)
+	thesis.rebuildIndex()
 	thesis.publish.Unlock()
 }
 
@@ -276,9 +211,19 @@ func (thesis *Thesis) AppendMeasurements(rows []*Measurement) {
 		return
 	}
 
-	thesis.publish.Lock()
-	thesis.Measurements = append(thesis.Measurements, rows...)
-	thesis.publish.Unlock()
+	bySource := make(map[SourceType][]*Measurement)
+
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+
+		bySource[row.Source] = append(bySource[row.Source], row)
+	}
+
+	for source, group := range bySource {
+		thesis.Publish(source, group)
+	}
 }
 
 /*
@@ -430,6 +375,8 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 	if thesis.CrossSection.Metrics == nil {
 		thesis.CrossSection.Metrics = &sync.Map{}
 	}
+
+	thesis.rebuildIndex()
 
 	return nil
 }

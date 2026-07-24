@@ -49,11 +49,16 @@ func (signal *Signal) bookCondition(
 			})
 		case LiquidityRetreat:
 			bid := market.bids[touchIndex(market.bids, "buy")]
-			actions = append(actions, Action{
-				Kind:    Cancel,
-				Symbol:  symbol,
-				OrderID: bid.ID,
-			})
+			actions = append(actions,
+				Action{
+					Kind:    Cancel,
+					Symbol:  symbol,
+					OrderID: bid.ID,
+				},
+				Action{
+					Kind: WidenSpread, Symbol: symbol, Ticks: 2,
+				},
+			)
 		case SpoofLiquidity:
 			bid := market.bids[touchIndex(market.bids, "buy")]
 			wall := 0.0

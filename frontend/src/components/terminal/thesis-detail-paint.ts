@@ -329,7 +329,7 @@ export const writeThesisDetailRail = (
 			);
 			setText(
 				row.querySelector("[data-thesis='holding-body']"),
-				`mark ${fixed(holding.mark)} · pnl ${fixed(holding.pnl)} · return ${fixed(holding.return_pct)}`,
+				`bid ${fixed(holding.mark)} · pnl ${fixed(holding.pnl)} · return ${fixed(holding.return_pct)}`,
 			);
 		},
 	);

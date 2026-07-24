@@ -42,6 +42,38 @@ func TestImmutableCutCheckpoint(t *testing.T) {
 	})
 }
 
+/*
+TestNewImmutableCutKeepsPublishedRowsStable proves a cut freezes the pointer
+slice without deep-cloning, and a later Publish upsert replaces thesis rows
+without mutating the cut's pointed-to measurements.
+*/
+func TestNewImmutableCutKeepsPublishedRowsStable(t *testing.T) {
+	Convey("Given a published measurement frozen into a cut", t, func() {
+		thesis := NewThesis()
+		first := time.Unix(1, 0).UTC()
+		original := &Measurement{
+			Source: SourceHawkes, Metric: MetricEventCount,
+			Side: SideBuy, Symbol: "SIM1/USD", Raw: 1, At: first,
+		}
+		thesis.Publish(SourceHawkes, []*Measurement{original})
+
+		cut := NewImmutableCut(1, 7, thesis)
+		So(cut.Measurements, ShouldHaveLength, 1)
+		So(cut.Measurements[0].Raw, ShouldEqual, 1)
+
+		Convey("Publish replaces the thesis pointer; cut row stays 1", func() {
+			thesis.Publish(SourceHawkes, []*Measurement{{
+				Source: SourceHawkes, Metric: MetricEventCount,
+				Side: SideBuy, Symbol: "SIM1/USD", Raw: 9, At: time.Unix(2, 0).UTC(),
+			}})
+
+			So(thesis.Measurements[0].Raw, ShouldEqual, 9)
+			So(cut.Measurements[0].Raw, ShouldEqual, 1)
+			So(cut.Measurements[0], ShouldNotEqual, thesis.Measurements[0])
+		})
+	})
+}
+
 func BenchmarkImmutableCutCheckpoint(b *testing.B) {
 	dir := b.TempDir()
 	cut := &ImmutableCut{
@@ -60,5 +92,27 @@ func BenchmarkImmutableCutCheckpoint(b *testing.B) {
 		if err := cut.Checkpoint(dir); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func BenchmarkNewImmutableCut(b *testing.B) {
+	thesis := NewThesis()
+	rows := make([]*Measurement, 0, 512)
+
+	for index := range 512 {
+		rows = append(rows, &Measurement{
+			Source: SourceHawkes,
+			Metric: MetricEventCount,
+			Symbol: "SIM1/USD",
+			Raw:    float64(index),
+			At:     time.Unix(int64(index), 0).UTC(),
+		})
+	}
+
+	thesis.Publish(SourceHawkes, rows)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewImmutableCut(1, 1, thesis)
 	}
 }

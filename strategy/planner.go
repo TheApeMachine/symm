@@ -125,11 +125,11 @@ func (planner *Planner) Update(
 	}
 
 	thesis.ResetTick(at, tick)
-	thesis.Measurements = rows
+	thesis.InstallMeasurements(rows)
 	started := time.Now()
 
 	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "measure_end", map[string]any{
-		"measurements": len(thesis.Measurements),
+		"measurements": len(rows),
 		"ns":           time.Since(started).Nanoseconds(),
 	}))
 

@@ -46,7 +46,8 @@ func (envelope WireEnvelope) Compatible() bool {
 WireMeasurements publishes one focus-gated, aggregated UI frame for a signal's
 measurement batch. Flat thesis rows collapse into compact metrics maps so the
 socket carries one observation per source×symbol×at instead of one frame row
-per metric. A full channel drops the frame rather than stalling measure.
+per metric. A full channel drops the frame rather than stalling measure; ticker
+rewire of retained book batches recovers focus kernels after a drop.
 */
 func WireMeasurements(rows []*Measurement, ui chan []byte) {
 	if len(rows) == 0 || ui == nil {

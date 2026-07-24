@@ -1,6 +1,6 @@
 import { createRef } from "react";
-import type { Measurement } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
+import type { Measurement } from "#/collections/types";
 import { buildHeatmapCells } from "#/components/kernel/heatmap";
 import { kernelStatusMeta } from "#/components/terminal/kernel-meta";
 import {
@@ -72,7 +72,9 @@ export const paintSignalDetailMeasurements = (
 		focusSymbol === ""
 			? universe
 			: universe.filter((row) => row.symbol === focusSymbol);
-	const history = rowsFromBuffer(focusRows.filter((row) => row.source === source));
+	const history = rowsFromBuffer(
+		focusRows.filter((row) => row.source === source),
+	);
 	const headline = headlineMetric(source);
 	const latest =
 		headline === null ? history.at(-1) : latestByMetric(history, headline);
@@ -147,7 +149,7 @@ SignalDetail is the static signal-insight shell. DRAW paints via
 paintSignalDetailMeasurements(value, focusSymbol).
 */
 export const SignalDetail = () => (
-	<Flex.Column className="min-h-0 overflow-auto px-5 py-[18px]">
+	<Flex.Column className="min-h-0 overflow-auto px-5 py-4.5">
 		<Flex.Row className="items-start justify-between gap-3">
 			<span
 				ref={titleRef}
@@ -160,15 +162,15 @@ export const SignalDetail = () => (
 		</Flex.Row>
 		<div
 			ref={waitingPanelRef}
-			className="mt-[18px] rounded-[3px] border border-(--line) bg-(--sunken) px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
+			className="mt-4.5 rounded-[3px] border border-(--line) bg-(--sunken) px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
 		/>
 		<div
 			ref={metricsGridRef}
-			className="mt-[18px] grid gap-x-[22px] gap-y-3"
+			className="mt-4.5 grid gap-x-5.5 gap-y-3"
 			style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
 		/>
 		<div
-			className="mt-5 grid gap-x-[22px] gap-y-2 border-(--line) border-t pt-3.5 font-mono text-xs"
+			className="mt-5 grid gap-x-5.5 gap-y-2 border-(--line) border-t pt-3.5 font-mono text-xs"
 			style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
 		>
 			<div className="flex justify-between">
@@ -188,14 +190,14 @@ export const SignalDetail = () => (
 				<span ref={validityRef} className="text-(--f1)" />
 			</div>
 		</div>
-		<div ref={heatmapSectionRef} className="mt-[18px]">
+		<div ref={heatmapSectionRef} className="mt-4.5">
 			<div
 				ref={heatmapTitleRef}
 				className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]"
 			/>
 			<div
 				ref={heatmapGridRef}
-				className="grid gap-[3px]"
+				className="grid gap-0.75"
 				style={{ gridTemplateColumns: "repeat(12, minmax(0, 1fr))" }}
 			/>
 		</div>

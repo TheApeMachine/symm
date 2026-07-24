@@ -637,8 +637,9 @@ func (price *Price) frictionAt(
 
 /*
 Mark stamps executable bid (flatten-now PnL), mid/last StopMark for stop
-geometry, and return onto a holding. When the ticker book is not yet warm after
-a fill, the last trade mark on the holding is used so the desk does not publish
+geometry, and return onto a holding. The UI labels Mark as bid so it is not
+confused with Kraken chart last. When the ticker book is not yet warm after a
+fill, the last trade mark on the holding is used so the desk does not publish
 a zero-PnL shell until the next tick.
 */
 func (price *Price) Mark(

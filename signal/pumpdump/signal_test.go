@@ -286,8 +286,19 @@ func TestMeasure(t *testing.T) {
 				for index, left := range leftValues {
 					for _, metric := range relation.metrics {
 						for _, symbol := range symbols {
-							So(left[metric][symbol], ShouldAlmostEqual,
-								rightValues[index][metric][symbol])
+							surface := "peak"
+
+							if index == 1 {
+								surface = "latest"
+							}
+
+							SoMsg(
+								relation.left+" "+relation.right+" "+
+									string(metric)+" "+symbol+" "+surface,
+								left[metric][symbol],
+								ShouldAlmostEqual,
+								rightValues[index][metric][symbol],
+							)
 						}
 					}
 				}

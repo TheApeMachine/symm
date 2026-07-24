@@ -112,7 +112,8 @@ func (position *Position) setStatus(next types.Status) error {
 }
 
 /*
-Mark applies the latest mid for this lot and feeds its Stoploss.
+Mark applies the latest bid (PnL) and StopMark (mid/last) for this lot and
+feeds its Stoploss from StopMark — never from the flatten bid.
 */
 func (position *Position) Mark(symbol string) {
 	if symbol != position.pair.Symbol {

@@ -29,6 +29,7 @@ type Signal struct {
 	volume     *sync.Map
 	orderBooks *sync.Map
 	increments *sync.Map
+	lastWire   *sync.Map
 	ui         chan []byte
 }
 
@@ -50,6 +51,7 @@ func NewSignal(
 		volume:     &sync.Map{},
 		orderBooks: &sync.Map{},
 		increments: &sync.Map{},
+		lastWire:   &sync.Map{},
 		ui:         ui,
 	}
 
@@ -164,6 +166,7 @@ func (signal *Signal) Calculate(
 	out := make([]*types.Measurement, 0, len(tickers))
 	tradeIndex := 0
 	bookIndex := 0
+	measured := make(map[string]struct{}, len(tickers))
 
 	for _, row := range tickers {
 		for tradeIndex < len(trades) &&
@@ -190,6 +193,14 @@ func (signal *Signal) Calculate(
 			return nil, err
 		}
 
+		if row.Symbol != "" {
+			measured[row.Symbol] = struct{}{}
+		}
+
+		if len(measurements) > 0 && row.Symbol != "" {
+			signal.lastWire.Store(row.Symbol, measurements)
+		}
+
 		out = append(out, measurements...)
 	}
 
@@ -197,7 +208,20 @@ func (signal *Signal) Calculate(
 		return nil, err
 	}
 
-	types.WireMeasurements(out, signal.ui)
+	// Thesis keeps this batch only. Focus-gated UI re-wires the last focus
+	// observation when the batch was an alt update so the kernel does not sit
+	// on STANDBY (do not remeasure — that would advance ignition on a stale tick).
+	uiRows := out
+
+	if focus := types.Focus(); focus != "" {
+		if _, seen := measured[focus]; !seen {
+			if value, ok := signal.lastWire.Load(focus); ok {
+				uiRows = append(append([]*types.Measurement{}, out...), value.([]*types.Measurement)...)
+			}
+		}
+	}
+
+	types.WireMeasurements(uiRows, signal.ui)
 
 	return out, nil
 }
