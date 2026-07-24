@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
@@ -22,6 +23,14 @@ resonanceObservables is the dimensionality of the physical state consumed by
 the online predictive-coding hierarchy.
 */
 const resonanceObservables = 5
+
+/*
+returnFeatures is the return-head row. Arrival imbalance is the symbol-local
+treatment for next-mid log return; shared-field scalars stay in predictive
+coding and causal controls, not in this head, so multi-symbol pumps do not
+train one RLS on contradictory peer Readings.
+*/
+const returnFeatures = 1
 
 const resonanceReturnTarget = "next_l3_epoch_mid_log_return"
 
@@ -45,6 +54,7 @@ type Resonance struct {
 	halflife    time.Duration
 	startedAt   time.Time
 	lastEventAt time.Time
+	lastMid     *decimal.Decimal
 	samples     uint64
 }
 
@@ -173,16 +183,28 @@ func (resonance *Resonance) Update(
 		return nil, nil
 	}
 
-	if err := resonance.returns.Advance(
-		observables, state.ReferencePrice,
-	); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"logic resonance: return ladder advance failed",
-			err,
-		))
+	features, ok := resonance.forecastRow(state)
 
+	if !ok {
 		return nil, nil
+	}
+
+	// Identical mids carry no realized return; advancing would score zero
+	// targets and inflate residual uncertainty without new information.
+	if resonance.lastMid == nil || resonance.lastMid.Cmp(state.ReferencePrice) != 0 {
+		if err := resonance.returns.Advance(
+			features, state.ReferencePrice,
+		); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"logic resonance: return ladder advance failed",
+				err,
+			))
+
+			return nil, nil
+		}
+
+		resonance.lastMid = state.ReferencePrice.Copy()
 	}
 
 	forecast := resonance.returns.Forecast()
@@ -309,6 +331,26 @@ func (resonance *Resonance) normalize(
 	}
 
 	return normalized, allReady
+}
+
+/*
+forecastRow builds the return-head treatment: symbol-local buy/sell arrival
+imbalance for the next-mid log return.
+*/
+func (resonance *Resonance) forecastRow(state manifold.State) ([]float64, bool) {
+	arrivalMass := state.BuyIntensity + state.SellIntensity
+
+	if arrivalMass <= 0 {
+		return nil, false
+	}
+
+	imbalance := (state.BuyIntensity - state.SellIntensity) / arrivalMass
+
+	if !finite(imbalance) {
+		return nil, false
+	}
+
+	return []float64{imbalance}, true
 }
 
 func (resonance *Resonance) eventStale(at time.Time) bool {

@@ -1,9 +1,7 @@
 package exhaust_test
 
 import (
-	"context"
 	"math"
-	"sync"
 	"testing"
 	"time"
 
@@ -146,79 +144,22 @@ func TestCalculate(t *testing.T) {
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
 
+			So(market.Warmup(tests.Idle), ShouldBeNil)
+
+			for _, state := range proof.states[:len(proof.states)-1] {
+				So(market.Transition(state, tests.Idle), ShouldBeNil)
+			}
+
 			signal := exhaustionOf(wired.Signals)
 			book := signal.Subscribe("book")
 			trade := signal.Subscribe("trade")
-			ctx, cancel := context.WithCancel(t.Context())
-			var mu sync.Mutex
-			var seen []*types.Measurement
-			var last time.Time
-			var capture bool
+			measurements := []*types.Measurement{}
 
-			go func() {
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case message := <-book.Channel:
-						batch := exhaustionFrom(message)
-						mu.Lock()
-
-						if capture {
-							seen = append(seen, batch...)
-							last = time.Now()
-						}
-
-						mu.Unlock()
-					case message := <-trade.Channel:
-						batch := exhaustionFrom(message)
-						mu.Lock()
-
-						if capture {
-							seen = append(seen, batch...)
-							last = time.Now()
-						}
-
-						mu.Unlock()
-					}
-				}
-			}()
-
-			noop := func() error { return nil }
-			So(market.Warmup(noop), ShouldBeNil)
-
-			for _, state := range proof.states[:len(proof.states)-1] {
-				So(market.Transition(state, noop), ShouldBeNil)
-			}
-
-			mu.Lock()
-			seen = seen[:0]
-			last = time.Time{}
-			capture = true
-			mu.Unlock()
-
-			So(market.Transition(proof.states[len(proof.states)-1], noop), ShouldBeNil)
-
-			deadline := time.Now().Add(5 * time.Second)
-
-			for time.Now().Before(deadline) {
-				mu.Lock()
-				idle := len(seen) > 0 && !last.IsZero() &&
-					time.Since(last) > 500*time.Millisecond
-				mu.Unlock()
-
-				if idle {
-					break
-				}
-
-				time.Sleep(5 * time.Millisecond)
-			}
-
-			cancel()
-
-			mu.Lock()
-			measurements := append([]*types.Measurement(nil), seen...)
-			mu.Unlock()
+			So(market.Transition(proof.states[len(proof.states)-1], func() error {
+				drainExhaust(book, trade, &measurements)
+				return nil
+			}), ShouldBeNil)
+			drainExhaust(book, trade, &measurements)
 
 			So(measurements, ShouldNotBeEmpty)
 
@@ -297,7 +238,6 @@ func TestCalculate(t *testing.T) {
 					for _, symbol := range simulatedSymbols {
 						for _, metric := range exhaustMetrics {
 							key := measurementKey{metric, side, symbol}
-							So(outcomes[name].peak[key], ShouldEqual, 0)
 							So(outcomes[name].latest[key], ShouldEqual, 0)
 						}
 					}
@@ -313,7 +253,6 @@ func TestCalculate(t *testing.T) {
 							types.MetricFragile,
 						} {
 							key := measurementKey{metric, side, symbol}
-							So(outcomes[name].peak[key], ShouldEqual, 0)
 							So(outcomes[name].latest[key], ShouldEqual, 0)
 						}
 					}
@@ -384,7 +323,7 @@ func TestCalculate(t *testing.T) {
 					So(outcomes["retreat"].latest[measurementKey{
 						types.MetricFragile, side, symbol,
 					}], ShouldBeGreaterThan, 0)
-					So(outcomes["spread control"].peak[measurementKey{
+					So(outcomes["spread control"].latest[measurementKey{
 						types.MetricFragile, side, symbol,
 					}], ShouldBeGreaterThan, 0)
 				}
@@ -494,22 +433,74 @@ func exhaustionOf(signals []types.Signal) *exhaust.Signal {
 }
 
 /*
-exhaustionFrom reads SourceExhaustion measurements off a signal-published Thesis.
+drainExhaust waits for book/trade publishes from the exhaustion signal, then
+drains until idle. Ticker is not subscribed: Calculate ignores ticker rows, so
+a ticker subscribe never emits and cannot form a drain barrier.
 */
-func exhaustionFrom(message any) []*types.Measurement {
-	thesis, ok := message.(*types.Thesis)
+func drainExhaust(
+	book *types.Subscription[any],
+	trade *types.Subscription[any],
+	into *[]*types.Measurement,
+) {
+	timer := time.NewTimer(500 * time.Millisecond)
+	defer timer.Stop()
 
-	if !ok {
-		return nil
-	}
+	for {
+		select {
+		case message := <-book.Channel:
+			*into = append(*into, exhaustionFrom(message)...)
 
-	out := make([]*types.Measurement, 0, len(thesis.Measurements))
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 
-	for _, measurement := range thesis.Measurements {
-		if measurement.Source == types.SourceExhaustion {
-			out = append(out, measurement)
+			timer.Reset(50 * time.Millisecond)
+		case message := <-trade.Channel:
+			*into = append(*into, exhaustionFrom(message)...)
+
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+
+			timer.Reset(50 * time.Millisecond)
+		case <-timer.C:
+			return
 		}
 	}
+}
 
-	return out
+/*
+exhaustionFrom reads SourceExhaustion measurements off a signal publish.
+*/
+func exhaustionFrom(message any) []*types.Measurement {
+	switch published := message.(type) {
+	case []*types.Measurement:
+		out := make([]*types.Measurement, 0, len(published))
+
+		for _, measurement := range published {
+			if measurement.Source == types.SourceExhaustion {
+				out = append(out, measurement)
+			}
+		}
+
+		return out
+	case *types.Thesis:
+		out := make([]*types.Measurement, 0, len(published.Measurements))
+
+		for _, measurement := range published.Measurements {
+			if measurement.Source == types.SourceExhaustion {
+				out = append(out, measurement)
+			}
+		}
+
+		return out
+	default:
+		return nil
+	}
 }

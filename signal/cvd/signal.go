@@ -44,7 +44,6 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 
 	signal.Actor = types.NewActor(ctx, map[string]types.Handler{
 		"ticker": {Topic: "thesis", Fn: signal.onTicker},
-		"book":   {Topic: "thesis", Fn: signal.onBook},
 		"trade":  {Topic: "thesis", Fn: signal.onTrade},
 	})
 
@@ -59,13 +58,13 @@ func (signal *Signal) Name() string {
 }
 
 /*
-Initialize wires ticker, book, and trade ingress from Live.
+Initialize wires ticker and trade ingress from Live. Book floods are unused by
+CVD (midpoints come from tickers) and must not fill a dead subscription.
 */
 func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 	signal.thesis = thesis
 	signal.Actor.Initialize(
 		types.Topic{Name: "ticker", Actor: live},
-		types.Topic{Name: "book", Actor: live},
 		types.Topic{Name: "trade", Actor: live},
 	)
 }
@@ -73,24 +72,6 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 func (signal *Signal) onTicker(message any) any {
 	rows := message.(*kraken.Ticker).Data
 	measurements, err := signal.Calculate(rows, nil, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	if len(measurements) == 0 {
-		return nil
-	}
-
-	signal.thesis.Publish(types.SourceCVD, measurements)
-
-	return signal.thesis
-}
-
-func (signal *Signal) onBook(message any) any {
-	rows := message.(*kraken.Book).Data
-	measurements, err := signal.Calculate(nil, nil, rows)
 
 	if err != nil {
 		errnie.Error(err)

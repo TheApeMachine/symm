@@ -54,10 +54,6 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 			Topic: "thesis",
 			Fn:    signal.onTicker,
 		},
-		"book": {
-			Topic: "thesis",
-			Fn:    signal.onBook,
-		},
 		"trade": {
 			Topic: "thesis",
 			Fn:    signal.onTrade,
@@ -75,13 +71,15 @@ func (signal *Signal) Name() string {
 }
 
 /*
-Initialize wires ticker, book, and trade ingress from Live.
+Initialize wires ticker and trade ingress from Live at depth one so Live cannot
+race ahead of Hawkes while Analyzer is still consuming a prior cut. Book traffic
+is not consumed — Hawkes measures marked trade arrivals only.
 */
 func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 	signal.thesis = thesis
-	signal.Actor.Initialize(
+	signal.Actor.InitializeSize(
+		1,
 		types.Topic{Name: "ticker", Actor: live},
-		types.Topic{Name: "book", Actor: live},
 		types.Topic{Name: "trade", Actor: live},
 	)
 }
@@ -101,25 +99,7 @@ func (signal *Signal) onTicker(message any) any {
 
 	signal.thesis.Publish(types.SourceHawkes, measurements)
 
-	return signal.thesis
-}
-
-func (signal *Signal) onBook(message any) any {
-	rows := message.(*kraken.Book).Data
-	measurements, err := signal.Calculate(nil, nil, rows)
-
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	if len(measurements) == 0 {
-		return nil
-	}
-
-	signal.thesis.Publish(types.SourceHawkes, measurements)
-
-	return signal.thesis
+	return signal.cut()
 }
 
 func (signal *Signal) onTrade(message any) any {
@@ -137,7 +117,7 @@ func (signal *Signal) onTrade(message any) any {
 
 	signal.thesis.Publish(types.SourceHawkes, measurements)
 
-	return signal.thesis
+	return signal.cut()
 }
 
 /*

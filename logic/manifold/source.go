@@ -6,188 +6,144 @@ import (
 )
 
 /*
-bookSampler owns the converted L3 population for each symbol. SDK decimal
-objects are immutable snapshots that writers replace on modification, so
-pointer identity lets unchanged orders reuse their float and exact-money
-representations instead of rebuilding big.Rat values on every analyzer tick.
+BookSource exposes SDK-managed L3 books through a read lease. PeekBook must hold
+exclusion against websocket writers for the duration of fn.
+*/
+type BookSource interface {
+	PeekBook(symbol string, fn func(*book.Book)) bool
+}
+
+/*
+bookSampler reads one leased L3 book into owned manifold inputs. Tokenization and
+touch scales happen under the lease so no *book.Order escapes the write barrier.
 */
 type bookSampler struct {
-	source  BookSource
-	samples map[string]*bookSample
+	source BookSource
 }
 
 /*
-bookSample retains only the current live order identities for one symbol.
-Orders is reused between sequential solver updates; cache entries not observed
-in the current leased book are removed immediately.
+bookPopulation is one symbol's owned sample after the lease returns.
 */
-type bookSample struct {
-	epoch   uint64
-	orders  []physicalOrder
-	cache   map[string]cachedPhysicalOrder
-	bestBid float64
-	bestAsk float64
-	read    func(*book.Book)
+type bookPopulation struct {
+	midPrice     float64
+	orderIDs     []string
+	batch        Batch
+	reference    *decimal.Decimal
+	spread       float64
+	buyCapacity  *decimal.Decimal
+	sellCapacity *decimal.Decimal
 }
 
 /*
-cachedPhysicalOrder binds one converted order to the SDK decimal objects from
-which it was derived. A quantity modification replaces its source pointer and
-therefore refreshes the cached representation on the next sample.
-*/
-type cachedPhysicalOrder struct {
-	priceSource    *decimal.Decimal
-	quantitySource *decimal.Decimal
-	observed       uint64
-	order          physicalOrder
-}
-
-/*
-newBookSampler composes a bounded converter around the authoritative L3 source.
+newBookSampler binds the authoritative L3 source.
 */
 func newBookSampler(source BookSource) *bookSampler {
-	return &bookSampler{
-		source:  source,
-		samples: make(map[string]*bookSample),
-	}
+	return &bookSampler{source: source}
 }
 
 /*
-Orders returns the current complete two-sided population for symbol. Conversion
-runs under the source lease only for orders whose SDK decimal snapshot changed.
+Sample tokenizes and measures touch for symbol under the source lease.
 */
-func (sampler *bookSampler) Orders(
+func (sampler *bookSampler) Sample(
 	symbol string,
-) ([]physicalOrder, float64, bool) {
+	tokenizer Tokenizer,
+) (bookPopulation, bool) {
 	if sampler == nil || sampler.source == nil || symbol == "" {
-		return nil, 0, false
+		return bookPopulation{}, false
 	}
 
-	sample := sampler.samples[symbol]
+	var population bookPopulation
+	var ready bool
 
-	if sample == nil {
-		sample = &bookSample{cache: make(map[string]cachedPhysicalOrder)}
-		sample.read = sample.capture
-		sampler.samples[symbol] = sample
-	}
+	found := sampler.source.PeekBook(symbol, func(symbolBook *book.Book) {
+		population, ready = readPopulation(symbolBook, tokenizer)
+	})
 
-	found := sampler.source.PeekBook(symbol, sample.read)
-
-	if !found {
-		delete(sampler.samples, symbol)
-		return nil, 0, false
-	}
-
-	if len(sample.orders) == 0 ||
-		sample.bestBid <= 0 || sample.bestAsk <= sample.bestBid {
-		return nil, 0, false
-	}
-
-	return sample.orders, (sample.bestBid + sample.bestAsk) / 2, true
+	return population, found && ready
 }
 
 /*
-capture refreshes one sample while the BookSource read lease is held.
+readPopulation walks one leased book into owned batch, IDs, and touch scales.
 */
-func (sample *bookSample) capture(symbolBook *book.Book) {
-	sample.epoch++
-	sample.orders = sample.orders[:0]
-	sample.bestBid = 0
-	sample.bestAsk = 0
-
-	if symbolBook != nil {
-		sample.captureSide(symbolBook.Bids)
-		sample.captureSide(symbolBook.Asks)
+func readPopulation(
+	symbolBook *book.Book,
+	tokenizer Tokenizer,
+) (bookPopulation, bool) {
+	if symbolBook == nil {
+		return bookPopulation{}, false
 	}
 
-	for orderID, cached := range sample.cache {
-		if cached.observed != sample.epoch {
-			delete(sample.cache, orderID)
+	bid := symbolBook.BestBid()
+	ask := symbolBook.BestAsk()
+
+	if bid == nil || ask == nil ||
+		bid.Price == nil || ask.Price == nil ||
+		bid.Quantity == nil || ask.Quantity == nil ||
+		bid.Price.Sign() <= 0 || ask.Price.Sign() <= 0 ||
+		bid.Quantity.Sign() <= 0 || ask.Quantity.Sign() <= 0 ||
+		ask.Price.Cmp(bid.Price) <= 0 {
+		return bookPopulation{}, false
+	}
+
+	touch := marketTouch{
+		bidPrice:      bid.Price.Float64(),
+		askPrice:      ask.Price.Float64(),
+		bidPriceMoney: bid.Price.Copy(),
+		askPriceMoney: ask.Price.Copy(),
+		bidQuantity:   bid.Quantity.Copy(),
+		askQuantity:   ask.Quantity.Copy(),
+	}
+	reference, spread, buyCapacity, sellCapacity, ok := touch.scales()
+
+	if !ok {
+		return bookPopulation{}, false
+	}
+
+	midPrice := reference.Float64()
+	orderIDs := make([]string, 0)
+	orders := make([]restingOrder, 0)
+
+	appendSide := func(side *book.Side, direction book.BookDirection) {
+		if side == nil {
+			return
 		}
-	}
-}
 
-/*
-captureSide walks one leased SDK side and appends each resting order once.
-*/
-func (sample *bookSample) captureSide(side *book.Side) {
-	if side == nil {
-		return
-	}
-
-	for _, level := range side.Levels {
-		if level == nil {
-			continue
-		}
-
-		for _, order := range level.Queue() {
-			physical, ready := sample.convert(side.Direction, order)
-
-			if !ready {
+		for _, level := range side.Levels {
+			if level == nil {
 				continue
 			}
 
-			sample.observeTouch(physical)
-			sample.orders = append(sample.orders, physical)
+			for _, order := range level.Queue() {
+				if order == nil || order.LimitPrice == nil || order.Quantity == nil ||
+					order.LimitPrice.Sign() <= 0 || order.Quantity.Sign() <= 0 {
+					continue
+				}
+
+				orderIDs = append(orderIDs, order.ID)
+				orders = append(orders, restingOrder{
+					side:  direction,
+					price: order.LimitPrice.Float64(),
+				})
+			}
 		}
 	}
-}
 
-/*
-convert reuses one unchanged order or converts its replacement decimals once.
-*/
-func (sample *bookSample) convert(
-	direction book.BookDirection,
-	order *book.Order,
-) (physicalOrder, bool) {
-	if order == nil || order.ID == "" ||
-		order.Quantity == nil || order.LimitPrice == nil {
-		return physicalOrder{}, false
+	appendSide(symbolBook.Bids, book.Bid)
+	appendSide(symbolBook.Asks, book.Ask)
+
+	batch := tokenizer.MakeBatch(orders, midPrice)
+
+	if len(batch.Particles) == 0 {
+		return bookPopulation{}, false
 	}
 
-	cached, exists := sample.cache[order.ID]
-
-	if exists && cached.priceSource == order.LimitPrice &&
-		cached.quantitySource == order.Quantity && cached.order.side == direction {
-		cached.observed = sample.epoch
-		sample.cache[order.ID] = cached
-		return cached.order, true
-	}
-
-	physical := physicalOrder{
-		orderID:       order.ID,
-		side:          direction,
-		price:         order.LimitPrice.Float64(),
-		quantity:      order.Quantity.Float64(),
-		priceMoney:    order.LimitPrice.Copy(),
-		quantityMoney: order.Quantity.Copy(),
-		timestamp:     order.Timestamp,
-	}
-
-	if physical.price <= 0 || physical.quantity <= 0 {
-		return physicalOrder{}, false
-	}
-
-	sample.cache[order.ID] = cachedPhysicalOrder{
-		priceSource:    order.LimitPrice,
-		quantitySource: order.Quantity,
-		observed:       sample.epoch,
-		order:          physical,
-	}
-
-	return physical, true
-}
-
-/*
-observeTouch derives the best bid and ask from the same converted population.
-*/
-func (sample *bookSample) observeTouch(order physicalOrder) {
-	if order.side == book.Bid && order.price > sample.bestBid {
-		sample.bestBid = order.price
-	}
-
-	if order.side == book.Ask &&
-		(sample.bestAsk == 0 || order.price < sample.bestAsk) {
-		sample.bestAsk = order.price
-	}
+	return bookPopulation{
+		midPrice:     midPrice,
+		orderIDs:     orderIDs,
+		batch:        batch,
+		reference:    reference,
+		spread:       spread,
+		buyCapacity:  buyCapacity,
+		sellCapacity: sellCapacity,
+	}, true
 }

@@ -123,11 +123,8 @@ func TestMeasure(t *testing.T) {
 			market := tests.NewMarket(t.Context(), 3)
 			wired, err := stack.NewBooter(t.Context()).Test(market)
 			So(err, ShouldBeNil)
-			var thesis *types.Thesis
-			So(market.Warmup(func() error {
-				var err error
-				return err
-			}), ShouldBeNil)
+			thesis := wired.Thesis
+			So(market.Warmup(tests.Idle), ShouldBeNil)
 			measurements := []*types.Measurement{}
 			maturity := make(map[string]float64, len(market.Symbols))
 
@@ -138,9 +135,7 @@ func TestMeasure(t *testing.T) {
 			}
 
 			for _, state := range proof.states[:len(proof.states)-1] {
-				So(market.Transition(state, func() error {
-					return nil
-				}, proof.symbols...), ShouldBeNil)
+				So(market.Transition(state, tests.Idle, proof.symbols...), ShouldBeNil)
 			}
 
 			for _, measurement := range thesis.Measurements {
@@ -151,8 +146,6 @@ func TestMeasure(t *testing.T) {
 
 			So(market.Transition(
 				proof.states[len(proof.states)-1], func() error {
-					thesis := wired.Thesis
-
 					current := thesis.Measurements
 					advanced := make(map[string]bool, len(market.Symbols))
 

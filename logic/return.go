@@ -36,7 +36,7 @@ calibration confidence before accepting any market observation.
 */
 func newReturnHead() (*returnHead, error) {
 	learner, err := learning.NewRLS(learning.RLSConfig{
-		Dimension:        resonanceObservables,
+		Dimension:        returnFeatures,
 		InitialVariance:  viper.GetFloat64("market.forecast.rls.initial_variance"),
 		ForgettingFactor: viper.GetFloat64("market.forecast.rls.forgetting_factor"),
 	})

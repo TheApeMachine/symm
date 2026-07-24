@@ -14,18 +14,19 @@ Particle is the dashboard view of one focused symbol observation after the
 shared Sensorium step. Cell coordinates preserve the established wire format.
 */
 type Particle struct {
-	Role      string  `json:"role"`
-	CellX     float64 `json:"cell_x"`
-	CellY     float64 `json:"cell_y"`
-	CellZ     float64 `json:"cell_z"`
-	Phase     float64 `json:"phase"`
-	Omega     float64 `json:"omega"`
-	Amplitude float64 `json:"amplitude"`
-	Heat      float64 `json:"heat"`
-	VelX      float64 `json:"vel_x"`
-	VelY      float64 `json:"vel_y"`
-	VelZ      float64 `json:"vel_z"`
-	Speed     float64 `json:"speed"`
+	Role           string  `json:"role"`
+	CellX          float64 `json:"cell_x"`
+	CellY          float64 `json:"cell_y"`
+	CellZ          float64 `json:"cell_z"`
+	Phase          float64 `json:"phase"`
+	Omega          float64 `json:"omega"`
+	Amplitude      float64 `json:"amplitude"`
+	Heat           float64 `json:"heat"`
+	VelX           float64 `json:"vel_x"`
+	VelY           float64 `json:"vel_y"`
+	VelZ           float64 `json:"vel_z"`
+	Speed          float64 `json:"speed"`
+	SpatialTokenID uint32  `json:"spatial_token_id,omitempty"`
 }
 
 /*
@@ -91,8 +92,7 @@ type State struct {
 
 /*
 view constructs the symbol-local market metadata around a shared physical
-reading. Touch notionals were multiplied exactly with Kraken decimals; this
-market state and forecast contracts preserve those exact values for sizing.
+reading. Touch notionals use exact Kraken decimals for sizing contracts.
 */
 func (slot *symbolSlot) view(
 	candidate intensityCandidate,
@@ -117,16 +117,29 @@ func (slot *symbolSlot) view(
 		interval = outcome.At.Sub(slot.last.At)
 	}
 
+	// Resonance and causal heads require strictly increasing observation time.
+	// Hawkes can admit a new EventCount at an unchanged wall clock; bump by one
+	// microsecond so the shared physical step remains chronologically ordered.
+	at := outcome.At
+
+	if !slot.last.At.IsZero() && !at.After(slot.last.At) {
+		at = slot.last.At.Add(time.Microsecond)
+
+		if interval <= 0 {
+			interval = time.Microsecond
+		}
+	}
+
 	state := State{
 		Source:           "manifold",
 		Symbol:           candidate.symbol,
-		At:               outcome.At,
+		At:               at,
 		Duration:         interval,
 		Epoch:            slot.epoch,
-		ReferencePrice:   slot.coords.reference.Copy(),
-		Spread:           slot.coords.spread,
-		BuyCapacity:      slot.coords.buyCapacity.Copy(),
-		SellCapacity:     slot.coords.sellCapacity.Copy(),
+		ReferencePrice:   candidate.reference,
+		Spread:           candidate.spread,
+		BuyCapacity:      candidate.buyCapacity,
+		SellCapacity:     candidate.sellCapacity,
 		InvalidReason:    Valid,
 		StressAnisotropy: stressAnisotropy(outcome),
 		Subdivisions:     diagnostics.Halvings + 1,
@@ -134,9 +147,15 @@ func (slot *symbolSlot) view(
 		SellIntensity:    sellIntensity,
 		SpectralRadius:   outcome.Fit.SpectralRadius,
 		Reading:          reading,
-		OscillatorCount:  slot.end - slot.start,
-		Grid:             grid,
+		// OscillatorCount is filled by paint from the post-merge resident count.
+		Grid: grid,
 	}
+
+	if candidate.reference == nil || candidate.buyCapacity == nil ||
+		candidate.sellCapacity == nil || candidate.spread <= 0 {
+		state.InvalidReason = "no executable touch"
+	}
+
 	slot.last = state
 	return state
 }

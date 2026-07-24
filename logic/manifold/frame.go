@@ -14,7 +14,7 @@ project reads the shared field projection and resident omega spectrum for every
 GasReady symbol view. Phase scans stay per-symbol in phase.
 */
 func (solver *Solver) project() (pfluid.Projection, []pfluid.WaveMode, error) {
-	if len(solver.particles) == 0 {
+	if solver.domain == nil || solver.domain.ParticleCount() == 0 {
 		return pfluid.Projection{Grid: solver.config.Grid}, nil, nil
 	}
 
@@ -44,25 +44,17 @@ func (solver *Solver) project() (pfluid.Projection, []pfluid.WaveMode, error) {
 /*
 phase stages the current resident omega field until cognition commits a label
 for the same symbol epoch, then scans one complete mode-derived turn against
-already labeled market states for that symbol.
+already labeled market states for that symbol. wave is the shared spectrum
+already read for this publish; it is not re-fetched per symbol.
 */
 func (solver *Solver) phase(
 	symbol string,
 	at time.Time,
 	advanced bool,
-) ([]pfluid.WaveMode, []PhaseResponse, error) {
-	if symbol == "" {
-		return nil, nil, nil
-	}
-
-	wave, err := solver.domain.Wave()
-
-	if err != nil {
-		return nil, nil, errnie.Err(
-			errnie.Internal,
-			"manifold: failed to read shared omega spectrum",
-			err,
-		)
+	wave []pfluid.WaveMode,
+) ([]PhaseResponse, error) {
+	if symbol == "" || len(wave) == 0 {
+		return nil, nil
 	}
 
 	dial := make(geometry.PhaseDial, len(wave))
@@ -74,7 +66,7 @@ func (solver *Solver) phase(
 	}
 
 	if !hasAmplitude {
-		return wave, nil, nil
+		return nil, nil
 	}
 
 	if advanced {
@@ -84,38 +76,36 @@ func (solver *Solver) phase(
 	phaseScan, err := solver.Responses(symbol, dial, at)
 
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return wave, phaseScan, nil
+	return phaseScan, nil
 }
 
 /*
-paint attaches the shared field and one symbol's latest observations to a state
-view so the dashboard can render any symbol without a backend focus gate.
+paint attaches the shared field and one shared particle render to a state view
+so the dashboard can render any symbol without a backend focus gate.
 */
 func (solver *Solver) paint(
 	state *State,
-	projection pfluid.Projection,
+	grid pfluid.Grid,
 	wave []pfluid.WaveMode,
 	phaseScan []PhaseResponse,
-	slot *symbolSlot,
+	particles []Particle,
+	rho, psi, guideX, guideZ [][]float64,
 ) {
-	if state == nil || slot == nil || slot.start < 0 || slot.end < slot.start ||
-		slot.end > len(solver.particles) || len(projection.Density) == 0 {
+	if state == nil || len(rho) == 0 {
 		return
 	}
 
-	state.Grid = projection.Grid
-	state.Rho = projectionRows(projection.Density, projection.Grid)
-	state.PsiMag2 = projectionRows(projection.Coherence, projection.Grid)
-	state.GuidanceVelX = projectionRows(projection.GuidanceX, projection.Grid)
-	state.GuidanceVelZ = projectionRows(projection.GuidanceZ, projection.Grid)
-	state.Particles = renderParticles(
-		solver.particles[slot.start:slot.end],
-		projection.Grid,
-	)
-	state.SharedOscillatorCount = len(solver.particles)
+	state.Grid = grid
+	state.Rho = rho
+	state.PsiMag2 = psi
+	state.GuidanceVelX = guideX
+	state.GuidanceVelZ = guideZ
+	state.Particles = particles
+	state.OscillatorCount = len(particles)
+	state.SharedOscillatorCount = len(particles)
 	state.Wave = wave
 	state.PhaseScan = phaseScan
 	state.PhaseReady = len(wave) > 0 && len(phaseScan) == len(wave)
@@ -168,10 +158,11 @@ func projectionRows(values []float32, grid pfluid.Grid) [][]float64 {
 
 /*
 renderParticles converts one symbol's latest physical observations to the
-established cell-based dashboard payload.
+established cell-based dashboard payload, including post-merge spatial token IDs.
 */
 func renderParticles(
 	particles []pfluid.Particle,
+	spatial []uint32,
 	grid pfluid.Grid,
 ) []Particle {
 	rendered := make([]Particle, len(particles))
@@ -195,6 +186,10 @@ func renderParticles(
 			Speed: math.Sqrt(
 				velocityX*velocityX + velocityY*velocityY + velocityZ*velocityZ,
 			),
+		}
+
+		if index < len(spatial) {
+			rendered[index].SpatialTokenID = spatial[index]
 		}
 	}
 

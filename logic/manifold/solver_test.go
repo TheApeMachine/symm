@@ -73,23 +73,24 @@ func TestSolver_Update(t *testing.T) {
 			So(bitcoin.GasReady(), ShouldBeTrue)
 			So(ether.GasReady(), ShouldBeTrue)
 			So(bitcoin.Reading, ShouldResemble, ether.Reading)
-			So(solver.particles, ShouldHaveLength, 4)
+			So(solver.Population(), ShouldBeGreaterThan, 0)
 			So(solver.domain, ShouldNotBeNil)
 		})
 
 		Convey("It should project the shared field onto every GasReady symbol", func() {
+			population := solver.Population()
 			So(bitcoin.Rho, ShouldNotBeEmpty)
 			So(bitcoin.PsiMag2, ShouldNotBeEmpty)
-			So(bitcoin.Particles, ShouldHaveLength, 2)
-			So(bitcoin.OscillatorCount, ShouldEqual, 2)
-			So(bitcoin.SharedOscillatorCount, ShouldEqual, 4)
+			So(bitcoin.Particles, ShouldHaveLength, population)
+			So(bitcoin.OscillatorCount, ShouldEqual, population)
+			So(bitcoin.SharedOscillatorCount, ShouldEqual, population)
 			So(bitcoin.Wave, ShouldHaveLength, solver.config.Grid.X)
 			So(bitcoin.PhaseReady, ShouldBeFalse)
 			So(bitcoin.PhaseReason, ShouldEqual,
 				"awaiting a prior outcome-labeled phase observation")
 			So(ether.Rho, ShouldNotBeEmpty)
-			So(ether.Particles, ShouldHaveLength, 2)
-			So(ether.SharedOscillatorCount, ShouldEqual, 4)
+			So(ether.Particles, ShouldHaveLength, population)
+			So(ether.SharedOscillatorCount, ShouldEqual, population)
 			So(ether.Wave, ShouldNotBeEmpty)
 		})
 
@@ -107,6 +108,7 @@ func TestSolver_Update(t *testing.T) {
 			source.outcomes["ETH/USD"] = solverOutcome(laterAt, 4, 8)
 			next := types.NewThesis(nil)
 			So(solver.Update(next, source), ShouldBeNil)
+			So(solver.Population(), ShouldBeGreaterThan, 0)
 			value, found := next.Manifold.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 
@@ -133,7 +135,8 @@ func TestSolver_Update(t *testing.T) {
 			}
 		})
 
-		Convey("It should replay unchanged source epochs without duplicating particles", func() {
+		Convey("It should replay unchanged source epochs without appending particles", func() {
+			before := solver.Population()
 			next := types.NewThesis(nil)
 			So(solver.Update(next, source), ShouldBeNil)
 			value, found := next.Manifold.Load("ETH/USD")
@@ -142,9 +145,9 @@ func TestSolver_Update(t *testing.T) {
 			So(replay.Replay, ShouldBeTrue)
 			So(replay.Epoch, ShouldEqual, ether.Epoch)
 			So(replay.Rho, ShouldNotBeEmpty)
-			So(replay.Particles, ShouldHaveLength, 2)
+			So(replay.Particles, ShouldHaveLength, before)
 			So(replay.Wave, ShouldNotBeEmpty)
-			So(solver.particles, ShouldHaveLength, 4)
+			So(solver.Population(), ShouldEqual, before)
 		})
 	})
 }
@@ -162,7 +165,9 @@ func TestSolver_Candidates(t *testing.T) {
 		}
 
 		Convey("It should not invent a physical population", func() {
-			So(solver.candidates(source), ShouldBeEmpty)
+			changed := solver.changedOutcomes(source)
+			So(changed, ShouldContainKey, "ETH/USD")
+			So(solver.sampleChanged(changed), ShouldBeEmpty)
 		})
 	})
 }

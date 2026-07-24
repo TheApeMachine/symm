@@ -274,13 +274,21 @@ func (conn *MockConn) Write(params json.Marshaler) error {
 	return conn.delivered()
 }
 
+const (
+	deliverDeadline       = 10 * time.Second
+	deliverQuietThreshold = 50
+	deliverPollInterval   = time.Millisecond
+)
+
 /*
 delivered waits until Actor roots are empty after a subscribe Emit so boot
 preflight can observe READY. Market Drain does not use this — tests subscribe
 to the signal Actor for that.
+ponytail: quiet polling is only a heuristic; upgrade path is a real drain/ack
+barrier on Actor roots.
 */
 func (conn *MockConn) delivered() error {
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(deliverDeadline)
 	quiet := 0
 
 	for time.Now().Before(deadline) {
@@ -295,17 +303,17 @@ func (conn *MockConn) delivered() error {
 
 		if busy {
 			quiet = 0
-			time.Sleep(time.Millisecond)
+			time.Sleep(deliverPollInterval)
 			continue
 		}
 
 		quiet++
 
-		if quiet >= 3 {
+		if quiet >= deliverQuietThreshold {
 			return nil
 		}
 
-		time.Sleep(time.Millisecond)
+		time.Sleep(deliverPollInterval)
 	}
 
 	return errnie.Err(

@@ -26,15 +26,16 @@ func TestRenderParticles(t *testing.T) {
 			Velocity: pfluid.Vector{X: 3, Y: 4},
 			Energy:   9,
 		}}
-		rendered := renderParticles(particles, grid)
+		rendered := renderParticles(particles, []uint32{0xAB12}, grid)
 
-		Convey("It should expose cell position, oscillator amplitude, and speed", func() {
+		Convey("It should expose cell position, oscillator amplitude, speed, and spatial ID", func() {
 			So(rendered, ShouldHaveLength, 1)
 			So(rendered[0].CellX, ShouldEqual, 0.5)
 			So(rendered[0].CellY, ShouldEqual, 1)
 			So(rendered[0].CellZ, ShouldEqual, 1.5)
 			So(rendered[0].Amplitude, ShouldEqual, 3)
 			So(rendered[0].Speed, ShouldEqual, 5)
+			So(rendered[0].SpatialTokenID, ShouldEqual, uint32(0xAB12))
 		})
 	})
 }

@@ -141,6 +141,10 @@ func (balance *Balance) syncWallet() {
 	})
 }
 
+/*
+upsertWalletLot opens or refreshes a wallet-backed holding so restart inventory
+and live balance sync keep Qty/Asset aligned with the exchange row.
+*/
 func (balance *Balance) upsertWalletLot(
 	symbol, asset string,
 	qty *decimal.Decimal,
@@ -165,6 +169,10 @@ func (balance *Balance) upsertWalletLot(
 	})
 }
 
+/*
+closeWalletLot marks a wallet-backed lot closed when its exchange qty has gone
+to zero so the desk and UI stop treating drained inventory as open.
+*/
 func (balance *Balance) closeWalletLot(asset string) {
 	symbol := asset + "/" + balance.quote
 	value, ok := balance.holdings.Load(symbol)

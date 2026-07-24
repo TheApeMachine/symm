@@ -35,6 +35,7 @@ type Analyzer struct {
 	resonance map[string]*Resonance
 	causal    map[string]*Causal
 	cognition map[string]types.Cognition
+	observed  map[string]uint64
 	rem       *remSleep
 }
 
@@ -73,12 +74,12 @@ func NewAnalyzer(
 		resonance: make(map[string]*Resonance),
 		causal:    make(map[string]*Causal),
 		cognition: make(map[string]types.Cognition),
+		observed:  make(map[string]uint64),
 		rem:       newREMSleep(ctx, tree),
 	}
 
 	analyzer.Actor = types.NewActor(ctx, map[string]types.Handler{
 		"ticker": {Topic: "ticker", Fn: analyzer.thesis},
-		"book":   {Topic: "book", Fn: analyzer.thesis},
 		"trade":  {Topic: "trade", Fn: analyzer.thesis},
 	})
 	analyzer.SetRecorder(recorder)
@@ -87,7 +88,9 @@ func NewAnalyzer(
 }
 
 /*
-Initialize attaches analyzer to the first signal's ticker/book/trade topics.
+Initialize attaches analyzer to Hawkes ticker/trade at depth one so each cut is
+processed against its Outcome snapshot before the next trade mutates the live
+Process, instead of coalescing many publishes onto the latest EventCount.
 */
 func (analyzer *Analyzer) Initialize(signals ...types.Topic) error {
 	errnie.Info("initializing analyzer")
@@ -97,7 +100,7 @@ func (analyzer *Analyzer) Initialize(signals ...types.Topic) error {
 		return nil
 	}
 
-	analyzer.Actor.Initialize(signals...)
+	analyzer.Actor.InitializeSize(1, signals...)
 	analyzer.status = types.READY
 
 	return nil
@@ -128,10 +131,64 @@ func (analyzer *Analyzer) Close() error {
 }
 
 func (analyzer *Analyzer) thesis(message any) any {
-	thesis := message.(*types.Thesis)
-	analyzer.Update(thesis)
+	thesis, source := analyzer.bind(message)
+	analyzer.enrich(thesis, source)
 
 	return thesis
+}
+
+/*
+hawkesCut is a publish that carries both the shared Thesis and a frozen
+HawkesSource so Analyzer does not reread the live Process after coalescing.
+*/
+type hawkesCut interface {
+	SharedThesis() *types.Thesis
+	manifold.HawkesSource
+}
+
+/*
+bind unwraps a Hawkes cut into Thesis plus the Outcome snapshot for this step.
+Bare Thesis messages still use the live Hawkes source (unit paths).
+*/
+func (analyzer *Analyzer) bind(message any) (*types.Thesis, manifold.HawkesSource) {
+	if cut, ok := message.(hawkesCut); ok {
+		return cut.SharedThesis(), cut
+	}
+
+	return message.(*types.Thesis), analyzer.hawkes
+}
+
+/*
+enrich runs analysis against an explicit HawkesSource for this cut.
+*/
+func (analyzer *Analyzer) enrich(thesis *types.Thesis, hawkes manifold.HawkesSource) {
+	started := time.Now()
+
+	if thesis != nil {
+		thesis.StampAt()
+	}
+
+	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "analyze_begin", nil))
+
+	analyzer.stepManifold(thesis, hawkes)
+	states := analyzer.observeStates(thesis)
+
+	analyzer.publishMeasured(thesis, states)
+
+	remObservations, remRequested := analyzer.cognizeStates(thesis, states)
+	analyzer.consolidate(thesis, remObservations, remRequested)
+	analyzer.publishCognition(thesis)
+
+	analyzer.finish(thesis, states, started)
+}
+
+/*
+Update runs Hawkes-driven field analysis after signal measure: manifold step,
+observation, publish, cognition, and finish. Evidence-graph composition is
+removed until the resident market graph is redesigned.
+*/
+func (analyzer *Analyzer) Update(thesis *types.Thesis) {
+	analyzer.enrich(thesis, analyzer.hawkes)
 }
 
 /*
@@ -167,30 +224,6 @@ func (analyzer *Analyzer) publish(frame datura.Map[any]) {
 	case analyzer.ui <- frame.Marshal():
 	default:
 	}
-}
-
-/*
-Update delegates Hawkes-driven field analysis after signal measure, then composes
-the current typed relationships for each symbol's evidence graph.
-*/
-func (analyzer *Analyzer) Update(thesis *types.Thesis) {
-	started := time.Now()
-
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "analyze_begin", nil))
-
-	analyzer.stepManifold(thesis)
-	states := analyzer.observeStates(thesis)
-
-	analyzer.publishMeasured(thesis, states)
-
-	analyzer.composeGraphs(thesis)
-	analyzer.publishGraphs(thesis)
-
-	remObservations, remRequested := analyzer.cognizeStates(thesis, states)
-	analyzer.consolidate(thesis, remObservations, remRequested)
-	analyzer.publishCognition(thesis)
-
-	analyzer.finish(thesis, states, started)
 }
 
 /*

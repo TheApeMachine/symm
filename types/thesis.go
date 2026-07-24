@@ -42,23 +42,23 @@ type Thesis struct {
 	checkpoint    atomic.Int64
 	uiHub         chan<- []byte
 	publish       sync.Mutex
-	Tick          int64         `json:"tick"`
-	At            time.Time     `json:"at"`
-	Positions     *sync.Map     `json:"positions"`
-	Holdings      *sync.Map     `json:"holdings"`
-	CrossSection  *CrossSection `json:"crossSection"`
+	Tick          int64          `json:"tick"`
+	At            time.Time      `json:"at"`
+	Positions     *sync.Map      `json:"positions"`
+	Holdings      *sync.Map      `json:"holdings"`
+	CrossSection  *CrossSection  `json:"crossSection"`
 	Measurements  []*Measurement `json:"measurements"`
-	Graphs        *sync.Map     `json:"graphs"`
-	Forecasts     []Forecasts   `json:"forecasts"`
-	Decisions     []Decision    `json:"decisions"`
-	Lifecycle     *sync.Map     `json:"lifecycle"`
-	Findings      []Finding     `json:"findings"`
-	Hypotheses    []Hypothesis  `json:"hypotheses"`
-	Categories    []Category    `json:"categories"`
-	Manifold      *sync.Map     `json:"manifold"`
-	Cognition     *sync.Map     `json:"cognition"`
-	Resonance     []any         `json:"resonance"`
-	Causal        []any         `json:"causal"`
+	Graphs        *sync.Map      `json:"graphs"`
+	Forecasts     []Forecasts    `json:"forecasts"`
+	Decisions     []Decision     `json:"decisions"`
+	Lifecycle     *sync.Map      `json:"lifecycle"`
+	Findings      []Finding      `json:"findings"`
+	Hypotheses    []Hypothesis   `json:"hypotheses"`
+	Categories    []Category     `json:"categories"`
+	Manifold      *sync.Map      `json:"manifold"`
+	Cognition     *sync.Map      `json:"cognition"`
+	Resonance     []any          `json:"resonance"`
+	Causal        []any          `json:"causal"`
 	cutIncomplete bool
 }
 
@@ -114,6 +114,34 @@ func (thesis *Thesis) ResetTick(at time.Time, tick int64) {
 	clearSyncMap(thesis.Cognition)
 	clearSyncMap(thesis.Positions)
 	clearSyncMap(thesis.Holdings)
+}
+
+/*
+StampAt sets Thesis.At to the latest measurement timestamp so Actor-driven cuts
+carry market time instead of the wall clock captured at NewThesis.
+*/
+func (thesis *Thesis) StampAt() {
+	if thesis == nil {
+		return
+	}
+
+	var latest time.Time
+
+	for _, row := range thesis.SnapshotMeasurements() {
+		if row == nil || row.At.IsZero() {
+			continue
+		}
+
+		if row.At.After(latest) {
+			latest = row.At
+		}
+	}
+
+	if latest.IsZero() {
+		return
+	}
+
+	thesis.At = latest
 }
 
 /*
@@ -336,7 +364,6 @@ ordinary JSON objects. The live Thesis remains the only state model.
 func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 	type alias Thesis
 	signals := make(map[string]any)
-	graphs := make(map[string]*Graph)
 	lifecycle := make(map[string]string)
 	manifold := make(map[string]any)
 	cognition := make(map[string]Cognition)
@@ -359,11 +386,6 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 		return true
 	})
 
-	thesis.Graphs.Range(func(key, value any) bool {
-		graphs[key.(string)] = value.(*Graph)
-		return true
-	})
-
 	thesis.Lifecycle.Range(func(key, value any) bool {
 		lifecycle[key.(string)] = value.(string)
 		return true
@@ -382,14 +404,13 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 	return sonic.Marshal(struct {
 		*alias
 		Signals   map[string]any       `json:"signals"`
-		Graphs    map[string]*Graph    `json:"graphs"`
 		Lifecycle map[string]string    `json:"lifecycle"`
 		Manifold  map[string]any       `json:"manifold"`
 		Cognition map[string]Cognition `json:"cognition"`
 		Positions map[string]bool      `json:"positions"`
 		Holdings  map[string]Holding   `json:"holdings"`
 	}{
-		alias: (*alias)(thesis), Signals: signals, Graphs: graphs,
+		alias: (*alias)(thesis), Signals: signals,
 		Lifecycle: lifecycle, Manifold: manifold, Cognition: cognition,
 		Positions: positions, Holdings: holdings,
 	})
@@ -404,7 +425,6 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 	decoded := struct {
 		*alias
 		Signals   map[string]any       `json:"signals"`
-		Graphs    map[string]*Graph    `json:"graphs"`
 		Lifecycle map[string]string    `json:"lifecycle"`
 		Manifold  map[string]any       `json:"manifold"`
 		Cognition map[string]Cognition `json:"cognition"`
@@ -430,10 +450,6 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 
 	for key := range decoded.Positions {
 		thesis.Positions.Store(key, nil)
-	}
-
-	for key, graph := range decoded.Graphs {
-		thesis.Graphs.Store(key, graph)
 	}
 
 	for key, value := range decoded.Lifecycle {

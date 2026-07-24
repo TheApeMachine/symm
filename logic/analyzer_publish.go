@@ -145,69 +145,12 @@ func (analyzer *Analyzer) projectCategories(
 }
 
 /*
-attachCategoryEvidence reads the symbol's composed evidence graph and fills the
-category's Supporting and Opposing lists with the active directional phenomena
-bearing on the winner. Winner rows are cognition attractors (buy/sell/balanced),
-not graph category nodes, so the evidence is the graph's long-stance reading:
-straight for a buy winner, mirrored for a sell winner, absent for balanced —
-never a fabricated proof for a label the graph does not model.
+attachCategoryEvidence is a no-op while the resident evidence graph is removed.
+Cognition winners still publish; supporting/opposing lists stay empty until the
+market graph is redesigned.
 */
 func (analyzer *Analyzer) attachCategoryEvidence(
-	thesis *types.Thesis,
-	category *types.Category,
+	_ *types.Thesis,
+	_ *types.Category,
 ) {
-	if thesis == nil || thesis.Graphs == nil || category.Symbol == "" {
-		return
-	}
-
-	value, found := thesis.Graphs.Load(category.Symbol)
-
-	if !found {
-		return
-	}
-
-	evidenceGraph, ok := value.(*types.Graph)
-
-	if !ok || evidenceGraph == nil {
-		return
-	}
-
-	evidence := evidenceGraph.LongEntryEvidence()
-
-	switch category.Type {
-	case "buy":
-		category.Supporting, category.Opposing = evidence.Favors, evidence.Opposes
-	case "sell":
-		category.Supporting, category.Opposing = evidence.Opposes, evidence.Favors
-	}
-}
-
-/*
-publishGraphs emits composed evidence graphs so the thesis modal can render
-measurement relationships for the focused symbol.
-*/
-func (analyzer *Analyzer) publishGraphs(thesis *types.Thesis) {
-	if thesis == nil || thesis.Graphs == nil {
-		return
-	}
-
-	graphs := make([]*types.Graph, 0)
-
-	thesis.Graphs.Range(func(_, value any) bool {
-		evidenceGraph, ok := value.(*types.Graph)
-
-		if !ok || evidenceGraph == nil || len(evidenceGraph.Nodes()) == 0 {
-			return true
-		}
-
-		graphs = append(graphs, evidenceGraph)
-
-		return true
-	})
-
-	if len(graphs) == 0 {
-		return
-	}
-
-	analyzer.publish(datura.Map[any]{"graphs": graphs})
 }

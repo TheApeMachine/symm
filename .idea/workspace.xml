@@ -5,15 +5,64 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="222fb375-f277-43aa-975e-7757d7d88eae" name="Changes" comment="Add support for thesis graphs, forecasts, and hypotheses in frame serialization logic&#10;&#10;- Updated `frame` logic in the `Thesis` struct to include `Graphs`, `Forecasts`, `Hypotheses`, and `Categories` for enhanced data representation.&#10;- Improved test coverage in `thesis_test.go` to validate new serialization fields.&#10;- Enhanced `JournalSurface` in the frontend to utilize `tradeJournalValues` and `findingsList` for better state extraction.&#10;- Introduced `CircularBuffer` in collections for bounded buffer management, improving memory efficiency.&#10;- Refactored lifecycle and findings stores to integrate circular buffers for retaining snapshots.&#10;- Improved `Audit trail` in `dashboard-rail` to filter and format trade observations for clarity.&#10;- Added benchmark and unit tests in broker position logic to validate ticker acknowledgment.&#10;- Extended Thesis types with new data structures for forecasts, hypotheses, and categories to support detailed analytics.">
+      <change beforePath="$PROJECT_DIR$/.cursor/hooks/state/continual-learning-index.json" beforeDir="false" afterPath="$PROJECT_DIR$/.cursor/hooks/state/continual-learning-index.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.cursor/hooks/state/continual-learning.json" beforeDir="false" afterPath="$PROJECT_DIR$/.cursor/hooks/state/continual-learning.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/AGENTS.md" beforeDir="false" afterPath="$PROJECT_DIR$/AGENTS.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/broker/balance.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/balance.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/balance_frame.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/balance_frame.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/broker/balance_publish_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/balance_publish_test.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/broker/desk.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/desk.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/hawkes/debug_cold_test.go" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/hawkes/evidence_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/hawkes/evidence_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/position.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/position.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/exhaust-test.out" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/analyzer.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/analyzer_directed_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/analyzer_graph.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/analyzer_interest_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer_interest_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/analyzer_manifold.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer_manifold.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/analyzer_observe.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer_observe.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/analyzer_publish.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer_publish.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/analyzer_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/analyzer_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/advance.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/advance.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/advance_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/advance_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/book.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/coordinate.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/coordinate_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/frame.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/frame.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/frame_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/frame_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/solver.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/solver.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/solver_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/solver_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/source.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/source.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/source_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/source_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/state.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/state.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/manifold/touch.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/touch.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/resonance.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/resonance.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/logic/return.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/return.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/correlation/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/correlation/signal.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/cvd/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/cvd/signal.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/exhaust/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/exhaust/signal.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/exhaust/signal_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/exhaust/signal_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/hawkes/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/hawkes/signal.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/leadlag/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/leadlag/signal.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/liquidity/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/liquidity/signal.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/signal/pumpdump/signal_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/pumpdump/signal_test.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/signal/sentiment/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/sentiment/signal.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stack/boot.go" beforeDir="false" afterPath="$PROJECT_DIR$/stack/boot.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/strategy/opportunity.go" beforeDir="false" afterPath="$PROJECT_DIR$/strategy/opportunity.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/strategy/planner.go" beforeDir="false" afterPath="$PROJECT_DIR$/strategy/planner.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/strategy/planner_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/strategy/planner_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/mockapi/mockapi.go" beforeDir="false" afterPath="$PROJECT_DIR$/tests/mockapi/mockapi.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/trader/crypto.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/crypto.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/ui/hub.go" beforeDir="false" afterPath="$PROJECT_DIR$/ui/hub.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/trader/crypto_publish_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/trader/crypto_publish_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/actor.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/actor.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/composer.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/composer_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/graph.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/graph_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/relationship.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/relationship_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/stance.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/stance_test.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/types/thesis.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/thesis.go" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

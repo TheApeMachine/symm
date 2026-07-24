@@ -127,6 +127,10 @@ func (desk *Desk) onTicker(message any) any {
 	return nil
 }
 
+/*
+onInstrument forwards the instrument tick to desk.instrument.On and then adopts
+any newly visible open lots via desk.AdoptOpen.
+*/
 func (desk *Desk) onInstrument(message any) any {
 	desk.instrument.On(message)
 	desk.AdoptOpen()

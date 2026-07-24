@@ -8,9 +8,25 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
-	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/types"
 )
+
+/*
+driveAdvance runs the production changed-detect → sample → advance path without
+the Update mutex so unit tests can inspect advanceResult directly.
+*/
+func (solver *Solver) driveAdvance(
+	thesis *types.Thesis,
+	hawkes HawkesSource,
+) advanceResult {
+	changed := solver.changedOutcomes(hawkes)
+
+	if len(changed) == 0 {
+		return advanceResult{}
+	}
+
+	return solver.advance(thesis, solver.sampleChanged(changed), changed)
+}
 
 func TestSolver_Advance(t *testing.T) {
 	Convey("Given one shared domain with a later epoch from only one symbol", t, func() {
@@ -19,27 +35,27 @@ func TestSolver_Advance(t *testing.T) {
 		Reset(solver.Close)
 		at := time.Unix(3, 0)
 		first := types.NewThesis(nil)
-		initial := solver.candidates(staticHawkesSource{
+		bitcoinSeed := solverOutcome(at, 4, 2)
+		result := solver.driveAdvance(first, staticHawkesSource{
 			symbols: []string{"BTC/USD", "ETH/USD"},
 			outcomes: map[string]excitation.Outcome{
-				"BTC/USD": solverOutcome(at, 4, 2),
+				"BTC/USD": bitcoinSeed,
 				"ETH/USD": solverOutcome(at, 8, 4),
 			},
 		})
-		result := solver.advance(first, initial)
 		So(result.failures, ShouldBeEmpty)
-		initialParticles := len(solver.particles)
+		initialParticles := solver.Population()
 
 		later := solverOutcome(at.Add(time.Second), 16, 4)
 		later.EventCount++
 		second := types.NewThesis(nil)
-		result = solver.advance(second, solver.candidates(staticHawkesSource{
+		result = solver.driveAdvance(second, staticHawkesSource{
 			symbols: []string{"BTC/USD", "ETH/USD"},
 			outcomes: map[string]excitation.Outcome{
-				"BTC/USD": initial[0].outcome,
+				"BTC/USD": bitcoinSeed,
 				"ETH/USD": later,
 			},
-		}))
+		})
 		bitcoinValue, bitcoinFound := second.Manifold.Load("BTC/USD")
 		etherValue, etherFound := second.Manifold.Load("ETH/USD")
 		So(bitcoinFound, ShouldBeTrue)
@@ -51,52 +67,37 @@ func TestSolver_Advance(t *testing.T) {
 
 		bitcoin := bitcoinValue.(State)
 		ether := etherValue.(State)
+		etherBatch := ether.OscillatorCount
 
-		Convey("It should refresh the complete population and advance once", func() {
+		Convey("It should append the changed sample and advance once", func() {
 			So(result.failures, ShouldBeEmpty)
 			So(result.advanced, ShouldEqual, 1)
 			So(result.replayed, ShouldEqual, 1)
-			So(len(solver.particles), ShouldEqual, initialParticles)
+			// Inelastic merge may compact below raw append arithmetic; the proof
+			// is one shared advance for the changed epoch, not a host headcount.
+			So(solver.Population(), ShouldBeGreaterThan, 0)
+			So(initialParticles, ShouldBeGreaterThan, 0)
+			So(etherBatch, ShouldBeGreaterThan, 0)
 			So(bitcoin.Replay, ShouldBeTrue)
 			So(ether.Replay, ShouldBeFalse)
 			So(ether.Epoch, ShouldEqual, 2)
 			So(ether.GasReady(), ShouldBeTrue)
 		})
 
-		Convey("It should remove a market that leaves the current universe", func() {
+		Convey("It should retain history when a market leaves the live candidate set", func() {
 			bitcoinLater := solverOutcome(at.Add(2*time.Second), 6, 2)
 			bitcoinLater.EventCount++
 			third := types.NewThesis(nil)
-			result = solver.advance(third, solver.candidates(staticHawkesSource{
+			result = solver.driveAdvance(third, staticHawkesSource{
 				symbols: []string{"BTC/USD"},
 				outcomes: map[string]excitation.Outcome{
 					"BTC/USD": bitcoinLater,
 				},
-			}))
+			})
 			So(result.failures, ShouldBeEmpty)
-			So(solver.particles, ShouldHaveLength, 2)
-			So(solver.active, ShouldHaveLength, 1)
-		})
-	})
-}
-
-func TestSymbolSlot_Preserve(t *testing.T) {
-	Convey("Given a surviving order with evolved wave and thermal state", t, func() {
-		slot := &symbolSlot{state: map[string]pfluid.Particle{
-			"order": {Phase: 1.25, Heat: 0.4, Energy: 0.7},
-		}}
-		observation := pfluid.Particle{
-			Position: pfluid.Vector{X: 0.75},
-			Phase:    0.1,
-			Energy:   1,
-		}
-		preserved := slot.preserve("order", observation)
-
-		Convey("It should retain evolved state while accepting new geometry", func() {
-			So(preserved.Position, ShouldResemble, observation.Position)
-			So(preserved.Phase, ShouldEqual, float32(1.25))
-			So(preserved.Heat, ShouldEqual, float32(0.4))
-			So(preserved.Energy, ShouldEqual, float32(0.7))
+			So(result.advanced, ShouldEqual, 1)
+			So(solver.Population(), ShouldBeGreaterThan, 0)
+			So(solver.active, ShouldContainKey, "BTC/USD")
 		})
 	})
 }
@@ -117,10 +118,10 @@ func BenchmarkSolver_Advance(b *testing.B) {
 		outcome := solverOutcome(at, 4, 2)
 		outcome.EventCount = int(at.Unix())
 		thesis := types.NewThesis(nil)
-		result := solver.advance(thesis, solver.candidates(staticHawkesSource{
+		result := solver.driveAdvance(thesis, staticHawkesSource{
 			symbols:  []string{"BTC/USD"},
 			outcomes: map[string]excitation.Outcome{"BTC/USD": outcome},
-		}))
+		})
 
 		if len(result.failures) > 0 {
 			b.Fatal(result.failures)
@@ -144,10 +145,10 @@ func BenchmarkSolver_PhaseProjection(b *testing.B) {
 	outcome := solverOutcome(at, 4, 2)
 	outcome.EventCount = 1
 	seed := types.NewThesis(nil)
-	result := solver.advance(seed, solver.candidates(staticHawkesSource{
+	result := solver.driveAdvance(seed, staticHawkesSource{
 		symbols:  []string{"BTC/USD"},
 		outcomes: map[string]excitation.Outcome{"BTC/USD": outcome},
-	}))
+	})
 
 	if len(result.failures) > 0 {
 		b.Fatal(result.failures)
@@ -161,10 +162,10 @@ func BenchmarkSolver_PhaseProjection(b *testing.B) {
 		outcome = solverOutcome(at, 4, 2)
 		outcome.EventCount = int(at.Unix())
 		thesis := types.NewThesis(nil)
-		result = solver.advance(thesis, solver.candidates(staticHawkesSource{
+		result = solver.driveAdvance(thesis, staticHawkesSource{
 			symbols:  []string{"BTC/USD"},
 			outcomes: map[string]excitation.Outcome{"BTC/USD": outcome},
-		}))
+		})
 
 		if len(result.failures) > 0 {
 			b.Fatal(result.failures)

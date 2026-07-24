@@ -87,6 +87,30 @@ func TestBalanceSyncWalletSeedsExistingLots(t *testing.T) {
 	})
 }
 
+func TestBalanceAckInitializesNilData(t *testing.T) {
+	Convey("Given a Balance whose data map was cleared", t, func() {
+		ui := make(chan []byte, 1)
+		balance := NewBalance(nil, nil, ui)
+		balance.quote = "USD"
+		balance.data = nil
+		frame := []byte(`{
+			"channel":"balances","type":"snapshot","sequence":1,
+			"data":[{"asset":"USD","balance":500}]
+		}`)
+
+		Convey("When BalanceAck ingests a snapshot", func() {
+			So(func() { balance.BalanceAck(frame) }, ShouldNotPanic)
+
+			Convey("It allocates data and stores the snapshot row", func() {
+				So(balance.data, ShouldNotBeNil)
+				row, err := balance.Get("USD")
+				So(err, ShouldBeNil)
+				So(row.Balance.Float64(), ShouldEqual, 500.0)
+			})
+		})
+	})
+}
+
 func TestBalanceFrameIncludesClosedLotsForAudit(t *testing.T) {
 	Convey("Given an open lot and a closed lot", t, func() {
 		balance := NewBalance(nil, nil, make(chan []byte, 1))

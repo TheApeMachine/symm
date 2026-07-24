@@ -79,7 +79,6 @@ func NewPlanner(
 
 	planner.Actor = types.NewActor(ctx, map[string]types.Handler{
 		"ticker": {Topic: "ticker", Fn: planner.thesis},
-		"book":   {Topic: "book", Fn: planner.thesis},
 		"trade":  {Topic: "trade", Fn: planner.thesis},
 	})
 
@@ -89,9 +88,9 @@ func NewPlanner(
 func (planner *Planner) Initialize(analyzer *logic.Analyzer) error {
 	errnie.Info("initializing planner")
 
-	planner.Actor.Initialize(
+	planner.Actor.InitializeSize(
+		1,
 		types.Topic{Name: "ticker", Actor: analyzer.Actor},
-		types.Topic{Name: "book", Actor: analyzer.Actor},
 		types.Topic{Name: "trade", Actor: analyzer.Actor},
 	)
 
@@ -146,6 +145,10 @@ func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 		return thesis
 	}
 
+	// Keep Enter rows Crypto has not yet opened on Balance. Clearing them while
+	// LifecycleEntrySelected + thesis Holdings remained blocked Measure forever.
+	planner.retainUnapplied(thesis)
+
 	planner.opportunity.StampFriction(thesis)
 	planner.continuity.Manage(thesis)
 	planner.evidence.Regulate(thesis, planner.balance)
@@ -170,6 +173,36 @@ func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 	planner.rotate.Commit(thesis)
 
 	return thesis
+}
+
+/*
+retainUnapplied drops settled desk outcomes but keeps Enter decisions whose
+symbol is not yet OPEN on Balance, so a slow Crypto.Apply is not erased by the
+next Decide.
+*/
+func (planner *Planner) retainUnapplied(thesis *types.Thesis) {
+	if thesis == nil {
+		return
+	}
+
+	retained := make([]types.Decision, 0, len(thesis.Decisions))
+
+	for _, decision := range thesis.Decisions {
+		if decision.Action != types.ActionEnter {
+			continue
+		}
+
+		if planner.balance != nil {
+			if holding, err := planner.balance.Holding(decision.Symbol); err == nil &&
+				holding.Status != types.CLOSED {
+				continue
+			}
+		}
+
+		retained = append(retained, decision)
+	}
+
+	thesis.Decisions = retained
 }
 
 func (planner *Planner) validate(mandatory map[string]any) error {

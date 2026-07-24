@@ -135,7 +135,16 @@ func (position *Position) ExecutionAck(buf []byte) {
 	for _, data := range execution.Data {
 		holding := position.holding(data.Symbol)
 
-		if holding == nil || !position.accept(data.OrderID) {
+		if holding == nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"position: nil holding for execution symbol "+data.Symbol,
+				nil,
+			))
+			continue
+		}
+
+		if !position.accept(data.OrderID) {
 			continue
 		}
 

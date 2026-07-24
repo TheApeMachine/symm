@@ -3,6 +3,7 @@ package manifold
 import (
 	"fmt"
 	"math"
+	"sort"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
@@ -21,42 +22,35 @@ type advanceResult struct {
 }
 
 /*
-advance detects changed source epochs, assembles the complete current universe,
-performs at most one GPU step, and publishes views of the resulting shared field.
+advance appends Sensorium-shaped particles for every changed Hawkes/book epoch,
+then performs at most one GPU step over the full resident history. Unchanged
+epochs replay shared readings without duplicating particles. Historical mass
+is retained — rule-shifts land in the wave field without culling the tape.
 */
 func (solver *Solver) advance(
 	thesis *types.Thesis,
 	candidates []intensityCandidate,
+	changed map[string]excitation.Outcome,
 ) advanceResult {
 	result := advanceResult{}
-	changed := make(map[string]excitation.Outcome)
 
-	for _, candidate := range candidates {
-		if candidate.changed(solver.symbols[candidate.symbol]) {
-			changed[candidate.symbol] = candidate.outcome
-		}
+	if len(candidates) == 0 {
+		return result
 	}
 
-	populationChanged := solver.universeChanged(candidates)
-	shouldStep := len(changed) > 0 || populationChanged
+	failures, grew := solver.appendBatches(candidates, changed)
+	result.failures = append(result.failures, failures...)
 
-	if shouldStep {
-		result.failures = append(result.failures, solver.populate(candidates, changed)...)
-
-		if len(result.failures) > 0 {
-			return result
-		}
+	if len(result.failures) > 0 {
+		return result
 	}
 
-	reading, diagnostics, err := solver.step(shouldStep && len(solver.particles) > 0)
+	shouldStep := grew && solver.domain.ParticleCount() > 0
+	reading, diagnostics, err := solver.step(shouldStep)
 
 	if err != nil {
 		result.failures = append(result.failures, err)
 		return result
-	}
-
-	if shouldStep && len(solver.particles) > 0 {
-		solver.retain(candidates)
 	}
 
 	solver.publish(
@@ -73,6 +67,8 @@ func (solver *Solver) advance(
 /*
 publish materializes symbol views from one shared reading and attaches the
 field projection to every GasReady symbol so the UI can select client-side.
+Only changed epochs are re-sampled; every other GasReady slot still receives
+the new shared reading without a fresh L3 tokenize.
 */
 func (solver *Solver) publish(
 	thesis *types.Thesis,
@@ -88,14 +84,43 @@ func (solver *Solver) publish(
 		result.failures = append(result.failures, err)
 	}
 
+	particles := solver.renderPopulation(projection)
+	rho := projectionRows(projection.Density, projection.Grid)
+	psi := projectionRows(projection.Coherence, projection.Grid)
+	guideX := projectionRows(projection.GuidanceX, projection.Grid)
+	guideZ := projectionRows(projection.GuidanceZ, projection.Grid)
+	sampled := make(map[string]intensityCandidate, len(candidates))
+
 	for _, candidate := range candidates {
-		slot := solver.symbols[candidate.symbol]
+		sampled[candidate.symbol] = candidate
+	}
+
+	symbols := make([]string, 0, len(solver.symbols))
+
+	for symbol := range solver.symbols {
+		symbols = append(symbols, symbol)
+	}
+
+	sort.Strings(symbols)
+
+	for _, symbol := range symbols {
+		slot := solver.symbols[symbol]
 
 		if slot == nil {
 			continue
 		}
 
-		outcome, advanced := changed[candidate.symbol]
+		outcome, advanced := changed[symbol]
+		candidate, hasSample := sampled[symbol]
+
+		if advanced && !hasSample {
+			continue
+		}
+
+		if !advanced && !slot.last.GasReady() {
+			continue
+		}
+
 		state := slot.view(
 			candidate,
 			outcome,
@@ -107,7 +132,7 @@ func (solver *Solver) publish(
 
 		if advanced {
 			result.advanced++
-		} else if state.GasReady() {
+		} else {
 			result.replayed++
 		}
 
@@ -118,66 +143,109 @@ func (solver *Solver) publish(
 				at = candidate.outcome.At
 			}
 
-			_, phaseScan, phaseErr := solver.phase(candidate.symbol, at, advanced)
-
-			if phaseErr != nil {
-				result.failures = append(result.failures, phaseErr)
+			if at.IsZero() {
+				at = state.At
 			}
 
-			solver.paint(&state, projection, wave, phaseScan, slot)
+			phaseScan := state.PhaseScan
+
+			if advanced {
+				var phaseErr error
+				phaseScan, phaseErr = solver.phase(symbol, at, true, wave)
+
+				if phaseErr != nil {
+					result.failures = append(result.failures, phaseErr)
+				}
+			}
+
+			solver.paint(
+				&state, projection.Grid, wave, phaseScan, particles,
+				rho, psi, guideX, guideZ,
+			)
+			slot.last = state
 		}
 
 		if state.GasReady() {
-			thesis.Manifold.Store(candidate.symbol, state)
+			thesis.Manifold.Store(symbol, state)
 		}
 	}
 }
 
 /*
-populate maps the complete current universe and preserves the evolved phase and
-energy of surviving order identities before the next shared physical step.
+renderPopulation reads the shared resident particles once per advance publish.
 */
-func (solver *Solver) populate(
+func (solver *Solver) renderPopulation(projection pfluid.Projection) []Particle {
+	if solver.domain == nil {
+		return nil
+	}
+
+	population := solver.domain.ParticleCount()
+
+	if population == 0 || len(projection.Density) == 0 {
+		return nil
+	}
+
+	batch, err := solver.domain.ReadParticles(0, population)
+
+	if err != nil {
+		return nil
+	}
+
+	spatial, _ := solver.domain.ReadSpatialIDs(0, population)
+	return renderParticles(batch, spatial, projection.Grid)
+}
+
+/*
+appendBatches tokenizes each changed book sample and Appends those particles
+into the Metal-resident domain history (Sensorium merge into manifold state).
+*/
+func (solver *Solver) appendBatches(
 	candidates []intensityCandidate,
 	changed map[string]excitation.Outcome,
-) []error {
-	population := make([]pfluid.Particle, 0, len(solver.particles))
+) ([]error, bool) {
 	failures := make([]error, 0)
-	nextSlots := make(map[string]*symbolSlot, len(candidates))
+	grew := false
 
 	for _, candidate := range candidates {
+		if _, advanced := changed[candidate.symbol]; !advanced {
+			continue
+		}
+
 		slot := solver.symbols[candidate.symbol].clone()
-		particles, err := slot.observe(
-			solver.config, candidate, len(population), changed,
-		)
+		batch, err := slot.ingest(candidate)
 
 		if err != nil {
 			failures = append(failures, solver.noteAdvanceFailure(candidate.symbol, err))
 			continue
 		}
 
-		nextSlots[candidate.symbol] = slot
-		population = append(population, particles...)
-	}
+		if len(batch.Particles) == 0 {
+			failures = append(failures, solver.noteAdvanceFailure(
+				candidate.symbol,
+				fmt.Errorf("book sample produced no particles"),
+			))
+			continue
+		}
 
-	if len(failures) > 0 {
-		return failures
-	}
+		start, err := solver.domain.Append(batch.Particles, batch.ContentIDs)
 
-	solver.particles = population
-	solver.active = make(map[string]struct{}, len(candidates))
+		if err != nil {
+			failures = append(failures, solver.noteAdvanceFailure(candidate.symbol, err))
+			continue
+		}
 
-	for _, candidate := range candidates {
+		slot.start = start
+		slot.end = start + len(batch.Particles)
+		solver.symbols[candidate.symbol] = slot
 		solver.active[candidate.symbol] = struct{}{}
-		solver.symbols[candidate.symbol] = nextSlots[candidate.symbol]
+		grew = true
 	}
 
-	return failures
+	return failures, grew
 }
 
 /*
-clone creates a transactional symbol slot whose resident particle map is read
-only until the complete universe has mapped successfully.
+clone creates a transactional symbol slot before an append commits.
 */
 func (slot *symbolSlot) clone() *symbolSlot {
 	if slot == nil {
@@ -189,102 +257,30 @@ func (slot *symbolSlot) clone() *symbolSlot {
 }
 
 /*
-observe maps one symbol into a staged population range and advances its source
-epoch only when the Hawkes observation changed.
+ingest accepts one owned book sample and bumps the source counter for change
+detection. Particles were tokenized under the book lease.
 */
-func (slot *symbolSlot) observe(
-	config pfluid.Config,
-	candidate intensityCandidate,
-	start int,
-	changed map[string]excitation.Outcome,
-) ([]pfluid.Particle, error) {
-	particles, epoch, mapped := slot.coords.Map(config, candidate)
-
-	if !mapped {
-		return nil, fmt.Errorf("L3 population has no physical coordinates")
+func (slot *symbolSlot) ingest(candidate intensityCandidate) (Batch, error) {
+	if len(candidate.batch.Particles) == 0 {
+		return Batch{}, fmt.Errorf("L3 sample has no tokenizable orders")
 	}
 
-	slot.start = start
-	slot.end = start + len(particles)
-	slot.orders = make([]string, len(particles))
-	slot.coords = epoch
-
-	for index := range particles {
-		orderID := candidate.orders[index].orderID
-		slot.orders[index] = orderID
-		particles[index] = slot.preserve(orderID, particles[index])
+	if candidate.reference == nil || candidate.buyCapacity == nil ||
+		candidate.sellCapacity == nil || candidate.spread <= 0 {
+		return Batch{}, fmt.Errorf("L3 population has no executable touch")
 	}
 
-	if outcome, advanced := changed[candidate.symbol]; advanced {
-		slot.at = outcome.At
-		slot.events = outcome.EventCount
-		slot.epoch++
-	}
+	slot.orders = append([]string(nil), candidate.orderIDs...)
+	slot.at = candidate.outcome.At
+	slot.events = candidate.outcome.EventCount
+	slot.epoch++
 
-	return particles, nil
+	return candidate.batch, nil
 }
 
 /*
-universeChanged reports whether symbol admission or removal changes the
-complete population even when every surviving source epoch is unchanged.
-*/
-func (solver *Solver) universeChanged(candidates []intensityCandidate) bool {
-	if len(candidates) != len(solver.active) {
-		return true
-	}
-
-	for _, candidate := range candidates {
-		if _, active := solver.active[candidate.symbol]; !active {
-			return true
-		}
-	}
-
-	return false
-}
-
-/*
-preserve transfers resident thermodynamic and phase state to the freshly
-observed geometry of an order that survived from the preceding population.
-*/
-func (slot *symbolSlot) preserve(
-	orderID string,
-	observation pfluid.Particle,
-) pfluid.Particle {
-	resident, found := slot.state[orderID]
-
-	if !found {
-		return observation
-	}
-
-	observation.Heat = resident.Heat
-	observation.Energy = resident.Energy
-	observation.Phase = resident.Phase
-	return observation
-}
-
-/*
-retain indexes the post-step particle state by stable order identity so the next
-complete population can remove canceled orders without losing surviving phase.
-*/
-func (solver *Solver) retain(candidates []intensityCandidate) {
-	for _, candidate := range candidates {
-		slot := solver.symbols[candidate.symbol]
-
-		if slot == nil || slot.end > len(solver.particles) {
-			continue
-		}
-
-		slot.state = make(map[string]pfluid.Particle, len(slot.orders))
-
-		for index, orderID := range slot.orders {
-			slot.state[orderID] = solver.particles[slot.start+index]
-		}
-	}
-}
-
-/*
-step advances the shared domain when new observations exist, then reads the
-same physical reductions used by every symbol view.
+step advances the resident Metal population when new observations were
+appended, then reads the shared physical reductions. No host re-upload.
 */
 func (solver *Solver) step(changed bool) (
 	pfluid.Reading,
@@ -300,7 +296,7 @@ func (solver *Solver) step(changed bool) (
 	}
 
 	if !changed {
-		if len(solver.particles) == 0 {
+		if solver.domain.ParticleCount() == 0 {
 			return pfluid.Reading{}, pfluid.Diagnostics{}, nil
 		}
 
@@ -308,15 +304,18 @@ func (solver *Solver) step(changed bool) (
 		return reading, pfluid.Diagnostics{}, err
 	}
 
-	diagnostics, err := solver.domain.Step(solver.particles)
+	diagnostics, err := solver.domain.Advance()
 
 	if err != nil {
 		return pfluid.Reading{}, diagnostics, errnie.Err(
 			errnie.Internal,
-			"manifold: shared Sensorium step failed",
+			"manifold: shared Sensorium advance failed",
 			err,
 		)
 	}
+
+	// Inelastic merge rewrites resident indices; per-sample ranges are gone.
+	solver.clearRanges()
 
 	reading, err := solver.domain.Reading()
 
@@ -328,7 +327,24 @@ func (solver *Solver) step(changed bool) (
 }
 
 /*
-changed reports whether a source epoch has not yet entered the shared domain.
+clearRanges drops per-symbol particle index ranges after a merge-compacting
+Advance. History remains in the shared Metal population; only the append-time
+index bookmarks become invalid.
+*/
+func (solver *Solver) clearRanges() {
+	for _, slot := range solver.symbols {
+		if slot == nil {
+			continue
+		}
+
+		slot.start = 0
+		slot.end = 0
+	}
+}
+
+/*
+changed reports whether a source sample has not yet been appended into the
+resident history.
 */
 func (candidate intensityCandidate) changed(slot *symbolSlot) bool {
 	if slot == nil || !slot.last.GasReady() {

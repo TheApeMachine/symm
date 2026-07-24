@@ -83,10 +83,6 @@ func (balance *Balance) Publish() {
 	select {
 	case balance.ui <- frame:
 	default:
-		select {
-		case balance.ui <- frame:
-		default:
-		}
 	}
 }
 
@@ -97,7 +93,11 @@ func (balance *Balance) BalanceAck(buf []byte) {
 		return
 	}
 
-	if balance.data == nil || incoming.Type == "snapshot" {
+	if balance.data == nil {
+		balance.data = &sync.Map{}
+	}
+
+	if incoming.Type == "snapshot" {
 		for index := range incoming.Data {
 			data := incoming.Data[index]
 			balance.data.Store(data.Asset, &data)

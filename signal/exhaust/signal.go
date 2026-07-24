@@ -87,7 +87,7 @@ func (signal *Signal) onTicker(message any) any {
 
 	signal.thesis.Publish(types.SourceExhaustion, measurements)
 
-	return signal.thesis
+	return measurements
 }
 
 func (signal *Signal) onBook(message any) any {
@@ -105,7 +105,7 @@ func (signal *Signal) onBook(message any) any {
 
 	signal.thesis.Publish(types.SourceExhaustion, measurements)
 
-	return signal.thesis
+	return measurements
 }
 
 func (signal *Signal) onTrade(message any) any {
@@ -123,7 +123,7 @@ func (signal *Signal) onTrade(message any) any {
 
 	signal.thesis.Publish(types.SourceExhaustion, measurements)
 
-	return signal.thesis
+	return measurements
 }
 
 func (signal *Signal) Calculate(

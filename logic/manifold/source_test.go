@@ -9,15 +9,17 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 )
 
 /*
-TestOrdersForSymbolConcurrentUpdates proves the BookSource read lease keeps
-ordersForSymbol from ranging Side.Levels while writers mutate the same map.
+TestSampleConcurrentUpdates proves the BookSource read lease keeps Sample from
+ranging Side.Levels while writers mutate the same map.
 */
-func TestOrdersForSymbolConcurrentUpdates(t *testing.T) {
+func TestSampleConcurrentUpdates(t *testing.T) {
 	source := newTestBookSource("BTC/USD")
 	sampler := newBookSampler(source)
+	tokenizer := NewTokenizer(pfluid.DefaultConfig())
 	symbolBook := source.manager.GetBook("BTC/USD")
 	done := make(chan struct{})
 	var wait sync.WaitGroup
@@ -47,63 +49,47 @@ func TestOrdersForSymbolConcurrentUpdates(t *testing.T) {
 		select {
 		case <-done:
 			wait.Wait()
-			orders, mid, ok := sampler.Orders("BTC/USD")
+			population, ok := sampler.Sample("BTC/USD", tokenizer)
 
-			if !ok || len(orders) == 0 || mid <= 0 {
-				t.Fatalf("final ordersForSymbol = %d mid=%v ok=%v", len(orders), mid, ok)
+			if !ok || len(population.batch.Particles) == 0 || population.midPrice <= 0 {
+				t.Fatalf("final Sample mid=%v ok=%v particles=%d",
+					population.midPrice, ok, len(population.batch.Particles))
 			}
 
 			return
 		default:
-			orders, mid, ok := sampler.Orders("BTC/USD")
+			population, ok := sampler.Sample("BTC/USD", tokenizer)
 
-			if !ok || len(orders) == 0 || mid <= 0 {
-				t.Fatalf("ordersForSymbol = %d mid=%v ok=%v", len(orders), mid, ok)
+			if !ok || len(population.batch.Particles) == 0 || population.midPrice <= 0 {
+				t.Fatalf("Sample mid=%v ok=%v particles=%d",
+					population.midPrice, ok, len(population.batch.Particles))
 			}
 		}
 	}
 }
 
 /*
-TestBookSampler_Orders proves unchanged SDK decimals are reused while replaced
-quantities refresh and departed identities leave the bounded cache.
+TestBookSampler_Sample proves a two-sided book yields owned touch scales and a
+cold particle batch.
 */
-func TestBookSampler_Orders(t *testing.T) {
+func TestBookSampler_Sample(t *testing.T) {
 	Convey("Given a sampled two-sided SDK book", t, func() {
 		source := newTestBookSource("BTC/USD")
 		sampler := newBookSampler(source)
-		symbolBook := source.manager.GetBook("BTC/USD")
-		first, _, ready := sampler.Orders("BTC/USD")
+		tokenizer := NewTokenizer(pfluid.DefaultConfig())
+		population, ready := sampler.Sample("BTC/USD", tokenizer)
 
 		So(ready, ShouldBeTrue)
-		So(first, ShouldHaveLength, 2)
-		firstBid := first[0]
+		So(population.orderIDs, ShouldHaveLength, 2)
+		So(population.batch.Particles, ShouldNotBeEmpty)
+		So(population.reference, ShouldNotBeNil)
+		So(population.reference.Sign(), ShouldEqual, 1)
+		So(population.spread, ShouldBeGreaterThan, 0)
+		So(population.buyCapacity.Sign(), ShouldEqual, 1)
+		So(population.sellCapacity.Sign(), ShouldEqual, 1)
 
-		Convey("Then an unchanged sample reuses its converted money", func() {
-			second, _, secondReady := sampler.Orders("BTC/USD")
-
-			So(secondReady, ShouldBeTrue)
-			So(second[0].priceMoney, ShouldEqual, firstBid.priceMoney)
-			So(second[0].quantityMoney, ShouldEqual, firstBid.quantityMoney)
-		})
-
-		Convey("Then a modified quantity refreshes only that order", func() {
-			source.apply(symbolBook, &book.UpdateOptions{
-				Direction: book.Bid,
-				ID:        "bid-1",
-				Price:     decimal.NewFromFloat64(100),
-				Quantity:  decimal.NewFromFloat64(4),
-				Timestamp: time.Unix(4, 0),
-			})
-			third, _, thirdReady := sampler.Orders("BTC/USD")
-
-			So(thirdReady, ShouldBeTrue)
-			So(third[0].quantity, ShouldEqual, 4.0)
-			So(third[0].quantityMoney, ShouldNotEqual, firstBid.quantityMoney)
-			So(sampler.samples["BTC/USD"].cache, ShouldHaveLength, 2)
-		})
-
-		Convey("Then a departed order is removed from the retained cache", func() {
+		Convey("Then removing the bid leaves the sample unreadied", func() {
+			symbolBook := source.manager.GetBook("BTC/USD")
 			source.apply(symbolBook, &book.UpdateOptions{
 				Direction: book.Bid,
 				ID:        "bid-1",
@@ -111,21 +97,17 @@ func TestBookSampler_Orders(t *testing.T) {
 				Quantity:  decimal.NewFromInt64(0),
 				Timestamp: time.Unix(4, 0),
 			})
-			_, _, twoSided := sampler.Orders("BTC/USD")
-			_, retained := sampler.samples["BTC/USD"].cache["bid-1"]
+			_, twoSided := sampler.Sample("BTC/USD", tokenizer)
 
 			So(twoSided, ShouldBeFalse)
-			So(retained, ShouldBeFalse)
-			So(sampler.samples["BTC/USD"].cache, ShouldHaveLength, 1)
 		})
 	})
 }
 
 /*
-BenchmarkBookSampler_Orders measures the unchanged-book tick path that formerly
-recreated every Decimal big.Rat and exact-money copy on every analyzer update.
+BenchmarkBookSampler_Sample measures the leased sample path under a deep book.
 */
-func BenchmarkBookSampler_Orders(b *testing.B) {
+func BenchmarkBookSampler_Sample(b *testing.B) {
 	source := newTestBookSource("BTC/USD")
 	symbolBook := source.manager.GetBook("BTC/USD")
 	at := time.Unix(2, 0)
@@ -148,7 +130,8 @@ func BenchmarkBookSampler_Orders(b *testing.B) {
 	}
 
 	sampler := newBookSampler(source)
-	_, _, ready := sampler.Orders("BTC/USD")
+	tokenizer := NewTokenizer(pfluid.DefaultConfig())
+	_, ready := sampler.Sample("BTC/USD", tokenizer)
 
 	if !ready {
 		b.Fatal("book sampler did not become ready")
@@ -158,10 +141,10 @@ func BenchmarkBookSampler_Orders(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		orders, _, sampled := sampler.Orders("BTC/USD")
+		population, sampled := sampler.Sample("BTC/USD", tokenizer)
 
-		if !sampled || len(orders) == 0 {
-			b.Fatal("book sampler lost the unchanged population")
+		if !sampled || len(population.batch.Particles) == 0 {
+			b.Fatal("book sampler lost the population")
 		}
 	}
 }

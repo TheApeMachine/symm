@@ -3,7 +3,6 @@ package strategy
 import (
 	"context"
 	"maps"
-	"strings"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
@@ -59,9 +58,13 @@ func (opportunity *Opportunity) StampFriction(thesis *types.Thesis) {
 		return
 	}
 
-	for index := range thesis.Forecasts {
-		opportunity.friction(&thesis.Forecasts[index])
+	forecasts := append([]types.Forecasts(nil), thesis.Forecasts...)
+
+	for index := range forecasts {
+		opportunity.friction(&forecasts[index])
 	}
+
+	thesis.Forecasts = forecasts
 }
 
 /*
@@ -130,9 +133,10 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 	}
 
 	blocked := opportunity.occupied(thesis)
+	forecasts := append([]types.Forecasts(nil), thesis.Forecasts...)
 
-	for index := range thesis.Forecasts {
-		forecast := &thesis.Forecasts[index]
+	for index := range forecasts {
+		forecast := &forecasts[index]
 
 		if _, skip := blocked[forecast.Symbol]; skip {
 			continue
@@ -198,21 +202,6 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			continue
 		}
 
-		evidence, vetoed := opportunity.stance(thesis, forecast.Symbol)
-
-		if vetoed {
-			rejected := opportunity.reject(
-				*forecast, 0, "evidence_opposition",
-				"active evidence does not clear a long entry: "+
-					strings.Join(evidence.Opposes, ", "),
-			)
-			rejected.Alternatives["evidence_favors"] = float64(len(evidence.Favors))
-			rejected.Alternatives["evidence_opposes"] = float64(len(evidence.Opposes))
-			rejected.Alternatives["evidence_vetoes"] = float64(len(evidence.Vetoes))
-			thesis.Decisions = append(thesis.Decisions, rejected)
-			continue
-		}
-
 		reading := measureOpportunity(*forecast, cognition, thesis)
 
 		if reading.PhaseOpposes() {
@@ -263,11 +252,8 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			AllocationHaircut: haircut,
 			AllocationClass:   allocation,
 			Alternatives: map[string]float64{
-				"enter":            utility,
-				"nothing":          0,
-				"evidence_favors":  float64(len(evidence.Favors)),
-				"evidence_opposes": float64(len(evidence.Opposes)),
-				"evidence_vetoes":  float64(len(evidence.Vetoes)),
+				"enter":   utility,
+				"nothing": 0,
 			},
 			ExpectedFees:      decimal.NewFromFloat64(forecast.ExpectedFees),
 			ExpectedSpread:    decimal.NewFromFloat64(forecast.ExpectedSpread),
@@ -289,33 +275,6 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			Reason:            "executable utility exceeds doing nothing",
 		})
 	}
-}
-
-/*
-stance reads the symbol's composed evidence graph for the category phenomena
-bearing on a long entry. Established deception, liquidity vacuum, collapse, or
-active reversal veto directly; other opposing context vetoes only when it
-outnumbers favoring phenomena. Missing structure remains neutral.
-*/
-func (opportunity *Opportunity) stance(
-	thesis *types.Thesis,
-	symbol string,
-) (types.EntryEvidence, bool) {
-	value, found := thesis.Graphs.Load(symbol)
-
-	if !found {
-		return types.EntryEvidence{}, false
-	}
-
-	evidenceGraph, ok := value.(*types.Graph)
-
-	if !ok || evidenceGraph == nil {
-		return types.EntryEvidence{}, false
-	}
-
-	evidence := evidenceGraph.LongEntryEvidence()
-	return evidence,
-		len(evidence.Vetoes) > 0 || len(evidence.Opposes) > len(evidence.Favors)
 }
 
 /*

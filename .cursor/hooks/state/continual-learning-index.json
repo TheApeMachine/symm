@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAtMs": 1784833065526,
+  "updatedAtMs": 1784899379126,
   "transcripts": {
     "0140878a-6f41-4819-87c2-fd1407b636e0/0140878a-6f41-4819-87c2-fd1407b636e0.jsonl": {
       "mtimeMs": 1779587795615
@@ -173,6 +173,15 @@
     "1ebe0d8b-83c9-4520-aba3-d25ded2a04e5/1ebe0d8b-83c9-4520-aba3-d25ded2a04e5.jsonl": {
       "mtimeMs": 1780323475038
     },
+    "1eea6770-abde-4987-a2d2-9ba3c39562f3/1eea6770-abde-4987-a2d2-9ba3c39562f3.jsonl": {
+      "mtimeMs": 1784852871808
+    },
+    "1eea6770-abde-4987-a2d2-9ba3c39562f3/subagents/55868d83-2e72-474d-8a2b-62a9049fc2b4.jsonl": {
+      "mtimeMs": 1784849097108
+    },
+    "1eea6770-abde-4987-a2d2-9ba3c39562f3/subagents/770301e9-b3ef-4c9f-9d1c-d0eafd733bda.jsonl": {
+      "mtimeMs": 1784841535620
+    },
     "1f8d3117-e388-4827-83c5-de0156c131a9/1f8d3117-e388-4827-83c5-de0156c131a9.jsonl": {
       "mtimeMs": 1779886180328
     },
@@ -301,6 +310,9 @@
     },
     "2de7d43f-6b4f-4365-a478-af76bf71b926/subagents/dd18a6c2-c8e0-4e1a-885f-f2d060b89835.jsonl": {
       "mtimeMs": 1782092650658
+    },
+    "2e52b4cf-e8a5-4a0e-a06e-dc9521b53b8b/2e52b4cf-e8a5-4a0e-a06e-dc9521b53b8b.jsonl": {
+      "mtimeMs": 1784842846547
     },
     "2e63b78c-8e56-438e-bd01-ed80e67ff1e1/2e63b78c-8e56-438e-bd01-ed80e67ff1e1.jsonl": {
       "mtimeMs": 1781677671117
@@ -854,6 +866,9 @@
     "6371c29d-81c8-4e21-9bb3-cfea7c8d9a43/6371c29d-81c8-4e21-9bb3-cfea7c8d9a43.jsonl": {
       "mtimeMs": 1784104920093
     },
+    "638e4a6a-e172-4d45-b391-dac41e045900/638e4a6a-e172-4d45-b391-dac41e045900.jsonl": {
+      "mtimeMs": 1784834540477
+    },
     "63e00432-b35c-47cc-8bfa-d55bf7631064/63e00432-b35c-47cc-8bfa-d55bf7631064.jsonl": {
       "mtimeMs": 1780088037763
     },
@@ -943,6 +958,9 @@
     },
     "76b825cc-a3fa-4a10-87b3-a214777d1626/76b825cc-a3fa-4a10-87b3-a214777d1626.jsonl": {
       "mtimeMs": 1782023993845
+    },
+    "770301e9-b3ef-4c9f-9d1c-d0eafd733bda/770301e9-b3ef-4c9f-9d1c-d0eafd733bda.jsonl": {
+      "mtimeMs": 1784841665534
     },
     "77060ef7-e7e1-4ffa-b115-e4a135a42b36/77060ef7-e7e1-4ffa-b115-e4a135a42b36.jsonl": {
       "mtimeMs": 1781128221520
@@ -1310,9 +1328,6 @@
     "agent-af16b5d5-1f94-4a10-936f-574b59986026/agent-af16b5d5-1f94-4a10-936f-574b59986026.jsonl": {
       "mtimeMs": 1781766379618
     },
-    "agent-curious-symm/agent-curious-symm.jsonl": {
-      "mtimeMs": 1781735872537
-    },
     "agent-curious-symm-develop-c0/agent-curious-symm-develop-c0.jsonl": {
       "mtimeMs": 1781767693594
     },
@@ -1382,11 +1397,11 @@
     "agent-curious-symm-develop-c29/agent-curious-symm-develop-c29.jsonl": {
       "mtimeMs": 1781788572691
     },
-    "agent-curious-symm-develop-c3/agent-curious-symm-develop-c3.jsonl": {
-      "mtimeMs": 1781739234182
-    },
     "agent-curious-symm-develop-c3-r1/agent-curious-symm-develop-c3-r1.jsonl": {
       "mtimeMs": 1781769356163
+    },
+    "agent-curious-symm-develop-c3/agent-curious-symm-develop-c3.jsonl": {
+      "mtimeMs": 1781739234182
     },
     "agent-curious-symm-develop-c30/agent-curious-symm-develop-c30.jsonl": {
       "mtimeMs": 1781789412324
@@ -1433,14 +1448,14 @@
     "agent-curious-symm-develop-c43/agent-curious-symm-develop-c43.jsonl": {
       "mtimeMs": 1781794581833
     },
-    "agent-curious-symm-develop-c44/agent-curious-symm-develop-c44.jsonl": {
-      "mtimeMs": 1781795188894
-    },
     "agent-curious-symm-develop-c44-r1/agent-curious-symm-develop-c44-r1.jsonl": {
       "mtimeMs": 1781795298147
     },
     "agent-curious-symm-develop-c44-r2/agent-curious-symm-develop-c44-r2.jsonl": {
       "mtimeMs": 1781796153851
+    },
+    "agent-curious-symm-develop-c44/agent-curious-symm-develop-c44.jsonl": {
+      "mtimeMs": 1781795188894
     },
     "agent-curious-symm-develop-c45/agent-curious-symm-develop-c45.jsonl": {
       "mtimeMs": 1781796515546
@@ -1516,9 +1531,6 @@
     },
     "agent-curious-symm-overseer-c5/agent-curious-symm-overseer-c5.jsonl": {
       "mtimeMs": 1781770091953
-    },
-    "agent-curious-symm-review/agent-curious-symm-review.jsonl": {
-      "mtimeMs": 1781737638222
     },
     "agent-curious-symm-review-c0/agent-curious-symm-review-c0.jsonl": {
       "mtimeMs": 1781767831600
@@ -1655,14 +1667,14 @@
     "agent-curious-symm-review-c47/agent-curious-symm-review-c47.jsonl": {
       "mtimeMs": 1781797041869
     },
+    "agent-curious-symm-review-c5-r1/agent-curious-symm-review-c5-r1.jsonl": {
+      "mtimeMs": 1781771394583
+    },
     "agent-curious-symm-review-c5/agent-curious-symm-review-c5.jsonl": {
       "mtimeMs": 1781740176865
     },
     "agent-curious-symm-review-c5/subagents/b5491c2d-9d70-4cf6-ac34-49bb15df0ae8.jsonl": {
       "mtimeMs": 1781740176873
-    },
-    "agent-curious-symm-review-c5-r1/agent-curious-symm-review-c5-r1.jsonl": {
-      "mtimeMs": 1781771394583
     },
     "agent-curious-symm-review-c6/agent-curious-symm-review-c6.jsonl": {
       "mtimeMs": 1781771792751
@@ -1678,6 +1690,9 @@
     },
     "agent-curious-symm-review-c9/agent-curious-symm-review-c9.jsonl": {
       "mtimeMs": 1781773699600
+    },
+    "agent-curious-symm-review/agent-curious-symm-review.jsonl": {
+      "mtimeMs": 1781737638222
     },
     "agent-curious-symm-scope-develop-c0/agent-curious-symm-scope-develop-c0.jsonl": {
       "mtimeMs": 1781767256883
@@ -1832,14 +1847,14 @@
     "agent-curious-symm-scope-overseer-c15/agent-curious-symm-scope-overseer-c15.jsonl": {
       "mtimeMs": 1781777035436
     },
-    "agent-curious-symm-scope-overseer-c20/agent-curious-symm-scope-overseer-c20.jsonl": {
-      "mtimeMs": 1781780858607
-    },
     "agent-curious-symm-scope-overseer-c20-r1/agent-curious-symm-scope-overseer-c20-r1.jsonl": {
       "mtimeMs": 1781780902069
     },
     "agent-curious-symm-scope-overseer-c20-r2/agent-curious-symm-scope-overseer-c20-r2.jsonl": {
       "mtimeMs": 1781780996966
+    },
+    "agent-curious-symm-scope-overseer-c20/agent-curious-symm-scope-overseer-c20.jsonl": {
+      "mtimeMs": 1781780858607
     },
     "agent-curious-symm-scope-overseer-c25/agent-curious-symm-scope-overseer-c25.jsonl": {
       "mtimeMs": 1781786057777
@@ -2150,9 +2165,6 @@
     "agent-curious-symm-scope-sync-c9/agent-curious-symm-scope-sync-c9.jsonl": {
       "mtimeMs": 1781773766700
     },
-    "agent-curious-symm-sync/agent-curious-symm-sync.jsonl": {
-      "mtimeMs": 1781737690923
-    },
     "agent-curious-symm-sync-c0/agent-curious-symm-sync-c0.jsonl": {
       "mtimeMs": 1781767871063
     },
@@ -2296,6 +2308,12 @@
     },
     "agent-curious-symm-sync-c9/agent-curious-symm-sync-c9.jsonl": {
       "mtimeMs": 1781773821230
+    },
+    "agent-curious-symm-sync/agent-curious-symm-sync.jsonl": {
+      "mtimeMs": 1781737690923
+    },
+    "agent-curious-symm/agent-curious-symm.jsonl": {
+      "mtimeMs": 1781735872537
     },
     "agent-d33e1c96-6c9a-49b2-9966-92c397c3217f/agent-d33e1c96-6c9a-49b2-9966-92c397c3217f.jsonl": {
       "mtimeMs": 1781733889546
@@ -2670,7 +2688,7 @@
       "mtimeMs": 1781823256510
     },
     "cf71b88e-4d47-4601-973d-73983483d534/cf71b88e-4d47-4601-973d-73983483d534.jsonl": {
-      "mtimeMs": 1784832992461
+      "mtimeMs": 1784899281980
     },
     "cf71b88e-4d47-4601-973d-73983483d534/subagents/08023190-6d39-426d-a155-30a51c2d05fb.jsonl": {
       "mtimeMs": 1784781331014
@@ -2685,7 +2703,7 @@
       "mtimeMs": 1784779678324
     },
     "cf71b88e-4d47-4601-973d-73983483d534/subagents/38376190-3122-4698-ba8a-1b0a72362386.jsonl": {
-      "mtimeMs": 1784832998755
+      "mtimeMs": 1784833067865
     },
     "cf71b88e-4d47-4601-973d-73983483d534/subagents/3b688fe7-6b43-48c8-ad15-5c54a3507f9e.jsonl": {
       "mtimeMs": 1784811707830
@@ -2716,6 +2734,9 @@
     },
     "cf71b88e-4d47-4601-973d-73983483d534/subagents/dbe999d2-2695-4a88-a82e-6d98263382f5.jsonl": {
       "mtimeMs": 1784772776511
+    },
+    "cf71b88e-4d47-4601-973d-73983483d534/subagents/ec629149-4cee-4869-90de-d707134febd1.jsonl": {
+      "mtimeMs": 1784899301073
     },
     "cf71b88e-4d47-4601-973d-73983483d534/subagents/fe970402-63c5-42ef-9012-1931674a9562.jsonl": {
       "mtimeMs": 1784789107377

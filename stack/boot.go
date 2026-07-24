@@ -211,6 +211,7 @@ type Stack struct {
 	Recorder   *audit.Recorder
 	Thesis     *types.Thesis
 	Signals    []types.Signal
+	cancel     context.CancelFunc
 	restore    func()
 }
 
@@ -329,6 +330,7 @@ func (booter *Booter) boot(
 		Recorder:   recorder,
 		Thesis:     thesis,
 		Signals:    signals,
+		cancel:     booter.cancel,
 	}
 
 	if reporter, ok := paper.(types.StatusReporter); ok {
@@ -379,7 +381,6 @@ func (booter *Booter) boot(
 
 	if err := analyzer.Initialize(
 		types.Topic{Name: "ticker", Actor: hawkesSignal.Actor},
-		types.Topic{Name: "book", Actor: hawkesSignal.Actor},
 		types.Topic{Name: "trade", Actor: hawkesSignal.Actor},
 	); err != nil {
 		return nil, errors.Join(errnie.Error(err), wired.Close())
@@ -397,12 +398,27 @@ func (booter *Booter) boot(
 }
 
 /*
-Close releases every resource owned by the assembled production graph and
-returns all lifecycle failures after configuration has been restored.
+Close stops every Actor in the composition root, then releases owned resources.
+Cancel runs first so the graph stops taking new work; Analyzer.Close then waits
+for REM and for any in-flight manifold Step before tearing the Metal domain
+down.
 */
 func (stack *Stack) Close() (err error) {
+	if stack.cancel != nil {
+		stack.cancel()
+		stack.cancel = nil
+	}
+
 	if stack.Crypto != nil {
 		err = errors.Join(err, stack.Crypto.Close())
+	}
+
+	if stack.Planner != nil {
+		err = errors.Join(err, stack.Planner.Close())
+	}
+
+	if stack.Analyzer != nil {
+		err = errors.Join(err, stack.Analyzer.Close())
 	}
 
 	if stack.API != nil {

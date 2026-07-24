@@ -42,8 +42,6 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 
 	signal.Actor = types.NewActor(ctx, map[string]types.Handler{
 		"ticker": {Topic: "thesis", Fn: signal.onTicker},
-		"book":   {Topic: "thesis", Fn: signal.onBook},
-		"trade":  {Topic: "thesis", Fn: signal.onTrade},
 	})
 
 	return signal
@@ -57,56 +55,19 @@ func (signal *Signal) Name() string {
 }
 
 /*
-Initialize wires ticker, book, and trade ingress from Live.
+Initialize wires ticker ingress from Live. Liquidity scores come from ticker
+cross-section only; book and trade floods must not fill unused buffers.
 */
 func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 	signal.thesis = thesis
 	signal.Actor.Initialize(
 		types.Topic{Name: "ticker", Actor: live},
-		types.Topic{Name: "book", Actor: live},
-		types.Topic{Name: "trade", Actor: live},
 	)
 }
 
 func (signal *Signal) onTicker(message any) any {
 	rows := message.(*kraken.Ticker).Data
 	measurements, err := signal.Calculate(rows, nil, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	if len(measurements) == 0 {
-		return nil
-	}
-
-	signal.thesis.Publish(types.SourceLiquidity, measurements)
-
-	return signal.thesis
-}
-
-func (signal *Signal) onBook(message any) any {
-	rows := message.(*kraken.Book).Data
-	measurements, err := signal.Calculate(nil, nil, rows)
-
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	if len(measurements) == 0 {
-		return nil
-	}
-
-	signal.thesis.Publish(types.SourceLiquidity, measurements)
-
-	return signal.thesis
-}
-
-func (signal *Signal) onTrade(message any) any {
-	rows := message.(*kraken.Trade).Data
-	measurements, err := signal.Calculate(nil, rows, nil)
 
 	if err != nil {
 		errnie.Error(err)

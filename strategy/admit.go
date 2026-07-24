@@ -158,6 +158,16 @@ func (admit *Admit) Accept(
 	}
 
 	admit.Capital(&decision)
+
+	if phase, found := thesis.Lifecycle.Load(decision.Symbol); found {
+		switch phase {
+		case types.LifecycleEntrySelected, types.LifecycleEntrySubmitted,
+			types.LifecyclePartiallyEntered, types.LifecycleManaging:
+			thesis.Decisions = append(thesis.Decisions, decision)
+			return
+		}
+	}
+
 	thesis.NoteLifecycle(decision.Symbol, types.LifecycleEntrySelected, decision.At)
 	thesis.Decisions = append(thesis.Decisions, decision)
 

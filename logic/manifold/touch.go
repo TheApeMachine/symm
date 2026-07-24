@@ -1,7 +1,6 @@
 package manifold
 
 import (
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 )
 
@@ -12,9 +11,9 @@ every touch observation. Decimal.Div reads and internally aligns its operand.
 var midpointDivisor = decimal.NewFromInt64(2)
 
 /*
-marketTouch owns the exact executable bid/ask boundary derived from the L3
-population. It aligns independent Kraken decimal scales before arithmetic so
-receiver-scale rounding cannot erase price or quantity precision.
+marketTouch is the executable bid/ask boundary from one L3 sample. Decimal
+scales are aligned before arithmetic so receiver-scale rounding cannot erase
+price or quantity precision.
 */
 type marketTouch struct {
 	bidPrice      float64
@@ -23,8 +22,32 @@ type marketTouch struct {
 	askPriceMoney *decimal.Decimal
 	bidQuantity   *decimal.Decimal
 	askQuantity   *decimal.Decimal
-	bidOrders     int
-	askOrders     int
+}
+
+/*
+scales returns touch midpoint, relative width, and side notionals for State.
+*/
+func (touch marketTouch) scales() (
+	reference *decimal.Decimal,
+	spread float64,
+	buyCapacity *decimal.Decimal,
+	sellCapacity *decimal.Decimal,
+	ok bool,
+) {
+	if touch.bidPrice <= 0 || touch.askPrice <= touch.bidPrice ||
+		touch.bidPriceMoney == nil || touch.askPriceMoney == nil ||
+		touch.bidQuantity == nil || touch.askQuantity == nil ||
+		touch.bidQuantity.Sign() <= 0 || touch.askQuantity.Sign() <= 0 {
+		return nil, 0, nil, nil, false
+	}
+
+	reference = touch.reference()
+
+	return reference,
+		touch.spread(reference),
+		touch.notional(touch.askPriceMoney, touch.askQuantity),
+		touch.notional(touch.bidPriceMoney, touch.bidQuantity),
+		true
 }
 
 /*
@@ -72,48 +95,4 @@ func (touch marketTouch) notional(
 	scale := max(int64(1), price.GetScale()+quantity.GetScale())
 
 	return price.SetScale(scale).Mul(quantity)
-}
-
-/*
-observe updates one side of the best touch and accumulates its exact quantity.
-*/
-func (touch *marketTouch) observe(order physicalOrder) {
-	if order.side == book.Bid {
-		touch.bidOrders++
-	}
-
-	if order.side == book.Ask {
-		touch.askOrders++
-	}
-
-	if order.side == book.Bid && order.price >= touch.bidPrice {
-		if order.price > touch.bidPrice {
-			touch.bidPrice = order.price
-			touch.bidPriceMoney = order.priceMoney
-			touch.bidQuantity = decimal.NewFromInt64(0)
-		}
-
-		if order.quantityMoney.GetScale() > touch.bidQuantity.GetScale() {
-			touch.bidQuantity, order.quantityMoney = order.quantityMoney, touch.bidQuantity
-		}
-
-		touch.bidQuantity = touch.bidQuantity.Add(order.quantityMoney)
-	}
-
-	if order.side != book.Ask ||
-		(touch.askPrice != 0 && order.price > touch.askPrice) {
-		return
-	}
-
-	if touch.askPrice == 0 || order.price < touch.askPrice {
-		touch.askPrice = order.price
-		touch.askPriceMoney = order.priceMoney
-		touch.askQuantity = decimal.NewFromInt64(0)
-	}
-
-	if order.quantityMoney.GetScale() > touch.askQuantity.GetScale() {
-		touch.askQuantity, order.quantityMoney = order.quantityMoney, touch.askQuantity
-	}
-
-	touch.askQuantity = touch.askQuantity.Add(order.quantityMoney)
 }

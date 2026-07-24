@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
@@ -25,13 +27,18 @@ type HawkesSource interface {
 
 /*
 intensityCandidate is one book-grounded market source entering the next shared
-domain step.
+domain step. Book fields are owned samples — no live *book.Order pointers.
 */
 type intensityCandidate struct {
-	symbol   string
-	outcome  excitation.Outcome
-	orders   []physicalOrder
-	midPrice float64
+	symbol       string
+	outcome      excitation.Outcome
+	midPrice     float64
+	orderIDs     []string
+	batch        Batch
+	reference    *decimal.Decimal
+	spread       float64
+	buyCapacity  *decimal.Decimal
+	sellCapacity *decimal.Decimal
 }
 
 /*
@@ -41,24 +48,24 @@ split into independent simulations that cannot interfere.
 */
 type Solver struct {
 	*PhaseCorpus
-	config    pfluid.Config
-	domain    *pfluid.Domain
-	particles []pfluid.Particle
-	symbols   map[string]*symbolSlot
-	active    map[string]struct{}
-	books     *bookSampler
-	recorder  *audit.Recorder
+	mu       sync.Mutex
+	config   pfluid.Config
+	domain   *pfluid.Domain
+	symbols  map[string]*symbolSlot
+	active   map[string]struct{}
+	books    *bookSampler
+	recorder *audit.Recorder
 }
 
 /*
-symbolSlot remembers a symbol's last market epoch and its most recently
-appended particle range so unchanged source epochs can be replayed honestly.
+symbolSlot remembers a symbol's last appended Hawkes/book sample. start/end are
+append-time bookmarks only; Advance clears them after inelastic merge rewrites
+resident indices. Views read the shared post-merge population.
 */
 type symbolSlot struct {
 	epoch  uint64
 	at     time.Time
 	events int
-	coords *coordinateEpoch
 	start  int
 	end    int
 	orders []string
@@ -124,9 +131,10 @@ func (solver *Solver) SetRecorder(recorder *audit.Recorder) {
 }
 
 /*
-Update assembles every book-grounded market population, advances the shared
-domain once when any source epoch changes, and publishes symbol views of that
-same physical state.
+Update appends tokenized book samples for every changed Hawkes epoch into the
+resident particle history, advances the shared domain once when anything was
+appended, and publishes symbol views of that same physical state. Unchanged
+epochs skip L3 sampling and phase scans entirely.
 */
 func (solver *Solver) Update(
 	thesis *types.Thesis,
@@ -136,13 +144,42 @@ func (solver *Solver) Update(
 		return nil
 	}
 
-	candidates := solver.candidates(hawkes)
-	result := solver.advance(thesis, candidates)
+	solver.mu.Lock()
+	defer solver.mu.Unlock()
+
+	if solver.domain == nil {
+		return nil
+	}
+
+	changed := solver.changedOutcomes(hawkes)
+	result := advanceResult{}
+
+	if len(changed) == 0 {
+		// No Hawkes epoch moved: restamp the last GasReady views as Replay so
+		// idle / book-only cuts cannot be mistaken for fresh advances. Forecast
+		// minting stays gated by Cut Outcome snapshots — coalesced live reads
+		// were what previously made idle look empty and starved Ready.
+		solver.replayStored(thesis)
+
+		errnie.Error(audit.Record(solver.recorder, "manifold", map[string]any{
+			"candidates": 0,
+			"advanced":   0,
+			"replayed":   solver.replayCount(),
+			"particles":  solver.Population(),
+			"failed":     0,
+		}))
+		return nil
+	}
+
+	candidates := solver.sampleChanged(changed)
+	result = solver.advance(thesis, candidates, changed)
+	population := solver.Population()
+
 	errnie.Error(audit.Record(solver.recorder, "manifold", map[string]any{
 		"candidates": len(candidates),
 		"advanced":   result.advanced,
 		"replayed":   result.replayed,
-		"particles":  len(solver.particles),
+		"particles":  population,
 		"failed":     len(result.failures),
 	}))
 
@@ -150,13 +187,14 @@ func (solver *Solver) Update(
 }
 
 /*
-candidates returns every symbol with observed intensity and a two-sided L3
-book. Alphabetical order keeps particle identity independent of map ordering.
+changedOutcomes lists Hawkes epochs that have not yet been appended, without
+touching L3 books.
 */
-func (solver *Solver) candidates(hawkes HawkesSource) []intensityCandidate {
+func (solver *Solver) changedOutcomes(
+	hawkes HawkesSource,
+) map[string]excitation.Outcome {
 	symbols := append([]string(nil), hawkes.Symbols()...)
-	sort.Strings(symbols)
-	candidates := make([]intensityCandidate, 0, len(symbols))
+	changed := make(map[string]excitation.Outcome)
 
 	for _, symbol := range symbols {
 		outcome, ok := hawkes.Outcome(symbol)
@@ -171,21 +209,88 @@ func (solver *Solver) candidates(hawkes HawkesSource) []intensityCandidate {
 			continue
 		}
 
-		orders, midPrice, ready := solver.books.Orders(symbol)
+		candidate := intensityCandidate{symbol: symbol, outcome: outcome}
+
+		if candidate.changed(solver.symbols[symbol]) {
+			changed[symbol] = outcome
+		}
+	}
+
+	return changed
+}
+
+/*
+sampleChanged tokenizes L3 books only for epochs that must enter the domain.
+*/
+func (solver *Solver) sampleChanged(
+	changed map[string]excitation.Outcome,
+) []intensityCandidate {
+	symbols := make([]string, 0, len(changed))
+
+	for symbol := range changed {
+		symbols = append(symbols, symbol)
+	}
+
+	sort.Strings(symbols)
+	candidates := make([]intensityCandidate, 0, len(symbols))
+	tokenizer := NewTokenizer(solver.config)
+
+	for _, symbol := range symbols {
+		population, ready := solver.books.Sample(symbol, tokenizer)
 
 		if !ready {
 			continue
 		}
 
 		candidates = append(candidates, intensityCandidate{
-			symbol:   symbol,
-			outcome:  outcome,
-			orders:   orders,
-			midPrice: midPrice,
+			symbol:       symbol,
+			outcome:      changed[symbol],
+			midPrice:     population.midPrice,
+			orderIDs:     population.orderIDs,
+			batch:        population.batch,
+			reference:    population.reference,
+			spread:       population.spread,
+			buyCapacity:  population.buyCapacity,
+			sellCapacity: population.sellCapacity,
 		})
 	}
 
 	return candidates
+}
+
+/*
+replayStored writes the last GasReady views onto thesis without a GPU step so a
+fresh Thesis still sees the resident market field when no Hawkes epoch moved.
+*/
+func (solver *Solver) replayStored(thesis *types.Thesis) {
+	if thesis == nil {
+		return
+	}
+
+	for symbol, slot := range solver.symbols {
+		if slot == nil || !slot.last.GasReady() {
+			continue
+		}
+
+		state := slot.last
+		state.Replay = true
+		thesis.Manifold.Store(symbol, state)
+	}
+}
+
+/*
+replayCount counts GasReady slots that would be restated without an advance.
+*/
+func (solver *Solver) replayCount() int {
+	count := 0
+
+	for _, slot := range solver.symbols {
+		if slot != nil && slot.last.GasReady() {
+			count++
+		}
+	}
+
+	return count
 }
 
 /*
@@ -215,14 +320,31 @@ func (solver *Solver) noteAdvanceFailure(symbol string, err error) error {
 Close releases the one resident domain and all accumulated observations.
 */
 func (solver *Solver) Close() {
-	if solver == nil || solver.domain == nil {
+	if solver == nil {
+		return
+	}
+
+	solver.mu.Lock()
+	defer solver.mu.Unlock()
+
+	if solver.domain == nil {
 		return
 	}
 
 	errnie.Error(solver.domain.Close())
 	solver.domain = nil
-	solver.particles = nil
 	clear(solver.symbols)
 	clear(solver.active)
 	solver.PhaseCorpus = nil
+}
+
+/*
+Population returns the Metal-resident particle count.
+*/
+func (solver *Solver) Population() int {
+	if solver == nil || solver.domain == nil {
+		return 0
+	}
+
+	return solver.domain.ParticleCount()
 }

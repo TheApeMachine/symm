@@ -2,11 +2,9 @@ package types
 
 import (
 	"context"
-	"fmt"
+	"runtime"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -17,10 +15,21 @@ type Subscription[T any] struct {
 }
 
 /*
-NewSubscription opens one buffered typed channel.
+NewSubscription opens one buffered typed channel using system.actor.buffer.
 */
 func NewSubscription[T any]() *Subscription[T] {
-	buffer := viper.GetViper().GetInt("system.actor.buffer")
+	return NewSubscriptionSize[T](0)
+}
+
+/*
+NewSubscriptionSize opens a typed channel with an explicit buffer. A non-positive
+size falls back to system.actor.buffer (then 64) so call sites can request a
+strict depth without re-reading config.
+*/
+func NewSubscriptionSize[T any](buffer int) *Subscription[T] {
+	if buffer < 1 {
+		buffer = viper.GetViper().GetInt("system.actor.buffer")
+	}
 
 	if buffer < 1 {
 		buffer = 64
@@ -32,20 +41,11 @@ func NewSubscription[T any]() *Subscription[T] {
 }
 
 /*
-Send delivers one message to the subscription channel.
+Send delivers one message, blocking when the subscriber is behind so producers
+apply real backpressure instead of sleeping and dropping under load.
 */
 func (subscription *Subscription[T]) Send(message T) {
-	retry := 1
-
-	for retry < 21 {
-		select {
-		case subscription.Channel <- message:
-			return
-		default:
-			retry = utils.Backoff(retry)
-			errnie.Warn(fmt.Sprintf("subscription buffer full, retrying: %d", retry))
-		}
-	}
+	subscription.Channel <- message
 }
 
 /*
@@ -108,7 +108,14 @@ Subscribe registers interest in this actor's topic and returns the shared
 channel used as the subscriber's inbound subscription.
 */
 func (actor *Actor) Subscribe(topic string) *Subscription[any] {
-	subscription := NewSubscription[any]()
+	return actor.SubscribeSize(topic, 0)
+}
+
+/*
+SubscribeSize registers interest with an explicit inbound buffer depth.
+*/
+func (actor *Actor) SubscribeSize(topic string, buffer int) *Subscription[any] {
+	subscription := NewSubscriptionSize[any](buffer)
 	actor.subscribers[topic] = append(actor.subscribers[topic], subscription)
 
 	return subscription
@@ -118,8 +125,18 @@ func (actor *Actor) Subscribe(topic string) *Subscription[any] {
 Initialize attaches this actor to upstream topics under the same Name.
 */
 func (actor *Actor) Initialize(topics ...Topic) {
+	actor.InitializeSize(0, topics...)
+}
+
+/*
+InitializeSize attaches upstream topics with an explicit inbound buffer depth so
+a slow consumer can apply real backpressure instead of coalescing mutable state.
+*/
+func (actor *Actor) InitializeSize(buffer int, topics ...Topic) {
 	for _, topic := range topics {
-		actor.subscriptions[topic.Name] = topic.Actor.Subscribe(topic.Name)
+		actor.subscriptions[topic.Name] = topic.Actor.SubscribeSize(
+			topic.Name, buffer,
+		)
 	}
 
 	actor.Run()
@@ -135,22 +152,38 @@ func (actor *Actor) Run() {
 			case <-actor.ctx.Done():
 				return
 			default:
-				actor.handle()
+				if !actor.handle() {
+					runtime.Gosched()
+				}
 			}
 		}
 	}()
 }
 
-func (actor *Actor) handle() {
-	for topic, subscription := range actor.subscriptions {
-		select {
-		case <-actor.ctx.Done():
-			return
-		default:
+/*
+handle drains ready subscription messages round-robin until every topic is
+empty for one full pass. It returns true when any work ran so the idle path
+only yields after a fully empty poll.
+*/
+func (actor *Actor) handle() bool {
+	worked := false
+
+	for {
+		progress := false
+
+		for topic, subscription := range actor.subscriptions {
 			select {
 			case <-actor.ctx.Done():
-				return
+				return worked
+			default:
+			}
+
+			select {
+			case <-actor.ctx.Done():
+				return worked
 			case message := <-subscription.Channel:
+				progress = true
+				worked = true
 				handler, ok := actor.handlers[topic]
 
 				if !ok {
@@ -167,6 +200,10 @@ func (actor *Actor) handle() {
 				actor.publish(topic, result)
 			default:
 			}
+		}
+
+		if !progress {
+			return worked
 		}
 	}
 }

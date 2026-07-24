@@ -29,6 +29,8 @@ func TestAnalyzerInterest(t *testing.T) {
 			var err error
 			return err
 		}), ShouldBeNil)
+		thesis = wired.Thesis
+		So(thesis, ShouldNotBeNil)
 		leader := market.Symbols[2]
 
 		for range 4 {

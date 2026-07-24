@@ -54,7 +54,6 @@ func NewCrypto(
 
 	crypto.Actor = types.NewActor(ctx, map[string]types.Handler{
 		"ticker": {Topic: "ticker", Fn: crypto.thesis},
-		"book":   {Topic: "book", Fn: crypto.thesis},
 		"trade":  {Topic: "trade", Fn: crypto.thesis},
 	})
 
@@ -66,9 +65,9 @@ func (crypto *Crypto) Initialize(
 ) error {
 	errnie.Info("initializing crypto")
 
-	crypto.Actor.Initialize(
+	crypto.Actor.InitializeSize(
+		1,
 		types.Topic{Name: "ticker", Actor: planner.Actor},
-		types.Topic{Name: "book", Actor: planner.Actor},
 		types.Topic{Name: "trade", Actor: planner.Actor},
 	)
 
@@ -82,6 +81,7 @@ func (crypto *Crypto) Status() types.Status {
 
 func (crypto *Crypto) thesis(message any) any {
 	thesis := message.(*types.Thesis)
+	thesis.Tick = crypto.NextTick()
 	crypto.Apply(thesis)
 
 	return thesis
@@ -103,9 +103,11 @@ func (crypto *Crypto) Apply(thesis *types.Thesis) {
 	}
 
 	started := time.Now()
+	// Copy so a concurrent Decide retain/replace cannot empty the slice mid-apply.
+	decisions := append([]types.Decision(nil), thesis.Decisions...)
 
-	for index := range thesis.Decisions {
-		decision := &thesis.Decisions[index]
+	for index := range decisions {
+		decision := &decisions[index]
 
 		switch decision.Action {
 		case types.ActionEnter:
@@ -115,13 +117,12 @@ func (crypto *Crypto) Apply(thesis *types.Thesis) {
 		}
 	}
 
-	decisions := len(thesis.Decisions)
-	crypto.publish(thesis, time.Since(started))
-	thesis.Decisions = thesis.Decisions[:0]
+	elapsed := time.Since(started)
+	crypto.publish(thesis, elapsed)
 
 	errnie.Error(audit.Phase(crypto.recorder, thesis.Tick, "desk", map[string]any{
-		"ns":        time.Since(started).Nanoseconds(),
-		"decisions": decisions,
+		"ns":        elapsed.Nanoseconds(),
+		"decisions": len(decisions),
 	}))
 }
 
@@ -185,12 +186,16 @@ func (crypto *Crypto) enter(thesis *types.Thesis, decision *types.Decision) {
 	}
 
 	value, ok := thesis.Holdings.Load(decision.Symbol)
+	var holding *types.Holding
 
-	if !ok {
-		return
+	if ok {
+		holding = value.(*types.Holding)
 	}
 
-	holding := value.(*types.Holding)
+	if holding == nil {
+		holding = types.NewHolding(crypto.ctx, decision.Symbol, decision.ProposedQuantity)
+		thesis.Holdings.Store(decision.Symbol, holding)
+	}
 
 	if holding.Qty == nil || holding.Qty.Sign() <= 0 {
 		holding.Qty = decision.ProposedQuantity.Copy()
