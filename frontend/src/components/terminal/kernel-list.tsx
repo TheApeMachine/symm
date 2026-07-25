@@ -1,14 +1,14 @@
 import { DEFAULT_KERNELS } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { repaintSignalDetail } from "#/components/kernel/detail";
+import {
+	type MeterParts,
+	mergeInspectorMetrics,
+	paintInspectorMeters,
+} from "#/components/terminal/inspector-meters";
 import { KernelListRow } from "#/components/terminal/kernel-list-row";
+import { kernelListReadout } from "#/components/terminal/measurement-view";
 import type { Measurement } from "#/types/measurement";
-
-type MeterParts = {
-	cell: HTMLElement;
-	value: HTMLElement;
-	fill: HTMLElement;
-};
 
 type SparkView = {
 	line: SVGPolylineElement | null;
@@ -218,6 +218,10 @@ export const bindInspector = (root: HTMLElement | null) => {
 		return;
 	}
 
+	if (inspector?.root === root) {
+		return;
+	}
+
 	inspector = {
 		root,
 		source: null,
@@ -254,27 +258,10 @@ export const paintKernelList = (value: unknown, focusSymbol: string) => {
 			continue;
 		}
 
-		const rawCandidate =
-			typeof row.raw === "number" && Number.isFinite(row.raw)
-				? row.raw
-				: Object.values(row.metrics ?? {}).find((entry) =>
-						Number.isFinite(entry),
-					);
-		const raw = Number.isFinite(rawCandidate) ? Number(rawCandidate) : 0;
-		const sample = Math.max(
-			0,
-			Math.min(
-				1,
-				typeof row.normalized === "number" &&
-					Number.isFinite(row.normalized)
-					? row.normalized
-					: Math.abs(raw),
-			),
-		);
+		const { metric, raw, sample } = kernelListReadout(row);
 		const valid = row.validity?.state !== "invalid";
 		const statusText = valid ? "Healthy" : "Invalid";
 		const tone = valid ? "var(--up)" : "var(--down)";
-		const metric = row.metric ?? Object.keys(row.metrics ?? {})[0] ?? "raw";
 		const percent = Math.max(0, Math.min(100, sample * 100));
 		const elapsed = now - Date.parse(row.at);
 		const age = !Number.isFinite(elapsed)
@@ -355,78 +342,29 @@ export const paintKernelList = (value: unknown, focusSymbol: string) => {
 			inspector.series.textContent = metric;
 		}
 
-		if (inspector.metrics !== null) {
-			const entries =
-				row.metrics !== undefined
-					? Object.entries(row.metrics)
-					: ([[metric, raw]] as Array<[string, number]>);
-			const currentKeys = new Set<string>();
-
-			for (const [key, entry] of entries) {
-				currentKeys.add(key);
-
-				let meter = inspector.meters.get(key);
-
-				if (meter === undefined) {
-					const cell = document.createElement("div");
-					cell.dataset.metric = key;
-					cell.setAttribute("role", "progressbar");
-					cell.setAttribute("aria-valuemin", "0");
-					cell.setAttribute("aria-valuemax", "100");
-
-					const header = document.createElement("div");
-					header.className =
-						"mb-1 flex justify-between font-mono text-[9px]";
-					const label = document.createElement("span");
-					const valueEl = document.createElement("span");
-					label.className = "text-(--f3)";
-					valueEl.className = "text-(--f1)";
-					label.textContent = key;
-					header.append(label, valueEl);
-
-					const track = document.createElement("div");
-					track.className =
-						"h-1 overflow-hidden rounded-[2px] bg-(--line) [--meter-tone:var(--info)]";
-					const fill = document.createElement("div");
-					fill.className = "h-full bg-(--meter-tone)";
-					track.append(fill);
-					cell.append(header, track);
-					inspector.metrics.append(cell);
-
-					meter = { cell, value: valueEl, fill };
-					inspector.meters.set(key, meter);
-				}
-
-				const numeric = Number(entry);
-				const safe = Number.isFinite(numeric) ? numeric : 0;
-				const fillPercent = Math.max(0, Math.min(100, safe * 100));
-
-				meter.value.textContent = safe.toPrecision(4);
-				meter.fill.style.width = `${fillPercent}%`;
-				meter.cell.setAttribute(
-					"aria-valuenow",
-					String(Math.round(fillPercent)),
-				);
-			}
-
-			for (const [key, meter] of inspector.meters) {
-				if (currentKeys.has(key)) {
-					continue;
-				}
-
-				meter.cell.remove();
-				inspector.meters.delete(key);
-			}
-
-			syncWaiting();
-		}
-
 		if (inspector.symbol !== null) {
 			inspector.symbol.textContent = `active ${row.symbol}`;
 		}
 
 		if (inspector.observed !== null) {
 			inspector.observed.textContent = `observed ${new Date(row.at).toLocaleTimeString("en-US", { hour12: false })} · ${inspector.count} samples`;
+		}
+	}
+
+	if (
+		inspector !== null &&
+		inspector.source !== null &&
+		inspector.metrics !== null
+	) {
+		const merged = mergeInspectorMetrics(
+			rows,
+			inspector.source,
+			focusSymbol,
+		);
+
+		if (merged.size > 0) {
+			paintInspectorMeters(inspector.metrics, inspector.meters, merged);
+			syncWaiting();
 		}
 	}
 };

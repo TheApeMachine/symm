@@ -80,23 +80,15 @@ func GetString(raw []byte, path ...any) string {
 	return value
 }
 
+/*
+GetBytes returns the raw JSON at path. Missing paths return nil, nil so callers
+can probe keys without treating absence as a fault.
+*/
 func GetBytes(raw []byte, path ...any) ([]byte, error) {
 	node, err := sonic.Get(raw, path...)
 
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"json: path lookup failed",
-			err,
-		))
-	}
-
-	if !node.Exists() {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"json: path not found",
-			nil,
-		))
+	if err != nil || !node.Exists() {
+		return nil, nil
 	}
 
 	value, err := node.Raw()
@@ -110,11 +102,7 @@ func GetBytes(raw []byte, path ...any) ([]byte, error) {
 	}
 
 	if value == "" {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"json: path empty",
-			nil,
-		))
+		return nil, nil
 	}
 
 	return []byte(value), nil

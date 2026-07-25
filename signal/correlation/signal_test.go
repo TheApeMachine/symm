@@ -68,7 +68,12 @@ func TestCalculate(t *testing.T) {
 					}
 
 					So(measurement.ValidateStruct(), ShouldBeNil)
-					So(math.IsNaN(measurement.Raw), ShouldBeFalse)
+
+					measurement.EachMetric(func(
+						_ types.MetricType, _ types.MeasurementSide, sample types.MetricSample,
+					) {
+						So(math.IsNaN(sample.Raw), ShouldBeFalse)
+					})
 					measurements = append(measurements, measurement)
 				}
 

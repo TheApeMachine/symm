@@ -105,28 +105,31 @@ func TestCalculate(t *testing.T) {
 
 			for _, measurement := range measurements {
 				So(measurement.ValidateStruct(), ShouldBeNil)
-				So(measurement.Stream, ShouldEqual, types.CVD)
-				So(measurement.Subject, ShouldEqual, types.SubjectAggressorFlow)
 				So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
 				So(measurement.Validity.Readiness, ShouldEqual,
 					types.ReadinessObservation)
 				So(measurement.Maturity, ShouldBeBetween, 0, 1)
 
-				if measurement.Metric == types.MetricNet {
-					So(measurement.Unit, ShouldEqual, types.UnitQuoteCurrency)
-					So(measurement.Normalized, ShouldBeNil)
-					continue
+				for _, metric := range metrics {
+					sample, ok := measurement.Sample(metric, types.SideNone)
+					So(ok, ShouldBeTrue)
+
+					if metric == types.MetricNet {
+						So(sample.Unit, ShouldEqual, types.UnitQuoteCurrency)
+						So(sample.Normalized, ShouldBeNil)
+						continue
+					}
+
+					So(sample.Unit, ShouldEqual, types.UnitDimensionless)
+
+					if sample.Raw == 0 {
+						So(sample.Normalized, ShouldBeNil)
+						continue
+					}
+
+					So(sample.Normalized, ShouldNotBeNil)
+					So(*sample.Normalized, ShouldEqual, sample.Raw)
 				}
-
-				So(measurement.Unit, ShouldEqual, types.UnitDimensionless)
-
-				if measurement.Raw == 0 {
-					So(measurement.Normalized, ShouldBeNil)
-					continue
-				}
-
-				So(measurement.Normalized, ShouldNotBeNil)
-				So(*measurement.Normalized, ShouldEqual, measurement.Raw)
 			}
 
 			outcomes[proof.name] = marketOutcome{

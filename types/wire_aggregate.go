@@ -19,24 +19,21 @@ type wireKey struct {
 wireGroup is one source×symbol×at observation assembled for the compact UI wire.
 */
 type wireGroup struct {
-	source   SourceType
-	stream   StreamType
-	symbol   string
-	at       time.Time
-	maturity float64
-	validity MeasurementValidity
-	scale    ScaleReference
-	metrics  datura.Map[any]
+	source            SourceType
+	symbol            string
+	at                time.Time
+	maturity          float64
+	validity          MeasurementValidity
+	scale             ScaleReference
+	metrics           datura.Map[any]
+	normalizedMetrics datura.Map[any]
 }
 
 /*
-AggregateMeasurements collapses flat typed measurement rows into one compact map
-per source×symbol×at observation. Metric names become keys under metrics;
-directional values that share a metric name keep their side as metric:side so
-buy and sell intensities are not clobbered. Fit-parameter epochs keep their own
-at and scale beside the live intensity epoch so the UI can reconstruct decay
-curves. Thesis and evidence graphs keep the flat typed rows; only the UI publish
-path uses this projection.
+AggregateMeasurements projects Thesis Measurements onto the compact UI wire:
+one frame per source×symbol×at with metrics and normalized_metrics maps.
+Thesis already stores that shape; this copies candidates (latest epoch plus
+fit-parameter rows) into datura frames.
 */
 func AggregateMeasurements(measurements []*Measurement) []datura.Map[any] {
 	candidates := wireCandidates(measurements)
@@ -49,7 +46,9 @@ func AggregateMeasurements(measurements []*Measurement) []datura.Map[any] {
 	order := make([]wireKey, 0, len(candidates))
 
 	for _, measurement := range candidates {
-		if measurement == nil || measurement.Symbol == "" || measurement.Metric == "" {
+		if measurement == nil ||
+			measurement.Symbol == "" ||
+			len(measurement.Metrics) == 0 {
 			continue
 		}
 
@@ -119,14 +118,14 @@ func wireGroupKey(measurement *Measurement) wireKey {
 
 func newWireGroup(measurement *Measurement) *wireGroup {
 	return &wireGroup{
-		source:   measurement.Source,
-		stream:   measurement.Stream,
-		symbol:   measurement.Symbol,
-		at:       measurement.At,
-		maturity: measurement.Maturity,
-		validity: measurement.Validity,
-		scale:    measurement.Scale,
-		metrics:  make(datura.Map[any], 8),
+		source:            measurement.Source,
+		symbol:            measurement.Symbol,
+		at:                measurement.At,
+		maturity:          measurement.Maturity,
+		validity:          measurement.Validity,
+		scale:             measurement.Scale,
+		metrics:           make(datura.Map[any], len(measurement.Metrics)),
+		normalizedMetrics: make(datura.Map[any], len(measurement.Metrics)),
 	}
 }
 
@@ -145,7 +144,13 @@ func (group *wireGroup) accumulate(measurement *Measurement) {
 		group.validity = measurement.Validity
 	}
 
-	group.metrics[wireMetricKey(measurement)] = measurement.Raw
+	for key, sample := range measurement.Metrics {
+		group.metrics[key] = sample.Raw
+
+		if sample.Normalized != nil {
+			group.normalizedMetrics[key] = *sample.Normalized
+		}
+	}
 }
 
 func (group *wireGroup) frame() datura.Map[any] {
@@ -154,10 +159,6 @@ func (group *wireGroup) frame() datura.Map[any] {
 		"symbol":  group.symbol,
 		"at":      group.at,
 		"metrics": group.metrics,
-	}
-
-	if group.stream != "" {
-		frame["stream"] = group.stream
 	}
 
 	if group.maturity > 0 {
@@ -174,13 +175,9 @@ func (group *wireGroup) frame() datura.Map[any] {
 		frame["scale"] = group.scale
 	}
 
-	return frame
-}
-
-func wireMetricKey(measurement *Measurement) string {
-	if measurement.Side == SideNone || measurement.Side == "" {
-		return string(measurement.Metric)
+	if len(group.normalizedMetrics) > 0 {
+		frame["normalized_metrics"] = group.normalizedMetrics
 	}
 
-	return string(measurement.Metric) + ":" + string(measurement.Side)
+	return frame
 }

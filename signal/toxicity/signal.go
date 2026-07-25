@@ -98,7 +98,7 @@ func (signal *Signal) onTicker(message any) any {
 		return nil
 	}
 
-	signal.thesis.Publish(types.SourceToxicity, measurements)
+	signal.thesis.Replace(types.SourceToxicity, measurements)
 
 	return signal.thesis
 }
@@ -116,7 +116,7 @@ func (signal *Signal) onBook(message any) any {
 		return nil
 	}
 
-	signal.thesis.Publish(types.SourceToxicity, measurements)
+	signal.thesis.Replace(types.SourceToxicity, measurements)
 
 	return signal.thesis
 }
@@ -134,7 +134,7 @@ func (signal *Signal) onTrade(message any) any {
 		return nil
 	}
 
-	signal.thesis.Publish(types.SourceToxicity, measurements)
+	signal.thesis.Replace(types.SourceToxicity, measurements)
 
 	return signal.thesis
 }

@@ -11,6 +11,10 @@ describe("drawers", () => {
 		expect(typeof drawers.decisions.paint).toBe("function");
 		expect(drawers.resonance.paint.input).toBe("latest");
 		expect(drawers.manifold.paint.input).toBe("latest");
+		expect(drawers.manifold_particles.paint.input).toBe("latest");
+		expect(drawers.manifold_wave.paint.input).toBe("latest");
+		expect(typeof drawers.manifold_particles.paint.paint).toBe("function");
+		expect(typeof drawers.manifold_wave.paint.paint).toBe("function");
 		expect(drawers.cognition.paint.input).toBe("latest");
 		expect(drawers.resonance.keys?.prediction.input).toBe("history");
 		expect(drawers.causal.keys?.allocation.input).toBe("latest");

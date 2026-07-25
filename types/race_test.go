@@ -24,11 +24,13 @@ func TestThesisPublishRaceStress(t *testing.T) {
 			for publishIndex := range 128 {
 				thesis.Publish(SourceHawkes, []*Measurement{{
 					Source: SourceHawkes,
-					Metric: MetricEventCount,
 					Symbol: "BTC/USD",
-					Side:   SideBuy,
-					Raw:    float64(index*128 + publishIndex),
 					At:     at,
+					Metrics: map[string]MetricSample{
+						MetricKey(MetricEventCount, SideBuy): {
+							Raw: float64(index*128 + publishIndex),
+						},
+					},
 				}})
 			}
 		}(writerIndex)

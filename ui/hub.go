@@ -11,9 +11,11 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -22,8 +24,19 @@ cacheKeys lists every replaceable UI stream retained for reconnect replay.
 var cacheKeys = []string{
 	"balances", "executions", "instruments", "positions", "tick",
 	"holdings", "stops", "measurements", "decisions", "lifecycle", "findings",
-	"causal", "resonance", "manifold", "cognition", "diagnostics",
+	"causal", "resonance", "manifold", "manifold_particles", "manifold_wave",
+	"cognition", "diagnostics",
 }
+
+var cacheKeySet = func() map[string]struct{} {
+	set := make(map[string]struct{}, len(cacheKeys))
+
+	for _, key := range cacheKeys {
+		set[key] = struct{}{}
+	}
+
+	return set
+}()
 
 const clientQueueDepth = 64
 
@@ -37,7 +50,7 @@ type cachedFrame struct {
 
 /*
 clientSession owns one websocket writer with a bounded latest-by-key queue.
-A stalled client is disconnected when its queue cannot absorb a replacement.
+A full queue drops the frame for that client without muting the session.
 */
 type clientSession struct {
 	conn   *websocket.Conn
@@ -47,7 +60,7 @@ type clientSession struct {
 }
 
 /*
-Hub owns the dashboard websocket and forwards typed backend frames to clients.
+Hub owns the dashboard websocket and forwards flat JSON frames to clients.
 Each client has a bounded latest-by-key writer queue managed by the hub loop.
 Publish coalesces replaceable state by key, assigns a generation, and fans out
 only to registered clients so one slow peer cannot block the drain.
@@ -206,31 +219,34 @@ func (hub *Hub) applyClient(payload []byte) {
 	types.SetFocus(inbound.Symbol)
 }
 
+/*
+retain splits a flat frame into latest-by-key cache entries with one top-level
+key walk. Probing every cache key with GetBytes re-searched fat manifold
+frames ~17× and saturated the hub drain (measured ~1.6ms/frame).
+*/
 func (hub *Hub) retain(generation uint64, msg []byte) []cachedFrame {
-	frame, err := unwrapWirePayload(msg)
+	retained := make([]cachedFrame, 0, 1)
 
-	if err != nil || frame == nil {
-		return nil
-	}
-
-	retained := make([]cachedFrame, 0, len(cacheKeys))
-
-	for _, key := range cacheKeys {
-		value, ok := frame[key]
-
-		if !ok {
-			continue
+	err := utils.EachKey(msg, func(key string, raw []byte) bool {
+		if _, ok := cacheKeySet[key]; !ok || len(raw) == 0 {
+			return true
 		}
 
-		payload, err := sonic.Marshal(map[string]sonic.NoCopyRawMessage{key: value})
-
-		if err != nil || len(payload) == 0 {
-			continue
-		}
+		payload := make([]byte, 0, len(key)+len(raw)+5)
+		payload = append(payload, `{"`...)
+		payload = append(payload, key...)
+		payload = append(payload, `":`...)
+		payload = append(payload, raw...)
+		payload = append(payload, '}')
 
 		entry := cachedFrame{generation: generation, payload: payload}
 		hub.cache.Store(key, entry)
 		retained = append(retained, entry)
+		return true
+	})
+
+	if err != nil {
+		return nil
 	}
 
 	return retained
@@ -274,8 +290,18 @@ func (hub *Hub) fanout(frame cachedFrame) {
 		select {
 		case session.queue <- frame:
 		default:
-			hub.dropped.Add(1)
-			session.cancel()
+			// Drop the frame for this client only. Cancelling the write loop
+			// while leaving the socket open freezes the UI until a manual
+			// refresh; saturation must not mute a live session.
+			total := hub.dropped.Add(1)
+
+			if total == 1 || total%64 == 0 {
+				errnie.Error(errnie.Err(
+					errnie.TooManyRequests,
+					"ui hub: client queue saturated; dropped frames",
+					nil,
+				))
+			}
 		}
 
 		return true
@@ -311,8 +337,6 @@ func (hub *Hub) replay(session *clientSession) {
 		case session.queue <- entry:
 		default:
 			hub.dropped.Add(1)
-			session.cancel()
-			return
 		}
 	}
 }
@@ -327,7 +351,13 @@ func (hub *Hub) writeWallet(session *clientSession) {
 		return
 	}
 
-	frame := hub.balance.Frame()
+	frame, err := hub.balance.Frame()
+
+	if err != nil {
+		errnie.Error(err)
+
+		return
+	}
 
 	if len(frame) == 0 {
 		return
@@ -345,8 +375,6 @@ func (hub *Hub) writeWallet(session *clientSession) {
 		case session.queue <- entry:
 		default:
 			hub.dropped.Add(1)
-			session.cancel()
-			return
 		}
 	}
 }
@@ -386,13 +414,11 @@ func (hub *Hub) writeLoop(ctx context.Context, session *clientSession) {
 				return
 			}
 
-			payload, err := wireFrame(frame)
-
-			if err != nil || len(payload) == 0 {
+			if len(frame.payload) == 0 {
 				continue
 			}
 
-			if err := hub.writeMessage(session.conn, payload); err != nil {
+			if err := hub.writeMessage(session.conn, frame.payload); err != nil {
 				session.cancel()
 				return
 			}

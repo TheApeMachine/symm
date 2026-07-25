@@ -107,7 +107,7 @@ func (thesis *Thesis) ResetTick(at time.Time, tick int64) {
 	thesis.Resonance = thesis.Resonance[:0]
 	thesis.Causal = thesis.Causal[:0]
 	thesis.cutIncomplete = false
-	clearSyncMap(thesis.Graphs)
+	// Graphs holds resident pointers (category graph); do not clear between ticks.
 	clearSyncMap(thesis.Manifold)
 	clearSyncMap(thesis.Cognition)
 	clearSyncMap(thesis.Positions)

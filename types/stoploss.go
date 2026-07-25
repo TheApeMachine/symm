@@ -233,12 +233,8 @@ func (stoploss *Stoploss) Update(evidence StopEvidence) *Stoploss {
 		return stoploss.settle("stop", "mark returned through live stop", markReturn)
 	}
 
-	if stoploss.takeProfit(evidence, markReturn) {
-		return stoploss.settle(
-			"take_profit",
-			"peak proximity with non-positive forward path",
-			markReturn,
-		)
+	if reason, ok := stoploss.takeProfit(evidence, markReturn); ok {
+		return stoploss.settle("take_profit", reason, markReturn)
 	}
 
 	return stoploss.settle("hold", "stop live; path intact", markReturn)
@@ -480,9 +476,17 @@ func (stoploss *Stoploss) breached(markReturn float64) bool {
 	return stoploss.TrailDistance > 0 && markReturn <= stoploss.StopReturn
 }
 
-func (stoploss *Stoploss) takeProfit(evidence StopEvidence, markReturn float64) bool {
+/*
+takeProfit exits near a peak only when the forward path itself is non-positive.
+High forecast residual alone is not a peak exit: miscalibration widens the
+stop band via Weight/rescale, but a still-positive calibrated return means the
+lot should ride the live floor, not cash a one-tick "peak."
+*/
+func (stoploss *Stoploss) takeProfit(
+	evidence StopEvidence, markReturn float64,
+) (reason string, ok bool) {
 	if stoploss.PeakReturn <= 0 {
-		return false
+		return "", false
 	}
 
 	band := liveWidth(evidence)
@@ -492,18 +496,18 @@ func (stoploss *Stoploss) takeProfit(evidence StopEvidence, markReturn float64) 
 	}
 
 	if stoploss.PeakReturn-markReturn > band {
-		return false
+		return "", false
 	}
 
 	if evidence.ReturnReady && evidence.ExpectedReturn <= 0 {
-		return true
+		return "peak proximity with non-positive forward path", true
 	}
 
-	if evidence.NormalizedResidual > 1 {
-		return true
+	if evidence.CausalReady && evidence.CausalExpectedReturn < 0 {
+		return "peak proximity with adverse causal path", true
 	}
 
-	return evidence.CausalReady && evidence.CausalExpectedReturn < 0
+	return "", false
 }
 
 func liveWidth(evidence StopEvidence) float64 {

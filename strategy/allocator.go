@@ -132,7 +132,7 @@ func (allocator *Allocator) size(
 
 	if askErr != nil {
 		if decision.ReservationID != "" {
-			_ = allocator.balance.Ledger().Release(decision.ReservationID)
+			_ = allocator.balance.Release(decision.ReservationID)
 			decision.ReservationID = ""
 
 			if decision.Cause != "rotation" {
@@ -241,7 +241,7 @@ func (allocator *Allocator) reserveIntent(
 		"alloc:%s:%d", decision.Symbol, decision.At.UnixNano(),
 	)
 
-	if err := allocator.balance.Ledger().Reserve(
+	if err := allocator.balance.Reserve(
 		intentID, decision.Symbol, cost, false,
 	); err != nil {
 		allocator.reject(thesis, decision, err.Error())

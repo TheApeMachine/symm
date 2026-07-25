@@ -1,19 +1,20 @@
 import { createRef } from "react";
-import type { ManifoldFrame, ResonanceFrame } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
+import type { ManifoldFrame, ResonanceFrame } from "#/collections/types";
 import {
 	finiteNumber,
-	frameAuxMatrix,
 	fluidGridDimensions,
+	frameAuxMatrix,
 	terminalFluidDisplayLatticeFromFrame,
 	terminalFluidParticlesFromFrame,
 	withSharedManifoldField,
 } from "#/components/terminal/charts-frame";
-import { aggregateFluidParticles } from "#/components/terminal/fluid-particles";
 import {
 	isFluidFieldMatrix,
 	terminalFluidFieldStats,
 } from "#/components/terminal/fluid-field";
+import { aggregateFluidParticles } from "#/components/terminal/fluid-particles";
+import { latestManifoldParticles } from "#/providers/manifold-parts";
 
 const manifoldWaitingRef = createRef<HTMLDivElement>();
 const manifoldGridRef = createRef<HTMLDivElement>();
@@ -63,7 +64,10 @@ export const paintManifoldMeta = (value: unknown, focusSymbol: string) => {
 		manifold ?? null,
 		field,
 	);
-	const particles = terminalFluidParticlesFromFrame(manifold ?? null);
+	const particles = terminalFluidParticlesFromFrame({
+		...(manifold ?? {}),
+		particles: latestManifoldParticles()?.particles ?? manifold?.particles,
+	});
 	const particleCells = aggregateFluidParticles(particles, columns, gridRows);
 	const coherence = terminalFluidFieldStats(
 		frameAuxMatrix(manifold ?? null, "psiMag2"),

@@ -65,6 +65,8 @@ export type Measurement = {
 	exitBaseline?: number;
 	categories?: Category[];
 	metrics?: Record<string, number>;
+	/** Compact-wire normalized samples keyed like metrics (metric or metric:side). */
+	normalized_metrics?: Record<string, number>;
 };
 
 /*

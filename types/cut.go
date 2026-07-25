@@ -75,14 +75,24 @@ func CloneMeasurements(rows []*Measurement) []*Measurement {
 
 		copyRow := *row
 
-		if row.Normalized != nil {
-			normalized := *row.Normalized
-			copyRow.Normalized = &normalized
-		}
-
 		if row.Uncertainty != nil {
 			uncertainty := *row.Uncertainty
 			copyRow.Uncertainty = &uncertainty
+		}
+
+		if len(row.Metrics) > 0 {
+			copyRow.Metrics = make(map[string]MetricSample, len(row.Metrics))
+
+			for key, sample := range row.Metrics {
+				copied := sample
+
+				if sample.Normalized != nil {
+					normalized := *sample.Normalized
+					copied.Normalized = &normalized
+				}
+
+				copyRow.Metrics[key] = copied
+			}
 		}
 
 		out = append(out, &copyRow)

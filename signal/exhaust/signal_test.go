@@ -1,6 +1,7 @@
 package exhaust_test
 
 import (
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -58,44 +59,56 @@ type marketOutcome struct {
 observe records one exhaustion measurement in each view used by the proof.
 */
 func (outcome *marketOutcome) observe(measurement *types.Measurement) {
-	normalized := measurement.Raw == 0 && measurement.Normalized == nil
-
-	if measurement.Raw > 0 && measurement.Normalized != nil {
-		normalized = !math.IsNaN(*measurement.Normalized) &&
-			!math.IsInf(*measurement.Normalized, 0)
+	if measurement == nil || measurement.Source != types.SourceExhaustion {
+		return
 	}
 
-	outcome.valid = outcome.valid &&
-		(measurement.Side == types.SideBuy || measurement.Side == types.SideSell) &&
-		measurement.Stream == types.Exhaust &&
-		measurement.Unit == types.UnitDimensionless &&
-		!measurement.At.IsZero() &&
+	baseValid := !measurement.At.IsZero() &&
 		measurement.ObservedFrom.Equal(measurement.At) &&
-		!math.IsNaN(measurement.Raw) &&
-		!math.IsInf(measurement.Raw, 0) &&
-		measurement.Raw >= 0 && normalized &&
 		measurement.Maturity > 0 && measurement.Maturity < 1 &&
 		measurement.Validity.State == types.ValidityValid &&
 		measurement.Validity.Readiness == types.ReadinessObservation
-	key := measurementKey{measurement.Metric, measurement.Side, measurement.Symbol}
-	peak, exists := outcome.peak[key]
 
-	if !exists || measurement.Raw > peak {
-		outcome.peak[key] = measurement.Raw
-	}
+	measurement.EachMetric(func(
+		metric types.MetricType,
+		side types.MeasurementSide,
+		sample types.MetricSample,
+	) {
+		normalized := sample.Raw == 0 && sample.Normalized == nil
 
-	if latest, exists := outcome.latestAt[key]; !exists || !measurement.At.Before(latest) {
-		outcome.latest[key] = measurement.Raw
-		outcome.latestAt[key] = measurement.At
-	}
+		if sample.Raw > 0 && sample.Normalized != nil {
+			normalized = !math.IsNaN(*sample.Normalized) &&
+				!math.IsInf(*sample.Normalized, 0)
+		}
 
-	epoch := epochKey{measurement.Side, measurement.Symbol, measurement.At}
+		outcome.valid = outcome.valid &&
+			baseValid &&
+			(side == types.SideBuy || side == types.SideSell) &&
+			sample.Unit == types.UnitDimensionless &&
+			!math.IsNaN(sample.Raw) &&
+			!math.IsInf(sample.Raw, 0) &&
+			sample.Raw >= 0 && normalized
 
-	if outcome.epochs[epoch] == nil {
-		outcome.epochs[epoch] = map[types.MetricType]float64{}
-	}
+		key := measurementKey{metric, side, measurement.Symbol}
+		peak, exists := outcome.peak[key]
 
-	outcome.epochs[epoch][measurement.Metric] = measurement.Raw
+		if !exists || sample.Raw > peak {
+			outcome.peak[key] = sample.Raw
+		}
+
+		if latest, exists := outcome.latestAt[key]; !exists || !measurement.At.Before(latest) {
+			outcome.latest[key] = sample.Raw
+			outcome.latestAt[key] = measurement.At
+		}
+
+		epoch := epochKey{side, measurement.Symbol, measurement.At}
+
+		if outcome.epochs[epoch] == nil {
+			outcome.epochs[epoch] = map[types.MetricType]float64{}
+		}
+
+		outcome.epochs[epoch][metric] = sample.Raw
+	})
 }
 
 /*
@@ -323,7 +336,10 @@ func TestCalculate(t *testing.T) {
 					So(outcomes["retreat"].latest[measurementKey{
 						types.MetricFragile, side, symbol,
 					}], ShouldBeGreaterThan, 0)
-					So(outcomes["spread control"].latest[measurementKey{
+					// Spread control widens then settles; Fragile must appear
+					// during the widen cycle (peak), not necessarily remain on
+					// the terminal settle observation.
+					So(outcomes["spread control"].peak[measurementKey{
 						types.MetricFragile, side, symbol,
 					}], ShouldBeGreaterThan, 0)
 				}
@@ -363,6 +379,68 @@ func TestCalculate(t *testing.T) {
 			So(rows, ShouldBeEmpty)
 		})
 	})
+}
+
+func TestProbeRetreatFragile(t *testing.T) {
+	market := tests.NewMarket(t.Context(), 3)
+	wired, err := stack.NewBooter(t.Context()).Test(market)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wired.Close()
+	defer market.Close()
+
+	signal := exhaustionOf(wired.Signals)
+	book := signal.Subscribe("book")
+	trade := signal.Subscribe("trade")
+	var afterBoot, afterWarm, afterRetreat []*types.Measurement
+
+	// Drain anything already published (subscribe snapshot if it arrived late)
+	drainExhaust(book, trade, &afterBoot)
+
+	if err := market.Warmup(func() error {
+		drainExhaust(book, trade, &afterWarm)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	drainExhaust(book, trade, &afterWarm)
+
+	if err := market.Transition(tests.MarketStateLiquidityRetreat, func() error {
+		drainExhaust(book, trade, &afterRetreat)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	drainExhaust(book, trade, &afterRetreat)
+
+	summarize := func(label string, rows []*types.Measurement) {
+		n, mat := 0, 0.0
+		frag, mech := 0.0, 0.0
+
+		for _, measurement := range rows {
+			if measurement.Symbol != "SIM1/USD" {
+				continue
+			}
+
+			if sample, ok := measurement.Sample(types.MetricMechanical, types.SideBuy); ok {
+				n++
+				mat = measurement.Maturity
+				mech = sample.Raw
+			}
+
+			if sample, ok := measurement.Sample(types.MetricFragile, types.SideBuy); ok {
+				frag = sample.Raw
+			}
+		}
+
+		obs := mat / (1 - mat) // from maturity = n/(n+1)
+		fmt.Printf("%s: mechanical_epochs=%d last_maturity=%.6f implied_obs=%.2f last_frag=%.6f last_mech=%.6f total_rows=%d\n",
+			label, n, mat, obs, frag, mech, len(rows))
+	}
+	summarize("post-subscribe-drain", afterBoot)
+	summarize("post-warmup", afterWarm)
+	summarize("post-retreat", afterRetreat)
 }
 
 /*

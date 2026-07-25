@@ -58,3 +58,36 @@ func TestHubPublishGeneration(t *testing.T) {
 		})
 	})
 }
+
+/*
+TestHubFanoutSaturationKeepsSessionAlive proves a full client queue drops
+frames without cancelling the write loop — mute-without-close freezes the UI.
+*/
+func TestHubFanoutSaturationKeepsSessionAlive(t *testing.T) {
+	Convey("Given a registered session whose outbound queue is already full", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		hub := NewHub(ctx, nil, nil, make(chan []byte, 1), config.UIConfig{Addr: "127.0.0.1:0"})
+		defer hub.Close()
+
+		session := &clientSession{
+			queue:  make(chan cachedFrame, 1),
+			cancel: func() {},
+			done:   make(chan struct{}),
+		}
+		session.queue <- cachedFrame{generation: 1, payload: []byte(`{"tick":1}`)}
+		hub.clients.Store(session, struct{}{})
+
+		before := hub.Dropped()
+		hub.fanout(cachedFrame{generation: 2, payload: []byte(`{"tick":2}`)})
+
+		Convey("It counts the drop and leaves the session registered", func() {
+			So(hub.Dropped(), ShouldEqual, before+1)
+
+			_, ok := hub.clients.Load(session)
+			So(ok, ShouldBeTrue)
+			So(len(session.queue), ShouldEqual, 1)
+		})
+	})
+}

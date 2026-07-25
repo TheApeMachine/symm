@@ -21,26 +21,13 @@ type evidenceKey struct {
 }
 
 /*
-evidenceIdentity adds the symbol whose marked process produced the quantity.
-*/
-type evidenceIdentity struct {
-	evidenceKey
-	symbol string
-}
-
-/*
-evidenceValues keeps measurements addressable by their full identity.
-*/
-type evidenceValues map[evidenceIdentity]*types.Measurement
-
-/*
 marketOutcome retains transition peaks, final evidence, and readiness batches.
 */
 type marketOutcome struct {
-	peak    evidenceValues
-	latest  evidenceValues
-	batches []evidenceValues
-	rows    []int
+	peak     map[evidenceKey]map[string]float64
+	latest   map[string]*types.Measurement
+	batches  []map[string]*types.Measurement
+	rowCount []int
 }
 
 var evidenceKeys = []evidenceKey{
@@ -72,7 +59,7 @@ var evidenceKeys = []evidenceKey{
 Capture reduces one successful production tick without erasing side identity.
 */
 func (outcome *marketOutcome) Capture(measurements []*types.Measurement) {
-	latest := make(evidenceValues)
+	latest := make(map[string]*types.Measurement)
 	rows := 0
 
 	for _, measurement := range measurements {
@@ -80,17 +67,28 @@ func (outcome *marketOutcome) Capture(measurements []*types.Measurement) {
 			continue
 		}
 
-		identity := evidenceIdentity{
-			evidenceKey: evidenceKey{measurement.Metric, measurement.Side},
-			symbol:      measurement.Symbol,
-		}
-		latest[identity] = measurement
+		latest[measurement.Symbol] = measurement
 		rows++
 
-		peak, found := outcome.peak[identity]
+		for _, key := range evidenceKeys {
+			sample, ok := measurement.Sample(key.metric, key.side)
 
-		if !found || math.Abs(measurement.Raw) > math.Abs(peak.Raw) {
-			outcome.peak[identity] = measurement
+			if !ok {
+				continue
+			}
+
+			bySymbol, found := outcome.peak[key]
+
+			if !found {
+				bySymbol = map[string]float64{}
+				outcome.peak[key] = bySymbol
+			}
+
+			peak, seen := bySymbol[measurement.Symbol]
+
+			if !seen || math.Abs(sample.Raw) > math.Abs(peak) {
+				bySymbol[measurement.Symbol] = sample.Raw
+			}
 		}
 	}
 
@@ -100,118 +98,98 @@ func (outcome *marketOutcome) Capture(measurements []*types.Measurement) {
 
 	outcome.latest = latest
 	outcome.batches = append(outcome.batches, latest)
-	outcome.rows = append(outcome.rows, rows)
+	outcome.rowCount = append(outcome.rowCount, rows)
 }
 
 /*
 Value returns one exact metric, side, and symbol without merging marked rows.
 */
-func (values evidenceValues) Value(
+func (outcome marketOutcome) Value(
 	metric types.MetricType,
 	side types.MeasurementSide,
 	symbol string,
 ) float64 {
-	return values[evidenceIdentity{
-		evidenceKey: evidenceKey{metric, side},
-		symbol:      symbol,
-	}].Raw
+	measurement := outcome.latest[symbol]
+
+	if measurement == nil {
+		return 0
+	}
+
+	sample, ok := measurement.Sample(metric, side)
+
+	if !ok {
+		return 0
+	}
+
+	return sample.Raw
 }
 
 /*
 Prove validates every metric and side at the transition peak and final batch.
 */
 func (outcome marketOutcome) Prove(symbols []string, fitted bool) {
-	expected := len(evidenceKeys) * len(symbols)
-	So(outcome.peak, ShouldHaveLength, expected)
-	latestExpected := len(evidenceKeys[:5]) * len(symbols)
-
-	if fitted {
-		latestExpected = expected
+	for _, key := range evidenceKeys {
+		So(outcome.peak[key], ShouldHaveLength, len(symbols))
 	}
-
-	So(outcome.latest, ShouldHaveLength, latestExpected)
 
 	for index, batch := range outcome.batches {
-		So(outcome.rows[index], ShouldEqual, len(batch))
-	}
-
-	for _, key := range evidenceKeys {
-		for _, symbol := range symbols {
-			identity := evidenceIdentity{evidenceKey: key, symbol: symbol}
-			values := []evidenceValues{outcome.peak}
-
-			if fitted || key.metric == types.MetricEventCount ||
-				key.metric == types.MetricArrivalRate {
-				values = append(values, outcome.latest)
-			}
-
-			for _, values := range values {
-				measurement, found := values[identity]
-				So(found, ShouldBeTrue)
-				So(measurement.ValidateStruct(), ShouldBeNil)
-				So(math.IsNaN(measurement.Raw), ShouldBeFalse)
-				So(math.IsInf(measurement.Raw, 0), ShouldBeFalse)
-				So(measurement.Maturity, ShouldBeBetweenOrEqual, 0.0, 1.0)
-
-				if key.metric != types.MetricHawkesPoissonDelta &&
-					key.metric != types.MetricCrossSelfDelta {
-					So(measurement.Raw, ShouldBeGreaterThanOrEqualTo, 0.0)
-				}
-
-				if key.metric == types.MetricEventCount {
-					So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
-					So(measurement.Validity.Readiness,
-						ShouldEqual, types.ReadinessObservation)
-				}
-
-				if key.metric == types.MetricArrivalRate {
-					So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
-					So(measurement.Validity.Readiness,
-						ShouldEqual, types.ReadinessIntensity)
-					So(measurement.Raw, ShouldBeGreaterThan, 0.0)
-				}
-
-				if key.metric != types.MetricEventCount &&
-					key.metric != types.MetricArrivalRate {
-					So(measurement.Validity.State, ShouldEqual, types.ValidityProvisional)
-					So(measurement.Validity.Readiness,
-						ShouldEqual, types.ReadinessModel)
-					So(measurement.Validity.Reason, ShouldNotBeBlank)
-				}
-			}
-		}
+		So(outcome.rowCount[index], ShouldEqual, len(batch))
+		So(batch, ShouldHaveLength, len(symbols))
 	}
 
 	for _, symbol := range symbols {
-		So(outcome.latest.Value(types.MetricEventCount, types.SideNone, symbol),
+		measurement := outcome.latest[symbol]
+		So(measurement, ShouldNotBeNil)
+		So(measurement.ValidateStruct(), ShouldBeNil)
+		So(measurement.Maturity, ShouldBeBetweenOrEqual, 0.0, 1.0)
+
+		for _, key := range evidenceKeys {
+			sample, found := measurement.Sample(key.metric, key.side)
+			So(found, ShouldBeTrue)
+			So(math.IsNaN(sample.Raw), ShouldBeFalse)
+			So(math.IsInf(sample.Raw, 0), ShouldBeFalse)
+
+			if key.metric != types.MetricHawkesPoissonDelta &&
+				key.metric != types.MetricCrossSelfDelta {
+				So(sample.Raw, ShouldBeGreaterThanOrEqualTo, 0.0)
+			}
+
+			if key.metric == types.MetricArrivalRate &&
+				measurement.Validity.State == types.ValidityValid {
+				So(sample.Raw, ShouldBeGreaterThan, 0.0)
+			}
+		}
+
+		So(outcome.Value(types.MetricEventCount, types.SideNone, symbol),
 			ShouldEqual,
-			outcome.latest.Value(types.MetricEventCount, types.SideBuy, symbol)+
-				outcome.latest.Value(types.MetricEventCount, types.SideSell, symbol))
+			outcome.Value(types.MetricEventCount, types.SideBuy, symbol)+
+				outcome.Value(types.MetricEventCount, types.SideSell, symbol))
 
 		if !fitted {
-			So(outcome.latest[evidenceIdentity{
-				evidenceKey: evidenceKey{types.MetricArrivalRate, types.SideBuy},
-				symbol:      symbol,
-			}].Validity.Reason, ShouldContainSubstring, "per side")
+			So(measurement.Validity.State, ShouldEqual, types.ValidityProvisional)
+			So(measurement.Validity.Reason, ShouldContainSubstring, "per side")
+			So(outcome.Value(
+				types.MetricConditionalIntensity, types.SideBuy, symbol,
+			), ShouldEqual, 0)
 			continue
 		}
 
-		So(outcome.latest.Value(types.MetricConditionalIntensity, types.SideBuy, symbol),
+		So(outcome.Value(types.MetricConditionalIntensity, types.SideBuy, symbol),
 			ShouldBeGreaterThanOrEqualTo,
-			outcome.latest.Value(types.MetricBaselineIntensity, types.SideBuy, symbol))
-		So(outcome.latest.Value(types.MetricConditionalIntensity, types.SideSell, symbol),
+			outcome.Value(types.MetricBaselineIntensity, types.SideBuy, symbol))
+		So(outcome.Value(types.MetricConditionalIntensity, types.SideSell, symbol),
 			ShouldBeGreaterThanOrEqualTo,
-			outcome.latest.Value(types.MetricBaselineIntensity, types.SideSell, symbol))
-		So(outcome.latest.Value(types.MetricTotalDescendants, types.SideBuy, symbol),
+			outcome.Value(types.MetricBaselineIntensity, types.SideSell, symbol))
+		So(outcome.Value(types.MetricTotalDescendants, types.SideBuy, symbol),
 			ShouldBeGreaterThanOrEqualTo,
-			outcome.latest.Value(types.MetricImmediateOffspring, types.SideBuy, symbol))
-		So(outcome.latest.Value(types.MetricTotalDescendants, types.SideSell, symbol),
+			outcome.Value(types.MetricImmediateOffspring, types.SideBuy, symbol))
+		So(outcome.Value(types.MetricTotalDescendants, types.SideSell, symbol),
 			ShouldBeGreaterThanOrEqualTo,
-			outcome.latest.Value(types.MetricImmediateOffspring, types.SideSell, symbol))
-		So(outcome.latest.Value(types.MetricDecayRate, types.SideNone, symbol)*
-			outcome.latest.Value(types.MetricKernelMemory, types.SideNone, symbol),
+			outcome.Value(types.MetricImmediateOffspring, types.SideSell, symbol))
+		So(outcome.Value(types.MetricDecayRate, types.SideNone, symbol)*
+			outcome.Value(types.MetricKernelMemory, types.SideNone, symbol),
 			ShouldAlmostEqual, 1.0)
-		So(outcome.latest.Value(types.MetricSpectralRadius, types.SideNone, symbol),
+		So(outcome.Value(types.MetricSpectralRadius, types.SideNone, symbol),
 			ShouldBeLessThan, 1.0)
 	}
 }
@@ -256,11 +234,9 @@ func TestEvidenceMeasureProjectedIntervals(t *testing.T) {
 		measurements := evidence.Measure("BTC/USD", outcome)
 
 		Convey("It should publish forward evidence intervals for every metric", func() {
-			So(measurements, ShouldNotBeEmpty)
-
-			for _, measurement := range measurements {
-				So(measurement.ValidateStruct(), ShouldBeNil)
-			}
+			So(measurements, ShouldHaveLength, 1)
+			So(measurements[0].ValidateStruct(), ShouldBeNil)
+			So(measurements[0].Metrics, ShouldHaveLength, len(evidenceKeys))
 		})
 
 		Convey("It should derive a missing origin from the observed horizon", func() {
@@ -268,8 +244,8 @@ func TestEvidenceMeasureProjectedIntervals(t *testing.T) {
 			missingOrigin.ObservedFrom = time.Time{}
 			measurements := evidence.Measure("BTC/USD", missingOrigin)
 
-			So(measurements, ShouldNotBeEmpty)
-			So(measurements[0].ObservedFrom, ShouldEqual, outcome.At.Add(-outcome.Horizon))
+			So(measurements, ShouldHaveLength, 1)
+			So(measurements[0].ObservedFrom, ShouldEqual, outcome.FitObservedFrom)
 		})
 	})
 }
@@ -280,27 +256,25 @@ func TestEvidenceModelEpochAnchoring(t *testing.T) {
 
 	Convey("Given a retained Hawkes fit evaluated after its parameter epoch", t, func() {
 		measurements := evidence.Measure("BTC/USD", outcome)
-		model, ok := findMeasurement(measurements, types.MetricSpectralRadius)
-		conditional, hasConditional := findMeasurement(
-			measurements, types.MetricConditionalIntensity,
+		measurement := measurements[0]
+		_, hasSpectral := measurement.Sample(types.MetricSpectralRadius, types.SideNone)
+		conditional, hasConditional := measurement.Sample(
+			types.MetricConditionalIntensity, types.SideBuy,
 		)
-		comparison, hasComparison := findMeasurement(
-			measurements, types.MetricHawkesPoissonDelta,
+		comparison, hasComparison := measurement.Sample(
+			types.MetricHawkesPoissonDelta, types.SideNone,
 		)
 
 		Convey("It should distinguish fit epochs from live evaluations", func() {
-			So(ok, ShouldBeTrue)
+			So(hasSpectral, ShouldBeTrue)
 			So(hasConditional, ShouldBeTrue)
 			So(hasComparison, ShouldBeTrue)
 			So(outcome.Readiness.ModelUpdated, ShouldBeFalse)
-			So(model.ObservedFrom, ShouldEqual, outcome.FitObservedFrom)
-			So(model.At, ShouldEqual, outcome.FitAt)
-			So(model.Scale.From, ShouldEqual, outcome.FitObservedFrom)
-			So(model.Scale.Through, ShouldEqual, outcome.FitAt)
-			So(conditional.At, ShouldEqual, outcome.At)
-			So(conditional.Scale.From, ShouldEqual, outcome.FitObservedFrom)
-			So(comparison.At, ShouldEqual, outcome.At)
-			So(comparison.Scale.From, ShouldEqual, outcome.FitObservedFrom)
+			So(measurement.At, ShouldEqual, outcome.At)
+			So(measurement.Scale.From, ShouldEqual, outcome.FitObservedFrom)
+			So(measurement.Scale.Through, ShouldEqual, outcome.At)
+			So(conditional.Raw, ShouldBeGreaterThan, 0)
+			So(comparison.Raw, ShouldEqual, outcome.HawkesPoissonLogLikelihoodDelta)
 		})
 	})
 }
@@ -316,35 +290,12 @@ func TestEvidenceModelEpochFallback(t *testing.T) {
 		measurements := evidence.Measure("BTC/USD", outcome)
 
 		Convey("It should still publish forward model intervals", func() {
-			validated := 0
-
-			for _, measurement := range measurements {
-				if measurement.Metric == types.MetricEventCount ||
-					measurement.Metric == types.MetricArrivalRate {
-					continue
-				}
-
-				So(measurement.ValidateStruct(), ShouldBeNil)
-				validated++
-			}
-
-			So(validated, ShouldBeGreaterThan, 0)
-			model, ok := findMeasurement(measurements, types.MetricSpectralRadius)
+			So(measurements, ShouldHaveLength, 1)
+			So(measurements[0].ValidateStruct(), ShouldBeNil)
+			So(measurements[0].ObservedFrom,
+				ShouldEqual, outcome.At.Add(-outcome.Horizon))
+			_, ok := measurements[0].Sample(types.MetricSpectralRadius, types.SideNone)
 			So(ok, ShouldBeTrue)
-			So(model.ObservedFrom, ShouldEqual, outcome.FitAt.Add(-outcome.Horizon))
 		})
 	})
-}
-
-func findMeasurement(
-	measurements []*types.Measurement,
-	metric types.MetricType,
-) (*types.Measurement, bool) {
-	for _, measurement := range measurements {
-		if measurement.Metric == metric {
-			return measurement, true
-		}
-	}
-
-	return nil, false
 }

@@ -67,9 +67,9 @@ func TestCalculateWiresFocusedPeerOnAltBatch(t *testing.T) {
 
 			select {
 			case frame := <-ui:
-				var envelope types.WireEnvelope
-				So(sonic.Unmarshal(frame, &envelope), ShouldBeNil)
-				So(envelope.Payload["measurements"], ShouldNotBeNil)
+				var decoded map[string]any
+				So(sonic.Unmarshal(frame, &decoded), ShouldBeNil)
+				So(decoded["measurements"], ShouldNotBeNil)
 			case <-time.After(time.Second):
 				So("ui frame", ShouldEqual, "received")
 			}

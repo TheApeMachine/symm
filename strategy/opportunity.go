@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -208,6 +209,24 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
 				*forecast, 0, "phase_opposition",
 				"phase dial attractor conflicts with cognitive buy: "+reading.PhaseClass,
+			))
+			continue
+		}
+
+		trap := logic.TrapShare(thesis, forecast.Symbol)
+
+		if trap.Dominates() {
+			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
+				*forecast, 0, "trap_dominant",
+				"trap evidence dominates opportunity mass: "+trap.Family,
+			))
+			continue
+		}
+
+		if _, dominates := logic.CategoryTrap(thesis, forecast.Symbol); dominates {
+			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
+				*forecast, 0, "category_trap_dominant",
+				"category graph trap/contradict structure dominates opportunity",
 			))
 			continue
 		}

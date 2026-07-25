@@ -9,8 +9,8 @@ import (
 
 /*
 Evidence maps estimator output onto the shared numerical measurement contract.
-It emits separate measurements because model parameters with different units,
-sides, and subjects must remain independently addressable by logic.
+It emits one source×symbol row whose Metrics map keeps every Hawkes quantity
+independently addressable by logic and UI wire consumers.
 */
 type Evidence struct {
 	normalize normalizer
@@ -24,274 +24,281 @@ func NewEvidence() *Evidence {
 }
 
 /*
-Measure emits empirical evidence first, then conditional intensities and the
-retained fit once HawkesFit is true. Static parameters stay anchored to their
-fit epoch while likelihood comparisons use the current evaluation interval.
+Measure emits the complete Hawkes metric set every observation. Arrival rates,
+conditional intensities, and fit parameters publish as zero with provisional
+validity until Intensity / HawkesFit readiness; static parameters stay anchored
+to their fit epoch while likelihood comparisons use the evaluation interval.
 */
 func (evidence *Evidence) Measure(
 	symbol string,
 	outcome excitation.Outcome,
 ) []*types.Measurement {
-	measurements := []*types.Measurement{
-		evidence.observation(
-			symbol,
-			outcome,
-			types.MetricEventCount,
-			types.SubjectTradeArrivals,
-			types.SideNone,
-			types.UnitCount,
-			float64(outcome.EventCount),
-		),
-		evidence.observation(
-			symbol,
-			outcome,
-			types.MetricEventCount,
-			types.SubjectTradeArrivals,
-			types.SideBuy,
-			types.UnitCount,
-			float64(outcome.BuyEventCount),
-		),
-		evidence.observation(
-			symbol,
-			outcome,
-			types.MetricEventCount,
-			types.SubjectTradeArrivals,
-			types.SideSell,
-			types.UnitCount,
-			float64(outcome.SellEventCount),
-		),
-	}
-
-	if !outcome.Readiness.Intensity {
-		return measurements
-	}
-
-	measurements = append(measurements,
-		evidence.intensity(
-			symbol, outcome, types.SideBuy, outcome.BuyArrivalRate,
-		),
-		evidence.intensity(
-			symbol, outcome, types.SideSell, outcome.SellArrivalRate,
-		),
-	)
-
-	if !outcome.Readiness.HawkesFit {
-		return measurements
-	}
-
-	measurements = append(measurements,
-		evidence.conditional(
-			symbol, outcome, types.SideBuy, outcome.Fit.IntensityX,
-		),
-		evidence.conditional(
-			symbol, outcome, types.SideSell, outcome.Fit.IntensityY,
-		),
-	)
-
-	return append(measurements, evidence.model(symbol, outcome)...)
-}
-
-/*
-observation builds empirical Hawkes evidence from event counts so observations
-remain distinct from fitted estimates.
-*/
-func (evidence *Evidence) observation(
-	symbol string,
-	outcome excitation.Outcome,
-	metric types.MetricType,
-	subject types.SubjectType,
-	side types.MeasurementSide,
-	unit types.MeasurementUnit,
-	raw float64,
-) *types.Measurement {
-	return evidence.measurement(symbol, outcome, metric, subject, side, unit, raw,
-		types.MeasurementValidity{
-			State:     types.ValidityValid,
-			Readiness: types.ReadinessObservation,
+	from, through := evidence.observationInterval(outcome)
+	measurement := &types.Measurement{
+		Source:       types.SourceHawkes,
+		Symbol:       symbol,
+		At:           through,
+		ObservedFrom: from,
+		Horizon:      through.Sub(from),
+		Maturity:     outcome.Maturity,
+		Validity:     evidence.validity(outcome),
+		Scale: types.ScaleReference{
+			Kind:    types.ScaleObservationWindow,
+			From:    from,
+			Through: through,
 		},
-	)
-}
-
-/*
-intensity builds arrival-intensity evidence only when the process has
-sufficient readiness.
-*/
-func (evidence *Evidence) intensity(
-	symbol string,
-	outcome excitation.Outcome,
-	side types.MeasurementSide,
-	raw float64,
-) *types.Measurement {
-	reason := outcome.Readiness.Reason
+		Metrics: map[string]types.MetricSample{},
+	}
 
 	if outcome.Readiness.HawkesFit {
-		reason = ""
-	}
-
-	return evidence.measurement(
-		symbol,
-		outcome,
-		types.MetricArrivalRate,
-		types.SubjectTradeArrivals,
-		side,
-		types.UnitEventsPerSecond,
-		raw,
-		types.MeasurementValidity{
-			State:     types.ValidityValid,
-			Readiness: types.ReadinessIntensity,
-			Reason:    reason,
-		},
-	)
-}
-
-/*
-conditional builds conditional-intensity evidence from the retained Hawkes fit
-so current excitation remains explicit.
-*/
-func (evidence *Evidence) conditional(
-	symbol string,
-	outcome excitation.Outcome,
-	side types.MeasurementSide,
-	raw float64,
-) *types.Measurement {
-	measurement := evidence.measurement(
-		symbol,
-		outcome,
-		types.MetricConditionalIntensity,
-		types.SubjectHawkesProcess,
-		side,
-		types.UnitEventsPerSecond,
-		raw,
-		types.MeasurementValidity{
-			State:     types.ValidityProvisional,
-			Readiness: types.ReadinessModel,
-			Reason:    outcome.Readiness.Reason,
-		},
-	)
-	evidence.applyFitEvaluation(measurement, outcome)
-
-	return measurement
-}
-
-/*
-model publishes fitted Hawkes parameters and current fit-quality comparisons
-without assigning the evaluation statistics to the older parameter epoch.
-*/
-func (evidence *Evidence) model(
-	symbol string,
-	outcome excitation.Outcome,
-) []*types.Measurement {
-	return []*types.Measurement{
-		evidence.modelValue(symbol, outcome, types.MetricBaselineIntensity,
-			types.SubjectHawkesProcess, types.SideBuy,
-			types.UnitEventsPerSecond, outcome.Fit.MuX),
-		evidence.modelValue(symbol, outcome, types.MetricBaselineIntensity,
-			types.SubjectHawkesProcess, types.SideSell,
-			types.UnitEventsPerSecond, outcome.Fit.MuY),
-		evidence.modelValue(symbol, outcome, types.MetricExcitationAmplitude,
-			types.SubjectHawkesKernel, types.SideBuyToBuy,
-			types.UnitEventsPerSecond, outcome.Fit.AlphaXX),
-		evidence.modelValue(symbol, outcome, types.MetricExcitationAmplitude,
-			types.SubjectHawkesKernel, types.SideSellToBuy,
-			types.UnitEventsPerSecond, outcome.Fit.AlphaXY),
-		evidence.modelValue(symbol, outcome, types.MetricExcitationAmplitude,
-			types.SubjectHawkesKernel, types.SideBuyToSell,
-			types.UnitEventsPerSecond, outcome.Fit.AlphaYX),
-		evidence.modelValue(symbol, outcome, types.MetricExcitationAmplitude,
-			types.SubjectHawkesKernel, types.SideSellToSell,
-			types.UnitEventsPerSecond, outcome.Fit.AlphaYY),
-		evidence.modelValue(symbol, outcome, types.MetricDecayRate,
-			types.SubjectHawkesKernel, types.SideNone,
-			types.UnitInverseSecond, outcome.Fit.Beta),
-		evidence.modelValue(symbol, outcome, types.MetricKernelMemory,
-			types.SubjectHawkesKernel, types.SideNone,
-			types.UnitSecond, 1/outcome.Fit.Beta),
-		evidence.modelValue(symbol, outcome, types.MetricSpectralRadius,
-			types.SubjectHawkesProcess, types.SideNone,
-			types.UnitDimensionless, outcome.Fit.SpectralRadius),
-		evidence.modelValue(symbol, outcome, types.MetricHawkesPoissonDelta,
-			types.SubjectHawkesFit, types.SideNone,
-			types.UnitNat, outcome.HawkesPoissonLogLikelihoodDelta),
-		evidence.modelValue(symbol, outcome, types.MetricCrossSelfDelta,
-			types.SubjectHawkesFit, types.SideNone,
-			types.UnitNat, outcome.CrossSelfLogLikelihoodDelta),
-		evidence.modelValue(symbol, outcome, types.MetricImmediateOffspring,
-			types.SubjectHawkesProcess, types.SideBuy,
-			types.UnitDimensionless, outcome.ImmediateBuyOffspring),
-		evidence.modelValue(symbol, outcome, types.MetricImmediateOffspring,
-			types.SubjectHawkesProcess, types.SideSell,
-			types.UnitDimensionless, outcome.ImmediateSellOffspring),
-		evidence.modelValue(symbol, outcome, types.MetricTotalDescendants,
-			types.SubjectHawkesProcess, types.SideBuy,
-			types.UnitDimensionless, outcome.TotalBuyDescendants),
-		evidence.modelValue(symbol, outcome, types.MetricTotalDescendants,
-			types.SubjectHawkesProcess, types.SideSell,
-			types.UnitDimensionless, outcome.TotalSellDescendants),
-	}
-}
-
-/*
-modelValue anchors parameters to their fit epoch and likelihood comparisons to
-the current stream on which that retained fit was evaluated.
-*/
-func (evidence *Evidence) modelValue(
-	symbol string,
-	outcome excitation.Outcome,
-	metric types.MetricType,
-	subject types.SubjectType,
-	side types.MeasurementSide,
-	unit types.MeasurementUnit,
-	raw float64,
-) *types.Measurement {
-	measurement := evidence.measurement(symbol, outcome, metric, subject, side, unit, raw,
-		types.MeasurementValidity{
-			State:     types.ValidityProvisional,
-			Readiness: types.ReadinessModel,
-			Reason:    outcome.Readiness.Reason,
-		},
-	)
-	if subject == types.SubjectHawkesFit {
 		evidence.applyFitEvaluation(measurement, outcome)
-
-		return measurement
 	}
 
-	evidence.applyFitEpoch(measurement, outcome)
+	evidence.putObservations(measurement, outcome)
+	evidence.putIntensities(measurement, outcome)
+	evidence.putConditionals(measurement, outcome)
+	evidence.putModel(measurement, outcome)
 
-	return measurement
+	return []*types.Measurement{measurement}
 }
 
 /*
-applyFitEpoch anchors fitted parameters to their retained interval, deriving a
-missing origin from the observation horizon without moving the fit epoch.
+validity summarizes estimator readiness for the merged Hawkes row.
 */
-func (evidence *Evidence) applyFitEpoch(
+func (evidence *Evidence) validity(
+	outcome excitation.Outcome,
+) types.MeasurementValidity {
+	if outcome.Readiness.HawkesFit {
+		return types.MeasurementValidity{
+			State:     types.ValidityProvisional,
+			Readiness: types.ReadinessModel,
+			Reason:    outcome.Readiness.Reason,
+		}
+	}
+
+	validity := types.MeasurementValidity{
+		State:     types.ValidityProvisional,
+		Readiness: types.ReadinessIntensity,
+		Reason:    outcome.Readiness.Reason,
+	}
+
+	if outcome.Readiness.Intensity {
+		validity.State = types.ValidityValid
+	}
+
+	return validity
+}
+
+/*
+putObservations records empirical event counts separately from fitted estimates.
+*/
+func (evidence *Evidence) putObservations(
 	measurement *types.Measurement,
 	outcome excitation.Outcome,
 ) {
-	from := outcome.FitObservedFrom
-	through := outcome.FitAt
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricEventCount, types.SideNone,
+		types.UnitCount, float64(outcome.EventCount),
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricEventCount, types.SideBuy,
+		types.UnitCount, float64(outcome.BuyEventCount),
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricEventCount, types.SideSell,
+		types.UnitCount, float64(outcome.SellEventCount),
+	)
+}
 
-	if from.IsZero() {
-		from = outcome.ObservedFrom
+/*
+putIntensities records arrival-intensity evidence, zeroing raw values before
+Intensity readiness while preserving metric identity.
+*/
+func (evidence *Evidence) putIntensities(
+	measurement *types.Measurement,
+	outcome excitation.Outcome,
+) {
+	buyRate := outcome.BuyArrivalRate
+	sellRate := outcome.SellArrivalRate
+
+	if !outcome.Readiness.Intensity {
+		buyRate = 0
+		sellRate = 0
 	}
 
-	if through.IsZero() {
-		through = outcome.At
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricArrivalRate, types.SideBuy,
+		types.UnitEventsPerSecond, buyRate,
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricArrivalRate, types.SideSell,
+		types.UnitEventsPerSecond, sellRate,
+	)
+}
+
+/*
+putConditionals records conditional-intensity evidence from the retained fit.
+*/
+func (evidence *Evidence) putConditionals(
+	measurement *types.Measurement,
+	outcome excitation.Outcome,
+) {
+	buyIntensity := outcome.Fit.IntensityX
+	sellIntensity := outcome.Fit.IntensityY
+
+	if !outcome.Readiness.HawkesFit {
+		buyIntensity = 0
+		sellIntensity = 0
 	}
 
-	if from.IsZero() && !through.IsZero() {
-		from = through.Add(-outcome.Horizon)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricConditionalIntensity, types.SideBuy,
+		types.UnitEventsPerSecond, buyIntensity,
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricConditionalIntensity, types.SideSell,
+		types.UnitEventsPerSecond, sellIntensity,
+	)
+}
+
+/*
+putModel publishes fitted Hawkes parameters and current fit-quality comparisons.
+*/
+func (evidence *Evidence) putModel(
+	measurement *types.Measurement,
+	outcome excitation.Outcome,
+) {
+	beta := outcome.Fit.Beta
+	kernelMemory := 0.0
+
+	if outcome.Readiness.HawkesFit && beta > 0 {
+		kernelMemory = 1 / beta
 	}
 
-	measurement.ObservedFrom = from
-	measurement.At = through
-	measurement.Horizon = through.Sub(from)
-	measurement.Scale = types.ScaleReference{
-		Kind:    types.ScaleObservationWindow,
-		From:    from,
-		Through: through,
+	if !outcome.Readiness.HawkesFit {
+		beta = 0
 	}
+
+	muX, muY := outcome.Fit.MuX, outcome.Fit.MuY
+	alphaXX, alphaXY := outcome.Fit.AlphaXX, outcome.Fit.AlphaXY
+	alphaYX, alphaYY := outcome.Fit.AlphaYX, outcome.Fit.AlphaYY
+	spectral := outcome.Fit.SpectralRadius
+	poissonDelta := outcome.HawkesPoissonLogLikelihoodDelta
+	crossSelfDelta := outcome.CrossSelfLogLikelihoodDelta
+	buyOffspring := outcome.ImmediateBuyOffspring
+	sellOffspring := outcome.ImmediateSellOffspring
+	buyDescendants := outcome.TotalBuyDescendants
+	sellDescendants := outcome.TotalSellDescendants
+
+	if !outcome.Readiness.HawkesFit {
+		muX, muY = 0, 0
+		alphaXX, alphaXY, alphaYX, alphaYY = 0, 0, 0, 0
+		spectral = 0
+		poissonDelta, crossSelfDelta = 0, 0
+		buyOffspring, sellOffspring = 0, 0
+		buyDescendants, sellDescendants = 0, 0
+	}
+
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricBaselineIntensity, types.SideBuy,
+		types.UnitEventsPerSecond, muX,
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricBaselineIntensity, types.SideSell,
+		types.UnitEventsPerSecond, muY,
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricExcitationAmplitude, types.SideBuyToBuy,
+		types.UnitEventsPerSecond, alphaXX,
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricExcitationAmplitude, types.SideSellToBuy,
+		types.UnitEventsPerSecond, alphaXY,
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricExcitationAmplitude, types.SideBuyToSell,
+		types.UnitEventsPerSecond, alphaYX,
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricExcitationAmplitude, types.SideSellToSell,
+		types.UnitEventsPerSecond, alphaYY,
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricDecayRate, types.SideNone,
+		types.UnitInverseSecond, beta,
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricKernelMemory, types.SideNone,
+		types.UnitSecond, kernelMemory,
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricSpectralRadius, types.SideNone,
+		types.UnitDimensionless, spectral,
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricHawkesPoissonDelta, types.SideNone,
+		types.UnitNat, poissonDelta,
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricCrossSelfDelta, types.SideNone,
+		types.UnitNat, crossSelfDelta,
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricImmediateOffspring, types.SideBuy,
+		types.UnitDimensionless, buyOffspring,
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricImmediateOffspring, types.SideSell,
+		types.UnitDimensionless, sellOffspring,
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricTotalDescendants, types.SideBuy,
+		types.UnitDimensionless, buyDescendants,
+	)
+	evidence.putMetric(
+		measurement, outcome,
+		types.MetricTotalDescendants, types.SideSell,
+		types.UnitDimensionless, sellDescendants,
+	)
+}
+
+/*
+putMetric writes one Hawkes sample with normalization owned by the mapper.
+*/
+func (evidence *Evidence) putMetric(
+	measurement *types.Measurement,
+	outcome excitation.Outcome,
+	metric types.MetricType,
+	side types.MeasurementSide,
+	unit types.MeasurementUnit,
+	raw float64,
+) {
+	measurement.PutMetric(metric, side, types.MetricSample{
+		Raw:        raw,
+		Normalized: evidence.normalize.value(outcome, metric, side, unit, raw),
+		Unit:       unit,
+	})
 }
 
 /*
@@ -321,45 +328,6 @@ func (evidence *Evidence) applyFitEvaluation(
 		Kind:    types.ScaleObservationWindow,
 		From:    from,
 		Through: through,
-	}
-}
-
-/*
-measurement assembles one Hawkes measurement from evidence already owned by
-the signal.
-*/
-func (evidence *Evidence) measurement(
-	symbol string,
-	outcome excitation.Outcome,
-	metric types.MetricType,
-	subject types.SubjectType,
-	side types.MeasurementSide,
-	unit types.MeasurementUnit,
-	raw float64,
-	validity types.MeasurementValidity,
-) *types.Measurement {
-	from, through := evidence.observationInterval(outcome)
-
-	return &types.Measurement{
-		Source:       types.SourceHawkes,
-		Metric:       metric,
-		Subject:      subject,
-		Stream:       types.Hawkes,
-		Symbol:       symbol,
-		Side:         side,
-		At:           through,
-		ObservedFrom: from,
-		Horizon:      through.Sub(from),
-		Unit:         unit,
-		Raw:          raw,
-		Normalized:   evidence.normalize.value(outcome, metric, side, unit, raw),
-		Maturity:     outcome.Maturity,
-		Validity:     validity,
-		Scale: types.ScaleReference{
-			Kind:    types.ScaleObservationWindow,
-			From:    from,
-			Through: through,
-		},
 	}
 }
 

@@ -92,7 +92,12 @@ func TestCalculate(t *testing.T) {
 
 				So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
 				So(measurement.Validity.Readiness, ShouldEqual, types.ReadinessObservation)
-				So(measurement.Unit, ShouldEqual, types.UnitDimensionless)
+
+				measurement.EachMetric(func(
+					_ types.MetricType, _ types.MeasurementSide, sample types.MetricSample,
+				) {
+					So(sample.Unit, ShouldEqual, types.UnitDimensionless)
+				})
 			}
 
 			outcomes[proof.name] = marketOutcome{

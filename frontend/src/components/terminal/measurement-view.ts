@@ -59,11 +59,118 @@ export const headlineReading = (
 };
 
 /*
+kernelListReadout pins the SIGNAL KERNELS meter label and bar to the source
+headline metric so compact wire maps cannot flip the readout to whichever
+metrics key was inserted first on that cut.
+*/
+export const kernelListReadout = (
+	row: Measurement,
+): { metric: string; raw: number; sample: number } => {
+	const reading = headlineReading([row], row.source);
+	const metric =
+		reading?.metric ?? headlineMetric(row.source) ?? row.metric ?? "raw";
+	const raw =
+		typeof reading?.raw === "number" && Number.isFinite(reading.raw)
+			? reading.raw
+			: 0;
+	const normalized =
+		typeof reading?.normalized === "number" &&
+		Number.isFinite(reading.normalized)
+			? reading.normalized
+			: null;
+	// Raw currency/count magnitudes have no 0–1 bound; saturating abs(raw)
+	// flattens the spark. Prefer normalized, else only trust unit-scale scores.
+	const sample = Math.max(
+		0,
+		Math.min(1, normalized ?? (Math.abs(raw) <= 1 ? Math.abs(raw) : 0)),
+	);
+
+	return { metric, raw, sample };
+};
+
+/*
 metricKey is the wire/store lookup for one metric identity, including side when
 the buffer row carries a compact metrics map (metric:side).
 */
 const metricKey = (metric: string, side = ""): string =>
 	side === "" ? metric : `${metric}:${side}`;
+
+/*
+compactReading resolves one metric from a compact wire map. When side is empty,
+directional metric:side keys are accepted and the lexicographically last match
+wins so buy-then-sell emit order matches flat-row latestByMetric behavior.
+*/
+const compactReading = (
+	measurement: Measurement,
+	metric: string,
+	side = "",
+): Measurement | undefined => {
+	const metrics = measurement.metrics;
+
+	if (metrics === undefined) {
+		return undefined;
+	}
+
+	if (side !== "") {
+		const key = metricKey(metric, side);
+		const raw = metrics[key];
+
+		if (typeof raw !== "number" || !Number.isFinite(raw)) {
+			return undefined;
+		}
+
+		const normalized = measurement.normalized_metrics?.[key];
+
+		return {
+			...measurement,
+			metric,
+			side,
+			raw,
+			normalized:
+				typeof normalized === "number" && Number.isFinite(normalized)
+					? normalized
+					: null,
+		};
+	}
+
+	const prefix = `${metric}:`;
+	let matchedKey: string | undefined;
+	let matchedRaw: number | undefined;
+
+	for (const [key, raw] of Object.entries(metrics)) {
+		if (key !== metric && !key.startsWith(prefix)) {
+			continue;
+		}
+
+		if (typeof raw !== "number" || !Number.isFinite(raw)) {
+			continue;
+		}
+
+		if (matchedKey === undefined || key > matchedKey) {
+			matchedKey = key;
+			matchedRaw = raw;
+		}
+	}
+
+	if (matchedKey === undefined || matchedRaw === undefined) {
+		return undefined;
+	}
+
+	const normalized = measurement.normalized_metrics?.[matchedKey];
+	const matchedSide =
+		matchedKey === metric ? measurement.side : matchedKey.slice(prefix.length);
+
+	return {
+		...measurement,
+		metric,
+		side: matchedSide,
+		raw: matchedRaw,
+		normalized:
+			typeof normalized === "number" && Number.isFinite(normalized)
+				? normalized
+				: null,
+	};
+};
 
 /*
 readingFromRow returns a flat metric view of one CircularBuffer row. Compact
@@ -81,19 +188,7 @@ const readingFromRow = (
 		return measurement;
 	}
 
-	const raw = measurement.metrics?.[metricKey(metric, side)];
-
-	if (typeof raw !== "number" || !Number.isFinite(raw)) {
-		return undefined;
-	}
-
-	return {
-		...measurement,
-		metric,
-		side: side === "" ? measurement.side : side,
-		raw,
-		normalized: measurement.normalized ?? null,
-	};
+	return compactReading(measurement, metric, side);
 };
 
 /*
@@ -153,6 +248,7 @@ export const rowsFromBuffer = (values: Measurement[]): Measurement[] =>
 			const split = key.indexOf(":");
 			const metric = split === -1 ? key : key.slice(0, split);
 			const side = split === -1 ? undefined : key.slice(split + 1);
+			const normalized = measurement.normalized_metrics?.[key];
 
 			return [
 				{
@@ -160,7 +256,10 @@ export const rowsFromBuffer = (values: Measurement[]): Measurement[] =>
 					metric,
 					side,
 					raw,
-					normalized: measurement.normalized ?? null,
+					normalized:
+						typeof normalized === "number" && Number.isFinite(normalized)
+							? normalized
+							: (measurement.normalized ?? null),
 				},
 			];
 		});

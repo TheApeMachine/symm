@@ -142,7 +142,7 @@ func BenchmarkExecutionAck(b *testing.B) {
 	holding := types.NewHolding(
 		context.Background(), "NEAR/USD", decimal.NewFromFloat64(1),
 	)
-	balance.holdings[holding.Symbol] = holding
+	balance.StoreHolding(holding)
 	position.orderID = "PAPER-00005"
 	raw, _ := kraken.NewExecutionFromMap(datura.Map[any]{
 		"id":       "PAPER-00006",

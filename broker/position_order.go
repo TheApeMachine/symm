@@ -98,9 +98,9 @@ func (position *Position) drainBuffered() {
 }
 
 func (position *Position) applyFill(data kraken.ExecutionData) {
-	holding := position.holding(data.Symbol)
+	symbol := position.holdingSymbol(data.Symbol)
 
-	if holding == nil {
+	if symbol == "" {
 		errnie.Error(errnie.Err(
 			errnie.Internal,
 			"position: nil holding for execution symbol "+data.Symbol,
@@ -115,41 +115,48 @@ func (position *Position) applyFill(data kraken.ExecutionData) {
 	}
 
 	data.Side = strings.ToLower(data.Side)
-	fill := position.price.RecordFill(&position.pair, holding, data, &position.fills)
-	_ = fill
+	closed := false
 
-	status, err := types.StatusFromMarket(data.ExecType)
+	if err := position.balance.Update(symbol, func(holding *types.Holding) error {
+		_ = position.price.RecordFill(&position.pair, holding, data, &position.fills)
 
-	if err != nil {
+		status, err := types.StatusFromMarket(data.ExecType)
+
+		if err != nil {
+			return err
+		}
+
+		if holding.Qty == nil || holding.Qty.Sign() <= 0 {
+			status = types.CLOSED
+		}
+
+		if data.Side == "sell" && data.OrderStatus == "filled" {
+			status = types.CLOSED
+		}
+
+		if holdErr := position.transitionHolding(holding, status); holdErr != nil {
+			return holdErr
+		}
+
+		closed = holding.Status == types.CLOSED || holding.Status == types.CANCELED
+
+		return position.setStatus(status)
+	}); err != nil {
 		errnie.Error(err)
 
 		return
 	}
 
-	if holding.Qty == nil || holding.Qty.Sign() <= 0 {
-		status = types.CLOSED
-	}
-
-	if data.Side == "sell" && data.OrderStatus == "filled" {
-		status = types.CLOSED
-	}
-
-	if holdErr := position.transitionHolding(holding, status); holdErr != nil {
-		errnie.Error(holdErr)
-	}
-
-	if setErr := position.setStatus(status); setErr != nil {
-		errnie.Error(setErr)
-	}
-
 	if position.intentID != "" && position.balance != nil {
-		_ = position.balance.Ledger().Commit(position.intentID)
+		_ = position.balance.Commit(position.intentID)
 		position.intentID = ""
 	}
 
-	position.balance.Publish()
+	if err := position.balance.Publish(); err != nil {
+		errnie.Error(err)
+	}
 
-	if holding.Status == types.CLOSED || holding.Status == types.CANCELED {
+	if closed {
 		position.Close()
 	}
 }
@@ -187,24 +194,24 @@ func (position *Position) accept(orderID string) bool {
 }
 
 /*
-holding resolves the lot for an execution symbol.
+holdingSymbol resolves which inventory key owns this execution symbol.
 */
-func (position *Position) holding(symbol string) *types.Holding {
-	if holding, ok := position.balance.LookupHolding(position.pair.Symbol); ok {
-		return holding
-	}
-
-	for _, key := range []string{symbol, position.api.Name(symbol)} {
+func (position *Position) holdingSymbol(symbol string) string {
+	for _, key := range []string{
+		position.pair.Symbol,
+		symbol,
+		position.api.Name(symbol),
+	} {
 		if key == "" {
 			continue
 		}
 
-		if holding, ok := position.balance.LookupHolding(key); ok {
-			return holding
+		if _, err := position.balance.Holding(key); err == nil {
+			return key
 		}
 	}
 
-	return nil
+	return ""
 }
 
 /*
@@ -230,14 +237,24 @@ func (position *Position) Enter(holding *types.Holding) error {
 	}
 
 	// Desk already reserved cash under intentID; Available would subtract it twice.
-	if position.intentID == "" && !position.balance.Available(amount) {
-		position.balance.DeleteHolding(holding.Symbol)
+	if position.intentID == "" {
+		ok, err := position.balance.Available(amount)
 
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"insufficient balance",
-			nil,
-		))
+		if err != nil {
+			position.balance.DeleteHolding(holding.Symbol)
+
+			return errnie.Error(err)
+		}
+
+		if !ok {
+			position.balance.DeleteHolding(holding.Symbol)
+
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"insufficient balance",
+				nil,
+			))
+		}
 	}
 
 	position.request = kraken.NewMarketOrder(
@@ -330,7 +347,7 @@ func (position *Position) Exit() error {
 
 	intentID := "exit:" + position.pair.Symbol + ":" + quantity.String()
 
-	if err := position.balance.Ledger().ReserveAsset(
+	if err := position.balance.ReserveAsset(
 		intentID, asset, quantity,
 	); err != nil {
 		return err
@@ -346,7 +363,7 @@ func (position *Position) Exit() error {
 	prior := position.status
 
 	if err := position.setStatus(types.PENDING); err != nil {
-		_ = position.balance.Ledger().Release(intentID)
+		_ = position.balance.Release(intentID)
 		position.intentID = ""
 		position.request = nil
 
@@ -354,7 +371,7 @@ func (position *Position) Exit() error {
 	}
 
 	if err := position.api.AddOrder(position.request); err != nil {
-		_ = position.balance.Ledger().Release(intentID)
+		_ = position.balance.Release(intentID)
 		position.intentID = ""
 		position.request = nil
 		_ = position.setStatus(prior)

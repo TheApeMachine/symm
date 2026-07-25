@@ -1,10 +1,10 @@
 package broker
 
 import (
-	"iter"
 	"sync"
 	"sync/atomic"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken"
@@ -13,24 +13,25 @@ import (
 )
 
 /*
-Balance owns the wallet map and reservation ledger for the Desk event loop.
-Snapshots replace the entire asset map; updates require exact next-sequence.
-mu serializes wallet mutations against concurrent Frame/strategy reads.
+Balance owns the exchange wallet map and sequence for the Desk event loop.
+It embeds Ledger and Inventory so reservations and lots stay separate owners;
+cash availability and UI projection are Balance methods over those parts.
 */
 type Balance struct {
+	*Ledger
+	*Inventory
 	status   atomic.Value
 	api      *websocket.API
 	mu       sync.RWMutex
 	data     map[string]*kraken.BalanceData
-	holdings map[string]*types.Holding
-	ledger   *Ledger
 	quote    string
 	ui       chan []byte
 	sequence int64
 }
 
 /*
-NewBalance constructs an empty wallet owner. Seed holdings are copied by value.
+NewBalance constructs an empty wallet owner. Seed holdings are copied by value
+into Inventory so restart inventory is present before the first snapshot.
 */
 func NewBalance(
 	api *websocket.API,
@@ -39,29 +40,22 @@ func NewBalance(
 	market config.MarketConfig,
 ) *Balance {
 	balance := &Balance{
-		api:      api,
-		quote:    market.QuoteCurrency,
-		data:     make(map[string]*kraken.BalanceData),
-		holdings: make(map[string]*types.Holding),
-		ledger:   NewLedger(),
-		ui:       ui,
-		sequence: 0,
+		Ledger:    NewLedger(),
+		Inventory: NewInventory(),
+		api:       api,
+		quote:     market.QuoteCurrency,
+		data:      make(map[string]*kraken.BalanceData),
+		ui:        ui,
+		sequence:  0,
 	}
 	balance.status.Store(types.INITIALIZING)
 
 	for _, holding := range holdings {
 		lot := holding
-		balance.holdings[holding.Symbol] = &lot
+		balance.StoreHolding(&lot)
 	}
 
 	return balance
-}
-
-/*
-Ledger exposes the reservation ledger so Desk and Allocator share one owner.
-*/
-func (balance *Balance) Ledger() *Ledger {
-	return balance.ledger
 }
 
 /*
@@ -91,32 +85,10 @@ func (balance *Balance) Initialize() error {
 }
 
 /*
-Status reports wallet readiness.
+Status reports wallet readiness for Desk and stack health checks.
 */
 func (balance *Balance) Status() types.Status {
-	status := balance.status.Load()
-
-	if status == nil {
-		return types.INITIALIZING
-	}
-
-	return status.(types.Status)
-}
-
-/*
-Publish enqueues Frame() on the UI channel. Saturated channels drop the frame.
-*/
-func (balance *Balance) Publish() {
-	frame := balance.Frame()
-
-	if len(frame) == 0 || balance.ui == nil {
-		return
-	}
-
-	select {
-	case balance.ui <- frame:
-	default:
-	}
+	return balance.status.Load().(types.Status)
 }
 
 /*
@@ -132,24 +104,23 @@ func (balance *Balance) BalanceAck(buf []byte) {
 
 	balance.mu.Lock()
 
-	if balance.data == nil {
-		balance.data = make(map[string]*kraken.BalanceData)
-	}
-
 	if incoming.Type == "snapshot" {
 		replaced := make(map[string]*kraken.BalanceData, len(incoming.Data))
 
 		for index := range incoming.Data {
 			row := incoming.Data[index]
-			replaced[row.Asset] = cloneBalanceRow(&row)
+			replaced[row.Asset] = balance.clone(&row)
 		}
 
 		balance.data = replaced
 		balance.sequence = incoming.Sequence
-		balance.syncWallet()
+		balance.Sync(balance.quote, balance.data, balance.ReservedAsset)
 		balance.mu.Unlock()
 		balance.status.Store(types.READY)
-		balance.Publish()
+
+		if err := balance.Publish(); err != nil {
+			errnie.Error(err)
+		}
 
 		return
 	}
@@ -168,25 +139,40 @@ func (balance *Balance) BalanceAck(buf []byte) {
 
 	for index := range incoming.Data {
 		row := incoming.Data[index]
-		balance.data[row.Asset] = cloneBalanceRow(&row)
+		balance.data[row.Asset] = balance.clone(&row)
 	}
 
 	balance.sequence = incoming.Sequence
-	balance.syncWallet()
+	balance.Sync(balance.quote, balance.data, balance.ReservedAsset)
 	balance.mu.Unlock()
 	balance.status.Store(types.READY)
-	balance.Publish()
+
+	if err := balance.Publish(); err != nil {
+		errnie.Error(err)
+	}
 }
 
+/*
+resync requests a fresh balances snapshot after a sequence gap so the wallet
+does not apply updates against an unknown baseline.
+*/
 func (balance *Balance) resync() {
 	if balance.api == nil {
+		balance.status.Store(types.ERROR)
+
 		return
 	}
 
-	errnie.Error(balance.api.SubscribeBalance())
+	if errnie.Error(balance.api.SubscribeBalance()) != nil {
+		balance.status.Store(types.ERROR)
+	}
 }
 
-func cloneBalanceRow(row *kraken.BalanceData) *kraken.BalanceData {
+/*
+clone deep-copies one wallet row so callers and the stored map never share
+mutable decimal state.
+*/
+func (balance *Balance) clone(row *kraken.BalanceData) *kraken.BalanceData {
 	cloned := *row
 
 	if row.Balance != nil {
@@ -197,13 +183,14 @@ func cloneBalanceRow(row *kraken.BalanceData) *kraken.BalanceData {
 }
 
 /*
-Get returns a copied wallet row for symbol.
+Get returns a copied wallet row for symbol so readers cannot mutate the map.
 */
 func (balance *Balance) Get(symbol string) (*kraken.BalanceData, error) {
-	if err := balance.validate(map[string]any{
+	if err := errnie.Require(map[string]any{
 		"symbol": symbol,
+		"data":   balance.data,
 	}); err != nil {
-		return nil, err
+		return nil, errnie.Error(err)
 	}
 
 	balance.mu.RLock()
@@ -219,99 +206,82 @@ func (balance *Balance) Get(symbol string) (*kraken.BalanceData, error) {
 		))
 	}
 
-	return cloneBalanceRow(row), nil
+	return balance.clone(row), nil
 }
 
 /*
-Holdings yields open non-quote inventory lots as value copies.
+Available reports whether free quote cash covers amount after live reservations.
 */
-func (balance *Balance) Holdings() iter.Seq[types.Holding] {
-	return func(yield func(types.Holding) bool) {
-		balance.mu.RLock()
-		defer balance.mu.RUnlock()
-
-		for symbol, holding := range balance.holdings {
-			if symbol != holding.Symbol {
-				continue
-			}
-
-			if holding.Status == types.CLOSED {
-				continue
-			}
-
-			if !yield(*holding) {
-				return
-			}
-		}
+func (balance *Balance) Available(amount *decimal.Decimal) (bool, error) {
+	if err := errnie.Require(map[string]any{
+		"amount": amount,
+		"data":   balance.data,
+	}); err != nil {
+		return false, errnie.Error(err)
 	}
+
+	free, err := balance.FreeCash()
+
+	if err != nil {
+		return false, err
+	}
+
+	return free.Sub(amount).Sign() >= 0, nil
 }
 
 /*
-Holding returns a value copy of an open lot.
+FreeCash is exchange quote balance minus open cash reservations on the ledger.
 */
-func (balance *Balance) Holding(symbol string) (types.Holding, error) {
-	balance.mu.RLock()
-	defer balance.mu.RUnlock()
+func (balance *Balance) FreeCash() (*decimal.Decimal, error) {
+	row, err := balance.Get(balance.quote)
 
-	holding, ok := balance.holdings[symbol]
-
-	if ok && holding.Status == types.CLOSED {
-		ok = false
-	}
-
-	if !ok {
-		return types.Holding{}, errnie.Error(errnie.Err(
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
 			errnie.NotFound,
-			"holding not found for "+symbol,
+			"quote balance not found",
+			err,
+		))
+	}
+
+	if row.Balance == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"quote balance not found",
 			nil,
 		))
 	}
 
-	return *holding, nil
+	return row.Balance.Copy().Sub(balance.ReservedCash()), nil
 }
 
 /*
-StoreHolding writes a lot into the wallet map (Desk enter / adopt path).
+AssetAvailable returns sellable base qty after subtracting sell reservations.
 */
-func (balance *Balance) StoreHolding(holding *types.Holding) {
-	balance.mu.Lock()
-	defer balance.mu.Unlock()
+func (balance *Balance) AssetAvailable(asset string) (*decimal.Decimal, error) {
+	if err := errnie.Require(map[string]any{
+		"asset": asset,
+		"data":  balance.data,
+	}); err != nil {
+		return nil, errnie.Error(err)
+	}
 
-	balance.holdings[holding.Symbol] = holding
-}
+	row, err := balance.Get(asset)
 
-/*
-DeleteHolding removes a pending lot that never filled.
-*/
-func (balance *Balance) DeleteHolding(symbol string) {
-	balance.mu.Lock()
-	defer balance.mu.Unlock()
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"asset available balance missing for "+asset,
+			err,
+		))
+	}
 
-	delete(balance.holdings, symbol)
-}
+	if row.Balance == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"asset available balance missing for "+asset,
+			nil,
+		))
+	}
 
-/*
-LookupHolding returns the live lot pointer for Desk fill/mark paths.
-*/
-func (balance *Balance) LookupHolding(symbol string) (*types.Holding, bool) {
-	balance.mu.RLock()
-	defer balance.mu.RUnlock()
-
-	holding, ok := balance.holdings[symbol]
-
-	return holding, ok
-}
-
-/*
-Symbol returns the canonical slash pair for a Kraken name via the SDK normalizer.
-*/
-func (balance *Balance) Symbol(pair string) string {
-	return balance.api.Name(pair)
-}
-
-/*
-TradeMatchesSymbol reports whether a REST trade-history pair belongs to symbol.
-*/
-func (balance *Balance) TradeMatchesSymbol(tradePair string, symbol string) bool {
-	return balance.api.Name(tradePair) == balance.api.Name(symbol)
+	return row.Balance.Copy().Sub(balance.ReservedAsset(asset)), nil
 }

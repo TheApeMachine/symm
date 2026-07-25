@@ -66,6 +66,7 @@ func (evidence Evidence) Project(
 	evidence.cognition(&projected, thesis, holding.Symbol)
 	evidence.manifold(&projected, thesis, holding.Symbol)
 	evidence.retreat(&projected, thesis, holding.Symbol)
+	evidence.category(&projected, thesis, holding.Symbol)
 
 	return projected
 }
@@ -211,6 +212,24 @@ func (evidence Evidence) manifold(
 	}
 }
 
+/*
+category taxes remaining expected return when Leads into exhaustion dominate
+Leads into opportunity on the resident category graph.
+*/
+func (evidence Evidence) category(
+	projected *types.StopEvidence,
+	thesis *types.Thesis,
+	symbol string,
+) {
+	share, dominates := logic.CategoryExhaustionLead(thesis, symbol)
+
+	if !dominates || share <= 0 || projected.ExpectedReturn <= 0 {
+		return
+	}
+
+	projected.ExpectedReturn -= share * projected.ExpectedReturn
+}
+
 func (evidence Evidence) retreat(
 	projected *types.StopEvidence,
 	thesis *types.Thesis,
@@ -223,18 +242,21 @@ func (evidence Evidence) retreat(
 			continue
 		}
 
-		if measurement.Metric == types.MetricTouchQuantity {
-			projected.RetreatReady = true
-		}
+		measurement.EachMetric(func(
+			metric types.MetricType, _ types.MeasurementSide, sample types.MetricSample,
+		) {
+			if metric == types.MetricTouchQuantity {
+				projected.RetreatReady = true
+			}
 
-		if measurement.Metric != types.MetricRetreatingQuantity ||
-			measurement.Normalized == nil {
-			continue
-		}
+			if metric != types.MetricRetreatingQuantity || sample.Normalized == nil {
+				return
+			}
 
-		if *measurement.Normalized > projected.RetreatPressure {
-			projected.RetreatPressure = *measurement.Normalized
-		}
+			if *sample.Normalized > projected.RetreatPressure {
+				projected.RetreatPressure = *sample.Normalized
+			}
+		})
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 func lrcPair() kraken.InstrumentPair {
@@ -73,6 +74,34 @@ func TestPriceQuantity(t *testing.T) {
 		Convey("Quantity rejects when budget is below instrument minimum cost", func() {
 			_, err := price.Quantity(&pair, decimal.NewFromFloat64(1))
 			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
+/*
+TestRecordFillDerivesMissingFee proves a fill without fee_usd_equiv still lands
+EntryFee from the taker schedule so wallet cash and PnL share one basis.
+*/
+func TestRecordFillDerivesMissingFee(t *testing.T) {
+	Convey("Given a buy fill that omits fee_usd_equiv", t, func() {
+		price, pair := wireLrcPrice()
+		holding := &types.Holding{
+			Symbol: pair.Symbol,
+			Qty:    decimal.NewFromFloat64(100),
+		}
+		var ledger []Fill
+
+		price.RecordFill(&pair, holding, kraken.ExecutionData{
+			ExecID:    "missing-fee",
+			Side:      "buy",
+			LastQty:   decimal.NewFromFloat64(100),
+			LastPrice: decimal.NewFromFloat64(0.05),
+		}, &ledger)
+
+		Convey("It derives EntryFee from the cached taker schedule", func() {
+			So(holding.EntryFee, ShouldNotBeNil)
+			So(holding.EntryFee.Sign(), ShouldBeGreaterThan, 0)
+			So(holding.EntryPrice.Float64(), ShouldEqual, 0.05)
 		})
 	})
 }

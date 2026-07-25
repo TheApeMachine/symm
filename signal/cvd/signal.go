@@ -195,8 +195,8 @@ func (signal *Signal) measureTrade(
 }
 
 /*
-cvdMeasurements maps signed-flow output into typed CVD measurements while
-preserving each metric's unit and normalization.
+cvdMeasurements maps signed-flow output into one source×symbol row whose
+Metrics map preserves each reading's unit and normalization.
 */
 func (signal *Signal) cvdMeasurements(
 	row kraken.TradeData,
@@ -212,6 +212,14 @@ func (signal *Signal) cvdMeasurements(
 		From:    row.Timestamp,
 		Through: row.Timestamp,
 	}
+	measurement := &types.Measurement{
+		Source:   types.SourceCVD,
+		Symbol:   row.Symbol,
+		At:       row.Timestamp,
+		Maturity: maturity,
+		Validity: validity,
+		Scale:    scale,
+	}
 	specs := []struct {
 		metric types.MetricType
 		unit   types.MeasurementUnit
@@ -225,7 +233,6 @@ func (signal *Signal) cvdMeasurements(
 		{types.MetricNetFraction, types.UnitDimensionless, output.NetFraction},
 		{types.MetricNet, types.UnitQuoteCurrency, output.Net},
 	}
-	measurements := make([]*types.Measurement, 0, len(specs))
 
 	for _, spec := range specs {
 		var normalized *float64
@@ -234,23 +241,14 @@ func (signal *Signal) cvdMeasurements(
 			normalized = types.NormalizeFinite(spec.value)
 		}
 
-		measurements = append(measurements, &types.Measurement{
-			Source:     types.SourceCVD,
-			Stream:     types.CVD,
-			Metric:     spec.metric,
-			Subject:    types.SubjectAggressorFlow,
-			Symbol:     row.Symbol,
-			At:         row.Timestamp,
-			Unit:       spec.unit,
+		measurement.PutMetric(spec.metric, types.SideNone, types.MetricSample{
 			Raw:        spec.value,
 			Normalized: normalized,
-			Maturity:   maturity,
-			Validity:   validity,
-			Scale:      scale,
+			Unit:       spec.unit,
 		})
 	}
 
-	return measurements
+	return []*types.Measurement{measurement}
 }
 
 /*

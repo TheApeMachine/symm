@@ -1,8 +1,10 @@
 package stack_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -101,6 +103,35 @@ func TestBooter_AuditHotPath(t *testing.T) {
 				} {
 					So(log, ShouldContainSubstring, `"phase":"`+phase+`"`)
 				}
+			})
+
+			Convey("measure_end bag stays near sources×symbols, not flat metrics", func() {
+				// 10 signal sources + resonance ≈ 11; 3 tape symbols → ~33.
+				// Flat-per-metric shape was ~98×symbols (~300). Cap at 80.
+				peak := 0
+
+				for line := range strings.SplitSeq(log, "\n") {
+					if !strings.Contains(line, `"phase":"measure_end"`) {
+						continue
+					}
+
+					var row struct {
+						Value struct {
+							Measurements int `json:"measurements"`
+						} `json:"value"`
+					}
+
+					if json.Unmarshal([]byte(line), &row) != nil {
+						continue
+					}
+
+					if row.Value.Measurements > peak {
+						peak = row.Value.Measurements
+					}
+				}
+
+				So(peak, ShouldBeGreaterThan, 0)
+				So(peak, ShouldBeLessThanOrEqualTo, 80)
 			})
 		})
 	})

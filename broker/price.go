@@ -480,6 +480,20 @@ func (price *Price) RecordFill(
 		fill.Fee = data.FeeUsdEquiv.Copy()
 	}
 
+	// Wallet cash already paid the venue fee. Without a fee on the fill,
+	// EntryFee stays nil, PnL omits entry friction, and UI equity undershoots
+	// initial+PnL by roughly the paid fee (measured ~entry fee on live lots).
+	if fill.Fee == nil && fill.Price != nil && fill.Qty != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"execution missing fee_usd_equiv for "+instrument.Symbol+"; deriving taker fee",
+			nil,
+		))
+
+		notional := price.Notional(instrument, fill.Price, fill.Qty)
+		fill.Fee = price.Fee(instrument, notional)
+	}
+
 	*ledger = append(*ledger, fill)
 	price.deriveEconomics(holding, *ledger)
 

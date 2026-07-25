@@ -276,6 +276,14 @@ func (market *Market) Apply(
 		if err := market.Level3.Publish("level3", payloads.level3); err != nil {
 			return errnie.Err(errnie.IO, "tests: queue level3 frame", err)
 		}
+
+		if err := market.Level3.Drain(); err != nil {
+			return errnie.Err(errnie.IO, "tests: drain level3 frames", err)
+		}
+
+		if err := market.Level3.Err(); err != nil {
+			return errnie.Err(errnie.Validation, "tests: production level3 rejected frame", err)
+		}
 	}
 
 	for _, frame := range []struct {
@@ -293,18 +301,12 @@ func (market *Market) Apply(
 		if err := market.Public.Publish(frame.channel, frame.payload); err != nil {
 			return errnie.Err(errnie.IO, "tests: queue "+frame.channel+" frame", err)
 		}
-	}
 
-	if err := market.Level3.Drain(); err != nil {
-		return errnie.Err(errnie.IO, "tests: drain level3 frames", err)
-	}
-
-	if err := market.Level3.Err(); err != nil {
-		return errnie.Err(errnie.Validation, "tests: production level3 rejected frame", err)
-	}
-
-	if err := market.Public.Drain(); err != nil {
-		return errnie.Err(errnie.IO, "tests: drain public frames", err)
+		// Drain each causal frame before releasing the next so Actor handlers
+		// cannot reorder trade→book→ticker within one market step.
+		if err := market.Public.Drain(); err != nil {
+			return errnie.Err(errnie.IO, "tests: drain "+frame.channel+" frame", err)
+		}
 	}
 
 	if err := market.Public.Err(); err != nil {

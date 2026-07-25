@@ -2,7 +2,6 @@
 
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 5000;
-const WIRE_VERSION = 1;
 
 type WorkerInbound =
 	| { type: "CONNECT"; url: string }
@@ -21,11 +20,6 @@ let socketListeners: AbortController | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let attempt = 0;
 let activeUrl = "";
-let pending: Record<string, unknown> = {};
-let pendingGeneration = new Map<string, number>();
-const appliedGeneration = new Map<string, number>();
-let rafHandle: number | null = null;
-let incompatible = false;
 let focusSymbol = "";
 
 /*
@@ -62,99 +56,6 @@ const teardownSocket = () => {
 	socket = null;
 };
 
-/*
-validateFrame accepts versioned envelopes or legacy flat frames and returns the
-payload object painters consume plus the envelope generation when present.
-*/
-const validateFrame = (
-	raw: Record<string, unknown>,
-): { payload: Record<string, unknown>; generation?: number } | null => {
-	if (typeof raw.v === "number") {
-		if (raw.v !== WIRE_VERSION) {
-			throw new Error(
-				`wire version ${raw.v} incompatible with ${WIRE_VERSION}`,
-			);
-		}
-
-		const payload = raw.payload;
-
-		if (
-			payload === null ||
-			typeof payload !== "object" ||
-			Array.isArray(payload)
-		) {
-			throw new Error("wire payload must be an object");
-		}
-
-		const generation =
-			typeof raw.g === "number" && Number.isFinite(raw.g) ? raw.g : undefined;
-
-		return {
-			payload: payload as Record<string, unknown>,
-			generation,
-		};
-	}
-
-	return { payload: raw };
-};
-
-const flushPending = () => {
-	rafHandle = null;
-
-	const frame = pending;
-	pending = {};
-
-	for (const [key, generation] of pendingGeneration) {
-		const prior = appliedGeneration.get(key) ?? 0;
-
-		if (generation >= prior) {
-			appliedGeneration.set(key, generation);
-		}
-	}
-
-	pendingGeneration = new Map();
-
-	if (Object.keys(frame).length === 0) {
-		return;
-	}
-
-	self.postMessage({
-		type: "DRAW",
-		frame,
-	} satisfies WorkerOutbound);
-};
-
-const scheduleFlush = () => {
-	if (rafHandle !== null) {
-		return;
-	}
-
-	rafHandle = self.requestAnimationFrame(flushPending);
-};
-
-/*
-coalesceFrame replaces pending keys; generation-aware ordering drops frames that
-would regress same-key state already applied or queued at a newer generation.
-*/
-const coalesceFrame = (frame: Record<string, unknown>, generation?: number) => {
-	for (const [key, value] of Object.entries(frame)) {
-		if (generation !== undefined) {
-			const applied = appliedGeneration.get(key) ?? 0;
-			const queued = pendingGeneration.get(key) ?? 0;
-
-			if (generation < applied || generation < queued) {
-				continue;
-			}
-
-			pendingGeneration.set(key, generation);
-		}
-
-		pending[key] = value;
-	}
-
-	scheduleFlush();
-};
-
 const connect = (url: string) => {
 	if (reconnectTimer !== null) {
 		clearTimeout(reconnectTimer);
@@ -163,7 +64,6 @@ const connect = (url: string) => {
 
 	activeUrl = url;
 	teardownSocket();
-	incompatible = false;
 
 	socketListeners = new AbortController();
 	socket = new WebSocket(url);
@@ -172,7 +72,6 @@ const connect = (url: string) => {
 		"open",
 		() => {
 			attempt = 0;
-			incompatible = false;
 
 			if (focusSymbol !== "") {
 				sendFocus(focusSymbol);
@@ -194,7 +93,7 @@ const connect = (url: string) => {
 				online: false,
 			} satisfies WorkerOutbound);
 
-			if (reconnectTimer !== null || activeUrl === "" || incompatible) {
+			if (reconnectTimer !== null || activeUrl === "") {
 				return;
 			}
 
@@ -231,22 +130,19 @@ const connect = (url: string) => {
 	socket.addEventListener(
 		"message",
 		(event) => {
-			if (incompatible) {
-				return;
-			}
-
 			try {
-				const parsed = JSON.parse(String(event.data)) as Record<
+				const frame = JSON.parse(String(event.data)) as Record<
 					string,
 					unknown
 				>;
-				const validated = validateFrame(parsed);
 
-				if (validated === null) {
-					return;
+				if (
+					frame === null ||
+					typeof frame !== "object" ||
+					Array.isArray(frame)
+				) {
+					throw new Error("wire frame must be an object");
 				}
-
-				const { payload: frame, generation } = validated;
 
 				if (
 					frame.error !== undefined &&
@@ -260,17 +156,14 @@ const connect = (url: string) => {
 					return;
 				}
 
-				coalesceFrame(frame, generation);
+				self.postMessage({
+					type: "DRAW",
+					frame,
+				} satisfies WorkerOutbound);
 			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-
-				if (message.includes("wire version")) {
-					incompatible = true;
-				}
-
 				self.postMessage({
 					type: "ERROR",
-					message,
+					message: err instanceof Error ? err.message : String(err),
 				} satisfies WorkerOutbound);
 			}
 		},
@@ -289,20 +182,12 @@ self.addEventListener("message", (event: MessageEvent<WorkerInbound>) => {
 
 		case "DISCONNECT": {
 			activeUrl = "";
-			incompatible = false;
 
 			if (reconnectTimer !== null) {
 				clearTimeout(reconnectTimer);
 				reconnectTimer = null;
 			}
 
-			if (rafHandle !== null) {
-				self.cancelAnimationFrame(rafHandle);
-				rafHandle = null;
-			}
-
-			pending = {};
-			pendingGeneration = new Map();
 			teardownSocket();
 			self.postMessage({
 				type: "ONLINE",

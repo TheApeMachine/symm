@@ -1,8 +1,8 @@
+import type { FluidFieldLayer } from "#/collections/terminal";
 import {
 	isFluidFieldMatrix,
 	resolveFluidDisplayLattice,
 } from "#/components/terminal/fluid-field";
-import type { FluidFieldLayer } from "#/collections/terminal";
 import type { TerminalFluidParticle } from "#/components/terminal/fluid-particles";
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
@@ -189,7 +189,7 @@ export const withSharedManifoldField = <
 		return focus;
 	}
 
-	const inherited = { ...focus };
+	const inherited: Record<string, unknown> = { ...focus };
 
 	for (const key of SHARED_FIELD_KEYS) {
 		if (carrier[key] !== undefined) {
@@ -197,7 +197,7 @@ export const withSharedManifoldField = <
 		}
 	}
 
-	return inherited;
+	return inherited as T;
 };
 
 /*
@@ -213,34 +213,31 @@ const terminalFluidParticleFromRecord = (
 	record: Record<string, unknown>,
 ): TerminalFluidParticle | null => {
 	const cellX = finiteNumber(record.cell_x);
-	const cellY = finiteNumber(record.cell_y);
 	const cellZ = finiteNumber(record.cell_z);
 	const phase = finiteNumber(record.phase);
-	const omega = finiteNumber(record.omega);
 	const amplitude = finiteNumber(record.amplitude);
-	const heat = finiteNumber(record.heat);
 	const velX = finiteNumber(record.vel_x);
-	const velY = finiteNumber(record.vel_y);
 	const velZ = finiteNumber(record.vel_z);
 
 	if (
 		cellX === null ||
-		cellY === null ||
 		cellZ === null ||
 		phase === null ||
-		omega === null ||
 		amplitude === null ||
-		heat === null ||
 		velX === null ||
-		velY === null ||
 		velZ === null
 	) {
 		return null;
 	}
 
+	const cellY = finiteNumber(record.cell_y) ?? 0;
+	const omega = finiteNumber(record.omega) ?? 0;
+	const heat = finiteNumber(record.heat) ?? 0;
+	const velY = finiteNumber(record.vel_y) ?? 0;
+
 	return {
 		source: stringValue(record.source),
-		role: stringValue(record.role),
+		role: stringValue(record.role) || "particle",
 		cellX,
 		cellY,
 		cellZ,

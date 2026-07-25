@@ -124,22 +124,10 @@ func (signal *Signal) Calculate(
 	notionalMedian, hasNotionalMedian := statistic.MedianOf(notionalPeers)
 	peerMaturity := float64(len(depthPeers)) / float64(len(depthPeers)+1)
 
-	type measurementSpec struct {
-		metric     types.MetricType
-		unit       types.MeasurementUnit
-		raw        float64
-		normalized *float64
-	}
-
 	out := make([]*types.Measurement, 0, len(peers))
 
 	for _, peer := range peers {
 		executableDepth := peer.ExecutableDepth
-
-		if executableDepth <= 0 {
-			continue
-		}
-
 		validity := types.MeasurementValidity{
 			State:     types.ValidityValid,
 			Readiness: types.ReadinessObservation,
@@ -149,71 +137,98 @@ func (signal *Signal) Calculate(
 			From:    peer.At,
 			Through: peer.At,
 		}
-		specs := []measurementSpec{
-			{types.MetricExecutableTouchDepth, types.UnitQuoteCurrency, executableDepth, nil},
-		}
 
-		if !peerReady {
+		if !peerReady || executableDepth <= 0 {
 			validity.State = types.ValidityProvisional
-			validity.Reason = "peer executable-depth median unavailable"
-		}
 
-		if peerReady {
-			relativeDepth := executableDepth / depthMedian
-			scarcity := math.Max(0, 1-relativeDepth)
-			specs = []measurementSpec{
-				{
-					types.MetricExecutableTouchDepth,
-					types.UnitQuoteCurrency,
-					executableDepth,
-					types.NormalizeFinite(relativeDepth),
-				},
-				{
-					types.MetricRelativeTouchDepth,
-					types.UnitDimensionless,
-					relativeDepth,
-					types.NormalizeFinite(relativeDepth),
-				},
-				{
-					types.MetricScarcityScore,
-					types.UnitDimensionless,
-					scarcity,
-					types.NormalizeFinite(scarcity),
-				},
-				{
-					types.MetricExecutableTouchDepthMedian,
-					types.UnitQuoteCurrency,
-					depthMedian,
-					nil,
-				},
+			if executableDepth <= 0 {
+				validity.Reason = "executable touch depth unavailable"
+			}
+
+			if !peerReady {
+				validity.Reason = "peer executable-depth median unavailable"
 			}
 		}
 
+		relativeDepth := 0.0
+		scarcity := 0.0
+		median := 0.0
+
+		if peerReady && executableDepth > 0 {
+			relativeDepth = executableDepth / depthMedian
+			scarcity = math.Max(0, 1-relativeDepth)
+			median = depthMedian
+		}
+
 		reportedNotional := peer.QuoteNotional
+		reportedMedian := 0.0
 
-		if peerReady && reportedNotional > 0 && hasNotionalMedian && notionalMedian > 0 {
-			specs = append(specs,
-				measurementSpec{types.MetricReportedVolumeNotional, types.UnitQuoteCurrency, reportedNotional, nil},
-				measurementSpec{types.MetricReportedVolumeNotionalMedian, types.UnitQuoteCurrency, notionalMedian, nil},
-			)
+		if hasNotionalMedian && notionalMedian > 0 {
+			reportedMedian = notionalMedian
 		}
 
-		for _, spec := range specs {
-			out = append(out, &types.Measurement{
-				Source:     types.SourceLiquidity,
-				Stream:     types.Liquidity,
-				Metric:     spec.metric,
-				Subject:    types.SubjectPeerLiquidity,
-				Symbol:     peer.Symbol,
-				At:         peer.At,
-				Unit:       spec.unit,
-				Raw:        spec.raw,
-				Normalized: spec.normalized,
-				Maturity:   peerMaturity,
-				Validity:   validity,
-				Scale:      scale,
-			})
+		measurement := &types.Measurement{
+			Source:   types.SourceLiquidity,
+			Symbol:   peer.Symbol,
+			At:       peer.At,
+			Maturity: peerMaturity,
+			Validity: validity,
+			Scale:    scale,
 		}
+
+		measurement.PutMetric(
+			types.MetricExecutableTouchDepth,
+			types.SideNone,
+			types.MetricSample{
+				Raw:        executableDepth,
+				Normalized: types.NormalizeFinite(relativeDepth),
+				Unit:       types.UnitQuoteCurrency,
+			},
+		)
+		measurement.PutMetric(
+			types.MetricRelativeTouchDepth,
+			types.SideNone,
+			types.MetricSample{
+				Raw:        relativeDepth,
+				Normalized: types.NormalizeFinite(relativeDepth),
+				Unit:       types.UnitDimensionless,
+			},
+		)
+		measurement.PutMetric(
+			types.MetricScarcityScore,
+			types.SideNone,
+			types.MetricSample{
+				Raw:        scarcity,
+				Normalized: types.NormalizeFinite(scarcity),
+				Unit:       types.UnitDimensionless,
+			},
+		)
+		measurement.PutMetric(
+			types.MetricExecutableTouchDepthMedian,
+			types.SideNone,
+			types.MetricSample{
+				Raw:  median,
+				Unit: types.UnitQuoteCurrency,
+			},
+		)
+		measurement.PutMetric(
+			types.MetricReportedVolumeNotional,
+			types.SideNone,
+			types.MetricSample{
+				Raw:  reportedNotional,
+				Unit: types.UnitQuoteCurrency,
+			},
+		)
+		measurement.PutMetric(
+			types.MetricReportedVolumeNotionalMedian,
+			types.SideNone,
+			types.MetricSample{
+				Raw:  reportedMedian,
+				Unit: types.UnitQuoteCurrency,
+			},
+		)
+
+		out = append(out, measurement)
 	}
 
 	types.WireMeasurements(out, signal.ui)

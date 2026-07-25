@@ -1,5 +1,8 @@
 import { appStore } from "#/collections/app";
-import { paintTerminalFluidChart } from "#/components/charts/fluid";
+import {
+	paintTerminalFluidChart,
+	repaintTerminalFluidChart,
+} from "#/components/charts/fluid";
 import { paintHawkes } from "#/components/charts/hawkes";
 import { paintTerminalManifoldChart } from "#/components/charts/manifold";
 import { paintTerminalPredictionChart } from "#/components/charts/prediction";
@@ -86,6 +89,10 @@ import {
 	paintXrayManifoldMeasurements,
 } from "#/components/terminal/xray-side";
 import { FrameHistory } from "#/providers/frame-history";
+import {
+	paintManifoldParticles,
+	paintManifoldWave,
+} from "#/providers/manifold-parts";
 
 /*
 Paint is one imperative target for a backend frame and the current UI focus.
@@ -242,6 +249,24 @@ export const drawers = {
 				paint: paintAllocationManifold,
 				input: "latest",
 			},
+		},
+	},
+	manifold_particles: {
+		paint: {
+			paint: (value: unknown, focusSymbol: string) => {
+				paintManifoldParticles(value);
+				repaintTerminalFluidChart(focusSymbol);
+			},
+			input: "latest",
+		},
+	},
+	manifold_wave: {
+		paint: {
+			paint: (value: unknown, focusSymbol: string) => {
+				paintManifoldWave(value);
+				repaintTerminalFluidChart(focusSymbol);
+			},
+			input: "latest",
 		},
 	},
 	cognition: {

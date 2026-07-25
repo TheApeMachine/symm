@@ -23,9 +23,10 @@ type advanceResult struct {
 
 /*
 advance appends Sensorium-shaped particles for every changed Hawkes/book epoch,
-then performs at most one GPU step over the full resident history. Unchanged
-epochs replay shared readings without duplicating particles. Historical mass
-is retained — rule-shifts land in the wave field without culling the tape.
+then performs at most one GPU step over the resident population. Unchanged
+epochs replay shared readings without duplicating particles. After Advance,
+below-mean mass×(energy+heat) contributors are pruned so historical dust cannot
+grow the resident tape without bound.
 */
 func (solver *Solver) advance(
 	thesis *types.Thesis,
@@ -316,6 +317,17 @@ func (solver *Solver) step(changed bool) (
 
 	// Inelastic merge rewrites resident indices; per-sample ranges are gone.
 	solver.clearRanges()
+
+	// Prune is best-effort after a successful Advance. A prune miss must not
+	// abort publish: ingest already committed Hawkes bookmarks, so failing here
+	// would force every later cut onto Replay until the next epoch.
+	if err := solver.pruneInert(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"manifold: inert particle prune failed",
+			err,
+		))
+	}
 
 	reading, err := solver.domain.Reading()
 

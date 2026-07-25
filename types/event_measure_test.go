@@ -137,7 +137,12 @@ func BenchmarkMeasureEventsParallel(b *testing.B) {
 	}
 
 	measure := func(event Event) ([]*Measurement, error) {
-		return []*Measurement{{Symbol: event.Symbol, Raw: 1}}, nil
+		return []*Measurement{{
+			Symbol: event.Symbol,
+			Metrics: map[string]MetricSample{
+				MetricKey(MetricStrength, SideNone): {Raw: 1},
+			},
+		}}, nil
 	}
 
 	b.ReportAllocs()

@@ -206,19 +206,22 @@ func (signal *Signal) Calculate(
 			{types.MetricSlumpScore, slumpScore},
 			{types.MetricStrength, strength},
 		}
+		measurement := &types.Measurement{
+			Source:   types.SourceSentiment,
+			Symbol:   peer.Symbol,
+			At:       peer.At,
+			Validity: validity,
+			Metrics:  map[string]types.MetricSample{},
+		}
 
 		for _, spec := range specs {
-			out = append(out, &types.Measurement{
-				Source:   types.SourceSentiment,
-				Metric:   spec.metric,
-				Stream:   types.Sentiment,
-				Symbol:   peer.Symbol,
-				At:       peer.At,
-				Unit:     types.UnitDimensionless,
-				Raw:      spec.raw,
-				Validity: validity,
+			measurement.PutMetric(spec.metric, types.SideNone, types.MetricSample{
+				Raw:  spec.raw,
+				Unit: types.UnitDimensionless,
 			})
 		}
+
+		out = append(out, measurement)
 	}
 
 	types.WireMeasurements(out, signal.ui)

@@ -106,7 +106,9 @@ func (desk *Desk) Initialize(market *types.Actor, account *types.Actor) error {
 	}
 
 	if desk.balance != nil {
-		desk.balance.Publish()
+		if err := desk.balance.Publish(); err != nil {
+			errnie.Error(err)
+		}
 	}
 
 	return nil
@@ -159,7 +161,9 @@ func (desk *Desk) onTicker(message any) any {
 	}
 
 	if marked {
-		desk.balance.Publish()
+		if err := desk.balance.Publish(); err != nil {
+			errnie.Error(err)
+		}
 	}
 
 	return nil
@@ -196,14 +200,10 @@ func (desk *Desk) AdoptOpen() {
 	published := false
 
 	for holding := range desk.balance.Holdings() {
-		lot, ok := desk.balance.LookupHolding(holding.Symbol)
+		symbol := holding.Symbol
 
-		if !ok {
-			continue
-		}
-
-		if _, exists := desk.positions[lot.Symbol]; !exists {
-			pair, err := desk.instrument.Pair(lot.Symbol)
+		if _, exists := desk.positions[symbol]; !exists {
+			pair, err := desk.instrument.Pair(symbol)
 
 			if err != nil {
 				continue
@@ -219,20 +219,30 @@ func (desk *Desk) AdoptOpen() {
 				continue
 			}
 
-			desk.positions[lot.Symbol] = position
+			desk.positions[symbol] = position
 		}
 
-		if desk.seedEconomics(lot) {
-			published = true
+		if err := desk.balance.Update(symbol, func(lot *types.Holding) error {
+			if desk.seedEconomics(lot) {
+				published = true
+			}
+
+			return nil
+		}); err != nil {
+			errnie.Error(err)
+
+			continue
 		}
 
-		if position, exists := desk.positions[lot.Symbol]; exists {
-			position.Mark(lot.Symbol)
+		if position, exists := desk.positions[symbol]; exists {
+			position.Mark(symbol)
 		}
 	}
 
 	if published {
-		desk.balance.Publish()
+		if err := desk.balance.Publish(); err != nil {
+			errnie.Error(err)
+		}
 	}
 }
 
@@ -289,7 +299,8 @@ func (desk *Desk) seedEconomics(holding *types.Holding) bool {
 		return false
 	}
 
-	if holding.EntryPrice != nil && holding.EntryPrice.Sign() > 0 {
+	if holding.EntryPrice != nil && holding.EntryPrice.Sign() > 0 &&
+		holding.EntryFee != nil {
 		return false
 	}
 
@@ -357,7 +368,7 @@ func (desk *Desk) OpenPositions() int {
 	reserved := 0
 
 	if desk.balance != nil {
-		reserved = desk.balance.Ledger().ReservedSlots()
+		reserved = desk.balance.ReservedSlots()
 	}
 
 	return desk.HoldingCount() + reserved

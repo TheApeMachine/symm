@@ -179,26 +179,23 @@ func (outcome *marketOutcome) observeCognition(thesis *types.Thesis) {
 	})
 
 	for _, category := range thesis.Categories {
-		reading, found := readings[category.Symbol]
-
-		if !found || !reading.Ready || reading.Winner == "" {
+		if !outcome.symbols[category.Symbol] {
 			continue
 		}
 
-		// Winner can advance mid-cut on the live thesis; only count rows whose
-		// Type still matches the Cognition snapshot we just collected.
-		if category.Type != types.CategoryType(reading.Winner) {
+		if category.Type == types.CategoryTypeNone || category.Strength <= 0 {
 			continue
 		}
 
+		// Composed taxonomy rows — not DMT buy/sell attractor labels.
+		So(string(category.Type), ShouldNotBeIn, []string{"buy", "sell", "balanced"})
 		outcome.categories++
 
-		if category.Confidence == reading.Confidence &&
-			category.Surprisal == reading.EntropyBits &&
-			category.Strength == reading.LookaheadScore &&
-			category.Maturity == float64(reading.Cohort) {
+		if len(category.Supporting) > 0 || len(category.Opposing) > 0 {
 			outcome.winners[category.Type]++
 		}
+
+		_ = readings
 	}
 }
 

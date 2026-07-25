@@ -1,6 +1,6 @@
 import { createRef } from "react";
-import type { ManifoldFrame } from "#/collections/types";
 import type { FluidFieldLayer } from "#/collections/terminal";
+import type { ManifoldFrame } from "#/collections/types";
 import {
 	clearCanvas,
 	drawGrid,
@@ -27,11 +27,16 @@ import {
 	resolveFluidDisplayLattice,
 } from "#/components/terminal/fluid-field";
 import { drawFluidParticles } from "#/components/terminal/fluid-particles";
+import {
+	latestManifoldParticles,
+	latestManifoldWave,
+} from "#/providers/manifold-parts";
 
 const fluidCanvasRef = createRef<HTMLCanvasElement>();
 let fluidContour = false;
 let fluidLayer: FluidFieldLayer = "Composite";
 let fluidFocus = "";
+let lastManifoldBatch: unknown = null;
 
 /*
 phaseOutcomeColor keeps the retained DMT basin visible as the winning
@@ -93,7 +98,8 @@ const drawPhaseResponse = (
 ) => {
 	for (const [index, response] of scan.entries()) {
 		const next = scan[(index + 1) % scan.length];
-		const nextAngle = index === scan.length - 1 ? next.angle + Math.PI * 2 : next.angle;
+		const nextAngle =
+			index === scan.length - 1 ? next.angle + Math.PI * 2 : next.angle;
 		const similarity = Math.min(1, Math.max(-1, response.similarity));
 		const nextSimilarity = Math.min(1, Math.max(-1, next.similarity));
 		const responseRadius = (radius * (similarity + 1)) / 2;
@@ -250,6 +256,27 @@ export const paintTerminalFluidChart = (
 	value: unknown,
 	focusSymbol: string,
 ) => {
+	lastManifoldBatch = value;
+	paintTerminalFluidCompose(value, focusSymbol);
+};
+
+/*
+repaintTerminalFluidChart redraws the retained field batch after split
+manifold_particles / manifold_wave packets arrive. Those packets store only;
+without a redraw the phase dial never sees the wave modes for the cut.
+*/
+export const repaintTerminalFluidChart = (focusSymbol: string) => {
+	if (lastManifoldBatch === null) {
+		return;
+	}
+
+	paintTerminalFluidCompose(lastManifoldBatch, focusSymbol);
+};
+
+const paintTerminalFluidCompose = (
+	value: unknown,
+	focusSymbol: string,
+) => {
 	const canvas = fluidCanvasRef.current;
 
 	if (canvas === null) {
@@ -284,21 +311,31 @@ export const paintTerminalFluidChart = (
 		return;
 	}
 
-	const rho = frameAuxMatrix(frame, "rho");
-	const psiMag2 = frameAuxMatrix(frame, "psiMag2");
-	const particles = terminalFluidParticlesFromFrame(frame);
+	const particlePacket = latestManifoldParticles();
+	const wavePacket = latestManifoldWave();
+	const composed: ManifoldFrame = {
+		...frame,
+		particles: particlePacket?.particles ?? frame.particles,
+		wave: wavePacket?.wave ?? frame.wave,
+	};
+
+	const rho = frameAuxMatrix(composed, "rho");
+	const psiMag2 = frameAuxMatrix(composed, "psiMag2");
+	const particles = terminalFluidParticlesFromFrame(composed);
 	const display = resolveFluidDisplayLattice(
 		isFluidFieldMatrix(rho) ? rho : [],
 		psiMag2,
 		fluidLayer,
 	);
-	const { columns, rows } = fluidGridDimensions(frame, display);
-	const reading = frameReading(frame);
-	const wave = terminalWaveModesFromFrame(frame);
-	const phaseScan = terminalPhaseScanFromFrame(frame);
-	const phaseStatus = terminalPhaseStatusFromFrame(frame);
+	const { columns, rows } = fluidGridDimensions(composed, display);
+	const reading = frameReading(composed);
+	const wave = terminalWaveModesFromFrame(composed);
+	const phaseScan = terminalPhaseScanFromFrame(composed);
+	const phaseStatus = terminalPhaseStatusFromFrame(composed);
 
-	if (display.length === 0 && particles.length === 0) {
+	// Wave-only arrivals still need a paint so the phase dial can appear before
+	// the next gas lattice frame; empty gas+particles+wave is a true no-op.
+	if (display.length === 0 && particles.length === 0 && wave.length === 0) {
 		return;
 	}
 
@@ -312,17 +349,17 @@ export const paintTerminalFluidChart = (
 			{
 				particles,
 				pressureGradX:
-					finiteNumber(frame?.pressureGradX) ??
+					finiteNumber(composed?.pressureGradX) ??
 					finiteNumber(reading?.pressureGradX) ??
 					0,
 				pressureGradZ:
-					finiteNumber(frame?.pressureGradZ) ??
+					finiteNumber(composed?.pressureGradZ) ??
 					finiteNumber(reading?.pressureGradZ) ??
 					0,
 				psiMag2,
 				layer: fluidLayer,
-				guidanceVelX: frameAuxMatrix(frame, "guidanceVelX"),
-				guidanceVelZ: frameAuxMatrix(frame, "guidanceVelZ"),
+				guidanceVelX: frameAuxMatrix(composed, "guidanceVelX"),
+				guidanceVelZ: frameAuxMatrix(composed, "guidanceVelZ"),
 			},
 		);
 	} else {

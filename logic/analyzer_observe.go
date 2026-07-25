@@ -243,8 +243,10 @@ func (analyzer *Analyzer) forecast(
 		BuyCapacity:                state.BuyCapacity,
 		SellCapacity:               state.SellCapacity,
 		ExpectedSpread:             state.Spread,
-		ExpectedAdverseSelection:   analyzer.forecastAdverse(state, causalOutcome),
-		Uncertainty:                resonanceOutcome.Uncertainty,
+		ExpectedAdverseSelection: analyzer.forecastAdverse(
+			thesis, state, causalOutcome, resonanceOutcome.ExpectedReturn,
+		),
+		Uncertainty: resonanceOutcome.Uncertainty,
 		Confidence: math.Min(
 			causalOutcome.Reading.Confidence,
 			math.Exp(-math.Abs(resonanceOutcome.Surprise)),
@@ -255,19 +257,22 @@ func (analyzer *Analyzer) forecast(
 }
 
 /*
-forecastAdverse prices adverse selection as the causal head's informed-flow
-probability times the observed touch cost, the Glosten-Milgrom decomposition:
-a taker's expected loss to informed counterparties is the chance the present
-flow is informed times the spread that compensates the quoting side for it.
-Both factors are derived — no interim heuristic remains in the utility.
+forecastAdverse prices adverse selection as Glosten-Milgrom informed-flow times
+touch spread, plus the trap-attributable share of the return claim derived from
+live signal masses on Thesis. Trap tax uses trapShare × max(0, ExpectedReturn)
+so a dominant trap cannot leave positive executable return.
 */
 func (analyzer *Analyzer) forecastAdverse(
+	thesis *types.Thesis,
 	state manifold.State,
 	causalOutcome *CausalOutcome,
+	expectedReturn float64,
 ) float64 {
-	if state.Spread <= 0 || !finite(causalOutcome.InformedFlow) {
-		return 0
+	adverse := 0.0
+
+	if state.Spread > 0 && finite(causalOutcome.InformedFlow) {
+		adverse = causalOutcome.InformedFlow * state.Spread
 	}
 
-	return causalOutcome.InformedFlow * state.Spread
+	return adverse + TrapShare(thesis, state.Symbol).Tax(expectedReturn)
 }

@@ -162,14 +162,20 @@ func TestMeasure(t *testing.T) {
 							maturity[measurement.Symbol] = measurement.Maturity
 						}
 
-						if measurement.Raw == 0 {
-							So(measurement.Normalized, ShouldBeNil)
-							continue
-						}
+						measurement.EachMetric(func(
+							_ types.MetricType,
+							_ types.MeasurementSide,
+							sample types.MetricSample,
+						) {
+							if sample.Raw == 0 {
+								So(sample.Normalized, ShouldBeNil)
+								return
+							}
 
-						So(measurement.Normalized, ShouldNotBeNil)
-						So(math.IsNaN(*measurement.Normalized), ShouldBeFalse)
-						So(math.IsInf(*measurement.Normalized, 0), ShouldBeFalse)
+							So(sample.Normalized, ShouldNotBeNil)
+							So(math.IsNaN(*sample.Normalized), ShouldBeFalse)
+							So(math.IsInf(*sample.Normalized, 0), ShouldBeFalse)
+						})
 					}
 
 					for _, measurement := range current {

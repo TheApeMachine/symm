@@ -313,9 +313,6 @@ func (live *Live) Initialize() error {
 		))
 	}
 
-	// READY is resolved only after connection, authentication when required,
-	// and acknowledgement of required subscriptions in onConnected / onAuthenticated.
-	live.status = types.PENDING
 	return nil
 }
 

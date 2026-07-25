@@ -12,9 +12,11 @@ import (
 
 /*
 publishMeasured emits manifold, resonance, causal, and hypothesis frames.
-Resonance and causal go first so a saturated UI channel cannot drop them behind
-a manifold fan-out. Manifold publishes one focus-aware batch so the pilot-wave
-painter can inherit ρ/|ψ|² from the field carrier onto the focused symbol.
+Resonance and causal go first so a saturated UI channel drops manifold after
+the lighter charts when the ingress buffer is full. Thesis rows stay book-wide
+for strategy; UI frames are focus-gated so the socket does not ship every
+symbol each cut. Manifold publishes one shared-field row; focus only labels
+that row for client inheritance.
 */
 func (analyzer *Analyzer) publishMeasured(
 	thesis *types.Thesis,
@@ -22,20 +24,23 @@ func (analyzer *Analyzer) publishMeasured(
 ) {
 	publishStarted := time.Now()
 
-	if len(thesis.Resonance) > 0 {
-		analyzer.publish(datura.Map[any]{"resonance": thesis.Resonance})
+	if framed := focusRows(thesis.Resonance); len(framed) > 0 {
+		analyzer.publish(datura.Map[any]{"resonance": framed})
 	}
 
-	if len(thesis.Causal) > 0 {
-		analyzer.publish(datura.Map[any]{"causal": thesis.Causal})
+	if framed := focusRows(thesis.Causal); len(framed) > 0 {
+		analyzer.publish(datura.Map[any]{"causal": framed})
 	}
 
-	if len(thesis.Hypotheses) > 0 {
-		analyzer.publish(datura.Map[any]{"hypotheses": thesis.Hypotheses})
+	if framed := focusHypotheses(thesis.Hypotheses); len(framed) > 0 {
+		analyzer.publish(datura.Map[any]{"hypotheses": framed})
 	}
 
 	if wired := wireManifold(states); len(wired) > 0 {
-		analyzer.publish(datura.Map[any]{"manifold": wired})
+		field, particles, wave := manifold.WirePackets(wired[0])
+		analyzer.publish(datura.Map[any]{"manifold": []manifold.WireField{field}})
+		analyzer.publish(datura.Map[any]{"manifold_particles": particles})
+		analyzer.publish(datura.Map[any]{"manifold_wave": wave})
 	}
 
 	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "publish", map[string]any{
@@ -45,10 +50,10 @@ func (analyzer *Analyzer) publishMeasured(
 }
 
 /*
-wireManifold keeps shared Sensorium lattices on one published row. The dashboard
-focus symbol is preferred as that row when present; ρ/|ψ|² are copied from the
-first state that still carries the field so focus without local lattices still
-paints the pilot-wave. Non-focus particle clouds are stripped.
+wireManifold publishes one row carrying the shared Sensorium field. Focus only
+chooses which symbol label the row wears for client-side inheritance; ρ, |ψ|²,
+guidance, wave, and the resident particle cloud are shared physics and always
+travel with that row — the manifold is not a per-symbol mechanism.
 */
 func wireManifold(states []manifold.State) []manifold.State {
 	if len(states) == 0 {
@@ -86,21 +91,18 @@ func wireManifold(states []manifold.State) []manifold.State {
 	selected.GuidanceVelX = states[field].GuidanceVelX
 	selected.GuidanceVelZ = states[field].GuidanceVelZ
 	selected.Wave = states[field].Wave
-
-	if target == field {
-		selected.Particles = states[field].Particles
-	} else {
-		selected.Particles = nil
-	}
+	selected.Particles = states[field].Particles
+	selected.OscillatorCount = states[field].OscillatorCount
+	selected.SharedOscillatorCount = states[field].SharedOscillatorCount
 
 	return []manifold.State{selected}
 }
 
 /*
 publishCognition emits cognition and forecast frames after REM consolidation,
-and projects ready winners onto thesis.Categories so the terminal category rail
-is not an empty shell while classifications live only on Cognition. Strategy
-sees every ready winner; the UI frame is focus-gated when a focus is set.
+and calibrates already-composed thesis.Categories with DMT surprisal/confidence.
+Thesis.Categories stays book-wide for strategy; the categories UI frame is
+focus-gated like cognition so the rail does not ship every symbol each cut.
 */
 func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 	cognition := make([]types.Cognition, 0, 8)
@@ -117,8 +119,7 @@ func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 		return true
 	})
 
-	thesis.Categories = nil
-	analyzer.projectCategories(thesis, cognition)
+	analyzer.calibrateCategories(thesis, cognition)
 
 	if framed := focusCognition(cognition); len(framed) > 0 {
 		analyzer.publish(datura.Map[any]{"cognition": framed})
@@ -128,8 +129,8 @@ func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 		analyzer.publish(datura.Map[any]{"forecasts": thesis.Forecasts})
 	}
 
-	if len(thesis.Categories) > 0 {
-		analyzer.publish(datura.Map[any]{"categories": thesis.Categories})
+	if framed := focusCategories(thesis.Categories); len(framed) > 0 {
+		analyzer.publish(datura.Map[any]{"categories": framed})
 	}
 }
 
@@ -158,10 +159,109 @@ func focusCognition(cognition []types.Cognition) []types.Cognition {
 }
 
 /*
-projectCategories writes one Category row per ready cognition winner so strategy
-publish and the thesis modal share the same classification surface.
+focusCategories returns every composed category when focus is unset, otherwise
+only the focused symbol so the thesis rail paints without a book-wide flood.
 */
-func (analyzer *Analyzer) projectCategories(
+func focusCategories(categories []types.Category) []types.Category {
+	focus := types.Focus()
+
+	if focus == "" {
+		return categories
+	}
+
+	framed := make([]types.Category, 0, 8)
+
+	for _, category := range categories {
+		if category.Symbol != focus {
+			continue
+		}
+
+		framed = append(framed, category)
+	}
+
+	return framed
+}
+
+/*
+focusHypotheses returns every hypothesis when focus is unset, otherwise only the
+focused symbol so the thesis rail does not ship the full book each cut.
+*/
+func focusHypotheses(hypotheses []types.Hypothesis) []types.Hypothesis {
+	focus := types.Focus()
+
+	if focus == "" {
+		return hypotheses
+	}
+
+	framed := make([]types.Hypothesis, 0, 1)
+
+	for _, hypothesis := range hypotheses {
+		if hypothesis.Symbol != focus {
+			continue
+		}
+
+		framed = append(framed, hypothesis)
+	}
+
+	return framed
+}
+
+/*
+focusRows returns every resonance/causal row when focus is unset, otherwise only
+the focused symbol so predictive-coding and causal charts stay lean on the wire.
+*/
+func focusRows(rows []any) []any {
+	focus := types.Focus()
+
+	if focus == "" {
+		return rows
+	}
+
+	framed := make([]any, 0, 1)
+
+	for _, row := range rows {
+		if rowSymbol(row) != focus {
+			continue
+		}
+
+		framed = append(framed, row)
+	}
+
+	return framed
+}
+
+/*
+rowSymbol reads the market symbol from a resonance or causal thesis row.
+*/
+func rowSymbol(row any) string {
+	switch value := row.(type) {
+	case *ResonanceOutcome:
+		if value == nil {
+			return ""
+		}
+
+		return value.Symbol
+	case ResonanceOutcome:
+		return value.Symbol
+	case *CausalOutcome:
+		if value == nil {
+			return ""
+		}
+
+		return value.Symbol
+	case CausalOutcome:
+		return value.Symbol
+	}
+
+	return ""
+}
+
+/*
+calibrateCategories stamps DMT surprisal and confidence onto the strongest
+composed category for each ready cognition symbol. Categories themselves come
+from measurement×affinity composition, not buy/sell attractor labels.
+*/
+func (analyzer *Analyzer) calibrateCategories(
 	thesis *types.Thesis,
 	cognition []types.Cognition,
 ) {
@@ -170,31 +270,34 @@ func (analyzer *Analyzer) projectCategories(
 	}
 
 	for _, reading := range cognition {
-		if !reading.Ready || reading.Winner == "" || reading.Symbol == "" {
+		if !reading.Ready || reading.Symbol == "" {
 			continue
 		}
 
-		category := types.Category{
-			Symbol:     reading.Symbol,
-			Type:       types.CategoryType(reading.Winner),
-			Confidence: reading.Confidence,
-			Surprisal:  reading.EntropyBits,
-			Strength:   reading.LookaheadScore,
-			Maturity:   float64(reading.Cohort),
+		best := -1
+
+		for index := range thesis.Categories {
+			if thesis.Categories[index].Symbol != reading.Symbol {
+				continue
+			}
+
+			if best < 0 || thesis.Categories[index].Strength > thesis.Categories[best].Strength {
+				best = index
+			}
 		}
 
-		analyzer.attachCategoryEvidence(thesis, &category)
-		thesis.Categories = append(thesis.Categories, category)
-	}
-}
+		if best < 0 {
+			continue
+		}
 
-/*
-attachCategoryEvidence is a no-op while the resident evidence graph is removed.
-Cognition winners still publish; supporting/opposing lists stay empty until the
-market graph is redesigned.
-*/
-func (analyzer *Analyzer) attachCategoryEvidence(
-	_ *types.Thesis,
-	_ *types.Category,
-) {
+		thesis.Categories[best].Surprisal = reading.EntropyBits
+
+		if reading.Confidence > thesis.Categories[best].Confidence {
+			thesis.Categories[best].Confidence = reading.Confidence
+		}
+
+		if reading.LookaheadScore > thesis.Categories[best].Strength {
+			thesis.Categories[best].Maturity = float64(reading.Cohort)
+		}
+	}
 }

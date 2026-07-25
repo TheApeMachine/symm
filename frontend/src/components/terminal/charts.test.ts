@@ -91,6 +91,39 @@ describe("terminalFluidParticlesFromFrame", () => {
 		]);
 	});
 
+	it("accepts the lean painter-facing particle wire", () => {
+		const particles = terminalFluidParticlesFromFrame({
+			particles: [
+				{
+					cell_x: 7,
+					cell_z: 5,
+					phase: 0.4,
+					amplitude: 3,
+					vel_x: 0.1,
+					vel_z: 0.3,
+				},
+			],
+		});
+
+		expect(particles).toEqual([
+			{
+				source: "",
+				role: "particle",
+				cellX: 7,
+				cellY: 0,
+				cellZ: 5,
+				phase: 0.4,
+				omega: 0,
+				amplitude: 3,
+				heat: 0,
+				velX: 0.1,
+				velY: 0,
+				velZ: 0.3,
+				speed: Math.hypot(0.1, 0, 0.3),
+			},
+		]);
+	});
+
 	it("rejects incomplete particle records", () => {
 		const particles = terminalFluidParticlesFromFrame({
 			particles: [{ cell_x: 7, cell_z: 5 }],

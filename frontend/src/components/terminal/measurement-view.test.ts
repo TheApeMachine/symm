@@ -4,6 +4,7 @@ import {
 	dedupeEpoch,
 	headlineMetric,
 	headlineReading,
+	kernelListReadout,
 	latestByMetric,
 	latestEpoch,
 	measurementIdentity,
@@ -178,5 +179,77 @@ describe("compact buffer rows", () => {
 		expect(resolveKernelStatus(headlineReading([row], "correlation"), true)).toBe(
 			"measured",
 		);
+	});
+
+	it("pins kernel list readout to the headline metric, not map insertion order", () => {
+		const at = "2026-07-19T04:01:00Z";
+		const row: Measurement = {
+			source: "correlation",
+			symbol: "BTC/USD",
+			at,
+			raw: 0,
+			normalized: null,
+			uncertainty: null,
+			validity: { state: "valid", readiness: "observation" },
+			scale: { kind: "observation_window", from: at, through: at },
+			metrics: { peak_score: 0.9, strength: 0.3, herd_score: 0.2 },
+		};
+
+		expect(kernelListReadout(row)).toEqual({
+			metric: "strength",
+			raw: 0.3,
+			sample: 0.3,
+		});
+	});
+
+	it("keeps the headline label when the preferred metric is not yet present", () => {
+		const at = "2026-07-19T04:02:00Z";
+		const row: Measurement = {
+			source: "liquidity",
+			symbol: "BTC/USD",
+			at,
+			raw: 0,
+			normalized: null,
+			uncertainty: null,
+			validity: { state: "valid", readiness: "observation" },
+			scale: { kind: "observation_window", from: at, through: at },
+			metrics: { reported_volume: 1.0 },
+		};
+
+		expect(kernelListReadout(row)).toEqual({
+			metric: "scarcity_score",
+			raw: 0,
+			sample: 0,
+		});
+	});
+
+	it("reads sided compact toxicity keys for the kernel spark sample", () => {
+		const at = "2026-07-25T01:25:08Z";
+		const row: Measurement = {
+			source: "toxicity",
+			symbol: "BTC/USD",
+			at,
+			raw: 0,
+			normalized: null,
+			uncertainty: null,
+			validity: { state: "valid", readiness: "observation" },
+			scale: { kind: "observation_window", from: at, through: at },
+			metrics: {
+				"touch_quantity:buy": 1.5,
+				"touch_quantity:sell": 1.0,
+				"trade_volume": 12,
+			},
+			normalized_metrics: {
+				"touch_quantity:buy": 0.6,
+				"touch_quantity:sell": 0.4,
+			},
+		};
+
+		expect(latestByMetric([row], "touch_quantity")?.raw).toBe(1.0);
+		expect(kernelListReadout(row)).toEqual({
+			metric: "touch_quantity",
+			raw: 1.0,
+			sample: 0.4,
+		});
 	});
 });

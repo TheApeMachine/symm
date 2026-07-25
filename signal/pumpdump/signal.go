@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
@@ -29,6 +30,7 @@ type Signal struct {
 	volume     *sync.Map
 	orderBooks *sync.Map
 	increments *sync.Map
+	lastAt     *sync.Map
 	lastWire   *sync.Map
 	ui         chan []byte
 }
@@ -51,6 +53,7 @@ func NewSignal(
 		volume:     &sync.Map{},
 		orderBooks: &sync.Map{},
 		increments: &sync.Map{},
+		lastAt:     &sync.Map{},
 		lastWire:   &sync.Map{},
 		ui:         ui,
 	}
@@ -228,10 +231,27 @@ func (signal *Signal) Calculate(
 
 /*
 measure derives one ticker observation from the causally preceding tape state.
+Kraken ticker timestamps are not a per-symbol sequence: late or reconnect
+frames can arrive behind the watermark. Those are not observations and must
+not enter the volume clock.
 */
 func (signal *Signal) measure(row kraken.TickerData) ([]*types.Measurement, error) {
 	if row.Symbol == "" || row.Last == nil || row.Last.Sign() <= 0 {
 		return nil, nil
+	}
+
+	if row.Timestamp.IsZero() {
+		return nil, errnie.Err(
+			errnie.Validation,
+			"pumpdump: ticker observation timestamp required",
+			nil,
+		)
+	}
+
+	if found, ok := signal.lastAt.Load(row.Symbol); ok {
+		if row.Timestamp.Before(found.(time.Time)) {
+			return nil, nil
+		}
 	}
 
 	bookFound, ok := signal.orderBooks.Load(row.Symbol)
@@ -291,6 +311,8 @@ func (signal *Signal) measure(row kraken.TickerData) ([]*types.Measurement, erro
 			err,
 		)
 	}
+
+	signal.lastAt.Store(row.Symbol, row.Timestamp)
 
 	return ignitionMeasurements(
 		row.Symbol,

@@ -316,9 +316,8 @@ func depthEvents(
 }
 
 /*
-frame converts a bookflow calculator output into the shared Measurement shape,
-so both the book-driven and trade-driven observation paths emit the same metric
-set for a symbol.
+frame converts a bookflow calculator output into one source×symbol row so both
+the book-driven and trade-driven observation paths emit the same metric set.
 */
 func (signal *Signal) frame(
 	symbol string, at time.Time, output equation.BookflowOutput, maturity float64,
@@ -332,6 +331,14 @@ func (signal *Signal) frame(
 		From:    at,
 		Through: at,
 	}
+	measurement := &types.Measurement{
+		Source:   types.SourceDepthFlow,
+		Symbol:   symbol,
+		At:       at,
+		Maturity: maturity,
+		Validity: validity,
+		Scale:    scale,
+	}
 	specs := []struct {
 		metric types.MetricType
 		raw    float64
@@ -343,26 +350,16 @@ func (signal *Signal) frame(
 		{types.MetricStrength, output.Strength},
 		{types.MetricValue, output.Value},
 	}
-	measurements := make([]*types.Measurement, 0, len(specs))
 
 	for _, spec := range specs {
-		measurements = append(measurements, &types.Measurement{
-			Source:     types.SourceDepthFlow,
-			Stream:     types.DepthFlow,
-			Metric:     spec.metric,
-			Subject:    types.SubjectBookImbalance,
-			Symbol:     symbol,
-			At:         at,
-			Unit:       types.UnitDimensionless,
+		measurement.PutMetric(spec.metric, types.SideNone, types.MetricSample{
 			Raw:        spec.raw,
 			Normalized: types.NormalizeFinite(spec.raw),
-			Maturity:   maturity,
-			Validity:   validity,
-			Scale:      scale,
+			Unit:       types.UnitDimensionless,
 		})
 	}
 
-	return measurements
+	return []*types.Measurement{measurement}
 }
 
 /*

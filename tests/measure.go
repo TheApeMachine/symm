@@ -27,22 +27,28 @@ func PeakMeasurements(
 			continue
 		}
 
-		if _, ok := wanted[row.Metric]; !ok {
-			continue
-		}
+		row.EachMetric(func(metric types.MetricType, side types.MeasurementSide, sample types.MetricSample) {
+			if side != types.SideNone {
+				return
+			}
 
-		bySymbol, ok := out[row.Metric]
+			if _, ok := wanted[metric]; !ok {
+				return
+			}
 
-		if !ok {
-			bySymbol = map[string]float64{}
-			out[row.Metric] = bySymbol
-		}
+			bySymbol, ok := out[metric]
 
-		current, seen := bySymbol[row.Symbol]
+			if !ok {
+				bySymbol = map[string]float64{}
+				out[metric] = bySymbol
+			}
 
-		if !seen || row.Raw > current {
-			bySymbol[row.Symbol] = row.Raw
-		}
+			current, seen := bySymbol[row.Symbol]
+
+			if !seen || sample.Raw > current {
+				bySymbol[row.Symbol] = sample.Raw
+			}
+		})
 	}
 
 	return out
@@ -74,23 +80,30 @@ func LatestMeasurements(
 			continue
 		}
 
-		if _, ok := wanted[row.Metric]; !ok {
-			continue
-		}
-
-		bySymbol, ok := latest[row.Metric]
-
-		if !ok {
-			bySymbol = map[string]stamp{}
-			latest[row.Metric] = bySymbol
-		}
-
 		nano := row.At.UnixNano()
-		current, seen := bySymbol[row.Symbol]
 
-		if !seen || nano >= current.at {
-			bySymbol[row.Symbol] = stamp{at: nano, raw: row.Raw}
-		}
+		row.EachMetric(func(metric types.MetricType, side types.MeasurementSide, sample types.MetricSample) {
+			if side != types.SideNone {
+				return
+			}
+
+			if _, ok := wanted[metric]; !ok {
+				return
+			}
+
+			bySymbol, ok := latest[metric]
+
+			if !ok {
+				bySymbol = map[string]stamp{}
+				latest[metric] = bySymbol
+			}
+
+			current, seen := bySymbol[row.Symbol]
+
+			if !seen || nano >= current.at {
+				bySymbol[row.Symbol] = stamp{at: nano, raw: sample.Raw}
+			}
+		})
 	}
 
 	out := map[types.MetricType]map[string]float64{}
@@ -129,22 +142,28 @@ func PeakMagnitudeMeasurements(
 			continue
 		}
 
-		if _, ok := wanted[row.Metric]; !ok {
-			continue
-		}
+		row.EachMetric(func(metric types.MetricType, side types.MeasurementSide, sample types.MetricSample) {
+			if side != types.SideNone {
+				return
+			}
 
-		bySymbol, ok := out[row.Metric]
+			if _, ok := wanted[metric]; !ok {
+				return
+			}
 
-		if !ok {
-			bySymbol = map[string]float64{}
-			out[row.Metric] = bySymbol
-		}
+			bySymbol, ok := out[metric]
 
-		current, seen := bySymbol[row.Symbol]
+			if !ok {
+				bySymbol = map[string]float64{}
+				out[metric] = bySymbol
+			}
 
-		if !seen || math.Abs(row.Raw) > math.Abs(current) {
-			bySymbol[row.Symbol] = row.Raw
-		}
+			current, seen := bySymbol[row.Symbol]
+
+			if !seen || math.Abs(sample.Raw) > math.Abs(current) {
+				bySymbol[row.Symbol] = sample.Raw
+			}
+		})
 	}
 
 	return out

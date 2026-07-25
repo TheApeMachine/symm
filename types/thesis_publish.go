@@ -1,22 +1,17 @@
 package types
 
 /*
-measureKey identifies one published row for O(1) Thesis.Publish upsert.
+measureKey identifies one published source×symbol row for O(1) Thesis.Publish.
 */
 type measureKey struct {
 	source SourceType
-	metric MetricType
-	side   MeasurementSide
 	symbol string
 }
 
 /*
-Publish upserts rows onto the Thesis by source/metric/side/symbol. Existing
-identities are replaced through an index so book-path publishes stay O(incoming)
-under the publish lock instead of rescanning the full measurement bag. For each
-symbol present in the incoming batch, prior rows from the same source that are
-absent from this publish are retracted so a book-only cut cannot keep a prior
-trade metric alive on the durable surface.
+Publish upserts rows onto the Thesis by source×symbol. Incoming Metrics replace
+the prior map for that identity so book-path publishes stay O(incoming) under
+the publish lock.
 */
 func (thesis *Thesis) Publish(source SourceType, rows []*Measurement) {
 	if thesis == nil || len(rows) == 0 {
@@ -25,22 +20,20 @@ func (thesis *Thesis) Publish(source SourceType, rows []*Measurement) {
 
 	incoming := make(map[measureKey]*Measurement, len(rows))
 	order := make([]measureKey, 0, len(rows))
-	symbols := make(map[string]struct{}, len(rows))
 
 	for _, row := range rows {
-		if row == nil {
+		if row == nil || row.Symbol == "" {
 			continue
 		}
 
 		row.Source = source
-		key := measureKey{source, row.Metric, row.Side, row.Symbol}
+		key := measureKey{source, row.Symbol}
 
 		if _, seen := incoming[key]; !seen {
 			order = append(order, key)
 		}
 
 		incoming[key] = row
-		symbols[row.Symbol] = struct{}{}
 	}
 
 	if len(order) == 0 {
@@ -52,14 +45,13 @@ func (thesis *Thesis) Publish(source SourceType, rows []*Measurement) {
 
 	if thesis.index == nil {
 		thesis.index = make(map[measureKey]int, len(thesis.Measurements)+len(order))
+
 		for slot, row := range thesis.Measurements {
 			if row == nil {
 				continue
 			}
 
-			thesis.index[measureKey{
-				row.Source, row.Metric, row.Side, row.Symbol,
-			}] = slot
+			thesis.index[measureKey{row.Source, row.Symbol}] = slot
 		}
 	}
 
@@ -75,54 +67,81 @@ func (thesis *Thesis) Publish(source SourceType, rows []*Measurement) {
 		thesis.index[key] = len(thesis.Measurements)
 		thesis.Measurements = append(thesis.Measurements, row)
 	}
-
-	thesis.retractAbsent(source, symbols, incoming)
 }
 
 /*
-retractAbsent drops same-source rows for batch symbols whose identities were
-not included in the current publish. Callers hold thesis.publish.
+Replace publishes a complete per-symbol surface for source: every prior row from
+that source for symbols present in rows is dropped, then the incoming identities
+are written. Book-only cuts therefore cannot keep a prior trade metric alive.
 */
-func (thesis *Thesis) retractAbsent(
-	source SourceType,
-	symbols map[string]struct{},
-	incoming map[measureKey]*Measurement,
-) {
+func (thesis *Thesis) Replace(source SourceType, rows []*Measurement) {
+	if thesis == nil || len(rows) == 0 {
+		return
+	}
+
+	symbols := make(map[string]struct{}, len(rows))
+
+	for _, row := range rows {
+		if row == nil || row.Symbol == "" {
+			continue
+		}
+
+		symbols[row.Symbol] = struct{}{}
+	}
+
+	if len(symbols) == 0 {
+		return
+	}
+
+	thesis.publish.Lock()
+	defer thesis.publish.Unlock()
+
 	kept := thesis.Measurements[:0]
-	changed := false
 
 	for _, row := range thesis.Measurements {
 		if row == nil {
-			changed = true
 			continue
 		}
 
-		if row.Source != source {
-			kept = append(kept, row)
-			continue
+		if row.Source == source {
+			if _, drop := symbols[row.Symbol]; drop {
+				continue
+			}
 		}
 
-		if _, inBatch := symbols[row.Symbol]; !inBatch {
-			kept = append(kept, row)
-			continue
-		}
-
-		key := measureKey{source, row.Metric, row.Side, row.Symbol}
-
-		if _, present := incoming[key]; present {
-			kept = append(kept, row)
-			continue
-		}
-
-		changed = true
-	}
-
-	if !changed && len(kept) == len(thesis.Measurements) {
-		return
+		kept = append(kept, row)
 	}
 
 	thesis.Measurements = kept
 	thesis.rebuildIndex()
+
+	if thesis.index == nil {
+		thesis.index = make(map[measureKey]int, len(rows))
+	}
+
+	incoming := make(map[measureKey]*Measurement, len(rows))
+	order := make([]measureKey, 0, len(rows))
+
+	for _, row := range rows {
+		if row == nil || row.Symbol == "" {
+			continue
+		}
+
+		row.Source = source
+		key := measureKey{source, row.Symbol}
+
+		if _, seen := incoming[key]; !seen {
+			order = append(order, key)
+		}
+
+		incoming[key] = row
+	}
+
+	for _, key := range order {
+		row := incoming[key]
+		thesis.index[key] = len(thesis.Measurements)
+		thesis.Measurements = append(thesis.Measurements, row)
+	}
 }
 
 /*
@@ -145,8 +164,6 @@ func (thesis *Thesis) rebuildIndex() {
 			continue
 		}
 
-		thesis.index[measureKey{
-			row.Source, row.Metric, row.Side, row.Symbol,
-		}] = slot
+		thesis.index[measureKey{row.Source, row.Symbol}] = slot
 	}
 }

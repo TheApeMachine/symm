@@ -120,21 +120,19 @@ func (position *Position) Mark(symbol string) {
 		return
 	}
 
-	holding, ok := position.balance.LookupHolding(position.pair.Symbol)
+	_ = position.balance.Update(position.pair.Symbol, func(holding *types.Holding) error {
+		if holding.Status != types.OPEN {
+			return nil
+		}
 
-	if !ok {
-		return
-	}
+		_ = position.price.Mark(&position.pair, holding)
 
-	if holding.Status != types.OPEN {
-		return
-	}
+		if holding.Stoploss != nil && holding.StopMark != nil {
+			holding.Stoploss.ObserveMark(holding.StopMark.Float64())
+		}
 
-	_ = position.price.Mark(&position.pair, holding)
-
-	if holding.Stoploss != nil && holding.StopMark != nil {
-		holding.Stoploss.ObserveMark(holding.StopMark.Float64())
-	}
+		return nil
+	})
 }
 
 func (position *Position) Symbol() string {

@@ -121,8 +121,8 @@ func (desk *Desk) ReserveAndSubmitEntry(
 	intentID := holding.Symbol + ":" + holding.Qty.String()
 	cash := holding.Qty.Mul(mark)
 
-	if _, exists := desk.balance.Ledger().byID[intentID]; !exists {
-		if err := desk.balance.Ledger().Reserve(
+	if _, exists := desk.balance.byID[intentID]; !exists {
+		if err := desk.balance.Reserve(
 			intentID, holding.Symbol, cash, true,
 		); err != nil {
 			return nil, err
@@ -135,14 +135,14 @@ func (desk *Desk) ReserveAndSubmitEntry(
 	position.intentID = intentID
 
 	if err := position.Enter(holding); err != nil {
-		_ = desk.balance.Ledger().Release(intentID)
+		_ = desk.balance.Release(intentID)
 
 		return nil, err
 	}
 
 	// Venue now owns the working order; drop the local claim so slot math and
 	// Available track exchange state plus any still-open Allocator claims.
-	_ = desk.balance.Ledger().Commit(intentID)
+	_ = desk.balance.Commit(intentID)
 	position.intentID = ""
 
 	if position.request != nil {

@@ -1,6 +1,7 @@
 package types
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -43,33 +44,37 @@ func TestPublish(t *testing.T) {
 		thesis := NewThesis()
 		first := time.Unix(1, 0).UTC()
 		second := time.Unix(2, 0).UTC()
-		thesis.Publish(SourceHawkes, []*Measurement{
-			{
-				Source: SourceHawkes, Metric: MetricEventCount,
-				Side: SideBuy, Symbol: "SIM1/USD", Raw: 1, At: first,
+		thesis.Publish(SourceHawkes, []*Measurement{{
+			Source: SourceHawkes, Symbol: "SIM1/USD", At: first,
+			Metrics: map[string]MetricSample{
+				MetricKey(MetricEventCount, SideBuy):   {Raw: 1},
+				MetricKey(MetricArrivalRate, SideBuy):  {Raw: 0.5},
 			},
-			{
-				Source: SourceHawkes, Metric: MetricArrivalRate,
-				Side: SideBuy, Symbol: "SIM1/USD", Raw: 0.5, At: first,
-			},
-		})
+		}})
 		thesis.Publish(SourcePumpDump, []*Measurement{{
-			Source: SourcePumpDump, Metric: MetricRVOL,
-			Side: SideNone, Symbol: "SIM1/USD", Raw: 2, At: first,
+			Source: SourcePumpDump, Symbol: "SIM1/USD", At: first,
+			Metrics: map[string]MetricSample{
+				MetricKey(MetricRVOL, SideNone): {Raw: 2},
+			},
 		}})
 
 		Convey("It should upsert only matching identities", func() {
 			thesis.Publish(SourceHawkes, []*Measurement{{
-				Source: SourceHawkes, Metric: MetricEventCount,
-				Side: SideBuy, Symbol: "SIM1/USD", Raw: 3, At: second,
+				Source: SourceHawkes, Symbol: "SIM1/USD", At: second,
+				Metrics: map[string]MetricSample{
+					MetricKey(MetricEventCount, SideBuy):  {Raw: 3},
+					MetricKey(MetricArrivalRate, SideBuy): {Raw: 0.5},
+				},
 			}})
 
-			So(thesis.Measurements, ShouldHaveLength, 3)
+			So(thesis.Measurements, ShouldHaveLength, 2)
 
 			byMetric := map[MetricType]float64{}
 
 			for _, row := range thesis.Measurements {
-				byMetric[row.Metric] = row.Raw
+				row.EachMetric(func(metric MetricType, side MeasurementSide, sample MetricSample) {
+					byMetric[metric] = sample.Raw
+				})
 			}
 
 			So(byMetric[MetricRVOL], ShouldEqual, 2)
@@ -85,8 +90,10 @@ func TestPublish(t *testing.T) {
 				<-wait
 				for index := range 64 {
 					thesis.Publish(SourceToxicity, []*Measurement{{
-						Source: SourceToxicity, Metric: MetricStrength,
-						Symbol: "SIM1/USD", Raw: float64(index), At: second,
+						Source: SourceToxicity, Symbol: "SIM1/USD", At: second,
+						Metrics: map[string]MetricSample{
+							MetricKey(MetricStrength, SideNone): {Raw: float64(index)},
+						},
 					}})
 				}
 				done <- struct{}{}
@@ -96,8 +103,10 @@ func TestPublish(t *testing.T) {
 				<-wait
 				for index := range 64 {
 					thesis.Publish(SourceExhaustion, []*Measurement{{
-						Source: SourceExhaustion, Metric: MetricStrength,
-						Symbol: "SIM1/USD", Raw: float64(index) + 100, At: second,
+						Source: SourceExhaustion, Symbol: "SIM1/USD", At: second,
+						Metrics: map[string]MetricSample{
+							MetricKey(MetricStrength, SideNone): {Raw: float64(index) + 100},
+						},
 					}})
 				}
 				done <- struct{}{}
@@ -110,8 +119,10 @@ func TestPublish(t *testing.T) {
 			bySource := map[SourceType]float64{}
 
 			for _, row := range thesis.SnapshotMeasurements() {
-				if row.Metric == MetricStrength {
-					bySource[row.Source] = row.Raw
+				sample, ok := row.Sample(MetricStrength, SideNone)
+
+				if ok {
+					bySource[row.Source] = sample.Raw
 				}
 			}
 
@@ -131,30 +142,88 @@ func TestPublishResonanceStaysBounded(t *testing.T) {
 		at := time.Unix(1, 0).UTC()
 
 		for epoch := range 10_000 {
-			thesis.Publish(SourceResonance, []*Measurement{
-				{
-					Metric: MetricResonanceEnergy, Symbol: "SIM1/USD",
-					Raw: float64(epoch), At: at.Add(time.Duration(epoch)),
+			thesis.Publish(SourceResonance, []*Measurement{{
+				Source: SourceResonance, Symbol: "SIM1/USD",
+				At: at.Add(time.Duration(epoch)),
+				Metrics: map[string]MetricSample{
+					MetricKey(MetricResonanceEnergy, SideNone):    {Raw: float64(epoch)},
+					MetricKey(MetricResonanceSurprise, SideNone): {Raw: float64(epoch) + 0.5},
 				},
-				{
-					Metric: MetricResonanceSurprise, Symbol: "SIM1/USD",
-					Raw: float64(epoch) + 0.5, At: at.Add(time.Duration(epoch)),
-				},
-			})
+			}})
 		}
 
-		Convey("Then the published surface stays two rows for that symbol", func() {
-			So(thesis.Measurements, ShouldHaveLength, 2)
+		Convey("Then the published surface stays one row for that symbol", func() {
+			So(thesis.Measurements, ShouldHaveLength, 1)
 			So(thesis.Measurements[0].Source, ShouldEqual, SourceResonance)
-			So(thesis.Measurements[0].Raw, ShouldEqual, 9999)
-			So(thesis.Measurements[1].Raw, ShouldEqual, 9999.5)
+
+			energy, ok := thesis.Measurements[0].Sample(MetricResonanceEnergy, SideNone)
+			So(ok, ShouldBeTrue)
+			So(energy.Raw, ShouldEqual, 9999)
+
+			surprise, ok := thesis.Measurements[0].Sample(MetricResonanceSurprise, SideNone)
+			So(ok, ShouldBeTrue)
+			So(surprise.Raw, ShouldEqual, 9999.5)
 		})
 	})
 }
 
 /*
-TestPublishRetractsAbsentSymbolMetrics proves a later publish for the same
-source and symbol drops identities that are no longer in the incoming batch.
+TestPublishSourceSymbolBound proves the Thesis bag is one row per source×symbol
+even when each publish carries many Metrics samples.
+*/
+func TestPublishSourceSymbolBound(t *testing.T) {
+	Convey("Given many sources publishing multi-metric rows for many symbols", t, func() {
+		thesis := NewThesis()
+		at := time.Unix(1, 0).UTC()
+		sources := []SourceType{
+			SourceHawkes, SourcePumpDump, SourceCVD, SourceDepthFlow,
+			SourceExhaustion, SourceToxicity, SourceLiquidity, SourceLeadLag,
+			SourceCorrelation, SourceSentiment,
+		}
+		symbols := make([]string, 64)
+
+		for index := range symbols {
+			symbols[index] = fmt.Sprintf("SIM%d/USD", index)
+		}
+
+		for _, source := range sources {
+			rows := make([]*Measurement, 0, len(symbols))
+
+			for _, symbol := range symbols {
+				row := &Measurement{Source: source, Symbol: symbol, At: at}
+
+				for metricIndex := range 8 {
+					row.PutMetric(
+						MetricType("metric_"+string(rune('a'+metricIndex))),
+						SideNone,
+						MetricSample{Raw: float64(metricIndex + 1)},
+					)
+				}
+
+				rows = append(rows, row)
+			}
+
+			thesis.Publish(source, rows)
+		}
+
+		Convey("Then the bag size equals sources times symbols, not metrics", func() {
+			So(thesis.Measurements, ShouldHaveLength, len(sources)*len(symbols))
+			So(thesis.Measurements, ShouldHaveLength, 640)
+
+			totalSamples := 0
+
+			for _, row := range thesis.Measurements {
+				totalSamples += len(row.Metrics)
+			}
+
+			So(totalSamples, ShouldEqual, 640*8)
+		})
+	})
+}
+
+/*
+TestPublishRetractsAbsentSymbolMetrics proves Replace drops prior same-source
+identities for symbols in the incoming batch while leaving other symbols alone.
 */
 func TestPublishRetractsAbsentSymbolMetrics(t *testing.T) {
 	Convey("Given a trade volume row already on the thesis", t, func() {
@@ -162,23 +231,26 @@ func TestPublishRetractsAbsentSymbolMetrics(t *testing.T) {
 		at := time.Unix(1, 0).UTC()
 		thesis.Publish(SourceToxicity, []*Measurement{
 			{
-				Metric: MetricTradeVolume, Symbol: "SIM1/USD",
-				Raw: 4, At: at,
+				Source: SourceToxicity, Symbol: "SIM1/USD", At: at,
+				Metrics: map[string]MetricSample{
+					MetricKey(MetricTradeVolume, SideNone):      {Raw: 4},
+					MetricKey(MetricTouchQuantity, SideBuy):     {Raw: 2},
+				},
 			},
 			{
-				Metric: MetricTouchQuantity, Side: SideBuy, Symbol: "SIM1/USD",
-				Raw: 2, At: at,
-			},
-			{
-				Metric: MetricTouchQuantity, Side: SideBuy, Symbol: "SIM2/USD",
-				Raw: 3, At: at,
+				Source: SourceToxicity, Symbol: "SIM2/USD", At: at,
+				Metrics: map[string]MetricSample{
+					MetricKey(MetricTouchQuantity, SideBuy): {Raw: 3},
+				},
 			},
 		})
 
-		Convey("When a book-only publish arrives for the traded symbol", func() {
-			thesis.Publish(SourceToxicity, []*Measurement{{
-				Metric: MetricTouchQuantity, Side: SideBuy, Symbol: "SIM1/USD",
-				Raw: 1, At: at.Add(time.Second),
+		Convey("When a book-only replace arrives for the traded symbol", func() {
+			thesis.Replace(SourceToxicity, []*Measurement{{
+				Source: SourceToxicity, Symbol: "SIM1/USD", At: at.Add(time.Second),
+				Metrics: map[string]MetricSample{
+					MetricKey(MetricTouchQuantity, SideBuy): {Raw: 1},
+				},
 			}})
 
 			Convey("Then trade volume is retracted while other symbols remain", func() {
@@ -187,10 +259,13 @@ func TestPublishRetractsAbsentSymbolMetrics(t *testing.T) {
 				byKey := map[string]float64{}
 
 				for _, row := range thesis.Measurements {
-					byKey[string(row.Metric)+"|"+row.Symbol] = row.Raw
+					row.EachMetric(func(metric MetricType, side MeasurementSide, sample MetricSample) {
+						byKey[string(metric)+"|"+row.Symbol] = sample.Raw
+					})
 				}
 
-				So(byKey[string(MetricTradeVolume)+"|SIM1/USD"], ShouldEqual, 0)
+				_, hasTrade := byKey[string(MetricTradeVolume)+"|SIM1/USD"]
+				So(hasTrade, ShouldBeFalse)
 				So(byKey[string(MetricTouchQuantity)+"|SIM1/USD"], ShouldEqual, 1)
 				So(byKey[string(MetricTouchQuantity)+"|SIM2/USD"], ShouldEqual, 3)
 			})
@@ -202,8 +277,10 @@ func BenchmarkPublish(b *testing.B) {
 	thesis := NewThesis()
 	at := time.Unix(1, 0).UTC()
 	rows := []*Measurement{{
-		Source: SourceHawkes, Metric: MetricEventCount,
-		Side: SideBuy, Symbol: "SIM1/USD", Raw: 1, At: at,
+		Source: SourceHawkes, Symbol: "SIM1/USD", At: at,
+		Metrics: map[string]MetricSample{
+			MetricKey(MetricEventCount, SideBuy): {Raw: 1},
+		},
 	}}
 
 	b.ReportAllocs()

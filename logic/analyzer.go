@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
@@ -32,11 +33,12 @@ type Analyzer struct {
 	tree      *dmt.Tree
 	ui        chan []byte
 	recorder  *audit.Recorder
-	resonance map[string]*Resonance
-	causal    map[string]*Causal
-	cognition map[string]types.Cognition
-	observed  map[string]uint64
-	rem       *remSleep
+	resonance  map[string]*Resonance
+	causal     map[string]*Causal
+	cognition  map[string]types.Cognition
+	observed   map[string]uint64
+	rem        *remSleep
+	categories *category.Graph
 }
 
 /*
@@ -63,19 +65,20 @@ func NewAnalyzer(
 	ctx, cancel := context.WithCancel(ctx)
 
 	analyzer := &Analyzer{
-		ctx:       ctx,
-		cancel:    cancel,
-		gate:      gate,
-		status:    types.READY,
-		manifold:  solver,
-		hawkes:    hawkes,
-		tree:      tree,
-		ui:        ui,
-		resonance: make(map[string]*Resonance),
-		causal:    make(map[string]*Causal),
-		cognition: make(map[string]types.Cognition),
-		observed:  make(map[string]uint64),
-		rem:       newREMSleep(ctx, tree),
+		ctx:        ctx,
+		cancel:     cancel,
+		gate:       gate,
+		status:     types.READY,
+		manifold:   solver,
+		hawkes:     hawkes,
+		tree:       tree,
+		ui:         ui,
+		resonance:  make(map[string]*Resonance),
+		causal:     make(map[string]*Causal),
+		cognition:  make(map[string]types.Cognition),
+		observed:   make(map[string]uint64),
+		rem:        newREMSleep(ctx, tree),
+		categories: category.NewGraph(),
 	}
 
 	analyzer.Actor = types.NewActor(ctx, map[string]types.Handler{
@@ -173,9 +176,24 @@ func (analyzer *Analyzer) enrich(thesis *types.Thesis, hawkes manifold.HawkesSou
 	analyzer.stepManifold(thesis, hawkes)
 	states := analyzer.observeStates(thesis)
 
+	composeStarted := time.Now()
+	analyzer.composeCategories(thesis)
+	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "categories_compose", map[string]any{
+		"ns":         time.Since(composeStarted).Nanoseconds(),
+		"categories": len(thesis.Categories),
+	}))
+
 	analyzer.publishMeasured(thesis, states)
 
 	remObservations, remRequested := analyzer.cognizeStates(thesis, states)
+
+	commitStarted := time.Now()
+	analyzer.commitCategories(thesis)
+	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "categories_commit", map[string]any{
+		"ns":         time.Since(commitStarted).Nanoseconds(),
+		"categories": len(thesis.Categories),
+	}))
+
 	analyzer.consolidate(thesis, remObservations, remRequested)
 	analyzer.publishCognition(thesis)
 
@@ -183,9 +201,38 @@ func (analyzer *Analyzer) enrich(thesis *types.Thesis, hawkes manifold.HawkesSou
 }
 
 /*
+composeCategories rebuilds Thesis category rows from measurements × affinity and
+publishes the resident graph pointer for strategy. Edge/prior mutation waits
+until after cognize so DMT still sees the previous top for transition tokens.
+*/
+func (analyzer *Analyzer) composeCategories(thesis *types.Thesis) {
+	if thesis == nil {
+		return
+	}
+
+	if analyzer.categories == nil {
+		analyzer.categories = category.NewGraph()
+	}
+
+	thesis.Categories = category.ComposeAll(thesis)
+	thesis.Graphs.Store("categories", analyzer.categories)
+}
+
+/*
+commitCategories strengthens resident graph edges from this cut's composed
+categories and advances per-symbol priors after DMT has consumed transitions.
+*/
+func (analyzer *Analyzer) commitCategories(thesis *types.Thesis) {
+	if thesis == nil || analyzer.categories == nil {
+		return
+	}
+
+	analyzer.categories.Update(thesis.At, thesis, thesis.Categories)
+}
+
+/*
 Update runs Hawkes-driven field analysis after signal measure: manifold step,
-observation, publish, cognition, and finish. Evidence-graph composition is
-removed until the resident market graph is redesigned.
+category composition, observation, publish, cognition, and finish.
 */
 func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 	analyzer.enrich(thesis, analyzer.hawkes)
@@ -215,10 +262,9 @@ func (analyzer *Analyzer) SetRecorder(recorder *audit.Recorder) {
 }
 
 /*
-publish sends one small datura frame to the UI hub ingress. The send blocks
-until the drain accepts it so resonance, manifold, and cognition frames are
-never silently discarded under load — a full buffer stalls analysis honestly
-instead of leaving the terminal painted as "waiting."
+publish enqueues one frame for the UI hub. A full ingress drops the frame —
+same contract as WireMeasurements — so dashboard backpressure cannot stall
+enrich or the cut cascade behind Hawkes.
 */
 func (analyzer *Analyzer) publish(frame datura.Map[any]) {
 	payload, err := frame.Marshal()
@@ -228,14 +274,18 @@ func (analyzer *Analyzer) publish(frame datura.Map[any]) {
 		return
 	}
 
-	if analyzer.ctx == nil {
-		analyzer.ui <- payload
+	if analyzer.ui == nil {
 		return
 	}
 
 	select {
 	case analyzer.ui <- payload:
-	case <-analyzer.ctx.Done():
+	default:
+		errnie.Error(errnie.Err(
+			errnie.TooManyRequests,
+			"logic analyzer: ui channel saturated; dropped frame",
+			nil,
+		))
 	}
 }
 

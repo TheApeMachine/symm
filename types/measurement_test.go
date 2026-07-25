@@ -106,36 +106,36 @@ func TestFilterLatest(t *testing.T) {
 	Convey("Given unsynchronized measurement epochs across symbols", t, func() {
 		btcOlder := &Measurement{
 			Symbol: "BTC/USD",
-			Metric: MetricBreadth,
 			At:     time.Unix(1, 0),
+			Metrics: map[string]MetricSample{
+				MetricKey(MetricBreadth, SideNone): {Raw: 0},
+			},
 		}
-		btcBreadth := &Measurement{
+		btcLatest := &Measurement{
 			Symbol: "BTC/USD",
-			Metric: MetricBreadth,
 			At:     time.Unix(2, 0),
-		}
-		btcStrength := &Measurement{
-			Symbol: "BTC/USD",
-			Metric: MetricStrength,
-			At:     time.Unix(2, 0),
+			Metrics: map[string]MetricSample{
+				MetricKey(MetricBreadth, SideNone):  {Raw: 1},
+				MetricKey(MetricStrength, SideNone): {Raw: 2},
+			},
 		}
 		ethLatest := &Measurement{
 			Symbol: "ETH/USD",
-			Metric: MetricStrength,
 			At:     time.Unix(3, 0),
+			Metrics: map[string]MetricSample{
+				MetricKey(MetricStrength, SideNone): {Raw: 3},
+			},
 		}
 
 		Convey("Then every symbol keeps its newest complete epoch", func() {
 			filtered := FilterLatest([]*Measurement{
 				btcOlder,
-				btcBreadth,
-				btcStrength,
+				btcLatest,
 				ethLatest,
 			})
 
 			So(filtered, ShouldResemble, []*Measurement{
-				btcBreadth,
-				btcStrength,
+				btcLatest,
 				ethLatest,
 			})
 		})
@@ -149,23 +149,25 @@ func BenchmarkFilterLatest(b *testing.B) {
 		epochCount  = 3
 	)
 
-	measurements := make(
-		[]*Measurement,
-		0,
-		symbolCount*metricCount*epochCount,
-	)
+	measurements := make([]*Measurement, 0, symbolCount*epochCount)
 
 	for symbolIndex := 0; symbolIndex < symbolCount; symbolIndex++ {
 		symbol := "PAIR-" + strconv.Itoa(symbolIndex)
 
 		for epochIndex := 0; epochIndex < epochCount; epochIndex++ {
-			for metricIndex := 0; metricIndex < metricCount; metricIndex++ {
-				measurements = append(measurements, &Measurement{
-					Symbol: symbol,
-					Metric: MetricStrength,
-					At:     time.Unix(int64(epochIndex), 0),
-				})
+			row := &Measurement{
+				Symbol: symbol,
+				At:     time.Unix(int64(epochIndex), 0),
+				Metrics: make(map[string]MetricSample, metricCount),
 			}
+
+			for metricIndex := 0; metricIndex < metricCount; metricIndex++ {
+				row.Metrics[MetricKey(MetricStrength, SideNone)] = MetricSample{
+					Raw: float64(metricIndex),
+				}
+			}
+
+			measurements = append(measurements, row)
 		}
 	}
 
@@ -173,82 +175,85 @@ func BenchmarkFilterLatest(b *testing.B) {
 	b.ResetTimer()
 
 	for iteration := 0; b.Loop(); iteration++ {
-		if len(FilterLatest(measurements)) != symbolCount*metricCount {
+		if len(FilterLatest(measurements)) != symbolCount {
 			b.Fatal("latest measurement epoch lost a symbol")
 		}
 	}
 }
 
 func TestForPublish(t *testing.T) {
-	Convey("Given flat typed rows for two symbols from one signal", t, func() {
+	Convey("Given merged rows for two symbols from one signal", t, func() {
 		at := time.Unix(100, 0).UTC()
 		rows := []*Measurement{
 			{
-				Source: SourceSentiment, Stream: Sentiment, Symbol: "BTC/USD",
-				Metric: MetricBreadth, At: at, Raw: 1,
+				Source: SourceSentiment, Symbol: "BTC/USD", At: at,
+				Metrics: map[string]MetricSample{
+					MetricKey(MetricBreadth, SideNone):  {Raw: 1},
+					MetricKey(MetricStrength, SideNone): {Raw: 0.4},
+				},
 				Validity: MeasurementValidity{State: ValidityValid, Readiness: ReadinessObservation},
 			},
 			{
-				Source: SourceSentiment, Stream: Sentiment, Symbol: "BTC/USD",
-				Metric: MetricStrength, At: at, Raw: 0.4,
-				Validity: MeasurementValidity{State: ValidityValid, Readiness: ReadinessObservation},
-			},
-			{
-				Source: SourceSentiment, Stream: Sentiment, Symbol: "ETH/USD",
-				Metric: MetricBreadth, At: at, Raw: 0.5,
-				Validity: MeasurementValidity{State: ValidityValid, Readiness: ReadinessObservation},
-			},
-			{
-				Source: SourceSentiment, Stream: Sentiment, Symbol: "ETH/USD",
-				Metric: MetricStrength, At: at, Raw: 0.2,
+				Source: SourceSentiment, Symbol: "ETH/USD", At: at,
+				Metrics: map[string]MetricSample{
+					MetricKey(MetricBreadth, SideNone):  {Raw: 0.5},
+					MetricKey(MetricStrength, SideNone): {Raw: 0.2},
+				},
 				Validity: MeasurementValidity{State: ValidityValid, Readiness: ReadinessObservation},
 			},
 		}
 
 		published := ForPublish(rows)
 
-		Convey("It keeps typed rows for both symbols", func() {
-			So(published, ShouldHaveLength, 4)
+		Convey("It keeps one row per symbol with all metrics", func() {
+			So(published, ShouldHaveLength, 2)
 			So(ObservationCount(rows), ShouldEqual, 2)
-			So(published[0].Metric, ShouldEqual, MetricBreadth)
-			So(published[0].Raw, ShouldEqual, 1.0)
+
+			breadth, ok := published[0].Sample(MetricBreadth, SideNone)
+			So(ok, ShouldBeTrue)
+			So(breadth.Raw, ShouldEqual, 1.0)
 			So(published[0].Symbol, ShouldEqual, "BTC/USD")
 		})
 	})
 
 	Convey("Given directional Hawkes metrics that share a metric name", t, func() {
 		at := time.Unix(100, 0).UTC()
-		rows := []*Measurement{
-			{
-				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
-				Metric: MetricArrivalRate, Side: SideBuy, At: at, Raw: 1.5,
+		rows := []*Measurement{{
+			Source: SourceHawkes, Symbol: "BTC/USD", At: at,
+			Metrics: map[string]MetricSample{
+				MetricKey(MetricArrivalRate, SideBuy):  {Raw: 1.5},
+				MetricKey(MetricArrivalRate, SideSell): {Raw: 0.7},
 			},
-			{
-				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
-				Metric: MetricArrivalRate, Side: SideSell, At: at, Raw: 0.7,
-			},
-		}
+		}}
 
 		published := ForPublish(rows)
 
-		Convey("It keeps buy and sell as distinct typed rows", func() {
-			So(published, ShouldHaveLength, 2)
-			So(published[0].Side, ShouldEqual, SideBuy)
-			So(published[0].Raw, ShouldEqual, 1.5)
-			So(published[1].Side, ShouldEqual, SideSell)
-			So(published[1].Raw, ShouldEqual, 0.7)
+		Convey("It keeps buy and sell under one source×symbol row", func() {
+			So(published, ShouldHaveLength, 1)
+
+			buy, ok := published[0].Sample(MetricArrivalRate, SideBuy)
+			So(ok, ShouldBeTrue)
+			So(buy.Raw, ShouldEqual, 1.5)
+
+			sell, ok := published[0].Sample(MetricArrivalRate, SideSell)
+			So(ok, ShouldBeTrue)
+			So(sell.Raw, ShouldEqual, 0.7)
 		})
 	})
 
 	Convey("Given an older epoch for one symbol", t, func() {
 		rows := []*Measurement{
 			{
-				Source: SourcePumpDump, Symbol: "BTC/USD",
-				Metric: MetricStrength, At: time.Unix(1, 0), Raw: 0.1,
+				Source: SourcePumpDump, Symbol: "BTC/USD", At: time.Unix(1, 0),
+				Metrics: map[string]MetricSample{
+					MetricKey(MetricStrength, SideNone): {Raw: 0.1},
+				},
 			},
 			{
-				Source: SourcePumpDump, Symbol: "BTC/USD",
-				Metric: MetricStrength, At: time.Unix(2, 0), Raw: 0.9,
+				Source: SourcePumpDump, Symbol: "BTC/USD", At: time.Unix(2, 0),
+				Metrics: map[string]MetricSample{
+					MetricKey(MetricStrength, SideNone): {Raw: 0.9},
+				},
 			},
 		}
 
@@ -256,7 +261,10 @@ func TestForPublish(t *testing.T) {
 
 		Convey("It keeps only the newest complete epoch", func() {
 			So(published, ShouldHaveLength, 1)
-			So(published[0].Raw, ShouldEqual, 0.9)
+
+			strength, ok := published[0].Sample(MetricStrength, SideNone)
+			So(ok, ShouldBeTrue)
+			So(strength.Raw, ShouldEqual, 0.9)
 		})
 	})
 
@@ -264,47 +272,27 @@ func TestForPublish(t *testing.T) {
 		fitFrom := time.Unix(80, 0).UTC()
 		fitAt := time.Unix(100, 0).UTC()
 		evalAt := time.Unix(140, 0).UTC()
+		fitScale := ScaleReference{
+			Kind: ScaleObservationWindow, From: fitFrom, Through: fitAt,
+		}
+		evalScale := ScaleReference{
+			Kind: ScaleObservationWindow, From: fitFrom, Through: evalAt,
+		}
 		rows := []*Measurement{
 			{
-				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
-				Metric: MetricBaselineIntensity, Side: SideBuy, At: fitAt, Raw: 0.6,
-				Scale: ScaleReference{
-					Kind: ScaleObservationWindow, From: fitFrom, Through: fitAt,
+				Source: SourceHawkes, Symbol: "BTC/USD", At: fitAt, Scale: fitScale,
+				Metrics: map[string]MetricSample{
+					MetricKey(MetricBaselineIntensity, SideBuy):  {Raw: 0.6},
+					MetricKey(MetricBaselineIntensity, SideSell): {Raw: 0.4},
+					MetricKey(MetricDecayRate, SideNone):         {Raw: 1.5},
+					MetricKey(MetricSpectralRadius, SideNone):    {Raw: 0.72},
 				},
 			},
 			{
-				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
-				Metric: MetricBaselineIntensity, Side: SideSell, At: fitAt, Raw: 0.4,
-				Scale: ScaleReference{
-					Kind: ScaleObservationWindow, From: fitFrom, Through: fitAt,
-				},
-			},
-			{
-				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
-				Metric: MetricDecayRate, At: fitAt, Raw: 1.5,
-				Scale: ScaleReference{
-					Kind: ScaleObservationWindow, From: fitFrom, Through: fitAt,
-				},
-			},
-			{
-				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
-				Metric: MetricSpectralRadius, At: fitAt, Raw: 0.72,
-				Scale: ScaleReference{
-					Kind: ScaleObservationWindow, From: fitFrom, Through: fitAt,
-				},
-			},
-			{
-				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
-				Metric: MetricConditionalIntensity, Side: SideBuy, At: evalAt, Raw: 0.9,
-				Scale: ScaleReference{
-					Kind: ScaleObservationWindow, From: fitFrom, Through: evalAt,
-				},
-			},
-			{
-				Source: SourceHawkes, Stream: Hawkes, Symbol: "BTC/USD",
-				Metric: MetricConditionalIntensity, Side: SideSell, At: evalAt, Raw: 0.6,
-				Scale: ScaleReference{
-					Kind: ScaleObservationWindow, From: fitFrom, Through: evalAt,
+				Source: SourceHawkes, Symbol: "BTC/USD", At: evalAt, Scale: evalScale,
+				Metrics: map[string]MetricSample{
+					MetricKey(MetricConditionalIntensity, SideBuy):  {Raw: 0.9},
+					MetricKey(MetricConditionalIntensity, SideSell): {Raw: 0.6},
 				},
 			},
 		}
@@ -312,27 +300,32 @@ func TestForPublish(t *testing.T) {
 		published := ForPublish(rows)
 
 		Convey("It publishes the fit parameters beside the live intensity", func() {
-			So(published, ShouldHaveLength, 6)
+			So(published, ShouldHaveLength, 2)
 
-			var decay, intensity *Measurement
+			var fitRow, liveRow *Measurement
 
 			for _, row := range published {
-				switch row.Metric {
-				case MetricDecayRate:
-					decay = row
-				case MetricConditionalIntensity:
-					if row.Side == SideBuy {
-						intensity = row
-					}
+				if row.At.Equal(fitAt) {
+					fitRow = row
+				}
+
+				if row.At.Equal(evalAt) {
+					liveRow = row
 				}
 			}
 
-			So(decay, ShouldNotBeNil)
-			So(intensity, ShouldNotBeNil)
+			So(fitRow, ShouldNotBeNil)
+			So(liveRow, ShouldNotBeNil)
+
+			decay, ok := fitRow.Sample(MetricDecayRate, SideNone)
+			So(ok, ShouldBeTrue)
 			So(decay.Raw, ShouldEqual, 1.5)
+
+			intensity, ok := liveRow.Sample(MetricConditionalIntensity, SideBuy)
+			So(ok, ShouldBeTrue)
 			So(intensity.Raw, ShouldEqual, 0.9)
-			So(decay.Scale.Through, ShouldEqual, fitAt)
-			So(intensity.Scale.Through, ShouldEqual, evalAt)
+			So(fitRow.Scale.Through, ShouldEqual, fitAt)
+			So(liveRow.Scale.Through, ShouldEqual, evalAt)
 		})
 	})
 }
@@ -343,22 +336,25 @@ func BenchmarkObservationCount(b *testing.B) {
 		metricCount = 9
 	)
 
-	rows := make([]*Measurement, 0, symbolCount*metricCount)
+	rows := make([]*Measurement, 0, symbolCount)
 	at := time.Unix(100, 0).UTC()
 
 	for symbolIndex := range symbolCount {
 		symbol := "PAIR-" + strconv.Itoa(symbolIndex)
+		metrics := make(map[string]MetricSample, metricCount)
 
 		for metricIndex := range metricCount {
-			rows = append(rows, &Measurement{
-				Source: SourceSentiment,
-				Stream: Sentiment,
-				Symbol: symbol,
-				Metric: MetricStrength,
-				At:     at,
-				Raw:    float64(metricIndex),
-			})
+			metrics[MetricKey(MetricStrength, SideNone)] = MetricSample{
+				Raw: float64(metricIndex),
+			}
 		}
+
+		rows = append(rows, &Measurement{
+			Source:  SourceSentiment,
+			Symbol:  symbol,
+			At:      at,
+			Metrics: metrics,
+		})
 	}
 
 	b.ReportAllocs()

@@ -1,7 +1,5 @@
 package types
 
-import "fmt"
-
 /*
 ClosedError reports that a component rejected work because it is shutting down
 or already closed. Libraries return this without logging so the process boundary
@@ -31,21 +29,6 @@ Error formats the saturated component name.
 */
 func (saturated SaturatedError) Error() string {
 	return saturated.Component + ": saturated"
-}
-
-/*
-VersionError reports an incompatible wire envelope version.
-*/
-type VersionError struct {
-	Want uint16
-	Got  uint16
-}
-
-/*
-Error formats the version mismatch.
-*/
-func (version VersionError) Error() string {
-	return fmt.Sprintf("wire: version %d incompatible with %d", version.Got, version.Want)
 }
 
 /*

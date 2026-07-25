@@ -112,7 +112,7 @@ func (signal *Signal) Calculate(
 		latestAtBySymbol[symbol] = row.Timestamp
 	}
 
-	out := make([]*types.Measurement, 0, len(scoresBySymbol)*9)
+	out := make([]*types.Measurement, 0, len(scoresBySymbol))
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,
 		Readiness: types.ReadinessObservation,
@@ -129,9 +129,7 @@ func (signal *Signal) Calculate(
 			continue
 		}
 
-		out = appendCorrelation(
-			out, symbol, at, validity, scores,
-		)
+		out = append(out, correlationMeasurement(symbol, at, validity, scores))
 	}
 
 	types.WireMeasurements(out, signal.ui)
@@ -140,15 +138,14 @@ func (signal *Signal) Calculate(
 }
 
 /*
-appendCorrelation writes the nine cohort evidence rows for one symbol.
+correlationMeasurement writes the nine cohort evidence metrics for one symbol.
 */
-func appendCorrelation(
-	out []*types.Measurement,
+func correlationMeasurement(
 	symbol string,
 	at time.Time,
 	validity types.MeasurementValidity,
 	scores map[string]float64,
-) []*types.Measurement {
+) *types.Measurement {
 	specs := []struct {
 		metric types.MetricType
 		key    string
@@ -163,21 +160,22 @@ func appendCorrelation(
 		{types.MetricPeakScore, "peakScore"},
 		{types.MetricStrength, "strength"},
 	}
+	measurement := &types.Measurement{
+		Source:   types.SourceCorrelation,
+		Symbol:   symbol,
+		At:       at,
+		Validity: validity,
+		Metrics:  map[string]types.MetricSample{},
+	}
 
 	for _, spec := range specs {
-		out = append(out, &types.Measurement{
-			Source:   types.SourceCorrelation,
-			Metric:   spec.metric,
-			Stream:   types.Correlation,
-			Symbol:   symbol,
-			At:       at,
-			Unit:     types.UnitDimensionless,
-			Raw:      scores[spec.key],
-			Validity: validity,
+		measurement.PutMetric(spec.metric, types.SideNone, types.MetricSample{
+			Raw:  scores[spec.key],
+			Unit: types.UnitDimensionless,
 		})
 	}
 
-	return out
+	return measurement
 }
 
 /*

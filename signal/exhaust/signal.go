@@ -276,30 +276,35 @@ set for a symbol.
 func (signal *Signal) frame(
 	symbol string, at time.Time, output equation.DecayOutput, maturity float64,
 ) []*types.Measurement {
-	measurements := signal.sideMeasurements(
-		symbol, at, output.Long, types.SideBuy, maturity,
-	)
-
-	return append(measurements, signal.sideMeasurements(
-		symbol, at, output.Short, types.SideSell, maturity,
-	)...)
-}
-
-/*
-sideMeasurements preserves which held position side the decay evidence would
-advise exiting, rather than merging contradictory long and short conditions.
-*/
-func (signal *Signal) sideMeasurements(
-	symbol string,
-	at time.Time,
-	output equation.DecaySideOutput,
-	side types.MeasurementSide,
-	maturity float64,
-) []*types.Measurement {
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,
 		Readiness: types.ReadinessObservation,
 	}
+	measurement := &types.Measurement{
+		Source:       types.SourceExhaustion,
+		Symbol:       symbol,
+		At:           at,
+		ObservedFrom: at,
+		Maturity:     maturity,
+		Validity:     validity,
+		Metrics:      map[string]types.MetricSample{},
+	}
+
+	signal.putSideMetrics(measurement, output.Long, types.SideBuy)
+	signal.putSideMetrics(measurement, output.Short, types.SideSell)
+
+	return []*types.Measurement{measurement}
+}
+
+/*
+putSideMetrics preserves which held position side the decay evidence would
+advise exiting, rather than merging contradictory long and short conditions.
+*/
+func (signal *Signal) putSideMetrics(
+	measurement *types.Measurement,
+	output equation.DecaySideOutput,
+	side types.MeasurementSide,
+) {
 	specs := []struct {
 		metric types.MetricType
 		raw    float64
@@ -313,26 +318,14 @@ func (signal *Signal) sideMeasurements(
 		{types.MetricValue, output.Value},
 		{types.MetricCategory, output.Category},
 	}
-	measurements := make([]*types.Measurement, 0, len(specs))
 
 	for _, spec := range specs {
-		measurements = append(measurements, &types.Measurement{
-			Source:       types.SourceExhaustion,
-			Metric:       spec.metric,
-			Stream:       types.Exhaust,
-			Symbol:       symbol,
-			Side:         side,
-			At:           at,
-			ObservedFrom: at,
-			Unit:         types.UnitDimensionless,
-			Raw:          spec.raw,
-			Normalized:   types.NormalizeFinite(spec.raw),
-			Maturity:     maturity,
-			Validity:     validity,
+		measurement.PutMetric(spec.metric, side, types.MetricSample{
+			Raw:        spec.raw,
+			Normalized: types.NormalizeFinite(spec.raw),
+			Unit:       types.UnitDimensionless,
 		})
 	}
-
-	return measurements
 }
 
 /*

@@ -6,34 +6,6 @@ import (
 )
 
 /*
-SubjectType identifies the market object or model component described by a
-metric. Metrics with the same unit are not necessarily comparable when their
-subjects differ.
-*/
-type SubjectType string
-
-const (
-	SubjectTradeArrivals   SubjectType = "trade_arrivals"
-	SubjectHawkesProcess   SubjectType = "hawkes_process"
-	SubjectHawkesKernel    SubjectType = "hawkes_kernel"
-	SubjectHawkesFit       SubjectType = "hawkes_fit"
-	SubjectManifoldState   SubjectType = "manifold_state"
-	SubjectPumpVolumeLift  SubjectType = "pump_volume_lift"
-	SubjectPumpPriceLift   SubjectType = "pump_price_lift"
-	SubjectPumpSpread      SubjectType = "pump_spread"
-	SubjectPumpCompression SubjectType = "pump_compression"
-	SubjectPumpIgnition    SubjectType = "pump_ignition"
-	SubjectPumpTrend       SubjectType = "pump_trend"
-	SubjectPumpExhaustion  SubjectType = "pump_exhaustion"
-	SubjectPumpComposite   SubjectType = "pump_composite"
-	SubjectBookImbalance   SubjectType = "book_imbalance"
-	SubjectAggressorFlow   SubjectType = "aggressor_flow"
-	SubjectPeerLiquidity   SubjectType = "peer_liquidity"
-	SubjectLevel3Touch     SubjectType = "level3_touch"
-	SubjectLevel3Tape      SubjectType = "level3_tape"
-)
-
-/*
 MeasurementSide preserves directional semantics, including the source and
 target of a bivariate interaction.
 */
@@ -168,27 +140,17 @@ type ScaleReference struct {
 }
 
 /*
-StreamType identifies the source of a measurement.
+MetricSample is one named numeric reading inside a source×symbol Measurement.
 */
-type StreamType string
-
-const (
-	Correlation StreamType = "correlation"
-	Covariance  StreamType = "covariance"
-	CVD         StreamType = "cvd"
-	DepthFlow   StreamType = "depth_flow"
-	Exhaust     StreamType = "exhaust"
-	Hawkes      StreamType = "hawkes"
-	LeadLag     StreamType = "lead_lag"
-	Liquidity   StreamType = "liquidity"
-	PumpDump    StreamType = "pump_dump"
-	Resonance   StreamType = "resonance"
-	Sentiment   StreamType = "sentiment"
-	Toxicity    StreamType = "toxicity"
-)
+type MetricSample struct {
+	Raw        float64         `json:"raw"`
+	Normalized *float64        `json:"normalized,omitempty"`
+	Unit       MeasurementUnit `json:"unit,omitempty"`
+}
 
 /*
-Measurement is one immutable numerical observation emitted by a signal.
+Measurement is one source×symbol observation: shared provenance plus a Metrics
+map keyed like the UI wire (metric, or metric:side).
 
 Provenance contract (set correctly at emit; never rewritten downstream):
   - At is the as-of / emit instant and is required.
@@ -200,22 +162,16 @@ Provenance contract (set correctly at emit; never rewritten downstream):
 */
 type Measurement struct {
 	Source       SourceType              `json:"source"`
-	Metric       MetricType              `json:"metric,omitempty"`
-	Subject      SubjectType             `json:"subject,omitempty"`
-	Stream       StreamType              `json:"stream,omitempty"`
 	Symbol       string                  `json:"symbol" validate:"required"`
 	Peer         string                  `json:"peer,omitempty"`
-	Side         MeasurementSide         `json:"side,omitempty"`
 	At           time.Time               `json:"at" validate:"required"`
 	ObservedFrom time.Time               `json:"observedFrom,omitempty"`
 	Horizon      time.Duration           `json:"horizon,omitempty" validate:"nonnegative"`
-	Unit         MeasurementUnit         `json:"unit,omitempty"`
-	Raw          float64                 `json:"raw" validate:"finite"`
-	Normalized   *float64                `json:"normalized" validate:"finite"`
 	Maturity     float64                 `json:"maturity,omitempty" validate:"finite"`
-	Uncertainty  *MeasurementUncertainty `json:"uncertainty"`
+	Uncertainty  *MeasurementUncertainty `json:"uncertainty,omitempty"`
 	Validity     MeasurementValidity     `json:"validity"`
 	Scale        ScaleReference          `json:"scale"`
+	Metrics      map[string]MetricSample `json:"metrics,omitempty"`
 }
 
 /*
@@ -310,9 +266,8 @@ func ObservationCount(measurements []*Measurement) int {
 }
 
 /*
-ForPublish returns the newest epoch per symbol plus any older Hawkes fit-parameter
-rows that FilterLatest would drop. Prefer AggregateMeasurements / WireMeasurements
-for the UI path; this keeps flat typed rows for non-wire consumers.
+ForPublish returns the newest epoch per symbol plus any older Hawkes rows that
+still carry fit-parameter metrics FilterLatest would drop.
 */
 func ForPublish(measurements []*Measurement) []*Measurement {
 	latest := FilterLatest(measurements)
@@ -362,18 +317,26 @@ func ForPublish(measurements []*Measurement) []*Measurement {
 }
 
 func (measurement *Measurement) fitParameter() bool {
-	switch measurement.Metric {
-	case MetricBaselineIntensity,
-		MetricExcitationAmplitude,
-		MetricDecayRate,
-		MetricKernelMemory,
-		MetricSpectralRadius,
-		MetricHawkesPoissonDelta,
-		MetricCrossSelfDelta,
-		MetricImmediateOffspring,
-		MetricTotalDescendants:
-		return true
-	default:
+	if measurement == nil {
 		return false
 	}
+
+	for key := range measurement.Metrics {
+		metric, _ := ParseMetricKey(key)
+
+		switch metric {
+		case MetricBaselineIntensity,
+			MetricExcitationAmplitude,
+			MetricDecayRate,
+			MetricKernelMemory,
+			MetricSpectralRadius,
+			MetricHawkesPoissonDelta,
+			MetricCrossSelfDelta,
+			MetricImmediateOffspring,
+			MetricTotalDescendants:
+			return true
+		}
+	}
+
+	return false
 }

@@ -88,10 +88,19 @@ func TestCalculate(t *testing.T) {
 			directions := []*types.Measurement{}
 
 			for _, measurement := range measurements {
-				if measurement.Source == types.SourceLeadLag &&
-					measurement.Metric == types.MetricSignedLagDirection {
-					directions = append(directions, measurement)
+				if measurement.Source != types.SourceLeadLag {
+					continue
 				}
+
+				sample, ok := measurement.Sample(
+					types.MetricSignedLagDirection, types.SideNone,
+				)
+
+				if !ok || sample.Raw == 0 {
+					continue
+				}
+
+				directions = append(directions, measurement)
 			}
 
 			outcomes[proof.name] = marketOutcome{
@@ -137,7 +146,12 @@ func TestCalculate(t *testing.T) {
 
 			for _, direction := range outcome.directions {
 				So(direction.Peer, ShouldNotBeEmpty)
-				So(math.Abs(direction.Raw), ShouldEqual, 1)
+
+				sample, ok := direction.Sample(
+					types.MetricSignedLagDirection, types.SideNone,
+				)
+				So(ok, ShouldBeTrue)
+				So(math.Abs(sample.Raw), ShouldEqual, 1)
 			}
 		}
 
@@ -208,7 +222,12 @@ func TestCalculate(t *testing.T) {
 
 		for _, follower := range []string{"SIM2/USD", "SIM3/USD"} {
 			So(latestDirections[follower].Peer, ShouldEqual, "SIM1/USD")
-			So(latestDirections[follower].Raw, ShouldEqual, 1)
+
+			sample, ok := latestDirections[follower].Sample(
+				types.MetricSignedLagDirection, types.SideNone,
+			)
+			So(ok, ShouldBeTrue)
+			So(sample.Raw, ShouldEqual, 1)
 		}
 
 		isolated := outcomes["isolated pump"].latest

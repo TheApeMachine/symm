@@ -263,18 +263,24 @@ func (resonance *Resonance) Update(
 
 	return []*types.Measurement{
 		{
-			Source: types.SourceResonance, Stream: types.Resonance,
-			Metric: types.MetricResonanceEnergy, Subject: types.SubjectManifoldState,
-			Symbol: resonance.symbol, At: stepAt, ObservedFrom: observedFrom,
-			Horizon: horizon, Unit: types.UnitDimensionless,
-			Raw: outcome.Energy, Maturity: maturity, Validity: validity, Scale: scale,
-		},
-		{
-			Source: types.SourceResonance, Stream: types.Resonance,
-			Metric: types.MetricResonanceSurprise, Subject: types.SubjectManifoldState,
-			Symbol: resonance.symbol, At: stepAt, ObservedFrom: observedFrom,
-			Horizon: horizon, Unit: types.UnitNat,
-			Raw: outcome.Surprise, Maturity: maturity, Validity: validity, Scale: scale,
+			Source:       types.SourceResonance,
+			Symbol:       resonance.symbol,
+			At:           stepAt,
+			ObservedFrom: observedFrom,
+			Horizon:      horizon,
+			Maturity:     maturity,
+			Validity:     validity,
+			Scale:        scale,
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricResonanceEnergy, types.SideNone): {
+					Raw:  outcome.Energy,
+					Unit: types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricResonanceSurprise, types.SideNone): {
+					Raw:  outcome.Surprise,
+					Unit: types.UnitNat,
+				},
+			},
 		},
 	}, &outcome
 }

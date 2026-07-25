@@ -8,6 +8,10 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+ignitionMeasurements emits one PumpDump Measurement per symbol whose Metrics
+map carries the full ignition surface (RVOL through Strength).
+*/
 func ignitionMeasurements(
 	symbol string,
 	at time.Time,
@@ -44,119 +48,61 @@ func ignitionMeasurements(
 		From:    at,
 		Through: at,
 	}
+	measurement := &types.Measurement{
+		Source:   types.SourcePumpDump,
+		Symbol:   symbol,
+		At:       at,
+		Maturity: maturity,
+		Validity: validity,
+		Scale:    scale,
+	}
+	specs := []struct {
+		metric     types.MetricType
+		unit       types.MeasurementUnit
+		raw        float64
+		normalized *float64
+	}{
+		{
+			types.MetricRVOL, types.UnitDimensionless, output.RVOL,
+			types.NormalizeFinite(output.RVOL),
+		},
+		{
+			types.MetricPrecursor, types.UnitDimensionless, output.Precursor,
+			types.NormalizeFinite(output.Precursor),
+		},
+		{
+			types.MetricSpread, types.UnitQuoteCurrency, output.Spread,
+			types.NormalizeRatio(output.Spread, mid),
+		},
+		{
+			types.MetricCompression, types.UnitDimensionless, output.Compression,
+			types.NormalizeFinite(output.Compression),
+		},
+		{
+			types.MetricIgnition, types.UnitDimensionless, output.Ignition,
+			types.NormalizeFinite(output.Ignition),
+		},
+		{
+			types.MetricTrend, types.UnitDimensionless, output.Trend,
+			types.NormalizeFinite(output.Trend),
+		},
+		{
+			types.MetricExhaustion, types.UnitDimensionless, output.Exhaustion,
+			types.NormalizeFinite(output.Exhaustion),
+		},
+		{
+			types.MetricStrength, types.UnitDimensionless, output.Strength,
+			types.NormalizeFinite(output.Strength),
+		},
+	}
 
-	return []*types.Measurement{
-		{
-			Source:     types.SourcePumpDump,
-			Stream:     types.PumpDump,
-			Metric:     types.MetricRVOL,
-			Subject:    types.SubjectPumpVolumeLift,
-			Symbol:     symbol,
-			At:         at,
-			Unit:       types.UnitDimensionless,
-			Raw:        output.RVOL,
-			Normalized: types.NormalizeFinite(output.RVOL),
-			Maturity:   maturity,
-			Validity:   validity,
-			Scale:      scale,
-		},
-		{
-			Source:     types.SourcePumpDump,
-			Stream:     types.PumpDump,
-			Metric:     types.MetricPrecursor,
-			Subject:    types.SubjectPumpPriceLift,
-			Symbol:     symbol,
-			At:         at,
-			Unit:       types.UnitDimensionless,
-			Raw:        output.Precursor,
-			Normalized: types.NormalizeFinite(output.Precursor),
-			Maturity:   maturity,
-			Validity:   validity,
-			Scale:      scale,
-		},
-		{
-			Source:     types.SourcePumpDump,
-			Stream:     types.PumpDump,
-			Metric:     types.MetricSpread,
-			Subject:    types.SubjectPumpSpread,
-			Symbol:     symbol,
-			At:         at,
-			Unit:       types.UnitQuoteCurrency,
-			Raw:        output.Spread,
-			Normalized: types.NormalizeRatio(output.Spread, mid),
-			Maturity:   maturity,
-			Validity:   validity,
-			Scale:      scale,
-		},
-		{
-			Source:     types.SourcePumpDump,
-			Stream:     types.PumpDump,
-			Metric:     types.MetricCompression,
-			Subject:    types.SubjectPumpCompression,
-			Symbol:     symbol,
-			At:         at,
-			Unit:       types.UnitDimensionless,
-			Raw:        output.Compression,
-			Normalized: types.NormalizeFinite(output.Compression),
-			Maturity:   maturity,
-			Validity:   validity,
-			Scale:      scale,
-		},
-		{
-			Source:     types.SourcePumpDump,
-			Stream:     types.PumpDump,
-			Metric:     types.MetricIgnition,
-			Subject:    types.SubjectPumpIgnition,
-			Symbol:     symbol,
-			At:         at,
-			Unit:       types.UnitDimensionless,
-			Raw:        output.Ignition,
-			Normalized: types.NormalizeFinite(output.Ignition),
-			Maturity:   maturity,
-			Validity:   validity,
-			Scale:      scale,
-		},
-		{
-			Source:     types.SourcePumpDump,
-			Stream:     types.PumpDump,
-			Metric:     types.MetricTrend,
-			Subject:    types.SubjectPumpTrend,
-			Symbol:     symbol,
-			At:         at,
-			Unit:       types.UnitDimensionless,
-			Raw:        output.Trend,
-			Normalized: types.NormalizeFinite(output.Trend),
-			Maturity:   maturity,
-			Validity:   validity,
-			Scale:      scale,
-		},
-		{
-			Source:     types.SourcePumpDump,
-			Stream:     types.PumpDump,
-			Metric:     types.MetricExhaustion,
-			Subject:    types.SubjectPumpExhaustion,
-			Symbol:     symbol,
-			At:         at,
-			Unit:       types.UnitDimensionless,
-			Raw:        output.Exhaustion,
-			Normalized: types.NormalizeFinite(output.Exhaustion),
-			Maturity:   maturity,
-			Validity:   validity,
-			Scale:      scale,
-		},
-		{
-			Source:     types.SourcePumpDump,
-			Stream:     types.PumpDump,
-			Metric:     types.MetricStrength,
-			Subject:    types.SubjectPumpComposite,
-			Symbol:     symbol,
-			At:         at,
-			Unit:       types.UnitDimensionless,
-			Raw:        output.Strength,
-			Normalized: types.NormalizeFinite(output.Strength),
-			Maturity:   maturity,
-			Validity:   validity,
-			Scale:      scale,
-		},
-	}, nil
+	for _, spec := range specs {
+		measurement.PutMetric(spec.metric, types.SideNone, types.MetricSample{
+			Raw:        spec.raw,
+			Normalized: spec.normalized,
+			Unit:       spec.unit,
+		})
+	}
+
+	return []*types.Measurement{measurement}, nil
 }

@@ -1,15 +1,17 @@
 package types
 
 type Category struct {
-	Symbol     string       `json:"symbol,omitempty"`
-	Type       CategoryType `json:"type"`
-	Confidence float64      `json:"confidence"`
-	Surprisal  float64      `json:"surprisal"`
-	Strength   float64      `json:"strength"`
-	Maturity   float64      `json:"maturity"`
-	Supporting []string     `json:"supporting,omitempty"`
-	Opposing   []string     `json:"opposing,omitempty"`
-	Missing    []string     `json:"missing,omitempty"`
+	Symbol      string       `json:"symbol,omitempty"`
+	Type        CategoryType `json:"type"`
+	Confidence  float64      `json:"confidence"`
+	Surprisal   float64      `json:"surprisal"`
+	Strength    float64      `json:"strength"`
+	Maturity    float64      `json:"maturity"`
+	Uncertainty float64      `json:"uncertainty,omitempty"`
+	Freshness   float64      `json:"freshness,omitempty"`
+	Supporting  []string     `json:"supporting,omitempty"`
+	Opposing    []string     `json:"opposing,omitempty"`
+	Missing     []string     `json:"missing,omitempty"`
 }
 
 type CategoryType string

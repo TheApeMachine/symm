@@ -189,6 +189,31 @@ func TestInstrumentPublishEmitsUniverse(t *testing.T) {
 TestInstrumentSubscribeRejectsInvalidBatchSize proves invalid batching cannot
 leave an Instrument reporting READY after it receives a universe.
 */
+func TestInstrumentPair(t *testing.T) {
+	Convey("Given a remembered instrument pair", t, func() {
+		instrument := broker.NewInstrument(
+			nil, nil, nil, config.Fixture().Market,
+		)
+		qty := decimal.NewFromFloat64(0.0001)
+		instrument.Remember(kraken.InstrumentPair{
+			Symbol:       "ETH/USD",
+			Base:         "ETH",
+			Quote:        "USD",
+			QtyIncrement: qty,
+		})
+
+		Convey("Pair returns an independent decimal copy", func() {
+			pair, err := instrument.Pair("ETH/USD")
+			So(err, ShouldBeNil)
+			pair.QtyIncrement = decimal.NewFromInt64(9)
+			So(pair.QtyIncrement.Float64(), ShouldEqual, 9)
+			again, err := instrument.Pair("ETH/USD")
+			So(err, ShouldBeNil)
+			So(again.QtyIncrement.Float64(), ShouldEqual, 0.0001)
+		})
+	})
+}
+
 func TestInstrumentSubscribeRejectsInvalidBatchSize(t *testing.T) {
 	previousBatch := viper.Get("market.subscribe_batch")
 	previousQuote := viper.Get("market.quote_currency")

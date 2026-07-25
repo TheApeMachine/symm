@@ -65,14 +65,13 @@ func TestProjectRetreatPressureFromToxicity(t *testing.T) {
 			&types.Measurement{
 				Source: types.SourceToxicity,
 				Symbol: "AAA/USD",
-				Metric: types.MetricTouchQuantity,
-			},
-			&types.Measurement{
-				Source:     types.SourceToxicity,
-				Symbol:     "AAA/USD",
-				Metric:     types.MetricRetreatingQuantity,
-				Normalized: &pressure,
-				Raw:        870,
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricTouchQuantity, types.SideNone): {},
+					types.MetricKey(types.MetricRetreatingQuantity, types.SideNone): {
+						Normalized: &pressure,
+						Raw:        870,
+					},
+				},
 			},
 		)
 
@@ -94,7 +93,9 @@ func TestProjectRetreatPressureFromToxicity(t *testing.T) {
 		thesis.Measurements = append(thesis.Measurements, &types.Measurement{
 			Source: types.SourceToxicity,
 			Symbol: "AAA/USD",
-			Metric: types.MetricTouchQuantity,
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricTouchQuantity, types.SideNone): {},
+			},
 		})
 
 		evidence := NewEvidence().Project(thesis, types.Holding{

@@ -102,9 +102,17 @@ func TestCalculate(t *testing.T) {
 
 					So(measurement.ValidateStruct(), ShouldBeNil)
 					So(measurement.Validity.State, ShouldNotEqual, types.ValidityInvalid)
-					So(math.IsNaN(measurement.Raw), ShouldBeFalse)
-					So(math.IsInf(measurement.Raw, 0), ShouldBeFalse)
-					So(measurement.Raw, ShouldBeGreaterThan, 0)
+
+					measurement.EachMetric(func(
+						metric types.MetricType,
+						side types.MeasurementSide,
+						sample types.MetricSample,
+					) {
+						So(math.IsNaN(sample.Raw), ShouldBeFalse)
+						So(math.IsInf(sample.Raw, 0), ShouldBeFalse)
+						So(sample.Raw, ShouldBeGreaterThanOrEqualTo, 0)
+					})
+
 					measurements = append(measurements, measurement)
 				}
 
@@ -121,30 +129,36 @@ func TestCalculate(t *testing.T) {
 			latestAt := time.Time{}
 
 			for _, measurement := range measurements {
-				key := measurementKey{
-					metric: measurement.Metric,
-					symbol: measurement.Symbol,
-					side:   measurement.Side,
-				}
+				measurement.EachMetric(func(
+					metric types.MetricType,
+					side types.MeasurementSide,
+					sample types.MetricSample,
+				) {
+					key := measurementKey{
+						metric: metric,
+						symbol: measurement.Symbol,
+						side:   side,
+					}
 
-				if measurement.Raw > outcome.peak[key] {
-					outcome.peak[key] = measurement.Raw
-				}
+					if sample.Raw > outcome.peak[key] {
+						outcome.peak[key] = sample.Raw
+					}
 
-				if measurement.At.After(latestAt) {
-					latestAt = measurement.At
-					clear(outcome.latest)
-				}
+					if measurement.At.After(latestAt) {
+						latestAt = measurement.At
+						clear(outcome.latest)
+					}
 
-				if measurement.At.Equal(latestAt) {
-					outcome.latest[key] = measurement.Raw
-				}
+					if measurement.At.Equal(latestAt) {
+						outcome.latest[key] = sample.Raw
+					}
 
-				if measurement.Metric == types.MetricTradeVolume &&
-					measurement.Raw > activeVolume[measurement.Symbol] {
-					activeVolume[measurement.Symbol] = measurement.Raw
-					activeAt[measurement.Symbol] = measurement.At
-				}
+					if metric == types.MetricTradeVolume &&
+						sample.Raw > activeVolume[measurement.Symbol] {
+						activeVolume[measurement.Symbol] = sample.Raw
+						activeAt[measurement.Symbol] = measurement.At
+					}
+				})
 			}
 
 			for _, measurement := range measurements {
@@ -152,11 +166,17 @@ func TestCalculate(t *testing.T) {
 					continue
 				}
 
-				outcome.active[measurementKey{
-					metric: measurement.Metric,
-					symbol: measurement.Symbol,
-					side:   measurement.Side,
-				}] = measurement.Raw
+				measurement.EachMetric(func(
+					metric types.MetricType,
+					side types.MeasurementSide,
+					sample types.MetricSample,
+				) {
+					outcome.active[measurementKey{
+						metric: metric,
+						symbol: measurement.Symbol,
+						side:   side,
+					}] = sample.Raw
+				})
 			}
 
 			outcomes[proof.name] = outcome
@@ -192,16 +212,15 @@ func TestCalculate(t *testing.T) {
 							symbol,
 							types.SideNone,
 						}
-						_, hasTrade := values[tradeKey]
-						So(hasTrade, ShouldEqual, proof.traded)
+						So(values[tradeKey] > 0, ShouldEqual, proof.traded)
 						fills := 0
 
 						for _, side := range sides {
-							if _, exists := values[measurementKey{
+							if values[measurementKey{
 								types.MetricFillVolume,
 								symbol,
 								side,
-							}]; exists {
+							}] > 0 {
 								fills++
 							}
 						}
@@ -264,8 +283,7 @@ func TestCalculate(t *testing.T) {
 					types.MetricRetreatingQuantity,
 				} {
 					for _, side := range sides {
-						_, exists := absorption[measurementKey{metric, symbol, side}]
-						So(exists, ShouldBeFalse)
+						So(absorption[measurementKey{metric, symbol, side}], ShouldEqual, 0)
 					}
 				}
 			}
@@ -297,12 +315,11 @@ func TestCalculate(t *testing.T) {
 						types.MetricRetreatingQuantity,
 					} {
 						for _, side := range sides {
-							_, exists := outcomes[name].peak[measurementKey{
+							So(outcomes[name].peak[measurementKey{
 								metric,
 								symbol,
 								side,
-							}]
-							So(exists, ShouldBeFalse)
+							}], ShouldEqual, 0)
 						}
 					}
 				}

@@ -19,10 +19,32 @@ func (analyzer *Analyzer) stepManifold(
 	thesis *types.Thesis,
 	hawkes manifold.HawkesSource,
 ) {
-	if analyzer.manifold == nil ||
-		hawkes == nil ||
-		analyzer.gate == nil ||
-		!analyzer.gate.Ready(system.StagePreflight) {
+	tick := int64(0)
+
+	if thesis != nil {
+		tick = thesis.Tick
+	}
+
+	switch {
+	case analyzer.manifold == nil:
+		errnie.Error(audit.Phase(analyzer.recorder, tick, "manifold", map[string]any{
+			"ok": false, "skip": "manifold_nil",
+		}))
+		return
+	case hawkes == nil:
+		errnie.Error(audit.Phase(analyzer.recorder, tick, "manifold", map[string]any{
+			"ok": false, "skip": "hawkes_nil",
+		}))
+		return
+	case analyzer.gate == nil:
+		errnie.Error(audit.Phase(analyzer.recorder, tick, "manifold", map[string]any{
+			"ok": false, "skip": "gate_nil",
+		}))
+		return
+	case !analyzer.gate.Ready(system.StagePreflight):
+		errnie.Error(audit.Phase(analyzer.recorder, tick, "manifold", map[string]any{
+			"ok": false, "skip": "preflight",
+		}))
 		return
 	}
 

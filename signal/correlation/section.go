@@ -289,26 +289,6 @@ func (section *Section) scores(symbol string) (map[string]float64, bool) {
 	}, true
 }
 
-func uniqueSymbols(symbols []string) []string {
-	if len(symbols) < 2 {
-		return symbols
-	}
-
-	seen := make(map[string]struct{}, len(symbols))
-	out := symbols[:0]
-
-	for _, symbol := range symbols {
-		if _, ok := seen[symbol]; ok {
-			continue
-		}
-
-		seen[symbol] = struct{}{}
-		out = append(out, symbol)
-	}
-
-	return out
-}
-
 func fillReturns(
 	samples []nomcorrelation.Sample,
 	logPrices []float64,

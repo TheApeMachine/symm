@@ -196,37 +196,21 @@ func (analyzer *Analyzer) cognize(
 /*
 sensorySequence builds the deterministic DMT token stream for one state.
 The symbol token stays first so the shared radix tree namespaces each coin;
-remaining evidence tokens are sorted for a stable bag under that hop.
+category and transition tokens (bounded by active taxonomy) plus a few field
+scalars form the bag — raw measurement keys are not expanded into the tree.
 */
 func (analyzer *Analyzer) sensorySequence(
 	thesis *types.Thesis,
 	state manifold.State,
 ) ([]string, []byte) {
-	measurements := thesis.SnapshotMeasurements()
-	evidence := make([]string, 0, len(measurements)+4)
-	seen := make(map[string]struct{}, len(measurements)+4)
 	replacer := strings.NewReplacer("_", "-", "/", "-")
 	symbolToken := "symbol-" + replacer.Replace(state.Symbol)
+	evidence := make([]string, 0, 16)
 
-	for _, measurement := range measurements {
-		if measurement == nil || measurement.Symbol != state.Symbol ||
-			measurement.Normalized == nil ||
-			measurement.Validity.State != types.ValidityValid {
-			continue
+	if analyzer.categories != nil {
+		for _, token := range analyzer.categories.Tokens(state.Symbol, thesis.Categories) {
+			evidence = append(evidence, replacer.Replace(token))
 		}
-
-		direction := signedToken(*measurement.Normalized)
-		token := replacer.Replace(strings.Join([]string{
-			string(measurement.Source), string(measurement.Metric),
-			string(measurement.Side), direction,
-		}, "-"))
-
-		if _, exists := seen[token]; exists {
-			continue
-		}
-
-		seen[token] = struct{}{}
-		evidence = append(evidence, token)
 	}
 
 	for name, value := range map[string]float64{

@@ -34,7 +34,7 @@ func TestReturnLadderPredict(t *testing.T) {
 			}
 
 			So(ladder.Advance(
-				[]float64{direction, 0, 0, 0, 0},
+				[]float64{direction},
 				decimal.NewFromFloat64(midPrice),
 			), ShouldBeNil)
 			priorDirection = direction
@@ -79,7 +79,7 @@ func TestReturnLadderSelectsDeepHorizon(t *testing.T) {
 			}
 
 			So(ladder.Advance(
-				[]float64{1, 0, 0, 0, 0},
+				[]float64{1},
 				decimal.NewFromFloat64(midPrice),
 			), ShouldBeNil)
 		}
@@ -108,7 +108,7 @@ func BenchmarkReturnLadderAdvance(b *testing.B) {
 	}
 
 	midPrice := 100.0
-	features := []float64{1, 0, 0, 0, 0}
+	features := []float64{1}
 	b.ReportAllocs()
 
 	for b.Loop() {

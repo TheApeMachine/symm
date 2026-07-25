@@ -46,6 +46,23 @@ func TestLedgerReserve(t *testing.T) {
 	})
 }
 
+func TestLedgerReserveAsset(t *testing.T) {
+	Convey("Given a ledger with cash and asset claims", t, func() {
+		ledger := NewLedger()
+		So(ledger.Reserve("buy", "BTC/USD", decimal.NewFromInt64(50), true), ShouldBeNil)
+		So(ledger.ReserveAsset("sell", "BTC", decimal.NewFromFloat64(0.5)), ShouldBeNil)
+
+		Convey("It tracks reserved cash and qty independently", func() {
+			So(ledger.ReservedCash().Float64(), ShouldEqual, 50.0)
+			So(ledger.ReservedAsset("BTC").Float64(), ShouldEqual, 0.5)
+			So(ledger.Commit("buy"), ShouldBeNil)
+			So(ledger.ReservedCash().Sign(), ShouldEqual, 0)
+			So(ledger.Release("sell"), ShouldBeNil)
+			So(ledger.ReservedAsset("BTC").Sign(), ShouldEqual, 0)
+		})
+	})
+}
+
 func BenchmarkLedgerReserve(b *testing.B) {
 	ledger := NewLedger()
 	cash := decimal.NewFromInt64(1)

@@ -18,7 +18,7 @@ export const KernelInspector = () => (
 		hidden
 		onClose={closeInspectorShell}
 		size="m"
-		className="inset-y-0 left-[282px] right-[332px] animate-[symFade_0.18s_ease]"
+		className="inset-y-0 left-70.5 right-83 animate-[symFade_0.18s_ease]"
 	>
 		<Modal.Header>
 			<div className="min-w-0">
@@ -50,7 +50,7 @@ export const KernelInspector = () => (
 				preserveAspectRatio="none"
 				className={cn(
 					panelVariants({ size: "bare" }),
-					"block h-[52px] w-full",
+					"block h-13 w-full",
 				)}
 			>
 				<title>Signal history</title>
@@ -63,16 +63,17 @@ export const KernelInspector = () => (
 				/>
 			</svg>
 		</div>
-		<Modal.Body
-			data-role="metrics"
-			className="grid grid-cols-2 content-start gap-x-3 gap-y-2.5"
-		>
+		<Modal.Body>
 			<div
 				data-role="metrics-waiting"
-				className="col-span-2 flex min-h-[88px] items-center justify-center"
+				className="flex min-h-22 items-center justify-center"
 			>
 				<Spinner size="m" label="Sampling meters" />
 			</div>
+			<div
+				data-role="metrics"
+				className="grid grid-cols-2 content-start gap-x-3 gap-y-2.5"
+			/>
 		</Modal.Body>
 		<Modal.Footer>
 			<div className="min-w-0 font-mono text-[9.5px] text-(--f4) leading-[1.55]">

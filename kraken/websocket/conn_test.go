@@ -344,7 +344,10 @@ func TestAPIInjectLevel3(t *testing.T) {
 		viper.Set("system.actor.buffer", 64)
 		api := NewAPI(context.Background(), conn, conn, nil)
 		api.InjectLevel3(conn.Actor, conn, symbols)
-		defer api.Close()
+		Reset(func() {
+			api.Close()
+			conn.Close()
+		})
 		signal.Bootstrap()
 
 		for payload := range fixture.Generate() {
@@ -594,6 +597,9 @@ func newStubConn() *stubConn {
 	}
 	stub.Actor = types.NewActor(context.Background(), nil)
 	stub.AddRoot("level3", stub.level3)
+	// Match MockConn: root fan-out only runs after Start, so InjectLevel3's
+	// subscriber actually receives frames sent on the level3 root.
+	stub.Start()
 
 	return stub
 }
@@ -614,7 +620,13 @@ func (stub *stubConn) Write(params json.Marshaler) error {
 	return nil
 }
 
-func (stub *stubConn) Close() { stub.closeCount++ }
+func (stub *stubConn) Close() {
+	stub.closeCount++
+
+	if stub.Actor != nil {
+		_ = stub.Actor.Close()
+	}
+}
 
 func (stub *stubConn) Root() *types.Actor { return stub.Actor }
 

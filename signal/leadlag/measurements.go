@@ -52,7 +52,7 @@ func (signal *Signal) measureFrame(
 		}
 
 		if signal.section.AnchorSymbol() == "" {
-			out = append(out, signal.provisional(row.Symbol, row.Timestamp)...)
+			out = append(out, signal.provisional(row.Symbol, row.Timestamp))
 			continue
 		}
 
@@ -62,7 +62,7 @@ func (signal *Signal) measureFrame(
 			continue
 		}
 
-		out = append(out, signal.score(row.Symbol, row.Timestamp, features)...)
+		out = append(out, signal.score(row.Symbol, row.Timestamp, features))
 	}
 
 	types.WireMeasurements(out, signal.ui)
@@ -216,16 +216,16 @@ func weightEvidence(
 }
 
 /*
-buildScoreMeasurements materializes the lead-lag metric bundle for one row.
+buildScoreMeasurement materializes the lead-lag metric bundle for one row.
 */
-func buildScoreMeasurements(
+func buildScoreMeasurement(
 	symbol string,
 	anchor string,
 	at time.Time,
 	selected correlationSelection,
 	sampleSupport float64,
 	weights evidenceWeights,
-) []*types.Measurement {
+) *types.Measurement {
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,
 		Readiness: types.ReadinessObservation,
@@ -247,40 +247,43 @@ func buildScoreMeasurements(
 		{types.MetricStall, weights.stall},
 		{types.MetricStrength, weights.strength},
 	}
-	measurements := make([]*types.Measurement, 0, len(readings)+1)
-
-	for _, item := range readings {
-		measurements = append(measurements, &types.Measurement{
-			Source:   types.SourceLeadLag,
-			Metric:   item.metric,
-			Stream:   types.LeadLag,
-			Symbol:   symbol,
-			At:       at,
-			Unit:     types.UnitDimensionless,
-			Raw:      item.raw,
-			Validity: validity,
-		})
-	}
 
 	// Signed lead-lag direction against the live anchor: +1 anchor leads this
 	// follower, -1 this follower leads the anchor. Peer names the counterpart
 	// so the analyzer can draw a directed Leads/Lags edge between their nodes.
-	if anchor != "" && anchor != symbol && selected.lagDirection != 0 {
-		measurements = append(measurements, &types.Measurement{
-			Source:     types.SourceLeadLag,
-			Metric:     types.MetricSignedLagDirection,
-			Stream:     types.LeadLag,
-			Symbol:     symbol,
-			Peer:       anchor,
-			At:         at,
-			Unit:       types.UnitDimensionless,
-			Raw:        selected.lagDirection,
-			Normalized: types.NormalizeFinite(selected.lagDirection),
-			Validity:   validity,
+	// Idle / self-anchor ticks still emit Raw 0 so the metric identity is stable.
+	peer := ""
+
+	if anchor != "" && anchor != symbol {
+		peer = anchor
+	}
+
+	measurement := &types.Measurement{
+		Source:   types.SourceLeadLag,
+		Symbol:   symbol,
+		Peer:     peer,
+		At:       at,
+		Validity: validity,
+		Metrics:  map[string]types.MetricSample{},
+	}
+
+	for _, item := range readings {
+		measurement.PutMetric(item.metric, types.SideNone, types.MetricSample{
+			Raw:  item.raw,
+			Unit: types.UnitDimensionless,
 		})
 	}
 
-	return measurements
+	measurement.PutMetric(
+		types.MetricSignedLagDirection, types.SideNone,
+		types.MetricSample{
+			Raw:        selected.lagDirection,
+			Normalized: types.NormalizeFinite(selected.lagDirection),
+			Unit:       types.UnitDimensionless,
+		},
+	)
+
+	return measurement
 }
 
 /*
@@ -291,13 +294,13 @@ func (signal *Signal) score(
 	symbol string,
 	at time.Time,
 	features LagFeatures,
-) []*types.Measurement {
+) *types.Measurement {
 	selected := signal.selectCorrelations(features)
 	sampleSupport := sampleSupportFraction(features.SampleCount)
 	weights := weightEvidence(features, selected, sampleSupport)
 	anchor := signal.section.AnchorSymbol()
 
-	return buildScoreMeasurements(
+	return buildScoreMeasurement(
 		symbol, anchor, at, selected, sampleSupport, weights,
 	)
 }
@@ -309,7 +312,7 @@ live leader, so quote ticks still surface an observation instead of silence.
 func (signal *Signal) provisional(
 	symbol string,
 	at time.Time,
-) []*types.Measurement {
+) *types.Measurement {
 	validity := types.MeasurementValidity{
 		State:     types.ValidityProvisional,
 		Readiness: types.ReadinessObservation,
@@ -327,21 +330,22 @@ func (signal *Signal) provisional(
 		types.MetricDecoupled,
 		types.MetricStall,
 		types.MetricStrength,
+		types.MetricSignedLagDirection,
 	}
-	measurements := make([]*types.Measurement, 0, len(metrics))
+	measurement := &types.Measurement{
+		Source:   types.SourceLeadLag,
+		Symbol:   symbol,
+		At:       at,
+		Validity: validity,
+		Metrics:  map[string]types.MetricSample{},
+	}
 
 	for _, metric := range metrics {
-		measurements = append(measurements, &types.Measurement{
-			Source:   types.SourceLeadLag,
-			Metric:   metric,
-			Stream:   types.LeadLag,
-			Symbol:   symbol,
-			At:       at,
-			Unit:     types.UnitDimensionless,
-			Raw:      0,
-			Validity: validity,
+		measurement.PutMetric(metric, types.SideNone, types.MetricSample{
+			Raw:  0,
+			Unit: types.UnitDimensionless,
 		})
 	}
 
-	return measurements
+	return measurement
 }

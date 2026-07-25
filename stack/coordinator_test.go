@@ -17,10 +17,13 @@ func TestCutCoordinatorFinalize(t *testing.T) {
 		thesis := types.NewThesis()
 		thesis.Publish(types.SourceHawkes, []*types.Measurement{{
 			Source: types.SourceHawkes,
-			Metric: types.MetricEventCount,
 			Symbol: "BTC/USD",
-			Raw:    1,
 			At:     time.Now().UTC(),
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricEventCount, types.SideNone): {
+					Raw: 1,
+				},
+			},
 		}})
 
 		coordinator := NewCutCoordinator(
@@ -93,10 +96,13 @@ func TestImmutableCutClone(t *testing.T) {
 		thesis.At = time.Now().UTC()
 		thesis.Publish(types.SourceHawkes, []*types.Measurement{{
 			Source: types.SourceHawkes,
-			Metric: types.MetricEventCount,
 			Symbol: "ETH/USD",
-			Raw:    3,
 			At:     thesis.At,
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricEventCount, types.SideNone): {
+					Raw: 3,
+				},
+			},
 		}})
 
 		cut := types.NewImmutableCut(1, 7, thesis)

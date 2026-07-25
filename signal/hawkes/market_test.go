@@ -39,7 +39,7 @@ func (proof marketProof) Run(t *testing.T) (marketOutcome, []string) {
 		So(market.Warmup(tests.Idle), ShouldBeNil)
 	}
 
-	outcome := marketOutcome{peak: make(evidenceValues)}
+	outcome := marketOutcome{peak: make(map[evidenceKey]map[string]float64)}
 
 	for index, state := range proof.states {
 		capture := index == len(proof.states)-1
@@ -93,10 +93,19 @@ func TestCalculate(t *testing.T) {
 		}
 
 		for _, twin := range []string{"absorption", "low volume", "small lift"} {
-			for identity, pump := range outcomes["fast pump"].latest {
-				So(outcomes[twin].latest[identity].Raw, ShouldEqual, pump.Raw)
-				So(outcomes[twin].peak[identity].Raw,
-					ShouldEqual, outcomes["fast pump"].peak[identity].Raw)
+			for _, symbol := range symbols {
+				pump := outcomes["fast pump"].latest[symbol]
+				twinMeasurement := outcomes[twin].latest[symbol]
+
+				for _, key := range evidenceKeys {
+					pumpSample, ok := pump.Sample(key.metric, key.side)
+					So(ok, ShouldBeTrue)
+					twinSample, twinOk := twinMeasurement.Sample(key.metric, key.side)
+					So(twinOk, ShouldBeTrue)
+					So(twinSample.Raw, ShouldEqual, pumpSample.Raw)
+					So(outcomes[twin].peak[key][symbol],
+						ShouldEqual, outcomes["fast pump"].peak[key][symbol])
+				}
 			}
 		}
 
@@ -104,62 +113,62 @@ func TestCalculate(t *testing.T) {
 			pump := outcomes["fast pump"]
 			dump := outcomes["fast dump"]
 			slow := outcomes["slow cadence"]
-			So(pump.latest.Value(types.MetricEventCount, types.SideNone, symbol),
-				ShouldEqual, dump.latest.Value(types.MetricEventCount, types.SideNone, symbol))
-			So(pump.latest.Value(types.MetricArrivalRate, types.SideBuy, symbol)+
-				pump.latest.Value(types.MetricArrivalRate, types.SideSell, symbol),
+			So(pump.Value(types.MetricEventCount, types.SideNone, symbol),
+				ShouldEqual, dump.Value(types.MetricEventCount, types.SideNone, symbol))
+			So(pump.Value(types.MetricArrivalRate, types.SideBuy, symbol)+
+				pump.Value(types.MetricArrivalRate, types.SideSell, symbol),
 				ShouldAlmostEqual,
-				dump.latest.Value(types.MetricArrivalRate, types.SideBuy, symbol)+
-					dump.latest.Value(types.MetricArrivalRate, types.SideSell, symbol))
-			So(pump.latest.Value(types.MetricArrivalRate, types.SideBuy, symbol),
+				dump.Value(types.MetricArrivalRate, types.SideBuy, symbol)+
+					dump.Value(types.MetricArrivalRate, types.SideSell, symbol))
+			So(pump.Value(types.MetricArrivalRate, types.SideBuy, symbol),
 				ShouldBeGreaterThan,
-				pump.latest.Value(types.MetricArrivalRate, types.SideSell, symbol))
-			So(dump.latest.Value(types.MetricArrivalRate, types.SideSell, symbol),
+				pump.Value(types.MetricArrivalRate, types.SideSell, symbol))
+			So(dump.Value(types.MetricArrivalRate, types.SideSell, symbol),
 				ShouldBeGreaterThan,
-				dump.latest.Value(types.MetricArrivalRate, types.SideBuy, symbol))
-			So(pump.latest.Value(types.MetricConditionalIntensity, types.SideBuy, symbol),
+				dump.Value(types.MetricArrivalRate, types.SideBuy, symbol))
+			So(pump.Value(types.MetricConditionalIntensity, types.SideBuy, symbol),
 				ShouldBeGreaterThan,
-				pump.latest.Value(types.MetricConditionalIntensity, types.SideSell, symbol))
-			So(dump.latest.Value(types.MetricConditionalIntensity, types.SideSell, symbol),
+				pump.Value(types.MetricConditionalIntensity, types.SideSell, symbol))
+			So(dump.Value(types.MetricConditionalIntensity, types.SideSell, symbol),
 				ShouldBeGreaterThan,
-				dump.latest.Value(types.MetricConditionalIntensity, types.SideBuy, symbol))
+				dump.Value(types.MetricConditionalIntensity, types.SideBuy, symbol))
 
 			for _, side := range []types.MeasurementSide{types.SideNone, types.SideBuy, types.SideSell} {
-				So(pump.latest.Value(types.MetricEventCount, side, symbol),
-					ShouldEqual, slow.latest.Value(types.MetricEventCount, side, symbol))
+				So(pump.Value(types.MetricEventCount, side, symbol),
+					ShouldEqual, slow.Value(types.MetricEventCount, side, symbol))
 			}
 
 			for _, side := range []types.MeasurementSide{types.SideBuy, types.SideSell} {
-				So(pump.latest.Value(types.MetricArrivalRate, side, symbol),
-					ShouldBeGreaterThan, slow.latest.Value(types.MetricArrivalRate, side, symbol))
+				So(pump.Value(types.MetricArrivalRate, side, symbol),
+					ShouldBeGreaterThan, slow.Value(types.MetricArrivalRate, side, symbol))
 			}
-			pumpFit := pump.latest.Value(types.MetricHawkesPoissonDelta, types.SideNone, symbol)
-			dumpFit := dump.latest.Value(types.MetricHawkesPoissonDelta, types.SideNone, symbol)
+			pumpFit := pump.Value(types.MetricHawkesPoissonDelta, types.SideNone, symbol)
+			dumpFit := dump.Value(types.MetricHawkesPoissonDelta, types.SideNone, symbol)
 			So(math.Max(pumpFit, dumpFit), ShouldBeLessThanOrEqualTo, 0.0)
 
 			fastRejection := outcomes["fast rejection"]
 			slowRejection := outcomes["slow rejection"]
 			reversal := outcomes["reversal"]
 			So(math.Abs(
-				fastRejection.latest.Value(types.MetricEventCount, types.SideBuy, symbol)-
-					fastRejection.latest.Value(types.MetricEventCount, types.SideSell, symbol),
+				fastRejection.Value(types.MetricEventCount, types.SideBuy, symbol)-
+					fastRejection.Value(types.MetricEventCount, types.SideSell, symbol),
 			), ShouldBeLessThanOrEqualTo, 1.0)
-			So(slowRejection.latest.Value(types.MetricHawkesPoissonDelta, types.SideNone, symbol),
+			So(slowRejection.Value(types.MetricHawkesPoissonDelta, types.SideNone, symbol),
 				ShouldBeGreaterThan, 0.0)
-			So(fastRejection.latest.Value(types.MetricHawkesPoissonDelta, types.SideNone, symbol),
+			So(fastRejection.Value(types.MetricHawkesPoissonDelta, types.SideNone, symbol),
 				ShouldBeGreaterThan, 0.0)
-			So(reversal.latest.Value(types.MetricHawkesPoissonDelta, types.SideNone, symbol),
+			So(reversal.Value(types.MetricHawkesPoissonDelta, types.SideNone, symbol),
 				ShouldBeGreaterThan, 0.0)
 
 			for _, key := range evidenceKeys[:5] {
-				So(reversal.latest.Value(key.metric, key.side, symbol),
+				So(reversal.Value(key.metric, key.side, symbol),
 					ShouldAlmostEqual,
-					slowRejection.latest.Value(key.metric, key.side, symbol))
+					slowRejection.Value(key.metric, key.side, symbol))
 			}
 
-			So(reversal.latest.Value(types.MetricConditionalIntensity, types.SideBuy, symbol),
+			So(reversal.Value(types.MetricConditionalIntensity, types.SideBuy, symbol),
 				ShouldBeGreaterThan,
-				slowRejection.latest.Value(types.MetricConditionalIntensity, types.SideBuy, symbol))
+				slowRejection.Value(types.MetricConditionalIntensity, types.SideBuy, symbol))
 		}
 	})
 
@@ -171,26 +180,20 @@ func TestCalculate(t *testing.T) {
 		}).Run(t)
 		firstModel := -1
 
+		expected := len(symbols)
+
 		for index, batch := range outcome.batches {
-			_, fitted := batch[evidenceIdentity{
-				evidenceKey: evidenceKey{
-					metric: types.MetricConditionalIntensity,
-					side:   types.SideBuy,
-				},
-				symbol: symbols[0],
-			}]
-			expected := 5 * len(symbols)
+			measurement := batch[symbols[0]]
+			intensity, ok := measurement.Sample(
+				types.MetricConditionalIntensity, types.SideBuy,
+			)
 
-			if fitted {
-				expected = len(evidenceKeys) * len(symbols)
-
-				if firstModel < 0 {
-					firstModel = index
-				}
+			if ok && intensity.Raw > 0 && firstModel < 0 {
+				firstModel = index
 			}
 
 			So(batch, ShouldHaveLength, expected)
-			So(outcome.rows[index], ShouldEqual, expected)
+			So(outcome.rowCount[index], ShouldEqual, expected)
 		}
 
 		So(firstModel, ShouldBeGreaterThan, 0)

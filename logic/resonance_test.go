@@ -20,23 +20,47 @@ func TestResonanceUpdate(t *testing.T) {
 		var measurements []*types.Measurement
 		producedAt := 0
 
-		for index := 1; index <= 16 && len(measurements) == 0; index++ {
+		for index := 1; index <= 32; index++ {
 			state := causalState(
 				time.Unix(int64(index), 0),
 				100+float64(index),
 				uint64(index),
 			)
 			state.Reading.PressureGradX += float64(index) / 100
-			measurements, _ = resonance.Update(state)
+			next, _ := resonance.Update(state)
 			producedAt = index
+
+			if len(next) == 0 {
+				continue
+			}
+
+			energy, ok := next[0].Sample(
+				types.MetricResonanceEnergy, types.SideNone,
+			)
+
+			if !ok || energy.Raw <= 0 {
+				continue
+			}
+
+			measurements = next
+			break
 		}
 
 		Convey("It should return numerical resonance evidence without a category", func() {
-			So(measurements, ShouldHaveLength, 2)
+			So(measurements, ShouldHaveLength, 1)
 			So(measurements[0].Source, ShouldEqual, types.SourceResonance)
-			So(measurements[0].Stream, ShouldEqual, types.Resonance)
-			So(measurements[0].Metric, ShouldEqual, types.MetricResonanceEnergy)
-			So(measurements[1].Metric, ShouldEqual, types.MetricResonanceSurprise)
+
+			energy, ok := measurements[0].Sample(
+				types.MetricResonanceEnergy, types.SideNone,
+			)
+			So(ok, ShouldBeTrue)
+			So(energy.Raw, ShouldBeGreaterThan, 0)
+
+			surprise, ok := measurements[0].Sample(
+				types.MetricResonanceSurprise, types.SideNone,
+			)
+			So(ok, ShouldBeTrue)
+			So(surprise.Raw, ShouldBeGreaterThanOrEqualTo, 0)
 		})
 
 		Convey("Its maturity should grow from observed event-time coverage", func() {
@@ -57,7 +81,7 @@ func TestResonanceUpdate(t *testing.T) {
 				}
 			}
 
-			So(next, ShouldHaveLength, 2)
+			So(next, ShouldHaveLength, 1)
 			So(outcome, ShouldNotBeNil)
 			So(next[0].Maturity, ShouldBeGreaterThan, measurements[0].Maturity)
 			So(next[0].Maturity, ShouldBeLessThan, 1)
@@ -80,9 +104,8 @@ func TestResonanceUpdate(t *testing.T) {
 			state.Reading.PressureGradX += float64(nextIndex) / 100
 			next, _ := resonance.Update(state)
 
-			So(next, ShouldHaveLength, 2)
+			So(next, ShouldHaveLength, 1)
 			So(next[0].Horizon, ShouldEqual, time.Duration(0))
-			So(next[1].Horizon, ShouldEqual, time.Duration(0))
 		})
 	})
 }
@@ -99,7 +122,7 @@ func TestResonanceUpdateUsesConfiguredHalflife(t *testing.T) {
 		)
 
 		Convey("Its maturity should reach one half after one configured halflife", func() {
-			So(measurements, ShouldHaveLength, 2)
+			So(measurements, ShouldHaveLength, 1)
 			So(measurements[0].Maturity, ShouldAlmostEqual, 0.5)
 		})
 	})

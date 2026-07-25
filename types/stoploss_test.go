@@ -116,6 +116,34 @@ func TestStoplossTakeProfitNearPeakWithDeadForward(t *testing.T) {
 }
 
 /*
+TestStoplossHoldsNearPeakWithPositivePathDespiteResidual proves forecast
+misfit alone cannot cash a peak while ExpectedReturn is still positive.
+*/
+func TestStoplossHoldsNearPeakWithPositivePathDespiteResidual(t *testing.T) {
+	Convey("Given a peak, positive forward return, and residual above one", t, func() {
+		stop := NewStoploss(context.Background())
+		_ = stop.Update(testEvidence(100, 100, 0.01, 0.04, 0.005))
+		_ = stop.Update(testEvidence(108, 100, 0.01, 0.03, 0.005))
+		held := stop.Update(StopEvidence{
+			Symbol:             "AAA/USD",
+			Mark:               107.5,
+			Entry:              100,
+			ForecastEpoch:      2,
+			NormalizedResidual: 1.15,
+			ExpectedReturn:     0.028,
+			Uncertainty:        0.01,
+			IncrementalMSE:     0.00013,
+			ReturnReady:        true,
+			Present:            true,
+		})
+
+		Convey("Then Action stays hold so the live floor owns the exit", func() {
+			So(held.Action, ShouldEqual, "hold")
+		})
+	})
+}
+
+/*
 TestStoplossBindLivesAtEntry proves fill-time Bind publishes a stop without σ.
 */
 func TestStoplossBindLivesAtEntry(t *testing.T) {
@@ -245,6 +273,33 @@ func TestStoplossUpdateFreezesUnderRetreat(t *testing.T) {
 			So(adverse.Action, ShouldEqual, "hold")
 			So(stop.LockedFloor, ShouldEqual, 0)
 			So(adverse.MarkReturn, ShouldBeLessThan, 0)
+		})
+	})
+}
+
+/*
+TestStoplossPiercesRetreatWhenForwardAdverse proves a calibrated negative
+forward path keeps the protective stop live through retreat pressure.
+*/
+func TestStoplossPiercesRetreatWhenForwardAdverse(t *testing.T) {
+	Convey("Given a peaked lot under retreat with adverse forward return", t, func() {
+		stop := NewStoploss(context.Background())
+		_ = stop.Update(testEvidence(100, 100, 0.02, 0.05, 0.0004))
+		_ = stop.Update(testEvidence(110, 100, 0.02, 0.04, 0.0004))
+		pierced := stop.Update(StopEvidence{
+			Symbol:          "AAA/USD",
+			Mark:            101,
+			Entry:           100,
+			Uncertainty:     0.02,
+			ExpectedReturn:  -0.05,
+			ReturnReady:     true,
+			RetreatPressure: 0.9,
+			RetreatReady:    true,
+			Present:         true,
+		})
+
+		Convey("Then Action is stop despite retreat pressure", func() {
+			So(pierced.Action, ShouldEqual, "stop")
 		})
 	})
 }

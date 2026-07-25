@@ -52,23 +52,35 @@ func TestNewImmutableCutKeepsPublishedRowsStable(t *testing.T) {
 		thesis := NewThesis()
 		first := time.Unix(1, 0).UTC()
 		original := &Measurement{
-			Source: SourceHawkes, Metric: MetricEventCount,
-			Side: SideBuy, Symbol: "SIM1/USD", Raw: 1, At: first,
+			Source: SourceHawkes, Symbol: "SIM1/USD", At: first,
+			Metrics: map[string]MetricSample{
+				MetricKey(MetricEventCount, SideBuy): {Raw: 1},
+			},
 		}
 		thesis.Publish(SourceHawkes, []*Measurement{original})
 
 		cut := NewImmutableCut(1, 7, thesis)
 		So(cut.Measurements, ShouldHaveLength, 1)
-		So(cut.Measurements[0].Raw, ShouldEqual, 1)
+
+		eventCount, ok := cut.Measurements[0].Sample(MetricEventCount, SideBuy)
+		So(ok, ShouldBeTrue)
+		So(eventCount.Raw, ShouldEqual, 1)
 
 		Convey("Publish replaces the thesis pointer; cut row stays 1", func() {
 			thesis.Publish(SourceHawkes, []*Measurement{{
-				Source: SourceHawkes, Metric: MetricEventCount,
-				Side: SideBuy, Symbol: "SIM1/USD", Raw: 9, At: time.Unix(2, 0).UTC(),
+				Source: SourceHawkes, Symbol: "SIM1/USD", At: time.Unix(2, 0).UTC(),
+				Metrics: map[string]MetricSample{
+					MetricKey(MetricEventCount, SideBuy): {Raw: 9},
+				},
 			}})
 
-			So(thesis.Measurements[0].Raw, ShouldEqual, 9)
-			So(cut.Measurements[0].Raw, ShouldEqual, 1)
+			live, ok := thesis.Measurements[0].Sample(MetricEventCount, SideBuy)
+			So(ok, ShouldBeTrue)
+			So(live.Raw, ShouldEqual, 9)
+
+			frozen, ok := cut.Measurements[0].Sample(MetricEventCount, SideBuy)
+			So(ok, ShouldBeTrue)
+			So(frozen.Raw, ShouldEqual, 1)
 			So(cut.Measurements[0], ShouldNotEqual, thesis.Measurements[0])
 		})
 	})
@@ -102,10 +114,11 @@ func BenchmarkNewImmutableCut(b *testing.B) {
 	for index := range 512 {
 		rows = append(rows, &Measurement{
 			Source: SourceHawkes,
-			Metric: MetricEventCount,
 			Symbol: "SIM1/USD",
-			Raw:    float64(index),
 			At:     time.Unix(int64(index), 0).UTC(),
+			Metrics: map[string]MetricSample{
+				MetricKey(MetricEventCount, SideNone): {Raw: float64(index)},
+			},
 		})
 	}
 

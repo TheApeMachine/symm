@@ -138,6 +138,7 @@ func (crypto *Crypto) Apply(thesis *types.Thesis) {
 		"ns":        elapsed.Nanoseconds(),
 		"decisions": len(decisions),
 	}))
+	
 	errnie.Error(audit.Phase(crypto.recorder, thesis.Tick, "tick_end", map[string]any{
 		"ns":        elapsed.Nanoseconds(),
 		"decisions": len(decisions),
