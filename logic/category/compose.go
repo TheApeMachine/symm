@@ -2,7 +2,9 @@ package category
 
 import (
 	"math"
+	"runtime"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/types"
@@ -57,8 +59,42 @@ func ComposeAll(thesis *types.Thesis) []types.Category {
 
 	categories := make([]types.Category, 0, len(grouped)*4)
 
+	if len(grouped) == 0 {
+		return categories
+	}
+
+	workerCap := runtime.GOMAXPROCS(0)
+
+	if workerCap < 1 {
+		workerCap = 1
+	}
+
+	if workerCap > len(grouped) {
+		workerCap = len(grouped)
+	}
+
+	workerSlots := make(chan struct{}, workerCap)
+	rowsOut := make(chan []types.Category, len(grouped))
+	var workerGroup sync.WaitGroup
+
 	for symbol, rows := range grouped {
-		categories = append(categories, composeRows(symbol, thesis.At, rows)...)
+		workerGroup.Add(1)
+
+		workerSlots <- struct{}{}
+
+		go func(symbol string, rows []*types.Measurement) {
+			defer workerGroup.Done()
+			defer func() { <-workerSlots }()
+
+			rowsOut <- composeRows(symbol, thesis.At, rows)
+		}(symbol, rows)
+	}
+
+	workerGroup.Wait()
+	close(rowsOut)
+
+	for rows := range rowsOut {
+		categories = append(categories, rows...)
 	}
 
 	return categories

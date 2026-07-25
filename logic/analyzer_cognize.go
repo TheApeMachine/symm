@@ -22,18 +22,21 @@ observation times plus ambiguity requests.
 func (analyzer *Analyzer) cognizeStates(
 	thesis *types.Thesis,
 	states []manifold.State,
+	cutID types.CutID,
+	tick int64,
 ) ([]time.Time, bool) {
 	remObservations := make([]time.Time, 0, len(states))
 	remRequested := false
 	cognizeStarted := time.Now()
+	categoryTokens := analyzer.cognitionTokens(thesis, states)
 
 	for _, state := range states {
 		if state.Replay {
-			analyzer.recall(thesis, state)
+			analyzer.recall(thesis, state, categoryTokens[state.Symbol])
 			continue
 		}
 
-		if !analyzer.cognize(thesis, state) {
+		if !analyzer.cognize(thesis, state, categoryTokens[state.Symbol]) {
 			continue
 		}
 
@@ -56,14 +59,67 @@ func (analyzer *Analyzer) cognizeStates(
 		remPending = analyzer.rem.Pending()
 	}
 
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "cognize", map[string]any{
+	payload := map[string]any{
 		"states":      len(states),
 		"ns":          time.Since(cognizeStarted).Nanoseconds(),
 		"ambiguous":   remRequested,
 		"rem_pending": remPending,
-	}))
+	}
+
+	if cutID > 0 {
+		payload["cut_id"] = uint64(cutID)
+	}
+
+	errnie.Error(audit.Phase(analyzer.recorder, tick, "cognize", payload))
 
 	return remObservations, remRequested
+}
+
+/*
+cognitionTokens builds one category token bag per symbol for this cut so
+cognize/recall do not rescan the full category slice for every manifold state.
+*/
+func (analyzer *Analyzer) cognitionTokens(
+	thesis *types.Thesis,
+	states []manifold.State,
+) map[string][]string {
+	if thesis == nil || len(states) == 0 {
+		return nil
+	}
+
+	reporter := category.Report(analyzer.categories)
+
+	if reporter == nil {
+		return nil
+	}
+
+	needed := make(map[string]struct{}, len(states))
+
+	for _, state := range states {
+		if state.Symbol == "" {
+			continue
+		}
+
+		needed[state.Symbol] = struct{}{}
+	}
+
+	grouped := make(map[string][]types.Category, len(needed))
+
+	for _, row := range thesis.Categories {
+		if _, ok := needed[row.Symbol]; !ok {
+			continue
+		}
+
+		grouped[row.Symbol] = append(grouped[row.Symbol], row)
+	}
+
+	tokens := make(map[string][]string, len(needed))
+
+	for symbol := range needed {
+		tokens[symbol] = reporter.Tokens(symbol, grouped[symbol])
+	}
+
+	return tokens
 }
 
 /*
@@ -75,19 +131,23 @@ market observation.
 func (analyzer *Analyzer) recall(
 	thesis *types.Thesis,
 	state manifold.State,
+	categoryTokens []string,
 ) {
 	if analyzer.tree == nil {
 		return
 	}
 
 	reading, found := analyzer.cognition[state.Symbol]
+	focus := types.Focus()
 
-	if found && reading.At.Equal(state.At) && len(reading.Branches) > 0 {
-		thesis.Cognition.Store(state.Symbol, reading)
-		return
+	if found && reading.At.Equal(state.At) {
+		if focus == "" || reading.Symbol != focus || len(reading.Branches) > 0 {
+			thesis.Cognition.Store(state.Symbol, reading)
+			return
+		}
 	}
 
-	parts, sequence := analyzer.sensorySequence(thesis, state)
+	parts, sequence := analyzer.sensorySequence(state, categoryTokens)
 
 	if len(sequence) == 0 {
 		return
@@ -138,17 +198,18 @@ cognize turns the Thesis evidence for one manifold state into a deterministic
 DMT sensory sequence, anchors the intensity-derived attractor on that sequence,
 then publishes the posterior classification strategy consumes. Publishing only
 the pre-train prior left Ready empty whenever the measurement bag changed,
-	because exact sequence repeats almost never occur on a live tape.
+because exact sequence repeats almost never occur on a live tape.
 */
 func (analyzer *Analyzer) cognize(
 	thesis *types.Thesis,
 	state manifold.State,
+	categoryTokens []string,
 ) bool {
 	if analyzer.tree == nil || !state.GasReady() {
 		return false
 	}
 
-	parts, sequence := analyzer.sensorySequence(thesis, state)
+	parts, sequence := analyzer.sensorySequence(state, categoryTokens)
 
 	if len(sequence) == 0 {
 		return false
@@ -201,17 +262,15 @@ category and transition tokens (bounded by active taxonomy) plus a few field
 scalars form the bag — raw measurement keys are not expanded into the tree.
 */
 func (analyzer *Analyzer) sensorySequence(
-	thesis *types.Thesis,
 	state manifold.State,
+	categoryTokens []string,
 ) ([]string, []byte) {
 	replacer := strings.NewReplacer("_", "-", "/", "-")
 	symbolToken := "symbol-" + replacer.Replace(state.Symbol)
 	evidence := make([]string, 0, 16)
 
-	if analyzer.categories != nil {
-		for _, token := range category.Report(analyzer.categories).Tokens(state.Symbol, thesis.Categories) {
-			evidence = append(evidence, replacer.Replace(token))
-		}
+	for _, token := range categoryTokens {
+		evidence = append(evidence, replacer.Replace(token))
 	}
 
 	for name, value := range map[string]float64{
@@ -287,7 +346,7 @@ func (analyzer *Analyzer) readCognition(
 		Cohort:           analyzer.tree.GetSensoryWeight(sequence).Count,
 		Predictions:      make(map[string]float64, len(predictions)),
 		Classes:          cognitionClasses(classification),
-		LookaheadScore:   analyzer.lookaheadScore(parts, predictions),
+		LookaheadScore:   analyzer.lookaheadScore(predictions),
 		RegimePrefix:     string(parent),
 	}
 
@@ -322,6 +381,20 @@ func (analyzer *Analyzer) attachVisualization(
 	classification dmt.ClassificationResult,
 	predictions []dmt.LookaheadPrediction,
 ) {
+	if reading == nil {
+		return
+	}
+
+	focus := types.Focus()
+
+	if focus == "" {
+		return
+	}
+
+	if reading.Symbol != focus {
+		return
+	}
+
 	branches, beams, classes, beamWidth, maxHops, nodeCount, lookaheadScore, lookaheadPaths :=
 		analyzer.cognitionVisualization(
 			sequence, parent, parts, classification, predictions,

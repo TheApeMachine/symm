@@ -16,7 +16,11 @@ A symbol epoch is observed once; later Analyzer cuts that still see that GasRead
 view treat it as replay so idle Hawkes republishes cannot wipe calibrated
 evidence by re-running Update at the same At.
 */
-func (analyzer *Analyzer) observeStates(thesis *types.Thesis) []manifold.State {
+func (analyzer *Analyzer) observeStates(
+	thesis *types.Thesis,
+	cutID types.CutID,
+	tick int64,
+) []manifold.State {
 	states := make([]manifold.State, 0)
 	observeStarted := time.Now()
 
@@ -55,10 +59,16 @@ func (analyzer *Analyzer) observeStates(thesis *types.Thesis) []manifold.State {
 		return true
 	})
 
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "observe", map[string]any{
+	payload := map[string]any{
 		"states": len(states),
 		"ns":     time.Since(observeStarted).Nanoseconds(),
-	}))
+	}
+
+	if cutID > 0 {
+		payload["cut_id"] = uint64(cutID)
+	}
+
+	errnie.Error(audit.Phase(analyzer.recorder, tick, "observe", payload))
 
 	return states
 }

@@ -210,6 +210,17 @@ type cutFrame struct {
 	Hawkes manifold.HawkesSource
 }
 
+/*
+CutIdentity exposes the frozen cut id/tick carried by this frame.
+*/
+func (frame *cutFrame) CutIdentity() (types.CutID, int64) {
+	if frame == nil || frame.Cut == nil {
+		return 0, 0
+	}
+
+	return frame.Cut.ID, frame.Cut.Tick
+}
+
 func (frame *cutFrame) SharedThesis() *types.Thesis {
 	if frame == nil {
 		return nil

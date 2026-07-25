@@ -143,7 +143,7 @@ func TestPublishMeasuredEmitsOrderedFrames(t *testing.T) {
 		types.SetFocus("BTC/USD")
 		Reset(func() { types.SetFocus("") })
 
-		analyzer.publishMeasured(thesis, states)
+		analyzer.publishMeasured(thesis, states, 0, thesis.Tick)
 
 		Convey("Thesis rows stay book-wide for strategy", func() {
 			So(thesis.Resonance, ShouldHaveLength, 2)
@@ -379,6 +379,6 @@ func BenchmarkPublishMeasured(b *testing.B) {
 			}
 		}
 
-		analyzer.publishMeasured(thesis, states)
+		analyzer.publishMeasured(thesis, states, 0, thesis.Tick)
 	}
 }
