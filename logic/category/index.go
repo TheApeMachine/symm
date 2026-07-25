@@ -48,12 +48,10 @@ type evidenceIndex struct {
 symbolEvidence holds per-metric mass and temporal envelopes for one symbol.
 */
 type symbolEvidence struct {
-	mass        map[types.MetricType]float64
-	from        map[types.MetricType]time.Time
-	through     map[types.MetricType]time.Time
-	horizon     map[types.MetricType]time.Duration
-	independent float64
-	indepKeys   []string
+	mass    map[types.MetricType]float64
+	from    map[types.MetricType]time.Time
+	through map[types.MetricType]time.Time
+	horizon map[types.MetricType]time.Duration
 }
 
 /*
@@ -78,11 +76,11 @@ func indexEvidence(thesis *types.Thesis) *evidenceIndex {
 
 		measurement.EachMetric(func(
 			metric types.MetricType, _ types.MeasurementSide, sample types.MetricSample,
-		) {
+		) bool {
 			mass, ok := sampleMass(sample)
 
 			if !ok {
-				return
+				return true
 			}
 
 			bucket := index.symbols[measurement.Symbol]
@@ -113,11 +111,7 @@ func indexEvidence(thesis *types.Thesis) *evidenceIndex {
 				bucket.horizon[metric] = measurement.Horizon
 			}
 
-			switch metric {
-			case types.MetricDecoupled, types.MetricNoiseScore:
-				bucket.independent += mass
-				bucket.indepKeys = append(bucket.indepKeys, string(metric))
-			}
+			return true
 		})
 	}
 
@@ -193,9 +187,13 @@ func (index *evidenceIndex) clockFor(symbol string, metrics []string) evidenceCl
 }
 
 /*
-independence returns live independence-bearing metric mass for symbol.
+independence returns live independence-bearing metric mass for symbol when at
+least one category in the pair is supported by a decoupled or noise metric.
 */
-func (index *evidenceIndex) independence(symbol string) (float64, []string) {
+func (index *evidenceIndex) independence(
+	symbol string,
+	first, second types.CategoryType,
+) (float64, []string) {
 	if index == nil {
 		return 0, nil
 	}
@@ -206,5 +204,46 @@ func (index *evidenceIndex) independence(symbol string) (float64, []string) {
 		return 0, nil
 	}
 
-	return bucket.independent, append([]string(nil), bucket.indepKeys...)
+	var mass float64
+	keys := make([]string, 0, 2)
+
+	for _, metric := range []types.MetricType{types.MetricDecoupled, types.MetricNoiseScore} {
+		value := bucket.mass[metric]
+
+		if value <= 0 {
+			continue
+		}
+
+		if !independenceEligible(metric, first) && !independenceEligible(metric, second) {
+			continue
+		}
+
+		mass += value
+		keys = append(keys, string(metric))
+	}
+
+	if mass <= 0 {
+		return 0, nil
+	}
+
+	return mass, keys
+}
+
+/*
+independenceEligible reports whether metric affinity supports categoryType.
+*/
+func independenceEligible(metric types.MetricType, categoryType types.CategoryType) bool {
+	affinity, ok := types.AffinityFor(metric)
+
+	if !ok {
+		return false
+	}
+
+	for _, supported := range affinity.Supports {
+		if supported == categoryType {
+			return true
+		}
+	}
+
+	return false
 }

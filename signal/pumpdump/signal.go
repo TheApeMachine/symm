@@ -236,72 +236,29 @@ frames can arrive behind the watermark. Those are not observations and must
 not enter the volume clock.
 */
 func (signal *Signal) measure(row kraken.TickerData) ([]*types.Measurement, error) {
-	if row.Symbol == "" || row.Last == nil || row.Last.Sign() <= 0 {
-		return nil, nil
-	}
+	at, ok, err := signal.tickerObservationGate(row)
 
-	if row.Timestamp.IsZero() {
-		return nil, errnie.Err(
-			errnie.Validation,
-			"pumpdump: ticker observation timestamp required",
-			nil,
-		)
+	if err != nil {
+		return nil, err
 	}
-
-	if found, ok := signal.lastAt.Load(row.Symbol); ok {
-		if row.Timestamp.Before(found.(time.Time)) {
-			return nil, nil
-		}
-	}
-
-	bookFound, ok := signal.orderBooks.Load(row.Symbol)
 
 	if !ok {
 		return nil, nil
 	}
 
-	book := bookFound.(*flow.Book)
-	found, ok := signal.volume.Load(row.Symbol)
+	bookState, ok := signal.resolveTickerBookState(row)
 
 	if !ok {
 		return nil, nil
 	}
-
-	volume := found.(float64)
-
-	if book == nil || volume <= 0 {
-		return nil, nil
-	}
-
-	mid := book.Mid()
-	incrementFound, ok := signal.increments.Load(row.Symbol)
-
-	if !ok {
-		return nil, nil
-	}
-
-	increment := incrementFound.(float64)
-
-	if mid <= 0 || increment <= 0 {
-		return nil, nil
-	}
-
-	spread := math.Round(book.Spread()/increment) * increment
-
-	if spread <= 0 {
-		return nil, nil
-	}
-
-	bid := mid - spread/2
-	ask := mid + spread/2
 
 	output, ready, maturity, err := signal.ignition.Measure(equation.IgnitionInput{
 		Symbol: row.Symbol,
-		Volume: volume,
-		Last:   mid,
-		Bid:    bid,
-		Ask:    ask,
-		At:     row.Timestamp,
+		Volume: bookState.volume,
+		Last:   bookState.mid,
+		Bid:    bookState.bid,
+		Ask:    bookState.ask,
+		At:     at,
 	})
 
 	if err != nil {
@@ -312,17 +269,106 @@ func (signal *Signal) measure(row kraken.TickerData) ([]*types.Measurement, erro
 		)
 	}
 
-	signal.lastAt.Store(row.Symbol, row.Timestamp)
+	signal.lastAt.Store(row.Symbol, at)
 
 	return ignitionMeasurements(
 		row.Symbol,
-		row.Timestamp,
+		at,
 		output,
 		maturity,
 		ready,
-		bid,
-		ask,
+		bookState.bid,
+		bookState.ask,
 	)
+}
+
+/*
+tickerBookState carries resolved midpoint, spread, and volume for one ticker.
+*/
+type tickerBookState struct {
+	mid     float64
+	bid     float64
+	ask     float64
+	volume  float64
+}
+
+/*
+tickerObservationGate rejects unusable or stale ticker rows before measurement.
+*/
+func (signal *Signal) tickerObservationGate(
+	row kraken.TickerData,
+) (time.Time, bool, error) {
+	if row.Symbol == "" || row.Last == nil || row.Last.Sign() <= 0 {
+		return time.Time{}, false, nil
+	}
+
+	if row.Timestamp.IsZero() {
+		return time.Time{}, false, errnie.Err(
+			errnie.Validation,
+			"pumpdump: ticker observation timestamp required",
+			nil,
+		)
+	}
+
+	if found, ok := signal.lastAt.Load(row.Symbol); ok {
+		if row.Timestamp.Before(found.(time.Time)) {
+			return time.Time{}, false, nil
+		}
+	}
+
+	return row.Timestamp, true, nil
+}
+
+/*
+resolveTickerBookState loads book, volume, increment, and spread for one symbol.
+*/
+func (signal *Signal) resolveTickerBookState(
+	row kraken.TickerData,
+) (tickerBookState, bool) {
+	bookFound, ok := signal.orderBooks.Load(row.Symbol)
+
+	if !ok {
+		return tickerBookState{}, false
+	}
+
+	book := bookFound.(*flow.Book)
+	found, ok := signal.volume.Load(row.Symbol)
+
+	if !ok {
+		return tickerBookState{}, false
+	}
+
+	volume := found.(float64)
+
+	if book == nil || volume <= 0 {
+		return tickerBookState{}, false
+	}
+
+	mid := book.Mid()
+	incrementFound, ok := signal.increments.Load(row.Symbol)
+
+	if !ok {
+		return tickerBookState{}, false
+	}
+
+	increment := incrementFound.(float64)
+
+	if mid <= 0 || increment <= 0 {
+		return tickerBookState{}, false
+	}
+
+	spread := math.Round(book.Spread()/increment) * increment
+
+	if spread <= 0 {
+		return tickerBookState{}, false
+	}
+
+	return tickerBookState{
+		mid:    mid,
+		bid:    mid - spread/2,
+		ask:    mid + spread/2,
+		volume: volume,
+	}, true
 }
 
 /*

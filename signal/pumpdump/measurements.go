@@ -9,6 +9,59 @@ import (
 )
 
 /*
+ignitionSpec binds one ignition metric to its unit and normalization.
+*/
+type ignitionSpec struct {
+	metric     types.MetricType
+	unit       types.MeasurementUnit
+	raw        float64
+	normalized *float64
+}
+
+/*
+ignitionSpecs builds the full ignition metric table for one observation.
+*/
+func ignitionSpecs(
+	output equation.IgnitionOutput,
+	mid float64,
+) []ignitionSpec {
+	return []ignitionSpec{
+		{
+			types.MetricRVOL, types.UnitDimensionless, output.RVOL,
+			types.NormalizeFinite(output.RVOL),
+		},
+		{
+			types.MetricPrecursor, types.UnitDimensionless, output.Precursor,
+			types.NormalizeFinite(output.Precursor),
+		},
+		{
+			types.MetricSpread, types.UnitQuoteCurrency, output.Spread,
+			types.NormalizeRatio(output.Spread, mid),
+		},
+		{
+			types.MetricCompression, types.UnitDimensionless, output.Compression,
+			types.NormalizeFinite(output.Compression),
+		},
+		{
+			types.MetricIgnition, types.UnitDimensionless, output.Ignition,
+			types.NormalizeFinite(output.Ignition),
+		},
+		{
+			types.MetricTrend, types.UnitDimensionless, output.Trend,
+			types.NormalizeFinite(output.Trend),
+		},
+		{
+			types.MetricExhaustion, types.UnitDimensionless, output.Exhaustion,
+			types.NormalizeFinite(output.Exhaustion),
+		},
+		{
+			types.MetricStrength, types.UnitDimensionless, output.Strength,
+			types.NormalizeFinite(output.Strength),
+		},
+	}
+}
+
+/*
 ignitionMeasurements emits one PumpDump Measurement per symbol whose Metrics
 map carries the full ignition surface (RVOL through Strength).
 */
@@ -56,47 +109,8 @@ func ignitionMeasurements(
 		Validity: validity,
 		Scale:    scale,
 	}
-	specs := []struct {
-		metric     types.MetricType
-		unit       types.MeasurementUnit
-		raw        float64
-		normalized *float64
-	}{
-		{
-			types.MetricRVOL, types.UnitDimensionless, output.RVOL,
-			types.NormalizeFinite(output.RVOL),
-		},
-		{
-			types.MetricPrecursor, types.UnitDimensionless, output.Precursor,
-			types.NormalizeFinite(output.Precursor),
-		},
-		{
-			types.MetricSpread, types.UnitQuoteCurrency, output.Spread,
-			types.NormalizeRatio(output.Spread, mid),
-		},
-		{
-			types.MetricCompression, types.UnitDimensionless, output.Compression,
-			types.NormalizeFinite(output.Compression),
-		},
-		{
-			types.MetricIgnition, types.UnitDimensionless, output.Ignition,
-			types.NormalizeFinite(output.Ignition),
-		},
-		{
-			types.MetricTrend, types.UnitDimensionless, output.Trend,
-			types.NormalizeFinite(output.Trend),
-		},
-		{
-			types.MetricExhaustion, types.UnitDimensionless, output.Exhaustion,
-			types.NormalizeFinite(output.Exhaustion),
-		},
-		{
-			types.MetricStrength, types.UnitDimensionless, output.Strength,
-			types.NormalizeFinite(output.Strength),
-		},
-	}
 
-	for _, spec := range specs {
+	for _, spec := range ignitionSpecs(output, mid) {
 		measurement.PutMetric(spec.metric, types.SideNone, types.MetricSample{
 			Raw:        spec.raw,
 			Normalized: spec.normalized,

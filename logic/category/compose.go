@@ -65,6 +65,15 @@ func ComposeAll(thesis *types.Thesis) []types.Category {
 }
 
 /*
+composeAccum holds measurement-derived mass and the latest evidence timestamp.
+*/
+type composeAccum struct {
+	accumulators map[types.CategoryType]*accumulator
+	present      map[types.MetricType]struct{}
+	at           time.Time
+}
+
+/*
 composeRows turns one symbol's measurement rows into active Category states.
 */
 func composeRows(
@@ -74,61 +83,91 @@ func composeRows(
 		return nil
 	}
 
-	accumulators := map[types.CategoryType]*accumulator{}
-	present := map[types.MetricType]struct{}{}
+	accumulated, ok := accumulateMeasurements(symbol, at, rows)
+
+	if !ok {
+		return nil
+	}
+
+	categories := buildCategories(symbol, accumulated)
+	sortByStrength(categories)
+
+	return categories
+}
+
+/*
+accumulateMeasurements folds one symbol's rows into category mass accumulators.
+*/
+func accumulateMeasurements(
+	symbol string, at time.Time, rows []*types.Measurement,
+) (composeAccum, bool) {
+	accumulated := composeAccum{
+		accumulators: map[types.CategoryType]*accumulator{},
+		present:      map[types.MetricType]struct{}{},
+		at:           at,
+	}
 
 	for _, measurement := range rows {
 		if !usable(measurement, symbol) {
 			continue
 		}
 
-		if measurement.At.After(at) {
-			at = measurement.At
+		if measurement.At.After(accumulated.at) {
+			accumulated.at = measurement.At
 		}
 
 		measurement.EachMetric(func(
 			metric types.MetricType, _ types.MeasurementSide, sample types.MetricSample,
-		) {
+		) bool {
 			affinity, ok := types.AffinityFor(metric)
 
 			if !ok {
-				return
+				return true
 			}
 
 			mass, ok := sampleMass(sample)
 
 			if !ok {
-				return
+				return true
 			}
 
-			present[metric] = struct{}{}
+			accumulated.present[metric] = struct{}{}
 
 			for _, categoryType := range affinity.Supports {
-				ensure(accumulators, categoryType).support(
+				ensure(accumulated.accumulators, categoryType).support(
 					string(metric), mass, measurement,
 				)
 			}
 
 			for _, categoryType := range affinity.Opposes {
-				ensure(accumulators, categoryType).oppose(
+				ensure(accumulated.accumulators, categoryType).oppose(
 					string(metric), mass, measurement,
 				)
 			}
+
+			return true
 		})
 	}
 
-	if len(accumulators) == 0 {
-		return nil
+	if len(accumulated.accumulators) == 0 {
+		return composeAccum{}, false
 	}
 
-	categories := make([]types.Category, 0, len(accumulators))
+	return accumulated, true
+}
 
-	for categoryType, accumulator := range accumulators {
+/*
+buildCategories derives strength, confidence, and provenance rows from accumulators.
+*/
+func buildCategories(symbol string, accumulated composeAccum) []types.Category {
+	categories := make([]types.Category, 0, len(accumulated.accumulators))
+
+	for categoryType, accumulator := range accumulated.accumulators {
 		if accumulator == nil {
 			continue
 		}
 
-		missing := missingSupport(requiredMetricsTable[categoryType], present)
+		missing := missingSupport(requiredMetricsTable[categoryType], accumulated.present)
 		support := accumulator.supportMass
 		oppose := accumulator.opposeMass
 		missingPenalty := support * float64(len(missing)) /
@@ -148,8 +187,8 @@ func composeRows(
 		uncertainty := accumulator.uncertainty
 		freshness := maturity
 
-		if !at.IsZero() && !accumulator.latest.IsZero() {
-			span := at.Sub(accumulator.latest)
+		if !accumulated.at.IsZero() && !accumulator.latest.IsZero() {
+			span := accumulated.at.Sub(accumulator.latest)
 
 			if span > 0 && accumulator.horizon > 0 {
 				freshness = 1 / (1 + float64(span)/float64(accumulator.horizon))
@@ -171,6 +210,13 @@ func composeRows(
 		})
 	}
 
+	return categories
+}
+
+/*
+sortByStrength orders categories by descending strength, then type name.
+*/
+func sortByStrength(categories []types.Category) {
 	sort.Slice(categories, func(left, right int) bool {
 		if categories[left].Strength == categories[right].Strength {
 			return categories[left].Type < categories[right].Type
@@ -178,8 +224,6 @@ func composeRows(
 
 		return categories[left].Strength > categories[right].Strength
 	})
-
-	return categories
 }
 
 /*
@@ -304,10 +348,12 @@ func hasAffinityMeasurement(measurement *types.Measurement) bool {
 
 	found := false
 
-	measurement.EachMetric(func(metric types.MetricType, _ types.MeasurementSide, _ types.MetricSample) {
+	measurement.EachMetric(func(metric types.MetricType, _ types.MeasurementSide, _ types.MetricSample) bool {
 		if _, ok := types.AffinityFor(metric); ok {
 			found = true
 		}
+
+		return true
 	})
 
 	return found

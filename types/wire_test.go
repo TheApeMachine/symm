@@ -203,6 +203,18 @@ func BenchmarkAggregateMeasurements(b *testing.B) {
 		metricCount = 9
 	)
 
+	benchmarkMetricTypes := []MetricType{
+		MetricEventCount,
+		MetricArrivalRate,
+		MetricConditionalIntensity,
+		MetricBaselineIntensity,
+		MetricExcitationAmplitude,
+		MetricDecayRate,
+		MetricKernelMemory,
+		MetricSpectralRadius,
+		MetricHawkesPoissonDelta,
+	}
+
 	rows := make([]*Measurement, 0, symbolCount)
 	at := time.Unix(100, 0).UTC()
 
@@ -211,7 +223,7 @@ func BenchmarkAggregateMeasurements(b *testing.B) {
 		metrics := make(map[string]MetricSample, metricCount)
 
 		for metricIndex := range metricCount {
-			metrics[MetricKey(MetricStrength, SideNone)] = MetricSample{
+			metrics[MetricKey(benchmarkMetricTypes[metricIndex], SideNone)] = MetricSample{
 				Raw: float64(metricIndex),
 			}
 		}

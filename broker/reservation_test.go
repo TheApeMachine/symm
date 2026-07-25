@@ -57,8 +57,10 @@ func TestLedgerReserveAsset(t *testing.T) {
 			So(ledger.ReservedAsset("BTC").Float64(), ShouldEqual, 0.5)
 			So(ledger.Commit("buy"), ShouldBeNil)
 			So(ledger.ReservedCash().Sign(), ShouldEqual, 0)
+			So(ledger.ReservedAsset("BTC").Float64(), ShouldEqual, 0.5)
 			So(ledger.Release("sell"), ShouldBeNil)
 			So(ledger.ReservedAsset("BTC").Sign(), ShouldEqual, 0)
+			So(ledger.ReservedCash().Sign(), ShouldEqual, 0)
 		})
 	})
 }

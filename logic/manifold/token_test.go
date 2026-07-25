@@ -8,6 +8,21 @@ import (
 	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 )
 
+func TestPackContent(t *testing.T) {
+	Convey("Given sequence, symbol index, and side", t, func() {
+		Convey("It should pack sequence in the top byte with side in the LSB", func() {
+			bid := packContent(3, 5, book.Bid)
+			ask := packContent(3, 5, book.Ask)
+			So(bid>>24, ShouldEqual, uint32(3))
+			So(ask>>24, ShouldEqual, uint32(3))
+			So(bid&1, ShouldEqual, uint32(0))
+			So(ask&1, ShouldEqual, uint32(1))
+			So((bid>>1)&symbolIndexMask, ShouldEqual, uint32(5))
+			So(bid, ShouldNotEqual, ask)
+		})
+	})
+}
+
 func TestTokenizer_MakeBatch(t *testing.T) {
 	Convey("Given one L3 book sample with bid and ask resting orders", t, func() {
 		tokenizer := NewTokenizer(pfluid.DefaultConfig())
@@ -16,9 +31,10 @@ func TestTokenizer_MakeBatch(t *testing.T) {
 			{side: book.Ask, price: 101},
 			{side: book.Bid, price: 99},
 		}
+		symbolIndex := uint32(2)
 
-		Convey("It should place one content site per order on the book circle", func() {
-			batch := tokenizer.MakeBatch(orders, 100, 2.5, 0.75)
+		Convey("It should pack content as sequence×side×symbol and site ω on the book circle", func() {
+			batch := tokenizer.MakeBatch(orders, 100, 2.5, 0.75, symbolIndex)
 			So(batch.Particles, ShouldHaveLength, len(orders))
 			So(batch.ContentIDs, ShouldHaveLength, len(orders))
 
@@ -27,7 +43,11 @@ func TestTokenizer_MakeBatch(t *testing.T) {
 				So(particle.Mass, ShouldEqual, float32(1))
 				So(particle.Omega, ShouldBeGreaterThanOrEqualTo, float32(-4))
 				So(particle.Omega, ShouldBeLessThanOrEqualTo, float32(4))
-				So(batch.ContentIDs[index], ShouldEqual, uint32(index))
+				So(
+					batch.ContentIDs[index],
+					ShouldEqual,
+					packContent(index, symbolIndex, orders[index].side),
+				)
 
 				if orders[index].side == book.Ask {
 					So(particle.Energy, ShouldEqual, float32(0.75))
@@ -44,6 +64,17 @@ func TestTokenizer_MakeBatch(t *testing.T) {
 			So(batch.Particles[0].Omega, ShouldEqual, cfg.OmegaMin+(0.5)/3*span)
 			So(batch.Particles[2].Omega, ShouldEqual, cfg.OmegaMin+(2.5)/3*span)
 		})
+	})
+}
+
+func TestUniverseIndex(t *testing.T) {
+	Convey("Given alphabetically sorted universe names", t, func() {
+		universe := sortedUniverse([]string{"ETH/USD", "BTC/USD", "SOL/USD"})
+		So(universe, ShouldResemble, []string{"BTC/USD", "ETH/USD", "SOL/USD"})
+
+		index, ok := universeIndex(universe, "ETH/USD")
+		So(ok, ShouldBeTrue)
+		So(index, ShouldEqual, uint32(1))
 	})
 }
 
@@ -78,6 +109,6 @@ func BenchmarkTokenizer_MakeBatch(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = tokenizer.MakeBatch(orders, 100, 1, 1).Particles
+		_ = tokenizer.MakeBatch(orders, 100, 1, 1, 3).Particles
 	}
 }

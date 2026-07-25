@@ -38,7 +38,7 @@ func TestWirePackets(t *testing.T) {
 		}
 
 		Convey("It emits meta without lattices and four binary planes", func() {
-			field, lattices, particles, wave := WirePackets(state)
+			field, lattices, particles, wave := state.WirePackets()
 			So(field.Symbol, ShouldEqual, "BTC/USD")
 			So(field.Grid.X, ShouldEqual, uint32(8))
 			So(field.Grid.Z, ShouldEqual, uint32(6))

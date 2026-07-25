@@ -107,10 +107,11 @@ func TestCalculate(t *testing.T) {
 						metric types.MetricType,
 						side types.MeasurementSide,
 						sample types.MetricSample,
-					) {
+					) bool {
 						So(math.IsNaN(sample.Raw), ShouldBeFalse)
 						So(math.IsInf(sample.Raw, 0), ShouldBeFalse)
 						So(sample.Raw, ShouldBeGreaterThanOrEqualTo, 0)
+						return true
 					})
 
 					measurements = append(measurements, measurement)
@@ -126,14 +127,14 @@ func TestCalculate(t *testing.T) {
 			}
 			activeAt := map[string]time.Time{}
 			activeVolume := map[string]float64{}
-			latestAt := time.Time{}
+			latestAt := map[measurementKey]time.Time{}
 
 			for _, measurement := range measurements {
 				measurement.EachMetric(func(
 					metric types.MetricType,
 					side types.MeasurementSide,
 					sample types.MetricSample,
-				) {
+				) bool {
 					key := measurementKey{
 						metric: metric,
 						symbol: measurement.Symbol,
@@ -144,12 +145,12 @@ func TestCalculate(t *testing.T) {
 						outcome.peak[key] = sample.Raw
 					}
 
-					if measurement.At.After(latestAt) {
-						latestAt = measurement.At
-						clear(outcome.latest)
+					if measurement.At.After(latestAt[key]) {
+						latestAt[key] = measurement.At
+						outcome.latest[key] = sample.Raw
 					}
 
-					if measurement.At.Equal(latestAt) {
+					if measurement.At.Equal(latestAt[key]) {
 						outcome.latest[key] = sample.Raw
 					}
 
@@ -158,6 +159,8 @@ func TestCalculate(t *testing.T) {
 						activeVolume[measurement.Symbol] = sample.Raw
 						activeAt[measurement.Symbol] = measurement.At
 					}
+
+					return true
 				})
 			}
 
@@ -170,12 +173,13 @@ func TestCalculate(t *testing.T) {
 					metric types.MetricType,
 					side types.MeasurementSide,
 					sample types.MetricSample,
-				) {
+				) bool {
 					outcome.active[measurementKey{
 						metric: metric,
 						symbol: measurement.Symbol,
 						side:   side,
 					}] = sample.Raw
+					return true
 				})
 			}
 

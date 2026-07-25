@@ -1,7 +1,6 @@
 package exhaust_test
 
 import (
-	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -73,7 +72,7 @@ func (outcome *marketOutcome) observe(measurement *types.Measurement) {
 		metric types.MetricType,
 		side types.MeasurementSide,
 		sample types.MetricSample,
-	) {
+	) bool {
 		normalized := sample.Raw == 0 && sample.Normalized == nil
 
 		if sample.Raw > 0 && sample.Normalized != nil {
@@ -108,6 +107,8 @@ func (outcome *marketOutcome) observe(measurement *types.Measurement) {
 		}
 
 		outcome.epochs[epoch][metric] = sample.Raw
+
+		return true
 	})
 }
 
@@ -379,68 +380,6 @@ func TestCalculate(t *testing.T) {
 			So(rows, ShouldBeEmpty)
 		})
 	})
-}
-
-func TestProbeRetreatFragile(t *testing.T) {
-	market := tests.NewMarket(t.Context(), 3)
-	wired, err := stack.NewBooter(t.Context()).Test(market)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer wired.Close()
-	defer market.Close()
-
-	signal := exhaustionOf(wired.Signals)
-	book := signal.Subscribe("book")
-	trade := signal.Subscribe("trade")
-	var afterBoot, afterWarm, afterRetreat []*types.Measurement
-
-	// Drain anything already published (subscribe snapshot if it arrived late)
-	drainExhaust(book, trade, &afterBoot)
-
-	if err := market.Warmup(func() error {
-		drainExhaust(book, trade, &afterWarm)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	drainExhaust(book, trade, &afterWarm)
-
-	if err := market.Transition(tests.MarketStateLiquidityRetreat, func() error {
-		drainExhaust(book, trade, &afterRetreat)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	drainExhaust(book, trade, &afterRetreat)
-
-	summarize := func(label string, rows []*types.Measurement) {
-		n, mat := 0, 0.0
-		frag, mech := 0.0, 0.0
-
-		for _, measurement := range rows {
-			if measurement.Symbol != "SIM1/USD" {
-				continue
-			}
-
-			if sample, ok := measurement.Sample(types.MetricMechanical, types.SideBuy); ok {
-				n++
-				mat = measurement.Maturity
-				mech = sample.Raw
-			}
-
-			if sample, ok := measurement.Sample(types.MetricFragile, types.SideBuy); ok {
-				frag = sample.Raw
-			}
-		}
-
-		obs := mat / (1 - mat) // from maturity = n/(n+1)
-		fmt.Printf("%s: mechanical_epochs=%d last_maturity=%.6f implied_obs=%.2f last_frag=%.6f last_mech=%.6f total_rows=%d\n",
-			label, n, mat, obs, frag, mech, len(rows))
-	}
-	summarize("post-subscribe-drain", afterBoot)
-	summarize("post-warmup", afterWarm)
-	summarize("post-retreat", afterRetreat)
 }
 
 /*

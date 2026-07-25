@@ -25,7 +25,8 @@ type advanceResult struct {
 advance appends Sensorium-shaped particles for every changed Hawkes/book epoch,
 then always performs one GPU step over the resident population when any
 particles exist. Unchanged epochs skip append and receive the new shared
-reading. After Advance, below-mean mass×(energy+heat) contributors are pruned.
+reading. Below-mean prune runs only after an append — always-step replay must
+not ratchet the resident set down to a single dust survivor.
 */
 func (solver *Solver) advance(
 	thesis *types.Thesis,
@@ -33,10 +34,10 @@ func (solver *Solver) advance(
 	changed map[string]excitation.Outcome,
 ) advanceResult {
 	result := advanceResult{}
-	failures, _ := solver.appendBatches(candidates, changed)
+	failures, grew := solver.appendBatches(candidates, changed)
 	result.failures = append(result.failures, failures...)
 
-	reading, diagnostics, err := solver.step()
+	reading, diagnostics, err := solver.step(grew)
 
 	if err != nil {
 		result.failures = append(result.failures, err)
@@ -271,8 +272,10 @@ func (slot *symbolSlot) ingest(candidate intensityCandidate) (Batch, error) {
 /*
 step advances the resident Metal population once, then reads the shared
 physical reductions. No host re-upload. An empty population is a no-op.
+When grew is set, inert contributors are pruned after the step so append dust
+cannot accumulate; pure always-step ticks leave the resident set intact.
 */
-func (solver *Solver) step() (
+func (solver *Solver) step(grew bool) (
 	pfluid.Reading,
 	pfluid.Diagnostics,
 	error,
@@ -302,15 +305,18 @@ func (solver *Solver) step() (
 	// Inelastic merge rewrites resident indices; per-sample ranges are gone.
 	solver.clearRanges()
 
-	// Prune is best-effort after a successful Advance. A prune miss must not
-	// abort publish: ingest already committed Hawkes bookmarks, so failing here
-	// would force every later cut onto Replay until the next epoch.
-	if err := solver.pruneInert(); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"manifold: inert particle prune failed",
-			err,
-		))
+	// Prune only after append growth. Replay always-steps would otherwise
+	// re-apply the mean threshold every cut and collapse the field to one
+	// survivor. A prune miss must not abort publish: ingest already committed
+	// Hawkes bookmarks.
+	if grew {
+		if err := solver.pruneInert(); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"manifold: inert particle prune failed",
+				err,
+			))
+		}
 	}
 
 	reading, err := solver.domain.Reading()

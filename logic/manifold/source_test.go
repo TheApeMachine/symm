@@ -49,7 +49,7 @@ func TestSampleConcurrentUpdates(t *testing.T) {
 		select {
 		case <-done:
 			wait.Wait()
-			population, ok := sampler.Sample("BTC/USD", tokenizer, 1, 1)
+			population, ok := sampler.Sample("BTC/USD", tokenizer, 1, 1, 0)
 
 			if !ok || len(population.batch.Particles) == 0 || population.midPrice <= 0 {
 				t.Fatalf("final Sample mid=%v ok=%v particles=%d",
@@ -58,7 +58,7 @@ func TestSampleConcurrentUpdates(t *testing.T) {
 
 			return
 		default:
-			population, ok := sampler.Sample("BTC/USD", tokenizer, 1, 1)
+			population, ok := sampler.Sample("BTC/USD", tokenizer, 1, 1, 0)
 
 			if !ok || len(population.batch.Particles) == 0 || population.midPrice <= 0 {
 				t.Fatalf("Sample mid=%v ok=%v particles=%d",
@@ -77,7 +77,7 @@ func TestBookSampler_Sample(t *testing.T) {
 		source := newTestBookSource("BTC/USD")
 		sampler := newBookSampler(source)
 		tokenizer := NewTokenizer(pfluid.DefaultConfig())
-		population, ready := sampler.Sample("BTC/USD", tokenizer, 2.5, 0.75)
+		population, ready := sampler.Sample("BTC/USD", tokenizer, 2.5, 0.75, 0)
 
 		So(ready, ShouldBeTrue)
 		So(population.orderIDs, ShouldHaveLength, 2)
@@ -107,7 +107,7 @@ func TestBookSampler_Sample(t *testing.T) {
 				Quantity:  decimal.NewFromInt64(0),
 				Timestamp: time.Unix(4, 0),
 			})
-			_, twoSided := sampler.Sample("BTC/USD", tokenizer, 2.5, 0.75)
+			_, twoSided := sampler.Sample("BTC/USD", tokenizer, 2.5, 0.75, 0)
 
 			So(twoSided, ShouldBeFalse)
 		})
@@ -141,7 +141,7 @@ func BenchmarkBookSampler_Sample(b *testing.B) {
 
 	sampler := newBookSampler(source)
 	tokenizer := NewTokenizer(pfluid.DefaultConfig())
-	_, ready := sampler.Sample("BTC/USD", tokenizer, 1, 1)
+	_, ready := sampler.Sample("BTC/USD", tokenizer, 1, 1, 0)
 
 	if !ready {
 		b.Fatal("book sampler did not become ready")
@@ -151,7 +151,7 @@ func BenchmarkBookSampler_Sample(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		population, sampled := sampler.Sample("BTC/USD", tokenizer, 1, 1)
+		population, sampled := sampler.Sample("BTC/USD", tokenizer, 1, 1, 0)
 
 		if !sampled || len(population.batch.Particles) == 0 {
 			b.Fatal("book sampler lost the population")

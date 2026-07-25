@@ -91,9 +91,7 @@ type WireWave struct {
 WirePackets splits one State into meta JSON, uint16 lattice binaries, particles,
 and wave so each part can fan out under hub backpressure.
 */
-func WirePackets(
-	state State,
-) (WireField, [][]byte, WireParticles, WireWave) {
+func (state State) WirePackets() (WireField, [][]byte, WireParticles, WireWave) {
 	field := WireField{
 		Source:                state.Source,
 		Symbol:                state.Symbol,

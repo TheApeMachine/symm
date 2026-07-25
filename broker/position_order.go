@@ -200,14 +200,23 @@ func (position *Position) holdingSymbol(symbol string) string {
 	for _, key := range []string{
 		position.pair.Symbol,
 		symbol,
-		position.api.Name(symbol),
 	} {
 		if key == "" {
 			continue
 		}
 
-		if _, err := position.balance.Holding(key); err == nil {
+		if _, ok := position.balance.Retained(key); ok {
 			return key
+		}
+	}
+
+	if position.api != nil {
+		named := position.api.Name(symbol)
+
+		if named != "" {
+			if _, ok := position.balance.Retained(named); ok {
+				return named
+			}
 		}
 	}
 

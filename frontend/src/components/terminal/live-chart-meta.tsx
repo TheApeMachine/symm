@@ -90,7 +90,9 @@ const paintManifoldMetaCompose = (value: unknown, focusSymbol: string) => {
 	);
 	const particles = terminalFluidParticlesFromFrame({
 		...(manifold ?? {}),
-		particles: latestManifoldParticles()?.particles ?? manifold?.particles,
+		particles:
+			latestManifoldParticles(manifold?.symbol ?? "")?.particles ??
+			manifold?.particles,
 	});
 	const particleCells = aggregateFluidParticles(particles, columns, gridRows);
 	const coherence = terminalFluidFieldStats(

@@ -13,22 +13,20 @@ type symbolCadence struct {
 }
 
 /*
-touchCadence records the gap since the previous cut for symbol and returns the
-updated mean inter-cut span.
+touch records the gap since the previous cut for symbol and returns the updated
+mean inter-cut span.
 */
-func (graph *Graph) touchCadence(symbol string, at time.Time) time.Duration {
-	if graph.cadence == nil {
-		graph.cadence = map[string]*symbolCadence{}
-	}
-
-	state := graph.cadence[symbol]
-
+func (state *symbolCadence) touch(at time.Time) time.Duration {
 	if state == nil {
-		graph.cadence[symbol] = &symbolCadence{last: at}
 		return 0
 	}
 
-	if !state.last.IsZero() && at.After(state.last) {
+	if state.last.IsZero() {
+		state.last = at
+		return 0
+	}
+
+	if at.After(state.last) {
 		gap := at.Sub(state.last)
 		state.n++
 		state.mean += (gap - state.mean) / time.Duration(state.n)
@@ -40,27 +38,59 @@ func (graph *Graph) touchCadence(symbol string, at time.Time) time.Duration {
 }
 
 /*
-decayIdle scales down edges for symbol that were not strengthened on this cut.
+cadenceBook holds per-symbol inter-cut tempo used to decay idle edges.
+*/
+type cadenceBook struct {
+	symbols map[string]*symbolCadence
+}
+
+/*
+touch records symbol cadence at at and returns the updated mean inter-cut span.
+*/
+func (book *cadenceBook) touch(symbol string, at time.Time) time.Duration {
+	if book.symbols == nil {
+		book.symbols = map[string]*symbolCadence{}
+	}
+
+	state := book.symbols[symbol]
+
+	if state == nil {
+		book.symbols[symbol] = &symbolCadence{last: at}
+		return 0
+	}
+
+	return state.touch(at)
+}
+
+/*
+decayIdle scales down symbol edges that were not strengthened on this cut.
 Weight is multiplied by mean/(mean+age) using the symbol's observed inter-cut
 mean, so longer silence relative to that cadence reduces coupling.
 */
-func (graph *Graph) decayIdle(symbol string, at time.Time, mean time.Duration) {
-	if mean <= 0 {
+func (book *cadenceBook) decayIdle(graph *Graph, symbol string, at time.Time, mean time.Duration) {
+	if book == nil || graph == nil || mean <= 0 {
 		return
 	}
 
-	for key, relation := range graph.edges {
-		if key.symbol != symbol || relation == nil {
+	keys := graph.edgesBySymbol[symbol]
+	remaining := keys[:0]
+
+	for _, key := range keys {
+		relation := graph.edges[key]
+
+		if relation == nil {
 			continue
 		}
 
 		if graph.touched != nil {
 			if _, ok := graph.touched[key]; ok {
+				remaining = append(remaining, key)
 				continue
 			}
 		}
 
 		if relation.At.IsZero() || !at.After(relation.At) {
+			remaining = append(remaining, key)
 			continue
 		}
 
@@ -69,6 +99,11 @@ func (graph *Graph) decayIdle(symbol string, at time.Time, mean time.Duration) {
 
 		if relation.Weight <= 0 {
 			delete(graph.edges, key)
+			continue
 		}
+
+		remaining = append(remaining, key)
 	}
+
+	graph.edgesBySymbol[symbol] = remaining
 }

@@ -1,7 +1,6 @@
 package logic_test
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/theapemachine/symm/logic/manifold"
@@ -64,20 +63,42 @@ func TestProbeFullAnalyzerPath(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("%s transition: %v", proof.name, err)
 		}
-		res := len(wired.Thesis.Resonance) > 0
-		man := false
+		resonanceCached := len(wired.Thesis.Resonance) > 0
+		manifoldReady := false
 		wired.Thesis.Manifold.Range(func(_, value any) bool {
 			state, ok := value.(manifold.State)
-			man = ok && state.GasReady()
-			return !man
+			manifoldReady = ok && state.GasReady()
+			return !manifoldReady
 		})
-		cog := false
+		cognitionCached := false
 		wired.Thesis.Cognition.Range(func(_, _ any) bool {
-			cog = true
+			cognitionCached = true
 			return false
 		})
-		fmt.Printf("%s: cuts=%d advanced=%d replayed=%d cognitions=%d categories=%d frames=%v/%v/%v\n",
-			proof.name, cuts, advanced, replayed, cognitions, categories, res, man, cog)
+		t.Logf("%s: cuts=%d advanced=%d replayed=%d cognitions=%d categories=%d frames=%v/%v/%v",
+			proof.name, cuts, advanced, replayed, cognitions, categories,
+			resonanceCached, manifoldReady, cognitionCached)
+
+		if cuts == 0 {
+			t.Errorf("%s: expected transition cuts during replay", proof.name)
+		}
+
+		if advanced+replayed == 0 {
+			t.Errorf("%s: expected manifold advancement or replay frames", proof.name)
+		}
+
+		if !resonanceCached {
+			t.Errorf("%s: expected resonance cache on thesis", proof.name)
+		}
+
+		if !manifoldReady {
+			t.Errorf("%s: expected manifold gas-ready frame on thesis", proof.name)
+		}
+
+		if !cognitionCached {
+			t.Errorf("%s: expected cognition cache on thesis", proof.name)
+		}
+
 		types.SetFocus("")
 		_ = wired.Close()
 		market.Close()

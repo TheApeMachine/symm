@@ -90,8 +90,10 @@ func TestRecordFillDerivesMissingFee(t *testing.T) {
 			Qty:    decimal.NewFromFloat64(100),
 		}
 		var ledger []Fill
+		notional := price.Notional(&pair, decimal.NewFromFloat64(0.05), holding.Qty)
+		expectedFee := price.Fee(&pair, notional)
 
-		price.RecordFill(&pair, holding, kraken.ExecutionData{
+		fill := price.RecordFill(&pair, holding, kraken.ExecutionData{
 			ExecID:    "missing-fee",
 			Side:      "buy",
 			LastQty:   decimal.NewFromFloat64(100),
@@ -99,9 +101,16 @@ func TestRecordFillDerivesMissingFee(t *testing.T) {
 		}, &ledger)
 
 		Convey("It derives EntryFee from the cached taker schedule", func() {
+			So(expectedFee, ShouldNotBeNil)
 			So(holding.EntryFee, ShouldNotBeNil)
-			So(holding.EntryFee.Sign(), ShouldBeGreaterThan, 0)
+			So(holding.EntryFee.Cmp(expectedFee), ShouldEqual, 0)
 			So(holding.EntryPrice.Float64(), ShouldEqual, 0.05)
+			So(len(ledger), ShouldEqual, 1)
+			So(fill.ExecID, ShouldEqual, "missing-fee")
+			So(fill.Fee, ShouldNotBeNil)
+			So(fill.Fee.Cmp(expectedFee), ShouldEqual, 0)
+			So(ledger[0].ExecID, ShouldEqual, "missing-fee")
+			So(ledger[0].Fee.Cmp(expectedFee), ShouldEqual, 0)
 		})
 	})
 }

@@ -209,7 +209,34 @@ func (graph *Graph) linkPair(
 	}
 
 	jaccard, shared := sharedSupport(first.Supporting, second.Supporting)
+	graph.linkRedundantContradictsConditions(
+		at, index, symbol, first, second, jaccard, shared,
+	)
 
+	leftClock := index.clockFor(symbol, first.Supporting)
+	rightClock := index.clockFor(symbol, second.Supporting)
+
+	if graph.linkIncomparableStaleLeads(
+		at, symbol, first, second, leftClock, rightClock,
+	) {
+		return
+	}
+
+	graph.linkIndependentOrSupports(at, index, symbol, first, second, jaccard)
+}
+
+/*
+linkRedundantContradictsConditions strengthens overlap, contradiction, and
+conditional evidence edges between one category pair.
+*/
+func (graph *Graph) linkRedundantContradictsConditions(
+	at time.Time,
+	index *evidenceIndex,
+	symbol string,
+	first, second types.Category,
+	jaccard float64,
+	shared []string,
+) {
 	if jaccard > 0 {
 		graph.strengthen(
 			at, symbol, first.Type, second.Type, RedundantWith,
@@ -236,16 +263,24 @@ func (graph *Graph) linkPair(
 	if mass, evidence := conditionsMass(second, first); mass > 0 {
 		graph.strengthen(at, symbol, second.Type, first.Type, Conditions, mass, evidence)
 	}
+}
 
-	leftClock := index.clockFor(symbol, first.Supporting)
-	rightClock := index.clockFor(symbol, second.Supporting)
-
+/*
+linkIncomparableStaleLeads strengthens temporal envelope edges and reports
+whether the pair is incomparable and further coupling should stop.
+*/
+func (graph *Graph) linkIncomparableStaleLeads(
+	at time.Time,
+	symbol string,
+	first, second types.Category,
+	leftClock, rightClock evidenceClock,
+) bool {
 	if leftClock.ok && rightClock.ok && !alignable(leftClock, rightClock) {
 		evidence := append(append([]string{}, first.Supporting...), second.Supporting...)
 		mass := math.Sqrt(first.Strength * second.Strength)
 		graph.strengthen(at, symbol, first.Type, second.Type, IncomparableWith, mass, evidence)
 		graph.strengthen(at, symbol, second.Type, first.Type, IncomparableWith, mass, evidence)
-		return
+		return true
 	}
 
 	if mass := staleMass(leftClock, rightClock, first.Strength, second.Strength); mass > 0 {
@@ -270,6 +305,20 @@ func (graph *Graph) linkPair(
 		graph.strengthen(at, symbol, first.Type, second.Type, Lags, mass, first.Supporting)
 	}
 
+	return false
+}
+
+/*
+linkIndependentOrSupports strengthens independence or default support after
+overlap and contradiction edges are ruled out.
+*/
+func (graph *Graph) linkIndependentOrSupports(
+	at time.Time,
+	index *evidenceIndex,
+	symbol string,
+	first, second types.Category,
+	jaccard float64,
+) {
 	contradicts := graph.Weight(symbol, first.Type, second.Type, Contradicts) > 0 ||
 		graph.Weight(symbol, second.Type, first.Type, Contradicts) > 0
 
@@ -278,7 +327,7 @@ func (graph *Graph) linkPair(
 	}
 
 	evidence := append(append([]string{}, first.Supporting...), second.Supporting...)
-	metricMass, metricEvidence := index.independence(symbol)
+	metricMass, metricEvidence := index.independence(symbol, first.Type, second.Type)
 	pairMass, independent := graph.pair.independent(
 		symbol, first.Type, second.Type, first.Strength, second.Strength,
 	)

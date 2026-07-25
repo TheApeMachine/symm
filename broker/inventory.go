@@ -126,19 +126,42 @@ func (inventory *Inventory) Update(
 }
 
 /*
+Retained returns a value copy of any lot still keyed in inventory, including
+closed audit lots that Holding intentionally hides from open-lot callers.
+*/
+func (inventory *Inventory) Retained(symbol string) (types.Holding, bool) {
+	inventory.mu.RLock()
+	defer inventory.mu.RUnlock()
+
+	holding, ok := inventory.lots[symbol]
+
+	if !ok || symbol != holding.Symbol {
+		return types.Holding{}, false
+	}
+
+	return *holding, true
+}
+
+/*
 Lots yields every retained holding, including closed lots for the audit rail.
 */
 func (inventory *Inventory) Lots() iter.Seq[types.Holding] {
 	return func(yield func(types.Holding) bool) {
 		inventory.mu.RLock()
-		defer inventory.mu.RUnlock()
+		copies := make([]types.Holding, 0, len(inventory.lots))
 
 		for symbol, holding := range inventory.lots {
 			if symbol != holding.Symbol {
 				continue
 			}
 
-			if !yield(*holding) {
+			copies = append(copies, *holding)
+		}
+
+		inventory.mu.RUnlock()
+
+		for _, holding := range copies {
+			if !yield(holding) {
 				return
 			}
 		}

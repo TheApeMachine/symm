@@ -166,15 +166,16 @@ func TestMeasure(t *testing.T) {
 							_ types.MetricType,
 							_ types.MeasurementSide,
 							sample types.MetricSample,
-						) {
+						) bool {
 							if sample.Raw == 0 {
 								So(sample.Normalized, ShouldBeNil)
-								return
+								return true
 							}
 
 							So(sample.Normalized, ShouldNotBeNil)
 							So(math.IsNaN(*sample.Normalized), ShouldBeFalse)
 							So(math.IsInf(*sample.Normalized, 0), ShouldBeFalse)
+							return true
 						})
 					}
 

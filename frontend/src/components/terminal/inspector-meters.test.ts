@@ -114,6 +114,30 @@ describe("mergeInspectorMetrics", () => {
 			"conditional_intensity:buy": 0.18,
 		});
 	});
+
+	it("merges legacy flat rows when metrics is undefined", () => {
+		const merged = mergeInspectorMetrics(
+			[
+				{
+					source: "pumpdump",
+					symbol: "BTC/USD",
+					metric: "peak_score",
+					at: "2026-07-25T01:00:00.000Z",
+					raw: 0.87,
+					normalized: null,
+					uncertainty: null,
+					validity: { state: "valid", readiness: "observation" },
+					scale: { kind: "observation_window", from: "", through: "" },
+				},
+			],
+			"pumpdump",
+			"BTC/USD",
+		);
+
+		expect(Object.fromEntries(merged)).toEqual({
+			peak_score: 0.87,
+		});
+	});
 });
 
 describe("paintInspectorMeters", () => {

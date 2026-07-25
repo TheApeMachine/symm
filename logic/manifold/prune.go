@@ -26,18 +26,19 @@ func particleContribution(particle pfluid.Particle) float64 {
 }
 
 /*
-retainAboveMean returns indices whose contribution is at least the population
-mean of positive contributors. Zero-mass and zero-store particles are always
-dropped. When every remaining score equals the mean, the full live set is kept.
+retainAboveMedian returns indices whose contribution is at least the median of
+positive contributors. Zero-mass and zero-store particles are always dropped.
+Median (not mean) keeps the typical half of a skewed Hawkes intensity mix —
+mean culling collapses a multi-symbol domain onto the single hottest oscillator
+and blanks the pilot-wave projection.
 */
-func retainAboveMean(particles []pfluid.Particle) []uint32 {
+func retainAboveMedian(particles []pfluid.Particle) []uint32 {
 	if len(particles) == 0 {
 		return nil
 	}
 
 	scores := make([]float64, len(particles))
-	total := 0.0
-	positive := 0
+	positives := make([]float64, 0, len(particles))
 
 	for index, particle := range particles {
 		score := particleContribution(particle)
@@ -47,25 +48,24 @@ func retainAboveMean(particles []pfluid.Particle) []uint32 {
 			continue
 		}
 
-		total += score
-		positive++
+		positives = append(positives, score)
 	}
 
-	if positive == 0 {
+	if len(positives) == 0 {
 		return nil
 	}
 
-	mean := total / float64(positive)
-	kept := make([]uint32, 0, positive)
+	sort.Float64s(positives)
+	threshold := positives[(len(positives)-1)/2]
+	kept := make([]uint32, 0, len(positives))
 
 	for index, score := range scores {
-		if score >= mean {
+		if score >= threshold {
 			kept = append(kept, uint32(index))
 		}
 	}
 
 	if len(kept) == 0 {
-		// Degenerate equality: keep the strongest contributor.
 		best := 0
 
 		for index, score := range scores {
@@ -86,9 +86,10 @@ func retainAboveMean(particles []pfluid.Particle) []uint32 {
 
 /*
 pruneInert drops resident particles whose mass×(energy+heat) sits below the
-positive-population mean after Advance. Merge already compacted same-cell
-twins; this removes the long tail of negligible contributors so GPU and wire
-cost cannot grow without bound from historical dust.
+positive-population median after an append Advance. Merge already compacted
+same-cell twins; this removes the long tail of negligible contributors so GPU
+and wire cost cannot grow without bound from historical dust. Callers must not
+invoke this on pure always-step ticks.
 */
 func (solver *Solver) pruneInert() error {
 	if solver == nil || solver.domain == nil {
@@ -107,7 +108,7 @@ func (solver *Solver) pruneInert() error {
 		return err
 	}
 
-	kept := retainAboveMean(particles)
+	kept := retainAboveMedian(particles)
 
 	// Empty keep-set means no positive contributors — leave the resident
 	// population alone rather than Retain(nil) wiping the domain.

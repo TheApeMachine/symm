@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"maps"
+	"strconv"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
@@ -223,10 +224,13 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			continue
 		}
 
-		if _, dominates := logic.CategoryTrap(thesis, forecast.Symbol); dominates {
+		categoryTrapShare, categoryTrapDominates := logic.CategoryTrap(thesis, forecast.Symbol)
+
+		if categoryTrapDominates {
 			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
 				*forecast, 0, "category_trap_dominant",
-				"category graph trap/contradict structure dominates opportunity",
+				"category graph trap/contradict structure dominates opportunity: "+
+					strconv.FormatFloat(categoryTrapShare, 'f', -1, 64),
 			))
 			continue
 		}

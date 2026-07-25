@@ -28,6 +28,8 @@ func (signal *Signal) emitSymbolMeasurements(
 
 	addTapeMetrics(measurement, row)
 
+	bookObserved := false
+
 	signal.level3.PeekBook(symbol, func(symbolBook *book.Book) {
 		if symbolBook.Name != symbol {
 			return
@@ -39,6 +41,7 @@ func (signal *Signal) emitSymbolMeasurements(
 			return
 		}
 
+		bookObserved = true
 		bidQuantity := bid.Quantity.Float64()
 		askQuantity := ask.Quantity.Float64()
 
@@ -63,6 +66,17 @@ func (signal *Signal) emitSymbolMeasurements(
 			askQuantity,
 		)
 	})
+
+	if !bookObserved {
+		addZeroTouchMetrics(measurement)
+		putHonestyMetrics(
+			measurement,
+			0, 0,
+			0, 0,
+			0, 0,
+			0, 0,
+		)
+	}
 
 	*out = append(*out, measurement)
 
@@ -120,6 +134,42 @@ func addTapeMetrics(measurement *types.Measurement, row *symbolEvidence) {
 				row.askExecuted, math.Max(row.volume, row.askExecuted),
 			),
 			Unit: types.UnitQuoteCurrency,
+		},
+	)
+}
+
+/*
+addZeroTouchMetrics emits zero-valued touch evidence when Level3 is unavailable.
+*/
+func addZeroTouchMetrics(measurement *types.Measurement) {
+	measurement.PutMetric(
+		types.MetricBestPrice, types.SideBuy,
+		types.MetricSample{
+			Raw:  0,
+			Unit: types.UnitQuoteCurrency,
+		},
+	)
+	measurement.PutMetric(
+		types.MetricBestPrice, types.SideSell,
+		types.MetricSample{
+			Raw:  0,
+			Unit: types.UnitQuoteCurrency,
+		},
+	)
+	measurement.PutMetric(
+		types.MetricTouchQuantity, types.SideBuy,
+		types.MetricSample{
+			Raw:        0,
+			Normalized: types.NormalizeRatio(0, 0),
+			Unit:       types.UnitBaseCurrency,
+		},
+	)
+	measurement.PutMetric(
+		types.MetricTouchQuantity, types.SideSell,
+		types.MetricSample{
+			Raw:        0,
+			Normalized: types.NormalizeRatio(0, 0),
+			Unit:       types.UnitBaseCurrency,
 		},
 	)
 }
@@ -184,7 +234,7 @@ func addHonestyMetrics(
 	askQuantity float64,
 ) {
 	if prior.bidQuantity <= 0 && prior.askQuantity <= 0 {
-		putHonestyMetrics(measurement, 0, 0, 0, 0, 0, 0)
+		putHonestyMetrics(measurement, 0, 0, 0, 0, 0, 0, 0, 0)
 
 		return
 	}
@@ -209,17 +259,21 @@ func addHonestyMetrics(
 		askCancelEmit = askCancelled
 	}
 
-	retreatingSide, retreatingQuantity, _ := dominantRetreat(
+	retreatingSide, retreatingQuantity, retreatBase := dominantRetreat(
 		bidCancelled, askCancelled, prior.bidQuantity, prior.askQuantity,
 	)
 	bidRetreatEmit := 0.0
 	askRetreatEmit := 0.0
+	bidRetreatBase := prior.bidQuantity
+	askRetreatBase := prior.askQuantity
 
 	switch retreatingSide {
 	case types.SideBuy:
 		bidRetreatEmit = retreatingQuantity
+		bidRetreatBase = retreatBase
 	case types.SideSell:
 		askRetreatEmit = retreatingQuantity
+		askRetreatBase = retreatBase
 	}
 
 	putHonestyMetrics(
@@ -227,6 +281,7 @@ func addHonestyMetrics(
 		bidCancelEmit, askCancelEmit,
 		bidRetreatEmit, askRetreatEmit,
 		prior.bidQuantity, prior.askQuantity,
+		bidRetreatBase, askRetreatBase,
 	)
 }
 
@@ -239,14 +294,16 @@ func putHonestyMetrics(
 	askCancelled float64,
 	bidRetreat float64,
 	askRetreat float64,
-	priorBid float64,
-	priorAsk float64,
+	cancelPriorBid float64,
+	cancelPriorAsk float64,
+	retreatPriorBid float64,
+	retreatPriorAsk float64,
 ) {
 	measurement.PutMetric(
 		types.MetricCancelledQuantity, types.SideBuy,
 		types.MetricSample{
 			Raw:        bidCancelled,
-			Normalized: types.NormalizeRatio(bidCancelled, priorBid),
+			Normalized: types.NormalizeRatio(bidCancelled, cancelPriorBid),
 			Unit:       types.UnitBaseCurrency,
 		},
 	)
@@ -254,7 +311,7 @@ func putHonestyMetrics(
 		types.MetricCancelledQuantity, types.SideSell,
 		types.MetricSample{
 			Raw:        askCancelled,
-			Normalized: types.NormalizeRatio(askCancelled, priorAsk),
+			Normalized: types.NormalizeRatio(askCancelled, cancelPriorAsk),
 			Unit:       types.UnitBaseCurrency,
 		},
 	)
@@ -262,7 +319,7 @@ func putHonestyMetrics(
 		types.MetricRetreatingQuantity, types.SideBuy,
 		types.MetricSample{
 			Raw:        bidRetreat,
-			Normalized: types.NormalizeRatio(bidRetreat, priorBid),
+			Normalized: types.NormalizeRatio(bidRetreat, retreatPriorBid),
 			Unit:       types.UnitBaseCurrency,
 		},
 	)
@@ -270,7 +327,7 @@ func putHonestyMetrics(
 		types.MetricRetreatingQuantity, types.SideSell,
 		types.MetricSample{
 			Raw:        askRetreat,
-			Normalized: types.NormalizeRatio(askRetreat, priorAsk),
+			Normalized: types.NormalizeRatio(askRetreat, retreatPriorAsk),
 			Unit:       types.UnitBaseCurrency,
 		},
 	)

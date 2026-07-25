@@ -77,6 +77,10 @@ func (outcome *marketOutcome) Capture(measurements []*types.Measurement) {
 				continue
 			}
 
+			if outcome.peak == nil {
+				outcome.peak = map[evidenceKey]map[string]float64{}
+			}
+
 			bySymbol, found := outcome.peak[key]
 
 			if !found {

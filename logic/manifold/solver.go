@@ -151,7 +151,7 @@ func (solver *Solver) Update(
 	}
 
 	changed := solver.changedOutcomes(hawkes)
-	candidates := solver.sampleChanged(changed)
+	candidates := solver.sampleChanged(hawkes, changed)
 	result := solver.advance(thesis, candidates, changed)
 	population := solver.Population()
 
@@ -201,10 +201,14 @@ func (solver *Solver) changedOutcomes(
 
 /*
 sampleChanged tokenizes L3 books only for epochs that must enter the domain.
+Universe indices are alphabetical over the full Hawkes symbol set so content
+ids stay stable when only a subset of markets change this tick.
 */
 func (solver *Solver) sampleChanged(
+	hawkes HawkesSource,
 	changed map[string]excitation.Outcome,
 ) []intensityCandidate {
+	universe := sortedUniverse(hawkes.Symbols())
 	symbols := make([]string, 0, len(changed))
 
 	for symbol := range changed {
@@ -216,9 +220,15 @@ func (solver *Solver) sampleChanged(
 	tokenizer := NewTokenizer(solver.config)
 
 	for _, symbol := range symbols {
+		symbolIndex, ok := universeIndex(universe, symbol)
+
+		if !ok {
+			continue
+		}
+
 		buyIntensity, sellIntensity := intensities(changed[symbol])
 		population, ready := solver.books.Sample(
-			symbol, tokenizer, buyIntensity, sellIntensity,
+			symbol, tokenizer, buyIntensity, sellIntensity, symbolIndex,
 		)
 
 		if !ready {

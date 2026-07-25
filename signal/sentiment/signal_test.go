@@ -92,11 +92,13 @@ func TestCalculate(t *testing.T) {
 
 				So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
 				So(measurement.Validity.Readiness, ShouldEqual, types.ReadinessObservation)
+				So(len(measurement.Metrics), ShouldBeGreaterThan, 0)
 
 				measurement.EachMetric(func(
 					_ types.MetricType, _ types.MeasurementSide, sample types.MetricSample,
-				) {
+				) bool {
 					So(sample.Unit, ShouldEqual, types.UnitDimensionless)
+					return true
 				})
 			}
 

@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
 )
@@ -208,7 +209,7 @@ func (analyzer *Analyzer) sensorySequence(
 	evidence := make([]string, 0, 16)
 
 	if analyzer.categories != nil {
-		for _, token := range analyzer.categories.Tokens(state.Symbol, thesis.Categories) {
+		for _, token := range category.Report(analyzer.categories).Tokens(state.Symbol, thesis.Categories) {
 			evidence = append(evidence, replacer.Replace(token))
 		}
 	}

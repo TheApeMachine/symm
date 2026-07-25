@@ -41,6 +41,11 @@ func (evidence TrapEvidence) Tax(expectedReturn float64) float64 {
 TrapShare scans published measurements for symbol and returns the relative trap
 mass. Trap and opportunity families use each signal's normalized strength so the
 ratio is scale-free across symbols.
+
+ponytail: this full-book measurement scan is O(n) per symbol and becomes
+O(symbols²) when hot-path consumers rescan independently; caching trap evidence
+on the thesis or passing one computed result through forecast/decision is the
+upgrade path.
 */
 func TrapShare(thesis *types.Thesis, symbol string) TrapEvidence {
 	if thesis == nil || symbol == "" {
@@ -58,11 +63,11 @@ func TrapShare(thesis *types.Thesis, symbol string) TrapEvidence {
 
 		measurement.EachMetric(func(
 			metric types.MetricType, _ types.MeasurementSide, sample types.MetricSample,
-		) {
+		) bool {
 			mass, ok := trapSampleMass(sample)
 
 			if !ok {
-				return
+				return true
 			}
 
 			switch {
@@ -76,6 +81,8 @@ func TrapShare(thesis *types.Thesis, symbol string) TrapEvidence {
 					evidence.OpportunityMass = mass
 				}
 			}
+
+			return true
 		})
 	}
 
@@ -162,7 +169,7 @@ func CategoryTrap(thesis *types.Thesis, symbol string) (share float64, dominates
 		return 0, false
 	}
 
-	return graph.TrapPressure(symbol)
+	return category.Report(graph).TrapPressure(symbol)
 }
 
 /*
@@ -176,7 +183,7 @@ func CategoryExhaustionLead(thesis *types.Thesis, symbol string) (share float64,
 		return 0, false
 	}
 
-	return graph.ExhaustionLead(symbol)
+	return category.Report(graph).ExhaustionLead(symbol)
 }
 
 /*

@@ -104,7 +104,7 @@ func TestGraphUpdate(t *testing.T) {
 			})
 
 			Convey("It should report trap pressure from node masses", func() {
-				share, _ := graph.TrapPressure("PENGU/USD")
+				share, _ := Report(graph).TrapPressure("PENGU/USD")
 				So(share, ShouldBeGreaterThan, 0)
 			})
 		})

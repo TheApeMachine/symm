@@ -146,7 +146,13 @@ func (signal *Signal) Calculate(
 			}
 
 			if !peerReady {
-				validity.Reason = "peer executable-depth median unavailable"
+				if validity.Reason != "" {
+					validity.Reason += "; peer executable-depth median unavailable"
+				}
+
+				if validity.Reason == "" {
+					validity.Reason = "peer executable-depth median unavailable"
+				}
 			}
 		}
 

@@ -118,14 +118,13 @@ func wireGroupKey(measurement *Measurement) wireKey {
 
 func newWireGroup(measurement *Measurement) *wireGroup {
 	return &wireGroup{
-		source:            measurement.Source,
-		symbol:            measurement.Symbol,
-		at:                measurement.At,
-		maturity:          measurement.Maturity,
-		validity:          measurement.Validity,
-		scale:             measurement.Scale,
-		metrics:           make(datura.Map[any], len(measurement.Metrics)),
-		normalizedMetrics: make(datura.Map[any], len(measurement.Metrics)),
+		source:   measurement.Source,
+		symbol:   measurement.Symbol,
+		at:       measurement.At,
+		maturity: measurement.Maturity,
+		validity: measurement.Validity,
+		scale:    measurement.Scale,
+		metrics:  make(datura.Map[any], len(measurement.Metrics)),
 	}
 }
 
@@ -148,6 +147,10 @@ func (group *wireGroup) accumulate(measurement *Measurement) {
 		group.metrics[key] = sample.Raw
 
 		if sample.Normalized != nil {
+			if group.normalizedMetrics == nil {
+				group.normalizedMetrics = make(datura.Map[any], len(measurement.Metrics))
+			}
+
 			group.normalizedMetrics[key] = *sample.Normalized
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/logic/category"
 	pmanifold "github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
@@ -209,6 +210,74 @@ func BenchmarkProject(b *testing.B) {
 	for b.Loop() {
 		_ = NewEvidence().Project(thesis, holding)
 	}
+}
+
+/*
+TestEvidenceCategoryTaxesExpectedReturn proves category exhaustion-lead share
+reduces positive ExpectedReturn only when dominance holds.
+*/
+func TestEvidenceCategoryTaxesExpectedReturn(t *testing.T) {
+	symbol := "AAA/USD"
+	at := time.Unix(1, 0).UTC()
+
+	thesisWithExhaustionLead := func() *types.Thesis {
+		thesis := types.NewThesis()
+		graph := category.NewGraph()
+		graph.Update(at, thesis, []types.Category{
+			{Symbol: symbol, Type: types.VerticalIgnition, Strength: 0.9, Freshness: 1},
+		})
+		graph.Update(at.Add(time.Second), thesis, []types.Category{
+			{Symbol: symbol, Type: types.VerticalIgnition, Strength: 0.9, Freshness: 1},
+			{Symbol: symbol, Type: types.Exhaustion, Strength: 0.9, Freshness: 1},
+		})
+		thesis.Graphs.Store("categories", graph)
+
+		return thesis
+	}
+
+	Convey("Given dominating exhaustion-lead share and positive ExpectedReturn", t, func() {
+		projected := &types.StopEvidence{ExpectedReturn: 0.04}
+		before := projected.ExpectedReturn
+
+		Evidence{}.category(projected, thesisWithExhaustionLead(), symbol)
+
+		share, dominates := logic.CategoryExhaustionLead(thesisWithExhaustionLead(), symbol)
+
+		Convey("Then ExpectedReturn is reduced by the exhaustion-lead share", func() {
+			So(dominates, ShouldBeTrue)
+			So(share, ShouldBeGreaterThan, 0)
+			So(projected.ExpectedReturn, ShouldBeLessThan, before)
+			So(projected.ExpectedReturn, ShouldAlmostEqual, before*(1-share))
+		})
+	})
+
+	Convey("Given non-dominating category structure", t, func() {
+		thesis := types.NewThesis()
+		graph := category.NewGraph()
+		graph.Update(at, thesis, []types.Category{
+			{Symbol: symbol, Type: types.VerticalIgnition, Strength: 0.9, Freshness: 1},
+		})
+		thesis.Graphs.Store("categories", graph)
+		projected := &types.StopEvidence{ExpectedReturn: 0.04}
+		before := projected.ExpectedReturn
+
+		Evidence{}.category(projected, thesis, symbol)
+
+		Convey("Then ExpectedReturn stays unchanged", func() {
+			So(projected.ExpectedReturn, ShouldEqual, before)
+		})
+	})
+
+	Convey("Given dominating exhaustion-lead but non-positive ExpectedReturn", t, func() {
+		projected := &types.StopEvidence{ExpectedReturn: -0.01}
+		before := projected.ExpectedReturn
+
+		Evidence{}.category(projected, thesisWithExhaustionLead(), symbol)
+
+		Convey("Then ExpectedReturn stays unchanged", func() {
+			So(projected.ExpectedReturn, ShouldEqual, before)
+		})
+	})
 }
 
 func TestProjectManifoldSpreadStaysReturnSpace(t *testing.T) {

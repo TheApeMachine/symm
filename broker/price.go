@@ -476,7 +476,7 @@ func (price *Price) RecordFill(
 		holding.Mark = data.LastPrice.Copy()
 	}
 
-	if data.FeeUsdEquiv != nil {
+	if data.FeeUsdEquiv != nil && instrument.Quote == "USD" {
 		fill.Fee = data.FeeUsdEquiv.Copy()
 	}
 
@@ -484,14 +484,18 @@ func (price *Price) RecordFill(
 	// EntryFee stays nil, PnL omits entry friction, and UI equity undershoots
 	// initial+PnL by roughly the paid fee (measured ~entry fee on live lots).
 	if fill.Fee == nil && fill.Price != nil && fill.Qty != nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"execution missing fee_usd_equiv for "+instrument.Symbol+"; deriving taker fee",
-			nil,
-		))
+		errnie.Warn(
+			"execution missing fee for "+instrument.Symbol+"; deriving taker fee",
+		)
 
 		notional := price.Notional(instrument, fill.Price, fill.Qty)
 		fill.Fee = price.Fee(instrument, notional)
+
+		if fill.Fee == nil {
+			errnie.Warn(
+				"price.Fee returned nil: no taker fee schedule for "+instrument.Symbol,
+			)
+		}
 	}
 
 	*ledger = append(*ledger, fill)

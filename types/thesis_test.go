@@ -72,8 +72,9 @@ func TestPublish(t *testing.T) {
 			byMetric := map[MetricType]float64{}
 
 			for _, row := range thesis.Measurements {
-				row.EachMetric(func(metric MetricType, side MeasurementSide, sample MetricSample) {
+				row.EachMetric(func(metric MetricType, side MeasurementSide, sample MetricSample) bool {
 					byMetric[metric] = sample.Raw
+					return true
 				})
 			}
 
@@ -259,8 +260,9 @@ func TestPublishRetractsAbsentSymbolMetrics(t *testing.T) {
 				byKey := map[string]float64{}
 
 				for _, row := range thesis.Measurements {
-					row.EachMetric(func(metric MetricType, side MeasurementSide, sample MetricSample) {
+					row.EachMetric(func(metric MetricType, side MeasurementSide, sample MetricSample) bool {
 						byKey[string(metric)+"|"+row.Symbol] = sample.Raw
+						return true
 					})
 				}
 

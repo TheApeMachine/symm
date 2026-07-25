@@ -122,20 +122,13 @@ misfit alone cannot cash a peak while ExpectedReturn is still positive.
 func TestStoplossHoldsNearPeakWithPositivePathDespiteResidual(t *testing.T) {
 	Convey("Given a peak, positive forward return, and residual above one", t, func() {
 		stop := NewStoploss(context.Background())
-		_ = stop.Update(testEvidence(100, 100, 0.01, 0.04, 0.005))
-		_ = stop.Update(testEvidence(108, 100, 0.01, 0.03, 0.005))
-		held := stop.Update(StopEvidence{
-			Symbol:             "AAA/USD",
-			Mark:               107.5,
-			Entry:              100,
-			ForecastEpoch:      2,
-			NormalizedResidual: 1.15,
-			ExpectedReturn:     0.028,
-			Uncertainty:        0.01,
-			IncrementalMSE:     0.00013,
-			ReturnReady:        true,
-			Present:            true,
-		})
+		peak := stop.Update(testEvidence(100, 100, 0.01, 0.04, 0.005))
+		So(peak.Action, ShouldEqual, "hold")
+
+		lift := stop.Update(testEvidence(108, 100, 0.01, 0.03, 0.005))
+		So(lift.Action, ShouldEqual, "hold")
+
+		held := stop.Update(testEvidenceAtEpoch(107.5, 100, 0.01, 0.028, 0.0115, 2))
 
 		Convey("Then Action stays hold so the live floor owns the exit", func() {
 			So(held.Action, ShouldEqual, "hold")

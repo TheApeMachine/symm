@@ -27,13 +27,13 @@ func PeakMeasurements(
 			continue
 		}
 
-		row.EachMetric(func(metric types.MetricType, side types.MeasurementSide, sample types.MetricSample) {
+		row.EachMetric(func(metric types.MetricType, side types.MeasurementSide, sample types.MetricSample) bool {
 			if side != types.SideNone {
-				return
+				return true
 			}
 
 			if _, ok := wanted[metric]; !ok {
-				return
+				return true
 			}
 
 			bySymbol, ok := out[metric]
@@ -48,6 +48,8 @@ func PeakMeasurements(
 			if !seen || sample.Raw > current {
 				bySymbol[row.Symbol] = sample.Raw
 			}
+
+			return true
 		})
 	}
 
@@ -82,13 +84,13 @@ func LatestMeasurements(
 
 		nano := row.At.UnixNano()
 
-		row.EachMetric(func(metric types.MetricType, side types.MeasurementSide, sample types.MetricSample) {
+		row.EachMetric(func(metric types.MetricType, side types.MeasurementSide, sample types.MetricSample) bool {
 			if side != types.SideNone {
-				return
+				return true
 			}
 
 			if _, ok := wanted[metric]; !ok {
-				return
+				return true
 			}
 
 			bySymbol, ok := latest[metric]
@@ -103,6 +105,8 @@ func LatestMeasurements(
 			if !seen || nano >= current.at {
 				bySymbol[row.Symbol] = stamp{at: nano, raw: sample.Raw}
 			}
+
+			return true
 		})
 	}
 
@@ -142,13 +146,13 @@ func PeakMagnitudeMeasurements(
 			continue
 		}
 
-		row.EachMetric(func(metric types.MetricType, side types.MeasurementSide, sample types.MetricSample) {
+		row.EachMetric(func(metric types.MetricType, side types.MeasurementSide, sample types.MetricSample) bool {
 			if side != types.SideNone {
-				return
+				return true
 			}
 
 			if _, ok := wanted[metric]; !ok {
-				return
+				return true
 			}
 
 			bySymbol, ok := out[metric]
@@ -163,6 +167,8 @@ func PeakMagnitudeMeasurements(
 			if !seen || math.Abs(sample.Raw) > math.Abs(current) {
 				bySymbol[row.Symbol] = sample.Raw
 			}
+
+			return true
 		})
 	}
 

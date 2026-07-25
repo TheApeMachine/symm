@@ -20,7 +20,7 @@ func (solver *Solver) driveAdvance(
 	hawkes HawkesSource,
 ) advanceResult {
 	changed := solver.changedOutcomes(hawkes)
-	return solver.advance(thesis, solver.sampleChanged(changed), changed)
+	return solver.advance(thesis, solver.sampleChanged(hawkes, changed), changed)
 }
 
 func TestSolver_Advance(t *testing.T) {
@@ -93,6 +93,36 @@ func TestSolver_Advance(t *testing.T) {
 			So(result.advanced, ShouldEqual, 1)
 			So(solver.Population(), ShouldBeGreaterThan, 0)
 			So(solver.active, ShouldContainKey, "BTC/USD")
+		})
+	})
+}
+
+func TestSolver_AdvanceReplayDoesNotPrune(t *testing.T) {
+	Convey("Given a seeded shared domain under always-step replay", t, func() {
+		solver, err := NewSolver(newTestBookSource("BTC/USD", "ETH/USD"), 8)
+		So(err, ShouldBeNil)
+		Reset(solver.Close)
+		at := time.Unix(3, 0)
+		seed := staticHawkesSource{
+			symbols: []string{"BTC/USD", "ETH/USD"},
+			outcomes: map[string]excitation.Outcome{
+				"BTC/USD": solverOutcome(at, 4, 2),
+				"ETH/USD": solverOutcome(at, 8, 4),
+			},
+		}
+		So(solver.driveAdvance(types.NewThesis(), seed).failures, ShouldBeEmpty)
+		before := solver.Population()
+		So(before, ShouldBeGreaterThan, 1)
+
+		Convey("It should not ratchet the resident set down across replay-only steps", func() {
+			for range 24 {
+				result := solver.driveAdvance(types.NewThesis(), seed)
+				So(result.failures, ShouldBeEmpty)
+				So(result.advanced, ShouldEqual, 0)
+				So(result.replayed, ShouldBeGreaterThan, 0)
+			}
+
+			So(solver.Population(), ShouldEqual, before)
 		})
 	})
 }

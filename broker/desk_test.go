@@ -1,6 +1,8 @@
 package broker
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -9,6 +11,42 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
+
+type testDeskOptions struct {
+	balance      *Balance
+	price        *Price
+	instrument   *Instrument
+	positions    map[string]*Position
+	fillsBySymbol map[string][]Fill
+	historyReady bool
+}
+
+/*
+testDesk constructs a Desk through NewDesk and applies only test-specific wiring
+so production-managed fields stay on the constructor path.
+*/
+func testDesk(options testDeskOptions) *Desk {
+	desk := NewDesk(
+		context.Background(),
+		nil,
+		options.instrument,
+		options.price,
+		options.balance,
+		config.Fixture().Trading,
+	)
+
+	if options.fillsBySymbol != nil {
+		desk.fillsBySymbol = options.fillsBySymbol
+	}
+
+	desk.historyReady = options.historyReady
+
+	if options.positions != nil {
+		desk.positions = options.positions
+	}
+
+	return desk
+}
 
 func TestDeskOnTickerPublishesMark(t *testing.T) {
 	Convey("Given an open lot already marked once", t, func() {
@@ -45,11 +83,13 @@ func TestDeskOnTickerPublishesMark(t *testing.T) {
 		position := NewPosition(nil, nil, price, balance, pair)
 		So(position.setStatus(types.OPEN), ShouldBeNil)
 
-		desk := &Desk{
-			balance:   balance,
-			price:     price,
-			positions: map[string]*Position{"ESPORTS/USD": position},
-		}
+		desk := testDesk(testDeskOptions{
+			balance: balance,
+			price:   price,
+			positions: map[string]*Position{
+				"ESPORTS/USD": position,
+			},
+		})
 
 		Convey("When a newer ticker arrives for that lot", func() {
 			desk.onTicker(&kraken.Ticker{
@@ -67,7 +107,21 @@ func TestDeskOnTickerPublishesMark(t *testing.T) {
 				So(holding.Mark, ShouldNotBeNil)
 				So(holding.Mark.Float64(), ShouldAlmostEqual, 0.9, 1e-9)
 				So(holding.PnL, ShouldNotBeNil)
-				So(len(ui), ShouldEqual, 1)
+
+				payload := <-ui
+				So(json.Valid(payload), ShouldBeTrue)
+
+				var frame struct {
+					Holdings []struct {
+						Symbol string  `json:"symbol"`
+						Mark   float64 `json:"mark"`
+					} `json:"holdings"`
+				}
+
+				So(json.Unmarshal(payload, &frame), ShouldBeNil)
+				So(frame.Holdings, ShouldHaveLength, 1)
+				So(frame.Holdings[0].Symbol, ShouldEqual, "ESPORTS/USD")
+				So(frame.Holdings[0].Mark, ShouldAlmostEqual, 0.9, 1e-9)
 			})
 		})
 	})
@@ -92,11 +146,10 @@ func TestDeskAdoptOpen(t *testing.T) {
 			Status: "online",
 		})
 
-		desk := &Desk{
+		desk := testDesk(testDeskOptions{
 			balance:    balance,
 			instrument: instrument,
-			positions:  map[string]*Position{},
-		}
+		})
 
 		Convey("AdoptOpen creates a position shell for the existing lot", func() {
 			desk.AdoptOpen()
@@ -140,11 +193,10 @@ func TestDeskSeedEconomicsFromHistory(t *testing.T) {
 			Last:   decimal.NewFromFloat64(0.04533),
 		}}})
 
-		desk := &Desk{
+		desk := testDesk(testDeskOptions{
 			balance:    balance,
 			instrument: instrument,
 			price:      price,
-			positions:  map[string]*Position{},
 			fillsBySymbol: map[string][]Fill{
 				"ESPORTS/USD": {{
 					ExecID: "PAPER-00004",
@@ -155,7 +207,7 @@ func TestDeskSeedEconomicsFromHistory(t *testing.T) {
 				}},
 			},
 			historyReady: true,
-		}
+		})
 
 		Convey("AdoptOpen seeds entry economics and marks PnL", func() {
 			desk.AdoptOpen()
@@ -163,6 +215,7 @@ func TestDeskSeedEconomicsFromHistory(t *testing.T) {
 			So(holding.EntryPrice, ShouldNotBeNil)
 			So(holding.EntryPrice.Float64(), ShouldAlmostEqual, 0.0463, 1e-9)
 			So(holding.EntryFee, ShouldNotBeNil)
+			So(holding.EntryFee.Float64(), ShouldAlmostEqual, 0.0587000723894, 1e-9)
 			So(holding.Mark, ShouldNotBeNil)
 			So(holding.PnL, ShouldNotBeNil)
 			So(holding.ReturnPct, ShouldNotBeNil)

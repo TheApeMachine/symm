@@ -1,4 +1,3 @@
-import { kernelListReadout } from "#/components/terminal/measurement-view";
 import type { Measurement } from "#/types/measurement";
 
 export type MeterParts = {
@@ -32,9 +31,7 @@ export const mergeInspectorMetrics = (
 		const entries =
 			row.metrics !== undefined
 				? Object.entries(row.metrics)
-				: ([[kernelListReadout(row).metric, row.raw]] as Array<
-						[string, number]
-					>);
+				: ([[row.metric ?? "raw", row.raw]] as Array<[string, number]>);
 
 		for (const [key, entry] of entries) {
 			const numeric = Number(entry);

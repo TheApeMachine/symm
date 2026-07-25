@@ -7,7 +7,7 @@ import (
 	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 )
 
-func TestRetainAboveMean(t *testing.T) {
+func TestRetainAboveMedian(t *testing.T) {
 	Convey("Given a mixed contribution population", t, func() {
 		particles := []pfluid.Particle{
 			{Mass: 1, Energy: 1, Heat: 0},
@@ -16,8 +16,23 @@ func TestRetainAboveMean(t *testing.T) {
 			{Mass: 0, Energy: 10, Heat: 10},
 		}
 
-		Convey("It keeps at-or-above-mean contributors and drops dust", func() {
-			So(retainAboveMean(particles), ShouldResemble, []uint32{0, 1})
+		Convey("It keeps at-or-above-median contributors and drops dust", func() {
+			So(retainAboveMedian(particles), ShouldResemble, []uint32{0, 1})
+		})
+	})
+
+	Convey("Given a skewed multi-symbol intensity mix", t, func() {
+		particles := []pfluid.Particle{
+			{Mass: 1, Energy: 4, Heat: 0},
+			{Mass: 1, Energy: 2, Heat: 0},
+			{Mass: 1, Energy: 8, Heat: 0},
+			{Mass: 1, Energy: 4, Heat: 0},
+		}
+
+		Convey("It must not collapse onto the single hottest oscillator", func() {
+			kept := retainAboveMedian(particles)
+			So(len(kept), ShouldBeGreaterThan, 1)
+			So(kept, ShouldResemble, []uint32{0, 2, 3})
 		})
 	})
 
@@ -28,12 +43,12 @@ func TestRetainAboveMean(t *testing.T) {
 		}
 
 		Convey("It returns an empty keep-set so prune will not wipe the domain", func() {
-			So(retainAboveMean(particles), ShouldBeEmpty)
+			So(retainAboveMedian(particles), ShouldBeEmpty)
 		})
 	})
 }
 
-func BenchmarkRetainAboveMean(b *testing.B) {
+func BenchmarkRetainAboveMedian(b *testing.B) {
 	particles := make([]pfluid.Particle, 4096)
 
 	for index := range particles {
@@ -47,6 +62,6 @@ func BenchmarkRetainAboveMean(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = retainAboveMean(particles)
+		_ = retainAboveMedian(particles)
 	}
 }

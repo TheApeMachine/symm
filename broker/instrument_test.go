@@ -203,12 +203,16 @@ func TestInstrumentPair(t *testing.T) {
 		})
 
 		Convey("Pair returns an independent decimal copy", func() {
+			remembered := qty
 			pair, err := instrument.Pair("ETH/USD")
 			So(err, ShouldBeNil)
+			So(pair.QtyIncrement, ShouldNotPointTo, remembered)
 			pair.QtyIncrement = decimal.NewFromInt64(9)
 			So(pair.QtyIncrement.Float64(), ShouldEqual, 9)
 			again, err := instrument.Pair("ETH/USD")
 			So(err, ShouldBeNil)
+			So(again.QtyIncrement, ShouldNotPointTo, remembered)
+			So(again.QtyIncrement, ShouldNotPointTo, pair.QtyIncrement)
 			So(again.QtyIncrement.Float64(), ShouldEqual, 0.0001)
 		})
 	})

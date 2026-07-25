@@ -321,8 +321,8 @@ const paintTerminalFluidCompose = (
 		return;
 	}
 
-	const particlePacket = latestManifoldParticles();
-	const wavePacket = latestManifoldWave();
+	const particlePacket = latestManifoldParticles(frame.symbol);
+	const wavePacket = latestManifoldWave(frame.symbol);
 	const composed: ManifoldFrame = {
 		...frame,
 		particles: particlePacket?.particles ?? frame.particles,

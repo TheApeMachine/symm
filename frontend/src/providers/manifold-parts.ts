@@ -2,29 +2,65 @@
 manifold-parts holds the latest split manifold packets so fluid/meta painters
 can compose gas, particles, and wave without one monolithic DRAW frame.
 */
-let particlesPayload: Record<string, unknown> | null = null;
-let wavePayload: Record<string, unknown> | null = null;
+const particlesBySymbol: Record<string, Record<string, unknown>> = {};
+const waveBySymbol: Record<string, Record<string, unknown>> = {};
 
-const asPacket = (value: unknown): Record<string, unknown> | null => {
-	const candidate = Array.isArray(value) ? value[0] : value;
-
-	if (candidate === null || typeof candidate !== "object") {
+const rowPacket = (value: unknown): Record<string, unknown> | null => {
+	if (value === null || typeof value !== "object") {
 		return null;
 	}
 
-	return candidate as Record<string, unknown>;
+	return value as Record<string, unknown>;
+};
+
+const symbolKey = (packet: Record<string, unknown>): string =>
+	typeof packet.symbol === "string" ? packet.symbol : "";
+
+const clearStore = (store: Record<string, Record<string, unknown>>) => {
+	for (const key of Object.keys(store)) {
+		delete store[key];
+	}
+};
+
+const ingestPackets = (
+	store: Record<string, Record<string, unknown>>,
+	value: unknown,
+) => {
+	if (value === null || value === undefined) {
+		clearStore(store);
+		return;
+	}
+
+	const rows = Array.isArray(value) ? value : [value];
+
+	if (rows.length === 0) {
+		clearStore(store);
+		return;
+	}
+
+	for (const row of rows) {
+		const packet = rowPacket(row);
+
+		if (packet === null) {
+			continue;
+		}
+
+		store[symbolKey(packet)] = packet;
+	}
 };
 
 export const paintManifoldParticles = (value: unknown) => {
-	particlesPayload = asPacket(value);
+	ingestPackets(particlesBySymbol, value);
 };
 
 export const paintManifoldWave = (value: unknown) => {
-	wavePayload = asPacket(value);
+	ingestPackets(waveBySymbol, value);
 };
 
-export const latestManifoldParticles = (): Record<string, unknown> | null =>
-	particlesPayload;
+export const latestManifoldParticles = (
+	symbol = "",
+): Record<string, unknown> | null => particlesBySymbol[symbol] ?? null;
 
-export const latestManifoldWave = (): Record<string, unknown> | null =>
-	wavePayload;
+export const latestManifoldWave = (
+	symbol = "",
+): Record<string, unknown> | null => waveBySymbol[symbol] ?? null;

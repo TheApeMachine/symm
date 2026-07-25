@@ -51,10 +51,13 @@ func TestNewImmutableCutKeepsPublishedRowsStable(t *testing.T) {
 	Convey("Given a published measurement frozen into a cut", t, func() {
 		thesis := NewThesis()
 		first := time.Unix(1, 0).UTC()
+		normalized := 0.5
 		original := &Measurement{
 			Source: SourceHawkes, Symbol: "SIM1/USD", At: first,
 			Metrics: map[string]MetricSample{
-				MetricKey(MetricEventCount, SideBuy): {Raw: 1},
+				MetricKey(MetricEventCount, SideBuy): {
+					Raw: 1, Normalized: &normalized,
+				},
 			},
 		}
 		thesis.Publish(SourceHawkes, []*Measurement{original})
@@ -81,7 +84,20 @@ func TestNewImmutableCutKeepsPublishedRowsStable(t *testing.T) {
 			frozen, ok := cut.Measurements[0].Sample(MetricEventCount, SideBuy)
 			So(ok, ShouldBeTrue)
 			So(frozen.Raw, ShouldEqual, 1)
+			So(frozen.Normalized, ShouldNotBeNil)
+			So(*frozen.Normalized, ShouldEqual, 0.5)
 			So(cut.Measurements[0], ShouldNotEqual, thesis.Measurements[0])
+
+			mutated := 9.0
+			thesis.Measurements[0].Metrics[MetricKey(MetricEventCount, SideBuy)] = MetricSample{
+				Raw: 99, Normalized: &mutated,
+			}
+
+			refrozen, ok := cut.Measurements[0].Sample(MetricEventCount, SideBuy)
+			So(ok, ShouldBeTrue)
+			So(refrozen.Raw, ShouldEqual, 1)
+			So(refrozen.Normalized, ShouldNotBeNil)
+			So(*refrozen.Normalized, ShouldEqual, 0.5)
 		})
 	})
 }

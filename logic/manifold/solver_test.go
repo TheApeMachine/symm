@@ -166,7 +166,7 @@ func TestSolver_Candidates(t *testing.T) {
 		Convey("It should not invent a physical population", func() {
 			changed := solver.changedOutcomes(source)
 			So(changed, ShouldContainKey, "ETH/USD")
-			So(solver.sampleChanged(changed), ShouldBeEmpty)
+			So(solver.sampleChanged(source, changed), ShouldBeEmpty)
 		})
 	})
 }

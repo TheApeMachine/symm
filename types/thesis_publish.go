@@ -9,15 +9,12 @@ type measureKey struct {
 }
 
 /*
-Publish upserts rows onto the Thesis by source×symbol. Incoming Metrics replace
-the prior map for that identity so book-path publishes stay O(incoming) under
-the publish lock.
+stageIncoming deduplicates incoming rows by source×symbol while preserving first
+encounter order and stamping row.Source for the caller.
 */
-func (thesis *Thesis) Publish(source SourceType, rows []*Measurement) {
-	if thesis == nil || len(rows) == 0 {
-		return
-	}
-
+func (thesis *Thesis) stageIncoming(
+	source SourceType, rows []*Measurement,
+) (map[measureKey]*Measurement, []measureKey) {
 	incoming := make(map[measureKey]*Measurement, len(rows))
 	order := make([]measureKey, 0, len(rows))
 
@@ -35,6 +32,21 @@ func (thesis *Thesis) Publish(source SourceType, rows []*Measurement) {
 
 		incoming[key] = row
 	}
+
+	return incoming, order
+}
+
+/*
+Publish upserts rows onto the Thesis by source×symbol. Incoming Metrics replace
+the prior map for that identity so book-path publishes stay O(incoming) under
+the publish lock.
+*/
+func (thesis *Thesis) Publish(source SourceType, rows []*Measurement) {
+	if thesis == nil || len(rows) == 0 {
+		return
+	}
+
+	incoming, order := thesis.stageIncoming(source, rows)
 
 	if len(order) == 0 {
 		return
@@ -96,7 +108,7 @@ func (thesis *Thesis) Replace(source SourceType, rows []*Measurement) {
 	thesis.publish.Lock()
 	defer thesis.publish.Unlock()
 
-	kept := thesis.Measurements[:0]
+	kept := make([]*Measurement, 0, len(thesis.Measurements))
 
 	for _, row := range thesis.Measurements {
 		if row == nil {
@@ -119,23 +131,7 @@ func (thesis *Thesis) Replace(source SourceType, rows []*Measurement) {
 		thesis.index = make(map[measureKey]int, len(rows))
 	}
 
-	incoming := make(map[measureKey]*Measurement, len(rows))
-	order := make([]measureKey, 0, len(rows))
-
-	for _, row := range rows {
-		if row == nil || row.Symbol == "" {
-			continue
-		}
-
-		row.Source = source
-		key := measureKey{source, row.Symbol}
-
-		if _, seen := incoming[key]; !seen {
-			order = append(order, key)
-		}
-
-		incoming[key] = row
-	}
+	incoming, order := thesis.stageIncoming(source, rows)
 
 	for _, key := range order {
 		row := incoming[key]

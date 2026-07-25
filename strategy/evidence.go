@@ -244,18 +244,20 @@ func (evidence Evidence) retreat(
 
 		measurement.EachMetric(func(
 			metric types.MetricType, _ types.MeasurementSide, sample types.MetricSample,
-		) {
+		) bool {
 			if metric == types.MetricTouchQuantity {
 				projected.RetreatReady = true
 			}
 
 			if metric != types.MetricRetreatingQuantity || sample.Normalized == nil {
-				return
+				return true
 			}
 
 			if *sample.Normalized > projected.RetreatPressure {
 				projected.RetreatPressure = *sample.Normalized
 			}
+
+			return true
 		})
 	}
 }

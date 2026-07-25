@@ -71,8 +71,9 @@ func TestCalculate(t *testing.T) {
 
 					measurement.EachMetric(func(
 						_ types.MetricType, _ types.MeasurementSide, sample types.MetricSample,
-					) {
+					) bool {
 						So(math.IsNaN(sample.Raw), ShouldBeFalse)
+						return true
 					})
 					measurements = append(measurements, measurement)
 				}

@@ -194,6 +194,10 @@ func (measurement *Measurement) ValidateStruct() error {
 		return errors.New("scale interval ends before it starts")
 	}
 
+	if measurement.Metrics == nil || len(measurement.Metrics) == 0 {
+		return errors.New("metrics required")
+	}
+
 	return nil
 }
 

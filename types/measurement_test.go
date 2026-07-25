@@ -38,8 +38,17 @@ func TestObservationValidity(t *testing.T) {
 
 func TestMeasurementValidateStruct(t *testing.T) {
 	Convey("Given forward and backwards evidence intervals", t, func() {
-		forward := Measurement{At: time.Unix(2, 0), ObservedFrom: time.Unix(1, 0)}
-		backwards := Measurement{At: time.Unix(1, 0), ObservedFrom: time.Unix(2, 0)}
+		metrics := map[string]MetricSample{
+			MetricKey(MetricStrength, SideNone): {Raw: 1},
+		}
+		forward := Measurement{
+			At: time.Unix(2, 0), ObservedFrom: time.Unix(1, 0),
+			Metrics: metrics,
+		}
+		backwards := Measurement{
+			At: time.Unix(1, 0), ObservedFrom: time.Unix(2, 0),
+			Metrics: metrics,
+		}
 
 		Convey("Then forward observation provenance is accepted unchanged", func() {
 			So(forward.ValidateStruct(), ShouldBeNil)
@@ -57,6 +66,7 @@ func TestMeasurementValidateStruct(t *testing.T) {
 			at := time.Unix(2, 0)
 			mixed := Measurement{
 				At: at,
+				Metrics: metrics,
 				Scale: ScaleReference{
 					Kind:    ScaleObservationWindow,
 					From:    at.Add(3 * time.Second),
@@ -67,6 +77,11 @@ func TestMeasurementValidateStruct(t *testing.T) {
 			So(mixed.ValidateStruct(), ShouldNotBeNil)
 			So(mixed.Scale.From, ShouldEqual, at.Add(3*time.Second))
 			So(mixed.Scale.Through, ShouldEqual, at.Add(time.Second))
+		})
+
+		Convey("Then nil or empty metrics are rejected", func() {
+			So((&Measurement{At: time.Unix(1, 0), Metrics: nil}).ValidateStruct(), ShouldNotBeNil)
+			So((&Measurement{At: time.Unix(1, 0), Metrics: map[string]MetricSample{}}).ValidateStruct(), ShouldNotBeNil)
 		})
 	})
 }
@@ -149,6 +164,18 @@ func BenchmarkFilterLatest(b *testing.B) {
 		epochCount  = 3
 	)
 
+	benchmarkMetricTypes := []MetricType{
+		MetricEventCount,
+		MetricArrivalRate,
+		MetricConditionalIntensity,
+		MetricBaselineIntensity,
+		MetricExcitationAmplitude,
+		MetricDecayRate,
+		MetricKernelMemory,
+		MetricSpectralRadius,
+		MetricHawkesPoissonDelta,
+	}
+
 	measurements := make([]*Measurement, 0, symbolCount*epochCount)
 
 	for symbolIndex := 0; symbolIndex < symbolCount; symbolIndex++ {
@@ -162,7 +189,7 @@ func BenchmarkFilterLatest(b *testing.B) {
 			}
 
 			for metricIndex := 0; metricIndex < metricCount; metricIndex++ {
-				row.Metrics[MetricKey(MetricStrength, SideNone)] = MetricSample{
+				row.Metrics[MetricKey(benchmarkMetricTypes[metricIndex], SideNone)] = MetricSample{
 					Raw: float64(metricIndex),
 				}
 			}

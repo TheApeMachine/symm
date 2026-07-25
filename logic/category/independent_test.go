@@ -9,22 +9,23 @@ import (
 )
 
 func TestIndependentOf(t *testing.T) {
-	Convey("Given co-active categories with an independence statistic", t, func() {
+	Convey("Given co-active categories with decoupled evidence", t, func() {
 		graph := NewGraph()
 		at := time.Unix(50, 0).UTC()
 		thesis := types.NewThesis()
 		thesis.At = at
-		ignition := 0.8
-		trend := 0.7
 		decoupled := 0.9
-		publishMetrics(thesis, types.SourcePumpDump, "SIM/USD", at, 2*time.Second, map[types.MetricType]types.MetricSample{
-			types.MetricIgnition: {Raw: ignition, Normalized: &ignition},
-			types.MetricTrend:    {Raw: trend, Normalized: &trend},
-		})
+		alpha := 0.7
 		thesis.Publish(types.SourceLeadLag, []*types.Measurement{
 			measurementWithMetric(
 				types.SourceLeadLag, "SIM/USD", at,
 				types.MetricDecoupled, decoupled, &decoupled, 2*time.Second,
+			),
+		})
+		thesis.Publish(types.SourceCorrelation, []*types.Measurement{
+			measurementWithMetric(
+				types.SourceCorrelation, "SIM/USD", at,
+				types.MetricAlphaScore, alpha, &alpha, 2*time.Second,
 			),
 		})
 
@@ -32,10 +33,10 @@ func TestIndependentOf(t *testing.T) {
 
 		Convey("It strengthens IndependentOf instead of Supports", func() {
 			So(graph.Weight(
-				"SIM/USD", types.VerticalIgnition, types.OrganicTrend, IndependentOf,
+				"SIM/USD", types.DecoupledMove, types.EndogenousAlpha, IndependentOf,
 			), ShouldBeGreaterThan, 0)
 			So(graph.Weight(
-				"SIM/USD", types.VerticalIgnition, types.OrganicTrend, Supports,
+				"SIM/USD", types.DecoupledMove, types.EndogenousAlpha, Supports,
 			), ShouldEqual, 0)
 		})
 	})

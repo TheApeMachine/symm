@@ -62,9 +62,10 @@ func (measurement *Measurement) PutMetric(
 
 /*
 EachMetric ranges Metrics and invokes yield with parsed metric, side, and sample.
+Yield returns false to stop iteration early.
 */
 func (measurement *Measurement) EachMetric(
-	yield func(metric MetricType, side MeasurementSide, sample MetricSample),
+	yield func(metric MetricType, side MeasurementSide, sample MetricSample) bool,
 ) {
 	if measurement == nil {
 		return
@@ -72,6 +73,9 @@ func (measurement *Measurement) EachMetric(
 
 	for key, sample := range measurement.Metrics {
 		metric, side := ParseMetricKey(key)
-		yield(metric, side, sample)
+
+		if !yield(metric, side, sample) {
+			return
+		}
 	}
 }
