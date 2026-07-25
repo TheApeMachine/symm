@@ -173,8 +173,13 @@ func (outcome *marketOutcome) observeCognition(thesis *types.Thesis) {
 		So(reading.At.IsZero(), ShouldBeFalse)
 		So(reading.Sequence, ShouldNotBeEmpty)
 		So(reading.Predictions, ShouldNotBeNil)
-		So(reading.Branches, ShouldNotBeEmpty)
-		So(reading.Beams, ShouldNotBeEmpty)
+		focus := types.Focus()
+
+		if focus == "" || reading.Symbol == focus {
+			So(reading.Branches, ShouldNotBeEmpty)
+			So(reading.Beams, ShouldNotBeEmpty)
+		}
+
 		So(reading.NodeCount, ShouldEqual, len(reading.Branches))
 		So(reading.LookaheadPaths, ShouldEqual, len(reading.Beams))
 		readings[reading.Symbol] = reading

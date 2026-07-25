@@ -40,6 +40,8 @@ func NewGraph() *Graph {
 Update upserts composed category nodes and derives typed edges from
 CategoryAffinity plus measurement temporal envelopes on the Thesis. Prior tops
 are recorded for DMT transition tokens only — they do not mint Leads/Lags.
+Only categories touched on this cut snapshot prior node state, so large resident
+graphs do not pay a full-map copy on every tick.
 */
 func (graph *Graph) Update(
 	at time.Time, thesis *types.Thesis, categories []types.Category,
@@ -50,15 +52,6 @@ func (graph *Graph) Update(
 
 	graph.touched = map[edgeKey]struct{}{}
 	previous := map[nodeKey]Node{}
-
-	for key, node := range graph.nodes {
-		if node == nil {
-			continue
-		}
-
-		previous[key] = *node
-	}
-
 	bySymbol := map[string][]types.Category{}
 	evidence := indexEvidence(thesis)
 
@@ -69,6 +62,12 @@ func (graph *Graph) Update(
 
 		key := nodeKey{symbol: category.Symbol, kind: category.Type}
 		node := graph.nodes[key]
+
+		if node != nil {
+			if _, captured := previous[key]; !captured {
+				previous[key] = *node
+			}
+		}
 
 		if node == nil {
 			node = &Node{Symbol: category.Symbol, Type: category.Type}
@@ -215,4 +214,3 @@ func (graph *Graph) Prior(symbol string) types.CategoryType {
 
 	return graph.prior[symbol]
 }
-

@@ -24,15 +24,15 @@ typed evidence topology.
 */
 type Analyzer struct {
 	*types.Actor
-	ctx       context.Context
-	cancel    context.CancelFunc
-	gate      stageGate
-	status    types.Status
-	manifold  *manifold.Solver
-	hawkes    manifold.HawkesSource
-	tree      *dmt.Tree
-	ui        chan []byte
-	recorder  *audit.Recorder
+	ctx        context.Context
+	cancel     context.CancelFunc
+	gate       stageGate
+	status     types.Status
+	manifold   *manifold.Solver
+	hawkes     manifold.HawkesSource
+	tree       *dmt.Tree
+	ui         chan []byte
+	recorder   *audit.Recorder
 	resonance  map[string]*Resonance
 	causal     map[string]*Causal
 	cognition  map[string]types.Cognition
@@ -134,8 +134,8 @@ func (analyzer *Analyzer) Close() error {
 }
 
 func (analyzer *Analyzer) thesis(message any) any {
-	thesis, source := analyzer.bind(message)
-	analyzer.enrich(thesis, source)
+	thesis, source, cutID, tick := analyzer.bind(message)
+	analyzer.enrichCut(thesis, source, cutID, tick)
 
 	return thesis
 }
@@ -147,57 +147,97 @@ HawkesSource so Analyzer does not reread the live Process after coalescing.
 type hawkesCut interface {
 	SharedThesis() *types.Thesis
 	manifold.HawkesSource
+	CutIdentity() (types.CutID, int64)
 }
 
 /*
 bind unwraps a cut frame or Hawkes cut into Thesis plus the Outcome snapshot.
 Bare Thesis messages still use the live Hawkes source (unit paths).
 */
-func (analyzer *Analyzer) bind(message any) (*types.Thesis, manifold.HawkesSource) {
+func (analyzer *Analyzer) bind(message any) (*types.Thesis, manifold.HawkesSource, types.CutID, int64) {
 	if cut, ok := message.(hawkesCut); ok {
-		return cut.SharedThesis(), cut
+		cutID, tick := cut.CutIdentity()
+		return cut.SharedThesis(), cut, cutID, tick
 	}
 
-	return message.(*types.Thesis), analyzer.hawkes
+	thesis := message.(*types.Thesis)
+	return thesis, analyzer.hawkes, 0, thesis.Tick
 }
 
 /*
 enrich runs analysis against an explicit HawkesSource for this cut.
 */
 func (analyzer *Analyzer) enrich(thesis *types.Thesis, hawkes manifold.HawkesSource) {
+	tick := int64(0)
+
+	if thesis != nil {
+		tick = thesis.Tick
+	}
+
+	analyzer.enrichCut(thesis, hawkes, 0, tick)
+}
+
+/*
+enrichCut runs analysis against one cut identity so audit rows stay cut-true even
+when the shared Thesis pointer advances before downstream handlers drain.
+*/
+func (analyzer *Analyzer) enrichCut(
+	thesis *types.Thesis,
+	hawkes manifold.HawkesSource,
+	cutID types.CutID,
+	tick int64,
+) {
 	started := time.Now()
 
 	if thesis != nil {
 		thesis.StampAt()
 	}
 
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "analyze_begin", nil))
+	payload := map[string]any{}
 
-	analyzer.stepManifold(thesis, hawkes)
-	states := analyzer.observeStates(thesis)
+	if cutID > 0 {
+		payload["cut_id"] = uint64(cutID)
+	}
+
+	errnie.Error(audit.Phase(analyzer.recorder, tick, "analyze_begin", payload))
+
+	analyzer.stepManifold(thesis, hawkes, cutID, tick)
+	states := analyzer.observeStates(thesis, cutID, tick)
 
 	composeStarted := time.Now()
 	analyzer.composeCategories(thesis)
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "categories_compose", map[string]any{
+	payload = map[string]any{
 		"ns":         time.Since(composeStarted).Nanoseconds(),
 		"categories": len(thesis.Categories),
-	}))
+	}
 
-	analyzer.publishMeasured(thesis, states)
+	if cutID > 0 {
+		payload["cut_id"] = uint64(cutID)
+	}
 
-	remObservations, remRequested := analyzer.cognizeStates(thesis, states)
+	errnie.Error(audit.Phase(analyzer.recorder, tick, "categories_compose", payload))
+
+	analyzer.publishMeasured(thesis, states, cutID, tick)
+
+	remObservations, remRequested := analyzer.cognizeStates(thesis, states, cutID, tick)
 
 	commitStarted := time.Now()
 	analyzer.commitCategories(thesis)
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "categories_commit", map[string]any{
+	payload = map[string]any{
 		"ns":         time.Since(commitStarted).Nanoseconds(),
 		"categories": len(thesis.Categories),
-	}))
+	}
+
+	if cutID > 0 {
+		payload["cut_id"] = uint64(cutID)
+	}
+
+	errnie.Error(audit.Phase(analyzer.recorder, tick, "categories_commit", payload))
 
 	analyzer.consolidate(thesis, remObservations, remRequested)
 	analyzer.publishCognition(thesis)
 
-	analyzer.finish(thesis, states, started)
+	analyzer.finish(thesis, states, started, cutID, tick)
 }
 
 /*
@@ -303,6 +343,8 @@ func (analyzer *Analyzer) finish(
 	thesis *types.Thesis,
 	states []manifold.State,
 	started time.Time,
+	cutID types.CutID,
+	tick int64,
 ) {
 	remPending := 0
 
@@ -310,11 +352,17 @@ func (analyzer *Analyzer) finish(
 		remPending = analyzer.rem.Pending()
 	}
 
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "analyze_end", map[string]any{
+	payload := map[string]any{
 		"ns":          time.Since(started).Nanoseconds(),
 		"states":      len(states),
 		"forecasts":   len(thesis.Forecasts),
 		"hypotheses":  len(thesis.Hypotheses),
 		"rem_pending": remPending,
-	}))
+	}
+
+	if cutID > 0 {
+		payload["cut_id"] = uint64(cutID)
+	}
+
+	errnie.Error(audit.Phase(analyzer.recorder, tick, "analyze_end", payload))
 }

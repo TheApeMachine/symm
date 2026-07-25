@@ -71,20 +71,14 @@ func (analyzer *Analyzer) lookaheadTip(
 }
 
 /*
-lookaheadScore sums the symbol-scoped continuation probabilities. It is the
-learned continuation mass shown as category strength on the terminal rail; no
-decision stage consumes it, and any threshold on it would be an invented
-constant, so it stays a presentation surface computed on the hot path for
-every symbol while the full branch and beam visualization is materialized only
-for the focused symbol.
+lookaheadScore sums immediate continuation probabilities from the current regime
+prefix. This keeps the hot path to one prediction query per symbol; the
+focused-symbol visualization still computes a deeper symbol-scoped tip.
 */
-func (analyzer *Analyzer) lookaheadScore(
-	parts []string,
-	predictions []dmt.LookaheadPrediction,
-) float64 {
+func (analyzer *Analyzer) lookaheadScore(predictions []dmt.LookaheadPrediction) float64 {
 	score := 0.0
 
-	for _, prediction := range analyzer.lookaheadTip(parts, predictions) {
+	for _, prediction := range predictions {
 		score += prediction.Probability
 	}
 
