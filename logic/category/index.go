@@ -55,16 +55,14 @@ type symbolEvidence struct {
 }
 
 /*
-indexEvidence builds the per-symbol evidence index from one thesis snapshot.
+indexEvidence builds the per-symbol evidence index from a pre-snapshotted
+measurement slice. Callers must hold their own snapshot before calling so the
+evidence pass and the compose pass share one copy of the pointer slice.
 */
-func indexEvidence(thesis *types.Thesis) *evidenceIndex {
+func indexEvidence(measurements []*types.Measurement) *evidenceIndex {
 	index := &evidenceIndex{symbols: map[string]*symbolEvidence{}}
 
-	if thesis == nil {
-		return index
-	}
-
-	for _, measurement := range thesis.SnapshotMeasurements() {
+	for _, measurement := range measurements {
 		if measurement == nil ||
 			measurement.Validity.State != types.ValidityValid ||
 			measurement.Symbol == "" ||

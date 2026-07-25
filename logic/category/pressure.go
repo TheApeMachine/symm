@@ -146,8 +146,47 @@ func (reporter *Reporter) Tokens(
 }
 
 /*
-trapCategory reports taxonomy nodes that refuse or tax a long entry.
+OpportunityLead is the share of Leads edge weight pointing into opportunity-family
+categories versus exhaustion-family categories for one symbol. It is the
+symmetric counterpart to ExhaustionLead, used to boost entry utility when the
+resident graph shows the current category sequence precedes opportunity regimes.
 */
+func (reporter *Reporter) OpportunityLead(symbol string) (share float64, dominates bool) {
+	if reporter == nil || reporter.graph == nil || symbol == "" {
+		return 0, false
+	}
+
+	graph := reporter.graph
+	var intoExhaustion, intoOpportunity float64
+
+	for _, key := range graph.edgesBySymbol[symbol] {
+		relation := graph.edges[key]
+
+		if relation == nil || relation.Type != Leads || relation.Weight <= 0 {
+			continue
+		}
+
+		switch {
+		case exhaustionCategory(relation.To):
+			intoExhaustion += relation.Weight
+		case opportunityCategory(relation.To):
+			intoOpportunity += relation.Weight
+		}
+	}
+
+	total := intoExhaustion + intoOpportunity
+
+	if total <= 0 {
+		return 0, false
+	}
+
+	share = intoOpportunity / total
+	dominates = intoOpportunity > intoExhaustion && intoOpportunity > 0
+
+	return share, dominates
+}
+
+
 func trapCategory(categoryType types.CategoryType) bool {
 	switch categoryType {
 	case types.SpoofTrap,

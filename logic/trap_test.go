@@ -155,3 +155,54 @@ func BenchmarkTrapShare(b *testing.B) {
 		_ = TrapShare(thesis, "SIM1/USD")
 	}
 }
+
+func TestCategoryOpportunityLead(t *testing.T) {
+	Convey("Given a resident category graph with Leads edges", t, func() {
+		thesis := types.NewThesis()
+		graph := category.NewGraph()
+		at := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
+
+		Convey("When Leads edges point into opportunity categories", func() {
+			// Two-step activation: VerticalIgnition activates first, then
+			// OrganicTrend activates — graph records Leads: Ignition→Trend.
+			graph.Update(at, thesis, []types.Category{
+				{Symbol: "SIM1/USD", Type: types.VerticalIgnition, Strength: 0.9, Freshness: 1},
+			})
+			graph.Update(at.Add(time.Second), thesis, []types.Category{
+				{Symbol: "SIM1/USD", Type: types.VerticalIgnition, Strength: 0.9, Freshness: 1, Supporting: []string{"ignition"}},
+				{Symbol: "SIM1/USD", Type: types.OrganicTrend, Strength: 0.7, Freshness: 1, Supporting: []string{"trend"}},
+			})
+			thesis.Graphs.Store("categories", graph)
+
+			Convey("It reports positive opportunity lead share", func() {
+				share, dominates := CategoryOpportunityLead(thesis, "SIM1/USD")
+				So(share, ShouldBeGreaterThan, 0)
+				So(dominates, ShouldBeTrue)
+			})
+		})
+
+		Convey("When Leads edges point into exhaustion categories", func() {
+			graph.Update(at, thesis, []types.Category{
+				{Symbol: "SIM1/USD", Type: types.VerticalIgnition, Strength: 0.9, Freshness: 1},
+			})
+			graph.Update(at.Add(time.Second), thesis, []types.Category{
+				{Symbol: "SIM1/USD", Type: types.VerticalIgnition, Strength: 0.9, Freshness: 1, Supporting: []string{"ignition"}},
+				{Symbol: "SIM1/USD", Type: types.Exhaustion, Strength: 0.8, Freshness: 1, Supporting: []string{"exhaust"}},
+			})
+			thesis.Graphs.Store("categories", graph)
+
+			Convey("It reports zero opportunity dominance", func() {
+				_, dominates := CategoryOpportunityLead(thesis, "SIM1/USD")
+				So(dominates, ShouldBeFalse)
+			})
+		})
+
+		Convey("When no graph is on thesis", func() {
+			Convey("It returns zero share without panicking", func() {
+				share, dominates := CategoryOpportunityLead(thesis, "SIM1/USD")
+				So(share, ShouldEqual, 0)
+				So(dominates, ShouldBeFalse)
+			})
+		})
+	})
+}
