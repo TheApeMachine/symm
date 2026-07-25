@@ -1,31 +1,22 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-	latestManifoldParticles,
 	latestManifoldWave,
-	paintManifoldParticles,
 	paintManifoldWave,
 } from "#/providers/manifold-parts";
 
 describe("manifold-parts", () => {
 	beforeEach(() => {
 		paintManifoldWave(null);
-		paintManifoldParticles(null);
 	});
 
-	it("retains object packets for wave and particles keyed by symbol", () => {
+	it("retains object packets for wave keyed by symbol", () => {
 		paintManifoldWave({
 			source: "manifold",
 			symbol: "BTC/USD",
 			wave: [{ omega: 1, real: 0.2, imaginary: 0.1, linewidth: 0.1 }],
 		});
-		paintManifoldParticles({
-			source: "manifold",
-			symbol: "BTC/USD",
-			particles: [{ cell_x: 1, cell_z: 2 }],
-		});
 
 		expect(latestManifoldWave("BTC/USD")?.wave).toHaveLength(1);
-		expect(latestManifoldParticles("BTC/USD")?.particles).toHaveLength(1);
 	});
 
 	it("accepts a single-row array without clearing the payload", () => {
@@ -79,9 +70,5 @@ describe("manifold-parts", () => {
 		paintManifoldWave({ source: "manifold", wave: [{ omega: 1 }] });
 		paintManifoldWave([]);
 		expect(latestManifoldWave("")).toBeNull();
-
-		paintManifoldParticles({ source: "manifold", particles: [{}] });
-		paintManifoldParticles(null);
-		expect(latestManifoldParticles("")).toBeNull();
 	});
 });

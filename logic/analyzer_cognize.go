@@ -3,7 +3,6 @@ package logic
 import (
 	"bytes"
 	"errors"
-	"sort"
 	"strings"
 	"time"
 
@@ -28,11 +27,6 @@ func (analyzer *Analyzer) cognizeStates(
 	cognizeStarted := time.Now()
 
 	for _, state := range states {
-		if state.Replay {
-			analyzer.recall(thesis, state)
-			continue
-		}
-
 		if !analyzer.cognize(thesis, state) {
 			continue
 		}
@@ -67,49 +61,6 @@ func (analyzer *Analyzer) cognizeStates(
 }
 
 /*
-recall republishes the focused symbol's cognitive visualization from the current
-trained tree when its physical state is an unchanged replay. It does not train,
-commit an episode, or advance a causal model, so presentation cannot fabricate a
-market observation.
-*/
-func (analyzer *Analyzer) recall(
-	thesis *types.Thesis,
-	state manifold.State,
-) {
-	if analyzer.tree == nil {
-		return
-	}
-
-	reading, found := analyzer.cognition[state.Symbol]
-
-	if found && reading.At.Equal(state.At) && len(reading.Branches) > 0 {
-		thesis.Cognition.Store(state.Symbol, reading)
-		return
-	}
-
-	parts, sequence := analyzer.sensorySequence(thesis, state)
-
-	if len(sequence) == 0 {
-		return
-	}
-
-	parent := sequence
-
-	if boundary := bytes.LastIndexByte(sequence, '_'); boundary > 0 {
-		parent = sequence[:boundary]
-	}
-
-	reading = analyzer.readCognition(state, parts, sequence, parent)
-	thesis.Cognition.Store(state.Symbol, reading)
-
-	if analyzer.cognition == nil {
-		analyzer.cognition = make(map[string]types.Cognition)
-	}
-
-	analyzer.cognition[state.Symbol] = reading
-}
-
-/*
 consolidate accumulates episodic observations and requests off-path REM when
 DMT reports ambiguous branching. The ambiguity gate supplies the trigger, so
 REM has no unrelated timer or fixed batch threshold.
@@ -138,6 +89,7 @@ cognize turns the Thesis evidence for one manifold state into a deterministic
 DMT sensory sequence, anchors the intensity-derived attractor on that sequence,
 then publishes the posterior classification strategy consumes. Publishing only
 the pre-train prior left Ready empty whenever the measurement bag changed,
+
 	because exact sequence repeats almost never occur on a live tape.
 */
 func (analyzer *Analyzer) cognize(
@@ -183,7 +135,7 @@ func (analyzer *Analyzer) cognize(
 		return false
 	}
 
-	if !analyzer.trainAttractors(state, sequence) {
+	if !analyzer.trainAttractors(thesis, state, sequence) {
 		return false
 	}
 
@@ -196,17 +148,17 @@ func (analyzer *Analyzer) cognize(
 
 /*
 sensorySequence builds the deterministic DMT token stream for one state.
-The symbol token stays first so the shared radix tree namespaces each coin;
-category and transition tokens (bounded by active taxonomy) plus a few field
-scalars form the bag — raw measurement keys are not expanded into the tree.
+The symbol token starts with the s/ sensory namespace so the shared radix tree
+namespaces each coin; temporal category transition tokens (prior -> top) form
+the sequence path.
 */
 func (analyzer *Analyzer) sensorySequence(
 	thesis *types.Thesis,
 	state manifold.State,
 ) ([]string, []byte) {
 	replacer := strings.NewReplacer("_", "-", "/", "-")
-	symbolToken := "symbol-" + replacer.Replace(state.Symbol)
-	evidence := make([]string, 0, 16)
+	symbolToken := "s/" + replacer.Replace(state.Symbol)
+	evidence := make([]string, 0, 4)
 
 	if analyzer.categories != nil {
 		for _, token := range category.Report(analyzer.categories).Tokens(state.Symbol, thesis.Categories) {
@@ -214,33 +166,9 @@ func (analyzer *Analyzer) sensorySequence(
 		}
 	}
 
-	for name, value := range map[string]float64{
-		"pressure":   state.Reading.PressureGradX,
-		"divergence": state.Reading.Divergence,
-		"stress":     state.StressAnisotropy,
-	} {
-		evidence = append(evidence, name+"-"+signedToken(value))
-	}
-
-	sort.Strings(evidence)
 	parts := append([]string{symbolToken}, evidence...)
 
 	return parts, []byte(strings.Join(parts, "_"))
-}
-
-/*
-signedToken maps a signed scalar onto the DMT vocabulary polarity tokens.
-*/
-func signedToken(value float64) string {
-	if value > 0 {
-		return "positive"
-	}
-
-	if value == 0 {
-		return "zero"
-	}
-
-	return "negative"
 }
 
 /*
@@ -338,23 +266,62 @@ func (analyzer *Analyzer) attachVisualization(
 }
 
 /*
-trainAttractors updates buy/sell/balanced basin weights for the sensory sequence.
+trainAttractors updates physical market regime basin weights for the sensory sequence.
+Attractors represent dynamical field categories rather than trading decisions.
 */
 func (analyzer *Analyzer) trainAttractors(
+	thesis *types.Thesis,
 	state manifold.State,
 	sequence []byte,
 ) bool {
-	class := []byte("balanced")
+	regime := string(types.Equilibrium)
 
 	if state.BuyIntensity > state.SellIntensity {
-		class = []byte("buy")
+		regime = string(types.Laminar)
 	}
 
 	if state.SellIntensity > state.BuyIntensity {
-		class = []byte("sell")
+		regime = string(types.Turbulent)
 	}
 
-	attractors := [][]byte{[]byte("buy"), []byte("sell"), []byte("balanced")}
+	candidates := map[string]struct{}{
+		string(types.Equilibrium): {},
+		string(types.Laminar):     {},
+		string(types.Turbulent):   {},
+	}
+
+	if thesis != nil {
+		bestIndex := -1
+
+		for index := range thesis.Categories {
+			if thesis.Categories[index].Symbol != state.Symbol {
+				continue
+			}
+
+			catType := thesis.Categories[index].Type
+
+			if catType == types.CausalNoise || catType == types.StochasticNoise {
+				continue
+			}
+
+			candidates[string(catType)] = struct{}{}
+
+			if bestIndex < 0 || thesis.Categories[index].Strength > thesis.Categories[bestIndex].Strength {
+				bestIndex = index
+			}
+		}
+
+		if bestIndex >= 0 {
+			regime = string(thesis.Categories[bestIndex].Type)
+		}
+	}
+
+	attractors := make([][]byte, 0, len(candidates))
+
+	for candidate := range candidates {
+		attractors = append(attractors, []byte(candidate))
+	}
+
 	weights := make([]dmt.CognitiveState, len(attractors))
 	total := uint64(1)
 
@@ -362,7 +329,7 @@ func (analyzer *Analyzer) trainAttractors(
 		weights[index] = analyzer.tree.GetAttractorBasin(candidate, sequence)
 		total += weights[index].Count
 
-		if bytes.Equal(candidate, class) {
+		if string(candidate) == regime {
 			weights[index].Count++
 		}
 	}
@@ -383,3 +350,4 @@ func (analyzer *Analyzer) trainAttractors(
 
 	return true
 }
+

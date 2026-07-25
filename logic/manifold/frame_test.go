@@ -7,35 +7,38 @@ import (
 	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 )
 
-func TestProjectionRows(t *testing.T) {
-	Convey("Given a flattened X-Z field", t, func() {
-		grid := pfluid.Grid{X: 2, Y: 1, Z: 2, Spacing: 0.5}
+func TestSolver_paint(t *testing.T) {
+	Convey("Given a GPU display frame", t, func() {
+		solver := &Solver{}
+		state := &State{}
+		frame := projectFrame{
+			grid:    pfluid.Grid{X: 2, Y: 1, Z: 2, Spacing: 0.5},
+			display: []byte{1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255},
+			width:   2,
+			height:  2,
+			stats: pfluid.DisplayStats{
+				Width: 2, Height: 2,
+				RhoOccupied: 1, PsiOccupied: 2,
+				RhoMax: 3, PsiMax: 4,
+			},
+			wave: []pfluid.WaveMode{{Omega: 1, Real: 0.2, Imaginary: 0.1}},
+		}
 
-		Convey("It should preserve row-major physical values", func() {
-			So(projectionRows([]float32{1, 2, 3, 4}, grid), ShouldResemble,
-				[][]float64{{1, 2}, {3, 4}})
-		})
-	})
-}
-
-func TestRenderParticles(t *testing.T) {
-	Convey("Given a post-step physical observation", t, func() {
-		grid := pfluid.Grid{X: 2, Y: 2, Z: 2, Spacing: 0.5}
-		particles := []pfluid.Particle{{
-			Position: pfluid.Vector{X: 0.25, Y: 0.5, Z: 0.75},
-			Velocity: pfluid.Vector{X: 3, Y: 4},
-			Energy:   9,
-		}}
-		rendered := renderParticles(particles, []uint32{0xAB12}, grid)
-
-		Convey("It should expose cell position, oscillator amplitude, speed, and spatial ID", func() {
-			So(rendered, ShouldHaveLength, 1)
-			So(rendered[0].CellX, ShouldEqual, 0.5)
-			So(rendered[0].CellY, ShouldEqual, 1)
-			So(rendered[0].CellZ, ShouldEqual, 1.5)
-			So(rendered[0].Amplitude, ShouldEqual, 3)
-			So(rendered[0].Speed, ShouldEqual, 5)
-			So(rendered[0].SpatialTokenID, ShouldEqual, uint32(0xAB12))
+		Convey("It attaches display stats and oscillator counts without lattices", func() {
+			solver.paint(state, frame, nil, 7)
+			So(state.Display, ShouldHaveLength, 16)
+			So(state.DisplayWidth, ShouldEqual, 2)
+			So(state.DisplayHeight, ShouldEqual, 2)
+			So(state.RhoOccupied, ShouldEqual, 1)
+			So(state.PsiOccupied, ShouldEqual, 2)
+			So(state.RhoMax, ShouldEqual, 3.0)
+			So(state.PsiMax, ShouldEqual, 4.0)
+			So(state.OscillatorCount, ShouldEqual, 7)
+			So(state.SharedOscillatorCount, ShouldEqual, 7)
+			So(state.Wave, ShouldHaveLength, 1)
+			So(state.PhaseReady, ShouldBeFalse)
+			So(state.PhaseReason, ShouldEqual,
+				"awaiting a prior outcome-labeled phase observation")
 		})
 	})
 }

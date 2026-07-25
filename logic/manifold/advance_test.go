@@ -64,19 +64,18 @@ func TestSolver_Advance(t *testing.T) {
 		ether := etherValue.(State)
 		etherBatch := ether.OscillatorCount
 
-		Convey("It should append the changed sample and advance once", func() {
+		Convey("It should append the changed sample and step once", func() {
 			So(result.failures, ShouldBeEmpty)
-			So(result.advanced, ShouldEqual, 1)
-			So(result.replayed, ShouldEqual, 1)
+			So(result.appended, ShouldEqual, 1)
 			// Inelastic merge may compact below raw append arithmetic; the proof
-			// is one shared advance for the changed epoch, not a host headcount.
+			// is one shared step for the changed epoch, not a host headcount.
 			So(solver.Population(), ShouldBeGreaterThan, 0)
 			So(initialParticles, ShouldBeGreaterThan, 0)
 			So(etherBatch, ShouldBeGreaterThan, 0)
-			So(bitcoin.Replay, ShouldBeTrue)
-			So(ether.Replay, ShouldBeFalse)
+			So(bitcoin.Epoch, ShouldEqual, 1)
 			So(ether.Epoch, ShouldEqual, 2)
 			So(ether.GasReady(), ShouldBeTrue)
+			So(bitcoin.At.After(bitcoinSeed.At), ShouldBeTrue)
 		})
 
 		Convey("It should retain history when a market leaves the live candidate set", func() {
@@ -90,15 +89,15 @@ func TestSolver_Advance(t *testing.T) {
 				},
 			})
 			So(result.failures, ShouldBeEmpty)
-			So(result.advanced, ShouldEqual, 1)
+			So(result.appended, ShouldEqual, 1)
 			So(solver.Population(), ShouldBeGreaterThan, 0)
 			So(solver.active, ShouldContainKey, "BTC/USD")
 		})
 	})
 }
 
-func TestSolver_AdvanceReplayDoesNotPrune(t *testing.T) {
-	Convey("Given a seeded shared domain under always-step replay", t, func() {
+func TestSolver_AdvanceHeldDoesNotPrune(t *testing.T) {
+	Convey("Given a seeded shared domain under held always-steps", t, func() {
 		solver, err := NewSolver(newTestBookSource("BTC/USD", "ETH/USD"), 8)
 		So(err, ShouldBeNil)
 		Reset(solver.Close)
@@ -114,12 +113,11 @@ func TestSolver_AdvanceReplayDoesNotPrune(t *testing.T) {
 		before := solver.Population()
 		So(before, ShouldBeGreaterThan, 1)
 
-		Convey("It should not ratchet the resident set down across replay-only steps", func() {
+		Convey("It should not ratchet the resident set down across held steps", func() {
 			for range 24 {
 				result := solver.driveAdvance(types.NewThesis(), seed)
 				So(result.failures, ShouldBeEmpty)
-				So(result.advanced, ShouldEqual, 0)
-				So(result.replayed, ShouldBeGreaterThan, 0)
+				So(result.appended, ShouldEqual, 0)
 			}
 
 			So(solver.Population(), ShouldEqual, before)

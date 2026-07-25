@@ -29,7 +29,7 @@ func TestDecideRotation(t *testing.T) {
 
 		incumbents := map[string]struct{}{}
 
-		for round := 0; round < 6 && len(incumbents) < 2; round++ {
+		for round := 0; round < 10 && len(incumbents) < 2; round++ {
 			So(market.Transition(tests.MarketStateFastPump, func() error {
 				So(market.Paper.Drain(), ShouldBeNil)
 

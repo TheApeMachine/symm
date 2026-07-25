@@ -87,12 +87,12 @@ func TestAnalyzerCognize(t *testing.T) {
 		Convey("When cognize anchors the attractor on this sequence", func() {
 			So(analyzer.cognize(thesis, state), ShouldBeTrue)
 
-			Convey("Then Thesis cognition is Ready with a buy winner", func() {
+			Convey("Then Thesis cognition is Ready with a physical regime winner", func() {
 				raw, found := thesis.Cognition.Load("BTC/USD")
 				So(found, ShouldBeTrue)
 				reading := raw.(types.Cognition)
 				So(reading.Ready, ShouldBeTrue)
-				So(reading.Winner, ShouldEqual, "buy")
+				So(reading.Winner, ShouldEqual, "laminar")
 				So(reading.Confidence, ShouldBeGreaterThan, 0)
 			})
 		})

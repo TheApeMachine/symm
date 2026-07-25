@@ -4,18 +4,9 @@ import type { ManifoldFrame, ResonanceFrame } from "#/collections/types";
 import {
 	finiteNumber,
 	fluidGridDimensions,
-	frameAuxMatrix,
-	terminalFluidDisplayLatticeFromFrame,
-	terminalFluidParticlesFromFrame,
 	withSharedManifoldField,
 } from "#/components/terminal/charts-frame";
-import {
-	isFluidFieldMatrix,
-	terminalFluidFieldStats,
-} from "#/components/terminal/fluid-field";
-import { aggregateFluidParticles } from "#/components/terminal/fluid-particles";
-import { withBinaryLattices } from "#/providers/manifold-binary";
-import { latestManifoldParticles } from "#/providers/manifold-parts";
+import { latestDisplay } from "#/providers/manifold-binary";
 
 const manifoldWaitingRef = createRef<HTMLDivElement>();
 const manifoldGridRef = createRef<HTMLDivElement>();
@@ -70,38 +61,28 @@ const paintManifoldMetaCompose = (value: unknown, focusSymbol: string) => {
 	const focused = rows
 		.filter((frame) => focusSymbol === "" || frame.symbol === focusSymbol)
 		.at(-1);
-	const manifold = withBinaryLattices(
-		withSharedManifoldField(focused ?? null, rows) as Record<
-			string,
-			unknown
-		> | null,
-	) as ManifoldFrame | null;
-	const display = terminalFluidDisplayLatticeFromFrame(manifold ?? null, layer);
-	const field = isFluidFieldMatrix(display) ? display : [];
+	const manifold = withSharedManifoldField(focused ?? null, rows) as ManifoldFrame | null;
+	const baked = latestDisplay();
+	const hasPicture = baked !== null;
 
-	if (field.length === 0 && !focusChanged && !layerChanged) {
+	if (!hasPicture && !focusChanged && !layerChanged) {
 		return;
 	}
 
-	const waiting = field.length === 0;
-	const { columns, rows: gridRows } = fluidGridDimensions(
-		manifold ?? null,
-		field,
-	);
-	const particles = terminalFluidParticlesFromFrame({
-		...(manifold ?? {}),
-		particles:
-			latestManifoldParticles(manifold?.symbol ?? "")?.particles ??
-			manifold?.particles,
-	});
-	const particleCells = aggregateFluidParticles(particles, columns, gridRows);
-	const coherence = terminalFluidFieldStats(
-		frameAuxMatrix(manifold ?? null, "psiMag2"),
-	);
-	const gas = terminalFluidFieldStats(frameAuxMatrix(manifold ?? null, "rho"));
+	const waiting = !hasPicture;
+	const columns =
+		baked?.width ??
+		fluidGridDimensions(manifold ?? null, []).columns;
+	const gridRows =
+		baked?.height ?? fluidGridDimensions(manifold ?? null, []).rows;
 	const focusedCount = finiteNumber(manifold?.oscillatorCount);
 	const sharedCount = finiteNumber(manifold?.sharedOscillatorCount);
-	const focusedLabel = String(focusedCount ?? particles.length);
+	const rhoOccupied = finiteNumber(manifold?.rhoOccupied);
+	const psiOccupied = finiteNumber(manifold?.psiOccupied);
+	const rhoMax = finiteNumber(manifold?.rhoMax);
+	const psiMax = finiteNumber(manifold?.psiMax);
+	const focusedLabel =
+		focusedCount === null ? "unavailable" : String(focusedCount);
 	const sharedLabel =
 		sharedCount === null ? "unavailable" : String(sharedCount);
 	const hidden = waiting ? "none" : "";
@@ -116,17 +97,17 @@ const paintManifoldMetaCompose = (value: unknown, focusSymbol: string) => {
 		[
 			manifoldProjectionRef,
 			hidden,
-			`focused projection ${String(particleCells.length)} occupied X–Z cells`,
+			`focused projection ${String(rhoOccupied ?? 0)} occupied X–Z cells`,
 		],
 		[
 			manifoldCoherenceRef,
 			hidden,
-			`|ψ|² ${String(coherence.occupied)} active · max ${formatFieldMaximum(coherence.maximum)}`,
+			`|ψ|² ${String(psiOccupied ?? 0)} active · max ${formatFieldMaximum(psiMax ?? 0)}`,
 		],
 		[
 			manifoldGasRef,
 			hidden,
-			`gas ρ ${String(gas.occupied)} active · max ${formatFieldMaximum(gas.maximum)}`,
+			`gas ρ ${String(rhoOccupied ?? 0)} active · max ${formatFieldMaximum(rhoMax ?? 0)}`,
 		],
 	] as const;
 

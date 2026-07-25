@@ -17,45 +17,39 @@ func TestWirePackets(t *testing.T) {
 			OscillatorCount:       2,
 			SharedOscillatorCount: 2,
 			Grid:                  pfluid.Grid{X: 8, Y: 4, Z: 6, Spacing: 0.1},
+			Display:               []byte{10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255},
+			DisplayWidth:          2,
+			DisplayHeight:         2,
+			RhoOccupied:           3,
+			PsiOccupied:           4,
+			RhoMax:                1.5,
+			PsiMax:                2.5,
 			Reading: pfluid.Reading{
 				PressureGradX: 1, PressureGradY: 2, PressureGradZ: 3,
 				Divergence: 4, CoherenceMag2: 5, GuidanceSpeed: 6, ViscosityProxy: 7,
 			},
-			Rho:          [][]float64{{0.1, 0.2}, {0.3, 0.4}},
-			PsiMag2:      [][]float64{{0.2, 0.1}, {0.4, 0.3}},
-			GuidanceVelX: [][]float64{{0.3, 0.0}, {0.0, 0.3}},
-			GuidanceVelZ: [][]float64{{0.4, 0.0}, {0.0, 0.4}},
-			Particles: []Particle{{
-				Role: "particle", CellX: 1, CellY: 2, CellZ: 3,
-				Phase: 0.5, Omega: 9, Amplitude: 1.5, Heat: 0.01,
-				VelX: 0.1, VelY: 0.2, VelZ: 0.3, Speed: 0.4,
-				SpatialTokenID: 99,
-			}},
 			Wave: []pfluid.WaveMode{{
 				Omega: 1, Real: 0.2, Imaginary: 0.3, Linewidth: 0.4,
 			}},
 			PhaseReady: true,
 		}
 
-		Convey("It emits meta without lattices and four binary planes", func() {
-			field, lattices, particles, wave := state.WirePackets()
+		Convey("It emits meta and one composited display texture", func() {
+			field, lattices, wave := state.WirePackets()
 			So(field.Symbol, ShouldEqual, "BTC/USD")
+			So(field.OscillatorCount, ShouldEqual, 2)
+			So(field.RhoOccupied, ShouldEqual, 3)
+			So(field.PsiOccupied, ShouldEqual, 4)
+			So(field.RhoMax, ShouldEqual, 1.5)
+			So(field.PsiMax, ShouldEqual, 2.5)
 			So(field.Grid.X, ShouldEqual, uint32(8))
 			So(field.Grid.Z, ShouldEqual, uint32(6))
 			So(field.Reading.PressureGradX, ShouldEqual, 1.0)
 			So(field.PhaseReady, ShouldBeTrue)
-			So(lattices, ShouldHaveLength, 4)
-
-			for index, want := range []string{
-				"manifold_rho", "manifold_psi",
-				"manifold_guidance_x", "manifold_guidance_z",
-			} {
-				key, known := BinaryCacheKey(lattices[index])
-				So(known, ShouldBeTrue)
-				So(key, ShouldEqual, want)
-			}
-			So(particles.Particles, ShouldHaveLength, 1)
-			So(particles.Particles[0].CellX, ShouldEqual, 1)
+			So(lattices, ShouldHaveLength, 1)
+			key, known := BinaryCacheKey(lattices[0])
+			So(known, ShouldBeTrue)
+			So(key, ShouldEqual, "manifold_display")
 			So(wave.Wave, ShouldHaveLength, 1)
 			So(wave.Wave[0].Real, ShouldEqual, float32(0.2))
 		})

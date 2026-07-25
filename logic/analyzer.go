@@ -36,7 +36,7 @@ type Analyzer struct {
 	resonance  map[string]*Resonance
 	causal     map[string]*Causal
 	cognition  map[string]types.Cognition
-	observed   map[string]uint64
+	observed   map[string]int64
 	rem        *remSleep
 	categories *category.Graph
 }
@@ -76,7 +76,7 @@ func NewAnalyzer(
 		resonance:  make(map[string]*Resonance),
 		causal:     make(map[string]*Causal),
 		cognition:  make(map[string]types.Cognition),
-		observed:   make(map[string]uint64),
+		observed:   make(map[string]int64),
 		rem:        newREMSleep(ctx, tree),
 		categories: category.NewGraph(),
 	}
@@ -171,28 +171,46 @@ func (analyzer *Analyzer) enrich(thesis *types.Thesis, hawkes manifold.HawkesSou
 		thesis.StampAt()
 	}
 
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "analyze_begin", nil))
+	if analyzer.recorder != nil {
+		errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "analyze_begin", nil))
+	}
 
 	analyzer.stepManifold(thesis, hawkes)
 	states := analyzer.observeStates(thesis)
 
-	composeStarted := time.Now()
+	var composeStarted time.Time
+
+	if analyzer.recorder != nil {
+		composeStarted = time.Now()
+	}
+
 	analyzer.composeCategories(thesis)
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "categories_compose", map[string]any{
-		"ns":         time.Since(composeStarted).Nanoseconds(),
-		"categories": len(thesis.Categories),
-	}))
+
+	if analyzer.recorder != nil {
+		errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "categories_compose", map[string]any{
+			"ns":         time.Since(composeStarted).Nanoseconds(),
+			"categories": len(thesis.Categories),
+		}))
+	}
 
 	analyzer.publishMeasured(thesis, states)
 
 	remObservations, remRequested := analyzer.cognizeStates(thesis, states)
 
-	commitStarted := time.Now()
+	var commitStarted time.Time
+
+	if analyzer.recorder != nil {
+		commitStarted = time.Now()
+	}
+
 	analyzer.commitCategories(thesis)
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "categories_commit", map[string]any{
-		"ns":         time.Since(commitStarted).Nanoseconds(),
-		"categories": len(thesis.Categories),
-	}))
+
+	if analyzer.recorder != nil {
+		errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "categories_commit", map[string]any{
+			"ns":         time.Since(commitStarted).Nanoseconds(),
+			"categories": len(thesis.Categories),
+		}))
+	}
 
 	analyzer.consolidate(thesis, remObservations, remRequested)
 	analyzer.publishCognition(thesis)

@@ -26,7 +26,7 @@ type marketOutcome struct {
 	flowAbsSum  float64
 	flowSamples int
 	advanced    int
-	replayed    int
+	held        int
 	cognitions  int
 	forecasts   int
 	forecastSum float64
@@ -43,10 +43,10 @@ type marketOutcome struct {
 
 /*
 observeManifold verifies that the analyzer projects every simulated symbol into
-one physically valid state and records whether the Hawkes epoch really advanced.
+one physically valid state and records whether the Hawkes epoch really grew.
 
-Trade then ticker both finalize cuts; the ticker refresh stores Replay=true for
-the same ingested epoch. Count epoch growth, not the final Replay bit.
+Trade then ticker both finalize cuts; held ticks keep the same epoch while the
+shared field still steps. Count epoch growth separately from held steps.
 */
 func (outcome *marketOutcome) observeManifold(
 	thesis *types.Thesis,
@@ -79,7 +79,7 @@ func (outcome *marketOutcome) observeManifold(
 			return true
 		}
 
-		outcome.replayed++
+		outcome.held++
 		return true
 	})
 
@@ -88,19 +88,11 @@ func (outcome *marketOutcome) observeManifold(
 
 /*
 observeModels validates the analyzer's chronological resonance, causal, and
-forecast outputs. Replayed Hawkes epochs must not manufacture new observations.
+forecast outputs for every physics tick that produced GasReady state.
 */
 func (outcome *marketOutcome) observeModels(
 	thesis *types.Thesis,
-	replay bool,
 ) {
-	if replay {
-		// Shared Thesis may retain prior observe rows from warmup. A replay cut
-		// must not mint into the accumulated forecast counter — that is checked
-		// by leaving outcome.forecasts untouched here.
-		return
-	}
-
 	So(thesis.Resonance, ShouldHaveLength, len(outcome.symbols))
 	So(thesis.Causal, ShouldHaveLength, len(outcome.symbols))
 	So(thesis.Hypotheses, ShouldHaveLength, len(outcome.symbols))
@@ -209,16 +201,16 @@ func (outcome *marketOutcome) observeCognition(thesis *types.Thesis) {
 }
 
 /*
-TestAnalyzerUpdate drives the complete production graph through quiet,
-directional, and replay-only markets and verifies every Analyzer-owned Thesis
-surface against the causal state that produced it.
+TestAnalyzerUpdate drives the complete production graph through quiet and
+directional markets and verifies every Analyzer-owned Thesis surface against
+the causal state that produced it.
 */
 func TestAnalyzerUpdate(t *testing.T) {
 	proofs := []struct {
 		name    string
 		state   tests.MarketState
-		replay  bool
 		prepare bool
+		bookOnly bool
 	}{
 		{"baseline", tests.MarketStateBaseline, false, false},
 		{"fast pump", tests.MarketStateFastPump, false, false},
@@ -226,9 +218,9 @@ func TestAnalyzerUpdate(t *testing.T) {
 		{"fast dump", tests.MarketStateFastDump, false, false},
 		{"slow dump", tests.MarketStateSlowDump, false, false},
 		{"volume absorption", tests.MarketStateVolumeAbsorption, false, false},
-		{"persistent adverse divergence", tests.MarketStateAdverseDivergence, false, true},
+		{"persistent adverse divergence", tests.MarketStateAdverseDivergence, true, false},
 		{"leader follower", tests.MarketStateLeaderFollower, false, false},
-		{"book-only replay", tests.MarketStateThinLiquidity, true, false},
+		{"thin liquidity", tests.MarketStateThinLiquidity, false, true},
 	}
 
 	Convey("Given materially distinct fixture-driven markets", t, func() {
@@ -272,34 +264,40 @@ func TestAnalyzerUpdate(t *testing.T) {
 				So(thesis.At.IsZero(), ShouldBeFalse)
 				So(thesis.At.After(market.Now()), ShouldBeFalse)
 				outcome.observeManifold(thesis)
-				outcome.observeModels(thesis, proof.replay)
+
+				// Book-only thin tapes never excite Hawkes, so resonance/causal
+				// heads stay empty while the shared field still steps.
+				if !proof.bookOnly {
+					outcome.observeModels(thesis)
+				}
+
 				outcome.observeCognition(thesis)
 				return nil
 			}), ShouldBeNil)
 
-			if !proof.replay {
+			manifoldReady := false
+			wired.Thesis.Manifold.Range(func(_, value any) bool {
+				state, ok := value.(manifold.State)
+				manifoldReady = ok && state.GasReady() && len(state.Display) > 0
+				return !manifoldReady
+			})
+			So(manifoldReady, ShouldBeTrue)
+			outcome.uiManifold++
+
+			cognitionReady := false
+			wired.Thesis.Cognition.Range(func(_, _ any) bool {
+				cognitionReady = true
+				return false
+			})
+			So(cognitionReady, ShouldBeTrue)
+			outcome.uiCognition++
+
+			if !proof.bookOnly {
 				// High-churn UI streams are fanout-only (not hub-cached). Prove the
 				// publish inputs on thesis instead of waitCached.
 				So(wired.Thesis.Resonance, ShouldNotBeEmpty)
 				So(wired.Thesis.Resonance[0].(*logic.ResonanceOutcome).Layers, ShouldNotBeEmpty)
 				outcome.uiResonance++
-
-				manifoldReady := false
-				wired.Thesis.Manifold.Range(func(_, value any) bool {
-					state, ok := value.(manifold.State)
-					manifoldReady = ok && state.GasReady() && len(state.Rho) > 0
-					return !manifoldReady
-				})
-				So(manifoldReady, ShouldBeTrue)
-				outcome.uiManifold++
-
-				cognitionReady := false
-				wired.Thesis.Cognition.Range(func(_, _ any) bool {
-					cognitionReady = true
-					return false
-				})
-				So(cognitionReady, ShouldBeTrue)
-				outcome.uiCognition++
 			}
 
 			types.SetFocus("")
@@ -403,13 +401,13 @@ func TestAnalyzerUpdate(t *testing.T) {
 			So(leader.forecasts, ShouldBeGreaterThan, 0)
 			So(leader.advanced, ShouldBeGreaterThan, 0)
 
-			replay := outcomes["book-only replay"]
-			// ThinLiquidity is book-only: Hawkes never publishes, so Analyzer does
-			// not restamp Manifold.Replay. What must hold is no new forecast mint
-			// and cognition residue from warmup still present.
-			So(replay.forecasts, ShouldEqual, 0)
-			So(replay.cognitions, ShouldBeGreaterThan, 0)
-			So(replay.uiManifold, ShouldEqual, 0)
+			thin := outcomes["thin liquidity"]
+			// ThinLiquidity is book-only: Hawkes never excites, so epochs hold while
+			// the shared field still steps and cognition keeps a live reading.
+			So(thin.cognitions, ShouldBeGreaterThan, 0)
+			So(thin.advanced+thin.held, ShouldBeGreaterThan, 0)
+			So(thin.uiManifold, ShouldEqual, 1)
+			So(thin.uiCognition, ShouldEqual, 1)
 		})
 	})
 }

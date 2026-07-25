@@ -157,8 +157,7 @@ func (solver *Solver) Update(
 
 	errnie.Error(audit.Record(solver.recorder, "manifold", map[string]any{
 		"candidates": len(candidates),
-		"advanced":   result.advanced,
-		"replayed":   result.replayed,
+		"appended":   result.appended,
 		"particles":  population,
 		"failed":     len(result.failures),
 	}))

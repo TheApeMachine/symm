@@ -12,21 +12,20 @@ import (
 )
 
 /*
-advanceResult describes one shared physical step and every source epoch that
-was either represented by it or replayed from it.
+advanceResult describes one shared physical step and how many symbols appended
+a new book/Hawkes sample into it.
 */
 type advanceResult struct {
 	failures []error
-	advanced int
-	replayed int
+	appended int
 }
 
 /*
 advance appends Sensorium-shaped particles for every changed Hawkes/book epoch,
 then always performs one GPU step over the resident population when any
-particles exist. Unchanged epochs skip append and receive the new shared
-reading. Below-mean prune runs only after an append — always-step replay must
-not ratchet the resident set down to a single dust survivor.
+particles exist. Symbols without a new sample still receive the new shared
+reading. Below-mean prune runs only after an append so held ticks cannot
+ratchet the resident set down to a single dust survivor.
 */
 func (solver *Solver) advance(
 	thesis *types.Thesis,
@@ -57,7 +56,7 @@ func (solver *Solver) advance(
 
 /*
 publish materializes symbol views from one shared reading and attaches the
-field projection to every GasReady symbol so the UI can select client-side.
+GPU display texture to every GasReady symbol so the UI can select client-side.
 Only changed epochs are re-sampled; every other GasReady slot still receives
 the new shared reading without a fresh L3 tokenize.
 */
@@ -69,17 +68,18 @@ func (solver *Solver) publish(
 	diagnostics pfluid.Diagnostics,
 	result *advanceResult,
 ) {
-	projection, wave, err := solver.project()
+	frame, err := solver.project()
 
 	if err != nil {
 		result.failures = append(result.failures, err)
 	}
 
-	particles := solver.renderPopulation(projection)
-	rho := projectionRows(projection.Density, projection.Grid)
-	psi := projectionRows(projection.Coherence, projection.Grid)
-	guideX := projectionRows(projection.GuidanceX, projection.Grid)
-	guideZ := projectionRows(projection.GuidanceZ, projection.Grid)
+	population := 0
+
+	if solver.domain != nil {
+		population = solver.domain.ParticleCount()
+	}
+
 	sampled := make(map[string]intensityCandidate, len(candidates))
 
 	for _, candidate := range candidates {
@@ -101,14 +101,14 @@ func (solver *Solver) publish(
 			continue
 		}
 
-		outcome, advanced := changed[symbol]
+		outcome, appended := changed[symbol]
 		candidate, hasSample := sampled[symbol]
 
-		if advanced && !hasSample {
+		if appended && !hasSample {
 			continue
 		}
 
-		if !advanced && !slot.last.GasReady() {
+		if !appended && !slot.last.GasReady() {
 			continue
 		}
 
@@ -118,41 +118,27 @@ func (solver *Solver) publish(
 			reading,
 			diagnostics,
 			solver.config.Grid,
-			advanced,
+			appended,
 		)
 
-		if advanced {
-			result.advanced++
-		} else {
-			result.replayed++
+		if appended {
+			result.appended++
 		}
 
 		if err == nil && state.GasReady() {
-			at := outcome.At
-
-			if at.IsZero() {
-				at = candidate.outcome.At
-			}
-
-			if at.IsZero() {
-				at = state.At
-			}
-
+			at := state.At
 			phaseScan := state.PhaseScan
 
-			if advanced {
+			if appended {
 				var phaseErr error
-				phaseScan, phaseErr = solver.phase(symbol, at, true, wave)
+				phaseScan, phaseErr = solver.phase(symbol, at, true, frame.wave)
 
 				if phaseErr != nil {
 					result.failures = append(result.failures, phaseErr)
 				}
 			}
 
-			solver.paint(
-				&state, projection.Grid, wave, phaseScan, particles,
-				rho, psi, guideX, guideZ,
-			)
+			solver.paint(&state, frame, phaseScan, population)
 			slot.last = state
 		}
 
@@ -160,30 +146,6 @@ func (solver *Solver) publish(
 			thesis.Manifold.Store(symbol, state)
 		}
 	}
-}
-
-/*
-renderPopulation reads the shared resident particles once per advance publish.
-*/
-func (solver *Solver) renderPopulation(projection pfluid.Projection) []Particle {
-	if solver.domain == nil {
-		return nil
-	}
-
-	population := solver.domain.ParticleCount()
-
-	if population == 0 || len(projection.Density) == 0 {
-		return nil
-	}
-
-	batch, err := solver.domain.ReadParticles(0, population)
-
-	if err != nil {
-		return nil
-	}
-
-	spatial, _ := solver.domain.ReadSpatialIDs(0, population)
-	return renderParticles(batch, spatial, projection.Grid)
 }
 
 /*
@@ -305,8 +267,8 @@ func (solver *Solver) step(grew bool) (
 	// Inelastic merge rewrites resident indices; per-sample ranges are gone.
 	solver.clearRanges()
 
-	// Prune only after append growth. Replay always-steps would otherwise
-	// re-apply the mean threshold every cut and collapse the field to one
+	// Prune only after append growth. Held always-steps would otherwise
+	// re-apply the median threshold every cut and collapse the field to one
 	// survivor. A prune miss must not abort publish: ingest already committed
 	// Hawkes bookmarks.
 	if grew {

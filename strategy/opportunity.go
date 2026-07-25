@@ -180,10 +180,10 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			continue
 		}
 
-		if cognition.Winner != "buy" {
+		if isOpposingRegime(cognition.Winner) {
 			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
 				*forecast, 0, "cognitive_opposition",
-				"cognitive memory does not support a buy entry",
+				"cognitive memory does not support an entry: "+cognition.Winner,
 			))
 			continue
 		}
@@ -235,9 +235,24 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			continue
 		}
 
+		if reading.CausalReady && reading.CausalNoise > 0.6 && reading.CausalIntervention <= 0 {
+			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
+				*forecast, 0, "causal_confounded",
+				"causal Do-calculus detects confounding noise dominating direct effect",
+			))
+			continue
+		}
+
 		// Enter pays the taker fee once; exit friction is scored when Continuity
 		// or Rotate liquidates. ExecutableReturn already encodes that one-way cut.
-		utility := forecast.ExecutableReturn() - forecast.Uncertainty
+		// Scaled by Pearl Causal Uplift (P(y|do(x)) - P(y)) to isolate direct effect.
+		causalMult := 1.0
+
+		if reading.CausalReady && reading.CausalUplift > 0 {
+			causalMult += reading.CausalUplift
+		}
+
+		utility := (forecast.ExecutableReturn() * causalMult) - forecast.Uncertainty
 
 		if utility <= 0 {
 			thesis.Decisions = append(thesis.Decisions, opportunity.reject(

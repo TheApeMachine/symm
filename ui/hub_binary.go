@@ -14,5 +14,5 @@ func isManifoldBinary(payload []byte) bool {
 	}
 
 	kind := payload[4]
-	return kind >= 1 && kind <= 4
+	return kind >= 1 && kind <= 5
 }

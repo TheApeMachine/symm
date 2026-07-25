@@ -91,10 +91,7 @@ import {
 	paintXrayManifoldMeasurements,
 } from "#/components/terminal/xray-side";
 import { FrameHistory } from "#/providers/frame-history";
-import {
-	paintManifoldParticles,
-	paintManifoldWave,
-} from "#/providers/manifold-parts";
+import { paintManifoldWave } from "#/providers/manifold-parts";
 
 /*
 Paint is one imperative target for a backend frame and the current UI focus.
@@ -255,12 +252,7 @@ export const drawers = {
 	},
 	// Raw wire packets — not history.project("latest"). These streams have no
 	// FrameHistory policy, so "latest" projects to [] and cleared the payloads.
-	manifold_particles: {
-		paint: (value: unknown, focusSymbol: string) => {
-			paintManifoldParticles(value);
-			repaintTerminalFluidChart(focusSymbol);
-		},
-	},
+	// Lattice textures arrive as binary SMF1; particles stay off the JSON wire.
 	manifold_wave: {
 		paint: (value: unknown, focusSymbol: string) => {
 			paintManifoldWave(value);

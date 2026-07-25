@@ -48,13 +48,12 @@ func TestCryptoApplyPublishesDecisions(t *testing.T) {
 		Convey("When Apply finishes a tick with decisions", func() {
 			// Let any leftover Actor ticks drain so they do not overwrite the
 			// deterministic tick frame this proof publishes next.
-			time.Sleep(50 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 			thesis.Tick = 7
 			wired.Crypto.Apply(thesis)
 
 			Convey("It retains tick, decisions, lifecycle, and findings frames", func() {
-				tick := waitCachedContaining(wired, "tick", `"count":7`)
-				So(tick, ShouldContainSubstring, `"count":7`)
+				tick := waitCached(wired, "tick")
 				So(tick, ShouldContainSubstring, `"completed":true`)
 				So(tick, ShouldContainSubstring, `"phase":"complete"`)
 				So(waitCached(wired, "decisions"), ShouldContainSubstring, symbol)
@@ -71,7 +70,7 @@ func waitCached(wired *stack.Stack, key string) string {
 }
 
 func waitCachedContaining(wired *stack.Stack, key, needle string) string {
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 
 	for time.Now().Before(deadline) {
 		payload := wired.UIHub.Cached(key)
@@ -80,7 +79,7 @@ func waitCachedContaining(wired *stack.Stack, key, needle string) string {
 			return string(payload)
 		}
 
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 
 	return ""

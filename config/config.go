@@ -172,7 +172,7 @@ func Fixture() Config {
 	return Config{
 		System: SystemConfig{
 			ActorBuffer:     64,
-			ChannelBuffer:   128,
+			ChannelBuffer:   4096,
 			DataPath:        "/tmp/symm-test",
 			AuditRotate:     false,
 			CheckpointEvery: time.Second,

@@ -3,6 +3,7 @@ package strategy
 import (
 	"math"
 
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
 )
@@ -12,22 +13,28 @@ Reading is the decomposed admit state for one forecast. Margin is economic
 edge after uncertainty; Lead is how far cognition has committed ahead of the
 manifold phase basin on a shared [0,1) scale. Reserved overflow is for
 anticipatory edge only — high SNR, cognition ahead of the phase compass by
-more than noise, and a non-ambiguous short-horizon reading.
+more than noise, multi-head lookahead path agreement, unconfounded Causal Do-calculus,
+and a non-ambiguous short-horizon reading.
 */
 type Reading struct {
-	Margin      float64
-	Lead        float64
-	Cognitive   float64
-	Basin       float64
-	BasinReady  bool
-	Ambiguous   bool
-	Contrast    float64
-	Uncertainty float64
-	Horizon     uint64
-	Noise       float64
-	PhaseClass       string
-	PhaseReady       bool
-	PhaseSimilarity  float64
+	Margin             float64
+	Lead               float64
+	Cognitive          float64
+	Basin              float64
+	BasinReady         bool
+	Ambiguous          bool
+	Contrast           float64
+	Uncertainty        float64
+	Horizon            uint64
+	Noise              float64
+	PhaseClass         string
+	PhaseReady         bool
+	PhaseSimilarity    float64
+	LookaheadScore     float64
+	CausalReady        bool
+	CausalUplift       float64
+	CausalIntervention float64
+	CausalNoise        float64
 }
 
 /*
@@ -54,6 +61,10 @@ func (reading Reading) Reserved() bool {
 		return false
 	}
 
+	if reading.CausalReady && reading.CausalNoise > 0.5 {
+		return false
+	}
+
 	return reading.Lead > reading.Noise
 }
 
@@ -67,9 +78,25 @@ func (reading Reading) CognitiveClears(forecast types.Forecasts) bool {
 }
 
 /*
+isOpposingRegime reports whether a physical market category regime represents an
+opposing breakdown, exhaustion, or trap state.
+*/
+func isOpposingRegime(class string) bool {
+	switch types.CategoryType(class) {
+	case types.Exhaustion, types.FadedExhaustion, types.MechanicalCollapse,
+		types.ThermalExhaustion, types.Turbulent, types.TurbulentResonance,
+		types.SystemicSlump, types.ToxicBluff, types.SpoofTrap,
+		types.LiquidityShock, types.BookThinning, types.CausalNoise, types.StochasticNoise:
+		return true
+	}
+
+	return class == "sell"
+}
+
+/*
 PhaseOpposes reports whether the phase dial's strongest constructive alignment
-points at a sell-labeled attractor while cognition wants buy. Cold corpus,
-destructive interference, and balanced/neutral labels do not oppose — they leave
+points at an opposing breakdown/exhaustion physical category regime. Cold corpus,
+destructive interference, and neutral/constructive labels do not oppose — they leave
 BasinReady false without inventing a veto.
 */
 func (reading Reading) PhaseOpposes() bool {
@@ -77,7 +104,7 @@ func (reading Reading) PhaseOpposes() bool {
 		return false
 	}
 
-	return reading.PhaseClass == "sell"
+	return isOpposingRegime(reading.PhaseClass)
 }
 
 /*
@@ -85,6 +112,7 @@ measureOpportunity builds OpportunityMargin and CognitiveLead from independent
 estimators. Margin is the SNR term that also enters utility; Lead ranks the
 reserved lane once utility has already cleared. Basin is the phase-dial
 attractor strength for the cognitive winner, not instantaneous field coherence.
+Incorporates multi-head predictive lookahead and Judea Pearl causal ladder output.
 */
 func measureOpportunity(
 	forecast types.Forecasts,
@@ -92,13 +120,33 @@ func measureOpportunity(
 	thesis *types.Thesis,
 ) Reading {
 	reading := Reading{
-		Margin:      forecast.ExpectedReturn - forecast.Uncertainty,
-		Cognitive:   cognition.Confidence,
-		Ambiguous:   cognition.Ambiguous,
-		Contrast:    cognition.Contrast,
-		Uncertainty: forecast.Uncertainty,
-		Horizon:     forecast.HorizonEvents,
-		Noise:       noiseShare(forecast),
+		Margin:         forecast.ExpectedReturn - forecast.Uncertainty,
+		Cognitive:      cognition.Confidence,
+		Ambiguous:      cognition.Ambiguous,
+		Contrast:       cognition.Contrast,
+		Uncertainty:    forecast.Uncertainty,
+		Horizon:        forecast.HorizonEvents,
+		Noise:          noiseShare(forecast),
+		LookaheadScore: cognition.LookaheadScore,
+	}
+
+	if thesis != nil && len(thesis.Causal) > 0 {
+		for _, raw := range thesis.Causal {
+			if outcome, ok := raw.(logic.CausalOutcome); ok && outcome.Symbol == forecast.Symbol && outcome.Ready {
+				reading.CausalReady = true
+				reading.CausalUplift = outcome.Reading.UpliftScore
+				reading.CausalIntervention = outcome.Reading.InterventionScore
+				reading.CausalNoise = outcome.Reading.Noise
+				break
+			}
+			if outcomePtr, ok := raw.(*logic.CausalOutcome); ok && outcomePtr != nil && outcomePtr.Symbol == forecast.Symbol && outcomePtr.Ready {
+				reading.CausalReady = true
+				reading.CausalUplift = outcomePtr.Reading.UpliftScore
+				reading.CausalIntervention = outcomePtr.Reading.InterventionScore
+				reading.CausalNoise = outcomePtr.Reading.Noise
+				break
+			}
+		}
 	}
 
 	basin, ready, phaseClass, phaseReady, phaseSimilarity := basinConfidence(
@@ -111,7 +159,11 @@ func measureOpportunity(
 	reading.PhaseSimilarity = phaseSimilarity
 
 	if ready {
-		reading.Lead = cognition.Confidence - basin
+		score := cognition.Confidence
+		if cognition.LookaheadScore > 0 {
+			score *= (0.5 + 0.5*cognition.LookaheadScore)
+		}
+		reading.Lead = score - basin
 	}
 
 	return reading

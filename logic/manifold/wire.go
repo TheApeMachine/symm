@@ -28,8 +28,8 @@ type WireReading struct {
 }
 
 /*
-WireField is the lightweight manifold meta packet. Dense lattices travel as
-separate binary frames so JSON never carries 64×64 decimal grids.
+WireField is the lightweight manifold meta packet. The field picture travels as
+one GPU-composited RGBA texture; meta only carries scalars the panels need.
 */
 type WireField struct {
 	Source                string          `json:"source"`
@@ -37,34 +37,15 @@ type WireField struct {
 	At                    time.Time       `json:"at"`
 	OscillatorCount       int             `json:"oscillatorCount"`
 	SharedOscillatorCount int             `json:"sharedOscillatorCount"`
+	RhoOccupied           int             `json:"rhoOccupied"`
+	PsiOccupied           int             `json:"psiOccupied"`
+	RhoMax                float64         `json:"rhoMax"`
+	PsiMax                float64         `json:"psiMax"`
 	Grid                  WireGrid        `json:"grid"`
 	Reading               WireReading     `json:"reading"`
 	PhaseReady            bool            `json:"phaseReady"`
 	PhaseReason           string          `json:"phaseReason,omitempty"`
 	PhaseScan             []PhaseResponse `json:"phaseScan,omitempty"`
-}
-
-/*
-WireParticle is the oscillator cloud the fluid canvas aggregates — only fields
-the painter reads.
-*/
-type WireParticle struct {
-	CellX     float64 `json:"cell_x"`
-	CellZ     float64 `json:"cell_z"`
-	Phase     float64 `json:"phase"`
-	Amplitude float64 `json:"amplitude"`
-	VelX      float64 `json:"vel_x"`
-	VelZ      float64 `json:"vel_z"`
-}
-
-/*
-WireParticles is the particle packet for one shared-field publish.
-*/
-type WireParticles struct {
-	Source    string         `json:"source"`
-	Symbol    string         `json:"symbol"`
-	At        time.Time      `json:"at"`
-	Particles []WireParticle `json:"particles,omitempty"`
 }
 
 /*
@@ -88,16 +69,20 @@ type WireWave struct {
 }
 
 /*
-WirePackets splits one State into meta JSON, uint16 lattice binaries, particles,
-and wave so each part can fan out under hub backpressure.
+WirePackets splits one State into meta JSON, one GPU display texture, and wave
+so the socket carries a blit-ready picture instead of raw planes.
 */
-func (state State) WirePackets() (WireField, [][]byte, WireParticles, WireWave) {
+func (state State) WirePackets() (WireField, [][]byte, WireWave) {
 	field := WireField{
 		Source:                state.Source,
 		Symbol:                state.Symbol,
 		At:                    state.At,
 		OscillatorCount:       state.OscillatorCount,
 		SharedOscillatorCount: state.SharedOscillatorCount,
+		RhoOccupied:           state.RhoOccupied,
+		PsiOccupied:           state.PsiOccupied,
+		RhoMax:                state.RhoMax,
+		PsiMax:                state.PsiMax,
 		Grid: WireGrid{
 			X:       uint32(state.Grid.X),
 			Z:       uint32(state.Grid.Z),
@@ -116,42 +101,20 @@ func (state State) WirePackets() (WireField, [][]byte, WireParticles, WireWave) 
 		PhaseScan:   state.PhaseScan,
 	}
 
-	lattices := make([][]byte, 0, 4)
+	if field.Grid.X == 0 && state.DisplayWidth > 0 {
+		field.Grid.X = uint32(state.DisplayWidth)
+	}
 
-	for _, plane := range []struct {
-		kind uint8
-		grid [][]float64
-	}{
-		{BinaryKindRho, state.Rho},
-		{BinaryKindPsi, state.PsiMag2},
-		{BinaryKindGuidanceX, state.GuidanceVelX},
-		{BinaryKindGuidanceZ, state.GuidanceVelZ},
-	} {
-		encoded, ok := EncodeLattice(plane.kind, state.Symbol, state.At, plane.grid)
+	if field.Grid.Z == 0 && state.DisplayHeight > 0 {
+		field.Grid.Z = uint32(state.DisplayHeight)
+	}
 
-		if !ok {
-			continue
-		}
+	lattices := make([][]byte, 0, 1)
 
+	if encoded, ok := EncodeDisplay(
+		state.Symbol, state.At, state.DisplayWidth, state.DisplayHeight, state.Display,
+	); ok {
 		lattices = append(lattices, encoded)
-	}
-
-	particles := WireParticles{
-		Source:    state.Source,
-		Symbol:    state.Symbol,
-		At:        state.At,
-		Particles: make([]WireParticle, 0, len(state.Particles)),
-	}
-
-	for _, particle := range state.Particles {
-		particles.Particles = append(particles.Particles, WireParticle{
-			CellX:     particle.CellX,
-			CellZ:     particle.CellZ,
-			Phase:     particle.Phase,
-			Amplitude: particle.Amplitude,
-			VelX:      particle.VelX,
-			VelZ:      particle.VelZ,
-		})
 	}
 
 	wave := WireWave{
@@ -165,7 +128,7 @@ func (state State) WirePackets() (WireField, [][]byte, WireParticles, WireWave) 
 		wave.Wave = append(wave.Wave, wireMode(mode))
 	}
 
-	return field, lattices, particles, wave
+	return field, lattices, wave
 }
 
 func wireMode(mode pfluid.WaveMode) WireMode {

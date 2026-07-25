@@ -5,7 +5,10 @@ Dense grids stay off the JSON path; the GPU samples R32F textures directly.
 
 import type { FluidFieldLayer } from "#/collections/terminal";
 import type { LatticePlane } from "#/providers/manifold-binary";
-import { latestLattice } from "#/providers/manifold-binary";
+import {
+	latestDisplay,
+	latestLattice,
+} from "#/providers/manifold-binary";
 
 const DISPLAY_GAMMA = 0.55;
 
@@ -244,6 +247,54 @@ const primaryPlane = (layer: FluidFieldLayer): LatticePlane | null => {
 };
 
 /*
+drawFluidDisplay blits the backend-composited RGBA texture. Returns false when
+no display frame is retained so callers can fall back to plane shading.
+*/
+export const drawFluidDisplay = (
+	canvas: HTMLCanvasElement,
+	width: number,
+	height: number,
+): boolean => {
+	const frame = latestDisplay();
+
+	if (frame === null || width <= 0 || height <= 0) {
+		return false;
+	}
+
+	const context = canvas.getContext("2d");
+
+	if (context === null) {
+		return false;
+	}
+
+	const dpr = Math.max(1, window.devicePixelRatio || 1);
+	const pixelWidth = Math.max(1, Math.floor(width * dpr));
+	const pixelHeight = Math.max(1, Math.floor(height * dpr));
+
+	if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+		canvas.width = pixelWidth;
+		canvas.height = pixelHeight;
+	}
+
+	const tile = document.createElement("canvas");
+	tile.width = frame.width;
+	tile.height = frame.height;
+	const tileContext = tile.getContext("2d");
+
+	if (tileContext === null) {
+		return false;
+	}
+
+	const image = tileContext.createImageData(frame.width, frame.height);
+	image.data.set(frame.rgba);
+	tileContext.putImageData(image, 0, 0);
+	context.imageSmoothingEnabled = false;
+	context.clearRect(0, 0, pixelWidth, pixelHeight);
+	context.drawImage(tile, 0, 0, pixelWidth, pixelHeight);
+	return true;
+};
+
+/*
 drawFluidFieldGL uploads retained binary lattices and draws the pilot-wave field.
 Returns false when WebGL2 is unavailable so the caller can fall back to Canvas2D.
 */
@@ -254,6 +305,10 @@ export const drawFluidFieldGL = (
 	layer: FluidFieldLayer,
 	contour: boolean,
 ): boolean => {
+	if (drawFluidDisplay(canvas, width, height)) {
+		return true;
+	}
+
 	const primary = primaryPlane(layer);
 	const gas = latestLattice("rho");
 

@@ -128,36 +128,21 @@ func (reporter *Reporter) Tokens(
 		return nil
 	}
 
-	graph := reporter.graph
-	tokens := make([]string, 0, len(categories)+1)
+	top := Top(categories, symbol)
+	prior := reporter.graph.Prior(symbol)
+	tokens := make([]string, 0, 2)
 
-	for _, category := range categories {
-		if category.Symbol != symbol || category.Strength <= 0 {
-			continue
-		}
-
-		tokens = append(tokens, "cat-"+string(category.Type)+"-"+polarity(category.Strength))
+	if prior != types.CategoryTypeNone {
+		tokens = append(tokens, string(prior))
 	}
 
-	top := Top(categories, symbol)
-	prior := graph.Prior(symbol)
-
-	if prior != types.CategoryTypeNone && top.Type != types.CategoryTypeNone && prior != top.Type {
-		tokens = append(tokens, "transition-"+string(prior)+"-"+string(top.Type))
+	if top.Type != types.CategoryTypeNone && top.Type != prior {
+		tokens = append(tokens, string(top.Type))
+	} else if top.Type != types.CategoryTypeNone && prior == types.CategoryTypeNone {
+		tokens = append(tokens, string(top.Type))
 	}
 
 	return tokens
-}
-
-/*
-polarity maps positive strength onto the DMT polarity vocabulary.
-*/
-func polarity(strength float64) string {
-	if strength > 0 {
-		return "positive"
-	}
-
-	return "zero"
 }
 
 /*

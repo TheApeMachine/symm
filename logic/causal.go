@@ -28,6 +28,7 @@ type Causal struct {
 	symbol  string
 	pearl   *algorithm.Pearl
 	pending *causalObservation
+	last    *CausalOutcome
 	samples uint64
 }
 
@@ -77,9 +78,8 @@ func (causal *Causal) Update(
 	}
 
 	if causal.pending != nil && state.Epoch == causal.pending.epoch &&
-		!state.At.Before(causal.pending.at) {
-		// Same epoch re-presented (idle symbol republished with its last
-		// GasReady state): nothing new to align, skip without erroring.
+		!state.At.After(causal.pending.at) {
+		// Exact same timestamp re-presented: nothing new to align.
 		return types.Hypothesis{}, nil, nil
 	}
 
@@ -104,12 +104,41 @@ func (causal *Causal) Update(
 		return types.Hypothesis{}, nil, nil
 	}
 
+	if causal.pending != nil && state.Epoch == causal.pending.epoch {
+		// Always-step on the same Hawkes epoch: refresh the pending row and
+		// republish the last ready reading so ResetTick cannot strand forecasts.
+		causal.pending.features = append(causal.pending.features[:0], features...)
+		causal.pending.midPrice = state.ReferencePrice.Copy()
+		causal.pending.at = state.At
+
+		if causal.last == nil {
+			return types.Hypothesis{}, nil, nil
+		}
+
+		outcome := *causal.last
+		outcome.At = state.At
+
+		return causal.hypothesis(outcome), &outcome, nil
+	}
+
 	outcome, err := causal.observe(state, features)
 
 	if err != nil {
 		return types.Hypothesis{}, nil, err
 	}
 
+	if outcome.Ready {
+		cloned := outcome
+		causal.last = &cloned
+	}
+
+	return causal.hypothesis(outcome), &outcome, nil
+}
+
+/*
+hypothesis projects one causal outcome onto the durable Thesis hypothesis row.
+*/
+func (causal *Causal) hypothesis(outcome CausalOutcome) types.Hypothesis {
 	return types.Hypothesis{
 		Source:         types.SourceCausal,
 		Symbol:         outcome.Symbol,
@@ -127,7 +156,7 @@ func (causal *Causal) Update(
 		Counterfactual: outcome.Reading.Counterfactual,
 		Confidence:     outcome.Reading.Confidence,
 		Strength:       outcome.Reading.Strength,
-	}, &outcome, nil
+	}
 }
 
 func (causal *Causal) observe(

@@ -131,8 +131,10 @@ func readPopulation(
 
 				orderIDs = append(orderIDs, order.ID)
 				orders = append(orders, restingOrder{
-					side:  direction,
-					price: order.LimitPrice.Float64(),
+					side:     direction,
+					price:    order.LimitPrice.Float64(),
+					quantity: order.Quantity.Float64(),
+					at:       order.Timestamp,
 				})
 			}
 		}

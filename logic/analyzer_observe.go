@@ -12,16 +12,21 @@ import (
 
 /*
 observeStates walks manifold state into resonance, causal, and forecast outputs.
-A symbol epoch is observed once; later Analyzer cuts that still see that GasReady
-view treat it as replay so idle Hawkes republishes cannot wipe calibrated
-evidence by re-running Update at the same At.
+One thesis tick is one shared physics step; every GasReady symbol observes that
+reading once for this tick.
 */
 func (analyzer *Analyzer) observeStates(thesis *types.Thesis) []manifold.State {
 	states := make([]manifold.State, 0)
 	observeStarted := time.Now()
 
 	if analyzer.observed == nil {
-		analyzer.observed = make(map[string]uint64)
+		analyzer.observed = make(map[string]int64)
+	}
+
+	tick := int64(0)
+
+	if thesis != nil {
+		tick = thesis.Tick
 	}
 
 	thesis.Manifold.Range(func(_, value any) bool {
@@ -37,19 +42,18 @@ func (analyzer *Analyzer) observeStates(thesis *types.Thesis) []manifold.State {
 			return true
 		}
 
-		if !state.Replay && analyzer.observed[state.Symbol] >= state.Epoch {
-			state.Replay = true
-			thesis.Manifold.Store(state.Symbol, state)
-		}
-
 		states = append(states, state)
 
-		if state.Replay {
+		if !state.GasReady() {
+			return true
+		}
+
+		if tick > 0 && analyzer.observed[state.Symbol] >= tick {
 			return true
 		}
 
 		if analyzer.observe(thesis, state) {
-			analyzer.observed[state.Symbol] = state.Epoch
+			analyzer.observed[state.Symbol] = tick
 		}
 
 		return true
@@ -131,13 +135,13 @@ func (analyzer *Analyzer) observe(
 
 	analyzer.forecast(thesis, state, resonanceOutcome, causalOutcome)
 
-	// Lock the epoch only after resonance publishes — earlier retries keep
+	// Lock the tick only after resonance publishes — earlier retries keep
 	// feeding the same physical view until time-elastic baselines are ready.
 	return resonanceOutcome != nil
 }
 
 /*
-dropSymbolEvidence removes one symbol's prior observe outputs so a fresh epoch
+dropSymbolEvidence removes one symbol's prior observe outputs so a fresh tick
 replaces them instead of appending duplicates.
 */
 func (analyzer *Analyzer) dropSymbolEvidence(thesis *types.Thesis, symbol string) {

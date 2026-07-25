@@ -40,18 +40,20 @@ func TestProbeFullAnalyzerPath(t *testing.T) {
 			}
 		}
 		types.SetFocus(market.Symbols[0])
-		var advanced, replayed, cuts, categories int
+		var advanced, held, cuts, categories int
 		var cognitions int
+		epochs := map[string]uint64{}
 		if err := market.Transition(proof.state, func() error {
 			cuts++
 			thesis := wired.Thesis
 			thesis.Manifold.Range(func(_, value any) bool {
 				state := value.(manifold.State)
-				if state.Replay {
-					replayed++
-				} else {
+				if state.Epoch > epochs[state.Symbol] {
+					epochs[state.Symbol] = state.Epoch
 					advanced++
+					return true
 				}
+				held++
 				return true
 			})
 			thesis.Cognition.Range(func(_, _ any) bool {
@@ -75,16 +77,16 @@ func TestProbeFullAnalyzerPath(t *testing.T) {
 			cognitionCached = true
 			return false
 		})
-		t.Logf("%s: cuts=%d advanced=%d replayed=%d cognitions=%d categories=%d frames=%v/%v/%v",
-			proof.name, cuts, advanced, replayed, cognitions, categories,
+		t.Logf("%s: cuts=%d advanced=%d held=%d cognitions=%d categories=%d frames=%v/%v/%v",
+			proof.name, cuts, advanced, held, cognitions, categories,
 			resonanceCached, manifoldReady, cognitionCached)
 
 		if cuts == 0 {
-			t.Errorf("%s: expected transition cuts during replay", proof.name)
+			t.Errorf("%s: expected transition cuts", proof.name)
 		}
 
-		if advanced+replayed == 0 {
-			t.Errorf("%s: expected manifold advancement or replay frames", proof.name)
+		if advanced+held == 0 {
+			t.Errorf("%s: expected manifold frames", proof.name)
 		}
 
 		if !resonanceCached {
@@ -100,7 +102,9 @@ func TestProbeFullAnalyzerPath(t *testing.T) {
 		}
 
 		types.SetFocus("")
-		_ = wired.Close()
+		if err := wired.Close(); err != nil {
+			t.Fatalf("%s close: %v", proof.name, err)
+		}
 		market.Close()
 	}
 }

@@ -1,7 +1,10 @@
 import { createRef, useEffect } from "react";
 import type { FluidFieldLayer } from "#/collections/terminal";
 import type { ManifoldFrame } from "#/collections/types";
-import { drawFluidFieldGL } from "#/components/charts/fluid-gl";
+import {
+	drawFluidDisplay,
+	drawFluidFieldGL,
+} from "#/components/charts/fluid-gl";
 import {
 	clearCanvas,
 	drawGrid,
@@ -10,13 +13,11 @@ import {
 } from "#/components/terminal/canvas";
 import {
 	finiteNumber,
-	fluidGridDimensions,
 	frameAuxMatrix,
 	frameReading,
 	type TerminalPhaseResponse,
 	type TerminalPhaseStatus,
 	type TerminalWaveMode,
-	terminalFluidParticlesFromFrame,
 	terminalPhaseScanFromFrame,
 	terminalPhaseStatusFromFrame,
 	terminalWaveModesFromFrame,
@@ -27,15 +28,12 @@ import {
 	isFluidFieldMatrix,
 	resolveFluidDisplayLattice,
 } from "#/components/terminal/fluid-field";
-import { drawFluidParticles } from "#/components/terminal/fluid-particles";
 import {
 	clearManifoldBinary,
+	latestDisplay,
 	withBinaryLattices,
 } from "#/providers/manifold-binary";
-import {
-	latestManifoldParticles,
-	latestManifoldWave,
-} from "#/providers/manifold-parts";
+import { latestManifoldWave } from "#/providers/manifold-parts";
 
 const fluidFieldCanvasRef = createRef<HTMLCanvasElement>();
 const fluidOverlayCanvasRef = createRef<HTMLCanvasElement>();
@@ -267,9 +265,9 @@ export const paintTerminalFluidChart = (
 };
 
 /*
-repaintTerminalFluidChart redraws the retained field batch after split
-manifold_particles / manifold_wave packets arrive. Those packets store only;
-without a redraw the phase dial never sees the wave modes for the cut.
+repaintTerminalFluidChart redraws the retained field batch after binary lattice
+or manifold_wave packets arrive. Those packets store only; without a redraw the
+phase dial never sees the wave modes for the cut.
 */
 export const repaintTerminalFluidChart = (focusSymbol: string) => {
 	if (lastManifoldBatch === null) {
@@ -321,39 +319,43 @@ const paintTerminalFluidCompose = (
 		return;
 	}
 
-	const particlePacket = latestManifoldParticles(frame.symbol);
 	const wavePacket = latestManifoldWave(frame.symbol);
 	const composed: ManifoldFrame = {
 		...frame,
-		particles: particlePacket?.particles ?? frame.particles,
 		wave: wavePacket?.wave ?? frame.wave,
 	};
 
+	const baked = latestDisplay();
 	const rho = frameAuxMatrix(composed, "rho");
 	const psiMag2 = frameAuxMatrix(composed, "psiMag2");
-	const particles = terminalFluidParticlesFromFrame(composed);
 	const display = resolveFluidDisplayLattice(
 		isFluidFieldMatrix(rho) ? rho : [],
 		psiMag2,
 		fluidLayer,
 	);
-	const { columns, rows } = fluidGridDimensions(composed, display);
 	const reading = frameReading(composed);
 	const wave = terminalWaveModesFromFrame(composed);
 	const phaseScan = terminalPhaseScanFromFrame(composed);
 	const phaseStatus = terminalPhaseStatusFromFrame(composed);
 
 	// Wave-only arrivals still need a paint so the phase dial can appear before
-	// the next gas lattice frame; empty gas+particles+wave is a true no-op.
-	if (display.length === 0 && particles.length === 0 && wave.length === 0) {
+	// the next display frame; empty picture+wave is a true no-op.
+	if (baked === null && display.length === 0 && wave.length === 0) {
 		return;
 	}
 
-	const paintedGL =
-		display.length > 0 &&
-		drawFluidFieldGL(fieldCanvas, width, height, fluidLayer, fluidContour);
+	const painted =
+		drawFluidDisplay(fieldCanvas, width, height) ||
+		(display.length > 0 &&
+			drawFluidFieldGL(
+				fieldCanvas,
+				width,
+				height,
+				fluidLayer,
+				fluidContour,
+			));
 
-	if (!paintedGL) {
+	if (!painted) {
 		const fieldContext = resizeCanvas(fieldCanvas);
 
 		if (fieldContext === null) {
@@ -368,7 +370,6 @@ const paintTerminalFluidCompose = (
 				isFluidFieldMatrix(rho) ? rho : [],
 				fluidContour,
 				{
-					particles,
 					pressureGradX:
 						finiteNumber(composed?.pressureGradX) ??
 						finiteNumber(reading?.pressureGradX) ??
@@ -390,7 +391,6 @@ const paintTerminalFluidCompose = (
 	}
 
 	overlay.clearRect(0, 0, width, height);
-	drawFluidParticles(overlay, width, height, particles, columns, rows);
 	drawPhaseDial(overlay, width, height, wave, phaseScan, phaseStatus);
 };
 

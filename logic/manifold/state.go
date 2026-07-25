@@ -10,26 +10,6 @@ import (
 )
 
 /*
-Particle is the dashboard view of one focused symbol observation after the
-shared Sensorium step. Cell coordinates preserve the established wire format.
-*/
-type Particle struct {
-	Role           string  `json:"role"`
-	CellX          float64 `json:"cell_x"`
-	CellY          float64 `json:"cell_y"`
-	CellZ          float64 `json:"cell_z"`
-	Phase          float64 `json:"phase"`
-	Omega          float64 `json:"omega"`
-	Amplitude      float64 `json:"amplitude"`
-	Heat           float64 `json:"heat"`
-	VelX           float64 `json:"vel_x"`
-	VelY           float64 `json:"vel_y"`
-	VelZ           float64 `json:"vel_z"`
-	Speed          float64 `json:"speed"`
-	SpatialTokenID uint32  `json:"spatial_token_id,omitempty"`
-}
-
-/*
 PhaseOutcome is the DMT attractor classification that was actually available
 for a focused market state when its resident field snapshot was retained. Its
 support and ambiguity make the categorical phase sectors auditable.
@@ -77,13 +57,14 @@ type State struct {
 	Reading               pfluid.Reading    `json:"reading"`
 	OscillatorCount       int               `json:"oscillatorCount"`
 	SharedOscillatorCount int               `json:"sharedOscillatorCount"`
-	Replay                bool              `json:"replay,omitempty"`
 	Grid                  pfluid.Grid       `json:"grid,omitempty"`
-	Rho                   [][]float64       `json:"rho,omitempty"`
-	PsiMag2               [][]float64       `json:"psiMag2,omitempty"`
-	GuidanceVelX          [][]float64       `json:"guidanceVelX,omitempty"`
-	GuidanceVelZ          [][]float64       `json:"guidanceVelZ,omitempty"`
-	Particles             []Particle        `json:"particles,omitempty"`
+	Display               []byte            `json:"-"`
+	DisplayWidth          int               `json:"-"`
+	DisplayHeight         int               `json:"-"`
+	RhoOccupied           int               `json:"rhoOccupied,omitempty"`
+	PsiOccupied           int               `json:"psiOccupied,omitempty"`
+	RhoMax                float64           `json:"rhoMax,omitempty"`
+	PsiMax                float64           `json:"psiMax,omitempty"`
 	Wave                  []pfluid.WaveMode `json:"wave,omitempty"`
 	PhaseReady            bool              `json:"phaseReady"`
 	PhaseReason           string            `json:"phaseReason,omitempty"`
@@ -93,6 +74,10 @@ type State struct {
 /*
 view constructs the symbol-local market metadata around a shared physical
 reading. Touch notionals use exact Kraken decimals for sizing contracts.
+appended is true when this tick ingested a new book/Hawkes sample; otherwise
+the prior touch metadata is kept and only the shared reading + clock advance.
+Every physics step advances the symbol's own observation clock — never the
+process wall clock — so resonance chronology stays aligned with Hawkes epochs.
 */
 func (slot *symbolSlot) view(
 	candidate intensityCandidate,
@@ -100,13 +85,19 @@ func (slot *symbolSlot) view(
 	reading pfluid.Reading,
 	diagnostics pfluid.Diagnostics,
 	grid pfluid.Grid,
-	advanced bool,
+	appended bool,
 ) State {
-	if !advanced {
+	if !appended {
 		state := slot.last
 		state.Reading = reading
-		state.Replay = true
-		slot.last.Reading = reading
+		state.Subdivisions = diagnostics.Halvings + 1
+		// Microsecond bump keeps chronology strict without racing ahead of the
+		// next Hawkes epoch timestamp on the market clock.
+		state.At, state.Duration = slot.stepClock(
+			state.At.Add(time.Microsecond),
+			state.Duration,
+		)
+		slot.last = state
 		return state
 	}
 
@@ -117,18 +108,7 @@ func (slot *symbolSlot) view(
 		interval = outcome.At.Sub(slot.last.At)
 	}
 
-	// Resonance and causal heads require strictly increasing observation time.
-	// Hawkes can admit a new EventCount at an unchanged wall clock; bump by one
-	// microsecond so the shared physical step remains chronologically ordered.
-	at := outcome.At
-
-	if !slot.last.At.IsZero() && !at.After(slot.last.At) {
-		at = slot.last.At.Add(time.Microsecond)
-
-		if interval <= 0 {
-			interval = time.Microsecond
-		}
-	}
+	at, interval := slot.stepClock(outcome.At, interval)
 
 	state := State{
 		Source:           "manifold",
@@ -158,6 +138,40 @@ func (slot *symbolSlot) view(
 
 	slot.last = state
 	return state
+}
+
+/*
+stepClock returns a strictly progressing observation time for one physics step.
+Hawkes can admit a new EventCount at an unchanged wall clock; the cut clock or a
+one-microsecond bump keeps resonance/causal chronology ordered.
+*/
+func (slot *symbolSlot) stepClock(
+	candidate time.Time,
+	interval time.Duration,
+) (time.Time, time.Duration) {
+	at := candidate
+
+	if at.IsZero() && !slot.last.At.IsZero() {
+		at = slot.last.At.Add(time.Microsecond)
+	}
+
+	if !slot.last.At.IsZero() && !at.After(slot.last.At) {
+		at = slot.last.At.Add(time.Microsecond)
+
+		if interval <= 0 {
+			interval = time.Microsecond
+		}
+	}
+
+	if interval <= 0 && !slot.last.At.IsZero() {
+		interval = at.Sub(slot.last.At)
+	}
+
+	if interval <= 0 {
+		interval = time.Microsecond
+	}
+
+	return at, interval
 }
 
 /*
@@ -196,15 +210,17 @@ func (state State) GasReady() bool {
 }
 
 /*
-Summary removes projection payloads while retaining all scalar physics.
+Summary removes display and wave payloads while retaining all scalar physics.
 */
 func (state State) Summary() State {
 	state.Grid = pfluid.Grid{}
-	state.Rho = nil
-	state.PsiMag2 = nil
-	state.GuidanceVelX = nil
-	state.GuidanceVelZ = nil
-	state.Particles = nil
+	state.Display = nil
+	state.DisplayWidth = 0
+	state.DisplayHeight = 0
+	state.RhoOccupied = 0
+	state.PsiOccupied = 0
+	state.RhoMax = 0
+	state.PsiMax = 0
 	state.Wave = nil
 	state.PhaseReady = false
 	state.PhaseReason = ""

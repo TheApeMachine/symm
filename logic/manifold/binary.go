@@ -12,10 +12,11 @@ const (
 	binaryMagic2 = 'F'
 	binaryMagic3 = '1'
 
-	BinaryKindRho        uint8 = 1
-	BinaryKindPsi        uint8 = 2
-	BinaryKindGuidanceX  uint8 = 3
-	BinaryKindGuidanceZ  uint8 = 4
+	BinaryKindRho       uint8 = 1
+	BinaryKindPsi       uint8 = 2
+	BinaryKindGuidanceX uint8 = 3
+	BinaryKindGuidanceZ uint8 = 4
+	BinaryKindDisplay   uint8 = 5
 )
 
 /*
@@ -31,6 +32,8 @@ func binaryKindKey(kind uint8) string {
 		return "manifold_guidance_x"
 	case BinaryKindGuidanceZ:
 		return "manifold_guidance_z"
+	case BinaryKindDisplay:
+		return "manifold_display"
 	default:
 		return ""
 	}
@@ -125,6 +128,40 @@ func EncodeLattice(
 			offset += 2
 		}
 	}
+
+	return payload, true
+}
+
+/*
+EncodeDisplay packs one backend-composited RGBA8 texture. One frame replaces
+four scalar lattice messages; the client blits instead of re-shading planes.
+*/
+func EncodeDisplay(
+	symbol string, at time.Time, width, height int, rgba []byte,
+) ([]byte, bool) {
+	if symbol == "" || len(symbol) > 255 || width <= 0 || height <= 0 {
+		return nil, false
+	}
+
+	if len(rgba) != width*height*4 {
+		return nil, false
+	}
+
+	header := 4 + 1 + 2 + 2 + 4 + 4 + 8 + 1 + len(symbol)
+	payload := make([]byte, header+len(rgba))
+	payload[0] = binaryMagic0
+	payload[1] = binaryMagic1
+	payload[2] = binaryMagic2
+	payload[3] = binaryMagic3
+	payload[4] = BinaryKindDisplay
+	binary.LittleEndian.PutUint16(payload[5:7], uint16(width))
+	binary.LittleEndian.PutUint16(payload[7:9], uint16(height))
+	binary.LittleEndian.PutUint32(payload[9:13], math.Float32bits(0))
+	binary.LittleEndian.PutUint32(payload[13:17], math.Float32bits(1))
+	binary.LittleEndian.PutUint64(payload[17:25], uint64(at.UnixNano()))
+	payload[25] = byte(len(symbol))
+	copy(payload[26:26+len(symbol)], symbol)
+	copy(payload[26+len(symbol):], rgba)
 
 	return payload, true
 }

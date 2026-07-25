@@ -53,19 +53,24 @@ func TestCalibrateCategories(t *testing.T) {
 }
 
 /*
-TestWireManifoldPrefersFocusCarrier proves the pilot-wave batch keeps shared
-ρ/|ψ|² on the focused symbol in a single row so one UI frame paints the field.
+TestWireManifoldPrefersFocusCarrier proves the pilot-wave batch keeps the shared
+GPU display texture on the focused symbol in a single row so one UI frame paints
+the field.
 */
 func TestWireManifoldPrefersFocusCarrier(t *testing.T) {
-	Convey("Given three manifold states with lattices on ETH", t, func() {
+	Convey("Given three manifold states with display on ETH", t, func() {
+		display := []byte{10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255}
 		states := []manifold.State{
 			{
-				Source:    "manifold",
-				Symbol:    "ETH/USD",
-				At:        time.Unix(1, 0).UTC(),
-				Rho:       [][]float64{{0.1, 0.2}},
-				PsiMag2:   [][]float64{{1, 0}},
-				Particles: []manifold.Particle{{Role: "particle"}},
+				Source:          "manifold",
+				Symbol:          "ETH/USD",
+				At:              time.Unix(1, 0).UTC(),
+				Display:         display,
+				DisplayWidth:    2,
+				DisplayHeight:   2,
+				OscillatorCount: 3,
+				RhoOccupied:     2,
+				PsiOccupied:     2,
 			},
 			{
 				Source: "manifold",
@@ -86,9 +91,9 @@ func TestWireManifoldPrefersFocusCarrier(t *testing.T) {
 			wired := wireManifold(states)
 			So(wired, ShouldHaveLength, 1)
 			So(wired[0].Symbol, ShouldEqual, "BTC/USD")
-			So(wired[0].Rho, ShouldResemble, [][]float64{{0.1, 0.2}})
-			So(wired[0].PsiMag2, ShouldResemble, [][]float64{{1, 0}})
-			So(wired[0].Particles, ShouldNotBeEmpty)
+			So(wired[0].Display, ShouldResemble, display)
+			So(wired[0].DisplayWidth, ShouldEqual, 2)
+			So(wired[0].OscillatorCount, ShouldEqual, 3)
 		})
 
 		Convey("When focus is unset", func() {
@@ -97,8 +102,8 @@ func TestWireManifoldPrefersFocusCarrier(t *testing.T) {
 			wired := wireManifold(states)
 			So(wired, ShouldHaveLength, 1)
 			So(wired[0].Symbol, ShouldEqual, "ETH/USD")
-			So(wired[0].Rho, ShouldNotBeEmpty)
-			So(wired[0].Particles, ShouldNotBeEmpty)
+			So(wired[0].Display, ShouldNotBeEmpty)
+			So(wired[0].OscillatorCount, ShouldEqual, 3)
 		})
 	})
 }
@@ -127,11 +132,14 @@ func TestPublishMeasuredEmitsOrderedFrames(t *testing.T) {
 		}
 		states := []manifold.State{
 			{
-				Source:  "manifold",
-				Symbol:  "ETH/USD",
-				At:      time.Unix(1, 0).UTC(),
-				Rho:     [][]float64{{0.1, 0.2}},
-				PsiMag2: [][]float64{{1, 0}},
+				Source:        "manifold",
+				Symbol:        "ETH/USD",
+				At:            time.Unix(1, 0).UTC(),
+				Display:       []byte{10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255},
+				DisplayWidth:  2,
+				DisplayHeight: 2,
+				RhoOccupied:   1,
+				PsiOccupied:   1,
 			},
 			{
 				Source: "manifold",
@@ -151,10 +159,9 @@ func TestPublishMeasuredEmitsOrderedFrames(t *testing.T) {
 			So(thesis.Hypotheses, ShouldHaveLength, 2)
 		})
 
-		Convey("It emits focus-only rows, meta manifold, binary lattices, parts", func() {
-			// resonance + causal + hypotheses + manifold meta + 2 lattices (rho, psi)
-			// + particles + wave. Guidance planes are empty on the fixture states.
-			So(len(ui), ShouldEqual, 8)
+		Convey("It emits focus-only rows, meta, one display texture, wave", func() {
+			// resonance + causal + hypotheses + manifold meta + display + wave.
+			So(len(ui), ShouldEqual, 6)
 
 			resonance := string(<-ui)
 			So(resonance, ShouldContainSubstring, `"resonance":`)
@@ -177,23 +184,15 @@ func TestPublishMeasuredEmitsOrderedFrames(t *testing.T) {
 			So(manifoldFrame, ShouldNotContainSubstring, `"rho"`)
 			So(manifoldFrame, ShouldNotContainSubstring, `"ETH/USD"`)
 
-			rho := <-ui
-			key, ok := manifold.BinaryCacheKey(rho)
+			display := <-ui
+			key, ok := manifold.BinaryCacheKey(display)
 			So(ok, ShouldBeTrue)
-			So(key, ShouldEqual, "manifold_rho")
-
-			psi := <-ui
-			key, ok = manifold.BinaryCacheKey(psi)
-			So(ok, ShouldBeTrue)
-			So(key, ShouldEqual, "manifold_psi")
-
-			particlesFrame := string(<-ui)
-			So(particlesFrame, ShouldContainSubstring, `"manifold_particles":`)
-			So(particlesFrame, ShouldContainSubstring, `"BTC/USD"`)
+			So(key, ShouldEqual, "manifold_display")
 
 			waveFrame := string(<-ui)
 			So(waveFrame, ShouldContainSubstring, `"manifold_wave":`)
 			So(waveFrame, ShouldContainSubstring, `"BTC/USD"`)
+			So(waveFrame, ShouldNotContainSubstring, `"manifold_particles"`)
 		})
 	})
 }
@@ -364,8 +363,9 @@ func BenchmarkPublishMeasured(b *testing.B) {
 		}
 	}
 
-	states[0].Rho = [][]float64{{0.1, 0.2}, {0.3, 0.4}}
-	states[0].PsiMag2 = [][]float64{{1, 0}, {0, 1}}
+	states[0].Display = []byte{10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255}
+	states[0].DisplayWidth = 2
+	states[0].DisplayHeight = 2
 
 	b.ReportAllocs()
 	b.ResetTimer()

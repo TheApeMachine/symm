@@ -1,7 +1,9 @@
 package manifold
 
 import (
+	"math"
 	"testing"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	. "github.com/smartystreets/goconvey/convey"
@@ -26,43 +28,79 @@ func TestPackContent(t *testing.T) {
 func TestTokenizer_MakeBatch(t *testing.T) {
 	Convey("Given one L3 book sample with bid and ask resting orders", t, func() {
 		tokenizer := NewTokenizer(pfluid.DefaultConfig())
+		at := time.Unix(10, 0)
 		orders := []restingOrder{
-			{side: book.Bid, price: 99},
-			{side: book.Ask, price: 101},
-			{side: book.Bid, price: 99},
+			{side: book.Bid, price: 99, quantity: 1, at: at},
+			{side: book.Ask, price: 101, quantity: 4, at: at.Add(time.Second)},
+			{side: book.Bid, price: 98, quantity: 2, at: at.Add(2 * time.Second)},
 		}
 		symbolIndex := uint32(2)
 
-		Convey("It should pack content as sequence×side×symbol and site ω on the book circle", func() {
+		Convey("It should place orders on log-price / log-size / age-rank axes", func() {
 			batch := tokenizer.MakeBatch(orders, 100, 2.5, 0.75, symbolIndex)
 			So(batch.Particles, ShouldHaveLength, len(orders))
 			So(batch.ContentIDs, ShouldHaveLength, len(orders))
 
+			grid := tokenizer.config.Grid
+			extent := max(grid.X, grid.Y, grid.Z)
+			spacing := float32(1.0 / float64(extent))
+			zSpan := float32(grid.Z-1) * spacing
+
 			for index, particle := range batch.Particles {
 				So(particle.Velocity, ShouldResemble, pfluid.Vector{})
 				So(particle.Mass, ShouldEqual, float32(1))
-				So(particle.Omega, ShouldBeGreaterThanOrEqualTo, float32(-4))
-				So(particle.Omega, ShouldBeLessThanOrEqualTo, float32(4))
 				So(
 					batch.ContentIDs[index],
 					ShouldEqual,
 					packContent(index, symbolIndex, orders[index].side),
 				)
-
-				if orders[index].side == book.Ask {
-					So(particle.Energy, ShouldEqual, float32(0.75))
-					So(particle.Heat, ShouldEqual, float32(0.75)*injectHeatFraction)
-					continue
-				}
-
-				So(particle.Energy, ShouldEqual, float32(2.5))
-				So(particle.Heat, ShouldEqual, float32(2.5)*injectHeatFraction)
 			}
 
-			cfg := tokenizer.config
-			span := cfg.OmegaMax - cfg.OmegaMin
-			So(batch.Particles[0].Omega, ShouldEqual, cfg.OmegaMin+(0.5)/3*span)
-			So(batch.Particles[2].Omega, ShouldEqual, cfg.OmegaMin+(2.5)/3*span)
+			// Oldest → Z=0, newest → Z=max. Prices span X; sizes span Y.
+			So(float64(batch.Particles[0].Position.Z), ShouldAlmostEqual, 0, 1e-5)
+			So(float64(batch.Particles[2].Position.Z), ShouldAlmostEqual, float64(zSpan), 1e-5)
+			So(batch.Particles[0].Position.X, ShouldBeLessThan, batch.Particles[1].Position.X)
+			So(batch.Particles[0].Position.Y, ShouldBeLessThan, batch.Particles[1].Position.Y)
+
+			So(batch.Particles[1].Energy, ShouldEqual, float32(0.75))
+			So(batch.Particles[0].Energy, ShouldEqual, float32(2.5))
+		})
+	})
+}
+
+func TestOrderAgeRanks(t *testing.T) {
+	Convey("Given resting orders with distinct timestamps", t, func() {
+		at := time.Unix(1, 0)
+		orders := []restingOrder{
+			{at: at.Add(2 * time.Second)},
+			{at: at},
+			{at: at.Add(time.Second)},
+		}
+
+		Convey("It should rank oldest as zero", func() {
+			So(orderAgeRanks(orders), ShouldResemble, []int{2, 0, 1})
+		})
+	})
+}
+
+func TestMarketPosition(t *testing.T) {
+	Convey("Given sample-relative market axes", t, func() {
+		grid := pfluid.Grid{X: 64, Y: 64, Z: 64, Spacing: 1.0 / 64.0}
+		spacing := float32(1.0 / 64.0)
+
+		Convey("It should put extremes on opposite Z cells for age ranks", func() {
+			oldest := marketPosition(
+				100, 100, 1, 0, 3,
+				-0.1, 0.1, 0, math.Log(4),
+				grid, spacing,
+			)
+			newest := marketPosition(
+				100, 100, 1, 2, 3,
+				-0.1, 0.1, 0, math.Log(4),
+				grid, spacing,
+			)
+			So(oldest.Z, ShouldEqual, float32(0))
+			So(newest.Z, ShouldEqual, float32(63)*spacing)
 		})
 	})
 }
@@ -92,6 +130,7 @@ func TestPositionPhase(t *testing.T) {
 func BenchmarkTokenizer_MakeBatch(b *testing.B) {
 	tokenizer := NewTokenizer(pfluid.DefaultConfig())
 	orders := make([]restingOrder, 64)
+	at := time.Unix(1, 0)
 
 	for index := range orders {
 		side := book.BookDirection(book.Bid)
@@ -101,8 +140,10 @@ func BenchmarkTokenizer_MakeBatch(b *testing.B) {
 		}
 
 		orders[index] = restingOrder{
-			side:  side,
-			price: 100 + float64(index%7),
+			side:     side,
+			price:    100 + float64(index%7),
+			quantity: float64(1 + index%5),
+			at:       at.Add(time.Duration(index) * time.Millisecond),
 		}
 	}
 

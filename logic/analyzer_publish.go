@@ -37,14 +37,13 @@ func (analyzer *Analyzer) publishMeasured(
 	}
 
 	if wired := wireManifold(states); len(wired) > 0 {
-		field, lattices, particles, wave := wired[0].WirePackets()
+		field, lattices, wave := wired[0].WirePackets()
 		analyzer.publish(datura.Map[any]{"manifold": []manifold.WireField{field}})
 
 		for _, lattice := range lattices {
 			analyzer.publishRaw(lattice)
 		}
 
-		analyzer.publish(datura.Map[any]{"manifold_particles": particles})
 		analyzer.publish(datura.Map[any]{"manifold_wave": wave})
 	}
 
@@ -56,9 +55,9 @@ func (analyzer *Analyzer) publishMeasured(
 
 /*
 wireManifold publishes one row carrying the shared Sensorium field. Focus only
-chooses which symbol label the row wears for client-side inheritance; ρ, |ψ|²,
-guidance, wave, and the resident particle cloud are shared physics and always
-travel with that row — the manifold is not a per-symbol mechanism.
+chooses which symbol label the row wears for client-side inheritance; the GPU
+display texture and wave are shared physics and always travel with that row —
+the manifold is not a per-symbol mechanism.
 */
 func wireManifold(states []manifold.State) []manifold.State {
 	if len(states) == 0 {
@@ -68,7 +67,7 @@ func wireManifold(states []manifold.State) []manifold.State {
 	field := -1
 
 	for index, state := range states {
-		if len(state.Rho) > 0 {
+		if len(state.Display) > 0 {
 			field = index
 			break
 		}
@@ -91,12 +90,15 @@ func wireManifold(states []manifold.State) []manifold.State {
 	}
 
 	selected := states[target]
-	selected.Rho = states[field].Rho
-	selected.PsiMag2 = states[field].PsiMag2
-	selected.GuidanceVelX = states[field].GuidanceVelX
-	selected.GuidanceVelZ = states[field].GuidanceVelZ
+	selected.Display = states[field].Display
+	selected.DisplayWidth = states[field].DisplayWidth
+	selected.DisplayHeight = states[field].DisplayHeight
+	selected.RhoOccupied = states[field].RhoOccupied
+	selected.PsiOccupied = states[field].PsiOccupied
+	selected.RhoMax = states[field].RhoMax
+	selected.PsiMax = states[field].PsiMax
+	selected.Grid = states[field].Grid
 	selected.Wave = states[field].Wave
-	selected.Particles = states[field].Particles
 	selected.OscillatorCount = states[field].OscillatorCount
 	selected.SharedOscillatorCount = states[field].SharedOscillatorCount
 

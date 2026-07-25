@@ -1,7 +1,6 @@
 package manifold
 
 import (
-	"math"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -10,35 +9,56 @@ import (
 )
 
 /*
-project reads the shared field projection and resident omega spectrum for every
+projectFrame is one shared-field publish read: GPU display texture plus resident
+omega spectrum. Phase scans stay per-symbol in phase.
+*/
+type projectFrame struct {
+	grid    pfluid.Grid
+	display []byte
+	width   int
+	height  int
+	stats   pfluid.DisplayStats
+	wave    []pfluid.WaveMode
+}
+
+/*
+project reads the GPU display texture and resident omega spectrum for every
 GasReady symbol view. Phase scans stay per-symbol in phase.
 */
-func (solver *Solver) project() (pfluid.Projection, []pfluid.WaveMode, error) {
+func (solver *Solver) project() (projectFrame, error) {
+	frame := projectFrame{grid: solver.config.Grid}
+
 	if solver.domain == nil || solver.domain.ParticleCount() == 0 {
-		return pfluid.Projection{Grid: solver.config.Grid}, nil, nil
+		return frame, nil
 	}
 
 	wave, err := solver.domain.Wave()
 
 	if err != nil {
-		return pfluid.Projection{}, nil, errnie.Err(
+		return frame, errnie.Err(
 			errnie.Internal,
 			"manifold: failed to read shared omega spectrum",
 			err,
 		)
 	}
 
-	projection, err := solver.domain.Projection()
+	rgba, stats, err := solver.domain.Display()
 
 	if err != nil {
-		return pfluid.Projection{}, nil, errnie.Err(
+		return frame, errnie.Err(
 			errnie.Internal,
-			"manifold: failed to read shared field projection",
+			"manifold: failed to read shared display texture",
 			err,
 		)
 	}
 
-	return projection, wave, nil
+	frame.display = rgba
+	frame.width = int(stats.Width)
+	frame.height = int(stats.Height)
+	frame.stats = stats
+	frame.wave = wave
+
+	return frame, nil
 }
 
 /*
@@ -83,33 +103,33 @@ func (solver *Solver) phase(
 }
 
 /*
-paint attaches the shared field and one shared particle render to a state view
-so the dashboard can render any symbol without a backend focus gate.
+paint attaches the shared GPU display texture and wave reading to a state view
+so the dashboard can blit any symbol without a backend focus gate.
 */
 func (solver *Solver) paint(
 	state *State,
-	grid pfluid.Grid,
-	wave []pfluid.WaveMode,
+	frame projectFrame,
 	phaseScan []PhaseResponse,
-	particles []Particle,
-	rho, psi, guideX, guideZ [][]float64,
+	population int,
 ) {
-	if state == nil || len(rho) == 0 {
+	if state == nil || len(frame.display) == 0 {
 		return
 	}
 
-	state.Grid = grid
-	state.Rho = rho
-	state.PsiMag2 = psi
-	state.GuidanceVelX = guideX
-	state.GuidanceVelZ = guideZ
-	state.Particles = particles
-	state.OscillatorCount = len(particles)
-	state.SharedOscillatorCount = len(particles)
-	state.Wave = wave
+	state.Grid = frame.grid
+	state.Display = frame.display
+	state.DisplayWidth = frame.width
+	state.DisplayHeight = frame.height
+	state.RhoOccupied = int(frame.stats.RhoOccupied)
+	state.PsiOccupied = int(frame.stats.PsiOccupied)
+	state.RhoMax = float64(frame.stats.RhoMax)
+	state.PsiMax = float64(frame.stats.PsiMax)
+	state.OscillatorCount = population
+	state.SharedOscillatorCount = population
+	state.Wave = frame.wave
 	state.PhaseScan = phaseScan
-	state.PhaseReady = len(wave) > 0 && len(phaseScan) == len(wave)
-	state.PhaseReason = solver.phaseReason(state.PhaseReady, wave)
+	state.PhaseReady = len(frame.wave) > 0 && len(phaseScan) == len(frame.wave)
+	state.PhaseReason = solver.phaseReason(state.PhaseReady, frame.wave)
 }
 
 /*
@@ -132,66 +152,4 @@ func (solver *Solver) phaseReason(
 	}
 
 	return "resident wave amplitude is zero"
-}
-
-/*
-projectionRows converts the Metal row-major X-Z projection into dashboard rows
-without changing its values or applying display normalization.
-*/
-func projectionRows(values []float32, grid pfluid.Grid) [][]float64 {
-	if len(values) != grid.X*grid.Z {
-		return nil
-	}
-
-	rows := make([][]float64, grid.Z)
-
-	for cellZ := range grid.Z {
-		rows[cellZ] = make([]float64, grid.X)
-
-		for cellX := range grid.X {
-			rows[cellZ][cellX] = float64(values[cellX+cellZ*grid.X])
-		}
-	}
-
-	return rows
-}
-
-/*
-renderParticles converts one symbol's latest physical observations to the
-established cell-based dashboard payload, including post-merge spatial token IDs.
-*/
-func renderParticles(
-	particles []pfluid.Particle,
-	spatial []uint32,
-	grid pfluid.Grid,
-) []Particle {
-	rendered := make([]Particle, len(particles))
-
-	for index, particle := range particles {
-		velocityX := float64(particle.Velocity.X)
-		velocityY := float64(particle.Velocity.Y)
-		velocityZ := float64(particle.Velocity.Z)
-		rendered[index] = Particle{
-			Role:      "particle",
-			CellX:     float64(particle.Position.X / grid.Spacing),
-			CellY:     float64(particle.Position.Y / grid.Spacing),
-			CellZ:     float64(particle.Position.Z / grid.Spacing),
-			Phase:     float64(particle.Phase),
-			Omega:     float64(particle.Omega),
-			Amplitude: math.Sqrt(float64(particle.Energy)),
-			Heat:      float64(particle.Heat),
-			VelX:      velocityX,
-			VelY:      velocityY,
-			VelZ:      velocityZ,
-			Speed: math.Sqrt(
-				velocityX*velocityX + velocityY*velocityY + velocityZ*velocityZ,
-			),
-		}
-
-		if index < len(spatial) {
-			rendered[index].SpatialTokenID = spatial[index]
-		}
-	}
-
-	return rendered
 }

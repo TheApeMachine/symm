@@ -1,8 +1,8 @@
 /*
-manifold-parts holds the latest split manifold packets so fluid/meta painters
-can compose gas, particles, and wave without one monolithic DRAW frame.
+manifold-parts holds the latest split manifold wave packet so the phase dial
+can compose without one monolithic DRAW frame. Lattice textures arrive as
+binary SMF1 frames; the oscillator cloud is not wired.
 */
-const particlesBySymbol: Record<string, Record<string, unknown>> = {};
 const waveBySymbol: Record<string, Record<string, unknown>> = {};
 
 const rowPacket = (value: unknown): Record<string, unknown> | null => {
@@ -49,17 +49,9 @@ const ingestPackets = (
 	}
 };
 
-export const paintManifoldParticles = (value: unknown) => {
-	ingestPackets(particlesBySymbol, value);
-};
-
 export const paintManifoldWave = (value: unknown) => {
 	ingestPackets(waveBySymbol, value);
 };
-
-export const latestManifoldParticles = (
-	symbol = "",
-): Record<string, unknown> | null => particlesBySymbol[symbol] ?? null;
 
 export const latestManifoldWave = (
 	symbol = "",
