@@ -102,9 +102,10 @@ func CloneMeasurements(rows []*Measurement) []*Measurement {
 }
 
 /*
-NewImmutableCut builds a cut from the current thesis publish surface. Measurement
-rows are deep-copied so later Publish pointer replacements and any in-place
-enrichment cannot mutate a historical cut.
+NewImmutableCut builds a cut from the current thesis publish surface. Measurements
+are a shallow pointer-slice snapshot: Publish replaces row pointers rather than
+mutating published rows, so SnapshotMeasurements is the correct freeze. Deep-
+cloning every Measurement struct here allocated hundreds of gigabytes per run.
 */
 func NewImmutableCut(id CutID, tick int64, thesis *Thesis) *ImmutableCut {
 	if thesis == nil {
@@ -115,7 +116,7 @@ func NewImmutableCut(id CutID, tick int64, thesis *Thesis) *ImmutableCut {
 		ID:           id,
 		Tick:         tick,
 		At:           thesis.At,
-		Measurements: CloneMeasurements(thesis.SnapshotMeasurements()),
+		Measurements: thesis.SnapshotMeasurements(),
 		Forecasts:    cloneForecasts(thesis.Forecasts),
 		Decisions:    cloneDecisions(thesis.Decisions),
 		Hypotheses:   cloneHypotheses(thesis.Hypotheses),
