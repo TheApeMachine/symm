@@ -152,27 +152,23 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			continue
 		}
 
-		cogVal, ok := thesis.Cognition.Load(forecast.Symbol)
+		cognition := types.Cognition{
+			Ready:      true,
+			Confidence: forecast.Confidence,
+		}
+		cognitionReady := false
+		cogVal, found := thesis.Cognition.Load(forecast.Symbol)
 
-		if !ok {
-			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
-				*forecast, 0, "cognitive_not_ready",
-				"cognitive memory is not ready for this evidence sequence",
-			))
-			continue
+		if found {
+			live, ok := cogVal.(types.Cognition)
+
+			if ok && live.Ready {
+				cognition = live
+				cognitionReady = true
+			}
 		}
 
-		cognition, ok := cogVal.(types.Cognition)
-
-		if !ok || !cognition.Ready {
-			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
-				*forecast, 0, "cognitive_not_ready",
-				"cognitive memory is not ready for this evidence sequence",
-			))
-			continue
-		}
-
-		if cognition.Ambiguous {
+		if cognitionReady && cognition.Ambiguous {
 			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
 				*forecast, 0, "cognitive_ambiguity",
 				"cognitive memory is ambiguous for this evidence sequence",
@@ -180,7 +176,7 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			continue
 		}
 
-		if isOpposingRegime(cognition.Winner) {
+		if cognitionReady && isOpposingRegime(cognition.Winner) {
 			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
 				*forecast, 0, "cognitive_opposition",
 				"cognitive memory does not support an entry: "+cognition.Winner,
@@ -188,7 +184,7 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			continue
 		}
 
-		if cognition.Confidence <= 0 {
+		if cognitionReady && cognition.Confidence <= 0 {
 			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
 				*forecast, 0, "cognitive_no_confidence",
 				"cognitive buy support has no confidence",
@@ -270,7 +266,7 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			continue
 		}
 
-		if !reading.CognitiveClears(*forecast) {
+		if cognitionReady && !reading.CognitiveClears(*forecast) {
 			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
 				*forecast, utility, "cognitive_weak",
 				"cognitive confidence does not clear forecast noise share",

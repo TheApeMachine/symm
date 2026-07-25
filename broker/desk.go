@@ -360,18 +360,12 @@ func (desk *Desk) forget(symbol string, position *Position) {
 }
 
 /*
-OpenPositions counts open inventory plus pending slot reservations.
+OpenPositions counts live wallet lots only.
 */
 func (desk *Desk) OpenPositions() int {
 	desk.Update()
 
-	reserved := 0
-
-	if desk.balance != nil {
-		reserved = desk.balance.ReservedSlots()
-	}
-
-	return desk.HoldingCount() + reserved
+	return desk.HoldingCount()
 }
 
 /*

@@ -26,16 +26,16 @@ func (analyzer *Analyzer) publishMeasured(
 ) {
 	publishStarted := time.Now()
 
-	if framed := focusRows(thesis.Resonance); len(framed) > 0 {
-		analyzer.publish(datura.Map[any]{"resonance": framed})
+	if len(thesis.Resonance) > 0 {
+		analyzer.publish(datura.Map[any]{"resonance": thesis.Resonance})
 	}
 
-	if framed := focusRows(thesis.Causal); len(framed) > 0 {
-		analyzer.publish(datura.Map[any]{"causal": framed})
+	if len(thesis.Causal) > 0 {
+		analyzer.publish(datura.Map[any]{"causal": thesis.Causal})
 	}
 
-	if framed := focusHypotheses(thesis.Hypotheses); len(framed) > 0 {
-		analyzer.publish(datura.Map[any]{"hypotheses": framed})
+	if len(thesis.Hypotheses) > 0 {
+		analyzer.publish(datura.Map[any]{"hypotheses": thesis.Hypotheses})
 	}
 
 	if wired := wireManifold(states); len(wired) > 0 {
