@@ -6,14 +6,13 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/logic/manifold"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
 stepManifold appends tokenized book samples for changed Hawkes epochs into the
-resident Sensorium history and advances the shared GPU field when preflight is
-ready.
+resident Sensorium history and always advances the shared GPU field once for
+this tick.
 */
 func (analyzer *Analyzer) stepManifold(
 	thesis *types.Thesis,
@@ -34,16 +33,6 @@ func (analyzer *Analyzer) stepManifold(
 	case hawkes == nil:
 		errnie.Error(audit.Phase(analyzer.recorder, tick, "manifold", map[string]any{
 			"ok": false, "skip": "hawkes_nil",
-		}))
-		return
-	case analyzer.gate == nil:
-		errnie.Error(audit.Phase(analyzer.recorder, tick, "manifold", map[string]any{
-			"ok": false, "skip": "gate_nil",
-		}))
-		return
-	case !analyzer.gate.Ready(system.StagePreflight):
-		errnie.Error(audit.Phase(analyzer.recorder, tick, "manifold", map[string]any{
-			"ok": false, "skip": "preflight",
 		}))
 		return
 	}

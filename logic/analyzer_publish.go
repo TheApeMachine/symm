@@ -37,8 +37,13 @@ func (analyzer *Analyzer) publishMeasured(
 	}
 
 	if wired := wireManifold(states); len(wired) > 0 {
-		field, particles, wave := manifold.WirePackets(wired[0])
+		field, lattices, particles, wave := manifold.WirePackets(wired[0])
 		analyzer.publish(datura.Map[any]{"manifold": []manifold.WireField{field}})
+
+		for _, lattice := range lattices {
+			analyzer.publishRaw(lattice)
+		}
+
 		analyzer.publish(datura.Map[any]{"manifold_particles": particles})
 		analyzer.publish(datura.Map[any]{"manifold_wave": wave})
 	}

@@ -23,10 +23,9 @@ type advanceResult struct {
 
 /*
 advance appends Sensorium-shaped particles for every changed Hawkes/book epoch,
-then performs at most one GPU step over the resident population. Unchanged
-epochs replay shared readings without duplicating particles. After Advance,
-below-mean mass×(energy+heat) contributors are pruned so historical dust cannot
-grow the resident tape without bound.
+then always performs one GPU step over the resident population when any
+particles exist. Unchanged epochs skip append and receive the new shared
+reading. After Advance, below-mean mass×(energy+heat) contributors are pruned.
 */
 func (solver *Solver) advance(
 	thesis *types.Thesis,
@@ -34,20 +33,10 @@ func (solver *Solver) advance(
 	changed map[string]excitation.Outcome,
 ) advanceResult {
 	result := advanceResult{}
-
-	if len(candidates) == 0 {
-		return result
-	}
-
-	failures, grew := solver.appendBatches(candidates, changed)
+	failures, _ := solver.appendBatches(candidates, changed)
 	result.failures = append(result.failures, failures...)
 
-	if len(result.failures) > 0 {
-		return result
-	}
-
-	shouldStep := grew && solver.domain.ParticleCount() > 0
-	reading, diagnostics, err := solver.step(shouldStep)
+	reading, diagnostics, err := solver.step()
 
 	if err != nil {
 		result.failures = append(result.failures, err)
@@ -280,10 +269,10 @@ func (slot *symbolSlot) ingest(candidate intensityCandidate) (Batch, error) {
 }
 
 /*
-step advances the resident Metal population when new observations were
-appended, then reads the shared physical reductions. No host re-upload.
+step advances the resident Metal population once, then reads the shared
+physical reductions. No host re-upload. An empty population is a no-op.
 */
-func (solver *Solver) step(changed bool) (
+func (solver *Solver) step() (
 	pfluid.Reading,
 	pfluid.Diagnostics,
 	error,
@@ -296,13 +285,8 @@ func (solver *Solver) step(changed bool) (
 		)
 	}
 
-	if !changed {
-		if solver.domain.ParticleCount() == 0 {
-			return pfluid.Reading{}, pfluid.Diagnostics{}, nil
-		}
-
-		reading, err := solver.domain.Reading()
-		return reading, pfluid.Diagnostics{}, err
+	if solver.domain.ParticleCount() == 0 {
+		return pfluid.Reading{}, pfluid.Diagnostics{}, nil
 	}
 
 	diagnostics, err := solver.domain.Advance()

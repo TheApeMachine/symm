@@ -49,7 +49,7 @@ func TestSampleConcurrentUpdates(t *testing.T) {
 		select {
 		case <-done:
 			wait.Wait()
-			population, ok := sampler.Sample("BTC/USD", tokenizer)
+			population, ok := sampler.Sample("BTC/USD", tokenizer, 1, 1)
 
 			if !ok || len(population.batch.Particles) == 0 || population.midPrice <= 0 {
 				t.Fatalf("final Sample mid=%v ok=%v particles=%d",
@@ -58,7 +58,7 @@ func TestSampleConcurrentUpdates(t *testing.T) {
 
 			return
 		default:
-			population, ok := sampler.Sample("BTC/USD", tokenizer)
+			population, ok := sampler.Sample("BTC/USD", tokenizer, 1, 1)
 
 			if !ok || len(population.batch.Particles) == 0 || population.midPrice <= 0 {
 				t.Fatalf("Sample mid=%v ok=%v particles=%d",
@@ -70,14 +70,14 @@ func TestSampleConcurrentUpdates(t *testing.T) {
 
 /*
 TestBookSampler_Sample proves a two-sided book yields owned touch scales and a
-cold particle batch.
+Hawkes-energized particle batch.
 */
 func TestBookSampler_Sample(t *testing.T) {
 	Convey("Given a sampled two-sided SDK book", t, func() {
 		source := newTestBookSource("BTC/USD")
 		sampler := newBookSampler(source)
 		tokenizer := NewTokenizer(pfluid.DefaultConfig())
-		population, ready := sampler.Sample("BTC/USD", tokenizer)
+		population, ready := sampler.Sample("BTC/USD", tokenizer, 2.5, 0.75)
 
 		So(ready, ShouldBeTrue)
 		So(population.orderIDs, ShouldHaveLength, 2)
@@ -88,6 +88,16 @@ func TestBookSampler_Sample(t *testing.T) {
 		So(population.buyCapacity.Sign(), ShouldEqual, 1)
 		So(population.sellCapacity.Sign(), ShouldEqual, 1)
 
+		So(population.batch.Particles, ShouldHaveLength, len(population.orderIDs))
+
+		for _, particle := range population.batch.Particles {
+			So(particle.Heat, ShouldEqual, particle.Energy*injectHeatFraction)
+			So(
+				particle.Energy == float32(2.5) || particle.Energy == float32(0.75),
+				ShouldBeTrue,
+			)
+		}
+
 		Convey("Then removing the bid leaves the sample unreadied", func() {
 			symbolBook := source.manager.GetBook("BTC/USD")
 			source.apply(symbolBook, &book.UpdateOptions{
@@ -97,7 +107,7 @@ func TestBookSampler_Sample(t *testing.T) {
 				Quantity:  decimal.NewFromInt64(0),
 				Timestamp: time.Unix(4, 0),
 			})
-			_, twoSided := sampler.Sample("BTC/USD", tokenizer)
+			_, twoSided := sampler.Sample("BTC/USD", tokenizer, 2.5, 0.75)
 
 			So(twoSided, ShouldBeFalse)
 		})
@@ -131,7 +141,7 @@ func BenchmarkBookSampler_Sample(b *testing.B) {
 
 	sampler := newBookSampler(source)
 	tokenizer := NewTokenizer(pfluid.DefaultConfig())
-	_, ready := sampler.Sample("BTC/USD", tokenizer)
+	_, ready := sampler.Sample("BTC/USD", tokenizer, 1, 1)
 
 	if !ready {
 		b.Fatal("book sampler did not become ready")
@@ -141,7 +151,7 @@ func BenchmarkBookSampler_Sample(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		population, sampled := sampler.Sample("BTC/USD", tokenizer)
+		population, sampled := sampler.Sample("BTC/USD", tokenizer, 1, 1)
 
 		if !sampled || len(population.batch.Particles) == 0 {
 			b.Fatal("book sampler lost the population")

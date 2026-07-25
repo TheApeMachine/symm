@@ -1,6 +1,7 @@
-import { createRef } from "react";
+import { createRef, useEffect } from "react";
 import type { FluidFieldLayer } from "#/collections/terminal";
 import type { ManifoldFrame } from "#/collections/types";
+import { drawFluidFieldGL } from "#/components/charts/fluid-gl";
 import {
 	clearCanvas,
 	drawGrid,
@@ -28,11 +29,16 @@ import {
 } from "#/components/terminal/fluid-field";
 import { drawFluidParticles } from "#/components/terminal/fluid-particles";
 import {
+	clearManifoldBinary,
+	withBinaryLattices,
+} from "#/providers/manifold-binary";
+import {
 	latestManifoldParticles,
 	latestManifoldWave,
 } from "#/providers/manifold-parts";
 
-const fluidCanvasRef = createRef<HTMLCanvasElement>();
+const fluidFieldCanvasRef = createRef<HTMLCanvasElement>();
+const fluidOverlayCanvasRef = createRef<HTMLCanvasElement>();
 let fluidContour = false;
 let fluidLayer: FluidFieldLayer = "Composite";
 let fluidFocus = "";
@@ -277,25 +283,27 @@ const paintTerminalFluidCompose = (
 	value: unknown,
 	focusSymbol: string,
 ) => {
-	const canvas = fluidCanvasRef.current;
+	const fieldCanvas = fluidFieldCanvasRef.current;
+	const overlayCanvas = fluidOverlayCanvasRef.current;
 
-	if (canvas === null) {
+	if (fieldCanvas === null || overlayCanvas === null) {
 		return;
 	}
 
-	const context = resizeCanvas(canvas);
+	const overlay = resizeCanvas(overlayCanvas);
 
-	if (context === null) {
+	if (overlay === null) {
 		return;
 	}
 
-	const width = canvas.clientWidth;
-	const height = canvas.clientHeight;
+	const width = overlayCanvas.clientWidth;
+	const height = overlayCanvas.clientHeight;
 	const focusChanged = fluidFocus !== focusSymbol;
 
 	if (focusChanged) {
 		fluidFocus = focusSymbol;
-		drawWaiting(context, width, height, "waiting for pilot-wave field");
+		clearManifoldBinary();
+		drawWaiting(overlay, width, height, "waiting for pilot-wave field");
 	}
 
 	const frames = (
@@ -305,7 +313,9 @@ const paintTerminalFluidCompose = (
 		frames.find(
 			(entry) => focusSymbol === "" || entry.symbol === focusSymbol,
 		) ?? (focusSymbol === "" ? (frames.at(-1) ?? null) : null);
-	const frame = withSharedManifoldField(focused, frames);
+	const frame = withBinaryLattices(
+		withSharedManifoldField(focused, frames) as Record<string, unknown> | null,
+	) as ManifoldFrame | null;
 
 	if (frame === null) {
 		return;
@@ -339,40 +349,56 @@ const paintTerminalFluidCompose = (
 		return;
 	}
 
-	if (display.length > 0) {
-		drawFluidField(
-			context,
-			width,
-			height,
-			isFluidFieldMatrix(rho) ? rho : [],
-			fluidContour,
-			{
-				particles,
-				pressureGradX:
-					finiteNumber(composed?.pressureGradX) ??
-					finiteNumber(reading?.pressureGradX) ??
-					0,
-				pressureGradZ:
-					finiteNumber(composed?.pressureGradZ) ??
-					finiteNumber(reading?.pressureGradZ) ??
-					0,
-				psiMag2,
-				layer: fluidLayer,
-				guidanceVelX: frameAuxMatrix(composed, "guidanceVelX"),
-				guidanceVelZ: frameAuxMatrix(composed, "guidanceVelZ"),
-			},
-		);
-	} else {
-		clearCanvas(context, width, height);
-		drawGrid(context, width, height);
+	const paintedGL =
+		display.length > 0 &&
+		drawFluidFieldGL(fieldCanvas, width, height, fluidLayer, fluidContour);
+
+	if (!paintedGL) {
+		const fieldContext = resizeCanvas(fieldCanvas);
+
+		if (fieldContext === null) {
+			return;
+		}
+
+		if (display.length > 0) {
+			drawFluidField(
+				fieldContext,
+				width,
+				height,
+				isFluidFieldMatrix(rho) ? rho : [],
+				fluidContour,
+				{
+					particles,
+					pressureGradX:
+						finiteNumber(composed?.pressureGradX) ??
+						finiteNumber(reading?.pressureGradX) ??
+						0,
+					pressureGradZ:
+						finiteNumber(composed?.pressureGradZ) ??
+						finiteNumber(reading?.pressureGradZ) ??
+						0,
+					psiMag2,
+					layer: fluidLayer,
+					guidanceVelX: frameAuxMatrix(composed, "guidanceVelX"),
+					guidanceVelZ: frameAuxMatrix(composed, "guidanceVelZ"),
+				},
+			);
+		} else {
+			clearCanvas(fieldContext, width, height);
+			drawGrid(fieldContext, width, height);
+		}
 	}
 
-	drawFluidParticles(context, width, height, particles, columns, rows);
-	drawPhaseDial(context, width, height, wave, phaseScan, phaseStatus);
+	overlay.clearRect(0, 0, width, height);
+	drawFluidParticles(overlay, width, height, particles, columns, rows);
+	drawPhaseDial(overlay, width, height, wave, phaseScan, phaseStatus);
 };
 
 /*
-TerminalFluidChart is the static canvas shell. DRAW paints via paintTerminalFluidChart.
+TerminalFluidChart is the static canvas shell. DRAW paints via
+paintTerminalFluidChart. Layer/contour toggles must repaint the retained batch
+immediately — waiting for the next websocket manifold frame makes the controls
+appear dead.
 */
 export const TerminalFluidChart = ({
 	contour = false,
@@ -384,5 +410,19 @@ export const TerminalFluidChart = ({
 	fluidContour = contour;
 	fluidLayer = layer;
 
-	return <canvas ref={fluidCanvasRef} className="block size-full" />;
+	useEffect(() => {
+		fluidContour = contour;
+		fluidLayer = layer;
+		repaintTerminalFluidChart(fluidFocus);
+	}, [contour, layer]);
+
+	return (
+		<div className="relative block size-full">
+			<canvas ref={fluidFieldCanvasRef} className="absolute inset-0 size-full" />
+			<canvas
+				ref={fluidOverlayCanvasRef}
+				className="absolute inset-0 size-full"
+			/>
+		</div>
+	);
 };

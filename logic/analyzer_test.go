@@ -20,6 +20,7 @@ transition so transient classifications and settled state are both examined.
 type marketOutcome struct {
 	symbols     map[string]bool
 	winners     map[types.CategoryType]int
+	epochs      map[string]uint64
 	minimumFlow float64
 	maximumFlow float64
 	flowAbsSum  float64
@@ -43,11 +44,18 @@ type marketOutcome struct {
 /*
 observeManifold verifies that the analyzer projects every simulated symbol into
 one physically valid state and records whether the Hawkes epoch really advanced.
+
+Trade then ticker both finalize cuts; the ticker refresh stores Replay=true for
+the same ingested epoch. Count epoch growth, not the final Replay bit.
 */
 func (outcome *marketOutcome) observeManifold(
 	thesis *types.Thesis,
 ) {
 	count := 0
+
+	if outcome.epochs == nil {
+		outcome.epochs = make(map[string]uint64)
+	}
 
 	thesis.Manifold.Range(func(_, value any) bool {
 		state, valid := value.(manifold.State)
@@ -65,12 +73,13 @@ func (outcome *marketOutcome) observeManifold(
 		outcome.flowSamples++
 		count++
 
-		if state.Replay {
-			outcome.replayed++
+		if state.Epoch > outcome.epochs[state.Symbol] {
+			outcome.epochs[state.Symbol] = state.Epoch
+			outcome.advanced++
 			return true
 		}
 
-		outcome.advanced++
+		outcome.replayed++
 		return true
 	})
 
@@ -269,22 +278,27 @@ func TestAnalyzerUpdate(t *testing.T) {
 			}), ShouldBeNil)
 
 			if !proof.replay {
-				resonanceFrame := waitCached(wired, "resonance")
-				So(resonanceFrame, ShouldNotBeNil)
-				So(string(resonanceFrame), ShouldContainSubstring, `"resonance":`)
-				So(string(resonanceFrame), ShouldContainSubstring, `"layers":`)
+				// High-churn UI streams are fanout-only (not hub-cached). Prove the
+				// publish inputs on thesis instead of waitCached.
+				So(wired.Thesis.Resonance, ShouldNotBeEmpty)
+				So(wired.Thesis.Resonance[0].(*logic.ResonanceOutcome).Layers, ShouldNotBeEmpty)
 				outcome.uiResonance++
 
-				manifoldFrame := waitCached(wired, "manifold")
-				So(manifoldFrame, ShouldNotBeNil)
-				So(string(manifoldFrame), ShouldContainSubstring, `"manifold":`)
-				So(string(manifoldFrame), ShouldContainSubstring, `"rho":`)
-				So(string(manifoldFrame), ShouldContainSubstring, market.Symbols[0])
+				manifoldReady := false
+				wired.Thesis.Manifold.Range(func(_, value any) bool {
+					state, ok := value.(manifold.State)
+					manifoldReady = ok && state.GasReady() && len(state.Rho) > 0
+					return !manifoldReady
+				})
+				So(manifoldReady, ShouldBeTrue)
 				outcome.uiManifold++
 
-				cognitionFrame := waitCached(wired, "cognition")
-				So(cognitionFrame, ShouldNotBeNil)
-				So(string(cognitionFrame), ShouldContainSubstring, `"cognition":`)
+				cognitionReady := false
+				wired.Thesis.Cognition.Range(func(_, _ any) bool {
+					cognitionReady = true
+					return false
+				})
+				So(cognitionReady, ShouldBeTrue)
 				outcome.uiCognition++
 			}
 

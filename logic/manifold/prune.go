@@ -8,8 +8,8 @@ import (
 
 /*
 particleContribution is the load-bearing scalar for retention: mass times the
-sum of oscillator energy and thermal heat. Heat alone is not death — inject is
-cold by design — and energy alone ignores gas scatter mass.
+sum of oscillator energy and thermal heat. Heat alone is not death, and energy
+alone ignores gas scatter mass.
 */
 func particleContribution(particle pfluid.Particle) float64 {
 	if particle.Mass <= 0 {

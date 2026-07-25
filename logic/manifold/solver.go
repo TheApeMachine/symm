@@ -131,10 +131,9 @@ func (solver *Solver) SetRecorder(recorder *audit.Recorder) {
 }
 
 /*
-Update appends tokenized book samples for every changed Hawkes epoch into the
-resident particle history, advances the shared domain once when anything was
-appended, and publishes symbol views of that same physical state. Unchanged
-epochs skip L3 sampling and phase scans entirely.
+Update appends tokenized book samples for every changed Hawkes epoch, then
+always advances the shared domain once for this tick and publishes symbol views
+of that physical state. Inject is Hawkes-gated; the step is not.
 */
 func (solver *Solver) Update(
 	thesis *types.Thesis,
@@ -152,27 +151,8 @@ func (solver *Solver) Update(
 	}
 
 	changed := solver.changedOutcomes(hawkes)
-	result := advanceResult{}
-
-	if len(changed) == 0 {
-		// No Hawkes epoch moved: restamp the last GasReady views as Replay so
-		// idle / book-only cuts cannot be mistaken for fresh advances. Forecast
-		// minting stays gated by Cut Outcome snapshots — coalesced live reads
-		// were what previously made idle look empty and starved Ready.
-		solver.replayStored(thesis)
-
-		errnie.Error(audit.Record(solver.recorder, "manifold", map[string]any{
-			"candidates": 0,
-			"advanced":   0,
-			"replayed":   solver.replayCount(),
-			"particles":  solver.Population(),
-			"failed":     0,
-		}))
-		return nil
-	}
-
 	candidates := solver.sampleChanged(changed)
-	result = solver.advance(thesis, candidates, changed)
+	result := solver.advance(thesis, candidates, changed)
 	population := solver.Population()
 
 	errnie.Error(audit.Record(solver.recorder, "manifold", map[string]any{
@@ -236,7 +216,10 @@ func (solver *Solver) sampleChanged(
 	tokenizer := NewTokenizer(solver.config)
 
 	for _, symbol := range symbols {
-		population, ready := solver.books.Sample(symbol, tokenizer)
+		buyIntensity, sellIntensity := intensities(changed[symbol])
+		population, ready := solver.books.Sample(
+			symbol, tokenizer, buyIntensity, sellIntensity,
+		)
 
 		if !ready {
 			continue
@@ -256,41 +239,6 @@ func (solver *Solver) sampleChanged(
 	}
 
 	return candidates
-}
-
-/*
-replayStored writes the last GasReady views onto thesis without a GPU step so a
-fresh Thesis still sees the resident market field when no Hawkes epoch moved.
-*/
-func (solver *Solver) replayStored(thesis *types.Thesis) {
-	if thesis == nil {
-		return
-	}
-
-	for symbol, slot := range solver.symbols {
-		if slot == nil || !slot.last.GasReady() {
-			continue
-		}
-
-		state := slot.last
-		state.Replay = true
-		thesis.Manifold.Store(symbol, state)
-	}
-}
-
-/*
-replayCount counts GasReady slots that would be restated without an advance.
-*/
-func (solver *Solver) replayCount() int {
-	count := 0
-
-	for _, slot := range solver.symbols {
-		if slot != nil && slot.last.GasReady() {
-			count++
-		}
-	}
-
-	return count
 }
 
 /*

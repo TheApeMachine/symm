@@ -17,55 +17,43 @@ func TestTokenizer_MakeBatch(t *testing.T) {
 			{side: book.Bid, price: 99},
 		}
 
-		Convey("It should emit universal-shaped cold particles with content ω", func() {
-			batch := tokenizer.MakeBatch(orders, 100)
-			So(batch.Particles, ShouldNotBeEmpty)
-			So(batch.ContentIDs, ShouldHaveLength, len(batch.Particles))
+		Convey("It should place one content site per order on the book circle", func() {
+			batch := tokenizer.MakeBatch(orders, 100, 2.5, 0.75)
+			So(batch.Particles, ShouldHaveLength, len(orders))
+			So(batch.ContentIDs, ShouldHaveLength, len(orders))
 
 			for index, particle := range batch.Particles {
-				So(particle.Heat, ShouldEqual, float32(1e-4))
-				So(particle.Energy, ShouldEqual, float32(1))
 				So(particle.Velocity, ShouldResemble, pfluid.Vector{})
-				So(particle.Mass, ShouldBeGreaterThan, float32(0))
+				So(particle.Mass, ShouldEqual, float32(1))
 				So(particle.Omega, ShouldBeGreaterThanOrEqualTo, float32(-4))
 				So(particle.Omega, ShouldBeLessThanOrEqualTo, float32(4))
-				So(batch.ContentIDs[index], ShouldBeLessThanOrEqualTo, uint32(255))
-			}
-		})
+				So(batch.ContentIDs[index], ShouldEqual, uint32(index))
 
-		Convey("It should compress identical content at the same relative sequence", func() {
-			wrapped := make([]restingOrder, segmentLen+1)
-			template := orders[0]
-
-			for index := range wrapped {
-				wrapped[index] = template
-				wrapped[index].price = 100 + float64(index)
-			}
-
-			wrapped[0] = orders[0]
-			wrapped[segmentLen] = orders[0]
-			batch := tokenizer.MakeBatch(wrapped, 100)
-			var merged float32
-
-			for _, particle := range batch.Particles {
-				if particle.Mass > 1 {
-					merged = particle.Mass
+				if orders[index].side == book.Ask {
+					So(particle.Energy, ShouldEqual, float32(0.75))
+					So(particle.Heat, ShouldEqual, float32(0.75)*injectHeatFraction)
+					continue
 				}
+
+				So(particle.Energy, ShouldEqual, float32(2.5))
+				So(particle.Heat, ShouldEqual, float32(2.5)*injectHeatFraction)
 			}
 
-			So(merged, ShouldEqual, float32(2))
-			So(orderContent(orders[0], 100), ShouldNotEqual, orderContent(orders[1], 100))
+			cfg := tokenizer.config
+			span := cfg.OmegaMax - cfg.OmegaMin
+			So(batch.Particles[0].Omega, ShouldEqual, cfg.OmegaMin+(0.5)/3*span)
+			So(batch.Particles[2].Omega, ShouldEqual, cfg.OmegaMin+(2.5)/3*span)
 		})
 	})
 }
 
 func TestPositionPhase(t *testing.T) {
-	Convey("Given sequence indices inside one segment", t, func() {
+	Convey("Given sequence indices on a book-sized beat", t, func() {
 		Convey("It should keep phase in [0, 2π)", func() {
-			phase := positionPhase(0)
+			phase := positionPhase(0, 3)
 			So(phase, ShouldBeGreaterThanOrEqualTo, float32(0))
 			So(float64(phase), ShouldBeLessThan, 2*3.141592653589793+1e-5)
-			So(positionPhase(128), ShouldNotEqual, positionPhase(0))
+			So(positionPhase(128, 3), ShouldNotEqual, positionPhase(0, 3))
 		})
 	})
 }
@@ -90,6 +78,6 @@ func BenchmarkTokenizer_MakeBatch(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = tokenizer.MakeBatch(orders, 100).Particles
+		_ = tokenizer.MakeBatch(orders, 100, 1, 1).Particles
 	}
 }

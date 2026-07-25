@@ -28,8 +28,8 @@ type WireReading struct {
 }
 
 /*
-WireField is the gas/coherence/guidance packet — lattices without particle or
-wave mode payloads.
+WireField is the lightweight manifold meta packet. Dense lattices travel as
+separate binary frames so JSON never carries 64×64 decimal grids.
 */
 type WireField struct {
 	Source                string          `json:"source"`
@@ -39,10 +39,6 @@ type WireField struct {
 	SharedOscillatorCount int             `json:"sharedOscillatorCount"`
 	Grid                  WireGrid        `json:"grid"`
 	Reading               WireReading     `json:"reading"`
-	Rho                   [][]float64     `json:"rho,omitempty"`
-	PsiMag2               [][]float64     `json:"psiMag2,omitempty"`
-	GuidanceVelX          [][]float64     `json:"guidanceVelX,omitempty"`
-	GuidanceVelZ          [][]float64     `json:"guidanceVelZ,omitempty"`
 	PhaseReady            bool            `json:"phaseReady"`
 	PhaseReason           string          `json:"phaseReason,omitempty"`
 	PhaseScan             []PhaseResponse `json:"phaseScan,omitempty"`
@@ -75,10 +71,10 @@ type WireParticles struct {
 WireMode is one complex omega mode the phase dial needs.
 */
 type WireMode struct {
-	Omega      float32 `json:"omega"`
-	Real       float32 `json:"real"`
-	Imaginary  float32 `json:"imaginary"`
-	Linewidth  float32 `json:"linewidth"`
+	Omega     float32 `json:"omega"`
+	Real      float32 `json:"real"`
+	Imaginary float32 `json:"imaginary"`
+	Linewidth float32 `json:"linewidth"`
 }
 
 /*
@@ -92,10 +88,12 @@ type WireWave struct {
 }
 
 /*
-WirePackets splits one State into the three dashboard packets so gas, particles,
-and wave can fan out independently under hub backpressure.
+WirePackets splits one State into meta JSON, uint16 lattice binaries, particles,
+and wave so each part can fan out under hub backpressure.
 */
-func WirePackets(state State) (WireField, WireParticles, WireWave) {
+func WirePackets(
+	state State,
+) (WireField, [][]byte, WireParticles, WireWave) {
 	field := WireField{
 		Source:                state.Source,
 		Symbol:                state.Symbol,
@@ -115,19 +113,35 @@ func WirePackets(state State) (WireField, WireParticles, WireWave) {
 			GuidanceSpeed:  state.Reading.GuidanceSpeed,
 			ViscosityProxy: state.Reading.ViscosityProxy,
 		},
-		Rho:          state.Rho,
-		PsiMag2:      state.PsiMag2,
-		GuidanceVelX: state.GuidanceVelX,
-		GuidanceVelZ: state.GuidanceVelZ,
-		PhaseReady:   state.PhaseReady,
-		PhaseReason:  state.PhaseReason,
-		PhaseScan:    state.PhaseScan,
+		PhaseReady:  state.PhaseReady,
+		PhaseReason: state.PhaseReason,
+		PhaseScan:   state.PhaseScan,
+	}
+
+	lattices := make([][]byte, 0, 4)
+
+	for _, plane := range []struct {
+		kind uint8
+		grid [][]float64
+	}{
+		{BinaryKindRho, state.Rho},
+		{BinaryKindPsi, state.PsiMag2},
+		{BinaryKindGuidanceX, state.GuidanceVelX},
+		{BinaryKindGuidanceZ, state.GuidanceVelZ},
+	} {
+		encoded, ok := EncodeLattice(plane.kind, state.Symbol, state.At, plane.grid)
+
+		if !ok {
+			continue
+		}
+
+		lattices = append(lattices, encoded)
 	}
 
 	particles := WireParticles{
-		Source: state.Source,
-		Symbol: state.Symbol,
-		At:     state.At,
+		Source:    state.Source,
+		Symbol:    state.Symbol,
+		At:        state.At,
 		Particles: make([]WireParticle, 0, len(state.Particles)),
 	}
 
@@ -153,7 +167,7 @@ func WirePackets(state State) (WireField, WireParticles, WireWave) {
 		wave.Wave = append(wave.Wave, wireMode(mode))
 	}
 
-	return field, particles, wave
+	return field, lattices, particles, wave
 }
 
 func wireMode(mode pfluid.WaveMode) WireMode {

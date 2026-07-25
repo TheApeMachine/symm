@@ -3,6 +3,7 @@ import {
 	paintTerminalFluidChart,
 	repaintTerminalFluidChart,
 } from "#/components/charts/fluid";
+import { retainManifoldBinary } from "#/providers/manifold-binary";
 import { paintHawkes } from "#/components/charts/hawkes";
 import { paintTerminalManifoldChart } from "#/components/charts/manifold";
 import { paintTerminalPredictionChart } from "#/components/charts/prediction";
@@ -55,6 +56,7 @@ import {
 import { paintKernelList } from "#/components/terminal/kernel-list";
 import {
 	paintManifoldMeta,
+	repaintManifoldMeta,
 	paintResonanceFooter,
 	paintResonanceTitle,
 } from "#/components/terminal/live-chart-meta";
@@ -251,22 +253,18 @@ export const drawers = {
 			},
 		},
 	},
+	// Raw wire packets — not history.project("latest"). These streams have no
+	// FrameHistory policy, so "latest" projects to [] and cleared the payloads.
 	manifold_particles: {
-		paint: {
-			paint: (value: unknown, focusSymbol: string) => {
-				paintManifoldParticles(value);
-				repaintTerminalFluidChart(focusSymbol);
-			},
-			input: "latest",
+		paint: (value: unknown, focusSymbol: string) => {
+			paintManifoldParticles(value);
+			repaintTerminalFluidChart(focusSymbol);
 		},
 	},
 	manifold_wave: {
-		paint: {
-			paint: (value: unknown, focusSymbol: string) => {
-				paintManifoldWave(value);
-				repaintTerminalFluidChart(focusSymbol);
-			},
-			input: "latest",
+		paint: (value: unknown, focusSymbol: string) => {
+			paintManifoldWave(value);
+			repaintTerminalFluidChart(focusSymbol);
 		},
 	},
 	cognition: {
@@ -302,13 +300,23 @@ export const attach = (
 		const message = event.data as {
 			type?: string;
 			frame?: Record<string, unknown>;
+			buffer?: ArrayBuffer;
 		};
+		const focusSymbol = appStore.state.focusSymbol;
+
+		if (message.type === "DRAW_BIN" && message.buffer instanceof ArrayBuffer) {
+			if (retainManifoldBinary(message.buffer) === null) {
+				return;
+			}
+
+			repaintTerminalFluidChart(focusSymbol);
+			repaintManifoldMeta(focusSymbol);
+			return;
+		}
 
 		if (message.type !== "DRAW" || message.frame === undefined) {
 			return;
 		}
-
-		const focusSymbol = appStore.state.focusSymbol;
 
 		for (const [name, value] of Object.entries(message.frame)) {
 			const drawer = drawers[name as keyof typeof drawers] as

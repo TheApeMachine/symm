@@ -64,9 +64,18 @@ func TestProbeFullAnalyzerPath(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("%s transition: %v", proof.name, err)
 		}
-		res := waitCached(wired, "resonance") != nil
-		man := waitCached(wired, "manifold") != nil
-		cog := waitCached(wired, "cognition") != nil
+		res := len(wired.Thesis.Resonance) > 0
+		man := false
+		wired.Thesis.Manifold.Range(func(_, value any) bool {
+			state, ok := value.(manifold.State)
+			man = ok && state.GasReady()
+			return !man
+		})
+		cog := false
+		wired.Thesis.Cognition.Range(func(_, _ any) bool {
+			cog = true
+			return false
+		})
 		fmt.Printf("%s: cuts=%d advanced=%d replayed=%d cognitions=%d categories=%d frames=%v/%v/%v\n",
 			proof.name, cuts, advanced, replayed, cognitions, categories, res, man, cog)
 		types.SetFocus("")

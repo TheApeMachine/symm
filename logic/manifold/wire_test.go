@@ -21,10 +21,10 @@ func TestWirePackets(t *testing.T) {
 				PressureGradX: 1, PressureGradY: 2, PressureGradZ: 3,
 				Divergence: 4, CoherenceMag2: 5, GuidanceSpeed: 6, ViscosityProxy: 7,
 			},
-			Rho:          [][]float64{{0.1}},
-			PsiMag2:      [][]float64{{0.2}},
-			GuidanceVelX: [][]float64{{0.3}},
-			GuidanceVelZ: [][]float64{{0.4}},
+			Rho:          [][]float64{{0.1, 0.2}, {0.3, 0.4}},
+			PsiMag2:      [][]float64{{0.2, 0.1}, {0.4, 0.3}},
+			GuidanceVelX: [][]float64{{0.3, 0.0}, {0.0, 0.3}},
+			GuidanceVelZ: [][]float64{{0.4, 0.0}, {0.0, 0.4}},
 			Particles: []Particle{{
 				Role: "particle", CellX: 1, CellY: 2, CellZ: 3,
 				Phase: 0.5, Omega: 9, Amplitude: 1.5, Heat: 0.01,
@@ -37,17 +37,25 @@ func TestWirePackets(t *testing.T) {
 			PhaseReady: true,
 		}
 
-		Convey("It emits only painter-facing fields across three packets", func() {
-			field, particles, wave := WirePackets(state)
+		Convey("It emits meta without lattices and four binary planes", func() {
+			field, lattices, particles, wave := WirePackets(state)
 			So(field.Symbol, ShouldEqual, "BTC/USD")
 			So(field.Grid.X, ShouldEqual, uint32(8))
 			So(field.Grid.Z, ShouldEqual, uint32(6))
-			So(field.Rho, ShouldResemble, [][]float64{{0.1}})
 			So(field.Reading.PressureGradX, ShouldEqual, 1.0)
-			So(field.Reading.PressureGradZ, ShouldEqual, 3.0)
+			So(field.PhaseReady, ShouldBeTrue)
+			So(lattices, ShouldHaveLength, 4)
+
+			for index, want := range []string{
+				"manifold_rho", "manifold_psi",
+				"manifold_guidance_x", "manifold_guidance_z",
+			} {
+				key, known := BinaryCacheKey(lattices[index])
+				So(known, ShouldBeTrue)
+				So(key, ShouldEqual, want)
+			}
 			So(particles.Particles, ShouldHaveLength, 1)
 			So(particles.Particles[0].CellX, ShouldEqual, 1)
-			So(particles.Particles[0].CellZ, ShouldEqual, 3)
 			So(wave.Wave, ShouldHaveLength, 1)
 			So(wave.Wave[0].Real, ShouldEqual, float32(0.2))
 		})

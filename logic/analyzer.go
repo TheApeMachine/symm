@@ -274,7 +274,14 @@ func (analyzer *Analyzer) publish(frame datura.Map[any]) {
 		return
 	}
 
-	if analyzer.ui == nil {
+	analyzer.publishRaw(payload)
+}
+
+/*
+publishRaw enqueues a pre-encoded UI payload (JSON or manifold binary lattice).
+*/
+func (analyzer *Analyzer) publishRaw(payload []byte) {
+	if analyzer.ui == nil || len(payload) == 0 {
 		return
 	}
 

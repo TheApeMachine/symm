@@ -5,22 +5,22 @@ can compose gas, particles, and wave without one monolithic DRAW frame.
 let particlesPayload: Record<string, unknown> | null = null;
 let wavePayload: Record<string, unknown> | null = null;
 
-export const paintManifoldParticles = (value: unknown) => {
-	if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-		particlesPayload = value as Record<string, unknown>;
-		return;
+const asPacket = (value: unknown): Record<string, unknown> | null => {
+	const candidate = Array.isArray(value) ? value[0] : value;
+
+	if (candidate === null || typeof candidate !== "object") {
+		return null;
 	}
 
-	particlesPayload = null;
+	return candidate as Record<string, unknown>;
+};
+
+export const paintManifoldParticles = (value: unknown) => {
+	particlesPayload = asPacket(value);
 };
 
 export const paintManifoldWave = (value: unknown) => {
-	if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-		wavePayload = value as Record<string, unknown>;
-		return;
-	}
-
-	wavePayload = null;
+	wavePayload = asPacket(value);
 };
 
 export const latestManifoldParticles = (): Record<string, unknown> | null =>

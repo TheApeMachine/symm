@@ -12,6 +12,7 @@ type WorkerOutbound =
 	| { type: "READY" }
 	| { type: "ONLINE"; online: boolean }
 	| { type: "DRAW"; frame: Record<string, unknown> }
+	| { type: "DRAW_BIN"; buffer: ArrayBuffer }
 	| { type: "ERROR_FRAME"; frame: Record<string, unknown> }
 	| { type: "ERROR"; message: string };
 
@@ -67,6 +68,7 @@ const connect = (url: string) => {
 
 	socketListeners = new AbortController();
 	socket = new WebSocket(url);
+	socket.binaryType = "arraybuffer";
 
 	socket.addEventListener(
 		"open",
@@ -131,6 +133,14 @@ const connect = (url: string) => {
 		"message",
 		(event) => {
 			try {
+				if (event.data instanceof ArrayBuffer) {
+					self.postMessage(
+						{ type: "DRAW_BIN", buffer: event.data } satisfies WorkerOutbound,
+						[event.data],
+					);
+					return;
+				}
+
 				const frame = JSON.parse(String(event.data)) as Record<
 					string,
 					unknown

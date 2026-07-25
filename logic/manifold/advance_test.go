@@ -20,11 +20,6 @@ func (solver *Solver) driveAdvance(
 	hawkes HawkesSource,
 ) advanceResult {
 	changed := solver.changedOutcomes(hawkes)
-
-	if len(changed) == 0 {
-		return advanceResult{}
-	}
-
 	return solver.advance(thesis, solver.sampleChanged(changed), changed)
 }
 

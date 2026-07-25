@@ -19,13 +19,12 @@ import (
 )
 
 /*
-cacheKeys lists every replaceable UI stream retained for reconnect replay.
+cacheKeys lists durable UI state retained for reconnect replay. High-churn
+streams (signals, manifold lattices/parts, cognition) are fanout-only — the
+next live frame arrives soon enough that caching them is wasted work.
 */
 var cacheKeys = []string{
-	"balances", "executions", "instruments", "positions", "tick",
-	"holdings", "stops", "measurements", "decisions", "lifecycle", "findings",
-	"causal", "resonance", "manifold", "manifold_particles", "manifold_wave",
-	"cognition", "diagnostics",
+	"balances", "executions", "instruments", "positions", "holdings", "stops",
 }
 
 var cacheKeySet = func() map[string]struct{} {
@@ -42,10 +41,12 @@ const clientQueueDepth = 64
 
 /*
 cachedFrame is one latest-by-key payload plus the generation that produced it.
+Binary lattice frames use WebSocket BinaryMessage; JSON uses TextMessage.
 */
 type cachedFrame struct {
 	generation uint64
 	payload    []byte
+	binary     bool
 }
 
 /*
@@ -158,6 +159,16 @@ func (hub *Hub) Publish(frame []byte) {
 	}
 
 	generation := hub.generation.Add(1)
+
+	if isManifoldBinary(frame) {
+		hub.fanout(cachedFrame{
+			generation: generation,
+			payload:    frame,
+			binary:     true,
+		})
+		return
+	}
+
 	retained := hub.retain(generation, frame)
 
 	if len(retained) == 0 {
@@ -418,7 +429,7 @@ func (hub *Hub) writeLoop(ctx context.Context, session *clientSession) {
 				continue
 			}
 
-			if err := hub.writeMessage(session.conn, frame.payload); err != nil {
+			if err := hub.writeMessage(session.conn, frame.payload, frame.binary); err != nil {
 				session.cancel()
 				return
 			}
@@ -426,12 +437,18 @@ func (hub *Hub) writeLoop(ctx context.Context, session *clientSession) {
 	}
 }
 
-func (hub *Hub) writeMessage(conn *websocket.Conn, msg []byte) error {
+func (hub *Hub) writeMessage(conn *websocket.Conn, msg []byte, binary bool) error {
 	if conn == nil || conn.Conn == nil || len(msg) == 0 {
 		return nil
 	}
 
-	if err := conn.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+	messageType := websocket.TextMessage
+
+	if binary {
+		messageType = websocket.BinaryMessage
+	}
+
+	if err := conn.Conn.WriteMessage(messageType, msg); err != nil {
 		for _, closeError := range []error{
 			syscall.EPIPE,
 			syscall.ECONNRESET,

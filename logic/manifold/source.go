@@ -43,10 +43,13 @@ func newBookSampler(source BookSource) *bookSampler {
 
 /*
 Sample tokenizes and measures touch for symbol under the source lease.
+buyIntensity / sellIntensity become oscillator Energy on bid / ask particles.
 */
 func (sampler *bookSampler) Sample(
 	symbol string,
 	tokenizer Tokenizer,
+	buyIntensity float64,
+	sellIntensity float64,
 ) (bookPopulation, bool) {
 	if sampler == nil || sampler.source == nil || symbol == "" {
 		return bookPopulation{}, false
@@ -56,7 +59,9 @@ func (sampler *bookSampler) Sample(
 	var ready bool
 
 	found := sampler.source.PeekBook(symbol, func(symbolBook *book.Book) {
-		population, ready = readPopulation(symbolBook, tokenizer)
+		population, ready = readPopulation(
+			symbolBook, tokenizer, buyIntensity, sellIntensity,
+		)
 	})
 
 	return population, found && ready
@@ -68,6 +73,8 @@ readPopulation walks one leased book into owned batch, IDs, and touch scales.
 func readPopulation(
 	symbolBook *book.Book,
 	tokenizer Tokenizer,
+	buyIntensity float64,
+	sellIntensity float64,
 ) (bookPopulation, bool) {
 	if symbolBook == nil {
 		return bookPopulation{}, false
@@ -131,7 +138,7 @@ func readPopulation(
 	appendSide(symbolBook.Bids, book.Bid)
 	appendSide(symbolBook.Asks, book.Ask)
 
-	batch := tokenizer.MakeBatch(orders, midPrice)
+	batch := tokenizer.MakeBatch(orders, midPrice, buyIntensity, sellIntensity)
 
 	if len(batch.Particles) == 0 {
 		return bookPopulation{}, false

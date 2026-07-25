@@ -151,8 +151,10 @@ func TestPublishMeasuredEmitsOrderedFrames(t *testing.T) {
 			So(thesis.Hypotheses, ShouldHaveLength, 2)
 		})
 
-		Convey("It emits focus-only cognition rows then split manifold packets", func() {
-			So(len(ui), ShouldEqual, 6)
+		Convey("It emits focus-only rows, meta manifold, binary lattices, parts", func() {
+			// resonance + causal + hypotheses + manifold meta + 2 lattices (rho, psi)
+			// + particles + wave. Guidance planes are empty on the fixture states.
+			So(len(ui), ShouldEqual, 8)
 
 			resonance := string(<-ui)
 			So(resonance, ShouldContainSubstring, `"resonance":`)
@@ -172,8 +174,18 @@ func TestPublishMeasuredEmitsOrderedFrames(t *testing.T) {
 			manifoldFrame := string(<-ui)
 			So(manifoldFrame, ShouldContainSubstring, `"manifold":[`)
 			So(manifoldFrame, ShouldContainSubstring, `"BTC/USD"`)
-			So(manifoldFrame, ShouldContainSubstring, `"rho":[[0.1,0.2]]`)
+			So(manifoldFrame, ShouldNotContainSubstring, `"rho"`)
 			So(manifoldFrame, ShouldNotContainSubstring, `"ETH/USD"`)
+
+			rho := <-ui
+			key, ok := manifold.BinaryCacheKey(rho)
+			So(ok, ShouldBeTrue)
+			So(key, ShouldEqual, "manifold_rho")
+
+			psi := <-ui
+			key, ok = manifold.BinaryCacheKey(psi)
+			So(ok, ShouldBeTrue)
+			So(key, ShouldEqual, "manifold_psi")
 
 			particlesFrame := string(<-ui)
 			So(particlesFrame, ShouldContainSubstring, `"manifold_particles":`)

@@ -47,12 +47,12 @@ func TestHubPublishGeneration(t *testing.T) {
 		hub := NewHub(ctx, nil, nil, make(chan []byte, 1), config.UIConfig{Addr: "127.0.0.1:0"})
 		defer hub.Close()
 
-		Convey("When Publish retains replaceable keys", func() {
-			hub.Publish([]byte(`{"measurements":[{"symbol":"BTC/USD"}],"causal":[{"symbol":"BTC/USD"}]}`))
+		Convey("When Publish sees high-churn and durable keys together", func() {
+			hub.Publish([]byte(`{"measurements":[{"symbol":"BTC/USD"}],"balances":[{"asset":"USD","balance":1}]}`))
 
-			Convey("It caches streams omitted from the old key list", func() {
-				So(len(hub.Cached("measurements")), ShouldBeGreaterThan, 0)
-				So(len(hub.Cached("causal")), ShouldBeGreaterThan, 0)
+			Convey("It retains only durable state", func() {
+				So(len(hub.Cached("balances")), ShouldBeGreaterThan, 0)
+				So(len(hub.Cached("measurements")), ShouldEqual, 0)
 				So(hub.generation.Load(), ShouldEqual, 1)
 			})
 		})

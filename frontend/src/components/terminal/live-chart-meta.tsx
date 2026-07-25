@@ -14,6 +14,7 @@ import {
 	terminalFluidFieldStats,
 } from "#/components/terminal/fluid-field";
 import { aggregateFluidParticles } from "#/components/terminal/fluid-particles";
+import { withBinaryLattices } from "#/providers/manifold-binary";
 import { latestManifoldParticles } from "#/providers/manifold-parts";
 
 const manifoldWaitingRef = createRef<HTMLDivElement>();
@@ -24,6 +25,7 @@ const manifoldCoherenceRef = createRef<HTMLDivElement>();
 const manifoldGasRef = createRef<HTMLDivElement>();
 let manifoldMetaFocus = "";
 let manifoldMetaLayer = terminalStore.state.fieldLayer;
+let lastManifoldMetaBatch: unknown = null;
 
 const resonanceFooterRef = createRef<HTMLSpanElement>();
 const resonanceTitleRef = createRef<HTMLSpanElement>();
@@ -40,6 +42,23 @@ Summary deltas cannot replace valid grid statistics with a misleading 0×0
 field, while a focus change returns the shell to an explicit waiting state.
 */
 export const paintManifoldMeta = (value: unknown, focusSymbol: string) => {
+	lastManifoldMetaBatch = value;
+	paintManifoldMetaCompose(value, focusSymbol);
+};
+
+/*
+repaintManifoldMeta refreshes grid stats after a binary lattice arrives without
+a new JSON manifold meta frame.
+*/
+export const repaintManifoldMeta = (focusSymbol: string) => {
+	if (lastManifoldMetaBatch === null) {
+		return;
+	}
+
+	paintManifoldMetaCompose(lastManifoldMetaBatch, focusSymbol);
+};
+
+const paintManifoldMetaCompose = (value: unknown, focusSymbol: string) => {
 	const focusChanged = manifoldMetaFocus !== focusSymbol;
 	manifoldMetaFocus = focusSymbol;
 	const layer = terminalStore.state.fieldLayer;
@@ -51,7 +70,12 @@ export const paintManifoldMeta = (value: unknown, focusSymbol: string) => {
 	const focused = rows
 		.filter((frame) => focusSymbol === "" || frame.symbol === focusSymbol)
 		.at(-1);
-	const manifold = withSharedManifoldField(focused ?? null, rows);
+	const manifold = withBinaryLattices(
+		withSharedManifoldField(focused ?? null, rows) as Record<
+			string,
+			unknown
+		> | null,
+	) as ManifoldFrame | null;
 	const display = terminalFluidDisplayLatticeFromFrame(manifold ?? null, layer);
 	const field = isFluidFieldMatrix(display) ? display : [];
 
