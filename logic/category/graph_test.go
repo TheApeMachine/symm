@@ -158,3 +158,29 @@ func BenchmarkGraphUpdate(b *testing.B) {
 		graph.Update(at, thesis, categories)
 	}
 }
+
+/*
+BenchmarkGraphUpdateFrom measures the allocation saving from the pooled touched
+map and shared measurement snapshot when UpdateFrom is called by the analyzer.
+*/
+func BenchmarkGraphUpdateFrom(b *testing.B) {
+	graph := NewGraph()
+	at := time.Unix(1, 0).UTC()
+	thesis := types.NewThesis()
+	thesis.At = at
+	value := 0.8
+	thesis.Publish(types.SourcePumpDump, []*types.Measurement{
+		measurementWithMetric(
+			types.SourcePumpDump, "PENGU/USD", at,
+			types.MetricIgnition, value, &value, time.Second,
+		),
+	})
+	measurements := thesis.SnapshotMeasurements()
+	categories := Compose(thesis, "PENGU/USD")
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		graph.UpdateFrom(at, measurements, categories)
+	}
+}

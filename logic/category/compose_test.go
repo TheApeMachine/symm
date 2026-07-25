@@ -115,3 +115,35 @@ func BenchmarkCompose(b *testing.B) {
 		_ = Compose(thesis, "PENGU/USD")
 	}
 }
+
+/*
+BenchmarkComposeAllFrom measures the allocation reduction from passing
+a pre-snapshotted slice versus calling ComposeAll on a thesis each tick.
+*/
+func BenchmarkComposeAllFrom(b *testing.B) {
+	at := time.Unix(10, 0).UTC()
+	value := 0.5
+	thesis := types.NewThesis()
+	thesis.At = at
+	thesis.Publish(types.SourcePumpDump, []*types.Measurement{{
+		Source: types.SourcePumpDump,
+		Symbol: "PENGU/USD", At: at,
+		Maturity: 0.5, Horizon: time.Second,
+		Validity: types.MeasurementValidity{
+			State: types.ValidityValid, Readiness: types.ReadinessObservation,
+		},
+		Metrics: map[string]types.MetricSample{
+			types.MetricKey(types.MetricIgnition, types.SideNone): {
+				Raw: value, Normalized: &value,
+			},
+		},
+	}})
+
+	measurements := thesis.SnapshotMeasurements()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = ComposeAllFrom(measurements, at)
+	}
+}

@@ -187,8 +187,22 @@ func CategoryExhaustionLead(thesis *types.Thesis, symbol string) (share float64,
 }
 
 /*
-categoryGraph loads the resident category graph pointer from Thesis.Graphs.
+CategoryOpportunityLead reports whether Leads edges into opportunity-family
+categories dominate Leads into exhaustion-family categories for symbol. It is
+the symmetric counterpart to CategoryExhaustionLead and is used to boost entry
+utility when the graph shows the current category sequence precedes real pumps.
 */
+func CategoryOpportunityLead(thesis *types.Thesis, symbol string) (share float64, dominates bool) {
+	graph, ok := categoryGraph(thesis)
+
+	if !ok {
+		return 0, false
+	}
+
+	return category.Report(graph).OpportunityLead(symbol)
+}
+
+
 func categoryGraph(thesis *types.Thesis) (*category.Graph, bool) {
 	if thesis == nil || thesis.Graphs == nil {
 		return nil, false

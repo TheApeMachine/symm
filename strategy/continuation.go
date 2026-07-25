@@ -6,6 +6,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -92,6 +93,19 @@ func (continuity Continuity) Manage(thesis *types.Thesis) {
 		}
 
 		decision := continuity.Score(forecast, fraction.Float64(), &lot)
+
+		// Tax hold utility by the exhaustion lead share from the resident category
+		// graph. When Leads edges into exhaustion outweigh those into opportunity,
+		// holding loses graph-backed value — the same principle as Evidence.category
+		// taxes expected return for stop evidence.
+		exhaustionShare, _ := logic.CategoryExhaustionLead(thesis, lot.Symbol)
+
+		if exhaustionShare > 0 {
+			taxed := decision.Utility * (1 - exhaustionShare)
+			decision.Utility = taxed
+			decision.Alternatives["hold"] = taxed
+		}
+
 		decision.Cause = continuity.Cause(thesis, forecast)
 		thesis.Decisions = append(thesis.Decisions, decision)
 	}

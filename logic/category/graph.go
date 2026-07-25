@@ -38,22 +38,47 @@ func NewGraph() *Graph {
 
 /*
 Update upserts composed category nodes and derives typed edges from
-CategoryAffinity plus measurement temporal envelopes on the Thesis. Prior tops
-are recorded for DMT transition tokens only — they do not mint Leads/Lags.
-Only categories touched on this cut snapshot prior node state, so large resident
-graphs do not pay a full-map copy on every tick.
+CategoryAffinity plus measurement temporal envelopes on the Thesis. It
+snapshots measurements from the thesis and delegates to UpdateFrom.
 */
 func (graph *Graph) Update(
 	at time.Time, thesis *types.Thesis, categories []types.Category,
+) {
+	var measurements []*types.Measurement
+
+	if thesis != nil {
+		measurements = thesis.SnapshotMeasurements()
+	}
+
+	graph.UpdateFrom(at, measurements, categories)
+}
+
+/*
+UpdateFrom upserts composed category nodes and derives typed edges from
+CategoryAffinity plus measurement temporal envelopes on a pre-snapshotted
+measurement slice. Prior tops are recorded for DMT transition tokens only —
+they do not mint Leads/Lags. Only categories touched on this cut snapshot
+prior node state, so large resident graphs do not pay a full-map copy on
+every tick. The touched map is cleared and reused to avoid per-tick allocation.
+*/
+func (graph *Graph) UpdateFrom(
+	at time.Time, measurements []*types.Measurement, categories []types.Category,
 ) {
 	if graph == nil {
 		return
 	}
 
-	graph.touched = map[edgeKey]struct{}{}
+	if graph.touched == nil {
+		graph.touched = make(map[edgeKey]struct{})
+	} else {
+		for key := range graph.touched {
+			delete(graph.touched, key)
+		}
+	}
+
 	previous := map[nodeKey]Node{}
 	bySymbol := map[string][]types.Category{}
-	evidence := indexEvidence(thesis)
+	evidence := indexEvidence(measurements)
 
 	for _, category := range categories {
 		if category.Symbol == "" || category.Type == types.CategoryTypeNone {

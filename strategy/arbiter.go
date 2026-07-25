@@ -7,6 +7,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -218,9 +219,15 @@ func (arbiter *Arbiter) incumbents(thesis *types.Thesis) []Incumbent {
 			continue
 		}
 
+		// Tax hold utility by the share of Leads edges pointing into exhaustion
+		// categories. A dominant exhaustion-leads pattern reduces the value of
+		// staying in the position, biasing toward rotate or stoploss exit.
+		exhaustionShare, _ := logic.CategoryExhaustionLead(thesis, holding.Symbol)
+		holdUtility := arbiter.rotate.Hold(forecast) * (1 - exhaustionShare)
+
 		rows = append(rows, Incumbent{
 			Symbol:      holding.Symbol,
-			HoldUtility: arbiter.rotate.Hold(forecast),
+			HoldUtility: holdUtility,
 			ExitCost:    arbiter.rotate.Exit(forecast, fraction.Float64()),
 			Notional:    notional,
 			Qty:         quantity,

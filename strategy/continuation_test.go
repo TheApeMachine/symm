@@ -7,6 +7,8 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -80,6 +82,74 @@ func TestContinuity_Score(t *testing.T) {
 			So(decision.ProposedQuantity.Sign(), ShouldEqual, 0)
 			So(decision.ProposedNotional.Sign(), ShouldEqual, 0)
 			So(decision.Reason, ShouldEqual, "stoploss owns full exit; continuation holds")
+		})
+	})
+}
+
+/*
+TestContinuityManageExhaustionTax proves that Manage taxes hold utility by the
+category graph's exhaustion lead share when the resident graph shows the current
+category sequence precedes exhaustion regimes.
+*/
+func TestContinuityManageExhaustionTax(t *testing.T) {
+	Convey("Given an open lot with a forecast and an exhaustion-lead graph", t, func() {
+		at := time.Unix(1, 0).UTC()
+		graph := category.NewGraph()
+		thesis := types.NewThesis()
+
+		// Two-cut sequence: VerticalIgnition alone, then VerticalIgnition + Exhaustion.
+		// Graph records Leads: VerticalIgnition → Exhaustion, which is exhaustion-dominant.
+		graph.Update(at, thesis, []types.Category{
+			{Symbol: "SIM1/USD", Type: types.VerticalIgnition, Strength: 0.9, Freshness: 1},
+		})
+		graph.Update(at.Add(time.Second), thesis, []types.Category{
+			{Symbol: "SIM1/USD", Type: types.VerticalIgnition, Strength: 0.9, Freshness: 1, Supporting: []string{"ignition"}},
+			{Symbol: "SIM1/USD", Type: types.Exhaustion, Strength: 0.8, Freshness: 1, Supporting: []string{"exhaust"}},
+		})
+		thesis.Graphs.Store("categories", graph)
+
+		forecast := types.Forecasts{
+			Symbol:         "SIM1/USD",
+			At:             at,
+			ExpectedReturn: 0.1,
+			Uncertainty:    0.01,
+			SellCapacity:   decimal.NewFromInt64(1_000_000_000),
+			ReferencePrice: decimal.NewFromFloat64(1.0),
+			Source:         "resonance+causal",
+			SourceEpoch:    1,
+			ExpiresEpoch:   2,
+		}
+		thesis.Forecasts = []types.Forecasts{forecast}
+
+		balance := broker.NewBalance(nil, nil, make(chan []byte, 1), config.Fixture().Market)
+		balance.StoreHolding(&types.Holding{
+			Symbol: "SIM1/USD",
+			Mark:   decimal.NewFromFloat64(1.0),
+			Qty:    decimal.NewFromFloat64(100),
+			Status: types.OPEN,
+		})
+
+		continuity := NewContinuity(broker.NewPrice(nil), balance, NewRotate())
+		rawHold := NewRotate().Hold(forecast)
+
+		Convey("When Manage applies the exhaustion lead tax", func() {
+			continuity.Manage(thesis)
+
+			var holdDecision *types.Decision
+
+			for index := range thesis.Decisions {
+				if thesis.Decisions[index].Symbol == "SIM1/USD" &&
+					thesis.Decisions[index].Action == types.ActionHold {
+					holdDecision = &thesis.Decisions[index]
+					break
+				}
+			}
+
+			Convey("It should reduce hold utility below the raw keep score", func() {
+				So(holdDecision, ShouldNotBeNil)
+				So(holdDecision.Utility, ShouldBeLessThan, rawHold)
+				So(holdDecision.Alternatives["hold"], ShouldEqual, holdDecision.Utility)
+			})
 		})
 	})
 }

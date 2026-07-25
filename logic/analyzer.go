@@ -210,7 +210,8 @@ func (analyzer *Analyzer) enrichCut(
 		composeStarted = time.Now()
 	}
 
-	analyzer.composeCategories(thesis)
+	measurements := thesis.SnapshotMeasurements()
+	analyzer.composeCategories(thesis, measurements)
 	payload = map[string]any{
 		"ns":         time.Since(composeStarted).Nanoseconds(),
 		"categories": len(thesis.Categories),
@@ -232,7 +233,7 @@ func (analyzer *Analyzer) enrichCut(
 		commitStarted = time.Now()
 	}
 
-	analyzer.commitCategories(thesis)
+	analyzer.commitCategories(thesis, measurements)
 	payload = map[string]any{
 		"ns":         time.Since(commitStarted).Nanoseconds(),
 		"categories": len(thesis.Categories),
@@ -254,8 +255,9 @@ func (analyzer *Analyzer) enrichCut(
 composeCategories rebuilds Thesis category rows from measurements × affinity and
 publishes the resident graph pointer for strategy. Edge/prior mutation waits
 until after cognize so DMT still sees the previous top for transition tokens.
+The measurements slice is a pre-snapshotted copy shared with commitCategories.
 */
-func (analyzer *Analyzer) composeCategories(thesis *types.Thesis) {
+func (analyzer *Analyzer) composeCategories(thesis *types.Thesis, measurements []*types.Measurement) {
 	if thesis == nil {
 		return
 	}
@@ -264,20 +266,21 @@ func (analyzer *Analyzer) composeCategories(thesis *types.Thesis) {
 		analyzer.categories = category.NewGraph()
 	}
 
-	thesis.Categories = category.ComposeAll(thesis)
+	thesis.Categories = category.ComposeAllFrom(measurements, thesis.At)
 	thesis.Graphs.Store("categories", analyzer.categories)
 }
 
 /*
 commitCategories strengthens resident graph edges from this cut's composed
 categories and advances per-symbol priors after DMT has consumed transitions.
+The measurements slice is the same pre-snapshotted copy used by composeCategories.
 */
-func (analyzer *Analyzer) commitCategories(thesis *types.Thesis) {
+func (analyzer *Analyzer) commitCategories(thesis *types.Thesis, measurements []*types.Measurement) {
 	if thesis == nil || analyzer.categories == nil {
 		return
 	}
 
-	analyzer.categories.Update(thesis.At, thesis, thesis.Categories)
+	analyzer.categories.UpdateFrom(thesis.At, measurements, thesis.Categories)
 }
 
 /*

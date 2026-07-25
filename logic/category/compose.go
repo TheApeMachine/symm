@@ -43,9 +43,18 @@ func ComposeAll(thesis *types.Thesis) []types.Category {
 		return nil
 	}
 
+	return ComposeAllFrom(thesis.SnapshotMeasurements(), thesis.At)
+}
+
+/*
+ComposeAllFrom builds composed categories from a pre-snapshotted measurement
+slice, sharing one snapshot copy with other pipeline stages. Single-symbol
+inputs are composed inline to avoid goroutine and channel overhead.
+*/
+func ComposeAllFrom(measurements []*types.Measurement, at time.Time) []types.Category {
 	grouped := map[string][]*types.Measurement{}
 
-	for _, measurement := range thesis.SnapshotMeasurements() {
+	for _, measurement := range measurements {
 		if measurement == nil || measurement.Symbol == "" {
 			continue
 		}
@@ -60,6 +69,14 @@ func ComposeAll(thesis *types.Thesis) []types.Category {
 	categories := make([]types.Category, 0, len(grouped)*4)
 
 	if len(grouped) == 0 {
+		return categories
+	}
+
+	if len(grouped) == 1 {
+		for symbol, rows := range grouped {
+			categories = append(categories, composeRows(symbol, at, rows)...)
+		}
+
 		return categories
 	}
 
@@ -86,7 +103,7 @@ func ComposeAll(thesis *types.Thesis) []types.Category {
 			defer workerGroup.Done()
 			defer func() { <-workerSlots }()
 
-			rowsOut <- composeRows(symbol, thesis.At, rows)
+			rowsOut <- composeRows(symbol, at, rows)
 		}(symbol, rows)
 	}
 

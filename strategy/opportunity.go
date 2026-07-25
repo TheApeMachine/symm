@@ -254,6 +254,14 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 
 		utility := (forecast.ExecutableReturn() * causalMult) - forecast.Uncertainty
 
+		// Boost utility by the opportunity-leads share from the resident category
+		// graph. When Leads edges from the current category into opportunity
+		// categories outweigh those into exhaustion, the graph provides additional
+		// predictive evidence that the move is real rather than a phantom lift.
+		// Zero when no graph is available, preserving prior behavior.
+		oppShare, _ := logic.CategoryOpportunityLead(thesis, forecast.Symbol)
+		utility *= (1 + oppShare)
+
 		if utility <= 0 {
 			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
 				*forecast, utility, "infeasible",
