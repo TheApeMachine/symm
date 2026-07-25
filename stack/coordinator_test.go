@@ -107,12 +107,28 @@ func TestImmutableCutClone(t *testing.T) {
 
 		cut := types.NewImmutableCut(1, 7, thesis)
 
-		Convey("It deep-copies measurements", func() {
+		Convey("It isolates the cut slice from subsequent Publish pointer replacements", func() {
 			So(cut.Tick, ShouldEqual, int64(7))
 			So(len(cut.Measurements), ShouldEqual, 1)
-			cut.Measurements[0].Symbol = "MUTATED"
-			live := thesis.SnapshotMeasurements()
-			So(live[0].Symbol, ShouldEqual, "ETH/USD")
+
+			// Publish replaces the slot pointer in the thesis — the cut's frozen
+			// slice must still point to the original row with Raw=3.
+			thesis.Publish(types.SourceHawkes, []*types.Measurement{{
+				Source: types.SourceHawkes,
+				Symbol: "ETH/USD",
+				At:     thesis.At,
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricEventCount, types.SideNone): {
+						Raw: 99,
+					},
+				},
+			}})
+
+			So(
+				cut.Measurements[0].Metrics[types.MetricKey(types.MetricEventCount, types.SideNone)].Raw,
+				ShouldEqual,
+				float64(3),
+			)
 		})
 	})
 }

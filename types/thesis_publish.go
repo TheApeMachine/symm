@@ -85,6 +85,8 @@ func (thesis *Thesis) Publish(source SourceType, rows []*Measurement) {
 Replace publishes a complete per-symbol surface for source: every prior row from
 that source for symbols present in rows is dropped, then the incoming identities
 are written. Book-only cuts therefore cannot keep a prior trade metric alive.
+The index is maintained incrementally — dropped keys are deleted, retained keys
+have their slot positions updated — so no new map is allocated on every call.
 */
 func (thesis *Thesis) Replace(source SourceType, rows []*Measurement) {
 	if thesis == nil || len(rows) == 0 {
@@ -108,35 +110,50 @@ func (thesis *Thesis) Replace(source SourceType, rows []*Measurement) {
 	thesis.publish.Lock()
 	defer thesis.publish.Unlock()
 
-	kept := make([]*Measurement, 0, len(thesis.Measurements))
+	if thesis.index == nil {
+		thesis.index = make(map[measureKey]int, len(thesis.Measurements)+len(rows))
+
+		for slot, row := range thesis.Measurements {
+			if row != nil {
+				thesis.index[measureKey{row.Source, row.Symbol}] = slot
+			}
+		}
+	}
+
+	// In-place filter: reuse the backing array and update the index incrementally
+	// instead of allocating a new map via rebuildIndex on every book update.
+	kept := thesis.Measurements[:0]
 
 	for _, row := range thesis.Measurements {
 		if row == nil {
 			continue
 		}
 
+		key := measureKey{row.Source, row.Symbol}
+
 		if row.Source == source {
 			if _, drop := symbols[row.Symbol]; drop {
+				delete(thesis.index, key)
 				continue
 			}
 		}
 
+		thesis.index[key] = len(kept)
 		kept = append(kept, row)
 	}
 
-	thesis.Measurements = kept
-	thesis.rebuildIndex()
-
-	if thesis.index == nil {
-		thesis.index = make(map[measureKey]int, len(rows))
+	// Nil trailing slots so GC can collect unreachable Measurement structs.
+	for i := len(kept); i < len(thesis.Measurements); i++ {
+		thesis.Measurements[i] = nil
 	}
+
+	thesis.Measurements = kept
 
 	incoming, order := thesis.stageIncoming(source, rows)
 
 	for _, key := range order {
-		row := incoming[key]
 		thesis.index[key] = len(thesis.Measurements)
-		thesis.Measurements = append(thesis.Measurements, row)
+		thesis.Measurements = append(thesis.Measurements, incoming[key])
 	}
 }
 
