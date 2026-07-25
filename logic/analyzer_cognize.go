@@ -31,7 +31,7 @@ func (analyzer *Analyzer) cognizeStates(
 	categoryTokens := analyzer.cognitionTokens(thesis, states)
 
 	for _, state := range states {
-		if state.Replay {
+		if analyzer.isReplayCognitionState(thesis, state) {
 			analyzer.recall(thesis, state, categoryTokens[state.Symbol])
 			continue
 		}

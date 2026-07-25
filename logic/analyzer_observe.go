@@ -41,14 +41,14 @@ func (analyzer *Analyzer) observeStates(
 			return true
 		}
 
-		if !state.Replay && analyzer.observed[state.Symbol] >= state.Epoch {
-			state.Replay = true
+		if !stateReplay(state) && analyzer.observed[state.Symbol] >= state.Epoch {
+			state = withStateReplay(state, true)
 			thesis.Manifold.Store(state.Symbol, state)
 		}
 
 		states = append(states, state)
 
-		if state.Replay {
+		if stateReplay(state) {
 			return true
 		}
 
