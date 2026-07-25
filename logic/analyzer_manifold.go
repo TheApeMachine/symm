@@ -17,23 +17,27 @@ this tick.
 func (analyzer *Analyzer) stepManifold(
 	thesis *types.Thesis,
 	hawkes manifold.HawkesSource,
+	cutID types.CutID,
+	tick int64,
 ) {
-	tick := int64(0)
-
-	if thesis != nil {
-		tick = thesis.Tick
-	}
-
 	switch {
 	case analyzer.manifold == nil:
-		errnie.Error(audit.Phase(analyzer.recorder, tick, "manifold", map[string]any{
-			"ok": false, "skip": "manifold_nil",
-		}))
+		payload := map[string]any{"ok": false, "skip": "manifold_nil"}
+
+		if cutID > 0 {
+			payload["cut_id"] = uint64(cutID)
+		}
+
+		errnie.Error(audit.Phase(analyzer.recorder, tick, "manifold", payload))
 		return
 	case hawkes == nil:
-		errnie.Error(audit.Phase(analyzer.recorder, tick, "manifold", map[string]any{
-			"ok": false, "skip": "hawkes_nil",
-		}))
+		payload := map[string]any{"ok": false, "skip": "hawkes_nil"}
+
+		if cutID > 0 {
+			payload["cut_id"] = uint64(cutID)
+		}
+
+		errnie.Error(audit.Phase(analyzer.recorder, tick, "manifold", payload))
 		return
 	}
 
@@ -47,5 +51,10 @@ func (analyzer *Analyzer) stepManifold(
 	}
 
 	payload["ns"] = time.Since(manifoldStarted).Nanoseconds()
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "manifold", payload))
+
+	if cutID > 0 {
+		payload["cut_id"] = uint64(cutID)
+	}
+
+	errnie.Error(audit.Phase(analyzer.recorder, tick, "manifold", payload))
 }

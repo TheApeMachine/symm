@@ -21,6 +21,8 @@ that row for client inheritance.
 func (analyzer *Analyzer) publishMeasured(
 	thesis *types.Thesis,
 	states []manifold.State,
+	cutID types.CutID,
+	tick int64,
 ) {
 	publishStarted := time.Now()
 
@@ -47,10 +49,16 @@ func (analyzer *Analyzer) publishMeasured(
 		analyzer.publish(datura.Map[any]{"manifold_wave": wave})
 	}
 
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "publish", map[string]any{
+	payload := map[string]any{
 		"ns":       time.Since(publishStarted).Nanoseconds(),
 		"manifold": len(states),
-	}))
+	}
+
+	if cutID > 0 {
+		payload["cut_id"] = uint64(cutID)
+	}
+
+	errnie.Error(audit.Phase(analyzer.recorder, tick, "publish", payload))
 }
 
 /*

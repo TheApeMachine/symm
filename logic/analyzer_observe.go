@@ -15,7 +15,11 @@ observeStates walks manifold state into resonance, causal, and forecast outputs.
 One thesis tick is one shared physics step; every GasReady symbol observes that
 reading once for this tick.
 */
-func (analyzer *Analyzer) observeStates(thesis *types.Thesis) []manifold.State {
+func (analyzer *Analyzer) observeStates(
+	thesis *types.Thesis,
+	cutID types.CutID,
+	tick int64,
+) []manifold.State {
 	states := make([]manifold.State, 0)
 	observeStarted := time.Now()
 
@@ -59,10 +63,16 @@ func (analyzer *Analyzer) observeStates(thesis *types.Thesis) []manifold.State {
 		return true
 	})
 
-	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "observe", map[string]any{
+	payload := map[string]any{
 		"states": len(states),
 		"ns":     time.Since(observeStarted).Nanoseconds(),
-	}))
+	}
+
+	if cutID > 0 {
+		payload["cut_id"] = uint64(cutID)
+	}
+
+	errnie.Error(audit.Phase(analyzer.recorder, tick, "observe", payload))
 
 	return states
 }
