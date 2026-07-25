@@ -12,8 +12,9 @@ import (
 
 /*
 observeStates walks manifold state into resonance, causal, and forecast outputs.
-One thesis tick is one shared physics step; every GasReady symbol observes that
-reading once for this tick.
+A symbol epoch is observed once; later Analyzer cuts that still see that GasReady
+view treat it as replay so idle Hawkes republishes cannot wipe calibrated
+evidence by re-running Update at the same At.
 */
 func (analyzer *Analyzer) observeStates(
 	thesis *types.Thesis,
@@ -22,58 +23,40 @@ func (analyzer *Analyzer) observeStates(
 ) []manifold.State {
 	states := make([]manifold.State, 0)
 	observeStarted := time.Now()
-
 	if analyzer.observed == nil {
-		analyzer.observed = make(map[string]int64)
+		analyzer.observed = make(map[string]uint64)
 	}
-
-	tick := int64(0)
-
-	if thesis != nil {
-		tick = thesis.Tick
-	}
-
 	thesis.Manifold.Range(func(_, value any) bool {
 		state, ok := value.(manifold.State)
-
 		if !ok {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"analyzer received invalid manifold state",
 				nil,
 			))
-
 			return true
 		}
-
+		if !stateReplay(state) && analyzer.observed[state.Symbol] >= state.Epoch {
+			state = withStateReplay(state, true)
+			thesis.Manifold.Store(state.Symbol, state)
+		}
 		states = append(states, state)
-
-		if !state.GasReady() {
+		if stateReplay(state) {
 			return true
 		}
-
-		if tick > 0 && analyzer.observed[state.Symbol] >= tick {
-			return true
-		}
-
 		if analyzer.observe(thesis, state) {
-			analyzer.observed[state.Symbol] = tick
+			analyzer.observed[state.Symbol] = state.Epoch
 		}
-
 		return true
 	})
-
 	payload := map[string]any{
 		"states": len(states),
 		"ns":     time.Since(observeStarted).Nanoseconds(),
 	}
-
 	if cutID > 0 {
 		payload["cut_id"] = uint64(cutID)
 	}
-
 	errnie.Error(audit.Phase(analyzer.recorder, tick, "observe", payload))
-
 	return states
 }
 
@@ -89,108 +72,82 @@ func (analyzer *Analyzer) observe(
 	if analyzer.resonance == nil {
 		analyzer.resonance = make(map[string]*Resonance)
 	}
-
 	if analyzer.causal == nil {
 		analyzer.causal = make(map[string]*Causal)
 	}
-
 	resonance := analyzer.resonance[state.Symbol]
-
 	if resonance == nil {
 		resonance = NewResonance(state.Symbol, manifold.DefaultBaselineHalflife())
-
 		if resonance == nil {
 			return false
 		}
-
 		analyzer.resonance[state.Symbol] = resonance
 	}
-
 	measurements, resonanceOutcome := resonance.Update(state)
-
 	causal := analyzer.causal[state.Symbol]
-
 	if causal == nil {
 		causal = NewCausal(state.Symbol)
 		analyzer.causal[state.Symbol] = causal
 	}
-
 	hypothesis, causalOutcome, err := causal.Update(state)
-
 	if err != nil {
 		errnie.Error(err)
 		causalOutcome = nil
 	}
-
 	if resonanceOutcome == nil && causalOutcome == nil && len(measurements) == 0 {
 		return false
 	}
-
 	analyzer.dropSymbolEvidence(thesis, state.Symbol)
-
 	if len(measurements) > 0 {
 		// Upsert — never AppendMeasurements. Appending every Hawkes epoch grew the
 		// durable thesis without bound; NewImmutableCut then cloned gigabytes.
 		thesis.Publish(types.SourceResonance, measurements)
 	}
-
 	if resonanceOutcome != nil {
 		thesis.Resonance = append(thesis.Resonance, resonanceOutcome)
 	}
-
 	if causalOutcome != nil {
 		thesis.Hypotheses = append(thesis.Hypotheses, hypothesis)
 		thesis.Causal = append(thesis.Causal, causalOutcome)
 	}
-
 	analyzer.forecast(thesis, state, resonanceOutcome, causalOutcome)
-
-	// Lock the tick only after resonance publishes — earlier retries keep
+	// Lock the epoch only after resonance publishes — earlier retries keep
 	// feeding the same physical view until time-elastic baselines are ready.
 	return resonanceOutcome != nil
 }
 
 /*
-dropSymbolEvidence removes one symbol's prior observe outputs so a fresh tick
+dropSymbolEvidence removes one symbol's prior observe outputs so a fresh epoch
 replaces them instead of appending duplicates.
 */
 func (analyzer *Analyzer) dropSymbolEvidence(thesis *types.Thesis, symbol string) {
 	if thesis == nil || symbol == "" {
 		return
 	}
-
 	priorForecasts := append([]types.Forecasts(nil), thesis.Forecasts...)
 	forecasts := thesis.Forecasts[:0]
-
 	for _, row := range priorForecasts {
 		if row.Symbol == symbol {
 			continue
 		}
-
 		forecasts = append(forecasts, row)
 	}
-
 	thesis.Forecasts = forecasts
 	priorHypotheses := append([]types.Hypothesis(nil), thesis.Hypotheses...)
 	hypotheses := thesis.Hypotheses[:0]
-
 	for _, row := range priorHypotheses {
 		if row.Symbol == symbol {
 			continue
 		}
-
 		hypotheses = append(hypotheses, row)
 	}
-
 	thesis.Hypotheses = hypotheses
 	thesis.Resonance = dropSymbolAny(thesis.Resonance, symbol)
 	thesis.Causal = dropSymbolAny(thesis.Causal, symbol)
 }
-
 func dropSymbolAny(rows []any, symbol string) []any {
 	prior := append([]any(nil), rows...)
 	out := rows[:0]
-
 	for _, row := range prior {
 		switch value := row.(type) {
 		case *ResonanceOutcome:
@@ -210,10 +167,8 @@ func dropSymbolAny(rows []any, symbol string) []any {
 				continue
 			}
 		}
-
 		out = append(out, row)
 	}
-
 	return out
 }
 
@@ -232,7 +187,6 @@ func (analyzer *Analyzer) forecast(
 		!causalOutcome.Ready {
 		return
 	}
-
 	// Candidate notional is capped at the best ask, so the forecast does not
 	// claim depth-crossing impact beyond the directly observed touch spread.
 	// ExpectedImpact is stamped by strategy friction, where deployable cash
@@ -266,7 +220,6 @@ func (analyzer *Analyzer) forecast(
 			math.Exp(-math.Abs(resonanceOutcome.Surprise)),
 		),
 	}
-
 	thesis.Forecasts = append(thesis.Forecasts, forecast)
 }
 
@@ -283,10 +236,8 @@ func (analyzer *Analyzer) forecastAdverse(
 	expectedReturn float64,
 ) float64 {
 	adverse := 0.0
-
 	if state.Spread > 0 && finite(causalOutcome.InformedFlow) {
 		adverse = causalOutcome.InformedFlow * state.Spread
 	}
-
 	return adverse + TrapShare(thesis, state.Symbol).Tax(expectedReturn)
 }

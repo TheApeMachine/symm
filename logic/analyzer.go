@@ -36,7 +36,7 @@ type Analyzer struct {
 	resonance  map[string]*Resonance
 	causal     map[string]*Causal
 	cognition  map[string]types.Cognition
-	observed   map[string]int64
+	observed   map[string]uint64
 	rem        *remSleep
 	categories *category.Graph
 }
@@ -76,7 +76,7 @@ func NewAnalyzer(
 		resonance:  make(map[string]*Resonance),
 		causal:     make(map[string]*Causal),
 		cognition:  make(map[string]types.Cognition),
-		observed:   make(map[string]int64),
+		observed:   make(map[string]uint64),
 		rem:        newREMSleep(ctx, tree),
 		categories: category.NewGraph(),
 	}
