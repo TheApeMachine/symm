@@ -117,10 +117,40 @@ const beamsFromReading = (reading: Record<string, unknown>): CortexBeam[] => {
 	}
 
 	const maxScore = Math.max(...beams.map((beam) => beam.score));
+	const displaySequence = (sequence: string): string => {
+		const tokens = sequence.split("_").filter(Boolean);
+
+		if (tokens.length === 0) {
+			return sequence;
+		}
+
+		const scoped =
+			tokens[0]?.startsWith("symbol-") === true ||
+			tokens[0]?.startsWith("s/") === true;
+		const content = scoped ? tokens.slice(1) : tokens;
+		const normalized = (content.length > 0 ? content : tokens).map((token) => {
+			if (token.startsWith("cat-")) {
+				let category = token.slice("cat-".length);
+
+				for (const suffix of ["-positive", "-negative", "-zero"]) {
+					if (category.endsWith(suffix)) {
+						category = category.slice(0, -suffix.length);
+						break;
+					}
+				}
+
+				return category;
+			}
+
+			return token;
+		});
+
+		return normalized.join("_");
+	};
 
 	return beams.map((beam, index) => ({
 		rank: index + 1,
-		sequence: beam.sequence,
+		sequence: displaySequence(beam.sequence),
 		score: beam.score.toFixed(2),
 		percent: Math.round(Math.exp(beam.score - maxScore) * 100),
 		variant: index === 0 ? "warning" : "info",

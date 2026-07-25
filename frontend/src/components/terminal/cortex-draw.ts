@@ -123,12 +123,25 @@ export const displayToken = (token: string): string => {
 		return body.toUpperCase();
 	}
 
+	if (token.startsWith("cat-")) {
+		let category = token.slice("cat-".length);
+
+		for (const suffix of ["-positive", "-negative", "-zero"]) {
+			if (category.endsWith(suffix)) {
+				category = category.slice(0, -suffix.length);
+				break;
+			}
+		}
+
+		return category;
+	}
+
 	const polarity = token.split("--");
 	const head = polarity[0] ?? token;
-	const segments = head.split("-").filter(Boolean);
-	const tip = segments[segments.length - 1] ?? token;
 
 	if (polarity.length > 1) {
+		const segments = head.split("-").filter(Boolean);
+		const tip = segments[segments.length - 1] ?? token;
 		const sign = polarity[polarity.length - 1];
 
 		if (sign === "positive") {
@@ -144,7 +157,7 @@ export const displayToken = (token: string): string => {
 		}
 	}
 
-	return tip;
+	return head;
 };
 
 /*
@@ -221,6 +234,14 @@ const shouldLabel = (
 ): boolean => {
 	if (node.depth === 0) {
 		return false;
+	}
+
+	if (node.token.startsWith("symbol-")) {
+		return false;
+	}
+
+	if (node.depth <= 2) {
+		return true;
 	}
 
 	if (onBeam) {

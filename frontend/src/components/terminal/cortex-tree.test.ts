@@ -149,8 +149,35 @@ describe("displayToken", () => {
 		expect(displayToken("sweep")).toBe("sweep");
 	});
 
+	it("preserves category names instead of collapsing to one segment", () => {
+		expect(displayToken("dense-neutrality")).toBe("dense-neutrality");
+		expect(displayToken("cat-fragile-expansion-positive")).toBe(
+			"fragile-expansion",
+		);
+	});
+
 	it("keeps symbol tokens readable instead of collapsing to the quote", () => {
 		expect(displayToken("symbol-btc-usd")).toBe("BTC/USD");
 		expect(displayToken("symbol-cloud-usd")).toBe("CLOUD/USD");
+	});
+});
+
+describe("beamsFromReading", () => {
+	it("renders beam sequences as category path without symbol scope prefix", () => {
+		const tree = cortexTreeFromReading({
+			...readingWith([
+				branch(0, -1, "•", 0, 1),
+				branch(1, 0, "cat-dense-neutrality-positive", 1, 0.7),
+			]),
+			beams: [
+				{
+					sequence:
+						"s/0G-USD_cat-dense-neutrality-positive_cat-median-depth-positive",
+					score: -0.2,
+				},
+			],
+		});
+
+		expect(tree?.beams[0]?.sequence).toBe("dense-neutrality_median-depth");
 	});
 });
