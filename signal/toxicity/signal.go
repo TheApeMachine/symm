@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -168,7 +169,17 @@ func (signal *Signal) Calculate(
 		out = append(out, signal.emitSymbolMeasurements(symbol, signal.evidence[symbol]))
 	}
 
-	types.WireMeasurements(out, signal.ui)
+	select {
+	case signal.ui <- datura.Map[any]{
+		"measurements": out,
+	}.Marshal():
+	default:
+		errnie.Error(errnie.Err(
+			errnie.TooManyRequests,
+			"wire: ui channel saturated; dropped measurements",
+			nil,
+		))
+	}
 
 	return out, nil
 }

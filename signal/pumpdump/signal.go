@@ -3,11 +3,11 @@ package pumpdump
 import (
 	"context"
 	"math"
-	"slices"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
@@ -153,15 +153,14 @@ func (signal *Signal) Calculate(
 		return nil, nil
 	}
 
-	tickers = slices.Clone(tickers)
-	trades = slices.Clone(trades)
-	books = slices.Clone(books)
 	sort.SliceStable(tickers, func(left, right int) bool {
 		return tickers[left].Timestamp.Before(tickers[right].Timestamp)
 	})
+
 	sort.SliceStable(trades, func(left, right int) bool {
 		return trades[left].Timestamp.Before(trades[right].Timestamp)
 	})
+
 	sort.SliceStable(books, func(left, right int) bool {
 		return books[left].Timestamp.Before(books[right].Timestamp)
 	})
@@ -172,8 +171,7 @@ func (signal *Signal) Calculate(
 	measured := make(map[string]struct{}, len(tickers))
 
 	for _, row := range tickers {
-		for tradeIndex < len(trades) &&
-			!trades[tradeIndex].Timestamp.After(row.Timestamp) {
+		for tradeIndex < len(trades) && !trades[tradeIndex].Timestamp.After(row.Timestamp) {
 			if err := signal.ingest(trades[tradeIndex:tradeIndex+1], nil); err != nil {
 				return nil, err
 			}
@@ -181,8 +179,7 @@ func (signal *Signal) Calculate(
 			tradeIndex++
 		}
 
-		for bookIndex < len(books) &&
-			!books[bookIndex].Timestamp.After(row.Timestamp) {
+		for bookIndex < len(books) && !books[bookIndex].Timestamp.After(row.Timestamp) {
 			if err := signal.ingest(nil, books[bookIndex:bookIndex+1]); err != nil {
 				return nil, err
 			}
@@ -224,7 +221,17 @@ func (signal *Signal) Calculate(
 		}
 	}
 
-	types.WireMeasurements(uiRows, signal.ui)
+	select {
+	case signal.ui <- datura.Map[any]{
+		"measurements": uiRows,
+	}.Marshal():
+	default:
+		errnie.Error(errnie.Err(
+			errnie.TooManyRequests,
+			"wire: ui channel saturated; dropped measurements",
+			nil,
+		))
+	}
 
 	return out, nil
 }

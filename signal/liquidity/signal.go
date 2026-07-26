@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/nomagique/statistic"
@@ -213,7 +214,17 @@ func (signal *Signal) Calculate(
 		out = append(out, measurement)
 	}
 
-	types.WireMeasurements(out, signal.ui)
+	select {
+	case signal.ui <- datura.Map[any]{
+		"measurements": out,
+	}.Marshal():
+	default:
+		errnie.Error(errnie.Err(
+			errnie.TooManyRequests,
+			"wire: ui channel saturated; dropped measurements",
+			nil,
+		))
+	}
 
 	return out, nil
 }

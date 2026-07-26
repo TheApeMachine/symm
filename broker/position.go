@@ -95,6 +95,7 @@ func NewPosition(
 		"executions": {Topic: "executions", Fn: position.onExecutions},
 	})
 
+	position.Actor.Initialize()
 	return position
 }
 

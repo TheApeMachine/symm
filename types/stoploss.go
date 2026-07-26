@@ -51,6 +51,7 @@ func NewStoploss(
 		"ticker": {Topic: "stoploss", Fn: stoploss.onTicker},
 	})
 
+	stoploss.Actor.Initialize()
 	return stoploss
 }
 

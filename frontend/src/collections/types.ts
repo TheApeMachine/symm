@@ -33,28 +33,29 @@ export type Balance = {
 
 /*
 Holding mirrors types.Holding JSON from Balance.Frame.
+Decimal fields arrive as strings from decimal.Decimal.MarshalJSON.
 */
 export type Holding = {
 	symbol: string;
-	qty: number;
-	entry_price: number;
-	entry_fee: number;
-	exit_price?: number;
-	exit_fee: number;
-	mark: number;
-	pnl: number;
-	return_pct: number;
+	qty: number | string;
+	entry_price: number | string;
+	entry_fee: number | string;
+	exit_price?: number | string;
+	exit_fee: number | string;
+	mark: number | string;
+	pnl: number | string;
+	return_pct: number | string;
 	status?: string;
 	asset?: string;
-	peak_price?: number;
-	stop_price?: number;
-	stop_return?: number;
-	peak_return?: number;
+	peak_price?: number | string;
+	stop_price?: number | string;
+	stop_return?: number | string;
+	peak_return?: number | string;
 	stop_armed?: boolean;
 	momentum_active?: boolean;
-	momentum_health?: number;
+	momentum_health?: number | string;
 	stagnation_active?: boolean;
-	stagnation_health?: number;
+	stagnation_health?: number | string;
 	stagnation_pending?: boolean;
 };
 

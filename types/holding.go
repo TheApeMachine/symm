@@ -71,7 +71,7 @@ finite floats and stop_price is derived from the bound regulator.
 */
 func (holding Holding) MarshalJSON() ([]byte, error) {
 	type alias Holding
-	return fastSonic.Marshal(holding)
+	return fastSonic.Marshal(alias(holding))
 }
 
 /*
