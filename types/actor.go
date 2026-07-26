@@ -103,6 +103,7 @@ inbox so idle actors sleep and cross-topic order follows arrival order.
 type Actor struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
+	name          string
 	subscriptions map[string]*Subscription[any]
 	subscribers   map[string][]*Subscription[any]
 	handlers      map[string]Handler
@@ -119,6 +120,7 @@ NewActor constructs an Actor with handlers fixed for its lifetime.
 */
 func NewActor(
 	ctx context.Context,
+	name string,
 	handlers map[string]Handler,
 ) *Actor {
 	ctx, cancel := context.WithCancel(ctx)
@@ -136,6 +138,7 @@ func NewActor(
 	return &Actor{
 		ctx:           ctx,
 		cancel:        cancel,
+		name:          name,
 		subscriptions: make(map[string]*Subscription[any]),
 		subscribers:   make(map[string][]*Subscription[any]),
 		handlers:      handlers,
@@ -177,6 +180,7 @@ func (actor *Actor) SubscribeSize(topic string, buffer int) *Subscription[any] {
 Initialize attaches this actor to upstream topics under the same Name.
 */
 func (actor *Actor) Initialize(topics ...Topic) {
+	errnie.Info("initializing actor: " + actor.name)
 	actor.InitializeSize(0, topics...)
 }
 
@@ -280,16 +284,16 @@ func (actor *Actor) loop() {
 
 			if !ok {
 				actor.publish(envelope.Topic, envelope.Payload)
-				return
+				continue
 			}
 
-		result := handler.Fn(envelope.Payload)
+			result := handler.Fn(envelope.Payload)
 
-		if result == nil {
-			continue
-		}
+			if result == nil {
+				continue
+			}
 
-		actor.publish(envelope.Topic, result)
+			actor.publish(envelope.Topic, result)
 		}
 	}
 }

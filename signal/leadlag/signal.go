@@ -37,7 +37,7 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 		ui:      ui,
 	}
 
-	signal.Actor = types.NewActor(ctx, map[string]types.Handler{
+	signal.Actor = types.NewActor(ctx, "leadlag", map[string]types.Handler{
 		"ticker": {Topic: "thesis", Fn: signal.onTicker},
 	})
 

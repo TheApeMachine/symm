@@ -47,7 +47,7 @@ func NewStoploss(
 		exit:   exit,
 	}
 
-	stoploss.Actor = NewActor(ctx, map[string]Handler{
+	stoploss.Actor = NewActor(ctx, "stoploss", map[string]Handler{
 		"ticker": {Topic: "stoploss", Fn: stoploss.onTicker},
 	})
 

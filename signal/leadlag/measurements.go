@@ -19,6 +19,7 @@ func (signal *Signal) measureFrame(
 ) ([]*types.Measurement, error) {
 	rows := tickers
 	out := make([]*types.Measurement, 0, len(rows))
+	uiOut := make([]*types.Measurement, 0)
 
 	anchor, _ := crossSection.Leadership()
 
@@ -65,11 +66,15 @@ func (signal *Signal) measureFrame(
 		}
 
 		out = append(out, signal.score(row.Symbol, row.Timestamp, features))
+
+		if row.Symbol == types.Focus() {
+			uiOut = append(uiOut, signal.score(row.Symbol, row.Timestamp, features))
+		}
 	}
 
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": out,
+		"measurements": uiOut,
 	}.Marshal():
 	default:
 		errnie.Error(errnie.Err(

@@ -89,7 +89,7 @@ func New(
 		},
 	}
 
-	live.Actor = types.NewActor(ctx, nil)
+	live.Actor = types.NewActor(ctx, "live", nil)
 
 	for name, root := range live.roots {
 		live.AddRoot(name, root)

@@ -115,17 +115,6 @@ func (wallet *Wallet) BalanceAck(
 }
 
 /*
-resync requests a fresh balances snapshot after a sequence gap.
-*/
-func (wallet *Wallet) resync() bool {
-	if wallet.api == nil {
-		return false
-	}
-
-	return errnie.Error(wallet.api.SubscribeBalance()) == nil
-}
-
-/*
 clone deep-copies one wallet row so callers and the stored map never share
 mutable decimal state.
 */

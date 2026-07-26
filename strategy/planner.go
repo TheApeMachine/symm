@@ -77,7 +77,7 @@ func NewPlanner(
 		arbiter:    NewArbiter(desk, price, balance, admit, rotate),
 	}
 
-	planner.Actor = types.NewActor(ctx, map[string]types.Handler{
+	planner.Actor = types.NewActor(ctx, "planner", map[string]types.Handler{
 		"ticker": {Topic: "ticker", Fn: planner.thesis},
 		"trade":  {Topic: "trade", Fn: planner.thesis},
 	})

@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -116,6 +117,7 @@ func (stage *Stage) Initialize(ctx context.Context, uiHub chan<- []byte) error {
 		}
 	}
 
+	errnie.Info("stage " + stage.stageType.String() + " initialized")
 	return nil
 }
 

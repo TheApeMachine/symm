@@ -58,7 +58,7 @@ func NewSignal(
 		ui:         ui,
 	}
 
-	signal.Actor = types.NewActor(ctx, map[string]types.Handler{
+	signal.Actor = types.NewActor(ctx, "pumpdump", map[string]types.Handler{
 		"ticker": {Topic: "thesis", Fn: signal.onTicker},
 		"book":   {Topic: "thesis", Fn: signal.onBook},
 		"trade":  {Topic: "thesis", Fn: signal.onTrade},
@@ -166,6 +166,8 @@ func (signal *Signal) Calculate(
 	})
 
 	out := make([]*types.Measurement, 0, len(tickers))
+	uiOut := make([]*types.Measurement, 0)
+
 	tradeIndex := 0
 	bookIndex := 0
 	measured := make(map[string]struct{}, len(tickers))
@@ -202,28 +204,19 @@ func (signal *Signal) Calculate(
 		}
 
 		out = append(out, measurements...)
+
+		if row.Symbol == types.Focus() {
+			uiOut = append(uiOut, measurements...)
+		}
 	}
 
 	if err := signal.ingest(trades[tradeIndex:], books[bookIndex:]); err != nil {
 		return nil, err
 	}
 
-	// Thesis keeps this batch only. Focus-gated UI re-wires the last focus
-	// observation when the batch was an alt update so the kernel does not sit
-	// on STANDBY (do not remeasure — that would advance ignition on a stale tick).
-	uiRows := out
-
-	if focus := types.Focus(); focus != "" {
-		if _, seen := measured[focus]; !seen {
-			if value, ok := signal.lastWire.Load(focus); ok {
-				uiRows = append(append([]*types.Measurement{}, out...), value.([]*types.Measurement)...)
-			}
-		}
-	}
-
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": uiRows,
+		"measurements": uiOut,
 	}.Marshal():
 	default:
 		errnie.Error(errnie.Err(

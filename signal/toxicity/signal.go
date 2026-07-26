@@ -48,7 +48,7 @@ func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal 
 		ui:           ui,
 	}
 
-	signal.Actor = types.NewActor(ctx, map[string]types.Handler{
+	signal.Actor = types.NewActor(ctx, "toxicity", map[string]types.Handler{
 		"ticker": {
 			Topic: "thesis",
 			Fn:    signal.onTicker,
@@ -164,14 +164,19 @@ func (signal *Signal) Calculate(
 	}
 
 	out := make([]*types.Measurement, 0, len(signal.evidence))
+	uiOut := make([]*types.Measurement, 0)
 
 	for symbol := range signal.evidence {
 		out = append(out, signal.emitSymbolMeasurements(symbol, signal.evidence[symbol]))
+
+		if symbol == types.Focus() {
+			uiOut = append(uiOut, out[len(out)-1])
+		}
 	}
 
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": out,
+		"measurements": uiOut,
 	}.Marshal():
 	default:
 		errnie.Error(errnie.Err(

@@ -77,7 +77,7 @@ func NewConn(ctx context.Context, symbols ...string) *MockConn {
 		},
 	}
 
-	conn.Actor = types.NewActor(ctx, nil)
+	conn.Actor = types.NewActor(ctx, "mockapi", nil)
 
 	for name, root := range conn.roots {
 		conn.AddRoot(name, root)

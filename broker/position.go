@@ -90,7 +90,7 @@ func NewPosition(
 		position.Exit,
 	)
 
-	position.Actor = types.NewActor(ctx, map[string]types.Handler{
+	position.Actor = types.NewActor(ctx, "position", map[string]types.Handler{
 		"add_order":  {Topic: "add_order", Fn: position.onOrder},
 		"executions": {Topic: "executions", Fn: position.onExecutions},
 	})

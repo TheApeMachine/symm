@@ -15,7 +15,7 @@ func TestInitializeSize(t *testing.T) {
 		Reset(cancel)
 
 		var handled atomic.Int64
-		consumer := NewActor(ctx, map[string]Handler{
+		consumer := NewActor(ctx, "consumer", map[string]Handler{
 			"trade": {
 				Topic: "trade",
 				Fn: func(message any) any {
@@ -26,7 +26,7 @@ func TestInitializeSize(t *testing.T) {
 				},
 			},
 		})
-		producer := NewActor(ctx, map[string]Handler{
+		producer := NewActor(ctx, "producer", map[string]Handler{
 			"trade": {
 				Topic: "trade",
 				Fn: func(message any) any {
@@ -61,7 +61,7 @@ func TestActorClose(t *testing.T) {
 	Convey("Given a started actor", t, func() {
 		ctx := t.Context()
 		var ran atomic.Bool
-		actor := NewActor(ctx, map[string]Handler{
+		actor := NewActor(ctx, "actor", map[string]Handler{
 			"trade": {
 				Topic: "trade",
 				Fn: func(message any) any {
@@ -92,7 +92,7 @@ func TestRootPublishDoesNotDrop(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		Reset(cancel)
 
-		live := NewActor(ctx, nil)
+		live := NewActor(ctx, "live", nil)
 		root := NewSubscriptionSize[any](8)
 		live.AddRoot("book", root)
 		live.Start()
@@ -151,7 +151,7 @@ func BenchmarkActorInbox(b *testing.B) {
 	defer cancel()
 
 	var handled atomic.Int64
-	actor := NewActor(ctx, map[string]Handler{
+	actor := NewActor(ctx, "actor", map[string]Handler{
 		"trade": {
 			Topic: "trade",
 			Fn: func(message any) any {

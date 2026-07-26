@@ -1,4 +1,3 @@
-import type { Category, Measurement } from "#/types/measurement";
 import type {
 	Finding,
 	Graph,
@@ -10,8 +9,6 @@ import type {
 } from "#/types/thesis";
 
 export type {
-	Category,
-	Measurement,
 	Finding,
 	Graph,
 	LifecycleState,
@@ -294,12 +291,33 @@ export type CognitiveClass = {
 	probability: number;
 };
 
-/*
-MeasurementEpoch groups measurements that share an observation timestamp for
-readers that still join multi-metric frames by tick.
-*/
-export type MeasurementEpoch = {
-	at: string;
-	readings: Measurement[];
-	publishedAt: string;
-};
+export type Measurement = {
+    source: string;
+    symbol: string;
+    peer?: string;
+    at: string;
+    observedFrom?: string;
+    horizon?: string;
+    maturity?: number;
+    uncertainty?: {
+        lower?: number;
+        upper?: number;
+        confidence?: number;
+        method?: string;
+    };
+    validity: {
+        state: string;
+        readiness: string;
+        reason?: string;
+    };
+    scale: {
+        kind: string;
+        from: string;
+        through: string;
+    };
+    metrics?: { [key: string]: {
+        raw: number;
+        normalized?: number;
+        unit?: string;
+    }};
+}

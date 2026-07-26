@@ -52,7 +52,7 @@ func NewCrypto(
 		desk:     desk,
 	}
 
-	crypto.Actor = types.NewActor(ctx, map[string]types.Handler{
+	crypto.Actor = types.NewActor(ctx, "crypto", map[string]types.Handler{
 		"ticker": {Topic: "ticker", Fn: crypto.thesis},
 		"trade":  {Topic: "trade", Fn: crypto.thesis},
 	})

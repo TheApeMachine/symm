@@ -11,7 +11,7 @@ drop non-focus signal metrics without changing the trading thesis path.
 var uiFocus atomic.Value
 
 func init() {
-	uiFocus.Store("")
+	uiFocus.Store("BTC/USD")
 }
 
 /*
@@ -35,29 +35,4 @@ func Focus() string {
 	symbol, _ := value.(string)
 
 	return symbol
-}
-
-/*
-Focused returns rows unchanged when focus is empty, otherwise only rows whose
-Symbol matches the dashboard focus. Thesis Publish stays ungated; only the UI
-wire path uses this filter.
-*/
-func Focused(rows []*Measurement) []*Measurement {
-	symbol := Focus()
-
-	if symbol == "" || len(rows) == 0 {
-		return rows
-	}
-
-	out := make([]*Measurement, 0, len(rows))
-
-	for _, row := range rows {
-		if row == nil || row.Symbol != symbol {
-			continue
-		}
-
-		out = append(out, row)
-	}
-
-	return out
 }

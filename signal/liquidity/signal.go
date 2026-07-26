@@ -41,7 +41,7 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 		crossSection: types.NewCrossSection(),
 	}
 
-	signal.Actor = types.NewActor(ctx, map[string]types.Handler{
+	signal.Actor = types.NewActor(ctx, "liquidity", map[string]types.Handler{
 		"ticker": {Topic: "thesis", Fn: signal.onTicker},
 	})
 
@@ -125,6 +125,7 @@ func (signal *Signal) Calculate(
 	peerMaturity := float64(len(depthPeers)) / float64(len(depthPeers)+1)
 
 	out := make([]*types.Measurement, 0, len(peers))
+	uiOut := make([]*types.Measurement, 0)
 
 	for _, peer := range peers {
 		executableDepth := peer.ExecutableDepth
@@ -212,11 +213,15 @@ func (signal *Signal) Calculate(
 		}
 
 		out = append(out, measurement)
+
+		if peer.Symbol == types.Focus() {
+			uiOut = append(uiOut, measurement)
+		}
 	}
 
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": out,
+		"measurements": uiOut,
 	}.Marshal():
 	default:
 		errnie.Error(errnie.Err(

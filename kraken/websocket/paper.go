@@ -55,7 +55,7 @@ func NewPaper(
 		},
 	}
 
-	paper.Actor = types.NewActor(ctx, nil)
+	paper.Actor = types.NewActor(ctx, "paper", nil)
 
 	for name, root := range paper.roots {
 		paper.AddRoot(name, root)

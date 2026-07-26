@@ -296,14 +296,6 @@ func (holding *Holding) Enrich(recovered Holding) {
 	}
 }
 
-func finiteFloat(value float64) float64 {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0
-	}
-
-	return value
-}
-
 /*
 WalletQty is a nil-safe positive-qty check used by Balance reconcile.
 */

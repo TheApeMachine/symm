@@ -1022,34 +1022,3 @@ func (price *Price) DivFloor(
 
 	return price.floorScale(quotient, scale)
 }
-
-/*
-decimalReturn projects value relative to entry onto return space using the same
-decimal division policy the broker price surface uses for monetary math.
-*/
-func decimalReturn(value *decimal.Decimal, entry *decimal.Decimal) float64 {
-	if value == nil || entry == nil || entry.Sign() <= 0 {
-		return 0
-	}
-
-	scale := max(
-		int64(decimal.DefaultScale),
-		value.GetScale(),
-		entry.GetScale(),
-	)
-
-	return finiteFloat(
-		value.SetScale(scale).
-			Div(entry.SetScale(scale)).
-			Sub(decimal.NewFromInt64(1)).
-			Float64(),
-	)
-}
-
-func finiteFloat(value float64) float64 {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0
-	}
-
-	return value
-}

@@ -61,7 +61,7 @@ func NewDesk(
 		maxReserved:  trading.SlotsReserved,
 	}
 
-	desk.Actor = types.NewActor(ctx, map[string]types.Handler{
+	desk.Actor = types.NewActor(ctx, "desk", map[string]types.Handler{
 		"instrument": {Topic: "instrument", Fn: desk.onInstrument},
 		"balances":   {Topic: "balances", Fn: desk.onBalances},
 	})

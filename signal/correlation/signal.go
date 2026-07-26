@@ -39,7 +39,7 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 		ui:      ui,
 	}
 
-	signal.Actor = types.NewActor(ctx, map[string]types.Handler{
+	signal.Actor = types.NewActor(ctx, "correlation", map[string]types.Handler{
 		"ticker": {Topic: "thesis", Fn: signal.onTicker},
 	})
 
@@ -113,6 +113,8 @@ func (signal *Signal) Calculate(
 	}
 
 	out := make([]*types.Measurement, 0, len(scoresBySymbol))
+	uiOut := make([]*types.Measurement, 0)
+
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,
 		Readiness: types.ReadinessObservation,
@@ -130,11 +132,15 @@ func (signal *Signal) Calculate(
 		}
 
 		out = append(out, correlationMeasurement(symbol, at, validity, scores))
+
+		if symbol == types.Focus() {
+			uiOut = append(uiOut, correlationMeasurement(symbol, at, validity, scores))
+		}
 	}
 
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": out,
+		"measurements": uiOut,
 	}.Marshal():
 	default:
 		errnie.Error(errnie.Err(

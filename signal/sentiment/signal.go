@@ -38,7 +38,7 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 		crossSection: types.NewCrossSection(),
 	}
 
-	signal.Actor = types.NewActor(ctx, map[string]types.Handler{
+	signal.Actor = types.NewActor(ctx, "sentiment", map[string]types.Handler{
 		"ticker": {Topic: "thesis", Fn: signal.onTicker},
 	})
 
@@ -90,6 +90,7 @@ func (signal *Signal) Calculate(
 	}
 
 	out := make([]*types.Measurement, 0, 64)
+	uiOut := make([]*types.Measurement, 0)
 
 	if signal.crossSection == nil {
 		return out, nil
@@ -211,11 +212,15 @@ func (signal *Signal) Calculate(
 		measurement.Metrics[types.MetricKey(types.MetricStrength, types.SideNone)] = types.MetricSample{Raw: strength, Unit: types.UnitDimensionless}
 
 		out = append(out, measurement)
+
+		if peer.Symbol == types.Focus() {
+			uiOut = append(uiOut, measurement)
+		}
 	}
 
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": out,
+		"measurements": uiOut,
 	}.Marshal():
 	default:
 		errnie.Error(errnie.Err(

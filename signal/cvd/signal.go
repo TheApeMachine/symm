@@ -43,7 +43,7 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 		ui:        ui,
 	}
 
-	signal.Actor = types.NewActor(ctx, map[string]types.Handler{
+	signal.Actor = types.NewActor(ctx, "cvd", map[string]types.Handler{
 		"ticker": {Topic: "thesis", Fn: signal.onTicker},
 		"trade":  {Topic: "thesis", Fn: signal.onTrade},
 	})
@@ -110,6 +110,7 @@ func (signal *Signal) Calculate(
 	books []kraken.BookData,
 ) ([]*types.Measurement, error) {
 	out := make([]*types.Measurement, 0, len(trades))
+	uiOut := make([]*types.Measurement, 0)
 
 	for _, row := range tickers {
 		if row.Symbol == "" || row.Timestamp.IsZero() {
@@ -145,11 +146,15 @@ func (signal *Signal) Calculate(
 		}
 
 		out = append(out, measurements...)
+
+		if row.Symbol == types.Focus() {
+			uiOut = append(uiOut, measurements...)
+		}
 	}
 
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": out,
+		"measurements": uiOut,
 	}.Marshal():
 	default:
 		errnie.Error(errnie.Err(

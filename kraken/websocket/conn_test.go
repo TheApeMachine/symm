@@ -595,7 +595,7 @@ func newStubConn() *stubConn {
 			Channel: make(chan any, 64),
 		},
 	}
-	stub.Actor = types.NewActor(context.Background(), nil)
+	stub.Actor = types.NewActor(context.Background(), "stub", nil)
 	stub.AddRoot("level3", stub.level3)
 	// Match MockConn: root fan-out only runs after Start, so InjectLevel3's
 	// subscriber actually receives frames sent on the level3 root.

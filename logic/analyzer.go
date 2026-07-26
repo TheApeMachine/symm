@@ -95,7 +95,7 @@ func NewAnalyzer(
 
 	// ticker and trade come from Hawkes cuts at depth one for manifold.
 	// thesis comes from every other signal's SignalResult for categories+cognition.
-	analyzer.Actor = types.NewActor(ctx, map[string]types.Handler{
+	analyzer.Actor = types.NewActor(ctx, "analyzer", map[string]types.Handler{
 		"ticker": {Topic: "ticker", Fn: analyzer.onHawkesCut},
 		"trade":  {Topic: "trade", Fn: analyzer.onHawkesCut},
 		"thesis": {Topic: "thesis", Fn: analyzer.onSignal},

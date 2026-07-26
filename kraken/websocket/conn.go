@@ -432,7 +432,7 @@ func (api *API) InjectLevel3(market *types.Actor, conn Conn, symbols []string) {
 	api.level3Conn = conn
 	api.level3.Attach("injected-level3", live)
 
-	feed := types.NewActor(api.ctx, map[string]types.Handler{
+	feed := types.NewActor(api.ctx, "feed", map[string]types.Handler{
 		"level3": {
 			Topic: "level3",
 			Fn: func(message any) any {

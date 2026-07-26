@@ -75,7 +75,7 @@ func TestSignal_Calculate(t *testing.T) {
 			viper.Set("system.actor.buffer", 64)
 			Reset(func() { viper.Set("system.actor.buffer", previous) })
 
-			live := types.NewActor(context.Background(), nil)
+			live := types.NewActor(t.Context(), "live", nil)
 			root := types.NewSubscription[any]()
 			live.AddRoot("trade", root)
 			ticker := types.NewSubscription[any]()

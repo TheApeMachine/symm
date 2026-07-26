@@ -45,7 +45,7 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 		ui:     ui,
 	}
 
-	signal.Actor = types.NewActor(ctx, map[string]types.Handler{
+	signal.Actor = types.NewActor(ctx, "exhaust", map[string]types.Handler{
 		"ticker": {Topic: "thesis", Fn: signal.onTicker},
 		"book":   {Topic: "thesis", Fn: signal.onBook},
 		"trade":  {Topic: "thesis", Fn: signal.onTrade},
@@ -145,9 +145,17 @@ func (signal *Signal) Calculate(
 		return nil, err
 	}
 
+	uiOut := make([]*types.Measurement, 0)
+
+	for _, measurement := range out {
+		if measurement.Symbol == types.Focus() {
+			uiOut = append(uiOut, measurement)
+		}
+	}
+
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": out,
+		"measurements": uiOut,
 	}.Marshal():
 	default:
 		errnie.Error(errnie.Err(

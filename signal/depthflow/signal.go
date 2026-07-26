@@ -56,7 +56,7 @@ func NewSignal(
 		ui:       ui,
 	}
 
-	signal.Actor = types.NewActor(ctx, map[string]types.Handler{
+	signal.Actor = types.NewActor(ctx, "depthflow", map[string]types.Handler{
 		"ticker": {
 			Topic: "thesis",
 			Fn:    signal.onTicker,
@@ -106,7 +106,18 @@ func (signal *Signal) onTicker(message any) any {
 	// book batch on ticker cadence so a focused major is not left on STANDBY
 	// when only alt tickers arrive and prior book UI frames were dropped.
 	if retained := signal.bookOut.Load(); retained != nil && len(*retained) > 0 {
-		types.WireMeasurements(*retained, signal.ui)
+		select {
+		case signal.ui <- datura.Map[any]{
+			"measurements": *retained,
+		}.Marshal():
+		default:
+			errnie.Error(errnie.Err(
+				errnie.TooManyRequests,
+				"wire: ui channel saturated; dropped measurements",
+				nil,
+			))
+		}
+
 	}
 
 	if len(measurements) == 0 {
@@ -173,9 +184,19 @@ func (signal *Signal) Calculate(
 		return nil, err
 	}
 
+	uiOut := make([]*types.Measurement, 0, len(out))
+
+	if len(out) > 0 {
+		for _, measurement := range out {
+			if measurement.Symbol == types.Focus() {
+				uiOut = append(uiOut, measurement)
+			}
+		}
+	}
+
 	select {
 	case signal.ui <- datura.Map[any]{
-		"measurements": out,
+		"measurements": uiOut,
 	}.Marshal():
 	default:
 		errnie.Error(errnie.Err(
