@@ -40,23 +40,23 @@ type Thesis struct {
 	checkpoint    atomic.Int64
 	publish       sync.RWMutex
 	index         map[measureKey]int
-	Tick          int64          `json:"tick"`
-	At            time.Time      `json:"at"`
-	Positions     *sync.Map      `json:"positions"`
-	Holdings      *sync.Map      `json:"holdings"`
-	CrossSection  *CrossSection  `json:"crossSection"`
-	Measurements  []*Measurement `json:"measurements"`
-	Graphs        *sync.Map      `json:"graphs"`
-	Forecasts     []Forecasts    `json:"forecasts"`
-	Decisions     []Decision     `json:"decisions"`
-	Lifecycle     *sync.Map      `json:"lifecycle"`
-	Findings      []Finding      `json:"findings"`
-	Hypotheses    []Hypothesis   `json:"hypotheses"`
-	Categories    []Category     `json:"categories"`
-	Manifold      *sync.Map      `json:"manifold"`
-	Cognition     *sync.Map      `json:"cognition"`
-	Resonance     []any          `json:"resonance"`
-	Causal        []any          `json:"causal"`
+	Tick          int64                 `json:"tick"`
+	At            time.Time             `json:"at"`
+	Positions     *sync.Map             `json:"positions"`
+	Holdings      *sync.Map             `json:"holdings"`
+	CrossSection  *CrossSection         `json:"crossSection"`
+	Measurements  []*Measurement        `json:"measurements"`
+	Graphs        *sync.Map             `json:"graphs"`
+	Forecasts     []Forecasts           `json:"forecasts"`
+	Decisions     []Decision            `json:"decisions"`
+	Lifecycle     *sync.Map             `json:"lifecycle"`
+	Findings      []Finding             `json:"findings"`
+	Hypotheses    []Hypothesis          `json:"hypotheses"`
+	Categories    map[string][]Category `json:"categories"`
+	Manifold      *sync.Map             `json:"manifold"`
+	Cognition     *sync.Map             `json:"cognition"`
+	Resonance     []any                 `json:"resonance"`
+	Causal        []any                 `json:"causal"`
 	cutIncomplete bool
 }
 
@@ -75,7 +75,7 @@ func NewThesis() *Thesis {
 		Lifecycle:    &sync.Map{},
 		Findings:     make([]Finding, 0),
 		Hypotheses:   make([]Hypothesis, 0),
-		Categories:   make([]Category, 0),
+		Categories:   make(map[string][]Category),
 		Manifold:     &sync.Map{},
 		Cognition:    &sync.Map{},
 		Resonance:    make([]any, 0),
@@ -103,7 +103,7 @@ func (thesis *Thesis) ResetTick(at time.Time, tick int64) {
 	thesis.Forecasts = thesis.Forecasts[:0]
 	thesis.Decisions = thesis.Decisions[:0]
 	thesis.Hypotheses = thesis.Hypotheses[:0]
-	thesis.Categories = thesis.Categories[:0]
+	thesis.Categories = make(map[string][]Category)
 	thesis.Resonance = thesis.Resonance[:0]
 	thesis.Causal = thesis.Causal[:0]
 	thesis.cutIncomplete = false
@@ -178,6 +178,16 @@ immutable after Publish (upsert installs new pointers); concurrent Publish
 cannot mutate a snapshot's pointed-to rows.
 */
 func (thesis *Thesis) SnapshotMeasurements() []*Measurement {
+	return thesis.SnapshotMeasurementsInto(nil)
+}
+
+/*
+SnapshotMeasurementsInto appends the published pointer surface into dst under
+the publish read lock. Analyzer reuses dst across cuts to avoid allocating a new
+slice for every stamp, compose, and graph commit pass while preserving the same
+immutable-row snapshot contract as SnapshotMeasurements.
+*/
+func (thesis *Thesis) SnapshotMeasurementsInto(dst []*Measurement) []*Measurement {
 	if thesis == nil {
 		return nil
 	}
@@ -185,7 +195,7 @@ func (thesis *Thesis) SnapshotMeasurements() []*Measurement {
 	thesis.publish.RLock()
 	defer thesis.publish.RUnlock()
 
-	return append([]*Measurement(nil), thesis.Measurements...)
+	return append(dst, thesis.Measurements...)
 }
 
 /*
@@ -224,29 +234,6 @@ func (thesis *Thesis) AppendMeasurements(rows []*Measurement) {
 	for source, group := range bySource {
 		thesis.Publish(source, group)
 	}
-}
-
-/*
-CutSnapshot copies this tick's measurements and forecasts for history callers
-that must not observe later ResetTick replacements on the durable Thesis.
-*/
-func (thesis *Thesis) CutSnapshot() *Thesis {
-	if thesis == nil {
-		return nil
-	}
-
-	snapshot := NewThesis()
-	snapshot.Tick = thesis.Tick
-	snapshot.At = thesis.At
-	snapshot.CrossSection = thesis.CrossSection
-	snapshot.Measurements = append([]*Measurement{}, thesis.Measurements...)
-	snapshot.Forecasts = append([]Forecasts{}, thesis.Forecasts...)
-	snapshot.Decisions = append([]Decision{}, thesis.Decisions...)
-	snapshot.Findings = append([]Finding{}, thesis.Findings...)
-	snapshot.Hypotheses = append([]Hypothesis{}, thesis.Hypotheses...)
-	snapshot.Categories = append([]Category{}, thesis.Categories...)
-
-	return snapshot
 }
 
 /*

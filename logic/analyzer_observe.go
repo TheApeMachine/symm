@@ -173,23 +173,35 @@ func dropSymbolAny(rows []any, symbol string) []any {
 	out := rows[:0]
 
 	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+
 		switch value := row.(type) {
 		case *ResonanceOutcome:
-			if value != nil && value.Symbol == symbol {
+			if value == nil || value.Symbol == symbol {
 				continue
 			}
 		case ResonanceOutcome:
 			if value.Symbol == symbol {
 				continue
 			}
+
+			row := value
+			out = append(out, &row)
+			continue
 		case *CausalOutcome:
-			if value != nil && value.Symbol == symbol {
+			if value == nil || value.Symbol == symbol {
 				continue
 			}
 		case CausalOutcome:
 			if value.Symbol == symbol {
 				continue
 			}
+
+			row := value
+			out = append(out, &row)
+			continue
 		}
 		out = append(out, row)
 	}

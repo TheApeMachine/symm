@@ -1,20 +1,22 @@
 import type { HeatmapCell } from "#/components/kernel/heatmap";
 import { colormapCss, heatmapForeground } from "#/lib/colormap";
-import type { Measurement } from "#/types/measurement";
-import {
-	formatRaw,
-	measurementIdentity,
-	metricLabel,
-	orderedEpoch,
-	percentOf,
-	sideLabel,
-} from "./measurement-view";
+import type { Measurement } from "#/collections/types";
 
 const METER_TONE: Record<"info" | "success" | "warning" | "error", string> = {
 	info: "var(--info)",
 	success: "var(--success)",
 	warning: "var(--warning)",
 	error: "var(--error)",
+};
+
+/*
+SOURCE_HEADLINE_METRIC selects the native metric that best summarizes sources
+whose primary reading is more specific than the shared strength metric.
+*/
+const SOURCE_HEADLINE_METRIC: Record<string, string | null> = {
+	hawkes: "conditional_intensity",
+	liquidity: "scarcity_score",
+	toxicity: "touch_quantity",
 };
 
 /*
@@ -67,22 +69,25 @@ const paintMetricRow = (
 	const value = row.querySelector<HTMLElement>("[data-metric-value='true']");
 	const track = row.querySelector<HTMLElement>("[data-metric-track='true']");
 	const fill = row.querySelector<HTMLElement>("[data-metric-fill='true']");
-	const percent = percentOf(measurement);
-	const variant = measurement.metric === headline ? "warning" : "info";
+	const metric = (measurement.metrics?.[headline ?? ""].normalized || measurement.metrics?.[headline ?? ""].raw) ?? 0;
+	const metricLabel = SOURCE_HEADLINE_METRIC[measurement.source] ?? "strength";
+	const percent = Math.max(0, Math.min(100, metric * 100));
+	const variant = metricLabel === headline ? "warning" : "info";
 	const labelText = [
-		metricLabel(measurement.metric),
-		sideLabel(measurement.side),
+		metricLabel,
+		measurement.metrics?.[metricLabel]?.unit !== undefined
+			? `(${measurement.metrics?.[metricLabel]?.unit})`
+			: null,
 	]
 		.filter(Boolean)
 		.join(" · ");
-	const valueText = formatRaw(measurement);
 
 	if (label !== null) {
 		label.textContent = labelText;
 	}
 
 	if (value !== null) {
-		value.textContent = valueText;
+		value.textContent = metric.toFixed(4);
 	}
 
 	if (track !== null) {
@@ -94,7 +99,7 @@ const paintMetricRow = (
 	}
 
 	row.setAttribute("aria-label", labelText);
-	row.setAttribute("aria-valuetext", valueText);
+	row.setAttribute("aria-valuetext", metric.toFixed(4));
 	row.setAttribute("aria-valuenow", String(Math.round(percent)));
 };
 
@@ -107,7 +112,7 @@ export const paintMetricGrid = (
 	values: Measurement[],
 	headline: string | null,
 ): void => {
-	const epoch = orderedEpoch(values, headline);
+	const epoch = values.filter((row) => row.metrics?.[headline ?? ""] !== undefined);
 	const existing = new Map<string, HTMLElement>();
 
 	for (const child of grid.children) {
@@ -122,7 +127,7 @@ export const paintMetricGrid = (
 	const nextKeys = new Set<string>();
 
 	for (const measurement of epoch) {
-		const key = measurementIdentity(measurement);
+		const key = measurement.source;
 		nextKeys.add(key);
 
 		let row = existing.get(key);

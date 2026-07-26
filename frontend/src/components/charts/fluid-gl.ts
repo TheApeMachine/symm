@@ -288,7 +288,8 @@ export const drawFluidDisplay = (
 	const image = tileContext.createImageData(frame.width, frame.height);
 	image.data.set(frame.rgba);
 	tileContext.putImageData(image, 0, 0);
-	context.imageSmoothingEnabled = false;
+	context.imageSmoothingEnabled = true;
+	context.imageSmoothingQuality = "high";
 	context.clearRect(0, 0, pixelWidth, pixelHeight);
 	context.drawImage(tile, 0, 0, pixelWidth, pixelHeight);
 	return true;

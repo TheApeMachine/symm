@@ -1,6 +1,7 @@
 package category
 
 import (
+	"math"
 	"time"
 
 	"github.com/theapemachine/symm/types"
@@ -35,6 +36,22 @@ func buildContradictIndex() map[types.CategoryType]map[types.CategoryType][]type
 	}
 
 	return index
+}
+
+/*
+sampleMass returns abs(normalized) when present, otherwise abs(raw), for graph
+edge evidence derived straight from the Thesis measurement surface.
+*/
+func sampleMass(sample types.MetricSample) (float64, bool) {
+	if sample.Normalized != nil {
+		mass := math.Abs(*sample.Normalized)
+
+		return mass, mass > 0 && !math.IsNaN(mass) && !math.IsInf(mass, 0)
+	}
+
+	mass := math.Abs(sample.Raw)
+
+	return mass, mass > 0 && !math.IsNaN(mass) && !math.IsInf(mass, 0)
 }
 
 /*

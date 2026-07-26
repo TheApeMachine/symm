@@ -19,6 +19,7 @@ type Graph struct {
 	prior         map[string]types.CategoryType
 	cadence       cadenceBook
 	touched       map[edgeKey]struct{}
+	previous      map[nodeKey]Node
 	// pair tracks cumulative activation mass for independence tests.
 	pair *pairMemory
 }
@@ -32,25 +33,42 @@ func NewGraph() *Graph {
 		edges:         map[edgeKey]*Relation{},
 		edgesBySymbol: map[string][]edgeKey{},
 		prior:         map[string]types.CategoryType{},
+		previous:      map[nodeKey]Node{},
 		pair:          newPairMemory(),
 	}
 }
 
 /*
 Update upserts composed category nodes and derives typed edges from
-CategoryAffinity plus measurement temporal envelopes on the Thesis. It
-snapshots measurements from the thesis and delegates to UpdateFrom.
+CategoryAffinity plus measurement temporal envelopes on the Thesis. It reuses
+the Thesis category buckets so direct graph tests and strategy proofs exercise
+the same resident graph commit path without allocating a separate compose API.
 */
 func (graph *Graph) Update(
 	at time.Time, thesis *types.Thesis, categories []types.Category,
 ) {
-	var measurements []*types.Measurement
-
-	if thesis != nil {
-		measurements = thesis.SnapshotMeasurements()
+	for symbol, rows := range thesis.Categories {
+		thesis.Categories[symbol] = rows[:0]
 	}
 
-	graph.UpdateFrom(at, measurements, categories)
+	for _, category := range categories {
+		if category.Symbol == "" {
+			continue
+		}
+
+		thesis.Categories[category.Symbol] = append(
+			thesis.Categories[category.Symbol], category,
+		)
+	}
+
+	for symbol, rows := range thesis.Categories {
+		if len(rows) == 0 {
+			delete(thesis.Categories, symbol)
+		}
+	}
+
+	thesis.At = at
+	graph.UpdateFrom(thesis)
 }
 
 /*
@@ -61,13 +79,7 @@ they do not mint Leads/Lags. Only categories touched on this cut snapshot
 prior node state, so large resident graphs do not pay a full-map copy on
 every tick. The touched map is cleared and reused to avoid per-tick allocation.
 */
-func (graph *Graph) UpdateFrom(
-	at time.Time, measurements []*types.Measurement, categories []types.Category,
-) {
-	if graph == nil {
-		return
-	}
-
+func (graph *Graph) UpdateFrom(thesis *types.Thesis) {
 	if graph.touched == nil {
 		graph.touched = make(map[edgeKey]struct{})
 	} else {
@@ -76,52 +88,54 @@ func (graph *Graph) UpdateFrom(
 		}
 	}
 
-	previous := map[nodeKey]Node{}
-	bySymbol := map[string][]types.Category{}
-	evidence := indexEvidence(measurements)
+	evidence := indexEvidence(thesis.Measurements)
 
-	for _, category := range categories {
-		if category.Symbol == "" || category.Type == types.CategoryTypeNone {
-			continue
+	for symbol, bySymbol := range thesis.Categories {
+		for key := range graph.previous {
+			delete(graph.previous, key)
 		}
 
-		key := nodeKey{symbol: category.Symbol, kind: category.Type}
-		node := graph.nodes[key]
-
-		if node != nil {
-			if _, captured := previous[key]; !captured {
-				previous[key] = *node
+		for _, category := range bySymbol {
+			if category.Symbol == "" || category.Type == types.CategoryTypeNone {
+				continue
 			}
+
+			key := nodeKey{symbol: category.Symbol, kind: category.Type}
+			node := graph.nodes[key]
+
+			if node != nil {
+				if _, captured := graph.previous[key]; !captured {
+					graph.previous[key] = *node
+				}
+			}
+
+			if node == nil {
+				node = &Node{Symbol: category.Symbol, Type: category.Type}
+				graph.nodes[key] = node
+			}
+
+			node.Strength = category.Strength
+			node.Freshness = category.Freshness
+			node.At = thesis.At
+			bySymbol = append(bySymbol, category)
+			graph.pair.observe(category.Symbol, category.Type, category.Strength)
 		}
 
-		if node == nil {
-			node = &Node{Symbol: category.Symbol, Type: category.Type}
-			graph.nodes[key] = node
-		}
+		mean := graph.cadence.touch(symbol, thesis.At)
 
-		node.Strength = category.Strength
-		node.Freshness = category.Freshness
-		node.At = at
-		bySymbol[category.Symbol] = append(bySymbol[category.Symbol], category)
-		graph.pair.observe(category.Symbol, category.Type, category.Strength)
-	}
-
-	for symbol, active := range bySymbol {
-		mean := graph.cadence.touch(symbol, at)
-
-		for left := 0; left < len(active); left++ {
-			for right := left + 1; right < len(active); right++ {
+		for left := 0; left < len(bySymbol); left++ {
+			for right := left + 1; right < len(bySymbol); right++ {
 				graph.pair.coobserve(
-					symbol, active[left].Type, active[right].Type,
-					active[left].Strength, active[right].Strength,
+					symbol, bySymbol[left].Type, bySymbol[right].Type,
+					bySymbol[left].Strength, bySymbol[right].Strength,
 				)
-				graph.linkPair(at, evidence, symbol, active[left], active[right])
+				graph.linkPair(thesis.At, evidence, symbol, bySymbol[left], bySymbol[right])
 			}
 		}
 
-		graph.linkActivationLeads(at, symbol, active, previous)
-		graph.cadence.decayIdle(graph, symbol, at, mean)
-		graph.prior[symbol] = Top(active, symbol).Type
+		graph.linkActivationLeads(thesis, symbol, graph.previous)
+		graph.cadence.decayIdle(graph, symbol, thesis.At, mean)
+		graph.prior[symbol] = Top(bySymbol).Type
 	}
 }
 
@@ -131,12 +145,11 @@ another category was already active on a prior cut for the same symbol. Order
 comes from resident node timestamps, not from top-winner label changes.
 */
 func (graph *Graph) linkActivationLeads(
-	at time.Time,
+	thesis *types.Thesis,
 	symbol string,
-	active []types.Category,
 	previous map[nodeKey]Node,
 ) {
-	for _, category := range active {
+	for _, category := range thesis.Categories[symbol] {
 		key := nodeKey{symbol: symbol, kind: category.Type}
 		prior, existed := previous[key]
 
@@ -148,7 +161,7 @@ func (graph *Graph) linkActivationLeads(
 			continue
 		}
 
-		for _, peer := range active {
+		for _, peer := range thesis.Categories[symbol] {
 			if peer.Type == category.Type || peer.Strength <= 0 {
 				continue
 			}
@@ -160,14 +173,14 @@ func (graph *Graph) linkActivationLeads(
 				continue
 			}
 
-			if !peerPrior.At.Before(at) {
+			if !peerPrior.At.Before(thesis.At) {
 				continue
 			}
 
 			mass := math.Sqrt(peer.Strength * category.Strength)
 			evidence := append(append([]string{}, peer.Supporting...), category.Supporting...)
-			graph.strengthen(at, symbol, peer.Type, category.Type, Leads, mass, evidence)
-			graph.strengthen(at, symbol, category.Type, peer.Type, Lags, mass, evidence)
+			graph.strengthen(thesis.At, symbol, peer.Type, category.Type, Leads, mass, evidence)
+			graph.strengthen(thesis.At, symbol, category.Type, peer.Type, Lags, mass, evidence)
 		}
 	}
 }

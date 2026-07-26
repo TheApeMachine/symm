@@ -92,11 +92,12 @@ import {
 } from "#/components/terminal/xray-side";
 import { FrameHistory } from "#/providers/frame-history";
 import { paintManifoldWave } from "#/providers/manifold-parts";
+import type { Measurement } from "#/collections/types";
 
 /*
 Paint is one imperative target for a backend frame and the current UI focus.
 */
-type Paint = (value: unknown, focusSymbol: string) => void;
+type Paint = (value: unknown | Measurement[], focusSymbol: string) => void;
 
 /*
 HistoryPaint marks a target that consumes either full temporal history or one
@@ -140,7 +141,7 @@ export const drawers = {
 		keys: {
 			hawkes: { paint: paintHawkes, input: "history" },
 			signalDetail: {
-				paint: paintSignalDetailMeasurements,
+				paint: paintSignalDetailMeasurements as Paint,
 				input: "history",
 			},
 			regimeRadar: { paint: paintRegimeRadar, input: "latest" },

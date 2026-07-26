@@ -48,7 +48,7 @@ type ImmutableCut struct {
 	Forecasts    []Forecasts
 	Decisions    []Decision
 	Hypotheses   []Hypothesis
-	Categories   []Category
+	Categories   map[string][]Category
 	Resonance    []any
 	Causal       []any
 	Incomplete   bool

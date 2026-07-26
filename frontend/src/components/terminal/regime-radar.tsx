@@ -1,10 +1,5 @@
 import { createRef } from "react";
-import type { Measurement } from "#/types/measurement";
-import { backendMeasurementSources } from "#/components/terminal/measurement-sources";
-import {
-	latestByMetric,
-	percentOf,
-} from "#/components/terminal/measurement-view";
+import type { Measurement } from "#/collections/types";
 import { frameRows } from "#/providers/frame-history";
 import { Flex } from "@/components/ui/flex";
 import { Panel } from "@/components/ui/panel";
@@ -34,26 +29,26 @@ export const regimeAxes = (
 	for (const symbol of symbols) {
 		const symbolRows = measurements.filter((row) => row.symbol === symbol);
 		const turbulence = available.has("hawkes")
-			? latestByMetric(
-					symbolRows.filter((row) => row.source === "hawkes"),
-					"spectral_radius",
-				)
+			? symbolRows
+					.filter((row) => row.source === "hawkes")
+					.reverse()
+					.find((row) => row.metrics?.["spectral_radius"] !== undefined)
 			: undefined;
 
 		if (turbulence !== undefined && turbulence.validity.state !== "invalid") {
-			volatile += percentOf(turbulence) / 100;
+			volatile += turbulence.metrics?.["spectral_radius"]?.raw ?? 0;
 			volatileCount += 1;
 		}
 
 		const trend = available.has("pumpdump")
-			? latestByMetric(
-					symbolRows.filter((row) => row.source === "pumpdump"),
-					"trend",
-				)
+			? symbolRows
+					.filter((row) => row.source === "pumpdump")
+					.reverse()
+					.find((row) => row.metrics?.["trend"] !== undefined)
 			: undefined;
 
 		if (trend !== undefined && trend.validity.state !== "invalid") {
-			trending += percentOf(trend) / 100;
+			trending += trend.metrics?.["trend"]?.normalized ?? trend.metrics?.["trend"]?.raw ?? 0;
 			trendingCount += 1;
 		}
 
@@ -62,9 +57,9 @@ export const regimeAxes = (
 		}
 
 		const flow = symbolRows.filter((row) => row.source === "cvd");
-		const net = latestByMetric(flow, "net");
-		const netFraction = latestByMetric(flow, "net_fraction");
-		const balance = latestByMetric(flow, "balance");
+		const net = [...flow].reverse().find((row) => row.metrics?.net !== undefined);
+		const netFraction = [...flow].reverse().find((row) => row.metrics?.net_fraction !== undefined);
+		const balance = [...flow].reverse().find((row) => row.metrics?.balance !== undefined);
 
 		if (
 			net !== undefined &&
@@ -72,14 +67,15 @@ export const regimeAxes = (
 			net.validity.state !== "invalid" &&
 			netFraction.validity.state !== "invalid"
 		) {
-			const pressure = percentOf(netFraction) / 100;
-			bullish += net.raw > 0 ? pressure : 0;
-			bearish += net.raw < 0 ? pressure : 0;
+			const pressure = netFraction.metrics?.net_fraction?.normalized ?? netFraction.metrics?.net_fraction?.raw ?? 0;
+			const raw = net.metrics?.net?.raw ?? 0;
+			bullish += raw > 0 ? pressure : 0;
+			bearish += raw < 0 ? pressure : 0;
 			directionalCount += 1;
 		}
 
 		if (balance !== undefined && balance.validity.state !== "invalid") {
-			choppy += percentOf(balance) / 100;
+			choppy += balance.metrics?.balance?.normalized ?? balance.metrics?.balance?.raw ?? 0;
 			choppyCount += 1;
 		}
 	}
@@ -123,7 +119,7 @@ export const paintRegimeRadar = (value: unknown, _focusSymbol: string) => {
 	}
 
 	const measurements = frameRows<Measurement>(value);
-	const candidates = backendMeasurementSources(measurements);
+	const candidates = [...new Set(measurements.map((row) => row.source))];
 	const axes = regimeAxes(measurements, candidates);
 	const points = RADAR_UNITS.map(
 		([x, y], index) =>

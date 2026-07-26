@@ -1,23 +1,6 @@
 import { createRef } from "react";
 import { terminalStore } from "#/collections/terminal";
 import type { Measurement } from "#/collections/types";
-import { buildHeatmapCells } from "#/components/kernel/heatmap";
-import { kernelStatusMeta } from "#/components/terminal/kernel-meta";
-import {
-	ageText,
-	headlineMetric,
-	latestByMetric,
-	metricLabel,
-	orderedEpoch,
-	resolveStatus,
-	rowsFromBuffer,
-	stampOf,
-} from "#/components/terminal/measurement-view";
-import {
-	paintHeatmapGrid,
-	paintMetricGrid,
-} from "#/components/terminal/metric-paint";
-import { frameRows } from "#/providers/frame-history";
 import { Flex } from "@/components/ui/flex";
 
 const titleRef = createRef<HTMLSpanElement>();
@@ -35,14 +18,6 @@ const badgeRef = createRef<HTMLSpanElement>();
 let lastUniverse: Measurement[] = [];
 let lastFocusSymbol = "";
 
-const measurementTickCount = (rows: Measurement[]): number => {
-	if (rows.length === 0) {
-		return 0;
-	}
-
-	return new Set(rows.map((row) => row.at)).size;
-};
-
 /*
 repaintSignalDetail paints SignalDetail from retained measurement history after
 a source click without requiring a store subscription.
@@ -56,10 +31,10 @@ paintSignalDetailMeasurements paints SignalDetail from ordered measurement
 history and the current focusSymbol.
 */
 export const paintSignalDetailMeasurements = (
-	value: unknown,
+	value: Measurement[],
 	focusSymbol: string,
 ) => {
-	lastUniverse = frameRows<Measurement>(value);
+	lastUniverse = value;
 	lastFocusSymbol = focusSymbol;
 
 	if (titleRef.current === null) {
@@ -67,47 +42,107 @@ export const paintSignalDetailMeasurements = (
 	}
 
 	const source = terminalStore.state.selectedSource;
-	const universe = lastUniverse;
 	const focusRows =
 		focusSymbol === ""
-			? universe
-			: universe.filter((row) => row.symbol === focusSymbol);
-	const history = rowsFromBuffer(
-		focusRows.filter((row) => row.source === source),
-	);
-	const headline = headlineMetric(source);
-	const latest =
-		headline === null ? history.at(-1) : latestByMetric(history, headline);
-	const epoch = orderedEpoch(history, headline);
-	const status = resolveStatus(latest);
-	const observedStamp = stampOf(latest?.at);
-	const active = measurementTickCount(
-		universe.filter((row) => row.source === source),
-	);
-	const total = measurementTickCount(universe);
-	const heatmap =
-		headline === null ? [] : buildHeatmapCells(universe, source, headline);
+			? value.filter((row) => row.source === source)
+			: value.filter(
+					(row) => row.source === source && row.symbol === focusSymbol,
+				);
+	const headline =
+		source === "hawkes"
+			? "conditional_intensity"
+			: source === "liquidity"
+				? "scarcity_score"
+				: source === "toxicity"
+					? "touch_quantity"
+					: "strength";
 
-	if (titleRef.current !== null) {
-		titleRef.current.textContent = source;
-	}
+	const latest = [...focusRows]
+		.reverse()
+		.find((row) => row.metrics?.[headline] !== undefined);
+
+	const epoch =
+		latest === undefined ? [] : focusRows.filter((row) => row.at === latest.at);
+
+	const active = new Set(
+		value.filter((row) => row.source === source).map((row) => row.at),
+	).size;
+
+	const total = new Set(value.map((row) => row.at)).size;
+
+	const observedStamp =
+		latest === undefined ? Number.NaN : Date.parse(latest.at);
+
+	titleRef.current.textContent = source;
 
 	if (waitingPanelRef.current !== null) {
-		waitingPanelRef.current.style.display = epoch.length === 0 ? "" : "none";
+		waitingPanelRef.current.hidden = epoch.length > 0;
 		waitingPanelRef.current.textContent = `waiting for backend ${source} measurement`;
 	}
 
 	if (metricsGridRef.current !== null) {
-		metricsGridRef.current.style.display = epoch.length === 0 ? "none" : "";
-		paintMetricGrid(metricsGridRef.current, history, headline);
+		metricsGridRef.current.hidden = epoch.length === 0;
+		metricsGridRef.current.replaceChildren(
+			...epoch.flatMap((row) =>
+				Object.entries(row.metrics ?? {}).map(([metric, sample]) => {
+					const cell = document.createElement("div");
+					const header = document.createElement("div");
+					const label = document.createElement("span");
+					const value = document.createElement("span");
+					const track = document.createElement("div");
+					const fill = document.createElement("div");
+
+					cell.setAttribute("role", "progressbar");
+					cell.setAttribute("aria-valuemin", "0");
+					cell.setAttribute("aria-valuemax", "100");
+					cell.setAttribute(
+						"aria-valuenow",
+						String(
+							Math.round(
+								Math.max(0, Math.min(1, sample.normalized ?? sample.raw)) * 100,
+							),
+						),
+					);
+					header.className = "mb-1 flex justify-between font-mono text-[9px]";
+					label.className = "text-(--f3)";
+					label.textContent = metric.replaceAll("_", " ");
+					value.className = "text-(--f1)";
+					value.textContent = sample.raw.toPrecision(4);
+					track.className = "h-1 overflow-hidden rounded-[2px] bg-(--line)";
+					fill.className =
+						metric === headline
+							? "h-full bg-(--warning)"
+							: "h-full bg-(--info)";
+					fill.style.width = `${Math.max(0, Math.min(1, sample.normalized ?? sample.raw)) * 100}%`;
+
+					header.append(label, value);
+					track.append(fill);
+					cell.append(header, track);
+
+					return cell;
+				}),
+			),
+		);
 	}
 
 	if (badgeRef.current !== null) {
-		const statusMeta = kernelStatusMeta(status);
-		badgeRef.current.textContent = statusMeta.label;
-		badgeRef.current.style.color = statusMeta.fg;
-		badgeRef.current.style.background = statusMeta.bg;
-		badgeRef.current.style.borderColor = statusMeta.bd;
+		badgeRef.current.textContent =
+			latest === undefined
+				? "Standby"
+				: latest.validity?.state === "invalid"
+					? "Fault"
+					: latest.validity?.state === "provisional"
+						? "Calib"
+						: "Healthy";
+		badgeRef.current.className = `shrink-0 rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide ${
+			latest === undefined
+				? "border-(--line2) bg-(--line) text-(--f3)"
+				: latest.validity?.state === "invalid"
+					? "border-(--down) bg-(--sunken) text-(--down)"
+					: latest.validity?.state === "provisional"
+						? "border-(--info) bg-(--sunken) text-(--info)"
+						: "border-(--up) bg-(--sunken) text-(--up)"
+		}`;
 	}
 
 	if (activeReadingsRef.current !== null) {
@@ -122,7 +157,7 @@ export const paintSignalDetailMeasurements = (
 		observedRef.current.textContent = Number.isFinite(observedStamp)
 			? `${new Date(observedStamp).toLocaleTimeString("en-US", {
 					hour12: false,
-				})} / ${ageText(observedStamp)}`
+				})} / ${Math.max(0, (Date.now() - observedStamp) / 1000).toFixed(1)}s`
 			: "— / —";
 	}
 
@@ -132,15 +167,36 @@ export const paintSignalDetailMeasurements = (
 	}
 
 	if (heatmapSectionRef.current !== null) {
-		heatmapSectionRef.current.style.display = headline === null ? "none" : "";
+		heatmapSectionRef.current.hidden = false;
 	}
 
-	if (heatmapTitleRef.current !== null && headline !== null) {
-		heatmapTitleRef.current.textContent = `Cross-section · ${metricLabel(headline)} heatmap`;
+	if (heatmapTitleRef.current !== null) {
+		heatmapTitleRef.current.textContent = `Cross-section · ${headline.replaceAll("_", " ")} heatmap`;
 	}
 
-	if (heatmapGridRef.current !== null && headline !== null) {
-		paintHeatmapGrid(heatmapGridRef.current, heatmap);
+	if (heatmapGridRef.current !== null) {
+		heatmapGridRef.current.replaceChildren(
+			...value
+				.filter(
+					(row) =>
+						row.source === source && row.metrics?.[headline] !== undefined,
+				)
+				.map((row) => {
+					const cell = document.createElement("div");
+					const sample = row.metrics?.[headline];
+					const strength = Math.max(
+						0,
+						Math.min(1, sample?.normalized ?? sample?.raw ?? 0),
+					);
+
+					cell.className =
+						"rounded-[2px] px-1.5 py-1 font-mono text-[9px] text-(--f1)";
+					cell.style.background = `color-mix(in srgb, var(--acc) ${Math.round(strength * 100)}%, var(--sunken))`;
+					cell.textContent = row.symbol.split("/")[0] ?? row.symbol;
+
+					return cell;
+				}),
+		);
 	}
 };
 
@@ -166,13 +222,9 @@ export const SignalDetail = () => (
 		/>
 		<div
 			ref={metricsGridRef}
-			className="mt-4.5 grid gap-x-5.5 gap-y-3"
-			style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
+			className="mt-4.5 grid grid-cols-2 gap-x-5.5 gap-y-3"
 		/>
-		<div
-			className="mt-5 grid gap-x-5.5 gap-y-2 border-(--line) border-t pt-3.5 font-mono text-xs"
-			style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
-		>
+		<div className="mt-5 grid grid-cols-2 gap-x-5.5 gap-y-2 border-(--line) border-t pt-3.5 font-mono text-xs">
 			<div className="flex justify-between">
 				<span className="text-(--f3)">Active readings</span>
 				<span ref={activeReadingsRef} className="text-(--f1)" />
@@ -195,11 +247,7 @@ export const SignalDetail = () => (
 				ref={heatmapTitleRef}
 				className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]"
 			/>
-			<div
-				ref={heatmapGridRef}
-				className="grid gap-0.75"
-				style={{ gridTemplateColumns: "repeat(12, minmax(0, 1fr))" }}
-			/>
+			<div ref={heatmapGridRef} className="grid grid-cols-12 gap-0.75" />
 		</div>
 	</Flex.Column>
 );

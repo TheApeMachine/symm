@@ -17,11 +17,7 @@ export const KernelListRow = ({
 		ref={rowRef}
 		type="button"
 		onClick={() => onActivate(source)}
-		className="block w-full cursor-pointer border-(--line) border-b border-l-2 px-3 py-2.5 text-left font-[inherit] hover:bg-(--raised)"
-		style={{
-			borderLeftColor: "transparent",
-			background: "transparent",
-		}}
+		className="block w-full cursor-pointer border-(--line) border-b border-l-2 border-l-transparent bg-transparent px-3 py-2.5 text-left font-[inherit] hover:bg-(--raised)"
 	>
 		<div className="flex items-center justify-between gap-2">
 			<span
@@ -57,13 +53,13 @@ export const KernelListRow = ({
 					<title>Signal sparkline</title>
 					<polyline
 						data-role="spark-area"
-						fill="color-mix(in srgb, var(--info) 12%, transparent)"
+						className="fill-[color-mix(in_srgb,var(--acc)_16%,transparent)]"
 						stroke="none"
 					/>
 					<polyline
 						data-role="spark-line"
+						className="stroke-(--acc)"
 						fill="none"
-						stroke="var(--info)"
 						strokeWidth="1.4"
 						vectorEffect="non-scaling-stroke"
 					/>
@@ -73,8 +69,7 @@ export const KernelListRow = ({
 					<div className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line)">
 						<div
 							data-role="bar"
-							className="h-full transition-[width] duration-500 ease-out"
-							style={{ width: "0%" }}
+							className="h-full bg-(--warning) transition-[width] duration-500 ease-out"
 						/>
 					</div>
 

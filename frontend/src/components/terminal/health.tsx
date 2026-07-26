@@ -1,15 +1,5 @@
 import { createRef } from "react";
-import type { DashboardFrame, TickFrame } from "#/collections/types";
-import type { Measurement } from "#/types/measurement";
-import {
-	backendMeasurementSources,
-	sourceHasUniverseFrames,
-} from "#/components/terminal/measurement-sources";
-import {
-	headlineReading,
-	percentOf,
-	resolveKernelStatus,
-} from "#/components/terminal/measurement-view";
+import type { DashboardFrame, Measurement, TickFrame } from "#/collections/types";
 import { paintInlineMeter } from "#/components/terminal/metric-paint";
 import { requirePositive } from "#/lib/domain";
 import { frameRows } from "#/providers/frame-history";
@@ -82,7 +72,7 @@ const measurementTickCount = (rows: Measurement[]): number => {
 export const terminalHealthSummary = (
 	measurements: Measurement[],
 	focusSymbol: string,
-	sources = backendMeasurementSources(measurements),
+	sources = [...new Set(measurements.map((row) => row.source))],
 	tick: DashboardFrame | null = null,
 ): HealthSummary => {
 	const total = sources.length;
@@ -99,14 +89,28 @@ export const terminalHealthSummary = (
 			focusSymbol === "stream"
 				? sourceRows
 				: sourceRows.filter((row) => row.symbol === focusSymbol);
-		const latest = headlineReading(history, source);
+		const headline =
+			source === "hawkes"
+				? "conditional_intensity"
+				: source === "liquidity"
+					? "scarcity_score"
+					: source === "toxicity"
+						? "touch_quantity"
+						: "strength";
+		const latest = [...history]
+			.reverse()
+			.find((row) => row.metrics?.[headline] !== undefined);
+		const universeHasSource = measurements.some((row) => row.source === source);
 		const status =
-			focusSymbol === "stream"
-				? resolveKernelStatus(latest, history.length > 0)
-				: resolveKernelStatus(
-						latest,
-						sourceHasUniverseFrames(measurements, source),
-					);
+			latest === undefined
+				? universeHasSource
+					? "unfocused"
+					: "waiting"
+				: latest.validity.state === "invalid"
+					? "fault"
+					: latest.validity.state === "provisional"
+						? "calibrating"
+						: "measured";
 
 		if (status === "fault") {
 			degraded += 1;
@@ -121,15 +125,14 @@ export const terminalHealthSummary = (
 		}
 
 		if (latest !== undefined) {
-			strength += percentOf(latest) / 100;
+			strength += latest.metrics?.[headline]?.normalized ?? latest.metrics?.[headline]?.raw ?? 0;
 			strengthCount += 1;
 		}
 
 		if (
 			focusSymbol === "stream"
 				? history.length > 0
-				: measurementTickCount(history) > 0 ||
-					sourceHasUniverseFrames(measurements, source)
+				: measurementTickCount(history) > 0 || universeHasSource
 		) {
 			firing += 1;
 		}

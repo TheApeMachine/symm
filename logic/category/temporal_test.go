@@ -51,11 +51,11 @@ func TestStaleAndIncomparable(t *testing.T) {
 			trend := 0.7
 			thesis.Measurements = append(thesis.Measurements,
 				&types.Measurement{
-					Source: types.SourcePumpDump,
-					Symbol: "SIM/USD",
-					At:     time.Unix(1, 0),
+					Source:       types.SourcePumpDump,
+					Symbol:       "SIM/USD",
+					At:           time.Unix(1, 0),
 					ObservedFrom: time.Unix(0, 0),
-					Horizon: time.Second,
+					Horizon:      time.Second,
 					Validity: types.MeasurementValidity{
 						State: types.ValidityValid, Readiness: types.ReadinessObservation,
 					},
@@ -66,11 +66,11 @@ func TestStaleAndIncomparable(t *testing.T) {
 					},
 				},
 				&types.Measurement{
-					Source: types.SourcePumpDump,
-					Symbol: "SIM/USD",
-					At:     time.Unix(100, 0),
+					Source:       types.SourcePumpDump,
+					Symbol:       "SIM/USD",
+					At:           time.Unix(100, 0),
 					ObservedFrom: time.Unix(99, 0),
-					Horizon: time.Second,
+					Horizon:      time.Second,
 					Validity: types.MeasurementValidity{
 						State: types.ValidityValid, Readiness: types.ReadinessObservation,
 					},
@@ -81,7 +81,23 @@ func TestStaleAndIncomparable(t *testing.T) {
 					},
 				},
 			)
-			graph.Update(at, thesis, Compose(thesis, "SIM/USD"))
+			thesis.Categories["SIM/USD"] = []types.Category{
+				{
+					Symbol:     "SIM/USD",
+					Type:       types.VerticalIgnition,
+					Strength:   ignition,
+					Freshness:  1,
+					Supporting: []string{string(types.MetricIgnition)},
+				},
+				{
+					Symbol:     "SIM/USD",
+					Type:       types.OrganicTrend,
+					Strength:   trend,
+					Freshness:  1,
+					Supporting: []string{string(types.MetricTrend)},
+				},
+			}
+			graph.UpdateFrom(thesis)
 
 			Convey("It strengthens IncomparableWith instead of Leads", func() {
 				So(graph.Weight(

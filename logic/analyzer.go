@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/spf13/viper"
@@ -28,28 +29,29 @@ snapshot fresh measurements and run the analysis pipeline.
 */
 type Analyzer struct {
 	*types.Actor
-	ctx        context.Context
-	cancel     context.CancelFunc
-	gate       stageGate
-	status     types.Status
-	thesis     *types.Thesis
-	manifold   *manifold.Solver
-	hawkes     manifold.HawkesSource
-	tree       *dmt.Tree
-	ui         chan []byte
-	recorder   *audit.Recorder
-	resonance  map[string]*Resonance
-	causal     map[string]*Causal
-	cognition  map[string]types.Cognition
-	observed   map[string]uint64
-	rem        *remSleep
-	categories *category.Graph
-	frameRows  []any
-	cogRows    []types.Cognition
-	catRows    []types.Category
-	hypRows    []types.Hypothesis
-	bestBySym  map[string]int
-	stateRows  []manifold.State
+	ctx         context.Context
+	cancel      context.CancelFunc
+	gate        stageGate
+	status      types.Status
+	thesis      *types.Thesis
+	manifold    *manifold.Solver
+	hawkes      manifold.HawkesSource
+	tree        *dmt.Tree
+	ui          chan []byte
+	recorder    *audit.Recorder
+	resonance   map[string]*Resonance
+	causal      map[string]*Causal
+	cognition   map[string]types.Cognition
+	observed    map[string]uint64
+	rem         *remSleep
+	categories  *category.Graph
+	frameRows   []any
+	cogRows     []types.Cognition
+	catRows     []types.Category
+	hypRows     []types.Hypothesis
+	measureRows []*types.Measurement
+	bestBySym   map[string]types.Category
+	stateRows   []manifold.State
 }
 
 /*
@@ -90,7 +92,7 @@ func NewAnalyzer(
 		observed:   make(map[string]uint64),
 		rem:        newREMSleep(ctx, tree),
 		categories: category.NewGraph(),
-		bestBySym:  make(map[string]int),
+		bestBySym:  make(map[string]types.Category),
 	}
 
 	// ticker and trade come from Hawkes cuts at depth one for manifold.
@@ -164,16 +166,13 @@ func (analyzer *Analyzer) onSignal(message any) any {
 
 	analyzer.stampAndBegin(thesis, 0, 0)
 
-	// Snapshot fresh measurements and compose categories from every signal.
-	measurements := thesis.SnapshotMeasurements()
-
 	var composeStarted time.Time
 
 	if analyzer.recorder != nil {
 		composeStarted = time.Now()
 	}
 
-	analyzer.composeCategories(thesis, measurements)
+	analyzer.composeCategories(thesis)
 
 	if analyzer.recorder != nil {
 		errnie.Error(audit.Phase(
@@ -194,7 +193,7 @@ func (analyzer *Analyzer) onSignal(message any) any {
 		commitStarted = time.Now()
 	}
 
-	analyzer.commitCategories(thesis, measurements)
+	analyzer.categories.UpdateFrom(thesis)
 
 	if analyzer.recorder != nil {
 		errnie.Error(audit.Phase(
@@ -293,10 +292,7 @@ func (analyzer *Analyzer) enrichCut(
 	tick int64,
 ) {
 	started := time.Now()
-
-	if thesis != nil {
-		thesis.StampAt()
-	}
+	analyzer.stamp(thesis, thesis.Measurements)
 
 	payload := map[string]any{}
 
@@ -315,8 +311,7 @@ func (analyzer *Analyzer) enrichCut(
 		composeStarted = time.Now()
 	}
 
-	measurements := thesis.SnapshotMeasurements()
-	analyzer.composeCategories(thesis, measurements)
+	analyzer.composeCategories(thesis)
 	payload = map[string]any{
 		"ns":         time.Since(composeStarted).Nanoseconds(),
 		"categories": len(thesis.Categories),
@@ -338,7 +333,8 @@ func (analyzer *Analyzer) enrichCut(
 		commitStarted = time.Now()
 	}
 
-	analyzer.commitCategories(thesis, measurements)
+	analyzer.categories.UpdateFrom(thesis)
+
 	payload = map[string]any{
 		"ns":         time.Since(commitStarted).Nanoseconds(),
 		"categories": len(thesis.Categories),
@@ -362,7 +358,7 @@ publishes the resident graph pointer for strategy. Edge/prior mutation waits
 until after cognize so DMT still sees the previous top for transition tokens.
 The measurements slice is a pre-snapshotted copy shared with commitCategories.
 */
-func (analyzer *Analyzer) composeCategories(thesis *types.Thesis, measurements []*types.Measurement) {
+func (analyzer *Analyzer) composeCategories(thesis *types.Thesis) {
 	if thesis == nil {
 		return
 	}
@@ -371,21 +367,105 @@ func (analyzer *Analyzer) composeCategories(thesis *types.Thesis, measurements [
 		analyzer.categories = category.NewGraph()
 	}
 
-	thesis.Categories = category.ComposeAllFrom(measurements, thesis.At)
+	if thesis.Categories == nil {
+		thesis.Categories = make(map[string][]types.Category)
+	}
+
+	for symbol, rows := range thesis.Categories {
+		thesis.Categories[symbol] = rows[:0]
+	}
+
+	for _, measurement := range thesis.Measurements {
+		analyzer.composeMeasurement(thesis, measurement)
+	}
+
+	for symbol, rows := range thesis.Categories {
+		if len(rows) == 0 {
+			delete(thesis.Categories, symbol)
+		}
+	}
+
 	thesis.Graphs.Store("categories", analyzer.categories)
 }
 
 /*
-commitCategories strengthens resident graph edges from this cut's composed
-categories and advances per-symbol priors after DMT has consumed transitions.
-The measurements slice is the same pre-snapshotted copy used by composeCategories.
+composeMeasurement projects one published measurement directly into the Thesis
+category bucket for its symbol. The Thesis map owns the reusable per-symbol
+slice, so Analyzer no longer allocates a temporary grouped book before writing
+the category surface consumed by graph, cognition, strategy, and UI.
 */
-func (analyzer *Analyzer) commitCategories(thesis *types.Thesis, measurements []*types.Measurement) {
-	if thesis == nil || analyzer.categories == nil {
+func (analyzer *Analyzer) composeMeasurement(
+	thesis *types.Thesis,
+	measurement *types.Measurement,
+) {
+	if measurement == nil || measurement.Symbol == "" ||
+		measurement.Validity.State != types.ValidityValid ||
+		len(measurement.Metrics) == 0 {
 		return
 	}
 
-	analyzer.categories.UpdateFrom(thesis.At, measurements, thesis.Categories)
+	measurement.EachMetric(func(
+		metric types.MetricType, _ types.MeasurementSide, sample types.MetricSample,
+	) bool {
+		affinity, ok := types.AffinityFor(metric)
+
+		if !ok {
+			return true
+		}
+
+		mass, ok := categoryMass(sample)
+
+		if !ok {
+			return true
+		}
+
+		for _, categoryType := range affinity.Supports {
+			thesis.Categories[measurement.Symbol] = append(
+				thesis.Categories[measurement.Symbol],
+				types.Category{
+					Symbol:      measurement.Symbol,
+					Type:        categoryType,
+					Confidence:  mass / (1 + categoryUncertainty(measurement)),
+					Strength:    mass,
+					Maturity:    measurement.Maturity,
+					Uncertainty: categoryUncertainty(measurement),
+					Freshness:   measurement.Maturity,
+					Supporting:  []string{string(metric)},
+				},
+			)
+		}
+
+		return true
+	})
+}
+
+/*
+categoryMass returns the absolute normalized metric mass when available, or raw
+mass otherwise. Category rows are direct evidence projections, so no local
+accumulator rescales the signal's own normalization before it reaches Thesis.
+*/
+func categoryMass(sample types.MetricSample) (float64, bool) {
+	if sample.Normalized != nil {
+		mass := math.Abs(*sample.Normalized)
+
+		return mass, mass > 0 && !math.IsNaN(mass) && !math.IsInf(mass, 0)
+	}
+
+	mass := math.Abs(sample.Raw)
+
+	return mass, mass > 0 && !math.IsNaN(mass) && !math.IsInf(mass, 0)
+}
+
+/*
+categoryUncertainty reads a measurement interval width as category uncertainty
+without creating an intermediate accumulator for the whole symbol.
+*/
+func categoryUncertainty(measurement *types.Measurement) float64 {
+	if measurement == nil || measurement.Uncertainty == nil {
+		return 0
+	}
+
+	return math.Abs(measurement.Uncertainty.Upper-measurement.Uncertainty.Lower) / 2
 }
 
 /*
@@ -434,20 +514,12 @@ same contract as WireMeasurements — so dashboard backpressure cannot stall
 enrich or the cut cascade behind Hawkes.
 */
 func (analyzer *Analyzer) publish(frame datura.Map[any]) {
-	payload := frame.Marshal()
-	analyzer.publishRaw(payload)
-}
-
-/*
-publishRaw enqueues a pre-encoded UI payload (JSON or manifold binary lattice).
-*/
-func (analyzer *Analyzer) publishRaw(payload []byte) {
-	if analyzer.ui == nil || len(payload) == 0 {
+	if analyzer.ui == nil || len(frame) == 0 {
 		return
 	}
 
 	select {
-	case analyzer.ui <- payload:
+	case analyzer.ui <- frame.Marshal():
 	default:
 		errnie.Error(errnie.Err(
 			errnie.TooManyRequests,
@@ -460,10 +532,12 @@ func (analyzer *Analyzer) publishRaw(payload []byte) {
 /*
 stampAndBegin audits the analysis start for a non-Hawkes signal cut.
 */
-func (analyzer *Analyzer) stampAndBegin(thesis *types.Thesis, cutID types.CutID, tick int64) {
-	if thesis != nil {
-		thesis.StampAt()
-	}
+func (analyzer *Analyzer) stampAndBegin(
+	thesis *types.Thesis,
+	cutID types.CutID,
+	tick int64,
+) {
+	analyzer.stamp(thesis, thesis.Measurements)
 
 	payload := map[string]any{}
 
@@ -472,6 +546,18 @@ func (analyzer *Analyzer) stampAndBegin(thesis *types.Thesis, cutID types.CutID,
 	}
 
 	errnie.Error(audit.Phase(analyzer.recorder, tick, "analyze_begin", payload))
+}
+
+/*
+stamp advances Thesis.At from the already-snapshotted measurement rows. This is
+the analyzer hot path equivalent of Thesis.StampAt without paying for another
+pointer-slice copy before category composition.
+*/
+func (analyzer *Analyzer) stamp(
+	thesis *types.Thesis,
+	measurements []*types.Measurement,
+) {
+	thesis.At = measurements[len(measurements)-1].At
 }
 
 /*
@@ -484,18 +570,12 @@ func (analyzer *Analyzer) finish(
 	cutID types.CutID,
 	tick int64,
 ) {
-	remPending := 0
-
-	if analyzer.rem != nil {
-		remPending = analyzer.rem.Pending()
-	}
-
 	payload := map[string]any{
 		"ns":          time.Since(started).Nanoseconds(),
 		"states":      len(states),
 		"forecasts":   len(thesis.Forecasts),
 		"hypotheses":  len(thesis.Hypotheses),
-		"rem_pending": remPending,
+		"rem_pending": analyzer.rem.Pending(),
 	}
 
 	if cutID > 0 {

@@ -184,21 +184,23 @@ func (outcome *marketOutcome) observeCognition(thesis *types.Thesis) {
 		return true
 	})
 
-	for _, category := range thesis.Categories {
-		if !outcome.symbols[category.Symbol] {
+	for symbol, categories := range thesis.Categories {
+		if !outcome.symbols[symbol] {
 			continue
 		}
 
-		if category.Type == types.CategoryTypeNone || category.Strength <= 0 {
-			continue
-		}
+		for _, category := range categories {
+			if category.Type == types.CategoryTypeNone || category.Strength <= 0 {
+				continue
+			}
 
-		// Composed taxonomy rows — not DMT buy/sell attractor labels.
-		So(string(category.Type), ShouldNotBeIn, []string{"buy", "sell", "balanced"})
-		outcome.categories++
+			// Composed taxonomy rows — not DMT buy/sell attractor labels.
+			So(string(category.Type), ShouldNotBeIn, []string{"buy", "sell", "balanced"})
+			outcome.categories++
 
-		if len(category.Supporting) > 0 || len(category.Opposing) > 0 {
-			outcome.winners[category.Type]++
+			if len(category.Supporting) > 0 || len(category.Opposing) > 0 {
+				outcome.winners[category.Type]++
+			}
 		}
 
 		_ = readings
@@ -212,9 +214,9 @@ the causal state that produced it.
 */
 func TestAnalyzerUpdate(t *testing.T) {
 	proofs := []struct {
-		name    string
-		state   tests.MarketState
-		prepare bool
+		name     string
+		state    tests.MarketState
+		prepare  bool
 		bookOnly bool
 	}{
 		{"baseline", tests.MarketStateBaseline, false, false},

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Measurement } from "#/types/measurement";
+import type { Measurement } from "#/collections/types";
 import { buildHeatmapCells, heatmapLabel } from "./heatmap";
 
 const measurement = (
@@ -11,16 +11,18 @@ const measurement = (
 	at: "2026-07-14T10:00:00Z",
 	symbol,
 	source,
-	metric,
-	raw,
-	unit: "dimensionless",
-	normalized: null,
-	uncertainty: null,
 	validity: { state: "provisional", readiness: "model" },
 	scale: {
 		kind: "observation_window",
 		from: "2026-07-14T10:00:00Z",
 		through: "2026-07-14T10:00:00Z",
+	},
+	metrics: {
+		[metric]: {
+			raw,
+			normalized: raw,
+			unit: "dimensionless",
+		},
 	},
 });
 

@@ -1,34 +1,33 @@
 import { bench, describe } from "vitest";
-import type { Measurement } from "#/types/measurement";
-import { dedupeEpoch, latestEpoch, orderedEpoch } from "./measurement-view";
+import type { Measurement } from "#/collections/types";
+import { mergeInspectorMetrics } from "./inspector-meters";
 
-const measurement = (metric: string, at: string, raw: number): Measurement => ({
+const measurement = (at: string, raw: number): Measurement => ({
 	source: "depthflow",
-	metric,
 	symbol: "BTC/USD",
 	at,
-	raw,
-	normalized: raw,
-	uncertainty: null,
 	validity: { state: "valid", readiness: "observation" },
 	scale: { kind: "observation_window", from: at, through: at },
+	metrics: {
+		loaded_score: { raw: raw * 0.27, normalized: raw * 0.27 },
+		spoof_score: { raw: raw * 0.18, normalized: raw * 0.18 },
+		thin_score: { raw: raw * 0.7, normalized: raw * 0.7 },
+		neutral_score: { raw, normalized: raw },
+		strength: { raw: raw * 0.91, normalized: raw * 0.91 },
+	},
 });
 
-describe("orderedEpoch", () => {
+describe("inspector metric paint", () => {
 	const at = "2026-07-14T16:25:24Z";
 	const values = [
-		measurement("loaded_score", at, 0.12),
-		measurement("spoof_score", at, 0.08),
-		measurement("thin_score", at, 0.31),
-		measurement("thin_score", at, 0.44),
-		measurement("neutral_score", at, 0.44),
-		measurement("strength", at, 0.07),
-		measurement("value", at, 0.11),
-		measurement("value", at, 0.22),
+		measurement(at, 0.12),
+		measurement(at, 0.31),
+		measurement(at, 0.44),
+		measurement(at, 0.07),
+		measurement(at, 0.22),
 	];
 
-	bench("dedupes and orders one observation tick", () => {
-		orderedEpoch(values, "strength");
-		dedupeEpoch(latestEpoch(values));
+	bench("merges one observation tick", () => {
+		mergeInspectorMetrics(values, "depthflow", "BTC/USD");
 	});
 });

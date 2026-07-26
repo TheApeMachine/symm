@@ -7,8 +7,7 @@ import {
 	paintInspectorMeters,
 } from "#/components/terminal/inspector-meters";
 import { KernelListRow } from "#/components/terminal/kernel-list-row";
-import { kernelListReadout } from "#/components/terminal/measurement-view";
-import type { Measurement } from "#/types/measurement";
+import type { Measurement } from "#/collections/types";
 
 type SparkView = {
 	line: SVGPolylineElement | null;
@@ -42,6 +41,43 @@ type InspectorParts = {
 	symbol: HTMLElement | null;
 	observed: HTMLElement | null;
 	meters: Map<string, MeterParts>;
+};
+
+const STATUS_HEALTHY_CLASSES = [
+	"border-[color-mix(in_srgb,var(--up)_38%,transparent)]",
+	"bg-[color-mix(in_srgb,var(--up)_12%,transparent)]",
+	"text-(--up)",
+];
+const STATUS_INVALID_CLASSES = [
+	"border-[color-mix(in_srgb,var(--down)_38%,transparent)]",
+	"bg-[color-mix(in_srgb,var(--down)_12%,transparent)]",
+	"text-(--down)",
+];
+
+const HEADLINE_METRIC: Record<string, string> = {
+	hawkes: "conditional_intensity",
+	liquidity: "scarcity_score",
+	toxicity: "touch_quantity",
+};
+
+/*
+kernelListReadout selects one native headline metric from a flat measurement row
+so the list can paint directly without depending on the removed measurement view.
+*/
+const kernelListReadout = (row: Measurement) => {
+	const metric = HEADLINE_METRIC[row.source] ?? "strength";
+	const reading = Object.entries(row.metrics ?? {})
+		.filter(([key]) => key === metric || key.startsWith(`${metric}:`))
+		.map(([, value]) => value)
+		.sort(
+			(left, right) =>
+				(right.normalized ?? right.raw) - (left.normalized ?? left.raw),
+		)
+		.at(0) ?? row.metrics?.strength;
+	const raw = reading?.raw ?? 0;
+	const sample = Math.max(0, Math.min(1, reading?.normalized ?? raw));
+
+	return { metric, raw, sample };
 };
 
 /*
@@ -90,7 +126,6 @@ const writeSpark = (
 
 	if (line !== null) {
 		line.setAttribute("points", spark);
-		line.setAttribute("stroke", "var(--acc)");
 	}
 
 	if (area !== null) {
@@ -99,10 +134,6 @@ const writeSpark = (
 			samples.length === 1
 				? `${spark} 150,${y} 150,30 0,30`
 				: `${spark} 150,30 0,30`,
-		);
-		area.setAttribute(
-			"fill",
-			"color-mix(in srgb, var(--acc) 16%, transparent)",
 		);
 	}
 };
@@ -261,7 +292,6 @@ export const paintKernelList = (value: unknown, focusSymbol: string) => {
 		const { metric, raw, sample } = kernelListReadout(row);
 		const valid = row.validity?.state !== "invalid";
 		const statusText = valid ? "Healthy" : "Invalid";
-		const tone = valid ? "var(--up)" : "var(--down)";
 		const percent = Math.max(0, Math.min(100, sample * 100));
 		const elapsed = now - Date.parse(row.at);
 		const age = !Number.isFinite(elapsed)
@@ -280,10 +310,10 @@ export const paintKernelList = (value: unknown, focusSymbol: string) => {
 
 			if (parts.pressed !== pressed) {
 				parts.pressed = pressed;
-				parts.root.style.borderLeftColor =
-					pressed === "true" ? "var(--acc)" : "transparent";
-				parts.root.style.background =
-					pressed === "true" ? "var(--raised)" : "transparent";
+				parts.root.classList.toggle("border-l-(--acc)", pressed === "true");
+				parts.root.classList.toggle("bg-(--raised)", pressed === "true");
+				parts.root.classList.toggle("border-l-transparent", pressed !== "true");
+				parts.root.classList.toggle("bg-transparent", pressed !== "true");
 				parts.root.setAttribute("aria-pressed", pressed);
 			}
 
@@ -291,14 +321,15 @@ export const paintKernelList = (value: unknown, focusSymbol: string) => {
 				parts.statusText = statusText;
 
 				if (parts.compact) {
-					parts.status.style.backgroundColor = tone;
+					parts.status.classList.toggle("bg-(--up)", valid);
+					parts.status.classList.toggle("bg-(--down)", !valid);
 				} else {
 					parts.status.textContent = statusText;
-					parts.status.style.color = tone;
-					parts.status.style.borderColor =
-						`color-mix(in srgb, ${tone} 38%, transparent)`;
-					parts.status.style.background =
-						`color-mix(in srgb, ${tone} 12%, transparent)`;
+					parts.status.classList.remove(...STATUS_HEALTHY_CLASSES);
+					parts.status.classList.remove(...STATUS_INVALID_CLASSES);
+					parts.status.classList.add(
+						...(valid ? STATUS_HEALTHY_CLASSES : STATUS_INVALID_CLASSES),
+					);
 				}
 			}
 
@@ -310,7 +341,6 @@ export const paintKernelList = (value: unknown, focusSymbol: string) => {
 
 			if (parts.bar !== null) {
 				parts.bar.style.width = `${percent}%`;
-				parts.bar.style.background = "var(--warning)";
 			}
 
 			if (parts.readout !== null) {
@@ -331,11 +361,11 @@ export const paintKernelList = (value: unknown, focusSymbol: string) => {
 		if (inspector.status !== null && inspector.statusText !== statusText) {
 			inspector.statusText = statusText;
 			inspector.status.textContent = statusText;
-			inspector.status.style.color = tone;
-			inspector.status.style.borderColor =
-				`color-mix(in srgb, ${tone} 38%, transparent)`;
-			inspector.status.style.background =
-				`color-mix(in srgb, ${tone} 12%, transparent)`;
+			inspector.status.classList.remove(...STATUS_HEALTHY_CLASSES);
+			inspector.status.classList.remove(...STATUS_INVALID_CLASSES);
+			inspector.status.classList.add(
+				...(valid ? STATUS_HEALTHY_CLASSES : STATUS_INVALID_CLASSES),
+			);
 		}
 
 		if (inspector.series !== null) {

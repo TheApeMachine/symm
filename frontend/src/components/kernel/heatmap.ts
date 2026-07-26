@@ -1,8 +1,4 @@
 import type { Measurement } from "#/collections/types";
-import {
-	latestByMetric,
-	percentOf,
-} from "#/components/terminal/measurement-view";
 
 export type HeatmapCell = {
 	symbol: string;
@@ -40,7 +36,9 @@ export const buildHeatmapCells = (
 	return [...bySymbol.entries()]
 		.sort(([left], [right]) => left.localeCompare(right))
 		.flatMap(([symbol, rows]) => {
-			const frame = latestByMetric(rows, headline);
+			const frame = rows
+				.reverse()
+				.find((row) => row.metrics?.[headline] !== undefined);
 
 			if (frame === undefined) {
 				return [];
@@ -50,7 +48,7 @@ export const buildHeatmapCells = (
 				{
 					symbol,
 					label: heatmapLabel(symbol),
-					value: percentOf(frame) / 100,
+					value: frame.metrics?.[headline]?.normalized ?? frame.metrics?.[headline]?.raw ?? 0,
 				},
 			];
 		});

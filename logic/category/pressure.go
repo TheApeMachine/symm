@@ -128,7 +128,7 @@ func (reporter *Reporter) Tokens(
 		return nil
 	}
 
-	top := Top(categories, symbol)
+	top := Top(categories)
 	prior := reporter.graph.Prior(symbol)
 	tokens := make([]string, 0, 2)
 
@@ -186,7 +186,6 @@ func (reporter *Reporter) OpportunityLead(symbol string) (share float64, dominat
 	return share, dominates
 }
 
-
 func trapCategory(categoryType types.CategoryType) bool {
 	switch categoryType {
 	case types.SpoofTrap,
@@ -239,4 +238,19 @@ func exhaustionCategory(categoryType types.CategoryType) bool {
 	default:
 		return false
 	}
+}
+
+/*
+Top returns the strongest composed category from one Thesis symbol bucket. The
+caller already read the bucket directly from Thesis.Categories, so no symbol
+filter or intermediate regrouping is needed here.
+*/
+func Top(categories []types.Category) types.Category {
+	for _, category := range categories {
+		if category.Type != types.CategoryTypeNone {
+			return category
+		}
+	}
+
+	return types.Category{}
 }

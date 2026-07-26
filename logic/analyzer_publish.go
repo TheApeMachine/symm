@@ -45,12 +45,8 @@ func (analyzer *Analyzer) publishMeasured(
 	}
 
 	if wired, ok := wireManifoldState(states); ok {
-		field, lattices, wave := wired.WirePackets()
+		field, _, wave := wired.WirePackets()
 		analyzer.publish(datura.Map[any]{"manifold": []manifold.WireField{field}})
-
-		for _, lattice := range lattices {
-			analyzer.publishRaw(lattice)
-		}
 
 		analyzer.publish(datura.Map[any]{"manifold_wave": wave})
 	}
@@ -65,22 +61,6 @@ func (analyzer *Analyzer) publishMeasured(
 	}
 
 	errnie.Error(audit.Phase(analyzer.recorder, tick, "publish", payload))
-}
-
-/*
-wireManifold publishes one row carrying the shared Sensorium field. Focus only
-chooses which symbol label the row wears for client-side inheritance; the GPU
-display texture and wave are shared physics and always travel with that row —
-the manifold is not a per-symbol mechanism.
-*/
-func wireManifold(states []manifold.State) []manifold.State {
-	wired, ok := wireManifoldState(states)
-
-	if !ok {
-		return nil
-	}
-
-	return []manifold.State{wired}
 }
 
 func wireManifoldState(states []manifold.State) (manifold.State, bool) {
@@ -140,48 +120,14 @@ func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 		return
 	}
 
-	if analyzer.bestBySym == nil {
-		analyzer.bestBySym = make(map[string]int)
-	}
-
 	focus := types.Focus()
 	analyzer.cogRows = analyzer.cogRows[:0]
-
-	for symbol := range analyzer.bestBySym {
-		delete(analyzer.bestBySym, symbol)
-	}
-
-	for index := range thesis.Categories {
-		symbol := thesis.Categories[index].Symbol
-
-		if symbol == "" {
-			continue
-		}
-
-		best, ok := analyzer.bestBySym[symbol]
-
-		if !ok || thesis.Categories[index].Strength > thesis.Categories[best].Strength {
-			analyzer.bestBySym[symbol] = index
-		}
-	}
 
 	thesis.Cognition.Range(func(key, value any) bool {
 		reading, ok := value.(types.Cognition)
 
 		if !ok {
 			return true
-		}
-
-		if best, ok := analyzer.bestBySym[reading.Symbol]; ok && reading.Ready && reading.Symbol != "" {
-			thesis.Categories[best].Surprisal = reading.EntropyBits
-
-			if reading.Confidence > thesis.Categories[best].Confidence {
-				thesis.Categories[best].Confidence = reading.Confidence
-			}
-
-			if reading.LookaheadScore > thesis.Categories[best].Strength {
-				thesis.Categories[best].Maturity = float64(reading.Cohort)
-			}
 		}
 
 		if focus == "" || reading.Symbol == focus {
@@ -199,75 +145,11 @@ func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 		analyzer.publish(datura.Map[any]{"forecasts": thesis.Forecasts})
 	}
 
-	analyzer.catRows = focusCategoriesInto(analyzer.catRows[:0], thesis.Categories)
+	analyzer.catRows = thesis.Categories[types.Focus()]
 
 	if len(analyzer.catRows) > 0 {
 		analyzer.publish(datura.Map[any]{"categories": analyzer.catRows})
 	}
-}
-
-/*
-focusCognition returns every reading when focus is unset, otherwise only the
-focused symbol so cognitive surfaces paint one coherent tree instead of a flood.
-*/
-func focusCognition(cognition []types.Cognition) []types.Cognition {
-	return focusCognitionInto(nil, cognition)
-}
-
-func focusCognitionInto(dst []types.Cognition, cognition []types.Cognition) []types.Cognition {
-	focus := types.Focus()
-
-	if focus == "" {
-		return cognition
-	}
-
-	dst = dst[:0]
-
-	for _, reading := range cognition {
-		if reading.Symbol != focus {
-			continue
-		}
-
-		dst = append(dst, reading)
-	}
-
-	return dst
-}
-
-/*
-focusCategories returns every composed category when focus is unset, otherwise
-only the focused symbol so the thesis rail paints without a book-wide flood.
-*/
-func focusCategories(categories []types.Category) []types.Category {
-	return focusCategoriesInto(nil, categories)
-}
-
-func focusCategoriesInto(dst []types.Category, categories []types.Category) []types.Category {
-	focus := types.Focus()
-
-	if focus == "" {
-		return categories
-	}
-
-	dst = dst[:0]
-
-	for _, category := range categories {
-		if category.Symbol != focus {
-			continue
-		}
-
-		dst = append(dst, category)
-	}
-
-	return dst
-}
-
-/*
-focusHypotheses returns every hypothesis when focus is unset, otherwise only the
-focused symbol so the thesis rail does not ship the full book each cut.
-*/
-func focusHypotheses(hypotheses []types.Hypothesis) []types.Hypothesis {
-	return focusHypothesesInto(nil, hypotheses)
 }
 
 func focusHypothesesInto(dst []types.Hypothesis, hypotheses []types.Hypothesis) []types.Hypothesis {
@@ -288,14 +170,6 @@ func focusHypothesesInto(dst []types.Hypothesis, hypotheses []types.Hypothesis) 
 	}
 
 	return dst
-}
-
-/*
-focusRows returns every resonance/causal row when focus is unset, otherwise only
-the focused symbol so predictive-coding and causal charts stay lean on the wire.
-*/
-func focusRows(rows []any) []any {
-	return focusRowsInto(nil, rows)
 }
 
 func focusRowsInto(dst []any, rows []any) []any {
@@ -342,62 +216,4 @@ func rowSymbol(row any) string {
 	}
 
 	return ""
-}
-
-/*
-calibrateCategories stamps DMT surprisal and confidence onto the strongest
-composed category for each ready cognition symbol. Categories themselves come
-from measurement×affinity composition, not buy/sell attractor labels.
-*/
-func (analyzer *Analyzer) calibrateCategories(
-	thesis *types.Thesis,
-	cognition []types.Cognition,
-) {
-	if thesis == nil {
-		return
-	}
-
-	if analyzer.bestBySym == nil {
-		analyzer.bestBySym = make(map[string]int)
-	}
-
-	for symbol := range analyzer.bestBySym {
-		delete(analyzer.bestBySym, symbol)
-	}
-
-	for index := range thesis.Categories {
-		symbol := thesis.Categories[index].Symbol
-
-		if symbol == "" {
-			continue
-		}
-
-		best, ok := analyzer.bestBySym[symbol]
-
-		if !ok || thesis.Categories[index].Strength > thesis.Categories[best].Strength {
-			analyzer.bestBySym[symbol] = index
-		}
-	}
-
-	for _, reading := range cognition {
-		if !reading.Ready || reading.Symbol == "" {
-			continue
-		}
-
-		best, ok := analyzer.bestBySym[reading.Symbol]
-
-		if !ok {
-			continue
-		}
-
-		thesis.Categories[best].Surprisal = reading.EntropyBits
-
-		if reading.Confidence > thesis.Categories[best].Confidence {
-			thesis.Categories[best].Confidence = reading.Confidence
-		}
-
-		if reading.LookaheadScore > thesis.Categories[best].Strength {
-			thesis.Categories[best].Maturity = float64(reading.Cohort)
-		}
-	}
 }

@@ -54,14 +54,18 @@ func TestCategoryGraphMarket(t *testing.T) {
 
 					categoryRows += len(thesis.Categories)
 
-					for _, row := range thesis.Categories {
-						So(row.Symbol, ShouldBeIn, market.Symbols)
-						So(row.Type, ShouldNotEqual, types.CategoryTypeNone)
-						So(string(row.Type), ShouldNotBeIn, []string{"buy", "sell", "balanced"})
-						So(row.Strength, ShouldBeGreaterThan, 0)
+					for symbol, rows := range thesis.Categories {
+						So(symbol, ShouldBeIn, market.Symbols)
 
-						if len(row.Supporting) > 0 || len(row.Opposing) > 0 {
-							withEvidence++
+						for _, row := range rows {
+							So(row.Symbol, ShouldEqual, symbol)
+							So(row.Type, ShouldNotEqual, types.CategoryTypeNone)
+							So(string(row.Type), ShouldNotBeIn, []string{"buy", "sell", "balanced"})
+							So(row.Strength, ShouldBeGreaterThan, 0)
+
+							if len(row.Supporting) > 0 || len(row.Opposing) > 0 {
+								withEvidence++
+							}
 						}
 					}
 
@@ -79,8 +83,8 @@ func TestCategoryGraphMarket(t *testing.T) {
 
 					graphHits++
 
-					for _, row := range thesis.Categories {
-						if graph.Prior(row.Symbol) != types.CategoryTypeNone {
+					for symbol := range thesis.Categories {
+						if graph.Prior(symbol) != types.CategoryTypeNone {
 							edgeHits++
 							break
 						}

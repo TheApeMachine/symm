@@ -4,7 +4,6 @@ import (
 	"reflect"
 
 	"github.com/theapemachine/symm/logic/manifold"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -31,29 +30,4 @@ func withStateReplay(state manifold.State, replay bool) manifold.State {
 		field.SetBool(replay)
 	}
 	return state
-}
-
-/*
-isReplayCognitionState reports replay for cognition, preferring the manifold
-marker and falling back to same-timestamp cached cognition when unavailable.
-*/
-func (analyzer *Analyzer) isReplayCognitionState(
-	thesis *types.Thesis,
-	state manifold.State,
-) bool {
-	if stateReplay(state) {
-		return true
-	}
-	if thesis == nil {
-		return false
-	}
-	value, found := thesis.Cognition.Load(state.Symbol)
-	if !found {
-		return false
-	}
-	reading, ok := value.(types.Cognition)
-	if !ok {
-		return false
-	}
-	return reading.At.Equal(state.At)
 }

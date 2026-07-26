@@ -103,20 +103,10 @@ func (analyzer *Analyzer) cognitionTokens(
 		needed[state.Symbol] = struct{}{}
 	}
 
-	grouped := make(map[string][]types.Category, len(needed))
-
-	for _, row := range thesis.Categories {
-		if _, ok := needed[row.Symbol]; !ok {
-			continue
-		}
-
-		grouped[row.Symbol] = append(grouped[row.Symbol], row)
-	}
-
 	tokens := make(map[string][]string, len(needed))
 
 	for symbol := range needed {
-		tokens[symbol] = reporter.Tokens(symbol, grouped[symbol])
+		tokens[symbol] = reporter.Tokens(symbol, thesis.Categories[symbol])
 	}
 
 	return tokens
@@ -400,26 +390,20 @@ func (analyzer *Analyzer) trainAttractors(
 	}
 
 	if thesis != nil {
-		bestIndex := -1
+		bestCategory := types.Category{Strength: 0}
 
-		for index := range thesis.Categories {
-			if thesis.Categories[index].Symbol != state.Symbol {
+		for _, value := range thesis.Categories[state.Symbol] {
+			if value.Type == types.CausalNoise || value.Type == types.StochasticNoise {
 				continue
 			}
 
-			catType := thesis.Categories[index].Type
-
-			if catType == types.CausalNoise || catType == types.StochasticNoise {
-				continue
-			}
-
-			if bestIndex < 0 || thesis.Categories[index].Strength > thesis.Categories[bestIndex].Strength {
-				bestIndex = index
+			if value.Strength > bestCategory.Strength {
+				bestCategory = value
 			}
 		}
 
-		if bestIndex >= 0 {
-			regime = string(thesis.Categories[bestIndex].Type)
+		if bestCategory.Strength > 0 {
+			regime = string(bestCategory.Type)
 		}
 	}
 

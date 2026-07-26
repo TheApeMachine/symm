@@ -1,4 +1,4 @@
-import type { Measurement } from "#/types/measurement";
+import type { Measurement } from "#/collections/types";
 
 export type MeterParts = {
 	cell: HTMLElement;
@@ -28,13 +28,10 @@ export const mergeInspectorMetrics = (
 			continue;
 		}
 
-		const entries =
-			row.metrics !== undefined
-				? Object.entries(row.metrics)
-				: ([[row.metric ?? "raw", row.raw]] as Array<[string, number]>);
+		const entries = Object.entries(row.metrics ?? {});
 
 		for (const [key, entry] of entries) {
-			const numeric = Number(entry);
+			const numeric = entry.normalized ?? entry.raw;
 			merged.set(key, Number.isFinite(numeric) ? numeric : 0);
 		}
 	}

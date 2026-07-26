@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Measurement } from "#/types/measurement";
+import type { Measurement } from "#/collections/types";
 import {
 	type MeterParts,
 	mergeInspectorMetrics,
@@ -43,12 +43,11 @@ const measurement = (
 	source: "hawkes",
 	symbol: "BTC/USD",
 	at,
-	raw: 0,
-	normalized: null,
-	uncertainty: null,
 	validity: { state: "valid", readiness: "observation" },
 	scale: { kind: "observation_window", from: "", through: "" },
-	metrics,
+	metrics: Object.fromEntries(
+		Object.entries(metrics).map(([key, raw]) => [key, { raw, normalized: raw }]),
+	),
 });
 
 describe("mergeInspectorMetrics", () => {
@@ -115,17 +114,13 @@ describe("mergeInspectorMetrics", () => {
 		});
 	});
 
-	it("merges legacy flat rows when metrics is undefined", () => {
+	it("ignores empty metric rows", () => {
 		const merged = mergeInspectorMetrics(
 			[
 				{
 					source: "pumpdump",
 					symbol: "BTC/USD",
-					metric: "peak_score",
 					at: "2026-07-25T01:00:00.000Z",
-					raw: 0.87,
-					normalized: null,
-					uncertainty: null,
 					validity: { state: "valid", readiness: "observation" },
 					scale: { kind: "observation_window", from: "", through: "" },
 				},
@@ -134,9 +129,7 @@ describe("mergeInspectorMetrics", () => {
 			"BTC/USD",
 		);
 
-		expect(Object.fromEntries(merged)).toEqual({
-			peak_score: 0.87,
-		});
+		expect(Object.fromEntries(merged)).toEqual({});
 	});
 });
 
