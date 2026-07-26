@@ -66,14 +66,14 @@ export const buildPositionGaugePanel = (symbol: string): HTMLElement => {
 	const stopMarker = document.createElement("div");
 	stopMarker.dataset.gauge = "stop";
 	stopMarker.className =
-		"pointer-events-none absolute top-1/2 h-2 w-px -translate-x-1/2 -translate-y-1/2";
+		"pointer-events-none absolute top-1/2 h-3 w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full";
 	stopMarker.title = "Stop";
 	stopMarker.style.background = "color-mix(in srgb, var(--down) 42%, transparent)";
 
 	const peakMarker = document.createElement("div");
 	peakMarker.dataset.gauge = "peak";
 	peakMarker.className =
-		"pointer-events-none absolute top-1/2 h-2 w-px -translate-x-1/2 -translate-y-1/2";
+		"pointer-events-none absolute top-1/2 h-3 w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full";
 	peakMarker.title = "Peak";
 	peakMarker.style.background =
 		"color-mix(in srgb, var(--up) 42%, transparent)";
@@ -93,6 +93,21 @@ export const buildPositionGaugePanel = (symbol: string): HTMLElement => {
 	markMarker.title = "Mark";
 
 	track.append(progress, stopMarker, peakMarker, entryMarker, markMarker);
+
+	const stopMeta = document.createElement("div");
+	stopMeta.className =
+		"mt-1 flex items-center justify-between gap-2 font-mono text-[9px] text-(--f4)";
+
+	const floor = document.createElement("span");
+	floor.dataset.gauge = "floor-label";
+
+	const peak = document.createElement("span");
+	peak.dataset.gauge = "peak-label";
+
+	const mark = document.createElement("span");
+	mark.dataset.gauge = "mark-label";
+
+	stopMeta.append(floor, peak, mark);
 
 	const momentumWrap = document.createElement("div");
 	momentumWrap.dataset.gauge = "momentum-wrap";
@@ -138,7 +153,7 @@ export const buildPositionGaugePanel = (symbol: string): HTMLElement => {
 	stagnationFlash.textContent = "⚡";
 	stagnationWrap.append(stagnationLabel, stagnationTrack, stagnationFlash);
 
-	panel.append(head, summaryRow, track, momentumWrap, stagnationWrap);
+	panel.append(head, summaryRow, track, stopMeta, momentumWrap, stagnationWrap);
 
 	return panel;
 };

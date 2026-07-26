@@ -4,9 +4,7 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -25,68 +23,16 @@ type symbolEvidence struct {
 }
 
 /*
-observationContext carries the shared validity and scale contract for one
-toxicity observation window anchored at a source event time.
-*/
-type observationContext struct {
-	validity types.MeasurementValidity
-	scale    types.ScaleReference
-}
-
-/*
-newObservationContext builds validity from corroborating event count and scale
-from the observation timestamp so Measure and touchHonesty share one contract.
-*/
-func newObservationContext(
-	at time.Time,
-	evidenceCount int,
-) observationContext {
-	return observationContext{
-		validity: types.ObservationValidity(evidenceCount),
-		scale: types.ScaleReference{
-			Kind:    types.ScaleObservationWindow,
-			From:    at,
-			Through: at,
-		},
-	}
-}
-
-/*
 ingestIncrements retains each symbol's observed price lattice and rejects a
 malformed book rather than silently falling back to decimal price proximity.
 */
 func (signal *Signal) ingestIncrements(books []kraken.BookData) error {
-	if len(books) == 0 {
-		return nil
-	}
-
-	groups := types.ChunkRowsBySymbol(books, func(row kraken.BookData) string {
-		return row.Symbol
-	})
-	increments := make([]*decimal.Decimal, len(groups))
-
-	err := types.RunSymbolGroupsParallel(groups, func(index int, rows []kraken.BookData) error {
-		for _, row := range rows {
-			if row.Symbol == "" || row.PriceIncrement == nil || row.PriceIncrement.Sign() <= 0 {
-				continue
-			}
-
-			increments[index] = row.PriceIncrement
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return err
-	}
-
-	for index, group := range groups {
-		if increments[index] == nil {
+	for _, row := range books {
+		if row.Symbol == "" || row.PriceIncrement == nil || row.PriceIncrement.Sign() <= 0 {
 			continue
 		}
 
-		signal.increments[group.Symbol] = increments[index]
+		signal.increments[row.Symbol] = row.PriceIncrement
 	}
 
 	return nil
@@ -149,7 +95,6 @@ func (signal *Signal) accumulateEvidence(
 				trade.Qty,
 				&prior.bidPrice,
 				&prior.askPrice,
-				increment,
 			); err != nil {
 				continue
 			}
@@ -165,7 +110,7 @@ func (signal *Signal) accumulateEvidence(
 			}
 
 			bid, ask := symbolBook.BestBid(), symbolBook.BestAsk()
-			err = attributeTouchFill(row, trade.Price, trade.Qty, bid, ask, increment)
+			err = attributeTouchFill(row, trade.Price, trade.Qty, bid, ask)
 			attributed = err == nil
 		})
 
@@ -183,70 +128,25 @@ without a public trade. This lets cancellation and retreat remain observable
 without fabricating an unrelated execution to trigger the signal.
 */
 func (signal *Signal) observeBooks(books []kraken.BookData) error {
-	if len(books) == 0 {
-		return nil
-	}
-
-	groups := types.ChunkRowsBySymbol(books, func(row kraken.BookData) string {
-		return row.Symbol
-	})
-	updates := make([]*symbolEvidence, len(groups))
-
-	err := types.RunSymbolGroupsParallel(groups, func(index int, rows []kraken.BookData) error {
-		updates[index] = observeSymbolBooks(rows)
-
-		return nil
-	})
-
-	if err != nil {
-		return err
-	}
-
-	for index, group := range groups {
-		update := updates[index]
-
-		if update == nil || update.bookCount == 0 {
-			continue
-		}
-
-		row := signal.evidence[group.Symbol]
-
-		if row == nil {
-			signal.evidence[group.Symbol] = update
-			continue
-		}
-
-		row.bookCount += update.bookCount
-
-		if update.latestAt.After(row.latestAt) {
-			row.latestAt = update.latestAt
-		}
-	}
-
-	return nil
-}
-
-/*
-observeSymbolBooks aggregates book-only evidence for one symbol's ordered rows.
-*/
-func observeSymbolBooks(rows []kraken.BookData) *symbolEvidence {
-	row := &symbolEvidence{}
-
-	for _, bookRow := range rows {
+	for _, bookRow := range books {
 		if bookRow.Symbol == "" || bookRow.Timestamp.IsZero() {
 			continue
 		}
 
-		row.bookCount++
+		row := signal.evidence[bookRow.Symbol]
 
-		if bookRow.Timestamp.After(row.latestAt) {
-			row.latestAt = bookRow.Timestamp.UTC()
+		if row == nil {
+			row = &symbolEvidence{}
+			signal.evidence[bookRow.Symbol] = row
+		}
+
+		row.bookCount++
+		at := bookRow.Timestamp.UTC()
+
+		if at.After(row.latestAt) {
+			row.latestAt = at
 		}
 	}
 
-	if row.bookCount == 0 {
-		return nil
-	}
-
-	return row
+	return nil
 }

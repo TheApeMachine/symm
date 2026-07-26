@@ -368,7 +368,7 @@ export const XrayManifoldPanel = () => (
 					<div ref={fillRef} className="h-full" style={{ width: "0%" }} />
 				</div>
 				<div className="relative h-0">
-					<div className="absolute top-[-9px] left-[40%] h-3 w-0.5 bg-(--acc)" />
+					<div className="absolute -top-2.25 left-[40%] h-3 w-0.5 bg-(--acc)" />
 				</div>
 			</div>
 			<div className="mt-1.5 font-mono text-[8.5px] text-(--f4)">

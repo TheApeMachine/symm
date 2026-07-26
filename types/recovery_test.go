@@ -12,24 +12,19 @@ import (
 )
 
 /*
-TestCaptureRecovery proves durable state rejects non-finite stop geometry
-instead of silently replacing economic values with zero.
+TestCaptureRecovery proves durable state rejects non-finite returns.
 */
 func TestCaptureRecovery(t *testing.T) {
-	Convey("Given an open holding with non-finite stop geometry", t, func() {
+	Convey("Given an open holding with non-finite return", t, func() {
 		qty := decimal.NewFromFloat64(1.5)
-		weight := math.NaN()
-		peak := math.Inf(1)
+		infPct := math.Inf(1)
 		open := map[string]Holding{
 			"ONDO/USD": {
-				Symbol: "ONDO/USD",
-				Asset:  "ONDO",
-				Qty:    qty,
-				Status: OPEN,
-				Stoploss: &Stoploss{
-					Weight:     weight,
-					PeakReturn: peak,
-				},
+				Symbol:    "ONDO/USD",
+				Asset:     "ONDO",
+				Qty:       qty,
+				Status:    OPEN,
+				ReturnPct: &infPct,
 			},
 		}
 
@@ -39,7 +34,7 @@ func TestCaptureRecovery(t *testing.T) {
 			Convey("Then it should expose the invalid durable state", func() {
 				So(recovery, ShouldBeNil)
 				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldContainSubstring, "non-finite weight")
+				So(err.Error(), ShouldContainSubstring, "non-finite return")
 			})
 		})
 	})
@@ -87,19 +82,18 @@ func TestSaveLoadRecovery(t *testing.T) {
 			So(loaded, ShouldBeNil)
 		})
 
-		Convey("When manually assembled recovery contains a non-finite stop", func() {
+		Convey("When manually assembled recovery contains a non-finite return", func() {
+			infPct := math.Inf(1)
 			original.Holdings["UAI/USD"] = Holding{
-				Symbol: "UAI/USD",
-				Qty:    qty,
-				Status: OPEN,
-				Stoploss: &Stoploss{
-					Weight: math.Inf(1),
-				},
+				Symbol:    "UAI/USD",
+				Qty:       qty,
+				Status:    OPEN,
+				ReturnPct: &infPct,
 			}
 			err := SaveRecovery(dir, original)
 
 			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "non-finite weight")
+			So(err.Error(), ShouldContainSubstring, "non-finite return")
 		})
 	})
 }
@@ -117,17 +111,11 @@ func TestHoldingEnrich(t *testing.T) {
 			Symbol:     "ONDO/USD",
 			EntryPrice: entry,
 			Stoploss: &Stoploss{
-				Weight:        0.4,
-				Action:        "hold",
-				LockedFloor:   0.03,
-				PeakReturn:    0.08,
-				MarkReturn:    0.05,
-				TrailDistance: 0.02,
-				StopReturn:    0.03,
-				FloorDistance: 0.02,
+				Peak:  decimal.NewFromFloat64(0.11),
+				Mark:  decimal.NewFromFloat64(0.08),
+				Floor: decimal.NewFromFloat64(0.05),
 			},
 		}
-		recovered.Stoploss.NoteRetreat(0.9)
 
 		payload, err := json.Marshal(Recovery{
 			Holdings: map[string]Holding{"ONDO/USD": recovered},
@@ -138,26 +126,16 @@ func TestHoldingEnrich(t *testing.T) {
 		So(json.Unmarshal(payload, &roundtrip), ShouldBeNil)
 		So(roundtrip.Holdings, ShouldContainKey, "ONDO/USD")
 
+		live.Mark = decimal.NewFromFloat64(1.30)
 		live.Enrich(roundtrip.Holdings["ONDO/USD"])
 
 		Convey("Then durable fields restore without resetting the trail", func() {
 			So(live.EntryPrice, ShouldNotBeNil)
 			So(live.EntryPrice.Float64(), ShouldEqual, 1.25)
 			So(live.Stoploss, ShouldNotBeNil)
-			So(live.Stoploss.Weight, ShouldEqual, 0.4)
-			So(live.Stoploss.Armed(), ShouldBeTrue)
-			So(live.Stoploss.LockedFloor, ShouldEqual, 0.03)
-			So(live.Stoploss.PeakReturn, ShouldEqual, 0.08)
-		})
-
-		Convey("Then retreat survives JSON recovery", func() {
-			adverse := live.Stoploss.Update(StopEvidence{
-				Symbol: "ONDO/USD", Mark: 1.20, Entry: 1.25,
-				Uncertainty: 0.02, ExpectedReturn: 0.05, Present: true,
-			})
-
-			So(adverse.Action, ShouldEqual, "hold")
-			So(adverse.Reason, ShouldContainSubstring, "retreat")
+			So(live.Stoploss.Peak.Float64(), ShouldEqual, 0.11)
+			So(live.Stoploss.Mark.Float64(), ShouldEqual, 0.08)
+			So(live.Stoploss.Floor.Float64(), ShouldEqual, 0.05)
 		})
 	})
 }
@@ -167,7 +145,7 @@ func BenchmarkCaptureRecovery(b *testing.B) {
 	open := map[string]Holding{
 		"BTC/USD": {
 			Symbol: "BTC/USD", Qty: qty, Status: OPEN,
-			Stoploss: &Stoploss{Weight: 0.5},
+			Stoploss: &Stoploss{},
 		},
 	}
 

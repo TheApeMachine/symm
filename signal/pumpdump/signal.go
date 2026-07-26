@@ -92,16 +92,16 @@ func (signal *Signal) onTicker(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourcePumpDump, Status: types.SignalSkip}
 	}
 
 	if len(measurements) == 0 {
-		return nil
+		return types.SignalResult{Source: types.SourcePumpDump, Status: types.SignalSkip}
 	}
 
 	signal.thesis.Publish(types.SourcePumpDump, measurements)
 
-	return signal.thesis
+	return types.SignalResult{Source: types.SourcePumpDump, Measurements: measurements, Status: types.SignalReady}
 }
 
 func (signal *Signal) onBook(message any) any {
@@ -110,16 +110,16 @@ func (signal *Signal) onBook(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourcePumpDump, Status: types.SignalSkip}
 	}
 
 	if len(measurements) == 0 {
-		return nil
+		return types.SignalResult{Source: types.SourcePumpDump, Status: types.SignalSkip}
 	}
 
 	signal.thesis.Publish(types.SourcePumpDump, measurements)
 
-	return signal.thesis
+	return types.SignalResult{Source: types.SourcePumpDump, Measurements: measurements, Status: types.SignalReady}
 }
 
 func (signal *Signal) onTrade(message any) any {
@@ -128,16 +128,16 @@ func (signal *Signal) onTrade(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourcePumpDump, Status: types.SignalSkip}
 	}
 
 	if len(measurements) == 0 {
-		return nil
+		return types.SignalResult{Source: types.SourcePumpDump, Status: types.SignalSkip}
 	}
 
 	signal.thesis.Publish(types.SourcePumpDump, measurements)
 
-	return signal.thesis
+	return types.SignalResult{Source: types.SourcePumpDump, Measurements: measurements, Status: types.SignalReady}
 }
 
 func (signal *Signal) Calculate(
@@ -286,10 +286,10 @@ func (signal *Signal) measure(row kraken.TickerData) ([]*types.Measurement, erro
 tickerBookState carries resolved midpoint, spread, and volume for one ticker.
 */
 type tickerBookState struct {
-	mid     float64
-	bid     float64
-	ask     float64
-	volume  float64
+	mid    float64
+	bid    float64
+	ask    float64
+	volume float64
 }
 
 /*

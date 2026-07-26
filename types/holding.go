@@ -4,9 +4,14 @@ import (
 	"context"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/datura"
 )
+
+// Freeze the configuration once at startup to reuse JIT-compiled encoders.
+var fastSonic = sonic.Config{
+	EncodeNullForInfOrNan: true, // Converts NaN, +Inf, -Inf to JSON `null` instead of returning an error
+}.Froze()
 
 /*
 Holding is inventory qty and economics. Wallet lots live on Balance; Thesis
@@ -44,17 +49,20 @@ func NewHolding(
 	ctx context.Context,
 	symbol string,
 	qty *decimal.Decimal,
+	mark *decimal.Decimal,
+	exit func() error,
 ) *Holding {
 	ctx, cancel := context.WithCancel(ctx)
-
-	return &Holding{
+	holding := &Holding{
 		ctx:      ctx,
 		cancel:   cancel,
 		Symbol:   symbol,
 		Qty:      qty,
 		Status:   PENDING,
-		Stoploss: NewStoploss(ctx),
+		Stoploss: NewStoploss(ctx, symbol, mark, exit),
 	}
+
+	return holding
 }
 
 /*
@@ -62,70 +70,24 @@ MarshalJSON encodes a JSON-safe desk/thesis surface. Decimal fields become
 finite floats and stop_price is derived from the bound regulator.
 */
 func (holding Holding) MarshalJSON() ([]byte, error) {
-	frame := datura.Map[any]{
-		"status":         holding.Status,
-		"symbol":         holding.Symbol,
-		"asset":          holding.Asset,
-		"qty":            decimalFloat(holding.Qty),
-		"sellable_qty":   decimalFloat(holding.SellableQty),
-		"entry_at":       holding.EntryAt,
-		"exit_at":        holding.ExitAt,
-		"entry_price":    decimalFloat(holding.EntryPrice),
-		"entry_fee":      decimalFloat(holding.EntryFee),
-		"exit_price":     decimalFloat(holding.ExitPrice),
-		"exit_fee":       decimalFloat(holding.ExitFee),
-		"pnl":            decimalFloat(holding.PnL),
-		"mark":           decimalFloat(holding.Mark),
-		"is_opportunity": holding.IsOpportunity,
-		"stoploss":       holding.Stoploss,
-	}
-
-	if holding.ReturnPct != nil {
-		frame["return_pct"] = finiteFloat(*holding.ReturnPct)
-	}
-
-	if holding.ReservationID != "" {
-		frame["reservation_id"] = holding.ReservationID
-	}
-
-	if holding.Stoploss != nil {
-		if stopPrice := holding.Stoploss.StopPrice(); stopPrice > 0 {
-			frame["stop_price"] = stopPrice
-		}
-	}
-
-	payload, err := frame.Marshal()
-
-	if err != nil {
-		return nil, err
-	}
-
-	return payload, nil
+	type alias Holding
+	return fastSonic.Marshal(holding)
 }
 
 /*
-StopFrame projects the live stop surface for the terminal gauge.
+UnmarshalJSON decodes a JSON-safe desk/thesis surface. Decimal fields become
+finite floats and stop_price is derived from the bound regulator.
 */
-func (holding *Holding) StopFrame() map[string]any {
-	if holding == nil || holding.Stoploss == nil || holding.Symbol == "" {
-		return nil
-	}
-
-	stop := holding.Stoploss
-
-	return map[string]any{
-		"symbol":      holding.Symbol,
-		"peak_return": finiteFloat(stop.PeakReturn),
-		"stop_return": finiteFloat(stop.StopReturn),
-		"armed":       stop.Armed(),
-		"stop_price":  stop.StopPrice(),
-	}
+func (holding *Holding) UnmarshalJSON(data []byte) error {
+	type alias Holding
+	return fastSonic.Unmarshal(data, holding)
 }
 
-func decimalFloat(value *decimal.Decimal) float64 {
-	if value == nil {
-		return 0
+func (holding *Holding) Close() {
+	if holding.cancel != nil {
+		holding.cancel()
 	}
 
-	return finiteFloat(value.Float64())
+	holding.Stoploss.Close()
+	holding.Status = CLOSED
 }

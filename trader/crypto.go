@@ -138,7 +138,7 @@ func (crypto *Crypto) Apply(thesis *types.Thesis) {
 		"ns":        elapsed.Nanoseconds(),
 		"decisions": len(decisions),
 	}))
-	
+
 	errnie.Error(audit.Phase(crypto.recorder, thesis.Tick, "tick_end", map[string]any{
 		"ns":        elapsed.Nanoseconds(),
 		"decisions": len(decisions),
@@ -154,18 +154,22 @@ func (crypto *Crypto) publish(thesis *types.Thesis, elapsed time.Duration) {
 		return
 	}
 
-	crypto.enqueue(datura.Map[any]{"tick": datura.Map[any]{
-		"count":        thesis.Tick,
-		"measurements": types.ObservationCount(thesis.Measurements),
-		"candidates":   len(thesis.Forecasts),
-		"open":         crypto.desk.HoldingCount(),
-		"ns":           elapsed.Nanoseconds(),
-		"completed":    true,
-		"phase":        "complete",
-	}})
+	crypto.uiHub.Publish(datura.Map[any]{
+		"tick": datura.Map[any]{
+			"count":        thesis.Tick,
+			"measurements": types.ObservationCount(thesis.Measurements),
+			"candidates":   len(thesis.Forecasts),
+			"open":         crypto.desk.OpenPositions(),
+			"ns":           elapsed.Nanoseconds(),
+			"completed":    true,
+			"phase":        "complete",
+		},
+	}.Marshal())
 
 	if len(thesis.Decisions) > 0 {
-		crypto.enqueue(datura.Map[any]{"decisions": thesis.Decisions})
+		crypto.uiHub.Publish(datura.Map[any]{
+			"decisions": thesis.Decisions,
+		}.Marshal())
 	}
 
 	lifecycle := make([]datura.Map[any], 0)
@@ -180,27 +184,13 @@ func (crypto *Crypto) publish(thesis *types.Thesis, elapsed time.Duration) {
 	})
 
 	if len(lifecycle) > 0 {
-		crypto.enqueue(datura.Map[any]{"lifecycle": lifecycle})
+		crypto.uiHub.Publish(datura.Map[any]{"lifecycle": lifecycle}.Marshal())
+
 	}
 
 	if len(thesis.Findings) > 0 {
-		crypto.enqueue(datura.Map[any]{"findings": thesis.Findings})
+		crypto.uiHub.Publish(datura.Map[any]{"findings": thesis.Findings}.Marshal())
 	}
-}
-
-/*
-enqueue publishes one UI frame through the hub so replaceable keys coalesce and
-a full ingress channel cannot strand the only drain behind a slow client.
-*/
-func (crypto *Crypto) enqueue(frame datura.Map[any]) {
-	payload, err := frame.Marshal()
-
-	if err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	crypto.uiHub.Publish(payload)
 }
 
 func (crypto *Crypto) enter(thesis *types.Thesis, decision *types.Decision) {
@@ -216,7 +206,7 @@ func (crypto *Crypto) enter(thesis *types.Thesis, decision *types.Decision) {
 	}
 
 	if holding == nil {
-		holding = types.NewHolding(crypto.ctx, decision.Symbol, decision.ProposedQuantity)
+		holding = types.NewHolding(crypto.ctx, decision.Symbol, decision.ProposedQuantity, decision.ReferencePrice, nil)
 		thesis.Holdings.Store(decision.Symbol, holding)
 	}
 

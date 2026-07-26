@@ -78,14 +78,10 @@ func (bridge *ErrorBridge) Write(payload []byte) (int, error) {
 		return len(payload), nil
 	}
 
-	frame, err := datura.Map[any]{"error": safeErrorFields(fields)}.Marshal()
-
-	if err != nil {
-		return len(payload), err
-	}
-
 	select {
-	case bridge.messages <- frame:
+	case bridge.messages <- datura.Map[any]{
+		"error": safeErrorFields(fields),
+	}.Marshal():
 		bridge.commit(fingerprint)
 	default:
 		// Best-effort drop when the hub is saturated; the line still lands in

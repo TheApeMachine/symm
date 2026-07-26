@@ -149,7 +149,7 @@ func New(
 				}
 			}
 
-			live.roots[channel].TrySend(entity)
+			live.roots[channel].Send(entity)
 		}
 	})
 

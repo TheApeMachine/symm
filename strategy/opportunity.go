@@ -368,7 +368,7 @@ func (opportunity *Opportunity) occupied(thesis *types.Thesis) map[string]struct
 	blocked := map[string]struct{}{}
 
 	if opportunity.balance != nil {
-		for holding := range opportunity.balance.Holdings() {
+		for _, holding := range opportunity.balance.Holdings() {
 			if holding.Status == types.CLOSED {
 				continue
 			}

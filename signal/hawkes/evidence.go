@@ -47,7 +47,7 @@ func (evidence *Evidence) Measure(
 			From:    from,
 			Through: through,
 		},
-		Metrics: map[string]types.MetricSample{},
+		Metrics: make(map[string]types.MetricSample, 16),
 	}
 
 	if outcome.Readiness.HawkesFit {
@@ -179,11 +179,11 @@ func (evidence *Evidence) putMetric(
 	unit types.MeasurementUnit,
 	raw float64,
 ) {
-	measurement.PutMetric(metric, side, types.MetricSample{
+	measurement.Metrics[types.MetricKey(metric, side)] = types.MetricSample{
 		Raw:        raw,
 		Normalized: evidence.normalize.value(outcome, metric, side, unit, raw),
 		Unit:       unit,
-	})
+	}
 }
 
 /*

@@ -3,7 +3,6 @@ package manifold
 import (
 	"errors"
 	"fmt"
-	"sort"
 	"sync"
 	"time"
 
@@ -172,10 +171,9 @@ touching L3 books.
 func (solver *Solver) changedOutcomes(
 	hawkes HawkesSource,
 ) map[string]excitation.Outcome {
-	symbols := append([]string(nil), hawkes.Symbols()...)
 	changed := make(map[string]excitation.Outcome)
 
-	for _, symbol := range symbols {
+	for _, symbol := range hawkes.Symbols() {
 		outcome, ok := hawkes.Outcome(symbol)
 
 		if !ok || !outcome.Readiness.Intensity {
@@ -207,27 +205,28 @@ func (solver *Solver) sampleChanged(
 	hawkes HawkesSource,
 	changed map[string]excitation.Outcome,
 ) []intensityCandidate {
-	universe := sortedUniverse(hawkes.Symbols())
-	symbols := make([]string, 0, len(changed))
-
-	for symbol := range changed {
-		symbols = append(symbols, symbol)
+	if len(changed) == 0 {
+		return nil
 	}
 
-	sort.Strings(symbols)
-	candidates := make([]intensityCandidate, 0, len(symbols))
+	universe := sortedUniverse(hawkes.Symbols())
+	candidates := make([]intensityCandidate, 0, len(changed))
 	tokenizer := NewTokenizer(solver.config)
 
-	for _, symbol := range symbols {
-		symbolIndex, ok := universeIndex(universe, symbol)
+	for symbolIndex, symbol := range universe {
+		outcome, ok := changed[symbol]
 
 		if !ok {
 			continue
 		}
 
-		buyIntensity, sellIntensity := intensities(changed[symbol])
+		buyIntensity, sellIntensity := intensities(outcome)
 		population, ready := solver.books.Sample(
-			symbol, tokenizer, buyIntensity, sellIntensity, symbolIndex,
+			symbol,
+			tokenizer,
+			buyIntensity,
+			sellIntensity,
+			uint32(symbolIndex),
 		)
 
 		if !ready {
@@ -236,7 +235,7 @@ func (solver *Solver) sampleChanged(
 
 		candidates = append(candidates, intensityCandidate{
 			symbol:       symbol,
-			outcome:      changed[symbol],
+			outcome:      outcome,
 			midPrice:     population.midPrice,
 			orderIDs:     population.orderIDs,
 			batch:        population.batch,

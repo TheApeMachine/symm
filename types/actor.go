@@ -2,11 +2,12 @@ package types
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -59,20 +60,23 @@ func (subscription *Subscription[T]) TrySend(message T) bool {
 	case subscription.Channel <- message:
 		return true
 	default:
+		errnie.Error(errnie.Err(
+			errnie.TooManyRequests,
+			fmt.Sprintf("actor dropped message: %v", message),
+			nil,
+		))
+
 		return false
 	}
 }
 
 /*
-Envelope is one ordered inbox item: topic routing plus optional venue sequence
-and event time so an Actor consumes a single stream instead of busy-polling
-topic maps.
+Envelope is one ordered inbox item: topic routing plus payload so an Actor
+consumes a single stream instead of busy-polling topic maps.
 */
 type Envelope struct {
-	Topic          string
-	SourceSequence uint64
-	EventTime      time.Time
-	Payload        any
+	Topic   string
+	Payload any
 }
 
 /*
@@ -103,11 +107,10 @@ type Actor struct {
 	subscribers   map[string][]*Subscription[any]
 	handlers      map[string]Handler
 	inbox         chan Envelope
-	mu            sync.Mutex
+	mu            sync.RWMutex
 	started       atomic.Bool
 	frozen        atomic.Bool
 	wg            sync.WaitGroup
-	seq           atomic.Uint64
 	dropped       atomic.Uint64
 }
 
@@ -144,9 +147,6 @@ func NewActor(
 AddRoot registers a producer-owned ingress subscription under name.
 */
 func (actor *Actor) AddRoot(name string, subscription *Subscription[any]) {
-	actor.mu.Lock()
-	defer actor.mu.Unlock()
-
 	if actor.frozen.Load() {
 		panic("types.Actor: AddRoot after Start")
 	}
@@ -167,9 +167,6 @@ SubscribeSize registers interest with an explicit inbound buffer depth.
 Subscribers may attach after Start; only the actor's own inbound roots freeze.
 */
 func (actor *Actor) SubscribeSize(topic string, buffer int) *Subscription[any] {
-	actor.mu.Lock()
-	defer actor.mu.Unlock()
-
 	subscription := NewSubscriptionSize[any](buffer)
 	actor.subscribers[topic] = append(actor.subscribers[topic], subscription)
 
@@ -192,15 +189,12 @@ func (actor *Actor) InitializeSize(buffer int, topics ...Topic) {
 		panic("types.Actor: InitializeSize after Start")
 	}
 
-	actor.mu.Lock()
-
 	for _, topic := range topics {
 		actor.subscriptions[topic.Name] = topic.Actor.SubscribeSize(
 			topic.Name, buffer,
 		)
 	}
 
-	actor.mu.Unlock()
 	actor.Start()
 }
 
@@ -214,14 +208,11 @@ func (actor *Actor) Start() {
 	}
 
 	actor.frozen.Store(true)
-	actor.mu.Lock()
 	topics := make([]string, 0, len(actor.subscriptions))
 
 	for topic := range actor.subscriptions {
 		topics = append(topics, topic)
 	}
-
-	actor.mu.Unlock()
 
 	for _, topic := range topics {
 		actor.pump(topic)
@@ -250,30 +241,19 @@ func (actor *Actor) Close() error {
 }
 
 func (actor *Actor) pump(topic string) {
-	actor.mu.Lock()
-	subscription := actor.subscriptions[topic]
-	actor.mu.Unlock()
-
-	if subscription == nil {
-		return
-	}
-
-
 	actor.wg.Go(func() {
 		for {
 			select {
 			case <-actor.ctx.Done():
 				return
-			case message, ok := <-subscription.Channel:
+			case message, ok := <-actor.subscriptions[topic].Channel:
 				if !ok {
 					return
 				}
 
 				envelope := Envelope{
-					Topic:          topic,
-					SourceSequence: actor.seq.Add(1),
-					EventTime:      time.Now().UTC(),
-					Payload:        message,
+					Topic:   topic,
+					Payload: message,
 				}
 
 				select {
@@ -296,64 +276,30 @@ func (actor *Actor) loop() {
 				return
 			}
 
-			actor.dispatch(envelope)
+			handler, ok := actor.handlers[envelope.Topic]
+
+			if !ok {
+				actor.publish(envelope.Topic, envelope.Payload)
+				return
+			}
+
+		result := handler.Fn(envelope.Payload)
+
+		if result == nil {
+			continue
+		}
+
+		actor.publish(envelope.Topic, result)
 		}
 	}
-}
-
-func (actor *Actor) dispatch(envelope Envelope) {
-	handler, ok := actor.handlers[envelope.Topic]
-
-	if !ok {
-		// Root fan-out (Live/Paper): never block ingress on a slow subscriber.
-		// Cascade actors always register handlers and keep blocking publish so
-		// cut identity stays serial where InitializeSize(1) is intentional.
-		actor.tryPublish(envelope.Topic, envelope.Payload)
-		return
-	}
-
-	result := handler.Fn(envelope.Payload)
-
-	if result == nil {
-		return
-	}
-
-	actor.publish(envelope.Topic, result)
-}
-
-/*
-Dropped reports how many tryPublish subscriber enqueues were rejected.
-*/
-func (actor *Actor) Dropped() uint64 {
-	return actor.dropped.Load()
 }
 
 func (actor *Actor) publish(topic string, result any) {
-	actor.mu.Lock()
-	subscribers := append([]*Subscription[any](nil), actor.subscribers[topic]...)
-	actor.mu.Unlock()
-
-	for _, subscriber := range subscribers {
+	for _, subscriber := range actor.subscribers[topic] {
 		select {
 		case <-actor.ctx.Done():
 			return
 		case subscriber.Channel <- result:
-		}
-	}
-}
-
-func (actor *Actor) tryPublish(topic string, result any) {
-	actor.mu.Lock()
-	subscribers := append([]*Subscription[any](nil), actor.subscribers[topic]...)
-	actor.mu.Unlock()
-
-	for _, subscriber := range subscribers {
-		select {
-		case <-actor.ctx.Done():
-			return
-		case subscriber.Channel <- result:
-		default:
-			actor.dropped.Add(1)
 		}
 	}
 }

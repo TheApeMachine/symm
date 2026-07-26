@@ -144,11 +144,11 @@ type MarketOrder struct {
 MarketOrderParams retains executable quantity text as a JSON number.
 */
 type MarketOrderParams struct {
-	OrderType  string      `json:"order_type"`
-	Side       string      `json:"side"`
-	OrderQty   json.Number `json:"order_qty"`
-	Symbol     string      `json:"symbol"`
-	LimitPrice json.Number `json:"limit_price,omitempty"`
+	OrderType  string           `json:"order_type"`
+	Side       string           `json:"side"`
+	Symbol     string           `json:"symbol"`
+	OrderQty   *decimal.Decimal `json:"order_qty"`
+	LimitPrice *decimal.Decimal `json:"limit_price,omitempty"`
 }
 
 /*
@@ -156,15 +156,15 @@ NewMarketOrder creates a market request without converting quantity to float64.
 */
 func NewMarketOrder(
 	side string,
-	orderQty *decimal.Decimal,
 	symbol string,
+	orderQty *decimal.Decimal,
 ) *MarketOrder {
 	return &MarketOrder{
 		Method: "add_order",
 		Params: MarketOrderParams{
 			OrderType: "market",
 			Side:      side,
-			OrderQty:  json.Number(orderQty.String()),
+			OrderQty:  orderQty,
 			Symbol:    symbol,
 		},
 		ReqID: orderRequestID.Next(),

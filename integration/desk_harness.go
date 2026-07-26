@@ -63,7 +63,7 @@ func sellAllOpen(desk *broker.Desk, balance *broker.Balance, keepSymbol ...strin
 		keep[symbol] = struct{}{}
 	}
 
-	for open := range balance.Holdings() {
+	for _, open := range balance.Holdings() {
 		if open.Status != types.OPEN {
 			continue
 		}

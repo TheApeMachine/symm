@@ -39,7 +39,7 @@ func TestDeskMarkAndPnL(t *testing.T) {
 					return nil
 				}
 
-				for open := range harness.Wired.Balance.Holdings() {
+				for _, open := range harness.Wired.Balance.Holdings() {
 					if open.Status != types.OPEN ||
 						open.Qty == nil || open.Qty.Sign() <= 0 ||
 						open.EntryPrice == nil || open.EntryPrice.Sign() <= 0 ||
@@ -181,7 +181,7 @@ func BenchmarkDeskOnTickerMark(b *testing.B) {
 	if err := harness.Market.Transition(tests.MarketStateFastPump, func() error {
 		_ = harness.Market.Paper.Drain()
 
-		for open := range harness.Wired.Balance.Holdings() {
+		for _, open := range harness.Wired.Balance.Holdings() {
 			if open.Status == types.OPEN {
 				opened = true
 			}

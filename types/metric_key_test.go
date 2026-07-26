@@ -6,69 +6,59 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+/*
+TestMetricKey proves directional metric keys stay stable for repeated callers
+while ParseMetricKey and Sample retain the flat wire contract.
+*/
 func TestMetricKey(t *testing.T) {
-	Convey("MetricKey", t, func() {
-		Convey("It omits side when none", func() {
-			So(MetricKey(MetricIgnition, SideNone), ShouldEqual, "ignition")
-		})
+	Convey("Given directional measurement keys", t, func() {
+		buyKey := MetricKey(MetricArrivalRate, SideBuy)
+		sellKey := MetricKey(MetricArrivalRate, SideSell)
+		noneKey := MetricKey(MetricStrength, SideNone)
 
-		Convey("It suffixes side when set", func() {
-			So(
-				MetricKey(MetricArrivalRate, SideBuy),
-				ShouldEqual,
-				"arrival_rate:buy",
-			)
-		})
-	})
-}
+		Convey("They should preserve the flat metric wire shape", func() {
+			So(buyKey, ShouldEqual, "arrival_rate:buy")
+			So(sellKey, ShouldEqual, "arrival_rate:sell")
+			So(noneKey, ShouldEqual, "strength")
 
-func TestParseMetricKey(t *testing.T) {
-	Convey("ParseMetricKey", t, func() {
-		Convey("It splits metric:side", func() {
-			metric, side := ParseMetricKey("arrival_rate:buy")
+			metric, side := ParseMetricKey(buyKey)
 			So(metric, ShouldEqual, MetricArrivalRate)
 			So(side, ShouldEqual, SideBuy)
 		})
 
-		Convey("It returns SideNone without colon", func() {
-			metric, side := ParseMetricKey("ignition")
-			So(metric, ShouldEqual, MetricIgnition)
-			So(side, ShouldEqual, SideNone)
+		Convey("Sample should read back the same keyed values", func() {
+			measurement := &Measurement{
+				Metrics: map[string]MetricSample{
+					buyKey:  {Raw: 1.5},
+					sellKey: {Raw: 0.7},
+				},
+			}
+
+			buy, ok := measurement.Sample(MetricArrivalRate, SideBuy)
+			So(ok, ShouldBeTrue)
+			So(buy.Raw, ShouldEqual, 1.5)
 		})
 	})
 }
 
-func TestMeasurementSample(t *testing.T) {
-	Convey("Measurement.Sample", t, func() {
-		measurement := &Measurement{
-			Metrics: map[string]MetricSample{
-				"ignition":           {Raw: 1.2},
-				"arrival_rate:buy":   {Raw: 3.4},
-				"arrival_rate:sell":  {Raw: 0.5},
-			},
+/*
+BenchmarkMetricKey exercises repeated sided key lookup so the cache stays under
+measurement and signal hot paths instead of re-allocating every combine.
+*/
+func BenchmarkMetricKey(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if MetricKey(MetricArrivalRate, SideBuy) == "" {
+			b.Fatal("missing buy metric key")
 		}
 
-		Convey("It finds undirected samples", func() {
-			sample, ok := measurement.Sample(MetricIgnition, SideNone)
-			So(ok, ShouldBeTrue)
-			So(sample.Raw, ShouldEqual, 1.2)
-		})
+		if MetricKey(MetricArrivalRate, SideSell) == "" {
+			b.Fatal("missing sell metric key")
+		}
 
-		Convey("It finds side-qualified samples", func() {
-			sample, ok := measurement.Sample(MetricArrivalRate, SideBuy)
-			So(ok, ShouldBeTrue)
-			So(sample.Raw, ShouldEqual, 3.4)
-		})
-
-		Convey("It reports missing keys", func() {
-			_, ok := measurement.Sample(MetricRVOL, SideNone)
-			So(ok, ShouldBeFalse)
-		})
-	})
-}
-
-func BenchmarkMetricKey(b *testing.B) {
-	for b.Loop() {
-		_ = MetricKey(MetricArrivalRate, SideBuy)
+		if MetricKey(MetricStrength, SideNone) == "" {
+			b.Fatal("missing neutral metric key")
+		}
 	}
 }

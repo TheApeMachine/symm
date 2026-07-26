@@ -20,7 +20,19 @@ var (
 	two = decimal.NewFromInt64(2)
 	// hundred converts Kraken's percentage fee into a unit fraction.
 	hundred = decimal.NewFromInt64(100)
+
+	floorQuoRounding = func(integer *big.Int, factor *big.Int) *big.Int {
+		return new(big.Int).Quo(integer, factor)
+	}
 )
+
+/*
+floorScale truncates toward zero rather than banker's rounding so a buy cannot
+inflate past the funded budget.
+*/
+func (price *Price) floorScale(value *decimal.Decimal, scale int64) *decimal.Decimal {
+	return value.Copy().SetRounding(floorQuoRounding).SetScale(scale)
+}
 
 /*
 Price is the broker price surface for symm. It is the single source of
@@ -485,7 +497,7 @@ func (price *Price) RecordFill(
 	// initial+PnL by roughly the paid fee (measured ~entry fee on live lots).
 	if fill.Fee == nil && fill.Price != nil && fill.Qty != nil {
 		errnie.Warn(
-			"execution missing fee for "+instrument.Symbol+"; deriving taker fee",
+			"execution missing fee for " + instrument.Symbol + "; deriving taker fee",
 		)
 
 		notional := price.Notional(instrument, fill.Price, fill.Qty)
@@ -493,7 +505,7 @@ func (price *Price) RecordFill(
 
 		if fill.Fee == nil {
 			errnie.Warn(
-				"price.Fee returned nil: no taker fee schedule for "+instrument.Symbol,
+				"price.Fee returned nil: no taker fee schedule for " + instrument.Symbol,
 			)
 		}
 	}
@@ -1012,11 +1024,32 @@ func (price *Price) DivFloor(
 }
 
 /*
-floorScale truncates toward zero rather than banker's rounding so a buy cannot
-inflate past the funded budget.
+decimalReturn projects value relative to entry onto return space using the same
+decimal division policy the broker price surface uses for monetary math.
 */
-func (price *Price) floorScale(value *decimal.Decimal, scale int64) *decimal.Decimal {
-	return value.Copy().SetRounding(func(integer *big.Int, factor *big.Int) *big.Int {
-		return new(big.Int).Quo(integer, factor)
-	}).SetScale(scale)
+func decimalReturn(value *decimal.Decimal, entry *decimal.Decimal) float64 {
+	if value == nil || entry == nil || entry.Sign() <= 0 {
+		return 0
+	}
+
+	scale := max(
+		int64(decimal.DefaultScale),
+		value.GetScale(),
+		entry.GetScale(),
+	)
+
+	return finiteFloat(
+		value.SetScale(scale).
+			Div(entry.SetScale(scale)).
+			Sub(decimal.NewFromInt64(1)).
+			Float64(),
+	)
+}
+
+func finiteFloat(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+
+	return value
 }

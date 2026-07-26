@@ -12,15 +12,19 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/manifold"
+	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Analyzer coordinates the composed analysis responsibilities after every signal
-has measured the current Thesis. The manifold solver owns the Hawkes-driven GPU
-step over the shared market population, while the Analyzer builds each symbol's
-typed evidence topology.
+Analyzer coordinates the composed analysis responsibilities as signals stream
+their measurements onto the shared Thesis. Every signal that publishes new
+measurements triggers category composition, cognition, and UI publish. The
+Hawkes signal additionally drives the manifold solver through its ticker/trade
+cuts at depth one so the shared field steps on each excitation advance.
+The thesis field is the shared boot pointer, set by Initialize so onSignal can
+snapshot fresh measurements and run the analysis pipeline.
 */
 type Analyzer struct {
 	*types.Actor
@@ -28,6 +32,7 @@ type Analyzer struct {
 	cancel     context.CancelFunc
 	gate       stageGate
 	status     types.Status
+	thesis     *types.Thesis
 	manifold   *manifold.Solver
 	hawkes     manifold.HawkesSource
 	tree       *dmt.Tree
@@ -39,6 +44,12 @@ type Analyzer struct {
 	observed   map[string]uint64
 	rem        *remSleep
 	categories *category.Graph
+	frameRows  []any
+	cogRows    []types.Cognition
+	catRows    []types.Category
+	hypRows    []types.Hypothesis
+	bestBySym  map[string]int
+	stateRows  []manifold.State
 }
 
 /*
@@ -79,11 +90,15 @@ func NewAnalyzer(
 		observed:   make(map[string]uint64),
 		rem:        newREMSleep(ctx, tree),
 		categories: category.NewGraph(),
+		bestBySym:  make(map[string]int),
 	}
 
+	// ticker and trade come from Hawkes cuts at depth one for manifold.
+	// thesis comes from every other signal's SignalResult for categories+cognition.
 	analyzer.Actor = types.NewActor(ctx, map[string]types.Handler{
-		"ticker": {Topic: "ticker", Fn: analyzer.thesis},
-		"trade":  {Topic: "trade", Fn: analyzer.thesis},
+		"ticker": {Topic: "ticker", Fn: analyzer.onHawkesCut},
+		"trade":  {Topic: "trade", Fn: analyzer.onHawkesCut},
+		"thesis": {Topic: "thesis", Fn: analyzer.onSignal},
 	})
 	analyzer.SetRecorder(recorder)
 
@@ -91,9 +106,11 @@ func NewAnalyzer(
 }
 
 /*
-Initialize attaches analyzer to Hawkes ticker/trade at depth one so each cut is
-processed against its Outcome snapshot before the next trade mutates the live
-Process, instead of coalescing many publishes onto the latest EventCount.
+Initialize attaches analyzer to upstream topics. Hawkes ticker/trade are wired
+at depth one so each cut is processed against its Outcome snapshot. Every
+non-Hawkes signal's thesis topic is wired so any signal publish triggers
+category+cognition analysis. The thesis pointer is the shared boot pointer
+set by the caller via SetThesis.
 */
 func (analyzer *Analyzer) Initialize(signals ...types.Topic) error {
 	errnie.Info("initializing analyzer")
@@ -133,7 +150,86 @@ func (analyzer *Analyzer) Close() error {
 	return nil
 }
 
-func (analyzer *Analyzer) thesis(message any) any {
+/*
+onSignal runs the analysis pipeline when any non-Hawkes signal publishes new
+measurements: category composition, cognize, publish UI frames. The manifold
+step is skipped — that only runs on Hawkes cuts which arrive via ticker/trade.
+*/
+func (analyzer *Analyzer) onSignal(message any) any {
+	thesis := analyzer.thesisFromSignal(message)
+
+	if thesis == nil {
+		return nil
+	}
+
+	analyzer.stampAndBegin(thesis, 0, 0)
+
+	// Snapshot fresh measurements and compose categories from every signal.
+	measurements := thesis.SnapshotMeasurements()
+
+	var composeStarted time.Time
+
+	if analyzer.recorder != nil {
+		composeStarted = time.Now()
+	}
+
+	analyzer.composeCategories(thesis, measurements)
+
+	if analyzer.recorder != nil {
+		errnie.Error(audit.Phase(
+			analyzer.recorder, thesis.Tick, "categories_compose",
+			map[string]any{"ns": time.Since(composeStarted).Nanoseconds(), "categories": len(thesis.Categories)},
+		))
+	}
+
+	// publishMeasured with no manifold states (only resonance/causal/hypotheses
+	// from prior Hawkes cuts; signal-only cuts do not have fresh states).
+	analyzer.publishMeasured(thesis, nil, 0, thesis.Tick)
+
+	remObservations, remRequested := analyzer.cognizeStates(thesis, nil, 0, thesis.Tick)
+
+	var commitStarted time.Time
+
+	if analyzer.recorder != nil {
+		commitStarted = time.Now()
+	}
+
+	analyzer.commitCategories(thesis, measurements)
+
+	if analyzer.recorder != nil {
+		errnie.Error(audit.Phase(
+			analyzer.recorder, thesis.Tick, "categories_commit",
+			map[string]any{"ns": time.Since(commitStarted).Nanoseconds(), "categories": len(thesis.Categories)},
+		))
+	}
+
+	analyzer.consolidate(thesis, remObservations, remRequested)
+	analyzer.publishCognition(thesis)
+
+	payload := map[string]any{
+		"ns":         int64(0),
+		"forecasts":  len(thesis.Forecasts),
+		"hypotheses": len(thesis.Hypotheses),
+	}
+
+	errnie.Error(audit.Phase(analyzer.recorder, thesis.Tick, "analyze_end", payload))
+
+	return thesis
+}
+
+/*
+thesisFromSignal returns the analyzer's stored shared Thesis pointer. All
+signals publish onto the same Thesis, so the pointer is set once at Initialize.
+*/
+func (analyzer *Analyzer) thesisFromSignal(_ any) *types.Thesis {
+	return analyzer.thesis
+}
+
+/*
+onHawkesCut processes a Hawkes ticker/trade cut through the full pipeline
+including manifold step, resonance, causal, categories, and cognition.
+*/
+func (analyzer *Analyzer) onHawkesCut(message any) any {
 	thesis, source, cutID, tick := analyzer.bind(message)
 	analyzer.enrichCut(thesis, source, cutID, tick)
 
@@ -160,6 +256,16 @@ func (analyzer *Analyzer) bind(message any) (*types.Thesis, manifold.HawkesSourc
 		return cut.SharedThesis(), cut, cutID, tick
 	}
 
+	if cut, ok := message.(*hawkes.Cut); ok {
+		thesis := cut.SharedThesis()
+
+		if thesis == nil {
+			return nil, cut, 0, 0
+		}
+
+		return thesis, cut, 0, thesis.Tick
+	}
+
 	thesis := message.(*types.Thesis)
 	return thesis, analyzer.hawkes, 0, thesis.Tick
 }
@@ -178,8 +284,7 @@ func (analyzer *Analyzer) enrich(thesis *types.Thesis, hawkes manifold.HawkesSou
 }
 
 /*
-enrichCut runs analysis against one cut identity so audit rows stay cut-true even
-when the shared Thesis pointer advances before downstream handlers drain.
+enrichCut runs full analysis including manifold for Hawkes-driven cuts.
 */
 func (analyzer *Analyzer) enrichCut(
 	thesis *types.Thesis,
@@ -299,6 +404,15 @@ type stageGate interface {
 }
 
 /*
+SetThesis stores the shared boot Thesis pointer so onSignal can snapshot
+measurements and run the analysis pipeline without receiving the pointer
+through every message.
+*/
+func (analyzer *Analyzer) SetThesis(thesis *types.Thesis) {
+	analyzer.thesis = thesis
+}
+
+/*
 SetRecorder attaches the runtime audit stream to the analyzer, manifold solver,
 and REM scheduler so phase breadcrumbs survive a freeze.
 */
@@ -320,13 +434,7 @@ same contract as WireMeasurements — so dashboard backpressure cannot stall
 enrich or the cut cascade behind Hawkes.
 */
 func (analyzer *Analyzer) publish(frame datura.Map[any]) {
-	payload, err := frame.Marshal()
-
-	if err != nil {
-		errnie.Error(err)
-		return
-	}
-
+	payload := frame.Marshal()
 	analyzer.publishRaw(payload)
 }
 
@@ -347,6 +455,23 @@ func (analyzer *Analyzer) publishRaw(payload []byte) {
 			nil,
 		))
 	}
+}
+
+/*
+stampAndBegin audits the analysis start for a non-Hawkes signal cut.
+*/
+func (analyzer *Analyzer) stampAndBegin(thesis *types.Thesis, cutID types.CutID, tick int64) {
+	if thesis != nil {
+		thesis.StampAt()
+	}
+
+	payload := map[string]any{}
+
+	if cutID > 0 {
+		payload["cut_id"] = uint64(cutID)
+	}
+
+	errnie.Error(audit.Phase(analyzer.recorder, tick, "analyze_begin", payload))
 }
 
 /*

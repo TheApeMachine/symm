@@ -7,7 +7,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -18,6 +17,8 @@ topics and owns plain position maps plus decode-once account routing indexes.
 */
 type Desk struct {
 	*types.Actor
+	ctx           context.Context
+	cancel        context.CancelFunc
 	status        types.Status
 	api           *websocket.API
 	instrument    *Instrument
@@ -43,7 +44,11 @@ func NewDesk(
 	balance *Balance,
 	trading config.TradingConfig,
 ) *Desk {
+	ctx, cancel := context.WithCancel(ctx)
+
 	desk := &Desk{
+		ctx:          ctx,
+		cancel:       cancel,
 		status:       types.INITIALIZING,
 		api:          api,
 		instrument:   instrument,
@@ -57,11 +62,8 @@ func NewDesk(
 	}
 
 	desk.Actor = types.NewActor(ctx, map[string]types.Handler{
-		"ticker":     {Topic: "ticker", Fn: desk.onTicker},
 		"instrument": {Topic: "instrument", Fn: desk.onInstrument},
 		"balances":   {Topic: "balances", Fn: desk.onBalances},
-		"executions": {Topic: "executions", Fn: desk.onExecutions},
-		"add_order":  {Topic: "add_order", Fn: desk.onOrder},
 	})
 
 	return desk
@@ -114,6 +116,11 @@ func (desk *Desk) Initialize(market *types.Actor, account *types.Actor) error {
 	return nil
 }
 
+func (desk *Desk) Publish() {
+	desk.balance.Publish()
+	desk.instrument.Publish()
+}
+
 /*
 transitionStatus applies one canonical desk lifecycle edge and fails loud on
 illegal transitions.
@@ -126,7 +133,6 @@ func (desk *Desk) transitionStatus(next types.Status) error {
 	}
 
 	desk.status = status
-
 	return nil
 }
 
@@ -137,113 +143,17 @@ func (desk *Desk) Status() types.Status {
 	return desk.status
 }
 
-func (desk *Desk) onTicker(message any) any {
-	ticker := message.(*kraken.Ticker)
-
-	if errnie.Error(kraken.Validate(ticker)) != nil {
-		return nil
-	}
-
-	desk.price.TickerAck(ticker)
-
-	marked := false
-
-	for index := range ticker.Data {
-		item := ticker.Data[index]
-		position, ok := desk.positions[item.Symbol]
-
-		if !ok {
-			continue
-		}
-
-		position.Mark(item.Symbol)
-		marked = true
-	}
-
-	if marked {
-		if err := desk.balance.Publish(); err != nil {
-			errnie.Error(err)
-		}
-	}
-
-	return nil
-}
-
 /*
 onInstrument forwards the instrument tick then adopts newly visible open lots.
 */
 func (desk *Desk) onInstrument(message any) any {
 	desk.instrument.On(message)
-	desk.AdoptOpen()
-
 	return nil
 }
 
 func (desk *Desk) onBalances(message any) any {
 	desk.balance.BalanceAck(message.([]byte))
-	desk.AdoptOpen()
-
 	return nil
-}
-
-/*
-AdoptOpen creates Position shells for wallet lots that already exist at startup
-or arrive via balance sync, seeds entry economics from trade history, and marks
-so the UI never shows Entry 0 / NaN% for a venue-backed lot.
-*/
-func (desk *Desk) AdoptOpen() {
-	if desk.balance == nil || desk.instrument == nil {
-		return
-	}
-
-	desk.loadFillHistory()
-	published := false
-
-	for holding := range desk.balance.Holdings() {
-		symbol := holding.Symbol
-
-		if _, exists := desk.positions[symbol]; !exists {
-			pair, err := desk.instrument.Pair(symbol)
-
-			if err != nil {
-				continue
-			}
-
-			position := NewPosition(
-				desk.api, desk.instrument, desk.price, desk.balance, pair,
-			)
-
-			if err := position.setStatus(types.OPEN); err != nil {
-				errnie.Error(err)
-
-				continue
-			}
-
-			desk.positions[symbol] = position
-		}
-
-		if err := desk.balance.Update(symbol, func(lot *types.Holding) error {
-			if desk.seedEconomics(lot) {
-				published = true
-			}
-
-			return nil
-		}); err != nil {
-			errnie.Error(err)
-
-			continue
-		}
-
-		if position, exists := desk.positions[symbol]; exists {
-			position.Mark(symbol)
-		}
-	}
-
-	if published {
-		if err := desk.balance.Publish(); err != nil {
-			errnie.Error(err)
-		}
-	}
 }
 
 /*
@@ -259,7 +169,6 @@ func (desk *Desk) loadFillHistory() {
 
 	if err != nil {
 		errnie.Error(err)
-
 		return
 	}
 
@@ -324,38 +233,8 @@ func (desk *Desk) Update() {
 			types.CLOSED, types.ERROR, types.CANCELED,
 		}, position.Status()) {
 			position.Close()
-			desk.forget(symbol, position)
-
-			continue
+			delete(desk.positions, symbol)
 		}
-
-		if desk.balance == nil {
-			continue
-		}
-
-		holding, err := desk.balance.Holding(position.Symbol())
-
-		if err != nil || holding.Status != types.CLOSED {
-			continue
-		}
-
-		if closeErr := position.setStatus(types.CLOSED); closeErr != nil {
-			errnie.Error(closeErr)
-		}
-
-		desk.forget(symbol, position)
-	}
-}
-
-func (desk *Desk) forget(symbol string, position *Position) {
-	delete(desk.positions, symbol)
-
-	if position.request != nil {
-		delete(desk.byReqID, position.request.ReqID)
-	}
-
-	if position.orderID != "" {
-		delete(desk.byOrderID, position.orderID)
 	}
 }
 
@@ -364,25 +243,7 @@ OpenPositions counts live wallet lots only.
 */
 func (desk *Desk) OpenPositions() int {
 	desk.Update()
-
-	return desk.HoldingCount()
-}
-
-/*
-HoldingCount returns the number of wallet lots without Update work.
-*/
-func (desk *Desk) HoldingCount() int {
-	if desk.balance == nil {
-		return 0
-	}
-
-	count := 0
-
-	for range desk.balance.Holdings() {
-		count++
-	}
-
-	return count
+	return len(desk.positions)
 }
 
 /*
@@ -390,7 +251,6 @@ Position returns the open lot shell for symbol.
 */
 func (desk *Desk) Position(symbol string) (*Position, bool) {
 	position, ok := desk.positions[symbol]
-
 	return position, ok
 }
 
@@ -423,4 +283,127 @@ func (desk *Desk) MaxSlots(withReserved bool) int {
 	}
 
 	return desk.maxPositions
+}
+
+func (desk *Desk) Buy(
+	holding *types.Holding,
+	opportunity bool,
+) (*Position, error) {
+	return desk.ReserveAndSubmitEntry(holding, opportunity)
+}
+
+/*
+ReserveAndSubmitEntry claims slot+cash then submits the market enter as one
+Desk transition so a failed submit releases both reservations.
+*/
+func (desk *Desk) ReserveAndSubmitEntry(
+	holding *types.Holding,
+	opportunity bool,
+) (*Position, error) {
+	if holding.Qty == nil || holding.Qty.Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "desk: enter requires positive quantity", nil,
+		))
+	}
+
+	if !desk.HasSlot(opportunity) {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Conflict, "desk: no free slot for "+holding.Symbol, nil,
+		))
+	}
+
+	pair, err := desk.instrument.Pair(holding.Symbol)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"desk: instrument pair unavailable for "+holding.Symbol,
+			err,
+		))
+	}
+
+	mark, err := desk.price.Last(holding.Symbol)
+
+	if err != nil || mark == nil || mark.Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"desk: mark unavailable for reservation on "+holding.Symbol,
+			err,
+		))
+	}
+
+	intentID := holding.Symbol + ":" + holding.Qty.String()
+	cash := holding.Qty.Mul(mark)
+
+	if _, exists := desk.balance.byID[intentID]; !exists {
+		if err := desk.balance.Reserve(
+			intentID, holding.Symbol, cash, true,
+		); err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Internal,
+				err.Error(),
+				err,
+			))
+		}
+	}
+
+	position := NewPosition(
+		desk.ctx,
+		desk.api,
+		desk.instrument,
+		desk.price,
+		desk.balance,
+		pair,
+		holding.Qty,
+	)
+
+	position.intentID = intentID
+
+	if err := position.Enter(holding); err != nil {
+		errnie.Error(desk.balance.Release(intentID))
+
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			err.Error(),
+			err,
+		))
+	}
+
+	// Venue now owns the working order; drop the local claim so slot math and
+	// Available track exchange state plus any still-open Allocator claims.
+	errnie.Error(desk.balance.Commit(intentID))
+	position.intentID = ""
+
+	if position.entryOrder != nil {
+		desk.byReqID[position.entryOrder.ReqID] = position
+	}
+
+	desk.positions[holding.Symbol] = position
+
+	return position, nil
+}
+
+/*
+Sell exits the full desk-owned sellable lot for symbol.
+*/
+func (desk *Desk) Sell(symbol string) error {
+	position, ok := desk.Position(symbol)
+
+	if !ok {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"desk: no open position for "+symbol,
+			nil,
+		))
+	}
+
+	if err := position.Exit(); err != nil {
+		return err
+	}
+
+	if position.entryOrder != nil {
+		desk.byReqID[position.entryOrder.ReqID] = position
+	}
+
+	return nil
 }

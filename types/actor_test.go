@@ -87,8 +87,8 @@ func TestActorClose(t *testing.T) {
 	})
 }
 
-func TestTryPublishDoesNotStallSibling(t *testing.T) {
-	Convey("Given a Live-style root fan-out with one saturated subscriber", t, func() {
+func TestRootPublishDoesNotDrop(t *testing.T) {
+	Convey("Given a root fan-out with one slow subscriber", t, func() {
 		ctx, cancel := context.WithCancel(t.Context())
 		Reset(cancel)
 
@@ -101,8 +101,18 @@ func TestTryPublishDoesNotStallSibling(t *testing.T) {
 		fast := live.SubscribeSize("book", 8)
 		So(slow.TrySend("pad"), ShouldBeTrue)
 
-		Convey("It delivers to the fast subscriber without blocking on the slow one", func() {
+		Convey("It should apply backpressure instead of dropping", func() {
 			done := make(chan struct{})
+			slowDone := make(chan struct{})
+
+			go func() {
+				defer close(slowDone)
+
+				for range 6 {
+					<-slow.Channel
+					time.Sleep(5 * time.Millisecond)
+				}
+			}()
 
 			go func() {
 				for range 5 {
@@ -114,12 +124,11 @@ func TestTryPublishDoesNotStallSibling(t *testing.T) {
 
 			select {
 			case <-done:
-			case <-time.After(500 * time.Millisecond):
-				So("fanout stalled", ShouldEqual, "")
+			case <-time.After(2 * time.Second):
 			}
 
 			received := 0
-			deadline := time.Now().Add(500 * time.Millisecond)
+			deadline := time.Now().Add(2 * time.Second)
 
 			for received < 5 && time.Now().Before(deadline) {
 				select {
@@ -130,8 +139,8 @@ func TestTryPublishDoesNotStallSibling(t *testing.T) {
 				}
 			}
 
+			<-slowDone
 			So(received, ShouldEqual, 5)
-			So(live.Dropped(), ShouldBeGreaterThan, 0)
 			So(live.Close(), ShouldBeNil)
 		})
 	})

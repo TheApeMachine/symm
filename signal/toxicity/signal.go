@@ -2,7 +2,6 @@ package toxicity
 
 import (
 	"context"
-	"sort"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -21,7 +20,7 @@ type Signal struct {
 	thesis       *types.Thesis
 	ctx          context.Context
 	cancel       context.CancelFunc
-	level3       *Level3
+	level3       *websocket.API
 	priorTouch   map[string]touchSnapshot
 	pendingTouch map[string]touchSnapshot
 	evidence     map[string]*symbolEvidence
@@ -40,7 +39,7 @@ func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal 
 	signal := &Signal{
 		ctx:          ctx,
 		cancel:       cancel,
-		level3:       NewLevel3(api),
+		level3:       api,
 		priorTouch:   map[string]touchSnapshot{},
 		pendingTouch: map[string]touchSnapshot{},
 		evidence:     map[string]*symbolEvidence{},
@@ -91,16 +90,15 @@ func (signal *Signal) onTicker(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourceToxicity, Status: types.SignalSkip}
 	}
 
-	if len(measurements) == 0 {
-		return nil
+	if len(measurements) > 0 {
+		signal.thesis.Replace(types.SourceToxicity, measurements)
+		return types.SignalResult{Source: types.SourceToxicity, Measurements: measurements, Status: types.SignalReady}
 	}
 
-	signal.thesis.Replace(types.SourceToxicity, measurements)
-
-	return signal.thesis
+	return types.SignalResult{Source: types.SourceToxicity, Status: types.SignalSkip}
 }
 
 func (signal *Signal) onBook(message any) any {
@@ -109,16 +107,15 @@ func (signal *Signal) onBook(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourceToxicity, Status: types.SignalSkip}
 	}
 
-	if len(measurements) == 0 {
-		return nil
+	if len(measurements) > 0 {
+		signal.thesis.Replace(types.SourceToxicity, measurements)
+		return types.SignalResult{Source: types.SourceToxicity, Measurements: measurements, Status: types.SignalReady}
 	}
 
-	signal.thesis.Replace(types.SourceToxicity, measurements)
-
-	return signal.thesis
+	return types.SignalResult{Source: types.SourceToxicity, Status: types.SignalSkip}
 }
 
 func (signal *Signal) onTrade(message any) any {
@@ -127,16 +124,15 @@ func (signal *Signal) onTrade(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourceToxicity, Status: types.SignalSkip}
 	}
 
-	if len(measurements) == 0 {
-		return nil
+	if len(measurements) > 0 {
+		signal.thesis.Replace(types.SourceToxicity, measurements)
+		return types.SignalResult{Source: types.SourceToxicity, Measurements: measurements, Status: types.SignalReady}
 	}
 
-	signal.thesis.Replace(types.SourceToxicity, measurements)
-
-	return signal.thesis
+	return types.SignalResult{Source: types.SourceToxicity, Status: types.SignalSkip}
 }
 
 func (signal *Signal) Calculate(
@@ -166,24 +162,10 @@ func (signal *Signal) Calculate(
 		return nil, err
 	}
 
-	out := make([]*types.Measurement, 0, len(signal.evidence)*8)
-	symbols := make([]string, 0, len(signal.evidence))
+	out := make([]*types.Measurement, 0, len(signal.evidence))
 
 	for symbol := range signal.evidence {
-		symbols = append(symbols, symbol)
-	}
-
-	sort.Strings(symbols)
-
-	for _, symbol := range symbols {
-		if err := signal.emitSymbolMeasurements(
-			symbol,
-			signal.evidence[symbol],
-			&out,
-			signal.pendingTouch,
-		); err != nil {
-			return nil, err
-		}
+		out = append(out, signal.emitSymbolMeasurements(symbol, signal.evidence[symbol]))
 	}
 
 	types.WireMeasurements(out, signal.ui)

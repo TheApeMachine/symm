@@ -2,15 +2,28 @@ package toxicity
 
 import (
 	"math"
-	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/types"
 )
 
+const (
+	toxicityMetricTradeVolume           = "trade_volume"
+	toxicityMetricFillVolumeBuy         = "fill_volume:buy"
+	toxicityMetricFillVolumeSell        = "fill_volume:sell"
+	toxicityMetricBestPriceBuy          = "best_price:buy"
+	toxicityMetricBestPriceSell         = "best_price:sell"
+	toxicityMetricTouchQuantityBuy      = "touch_quantity:buy"
+	toxicityMetricTouchQuantitySell     = "touch_quantity:sell"
+	toxicityMetricCancelledQuantityBuy  = "cancelled_quantity:buy"
+	toxicityMetricCancelledQuantitySell = "cancelled_quantity:sell"
+	toxicityMetricRetreatQuantityBuy    = "retreating_quantity:buy"
+	toxicityMetricRetreatQuantitySell   = "retreating_quantity:sell"
+)
+
 /*
-emitSymbolMeasurements appends the complete toxicity metric set for one symbol
+emitSymbolMeasurements builds the complete toxicity metric set for one symbol
 and records the next touch snapshot for the following observation. Idle tape,
 fill, cancel, and retreat evidence is published as zero rather than omitted so
 consumers always see a stable metric identity.
@@ -18,19 +31,27 @@ consumers always see a stable metric identity.
 func (signal *Signal) emitSymbolMeasurements(
 	symbol string,
 	row *symbolEvidence,
-	out *[]*types.Measurement,
-	nextTouch map[string]touchSnapshot,
-) error {
+) *types.Measurement {
 	evidenceCount := row.tradeCount + row.bookCount
 	maturity := float64(evidenceCount) / float64(evidenceCount+1)
-	obsCtx := newObservationContext(row.latestAt, evidenceCount)
-	measurement := symbolMeasurement(symbol, row.latestAt, maturity, obsCtx)
+	measurement := &types.Measurement{
+		Source:   types.SourceToxicity,
+		Symbol:   symbol,
+		At:       row.latestAt,
+		Maturity: maturity,
+		Validity: types.ObservationValidity(evidenceCount),
+		Scale: types.ScaleReference{
+			Kind:    types.ScaleObservationWindow,
+			From:    row.latestAt,
+			Through: row.latestAt,
+		},
+		Metrics: make(map[string]types.MetricSample, 11),
+	}
 
 	addTapeMetrics(measurement, row)
-
 	bookObserved := false
 
-	signal.level3.PeekBook(symbol, func(symbolBook *book.Book) {
+	peeked := signal.level3.PeekBook(symbol, func(symbolBook *book.Book) {
 		if symbolBook.Name != symbol {
 			return
 		}
@@ -41,11 +62,11 @@ func (signal *Signal) emitSymbolMeasurements(
 			return
 		}
 
-		bookObserved = true
 		bidQuantity := bid.Quantity.Float64()
 		askQuantity := ask.Quantity.Float64()
+		bookObserved = true
 
-		nextTouch[symbol] = touchSnapshot{
+		signal.pendingTouch[symbol] = touchSnapshot{
 			bidPrice:    *bid.Price,
 			askPrice:    *ask.Price,
 			bidQuantity: bidQuantity,
@@ -53,9 +74,7 @@ func (signal *Signal) emitSymbolMeasurements(
 			observedAt:  row.latestAt,
 		}
 
-		addTouchMetrics(
-			measurement, bid, ask, bidQuantity, askQuantity,
-		)
+		addTouchMetrics(measurement, bid, ask, bidQuantity, askQuantity)
 		addHonestyMetrics(
 			measurement,
 			row,
@@ -67,7 +86,7 @@ func (signal *Signal) emitSymbolMeasurements(
 		)
 	})
 
-	if !bookObserved {
+	if !peeked || !bookObserved {
 		addZeroTouchMetrics(measurement)
 		putHonestyMetrics(
 			measurement,
@@ -78,28 +97,30 @@ func (signal *Signal) emitSymbolMeasurements(
 		)
 	}
 
-	*out = append(*out, measurement)
-
-	return nil
+	return measurement
 }
 
 /*
-symbolMeasurement allocates one source×symbol row for the full toxicity set.
+addZeroTouchMetrics emits zero-valued touch evidence when Level3 is unavailable.
 */
-func symbolMeasurement(
-	symbol string,
-	at time.Time,
-	maturity float64,
-	obsCtx observationContext,
-) *types.Measurement {
-	return &types.Measurement{
-		Source:   types.SourceToxicity,
-		Symbol:   symbol,
-		At:       at,
-		Maturity: maturity,
-		Validity: obsCtx.validity,
-		Scale:    obsCtx.scale,
-		Metrics:  map[string]types.MetricSample{},
+func addZeroTouchMetrics(measurement *types.Measurement) {
+	measurement.Metrics[toxicityMetricBestPriceBuy] = types.MetricSample{
+		Raw:  0,
+		Unit: types.UnitQuoteCurrency,
+	}
+	measurement.Metrics[toxicityMetricBestPriceSell] = types.MetricSample{
+		Raw:  0,
+		Unit: types.UnitQuoteCurrency,
+	}
+	measurement.Metrics[toxicityMetricTouchQuantityBuy] = types.MetricSample{
+		Raw:        0,
+		Normalized: types.NormalizeRatio(0, 0),
+		Unit:       types.UnitBaseCurrency,
+	}
+	measurement.Metrics[toxicityMetricTouchQuantitySell] = types.MetricSample{
+		Raw:        0,
+		Normalized: types.NormalizeRatio(0, 0),
+		Unit:       types.UnitBaseCurrency,
 	}
 }
 
@@ -107,71 +128,26 @@ func symbolMeasurement(
 addTapeMetrics emits trade volume and both fill sides every observation.
 */
 func addTapeMetrics(measurement *types.Measurement, row *symbolEvidence) {
-	measurement.PutMetric(
-		types.MetricTradeVolume, types.SideNone,
-		types.MetricSample{
-			Raw:  row.volume,
-			Unit: types.UnitBaseCurrency,
-		},
-	)
-	measurement.PutMetric(
-		types.MetricFillVolume, types.SideBuy,
-		types.MetricSample{
-			Raw: row.fillBid,
-			// Honesty is executed base size versus observed trade size; notional
-			// fill value is retained as Raw for quote-space reporting only.
-			Normalized: types.NormalizeRatio(
-				row.bidExecuted, math.Max(row.volume, row.bidExecuted),
-			),
-			Unit: types.UnitQuoteCurrency,
-		},
-	)
-	measurement.PutMetric(
-		types.MetricFillVolume, types.SideSell,
-		types.MetricSample{
-			Raw: row.fillAsk,
-			Normalized: types.NormalizeRatio(
-				row.askExecuted, math.Max(row.volume, row.askExecuted),
-			),
-			Unit: types.UnitQuoteCurrency,
-		},
-	)
-}
-
-/*
-addZeroTouchMetrics emits zero-valued touch evidence when Level3 is unavailable.
-*/
-func addZeroTouchMetrics(measurement *types.Measurement) {
-	measurement.PutMetric(
-		types.MetricBestPrice, types.SideBuy,
-		types.MetricSample{
-			Raw:  0,
-			Unit: types.UnitQuoteCurrency,
-		},
-	)
-	measurement.PutMetric(
-		types.MetricBestPrice, types.SideSell,
-		types.MetricSample{
-			Raw:  0,
-			Unit: types.UnitQuoteCurrency,
-		},
-	)
-	measurement.PutMetric(
-		types.MetricTouchQuantity, types.SideBuy,
-		types.MetricSample{
-			Raw:        0,
-			Normalized: types.NormalizeRatio(0, 0),
-			Unit:       types.UnitBaseCurrency,
-		},
-	)
-	measurement.PutMetric(
-		types.MetricTouchQuantity, types.SideSell,
-		types.MetricSample{
-			Raw:        0,
-			Normalized: types.NormalizeRatio(0, 0),
-			Unit:       types.UnitBaseCurrency,
-		},
-	)
+	measurement.Metrics[toxicityMetricTradeVolume] = types.MetricSample{
+		Raw:  row.volume,
+		Unit: types.UnitBaseCurrency,
+	}
+	measurement.Metrics[toxicityMetricFillVolumeBuy] = types.MetricSample{
+		Raw: row.fillBid,
+		// Honesty is executed base size versus observed trade size; notional
+		// fill value is retained as Raw for quote-space reporting only.
+		Normalized: types.NormalizeRatio(
+			row.bidExecuted, math.Max(row.volume, row.bidExecuted),
+		),
+		Unit: types.UnitQuoteCurrency,
+	}
+	measurement.Metrics[toxicityMetricFillVolumeSell] = types.MetricSample{
+		Raw: row.fillAsk,
+		Normalized: types.NormalizeRatio(
+			row.askExecuted, math.Max(row.volume, row.askExecuted),
+		),
+		Unit: types.UnitQuoteCurrency,
+	}
 }
 
 /*
@@ -184,40 +160,28 @@ func addTouchMetrics(
 	bidQuantity float64,
 	askQuantity float64,
 ) {
-	measurement.PutMetric(
-		types.MetricBestPrice, types.SideBuy,
-		types.MetricSample{
-			Raw:  bid.Price.Float64(),
-			Unit: types.UnitQuoteCurrency,
-		},
-	)
-	measurement.PutMetric(
-		types.MetricBestPrice, types.SideSell,
-		types.MetricSample{
-			Raw:  ask.Price.Float64(),
-			Unit: types.UnitQuoteCurrency,
-		},
-	)
-	measurement.PutMetric(
-		types.MetricTouchQuantity, types.SideBuy,
-		types.MetricSample{
-			Raw: bidQuantity,
-			Normalized: types.NormalizeRatio(
-				bidQuantity, bidQuantity+askQuantity,
-			),
-			Unit: types.UnitBaseCurrency,
-		},
-	)
-	measurement.PutMetric(
-		types.MetricTouchQuantity, types.SideSell,
-		types.MetricSample{
-			Raw: askQuantity,
-			Normalized: types.NormalizeRatio(
-				askQuantity, bidQuantity+askQuantity,
-			),
-			Unit: types.UnitBaseCurrency,
-		},
-	)
+	measurement.Metrics[toxicityMetricBestPriceBuy] = types.MetricSample{
+		Raw:  bid.Price.Float64(),
+		Unit: types.UnitQuoteCurrency,
+	}
+	measurement.Metrics[toxicityMetricBestPriceSell] = types.MetricSample{
+		Raw:  ask.Price.Float64(),
+		Unit: types.UnitQuoteCurrency,
+	}
+	measurement.Metrics[toxicityMetricTouchQuantityBuy] = types.MetricSample{
+		Raw: bidQuantity,
+		Normalized: types.NormalizeRatio(
+			bidQuantity, bidQuantity+askQuantity,
+		),
+		Unit: types.UnitBaseCurrency,
+	}
+	measurement.Metrics[toxicityMetricTouchQuantitySell] = types.MetricSample{
+		Raw: askQuantity,
+		Normalized: types.NormalizeRatio(
+			askQuantity, bidQuantity+askQuantity,
+		),
+		Unit: types.UnitBaseCurrency,
+	}
 }
 
 /*
@@ -299,38 +263,26 @@ func putHonestyMetrics(
 	retreatPriorBid float64,
 	retreatPriorAsk float64,
 ) {
-	measurement.PutMetric(
-		types.MetricCancelledQuantity, types.SideBuy,
-		types.MetricSample{
-			Raw:        bidCancelled,
-			Normalized: types.NormalizeRatio(bidCancelled, cancelPriorBid),
-			Unit:       types.UnitBaseCurrency,
-		},
-	)
-	measurement.PutMetric(
-		types.MetricCancelledQuantity, types.SideSell,
-		types.MetricSample{
-			Raw:        askCancelled,
-			Normalized: types.NormalizeRatio(askCancelled, cancelPriorAsk),
-			Unit:       types.UnitBaseCurrency,
-		},
-	)
-	measurement.PutMetric(
-		types.MetricRetreatingQuantity, types.SideBuy,
-		types.MetricSample{
-			Raw:        bidRetreat,
-			Normalized: types.NormalizeRatio(bidRetreat, retreatPriorBid),
-			Unit:       types.UnitBaseCurrency,
-		},
-	)
-	measurement.PutMetric(
-		types.MetricRetreatingQuantity, types.SideSell,
-		types.MetricSample{
-			Raw:        askRetreat,
-			Normalized: types.NormalizeRatio(askRetreat, retreatPriorAsk),
-			Unit:       types.UnitBaseCurrency,
-		},
-	)
+	measurement.Metrics[toxicityMetricCancelledQuantityBuy] = types.MetricSample{
+		Raw:        bidCancelled,
+		Normalized: types.NormalizeRatio(bidCancelled, cancelPriorBid),
+		Unit:       types.UnitBaseCurrency,
+	}
+	measurement.Metrics[toxicityMetricCancelledQuantitySell] = types.MetricSample{
+		Raw:        askCancelled,
+		Normalized: types.NormalizeRatio(askCancelled, cancelPriorAsk),
+		Unit:       types.UnitBaseCurrency,
+	}
+	measurement.Metrics[toxicityMetricRetreatQuantityBuy] = types.MetricSample{
+		Raw:        bidRetreat,
+		Normalized: types.NormalizeRatio(bidRetreat, retreatPriorBid),
+		Unit:       types.UnitBaseCurrency,
+	}
+	measurement.Metrics[toxicityMetricRetreatQuantitySell] = types.MetricSample{
+		Raw:        askRetreat,
+		Normalized: types.NormalizeRatio(askRetreat, retreatPriorAsk),
+		Unit:       types.UnitBaseCurrency,
+	}
 }
 
 /*

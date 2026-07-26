@@ -45,7 +45,7 @@ func (continuity Continuity) Manage(thesis *types.Thesis) {
 
 	forecasts := selectForecasts(thesis.Forecasts)
 
-	for holding := range continuity.balance.Holdings() {
+	for _, holding := range continuity.balance.Holdings() {
 		lot := holding
 
 		if lot.Status != types.OPEN {
@@ -92,7 +92,7 @@ func (continuity Continuity) Manage(thesis *types.Thesis) {
 			continue
 		}
 
-		decision := continuity.Score(forecast, fraction.Float64(), &lot)
+		decision := continuity.Score(forecast, fraction.Float64(), lot)
 
 		// Tax hold utility by the exhaustion lead share from the resident category
 		// graph. When Leads edges into exhaustion outweigh those into opportunity,
@@ -123,10 +123,10 @@ func (continuity Continuity) Score(
 	hold := continuity.rotate.Hold(forecast)
 
 	return types.Decision{
-		Action:   types.ActionHold,
-		Symbol:   forecast.Symbol,
-		At:       forecast.At,
-		Utility:  hold,
+		Action:  types.ActionHold,
+		Symbol:  forecast.Symbol,
+		At:      forecast.At,
+		Utility: hold,
 		Alternatives: map[string]float64{
 			"hold": hold,
 			"exit": -continuity.rotate.Exit(forecast, fee),

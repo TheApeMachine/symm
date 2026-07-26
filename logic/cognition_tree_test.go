@@ -39,14 +39,13 @@ func TestCognitionVisualizationStaysBounded(t *testing.T) {
 		}
 
 		var scratch dmt.ClassificationScratch
-		classification, classifyErr := tree.Classify(sequence, &scratch)
-		So(classifyErr, ShouldBeNil)
+		classification := tree.Classify(sequence, &scratch)
 		predictions := tree.PredictNextSensoryTokens(parent, nil)
 		done := make(chan struct{})
 
 		go func() {
 			_, _, _, _, _, _, _, _ = analyzer.cognitionVisualization(
-				sequence, parent, parts, classification, predictions,
+				sequence, parent, parts[0], classification, predictions,
 			)
 			close(done)
 		}()
@@ -144,18 +143,16 @@ func TestCognitionBeamsStaySymbolScoped(t *testing.T) {
 		ethSequence := []byte(strings.Join(ethParts, "_"))
 
 		var scratch dmt.ClassificationScratch
-		btcClass, err := tree.Classify(btcSequence, &scratch)
-		So(err, ShouldBeNil)
-		ethClass, err := tree.Classify(ethSequence, &scratch)
-		So(err, ShouldBeNil)
+		btcClass := tree.Classify(btcSequence, &scratch)
+		ethClass := tree.Classify(ethSequence, &scratch)
 		btcTip := tree.PredictNextSensoryTokens([]byte("symbol-btc-usd"), nil)
 		ethTip := tree.PredictNextSensoryTokens([]byte("symbol-eth-usd"), nil)
 
 		_, btcBeams, _, _, _, _, _, _ := analyzer.cognitionVisualization(
-			btcSequence, []byte("symbol-btc-usd"), btcParts, btcClass, btcTip,
+			btcSequence, []byte("symbol-btc-usd"), btcParts[0], btcClass, btcTip,
 		)
 		_, ethBeams, _, _, _, _, _, _ := analyzer.cognitionVisualization(
-			ethSequence, []byte("symbol-eth-usd"), ethParts, ethClass, ethTip,
+			ethSequence, []byte("symbol-eth-usd"), ethParts[0], ethClass, ethTip,
 		)
 
 		Convey("Then each symbol's MAP beam stays inside its own namespace", func() {
@@ -182,13 +179,12 @@ func TestCognitionVisualization(t *testing.T) {
 		tree.TrainSensorySequence([]byte("symbol-btc-usd_pressure-negative"))
 
 		var scratch dmt.ClassificationScratch
-		classification, err := tree.Classify(sequence, &scratch)
-		So(err, ShouldBeNil)
+		classification := tree.Classify(sequence, &scratch)
 		predictions := tree.PredictNextSensoryTokens(parent, nil)
 
 		branches, beams, classes, beamWidth, maxHops, nodeCount, lookaheadScore, lookaheadPaths :=
 			analyzer.cognitionVisualization(
-				sequence, parent, parts, classification, predictions,
+				sequence, parent, parts[0], classification, predictions,
 			)
 
 		Convey("It should export a bounded radix tree for Cortex", func() {
@@ -235,17 +231,12 @@ func BenchmarkCognitionVisualization(b *testing.B) {
 	tree.TrainSensorySequence([]byte("symbol-btc-usd_pressure-negative_divergence-positive"))
 
 	var scratch dmt.ClassificationScratch
-	classification, err := tree.Classify(sequence, &scratch)
-
-	if err != nil {
-		b.Fatal(err)
-	}
-
+	classification := tree.Classify(sequence, &scratch)
 	predictions := tree.PredictNextSensoryTokens(parent, nil)
 
 	for b.Loop() {
 		_, _, _, _, _, _, _, _ = analyzer.cognitionVisualization(
-			sequence, parent, parts, classification, predictions,
+			sequence, parent, parts[0], classification, predictions,
 		)
 	}
 }

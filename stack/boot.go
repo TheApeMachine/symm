@@ -219,34 +219,33 @@ type closer struct {
 Stack exposes the production graph after Booter has initialized every stage.
 */
 type Stack struct {
-	API         *websocket.API
-	Booter      *system.Booter
-	Channel     chan []byte
-	Tree        *dmt.Tree
-	Price       *broker.Price
-	Instrument  *broker.Instrument
-	Balance     *broker.Balance
-	Desk        *broker.Desk
-	Coordinator *CutCoordinator
-	Analyzer    *logic.Analyzer
-	Planner     *strategy.Planner
-	Crypto      *trader.Crypto
-	UIHub       *ui.Hub
-	Recorder    *audit.Recorder
-	Thesis      *types.Thesis
-	Signals     []types.Signal
-	config      config.Config
-	cancel      context.CancelFunc
-	restore     func()
-	closers     []closer
-	actors      []*types.Actor
+	API        *websocket.API
+	Booter     *system.Booter
+	Channel    chan []byte
+	Tree       *dmt.Tree
+	Price      *broker.Price
+	Instrument *broker.Instrument
+	Balance    *broker.Balance
+	Desk       *broker.Desk
+	Analyzer   *logic.Analyzer
+	Planner    *strategy.Planner
+	Crypto     *trader.Crypto
+	UIHub      *ui.Hub
+	Recorder   *audit.Recorder
+	Thesis     *types.Thesis
+	Signals    []types.Signal
+	config     config.Config
+	cancel     context.CancelFunc
+	restore    func()
+	closers    []closer
+	actors     []*types.Actor
 }
 
 /*
 boot assembles and initializes the graph against the supplied Conn transports.
 Fixture tests and live start share the same Actor cascade: signals measure into
-the shared Thesis; Hawkes cadence enters CutCoordinator, which freezes an
-ImmutableCut and advances analyzer → planner → crypto.
+the shared Thesis; Hawkes feeds analyzer directly for manifold energy while the
+other signals stream their updates independently onto that same thesis.
 */
 func (booter *Booter) boot(
 	public websocket.Conn,
@@ -276,7 +275,21 @@ func (booter *Booter) boot(
 
 	price := broker.NewPrice(api)
 	instrument := broker.NewInstrument(api, price, booter.channel, booter.config.Market)
-	balance := broker.NewBalance(api, nil, booter.channel, booter.config.Market)
+	recovery, err := types.LoadRecovery(booter.config.System.DataPath)
+
+	if err != nil {
+		return nil, errors.Join(errnie.Error(err), recorder.Close())
+	}
+
+	seed := make([]types.Holding, 0)
+
+	if recovery != nil {
+		for _, holding := range recovery.Holdings {
+			seed = append(seed, holding)
+		}
+	}
+
+	balance := broker.NewBalance(api, seed, booter.channel, booter.config.Market)
 	desk := broker.NewDesk(
 		booter.ctx, api, instrument, price, balance, booter.config.Trading,
 	)
@@ -295,23 +308,32 @@ func (booter *Booter) boot(
 	if err != nil {
 		return nil, errors.Join(errnie.Error(err), recorder.Close())
 	}
+	pumpdumpSignal := pumpdump.NewSignal(
+		booter.ctx,
+		booter.channel,
+		trackCapacity,
+	)
+	liquiditySignal := liquidity.NewSignal(booter.ctx, booter.channel)
+	toxicitySignal := toxicity.NewSignal(booter.ctx, api, booter.channel)
+	leadlagSignal := leadlag.NewSignal(booter.ctx, booter.channel)
+	cvdSignal := cvd.NewSignal(booter.ctx, booter.channel)
+	correlationSignal := correlation.NewSignal(booter.ctx, booter.channel)
+	exhaustSignal := exhaust.NewSignal(booter.ctx, booter.channel)
+	sentimentSignal := sentiment.NewSignal(booter.ctx, booter.channel)
 
 	signals := []types.Signal{
-		pumpdump.NewSignal(
-			booter.ctx,
-			booter.channel,
-			trackCapacity,
-		),
-		liquidity.NewSignal(booter.ctx, booter.channel),
-		toxicity.NewSignal(booter.ctx, api, booter.channel),
-		leadlag.NewSignal(booter.ctx, booter.channel),
-		cvd.NewSignal(booter.ctx, booter.channel),
-		correlation.NewSignal(booter.ctx, booter.channel),
-		exhaust.NewSignal(booter.ctx, booter.channel),
-		sentiment.NewSignal(booter.ctx, booter.channel),
+		pumpdumpSignal,
+		liquiditySignal,
+		toxicitySignal,
+		leadlagSignal,
+		cvdSignal,
+		correlationSignal,
+		exhaustSignal,
+		sentimentSignal,
 		depthflowSignal,
 		hawkesSignal,
 	}
+
 	analyzer, err := logic.NewAnalyzer(
 		booter.ctx,
 		booter.stages,
@@ -335,7 +357,9 @@ func (booter *Booter) boot(
 		price,
 		balance,
 		analyzer,
-		strategy.NewAllocator(booter.ctx, balance, instrument, price),
+		strategy.NewAllocator(
+			booter.ctx, balance, instrument, price,
+		),
 		recorder,
 	)
 
@@ -350,41 +374,24 @@ func (booter *Booter) boot(
 		return nil, errors.Join(errnie.Error(err), recorder.Close())
 	}
 
-	coordinator := NewCutCoordinator(
-		booter.ctx,
-		thesis,
-		types.SourcePumpDump,
-		types.SourceLiquidity,
-		types.SourceToxicity,
-		types.SourceLeadLag,
-		types.SourceCVD,
-		types.SourceCorrelation,
-		types.SourceExhaustion,
-		types.SourceSentiment,
-		types.SourceDepthFlow,
-		types.SourceHawkes,
-	)
-	coordinator.SetRecorder(recorder)
-
 	wired := &Stack{
-		API:         api,
-		Booter:      booter.stages,
-		Channel:     booter.channel,
-		Tree:        tree,
-		Price:       price,
-		Instrument:  instrument,
-		Balance:     balance,
-		Desk:        desk,
-		Coordinator: coordinator,
-		Analyzer:    analyzer,
-		Planner:     planner,
-		Crypto:      crypto,
-		UIHub:       hub,
-		Recorder:    recorder,
-		Thesis:      thesis,
-		Signals:     signals,
-		config:      booter.config,
-		cancel:      booter.cancel,
+		API:        api,
+		Booter:     booter.stages,
+		Channel:    booter.channel,
+		Tree:       tree,
+		Price:      price,
+		Instrument: instrument,
+		Balance:    balance,
+		Desk:       desk,
+		Analyzer:   analyzer,
+		Planner:    planner,
+		Crypto:     crypto,
+		UIHub:      hub,
+		Recorder:   recorder,
+		Thesis:     thesis,
+		Signals:    signals,
+		config:     booter.config,
+		cancel:     booter.cancel,
 		actors: []*types.Actor{
 			desk.Actor,
 			analyzer.Actor,
@@ -397,7 +404,6 @@ func (booter *Booter) boot(
 		{name: "crypto", fn: crypto.Close},
 		{name: "planner", fn: planner.Close},
 		{name: "analyzer", fn: analyzer.Close},
-		{name: "coordinator", fn: coordinator.Close},
 		{name: "api", fn: func() error { api.Close(); return nil }},
 		{name: "hub", fn: hub.Close},
 		{name: "tree", fn: tree.Close},
@@ -453,14 +459,28 @@ func (booter *Booter) boot(
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
 
-	if err := coordinator.Initialize(hawkesSignal.Actor); err != nil {
-		return nil, errors.Join(errnie.Error(err), wired.Close())
+	// Set the shared thesis pointer so onSignal can snapshot measurements.
+	analyzer.SetThesis(thesis)
+
+	// Wire every signal to the Analyzer. Hawkes drives the manifold through
+	// ticker/trade at depth one; all other signals publish SignalResult to
+	// their "thesis" topic which the Analyzer's "thesis" handler processes
+	// for category composition, cognition, and UI publish.
+	signalTopics := []types.Topic{
+		{Name: "ticker", Actor: hawkesSignal.Actor},
+		{Name: "trade", Actor: hawkesSignal.Actor},
+		{Name: "thesis", Actor: pumpdumpSignal.Actor},
+		{Name: "thesis", Actor: liquiditySignal.Actor},
+		{Name: "thesis", Actor: toxicitySignal.Actor},
+		{Name: "thesis", Actor: leadlagSignal.Actor},
+		{Name: "thesis", Actor: cvdSignal.Actor},
+		{Name: "thesis", Actor: correlationSignal.Actor},
+		{Name: "thesis", Actor: exhaustSignal.Actor},
+		{Name: "thesis", Actor: sentimentSignal.Actor},
+		{Name: "thesis", Actor: depthflowSignal.Actor},
 	}
 
-	if err := analyzer.Initialize(
-		types.Topic{Name: "ticker", Actor: coordinator.Actor},
-		types.Topic{Name: "trade", Actor: coordinator.Actor},
-	); err != nil {
+	if err := analyzer.Initialize(signalTopics...); err != nil {
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
 

@@ -171,7 +171,7 @@ func (admit *Admit) Accept(
 	thesis.NoteLifecycle(decision.Symbol, types.LifecycleEntrySelected, decision.At)
 	thesis.Decisions = append(thesis.Decisions, decision)
 
-	holding := types.NewHolding(admit.ctx, decision.Symbol, decision.ProposedQuantity)
+	holding := types.NewHolding(admit.ctx, decision.Symbol, decision.ProposedQuantity, decision.ReferencePrice, nil)
 	holding.IsOpportunity = opportunity
 
 	// Nil qty means Allocator must size from max_fraction; rotation may leave

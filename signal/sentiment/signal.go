@@ -68,16 +68,15 @@ func (signal *Signal) onTicker(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourceSentiment, Status: types.SignalSkip}
 	}
 
-	if len(measurements) == 0 {
-		return nil
+	if len(measurements) > 0 {
+		signal.thesis.Publish(types.SourceSentiment, measurements)
+		return types.SignalResult{Source: types.SourceSentiment, Measurements: measurements, Status: types.SignalReady}
 	}
 
-	signal.thesis.Publish(types.SourceSentiment, measurements)
-
-	return signal.thesis
+	return types.SignalResult{Source: types.SourceSentiment, Status: types.SignalSkip}
 }
 
 func (signal *Signal) Calculate(
@@ -192,34 +191,23 @@ func (signal *Signal) Calculate(
 		}
 
 		strength := math.Max(surgeScore, math.Max(divergentScore, slumpScore))
-		specs := []struct {
-			metric types.MetricType
-			raw    float64
-		}{
-			{types.MetricChange, change},
-			{types.MetricBreadth, breadth},
-			{types.MetricLeaderStrength, leaderStrength},
-			{types.MetricLeaderEvidence, leaderEvidence},
-			{types.MetricRelativeLead, relativeLead},
-			{types.MetricSurgeScore, surgeScore},
-			{types.MetricDivergentScore, divergentScore},
-			{types.MetricSlumpScore, slumpScore},
-			{types.MetricStrength, strength},
-		}
 		measurement := &types.Measurement{
 			Source:   types.SourceSentiment,
 			Symbol:   peer.Symbol,
 			At:       peer.At,
 			Validity: validity,
-			Metrics:  map[string]types.MetricSample{},
+			Metrics:  make(map[string]types.MetricSample, 9),
 		}
 
-		for _, spec := range specs {
-			measurement.PutMetric(spec.metric, types.SideNone, types.MetricSample{
-				Raw:  spec.raw,
-				Unit: types.UnitDimensionless,
-			})
-		}
+		measurement.Metrics[types.MetricKey(types.MetricChange, types.SideNone)] = types.MetricSample{Raw: change, Unit: types.UnitDimensionless}
+		measurement.Metrics[types.MetricKey(types.MetricBreadth, types.SideNone)] = types.MetricSample{Raw: breadth, Unit: types.UnitDimensionless}
+		measurement.Metrics[types.MetricKey(types.MetricLeaderStrength, types.SideNone)] = types.MetricSample{Raw: leaderStrength, Unit: types.UnitDimensionless}
+		measurement.Metrics[types.MetricKey(types.MetricLeaderEvidence, types.SideNone)] = types.MetricSample{Raw: leaderEvidence, Unit: types.UnitDimensionless}
+		measurement.Metrics[types.MetricKey(types.MetricRelativeLead, types.SideNone)] = types.MetricSample{Raw: relativeLead, Unit: types.UnitDimensionless}
+		measurement.Metrics[types.MetricKey(types.MetricSurgeScore, types.SideNone)] = types.MetricSample{Raw: surgeScore, Unit: types.UnitDimensionless}
+		measurement.Metrics[types.MetricKey(types.MetricDivergentScore, types.SideNone)] = types.MetricSample{Raw: divergentScore, Unit: types.UnitDimensionless}
+		measurement.Metrics[types.MetricKey(types.MetricSlumpScore, types.SideNone)] = types.MetricSample{Raw: slumpScore, Unit: types.UnitDimensionless}
+		measurement.Metrics[types.MetricKey(types.MetricStrength, types.SideNone)] = types.MetricSample{Raw: strength, Unit: types.UnitDimensionless}
 
 		out = append(out, measurement)
 	}

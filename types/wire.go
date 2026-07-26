@@ -23,21 +23,10 @@ func WireMeasurements(rows []*Measurement, ui chan []byte) {
 		return
 	}
 
-	frame, err := datura.Map[any]{
-		"measurements": aggregated,
-	}.Marshal()
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"wire: measurements marshal failed",
-			err,
-		))
-		return
-	}
-
 	select {
-	case ui <- frame:
+	case ui <- datura.Map[any]{
+		"measurements": aggregated,
+	}.Marshal():
 	default:
 		errnie.Error(errnie.Err(
 			errnie.TooManyRequests,

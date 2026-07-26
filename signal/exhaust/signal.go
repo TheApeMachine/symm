@@ -78,16 +78,16 @@ func (signal *Signal) onTicker(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourceExhaustion, Status: types.SignalSkip}
 	}
 
 	if len(measurements) == 0 {
-		return nil
+		return types.SignalResult{Source: types.SourceExhaustion, Status: types.SignalSkip}
 	}
 
 	signal.thesis.Publish(types.SourceExhaustion, measurements)
 
-	return measurements
+	return types.SignalResult{Source: types.SourceExhaustion, Measurements: measurements, Status: types.SignalReady}
 }
 
 func (signal *Signal) onBook(message any) any {
@@ -96,16 +96,16 @@ func (signal *Signal) onBook(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourceExhaustion, Status: types.SignalSkip}
 	}
 
 	if len(measurements) == 0 {
-		return nil
+		return types.SignalResult{Source: types.SourceExhaustion, Status: types.SignalSkip}
 	}
 
 	signal.thesis.Publish(types.SourceExhaustion, measurements)
 
-	return measurements
+	return types.SignalResult{Source: types.SourceExhaustion, Measurements: measurements, Status: types.SignalReady}
 }
 
 func (signal *Signal) onTrade(message any) any {
@@ -114,16 +114,16 @@ func (signal *Signal) onTrade(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourceExhaustion, Status: types.SignalSkip}
 	}
 
 	if len(measurements) == 0 {
-		return nil
+		return types.SignalResult{Source: types.SourceExhaustion, Status: types.SignalSkip}
 	}
 
 	signal.thesis.Publish(types.SourceExhaustion, measurements)
 
-	return measurements
+	return types.SignalResult{Source: types.SourceExhaustion, Measurements: measurements, Status: types.SignalReady}
 }
 
 func (signal *Signal) Calculate(
@@ -287,7 +287,7 @@ func (signal *Signal) frame(
 		ObservedFrom: at,
 		Maturity:     maturity,
 		Validity:     validity,
-		Metrics:      map[string]types.MetricSample{},
+		Metrics:      make(map[string]types.MetricSample, 16),
 	}
 
 	signal.putSideMetrics(measurement, output.Long, types.SideBuy)
@@ -305,27 +305,14 @@ func (signal *Signal) putSideMetrics(
 	output equation.DecaySideOutput,
 	side types.MeasurementSide,
 ) {
-	specs := []struct {
-		metric types.MetricType
-		raw    float64
-	}{
-		{types.MetricMechanical, output.Mechanical},
-		{types.MetricThermal, output.Thermal},
-		{types.MetricFragile, output.Fragile},
-		{types.MetricReversal, output.Reversal},
-		{types.MetricUrgency, output.Urgency},
-		{types.MetricStrength, output.Strength},
-		{types.MetricValue, output.Value},
-		{types.MetricCategory, output.Category},
-	}
-
-	for _, spec := range specs {
-		measurement.PutMetric(spec.metric, side, types.MetricSample{
-			Raw:        spec.raw,
-			Normalized: types.NormalizeFinite(spec.raw),
-			Unit:       types.UnitDimensionless,
-		})
-	}
+	measurement.Metrics[types.MetricKey(types.MetricMechanical, side)] = types.MetricSample{Raw: output.Mechanical, Normalized: types.NormalizeFinite(output.Mechanical), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricThermal, side)] = types.MetricSample{Raw: output.Thermal, Normalized: types.NormalizeFinite(output.Thermal), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricFragile, side)] = types.MetricSample{Raw: output.Fragile, Normalized: types.NormalizeFinite(output.Fragile), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricReversal, side)] = types.MetricSample{Raw: output.Reversal, Normalized: types.NormalizeFinite(output.Reversal), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricUrgency, side)] = types.MetricSample{Raw: output.Urgency, Normalized: types.NormalizeFinite(output.Urgency), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricStrength, side)] = types.MetricSample{Raw: output.Strength, Normalized: types.NormalizeFinite(output.Strength), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricValue, side)] = types.MetricSample{Raw: output.Value, Normalized: types.NormalizeFinite(output.Value), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricCategory, side)] = types.MetricSample{Raw: output.Category, Normalized: types.NormalizeFinite(output.Category), Unit: types.UnitDimensionless}
 }
 
 /*

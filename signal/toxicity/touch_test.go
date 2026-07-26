@@ -12,12 +12,6 @@ TestAttributeTouchSide proves fill attribution requires exact executable price
 identity after the full-market proof has established the surrounding flow.
 */
 func TestAttributeTouchSide(t *testing.T) {
-	increment, err := decimal.NewFromString("0.01")
-
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	bid, err := decimal.NewFromString("100.00")
 
 	if err != nil {
@@ -32,13 +26,13 @@ func TestAttributeTouchSide(t *testing.T) {
 
 	Convey("Given an executable bid and ask on Kraken's tick lattice", t, func() {
 		Convey("A trade at the ask should consume the ask", func() {
-			side, err := attributeTouchSide(*ask, bid, ask, increment)
+			side, err := attributeTouchSide(*ask, bid, ask)
 			So(err, ShouldBeNil)
 			So(side, ShouldEqual, touchSideAsk)
 		})
 
 		Convey("A trade at the bid should consume the bid", func() {
-			side, err := attributeTouchSide(*bid, bid, ask, increment)
+			side, err := attributeTouchSide(*bid, bid, ask)
 			So(err, ShouldBeNil)
 			So(side, ShouldEqual, touchSideBid)
 		})
@@ -46,7 +40,7 @@ func TestAttributeTouchSide(t *testing.T) {
 		Convey("A trade one tick beyond the ask should not be a touch fill", func() {
 			outside, err := decimal.NewFromString("100.03")
 			So(err, ShouldBeNil)
-			side, err := attributeTouchSide(*outside, bid, ask, increment)
+			side, err := attributeTouchSide(*outside, bid, ask)
 			So(err, ShouldBeNil)
 			So(side, ShouldEqual, touchSideNone)
 		})

@@ -147,14 +147,6 @@ func (rotate Rotate) Clear(stop *types.Stoploss, forecast types.Forecasts) float
 		return 0
 	}
 
-	if stop.Action == "stop" || stop.Action == "take_profit" {
-		return 1
-	}
-
-	if stop.PeakReturn <= 0 || stop.TrailDistance <= 0 {
-		return 0
-	}
-
 	if forecast.ExpectedReturn > 0 {
 		return 0
 	}
@@ -163,8 +155,8 @@ func (rotate Rotate) Clear(stop *types.Stoploss, forecast types.Forecasts) float
 		return 0
 	}
 
-	giveback := math.Max(0, stop.PeakReturn-stop.MarkReturn)
-	proximity := math.Min(1, 1-giveback/stop.TrailDistance)
+	giveback := math.Max(0, stop.Floor.Float64())
+	proximity := math.Min(1, 1-giveback/stop.Floor.Float64())
 
 	if proximity <= 0 {
 		return 0

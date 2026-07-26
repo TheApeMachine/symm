@@ -17,6 +17,9 @@ type PositionGaugeParts = {
 	peakMarker: HTMLDivElement | null;
 	entryMarker: HTMLDivElement | null;
 	markMarker: HTMLDivElement | null;
+	floorLabel: HTMLSpanElement | null;
+	peakLabel: HTMLSpanElement | null;
+	markLabel: HTMLSpanElement | null;
 	pnl: HTMLSpanElement | null;
 	summary: HTMLSpanElement | null;
 	returnPct: HTMLSpanElement | null;
@@ -80,6 +83,14 @@ const writePositionGauge = (
 	const rawMark =
 		Number.isFinite(position.mark) && position.mark > 0 ? position.mark : null;
 	const markLabel = rawMark === null ? "--" : fixed(rawMark);
+	const peakPrice =
+		stop !== undefined && Number.isFinite(stop.peak_price) && stop.peak_price > 0
+			? fixed(stop.peak_price)
+			: "--";
+	const floorPrice =
+		stop !== undefined && Number.isFinite(stop.stop_price) && stop.stop_price > 0
+			? fixed(stop.stop_price)
+			: "--";
 	const progressTone =
 		geometry !== null &&
 		geometry.stopPct !== null &&
@@ -138,11 +149,22 @@ const writePositionGauge = (
 	}
 
 	if (parts.summary) {
-		const stopSuffix =
-			stop !== undefined && geometry !== null && geometry.stopPct !== null
-				? ` / stop ${fixed(stop.stop_price)}`
-				: "";
-		parts.summary.textContent = `entry ${fixed(position.entry_price)} / bid ${markLabel}${stopSuffix}`;
+		parts.summary.textContent = `entry ${fixed(position.entry_price)} / mark ${markLabel}`;
+	}
+
+	if (parts.floorLabel) {
+		parts.floorLabel.textContent = `floor ${floorPrice}`;
+		parts.floorLabel.style.color = downTone;
+	}
+
+	if (parts.peakLabel) {
+		parts.peakLabel.textContent = `peak ${peakPrice}`;
+		parts.peakLabel.style.color = upTone;
+	}
+
+	if (parts.markLabel) {
+		parts.markLabel.textContent = `mark ${markLabel}`;
+		parts.markLabel.style.color = pnlTone;
 	}
 
 	if (parts.returnPct) {
@@ -209,6 +231,9 @@ const bindGauge = (symbol: string, quote: string, root: HTMLElement | null) => {
 		peakMarker: root.querySelector('[data-gauge="peak"]'),
 		entryMarker: root.querySelector('[data-gauge="entry"]'),
 		markMarker: root.querySelector('[data-gauge="mark"]'),
+		floorLabel: root.querySelector('[data-gauge="floor-label"]'),
+		peakLabel: root.querySelector('[data-gauge="peak-label"]'),
+		markLabel: root.querySelector('[data-gauge="mark-label"]'),
 		pnl: root.querySelector('[data-gauge="pnl"]'),
 		summary: root.querySelector('[data-gauge="summary"]'),
 		returnPct: root.querySelector('[data-gauge="return"]'),

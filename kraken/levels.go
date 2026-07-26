@@ -3,6 +3,7 @@ package kraken
 import (
 	"fmt"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 )
 
@@ -22,29 +23,17 @@ func BookLevels(row BookData) ([]flow.BookLevel, []flow.BookLevel, error) {
 	asks := make([]flow.BookLevel, 0, len(row.Asks))
 
 	for _, level := range row.Bids {
-		tick, err := PriceTick(level.Price, *row.PriceIncrement)
-
-		if err != nil {
-			return nil, nil, err
-		}
-
 		bids = append(bids, flow.BookLevel{
 			Price:    level.Price.Float64(),
-			Ticks:    tick,
+			Ticks:    decimal.ExactDiv(&level.Price, row.PriceIncrement).Int64(),
 			Quantity: level.Qty,
 		})
 	}
 
 	for _, level := range row.Asks {
-		tick, err := PriceTick(level.Price, *row.PriceIncrement)
-
-		if err != nil {
-			return nil, nil, err
-		}
-
 		asks = append(asks, flow.BookLevel{
 			Price:    level.Price.Float64(),
-			Ticks:    tick,
+			Ticks:    decimal.ExactDiv(&level.Price, row.PriceIncrement).Int64(),
 			Quantity: level.Qty,
 		})
 	}

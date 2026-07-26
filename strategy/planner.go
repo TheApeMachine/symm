@@ -153,7 +153,6 @@ func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 
 	planner.opportunity.StampFriction(thesis)
 	planner.continuity.Manage(thesis)
-	planner.evidence.Regulate(thesis, planner.balance)
 
 	if thesis.Incomplete() {
 		thesis.Decisions = append(thesis.Decisions, types.Decision{

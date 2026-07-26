@@ -11,6 +11,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/config"
@@ -100,10 +101,10 @@ func NewHub(
 	}
 
 	hub := &Hub{
-		ctx:         ctx,
-		cancel:      cancel,
-		listenAddr:  addr,
-		Messages:    channel,
+		ctx:        ctx,
+		cancel:     cancel,
+		listenAddr: addr,
+		Messages:   channel,
 		app: fiber.New(fiber.Config{
 			JSONEncoder:     sonic.Marshal,
 			JSONDecoder:     sonic.Unmarshal,
@@ -362,13 +363,9 @@ func (hub *Hub) writeWallet(session *clientSession) {
 		return
 	}
 
-	frame, err := hub.balance.Frame()
-
-	if err != nil {
-		errnie.Error(err)
-
-		return
-	}
+	frame := datura.Map[any]{
+		"balances": hub.balance.Data,
+	}.Marshal()
 
 	if len(frame) == 0 {
 		return
@@ -497,4 +494,3 @@ func (hub *Hub) Close() error {
 
 	return err
 }
-

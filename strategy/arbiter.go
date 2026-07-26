@@ -179,7 +179,7 @@ func (arbiter *Arbiter) incumbents(thesis *types.Thesis) []Incumbent {
 	forecasts := selectForecasts(thesis.Forecasts)
 	rows := make([]Incumbent, 0)
 
-	for holding := range arbiter.balance.Holdings() {
+	for _, holding := range arbiter.balance.Holdings() {
 		if holding.Status != types.OPEN {
 			continue
 		}

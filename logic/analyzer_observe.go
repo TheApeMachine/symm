@@ -21,13 +21,16 @@ func (analyzer *Analyzer) observeStates(
 	cutID types.CutID,
 	tick int64,
 ) []manifold.State {
-	states := make([]manifold.State, 0)
+	analyzer.stateRows = analyzer.stateRows[:0]
 	observeStarted := time.Now()
+
 	if analyzer.observed == nil {
 		analyzer.observed = make(map[string]uint64)
 	}
+
 	thesis.Manifold.Range(func(_, value any) bool {
 		state, ok := value.(manifold.State)
+
 		if !ok {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -40,24 +43,32 @@ func (analyzer *Analyzer) observeStates(
 			state = withStateReplay(state, true)
 			thesis.Manifold.Store(state.Symbol, state)
 		}
-		states = append(states, state)
+
+		analyzer.stateRows = append(analyzer.stateRows, state)
+
 		if stateReplay(state) {
 			return true
 		}
+
 		if analyzer.observe(thesis, state) {
 			analyzer.observed[state.Symbol] = state.Epoch
 		}
+
 		return true
 	})
+
 	payload := map[string]any{
-		"states": len(states),
+		"states": len(analyzer.stateRows),
 		"ns":     time.Since(observeStarted).Nanoseconds(),
 	}
+
 	if cutID > 0 {
 		payload["cut_id"] = uint64(cutID)
 	}
+
 	errnie.Error(audit.Phase(analyzer.recorder, tick, "observe", payload))
-	return states
+
+	return analyzer.stateRows
 }
 
 /*
@@ -124,31 +135,44 @@ func (analyzer *Analyzer) dropSymbolEvidence(thesis *types.Thesis, symbol string
 	if thesis == nil || symbol == "" {
 		return
 	}
-	priorForecasts := append([]types.Forecasts(nil), thesis.Forecasts...)
 	forecasts := thesis.Forecasts[:0]
-	for _, row := range priorForecasts {
+
+	for _, row := range thesis.Forecasts {
 		if row.Symbol == symbol {
 			continue
 		}
+
 		forecasts = append(forecasts, row)
 	}
+
+	for index := len(forecasts); index < len(thesis.Forecasts); index++ {
+		thesis.Forecasts[index] = types.Forecasts{}
+	}
+
 	thesis.Forecasts = forecasts
-	priorHypotheses := append([]types.Hypothesis(nil), thesis.Hypotheses...)
 	hypotheses := thesis.Hypotheses[:0]
-	for _, row := range priorHypotheses {
+
+	for _, row := range thesis.Hypotheses {
 		if row.Symbol == symbol {
 			continue
 		}
+
 		hypotheses = append(hypotheses, row)
 	}
+
+	for index := len(hypotheses); index < len(thesis.Hypotheses); index++ {
+		thesis.Hypotheses[index] = types.Hypothesis{}
+	}
+
 	thesis.Hypotheses = hypotheses
 	thesis.Resonance = dropSymbolAny(thesis.Resonance, symbol)
 	thesis.Causal = dropSymbolAny(thesis.Causal, symbol)
 }
+
 func dropSymbolAny(rows []any, symbol string) []any {
-	prior := append([]any(nil), rows...)
 	out := rows[:0]
-	for _, row := range prior {
+
+	for _, row := range rows {
 		switch value := row.(type) {
 		case *ResonanceOutcome:
 			if value != nil && value.Symbol == symbol {
@@ -169,6 +193,11 @@ func dropSymbolAny(rows []any, symbol string) []any {
 		}
 		out = append(out, row)
 	}
+
+	for index := len(out); index < len(rows); index++ {
+		rows[index] = nil
+	}
+
 	return out
 }
 

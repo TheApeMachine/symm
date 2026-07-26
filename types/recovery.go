@@ -1,7 +1,6 @@
 package types
 
 import (
-	"context"
 	"encoding/json"
 	"math"
 	"os"
@@ -221,11 +220,6 @@ func (recovery *Recovery) Apply(holdings *sync.Map) {
 	if recovery == nil || holdings == nil {
 		return
 	}
-
-	for symbol, holding := range recovery.Holdings {
-		seed := holding
-		holdings.Store(symbol, &seed)
-	}
 }
 
 func (holding Holding) qtyPositive() bool {
@@ -241,61 +235,6 @@ func (holding Holding) durable() (Holding, error) {
 	out.ctx = nil
 	out.cancel = nil
 
-	if out.Stoploss != nil {
-		stop := *out.Stoploss
-		stop.ctx = nil
-		stop.cancel = nil
-		values := []struct {
-			name  string
-			value float64
-		}{
-			{
-				name:  "weight",
-				value: stop.Weight,
-			},
-			{
-				name:  "locked floor",
-				value: stop.LockedFloor,
-			},
-			{
-				name:  "floor distance",
-				value: stop.FloorDistance,
-			},
-			{
-				name:  "trail distance",
-				value: stop.TrailDistance,
-			},
-			{
-				name:  "stop return",
-				value: stop.StopReturn,
-			},
-			{
-				name:  "peak return",
-				value: stop.PeakReturn,
-			},
-			{
-				name:  "mark return",
-				value: stop.MarkReturn,
-			},
-			{
-				name:  "retreat",
-				value: stop.Retreat,
-			},
-		}
-
-		for _, field := range values {
-			if math.IsNaN(field.value) || math.IsInf(field.value, 0) {
-				return Holding{}, errnie.Error(errnie.Err(
-					errnie.Validation,
-					"recovery: non-finite "+field.name+" for "+holding.Symbol,
-					nil,
-				))
-			}
-		}
-
-		out.Stoploss = &stop
-	}
-
 	if out.ReturnPct != nil &&
 		(math.IsNaN(*out.ReturnPct) || math.IsInf(*out.ReturnPct, 0)) {
 		return Holding{}, errnie.Error(errnie.Err(
@@ -303,6 +242,28 @@ func (holding Holding) durable() (Holding, error) {
 			"recovery: non-finite return for "+holding.Symbol,
 			nil,
 		))
+	}
+
+	if holding.Stoploss != nil {
+		if holding.Stoploss.Peak != nil &&
+			(math.IsNaN(holding.Stoploss.Peak.Float64()) ||
+				math.IsInf(holding.Stoploss.Peak.Float64(), 0)) {
+			return Holding{}, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"recovery: non-finite peak for "+holding.Symbol,
+				nil,
+			))
+		}
+
+		if holding.Stoploss.Floor != nil &&
+			(math.IsNaN(holding.Stoploss.Floor.Float64()) ||
+				math.IsInf(holding.Stoploss.Floor.Float64(), 0)) {
+			return Holding{}, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"recovery: non-finite stop for "+holding.Symbol,
+				nil,
+			))
+		}
 	}
 
 	return out, nil
@@ -328,14 +289,6 @@ func (holding *Holding) Enrich(recovered Holding) {
 	if holding.EntryAt == nil && recovered.EntryAt != nil {
 		at := *recovered.EntryAt
 		holding.EntryAt = &at
-	}
-
-	if recovered.Stoploss != nil && holding.EntryPrice != nil {
-		if holding.Stoploss == nil {
-			holding.Stoploss = NewStoploss(context.Background())
-		}
-
-		holding.Stoploss.Restore(holding.EntryPrice.Float64(), recovered.Stoploss)
 	}
 
 	if holding.Asset == "" {

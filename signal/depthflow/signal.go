@@ -98,7 +98,7 @@ func (signal *Signal) onTicker(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourceDepthFlow, Status: types.SignalSkip}
 	}
 
 	// Book observations arrive far more often than tickers. Re-wire the last
@@ -109,12 +109,12 @@ func (signal *Signal) onTicker(message any) any {
 	}
 
 	if len(measurements) == 0 {
-		return nil
+		return types.SignalResult{Source: types.SourceDepthFlow, Status: types.SignalSkip}
 	}
 
 	signal.thesis.Publish(types.SourceDepthFlow, measurements)
 
-	return signal.thesis
+	return types.SignalResult{Source: types.SourceDepthFlow, Measurements: measurements, Status: types.SignalReady}
 }
 
 func (signal *Signal) onBook(message any) any {
@@ -123,17 +123,17 @@ func (signal *Signal) onBook(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourceDepthFlow, Status: types.SignalSkip}
 	}
 
 	if len(measurements) == 0 {
-		return nil
+		return types.SignalResult{Source: types.SourceDepthFlow, Status: types.SignalSkip}
 	}
 
 	signal.bookOut.Store(&measurements)
 	signal.thesis.Publish(types.SourceDepthFlow, measurements)
 
-	return signal.thesis
+	return types.SignalResult{Source: types.SourceDepthFlow, Measurements: measurements, Status: types.SignalReady}
 }
 
 func (signal *Signal) onTrade(message any) any {
@@ -142,16 +142,16 @@ func (signal *Signal) onTrade(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourceDepthFlow, Status: types.SignalSkip}
 	}
 
 	if len(measurements) == 0 {
-		return nil
+		return types.SignalResult{Source: types.SourceDepthFlow, Status: types.SignalSkip}
 	}
 
 	signal.thesis.Publish(types.SourceDepthFlow, measurements)
 
-	return signal.thesis
+	return types.SignalResult{Source: types.SourceDepthFlow, Measurements: measurements, Status: types.SignalReady}
 }
 
 func (signal *Signal) Calculate(
@@ -337,27 +337,15 @@ func (signal *Signal) frame(
 		At:       at,
 		Maturity: maturity,
 		Validity: validity,
+		Metrics:  make(map[string]types.MetricSample, 6),
 		Scale:    scale,
 	}
-	specs := []struct {
-		metric types.MetricType
-		raw    float64
-	}{
-		{types.MetricLoadedScore, output.LoadedScore},
-		{types.MetricSpoofScore, output.SpoofScore},
-		{types.MetricThinScore, output.ThinScore},
-		{types.MetricNeutralScore, output.NeutralScore},
-		{types.MetricStrength, output.Strength},
-		{types.MetricValue, output.Value},
-	}
-
-	for _, spec := range specs {
-		measurement.PutMetric(spec.metric, types.SideNone, types.MetricSample{
-			Raw:        spec.raw,
-			Normalized: types.NormalizeFinite(spec.raw),
-			Unit:       types.UnitDimensionless,
-		})
-	}
+	measurement.Metrics[types.MetricKey(types.MetricLoadedScore, types.SideNone)] = types.MetricSample{Raw: output.LoadedScore, Normalized: types.NormalizeFinite(output.LoadedScore), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricSpoofScore, types.SideNone)] = types.MetricSample{Raw: output.SpoofScore, Normalized: types.NormalizeFinite(output.SpoofScore), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricThinScore, types.SideNone)] = types.MetricSample{Raw: output.ThinScore, Normalized: types.NormalizeFinite(output.ThinScore), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricNeutralScore, types.SideNone)] = types.MetricSample{Raw: output.NeutralScore, Normalized: types.NormalizeFinite(output.NeutralScore), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricStrength, types.SideNone)] = types.MetricSample{Raw: output.Strength, Normalized: types.NormalizeFinite(output.Strength), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricValue, types.SideNone)] = types.MetricSample{Raw: output.Value, Normalized: types.NormalizeFinite(output.Value), Unit: types.UnitDimensionless}
 
 	return []*types.Measurement{measurement}
 }

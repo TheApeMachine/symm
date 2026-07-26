@@ -24,7 +24,7 @@ func TestDeskThinBookDoesNotFabricateMarks(t *testing.T) {
 		So(harness.Market.Transition(tests.MarketStateFastPump, func() error {
 			So(harness.Market.Paper.Drain(), ShouldBeNil)
 
-			for open := range harness.Wired.Balance.Holdings() {
+			for _, open := range harness.Wired.Balance.Holdings() {
 				if open.Status != types.OPEN || open.Mark == nil {
 					continue
 				}

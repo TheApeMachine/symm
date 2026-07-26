@@ -264,24 +264,21 @@ func buildScoreMeasurement(
 		Peer:     peer,
 		At:       at,
 		Validity: validity,
-		Metrics:  map[string]types.MetricSample{},
+		Metrics:  make(map[string]types.MetricSample, len(readings)+1),
 	}
 
 	for _, item := range readings {
-		measurement.PutMetric(item.metric, types.SideNone, types.MetricSample{
+		measurement.Metrics[types.MetricKey(item.metric, types.SideNone)] = types.MetricSample{
 			Raw:  item.raw,
 			Unit: types.UnitDimensionless,
-		})
+		}
 	}
 
-	measurement.PutMetric(
-		types.MetricSignedLagDirection, types.SideNone,
-		types.MetricSample{
-			Raw:        selected.lagDirection,
-			Normalized: types.NormalizeFinite(selected.lagDirection),
-			Unit:       types.UnitDimensionless,
-		},
-	)
+	measurement.Metrics[types.MetricKey(types.MetricSignedLagDirection, types.SideNone)] = types.MetricSample{
+		Raw:        selected.lagDirection,
+		Normalized: types.NormalizeFinite(selected.lagDirection),
+		Unit:       types.UnitDimensionless,
+	}
 
 	return measurement
 }
@@ -318,34 +315,26 @@ func (signal *Signal) provisional(
 		Readiness: types.ReadinessObservation,
 		Reason:    "no cross-section leader",
 	}
-	metrics := []types.MetricType{
-		types.MetricCorrelation,
-		types.MetricSignedCorrelation,
-		types.MetricSignedContempCorrelation,
-		types.MetricSignedLagCorrelation,
-		types.MetricLagFraction,
-		types.MetricSampleSupport,
-		types.MetricInefficient,
-		types.MetricSync,
-		types.MetricDecoupled,
-		types.MetricStall,
-		types.MetricStrength,
-		types.MetricSignedLagDirection,
-	}
 	measurement := &types.Measurement{
 		Source:   types.SourceLeadLag,
 		Symbol:   symbol,
 		At:       at,
 		Validity: validity,
-		Metrics:  map[string]types.MetricSample{},
+		Metrics:  make(map[string]types.MetricSample, 12),
 	}
 
-	for _, metric := range metrics {
-		measurement.PutMetric(metric, types.SideNone, types.MetricSample{
-			Raw:  0,
-			Unit: types.UnitDimensionless,
-		})
-	}
+	measurement.Metrics[types.MetricKey(types.MetricCorrelation, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricSignedCorrelation, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricSignedContempCorrelation, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricSignedLagCorrelation, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricLagFraction, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricSampleSupport, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricInefficient, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricSync, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricDecoupled, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricStall, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricStrength, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricSignedLagDirection, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
 
 	return measurement
 }

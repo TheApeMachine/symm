@@ -68,16 +68,15 @@ func (signal *Signal) onTicker(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourceLeadLag, Status: types.SignalSkip}
 	}
 
-	if len(measurements) == 0 {
-		return nil
+	if len(measurements) > 0 {
+		signal.thesis.Publish(types.SourceLeadLag, measurements)
+		return types.SignalResult{Source: types.SourceLeadLag, Measurements: measurements, Status: types.SignalReady}
 	}
 
-	signal.thesis.Publish(types.SourceLeadLag, measurements)
-
-	return signal.thesis
+	return types.SignalResult{Source: types.SourceLeadLag, Status: types.SignalSkip}
 }
 
 func (signal *Signal) Calculate(

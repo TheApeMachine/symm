@@ -71,16 +71,15 @@ func (signal *Signal) onTicker(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourceLiquidity, Status: types.SignalSkip}
 	}
 
-	if len(measurements) == 0 {
-		return nil
+	if len(measurements) > 0 {
+		signal.thesis.Publish(types.SourceLiquidity, measurements)
+		return types.SignalResult{Source: types.SourceLiquidity, Measurements: measurements, Status: types.SignalReady}
 	}
 
-	signal.thesis.Publish(types.SourceLiquidity, measurements)
-
-	return signal.thesis
+	return types.SignalResult{Source: types.SourceLiquidity, Status: types.SignalSkip}
 }
 
 func (signal *Signal) Calculate(
@@ -180,59 +179,36 @@ func (signal *Signal) Calculate(
 			Maturity: peerMaturity,
 			Validity: validity,
 			Scale:    scale,
+			Metrics:  make(map[string]types.MetricSample, 6),
 		}
 
-		measurement.PutMetric(
-			types.MetricExecutableTouchDepth,
-			types.SideNone,
-			types.MetricSample{
-				Raw:        executableDepth,
-				Normalized: types.NormalizeFinite(relativeDepth),
-				Unit:       types.UnitQuoteCurrency,
-			},
-		)
-		measurement.PutMetric(
-			types.MetricRelativeTouchDepth,
-			types.SideNone,
-			types.MetricSample{
-				Raw:        relativeDepth,
-				Normalized: types.NormalizeFinite(relativeDepth),
-				Unit:       types.UnitDimensionless,
-			},
-		)
-		measurement.PutMetric(
-			types.MetricScarcityScore,
-			types.SideNone,
-			types.MetricSample{
-				Raw:        scarcity,
-				Normalized: types.NormalizeFinite(scarcity),
-				Unit:       types.UnitDimensionless,
-			},
-		)
-		measurement.PutMetric(
-			types.MetricExecutableTouchDepthMedian,
-			types.SideNone,
-			types.MetricSample{
-				Raw:  median,
-				Unit: types.UnitQuoteCurrency,
-			},
-		)
-		measurement.PutMetric(
-			types.MetricReportedVolumeNotional,
-			types.SideNone,
-			types.MetricSample{
-				Raw:  reportedNotional,
-				Unit: types.UnitQuoteCurrency,
-			},
-		)
-		measurement.PutMetric(
-			types.MetricReportedVolumeNotionalMedian,
-			types.SideNone,
-			types.MetricSample{
-				Raw:  reportedMedian,
-				Unit: types.UnitQuoteCurrency,
-			},
-		)
+		measurement.Metrics[types.MetricKey(types.MetricExecutableTouchDepth, types.SideNone)] = types.MetricSample{
+			Raw:        executableDepth,
+			Normalized: types.NormalizeFinite(relativeDepth),
+			Unit:       types.UnitQuoteCurrency,
+		}
+		measurement.Metrics[types.MetricKey(types.MetricRelativeTouchDepth, types.SideNone)] = types.MetricSample{
+			Raw:        relativeDepth,
+			Normalized: types.NormalizeFinite(relativeDepth),
+			Unit:       types.UnitDimensionless,
+		}
+		measurement.Metrics[types.MetricKey(types.MetricScarcityScore, types.SideNone)] = types.MetricSample{
+			Raw:        scarcity,
+			Normalized: types.NormalizeFinite(scarcity),
+			Unit:       types.UnitDimensionless,
+		}
+		measurement.Metrics[types.MetricKey(types.MetricExecutableTouchDepthMedian, types.SideNone)] = types.MetricSample{
+			Raw:  median,
+			Unit: types.UnitQuoteCurrency,
+		}
+		measurement.Metrics[types.MetricKey(types.MetricReportedVolumeNotional, types.SideNone)] = types.MetricSample{
+			Raw:  reportedNotional,
+			Unit: types.UnitQuoteCurrency,
+		}
+		measurement.Metrics[types.MetricKey(types.MetricReportedVolumeNotionalMedian, types.SideNone)] = types.MetricSample{
+			Raw:  reportedMedian,
+			Unit: types.UnitQuoteCurrency,
+		}
 
 		out = append(out, measurement)
 	}

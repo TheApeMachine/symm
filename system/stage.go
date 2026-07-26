@@ -131,18 +131,8 @@ func waitReporter(ctx context.Context, reporter types.StatusReporter) error {
 }
 
 func (stage *Stage) Publish(uiHub chan<- []byte, status datura.Map[any]) {
-	if uiHub == nil {
-		return
-	}
-
-	frame, err := status.Marshal()
-
-	if err != nil {
-		return
-	}
-
 	select {
-	case uiHub <- frame:
+	case uiHub <- status.Marshal():
 	default:
 	}
 }

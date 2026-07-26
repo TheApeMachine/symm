@@ -2,7 +2,6 @@ package logic
 
 import (
 	"bytes"
-	"errors"
 	"strings"
 	"time"
 
@@ -13,6 +12,8 @@ import (
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
 )
+
+var cognitionTokenReplacer = strings.NewReplacer("_", "-", "/", "-")
 
 /*
 cognizeStates runs DMT cognition for each gas-ready state and collects REM
@@ -146,7 +147,7 @@ func (analyzer *Analyzer) recall(
 		}
 	}
 
-	parts, sequence := analyzer.sensorySequence(state, categoryTokens)
+	symbolToken, sequence, partCount := analyzer.sensorySequence(state, categoryTokens)
 
 	if len(sequence) == 0 {
 		return
@@ -158,7 +159,7 @@ func (analyzer *Analyzer) recall(
 		parent = sequence[:boundary]
 	}
 
-	reading = analyzer.readCognition(state, parts, sequence, parent)
+	reading = analyzer.readCognition(state, symbolToken, partCount, sequence, parent)
 	thesis.Cognition.Store(state.Symbol, reading)
 
 	if analyzer.cognition == nil {
@@ -208,7 +209,7 @@ func (analyzer *Analyzer) cognize(
 		return false
 	}
 
-	parts, sequence := analyzer.sensorySequence(state, categoryTokens)
+	symbolToken, sequence, partCount := analyzer.sensorySequence(state, categoryTokens)
 
 	if len(sequence) == 0 {
 		return false
@@ -226,19 +227,12 @@ func (analyzer *Analyzer) cognize(
 
 	analyzer.tree.TrainSensorySequence(sequence)
 
-	if _, _, err := analyzer.tree.CommitToEpisodicBuffer(
+	if _, ok := analyzer.tree.CommitToEpisodicBuffer(
 		uint64(state.At.UnixNano()), sequence,
-	); err != nil {
-		// The dmt persistence wrapper renders only "dmt/tree" and hides the
-		// underlying WAL cause; unwrap so the real failure is visible.
-		cause := err
-		for unwrapped := errors.Unwrap(cause); unwrapped != nil; unwrapped = errors.Unwrap(cause) {
-			cause = unwrapped
-		}
-
-		errnie.Error(errnie.Err(errnie.IO, "logic cognize: episodic commit failed", err).
-			With("cause", cause.Error()).
-			With("symbol", state.Symbol))
+	); !ok {
+		errnie.Error(errnie.Err(
+			errnie.IO, "logic cognize: episodic commit failed", nil,
+		))
 
 		return false
 	}
@@ -247,7 +241,7 @@ func (analyzer *Analyzer) cognize(
 		return false
 	}
 
-	reading := analyzer.readCognition(state, parts, sequence, parent)
+	reading := analyzer.readCognition(state, symbolToken, partCount, sequence, parent)
 	thesis.Cognition.Store(state.Symbol, reading)
 	analyzer.cognition[state.Symbol] = reading
 
@@ -263,18 +257,29 @@ the sequence path.
 func (analyzer *Analyzer) sensorySequence(
 	state manifold.State,
 	categoryTokens []string,
-) ([]string, []byte) {
-	replacer := strings.NewReplacer("_", "-", "/", "-")
-	symbolToken := "s/" + replacer.Replace(state.Symbol)
-	evidence := make([]string, 0, 4)
+) (string, []byte, int) {
+	symbolToken := "s/" + cognitionTokenReplacer.Replace(state.Symbol)
+	sequenceSize := len(symbolToken)
 
 	for _, token := range categoryTokens {
-		evidence = append(evidence, replacer.Replace(token))
+		replaced := cognitionTokenReplacer.Replace(token)
+		sequenceSize += len(replaced) + 1
 	}
 
-	parts := append([]string{symbolToken}, evidence...)
+	if len(categoryTokens) == 0 {
+		return symbolToken, []byte(symbolToken), 1
+	}
 
-	return parts, []byte(strings.Join(parts, "_"))
+	builder := strings.Builder{}
+	builder.Grow(sequenceSize)
+	builder.WriteString(symbolToken)
+
+	for _, token := range categoryTokens {
+		builder.WriteByte('_')
+		builder.WriteString(cognitionTokenReplacer.Replace(token))
+	}
+
+	return symbolToken, []byte(builder.String()), len(categoryTokens) + 1
 }
 
 /*
@@ -285,27 +290,17 @@ attaches the full Cortex radix/beam visualization only for the focused symbol.
 */
 func (analyzer *Analyzer) readCognition(
 	state manifold.State,
-	parts []string,
+	symbolToken string,
+	partCount int,
 	sequence []byte,
 	parent []byte,
 ) types.Cognition {
 	var classificationScratch dmt.ClassificationScratch
-	classification, err := analyzer.tree.Classify(sequence, &classificationScratch)
-
-	if err != nil {
-		return types.Cognition{
-			Source:   "dmt",
-			Symbol:   state.Symbol,
-			At:       state.At,
-			Sequence: string(sequence),
-			Ready:    false,
-			Error:    err.Error(),
-		}
-	}
+	classification := analyzer.tree.Classify(sequence, &classificationScratch)
 
 	storageParent := append([]byte("s/"), parent...)
 	ambiguity := analyzer.tree.MeasureBranchAmbiguity(storageParent)
-	predictionBuffer := make([]dmt.LookaheadPrediction, 0, len(parts))
+	predictionBuffer := make([]dmt.LookaheadPrediction, 0, partCount)
 	predictions := analyzer.tree.PredictNextSensoryTokens(parent, predictionBuffer)
 	reading := types.Cognition{
 		Source:           "dmt",
@@ -337,7 +332,7 @@ func (analyzer *Analyzer) readCognition(
 		reading.Predictions[string(prediction.Token)] = prediction.Probability
 	}
 
-	analyzer.attachVisualization(&reading, sequence, parent, parts, classification, predictions)
+	analyzer.attachVisualization(&reading, sequence, parent, symbolToken, classification, predictions)
 
 	return reading
 }
@@ -352,7 +347,7 @@ func (analyzer *Analyzer) attachVisualization(
 	reading *types.Cognition,
 	sequence []byte,
 	parent []byte,
-	parts []string,
+	symbolToken string,
 	classification dmt.ClassificationResult,
 	predictions []dmt.LookaheadPrediction,
 ) {
@@ -372,7 +367,7 @@ func (analyzer *Analyzer) attachVisualization(
 
 	branches, beams, classes, beamWidth, maxHops, nodeCount, lookaheadScore, lookaheadPaths :=
 		analyzer.cognitionVisualization(
-			sequence, parent, parts, classification, predictions,
+			sequence, parent, symbolToken, classification, predictions,
 		)
 
 	reading.Branches = branches
@@ -404,12 +399,6 @@ func (analyzer *Analyzer) trainAttractors(
 		regime = string(types.Turbulent)
 	}
 
-	candidates := map[string]struct{}{
-		string(types.Equilibrium): {},
-		string(types.Laminar):     {},
-		string(types.Turbulent):   {},
-	}
-
 	if thesis != nil {
 		bestIndex := -1
 
@@ -424,8 +413,6 @@ func (analyzer *Analyzer) trainAttractors(
 				continue
 			}
 
-			candidates[string(catType)] = struct{}{}
-
 			if bestIndex < 0 || thesis.Categories[index].Strength > thesis.Categories[bestIndex].Strength {
 				bestIndex = index
 			}
@@ -436,36 +423,51 @@ func (analyzer *Analyzer) trainAttractors(
 		}
 	}
 
-	attractors := make([][]byte, 0, len(candidates))
+	regimeKey := []byte(regime)
+	tokenStart := 0
 
-	for candidate := range candidates {
-		attractors = append(attractors, []byte(candidate))
-	}
-
-	weights := make([]dmt.CognitiveState, len(attractors))
-	total := uint64(1)
-
-	for index, candidate := range attractors {
-		weights[index] = analyzer.tree.GetAttractorBasin(candidate, sequence)
-		total += weights[index].Count
-
-		if string(candidate) == regime {
-			weights[index].Count++
-		}
-	}
-
-	for index, candidate := range attractors {
-		if weights[index].Count == 0 {
+	for index := 0; index <= len(sequence); index++ {
+		if index < len(sequence) && sequence[index] != '_' {
 			continue
 		}
 
-		weights[index].Probability = float64(weights[index].Count) / float64(total)
-
-		if _, _, err := analyzer.tree.InsertAttractorBasin(
-			candidate, sequence, weights[index],
-		); err != nil {
-			errnie.Error(err)
+		if index == tokenStart {
+			tokenStart = index + 1
+			continue
 		}
+
+		currentPath := sequence[:index]
+		parentPath := []byte(nil)
+
+		if boundary := bytes.LastIndexByte(currentPath, '_'); boundary > 0 {
+			parentPath = currentPath[:boundary]
+		}
+
+		basin := analyzer.tree.GetAttractorBasin(regimeKey, currentPath)
+		basin.Count++
+
+		parentCount := uint64(0)
+
+		if len(parentPath) > 0 {
+			parentCount = analyzer.tree.GetAttractorBasin(regimeKey, parentPath).Count
+		}
+
+		if basin.Count == 1 && parentCount == 0 {
+			basin.Probability = 1
+		} else {
+			basin.Probability = float64(basin.Count) / float64(basin.Count+parentCount)
+		}
+
+		if _, ok := analyzer.tree.InsertAttractorBasin(regimeKey, currentPath, basin); !ok {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"failed ot write attractor basin",
+				nil,
+			))
+			return false
+		}
+
+		tokenStart = index + 1
 	}
 
 	return true

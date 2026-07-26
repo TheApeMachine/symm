@@ -41,7 +41,7 @@ esac
 		balSub := paper.Subscribe("balances")
 
 		order := kraken.NewMarketOrder(
-			"sell", decimal.NewFromFloat64(0.00299963), "BTC/USD",
+			"sell", "BTC/USD", decimal.NewFromFloat64(0.00299963),
 		)
 		err := paper.AddOrder(order)
 

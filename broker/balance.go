@@ -3,6 +3,7 @@ package broker
 import (
 	"sync/atomic"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken"
@@ -20,9 +21,9 @@ type Balance struct {
 	*Inventory
 	*Wallet
 	*Cash
-	*View
 	status atomic.Value
 	ui     chan []byte
+	Data   map[string]*kraken.BalanceData `json:"data"`
 }
 
 /*
@@ -44,21 +45,10 @@ func NewBalance(
 		Inventory: inventory,
 		Wallet:    wallet,
 		Cash:      &Cash{wallet: wallet, ledger: ledger},
-		View: &View{
-			wallet:    wallet,
-			ledger:    ledger,
-			inventory: inventory,
-			ui:        ui,
-		},
-		ui: ui,
+		ui:        ui,
 	}
+
 	balance.status.Store(types.INITIALIZING)
-
-	for _, holding := range holdings {
-		lot := holding
-		balance.StoreHolding(&lot)
-	}
-
 	return balance
 }
 
@@ -96,6 +86,26 @@ func (balance *Balance) Status() types.Status {
 }
 
 /*
+Publish enqueues Frame on the UI channel. A saturated channel returns an error
+instead of dropping the wallet frame silently.
+*/
+func (balance *Balance) Publish() error {
+	select {
+	case balance.ui <- datura.Map[any]{
+		"balances": []string{},
+		"holdings": balance.Inventory.Holdings,
+	}.Marshal():
+		return nil
+	default:
+		return errnie.Error(errnie.Err(
+			errnie.TooManyRequests,
+			"balance: ui channel saturated; dropped wallet frame",
+			nil,
+		))
+	}
+}
+
+/*
 BalanceAck applies one private balance frame. Snapshots replace the wallet map
 and sequence; updates require exact next-sequence or a resync is requested.
 */
@@ -109,7 +119,6 @@ func (balance *Balance) BalanceAck(buf []byte) {
 
 	if resync {
 		balance.resync()
-
 		return
 	}
 
@@ -138,4 +147,22 @@ func (balance *Balance) resync() {
 	if errnie.Error(balance.Wallet.api.SubscribeBalance()) != nil {
 		balance.status.Store(types.ERROR)
 	}
+}
+
+func (balance *Balance) Holdings() map[string]*types.Holding {
+	return balance.Inventory.Holdings
+}
+
+func (balance *Balance) Holding(symbol string) (*types.Holding, error) {
+	holding, ok := balance.Inventory.Holdings[symbol]
+
+	if !ok {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"balance: holding not found",
+			nil,
+		))
+	}
+
+	return holding, nil
 }

@@ -15,70 +15,17 @@ Inventory owns open and closed lots. It locks its own map; Sync receives quote,
 wallet rows, and a reserved-qty lookup so it never reaches back into Balance.
 */
 type Inventory struct {
-	mu   sync.RWMutex
-	lots map[string]*types.Holding
+	mu       sync.RWMutex
+	Holdings map[string]*types.Holding `json:"holdings"`
 }
 
 /*
 NewInventory constructs empty lot storage for a Balance to compose.
 */
 func NewInventory() *Inventory {
-	return &Inventory{lots: make(map[string]*types.Holding)}
-}
-
-/*
-Holdings yields open lots as value copies and releases the lock before yield so
-callers may Update without re-entering the mutex.
-*/
-func (inventory *Inventory) Holdings() iter.Seq[types.Holding] {
-	return func(yield func(types.Holding) bool) {
-		inventory.mu.RLock()
-		copies := make([]types.Holding, 0, len(inventory.lots))
-
-		for symbol, holding := range inventory.lots {
-			if symbol != holding.Symbol {
-				continue
-			}
-
-			if holding.Status == types.CLOSED {
-				continue
-			}
-
-			copies = append(copies, *holding)
-		}
-
-		inventory.mu.RUnlock()
-
-		for _, holding := range copies {
-			if !yield(holding) {
-				return
-			}
-		}
+	return &Inventory{
+		Holdings: make(map[string]*types.Holding),
 	}
-}
-
-/*
-Holding returns a value copy of an open lot.
-*/
-func (inventory *Inventory) Holding(symbol string) (types.Holding, error) {
-	inventory.mu.RLock()
-	defer inventory.mu.RUnlock()
-
-	holding, ok := inventory.lots[symbol]
-
-	if ok && holding.Status == types.CLOSED {
-		ok = false
-	}
-
-	if !ok {
-		return types.Holding{}, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"holding not found for "+symbol,
-			nil,
-		))
-	}
-
-	return *holding, nil
 }
 
 /*
@@ -88,7 +35,7 @@ func (inventory *Inventory) StoreHolding(holding *types.Holding) {
 	inventory.mu.Lock()
 	defer inventory.mu.Unlock()
 
-	inventory.lots[holding.Symbol] = holding
+	inventory.Holdings[holding.Symbol] = holding
 }
 
 /*
@@ -98,7 +45,7 @@ func (inventory *Inventory) DeleteHolding(symbol string) {
 	inventory.mu.Lock()
 	defer inventory.mu.Unlock()
 
-	delete(inventory.lots, symbol)
+	delete(inventory.Holdings, symbol)
 }
 
 /*
@@ -112,7 +59,7 @@ func (inventory *Inventory) Update(
 	inventory.mu.Lock()
 	defer inventory.mu.Unlock()
 
-	holding, ok := inventory.lots[symbol]
+	holding, ok := inventory.Holdings[symbol]
 
 	if !ok {
 		return errnie.Error(errnie.Err(
@@ -133,7 +80,7 @@ func (inventory *Inventory) Retained(symbol string) (types.Holding, bool) {
 	inventory.mu.RLock()
 	defer inventory.mu.RUnlock()
 
-	holding, ok := inventory.lots[symbol]
+	holding, ok := inventory.Holdings[symbol]
 
 	if !ok || symbol != holding.Symbol {
 		return types.Holding{}, false
@@ -148,9 +95,9 @@ Lots yields every retained holding, including closed lots for the audit rail.
 func (inventory *Inventory) Lots() iter.Seq[types.Holding] {
 	return func(yield func(types.Holding) bool) {
 		inventory.mu.RLock()
-		copies := make([]types.Holding, 0, len(inventory.lots))
+		copies := make([]types.Holding, 0, len(inventory.Holdings))
 
-		for symbol, holding := range inventory.lots {
+		for symbol, holding := range inventory.Holdings {
 			if symbol != holding.Symbol {
 				continue
 			}
@@ -197,7 +144,7 @@ func (inventory *Inventory) Sync(
 		inventory.upsert(symbol, asset, row.Balance, reserved(asset))
 	}
 
-	for _, holding := range inventory.lots {
+	for _, holding := range inventory.Holdings {
 		if holding.Status != types.OPEN {
 			continue
 		}
@@ -241,7 +188,7 @@ func (inventory *Inventory) upsert(
 ) {
 	sellable := qty.Copy().Sub(reserved)
 
-	if holding, ok := inventory.lots[symbol]; ok {
+	if holding, ok := inventory.Holdings[symbol]; ok {
 		holding.Qty = qty.Copy()
 		holding.Asset = asset
 		holding.SellableQty = sellable
@@ -261,7 +208,7 @@ func (inventory *Inventory) upsert(
 		return
 	}
 
-	inventory.lots[symbol] = &types.Holding{
+	inventory.Holdings[symbol] = &types.Holding{
 		Symbol:      symbol,
 		Asset:       asset,
 		Qty:         qty.Copy(),
@@ -276,7 +223,7 @@ Caller must already hold Inventory.mu.
 */
 func (inventory *Inventory) close(quote, asset string) {
 	symbol := asset + "/" + quote
-	holding, ok := inventory.lots[symbol]
+	holding, ok := inventory.Holdings[symbol]
 
 	if !ok {
 		return

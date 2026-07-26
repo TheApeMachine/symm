@@ -37,7 +37,7 @@ func TestDeskSlotsAndExit(t *testing.T) {
 					return nil
 				}
 
-				for open := range harness.Wired.Balance.Holdings() {
+				for _, open := range harness.Wired.Balance.Holdings() {
 					if open.Status != types.OPEN ||
 						open.Qty == nil || open.Qty.Sign() <= 0 {
 						continue

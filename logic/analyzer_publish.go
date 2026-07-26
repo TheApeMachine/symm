@@ -26,20 +26,26 @@ func (analyzer *Analyzer) publishMeasured(
 ) {
 	publishStarted := time.Now()
 
-	if len(thesis.Resonance) > 0 {
-		analyzer.publish(datura.Map[any]{"resonance": thesis.Resonance})
+	analyzer.frameRows = focusRowsInto(analyzer.frameRows[:0], thesis.Resonance)
+
+	if len(analyzer.frameRows) > 0 {
+		analyzer.publish(datura.Map[any]{"resonance": analyzer.frameRows})
 	}
 
-	if len(thesis.Causal) > 0 {
-		analyzer.publish(datura.Map[any]{"causal": thesis.Causal})
+	analyzer.frameRows = focusRowsInto(analyzer.frameRows[:0], thesis.Causal)
+
+	if len(analyzer.frameRows) > 0 {
+		analyzer.publish(datura.Map[any]{"causal": analyzer.frameRows})
 	}
 
-	if len(thesis.Hypotheses) > 0 {
-		analyzer.publish(datura.Map[any]{"hypotheses": thesis.Hypotheses})
+	analyzer.hypRows = focusHypothesesInto(analyzer.hypRows[:0], thesis.Hypotheses)
+
+	if len(analyzer.hypRows) > 0 {
+		analyzer.publish(datura.Map[any]{"hypotheses": analyzer.hypRows})
 	}
 
-	if wired := wireManifold(states); len(wired) > 0 {
-		field, lattices, wave := wired[0].WirePackets()
+	if wired, ok := wireManifoldState(states); ok {
+		field, lattices, wave := wired.WirePackets()
 		analyzer.publish(datura.Map[any]{"manifold": []manifold.WireField{field}})
 
 		for _, lattice := range lattices {
@@ -68,8 +74,18 @@ display texture and wave are shared physics and always travel with that row —
 the manifold is not a per-symbol mechanism.
 */
 func wireManifold(states []manifold.State) []manifold.State {
-	if len(states) == 0 {
+	wired, ok := wireManifoldState(states)
+
+	if !ok {
 		return nil
+	}
+
+	return []manifold.State{wired}
+}
+
+func wireManifoldState(states []manifold.State) (manifold.State, bool) {
+	if len(states) == 0 {
+		return manifold.State{}, false
 	}
 
 	field := -1
@@ -110,7 +126,7 @@ func wireManifold(states []manifold.State) []manifold.State {
 	selected.OscillatorCount = states[field].OscillatorCount
 	selected.SharedOscillatorCount = states[field].SharedOscillatorCount
 
-	return []manifold.State{selected}
+	return selected, true
 }
 
 /*
@@ -120,7 +136,34 @@ Thesis.Categories stays book-wide for strategy; the categories UI frame is
 focus-gated like cognition so the rail does not ship every symbol each cut.
 */
 func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
-	cognition := make([]types.Cognition, 0, 8)
+	if thesis == nil {
+		return
+	}
+
+	if analyzer.bestBySym == nil {
+		analyzer.bestBySym = make(map[string]int)
+	}
+
+	focus := types.Focus()
+	analyzer.cogRows = analyzer.cogRows[:0]
+
+	for symbol := range analyzer.bestBySym {
+		delete(analyzer.bestBySym, symbol)
+	}
+
+	for index := range thesis.Categories {
+		symbol := thesis.Categories[index].Symbol
+
+		if symbol == "" {
+			continue
+		}
+
+		best, ok := analyzer.bestBySym[symbol]
+
+		if !ok || thesis.Categories[index].Strength > thesis.Categories[best].Strength {
+			analyzer.bestBySym[symbol] = index
+		}
+	}
 
 	thesis.Cognition.Range(func(key, value any) bool {
 		reading, ok := value.(types.Cognition)
@@ -129,23 +172,37 @@ func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 			return true
 		}
 
-		cognition = append(cognition, reading)
+		if best, ok := analyzer.bestBySym[reading.Symbol]; ok && reading.Ready && reading.Symbol != "" {
+			thesis.Categories[best].Surprisal = reading.EntropyBits
+
+			if reading.Confidence > thesis.Categories[best].Confidence {
+				thesis.Categories[best].Confidence = reading.Confidence
+			}
+
+			if reading.LookaheadScore > thesis.Categories[best].Strength {
+				thesis.Categories[best].Maturity = float64(reading.Cohort)
+			}
+		}
+
+		if focus == "" || reading.Symbol == focus {
+			analyzer.cogRows = append(analyzer.cogRows, reading)
+		}
 
 		return true
 	})
 
-	analyzer.calibrateCategories(thesis, cognition)
-
-	if framed := focusCognition(cognition); len(framed) > 0 {
-		analyzer.publish(datura.Map[any]{"cognition": framed})
+	if len(analyzer.cogRows) > 0 {
+		analyzer.publish(datura.Map[any]{"cognition": analyzer.cogRows})
 	}
 
 	if len(thesis.Forecasts) > 0 {
 		analyzer.publish(datura.Map[any]{"forecasts": thesis.Forecasts})
 	}
 
-	if framed := focusCategories(thesis.Categories); len(framed) > 0 {
-		analyzer.publish(datura.Map[any]{"categories": framed})
+	analyzer.catRows = focusCategoriesInto(analyzer.catRows[:0], thesis.Categories)
+
+	if len(analyzer.catRows) > 0 {
+		analyzer.publish(datura.Map[any]{"categories": analyzer.catRows})
 	}
 }
 
@@ -154,23 +211,27 @@ focusCognition returns every reading when focus is unset, otherwise only the
 focused symbol so cognitive surfaces paint one coherent tree instead of a flood.
 */
 func focusCognition(cognition []types.Cognition) []types.Cognition {
+	return focusCognitionInto(nil, cognition)
+}
+
+func focusCognitionInto(dst []types.Cognition, cognition []types.Cognition) []types.Cognition {
 	focus := types.Focus()
 
 	if focus == "" {
 		return cognition
 	}
 
-	framed := make([]types.Cognition, 0, 1)
+	dst = dst[:0]
 
 	for _, reading := range cognition {
 		if reading.Symbol != focus {
 			continue
 		}
 
-		framed = append(framed, reading)
+		dst = append(dst, reading)
 	}
 
-	return framed
+	return dst
 }
 
 /*
@@ -178,23 +239,27 @@ focusCategories returns every composed category when focus is unset, otherwise
 only the focused symbol so the thesis rail paints without a book-wide flood.
 */
 func focusCategories(categories []types.Category) []types.Category {
+	return focusCategoriesInto(nil, categories)
+}
+
+func focusCategoriesInto(dst []types.Category, categories []types.Category) []types.Category {
 	focus := types.Focus()
 
 	if focus == "" {
 		return categories
 	}
 
-	framed := make([]types.Category, 0, 8)
+	dst = dst[:0]
 
 	for _, category := range categories {
 		if category.Symbol != focus {
 			continue
 		}
 
-		framed = append(framed, category)
+		dst = append(dst, category)
 	}
 
-	return framed
+	return dst
 }
 
 /*
@@ -202,23 +267,27 @@ focusHypotheses returns every hypothesis when focus is unset, otherwise only the
 focused symbol so the thesis rail does not ship the full book each cut.
 */
 func focusHypotheses(hypotheses []types.Hypothesis) []types.Hypothesis {
+	return focusHypothesesInto(nil, hypotheses)
+}
+
+func focusHypothesesInto(dst []types.Hypothesis, hypotheses []types.Hypothesis) []types.Hypothesis {
 	focus := types.Focus()
 
 	if focus == "" {
 		return hypotheses
 	}
 
-	framed := make([]types.Hypothesis, 0, 1)
+	dst = dst[:0]
 
 	for _, hypothesis := range hypotheses {
 		if hypothesis.Symbol != focus {
 			continue
 		}
 
-		framed = append(framed, hypothesis)
+		dst = append(dst, hypothesis)
 	}
 
-	return framed
+	return dst
 }
 
 /*
@@ -226,23 +295,27 @@ focusRows returns every resonance/causal row when focus is unset, otherwise only
 the focused symbol so predictive-coding and causal charts stay lean on the wire.
 */
 func focusRows(rows []any) []any {
+	return focusRowsInto(nil, rows)
+}
+
+func focusRowsInto(dst []any, rows []any) []any {
 	focus := types.Focus()
 
 	if focus == "" {
 		return rows
 	}
 
-	framed := make([]any, 0, 1)
+	dst = dst[:0]
 
 	for _, row := range rows {
 		if rowSymbol(row) != focus {
 			continue
 		}
 
-		framed = append(framed, row)
+		dst = append(dst, row)
 	}
 
-	return framed
+	return dst
 }
 
 /*
@@ -284,24 +357,36 @@ func (analyzer *Analyzer) calibrateCategories(
 		return
 	}
 
+	if analyzer.bestBySym == nil {
+		analyzer.bestBySym = make(map[string]int)
+	}
+
+	for symbol := range analyzer.bestBySym {
+		delete(analyzer.bestBySym, symbol)
+	}
+
+	for index := range thesis.Categories {
+		symbol := thesis.Categories[index].Symbol
+
+		if symbol == "" {
+			continue
+		}
+
+		best, ok := analyzer.bestBySym[symbol]
+
+		if !ok || thesis.Categories[index].Strength > thesis.Categories[best].Strength {
+			analyzer.bestBySym[symbol] = index
+		}
+	}
+
 	for _, reading := range cognition {
 		if !reading.Ready || reading.Symbol == "" {
 			continue
 		}
 
-		best := -1
+		best, ok := analyzer.bestBySym[reading.Symbol]
 
-		for index := range thesis.Categories {
-			if thesis.Categories[index].Symbol != reading.Symbol {
-				continue
-			}
-
-			if best < 0 || thesis.Categories[index].Strength > thesis.Categories[best].Strength {
-				best = index
-			}
-		}
-
-		if best < 0 {
+		if !ok {
 			continue
 		}
 

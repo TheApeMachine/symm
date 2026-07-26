@@ -4,7 +4,6 @@ import (
 	"math"
 	"slices"
 
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
@@ -69,31 +68,6 @@ func (evidence Evidence) Project(
 	evidence.category(&projected, thesis, holding.Symbol)
 
 	return projected
-}
-
-/*
-Regulate projects stop evidence for every open wallet lot and lets Stoploss
-append a full-lot exit when the live floor is breached.
-*/
-func (evidence Evidence) Regulate(
-	thesis *types.Thesis,
-	balance *broker.Balance,
-) {
-	if thesis == nil || balance == nil {
-		return
-	}
-
-	for holding := range balance.Holdings() {
-		if holding.Status != types.OPEN || holding.Stoploss == nil {
-			continue
-		}
-
-		holding.Stoploss.Regulate(
-			thesis,
-			holding,
-			evidence.Project(thesis, holding),
-		)
-	}
 }
 
 func (evidence Evidence) forecast(

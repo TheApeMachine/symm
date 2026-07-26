@@ -46,6 +46,7 @@ export type Holding = {
 	return_pct: number;
 	status?: string;
 	asset?: string;
+	peak_price?: number;
 	stop_price?: number;
 	stop_return?: number;
 	peak_return?: number;

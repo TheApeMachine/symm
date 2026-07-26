@@ -75,16 +75,15 @@ func (signal *Signal) onTicker(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourceCVD, Status: types.SignalSkip}
 	}
 
-	if len(measurements) == 0 {
-		return nil
+	if len(measurements) > 0 {
+		signal.thesis.Publish(types.SourceCVD, measurements)
+		return types.SignalResult{Source: types.SourceCVD, Measurements: measurements, Status: types.SignalReady}
 	}
 
-	signal.thesis.Publish(types.SourceCVD, measurements)
-
-	return signal.thesis
+	return types.SignalResult{Source: types.SourceCVD, Status: types.SignalSkip}
 }
 
 func (signal *Signal) onTrade(message any) any {
@@ -93,16 +92,15 @@ func (signal *Signal) onTrade(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourceCVD, Status: types.SignalSkip}
 	}
 
-	if len(measurements) == 0 {
-		return nil
+	if len(measurements) > 0 {
+		signal.thesis.Publish(types.SourceCVD, measurements)
+		return types.SignalResult{Source: types.SourceCVD, Measurements: measurements, Status: types.SignalReady}
 	}
 
-	signal.thesis.Publish(types.SourceCVD, measurements)
-
-	return signal.thesis
+	return types.SignalResult{Source: types.SourceCVD, Status: types.SignalSkip}
 }
 
 func (signal *Signal) Calculate(
@@ -218,35 +216,16 @@ func (signal *Signal) cvdMeasurements(
 		At:       row.Timestamp,
 		Maturity: maturity,
 		Validity: validity,
+		Metrics:  make(map[string]types.MetricSample, 7),
 		Scale:    scale,
 	}
-	specs := []struct {
-		metric types.MetricType
-		unit   types.MeasurementUnit
-		value  float64
-	}{
-		{types.MetricAbsorption, types.UnitDimensionless, output.Absorption},
-		{types.MetricDrive, types.UnitDimensionless, output.Drive},
-		{types.MetricBalance, types.UnitDimensionless, output.Balance},
-		{types.MetricStarvation, types.UnitDimensionless, output.Starvation},
-		{types.MetricStrength, types.UnitDimensionless, output.Value},
-		{types.MetricNetFraction, types.UnitDimensionless, output.NetFraction},
-		{types.MetricNet, types.UnitQuoteCurrency, output.Net},
-	}
-
-	for _, spec := range specs {
-		var normalized *float64
-
-		if spec.unit == types.UnitDimensionless {
-			normalized = types.NormalizeFinite(spec.value)
-		}
-
-		measurement.PutMetric(spec.metric, types.SideNone, types.MetricSample{
-			Raw:        spec.value,
-			Normalized: normalized,
-			Unit:       spec.unit,
-		})
-	}
+	measurement.Metrics[types.MetricKey(types.MetricAbsorption, types.SideNone)] = types.MetricSample{Raw: output.Absorption, Normalized: types.NormalizeFinite(output.Absorption), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricDrive, types.SideNone)] = types.MetricSample{Raw: output.Drive, Normalized: types.NormalizeFinite(output.Drive), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricBalance, types.SideNone)] = types.MetricSample{Raw: output.Balance, Normalized: types.NormalizeFinite(output.Balance), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricStarvation, types.SideNone)] = types.MetricSample{Raw: output.Starvation, Normalized: types.NormalizeFinite(output.Starvation), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricStrength, types.SideNone)] = types.MetricSample{Raw: output.Value, Normalized: types.NormalizeFinite(output.Value), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricNetFraction, types.SideNone)] = types.MetricSample{Raw: output.NetFraction, Normalized: types.NormalizeFinite(output.NetFraction), Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricNet, types.SideNone)] = types.MetricSample{Raw: output.Net, Unit: types.UnitQuoteCurrency}
 
 	return []*types.Measurement{measurement}
 }

@@ -1,7 +1,6 @@
 package kraken
 
 import (
-	"math/big"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -57,78 +56,6 @@ func (book *Book) IsSuccess() bool {
 
 func (book *Book) Action() string {
 	return "book"
-}
-
-type BookDataSlice []BookData
-
-func NewBookDataSlice(buf []byte) BookDataSlice {
-	data := BookDataSlice{}
-	errnie.Error(data.Decode(buf))
-	return data
-}
-
-func (data *BookDataSlice) Decode(buf []byte) error {
-	// Look for the first non-whitespace character to avoid a failing unmarshal attempt
-	// which allocates heavily.
-	isArray := false
-	for _, b := range buf {
-		if b == ' ' || b == '\t' || b == '\n' || b == '\r' {
-			continue
-		}
-		if b == '[' {
-			isArray = true
-		}
-		break
-	}
-
-	if isArray {
-		var rows []BookData
-		if err := sonic.Unmarshal(buf, &rows); err != nil {
-			return errnie.Err(errnie.Validation, "kraken: decode book array data", err)
-		}
-		*data = rows
-		return nil
-	}
-
-	var frame Book
-	if err := sonic.Unmarshal(buf, &frame); err != nil {
-		return errnie.Err(errnie.Validation, "kraken: decode book object data", err)
-	}
-
-	for index := range frame.Data {
-		if frame.Data[index].Type == "" {
-			frame.Data[index].Type = frame.Type
-		}
-	}
-
-	*data = frame.Data
-	return nil
-}
-
-/*
-PriceTick resolves an exchange price onto its exact declared increment using
-fixed-point rationals so off-lattice values cannot be rounded into validity.
-*/
-func PriceTick(price decimal.Decimal, increment decimal.Decimal) (int64, error) {
-	if price.Sign() <= 0 || increment.Sign() <= 0 {
-		return 0, errnie.Err(
-			errnie.Validation,
-			"kraken: positive price and increment required",
-			nil,
-		)
-	}
-
-	ratio := new(big.Rat).Quo(price.Rat(), increment.Rat())
-
-	if ratio.Denom().Cmp(big.NewInt(1)) != 0 || !ratio.Num().IsInt64() {
-		return 0, errnie.Err(
-			errnie.Validation,
-			"kraken: price is not an integer tick",
-			nil,
-		)
-	}
-
-	return ratio.Num().Int64(), nil
 }
 
 type BookSubscription struct {

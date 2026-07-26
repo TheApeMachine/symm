@@ -14,7 +14,7 @@ posteriors that Cortex renders from one DMT reading.
 func (analyzer *Analyzer) cognitionVisualization(
 	sequence []byte,
 	parent []byte,
-	parts []string,
+	symbolToken string,
 	classification dmt.ClassificationResult,
 	predictions []dmt.LookaheadPrediction,
 ) (
@@ -32,8 +32,8 @@ func (analyzer *Analyzer) cognitionVisualization(
 	}
 
 	classes = cognitionClasses(classification)
-	symbolPrefix := cognitionSymbolPrefix(parts)
-	tip := analyzer.lookaheadTip(parts, predictions)
+	symbolPrefix := cognitionSymbolPrefix(symbolToken)
+	tip := analyzer.lookaheadTip(symbolToken, predictions)
 
 	beamWidth = analyzer.treeExpandWidth(cognitionBeamWidth(tip))
 	maxHops = cognitionTreeDepth()
@@ -55,10 +55,10 @@ beam and to score category strength, falling back to the parent predictions when
 the symbol namespace has no learned children yet.
 */
 func (analyzer *Analyzer) lookaheadTip(
-	parts []string,
+	symbolToken string,
 	predictions []dmt.LookaheadPrediction,
 ) []dmt.LookaheadPrediction {
-	symbolPrefix := cognitionSymbolPrefix(parts)
+	symbolPrefix := cognitionSymbolPrefix(symbolToken)
 	tip := analyzer.predictChildren(
 		string(symbolPrefix), cognitionTreeDepth()*cognitionTreeDepth(),
 	)
@@ -89,12 +89,12 @@ func (analyzer *Analyzer) lookaheadScore(predictions []dmt.LookaheadPrediction) 
 cognitionSymbolPrefix returns the leading symbol-* token so beam search stays
 inside one coin's radix namespace.
 */
-func cognitionSymbolPrefix(parts []string) []byte {
-	if len(parts) == 0 || !strings.HasPrefix(parts[0], "symbol-") {
+func cognitionSymbolPrefix(symbolToken string) []byte {
+	if !strings.HasPrefix(symbolToken, "symbol-") {
 		return nil
 	}
 
-	return []byte(parts[0])
+	return []byte(symbolToken)
 }
 
 func cognitionClasses(

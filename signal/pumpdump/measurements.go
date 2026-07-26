@@ -91,6 +91,7 @@ func ignitionMeasurements(
 		State:     types.ValidityValid,
 		Readiness: types.ReadinessObservation,
 	}
+	specs := ignitionSpecs(output, mid)
 
 	if !ready {
 		validity.State = types.ValidityProvisional
@@ -108,14 +109,15 @@ func ignitionMeasurements(
 		Maturity: maturity,
 		Validity: validity,
 		Scale:    scale,
+		Metrics:  make(map[string]types.MetricSample, len(specs)),
 	}
 
-	for _, spec := range ignitionSpecs(output, mid) {
-		measurement.PutMetric(spec.metric, types.SideNone, types.MetricSample{
+	for _, spec := range specs {
+		measurement.Metrics[types.MetricKey(spec.metric, types.SideNone)] = types.MetricSample{
 			Raw:        spec.raw,
 			Normalized: spec.normalized,
 			Unit:       spec.unit,
-		})
+		}
 	}
 
 	return []*types.Measurement{measurement}, nil

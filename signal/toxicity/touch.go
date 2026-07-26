@@ -6,7 +6,6 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/symm/kraken"
 )
 
 /*
@@ -33,47 +32,28 @@ const (
 )
 
 /*
-attributeTouchSide maps a trade onto the exact executable bid or ask tick.
+attributeTouchSide maps a trade onto the exact executable bid or ask price.
 Prints away from both touches remain valid trades but are not fabricated as
-touch fills; malformed off-lattice prices fail explicitly.
+touch fills.
 */
 func attributeTouchSide(
 	tradePrice decimal.Decimal,
 	bidPrice *decimal.Decimal,
 	askPrice *decimal.Decimal,
-	increment *decimal.Decimal,
 ) (touchSide, error) {
-	if bidPrice == nil || askPrice == nil || increment == nil || increment.Sign() <= 0 {
-		return touchSideNone, fmt.Errorf("toxicity: complete touch lattice required")
+	if bidPrice == nil || askPrice == nil {
+		return touchSideNone, fmt.Errorf("toxicity: complete touch required")
 	}
 
-	tradeTick, err := kraken.PriceTick(tradePrice, *increment)
-
-	if err != nil {
-		return touchSideNone, fmt.Errorf("toxicity: trade price off lattice: %w", err)
-	}
-
-	bidTick, err := kraken.PriceTick(*bidPrice, *increment)
-
-	if err != nil {
-		return touchSideNone, fmt.Errorf("toxicity: bid price off lattice: %w", err)
-	}
-
-	askTick, err := kraken.PriceTick(*askPrice, *increment)
-
-	if err != nil {
-		return touchSideNone, fmt.Errorf("toxicity: ask price off lattice: %w", err)
-	}
-
-	if bidTick >= askTick {
+	if bidPrice.Cmp(askPrice) >= 0 {
 		return touchSideNone, fmt.Errorf("toxicity: uncrossed touch required")
 	}
 
-	if tradeTick == askTick {
+	if tradePrice.Cmp(askPrice) == 0 {
 		return touchSideAsk, nil
 	}
 
-	if tradeTick == bidTick {
+	if tradePrice.Cmp(bidPrice) == 0 {
 		return touchSideBid, nil
 	}
 
@@ -89,7 +69,6 @@ func attributeTouchFill(
 	tradeQty float64,
 	bid *book.Level,
 	ask *book.Level,
-	increment *decimal.Decimal,
 ) error {
 	if bid == nil || ask == nil {
 		return fmt.Errorf("toxicity: complete Level3 touch required")
@@ -101,7 +80,6 @@ func attributeTouchFill(
 		tradeQty,
 		bid.Price,
 		ask.Price,
-		increment,
 	)
 }
 
@@ -116,14 +94,8 @@ func attributeTouchPrices(
 	tradeQty float64,
 	bidPrice *decimal.Decimal,
 	askPrice *decimal.Decimal,
-	increment *decimal.Decimal,
 ) error {
-	side, err := attributeTouchSide(
-		tradePrice,
-		bidPrice,
-		askPrice,
-		increment,
-	)
+	side, err := attributeTouchSide(tradePrice, bidPrice, askPrice)
 
 	if err != nil {
 		return err

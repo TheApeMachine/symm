@@ -69,16 +69,15 @@ func (signal *Signal) onTicker(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return nil
+		return types.SignalResult{Source: types.SourceCorrelation, Status: types.SignalSkip}
 	}
 
-	if len(measurements) == 0 {
-		return nil
+	if len(measurements) > 0 {
+		signal.thesis.Publish(types.SourceCorrelation, measurements)
+		return types.SignalResult{Source: types.SourceCorrelation, Measurements: measurements, Status: types.SignalReady}
 	}
 
-	signal.thesis.Publish(types.SourceCorrelation, measurements)
-
-	return signal.thesis
+	return types.SignalResult{Source: types.SourceCorrelation, Status: types.SignalSkip}
 }
 
 func (signal *Signal) Calculate(
@@ -146,34 +145,23 @@ func correlationMeasurement(
 	validity types.MeasurementValidity,
 	scores map[string]float64,
 ) *types.Measurement {
-	specs := []struct {
-		metric types.MetricType
-		key    string
-	}{
-		{types.MetricCorrelation, "correlation"},
-		{types.MetricSigned, "signed"},
-		{types.MetricRelativeEnergy, "relativeEnergy"},
-		{types.MetricHerdScore, "herdScore"},
-		{types.MetricAlphaScore, "alphaScore"},
-		{types.MetricNoiseScore, "noiseScore"},
-		{types.MetricStressScore, "stressScore"},
-		{types.MetricPeakScore, "peakScore"},
-		{types.MetricStrength, "strength"},
-	}
 	measurement := &types.Measurement{
 		Source:   types.SourceCorrelation,
 		Symbol:   symbol,
 		At:       at,
 		Validity: validity,
-		Metrics:  map[string]types.MetricSample{},
+		Metrics:  make(map[string]types.MetricSample, 9),
 	}
 
-	for _, spec := range specs {
-		measurement.PutMetric(spec.metric, types.SideNone, types.MetricSample{
-			Raw:  scores[spec.key],
-			Unit: types.UnitDimensionless,
-		})
-	}
+	measurement.Metrics[types.MetricKey(types.MetricCorrelation, types.SideNone)] = types.MetricSample{Raw: scores["correlation"], Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricSigned, types.SideNone)] = types.MetricSample{Raw: scores["signed"], Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricRelativeEnergy, types.SideNone)] = types.MetricSample{Raw: scores["relativeEnergy"], Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricHerdScore, types.SideNone)] = types.MetricSample{Raw: scores["herdScore"], Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricAlphaScore, types.SideNone)] = types.MetricSample{Raw: scores["alphaScore"], Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricNoiseScore, types.SideNone)] = types.MetricSample{Raw: scores["noiseScore"], Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricStressScore, types.SideNone)] = types.MetricSample{Raw: scores["stressScore"], Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricPeakScore, types.SideNone)] = types.MetricSample{Raw: scores["peakScore"], Unit: types.UnitDimensionless}
+	measurement.Metrics[types.MetricKey(types.MetricStrength, types.SideNone)] = types.MetricSample{Raw: scores["strength"], Unit: types.UnitDimensionless}
 
 	return measurement
 }
