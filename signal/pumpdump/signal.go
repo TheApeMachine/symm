@@ -214,16 +214,18 @@ func (signal *Signal) Calculate(
 		return nil, err
 	}
 
-	select {
-	case signal.ui <- datura.Map[any]{
-		"measurements": uiOut,
-	}.Marshal():
-	default:
-		errnie.Error(errnie.Err(
-			errnie.TooManyRequests,
-			"wire: ui channel saturated; dropped measurements",
-			nil,
-		))
+	if len(uiOut) > 0 {
+		select {
+		case signal.ui <- datura.Map[any]{
+			"measurements": uiOut,
+		}.Marshal():
+		default:
+			errnie.Error(errnie.Err(
+				errnie.TooManyRequests,
+				"wire: ui channel saturated; dropped measurements",
+				nil,
+			))
+		}
 	}
 
 	return out, nil
