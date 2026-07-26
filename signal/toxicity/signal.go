@@ -95,7 +95,7 @@ func (signal *Signal) onTicker(message any) any {
 	}
 
 	if len(measurements) > 0 {
-		signal.thesis.Replace(types.SourceToxicity, measurements)
+		signal.thesis.AppendMeasurements(measurements)
 		return types.SignalResult{Source: types.SourceToxicity, Measurements: measurements, Status: types.SignalReady}
 	}
 
@@ -112,7 +112,7 @@ func (signal *Signal) onBook(message any) any {
 	}
 
 	if len(measurements) > 0 {
-		signal.thesis.Replace(types.SourceToxicity, measurements)
+		signal.thesis.AppendMeasurements(measurements)
 		return types.SignalResult{Source: types.SourceToxicity, Measurements: measurements, Status: types.SignalReady}
 	}
 
@@ -129,7 +129,7 @@ func (signal *Signal) onTrade(message any) any {
 	}
 
 	if len(measurements) > 0 {
-		signal.thesis.Replace(types.SourceToxicity, measurements)
+		signal.thesis.AppendMeasurements(measurements)
 		return types.SignalResult{Source: types.SourceToxicity, Measurements: measurements, Status: types.SignalReady}
 	}
 

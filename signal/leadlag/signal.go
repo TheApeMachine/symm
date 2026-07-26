@@ -72,7 +72,7 @@ func (signal *Signal) onTicker(message any) any {
 	}
 
 	if len(measurements) > 0 {
-		signal.thesis.Publish(types.SourceLeadLag, measurements)
+		signal.thesis.AppendMeasurements(measurements)
 		return types.SignalResult{Source: types.SourceLeadLag, Measurements: measurements, Status: types.SignalReady}
 	}
 

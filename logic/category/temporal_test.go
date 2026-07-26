@@ -49,8 +49,8 @@ func TestStaleAndIncomparable(t *testing.T) {
 			thesis.At = at
 			ignition := 0.8
 			trend := 0.7
-			thesis.Measurements = append(thesis.Measurements,
-				&types.Measurement{
+			thesis.Measurements["SIM/USD"] = []*types.Measurement{
+				{
 					Source:       types.SourcePumpDump,
 					Symbol:       "SIM/USD",
 					At:           time.Unix(1, 0),
@@ -65,7 +65,7 @@ func TestStaleAndIncomparable(t *testing.T) {
 						},
 					},
 				},
-				&types.Measurement{
+				{
 					Source:       types.SourcePumpDump,
 					Symbol:       "SIM/USD",
 					At:           time.Unix(100, 0),
@@ -80,7 +80,7 @@ func TestStaleAndIncomparable(t *testing.T) {
 						},
 					},
 				},
-			)
+			}
 			thesis.Categories["SIM/USD"] = []types.Category{
 				{
 					Symbol:     "SIM/USD",

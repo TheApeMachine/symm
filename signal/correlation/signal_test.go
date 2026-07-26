@@ -62,20 +62,22 @@ func TestCalculate(t *testing.T) {
 			So(market.Transition(proof.state, func() error {
 				thesis := wired.Thesis
 
-				for _, measurement := range thesis.Measurements {
-					if measurement.Source != types.SourceCorrelation {
-						continue
+				for _, rows := range thesis.Measurements {
+					for _, measurement := range rows {
+						if measurement.Source != types.SourceCorrelation {
+							continue
+						}
+
+						So(measurement.ValidateStruct(), ShouldBeNil)
+
+						measurement.EachMetric(func(
+							_ types.MetricType, _ types.MeasurementSide, sample types.MetricSample,
+						) bool {
+							So(math.IsNaN(sample.Raw), ShouldBeFalse)
+							return true
+						})
+						measurements = append(measurements, measurement)
 					}
-
-					So(measurement.ValidateStruct(), ShouldBeNil)
-
-					measurement.EachMetric(func(
-						_ types.MetricType, _ types.MeasurementSide, sample types.MetricSample,
-					) bool {
-						So(math.IsNaN(sample.Raw), ShouldBeFalse)
-						return true
-					})
-					measurements = append(measurements, measurement)
 				}
 
 				return nil

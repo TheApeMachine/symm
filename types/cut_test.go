@@ -17,10 +17,12 @@ func TestImmutableCutCheckpoint(t *testing.T) {
 			ID:   3,
 			Tick: 9,
 			At:   time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC),
-			Measurements: []*Measurement{{
-				Symbol: "BTC/USD",
-				Source: SourceHawkes,
-			}},
+			Measurements: map[string][]*Measurement{
+				"BTC/USD": {{
+					Symbol: "BTC/USD",
+					Source: SourceHawkes,
+				}},
+			},
 		}
 
 		Convey("When Checkpoint persists it", func() {
@@ -36,7 +38,7 @@ func TestImmutableCutCheckpoint(t *testing.T) {
 				So(decoded.ID, ShouldEqual, CutID(3))
 				So(decoded.Tick, ShouldEqual, 9)
 				So(decoded.Measurements, ShouldHaveLength, 1)
-				So(decoded.Measurements[0].Symbol, ShouldEqual, "BTC/USD")
+				So(decoded.Measurements["BTC/USD"][0].Symbol, ShouldEqual, "BTC/USD")
 			})
 		})
 	})
@@ -60,40 +62,41 @@ func TestNewImmutableCutKeepsPublishedRowsStable(t *testing.T) {
 				},
 			},
 		}
-		thesis.Publish(SourceHawkes, []*Measurement{original})
+		thesis.Measurements[original.Symbol] = []*Measurement{original}
 
 		cut := NewImmutableCut(1, 7, thesis)
 		So(cut.Measurements, ShouldHaveLength, 1)
 
-		eventCount, ok := cut.Measurements[0].Sample(MetricEventCount, SideBuy)
+		eventCount, ok := cut.Measurements["SIM1/USD"][0].Sample(MetricEventCount, SideBuy)
 		So(ok, ShouldBeTrue)
 		So(eventCount.Raw, ShouldEqual, 1)
 
 		Convey("Publish replaces the thesis pointer; cut row stays 1", func() {
-			thesis.Publish(SourceHawkes, []*Measurement{{
+			replacement := &Measurement{
 				Source: SourceHawkes, Symbol: "SIM1/USD", At: time.Unix(2, 0).UTC(),
 				Metrics: map[string]MetricSample{
 					MetricKey(MetricEventCount, SideBuy): {Raw: 9},
 				},
-			}})
+			}
+			thesis.Measurements[replacement.Symbol] = []*Measurement{replacement}
 
-			live, ok := thesis.Measurements[0].Sample(MetricEventCount, SideBuy)
+			live, ok := thesis.Measurements["SIM1/USD"][0].Sample(MetricEventCount, SideBuy)
 			So(ok, ShouldBeTrue)
 			So(live.Raw, ShouldEqual, 9)
 
-			frozen, ok := cut.Measurements[0].Sample(MetricEventCount, SideBuy)
+			frozen, ok := cut.Measurements["SIM1/USD"][0].Sample(MetricEventCount, SideBuy)
 			So(ok, ShouldBeTrue)
 			So(frozen.Raw, ShouldEqual, 1)
 			So(frozen.Normalized, ShouldNotBeNil)
 			So(*frozen.Normalized, ShouldEqual, 0.5)
-			So(cut.Measurements[0], ShouldNotEqual, thesis.Measurements[0])
+			So(cut.Measurements["SIM1/USD"][0], ShouldNotEqual, thesis.Measurements["SIM1/USD"][0])
 
 			mutated := 9.0
-			thesis.Measurements[0].Metrics[MetricKey(MetricEventCount, SideBuy)] = MetricSample{
+			thesis.Measurements["SIM1/USD"][0].Metrics[MetricKey(MetricEventCount, SideBuy)] = MetricSample{
 				Raw: 99, Normalized: &mutated,
 			}
 
-			refrozen, ok := cut.Measurements[0].Sample(MetricEventCount, SideBuy)
+			refrozen, ok := cut.Measurements["SIM1/USD"][0].Sample(MetricEventCount, SideBuy)
 			So(ok, ShouldBeTrue)
 			So(refrozen.Raw, ShouldEqual, 1)
 			So(refrozen.Normalized, ShouldNotBeNil)
@@ -108,10 +111,12 @@ func BenchmarkImmutableCutCheckpoint(b *testing.B) {
 		ID:   1,
 		Tick: 1,
 		At:   time.Now().UTC(),
-		Measurements: []*Measurement{{
-			Symbol: "ETH/USD",
-			Source: SourceDepthFlow,
-		}},
+		Measurements: map[string][]*Measurement{
+			"ETH/USD": {{
+				Symbol: "ETH/USD",
+				Source: SourceDepthFlow,
+			}},
+		},
 	}
 
 	b.ReportAllocs()
@@ -138,7 +143,7 @@ func BenchmarkNewImmutableCut(b *testing.B) {
 		})
 	}
 
-	thesis.Publish(SourceHawkes, rows)
+	thesis.Measurements["SIM1/USD"] = rows
 	b.ReportAllocs()
 
 	for b.Loop() {

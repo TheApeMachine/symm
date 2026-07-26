@@ -94,7 +94,7 @@ func (signal *Signal) onTicker(message any) any {
 	}
 
 	if len(measurements) > 0 {
-		signal.thesis.Publish(types.SourceHawkes, measurements)
+		signal.thesis.AppendMeasurements(measurements)
 	}
 
 	// Tickers do not feed arrivals today, but they are the market pulse. Without
@@ -119,7 +119,7 @@ func (signal *Signal) onTrade(message any) any {
 		return nil
 	}
 
-	signal.thesis.Publish(types.SourceHawkes, measurements)
+	signal.thesis.AppendMeasurements(measurements)
 
 	return signal.cut()
 }

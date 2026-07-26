@@ -128,9 +128,11 @@ func TestMeasure(t *testing.T) {
 			measurements := []*types.Measurement{}
 			maturity := make(map[string]float64, len(market.Symbols))
 
-			for _, measurement := range thesis.Measurements {
-				if measurement.Source == types.SourcePumpDump {
-					maturity[measurement.Symbol] = measurement.Maturity
+			for _, rows := range thesis.Measurements {
+				for _, measurement := range rows {
+					if measurement.Source == types.SourcePumpDump {
+						maturity[measurement.Symbol] = measurement.Maturity
+					}
 				}
 			}
 
@@ -138,9 +140,11 @@ func TestMeasure(t *testing.T) {
 				So(market.Transition(state, tests.Idle, proof.symbols...), ShouldBeNil)
 			}
 
-			for _, measurement := range thesis.Measurements {
-				if measurement.Source == types.SourcePumpDump {
-					maturity[measurement.Symbol] = measurement.Maturity
+			for _, rows := range thesis.Measurements {
+				for _, measurement := range rows {
+					if measurement.Source == types.SourcePumpDump {
+						maturity[measurement.Symbol] = measurement.Maturity
+					}
 				}
 			}
 
@@ -149,40 +153,44 @@ func TestMeasure(t *testing.T) {
 					current := thesis.Measurements
 					advanced := make(map[string]bool, len(market.Symbols))
 
-					for _, measurement := range current {
-						if measurement.Source != types.SourcePumpDump {
-							continue
-						}
-
-						So(measurement.ValidateStruct(), ShouldBeNil)
-
-						if measurement.Maturity > maturity[measurement.Symbol] {
-							So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
-							advanced[measurement.Symbol] = true
-							maturity[measurement.Symbol] = measurement.Maturity
-						}
-
-						measurement.EachMetric(func(
-							_ types.MetricType,
-							_ types.MeasurementSide,
-							sample types.MetricSample,
-						) bool {
-							if sample.Raw == 0 {
-								So(sample.Normalized, ShouldBeNil)
-								return true
+					for _, rows := range current {
+						for _, measurement := range rows {
+							if measurement.Source != types.SourcePumpDump {
+								continue
 							}
 
-							So(sample.Normalized, ShouldNotBeNil)
-							So(math.IsNaN(*sample.Normalized), ShouldBeFalse)
-							So(math.IsInf(*sample.Normalized, 0), ShouldBeFalse)
-							return true
-						})
+							So(measurement.ValidateStruct(), ShouldBeNil)
+
+							if measurement.Maturity > maturity[measurement.Symbol] {
+								So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
+								advanced[measurement.Symbol] = true
+								maturity[measurement.Symbol] = measurement.Maturity
+							}
+
+							measurement.EachMetric(func(
+								_ types.MetricType,
+								_ types.MeasurementSide,
+								sample types.MetricSample,
+							) bool {
+								if sample.Raw == 0 {
+									So(sample.Normalized, ShouldBeNil)
+									return true
+								}
+
+								So(sample.Normalized, ShouldNotBeNil)
+								So(math.IsNaN(*sample.Normalized), ShouldBeFalse)
+								So(math.IsInf(*sample.Normalized, 0), ShouldBeFalse)
+								return true
+							})
+						}
 					}
 
-					for _, measurement := range current {
-						if measurement.Source == types.SourcePumpDump &&
-							advanced[measurement.Symbol] {
-							measurements = append(measurements, measurement)
+					for _, rows := range current {
+						for _, measurement := range rows {
+							if measurement.Source == types.SourcePumpDump &&
+								advanced[measurement.Symbol] {
+								measurements = append(measurements, measurement)
+							}
 						}
 					}
 

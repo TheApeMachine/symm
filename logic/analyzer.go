@@ -292,7 +292,7 @@ func (analyzer *Analyzer) enrichCut(
 	tick int64,
 ) {
 	started := time.Now()
-	analyzer.stamp(thesis, thesis.Measurements)
+	analyzer.stamp(thesis)
 
 	payload := map[string]any{}
 
@@ -375,9 +375,10 @@ func (analyzer *Analyzer) composeCategories(thesis *types.Thesis) {
 		thesis.Categories[symbol] = rows[:0]
 	}
 
-	for _, measurement := range thesis.Measurements {
+	thesis.EachMeasurement(func(measurement *types.Measurement) bool {
 		analyzer.composeMeasurement(thesis, measurement)
-	}
+		return true
+	})
 
 	for symbol, rows := range thesis.Categories {
 		if len(rows) == 0 {
@@ -537,7 +538,7 @@ func (analyzer *Analyzer) stampAndBegin(
 	cutID types.CutID,
 	tick int64,
 ) {
-	analyzer.stamp(thesis, thesis.Measurements)
+	analyzer.stamp(thesis)
 
 	payload := map[string]any{}
 
@@ -555,9 +556,15 @@ pointer-slice copy before category composition.
 */
 func (analyzer *Analyzer) stamp(
 	thesis *types.Thesis,
-	measurements []*types.Measurement,
 ) {
-	thesis.At = measurements[len(measurements)-1].At
+	thesis.EachMeasurement(func(measurement *types.Measurement) bool {
+		if measurement != nil && !measurement.At.IsZero() {
+			thesis.At = measurement.At
+			return false
+		}
+
+		return true
+	})
 }
 
 /*

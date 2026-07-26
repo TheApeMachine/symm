@@ -31,10 +31,12 @@ func TestImmutableCutCheckpointRaceStress(t *testing.T) {
 					ID:   types.CutID(index*16 + tick),
 					Tick: int64(tick),
 					At:   at,
-					Measurements: []*types.Measurement{{
-						Symbol: "BTC/USD",
-						Source: types.SourceHawkes,
-					}},
+					Measurements: map[string][]*types.Measurement{
+						"BTC/USD": {{
+							Symbol: "BTC/USD",
+							Source: types.SourceHawkes,
+						}},
+					},
 				}
 
 				if err := cut.Checkpoint(dir); err != nil {

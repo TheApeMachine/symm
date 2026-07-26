@@ -364,7 +364,8 @@ func (hub *Hub) writeWallet(session *clientSession) {
 	}
 
 	frame := datura.Map[any]{
-		"balances": hub.balance.Data,
+		"balances": hub.balance.Wallet.Data,
+		"holdings": hub.balance.Holdings(),
 	}.Marshal()
 
 	if len(frame) == 0 {

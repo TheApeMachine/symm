@@ -65,7 +65,7 @@ func TestMeasurementValidateStruct(t *testing.T) {
 		Convey("Then a backwards scale interval is rejected without mutation", func() {
 			at := time.Unix(2, 0)
 			mixed := Measurement{
-				At: at,
+				At:      at,
 				Metrics: metrics,
 				Scale: ScaleReference{
 					Kind:    ScaleObservationWindow,
@@ -183,8 +183,8 @@ func BenchmarkFilterLatest(b *testing.B) {
 
 		for epochIndex := 0; epochIndex < epochCount; epochIndex++ {
 			row := &Measurement{
-				Symbol: symbol,
-				At:     time.Unix(int64(epochIndex), 0),
+				Symbol:  symbol,
+				At:      time.Unix(int64(epochIndex), 0),
 				Metrics: make(map[string]MetricSample, metricCount),
 			}
 
@@ -211,6 +211,7 @@ func BenchmarkFilterLatest(b *testing.B) {
 func TestForPublish(t *testing.T) {
 	Convey("Given merged rows for two symbols from one signal", t, func() {
 		at := time.Unix(100, 0).UTC()
+		observations := map[string][]*Measurement{}
 		rows := []*Measurement{
 			{
 				Source: SourceSentiment, Symbol: "BTC/USD", At: at,
@@ -230,11 +231,15 @@ func TestForPublish(t *testing.T) {
 			},
 		}
 
+		for _, row := range rows {
+			observations[row.Symbol] = append(observations[row.Symbol], row)
+		}
+
 		published := ForPublish(rows)
 
 		Convey("It keeps one row per symbol with all metrics", func() {
 			So(published, ShouldHaveLength, 2)
-			So(ObservationCount(rows), ShouldEqual, 2)
+			So(ObservationCount(observations), ShouldEqual, 2)
 
 			breadth, ok := published[0].Sample(MetricBreadth, SideNone)
 			So(ok, ShouldBeTrue)
@@ -363,7 +368,7 @@ func BenchmarkObservationCount(b *testing.B) {
 		metricCount = 9
 	)
 
-	rows := make([]*Measurement, 0, symbolCount)
+	rows := make(map[string][]*Measurement, symbolCount)
 	at := time.Unix(100, 0).UTC()
 
 	for symbolIndex := range symbolCount {
@@ -376,7 +381,7 @@ func BenchmarkObservationCount(b *testing.B) {
 			}
 		}
 
-		rows = append(rows, &Measurement{
+		rows[symbol] = append(rows[symbol], &Measurement{
 			Source:  SourceSentiment,
 			Symbol:  symbol,
 			At:      at,

@@ -76,58 +76,60 @@ indexEvidence builds the per-symbol evidence index from a pre-snapshotted
 measurement slice. Callers must hold their own snapshot before calling so the
 evidence pass and the compose pass share one copy of the pointer slice.
 */
-func indexEvidence(measurements []*types.Measurement) *evidenceIndex {
+func indexEvidence(measurements map[string][]*types.Measurement) *evidenceIndex {
 	index := &evidenceIndex{symbols: map[string]*symbolEvidence{}}
 
-	for _, measurement := range measurements {
-		if measurement == nil ||
-			measurement.Validity.State != types.ValidityValid ||
-			measurement.Symbol == "" ||
-			len(measurement.Metrics) == 0 {
-			continue
-		}
-
-		from, through := measurement.Interval()
-
-		measurement.EachMetric(func(
-			metric types.MetricType, _ types.MeasurementSide, sample types.MetricSample,
-		) bool {
-			mass, ok := sampleMass(sample)
-
-			if !ok {
-				return true
+	for _, bySymbol := range measurements {
+		for _, measurement := range bySymbol {
+			if measurement == nil ||
+				measurement.Validity.State != types.ValidityValid ||
+				measurement.Symbol == "" ||
+				len(measurement.Metrics) == 0 {
+				continue
 			}
 
-			bucket := index.symbols[measurement.Symbol]
+			from, through := measurement.Interval()
 
-			if bucket == nil {
-				bucket = &symbolEvidence{
-					mass:    map[types.MetricType]float64{},
-					from:    map[types.MetricType]time.Time{},
-					through: map[types.MetricType]time.Time{},
-					horizon: map[types.MetricType]time.Duration{},
+			measurement.EachMetric(func(
+				metric types.MetricType, _ types.MeasurementSide, sample types.MetricSample,
+			) bool {
+				mass, ok := sampleMass(sample)
+
+				if !ok {
+					return true
 				}
-				index.symbols[measurement.Symbol] = bucket
-			}
 
-			if mass > bucket.mass[metric] {
-				bucket.mass[metric] = mass
-			}
+				bucket := index.symbols[measurement.Symbol]
 
-			if previous, ok := bucket.from[metric]; !ok || from.Before(previous) {
-				bucket.from[metric] = from
-			}
+				if bucket == nil {
+					bucket = &symbolEvidence{
+						mass:    map[types.MetricType]float64{},
+						from:    map[types.MetricType]time.Time{},
+						through: map[types.MetricType]time.Time{},
+						horizon: map[types.MetricType]time.Duration{},
+					}
+					index.symbols[measurement.Symbol] = bucket
+				}
 
-			if previous, ok := bucket.through[metric]; !ok || through.After(previous) {
-				bucket.through[metric] = through
-			}
+				if mass > bucket.mass[metric] {
+					bucket.mass[metric] = mass
+				}
 
-			if measurement.Horizon > bucket.horizon[metric] {
-				bucket.horizon[metric] = measurement.Horizon
-			}
+				if previous, ok := bucket.from[metric]; !ok || from.Before(previous) {
+					bucket.from[metric] = from
+				}
 
-			return true
-		})
+				if previous, ok := bucket.through[metric]; !ok || through.After(previous) {
+					bucket.through[metric] = through
+				}
+
+				if measurement.Horizon > bucket.horizon[metric] {
+					bucket.horizon[metric] = measurement.Horizon
+				}
+
+				return true
+			})
+		}
 	}
 
 	return index

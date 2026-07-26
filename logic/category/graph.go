@@ -117,7 +117,6 @@ func (graph *Graph) UpdateFrom(thesis *types.Thesis) {
 			node.Strength = category.Strength
 			node.Freshness = category.Freshness
 			node.At = thesis.At
-			bySymbol = append(bySymbol, category)
 			graph.pair.observe(category.Symbol, category.Type, category.Strength)
 		}
 

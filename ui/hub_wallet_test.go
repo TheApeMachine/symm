@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestHubWriteWallet(t *testing.T) {
@@ -21,7 +22,11 @@ func TestHubWriteWallet(t *testing.T) {
 		defer cancel()
 
 		messages := make(chan []byte, 4)
-		balance := broker.NewBalance(nil, nil, messages, config.Fixture().Market)
+		balance := broker.NewBalance(nil, []types.Holding{{
+			Symbol: "BTC/USD",
+			Asset:  "BTC",
+			Status: types.OPEN,
+		}}, messages, config.Fixture().Market)
 		hub := NewHub(ctx, nil, balance, messages, config.UIConfig{Addr: "127.0.0.1:0"})
 		defer hub.Close()
 
@@ -41,6 +46,7 @@ func TestHubWriteWallet(t *testing.T) {
 				if len(payload) > 0 {
 					So(string(payload), ShouldContainSubstring, `"USD"`)
 					So(string(payload), ShouldContainSubstring, `250`)
+					So(string(hub.Cached("holdings")), ShouldContainSubstring, `BTC/USD`)
 					return
 				}
 

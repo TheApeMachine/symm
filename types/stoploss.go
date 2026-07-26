@@ -55,20 +55,16 @@ func NewStoploss(
 	return stoploss
 }
 
+/*
+onTicker advances the independent stop state from live ticker bids and invokes
+the bound exit callback immediately when the floor is breached.
+*/
 func (stoploss *Stoploss) onTicker(message any) any {
 	rows := message.(*kraken.Ticker).Data
 
 	for _, row := range rows {
 		if row.Symbol == stoploss.Symbol && row.Bid != nil {
 			if row.Bid.Cmp(stoploss.Floor) <= 0 {
-				if stoploss.exit == nil {
-					errnie.Error(errnie.Err(
-						errnie.ExpectationFailed,
-						"stoploss: exit called but not set",
-						nil,
-					))
-				}
-
 				if stoploss.exit == nil {
 					return errnie.Error(errnie.Err(
 						errnie.ExpectationFailed,
@@ -98,6 +94,10 @@ func (stoploss *Stoploss) onTicker(message any) any {
 	return stoploss
 }
 
+/*
+Close cancels the regulator context and delegates exit to the same callback so
+manual close and floor breach share one order path.
+*/
 func (stoploss *Stoploss) Close() {
 	stoploss.exit()
 

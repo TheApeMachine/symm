@@ -220,6 +220,13 @@ func (recovery *Recovery) Apply(holdings *sync.Map) {
 	if recovery == nil || holdings == nil {
 		return
 	}
+
+	for symbol, recovered := range recovery.Holdings {
+		recovered.Symbol = symbol
+
+		holding := recovered
+		holdings.Store(symbol, &holding)
+	}
 }
 
 func (holding Holding) qtyPositive() bool {
@@ -293,6 +300,10 @@ func (holding *Holding) Enrich(recovered Holding) {
 
 	if holding.Asset == "" {
 		holding.Asset = recovered.Asset
+	}
+
+	if holding.Stoploss == nil && recovered.Stoploss != nil {
+		holding.Stoploss = recovered.Stoploss
 	}
 }
 

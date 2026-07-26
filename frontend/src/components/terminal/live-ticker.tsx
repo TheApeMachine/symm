@@ -23,8 +23,21 @@ const setVisibility = (element: HTMLElement | null, visible: boolean) => {
 	}
 };
 
-const asRows = <T,>(value: unknown): T[] =>
-	(Array.isArray(value) ? value : value != null ? [value] : []) as T[];
+const asRows = <T,>(value: unknown): T[] => {
+	if (Array.isArray(value)) {
+		return value as T[];
+	}
+
+	if (value !== null && typeof value === "object") {
+		return Object.values(value as Record<string, T>);
+	}
+
+	if (value === undefined || value === null) {
+		return [];
+	}
+
+	return [value as T];
+};
 
 const latest = <T,>(value: unknown): T | undefined =>
 	asRows<T>(value).at(-1);

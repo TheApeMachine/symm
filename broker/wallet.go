@@ -14,7 +14,7 @@ currency. Snapshot and update frames mutate data under Wallet.mu only.
 */
 type Wallet struct {
 	mu       sync.RWMutex
-	data     map[string]*kraken.BalanceData
+	Data     map[string]*kraken.BalanceData
 	quote    string
 	sequence int64
 	api      *websocket.API
@@ -27,7 +27,7 @@ func newWallet(api *websocket.API, quote string) *Wallet {
 	return &Wallet{
 		api:   api,
 		quote: quote,
-		data:  make(map[string]*kraken.BalanceData),
+		Data:  make(map[string]*kraken.BalanceData),
 	}
 }
 
@@ -40,12 +40,12 @@ func (wallet *Wallet) Get(symbol string) (*kraken.BalanceData, error) {
 
 	if err := errnie.Require(map[string]any{
 		"symbol": symbol,
-		"data":   wallet.data,
+		"data":   wallet.Data,
 	}); err != nil {
 		return nil, errnie.Error(err)
 	}
 
-	row, ok := wallet.data[symbol]
+	row, ok := wallet.Data[symbol]
 
 	if !ok {
 		return nil, errnie.Error(errnie.Err(
@@ -82,9 +82,9 @@ func (wallet *Wallet) BalanceAck(
 			replaced[row.Asset] = wallet.clone(&row)
 		}
 
-		wallet.data = replaced
+		wallet.Data = replaced
 		wallet.sequence = incoming.Sequence
-		sync(wallet.quote, wallet.data)
+		sync(wallet.quote, wallet.Data)
 		wallet.mu.Unlock()
 
 		return true, false
@@ -104,11 +104,11 @@ func (wallet *Wallet) BalanceAck(
 
 	for index := range incoming.Data {
 		row := incoming.Data[index]
-		wallet.data[row.Asset] = wallet.clone(&row)
+		wallet.Data[row.Asset] = wallet.clone(&row)
 	}
 
 	wallet.sequence = incoming.Sequence
-	sync(wallet.quote, wallet.data)
+	sync(wallet.quote, wallet.Data)
 	wallet.mu.Unlock()
 
 	return true, false

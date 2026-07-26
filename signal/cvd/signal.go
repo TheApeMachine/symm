@@ -80,7 +80,7 @@ func (signal *Signal) onTicker(message any) any {
 	}
 
 	if len(measurements) > 0 {
-		signal.thesis.Publish(types.SourceCVD, measurements)
+		signal.thesis.AppendMeasurements(measurements)
 		return types.SignalResult{Source: types.SourceCVD, Measurements: measurements, Status: types.SignalReady}
 	}
 
@@ -97,7 +97,8 @@ func (signal *Signal) onTrade(message any) any {
 	}
 
 	if len(measurements) > 0 {
-		signal.thesis.Publish(types.SourceCVD, measurements)
+		signal.thesis.AppendMeasurements(measurements)
+
 		return types.SignalResult{Source: types.SourceCVD, Measurements: measurements, Status: types.SignalReady}
 	}
 

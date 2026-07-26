@@ -13,10 +13,10 @@ only from Thesis measurements already published by signals. Share is
 trapMass / (trapMass + opportunityMass) when either mass is positive.
 */
 type TrapEvidence struct {
-	Share            float64
-	TrapMass         float64
-	OpportunityMass  float64
-	Family           string
+	Share           float64
+	TrapMass        float64
+	OpportunityMass float64
+	Family          string
 }
 
 /*
@@ -54,9 +54,8 @@ func TrapShare(thesis *types.Thesis, symbol string) TrapEvidence {
 
 	var evidence TrapEvidence
 
-	for _, measurement := range thesis.SnapshotMeasurements() {
+	for _, measurement := range thesis.Measurements[symbol] {
 		if measurement == nil ||
-			measurement.Symbol != symbol ||
 			len(measurement.Metrics) == 0 {
 			continue
 		}
@@ -201,7 +200,6 @@ func CategoryOpportunityLead(thesis *types.Thesis, symbol string) (share float64
 
 	return category.Report(graph).OpportunityLead(symbol)
 }
-
 
 func categoryGraph(thesis *types.Thesis) (*category.Graph, bool) {
 	if thesis == nil || thesis.Graphs == nil {

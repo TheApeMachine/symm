@@ -25,9 +25,38 @@ type WalletMetrics = {
 };
 
 const isOpenLot = (holding: Holding): boolean =>
-	holding.qty > 0 &&
+	toNumber(holding.qty) > 0 &&
 	holding.status !== "closed" &&
 	holding.status !== "canceled";
+
+const toNumber = (value: number | string | undefined): number => {
+	const numeric =
+		typeof value === "string" ? Number(value) : (value as number | undefined);
+
+	if (!Number.isFinite(numeric)) {
+		return 0;
+	}
+
+	return numeric;
+};
+
+const quoteFromHoldings = (holdings: Holding[]): string | null => {
+	for (const holding of holdings) {
+		if (typeof holding.symbol !== "string") {
+			continue;
+		}
+
+		const pair = holding.symbol.split("/");
+
+		if (pair.length !== 2 || pair[1] === "") {
+			continue;
+		}
+
+		return pair[1];
+	}
+
+	return null;
+};
 
 export const walletMetrics = (
 	balances: Balance[],
@@ -37,29 +66,35 @@ export const walletMetrics = (
 		return null;
 	}
 
-	if (balances.length !== 1) {
-		throw new TypeError("wallet requires exactly one quote balance");
-	}
+	const inferredQuote = quoteFromHoldings(holdings) ?? "USD";
+	const balance =
+		balances.find((row) => row.asset === inferredQuote) ??
+		balances.find((row) => row.asset === "USD") ??
+		balances[0];
 
-	const balance = balances[0];
 	const funded = holdings.filter(isOpenLot);
 	const unrealized = funded.reduce(
-		(total, position) => total + position.pnl,
+		(total, position) => total + toNumber(position.pnl),
 		0,
 	);
 	const committed = funded.reduce(
 		(total, position) =>
-			total + position.entry_price * position.qty + position.entry_fee,
+			total +
+			toNumber(position.entry_price) * toNumber(position.qty) +
+			toNumber(position.entry_fee),
 		0,
 	);
+	const balanceValue = toNumber(balance.balance);
+	const availableValue = toNumber(balance.available);
+	const reservedValue = toNumber(balance.reserved);
 
 	return {
 		asset: balance.asset,
-		cash: balance.balance,
-		available: balance.available,
-		reserved: balance.reserved,
+		cash: balanceValue,
+		available: availableValue,
+		reserved: reservedValue,
 		unrealized,
-		equity: balance.balance + committed + unrealized,
+		equity: balanceValue + committed + unrealized,
 	};
 };
 

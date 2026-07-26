@@ -36,15 +36,16 @@ type SignalResult struct {
 }
 
 /*
-ImmutableCut is a finalized, deep-copied evidence surface for analyzer/planner.
-Durable Thesis may consume completed cuts; it is not mutated as the pipeline
-object through signals.
+ImmutableCut is a finalized evidence surface for analyzer/planner. It freezes
+map and slice membership while retaining measurement row pointers because
+signals replace rows instead of mutating them, keeping cuts stable without
+expensive metric cloning.
 */
 type ImmutableCut struct {
 	ID           CutID
 	Tick         int64
 	At           time.Time
-	Measurements []*Measurement
+	Measurements map[string][]*Measurement
 	Forecasts    []Forecasts
 	Decisions    []Decision
 	Hypotheses   []Hypothesis
@@ -56,10 +57,10 @@ type ImmutableCut struct {
 }
 
 /*
-NewImmutableCut builds a cut from the current thesis publish surface. Measurements
-are a shallow pointer-slice snapshot: Publish replaces row pointers rather than
-mutating published rows, so SnapshotMeasurements is the correct freeze. Deep-
-cloning every Measurement struct here allocated hundreds of gigabytes per run.
+NewImmutableCut builds a cut from the current thesis publish surface. The
+measurement snapshot copies map and slice headers only; row pointers remain
+shared so the hot path avoids deep metric cloning while later thesis row
+replacement cannot change which rows belong to the cut.
 */
 func NewImmutableCut(id CutID, tick int64, thesis *Thesis) *ImmutableCut {
 	if thesis == nil {
@@ -70,7 +71,7 @@ func NewImmutableCut(id CutID, tick int64, thesis *Thesis) *ImmutableCut {
 		ID:           id,
 		Tick:         tick,
 		At:           thesis.At,
-		Measurements: thesis.SnapshotMeasurements(),
+		Measurements: cutMeasurements(thesis.Measurements),
 		Forecasts:    thesis.Forecasts,
 		Decisions:    thesis.Decisions,
 		Hypotheses:   thesis.Hypotheses,
@@ -80,6 +81,21 @@ func NewImmutableCut(id CutID, tick int64, thesis *Thesis) *ImmutableCut {
 		Incomplete:   thesis.Incomplete(),
 		Sequence:     uint64(tick),
 	}
+}
+
+/*
+cutMeasurements freezes the measurement map and per-symbol slice headers while
+retaining row pointers. Signal publication replaces row pointers instead of
+mutating rows, so this preserves cut membership without deep-cloning metrics.
+*/
+func cutMeasurements(measurements map[string][]*Measurement) map[string][]*Measurement {
+	frozen := make(map[string][]*Measurement, len(measurements))
+
+	for symbol, rows := range measurements {
+		frozen[symbol] = append([]*Measurement(nil), rows...)
+	}
+
+	return frozen
 }
 
 /*

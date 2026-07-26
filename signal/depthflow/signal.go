@@ -124,7 +124,7 @@ func (signal *Signal) onTicker(message any) any {
 		return types.SignalResult{Source: types.SourceDepthFlow, Status: types.SignalSkip}
 	}
 
-	signal.thesis.Publish(types.SourceDepthFlow, measurements)
+	signal.thesis.AppendMeasurements(measurements)
 
 	return types.SignalResult{Source: types.SourceDepthFlow, Measurements: measurements, Status: types.SignalReady}
 }
@@ -143,7 +143,7 @@ func (signal *Signal) onBook(message any) any {
 	}
 
 	signal.bookOut.Store(&measurements)
-	signal.thesis.Publish(types.SourceDepthFlow, measurements)
+	signal.thesis.AppendMeasurements(measurements)
 
 	return types.SignalResult{Source: types.SourceDepthFlow, Measurements: measurements, Status: types.SignalReady}
 }
@@ -161,7 +161,7 @@ func (signal *Signal) onTrade(message any) any {
 		return types.SignalResult{Source: types.SourceDepthFlow, Status: types.SignalSkip}
 	}
 
-	signal.thesis.Publish(types.SourceDepthFlow, measurements)
+	signal.thesis.AppendMeasurements(measurements)
 
 	return types.SignalResult{Source: types.SourceDepthFlow, Measurements: measurements, Status: types.SignalReady}
 }

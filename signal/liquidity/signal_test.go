@@ -68,16 +68,22 @@ func TestCalculate(t *testing.T) {
 			So(market.Warmup(func() error {
 				thesis := wired.Thesis
 
-				calm = tests.LatestMeasurements(
-					thesis.Measurements, types.SourceLiquidity, metrics,
-				)
+				measurements := []*types.Measurement{}
+
+				for _, rows := range thesis.Measurements {
+					measurements = append(measurements, rows...)
+				}
+
+				calm = tests.LatestMeasurements(measurements, types.SourceLiquidity, metrics)
 				return nil
 			}), ShouldBeNil)
 			measurements := []*types.Measurement{}
 			So(market.Transition(proof.state, func() error {
 				thesis := wired.Thesis
 
-				measurements = append(measurements, thesis.Measurements...)
+				for _, rows := range thesis.Measurements {
+					measurements = append(measurements, rows...)
+				}
 				return nil
 			}, proof.symbols...), ShouldBeNil)
 			outcomes[proof.name] = marketOutcome{

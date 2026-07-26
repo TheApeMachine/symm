@@ -39,24 +39,23 @@ per-tick evidence in place so the object does not grow without bound.
 type Thesis struct {
 	checkpoint    atomic.Int64
 	publish       sync.RWMutex
-	index         map[measureKey]int
-	Tick          int64                 `json:"tick"`
-	At            time.Time             `json:"at"`
-	Positions     *sync.Map             `json:"positions"`
-	Holdings      *sync.Map             `json:"holdings"`
-	CrossSection  *CrossSection         `json:"crossSection"`
-	Measurements  []*Measurement        `json:"measurements"`
-	Graphs        *sync.Map             `json:"graphs"`
-	Forecasts     []Forecasts           `json:"forecasts"`
-	Decisions     []Decision            `json:"decisions"`
-	Lifecycle     *sync.Map             `json:"lifecycle"`
-	Findings      []Finding             `json:"findings"`
-	Hypotheses    []Hypothesis          `json:"hypotheses"`
-	Categories    map[string][]Category `json:"categories"`
-	Manifold      *sync.Map             `json:"manifold"`
-	Cognition     *sync.Map             `json:"cognition"`
-	Resonance     []any                 `json:"resonance"`
-	Causal        []any                 `json:"causal"`
+	Tick          int64                     `json:"tick"`
+	At            time.Time                 `json:"at"`
+	Positions     *sync.Map                 `json:"positions"`
+	Holdings      *sync.Map                 `json:"holdings"`
+	CrossSection  *CrossSection             `json:"crossSection"`
+	Measurements  map[string][]*Measurement `json:"measurements"`
+	Graphs        *sync.Map                 `json:"graphs"`
+	Forecasts     []Forecasts               `json:"forecasts"`
+	Decisions     []Decision                `json:"decisions"`
+	Lifecycle     *sync.Map                 `json:"lifecycle"`
+	Findings      []Finding                 `json:"findings"`
+	Hypotheses    []Hypothesis              `json:"hypotheses"`
+	Categories    map[string][]Category     `json:"categories"`
+	Manifold      *sync.Map                 `json:"manifold"`
+	Cognition     *sync.Map                 `json:"cognition"`
+	Resonance     []any                     `json:"resonance"`
+	Causal        []any                     `json:"causal"`
 	cutIncomplete bool
 }
 
@@ -76,6 +75,7 @@ func NewThesis() *Thesis {
 		Findings:     make([]Finding, 0),
 		Hypotheses:   make([]Hypothesis, 0),
 		Categories:   make(map[string][]Category),
+		Measurements: make(map[string][]*Measurement),
 		Manifold:     &sync.Map{},
 		Cognition:    &sync.Map{},
 		Resonance:    make([]any, 0),
@@ -98,7 +98,7 @@ func (thesis *Thesis) ResetTick(at time.Time, tick int64) {
 	thesis.CrossSection = NewCrossSection()
 	thesis.publish.Lock()
 	thesis.Measurements = nil
-	thesis.index = nil
+	thesis.Measurements = make(map[string][]*Measurement)
 	thesis.publish.Unlock()
 	thesis.Forecasts = thesis.Forecasts[:0]
 	thesis.Decisions = thesis.Decisions[:0]
@@ -125,13 +125,15 @@ func (thesis *Thesis) StampAt() {
 
 	var latest time.Time
 
-	for _, row := range thesis.SnapshotMeasurements() {
-		if row == nil || row.At.IsZero() {
-			continue
-		}
+	for _, bySymbol := range thesis.Measurements {
+		for _, row := range bySymbol {
+			if row == nil || row.At.IsZero() {
+				continue
+			}
 
-		if row.At.After(latest) {
-			latest = row.At
+			if row.At.After(latest) {
+				latest = row.At
+			}
 		}
 	}
 
@@ -140,6 +142,39 @@ func (thesis *Thesis) StampAt() {
 	}
 
 	thesis.At = latest
+}
+
+/*
+AppendMeasurements appends published signal rows into the grouped Thesis surface
+under the Thesis publish lock. Signal actors run independently, so direct map
+writes can collide; this keeps the current grouped shape without restoring the
+old Publish or snapshot APIs.
+*/
+func (thesis *Thesis) AppendMeasurements(rows []*Measurement) {
+	thesis.publish.Lock()
+	defer thesis.publish.Unlock()
+
+	for _, row := range rows {
+		thesis.Measurements[row.Symbol] = append(thesis.Measurements[row.Symbol], row)
+	}
+}
+
+/*
+EachMeasurement walks the grouped measurement surface under the Thesis publish
+read lock. Readers use it while signal actors may append rows, preventing map
+iteration races without reviving the removed snapshot allocation path.
+*/
+func (thesis *Thesis) EachMeasurement(yield func(*Measurement) bool) {
+	thesis.publish.RLock()
+	defer thesis.publish.RUnlock()
+
+	for _, rows := range thesis.Measurements {
+		for _, row := range rows {
+			if !yield(row) {
+				return
+			}
+		}
+	}
 }
 
 /*
@@ -170,70 +205,6 @@ Incomplete reports whether the current cut skipped interested signal work.
 */
 func (thesis *Thesis) Incomplete() bool {
 	return thesis != nil && thesis.cutIncomplete
-}
-
-/*
-SnapshotMeasurements copies the published pointer slice for readers. Rows are
-immutable after Publish (upsert installs new pointers); concurrent Publish
-cannot mutate a snapshot's pointed-to rows.
-*/
-func (thesis *Thesis) SnapshotMeasurements() []*Measurement {
-	return thesis.SnapshotMeasurementsInto(nil)
-}
-
-/*
-SnapshotMeasurementsInto appends the published pointer surface into dst under
-the publish read lock. Analyzer reuses dst across cuts to avoid allocating a new
-slice for every stamp, compose, and graph commit pass while preserving the same
-immutable-row snapshot contract as SnapshotMeasurements.
-*/
-func (thesis *Thesis) SnapshotMeasurementsInto(dst []*Measurement) []*Measurement {
-	if thesis == nil {
-		return nil
-	}
-
-	thesis.publish.RLock()
-	defer thesis.publish.RUnlock()
-
-	return append(dst, thesis.Measurements...)
-}
-
-/*
-InstallMeasurements replaces the published surface after a tick reset.
-*/
-func (thesis *Thesis) InstallMeasurements(rows []*Measurement) {
-	if thesis == nil {
-		return
-	}
-
-	thesis.publish.Lock()
-	thesis.Measurements = append([]*Measurement(nil), rows...)
-	thesis.rebuildIndex()
-	thesis.publish.Unlock()
-}
-
-/*
-AppendMeasurements extends the published surface under the same lock Publish
-uses so analyzer enrichment cannot race concurrent signal upserts.
-*/
-func (thesis *Thesis) AppendMeasurements(rows []*Measurement) {
-	if thesis == nil || len(rows) == 0 {
-		return
-	}
-
-	bySource := make(map[SourceType][]*Measurement)
-
-	for _, row := range rows {
-		if row == nil {
-			continue
-		}
-
-		bySource[row.Source] = append(bySource[row.Source], row)
-	}
-
-	for source, group := range bySource {
-		thesis.Publish(source, group)
-	}
 }
 
 /*
@@ -362,8 +333,6 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 	if thesis.CrossSection.Metrics == nil {
 		thesis.CrossSection.Metrics = &sync.Map{}
 	}
-
-	thesis.rebuildIndex()
 
 	return nil
 }

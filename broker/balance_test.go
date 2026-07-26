@@ -6,6 +6,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestBalanceAck(t *testing.T) {
@@ -56,6 +57,26 @@ func TestBalanceGet(t *testing.T) {
 			again, err := balance.Get("USD")
 			So(err, ShouldBeNil)
 			So(again.Balance.Float64(), ShouldEqual, 500.0)
+		})
+	})
+}
+
+func TestBalanceRecoverySeed(t *testing.T) {
+	Convey("Given recovered holdings from durable restart state", t, func() {
+		qty := decimal.NewFromFloat64(2)
+		balance := NewBalance(nil, []types.Holding{{
+			Symbol: "BTC/USD",
+			Asset:  "BTC",
+			Qty:    qty,
+			Status: types.OPEN,
+		}}, make(chan []byte, 1), config.Fixture().Market)
+
+		Convey("Then the inventory should expose the holding before any wallet snapshot", func() {
+			holding, err := balance.Holding("BTC/USD")
+
+			So(err, ShouldBeNil)
+			So(holding.Asset, ShouldEqual, "BTC")
+			So(holding.Qty.String(), ShouldEqual, qty.String())
 		})
 	})
 }

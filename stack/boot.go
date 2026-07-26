@@ -500,6 +500,8 @@ Close cancels the root context, waits for every registered actor and signal,
 then closes stateful dependencies in reverse construction order.
 */
 func (stack *Stack) Close() (err error) {
+	err = errors.Join(err, stack.saveRecovery())
+
 	if stack.cancel != nil {
 		stack.cancel()
 		stack.cancel = nil
@@ -527,4 +529,27 @@ func (stack *Stack) Close() (err error) {
 	}
 
 	return err
+}
+
+/*
+saveRecovery captures open holdings and writes recovery.json under data_path.
+*/
+func (stack *Stack) saveRecovery() error {
+	if stack == nil || stack.Balance == nil || stack.config.System.DataPath == "" {
+		return nil
+	}
+
+	holdings := map[string]types.Holding{}
+
+	for holding := range stack.Balance.Lots() {
+		holdings[holding.Symbol] = holding
+	}
+
+	recovery, err := types.CaptureRecovery(stack.Thesis.Tick, holdings, nil, nil)
+
+	if err != nil {
+		return err
+	}
+
+	return types.SaveRecovery(stack.config.System.DataPath, recovery)
 }

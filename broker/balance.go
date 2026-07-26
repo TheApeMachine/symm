@@ -23,7 +23,6 @@ type Balance struct {
 	*Cash
 	status atomic.Value
 	ui     chan []byte
-	Data   map[string]*kraken.BalanceData `json:"data"`
 }
 
 /*
@@ -46,6 +45,11 @@ func NewBalance(
 		Wallet:    wallet,
 		Cash:      &Cash{wallet: wallet, ledger: ledger},
 		ui:        ui,
+	}
+
+	for _, holding := range holdings {
+		seed := holding
+		balance.StoreHolding(&seed)
 	}
 
 	balance.status.Store(types.INITIALIZING)
@@ -92,7 +96,7 @@ instead of dropping the wallet frame silently.
 func (balance *Balance) Publish() error {
 	select {
 	case balance.ui <- datura.Map[any]{
-		"balances": []string{},
+		"balances": balance.Wallet.Data,
 		"holdings": balance.Inventory.Holdings,
 	}.Marshal():
 		return nil
@@ -149,10 +153,18 @@ func (balance *Balance) resync() {
 	}
 }
 
+/*
+Holdings returns the live inventory map so UI publishing can marshal the same
+shape Balance owns without repackaging restart state for the browser.
+*/
 func (balance *Balance) Holdings() map[string]*types.Holding {
 	return balance.Inventory.Holdings
 }
 
+/*
+Holding returns one inventory lot by symbol for broker and recovery tests that
+need to prove restart-seeded positions are present before exchange snapshots.
+*/
 func (balance *Balance) Holding(symbol string) (*types.Holding, error) {
 	holding, ok := balance.Inventory.Holdings[symbol]
 

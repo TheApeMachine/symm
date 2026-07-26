@@ -6,9 +6,9 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	pmanifold "github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/logic/category"
-	pmanifold "github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
 )
@@ -62,7 +62,8 @@ func TestProjectRetreatPressureFromToxicity(t *testing.T) {
 	Convey("Given a toxicity retreat measurement", t, func() {
 		thesis := types.NewThesis()
 		pressure := 0.87
-		thesis.Measurements = append(thesis.Measurements,
+		thesis.Measurements["AAA/USD"] = append(
+			thesis.Measurements["AAA/USD"],
 			&types.Measurement{
 				Source: types.SourceToxicity,
 				Symbol: "AAA/USD",
@@ -91,7 +92,7 @@ func TestProjectRetreatPressureFromToxicity(t *testing.T) {
 
 	Convey("Given a current toxicity touch without any retreat", t, func() {
 		thesis := types.NewThesis()
-		thesis.Measurements = append(thesis.Measurements, &types.Measurement{
+		thesis.Measurements["AAA/USD"] = append(thesis.Measurements["AAA/USD"], &types.Measurement{
 			Source: types.SourceToxicity,
 			Symbol: "AAA/USD",
 			Metrics: map[string]types.MetricSample{

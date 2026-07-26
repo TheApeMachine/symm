@@ -209,9 +209,8 @@ func (evidence Evidence) retreat(
 	thesis *types.Thesis,
 	symbol string,
 ) {
-	for _, measurement := range thesis.SnapshotMeasurements() {
+	for _, measurement := range thesis.Measurements[symbol] {
 		if measurement == nil ||
-			measurement.Symbol != symbol ||
 			measurement.Source != types.SourceToxicity {
 			continue
 		}

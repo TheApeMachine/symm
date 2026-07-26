@@ -74,7 +74,7 @@ func (signal *Signal) onTicker(message any) any {
 	}
 
 	if len(measurements) > 0 {
-		signal.thesis.Publish(types.SourceCorrelation, measurements)
+		signal.thesis.AppendMeasurements(measurements)
 		return types.SignalResult{Source: types.SourceCorrelation, Measurements: measurements, Status: types.SignalReady}
 	}
 

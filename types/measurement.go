@@ -255,15 +255,11 @@ func FilterLatest(measurements []*Measurement) []*Measurement {
 /*
 ObservationCount returns how many distinct symbols appear in the rows.
 */
-func ObservationCount(measurements []*Measurement) int {
+func ObservationCount(measurements map[string][]*Measurement) int {
 	symbols := make(map[string]struct{}, len(measurements))
 
-	for _, measurement := range measurements {
-		if measurement == nil {
-			continue
-		}
-
-		symbols[measurement.Symbol] = struct{}{}
+	for symbol := range measurements {
+		symbols[symbol] = struct{}{}
 	}
 
 	return len(symbols)

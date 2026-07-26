@@ -78,7 +78,9 @@ func TestCalculate(t *testing.T) {
 					thesis := wired.Thesis
 
 					if capture {
-						measurements = append(measurements, thesis.Measurements...)
+						for _, rows := range thesis.Measurements {
+							measurements = append(measurements, rows...)
+						}
 					}
 
 					return nil

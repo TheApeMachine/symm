@@ -57,23 +57,13 @@ func sharedSupport(left, right []string) (jaccard float64, shared []string) {
 		return 0, nil
 	}
 
-	seen := map[string]struct{}{}
-
-	for _, metric := range left {
-		seen[metric] = struct{}{}
-	}
-
-	union := len(seen)
-
 	for _, metric := range right {
-		if _, ok := seen[metric]; ok {
+		if hasMetric(left, metric) {
 			shared = append(shared, metric)
-			continue
 		}
-
-		seen[metric] = struct{}{}
-		union++
 	}
+
+	union := len(left) + len(right) - len(shared)
 
 	if union == 0 || len(shared) == 0 {
 		return 0, nil
@@ -91,16 +81,10 @@ func conditionsMass(provider, dependent types.Category) (float64, []string) {
 		return 0, nil
 	}
 
-	have := map[string]struct{}{}
-
-	for _, metric := range provider.Supporting {
-		have[metric] = struct{}{}
-	}
-
 	filled := make([]string, 0, len(dependent.Missing))
 
 	for _, metric := range dependent.Missing {
-		if _, ok := have[metric]; ok {
+		if hasMetric(provider.Supporting, metric) {
 			filled = append(filled, metric)
 		}
 	}
@@ -113,6 +97,21 @@ func conditionsMass(provider, dependent types.Category) (float64, []string) {
 		float64(len(filled)) / float64(len(dependent.Missing))
 
 	return mass, filled
+}
+
+/*
+hasMetric reports whether a category evidence list contains metric. Category
+support lists are tiny and hot, so a direct scan avoids allocating transient maps
+inside every pair relation while keeping the evidence comparison explicit.
+*/
+func hasMetric(metrics []string, target string) bool {
+	for _, metric := range metrics {
+		if metric == target {
+			return true
+		}
+	}
+
+	return false
 }
 
 /*
@@ -276,7 +275,7 @@ func (graph *Graph) linkIncomparableStaleLeads(
 	leftClock, rightClock evidenceClock,
 ) bool {
 	if leftClock.ok && rightClock.ok && !alignable(leftClock, rightClock) {
-		evidence := append(append([]string{}, first.Supporting...), second.Supporting...)
+		evidence := append(first.Supporting, second.Supporting...)
 		mass := math.Sqrt(first.Strength * second.Strength)
 		graph.strengthen(at, symbol, first.Type, second.Type, IncomparableWith, mass, evidence)
 		graph.strengthen(at, symbol, second.Type, first.Type, IncomparableWith, mass, evidence)
@@ -326,7 +325,7 @@ func (graph *Graph) linkIndependentOrSupports(
 		return
 	}
 
-	evidence := append(append([]string{}, first.Supporting...), second.Supporting...)
+	evidence := append(first.Supporting, second.Supporting...)
 	metricMass, metricEvidence := index.independence(symbol, first.Type, second.Type)
 	pairMass, independent := graph.pair.independent(
 		symbol, first.Type, second.Type, first.Strength, second.Strength,
