@@ -139,7 +139,11 @@ func (instrument *Instrument) Pairs() []kraken.InstrumentPair {
 	pairs := make([]kraken.InstrumentPair, 0, len(instrument.cache))
 
 	for _, pair := range instrument.cache {
-		pairs = append(pairs, pair)
+		if pair.Quote != instrument.quote || pair.Status != "online" {
+			continue
+		}
+
+		pairs = append(pairs, copyPair(pair))
 	}
 
 	return pairs
@@ -153,7 +157,7 @@ func (instrument *Instrument) Remember(pair kraken.InstrumentPair) {
 		return
 	}
 
-	instrument.cache[pair.Symbol] = pair
+	instrument.cache[pair.Symbol] = copyPair(pair)
 }
 
 /*
@@ -170,7 +174,27 @@ func (instrument *Instrument) Pair(symbol string) (kraken.InstrumentPair, error)
 		))
 	}
 
-	return pair, nil
+	return copyPair(pair), nil
+}
+
+/*
+copyPair returns an independent instrument snapshot so cached venue precision
+cannot be mutated through Pairs, Remember, or Pair callers.
+*/
+func copyPair(pair kraken.InstrumentPair) kraken.InstrumentPair {
+	if pair.QtyIncrement != nil {
+		pair.QtyIncrement = pair.QtyIncrement.Copy()
+	}
+
+	if pair.CostMin != nil {
+		pair.CostMin = pair.CostMin.Copy()
+	}
+
+	if pair.QtyMin != nil {
+		pair.QtyMin = pair.QtyMin.Copy()
+	}
+
+	return pair
 }
 
 /*

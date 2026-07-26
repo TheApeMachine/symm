@@ -164,6 +164,10 @@ export const drawers = {
 				input: "latest",
 			},
 			palette: paintPaletteMeasurements,
+			crossSection: {
+				paint: paintCrossSection as Paint,
+				input: "latest",
+			},
 		},
 	},
 	tick: {

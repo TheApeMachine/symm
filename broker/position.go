@@ -81,12 +81,17 @@ func NewPosition(
 		entryOrder: entryOrder,
 		exitOrder:  exitOrder,
 	}
+	mark := entryOrder.Params.LimitPrice
+
+	if mark == nil {
+		mark = decimal.NewFromInt64(0)
+	}
 
 	position.holding = types.NewHolding(
 		ctx,
 		pair.Symbol,
 		entryOrder.Params.OrderQty,
-		entryOrder.Params.LimitPrice,
+		mark,
 		position.Exit,
 	)
 
@@ -97,6 +102,31 @@ func NewPosition(
 
 	position.Actor.Initialize()
 	return position
+}
+
+/*
+Adopt copies a wallet-backed holding into the Position holding constructed by
+NewHolding without submitting a new entry order. Restart lots already exist at
+the venue, so adoption preserves native stoploss wiring and only restores the
+lot economics that came from balances and fills.
+*/
+func (position *Position) Adopt(holding *types.Holding) {
+	position.holding.Status = types.OPEN
+	position.holding.Asset = holding.Asset
+	position.holding.Qty = holding.Qty
+	position.holding.SellableQty = holding.SellableQty
+	position.holding.EntryAt = holding.EntryAt
+	position.holding.EntryPrice = holding.EntryPrice
+	position.holding.EntryFee = holding.EntryFee
+	position.holding.Mark = holding.Mark
+	position.holding.ReturnPct = holding.ReturnPct
+
+	if position.holding.Asset == "" {
+		position.holding.Asset = position.pair.Base
+	}
+
+	position.balance.StoreHolding(position.holding)
+	position.status = types.OPEN
 }
 
 /*

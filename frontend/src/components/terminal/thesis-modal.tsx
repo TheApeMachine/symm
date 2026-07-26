@@ -44,7 +44,13 @@ let graphs: Graph[] = [];
 let tick: TickFrame | undefined;
 
 const asRows = <T,>(value: unknown): T[] =>
-	(Array.isArray(value) ? value : value != null ? [value] : []) as T[];
+	(Array.isArray(value)
+		? value
+		: value !== null && typeof value === "object"
+			? Object.values(value as Record<string, T>)
+			: value != null
+				? [value]
+				: []) as T[];
 
 /*
 bindThesis caches chrome/rail nodes once. Open/close is painted from click
@@ -132,10 +138,8 @@ export const paintThesis = (
 		retained,
 		thesisSnapshotFor({
 			symbol,
-			tick:
-				typeof count === "number" && Number.isFinite(count) ? count : null,
-			lifecycle:
-				lifecycle.find((row) => row.symbol === symbol)?.state ?? null,
+			tick: typeof count === "number" && Number.isFinite(count) ? count : null,
+			lifecycle: lifecycle.find((row) => row.symbol === symbol)?.state ?? null,
 			graph: graphs.find((frame) => frame.symbol === symbol) ?? null,
 			measurements,
 			decision:

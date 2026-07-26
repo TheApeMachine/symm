@@ -11,7 +11,9 @@ describe("drawers", () => {
 		expect(typeof drawers.decisions.paint).toBe("function");
 		expect(drawers.resonance.paint.input).toBe("latest");
 		expect(drawers.manifold.paint.input).toBe("latest");
-		expect(drawers.manifold_particles).toBeUndefined();
+		expect(
+			(drawers as Record<string, unknown>).manifold_particles,
+		).toBeUndefined();
 		expect(typeof drawers.manifold_wave.paint).toBe("function");
 		expect(drawers.cognition.paint.input).toBe("latest");
 		expect(drawers.resonance.keys?.prediction.input).toBe("history");

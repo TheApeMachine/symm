@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Holding } from "#/collections/types";
+import { holdingRows } from "#/components/terminal/holding-wire";
 import type { StrategyDecision } from "#/types/thesis";
 import {
 	auditHoldings,
 	decisionFraction,
 	holdingAuditRow,
 	isClosedLot,
+	paintDashboardHoldings,
 } from "./dashboard-rail";
 
 const samplePosition = (overrides: Partial<Holding> = {}): Holding => ({
@@ -105,5 +107,29 @@ describe("holdingAuditRow", () => {
 
 		expect(row.reference).toBe("BTC/USD");
 		expect(row.meta).toContain("pnl");
+	});
+});
+
+describe("paintDashboardHoldings", () => {
+	it("accepts backend map-shaped open holdings with decimal strings", () => {
+		const rows = holdingRows({
+			"EUL/USD": samplePosition({
+				symbol: "EUL/USD",
+				qty: "9.85795428",
+				status: "open",
+				pnl: "0",
+			}),
+			"ESPORTS/USD": samplePosition({
+				symbol: "ESPORTS/USD",
+				qty: "544.58996",
+				status: "open",
+				pnl: "0",
+			}),
+		});
+
+		expect(rows.map((row) => row.symbol)).toEqual(["EUL/USD", "ESPORTS/USD"]);
+		expect(rows[0]?.qty).toBe(9.85795428);
+		expect(rows[1]?.qty).toBe(544.58996);
+		expect(() => paintDashboardHoldings(rows, "BTC/USD")).not.toThrow();
 	});
 });

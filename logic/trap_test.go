@@ -16,7 +16,7 @@ func TestTrapShare(t *testing.T) {
 
 		Convey("When only trap mass is present", func() {
 			absorption := 0.8
-			thesis.Measurements["SIM1/USD"] = append(thesis.Measurements["SIM1/USD"], &types.Measurement{
+			thesis.AppendMeasurements([]*types.Measurement{{
 				Source: types.SourceCVD,
 				Symbol: "SIM1/USD",
 				At:     at,
@@ -25,7 +25,7 @@ func TestTrapShare(t *testing.T) {
 						Raw: absorption, Normalized: &absorption,
 					},
 				},
-			})
+			}})
 
 			evidence := TrapShare(thesis, "SIM1/USD")
 
@@ -39,7 +39,7 @@ func TestTrapShare(t *testing.T) {
 
 		Convey("When only opportunity mass is present", func() {
 			ignition := 0.6
-			thesis.Measurements["SIM1/USD"] = append(thesis.Measurements["SIM1/USD"], &types.Measurement{
+			thesis.AppendMeasurements([]*types.Measurement{{
 				Source: types.SourcePumpDump,
 				Symbol: "SIM1/USD",
 				At:     at,
@@ -48,7 +48,7 @@ func TestTrapShare(t *testing.T) {
 						Raw: ignition, Normalized: &ignition,
 					},
 				},
-			})
+			}})
 
 			evidence := TrapShare(thesis, "SIM1/USD")
 
@@ -62,7 +62,7 @@ func TestTrapShare(t *testing.T) {
 		Convey("When trap and opportunity masses both exist", func() {
 			spoof := 0.9
 			drive := 0.3
-			thesis.Measurements["SIM1/USD"] = append(thesis.Measurements["SIM1/USD"], &types.Measurement{
+			thesis.AppendMeasurements([]*types.Measurement{{
 				Source: types.SourceDepthFlow,
 				Symbol: "SIM1/USD",
 				At:     at,
@@ -71,8 +71,8 @@ func TestTrapShare(t *testing.T) {
 						Raw: spoof, Normalized: &spoof,
 					},
 				},
-			})
-			thesis.Measurements["SIM1/USD"] = append(thesis.Measurements["SIM1/USD"], &types.Measurement{
+			}})
+			thesis.AppendMeasurements([]*types.Measurement{{
 				Source: types.SourceCVD,
 				Symbol: "SIM1/USD",
 				At:     at,
@@ -81,7 +81,7 @@ func TestTrapShare(t *testing.T) {
 						Raw: drive, Normalized: &drive,
 					},
 				},
-			})
+			}})
 
 			evidence := TrapShare(thesis, "SIM1/USD")
 
@@ -130,7 +130,7 @@ func BenchmarkTrapShare(b *testing.B) {
 	absorption := 0.5
 	ignition := 0.5
 	thesis := types.NewThesis()
-	thesis.Measurements["SIM1/USD"] = append(thesis.Measurements["SIM1/USD"], &types.Measurement{
+	thesis.AppendMeasurements([]*types.Measurement{{
 		Source: types.SourceCVD,
 		Symbol: "SIM1/USD", At: at,
 		Metrics: map[string]types.MetricSample{
@@ -138,8 +138,8 @@ func BenchmarkTrapShare(b *testing.B) {
 				Raw: absorption, Normalized: &absorption,
 			},
 		},
-	})
-	thesis.Measurements["SIM1/USD"] = append(thesis.Measurements["SIM1/USD"], &types.Measurement{
+	}})
+	thesis.AppendMeasurements([]*types.Measurement{{
 		Source: types.SourcePumpDump,
 		Symbol: "SIM1/USD", At: at,
 		Metrics: map[string]types.MetricSample{
@@ -147,7 +147,7 @@ func BenchmarkTrapShare(b *testing.B) {
 				Raw: ignition, Normalized: &ignition,
 			},
 		},
-	})
+	}})
 
 	b.ReportAllocs()
 

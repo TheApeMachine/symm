@@ -1,5 +1,6 @@
 import type { Holding, Stop } from "#/collections/types";
 import { fixed } from "#/components/terminal/decision-format";
+import { holdingRows } from "#/components/terminal/holding-wire";
 import { buildPositionGaugePanel } from "#/components/terminal/position-gauge-shell";
 import {
 	positionGaugeGeometry,
@@ -84,11 +85,15 @@ const writePositionGauge = (
 		Number.isFinite(position.mark) && position.mark > 0 ? position.mark : null;
 	const markLabel = rawMark === null ? "--" : fixed(rawMark);
 	const peakPrice =
-		stop !== undefined && Number.isFinite(stop.peak_price) && stop.peak_price > 0
+		stop !== undefined &&
+		Number.isFinite(stop.peak_price) &&
+		stop.peak_price > 0
 			? fixed(stop.peak_price)
 			: "--";
 	const floorPrice =
-		stop !== undefined && Number.isFinite(stop.stop_price) && stop.stop_price > 0
+		stop !== undefined &&
+		Number.isFinite(stop.stop_price) &&
+		stop.stop_price > 0
 			? fixed(stop.stop_price)
 			: "--";
 	const progressTone =
@@ -273,9 +278,7 @@ paintPositionHoldings merges the DRAW holdings batch into lastHoldings and
 repaints every bound position gauge whose symbol appears in the batch.
 */
 export const paintPositionHoldings = (value: unknown, _focusSymbol: string) => {
-	const rows = (
-		Array.isArray(value) ? value : value != null ? [value] : []
-	) as Holding[];
+	const rows = holdingRows(value);
 
 	for (const row of rows) {
 		lastHoldings[row.symbol] = row;

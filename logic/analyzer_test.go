@@ -113,6 +113,13 @@ func (outcome *marketOutcome) observeModels(
 
 	for _, value := range thesis.Causal {
 		reading, valid := value.(*logic.CausalOutcome)
+
+		if !valid {
+			row, ok := value.(logic.CausalOutcome)
+			valid = ok
+			reading = &row
+		}
+
 		So(valid, ShouldBeTrue)
 		So(outcome.symbols[reading.Symbol], ShouldBeTrue)
 		So(reading.Source, ShouldEqual, "causal")

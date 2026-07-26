@@ -209,10 +209,16 @@ func (evidence Evidence) retreat(
 	thesis *types.Thesis,
 	symbol string,
 ) {
-	for _, measurement := range thesis.Measurements[symbol] {
+	thesis.Measurements.Range(func(_, value any) bool {
+		measurement, _ := value.(*types.Measurement)
+
+		if measurement == nil || measurement.Symbol != symbol {
+			return true
+		}
+
 		if measurement == nil ||
 			measurement.Source != types.SourceToxicity {
-			continue
+			return true
 		}
 
 		measurement.EachMetric(func(
@@ -232,7 +238,9 @@ func (evidence Evidence) retreat(
 
 			return true
 		})
-	}
+
+		return true
+	})
 }
 
 func (evidence Evidence) residual(incrementalMSE, uncertainty float64) float64 {

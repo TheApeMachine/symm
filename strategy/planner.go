@@ -125,9 +125,7 @@ func (planner *Planner) Update(
 	}
 
 	thesis.ResetTick(at, tick)
-	for _, row := range rows {
-		thesis.Measurements[row.Symbol] = append(thesis.Measurements[row.Symbol], row)
-	}
+	thesis.AppendMeasurements(rows)
 	started := time.Now()
 
 	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "measure_end", map[string]any{

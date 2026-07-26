@@ -112,7 +112,7 @@ func (analyzer *Analyzer) observe(
 	if len(measurements) > 0 {
 		// Upsert — never AppendMeasurements. Appending every Hawkes epoch grew the
 		// durable thesis without bound; NewImmutableCut then cloned gigabytes.
-		thesis.Measurements[state.Symbol] = measurements
+		thesis.ReplaceMeasurements(state.Symbol, measurements)
 	}
 	if resonanceOutcome != nil {
 		thesis.Resonance = append(thesis.Resonance, resonanceOutcome)

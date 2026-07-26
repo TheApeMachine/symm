@@ -47,13 +47,7 @@ func (proof marketProof) Run(t *testing.T) (marketOutcome, []string) {
 			thesis := wired.Thesis
 
 			if capture {
-				measurements := make([]*types.Measurement, 0)
-				thesis.EachMeasurement(func(measurement *types.Measurement) bool {
-					measurements = append(measurements, measurement)
-
-					return true
-				})
-				outcome.Capture(measurements)
+				outcome.Capture(thesis.Measurements)
 			}
 
 			return nil

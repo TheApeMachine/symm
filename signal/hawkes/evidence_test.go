@@ -58,40 +58,42 @@ var evidenceKeys = []evidenceKey{
 /*
 Capture reduces one successful production tick without erasing side identity.
 */
-func (outcome *marketOutcome) Capture(measurements []*types.Measurement) {
+func (outcome *marketOutcome) Capture(measurements map[string][]*types.Measurement) {
 	latest := make(map[string]*types.Measurement)
 	rows := 0
 
-	for _, measurement := range measurements {
-		if measurement == nil || measurement.Source != types.SourceHawkes {
-			continue
-		}
-
-		latest[measurement.Symbol] = measurement
-		rows++
-
-		for _, key := range evidenceKeys {
-			sample, ok := measurement.Sample(key.metric, key.side)
-
-			if !ok {
+	for _, batch := range measurements {
+		for _, measurement := range batch {
+			if measurement == nil || measurement.Source != types.SourceHawkes {
 				continue
 			}
 
-			if outcome.peak == nil {
-				outcome.peak = map[evidenceKey]map[string]float64{}
-			}
+			latest[measurement.Symbol] = measurement
+			rows++
 
-			bySymbol, found := outcome.peak[key]
+			for _, key := range evidenceKeys {
+				sample, ok := measurement.Sample(key.metric, key.side)
 
-			if !found {
-				bySymbol = map[string]float64{}
-				outcome.peak[key] = bySymbol
-			}
+				if !ok {
+					continue
+				}
 
-			peak, seen := bySymbol[measurement.Symbol]
+				if outcome.peak == nil {
+					outcome.peak = map[evidenceKey]map[string]float64{}
+				}
 
-			if !seen || math.Abs(sample.Raw) > math.Abs(peak) {
-				bySymbol[measurement.Symbol] = sample.Raw
+				bySymbol, found := outcome.peak[key]
+
+				if !found {
+					bySymbol = map[string]float64{}
+					outcome.peak[key] = bySymbol
+				}
+
+				peak, seen := bySymbol[measurement.Symbol]
+
+				if !seen || math.Abs(sample.Raw) > math.Abs(peak) {
+					bySymbol[measurement.Symbol] = sample.Raw
+				}
 			}
 		}
 	}

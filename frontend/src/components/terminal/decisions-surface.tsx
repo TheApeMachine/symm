@@ -34,7 +34,13 @@ let lastInstruments: Instrument[] = [];
 let selectedSymbol: string | null = null;
 
 const asRows = <T,>(value: unknown): T[] =>
-	(Array.isArray(value) ? value : value != null ? [value] : []) as T[];
+	(Array.isArray(value)
+		? value
+		: value !== null && typeof value === "object"
+			? Object.values(value as Record<string, T>)
+			: value != null
+				? [value]
+				: []) as T[];
 
 const latestBySymbol = <T extends { symbol: string }>(
 	rows: T[],

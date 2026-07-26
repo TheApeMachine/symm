@@ -62,7 +62,7 @@ func TestNewImmutableCutKeepsPublishedRowsStable(t *testing.T) {
 				},
 			},
 		}
-		thesis.Measurements[original.Symbol] = []*Measurement{original}
+		thesis.Measurements.Store(original.Key(), original)
 
 		cut := NewImmutableCut(1, 7, thesis)
 		So(cut.Measurements, ShouldHaveLength, 1)
@@ -78,9 +78,11 @@ func TestNewImmutableCutKeepsPublishedRowsStable(t *testing.T) {
 					MetricKey(MetricEventCount, SideBuy): {Raw: 9},
 				},
 			}
-			thesis.Measurements[replacement.Symbol] = []*Measurement{replacement}
+			thesis.Measurements.Store(replacement.Key(), replacement)
 
-			live, ok := thesis.Measurements["SIM1/USD"][0].Sample(MetricEventCount, SideBuy)
+			value, _ := thesis.Measurements.Load(replacement.Key())
+			liveRow := value.(*Measurement)
+			live, ok := liveRow.Sample(MetricEventCount, SideBuy)
 			So(ok, ShouldBeTrue)
 			So(live.Raw, ShouldEqual, 9)
 
@@ -89,10 +91,10 @@ func TestNewImmutableCutKeepsPublishedRowsStable(t *testing.T) {
 			So(frozen.Raw, ShouldEqual, 1)
 			So(frozen.Normalized, ShouldNotBeNil)
 			So(*frozen.Normalized, ShouldEqual, 0.5)
-			So(cut.Measurements["SIM1/USD"][0], ShouldNotEqual, thesis.Measurements["SIM1/USD"][0])
+			So(cut.Measurements["SIM1/USD"][0], ShouldNotEqual, liveRow)
 
 			mutated := 9.0
-			thesis.Measurements["SIM1/USD"][0].Metrics[MetricKey(MetricEventCount, SideBuy)] = MetricSample{
+			liveRow.Metrics[MetricKey(MetricEventCount, SideBuy)] = MetricSample{
 				Raw: 99, Normalized: &mutated,
 			}
 
@@ -143,7 +145,9 @@ func BenchmarkNewImmutableCut(b *testing.B) {
 		})
 	}
 
-	thesis.Measurements["SIM1/USD"] = rows
+	for _, row := range rows {
+		thesis.Measurements.Store(row.Key(), row)
+	}
 	b.ReportAllocs()
 
 	for b.Loop() {

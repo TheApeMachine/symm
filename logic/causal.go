@@ -250,7 +250,7 @@ func (causal *Causal) observe(
 		// magnitude, both in [0,1], so the product is a joint probability
 		// with no free constants.
 		outcome.InformedFlow = math.Abs(features[causalTreatmentIndex]) *
-			math.Max(outcome.Reading.Confidence, 0)
+			min(max(outcome.Reading.Confidence, 0), 1)
 	}
 
 	return outcome, nil

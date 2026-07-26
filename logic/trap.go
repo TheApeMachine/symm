@@ -53,11 +53,16 @@ func TrapShare(thesis *types.Thesis, symbol string) TrapEvidence {
 	}
 
 	var evidence TrapEvidence
+	thesis.Measurements.Range(func(_, value any) bool {
+		measurement, _ := value.(*types.Measurement)
 
-	for _, measurement := range thesis.Measurements[symbol] {
+		if measurement == nil || measurement.Symbol != symbol {
+			return true
+		}
+
 		if measurement == nil ||
 			len(measurement.Metrics) == 0 {
-			continue
+			return true
 		}
 
 		measurement.EachMetric(func(
@@ -83,7 +88,9 @@ func TrapShare(thesis *types.Thesis, symbol string) TrapEvidence {
 
 			return true
 		})
-	}
+
+		return true
+	})
 
 	total := evidence.TrapMass + evidence.OpportunityMass
 

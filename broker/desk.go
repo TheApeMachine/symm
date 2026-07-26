@@ -7,6 +7,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -62,6 +63,7 @@ func NewDesk(
 	}
 
 	desk.Actor = types.NewActor(ctx, "desk", map[string]types.Handler{
+		"ticker":     {Topic: "ticker", Fn: desk.onTicker},
 		"instrument": {Topic: "instrument", Fn: desk.onInstrument},
 		"balances":   {Topic: "balances", Fn: desk.onBalances},
 	})
@@ -116,9 +118,48 @@ func (desk *Desk) Initialize(market *types.Actor, account *types.Actor) error {
 	return nil
 }
 
+/*
+Publish pushes the current wallet and instrument snapshots to the UI channel.
+It is the explicit broker refresh hook used when callers need the latest owned
+state without waiting for the next market or account frame.
+*/
 func (desk *Desk) Publish() {
 	desk.balance.Publish()
 	desk.instrument.Publish()
+}
+
+/*
+onTicker records the latest executable price row and immediately remarks every
+open wallet lot carried by that ticker. Open positions and stoplosses must move
+on the same live ticker path as the exchange; waiting for strategy recomputation
+leaves restart-adopted lots visible as empty shells with stale risk.
+*/
+func (desk *Desk) onTicker(message any) any {
+	ticker, ok := message.(*kraken.Ticker)
+
+	if !ok {
+		ticker = kraken.NewTicker(message.([]byte))
+	}
+
+	desk.price.TickerAck(ticker)
+
+	for _, row := range ticker.Data {
+		position, ok := desk.positions[row.Symbol]
+
+		if !ok || position.holding == nil || position.holding.Status != types.OPEN {
+			continue
+		}
+
+		if err := desk.price.Mark(&position.pair, position.holding); err != nil {
+			errnie.Error(err)
+		}
+	}
+
+	if err := desk.balance.Publish(); err != nil {
+		errnie.Error(err)
+	}
+
+	return nil
 }
 
 /*
@@ -148,11 +189,20 @@ onInstrument forwards the instrument tick then adopts newly visible open lots.
 */
 func (desk *Desk) onInstrument(message any) any {
 	desk.instrument.On(message)
+	desk.adopt()
+
 	return nil
 }
 
+/*
+onBalances applies the wallet frame, indexes fill history once, and adopts any
+wallet-backed lots so restart positions are immediately managed by Desk.
+*/
 func (desk *Desk) onBalances(message any) any {
 	desk.balance.BalanceAck(message.([]byte))
+	desk.loadFillHistory()
+	desk.adopt()
+
 	return nil
 }
 
@@ -222,6 +272,51 @@ func (desk *Desk) seedEconomics(holding *types.Holding) bool {
 	desk.price.deriveEconomics(holding, fills)
 
 	return holding.EntryPrice != nil && holding.EntryPrice.Sign() > 0
+}
+
+/*
+adopt turns wallet-backed open lots into Desk positions after a balance snapshot
+or update proves the asset exists. It avoids submitting orders because the paper
+or venue ledger already owns these fills; Desk only rebuilds the exit shell.
+*/
+func (desk *Desk) adopt() {
+	for holding := range desk.balance.Lots() {
+		if holding.Status != types.OPEN || holding.Qty == nil ||
+			holding.Qty.Sign() <= 0 {
+			continue
+		}
+
+		if _, ok := desk.positions[holding.Symbol]; ok {
+			continue
+		}
+
+		lot, err := desk.balance.Holding(holding.Symbol)
+
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		desk.seedEconomics(lot)
+		pair, err := desk.instrument.Pair(lot.Symbol)
+
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		position := NewPosition(
+			desk.ctx,
+			desk.api,
+			desk.instrument,
+			desk.price,
+			desk.balance,
+			pair,
+			lot.Qty,
+		)
+		position.Adopt(lot)
+		desk.positions[lot.Symbol] = position
+	}
 }
 
 /*

@@ -38,24 +38,24 @@ per-tick evidence in place so the object does not grow without bound.
 */
 type Thesis struct {
 	checkpoint    atomic.Int64
-	publish       sync.RWMutex
-	Tick          int64                     `json:"tick"`
-	At            time.Time                 `json:"at"`
-	Positions     *sync.Map                 `json:"positions"`
-	Holdings      *sync.Map                 `json:"holdings"`
-	CrossSection  *CrossSection             `json:"crossSection"`
-	Measurements  map[string][]*Measurement `json:"measurements"`
-	Graphs        *sync.Map                 `json:"graphs"`
-	Forecasts     []Forecasts               `json:"forecasts"`
-	Decisions     []Decision                `json:"decisions"`
-	Lifecycle     *sync.Map                 `json:"lifecycle"`
-	Findings      []Finding                 `json:"findings"`
-	Hypotheses    []Hypothesis              `json:"hypotheses"`
-	Categories    map[string][]Category     `json:"categories"`
-	Manifold      *sync.Map                 `json:"manifold"`
-	Cognition     *sync.Map                 `json:"cognition"`
-	Resonance     []any                     `json:"resonance"`
-	Causal        []any                     `json:"causal"`
+	publish       *sync.RWMutex
+	Tick          int64                 `json:"tick"`
+	At            time.Time             `json:"at"`
+	Positions     *sync.Map             `json:"positions"`
+	Holdings      *sync.Map             `json:"holdings"`
+	CrossSection  *CrossSection         `json:"crossSection"`
+	Measurements  *sync.Map             `json:"measurements"`
+	Graphs        *sync.Map             `json:"graphs"`
+	Forecasts     []Forecasts           `json:"forecasts"`
+	Decisions     []Decision            `json:"decisions"`
+	Lifecycle     *sync.Map             `json:"lifecycle"`
+	Findings      []Finding             `json:"findings"`
+	Hypotheses    []Hypothesis          `json:"hypotheses"`
+	Categories    map[string][]Category `json:"categories"`
+	Manifold      *sync.Map             `json:"manifold"`
+	Cognition     *sync.Map             `json:"cognition"`
+	Resonance     []any                 `json:"resonance"`
+	Causal        []any                 `json:"causal"`
 	cutIncomplete bool
 }
 
@@ -65,6 +65,7 @@ NewThesis creates a Thesis with empty durable maps and no tick evidence yet.
 func NewThesis() *Thesis {
 	return &Thesis{
 		At:           time.Now().UTC(),
+		publish:      &sync.RWMutex{},
 		Positions:    &sync.Map{},
 		Holdings:     &sync.Map{},
 		Decisions:    make([]Decision, 0),
@@ -75,7 +76,7 @@ func NewThesis() *Thesis {
 		Findings:     make([]Finding, 0),
 		Hypotheses:   make([]Hypothesis, 0),
 		Categories:   make(map[string][]Category),
-		Measurements: make(map[string][]*Measurement),
+		Measurements: &sync.Map{},
 		Manifold:     &sync.Map{},
 		Cognition:    &sync.Map{},
 		Resonance:    make([]any, 0),
@@ -93,25 +94,26 @@ func (thesis *Thesis) ResetTick(at time.Time, tick int64) {
 		return
 	}
 
+	thesis.ensureLocks()
+
 	thesis.Tick = tick
 	thesis.At = at
 	thesis.CrossSection = NewCrossSection()
-	thesis.publish.Lock()
-	thesis.Measurements = nil
-	thesis.Measurements = make(map[string][]*Measurement)
-	thesis.publish.Unlock()
+	thesis.Measurements.Clear()
 	thesis.Forecasts = thesis.Forecasts[:0]
 	thesis.Decisions = thesis.Decisions[:0]
 	thesis.Hypotheses = thesis.Hypotheses[:0]
-	thesis.Categories = make(map[string][]Category)
+	for symbol, rows := range thesis.Categories {
+		thesis.Categories[symbol] = rows[:0]
+	}
 	thesis.Resonance = thesis.Resonance[:0]
 	thesis.Causal = thesis.Causal[:0]
 	thesis.cutIncomplete = false
 	// Graphs holds resident pointers (category graph); do not clear between ticks.
-	clearSyncMap(thesis.Manifold)
-	clearSyncMap(thesis.Cognition)
-	clearSyncMap(thesis.Positions)
-	clearSyncMap(thesis.Holdings)
+	thesis.Manifold.Clear()
+	thesis.Cognition.Clear()
+	thesis.Positions.Clear()
+	thesis.Holdings.Clear()
 }
 
 /*
@@ -123,19 +125,22 @@ func (thesis *Thesis) StampAt() {
 		return
 	}
 
+	thesis.ensureLocks()
+
 	var latest time.Time
+	thesis.Measurements.Range(func(_, value any) bool {
+		row, _ := value.(*Measurement)
 
-	for _, bySymbol := range thesis.Measurements {
-		for _, row := range bySymbol {
-			if row == nil || row.At.IsZero() {
-				continue
-			}
-
-			if row.At.After(latest) {
-				latest = row.At
-			}
+		if row == nil || row.At.IsZero() {
+			return true
 		}
-	}
+
+		if row.At.After(latest) {
+			latest = row.At
+		}
+
+		return true
+	})
 
 	if latest.IsZero() {
 		return
@@ -151,11 +156,39 @@ writes can collide; this keeps the current grouped shape without restoring the
 old Publish or snapshot APIs.
 */
 func (thesis *Thesis) AppendMeasurements(rows []*Measurement) {
-	thesis.publish.Lock()
-	defer thesis.publish.Unlock()
+	thesis.ensureLocks()
 
 	for _, row := range rows {
-		thesis.Measurements[row.Symbol] = append(thesis.Measurements[row.Symbol], row)
+		if row == nil {
+			continue
+		}
+
+		thesis.Measurements.Store(row.Key(), row)
+	}
+}
+
+/*
+ReplaceMeasurements swaps one symbol's measurement group under the shared Thesis
+measurement lock. Analyzer observe output is an upsert, not an append, because a
+manifold epoch replaces that symbol's derived evidence while signal actors may
+still be publishing raw measurements on neighboring goroutines.
+*/
+func (thesis *Thesis) ReplaceMeasurements(symbol string, rows []*Measurement) {
+	thesis.ensureLocks()
+	thesis.Measurements.Range(func(key, value any) bool {
+		measurement, ok := value.(*Measurement)
+
+		if ok && measurement != nil && measurement.Symbol == symbol {
+			thesis.Measurements.Delete(key)
+		}
+
+		return true
+	})
+
+	for _, row := range rows {
+		if row != nil {
+			thesis.Measurements.Store(row.Key(), row)
+		}
 	}
 }
 
@@ -165,30 +198,47 @@ read lock. Readers use it while signal actors may append rows, preventing map
 iteration races without reviving the removed snapshot allocation path.
 */
 func (thesis *Thesis) EachMeasurement(yield func(*Measurement) bool) {
-	thesis.publish.RLock()
-	defer thesis.publish.RUnlock()
+	thesis.ensureLocks()
 
-	for _, rows := range thesis.Measurements {
-		for _, row := range rows {
-			if !yield(row) {
-				return
-			}
+	thesis.Measurements.Range(func(_, value any) bool {
+		row, _ := value.(*Measurement)
+
+		if row != nil && !yield(row) {
+			return false
 		}
-	}
+
+		return true
+	})
+}
+
+func (thesis *Thesis) cutMeasurements() map[string][]*Measurement {
+	thesis.ensureLocks()
+
+	frozen := make(map[string][]*Measurement)
+
+	thesis.Measurements.Range(func(key, value any) bool {
+		row, ok := value.(*Measurement)
+
+		if !ok || row == nil {
+			return true
+		}
+
+		frozen[row.Symbol] = append(frozen[row.Symbol], row)
+		return true
+	})
+
+	return frozen
 }
 
 /*
-clearSyncMap drops every entry from map without reallocating the header.
+ensureLocks restores pointer-owned locks after JSON decode or accidental value
+construction. Thesis maps may be shared by copied values, so the lock itself must
+also be shared rather than copied by value.
 */
-func clearSyncMap(values *sync.Map) {
-	if values == nil {
-		return
+func (thesis *Thesis) ensureLocks() {
+	if thesis.publish == nil {
+		thesis.publish = &sync.RWMutex{}
 	}
-
-	values.Range(func(key, _ any) bool {
-		values.Delete(key)
-		return true
-	})
 }
 
 /*
@@ -299,6 +349,7 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 	}
 
 	thesis.Graphs = &sync.Map{}
+	thesis.publish = &sync.RWMutex{}
 	thesis.Lifecycle = &sync.Map{}
 	thesis.Manifold = &sync.Map{}
 	thesis.Cognition = &sync.Map{}

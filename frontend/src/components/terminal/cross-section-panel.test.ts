@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	compactNumber,
 	crossSectionReadoutFromFrame,
+	crossSectionReadoutFromMeasurements,
 	retainCrossSectionReadout,
 } from "./cross-section-panel";
 
@@ -78,6 +79,40 @@ describe("crossSectionReadoutFromFrame", () => {
 		expect(readout.medianVolume).toBe(20);
 		expect(readout.medianQuoteNotional).toBe(2000);
 		expect(readout.medianExecutableDepth).toBe(10);
+	});
+});
+
+describe("crossSectionReadoutFromMeasurements", () => {
+	it("derives peer depth from current backend measurement rows", () => {
+		const readout = crossSectionReadoutFromMeasurements([
+			{
+				source: "liquidity",
+				symbol: "BTC/USD",
+				at: "1",
+				validity: { state: "valid", readiness: "observation" },
+				scale: { kind: "window", from: "1", through: "1" },
+				metrics: {
+					executable_touch_depth: { raw: 5 },
+					reported_volume_notional: { raw: 1000 },
+				},
+			},
+			{
+				source: "liquidity",
+				symbol: "ETH/USD",
+				at: "1",
+				validity: { state: "valid", readiness: "observation" },
+				scale: { kind: "window", from: "1", through: "1" },
+				metrics: {
+					executable_touch_depth: { raw: 15 },
+					reported_volume_notional: { raw: 3000 },
+				},
+			},
+		]);
+
+		expect(readout.symbolCount).toBe(2);
+		expect(readout.leader).toBe("ETH/USD");
+		expect(readout.medianExecutableDepth).toBe(10);
+		expect(readout.medianQuoteNotional).toBe(2000);
 	});
 });
 

@@ -1,11 +1,48 @@
 package types
 
 import (
+	"sync"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
+
+/*
+TestThesisAppendMeasurementsConcurrent proves independent signal actors can
+replace the same source-symbol row in the shared Thesis without corrupting the
+direct measurement map. The Thesis stores current evidence, not an append-only
+history, so one row survives for this identity.
+*/
+func TestThesisAppendMeasurementsConcurrent(t *testing.T) {
+	Convey("Given concurrent signal publications", t, func() {
+		thesis := NewThesis()
+		var wg sync.WaitGroup
+
+		Convey("When many goroutines publish the same source-symbol row", func() {
+			for index := range 128 {
+				wg.Go(func() {
+					thesis.AppendMeasurements([]*Measurement{{
+						Source: SourceCVD,
+						Symbol: "BTC/USD",
+						At:     time.Unix(int64(index), 0).UTC(),
+					}})
+				})
+			}
+
+			wg.Wait()
+			count := 0
+			thesis.EachMeasurement(func(*Measurement) bool {
+				count++
+				return true
+			})
+
+			Convey("Then the current row is retained without map corruption", func() {
+				So(count, ShouldEqual, 1)
+			})
+		})
+	})
+}
 
 func TestNoteLifecycle(t *testing.T) {
 	Convey("Given a thesis phase transition", t, func() {
@@ -46,5 +83,19 @@ func BenchmarkNoteLifecycle(b *testing.B) {
 
 	for b.Loop() {
 		thesis.NoteLifecycle("BTC/USD", LifecycleManaging, at)
+	}
+}
+
+/*
+BenchmarkAppendMeasurements measures the locked shared-Thesis signal publish path.
+*/
+func BenchmarkAppendMeasurements(b *testing.B) {
+	thesis := NewThesis()
+	row := &Measurement{Source: SourceCVD, Symbol: "BTC/USD", At: time.Unix(1, 0)}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		thesis.AppendMeasurements([]*Measurement{row})
 	}
 }

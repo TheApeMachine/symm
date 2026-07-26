@@ -8,30 +8,17 @@ import (
 )
 
 /*
-evidenceClock is the temporal envelope of a category's supporting measurements.
-Horizon is the max producer horizon among those rows so staleness is relative
-to the estimator's own scale, not a wall-clock constant.
-*/
-type evidenceClock struct {
-	from    time.Time
-	through time.Time
-	horizon time.Duration
-	mass    float64
-	ok      bool
-}
-
-/*
 contradictMass sums indexed live mass for affinity contradictions from→to.
 */
 func contradictMass(
 	index *evidenceIndex,
 	symbol string,
 	from, to types.CategoryType,
-) (mass float64, evidence []string) {
+) (mass float64) {
 	targets := contradictIndex[from]
 
 	if len(targets) == 0 {
-		return 0, nil
+		return 0
 	}
 
 	for _, metric := range targets[to] {
@@ -42,61 +29,83 @@ func contradictMass(
 		}
 
 		mass += value
-		evidence = append(evidence, string(metric))
 	}
 
-	return mass, evidence
+	return mass
+}
+
+/*
+contradictEvidence writes contradiction metric names into graph scratch only when
+the already-computed mass proves an edge exists. The hot no-edge path therefore
+does not allocate or build evidence lists that will be thrown away.
+*/
+func (graph *Graph) contradictEvidence(
+	index *evidenceIndex,
+	symbol string,
+	from, to types.CategoryType,
+) []string {
+	graph.evidenceScratch = graph.evidenceScratch[:0]
+
+	for _, metric := range contradictIndex[from][to] {
+		if index.metricMass(symbol, metric) > 0 {
+			graph.evidenceScratch = append(graph.evidenceScratch, string(metric))
+		}
+	}
+
+	return graph.evidenceScratch
 }
 
 /*
 sharedSupport returns the Jaccard overlap of supporting metric keys and the
 shared key list. RedundantWith is exactly this overlap under live activation.
 */
-func sharedSupport(left, right []string) (jaccard float64, shared []string) {
+func (graph *Graph) sharedSupport(left, right []string) (float64, []string) {
 	if len(left) == 0 || len(right) == 0 {
 		return 0, nil
 	}
 
+	graph.scratch = graph.scratch[:0]
+
 	for _, metric := range right {
 		if hasMetric(left, metric) {
-			shared = append(shared, metric)
+			graph.scratch = append(graph.scratch, metric)
 		}
 	}
 
-	union := len(left) + len(right) - len(shared)
+	union := len(left) + len(right) - len(graph.scratch)
 
-	if union == 0 || len(shared) == 0 {
+	if union == 0 || len(graph.scratch) == 0 {
 		return 0, nil
 	}
 
-	return float64(len(shared)) / float64(union), shared
+	return float64(len(graph.scratch)) / float64(union), graph.scratch
 }
 
 /*
 conditionsMass is the strength contribution when A's supporting metrics fill
 B's missing required evidence — A Conditions B.
 */
-func conditionsMass(provider, dependent types.Category) (float64, []string) {
+func (graph *Graph) conditionsMass(provider, dependent types.Category) (float64, []string) {
 	if len(provider.Supporting) == 0 || len(dependent.Missing) == 0 {
 		return 0, nil
 	}
 
-	filled := make([]string, 0, len(dependent.Missing))
+	graph.scratch = graph.scratch[:0]
 
 	for _, metric := range dependent.Missing {
 		if hasMetric(provider.Supporting, metric) {
-			filled = append(filled, metric)
+			graph.scratch = append(graph.scratch, metric)
 		}
 	}
 
-	if len(filled) == 0 {
+	if len(graph.scratch) == 0 {
 		return 0, nil
 	}
 
 	mass := provider.Strength * dependent.Strength *
-		float64(len(filled)) / float64(len(dependent.Missing))
+		float64(len(graph.scratch)) / float64(len(dependent.Missing))
 
-	return mass, filled
+	return mass, graph.scratch
 }
 
 /*
@@ -115,83 +124,6 @@ func hasMetric(metrics []string, target string) bool {
 }
 
 /*
-alignable reports whether two evidence clocks can be compared temporally.
-Disjoint intervals with no horizon coverage are IncomparableWith.
-*/
-func alignable(left, right evidenceClock) bool {
-	if !left.ok || !right.ok {
-		return false
-	}
-
-	if !left.through.Before(right.from) && !right.through.Before(left.from) {
-		return true
-	}
-
-	gap := right.from.Sub(left.through)
-
-	if gap < 0 {
-		gap = left.from.Sub(right.through)
-	}
-
-	cover := left.horizon
-
-	if right.horizon > cover {
-		cover = right.horizon
-	}
-
-	return cover > 0 && gap <= cover
-}
-
-/*
-staleMass returns mass when left's evidence is stale relative to right: left's
-latest sample is older than right's by more than left's own horizon.
-*/
-func staleMass(left, right evidenceClock, leftStrength, rightStrength float64) float64 {
-	if !left.ok || !right.ok || left.horizon <= 0 {
-		return 0
-	}
-
-	if !right.through.After(left.through) {
-		return 0
-	}
-
-	if right.through.Sub(left.through) <= left.horizon {
-		return 0
-	}
-
-	return math.Sqrt(leftStrength * rightStrength)
-}
-
-/*
-leadMass returns mass when left's evidence envelope precedes right's on an
-alignable clock. Contemporaneous envelopes (neither strictly before) yield zero.
-*/
-func leadMass(left, right evidenceClock, leftStrength, rightStrength float64) float64 {
-	if !alignable(left, right) {
-		return 0
-	}
-
-	if !left.through.Before(right.from) && !right.through.Before(left.from) {
-		// Overlap: use earliest-from ordering only when from times differ.
-		if left.from.Equal(right.from) {
-			return 0
-		}
-
-		if left.from.Before(right.from) {
-			return math.Sqrt(leftStrength * rightStrength)
-		}
-
-		return 0
-	}
-
-	if left.through.Before(right.from) || left.from.Before(right.from) {
-		return math.Sqrt(leftStrength * rightStrength)
-	}
-
-	return 0
-}
-
-/*
 linkPair derives every justified typed edge for one ordered observation of two
 active categories on the same symbol. Edge types come from CategoryAffinity and
 measurement temporal envelopes — not from trap/opportunity labels or top-winner
@@ -207,7 +139,7 @@ func (graph *Graph) linkPair(
 		return
 	}
 
-	jaccard, shared := sharedSupport(first.Supporting, second.Supporting)
+	jaccard, shared := graph.sharedSupport(first.Supporting, second.Supporting)
 	graph.linkRedundantContradictsConditions(
 		at, index, symbol, first, second, jaccard, shared,
 	)
@@ -247,19 +179,25 @@ func (graph *Graph) linkRedundantContradictsConditions(
 		)
 	}
 
-	if mass, evidence := contradictMass(index, symbol, first.Type, second.Type); mass > 0 {
-		graph.strengthen(at, symbol, first.Type, second.Type, Contradicts, mass, evidence)
+	if mass := contradictMass(index, symbol, first.Type, second.Type); mass > 0 {
+		graph.strengthen(
+			at, symbol, first.Type, second.Type, Contradicts, mass,
+			graph.contradictEvidence(index, symbol, first.Type, second.Type),
+		)
 	}
 
-	if mass, evidence := contradictMass(index, symbol, second.Type, first.Type); mass > 0 {
-		graph.strengthen(at, symbol, second.Type, first.Type, Contradicts, mass, evidence)
+	if mass := contradictMass(index, symbol, second.Type, first.Type); mass > 0 {
+		graph.strengthen(
+			at, symbol, second.Type, first.Type, Contradicts, mass,
+			graph.contradictEvidence(index, symbol, second.Type, first.Type),
+		)
 	}
 
-	if mass, evidence := conditionsMass(first, second); mass > 0 {
+	if mass, evidence := graph.conditionsMass(first, second); mass > 0 {
 		graph.strengthen(at, symbol, first.Type, second.Type, Conditions, mass, evidence)
 	}
 
-	if mass, evidence := conditionsMass(second, first); mass > 0 {
+	if mass, evidence := graph.conditionsMass(second, first); mass > 0 {
 		graph.strengthen(at, symbol, second.Type, first.Type, Conditions, mass, evidence)
 	}
 }
@@ -275,10 +213,15 @@ func (graph *Graph) linkIncomparableStaleLeads(
 	leftClock, rightClock evidenceClock,
 ) bool {
 	if leftClock.ok && rightClock.ok && !alignable(leftClock, rightClock) {
-		evidence := append(first.Supporting, second.Supporting...)
 		mass := math.Sqrt(first.Strength * second.Strength)
-		graph.strengthen(at, symbol, first.Type, second.Type, IncomparableWith, mass, evidence)
-		graph.strengthen(at, symbol, second.Type, first.Type, IncomparableWith, mass, evidence)
+		graph.strengthenJoined(
+			at, symbol, first.Type, second.Type, IncomparableWith, mass,
+			first.Supporting, second.Supporting,
+		)
+		graph.strengthenJoined(
+			at, symbol, second.Type, first.Type, IncomparableWith, mass,
+			second.Supporting, first.Supporting,
+		)
 		return true
 	}
 
@@ -325,8 +268,7 @@ func (graph *Graph) linkIndependentOrSupports(
 		return
 	}
 
-	evidence := append(first.Supporting, second.Supporting...)
-	metricMass, metricEvidence := index.independence(symbol, first.Type, second.Type)
+	metricMass := index.independence(symbol, first.Type, second.Type)
 	pairMass, independent := graph.pair.independent(
 		symbol, first.Type, second.Type, first.Strength, second.Strength,
 	)
@@ -340,15 +282,40 @@ func (graph *Graph) linkIndependentOrSupports(
 
 		if metricMass > 0 {
 			mass = math.Sqrt(mass * metricMass)
-			evidence = append(evidence, metricEvidence...)
+			graph.scratch = append(graph.scratch[:0], second.Supporting...)
+			graph.scratch = index.appendIndependence(graph.scratch, symbol, first.Type, second.Type)
+			graph.strengthenJoined(
+				at, symbol, first.Type, second.Type, IndependentOf, mass,
+				first.Supporting, graph.scratch,
+			)
+
+			graph.scratch = append(graph.scratch[:0], first.Supporting...)
+			graph.scratch = index.appendIndependence(graph.scratch, symbol, first.Type, second.Type)
+			graph.strengthenJoined(
+				at, symbol, second.Type, first.Type, IndependentOf, mass,
+				second.Supporting, graph.scratch,
+			)
+			return
 		}
 
-		graph.strengthen(at, symbol, first.Type, second.Type, IndependentOf, mass, evidence)
-		graph.strengthen(at, symbol, second.Type, first.Type, IndependentOf, mass, evidence)
+		graph.strengthenJoined(
+			at, symbol, first.Type, second.Type, IndependentOf, mass,
+			first.Supporting, second.Supporting,
+		)
+		graph.strengthenJoined(
+			at, symbol, second.Type, first.Type, IndependentOf, mass,
+			second.Supporting, first.Supporting,
+		)
 		return
 	}
 
 	mass := math.Sqrt(first.Strength * second.Strength)
-	graph.strengthen(at, symbol, first.Type, second.Type, Supports, mass, evidence)
-	graph.strengthen(at, symbol, second.Type, first.Type, Supports, mass, evidence)
+	graph.strengthenJoined(
+		at, symbol, first.Type, second.Type, Supports, mass,
+		first.Supporting, second.Supporting,
+	)
+	graph.strengthenJoined(
+		at, symbol, second.Type, first.Type, Supports, mass,
+		second.Supporting, first.Supporting,
+	)
 }

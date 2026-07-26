@@ -2,6 +2,7 @@ package types
 
 import (
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -211,7 +212,7 @@ func BenchmarkFilterLatest(b *testing.B) {
 func TestForPublish(t *testing.T) {
 	Convey("Given merged rows for two symbols from one signal", t, func() {
 		at := time.Unix(100, 0).UTC()
-		observations := map[string][]*Measurement{}
+		observations := &sync.Map{}
 		rows := []*Measurement{
 			{
 				Source: SourceSentiment, Symbol: "BTC/USD", At: at,
@@ -232,7 +233,7 @@ func TestForPublish(t *testing.T) {
 		}
 
 		for _, row := range rows {
-			observations[row.Symbol] = append(observations[row.Symbol], row)
+			observations.Store(row.Key(), row)
 		}
 
 		published := ForPublish(rows)
@@ -368,7 +369,7 @@ func BenchmarkObservationCount(b *testing.B) {
 		metricCount = 9
 	)
 
-	rows := make(map[string][]*Measurement, symbolCount)
+	rows := &sync.Map{}
 	at := time.Unix(100, 0).UTC()
 
 	for symbolIndex := range symbolCount {
@@ -381,12 +382,13 @@ func BenchmarkObservationCount(b *testing.B) {
 			}
 		}
 
-		rows[symbol] = append(rows[symbol], &Measurement{
+		row := &Measurement{
 			Source:  SourceSentiment,
 			Symbol:  symbol,
 			At:      at,
 			Metrics: metrics,
-		})
+		}
+		rows.Store(row.Key(), row)
 	}
 
 	b.ReportAllocs()

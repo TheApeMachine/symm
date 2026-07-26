@@ -71,7 +71,7 @@ func NewImmutableCut(id CutID, tick int64, thesis *Thesis) *ImmutableCut {
 		ID:           id,
 		Tick:         tick,
 		At:           thesis.At,
-		Measurements: cutMeasurements(thesis.Measurements),
+		Measurements: thesis.cutMeasurements(),
 		Forecasts:    thesis.Forecasts,
 		Decisions:    thesis.Decisions,
 		Hypotheses:   thesis.Hypotheses,
@@ -81,21 +81,6 @@ func NewImmutableCut(id CutID, tick int64, thesis *Thesis) *ImmutableCut {
 		Incomplete:   thesis.Incomplete(),
 		Sequence:     uint64(tick),
 	}
-}
-
-/*
-cutMeasurements freezes the measurement map and per-symbol slice headers while
-retaining row pointers. Signal publication replaces row pointers instead of
-mutating rows, so this preserves cut membership without deep-cloning metrics.
-*/
-func cutMeasurements(measurements map[string][]*Measurement) map[string][]*Measurement {
-	frozen := make(map[string][]*Measurement, len(measurements))
-
-	for symbol, rows := range measurements {
-		frozen[symbol] = append([]*Measurement(nil), rows...)
-	}
-
-	return frozen
 }
 
 /*

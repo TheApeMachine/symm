@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { Holding } from "#/collections/types";
-import type { Stop } from "#/collections/types";
-import { positionGaugeGeometry } from "./position-gauge";
+import type { Holding, Stop } from "#/collections/types";
+import {
+	createPositionGaugeElement,
+	paintPositionHoldings,
+	positionGaugeGeometry,
+} from "./position-gauge";
 
 const position = (mark: number, returnPct: number): Holding => ({
 	symbol: "XLM/USD",
@@ -61,5 +64,31 @@ describe("positionGaugeGeometry", () => {
 		expect(geometry?.entryPct).toBeGreaterThan(geometry?.markPct ?? 0);
 		expect(geometry?.stopPct).toBeNull();
 		expect(geometry?.peakPct).toBeNull();
+	});
+});
+
+describe("paintPositionHoldings", () => {
+	it("paints restored map-shaped holdings with decimal strings", () => {
+		document.body.replaceChildren(createPositionGaugeElement("EUL/USD", "USD"));
+
+		paintPositionHoldings(
+			{
+				"EUL/USD": {
+					symbol: "EUL/USD",
+					qty: "9.85795428",
+					entry_price: "1.729",
+					entry_fee: "0.044315447670311994",
+					exit_fee: "0",
+					mark: "1.73",
+					pnl: "0.00985795428",
+					return_pct: "0.0005783337200618928",
+					status: "open",
+				},
+			},
+			"BTC/USD",
+		);
+
+		expect(document.body.textContent).toContain("P/L 0.0099 USD");
+		expect(document.body.textContent).toContain("entry 1.729 / mark 1.7300");
 	});
 });

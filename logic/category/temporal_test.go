@@ -110,3 +110,59 @@ func TestStaleAndIncomparable(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkGraphUpdateFrom(b *testing.B) {
+	graph := NewGraph()
+	thesis := types.NewThesis()
+	base := time.Unix(100, 0).UTC()
+	symbols := []string{"AAA/USD", "BBB/USD", "CCC/USD", "DDD/USD"}
+	metrics := []types.MetricType{
+		types.MetricIgnition,
+		types.MetricTrend,
+		types.MetricDecoupled,
+		types.MetricNoiseScore,
+	}
+	categories := []types.CategoryType{
+		types.VerticalIgnition,
+		types.OrganicTrend,
+		types.DecoupledAlpha,
+		types.StochasticNoise,
+	}
+
+	for _, symbol := range symbols {
+		for index, metric := range metrics {
+			mass := 0.2 + float64(index)/10
+			thesis.Measurements[symbol] = append(thesis.Measurements[symbol], &types.Measurement{
+				Source:       types.SourcePumpDump,
+				Symbol:       symbol,
+				At:           base.Add(time.Duration(index) * time.Second),
+				ObservedFrom: base.Add(time.Duration(index-1) * time.Second),
+				Horizon:      time.Second,
+				Validity: types.MeasurementValidity{
+					State:     types.ValidityValid,
+					Readiness: types.ReadinessObservation,
+				},
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(metric, types.SideNone): {
+						Raw:        mass,
+						Normalized: &mass,
+					},
+				},
+			})
+			thesis.Categories[symbol] = append(thesis.Categories[symbol], types.Category{
+				Symbol:     symbol,
+				Type:       categories[index],
+				Strength:   mass,
+				Freshness:  1,
+				Supporting: []string{string(metric)},
+			})
+		}
+	}
+
+	b.ReportAllocs()
+
+	for index := 0; index < b.N; index++ {
+		thesis.At = base.Add(time.Duration(index) * time.Second)
+		graph.UpdateFrom(thesis)
+	}
+}

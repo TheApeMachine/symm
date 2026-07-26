@@ -6,13 +6,18 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+var independentMetrics = [...]types.MetricType{
+	types.MetricDecoupled,
+	types.MetricNoiseScore,
+}
+
 /*
 pairMemory accumulates per-symbol category activation and co-activation mass so
 IndependenceOf can be tested against the product baseline P(A)P(B) without a
 fixed window: expected joint mass is (massA/total)*(massB/total)*total.
 */
 type pairMemory struct {
-	solo map[nodeKey]float64
+	solo  map[nodeKey]float64
 	joint map[pairKey]float64
 	total map[string]float64
 }

@@ -2,6 +2,7 @@ package types
 
 import (
 	"errors"
+	"sync"
 	"time"
 )
 
@@ -175,6 +176,19 @@ type Measurement struct {
 }
 
 /*
+Key returns the stable Thesis storage identity for this source-symbol row.
+Signals emit one row per source and symbol, while bivariate rows include Peer so
+cross-symbol evidence does not overwrite univariate evidence.
+*/
+func (measurement *Measurement) Key() string {
+	if measurement == nil {
+		return ""
+	}
+
+	return string(measurement.Source) + ":" + measurement.Symbol + ":" + measurement.Peer
+}
+
+/*
 ValidateStruct enforces the provenance contract. Producers must emit forward
 observation and scale intervals; this rejects conflict instead of rewriting it.
 */
@@ -255,12 +269,18 @@ func FilterLatest(measurements []*Measurement) []*Measurement {
 /*
 ObservationCount returns how many distinct symbols appear in the rows.
 */
-func ObservationCount(measurements map[string][]*Measurement) int {
-	symbols := make(map[string]struct{}, len(measurements))
+func ObservationCount(measurements *sync.Map) int {
+	symbols := make(map[string]struct{})
 
-	for symbol := range measurements {
-		symbols[symbol] = struct{}{}
-	}
+	measurements.Range(func(_, value any) bool {
+		measurement, ok := value.(*Measurement)
+
+		if ok && measurement != nil {
+			symbols[measurement.Symbol] = struct{}{}
+		}
+
+		return true
+	})
 
 	return len(symbols)
 }

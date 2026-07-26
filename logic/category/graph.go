@@ -13,13 +13,16 @@ and typed edges are upserted each cut; weights only strengthen on evidence —
 the graph is never rebuilt from scratch on a tick.
 */
 type Graph struct {
-	nodes         map[nodeKey]*Node
-	edges         map[edgeKey]*Relation
-	edgesBySymbol map[string][]edgeKey
-	prior         map[string]types.CategoryType
-	cadence       cadenceBook
-	touched       map[edgeKey]struct{}
-	previous      map[nodeKey]Node
+	nodes           map[nodeKey]*Node
+	edges           map[edgeKey]*Relation
+	edgesBySymbol   map[string][]edgeKey
+	prior           map[string]types.CategoryType
+	cadence         cadenceBook
+	touched         map[edgeKey]struct{}
+	previous        map[nodeKey]Node
+	evidence        *evidenceIndex
+	scratch         []string
+	evidenceScratch []string
 	// pair tracks cumulative activation mass for independence tests.
 	pair *pairMemory
 }
@@ -29,12 +32,15 @@ NewGraph allocates an empty resident category graph.
 */
 func NewGraph() *Graph {
 	return &Graph{
-		nodes:         map[nodeKey]*Node{},
-		edges:         map[edgeKey]*Relation{},
-		edgesBySymbol: map[string][]edgeKey{},
-		prior:         map[string]types.CategoryType{},
-		previous:      map[nodeKey]Node{},
-		pair:          newPairMemory(),
+		nodes:           map[nodeKey]*Node{},
+		edges:           map[edgeKey]*Relation{},
+		edgesBySymbol:   map[string][]edgeKey{},
+		prior:           map[string]types.CategoryType{},
+		previous:        map[nodeKey]Node{},
+		evidence:        newEvidenceIndex(),
+		scratch:         make([]string, 0, len(types.CategoryOrder)),
+		evidenceScratch: make([]string, 0, len(types.CategoryOrder)),
+		pair:            newPairMemory(),
 	}
 }
 
@@ -88,7 +94,11 @@ func (graph *Graph) UpdateFrom(thesis *types.Thesis) {
 		}
 	}
 
-	evidence := indexEvidence(thesis.Measurements)
+	if graph.evidence == nil {
+		graph.evidence = newEvidenceIndex()
+	}
+
+	graph.evidence.UpdateFrom(thesis)
 
 	for symbol, bySymbol := range thesis.Categories {
 		for key := range graph.previous {
@@ -128,7 +138,7 @@ func (graph *Graph) UpdateFrom(thesis *types.Thesis) {
 					symbol, bySymbol[left].Type, bySymbol[right].Type,
 					bySymbol[left].Strength, bySymbol[right].Strength,
 				)
-				graph.linkPair(thesis.At, evidence, symbol, bySymbol[left], bySymbol[right])
+				graph.linkPair(thesis.At, graph.evidence, symbol, bySymbol[left], bySymbol[right])
 			}
 		}
 
@@ -177,9 +187,14 @@ func (graph *Graph) linkActivationLeads(
 			}
 
 			mass := math.Sqrt(peer.Strength * category.Strength)
-			evidence := append(append([]string{}, peer.Supporting...), category.Supporting...)
-			graph.strengthen(thesis.At, symbol, peer.Type, category.Type, Leads, mass, evidence)
-			graph.strengthen(thesis.At, symbol, category.Type, peer.Type, Lags, mass, evidence)
+			graph.strengthenJoined(
+				thesis.At, symbol, peer.Type, category.Type, Leads, mass,
+				peer.Supporting, category.Supporting,
+			)
+			graph.strengthenJoined(
+				thesis.At, symbol, category.Type, peer.Type, Lags, mass,
+				peer.Supporting, category.Supporting,
+			)
 		}
 	}
 }
@@ -211,7 +226,47 @@ func (graph *Graph) strengthen(
 
 	relation.Weight += mass
 	relation.At = at
-	relation.Evidence = evidence
+	relation.Evidence = append(relation.Evidence[:0], evidence...)
+
+	if graph.touched == nil {
+		graph.touched = map[edgeKey]struct{}{}
+	}
+
+	graph.touched[key] = struct{}{}
+}
+
+/*
+strengthenJoined upserts a typed edge using two already-resident category
+evidence lists. Copying straight into the retained Relation avoids constructing
+a transient joined slice for every graph pair while preserving the evidence that
+last justified the edge.
+*/
+func (graph *Graph) strengthenJoined(
+	at time.Time,
+	symbol string,
+	from, to types.CategoryType,
+	kind RelationType,
+	mass float64,
+	first, second []string,
+) {
+	key := edgeKey{symbol: symbol, from: from, to: to, kind: kind}
+	relation := graph.edges[key]
+
+	if relation == nil {
+		relation = &Relation{
+			Symbol: symbol,
+			From:   from,
+			To:     to,
+			Type:   kind,
+		}
+		graph.edges[key] = relation
+		graph.edgesBySymbol[symbol] = append(graph.edgesBySymbol[symbol], key)
+	}
+
+	relation.Weight += mass
+	relation.At = at
+	relation.Evidence = append(relation.Evidence[:0], first...)
+	relation.Evidence = append(relation.Evidence, second...)
 
 	if graph.touched == nil {
 		graph.touched = map[edgeKey]struct{}{}

@@ -2,6 +2,7 @@ package category
 
 import (
 	"math"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/types"
@@ -62,6 +63,15 @@ type evidenceIndex struct {
 }
 
 /*
+newEvidenceIndex allocates the resident evidence index that Graph reuses across
+cuts. Evidence is derived from the moving Thesis, so only map contents reset;
+headers stay alive to avoid rebuilding the same per-symbol containers each tick.
+*/
+func newEvidenceIndex() *evidenceIndex {
+	return &evidenceIndex{symbols: map[string]*symbolEvidence{}}
+}
+
+/*
 symbolEvidence holds per-metric mass and temporal envelopes for one symbol.
 */
 type symbolEvidence struct {
@@ -72,67 +82,146 @@ type symbolEvidence struct {
 }
 
 /*
+clear drops metric evidence while retaining the maps for the next Thesis pass.
+*/
+func (evidence *symbolEvidence) clear() {
+	for metric := range evidence.mass {
+		delete(evidence.mass, metric)
+	}
+
+	for metric := range evidence.from {
+		delete(evidence.from, metric)
+	}
+
+	for metric := range evidence.through {
+		delete(evidence.through, metric)
+	}
+
+	for metric := range evidence.horizon {
+		delete(evidence.horizon, metric)
+	}
+}
+
+/*
 indexEvidence builds the per-symbol evidence index from a pre-snapshotted
 measurement slice. Callers must hold their own snapshot before calling so the
 evidence pass and the compose pass share one copy of the pointer slice.
 */
 func indexEvidence(measurements map[string][]*types.Measurement) *evidenceIndex {
-	index := &evidenceIndex{symbols: map[string]*symbolEvidence{}}
-
-	for _, bySymbol := range measurements {
-		for _, measurement := range bySymbol {
-			if measurement == nil ||
-				measurement.Validity.State != types.ValidityValid ||
-				measurement.Symbol == "" ||
-				len(measurement.Metrics) == 0 {
-				continue
-			}
-
-			from, through := measurement.Interval()
-
-			measurement.EachMetric(func(
-				metric types.MetricType, _ types.MeasurementSide, sample types.MetricSample,
-			) bool {
-				mass, ok := sampleMass(sample)
-
-				if !ok {
-					return true
-				}
-
-				bucket := index.symbols[measurement.Symbol]
-
-				if bucket == nil {
-					bucket = &symbolEvidence{
-						mass:    map[types.MetricType]float64{},
-						from:    map[types.MetricType]time.Time{},
-						through: map[types.MetricType]time.Time{},
-						horizon: map[types.MetricType]time.Duration{},
-					}
-					index.symbols[measurement.Symbol] = bucket
-				}
-
-				if mass > bucket.mass[metric] {
-					bucket.mass[metric] = mass
-				}
-
-				if previous, ok := bucket.from[metric]; !ok || from.Before(previous) {
-					bucket.from[metric] = from
-				}
-
-				if previous, ok := bucket.through[metric]; !ok || through.After(previous) {
-					bucket.through[metric] = through
-				}
-
-				if measurement.Horizon > bucket.horizon[metric] {
-					bucket.horizon[metric] = measurement.Horizon
-				}
-
-				return true
-			})
-		}
-	}
+	index := newEvidenceIndex()
+	index.updateMap(measurements)
 
 	return index
+}
+
+/*
+UpdateFrom refreshes the resident evidence index from the moving Thesis. The
+Thesis owns current measurements, and the index only stores derived mass and
+temporal envelopes needed by graph edge classification.
+*/
+func (index *evidenceIndex) UpdateFrom(thesis *types.Thesis) {
+	if thesis == nil {
+		return
+	}
+
+	index.UpdateMeasurements(thesis.Measurements)
+}
+
+/*
+UpdateMeasurements refreshes per-symbol metric evidence without reallocating the
+top-level index or per-symbol buckets.
+*/
+func (index *evidenceIndex) UpdateMeasurements(measurements *sync.Map) {
+	if index.symbols == nil {
+		index.symbols = map[string]*symbolEvidence{}
+	}
+
+	for _, bucket := range index.symbols {
+		bucket.clear()
+	}
+
+	measurements.Range(func(_, value any) bool {
+		measurement, ok := value.(*types.Measurement)
+
+		if !ok || measurement == nil {
+			return true
+		}
+
+		index.update(measurement)
+
+		return true
+	})
+}
+
+func (index *evidenceIndex) updateMap(measurements map[string][]*types.Measurement) {
+	if index.symbols == nil {
+		index.symbols = map[string]*symbolEvidence{}
+	}
+
+	for _, bucket := range index.symbols {
+		bucket.clear()
+	}
+
+	for _, bySymbol := range measurements {
+		index.updateRows(bySymbol)
+	}
+}
+
+func (index *evidenceIndex) updateRows(bySymbol []*types.Measurement) {
+	for _, measurement := range bySymbol {
+		index.update(measurement)
+	}
+}
+
+func (index *evidenceIndex) update(measurement *types.Measurement) {
+	if measurement == nil ||
+		measurement.Validity.State != types.ValidityValid ||
+		measurement.Symbol == "" ||
+		len(measurement.Metrics) == 0 {
+		return
+	}
+
+	from, through := measurement.Interval()
+
+	measurement.EachMetric(func(
+		metric types.MetricType, _ types.MeasurementSide, sample types.MetricSample,
+	) bool {
+		mass, ok := sampleMass(sample)
+
+		if !ok {
+			return true
+		}
+
+		bucket := index.symbols[measurement.Symbol]
+
+		if bucket == nil {
+			bucket = &symbolEvidence{
+				mass:    map[types.MetricType]float64{},
+				from:    map[types.MetricType]time.Time{},
+				through: map[types.MetricType]time.Time{},
+				horizon: map[types.MetricType]time.Duration{},
+			}
+			index.symbols[measurement.Symbol] = bucket
+		}
+
+		if mass > bucket.mass[metric] {
+			bucket.mass[metric] = mass
+		}
+
+		if previous, ok := bucket.from[metric]; !ok || from.Before(previous) {
+			bucket.from[metric] = from
+		}
+
+		if previous, ok := bucket.through[metric]; !ok || through.After(previous) {
+			bucket.through[metric] = through
+		}
+
+		if measurement.Horizon > bucket.horizon[metric] {
+			bucket.horizon[metric] = measurement.Horizon
+		}
+
+		return true
+	})
 }
 
 /*
@@ -210,21 +299,20 @@ least one category in the pair is supported by a decoupled or noise metric.
 func (index *evidenceIndex) independence(
 	symbol string,
 	first, second types.CategoryType,
-) (float64, []string) {
+) float64 {
 	if index == nil {
-		return 0, nil
+		return 0
 	}
 
 	bucket := index.symbols[symbol]
 
 	if bucket == nil {
-		return 0, nil
+		return 0
 	}
 
-	var mass float64
-	keys := make([]string, 0, 2)
+	mass := 0.0
 
-	for _, metric := range []types.MetricType{types.MetricDecoupled, types.MetricNoiseScore} {
+	for _, metric := range independentMetrics {
 		value := bucket.mass[metric]
 
 		if value <= 0 {
@@ -236,14 +324,36 @@ func (index *evidenceIndex) independence(
 		}
 
 		mass += value
-		keys = append(keys, string(metric))
 	}
 
-	if mass <= 0 {
-		return 0, nil
+	return mass
+}
+
+/*
+appendIndependence appends live independence metric names into caller-owned
+scratch after independence mass proves the edge exists. That keeps the evidence
+copy at the retained relation destination and removes per-pair slice literals.
+*/
+func (index *evidenceIndex) appendIndependence(
+	evidence []string,
+	symbol string,
+	first, second types.CategoryType,
+) []string {
+	bucket := index.symbols[symbol]
+
+	for _, metric := range independentMetrics {
+		if bucket.mass[metric] <= 0 {
+			continue
+		}
+
+		if !independenceEligible(metric, first) && !independenceEligible(metric, second) {
+			continue
+		}
+
+		evidence = append(evidence, string(metric))
 	}
 
-	return mass, keys
+	return evidence
 }
 
 /*

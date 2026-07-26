@@ -18,7 +18,13 @@ let lastFindings: Finding[] = [];
 let selectedSymbol: string | null = null;
 
 const asRows = <T,>(value: unknown): T[] =>
-	(Array.isArray(value) ? value : value != null ? [value] : []) as T[];
+	(Array.isArray(value)
+		? value
+		: value !== null && typeof value === "object"
+			? Object.values(value as Record<string, T>)
+			: value != null
+				? [value]
+				: []) as T[];
 
 const selectLifecycleSymbol = (symbol: string) => {
 	selectedSymbol = selectedSymbol === symbol ? null : symbol;
@@ -101,10 +107,7 @@ export const JournalSurface = () => (
 				title="Lifecycle rail"
 				meta={<span data-journal="lifecycle-meta">0 symbols</span>}
 			>
-				<div
-					className="flex flex-col gap-2 p-2"
-					data-journal-host="lifecycle"
-				>
+				<div className="flex flex-col gap-2 p-2" data-journal-host="lifecycle">
 					<Panel
 						variant="surface"
 						size="bare"
@@ -127,10 +130,7 @@ export const JournalSurface = () => (
 					className="font-mono text-[9.5px] text-(--f4)"
 				/>
 			</div>
-			<div
-				className="flex flex-col gap-2"
-				data-journal-host="holdings"
-			>
+			<div className="flex flex-col gap-2" data-journal-host="holdings">
 				<Panel
 					variant="surface"
 					size="bare"
@@ -147,10 +147,7 @@ export const JournalSurface = () => (
 				title="PostMortem findings"
 				meta={<span data-journal="findings-meta">0 findings</span>}
 			>
-				<div
-					className="flex flex-col gap-2 p-2"
-					data-journal-host="findings"
-				>
+				<div className="flex flex-col gap-2 p-2" data-journal-host="findings">
 					<Panel
 						variant="surface"
 						size="bare"

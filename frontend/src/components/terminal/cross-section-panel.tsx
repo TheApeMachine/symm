@@ -1,5 +1,5 @@
 import { createRef } from "react";
-import type { DiagnosticsFrame } from "#/collections/types";
+import type { DiagnosticsFrame, Measurement } from "#/collections/types";
 import { paintInlineMeter } from "#/components/terminal/metric-paint";
 import { Panel } from "@/components/ui/panel";
 
@@ -33,6 +33,47 @@ const numberArray = (value: unknown): number[] =>
 					typeof entry === "number" && Number.isFinite(entry),
 			)
 		: [];
+
+const metricRaw = (measurement: Measurement, metric: string): number => {
+	const sample =
+		measurement.metrics?.[metric] ?? measurement.metrics?.[`${metric}/`];
+
+	return finiteNumber(sample?.raw);
+};
+
+const metricMagnitude = (measurement: Measurement): number =>
+	Object.values(measurement.metrics ?? {}).reduce(
+		(max, sample) => Math.max(max, Math.abs(finiteNumber(sample?.raw))),
+		0,
+	);
+
+const symbolMetricsFromMeasurements = (
+	measurements: Measurement[],
+): Array<{
+	symbol: string;
+	volume: number;
+	quoteNotional: number;
+	executableDepth: number;
+	magnitude: number;
+}> => {
+	const latest = new Map<string, Measurement>();
+
+	for (const measurement of measurements) {
+		if (typeof measurement.symbol !== "string" || measurement.symbol === "") {
+			continue;
+		}
+
+		latest.set(measurement.symbol, measurement);
+	}
+
+	return [...latest.values()].map((measurement) => ({
+		symbol: measurement.symbol,
+		volume: 0,
+		quoteNotional: metricRaw(measurement, "reported_volume_notional"),
+		executableDepth: metricRaw(measurement, "executable_touch_depth"),
+		magnitude: metricMagnitude(measurement),
+	}));
+};
 
 /*
 symbolMetricsFromFrame reads backend CrossSection.Metrics rows and falls back to
@@ -127,6 +168,32 @@ export const crossSectionReadoutFromFrame = (
 };
 
 /*
+crossSectionReadoutFromMeasurements derives the panel directly from signal rows
+when the backend sends current measurement deltas instead of diagnostics frames.
+*/
+export const crossSectionReadoutFromMeasurements = (
+	measurements: Measurement[],
+): CrossSectionReadout => {
+	const metrics = symbolMetricsFromMeasurements(measurements);
+	const leader = metrics.reduce(
+		(best, metric) => (metric.magnitude > best.magnitude ? metric : best),
+		{ symbol: "", magnitude: 0 },
+	).symbol;
+
+	return {
+		leader,
+		leadershipThresholdPercent: 0,
+		breadthPercent: 0,
+		symbolCount: metrics.length,
+		medianVolume: median(metrics.map((metric) => metric.volume)),
+		medianQuoteNotional: median(metrics.map((metric) => metric.quoteNotional)),
+		medianExecutableDepth: median(
+			metrics.map((metric) => metric.executableDepth),
+		),
+	};
+};
+
+/*
 retainCrossSectionReadout keeps the previous cross-section snapshot when a new
 diagnostics frame arrives without peer metrics, so intermittent empty backend
 ticks do not flash the panel back to zero.
@@ -158,7 +225,9 @@ const depthRef = createRef<HTMLDivElement>();
 let lastReadout: CrossSectionReadout | null = null;
 
 const paintStat = (node: HTMLDivElement | null, value: string) => {
-	const valueNode = node?.querySelector<HTMLElement>("[data-stat-value='true']");
+	const valueNode = node?.querySelector<HTMLElement>(
+		"[data-stat-value='true']",
+	);
 
 	if (valueNode !== null && valueNode !== undefined) {
 		valueNode.textContent = value;
@@ -172,18 +241,22 @@ batch into the CrossSectionPanel shell.
 export const paintCrossSection = (value: unknown, _focusSymbol: string) => {
 	const rows = Array.isArray(value) ? value : value != null ? [value] : [];
 	const frame = rows.at(-1) as DiagnosticsFrame | undefined;
+	const measurements = rows.filter(
+		(row): row is Measurement =>
+			asRecord(row) !== null && typeof asRecord(row)?.symbol === "string",
+	);
 	const readout = retainCrossSectionReadout(
 		lastReadout,
-		crossSectionReadoutFromFrame(frame ?? null),
+		measurements.length > 0
+			? crossSectionReadoutFromMeasurements(measurements)
+			: crossSectionReadoutFromFrame(frame ?? null),
 	);
 	lastReadout = readout;
 	const broad = readout.breadthPercent >= 50;
 
 	if (badgeRef.current !== null) {
 		badgeRef.current.textContent = broad ? "broad" : "thin";
-		badgeRef.current.style.color = broad
-			? "var(--success)"
-			: "var(--warning)";
+		badgeRef.current.style.color = broad ? "var(--success)" : "var(--warning)";
 		badgeRef.current.style.background = broad
 			? "color-mix(in srgb, var(--success) 12%, transparent)"
 			: "color-mix(in srgb, var(--warning) 12%, transparent)";
@@ -240,10 +313,7 @@ export const CrossSectionPanel = () => (
 			<span className="font-mono text-[11px] text-(--f2)">
 				leader <span ref={leaderRef} className="text-(--acc)" />
 			</span>
-			<span
-				ref={thresholdRef}
-				className="font-mono text-[10px] text-(--f4)"
-			/>
+			<span ref={thresholdRef} className="font-mono text-[10px] text-(--f4)" />
 		</div>
 		<div className="mt-2.5">
 			<div
@@ -275,9 +345,7 @@ export const CrossSectionPanel = () => (
 					data-stat-value="true"
 					className="font-mono text-lg text-(--f1) leading-none"
 				/>
-				<div className="mt-1 font-mono text-[9px] text-(--f4)">
-					med volume
-				</div>
+				<div className="mt-1 font-mono text-[9px] text-(--f4)">med volume</div>
 			</div>
 			<div ref={notionalRef} className="min-w-0 flex-1 text-center">
 				<div

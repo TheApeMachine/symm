@@ -1,10 +1,11 @@
 import { createRef } from "react";
 import type { Holding, LifecycleRow } from "#/collections/types";
-import type { StrategyDecision } from "#/types/thesis";
 import { ColumnHeader } from "#/components/dashboard/header";
 import { DashboardAuditSync } from "#/components/terminal/dashboard-audit";
 import { DashboardShellSync } from "#/components/terminal/dashboard-shells";
 import { buildDecisionLogRow } from "#/components/terminal/decision-row";
+import { holdingRows } from "#/components/terminal/holding-wire";
+import type { StrategyDecision } from "#/types/thesis";
 
 export {
 	auditHoldings,
@@ -14,9 +15,12 @@ export {
 export { decisionFraction } from "#/components/terminal/decision-row";
 
 const isOpenLot = (holding: Holding): boolean =>
-	holding.qty > 0 &&
+	Number(holding.qty) > 0 &&
 	holding.status !== "closed" &&
 	holding.status !== "canceled";
+
+const asRows = <T,>(value: unknown): T[] =>
+	(Array.isArray(value) ? value : value != null ? [value] : []) as T[];
 
 const decisionActiveRef = createRef<HTMLSpanElement>();
 const decisionPassiveRef = createRef<HTMLSpanElement>();
@@ -74,8 +78,7 @@ export const paintDecisionRows = (value: unknown, _focusSymbol: string) => {
 
 		decisionLogKeys.add(key);
 
-		const active =
-			decision.action === "enter" || decision.action === "exit";
+		const active = decision.action === "enter" || decision.action === "exit";
 		const row = buildDecisionLogRow(decision);
 		list.prepend(row);
 		decisionLog.push({ key, el: row, active });
@@ -116,14 +119,13 @@ export const paintDecisionRows = (value: unknown, _focusSymbol: string) => {
 
 const writePositionMeta = (open: Holding[]) => {
 	const symbols = open.map((holding) => holding.symbol);
-	const net = open.reduce((sum, holding) => sum + (holding.pnl ?? 0), 0);
+	const net = open.reduce((sum, holding) => sum + Number(holding.pnl ?? 0), 0);
 	const quote = shellSync.refreshQuote(open);
 
 	shellSync.syncPositionShells(symbols, quote, positionListRef.current);
 
 	if (positionEmptyRef.current !== null) {
-		positionEmptyRef.current.style.display =
-			symbols.length === 0 ? "" : "none";
+		positionEmptyRef.current.style.display = symbols.length === 0 ? "" : "none";
 		positionEmptyRef.current.textContent =
 			lastHoldings.length === 0
 				? "waiting for holdings frames"
@@ -146,9 +148,7 @@ export const paintDashboardHoldings = (
 	value: unknown,
 	_focusSymbol: string,
 ) => {
-	lastHoldings = (
-		Array.isArray(value) ? value : value != null ? [value] : []
-	) as Holding[];
+	lastHoldings = holdingRows(value);
 	writePositionMeta(lastHoldings.filter(isOpenLot));
 	auditSync.writeAudit(
 		lastHoldings,
@@ -166,9 +166,7 @@ export const paintDashboardLifecycle = (
 	value: unknown,
 	_focusSymbol: string,
 ) => {
-	const rows = (
-		Array.isArray(value) ? value : value != null ? [value] : []
-	) as LifecycleRow[];
+	const rows = asRows<LifecycleRow>(value);
 	lastLifecycle = Object.fromEntries(
 		rows.map((row) => [row.symbol, String(row.state)]),
 	);
