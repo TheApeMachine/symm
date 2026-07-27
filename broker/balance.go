@@ -20,8 +20,9 @@ type Balance struct {
 	*Ledger
 	*Wallet
 	*Cash
-	status atomic.Value
-	ui     chan []byte
+	status              atomic.Value
+	ui                  chan []byte
+	tradeBalancePending atomic.Bool
 }
 
 /*
@@ -105,6 +106,89 @@ func (balance *Balance) Publish() error {
 }
 
 /*
+PublishTradeBalance publishes the backend-owned liquidation value from the shared
+live/paper trade-balance surface without blocking the caller on REST/CLI latency.
+*/
+func (balance *Balance) PublishTradeBalance() {
+	if balance == nil || balance.ui == nil || balance.Wallet == nil || balance.Wallet.api == nil {
+		return
+	}
+
+	if !balance.tradeBalancePending.CompareAndSwap(false, true) {
+		return
+	}
+
+	go func() {
+		defer balance.tradeBalancePending.Store(false)
+
+		tradeBalance, err := balance.Wallet.api.TradeBalance(balance.Wallet.quote)
+
+		if err != nil {
+			errnie.Error(err)
+			return
+		}
+
+		select {
+		case balance.ui <- datura.NewMap("trade_balance", tradeBalance).MarshalAndFree():
+		default:
+			errnie.Error(errnie.Err(
+				errnie.TooManyRequests,
+				"balance: ui channel saturated; dropped trade balance frame",
+				nil,
+			))
+		}
+	}()
+}
+
+/*
+Refresh replaces the wallet from the transport's authoritative account-balance REST/CLI surface.
+*/
+func (balance *Balance) Refresh() error {
+	if balance == nil || balance.Wallet == nil || balance.Wallet.api == nil {
+		return nil
+	}
+
+	snapshot, err := balance.Wallet.api.AccountBalances()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	if snapshot == nil {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"balance: missing account balance snapshot",
+			nil,
+		))
+	}
+
+	raw, err := snapshot.MarshalJSON()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	balance.BalanceAck(raw)
+	return nil
+}
+
+/*
+TradeBalance returns the authoritative liquidation summary from the shared live
+or paper account surface.
+*/
+func (balance *Balance) TradeBalance() (*kraken.TradeBalanceResult, error) {
+	if balance == nil || balance.Wallet == nil || balance.Wallet.api == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"balance: api required for trade balance",
+			nil,
+		))
+	}
+
+	return balance.Wallet.api.TradeBalance(balance.Wallet.quote)
+}
+
+/*
 Frame returns wallet rows with available and reserved capital explicit for UI.
 Kraken snapshots carry total balance; the broker ledger owns live reservations,
 so the terminal must receive both rather than reconstructing unavailable cash.
@@ -161,6 +245,8 @@ func (balance *Balance) BalanceAck(buf []byte) {
 	if err := balance.Publish(); err != nil {
 		errnie.Error(err)
 	}
+
+	balance.PublishTradeBalance()
 }
 
 /*

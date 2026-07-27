@@ -65,3 +65,37 @@ esac
 		})
 	})
 }
+
+/*
+TestPaperTradesHistoryUsesVerbose proves the paper adapter reads the CLI history
+surface through the verbose form used for recovery.
+*/
+func TestPaperTradesHistoryUsesVerbose(t *testing.T) {
+	Convey("Given a kraken paper history script that requires --verbose", t, func() {
+		path := filepath.Join(t.TempDir(), "kraken")
+		script := `#!/bin/sh
+case "$2:$3" in
+history:--verbose)
+  printf '%s\n' '{"mode":"paper","filled_count":1,"trades":[{"id":"PAPER-00026","order_id":"PAPER-00025","pair":"ESPORTSUSD","side":"buy","volume":226.03428,"price":0.0264,"cost":5.967304992,"fee":0.0155149929792,"status":"filled","time":"2026-07-27T17:58:02.019385+00:00"}]}'
+  ;;
+*)
+  exit 1
+  ;;
+esac
+`
+		So(os.WriteFile(path, []byte(script), 0o755), ShouldBeNil)
+		t.Setenv("PATH", filepath.Dir(path)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+		paper := NewPaper(context.Background(), NewSimulator(), config.Fixture())
+		history, err := paper.TradesHistory()
+
+		Convey("Then the adapter should parse the verbose trade list", func() {
+			So(err, ShouldBeNil)
+			So(history.Result.Trades, ShouldHaveLength, 1)
+			trade := history.Result.Trades["PAPER-00026"]
+			So(trade.Pair, ShouldEqual, "ESPORTSUSD")
+			So(trade.Price.Float64(), ShouldEqual, 0.0264)
+			So(trade.Fee.Float64(), ShouldAlmostEqual, 0.0155149929792, 1e-12)
+		})
+	})
+}

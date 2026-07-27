@@ -2,13 +2,16 @@ package mockapi
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	balancesfixture "github.com/theapemachine/symm/tests/fixtures/balances"
 	executionfixture "github.com/theapemachine/symm/tests/fixtures/execution"
 )
@@ -37,6 +40,7 @@ type Paper struct {
 	reserved    map[string]float64
 	open        map[string]paperOrder
 	order       []string
+	history     map[string]spot.Trade
 	nextID      uint64
 	nextExec    uint64
 	nextBalance int64
@@ -63,6 +67,7 @@ func (conn *MockConn) EnablePaper(options PaperOptions) error {
 		balances: balances,
 		reserved: map[string]float64{},
 		open:     map[string]paperOrder{},
+		history:  map[string]spot.Trade{},
 	}
 	conn.paperMu.Lock()
 	conn.paper = paper
@@ -129,6 +134,78 @@ func (conn *MockConn) OpenOrders() (map[string]spot.Order, error) {
 }
 
 /*
+TradesHistory exposes the paper venue execution ledger for broker recovery
+through websocket.API.TradesHistory.
+*/
+func (conn *MockConn) TradesHistory() (*kraken.TradesHistory, error) {
+	conn.paperMu.Lock()
+	paper := conn.paper
+	conn.paperMu.Unlock()
+
+	if !conn.Active() {
+		return nil, errnie.Err(errnie.IO, "tests/mockapi: paper connection closed", nil)
+	}
+
+	if paper == nil {
+		return &kraken.TradesHistory{
+			Result: kraken.TradesHistoryResult{Trades: map[string]spot.Trade{}},
+		}, nil
+	}
+
+	return paper.TradesHistory(), nil
+}
+
+/*
+BalanceSnapshot exposes the current paper wallet frame for API.AccountBalances.
+*/
+func (conn *MockConn) BalanceSnapshot() (*kraken.Balance, error) {
+	conn.paperMu.Lock()
+	paper := conn.paper
+	conn.paperMu.Unlock()
+
+	if !conn.Active() {
+		return nil, errnie.Err(errnie.IO, "tests/mockapi: paper connection closed", nil)
+	}
+
+	if paper == nil {
+		return &kraken.Balance{Channel: "balances", Type: "snapshot", Data: []kraken.BalanceData{}}, nil
+	}
+
+	return kraken.NewBalance(paper.BalanceSnapshot()), nil
+}
+
+/*
+TradeBalance exposes a deterministic trade-balance summary for integration tests
+through the same API surface production uses.
+*/
+func (conn *MockConn) TradeBalance(asset string) (*kraken.TradeBalanceResult, error) {
+	conn.paperMu.Lock()
+	paper := conn.paper
+	conn.paperMu.Unlock()
+
+	if !conn.Active() {
+		return nil, errnie.Err(errnie.IO, "tests/mockapi: paper connection closed", nil)
+	}
+
+	if paper == nil {
+		return &kraken.TradeBalanceResult{
+			EquivalentBalance: decimal.NewFromInt64(0),
+			TradeBalance:      decimal.NewFromInt64(0),
+			MarginAmount:      decimal.NewFromInt64(0),
+			UnrealizedPnL:     decimal.NewFromInt64(0),
+			CostBasis:         decimal.NewFromInt64(0),
+			Valuation:         decimal.NewFromInt64(0),
+			Equity:            decimal.NewFromInt64(0),
+			FreeMargin:        decimal.NewFromInt64(0),
+			MarginFreeOrders:  decimal.NewFromInt64(0),
+			UnexecutedValue:   decimal.NewFromInt64(0),
+		}, nil
+	}
+
+	return paper.TradeBalance(asset), nil
+}
+
+/*
 Match evaluates resting limits against the latest deterministic touch.
 */
 func (paper *Paper) Match() ([]outbound, error) {
@@ -140,6 +217,7 @@ func (paper *Paper) Match() ([]outbound, error) {
 		reserved:    make(map[string]float64, len(paper.reserved)),
 		open:        make(map[string]paperOrder, len(paper.open)),
 		order:       append([]string(nil), paper.order...),
+		history:     make(map[string]spot.Trade, len(paper.history)),
 		nextID:      paper.nextID,
 		nextExec:    paper.nextExec,
 		nextBalance: paper.nextBalance,
@@ -155,6 +233,10 @@ func (paper *Paper) Match() ([]outbound, error) {
 
 	for orderID, order := range paper.open {
 		draft.open[orderID] = order
+	}
+
+	for tradeID, trade := range paper.history {
+		draft.history[tradeID] = trade
 	}
 
 	frames := []outbound{}
@@ -215,6 +297,7 @@ func (paper *Paper) Match() ([]outbound, error) {
 	paper.reserved = draft.reserved
 	paper.open = draft.open
 	paper.order = draft.order
+	paper.history = draft.history
 	paper.nextID = draft.nextID
 	paper.nextExec = draft.nextExec
 	paper.nextBalance = draft.nextBalance
@@ -235,6 +318,124 @@ func (paper *Paper) OpenOrders() map[string]spot.Order {
 	}
 
 	return orders
+}
+
+/*
+TradesHistory returns a stable copy of the paper fill ledger keyed by execution id.
+*/
+func (paper *Paper) TradesHistory() *kraken.TradesHistory {
+	paper.mu.Lock()
+	defer paper.mu.Unlock()
+
+	trades := make(map[string]spot.Trade, len(paper.history))
+
+	for tradeID, trade := range paper.history {
+		trades[tradeID] = trade
+	}
+
+	return &kraken.TradesHistory{
+		Result: kraken.TradesHistoryResult{Trades: trades},
+	}
+}
+
+/*
+TradeBalance summarizes current quote cash plus executable bid valuation of open
+paper balances using the same field shape as Kraken trade balance.
+*/
+func (paper *Paper) TradeBalance(asset string) *kraken.TradeBalanceResult {
+	paper.mu.Lock()
+	defer paper.mu.Unlock()
+
+	quoteCash := decimal.NewFromFloat64(paper.balances[asset])
+	costBasis := decimal.NewFromInt64(0)
+	valuation := decimal.NewFromInt64(0)
+
+	for symbol, basis := range paper.openBasis(asset) {
+		qty := paper.balances[symbol]
+
+		if qty <= 0 {
+			continue
+		}
+
+		bid, _, _, _, ok := paper.options.Quote(symbol + "/" + asset)
+
+		if !ok {
+			continue
+		}
+
+		costBasis = costBasis.Add(basis)
+		valuation = valuation.Add(decimal.NewFromFloat64(bid * qty))
+	}
+
+	unrealized := valuation.Sub(costBasis)
+	tradeBalance := quoteCash.Add(costBasis)
+	equity := tradeBalance.Add(unrealized)
+
+	return &kraken.TradeBalanceResult{
+		EquivalentBalance: equity.Copy(),
+		TradeBalance:      tradeBalance,
+		MarginAmount:      decimal.NewFromInt64(0),
+		UnrealizedPnL:     unrealized,
+		CostBasis:         costBasis,
+		Valuation:         valuation,
+		Equity:            equity,
+		FreeMargin:        equity.Copy(),
+		MarginFreeOrders:  equity.Copy(),
+		UnexecutedValue:   decimal.NewFromInt64(0),
+	}
+}
+
+func (paper *Paper) openBasis(asset string) map[string]*decimal.Decimal {
+	keys := make([]string, 0, len(paper.history))
+
+	for tradeID := range paper.history {
+		keys = append(keys, tradeID)
+	}
+
+	sort.Strings(keys)
+	basis := map[string]*decimal.Decimal{}
+	quantity := map[string]*decimal.Decimal{}
+
+	for _, tradeID := range keys {
+		trade := paper.history[tradeID]
+		symbol, _, ok := strings.Cut(trade.Pair, "/")
+
+		if !ok || symbol == "" || trade.Volume == nil || trade.Cost == nil {
+			continue
+		}
+
+		side := strings.ToLower(trade.Type)
+
+		if side == "buy" {
+			if basis[symbol] == nil {
+				basis[symbol] = trade.Cost.Copy()
+				quantity[symbol] = trade.Volume.Copy()
+				continue
+			}
+
+			basis[symbol] = basis[symbol].Add(trade.Cost)
+			quantity[symbol] = quantity[symbol].Add(trade.Volume)
+			continue
+		}
+
+		if side != "sell" || basis[symbol] == nil || quantity[symbol] == nil {
+			continue
+		}
+
+		remainingQty := quantity[symbol].Sub(trade.Volume)
+
+		if remainingQty.Sign() <= 0 {
+			delete(basis, symbol)
+			delete(quantity, symbol)
+			continue
+		}
+
+		averageCost := basis[symbol].Div(quantity[symbol])
+		basis[symbol] = averageCost.Mul(remainingQty)
+		quantity[symbol] = remainingQty
+	}
+
+	return basis
 }
 
 /*
@@ -288,6 +489,7 @@ func (paper *Paper) execution(
 	status string,
 ) outbound {
 	paper.nextExec++
+	execID := fmt.Sprintf("EXEC-%05d", paper.nextExec)
 	quantity := order.quantity
 
 	if execType == "new" {
@@ -295,15 +497,31 @@ func (paper *Paper) execution(
 	}
 
 	cost := quantity * price
+	timestamp := paper.options.Now()
 	text := func(value float64) string {
 		return strconv.FormatFloat(value, 'f', 8, 64)
+	}
+
+	if execType == "trade" && status == "filled" {
+		paper.history[execID] = spot.Trade{
+			OrderID:   order.id,
+			Pair:      order.symbol,
+			Time:      decimal.NewFromFloat64(float64(timestamp.UnixNano()) / 1e9),
+			Type:      order.side,
+			OrderType: order.typ,
+			Price:     decimal.NewFromFloat64(price),
+			Cost:      decimal.NewFromFloat64(cost),
+			Fee:       decimal.NewFromFloat64(cost * paper.fee(order)),
+			Volume:    decimal.NewFromFloat64(quantity),
+			Maker:     order.maker,
+		}
 	}
 
 	return outbound{
 		channel: "executions",
 		payload: executionfixture.Frame(executionfixture.Options{
 			OrderID:     order.id,
-			ExecID:      fmt.Sprintf("EXEC-%05d", paper.nextExec),
+			ExecID:      execID,
 			Symbol:      order.symbol,
 			Side:        order.side,
 			LastQty:     text(quantity),
@@ -316,7 +534,7 @@ func (paper *Paper) execution(
 			CumCost:     text(cost),
 			AvgPrice:    text(price),
 			FeeUsdEquiv: text(cost * paper.fee(order)),
-			Timestamp:   paper.options.Now().Format(time.RFC3339Nano),
+			Timestamp:   timestamp.Format(time.RFC3339Nano),
 		}),
 	}
 }

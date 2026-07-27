@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"slices"
 	"sync"
 	"time"
 
@@ -34,13 +35,13 @@ func (analyzer *Analyzer) publishMeasured(
 	analyzer.frameRows = focusRowsInto(analyzer.frameRows[:0], thesis.Resonance)
 
 	if len(analyzer.frameRows) > 0 {
-		analyzer.publish(datura.NewMap("resonance", analyzer.frameRows))
+		analyzer.publishAnyBatches("resonance", analyzer.frameRows)
 	}
 
 	analyzer.frameRows = focusRowsInto(analyzer.frameRows[:0], thesis.Causal)
 
 	if len(analyzer.frameRows) > 0 {
-		analyzer.publish(datura.NewMap("causal", analyzer.frameRows))
+		analyzer.publishAnyBatches("causal", analyzer.frameRows)
 	}
 
 	analyzer.hypRows = focusHypothesesInto(analyzer.hypRows[:0], thesis.Hypotheses)
@@ -131,8 +132,9 @@ func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 		return
 	}
 
-	analyzer.cogRows = analyzer.cogRows[:0]
 	focus := types.Focus()
+
+	analyzer.cogRows = analyzer.cogRows[:0]
 
 	thesis.Cognition.Range(func(key, value any) bool {
 		reading, ok := value.(types.Cognition)
@@ -160,10 +162,26 @@ func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 		analyzer.publish(datura.NewMap("forecasts", thesis.Forecasts))
 	}
 
+	if focus == "" {
+		return
+	}
+
+	focusedHypotheses := analyzer.hypRows[:0]
+
+	for _, hypothesis := range thesis.Hypotheses {
+		if hypothesis.Symbol == focus {
+			focusedHypotheses = append(focusedHypotheses, hypothesis)
+		}
+	}
+
+	if len(focusedHypotheses) > 0 {
+		analyzer.publish(datura.NewMap("hypotheses", focusedHypotheses))
+	}
+
 	analyzer.catRows = analyzer.catRows[:0]
 
-	for _, rows := range thesis.Categories {
-		analyzer.catRows = append(analyzer.catRows, rows...)
+	for _, category := range thesis.Categories[focus] {
+		analyzer.catRows = append(analyzer.catRows, category)
 	}
 
 	if len(analyzer.catRows) > 0 {
@@ -186,3 +204,20 @@ func focusRowsInto(dst []any, rows *sync.Map) []any {
 	return dst
 }
 
+func (analyzer *Analyzer) publishAnyBatches(key string, rows []any) {
+	if len(rows) == 0 {
+		return
+	}
+
+	if len(rows) < 128 {
+		analyzer.publish(datura.NewMap(key, rows))
+		return
+	}
+
+	chunkSize := (len(rows) + 3) / 4
+
+	for start := 0; start < len(rows); start += chunkSize {
+		end := min(start+chunkSize, len(rows))
+		analyzer.publish(datura.NewMap(key, slices.Clone(rows[start:end])))
+	}
+}

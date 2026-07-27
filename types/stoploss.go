@@ -16,16 +16,19 @@ so onTicker receives live bids directly instead of relying on an external
 routing layer like Desk.
 */
 type Stoploss struct {
-	*Actor `json:"-"`
-	ctx    context.Context
-	cancel context.CancelFunc
-	Status Status           `json:"status"`
-	Symbol string           `json:"symbol"`
-	Entry  *decimal.Decimal `json:"entry"`
-	Peak   *decimal.Decimal `json:"peak"`
-	Mark   *decimal.Decimal `json:"mark"`
-	Floor  *decimal.Decimal `json:"floor"`
-	exit   func() error
+	*Actor      `json:"-"`
+	ctx         context.Context
+	cancel      context.CancelFunc
+	Status      Status           `json:"status"`
+	Symbol      string           `json:"symbol"`
+	Entry       *decimal.Decimal `json:"entry"`
+	Peak        *decimal.Decimal `json:"peak"`
+	Mark        *decimal.Decimal `json:"mark"`
+	Floor       *decimal.Decimal `json:"floor"`
+	exit        func() error
+	onChange    func()
+	breachCount int
+	shockTicks  int
 }
 
 /*
@@ -39,6 +42,7 @@ func NewStoploss(
 	symbol string,
 	mark *decimal.Decimal,
 	exit func() error,
+	onChange func(),
 	market *Actor,
 ) *Stoploss {
 	errnie.Info("creating stoploss")
@@ -46,13 +50,14 @@ func NewStoploss(
 	ctx, cancel := context.WithCancel(ctx)
 
 	stoploss := &Stoploss{
-		ctx:    ctx,
-		cancel: cancel,
-		Symbol: symbol,
-		Entry:  mark.Copy(),
-		Mark:   mark.Copy(),
-		exit:   exit,
-		Status: PENDING,
+		ctx:      ctx,
+		cancel:   cancel,
+		Symbol:   symbol,
+		Entry:    mark.Copy(),
+		Mark:     mark.Copy(),
+		exit:     exit,
+		onChange: onChange,
+		Status:   PENDING,
 	}
 
 	stoploss.evaluate()
@@ -82,6 +87,7 @@ func (stoploss *Stoploss) Initialize(
 	ctx context.Context,
 	mark *decimal.Decimal,
 	exit func() error,
+	onChange func(),
 	market *Actor,
 ) {
 	stoploss.Status = PENDING
@@ -91,6 +97,7 @@ func (stoploss *Stoploss) Initialize(
 	stoploss.evaluate()
 
 	stoploss.exit = exit
+	stoploss.onChange = onChange
 
 	if market != nil {
 		stoploss.Actor.Initialize(Topic{Name: "ticker", Actor: market})
@@ -117,9 +124,46 @@ func (stoploss *Stoploss) onTicker(message any) any {
 			continue
 		}
 
+		previous := stoploss.Mark
 		stoploss.Mark = row.Bid.Copy()
 
+		if previous != nil && previous.Sign() > 0 {
+			shockThreshold := decimal.ExactMul(previous, decimal.NewFromFloat64(0.8))
+
+			if shockThreshold != nil && row.Bid.Cmp(shockThreshold) < 0 {
+				stoploss.shockTicks = 6
+			}
+		}
+
+		if stoploss.shockTicks > 0 {
+			stoploss.shockTicks--
+			stoploss.breachCount = 0
+			stoploss.evaluate()
+
+			if stoploss.onChange != nil {
+				stoploss.onChange()
+			}
+
+			continue
+		}
+
+		if stoploss.Floor != nil && row.Bid.Cmp(stoploss.Floor) > 0 {
+			stoploss.breachCount = 0
+		}
+
 		if stoploss.Floor != nil && row.Bid.Cmp(stoploss.Floor) <= 0 {
+			stoploss.breachCount++
+
+			if stoploss.breachCount < 6 {
+				stoploss.evaluate()
+
+				if stoploss.onChange != nil {
+					stoploss.onChange()
+				}
+
+				continue
+			}
+
 			if stoploss.exit == nil {
 				stoploss.Status = ERROR
 
@@ -142,6 +186,10 @@ func (stoploss *Stoploss) onTicker(message any) any {
 		}
 
 		stoploss.evaluate()
+
+		if stoploss.onChange != nil {
+			stoploss.onChange()
+		}
 	}
 
 	return stoploss
@@ -154,6 +202,10 @@ from the Position on fills, and to update the mark from the Holding on recovery.
 func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 	stoploss.Mark = mark.Copy()
 	stoploss.evaluate()
+
+	if stoploss.onChange != nil {
+		stoploss.onChange()
+	}
 }
 
 /*

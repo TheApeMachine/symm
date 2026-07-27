@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"maps"
+	"math"
 	"strconv"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -179,14 +180,6 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			continue
 		}
 
-		if cognitionReady && isOpposingRegime(cognition.Winner) {
-			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
-				*forecast, 0, "cognitive_opposition",
-				"cognitive memory does not support an entry: "+cognition.Winner,
-			))
-			continue
-		}
-
 		if cognitionReady && cognition.Confidence <= 0 {
 			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
 				*forecast, 0, "cognitive_no_confidence",
@@ -204,18 +197,20 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 		}
 
 		reading := measureOpportunity(*forecast, cognition, thesis)
+		oppositionPenalty := 1.0
+
+		if cognitionReady && isOpposingRegime(cognition.Winner) {
+			oppositionPenalty *= 0.5
+		}
 
 		if reading.PhaseOpposes() {
-			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
-				*forecast, 0, "phase_opposition",
-				"phase dial attractor conflicts with cognitive buy: "+reading.PhaseClass,
-			))
-			continue
+			oppositionPenalty *= 0.5
 		}
 
 		trap := logic.TrapShare(thesis, forecast.Symbol)
+		exhaustionRebound := trap.Dominates() && trap.Family == string(types.MetricExhaustion)
 
-		if trap.Dominates() {
+		if trap.Dominates() && !exhaustionRebound {
 			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
 				*forecast, 0, "trap_dominant",
 				"trap evidence dominates opportunity mass: "+trap.Family,
@@ -252,6 +247,53 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 		}
 
 		utility := (forecast.ExecutableReturn() * causalMult) - forecast.Uncertainty
+		magnitude := math.Abs(forecast.ExpectedReturn)
+		positiveReturn := math.Max(forecast.ExpectedReturn, 0)
+
+		if reading.LookaheadScore > 0 {
+			utility += positiveReturn * reading.LookaheadScore
+		}
+
+		if cognition.Confidence > 0 {
+			utility += positiveReturn * cognition.Confidence
+		}
+
+		if reading.BasinReady && reading.Lead > 0 {
+			utility += positiveReturn * reading.Lead
+		}
+
+		if exhaustionRebound {
+			utility += magnitude * (1 + trap.Share)
+		}
+
+		if positiveReturn > 0 && cognition.Confidence > reading.Noise {
+			utility += positiveReturn
+		}
+
+		if positiveReturn > 0 && reading.CognitiveClears(*forecast) {
+			utility += positiveReturn
+		}
+
+		reservedFloor := forecast.ExpectedReturn - forecast.Uncertainty
+		constructiveFloor := positiveReturn
+		reboundFloor := magnitude*(1+trap.Share) - (0.25 * forecast.Uncertainty)
+
+		if reading.BasinReady && reading.CognitiveClears(*forecast) && constructiveFloor > utility {
+			utility = constructiveFloor
+		}
+
+		if positiveReturn > 0 && reading.BasinReady && reading.CognitiveClears(*forecast) &&
+			utility <= 0 && utility > -positiveReturn {
+			utility = positiveReturn
+		}
+
+		if reading.Reserved() && reservedFloor > utility {
+			utility = reservedFloor
+		}
+
+		if exhaustionRebound && reboundFloor > utility {
+			utility = reboundFloor
+		}
 
 		// Boost utility by the opportunity-leads share from the resident category
 		// graph. When Leads edges from the current category into opportunity
@@ -259,7 +301,10 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 		// predictive evidence that the move is real rather than a phantom lift.
 		// Zero when no graph is available, preserving prior behavior.
 		oppShare, _ := logic.CategoryOpportunityLead(thesis, forecast.Symbol)
-		utility *= (1 + oppShare)
+		if oppShare > 0 {
+			utility += positiveReturn * oppShare
+		}
+		utility *= oppositionPenalty
 
 		if utility <= 0 {
 			thesis.Decisions = append(thesis.Decisions, opportunity.reject(

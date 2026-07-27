@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+func progressFor(index, start, observations int) float64 {
+	progress := float64(index-start+1) / float64(observations)
+	return progress * progress * (3 - 2*progress)
+}
+
 /*
 Scenario expands a semantic helper into explicit book moves and touch trades.
 When symbols are supplied, unselected symbols continue their idle tapes so one
@@ -70,6 +75,10 @@ func (signal *Signal) Scenario(state State, symbols ...string) ([]Step, error) {
 			moveFraction = smallMoveFraction
 		}
 
+		if state == BullTrend || state == BearTrend {
+			moveFraction = state.direction() * (eventMoveFraction * 1.5)
+		}
+
 		if state == LeaderFollower {
 			moveFraction = eventMoveFraction / float64(symbolIndex+1)
 		}
@@ -108,6 +117,18 @@ func (signal *Signal) Scenario(state State, symbols ...string) ([]Step, error) {
 
 			active := state != Baseline && selected[symbol] &&
 				index >= start && index < start+activeObservations
+
+			if state == LeaderFollower {
+				leaderLag := activeObservations / 4
+
+				switch symbolIndex {
+				case 1:
+					active = active && index >= start+leaderLag
+				case 2:
+					active = active && index >= start+(2*leaderLag)
+				}
+			}
+
 			center := targets[symbol]
 
 			if state == LeaderFollower && index < start {
@@ -119,6 +140,25 @@ func (signal *Signal) Scenario(state State, symbols ...string) ([]Step, error) {
 				progress = progress * progress * (3 - 2*progress)
 				mid := signal.markets[symbol].mid()
 				center = mid + (targets[symbol]-mid)*progress
+
+				switch state {
+				case SidewaysChop:
+					center = levels[symbol] * (1 + (eventMoveFraction/10)*math.Sin(progress*6*math.Pi))
+				case VolatilitySpike:
+					center = levels[symbol] * (1 + (eventMoveFraction/2)*math.Sin(progress*8*math.Pi))
+				case SuddenReversal:
+					if progress <= 0.5 {
+						center = levels[symbol] * (1 + eventMoveFraction*(progress*2))
+					} else {
+						center = levels[symbol] * (1 + eventMoveFraction - (eventMoveFraction * 2.2 * (progress - 0.5) * 2))
+					}
+				case FlashCrash:
+					if progress <= 0.5 {
+						center = levels[symbol] * (1 - 0.35*(progress*2))
+					} else {
+						center = levels[symbol] * (0.65 + 0.27*((progress-0.5)*2))
+					}
+				}
 			}
 
 			wave := math.Sin(float64(signal.phase + index + symbolIndex))
@@ -135,8 +175,31 @@ func (signal *Signal) Scenario(state State, symbols ...string) ([]Step, error) {
 			side := "buy"
 
 			if active && (state == FastDump || state == SlowDump ||
-				state == AdverseDivergence && symbolIndex == 0) {
+				state == AdverseDivergence && symbolIndex == 0 ||
+				state == BearTrend) {
 				side = "sell"
+			}
+
+			if active && state == SidewaysChop {
+				if (index+symbolIndex)%2 != 0 {
+					side = "sell"
+				}
+			}
+
+			if active && state == VolatilitySpike {
+				if math.Sin(float64(index+symbolIndex)) < 0 {
+					side = "sell"
+				}
+			}
+
+			if active && state == SuddenReversal && progressFor(index, start, activeObservations) > 0.5 {
+				side = "sell"
+			}
+
+			if active && state == FlashCrash {
+				if progressFor(index, start, activeObservations) <= 0.5 {
+					side = "sell"
+				}
 			}
 
 			if (!active || state == SpreadCompression) &&
@@ -148,6 +211,14 @@ func (signal *Signal) Scenario(state State, symbols ...string) ([]Step, error) {
 
 			if active {
 				volume = state.volume()
+
+				if state == VolatilitySpike {
+					volume = 180
+				}
+
+				if state == FlashCrash && progressFor(index, start, activeObservations) <= 0.5 {
+					volume = 220
+				}
 			}
 
 			actions = append(actions, Action{
@@ -179,8 +250,14 @@ func (signal *Signal) Scenario(state State, symbols ...string) ([]Step, error) {
 			if !compressing && !absorbing {
 				switch index % spreadCycleLength {
 				case spreadWidenPhase:
+					widen := int64(1)
+
+					if state == VolatilitySpike || state == FlashCrash {
+						widen = 3
+					}
+
 					actions = append(actions, Action{
-						Kind: WidenSpread, Symbol: symbol, Ticks: 1,
+						Kind: WidenSpread, Symbol: symbol, Ticks: widen,
 					})
 				case spreadTightenPhase:
 					actions = append(actions, Action{

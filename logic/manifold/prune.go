@@ -26,13 +26,15 @@ func particleContribution(particle pfluid.Particle) float64 {
 }
 
 /*
-retainAboveMedian returns indices whose contribution is at least the median of
-positive contributors. Zero-mass and zero-store particles are always dropped.
-Median (not mean) keeps the typical half of a skewed Hawkes intensity mix —
-mean culling collapses a multi-symbol domain onto the single hottest oscillator
-and blanks the pilot-wave projection.
+retainAboveDustTail returns indices whose contribution clears the lower quantile
+of positive contributors. Zero-mass and zero-store particles are always
+dropped. The shared manifold can carry a large resident history, so pruning
+should only remove the inert dust tail rather than halve the population on each
+growth step.
 */
-func retainAboveMedian(particles []pfluid.Particle) []uint32 {
+func retainAboveDustTail(particles []pfluid.Particle) []uint32 {
+	const keepFloor = 0.80
+
 	if len(particles) == 0 {
 		return nil
 	}
@@ -56,7 +58,8 @@ func retainAboveMedian(particles []pfluid.Particle) []uint32 {
 	}
 
 	sort.Float64s(positives)
-	threshold := positives[(len(positives)-1)/2]
+	thresholdIndex := int(float64(len(positives)-1) * (1.0 - keepFloor))
+	threshold := positives[thresholdIndex]
 	kept := make([]uint32, 0, len(positives))
 
 	for index, score := range scores {
@@ -85,11 +88,11 @@ func retainAboveMedian(particles []pfluid.Particle) []uint32 {
 }
 
 /*
-pruneInert drops resident particles whose mass×(energy+heat) sits below the
-positive-population median after an append Advance. Merge already compacted
-same-cell twins; this removes the long tail of negligible contributors so GPU
-and wire cost cannot grow without bound from historical dust. Callers must not
-invoke this on pure always-step ticks.
+pruneInert drops resident particles whose mass×(energy+heat) sits in the lower
+dust tail of the positive population after an append Advance. Merge already
+compacted same-cell twins; this trims negligible contributors while keeping the
+large majority of resident history alive. Callers must not invoke this on pure
+always-step ticks.
 */
 func (solver *Solver) pruneInert() error {
 	if solver == nil || solver.domain == nil {
@@ -108,7 +111,7 @@ func (solver *Solver) pruneInert() error {
 		return err
 	}
 
-	kept := retainAboveMedian(particles)
+	kept := retainAboveDustTail(particles)
 
 	// Empty keep-set means no positive contributors — leave the resident
 	// population alone rather than Retain(nil) wiping the domain.

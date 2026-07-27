@@ -79,16 +79,10 @@ func TestSolver_Update(t *testing.T) {
 
 		Convey("It should project the shared field onto every GasReady symbol", func() {
 			population := solver.Population()
-			displayCells := float64(
-				solver.config.Grid.X * solver.config.Grid.Y * solver.config.Grid.Z,
-			)
-			displayAspect := float64(solver.config.Grid.X) / float64(solver.config.Grid.Z)
-			displayWidth := int(math.Round(math.Sqrt(displayCells * displayAspect)))
-			displayHeight := int(math.Ceil(displayCells / float64(displayWidth)))
 			So(bitcoin.Display, ShouldNotBeEmpty)
-			So(bitcoin.DisplayWidth, ShouldEqual, displayWidth)
-			So(bitcoin.DisplayHeight, ShouldEqual, displayHeight)
-			So(len(bitcoin.Display), ShouldEqual, displayWidth*displayHeight*4)
+			So(bitcoin.DisplayWidth, ShouldEqual, 64)
+			So(bitcoin.DisplayHeight, ShouldEqual, 64)
+			So(len(bitcoin.Display), ShouldEqual, 64*64*4)
 			So(bitcoin.RhoOccupied, ShouldBeGreaterThan, 0)
 			So(bitcoin.PsiOccupied, ShouldBeGreaterThan, 0)
 			So(bitcoin.OscillatorCount, ShouldEqual, population)

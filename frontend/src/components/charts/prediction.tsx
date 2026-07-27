@@ -10,6 +10,7 @@ import { resizeCanvas } from "#/components/terminal/canvas";
 
 const predictionCanvasRef = createRef<HTMLCanvasElement>();
 let predictionHistory = Circular<ResonanceFrame>(0);
+let predictionFocus = "";
 
 /*
 updatePredictionHistory applies websocket delta semantics to one bounded chart
@@ -33,22 +34,27 @@ export const updatePredictionHistory = (
 	}
 };
 
-/*
-replacePredictionHistory rebuilds the bounded canvas series from the central
-retained projection. Rebuilding prevents an older retained prefix from being
-re-appended whenever a new websocket observation arrives.
-*/
-const replacePredictionHistory = (
-	capacity: number,
-	frames: ResonanceFrame[],
-): void => {
+const resetPredictionHistory = (capacity: number): void => {
 	predictionHistory = Circular<ResonanceFrame>(capacity);
-	updatePredictionHistory(predictionHistory, frames.slice(-capacity));
 };
 
 /*
-paintTerminalPredictionChart replaces its canvas series from the centrally
-retained focused resonance history, so websocket deltas append exactly once.
+hasPredictionLayers confirms that at least one incoming resonance frame still
+carries settled hierarchy layers. Sparse meta-only rows must not blank the
+retained chart history while the backend catches up.
+*/
+const hasPredictionLayers = (frames: ResonanceFrame[]): boolean =>
+	frames.some(
+		(frame) => Array.isArray(frame.layers) && frame.layers.length > 0,
+	);
+
+export const shouldReplacePredictionHistory = (frames: ResonanceFrame[]): boolean =>
+	hasPredictionLayers(frames);
+
+/*
+paintTerminalPredictionChart incrementally merges focused resonance frames into
+one stable local history buffer. Sparse websocket projections must update the
+existing curve in place rather than rebuilding and flickering the entire panel.
 */
 export const paintTerminalPredictionChart = (
 	value: unknown,
@@ -73,7 +79,16 @@ export const paintTerminalPredictionChart = (
 		(frame) => focusSymbol === "" || frame.symbol === focusSymbol,
 	);
 	const capacity = Math.max(2, Math.floor(canvas.clientWidth));
-	replacePredictionHistory(capacity, focused);
+	const focusChanged = predictionFocus !== focusSymbol;
+
+	if (focusChanged || predictionHistory.capacity() !== capacity) {
+		predictionFocus = focusSymbol;
+		resetPredictionHistory(capacity);
+	}
+
+	if (shouldReplacePredictionHistory(focused)) {
+		updatePredictionHistory(predictionHistory, focused.slice(-capacity));
+	}
 
 	drawPredictiveCodingChart(
 		context,

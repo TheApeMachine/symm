@@ -19,7 +19,8 @@ import (
 )
 
 const (
-	TradeVolumeEndpoint = "/0/private/TradeVolume"
+	TradeBalanceEndpoint = "/0/private/TradeBalance"
+	TradeVolumeEndpoint  = "/0/private/TradeVolume"
 )
 
 /*
@@ -263,6 +264,120 @@ func (api *API) TradesHistory() (*kraken.TradesHistory, error) {
 			Trades: trades,
 		},
 	}, nil
+}
+
+func (api *API) AccountBalances() (*kraken.Balance, error) {
+	if !api.live {
+		ledger, ok := api.paper.(interface {
+			BalanceSnapshot() (*kraken.Balance, error)
+		})
+
+		if !ok {
+			return nil, errnie.Error(errnie.Err(
+				errnie.NotImplemented,
+				"paper transport does not provide account balances",
+				nil,
+			))
+		}
+
+		return ledger.BalanceSnapshot()
+	}
+
+	if api.private == nil || api.private.Client() == nil || api.private.Client().REST == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"Kraken private REST client is unavailable",
+			nil,
+		))
+	}
+
+	response, err := api.private.Client().REST.Balances()
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get account balances",
+			err,
+		))
+	}
+
+	balance := &kraken.Balance{
+		Channel: "balances",
+		Type:    "snapshot",
+		Data:    make([]kraken.BalanceData, 0, len(response.Result)),
+	}
+
+	for asset, total := range response.Result {
+		if total == nil {
+			continue
+		}
+
+		name := api.Name(asset)
+
+		if name == "" {
+			name = asset
+		}
+
+		balance.Data = append(balance.Data, kraken.BalanceData{
+			Asset:      name,
+			AssetClass: "currency",
+			Balance:    total.Copy(),
+			Wallets: []kraken.Wallet{{
+				Type:    "spot",
+				ID:      "main",
+				Balance: total.Copy(),
+			}},
+		})
+	}
+
+	return balance, nil
+}
+
+func (api *API) TradeBalance(asset string) (*kraken.TradeBalanceResult, error) {
+	if !api.live {
+		ledger, ok := api.paper.(interface {
+			TradeBalance(asset string) (*kraken.TradeBalanceResult, error)
+		})
+
+		if !ok {
+			return nil, errnie.Error(errnie.Err(
+				errnie.NotImplemented,
+				"paper transport does not provide trade balance",
+				nil,
+			))
+		}
+
+		return ledger.TradeBalance(asset)
+	}
+
+	if asset == "USD" {
+		asset = "ZUSD"
+	}
+
+	response, err := api.private.Post(
+		TradeBalanceEndpoint,
+		kraken.NewTradeBalanceRequest(asset),
+	)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get trade balance",
+			err,
+		))
+	}
+
+	balance := kraken.NewTradeBalance(response)
+
+	if balance == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"Kraken returned an invalid trade balance response",
+			nil,
+		))
+	}
+
+	return balance, nil
 }
 
 /*

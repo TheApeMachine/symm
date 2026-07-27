@@ -1,11 +1,20 @@
 package broker
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/config"
+	krakenmodel "github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/tests/mockapi"
@@ -34,7 +43,7 @@ func TestDeskRecoversOpenLotsAfterInstrumentReady(t *testing.T) {
 			},
 			Now: market.Now,
 			Balances: map[string]float64{
-				"USD": 80595.4943,
+				"USD":  80595.4943,
 				"SIM1": 2,
 			},
 			MakerFee: 0.0016,
@@ -91,4 +100,124 @@ func TestDeskRecoversOpenLotsAfterInstrumentReady(t *testing.T) {
 			So(position.Holding.Stoploss.Floor.Sign(), ShouldBeGreaterThan, 0)
 		})
 	})
+}
+
+/*
+TestDeskHydrateRecovered proves desk recovery enriches balances-backed open lots
+from account-ledger trade history before any UI publish or stoploss sync path.
+*/
+func TestDeskHydrateRecovered(t *testing.T) {
+	previousModel := viper.Get("trading.model")
+	t.Cleanup(func() { viper.Set("trading.model", previousModel) })
+
+	Convey("Given paper trade history with a closed lot followed by a new open lot", t, func() {
+		viper.Set("trading.model", "paper")
+		public := &deskHistoryConn{client: deskNormalizerClient()}
+		paper := &deskHistoryConn{history: &krakenmodel.TradesHistory{
+			Result: krakenmodel.TradesHistoryResult{Trades: map[string]spot.Trade{
+				"closed-buy": {
+					Pair:   "BTCUSD",
+					Type:   "buy",
+					Price:  decimal.NewFromInt64(10),
+					Cost:   decimal.NewFromInt64(10),
+					Fee:    decimal.NewFromFloat64(0.1),
+					Volume: decimal.NewFromInt64(1),
+					Time:   decimal.NewFromFloat64(1),
+				},
+				"closed-sell": {
+					Pair:   "BTCUSD",
+					Type:   "sell",
+					Price:  decimal.NewFromInt64(12),
+					Cost:   decimal.NewFromInt64(12),
+					Fee:    decimal.NewFromFloat64(0.1),
+					Volume: decimal.NewFromInt64(1),
+					Time:   decimal.NewFromFloat64(2),
+				},
+				"open-buy": {
+					Pair:   "BTCUSD",
+					Type:   "buy",
+					Price:  decimal.NewFromInt64(5),
+					Cost:   decimal.NewFromInt64(15),
+					Fee:    decimal.NewFromFloat64(0.2),
+					Volume: decimal.NewFromInt64(3),
+					Time:   decimal.NewFromFloat64(3),
+				},
+			}},
+		}}
+		api := websocket.NewAPI(context.Background(), public, &deskHistoryConn{}, paper)
+		desk := NewDesk(context.Background(), api, nil, nil, nil, config.Fixture().Trading)
+
+		So(api.Initialize(), ShouldBeNil)
+		So(desk.hydrateRecovered(), ShouldBeNil)
+
+		Convey("Then the latest open lot economics are recovered by symbol", func() {
+			holding := desk.recovered["BTC/USD"]
+			So(holding, ShouldNotBeNil)
+			So(holding.EntryPrice, ShouldNotBeNil)
+			So(holding.EntryPrice.Float64(), ShouldEqual, 5)
+			So(holding.EntryFee, ShouldNotBeNil)
+			So(holding.EntryFee.Float64(), ShouldAlmostEqual, 0.2, 1e-8)
+			So(holding.Stoploss, ShouldNotBeNil)
+			So(holding.Stoploss.Entry, ShouldNotBeNil)
+			So(holding.Stoploss.Entry.Float64(), ShouldEqual, 5)
+		})
+	})
+}
+
+type deskHistoryConn struct {
+	*types.Actor
+	client  *spot.WebSocket
+	history *krakenmodel.TradesHistory
+}
+
+func (conn *deskHistoryConn) Client() *spot.WebSocket { return conn.client }
+
+func (conn *deskHistoryConn) Write(json.Marshaler) error { return nil }
+
+func (conn *deskHistoryConn) Post(string, json.Marshaler) ([]byte, error) { return nil, nil }
+
+func (conn *deskHistoryConn) Close() {}
+
+func (conn *deskHistoryConn) Root() *types.Actor {
+	if conn.Actor == nil {
+		conn.Actor = types.NewActor(context.Background(), "history-stub", nil)
+		conn.Actor.Initialize()
+	}
+
+	return conn.Actor
+}
+
+func (conn *deskHistoryConn) TradesHistory() (*krakenmodel.TradesHistory, error) {
+	return conn.history, nil
+}
+
+func deskNormalizerClient() *spot.WebSocket {
+	client := spot.NewWebSocket()
+	client.REST.Executor = func(request *http.Request) (*http.Response, error) {
+		version := request.URL.Query().Get("assetVersion")
+		body := `{"error":[],"result":{}}`
+
+		switch request.URL.Path {
+		case "/0/public/Assets":
+			body = `{"error":[],"result":{"XXBT":{"altname":"XBT"},"ZUSD":{"altname":"USD"}}}`
+
+			if version == "1" {
+				body = `{"error":[],"result":{"BTC":{"altname":"XBT"},"USD":{"altname":"USD"}}}`
+			}
+		case "/0/public/AssetPairs":
+			body = `{"error":[],"result":{"XXBTZUSD":{"wsname":"BTC/USD","base":"XXBT","quote":"ZUSD"}}}`
+
+			if version == "1" {
+				body = `{"error":[],"result":{"BTC/USD":{"wsname":"BTC/USD","base":"BTC","quote":"USD"}}}`
+			}
+		}
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	}
+
+	return client
 }

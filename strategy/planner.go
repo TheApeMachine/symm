@@ -138,7 +138,7 @@ func (planner *Planner) Update(
 		planner.analyzer.Update(thesis)
 	}
 
-	return nil
+	return thesis
 }
 
 func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {

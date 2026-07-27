@@ -67,6 +67,7 @@ import {
 	paintPulseTick,
 	paintWalletBalances,
 	paintWalletPositions,
+	paintWalletTradeBalance,
 	paintWalletTick,
 } from "#/components/terminal/live-ticker";
 import {
@@ -143,7 +144,7 @@ export const drawers = {
 			hawkes: { paint: paintHawkes, input: "history" },
 			signalDetail: {
 				paint: paintSignalDetailMeasurements as Paint,
-				input: "history",
+				input: "latest",
 			},
 			regimeRadar: { paint: paintRegimeRadar, input: "history" },
 			health: { paint: paintHealthMeasurements, input: "latest" },
@@ -185,6 +186,9 @@ export const drawers = {
 		keys: {
 			allocation: paintAllocationBalances,
 		},
+	},
+	trade_balance: {
+		paint: paintWalletTradeBalance as Paint,
 	},
 	positions: {
 		paint: paintWalletPositions as Paint,

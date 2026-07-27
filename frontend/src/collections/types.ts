@@ -28,6 +28,11 @@ export type Balance = {
 	reserved?: number | string;
 };
 
+export type TradeBalance = {
+	e?: number | string;
+	n?: number | string;
+};
+
 /*
  Holding mirrors the public JSON fields on types.Holding exactly.
  */

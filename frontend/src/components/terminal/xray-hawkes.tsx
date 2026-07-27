@@ -1,4 +1,5 @@
 import { createRef } from "react";
+import { Circular } from "#/collections/circular";
 import type { Measurement, MeasurementEpoch } from "#/collections/types";
 import {
 	clearCanvas,
@@ -19,6 +20,43 @@ const hawkesCanvasRef = createRef<HTMLCanvasElement>();
 const branchingRef = createRef<HTMLSpanElement>();
 const intensityRef = createRef<HTMLSpanElement>();
 const cascadeRef = createRef<HTMLDivElement>();
+const retainedEpochs = new Map<string, ReturnType<typeof Circular<MeasurementEpoch>>>();
+
+const retainedEpochBuffer = (symbol: string) => {
+	let buffer = retainedEpochs.get(symbol);
+
+	if (buffer !== undefined) {
+		return buffer;
+	}
+
+	buffer = Circular<MeasurementEpoch>(64);
+	retainedEpochs.set(symbol, buffer);
+	return buffer;
+};
+
+const mergeEpochs = (
+	measurements: Measurement[],
+	focusSymbol: string,
+): MeasurementEpoch[] => {
+	const frames = measurements.filter(
+		(measurement) =>
+			measurement.source === "hawkes" &&
+			(focusSymbol === "" || measurement.symbol === focusSymbol),
+	);
+	const byAt = new Map<string, Measurement[]>();
+
+	for (const row of frames) {
+		const group = byAt.get(row.at) ?? [];
+		group.push(row);
+		byAt.set(row.at, group);
+	}
+
+	return [...byAt.values()].map((readings) => ({
+		at: readings[0]?.at ?? "",
+		readings,
+		publishedAt: readings.at(-1)?.at ?? readings[0]?.at ?? "",
+	}));
+};
 
 /*
 paintXrayHawkes reconstructs Hawkes intensity from retained measurement epochs
@@ -50,19 +88,22 @@ export const paintXrayHawkes = (value: unknown, focusSymbol: string) => {
 		);
 	}
 
-	const byAt = new Map<string, Measurement[]>();
+	const symbol = focusSymbol || frames.at(-1)?.symbol || "";
+	const buffer = retainedEpochBuffer(symbol);
+	const incomingEpochs = mergeEpochs(frames, symbol);
 
-	for (const row of frames) {
-		const group = byAt.get(row.at) ?? [];
-		group.push(row);
-		byAt.set(row.at, group);
+	for (const epoch of incomingEpochs) {
+		const latest = buffer.values().at(-1);
+
+		if (latest?.at === epoch.at) {
+			buffer.replaceTail(epoch);
+			continue;
+		}
+
+		buffer.push(epoch);
 	}
 
-	const epochs: MeasurementEpoch[] = [...byAt.values()].map((readings) => ({
-		at: readings[0]?.at ?? "",
-		readings,
-		publishedAt: readings.at(-1)?.at ?? readings[0]?.at ?? "",
-	}));
+	const epochs = buffer.values();
 	const metrics = hawkesMetricsFromBuffer(frames);
 	const cascade = cascadeLabel(metrics.branching);
 	const series = hawkesSeriesFromBuffer(epochs);

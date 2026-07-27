@@ -306,9 +306,21 @@ func (hub *Hub) fanout(frame cachedFrame) {
 		select {
 		case session.queue <- frame:
 		default:
-			// Drop the frame for this client only. Cancelling the write loop
-			// while leaving the socket open freezes the UI until a manual
-			// refresh; saturation must not mute a live session.
+			select {
+			case <-session.queue:
+			default:
+			}
+
+			select {
+			case session.queue <- frame:
+				return true
+			default:
+			}
+
+			// If even replace-oldest cannot make room, count the drop for this
+			// client only. Cancelling the write loop while leaving the socket
+			// open freezes the UI until a manual refresh; saturation must not
+			// mute a live session.
 			total := hub.dropped.Add(1)
 
 			if total == 1 || total%64 == 0 {

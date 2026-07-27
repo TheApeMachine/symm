@@ -2,6 +2,7 @@ package category
 
 import (
 	"math"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/types"
@@ -13,20 +14,21 @@ and typed edges are upserted each cut; weights only strengthen on evidence —
 the graph is never rebuilt from scratch on a tick.
 */
 type Graph struct {
-	Nodes           []*Node                       `json:"nodes"`
-	Edges           []*Relation                   `json:"edges"`
-	Priors          map[string]types.CategoryType `json:"priors"`
-	NodeIndex       map[nodeKey]*Node             `json:"-"`
-	EdgeIndex       map[edgeKey]*Relation         `json:"-"`
-	edgesBySymbol   map[string][]edgeKey
-	cadence         cadenceBook
-	touched         map[edgeKey]struct{}
-	previous        map[nodeKey]Node
-	evidence        *evidenceIndex
+	mu                sync.RWMutex
+	Nodes             []*Node                       `json:"nodes"`
+	Edges             []*Relation                   `json:"edges"`
+	Priors            map[string]types.CategoryType `json:"priors"`
+	NodeIndex         map[nodeKey]*Node             `json:"-"`
+	EdgeIndex         map[edgeKey]*Relation         `json:"-"`
+	edgesBySymbol     map[string][]edgeKey
+	cadence           cadenceBook
+	touched           map[edgeKey]struct{}
+	previous          map[nodeKey]Node
+	evidence          *evidenceIndex
 	sharedScratch     []string
 	conditionsScratch []string
-	evidenceScratch []string
-	pair            *pairMemory
+	evidenceScratch   []string
+	pair              *pairMemory
 }
 
 /*
@@ -34,18 +36,18 @@ NewGraph allocates an empty resident category graph.
 */
 func NewGraph() *Graph {
 	return &Graph{
-		Nodes:           []*Node{},
-		Edges:           []*Relation{},
-		Priors:          map[string]types.CategoryType{},
-		NodeIndex:       map[nodeKey]*Node{},
-		EdgeIndex:       map[edgeKey]*Relation{},
-		edgesBySymbol:   map[string][]edgeKey{},
-		previous:        map[nodeKey]Node{},
-		evidence:        newEvidenceIndex(),
+		Nodes:             []*Node{},
+		Edges:             []*Relation{},
+		Priors:            map[string]types.CategoryType{},
+		NodeIndex:         map[nodeKey]*Node{},
+		EdgeIndex:         map[edgeKey]*Relation{},
+		edgesBySymbol:     map[string][]edgeKey{},
+		previous:          map[nodeKey]Node{},
+		evidence:          newEvidenceIndex(),
 		sharedScratch:     make([]string, 0, len(types.CategoryOrder)),
 		conditionsScratch: make([]string, 0, len(types.CategoryOrder)),
 		evidenceScratch:   make([]string, 0, len(types.CategoryOrder)),
-		pair:            newPairMemory(),
+		pair:              newPairMemory(),
 	}
 }
 
@@ -91,6 +93,9 @@ prior node state, so large resident graphs do not pay a full-map copy on
 every tick. The touched map is cleared and reused to avoid per-tick allocation.
 */
 func (graph *Graph) UpdateFrom(thesis *types.Thesis) {
+	graph.mu.Lock()
+	defer graph.mu.Unlock()
+
 	if graph.touched == nil {
 		graph.touched = make(map[edgeKey]struct{})
 	} else {
@@ -283,6 +288,9 @@ func (graph *Graph) Weight(
 		return 0
 	}
 
+	graph.mu.RLock()
+	defer graph.mu.RUnlock()
+
 	relation := graph.EdgeIndex[makeEdgeKey(symbol, from, to, kind)]
 
 	if relation == nil {
@@ -299,6 +307,9 @@ func (graph *Graph) Prior(symbol string) types.CategoryType {
 	if graph == nil {
 		return types.CategoryTypeNone
 	}
+
+	graph.mu.RLock()
+	defer graph.mu.RUnlock()
 
 	return graph.Priors[symbol]
 }

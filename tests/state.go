@@ -33,6 +33,12 @@ const (
 	MarketStateSpreadControl     = marketsignal.SpreadControl
 	MarketStateLeaderFollower    = marketsignal.LeaderFollower
 	MarketStateAdverseDivergence = marketsignal.AdverseDivergence
+	MarketStateBullTrend         = marketsignal.BullTrend
+	MarketStateBearTrend         = marketsignal.BearTrend
+	MarketStateSidewaysChop      = marketsignal.SidewaysChop
+	MarketStateVolatilitySpike   = marketsignal.VolatilitySpike
+	MarketStateSuddenReversal    = marketsignal.SuddenReversal
+	MarketStateFlashCrash        = marketsignal.FlashCrash
 	MarketMoveMid                = marketsignal.MoveMid
 	MarketTrade                  = marketsignal.Trade
 	MarketAdd                    = marketsignal.Add

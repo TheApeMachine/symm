@@ -45,6 +45,7 @@ func NewHolding(
 	qty *decimal.Decimal,
 	mark *decimal.Decimal,
 	exit func() error,
+	onChange func(),
 	market *Actor,
 ) *Holding {
 	errnie.Info("creating holding for: " + symbol)
@@ -56,7 +57,7 @@ func NewHolding(
 		Symbol:   symbol,
 		Qty:      qty,
 		Status:   PENDING,
-		Stoploss: NewStoploss(ctx, symbol, mark, exit, market),
+		Stoploss: NewStoploss(ctx, symbol, mark, exit, onChange, market),
 	}
 
 	return holding
@@ -71,12 +72,13 @@ func (holding *Holding) Initialize(
 	qty *decimal.Decimal,
 	mark *decimal.Decimal,
 	exit func() error,
+	onChange func(),
 	market *Actor,
 ) {
 	holding.ctx = ctx
 	holding.Qty = qty
 	holding.Status = READY
-	holding.Stoploss.Initialize(ctx, mark, exit, market)
+	holding.Stoploss.Initialize(ctx, mark, exit, onChange, market)
 }
 
 func (holding *Holding) Close() (err error) {

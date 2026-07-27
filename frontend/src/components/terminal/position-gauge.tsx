@@ -222,13 +222,13 @@ const writePositionGauge = (
 	}
 
 	if (parts.peakLabel) {
-		parts.peakLabel.textContent = `peak ${peakPrice}`;
+		parts.peakLabel.textContent = "";
 		parts.peakLabel.style.color = upTone;
 	}
 
 	if (parts.markLabel) {
-		parts.markLabel.textContent = `mark ${markLabel}`;
-		parts.markLabel.style.color = pnlTone;
+		parts.markLabel.textContent = `peak ${peakPrice}`;
+		parts.markLabel.style.color = upTone;
 	}
 
 	if (parts.returnPct) {

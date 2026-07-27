@@ -91,12 +91,13 @@ func TestHubFanoutSaturationKeepsSessionAlive(t *testing.T) {
 		before := hub.Dropped()
 		hub.fanout(cachedFrame{generation: 2, payload: []byte(`{"tick":2}`)})
 
-		Convey("It counts the drop and leaves the session registered", func() {
-			So(hub.Dropped(), ShouldEqual, before+1)
+		Convey("It keeps the session registered and replaces the oldest frame", func() {
+			So(hub.Dropped(), ShouldEqual, before)
 
 			_, ok := hub.clients.Load(session)
 			So(ok, ShouldBeTrue)
 			So(len(session.queue), ShouldEqual, 1)
+			So((<-session.queue).payload, ShouldResemble, []byte(`{"tick":2}`))
 		})
 	})
 }

@@ -19,11 +19,25 @@ import {
 } from "#/components/terminal/xray-view";
 
 const latentCanvasRef = createRef<HTMLCanvasElement>();
-let latentPoints: LatentPoint[] = [];
+const latentPointBySymbol = new Map<string, LatentPoint>();
+let latentFingerprint = "";
+let latentGeometry = "";
+
+const retainedLatentPoints = (): LatentPoint[] =>
+	[...latentPointBySymbol.values()].sort((left, right) =>
+		left.symbol.localeCompare(right.symbol),
+	);
+
+const latentKey = (point: LatentPoint): string =>
+	`${point.symbol}|${point.x.toFixed(6)}|${point.y.toFixed(6)}|${point.category}`;
+
+const latentSignature = (points: LatentPoint[], focusSymbol: string): string =>
+	`${focusSymbol}::${points.map(latentKey).join(";")}`;
 
 /*
-paintXrayLatent draws the current DRAW batch of resonance latent carriers into
-latentCanvasRef. Only this batch is used — nothing is retained in JS.
+paintXrayLatent draws retained resonance latent carriers into latentCanvasRef.
+Sparse updates must not reshuffle the cloud or clear the canvas unless the
+visible point set or canvas geometry actually changed.
 */
 export const paintXrayLatent = (value: unknown, focusSymbol: string) => {
 	const canvas = latentCanvasRef.current;
@@ -42,17 +56,30 @@ export const paintXrayLatent = (value: unknown, focusSymbol: string) => {
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as ResonanceFrame[];
 	const points = latentPointsFromFrames(frames);
-	if (points.length > 0) {
-		latentPoints = points;
+
+	for (const point of points) {
+		latentPointBySymbol.set(point.symbol, point);
 	}
-	const pointsToDraw = latentPoints;
+
+	const pointsToDraw = retainedLatentPoints();
 	const width = canvas.clientWidth;
 	const height = canvas.clientHeight;
+	const geometry = `${width}x${height}`;
+	const fingerprint = latentSignature(pointsToDraw, focusSymbol);
 
 	if (pointsToDraw.length === 0) {
+		latentFingerprint = "";
+		latentGeometry = geometry;
 		drawXrayWaiting(context, width, height, "waiting for latent carriers");
 		return;
 	}
+
+	if (fingerprint === latentFingerprint && geometry === latentGeometry) {
+		return;
+	}
+
+	latentFingerprint = fingerprint;
+	latentGeometry = geometry;
 
 	clearCanvas(context, width, height);
 
@@ -131,7 +158,7 @@ export const XrayLatentPanel = () => (
 		ref={latentCanvasRef}
 		onClick={(event) => {
 			const canvas = latentCanvasRef.current;
-			const points = latentPoints;
+			const points = retainedLatentPoints();
 
 			if (canvas === null || points.length === 0) {
 				return;

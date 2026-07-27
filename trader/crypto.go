@@ -209,21 +209,23 @@ func (crypto *Crypto) publish(thesis *types.Thesis, elapsed time.Duration) {
 		crypto.uiHub.Publish(datura.NewMap("findings", thesis.Findings).MarshalAndFree())
 	}
 
-	crypto.captureJournal(thesis)
+	journalChanged := crypto.captureJournal(thesis)
 
-	if crypto.uiHub != nil && len(crypto.theses) > 0 {
+	if journalChanged && crypto.uiHub != nil && len(crypto.theses) > 0 {
 		crypto.uiHub.Publish(datura.NewMap("journal", crypto.theses).MarshalAndFree())
 	}
 
-	if crypto.journal != nil {
+	if journalChanged && crypto.journal != nil {
 		_ = crypto.journal.Save(crypto.theses)
 	}
 }
 
-func (crypto *Crypto) captureJournal(thesis *types.Thesis) {
+func (crypto *Crypto) captureJournal(thesis *types.Thesis) bool {
 	if thesis == nil {
-		return
+		return false
 	}
+
+	changed := false
 
 	thesis.Lifecycle.Range(func(key, value any) bool {
 		symbol, ok := key.(string)
@@ -240,9 +242,12 @@ func (crypto *Crypto) captureJournal(thesis *types.Thesis) {
 
 		if snapshot := crypto.snapshotThesis(thesis, symbol); snapshot != nil {
 			crypto.theses = append(crypto.theses, snapshot)
+			changed = true
 		}
 		return true
 	})
+
+	return changed
 }
 
 func (crypto *Crypto) hasJournalLifecycle(symbol, lifecycle string) bool {
@@ -475,7 +480,7 @@ func (crypto *Crypto) savedHoldings() []*types.Holding {
 			}
 
 			seen[symbol] = struct{}{}
-			holdings = append(holdings, holding)
+			holdings = append(holdings, freezeHolding(holding))
 			return true
 		})
 	}
@@ -496,7 +501,7 @@ func (crypto *Crypto) enter(thesis *types.Thesis, decision *types.Decision) {
 	}
 
 	if holding == nil {
-		holding = types.NewHolding(crypto.ctx, decision.Symbol, decision.ProposedQuantity, decision.ReferencePrice, nil, nil)
+		holding = types.NewHolding(crypto.ctx, decision.Symbol, decision.ProposedQuantity, decision.ReferencePrice, nil, nil, nil)
 		thesis.Holdings.Store(decision.Symbol, holding)
 	}
 

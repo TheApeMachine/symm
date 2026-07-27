@@ -149,13 +149,18 @@ export const paintSignalDetailMeasurements = (
 	}
 
 	if (heatmapGridRef.current !== null) {
+		const heatmapRows =
+			latest === undefined
+				? []
+				: value.filter(
+						(row) =>
+							row.source === source &&
+							row.at === latest.at &&
+							row.metrics?.[headline] !== undefined,
+					);
+
 		heatmapGridRef.current.replaceChildren(
-			...value
-				.filter(
-					(row) =>
-						row.source === source && row.metrics?.[headline] !== undefined,
-				)
-				.map((row) => {
+			...heatmapRows.map((row) => {
 					const cell = document.createElement("div");
 					const sample = row.metrics?.[headline];
 					const strength = Math.max(

@@ -26,6 +26,9 @@ func (reporter Reporter) TrapPressure(symbol string) (share float64, dominates b
 	}
 
 	graph := reporter.graph
+	graph.mu.RLock()
+	defer graph.mu.RUnlock()
+
 	var trapMass, opportunityMass, contradict, support float64
 
 	for key, node := range graph.NodeIndex {
@@ -83,6 +86,9 @@ func (reporter Reporter) ExhaustionLead(symbol string) (share float64, dominates
 	}
 
 	graph := reporter.graph
+	graph.mu.RLock()
+	defer graph.mu.RUnlock()
+
 	var intoExhaustion, intoOpportunity float64
 
 	for _, key := range graph.edgesBySymbol[symbol] {
@@ -153,6 +159,9 @@ func (reporter Reporter) OpportunityLead(symbol string) (share float64, dominate
 	}
 
 	graph := reporter.graph
+	graph.mu.RLock()
+	defer graph.mu.RUnlock()
+
 	var intoExhaustion, intoOpportunity float64
 
 	for _, key := range graph.edgesBySymbol[symbol] {

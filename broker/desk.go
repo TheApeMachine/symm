@@ -3,8 +3,13 @@ package broker
 import (
 	"context"
 	"slices"
+	"sort"
+	"strings"
+	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken"
@@ -49,7 +54,7 @@ func NewDesk(
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
-		desk := &Desk{
+	desk := &Desk{
 		ctx:          ctx,
 		cancel:       cancel,
 		status:       types.INITIALIZING,
@@ -124,6 +129,16 @@ func (desk *Desk) Initialize(market *types.Actor, account *types.Actor) error {
 				err,
 			))
 		}
+
+		if err := desk.hydrateRecovered(); err != nil {
+			_ = desk.transitionStatus(types.ERROR)
+
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"failed to recover account holdings",
+				err,
+			))
+		}
 	}
 
 	if err := desk.transitionStatus(types.READY); err != nil {
@@ -134,6 +149,141 @@ func (desk *Desk) Initialize(market *types.Actor, account *types.Actor) error {
 		if err := desk.balance.Publish(); err != nil {
 			errnie.Error(err)
 		}
+	}
+
+	return nil
+}
+
+func (desk *Desk) hydrateRecovered() error {
+	if desk == nil || desk.api == nil {
+		return nil
+	}
+
+	history, err := desk.api.TradesHistory()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	if history == nil {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"desk: missing trades history during recovery",
+			nil,
+		))
+	}
+
+	rows := make([]struct {
+		symbol string
+		trade  spot.Trade
+	}, 0, len(history.Result.Trades))
+
+	for _, trade := range history.Result.Trades {
+		symbol := desk.api.Name(trade.Pair)
+
+		if symbol == "" {
+			return errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"desk: unknown trade pair during recovery: "+trade.Pair,
+				nil,
+			))
+		}
+
+		rows = append(rows, struct {
+			symbol string
+			trade  spot.Trade
+		}{symbol: symbol, trade: trade})
+	}
+
+	sort.Slice(rows, func(left, right int) bool {
+		leftAt := time.Time{}
+		rightAt := time.Time{}
+
+		if rows[left].trade.Time != nil {
+			leftAt = time.Unix(0, int64(rows[left].trade.Time.Float64()*1e9)).UTC()
+		}
+
+		if rows[right].trade.Time != nil {
+			rightAt = time.Unix(0, int64(rows[right].trade.Time.Float64()*1e9)).UTC()
+		}
+
+		return leftAt.Before(rightAt)
+	})
+
+	holdings := make(map[string]*types.Holding)
+	notionals := make(map[string]*decimal.Decimal)
+
+	for _, row := range rows {
+		side := strings.ToLower(row.trade.Type)
+
+		if side == "sell" {
+			delete(holdings, row.symbol)
+			delete(notionals, row.symbol)
+			continue
+		}
+
+		if side != "buy" || row.trade.Volume == nil || row.trade.Cost == nil {
+			continue
+		}
+
+		holding := holdings[row.symbol]
+
+		if holding == nil {
+			holding = &types.Holding{Symbol: row.symbol}
+			holdings[row.symbol] = holding
+		}
+
+		if row.trade.Time != nil {
+			entryAt := time.Unix(0, int64(row.trade.Time.Float64()*1e9)).UTC()
+
+			if holding.EntryAt == nil || entryAt.Before(*holding.EntryAt) {
+				holding.EntryAt = &entryAt
+			}
+		}
+
+		if holding.Qty == nil {
+			holding.Qty = row.trade.Volume.Copy()
+		} else {
+			holding.Qty = holding.Qty.Add(row.trade.Volume)
+		}
+
+		if row.trade.Fee != nil {
+			if holding.EntryFee == nil {
+				holding.EntryFee = row.trade.Fee.Copy()
+			} else {
+				holding.EntryFee = holding.EntryFee.Add(row.trade.Fee)
+			}
+		}
+
+		if notionals[row.symbol] == nil {
+			notionals[row.symbol] = row.trade.Cost.Copy()
+		} else {
+			notionals[row.symbol] = notionals[row.symbol].Add(row.trade.Cost)
+		}
+
+		holding.EntryPrice = notionals[row.symbol].Div(holding.Qty)
+	}
+
+	for symbol, recovered := range holdings {
+		holding := desk.recovered[symbol]
+
+		if holding == nil {
+			holding = &types.Holding{Symbol: symbol}
+		}
+
+		holding.EntryAt = recovered.EntryAt
+		holding.EntryPrice = recovered.EntryPrice
+		holding.EntryFee = recovered.EntryFee
+
+		if holding.Stoploss == nil {
+			holding.Stoploss = &types.Stoploss{Symbol: symbol}
+		}
+
+		if recovered.EntryPrice != nil {
+			holding.Stoploss.Entry = recovered.EntryPrice.Copy()
+		}
+
+		desk.recovered[symbol] = holding
 	}
 
 	return nil
@@ -259,19 +409,21 @@ func (desk *Desk) adoptOpenPositions() {
 			desk.account,
 		)
 
+		desk.positions[symbol] = position
+
 		desk.recoverPosition(position, desk.recovered[symbol])
 
 		if err := desk.price.Mark(&pair, position.Holding); err != nil {
+			delete(desk.positions, symbol)
 			continue
 		}
 
 		if position.Holding.Mark != nil && position.Holding.Mark.Sign() > 0 &&
 			position.Holding.Stoploss != nil {
 			position.Holding.Stoploss.Update(position.Holding.Mark)
-			position.Publish()
 		}
 
-		desk.positions[symbol] = position
+		position.Publish()
 	}
 }
 
@@ -286,28 +438,33 @@ func (desk *Desk) recoverPosition(position *Position, holding *types.Holding) {
 		return
 	}
 
-	position.Holding.Asset = holding.Asset
-	position.Holding.SellableQty = holding.SellableQty
-	position.Holding.EntryAt = holding.EntryAt
-	position.Holding.ExitAt = holding.ExitAt
-	position.Holding.EntryPrice = holding.EntryPrice
-	position.Holding.EntryFee = holding.EntryFee
-	position.Holding.ExitPrice = holding.ExitPrice
-	position.Holding.ExitFee = holding.ExitFee
-	position.Holding.PnL = holding.PnL
-	position.Holding.ReturnPct = holding.ReturnPct
-	position.Holding.IsOpportunity = holding.IsOpportunity
-	position.Holding.ReservationID = holding.ReservationID
+	runtimeSymbol := position.Holding.Symbol
+	runtimeQty := position.Holding.Qty
+	runtimeStatus := position.Holding.Status
+	runtimeStoploss := position.Holding.Stoploss
+	payload, err := sonic.Marshal(holding)
 
-	if holding.Stoploss == nil || position.Holding.Stoploss == nil {
+	if err != nil {
+		errnie.Error(err)
 		return
 	}
 
-	position.Holding.Stoploss.Entry = holding.Stoploss.Entry
-	position.Holding.Stoploss.Peak = holding.Stoploss.Peak
-	position.Holding.Stoploss.Mark = holding.Stoploss.Mark
-	position.Holding.Stoploss.Floor = holding.Stoploss.Floor
-	position.Holding.Stoploss.Status = holding.Stoploss.Status
+	if err := sonic.Unmarshal(payload, position.Holding); err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	position.Holding.Symbol = runtimeSymbol
+	position.Holding.Qty = runtimeQty
+	position.Holding.Status = runtimeStatus
+
+	if position.Holding.Stoploss == nil {
+		position.Holding.Stoploss = runtimeStoploss
+	}
+
+	if position.Holding.Stoploss != nil && holding.EntryPrice != nil {
+		position.Holding.Stoploss.Entry = holding.EntryPrice.Copy()
+	}
 }
 
 /*

@@ -29,28 +29,35 @@ const (
 	SpreadControl
 	LeaderFollower
 	AdverseDivergence
+	BullTrend
+	BearTrend
+	SidewaysChop
+	VolatilitySpike
+	SuddenReversal
+	FlashCrash
 )
 
 const (
-	idleObservations       = 16
-	fastLegObservations    = 8
-	slowLegObservations    = 16
-	settleObservations     = 4
-	initialPrice           = 100.0
-	PriceIncrement         = 0.01
-	QuantityIncrement      = 0.00000001
-	idleAmplitudeFraction  = 0.0005
-	eventMoveFraction      = 0.12
-	smallMoveFraction      = eventMoveFraction / 4
-	idleVolume             = 10.0
-	idleVolumeWaveFraction = 0.2
-	bookLevels             = 2
-	bestQuoteTicks         = 2
-	initialOrderQuantity   = 10_000.0
-	spreadCycleLength      = 4
-	spreadWidenPhase       = 0
-	spreadTightenPhase     = 2
-	leaderLagObservations  = fastLegObservations / 2
+	idleObservations         = 16
+	fastLegObservations      = 8
+	slowLegObservations      = 16
+	settleObservations       = 4
+	initialPrice             = 100.0
+	PriceIncrement           = 0.01
+	QuantityIncrement        = 0.00000001
+	idleAmplitudeFraction    = 0.0005
+	eventMoveFraction        = 0.12
+	smallMoveFraction        = eventMoveFraction / 4
+	idleVolume               = 10.0
+	idleVolumeWaveFraction   = 0.2
+	bookLevels               = 2
+	bestQuoteTicks           = 2
+	initialOrderQuantity     = 10_000.0
+	spreadCycleLength        = 4
+	spreadWidenPhase         = 0
+	spreadTightenPhase       = 2
+	leaderLagObservations    = fastLegObservations / 2
+	sustainedLegObservations = 24
 )
 
 var epoch = time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)
@@ -330,9 +337,11 @@ func (state State) observations() int {
 	switch state {
 	case SlowPump, SlowDump:
 		return slowLegObservations
+	case BullTrend, BearTrend, SidewaysChop:
+		return sustainedLegObservations
 	case FastPump, FastDump, VolumeAbsorption, LowVolumeLift, SpreadCompression,
 		SlowCadenceLift, SmallDisplacementLift, SpreadControl, LeaderFollower,
-		AdverseDivergence:
+		AdverseDivergence, VolatilitySpike, SuddenReversal, FlashCrash:
 		return fastLegObservations
 	default:
 		return idleObservations
@@ -343,7 +352,7 @@ func (state State) observations() int {
 valid rejects unknown regimes before they can emit a zero-direction event.
 */
 func (state State) valid() bool {
-	return state >= Baseline && state <= AdverseDivergence
+	return state >= Baseline && state <= FlashCrash
 }
 
 /*
@@ -352,8 +361,11 @@ interval returns the sampling cadence of the active event leg.
 func (state State) interval() time.Duration {
 	switch state {
 	case FastPump, FastDump, VolumeAbsorption, LowVolumeLift,
-		SmallDisplacementLift, LeaderFollower, AdverseDivergence:
+		SmallDisplacementLift, LeaderFollower, AdverseDivergence,
+		VolatilitySpike, SuddenReversal, FlashCrash:
 		return 250 * time.Millisecond
+	case SidewaysChop:
+		return 500 * time.Millisecond
 	default:
 		return time.Second
 	}
@@ -365,9 +377,9 @@ direction returns the signed displacement of the selected event.
 func (state State) direction() float64 {
 	switch state {
 	case FastPump, SlowPump, LowVolumeLift, SlowCadenceLift,
-		SmallDisplacementLift, LeaderFollower, AdverseDivergence:
+		SmallDisplacementLift, LeaderFollower, AdverseDivergence, BullTrend:
 		return 1
-	case FastDump, SlowDump:
+	case FastDump, SlowDump, BearTrend, FlashCrash:
 		return -1
 	default:
 		return 0
@@ -380,8 +392,13 @@ volume returns the executed quantity generated during the active event leg.
 func (state State) volume() float64 {
 	switch state {
 	case FastPump, FastDump, VolumeAbsorption, SlowCadenceLift,
-		SmallDisplacementLift, LeaderFollower, AdverseDivergence:
+		SmallDisplacementLift, LeaderFollower, AdverseDivergence,
+		VolatilitySpike, SuddenReversal, FlashCrash:
 		return 100
+	case BullTrend, BearTrend:
+		return 60
+	case SidewaysChop:
+		return 40
 	case SlowPump, SlowDump:
 		return 30
 	default:

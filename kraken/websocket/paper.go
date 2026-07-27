@@ -195,7 +195,7 @@ func (paper *Paper) TradesHistory() (*kraken.TradesHistory, error) {
 	)
 
 	paper.simulator.Do(REST, func() {
-		model, err = paper.execute("history", "history")
+		model, err = paper.execute("history", "history", "--verbose")
 	})
 
 	if err != nil {
@@ -207,6 +207,57 @@ func (paper *Paper) TradesHistory() (*kraken.TradesHistory, error) {
 	}
 
 	return kraken.NewTradesHistoryFromMap(model), nil
+}
+
+/*
+BalanceSnapshot loads an authoritative paper wallet snapshot from `kraken paper balance`.
+*/
+func (paper *Paper) BalanceSnapshot() (*kraken.Balance, error) {
+	var (
+		model datura.Map[any]
+		err   error
+	)
+
+	paper.simulator.Do(REST, func() {
+		model, err = paper.execute("balances", "balance")
+	})
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get paper balances",
+			err,
+		))
+	}
+
+	balance := kraken.NewBalanceFromMap(model)
+	balance.Type = "snapshot"
+
+	return balance, nil
+}
+
+/*
+TradeBalance reshapes `kraken paper status --verbose` into Kraken trade balance.
+*/
+func (paper *Paper) TradeBalance(string) (*kraken.TradeBalanceResult, error) {
+	var (
+		model datura.Map[any]
+		err   error
+	)
+
+	paper.simulator.Do(REST, func() {
+		model, err = paper.execute("trade_balance", "status", "--verbose")
+	})
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get paper trade balance",
+			err,
+		))
+	}
+
+	return kraken.NewPaperTradeBalanceFromMap(model), nil
 }
 
 /*

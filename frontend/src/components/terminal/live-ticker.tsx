@@ -1,6 +1,6 @@
 import { createRef } from "react";
 import { appStore } from "#/collections/app";
-import type { Balance, Holding, Position } from "#/collections/types";
+import type { Balance, Holding, Position, TradeBalance } from "#/collections/types";
 import { formatUptime } from "#/components/terminal/kernel-meta";
 import { walletMetrics } from "#/components/terminal/panels";
 import { Flex } from "@/components/ui/flex";
@@ -68,6 +68,7 @@ const uptimeRef = createRef<HTMLDivElement>();
 
 let lastBalances: Balance[] = [];
 let lastPositions: Position[] = [];
+let lastTradeBalance: TradeBalance | null = null;
 let clockTimer: number | null = null;
 
 type TickRow = {
@@ -196,17 +197,9 @@ const paintWallet = () => {
 	const reservedValue = wallet
 		? `${wallet.reserved.toFixed(2)} ${wallet.asset}`
 		: "—";
-	const pnl = lastHoldings.reduce((total, holding) => {
-		const value = Number(holding.pnl);
-
-		if (!Number.isFinite(value)) {
-			return total;
-		}
-
-		return total + value;
-	}, 0);
-	const equityValue = wallet
-		? `${wallet.equity.toFixed(2)} ${wallet.asset}`
+	const pnl = Number(lastTradeBalance?.n);
+	const equityValue = wallet && Number.isFinite(Number(lastTradeBalance?.e))
+		? `${Number(lastTradeBalance?.e).toFixed(2)} ${wallet.asset}`
 		: "—";
 
 	setText(walletCashRef.current, cashValue);
@@ -238,6 +231,17 @@ export const paintWalletPositions = (value: unknown) => {
 			: value != null
 				? [value]
 				: []) as Position[];
+	paintWallet();
+};
+
+/*
+paintWalletTradeBalance paints backend-owned liquidation value from trade balance.
+*/
+export const paintWalletTradeBalance = (value: unknown) => {
+	lastTradeBalance =
+		value !== null && typeof value === "object"
+			? (value as TradeBalance)
+			: null;
 	paintWallet();
 };
 
@@ -316,7 +320,7 @@ export const LiveWalletMetrics = () => (
 				style={{ display: "none" }}
 			/>
 			<span className="text-[9px] text-(--f4) uppercase tracking-widest">
-				Equity
+				Liquidation
 			</span>
 			<span
 				ref={walletEquityRef}

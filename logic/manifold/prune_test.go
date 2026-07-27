@@ -7,17 +7,17 @@ import (
 	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 )
 
-func TestRetainAboveMedian(t *testing.T) {
+func TestRetainAboveDustTail(t *testing.T) {
 	Convey("Given a mixed contribution population", t, func() {
 		particles := []pfluid.Particle{
 			{Mass: 1, Energy: 1, Heat: 0},
 			{Mass: 1, Energy: 1, Heat: 0},
-			{Mass: 0.01, Energy: 1e-6, Heat: 0},
+			{Mass: 0, Energy: 1e-6, Heat: 0},
 			{Mass: 0, Energy: 10, Heat: 10},
 		}
 
-		Convey("It keeps at-or-above-median contributors and drops dust", func() {
-			So(retainAboveMedian(particles), ShouldResemble, []uint32{0, 1})
+		Convey("It keeps meaningful contributors and drops only the inert dust tail", func() {
+			So(retainAboveDustTail(particles), ShouldResemble, []uint32{0, 1})
 		})
 	})
 
@@ -29,10 +29,27 @@ func TestRetainAboveMedian(t *testing.T) {
 			{Mass: 1, Energy: 4, Heat: 0},
 		}
 
-		Convey("It must not collapse onto the single hottest oscillator", func() {
-			kept := retainAboveMedian(particles)
-			So(len(kept), ShouldBeGreaterThan, 1)
-			So(kept, ShouldResemble, []uint32{0, 2, 3})
+		Convey("It keeps the whole active cohort instead of halving the population", func() {
+			kept := retainAboveDustTail(particles)
+			So(len(kept), ShouldEqual, 4)
+			So(kept, ShouldResemble, []uint32{0, 1, 2, 3})
+		})
+	})
+
+	Convey("Given one weak positive among many active contributors", t, func() {
+		particles := []pfluid.Particle{
+			{Mass: 1, Energy: 8, Heat: 0},
+			{Mass: 1, Energy: 7, Heat: 0},
+			{Mass: 1, Energy: 6, Heat: 0},
+			{Mass: 1, Energy: 5, Heat: 0},
+			{Mass: 1, Energy: 4, Heat: 0},
+			{Mass: 1, Energy: 3, Heat: 0},
+			{Mass: 1, Energy: 2, Heat: 0},
+			{Mass: 1, Energy: 0.001, Heat: 0},
+		}
+
+		Convey("It trims only the weakest dust tail contributor", func() {
+			So(retainAboveDustTail(particles), ShouldResemble, []uint32{0, 1, 2, 3, 4, 5, 6})
 		})
 	})
 
@@ -43,12 +60,12 @@ func TestRetainAboveMedian(t *testing.T) {
 		}
 
 		Convey("It returns an empty keep-set so prune will not wipe the domain", func() {
-			So(retainAboveMedian(particles), ShouldBeEmpty)
+			So(retainAboveDustTail(particles), ShouldBeEmpty)
 		})
 	})
 }
 
-func BenchmarkRetainAboveMedian(b *testing.B) {
+func BenchmarkRetainAboveDustTail(b *testing.B) {
 	particles := make([]pfluid.Particle, 4096)
 
 	for index := range particles {
@@ -62,6 +79,6 @@ func BenchmarkRetainAboveMedian(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = retainAboveMedian(particles)
+		_ = retainAboveDustTail(particles)
 	}
 }

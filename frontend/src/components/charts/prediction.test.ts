@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { Circular } from "#/collections/circular";
 import type { ResonanceFrame } from "#/collections/types";
-import { updatePredictionHistory } from "#/components/charts/prediction";
+import {
+	shouldReplacePredictionHistory,
+	updatePredictionHistory,
+} from "#/components/charts/prediction";
 import {
 	predictiveCodingSeries,
 	reconstructionError,
@@ -48,6 +51,38 @@ describe("updatePredictionHistory", () => {
 		]);
 
 		expect(history.values().map((entry) => entry.surprise)).toEqual([2, 3]);
+	});
+});
+
+describe("shouldReplacePredictionHistory", () => {
+	it("keeps retained chart history when a sparse focused row lacks layers", () => {
+		expect(
+			shouldReplacePredictionHistory([
+				{
+					source: "resonance",
+					symbol: "BTC/USD",
+					at: "2026-07-20T18:00:02Z",
+					expectedReturn: 0.01,
+				},
+			]),
+		).toBe(false);
+	});
+
+	it("rebuilds retained chart history when layered resonance frames arrive", () => {
+		expect(
+			shouldReplacePredictionHistory([
+				frame("2026-07-20T18:00:00Z", 1),
+				frame("2026-07-20T18:00:01Z", 2),
+			]),
+		).toBe(true);
+	});
+
+	it("accepts incremental layered updates without requiring a full rebuilt history", () => {
+		expect(
+			shouldReplacePredictionHistory([
+				frame("2026-07-20T18:00:02Z", 3),
+			]),
+		).toBe(true);
 	});
 });
 

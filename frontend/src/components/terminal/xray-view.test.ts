@@ -123,4 +123,32 @@ describe("xray-view", () => {
 			},
 		]);
 	});
+
+	it("keeps only symbols with full latent pairs in each incoming batch", () => {
+		const latent = latentPointsFromFrames([
+			{
+				source: "resonance",
+				symbol: "BTC/USD",
+				at: "2",
+				category: "equilibrium",
+				latent: [0.2, -0.4],
+			},
+			{
+				source: "resonance",
+				symbol: "ETH/USD",
+				at: "3",
+				category: "transition",
+			},
+		]);
+
+		expect(latent).toEqual([
+			{
+				key: "BTC/USD:2",
+				symbol: "BTC/USD",
+				x: 0.2,
+				y: -0.4,
+				category: "equilibrium",
+			},
+		]);
+	});
 });

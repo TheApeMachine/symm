@@ -7,6 +7,7 @@ import { xrayLayersFromResonance } from "#/components/terminal/xray-view";
 const symbolRef = createRef<HTMLSpanElement>();
 const waitingRef = createRef<HTMLDivElement>();
 const rowsRef = createRef<HTMLDivElement>();
+let retainedLayers: ReturnType<typeof xrayLayersFromResonance> = [];
 
 /*
 layerErrorTone maps prediction-error magnitude onto terminal semantic colors.
@@ -104,7 +105,9 @@ const paintHierarchyRows = (
 
 /*
 paintXrayHierarchy paints the current DRAW batch of resonance layers into the
-hierarchy host. Only this batch is used — nothing is retained in JS.
+hierarchy host. Sparse resonance rows must not blank the last valid hierarchy;
+direct DOM paint keeps the previous layered state until a new layered frame
+arrives.
 */
 export const paintXrayHierarchy = (value: unknown, focusSymbol: string) => {
 	const frames = (
@@ -116,7 +119,11 @@ export const paintXrayHierarchy = (value: unknown, focusSymbol: string) => {
 		) ??
 		frames.at(-1) ??
 		null;
-	const layers = xrayLayersFromResonance(frame);
+	const nextLayers = xrayLayersFromResonance(frame);
+
+	if (nextLayers.length > 0) {
+		retainedLayers = nextLayers;
+	}
 
 	if (symbolRef.current !== null) {
 		symbolRef.current.textContent = focusSymbol;
@@ -124,7 +131,7 @@ export const paintXrayHierarchy = (value: unknown, focusSymbol: string) => {
 	}
 
 	if (waitingRef.current !== null && rowsRef.current !== null) {
-		paintHierarchyRows(rowsRef.current, waitingRef.current, layers);
+		paintHierarchyRows(rowsRef.current, waitingRef.current, retainedLayers);
 	}
 };
 

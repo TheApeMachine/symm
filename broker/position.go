@@ -113,6 +113,7 @@ func NewPosition(
 		entryOrder.Params.OrderQty,
 		mark,
 		position.Exit,
+		position.Publish,
 		market,
 	)
 
@@ -173,6 +174,7 @@ func (position *Position) Initialize(
 		position.EntryOrder.Params.OrderQty,
 		position.EntryOrder.Params.LimitPrice,
 		position.Exit,
+		position.Publish,
 		market,
 	)
 
@@ -211,14 +213,21 @@ func (position *Position) Publish() {
 		return
 	}
 
+	payload := datura.NewMap(
+		"positions", []Position{*position},
+	).MarshalAndFree()
+
+	if len(payload) == 0 {
+		return
+	}
+
 	select {
 	case <-position.ctx.Done():
 		return
-	case position.ui <- datura.NewMap(
-		"positions", []Position{*position},
-	).MarshalAndFree():
-	default:
+	case position.ui <- payload:
 	}
+
+	position.balance.PublishTradeBalance()
 }
 
 /*
@@ -328,6 +337,10 @@ func (position *Position) applyExecution(row kraken.ExecutionData) {
 
 	position.Status = types.Status(row.OrderStatus)
 	position.Holding.Status = types.Status(row.OrderStatus)
+
+	if err := position.balance.Refresh(); err != nil {
+		errnie.Error(err)
+	}
 
 	if row.Side == "sell" {
 		switch position.Status {
