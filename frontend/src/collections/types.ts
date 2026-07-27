@@ -29,12 +29,16 @@ export type Balance = {
 };
 
 /*
-Holding mirrors types.Holding JSON from Balance.Frame.
-Decimal fields arrive as strings from decimal.Decimal.MarshalJSON.
-*/
+ Holding mirrors the public JSON fields on types.Holding exactly.
+ */
 export type Holding = {
+	status?: string;
 	symbol: string;
+	asset?: string;
 	qty: number | string;
+	sellable_qty?: number | string;
+	entry_at?: string;
+	exit_at?: string;
 	entry_price: number | string;
 	entry_fee: number | string;
 	exit_price?: number | string;
@@ -42,41 +46,39 @@ export type Holding = {
 	mark: number | string;
 	pnl: number | string;
 	return_pct: number | string;
-	status?: string;
-	asset?: string;
-	peak_price?: number | string;
-	stop_price?: number | string;
-	stop_return?: number | string;
-	peak_return?: number | string;
-	stop_armed?: boolean;
-	momentum_active?: boolean;
-	momentum_health?: number | string;
-	stagnation_active?: boolean;
-	stagnation_health?: number | string;
-	stagnation_pending?: boolean;
-	stoploss?: Stop;
+	is_opportunity: boolean;
+	reservation_id?: string;
+	stoploss?: Stoploss;
 };
 
 /*
-Stop mirrors Stoploss.Frame JSON published beside holdings.
-*/
-export type Stop = {
+ Stoploss mirrors the public JSON fields on types.Stoploss exactly.
+ */
+export type Stoploss = {
+	status: string;
 	symbol: string;
-	stop_price: number | string;
-	peak_return: number | string;
-	stop_return: number | string;
-	armed?: boolean;
-	peak_price?: number | string;
-	momentum?: number | string;
-	peak_momentum?: number | string;
-	momentum_floor?: number | string;
-	momentum_health?: number | string;
-	momentum_active?: boolean;
-	peak_touch_count?: number | string;
-	stagnation_max_touches?: number | string;
-	stagnation_health?: number | string;
-	stagnation_pending?: boolean;
-	stagnation_active?: boolean;
+	entry: number | string;
+	peak: number | string;
+	mark: number | string;
+	floor: number | string;
+};
+
+export type Fill = {
+	exec_id: string;
+	side: string;
+	qty: number | string;
+	price: number | string;
+	fee: number | string;
+};
+
+export type Position = {
+	status: string;
+	entry_order: Record<string, unknown>;
+	exit_order: Record<string, unknown>;
+	order_id: string;
+	fills: Fill[];
+	buffered: Record<string, unknown>[];
+	holding: Holding;
 };
 
 /*

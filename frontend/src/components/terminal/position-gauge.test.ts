@@ -1,42 +1,52 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Holding, Stop } from "#/collections/types";
+import type { Holding, Position, Stoploss } from "#/collections/types";
 import {
 	createPositionGaugeElement,
 	paintPositionHoldings,
 	positionGaugeGeometry,
 } from "./position-gauge";
 
-const position = (mark: number, returnPct: number): Holding => ({
+const holding = (mark: number, returnPct: number): Holding => ({
+	status: "open",
 	symbol: "XLM/USD",
+	asset: "XLM",
 	qty: 10,
+	sellable_qty: 10,
 	entry_price: 100,
 	entry_fee: 2.6,
+	exit_price: 0,
 	exit_fee: 2.6,
 	mark,
 	pnl: returnPct * 100,
 	return_pct: returnPct,
+	is_opportunity: false,
 });
 
-const stop = (): Stop => ({
+const stoploss = (): Stoploss => ({
+	status: "armed",
 	symbol: "XLM/USD",
-	stop_price: 101,
-	peak_return: 0.02,
-	stop_return: 0.01,
-	momentum: 1,
-	peak_momentum: 1,
-	momentum_floor: 0.6,
-	momentum_health: 1,
-	momentum_active: true,
-	peak_touch_count: 0,
-	stagnation_max_touches: 3,
-	stagnation_health: 1,
-	stagnation_pending: false,
-	stagnation_active: false,
+	entry: 100,
+	peak: 102,
+	mark: 101.9,
+	floor: 101,
+});
+
+const position = (mark: number, returnPct: number): Position => ({
+	status: "open",
+	entry_order: {},
+	exit_order: {},
+	order_id: "oid",
+	fills: [],
+	buffered: [],
+	holding: {
+		...holding(mark, returnPct),
+		stoploss: stoploss(),
+	},
 });
 
 describe("positionGaugeGeometry", () => {
 	it("anchors the price gauge to entry, stop, peak, and mark returns", () => {
-		const geometry = positionGaugeGeometry(position(101.9, 0.019), stop());
+		const geometry = positionGaugeGeometry(holding(101.9, 0.019), stoploss());
 
 		expect(geometry).not.toBeNull();
 		expect(geometry?.entryPct).toBe(25);
@@ -46,19 +56,14 @@ describe("positionGaugeGeometry", () => {
 		expect(geometry?.rawMarkPrice).toBe(101.9);
 	});
 
-	it("ignores a zero mark and uses return_pct for geometry only", () => {
-		const geometry = positionGaugeGeometry(position(0, 0.015), stop());
+	it("requires an explicit mark instead of deriving one from return_pct", () => {
+		const geometry = positionGaugeGeometry(holding(0, 0.015), stoploss());
 
-		expect(geometry).not.toBeNull();
-		expect(geometry?.entryPct).toBe(25);
-		expect(geometry?.markPct).toBeCloseTo(62.5);
-		expect(geometry?.stopPct).toBe(50);
-		expect(geometry?.peakPct).toBe(75);
-		expect(geometry?.rawMarkPrice).toBeNull();
+		expect(geometry).toBeNull();
 	});
 
 	it("scales mark distance from entry when no stop frame exists", () => {
-		const geometry = positionGaugeGeometry(position(95, -0.05));
+		const geometry = positionGaugeGeometry(holding(95, -0.05));
 
 		expect(geometry).not.toBeNull();
 		expect(geometry?.entryPct).toBeGreaterThan(geometry?.markPct ?? 0);
@@ -114,15 +119,26 @@ describe("paintPositionHoldings", () => {
 		paintPositionHoldings(
 			{
 				"EUL/USD": {
-					symbol: "EUL/USD",
-					qty: "9.85795428",
-					entry_price: "1.729",
-					entry_fee: "0.044315447670311994",
-					exit_fee: "0",
-					mark: "1.73",
-					pnl: "0.00985795428",
-					return_pct: "0.0005783337200618928",
 					status: "open",
+					entry_order: {},
+					exit_order: {},
+					order_id: "oid",
+					fills: [],
+					buffered: [],
+					holding: {
+						symbol: "EUL/USD",
+						asset: "EUL",
+						qty: "9.85795428",
+						sellable_qty: "9.85795428",
+						entry_price: "1.729",
+						entry_fee: "0.044315447670311994",
+						exit_price: "0",
+						exit_fee: "0",
+						mark: "1.73",
+						pnl: "0.00985795428",
+						return_pct: "0.0005783337200618928",
+						is_opportunity: false,
+					},
 				},
 			},
 			"BTC/USD",
@@ -179,22 +195,33 @@ describe("paintPositionHoldings", () => {
 		paintPositionHoldings(
 			{
 				"BABYSHARK/USD": {
-					symbol: "BABYSHARK/USD",
-					qty: "2151.4756",
-					entry_price: "0.0742",
-					entry_fee: "0",
-					exit_fee: "0",
-					mark: "0.0745",
-					pnl: "0.6454",
-					return_pct: "0.0040",
 					status: "open",
-					stoploss: {
+					entry_order: {},
+					exit_order: {},
+					order_id: "oid",
+					fills: [],
+					buffered: [],
+					holding: {
 						symbol: "BABYSHARK/USD",
-						stop_price: "0.0730",
-						peak_price: "0.0745",
-						stop_return: "-0.0161",
-						peak_return: "0.0040",
-						armed: true,
+						asset: "BABYSHARK",
+						qty: "2151.4756",
+						sellable_qty: "2151.4756",
+						entry_price: "0.0742",
+						entry_fee: "0",
+						exit_price: "0",
+						exit_fee: "0",
+						mark: "0.0745",
+						pnl: "0.6454",
+						return_pct: "0.0040",
+						is_opportunity: false,
+						stoploss: {
+							status: "armed",
+							symbol: "BABYSHARK/USD",
+							entry: "0.0742",
+							peak: "0.0745",
+							mark: "0.0745",
+							floor: "0.0730",
+						},
 					},
 				},
 			},
@@ -252,11 +279,26 @@ describe("paintPositionHoldings", () => {
 		paintPositionHoldings(
 			{
 				"BABYSHARK/USD": {
-					symbol: "BABYSHARK/USD",
-					qty: "1.2",
-					entry_fee: "0",
-					exit_fee: "0",
 					status: "open",
+					entry_order: {},
+					exit_order: {},
+					order_id: "oid",
+					fills: [],
+					buffered: [],
+					holding: {
+						symbol: "BABYSHARK/USD",
+						asset: "BABYSHARK",
+						qty: "1.2",
+						sellable_qty: "1.2",
+						entry_price: "0",
+						entry_fee: "0",
+						exit_price: "0",
+						exit_fee: "0",
+						mark: "0",
+						pnl: "0",
+						return_pct: "0",
+						is_opportunity: false,
+					},
 				},
 			},
 			"USD",

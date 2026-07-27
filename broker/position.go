@@ -24,21 +24,21 @@ type Position struct {
 	*types.Actor
 	ctx        context.Context
 	cancel     context.CancelFunc
-	status     types.Status
+	Status     types.Status `json:"status"`
 	api        *websocket.API
 	ui         chan []byte
 	instrument *Instrument
 	price      *Price
 	balance    *Balance
 	pair       kraken.InstrumentPair
-	entryOrder *kraken.MarketOrder
-	exitOrder  *kraken.MarketOrder
-	orderID    string
+	EntryOrder *kraken.MarketOrder `json:"entry_order"`
+	ExitOrder  *kraken.MarketOrder `json:"exit_order"`
+	OrderID    string              `json:"order_id"`
 	intentID   string
-	fills      []Fill
+	Fills      []Fill `json:"fills"`
 	seenExec   map[string]struct{}
-	buffered   []kraken.ExecutionData
-	holding    *types.Holding
+	Buffered   []kraken.ExecutionData `json:"buffered"`
+	Holding    *types.Holding         `json:"holding"`
 	market     *types.Actor
 	account    *types.Actor
 }
@@ -87,7 +87,7 @@ func NewPosition(
 	position := &Position{
 		ctx:        ctx,
 		cancel:     cancel,
-		status:     types.INITIALIZING,
+		Status:     types.INITIALIZING,
 		api:        api,
 		ui:         ui,
 		instrument: instrument,
@@ -95,8 +95,8 @@ func NewPosition(
 		balance:    balance,
 		pair:       pair,
 		seenExec:   make(map[string]struct{}),
-		entryOrder: entryOrder,
-		exitOrder:  exitOrder,
+		EntryOrder: entryOrder,
+		ExitOrder:  exitOrder,
 		market:     market,
 		account:    account,
 	}
@@ -106,7 +106,7 @@ func NewPosition(
 		mark = decimal.NewFromInt64(0)
 	}
 
-	position.holding = types.NewHolding(
+	position.Holding = types.NewHolding(
 		ctx,
 		pair.Symbol,
 		entryOrder.Params.OrderQty,
@@ -167,10 +167,10 @@ func (position *Position) Initialize(
 	)
 
 	position.Actor.Initialize(topics...)
-	position.holding.Initialize(
+	position.Holding.Initialize(
 		position.ctx,
-		position.entryOrder.Params.OrderQty,
-		position.entryOrder.Params.LimitPrice,
+		position.EntryOrder.Params.OrderQty,
+		position.EntryOrder.Params.LimitPrice,
 		position.Exit,
 		market,
 	)
@@ -179,22 +179,15 @@ func (position *Position) Initialize(
 }
 
 /*
-Status reports the lot lifecycle.
-*/
-func (position *Position) Status() types.Status {
-	return position.status
-}
-
-/*
 Close marks the lot closed once Desk drops it from the open map.
 */
 func (position *Position) Close() (err error) {
-	if position.status == types.CLOSED {
+	if position.Status == types.CLOSED {
 		return nil
 	}
 
-	errors.Join(err, position.holding.Close())
-	position.status = types.CLOSED
+	errors.Join(err, position.Holding.Close())
+	position.Status = types.CLOSED
 
 	return errnie.Error(err)
 }
@@ -236,8 +229,8 @@ func (position *Position) onOrder(message any) any {
 	}
 
 	row := response.Result
-	position.orderID = row.OrderID
-	position.status = types.PENDING
+	position.OrderID = row.OrderID
+	position.Status = types.PENDING
 
 	return nil
 }
@@ -262,7 +255,7 @@ func (position *Position) onExecutions(message any) any {
 	rows := execution.Data
 
 	for _, row := range rows {
-		symbol := position.holding.Symbol
+		symbol := position.Holding.Symbol
 
 		if symbol == "" {
 			errnie.Error(errnie.Err(
@@ -282,18 +275,18 @@ func (position *Position) onExecutions(message any) any {
 		closed := false
 
 		position.price.RecordFill(
-			&position.pair, position.holding, row, &position.fills,
+			&position.pair, position.Holding, row, &position.Fills,
 		)
 
 		if row.Side == "buy" && row.OrderStatus == "filled" {
-			if position.holding.Stoploss != nil {
-				position.holding.EntryPrice = row.Cost
-				position.holding.Stoploss.Update(row.Cost)
+			if position.Holding.Stoploss != nil {
+				position.Holding.EntryPrice = row.Cost
+				position.Holding.Stoploss.Update(row.Cost)
 			}
 		}
 
-		position.status = types.Status(row.OrderStatus)
-		position.holding.Status = types.Status(row.OrderStatus)
+		position.Status = types.Status(row.OrderStatus)
+		position.Holding.Status = types.Status(row.OrderStatus)
 
 		if err := position.balance.Publish(); err != nil {
 			errnie.Error(err)
@@ -324,7 +317,7 @@ func (position *Position) onTicker(message any) any {
 			continue
 		}
 
-		if err := position.price.Mark(&position.pair, position.holding); err != nil {
+		if err := position.price.Mark(&position.pair, position.Holding); err != nil {
 			errnie.Error(err)
 		}
 
@@ -340,8 +333,8 @@ func (position *Position) onTicker(message any) any {
 Enter seeds the holding onto Balance and submits a market buy for its quantity.
 */
 func (position *Position) Enter() *Position {
-	if err := position.api.AddOrder(position.entryOrder); err != nil {
-		position.status = types.ERROR
+	if err := position.api.AddOrder(position.EntryOrder); err != nil {
+		position.Status = types.ERROR
 
 		errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -357,7 +350,7 @@ func (position *Position) Enter() *Position {
 Exit submits a market sell for the sellable ledger quantity.
 */
 func (position *Position) Exit() error {
-	if err := position.api.AddOrder(position.exitOrder); err != nil {
+	if err := position.api.AddOrder(position.ExitOrder); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to place market sell order",

@@ -1,14 +1,6 @@
-import type { Holding, Stop } from "#/collections/types";
+import type { Position, Stoploss } from "#/collections/types";
 import { fixed } from "#/components/terminal/decision-format";
-import { holdingRows } from "#/components/terminal/holding-wire";
 import { buildPositionGaugePanel } from "#/components/terminal/position-gauge-shell";
-import {
-	positionGaugeGeometry,
-	positionStop,
-} from "#/components/terminal/position-geometry";
-
-export type { PriceGaugeGeometry } from "#/components/terminal/position-geometry";
-export { positionGaugeGeometry } from "#/components/terminal/position-geometry";
 
 type PositionGaugeParts = {
 	quote: string;
@@ -33,8 +25,8 @@ type PositionGaugeParts = {
 
 export const positionGauges = new Map<string, PositionGaugeParts>();
 
-const lastHoldings: Record<string, Holding | undefined> = {};
-const lastStops: Record<string, Stop | undefined> = {};
+const lastPositions: Record<string, Position | undefined> = {};
+const lastStops: Record<string, Stoploss | undefined> = {};
 
 const upTone = "var(--up)";
 const downTone = "var(--down)";
@@ -47,6 +39,71 @@ const numberValue = (value: number | string | undefined): number | null => {
 
 	return Number.isFinite(number) ? number : null;
 };
+
+type GaugeGeometry = {
+	entryPct: number;
+	markPct: number;
+	stopPct: number | null;
+	peakPct: number | null;
+};
+
+const clampPercent = (value: number, lo: number, hi: number): number => {
+	if (!(hi > lo)) {
+		return 50;
+	}
+
+	return Math.min(100, Math.max(0, ((value - lo) / (hi - lo)) * 100));
+};
+
+const gaugeGeometry = (
+	entry: number | null,
+	mark: number | null,
+	floor: number | null,
+	peak: number | null,
+): GaugeGeometry | null => {
+	if (entry === null || entry <= 0 || mark === null || mark <= 0) {
+		return null;
+	}
+
+	const points = [entry, mark].filter((value): value is number => value !== null);
+
+	if (floor !== null && floor > 0) {
+		points.push(floor);
+	}
+
+	if (peak !== null && peak > 0) {
+		points.push(peak);
+	}
+
+	const lo = Math.min(...points);
+	const hi = Math.max(...points);
+
+	if (!(hi > lo)) {
+		return null;
+	}
+
+	const pad = Math.max((hi - lo) * 0.15, 1e-6);
+	const domainLo = lo - pad;
+	const domainHi = hi + pad;
+
+	return {
+		entryPct: clampPercent(entry, domainLo, domainHi),
+		markPct: clampPercent(mark, domainLo, domainHi),
+		stopPct: floor !== null && floor > 0 ? clampPercent(floor, domainLo, domainHi) : null,
+		peakPct: peak !== null && peak > 0 ? clampPercent(peak, domainLo, domainHi) : null,
+	};
+};
+
+export const positionGaugeGeometry = (
+	holding: Position["holding"],
+	stoploss?: Stoploss,
+): GaugeGeometry | null =>
+	gaugeGeometry(
+		numberValue(holding?.entry_price),
+		numberValue(holding?.mark),
+		numberValue(stoploss?.floor),
+		numberValue(stoploss?.peak),
+	);
 
 const setMarkerPosition = (
 	element: HTMLElement | null,
@@ -68,19 +125,21 @@ const setMarkerPosition = (
 
 const writePositionGauge = (
 	parts: PositionGaugeParts,
-	position: Holding | undefined,
-	legacyStop: Stop | undefined,
+	position: Position | undefined,
 ) => {
-	if (!position) {
+	if (!position || !position.holding) {
 		return;
 	}
 
-	const stop = positionStop(position, legacyStop);
-	const pnl = numberValue(position.pnl);
-	const returnPct = numberValue(position.return_pct);
-	const mark = numberValue(position.mark);
-	const peak = numberValue(stop?.peak_price);
-	const floor = numberValue(stop?.stop_price);
+	const holding = position.holding;
+	const stoploss = holding.stoploss ?? lastStops[holding.symbol];
+
+	const pnl = numberValue(holding.pnl);
+	const returnPct = numberValue(holding.return_pct);
+	const mark = numberValue(holding.mark);
+	const peak = numberValue(stoploss?.peak);
+	const floor = numberValue(stoploss?.floor);
+	const entry = numberValue(holding.entry_price);
 	// Color each figure by its own sign — fee-dragged PnL can be red while
 	// return_pct is green when price lifted but fees dominate dollars.
 	const pnlTone =
@@ -91,25 +150,21 @@ const writePositionGauge = (
 			: returnPct !== null && returnPct < 0
 				? downTone
 				: neutralTone;
-	const geometry = positionGaugeGeometry(position, stop);
+
+	const geometry = gaugeGeometry(entry, mark, floor, peak);
 	const rawMark = mark !== null && mark > 0 ? mark : null;
 	const markLabel = rawMark === null ? "--" : fixed(rawMark);
 	const peakPrice = peak !== null && peak > 0 ? fixed(peak) : "--";
 	const floorPrice = floor !== null && floor > 0 ? fixed(floor) : "--";
+
 	const progressTone =
 		geometry !== null &&
 		geometry.stopPct !== null &&
 		geometry.markPct >= geometry.stopPct
 			? upTone
 			: downTone;
-	const hasMomentum = stop?.momentum_active;
-	const health = hasMomentum
-		? Math.max(0, Math.min(1, stop.momentum_health ?? 0))
-		: 0;
-	const momentumTone =
-		health > 0.5 ? upTone : health > 0.2 ? warnTone : downTone;
-	const hasStagnation = stop?.stagnation_active;
-	const showGauge = geometry !== null;
+
+			const showGauge = geometry !== null;
 
 	if (parts.track) {
 		parts.track.style.display = showGauge ? "" : "none";
@@ -155,12 +210,10 @@ const writePositionGauge = (
 	}
 
 	if (parts.summary) {
-		const entryPrice = numberValue(position.entry_price);
-
 		parts.summary.textContent =
-			entryPrice === null
+			entry === null
 				? `entry — / mark ${markLabel}`
-				: `entry ${fixed(entryPrice)} / mark ${markLabel}`;
+				: `entry ${fixed(entry)} / mark ${markLabel}`;
 	}
 
 	if (parts.floorLabel) {
@@ -184,34 +237,16 @@ const writePositionGauge = (
 			returnPct === null ? "—" : `${(returnPct * 100).toFixed(4)}%`;
 	}
 
-	if (parts.momentumWrap && parts.momentumBar) {
-		parts.momentumWrap.style.display = hasMomentum ? "" : "none";
-		parts.momentumBar.style.width = `${health * 100}%`;
-		parts.momentumBar.style.background = momentumTone;
+	if (parts.momentumWrap) {
+		parts.momentumWrap.style.display = "none";
 	}
 
-	if (parts.stagnationWrap && parts.stagnationBar && parts.stagnationFlash) {
-		parts.stagnationWrap.style.display = hasStagnation ? "" : "none";
+	if (parts.stagnationWrap) {
+		parts.stagnationWrap.style.display = "none";
+	}
 
-		if (hasStagnation) {
-			const stagnationHealth = Math.max(
-				0,
-				Math.min(1, stop.stagnation_health ?? 0),
-			);
-			const stagnationTone = stop.stagnation_pending
-				? accentTone
-				: stagnationHealth > 0.5
-					? upTone
-					: stagnationHealth > 0.2
-						? warnTone
-						: downTone;
-
-			parts.stagnationBar.style.width = `${(stagnationHealth * 100).toFixed(0)}%`;
-			parts.stagnationBar.style.background = stagnationTone;
-			parts.stagnationFlash.style.display = stop.stagnation_pending
-				? ""
-				: "none";
-		}
+	if (parts.stagnationFlash) {
+		parts.stagnationFlash.style.display = "none";
 	}
 };
 
@@ -222,7 +257,7 @@ const paintBound = (symbol: string) => {
 		return;
 	}
 
-	writePositionGauge(parts, lastHoldings[symbol], lastStops[symbol]);
+	writePositionGauge(parts, lastPositions[symbol]);
 };
 
 const bindGauge = (symbol: string, quote: string, root: HTMLElement | null) => {
@@ -277,17 +312,29 @@ export const removePositionGauge = (symbol: string): void => {
 };
 
 /*
-paintPositionHoldings merges the DRAW holdings batch into lastHoldings and
-repaints every bound position gauge whose symbol appears in the batch.
-*/
-export const paintPositionHoldings = (value: unknown, _focusSymbol: string) => {
-	const rows = holdingRows(value);
+ paintPositions merges the DRAW positions batch into lastPositions and repaints
+ every bound position gauge whose symbol appears in the batch.
+ */
+export const paintPositions = (value: unknown, _focusSymbol: string) => {
+	const rows = (Array.isArray(value)
+		? value
+		: value !== null && typeof value === "object"
+			? Object.values(value as Record<string, Position>)
+			: value != null
+				? [value]
+				: []) as Position[];
 
 	for (const row of rows) {
-		lastHoldings[row.symbol] = row;
-		paintBound(row.symbol);
+		if (!row.holding) {
+			continue
+		}
+
+		lastPositions[row.holding.symbol] = row;
+		paintBound(row.holding.symbol);
 	}
 };
+
+export const paintPositionHoldings = paintPositions;
 
 /*
 paintPositionStops merges the DRAW stops batch into lastStops and repaints
@@ -296,7 +343,7 @@ matching bound position gauge shells.
 export const paintPositionStops = (value: unknown, _focusSymbol: string) => {
 	const rows = (
 		Array.isArray(value) ? value : value != null ? [value] : []
-	) as Stop[];
+	) as Stoploss[];
 
 	for (const row of rows) {
 		lastStops[row.symbol] = row;

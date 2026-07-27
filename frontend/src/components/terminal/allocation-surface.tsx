@@ -5,6 +5,7 @@ import type {
 	CausalFrame,
 	Holding,
 	Instrument,
+	Position,
 	ManifoldFrame,
 	ResonanceFrame,
 } from "#/collections/types";
@@ -17,7 +18,7 @@ const rootRef = createRef<HTMLDivElement>();
 
 let lastInstruments: Instrument[] = [];
 let lastBalances: Balance[] = [];
-let lastHoldings: Holding[] = [];
+let lastPositions: Position[] = [];
 let lastCausal: CausalFrame[] = [];
 let lastManifold: ManifoldFrame[] = [];
 let lastResonance: ResonanceFrame[] = [];
@@ -65,7 +66,9 @@ const paint = () => {
 		focusSymbol: appStore.state.focusSymbol,
 		symbols: lastInstruments.map((instrument) => instrument.symbol).sort(),
 		balances: lastBalances,
-		holdings: lastHoldings,
+		holdings: lastPositions
+			.map((position) => position.holding)
+			.filter((holding): holding is Holding => holding !== undefined && holding !== null),
 		causal: asHistory(lastCausal),
 		manifold: asHistory(lastManifold),
 		resonance: asHistory(lastResonance),
@@ -97,15 +100,23 @@ export const paintAllocationBalances = (
 };
 
 /*
-paintAllocationHoldings retains the open portfolio for allocation calculations.
+paintAllocationPositions retains the open portfolio for allocation calculations.
 */
-export const paintAllocationHoldings = (
+export const paintAllocationPositions = (
 	value: unknown,
 	_focusSymbol: string,
 ) => {
-	lastHoldings = asRows<Holding>(value);
+	lastPositions = (Array.isArray(value)
+		? value
+		: value !== null && typeof value === "object"
+			? Object.values(value as Record<string, Position>)
+			: value != null
+				? [value]
+				: []) as Position[];
 	paint();
 };
+
+export const paintAllocationHoldings = paintAllocationPositions;
 
 /*
 paintAllocationCausal retains the latest causal row for every observed symbol.

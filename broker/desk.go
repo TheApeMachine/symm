@@ -29,6 +29,7 @@ type Desk struct {
 	price        *Price
 	balance      *Balance
 	positions    map[string]*Position
+	recovered    map[string]*types.Holding
 	maxPositions int
 	maxReserved  int
 	market       *types.Actor
@@ -48,7 +49,7 @@ func NewDesk(
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
-	desk := &Desk{
+		desk := &Desk{
 		ctx:          ctx,
 		cancel:       cancel,
 		status:       types.INITIALIZING,
@@ -57,6 +58,7 @@ func NewDesk(
 		price:        price,
 		balance:      balance,
 		positions:    make(map[string]*Position),
+		recovered:    make(map[string]*types.Holding),
 		maxPositions: trading.SlotsNormal,
 		maxReserved:  trading.SlotsReserved,
 	}
@@ -68,6 +70,23 @@ func NewDesk(
 	})
 
 	return desk
+}
+
+/*
+SeedHoldings stores persisted Holding economics by symbol so the single
+onBalances recovery path can merge them back into rebuilt Positions once the
+wallet snapshot, instruments, and ticker cache are all ready.
+*/
+func (desk *Desk) SeedHoldings(holdings []*types.Holding) {
+	clear(desk.recovered)
+
+	for _, holding := range holdings {
+		if holding == nil || holding.Symbol == "" {
+			continue
+		}
+
+		desk.recovered[holding.Symbol] = holding
+	}
 }
 
 /*
@@ -240,13 +259,15 @@ func (desk *Desk) adoptOpenPositions() {
 			desk.account,
 		)
 
-		if err := desk.price.Mark(&pair, position.holding); err != nil {
+		desk.recoverPosition(position, desk.recovered[symbol])
+
+		if err := desk.price.Mark(&pair, position.Holding); err != nil {
 			continue
 		}
 
-		if position.holding.Mark != nil && position.holding.Mark.Sign() > 0 &&
-			position.holding.Stoploss != nil {
-			position.holding.Stoploss.Update(position.holding.Mark)
+		if position.Holding.Mark != nil && position.Holding.Mark.Sign() > 0 &&
+			position.Holding.Stoploss != nil {
+			position.Holding.Stoploss.Update(position.Holding.Mark)
 			position.Publish()
 		}
 
@@ -255,19 +276,73 @@ func (desk *Desk) adoptOpenPositions() {
 }
 
 /*
+recoverPosition merges persisted Holding economics into a rebuilt Position
+before the live mark refresh runs. The wallet snapshot remains the source of
+truth for quantity; persisted state only restores entry, fees, returns, and the
+stop regulator state that balances do not carry.
+*/
+func (desk *Desk) recoverPosition(position *Position, holding *types.Holding) {
+	if position == nil || position.Holding == nil || holding == nil {
+		return
+	}
+
+	position.Holding.Asset = holding.Asset
+	position.Holding.SellableQty = holding.SellableQty
+	position.Holding.EntryAt = holding.EntryAt
+	position.Holding.ExitAt = holding.ExitAt
+	position.Holding.EntryPrice = holding.EntryPrice
+	position.Holding.EntryFee = holding.EntryFee
+	position.Holding.ExitPrice = holding.ExitPrice
+	position.Holding.ExitFee = holding.ExitFee
+	position.Holding.PnL = holding.PnL
+	position.Holding.ReturnPct = holding.ReturnPct
+	position.Holding.IsOpportunity = holding.IsOpportunity
+	position.Holding.ReservationID = holding.ReservationID
+
+	if holding.Stoploss == nil || position.Holding.Stoploss == nil {
+		return
+	}
+
+	position.Holding.Stoploss.Entry = holding.Stoploss.Entry
+	position.Holding.Stoploss.Peak = holding.Stoploss.Peak
+	position.Holding.Stoploss.Mark = holding.Stoploss.Mark
+	position.Holding.Stoploss.Floor = holding.Stoploss.Floor
+	position.Holding.Stoploss.Status = holding.Stoploss.Status
+}
+
+/*
+Positions returns the active desk-managed Position set keyed by symbol so UI
+replay can mirror the exact live wire shape after refresh.
+*/
+func (desk *Desk) Positions() map[string]*Position {
+	desk.Update()
+	positions := make(map[string]*Position, len(desk.positions))
+
+	for symbol, position := range desk.positions {
+		if position == nil {
+			continue
+		}
+
+		positions[symbol] = position
+	}
+
+	return positions
+}
+
+/*
 Holdings returns the active desk-managed Holding set keyed by symbol. Balance is
 wallet-only; open Holding ownership lives on Desk through its Position map.
 */
 func (desk *Desk) Holdings() map[string]*types.Holding {
-	desk.Update()
-	holdings := make(map[string]*types.Holding, len(desk.positions))
+	positions := desk.Positions()
+	holdings := make(map[string]*types.Holding, len(positions))
 
-	for symbol, position := range desk.positions {
-		if position == nil || position.holding == nil {
+	for symbol, position := range positions {
+		if position.Holding == nil {
 			continue
 		}
 
-		holdings[symbol] = position.holding
+		holdings[symbol] = position.Holding
 	}
 
 	return holdings
@@ -295,11 +370,11 @@ Update removes closed or errored positions from the open map.
 */
 func (desk *Desk) Update() {
 	for symbol, position := range desk.positions {
-		if position.holding.Status == types.CLOSED || slices.Contains([]types.Status{
+		if position.Holding.Status == types.CLOSED || slices.Contains([]types.Status{
 			types.CLOSED, types.ERROR, types.CANCELED,
-		}, position.Status()) {
-			position.status = types.CLOSED
-			position.holding.Status = types.CLOSED
+		}, position.Status) {
+			position.Status = types.CLOSED
+			position.Holding.Status = types.CLOSED
 			delete(desk.positions, symbol)
 		}
 	}

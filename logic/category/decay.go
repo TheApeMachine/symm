@@ -76,7 +76,7 @@ func (book *cadenceBook) decayIdle(graph *Graph, symbol string, at time.Time, me
 	remaining := keys[:0]
 
 	for _, key := range keys {
-		relation := graph.edges[key]
+		relation := graph.EdgeIndex[key]
 
 		if relation == nil {
 			continue
@@ -98,7 +98,13 @@ func (book *cadenceBook) decayIdle(graph *Graph, symbol string, at time.Time, me
 		relation.Weight *= float64(mean) / float64(mean+age)
 
 		if relation.Weight <= 0 {
-			delete(graph.edges, key)
+			delete(graph.EdgeIndex, key)
+			for index, edge := range graph.Edges {
+				if edge == relation {
+					graph.Edges = append(graph.Edges[:index], graph.Edges[index+1:]...)
+					break
+				}
+			}
 			continue
 		}
 

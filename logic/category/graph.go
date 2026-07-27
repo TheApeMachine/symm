@@ -4,8 +4,13 @@ import (
 	"math"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/symm/types"
 )
+
+var fastSonic = sonic.Config{
+	EncodeNullForInfOrNan: true,
+}.Froze()
 
 /*
 Graph is the single resident category network for the process lifetime. Nodes
@@ -13,8 +18,11 @@ and typed edges are upserted each cut; weights only strengthen on evidence —
 the graph is never rebuilt from scratch on a tick.
 */
 type Graph struct {
-	nodes           map[nodeKey]*Node
-	edges           map[edgeKey]*Relation
+	Nodes           []*Node                       `json:"nodes"`
+	Edges           []*Relation                   `json:"edges"`
+	Priors          map[string]types.CategoryType `json:"priors"`
+	NodeIndex       map[nodeKey]*Node             `json:"-"`
+	EdgeIndex       map[edgeKey]*Relation         `json:"-"`
 	edgesBySymbol   map[string][]edgeKey
 	prior           map[string]types.CategoryType
 	cadence         cadenceBook
@@ -32,8 +40,11 @@ NewGraph allocates an empty resident category graph.
 */
 func NewGraph() *Graph {
 	return &Graph{
-		nodes:           map[nodeKey]*Node{},
-		edges:           map[edgeKey]*Relation{},
+		Nodes:           []*Node{},
+		Edges:           []*Relation{},
+		Priors:          map[string]types.CategoryType{},
+		NodeIndex:       map[nodeKey]*Node{},
+		EdgeIndex:       map[edgeKey]*Relation{},
 		edgesBySymbol:   map[string][]edgeKey{},
 		prior:           map[string]types.CategoryType{},
 		previous:        map[nodeKey]Node{},
@@ -111,7 +122,7 @@ func (graph *Graph) UpdateFrom(thesis *types.Thesis) {
 			}
 
 			key := nodeKey{symbol: category.Symbol, kind: category.Type}
-			node := graph.nodes[key]
+			node := graph.NodeIndex[key]
 
 			if node != nil {
 				if _, captured := graph.previous[key]; !captured {
@@ -121,7 +132,8 @@ func (graph *Graph) UpdateFrom(thesis *types.Thesis) {
 
 			if node == nil {
 				node = &Node{Symbol: category.Symbol, Type: category.Type}
-				graph.nodes[key] = node
+				graph.NodeIndex[key] = node
+				graph.Nodes = append(graph.Nodes, node)
 			}
 
 			node.Strength = category.Strength
@@ -145,6 +157,7 @@ func (graph *Graph) UpdateFrom(thesis *types.Thesis) {
 		graph.linkActivationLeads(thesis, symbol, graph.previous)
 		graph.cadence.decayIdle(graph, symbol, thesis.At, mean)
 		graph.prior[symbol] = Top(bySymbol).Type
+		graph.Priors[symbol] = graph.prior[symbol]
 	}
 }
 
@@ -211,7 +224,7 @@ func (graph *Graph) strengthen(
 	evidence []string,
 ) {
 	key := edgeKey{symbol: symbol, from: from, to: to, kind: kind}
-	relation := graph.edges[key]
+	relation := graph.EdgeIndex[key]
 
 	if relation == nil {
 		relation = &Relation{
@@ -220,7 +233,8 @@ func (graph *Graph) strengthen(
 			To:     to,
 			Type:   kind,
 		}
-		graph.edges[key] = relation
+		graph.EdgeIndex[key] = relation
+		graph.Edges = append(graph.Edges, relation)
 		graph.edgesBySymbol[symbol] = append(graph.edgesBySymbol[symbol], key)
 	}
 
@@ -250,7 +264,7 @@ func (graph *Graph) strengthenJoined(
 	first, second []string,
 ) {
 	key := edgeKey{symbol: symbol, from: from, to: to, kind: kind}
-	relation := graph.edges[key]
+	relation := graph.EdgeIndex[key]
 
 	if relation == nil {
 		relation = &Relation{
@@ -259,7 +273,8 @@ func (graph *Graph) strengthenJoined(
 			To:     to,
 			Type:   kind,
 		}
-		graph.edges[key] = relation
+		graph.EdgeIndex[key] = relation
+		graph.Edges = append(graph.Edges, relation)
 		graph.edgesBySymbol[symbol] = append(graph.edgesBySymbol[symbol], key)
 	}
 
@@ -287,7 +302,7 @@ func (graph *Graph) Weight(
 		return 0
 	}
 
-	relation := graph.edges[edgeKey{symbol: symbol, from: from, to: to, kind: kind}]
+	relation := graph.EdgeIndex[edgeKey{symbol: symbol, from: from, to: to, kind: kind}]
 
 	if relation == nil {
 		return 0
@@ -305,4 +320,25 @@ func (graph *Graph) Prior(symbol string) types.CategoryType {
 	}
 
 	return graph.prior[symbol]
+}
+
+/*
+MarshalJSON emits the resident graph with exported node/edge slices while using
+the frozen Sonic config so non-finite floats become JSON null instead of
+aborting persistence.
+*/
+func (graph *Graph) MarshalJSON() ([]byte, error) {
+	if graph == nil {
+		return fastSonic.Marshal((*Graph)(nil))
+	}
+
+	return fastSonic.Marshal(struct {
+		Nodes []*Node                      `json:"nodes"`
+		Edges []*Relation                  `json:"edges"`
+		Priors map[string]types.CategoryType `json:"priors"`
+	}{
+		Nodes: graph.Nodes,
+		Edges: graph.Edges,
+		Priors: graph.Priors,
+	})
 }

@@ -55,7 +55,11 @@ func NewCrypto(
 		journal:  journalStore,
 	}
 
-	if _, savedFindings, err := journalStore.Load(); err == nil {
+	if savedHoldings, savedFindings, err := journalStore.Load(); err == nil {
+		if desk != nil && len(savedHoldings) > 0 {
+			desk.SeedHoldings(savedHoldings)
+		}
+
 		if uiHub != nil && len(savedFindings) > 0 {
 			uiHub.Publish(datura.Map[any]{"findings": savedFindings}.Marshal())
 		}

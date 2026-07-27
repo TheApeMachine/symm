@@ -1,6 +1,6 @@
 import { createRef, useEffect } from "react";
 import { appStore } from "#/collections/app";
-import type { Holding, LifecycleRow } from "#/collections/types";
+import type { Holding, LifecycleRow, Position } from "#/collections/types";
 import {
 	findingKey,
 	holdingKey,
@@ -13,7 +13,7 @@ import { Panel } from "@/components/ui/panel";
 const rootRef = createRef<HTMLDivElement>();
 
 let lastLifecycle: LifecycleRow[] = [];
-let lastHoldings: Holding[] = [];
+let lastPositions: Position[] = [];
 let lastFindings: Finding[] = [];
 let selectedSymbol: string | null = null;
 
@@ -40,11 +40,14 @@ const paint = () => {
 	const nextSymbols = [
 		...new Set([
 			...lastLifecycle.map((row) => row.symbol),
-			...lastHoldings.map((holding) => holding.symbol),
+			...lastPositions.map((position) => position.holding?.symbol).filter(Boolean),
 		]),
 	].sort();
+	const holdings = lastPositions
+		.map((position) => position.holding)
+		.filter((holding): holding is Holding => holding !== undefined && holding !== null);
 	const nextHoldingKeys = [
-		...new Set(lastHoldings.map((holding) => holdingKey(holding))),
+		...new Set(holdings.map((holding) => holdingKey(holding))),
 	].sort();
 	const nextFindingKeys = [
 		...new Set(lastFindings.map((finding) => findingKey(finding))),
@@ -58,7 +61,7 @@ const paint = () => {
 		activeSymbol: nextActive,
 		findings: lastFindings,
 		findingKeys: nextFindingKeys,
-		holdings: lastHoldings,
+			holdings: holdings,
 		holdingKeys: nextHoldingKeys,
 		lifecycleBySymbol: Object.fromEntries(
 			lastLifecycle.map((row) => [row.symbol, String(row.state)]),
@@ -78,12 +81,20 @@ export const paintJournalLifecycle = (value: unknown, _focusSymbol: string) => {
 };
 
 /*
-paintJournalHoldings refreshes the journal from the current DRAW holdings batch.
-*/
-export const paintJournalHoldings = (value: unknown, _focusSymbol: string) => {
-	lastHoldings = asRows<Holding>(value);
+ paintJournalPositions refreshes the journal from the current DRAW positions batch.
+ */
+export const paintJournalPositions = (value: unknown, _focusSymbol: string) => {
+	lastPositions = (Array.isArray(value)
+		? value
+		: value !== null && typeof value === "object"
+			? Object.values(value as Record<string, Position>)
+			: value != null
+				? [value]
+				: []) as Position[];
 	paint();
 };
+
+export const paintJournalHoldings = paintJournalPositions;
 
 /*
 paintJournalFindings refreshes the journal from the current DRAW findings batch.
@@ -95,7 +106,7 @@ export const paintJournalFindings = (value: unknown, _focusSymbol: string) => {
 
 /*
 JournalSurface is the static lifecycle / holdings / findings shell.
-DRAW paints via paintJournalLifecycle, paintJournalHoldings, paintJournalFindings.
+ DRAW paints via paintJournalLifecycle, paintJournalPositions, paintJournalFindings.
 */
 export const JournalSurface = () => (
 	<JournalSurfaceBody />

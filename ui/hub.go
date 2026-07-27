@@ -25,7 +25,7 @@ streams (signals, manifold lattices/parts, cognition) are fanout-only — the
 next live frame arrives soon enough that caching them is wasted work.
 */
 var cacheKeys = []string{
-	"balances", "executions", "instruments", "positions", "holdings", "stops",
+	"balances", "executions", "instruments", "positions", "stops",
 	"lifecycle", "findings", "tick",
 }
 
@@ -368,8 +368,8 @@ func (hub *Hub) writeWallet(session *clientSession) {
 	}
 
 	frame := datura.Map[any]{
-		"balances": hub.balance.Frame(),
-		"holdings": hub.desk.Holdings(),
+		"balances":  hub.balance.Frame(),
+		"positions": hub.desk.Positions(),
 	}.Marshal()
 
 	if len(frame) == 0 {

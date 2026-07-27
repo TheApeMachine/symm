@@ -1,10 +1,9 @@
 import { createRef } from "react";
-import type { Holding, LifecycleRow } from "#/collections/types";
+import type { Holding, LifecycleRow, Position } from "#/collections/types";
 import { ColumnHeader } from "#/components/dashboard/header";
 import { DashboardAuditSync } from "#/components/terminal/dashboard-audit";
 import { DashboardShellSync } from "#/components/terminal/dashboard-shells";
 import { buildDecisionLogRow } from "#/components/terminal/decision-row";
-import { holdingRows } from "#/components/terminal/holding-wire";
 import type { StrategyDecision } from "#/types/thesis";
 
 export {
@@ -35,7 +34,7 @@ const positionListRef = createRef<HTMLDivElement>();
 const shellSync = new DashboardShellSync();
 const auditSync = new DashboardAuditSync();
 
-let lastHoldings: Holding[] = [];
+let lastPositions: Position[] = [];
 let lastLifecycle: Record<string, string> = {};
 
 // The decisions panel is an append-only log: every decision the engine emits is
@@ -127,9 +126,9 @@ const writePositionMeta = (open: Holding[]) => {
 	if (positionEmptyRef.current !== null) {
 		positionEmptyRef.current.style.display = symbols.length === 0 ? "" : "none";
 		positionEmptyRef.current.textContent =
-			lastHoldings.length === 0
-				? "waiting for holdings frames"
-				: "no open holdings";
+			lastPositions.length === 0
+				? "waiting for position frames"
+				: "no open positions";
 	}
 
 	if (positionMetaRef.current !== null) {
@@ -141,22 +140,33 @@ const writePositionMeta = (open: Holding[]) => {
 };
 
 /*
-paintDashboardHoldings refreshes open-position shells and the audit trail from
-the current DRAW holdings batch.
-*/
-export const paintDashboardHoldings = (
+ paintDashboardPositions refreshes open-position shells and the audit trail from
+ the current DRAW positions batch.
+ */
+export const paintDashboardPositions = (
 	value: unknown,
 	_focusSymbol: string,
 ) => {
-	lastHoldings = holdingRows(value);
-	writePositionMeta(lastHoldings.filter(isOpenLot));
+	lastPositions = (Array.isArray(value)
+		? value
+		: value !== null && typeof value === "object"
+			? Object.values(value as Record<string, Position>)
+			: value != null
+				? [value]
+			: []) as Position[];
+	const holdings = lastPositions
+		.map((position) => position.holding)
+		.filter((holding): holding is Holding => holding !== undefined && holding !== null);
+	writePositionMeta(holdings.filter(isOpenLot));
 	auditSync.writeAudit(
-		lastHoldings,
+		holdings,
 		lastLifecycle,
 		auditListRef.current,
 		auditEmptyRef.current,
 	);
 };
+
+export const paintDashboardHoldings = paintDashboardPositions;
 
 /*
 paintDashboardLifecycle refreshes audit lifecycle labels from the current DRAW
@@ -171,7 +181,9 @@ export const paintDashboardLifecycle = (
 		rows.map((row) => [row.symbol, String(row.state)]),
 	);
 	auditSync.writeAudit(
-		lastHoldings,
+		lastPositions
+			.map((position) => position.holding)
+			.filter((holding): holding is Holding => holding !== undefined && holding !== null),
 		lastLifecycle,
 		auditListRef.current,
 		auditEmptyRef.current,

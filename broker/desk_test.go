@@ -63,12 +63,12 @@ func TestDeskRecoversOpenLotsAfterInstrumentReady(t *testing.T) {
 			for time.Now().Before(deadline) {
 				position, ok = desk.Position(symbol)
 
-				if ok && position != nil && position.holding != nil &&
-					position.holding.Status == types.PENDING &&
-					position.holding.Mark != nil && position.holding.Mark.Sign() > 0 &&
-					position.holding.Stoploss != nil &&
-					position.holding.Stoploss.Mark != nil && position.holding.Stoploss.Mark.Sign() > 0 &&
-					position.holding.Stoploss.Floor != nil && position.holding.Stoploss.Floor.Sign() > 0 {
+				if ok && position != nil && position.Holding != nil &&
+					position.Holding.Status == types.PENDING &&
+					position.Holding.Mark != nil && position.Holding.Mark.Sign() > 0 &&
+					position.Holding.Stoploss != nil &&
+					position.Holding.Stoploss.Mark != nil && position.Holding.Stoploss.Mark.Sign() > 0 &&
+					position.Holding.Stoploss.Floor != nil && position.Holding.Stoploss.Floor.Sign() > 0 {
 					break
 				}
 
@@ -77,18 +77,18 @@ func TestDeskRecoversOpenLotsAfterInstrumentReady(t *testing.T) {
 
 			So(ok, ShouldBeTrue)
 			So(position, ShouldNotBeNil)
-			So(position.holding, ShouldNotBeNil)
-			So(position.holding.Symbol, ShouldEqual, symbol)
-			So(position.holding.Qty, ShouldNotBeNil)
-			So(position.holding.Qty.String(), ShouldEqual, "2")
-			So(position.holding.Status, ShouldEqual, types.PENDING)
-			So(position.holding.Mark, ShouldNotBeNil)
-			So(position.holding.Mark.Sign(), ShouldBeGreaterThan, 0)
-			So(position.holding.Stoploss, ShouldNotBeNil)
-			So(position.holding.Stoploss.Mark, ShouldNotBeNil)
-			So(position.holding.Stoploss.Mark.Sign(), ShouldBeGreaterThan, 0)
-			So(position.holding.Stoploss.Floor, ShouldNotBeNil)
-			So(position.holding.Stoploss.Floor.Sign(), ShouldBeGreaterThan, 0)
+			So(position.Holding, ShouldNotBeNil)
+			So(position.Holding.Symbol, ShouldEqual, symbol)
+			So(position.Holding.Qty, ShouldNotBeNil)
+			So(position.Holding.Qty.String(), ShouldEqual, "2")
+			So(position.Holding.Status, ShouldEqual, types.PENDING)
+			So(position.Holding.Mark, ShouldNotBeNil)
+			So(position.Holding.Mark.Sign(), ShouldBeGreaterThan, 0)
+			So(position.Holding.Stoploss, ShouldNotBeNil)
+			So(position.Holding.Stoploss.Mark, ShouldNotBeNil)
+			So(position.Holding.Stoploss.Mark.Sign(), ShouldBeGreaterThan, 0)
+			So(position.Holding.Stoploss.Floor, ShouldNotBeNil)
+			So(position.Holding.Stoploss.Floor.Sign(), ShouldBeGreaterThan, 0)
 		})
 	})
 }

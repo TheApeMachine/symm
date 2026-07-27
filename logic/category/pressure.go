@@ -32,7 +32,7 @@ func (reporter *Reporter) TrapPressure(symbol string) (share float64, dominates 
 	graph := reporter.graph
 	var trapMass, opportunityMass, contradict, support float64
 
-	for key, node := range graph.nodes {
+	for key, node := range graph.NodeIndex {
 		if key.symbol != symbol || node == nil || node.Strength <= 0 {
 			continue
 		}
@@ -46,7 +46,7 @@ func (reporter *Reporter) TrapPressure(symbol string) (share float64, dominates 
 	}
 
 	for _, key := range graph.edgesBySymbol[symbol] {
-		relation := graph.edges[key]
+		relation := graph.EdgeIndex[key]
 
 		if relation == nil || relation.Weight <= 0 {
 			continue
@@ -90,7 +90,7 @@ func (reporter *Reporter) ExhaustionLead(symbol string) (share float64, dominate
 	var intoExhaustion, intoOpportunity float64
 
 	for _, key := range graph.edgesBySymbol[symbol] {
-		relation := graph.edges[key]
+		relation := graph.EdgeIndex[key]
 
 		if relation == nil || relation.Type != Leads || relation.Weight <= 0 {
 			continue
@@ -160,7 +160,7 @@ func (reporter *Reporter) OpportunityLead(symbol string) (share float64, dominat
 	var intoExhaustion, intoOpportunity float64
 
 	for _, key := range graph.edgesBySymbol[symbol] {
-		relation := graph.edges[key]
+		relation := graph.EdgeIndex[key]
 
 		if relation == nil || relation.Type != Leads || relation.Weight <= 0 {
 			continue

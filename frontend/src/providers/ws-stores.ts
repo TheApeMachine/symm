@@ -13,7 +13,7 @@ import { paintSignalDetailMeasurements } from "#/components/kernel/detail";
 import {
 	paintAllocationBalances,
 	paintAllocationCausal,
-	paintAllocationHoldings,
+	paintAllocationPositions,
 	paintAllocationInstruments,
 	paintAllocationManifold,
 	paintAllocationResonance,
@@ -28,7 +28,7 @@ import { paintCognitiveBeam } from "#/components/terminal/cognitive-beam";
 import { paintCortex } from "#/components/terminal/cortex-surface";
 import { paintCrossSection } from "#/components/terminal/cross-section-panel";
 import {
-	paintDashboardHoldings,
+	paintDashboardPositions,
 	paintDashboardLifecycle,
 	paintDecisionRows,
 } from "#/components/terminal/dashboard-rail";
@@ -50,7 +50,7 @@ import {
 } from "#/components/terminal/health";
 import {
 	paintJournalFindings,
-	paintJournalHoldings,
+	paintJournalPositions,
 	paintJournalLifecycle,
 } from "#/components/terminal/journal-surface";
 import { paintKernelList } from "#/components/terminal/kernel-list";
@@ -65,7 +65,7 @@ import {
 	paintOpenCount,
 	paintPulseTick,
 	paintWalletBalances,
-	paintWalletHoldings,
+	paintWalletPositions,
 	paintWalletTick,
 } from "#/components/terminal/live-ticker";
 import {
@@ -73,7 +73,7 @@ import {
 	paintPaletteMeasurements,
 } from "#/components/terminal/palette";
 import {
-	paintPositionHoldings,
+	paintPositions,
 	paintPositionStops,
 } from "#/components/terminal/position-gauge";
 import { paintRegimeRadar } from "#/components/terminal/regime-radar";
@@ -185,13 +185,13 @@ export const drawers = {
 			allocation: paintAllocationBalances,
 		},
 	},
-	holdings: {
-		paint: paintWalletHoldings as Paint,
+	positions: {
+		paint: paintWalletPositions as Paint,
 		keys: {
-			journal: paintJournalHoldings,
-			dashboard: paintDashboardHoldings,
-			position: paintPositionHoldings,
-			allocation: paintAllocationHoldings,
+			journal: paintJournalPositions,
+			dashboard: paintDashboardPositions,
+			position: paintPositions,
+			allocation: paintAllocationPositions,
 		},
 	},
 	stops: {

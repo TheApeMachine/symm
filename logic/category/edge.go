@@ -12,13 +12,13 @@ when the relationship is observed again; evidence refs and At keep the cut that
 last justified the edge.
 */
 type Relation struct {
-	Symbol   string
-	From     types.CategoryType
-	To       types.CategoryType
-	Type     RelationType
-	Weight   float64
-	Evidence []string
-	At       time.Time
+	Symbol   string             `json:"symbol"`
+	From     types.CategoryType `json:"from"`
+	To       types.CategoryType `json:"to"`
+	Type     RelationType       `json:"type"`
+	Weight   float64            `json:"weight"`
+	Evidence []string           `json:"evidence"`
+	At       time.Time          `json:"at"`
 }
 
 /*
@@ -60,9 +60,9 @@ type nodeKey struct {
 Node holds the latest composed activation for a category on a symbol.
 */
 type Node struct {
-	Symbol    string
-	Type      types.CategoryType
-	Strength  float64
-	Freshness float64
-	At        time.Time
+	Symbol    string             `json:"symbol"`
+	Type      types.CategoryType `json:"type"`
+	Strength  float64            `json:"strength"`
+	Freshness float64            `json:"freshness"`
+	At        time.Time          `json:"at"`
 }

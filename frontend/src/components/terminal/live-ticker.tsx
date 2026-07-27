@@ -1,6 +1,6 @@
 import { createRef } from "react";
 import { appStore } from "#/collections/app";
-import type { Balance, Holding } from "#/collections/types";
+import type { Balance, Holding, Position } from "#/collections/types";
 import { formatUptime } from "#/components/terminal/kernel-meta";
 import { walletMetrics } from "#/components/terminal/panels";
 import { Flex } from "@/components/ui/flex";
@@ -67,7 +67,7 @@ const clockRef = createRef<HTMLDivElement>();
 const uptimeRef = createRef<HTMLDivElement>();
 
 let lastBalances: Balance[] = [];
-let lastHoldings: Holding[] = [];
+let lastPositions: Position[] = [];
 let clockTimer: number | null = null;
 
 type TickRow = {
@@ -188,6 +188,9 @@ export const paintEngineTick = (value: unknown) => {
 };
 
 const paintWallet = () => {
+	const lastHoldings = lastPositions
+		.map((position) => position.holding)
+		.filter((holding): holding is Holding => holding !== undefined && holding !== null);
 	const wallet = walletMetrics(lastBalances, lastHoldings);
 	const cashValue = wallet ? `${wallet.cash.toFixed(2)} ${wallet.asset}` : "—";
 	const reservedValue = wallet
@@ -225,12 +228,20 @@ export const paintWalletBalances = (value: unknown) => {
 };
 
 /*
-paintWalletHoldings refreshes wallet cash/equity from the current DRAW holdings.
+paintWalletPositions refreshes wallet cash/equity from the current DRAW positions.
 */
-export const paintWalletHoldings = (value: unknown) => {
-	lastHoldings = asRows<Holding>(value);
+export const paintWalletPositions = (value: unknown) => {
+	lastPositions = (Array.isArray(value)
+		? value
+		: value !== null && typeof value === "object"
+			? Object.values(value as Record<string, Position>)
+			: value != null
+				? [value]
+				: []) as Position[];
 	paintWallet();
 };
+
+export const paintWalletHoldings = paintWalletPositions;
 
 /*
 paintWalletTick paints the wallet tick counter from the current DRAW tick.
