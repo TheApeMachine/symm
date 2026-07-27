@@ -10,10 +10,7 @@ type metricSideKey struct {
 	side   MeasurementSide
 }
 
-var metricKeys struct {
-	sync.RWMutex
-	cache map[metricSideKey]string
-}
+var metricKeysCache sync.Map
 
 /*
 MetricKey builds the Metrics map key for one metric, with an optional side
@@ -25,29 +22,14 @@ func MetricKey(metric MetricType, side MeasurementSide) string {
 	}
 
 	key := metricSideKey{metric: metric, side: side}
-	metricKeys.RLock()
-	cached := metricKeys.cache[key]
-	metricKeys.RUnlock()
-
-	if cached != "" {
-		return cached
+	if cached, ok := metricKeysCache.Load(key); ok {
+		return cached.(string)
 	}
 
 	combined := string(metric) + ":" + string(side)
-	metricKeys.Lock()
+	actual, _ := metricKeysCache.LoadOrStore(key, combined)
 
-	if metricKeys.cache == nil {
-		metricKeys.cache = map[metricSideKey]string{}
-	}
-
-	if cached = metricKeys.cache[key]; cached == "" {
-		metricKeys.cache[key] = combined
-		cached = combined
-	}
-
-	metricKeys.Unlock()
-
-	return cached
+	return actual.(string)
 }
 
 /*

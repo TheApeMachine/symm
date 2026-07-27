@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
 	clearManifoldBinary,
 	latestDisplay,
-	latestLattice,
 	parseManifoldBinary,
 	retainManifoldBinary,
 } from "#/providers/manifold-binary";
@@ -62,20 +61,10 @@ const encodeDisplayFixture = (): ArrayBuffer => {
 };
 
 describe("parseManifoldBinary", () => {
-	it("decodes SMF1 uint16 lattices into float samples", () => {
+	it("rejects legacy scalar lattice frames", () => {
 		const plane = parseManifoldBinary(encodeLatticeFixture());
 
-		expect(plane).not.toBeNull();
-		expect(plane?.kind).toBe("rho");
-		expect(plane?.symbol).toBe("BTC/USD");
-		if (plane?.kind !== "rho") {
-			return;
-		}
-		expect(plane.width).toBe(2);
-		expect(plane.height).toBe(2);
-		expect(plane.samples[0]).toBeCloseTo(0);
-		expect(plane.samples[1]).toBeCloseTo(1);
-		expect(plane.samples[2]).toBeCloseTo(0.5, 2);
+		expect(plane).toBeNull();
 	});
 
 	it("decodes a backend-composited RGBA display frame", () => {
@@ -90,11 +79,9 @@ describe("parseManifoldBinary", () => {
 		expect(latestDisplay()).toBeNull();
 	});
 
-	it("retains the latest plane by kind", () => {
+	it("does not retain scalar planes", () => {
 		clearManifoldBinary();
-		expect(retainManifoldBinary(encodeLatticeFixture())).toBe("rho");
-		expect(latestLattice("rho")?.symbol).toBe("BTC/USD");
-		clearManifoldBinary();
-		expect(latestLattice("rho")).toBeNull();
+		expect(retainManifoldBinary(encodeLatticeFixture())).toBeNull();
+		expect(latestDisplay()).toBeNull();
 	});
 });

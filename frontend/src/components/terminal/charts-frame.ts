@@ -1,10 +1,3 @@
-import type { FluidFieldLayer } from "#/collections/terminal";
-import {
-	isFluidFieldMatrix,
-	resolveFluidDisplayLattice,
-} from "#/components/terminal/fluid-field";
-import type { TerminalFluidParticle } from "#/components/terminal/fluid-particles";
-
 const asRecord = (value: unknown): Record<string, unknown> | null =>
 	value !== null && typeof value === "object" && !Array.isArray(value)
 		? (value as Record<string, unknown>)
@@ -135,72 +128,6 @@ export const frameMatrix = (
 };
 
 /*
-frameAuxMatrix reads a named matrix field from a frame or its output envelope.
-*/
-export const frameAuxMatrix = (
-	frame: Record<string, unknown> | null | undefined,
-	field: string,
-): number[][] => {
-	const output = frameOutput(frame);
-
-	for (const value of [frame?.[field], output?.[field]]) {
-		const matrix = numberMatrix(value);
-
-		if (matrix.length > 0) {
-			return matrix;
-		}
-	}
-
-	return [];
-};
-
-const SHARED_FIELD_KEYS = [
-	"rho",
-	"psiMag2",
-	"guidanceVelX",
-	"guidanceVelZ",
-	"wave",
-] as const;
-
-/*
-withSharedManifoldField overlays the batch's single shared Sensorium lattices
-onto the focused symbol row. Backend wireManifold keeps ρ/|ψ|² on one carrier
-only; the pilot-wave paint still needs those lattices under every focus.
-*/
-export const withSharedManifoldField = <
-	T extends Record<string, unknown> & { symbol?: string },
->(
-	focus: T | null | undefined,
-	batch: readonly T[],
-): T | null => {
-	if (focus == null) {
-		return null;
-	}
-
-	if (isFluidFieldMatrix(frameAuxMatrix(focus, "rho"))) {
-		return focus;
-	}
-
-	const carrier = batch.find((frame) =>
-		isFluidFieldMatrix(frameAuxMatrix(frame, "rho")),
-	);
-
-	if (carrier == null) {
-		return focus;
-	}
-
-	const inherited: Record<string, unknown> = { ...focus };
-
-	for (const key of SHARED_FIELD_KEYS) {
-		if (carrier[key] !== undefined) {
-			inherited[key] = carrier[key];
-		}
-	}
-
-	return inherited as T;
-};
-
-/*
 finiteNumber keeps only finite numeric wire values.
 */
 export const finiteNumber = (value: unknown): number | null =>
@@ -208,60 +135,6 @@ export const finiteNumber = (value: unknown): number | null =>
 
 const stringValue = (value: unknown): string =>
 	typeof value === "string" ? value.trim() : "";
-
-const terminalFluidParticleFromRecord = (
-	record: Record<string, unknown>,
-): TerminalFluidParticle | null => {
-	const cellX = finiteNumber(record.cell_x);
-	const cellZ = finiteNumber(record.cell_z);
-	const phase = finiteNumber(record.phase);
-	const amplitude = finiteNumber(record.amplitude);
-	const velX = finiteNumber(record.vel_x);
-	const velZ = finiteNumber(record.vel_z);
-
-	if (
-		cellX === null ||
-		cellZ === null ||
-		phase === null ||
-		amplitude === null ||
-		velX === null ||
-		velZ === null
-	) {
-		return null;
-	}
-
-	const cellY = finiteNumber(record.cell_y) ?? 0;
-	const omega = finiteNumber(record.omega) ?? 0;
-	const heat = finiteNumber(record.heat) ?? 0;
-	const velY = finiteNumber(record.vel_y) ?? 0;
-
-	return {
-		source: stringValue(record.source),
-		role: stringValue(record.role) || "particle",
-		cellX,
-		cellY,
-		cellZ,
-		phase,
-		omega,
-		amplitude,
-		heat,
-		velX,
-		velY,
-		velZ,
-		speed: finiteNumber(record.speed) ?? Math.hypot(velX, velY, velZ),
-	};
-};
-
-/*
-terminalFluidParticlesFromFrame maps wire particles onto the fluid canvas model.
-*/
-export const terminalFluidParticlesFromFrame = (
-	frame: Record<string, unknown> | null | undefined,
-): TerminalFluidParticle[] =>
-	recordArray(frame?.particles).flatMap((record) => {
-		const particle = terminalFluidParticleFromRecord(record);
-		return particle === null ? [] : [particle];
-	});
 
 /*
 terminalWaveModesFromFrame reads the resident complex omega field without
@@ -346,20 +219,19 @@ export const terminalPhaseStatusFromFrame = (
 });
 
 /*
-fluidGridDimensions prefers explicit grid metadata, then falls back to matrix shape.
+fluidGridDimensions reads explicit backend grid metadata for display labels.
 */
 export const fluidGridDimensions = (
 	frame: Record<string, unknown> | null | undefined,
-	matrix: number[][],
 ): { columns: number; rows: number } => {
 	const grid = asRecord(frame?.grid);
 	const gridX = finiteNumber(grid?.x);
 	const gridZ = finiteNumber(grid?.z);
-	const columns =
-		gridX !== null && gridX > 0 ? gridX : (matrix[0]?.length ?? 0);
-	const rows = gridZ !== null && gridZ > 0 ? gridZ : matrix.length;
 
-	return { columns, rows };
+	return {
+		columns: gridX !== null && gridX > 0 ? gridX : 0,
+		rows: gridZ !== null && gridZ > 0 ? gridZ : 0,
+	};
 };
 
 /*
@@ -373,28 +245,4 @@ export const terminalResonanceLayerMatrixFromFrame = (
 	const energy = numberArray([frame?.baseline, frame?.energy, frame?.surprise]);
 
 	return [latent, modes, energy].filter((row) => row.length > 0);
-};
-
-export const terminalFluidMatrixFromFrame = frameMatrix;
-
-/*
-terminalFluidPsiMatrixFromFrame reads the ψ magnitude lattice from a manifold frame.
-*/
-export const terminalFluidPsiMatrixFromFrame = (
-	frame: Record<string, unknown> | null | undefined,
-): number[][] => frameAuxMatrix(frame, "psiMag2");
-
-/*
-terminalFluidDisplayLatticeFromFrame selects the requested physical field layer
-without combining gas density and coherence into one scalar lattice.
-*/
-export const terminalFluidDisplayLatticeFromFrame = (
-	frame: Record<string, unknown> | null | undefined,
-	layer: FluidFieldLayer = "Composite",
-): number[][] => {
-	const rho = frameAuxMatrix(frame, "rho");
-	const psiMag2 = frameAuxMatrix(frame, "psiMag2");
-	const lattice = isFluidFieldMatrix(rho) ? rho : [];
-
-	return resolveFluidDisplayLattice(lattice, psiMag2, layer);
 };

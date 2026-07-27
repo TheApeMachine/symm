@@ -296,57 +296,56 @@ func (analyzer *Analyzer) enrichCut(
 	started := time.Now()
 	analyzer.stamp(thesis)
 
-	payload := map[string]any{}
-
-	if cutID > 0 {
-		payload["cut_id"] = uint64(cutID)
+	if analyzer.recorder != nil {
+		payload := map[string]any{}
+		if cutID > 0 {
+			payload["cut_id"] = uint64(cutID)
+		}
+		errnie.Error(audit.Phase(analyzer.recorder, tick, "analyze_begin", payload))
 	}
-
-	errnie.Error(audit.Phase(analyzer.recorder, tick, "analyze_begin", payload))
 
 	analyzer.stepManifold(thesis, hawkes, cutID, tick)
 	states := analyzer.observeStates(thesis, cutID, tick)
 
 	var composeStarted time.Time
-
 	if analyzer.recorder != nil {
 		composeStarted = time.Now()
 	}
 
 	analyzer.composeCategories(thesis)
-	payload = map[string]any{
-		"ns":         time.Since(composeStarted).Nanoseconds(),
-		"categories": len(thesis.Categories),
-	}
 
-	if cutID > 0 {
-		payload["cut_id"] = uint64(cutID)
+	if analyzer.recorder != nil {
+		payload := map[string]any{
+			"ns":         time.Since(composeStarted).Nanoseconds(),
+			"categories": len(thesis.Categories),
+		}
+		if cutID > 0 {
+			payload["cut_id"] = uint64(cutID)
+		}
+		errnie.Error(audit.Phase(analyzer.recorder, tick, "categories_compose", payload))
 	}
-
-	errnie.Error(audit.Phase(analyzer.recorder, tick, "categories_compose", payload))
 
 	analyzer.publishMeasured(thesis, states, cutID, tick)
 
 	remObservations, remRequested := analyzer.cognizeStates(thesis, states, cutID, tick)
 
 	var commitStarted time.Time
-
 	if analyzer.recorder != nil {
 		commitStarted = time.Now()
 	}
 
 	analyzer.categories.UpdateFrom(thesis)
 
-	payload = map[string]any{
-		"ns":         time.Since(commitStarted).Nanoseconds(),
-		"categories": len(thesis.Categories),
+	if analyzer.recorder != nil {
+		payload := map[string]any{
+			"ns":         time.Since(commitStarted).Nanoseconds(),
+			"categories": len(thesis.Categories),
+		}
+		if cutID > 0 {
+			payload["cut_id"] = uint64(cutID)
+		}
+		errnie.Error(audit.Phase(analyzer.recorder, tick, "categories_commit", payload))
 	}
-
-	if cutID > 0 {
-		payload["cut_id"] = uint64(cutID)
-	}
-
-	errnie.Error(audit.Phase(analyzer.recorder, tick, "categories_commit", payload))
 
 	analyzer.consolidate(thesis, remObservations, remRequested)
 	analyzer.publishCognition(thesis)

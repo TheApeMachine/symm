@@ -11,6 +11,10 @@ func Phase(
 	phase string,
 	value map[string]any,
 ) error {
+	if recorder == nil {
+		return nil
+	}
+
 	if value == nil {
 		value = map[string]any{}
 	}

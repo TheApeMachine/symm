@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
-import { terminalStore } from "#/collections/terminal";
 import { Canvas } from "#/components/dashboard/canvas";
 import { FluidLegend } from "#/components/dashboard/fluid";
 import { ColumnHeader } from "#/components/dashboard/header";
@@ -25,8 +24,6 @@ import { Grid } from "@/components/ui/grid";
 const RouteComponent = () => {
 	const kernels = useSelector(appStore, (state) => state.kernels);
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
-	const fieldLayer = useSelector(terminalStore, (state) => state.fieldLayer);
 
 	return (
 		<Flex.Column fullWidth className="h-full min-w-[1120px]">
@@ -52,13 +49,10 @@ const RouteComponent = () => {
 							title="Pilot-wave field"
 							meta="shared |ψ|² / ρ · focused particles · X relative log price · Z empirical order-age rank · max over Y log size"
 							topRight={<LiveManifoldMeta focusSymbol={focusSymbol} />}
-							legend={<FluidLegend layer={fieldLayer} />}
+							legend={<FluidLegend />}
 							className="flex-[1.45]"
 						>
-							<TerminalFluidChart
-								contour={fieldStyle === "Contour"}
-								layer={fieldLayer}
-							/>
+							<TerminalFluidChart />
 						</Canvas>
 						<Canvas
 							title={

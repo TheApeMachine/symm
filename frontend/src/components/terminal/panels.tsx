@@ -373,10 +373,7 @@ export const TerminalTopBar = () => {
 
 export const TerminalNav = ({ active }: { active: TerminalSurface }) => {
 	const scanlines = useSelector(terminalStore, (state) => state.scanlines);
-	const fieldStyle = useSelector(terminalStore, (state) => state.fieldStyle);
-	const fieldLayer = useSelector(terminalStore, (state) => state.fieldLayer);
-	const { cycleFieldLayer, toggleScanlines, toggleFieldStyle } =
-		terminalStore.actions;
+	const { toggleScanlines } = terminalStore.actions;
 
 	return (
 		<nav className="flex w-[210px] shrink-0 flex-col border-(--line) border-r bg-(--surface)">
@@ -406,20 +403,6 @@ export const TerminalNav = ({ active }: { active: TerminalSurface }) => {
 			<LiveEngineTicker />
 			<div className="mt-auto border-(--line) border-t p-2.5 font-mono text-[10px] text-(--f4) leading-[1.6]">
 				<LiveEngineClock />
-				<button
-					type="button"
-					onClick={cycleFieldLayer}
-					className="mt-1.5 block cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-(--f3) hover:text-(--acc)"
-				>
-					layer {fieldLayer.toLowerCase()}
-				</button>
-				<button
-					type="button"
-					onClick={toggleFieldStyle}
-					className="mt-1.5 block cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-(--f3) hover:text-(--acc)"
-				>
-					field {fieldStyle.toLowerCase()}
-				</button>
 				<button
 					type="button"
 					onClick={toggleScanlines}

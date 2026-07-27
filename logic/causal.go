@@ -159,6 +159,14 @@ func (causal *Causal) hypothesis(outcome CausalOutcome) types.Hypothesis {
 	}
 }
 
+var causalControlNames = []string{
+	"pressure_gradient_x",
+	"velocity_divergence",
+	"stress_anisotropy",
+	"coherence_magnitude_squared",
+	"guidance_speed",
+}
+
 func (causal *Causal) observe(
 	state manifold.State,
 	features []float64,
@@ -170,14 +178,8 @@ func (causal *Causal) observe(
 		Samples:    causal.samples,
 		Hypothesis: causalHypothesis,
 		Treatment:  "buy_sell_arrival_intensity_imbalance",
-		Controls: []string{
-			"pressure_gradient_x",
-			"velocity_divergence",
-			"stress_anisotropy",
-			"coherence_magnitude_squared",
-			"guidance_speed",
-		},
-		Target: "next_l3_epoch_mid_log_return",
+		Controls:   causalControlNames,
+		Target:     "next_l3_epoch_mid_log_return",
 	}
 
 	if causal.pending != nil && state.Epoch == causal.pending.epoch+1 {

@@ -6,10 +6,6 @@ import type {
 	ResonanceFrame,
 } from "#/collections/types";
 import {
-	isFluidFieldMatrix,
-	meanGuidanceSpeed,
-} from "#/components/terminal/fluid-field";
-import {
 	cascadeLabel,
 	finiteMetric,
 	formatMetric,
@@ -34,28 +30,6 @@ const guidanceRef = createRef<HTMLSpanElement>();
 const viscosityRef = createRef<HTMLSpanElement>();
 const momentumRef = createRef<HTMLSpanElement>();
 const fillRef = createRef<HTMLDivElement>();
-
-const numberMatrix = (value: unknown): number[][] =>
-	Array.isArray(value)
-		? value
-				.map((row) =>
-					Array.isArray(row)
-						? row.filter((cell): cell is number => Number.isFinite(cell))
-						: [],
-				)
-				.filter((row) => row.length > 0)
-		: [];
-
-const frameMatrix = (frame: unknown, key: string): number[][] | undefined => {
-	if (frame === null || frame === undefined || typeof frame !== "object") {
-		return undefined;
-	}
-
-	const value = (frame as Record<string, unknown>)[key];
-	const matrix = numberMatrix(value);
-
-	return isFluidFieldMatrix(matrix) ? matrix : undefined;
-};
 
 /*
 cognitiveScopes lists symbols that currently own a cognitive reading.
@@ -273,12 +247,8 @@ export const paintXrayManifold = (value: unknown, focusSymbol: string) => {
 	}
 
 	if (guidanceRef.current !== null) {
-		const latticeGuidance = meanGuidanceSpeed(
-			frameMatrix(frame, "guidanceVelX"),
-			frameMatrix(frame, "guidanceVelZ"),
-		);
 		guidanceRef.current.textContent = formatMetric(
-			finiteMetric(reading?.guidanceSpeed) ?? latticeGuidance,
+			finiteMetric(reading?.guidanceSpeed),
 		);
 	}
 

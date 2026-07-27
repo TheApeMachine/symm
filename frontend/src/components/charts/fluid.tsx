@@ -1,10 +1,6 @@
 import { createRef, useEffect } from "react";
-import type { FluidFieldLayer } from "#/collections/terminal";
 import type { ManifoldFrame } from "#/collections/types";
-import {
-	drawFluidDisplay,
-	drawFluidFieldGL,
-} from "#/components/charts/fluid-gl";
+import { drawFluidDisplay } from "#/components/charts/fluid-display";
 import {
 	clearCanvas,
 	drawGrid,
@@ -12,33 +8,21 @@ import {
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
 import {
-	finiteNumber,
-	frameAuxMatrix,
-	frameReading,
 	type TerminalPhaseResponse,
 	type TerminalPhaseStatus,
 	type TerminalWaveMode,
 	terminalPhaseScanFromFrame,
 	terminalPhaseStatusFromFrame,
 	terminalWaveModesFromFrame,
-	withSharedManifoldField,
 } from "#/components/terminal/charts-frame";
-import {
-	drawFluidField,
-	isFluidFieldMatrix,
-	resolveFluidDisplayLattice,
-} from "#/components/terminal/fluid-field";
 import {
 	clearManifoldBinary,
 	latestDisplay,
-	withBinaryLattices,
 } from "#/providers/manifold-binary";
 import { latestManifoldWave } from "#/providers/manifold-parts";
 
 const fluidFieldCanvasRef = createRef<HTMLCanvasElement>();
 const fluidOverlayCanvasRef = createRef<HTMLCanvasElement>();
-let fluidContour = false;
-let fluidLayer: FluidFieldLayer = "Composite";
 let fluidFocus = "";
 let lastManifoldBatch: unknown = null;
 
@@ -308,9 +292,7 @@ const paintTerminalFluidCompose = (value: unknown, focusSymbol: string) => {
 		frames.find(
 			(entry) => focusSymbol === "" || entry.symbol === focusSymbol,
 		) ?? (focusSymbol === "" ? (frames.at(-1) ?? null) : null);
-	const frame = withBinaryLattices(
-		withSharedManifoldField(focused, frames) as Record<string, unknown> | null,
-	) as ManifoldFrame | null;
+	const frame = focused;
 
 	if (frame === null) {
 		return;
@@ -323,28 +305,17 @@ const paintTerminalFluidCompose = (value: unknown, focusSymbol: string) => {
 	};
 
 	const baked = latestDisplay();
-	const rho = frameAuxMatrix(composed, "rho");
-	const psiMag2 = frameAuxMatrix(composed, "psiMag2");
-	const display = resolveFluidDisplayLattice(
-		isFluidFieldMatrix(rho) ? rho : [],
-		psiMag2,
-		fluidLayer,
-	);
-	const reading = frameReading(composed);
 	const wave = terminalWaveModesFromFrame(composed);
 	const phaseScan = terminalPhaseScanFromFrame(composed);
 	const phaseStatus = terminalPhaseStatusFromFrame(composed);
 
 	// Wave-only arrivals still need a paint so the phase dial can appear before
 	// the next display frame; empty picture+wave is a true no-op.
-	if (baked === null && display.length === 0 && wave.length === 0) {
+	if (baked === null && wave.length === 0) {
 		return;
 	}
 
-	const painted =
-		drawFluidDisplay(fieldCanvas, width, height) ||
-		(display.length > 0 &&
-			drawFluidFieldGL(fieldCanvas, width, height, fluidLayer, fluidContour));
+	const painted = drawFluidDisplay(fieldCanvas, width, height);
 
 	if (!painted) {
 		const fieldContext = resizeCanvas(fieldCanvas);
@@ -353,32 +324,8 @@ const paintTerminalFluidCompose = (value: unknown, focusSymbol: string) => {
 			return;
 		}
 
-		if (display.length > 0) {
-			drawFluidField(
-				fieldContext,
-				width,
-				height,
-				isFluidFieldMatrix(rho) ? rho : [],
-				fluidContour,
-				{
-					pressureGradX:
-						finiteNumber(composed?.pressureGradX) ??
-						finiteNumber(reading?.pressureGradX) ??
-						0,
-					pressureGradZ:
-						finiteNumber(composed?.pressureGradZ) ??
-						finiteNumber(reading?.pressureGradZ) ??
-						0,
-					psiMag2,
-					layer: fluidLayer,
-					guidanceVelX: frameAuxMatrix(composed, "guidanceVelX"),
-					guidanceVelZ: frameAuxMatrix(composed, "guidanceVelZ"),
-				},
-			);
-		} else {
-			clearCanvas(fieldContext, width, height);
-			drawGrid(fieldContext, width, height);
-		}
+		clearCanvas(fieldContext, width, height);
+		drawGrid(fieldContext, width, height);
 	}
 
 	overlay.clearRect(0, 0, width, height);
@@ -387,25 +334,12 @@ const paintTerminalFluidCompose = (value: unknown, focusSymbol: string) => {
 
 /*
 TerminalFluidChart is the static canvas shell. DRAW paints via
-paintTerminalFluidChart. Layer/contour toggles must repaint the retained batch
-immediately — waiting for the next websocket manifold frame makes the controls
-appear dead.
+paintTerminalFluidChart, and the field canvas only blits backend GPU images.
 */
-export const TerminalFluidChart = ({
-	contour = false,
-	layer = "Composite",
-}: {
-	contour?: boolean;
-	layer?: FluidFieldLayer;
-}) => {
-	fluidContour = contour;
-	fluidLayer = layer;
-
+export const TerminalFluidChart = () => {
 	useEffect(() => {
-		fluidContour = contour;
-		fluidLayer = layer;
 		repaintTerminalFluidChart(fluidFocus);
-	}, [contour, layer]);
+	}, []);
 
 	return (
 		<div className="relative block size-full">

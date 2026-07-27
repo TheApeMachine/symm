@@ -1,10 +1,8 @@
 import { createRef } from "react";
-import { terminalStore } from "#/collections/terminal";
 import type { ManifoldFrame, ResonanceFrame } from "#/collections/types";
 import {
 	finiteNumber,
 	fluidGridDimensions,
-	withSharedManifoldField,
 } from "#/components/terminal/charts-frame";
 import { latestDisplay } from "#/providers/manifold-binary";
 
@@ -15,7 +13,6 @@ const manifoldProjectionRef = createRef<HTMLDivElement>();
 const manifoldCoherenceRef = createRef<HTMLDivElement>();
 const manifoldGasRef = createRef<HTMLDivElement>();
 let manifoldMetaFocus = "";
-let manifoldMetaLayer = terminalStore.state.fieldLayer;
 let lastManifoldMetaBatch: unknown = null;
 
 const resonanceFooterRef = createRef<HTMLSpanElement>();
@@ -52,29 +49,24 @@ export const repaintManifoldMeta = (focusSymbol: string) => {
 const paintManifoldMetaCompose = (value: unknown, focusSymbol: string) => {
 	const focusChanged = manifoldMetaFocus !== focusSymbol;
 	manifoldMetaFocus = focusSymbol;
-	const layer = terminalStore.state.fieldLayer;
-	const layerChanged = manifoldMetaLayer !== layer;
-	manifoldMetaLayer = layer;
 	const rows = (
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as ManifoldFrame[];
 	const focused = rows
 		.filter((frame) => focusSymbol === "" || frame.symbol === focusSymbol)
 		.at(-1);
-	const manifold = withSharedManifoldField(focused ?? null, rows) as ManifoldFrame | null;
+	const manifold = focused ?? null;
 	const baked = latestDisplay();
 	const hasPicture = baked !== null;
 
-	if (!hasPicture && !focusChanged && !layerChanged) {
+	if (!hasPicture && !focusChanged) {
 		return;
 	}
 
 	const waiting = !hasPicture;
-	const columns =
-		baked?.width ??
-		fluidGridDimensions(manifold ?? null, []).columns;
-	const gridRows =
-		baked?.height ?? fluidGridDimensions(manifold ?? null, []).rows;
+	const grid = fluidGridDimensions(manifold ?? null);
+	const columns = baked?.width ?? grid.columns;
+	const gridRows = baked?.height ?? grid.rows;
 	const focusedCount = finiteNumber(manifold?.oscillatorCount);
 	const sharedCount = finiteNumber(manifold?.sharedOscillatorCount);
 	const rhoOccupied = finiteNumber(manifold?.rhoOccupied);

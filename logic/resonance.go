@@ -56,6 +56,7 @@ type Resonance struct {
 	lastEventAt time.Time
 	lastMid     *decimal.Decimal
 	samples     uint64
+	normalized  []float64
 }
 
 /*
@@ -102,11 +103,12 @@ func NewResonance(
 	}
 
 	resonance := &Resonance{
-		symbol:    symbol,
-		manifold:  manifoldOut,
-		returns:   returns,
-		baselines: map[string]*adaptive.TimeElastic{},
-		halflife:  halflife,
+		symbol:     symbol,
+		manifold:   manifoldOut,
+		returns:    returns,
+		baselines:  map[string]*adaptive.TimeElastic{},
+		halflife:   halflife,
+		normalized: make([]float64, resonanceObservables),
 	}
 
 	return resonance
@@ -293,7 +295,11 @@ func (resonance *Resonance) normalize(
 		return nil, false
 	}
 
-	normalized := make([]float64, len(observables))
+	if len(resonance.normalized) != resonanceObservables {
+		resonance.normalized = make([]float64, resonanceObservables)
+	}
+
+	normalized := resonance.normalized
 	allReady := true
 
 	for index, value := range observables {

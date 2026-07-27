@@ -12,19 +12,9 @@ export type TerminalSurface =
 
 export { DEFAULT_FOCUS_SYMBOL };
 
-/*
-FluidFieldLayer names the physically distinct pilot-wave projections available
-for inspection; Composite preserves both by drawing rather than adding them.
-*/
-export type FluidFieldLayer = "Composite" | "Coherence" | "Gas";
-
-const FIELD_LAYERS: FluidFieldLayer[] = ["Composite", "Coherence", "Gas"];
-
 export const terminalStore = createStore(
 	{
 		scanlines: true,
-		fieldStyle: "Heatmap" as "Heatmap" | "Contour",
-		fieldLayer: "Composite" as FluidFieldLayer,
 		selectedSource: "manifold",
 		inspectorSource: null as string | null,
 		paletteOpen: false,
@@ -35,23 +25,10 @@ export const terminalStore = createStore(
 		thesisSymbol: null as string | null,
 	},
 	({ setState }) => ({
-		toggleScanlines: () =>
+			toggleScanlines: () =>
 			setState((prev) => ({
 				...prev,
 				scanlines: !prev.scanlines,
-			})),
-		toggleFieldStyle: () =>
-			setState((prev) => ({
-				...prev,
-				fieldStyle: prev.fieldStyle === "Heatmap" ? "Contour" : "Heatmap",
-			})),
-		cycleFieldLayer: () =>
-			setState((prev) => ({
-				...prev,
-				fieldLayer:
-					FIELD_LAYERS[
-						(FIELD_LAYERS.indexOf(prev.fieldLayer) + 1) % FIELD_LAYERS.length
-					],
 			})),
 		selectSource: (selectedSource: string) =>
 			setState((prev) => ({

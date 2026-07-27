@@ -38,31 +38,136 @@ const (
 	IncomparableWith RelationType = "incomparable_with"
 )
 
-var (
-	categoryIDs = map[types.CategoryType]uint8{}
-	relationIDs = map[RelationType]uint8{}
-)
-
-func init() {
-	for idx, cat := range types.CategoryOrder {
-		categoryIDs[cat] = uint8(idx + 1)
-	}
-
-	relations := []RelationType{
-		Supports, Contradicts, Conditions, Leads, Lags,
-		RedundantWith, IndependentOf, StaleRelativeTo, IncomparableWith,
-	}
-	for idx, rel := range relations {
-		relationIDs[rel] = uint8(idx + 1)
-	}
-}
-
 func categoryID(cat types.CategoryType) uint8 {
-	return categoryIDs[cat]
+	switch cat {
+	case types.ForecastEdge:
+		return 1
+	case types.PhysicalField:
+		return 2
+	case types.Laminar:
+		return 3
+	case types.Turbulent:
+		return 4
+	case types.Inertial:
+		return 5
+	case types.Viscous:
+		return 6
+	case types.Frenzy:
+		return 7
+	case types.Saturation:
+		return 8
+	case types.Organic:
+		return 9
+	case types.Exhaustion:
+		return 10
+	case types.HiddenAbsorption:
+		return 11
+	case types.AggressiveDrive:
+		return 12
+	case types.StochasticBalance:
+		return 13
+	case types.VolumeStarvation:
+		return 14
+	case types.LoadedImbalance:
+		return 15
+	case types.SpoofTrap:
+		return 16
+	case types.BookThinning:
+		return 17
+	case types.DenseNeutrality:
+		return 18
+	case types.InefficientLag:
+		return 19
+	case types.SynchronizedDrift:
+		return 20
+	case types.DecoupledMove:
+		return 21
+	case types.AnchorStall:
+		return 22
+	case types.VerticalIgnition:
+		return 23
+	case types.CoiledCompression:
+		return 24
+	case types.OrganicTrend:
+		return 25
+	case types.FadedExhaustion:
+		return 26
+	case types.ExtremeScarcity:
+		return 27
+	case types.MedianDepth:
+		return 28
+	case types.RobustLiquidity:
+		return 29
+	case types.RiskOnSurge:
+		return 30
+	case types.DivergentMove:
+		return 31
+	case types.SystemicSlump:
+		return 32
+	case types.LiquidityVacuum:
+		return 33
+	case types.ToxicBluff:
+		return 34
+	case types.HardSupport:
+		return 35
+	case types.SystemicHerd:
+		return 36
+	case types.DecoupledAlpha:
+		return 37
+	case types.StochasticNoise:
+		return 38
+	case types.DivergentStress:
+		return 39
+	case types.EndogenousAlpha:
+		return 40
+	case types.SystemicBeta:
+		return 41
+	case types.LiquidityShock:
+		return 42
+	case types.CausalNoise:
+		return 43
+	case types.MechanicalCollapse:
+		return 44
+	case types.ThermalExhaustion:
+		return 45
+	case types.FragileExpansion:
+		return 46
+	case types.ActiveReversal:
+		return 47
+	case types.LaminarResonance:
+		return 48
+	case types.TurbulentResonance:
+		return 49
+	case types.Equilibrium:
+		return 50
+	default:
+		return 0
+	}
 }
 
 func relationID(rel RelationType) uint8 {
-	return relationIDs[rel]
+	switch rel {
+	case Supports:
+		return 1
+	case Contradicts:
+		return 2
+	case Conditions:
+		return 3
+	case Leads:
+		return 4
+	case Lags:
+		return 5
+	case RedundantWith:
+		return 6
+	case IndependentOf:
+		return 7
+	case StaleRelativeTo:
+		return 8
+	case IncomparableWith:
+		return 9
+	default:
+		return 0
+	}
 }
 
 /*
@@ -78,9 +183,9 @@ type edgeKey struct {
 func makeEdgeKey(symbol string, from, to types.CategoryType, kind RelationType) edgeKey {
 	return edgeKey{
 		symbol: symbol,
-		from:   categoryIDs[from],
-		to:     categoryIDs[to],
-		kind:   relationIDs[kind],
+		from:   categoryID(from),
+		to:     categoryID(to),
+		kind:   relationID(kind),
 	}
 }
 
@@ -95,7 +200,7 @@ type nodeKey struct {
 func makeNodeKey(symbol string, kind types.CategoryType) nodeKey {
 	return nodeKey{
 		symbol: symbol,
-		kind:   categoryIDs[kind],
+		kind:   categoryID(kind),
 	}
 }
 

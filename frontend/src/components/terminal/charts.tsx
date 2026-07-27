@@ -29,15 +29,10 @@ export {
 } from "#/components/charts/signal-heatmap";
 export {
 	fluidGridDimensions,
-	terminalFluidDisplayLatticeFromFrame,
-	terminalFluidMatrixFromFrame,
-	terminalFluidParticlesFromFrame,
-	terminalFluidPsiMatrixFromFrame,
 	terminalPhaseScanFromFrame,
 	terminalPhaseStatusFromFrame,
 	terminalResonanceLayerMatrixFromFrame,
 	terminalWaveModesFromFrame,
-	withSharedManifoldField,
 } from "#/components/terminal/charts-frame";
 
 type Draw = (
