@@ -38,14 +38,50 @@ const (
 	IncomparableWith RelationType = "incomparable_with"
 )
 
+var (
+	categoryIDs = map[types.CategoryType]uint8{}
+	relationIDs = map[RelationType]uint8{}
+)
+
+func init() {
+	for idx, cat := range types.CategoryOrder {
+		categoryIDs[cat] = uint8(idx + 1)
+	}
+
+	relations := []RelationType{
+		Supports, Contradicts, Conditions, Leads, Lags,
+		RedundantWith, IndependentOf, StaleRelativeTo, IncomparableWith,
+	}
+	for idx, rel := range relations {
+		relationIDs[rel] = uint8(idx + 1)
+	}
+}
+
+func categoryID(cat types.CategoryType) uint8 {
+	return categoryIDs[cat]
+}
+
+func relationID(rel RelationType) uint8 {
+	return relationIDs[rel]
+}
+
 /*
 edgeKey uniquely identifies one typed directed edge on one symbol.
 */
 type edgeKey struct {
 	symbol string
-	from   types.CategoryType
-	to     types.CategoryType
-	kind   RelationType
+	from   uint8
+	to     uint8
+	kind   uint8
+}
+
+func makeEdgeKey(symbol string, from, to types.CategoryType, kind RelationType) edgeKey {
+	return edgeKey{
+		symbol: symbol,
+		from:   categoryIDs[from],
+		to:     categoryIDs[to],
+		kind:   relationIDs[kind],
+	}
 }
 
 /*
@@ -53,7 +89,14 @@ nodeKey uniquely identifies one category node on one symbol.
 */
 type nodeKey struct {
 	symbol string
-	kind   types.CategoryType
+	kind   uint8
+}
+
+func makeNodeKey(symbol string, kind types.CategoryType) nodeKey {
+	return nodeKey{
+		symbol: symbol,
+		kind:   categoryIDs[kind],
+	}
 }
 
 /*

@@ -126,9 +126,9 @@ func (signal *Signal) Calculate(
 	peerMaturity := float64(len(depthPeers)) / float64(len(depthPeers)+1)
 
 	out := make([]*types.Measurement, 0, len(peers))
-	uiOut := datura.Map[any]{
-		"measurements": make([]*types.Measurement, 0),
-	}
+	uiOut := datura.NewMap(
+		"measurements", make([]*types.Measurement, 0),
+	)
 
 	for _, peer := range peers {
 		executableDepth := peer.ExecutableDepth

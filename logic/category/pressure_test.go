@@ -14,15 +14,15 @@ func TestTrapPressure(t *testing.T) {
 		graph.touched = map[edgeKey]struct{}{}
 		at := time.Unix(100, 0).UTC()
 
-		graph.NodeIndex[nodeKey{symbol: "SIM/USD", kind: types.SpoofTrap}] = &Node{
+		graph.NodeIndex[makeNodeKey("SIM/USD", types.SpoofTrap)] = &Node{
 			Symbol: "SIM/USD", Type: types.SpoofTrap, Strength: 0.9, At: at,
 		}
-		graph.Nodes = append(graph.Nodes, graph.NodeIndex[nodeKey{symbol: "SIM/USD", kind: types.SpoofTrap}])
+		graph.Nodes = append(graph.Nodes, graph.NodeIndex[makeNodeKey("SIM/USD", types.SpoofTrap)])
 
-		graph.NodeIndex[nodeKey{symbol: "SIM/USD", kind: types.VerticalIgnition}] = &Node{
+		graph.NodeIndex[makeNodeKey("SIM/USD", types.VerticalIgnition)] = &Node{
 			Symbol: "SIM/USD", Type: types.VerticalIgnition, Strength: 0.3, At: at,
 		}
-		graph.Nodes = append(graph.Nodes, graph.NodeIndex[nodeKey{symbol: "SIM/USD", kind: types.VerticalIgnition}])
+		graph.Nodes = append(graph.Nodes, graph.NodeIndex[makeNodeKey("SIM/USD", types.VerticalIgnition)])
 
 		reporter := Report(graph)
 
@@ -38,10 +38,10 @@ func TestTrapPressure(t *testing.T) {
 
 	Convey("Given a graph with only opportunity nodes", t, func() {
 		graph := NewGraph()
-		graph.NodeIndex[nodeKey{symbol: "SIM/USD", kind: types.VerticalIgnition}] = &Node{
+		graph.NodeIndex[makeNodeKey("SIM/USD", types.VerticalIgnition)] = &Node{
 			Symbol: "SIM/USD", Type: types.VerticalIgnition, Strength: 0.8,
 		}
-		graph.Nodes = append(graph.Nodes, graph.NodeIndex[nodeKey{symbol: "SIM/USD", kind: types.VerticalIgnition}])
+		graph.Nodes = append(graph.Nodes, graph.NodeIndex[makeNodeKey("SIM/USD", types.VerticalIgnition)])
 
 		reporter := Report(graph)
 		share, dominates := reporter.TrapPressure("SIM/USD")
@@ -195,14 +195,14 @@ func BenchmarkTrapPressure(b *testing.B) {
 	oppTypes := []types.CategoryType{types.VerticalIgnition, types.OrganicTrend, types.RiskOnSurge}
 
 	for _, categoryType := range trapTypes {
-		key := nodeKey{symbol: "SIM/USD", kind: categoryType}
+		key := makeNodeKey("SIM/USD", categoryType)
 		node := &Node{Symbol: "SIM/USD", Type: categoryType, Strength: 0.7, At: at}
 		graph.NodeIndex[key] = node
 		graph.Nodes = append(graph.Nodes, node)
 	}
 
 	for _, categoryType := range oppTypes {
-		key := nodeKey{symbol: "SIM/USD", kind: categoryType}
+		key := makeNodeKey("SIM/USD", categoryType)
 		node := &Node{Symbol: "SIM/USD", Type: categoryType, Strength: 0.5, At: at}
 		graph.NodeIndex[key] = node
 		graph.Nodes = append(graph.Nodes, node)

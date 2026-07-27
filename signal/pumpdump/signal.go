@@ -167,9 +167,9 @@ func (signal *Signal) Calculate(
 	})
 
 	out := make([]*types.Measurement, 0, len(tickers))
-	uiOut := datura.Map[any]{
-		"measurements": make([]*types.Measurement, 0),
-	}
+	uiOut := datura.NewMap(
+		"measurements", make([]*types.Measurement, 0),
+	)
 
 	tradeIndex := 0
 	bookIndex := 0

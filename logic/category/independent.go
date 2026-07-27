@@ -24,8 +24,23 @@ type pairMemory struct {
 
 type pairKey struct {
 	symbol string
-	left   types.CategoryType
-	right  types.CategoryType
+	left   uint8
+	right  uint8
+}
+
+func makePairKey(symbol string, left, right types.CategoryType) pairKey {
+	lID := categoryID(left)
+	rID := categoryID(right)
+
+	if rID < lID {
+		lID, rID = rID, lID
+	}
+
+	return pairKey{
+		symbol: symbol,
+		left:   lID,
+		right:  rID,
+	}
 }
 
 /*
@@ -49,7 +64,7 @@ func (memory *pairMemory) observe(
 		return
 	}
 
-	memory.solo[nodeKey{symbol: symbol, kind: categoryType}] += strength
+	memory.solo[makeNodeKey(symbol, categoryType)] += strength
 	memory.total[symbol] += strength
 }
 
@@ -66,11 +81,10 @@ func (memory *pairMemory) coobserve(
 	}
 
 	if right < left {
-		left, right = right, left
 		leftStrength, rightStrength = rightStrength, leftStrength
 	}
 
-	memory.joint[pairKey{symbol: symbol, left: left, right: right}] +=
+	memory.joint[makePairKey(symbol, left, right)] +=
 		math.Sqrt(leftStrength * rightStrength)
 }
 
@@ -94,13 +108,9 @@ func (memory *pairMemory) independent(
 		return 0, false
 	}
 
-	if right < left {
-		left, right = right, left
-	}
-
-	soloLeft := memory.solo[nodeKey{symbol: symbol, kind: left}]
-	soloRight := memory.solo[nodeKey{symbol: symbol, kind: right}]
-	observed := memory.joint[pairKey{symbol: symbol, left: left, right: right}]
+	soloLeft := memory.solo[makeNodeKey(symbol, left)]
+	soloRight := memory.solo[makeNodeKey(symbol, right)]
+	observed := memory.joint[makePairKey(symbol, left, right)]
 
 	if soloLeft <= 0 || soloRight <= 0 || observed <= 0 {
 		return 0, false

@@ -69,6 +69,7 @@ type State struct {
 	PhaseReady            bool              `json:"phaseReady"`
 	PhaseReason           string            `json:"phaseReason,omitempty"`
 	PhaseScan             []PhaseResponse   `json:"phaseScan,omitempty"`
+	Replay                bool              `json:"replay,omitempty"`
 }
 
 /*

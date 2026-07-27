@@ -64,7 +64,7 @@ func NewCrypto(
 		}
 
 		if uiHub != nil && len(savedTheses) > 0 {
-			uiHub.Publish(datura.Map[any]{"journal": savedTheses}.Marshal())
+			uiHub.Publish(datura.NewMap("journal", savedTheses).MarshalAndFree())
 		}
 	}
 
@@ -171,48 +171,47 @@ func (crypto *Crypto) publish(thesis *types.Thesis, elapsed time.Duration) {
 		return
 	}
 
-	crypto.uiHub.Publish(datura.Map[any]{
-		"tick": datura.Map[any]{
-			"count":        thesis.Tick,
-			"measurements": types.ObservationCount(thesis.Measurements),
-			"candidates":   len(thesis.Forecasts),
-			"open":         crypto.desk.OpenPositions(),
-			"ns":           elapsed.Nanoseconds(),
-			"completed":    true,
-			"phase":        "complete",
-		},
-	}.Marshal())
+	crypto.uiHub.Publish(datura.NewMap(
+		"tick", datura.NewMap(
+			"count", thesis.Tick,
+			"measurements", types.ObservationCount(thesis.Measurements),
+			"candidates", len(thesis.Forecasts),
+			"open", crypto.desk.OpenPositions(),
+			"ns", elapsed.Nanoseconds(),
+			"completed", true,
+			"phase", "complete",
+		),
+	).MarshalAndFree())
 
 	if len(thesis.Decisions) > 0 {
-		crypto.uiHub.Publish(datura.Map[any]{
-			"decisions": thesis.Decisions,
-		}.Marshal())
+		crypto.uiHub.Publish(datura.NewMap(
+			"decisions", thesis.Decisions,
+		).MarshalAndFree())
 	}
 
 	lifecycle := make([]datura.Map[any], 0)
 
 	thesis.Lifecycle.Range(func(key, value any) bool {
-		lifecycle = append(lifecycle, datura.Map[any]{
-			"symbol": key.(string),
-			"state":  value.(string),
-		})
+		lifecycle = append(lifecycle, datura.NewMap(
+			"symbol", key.(string),
+			"state", value.(string),
+		))
 
 		return true
 	})
 
 	if len(lifecycle) > 0 {
-		crypto.uiHub.Publish(datura.Map[any]{"lifecycle": lifecycle}.Marshal())
-
+		crypto.uiHub.Publish(datura.NewMap("lifecycle", lifecycle).MarshalAndFree())
 	}
 
 	if len(thesis.Findings) > 0 {
-		crypto.uiHub.Publish(datura.Map[any]{"findings": thesis.Findings}.Marshal())
+		crypto.uiHub.Publish(datura.NewMap("findings", thesis.Findings).MarshalAndFree())
 	}
 
 	crypto.captureJournal(thesis)
 
 	if crypto.uiHub != nil && len(crypto.theses) > 0 {
-		crypto.uiHub.Publish(datura.Map[any]{"journal": crypto.theses}.Marshal())
+		crypto.uiHub.Publish(datura.NewMap("journal", crypto.theses).MarshalAndFree())
 	}
 
 	if crypto.journal != nil {

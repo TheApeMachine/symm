@@ -91,27 +91,27 @@ func (stage *Stage) Initialize(ctx context.Context, uiHub chan<- []byte) error {
 	}
 
 	for _, reporter := range stage.reporters {
-		stage.Publish(uiHub, datura.Map[any]{
-			"stage":  stage.stageType.String(),
-			"status": stage.Status(),
-		})
+		stage.Publish(uiHub, datura.NewMap(
+			"stage", stage.stageType.String(),
+			"status", stage.Status(),
+		))
 
 		if err := reporter.Initialize(); err != nil {
 			stage.status.Store(types.ERROR)
-			stage.Publish(uiHub, datura.Map[any]{
-				"stage":  stage.stageType.String(),
-				"status": types.ERROR,
-			})
+			stage.Publish(uiHub, datura.NewMap(
+				"stage", stage.stageType.String(),
+				"status", types.ERROR,
+			))
 
 			return err
 		}
 
 		if err := waitReporter(ctx, reporter); err != nil {
 			stage.status.Store(types.ERROR)
-			stage.Publish(uiHub, datura.Map[any]{
-				"stage":  stage.stageType.String(),
-				"status": types.ERROR,
-			})
+			stage.Publish(uiHub, datura.NewMap(
+				"stage", stage.stageType.String(),
+				"status", types.ERROR,
+			))
 
 			return err
 		}
@@ -133,8 +133,14 @@ func waitReporter(ctx context.Context, reporter types.StatusReporter) error {
 }
 
 func (stage *Stage) Publish(uiHub chan<- []byte, status datura.Map[any]) {
+	if uiHub == nil || status == nil {
+		status.Free()
+		return
+	}
+
 	select {
-	case uiHub <- status.Marshal():
+	case uiHub <- status.MarshalAndFree():
 	default:
+		status.Free()
 	}
 }

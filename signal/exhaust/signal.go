@@ -146,9 +146,9 @@ func (signal *Signal) Calculate(
 		return nil, err
 	}
 
-	uiOut := datura.Map[any]{
-		"measurements": make([]*types.Measurement, 0),
-	}
+	uiOut := datura.NewMap(
+		"measurements", make([]*types.Measurement, 0),
+	)
 
 	for _, measurement := range out {
 		if measurement.Symbol == types.Focus() {

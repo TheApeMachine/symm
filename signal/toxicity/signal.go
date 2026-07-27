@@ -165,9 +165,9 @@ func (signal *Signal) Calculate(
 	}
 
 	out := make([]*types.Measurement, 0, len(signal.evidence))
-	uiOut := datura.Map[any]{
-		"measurements": make([]*types.Measurement, 0),
-	}
+	uiOut := datura.NewMap(
+		"measurements", make([]*types.Measurement, 0),
+	)
 
 	for symbol := range signal.evidence {
 		out = append(out, signal.emitSymbolMeasurements(symbol, signal.evidence[symbol]))

@@ -201,12 +201,16 @@ trading implementation we use is based on the kraken-cli, where under normal
 use you would also not be manually managing the balances.
 */
 func (position *Position) Publish() {
+	if position.ui == nil {
+		return
+	}
+
 	select {
 	case <-position.ctx.Done():
 		return
-	case position.ui <- datura.Map[any]{
-		"positions": []Position{*position},
-	}.Marshal():
+	case position.ui <- datura.NewMap(
+		"positions", []Position{*position},
+	).MarshalAndFree():
 	default:
 	}
 }

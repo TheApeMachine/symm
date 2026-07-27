@@ -111,10 +111,14 @@ func (instrument *Instrument) On(message any) any {
 Publish forwards the online quote-currency instrument universe to the terminal.
 */
 func (instrument *Instrument) Publish() {
+	if instrument.uiHub == nil {
+		return
+	}
+
 	select {
-	case instrument.uiHub <- datura.Map[any]{
-		"instruments": instrument.Pairs(),
-	}.Marshal():
+	case instrument.uiHub <- datura.NewMap(
+		"instruments", instrument.Pairs(),
+	).MarshalAndFree():
 	default:
 	}
 }

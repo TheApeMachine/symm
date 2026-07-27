@@ -6,9 +6,15 @@ import (
 )
 
 func Publish(ui chan []byte, data datura.Map[any]) {
+	if ui == nil || data == nil {
+		data.Free()
+		return
+	}
+
 	select {
-	case ui <- data.Marshal():
+	case ui <- data.MarshalAndFree():
 	default:
+		data.Free()
 		errnie.Error(errnie.Err(
 			errnie.TooManyRequests,
 			"wire: ui channel saturated; dropped measurements",

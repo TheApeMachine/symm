@@ -64,21 +64,21 @@ func (graph *Graph) sharedSupport(left, right []string) (float64, []string) {
 		return 0, nil
 	}
 
-	graph.scratch = graph.scratch[:0]
+	graph.sharedScratch = graph.sharedScratch[:0]
 
 	for _, metric := range right {
 		if hasMetric(left, metric) {
-			graph.scratch = append(graph.scratch, metric)
+			graph.sharedScratch = append(graph.sharedScratch, metric)
 		}
 	}
 
-	union := len(left) + len(right) - len(graph.scratch)
+	union := len(left) + len(right) - len(graph.sharedScratch)
 
-	if union == 0 || len(graph.scratch) == 0 {
+	if union == 0 || len(graph.sharedScratch) == 0 {
 		return 0, nil
 	}
 
-	return float64(len(graph.scratch)) / float64(union), graph.scratch
+	return float64(len(graph.sharedScratch)) / float64(union), graph.sharedScratch
 }
 
 /*
@@ -90,22 +90,22 @@ func (graph *Graph) conditionsMass(provider, dependent types.Category) (float64,
 		return 0, nil
 	}
 
-	graph.scratch = graph.scratch[:0]
+	graph.conditionsScratch = graph.conditionsScratch[:0]
 
 	for _, metric := range dependent.Missing {
 		if hasMetric(provider.Supporting, metric) {
-			graph.scratch = append(graph.scratch, metric)
+			graph.conditionsScratch = append(graph.conditionsScratch, metric)
 		}
 	}
 
-	if len(graph.scratch) == 0 {
+	if len(graph.conditionsScratch) == 0 {
 		return 0, nil
 	}
 
 	mass := provider.Strength * dependent.Strength *
-		float64(len(graph.scratch)) / float64(len(dependent.Missing))
+		float64(len(graph.conditionsScratch)) / float64(len(dependent.Missing))
 
-	return mass, graph.scratch
+	return mass, graph.conditionsScratch
 }
 
 /*
@@ -140,7 +140,7 @@ func (graph *Graph) linkPair(
 	}
 
 	jaccard, shared := graph.sharedSupport(first.Supporting, second.Supporting)
-	graph.linkRedundantContradictsConditions(
+	contradicts := graph.linkRedundantContradictsConditions(
 		at, index, symbol, first, second, jaccard, shared,
 	)
 
@@ -153,7 +153,7 @@ func (graph *Graph) linkPair(
 		return
 	}
 
-	graph.linkIndependentOrSupports(at, index, symbol, first, second, jaccard)
+	graph.linkIndependentOrSupports(at, index, symbol, first, second, jaccard, contradicts)
 }
 
 /*
@@ -167,7 +167,7 @@ func (graph *Graph) linkRedundantContradictsConditions(
 	first, second types.Category,
 	jaccard float64,
 	shared []string,
-) {
+) bool {
 	if jaccard > 0 {
 		graph.strengthen(
 			at, symbol, first.Type, second.Type, RedundantWith,
@@ -179,16 +179,18 @@ func (graph *Graph) linkRedundantContradictsConditions(
 		)
 	}
 
-	if mass := contradictMass(index, symbol, first.Type, second.Type); mass > 0 {
+	c1 := contradictMass(index, symbol, first.Type, second.Type)
+	if c1 > 0 {
 		graph.strengthen(
-			at, symbol, first.Type, second.Type, Contradicts, mass,
+			at, symbol, first.Type, second.Type, Contradicts, c1,
 			graph.contradictEvidence(index, symbol, first.Type, second.Type),
 		)
 	}
 
-	if mass := contradictMass(index, symbol, second.Type, first.Type); mass > 0 {
+	c2 := contradictMass(index, symbol, second.Type, first.Type)
+	if c2 > 0 {
 		graph.strengthen(
-			at, symbol, second.Type, first.Type, Contradicts, mass,
+			at, symbol, second.Type, first.Type, Contradicts, c2,
 			graph.contradictEvidence(index, symbol, second.Type, first.Type),
 		)
 	}
@@ -200,6 +202,8 @@ func (graph *Graph) linkRedundantContradictsConditions(
 	if mass, evidence := graph.conditionsMass(second, first); mass > 0 {
 		graph.strengthen(at, symbol, second.Type, first.Type, Conditions, mass, evidence)
 	}
+
+	return c1 > 0 || c2 > 0
 }
 
 /*
@@ -260,10 +264,8 @@ func (graph *Graph) linkIndependentOrSupports(
 	symbol string,
 	first, second types.Category,
 	jaccard float64,
+	contradicts bool,
 ) {
-	contradicts := graph.Weight(symbol, first.Type, second.Type, Contradicts) > 0 ||
-		graph.Weight(symbol, second.Type, first.Type, Contradicts) > 0
-
 	if jaccard > 0 || contradicts {
 		return
 	}
@@ -282,18 +284,18 @@ func (graph *Graph) linkIndependentOrSupports(
 
 		if metricMass > 0 {
 			mass = math.Sqrt(mass * metricMass)
-			graph.scratch = append(graph.scratch[:0], second.Supporting...)
-			graph.scratch = index.appendIndependence(graph.scratch, symbol, first.Type, second.Type)
+			graph.sharedScratch = append(graph.sharedScratch[:0], second.Supporting...)
+			graph.sharedScratch = index.appendIndependence(graph.sharedScratch, symbol, first.Type, second.Type)
 			graph.strengthenJoined(
 				at, symbol, first.Type, second.Type, IndependentOf, mass,
-				first.Supporting, graph.scratch,
+				first.Supporting, graph.sharedScratch,
 			)
 
-			graph.scratch = append(graph.scratch[:0], first.Supporting...)
-			graph.scratch = index.appendIndependence(graph.scratch, symbol, first.Type, second.Type)
+			graph.sharedScratch = append(graph.sharedScratch[:0], first.Supporting...)
+			graph.sharedScratch = index.appendIndependence(graph.sharedScratch, symbol, first.Type, second.Type)
 			graph.strengthenJoined(
 				at, symbol, second.Type, first.Type, IndependentOf, mass,
-				second.Supporting, graph.scratch,
+				second.Supporting, graph.sharedScratch,
 			)
 			return
 		}

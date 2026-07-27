@@ -25,29 +25,33 @@ func (analyzer *Analyzer) publishMeasured(
 	cutID types.CutID,
 	tick int64,
 ) {
+	if analyzer.ui == nil {
+		return
+	}
+
 	publishStarted := time.Now()
 
 	analyzer.frameRows = focusRowsInto(analyzer.frameRows[:0], thesis.Resonance)
 
 	if len(analyzer.frameRows) > 0 {
-		analyzer.publish(datura.Map[any]{"resonance": analyzer.frameRows})
+		analyzer.publish(datura.NewMap("resonance", analyzer.frameRows))
 	}
 
 	analyzer.frameRows = focusRowsInto(analyzer.frameRows[:0], thesis.Causal)
 
 	if len(analyzer.frameRows) > 0 {
-		analyzer.publish(datura.Map[any]{"causal": analyzer.frameRows})
+		analyzer.publish(datura.NewMap("causal", analyzer.frameRows))
 	}
 
 	analyzer.hypRows = focusHypothesesInto(analyzer.hypRows[:0], thesis.Hypotheses)
 
 	if len(analyzer.hypRows) > 0 {
-		analyzer.publish(datura.Map[any]{"hypotheses": analyzer.hypRows})
+		analyzer.publish(datura.NewMap("hypotheses", analyzer.hypRows))
 	}
 
 	if wired, ok := wireManifoldState(states); ok {
 		field, displays, wave := wired.WirePackets()
-		analyzer.publish(datura.Map[any]{"manifold": []manifold.WireField{field}})
+		analyzer.publish(datura.NewMap("manifold", []manifold.WireField{field}))
 
 		for _, display := range displays {
 			if len(display) > 0 {
@@ -55,7 +59,7 @@ func (analyzer *Analyzer) publishMeasured(
 			}
 		}
 
-		analyzer.publish(datura.Map[any]{"manifold_wave": wave})
+		analyzer.publish(datura.NewMap("manifold_wave", wave))
 	}
 
 	payload := map[string]any{
@@ -123,7 +127,7 @@ Thesis.Categories stays book-wide for strategy and UI so cortex, xray, and
 allocation all inspect the same ranked universe.
 */
 func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
-	if thesis == nil {
+	if analyzer.ui == nil || thesis == nil {
 		return
 	}
 
@@ -149,11 +153,11 @@ func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 	})
 
 	if len(analyzer.cogRows) > 0 {
-		analyzer.publish(datura.Map[any]{"cognition": analyzer.cogRows})
+		analyzer.publish(datura.NewMap("cognition", analyzer.cogRows))
 	}
 
 	if len(thesis.Forecasts) > 0 {
-		analyzer.publish(datura.Map[any]{"forecasts": thesis.Forecasts})
+		analyzer.publish(datura.NewMap("forecasts", thesis.Forecasts))
 	}
 
 	analyzer.catRows = analyzer.catRows[:0]
@@ -163,7 +167,7 @@ func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 	}
 
 	if len(analyzer.catRows) > 0 {
-		analyzer.publish(datura.Map[any]{"categories": analyzer.catRows})
+		analyzer.publish(datura.NewMap("categories", analyzer.catRows))
 	}
 }
 

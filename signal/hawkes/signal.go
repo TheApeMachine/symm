@@ -162,9 +162,9 @@ func (signal *Signal) Calculate(
 	_ []kraken.BookData,
 ) ([]*types.Measurement, error) {
 	out := make([]*types.Measurement, 0, len(trades))
-	uiOut := datura.Map[any]{
-		"measurements": make([]*types.Measurement, 0),
-	}
+	uiOut := datura.NewMap(
+		"measurements", make([]*types.Measurement, 0),
+	)
 
 	signal.mu.Lock()
 	defer signal.mu.Unlock()

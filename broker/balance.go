@@ -84,12 +84,16 @@ Publish enqueues Frame on the UI channel. A saturated channel returns an error
 instead of dropping the wallet frame silently.
 */
 func (balance *Balance) Publish() error {
+	if balance.ui == nil {
+		return nil
+	}
+
 	wallet := balance.Frame()
 
 	select {
-	case balance.ui <- datura.Map[any]{
-		"balances": wallet,
-	}.Marshal():
+	case balance.ui <- datura.NewMap(
+		"balances", wallet,
+	).MarshalAndFree():
 		return nil
 	default:
 		return errnie.Error(errnie.Err(

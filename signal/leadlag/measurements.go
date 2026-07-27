@@ -19,9 +19,9 @@ func (signal *Signal) measureFrame(
 ) ([]*types.Measurement, error) {
 	rows := tickers
 	out := make([]*types.Measurement, 0, len(rows))
-	uiOut := datura.Map[any]{
-		"measurements": make([]*types.Measurement, 0),
-	}
+	uiOut := datura.NewMap(
+		"measurements", make([]*types.Measurement, 0),
+	)
 
 	anchor, _ := crossSection.Leadership()
 

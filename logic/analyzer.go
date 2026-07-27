@@ -518,10 +518,11 @@ enrich or the cut cascade behind Hawkes.
 */
 func (analyzer *Analyzer) publish(frame datura.Map[any]) {
 	if analyzer.ui == nil || len(frame) == 0 {
+		frame.Free()
 		return
 	}
 
-	analyzer.publishBytes(frame.Marshal())
+	analyzer.publishBytes(frame.MarshalAndFree())
 }
 
 /*

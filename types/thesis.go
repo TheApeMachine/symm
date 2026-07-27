@@ -10,12 +10,6 @@ import (
 	"github.com/theapemachine/datura"
 )
 
-var daturaPool = sync.Pool{
-	New: func() any {
-		return datura.Map[any]{}
-	},
-}
-
 const (
 	ThesisKey = "thesis"
 
@@ -305,8 +299,8 @@ MarshalJSON stores the Thesis itself while translating its concurrent maps into
 ordinary JSON objects. The live Thesis remains the only state model.
 */
 func (thesis *Thesis) MarshalJSON() ([]byte, error) {
-	mapped := daturaPool.Get().(datura.Map[any])
-	defer daturaPool.Put(mapped)
+	mapped := datura.NewMap()
+	defer mapped.Free()
 	mapped["tick"] = thesis.Tick
 	mapped["at"] = thesis.At
 	mapped["forecasts"] = thesis.Forecasts
@@ -315,8 +309,8 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 	mapped["hypotheses"] = thesis.Hypotheses
 	mapped["categories"] = thesis.Categories
 
-	mappedPositions := daturaPool.Get().(datura.Map[any])
-	defer daturaPool.Put(mappedPositions)
+	mappedPositions := datura.NewMap()
+	defer mappedPositions.Free()
 
 	mapped["positions"] = mappedPositions
 
@@ -325,8 +319,8 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 		return true
 	})
 
-	mappedHoldings := daturaPool.Get().(datura.Map[any])
-	defer daturaPool.Put(mappedHoldings)
+	mappedHoldings := datura.NewMap()
+	defer mappedHoldings.Free()
 
 	mapped["holdings"] = mappedHoldings
 
@@ -341,8 +335,8 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 		return true
 	})
 
-	mappedLifecycle := daturaPool.Get().(datura.Map[any])
-	defer daturaPool.Put(mappedLifecycle)
+	mappedLifecycle := datura.NewMap()
+	defer mappedLifecycle.Free()
 
 	mapped["lifecycle"] = mappedLifecycle
 
@@ -351,8 +345,8 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 		return true
 	})
 
-	mappedManifold := daturaPool.Get().(datura.Map[any])
-	defer daturaPool.Put(mappedManifold)
+	mappedManifold := datura.NewMap()
+	defer mappedManifold.Free()
 
 	mapped["manifold"] = mappedManifold
 
@@ -361,8 +355,8 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 		return true
 	})
 
-	mappedCognition := daturaPool.Get().(datura.Map[any])
-	defer daturaPool.Put(mappedCognition)
+	mappedCognition := datura.NewMap()
+	defer mappedCognition.Free()
 
 	mapped["cognition"] = mappedCognition
 
@@ -371,8 +365,8 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 		return true
 	})
 
-	mappedResonance := daturaPool.Get().(datura.Map[any])
-	defer daturaPool.Put(mappedResonance)
+	mappedResonance := datura.NewMap()
+	defer mappedResonance.Free()
 
 	mapped["resonance"] = mappedResonance
 
@@ -381,8 +375,8 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 		return true
 	})
 
-	mappedCausal := daturaPool.Get().(datura.Map[any])
-	defer daturaPool.Put(mappedCausal)
+	mappedCausal := datura.NewMap()
+	defer mappedCausal.Free()
 
 	mapped["causal"] = mappedCausal
 
@@ -391,8 +385,8 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 		return true
 	})
 
-	mappedMeasurements := daturaPool.Get().(datura.Map[any])
-	defer daturaPool.Put(mappedMeasurements)
+	mappedMeasurements := datura.NewMap()
+	defer mappedMeasurements.Free()
 
 	mapped["measurements"] = mappedMeasurements
 
@@ -407,8 +401,8 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 		return true
 	})
 
-	mappedGraphs := daturaPool.Get().(datura.Map[any])
-	defer daturaPool.Put(mappedGraphs)
+	mappedGraphs := datura.NewMap()
+	defer mappedGraphs.Free()
 
 	mapped["graphs"] = mappedGraphs
 

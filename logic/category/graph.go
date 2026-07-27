@@ -23,7 +23,8 @@ type Graph struct {
 	touched         map[edgeKey]struct{}
 	previous        map[nodeKey]Node
 	evidence        *evidenceIndex
-	scratch         []string
+	sharedScratch     []string
+	conditionsScratch []string
 	evidenceScratch []string
 	pair            *pairMemory
 }
@@ -41,8 +42,9 @@ func NewGraph() *Graph {
 		edgesBySymbol:   map[string][]edgeKey{},
 		previous:        map[nodeKey]Node{},
 		evidence:        newEvidenceIndex(),
-		scratch:         make([]string, 0, len(types.CategoryOrder)),
-		evidenceScratch: make([]string, 0, len(types.CategoryOrder)),
+		sharedScratch:     make([]string, 0, len(types.CategoryOrder)),
+		conditionsScratch: make([]string, 0, len(types.CategoryOrder)),
+		evidenceScratch:   make([]string, 0, len(types.CategoryOrder)),
 		pair:            newPairMemory(),
 	}
 }
@@ -109,7 +111,7 @@ func (graph *Graph) UpdateFrom(thesis *types.Thesis) {
 				continue
 			}
 
-			key := nodeKey{symbol: category.Symbol, kind: category.Type}
+			key := makeNodeKey(category.Symbol, category.Type)
 			node := graph.NodeIndex[key]
 
 			if node != nil {
@@ -159,7 +161,7 @@ func (graph *Graph) linkActivationLeads(
 	previous map[nodeKey]Node,
 ) {
 	for _, category := range thesis.Categories[symbol] {
-		key := nodeKey{symbol: symbol, kind: category.Type}
+		key := makeNodeKey(symbol, category.Type)
 		prior, existed := previous[key]
 
 		if existed && prior.Strength > 0 {
@@ -175,7 +177,7 @@ func (graph *Graph) linkActivationLeads(
 				continue
 			}
 
-			peerKey := nodeKey{symbol: symbol, kind: peer.Type}
+			peerKey := makeNodeKey(symbol, peer.Type)
 			peerPrior, peerExisted := previous[peerKey]
 
 			if !peerExisted || peerPrior.Strength <= 0 {
@@ -210,15 +212,16 @@ func (graph *Graph) strengthen(
 	mass float64,
 	evidence []string,
 ) {
-	key := edgeKey{symbol: symbol, from: from, to: to, kind: kind}
+	key := makeEdgeKey(symbol, from, to, kind)
 	relation := graph.EdgeIndex[key]
 
 	if relation == nil {
 		relation = &Relation{
-			Symbol: symbol,
-			From:   from,
-			To:     to,
-			Type:   kind,
+			Symbol:   symbol,
+			From:     from,
+			To:       to,
+			Type:     kind,
+			Evidence: make([]string, 0, len(evidence)),
 		}
 		graph.EdgeIndex[key] = relation
 		graph.Edges = append(graph.Edges, relation)
@@ -245,15 +248,16 @@ func (graph *Graph) strengthenJoined(
 	mass float64,
 	first, second []string,
 ) {
-	key := edgeKey{symbol: symbol, from: from, to: to, kind: kind}
+	key := makeEdgeKey(symbol, from, to, kind)
 	relation := graph.EdgeIndex[key]
 
 	if relation == nil {
 		relation = &Relation{
-			Symbol: symbol,
-			From:   from,
-			To:     to,
-			Type:   kind,
+			Symbol:   symbol,
+			From:     from,
+			To:       to,
+			Type:     kind,
+			Evidence: make([]string, 0, len(first)+len(second)),
 		}
 		graph.EdgeIndex[key] = relation
 		graph.Edges = append(graph.Edges, relation)
@@ -279,7 +283,7 @@ func (graph *Graph) Weight(
 		return 0
 	}
 
-	relation := graph.EdgeIndex[edgeKey{symbol: symbol, from: from, to: to, kind: kind}]
+	relation := graph.EdgeIndex[makeEdgeKey(symbol, from, to, kind)]
 
 	if relation == nil {
 		return 0

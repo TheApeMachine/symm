@@ -112,9 +112,9 @@ func (signal *Signal) Calculate(
 	books []kraken.BookData,
 ) ([]*types.Measurement, error) {
 	out := make([]*types.Measurement, 0, len(trades))
-	uiOut := datura.Map[any]{
-		"measurements": make([]*types.Measurement, 0),
-	}
+	uiOut := datura.NewMap(
+		"measurements", make([]*types.Measurement, 0),
+	)
 
 	for _, row := range tickers {
 		if row.Symbol == "" || row.Timestamp.IsZero() {

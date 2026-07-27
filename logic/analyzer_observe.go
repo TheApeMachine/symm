@@ -28,6 +28,8 @@ func (analyzer *Analyzer) observeStates(
 		analyzer.observed = make(map[string]uint64)
 	}
 
+	var updated []manifold.State
+
 	thesis.Manifold.Range(func(_, value any) bool {
 		state, ok := value.(manifold.State)
 
@@ -39,14 +41,15 @@ func (analyzer *Analyzer) observeStates(
 			))
 			return true
 		}
-		if !stateReplay(state) && analyzer.observed[state.Symbol] >= state.Epoch {
-			state = withStateReplay(state, true)
-			thesis.Manifold.Store(state.Symbol, state)
+
+		if !state.Replay && analyzer.observed[state.Symbol] >= state.Epoch {
+			state.Replay = true
+			updated = append(updated, state)
 		}
 
 		analyzer.stateRows = append(analyzer.stateRows, state)
 
-		if stateReplay(state) {
+		if state.Replay {
 			return true
 		}
 
@@ -56,6 +59,10 @@ func (analyzer *Analyzer) observeStates(
 
 		return true
 	})
+
+	for _, state := range updated {
+		thesis.Manifold.Store(state.Symbol, state)
+	}
 
 	payload := map[string]any{
 		"states": len(analyzer.stateRows),

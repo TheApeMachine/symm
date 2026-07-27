@@ -15,7 +15,7 @@ func TestPairMemoryObserve(t *testing.T) {
 			memory.observe("SIM/USD", types.VerticalIgnition, 0.8)
 
 			Convey("It should accumulate solo mass and total", func() {
-				key := nodeKey{symbol: "SIM/USD", kind: types.VerticalIgnition}
+				key := makeNodeKey("SIM/USD", types.VerticalIgnition)
 				So(memory.solo[key], ShouldAlmostEqual, 0.8)
 				So(memory.total["SIM/USD"], ShouldAlmostEqual, 0.8)
 			})
@@ -78,17 +78,11 @@ func TestPairMemoryIndependent(t *testing.T) {
 		memory := newPairMemory()
 
 		Convey("When solo mass is high but joint mass is low", func() {
-			memory.solo[nodeKey{symbol: "SIM/USD", kind: types.VerticalIgnition}] = 10.0
-			memory.solo[nodeKey{symbol: "SIM/USD", kind: types.OrganicTrend}] = 10.0
+			memory.solo[makeNodeKey("SIM/USD", types.VerticalIgnition)] = 10.0
+			memory.solo[makeNodeKey("SIM/USD", types.OrganicTrend)] = 10.0
 			memory.total["SIM/USD"] = 20.0
 
-			left, right := types.VerticalIgnition, types.OrganicTrend
-
-			if right < left {
-				left, right = right, left
-			}
-
-			memory.joint[pairKey{symbol: "SIM/USD", left: left, right: right}] = 0.1
+			memory.joint[makePairKey("SIM/USD", types.VerticalIgnition, types.OrganicTrend)] = 0.1
 
 			mass, independent := memory.independent(
 				"SIM/USD", types.VerticalIgnition, types.OrganicTrend, 0.8, 0.6,
@@ -101,17 +95,11 @@ func TestPairMemoryIndependent(t *testing.T) {
 		})
 
 		Convey("When joint mass exceeds the product baseline", func() {
-			memory.solo[nodeKey{symbol: "SIM/USD", kind: types.VerticalIgnition}] = 5.0
-			memory.solo[nodeKey{symbol: "SIM/USD", kind: types.OrganicTrend}] = 5.0
+			memory.solo[makeNodeKey("SIM/USD", types.VerticalIgnition)] = 5.0
+			memory.solo[makeNodeKey("SIM/USD", types.OrganicTrend)] = 5.0
 			memory.total["SIM/USD"] = 10.0
 
-			left, right := types.VerticalIgnition, types.OrganicTrend
-
-			if right < left {
-				left, right = right, left
-			}
-
-			memory.joint[pairKey{symbol: "SIM/USD", left: left, right: right}] = 10.0
+			memory.joint[makePairKey("SIM/USD", types.VerticalIgnition, types.OrganicTrend)] = 10.0
 
 			_, independent := memory.independent(
 				"SIM/USD", types.VerticalIgnition, types.OrganicTrend, 0.8, 0.6,
@@ -171,17 +159,11 @@ func BenchmarkPairMemoryCoobserve(b *testing.B) {
 
 func BenchmarkPairMemoryIndependent(b *testing.B) {
 	memory := newPairMemory()
-	memory.solo[nodeKey{symbol: "SIM/USD", kind: types.VerticalIgnition}] = 10.0
-	memory.solo[nodeKey{symbol: "SIM/USD", kind: types.OrganicTrend}] = 10.0
+	memory.solo[makeNodeKey("SIM/USD", types.VerticalIgnition)] = 10.0
+	memory.solo[makeNodeKey("SIM/USD", types.OrganicTrend)] = 10.0
 	memory.total["SIM/USD"] = 20.0
 
-	left, right := types.VerticalIgnition, types.OrganicTrend
-
-	if right < left {
-		left, right = right, left
-	}
-
-	memory.joint[pairKey{symbol: "SIM/USD", left: left, right: right}] = 0.1
+	memory.joint[makePairKey("SIM/USD", types.VerticalIgnition, types.OrganicTrend)] = 0.1
 
 	b.ReportAllocs()
 

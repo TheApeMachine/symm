@@ -92,9 +92,9 @@ func (signal *Signal) Calculate(
 
 	out := make([]*types.Measurement, 0, 64)
 
-	uiOut := datura.Map[any]{
-		"measurements": make([]*types.Measurement, 0),
-	}
+	uiOut := datura.NewMap(
+		"measurements", make([]*types.Measurement, 0),
+	)
 
 	if signal.crossSection == nil {
 		return out, nil

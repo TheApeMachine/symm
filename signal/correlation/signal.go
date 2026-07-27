@@ -114,9 +114,9 @@ func (signal *Signal) Calculate(
 	}
 
 	out := make([]*types.Measurement, 0, len(scoresBySymbol))
-	uiOut := datura.Map[any]{
-		"measurements": make([]*types.Measurement, 0),
-	}
+	uiOut := datura.NewMap(
+		"measurements", make([]*types.Measurement, 0),
+	)
 
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,

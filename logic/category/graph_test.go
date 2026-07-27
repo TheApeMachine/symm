@@ -142,12 +142,7 @@ func TestStrengthen(t *testing.T) {
 			})
 
 			Convey("It should mark the edge as touched", func() {
-				key := edgeKey{
-					symbol: "SIM/USD",
-					from:   types.VerticalIgnition,
-					to:     types.OrganicTrend,
-					kind:   Supports,
-				}
+				key := makeEdgeKey("SIM/USD", types.VerticalIgnition, types.OrganicTrend, Supports)
 				_, ok := graph.touched[key]
 				So(ok, ShouldBeTrue)
 			})

@@ -107,18 +107,7 @@ func (signal *Signal) onTicker(message any) any {
 	// book batch on ticker cadence so a focused major is not left on STANDBY
 	// when only alt tickers arrive and prior book UI frames were dropped.
 	if retained := signal.bookOut.Load(); retained != nil && len(*retained) > 0 {
-		select {
-		case signal.ui <- datura.Map[any]{
-			"measurements": *retained,
-		}.Marshal():
-		default:
-			errnie.Error(errnie.Err(
-				errnie.TooManyRequests,
-				"wire: ui channel saturated; dropped measurements",
-				nil,
-			))
-		}
-
+		utils.Publish(signal.ui, datura.NewMap("measurements", *retained))
 	}
 
 	if len(measurements) == 0 {
@@ -181,9 +170,9 @@ func (signal *Signal) Calculate(
 		return signal.measureTrade(event.Row.(kraken.TradeData))
 	})
 
-	uiOut := datura.Map[any]{
-		"measurements": make([]*types.Measurement, 0),
-	}
+	uiOut := datura.NewMap(
+		"measurements", make([]*types.Measurement, 0),
+	)
 
 	for _, measurement := range out {
 		if measurement.Symbol == types.Focus() {
