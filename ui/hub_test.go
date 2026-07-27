@@ -15,7 +15,7 @@ func TestHubRetain(t *testing.T) {
 		defer cancel()
 
 		messages := make(chan []byte, 4)
-		hub := NewHub(ctx, nil, nil, messages, config.UIConfig{Addr: "127.0.0.1:0"})
+		hub := NewHub(ctx, nil, nil, nil, messages, config.UIConfig{Addr: "127.0.0.1:0"})
 		defer hub.Close()
 
 		Convey("When a balances frame is published before a client connects", func() {
@@ -44,7 +44,7 @@ func TestHubPublishGeneration(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		hub := NewHub(ctx, nil, nil, make(chan []byte, 1), config.UIConfig{Addr: "127.0.0.1:0"})
+		hub := NewHub(ctx, nil, nil, nil, make(chan []byte, 1), config.UIConfig{Addr: "127.0.0.1:0"})
 		defer hub.Close()
 
 		Convey("When Publish sees high-churn and durable keys together", func() {
@@ -77,7 +77,7 @@ func TestHubFanoutSaturationKeepsSessionAlive(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		hub := NewHub(ctx, nil, nil, make(chan []byte, 1), config.UIConfig{Addr: "127.0.0.1:0"})
+		hub := NewHub(ctx, nil, nil, nil, make(chan []byte, 1), config.UIConfig{Addr: "127.0.0.1:0"})
 		defer hub.Close()
 
 		session := &clientSession{

@@ -20,6 +20,7 @@ Opportunity turns logic outputs into friction-aware enter decisions.
 type Opportunity struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
+	desk        *broker.Desk
 	price       *broker.Price
 	balance     *broker.Balance
 	recorder    *audit.Recorder
@@ -33,6 +34,7 @@ NewOpportunity wires the surfaces Measure needs to score forecasts.
 func NewOpportunity(
 	ctx context.Context,
 	cancel context.CancelFunc,
+	desk *broker.Desk,
 	price *broker.Price,
 	balance *broker.Balance,
 	recorder *audit.Recorder,
@@ -41,6 +43,7 @@ func NewOpportunity(
 	return &Opportunity{
 		ctx:      ctx,
 		cancel:   cancel,
+		desk:     desk,
 		price:    price,
 		balance:  balance,
 		recorder: recorder,
@@ -352,6 +355,7 @@ func (opportunity *Opportunity) reject(
 
 func (opportunity *Opportunity) validate(mandatory map[string]any) error {
 	check := map[string]any{
+		"desk":    opportunity.desk,
 		"price":   opportunity.price,
 		"balance": opportunity.balance,
 	}
@@ -367,8 +371,8 @@ lifecycle so Measure cannot propose a fresh enter against a live lot.
 func (opportunity *Opportunity) occupied(thesis *types.Thesis) map[string]struct{} {
 	blocked := map[string]struct{}{}
 
-	if opportunity.balance != nil {
-		for _, holding := range opportunity.balance.Holdings() {
+	if opportunity.desk != nil {
+		for _, holding := range opportunity.desk.Holdings() {
 			if holding.Status == types.CLOSED {
 				continue
 			}

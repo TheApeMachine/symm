@@ -16,7 +16,7 @@ Full exits belong to Stoploss.Regulate; positions are never partially reduced.
 */
 type Continuity struct {
 	price   *broker.Price
-	balance *broker.Balance
+	desk    *broker.Desk
 	rotate  Rotate
 }
 
@@ -25,12 +25,12 @@ NewContinuity wires price fees, wallet qty, and rotate keep-scores.
 */
 func NewContinuity(
 	price *broker.Price,
-	balance *broker.Balance,
+	desk *broker.Desk,
 	rotate Rotate,
 ) Continuity {
 	return Continuity{
 		price:   price,
-		balance: balance,
+		desk:    desk,
 		rotate:  rotate,
 	}
 }
@@ -45,7 +45,7 @@ func (continuity Continuity) Manage(thesis *types.Thesis) {
 
 	forecasts := selectForecasts(thesis.Forecasts)
 
-	for _, holding := range continuity.balance.Holdings() {
+	for _, holding := range continuity.desk.Holdings() {
 		lot := holding
 
 		if lot.Status != types.OPEN {
@@ -189,8 +189,8 @@ func (continuity Continuity) exiting(thesis *types.Thesis, symbol string) bool {
 
 func (continuity Continuity) validate(mandatory map[string]any) error {
 	check := map[string]any{
-		"price":   continuity.price,
-		"balance": continuity.balance,
+		"price": continuity.price,
+		"desk":  continuity.desk,
 	}
 
 	maps.Copy(check, mandatory)

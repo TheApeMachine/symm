@@ -341,7 +341,6 @@ Enter seeds the holding onto Balance and submits a market buy for its quantity.
 */
 func (position *Position) Enter() *Position {
 	if err := position.api.AddOrder(position.entryOrder); err != nil {
-		position.balance.DeleteHolding(position.holding.Symbol)
 		position.status = types.ERROR
 
 		errnie.Error(errnie.Err(

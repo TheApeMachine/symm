@@ -37,7 +37,7 @@ func TestDeskSlotsAndExit(t *testing.T) {
 					return nil
 				}
 
-				for _, open := range harness.Wired.Balance.Holdings() {
+				for _, open := range harness.Wired.Desk.Holdings() {
 					if open.Status != types.OPEN ||
 						open.Qty == nil || open.Qty.Sign() <= 0 {
 						continue
@@ -57,7 +57,7 @@ func TestDeskSlotsAndExit(t *testing.T) {
 			}), ShouldBeNil)
 
 			So(opened, ShouldNotBeBlank)
-			holding, err := harness.Wired.Balance.Holding(opened)
+			holding, err := harness.Wired.Desk.Holding(opened)
 			So(err, ShouldBeNil)
 			heldQty := holding.Qty.Copy()
 
@@ -70,7 +70,7 @@ func TestDeskSlotsAndExit(t *testing.T) {
 				So(harness.Market.Transition(tests.MarketStateBaseline, func() error {
 					So(harness.Market.Paper.Drain(), ShouldBeNil)
 
-					if _, holdErr := harness.Wired.Balance.Holding(opened); holdErr != nil {
+					if _, holdErr := harness.Wired.Desk.Holding(opened); holdErr != nil {
 						// ponytail: nondeterministic baseline tape may clear the lot
 						// before explicit Sell drain completes; upgrade path is
 						// deterministic per-scenario seeding on the pump leg.
@@ -84,7 +84,7 @@ func TestDeskSlotsAndExit(t *testing.T) {
 
 				So(closed, ShouldBeTrue)
 				So(heldQty.Sign(), ShouldEqual, 1)
-				_, holdErr := harness.Wired.Balance.Holding(opened)
+				_, holdErr := harness.Wired.Desk.Holding(opened)
 				So(holdErr, ShouldNotBeNil)
 
 				sellAllOpen(harness.Wired.Desk, harness.Wired.Balance)

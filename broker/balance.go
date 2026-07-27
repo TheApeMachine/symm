@@ -12,13 +12,12 @@ import (
 )
 
 /*
-Balance owns the exchange wallet map and sequence for the Desk event loop.
-It composes Wallet, Cash, View, Ledger, and Inventory so reservations, lots,
-availability, and UI projection stay separate owners.
+Balance owns the exchange wallet map and sequence for the Desk event loop. It
+composes Wallet, Cash, and Ledger so reservations and available capital stay a
+wallet concern while Position and Holding ownership remains on Desk.
 */
 type Balance struct {
 	*Ledger
-	*Inventory
 	*Wallet
 	*Cash
 	status atomic.Value
@@ -26,8 +25,7 @@ type Balance struct {
 }
 
 /*
-NewBalance constructs an empty wallet owner. Seed holdings are copied by value
-into Inventory so restart inventory is present before the first snapshot.
+NewBalance constructs an empty wallet owner for exchange balances only.
 */
 func NewBalance(
 	api *websocket.API,
@@ -35,15 +33,13 @@ func NewBalance(
 	market config.MarketConfig,
 ) *Balance {
 	ledger := NewLedger()
-	inventory := NewInventory()
 	wallet := newWallet(api, market.QuoteCurrency)
 
 	balance := &Balance{
-		Ledger:    ledger,
-		Inventory: inventory,
-		Wallet:    wallet,
-		Cash:      &Cash{wallet: wallet, ledger: ledger},
-		ui:        ui,
+		Ledger: ledger,
+		Wallet: wallet,
+		Cash:   &Cash{wallet: wallet, ledger: ledger},
+		ui:     ui,
 	}
 
 	balance.status.Store(types.INITIALIZING)
@@ -141,11 +137,10 @@ and sequence; updates require exact next-sequence or a resync is requested.
 */
 func (balance *Balance) BalanceAck(buf []byte) {
 	ready, resync := balance.Wallet.BalanceAck(buf, func(
-		quote string,
-		data map[string]*kraken.BalanceData,
-		complete bool,
+		string,
+		map[string]*kraken.BalanceData,
+		bool,
 	) {
-		balance.Sync(quote, data, complete, balance.ReservedAsset)
 	})
 
 	if resync {
@@ -169,39 +164,7 @@ resync requests a fresh balances snapshot after a sequence gap so the wallet
 does not apply updates against an unknown baseline.
 */
 func (balance *Balance) resync() {
-	if balance.Wallet.api == nil {
-		balance.status.Store(types.ERROR)
-
-		return
-	}
-
 	if errnie.Error(balance.Wallet.api.SubscribeBalance()) != nil {
 		balance.status.Store(types.ERROR)
 	}
-}
-
-/*
-Holdings returns the live inventory map so UI publishing can marshal the same
-shape Balance owns without repackaging restart state for the browser.
-*/
-func (balance *Balance) Holdings() map[string]*types.Holding {
-	return balance.Inventory.Holdings
-}
-
-/*
-Holding returns one inventory lot by symbol for broker and recovery tests that
-need to prove restart-seeded positions are present before exchange snapshots.
-*/
-func (balance *Balance) Holding(symbol string) (*types.Holding, error) {
-	holding, ok := balance.Inventory.Holdings[symbol]
-
-	if !ok {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"balance: holding not found",
-			nil,
-		))
-	}
-
-	return holding, nil
 }

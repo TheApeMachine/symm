@@ -133,6 +133,79 @@ describe("paintPositionHoldings", () => {
 		vi.unstubAllGlobals();
 	});
 
+	it("paints nested stoploss fields from the holding payload directly", () => {
+		const elements: Array<Record<string, any>> = [];
+		const element = () => {
+			const node: Record<string, any> = {
+				children: [],
+				dataset: {},
+				style: {},
+				className: "",
+				append: (...children: unknown[]) => node.children.push(...children),
+				appendChild: (child: unknown) => node.children.push(child),
+				addEventListener: () => undefined,
+				setAttribute: () => undefined,
+				querySelector: (selector: string) =>
+					elements.find(
+						(candidate) =>
+							selector === `[data-gauge="${candidate.dataset.gauge}"]`,
+					) ?? null,
+			};
+			let text = "";
+
+			Object.defineProperty(node, "textContent", {
+				get: () =>
+					`${text}${node.children.map((child: any) => child.textContent ?? "").join("")}`,
+				set: (value) => {
+					text = String(value ?? "");
+				},
+			});
+			elements.push(node);
+
+			return node;
+		};
+		const body = element();
+		body.replaceChildren = (...children: unknown[]) => {
+			body.children = children;
+		};
+
+		vi.stubGlobal("document", {
+			body,
+			createElement: element,
+		});
+
+		document.body.replaceChildren(createPositionGaugeElement("BABYSHARK/USD", "USD"));
+
+		paintPositionHoldings(
+			{
+				"BABYSHARK/USD": {
+					symbol: "BABYSHARK/USD",
+					qty: "2151.4756",
+					entry_price: "0.0742",
+					entry_fee: "0",
+					exit_fee: "0",
+					mark: "0.0745",
+					pnl: "0.6454",
+					return_pct: "0.0040",
+					status: "open",
+					stoploss: {
+						symbol: "BABYSHARK/USD",
+						stop_price: "0.0730",
+						peak_price: "0.0745",
+						stop_return: "-0.0161",
+						peak_return: "0.0040",
+						armed: true,
+					},
+				},
+			},
+			"USD",
+		);
+
+		expect(document.body.textContent).toContain("peak 0.0745");
+		expect(document.body.textContent).toContain("floor 0.0730");
+		vi.unstubAllGlobals();
+	});
+
 	it("keeps missing economics visible instead of collapsing to zero", () => {
 		const elements: Array<Record<string, any>> = [];
 		const element = () => {

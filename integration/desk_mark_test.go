@@ -39,7 +39,7 @@ func TestDeskMarkAndPnL(t *testing.T) {
 					return nil
 				}
 
-				for _, open := range harness.Wired.Balance.Holdings() {
+				for _, open := range harness.Wired.Desk.Holdings() {
 					if open.Status != types.OPEN ||
 						open.Qty == nil || open.Qty.Sign() <= 0 ||
 						open.EntryPrice == nil || open.EntryPrice.Sign() <= 0 ||
@@ -65,7 +65,7 @@ func TestDeskMarkAndPnL(t *testing.T) {
 						continue
 					}
 
-					holding, holdErr := harness.Wired.Balance.Holding(decision.Symbol)
+					holding, holdErr := harness.Wired.Desk.Holding(decision.Symbol)
 
 					if holdErr != nil {
 						return nil
@@ -94,7 +94,7 @@ func TestDeskMarkAndPnL(t *testing.T) {
 			So(opened, ShouldBeTrue)
 			So(entered.Symbol, ShouldBeIn, harness.Market.Symbols)
 
-			holding, err := harness.Wired.Balance.Holding(entered.Symbol)
+			holding, err := harness.Wired.Desk.Holding(entered.Symbol)
 			So(err, ShouldBeNil)
 			entry := holding.EntryPrice.Copy()
 			entryMark := holding.Mark.Copy()
@@ -105,7 +105,7 @@ func TestDeskMarkAndPnL(t *testing.T) {
 
 				So(harness.Market.Transition(tests.MarketStateFastPump, func() error {
 					So(harness.Market.Paper.Drain(), ShouldBeNil)
-					lot, holdErr := harness.Wired.Balance.Holding(entered.Symbol)
+					lot, holdErr := harness.Wired.Desk.Holding(entered.Symbol)
 					So(holdErr, ShouldBeNil)
 					So(lot.Status, ShouldEqual, types.OPEN)
 					So(lot.Qty.Cmp(entered.ProposedQuantity), ShouldEqual, 0)
@@ -123,7 +123,7 @@ func TestDeskMarkAndPnL(t *testing.T) {
 				So(improved, ShouldBeTrue)
 
 				Convey("An adverse dump lowers mark and worsens PnL", func() {
-					peak, peakErr := harness.Wired.Balance.Holding(entered.Symbol)
+					peak, peakErr := harness.Wired.Desk.Holding(entered.Symbol)
 					So(peakErr, ShouldBeNil)
 					So(peak.Mark, ShouldNotBeNil)
 					So(peak.PnL, ShouldNotBeNil)
@@ -133,7 +133,7 @@ func TestDeskMarkAndPnL(t *testing.T) {
 
 					So(harness.Market.Transition(tests.MarketStateFastDump, func() error {
 						So(harness.Market.Paper.Drain(), ShouldBeNil)
-						lot, holdErr := harness.Wired.Balance.Holding(entered.Symbol)
+						lot, holdErr := harness.Wired.Desk.Holding(entered.Symbol)
 
 						if holdErr != nil {
 							// ponytail: nondeterministic dump tape may stop out the lot
@@ -181,7 +181,7 @@ func BenchmarkDeskOnTickerMark(b *testing.B) {
 	if err := harness.Market.Transition(tests.MarketStateFastPump, func() error {
 		_ = harness.Market.Paper.Drain()
 
-		for _, open := range harness.Wired.Balance.Holdings() {
+		for _, open := range harness.Wired.Desk.Holdings() {
 			if open.Status == types.OPEN {
 				opened = true
 			}

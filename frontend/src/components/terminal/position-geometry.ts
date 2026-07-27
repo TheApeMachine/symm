@@ -18,13 +18,18 @@ const positiveFinite = (value: number): number | null =>
 	Number.isFinite(value) && value > 0 ? value : null;
 
 /*
-positionStop prefers stop fields published on the Holding/position frame, then
-falls back to the legacy symbol-keyed stops map.
+positionStop reads the nested stoploss published on the Holding/Position frame.
+The legacy symbol-keyed stop map remains only as a fallback while old frames
+still exist elsewhere on the wire.
 */
 export const positionStop = (
 	position: Holding,
 	legacy?: Stop,
 ): Stop | undefined => {
+	if (position.stoploss && typeof position.stoploss === "object") {
+		return position.stoploss;
+	}
+
 	const stopPrice = position.stop_price;
 	const stopReturn = position.stop_return;
 	const peakReturn = position.peak_return;

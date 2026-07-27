@@ -21,18 +21,18 @@ websocket messages without Desk absorbing the routing logic.
 */
 type Desk struct {
 	*types.Actor
-	ctx           context.Context
-	cancel        context.CancelFunc
-	status        types.Status
-	api           *websocket.API
-	instrument    *Instrument
-	price         *Price
-	balance       *Balance
-	positions     map[string]*Position
-	maxPositions  int
-	maxReserved   int
-	market        *types.Actor
-	account       *types.Actor
+	ctx          context.Context
+	cancel       context.CancelFunc
+	status       types.Status
+	api          *websocket.API
+	instrument   *Instrument
+	price        *Price
+	balance      *Balance
+	positions    map[string]*Position
+	maxPositions int
+	maxReserved  int
+	market       *types.Actor
+	account      *types.Actor
 }
 
 /*
@@ -147,6 +147,8 @@ onInstrument forwards the instrument tick then adopts newly visible open lots.
 */
 func (desk *Desk) onInstrument(message any) any {
 	desk.instrument.On(message)
+	desk.adoptOpenPositions()
+
 	return nil
 }
 
@@ -164,6 +166,7 @@ func (desk *Desk) onTicker(message any) any {
 	}
 
 	desk.price.TickerAck(ticker)
+	desk.adoptOpenPositions()
 
 	if err := desk.balance.Publish(); err != nil {
 		errnie.Error(err)
@@ -178,20 +181,53 @@ wallet-backed lots so restart positions are immediately managed by Desk.
 */
 func (desk *Desk) onBalances(message any) any {
 	desk.balance.BalanceAck(message.([]byte))
+	desk.adoptOpenPositions()
 
-	for lot := range desk.balance.Lots() {
-		if lot.Status != types.OPEN || lot.Qty == nil || lot.Qty.Sign() <= 0 {
+	if err := desk.balance.Publish(); err != nil {
+		errnie.Error(err)
+	}
+
+	return nil
+}
+
+/*
+adoptOpenLots recreates desk-owned positions from wallet-backed open lots once
+their instrument metadata exists. Balance snapshots can arrive before the
+instrument stage is ready, so this helper is called from both balances and
+instrument handlers and seeds the recovered position from any cached ticker.
+*/
+func (desk *Desk) adoptOpenPositions() {
+	desk.Update()
+
+	frame := desk.balance.Frame()
+	quote := desk.balance.Wallet.quote
+
+	for asset, row := range frame {
+		if asset == "" || asset == quote {
 			continue
 		}
 
-		pair, err := desk.instrument.Pair(lot.Symbol)
+		if row.Balance == nil || row.Balance.Sign() <= 0 {
+			continue
+		}
+
+		symbol := asset + "/" + quote
+
+		if _, exists := desk.positions[symbol]; exists {
+			continue
+		}
+
+		pair, err := desk.instrument.Pair(symbol)
 
 		if err != nil {
-			errnie.Error(err)
 			continue
 		}
 
-		desk.positions[lot.Symbol] = NewPosition(
+		if _, err := desk.price.Get(pair.Symbol); err != nil {
+			continue
+		}
+
+		position := NewPosition(
 			desk.ctx,
 			desk.api,
 			desk.balance.ui,
@@ -199,17 +235,59 @@ func (desk *Desk) onBalances(message any) any {
 			desk.price,
 			desk.balance,
 			pair,
-			lot.Qty,
+			row.Balance,
 			desk.market,
 			desk.account,
 		)
+
+		if err := desk.price.Mark(&pair, position.holding); err != nil {
+			continue
+		}
+
+		if position.holding.Mark != nil && position.holding.Mark.Sign() > 0 &&
+			position.holding.Stoploss != nil {
+			position.holding.Stoploss.Update(position.holding.Mark)
+			position.Publish()
+		}
+
+		desk.positions[symbol] = position
+	}
+}
+
+/*
+Holdings returns the active desk-managed Holding set keyed by symbol. Balance is
+wallet-only; open Holding ownership lives on Desk through its Position map.
+*/
+func (desk *Desk) Holdings() map[string]*types.Holding {
+	desk.Update()
+	holdings := make(map[string]*types.Holding, len(desk.positions))
+
+	for symbol, position := range desk.positions {
+		if position == nil || position.holding == nil {
+			continue
+		}
+
+		holdings[symbol] = position.holding
 	}
 
-	if err := desk.balance.Publish(); err != nil {
-		errnie.Error(err)
+	return holdings
+}
+
+/*
+Holding returns one active desk-managed Holding by symbol.
+*/
+func (desk *Desk) Holding(symbol string) (*types.Holding, error) {
+	holding, ok := desk.Holdings()[symbol]
+
+	if ok {
+		return holding, nil
 	}
 
-	return nil
+	return nil, errnie.Error(errnie.Err(
+		errnie.NotFound,
+		"desk: holding not found",
+		nil,
+	))
 }
 
 /*

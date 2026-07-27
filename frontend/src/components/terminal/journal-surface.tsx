@@ -1,4 +1,4 @@
-import { createRef } from "react";
+import { createRef, useEffect } from "react";
 import { appStore } from "#/collections/app";
 import type { Holding, LifecycleRow } from "#/collections/types";
 import {
@@ -98,10 +98,19 @@ JournalSurface is the static lifecycle / holdings / findings shell.
 DRAW paints via paintJournalLifecycle, paintJournalHoldings, paintJournalFindings.
 */
 export const JournalSurface = () => (
-	<div
-		ref={rootRef}
-		className="grid h-full min-h-0 min-w-[1040px] grid-cols-[minmax(280px,320px)_minmax(420px,1fr)_minmax(280px,320px)]"
-	>
+	<JournalSurfaceBody />
+);
+
+const JournalSurfaceBody = () => {
+	useEffect(() => {
+		paint();
+	}, []);
+
+	return (
+		<div
+			ref={rootRef}
+			className="grid h-full min-h-0 min-w-[1040px] grid-cols-[minmax(280px,320px)_minmax(420px,1fr)_minmax(280px,320px)]"
+		>
 		<div className="min-h-0 overflow-auto border-(--line) border-r p-3.5">
 			<TerminalSection
 				title="Lifecycle rail"
@@ -159,5 +168,6 @@ export const JournalSurface = () => (
 				</div>
 			</TerminalSection>
 		</div>
-	</div>
-);
+		</div>
+	);
+};

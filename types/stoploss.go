@@ -3,7 +3,6 @@ package types
 import (
 	"context"
 
-	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
@@ -158,34 +157,20 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 }
 
 /*
-MarshalJSON emits the flat stop frame consumed by the terminal. Stoploss owns
-the trailing floor, peak, and armed state, so Position can publish this directly
-without Holding inventing stop fields.
-*/
-func (stoploss *Stoploss) MarshalJSON() ([]byte, error) {
-	frame := map[string]any{
-		"symbol":     stoploss.Symbol,
-		"stop_price": stoploss.Floor,
-		"peak_price": stoploss.Peak,
-		"armed":      stoploss.Status == ARMED,
-	}
-
-	if stoploss.Entry != nil && stoploss.Entry.Sign() > 0 &&
-		stoploss.Floor != nil && stoploss.Peak != nil {
-		frame["stop_return"] = stoploss.Floor.Copy().Sub(stoploss.Entry).Div(stoploss.Entry)
-		frame["peak_return"] = stoploss.Peak.Copy().Sub(stoploss.Entry).Div(stoploss.Entry)
-	}
-
-	return sonic.Marshal(frame)
-}
-
-/*
 evaluate checks the current the current Peek, and potentially re-sets
 the Peak and the Floor if the current Mark is higher than the Peak.
 */
 func (stoploss *Stoploss) evaluate() {
 	if stoploss.Peak == nil {
 		stoploss.Peak = stoploss.Mark.Copy()
+	}
+
+	if stoploss.Floor == nil {
+		stoploss.Floor = decimal.ExactMul(
+			stoploss.Peak, decimal.NewFromFloat64(0.98),
+		)
+
+		return
 	}
 
 	if stoploss.Mark.Cmp(stoploss.Peak) > 0 {
@@ -202,10 +187,6 @@ Close cancels the regulator context and delegates exit to the same callback so
 manual close and floor breach share one order path.
 */
 func (stoploss *Stoploss) Close() (err error) {
-	if stoploss.exit != nil {
-		err = stoploss.exit()
-	}
-
 	if stoploss.cancel != nil {
 		stoploss.cancel()
 	}

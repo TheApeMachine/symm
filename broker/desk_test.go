@@ -1,0 +1,94 @@
+package broker
+
+import (
+	"testing"
+	"time"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/config"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/mockapi"
+	"github.com/theapemachine/symm/types"
+)
+
+/*
+TestDeskRecoversOpenLotsAfterInstrumentReady proves recovery can recreate an
+already-open wallet lot when balances arrive before instruments during boot.
+The real broker boot order initializes Desk first, then Balance, then
+Instrument; this test keeps that order and requires the recovered position to
+exist only after instrument and ticker state become available, with a seeded
+live mark and active stoploss instead of the zeroed ghost shell.
+*/
+func TestDeskRecoversOpenLotsAfterInstrumentReady(t *testing.T) {
+	Convey("Given a pre-existing wallet lot before Balance and Instrument finish booting", t, func() {
+		market := tests.NewMarket(t.Context(), 1)
+		cfg := config.Fixture()
+		cfg.Market.L3Enabled = false
+		symbol := market.Symbols[0]
+		ui := make(chan []byte, 1024)
+
+		So(market.Paper.EnablePaper(mockapi.PaperOptions{
+			Quote: func(symbol string) (float64, float64, float64, float64, bool) {
+				return 101, 5, 102, 5, symbol == "SIM1/USD"
+			},
+			Now: market.Now,
+			Balances: map[string]float64{
+				"USD": 80595.4943,
+				"SIM1": 2,
+			},
+			MakerFee: 0.0016,
+			TakerFee: 0.0026,
+		}), ShouldBeNil)
+		So(market.Bootstrap(), ShouldBeNil)
+		Reset(market.Close)
+
+		api := websocket.NewAPI(t.Context(), market.Public, market.Private, market.Paper)
+		price := NewPrice(api)
+		instrument := NewInstrument(api, price, ui, cfg.Market)
+		balance := NewBalance(api, ui, cfg.Market)
+		desk := NewDesk(t.Context(), api, instrument, price, balance, cfg.Trading)
+
+		So(api.Initialize(), ShouldBeNil)
+		So(price.Initialize(), ShouldBeNil)
+		So(desk.Initialize(market.Public.Root(), api.Account().Root()), ShouldBeNil)
+		So(balance.Initialize(), ShouldBeNil)
+		So(instrument.Initialize(), ShouldBeNil)
+
+		Convey("Then the lot is recreated as a real Position after instrument and ticker state become available", func() {
+			deadline := time.Now().Add(2 * time.Second)
+			var position *Position
+			var ok bool
+
+			for time.Now().Before(deadline) {
+				position, ok = desk.Position(symbol)
+
+				if ok && position != nil && position.holding != nil &&
+					position.holding.Status == types.PENDING &&
+					position.holding.Mark != nil && position.holding.Mark.Sign() > 0 &&
+					position.holding.Stoploss != nil &&
+					position.holding.Stoploss.Mark != nil && position.holding.Stoploss.Mark.Sign() > 0 &&
+					position.holding.Stoploss.Floor != nil && position.holding.Stoploss.Floor.Sign() > 0 {
+					break
+				}
+
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			So(ok, ShouldBeTrue)
+			So(position, ShouldNotBeNil)
+			So(position.holding, ShouldNotBeNil)
+			So(position.holding.Symbol, ShouldEqual, symbol)
+			So(position.holding.Qty, ShouldNotBeNil)
+			So(position.holding.Qty.String(), ShouldEqual, "2")
+			So(position.holding.Status, ShouldEqual, types.PENDING)
+			So(position.holding.Mark, ShouldNotBeNil)
+			So(position.holding.Mark.Sign(), ShouldBeGreaterThan, 0)
+			So(position.holding.Stoploss, ShouldNotBeNil)
+			So(position.holding.Stoploss.Mark, ShouldNotBeNil)
+			So(position.holding.Stoploss.Mark.Sign(), ShouldBeGreaterThan, 0)
+			So(position.holding.Stoploss.Floor, ShouldNotBeNil)
+			So(position.holding.Stoploss.Floor.Sign(), ShouldBeGreaterThan, 0)
+		})
+	})
+}

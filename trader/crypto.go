@@ -55,12 +55,7 @@ func NewCrypto(
 		journal:  journalStore,
 	}
 
-	if savedHoldings, savedFindings, err := journalStore.Load(); err == nil && len(savedHoldings) > 0 {
-		for _, h := range savedHoldings {
-			if desk != nil && desk.Balance() != nil {
-				desk.Balance().StoreHolding(h)
-			}
-		}
+	if _, savedFindings, err := journalStore.Load(); err == nil {
 		if uiHub != nil && len(savedFindings) > 0 {
 			uiHub.Publish(datura.Map[any]{"findings": savedFindings}.Marshal())
 		}
@@ -207,11 +202,10 @@ func (crypto *Crypto) publish(thesis *types.Thesis, elapsed time.Duration) {
 		crypto.uiHub.Publish(datura.Map[any]{"findings": thesis.Findings}.Marshal())
 	}
 
-	if crypto.journal != nil && crypto.desk != nil && crypto.desk.Balance() != nil {
+	if crypto.journal != nil && crypto.desk != nil {
 		holdings := make([]*types.Holding, 0)
-		for h := range crypto.desk.Balance().Lots() {
-			copyH := h
-			holdings = append(holdings, &copyH)
+		for _, holding := range crypto.desk.Holdings() {
+			holdings = append(holdings, holding)
 		}
 		_ = crypto.journal.Save(holdings, thesis.Findings)
 	}

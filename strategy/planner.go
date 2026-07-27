@@ -68,13 +68,13 @@ func NewPlanner(
 		analyzer:   analyzer,
 		recorder:   recorder,
 		opportunity: NewOpportunity(
-			ctx, cancel, price, balance, recorder, uiHub,
+			ctx, cancel, desk, price, balance, recorder, uiHub,
 		),
 		admit:      admit,
-		continuity: NewContinuity(price, balance, rotate),
+		continuity: NewContinuity(price, desk, rotate),
 		evidence:   NewEvidence(),
 		rotate:     rotate,
-		arbiter:    NewArbiter(desk, price, balance, admit, rotate),
+		arbiter:    NewArbiter(desk, price, admit, rotate),
 	}
 
 	planner.Actor = types.NewActor(ctx, "planner", map[string]types.Handler{
@@ -201,8 +201,8 @@ func (planner *Planner) retainUnapplied(thesis *types.Thesis) {
 			continue
 		}
 
-		if planner.balance != nil {
-			if holding, err := planner.balance.Holding(decision.Symbol); err == nil &&
+		if planner.desk != nil {
+			if holding, err := planner.desk.Holding(decision.Symbol); err == nil &&
 				holding.Status != types.CLOSED {
 				continue
 			}

@@ -24,7 +24,7 @@ func TestDeskThinBookDoesNotFabricateMarks(t *testing.T) {
 		So(harness.Market.Transition(tests.MarketStateFastPump, func() error {
 			So(harness.Market.Paper.Drain(), ShouldBeNil)
 
-			for _, open := range harness.Wired.Balance.Holdings() {
+			for _, open := range harness.Wired.Desk.Holdings() {
 				if open.Status != types.OPEN || open.Mark == nil {
 					continue
 				}
@@ -47,14 +47,14 @@ func TestDeskThinBookDoesNotFabricateMarks(t *testing.T) {
 			return
 		}
 
-		before, err := harness.Wired.Balance.Holding(opened)
+		before, err := harness.Wired.Desk.Holding(opened)
 		So(err, ShouldBeNil)
 		beforeMark := before.Mark.Copy()
 
 		Convey("Thin liquidity then baseline keeps a positive executable mark", func() {
 			So(harness.Market.Transition(tests.MarketStateThinLiquidity, tests.Idle), ShouldBeNil)
 
-			duringThin, thinErr := harness.Wired.Balance.Holding(opened)
+			duringThin, thinErr := harness.Wired.Desk.Holding(opened)
 
 			if thinErr == nil {
 				So(duringThin.Mark, ShouldNotBeNil)
@@ -65,7 +65,7 @@ func TestDeskThinBookDoesNotFabricateMarks(t *testing.T) {
 
 			So(harness.Market.Transition(tests.MarketStateBaseline, func() error {
 				So(harness.Market.Paper.Drain(), ShouldBeNil)
-				lot, holdErr := harness.Wired.Balance.Holding(opened)
+				lot, holdErr := harness.Wired.Desk.Holding(opened)
 
 				if holdErr != nil {
 					return nil

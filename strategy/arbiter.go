@@ -18,7 +18,6 @@ a challenger clears the one-step wait gate against an open incumbent.
 type Arbiter struct {
 	desk    *broker.Desk
 	price   *broker.Price
-	balance *broker.Balance
 	admit   *Admit
 	rotate  Rotate
 }
@@ -29,14 +28,12 @@ NewArbiter wires slot checks, wallet inventory, Admit persistence, and Rotate.
 func NewArbiter(
 	desk *broker.Desk,
 	price *broker.Price,
-	balance *broker.Balance,
 	admit *Admit,
 	rotate Rotate,
 ) *Arbiter {
 	return &Arbiter{
 		desk:    desk,
 		price:   price,
-		balance: balance,
 		admit:   admit,
 		rotate:  rotate,
 	}
@@ -179,7 +176,7 @@ func (arbiter *Arbiter) incumbents(thesis *types.Thesis) []Incumbent {
 	forecasts := selectForecasts(thesis.Forecasts)
 	rows := make([]Incumbent, 0)
 
-	for _, holding := range arbiter.balance.Holdings() {
+	for _, holding := range arbiter.desk.Holdings() {
 		if holding.Status != types.OPEN {
 			continue
 		}
@@ -249,10 +246,9 @@ func (arbiter *Arbiter) exiting(thesis *types.Thesis, symbol string) bool {
 
 func (arbiter *Arbiter) validate(mandatory map[string]any) error {
 	check := map[string]any{
-		"desk":    arbiter.desk,
-		"price":   arbiter.price,
-		"balance": arbiter.balance,
-		"admit":   arbiter.admit,
+		"desk":  arbiter.desk,
+		"price": arbiter.price,
+		"admit": arbiter.admit,
 	}
 
 	maps.Copy(check, mandatory)

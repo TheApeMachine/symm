@@ -280,7 +280,7 @@ func (booter *Booter) boot(
 	desk := broker.NewDesk(
 		booter.ctx, api, instrument, price, balance, booter.config.Trading,
 	)
-	hub := ui.NewHub(booter.ctx, price, balance, booter.channel, booter.config.UI)
+	hub := ui.NewHub(booter.ctx, desk, price, balance, booter.channel, booter.config.UI)
 	thesis := types.NewThesis()
 	hawkesSignal := hawkes.NewSignal(booter.ctx, booter.channel)
 

@@ -56,14 +56,14 @@ func (harness *deskHarness) Warmup() error {
 /*
 sellAllOpen closes every open lot through Desk.Sell, optionally keeping symbols.
 */
-func sellAllOpen(desk *broker.Desk, balance *broker.Balance, keepSymbol ...string) {
+func sellAllOpen(desk *broker.Desk, _ *broker.Balance, keepSymbol ...string) {
 	keep := make(map[string]struct{}, len(keepSymbol))
 
 	for _, symbol := range keepSymbol {
 		keep[symbol] = struct{}{}
 	}
 
-	for _, open := range balance.Holdings() {
+	for _, open := range desk.Holdings() {
 		if open.Status != types.OPEN {
 			continue
 		}

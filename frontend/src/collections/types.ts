@@ -54,6 +54,7 @@ export type Holding = {
 	stagnation_active?: boolean;
 	stagnation_health?: number | string;
 	stagnation_pending?: boolean;
+	stoploss?: Stop;
 };
 
 /*
@@ -61,19 +62,19 @@ Stop mirrors Stoploss.Frame JSON published beside holdings.
 */
 export type Stop = {
 	symbol: string;
-	stop_price: number;
-	peak_return: number;
-	stop_return: number;
+	stop_price: number | string;
+	peak_return: number | string;
+	stop_return: number | string;
 	armed?: boolean;
-	peak_price?: number;
-	momentum?: number;
-	peak_momentum?: number;
-	momentum_floor?: number;
-	momentum_health?: number;
+	peak_price?: number | string;
+	momentum?: number | string;
+	peak_momentum?: number | string;
+	momentum_floor?: number | string;
+	momentum_health?: number | string;
 	momentum_active?: boolean;
-	peak_touch_count?: number;
-	stagnation_max_touches?: number;
-	stagnation_health?: number;
+	peak_touch_count?: number | string;
+	stagnation_max_touches?: number | string;
+	stagnation_health?: number | string;
 	stagnation_pending?: boolean;
 	stagnation_active?: boolean;
 };

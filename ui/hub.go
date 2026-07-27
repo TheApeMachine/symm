@@ -74,6 +74,7 @@ type Hub struct {
 	app         *fiber.App
 	listenAddr  string
 	Messages    chan []byte
+	desk        *broker.Desk
 	price       *broker.Price
 	balance     *broker.Balance
 	cache       sync.Map
@@ -88,6 +89,7 @@ NewHub constructs the dashboard hub from an injected UI config address.
 */
 func NewHub(
 	ctx context.Context,
+	desk *broker.Desk,
 	price *broker.Price,
 	balance *broker.Balance,
 	channel chan []byte,
@@ -106,6 +108,7 @@ func NewHub(
 		cancel:     cancel,
 		listenAddr: addr,
 		Messages:   channel,
+		desk:       desk,
 		app: fiber.New(fiber.Config{
 			JSONEncoder:     sonic.Marshal,
 			JSONDecoder:     sonic.Unmarshal,
@@ -366,7 +369,7 @@ func (hub *Hub) writeWallet(session *clientSession) {
 
 	frame := datura.Map[any]{
 		"balances": hub.balance.Frame(),
-		"holdings": hub.balance.Holdings(),
+		"holdings": hub.desk.Holdings(),
 	}.Marshal()
 
 	if len(frame) == 0 {
