@@ -1,5 +1,6 @@
 import type { Holding } from "#/collections/types";
 import { fixed } from "#/components/terminal/decision-format";
+import { openThesisShell } from "#/components/terminal/thesis-modal";
 
 export type AuditRow = {
 	reason: string;
@@ -57,8 +58,9 @@ const auditKey = (holding: Holding): string =>
 	].join("\0");
 
 const bindAuditCard = (): AuditParts => {
-	const card = document.createElement("div");
-	card.className = "border-(--line) border-b px-3 py-1.5";
+	const card = document.createElement("button");
+	card.type = "button";
+	card.className = "w-full cursor-pointer border-(--line) border-b px-3 py-1.5 text-left";
 
 	const head = document.createElement("div");
 	head.className = "flex items-start justify-between gap-2";
@@ -122,6 +124,7 @@ export class DashboardAuditSync {
 			}
 
 			const row = holdingAuditRow(holding, lifecycle[holding.symbol]);
+			parts.card.onclick = () => openThesisShell(holding.symbol);
 
 			if (parts.reason.textContent !== row.reason) {
 				parts.reason.textContent = row.reason;

@@ -29,6 +29,7 @@ type Crypto struct {
 	recorder *audit.Recorder
 	desk     *broker.Desk
 	journal  *JournalStore
+	theses   []*types.Thesis
 }
 
 /*
@@ -55,13 +56,15 @@ func NewCrypto(
 		journal:  journalStore,
 	}
 
-	if savedHoldings, savedFindings, err := journalStore.Load(); err == nil {
-		if desk != nil && len(savedHoldings) > 0 {
-			desk.SeedHoldings(savedHoldings)
+	if savedTheses, err := journalStore.Load(); err == nil {
+		crypto.theses = append(crypto.theses, savedTheses...)
+
+		if desk != nil {
+			desk.SeedHoldings(crypto.savedHoldings())
 		}
 
-		if uiHub != nil && len(savedFindings) > 0 {
-			uiHub.Publish(datura.Map[any]{"findings": savedFindings}.Marshal())
+		if uiHub != nil && len(savedTheses) > 0 {
+			uiHub.Publish(datura.Map[any]{"journal": savedTheses}.Marshal())
 		}
 	}
 
@@ -206,13 +209,140 @@ func (crypto *Crypto) publish(thesis *types.Thesis, elapsed time.Duration) {
 		crypto.uiHub.Publish(datura.Map[any]{"findings": thesis.Findings}.Marshal())
 	}
 
-	if crypto.journal != nil && crypto.desk != nil {
-		holdings := make([]*types.Holding, 0)
-		for _, holding := range crypto.desk.Holdings() {
-			holdings = append(holdings, holding)
-		}
-		_ = crypto.journal.Save(holdings, thesis.Findings)
+	crypto.captureJournal(thesis)
+
+	if crypto.uiHub != nil && len(crypto.theses) > 0 {
+		crypto.uiHub.Publish(datura.Map[any]{"journal": crypto.theses}.Marshal())
 	}
+
+	if crypto.journal != nil {
+		_ = crypto.journal.Save(crypto.theses)
+	}
+}
+
+func (crypto *Crypto) captureJournal(thesis *types.Thesis) {
+	if thesis == nil {
+		return
+	}
+
+	thesis.Lifecycle.Range(func(key, value any) bool {
+		symbol, ok := key.(string)
+
+		if !ok || symbol == "" {
+			return true
+		}
+
+		lifecycle, _ := value.(string)
+
+		if lifecycle == "" || crypto.hasJournalLifecycle(symbol, lifecycle) {
+			return true
+		}
+
+		if snapshot := crypto.snapshotThesis(thesis, symbol); snapshot != nil {
+			crypto.theses = append(crypto.theses, snapshot)
+		}
+		return true
+	})
+}
+
+func (crypto *Crypto) hasJournalLifecycle(symbol, lifecycle string) bool {
+	for index := len(crypto.theses) - 1; index >= 0; index-- {
+		entry := crypto.theses[index]
+
+		if entry == nil {
+			continue
+		}
+
+		value, ok := entry.Lifecycle.Load(symbol)
+
+		if !ok {
+			continue
+		}
+
+		return value == lifecycle
+	}
+
+	return false
+}
+
+func (crypto *Crypto) snapshotThesis(thesis *types.Thesis, symbol string) *types.Thesis {
+	if thesis == nil || symbol == "" {
+		return nil
+	}
+
+	snapshot := types.NewThesis()
+	snapshot.Tick = thesis.Tick
+	snapshot.At = thesis.At
+
+	for _, decision := range thesis.Decisions {
+		if decision.Symbol == symbol {
+			snapshot.Decisions = append(snapshot.Decisions, decision)
+		}
+	}
+
+	if value, ok := thesis.Holdings.Load(symbol); ok {
+		snapshot.Holdings.Store(symbol, value)
+	}
+
+	if value, ok := thesis.Lifecycle.Load(symbol); ok {
+		snapshot.Lifecycle.Store(symbol, value)
+	}
+
+	for _, finding := range thesis.Findings {
+		if finding.Symbol == symbol {
+			snapshot.Findings = append(snapshot.Findings, finding)
+		}
+	}
+
+	if thesis.Graphs != nil {
+		thesis.Graphs.Range(func(key, value any) bool {
+			snapshot.Graphs.Store(key, value)
+			return true
+		})
+	}
+
+	return snapshot
+}
+
+func (crypto *Crypto) savedHoldings() []*types.Holding {
+	if len(crypto.theses) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	holdings := make([]*types.Holding, 0)
+
+	for index := len(crypto.theses) - 1; index >= 0; index-- {
+		thesis := crypto.theses[index]
+
+		if thesis == nil || thesis.Holdings == nil {
+			continue
+		}
+
+		thesis.Holdings.Range(func(key, value any) bool {
+			symbol, ok := key.(string)
+
+			if !ok || symbol == "" {
+				return true
+			}
+
+			if _, exists := seen[symbol]; exists {
+				return true
+			}
+
+			holding, ok := value.(*types.Holding)
+
+			if !ok || holding == nil {
+				return true
+			}
+
+			seen[symbol] = struct{}{}
+			holdings = append(holdings, holding)
+			return true
+		})
+	}
+
+	return holdings
 }
 
 func (crypto *Crypto) enter(thesis *types.Thesis, decision *types.Decision) {

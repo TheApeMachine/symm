@@ -49,6 +49,7 @@ import {
 	paintHealthTick,
 } from "#/components/terminal/health";
 import {
+	paintJournalEntries,
 	paintJournalFindings,
 	paintJournalPositions,
 	paintJournalLifecycle,
@@ -205,6 +206,9 @@ export const drawers = {
 	},
 	findings: {
 		paint: paintJournalFindings,
+	},
+	journal: {
+		paint: paintJournalEntries,
 	},
 	decisions: {
 		paint: paintStrategyDecisions,

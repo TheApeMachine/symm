@@ -26,7 +26,7 @@ next live frame arrives soon enough that caching them is wasted work.
 */
 var cacheKeys = []string{
 	"balances", "executions", "instruments", "positions", "stops",
-	"lifecycle", "findings", "tick",
+	"lifecycle", "findings", "journal", "tick",
 }
 
 var cacheKeySet = func() map[string]struct{} {

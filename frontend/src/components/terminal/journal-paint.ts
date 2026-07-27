@@ -1,4 +1,4 @@
-import type { Holding } from "#/collections/types";
+import type { Holding, Thesis } from "#/collections/types";
 import { fixed } from "#/components/terminal/decision-format";
 import { syncJournalShells } from "#/components/terminal/journal-shells";
 import { paintLifecycleTrack } from "#/components/terminal/lifecycle-track";
@@ -22,6 +22,13 @@ export const holdingKey = (holding: Holding): string =>
 
 export const findingKey = (finding: Finding): string =>
 	`${finding.symbol}:${finding.component}:${finding.condition}`;
+
+export const journalEntryKey = (entry: Thesis): string => {
+	const symbol = Object.keys(entry.lifecycle ?? {})[0] ?? Object.keys(entry.holdings ?? {})[0] ?? "";
+	const lifecycle = symbol === "" ? "" : (entry.lifecycle?.[symbol] ?? "");
+
+	return `${symbol}:${entry.tick}:${lifecycle}:${entry.at}`;
+};
 
 const paintHoldingRow = (row: HTMLElement, holding: Holding): void => {
 	setText(row.querySelector("[data-journal='holding-symbol']"), holding.symbol);
@@ -51,6 +58,57 @@ const paintHoldingRow = (row: HTMLElement, holding: Holding): void => {
 			size: "xs",
 		}),
 	);
+};
+
+const paintJournalEntryRow = (row: HTMLElement, entry: Thesis): void => {
+	const symbol = Object.keys(entry.lifecycle ?? {})[0] ?? Object.keys(entry.holdings ?? {})[0] ?? "";
+	const lifecycleState = symbol === "" ? "" : (entry.lifecycle?.[symbol] ?? "");
+	const decision = (entry.decisions ?? []).find((item) => item.symbol === symbol) ?? entry.decisions?.[0];
+	const holding = symbol === "" ? undefined : entry.holdings?.[symbol];
+	const findings = (entry.findings ?? []).filter((finding) => finding.symbol === symbol);
+	const graph = entry.graphs?.categories;
+
+	setText(row.querySelector("[data-journal='entry-symbol']"), symbol);
+	setText(
+		row.querySelector("[data-journal='entry-meta']"),
+		`${entry.at.slice(11, 19)} · tick ${entry.tick}`,
+	);
+
+	const lifecycle = row.querySelector("[data-journal='entry-lifecycle']");
+
+	if (lifecycle instanceof HTMLElement) {
+		lifecycle.textContent = lifecycleState;
+		lifecycle.className = cn(badgeVariants({ variant: "info", size: "xs" }));
+	}
+
+	setText(
+		row.querySelector("[data-journal='entry-reason']"),
+		decision?.reason ||
+			decision?.cause ||
+			decision?.action ||
+			"state transition",
+	);
+	const findingsCount = findings.length;
+	const graphText =
+		graph == null
+			? "graph —"
+			: `graph ${graph.nodes.length} nodes · ${graph.edges.length} edges`;
+
+	setText(
+		row.querySelector("[data-journal='entry-detail']"),
+		holding == null
+			? `decision ${decision?.action ?? "—"} · findings ${findingsCount}`
+			: [
+				`qty ${fixed(holding.qty)}`,
+				`entry ${fixed(holding.entry_price)}`,
+				`mark ${fixed(holding.mark)}`,
+				`pnl ${fixed(holding.pnl)}`,
+				`findings ${findingsCount}`,
+			]
+				.filter(Boolean)
+				.join(" · "),
+	);
+	setText(row.querySelector("[data-journal='entry-graph']"), graphText);
 };
 
 const paintFindingCard = (card: HTMLElement, finding: Finding): void => {
@@ -138,8 +196,9 @@ const paintLifecycleSelection = (
 };
 
 /*
-paintJournalSurface writes lifecycle rails, holdings lots, and postmortem
-findings into mounted shells so websocket cadence never re-renders JournalSurface.
+paintJournalSurface writes lifecycle rails, persisted journal entries, and
+postmortem findings into mounted shells so websocket cadence never re-renders
+JournalSurface.
 */
 export const paintJournalSurface = (
 	root: HTMLElement | null,
@@ -147,8 +206,8 @@ export const paintJournalSurface = (
 		activeSymbol: string | null;
 		findings: Finding[];
 		findingKeys: string[];
-		holdings: Holding[];
-		holdingKeys: string[];
+		entries: Thesis[];
+		journalKeys: string[];
 		lifecycleBySymbol: Record<string, string>;
 		onLifecycleSelect: (symbol: string) => void;
 		online: boolean;
@@ -161,10 +220,10 @@ export const paintJournalSurface = (
 
 	const {
 		activeSymbol,
+		entries,
 		findings,
 		findingKeys,
-		holdings,
-		holdingKeys,
+		journalKeys,
 		lifecycleBySymbol,
 		onLifecycleSelect,
 		online,
@@ -174,7 +233,7 @@ export const paintJournalSurface = (
 	syncJournalShells(root, {
 		symbols,
 		onLifecycleSelect,
-		holdingKeys,
+		journalKeys,
 		findingKeys,
 	});
 	paintLifecycleSelection(root, activeSymbol);
@@ -202,50 +261,54 @@ export const paintJournalSurface = (
 		);
 	}
 
-	const filteredHoldings = (
+	const filteredEntries = (
 		activeSymbol
-			? holdings.filter((holding) => holding.symbol === activeSymbol)
-			: holdings
-	).sort((left, right) => left.symbol.localeCompare(right.symbol));
+			? entries.filter((entry) => {
+				const symbol = Object.keys(entry.lifecycle ?? {})[0] ?? Object.keys(entry.holdings ?? {})[0] ?? "";
+				return symbol === activeSymbol;
+			})
+			: entries
+	).sort((left, right) => right.at.localeCompare(left.at));
 
 	setText(
 		root.querySelector("[data-journal='holdings-meta']"),
-		`${activeSymbol ?? "all symbols"} · ${filteredHoldings.length} lots`,
+		`${activeSymbol ?? "all symbols"} · ${filteredEntries.length} entries`,
 	);
 
 	const holdingsEmpty = root.querySelector("[data-journal='holdings-empty']");
 
 	if (holdingsEmpty instanceof HTMLElement) {
-		holdingsEmpty.style.display = filteredHoldings.length === 0 ? "" : "none";
+		holdingsEmpty.style.display = filteredEntries.length === 0 ? "" : "none";
 		holdingsEmpty.textContent = online
-			? "no holdings retained"
-			: "waiting for position frames";
+			? "no journal entries retained"
+			: "waiting for journal frames";
 	}
 
-	const holdingsByKey = new Map(
-		holdings.map((holding) => [holdingKey(holding), holding]),
+	const entriesByKey = new Map(
+		entries.map((entry) => [journalEntryKey(entry), entry]),
 	);
 
-	for (const key of holdingKeys) {
-		const row = root.querySelector(`[data-holding='${CSS.escape(key)}']`);
+	for (const key of journalKeys) {
+		const row = root.querySelector(`[data-journal-entry='${CSS.escape(key)}']`);
 
 		if (!(row instanceof HTMLElement)) {
 			continue;
 		}
 
-		const holding = holdingsByKey.get(key);
+		const entry = entriesByKey.get(key);
 
-		if (holding === undefined) {
+		if (entry === undefined) {
 			row.style.display = "none";
 			continue;
 		}
 
-		const visible = !activeSymbol || holding.symbol === activeSymbol;
+		const symbol = Object.keys(entry.lifecycle ?? {})[0] ?? Object.keys(entry.holdings ?? {})[0] ?? "";
+		const visible = !activeSymbol || symbol === activeSymbol;
 
 		row.style.display = visible ? "" : "none";
 
 		if (visible) {
-			paintHoldingRow(row, holding);
+			paintJournalEntryRow(row, entry);
 		}
 	}
 

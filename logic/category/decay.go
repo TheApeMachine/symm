@@ -99,12 +99,17 @@ func (book *cadenceBook) decayIdle(graph *Graph, symbol string, at time.Time, me
 
 		if relation.Weight <= 0 {
 			delete(graph.EdgeIndex, key)
+
 			for index, edge := range graph.Edges {
 				if edge == relation {
-					graph.Edges = append(graph.Edges[:index], graph.Edges[index+1:]...)
+					last := len(graph.Edges) - 1
+					graph.Edges[index] = graph.Edges[last]
+					graph.Edges[last] = nil
+					graph.Edges = graph.Edges[:last]
 					break
 				}
 			}
+
 			continue
 		}
 

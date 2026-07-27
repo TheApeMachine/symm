@@ -12,20 +12,16 @@ type Reporter struct {
 /*
 Report returns read-only reporting helpers for graph.
 */
-func Report(graph *Graph) *Reporter {
-	if graph == nil {
-		return nil
-	}
-
-	return &Reporter{graph: graph}
+func Report(graph *Graph) Reporter {
+	return Reporter{graph: graph}
 }
 
 /*
 TrapPressure is trap vs opportunity category strength on the resident nodes for
 symbol, plus Contradicts edge mass that affinity placed from trap→opportunity.
 */
-func (reporter *Reporter) TrapPressure(symbol string) (share float64, dominates bool) {
-	if reporter == nil || reporter.graph == nil || symbol == "" {
+func (reporter Reporter) TrapPressure(symbol string) (share float64, dominates bool) {
+	if reporter.graph == nil || symbol == "" {
 		return 0, false
 	}
 
@@ -81,8 +77,8 @@ func (reporter *Reporter) TrapPressure(symbol string) (share float64, dominates 
 ExhaustionLead is the share of Leads edge weight pointing into exhaustion-family
 categories versus opportunity-family categories for one symbol.
 */
-func (reporter *Reporter) ExhaustionLead(symbol string) (share float64, dominates bool) {
-	if reporter == nil || reporter.graph == nil || symbol == "" {
+func (reporter Reporter) ExhaustionLead(symbol string) (share float64, dominates bool) {
+	if reporter.graph == nil || symbol == "" {
 		return 0, false
 	}
 
@@ -121,10 +117,10 @@ Tokens builds the DMT category bag for symbol from the latest composed rows,
 including a transition token when the resident prior differs from the current
 top.
 */
-func (reporter *Reporter) Tokens(
+func (reporter Reporter) Tokens(
 	symbol string, categories []types.Category,
 ) []string {
-	if reporter == nil || reporter.graph == nil {
+	if reporter.graph == nil {
 		return nil
 	}
 
@@ -151,8 +147,8 @@ categories versus exhaustion-family categories for one symbol. It is the
 symmetric counterpart to ExhaustionLead, used to boost entry utility when the
 resident graph shows the current category sequence precedes opportunity regimes.
 */
-func (reporter *Reporter) OpportunityLead(symbol string) (share float64, dominates bool) {
-	if reporter == nil || reporter.graph == nil || symbol == "" {
+func (reporter Reporter) OpportunityLead(symbol string) (share float64, dominates bool) {
+	if reporter.graph == nil || symbol == "" {
 		return 0, false
 	}
 

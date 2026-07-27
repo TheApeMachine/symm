@@ -24,6 +24,7 @@ type returnHead struct {
 	mse         *statistic.Mean
 	errors      *adaptive.Variance
 	skill       *adaptive.Variance
+	ready       bool
 	samples     uint64
 	meanMSE     float64
 	uncertainty float64
@@ -173,6 +174,10 @@ func (head *returnHead) calibrate(target float64, prediction float64) error {
 	head.meanMSE = mse.Value
 	head.skillLower = head.lowerSkill(skill)
 
+	if head.samples > 1 && head.skillLower > 0 {
+		head.ready = true
+	}
+
 	if variance.Ready {
 		head.uncertainty = math.Sqrt(math.Max(variance.Value, 0))
 	}
@@ -185,7 +190,7 @@ Ready reports whether the return head's one-sided lower confidence bound shows
 positive squared-error skill over the zero-return baseline.
 */
 func (head *returnHead) Ready() bool {
-	return head != nil && head.samples > 1 && head.skillLower > 0
+	return head != nil && head.ready
 }
 
 /*

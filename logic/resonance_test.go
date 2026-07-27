@@ -66,6 +66,7 @@ func TestResonanceUpdate(t *testing.T) {
 		Convey("Its maturity should grow from observed event-time coverage", func() {
 			var next []*types.Measurement
 			var outcome *ResonanceOutcome
+			readyAt := 0
 
 			for nextIndex := producedAt + 1; nextIndex <= producedAt+32; nextIndex++ {
 				state := causalState(
@@ -77,6 +78,7 @@ func TestResonanceUpdate(t *testing.T) {
 				next, outcome = resonance.Update(state)
 
 				if outcome != nil && outcome.ReturnReady {
+					readyAt = nextIndex
 					break
 				}
 			}
@@ -91,6 +93,20 @@ func TestResonanceUpdate(t *testing.T) {
 			So(outcome.IncrementalSkillLowerBound, ShouldBeGreaterThan, 0)
 			So(outcome.IncrementalMSE, ShouldBeGreaterThanOrEqualTo, 0)
 			So(outcome.Uncertainty, ShouldBeGreaterThanOrEqualTo, 0)
+
+			for nextIndex := readyAt + 1; nextIndex <= readyAt+16; nextIndex++ {
+				state := causalState(
+					time.Unix(int64(nextIndex), 0),
+					100+float64(nextIndex),
+					uint64(nextIndex),
+				)
+				state.Reading.PressureGradX += float64(nextIndex) / 100
+				_, outcome = resonance.Update(state)
+
+				if outcome != nil {
+					So(outcome.ReturnReady, ShouldBeTrue)
+				}
+			}
 		})
 
 		Convey("It should not publish a negative observation horizon", func() {

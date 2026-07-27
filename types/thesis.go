@@ -307,6 +307,13 @@ ordinary JSON objects. The live Thesis remains the only state model.
 func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 	mapped := daturaPool.Get().(datura.Map[any])
 	defer daturaPool.Put(mapped)
+	mapped["tick"] = thesis.Tick
+	mapped["at"] = thesis.At
+	mapped["forecasts"] = thesis.Forecasts
+	mapped["decisions"] = thesis.Decisions
+	mapped["findings"] = thesis.Findings
+	mapped["hypotheses"] = thesis.Hypotheses
+	mapped["categories"] = thesis.Categories
 
 	mappedPositions := daturaPool.Get().(datura.Map[any])
 	defer daturaPool.Put(mappedPositions)
@@ -400,6 +407,16 @@ func (thesis *Thesis) MarshalJSON() ([]byte, error) {
 		return true
 	})
 
+	mappedGraphs := daturaPool.Get().(datura.Map[any])
+	defer daturaPool.Put(mappedGraphs)
+
+	mapped["graphs"] = mappedGraphs
+
+	thesis.Graphs.Range(func(key, value any) bool {
+		mapped["graphs"].(datura.Map[any])[key.(string)] = value
+		return true
+	})
+
 	return mapped.Marshal(), nil
 }
 
@@ -411,6 +428,7 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 	type alias Thesis
 	decoded := struct {
 		*alias
+		Graphs    map[string]any       `json:"graphs"`
 		Signals   map[string]any       `json:"signals"`
 		Lifecycle map[string]string    `json:"lifecycle"`
 		Manifold  map[string]any       `json:"manifold"`
@@ -462,6 +480,10 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 
 	for key, value := range decoded.Causal {
 		thesis.Causal.Store(key, value)
+	}
+
+	for key, value := range decoded.Graphs {
+		thesis.Graphs.Store(key, value)
 	}
 
 	if thesis.CrossSection == nil {

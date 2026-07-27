@@ -81,6 +81,51 @@ export type Position = {
 	holding: Holding;
 };
 
+export type CategoryGraphNode = {
+	symbol: string;
+	type: string;
+	strength: number;
+	freshness: number;
+	at: string;
+};
+
+export type CategoryGraphEdge = {
+	symbol: string;
+	from: string;
+	to: string;
+	type: string;
+	weight: number | null;
+	evidence: string[];
+	at: string;
+};
+
+export type CategoryGraph = {
+	nodes: CategoryGraphNode[];
+	edges: CategoryGraphEdge[];
+	priors: Record<string, string>;
+};
+
+export type Thesis = {
+	tick: number;
+	at: string;
+	forecasts?: ThesisForecast[];
+	decisions?: StrategyDecision[];
+	findings?: Finding[];
+	hypotheses?: ThesisHypothesis[];
+	categories?: Record<string, ThesisCategory[]>;
+	positions?: Record<string, boolean>;
+	holdings?: Record<string, Holding>;
+	lifecycle?: Record<string, LifecycleState>;
+	graphs?: Record<string, unknown> & {
+		categories?: CategoryGraph;
+	};
+	measurements?: Record<string, unknown>;
+	manifold?: Record<string, unknown>;
+	cognition?: Record<string, unknown>;
+	resonance?: Record<string, unknown>;
+	causal?: Record<string, unknown>;
+};
+
 /*
 Order mirrors an open-order row on the UI wire.
 */

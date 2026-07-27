@@ -16,8 +16,6 @@ import (
 )
 
 var (
-	// two is the mid divisor reused on the mark hot path.
-	two = decimal.NewFromInt64(2)
 	// hundred converts Kraken's percentage fee into a unit fraction.
 	hundred = decimal.NewFromInt64(100)
 
@@ -730,31 +728,6 @@ func (price *Price) Mark(
 	}
 
 	holding.ReturnPct = &pct
-
-	return nil
-}
-
-/*
-geometryMark prefers touch mid for stop geometry so bid–ask cross after an ask
-entry is not treated as adverse alpha. Falls back to last only — never bid —
-so a missing ask cannot invent a spread-wide stop breach.
-*/
-func (price *Price) geometryMark(
-	ticker *kraken.TickerData,
-	_ *types.Holding,
-) *decimal.Decimal {
-	if price != nil && ticker != nil && ticker.Bid != nil && ticker.Ask != nil &&
-		ticker.Bid.Sign() > 0 && ticker.Ask.Sign() > 0 {
-		sum := ticker.Bid.Add(ticker.Ask)
-
-		if mid := price.Div(sum, two); mid != nil && mid.Sign() > 0 {
-			return mid
-		}
-	}
-
-	if ticker != nil && ticker.Last != nil && ticker.Last.Sign() > 0 {
-		return ticker.Last.Copy()
-	}
 
 	return nil
 }

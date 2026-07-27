@@ -1,9 +1,10 @@
 import { createRef, useEffect } from "react";
 import { appStore } from "#/collections/app";
-import type { Holding, LifecycleRow, Position } from "#/collections/types";
+import { terminalStore } from "#/collections/terminal";
+import type { LifecycleRow, Position, Thesis } from "#/collections/types";
 import {
 	findingKey,
-	holdingKey,
+	journalEntryKey,
 	paintJournalSurface,
 } from "#/components/terminal/journal-paint";
 import { TerminalSection } from "#/components/terminal/panels";
@@ -15,6 +16,7 @@ const rootRef = createRef<HTMLDivElement>();
 let lastLifecycle: LifecycleRow[] = [];
 let lastPositions: Position[] = [];
 let lastFindings: Finding[] = [];
+let lastJournal: Thesis[] = [];
 let selectedSymbol: string | null = null;
 
 const asRows = <T,>(value: unknown): T[] =>
@@ -32,6 +34,20 @@ const selectLifecycleSymbol = (symbol: string) => {
 	paint();
 };
 
+const selectJournalEntry = (key: string) => {
+	const entry = lastJournal.find((candidate) => journalEntryKey(candidate) === key);
+	const symbol = Object.keys(entry?.lifecycle ?? {})[0] ?? Object.keys(entry?.holdings ?? {})[0] ?? "";
+
+	if (symbol === "") {
+		return;
+	}
+
+	selectedSymbol = symbol;
+	appStore.actions.updateFocusSymbol(symbol);
+	terminalStore.actions.openThesis(symbol);
+	paint();
+};
+
 /*
 paint writes lifecycle / holdings / findings shells from the module caches.
 */
@@ -41,13 +57,11 @@ const paint = () => {
 		...new Set([
 			...lastLifecycle.map((row) => row.symbol),
 			...lastPositions.map((position) => position.holding?.symbol).filter(Boolean),
+			...lastJournal.map((entry) => entry.symbol),
 		]),
 	].sort();
-	const holdings = lastPositions
-		.map((position) => position.holding)
-		.filter((holding): holding is Holding => holding !== undefined && holding !== null);
-	const nextHoldingKeys = [
-		...new Set(holdings.map((holding) => holdingKey(holding))),
+	const nextJournalKeys = [
+		...new Set(lastJournal.map((entry) => journalEntryKey(entry))),
 	].sort();
 	const nextFindingKeys = [
 		...new Set(lastFindings.map((finding) => findingKey(finding))),
@@ -59,13 +73,14 @@ const paint = () => {
 
 	paintJournalSurface(rootRef.current, {
 		activeSymbol: nextActive,
+		entries: lastJournal,
 		findings: lastFindings,
 		findingKeys: nextFindingKeys,
-			holdings: holdings,
-		holdingKeys: nextHoldingKeys,
+		journalKeys: nextJournalKeys,
 		lifecycleBySymbol: Object.fromEntries(
 			lastLifecycle.map((row) => [row.symbol, String(row.state)]),
 		),
+		onJournalSelect: selectJournalEntry,
 		onLifecycleSelect: selectLifecycleSymbol,
 		online: appStore.state.online,
 		symbols: nextSymbols,
@@ -101,6 +116,11 @@ paintJournalFindings refreshes the journal from the current DRAW findings batch.
 */
 export const paintJournalFindings = (value: unknown, _focusSymbol: string) => {
 	lastFindings = asRows<Finding>(value);
+	paint();
+};
+
+export const paintJournalEntries = (value: unknown, _focusSymbol: string) => {
+	lastJournal = asRows<Thesis>(value);
 	paint();
 };
 
@@ -143,21 +163,21 @@ const JournalSurfaceBody = () => {
 		<div className="min-h-0 overflow-auto px-4 py-[18px]">
 			<div className="mb-3 flex items-baseline justify-between">
 				<span className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
-					Holdings
+					Journal
 				</span>
 				<span
 					data-journal="holdings-meta"
 					className="font-mono text-[9.5px] text-(--f4)"
 				/>
 			</div>
-			<div className="flex flex-col gap-2" data-journal-host="holdings">
+			<div className="flex flex-col gap-2" data-journal-host="journal">
 				<Panel
 					variant="surface"
 					size="bare"
 					data-journal="holdings-empty"
 					className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
 				>
-					waiting for position frames
+					waiting for journal frames
 				</Panel>
 			</div>
 		</div>

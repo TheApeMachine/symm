@@ -86,6 +86,53 @@ const createHoldingCard = (key: string): HTMLElement => {
 	return card;
 };
 
+const createJournalCard = (
+	key: string,
+	onSelect: (key: string) => void,
+): HTMLElement => {
+	const card = document.createElement("button");
+	card.type = "button";
+	card.dataset.journalEntry = key;
+	card.className = cn(panelShell("w-full px-3 py-2.5 text-left"), "cursor-pointer");
+	card.style.display = "none";
+	card.addEventListener("click", () => onSelect(key));
+
+	const head = document.createElement("div");
+	head.className = "mb-2 flex items-start justify-between gap-2";
+
+	const title = document.createElement("div");
+	title.className = "min-w-0";
+
+	const symbol = document.createElement("div");
+	symbol.dataset.journal = "entry-symbol";
+	symbol.className = "font-mono font-semibold text-[12px] text-(--f1)";
+
+	const meta = document.createElement("div");
+	meta.dataset.journal = "entry-meta";
+	meta.className = "mt-0.5 truncate font-mono text-[10px] text-(--f4)";
+	title.append(symbol, meta);
+
+	const badge = document.createElement("span");
+	badge.dataset.journal = "entry-lifecycle";
+	head.append(title, badge);
+
+	const reason = document.createElement("div");
+	reason.dataset.journal = "entry-reason";
+	reason.className = "font-medium text-[11px] text-(--f2)";
+
+	const detail = document.createElement("div");
+	detail.dataset.journal = "entry-detail";
+	detail.className = "mt-1 font-mono text-[9.5px] text-(--f3)";
+
+	const graph = document.createElement("div");
+	graph.dataset.journal = "entry-graph";
+	graph.className = "mt-1 font-mono text-[9px] text-(--f4)";
+
+	card.append(head, reason, detail, graph);
+
+	return card;
+};
+
 const createFindingCard = (key: string): HTMLElement => {
 	const card = document.createElement("div");
 	card.dataset.finding = key;
@@ -280,7 +327,7 @@ const syncLifecycleShells = (
 };
 
 /*
-syncJournalShells creates or reorders lifecycle, holding, and finding shells
+syncJournalShells creates or reorders lifecycle, journal, and finding shells
 when journal keys change so paintJournalSurface only writes values in place.
 */
 export const syncJournalShells = (
@@ -288,16 +335,17 @@ export const syncJournalShells = (
 	input: {
 		symbols: string[];
 		onLifecycleSelect: (symbol: string) => void;
-		holdingKeys: string[];
+		onJournalSelect: (key: string) => void;
+		journalKeys: string[];
 		findingKeys: string[];
 	},
 ): void => {
 	syncLifecycleShells(root, input.symbols, input.onLifecycleSelect);
 	syncHostRows(
-		root.querySelector("[data-journal-host='holdings']"),
-		input.holdingKeys,
-		createHoldingCard,
-		"data-holding",
+		root.querySelector("[data-journal-host='journal']"),
+		input.journalKeys,
+		(key) => createJournalCard(key, input.onJournalSelect),
+		"data-journal-entry",
 	);
 	syncHostRows(
 		root.querySelector("[data-journal-host='findings']"),

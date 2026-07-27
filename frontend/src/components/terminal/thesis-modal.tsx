@@ -1,5 +1,5 @@
 import { terminalStore } from "#/collections/terminal";
-import type { Holding, Measurement, TickFrame } from "#/collections/types";
+import type { Holding, Measurement, Thesis, TickFrame } from "#/collections/types";
 import { ThesisDetailRail } from "#/components/terminal/thesis-detail-rail";
 import { writeThesisDetailRail } from "#/components/terminal/thesis-detail-paint";
 import {
@@ -8,6 +8,7 @@ import {
 } from "#/components/terminal/thesis-evidence-canvas";
 import {
 	accumulateThesisSnapshot,
+	thesisSnapshotFromPersisted,
 	thesisSnapshotFor,
 } from "#/components/terminal/thesis-snapshot";
 import { cn } from "#/lib/utils";
@@ -41,6 +42,7 @@ let lifecycle: Array<{ symbol: string; state: string }> = [];
 let holdings: Holding[] = [];
 let findings: Finding[] = [];
 let graphs: Graph[] = [];
+let journal: Thesis[] = [];
 let tick: TickFrame | undefined;
 
 const asRows = <T,>(value: unknown): T[] =>
@@ -117,6 +119,10 @@ export const paintThesis = (
 		graphs = asRows<Graph>(frame.graphs);
 	}
 
+	if (frame.journal !== undefined) {
+		journal = asRows<Thesis>(frame.journal);
+	}
+
 	if (frame.tick !== undefined) {
 		tick = asRows<TickFrame>(frame.tick).at(-1);
 	}
@@ -134,8 +140,19 @@ export const paintThesis = (
 	}
 
 	const count = tick?.count;
+	const persisted = [...journal]
+		.reverse()
+		.find(
+			(entry) => entry.lifecycle?.[symbol] !== undefined || entry.holdings?.[symbol] !== undefined,
+		);
+	let seed = persisted ? thesisSnapshotFromPersisted(persisted, symbol) : null;
+
+	if (retained !== null && retained.symbol === symbol) {
+		seed = accumulateThesisSnapshot(seed, retained);
+	}
+
 	const next = accumulateThesisSnapshot(
-		retained,
+		seed,
 		thesisSnapshotFor({
 			symbol,
 			tick: typeof count === "number" && Number.isFinite(count) ? count : null,
@@ -173,7 +190,7 @@ export const paintThesis = (
 		writeThesisDetailRail(thesis.rail, next);
 	}
 
-	paintThesisEvidence(graphs, symbol);
+	paintThesisEvidence(next.graph === null ? [] : [next.graph], symbol);
 	thesis.root.hidden = false;
 };
 

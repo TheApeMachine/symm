@@ -4,13 +4,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/symm/types"
 )
-
-var fastSonic = sonic.Config{
-	EncodeNullForInfOrNan: true,
-}.Froze()
 
 /*
 Graph is the single resident category network for the process lifetime. Nodes
@@ -24,15 +19,13 @@ type Graph struct {
 	NodeIndex       map[nodeKey]*Node             `json:"-"`
 	EdgeIndex       map[edgeKey]*Relation         `json:"-"`
 	edgesBySymbol   map[string][]edgeKey
-	prior           map[string]types.CategoryType
 	cadence         cadenceBook
 	touched         map[edgeKey]struct{}
 	previous        map[nodeKey]Node
 	evidence        *evidenceIndex
 	scratch         []string
 	evidenceScratch []string
-	// pair tracks cumulative activation mass for independence tests.
-	pair *pairMemory
+	pair            *pairMemory
 }
 
 /*
@@ -46,7 +39,6 @@ func NewGraph() *Graph {
 		NodeIndex:       map[nodeKey]*Node{},
 		EdgeIndex:       map[edgeKey]*Relation{},
 		edgesBySymbol:   map[string][]edgeKey{},
-		prior:           map[string]types.CategoryType{},
 		previous:        map[nodeKey]Node{},
 		evidence:        newEvidenceIndex(),
 		scratch:         make([]string, 0, len(types.CategoryOrder)),
@@ -100,9 +92,7 @@ func (graph *Graph) UpdateFrom(thesis *types.Thesis) {
 	if graph.touched == nil {
 		graph.touched = make(map[edgeKey]struct{})
 	} else {
-		for key := range graph.touched {
-			delete(graph.touched, key)
-		}
+		clear(graph.touched)
 	}
 
 	if graph.evidence == nil {
@@ -112,9 +102,7 @@ func (graph *Graph) UpdateFrom(thesis *types.Thesis) {
 	graph.evidence.UpdateFrom(thesis)
 
 	for symbol, bySymbol := range thesis.Categories {
-		for key := range graph.previous {
-			delete(graph.previous, key)
-		}
+		clear(graph.previous)
 
 		for _, category := range bySymbol {
 			if category.Symbol == "" || category.Type == types.CategoryTypeNone {
@@ -144,7 +132,7 @@ func (graph *Graph) UpdateFrom(thesis *types.Thesis) {
 
 		mean := graph.cadence.touch(symbol, thesis.At)
 
-		for left := 0; left < len(bySymbol); left++ {
+		for left := range bySymbol {
 			for right := left + 1; right < len(bySymbol); right++ {
 				graph.pair.coobserve(
 					symbol, bySymbol[left].Type, bySymbol[right].Type,
@@ -156,8 +144,7 @@ func (graph *Graph) UpdateFrom(thesis *types.Thesis) {
 
 		graph.linkActivationLeads(thesis, symbol, graph.previous)
 		graph.cadence.decayIdle(graph, symbol, thesis.At, mean)
-		graph.prior[symbol] = Top(bySymbol).Type
-		graph.Priors[symbol] = graph.prior[symbol]
+		graph.Priors[symbol] = Top(bySymbol).Type
 	}
 }
 
@@ -241,11 +228,6 @@ func (graph *Graph) strengthen(
 	relation.Weight += mass
 	relation.At = at
 	relation.Evidence = append(relation.Evidence[:0], evidence...)
-
-	if graph.touched == nil {
-		graph.touched = map[edgeKey]struct{}{}
-	}
-
 	graph.touched[key] = struct{}{}
 }
 
@@ -282,11 +264,6 @@ func (graph *Graph) strengthenJoined(
 	relation.At = at
 	relation.Evidence = append(relation.Evidence[:0], first...)
 	relation.Evidence = append(relation.Evidence, second...)
-
-	if graph.touched == nil {
-		graph.touched = map[edgeKey]struct{}{}
-	}
-
 	graph.touched[key] = struct{}{}
 }
 
@@ -319,26 +296,5 @@ func (graph *Graph) Prior(symbol string) types.CategoryType {
 		return types.CategoryTypeNone
 	}
 
-	return graph.prior[symbol]
-}
-
-/*
-MarshalJSON emits the resident graph with exported node/edge slices while using
-the frozen Sonic config so non-finite floats become JSON null instead of
-aborting persistence.
-*/
-func (graph *Graph) MarshalJSON() ([]byte, error) {
-	if graph == nil {
-		return fastSonic.Marshal((*Graph)(nil))
-	}
-
-	return fastSonic.Marshal(struct {
-		Nodes []*Node                      `json:"nodes"`
-		Edges []*Relation                  `json:"edges"`
-		Priors map[string]types.CategoryType `json:"priors"`
-	}{
-		Nodes: graph.Nodes,
-		Edges: graph.Edges,
-		Priors: graph.Priors,
-	})
+	return graph.Priors[symbol]
 }

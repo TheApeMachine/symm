@@ -11,9 +11,14 @@ import (
 	"github.com/theapemachine/symm/utils"
 )
 
+var fastSonic = sonic.Config{
+	EncodeNullForInfOrNan: true,
+}.Froze()
+
 /*
-JournalStore manages persistent file storage for holdings and postmortem findings.
-It ensures trade journal records survive system restarts.
+JournalStore persists the trade journal as Thesis snapshots. The live Thesis
+remains the only lifecycle model; the journal file is just a retained slice of
+those snapshots for restart replay.
 */
 type JournalStore struct {
 	mu       sync.Mutex
@@ -21,15 +26,8 @@ type JournalStore struct {
 }
 
 /*
-JournalPayload defines the JSON serialization schema for persisted trade history.
-*/
-type JournalPayload struct {
-	Holdings []*types.Holding `json:"holdings"`
-	Findings []types.Finding  `json:"findings"`
-}
-
-/*
-NewJournalStore constructs a new JournalStore pointing to journal.json in system data_path.
+NewJournalStore constructs a new JournalStore pointing to journal.json in the
+system data path.
 */
 func NewJournalStore() *JournalStore {
 	dir := utils.ResolveDataPath()
@@ -38,15 +36,13 @@ func NewJournalStore() *JournalStore {
 		_ = os.MkdirAll(dir, 0755)
 	}
 
-	return &JournalStore{
-		filePath: filepath.Join(dir, "journal.json"),
-	}
+	return &JournalStore{filePath: filepath.Join(dir, "journal.json")}
 }
 
 /*
-Save writes active and historical holdings plus postmortem findings to disk.
+Save writes the retained Thesis snapshots to disk.
 */
-func (journalStore *JournalStore) Save(holdings []*types.Holding, findings []types.Finding) error {
+func (journalStore *JournalStore) Save(theses []*types.Thesis) error {
 	if journalStore == nil || journalStore.filePath == "" {
 		return nil
 	}
@@ -54,12 +50,7 @@ func (journalStore *JournalStore) Save(holdings []*types.Holding, findings []typ
 	journalStore.mu.Lock()
 	defer journalStore.mu.Unlock()
 
-	payload := JournalPayload{
-		Holdings: holdings,
-		Findings: findings,
-	}
-
-	data, err := sonic.Marshal(payload)
+	data, err := fastSonic.Marshal(theses)
 
 	if err != nil {
 		return errnie.Error(err)
@@ -69,11 +60,11 @@ func (journalStore *JournalStore) Save(holdings []*types.Holding, findings []typ
 }
 
 /*
-Load retrieves saved holdings and findings from disk on boot.
+Load retrieves saved Thesis snapshots from disk on boot.
 */
-func (journalStore *JournalStore) Load() ([]*types.Holding, []types.Finding, error) {
+func (journalStore *JournalStore) Load() ([]*types.Thesis, error) {
 	if journalStore == nil || journalStore.filePath == "" {
-		return nil, nil, nil
+		return nil, nil
 	}
 
 	journalStore.mu.Lock()
@@ -83,17 +74,17 @@ func (journalStore *JournalStore) Load() ([]*types.Holding, []types.Finding, err
 
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil, nil
+			return nil, nil
 		}
 
-		return nil, nil, errnie.Error(err)
+		return nil, errnie.Error(err)
 	}
 
-	var payload JournalPayload
+	var theses []*types.Thesis
 
-	if err := sonic.Unmarshal(data, &payload); err != nil {
-		return nil, nil, errnie.Error(err)
+	if err := sonic.Unmarshal(data, &theses); err != nil {
+		return nil, errnie.Error(err)
 	}
 
-	return payload.Holdings, payload.Findings, nil
+	return theses, nil
 }

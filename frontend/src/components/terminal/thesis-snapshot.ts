@@ -2,6 +2,8 @@ import type {
 	Holding,
 	Measurement,
 	MeasurementCategory,
+	Thesis,
+	CategoryGraph,
 } from "#/collections/types";
 import type {
 	Finding,
@@ -43,6 +45,41 @@ export type ThesisSnapshotInput = {
 	categories: Array<Category & { symbol?: string }>;
 	holdings: Holding[];
 	findings: Finding[];
+};
+
+const graphFromCategory = (
+	symbol: string,
+	graph: CategoryGraph | undefined,
+): Graph | null => {
+	if (graph === undefined) {
+		return null;
+	}
+
+	return {
+		symbol,
+		at: graph.edges.at(-1)?.at ?? graph.nodes.at(-1)?.at ?? new Date(0).toISOString(),
+		nodes: graph.nodes
+			.filter((node) => node.symbol === symbol)
+			.map((node) => ({
+				key: `${node.symbol}/${node.type}`,
+				kind: "category",
+				category: node.type,
+				measurement: {
+					strength: node.strength,
+					freshness: node.freshness,
+					at: node.at,
+				},
+			})),
+		edges: graph.edges
+			.filter((edge) => edge.symbol === symbol)
+			.map((edge) => ({
+				from: `${edge.symbol}/${edge.from}`,
+				to: `${edge.symbol}/${edge.to}`,
+				type: edge.type,
+				at: edge.at,
+				observedFrom: edge.at,
+			})),
+	};
 };
 
 const categoryFromMeasurement = (
@@ -181,4 +218,21 @@ export const thesisSnapshotFor = (
 	),
 	holdings: input.holdings.filter((holding) => holding.symbol === input.symbol),
 	findings: input.findings.filter((finding) => finding.symbol === input.symbol),
+});
+
+export const thesisSnapshotFromPersisted = (
+	thesis: Thesis,
+	symbol: string,
+): ThesisSnapshot => ({
+	symbol,
+	tick: thesis.tick ?? null,
+	lifecycle: thesis.lifecycle?.[symbol] ?? null,
+	graph: graphFromCategory(symbol, thesis.graphs?.categories),
+	measurements: [],
+	decision: (thesis.decisions ?? []).find((decision) => decision.symbol === symbol) ?? null,
+	forecasts: (thesis.forecasts ?? []).filter((forecast) => forecast.symbol === symbol),
+	hypotheses: (thesis.hypotheses ?? []).filter((hypothesis) => hypothesis.symbol === symbol),
+	categories: thesis.categories?.[symbol] ?? [],
+	holdings: thesis.holdings?.[symbol] ? [thesis.holdings[symbol]] : [],
+	findings: (thesis.findings ?? []).filter((finding) => finding.symbol === symbol),
 });
