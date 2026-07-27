@@ -126,6 +126,7 @@ func (planner *Planner) Update(
 
 	thesis.ResetTick(at, tick)
 	thesis.AppendMeasurements(rows)
+
 	started := time.Now()
 
 	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "measure_end", map[string]any{
@@ -137,7 +138,7 @@ func (planner *Planner) Update(
 		planner.analyzer.Update(thesis)
 	}
 
-	return thesis
+	return nil
 }
 
 func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
@@ -185,7 +186,7 @@ func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 }
 
 /*
-retainUnapplied drops settled desk outcomes but keeps Enter decisions whose
+retainUnapplied preserves unapplied Enter decisions when their target
 symbol is not yet OPEN on Balance, so a slow Crypto.Apply is not erased by the
 next Decide.
 */

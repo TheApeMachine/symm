@@ -19,7 +19,9 @@ const view = (buffer: ArrayBuffer) => new DataView(buffer);
 parseManifoldBinary decodes one backend GPU RGBA frame. It returns null for
 legacy scalar planes and malformed frames so they cannot replace the picture.
 */
-export const parseManifoldBinary = (buffer: ArrayBuffer): DisplayFrame | null => {
+export const parseManifoldBinary = (
+	buffer: ArrayBuffer,
+): DisplayFrame | null => {
 	if (buffer.byteLength < 26) {
 		return null;
 	}

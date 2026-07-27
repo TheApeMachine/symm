@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"unsafe"
+
 	"github.com/bytedance/sonic"
 	"github.com/bytedance/sonic/ast"
 	"github.com/theapemachine/errnie"
@@ -48,7 +50,9 @@ func EachKey(raw []byte, visit func(key string, value []byte) bool) error {
 			))
 		}
 
-		if !visit(pair.Key, []byte(value)) {
+		valBytes := unsafe.Slice(unsafe.StringData(value), len(value))
+
+		if !visit(pair.Key, valBytes) {
 			return nil
 		}
 	}

@@ -80,21 +80,17 @@ func (solver *Solver) publish(
 		population = solver.domain.ParticleCount()
 	}
 
-	sampled := make(map[string]intensityCandidate, len(candidates))
+	if solver.sampledScratch == nil {
+		solver.sampledScratch = make(map[string]intensityCandidate, len(candidates))
+	} else {
+		clear(solver.sampledScratch)
+	}
 
 	for _, candidate := range candidates {
-		sampled[candidate.symbol] = candidate
+		solver.sampledScratch[candidate.symbol] = candidate
 	}
 
-	symbols := make([]string, 0, len(solver.symbols))
-
-	for symbol := range solver.symbols {
-		symbols = append(symbols, symbol)
-	}
-
-	sort.Strings(symbols)
-
-	for _, symbol := range symbols {
+	for _, symbol := range solver.orderedSymbols {
 		slot := solver.symbols[symbol]
 
 		if slot == nil {
@@ -102,7 +98,7 @@ func (solver *Solver) publish(
 		}
 
 		outcome, appended := changed[symbol]
-		candidate, hasSample := sampled[symbol]
+		candidate, hasSample := solver.sampledScratch[symbol]
 
 		if appended && !hasSample {
 			continue
@@ -189,6 +185,10 @@ func (solver *Solver) appendBatches(
 
 		slot.start = start
 		slot.end = start + len(batch.Particles)
+		if _, exists := solver.symbols[candidate.symbol]; !exists {
+			solver.orderedSymbols = append(solver.orderedSymbols, candidate.symbol)
+			sort.Strings(solver.orderedSymbols)
+		}
 		solver.symbols[candidate.symbol] = slot
 		solver.active[candidate.symbol] = struct{}{}
 		grew = true

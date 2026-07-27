@@ -49,11 +49,13 @@ type Solver struct {
 	*PhaseCorpus
 	mu       sync.Mutex
 	config   pfluid.Config
-	domain   *pfluid.Domain
-	symbols  map[string]*symbolSlot
-	active   map[string]struct{}
-	books    *bookSampler
-	recorder *audit.Recorder
+	domain         *pfluid.Domain
+	symbols        map[string]*symbolSlot
+	orderedSymbols []string
+	sampledScratch map[string]intensityCandidate
+	active         map[string]struct{}
+	books          *bookSampler
+	recorder       *audit.Recorder
 }
 
 /*
@@ -290,6 +292,7 @@ func (solver *Solver) Close() {
 	errnie.Error(solver.domain.Close())
 	solver.domain = nil
 	clear(solver.symbols)
+	solver.orderedSymbols = solver.orderedSymbols[:0]
 	clear(solver.active)
 	solver.PhaseCorpus = nil
 }

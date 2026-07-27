@@ -112,9 +112,7 @@ func (signal *Signal) Calculate(
 	books []kraken.BookData,
 ) ([]*types.Measurement, error) {
 	out := make([]*types.Measurement, 0, len(trades))
-	uiOut := datura.NewMap(
-		"measurements", make([]*types.Measurement, 0),
-	)
+	var focusMeasurements []*types.Measurement
 
 	for _, row := range tickers {
 		if row.Symbol == "" || row.Timestamp.IsZero() {
@@ -152,14 +150,12 @@ func (signal *Signal) Calculate(
 		out = append(out, measurements...)
 
 		if row.Symbol == types.Focus() {
-			uiOut["measurements"] = append(
-				uiOut["measurements"].([]*types.Measurement), measurements...,
-			)
+			focusMeasurements = append(focusMeasurements, measurements...)
 		}
 	}
 
-	if len(uiOut["measurements"].([]*types.Measurement)) > 0 {
-		utils.Publish(signal.ui, uiOut)
+	if len(focusMeasurements) > 0 {
+		utils.Publish(signal.ui, datura.NewMap("measurements", focusMeasurements))
 	}
 
 	return out, nil

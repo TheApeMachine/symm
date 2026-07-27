@@ -146,20 +146,16 @@ func (signal *Signal) Calculate(
 		return nil, err
 	}
 
-	uiOut := datura.NewMap(
-		"measurements", make([]*types.Measurement, 0),
-	)
+	var focusMeasurements []*types.Measurement
 
 	for _, measurement := range out {
 		if measurement.Symbol == types.Focus() {
-			uiOut["measurements"] = append(
-				uiOut["measurements"].([]*types.Measurement), measurement,
-			)
+			focusMeasurements = append(focusMeasurements, measurement)
 		}
 	}
 
-	if len(uiOut["measurements"].([]*types.Measurement)) > 0 {
-		utils.Publish(signal.ui, uiOut)
+	if len(focusMeasurements) > 0 {
+		utils.Publish(signal.ui, datura.NewMap("measurements", focusMeasurements))
 	}
 
 	return out, nil

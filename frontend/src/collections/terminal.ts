@@ -25,7 +25,7 @@ export const terminalStore = createStore(
 		thesisSymbol: null as string | null,
 	},
 	({ setState }) => ({
-			toggleScanlines: () =>
+		toggleScanlines: () =>
 			setState((prev) => ({
 				...prev,
 				scanlines: !prev.scanlines,

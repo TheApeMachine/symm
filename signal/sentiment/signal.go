@@ -91,10 +91,7 @@ func (signal *Signal) Calculate(
 	}
 
 	out := make([]*types.Measurement, 0, 64)
-
-	uiOut := datura.NewMap(
-		"measurements", make([]*types.Measurement, 0),
-	)
+	var focusMeasurements []*types.Measurement
 
 	if signal.crossSection == nil {
 		return out, nil
@@ -218,14 +215,12 @@ func (signal *Signal) Calculate(
 		out = append(out, measurement)
 
 		if measurement.Symbol == types.Focus() {
-			uiOut["measurements"] = append(
-				uiOut["measurements"].([]*types.Measurement), measurement,
-			)
+			focusMeasurements = append(focusMeasurements, measurement)
 		}
 	}
 
-	if len(uiOut["measurements"].([]*types.Measurement)) > 0 {
-		utils.Publish(signal.ui, uiOut)
+	if len(focusMeasurements) > 0 {
+		utils.Publish(signal.ui, datura.NewMap("measurements", focusMeasurements))
 	}
 
 	return out, nil
