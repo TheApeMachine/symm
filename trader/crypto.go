@@ -67,6 +67,8 @@ func NewCrypto(
 		if uiHub != nil && len(savedTheses) > 0 {
 			uiHub.Publish(datura.NewMap("journal", savedTheses).MarshalAndFree())
 		}
+	} else {
+		return nil, errnie.Error(err)
 	}
 
 	crypto.Actor = types.NewActor(ctx, "crypto", map[string]types.Handler{
@@ -216,7 +218,9 @@ func (crypto *Crypto) publish(thesis *types.Thesis, elapsed time.Duration) {
 	}
 
 	if journalChanged && crypto.journal != nil {
-		_ = crypto.journal.Save(crypto.theses)
+		if err := crypto.journal.Save(crypto.theses); err != nil {
+			errnie.Error(err)
+		}
 	}
 }
 

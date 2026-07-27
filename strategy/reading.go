@@ -45,7 +45,7 @@ noise share CognitiveClears uses, the phase basin be ready, the horizon be the
 next event, and cognition be non-ambiguous with positive winner contrast.
 */
 func (reading Reading) Reserved() bool {
-	if reading.Ambiguous || !reading.BasinReady {
+	if reading.Ambiguous {
 		return false
 	}
 
@@ -57,7 +57,7 @@ func (reading Reading) Reserved() bool {
 		return false
 	}
 
-	if reading.Margin <= reading.Uncertainty {
+	if reading.Margin <= 0 && reading.Lead <= 0 {
 		return false
 	}
 
@@ -65,7 +65,11 @@ func (reading Reading) Reserved() bool {
 		return false
 	}
 
-	return reading.Lead > reading.Noise
+	if reading.BasinReady {
+		return reading.Lead >= reading.Noise
+	}
+
+	return reading.Lead > 0
 }
 
 /*

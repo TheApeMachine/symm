@@ -63,6 +63,16 @@ export const paintHawkes = (value: unknown, focusSymbol: string) => {
 			if (typeof mapped === "number" && Number.isFinite(mapped)) {
 				return mapped;
 			}
+
+			if (
+				typeof mapped === "object" &&
+				mapped !== null &&
+				"raw" in mapped &&
+				typeof mapped.raw === "number" &&
+				Number.isFinite(mapped.raw)
+			) {
+				return mapped.raw;
+			}
 		}
 
 		return undefined;
@@ -87,7 +97,17 @@ export const paintHawkes = (value: unknown, focusSymbol: string) => {
 					fallback?.sellIntensity,
 					fallback?.branching,
 					fallback?.radius,
-				].filter((entry): entry is number => typeof entry === "number");
+				].flatMap((entry) =>
+					typeof entry === "number" && Number.isFinite(entry)
+						? [entry]
+						: typeof entry === "object" &&
+							entry !== null &&
+							"raw" in entry &&
+							typeof entry.raw === "number" &&
+							Number.isFinite(entry.raw)
+							? [entry.raw]
+							: [],
+				);
 
 	if (resolved.length === 0) {
 		clearCanvas(context, width, height);

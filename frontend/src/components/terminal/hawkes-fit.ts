@@ -64,7 +64,17 @@ const reading = (
 
 		const mapped = measurement.metrics?.[key];
 
-		if (typeof mapped !== "number" || !Number.isFinite(mapped)) {
+		const value =
+			typeof mapped === "number"
+				? mapped
+				: typeof mapped === "object" &&
+					mapped !== null &&
+					"raw" in mapped &&
+					typeof mapped.raw === "number"
+					? mapped.raw
+					: null;
+
+		if (value === null || !Number.isFinite(value)) {
 			continue;
 		}
 
@@ -72,7 +82,7 @@ const reading = (
 			...measurement,
 			metric,
 			side: side === "" ? measurement.side : side,
-			raw: mapped,
+			raw: value,
 			normalized: measurement.normalized ?? null,
 		};
 	}

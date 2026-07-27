@@ -249,6 +249,8 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 		utility := (forecast.ExecutableReturn() * causalMult) - forecast.Uncertainty
 		magnitude := math.Abs(forecast.ExpectedReturn)
 		positiveReturn := math.Max(forecast.ExpectedReturn, 0)
+		opportunityLane := reading.Reserved() ||
+			(positiveReturn > 0 && reading.Horizon == 1 && reading.Contrast > 0 && !reading.PhaseOpposes())
 
 		if reading.LookaheadScore > 0 {
 			utility += positiveReturn * reading.LookaheadScore
@@ -287,12 +289,24 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			utility = positiveReturn
 		}
 
-		if reading.Reserved() && reservedFloor > utility {
+		if opportunityLane && reservedFloor > utility {
 			utility = reservedFloor
+		}
+
+		if opportunityLane && positiveReturn > 0 && utility <= 0 {
+			utility = positiveReturn
 		}
 
 		if exhaustionRebound && reboundFloor > utility {
 			utility = reboundFloor
+		}
+
+		if reading.PhaseOpposes() && !opportunityLane && !exhaustionRebound {
+			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
+				*forecast, utility, "phase_opposition",
+				"phase dial attractor conflicts with non-opportunity long setup: "+reading.PhaseClass,
+			))
+			continue
 		}
 
 		// Boost utility by the opportunity-leads share from the resident category
@@ -314,7 +328,7 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			continue
 		}
 
-		if cognitionReady && !reading.CognitiveClears(*forecast) {
+		if cognitionReady && !reading.CognitiveClears(*forecast) && !opportunityLane {
 			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
 				*forecast, utility, "cognitive_weak",
 				"cognitive confidence does not clear forecast noise share",
@@ -324,7 +338,7 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 
 		allocation := "normal"
 
-		if reading.Reserved() {
+		if opportunityLane {
 			allocation = "reserved"
 		}
 
@@ -339,6 +353,7 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			Symbol:            forecast.Symbol,
 			At:                forecast.At,
 			Utility:           utility,
+			Opportunity:       opportunityLane,
 			AllocationHaircut: haircut,
 			AllocationClass:   allocation,
 			Alternatives: map[string]float64{

@@ -20,6 +20,7 @@ type Decision struct {
 	AllocationHaircut float64            `json:"allocation_haircut" validate:"finite,nonnegative"`
 	Alternatives      map[string]float64 `json:"alternatives"`
 	AllocationClass   string             `json:"allocationClass"`
+	Opportunity       bool               `json:"opportunity"`
 	ProposedNotional  *decimal.Decimal   `json:"proposedNotional" validate:"required"`
 	ProposedQuantity  *decimal.Decimal   `json:"proposedQuantity" validate:"required"`
 	ReferencePrice    *decimal.Decimal   `json:"referencePrice" validate:"required"`

@@ -56,7 +56,48 @@ func (journalStore *JournalStore) Save(theses []*types.Thesis) error {
 		return errnie.Error(err)
 	}
 
-	return os.WriteFile(journalStore.filePath, data, 0644)
+	temporary, err := os.CreateTemp(filepath.Dir(journalStore.filePath), ".journal-*")
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	temporaryPath := temporary.Name()
+
+	defer os.Remove(temporaryPath)
+
+	if err := temporary.Chmod(0600); err != nil {
+		temporary.Close()
+		return errnie.Error(err)
+	}
+
+	if _, err := temporary.Write(data); err != nil {
+		temporary.Close()
+		return errnie.Error(err)
+	}
+
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return errnie.Error(err)
+	}
+
+	if err := temporary.Close(); err != nil {
+		return errnie.Error(err)
+	}
+
+	if err := os.Rename(temporaryPath, journalStore.filePath); err != nil {
+		return errnie.Error(err)
+	}
+
+	directory, err := os.Open(filepath.Dir(journalStore.filePath))
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	defer directory.Close()
+
+	return errnie.Error(directory.Sync())
 }
 
 /*

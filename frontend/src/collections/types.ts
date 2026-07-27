@@ -379,7 +379,15 @@ export type Measurement = {
 		from: string;
 		through: string;
 	};
-	metrics?: Record<string, any>;
+	metrics?: Record<
+		string,
+		| number
+		| {
+				raw: number;
+				normalized?: number | null;
+				unit?: string;
+			}
+	>;
 	categories?: MeasurementCategory[];
 };
 

@@ -573,9 +573,8 @@ func (analyzer *Analyzer) stamp(
 	thesis *types.Thesis,
 ) {
 	thesis.EachMeasurement(func(measurement *types.Measurement) bool {
-		if measurement != nil && !measurement.At.IsZero() {
+		if measurement != nil && measurement.At.After(thesis.At) {
 			thesis.At = measurement.At
-			return false
 		}
 
 		return true

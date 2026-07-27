@@ -16,10 +16,10 @@ Arbiter ranks enter candidates by utility, fills free slots, and rotates when
 a challenger clears the one-step wait gate against an open incumbent.
 */
 type Arbiter struct {
-	desk    *broker.Desk
-	price   *broker.Price
-	admit   *Admit
-	rotate  Rotate
+	desk   *broker.Desk
+	price  *broker.Price
+	admit  *Admit
+	rotate Rotate
 }
 
 /*
@@ -32,10 +32,10 @@ func NewArbiter(
 	rotate Rotate,
 ) *Arbiter {
 	return &Arbiter{
-		desk:    desk,
-		price:   price,
-		admit:   admit,
-		rotate:  rotate,
+		desk:   desk,
+		price:  price,
+		admit:  admit,
+		rotate: rotate,
 	}
 }
 
@@ -74,7 +74,7 @@ func (arbiter *Arbiter) Select(thesis *types.Thesis) {
 	admittedReserved := 0
 
 	for _, decision := range enters {
-		opportunity := decision.AllocationClass == "reserved"
+		opportunity := decision.Opportunity
 		useNormal := open+admittedNormal < maxNormal
 		useReserved := opportunity &&
 			open+admittedNormal+admittedReserved < maxAll
@@ -122,7 +122,7 @@ func (arbiter *Arbiter) displace(
 	decision *types.Decision,
 	incumbents []Incumbent,
 ) bool {
-	opportunity := decision.AllocationClass == "reserved"
+	opportunity := decision.Opportunity
 	index, found := arbiter.rotate.Best(decision.Utility, incumbents)
 
 	if !found {

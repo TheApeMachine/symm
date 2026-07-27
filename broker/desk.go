@@ -216,9 +216,27 @@ func (desk *Desk) hydrateRecovered() error {
 	for _, row := range rows {
 		side := strings.ToLower(row.trade.Type)
 
-		if side == "sell" {
-			delete(holdings, row.symbol)
-			delete(notionals, row.symbol)
+		if side == "sell" && row.trade.Volume != nil {
+			holding := holdings[row.symbol]
+
+			if holding == nil || holding.Qty == nil {
+				continue
+			}
+
+			sold := decimal.Min(holding.Qty, row.trade.Volume)
+			remaining := holding.Qty.Sub(sold)
+
+			if remaining.Sign() <= 0 {
+				delete(holdings, row.symbol)
+				delete(notionals, row.symbol)
+				continue
+			}
+
+			if notional := notionals[row.symbol]; notional != nil {
+				notionals[row.symbol] = holding.EntryPrice.Mul(remaining)
+			}
+
+			holding.Qty = remaining
 			continue
 		}
 
