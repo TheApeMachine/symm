@@ -229,6 +229,7 @@ func (market *Market) Apply(
 		conn *mockapi.MockConn
 	}{
 		{"public", market.Public},
+		{"private", market.Private},
 		{"paper", market.Paper},
 		{"level3", market.Level3},
 	} {
@@ -313,28 +314,44 @@ func (market *Market) Apply(
 		return errnie.Err(errnie.Validation, "tests: production public rejected frame", err)
 	}
 
-	if err := market.Paper.MatchPaper(); err != nil {
-		return errnie.Err(errnie.Internal, "tests: match resting paper orders", err)
-	}
+	for _, transport := range []struct {
+		name string
+		conn *mockapi.MockConn
+	}{
+		{"private", market.Private},
+		{"paper", market.Paper},
+	} {
+		if err := transport.conn.MatchPaper(); err != nil {
+			return errnie.Err(errnie.Internal, "tests: match resting "+transport.name+" orders", err)
+		}
 
-	if err := market.Paper.Drain(); err != nil {
-		return errnie.Err(errnie.IO, "tests: drain private frames", err)
-	}
+		if err := transport.conn.Drain(); err != nil {
+			return errnie.Err(errnie.IO, "tests: drain "+transport.name+" private frames", err)
+		}
 
-	if err := market.Paper.Err(); err != nil {
-		return errnie.Err(errnie.Validation, "tests: production private rejected frame", err)
+		if err := transport.conn.Err(); err != nil {
+			return errnie.Err(errnie.Validation, "tests: production "+transport.name+" private rejected frame", err)
+		}
 	}
 
 	if err := afterStep(); err != nil {
 		return errnie.Err(errnie.Internal, "tests: market step failed", err)
 	}
 
-	if err := market.Paper.Drain(); err != nil {
-		return errnie.Err(errnie.IO, "tests: drain order responses", err)
-	}
+	for _, transport := range []struct {
+		name string
+		conn *mockapi.MockConn
+	}{
+		{"private", market.Private},
+		{"paper", market.Paper},
+	} {
+		if err := transport.conn.Drain(); err != nil {
+			return errnie.Err(errnie.IO, "tests: drain "+transport.name+" order responses", err)
+		}
 
-	if err := market.Paper.Err(); err != nil {
-		return errnie.Err(errnie.Validation, "tests: production order response rejected", err)
+		if err := transport.conn.Err(); err != nil {
+			return errnie.Err(errnie.Validation, "tests: production "+transport.name+" order response rejected", err)
+		}
 	}
 
 	return nil
@@ -345,6 +362,23 @@ configure assigns fixture streams to the Kraken subscription and REST routes.
 */
 func (market *Market) configure() {
 	err := market.Paper.EnablePaper(mockapi.PaperOptions{
+		Quote: func(symbol string) (float64, float64, float64, float64, bool) {
+			quote, exists := market.signal.Quote(symbol)
+			return quote.Bid, quote.BidQty, quote.Ask, quote.AskQty, exists
+		},
+		Now: market.signal.Now,
+		Balances: map[string]float64{
+			"USD": defaultPaperQuoteBalance,
+		},
+		MakerFee: defaultPaperMakerFee,
+		TakerFee: defaultPaperTakerFee,
+	})
+
+	if err != nil {
+		panic(err)
+	}
+
+	err = market.Private.EnablePaper(mockapi.PaperOptions{
 		Quote: func(symbol string) (float64, float64, float64, float64, bool) {
 			quote, exists := market.signal.Quote(symbol)
 			return quote.Bid, quote.BidQty, quote.Ask, quote.AskQty, exists

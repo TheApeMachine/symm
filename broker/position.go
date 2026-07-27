@@ -39,6 +39,7 @@ type Position struct {
 	seenExec   map[string]struct{}
 	Buffered   []kraken.ExecutionData `json:"buffered"`
 	Holding    *types.Holding         `json:"holding"`
+	closing    bool
 	market     *types.Actor
 	account    *types.Actor
 }
@@ -186,7 +187,12 @@ func (position *Position) Close() (err error) {
 		return nil
 	}
 
+	if position.cancel != nil {
+		position.cancel()
+	}
+
 	errors.Join(err, position.Holding.Close())
+	position.closing = false
 	position.Status = types.CLOSED
 
 	return errnie.Error(err)
@@ -233,8 +239,24 @@ func (position *Position) onOrder(message any) any {
 	}
 
 	row := response.Result
+
+	if !response.IsSuccess() || (response.ReqID != position.EntryOrder.ReqID &&
+		response.ReqID != position.ExitOrder.ReqID) {
+		return nil
+	}
+
 	position.OrderID = row.OrderID
 	position.Status = types.PENDING
+	position.closing = response.ReqID == position.ExitOrder.ReqID
+
+	buffered := position.Buffered
+	position.Buffered = nil
+
+	for _, row := range buffered {
+		position.applyExecution(row)
+	}
+
+	position.Publish()
 
 	return nil
 }
@@ -259,49 +281,70 @@ func (position *Position) onExecutions(message any) any {
 	rows := execution.Data
 
 	for _, row := range rows {
-		symbol := position.Holding.Symbol
-
-		if symbol == "" {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"position: nil holding for execution symbol "+row.Symbol,
-				nil,
-			))
-
-			return nil
-		}
-
-		if row.ExecID != "" {
-			position.seenExec[row.ExecID] = struct{}{}
-		}
-
-		row.Side = strings.ToLower(row.Side)
-		closed := false
-
-		position.price.RecordFill(
-			&position.pair, position.Holding, row, &position.Fills,
-		)
-
-		if row.Side == "buy" && row.OrderStatus == "filled" {
-			if position.Holding.Stoploss != nil {
-				position.Holding.EntryPrice = row.Cost
-				position.Holding.Stoploss.Update(row.Cost)
+		if position.OrderID == "" {
+			if row.Symbol != position.Holding.Symbol {
+				continue
 			}
+
+			position.Buffered = append(position.Buffered, row)
+			continue
 		}
 
-		position.Status = types.Status(row.OrderStatus)
-		position.Holding.Status = types.Status(row.OrderStatus)
-
-		if err := position.balance.Publish(); err != nil {
-			errnie.Error(err)
-		}
-
-		if closed {
-			position.Close()
-		}
+		position.applyExecution(row)
 	}
 
 	return nil
+}
+
+func (position *Position) applyExecution(row kraken.ExecutionData) {
+	if position.Holding == nil || position.Holding.Symbol == "" ||
+		row.Symbol != position.Holding.Symbol {
+		return
+	}
+
+	if row.OrderID != "" && position.OrderID != "" && row.OrderID != position.OrderID {
+		return
+	}
+
+	if row.ExecID != "" {
+		if _, seen := position.seenExec[row.ExecID]; seen {
+			return
+		}
+
+		position.seenExec[row.ExecID] = struct{}{}
+	}
+
+	row.Side = strings.ToLower(row.Side)
+	closed := row.Side == "sell" && row.OrderStatus == "filled"
+
+	position.price.RecordFill(
+		&position.pair, position.Holding, row, &position.Fills,
+	)
+
+	if row.Side == "buy" && row.OrderStatus == "filled" &&
+		position.Holding.Stoploss != nil && position.Holding.EntryPrice != nil {
+		position.Holding.Stoploss.Update(position.Holding.EntryPrice)
+	}
+
+	position.Status = types.Status(row.OrderStatus)
+	position.Holding.Status = types.Status(row.OrderStatus)
+
+	if row.Side == "sell" {
+		switch position.Status {
+		case types.CANCELED, types.ERROR, types.EXPIRED, types.REJECTED:
+			position.closing = false
+		}
+	}
+
+	if err := position.balance.Publish(); err != nil {
+		errnie.Error(err)
+	}
+
+	position.Publish()
+
+	if closed {
+		position.Close()
+	}
 }
 
 /*
@@ -354,6 +397,10 @@ func (position *Position) Enter() *Position {
 Exit submits a market sell for the sellable ledger quantity.
 */
 func (position *Position) Exit() error {
+	if position.closing || position.Status == types.CLOSED {
+		return nil
+	}
+
 	if err := position.api.AddOrder(position.ExitOrder); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -362,5 +409,10 @@ func (position *Position) Exit() error {
 		))
 	}
 
-	return position.Close()
+	position.closing = true
+	position.Status = types.PENDING
+	position.Holding.Status = types.PENDING
+	position.Publish()
+
+	return nil
 }

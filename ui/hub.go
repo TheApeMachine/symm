@@ -25,7 +25,7 @@ streams (signals, manifold lattices/parts, cognition) are fanout-only — the
 next live frame arrives soon enough that caching them is wasted work.
 */
 var cacheKeys = []string{
-	"balances", "executions", "instruments", "positions", "stops",
+	"balances", "executions", "instruments", "positions",
 	"lifecycle", "findings", "journal", "tick",
 }
 

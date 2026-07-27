@@ -86,6 +86,9 @@ func New(
 			"trade":      types.NewSubscription[any](),
 			"level3":     types.NewSubscription[any](),
 			"instrument": types.NewSubscription[any](),
+			"balances":   types.NewSubscription[any](),
+			"executions": types.NewSubscription[any](),
+			"add_order":  types.NewSubscription[any](),
 		},
 	}
 
@@ -134,6 +137,11 @@ func New(
 		}
 
 		if channel == "status" || channel == "heartbeat" || (live.isLevel3 && channel == "level3") {
+			return
+		}
+
+		if channel == "balances" || channel == "executions" || channel == "add_order" {
+			live.roots[channel].Send(raw)
 			return
 		}
 

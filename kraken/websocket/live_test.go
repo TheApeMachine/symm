@@ -44,6 +44,29 @@ func TestNewSetsAuthURL(t *testing.T) {
 	})
 }
 
+func TestLiveRoutesPrivateChannels(t *testing.T) {
+	Convey("Given an authenticated private websocket transport", t, func() {
+		live := New(context.Background(), nil, true, PrivateWebSocketURL)
+		defer live.Close()
+		balances := live.Subscribe("balances")
+		executions := live.Subscribe("executions")
+		orders := live.Subscribe("add_order")
+		balanceRaw := []byte(`{"channel":"balances","type":"snapshot","data":[]}`)
+		executionRaw := []byte(`{"channel":"executions","type":"update","data":[]}`)
+		orderRaw := []byte(`{"method":"add_order","success":true,"result":{"order_id":"OID-1"},"req_id":7}`)
+
+		live.client.OnReceived.Call(kraken.NewWebSocketMessage(balanceRaw))
+		live.client.OnReceived.Call(kraken.NewWebSocketMessage(executionRaw))
+		live.client.OnReceived.Call(kraken.NewWebSocketMessage(orderRaw))
+
+		Convey("Then private channel payloads reach their actor roots unchanged", func() {
+			So((<-balances.Channel).([]byte), ShouldResemble, balanceRaw)
+			So((<-executions.Channel).([]byte), ShouldResemble, executionRaw)
+			So((<-orders.Channel).([]byte), ShouldResemble, orderRaw)
+		})
+	})
+}
+
 func TestLiveUpdateLevel3(t *testing.T) {
 	Convey("Given a depth-limited SDK book", t, func() {
 		live := New(context.Background(), nil, true, Level3WebSocketURL)
@@ -248,8 +271,6 @@ func BenchmarkLiveUpdateLevel3(b *testing.B) {
 		}
 	}
 }
-
-
 
 func TestAuthNonceSurvivesRestart(t *testing.T) {
 	Convey("Given the auth nonce generator used for authenticated transports", t, func() {

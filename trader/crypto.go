@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
@@ -280,7 +281,9 @@ func (crypto *Crypto) snapshotThesis(thesis *types.Thesis, symbol string) *types
 	}
 
 	if value, ok := thesis.Holdings.Load(symbol); ok {
-		snapshot.Holdings.Store(symbol, value)
+		if holding, ok := value.(*types.Holding); ok && holding != nil {
+			snapshot.Holdings.Store(symbol, freezeHolding(holding))
+		}
 	}
 
 	if value, ok := thesis.Lifecycle.Load(symbol); ok {
@@ -295,12 +298,148 @@ func (crypto *Crypto) snapshotThesis(thesis *types.Thesis, symbol string) *types
 
 	if thesis.Graphs != nil {
 		thesis.Graphs.Range(func(key, value any) bool {
-			snapshot.Graphs.Store(key, value)
+			name, ok := key.(string)
+
+			if !ok {
+				return true
+			}
+
+			if name != "categories" {
+				return true
+			}
+
+			graph, ok := value.(*category.Graph)
+
+			if ok && graph != nil {
+				snapshot.Graphs.Store(name, freezeCategoryGraph(graph))
+			}
+
 			return true
 		})
 	}
 
 	return snapshot
+}
+
+func freezeHolding(holding *types.Holding) *types.Holding {
+	if holding == nil {
+		return nil
+	}
+
+	frozen := *holding
+
+	if holding.Qty != nil {
+		frozen.Qty = holding.Qty.Copy()
+	}
+
+	if holding.SellableQty != nil {
+		frozen.SellableQty = holding.SellableQty.Copy()
+	}
+
+	if holding.EntryPrice != nil {
+		frozen.EntryPrice = holding.EntryPrice.Copy()
+	}
+
+	if holding.EntryFee != nil {
+		frozen.EntryFee = holding.EntryFee.Copy()
+	}
+
+	if holding.ExitPrice != nil {
+		frozen.ExitPrice = holding.ExitPrice.Copy()
+	}
+
+	if holding.ExitFee != nil {
+		frozen.ExitFee = holding.ExitFee.Copy()
+	}
+
+	if holding.PnL != nil {
+		frozen.PnL = holding.PnL.Copy()
+	}
+
+	if holding.Mark != nil {
+		frozen.Mark = holding.Mark.Copy()
+	}
+
+	if holding.ReturnPct != nil {
+		value := *holding.ReturnPct
+		frozen.ReturnPct = &value
+	}
+
+	if holding.EntryAt != nil {
+		value := *holding.EntryAt
+		frozen.EntryAt = &value
+	}
+
+	if holding.ExitAt != nil {
+		value := *holding.ExitAt
+		frozen.ExitAt = &value
+	}
+
+	if holding.Stoploss != nil {
+		stoploss := *holding.Stoploss
+
+		if holding.Stoploss.Entry != nil {
+			stoploss.Entry = holding.Stoploss.Entry.Copy()
+		}
+
+		if holding.Stoploss.Peak != nil {
+			stoploss.Peak = holding.Stoploss.Peak.Copy()
+		}
+
+		if holding.Stoploss.Mark != nil {
+			stoploss.Mark = holding.Stoploss.Mark.Copy()
+		}
+
+		if holding.Stoploss.Floor != nil {
+			stoploss.Floor = holding.Stoploss.Floor.Copy()
+		}
+
+		stoploss.Actor = nil
+		frozen.Stoploss = &stoploss
+	}
+
+	return &frozen
+}
+
+func freezeCategoryGraph(graph *category.Graph) *category.Graph {
+	if graph == nil {
+		return nil
+	}
+
+	frozen := &category.Graph{
+		Nodes:  make([]*category.Node, 0, len(graph.Nodes)),
+		Edges:  make([]*category.Relation, 0, len(graph.Edges)),
+		Priors: make(map[string]types.CategoryType, len(graph.Priors)),
+	}
+
+	for _, node := range graph.Nodes {
+		if node == nil {
+			continue
+		}
+
+		copyNode := *node
+		frozen.Nodes = append(frozen.Nodes, &copyNode)
+	}
+
+	for _, relation := range graph.Edges {
+		if relation == nil {
+			continue
+		}
+
+		copyRelation := *relation
+
+		if relation.Evidence != nil {
+			copyRelation.Evidence = append([]string(nil), relation.Evidence...)
+		}
+
+		frozen.Edges = append(frozen.Edges, &copyRelation)
+	}
+
+	for symbol, prior := range graph.Priors {
+		frozen.Priors[symbol] = prior
+	}
+
+	return frozen
 }
 
 func (crypto *Crypto) savedHoldings() []*types.Holding {
