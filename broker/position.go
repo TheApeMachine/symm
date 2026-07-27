@@ -16,6 +16,9 @@ import (
 /*
 Position is one lot shell owned by Desk. Order correlation uses request ID then
 exchange order ID; unmatched executions buffer until the ack binds them.
+Position subscribes to the market ticker topic for live mark and stoploss
+updates, and to the account execution and add_order topics for fills and
+order acks so it handles its own lifecycle without Desk absorbing the logic.
 */
 type Position struct {
 	*types.Actor
@@ -36,6 +39,8 @@ type Position struct {
 	seenExec   map[string]struct{}
 	buffered   []kraken.ExecutionData
 	holding    *types.Holding
+	market     *types.Actor
+	account    *types.Actor
 }
 
 /*
@@ -50,7 +55,10 @@ type Fill struct {
 }
 
 /*
-NewPosition constructs one lot shell; Desk routes order and execution rows.
+NewPosition constructs one lot shell; Desk routes order and execution
+rows initially but Position subscribes to the market ticker, account
+executions, and account add_order topics so it responds to live
+websocket messages directly.
 */
 func NewPosition(
 	ctx context.Context,
@@ -61,7 +69,11 @@ func NewPosition(
 	balance *Balance,
 	pair kraken.InstrumentPair,
 	qty *decimal.Decimal,
+	market *types.Actor,
+	account *types.Actor,
 ) *Position {
+	errnie.Info("creating position for: " + pair.Symbol)
+
 	ctx, cancel := context.WithCancel(ctx)
 
 	entryOrder := kraken.NewMarketOrder(
@@ -85,6 +97,8 @@ func NewPosition(
 		seenExec:   make(map[string]struct{}),
 		entryOrder: entryOrder,
 		exitOrder:  exitOrder,
+		market:     market,
+		account:    account,
 	}
 	mark := entryOrder.Params.LimitPrice
 
@@ -98,14 +112,24 @@ func NewPosition(
 		entryOrder.Params.OrderQty,
 		mark,
 		position.Exit,
+		market,
 	)
 
 	position.Actor = types.NewActor(ctx, "position", map[string]types.Handler{
 		"add_order":  {Topic: "add_order", Fn: position.onOrder},
 		"executions": {Topic: "executions", Fn: position.onExecutions},
+		"ticker":     {Topic: "ticker", Fn: position.onTicker},
 	})
 
-	position.Actor.Initialize()
+	topics := make([]types.Topic, 0, 3)
+
+	topics = append(topics,
+		types.Topic{Name: "ticker", Actor: market},
+		types.Topic{Name: "executions", Actor: account},
+		types.Topic{Name: "add_order", Actor: account},
+	)
+
+	position.Actor.Initialize(topics...)
 	position.Publish()
 
 	return position
@@ -119,6 +143,8 @@ func (position *Position) Initialize(
 	price *Price,
 	balance *Balance,
 	pair kraken.InstrumentPair,
+	market *types.Actor,
+	account *types.Actor,
 ) {
 	errnie.Info("initializing position for: " + pair.Symbol)
 
@@ -129,13 +155,24 @@ func (position *Position) Initialize(
 	position.price = price
 	position.balance = balance
 	position.pair = pair
+	position.market = market
+	position.account = account
 
-	position.Actor.Initialize()
+	topics := make([]types.Topic, 0, 3)
+
+	topics = append(topics,
+		types.Topic{Name: "ticker", Actor: market},
+		types.Topic{Name: "executions", Actor: account},
+		types.Topic{Name: "add_order", Actor: account},
+	)
+
+	position.Actor.Initialize(topics...)
 	position.holding.Initialize(
 		position.ctx,
 		position.entryOrder.Params.OrderQty,
 		position.entryOrder.Params.LimitPrice,
 		position.Exit,
+		market,
 	)
 
 	position.Publish()
@@ -187,9 +224,21 @@ already correlated the request id. The position stays pending until execution
 frames prove whether the market order opened or closed the lot.
 */
 func (position *Position) onOrder(message any) any {
-	row := message.(*kraken.OrderResponse).Result
+	var response *kraken.OrderResponse
+
+	switch v := message.(type) {
+	case *kraken.OrderResponse:
+		response = v
+	case []byte:
+		response = kraken.NewOrderResponse(v)
+	default:
+		return nil
+	}
+
+	row := response.Result
 	position.orderID = row.OrderID
 	position.status = types.PENDING
+
 	return nil
 }
 
@@ -199,7 +248,18 @@ entries must become the same enriched lot as restart-adopted positions, includin
 entry economics, mark, PnL, and the bound stoploss floor/peak regulator.
 */
 func (position *Position) onExecutions(message any) any {
-	rows := message.(*kraken.Execution).Data
+	var execution *kraken.Execution
+
+	switch v := message.(type) {
+	case *kraken.Execution:
+		execution = v
+	case []byte:
+		execution = kraken.NewExecution(v)
+	default:
+		return nil
+	}
+
+	rows := execution.Data
 
 	for _, row := range rows {
 		symbol := position.holding.Symbol
@@ -243,6 +303,35 @@ func (position *Position) onExecutions(message any) any {
 			position.Close()
 		}
 	}
+
+	return nil
+}
+
+/*
+onTicker refreshes the mark cache for this position's holding and
+lets the bound stoploss regulator evaluate the live bid path for
+exit decisions.
+*/
+func (position *Position) onTicker(message any) any {
+	ticker, ok := message.(*kraken.Ticker)
+
+	if !ok {
+		ticker = kraken.NewTicker(message.([]byte))
+	}
+
+	for _, row := range ticker.Data {
+		if row.Symbol != position.pair.Symbol {
+			continue
+		}
+
+		if err := position.price.Mark(&position.pair, position.holding); err != nil {
+			errnie.Error(err)
+		}
+
+		break
+	}
+
+	position.Publish()
 
 	return nil
 }

@@ -230,7 +230,7 @@ func (crypto *Crypto) enter(thesis *types.Thesis, decision *types.Decision) {
 	}
 
 	if holding == nil {
-		holding = types.NewHolding(crypto.ctx, decision.Symbol, decision.ProposedQuantity, decision.ReferencePrice, nil)
+		holding = types.NewHolding(crypto.ctx, decision.Symbol, decision.ProposedQuantity, decision.ReferencePrice, nil, nil)
 		thesis.Holdings.Store(decision.Symbol, holding)
 	}
 

@@ -3,7 +3,6 @@ package broker
 import (
 	"context"
 	"slices"
-	"strings"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -14,8 +13,11 @@ import (
 )
 
 /*
-Desk is the broker Actor entrypoint. It alone Subscribes market and account
-topics and owns plain position maps plus decode-once account routing indexes.
+Desk is the broker Actor entrypoint. It subscribes market topics for
+price cache updates and account topics not routed to positions.
+Position and Stoploss subscribe directly to the market ticker, account
+executions, and account add_order topics so they react to live
+websocket messages without Desk absorbing the routing logic.
 */
 type Desk struct {
 	*types.Actor
@@ -27,12 +29,10 @@ type Desk struct {
 	price         *Price
 	balance       *Balance
 	positions     map[string]*Position
-	byReqID       map[int64]*Position
-	byOrderID     map[string]*Position
-	fillsBySymbol map[string][]Fill
-	historyReady  bool
 	maxPositions  int
 	maxReserved   int
+	market        *types.Actor
+	account       *types.Actor
 }
 
 /*
@@ -57,8 +57,6 @@ func NewDesk(
 		price:        price,
 		balance:      balance,
 		positions:    make(map[string]*Position),
-		byReqID:      make(map[int64]*Position),
-		byOrderID:    make(map[string]*Position),
 		maxPositions: trading.SlotsNormal,
 		maxReserved:  trading.SlotsReserved,
 	}
@@ -67,19 +65,22 @@ func NewDesk(
 		"ticker":     {Topic: "ticker", Fn: desk.onTicker},
 		"instrument": {Topic: "instrument", Fn: desk.onInstrument},
 		"balances":   {Topic: "balances", Fn: desk.onBalances},
-		"executions": {Topic: "executions", Fn: desk.onExecutions},
-		"add_order":  {Topic: "add_order", Fn: desk.onOrder},
 	})
 
 	return desk
 }
 
 /*
-Initialize attaches Desk to the market and account Actors, subscribes to
-executions, and publishes the initial balance frame.
+Initialize attaches Desk to the market and account Actors, subscribes
+to shared topics, and publishes the initial balance frame. Position
+subscribes to market ticker and account executions/add_order topics
+directly so it handles its own lifecycle without Desk absorbing it.
 */
 func (desk *Desk) Initialize(market *types.Actor, account *types.Actor) error {
 	errnie.Info("initializing desk")
+
+	desk.market = market
+	desk.account = account
 
 	topics := []types.Topic{
 		{Name: "ticker", Actor: market},
@@ -89,8 +90,6 @@ func (desk *Desk) Initialize(market *types.Actor, account *types.Actor) error {
 	if account != nil {
 		topics = append(topics,
 			types.Topic{Name: "balances", Actor: account},
-			types.Topic{Name: "executions", Actor: account},
-			types.Topic{Name: "add_order", Actor: account},
 		)
 	}
 
@@ -152,9 +151,10 @@ func (desk *Desk) onInstrument(message any) any {
 }
 
 /*
-onTicker refreshes the price cache, lets each open position mark itself, and
-lets the bound stoploss regulate off the same live bid path before a wallet
-publish goes out.
+onTicker refreshes the price cache and publishes the balance
+frame. Position subscribes to the ticker topic directly so it
+handles its own mark and stoploss updates without Desk
+absorbing that routing logic.
 */
 func (desk *Desk) onTicker(message any) any {
 	ticker, ok := message.(*kraken.Ticker)
@@ -165,22 +165,6 @@ func (desk *Desk) onTicker(message any) any {
 
 	desk.price.TickerAck(ticker)
 
-	for _, row := range ticker.Data {
-		position, exists := desk.positions[row.Symbol]
-
-		if !exists || position == nil || position.holding == nil {
-			continue
-		}
-
-		if err := desk.price.Mark(&position.pair, position.holding); err != nil {
-			errnie.Error(err)
-		}
-
-		if position.holding.Stoploss != nil {
-			position.holding.Stoploss.Update(position.holding.Mark)
-		}
-	}
-
 	if err := desk.balance.Publish(); err != nil {
 		errnie.Error(err)
 	}
@@ -189,14 +173,11 @@ func (desk *Desk) onTicker(message any) any {
 }
 
 /*
-onBalances applies the wallet frame, indexes fill history once, and adopts any
+onBalances applies the wallet frame and adopts any
 wallet-backed lots so restart positions are immediately managed by Desk.
 */
 func (desk *Desk) onBalances(message any) any {
 	desk.balance.BalanceAck(message.([]byte))
-	desk.loadFillHistory()
-
-	seen := make(map[string]struct{})
 
 	for lot := range desk.balance.Lots() {
 		if lot.Status != types.OPEN || lot.Qty == nil || lot.Qty.Sign() <= 0 {
@@ -210,22 +191,18 @@ func (desk *Desk) onBalances(message any) any {
 			continue
 		}
 
-		seen[lot.Symbol] = struct{}{}
-
-		if fills := desk.fillsBySymbol[lot.Symbol]; len(fills) > 0 {
-			entry := fills[len(fills)-1]
-
-			desk.positions[lot.Symbol] = NewPosition(
-				desk.ctx,
-				desk.api,
-				desk.balance.ui,
-				desk.instrument,
-				desk.price,
-				desk.balance,
-				pair,
-				entry.Qty,
-			)
-		}
+		desk.positions[lot.Symbol] = NewPosition(
+			desk.ctx,
+			desk.api,
+			desk.balance.ui,
+			desk.instrument,
+			desk.price,
+			desk.balance,
+			pair,
+			lot.Qty,
+			desk.market,
+			desk.account,
+		)
 	}
 
 	if err := desk.balance.Publish(); err != nil {
@@ -233,102 +210,6 @@ func (desk *Desk) onBalances(message any) any {
 	}
 
 	return nil
-}
-
-/*
-onOrder correlates a venue acknowledgement to the position that submitted the
-request. The order id is needed for later execution frames, which may arrive
-after the ack and only carry venue identity.
-*/
-func (desk *Desk) onOrder(message any) any {
-	order, ok := message.(*kraken.OrderResponse)
-
-	if !ok {
-		order = kraken.NewOrderResponse(message.([]byte))
-	}
-
-	position := desk.byReqID[order.ReqID]
-
-	if position == nil {
-		return nil
-	}
-
-	position.onOrder(order)
-	desk.byOrderID[order.Result.OrderID] = position
-	return nil
-}
-
-/*
-onExecutions routes private fill frames to their owning position by venue order
-id, then lets Balance publish the enriched holding that powers live cards and
-wallet equity.
-*/
-func (desk *Desk) onExecutions(message any) any {
-	execution, ok := message.(*kraken.Execution)
-
-	if !ok {
-		execution = kraken.NewExecution(message.([]byte))
-	}
-
-	for _, row := range execution.Data {
-		position := desk.byOrderID[row.OrderID]
-
-		if position == nil {
-			continue
-		}
-
-		position.onExecutions(&kraken.Execution{
-			Channel:  execution.Channel,
-			Type:     execution.Type,
-			Data:     []kraken.ExecutionData{row},
-			Sequence: execution.Sequence,
-		})
-	}
-
-	return nil
-}
-
-/*
-loadFillHistory pulls venue trade history once and indexes fills by symbol so
-restarted inventory can recover entry price and fees.
-*/
-func (desk *Desk) loadFillHistory() {
-	if desk.historyReady || desk.api == nil {
-		return
-	}
-
-	history, err := desk.api.TradesHistory()
-
-	if err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	if history == nil {
-		return
-	}
-
-	desk.fillsBySymbol = make(map[string][]Fill, len(history.Result.Trades))
-
-	for execID, trade := range history.Result.Trades {
-		symbol := desk.api.Name(trade.Pair)
-
-		if symbol == "" {
-			continue
-		}
-
-		fill := Fill{
-			ExecID: execID,
-			Side:   strings.ToLower(trade.Type),
-			Qty:    trade.Volume,
-			Price:  trade.Price,
-			Fee:    trade.Fee,
-		}
-
-		desk.fillsBySymbol[symbol] = append(desk.fillsBySymbol[symbol], fill)
-	}
-
-	desk.historyReady = true
 }
 
 /*
@@ -428,6 +309,8 @@ func (desk *Desk) Buy(
 		desk.balance,
 		pair,
 		qty,
+		desk.market,
+		desk.account,
 	).Enter()
 
 	return desk.positions[symbol], nil
@@ -449,10 +332,6 @@ func (desk *Desk) Sell(symbol string) error {
 
 	if err := position.Exit(); err != nil {
 		return err
-	}
-
-	if position.entryOrder != nil {
-		desk.byReqID[position.entryOrder.ReqID] = position
 	}
 
 	return nil

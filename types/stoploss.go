@@ -10,10 +10,11 @@ import (
 )
 
 /*
-Stoploss is an always-on position regulator. It tracks entry, marks the current
-price against a trailing stop floor that ratchets up with profits, and emits
-exit decisions when the floor is breached or a peak with adverse forward path
-is detected. There is no armed/unbound state - it's active from initialization.
+Actor for stoploss lifecycle. Non-nil when the stoploss is owned by a
+position that has subscribed to the market ticker topic. When non-nil,
+NewStoploss and Initialize subscribe the actor to the market ticker root
+so onTicker receives live bids directly instead of relying on an external
+routing layer like Desk.
 */
 type Stoploss struct {
 	*Actor `json:"-"`
@@ -30,13 +31,16 @@ type Stoploss struct {
 
 /*
 NewStoploss constructs an active regulator with default weight. Entry is bound
-later via Bind when the position opens.
+later via Bind when the position opens. market is the upstream market actor
+that publishes ticker frames on the "ticker" topic so the stoploss can
+evaluate exits from live bid data without depending on a routing layer.
 */
 func NewStoploss(
 	ctx context.Context,
 	symbol string,
 	mark *decimal.Decimal,
 	exit func() error,
+	market *Actor,
 ) *Stoploss {
 	errnie.Info("creating stoploss")
 
@@ -58,18 +62,28 @@ func NewStoploss(
 		"ticker": {Topic: "stoploss", Fn: stoploss.onTicker},
 	})
 
-	stoploss.Actor.Initialize()
+	if market != nil {
+		stoploss.Actor.Initialize(Topic{
+			Name: "ticker", Actor: market,
+		})
+	} else {
+		stoploss.Actor.Initialize()
+	}
+
 	stoploss.Status = ARMED
 	return stoploss
 }
 
 /*
 Initialize the Stoploss if we are "recovering" after a restart.
+market is the upstream market actor that publishes ticker frames on
+the "ticker" topic so the stoploss can evaluate exits from live bid data.
 */
 func (stoploss *Stoploss) Initialize(
 	ctx context.Context,
 	mark *decimal.Decimal,
 	exit func() error,
+	market *Actor,
 ) {
 	stoploss.Status = PENDING
 	stoploss.ctx = ctx
@@ -78,7 +92,13 @@ func (stoploss *Stoploss) Initialize(
 	stoploss.evaluate()
 
 	stoploss.exit = exit
-	stoploss.Actor.Initialize()
+
+	if market != nil {
+		stoploss.Actor.Initialize(Topic{Name: "ticker", Actor: market})
+	} else {
+		stoploss.Actor.Initialize()
+	}
+
 	stoploss.Status = ARMED
 }
 
@@ -94,9 +114,13 @@ func (stoploss *Stoploss) onTicker(message any) any {
 			continue
 		}
 
+		if row.Bid == nil {
+			continue
+		}
+
 		stoploss.Mark = row.Bid.Copy()
 
-		if row.Bid.Cmp(stoploss.Floor) <= 0 {
+		if stoploss.Floor != nil && row.Bid.Cmp(stoploss.Floor) <= 0 {
 			if stoploss.exit == nil {
 				stoploss.Status = ERROR
 

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -36,7 +37,7 @@ type Holding struct {
 
 /*
 NewHolding constructs a pending Thesis lot with a Stoploss Position will own
-after Desk entry.
+after Desk entry. market is the upstream market actor for the stoploss ticker subscription.
 */
 func NewHolding(
 	ctx context.Context,
@@ -44,7 +45,10 @@ func NewHolding(
 	qty *decimal.Decimal,
 	mark *decimal.Decimal,
 	exit func() error,
+	market *Actor,
 ) *Holding {
+	errnie.Info("creating holding for: " + symbol)
+
 	ctx, cancel := context.WithCancel(ctx)
 	holding := &Holding{
 		ctx:      ctx,
@@ -52,7 +56,7 @@ func NewHolding(
 		Symbol:   symbol,
 		Qty:      qty,
 		Status:   PENDING,
-		Stoploss: NewStoploss(ctx, symbol, mark, exit),
+		Stoploss: NewStoploss(ctx, symbol, mark, exit, market),
 	}
 
 	return holding
@@ -60,17 +64,19 @@ func NewHolding(
 
 /*
 Initialize the Holding if we are "recovering" after a restart.
+market is the upstream market actor for the stoploss ticker subscription.
 */
 func (holding *Holding) Initialize(
 	ctx context.Context,
 	qty *decimal.Decimal,
 	mark *decimal.Decimal,
 	exit func() error,
+	market *Actor,
 ) {
 	holding.ctx = ctx
 	holding.Qty = qty
 	holding.Status = READY
-	holding.Stoploss.Initialize(ctx, mark, exit)
+	holding.Stoploss.Initialize(ctx, mark, exit, market)
 }
 
 func (holding *Holding) Close() (err error) {
