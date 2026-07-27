@@ -76,20 +76,17 @@ func (analyzer *Analyzer) cognizeStates(
 }
 
 /*
-cognitionTokens builds one category token bag per symbol for this cut so
-cognize/recall do not rescan the full category slice for every manifold state.
+cognitionTokens records the single market regime sequence for this cut and gives
+every state the same category path. The DMT tree is a global transition memory,
+not a symbol namespace, so only the strongest current category can advance the
+resident path; repeating a category closes the prior episode and starts a new
+one at that regime.
 */
 func (analyzer *Analyzer) cognitionTokens(
 	thesis *types.Thesis,
 	states []manifold.State,
 ) map[string][]string {
 	if thesis == nil || len(states) == 0 {
-		return nil
-	}
-
-	reporter := category.Report(analyzer.categories)
-
-	if reporter == nil {
 		return nil
 	}
 
@@ -103,13 +100,48 @@ func (analyzer *Analyzer) cognitionTokens(
 		needed[state.Symbol] = struct{}{}
 	}
 
+	analyzer.advanceCognitionPath(thesis)
 	tokens := make(map[string][]string, len(needed))
 
 	for symbol := range needed {
-		tokens[symbol] = reporter.Tokens(symbol, thesis.Categories[symbol])
+		tokens[symbol] = analyzer.cognitionPath
 	}
 
 	return tokens
+}
+
+/*
+advanceCognitionPath moves the process-wide category episode by one observed top
+regime. A recurrence is the principled stop condition: once the same regime
+would appear twice in the active path, the transition chain has looped and a new
+episode begins at that category rather than creating a longer, worse predictor.
+*/
+func (analyzer *Analyzer) advanceCognitionPath(thesis *types.Thesis) {
+	top := types.Category{}
+
+	for _, rows := range thesis.Categories {
+		candidate := category.Top(rows)
+
+		if candidate.Strength > top.Strength {
+			top = candidate
+		}
+	}
+
+	if top.Type == types.CategoryTypeNone || top.Type == analyzer.cognitionLast {
+		return
+	}
+
+	analyzer.cognitionLast = top.Type
+	token := string(top.Type)
+
+	for _, existing := range analyzer.cognitionPath {
+		if existing == token {
+			analyzer.cognitionPath = []string{token}
+			return
+		}
+	}
+
+	analyzer.cognitionPath = append(analyzer.cognitionPath, token)
 }
 
 /*
@@ -239,16 +271,15 @@ func (analyzer *Analyzer) cognize(
 }
 
 /*
-sensorySequence builds the deterministic DMT token stream for one state.
-The symbol token starts with the s/ sensory namespace so the shared radix tree
-namespaces each coin; temporal category transition tokens (prior -> top) form
-the sequence path.
+sensorySequence builds the deterministic DMT token stream for one state. The
+sequence starts with the global s namespace and then only category regimes, so
+the tree stores observed transition chains instead of per-symbol branches.
 */
 func (analyzer *Analyzer) sensorySequence(
 	state manifold.State,
 	categoryTokens []string,
 ) (string, []byte, int) {
-	symbolToken := "s/" + cognitionTokenReplacer.Replace(state.Symbol)
+	symbolToken := "s"
 	sequenceSize := len(symbolToken)
 
 	for _, token := range categoryTokens {
@@ -269,6 +300,8 @@ func (analyzer *Analyzer) sensorySequence(
 		builder.WriteString(cognitionTokenReplacer.Replace(token))
 	}
 
+	_ = state
+
 	return symbolToken, []byte(builder.String()), len(categoryTokens) + 1
 }
 
@@ -288,8 +321,7 @@ func (analyzer *Analyzer) readCognition(
 	var classificationScratch dmt.ClassificationScratch
 	classification := analyzer.tree.Classify(sequence, &classificationScratch)
 
-	storageParent := append([]byte("s/"), parent...)
-	ambiguity := analyzer.tree.MeasureBranchAmbiguity(storageParent)
+	ambiguity := analyzer.tree.MeasureBranchAmbiguity(parent)
 	predictionBuffer := make([]dmt.LookaheadPrediction, 0, partCount)
 	predictions := analyzer.tree.PredictNextSensoryTokens(parent, predictionBuffer)
 	reading := types.Cognition{

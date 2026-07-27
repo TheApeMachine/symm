@@ -29,29 +29,31 @@ snapshot fresh measurements and run the analysis pipeline.
 */
 type Analyzer struct {
 	*types.Actor
-	ctx         context.Context
-	cancel      context.CancelFunc
-	gate        stageGate
-	status      types.Status
-	thesis      *types.Thesis
-	manifold    *manifold.Solver
-	hawkes      manifold.HawkesSource
-	tree        *dmt.Tree
-	ui          chan []byte
-	recorder    *audit.Recorder
-	resonance   map[string]*Resonance
-	causal      map[string]*Causal
-	cognition   map[string]types.Cognition
-	observed    map[string]uint64
-	rem         *remSleep
-	categories  *category.Graph
-	frameRows   []any
-	cogRows     []types.Cognition
-	catRows     []types.Category
-	hypRows     []types.Hypothesis
-	measureRows []*types.Measurement
-	bestBySym   map[string]types.Category
-	stateRows   []manifold.State
+	ctx           context.Context
+	cancel        context.CancelFunc
+	gate          stageGate
+	status        types.Status
+	thesis        *types.Thesis
+	manifold      *manifold.Solver
+	hawkes        manifold.HawkesSource
+	tree          *dmt.Tree
+	ui            chan []byte
+	recorder      *audit.Recorder
+	resonance     map[string]*Resonance
+	causal        map[string]*Causal
+	cognition     map[string]types.Cognition
+	cognitionPath []string
+	cognitionLast types.CategoryType
+	observed      map[string]uint64
+	rem           *remSleep
+	categories    *category.Graph
+	frameRows     []any
+	cogRows       []types.Cognition
+	catRows       []types.Category
+	hypRows       []types.Hypothesis
+	measureRows   []*types.Measurement
+	bestBySym     map[string]types.Category
+	stateRows     []manifold.State
 }
 
 /*
@@ -519,8 +521,21 @@ func (analyzer *Analyzer) publish(frame datura.Map[any]) {
 		return
 	}
 
+	analyzer.publishBytes(frame.Marshal())
+}
+
+/*
+publishBytes enqueues one already encoded UI frame without blocking analysis.
+Binary manifold textures use this path so they follow the same saturation
+contract as JSON frames.
+*/
+func (analyzer *Analyzer) publishBytes(frame []byte) {
+	if analyzer.ui == nil || len(frame) == 0 {
+		return
+	}
+
 	select {
-	case analyzer.ui <- frame.Marshal():
+	case analyzer.ui <- frame:
 	default:
 		errnie.Error(errnie.Err(
 			errnie.TooManyRequests,

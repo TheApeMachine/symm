@@ -695,8 +695,6 @@ func (price *Price) Mark(
 		bid = holding.Mark
 	}
 
-	holding.StopMark = price.geometryMark(ticker, holding)
-
 	if bid == nil || holding.EntryPrice == nil ||
 		holding.Qty == nil || holding.Qty.Sign() <= 0 {
 		return tickerErr

@@ -114,6 +114,35 @@ describe("crossSectionReadoutFromMeasurements", () => {
 		expect(readout.medianExecutableDepth).toBe(10);
 		expect(readout.medianQuoteNotional).toBe(2000);
 	});
+
+	it("keeps per-source rows for the same symbol instead of replacing metrics", () => {
+		const readout = crossSectionReadoutFromMeasurements([
+			{
+				source: "correlation",
+				symbol: "BTC/USD",
+				at: "1",
+				validity: { state: "valid", readiness: "observation" },
+				scale: { kind: "window", from: "1", through: "1" },
+				metrics: { strength: { raw: 1 } },
+			},
+			{
+				source: "liquidity",
+				symbol: "BTC/USD",
+				at: "1",
+				validity: { state: "valid", readiness: "observation" },
+				scale: { kind: "window", from: "1", through: "1" },
+				metrics: {
+					executable_touch_depth: { raw: 15 },
+					reported_volume_notional: { raw: 3000 },
+				},
+			},
+		]);
+
+		expect(readout.symbolCount).toBe(1);
+		expect(readout.leader).toBe("BTC/USD");
+		expect(readout.medianExecutableDepth).toBe(15);
+		expect(readout.medianQuoteNotional).toBe(3000);
+	});
 });
 
 describe("retainCrossSectionReadout", () => {

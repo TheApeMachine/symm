@@ -47,7 +47,7 @@ func (proof marketProof) Run(t *testing.T) (marketOutcome, []string) {
 			thesis := wired.Thesis
 
 			if capture {
-				outcome.Capture(thesis.Measurements)
+				outcome.Capture(thesis)
 			}
 
 			return nil

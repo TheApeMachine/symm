@@ -55,9 +55,10 @@ export const paintCortex = (value: unknown, focusSymbol: string) => {
 
 	lastFocusSymbol = focusSymbol;
 	const reading =
-		(focusSymbol === ""
-			? readings.at(-1)
-			: readingsBySymbol.get(focusSymbol)) ?? null;
+		readingsBySymbol.get(focusSymbol) ??
+		readings.at(-1) ??
+		[...readingsBySymbol.values()].at(-1) ??
+		null;
 
 	lastReading = reading;
 	drawCortexCanvas(reading);

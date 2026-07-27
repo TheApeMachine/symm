@@ -28,6 +28,7 @@ type Crypto struct {
 	uiHub    *ui.Hub
 	recorder *audit.Recorder
 	desk     *broker.Desk
+	journal  *JournalStore
 }
 
 /*
@@ -40,6 +41,7 @@ func NewCrypto(
 	desk *broker.Desk,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
+	journalStore := NewJournalStore()
 
 	crypto := &Crypto{
 		ctx:      ctx,
@@ -50,6 +52,18 @@ func NewCrypto(
 		uiHub:    uiHub,
 		recorder: recorder,
 		desk:     desk,
+		journal:  journalStore,
+	}
+
+	if savedHoldings, savedFindings, err := journalStore.Load(); err == nil && len(savedHoldings) > 0 {
+		for _, h := range savedHoldings {
+			if desk != nil && desk.Balance() != nil {
+				desk.Balance().StoreHolding(h)
+			}
+		}
+		if uiHub != nil && len(savedFindings) > 0 {
+			uiHub.Publish(datura.Map[any]{"findings": savedFindings}.Marshal())
+		}
 	}
 
 	crypto.Actor = types.NewActor(ctx, "crypto", map[string]types.Handler{
@@ -102,6 +116,7 @@ func (crypto *Crypto) Apply(thesis *types.Thesis) {
 		return
 	}
 
+	thesis.Tick = crypto.NextTick()
 	started := time.Now()
 	// Copy so a concurrent Decide retain/replace cannot empty the slice mid-apply.
 	decisions := append([]types.Decision(nil), thesis.Decisions...)
@@ -191,6 +206,15 @@ func (crypto *Crypto) publish(thesis *types.Thesis, elapsed time.Duration) {
 	if len(thesis.Findings) > 0 {
 		crypto.uiHub.Publish(datura.Map[any]{"findings": thesis.Findings}.Marshal())
 	}
+
+	if crypto.journal != nil && crypto.desk != nil && crypto.desk.Balance() != nil {
+		holdings := make([]*types.Holding, 0)
+		for h := range crypto.desk.Balance().Lots() {
+			copyH := h
+			holdings = append(holdings, &copyH)
+		}
+		_ = crypto.journal.Save(holdings, thesis.Findings)
+	}
 }
 
 func (crypto *Crypto) enter(thesis *types.Thesis, decision *types.Decision) {
@@ -214,7 +238,7 @@ func (crypto *Crypto) enter(thesis *types.Thesis, decision *types.Decision) {
 		holding.Qty = decision.ProposedQuantity.Copy()
 	}
 
-	if _, err := crypto.desk.Buy(holding, holding.IsOpportunity); err != nil {
+	if _, err := crypto.desk.Buy(holding.Symbol, holding.Qty, holding.IsOpportunity); err != nil {
 		errnie.Error(err)
 		return
 	}

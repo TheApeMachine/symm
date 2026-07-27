@@ -48,8 +48,13 @@ export const paintInspectorMeters = (
 	host: HTMLElement,
 	meters: Map<string, MeterParts>,
 	entries: Map<string, number>,
+	headline?: string,
 ) => {
-	for (const [key, entry] of entries) {
+	const sortedEntries = [...entries.entries()].sort(([left], [right]) =>
+		left.localeCompare(right),
+	);
+
+	for (const [key, entry] of sortedEntries) {
 		let meter = meters.get(key);
 
 		if (meter === undefined) {
@@ -65,7 +70,7 @@ export const paintInspectorMeters = (
 			const valueEl = document.createElement("span");
 			label.className = "text-(--f3)";
 			valueEl.className = "text-(--f1)";
-			label.textContent = key;
+			label.textContent = key.replaceAll("_", " ");
 			header.append(label, valueEl);
 
 			const track = document.createElement("div");
@@ -89,6 +94,10 @@ export const paintInspectorMeters = (
 			"aria-valuenow",
 			String(Math.round(fillPercent)),
 		);
+		if (headline !== undefined) {
+			meter.fill.className =
+				key === headline ? "h-full bg-(--warning)" : "h-full bg-(--info)";
+		}
 	}
 
 	for (const [key, meter] of meters) {
@@ -98,5 +107,16 @@ export const paintInspectorMeters = (
 
 		meter.cell.remove();
 		meters.delete(key);
+	}
+
+	for (const [index, [key]] of sortedEntries.entries()) {
+		const meter = meters.get(key);
+		if (
+			meter &&
+			typeof host.insertBefore === "function" &&
+			host.children?.[index] !== meter.cell
+		) {
+			host.insertBefore(meter.cell, host.children[index] || null);
+		}
 	}
 };

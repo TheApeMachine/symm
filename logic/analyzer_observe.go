@@ -115,11 +115,11 @@ func (analyzer *Analyzer) observe(
 		thesis.ReplaceMeasurements(state.Symbol, measurements)
 	}
 	if resonanceOutcome != nil {
-		thesis.Resonance = append(thesis.Resonance, resonanceOutcome)
+		thesis.Resonance.Store(state.Symbol, resonanceOutcome)
 	}
 	if causalOutcome != nil {
 		thesis.Hypotheses = append(thesis.Hypotheses, hypothesis)
-		thesis.Causal = append(thesis.Causal, causalOutcome)
+		thesis.Causal.Store(state.Symbol, causalOutcome)
 	}
 	analyzer.forecast(thesis, state, resonanceOutcome, causalOutcome)
 	// Lock the epoch only after resonance publishes — earlier retries keep
@@ -165,52 +165,8 @@ func (analyzer *Analyzer) dropSymbolEvidence(thesis *types.Thesis, symbol string
 	}
 
 	thesis.Hypotheses = hypotheses
-	thesis.Resonance = dropSymbolAny(thesis.Resonance, symbol)
-	thesis.Causal = dropSymbolAny(thesis.Causal, symbol)
-}
-
-func dropSymbolAny(rows []any, symbol string) []any {
-	out := rows[:0]
-
-	for _, row := range rows {
-		if row == nil {
-			continue
-		}
-
-		switch value := row.(type) {
-		case *ResonanceOutcome:
-			if value == nil || value.Symbol == symbol {
-				continue
-			}
-		case ResonanceOutcome:
-			if value.Symbol == symbol {
-				continue
-			}
-
-			row := value
-			out = append(out, &row)
-			continue
-		case *CausalOutcome:
-			if value == nil || value.Symbol == symbol {
-				continue
-			}
-		case CausalOutcome:
-			if value.Symbol == symbol {
-				continue
-			}
-
-			row := value
-			out = append(out, &row)
-			continue
-		}
-		out = append(out, row)
-	}
-
-	for index := len(out); index < len(rows); index++ {
-		rows[index] = nil
-	}
-
-	return out
+	thesis.Resonance.Delete(symbol)
+	thesis.Causal.Delete(symbol)
 }
 
 /*

@@ -127,9 +127,9 @@ describe("paintDashboardHoldings", () => {
 			}),
 		});
 
-		expect(rows.map((row) => row.symbol)).toEqual(["EUL/USD", "ESPORTS/USD"]);
-		expect(rows[0]?.qty).toBe(9.85795428);
-		expect(rows[1]?.qty).toBe(544.58996);
+		expect(rows.map((row) => row.symbol)).toEqual(["ESPORTS/USD", "EUL/USD"]);
+		expect(rows[0]?.qty).toBe(544.58996);
+		expect(rows[1]?.qty).toBe(9.85795428);
 		expect(() => paintDashboardHoldings(rows, "BTC/USD")).not.toThrow();
 	});
 });

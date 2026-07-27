@@ -49,7 +49,7 @@ func TestStaleAndIncomparable(t *testing.T) {
 			thesis.At = at
 			ignition := 0.8
 			trend := 0.7
-			thesis.Measurements["SIM/USD"] = []*types.Measurement{
+			thesis.AppendMeasurements([]*types.Measurement{
 				{
 					Source:       types.SourcePumpDump,
 					Symbol:       "SIM/USD",
@@ -66,7 +66,7 @@ func TestStaleAndIncomparable(t *testing.T) {
 					},
 				},
 				{
-					Source:       types.SourcePumpDump,
+					Source:       types.SourceLiquidity,
 					Symbol:       "SIM/USD",
 					At:           time.Unix(100, 0),
 					ObservedFrom: time.Unix(99, 0),
@@ -80,7 +80,7 @@ func TestStaleAndIncomparable(t *testing.T) {
 						},
 					},
 				},
-			}
+			})
 			thesis.Categories["SIM/USD"] = []types.Category{
 				{
 					Symbol:     "SIM/USD",
@@ -132,20 +132,23 @@ func BenchmarkGraphUpdateFrom(b *testing.B) {
 	for _, symbol := range symbols {
 		for index, metric := range metrics {
 			mass := 0.2 + float64(index)/10
-			thesis.Measurements[symbol] = append(thesis.Measurements[symbol], &types.Measurement{
-				Source:       types.SourcePumpDump,
-				Symbol:       symbol,
-				At:           base.Add(time.Duration(index) * time.Second),
-				ObservedFrom: base.Add(time.Duration(index-1) * time.Second),
-				Horizon:      time.Second,
-				Validity: types.MeasurementValidity{
-					State:     types.ValidityValid,
-					Readiness: types.ReadinessObservation,
-				},
-				Metrics: map[string]types.MetricSample{
-					types.MetricKey(metric, types.SideNone): {
-						Raw:        mass,
-						Normalized: &mass,
+			thesis.AppendMeasurements([]*types.Measurement{
+				{
+					Source:       types.SourcePumpDump,
+					Symbol:       symbol,
+					Peer:         string(metric),
+					At:           base.Add(time.Duration(index) * time.Second),
+					ObservedFrom: base.Add(time.Duration(index-1) * time.Second),
+					Horizon:      time.Second,
+					Validity: types.MeasurementValidity{
+						State:     types.ValidityValid,
+						Readiness: types.ReadinessObservation,
+					},
+					Metrics: map[string]types.MetricSample{
+						types.MetricKey(metric, types.SideNone): {
+							Raw:        mass,
+							Normalized: &mass,
+						},
 					},
 				},
 			})
@@ -161,7 +164,7 @@ func BenchmarkGraphUpdateFrom(b *testing.B) {
 
 	b.ReportAllocs()
 
-	for index := 0; index < b.N; index++ {
+	for index := 0; b.Loop(); index++ {
 		thesis.At = base.Add(time.Duration(index) * time.Second)
 		graph.UpdateFrom(thesis)
 	}

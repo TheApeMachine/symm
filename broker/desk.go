@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken"
@@ -66,6 +67,8 @@ func NewDesk(
 		"ticker":     {Topic: "ticker", Fn: desk.onTicker},
 		"instrument": {Topic: "instrument", Fn: desk.onInstrument},
 		"balances":   {Topic: "balances", Fn: desk.onBalances},
+		"executions": {Topic: "executions", Fn: desk.onExecutions},
+		"add_order":  {Topic: "add_order", Fn: desk.onOrder},
 	})
 
 	return desk
@@ -119,50 +122,6 @@ func (desk *Desk) Initialize(market *types.Actor, account *types.Actor) error {
 }
 
 /*
-Publish pushes the current wallet and instrument snapshots to the UI channel.
-It is the explicit broker refresh hook used when callers need the latest owned
-state without waiting for the next market or account frame.
-*/
-func (desk *Desk) Publish() {
-	desk.balance.Publish()
-	desk.instrument.Publish()
-}
-
-/*
-onTicker records the latest executable price row and immediately remarks every
-open wallet lot carried by that ticker. Open positions and stoplosses must move
-on the same live ticker path as the exchange; waiting for strategy recomputation
-leaves restart-adopted lots visible as empty shells with stale risk.
-*/
-func (desk *Desk) onTicker(message any) any {
-	ticker, ok := message.(*kraken.Ticker)
-
-	if !ok {
-		ticker = kraken.NewTicker(message.([]byte))
-	}
-
-	desk.price.TickerAck(ticker)
-
-	for _, row := range ticker.Data {
-		position, ok := desk.positions[row.Symbol]
-
-		if !ok || position.holding == nil || position.holding.Status != types.OPEN {
-			continue
-		}
-
-		if err := desk.price.Mark(&position.pair, position.holding); err != nil {
-			errnie.Error(err)
-		}
-	}
-
-	if err := desk.balance.Publish(); err != nil {
-		errnie.Error(err)
-	}
-
-	return nil
-}
-
-/*
 transitionStatus applies one canonical desk lifecycle edge and fails loud on
 illegal transitions.
 */
@@ -189,7 +148,42 @@ onInstrument forwards the instrument tick then adopts newly visible open lots.
 */
 func (desk *Desk) onInstrument(message any) any {
 	desk.instrument.On(message)
-	desk.adopt()
+	return nil
+}
+
+/*
+onTicker refreshes the price cache, lets each open position mark itself, and
+lets the bound stoploss regulate off the same live bid path before a wallet
+publish goes out.
+*/
+func (desk *Desk) onTicker(message any) any {
+	ticker, ok := message.(*kraken.Ticker)
+
+	if !ok {
+		ticker = kraken.NewTicker(message.([]byte))
+	}
+
+	desk.price.TickerAck(ticker)
+
+	for _, row := range ticker.Data {
+		position, exists := desk.positions[row.Symbol]
+
+		if !exists || position == nil || position.holding == nil {
+			continue
+		}
+
+		if err := desk.price.Mark(&position.pair, position.holding); err != nil {
+			errnie.Error(err)
+		}
+
+		if position.holding.Stoploss != nil {
+			position.holding.Stoploss.Update(position.holding.Mark)
+		}
+	}
+
+	if err := desk.balance.Publish(); err != nil {
+		errnie.Error(err)
+	}
 
 	return nil
 }
@@ -201,7 +195,95 @@ wallet-backed lots so restart positions are immediately managed by Desk.
 func (desk *Desk) onBalances(message any) any {
 	desk.balance.BalanceAck(message.([]byte))
 	desk.loadFillHistory()
-	desk.adopt()
+
+	seen := make(map[string]struct{})
+
+	for lot := range desk.balance.Lots() {
+		if lot.Status != types.OPEN || lot.Qty == nil || lot.Qty.Sign() <= 0 {
+			continue
+		}
+
+		pair, err := desk.instrument.Pair(lot.Symbol)
+
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		seen[lot.Symbol] = struct{}{}
+
+		if fills := desk.fillsBySymbol[lot.Symbol]; len(fills) > 0 {
+			entry := fills[len(fills)-1]
+
+			desk.positions[lot.Symbol] = NewPosition(
+				desk.ctx,
+				desk.api,
+				desk.balance.ui,
+				desk.instrument,
+				desk.price,
+				desk.balance,
+				pair,
+				entry.Qty,
+			)
+		}
+	}
+
+	if err := desk.balance.Publish(); err != nil {
+		errnie.Error(err)
+	}
+
+	return nil
+}
+
+/*
+onOrder correlates a venue acknowledgement to the position that submitted the
+request. The order id is needed for later execution frames, which may arrive
+after the ack and only carry venue identity.
+*/
+func (desk *Desk) onOrder(message any) any {
+	order, ok := message.(*kraken.OrderResponse)
+
+	if !ok {
+		order = kraken.NewOrderResponse(message.([]byte))
+	}
+
+	position := desk.byReqID[order.ReqID]
+
+	if position == nil {
+		return nil
+	}
+
+	position.onOrder(order)
+	desk.byOrderID[order.Result.OrderID] = position
+	return nil
+}
+
+/*
+onExecutions routes private fill frames to their owning position by venue order
+id, then lets Balance publish the enriched holding that powers live cards and
+wallet equity.
+*/
+func (desk *Desk) onExecutions(message any) any {
+	execution, ok := message.(*kraken.Execution)
+
+	if !ok {
+		execution = kraken.NewExecution(message.([]byte))
+	}
+
+	for _, row := range execution.Data {
+		position := desk.byOrderID[row.OrderID]
+
+		if position == nil {
+			continue
+		}
+
+		position.onExecutions(&kraken.Execution{
+			Channel:  execution.Channel,
+			Type:     execution.Type,
+			Data:     []kraken.ExecutionData{row},
+			Sequence: execution.Sequence,
+		})
+	}
 
 	return nil
 }
@@ -250,84 +332,15 @@ func (desk *Desk) loadFillHistory() {
 }
 
 /*
-seedEconomics derives EntryPrice/EntryFee from indexed fills when the wallet
-lot arrived without a live Enter path.
-*/
-func (desk *Desk) seedEconomics(holding *types.Holding) bool {
-	if holding == nil || desk.price == nil {
-		return false
-	}
-
-	if holding.EntryPrice != nil && holding.EntryPrice.Sign() > 0 &&
-		holding.EntryFee != nil {
-		return false
-	}
-
-	fills := desk.fillsBySymbol[holding.Symbol]
-
-	if len(fills) == 0 {
-		return false
-	}
-
-	desk.price.deriveEconomics(holding, fills)
-
-	return holding.EntryPrice != nil && holding.EntryPrice.Sign() > 0
-}
-
-/*
-adopt turns wallet-backed open lots into Desk positions after a balance snapshot
-or update proves the asset exists. It avoids submitting orders because the paper
-or venue ledger already owns these fills; Desk only rebuilds the exit shell.
-*/
-func (desk *Desk) adopt() {
-	for holding := range desk.balance.Lots() {
-		if holding.Status != types.OPEN || holding.Qty == nil ||
-			holding.Qty.Sign() <= 0 {
-			continue
-		}
-
-		if _, ok := desk.positions[holding.Symbol]; ok {
-			continue
-		}
-
-		lot, err := desk.balance.Holding(holding.Symbol)
-
-		if err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		desk.seedEconomics(lot)
-		pair, err := desk.instrument.Pair(lot.Symbol)
-
-		if err != nil {
-			errnie.Error(err)
-			continue
-		}
-
-		position := NewPosition(
-			desk.ctx,
-			desk.api,
-			desk.instrument,
-			desk.price,
-			desk.balance,
-			pair,
-			lot.Qty,
-		)
-		position.Adopt(lot)
-		desk.positions[lot.Symbol] = position
-	}
-}
-
-/*
 Update removes closed or errored positions from the open map.
 */
 func (desk *Desk) Update() {
 	for symbol, position := range desk.positions {
-		if slices.Contains([]types.Status{
+		if position.holding.Status == types.CLOSED || slices.Contains([]types.Status{
 			types.CLOSED, types.ERROR, types.CANCELED,
 		}, position.Status()) {
-			position.Close()
+			position.status = types.CLOSED
+			position.holding.Status = types.CLOSED
 			delete(desk.positions, symbol)
 		}
 	}
@@ -347,6 +360,17 @@ Position returns the open lot shell for symbol.
 func (desk *Desk) Position(symbol string) (*Position, bool) {
 	position, ok := desk.positions[symbol]
 	return position, ok
+}
+
+/*
+Balance returns the composed Balance owner.
+*/
+func (desk *Desk) Balance() *Balance {
+	if desk == nil {
+		return nil
+	}
+
+	return desk.balance
 }
 
 /*
@@ -381,101 +405,32 @@ func (desk *Desk) MaxSlots(withReserved bool) int {
 }
 
 func (desk *Desk) Buy(
-	holding *types.Holding,
+	symbol string,
+	qty *decimal.Decimal,
 	opportunity bool,
 ) (*Position, error) {
-	return desk.ReserveAndSubmitEntry(holding, opportunity)
-}
-
-/*
-ReserveAndSubmitEntry claims slot+cash then submits the market enter as one
-Desk transition so a failed submit releases both reservations.
-*/
-func (desk *Desk) ReserveAndSubmitEntry(
-	holding *types.Holding,
-	opportunity bool,
-) (*Position, error) {
-	if holding.Qty == nil || holding.Qty.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation, "desk: enter requires positive quantity", nil,
-		))
-	}
-
-	if !desk.HasSlot(opportunity) {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Conflict, "desk: no free slot for "+holding.Symbol, nil,
-		))
-	}
-
-	pair, err := desk.instrument.Pair(holding.Symbol)
+	pair, err := desk.instrument.Pair(symbol)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.NotFound,
-			"desk: instrument pair unavailable for "+holding.Symbol,
+			"desk: no instrument for "+symbol,
 			err,
 		))
 	}
 
-	mark, err := desk.price.Last(holding.Symbol)
-
-	if err != nil || mark == nil || mark.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"desk: mark unavailable for reservation on "+holding.Symbol,
-			err,
-		))
-	}
-
-	intentID := holding.Symbol + ":" + holding.Qty.String()
-	cash := holding.Qty.Mul(mark)
-
-	if _, exists := desk.balance.byID[intentID]; !exists {
-		if err := desk.balance.Reserve(
-			intentID, holding.Symbol, cash, true,
-		); err != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.Internal,
-				err.Error(),
-				err,
-			))
-		}
-	}
-
-	position := NewPosition(
+	desk.positions[symbol] = NewPosition(
 		desk.ctx,
 		desk.api,
+		desk.balance.ui,
 		desk.instrument,
 		desk.price,
 		desk.balance,
 		pair,
-		holding.Qty,
-	)
+		qty,
+	).Enter()
 
-	position.intentID = intentID
-
-	if err := position.Enter(holding); err != nil {
-		errnie.Error(desk.balance.Release(intentID))
-
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			err.Error(),
-			err,
-		))
-	}
-
-	// Venue now owns the working order; drop the local claim so slot math and
-	// Available track exchange state plus any still-open Allocator claims.
-	errnie.Error(desk.balance.Commit(intentID))
-	position.intentID = ""
-
-	if position.entryOrder != nil {
-		desk.byReqID[position.entryOrder.ReqID] = position
-	}
-
-	desk.positions[holding.Symbol] = position
-
-	return position, nil
+	return desk.positions[symbol], nil
 }
 
 /*

@@ -13,7 +13,7 @@ const setText = (node: Element | null | undefined, value: string): void => {
 };
 
 const isOpenLot = (holding: Holding): boolean =>
-	holding.qty > 0 &&
+	Number(holding.qty) > 0 &&
 	holding.status !== "closed" &&
 	holding.status !== "canceled";
 

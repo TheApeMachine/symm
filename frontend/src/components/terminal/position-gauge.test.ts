@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Holding, Stop } from "#/collections/types";
 import {
 	createPositionGaugeElement,
@@ -69,6 +69,46 @@ describe("positionGaugeGeometry", () => {
 
 describe("paintPositionHoldings", () => {
 	it("paints restored map-shaped holdings with decimal strings", () => {
+		const elements: Array<Record<string, any>> = [];
+		const element = () => {
+			const node: Record<string, any> = {
+				children: [],
+				dataset: {},
+				style: {},
+				className: "",
+				append: (...children: unknown[]) => node.children.push(...children),
+				appendChild: (child: unknown) => node.children.push(child),
+				addEventListener: () => undefined,
+				setAttribute: () => undefined,
+				querySelector: (selector: string) =>
+					elements.find(
+						(candidate) =>
+							selector === `[data-gauge="${candidate.dataset.gauge}"]`,
+						) ?? null,
+			};
+			let text = "";
+
+			Object.defineProperty(node, "textContent", {
+				get: () =>
+					`${text}${node.children.map((child: any) => child.textContent ?? "").join("")}`,
+				set: (value) => {
+					text = String(value ?? "");
+				},
+			});
+			elements.push(node);
+
+			return node;
+		};
+		const body = element();
+		body.replaceChildren = (...children: unknown[]) => {
+			body.children = children;
+		};
+
+		vi.stubGlobal("document", {
+			body,
+			createElement: element,
+		});
+
 		document.body.replaceChildren(createPositionGaugeElement("EUL/USD", "USD"));
 
 		paintPositionHoldings(
@@ -90,5 +130,67 @@ describe("paintPositionHoldings", () => {
 
 		expect(document.body.textContent).toContain("P/L 0.0099 USD");
 		expect(document.body.textContent).toContain("entry 1.729 / mark 1.7300");
+		vi.unstubAllGlobals();
+	});
+
+	it("keeps missing economics visible instead of collapsing to zero", () => {
+		const elements: Array<Record<string, any>> = [];
+		const element = () => {
+			const node: Record<string, any> = {
+				children: [],
+				dataset: {},
+				style: {},
+				className: "",
+				append: (...children: unknown[]) => node.children.push(...children),
+				appendChild: (child: unknown) => node.children.push(child),
+				addEventListener: () => undefined,
+				setAttribute: () => undefined,
+				querySelector: (selector: string) =>
+					elements.find(
+						(candidate) =>
+							selector === `[data-gauge="${candidate.dataset.gauge}"]`,
+						) ?? null,
+			};
+			let text = "";
+
+			Object.defineProperty(node, "textContent", {
+				get: () =>
+					`${text}${node.children.map((child: any) => child.textContent ?? "").join("")}`,
+				set: (value) => {
+					text = String(value ?? "");
+				},
+			});
+			elements.push(node);
+
+			return node;
+		};
+		const body = element();
+		body.replaceChildren = (...children: unknown[]) => {
+			body.children = children;
+		};
+
+		vi.stubGlobal("document", {
+			body,
+			createElement: element,
+		});
+
+		document.body.replaceChildren(createPositionGaugeElement("BABYSHARK/USD", "USD"));
+
+		paintPositionHoldings(
+			{
+				"BABYSHARK/USD": {
+					symbol: "BABYSHARK/USD",
+					qty: "1.2",
+					entry_fee: "0",
+					exit_fee: "0",
+					status: "open",
+				},
+			},
+			"USD",
+		);
+
+		expect(document.body.textContent).toContain("P/L — USD");
+		expect(document.body.textContent).toContain("entry — / mark --");
+		vi.unstubAllGlobals();
 	});
 });

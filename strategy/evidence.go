@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"math"
-	"slices"
 
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/logic/manifold"
@@ -36,23 +35,9 @@ func (evidence Evidence) Project(
 		return projected
 	}
 
-	// StopMark (mid/last) only — bid Mark is flatten-now PnL, not stop geometry.
-	markDecimal := holding.StopMark
-
-	if markDecimal == nil {
-		return projected
-	}
-
-	mark := markDecimal.Float64()
 	entry := holding.EntryPrice.Float64()
 
-	if mark <= 0 || entry <= 0 {
-		return projected
-	}
-
-	projected.Mark = mark
 	projected.Entry = entry
-	projected.ReferencePrice = markDecimal.Copy()
 	projected.Present = true
 
 	if thesis == nil {
@@ -98,22 +83,25 @@ func (evidence Evidence) resonance(
 	thesis *types.Thesis,
 	symbol string,
 ) {
-	for index := len(thesis.Resonance) - 1; index >= 0; index-- {
-		outcome, ok := evidence.asResonance(thesis.Resonance[index])
+	value, found := thesis.Resonance.Load(symbol)
 
-		if !ok || outcome.Symbol != symbol {
-			continue
-		}
-
-		projected.ExpectedReturn = outcome.ExpectedReturn
-		projected.Uncertainty = outcome.Uncertainty
-		projected.IncrementalMSE = outcome.IncrementalMSE
-		projected.ReturnReady = outcome.ReturnReady
-		projected.NormalizedResidual = evidence.residual(
-			projected.IncrementalMSE, projected.Uncertainty,
-		)
+	if !found {
 		return
 	}
+
+	outcome, ok := evidence.asResonance(value)
+
+	if !ok {
+		return
+	}
+
+	projected.ExpectedReturn = outcome.ExpectedReturn
+	projected.Uncertainty = outcome.Uncertainty
+	projected.IncrementalMSE = outcome.IncrementalMSE
+	projected.ReturnReady = outcome.ReturnReady
+	projected.NormalizedResidual = evidence.residual(
+		projected.IncrementalMSE, projected.Uncertainty,
+	)
 }
 
 func (evidence Evidence) causal(
@@ -121,17 +109,20 @@ func (evidence Evidence) causal(
 	thesis *types.Thesis,
 	symbol string,
 ) {
-	for _, value := range slices.Backward(thesis.Causal) {
-		outcome, ok := evidence.asCausal(value)
+	value, found := thesis.Causal.Load(symbol)
 
-		if !ok || outcome.Symbol != symbol {
-			continue
-		}
-
-		projected.CausalReady = outcome.Ready
-		projected.CausalExpectedReturn = outcome.ExpectedReturn
+	if !found {
 		return
 	}
+
+	outcome, ok := evidence.asCausal(value)
+
+	if !ok {
+		return
+	}
+
+	projected.CausalReady = outcome.Ready
+	projected.CausalExpectedReturn = outcome.ExpectedReturn
 }
 
 func (evidence Evidence) cognition(
@@ -216,8 +207,7 @@ func (evidence Evidence) retreat(
 			return true
 		}
 
-		if measurement == nil ||
-			measurement.Source != types.SourceToxicity {
+		if measurement.Source != types.SourceToxicity {
 			return true
 		}
 

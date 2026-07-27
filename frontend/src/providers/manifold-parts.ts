@@ -1,29 +1,34 @@
 /*
 manifold-parts holds the latest split manifold wave packet so the phase dial
 can compose without one monolithic DRAW frame. Lattice textures arrive as
-binary SMF1 frames; the oscillator cloud is not wired.
+binary SMF1 frames.
 */
-const waveBySymbol: Record<string, Record<string, unknown>> = {};
+type ManifoldWavePacket = Record<string, unknown> & {
+	symbol?: string;
+	wave?: Array<Record<string, unknown>>;
+};
 
-const rowPacket = (value: unknown): Record<string, unknown> | null => {
+const waveBySymbol: Record<string, ManifoldWavePacket> = {};
+
+const rowPacket = (value: unknown): ManifoldWavePacket | null => {
 	if (value === null || typeof value !== "object") {
 		return null;
 	}
 
-	return value as Record<string, unknown>;
+	return value as ManifoldWavePacket;
 };
 
-const symbolKey = (packet: Record<string, unknown>): string =>
+const symbolKey = (packet: ManifoldWavePacket): string =>
 	typeof packet.symbol === "string" ? packet.symbol : "";
 
-const clearStore = (store: Record<string, Record<string, unknown>>) => {
+const clearStore = (store: Record<string, ManifoldWavePacket>) => {
 	for (const key of Object.keys(store)) {
 		delete store[key];
 	}
 };
 
 const ingestPackets = (
-	store: Record<string, Record<string, unknown>>,
+	store: Record<string, ManifoldWavePacket>,
 	value: unknown,
 ) => {
 	if (value === null || value === undefined) {
@@ -53,6 +58,5 @@ export const paintManifoldWave = (value: unknown) => {
 	ingestPackets(waveBySymbol, value);
 };
 
-export const latestManifoldWave = (
-	symbol = "",
-): Record<string, unknown> | null => waveBySymbol[symbol] ?? null;
+export const latestManifoldWave = (symbol = ""): ManifoldWavePacket | null =>
+	waveBySymbol[symbol] ?? null;

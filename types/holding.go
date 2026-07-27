@@ -4,14 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 )
-
-// Freeze the configuration once at startup to reuse JIT-compiled encoders.
-var fastSonic = sonic.Config{
-	EncodeNullForInfOrNan: true, // Converts NaN, +Inf, -Inf to JSON `null` instead of returning an error
-}.Froze()
 
 /*
 Holding is inventory qty and economics. Wallet lots live on Balance; Thesis
@@ -35,7 +29,6 @@ type Holding struct {
 	PnL           *decimal.Decimal `json:"pnl"`
 	ReturnPct     *float64         `json:"return_pct"`
 	Mark          *decimal.Decimal `json:"mark"`
-	StopMark      *decimal.Decimal `json:"stop_mark,omitempty"`
 	IsOpportunity bool             `json:"is_opportunity"`
 	ReservationID string           `json:"reservation_id,omitempty"`
 	Stoploss      *Stoploss        `json:"stoploss"`
@@ -66,28 +59,28 @@ func NewHolding(
 }
 
 /*
-MarshalJSON encodes a JSON-safe desk/thesis surface. Decimal fields become
-finite floats and stop_price is derived from the bound regulator.
+Initialize the Holding if we are "recovering" after a restart.
 */
-func (holding Holding) MarshalJSON() ([]byte, error) {
-	type alias Holding
-	return fastSonic.Marshal(alias(holding))
+func (holding *Holding) Initialize(
+	ctx context.Context,
+	qty *decimal.Decimal,
+	mark *decimal.Decimal,
+	exit func() error,
+) {
+	holding.ctx = ctx
+	holding.Qty = qty
+	holding.Status = READY
+	holding.Stoploss.Initialize(ctx, mark, exit)
 }
 
-/*
-UnmarshalJSON decodes a JSON-safe desk/thesis surface. Decimal fields become
-finite floats and stop_price is derived from the bound regulator.
-*/
-func (holding *Holding) UnmarshalJSON(data []byte) error {
-	type alias Holding
-	return fastSonic.Unmarshal(data, (*alias)(holding))
-}
+func (holding *Holding) Close() (err error) {
+	holding.cancel()
 
-func (holding *Holding) Close() {
-	if holding.cancel != nil {
-		holding.cancel()
+	if holding.Stoploss != nil {
+		err = holding.Stoploss.Close()
 	}
 
-	holding.Stoploss.Close()
 	holding.Status = CLOSED
+
+	return err
 }

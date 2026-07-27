@@ -31,7 +31,6 @@ into Inventory so restart inventory is present before the first snapshot.
 */
 func NewBalance(
 	api *websocket.API,
-	holdings []types.Holding,
 	ui chan []byte,
 	market config.MarketConfig,
 ) *Balance {
@@ -45,11 +44,6 @@ func NewBalance(
 		Wallet:    wallet,
 		Cash:      &Cash{wallet: wallet, ledger: ledger},
 		ui:        ui,
-	}
-
-	for _, holding := range holdings {
-		seed := holding
-		balance.StoreHolding(&seed)
 	}
 
 	balance.status.Store(types.INITIALIZING)
@@ -94,10 +88,11 @@ Publish enqueues Frame on the UI channel. A saturated channel returns an error
 instead of dropping the wallet frame silently.
 */
 func (balance *Balance) Publish() error {
+	wallet := balance.Frame()
+
 	select {
 	case balance.ui <- datura.Map[any]{
-		"balances": balance.Wallet.Data,
-		"holdings": balance.Inventory.Holdings,
+		"balances": wallet,
 	}.Marshal():
 		return nil
 	default:
@@ -110,6 +105,37 @@ func (balance *Balance) Publish() error {
 }
 
 /*
+Frame returns wallet rows with available and reserved capital explicit for UI.
+Kraken snapshots carry total balance; the broker ledger owns live reservations,
+so the terminal must receive both rather than reconstructing unavailable cash.
+*/
+func (balance *Balance) Frame() map[string]*kraken.BalanceData {
+	balance.Wallet.mu.RLock()
+	defer balance.Wallet.mu.RUnlock()
+
+	rows := make(map[string]*kraken.BalanceData, len(balance.Wallet.Data))
+
+	for asset, row := range balance.Wallet.Data {
+		copyRow := balance.Wallet.clone(row)
+		reserved := balance.ReservedAsset(asset)
+
+		if asset == balance.Wallet.quote {
+			reserved = balance.ReservedCash()
+		}
+
+		copyRow.Reserved = reserved
+
+		if copyRow.Available == nil && copyRow.Balance != nil {
+			copyRow.Available = copyRow.Balance.Copy().Sub(reserved)
+		}
+
+		rows[asset] = copyRow
+	}
+
+	return rows
+}
+
+/*
 BalanceAck applies one private balance frame. Snapshots replace the wallet map
 and sequence; updates require exact next-sequence or a resync is requested.
 */
@@ -117,8 +143,9 @@ func (balance *Balance) BalanceAck(buf []byte) {
 	ready, resync := balance.Wallet.BalanceAck(buf, func(
 		quote string,
 		data map[string]*kraken.BalanceData,
+		complete bool,
 	) {
-		balance.Sync(quote, data, balance.ReservedAsset)
+		balance.Sync(quote, data, complete, balance.ReservedAsset)
 	})
 
 	if resync {

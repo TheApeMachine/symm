@@ -9,6 +9,7 @@ import (
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -90,7 +91,10 @@ func (signal *Signal) Calculate(
 	}
 
 	out := make([]*types.Measurement, 0, 64)
-	uiOut := make([]*types.Measurement, 0)
+
+	uiOut := datura.Map[any]{
+		"measurements": make([]*types.Measurement, 0),
+	}
 
 	if signal.crossSection == nil {
 		return out, nil
@@ -213,23 +217,15 @@ func (signal *Signal) Calculate(
 
 		out = append(out, measurement)
 
-		if peer.Symbol == types.Focus() {
-			uiOut = append(uiOut, measurement)
+		if measurement.Symbol == types.Focus() {
+			uiOut["measurements"] = append(
+				uiOut["measurements"].([]*types.Measurement), measurement,
+			)
 		}
 	}
 
-	if len(uiOut) > 0 {
-		select {
-		case signal.ui <- datura.Map[any]{
-			"measurements": uiOut,
-		}.Marshal():
-		default:
-			errnie.Error(errnie.Err(
-				errnie.TooManyRequests,
-				"wire: ui channel saturated; dropped measurements",
-				nil,
-			))
-		}
+	if len(uiOut["measurements"].([]*types.Measurement)) > 0 {
+		utils.Publish(signal.ui, uiOut)
 	}
 
 	return out, nil

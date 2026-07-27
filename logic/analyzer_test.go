@@ -93,11 +93,11 @@ forecast outputs for every physics tick that produced GasReady state.
 func (outcome *marketOutcome) observeModels(
 	thesis *types.Thesis,
 ) {
-	So(thesis.Resonance, ShouldHaveLength, len(outcome.symbols))
-	So(thesis.Causal, ShouldHaveLength, len(outcome.symbols))
+	resonanceCount := 0
+	causalCount := 0
 	So(thesis.Hypotheses, ShouldHaveLength, len(outcome.symbols))
 
-	for _, value := range thesis.Resonance {
+	thesis.Resonance.Range(func(_, value any) bool {
 		reading, valid := value.(*logic.ResonanceOutcome)
 		So(valid, ShouldBeTrue)
 		So(outcome.symbols[reading.Symbol], ShouldBeTrue)
@@ -107,11 +107,15 @@ func (outcome *marketOutcome) observeModels(
 		So(reading.Layers, ShouldNotBeEmpty)
 		So(reading.Target, ShouldEqual, "next_l3_epoch_mid_log_return")
 		outcome.layerRows += len(reading.Layers)
-	}
+		resonanceCount++
 
-	outcome.resonanceN = len(thesis.Resonance)
+		return true
+	})
 
-	for _, value := range thesis.Causal {
+	So(resonanceCount, ShouldEqual, len(outcome.symbols))
+	outcome.resonanceN = resonanceCount
+
+	thesis.Causal.Range(func(_, value any) bool {
 		reading, valid := value.(*logic.CausalOutcome)
 
 		if !valid {
@@ -127,9 +131,13 @@ func (outcome *marketOutcome) observeModels(
 		So(reading.Treatment, ShouldNotBeEmpty)
 		So(reading.Target, ShouldNotBeEmpty)
 		So(reading.InformedFlow, ShouldBeBetweenOrEqual, 0, 1)
-	}
+		causalCount++
 
-	outcome.causalN = len(thesis.Causal)
+		return true
+	})
+
+	So(causalCount, ShouldEqual, len(outcome.symbols))
+	outcome.causalN = causalCount
 
 	for _, hypothesis := range thesis.Hypotheses {
 		So(hypothesis.Source, ShouldEqual, types.SourceCausal)
@@ -309,8 +317,9 @@ func TestAnalyzerUpdate(t *testing.T) {
 			if !proof.bookOnly {
 				// High-churn UI streams are fanout-only (not hub-cached). Prove the
 				// publish inputs on thesis instead of waitCached.
-				So(wired.Thesis.Resonance, ShouldNotBeEmpty)
-				So(wired.Thesis.Resonance[0].(*logic.ResonanceOutcome).Layers, ShouldNotBeEmpty)
+				value, found := wired.Thesis.Resonance.Load(market.Symbols[0])
+				So(found, ShouldBeTrue)
+				So(value.(*logic.ResonanceOutcome).Layers, ShouldNotBeEmpty)
 				outcome.uiResonance++
 			}
 

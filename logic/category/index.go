@@ -103,18 +103,6 @@ func (evidence *symbolEvidence) clear() {
 }
 
 /*
-indexEvidence builds the per-symbol evidence index from a pre-snapshotted
-measurement slice. Callers must hold their own snapshot before calling so the
-evidence pass and the compose pass share one copy of the pointer slice.
-*/
-func indexEvidence(measurements map[string][]*types.Measurement) *evidenceIndex {
-	index := newEvidenceIndex()
-	index.updateMap(measurements)
-
-	return index
-}
-
-/*
 UpdateFrom refreshes the resident evidence index from the moving Thesis. The
 Thesis owns current measurements, and the index only stores derived mass and
 temporal envelopes needed by graph edge classification.
@@ -151,26 +139,6 @@ func (index *evidenceIndex) UpdateMeasurements(measurements *sync.Map) {
 
 		return true
 	})
-}
-
-func (index *evidenceIndex) updateMap(measurements map[string][]*types.Measurement) {
-	if index.symbols == nil {
-		index.symbols = map[string]*symbolEvidence{}
-	}
-
-	for _, bucket := range index.symbols {
-		bucket.clear()
-	}
-
-	for _, bySymbol := range measurements {
-		index.updateRows(bySymbol)
-	}
-}
-
-func (index *evidenceIndex) updateRows(bySymbol []*types.Measurement) {
-	for _, measurement := range bySymbol {
-		index.update(measurement)
-	}
 }
 
 func (index *evidenceIndex) update(measurement *types.Measurement) {

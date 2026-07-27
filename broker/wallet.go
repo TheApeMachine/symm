@@ -64,7 +64,7 @@ and sequence; updates require exact next-sequence or a resync is requested.
 */
 func (wallet *Wallet) BalanceAck(
 	buf []byte,
-	sync func(quote string, data map[string]*kraken.BalanceData),
+	sync func(quote string, data map[string]*kraken.BalanceData, complete bool),
 ) (ready bool, resync bool) {
 	incoming := kraken.NewBalance(buf)
 
@@ -84,7 +84,7 @@ func (wallet *Wallet) BalanceAck(
 
 		wallet.Data = replaced
 		wallet.sequence = incoming.Sequence
-		sync(wallet.quote, wallet.Data)
+		sync(wallet.quote, wallet.Data, true)
 		wallet.mu.Unlock()
 
 		return true, false
@@ -108,7 +108,7 @@ func (wallet *Wallet) BalanceAck(
 	}
 
 	wallet.sequence = incoming.Sequence
-	sync(wallet.quote, wallet.Data)
+	sync(wallet.quote, wallet.Data, false)
 	wallet.mu.Unlock()
 
 	return true, false
@@ -123,6 +123,14 @@ func (wallet *Wallet) clone(row *kraken.BalanceData) *kraken.BalanceData {
 
 	if row.Balance != nil {
 		cloned.Balance = row.Balance.Copy()
+	}
+
+	if row.Available != nil {
+		cloned.Available = row.Available.Copy()
+	}
+
+	if row.Reserved != nil {
+		cloned.Reserved = row.Reserved.Copy()
 	}
 
 	return &cloned

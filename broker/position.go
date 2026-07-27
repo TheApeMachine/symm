@@ -2,9 +2,11 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -21,6 +23,7 @@ type Position struct {
 	cancel     context.CancelFunc
 	status     types.Status
 	api        *websocket.API
+	ui         chan []byte
 	instrument *Instrument
 	price      *Price
 	balance    *Balance
@@ -52,6 +55,7 @@ NewPosition constructs one lot shell; Desk routes order and execution rows.
 func NewPosition(
 	ctx context.Context,
 	api *websocket.API,
+	ui chan []byte,
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
@@ -73,6 +77,7 @@ func NewPosition(
 		cancel:     cancel,
 		status:     types.INITIALIZING,
 		api:        api,
+		ui:         ui,
 		instrument: instrument,
 		price:      price,
 		balance:    balance,
@@ -101,32 +106,39 @@ func NewPosition(
 	})
 
 	position.Actor.Initialize()
+	position.Publish()
+
 	return position
 }
 
-/*
-Adopt copies a wallet-backed holding into the Position holding constructed by
-NewHolding without submitting a new entry order. Restart lots already exist at
-the venue, so adoption preserves native stoploss wiring and only restores the
-lot economics that came from balances and fills.
-*/
-func (position *Position) Adopt(holding *types.Holding) {
-	position.holding.Status = types.OPEN
-	position.holding.Asset = holding.Asset
-	position.holding.Qty = holding.Qty
-	position.holding.SellableQty = holding.SellableQty
-	position.holding.EntryAt = holding.EntryAt
-	position.holding.EntryPrice = holding.EntryPrice
-	position.holding.EntryFee = holding.EntryFee
-	position.holding.Mark = holding.Mark
-	position.holding.ReturnPct = holding.ReturnPct
+func (position *Position) Initialize(
+	ctx context.Context,
+	api *websocket.API,
+	ui chan []byte,
+	instrument *Instrument,
+	price *Price,
+	balance *Balance,
+	pair kraken.InstrumentPair,
+) {
+	errnie.Info("initializing position for: " + pair.Symbol)
 
-	if position.holding.Asset == "" {
-		position.holding.Asset = position.pair.Base
-	}
+	position.ctx = ctx
+	position.api = api
+	position.ui = ui
+	position.instrument = instrument
+	position.price = price
+	position.balance = balance
+	position.pair = pair
 
-	position.balance.StoreHolding(position.holding)
-	position.status = types.OPEN
+	position.Actor.Initialize()
+	position.holding.Initialize(
+		position.ctx,
+		position.entryOrder.Params.OrderQty,
+		position.entryOrder.Params.LimitPrice,
+		position.Exit,
+	)
+
+	position.Publish()
 }
 
 /*
@@ -139,15 +151,41 @@ func (position *Position) Status() types.Status {
 /*
 Close marks the lot closed once Desk drops it from the open map.
 */
-func (position *Position) Close() {
+func (position *Position) Close() (err error) {
 	if position.status == types.CLOSED {
-		return
+		return nil
 	}
 
-	position.holding.Close()
+	errors.Join(err, position.holding.Close())
 	position.status = types.CLOSED
+
+	return errnie.Error(err)
 }
 
+/*
+Publish the position to the UI, which will automatically marshal the Holding
+and its Stoploss into the JSON payload. For clarity, the balance is kept out
+of this, as there must be a way to get that more accurate to reality, where
+the exchange publishes the wallet state at the sensible moments. The paper
+trading implementation we use is based on the kraken-cli, where under normal
+use you would also not be manually managing the balances.
+*/
+func (position *Position) Publish() {
+	select {
+	case <-position.ctx.Done():
+		return
+	case position.ui <- datura.Map[any]{
+		"positions": []Position{*position},
+	}.Marshal():
+	default:
+	}
+}
+
+/*
+onOrder binds the venue order identifier to this position after the broker has
+already correlated the request id. The position stays pending until execution
+frames prove whether the market order opened or closed the lot.
+*/
 func (position *Position) onOrder(message any) any {
 	row := message.(*kraken.OrderResponse).Result
 	position.orderID = row.OrderID
@@ -155,6 +193,11 @@ func (position *Position) onOrder(message any) any {
 	return nil
 }
 
+/*
+onExecutions applies fills onto the exact holding published to Balance. Live
+entries must become the same enriched lot as restart-adopted positions, including
+entry economics, mark, PnL, and the bound stoploss floor/peak regulator.
+*/
 func (position *Position) onExecutions(message any) any {
 	rows := message.(*kraken.Execution).Data
 
@@ -178,35 +221,19 @@ func (position *Position) onExecutions(message any) any {
 		row.Side = strings.ToLower(row.Side)
 		closed := false
 
-		if err := position.balance.Update(symbol, func(holding *types.Holding) error {
-			_ = position.price.RecordFill(&position.pair, holding, row, &position.fills)
+		position.price.RecordFill(
+			&position.pair, position.holding, row, &position.fills,
+		)
 
-			status, err := types.StatusFromMarket(row.ExecType)
-
-			if err != nil {
-				return err
+		if row.Side == "buy" && row.OrderStatus == "filled" {
+			if position.holding.Stoploss != nil {
+				position.holding.EntryPrice = row.Cost
+				position.holding.Stoploss.Update(row.Cost)
 			}
-
-			if holding.Qty == nil || holding.Qty.Sign() <= 0 {
-				status = types.CLOSED
-			}
-
-			if row.Side == "sell" && row.OrderStatus == "filled" {
-				status = types.CLOSED
-			}
-
-			position.status = status
-			position.holding.Status = status
-			return nil
-		}); err != nil {
-			errnie.Error(err)
-			return nil
 		}
 
-		if position.intentID != "" && position.balance != nil {
-			_ = position.balance.Commit(position.intentID)
-			position.intentID = ""
-		}
+		position.status = types.Status(row.OrderStatus)
+		position.holding.Status = types.Status(row.OrderStatus)
 
 		if err := position.balance.Publish(); err != nil {
 			errnie.Error(err)
@@ -223,131 +250,26 @@ func (position *Position) onExecutions(message any) any {
 /*
 Enter seeds the holding onto Balance and submits a market buy for its quantity.
 */
-func (position *Position) Enter(holding *types.Holding) error {
-	if holding.Asset == "" {
-		holding.Asset = position.pair.Base
-	}
-
-	position.balance.StoreHolding(holding)
-
-	amount, err := position.price.Taker(&position.pair, holding.Qty)
-
-	if err != nil {
-		position.balance.DeleteHolding(holding.Symbol)
-
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to calculate taker cost: "+err.Error(),
-			err,
-		))
-	}
-
-	// Desk already reserved cash under intentID; Available would subtract it twice.
-	if position.intentID == "" {
-		ok, err := position.balance.Available(amount)
-
-		if err != nil {
-			position.balance.DeleteHolding(holding.Symbol)
-
-			return errnie.Error(err)
-		}
-
-		if !ok {
-			position.balance.DeleteHolding(holding.Symbol)
-
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				"insufficient balance",
-				nil,
-			))
-		}
-	}
-
+func (position *Position) Enter() *Position {
 	if err := position.api.AddOrder(position.entryOrder); err != nil {
-		position.balance.DeleteHolding(holding.Symbol)
+		position.balance.DeleteHolding(position.holding.Symbol)
 		position.status = types.ERROR
 
-		return errnie.Error(errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to place market order",
 			err,
 		))
 	}
 
-	return nil
+	return position
 }
 
 /*
 Exit submits a market sell for the sellable ledger quantity.
 */
 func (position *Position) Exit() error {
-	if position.status == types.PENDING {
-		return errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"position is pending",
-			nil,
-		))
-	}
-
-	asset := position.holding.Asset
-
-	if asset == "" {
-		asset = position.pair.Base
-	}
-
-	available, err := position.balance.AssetAvailable(asset)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"no wallet availability to sell "+position.pair.Symbol,
-			err,
-		))
-	}
-
-	if available.Sign() <= 0 {
-		return errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"no sellable "+asset+" available for "+position.pair.Symbol,
-			nil,
-		))
-	}
-
-	quantity := position.price.Quantize(&position.pair, available)
-
-	if quantity == nil || quantity.Sign() <= 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"exit quantity not executable for "+position.pair.Symbol,
-			nil,
-		))
-	}
-
-	if position.holding.Qty != nil && quantity.Cmp(position.holding.Qty) > 0 {
-		quantity = position.price.Quantize(&position.pair, position.holding.Qty)
-	}
-
-	intentID := "exit:" + position.pair.Symbol + ":" + quantity.String()
-
-	if err := position.balance.ReserveAsset(
-		intentID, asset, quantity,
-	); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"failed to reserve sellable "+asset+" for "+position.pair.Symbol,
-			err,
-		))
-	}
-
-	position.intentID = intentID
-	prior := position.status
-
 	if err := position.api.AddOrder(position.exitOrder); err != nil {
-		errnie.Error(position.balance.Release(intentID))
-		position.intentID = ""
-		position.exitOrder = nil
-		position.status = prior
-
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to place market sell order",
@@ -355,5 +277,5 @@ func (position *Position) Exit() error {
 		))
 	}
 
-	return nil
+	return position.Close()
 }

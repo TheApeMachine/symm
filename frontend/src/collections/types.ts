@@ -23,9 +23,9 @@ Balance mirrors the Balance.Frame wallet row JSON.
 */
 export type Balance = {
 	asset: string;
-	balance: number;
-	available: number;
-	reserved: number;
+	balance: number | string;
+	available?: number | string;
+	reserved?: number | string;
 };
 
 /*
@@ -291,33 +291,47 @@ export type CognitiveClass = {
 	probability: number;
 };
 
+export type MeasurementCategory = Omit<ThesisCategory, "maturity"> & {
+	maturity?: number;
+};
+
 export type Measurement = {
-    source: string;
-    symbol: string;
-    peer?: string;
-    at: string;
-    observedFrom?: string;
-    horizon?: string;
-    maturity?: number;
-    uncertainty?: {
-        lower?: number;
-        upper?: number;
-        confidence?: number;
-        method?: string;
-    };
-    validity: {
-        state: string;
-        readiness: string;
-        reason?: string;
-    };
-    scale: {
-        kind: string;
-        from: string;
-        through: string;
-    };
-    metrics?: { [key: string]: {
-        raw: number;
-        normalized?: number;
-        unit?: string;
-    }};
-}
+	source: string;
+	symbol: string;
+	subject?: string;
+	stream?: string;
+	peer?: string;
+	at: string;
+	observedFrom?: string;
+	horizon?: number | string;
+	maturity?: number;
+	uncertainty?: {
+		lower?: number;
+		upper?: number;
+		confidence?: number;
+		method?: string;
+	} | null;
+	metric?: string;
+	side?: string;
+	unit?: string;
+	raw?: number;
+	normalized?: number | null;
+	validity: {
+		state: string;
+		readiness: string;
+		reason?: string;
+	};
+	scale: {
+		kind: string;
+		from: string;
+		through: string;
+	};
+	metrics?: Record<string, any>;
+	categories?: MeasurementCategory[];
+};
+
+export type MeasurementEpoch = {
+	at: string;
+	readings: Measurement[];
+	publishedAt?: string;
+};

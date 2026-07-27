@@ -26,6 +26,7 @@ next live frame arrives soon enough that caching them is wasted work.
 */
 var cacheKeys = []string{
 	"balances", "executions", "instruments", "positions", "holdings", "stops",
+	"lifecycle", "findings", "tick",
 }
 
 var cacheKeySet = func() map[string]struct{} {
@@ -364,7 +365,7 @@ func (hub *Hub) writeWallet(session *clientSession) {
 	}
 
 	frame := datura.Map[any]{
-		"balances": hub.balance.Wallet.Data,
+		"balances": hub.balance.Frame(),
 		"holdings": hub.balance.Holdings(),
 	}.Marshal()
 

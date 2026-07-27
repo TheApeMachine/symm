@@ -56,6 +56,15 @@ func TestHubPublishGeneration(t *testing.T) {
 				So(hub.generation.Load(), ShouldEqual, 1)
 			})
 		})
+
+		Convey("When Publish sees journal lifecycle state", func() {
+			hub.Publish([]byte(`{"lifecycle":[{"symbol":"BTC/USD","state":"managing"}],"findings":[{"symbol":"BTC/USD"}]}`))
+
+			Convey("It retains the journal rails for reconnect replay", func() {
+				So(string(hub.Cached("lifecycle")), ShouldContainSubstring, `"managing"`)
+				So(string(hub.Cached("findings")), ShouldContainSubstring, `"BTC/USD"`)
+			})
+		})
 	})
 }
 

@@ -1,6 +1,11 @@
 import { createRef } from "react";
 import { terminalStore } from "#/collections/terminal";
 import type { Measurement } from "#/collections/types";
+import {
+	paintInspectorMeters,
+	mergeInspectorMetrics,
+	type MeterParts,
+} from "#/components/terminal/inspector-meters";
 import { Flex } from "@/components/ui/flex";
 
 const titleRef = createRef<HTMLSpanElement>();
@@ -17,6 +22,7 @@ const badgeRef = createRef<HTMLSpanElement>();
 
 let lastUniverse: Measurement[] = [];
 let lastFocusSymbol = "";
+const detailMeters = new Map<string, MeterParts>();
 
 /*
 repaintSignalDetail paints SignalDetail from retained measurement history after
@@ -82,47 +88,15 @@ export const paintSignalDetailMeasurements = (
 
 	if (metricsGridRef.current !== null) {
 		metricsGridRef.current.hidden = epoch.length === 0;
-		metricsGridRef.current.replaceChildren(
-			...epoch.flatMap((row) =>
-				Object.entries(row.metrics ?? {}).map(([metric, sample]) => {
-					const cell = document.createElement("div");
-					const header = document.createElement("div");
-					const label = document.createElement("span");
-					const value = document.createElement("span");
-					const track = document.createElement("div");
-					const fill = document.createElement("div");
-
-					cell.setAttribute("role", "progressbar");
-					cell.setAttribute("aria-valuemin", "0");
-					cell.setAttribute("aria-valuemax", "100");
-					cell.setAttribute(
-						"aria-valuenow",
-						String(
-							Math.round(
-								Math.max(0, Math.min(1, sample.normalized ?? sample.raw)) * 100,
-							),
-						),
-					);
-					header.className = "mb-1 flex justify-between font-mono text-[9px]";
-					label.className = "text-(--f3)";
-					label.textContent = metric.replaceAll("_", " ");
-					value.className = "text-(--f1)";
-					value.textContent = sample.raw.toPrecision(4);
-					track.className = "h-1 overflow-hidden rounded-[2px] bg-(--line)";
-					fill.className =
-						metric === headline
-							? "h-full bg-(--warning)"
-							: "h-full bg-(--info)";
-					fill.style.width = `${Math.max(0, Math.min(1, sample.normalized ?? sample.raw)) * 100}%`;
-
-					header.append(label, value);
-					track.append(fill);
-					cell.append(header, track);
-
-					return cell;
-				}),
-			),
-		);
+		if (epoch.length > 0) {
+			const entries = mergeInspectorMetrics(epoch, source, focusSymbol);
+			paintInspectorMeters(
+				metricsGridRef.current,
+				detailMeters,
+				entries,
+				headline,
+			);
+		}
 	}
 
 	if (badgeRef.current !== null) {
@@ -190,7 +164,7 @@ export const paintSignalDetailMeasurements = (
 					);
 
 					cell.className =
-						"rounded-[2px] px-1.5 py-1 font-mono text-[9px] text-(--f1)";
+						"flex aspect-square w-8 h-8 items-center justify-center rounded-[2px] font-mono text-[9.5px] font-semibold text-(--f1)";
 					cell.style.background = `color-mix(in srgb, var(--acc) ${Math.round(strength * 100)}%, var(--sunken))`;
 					cell.textContent = row.symbol.split("/")[0] ?? row.symbol;
 
@@ -247,7 +221,7 @@ export const SignalDetail = () => (
 				ref={heatmapTitleRef}
 				className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]"
 			/>
-			<div ref={heatmapGridRef} className="grid grid-cols-12 gap-0.75" />
+			<div ref={heatmapGridRef} className="flex flex-wrap gap-1.5" />
 		</div>
 	</Flex.Column>
 );

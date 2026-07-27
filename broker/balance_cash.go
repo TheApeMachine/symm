@@ -55,6 +55,10 @@ func (cash *Cash) FreeCash() (*decimal.Decimal, error) {
 		))
 	}
 
+	if row.Available != nil {
+		return row.Available.Copy().Sub(cash.ledger.ReservedCash()), nil
+	}
+
 	return row.Balance.Copy().Sub(cash.ledger.ReservedCash()), nil
 }
 
@@ -84,6 +88,10 @@ func (cash *Cash) AssetAvailable(asset string) (*decimal.Decimal, error) {
 			"asset available balance missing for "+asset,
 			nil,
 		))
+	}
+
+	if row.Available != nil {
+		return row.Available.Copy().Sub(cash.ledger.ReservedAsset(asset)), nil
 	}
 
 	return row.Balance.Copy().Sub(cash.ledger.ReservedAsset(asset)), nil

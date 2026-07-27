@@ -19,10 +19,10 @@ func TestCognitionVisualizationStaysBounded(t *testing.T) {
 	Convey("Given a trained sequence wider than the beam-search depth", t, func() {
 		tree, err := dmt.NewTree("")
 		So(err, ShouldBeNil)
-		parts := []string{"symbol-vvv-usd"}
+		parts := []string{"s"}
 
 		for index := range 64 {
-			parts = append(parts, fmt.Sprintf("exhaust-metric-%d-positive", index))
+			parts = append(parts, fmt.Sprintf("category-%d-positive", index))
 		}
 
 		sequence := []byte(strings.Join(parts, "_"))
@@ -32,9 +32,7 @@ func TestCognitionVisualizationStaysBounded(t *testing.T) {
 
 		for index := range 32 {
 			alternate := append([]string{}, parts...)
-			alternate[len(alternate)-1] = fmt.Sprintf(
-				"exhaust-metric-%d-negative", index,
-			)
+			alternate[len(alternate)-1] = fmt.Sprintf("category-%d-negative", index)
 			tree.TrainSensorySequence([]byte(strings.Join(alternate, "_")))
 		}
 
@@ -59,35 +57,28 @@ func TestCognitionVisualizationStaysBounded(t *testing.T) {
 }
 
 /*
-TestCognitionBranchesForkFromRoot proves Cortex exports a real radix fork, not a
-sealed-bag spine with one-hop stubs. Sibling pressure tokens under the same
-symbol must both appear as depth-2 children.
+TestCognitionBranchesForkFromRoot proves Cortex exports one sensory root with
+category transition forks beneath it, not a mixed symbol tree.
 */
 func TestCognitionBranchesForkFromRoot(t *testing.T) {
-	Convey("Given trained sequences that diverge after the symbol hop", t, func() {
+	Convey("Given trained sequences that diverge after the sensory root", t, func() {
 		tree, err := dmt.NewTree("")
 		So(err, ShouldBeNil)
 		analyzer := &Analyzer{tree: tree}
 
-		tree.TrainSensorySequence([]byte(
-			"symbol-btc-usd_pressure-positive_divergence-negative",
-		))
-		tree.TrainSensorySequence([]byte(
-			"symbol-btc-usd_pressure-negative_divergence-positive",
-		))
-		tree.TrainSensorySequence([]byte(
-			"symbol-eth-usd_pressure-positive_divergence-negative",
-		))
+		tree.TrainSensorySequence([]byte("s_pressure-positive_divergence-negative"))
+		tree.TrainSensorySequence([]byte("s_pressure-negative_divergence-positive"))
+		tree.TrainSensorySequence([]byte("s_pressure-positive_loaded-imbalance"))
 
 		tip := tree.PredictNextSensoryTokens(
-			[]byte("symbol-btc-usd_pressure-positive"),
+			[]byte("s_pressure-positive"),
 			make([]dmt.LookaheadPrediction, 0, 4),
 		)
 		branches, count := analyzer.cognitionBranches(
 			analyzer.treeExpandWidth(cognitionBeamWidth(tip)),
 		)
 
-		Convey("Then the root fans into multiple symbols and pressure forks", func() {
+		Convey("Then the root has one s child and category forks below it", func() {
 			So(count, ShouldEqual, len(branches))
 
 			childrenOf := map[int][]string{}
@@ -103,64 +94,52 @@ func TestCognitionBranchesForkFromRoot(t *testing.T) {
 				)
 			}
 
-			So(len(childrenOf[0]), ShouldBeGreaterThanOrEqualTo, 2)
+			So(childrenOf[0], ShouldResemble, []string{"s"})
 
-			btcID := -1
+			sID := -1
 
 			for _, branch := range branches {
-				if branch.Token == "symbol-btc-usd" {
-					btcID = branch.ID
+				if branch.Token == "s" {
+					sID = branch.ID
 					break
 				}
 			}
 
-			So(btcID, ShouldBeGreaterThanOrEqualTo, 0)
-			So(len(childrenOf[btcID]), ShouldBeGreaterThanOrEqualTo, 2)
+			So(sID, ShouldBeGreaterThanOrEqualTo, 0)
+			So(len(childrenOf[sID]), ShouldBeGreaterThanOrEqualTo, 2)
 		})
 	})
 }
 
-func TestCognitionBeamsStaySymbolScoped(t *testing.T) {
-	Convey("Given two symbols trained on divergent sensory continuations", t, func() {
+/*
+TestCognitionBeamsStayGlobal proves MAP lookahead uses observed category
+transitions under s and never scopes the prediction path by symbol.
+*/
+func TestCognitionBeamsStayGlobal(t *testing.T) {
+	Convey("Given category continuations observed across symbols", t, func() {
 		tree, err := dmt.NewTree("")
 		So(err, ShouldBeNil)
 		analyzer := &Analyzer{tree: tree}
 
 		for range 8 {
-			tree.TrainSensorySequence([]byte(
-				"symbol-btc-usd_cvd-absorption--positive_cvd-balance--positive",
-			))
-			tree.TrainSensorySequence([]byte(
-				"symbol-eth-usd_liquidity-scarcity-score--positive_hawkes-spectral-radius--positive",
-			))
+			tree.TrainSensorySequence([]byte("s_loaded-imbalance_median-depth"))
+			tree.TrainSensorySequence([]byte("s_thermal-exhaustion_median-depth"))
 		}
 
-		btcParts := []string{"symbol-btc-usd", "cvd-absorption--positive", "cvd-balance--positive"}
-		ethParts := []string{
-			"symbol-eth-usd", "liquidity-scarcity-score--positive", "hawkes-spectral-radius--positive",
-		}
-		btcSequence := []byte(strings.Join(btcParts, "_"))
-		ethSequence := []byte(strings.Join(ethParts, "_"))
+		sequence := []byte("s_loaded-imbalance_median-depth")
 
 		var scratch dmt.ClassificationScratch
-		btcClass := tree.Classify(btcSequence, &scratch)
-		ethClass := tree.Classify(ethSequence, &scratch)
-		btcTip := tree.PredictNextSensoryTokens([]byte("symbol-btc-usd"), nil)
-		ethTip := tree.PredictNextSensoryTokens([]byte("symbol-eth-usd"), nil)
+		classification := tree.Classify(sequence, &scratch)
+		predictions := tree.PredictNextSensoryTokens([]byte("s"), nil)
 
-		_, btcBeams, _, _, _, _, _, _ := analyzer.cognitionVisualization(
-			btcSequence, []byte("symbol-btc-usd"), btcParts[0], btcClass, btcTip,
-		)
-		_, ethBeams, _, _, _, _, _, _ := analyzer.cognitionVisualization(
-			ethSequence, []byte("symbol-eth-usd"), ethParts[0], ethClass, ethTip,
+		_, beams, _, _, _, _, _, _ := analyzer.cognitionVisualization(
+			sequence, []byte("s_loaded-imbalance"), "s", classification, predictions,
 		)
 
-		Convey("Then each symbol's MAP beam stays inside its own namespace", func() {
-			So(len(btcBeams), ShouldBeGreaterThan, 0)
-			So(len(ethBeams), ShouldBeGreaterThan, 0)
-			So(btcBeams[0].Sequence, ShouldContainSubstring, "symbol-btc-usd")
-			So(ethBeams[0].Sequence, ShouldContainSubstring, "symbol-eth-usd")
-			So(btcBeams[0].Sequence, ShouldNotEqual, ethBeams[0].Sequence)
+		Convey("Then the MAP beams stay under s without symbol prefixes", func() {
+			So(len(beams), ShouldBeGreaterThan, 0)
+			So(beams[0].Sequence, ShouldContainSubstring, "s_")
+			So(beams[0].Sequence, ShouldNotContainSubstring, "usd")
 		})
 	})
 }
@@ -169,14 +148,14 @@ func TestCognitionVisualization(t *testing.T) {
 	Convey("Given a trained sensory sequence", t, func() {
 		tree, err := dmt.NewTree("")
 		So(err, ShouldBeNil)
-		sequence := []byte("symbol-btc-usd_pressure-positive")
-		parts := []string{"symbol-btc-usd", "pressure-positive"}
-		parent := []byte("symbol-btc-usd")
+		sequence := []byte("s_pressure-positive")
+		parts := []string{"s", "pressure-positive"}
+		parent := []byte("s")
 		analyzer := &Analyzer{tree: tree}
 
 		tree.TrainSensorySequence(sequence)
-		tree.TrainSensorySequence([]byte("symbol-eth-usd_pressure-negative"))
-		tree.TrainSensorySequence([]byte("symbol-btc-usd_pressure-negative"))
+		tree.TrainSensorySequence([]byte("s_pressure-negative"))
+		tree.TrainSensorySequence([]byte("s_loaded-imbalance"))
 
 		var scratch dmt.ClassificationScratch
 		classification := tree.Classify(sequence, &scratch)
@@ -221,14 +200,14 @@ func BenchmarkCognitionVisualization(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	sequence := []byte("symbol-btc-usd_pressure-positive_divergence-negative")
-	parts := []string{"symbol-btc-usd", "pressure-positive", "divergence-negative"}
-	parent := []byte("symbol-btc-usd_pressure-positive")
+	sequence := []byte("s_pressure-positive_divergence-negative")
+	parts := []string{"s", "pressure-positive", "divergence-negative"}
+	parent := []byte("s_pressure-positive")
 	analyzer := &Analyzer{tree: tree}
 
 	tree.TrainSensorySequence(sequence)
-	tree.TrainSensorySequence([]byte("symbol-eth-usd_pressure-negative_divergence-positive"))
-	tree.TrainSensorySequence([]byte("symbol-btc-usd_pressure-negative_divergence-positive"))
+	tree.TrainSensorySequence([]byte("s_pressure-negative_divergence-positive"))
+	tree.TrainSensorySequence([]byte("s_loaded-imbalance_divergence-positive"))
 
 	var scratch dmt.ClassificationScratch
 	classification := tree.Classify(sequence, &scratch)

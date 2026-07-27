@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -13,10 +14,10 @@ import (
 /*
 publishMeasured emits manifold, resonance, causal, and hypothesis frames.
 Resonance and causal go first so a saturated UI channel drops manifold after
-the lighter charts when the ingress buffer is full. Thesis rows stay book-wide
-for strategy; UI frames are focus-gated so the socket does not ship every
-symbol each cut. Manifold publishes one shared-field row; focus only labels
-that row for client inheritance.
+the lighter charts when the ingress buffer is full. Thesis rows and UI frames
+stay book-wide so allocation, decisions, and cross-section panels can see the
+same universe the strategy saw. Manifold publishes one shared-field row plus a
+binary display texture and wave packet so the browser blits the GPU result.
 */
 func (analyzer *Analyzer) publishMeasured(
 	thesis *types.Thesis,
@@ -45,8 +46,14 @@ func (analyzer *Analyzer) publishMeasured(
 	}
 
 	if wired, ok := wireManifoldState(states); ok {
-		field, _, wave := wired.WirePackets()
+		field, displays, wave := wired.WirePackets()
 		analyzer.publish(datura.Map[any]{"manifold": []manifold.WireField{field}})
+
+		for _, display := range displays {
+			if len(display) > 0 {
+				analyzer.publishBytes(display)
+			}
+		}
 
 		analyzer.publish(datura.Map[any]{"manifold_wave": wave})
 	}
@@ -112,16 +119,16 @@ func wireManifoldState(states []manifold.State) (manifold.State, bool) {
 /*
 publishCognition emits cognition and forecast frames after REM consolidation,
 and calibrates already-composed thesis.Categories with DMT surprisal/confidence.
-Thesis.Categories stays book-wide for strategy; the categories UI frame is
-focus-gated like cognition so the rail does not ship every symbol each cut.
+Thesis.Categories stays book-wide for strategy and UI so cortex, xray, and
+allocation all inspect the same ranked universe.
 */
 func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 	if thesis == nil {
 		return
 	}
 
-	focus := types.Focus()
 	analyzer.cogRows = analyzer.cogRows[:0]
+	focus := types.Focus()
 
 	thesis.Cognition.Range(func(key, value any) bool {
 		reading, ok := value.(types.Cognition)
@@ -132,6 +139,10 @@ func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 
 		if focus == "" || reading.Symbol == focus {
 			analyzer.cogRows = append(analyzer.cogRows, reading)
+
+			if focus != "" {
+				return false
+			}
 		}
 
 		return true
@@ -145,7 +156,11 @@ func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 		analyzer.publish(datura.Map[any]{"forecasts": thesis.Forecasts})
 	}
 
-	analyzer.catRows = thesis.Categories[types.Focus()]
+	analyzer.catRows = analyzer.catRows[:0]
+
+	for _, rows := range thesis.Categories {
+		analyzer.catRows = append(analyzer.catRows, rows...)
+	}
 
 	if len(analyzer.catRows) > 0 {
 		analyzer.publish(datura.Map[any]{"categories": analyzer.catRows})
@@ -153,67 +168,17 @@ func (analyzer *Analyzer) publishCognition(thesis *types.Thesis) {
 }
 
 func focusHypothesesInto(dst []types.Hypothesis, hypotheses []types.Hypothesis) []types.Hypothesis {
-	focus := types.Focus()
-
-	if focus == "" {
-		return hypotheses
-	}
-
-	dst = dst[:0]
-
-	for _, hypothesis := range hypotheses {
-		if hypothesis.Symbol != focus {
-			continue
-		}
-
-		dst = append(dst, hypothesis)
-	}
-
-	return dst
+	return append(dst[:0], hypotheses...)
 }
 
-func focusRowsInto(dst []any, rows []any) []any {
-	focus := types.Focus()
-
-	if focus == "" {
-		return rows
-	}
-
+func focusRowsInto(dst []any, rows *sync.Map) []any {
 	dst = dst[:0]
-
-	for _, row := range rows {
-		if rowSymbol(row) != focus {
-			continue
-		}
-
+	rows.Range(func(_, row any) bool {
 		dst = append(dst, row)
-	}
+
+		return true
+	})
 
 	return dst
 }
 
-/*
-rowSymbol reads the market symbol from a resonance or causal thesis row.
-*/
-func rowSymbol(row any) string {
-	switch value := row.(type) {
-	case *ResonanceOutcome:
-		if value == nil {
-			return ""
-		}
-
-		return value.Symbol
-	case ResonanceOutcome:
-		return value.Symbol
-	case *CausalOutcome:
-		if value == nil {
-			return ""
-		}
-
-		return value.Symbol
-	case CausalOutcome:
-		return value.Symbol
-	}
-
-	return ""
-}

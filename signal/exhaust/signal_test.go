@@ -508,15 +508,15 @@ func exhaustionFrom(message any) []*types.Measurement {
 
 		return out
 	case *types.Thesis:
-		out := make([]*types.Measurement, 0, len(published.Measurements))
+		out := make([]*types.Measurement, 0)
 
-		for _, rows := range published.Measurements {
-			for _, measurement := range rows {
-				if measurement.Source == types.SourceExhaustion {
-					out = append(out, measurement)
-				}
+		published.EachMeasurement(func(measurement *types.Measurement) bool {
+			if measurement.Source == types.SourceExhaustion {
+				out = append(out, measurement)
 			}
-		}
+
+			return true
+		})
 
 		return out
 	default:

@@ -277,10 +277,7 @@ export const repaintTerminalFluidChart = (focusSymbol: string) => {
 	paintTerminalFluidCompose(lastManifoldBatch, focusSymbol);
 };
 
-const paintTerminalFluidCompose = (
-	value: unknown,
-	focusSymbol: string,
-) => {
+const paintTerminalFluidCompose = (value: unknown, focusSymbol: string) => {
 	const fieldCanvas = fluidFieldCanvasRef.current;
 	const overlayCanvas = fluidOverlayCanvasRef.current;
 
@@ -347,13 +344,7 @@ const paintTerminalFluidCompose = (
 	const painted =
 		drawFluidDisplay(fieldCanvas, width, height) ||
 		(display.length > 0 &&
-			drawFluidFieldGL(
-				fieldCanvas,
-				width,
-				height,
-				fluidLayer,
-				fluidContour,
-			));
+			drawFluidFieldGL(fieldCanvas, width, height, fluidLayer, fluidContour));
 
 	if (!painted) {
 		const fieldContext = resizeCanvas(fieldCanvas);
@@ -418,7 +409,10 @@ export const TerminalFluidChart = ({
 
 	return (
 		<div className="relative block size-full">
-			<canvas ref={fluidFieldCanvasRef} className="absolute inset-0 size-full" />
+			<canvas
+				ref={fluidFieldCanvasRef}
+				className="absolute inset-0 size-full"
+			/>
 			<canvas
 				ref={fluidOverlayCanvasRef}
 				className="absolute inset-0 size-full"

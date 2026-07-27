@@ -8,6 +8,12 @@ const clampPercent = (value: number, lo: number, hi: number): number => {
 	return Math.min(100, Math.max(0, ((value - lo) / (hi - lo)) * 100));
 };
 
+const numberValue = (value: number | string | undefined): number | null => {
+	const number = typeof value === "number" ? value : Number(value);
+
+	return Number.isFinite(number) ? number : null;
+};
+
 const positiveFinite = (value: number): number | null =>
 	Number.isFinite(value) && value > 0 ? value : null;
 
@@ -81,17 +87,19 @@ export const positionGaugeGeometry = (
 	position: Holding,
 	stop?: Stop,
 ): PriceGaugeGeometry | null => {
-	const entry = positiveFinite(position.entry_price);
+	const entry = numberValue(position.entry_price);
+	const mark = numberValue(position.mark);
+	const returnPct = numberValue(position.return_pct);
 
-	if (entry === null) {
+	if (entry === null || entry <= 0) {
 		return null;
 	}
 
-	const rawMark = positiveFinite(position.mark);
+	const rawMark = mark === null ? null : positiveFinite(mark);
 	const derivedMark =
 		rawMark ??
-		(Number.isFinite(position.return_pct) && position.return_pct > -1
-			? positiveFinite(entry * (1 + position.return_pct))
+		(returnPct !== null && returnPct > -1
+			? positiveFinite(entry * (1 + returnPct))
 			: null);
 	const markReturn = derivedMark === null ? 0 : derivedMark / entry - 1;
 	const armed =

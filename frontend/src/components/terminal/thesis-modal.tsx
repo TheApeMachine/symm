@@ -1,5 +1,5 @@
 import { terminalStore } from "#/collections/terminal";
-import type { Holding, TickFrame } from "#/collections/types";
+import type { Holding, Measurement, TickFrame } from "#/collections/types";
 import { ThesisDetailRail } from "#/components/terminal/thesis-detail-rail";
 import { writeThesisDetailRail } from "#/components/terminal/thesis-detail-paint";
 import {
@@ -11,8 +11,8 @@ import {
 	thesisSnapshotFor,
 } from "#/components/terminal/thesis-snapshot";
 import { cn } from "#/lib/utils";
-import type { Category, Measurement } from "#/types/measurement";
 import type {
+	ThesisCategory as Category,
 	Finding,
 	Graph,
 	StrategyDecision,

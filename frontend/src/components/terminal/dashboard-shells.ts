@@ -133,7 +133,7 @@ export class DashboardShellSync {
 			ordered.every((row, index) => list.children[index] === row);
 
 		if (!orderMatches) {
-			list.replaceChildren(...ordered);
+			list.append(...ordered);
 		}
 	}
 
@@ -178,7 +178,7 @@ export class DashboardShellSync {
 			ordered.every((gauge, index) => list.children[index] === gauge);
 
 		if (!orderMatches) {
-			list.replaceChildren(...ordered);
+			list.append(...ordered);
 		}
 	}
 }

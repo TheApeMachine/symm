@@ -56,23 +56,34 @@ const symbolMetricsFromMeasurements = (
 	executableDepth: number;
 	magnitude: number;
 }> => {
-	const latest = new Map<string, Measurement>();
+	const latest = new Map<string, Map<string, Measurement>>();
 
 	for (const measurement of measurements) {
 		if (typeof measurement.symbol !== "string" || measurement.symbol === "") {
 			continue;
 		}
 
-		latest.set(measurement.symbol, measurement);
+		const bucket =
+			latest.get(measurement.symbol) ?? new Map<string, Measurement>();
+		bucket.set(measurement.source, measurement);
+		latest.set(measurement.symbol, bucket);
 	}
 
-	return [...latest.values()].map((measurement) => ({
-		symbol: measurement.symbol,
-		volume: 0,
-		quoteNotional: metricRaw(measurement, "reported_volume_notional"),
-		executableDepth: metricRaw(measurement, "executable_touch_depth"),
-		magnitude: metricMagnitude(measurement),
-	}));
+	return [...latest.entries()].map(([symbol, bucket]) => {
+		const rows = [...bucket.values()];
+
+		return {
+			symbol,
+			volume: 0,
+			quoteNotional: Math.max(
+				...rows.map((row) => metricRaw(row, "reported_volume_notional")),
+			),
+			executableDepth: Math.max(
+				...rows.map((row) => metricRaw(row, "executable_touch_depth")),
+			),
+			magnitude: Math.max(...rows.map(metricMagnitude)),
+		};
+	});
 };
 
 /*

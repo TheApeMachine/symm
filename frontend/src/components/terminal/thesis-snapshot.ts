@@ -1,9 +1,13 @@
-import type { Holding } from "#/collections/types";
-import type { Category, Measurement } from "#/types/measurement";
+import type {
+	Holding,
+	Measurement,
+	MeasurementCategory,
+} from "#/collections/types";
 import type {
 	Finding,
 	Graph,
 	StrategyDecision,
+	ThesisCategory as Category,
 	ThesisCategory,
 	ThesisForecast,
 	ThesisHypothesis,
@@ -43,7 +47,7 @@ export type ThesisSnapshotInput = {
 
 const categoryFromMeasurement = (
 	symbol: string,
-	category: Category,
+	category: MeasurementCategory,
 ): ThesisCategory => ({
 	symbol,
 	type: category.type,

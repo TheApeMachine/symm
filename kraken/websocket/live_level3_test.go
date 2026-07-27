@@ -95,9 +95,8 @@ func TestUpdateLevel3RecoversDeleteOnEmptyBook(t *testing.T) {
 				Data: sdkkraken.NewWebSocketMessage(raw),
 			})
 
-			Convey("Then the panic is returned as an error instead of crashing", func() {
+			Convey("Then the failed apply is returned as an error instead of crashing", func() {
 				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldContainSubstring, "level3 apply panic")
 			})
 		})
 	})

@@ -130,21 +130,13 @@ func measureOpportunity(
 		LookaheadScore: cognition.LookaheadScore,
 	}
 
-	if thesis != nil && len(thesis.Causal) > 0 {
-		for _, raw := range thesis.Causal {
-			if outcome, ok := raw.(logic.CausalOutcome); ok && outcome.Symbol == forecast.Symbol && outcome.Ready {
+	if thesis != nil {
+		if raw, found := thesis.Causal.Load(forecast.Symbol); found {
+			if outcome, ok := raw.(*logic.CausalOutcome); ok && outcome != nil && outcome.Ready {
 				reading.CausalReady = true
 				reading.CausalUplift = outcome.Reading.UpliftScore
 				reading.CausalIntervention = outcome.Reading.InterventionScore
 				reading.CausalNoise = outcome.Reading.Noise
-				break
-			}
-			if outcomePtr, ok := raw.(*logic.CausalOutcome); ok && outcomePtr != nil && outcomePtr.Symbol == forecast.Symbol && outcomePtr.Ready {
-				reading.CausalReady = true
-				reading.CausalUplift = outcomePtr.Reading.UpliftScore
-				reading.CausalIntervention = outcomePtr.Reading.InterventionScore
-				reading.CausalNoise = outcomePtr.Reading.Noise
-				break
 			}
 		}
 	}

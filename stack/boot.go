@@ -275,21 +275,8 @@ func (booter *Booter) boot(
 
 	price := broker.NewPrice(api)
 	instrument := broker.NewInstrument(api, price, booter.channel, booter.config.Market)
-	recovery, err := types.LoadRecovery(booter.config.System.DataPath)
 
-	if err != nil {
-		return nil, errors.Join(errnie.Error(err), recorder.Close())
-	}
-
-	seed := make([]types.Holding, 0)
-
-	if recovery != nil {
-		for _, holding := range recovery.Holdings {
-			seed = append(seed, holding)
-		}
-	}
-
-	balance := broker.NewBalance(api, seed, booter.channel, booter.config.Market)
+	balance := broker.NewBalance(api, booter.channel, booter.config.Market)
 	desk := broker.NewDesk(
 		booter.ctx, api, instrument, price, balance, booter.config.Trading,
 	)
@@ -500,8 +487,6 @@ Close cancels the root context, waits for every registered actor and signal,
 then closes stateful dependencies in reverse construction order.
 */
 func (stack *Stack) Close() (err error) {
-	err = errors.Join(err, stack.saveRecovery())
-
 	if stack.cancel != nil {
 		stack.cancel()
 		stack.cancel = nil
@@ -529,27 +514,4 @@ func (stack *Stack) Close() (err error) {
 	}
 
 	return err
-}
-
-/*
-saveRecovery captures open holdings and writes recovery.json under data_path.
-*/
-func (stack *Stack) saveRecovery() error {
-	if stack == nil || stack.Balance == nil || stack.config.System.DataPath == "" {
-		return nil
-	}
-
-	holdings := map[string]types.Holding{}
-
-	for holding := range stack.Balance.Lots() {
-		holdings[holding.Symbol] = holding
-	}
-
-	recovery, err := types.CaptureRecovery(stack.Thesis.Tick, holdings, nil, nil)
-
-	if err != nil {
-		return err
-	}
-
-	return types.SaveRecovery(stack.config.System.DataPath, recovery)
 }

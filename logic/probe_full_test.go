@@ -65,7 +65,11 @@ func TestProbeFullAnalyzerPath(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("%s transition: %v", proof.name, err)
 		}
-		resonanceCached := len(wired.Thesis.Resonance) > 0
+		resonanceCached := false
+		wired.Thesis.Resonance.Range(func(_, _ any) bool {
+			resonanceCached = true
+			return false
+		})
 		manifoldReady := false
 		wired.Thesis.Manifold.Range(func(_, value any) bool {
 			state, ok := value.(manifold.State)

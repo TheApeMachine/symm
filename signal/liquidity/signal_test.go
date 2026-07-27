@@ -70,9 +70,10 @@ func TestCalculate(t *testing.T) {
 
 				measurements := []*types.Measurement{}
 
-				for _, rows := range thesis.Measurements {
-					measurements = append(measurements, rows...)
-				}
+				thesis.EachMeasurement(func(measurement *types.Measurement) bool {
+					measurements = append(measurements, measurement)
+					return true
+				})
 
 				calm = tests.LatestMeasurements(measurements, types.SourceLiquidity, metrics)
 				return nil
@@ -81,9 +82,10 @@ func TestCalculate(t *testing.T) {
 			So(market.Transition(proof.state, func() error {
 				thesis := wired.Thesis
 
-				for _, rows := range thesis.Measurements {
-					measurements = append(measurements, rows...)
-				}
+				thesis.EachMeasurement(func(measurement *types.Measurement) bool {
+					measurements = append(measurements, measurement)
+					return true
+				})
 				return nil
 			}, proof.symbols...), ShouldBeNil)
 			outcomes[proof.name] = marketOutcome{

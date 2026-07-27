@@ -61,9 +61,10 @@ func TestCalculate(t *testing.T) {
 			So(market.Transition(proof.state, func() error {
 				thesis := wired.Thesis
 
-				for _, rows := range thesis.Measurements {
-					measurements = append(measurements, rows...)
-				}
+				thesis.EachMeasurement(func(measurement *types.Measurement) bool {
+					measurements = append(measurements, measurement)
+					return true
+				})
 				return nil
 			}), ShouldBeNil)
 

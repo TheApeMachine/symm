@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -113,7 +114,9 @@ func (signal *Signal) Calculate(
 	}
 
 	out := make([]*types.Measurement, 0, len(scoresBySymbol))
-	uiOut := make([]*types.Measurement, 0)
+	uiOut := datura.Map[any]{
+		"measurements": make([]*types.Measurement, 0),
+	}
 
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,
@@ -131,25 +134,18 @@ func (signal *Signal) Calculate(
 			continue
 		}
 
-		out = append(out, correlationMeasurement(symbol, at, validity, scores))
+		measurement := correlationMeasurement(symbol, at, validity, scores)
+		out = append(out, measurement)
 
-		if symbol == types.Focus() {
-			uiOut = append(uiOut, correlationMeasurement(symbol, at, validity, scores))
+		if measurement.Symbol == types.Focus() {
+			uiOut["measurements"] = append(
+				uiOut["measurements"].([]*types.Measurement), measurement,
+			)
 		}
 	}
 
-	if len(uiOut) > 0 {
-		select {
-		case signal.ui <- datura.Map[any]{
-			"measurements": uiOut,
-		}.Marshal():
-		default:
-			errnie.Error(errnie.Err(
-				errnie.TooManyRequests,
-				"wire: ui channel saturated; dropped measurements",
-				nil,
-			))
-		}
+	if len(uiOut["measurements"].([]*types.Measurement)) > 0 {
+		utils.Publish(signal.ui, uiOut)
 	}
 
 	return out, nil

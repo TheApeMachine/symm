@@ -42,11 +42,14 @@ export const paintXrayLatent = (value: unknown, focusSymbol: string) => {
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as ResonanceFrame[];
 	const points = latentPointsFromFrames(frames);
-	latentPoints = points;
+	if (points.length > 0) {
+		latentPoints = points;
+	}
+	const pointsToDraw = latentPoints;
 	const width = canvas.clientWidth;
 	const height = canvas.clientHeight;
 
-	if (points.length === 0) {
+	if (pointsToDraw.length === 0) {
 		drawXrayWaiting(context, width, height, "waiting for latent carriers");
 		return;
 	}
@@ -58,8 +61,8 @@ export const paintXrayLatent = (value: unknown, focusSymbol: string) => {
 	let yRange: ReturnType<typeof latentRange>;
 
 	try {
-		xRange = latentRange(points, "x");
-		yRange = latentRange(points, "y");
+		xRange = latentRange(pointsToDraw, "x");
+		yRange = latentRange(pointsToDraw, "y");
 	} catch {
 		drawXrayWaiting(context, width, height, "waiting for latent span");
 		return;
@@ -82,7 +85,7 @@ export const paintXrayLatent = (value: unknown, focusSymbol: string) => {
 		context.stroke();
 	}
 
-	for (const point of points) {
+	for (const point of pointsToDraw) {
 		const focus = point.symbol === focusSymbol;
 		const x =
 			pad + ((point.x - xRange.min) / xRange.span) * (width - pad * 2);

@@ -27,6 +27,7 @@ const (
 	RESTATED          Status = "restated"
 	STATUS            Status = "status"
 	READY             Status = "ready"
+	ARMED             Status = "armed"
 	BUSY              Status = "busy"
 	PRIORITY          Status = "priority"
 	CANCELED          Status = "canceled"
@@ -90,19 +91,19 @@ var statusEdges = map[Status]map[Status]struct{}{
 		FILLED: {}, CLOSED: {}, CANCELED: {}, OPEN: {}, ERROR: {},
 		AMENDED: {}, RESTATED: {}, STATUS: {}, PRIORITY: {},
 	},
-	FILLED: {OPEN: {}, CLOSED: {}, PENDING: {}, AMENDED: {}, RESTATED: {}, STATUS: {}},
-	READY:  {BUSY: {}, PENDING: {}, ERROR: {}, FATAL: {}, PRIORITY: {}, STATUS: {}},
-	BUSY:   {READY: {}, ERROR: {}, FATAL: {}, PRIORITY: {}, STATUS: {}},
-	CLOSED:         {OPEN: {}},
-	CANCELED:       {OPEN: {}},
-	REJECTED:       {},
-	EXPIRED:        {},
-	ERROR:          {READY: {}, CLOSED: {}, FATAL: {}},
-	FATAL:          {},
-	AMENDED:        {OPEN: {}, PENDING: {}, FILLED: {}, CANCELED: {}},
-	RESTATED:       {OPEN: {}, PENDING: {}, FILLED: {}, CANCELED: {}},
-	STATUS:         {OPEN: {}, PENDING: {}, FILLED: {}, CANCELED: {}, CLOSED: {}},
-	PRIORITY:       {READY: {}, BUSY: {}, ERROR: {}},
+	FILLED:   {OPEN: {}, CLOSED: {}, PENDING: {}, AMENDED: {}, RESTATED: {}, STATUS: {}},
+	READY:    {BUSY: {}, PENDING: {}, ERROR: {}, FATAL: {}, PRIORITY: {}, STATUS: {}},
+	BUSY:     {READY: {}, ERROR: {}, FATAL: {}, PRIORITY: {}, STATUS: {}},
+	CLOSED:   {OPEN: {}},
+	CANCELED: {OPEN: {}},
+	REJECTED: {},
+	EXPIRED:  {},
+	ERROR:    {READY: {}, CLOSED: {}, FATAL: {}},
+	FATAL:    {},
+	AMENDED:  {OPEN: {}, PENDING: {}, FILLED: {}, CANCELED: {}},
+	RESTATED: {OPEN: {}, PENDING: {}, FILLED: {}, CANCELED: {}},
+	STATUS:   {OPEN: {}, PENDING: {}, FILLED: {}, CANCELED: {}, CLOSED: {}},
+	PRIORITY: {READY: {}, BUSY: {}, ERROR: {}},
 }
 
 /*

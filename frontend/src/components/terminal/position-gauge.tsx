@@ -42,6 +42,12 @@ const neutralTone = "var(--f3)";
 const warnTone = "var(--warn)";
 const accentTone = "var(--acc)";
 
+const numberValue = (value: number | string | undefined): number | null => {
+	const number = typeof value === "number" ? value : Number(value);
+
+	return Number.isFinite(number) ? number : null;
+};
+
 const setMarkerPosition = (
 	element: HTMLElement | null,
 	percent: number | null,
@@ -70,32 +76,26 @@ const writePositionGauge = (
 	}
 
 	const stop = positionStop(position, legacyStop);
+	const pnl = numberValue(position.pnl);
+	const returnPct = numberValue(position.return_pct);
+	const mark = numberValue(position.mark);
+	const peak = numberValue(stop?.peak_price);
+	const floor = numberValue(stop?.stop_price);
 	// Color each figure by its own sign — fee-dragged PnL can be red while
 	// return_pct is green when price lifted but fees dominate dollars.
 	const pnlTone =
-		position.pnl > 0 ? upTone : position.pnl < 0 ? downTone : neutralTone;
+		pnl === null ? neutralTone : pnl > 0 ? upTone : pnl < 0 ? downTone : neutralTone;
 	const returnTone =
-		position.return_pct > 0
+		returnPct !== null && returnPct > 0
 			? upTone
-			: position.return_pct < 0
+			: returnPct !== null && returnPct < 0
 				? downTone
 				: neutralTone;
 	const geometry = positionGaugeGeometry(position, stop);
-	const rawMark =
-		Number.isFinite(position.mark) && position.mark > 0 ? position.mark : null;
+	const rawMark = mark !== null && mark > 0 ? mark : null;
 	const markLabel = rawMark === null ? "--" : fixed(rawMark);
-	const peakPrice =
-		stop !== undefined &&
-		Number.isFinite(stop.peak_price) &&
-		stop.peak_price > 0
-			? fixed(stop.peak_price)
-			: "--";
-	const floorPrice =
-		stop !== undefined &&
-		Number.isFinite(stop.stop_price) &&
-		stop.stop_price > 0
-			? fixed(stop.stop_price)
-			: "--";
+	const peakPrice = peak !== null && peak > 0 ? fixed(peak) : "--";
+	const floorPrice = floor !== null && floor > 0 ? fixed(floor) : "--";
 	const progressTone =
 		geometry !== null &&
 		geometry.stopPct !== null &&
@@ -150,11 +150,17 @@ const writePositionGauge = (
 
 	if (parts.pnl) {
 		parts.pnl.style.color = pnlTone;
-		parts.pnl.textContent = `P/L ${position.pnl.toFixed(4)} ${parts.quote}`;
+		parts.pnl.textContent =
+			pnl === null ? `P/L — ${parts.quote}` : `P/L ${pnl.toFixed(4)} ${parts.quote}`;
 	}
 
 	if (parts.summary) {
-		parts.summary.textContent = `entry ${fixed(position.entry_price)} / mark ${markLabel}`;
+		const entryPrice = numberValue(position.entry_price);
+
+		parts.summary.textContent =
+			entryPrice === null
+				? `entry — / mark ${markLabel}`
+				: `entry ${fixed(entryPrice)} / mark ${markLabel}`;
 	}
 
 	if (parts.floorLabel) {
@@ -174,9 +180,6 @@ const writePositionGauge = (
 
 	if (parts.returnPct) {
 		parts.returnPct.style.color = returnTone;
-		const returnPct = Number.isFinite(position.return_pct)
-			? position.return_pct
-			: null;
 		parts.returnPct.textContent =
 			returnPct === null ? "—" : `${(returnPct * 100).toFixed(4)}%`;
 	}

@@ -85,7 +85,9 @@ func TestAnalyzerCognize(t *testing.T) {
 		}
 
 		Convey("When cognize anchors the attractor on this sequence", func() {
-			So(analyzer.cognize(thesis, state, nil), ShouldBeTrue)
+			So(analyzer.cognize(
+				thesis, state, []string{string(types.Laminar)},
+			), ShouldBeTrue)
 
 			Convey("Then Thesis cognition is Ready with a physical regime winner", func() {
 				raw, found := thesis.Cognition.Load("BTC/USD")
@@ -132,6 +134,6 @@ func BenchmarkAnalyzerCognize(b *testing.B) {
 	}
 
 	for b.Loop() {
-		analyzer.cognize(types.NewThesis(), state, nil)
+		analyzer.cognize(types.NewThesis(), state, []string{string(types.Laminar)})
 	}
 }

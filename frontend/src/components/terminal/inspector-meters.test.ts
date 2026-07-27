@@ -11,6 +11,7 @@ type FakeNode = {
 	style: Record<string, string>;
 	textContent: string;
 	removed: boolean;
+	isConnected: boolean;
 	children: FakeNode[];
 	setAttribute: (name: string, value: string) => void;
 	append: (...nodes: FakeNode[]) => void;
@@ -23,6 +24,7 @@ const fakeNode = (): FakeNode => {
 		style: {},
 		textContent: "",
 		removed: false,
+		isConnected: true,
 		children: [],
 		setAttribute: () => undefined,
 		append: (...nodes: FakeNode[]) => {
@@ -30,6 +32,7 @@ const fakeNode = (): FakeNode => {
 		},
 		remove: () => {
 			node.removed = true;
+			node.isConnected = false;
 		},
 	};
 
@@ -165,7 +168,7 @@ describe("paintInspectorMeters", () => {
 		);
 
 		expect(meters.has("fill_volume:buy")).toBe(false);
-		expect(fill?.cell.removed).toBe(true);
+		expect(fill?.cell.isConnected).toBe(false);
 		expect(meters.size).toBe(1);
 	});
 });

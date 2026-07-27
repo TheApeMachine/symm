@@ -21,6 +21,8 @@ type BalanceData struct {
 	Asset      string           `json:"asset"`
 	AssetClass string           `json:"asset_class"`
 	Balance    *decimal.Decimal `json:"balance"`
+	Available  *decimal.Decimal `json:"available,omitempty"`
+	Reserved   *decimal.Decimal `json:"reserved,omitempty"`
 	Wallets    []Wallet         `json:"wallets"`
 }
 

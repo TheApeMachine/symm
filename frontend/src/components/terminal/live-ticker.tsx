@@ -39,8 +39,7 @@ const asRows = <T,>(value: unknown): T[] => {
 	return [value as T];
 };
 
-const latest = <T,>(value: unknown): T | undefined =>
-	asRows<T>(value).at(-1);
+const latest = <T,>(value: unknown): T | undefined => asRows<T>(value).at(-1);
 
 const pulseTickRef = createRef<HTMLSpanElement>();
 const pulsePhaseRef = createRef<HTMLSpanElement>();
@@ -52,6 +51,7 @@ const pulseQuotesRef = createRef<HTMLSpanElement>();
 const openCountRef = createRef<HTMLSpanElement>();
 
 const walletCashRef = createRef<HTMLSpanElement>();
+const walletReservedRef = createRef<HTMLSpanElement>();
 const walletEquityRef = createRef<HTMLSpanElement>();
 const walletLamboRef = createRef<HTMLImageElement>();
 const walletTickRef = createRef<HTMLSpanElement>();
@@ -82,11 +82,21 @@ type TickRow = {
 	quotes_total?: number;
 };
 
+const latestTick = (value: unknown): TickRow | undefined => {
+	if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+		const obj = value as Record<string, unknown>;
+		if ("count" in obj || "measurements" in obj || "candidates" in obj) {
+			return obj as unknown as TickRow;
+		}
+	}
+	return latest<TickRow>(value);
+};
+
 /*
 paintPulseTick paints the dashboard pulse strip from the current DRAW tick.
 */
 export const paintPulseTick = (value: unknown) => {
-	const tick = latest<TickRow>(value);
+	const tick = latestTick(value);
 
 	setText(pulseTickRef.current, `#${String(tick?.count ?? 0)}`);
 	setText(
@@ -98,11 +108,10 @@ export const paintPulseTick = (value: unknown) => {
 	setText(pulseOpenRef.current, String(tick?.open ?? "—"));
 	setText(
 		pulseQuotesRef.current,
-		typeof tick?.ns === "number"
-			? `${Math.round(tick.ns / 1_000_000)}ms`
-			: tick?.quotes_ready !== undefined &&
-					tick?.quotes_total !== undefined
-				? `${String(tick.quotes_ready)}/${String(tick.quotes_total)}`
+		tick?.quotes_ready !== undefined && tick?.quotes_total !== undefined
+			? `${String(tick.quotes_ready)}/${String(tick.quotes_total)}`
+			: typeof tick?.ns === "number"
+				? `${Math.round(tick.ns / 1_000_000)}ms`
 				: "—",
 	);
 };
@@ -111,7 +120,7 @@ export const paintPulseTick = (value: unknown) => {
 paintOpenCount paints the open-position counter from the current DRAW tick.
 */
 export const paintOpenCount = (value: unknown) => {
-	setText(openCountRef.current, String(latest<TickRow>(value)?.open ?? 0));
+	setText(openCountRef.current, String(latestTick(value)?.open ?? 0));
 };
 
 /*
@@ -156,7 +165,7 @@ const bindClock = (host: HTMLElement | null) => {
 paintEngineTick paints the nav engine readout from the current DRAW tick.
 */
 export const paintEngineTick = (value: unknown) => {
-	const tick = latest<TickRow>(value);
+	const tick = latestTick(value);
 	const online = appStore.state.online;
 
 	setText(engineSeqRef.current, `#${tick?.count ?? 0}`);
@@ -173,9 +182,7 @@ export const paintEngineTick = (value: unknown) => {
 	setText(engineMeasRef.current, tick?.measurements?.toString() ?? "—");
 	setText(
 		engineLatencyRef.current,
-		typeof tick?.ns === "number"
-			? `${Math.round(tick.ns / 1_000_000)}ms`
-			: "—",
+		typeof tick?.ns === "number" ? `${Math.round(tick.ns / 1_000_000)}ms` : "—",
 	);
 	paintEngineClock();
 };
@@ -183,28 +190,30 @@ export const paintEngineTick = (value: unknown) => {
 const paintWallet = () => {
 	const wallet = walletMetrics(lastBalances, lastHoldings);
 	const cashValue = wallet ? `${wallet.cash.toFixed(2)} ${wallet.asset}` : "—";
-	const pricePnl = lastHoldings.reduce((total, holding) => {
-		if (
-			!(holding.qty > 0) ||
-			!(holding.entry_price > 0) ||
-			!(holding.mark > 0)
-		) {
+	const reservedValue = wallet
+		? `${wallet.reserved.toFixed(2)} ${wallet.asset}`
+		: "—";
+	const pnl = lastHoldings.reduce((total, holding) => {
+		const value = Number(holding.pnl);
+
+		if (!Number.isFinite(value)) {
 			return total;
 		}
 
-		return total + (holding.mark - holding.entry_price) * holding.qty;
+		return total + value;
 	}, 0);
 	const equityValue = wallet
 		? `${wallet.equity.toFixed(2)} ${wallet.asset}`
 		: "—";
 
 	setText(walletCashRef.current, cashValue);
+	setText(walletReservedRef.current, reservedValue);
 	setText(walletEquityRef.current, equityValue);
 	setTone(
 		walletEquityRef.current,
-		pricePnl > 0 ? "var(--up)" : pricePnl < 0 ? "var(--down)" : "var(--f3)",
+		pnl > 0 ? "var(--up)" : pnl < 0 ? "var(--down)" : "var(--f3)",
 	);
-	setVisibility(walletLamboRef.current, pricePnl > 0);
+	setVisibility(walletLamboRef.current, pnl > 0);
 };
 
 /*
@@ -227,7 +236,7 @@ export const paintWalletHoldings = (value: unknown) => {
 paintWalletTick paints the wallet tick counter from the current DRAW tick.
 */
 export const paintWalletTick = (value: unknown) => {
-	setText(walletTickRef.current, String(latest<TickRow>(value)?.count ?? 0));
+	setText(walletTickRef.current, String(latestTick(value)?.count ?? 0));
 };
 
 /*
@@ -275,6 +284,15 @@ export const LiveWalletMetrics = () => (
 			<span
 				ref={walletCashRef}
 				className="font-mono text-[12px] font-medium text-(--f1)"
+			/>
+		</div>
+		<div className="flex flex-col items-end gap-px">
+			<span className="text-[9px] text-(--f4) uppercase tracking-widest">
+				Reserved
+			</span>
+			<span
+				ref={walletReservedRef}
+				className="font-mono text-[12px] font-medium text-(--f3)"
 			/>
 		</div>
 		<div className="relative flex flex-col items-end gap-px">

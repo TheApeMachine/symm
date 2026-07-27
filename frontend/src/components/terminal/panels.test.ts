@@ -57,15 +57,32 @@ describe("walletMetrics", () => {
 		expect(metrics?.equity).toBeCloseTo(initial + pnl, 4);
 	});
 
-	it("rejects ambiguous quote balance snapshots", () => {
-		expect(() =>
+	it("displays available cash while retaining reserved capital in equity", () => {
+		expect(
 			walletMetrics(
-				[
-					{ asset: "USD", balance: 1200, available: 1100, reserved: 100 },
-					{ asset: "EUR", balance: 20, available: 20, reserved: 0 },
-				],
+				[{ asset: "USD", balance: 1200, available: 1100, reserved: 100 }],
 				[],
 			),
-		).toThrow("exactly one quote balance");
+		).toEqual({
+			asset: "USD",
+			cash: 1100,
+			available: 1100,
+			reserved: 100,
+			unrealized: 0,
+			equity: 1200,
+		});
+	});
+
+	it("derives available cash from total minus reserved on older frames", () => {
+		expect(
+			walletMetrics([{ asset: "USD", balance: "1200", reserved: "100" }], []),
+		).toEqual({
+			asset: "USD",
+			cash: 1100,
+			available: 1100,
+			reserved: 100,
+			unrealized: 0,
+			equity: 1200,
+		});
 	});
 });

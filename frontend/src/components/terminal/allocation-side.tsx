@@ -165,15 +165,31 @@ export const allocationSummary = ({
 	const thresholdPct = pct(threshold);
 	const medianPct = pct(med);
 
+	const holdingBySymbol = new Map<string, Holding>();
+	for (const holding of holdings) {
+		holdingBySymbol.set(holding.symbol, holding);
+	}
+
+	const totalCapital = deployable + deployed;
+
 	for (const row of rows) {
 		row.edge = row.thesis - threshold;
-		row.share =
-			row.edge > 0 && row.thesis + sumPositive > 0
-				? row.edge / (row.thesis + sumPositive)
-				: 0;
-		row.allocated = row.edge > 0;
-		row.notional = row.allocated ? deployable * row.share : 0;
-		row.inPlay = row.inPlay || row.edge > 0;
+		const holding = holdingBySymbol.get(row.symbol);
+
+		if (holding !== undefined && holding.qty > 0 && holding.mark > 0) {
+			row.notional = holding.qty * holding.mark;
+			row.share = totalCapital > 0 ? row.notional / totalCapital : 0;
+			row.allocated = true;
+		} else {
+			row.share =
+				row.edge > 0 && row.thesis + sumPositive > 0
+					? Math.min(0.2, row.edge / (row.thesis + sumPositive))
+					: 0;
+			row.allocated = false;
+			row.notional = 0;
+		}
+
+		row.inPlay = row.inPlay || row.allocated || row.edge > 0;
 		row.xPct = pct(row.thesis);
 		row.edgeLeft = Math.min(thresholdPct, row.xPct);
 		row.edgeWidth = row.edge > 0 ? Math.max(0, row.xPct - thresholdPct) : 0;

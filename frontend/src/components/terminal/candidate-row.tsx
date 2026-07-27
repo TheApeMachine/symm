@@ -299,11 +299,10 @@ export const syncCandidateRowShells = (
 	}
 
 	const waiting = host.querySelector("[data-decision='waiting']");
+	const currentRows = Array.from(host.children).filter((child) => child !== waiting);
 	const orderMatches =
-		ordered.length === host.querySelectorAll("[data-candidate]").length &&
-		ordered.every(
-			(row, index) => host.querySelectorAll("[data-candidate]")[index] === row,
-		);
+		ordered.length === currentRows.length &&
+		ordered.every((row, index) => currentRows[index] === row);
 
 	if (!orderMatches) {
 		host.replaceChildren(...(waiting ? [waiting] : []), ...ordered);

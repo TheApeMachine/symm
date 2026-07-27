@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -19,7 +19,9 @@ func (signal *Signal) measureFrame(
 ) ([]*types.Measurement, error) {
 	rows := tickers
 	out := make([]*types.Measurement, 0, len(rows))
-	uiOut := make([]*types.Measurement, 0)
+	uiOut := datura.Map[any]{
+		"measurements": make([]*types.Measurement, 0),
+	}
 
 	anchor, _ := crossSection.Leadership()
 
@@ -68,22 +70,14 @@ func (signal *Signal) measureFrame(
 		out = append(out, signal.score(row.Symbol, row.Timestamp, features))
 
 		if row.Symbol == types.Focus() {
-			uiOut = append(uiOut, signal.score(row.Symbol, row.Timestamp, features))
+			uiOut["measurements"] = append(
+				uiOut["measurements"].([]*types.Measurement), out[len(out)-1],
+			)
 		}
 	}
 
-	if len(uiOut) > 0 {
-		select {
-		case signal.ui <- datura.Map[any]{
-			"measurements": uiOut,
-		}.Marshal():
-		default:
-			errnie.Error(errnie.Err(
-				errnie.TooManyRequests,
-				"wire: ui channel saturated; dropped measurements",
-				nil,
-			))
-		}
+	if len(uiOut["measurements"].([]*types.Measurement)) > 0 {
+		utils.Publish(signal.ui, uiOut)
 	}
 
 	return out, nil

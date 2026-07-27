@@ -62,10 +62,9 @@ func TestCalculate(t *testing.T) {
 			So(market.Transition(proof.state, func() error {
 				thesis := wired.Thesis
 
-				for _, rows := range thesis.Measurements {
-					for _, measurement := range rows {
+				thesis.EachMeasurement(func(measurement *types.Measurement) bool {
 						if measurement.Source != types.SourceCorrelation {
-							continue
+							return true
 						}
 
 						So(measurement.ValidateStruct(), ShouldBeNil)
@@ -77,8 +76,8 @@ func TestCalculate(t *testing.T) {
 							return true
 						})
 						measurements = append(measurements, measurement)
-					}
-				}
+						return true
+				})
 
 				return nil
 			}, proof.focus...), ShouldBeNil)

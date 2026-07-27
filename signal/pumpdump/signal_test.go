@@ -128,35 +128,33 @@ func TestMeasure(t *testing.T) {
 			measurements := []*types.Measurement{}
 			maturity := make(map[string]float64, len(market.Symbols))
 
-			for _, rows := range thesis.Measurements {
-				for _, measurement := range rows {
+			thesis.EachMeasurement(func(measurement *types.Measurement) bool {
 					if measurement.Source == types.SourcePumpDump {
 						maturity[measurement.Symbol] = measurement.Maturity
 					}
-				}
-			}
+
+				return true
+			})
 
 			for _, state := range proof.states[:len(proof.states)-1] {
 				So(market.Transition(state, tests.Idle, proof.symbols...), ShouldBeNil)
 			}
 
-			for _, rows := range thesis.Measurements {
-				for _, measurement := range rows {
+			thesis.EachMeasurement(func(measurement *types.Measurement) bool {
 					if measurement.Source == types.SourcePumpDump {
 						maturity[measurement.Symbol] = measurement.Maturity
 					}
-				}
-			}
+
+				return true
+			})
 
 			So(market.Transition(
 				proof.states[len(proof.states)-1], func() error {
-					current := thesis.Measurements
 					advanced := make(map[string]bool, len(market.Symbols))
 
-					for _, rows := range current {
-						for _, measurement := range rows {
+					thesis.EachMeasurement(func(measurement *types.Measurement) bool {
 							if measurement.Source != types.SourcePumpDump {
-								continue
+								return true
 							}
 
 							So(measurement.ValidateStruct(), ShouldBeNil)
@@ -182,17 +180,18 @@ func TestMeasure(t *testing.T) {
 								So(math.IsInf(*sample.Normalized, 0), ShouldBeFalse)
 								return true
 							})
-						}
-					}
 
-					for _, rows := range current {
-						for _, measurement := range rows {
+							return true
+					})
+
+					thesis.EachMeasurement(func(measurement *types.Measurement) bool {
 							if measurement.Source == types.SourcePumpDump &&
 								advanced[measurement.Symbol] {
 								measurements = append(measurements, measurement)
 							}
-						}
-					}
+
+							return true
+					})
 
 					return nil
 				}, proof.symbols...,

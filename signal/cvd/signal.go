@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -111,7 +112,9 @@ func (signal *Signal) Calculate(
 	books []kraken.BookData,
 ) ([]*types.Measurement, error) {
 	out := make([]*types.Measurement, 0, len(trades))
-	uiOut := make([]*types.Measurement, 0)
+	uiOut := datura.Map[any]{
+		"measurements": make([]*types.Measurement, 0),
+	}
 
 	for _, row := range tickers {
 		if row.Symbol == "" || row.Timestamp.IsZero() {
@@ -149,22 +152,14 @@ func (signal *Signal) Calculate(
 		out = append(out, measurements...)
 
 		if row.Symbol == types.Focus() {
-			uiOut = append(uiOut, measurements...)
+			uiOut["measurements"] = append(
+				uiOut["measurements"].([]*types.Measurement), measurements...,
+			)
 		}
 	}
 
-	if len(uiOut) > 0 {
-		select {
-		case signal.ui <- datura.Map[any]{
-			"measurements": uiOut,
-		}.Marshal():
-		default:
-			errnie.Error(errnie.Err(
-				errnie.TooManyRequests,
-				"wire: ui channel saturated; dropped measurements",
-				nil,
-			))
-		}
+	if len(uiOut["measurements"].([]*types.Measurement)) > 0 {
+		utils.Publish(signal.ui, uiOut)
 	}
 
 	return out, nil

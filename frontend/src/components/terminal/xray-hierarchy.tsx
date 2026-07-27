@@ -93,7 +93,7 @@ const paintHierarchyRows = (
 
 			if (cell === undefined) {
 				cell = document.createElement("div");
-				cell.className = "min-w-0 rounded-[1px]";
+				cell.className = "min-w-0 rounded-[1px] transition-colors duration-150 ease-out";
 				cells.appendChild(cell);
 			}
 

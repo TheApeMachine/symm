@@ -30,15 +30,17 @@ export const holdingAuditRow = (
 	const phase =
 		lifecycle ??
 		(typeof position.status === "string" ? position.status : "closed");
-	const pnl = Number.isFinite(position.pnl) ? fixed(position.pnl) : "—";
-	const ret = Number.isFinite(position.return_pct)
-		? `${(position.return_pct * 100).toFixed(2)}%`
+	const pnl = Number(position.pnl);
+	const ret = Number(position.return_pct);
+	const pnlText = Number.isFinite(pnl) ? fixed(pnl) : "—";
+	const retText = Number.isFinite(ret)
+		? `${(ret * 100).toFixed(2)}%`
 		: "—";
 
 	return {
 		reason: phase,
 		reference: position.symbol,
-		meta: `pnl ${pnl} · return ${ret}`,
+		meta: `pnl ${pnlText} · return ${retText}`,
 	};
 };
 

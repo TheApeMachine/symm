@@ -114,7 +114,7 @@ export const allocationSummary = ({
 	const reserved = balanceAmount(balances, quote, "reserved");
 	const deployed = holdings
 		.filter((holding) => quoteAsset(holding.symbol) === quote)
-		.reduce((sum, holding) => sum + holding.qty * holding.mark, 0);
+		.reduce((sum, holding) => sum + Number(holding.qty) * Number(holding.mark), 0);
 	const rows = orderedSymbols.map((symbol) => {
 		const causalFrame = latest(causal[symbol]);
 		const manifoldFrame = latest(manifold[symbol]);

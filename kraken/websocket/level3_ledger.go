@@ -8,6 +8,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -191,13 +192,25 @@ func (ledger *level3Ledger) applySide(
 			quantity = order.OrderQty
 		}
 
-		managed.Update(&book.UpdateOptions{
-			Direction: direction,
-			ID:        order.OrderID,
-			Price:     order.LimitPrice,
-			Quantity:  quantity,
-			Timestamp: order.Timestamp,
-		})
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					errnie.Error(errnie.Err(
+						errnie.Internal,
+						fmt.Sprintf("level3 apply panic: %v", r),
+						nil,
+					))
+				}
+			}()
+
+			managed.Update(&book.UpdateOptions{
+				Direction: direction,
+				ID:        order.OrderID,
+				Price:     order.LimitPrice,
+				Quantity:  quantity,
+				Timestamp: order.Timestamp,
+			})
+		}()
 
 		if order.Event == "delete" {
 			delete(ledger.orders[symbol], order.OrderID)

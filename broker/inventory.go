@@ -122,6 +122,7 @@ whose exchange qty has gone to zero. reserved supplies live sell claims per asse
 func (inventory *Inventory) Sync(
 	quote string,
 	data map[string]*kraken.BalanceData,
+	complete bool,
 	reserved func(asset string) *decimal.Decimal,
 ) {
 	inventory.mu.Lock()
@@ -144,6 +145,10 @@ func (inventory *Inventory) Sync(
 		inventory.upsert(symbol, asset, row.Balance, reserved(asset))
 	}
 
+	if !complete {
+		return
+	}
+
 	for _, holding := range inventory.Holdings {
 		if holding.Status != types.OPEN {
 			continue
@@ -154,13 +159,6 @@ func (inventory *Inventory) Sync(
 		}
 
 		if holding.Asset == "" {
-			continue
-		}
-
-		// Desk-traded lots must not flatten when a snapshot omits the asset —
-		// wait for an explicit zero-qty row.
-		if holding.EntryPrice != nil ||
-			holding.Qty != nil && holding.Qty.Sign() > 0 {
 			continue
 		}
 

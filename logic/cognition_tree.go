@@ -1,8 +1,6 @@
 package logic
 
 import (
-	"strings"
-
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/types"
 )
@@ -32,36 +30,25 @@ func (analyzer *Analyzer) cognitionVisualization(
 	}
 
 	classes = cognitionClasses(classification)
-	symbolPrefix := cognitionSymbolPrefix(symbolToken)
-	tip := analyzer.lookaheadTip(symbolToken, predictions)
+	tip := analyzer.lookaheadTip(predictions)
 
 	beamWidth = analyzer.treeExpandWidth(cognitionBeamWidth(tip))
 	maxHops = cognitionTreeDepth()
 	branches, nodeCount = analyzer.cognitionBranches(beamWidth)
-	// Beam search is scoped under the symbol hop so each coin explores its own
-	// namespace. Searching the empty root made every symbol share one global MAP.
-	beams, lookaheadScore, lookaheadPaths = analyzer.cognitionBeams(
-		symbolPrefix, beamWidth, maxHops, tip,
-	)
+	beams, lookaheadScore, lookaheadPaths = analyzer.cognitionBeams([]byte("s"), beamWidth, maxHops, tip)
 
-	_ = parent
+	_, _ = parent, symbolToken
 
 	return branches, beams, classes, beamWidth, maxHops, nodeCount, lookaheadScore, lookaheadPaths
 }
 
 /*
-lookaheadTip returns the symbol-scoped continuation predictions used to size the
-beam and to score category strength, falling back to the parent predictions when
-the symbol namespace has no learned children yet.
+lookaheadTip returns global continuation predictions under the sensory root used
+to size the beam and score category strength. Falling back to the current parent
+predictions keeps fresh trees readable before s has learned children.
 */
-func (analyzer *Analyzer) lookaheadTip(
-	symbolToken string,
-	predictions []dmt.LookaheadPrediction,
-) []dmt.LookaheadPrediction {
-	symbolPrefix := cognitionSymbolPrefix(symbolToken)
-	tip := analyzer.predictChildren(
-		string(symbolPrefix), cognitionTreeDepth()*cognitionTreeDepth(),
-	)
+func (analyzer *Analyzer) lookaheadTip(predictions []dmt.LookaheadPrediction) []dmt.LookaheadPrediction {
+	tip := analyzer.predictChildren("s", cognitionTreeDepth()*cognitionTreeDepth())
 
 	if len(tip) == 0 {
 		return predictions
@@ -83,18 +70,6 @@ func (analyzer *Analyzer) lookaheadScore(predictions []dmt.LookaheadPrediction) 
 	}
 
 	return score
-}
-
-/*
-cognitionSymbolPrefix returns the leading symbol-* token so beam search stays
-inside one coin's radix namespace.
-*/
-func cognitionSymbolPrefix(symbolToken string) []byte {
-	if !strings.HasPrefix(symbolToken, "symbol-") {
-		return nil
-	}
-
-	return []byte(symbolToken)
 }
 
 func cognitionClasses(

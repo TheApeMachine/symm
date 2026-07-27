@@ -37,7 +37,7 @@ const toNumber = (value: number | string | undefined): number => {
 		return 0;
 	}
 
-	return numeric;
+	return numeric ?? 0;
 };
 
 const quoteFromHoldings = (holdings: Holding[]): string | null => {
@@ -85,16 +85,19 @@ export const walletMetrics = (
 		0,
 	);
 	const balanceValue = toNumber(balance.balance);
-	const availableValue = toNumber(balance.available);
+	const availableValue =
+		balance.available === undefined
+			? balanceValue - toNumber(balance.reserved)
+			: toNumber(balance.available);
 	const reservedValue = toNumber(balance.reserved);
 
 	return {
 		asset: balance.asset,
-		cash: balanceValue,
+		cash: availableValue,
 		available: availableValue,
 		reserved: reservedValue,
 		unrealized,
-		equity: balanceValue + committed + unrealized,
+		equity: availableValue + reservedValue + committed + unrealized,
 	};
 };
 

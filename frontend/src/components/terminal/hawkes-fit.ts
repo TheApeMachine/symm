@@ -137,7 +137,7 @@ const modelFrom = (epoch: MeasurementEpoch): [string, HawkesModel] | null => {
 		return null;
 	}
 
-	return [buyFit, { baseline: buy.raw + sell.raw, beta }];
+	return [buyFit, { baseline: (buy.raw ?? 0) + (sell.raw ?? 0), beta }];
 };
 
 /*
@@ -168,7 +168,7 @@ export const retainHawkesModelEpoch = (epoch: MeasurementEpoch): void => {
 
 		values.set(
 			parameterKey(measurement.metric ?? "", measurement.side ?? ""),
-			measurement.raw,
+			measurement.raw ?? 0,
 		);
 	}
 
@@ -211,7 +211,7 @@ const observationFrom = (epoch: MeasurementEpoch): HawkesObservation | null => {
 		return null;
 	}
 
-	return { at, intensity: buy.raw + sell.raw, fit: buyFit, symbol };
+	return { at, intensity: (buy.raw ?? 0) + (sell.raw ?? 0), fit: buyFit, symbol };
 };
 
 /*

@@ -144,7 +144,7 @@ export const drawers = {
 				paint: paintSignalDetailMeasurements as Paint,
 				input: "history",
 			},
-			regimeRadar: { paint: paintRegimeRadar, input: "latest" },
+			regimeRadar: { paint: paintRegimeRadar, input: "history" },
 			health: { paint: paintHealthMeasurements, input: "latest" },
 			signalHeatmap: {
 				paint: paintTerminalSignalHeatmap,
@@ -261,6 +261,11 @@ export const drawers = {
 	manifold_wave: {
 		paint: (value: unknown, focusSymbol: string) => {
 			paintManifoldWave(value);
+			repaintTerminalFluidChart(focusSymbol);
+		},
+	},
+	manifold_display: {
+		paint: (_value: unknown, focusSymbol: string) => {
 			repaintTerminalFluidChart(focusSymbol);
 		},
 	},

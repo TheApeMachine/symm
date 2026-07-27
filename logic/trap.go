@@ -60,8 +60,7 @@ func TrapShare(thesis *types.Thesis, symbol string) TrapEvidence {
 			return true
 		}
 
-		if measurement == nil ||
-			len(measurement.Metrics) == 0 {
+		if len(measurement.Metrics) == 0 {
 			return true
 		}
 

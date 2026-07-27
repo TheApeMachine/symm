@@ -16,6 +16,9 @@ const reading = (
 	at: "2026-07-06T10:00:00Z",
 	raw,
 	normalized,
+	metrics: {
+		[metric]: { raw, normalized: normalized ?? raw },
+	},
 	uncertainty: null,
 	validity: { state: "valid", readiness: "observation" },
 	scale: { kind: "observation_window", from: "", through: "" },

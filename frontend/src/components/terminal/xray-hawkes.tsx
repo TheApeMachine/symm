@@ -38,11 +38,18 @@ export const paintXrayHawkes = (value: unknown, focusSymbol: string) => {
 	}
 
 	const measurements = frameRows<Measurement>(value);
-	const frames = measurements.filter(
+	let frames = measurements.filter(
 		(measurement) =>
 			measurement.source === "hawkes" &&
 			(focusSymbol === "" || measurement.symbol === focusSymbol),
 	);
+
+	if (frames.length === 0) {
+		frames = measurements.filter(
+			(measurement) => measurement.source === "hawkes",
+		);
+	}
+
 	const byAt = new Map<string, Measurement[]>();
 
 	for (const row of frames) {

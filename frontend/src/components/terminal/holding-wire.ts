@@ -46,5 +46,5 @@ export const holdingRows = (value: unknown): Holding[] => {
 		}
 
 		return out as Holding;
-	});
+	}).sort((left, right) => left.symbol.localeCompare(right.symbol));
 };

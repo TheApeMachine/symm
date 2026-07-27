@@ -75,7 +75,7 @@ const measurementRaw = (
 			(measurement.side ?? "") === side &&
 			Number.isFinite(measurement.raw)
 		) {
-			return measurement.raw;
+			return measurement.raw ?? null;
 		}
 
 		const raw = measurement.metrics?.[key];

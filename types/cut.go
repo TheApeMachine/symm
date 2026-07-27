@@ -50,8 +50,8 @@ type ImmutableCut struct {
 	Decisions    []Decision
 	Hypotheses   []Hypothesis
 	Categories   map[string][]Category
-	Resonance    []any
-	Causal       []any
+	Resonance    map[string]any
+	Causal       map[string]any
 	Incomplete   bool
 	Sequence     uint64
 }
@@ -76,8 +76,8 @@ func NewImmutableCut(id CutID, tick int64, thesis *Thesis) *ImmutableCut {
 		Decisions:    thesis.Decisions,
 		Hypotheses:   thesis.Hypotheses,
 		Categories:   thesis.Categories,
-		Resonance:    append([]any(nil), thesis.Resonance...),
-		Causal:       append([]any(nil), thesis.Causal...),
+		Resonance:    thesis.cutMap(thesis.Resonance),
+		Causal:       thesis.cutMap(thesis.Causal),
 		Incomplete:   thesis.Incomplete(),
 		Sequence:     uint64(tick),
 	}

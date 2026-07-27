@@ -7,7 +7,14 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/theapemachine/datura"
 )
+
+var daturaPool = sync.Pool{
+	New: func() any {
+		return datura.Map[any]{}
+	},
+}
 
 const (
 	ThesisKey = "thesis"
@@ -54,8 +61,8 @@ type Thesis struct {
 	Categories    map[string][]Category `json:"categories"`
 	Manifold      *sync.Map             `json:"manifold"`
 	Cognition     *sync.Map             `json:"cognition"`
-	Resonance     []any                 `json:"resonance"`
-	Causal        []any                 `json:"causal"`
+	Resonance     *sync.Map             `json:"resonance"`
+	Causal        *sync.Map             `json:"causal"`
 	cutIncomplete bool
 }
 
@@ -79,8 +86,8 @@ func NewThesis() *Thesis {
 		Measurements: &sync.Map{},
 		Manifold:     &sync.Map{},
 		Cognition:    &sync.Map{},
-		Resonance:    make([]any, 0),
-		Causal:       make([]any, 0),
+		Resonance:    &sync.Map{},
+		Causal:       &sync.Map{},
 	}
 }
 
@@ -106,8 +113,8 @@ func (thesis *Thesis) ResetTick(at time.Time, tick int64) {
 	for symbol, rows := range thesis.Categories {
 		thesis.Categories[symbol] = rows[:0]
 	}
-	thesis.Resonance = thesis.Resonance[:0]
-	thesis.Causal = thesis.Causal[:0]
+	thesis.Resonance.Clear()
+	thesis.Causal.Clear()
 	thesis.cutIncomplete = false
 	// Graphs holds resident pointers (category graph); do not clear between ticks.
 	thesis.Manifold.Clear()
@@ -231,6 +238,30 @@ func (thesis *Thesis) cutMeasurements() map[string][]*Measurement {
 }
 
 /*
+cutMap freezes keyed per-symbol analyzer rows without turning the Thesis back
+into append-only slices. The values remain shared immutable outcome pointers.
+*/
+func (thesis *Thesis) cutMap(rows *sync.Map) map[string]any {
+	frozen := make(map[string]any)
+
+	if rows == nil {
+		return frozen
+	}
+
+	rows.Range(func(key, value any) bool {
+		name, ok := key.(string)
+
+		if ok && value != nil {
+			frozen[name] = value
+		}
+
+		return true
+	})
+
+	return frozen
+}
+
+/*
 ensureLocks restores pointer-owned locks after JSON decode or accidental value
 construction. Thesis maps may be shared by copied values, so the lock itself must
 also be shared rather than copied by value.
@@ -274,58 +305,102 @@ MarshalJSON stores the Thesis itself while translating its concurrent maps into
 ordinary JSON objects. The live Thesis remains the only state model.
 */
 func (thesis *Thesis) MarshalJSON() ([]byte, error) {
-	type alias Thesis
-	signals := make(map[string]any)
-	lifecycle := make(map[string]string)
-	manifold := make(map[string]any)
-	cognition := make(map[string]Cognition)
-	positions := make(map[string]bool)
-	holdings := make(map[string]Holding)
+	mapped := daturaPool.Get().(datura.Map[any])
+	defer daturaPool.Put(mapped)
+
+	mappedPositions := daturaPool.Get().(datura.Map[any])
+	defer daturaPool.Put(mappedPositions)
+
+	mapped["positions"] = mappedPositions
 
 	thesis.Positions.Range(func(key, value any) bool {
-		positions[key.(string)] = true
+		mapped["positions"].(datura.Map[any])[key.(string)] = true
 		return true
 	})
+
+	mappedHoldings := daturaPool.Get().(datura.Map[any])
+	defer daturaPool.Put(mappedHoldings)
+
+	mapped["holdings"] = mappedHoldings
 
 	thesis.Holdings.Range(func(key, value any) bool {
 		switch holding := value.(type) {
 		case Holding:
-			holdings[key.(string)] = holding
+			mapped["holdings"].(datura.Map[any])[key.(string)] = holding
 		case *Holding:
-			holdings[key.(string)] = *holding
+			mapped["holdings"].(datura.Map[any])[key.(string)] = *holding
 		}
 
 		return true
 	})
 
+	mappedLifecycle := daturaPool.Get().(datura.Map[any])
+	defer daturaPool.Put(mappedLifecycle)
+
+	mapped["lifecycle"] = mappedLifecycle
+
 	thesis.Lifecycle.Range(func(key, value any) bool {
-		lifecycle[key.(string)] = value.(string)
+		mapped["lifecycle"].(datura.Map[any])[key.(string)] = value.(string)
 		return true
 	})
+
+	mappedManifold := daturaPool.Get().(datura.Map[any])
+	defer daturaPool.Put(mappedManifold)
+
+	mapped["manifold"] = mappedManifold
 
 	thesis.Manifold.Range(func(key, value any) bool {
-		manifold[key.(string)] = value
+		mapped["manifold"].(datura.Map[any])[key.(string)] = value
 		return true
 	})
+
+	mappedCognition := daturaPool.Get().(datura.Map[any])
+	defer daturaPool.Put(mappedCognition)
+
+	mapped["cognition"] = mappedCognition
 
 	thesis.Cognition.Range(func(key, value any) bool {
-		cognition[key.(string)] = value.(Cognition)
+		mapped["cognition"].(datura.Map[any])[key.(string)] = value
 		return true
 	})
 
-	return sonic.Marshal(struct {
-		*alias
-		Signals   map[string]any       `json:"signals"`
-		Lifecycle map[string]string    `json:"lifecycle"`
-		Manifold  map[string]any       `json:"manifold"`
-		Cognition map[string]Cognition `json:"cognition"`
-		Positions map[string]bool      `json:"positions"`
-		Holdings  map[string]Holding   `json:"holdings"`
-	}{
-		alias: (*alias)(thesis), Signals: signals,
-		Lifecycle: lifecycle, Manifold: manifold, Cognition: cognition,
-		Positions: positions, Holdings: holdings,
+	mappedResonance := daturaPool.Get().(datura.Map[any])
+	defer daturaPool.Put(mappedResonance)
+
+	mapped["resonance"] = mappedResonance
+
+	thesis.Resonance.Range(func(key, value any) bool {
+		mapped["resonance"].(datura.Map[any])[key.(string)] = value
+		return true
 	})
+
+	mappedCausal := daturaPool.Get().(datura.Map[any])
+	defer daturaPool.Put(mappedCausal)
+
+	mapped["causal"] = mappedCausal
+
+	thesis.Causal.Range(func(key, value any) bool {
+		mapped["causal"].(datura.Map[any])[key.(string)] = value
+		return true
+	})
+
+	mappedMeasurements := daturaPool.Get().(datura.Map[any])
+	defer daturaPool.Put(mappedMeasurements)
+
+	mapped["measurements"] = mappedMeasurements
+
+	thesis.Measurements.Range(func(key, value any) bool {
+		switch measurement := value.(type) {
+		case Measurement:
+			mapped["measurements"].(datura.Map[any])[key.(string)] = measurement
+		case *Measurement:
+			mapped["measurements"].(datura.Map[any])[key.(string)] = *measurement
+		}
+
+		return true
+	})
+
+	return mapped.Marshal(), nil
 }
 
 /*
@@ -340,6 +415,8 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 		Lifecycle map[string]string    `json:"lifecycle"`
 		Manifold  map[string]any       `json:"manifold"`
 		Cognition map[string]Cognition `json:"cognition"`
+		Resonance map[string]any       `json:"resonance"`
+		Causal    map[string]any       `json:"causal"`
 		Positions map[string]bool      `json:"positions"`
 		Holdings  map[string]Holding   `json:"holdings"`
 	}{alias: (*alias)(thesis)}
@@ -353,6 +430,8 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 	thesis.Lifecycle = &sync.Map{}
 	thesis.Manifold = &sync.Map{}
 	thesis.Cognition = &sync.Map{}
+	thesis.Resonance = &sync.Map{}
+	thesis.Causal = &sync.Map{}
 	thesis.Positions = &sync.Map{}
 	thesis.Holdings = &sync.Map{}
 
@@ -375,6 +454,14 @@ func (thesis *Thesis) UnmarshalJSON(data []byte) error {
 
 	for key, value := range decoded.Cognition {
 		thesis.Cognition.Store(key, value)
+	}
+
+	for key, value := range decoded.Resonance {
+		thesis.Resonance.Store(key, value)
+	}
+
+	for key, value := range decoded.Causal {
+		thesis.Causal.Store(key, value)
 	}
 
 	if thesis.CrossSection == nil {

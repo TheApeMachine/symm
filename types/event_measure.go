@@ -96,11 +96,7 @@ parallelWorkers returns the worker count for symbol-parallel work bounded by
 GOMAXPROCS and the number of distinct symbol groups.
 */
 func parallelWorkers(groupCount int) int {
-	workers := runtime.GOMAXPROCS(0)
-
-	if workers > groupCount {
-		workers = groupCount
-	}
+	workers := min(runtime.GOMAXPROCS(0), groupCount)
 
 	if workers < 1 {
 		workers = 1

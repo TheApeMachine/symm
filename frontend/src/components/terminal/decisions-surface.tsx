@@ -1,5 +1,6 @@
 import { createRef } from "react";
 import { appStore } from "#/collections/app";
+import { terminalStore } from "#/collections/terminal";
 import type {
 	CausalFrame,
 	Instrument,
@@ -62,6 +63,8 @@ const setText = (node: Element | null | undefined, value: string): void => {
 
 const selectCandidate = (symbol: string) => {
 	selectedSymbol = selectedSymbol === symbol ? null : symbol;
+	appStore.actions.updateFocusSymbol(symbol);
+	terminalStore.actions.openThesis(symbol);
 	paint();
 };
 

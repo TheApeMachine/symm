@@ -92,13 +92,13 @@ func TestCalculate(t *testing.T) {
 				proof.states[len(proof.states)-1], func() error {
 					thesis := wired.Thesis
 
-					for _, rows := range thesis.Measurements {
-						for _, measurement := range rows {
+					thesis.EachMeasurement(func(measurement *types.Measurement) bool {
 							if measurement.Source == types.SourceCVD && measurement.At.After(from) {
 								measurements = append(measurements, measurement)
 							}
-						}
-					}
+
+							return true
+					})
 
 					return nil
 				}, proof.symbols...,

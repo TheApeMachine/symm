@@ -95,10 +95,9 @@ func TestCalculate(t *testing.T) {
 					return err
 				}
 
-				for _, rows := range thesis.Measurements {
-					for _, measurement := range rows {
+				thesis.EachMeasurement(func(measurement *types.Measurement) bool {
 						if measurement.Source != types.SourceToxicity {
-							continue
+							return true
 						}
 
 						So(measurement.ValidateStruct(), ShouldBeNil)
@@ -116,8 +115,8 @@ func TestCalculate(t *testing.T) {
 						})
 
 						measurements = append(measurements, measurement)
-					}
-				}
+						return true
+				})
 
 				return nil
 			}), ShouldBeNil)
