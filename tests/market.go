@@ -400,9 +400,6 @@ func (market *Market) configure() {
 		marketsignal.PriceIncrement,
 	).Generate() {
 		market.Public.Respond("instrument", payload)
-		// Warm price-increment cache the same way a live instrument
-		// snapshot would, so later book frames are complete before Send.
-		market.Public.Emit("instrument", payload)
 	}
 
 	for payload := range tradevolumefixture.NewMarket(market.Symbols).Generate() {

@@ -7,6 +7,7 @@ import {
 	decisionFraction,
 	holdingAuditRow,
 	isClosedLot,
+	mergeDashboardPositions,
 	paintDashboardHoldings,
 } from "./dashboard-rail";
 
@@ -131,5 +132,63 @@ describe("paintDashboardHoldings", () => {
 		expect(rows[0]?.qty).toBe(544.58996);
 		expect(rows[1]?.qty).toBe(9.85795428);
 		expect(() => paintDashboardHoldings(rows, "BTC/USD")).not.toThrow();
+	});
+});
+
+describe("mergeDashboardPositions", () => {
+	it("retains earlier symbols when incremental position rows arrive one at a time", () => {
+		const first = {
+			status: "open",
+			entry_order: {},
+			exit_order: {},
+			order_id: "one",
+			fills: [],
+			buffered: [],
+			holding: samplePosition({ symbol: "BTC/USD", status: "open", qty: 1 }),
+		} satisfies Record<string, unknown>;
+		const second = {
+			status: "open",
+			entry_order: {},
+			exit_order: {},
+			order_id: "two",
+			fills: [],
+			buffered: [],
+			holding: samplePosition({ symbol: "ETH/USD", status: "open", qty: 2 }),
+		} satisfies Record<string, unknown>;
+
+		const merged = mergeDashboardPositions([], first);
+		const next = mergeDashboardPositions(merged, second);
+
+		expect(next.map((row) => row.holding?.symbol)).toEqual([
+			"BTC/USD",
+			"ETH/USD",
+		]);
+	});
+
+	it("replaces retained state when the backend sends a full snapshot map", () => {
+		const previous = mergeDashboardPositions([], {
+			status: "open",
+			entry_order: {},
+			exit_order: {},
+			order_id: "one",
+			fills: [],
+			buffered: [],
+			holding: samplePosition({ symbol: "BTC/USD", status: "open", qty: 1 }),
+		});
+		const snapshot = {
+			"ETH/USD": {
+				status: "open",
+				entry_order: {},
+				exit_order: {},
+				order_id: "two",
+				fills: [],
+				buffered: [],
+				holding: samplePosition({ symbol: "ETH/USD", status: "open", qty: 2 }),
+			},
+		};
+
+		const next = mergeDashboardPositions(previous, snapshot);
+
+		expect(next.map((row) => row.holding?.symbol)).toEqual(["ETH/USD"]);
 	});
 });

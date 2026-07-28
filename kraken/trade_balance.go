@@ -5,6 +5,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"strings"
 )
 
 /*
@@ -52,6 +53,16 @@ func NewTradeBalance(buf []byte) *TradeBalanceResult {
 		return nil
 	}
 
+	if len(balance.Error) > 0 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trade balance response contains errors: "+strings.Join(balance.Error, "; "),
+			nil,
+		))
+
+		return nil
+	}
+
 	return &balance.Result
 }
 
@@ -62,6 +73,9 @@ func NewTradeBalanceRequest(asset string) *TradeBalanceRequest {
 	return &TradeBalanceRequest{Asset: asset}
 }
 
+/*
+MarshalJSON serializes the trade-balance request payload for Kraken REST.
+*/
 func (request *TradeBalanceRequest) MarshalJSON() ([]byte, error) {
 	type alias TradeBalanceRequest
 	return sonic.Marshal((*alias)(request))

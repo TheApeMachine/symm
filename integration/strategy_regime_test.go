@@ -82,6 +82,51 @@ func TestStrategyRegimes(t *testing.T) {
 			So(holding.Stoploss.Peak, ShouldNotBeNil)
 		})
 
+		Convey("A fast pump reaches a non-trap cognition winner and opens a position", func() {
+			harness := newDeskHarness(t, 3)
+			Reset(harness.reset)
+			So(harness.Warmup(), ShouldBeNil)
+			summary := &decisionSummary{}
+			nonTrapReady := 0
+			trapReady := 0
+
+			So(harness.Market.Transition(tests.MarketStateFastPump, func() error {
+				summary.observe(harness.Wired.Thesis, symbol)
+
+				raw, found := harness.Wired.Thesis.Cognition.Load(symbol)
+
+				if !found {
+					return nil
+				}
+
+				reading, ok := raw.(types.Cognition)
+
+				if !ok || !reading.Ready {
+					return nil
+				}
+
+				switch reading.Winner {
+				case string(types.SpoofTrap),
+					string(types.ToxicBluff),
+					string(types.BookThinning),
+					string(types.ThermalExhaustion),
+					string(types.MechanicalCollapse),
+					string(types.FadedExhaustion),
+					string(types.Exhaustion):
+					trapReady++
+				default:
+					nonTrapReady++
+				}
+
+				return nil
+			}), ShouldBeNil)
+
+			So(summary.enterCount, ShouldBeGreaterThan, 0)
+			So(harness.Wired.Desk.OpenPositions(), ShouldBeGreaterThan, 0)
+			So(nonTrapReady, ShouldBeGreaterThan, 0)
+			So(nonTrapReady, ShouldBeGreaterThanOrEqualTo, trapReady)
+		})
+
 		Convey("A sustained bear trend opens nothing and never emits an enter decision", func() {
 			harness := newDeskHarness(t, 3)
 			Reset(harness.reset)
@@ -90,6 +135,7 @@ func TestStrategyRegimes(t *testing.T) {
 
 			So(harness.Market.Transition(tests.MarketStateBearTrend, func() error {
 				summary.observe(harness.Wired.Thesis, symbol)
+
 				return nil
 			}, symbol), ShouldBeNil)
 
@@ -175,6 +221,7 @@ func TestStrategyRegimes(t *testing.T) {
 
 			So(harness.Market.Transition(tests.MarketStateFlashCrash, func() error {
 				summary.observe(harness.Wired.Thesis, symbol)
+
 				return nil
 			}, symbol), ShouldBeNil)
 

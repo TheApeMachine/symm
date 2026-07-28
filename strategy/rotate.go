@@ -155,8 +155,14 @@ func (rotate Rotate) Clear(stop *types.Stoploss, forecast types.Forecasts) float
 		return 0
 	}
 
-	giveback := math.Max(0, stop.Floor.Float64())
-	proximity := math.Min(1, 1-giveback/stop.Floor.Float64())
+	if stop.Mark == nil || stop.Peak == nil || stop.Floor == nil ||
+		stop.Peak.Cmp(stop.Floor) <= 0 {
+		return 0
+	}
+
+	distance := stop.Mark.Float64() - stop.Floor.Float64()
+	rangeWidth := stop.Peak.Float64() - stop.Floor.Float64()
+	proximity := math.Min(1, math.Max(0, 1-distance/rangeWidth))
 
 	if proximity <= 0 {
 		return 0

@@ -221,6 +221,42 @@ func TestPaperMatch(t *testing.T) {
 }
 
 /*
+TestPaperExecutionSnapshotIncludesTradeHistory proves a late executions
+subscription can reconstruct both open orders and already filled trades from the
+paper venue, matching Kraken snap_trades expectations more closely.
+*/
+func TestPaperExecutionSnapshotIncludesTradeHistory(t *testing.T) {
+	Convey("Given a paper venue with one filled trade in history", t, func() {
+		conn := NewConn(t.Context(), "SIM1/USD")
+		So(conn.EnablePaper(PaperOptions{
+			Quote: func(string) (float64, float64, float64, float64, bool) {
+				return 99, 10, 101, 10, true
+			},
+			Now: func() time.Time {
+				return time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)
+			},
+			Balances: map[string]float64{"USD": 1000},
+			MakerFee: 0.005,
+			TakerFee: 0.01,
+		}), ShouldBeNil)
+
+		request := json.RawMessage(`{"method":"add_order","req_id":7,"params":{` +
+			`"order_type":"market","side":"buy","order_qty":2,"symbol":"SIM1/USD"}}`)
+		So(conn.Write(request), ShouldBeNil)
+		So(conn.Drain(), ShouldBeNil)
+
+		snapshot := conn.paper.ExecutionSnapshot()
+
+		Convey("Then the executions snapshot includes the filled trade row", func() {
+			So(string(snapshot), ShouldContainSubstring, `"type":"snapshot"`)
+			So(string(snapshot), ShouldContainSubstring, `"exec_type":"trade"`)
+			So(string(snapshot), ShouldContainSubstring, `"order_status":"filled"`)
+			So(string(snapshot), ShouldContainSubstring, `"symbol":"SIM1/USD"`)
+		})
+	})
+}
+
+/*
 BenchmarkPaper_Handle measures validation, execution, and ledger rendering for
 one touch-sized paper order through the mock connection boundary.
 */
@@ -253,7 +289,7 @@ func BenchmarkPaper_Handle(b *testing.B) {
 	}
 
 	request := json.RawMessage(fmt.Sprintf(
-		`{"method":"add_order","params":{"order_type":"market","side":"buy",`+
+		`{"method":"add_order","params":{"order_type":"market","side":"buy",` +
 			`"order_qty":1,"symbol":"SIM1/USD"}}`,
 	))
 	b.ReportAllocs()

@@ -108,9 +108,10 @@ func (conn *MockConn) Emit(channel string, payload []byte) {
 }
 
 /*
-Drain delivers every queued frame through MockConn.Emit so Actor roots see
-the same tape as production OnReceived → Send. add_order frames emit before
-executions so Desk can record OrderAck before ExecutionAck.
+Drain delivers every queued frame through MockConn.Emit in the exact order the
+mock venue produced them, waiting for each frame to quiet before releasing the
+next one so cross-topic actor pumps cannot invert add_order/executions
+chronology inside one synthetic venue step.
 */
 func (conn *MockConn) Drain() error {
 	if conn == nil {
@@ -132,33 +133,15 @@ func (conn *MockConn) Drain() error {
 		return nil
 	}
 
-	early := make([]outbound, 0, len(queued))
-	late := make([]outbound, 0, len(queued))
-
 	for _, frame := range queued {
-		if frame.channel == "add_order" {
-			early = append(early, frame)
-			continue
-		}
-
-		late = append(late, frame)
-	}
-
-	for _, frame := range early {
 		conn.Emit(frame.channel, frame.payload)
-	}
 
-	if len(early) > 0 {
 		if err := conn.delivered(); err != nil {
 			return err
 		}
 	}
 
-	for _, frame := range late {
-		conn.Emit(frame.channel, frame.payload)
-	}
-
-	return conn.delivered()
+	return nil
 }
 
 func (conn *MockConn) feed(channel string, raw []byte) {
@@ -184,8 +167,12 @@ func (conn *MockConn) feed(channel string, raw []byte) {
 			return
 		}
 
-		if errnie.Error(conn.increments.Stamp(frame)) != nil {
-			return
+		if err := conn.increments.Stamp(frame); err != nil {
+			conn.hydrateIncrements()
+
+			if errnie.Error(conn.increments.Stamp(frame)) != nil {
+				return
+			}
 		}
 
 		root.Send(frame)
@@ -204,6 +191,33 @@ func (conn *MockConn) feed(channel string, raw []byte) {
 	default:
 		root.Send(raw)
 	}
+}
+
+func (conn *MockConn) hydrateIncrements() {
+	conn.Control.mu.Lock()
+	responses := clonePayloads(conn.Control.responses["instrument"])
+	current := conn.Control.current["instrument"]
+	conn.Control.mu.Unlock()
+
+	for _, payload := range responses {
+		frame := kraken.NewInstrument(payload)
+
+		conn.increments.Remember(frame)
+	}
+
+	if current == nil {
+		return
+	}
+
+	payload := current()
+
+	if len(payload) == 0 {
+		return
+	}
+
+	frame := kraken.NewInstrument(payload)
+
+	conn.increments.Remember(frame)
 }
 
 /*

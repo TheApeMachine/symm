@@ -93,12 +93,20 @@ func (corpus *PhaseCorpus) CommitPhase(cognition types.Cognition) error {
 		corpus.spectra[cognition.Symbol] = spectrum
 	}
 
+	class := cognition.WinnerClass
+	confidence := cognition.ClassConfidence
+
+	if class == "" {
+		class = cognition.Winner
+		confidence = cognition.Confidence
+	}
+
 	err := spectrum.Insert(geometry.CorpusEntry[PhaseOutcome]{
 		Dial: pending.dial,
 		Outcome: PhaseOutcome{
 			Symbol:     cognition.Symbol,
-			Class:      cognition.Winner,
-			Confidence: cognition.Confidence,
+			Class:      class,
+			Confidence: confidence,
 			Ambiguous:  cognition.Ambiguous,
 			Cohort:     cognition.Cohort,
 		},

@@ -126,10 +126,11 @@ func (opportunity *Opportunity) utilization(forecast *types.Forecasts) float64 {
 }
 
 /*
-Measure scores executable utility and appends enter when utility clears doing
-nothing and cognition clears forecast noise. Cognitive and forecast rejects are
-recorded as explicit nothing decisions for audit. Occupied symbols are skipped
-for entry; Continuity already scored them after StampFriction.
+Measure scores executable utility and appends enter when the combined logic
+surfaces clear doing nothing. Structural trap dominance still rejects outright;
+other reduced surfaces such as cognition, phase, and causal context tax utility
+instead of acting as sovereign vetoes. Occupied symbols are skipped for entry;
+Continuity already scored them after StampFriction.
 */
 func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 	if err := opportunity.validate(map[string]any{
@@ -172,22 +173,6 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			}
 		}
 
-		if cognitionReady && cognition.Ambiguous {
-			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
-				*forecast, 0, "cognitive_ambiguity",
-				"cognitive memory is ambiguous for this evidence sequence",
-			))
-			continue
-		}
-
-		if cognitionReady && cognition.Confidence <= 0 {
-			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
-				*forecast, 0, "cognitive_no_confidence",
-				"cognitive buy support has no confidence",
-			))
-			continue
-		}
-
 		if forecast.Confidence <= 0 {
 			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
 				*forecast, 0, "forecast_no_confidence",
@@ -197,14 +182,22 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 		}
 
 		reading := measureOpportunity(*forecast, cognition, thesis)
-		oppositionPenalty := 1.0
+		utilityScale := 1.0
 
 		if cognitionReady && isOpposingRegime(cognition.Winner) {
-			oppositionPenalty *= 0.5
+			utilityScale *= 0.5
 		}
 
 		if reading.PhaseOpposes() {
-			oppositionPenalty *= 0.5
+			utilityScale *= 0.5
+		}
+
+		if cognitionReady && cognition.Ambiguous {
+			utilityScale *= 0.5
+		}
+
+		if cognitionReady && cognition.Confidence <= 0 {
+			utilityScale *= 0.5
 		}
 
 		trap := logic.TrapShare(thesis, forecast.Symbol)
@@ -229,12 +222,12 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			continue
 		}
 
+		categoryOpportunityShare, categoryOpportunityDominates := logic.CategoryOpportunity(
+			thesis, forecast.Symbol,
+		)
+
 		if reading.CausalReady && reading.CausalNoise > 0.6 && reading.CausalIntervention <= 0 {
-			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
-				*forecast, 0, "causal_confounded",
-				"causal Do-calculus detects confounding noise dominating direct effect",
-			))
-			continue
+			utilityScale *= max(0.25, 1-reading.CausalNoise)
 		}
 
 		// Enter pays the taker fee once; exit friction is scored when Continuity
@@ -249,8 +242,11 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 		utility := (forecast.ExecutableReturn() * causalMult) - forecast.Uncertainty
 		magnitude := math.Abs(forecast.ExpectedReturn)
 		positiveReturn := math.Max(forecast.ExpectedReturn, 0)
+		oppShare, _ := logic.CategoryOpportunityLead(thesis, forecast.Symbol)
+		anticipatoryEdge := reading.Contrast > 0 ||
+			reading.LookaheadScore > 0 || oppShare > 0 || reading.CognitiveClears(*forecast)
 		opportunityLane := reading.Reserved() ||
-			(positiveReturn > 0 && reading.Horizon == 1 && reading.Contrast > 0 && !reading.PhaseOpposes())
+			(positiveReturn > 0 && !reading.PhaseOpposes() && categoryOpportunityDominates && anticipatoryEdge)
 
 		if reading.LookaheadScore > 0 {
 			utility += positiveReturn * reading.LookaheadScore
@@ -301,37 +297,30 @@ func (opportunity *Opportunity) Measure(thesis *types.Thesis) {
 			utility = reboundFloor
 		}
 
-		if reading.PhaseOpposes() && !opportunityLane && !exhaustionRebound {
-			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
-				*forecast, utility, "phase_opposition",
-				"phase dial attractor conflicts with non-opportunity long setup: "+reading.PhaseClass,
-			))
-			continue
-		}
-
 		// Boost utility by the opportunity-leads share from the resident category
 		// graph. When Leads edges from the current category into opportunity
 		// categories outweigh those into exhaustion, the graph provides additional
 		// predictive evidence that the move is real rather than a phantom lift.
 		// Zero when no graph is available, preserving prior behavior.
-		oppShare, _ := logic.CategoryOpportunityLead(thesis, forecast.Symbol)
 		if oppShare > 0 {
 			utility += positiveReturn * oppShare
 		}
-		utility *= oppositionPenalty
+
+		if categoryOpportunityShare > 0 {
+			utility += positiveReturn * categoryOpportunityShare
+		}
+
+		if cognitionReady && !reading.CognitiveClears(*forecast) && !opportunityLane &&
+			!exhaustionRebound {
+			utilityScale *= 0.5
+		}
+
+		utility *= utilityScale
 
 		if utility <= 0 {
 			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
 				*forecast, utility, "infeasible",
 				"expected executable utility does not exceed doing nothing",
-			))
-			continue
-		}
-
-		if cognitionReady && !reading.CognitiveClears(*forecast) && !opportunityLane {
-			thesis.Decisions = append(thesis.Decisions, opportunity.reject(
-				*forecast, utility, "cognitive_weak",
-				"cognitive confidence does not clear forecast noise share",
 			))
 			continue
 		}

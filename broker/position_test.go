@@ -217,6 +217,53 @@ func TestPositionExitWaitsForFill(t *testing.T) {
 }
 
 /*
+TestPositionTickerPublishesThroughStoploss proves ticker marks do not publish
+directly from Position. Stoploss owns the ticker-side publish callback so the UI
+only sees snapshots after the regulator has absorbed the fresh mark.
+*/
+func TestPositionTickerPublishesThroughStoploss(t *testing.T) {
+	Convey("Given a position mark update on a live ticker", t, func() {
+		published := 0
+		price := NewPrice(nil)
+		symbol := "SIM1/USD"
+		bid := decimal.NewFromFloat64(101.5)
+		price.tickers[symbol] = &kraken.TickerData{
+			Symbol: symbol,
+			Bid:    bid,
+			Last:   bid,
+		}
+
+		holding := types.NewHolding(
+			t.Context(),
+			symbol,
+			decimal.NewFromInt64(1),
+			decimal.NewFromFloat64(100),
+			func() error { return nil },
+			func() { published++ },
+			nil,
+		)
+		position := &Position{
+			price:   price,
+			pair:    kraken.InstrumentPair{Symbol: symbol, Quote: "USD", CostPrecision: 5},
+			Holding: holding,
+		}
+
+		position.onTicker(&kraken.Ticker{Data: []kraken.TickerData{{
+			Symbol: symbol,
+			Bid:    bid,
+		}}})
+
+		Convey("Then stoploss publishes the coherent snapshot and peak keeps up with mark", func() {
+			So(position.Holding.Mark, ShouldNotBeNil)
+			So(position.Holding.Mark.Cmp(bid), ShouldEqual, 0)
+			So(position.Holding.Stoploss.Peak, ShouldNotBeNil)
+			So(position.Holding.Stoploss.Peak.Cmp(position.Holding.Mark) >= 0, ShouldBeTrue)
+			So(published, ShouldEqual, 1)
+		})
+	})
+}
+
+/*
 TestDeskUsesSimulatedPrivateLiveTransport proves the fixture market can drive
 the live-model private path end to end without touching a real venue socket.
 */

@@ -223,7 +223,11 @@ func (desk *Desk) hydrateRecovered() error {
 				continue
 			}
 
-			sold := decimal.Min(holding.Qty, row.trade.Volume)
+			sold := row.trade.Volume
+
+			if sold.Cmp(holding.Qty) > 0 {
+				sold = holding.Qty
+			}
 			remaining := holding.Qty.Sub(sold)
 
 			if remaining.Sign() <= 0 {
@@ -628,7 +632,7 @@ func (desk *Desk) Buy(
 		))
 	}
 
-	desk.positions[symbol] = NewPosition(
+	position := NewPosition(
 		desk.ctx,
 		desk.api,
 		desk.balance.ui,
@@ -639,9 +643,83 @@ func (desk *Desk) Buy(
 		qty,
 		desk.market,
 		desk.account,
-	).Enter()
+	)
+	desk.positions[symbol] = position
+	entered, err := position.Enter()
 
-	return desk.positions[symbol], nil
+	if err != nil {
+		delete(desk.positions, symbol)
+		return entered, err
+	}
+
+	return entered, nil
+}
+
+/*
+BuyHolding submits the exact strategy-owned holding so execution updates and
+journal snapshots refer to one inventory object.
+*/
+func (desk *Desk) BuyHolding(
+	holding *types.Holding,
+	opportunity bool,
+) (*Position, error) {
+	if holding == nil || holding.Symbol == "" || holding.Qty == nil ||
+		holding.Qty.Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"desk: holding with positive quantity required",
+			nil,
+		))
+	}
+
+	if _, exists := desk.positions[holding.Symbol]; exists {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Conflict,
+			"desk: position already open for "+holding.Symbol,
+			nil,
+		))
+	}
+
+	if !desk.HasSlot(opportunity) {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"desk: position capacity exhausted",
+			nil,
+		))
+	}
+
+	pair, err := desk.instrument.Pair(holding.Symbol)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"desk: no instrument for "+holding.Symbol,
+			err,
+		))
+	}
+
+	position := NewPosition(
+		desk.ctx,
+		desk.api,
+		desk.balance.ui,
+		desk.instrument,
+		desk.price,
+		desk.balance,
+		pair,
+		holding.Qty,
+		desk.market,
+		desk.account,
+	)
+	position.UseHolding(holding)
+	desk.positions[holding.Symbol] = position
+	entered, err := position.Enter()
+
+	if err != nil {
+		delete(desk.positions, holding.Symbol)
+		return entered, err
+	}
+
+	return entered, nil
 }
 
 /*

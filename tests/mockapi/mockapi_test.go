@@ -135,6 +135,30 @@ func TestMockConnDrainAndClose(t *testing.T) {
 		})
 	})
 }
+
+/*
+TestMockConnDrainPreservesQueueOrder proves the harness does not globally
+promote add_order frames ahead of earlier queued transport events.
+*/
+func TestMockConnDrainPreservesQueueOrder(t *testing.T) {
+	Convey("Given queued ticker then add_order frames", t, func() {
+		conn := NewConn(t.Context(), "SIM1/USD")
+		tickerSub := conn.Subscribe("ticker")
+		ackSub := conn.Subscribe("add_order")
+		ticker := []byte(`{"channel":"ticker","type":"update","data":[{"symbol":"SIM1/USD"}]}`)
+		ack := []byte(`{"result":{"order_id":"PAPER-1"}}`)
+
+		So(conn.Queue("ticker", ticker), ShouldBeNil)
+		So(conn.Queue("add_order", ack), ShouldBeNil)
+		So(conn.Drain(), ShouldBeNil)
+
+		Convey("Then delivery follows the queued chronology", func() {
+			So((<-tickerSub.Channel).(*kraken.Ticker).Data[0].Symbol, ShouldEqual, "SIM1/USD")
+			So((<-ackSub.Channel).([]byte), ShouldResemble, ack)
+		})
+	})
+}
+
 func TestMockConnPostRejectsMissingRoute(t *testing.T) {
 	Convey("Given an unconfigured REST path", t, func() {
 		conn := NewConn(t.Context())
@@ -170,7 +194,8 @@ func TestMockConnWriteRecordsRequests(t *testing.T) {
 
 /*
 TestMockConnBookStampsIncrement proves books leave the mock venue only after
-instrument increments are applied, matching Live ingress.
+instrument increments are derived from the configured venue surface itself,
+without any out-of-band instrument prewarm.
 */
 func TestMockConnBookStampsIncrement(t *testing.T) {
 	Convey("Given instrument and book fixtures on one mock venue", t, func() {
@@ -187,10 +212,7 @@ func TestMockConnBookStampsIncrement(t *testing.T) {
 				`"asks":[{"price":"1.01","qty":1}]}]}`,
 		))
 
-		Convey("When instrument then book are subscribed", func() {
-			So(conn.Write(json.RawMessage(
-				`{"method":"subscribe","params":{"channel":"instrument"}}`,
-			)), ShouldBeNil)
+		Convey("When only the book is subscribed", func() {
 			So(conn.Write(json.RawMessage(
 				`{"method":"subscribe","params":{"channel":"book","symbol":["SIM1/USD"]}}`,
 			)), ShouldBeNil)
@@ -203,4 +225,3 @@ func TestMockConnBookStampsIncrement(t *testing.T) {
 		})
 	})
 }
-

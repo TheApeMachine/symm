@@ -37,6 +37,25 @@ const auditSync = new DashboardAuditSync();
 let lastPositions: Position[] = [];
 let lastLifecycle: Record<string, string> = {};
 
+const asPositions = (value: unknown): Position[] =>
+	(Array.isArray(value)
+		? value
+		: value !== null && typeof value === "object"
+			? "holding" in value
+				? [value]
+				: Object.values(value as Record<string, Position>)
+			: value != null
+				? [value]
+				: []) as Position[];
+
+const isPositionSnapshot = (
+	value: unknown,
+): value is Record<string, Position> =>
+	value !== null &&
+	typeof value === "object" &&
+	!Array.isArray(value) &&
+	!("holding" in value);
+
 // The decisions panel is an append-only log: every decision the engine emits is
 // kept as its own row, newest first, capped so the DOM never grows unbounded.
 const DECISION_LOG_CAP = 200;
@@ -140,6 +159,37 @@ const writePositionMeta = (open: Holding[]) => {
 };
 
 /*
+mergeDashboardPositions retains prior symbols when the backend sends one
+incremental position row at a time, while still honoring full snapshot maps.
+*/
+export const mergeDashboardPositions = (
+	previous: Position[],
+	value: unknown,
+): Position[] => {
+	const merged = new Map<string, Position>();
+
+	if (!isPositionSnapshot(value)) {
+		for (const position of previous) {
+			const symbol = position.holding?.symbol;
+
+			if (symbol) {
+				merged.set(symbol, position);
+			}
+		}
+	}
+
+	for (const position of asPositions(value)) {
+		const symbol = position.holding?.symbol;
+
+		if (symbol) {
+			merged.set(symbol, position);
+		}
+	}
+
+	return [...merged.values()];
+};
+
+/*
  paintDashboardPositions refreshes open-position shells and the audit trail from
  the current DRAW positions batch.
  */
@@ -147,13 +197,7 @@ export const paintDashboardPositions = (
 	value: unknown,
 	_focusSymbol: string,
 ) => {
-	lastPositions = (Array.isArray(value)
-		? value
-		: value !== null && typeof value === "object"
-			? Object.values(value as Record<string, Position>)
-			: value != null
-				? [value]
-			: []) as Position[];
+	lastPositions = mergeDashboardPositions(lastPositions, value);
 	const holdings = lastPositions
 		.map((position) => position.holding)
 		.filter((holding): holding is Holding => holding !== undefined && holding !== null);

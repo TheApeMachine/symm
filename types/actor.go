@@ -154,6 +154,9 @@ func (actor *Actor) AddRoot(name string, subscription *Subscription[any]) {
 		panic("types.Actor: AddRoot after Start")
 	}
 
+	actor.mu.Lock()
+	defer actor.mu.Unlock()
+
 	actor.subscriptions[name] = subscription
 }
 
@@ -166,11 +169,14 @@ func (actor *Actor) Subscribe(topic string) *Subscription[any] {
 }
 
 /*
-SubscribeSize registers interest with an explicit inbound buffer depth.
-Subscribers may attach after Start; only the actor's own inbound roots freeze.
+SubscribeSize registers interest with an explicit inbound buffer depth. The
+subscriber map is synchronized so late subscribers cannot race publication.
 */
 func (actor *Actor) SubscribeSize(topic string, buffer int) *Subscription[any] {
 	subscription := NewSubscriptionSize[any](buffer)
+	actor.mu.Lock()
+	defer actor.mu.Unlock()
+
 	actor.subscribers[topic] = append(actor.subscribers[topic], subscription)
 
 	return subscription
@@ -211,12 +217,15 @@ func (actor *Actor) Start() {
 		return
 	}
 
+	actor.mu.Lock()
 	actor.frozen.Store(true)
 	topics := make([]string, 0, len(actor.subscriptions))
 
 	for topic := range actor.subscriptions {
 		topics = append(topics, topic)
 	}
+
+	actor.mu.Unlock()
 
 	for _, topic := range topics {
 		actor.pump(topic)
@@ -299,7 +308,11 @@ func (actor *Actor) loop() {
 }
 
 func (actor *Actor) publish(topic string, result any) {
-	for _, subscriber := range actor.subscribers[topic] {
+	actor.mu.RLock()
+	subscribers := append([]*Subscription[any](nil), actor.subscribers[topic]...)
+	actor.mu.RUnlock()
+
+	for _, subscriber := range subscribers {
 		select {
 		case <-actor.ctx.Done():
 			return

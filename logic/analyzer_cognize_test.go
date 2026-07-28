@@ -8,6 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura/dmt"
 	pmanifold "github.com/theapemachine/nomagique/physics/fluid"
+	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
 )
@@ -96,6 +97,46 @@ func TestAnalyzerCognize(t *testing.T) {
 				So(reading.Ready, ShouldBeTrue)
 				So(reading.Winner, ShouldEqual, "laminar")
 				So(reading.Confidence, ShouldBeGreaterThan, 0)
+			})
+		})
+	})
+}
+
+/*
+TestCognitionTokensUseResidentGraphTransitions proves cognition no longer builds
+one process-wide top-category path. Instead it asks the resident category graph
+for each symbol's prior->current transition token bag, which keeps DMT aligned
+with the per-symbol reduced logic view.
+*/
+func TestCognitionTokensUseResidentGraphTransitions(t *testing.T) {
+	Convey("Given a resident graph with a prior trap top and a new compressor top", t, func() {
+		analyzer := &Analyzer{categories: category.NewGraph()}
+		thesis := types.NewThesis()
+		thesis.At = time.Unix(1, 0)
+		thesis.Categories = map[string][]types.Category{
+			"BTC/USD": {{
+				Symbol:   "BTC/USD",
+				Type:     types.SpoofTrap,
+				Strength: 1,
+			}},
+		}
+		analyzer.categories.UpdateFrom(thesis)
+
+		thesis.At = time.Unix(2, 0)
+		thesis.Categories = map[string][]types.Category{
+			"BTC/USD": {{
+				Symbol:   "BTC/USD",
+				Type:     types.CoiledCompression,
+				Strength: 1,
+			}},
+		}
+
+		tokens := analyzer.cognitionTokens(thesis, []manifold.State{{Symbol: "BTC/USD"}})
+
+		Convey("It should emit the resident prior plus the current top for that symbol", func() {
+			So(tokens["BTC/USD"], ShouldResemble, []string{
+				string(types.SpoofTrap),
+				string(types.CoiledCompression),
 			})
 		})
 	})

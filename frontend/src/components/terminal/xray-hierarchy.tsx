@@ -46,14 +46,14 @@ const paintHierarchyRows = (
 			row = document.createElement("div");
 			row.className = "flex items-center gap-3";
 			row.innerHTML = `
-				<span data-label class="w-[92px] shrink-0 font-mono text-[10px] text-(--f3)"></span>
+				<span data-label class="w-23 shrink-0 font-mono text-[10px] text-(--f3)"></span>
 				<div data-cells class="grid h-16 flex-1 grid-cols-16 gap-0.5"></div>
 				<div class="w-20 shrink-0">
 					<div class="flex justify-between font-mono text-[9px] text-(--f4)">
 						<span>ε</span>
 						<span data-error></span>
 					</div>
-					<div class="mt-[3px] h-1 overflow-hidden rounded-[2px] bg-(--line)">
+					<div class="mt-0.75 h-1 overflow-hidden rounded-xs bg-(--line)">
 						<div data-fill class="h-full" style="width:0%"></div>
 					</div>
 				</div>
@@ -140,7 +140,7 @@ XrayHierarchyPanel is the static predictive-coding hierarchy shell. DRAW paints
 via paintXrayHierarchy.
 */
 export const XrayHierarchyPanel = () => (
-	<div className="shrink-0 px-[18px] py-4">
+	<div className="shrink-0 px-4.5 py-4">
 		<div className="flex items-baseline justify-between gap-3">
 			<span className="font-serif font-semibold text-[22px] text-(--f1) leading-[1.1]">
 				Predictive-coding hierarchy

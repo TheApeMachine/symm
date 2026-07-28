@@ -32,9 +32,10 @@ type CognitionClass struct {
 }
 
 /*
-Cognition is the DMT reading for one symbol's current physical and signal
-context. It keeps the persistent cognitive engine behind the Thesis boundary so
-strategy can consume its readiness and ambiguity without depending on DMT.
+Cognition is the DMT reading for one symbol's reduced category context. It
+retains both the current basin classification and the next-step lookahead so
+the Thesis can expose cognition as one influence among many, rather than as a
+sovereign market verdict.
 */
 type Cognition struct {
 	Source           string             `json:"source"`
@@ -43,10 +44,13 @@ type Cognition struct {
 	Sequence         string             `json:"sequence"`
 	RegimePrefix     string             `json:"regimePrefix"`
 	Winner           string             `json:"winner"`
+	WinnerClass      string             `json:"winnerClass,omitempty"`
 	Ready            bool               `json:"ready"`
 	Error            string             `json:"error,omitempty"`
 	Confidence       float64            `json:"confidence"`
+	ClassConfidence  float64            `json:"classConfidence,omitempty"`
 	Contrast         float64            `json:"contrast"`
+	ContrastEvidence float64            `json:"contrastEvidence,omitempty"`
 	EntropyBits      float64            `json:"entropyBits"`
 	EntropyThreshold float64            `json:"entropyThreshold"`
 	Ambiguous        bool               `json:"ambiguous"`

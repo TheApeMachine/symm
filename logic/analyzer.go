@@ -29,31 +29,29 @@ snapshot fresh measurements and run the analysis pipeline.
 */
 type Analyzer struct {
 	*types.Actor
-	ctx           context.Context
-	cancel        context.CancelFunc
-	gate          stageGate
-	status        types.Status
-	thesis        *types.Thesis
-	manifold      *manifold.Solver
-	hawkes        manifold.HawkesSource
-	tree          *dmt.Tree
-	ui            chan []byte
-	recorder      *audit.Recorder
-	resonance     map[string]*Resonance
-	causal        map[string]*Causal
-	cognition     map[string]types.Cognition
-	cognitionPath []string
-	cognitionLast types.CategoryType
-	observed      map[string]uint64
-	rem           *remSleep
-	categories    *category.Graph
-	frameRows     []any
-	cogRows       []types.Cognition
-	catRows       []types.Category
-	hypRows       []types.Hypothesis
-	measureRows   []*types.Measurement
-	bestBySym     map[string]types.Category
-	stateRows     []manifold.State
+	ctx         context.Context
+	cancel      context.CancelFunc
+	gate        stageGate
+	status      types.Status
+	thesis      *types.Thesis
+	manifold    *manifold.Solver
+	hawkes      manifold.HawkesSource
+	tree        *dmt.Tree
+	ui          chan []byte
+	recorder    *audit.Recorder
+	resonance   map[string]*Resonance
+	causal      map[string]*Causal
+	cognition   map[string]types.Cognition
+	observed    map[string]uint64
+	rem         *remSleep
+	categories  *category.Graph
+	frameRows   []any
+	cogRows     []types.Cognition
+	catRows     []types.Category
+	hypRows     []types.Hypothesis
+	measureRows []*types.Measurement
+	bestBySym   map[string]types.Category
+	stateRows   []manifold.State
 }
 
 /*
@@ -573,7 +571,8 @@ func (analyzer *Analyzer) stamp(
 	thesis *types.Thesis,
 ) {
 	thesis.EachMeasurement(func(measurement *types.Measurement) bool {
-		if measurement != nil && measurement.At.After(thesis.At) {
+		if measurement != nil && !measurement.At.IsZero() &&
+			(measurement.At.After(thesis.At) || thesis.At.IsZero()) {
 			thesis.At = measurement.At
 		}
 

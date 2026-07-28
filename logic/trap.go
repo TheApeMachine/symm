@@ -178,6 +178,21 @@ func CategoryTrap(thesis *types.Thesis, symbol string) (share float64, dominates
 }
 
 /*
+CategoryOpportunity reads the resident category graph on Thesis and reports
+whether opportunity categories / Supports edges dominate trap structure for
+symbol.
+*/
+func CategoryOpportunity(thesis *types.Thesis, symbol string) (share float64, dominates bool) {
+	graph, ok := categoryGraph(thesis)
+
+	if !ok {
+		return 0, false
+	}
+
+	return category.Report(graph).OpportunityPressure(symbol)
+}
+
+/*
 CategoryExhaustionLead reports whether Leads edges into exhaustion-family
 categories dominate Leads into opportunity-family categories for symbol.
 */

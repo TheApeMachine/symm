@@ -1,6 +1,7 @@
 package types
 
 import (
+	"sort"
 	"strings"
 	"sync"
 )
@@ -91,7 +92,16 @@ func (measurement *Measurement) EachMetric(
 		return
 	}
 
-	for key, sample := range measurement.Metrics {
+	keys := make([]string, 0, len(measurement.Metrics))
+
+	for key := range measurement.Metrics {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		sample := measurement.Metrics[key]
 		metric, side := ParseMetricKey(key)
 
 		if !yield(metric, side, sample) {

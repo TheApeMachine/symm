@@ -137,6 +137,37 @@ func NewPosition(
 	return position
 }
 
+/*
+UseHolding replaces the provisional position holding with the thesis-owned
+holding selected and reserved by strategy, while preserving Position-owned live
+stoploss callbacks and market subscription state.
+*/
+func (position *Position) UseHolding(holding *types.Holding) {
+	if position == nil || holding == nil || holding.Qty == nil {
+		panic("broker.Position: holding with quantity required")
+	}
+
+	previous := position.Holding
+	position.Holding = holding
+	position.EntryOrder.Params.OrderQty = holding.Qty.Copy()
+	position.ExitOrder.Params.OrderQty = holding.Qty.Copy()
+
+	if holding.Stoploss == nil && previous != nil {
+		holding.Stoploss = previous.Stoploss
+	}
+
+	if holding.Stoploss == nil {
+		holding.Stoploss = types.NewStoploss(
+			position.ctx,
+			holding.Symbol,
+			holding.Mark,
+			position.Exit,
+			position.Publish,
+			position.market,
+		)
+	}
+}
+
 func (position *Position) Initialize(
 	ctx context.Context,
 	api *websocket.API,
@@ -249,8 +280,16 @@ func (position *Position) onOrder(message any) any {
 
 	row := response.Result
 
-	if !response.IsSuccess() || (response.ReqID != position.EntryOrder.ReqID &&
-		response.ReqID != position.ExitOrder.ReqID) {
+	if response.ReqID != position.EntryOrder.ReqID &&
+		response.ReqID != position.ExitOrder.ReqID {
+		return nil
+	}
+
+	if !response.IsSuccess() {
+		position.Status = types.REJECTED
+		position.Holding.Status = types.REJECTED
+		position.closing = false
+		position.Publish()
 		return nil
 	}
 
@@ -324,19 +363,33 @@ func (position *Position) applyExecution(row kraken.ExecutionData) {
 	}
 
 	row.Side = strings.ToLower(row.Side)
-	closed := row.Side == "sell" && row.OrderStatus == "filled"
-
 	position.price.RecordFill(
 		&position.pair, position.Holding, row, &position.Fills,
 	)
+
+	if row.Side == "buy" && row.LastQty != nil {
+		position.Holding.Qty = position.filledQty("buy")
+		position.ExitOrder.Params.OrderQty = position.Holding.Qty.Copy()
+	}
+
+	if row.Side == "sell" && row.LastQty != nil {
+		position.Holding.Qty = position.remainingQty()
+		position.ExitOrder.Params.OrderQty = position.Holding.Qty.Copy()
+	}
 
 	if row.Side == "buy" && row.OrderStatus == "filled" &&
 		position.Holding.Stoploss != nil && position.Holding.EntryPrice != nil {
 		position.Holding.Stoploss.Update(position.Holding.EntryPrice)
 	}
 
-	position.Status = types.Status(row.OrderStatus)
-	position.Holding.Status = types.Status(row.OrderStatus)
+	status, err := types.StatusFromMarket(row.ExecType)
+
+	if err != nil {
+		status = types.Status(row.OrderStatus)
+	}
+
+	position.Status = status
+	position.Holding.Status = status
 
 	if err := position.balance.Refresh(); err != nil {
 		errnie.Error(err)
@@ -355,9 +408,34 @@ func (position *Position) applyExecution(row kraken.ExecutionData) {
 
 	position.Publish()
 
-	if closed {
+	if row.Side == "sell" && position.Holding.Qty != nil &&
+		position.Holding.Qty.Sign() <= 0 {
 		position.Close()
 	}
+}
+
+/*
+filledQty totals one side of the immutable execution ledger so order requests
+never substitute for exchange-confirmed inventory.
+*/
+func (position *Position) filledQty(side string) *decimal.Decimal {
+	quantity := decimal.NewFromInt64(0)
+
+	for _, fill := range position.Fills {
+		if fill.Side == side && fill.Qty != nil {
+			quantity = quantity.Add(fill.Qty)
+		}
+	}
+
+	return quantity
+}
+
+/*
+remainingQty derives sellable inventory from confirmed fills, preserving a
+partially filled entry instead of submitting the originally requested size.
+*/
+func (position *Position) remainingQty() *decimal.Decimal {
+	return position.filledQty("buy").Sub(position.filledQty("sell"))
 }
 
 /*
@@ -381,29 +459,34 @@ func (position *Position) onTicker(message any) any {
 			errnie.Error(err)
 		}
 
+		if position.Holding != nil && position.Holding.Mark != nil &&
+			position.Holding.Mark.Sign() > 0 && position.Holding.Stoploss != nil {
+			position.Holding.Stoploss.Update(position.Holding.Mark)
+		}
+
 		break
 	}
-
-	position.Publish()
 
 	return nil
 }
 
 /*
-Enter seeds the holding onto Balance and submits a market buy for its quantity.
+Enter submits a market buy for its quantity and returns the transport error so
+Desk cannot publish a false entry-submitted lifecycle.
 */
-func (position *Position) Enter() *Position {
+func (position *Position) Enter() (*Position, error) {
 	if err := position.api.AddOrder(position.EntryOrder); err != nil {
 		position.Status = types.ERROR
+		position.Holding.Status = types.ERROR
 
-		errnie.Error(errnie.Err(
+		return position, errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to place market order",
 			err,
 		))
 	}
 
-	return position
+	return position, nil
 }
 
 /*
@@ -413,6 +496,17 @@ func (position *Position) Exit() error {
 	if position.closing || position.Status == types.CLOSED {
 		return nil
 	}
+
+	if position.Holding == nil || position.Holding.Qty == nil ||
+		position.Holding.Qty.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"position: no sellable filled inventory",
+			nil,
+		))
+	}
+
+	position.ExitOrder.Params.OrderQty = position.Holding.Qty.Copy()
 
 	if err := position.api.AddOrder(position.ExitOrder); err != nil {
 		return errnie.Error(errnie.Err(

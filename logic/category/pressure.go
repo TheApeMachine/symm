@@ -1,6 +1,10 @@
 package category
 
-import "github.com/theapemachine/symm/types"
+import (
+	"sort"
+
+	"github.com/theapemachine/symm/types"
+)
 
 /*
 Reporter wraps a resident Graph for read-only trap, exhaustion, and DMT reporting.
@@ -72,6 +76,68 @@ func (reporter Reporter) TrapPressure(symbol string) (share float64, dominates b
 	}
 
 	dominates = weightedTrap > weightedOpportunity && weightedTrap > 0
+
+	return share, dominates
+}
+
+/*
+OpportunityPressure is the symmetric counterpart to TrapPressure: opportunity
+category strength on the resident nodes for symbol, plus Supports edge mass
+among opportunity nodes, versus trap-node strength and trap->opportunity
+Contradicts mass.
+*/
+func (reporter Reporter) OpportunityPressure(symbol string) (share float64, dominates bool) {
+	if reporter.graph == nil || symbol == "" {
+		return 0, false
+	}
+
+	graph := reporter.graph
+	graph.mu.RLock()
+	defer graph.mu.RUnlock()
+
+	var trapMass, opportunityMass, contradict, support float64
+
+	for key, node := range graph.NodeIndex {
+		if key.symbol != symbol || node == nil || node.Strength <= 0 {
+			continue
+		}
+
+		switch {
+		case trapCategory(node.Type):
+			trapMass += node.Strength
+		case opportunityCategory(node.Type):
+			opportunityMass += node.Strength
+		}
+	}
+
+	for _, key := range graph.edgesBySymbol[symbol] {
+		relation := graph.EdgeIndex[key]
+
+		if relation == nil || relation.Weight <= 0 {
+			continue
+		}
+
+		switch relation.Type {
+		case Contradicts:
+			if trapCategory(relation.From) && opportunityCategory(relation.To) {
+				contradict += relation.Weight
+			}
+		case Supports:
+			if opportunityCategory(relation.From) && opportunityCategory(relation.To) {
+				support += relation.Weight
+			}
+		}
+	}
+
+	weightedTrap := trapMass + contradict
+	weightedOpportunity := opportunityMass + support
+	total := weightedTrap + weightedOpportunity
+
+	if total > 0 {
+		share = weightedOpportunity / total
+	}
+
+	dominates = weightedOpportunity > weightedTrap && weightedOpportunity > 0
 
 	return share, dominates
 }
@@ -251,11 +317,21 @@ caller already read the bucket directly from Thesis.Categories, so no symbol
 filter or intermediate regrouping is needed here.
 */
 func Top(categories []types.Category) types.Category {
+	filtered := make([]types.Category, 0, len(categories))
+
 	for _, category := range categories {
 		if category.Type != types.CategoryTypeNone {
-			return category
+			filtered = append(filtered, category)
 		}
 	}
 
-	return types.Category{}
+	if len(filtered) == 0 {
+		return types.Category{}
+	}
+
+	sort.SliceStable(filtered, func(left, right int) bool {
+		return filtered[left].Type < filtered[right].Type
+	})
+
+	return filtered[0]
 }

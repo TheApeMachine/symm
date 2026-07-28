@@ -131,6 +131,31 @@ func TestMeasureOpportunityPhase(t *testing.T) {
 			So(reading.Reserved(), ShouldBeTrue)
 		})
 	})
+
+	Convey("Given a classified basin and a different next-step lookahead winner", t, func() {
+		thesis := types.NewThesis()
+		thesis.Manifold.Store("BTC/USD", gasState("BTC/USD", true, []manifold.PhaseResponse{
+			{Angle: 0, Similarity: 0.4, Outcome: manifold.PhaseOutcome{Class: "buy"}},
+		}))
+
+		reading := measureOpportunity(
+			types.Forecasts{
+				Symbol: "BTC/USD", ExpectedReturn: 0.08, Uncertainty: 0.01, HorizonEvents: 1,
+			},
+			types.Cognition{
+				Winner: "coiled_compression", WinnerClass: "buy",
+				Confidence: 0.95, Contrast: 0.5, Ambiguous: false,
+			},
+			thesis,
+		)
+
+		Convey("It anchors the basin on the classified current regime, not the next-step winner", func() {
+			So(reading.PhaseOpposes(), ShouldBeFalse)
+			So(reading.BasinReady, ShouldBeTrue)
+			So(reading.Basin, ShouldEqual, 0.4)
+			So(reading.Lead, ShouldAlmostEqual, 0.55)
+		})
+	})
 }
 
 func BenchmarkBasinConfidence(b *testing.B) {

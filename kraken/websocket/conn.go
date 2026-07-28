@@ -266,6 +266,11 @@ func (api *API) TradesHistory() (*kraken.TradesHistory, error) {
 	}, nil
 }
 
+/*
+AccountBalances loads the shared wallet snapshot for trading and UI reconciliation.
+It uses paper balances in paper mode and the private REST balances endpoint in
+live mode so the strategy and terminal share one authoritative wallet source.
+*/
 func (api *API) AccountBalances() (*kraken.Balance, error) {
 	if !api.live {
 		ledger, ok := api.paper.(interface {
@@ -333,6 +338,10 @@ func (api *API) AccountBalances() (*kraken.Balance, error) {
 	return balance, nil
 }
 
+/*
+TradeBalance loads current liquidation-like exposure from the paper surface or
+Kraken `/0/private/TradeBalance` in live mode.
+*/
 func (api *API) TradeBalance(asset string) (*kraken.TradeBalanceResult, error) {
 	if !api.live {
 		ledger, ok := api.paper.(interface {
@@ -350,13 +359,34 @@ func (api *API) TradeBalance(asset string) (*kraken.TradeBalanceResult, error) {
 		return ledger.TradeBalance(asset)
 	}
 
-	if asset == "USD" {
-		asset = "ZUSD"
+	if asset == "" {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"trade-balance request requires an asset",
+			nil,
+		))
+	}
+
+	normalized := strings.TrimSpace(api.Name(asset))
+	if normalized == "" {
+		normalized = strings.TrimSpace(asset)
+	}
+
+	if normalized == "USD" {
+		normalized = "ZUSD"
+	}
+
+	if api.private == nil || api.private.Client() == nil || api.private.Client().REST == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"Kraken private REST client is unavailable",
+			nil,
+		))
 	}
 
 	response, err := api.private.Post(
 		TradeBalanceEndpoint,
-		kraken.NewTradeBalanceRequest(asset),
+		kraken.NewTradeBalanceRequest(normalized),
 	)
 
 	if err != nil {

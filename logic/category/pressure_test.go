@@ -121,6 +121,37 @@ func TestOpportunityLead(t *testing.T) {
 	})
 }
 
+func TestOpportunityPressure(t *testing.T) {
+	Convey("Given a graph with dominant opportunity nodes and supports edges", t, func() {
+		graph := NewGraph()
+		graph.touched = map[edgeKey]struct{}{}
+		at := time.Unix(100, 0).UTC()
+
+		graph.NodeIndex[makeNodeKey("SIM/USD", types.VerticalIgnition)] = &Node{
+			Symbol: "SIM/USD", Type: types.VerticalIgnition, Strength: 0.9, At: at,
+		}
+		graph.Nodes = append(graph.Nodes, graph.NodeIndex[makeNodeKey("SIM/USD", types.VerticalIgnition)])
+
+		graph.NodeIndex[makeNodeKey("SIM/USD", types.SpoofTrap)] = &Node{
+			Symbol: "SIM/USD", Type: types.SpoofTrap, Strength: 0.2, At: at,
+		}
+		graph.Nodes = append(graph.Nodes, graph.NodeIndex[makeNodeKey("SIM/USD", types.SpoofTrap)])
+
+		graph.strengthen(
+			at, "SIM/USD", types.VerticalIgnition, types.Frenzy,
+			Supports, 0.8, nil,
+		)
+
+		reporter := Report(graph)
+		share, dominates := reporter.OpportunityPressure("SIM/USD")
+
+		Convey("It should report opportunity dominance", func() {
+			So(dominates, ShouldBeTrue)
+			So(share, ShouldBeGreaterThan, 0.5)
+		})
+	})
+}
+
 func TestTokens(t *testing.T) {
 	Convey("Given a graph with a known prior", t, func() {
 		graph := NewGraph()

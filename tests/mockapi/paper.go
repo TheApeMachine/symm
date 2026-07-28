@@ -343,21 +343,54 @@ TradeBalance summarizes current quote cash plus executable bid valuation of open
 paper balances using the same field shape as Kraken trade balance.
 */
 func (paper *Paper) TradeBalance(asset string) *kraken.TradeBalanceResult {
-	paper.mu.Lock()
-	defer paper.mu.Unlock()
+	normalized := strings.TrimPrefix(strings.TrimSpace(asset), "Z")
 
-	quoteCash := decimal.NewFromFloat64(paper.balances[asset])
+	if normalized == "" {
+		normalized = "USD"
+	}
+
+	paper.mu.Lock()
+	balanceSnapshot := make(map[string]float64, len(paper.balances))
+	history := make(map[string]spot.Trade, len(paper.history))
+	quote := paper.options.Quote
+
+	for symbol, total := range paper.balances {
+		balanceSnapshot[symbol] = total
+	}
+
+	for tradeID, trade := range paper.history {
+		history[tradeID] = trade
+	}
+
+	quoteCash := decimal.NewFromFloat64(balanceSnapshot[normalized])
+	paper.mu.Unlock()
+
+	if quote == nil {
+		return &kraken.TradeBalanceResult{
+			EquivalentBalance: decimal.NewFromInt64(0),
+			TradeBalance:      decimal.NewFromInt64(0),
+			MarginAmount:      decimal.NewFromInt64(0),
+			UnrealizedPnL:     decimal.NewFromInt64(0),
+			CostBasis:         decimal.NewFromInt64(0),
+			Valuation:         decimal.NewFromInt64(0),
+			Equity:            decimal.NewFromInt64(0),
+			FreeMargin:        decimal.NewFromInt64(0),
+			MarginFreeOrders:  decimal.NewFromInt64(0),
+			UnexecutedValue:   decimal.NewFromInt64(0),
+		}
+	}
+
 	costBasis := decimal.NewFromInt64(0)
 	valuation := decimal.NewFromInt64(0)
 
-	for symbol, basis := range paper.openBasis(asset) {
-		qty := paper.balances[symbol]
+	for symbol, basis := range paper.openBasis(history) {
+		qty := balanceSnapshot[symbol]
 
 		if qty <= 0 {
 			continue
 		}
 
-		bid, _, _, _, ok := paper.options.Quote(symbol + "/" + asset)
+		bid, _, _, _, ok := quote(symbol + "/" + normalized)
 
 		if !ok {
 			continue
@@ -385,19 +418,40 @@ func (paper *Paper) TradeBalance(asset string) *kraken.TradeBalanceResult {
 	}
 }
 
-func (paper *Paper) openBasis(asset string) map[string]*decimal.Decimal {
-	keys := make([]string, 0, len(paper.history))
+func (paper *Paper) openBasis(history map[string]spot.Trade) map[string]*decimal.Decimal {
+	keys := make([]string, 0, len(history))
 
-	for tradeID := range paper.history {
+	for tradeID := range history {
 		keys = append(keys, tradeID)
 	}
 
-	sort.Strings(keys)
+	sort.Slice(keys, func(left, right int) bool {
+		leftTrade := history[keys[left]]
+		rightTrade := history[keys[right]]
+
+		if leftTrade.Time == nil && rightTrade.Time == nil {
+			return keys[left] < keys[right]
+		}
+
+		if leftTrade.Time == nil {
+			return true
+		}
+
+		if rightTrade.Time == nil {
+			return false
+		}
+
+		if diff := leftTrade.Time.Cmp(rightTrade.Time); diff != 0 {
+			return diff < 0
+		}
+
+		return keys[left] < keys[right]
+	})
 	basis := map[string]*decimal.Decimal{}
 	quantity := map[string]*decimal.Decimal{}
 
 	for _, tradeID := range keys {
-		trade := paper.history[tradeID]
+		trade := history[tradeID]
 		symbol, _, ok := strings.Cut(trade.Pair, "/")
 
 		if !ok || symbol == "" || trade.Volume == nil || trade.Cost == nil {

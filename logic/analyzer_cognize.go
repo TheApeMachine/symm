@@ -14,6 +14,7 @@ import (
 )
 
 var cognitionTokenReplacer = strings.NewReplacer("_", "-", "/", "-")
+var cognitionClassReplacer = strings.NewReplacer("-", "_")
 
 /*
 cognizeStates runs DMT cognition for each gas-ready state and collects REM
@@ -76,11 +77,10 @@ func (analyzer *Analyzer) cognizeStates(
 }
 
 /*
-cognitionTokens records the single market regime sequence for this cut and gives
-every state the same category path. The DMT tree is a global transition memory,
-not a symbol namespace, so only the strongest current category can advance the
-resident path; repeating a category closes the prior episode and starts a new
-one at that regime.
+cognitionTokens derives one per-symbol category transition bag from the resident
+category graph. The graph supplies the prior top category while the current
+Thesis bucket supplies the latest top category, so DMT learns observed
+transitions such as A->B directly from the logic stage's reduced category view.
 */
 func (analyzer *Analyzer) cognitionTokens(
 	thesis *types.Thesis,
@@ -100,48 +100,19 @@ func (analyzer *Analyzer) cognitionTokens(
 		needed[state.Symbol] = struct{}{}
 	}
 
-	analyzer.advanceCognitionPath(thesis)
 	tokens := make(map[string][]string, len(needed))
+	reporter := category.Report(analyzer.categories)
 
 	for symbol := range needed {
-		tokens[symbol] = analyzer.cognitionPath
+		if analyzer.categories == nil {
+			tokens[symbol] = nil
+			continue
+		}
+
+		tokens[symbol] = reporter.Tokens(symbol, thesis.Categories[symbol])
 	}
 
 	return tokens
-}
-
-/*
-advanceCognitionPath moves the process-wide category episode by one observed top
-regime. A recurrence is the principled stop condition: once the same regime
-would appear twice in the active path, the transition chain has looped and a new
-episode begins at that category rather than creating a longer, worse predictor.
-*/
-func (analyzer *Analyzer) advanceCognitionPath(thesis *types.Thesis) {
-	top := types.Category{}
-
-	for _, rows := range thesis.Categories {
-		candidate := category.Top(rows)
-
-		if candidate.Strength > top.Strength {
-			top = candidate
-		}
-	}
-
-	if top.Type == types.CategoryTypeNone || top.Type == analyzer.cognitionLast {
-		return
-	}
-
-	analyzer.cognitionLast = top.Type
-	token := string(top.Type)
-
-	for _, existing := range analyzer.cognitionPath {
-		if existing == token {
-			analyzer.cognitionPath = []string{token}
-			return
-		}
-	}
-
-	analyzer.cognitionPath = append(analyzer.cognitionPath, token)
 }
 
 /*
@@ -306,10 +277,11 @@ func (analyzer *Analyzer) sensorySequence(
 }
 
 /*
-readCognition classifies the sensory sequence for strategy on the hot path —
-winner, confidence, ambiguity, contrast, cohort, predictions, and classes —
-plus the lookahead strength the terminal shows as category strength, then
-attaches the full Cortex radix/beam visualization only for the focused symbol.
+readCognition reads the DMT surface for one category sequence on the hot path.
+It keeps the current basin classification separate from the next-step lookahead
+prediction so one reduced cognition view does not masquerade as the whole logic
+output. The focused symbol alone receives the heavier radix and beam
+visualization for the terminal.
 */
 func (analyzer *Analyzer) readCognition(
 	state manifold.State,
@@ -324,14 +296,35 @@ func (analyzer *Analyzer) readCognition(
 	ambiguity := analyzer.tree.MeasureBranchAmbiguity(parent)
 	predictionBuffer := make([]dmt.LookaheadPrediction, 0, partCount)
 	predictions := analyzer.tree.PredictNextSensoryTokens(parent, predictionBuffer)
+	classWinner := cognitionClassName(string(classification.Winner))
+	contrastEvidence := 0.0
+
+	if len(classification.Scores) > 1 {
+		contrastEvidence = analyzer.tree.ComputeBasinContrastiveEvidence(
+			classification.Scores[0].ClassName,
+			classification.Scores[1].ClassName,
+			sequence,
+		).Divergence
+	}
+
+	winner, confidence, contrast := cognitionPrediction(predictions)
+
+	if winner == "" {
+		winner = classWinner
+		confidence = classification.Highest
+		contrast = contrastEvidence
+	}
+
 	reading := types.Cognition{
 		Source:           "dmt",
 		Symbol:           state.Symbol,
 		At:               state.At,
 		Sequence:         string(sequence),
-		Ready:            len(classification.Winner) > 0,
-		Winner:           string(classification.Winner),
-		Confidence:       classification.Highest,
+		Ready:            winner != "",
+		Winner:           winner,
+		WinnerClass:      classWinner,
+		Confidence:       confidence,
+		ClassConfidence:  classification.Highest,
 		EntropyBits:      ambiguity.EntropyBits,
 		EntropyThreshold: ambiguity.Threshold,
 		Ambiguous:        ambiguity.Ambiguous,
@@ -340,23 +333,49 @@ func (analyzer *Analyzer) readCognition(
 		Classes:          cognitionClasses(classification),
 		LookaheadScore:   analyzer.lookaheadScore(predictions),
 		RegimePrefix:     string(parent),
-	}
-
-	if len(classification.Scores) > 1 {
-		reading.Contrast = analyzer.tree.ComputeBasinContrastiveEvidence(
-			classification.Scores[0].ClassName,
-			classification.Scores[1].ClassName,
-			sequence,
-		).Divergence
+		Contrast:         contrast,
+		ContrastEvidence: contrastEvidence,
 	}
 
 	for _, prediction := range predictions {
-		reading.Predictions[string(prediction.Token)] = prediction.Probability
+		reading.Predictions[cognitionClassName(string(prediction.Token))] = prediction.Probability
 	}
 
 	analyzer.attachVisualization(&reading, sequence, parent, symbolToken, classification, predictions)
 
 	return reading
+}
+
+func cognitionClassName(token string) string {
+	if token == "" {
+		return ""
+	}
+
+	return cognitionClassReplacer.Replace(token)
+}
+
+func cognitionPrediction(predictions []dmt.LookaheadPrediction) (string, float64, float64) {
+	if len(predictions) == 0 {
+		return "", 0, 0
+	}
+
+	winner := predictions[0]
+	runnerUpProbability := 0.0
+
+	for _, prediction := range predictions[1:] {
+		if prediction.Probability > winner.Probability {
+			runnerUpProbability = winner.Probability
+			winner = prediction
+			continue
+		}
+
+		if prediction.Probability > runnerUpProbability {
+			runnerUpProbability = prediction.Probability
+		}
+	}
+
+	return cognitionClassName(string(winner.Token)), winner.Probability,
+		winner.Probability - runnerUpProbability
 }
 
 /*

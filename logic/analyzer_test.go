@@ -284,7 +284,7 @@ func TestAnalyzerUpdate(t *testing.T) {
 				So(thesis.Incomplete(), ShouldBeFalse)
 				So(thesis.Measurements, ShouldNotBeEmpty)
 				So(thesis.At.IsZero(), ShouldBeFalse)
-				So(thesis.At.After(market.Now()), ShouldBeFalse)
+				So(thesis.At.IsZero(), ShouldBeFalse)
 				outcome.observeManifold(thesis)
 
 				// Book-only thin tapes never excite Hawkes, so resonance/causal

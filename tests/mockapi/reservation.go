@@ -2,6 +2,8 @@ package mockapi
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -77,14 +79,18 @@ func (paper *Paper) BalanceSnapshot() []byte {
 }
 
 /*
-ExecutionSnapshot returns stable open-order state for private resubscription.
+ExecutionSnapshot returns the paper venue's current open-order projections plus
+executed trade history so private resubscription matches Kraken's
+snap_orders+snap_trades surface more closely.
 */
 func (paper *Paper) ExecutionSnapshot() []byte {
 	paper.mu.Lock()
 	defer paper.mu.Unlock()
-	options := make([]executionfixture.Options, 0, len(paper.order))
+	options := make([]executionfixture.Options, 0, len(paper.order)+len(paper.history))
+	orderIDs := append([]string(nil), paper.order...)
+	sort.Strings(orderIDs)
 
-	for _, orderID := range paper.order {
+	for _, orderID := range orderIDs {
 		order, exists := paper.open[orderID]
 
 		if !exists {
@@ -106,6 +112,74 @@ func (paper *Paper) ExecutionSnapshot() []byte {
 			CumCost:     "0",
 			AvgPrice:    "0",
 			Timestamp:   paper.options.Now().Format(time.RFC3339Nano),
+		})
+	}
+
+	historyIDs := make([]string, 0, len(paper.history))
+
+	for execID := range paper.history {
+		historyIDs = append(historyIDs, execID)
+	}
+
+	sort.Slice(historyIDs, func(left, right int) bool {
+		leftTrade := paper.history[historyIDs[left]]
+		rightTrade := paper.history[historyIDs[right]]
+
+		if leftTrade.Time == nil && rightTrade.Time == nil {
+			return historyIDs[left] < historyIDs[right]
+		}
+
+		if leftTrade.Time == nil {
+			return true
+		}
+
+		if rightTrade.Time == nil {
+			return false
+		}
+
+		if diff := leftTrade.Time.Cmp(rightTrade.Time); diff != 0 {
+			return diff < 0
+		}
+
+		return historyIDs[left] < historyIDs[right]
+	})
+
+	for _, execID := range historyIDs {
+		trade := paper.history[execID]
+
+		if trade.Price == nil || trade.Volume == nil || trade.Cost == nil {
+			continue
+		}
+
+		fee := "0"
+
+		if trade.Fee != nil {
+			fee = trade.Fee.String()
+		}
+
+		timestamp := paper.options.Now().Format(time.RFC3339Nano)
+
+		if trade.Time != nil {
+			seconds, _ := strconv.ParseFloat(trade.Time.String(), 64)
+			timestamp = time.Unix(0, int64(seconds*float64(time.Second))).UTC().Format(time.RFC3339Nano)
+		}
+
+		options = append(options, executionfixture.Options{
+			OrderID:     trade.OrderID,
+			ExecID:      execID,
+			Symbol:      trade.Pair,
+			Side:        strings.ToLower(trade.Type),
+			LastQty:     trade.Volume.String(),
+			LastPrice:   trade.Price.String(),
+			Cost:        trade.Cost.String(),
+			OrderStatus: "filled",
+			OrderType:   trade.OrderType,
+			ExecType:    "trade",
+			CumQty:      trade.Volume.String(),
+			CumCost:     trade.Cost.String(),
+			AvgPrice:    trade.Price.String(),
+			FeeUsdEquiv: fee,
+			Timestamp:   timestamp,
 		})
 	}
 

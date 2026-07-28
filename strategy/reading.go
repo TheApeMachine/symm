@@ -10,11 +10,11 @@ import (
 
 /*
 Reading is the decomposed admit state for one forecast. Margin is economic
-edge after uncertainty; Lead is how far cognition has committed ahead of the
-manifold phase basin on a shared [0,1) scale. Reserved overflow is for
+edge after uncertainty; Lead is how far the DMT lookahead has committed beyond
+the current phase basin on a shared [0,1) scale. Reserved overflow is for
 anticipatory edge only — high SNR, cognition ahead of the phase compass by
-more than noise, multi-head lookahead path agreement, unconfounded Causal Do-calculus,
-and a non-ambiguous short-horizon reading.
+more than noise, multi-head lookahead path agreement, unconfounded causal
+context, and a non-ambiguous short-horizon reading.
 */
 type Reading struct {
 	Margin             float64
@@ -115,8 +115,9 @@ func (reading Reading) PhaseOpposes() bool {
 measureOpportunity builds OpportunityMargin and CognitiveLead from independent
 estimators. Margin is the SNR term that also enters utility; Lead ranks the
 reserved lane once utility has already cleared. Basin is the phase-dial
-attractor strength for the cognitive winner, not instantaneous field coherence.
-Incorporates multi-head predictive lookahead and Judea Pearl causal ladder output.
+attractor strength for the current classified basin, while cognition contributes
+the next-step lookahead pressure layered on top of that basin. Incorporates
+multi-head predictive lookahead and Judea Pearl causal ladder output.
 */
 func measureOpportunity(
 	forecast types.Forecasts,
@@ -145,8 +146,14 @@ func measureOpportunity(
 		}
 	}
 
+	basisClass := cognition.WinnerClass
+
+	if basisClass == "" {
+		basisClass = cognition.Winner
+	}
+
 	basin, ready, phaseClass, phaseReady, phaseSimilarity := basinConfidence(
-		thesis, forecast.Symbol, cognition.Winner,
+		thesis, forecast.Symbol, basisClass,
 	)
 	reading.Basin = basin
 	reading.BasinReady = ready
@@ -183,9 +190,10 @@ func noiseShare(forecast types.Forecasts) float64 {
 basinConfidence reads the manifold phase compass the way the wave-field dial
 does: strongest signed scan response is the current attractor alignment. Basin
 is ready only when that alignment is constructive, non-ambiguous, and labeled
-with the same class cognition is acting on — otherwise Lead stays neutral
-rather than inventing a coherence stand-in. A cold PhaseCorpus leaves the
-basin unready so reserved overflow cannot fire without attractor memory.
+with the same current basin class cognition has classified — otherwise Lead
+stays neutral rather than inventing a coherence stand-in. A cold PhaseCorpus
+leaves the basin unready so reserved overflow cannot fire without attractor
+memory.
 */
 func basinConfidence(
 	thesis *types.Thesis,

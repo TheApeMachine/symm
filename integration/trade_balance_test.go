@@ -75,8 +75,9 @@ func TestTradeBalanceLifecycle(t *testing.T) {
 				}), ShouldBeNil)
 
 				So(harness.Wired.Desk.OpenPositions(), ShouldEqual, 0)
-				tradeBalance, err = harness.Wired.Balance.TradeBalance()
+				tradeBalance, err := harness.Wired.Balance.TradeBalance()
 				So(err, ShouldBeNil)
+				assertTradeBalanceIdentity(tradeBalance)
 				So(tradeBalance.CostBasis.Sign(), ShouldEqual, 0)
 				So(tradeBalance.Valuation.Sign(), ShouldEqual, 0)
 				So(tradeBalance.UnrealizedPnL.Sign(), ShouldEqual, 0)

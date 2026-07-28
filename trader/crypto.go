@@ -513,9 +513,23 @@ func (crypto *Crypto) enter(thesis *types.Thesis, decision *types.Decision) {
 		holding.Qty = decision.ProposedQuantity.Copy()
 	}
 
-	if _, err := crypto.desk.Buy(holding.Symbol, holding.Qty, holding.IsOpportunity); err != nil {
+	if _, err := crypto.desk.BuyHolding(holding, holding.IsOpportunity); err != nil {
 		errnie.Error(err)
+
+		if holding.ReservationID != "" {
+			if releaseErr := crypto.desk.Balance().Release(holding.ReservationID); releaseErr != nil {
+				errnie.Error(releaseErr)
+			}
+		}
+
+		thesis.Holdings.Delete(decision.Symbol)
 		return
+	}
+
+	if holding.ReservationID != "" {
+		if commitErr := crypto.desk.Balance().Commit(holding.ReservationID); commitErr != nil {
+			errnie.Error(commitErr)
+		}
 	}
 
 	thesis.NoteLifecycle(decision.Symbol, types.LifecycleEntrySubmitted, thesis.At)
