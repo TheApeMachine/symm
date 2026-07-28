@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-const RECONNECT_BASE_MS = 500;
+const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 5000;
 
 type WorkerInbound =
@@ -141,10 +141,7 @@ const connect = (url: string) => {
 					return;
 				}
 
-				const frame = JSON.parse(String(event.data)) as Record<
-					string,
-					unknown
-				>;
+				const frame = JSON.parse(String(event.data)) as Record<string, unknown>;
 
 				if (
 					frame === null ||
@@ -171,9 +168,14 @@ const connect = (url: string) => {
 					frame,
 				} satisfies WorkerOutbound);
 			} catch (err) {
+				console.log(event);
+
 				self.postMessage({
 					type: "ERROR",
-					message: err instanceof Error ? err.message : String(err),
+					message:
+						err instanceof Error
+							? `${err.message}\n\n${err.stack}\n\n${event.data}`
+							: String(err),
 				} satisfies WorkerOutbound);
 			}
 		},

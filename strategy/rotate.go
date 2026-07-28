@@ -198,7 +198,6 @@ func (rotate Rotate) Commit(thesis *types.Thesis) {
 			decision.Displaces = ""
 			decision.ProposedQuantity = nil
 			decision.ProposedNotional = nil
-			thesis.Holdings.Delete(decision.Symbol)
 
 			if decision.Reason == "" {
 				decision.Reason = "unsized"

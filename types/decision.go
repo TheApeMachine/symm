@@ -3,6 +3,7 @@ package types
 import (
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 )
 
@@ -11,6 +12,7 @@ Decision records the action strategy selected and the alternatives it compared.
 It is owned by one Thesis so intended behavior remains separate from execution.
 */
 type Decision struct {
+	ID      string    `json:"id" validate:"required"`
 	Action  Action    `json:"action" validate:"required,oneof=enter|exit|reduce|hold|nothing"`
 	Symbol  string    `json:"symbol" validate:"required"`
 	At      time.Time `json:"at" validate:"required"`
@@ -48,4 +50,53 @@ type Decision struct {
 	DisplacedQuantity *decimal.Decimal   `json:"displacedQuantity,omitempty"`
 	DisplacedPrice    *decimal.Decimal   `json:"displacedPrice,omitempty"`
 	ReservationID     string             `json:"reservationId,omitempty"`
+	PositionStatus    Status             `json:"positionStatus,omitempty"`
+	SellableQty       *decimal.Decimal   `json:"sellableQty,omitempty"`
+	EntryAt           *time.Time         `json:"entryAt,omitempty"`
+	ExitAt            *time.Time         `json:"exitAt,omitempty"`
+	EntryPrice        *decimal.Decimal   `json:"entryPrice,omitempty"`
+	EntryFee          *decimal.Decimal   `json:"entryFee,omitempty"`
+	ExitPrice         *decimal.Decimal   `json:"exitPrice,omitempty"`
+	ExitFee           *decimal.Decimal   `json:"exitFee,omitempty"`
+	PnL               *decimal.Decimal   `json:"pnl,omitempty"`
+	ReturnPct         *float64           `json:"returnPct,omitempty"`
+	Mark              *decimal.Decimal   `json:"mark,omitempty"`
+	Stoploss          *Stoploss          `json:"stoploss,omitempty"`
+}
+
+/*
+NewDecision creates a Decision with a durable UUID assigned and the action
+and symbol set. Callers fill remaining fields after construction.
+*/
+func NewDecision(action Action, symbol string) *Decision {
+	return &Decision{
+		ID:       uuid.NewString(),
+		Action:   action,
+		Symbol:   symbol,
+		At:       time.Now().UTC(),
+	}
+}
+
+/*
+EnsureID assigns one UUID when the decision does not already carry its durable
+position-link identifier.
+*/
+func (decision *Decision) EnsureID() {
+	if decision == nil || decision.ID != "" {
+		return
+	}
+
+	decision.ID = uuid.NewString()
+}
+
+/*
+ValidID reports whether the decision identifier is a syntactically valid UUID.
+*/
+func (decision Decision) ValidID() bool {
+	if decision.ID == "" {
+		return false
+	}
+
+	_, err := uuid.Parse(decision.ID)
+	return err == nil
 }

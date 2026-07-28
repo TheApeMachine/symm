@@ -1,17 +1,15 @@
 package audit
 
 var strategyLogicPhases = map[string]struct{}{
-	"categories_commit": {},
-	"cognize":           {},
-	"desk":              {},
-	"decide_end":        {},
-	"manifold":          {},
-	"measure_end":       {},
-	"observe":           {},
-	"rem":               {},
-	"rem_begin":         {},
-	"rem_deferred":      {},
-	"tick_end":          {},
+	"analyze_end":        {},
+	"categories_compose": {},
+	"categories_commit":  {},
+	"cognize":            {},
+	"decide_begin":       {},
+	"decide_end":         {},
+	"manifold":           {},
+	"measure_end":        {},
+	"observe":            {},
 }
 
 /*

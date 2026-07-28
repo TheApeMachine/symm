@@ -11,7 +11,8 @@ import type {
 } from "#/collections/types";
 import { frameRows } from "#/providers/frame-history";
 import { paintAllocationSurface } from "./allocation-paint";
-import { AllocationMain, AllocationSidePanel } from "./allocation-panels";
+import { AllocationMain } from "./allocation-main";
+import { AllocationSidePanel } from "./allocation-side-panel";
 import { allocationSummary } from "./allocation-side";
 
 const rootRef = createRef<HTMLDivElement>();

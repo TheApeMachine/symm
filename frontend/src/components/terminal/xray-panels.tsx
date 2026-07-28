@@ -12,11 +12,13 @@ export {
 } from "#/components/terminal/xray-latent";
 export {
 	XrayFactsPanel,
-	XrayManifoldPanel,
 	paintXrayFactsCognition,
 	paintXrayFactsManifold,
 	paintXrayFactsMeasurements,
 	paintXrayFactsResonance,
+} from "#/components/terminal/xray-facts-panel";
+export {
+	XrayManifoldPanel,
 	paintXrayManifold,
 	paintXrayManifoldMeasurements,
-} from "#/components/terminal/xray-side";
+} from "#/components/terminal/xray-manifold-panel";

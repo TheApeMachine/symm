@@ -3,6 +3,7 @@ package mockapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -30,6 +31,20 @@ type MockConn struct {
 	roots      map[string]*types.Subscription[any]
 	increments websocket.Increments
 	cancel     context.CancelFunc
+}
+
+/*
+Respond records one venue fixture payload. Instrument fixtures also hydrate the
+connection's increment cache because the mock Conn owns that transport state.
+*/
+func (conn *MockConn) Respond(channel string, payload []byte) {
+	conn.Control.Respond(channel, payload)
+
+	if channel != "instrument" || len(payload) == 0 {
+		return
+	}
+
+	conn.increments.Remember(kraken.NewInstrument(payload))
 }
 
 /*
@@ -134,9 +149,10 @@ func (conn *MockConn) Drain() error {
 	}
 
 	for _, frame := range queued {
+		baseline := types.TrackedPending()
 		conn.Emit(frame.channel, frame.payload)
 
-		if err := conn.delivered(); err != nil {
+		if err := conn.delivered(baseline); err != nil {
 			return err
 		}
 	}
@@ -167,12 +183,8 @@ func (conn *MockConn) feed(channel string, raw []byte) {
 			return
 		}
 
-		if err := conn.increments.Stamp(frame); err != nil {
-			conn.hydrateIncrements()
-
-			if errnie.Error(conn.increments.Stamp(frame)) != nil {
-				return
-			}
+		if errnie.Error(conn.increments.Stamp(frame)) != nil {
+			return
 		}
 
 		root.Send(frame)
@@ -191,33 +203,6 @@ func (conn *MockConn) feed(channel string, raw []byte) {
 	default:
 		root.Send(raw)
 	}
-}
-
-func (conn *MockConn) hydrateIncrements() {
-	conn.Control.mu.Lock()
-	responses := clonePayloads(conn.Control.responses["instrument"])
-	current := conn.Control.current["instrument"]
-	conn.Control.mu.Unlock()
-
-	for _, payload := range responses {
-		frame := kraken.NewInstrument(payload)
-
-		conn.increments.Remember(frame)
-	}
-
-	if current == nil {
-		return
-	}
-
-	payload := current()
-
-	if len(payload) == 0 {
-		return
-	}
-
-	frame := kraken.NewInstrument(payload)
-
-	conn.increments.Remember(frame)
 }
 
 /*
@@ -284,57 +269,31 @@ func (conn *MockConn) Write(params json.Marshaler) error {
 		}
 	}
 
-	// Subscription snapshots must reach Balance/Instrument before Status READY.
-	return conn.delivered()
+	return nil
 }
 
 const (
-	deliverDeadline       = 10 * time.Second
-	deliverQuietThreshold = 50
-	deliverPollInterval   = time.Millisecond
+	deliverDeadline = 10 * time.Second
 )
 
 /*
-delivered waits until Actor roots are empty after a subscribe Emit so boot
-preflight can observe READY. Market Drain does not use this — tests subscribe
-to the signal Actor for that.
-ponytail: quiet polling is only a heuristic; upgrade path is a real drain/ack
-barrier on Actor roots.
+delivered waits until tracked actor delivery has fully quiesced after a mock
+venue emit, so the synthetic Kraken connection observes end-to-end production
+actor completion rather than root-channel emptiness.
 */
-func (conn *MockConn) delivered() error {
-	deadline := time.Now().Add(deliverDeadline)
-	quiet := 0
-
-	for time.Now().Before(deadline) {
-		busy := false
-
-		for _, root := range conn.roots {
-			if len(root.Channel) > 0 {
-				busy = true
-				break
-			}
-		}
-
-		if busy {
-			quiet = 0
-			time.Sleep(deliverPollInterval)
-			continue
-		}
-
-		quiet++
-
-		if quiet >= deliverQuietThreshold {
-			return nil
-		}
-
-		time.Sleep(deliverPollInterval)
+func (conn *MockConn) delivered(baseline int64) error {
+	if err := types.AwaitQuiescenceSince(deliverDeadline, baseline); err != nil {
+		return errnie.Err(
+			errnie.Timeout,
+			fmt.Sprintf(
+				"tests/mockapi: actor delivery did not quiesce (pending=%d baseline=%d)",
+				types.TrackedPending(), baseline,
+			),
+			err,
+		)
 	}
 
-	return errnie.Err(
-		errnie.Timeout,
-		"tests/mockapi: subscribe Emit not consumed",
-		nil,
-	)
+	return nil
 }
 
 /*

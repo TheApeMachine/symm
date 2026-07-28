@@ -147,6 +147,7 @@ func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 	}
 
 	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "decide_begin", nil))
+	syncThesisLifecycle(thesis, planner.desk.Holdings())
 
 	// Keep Enter rows Crypto has not yet opened on Balance. Clearing them while
 	// LifecycleEntrySelected + thesis Holdings remained blocked Measure forever.
@@ -161,10 +162,16 @@ func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 			Cause:  "measure_incomplete",
 			Reason: "accumulated evidence is marked incomplete; refuse fresh enters",
 		})
+		assignDecisionIDs(thesis)
 
-		errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "decide_end", map[string]any{
-			"decisions": len(thesis.Decisions),
-		}))
+		planner.auditDecisions(thesis)
+
+		errnie.Error(audit.Phase(
+			planner.recorder,
+			thesis.Tick,
+			"decide_end",
+			decisionCounts(thesis.Decisions),
+		))
 
 		return thesis
 	}
@@ -177,10 +184,15 @@ func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 	}
 
 	planner.rotate.Commit(thesis)
+	assignDecisionIDs(thesis)
+	planner.auditDecisions(thesis)
 
-	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "decide_end", map[string]any{
-		"decisions": len(thesis.Decisions),
-	}))
+	errnie.Error(audit.Phase(
+		planner.recorder,
+		thesis.Tick,
+		"decide_end",
+		decisionCounts(thesis.Decisions),
+	))
 
 	return thesis
 }
@@ -213,6 +225,16 @@ func (planner *Planner) retainUnapplied(thesis *types.Thesis) {
 	}
 
 	thesis.Decisions = retained
+}
+
+func assignDecisionIDs(thesis *types.Thesis) {
+	if thesis == nil {
+		return
+	}
+
+	for index := range thesis.Decisions {
+		thesis.Decisions[index].EnsureID()
+	}
 }
 
 func (planner *Planner) validate(mandatory map[string]any) error {

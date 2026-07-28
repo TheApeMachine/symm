@@ -135,8 +135,8 @@ func (admit *Admit) Reject(
 }
 
 /*
-Accept records lifecycle, decision, and a Thesis holding for Desk to size and
-submit. Broker Position construction stays on Desk alone.
+Accept records lifecycle and the enter decision for Desk to size and submit.
+Broker Position construction stays on Desk alone.
 */
 func (admit *Admit) Accept(
 	thesis *types.Thesis,
@@ -169,18 +169,8 @@ func (admit *Admit) Accept(
 	}
 
 	thesis.NoteLifecycle(decision.Symbol, types.LifecycleEntrySelected, decision.At)
+	decision.Opportunity = opportunity
 	thesis.Decisions = append(thesis.Decisions, decision)
-
-	holding := types.NewHolding(admit.ctx, decision.Symbol, decision.ProposedQuantity, decision.ReferencePrice, nil, nil, nil)
-	holding.IsOpportunity = opportunity
-
-	// Nil qty means Allocator must size from max_fraction; rotation may leave
-	// a positive redeploy quantity already on the decision.
-	if decision.ProposedQuantity == nil || decision.ProposedQuantity.Sign() <= 0 {
-		holding.Qty = nil
-	}
-
-	thesis.Holdings.Store(decision.Symbol, holding)
 }
 
 /*

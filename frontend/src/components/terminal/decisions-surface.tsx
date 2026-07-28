@@ -13,11 +13,9 @@ import {
 	syncCandidateRowShells,
 } from "#/components/terminal/candidate-row";
 import { buildCandidate } from "#/components/terminal/decision-candidate";
-import {
-	DecisionSideRail,
-	LiveDecisionsEntryLine,
-	setDecisionsScopeSymbol,
-} from "#/components/terminal/decision-side";
+import { DecisionSideRail } from "#/components/terminal/decision-side-rail";
+import { LiveDecisionsEntryLine } from "#/components/terminal/decisions-entry-line";
+import { setDecisionsScopeSymbol } from "#/components/terminal/decision-side";
 import { StrategyDecisionRows } from "#/components/terminal/strategy-decisions";
 import { cn } from "#/lib/utils";
 import { frameRows } from "#/providers/frame-history";

@@ -146,6 +146,40 @@ func TestRootPublishDoesNotDrop(t *testing.T) {
 	})
 }
 
+func TestAwaitQuiescence(t *testing.T) {
+	Convey("Given a tracked actor chain", t, func() {
+		ctx, cancel := context.WithCancel(t.Context())
+		Reset(cancel)
+
+		producer := NewActor(ctx, "producer", map[string]Handler{
+			"ticker": {Topic: "ticker", Fn: func(message any) any { return message }},
+		})
+		producer.AddRoot("ticker", NewSubscriptionSize[any](1))
+		producer.Start()
+
+		var handled atomic.Int64
+		consumer := NewActor(ctx, "consumer", map[string]Handler{
+			"ticker": {
+				Topic: "ticker",
+				Fn: func(message any) any {
+					time.Sleep(5 * time.Millisecond)
+					handled.Add(1)
+					return nil
+				},
+			},
+		})
+		consumer.Initialize(Topic{Name: "ticker", Actor: producer})
+
+		Convey("AwaitQuiescence should wait for downstream handling, not just the root send", func() {
+			producer.subscriptions["ticker"].Send("ping")
+			So(AwaitQuiescence(time.Second), ShouldBeNil)
+			So(handled.Load(), ShouldEqual, int64(1))
+			So(consumer.Close(), ShouldBeNil)
+			So(producer.Close(), ShouldBeNil)
+		})
+	})
+}
+
 func BenchmarkActorInbox(b *testing.B) {
 	ctx, cancel := context.WithCancel(b.Context())
 	defer cancel()

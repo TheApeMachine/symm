@@ -35,6 +35,7 @@ type Desk struct {
 	balance      *Balance
 	positions    map[string]*Position
 	recovered    map[string]*types.Holding
+	recoveredIDs map[string]string
 	maxPositions int
 	maxReserved  int
 	market       *types.Actor
@@ -64,6 +65,7 @@ func NewDesk(
 		balance:      balance,
 		positions:    make(map[string]*Position),
 		recovered:    make(map[string]*types.Holding),
+		recoveredIDs: make(map[string]string),
 		maxPositions: trading.SlotsNormal,
 		maxReserved:  trading.SlotsReserved,
 	}
@@ -78,19 +80,18 @@ func NewDesk(
 }
 
 /*
-SeedHoldings stores persisted Holding economics by symbol so the single
-onBalances recovery path can merge them back into rebuilt Positions once the
-wallet snapshot, instruments, and ticker cache are all ready.
+SeedDecisionIDs stores persisted decision identifiers by symbol so restart
+recovery preserves the durable decision-to-position link.
 */
-func (desk *Desk) SeedHoldings(holdings []*types.Holding) {
-	clear(desk.recovered)
+func (desk *Desk) SeedDecisionIDs(ids map[string]string) {
+	clear(desk.recoveredIDs)
 
-	for _, holding := range holdings {
-		if holding == nil || holding.Symbol == "" {
+	for symbol, id := range ids {
+		if symbol == "" || id == "" {
 			continue
 		}
 
-		desk.recovered[holding.Symbol] = holding
+		desk.recoveredIDs[symbol] = id
 	}
 }
 
@@ -431,6 +432,8 @@ func (desk *Desk) adoptOpenPositions() {
 			desk.account,
 		)
 
+		position.ID = desk.recoveredIDs[symbol]
+
 		desk.positions[symbol] = position
 
 		desk.recoverPosition(position, desk.recovered[symbol])
@@ -622,78 +625,25 @@ func (desk *Desk) Buy(
 	qty *decimal.Decimal,
 	opportunity bool,
 ) (*Position, error) {
-	pair, err := desk.instrument.Pair(symbol)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"desk: no instrument for "+symbol,
-			err,
-		))
+	decision := &types.Decision{
+		Symbol:           symbol,
+		Opportunity:      opportunity,
+		ProposedQuantity: qty,
 	}
+	decision.EnsureID()
 
-	position := NewPosition(
-		desk.ctx,
-		desk.api,
-		desk.balance.ui,
-		desk.instrument,
-		desk.price,
-		desk.balance,
-		pair,
-		qty,
-		desk.market,
-		desk.account,
-	)
-	desk.positions[symbol] = position
-	entered, err := position.Enter()
-
-	if err != nil {
-		delete(desk.positions, symbol)
-		return entered, err
-	}
-
-	return entered, nil
+	return desk.Enter(decision)
 }
 
-/*
-BuyHolding submits the exact strategy-owned holding so execution updates and
-journal snapshots refer to one inventory object.
-*/
-func (desk *Desk) BuyHolding(
-	holding *types.Holding,
-	opportunity bool,
+func (desk *Desk) Enter(
+	decision *types.Decision,
 ) (*Position, error) {
-	if holding == nil || holding.Symbol == "" || holding.Qty == nil ||
-		holding.Qty.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"desk: holding with positive quantity required",
-			nil,
-		))
-	}
-
-	if _, exists := desk.positions[holding.Symbol]; exists {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Conflict,
-			"desk: position already open for "+holding.Symbol,
-			nil,
-		))
-	}
-
-	if !desk.HasSlot(opportunity) {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"desk: position capacity exhausted",
-			nil,
-		))
-	}
-
-	pair, err := desk.instrument.Pair(holding.Symbol)
+	pair, err := desk.instrument.Pair(decision.Symbol)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.NotFound,
-			"desk: no instrument for "+holding.Symbol,
+			"desk: no instrument for "+decision.Symbol,
 			err,
 		))
 	}
@@ -706,38 +656,39 @@ func (desk *Desk) BuyHolding(
 		desk.price,
 		desk.balance,
 		pair,
-		holding.Qty,
+		decision.ProposedQuantity,
 		desk.market,
 		desk.account,
 	)
-	position.UseHolding(holding)
-	desk.positions[holding.Symbol] = position
-	entered, err := position.Enter()
 
-	if err != nil {
-		delete(desk.positions, holding.Symbol)
-		return entered, err
-	}
-
-	return entered, nil
+	return position, nil
 }
 
-/*
-Sell exits the full desk-owned sellable lot for symbol.
-*/
-func (desk *Desk) Sell(symbol string) error {
+func (desk *Desk) Exit(
+	symbol string,
+) error {
 	position, ok := desk.Position(symbol)
 
-	if !ok {
+	if !ok || position == nil {
 		return errnie.Error(errnie.Err(
 			errnie.NotFound,
-			"desk: no open position for "+symbol,
+			"desk: no position for "+symbol,
 			nil,
 		))
 	}
 
-	if err := position.Exit(); err != nil {
-		return err
+	return position.Exit()
+}
+
+func (desk *Desk) Cancel() error {
+	for _, position := range desk.positions {
+		if position == nil {
+			continue
+		}
+
+		if err := position.Close(); err != nil {
+			errnie.Error(err)
+		}
 	}
 
 	return nil

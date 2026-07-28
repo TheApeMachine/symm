@@ -434,17 +434,6 @@ func (opportunity *Opportunity) occupied(thesis *types.Thesis) map[string]struct
 		return blocked
 	}
 
-	thesis.Holdings.Range(func(_, value any) bool {
-		holding, ok := value.(*types.Holding)
-
-		if !ok || holding == nil || holding.Status == types.CLOSED {
-			return true
-		}
-
-		blocked[holding.Symbol] = struct{}{}
-		return true
-	})
-
 	thesis.Lifecycle.Range(func(key, value any) bool {
 		symbol, ok := key.(string)
 

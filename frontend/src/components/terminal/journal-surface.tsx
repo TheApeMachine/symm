@@ -7,7 +7,7 @@ import {
 	journalEntryKey,
 	paintJournalSurface,
 } from "#/components/terminal/journal-paint";
-import { TerminalSection } from "#/components/terminal/panels";
+import { TerminalSection } from "#/components/terminal/terminal-section";
 import type { Finding } from "#/types/thesis";
 import { Panel } from "@/components/ui/panel";
 

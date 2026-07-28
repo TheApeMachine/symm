@@ -4,12 +4,9 @@ import { frameRows } from "#/providers/frame-history";
 import { resizeCanvas } from "./canvas";
 import { drawCognitiveTree } from "./cognitive-viz";
 import { CortexLeafRoster } from "./cortex-draw";
-import {
-	CortexBeamShell,
-	CortexPanelsShell,
-	paintCortexBeams,
-	paintCortexPanels,
-} from "./cortex-panels";
+import { CortexBeamShell } from "./cortex-beam-shell";
+import { CortexPanelsShell } from "./cortex-panels-shell";
+import { paintCortexBeams, paintCortexPanels } from "./cortex-paint";
 
 const cortexCanvasRef = createRef<HTMLCanvasElement>();
 const cortexCountRef = createRef<HTMLSpanElement>();

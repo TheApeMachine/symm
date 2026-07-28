@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -15,7 +16,13 @@ Subscription is a thin typed wrapper over a channel so call sites keep T.
 */
 type Subscription[T any] struct {
 	Channel chan T
+	tracked bool
+	ctx     context.Context
 }
+
+var trackedMessages atomic.Int64
+
+const trackedPollInterval = 100 * time.Microsecond
 
 /*
 NewSubscription opens one buffered typed channel using system.actor.buffer.
@@ -48,6 +55,19 @@ Send delivers one message, blocking when the subscriber is behind so producers
 apply real backpressure instead of sleeping and dropping under load.
 */
 func (subscription *Subscription[T]) Send(message T) {
+	if subscription.tracked {
+		trackedMessages.Add(1)
+
+		if subscription.ctx != nil {
+			select {
+			case <-subscription.ctx.Done():
+				trackedMessages.Add(-1)
+				return
+			default:
+			}
+		}
+	}
+
 	subscription.Channel <- message
 }
 
@@ -77,6 +97,7 @@ consumes a single stream instead of busy-polling topic maps.
 type Envelope struct {
 	Topic   string
 	Payload any
+	Tracked bool
 }
 
 /*
@@ -154,6 +175,8 @@ func (actor *Actor) AddRoot(name string, subscription *Subscription[any]) {
 		panic("types.Actor: AddRoot after Start")
 	}
 
+	subscription.tracked = true
+	subscription.ctx = actor.ctx
 	actor.mu.Lock()
 	defer actor.mu.Unlock()
 
@@ -200,9 +223,12 @@ func (actor *Actor) InitializeSize(buffer int, topics ...Topic) {
 	}
 
 	for _, topic := range topics {
-		actor.subscriptions[topic.Name] = topic.Actor.SubscribeSize(
+		subscription := topic.Actor.SubscribeSize(
 			topic.Name, buffer,
 		)
+		subscription.tracked = true
+		subscription.ctx = actor.ctx
+		actor.subscriptions[topic.Name] = subscription
 	}
 
 	actor.Start()
@@ -249,12 +275,15 @@ Close cancels the actor and waits until the inbox loop and pumps exit.
 func (actor *Actor) Close() error {
 	actor.cancel()
 	actor.wg.Wait()
+	actor.discardTracked()
 
 	return nil
 }
 
 func (actor *Actor) pump(topic string) {
 	actor.wg.Go(func() {
+		tracked := actor.subscriptions[topic].tracked
+
 		for {
 			select {
 			case <-actor.ctx.Done():
@@ -267,6 +296,7 @@ func (actor *Actor) pump(topic string) {
 				envelope := Envelope{
 					Topic:   topic,
 					Payload: message,
+					Tracked: tracked,
 				}
 
 				select {
@@ -293,18 +323,72 @@ func (actor *Actor) loop() {
 
 			if !ok {
 				actor.publish(envelope.Topic, envelope.Payload)
+
+				if envelope.Tracked {
+					trackedMessages.Add(-1)
+				}
+
 				continue
 			}
 
 			result := handler.Fn(envelope.Payload)
 
 			if result == nil {
+				if envelope.Tracked {
+					trackedMessages.Add(-1)
+				}
+
 				continue
 			}
 
 			actor.publish(envelope.Topic, result)
+
+			if envelope.Tracked {
+				trackedMessages.Add(-1)
+			}
 		}
 	}
+}
+
+/*
+AwaitQuiescence waits until all tracked actor messages have completed their
+end-to-end delivery through the actor graph.
+*/
+func AwaitQuiescence(timeout time.Duration) error {
+	return AwaitQuiescenceSince(timeout, 0)
+}
+
+/*
+TrackedPending reports the current tracked actor-message count.
+*/
+func TrackedPending() int64 {
+	return trackedMessages.Load()
+}
+
+/*
+AwaitQuiescenceSince waits until tracked actor delivery returns to the supplied
+baseline, which allows nested transport writes from inside an active handler to
+wait only for the newly emitted downstream work.
+*/
+func AwaitQuiescenceSince(timeout time.Duration, baseline int64) error {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		if trackedMessages.Load() <= baseline {
+			return nil
+		}
+
+		time.Sleep(trackedPollInterval)
+	}
+
+	return errnie.Err(
+		errnie.Timeout,
+		fmt.Sprintf(
+			"actor: tracked delivery did not quiesce (pending=%d baseline=%d)",
+			trackedMessages.Load(), baseline,
+		),
+		nil,
+	)
 }
 
 func (actor *Actor) publish(topic string, result any) {
@@ -313,10 +397,49 @@ func (actor *Actor) publish(topic string, result any) {
 	actor.mu.RUnlock()
 
 	for _, subscriber := range subscribers {
+		if subscriber.ctx != nil {
+			select {
+			case <-subscriber.ctx.Done():
+				continue
+			default:
+			}
+		}
+
 		select {
 		case <-actor.ctx.Done():
 			return
-		case subscriber.Channel <- result:
+		default:
+			subscriber.Send(result)
+		}
+	}
+}
+
+func (actor *Actor) discardTracked() {
+	for _, subscription := range actor.subscriptions {
+		if !subscription.tracked {
+			continue
+		}
+
+		for {
+			select {
+			case <-subscription.Channel:
+				trackedMessages.Add(-1)
+			default:
+				goto nextSubscription
+			}
+		}
+
+	nextSubscription:
+	}
+
+	for {
+		select {
+		case envelope := <-actor.inbox:
+			if envelope.Tracked {
+				trackedMessages.Add(-1)
+			}
+		default:
+			return
 		}
 	}
 }

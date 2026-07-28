@@ -1,10 +1,11 @@
-import { createRef } from "react";
+import { createRef, useEffect } from "react";
 import type { StrategyDecision } from "#/types/thesis";
 import { readDecisionsScopeSymbol } from "#/components/terminal/decision-side";
 import { fixed } from "#/components/terminal/decision-format";
-import { TerminalSection } from "#/components/terminal/panels";
+import { TerminalSection } from "#/components/terminal/terminal-section";
 import { badgeVariants } from "@/components/ui/badge";
 import { Panel } from "@/components/ui/panel";
+import { registerPainter } from "#/providers/ws-stores";
 
 const strategyRootRef = createRef<HTMLDivElement>();
 const strategyListRef = createRef<HTMLDivElement>();
@@ -238,10 +239,7 @@ const writeStrategyDecisions = (
 paintStrategyDecisions paints the current DRAW decisions batch into the static
 StrategyDecisionRows shell, creating row shells only when identities change.
 */
-export const paintStrategyDecisions = (
-	value: unknown,
-	focusSymbol: string,
-) => {
+export const paintStrategyDecisions = (value: unknown) => {
 	const decisions = (
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as StrategyDecision[];
@@ -249,9 +247,7 @@ export const paintStrategyDecisions = (
 	const symbol =
 		scope !== undefined && scope !== ""
 			? scope
-			: focusSymbol === ""
-				? undefined
-				: focusSymbol;
+			: undefined;
 
 	writeStrategyDecisions(decisions, symbol);
 };
@@ -260,8 +256,11 @@ export const paintStrategyDecisions = (
 StrategyDecisionRows is the static strategy-intent shell. DRAW paints live fields
 via paintStrategyDecisions without React reconciliation each tick.
 */
-export const StrategyDecisionRows = () => (
-	<div ref={strategyRootRef}>
+export const StrategyDecisionRows = () => {
+	useEffect(() => registerPainter("decisions", paintStrategyDecisions), []);
+
+	return (
+		<div ref={strategyRootRef}>
 			<TerminalSection
 				title="Strategy intent"
 				meta={<span data-strategy="meta">0 decisions</span>}
@@ -283,4 +282,5 @@ export const StrategyDecisionRows = () => (
 				</div>
 			</TerminalSection>
 		</div>
-);
+	);
+};

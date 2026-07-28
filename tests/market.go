@@ -326,7 +326,11 @@ func (market *Market) Apply(
 		}
 
 		if err := transport.conn.Drain(); err != nil {
-			return errnie.Err(errnie.IO, "tests: drain "+transport.name+" private frames", err)
+			return errnie.Err(
+				errnie.IO,
+				"tests: drain "+transport.name+" private frames: "+err.Error(),
+				err,
+			)
 		}
 
 		if err := transport.conn.Err(); err != nil {
@@ -346,7 +350,11 @@ func (market *Market) Apply(
 		{"paper", market.Paper},
 	} {
 		if err := transport.conn.Drain(); err != nil {
-			return errnie.Err(errnie.IO, "tests: drain "+transport.name+" order responses", err)
+			return errnie.Err(
+				errnie.IO,
+				"tests: drain "+transport.name+" order responses: "+err.Error(),
+				err,
+			)
 		}
 
 		if err := transport.conn.Err(); err != nil {

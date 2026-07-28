@@ -62,7 +62,7 @@ func TestDeskSlotsAndExit(t *testing.T) {
 			heldQty := holding.Qty.Copy()
 
 			Convey("Sell closes the full lot and frees the slot", func() {
-				So(harness.Wired.Desk.Sell(opened), ShouldBeNil)
+				So(harness.Wired.Desk.Exit(opened), ShouldBeNil)
 				So(harness.Market.Paper.Drain(), ShouldBeNil)
 
 				closed := false

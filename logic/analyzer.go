@@ -2,7 +2,6 @@ package logic
 
 import (
 	"context"
-	"math"
 	"time"
 
 	"github.com/spf13/viper"
@@ -14,24 +13,22 @@ import (
 	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/signal/hawkes"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Analyzer coordinates the composed analysis responsibilities as signals stream
-their measurements onto the shared Thesis. Every signal that publishes new
-measurements triggers category composition, cognition, and UI publish. The
-Hawkes signal additionally drives the manifold solver through its ticker/trade
-cuts at depth one so the shared field steps on each excitation advance.
-The thesis field is the shared boot pointer, set by Initialize so onSignal can
-snapshot fresh measurements and run the analysis pipeline.
+Analyzer is the entrypoint to the logic stage. This stage is responsible for
+part dimensionality reduction of the Measurements (the Signal outputs), and
+part an enrichment of the Metrics that the Measurements carry. Finally, the
+logic stage is also the final structural transformation, which completes the
+full transformation of raw market data to something that can be used by the
+Strategy package to make Decisions. The final output of the Logic stage is
+the Graph, which should encode everything that has been collected so far.
 */
 type Analyzer struct {
 	*types.Actor
 	ctx         context.Context
 	cancel      context.CancelFunc
-	gate        stageGate
 	status      types.Status
 	thesis      *types.Thesis
 	manifold    *manifold.Solver
@@ -59,7 +56,6 @@ NewAnalyzer composes the field processor required by the analysis stage.
 */
 func NewAnalyzer(
 	ctx context.Context,
-	gate stageGate,
 	api *websocket.API,
 	hawkes manifold.HawkesSource,
 	tree *dmt.Tree,
@@ -78,21 +74,20 @@ func NewAnalyzer(
 	ctx, cancel := context.WithCancel(ctx)
 
 	analyzer := &Analyzer{
-		ctx:        ctx,
-		cancel:     cancel,
-		gate:       gate,
-		status:     types.READY,
-		manifold:   solver,
-		hawkes:     hawkes,
-		tree:       tree,
-		ui:         ui,
-		resonance:  make(map[string]*Resonance),
-		causal:     make(map[string]*Causal),
-		cognition:  make(map[string]types.Cognition),
-		observed:   make(map[string]uint64),
-		rem:        newREMSleep(ctx, tree),
-		categories: category.NewGraph(),
-		bestBySym:  make(map[string]types.Category),
+		ctx:       ctx,
+		cancel:    cancel,
+		status:    types.READY,
+		manifold:  solver,
+		hawkes:    hawkes,
+		tree:      tree,
+		ui:        ui,
+		recorder:  recorder,
+		resonance: make(map[string]*Resonance),
+		causal:    make(map[string]*Causal),
+		cognition: make(map[string]types.Cognition),
+		observed:  make(map[string]uint64),
+		rem:       newREMSleep(ctx, tree),
+		bestBySym: make(map[string]types.Category),
 	}
 
 	// ticker and trade come from Hawkes cuts at depth one for manifold.
@@ -102,7 +97,6 @@ func NewAnalyzer(
 		"trade":  {Topic: "trade", Fn: analyzer.onHawkesCut},
 		"thesis": {Topic: "thesis", Fn: analyzer.onSignal},
 	})
-	analyzer.SetRecorder(recorder)
 
 	return analyzer, nil
 }
@@ -440,35 +434,6 @@ func (analyzer *Analyzer) composeMeasurement(
 }
 
 /*
-categoryMass returns the absolute normalized metric mass when available, or raw
-mass otherwise. Category rows are direct evidence projections, so no local
-accumulator rescales the signal's own normalization before it reaches Thesis.
-*/
-func categoryMass(sample types.MetricSample) (float64, bool) {
-	if sample.Normalized != nil {
-		mass := math.Abs(*sample.Normalized)
-
-		return mass, mass > 0 && !math.IsNaN(mass) && !math.IsInf(mass, 0)
-	}
-
-	mass := math.Abs(sample.Raw)
-
-	return mass, mass > 0 && !math.IsNaN(mass) && !math.IsInf(mass, 0)
-}
-
-/*
-categoryUncertainty reads a measurement interval width as category uncertainty
-without creating an intermediate accumulator for the whole symbol.
-*/
-func categoryUncertainty(measurement *types.Measurement) float64 {
-	if measurement == nil || measurement.Uncertainty == nil {
-		return 0
-	}
-
-	return math.Abs(measurement.Uncertainty.Upper-measurement.Uncertainty.Lower) / 2
-}
-
-/*
 Update runs Hawkes-driven field analysis after signal measure: manifold step,
 category composition, observation, publish, cognition, and finish.
 */
@@ -477,63 +442,13 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 }
 
 /*
-stageGate exposes boot readiness without coupling Analyzer to boot orchestration.
-*/
-type stageGate interface {
-	Ready(system.StageType) bool
-}
-
-/*
-SetThesis stores the shared boot Thesis pointer so onSignal can snapshot
-measurements and run the analysis pipeline without receiving the pointer
-through every message.
-*/
-func (analyzer *Analyzer) SetThesis(thesis *types.Thesis) {
-	analyzer.thesis = thesis
-}
-
-/*
-SetRecorder attaches the runtime audit stream to the analyzer, manifold solver,
-and REM scheduler so phase breadcrumbs survive a freeze.
-*/
-func (analyzer *Analyzer) SetRecorder(recorder *audit.Recorder) {
-	analyzer.recorder = recorder
-
-	if analyzer.manifold != nil {
-		analyzer.manifold.SetRecorder(recorder)
-	}
-
-	if analyzer.rem != nil {
-		analyzer.rem.SetRecorder(recorder)
-	}
-}
-
-/*
-publish enqueues one frame for the UI hub. A full ingress drops the frame —
-same contract as WireMeasurements — so dashboard backpressure cannot stall
-enrich or the cut cascade behind Hawkes.
-*/
-func (analyzer *Analyzer) publish(frame datura.Map[any]) {
-	if analyzer.ui == nil || len(frame) == 0 {
-		frame.Free()
-		return
-	}
-
-	analyzer.publishBytes(frame.MarshalAndFree())
-}
-
-/*
 publishBytes enqueues one already encoded UI frame without blocking analysis.
 Binary manifold textures use this path so they follow the same saturation
 contract as JSON frames.
 */
-func (analyzer *Analyzer) publishBytes(frame []byte) {
-	if analyzer.ui == nil || len(frame) == 0 {
-		return
-	}
-
+func (analyzer *Analyzer) Publish(frame datura.Map[any]) {
 	select {
-	case analyzer.ui <- frame:
+	case analyzer.ui <- frame.Marshal():
 	default:
 		errnie.Error(errnie.Err(
 			errnie.TooManyRequests,
@@ -541,66 +456,4 @@ func (analyzer *Analyzer) publishBytes(frame []byte) {
 			nil,
 		))
 	}
-}
-
-/*
-stampAndBegin audits the analysis start for a non-Hawkes signal cut.
-*/
-func (analyzer *Analyzer) stampAndBegin(
-	thesis *types.Thesis,
-	cutID types.CutID,
-	tick int64,
-) {
-	analyzer.stamp(thesis)
-
-	payload := map[string]any{}
-
-	if cutID > 0 {
-		payload["cut_id"] = uint64(cutID)
-	}
-
-	errnie.Error(audit.Phase(analyzer.recorder, tick, "analyze_begin", payload))
-}
-
-/*
-stamp advances Thesis.At from the already-snapshotted measurement rows. This is
-the analyzer hot path equivalent of Thesis.StampAt without paying for another
-pointer-slice copy before category composition.
-*/
-func (analyzer *Analyzer) stamp(
-	thesis *types.Thesis,
-) {
-	thesis.EachMeasurement(func(measurement *types.Measurement) bool {
-		if measurement != nil && !measurement.At.IsZero() &&
-			(measurement.At.After(thesis.At) || thesis.At.IsZero()) {
-			thesis.At = measurement.At
-		}
-
-		return true
-	})
-}
-
-/*
-finish audits analyze_end with the terminal rem and forecast counts.
-*/
-func (analyzer *Analyzer) finish(
-	thesis *types.Thesis,
-	states []manifold.State,
-	started time.Time,
-	cutID types.CutID,
-	tick int64,
-) {
-	payload := map[string]any{
-		"ns":          time.Since(started).Nanoseconds(),
-		"states":      len(states),
-		"forecasts":   len(thesis.Forecasts),
-		"hypotheses":  len(thesis.Hypotheses),
-		"rem_pending": analyzer.rem.Pending(),
-	}
-
-	if cutID > 0 {
-		payload["cut_id"] = uint64(cutID)
-	}
-
-	errnie.Error(audit.Phase(analyzer.recorder, tick, "analyze_end", payload))
 }

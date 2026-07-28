@@ -72,6 +72,6 @@ func sellAllOpen(desk *broker.Desk, _ *broker.Balance, keepSymbol ...string) {
 			continue
 		}
 
-		So(desk.Sell(open.Symbol), ShouldBeNil)
+		So(desk.Exit(open.Symbol), ShouldBeNil)
 	}
 }

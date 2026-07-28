@@ -2,33 +2,34 @@ package toxicity
 
 import (
 	"context"
-	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
 
+const (
+	touchSideNone = iota
+	touchSideBid
+	touchSideAsk
+)
+
 /*
 Signal tracks whether near-touch liquidity is sincere, retreating, or bluffing
-from level3 order events corroborated by the public trade tape.
+from Level3 order events corroborated by the public trade tape.
 */
 type Signal struct {
 	*types.Actor
-	thesis       *types.Thesis
-	ctx          context.Context
-	cancel       context.CancelFunc
-	level3       *websocket.API
-	priorTouch   map[string]touchSnapshot
-	pendingTouch map[string]touchSnapshot
-	evidence     map[string]*symbolEvidence
-	increments   map[string]*decimal.Decimal
-	lastCutAt    time.Time
-	ui           chan []byte
+	thesis   *types.Thesis
+	ctx      context.Context
+	cancel   context.CancelFunc
+	level3   *websocket.API
+	ui       chan []byte
+	maturity int64
 }
 
 /*
@@ -39,27 +40,20 @@ func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal 
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:          ctx,
-		cancel:       cancel,
-		level3:       api,
-		priorTouch:   map[string]touchSnapshot{},
-		pendingTouch: map[string]touchSnapshot{},
-		evidence:     map[string]*symbolEvidence{},
-		increments:   map[string]*decimal.Decimal{},
-		ui:           ui,
+		ctx:      ctx,
+		cancel:   cancel,
+		level3:   api,
+		ui:       ui,
+		maturity: 0,
 	}
 
-	signal.Actor = types.NewActor(ctx, "toxicity", map[string]types.Handler{
-		"ticker": {
-			Topic: "thesis",
-			Fn:    signal.onTicker,
-		},
+	signal.Actor = types.NewActor(ctx, "hawkes", map[string]types.Handler{
 		"book": {
-			Topic: "thesis",
+			Topic: "book",
 			Fn:    signal.onBook,
 		},
 		"trade": {
-			Topic: "thesis",
+			Topic: "trade",
 			Fn:    signal.onTrade,
 		},
 	})
@@ -75,104 +69,155 @@ func (signal *Signal) Name() string {
 }
 
 /*
-Initialize wires ticker, book, and trade ingress from Live.
+Initialize wires book and trade ingress from Live.
 */
 func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 	signal.thesis = thesis
+
 	signal.Actor.Initialize(
-		types.Topic{Name: "ticker", Actor: live},
 		types.Topic{Name: "book", Actor: live},
 		types.Topic{Name: "trade", Actor: live},
 	)
 }
 
-func (signal *Signal) onTicker(message any) any {
-	rows := message.(*kraken.Ticker).Data
-	measurements, err := signal.Calculate(rows, nil, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return types.SignalResult{Source: types.SourceToxicity, Status: types.SignalSkip}
-	}
-
-	if len(measurements) > 0 {
-		signal.thesis.AppendMeasurements(measurements)
-		return types.SignalResult{Source: types.SourceToxicity, Measurements: measurements, Status: types.SignalReady}
-	}
-
-	return types.SignalResult{Source: types.SourceToxicity, Status: types.SignalSkip}
-}
-
 func (signal *Signal) onBook(message any) any {
 	rows := message.(*kraken.Book).Data
-	measurements, err := signal.Calculate(nil, nil, rows)
 
-	if err != nil {
-		errnie.Error(err)
-		return types.SignalResult{Source: types.SourceToxicity, Status: types.SignalSkip}
-	}
+	signal.thesis.Measurements.Store(
+		types.SourceToxicity, signal.Calculate(nil, nil, rows),
+	)
 
-	if len(measurements) > 0 {
-		signal.thesis.AppendMeasurements(measurements)
-		return types.SignalResult{Source: types.SourceToxicity, Measurements: measurements, Status: types.SignalReady}
-	}
-
-	return types.SignalResult{Source: types.SourceToxicity, Status: types.SignalSkip}
+	return signal.thesis
 }
 
 func (signal *Signal) onTrade(message any) any {
 	rows := message.(*kraken.Trade).Data
-	measurements, err := signal.Calculate(nil, rows, nil)
 
-	if err != nil {
-		errnie.Error(err)
-		return types.SignalResult{Source: types.SourceToxicity, Status: types.SignalSkip}
-	}
+	signal.thesis.Measurements.Store(
+		types.SourceToxicity, signal.Calculate(nil, rows, nil),
+	)
 
-	if len(measurements) > 0 {
-		signal.thesis.AppendMeasurements(measurements)
-		return types.SignalResult{Source: types.SourceToxicity, Measurements: measurements, Status: types.SignalReady}
-	}
-
-	return types.SignalResult{Source: types.SourceToxicity, Status: types.SignalSkip}
+	return signal.thesis
 }
 
 func (signal *Signal) Calculate(
 	tickers []kraken.TickerData,
 	trades []kraken.TradeData,
-	books []kraken.BookData,
-) ([]*types.Measurement, error) {
-	signal.ensureScratch()
+	books []spot.BookManager,
+) []*types.Measurement {
+	signal.maturity = signal.thesis.Tick
+	measurements := make([]*types.Measurement, 0)
+	focusMeasurements := make([]*types.Measurement, 0)
 
-	if err := signal.ingestIncrements(books); err != nil {
-		return nil, err
+	found, ok := signal.thesis.Measurements.Load(types.SourceToxicity)
+	var priors []*types.Measurement
+	var scaleFrom types.Measurement
+
+	if ok {
+		priors = found.([]*types.Measurement)
+
+		if len(priors) > 0 && priors[len(priors)-1] != nil {
+			scaleFrom = *priors[len(priors)-1]
+		}
 	}
 
-	// A public trade and the book update that reflects it share one market
-	// timestamp but arrive as two separate cuts. Attribution must compare each
-	// trade against the touch that existed strictly before this instant, so a
-	// pending touch is only promoted to the authoritative prior once the cut
-	// clock advances past the moment it was observed.
-	cutAt := cutTimestamp(trades, books)
-	signal.promotePrior(cutAt)
+	for _, trade := range trades {
+		measurement := &types.Measurement{
+			Source:   types.SourceToxicity,
+			Symbol:   trade.Symbol,
+			At:       trade.Timestamp.UTC(),
+			Maturity: 1.0,
+			Validity: types.ObservationValidity(len(priors) + 1),
+			Scale: types.ScaleReference{
+				Kind:    types.ScaleObservationWindow,
+				From:    scaleFrom.At.UTC(),
+				Through: trade.Timestamp.UTC(),
+			},
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricTradeVolume, types.SideNone): {
+					Raw:  trade.Price.Float64() * trade.Qty,
+					Unit: types.UnitBaseCurrency,
+				},
+				types.MetricKey(types.MetricFillVolume, types.SideBuy): {
+					Raw:  trade.Price.Float64() * trade.Qty,
+					Unit: types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricFillVolume, types.SideSell): {
+					Raw:  trade.Price.Float64() * trade.Qty,
+					Unit: types.UnitQuoteCurrency,
+				},
+			},
+		}
 
-	if err := signal.accumulateEvidence(trades, cutAt); err != nil {
-		return nil, err
-	}
+		measurements = append(measurements, measurement)
 
-	if err := signal.observeBooks(books); err != nil {
-		return nil, err
-	}
-
-	out := make([]*types.Measurement, 0, len(signal.evidence))
-	var focusMeasurements []*types.Measurement
-
-	for symbol := range signal.evidence {
-		measurement := signal.emitSymbolMeasurements(symbol, signal.evidence[symbol])
-		out = append(out, measurement)
-
-		if symbol == types.Focus() {
+		if trade.Symbol == types.Focus() {
 			focusMeasurements = append(focusMeasurements, measurement)
+		}
+	}
+
+	for _, book := range books {
+		for _, ask := range book.Asks {
+			bidQuantity := book.Book.BestBid().Quantity.Float64()
+			touchQuantity := ask.Qty + bidQuantity
+			quotedQuantity := decimal.ExactMul(
+				decimal.NewFromFloat64(ask.Qty), &ask.Price,
+			).Float64()
+
+			measurement := &types.Measurement{
+				Source:   types.SourceToxicity,
+				Symbol:   book.Symbol,
+				At:       book.Timestamp.UTC(),
+				Maturity: float64(signal.maturity),
+				Validity: types.ObservationValidity(len(priors) + 1),
+				Scale: types.ScaleReference{
+					Kind:    types.ScaleObservationWindow,
+					From:    scaleFrom.At.UTC(),
+					Through: book.Timestamp.UTC(),
+				},
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricTradeVolume, types.SideBuy): {
+						Raw:  quotedQuantity,
+						Unit: types.UnitBaseCurrency,
+					},
+					types.MetricKey(types.MetricFillVolume, types.SideBuy): {
+						Raw:  quotedQuantity,
+						Unit: types.UnitQuoteCurrency,
+					},
+					types.MetricKey(types.MetricAbsorption, types.SideBuy): {
+						Raw:  quotedQuantity,
+						Unit: types.UnitQuoteCurrency,
+					},
+					types.MetricKey(types.MetricBestPrice, types.SideBuy): {
+						Raw:  book.Book.BestAsk().Price.Float64(),
+						Unit: types.UnitQuoteCurrency,
+					},
+					types.MetricKey(types.MetricBestPrice, types.SideSell): {
+						Raw:  book.Book.BestBid().Price.Float64(),
+						Unit: types.UnitQuoteCurrency,
+					},
+					types.MetricKey(types.MetricTouchQuantity, types.SideBuy): {
+						Raw: ask.Qty,
+						Normalized: types.NormalizeRatio(
+							ask.Qty, touchQuantity,
+						),
+						Unit: types.UnitBaseCurrency,
+					},
+					types.MetricKey(types.MetricTouchQuantity, types.SideSell): {
+						Raw: bidQuantity,
+						Normalized: types.NormalizeRatio(
+							bidQuantity, touchQuantity,
+						),
+						Unit: types.UnitBaseCurrency,
+					},
+				},
+			}
+
+			measurements = append(measurements, measurement)
+
+			if book.Symbol == types.Focus() {
+				focusMeasurements = append(focusMeasurements, measurement)
+			}
 		}
 	}
 
@@ -180,69 +225,7 @@ func (signal *Signal) Calculate(
 		utils.Publish(signal.ui, datura.NewMap("measurements", focusMeasurements))
 	}
 
-	return out, nil
-}
-
-/*
-cutTimestamp returns the latest source event time in this cut so pending touch
-snapshots are only promoted to prior once the observation clock advances.
-*/
-func cutTimestamp(trades []kraken.TradeData, books []kraken.BookData) time.Time {
-	cutAt := time.Time{}
-
-	for _, trade := range trades {
-		if at := trade.Timestamp.UTC(); at.After(cutAt) {
-			cutAt = at
-		}
-	}
-
-	for _, bookRow := range books {
-		if at := bookRow.Timestamp.UTC(); at.After(cutAt) {
-			cutAt = at
-		}
-	}
-
-	return cutAt
-}
-
-/*
-promotePrior advances each symbol's authoritative prior touch to its pending
-snapshot once the cut clock has moved strictly past when it was observed. A
-trade and the book update at the same instant therefore both attribute against
-the touch that preceded that instant rather than its own post-event book.
-*/
-func (signal *Signal) promotePrior(cutAt time.Time) {
-	if cutAt.IsZero() {
-		return
-	}
-
-	for symbol, snapshot := range signal.pendingTouch {
-		if snapshot.observedAt.Before(cutAt) {
-			signal.priorTouch[symbol] = snapshot
-			delete(signal.pendingTouch, symbol)
-		}
-	}
-}
-
-/*
-ensureScratch allocates reusable tick maps when tests construct Signal by hand.
-*/
-func (signal *Signal) ensureScratch() {
-	if signal.priorTouch == nil {
-		signal.priorTouch = map[string]touchSnapshot{}
-	}
-
-	if signal.pendingTouch == nil {
-		signal.pendingTouch = map[string]touchSnapshot{}
-	}
-
-	if signal.evidence == nil {
-		signal.evidence = map[string]*symbolEvidence{}
-	}
-
-	if signal.increments == nil {
-		signal.increments = map[string]*decimal.Decimal{}
-	}
+	return measurements
 }
 
 /*

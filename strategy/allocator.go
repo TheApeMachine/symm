@@ -87,44 +87,43 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			continue
 		}
 
-		allocator.size(thesis, decision, &budget)
+		allocator.size(decision, &budget)
 	}
 
 	return nil
 }
 
 func (allocator *Allocator) size(
-	thesis *types.Thesis,
 	decision *types.Decision,
 	budget **decimal.Decimal,
 ) {
 	pair, err := allocator.instrument.Pair(decision.Symbol)
 
 	if err != nil {
-		allocator.reject(thesis, decision, "instrument pair unavailable")
+		allocator.reject(decision, "instrument pair unavailable")
 		return
 	}
 
 	if pair.QtyMin == nil || pair.QtyMin.Sign() <= 0 {
-		allocator.reject(thesis, decision, "instrument qty_min unavailable")
+		allocator.reject(decision, "instrument qty_min unavailable")
 		return
 	}
 
 	riskAdjusted, sliceErr := allocator.resolveSlice(decision, *budget)
 
 	if sliceErr != "" {
-		allocator.reject(thesis, decision, sliceErr)
+		allocator.reject(decision, sliceErr)
 		return
 	}
 
 	quantity, cost, qtyErr := allocator.sizeQuantity(&pair, riskAdjusted, *budget, decision)
 
 	if qtyErr != "" {
-		allocator.reject(thesis, decision, qtyErr)
+		allocator.reject(decision, qtyErr)
 		return
 	}
 
-	if !allocator.reserveIntent(thesis, decision, budget, cost) {
+	if !allocator.reserveIntent(decision, budget, cost) {
 		return
 	}
 
@@ -140,7 +139,7 @@ func (allocator *Allocator) size(
 			}
 		}
 
-		allocator.reject(thesis, decision, "reference price unavailable")
+		allocator.reject(decision, "reference price unavailable")
 		return
 	}
 
@@ -149,11 +148,6 @@ func (allocator *Allocator) size(
 	decision.ReferencePrice = ask
 	decision.Reason = "sized from transaction budget"
 
-	if value, ok := thesis.Holdings.Load(decision.Symbol); ok {
-		holding := value.(*types.Holding)
-		holding.Qty = quantity
-		thesis.Holdings.Store(decision.Symbol, holding)
-	}
 }
 
 func (allocator *Allocator) resolveSlice(
@@ -228,7 +222,6 @@ func (allocator *Allocator) sizeQuantity(
 }
 
 func (allocator *Allocator) reserveIntent(
-	thesis *types.Thesis,
 	decision *types.Decision,
 	budget **decimal.Decimal,
 	cost *decimal.Decimal,
@@ -244,17 +237,11 @@ func (allocator *Allocator) reserveIntent(
 	if err := allocator.balance.Reserve(
 		intentID, decision.Symbol, cost, false,
 	); err != nil {
-		allocator.reject(thesis, decision, err.Error())
+		allocator.reject(decision, err.Error())
 		return false
 	}
 
 	decision.ReservationID = intentID
-
-	if value, ok := thesis.Holdings.Load(decision.Symbol); ok {
-		holding := value.(*types.Holding)
-		holding.ReservationID = intentID
-		thesis.Holdings.Store(decision.Symbol, holding)
-	}
 
 	*budget = (*budget).Sub(cost)
 
@@ -274,14 +261,13 @@ func (allocator *Allocator) haircut(value float64) (*decimal.Decimal, error) {
 }
 
 func (allocator *Allocator) reject(
-	thesis *types.Thesis,
 	decision *types.Decision,
 	reason string,
 ) {
-	thesis.Holdings.Delete(decision.Symbol)
 	decision.Reason = reason
 	decision.ProposedQuantity = nil
 	decision.ProposedNotional = nil
+	decision.ReservationID = ""
 }
 
 func (allocator *Allocator) validate(mandatory map[string]any) error {

@@ -75,8 +75,8 @@ func TestPaperHandle(t *testing.T) {
 		So(conn.Write(json.RawMessage(
 			`{"method":"subscribe","params":{"channel":"balances"}}`,
 		)), ShouldBeNil)
-		takeBytes(balSub.Channel)
-		takeBytes(execSub.Channel)
+		awaitBytes(balSub.Channel, 1)
+		awaitBytes(execSub.Channel, 1)
 
 		Convey("A market buy fills at the ask and updates both wallets", func() {
 			request := json.RawMessage(`{"method":"add_order","req_id":7,"params":{` +
@@ -115,7 +115,7 @@ func TestPaperHandle(t *testing.T) {
 			So(conn.Write(json.RawMessage(
 				`{"method":"subscribe","params":{"channel":"executions"}}`,
 			)), ShouldBeNil)
-			takeBytes(execSub.Channel)
+			awaitBytes(execSub.Channel, 1)
 			ask = 100.0
 			So(conn.MatchPaper(), ShouldBeNil)
 			So(conn.Drain(), ShouldBeNil)

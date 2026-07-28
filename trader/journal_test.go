@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/types"
 )
@@ -30,7 +31,14 @@ func TestJournalStore(t *testing.T) {
 
 		Convey("When saving Thesis snapshots", func() {
 			thesis := types.NewThesis()
-			thesis.Holdings.Store("BTC/USD", &types.Holding{Symbol: "BTC/USD"})
+			decision := types.Decision{
+				Symbol:           "BTC/USD",
+				ProposedQuantity: decimal.NewFromInt64(1),
+				PositionStatus:   types.OPEN,
+				Mark:             decimal.NewFromInt64(10),
+			}
+			decision.EnsureID()
+			thesis.Decisions = append(thesis.Decisions, decision)
 			thesis.Lifecycle.Store("BTC/USD", types.LifecycleEntrySubmitted)
 			thesis.Findings = append(thesis.Findings, types.Finding{
 				Symbol: "BTC/USD", Component: "hawkes", Condition: "elevated",
@@ -45,9 +53,9 @@ func TestJournalStore(t *testing.T) {
 				Convey("It restores the saved payload", func() {
 					So(err, ShouldBeNil)
 					So(len(loaded), ShouldEqual, 1)
-					value, ok := loaded[0].Holdings.Load("BTC/USD")
-					So(ok, ShouldBeTrue)
-					So(value.(*types.Holding).Symbol, ShouldEqual, "BTC/USD")
+					So(len(loaded[0].Decisions), ShouldEqual, 1)
+					So(loaded[0].Decisions[0].Symbol, ShouldEqual, "BTC/USD")
+					So(loaded[0].Decisions[0].Mark.Float64(), ShouldEqual, 10)
 					lifecycle, ok := loaded[0].Lifecycle.Load("BTC/USD")
 					So(ok, ShouldBeTrue)
 					So(lifecycle, ShouldEqual, types.LifecycleEntrySubmitted)

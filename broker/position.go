@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
@@ -24,6 +25,7 @@ type Position struct {
 	*types.Actor
 	ctx        context.Context
 	cancel     context.CancelFunc
+	ID         string       `json:"id"`
 	Status     types.Status `json:"status"`
 	api        *websocket.API
 	ui         chan []byte
@@ -53,6 +55,17 @@ type Fill struct {
 	Qty    *decimal.Decimal
 	Price  *decimal.Decimal
 	Fee    *decimal.Decimal
+}
+
+type positionSnapshot struct {
+	ID         string                 `json:"id"`
+	Status     types.Status           `json:"status"`
+	EntryOrder *kraken.MarketOrder    `json:"entry_order"`
+	ExitOrder  *kraken.MarketOrder    `json:"exit_order"`
+	OrderID    string                 `json:"order_id"`
+	Fills      []Fill                 `json:"fills"`
+	Buffered   []kraken.ExecutionData `json:"buffered"`
+	Holding    *types.Holding         `json:"holding"`
 }
 
 /*
@@ -116,7 +129,6 @@ func NewPosition(
 		position.Publish,
 		market,
 	)
-
 	position.Actor = types.NewActor(ctx, "position", map[string]types.Handler{
 		"add_order":  {Topic: "add_order", Fn: position.onOrder},
 		"executions": {Topic: "executions", Fn: position.onExecutions},
@@ -138,36 +150,50 @@ func NewPosition(
 }
 
 /*
-UseHolding replaces the provisional position holding with the thesis-owned
-holding selected and reserved by strategy, while preserving Position-owned live
-stoploss callbacks and market subscription state.
+NewDecisionPosition constructs one live position directly from the strategy
+decision that selected and sized the entry.
 */
-func (position *Position) UseHolding(holding *types.Holding) {
-	if position == nil || holding == nil || holding.Qty == nil {
-		panic("broker.Position: holding with quantity required")
+func NewDecisionPosition(
+	ctx context.Context,
+	api *websocket.API,
+	ui chan []byte,
+	instrument *Instrument,
+	price *Price,
+	balance *Balance,
+	pair kraken.InstrumentPair,
+	decision *types.Decision,
+	market *types.Actor,
+	account *types.Actor,
+) *Position {
+	if decision == nil || decision.Symbol == "" || decision.ProposedQuantity == nil {
+		panic("broker.Position: decision with symbol and quantity required")
 	}
 
-	previous := position.Holding
-	position.Holding = holding
-	position.EntryOrder.Params.OrderQty = holding.Qty.Copy()
-	position.ExitOrder.Params.OrderQty = holding.Qty.Copy()
+	position := NewPosition(
+		ctx,
+		api,
+		ui,
+		instrument,
+		price,
+		balance,
+		pair,
+		decision.ProposedQuantity,
+		market,
+		account,
+	)
+	position.ID = decision.ID
 
-	if holding.Stoploss == nil && previous != nil {
-		holding.Stoploss = previous.Stoploss
+	if decision.ReferencePrice != nil {
+		position.Holding.Mark = decision.ReferencePrice.Copy()
+		position.Holding.Stoploss.Mark = decision.ReferencePrice.Copy()
+		position.Holding.Stoploss.Entry = decision.ReferencePrice.Copy()
 	}
 
-	if holding.Stoploss == nil {
-		holding.Stoploss = types.NewStoploss(
-			position.ctx,
-			holding.Symbol,
-			holding.Mark,
-			position.Exit,
-			position.Publish,
-			position.market,
-		)
-	}
+	position.Holding.IsOpportunity = decision.Opportunity
+	position.Holding.ReservationID = decision.ReservationID
+
+	return position
 }
-
 func (position *Position) Initialize(
 	ctx context.Context,
 	api *websocket.API,
@@ -224,7 +250,10 @@ func (position *Position) Close() (err error) {
 		position.cancel()
 	}
 
-	errors.Join(err, position.Holding.Close())
+	if position.Holding != nil {
+		err = errors.Join(err, position.Holding.Close())
+	}
+
 	position.closing = false
 	position.Status = types.CLOSED
 
@@ -245,7 +274,7 @@ func (position *Position) Publish() {
 	}
 
 	payload := datura.NewMap(
-		"positions", []Position{*position},
+		"positions", []positionSnapshot{position.snapshot()},
 	).MarshalAndFree()
 
 	if len(payload) == 0 {
@@ -259,6 +288,159 @@ func (position *Position) Publish() {
 	}
 
 	position.balance.PublishTradeBalance()
+}
+
+func (position *Position) snapshot() positionSnapshot {
+	return positionSnapshot{
+		ID:         position.ID,
+		Status:     position.Status,
+		EntryOrder: position.copyOrder(position.EntryOrder),
+		ExitOrder:  position.copyOrder(position.ExitOrder),
+		OrderID:    position.OrderID,
+		Fills:      position.copyFills(),
+		Buffered:   position.copyBuffered(),
+		Holding:    position.copyHolding(),
+	}
+}
+
+func (position *Position) copyOrder(order *kraken.MarketOrder) *kraken.MarketOrder {
+	if order == nil {
+		return nil
+	}
+
+	copy := &kraken.MarketOrder{
+		Method: order.Method,
+		ReqID:  order.ReqID,
+		Params: kraken.MarketOrderParams{
+			OrderType:  order.Params.OrderType,
+			Side:       order.Params.Side,
+			Symbol:     order.Params.Symbol,
+			OrderQty:   copyDecimal(order.Params.OrderQty),
+			LimitPrice: copyDecimal(order.Params.LimitPrice),
+		},
+	}
+
+	return copy
+}
+
+func (position *Position) copyFills() []Fill {
+	if len(position.Fills) == 0 {
+		return nil
+	}
+
+	fills := make([]Fill, len(position.Fills))
+
+	for index, fill := range position.Fills {
+		fills[index] = Fill{
+			ExecID: fill.ExecID,
+			Side:   fill.Side,
+			Qty:    copyDecimal(fill.Qty),
+			Price:  copyDecimal(fill.Price),
+			Fee:    copyDecimal(fill.Fee),
+		}
+	}
+
+	return fills
+}
+
+func (position *Position) copyBuffered() []kraken.ExecutionData {
+	if len(position.Buffered) == 0 {
+		return nil
+	}
+
+	buffered := make([]kraken.ExecutionData, len(position.Buffered))
+
+	for index, row := range position.Buffered {
+		buffered[index] = kraken.ExecutionData{
+			OrderID:      row.OrderID,
+			OrderUserref: row.OrderUserref,
+			ExecID:       row.ExecID,
+			ExecType:     row.ExecType,
+			TradeID:      row.TradeID,
+			Symbol:       row.Symbol,
+			Side:         row.Side,
+			LastQty:      copyDecimal(row.LastQty),
+			LastPrice:    copyDecimal(row.LastPrice),
+			LiquidityInd: row.LiquidityInd,
+			Cost:         copyDecimal(row.Cost),
+			OrderType:    row.OrderType,
+			Timestamp:    row.Timestamp,
+			OrderStatus:  row.OrderStatus,
+			CumQty:       copyDecimal(row.CumQty),
+			CumCost:      copyDecimal(row.CumCost),
+			AvgPrice:     copyDecimal(row.AvgPrice),
+			FeeUsdEquiv:  copyDecimal(row.FeeUsdEquiv),
+			Fees:         append([]kraken.ExecutionFee(nil), row.Fees...),
+		}
+	}
+
+	return buffered
+}
+
+func (position *Position) copyHolding() *types.Holding {
+	holding := position.Holding
+
+	if holding == nil {
+		return nil
+	}
+
+	copy := &types.Holding{
+		Status:        holding.Status,
+		Symbol:        holding.Symbol,
+		Asset:         holding.Asset,
+		Qty:           copyDecimal(holding.Qty),
+		SellableQty:   copyDecimal(holding.SellableQty),
+		EntryAt:       copyTime(holding.EntryAt),
+		ExitAt:        copyTime(holding.ExitAt),
+		EntryPrice:    copyDecimal(holding.EntryPrice),
+		EntryFee:      copyDecimal(holding.EntryFee),
+		ExitPrice:     copyDecimal(holding.ExitPrice),
+		ExitFee:       copyDecimal(holding.ExitFee),
+		PnL:           copyDecimal(holding.PnL),
+		Mark:          copyDecimal(holding.Mark),
+		IsOpportunity: holding.IsOpportunity,
+		ReservationID: holding.ReservationID,
+		Stoploss:      copyStoploss(holding.Stoploss),
+	}
+
+	if holding.ReturnPct != nil {
+		returnPct := *holding.ReturnPct
+		copy.ReturnPct = &returnPct
+	}
+
+	return copy
+}
+
+func copyStoploss(stoploss *types.Stoploss) *types.Stoploss {
+	if stoploss == nil {
+		return nil
+	}
+
+	return &types.Stoploss{
+		Status: stoploss.Status,
+		Symbol: stoploss.Symbol,
+		Entry:  copyDecimal(stoploss.Entry),
+		Peak:   copyDecimal(stoploss.Peak),
+		Mark:   copyDecimal(stoploss.Mark),
+		Floor:  copyDecimal(stoploss.Floor),
+	}
+}
+
+func copyDecimal(value *decimal.Decimal) *decimal.Decimal {
+	if value == nil {
+		return nil
+	}
+
+	return value.Copy()
+}
+
+func copyTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+
+	copy := *value
+	return &copy
 }
 
 /*

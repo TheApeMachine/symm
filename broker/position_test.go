@@ -301,6 +301,7 @@ func TestDeskUsesSimulatedPrivateLiveTransport(t *testing.T) {
 			position, err := desk.Buy(market.Symbols[0], decimal.NewFromInt64(1), false)
 			So(err, ShouldBeNil)
 			So(market.Private.Drain(), ShouldBeNil)
+			So(position.ID, ShouldNotEqual, "")
 			So(position.OrderID, ShouldNotEqual, "")
 			So(position.Fills, ShouldHaveLength, 1)
 		})

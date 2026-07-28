@@ -67,7 +67,7 @@ func TestTradeBalanceLifecycle(t *testing.T) {
 			So(holding.PnL, ShouldNotBeNil)
 
 			Convey("After an explicit sell the trade balance returns to a flat account state", func() {
-				So(harness.Wired.Desk.Sell(symbol), ShouldBeNil)
+				So(harness.Wired.Desk.Exit(symbol), ShouldBeNil)
 				So(harness.Market.Paper.Drain(), ShouldBeNil)
 				So(harness.Market.Transition(tests.MarketStateBaseline, func() error {
 					So(harness.Market.Paper.Drain(), ShouldBeNil)

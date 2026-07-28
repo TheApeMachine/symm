@@ -1,9 +1,9 @@
 import { appStore } from "#/collections/app";
+import type { Measurement } from "#/collections/types";
 import {
 	paintTerminalFluidChart,
 	repaintTerminalFluidChart,
 } from "#/components/charts/fluid";
-import { retainManifoldBinary } from "#/providers/manifold-binary";
 import { paintHawkes } from "#/components/charts/hawkes";
 import { paintTerminalManifoldChart } from "#/components/charts/manifold";
 import { paintTerminalPredictionChart } from "#/components/charts/prediction";
@@ -13,9 +13,9 @@ import { paintSignalDetailMeasurements } from "#/components/kernel/detail";
 import {
 	paintAllocationBalances,
 	paintAllocationCausal,
-	paintAllocationPositions,
 	paintAllocationInstruments,
 	paintAllocationManifold,
+	paintAllocationPositions,
 	paintAllocationResonance,
 } from "#/components/terminal/allocation-surface";
 import {
@@ -28,14 +28,12 @@ import { paintCognitiveBeam } from "#/components/terminal/cognitive-beam";
 import { paintCortex } from "#/components/terminal/cortex-surface";
 import { paintCrossSection } from "#/components/terminal/cross-section-panel";
 import {
-	paintDashboardPositions,
 	paintDashboardLifecycle,
+	paintDashboardPositions,
 	paintDecisionRows,
 } from "#/components/terminal/dashboard-rail";
-import {
-	paintCausalLadder,
-	paintDecisionsEntryLine,
-} from "#/components/terminal/decision-side";
+import { paintCausalLadder } from "#/components/terminal/causal-ladder";
+import { paintDecisionsEntryLine } from "#/components/terminal/decisions-entry-line";
 import {
 	paintDecisions,
 	paintDecisionsCausal,
@@ -51,35 +49,20 @@ import {
 import {
 	paintJournalEntries,
 	paintJournalFindings,
-	paintJournalPositions,
 	paintJournalLifecycle,
+	paintJournalPositions,
 } from "#/components/terminal/journal-surface";
 import { paintKernelList } from "#/components/terminal/kernel-list";
-import {
-	paintManifoldMeta,
-	repaintManifoldMeta,
-	paintResonanceFooter,
-	paintResonanceTitle,
-} from "#/components/terminal/live-chart-meta";
-import {
-	paintEngineTick,
-	paintOpenCount,
-	paintPulseTick,
-	paintWalletBalances,
-	paintWalletPositions,
-	paintWalletTradeBalance,
-	paintWalletTick,
-} from "#/components/terminal/live-ticker";
+import { paintManifoldMeta, repaintManifoldMeta } from "#/components/terminal/live-manifold-meta";
 import {
 	paintPaletteInstruments,
 	paintPaletteMeasurements,
 } from "#/components/terminal/palette";
 import {
-	paintPositions,
 	paintPositionStops,
+	paintPositions,
 } from "#/components/terminal/position-gauge";
 import { paintRegimeRadar } from "#/components/terminal/regime-radar";
-import { paintStrategyDecisions } from "#/components/terminal/strategy-decisions";
 import { paintThesis } from "#/components/terminal/thesis-modal";
 import { paintXrayHawkes } from "#/components/terminal/xray-hawkes";
 import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
@@ -89,24 +72,57 @@ import {
 	paintXrayFactsManifold,
 	paintXrayFactsMeasurements,
 	paintXrayFactsResonance,
+} from "#/components/terminal/xray-facts-panel";
+import {
 	paintXrayManifold,
 	paintXrayManifoldMeasurements,
-} from "#/components/terminal/xray-side";
+} from "#/components/terminal/xray-manifold-panel";
 import { FrameHistory } from "#/providers/frame-history";
+import { retainManifoldBinary } from "#/providers/manifold-binary";
 import { paintManifoldWave } from "#/providers/manifold-parts";
-import type { Measurement } from "#/collections/types";
+
+type Paint = (updates: unknown) => void;
+
+const registeredPainters = new Map<string, Set<Paint>>();
+
+export const registerPainter = (key: string, paint: Paint): (() => void) => {
+	const painters = registeredPainters.get(key) ?? new Set<Paint>();
+
+	painters.add(paint);
+	registeredPainters.set(key, painters);
+
+	return () => {
+		painters.delete(paint);
+
+		if (painters.size === 0) {
+			registeredPainters.delete(key);
+		}
+	};
+};
+
+export const paintRegistered = (
+	key: string,
+	updates: unknown,
+): void => {
+	for (const paint of registeredPainters.get(key) ?? []) {
+		paint(updates);
+	}
+};
 
 /*
-Paint is one imperative target for a backend frame and the current UI focus.
+PaintLegacy is one imperative target for a backend frame and the current UI focus.
 */
-type Paint = (value: unknown | Measurement[], focusSymbol: string) => void;
+type PaintLegacy = (
+	value: unknown | Measurement[],
+	focusSymbol: string,
+) => void;
 
 /*
 HistoryPaint marks a target that consumes either full temporal history or one
 latest observation per entity instead of only the current websocket delta.
 */
 type HistoryPaint = {
-	paint: Paint;
+	paint: PaintLegacy;
 	input: "history" | "latest";
 };
 
@@ -115,8 +131,8 @@ Drawer owns the primary delta painter and any secondary painters with explicit
 input semantics.
 */
 type Drawer = {
-	paint: Paint | HistoryPaint;
-	keys?: Record<string, Paint | HistoryPaint>;
+	paint: PaintLegacy | HistoryPaint;
+	keys?: Record<string, PaintLegacy | HistoryPaint>;
 };
 
 /*
@@ -143,7 +159,7 @@ export const drawers = {
 		keys: {
 			hawkes: { paint: paintHawkes, input: "history" },
 			signalDetail: {
-				paint: paintSignalDetailMeasurements as Paint,
+				paint: paintSignalDetailMeasurements as PaintLegacy,
 				input: "latest",
 			},
 			regimeRadar: { paint: paintRegimeRadar, input: "history" },
@@ -167,31 +183,28 @@ export const drawers = {
 			},
 			palette: paintPaletteMeasurements,
 			crossSection: {
-				paint: paintCrossSection as Paint,
+				paint: paintCrossSection as PaintLegacy,
 				input: "latest",
 			},
 		},
 	},
 	tick: {
-		paint: paintPulseTick as Paint,
+		paint: () => {},
 		keys: {
-			open: paintOpenCount as Paint,
-			engine: paintEngineTick as Paint,
-			wallet: paintWalletTick as Paint,
 			health: paintHealthTick,
 		},
 	},
 	balances: {
-		paint: paintWalletBalances as Paint,
+		paint: () => {},
 		keys: {
 			allocation: paintAllocationBalances,
 		},
 	},
 	trade_balance: {
-		paint: paintWalletTradeBalance as Paint,
+		paint: () => {},
 	},
 	positions: {
-		paint: paintWalletPositions as Paint,
+		paint: () => {},
 		keys: {
 			journal: paintJournalPositions,
 			dashboard: paintDashboardPositions,
@@ -215,7 +228,7 @@ export const drawers = {
 		paint: paintJournalEntries,
 	},
 	decisions: {
-		paint: paintStrategyDecisions,
+		paint: () => {},
 		keys: {
 			rows: paintDecisionRows,
 			candidate: paintCandidateDecisions,
@@ -237,8 +250,6 @@ export const drawers = {
 			hierarchy: { paint: paintXrayHierarchy, input: "latest" },
 			prediction: { paint: paintTerminalPredictionChart, input: "history" },
 			chart: { paint: paintTerminalResonanceChart, input: "latest" },
-			footer: { paint: paintResonanceFooter, input: "latest" },
-			title: { paint: paintResonanceTitle, input: "latest" },
 			facts: { paint: paintXrayFactsResonance, input: "latest" },
 			candidate: { paint: paintCandidateResonance, input: "latest" },
 			surface: { paint: paintDecisionsResonance, input: "latest" },
@@ -329,6 +340,8 @@ export const attach = (
 		}
 
 		for (const [name, value] of Object.entries(message.frame)) {
+			paintRegistered(name, value);
+
 			const drawer = drawers[name as keyof typeof drawers] as
 				| Drawer
 				| undefined;

@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	pfluid "github.com/theapemachine/nomagique/physics/fluid"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -164,27 +165,27 @@ func (solver *Solver) appendBatches(
 		batch, err := slot.ingest(candidate)
 
 		if err != nil {
-			failures = append(failures, solver.noteAdvanceFailure(candidate.symbol, err))
-			continue
+			errnie.Error(audit.Record(solver.recorder, "manifold_advance", map[string]any{
+				"symbol": candidate.symbol,
+				"ok":     false,
+				"error":  err.Error(),
+			}))
 		}
 
-		if len(batch.Particles) == 0 {
-			failures = append(failures, solver.noteAdvanceFailure(
-				candidate.symbol,
-				fmt.Errorf("book sample produced no particles"),
-			))
-			continue
-		}
-
-		start, err := solver.domain.Append(batch.Particles, batch.ContentIDs)
+		slot.start, err = solver.domain.Append(batch.Particles, batch.ContentIDs)
 
 		if err != nil {
-			failures = append(failures, solver.noteAdvanceFailure(candidate.symbol, err))
+			errnie.Error(audit.Record(solver.recorder, "manifold_advance", map[string]any{
+				"symbol": candidate.symbol,
+				"ok":     false,
+				"error":  err.Error(),
+			}))
+
 			continue
 		}
 
-		slot.start = start
-		slot.end = start + len(batch.Particles)
+		slot.end = slot.start + len(batch.Particles)
+		
 		if _, exists := solver.symbols[candidate.symbol]; !exists {
 			solver.orderedSymbols = append(solver.orderedSymbols, candidate.symbol)
 			sort.Strings(solver.orderedSymbols)
