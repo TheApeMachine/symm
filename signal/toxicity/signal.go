@@ -82,19 +82,11 @@ advances. The public frame is only the clock and symbol list; the quantities are
 read from the authenticated Level3 BookManager through its read lease.
 */
 func (signal *Signal) onBook(message any) any {
-	rows := signal.Calculate(message.(*kraken.Book).Data)
+	signal.thesis.Measurements.Store(
+		types.SourceToxicity, signal.Calculate(message.(*kraken.Book).Data),
+	)
 
-	if len(rows) == 0 {
-		return types.SignalResult{Source: types.SourceToxicity, Status: types.SignalSkip}
-	}
-
-	signal.thesis.AppendMeasurements(rows)
-	signal.publish(rows)
-	return types.SignalResult{
-		Source:       types.SourceToxicity,
-		Measurements: rows,
-		Status:       types.SignalReady,
-	}
+	return signal.thesis
 }
 
 /*
@@ -119,16 +111,12 @@ func (signal *Signal) onTrade(message any) any {
 	}
 
 	if len(measurements) == 0 {
-		return types.SignalResult{Source: types.SourceToxicity, Status: types.SignalSkip}
+		return signal.thesis
 	}
 
-	signal.thesis.AppendMeasurements(measurements)
-	signal.publish(measurements)
-	return types.SignalResult{
-		Source:       types.SourceToxicity,
-		Measurements: measurements,
-		Status:       types.SignalReady,
-	}
+	signal.thesis.Measurements.Store(types.SourceToxicity, measurements)
+
+	return signal.thesis
 }
 
 /*

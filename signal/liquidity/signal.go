@@ -73,15 +73,14 @@ func (signal *Signal) onTicker(message any) any {
 
 	if err != nil {
 		errnie.Error(err)
-		return types.SignalResult{Source: types.SourceLiquidity, Status: types.SignalSkip}
+		return signal.thesis
 	}
 
 	if len(measurements) > 0 {
-		signal.thesis.AppendMeasurements(measurements)
-		return types.SignalResult{Source: types.SourceLiquidity, Measurements: measurements, Status: types.SignalReady}
+		signal.thesis.Measurements.Store(types.SourceLiquidity, measurements)
 	}
 
-	return types.SignalResult{Source: types.SourceLiquidity, Status: types.SignalSkip}
+	return signal.thesis
 }
 
 func (signal *Signal) Calculate(

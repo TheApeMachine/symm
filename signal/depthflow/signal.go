@@ -96,71 +96,27 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 
 func (signal *Signal) onTicker(message any) any {
 	rows := message.(*kraken.Ticker).Data
-	measurements, err := signal.Calculate(rows, nil, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return types.SignalResult{Source: types.SourceDepthFlow, Status: types.SignalSkip}
-	}
-
-	// Book observations arrive far more often than tickers. Re-wire the last
-	// book batch on ticker cadence so a focused major is not left on STANDBY
-	// when only alt tickers arrive and prior book UI frames were dropped.
-	if retained := signal.bookOut.Load(); retained != nil && len(*retained) > 0 {
-		utils.Publish(signal.ui, datura.NewMap("measurements", *retained))
-	}
-
-	if len(measurements) == 0 {
-		return types.SignalResult{Source: types.SourceDepthFlow, Status: types.SignalSkip}
-	}
-
-	signal.thesis.AppendMeasurements(measurements)
-
-	return types.SignalResult{Source: types.SourceDepthFlow, Measurements: measurements, Status: types.SignalReady}
+	signal.thesis.Measurements.Store(types.SourceDepthFlow, signal.Calculate(rows, nil, nil))
+	return signal.thesis
 }
 
 func (signal *Signal) onBook(message any) any {
 	rows := message.(*kraken.Book).Data
-	measurements, err := signal.Calculate(nil, nil, rows)
-
-	if err != nil {
-		errnie.Error(err)
-		return types.SignalResult{Source: types.SourceDepthFlow, Status: types.SignalSkip}
-	}
-
-	if len(measurements) == 0 {
-		return types.SignalResult{Source: types.SourceDepthFlow, Status: types.SignalSkip}
-	}
-
-	signal.bookOut.Store(&measurements)
-	signal.thesis.AppendMeasurements(measurements)
-
-	return types.SignalResult{Source: types.SourceDepthFlow, Measurements: measurements, Status: types.SignalReady}
+	signal.thesis.Measurements.Store(types.SourceDepthFlow, signal.Calculate(nil, nil, rows))
+	return signal.thesis
 }
 
 func (signal *Signal) onTrade(message any) any {
 	rows := message.(*kraken.Trade).Data
-	measurements, err := signal.Calculate(nil, rows, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return types.SignalResult{Source: types.SourceDepthFlow, Status: types.SignalSkip}
-	}
-
-	if len(measurements) == 0 {
-		return types.SignalResult{Source: types.SourceDepthFlow, Status: types.SignalSkip}
-	}
-
-	signal.thesis.AppendMeasurements(measurements)
-
-	return types.SignalResult{Source: types.SourceDepthFlow, Measurements: measurements, Status: types.SignalReady}
+	signal.thesis.Measurements.Store(types.SourceDepthFlow, signal.Calculate(nil, rows, nil))
+	return signal.thesis
 }
 
 func (signal *Signal) Calculate(
 	tickers []kraken.TickerData,
 	trades []kraken.TradeData,
 	books []kraken.BookData,
-) ([]*types.Measurement, error) {
+) []*types.Measurement {
 	events := depthEvents(books, trades)
 	out, err := types.MeasureEventsParallel(events, func(event types.Event) ([]*types.Measurement, error) {
 		if event.Stream == "book" {
@@ -183,14 +139,15 @@ func (signal *Signal) Calculate(
 	}
 
 	if err != nil {
-		return nil, err
+		errnie.Error(err)
+		return nil
 	}
 
 	if len(uiOut["measurements"].([]*types.Measurement)) > 0 {
 		utils.Publish(signal.ui, uiOut)
 	}
 
-	return out, nil
+	return out
 }
 
 /*

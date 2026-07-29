@@ -2,7 +2,9 @@ package resonance
 
 import (
 	"math"
+	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/audit"
@@ -90,6 +92,7 @@ type Solver struct {
 	maxHorizon      int // Maximum forward prediction horizon (e.g. 20 ticks)
 	learn           bool
 	advanceTemporal bool
+	ui              chan []byte
 }
 
 /*
@@ -97,7 +100,7 @@ NewSolver returns a new predictive coding solver wired to audit recording, dynam
 and dynamic forward prediction rollout.
 Defaults: initial alpha = 0.03, maxHorizon = 20 ticks.
 */
-func NewSolver(recorder *audit.Recorder) *Solver {
+func NewSolver(ui chan []byte, recorder *audit.Recorder) *Solver {
 	initialAlpha := 0.03
 	solver := &Solver{
 		recorder:        recorder,
@@ -106,6 +109,7 @@ func NewSolver(recorder *audit.Recorder) *Solver {
 		maxHorizon:      20, // Can extend up to 20 ticks ahead when confidence is high
 		learn:           true,
 		advanceTemporal: true,
+		ui:              ui,
 	}
 
 	return solver
@@ -178,6 +182,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	// 8. Enrich the shared Thesis with predictive coding outcomes, dynamic alpha, and return curve
 	solver.enrichThesis(thesis, surprise, energy, latent, forwardCurve, activeHorizon, confidence, layers, solver.alpha)
 
+	solver.publish(thesis)
+
 	// 9. Record audit snapshot if recorder is attached
 	if solver.recorder != nil {
 		solver.recorder.Write(map[string]any{
@@ -222,6 +228,58 @@ func (solver *Solver) enrichThesis(
 			"alpha":         alpha,
 		},
 	)
+}
+
+/*
+publish emits one resonance wire frame per observed symbol so the frontend
+can bind data-paint attributes directly to backend outputs.
+*/
+func (solver *Solver) publish(thesis *types.Thesis) {
+	if solver.ui == nil || thesis == nil {
+		return
+	}
+
+	raw, ok := thesis.Resonance.Load("resonance")
+	if !ok {
+		return
+	}
+
+	resMap, ok := raw.(map[string]any)
+	if !ok {
+		return
+	}
+
+	symbols := make([]string, 0)
+	thesis.Measurements.Range(func(key, value any) bool {
+		if m, ok := value.(*types.Measurement); ok && m.Symbol != "" {
+			symbols = append(symbols, m.Symbol)
+		}
+		return true
+	})
+
+	if len(symbols) == 0 {
+		symbols = []string{types.Focus()}
+	}
+
+	rows := make([]datura.Map[any], 0, len(symbols))
+	at := thesis.At.Format(time.RFC3339)
+
+	for _, symbol := range symbols {
+		row := datura.NewMap(
+			"source", "resonance",
+			"symbol", symbol,
+			"at", at,
+		)
+		for k, v := range resMap {
+			row[k] = v
+		}
+		rows = append(rows, row)
+	}
+
+	select {
+	case solver.ui <- datura.NewMap("resonance", rows).MarshalAndFree():
+	default:
+	}
 }
 
 /*

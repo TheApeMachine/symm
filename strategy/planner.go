@@ -65,8 +65,7 @@ func NewPlanner(
 	}
 
 	planner.Actor = types.NewActor(ctx, "planner", map[string]types.Handler{
-		"ticker": {Topic: "thesis", Fn: planner.onThesis},
-		"trade":  {Topic: "thesis", Fn: planner.onThesis},
+		"thesis": {Topic: "thesis", Fn: planner.onThesis},
 	})
 
 	return planner
@@ -77,8 +76,7 @@ func (p *Planner) Initialize(analyzer *logic.Analyzer) error {
 
 	p.Actor.InitializeSize(
 		1,
-		types.Topic{Name: "ticker", Actor: analyzer.Actor},
-		types.Topic{Name: "trade", Actor: analyzer.Actor},
+		types.Topic{Name: "thesis", Actor: analyzer.Actor},
 	)
 
 	p.status = types.READY

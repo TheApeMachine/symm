@@ -590,6 +590,28 @@ func (desk *Desk) Balance() *Balance {
 }
 
 /*
+Price returns the composed Price owner.
+*/
+func (desk *Desk) Price() *Price {
+	if desk == nil {
+		return nil
+	}
+
+	return desk.price
+}
+
+/*
+Instrument returns the composed Instrument owner.
+*/
+func (desk *Desk) Instrument() *Instrument {
+	if desk == nil {
+		return nil
+	}
+
+	return desk.instrument
+}
+
+/*
 Close is retained for boot shutdown symmetry.
 */
 func (desk *Desk) Close() error {

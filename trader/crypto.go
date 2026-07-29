@@ -67,8 +67,7 @@ func NewCrypto(
 	}
 
 	crypto.Actor = types.NewActor(ctx, "crypto", map[string]types.Handler{
-		"ticker": {Topic: "ticker", Fn: crypto.thesis},
-		"trade":  {Topic: "trade", Fn: crypto.thesis},
+		"thesis": {Topic: "thesis", Fn: crypto.thesis},
 	})
 
 	return crypto, nil
@@ -81,8 +80,7 @@ func (crypto *Crypto) Initialize(
 
 	crypto.Actor.InitializeSize(
 		1,
-		types.Topic{Name: "ticker", Actor: planner.Actor},
-		types.Topic{Name: "trade", Actor: planner.Actor},
+		types.Topic{Name: "thesis", Actor: planner.Actor},
 	)
 
 	crypto.status = types.READY
@@ -170,13 +168,17 @@ func (crypto *Crypto) Apply(thesis *types.Thesis) {
 }
 
 /*
-publish forwards the engine tick plus decisions, lifecycle, and findings so the
-terminal pulse and rails leave their waiting states as soon as a cut completes.
+publish forwards the engine tick plus decisions, lifecycle, findings, and
+enriched logic outputs so the terminal pulse and rails leave their waiting
+states as soon as a cut completes.
 */
 func (crypto *Crypto) publish(thesis *types.Thesis, elapsed time.Duration) {
 	if crypto.uiHub == nil || thesis == nil {
 		return
 	}
+
+	price := crypto.desk.Price()
+	instrument := crypto.desk.Instrument()
 
 	crypto.uiHub.Publish(datura.NewMap(
 		"tick", datura.NewMap(
@@ -187,6 +189,18 @@ func (crypto *Crypto) publish(thesis *types.Thesis, elapsed time.Duration) {
 			"ns", elapsed.Nanoseconds(),
 			"completed", true,
 			"phase", "complete",
+			"quotes_ready", func() int {
+				if price != nil {
+					return price.QuoteReady()
+				}
+				return 0
+			}(),
+			"quotes_total", func() int {
+				if instrument != nil {
+					return instrument.QuoteTotal()
+				}
+				return 0
+			}(),
 		),
 	).MarshalAndFree())
 

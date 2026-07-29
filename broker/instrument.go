@@ -137,6 +137,17 @@ func (instrument *Instrument) Status() types.Status {
 }
 
 /*
+QuoteTotal returns the subscribed symbol count.
+*/
+func (instrument *Instrument) QuoteTotal() int {
+	if instrument == nil {
+		return 0
+	}
+
+	return len(instrument.symbols)
+}
+
+/*
 Pairs returns deep-copied instrument snapshots sorted by symbol.
 */
 func (instrument *Instrument) Pairs() []kraken.InstrumentPair {

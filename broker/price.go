@@ -88,6 +88,20 @@ func (price *Price) Status() types.Status {
 }
 
 /*
+QuoteReady returns how many symbols have received at least one ticker.
+*/
+func (price *Price) QuoteReady() int {
+	if price == nil {
+		return 0
+	}
+
+	price.mu.RLock()
+	defer price.mu.RUnlock()
+
+	return len(price.tickers)
+}
+
+/*
 Last returns the cached last trade price for symbol.
 */
 func (price *Price) Last(symbol string) (*decimal.Decimal, error) {

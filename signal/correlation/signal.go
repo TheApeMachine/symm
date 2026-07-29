@@ -67,34 +67,27 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 
 func (signal *Signal) onTicker(message any) any {
 	rows := message.(*kraken.Ticker).Data
-	measurements, err := signal.Calculate(rows, nil, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return types.SignalResult{Source: types.SourceCorrelation, Status: types.SignalSkip}
-	}
-
-	if len(measurements) > 0 {
-		signal.thesis.AppendMeasurements(measurements)
-		return types.SignalResult{Source: types.SourceCorrelation, Measurements: measurements, Status: types.SignalReady}
-	}
-
-	return types.SignalResult{Source: types.SourceCorrelation, Status: types.SignalSkip}
+	signal.thesis.Measurements.Store(types.SourceCorrelation, signal.Calculate(rows, nil, nil))
+	return signal.thesis
 }
 
 func (signal *Signal) Calculate(
 	tickers []kraken.TickerData,
 	trades []kraken.TradeData,
 	books []kraken.BookData,
-) ([]*types.Measurement, error) {
+) []*types.Measurement {
 	if len(tickers) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	scoresBySymbol, err := signal.section.Measure(tickers)
 
 	if err != nil || len(scoresBySymbol) == 0 {
-		return nil, err
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, "correlation: failed to measure tickers", err,
+		))
+		
+		return nil
 	}
 
 	latestAtBySymbol := make(map[string]time.Time, len(tickers))
@@ -148,7 +141,7 @@ func (signal *Signal) Calculate(
 		utils.Publish(signal.ui, uiOut)
 	}
 
-	return out, nil
+	return out
 }
 
 /*

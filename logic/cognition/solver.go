@@ -5,7 +5,9 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
@@ -48,6 +50,7 @@ type Solver struct {
 	maxSeqLen      int
 	surprisalLimit float64
 	tickCounter    uint64
+	ui             chan []byte
 
 	// Reusable zero-allocation scratch buffers
 	classScratch dmt.ClassificationScratch
@@ -57,7 +60,7 @@ type Solver struct {
 /*
 NewSolver returns a new cognition solver bound to a radix tree and audit recorder.
 */
-func NewSolver(tree *dmt.Tree, recorder *audit.Recorder, opts ...Option) *Solver {
+func NewSolver(tree *dmt.Tree, ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver {
 	if tree == nil {
 		var err error
 		tree, err = dmt.NewTree("")
@@ -72,6 +75,7 @@ func NewSolver(tree *dmt.Tree, recorder *audit.Recorder, opts ...Option) *Solver
 		sequences:      make(map[string][]string),
 		maxSeqLen:      6,   // Max 6 category transitions per sequence window
 		surprisalLimit: 3.5, // > 3.5 bits surprisal (P < 8.8%) indicates a regime break
+		ui:             ui,
 		beamScratch: dmt.BeamSearchScratch{
 			CurrentBeams: make([]dmt.BeamPath, 0, 4),
 			NextBeams:    make([]dmt.BeamPath, 0, 4),
@@ -188,6 +192,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 	}
 
+	solver.publish(thesis)
+
 	// 10. Periodic REM Sleep Consolidation (every 128 ticks)
 	if solver.tickCounter%128 == 0 && nowUnix > 60e9 {
 		startWindow := nowUnix - 60e9 // 1 minute window
@@ -274,6 +280,48 @@ func (solver *Solver) formatLookaheadPredictions(paths []dmt.BeamPath, currentPr
 	}
 
 	return predictions
+}
+
+/*
+publish emits one cognition wire frame per symbol observed on this tick.
+*/
+func (solver *Solver) publish(thesis *types.Thesis) {
+	if solver.ui == nil || thesis == nil {
+		return
+	}
+
+	rows := make([]datura.Map[any], 0)
+	at := thesis.At.Format(time.RFC3339)
+
+	thesis.Cognition.Range(func(key, value any) bool {
+		symbol, ok := key.(string)
+		if !ok || value == nil {
+			return true
+		}
+
+		cogMap, ok := value.(map[string]any)
+		if !ok {
+			return true
+		}
+
+		row := datura.NewMap(
+			"source", "cognition",
+			"symbol", symbol,
+			"at", at,
+		)
+		for k, v := range cogMap {
+			row[k] = v
+		}
+		rows = append(rows, row)
+		return true
+	})
+
+	if len(rows) > 0 {
+		select {
+		case solver.ui <- datura.NewMap("cognition", rows).MarshalAndFree():
+		default:
+		}
+	}
 }
 
 /*

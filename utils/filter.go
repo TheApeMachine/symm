@@ -3,7 +3,7 @@ package utils
 import "github.com/theapemachine/symm/types"
 
 func Measurements(thesis *types.Thesis, source types.SourceType) []*types.Measurement {
-	found, ok := thesis.Measurements.Load(types.SourceHawkes)
+	found, ok := thesis.Measurements.Load(source)
 
 	if !ok || found == nil {
 		return nil

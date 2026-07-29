@@ -2,6 +2,7 @@ package manifold
 
 import (
 	"sync"
+	"time"
 
 	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/spf13/viper"
@@ -12,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/signal/compute"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
+	"github.com/bytedance/sonic"
 )
 
 /*
@@ -59,6 +61,8 @@ func NewSolver(ui, binui chan []byte, recorder *audit.Recorder) *Solver {
 		domain:    domain,
 		recorder:  recorder,
 		tokenizer: NewTokenizer(config, nil),
+		ui:        ui,
+		binui:     binui,
 	}
 }
 
@@ -104,16 +108,13 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		solver.domain.Append(particles, contentIDs)
-		errnie.Error(solver.Step())
+		errnie.Error(solver.Step(bookName, thesis.At))
 	}
 
 	return nil
 }
 
-func (solver *Solver) Step() error {
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
-
+func (solver *Solver) Step(symbol string, at time.Time) error {
 	diagnostics, err := solver.domain.Advance()
 
 	if err != nil {
@@ -138,18 +139,31 @@ func (solver *Solver) Step() error {
 		))
 	}
 
-	if solver.ui != nil {
+	if solver.binui != nil {
 		select {
 		case solver.binui <- frame:
 		default:
 		}
 	}
 
-	if solver.binui != nil {
+	if solver.ui != nil {
+		row := datura.NewMap(
+			"source", "manifold",
+			"symbol", symbol,
+			"at", at.Format(time.RFC3339),
+		)
+
+		if statsBytes, err := sonic.Marshal(stats); err == nil {
+			var statsMap map[string]any
+			if err := sonic.Unmarshal(statsBytes, &statsMap); err == nil {
+				for k, v := range statsMap {
+					row[k] = v
+				}
+			}
+		}
+
 		select {
-		case solver.ui <- datura.Map[any]{
-			"stats": stats,
-		}.Marshal():
+		case solver.ui <- datura.NewMap("manifold", []datura.Map[any]{row}).MarshalAndFree():
 		default:
 		}
 	}

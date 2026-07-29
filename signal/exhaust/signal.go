@@ -76,63 +76,27 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 
 func (signal *Signal) onTicker(message any) any {
 	rows := message.(*kraken.Ticker).Data
-	measurements, err := signal.Calculate(rows, nil, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return types.SignalResult{Source: types.SourceExhaustion, Status: types.SignalSkip}
-	}
-
-	if len(measurements) == 0 {
-		return types.SignalResult{Source: types.SourceExhaustion, Status: types.SignalSkip}
-	}
-
-	signal.thesis.AppendMeasurements(measurements)
-
-	return types.SignalResult{Source: types.SourceExhaustion, Measurements: measurements, Status: types.SignalReady}
+	signal.thesis.Measurements.Store(types.SourceExhaustion, signal.Calculate(rows, nil, nil))
+	return signal.thesis
 }
 
 func (signal *Signal) onBook(message any) any {
 	rows := message.(*kraken.Book).Data
-	measurements, err := signal.Calculate(nil, nil, rows)
-
-	if err != nil {
-		errnie.Error(err)
-		return types.SignalResult{Source: types.SourceExhaustion, Status: types.SignalSkip}
-	}
-
-	if len(measurements) == 0 {
-		return types.SignalResult{Source: types.SourceExhaustion, Status: types.SignalSkip}
-	}
-
-	signal.thesis.AppendMeasurements(measurements)
-
-	return types.SignalResult{Source: types.SourceExhaustion, Measurements: measurements, Status: types.SignalReady}
+	signal.thesis.Measurements.Store(types.SourceExhaustion, signal.Calculate(nil, nil, rows))
+	return signal.thesis
 }
 
 func (signal *Signal) onTrade(message any) any {
 	rows := message.(*kraken.Trade).Data
-	measurements, err := signal.Calculate(nil, rows, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return types.SignalResult{Source: types.SourceExhaustion, Status: types.SignalSkip}
-	}
-
-	if len(measurements) == 0 {
-		return types.SignalResult{Source: types.SourceExhaustion, Status: types.SignalSkip}
-	}
-
-	signal.thesis.AppendMeasurements(measurements)
-
-	return types.SignalResult{Source: types.SourceExhaustion, Measurements: measurements, Status: types.SignalReady}
+	signal.thesis.Measurements.Store(types.SourceExhaustion, signal.Calculate(nil, rows, nil))
+	return signal.thesis
 }
 
 func (signal *Signal) Calculate(
 	tickers []kraken.TickerData,
 	trades []kraken.TradeData,
 	books []kraken.BookData,
-) ([]*types.Measurement, error) {
+) []*types.Measurement {
 	events := exhaustEvents(books, trades)
 	out, err := types.MeasureEventsParallel(events, func(event types.Event) ([]*types.Measurement, error) {
 		if event.Stream == "book" {
@@ -143,7 +107,8 @@ func (signal *Signal) Calculate(
 	})
 
 	if err != nil {
-		return nil, err
+		errnie.Error(errnie.Err(errnie.UnprocessableContent, "exhaust: failed to measure events", err))
+		return nil
 	}
 
 	var focusMeasurements []*types.Measurement
@@ -158,7 +123,7 @@ func (signal *Signal) Calculate(
 		utils.Publish(signal.ui, datura.NewMap("measurements", focusMeasurements))
 	}
 
-	return out, nil
+	return out
 }
 
 /*

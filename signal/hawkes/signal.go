@@ -87,42 +87,14 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 
 func (signal *Signal) onTicker(message any) any {
 	rows := message.(*kraken.Ticker).Data
-	measurements, err := signal.Calculate(rows, nil, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	if len(measurements) > 0 {
-		signal.thesis.AppendMeasurements(measurements)
-	}
-
-	// Tickers do not feed arrivals today, but they are the market pulse. Without
-	// a cut here the cascade only advances on trades and starves on thin books.
-	if len(signal.Symbols()) == 0 {
-		return nil
-	}
-
-	return signal.cut()
+	signal.thesis.Measurements.Store(types.SourceHawkes, signal.Calculate(rows, nil, nil))
+	return signal.thesis
 }
 
 func (signal *Signal) onTrade(message any) any {
 	rows := message.(*kraken.Trade).Data
-	measurements, err := signal.Calculate(nil, rows, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
-	if len(measurements) == 0 {
-		return nil
-	}
-
-	signal.thesis.AppendMeasurements(measurements)
-
-	return signal.cut()
+	signal.thesis.Measurements.Store(types.SourceHawkes, signal.Calculate(nil, rows, nil))
+	return signal.thesis
 }
 
 /*
@@ -160,7 +132,7 @@ func (signal *Signal) Calculate(
 	_ []kraken.TickerData,
 	trades []kraken.TradeData,
 	_ []kraken.BookData,
-) ([]*types.Measurement, error) {
+) []*types.Measurement {
 	out := make([]*types.Measurement, 0, len(trades))
 	uiOut := datura.NewMap(
 		"measurements", make([]*types.Measurement, 0),
@@ -173,7 +145,8 @@ func (signal *Signal) Calculate(
 		measurements, err := signal.measure(row)
 
 		if err != nil {
-			return nil, err
+			errnie.Error(err)
+			return nil
 		}
 
 		out = append(out, measurements...)
@@ -189,7 +162,7 @@ func (signal *Signal) Calculate(
 		utils.Publish(signal.ui, uiOut)
 	}
 
-	return out, nil
+	return out
 }
 
 /*

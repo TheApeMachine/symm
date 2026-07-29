@@ -458,13 +458,11 @@ func (booter *Booter) boot(
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
 
-	// Wire every signal to the Analyzer. Hawkes drives the manifold through
-	// ticker/trade at depth one; all other signals publish SignalResult to
-	// their "thesis" topic which the Analyzer's "thesis" handler processes
-	// for category composition, cognition, and UI publish.
+	// Wire every signal to the Analyzer through the shared thesis topic. Signals
+	// mutate the shared Thesis in their on-handlers and return that Thesis; the
+	// analyzer then enriches the same object further downstream.
 	signalTopics := []types.Topic{
-		{Name: "ticker", Actor: hawkesSignal.Actor},
-		{Name: "trade", Actor: hawkesSignal.Actor},
+		{Name: "thesis", Actor: hawkesSignal.Actor},
 		{Name: "thesis", Actor: pumpdumpSignal.Actor},
 		{Name: "thesis", Actor: liquiditySignal.Actor},
 		{Name: "thesis", Actor: toxicitySignal.Actor},

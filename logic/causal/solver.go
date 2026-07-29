@@ -3,7 +3,9 @@ package causal
 import (
 	"math"
 	"sync"
+	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/causal"
@@ -35,6 +37,7 @@ type Solver struct {
 	pearls   map[string]*algorithm.Pearl
 	regimes  map[string]*causal.Regime
 	config   algorithm.PearlConfig
+	ui       chan []byte
 }
 
 /*
@@ -45,7 +48,7 @@ Default layout (4-column row):
   - Col 2: Treatment (Resonance Task Prediction / Expected Return)
   - Col 3: Target (Realized Price Return)
 */
-func NewSolver(recorder *audit.Recorder, opts ...Option) *Solver {
+func NewSolver(ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver {
 	defaultConfig := algorithm.PearlConfig{
 		Target:                  3,
 		Treatment:               2,
@@ -62,6 +65,7 @@ func NewSolver(recorder *audit.Recorder, opts ...Option) *Solver {
 		pearls:   make(map[string]*algorithm.Pearl),
 		regimes:  make(map[string]*causal.Regime),
 		config:   defaultConfig,
+		ui:       ui,
 	}
 
 	for _, opt := range opts {
@@ -138,6 +142,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 	}
 
+	solver.publish(thesis)
+
 	return nil
 }
 
@@ -172,8 +178,9 @@ func (solver *Solver) buildCausalRow(
 	var realizedReturn float64
 	measurementCount := 0
 
-	thesis.EachMeasurement(func(m *types.Measurement) bool {
-		if m != nil && (m.Symbol == symbol || symbol == "default") {
+	thesis.Measurements.Range(func(key, value any) bool {
+		m, ok := value.(*types.Measurement)
+		if ok && m != nil && (m.Symbol == symbol || symbol == "default") {
 			for _, metric := range m.Metrics {
 				realizedReturn += metric.Raw
 				measurementCount++
@@ -217,10 +224,13 @@ extractSymbols finds all distinct symbols in Thesis measurements.
 */
 func (solver *Solver) extractSymbols(thesis *types.Thesis) []string {
 	seen := make(map[string]struct{})
-	thesis.EachMeasurement(func(m *types.Measurement) bool {
-		if m != nil && m.Symbol != "" {
+	thesis.Measurements.Range(func(key, value any) bool {
+		m, ok := value.(*types.Measurement)
+
+		if ok && m != nil && m.Symbol != "" {
 			seen[m.Symbol] = struct{}{}
 		}
+
 		return true
 	})
 
@@ -229,6 +239,48 @@ func (solver *Solver) extractSymbols(thesis *types.Thesis) []string {
 		symbols = append(symbols, s)
 	}
 	return symbols
+}
+
+/*
+publish emits one causal wire frame per symbol observed on this tick.
+*/
+func (solver *Solver) publish(thesis *types.Thesis) {
+	if solver.ui == nil || thesis == nil {
+		return
+	}
+
+	rows := make([]datura.Map[any], 0)
+	at := thesis.At.Format(time.RFC3339)
+
+	thesis.Causal.Range(func(key, value any) bool {
+		symbol, ok := key.(string)
+		if !ok || value == nil {
+			return true
+		}
+
+		causalMap, ok := value.(map[string]any)
+		if !ok {
+			return true
+		}
+
+		row := datura.NewMap(
+			"source", "causal",
+			"symbol", symbol,
+			"at", at,
+		)
+		for k, v := range causalMap {
+			row[k] = v
+		}
+		rows = append(rows, row)
+		return true
+	})
+
+	if len(rows) > 0 {
+		select {
+		case solver.ui <- datura.NewMap("causal", rows).MarshalAndFree():
+		default:
+		}
+	}
 }
 
 /*

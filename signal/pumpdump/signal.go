@@ -89,69 +89,30 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 
 func (signal *Signal) onTicker(message any) any {
 	rows := message.(*kraken.Ticker).Data
-	measurements, err := signal.Calculate(rows, nil, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return types.SignalResult{Source: types.SourcePumpDump, Status: types.SignalSkip}
-	}
-
-	if len(measurements) == 0 {
-		return types.SignalResult{Source: types.SourcePumpDump, Status: types.SignalSkip}
-	}
-
-	signal.thesis.AppendMeasurements(measurements)
-
-	return types.SignalResult{Source: types.SourcePumpDump, Measurements: measurements, Status: types.SignalReady}
+	signal.thesis.Measurements.Store(types.SourcePumpDump, signal.Calculate(rows, nil, nil))
+	return signal.thesis
 }
 
 func (signal *Signal) onBook(message any) any {
 	rows := message.(*kraken.Book).Data
-	measurements, err := signal.Calculate(nil, nil, rows)
-
-	if err != nil {
-		errnie.Error(err)
-		return types.SignalResult{Source: types.SourcePumpDump, Status: types.SignalSkip}
-	}
-
-	if len(measurements) == 0 {
-		return types.SignalResult{Source: types.SourcePumpDump, Status: types.SignalSkip}
-	}
-
-	signal.thesis.AppendMeasurements(measurements)
-
-	return types.SignalResult{Source: types.SourcePumpDump, Measurements: measurements, Status: types.SignalReady}
+	signal.thesis.Measurements.Store(types.SourcePumpDump, signal.Calculate(nil, nil, rows))
+	return signal.thesis
 }
 
 func (signal *Signal) onTrade(message any) any {
 	rows := message.(*kraken.Trade).Data
-	measurements, err := signal.Calculate(nil, rows, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return types.SignalResult{Source: types.SourcePumpDump, Status: types.SignalSkip}
-	}
-
-	if len(measurements) == 0 {
-		return types.SignalResult{Source: types.SourcePumpDump, Status: types.SignalSkip}
-	}
-
-	signal.thesis.AppendMeasurements(measurements)
-
-	return types.SignalResult{Source: types.SourcePumpDump, Measurements: measurements, Status: types.SignalReady}
+	signal.thesis.Measurements.Store(types.SourcePumpDump, signal.Calculate(nil, rows, nil))
+	return signal.thesis
 }
 
 func (signal *Signal) Calculate(
 	tickers []kraken.TickerData,
 	trades []kraken.TradeData,
 	books []kraken.BookData,
-) ([]*types.Measurement, error) {
+) []*types.Measurement {
 	if len(tickers) == 0 {
-		if err := signal.ingest(trades, books); err != nil {
-			return nil, err
-		}
-
-		return nil, nil
+		signal.ingest(trades, books)
+		return nil
 	}
 
 	sort.SliceStable(tickers, func(left, right int) bool {
@@ -177,17 +138,13 @@ func (signal *Signal) Calculate(
 
 	for _, row := range tickers {
 		for tradeIndex < len(trades) && !trades[tradeIndex].Timestamp.After(row.Timestamp) {
-			if err := signal.ingest(trades[tradeIndex:tradeIndex+1], nil); err != nil {
-				return nil, err
-			}
+			signal.ingest(trades[tradeIndex:tradeIndex+1], nil)
 
 			tradeIndex++
 		}
 
 		for bookIndex < len(books) && !books[bookIndex].Timestamp.After(row.Timestamp) {
-			if err := signal.ingest(nil, books[bookIndex:bookIndex+1]); err != nil {
-				return nil, err
-			}
+			signal.ingest(nil, books[bookIndex:bookIndex+1])
 
 			bookIndex++
 		}
@@ -195,7 +152,10 @@ func (signal *Signal) Calculate(
 		measurements, err := signal.measure(row)
 
 		if err != nil {
-			return nil, err
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, "pumpdump: failed to measure tickers", err,
+			))
+			return nil
 		}
 
 		if row.Symbol != "" {
@@ -215,15 +175,13 @@ func (signal *Signal) Calculate(
 		}
 	}
 
-	if err := signal.ingest(trades[tradeIndex:], books[bookIndex:]); err != nil {
-		return nil, err
-	}
+	signal.ingest(trades[tradeIndex:], books[bookIndex:])
 
 	if len(uiOut["measurements"].([]*types.Measurement)) > 0 {
 		utils.Publish(signal.ui, uiOut)
 	}
 
-	return out, nil
+	return out
 }
 
 /*

@@ -181,8 +181,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 extractMeasurementNodes registers raw signal measurements as nodes.
 */
 func (solver *Solver) extractMeasurementNodes(thesis *types.Thesis, graph *Graph) {
-	thesis.EachMeasurement(func(m *types.Measurement) bool {
-		if m == nil {
+	thesis.Measurements.Range(func(key, value any) bool {
+		m, ok := value.(*types.Measurement)
+
+		if m == nil || !ok || m.Symbol == "" {
 			return true
 		}
 
