@@ -20,6 +20,10 @@ system:
       # and burst limits; telemetry-driven or adaptive sizing is the upgrade path.
       buffer: 4096
 
+resonance:
+  learning_rate: 0.01
+  layers: 10
+
 cognitive:
   # Keep the DMT radix tree fully in process. Empty persist_dir / in_memory
   # skips the WAL so TrainSensorySequence and episodic commits do not hit disk.

@@ -131,18 +131,20 @@ func (solver *Solver) Step() error {
 /*
 Close releases the one resident domain and all accumulated observations.
 */
-func (solver *Solver) Close() {
+func (solver *Solver) Close() error {
 	if solver == nil {
-		return
+		return nil
 	}
 
 	solver.mu.Lock()
 	defer solver.mu.Unlock()
 
 	if solver.domain == nil {
-		return
+		return nil
 	}
 
 	errnie.Error(solver.domain.Close())
 	solver.domain = nil
+
+	return nil
 }
