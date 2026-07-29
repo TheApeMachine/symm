@@ -323,9 +323,7 @@ func (booter *Booter) boot(
 
 	analyzer, err := logic.NewAnalyzer(
 		booter.ctx,
-		booter.stages,
 		api,
-		hawkesSignal,
 		tree,
 		booter.channel,
 		recorder,
@@ -445,9 +443,6 @@ func (booter *Booter) boot(
 	if err := instruments.Initialize(booter.ctx, booter.channel); err != nil {
 		return nil, errors.Join(errnie.Error(err), wired.Close())
 	}
-
-	// Set the shared thesis pointer so onSignal can snapshot measurements.
-	analyzer.SetThesis(thesis)
 
 	// Wire every signal to the Analyzer. Hawkes drives the manifold through
 	// ticker/trade at depth one; all other signals publish SignalResult to
