@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 )
 
 const (
@@ -41,6 +43,7 @@ type Thesis struct {
 	At            time.Time             `json:"at"`
 	CrossSection  *CrossSection         `json:"crossSection"`
 	Measurements  *sync.Map             `json:"-"`
+	BookManager   *spot.BookManager     `json:"-"`
 	Books         *sync.Map             `json:"-"`
 	Graphs        *sync.Map             `json:"-"`
 	Forecasts     []Forecasts           `json:"forecasts"`

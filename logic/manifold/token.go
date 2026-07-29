@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
+	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
 	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 )
 
@@ -21,16 +22,6 @@ const (
 	// symbolIndexMask leaves the LSB free for bid/ask inside the low 24 bits.
 	symbolIndexMask uint32 = 0x7fffff
 )
-
-/*
-restingOrder is the tokenize input retained after the book lease.
-*/
-type restingOrder struct {
-	side     book.BookDirection
-	price    float64
-	quantity float64
-	at       time.Time
-}
 
 /*
 tokenKey is one compressor identity inside a book sample. Content packs
@@ -73,55 +64,13 @@ type Batch struct {
 }
 
 /*
-packContent encodes (sequence << 24) | (symbolIndex << 1) | sideBit.
-*/
-func packContent(
-	sequence int,
-	symbolIndex uint32,
-	side book.BookDirection,
-) uint32 {
-	sideBit := uint32(0)
-
-	if side == book.Ask {
-		sideBit = 1
-	}
-
-	return (uint32(sequence) << 24) |
-		((symbolIndex & symbolIndexMask) << 1) |
-		sideBit
-}
-
-/*
-universeIndex returns the alphabetical index of symbol in names. names must
-already be sorted.
-*/
-func universeIndex(names []string, symbol string) (uint32, bool) {
-	index := sort.SearchStrings(names, symbol)
-
-	if index == len(names) || names[index] != symbol {
-		return 0, false
-	}
-
-	return uint32(index), true
-}
-
-/*
-sortedUniverse copies and sorts symbol names into a stable index basis.
-*/
-func sortedUniverse(names []string) []string {
-	universe := append([]string(nil), names...)
-	sort.Strings(universe)
-	return universe
-}
-
-/*
-MakeBatch converts one book's resting orders into an appendable particle batch.
+NewBatch converts one book's resting orders into an appendable particle batch.
 Each order is placed by relative log price (X), log size (Y), and empirical
 age rank (Z) over this sample — one book tick, one geometric step into the
 shared field. Content is (sequence<<24)|(symbolIndex<<1)|side for merge.
 */
-func (tokenizer Tokenizer) MakeBatch(
-	orders []restingOrder,
+func (tokenizer Tokenizer) NewBatch(
+	orders []*mgrbook.Order,
 	midPrice float64,
 	buyIntensity float64,
 	sellIntensity float64,
@@ -151,7 +100,7 @@ func (tokenizer Tokenizer) MakeBatch(
 	order := make([]tokenKey, 0, len(orders))
 
 	for sequence, resting := range orders {
-		content := packContent(sequence, symbolIndex, resting.side)
+		content := packContent(sequence, symbolIndex, resting)
 
 		if _, seen := counts[content]; !seen {
 			order = append(order, tokenKey{
@@ -209,6 +158,48 @@ func (tokenizer Tokenizer) MakeBatch(
 	}
 
 	return batch
+}
+
+/*
+packContent encodes (sequence << 24) | (symbolIndex << 1) | sideBit.
+*/
+func packContent(
+	sequence int,
+	symbolIndex uint32,
+	side book.BookDirection,
+) uint32 {
+	sideBit := uint32(0)
+
+	if side == book.Ask {
+		sideBit = 1
+	}
+
+	return (uint32(sequence) << 24) |
+		((symbolIndex & symbolIndexMask) << 1) |
+		sideBit
+}
+
+/*
+universeIndex returns the alphabetical index of symbol in names. names must
+already be sorted.
+*/
+func universeIndex(names []string, symbol string) (uint32, bool) {
+	index := sort.SearchStrings(names, symbol)
+
+	if index == len(names) || names[index] != symbol {
+		return 0, false
+	}
+
+	return uint32(index), true
+}
+
+/*
+sortedUniverse copies and sorts symbol names into a stable index basis.
+*/
+func sortedUniverse(names []string) []string {
+	universe := append([]string(nil), names...)
+	sort.Strings(universe)
+	return universe
 }
 
 /*

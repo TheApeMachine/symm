@@ -442,13 +442,41 @@ func (analyzer *Analyzer) Update(thesis *types.Thesis) {
 }
 
 /*
+Publish keeps the external analyzer UI publish entrypoint while delegating to
+the internal non-blocking JSON frame sender.
+*/
+func (analyzer *Analyzer) Publish(frame datura.Map[any]) {
+	analyzer.publish(frame)
+}
+
+/*
+publish enqueues one JSON UI frame without blocking analysis so hot-path logic
+can shed UI load instead of stalling market processing.
+*/
+func (analyzer *Analyzer) publish(frame datura.Map[any]) {
+	select {
+	case analyzer.ui <- frame.Marshal():
+	default:
+		errnie.Error(errnie.Err(
+			errnie.TooManyRequests,
+			"logic analyzer: ui channel saturated; dropped frame",
+			nil,
+		))
+	}
+}
+
+/*
 publishBytes enqueues one already encoded UI frame without blocking analysis.
 Binary manifold textures use this path so they follow the same saturation
 contract as JSON frames.
 */
-func (analyzer *Analyzer) Publish(frame datura.Map[any]) {
+func (analyzer *Analyzer) publishBytes(frame []byte) {
+	if len(frame) == 0 {
+		return
+	}
+
 	select {
-	case analyzer.ui <- frame.Marshal():
+	case analyzer.ui <- frame:
 	default:
 		errnie.Error(errnie.Err(
 			errnie.TooManyRequests,

@@ -73,6 +73,26 @@ type State struct {
 }
 
 /*
+WireField is the compact JSON manifold summary that stays on the primary DRAW
+lane while the GPU image itself travels on the binary side-channel.
+*/
+type WireField = State
+
+/*
+WireWave carries only the symbol-scoped wave modes needed by the phase dial so
+the main manifold summary does not have to repeat the full baked RGBA texture.
+*/
+type WireWave struct {
+	Source string             `json:"source"`
+	Symbol string             `json:"symbol"`
+	At     time.Time          `json:"at"`
+	Wave   []pfluid.WaveMode  `json:"wave,omitempty"`
+	Ready  bool               `json:"ready,omitempty"`
+	Reason string             `json:"reason,omitempty"`
+	Scan   []PhaseResponse    `json:"phaseScan,omitempty"`
+}
+
+/*
 view constructs the symbol-local market metadata around a shared physical
 reading. Touch notionals use exact Kraken decimals for sizing contracts.
 appended is true when this tick ingested a new book/Hawkes sample; otherwise
@@ -228,4 +248,40 @@ func (state State) Summary() State {
 	state.PhaseScan = nil
 
 	return state
+}
+
+/*
+WirePackets splits one manifold state into the primary JSON summary, an
+optional SMF1 binary display frame, and the symbol-scoped wave packet the
+frontend retains separately for the phase dial.
+*/
+func (state State) WirePackets() (WireField, [][]byte, WireWave) {
+	field := state.Summary()
+	wave := WireWave{
+		Source: state.Source,
+		Symbol: state.Symbol,
+		At:     state.At,
+		Wave:   state.Wave,
+		Ready:  state.PhaseReady,
+		Reason: state.PhaseReason,
+		Scan:   state.PhaseScan,
+	}
+
+	if len(state.Display) == 0 || state.DisplayWidth < 1 || state.DisplayHeight < 1 {
+		return field, nil, wave
+	}
+
+	payload, ok := EncodeDisplay(
+		state.Symbol,
+		state.At,
+		state.DisplayWidth,
+		state.DisplayHeight,
+		state.Display,
+	)
+
+	if !ok {
+		return field, nil, wave
+	}
+
+	return field, [][]byte{payload}, wave
 }

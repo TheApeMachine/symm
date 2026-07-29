@@ -1,44 +1,17 @@
 package manifold
 
 import (
-	"errors"
-	"fmt"
 	"sync"
-	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/algorithm/excitation"
 	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/signal/compute"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
-
-/*
-HawkesSource exposes the latest empirical arrival process for every symbol.
-*/
-type HawkesSource interface {
-	Symbols() []string
-	Outcome(symbol string) (excitation.Outcome, bool)
-}
-
-/*
-intensityCandidate is one book-grounded market source entering the next shared
-domain step. Book fields are owned samples — no live *book.Order pointers.
-*/
-type intensityCandidate struct {
-	symbol       string
-	outcome      excitation.Outcome
-	midPrice     float64
-	orderIDs     []string
-	batch        Batch
-	reference    *decimal.Decimal
-	spread       float64
-	buyCapacity  *decimal.Decimal
-	sellCapacity *decimal.Decimal
-}
 
 /*
 Solver owns one resident Sensorium domain for the complete market universe.
@@ -46,39 +19,20 @@ Symbols contribute observations to the same gas and wave fields; they are not
 split into independent simulations that cannot interfere.
 */
 type Solver struct {
-	*PhaseCorpus
-	mu       sync.Mutex
-	config   pfluid.Config
-	domain         *pfluid.Domain
-	symbols        map[string]*symbolSlot
-	orderedSymbols []string
-	sampledScratch map[string]intensityCandidate
-	active         map[string]struct{}
-	books          *bookSampler
-	recorder       *audit.Recorder
-}
-
-/*
-symbolSlot remembers a symbol's last appended Hawkes/book sample. start/end are
-append-time bookmarks only; Advance clears them after inelastic merge rewrites
-resident indices. Views read the shared post-merge population.
-*/
-type symbolSlot struct {
-	epoch  uint64
-	at     time.Time
-	events int
-	start  int
-	end    int
-	orders []string
-	state  map[string]pfluid.Particle
-	last   State
+	mu        sync.Mutex
+	config    pfluid.Config
+	domain    *pfluid.Domain
+	recorder  *audit.Recorder
+	tokenizer *Tokenizer
 }
 
 /*
 NewSolver creates the single shared Metal domain and a spectral corpus bounded
 by the same explicit event-history capacity as the live market feed.
 */
-func NewSolver(books BookSource, historyCapacity int) (*Solver, error) {
+func NewSolver(
+	books BookSource, historyCapacity int, recorder *audit.Recorder,
+) *Solver {
 	config := pfluid.DefaultConfig()
 	configuredDelta := viper.GetDuration("market.manifold.integration_interval")
 
@@ -86,48 +40,23 @@ func NewSolver(books BookSource, historyCapacity int) (*Solver, error) {
 		config.MaxDelta = float32(configuredDelta.Seconds())
 	}
 
-	phaseCorpus, err := NewPhaseCorpus(historyCapacity)
-
-	if err != nil {
-		return nil, err
-	}
-
 	var domain *pfluid.Domain
-	err = compute.WithMetalInit(func() error {
-		created, createErr := pfluid.NewDomain(config)
 
-		if createErr != nil {
-			return createErr
+	errnie.Error(compute.WithMetalInit(func() error {
+		created, err := pfluid.NewDomain(config)
+
+		if err != nil {
+			return err
 		}
 
 		domain = created
 		return nil
-	})
-
-	if err != nil {
-		return nil, errnie.Err(
-			errnie.Internal,
-			"manifold: failed to create shared Sensorium domain",
-			err,
-		)
-	}
+	}))
 
 	return &Solver{
-		PhaseCorpus: phaseCorpus,
-		config:      config,
-		domain:      domain,
-		symbols:     make(map[string]*symbolSlot),
-		active:      make(map[string]struct{}),
-		books:       newBookSampler(books),
-	}, nil
-}
-
-/*
-SetRecorder attaches the runtime audit stream to shared-domain advances.
-*/
-func (solver *Solver) SetRecorder(recorder *audit.Recorder) {
-	if solver != nil {
-		solver.recorder = recorder
+		config:   config,
+		domain:   domain,
+		recorder: recorder,
 	}
 }
 
@@ -136,142 +65,27 @@ Update appends tokenized book samples for every changed Hawkes epoch, then
 always advances the shared domain once for this tick and publishes symbol views
 of that physical state. Inject is Hawkes-gated; the step is not.
 */
-func (solver *Solver) Update(
-	thesis *types.Thesis,
-	hawkes HawkesSource,
-) error {
-	if solver == nil || thesis == nil || hawkes == nil {
-		return nil
-	}
-
+func (solver *Solver) Update(thesis *types.Thesis) error {
 	solver.mu.Lock()
 	defer solver.mu.Unlock()
 
-	if solver.domain == nil {
-		return nil
-	}
+	hawkes := utils.Measurements(thesis, types.SourceHawkes)
+	orders := make([]*mgrbook.Order, 0, len(hawkes))
 
-	changed := solver.changedOutcomes(hawkes)
-	candidates := solver.sampleChanged(hawkes, changed)
-	result := solver.advance(thesis, candidates, changed)
-	population := solver.Population()
-
-	errnie.Error(audit.Record(solver.recorder, "manifold", map[string]any{
-		"candidates": len(candidates),
-		"appended":   result.appended,
-		"particles":  population,
-		"failed":     len(result.failures),
-	}))
-
-	return errors.Join(result.failures...)
-}
-
-/*
-changedOutcomes lists Hawkes epochs that have not yet been appended, without
-touching L3 books.
-*/
-func (solver *Solver) changedOutcomes(
-	hawkes HawkesSource,
-) map[string]excitation.Outcome {
-	changed := make(map[string]excitation.Outcome)
-
-	for _, symbol := range hawkes.Symbols() {
-		outcome, ok := hawkes.Outcome(symbol)
-
-		if !ok || !outcome.Readiness.Intensity {
-			continue
-		}
-
-		buyIntensity, sellIntensity := intensities(outcome)
-
-		if buyIntensity+sellIntensity <= 0 {
-			continue
-		}
-
-		candidate := intensityCandidate{symbol: symbol, outcome: outcome}
-
-		if candidate.changed(solver.symbols[symbol]) {
-			changed[symbol] = outcome
+	for _, bookName := range thesis.BookManager.GetBooks() {
+		book := thesis.BookManager.GetBook(bookName)
+		for _, level := range book.Bids.Levels {
+			orders = append(orders, level.Queue()...)
 		}
 	}
 
-	return changed
-}
+	batch := solver.tokenizer.NewBatch()
 
-/*
-sampleChanged tokenizes L3 books only for epochs that must enter the domain.
-Universe indices are alphabetical over the full Hawkes symbol set so content
-ids stay stable when only a subset of markets change this tick.
-*/
-func (solver *Solver) sampleChanged(
-	hawkes HawkesSource,
-	changed map[string]excitation.Outcome,
-) []intensityCandidate {
-	if len(changed) == 0 {
-		return nil
+	for idx, measurement := range measurements {
+		solver.domain.Append(particles, []uint32{})
 	}
 
-	universe := sortedUniverse(hawkes.Symbols())
-	candidates := make([]intensityCandidate, 0, len(changed))
-	tokenizer := NewTokenizer(solver.config)
-
-	for symbolIndex, symbol := range universe {
-		outcome, ok := changed[symbol]
-
-		if !ok {
-			continue
-		}
-
-		buyIntensity, sellIntensity := intensities(outcome)
-		population, ready := solver.books.Sample(
-			symbol,
-			tokenizer,
-			buyIntensity,
-			sellIntensity,
-			uint32(symbolIndex),
-		)
-
-		if !ready {
-			continue
-		}
-
-		candidates = append(candidates, intensityCandidate{
-			symbol:       symbol,
-			outcome:      outcome,
-			midPrice:     population.midPrice,
-			orderIDs:     population.orderIDs,
-			batch:        population.batch,
-			reference:    population.reference,
-			spread:       population.spread,
-			buyCapacity:  population.buyCapacity,
-			sellCapacity: population.sellCapacity,
-		})
-	}
-
-	return candidates
-}
-
-/*
-noteAdvanceFailure records the root cause of one rejected market population.
-*/
-func (solver *Solver) noteAdvanceFailure(symbol string, err error) error {
-	cause := err
-
-	for errors.Unwrap(cause) != nil {
-		cause = errors.Unwrap(cause)
-	}
-
-	errnie.Error(audit.Record(solver.recorder, "manifold_advance", map[string]any{
-		"symbol": symbol,
-		"ok":     false,
-		"error":  cause.Error(),
-	}))
-
-	return errnie.Err(
-		errnie.Internal,
-		fmt.Sprintf("manifold: %s failed to enter shared domain", symbol),
-		err,
-	).With("cause", cause.Error())
+	return nil
 }
 
 /*
@@ -291,19 +105,4 @@ func (solver *Solver) Close() {
 
 	errnie.Error(solver.domain.Close())
 	solver.domain = nil
-	clear(solver.symbols)
-	solver.orderedSymbols = solver.orderedSymbols[:0]
-	clear(solver.active)
-	solver.PhaseCorpus = nil
-}
-
-/*
-Population returns the Metal-resident particle count.
-*/
-func (solver *Solver) Population() int {
-	if solver == nil || solver.domain == nil {
-		return 0
-	}
-
-	return solver.domain.ParticleCount()
 }
