@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/theapemachine/errnie"
 )
 
 type metricSideKey struct {
@@ -52,14 +54,22 @@ Sample returns the Metrics entry for metric and side when present.
 func (measurement *Measurement) Sample(
 	metric MetricType,
 	side MeasurementSide,
-) (MetricSample, bool) {
+) MetricSample {
 	if measurement == nil || len(measurement.Metrics) == 0 {
-		return MetricSample{}, false
+		return MetricSample{}
 	}
 
 	sample, ok := measurement.Metrics[MetricKey(metric, side)]
 
-	return sample, ok
+	if !ok {
+		errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"sample not found",
+			nil,
+		))
+	}
+
+	return sample
 }
 
 /*

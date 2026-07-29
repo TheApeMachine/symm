@@ -17,3 +17,23 @@ func Measurements(thesis *types.Thesis, source types.SourceType) []*types.Measur
 
 	return measurements
 }
+
+func ForSymbol(measurements []*types.Measurement, symbol string) []*types.Measurement {
+	if len(measurements) == 0 {
+		return nil
+	}
+
+	batch := make([]*types.Measurement, 0, len(measurements))
+
+	for _, measurement := range measurements {
+		if measurement != nil && measurement.Symbol == symbol {
+			batch = append(batch, measurement)
+		}
+	}
+
+	if len(batch) == 0 {
+		return nil
+	}
+
+	return batch
+}
