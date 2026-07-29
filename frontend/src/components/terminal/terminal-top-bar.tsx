@@ -32,7 +32,7 @@ export const TerminalTopBar = () => {
 	const { openPalette, openSymbolPalette } = terminalStore.actions;
 
 	return (
-		<header className="relative z-5 flex h-[52px] shrink-0 items-center gap-3.5 border-(--line) border-b bg-(--surface) px-4">
+		<header className="relative z-5 flex h-13 shrink-0 items-center gap-3.5 border-(--line) border-b bg-(--surface) px-4">
 			<div className="flex items-center gap-2">
 				<SymmLogo />
 				<span className="font-semibold text-[14px] text-(--f1) tracking-[0.22em]">
@@ -46,7 +46,7 @@ export const TerminalTopBar = () => {
 				className={online ? "[&_span[aria-hidden]]:animate-pulse" : undefined}
 			/>
 			<Count />
-			<div className="ml-auto flex items-center gap-[22px]">
+			<div className="ml-auto flex items-center gap-5.5">
 				<button
 					type="button"
 					onClick={openSymbolPalette}
@@ -66,7 +66,7 @@ export const TerminalTopBar = () => {
 					onClick={openPalette}
 					className={cn(
 						panelVariants({ size: "s" }),
-						"flex cursor-pointer items-center gap-2 py-[5px] pr-2 pl-[9px] text-(--f3) hover:border-(--line2) hover:text-(--f1)",
+						"flex cursor-pointer items-center gap-2 py-1.25 pr-2 pl-2.25 text-(--f3) hover:border-(--line2) hover:text-(--f1)",
 					)}
 				>
 					<svg
@@ -82,7 +82,7 @@ export const TerminalTopBar = () => {
 						<path d="M21 21l-4.3-4.3" />
 					</svg>
 					<span className="text-[11px]">Jump to</span>
-					<span className="rounded-[2px] border border-(--line) px-1 font-mono text-[10px] text-(--f4)">
+					<span className="rounded-xs border border-(--line) px-1 font-mono text-[10px] text-(--f4)">
 						⌘K
 					</span>
 				</button>

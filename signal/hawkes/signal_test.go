@@ -22,7 +22,7 @@ func newTestSignal() *Signal {
 	}
 }
 
-func calc(signal *Signal, rows ...kraken.TradeData) ([]*types.Measurement, error) {
+func calc(signal *Signal, rows ...kraken.TradeData) []*types.Measurement {
 	return signal.Calculate(nil, rows, nil)
 }
 
@@ -42,19 +42,10 @@ func TestSignal_Calculate(t *testing.T) {
 		at := time.Date(2023, 9, 25, 9, 4, 31, 0, time.UTC)
 		row := tradeRow("BTC/USD", "buy", 100.5, 1.25, at)
 
-		Convey("When a trade frame is calculated", func() {
-			_, err := calc(signal, row)
-
-			Convey("Then Calculate should accept the row without error", func() {
-				So(err, ShouldBeNil)
-			})
-		})
-
 		Convey("When an empty trade batch arrives", func() {
-			measurements, err := calc(signal)
+			measurements := calc(signal)
 
 			Convey("Then nothing should be measured", func() {
-				So(err, ShouldBeNil)
 				So(measurements, ShouldBeEmpty)
 			})
 		})
@@ -62,10 +53,9 @@ func TestSignal_Calculate(t *testing.T) {
 		Convey("When a malformed marked arrival is calculated", func() {
 			invalid := row
 			invalid.Side = "hold"
-			measurements, err := calc(signal, invalid)
+			measurements := calc(signal, invalid)
 
-			Convey("Then the invalid input should be returned to the caller", func() {
-				So(err, ShouldNotBeNil)
+			Convey("Then the invalid input should produce no measurements", func() {
 				So(measurements, ShouldBeEmpty)
 			})
 		})
@@ -108,15 +98,13 @@ func BenchmarkSignal_Calculate(benchmark *testing.B) {
 			side = "sell"
 		}
 
-		if _, err := calc(signal, tradeRow(
+		calc(signal, tradeRow(
 			"MATIC/USD",
 			side,
 			0.56+float64(index)*0.001,
 			1+float64(index),
 			start.Add(time.Duration(index)*100*time.Millisecond),
-		)); err != nil {
-			benchmark.Fatal(err)
-		}
+		))
 	}
 
 	benchmark.ReportAllocs()
@@ -129,15 +117,13 @@ func BenchmarkSignal_Calculate(benchmark *testing.B) {
 			side = "sell"
 		}
 
-		if _, err := calc(signal, tradeRow(
+		calc(signal, tradeRow(
 			"MATIC/USD",
 			side,
 			0.56+float64(index)*0.001,
 			1+float64(index),
 			start.Add(time.Duration(index)*100*time.Millisecond),
-		)); err != nil {
-			benchmark.Fatal(err)
-		}
+		))
 
 		index++
 	}

@@ -25,7 +25,7 @@ export const CortexBeamShell = ({
 		<div
 			data-cortex="content"
 			style={{ display: "none" }}
-			className="flex min-h-0 flex-1 flex-col gap-[5px] overflow-auto px-2 py-1.5"
+			className="flex min-h-0 flex-1 flex-col gap-1.25 overflow-auto px-2 py-1.5"
 		>
 			{Array.from({ length: BEAM_POOL }, (_, index) => (
 				<Panel

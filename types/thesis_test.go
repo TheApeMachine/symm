@@ -22,7 +22,7 @@ func TestThesisAppendMeasurementsConcurrent(t *testing.T) {
 		Convey("When many goroutines publish the same source-symbol row", func() {
 			for index := range 128 {
 				wg.Go(func() {
-					thesis.AppendMeasurements([]*Measurement{{
+					thesis.Measurements.Store(SourceCVD, []*Measurement{{
 						Source: SourceCVD,
 						Symbol: "BTC/USD",
 						At:     time.Unix(int64(index), 0).UTC(),
@@ -32,8 +32,12 @@ func TestThesisAppendMeasurementsConcurrent(t *testing.T) {
 
 			wg.Wait()
 			count := 0
-			thesis.EachMeasurement(func(*Measurement) bool {
-				count++
+			thesis.Measurements.Range(func(_, value any) bool {
+				for _, m := range value.([]*Measurement) {
+					if m != nil {
+						count++
+					}
+				}
 				return true
 			})
 
@@ -58,23 +62,6 @@ func TestNoteLifecycle(t *testing.T) {
 	})
 }
 
-func TestThesisSaveCheckpoint(t *testing.T) {
-	Convey("Given a finalized immutable cut", t, func() {
-		dir := t.TempDir()
-		thesis := NewThesis(nil)
-		cut := &ImmutableCut{
-			ID:   2,
-			Tick: 4,
-			At:   time.Unix(1, 0).UTC(),
-		}
-
-		Convey("Save delegates to cut checkpoint", func() {
-			So(thesis.Save(dir, cut), ShouldBeNil)
-			So(thesis.Save(dir, nil), ShouldNotBeNil)
-		})
-	})
-}
-
 func BenchmarkNoteLifecycle(b *testing.B) {
 	thesis := NewThesis(nil)
 	at := time.Unix(1, 0).UTC()
@@ -87,15 +74,15 @@ func BenchmarkNoteLifecycle(b *testing.B) {
 }
 
 /*
-BenchmarkAppendMeasurements measures the locked shared-Thesis signal publish path.
+BenchmarkMeasurements measures the locked shared-Thesis signal publish path.
 */
-func BenchmarkAppendMeasurements(b *testing.B) {
+func BenchmarkMeasurements(b *testing.B) {
 	thesis := NewThesis(nil)
 	row := &Measurement{Source: SourceCVD, Symbol: "BTC/USD", At: time.Unix(1, 0)}
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		thesis.AppendMeasurements([]*Measurement{row})
+		thesis.Measurements.Store(SourceCVD, []*Measurement{row})
 	}
 }

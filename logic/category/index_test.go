@@ -16,7 +16,7 @@ func TestEvidenceIndexUpdateFrom(t *testing.T) {
 		Convey("When updated from a thesis with valid measurements", func() {
 			thesis := types.NewThesis(nil)
 			mass := 0.75
-			thesis.AppendMeasurements([]*types.Measurement{
+			thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{
 				{
 					Source:       types.SourcePumpDump,
 					Symbol:       "SIM/USD",
@@ -91,7 +91,7 @@ func TestClockFor(t *testing.T) {
 		mass1 := 0.5
 		mass2 := 0.8
 
-		thesis.AppendMeasurements([]*types.Measurement{
+		thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{
 			{
 				Source: types.SourcePumpDump, Symbol: "SIM/USD",
 				At:           time.Unix(10, 0),
@@ -206,7 +206,7 @@ func BenchmarkEvidenceIndexUpdateFrom(b *testing.B) {
 	for _, symbol := range symbols {
 		for index, metric := range metrics {
 			mass := 0.2 + float64(index)/10
-			thesis.AppendMeasurements([]*types.Measurement{
+			thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{
 				{
 					Source: types.SourcePumpDump, Symbol: symbol,
 					At:           base.Add(time.Duration(index) * time.Second),
@@ -238,7 +238,7 @@ func BenchmarkClockFor(b *testing.B) {
 	index := newEvidenceIndex()
 	thesis := types.NewThesis(nil)
 	mass := 0.5
-	thesis.AppendMeasurements([]*types.Measurement{
+			thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{
 		{
 			Source: types.SourcePumpDump, Symbol: "SIM/USD",
 			At:           time.Unix(10, 0),

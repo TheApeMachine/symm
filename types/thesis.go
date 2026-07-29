@@ -1,7 +1,6 @@
 package types
 
 import (
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -136,18 +135,6 @@ Incomplete reports whether the current cut skipped interested signal work.
 */
 func (thesis *Thesis) Incomplete() bool {
 	return thesis != nil && thesis.cutIncomplete
-}
-
-/*
-Save persists an immutable completed-cut snapshot under dir. The live Thesis is
-not marshaled while mutable; callers must pass a finalized ImmutableCut.
-*/
-func (thesis *Thesis) Save(dir string, cut *ImmutableCut) error {
-	if cut == nil {
-		return fmt.Errorf("thesis: checkpoint requires ImmutableCut")
-	}
-
-	return cut.Checkpoint(dir)
 }
 
 /*

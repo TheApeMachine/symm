@@ -49,7 +49,7 @@ func TestStaleAndIncomparable(t *testing.T) {
 			thesis.At = at
 			ignition := 0.8
 			trend := 0.7
-			thesis.AppendMeasurements([]*types.Measurement{
+			thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{
 				{
 					Source:       types.SourcePumpDump,
 					Symbol:       "SIM/USD",
@@ -132,7 +132,7 @@ func BenchmarkGraphUpdateFrom(b *testing.B) {
 	for _, symbol := range symbols {
 		for index, metric := range metrics {
 			mass := 0.2 + float64(index)/10
-			thesis.AppendMeasurements([]*types.Measurement{
+			thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{
 				{
 					Source:       types.SourcePumpDump,
 					Symbol:       symbol,

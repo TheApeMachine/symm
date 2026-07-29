@@ -75,10 +75,12 @@ func TestCalculate(t *testing.T) {
 					thesis := wired.Thesis
 
 					if capture {
-						thesis.EachMeasurement(func(measurement *types.Measurement) bool {
+					thesis.Measurements.Range(func(_, value any) bool {
+						for _, measurement := range value.([]*types.Measurement) {
 							measurements = append(measurements, measurement)
-							return true
-						})
+						}
+						return true
+					})
 					}
 
 					return nil

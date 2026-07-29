@@ -20,7 +20,7 @@ func TestCalculate(t *testing.T) {
 		at := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
 		increment := decimal.NewFromFloat64(0.01)
 
-		_, err := signal.Calculate(nil, nil, []kraken.BookData{
+		signal.Calculate(nil, nil, []kraken.BookData{
 			{
 				Symbol:         "SIM1/USD",
 				Type:           "snapshot",
@@ -46,9 +46,8 @@ func TestCalculate(t *testing.T) {
 				Timestamp: at,
 			},
 		})
-		So(err, ShouldBeNil)
 
-		_, err = signal.Calculate(nil, []kraken.TradeData{
+		signal.Calculate(nil, []kraken.TradeData{
 			{
 				Symbol:    "SIM1/USD",
 				Side:      "buy",
@@ -64,9 +63,7 @@ func TestCalculate(t *testing.T) {
 				Timestamp: at,
 			},
 		}, nil)
-		So(err, ShouldBeNil)
-
-		first, err := signal.Calculate([]kraken.TickerData{
+		first := signal.Calculate([]kraken.TickerData{
 			{
 				Symbol:    "SIM1/USD",
 				Last:      decimal.NewFromFloat64(100),
@@ -78,11 +75,10 @@ func TestCalculate(t *testing.T) {
 				Timestamp: at.Add(2 * time.Second),
 			},
 		}, nil, nil)
-		So(err, ShouldBeNil)
 		So(first, ShouldNotBeEmpty)
 
 		Convey("A late ticker for one symbol should not fail the batch", func() {
-			rows, err := signal.Calculate([]kraken.TickerData{
+			rows := signal.Calculate([]kraken.TickerData{
 				{
 					Symbol:    "SIM1/USD",
 					Last:      decimal.NewFromFloat64(100),
@@ -95,8 +91,6 @@ func TestCalculate(t *testing.T) {
 				},
 			}, nil, nil)
 
-			So(err, ShouldBeNil)
-
 			symbols := map[string]bool{}
 
 			for _, measurement := range rows {
@@ -108,15 +102,13 @@ func TestCalculate(t *testing.T) {
 		})
 
 		Convey("A later causal ticker should still advance the symbol", func() {
-			rows, err := signal.Calculate([]kraken.TickerData{
+			rows := signal.Calculate([]kraken.TickerData{
 				{
 					Symbol:    "SIM1/USD",
 					Last:      decimal.NewFromFloat64(100),
 					Timestamp: at.Add(4 * time.Second),
 				},
 			}, nil, nil)
-
-			So(err, ShouldBeNil)
 			So(rows, ShouldNotBeEmpty)
 			So(rows[0].Symbol, ShouldEqual, "SIM1/USD")
 		})

@@ -27,7 +27,7 @@ func TestCalculateWiresFocusedPeerOnAltBatch(t *testing.T) {
 
 		for index := range 40 {
 			at := start.Add(time.Duration(index) * time.Second)
-			_, err := signal.Calculate([]kraken.TickerData{
+			signal.Calculate([]kraken.TickerData{
 				{
 					Symbol:    "A/USD",
 					Timestamp: at,
@@ -39,21 +39,19 @@ func TestCalculateWiresFocusedPeerOnAltBatch(t *testing.T) {
 					Last:      decimal.NewFromFloat64(50 + float64(index)*0.1),
 				},
 			}, nil, nil)
-			So(err, ShouldBeNil)
 		}
 
 		drain(ui)
 
 		Convey("When only B ticks, It still wires A for the focus gate", func() {
 			at := start.Add(40 * time.Second)
-			rows, err := signal.Calculate([]kraken.TickerData{
+			rows := signal.Calculate([]kraken.TickerData{
 				{
 					Symbol:    "B/USD",
 					Timestamp: at,
 					Last:      decimal.NewFromFloat64(54),
 				},
 			}, nil, nil)
-			So(err, ShouldBeNil)
 
 			focused := 0
 

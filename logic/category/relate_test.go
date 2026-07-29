@@ -123,7 +123,7 @@ func TestLinkPair(t *testing.T) {
 
 		ignitionMass := 0.8
 		trendMass := 0.6
-		thesis.AppendMeasurements([]*types.Measurement{
+		thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{
 			{
 				Source: types.SourcePumpDump, Symbol: "SIM/USD",
 				At: at, ObservedFrom: at.Add(-time.Second),
@@ -192,7 +192,7 @@ func TestContradictMass(t *testing.T) {
 		index := newEvidenceIndex()
 		thesis := types.NewThesis(nil)
 		mass := 0.9
-		thesis.AppendMeasurements([]*types.Measurement{
+		thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{
 			{
 				Source: types.SourcePumpDump, Symbol: "SIM/USD",
 				At: time.Unix(10, 0), ObservedFrom: time.Unix(9, 0),
@@ -244,7 +244,7 @@ func BenchmarkLinkPair(b *testing.B) {
 	at := time.Unix(100, 0).UTC()
 
 	mass := 0.7
-	thesis.AppendMeasurements([]*types.Measurement{
+	thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{
 		{
 			Source: types.SourcePumpDump, Symbol: "SIM/USD",
 			At: at, ObservedFrom: at.Add(-time.Second),
@@ -301,7 +301,7 @@ func BenchmarkContradictMass(b *testing.B) {
 	thesis := types.NewThesis(nil)
 	mass := 0.9
 
-	thesis.AppendMeasurements([]*types.Measurement{
+	thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{
 		{
 			Source: types.SourcePumpDump, Symbol: "SIM/USD",
 			At: time.Unix(10, 0), ObservedFrom: time.Unix(9, 0),

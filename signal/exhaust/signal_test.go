@@ -371,13 +371,12 @@ func TestCalculate(t *testing.T) {
 		signal := exhaust.NewSignal(t.Context(), nil)
 
 		Convey("It should skip unusable rows and return no measurements", func() {
-			rows, err := signal.Calculate(
+			rows := signal.Calculate(
 				nil,
 				[]kraken.TradeData{{Symbol: "SIM1/USD"}},
 				nil,
 			)
-			So(err, ShouldBeNil)
-			So(rows, ShouldBeEmpty)
+		So(rows, ShouldBeEmpty)
 		})
 	})
 }
@@ -510,11 +509,12 @@ func exhaustionFrom(message any) []*types.Measurement {
 	case *types.Thesis:
 		out := make([]*types.Measurement, 0)
 
-		published.EachMeasurement(func(measurement *types.Measurement) bool {
-			if measurement.Source == types.SourceExhaustion {
-				out = append(out, measurement)
+		published.Measurements.Range(func(_, value any) bool {
+			for _, measurement := range value.([]*types.Measurement) {
+				if measurement.Source == types.SourceExhaustion {
+					out = append(out, measurement)
+				}
 			}
-
 			return true
 		})
 

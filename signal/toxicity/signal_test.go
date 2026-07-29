@@ -95,26 +95,28 @@ func TestCalculate(t *testing.T) {
 					return err
 				}
 
-				thesis.EachMeasurement(func(measurement *types.Measurement) bool {
-					if measurement.Source != types.SourceToxicity {
-						return true
+				thesis.Measurements.Range(func(_, value any) bool {
+					for _, measurement := range value.([]*types.Measurement) {
+						if measurement.Source != types.SourceToxicity {
+							continue
+						}
+
+						So(measurement.ValidateStruct(), ShouldBeNil)
+						So(measurement.Validity.State, ShouldNotEqual, types.ValidityInvalid)
+
+						measurement.EachMetric(func(
+							metric types.MetricType,
+							side types.MeasurementSide,
+							sample types.MetricSample,
+						) bool {
+							So(math.IsNaN(sample.Raw), ShouldBeFalse)
+							So(math.IsInf(sample.Raw, 0), ShouldBeFalse)
+							So(sample.Raw, ShouldBeGreaterThanOrEqualTo, 0)
+							return true
+						})
+
+						measurements = append(measurements, measurement)
 					}
-
-					So(measurement.ValidateStruct(), ShouldBeNil)
-					So(measurement.Validity.State, ShouldNotEqual, types.ValidityInvalid)
-
-					measurement.EachMetric(func(
-						metric types.MetricType,
-						side types.MeasurementSide,
-						sample types.MetricSample,
-					) bool {
-						So(math.IsNaN(sample.Raw), ShouldBeFalse)
-						So(math.IsInf(sample.Raw, 0), ShouldBeFalse)
-						So(sample.Raw, ShouldBeGreaterThanOrEqualTo, 0)
-						return true
-					})
-
-					measurements = append(measurements, measurement)
 					return true
 				})
 

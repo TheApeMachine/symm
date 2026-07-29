@@ -70,22 +70,26 @@ func TestCalculate(t *testing.T) {
 
 				measurements := []*types.Measurement{}
 
-				thesis.EachMeasurement(func(measurement *types.Measurement) bool {
+			thesis.Measurements.Range(func(_, value any) bool {
+				for _, measurement := range value.([]*types.Measurement) {
 					measurements = append(measurements, measurement)
-					return true
-				})
+				}
+				return true
+			})
 
-				calm = tests.LatestMeasurements(measurements, types.SourceLiquidity, metrics)
-				return nil
-			}), ShouldBeNil)
-			measurements := []*types.Measurement{}
-			So(market.Transition(proof.state, func() error {
-				thesis := wired.Thesis
+			calm = tests.LatestMeasurements(measurements, types.SourceLiquidity, metrics)
+			return nil
+		}), ShouldBeNil)
+		measurements := []*types.Measurement{}
+		So(market.Transition(proof.state, func() error {
+			thesis := wired.Thesis
 
-				thesis.EachMeasurement(func(measurement *types.Measurement) bool {
+			thesis.Measurements.Range(func(_, value any) bool {
+				for _, measurement := range value.([]*types.Measurement) {
 					measurements = append(measurements, measurement)
-					return true
-				})
+				}
+				return true
+			})
 				return nil
 			}, proof.symbols...), ShouldBeNil)
 			outcomes[proof.name] = marketOutcome{

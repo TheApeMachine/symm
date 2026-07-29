@@ -128,11 +128,12 @@ func TestMeasure(t *testing.T) {
 			measurements := []*types.Measurement{}
 			maturity := make(map[string]float64, len(market.Symbols))
 
-			thesis.EachMeasurement(func(measurement *types.Measurement) bool {
+			thesis.Measurements.Range(func(_, value any) bool {
+				for _, measurement := range value.([]*types.Measurement) {
 					if measurement.Source == types.SourcePumpDump {
 						maturity[measurement.Symbol] = measurement.Maturity
 					}
-
+				}
 				return true
 			})
 
@@ -140,11 +141,12 @@ func TestMeasure(t *testing.T) {
 				So(market.Transition(state, tests.Idle, proof.symbols...), ShouldBeNil)
 			}
 
-			thesis.EachMeasurement(func(measurement *types.Measurement) bool {
+			thesis.Measurements.Range(func(_, value any) bool {
+				for _, measurement := range value.([]*types.Measurement) {
 					if measurement.Source == types.SourcePumpDump {
 						maturity[measurement.Symbol] = measurement.Maturity
 					}
-
+				}
 				return true
 			})
 
@@ -152,9 +154,10 @@ func TestMeasure(t *testing.T) {
 				proof.states[len(proof.states)-1], func() error {
 					advanced := make(map[string]bool, len(market.Symbols))
 
-					thesis.EachMeasurement(func(measurement *types.Measurement) bool {
+					thesis.Measurements.Range(func(_, value any) bool {
+						for _, measurement := range value.([]*types.Measurement) {
 							if measurement.Source != types.SourcePumpDump {
-								return true
+								continue
 							}
 
 							So(measurement.ValidateStruct(), ShouldBeNil)
@@ -180,17 +183,18 @@ func TestMeasure(t *testing.T) {
 								So(math.IsInf(*sample.Normalized, 0), ShouldBeFalse)
 								return true
 							})
-
-							return true
+						}
+						return true
 					})
 
-					thesis.EachMeasurement(func(measurement *types.Measurement) bool {
+					thesis.Measurements.Range(func(_, value any) bool {
+						for _, measurement := range value.([]*types.Measurement) {
 							if measurement.Source == types.SourcePumpDump &&
 								advanced[measurement.Symbol] {
 								measurements = append(measurements, measurement)
 							}
-
-							return true
+						}
+						return true
 					})
 
 					return nil

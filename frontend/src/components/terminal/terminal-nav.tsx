@@ -153,17 +153,17 @@ export const TerminalNav = ({ active }: { active: TerminalSurface }) => {
 	const { toggleScanlines } = terminalStore.actions;
 
 	return (
-		<nav className="flex w-[210px] shrink-0 flex-col border-(--line) border-r bg-(--surface)">
+		<nav className="flex w-52.5 shrink-0 flex-col border-(--line) border-r bg-(--surface)">
 			<div className="px-2.5 pt-3 pb-1.5 font-semibold text-[9px] text-(--f4) uppercase tracking-[0.14em]">
 				Surfaces
 			</div>
-			<div className="flex flex-col gap-[3px] px-2">
+			<div className="flex flex-col gap-0.75 px-2">
 				{SURFACE_ITEMS.map((item) => (
 					<Link
 						key={item.key}
 						to={item.to}
 						className={cn(
-							"flex cursor-pointer items-center gap-2 rounded-[3px] border px-[9px] py-2 text-left text-[13px] font-medium hover:bg-(--raised)",
+							"flex cursor-pointer items-center gap-2 rounded-[3px] border px-2.25 py-2 text-left text-[13px] font-medium hover:bg-(--raised)",
 							active === item.key
 								? "border-(--line2) bg-(--raised) text-(--f1)"
 								: "border-transparent bg-transparent text-(--f3)",
@@ -174,7 +174,7 @@ export const TerminalNav = ({ active }: { active: TerminalSurface }) => {
 					</Link>
 				))}
 			</div>
-			<div className="px-2.5 pt-[18px] pb-1.5 font-semibold text-[9px] text-(--f4) uppercase tracking-[0.14em]">
+			<div className="px-2.5 pt-4.5 pb-1.5 font-semibold text-[9px] text-(--f4) uppercase tracking-[0.14em]">
 				Engine
 			</div>
 			<Engine />
