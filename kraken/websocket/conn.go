@@ -30,6 +30,7 @@ wiring never type-assert Live versus MockConn versus Paper.
 */
 type Conn interface {
 	Client() *spot.WebSocket
+	Books() *spot.BookManager
 	Write(params json.Marshaler) error
 	Post(path string, params json.Marshaler) ([]byte, error)
 	Close()
@@ -559,6 +560,13 @@ mutated under a write lease during websocket updates.
 */
 func (api *API) Books() iter.Seq[*spot.BookManager] {
 	return api.level3.Books()
+}
+
+/*
+Book returns the SDK BookManager for symbol's Level3 transport. Callers that
+*/
+func (api *API) Book() *spot.BookManager {
+	return api.private.Books()
 }
 
 /*

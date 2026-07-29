@@ -497,3 +497,7 @@ func decodeRequest(raw []byte) (wireRequest, []string, error) {
 
 	return request, symbols, nil
 }
+
+func (conn *MockConn) Books() *spot.BookManager {
+	return &spot.BookManager{}
+}

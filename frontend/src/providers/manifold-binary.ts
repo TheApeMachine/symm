@@ -1,6 +1,7 @@
 /*
-manifold-binary decodes backend-composited SMF1 display frames. Scalar lattice
-frames are ignored so the frontend cannot synthesize pilot-wave imagery.
+manifold-binary retains the raw RGBA display arriving on the dedicated manifold
+socket. Width and height travel on the normal JSON manifold lane so the image
+bytes stay off the main websocket path.
 */
 
 export type DisplayFrame = {
@@ -12,68 +13,53 @@ export type DisplayFrame = {
 };
 
 let display: DisplayFrame | null = null;
-
-const view = (buffer: ArrayBuffer) => new DataView(buffer);
+let meta: Pick<DisplayFrame, "symbol" | "width" | "height"> | null = null;
 
 /*
-parseManifoldBinary decodes one backend GPU RGBA frame. It returns null for
-legacy scalar planes and malformed frames so they cannot replace the picture.
-*/
-export const parseManifoldBinary = (
-	buffer: ArrayBuffer,
-): DisplayFrame | null => {
-	if (buffer.byteLength < 26) {
-		return null;
+retainManifoldMeta keeps the latest symbol and dimensions needed to interpret
+the raw RGBA frame from the manifold socket.
+ */
+export const retainManifoldMeta = (value: unknown) => {
+	const rows = Array.isArray(value) ? value : value != null ? [value] : [];
+	const latest = rows.at(-1);
+
+	if (latest === undefined || latest === null || typeof latest !== "object") {
+		return;
 	}
 
-	const data = view(buffer);
+	const record = latest as Record<string, unknown>;
+	const symbol = typeof record.symbol === "string" ? record.symbol : "shared";
+	const width = Number(record.width);
+	const height = Number(record.height);
 
-	if (
-		data.getUint8(0) !== 0x53 ||
-		data.getUint8(1) !== 0x4d ||
-		data.getUint8(2) !== 0x46 ||
-		data.getUint8(3) !== 0x31 ||
-		data.getUint8(4) !== 5
-	) {
-		return null;
+	if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) {
+		return;
 	}
 
-	const width = data.getUint16(5, true);
-	const height = data.getUint16(7, true);
-	const symbolLen = data.getUint8(25);
-
-	if (width < 1 || height < 1 || buffer.byteLength < 26 + symbolLen) {
-		return null;
-	}
-
-	const symbol = new TextDecoder().decode(
-		new Uint8Array(buffer, 26, symbolLen),
-	);
-	const offset = 26 + symbolLen;
-	const count = width * height;
-
-	if (buffer.byteLength < offset + count * 4) {
-		return null;
-	}
-
-	return {
-		kind: "display",
+	meta = {
 		symbol,
 		width,
 		height,
-		// Copy out of the websocket buffer because the worker reuses transferables.
-		rgba: new Uint8ClampedArray(buffer.slice(offset, offset + count * 4)),
 	};
 };
 
 export const retainManifoldBinary = (buffer: ArrayBuffer): "display" | null => {
-	const frame = parseManifoldBinary(buffer);
-
-	if (frame === null) {
+	if (meta === null) {
 		return null;
 	}
 
-	display = frame;
+	if (buffer.byteLength !== meta.width * meta.height * 4) {
+		return null;
+	}
+
+	display = {
+		kind: "display",
+		symbol: meta.symbol,
+		width: meta.width,
+		height: meta.height,
+		rgba: new Uint8ClampedArray(buffer.slice(0)),
+	};
+
 	return "display";
 };
 
@@ -81,4 +67,5 @@ export const latestDisplay = (): DisplayFrame | null => display;
 
 export const clearManifoldBinary = () => {
 	display = null;
+	meta = null;
 };

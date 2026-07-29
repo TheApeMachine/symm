@@ -14,7 +14,7 @@ import (
 func TestOnTickerAdvancesCut(t *testing.T) {
 	Convey("Given a Hawkes process that already has symbol state", t, func() {
 		signal := NewSignal(t.Context(), nil)
-		signal.thesis = types.NewThesis()
+		signal.thesis = types.NewThesis(nil)
 		base := time.Unix(1, 0)
 
 		signal.mu.Lock()
@@ -45,7 +45,7 @@ func TestOnTickerAdvancesCut(t *testing.T) {
 
 		Convey("When no symbols are warm yet", func() {
 			cold := NewSignal(t.Context(), nil)
-			cold.thesis = types.NewThesis()
+			cold.thesis = types.NewThesis(nil)
 
 			Convey("It does not invent a cut", func() {
 				So(cold.onTicker(&kraken.Ticker{
@@ -61,7 +61,7 @@ func TestOnTickerAdvancesCut(t *testing.T) {
 func TestCutOutcome(t *testing.T) {
 	Convey("Given a cut frozen from a live process", t, func() {
 		signal := NewSignal(t.Context(), nil)
-		signal.thesis = types.NewThesis()
+		signal.thesis = types.NewThesis(nil)
 		base := time.Unix(1, 0)
 
 		signal.mu.Lock()

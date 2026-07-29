@@ -41,6 +41,7 @@ type Analyzer struct {
 	cognition *cognition.Solver
 	graph     *graph.Solver
 	ui        chan []byte
+	binui     chan []byte
 	recorder  *audit.Recorder
 	thesis    *types.Thesis
 }
@@ -53,6 +54,7 @@ func NewAnalyzer(
 	api *websocket.API,
 	tree *dmt.Tree,
 	ui chan []byte,
+	binui chan []byte,
 	recorder *audit.Recorder,
 ) (*Analyzer, error) {
 	ctx, cancel := context.WithCancel(ctx)
@@ -62,7 +64,7 @@ func NewAnalyzer(
 		cancel:    cancel,
 		status:    types.READY,
 		tree:      tree,
-		manifold:  manifold.NewSolver(recorder),
+		manifold:  manifold.NewSolver(ui, binui, recorder),
 		resonance: resonance.NewSolver(recorder),
 		causal:    causal.NewSolver(recorder),
 		cognition: cognition.NewSolver(tree, recorder),

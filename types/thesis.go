@@ -62,7 +62,7 @@ type Thesis struct {
 /*
 NewThesis creates a Thesis with empty durable maps and no tick evidence yet.
 */
-func NewThesis() *Thesis {
+func NewThesis(bookManager *spot.BookManager) *Thesis {
 	return &Thesis{
 		At:           time.Now().UTC(),
 		publish:      &sync.RWMutex{},
@@ -76,6 +76,7 @@ func NewThesis() *Thesis {
 		Categories:   make(map[string][]Category),
 		Measurements: &sync.Map{},
 		Books:        &sync.Map{},
+		BookManager:  bookManager,
 		Manifold:     &sync.Map{},
 		Cognition:    &sync.Map{},
 		Resonance:    &sync.Map{},

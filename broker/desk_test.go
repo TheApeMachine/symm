@@ -187,6 +187,10 @@ func (conn *deskHistoryConn) Root() *types.Actor {
 	return conn.Actor
 }
 
+func (conn *deskHistoryConn) Books() *spot.BookManager {
+	return &spot.BookManager{}
+}
+
 func (conn *deskHistoryConn) TradesHistory() (*krakenmodel.TradesHistory, error) {
 	return conn.history, nil
 }

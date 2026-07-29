@@ -346,6 +346,10 @@ func (live *Live) Client() *spot.WebSocket {
 	return live.client
 }
 
+func (live *Live) Books() *spot.BookManager {
+	return live.books
+}
+
 func (live *Live) Write(params json.Marshaler) error {
 	raw, err := params.MarshalJSON()
 

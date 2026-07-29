@@ -78,7 +78,10 @@ import {
 	paintXrayManifoldMeasurements,
 } from "#/components/terminal/xray-manifold-panel";
 import { FrameHistory } from "#/providers/frame-history";
-import { retainManifoldBinary } from "#/providers/manifold-binary";
+import {
+	retainManifoldBinary,
+	retainManifoldMeta,
+} from "#/providers/manifold-binary";
 import { paintManifoldWave } from "#/providers/manifold-parts";
 
 type Paint = (updates: unknown) => void;
@@ -340,6 +343,10 @@ export const attach = (
 		}
 
 		for (const [name, value] of Object.entries(message.frame)) {
+			if (name === "manifold") {
+				retainManifoldMeta(value);
+			}
+
 			paintRegistered(name, value);
 
 			const drawer = drawers[name as keyof typeof drawers] as

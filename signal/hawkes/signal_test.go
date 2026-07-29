@@ -84,7 +84,7 @@ func TestSignal_Calculate(t *testing.T) {
 			live.AddRoot("book", book)
 
 			signal := NewSignal(context.Background(), nil)
-			thesis := types.NewThesis()
+			thesis := types.NewThesis(nil)
 			signal.Initialize(live, thesis)
 
 			for range 32 {

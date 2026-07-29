@@ -10,12 +10,12 @@ import (
 func TestRestoreThesis(t *testing.T) {
 	Convey("Given an active thesis and optional recovery state", t, func() {
 		channel := make(chan []byte, 1)
-		active := types.NewThesis()
+		active := types.NewThesis(nil)
 		active.Tick = 7
 
 		Convey("It should retain the active thesis when recovery state is malformed", func() {
 			restored := restoreThesis(
-				active, channel, []byte(`{"tick":`), "invalid optional thesis",
+				active, channel, []byte(`{"tick":`), "invalid optional thesis", nil,
 			)
 
 			So(restored, ShouldEqual, active)
@@ -24,7 +24,7 @@ func TestRestoreThesis(t *testing.T) {
 
 		Convey("It should replace the active thesis when recovery state is valid", func() {
 			restored := restoreThesis(
-				active, channel, []byte(`{"tick":11}`), "invalid optional thesis",
+				active, channel, []byte(`{"tick":11}`), "invalid optional thesis", nil,
 			)
 
 			So(restored, ShouldNotEqual, active)

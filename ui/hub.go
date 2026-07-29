@@ -74,12 +74,14 @@ type Hub struct {
 	app         *fiber.App
 	listenAddr  string
 	Messages    chan []byte
+	Manifold    chan []byte
 	desk        *broker.Desk
 	price       *broker.Price
 	balance     *broker.Balance
 	cache       sync.Map
 	generation  atomic.Uint64
 	clients     sync.Map
+	manifold    sync.Map
 	dropped     atomic.Uint64
 	ingressDone chan struct{}
 }
@@ -93,6 +95,7 @@ func NewHub(
 	price *broker.Price,
 	balance *broker.Balance,
 	channel chan []byte,
+	manifold chan []byte,
 	cfg config.UIConfig,
 ) *Hub {
 	ctx, cancel := context.WithCancel(ctx)
@@ -103,11 +106,12 @@ func NewHub(
 		addr = "127.0.0.1:8765"
 	}
 
-	hub := &Hub{
+		hub := &Hub{
 		ctx:        ctx,
 		cancel:     cancel,
 		listenAddr: addr,
 		Messages:   channel,
+		Manifold:   manifold,
 		desk:       desk,
 		app: fiber.New(fiber.Config{
 			JSONEncoder:     sonic.Marshal,
@@ -148,7 +152,28 @@ func NewHub(
 		}
 	}))
 
+	hub.app.Use("/ws-manifold", func(c fiber.Ctx) error {
+		if websocket.IsWebSocketUpgrade(c) {
+			c.Locals("allowed", true)
+			return c.Next()
+		}
+
+		return fiber.ErrUpgradeRequired
+	})
+
+	hub.app.Get("/ws-manifold", websocket.New(func(conn *websocket.Conn) {
+		session := hub.registerManifold(conn)
+		defer hub.unregisterManifold(session)
+
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+
 	go hub.drain()
+	go hub.drainManifold()
 
 	return hub
 }
@@ -165,15 +190,6 @@ func (hub *Hub) Publish(frame []byte) {
 
 	generation := hub.generation.Add(1)
 
-	if isManifoldBinary(frame) {
-		hub.fanout(cachedFrame{
-			generation: generation,
-			payload:    frame,
-			binary:     true,
-		})
-		return
-	}
-
 	retained := hub.retain(generation, frame)
 
 	if len(retained) == 0 {
@@ -184,6 +200,23 @@ func (hub *Hub) Publish(frame []byte) {
 	for _, entry := range retained {
 		hub.fanout(entry)
 	}
+}
+
+/*
+PublishManifold fans out one already-binary manifold image frame on the
+dedicated manifold socket path without touching the normal JSON retain path.
+*/
+func (hub *Hub) PublishManifold(frame []byte) {
+	if hub == nil || len(frame) == 0 {
+		return
+	}
+
+	generation := hub.generation.Add(1)
+	hub.fanoutTo(&hub.manifold, cachedFrame{
+		generation: generation,
+		payload:    frame,
+		binary:     true,
+	})
 }
 
 /*
@@ -206,6 +239,21 @@ func (hub *Hub) drain() {
 			}
 
 			hub.Publish(msg)
+		}
+	}
+}
+
+func (hub *Hub) drainManifold() {
+	for {
+		select {
+		case <-hub.ctx.Done():
+			return
+		case msg, ok := <-hub.Manifold:
+			if !ok {
+				return
+			}
+
+			hub.PublishManifold(msg)
 		}
 	}
 }
@@ -269,6 +317,17 @@ func (hub *Hub) retain(generation uint64, msg []byte) []cachedFrame {
 }
 
 func (hub *Hub) register(conn *websocket.Conn) *clientSession {
+	return hub.registerTo(&hub.clients, conn)
+}
+
+func (hub *Hub) registerManifold(conn *websocket.Conn) *clientSession {
+	return hub.registerTo(&hub.manifold, conn)
+}
+
+func (hub *Hub) registerTo(
+	clients *sync.Map,
+	conn *websocket.Conn,
+) *clientSession {
 	sessionCtx, cancel := context.WithCancel(hub.ctx)
 	session := &clientSession{
 		conn:   conn,
@@ -277,7 +336,7 @@ func (hub *Hub) register(conn *websocket.Conn) *clientSession {
 		done:   make(chan struct{}),
 	}
 
-	hub.clients.Store(session, struct{}{})
+	clients.Store(session, struct{}{})
 
 	go hub.writeLoop(sessionCtx, session)
 
@@ -285,18 +344,30 @@ func (hub *Hub) register(conn *websocket.Conn) *clientSession {
 }
 
 func (hub *Hub) unregister(session *clientSession) {
+	hub.unregisterFrom(&hub.clients, session)
+}
+
+func (hub *Hub) unregisterManifold(session *clientSession) {
+	hub.unregisterFrom(&hub.manifold, session)
+}
+
+func (hub *Hub) unregisterFrom(clients *sync.Map, session *clientSession) {
 	if session == nil {
 		return
 	}
 
-	hub.clients.Delete(session)
+	clients.Delete(session)
 	session.cancel()
 	<-session.done
 	_ = session.conn.Close()
 }
 
 func (hub *Hub) fanout(frame cachedFrame) {
-	hub.clients.Range(func(key, _ any) bool {
+	hub.fanoutTo(&hub.clients, frame)
+}
+
+func (hub *Hub) fanoutTo(clients *sync.Map, frame cachedFrame) {
+	clients.Range(func(key, _ any) bool {
 		session, ok := key.(*clientSession)
 
 		if !ok || session == nil {

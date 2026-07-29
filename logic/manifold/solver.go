@@ -5,6 +5,7 @@ import (
 
 	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/audit"
@@ -24,13 +25,15 @@ type Solver struct {
 	domain    *pfluid.Domain
 	recorder  *audit.Recorder
 	tokenizer *Tokenizer
+	ui        chan []byte
+	binui     chan []byte
 }
 
 /*
 NewSolver creates the single shared Metal domain and a spectral corpus bounded
 by the same explicit event-history capacity as the live market feed.
 */
-func NewSolver(recorder *audit.Recorder) *Solver {
+func NewSolver(ui, binui chan []byte, recorder *audit.Recorder) *Solver {
 	config := pfluid.DefaultConfig()
 	configuredDelta := viper.GetDuration("market.manifold.integration_interval")
 
@@ -123,6 +126,32 @@ func (solver *Solver) Step() error {
 
 	if solver.recorder != nil {
 		solver.recorder.Write(diagnostics)
+	}
+
+	frame, stats, err := solver.domain.Display()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to display domain",
+			err,
+		))
+	}
+
+	if solver.ui != nil {
+		select {
+		case solver.binui <- frame:
+		default:
+		}
+	}
+
+	if solver.binui != nil {
+		select {
+		case solver.ui <- datura.Map[any]{
+			"stats": stats,
+		}.Marshal():
+		default:
+		}
 	}
 
 	return nil

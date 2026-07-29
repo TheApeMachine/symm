@@ -636,6 +636,10 @@ func (stub *stubConn) Post(path string, params json.Marshaler) ([]byte, error) {
 	return stub.postResponse, nil
 }
 
+func (stub *stubConn) Books() *spot.BookManager {
+	return &spot.BookManager{}
+}
+
 func normalizerClient() *spot.WebSocket {
 	client := spot.NewWebSocket()
 	client.REST.Executor = func(request *http.Request) (*http.Response, error) {

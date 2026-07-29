@@ -30,6 +30,7 @@ type Paper struct {
 	cancel    context.CancelFunc
 	simulator *Simulator
 	roots     map[string]*types.Subscription[any]
+	books     *spot.BookManager
 }
 
 var _ Conn = (*Paper)(nil)
@@ -429,4 +430,8 @@ func (paper *Paper) Place(model datura.Map[any], reqID int64) error {
 	// as an incremental update leaves stale positive rows in Balance and keeps
 	// phantom OPEN lots.
 	return paper.Balance("snapshot")
+}
+
+func (paper *Paper) Books() *spot.BookManager {
+	return paper.books
 }

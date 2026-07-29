@@ -38,11 +38,12 @@ The command only supplies its process context; every runtime dependency is
 created here so tests can replace transports without rebuilding the system.
 */
 type Booter struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	channel chan []byte
-	stages  *system.Booter
-	config  config.Config
+	ctx      context.Context
+	cancel   context.CancelFunc
+	channel  chan []byte
+	manifold chan []byte
+	stages   *system.Booter
+	config   config.Config
 }
 
 /*
@@ -71,6 +72,7 @@ func (booter *Booter) compose() error {
 
 	booter.config = cfg
 	booter.channel = make(chan []byte, cfg.System.ChannelBuffer)
+	booter.manifold = make(chan []byte, cfg.System.ChannelBuffer)
 	booter.stages = system.NewBooter(booter.ctx, booter.channel)
 
 	return nil
@@ -277,11 +279,22 @@ func (booter *Booter) boot(
 	instrument := broker.NewInstrument(api, price, booter.channel, booter.config.Market)
 
 	balance := broker.NewBalance(api, booter.channel, booter.config.Market)
+
 	desk := broker.NewDesk(
 		booter.ctx, api, instrument, price, balance, booter.config.Trading,
 	)
-	hub := ui.NewHub(booter.ctx, desk, price, balance, booter.channel, booter.config.UI)
-	thesis := types.NewThesis()
+
+	hub := ui.NewHub(
+		booter.ctx,
+		desk,
+		price,
+		balance,
+		booter.channel,
+		booter.manifold,
+		booter.config.UI,
+	)
+
+	thesis := types.NewThesis(api.Book())
 	hawkesSignal := hawkes.NewSignal(booter.ctx, booter.channel)
 
 	trackCapacity := booter.config.Signals.FeedTrackCapacity
@@ -326,6 +339,7 @@ func (booter *Booter) boot(
 		api,
 		tree,
 		booter.channel,
+		booter.manifold,
 		recorder,
 	)
 

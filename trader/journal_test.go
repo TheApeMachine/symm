@@ -30,7 +30,7 @@ func TestJournalStore(t *testing.T) {
 		})
 
 		Convey("When saving Thesis snapshots", func() {
-			thesis := types.NewThesis()
+			thesis := types.NewThesis(nil)
 			decision := types.Decision{
 				Symbol:           "BTC/USD",
 				ProposedQuantity: decimal.NewFromInt64(1),

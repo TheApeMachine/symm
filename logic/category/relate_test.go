@@ -118,7 +118,7 @@ func TestLinkPair(t *testing.T) {
 	Convey("Given a graph with evidence from valid measurements", t, func() {
 		graph := NewGraph()
 		graph.touched = map[edgeKey]struct{}{}
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		at := time.Unix(100, 0).UTC()
 
 		ignitionMass := 0.8
@@ -190,7 +190,7 @@ func TestLinkPair(t *testing.T) {
 func TestContradictMass(t *testing.T) {
 	Convey("Given an evidence index with active metrics", t, func() {
 		index := newEvidenceIndex()
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		mass := 0.9
 		thesis.AppendMeasurements([]*types.Measurement{
 			{
@@ -240,7 +240,7 @@ func TestContradictMass(t *testing.T) {
 func BenchmarkLinkPair(b *testing.B) {
 	graph := NewGraph()
 	graph.touched = map[edgeKey]struct{}{}
-	thesis := types.NewThesis()
+	thesis := types.NewThesis(nil)
 	at := time.Unix(100, 0).UTC()
 
 	mass := 0.7
@@ -298,7 +298,7 @@ func BenchmarkSharedSupport(b *testing.B) {
 
 func BenchmarkContradictMass(b *testing.B) {
 	index := newEvidenceIndex()
-	thesis := types.NewThesis()
+	thesis := types.NewThesis(nil)
 	mass := 0.9
 
 	thesis.AppendMeasurements([]*types.Measurement{
