@@ -70,16 +70,26 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	defer solver.mu.Unlock()
 
 	hawkes := utils.Measurements(thesis, types.SourceHawkes)
-	orders := make([]*mgrbook.Order, 0, len(hawkes))
+	bidOrders := make([]*mgrbook.Order, 0, len(hawkes))
+	askOrders := make([]*mgrbook.Order, 0, len(hawkes))
 
 	for _, bookName := range thesis.BookManager.GetBooks() {
 		book := thesis.BookManager.GetBook(bookName)
 		for _, level := range book.Bids.Levels {
-			orders = append(orders, level.Queue()...)
+			bidOrders = append(bidOrders, level.Queue()...)
 		}
-	}
 
-	batch := solver.tokenizer.NewBatch()
+		for _, level := range book.Asks.Levels {
+			askOrders = append(askOrders, level.Queue()...)
+		}
+
+		particles, contentIDs := solver.tokenizer.NewBatch(
+			bidOrders, 
+			askOrders, 
+			book.Midpoint().Float64(),
+			book.
+		)
+	}
 
 	for idx, measurement := range measurements {
 		solver.domain.Append(particles, []uint32{})

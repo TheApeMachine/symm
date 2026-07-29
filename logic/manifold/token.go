@@ -55,27 +55,19 @@ func NewTokenizer(config pfluid.Config) Tokenizer {
 }
 
 /*
-Batch is one tokenized book sample: Sensorium particles plus the content
-identities inelastic merge uses (content_token_ids).
-*/
-type Batch struct {
-	Particles  []pfluid.Particle
-	ContentIDs []uint32
-}
-
-/*
 NewBatch converts one book's resting orders into an appendable particle batch.
 Each order is placed by relative log price (X), log size (Y), and empirical
 age rank (Z) over this sample — one book tick, one geometric step into the
 shared field. Content is (sequence<<24)|(symbolIndex<<1)|side for merge.
 */
 func (tokenizer Tokenizer) NewBatch(
-	orders []*mgrbook.Order,
+	bidOrders []*mgrbook.Order,
+	askOrders []*mgrbook.Order,
 	midPrice float64,
 	buyIntensity float64,
 	sellIntensity float64,
 	symbolIndex uint32,
-) Batch {
+) ([]pfluid.Particle, []uint32) {
 	if midPrice <= 0 || len(orders) == 0 {
 		return Batch{}
 	}
