@@ -9,7 +9,6 @@ import { paintTerminalManifoldChart } from "#/components/charts/manifold";
 import { paintTerminalPredictionChart } from "#/components/charts/prediction";
 import { paintTerminalResonanceChart } from "#/components/charts/resonance";
 import { paintTerminalSignalHeatmap } from "#/components/charts/signal-heatmap";
-import { paintSignalDetailMeasurements } from "#/components/kernel/detail";
 import {
 	paintAllocationBalances,
 	paintAllocationCausal,
@@ -53,7 +52,10 @@ import {
 	paintJournalPositions,
 } from "#/components/terminal/journal-surface";
 import { paintKernelList } from "#/components/terminal/kernel-list";
-import { paintManifoldMeta, repaintManifoldMeta } from "#/components/terminal/live-manifold-meta";
+import {
+	paintManifoldMeta,
+	repaintManifoldMeta,
+} from "#/components/terminal/live-manifold-meta";
 import {
 	paintPaletteInstruments,
 	paintPaletteMeasurements,
@@ -103,10 +105,7 @@ export const registerPainter = (key: string, paint: Paint): (() => void) => {
 	};
 };
 
-export const paintRegistered = (
-	key: string,
-	updates: unknown,
-): void => {
+export const paintRegistered = (key: string, updates: unknown): void => {
 	for (const paint of registeredPainters.get(key) ?? []) {
 		paint(updates);
 	}
@@ -161,10 +160,6 @@ export const drawers = {
 		paint: paintKernelList,
 		keys: {
 			hawkes: { paint: paintHawkes, input: "history" },
-			signalDetail: {
-				paint: paintSignalDetailMeasurements as PaintLegacy,
-				input: "latest",
-			},
 			regimeRadar: { paint: paintRegimeRadar, input: "history" },
 			health: { paint: paintHealthMeasurements, input: "latest" },
 			signalHeatmap: {

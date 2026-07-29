@@ -1,6 +1,5 @@
 import { DEFAULT_KERNELS } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
-import { repaintSignalDetail } from "#/components/kernel/detail";
 import {
 	type MeterParts,
 	mergeInspectorMetrics,
@@ -66,14 +65,15 @@ so the list can paint directly without depending on the removed measurement view
 */
 const kernelListReadout = (row: Measurement) => {
 	const metric = HEADLINE_METRIC[row.source] ?? "strength";
-	const reading = Object.entries(row.metrics ?? {})
-		.filter(([key]) => key === metric || key.startsWith(`${metric}:`))
-		.map(([, value]) => value)
-		.sort(
-			(left, right) =>
-				(right.normalized ?? right.raw) - (left.normalized ?? left.raw),
-		)
-		.at(0) ?? row.metrics?.strength;
+	const reading =
+		Object.entries(row.metrics ?? {})
+			.filter(([key]) => key === metric || key.startsWith(`${metric}:`))
+			.map(([, value]) => value)
+			.sort(
+				(left, right) =>
+					(right.normalized ?? right.raw) - (left.normalized ?? left.raw),
+			)
+			.at(0) ?? row.metrics?.strength;
 	const raw = reading?.raw ?? 0;
 	const sample = Math.max(0, Math.min(1, reading?.normalized ?? raw));
 
@@ -100,10 +100,7 @@ sparkPoints builds the SVG points string from the in-memory y-sample series.
 const sparkPoints = (samples: number[]): string =>
 	samples
 		.map((sampleY, index) => {
-			const x =
-				samples.length === 1
-					? 0
-					: (index / (samples.length - 1)) * 150;
+			const x = samples.length === 1 ? 0 : (index / (samples.length - 1)) * 150;
 
 			return `${x.toFixed(1)},${sampleY.toFixed(1)}`;
 		})
@@ -150,7 +147,11 @@ const appendSpark = (samples: number[], unit: number) => {
 };
 
 const detachInspectorSpark = () => {
-	if (inspector === null || inspector.source === null || inspector.sparkLine === null) {
+	if (
+		inspector === null ||
+		inspector.source === null ||
+		inspector.sparkLine === null
+	) {
 		return;
 	}
 
@@ -386,11 +387,7 @@ export const paintKernelList = (value: unknown, focusSymbol: string) => {
 		inspector.source !== null &&
 		inspector.metrics !== null
 	) {
-		const merged = mergeInspectorMetrics(
-			rows,
-			inspector.source,
-			focusSymbol,
-		);
+		const merged = mergeInspectorMetrics(rows, inspector.source, focusSymbol);
 
 		if (merged.size > 0) {
 			paintInspectorMeters(inspector.metrics, inspector.meters, merged);
@@ -422,7 +419,6 @@ export const KernelList = ({
 					}
 
 					terminalStore.actions.selectSource(next);
-					repaintSignalDetail();
 				}}
 				rowRef={(element) => {
 					if (element === null) {
@@ -436,12 +432,8 @@ export const KernelList = ({
 						samples: [],
 						sparks: [
 							{
-								line: element.querySelector(
-									'[data-role="spark-line"]',
-								),
-								area: element.querySelector(
-									'[data-role="spark-area"]',
-								),
+								line: element.querySelector('[data-role="spark-line"]'),
+								area: element.querySelector('[data-role="spark-area"]'),
 							},
 						],
 						pressed: "",

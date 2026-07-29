@@ -381,12 +381,11 @@ export type Measurement = {
 	};
 	metrics?: Record<
 		string,
-		| number
-		| {
-				raw: number;
-				normalized?: number | null;
-				unit?: string;
-			}
+		{
+			raw: number;
+			normalized?: number | null;
+			unit?: string;
+		}
 	>;
 	categories?: MeasurementCategory[];
 };

@@ -134,12 +134,7 @@ Usage:
 
 <Component
 	className="metric-grid"
-	register={(paint) =>
-		registerPainter(
-			"measurements.signalDetail",
-			paint,
-		)
-	}
+	register={(paint) => registerPainter("measurements", paint)}
 >
 	{({ ref, className }) => (
 		<div ref={ref} className={className}>

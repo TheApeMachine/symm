@@ -23,7 +23,7 @@ const RouteComponent = () => {
 	const kernels = useSelector(appStore, (state) => state.kernels);
 
 	return (
-		<Flex.Column fullWidth className="h-full min-w-[1120px]">
+		<Flex.Column fullWidth className="h-full min-w-280">
 			<Pulse />
 			<Flex fullWidth className="relative min-h-0 flex-1">
 				<KernelInspector />

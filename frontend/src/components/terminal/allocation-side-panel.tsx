@@ -10,17 +10,17 @@ export const AllocationSidePanel = () => (
 					className="font-mono text-[11px] text-(--acc)"
 				/>
 			</div>
-			<div className="mt-1 mb-[11px] font-mono text-[9.5px] text-(--f4)">
+			<div className="mt-1 mb-2.75 font-mono text-[9.5px] text-(--f4)">
 				share of deployable free cash
 			</div>
-			<div className="h-2 overflow-hidden rounded-[2px] bg-(--line)">
+			<div className="h-2 overflow-hidden rounded-xs bg-(--line)">
 				<div
 					data-alloc="deploy-fill"
 					className="h-full bg-(--acc)"
 					style={{ width: "0%" }}
 				/>
 			</div>
-			<div className="mt-[7px] flex justify-between font-mono text-[10px] text-(--f3)">
+			<div className="mt-1.75 flex justify-between font-mono text-[10px] text-(--f3)">
 				<span data-alloc="deployed-label" />
 				<span data-alloc="reserved-label" />
 			</div>
@@ -32,12 +32,12 @@ export const AllocationSidePanel = () => (
 			</div>
 			<div
 				data-alloc="quote-label"
-				className="mb-[11px] font-mono text-[9.5px] text-(--f4)"
+				className="mb-2.75 font-mono text-[9.5px] text-(--f4)"
 			/>
-			<div className="flex flex-col gap-[9px]" data-alloc-host="sizes">
+			<div className="flex flex-col gap-2.25" data-alloc-host="sizes">
 				<div
 					data-alloc="sizing-empty"
-					className="border-(--line) border-t pt-[11px] font-mono text-[9.5px] text-(--f4)"
+					className="border-(--line) border-t pt-2.75 font-mono text-[9.5px] text-(--f4)"
 				>
 					no symbols above entry edge
 				</div>

@@ -12,9 +12,9 @@ import { appStore } from "#/collections/app";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { openInspectorShell } from "#/components/terminal/kernel-list";
 import { CommandPalette } from "#/components/terminal/palette";
+import { SymbolFocusLayer } from "#/components/terminal/symbol-focus";
 import { TerminalNav } from "#/components/terminal/terminal-nav";
 import { TerminalTopBar } from "#/components/terminal/terminal-top-bar";
-import { SymbolFocusLayer } from "#/components/terminal/symbol-focus";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
 import { WsFeed } from "#/providers/websocket";
@@ -64,12 +64,8 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 	const scanlines = useSelector(terminalStore, (state) => state.scanlines);
 	const errorDialogRef = useRef<HTMLDialogElement>(null);
 	const dismissRef = useRef<HTMLButtonElement>(null);
-	const {
-		openPalette,
-		closePalette,
-		bumpPaletteIndex,
-		selectFocusSymbol,
-	} = terminalStore.actions;
+	const { openPalette, closePalette, bumpPaletteIndex, selectFocusSymbol } =
+		terminalStore.actions;
 	const { updateFocusSymbol } = appStore.actions;
 
 	useEffect(() => {
@@ -160,7 +156,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 			<body className="flex h-full min-h-svh flex-col" suppressHydrationWarning>
 				<ClientOnly fallback={null}>
 					<WsFeed />
-					<div className="fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-[#0e0c0a] text-[13px] text-[#cbc2b4]">
+					<Flex.Column className="fixed inset-0 z-50 min-h-0 overflow-hidden bg-[#0e0c0a] text-[13px] text-[#cbc2b4]">
 						{scanlines ? (
 							<div
 								className="pointer-events-none fixed inset-0 z-60 opacity-(--scan)"
@@ -173,12 +169,12 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 						) : null}
 						<SymbolFocusLayer>
 							<TerminalTopBar />
-							<div className="flex min-h-0 flex-1">
+							<Flex.Row className="min-h-0 flex-1">
 								<TerminalNav active={surface} />
 								<main className="min-w-0 flex-1 overflow-auto bg-[#0e0c0a]">
 									<div className="h-full min-h-180">{children}</div>
 								</main>
-							</div>
+							</Flex.Row>
 						</SymbolFocusLayer>
 						<CommandPalette activeSurface={surface} onRun={runPalette} />
 						<dialog
@@ -250,7 +246,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 								</Flex.Column>
 							) : null}
 						</dialog>
-					</div>
+					</Flex.Column>
 				</ClientOnly>
 				<Scripts />
 			</body>

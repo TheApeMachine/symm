@@ -26,7 +26,7 @@ export const SignalsSurface = () => {
 	const kernels = useSelector(appStore, (state) => state.kernels);
 
 	return (
-		<div className="grid h-full min-w-[1080px] grid-cols-[230px_minmax(420px,1fr)_320px]">
+		<div className="grid h-full min-w-270 grid-cols-[230px_minmax(420px,1fr)_320px]">
 			<div className="min-h-0 overflow-auto border-(--line) border-r bg-(--surface)">
 				<div className="sticky top-0 border-(--line) border-b bg-(--surface) px-3 py-2.5 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
 					Kernels

@@ -425,7 +425,13 @@ describe("hawkes curve", () => {
 		};
 		const compact = (
 			at: string,
-			metrics: Record<string, number>,
+			metrics: Record<
+				string,
+				{
+					raw: number;
+					normalized?: number | null;
+				}
+			>,
 		): Measurement => ({
 			source: "hawkes",
 			symbol: "BTC/USD",
@@ -442,18 +448,18 @@ describe("hawkes curve", () => {
 		const epochs = [
 			epoch(firstAt, [
 				compact(firstAt, {
-					"baseline_intensity:buy": 0.6,
-					"baseline_intensity:sell": 0.4,
-					decay_rate: 1,
-					spectral_radius: 0.72,
-					"conditional_intensity:buy": 0.9,
-					"conditional_intensity:sell": 0.6,
+					"baseline_intensity:buy": { raw: 0.6 },
+					"baseline_intensity:sell": { raw: 0.4 },
+					decay_rate: { raw: 1 },
+					spectral_radius: { raw: 0.72 },
+					"conditional_intensity:buy": { raw: 0.9 },
+					"conditional_intensity:sell": { raw: 0.6 },
 				}),
 			]),
 			epoch(nextAt, [
 				compact(nextAt, {
-					"conditional_intensity:buy": 1.2,
-					"conditional_intensity:sell": 0.8,
+					"conditional_intensity:buy": { raw: 1.2 },
+					"conditional_intensity:sell": { raw: 0.8 },
 				}),
 			]),
 		];
