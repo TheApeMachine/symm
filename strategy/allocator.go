@@ -3,44 +3,29 @@ package strategy
 import (
 	"context"
 	"fmt"
-	"maps"
-	"math"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
-/*
-Allocator sizes enter decisions from a transaction-local budget drawn from the
-reservation ledger, honoring rotation notionals and validating haircuts.
-*/
 type Allocator struct {
 	ctx         context.Context
-	cancel      context.CancelFunc
 	balance     *broker.Balance
 	instrument  *broker.Instrument
 	price       *broker.Price
 	maxFraction *decimal.Decimal
 }
 
-/*
-NewAllocator wires Balance, Instrument, and Price for lot sizing.
-*/
 func NewAllocator(
 	ctx context.Context,
 	balance *broker.Balance,
 	instrument *broker.Instrument,
 	price *broker.Price,
 ) *Allocator {
-	ctx, cancel := context.WithCancel(ctx)
-
 	return &Allocator{
 		ctx:        ctx,
-		cancel:     cancel,
 		balance:    balance,
 		instrument: instrument,
 		price:      price,
@@ -50,235 +35,89 @@ func NewAllocator(
 	}
 }
 
-/*
-Close releases the allocator context.
-*/
-func (allocator *Allocator) Close() {
-	if allocator.cancel != nil {
-		allocator.cancel()
-	}
-}
-
-/*
-Allocate sizes each enter decision against a shrinking transaction-local budget.
-Per-decision failures reject that row and continue the batch.
-*/
-func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
-	if err := allocator.validate(map[string]any{"thesis": thesis}); err != nil {
-		return err
+// Allocate sizes each accepted 'enter' decision against free wallet cash.
+func (a *Allocator) Allocate(thesis *types.Thesis) error {
+	if thesis == nil {
+		return nil
 	}
 
-	cash, err := allocator.balance.FreeCash()
-
+	cash, err := a.balance.FreeCash()
 	if err != nil || cash == nil || cash.Sign() <= 0 {
-		return errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"allocator: quote cash unavailable",
-			err,
-		))
+		return nil
 	}
 
 	budget := cash.Copy()
 
-	for index := range thesis.Decisions {
-		decision := &thesis.Decisions[index]
-
+	for i := range thesis.Decisions {
+		decision := &thesis.Decisions[i]
 		if decision.Action != types.ActionEnter {
 			continue
 		}
 
-		allocator.size(decision, &budget)
+		pair, err := a.instrument.Pair(decision.Symbol)
+		if err != nil {
+			a.reject(decision, "instrument pair unavailable")
+			continue
+		}
+
+		if pair.QtyMin == nil || pair.QtyMin.Sign() <= 0 {
+			a.reject(decision, "instrument qty_min unavailable")
+			continue
+		}
+
+		// Calculate Max Fraction Slice or reuse rotation freed capital
+		slice := decimal.ExactMul(budget, a.maxFraction)
+		if decision.ProposedNotional != nil && decision.ProposedNotional.Sign() > 0 {
+			slice = decision.ProposedNotional.Copy()
+		}
+
+		// Quantize quantity against instrument venue rules
+		qty, err := a.price.Quantity(&pair, slice)
+		if err != nil || qty == nil {
+			a.reject(decision, "quantity sizing failed")
+			continue
+		}
+
+		cost, err := a.price.Taker(&pair, qty)
+		if err != nil || cost == nil || cost.Cmp(budget) > 0 {
+			a.reject(decision, "taker cost exceeds available budget")
+			continue
+		}
+
+		// Reserve capital on broker ledger
+		intentID := fmt.Sprintf("alloc:%s:%d", decision.Symbol, decision.At.UnixNano())
+		if err := a.balance.Reserve(intentID, decision.Symbol, cost, false); err != nil {
+			a.reject(decision, "ledger reservation failed")
+			continue
+		}
+
+		ask, err := a.price.ReferencePrice(&pair)
+		if err != nil {
+			_ = a.balance.Release(intentID)
+			a.reject(decision, "reference price unavailable")
+			continue
+		}
+
+		decision.ReservationID = intentID
+		decision.ProposedQuantity = qty
+		decision.ProposedNotional = cost
+		decision.ReferencePrice = ask.Copy()
+		decision.Reason = "sized from transaction budget"
+
+		if decision.Cause != "rotation" {
+			budget = budget.Sub(cost)
+		}
 	}
 
 	return nil
 }
 
-func (allocator *Allocator) size(
-	decision *types.Decision,
-	budget **decimal.Decimal,
-) {
-	pair, err := allocator.instrument.Pair(decision.Symbol)
-
-	if err != nil {
-		allocator.reject(decision, "instrument pair unavailable")
-		return
-	}
-
-	if pair.QtyMin == nil || pair.QtyMin.Sign() <= 0 {
-		allocator.reject(decision, "instrument qty_min unavailable")
-		return
-	}
-
-	riskAdjusted, sliceErr := allocator.resolveSlice(decision, *budget)
-
-	if sliceErr != "" {
-		allocator.reject(decision, sliceErr)
-		return
-	}
-
-	quantity, cost, qtyErr := allocator.sizeQuantity(&pair, riskAdjusted, *budget, decision)
-
-	if qtyErr != "" {
-		allocator.reject(decision, qtyErr)
-		return
-	}
-
-	if !allocator.reserveIntent(decision, budget, cost) {
-		return
-	}
-
-	ask, askErr := allocator.price.ReferencePrice(&pair)
-
-	if askErr != nil {
-		if decision.ReservationID != "" {
-			_ = allocator.balance.Release(decision.ReservationID)
-			decision.ReservationID = ""
-
-			if decision.Cause != "rotation" {
-				*budget = (*budget).Add(cost)
-			}
-		}
-
-		allocator.reject(decision, "reference price unavailable")
-		return
-	}
-
-	decision.ProposedQuantity = quantity
-	decision.ProposedNotional = cost
-	decision.ReferencePrice = ask
-	decision.Reason = "sized from transaction budget"
-
-}
-
-func (allocator *Allocator) resolveSlice(
-	decision *types.Decision,
-	budget *decimal.Decimal,
-) (*decimal.Decimal, string) {
-	haircut, haircutErr := allocator.haircut(decision.AllocationHaircut)
-
-	if haircutErr != nil {
-		return nil, haircutErr.Error()
-	}
-
-	slice := budget
-
-	if decision.Cause == "rotation" &&
-		decision.ProposedNotional != nil &&
-		decision.ProposedNotional.Sign() > 0 {
-		slice = decision.ProposedNotional.Copy()
-	}
-
-	if decision.Cause != "rotation" {
-		walletSlice := decimal.ExactMul(slice, allocator.maxFraction)
-
-		if walletSlice == nil || walletSlice.Sign() <= 0 {
-			return nil, "wallet slice unavailable"
-		}
-
-		slice = walletSlice
-	}
-
-	riskAdjusted := slice.Copy().Sub(decimal.ExactMul(slice.Copy(), haircut))
-
-	if riskAdjusted.Sign() <= 0 {
-		return nil, "risk-adjusted budget below minimum"
-	}
-
-	return riskAdjusted, ""
-}
-
-func (allocator *Allocator) sizeQuantity(
-	pair *kraken.InstrumentPair,
-	riskAdjusted, budget *decimal.Decimal,
-	decision *types.Decision,
-) (*decimal.Decimal, *decimal.Decimal, string) {
-	minCost, minErr := allocator.price.Taker(pair, pair.QtyMin)
-
-	if minErr != nil || minCost == nil {
-		return nil, nil, "minimum cost unavailable"
-	}
-
-	if minCost.Cmp(riskAdjusted) > 0 {
-		return nil, nil, "minimum exceeds wallet slice"
-	}
-
-	quantity, qtyErr := allocator.price.Quantity(pair, riskAdjusted)
-
-	if qtyErr != nil || quantity == nil {
-		return nil, nil, "quantity unavailable"
-	}
-
-	cost, costErr := allocator.price.Taker(pair, quantity)
-
-	if costErr != nil || cost == nil || cost.Cmp(riskAdjusted) > 0 {
-		return nil, nil, "taker cost unavailable"
-	}
-
-	if decision.Cause != "rotation" && cost.Cmp(budget) > 0 {
-		return nil, nil, "insufficient transaction budget"
-	}
-
-	return quantity, cost, ""
-}
-
-func (allocator *Allocator) reserveIntent(
-	decision *types.Decision,
-	budget **decimal.Decimal,
-	cost *decimal.Decimal,
-) bool {
-	if decision.Cause == "rotation" {
-		return true
-	}
-
-	intentID := fmt.Sprintf(
-		"alloc:%s:%d", decision.Symbol, decision.At.UnixNano(),
-	)
-
-	if err := allocator.balance.Reserve(
-		intentID, decision.Symbol, cost, false,
-	); err != nil {
-		allocator.reject(decision, err.Error())
-		return false
-	}
-
-	decision.ReservationID = intentID
-
-	*budget = (*budget).Sub(cost)
-
-	return true
-}
-
-func (allocator *Allocator) haircut(value float64) (*decimal.Decimal, error) {
-	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 1 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"allocation haircut must be finite in [0,1]",
-			nil,
-		))
-	}
-
-	return decimal.NewFromFloat64(value), nil
-}
-
-func (allocator *Allocator) reject(
-	decision *types.Decision,
-	reason string,
-) {
+func (a *Allocator) reject(decision *types.Decision, reason string) {
+	decision.Action = types.ActionNothing
 	decision.Reason = reason
 	decision.ProposedQuantity = nil
 	decision.ProposedNotional = nil
 	decision.ReservationID = ""
 }
 
-func (allocator *Allocator) validate(mandatory map[string]any) error {
-	check := map[string]any{
-		"balance":     allocator.balance,
-		"instrument":  allocator.instrument,
-		"price":       allocator.price,
-		"maxFraction": allocator.maxFraction,
-	}
-
-	maps.Copy(check, mandatory)
-
-	return errnie.Error(errnie.Require(check))
-}
+func (a *Allocator) Close() {}

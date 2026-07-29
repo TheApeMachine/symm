@@ -2,8 +2,6 @@ package strategy
 
 import (
 	"context"
-	"maps"
-	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
@@ -13,29 +11,20 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-/*
-Planner records feasible actions from accumulated measurements.
-*/
 type Planner struct {
 	*types.Actor
-	ctx         context.Context
-	cancel      context.CancelFunc
-	status      types.Status
-	api         *websocket.API
-	desk        *broker.Desk
-	instrument  *broker.Instrument
-	price       *broker.Price
-	balance     *broker.Balance
-	uiHub       chan<- []byte
-	analyzer    *logic.Analyzer
-	recorder    *audit.Recorder
-	allocator   *Allocator
-	opportunity *Opportunity
-	admit       *Admit
-	continuity  Continuity
-	evidence    Evidence
-	rotate      Rotate
-	arbiter     *Arbiter
+	ctx       context.Context
+	cancel    context.CancelFunc
+	status    types.Status
+	api       *websocket.API
+	desk      *broker.Desk
+	price     *broker.Price
+	balance   *broker.Balance
+	analyzer  *logic.Analyzer
+	recorder  *audit.Recorder
+	evaluator Evaluator
+	arbiter   *Arbiter
+	allocator *Allocator
 }
 
 func NewPlanner(
@@ -51,144 +40,113 @@ func NewPlanner(
 	recorder *audit.Recorder,
 ) *Planner {
 	ctx, cancel := context.WithCancel(ctx)
-	rotate := NewRotate()
-	admit := NewAdmit(ctx, balance, desk, rotate)
+	_ = uiHub // Retained for signature compatibility
+
+	evaluator := NewEvaluator()
+	arbiter := NewArbiter(desk, price)
+
+	if allocator == nil {
+		allocator = NewAllocator(ctx, balance, instrument, price)
+	}
 
 	planner := &Planner{
-		ctx:        ctx,
-		cancel:     cancel,
-		status:     types.READY,
-		api:        api,
-		desk:       desk,
-		instrument: instrument,
-		price:      price,
-		balance:    balance,
-		allocator:  allocator,
-		uiHub:      uiHub,
-		analyzer:   analyzer,
-		recorder:   recorder,
-		opportunity: NewOpportunity(
-			ctx, cancel, desk, price, balance, recorder, uiHub,
-		),
-		admit:      admit,
-		continuity: NewContinuity(price, desk, rotate),
-		evidence:   NewEvidence(),
-		rotate:     rotate,
-		arbiter:    NewArbiter(desk, price, admit, rotate),
+		ctx:       ctx,
+		cancel:    cancel,
+		status:    types.READY,
+		api:       api,
+		desk:      desk,
+		price:     price,
+		balance:   balance,
+		analyzer:  analyzer,
+		recorder:  recorder,
+		evaluator: evaluator,
+		arbiter:   arbiter,
+		allocator: allocator,
 	}
 
 	planner.Actor = types.NewActor(ctx, "planner", map[string]types.Handler{
-		"ticker": {Topic: "ticker", Fn: planner.thesis},
-		"trade":  {Topic: "trade", Fn: planner.thesis},
+		"ticker": {Topic: "thesis", Fn: planner.onThesis},
+		"trade":  {Topic: "thesis", Fn: planner.onThesis},
 	})
 
 	return planner
 }
 
-func (planner *Planner) Initialize(analyzer *logic.Analyzer) error {
+func (p *Planner) Initialize(analyzer *logic.Analyzer) error {
 	errnie.Info("initializing planner")
 
-	planner.Actor.InitializeSize(
+	p.Actor.InitializeSize(
 		1,
 		types.Topic{Name: "ticker", Actor: analyzer.Actor},
 		types.Topic{Name: "trade", Actor: analyzer.Actor},
 	)
 
-	planner.status = types.READY
+	p.status = types.READY
 	return nil
 }
 
-func (planner *Planner) Status() types.Status {
-	return planner.status
+func (p *Planner) Status() types.Status {
+	return p.status
 }
 
-func (planner *Planner) Close() error {
-	planner.cancel()
+func (p *Planner) Close() error {
+	p.cancel()
 	return nil
 }
 
-func (planner *Planner) thesis(message any) any {
-	return planner.Decide(message.(*types.Thesis))
+func (p *Planner) onThesis(msg any) any {
+	thesis, ok := msg.(*types.Thesis)
+	if !ok || thesis == nil {
+		return nil
+	}
+
+	return p.Decide(thesis)
 }
 
-/*
-Update installs measurements onto the durable Thesis and runs the analyzer.
-*/
-func (planner *Planner) Update(
-	thesis *types.Thesis,
-	at time.Time,
-	tick int64,
-	rows []*types.Measurement,
-) *types.Thesis {
+// Decide is the clean, 4-step pipeline executor.
+func (p *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 	if thesis == nil {
-		thesis = types.NewThesis()
-	}
-
-	thesis.ResetTick(at, tick)
-	thesis.AppendMeasurements(rows)
-
-	started := time.Now()
-
-	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "measure_end", map[string]any{
-		"measurements": len(rows),
-		"ns":           time.Since(started).Nanoseconds(),
-	}))
-
-	if planner.analyzer != nil {
-		planner.analyzer.Update(thesis)
-	}
-
-	return thesis
-}
-
-func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
-	if err := planner.validate(map[string]any{"thesis": thesis}); err != nil {
 		return thesis
 	}
 
-	errnie.Error(audit.Phase(planner.recorder, thesis.Tick, "decide_begin", nil))
-	syncThesisLifecycle(thesis, planner.desk.Holdings())
+	errnie.Error(audit.Phase(p.recorder, thesis.Tick, "decide_begin", nil))
 
-	// Keep Enter rows Crypto has not yet opened on Balance. Clearing them while
-	// LifecycleEntrySelected + thesis Holdings remained blocked Measure forever.
-	planner.retainUnapplied(thesis)
+	// Step 1: Sync thesis lifecycle with live desk holdings
+	syncThesisLifecycle(thesis, p.desk.Holdings())
+	p.retainUnapplied(thesis)
 
-	planner.opportunity.StampFriction(thesis)
-	planner.continuity.Manage(thesis)
+	// Step 2: Score continuation for active holdings
+	p.evaluator.ManageContinuation(thesis, p.desk, p.price)
 
+	// Step 3: Check completeness
 	if thesis.Incomplete() {
 		thesis.Decisions = append(thesis.Decisions, types.Decision{
 			Action: types.ActionNothing,
 			Cause:  "measure_incomplete",
-			Reason: "accumulated evidence is marked incomplete; refuse fresh enters",
+			Reason: "accumulated evidence is incomplete; refusing entries",
 		})
 		assignDecisionIDs(thesis)
-
-		planner.auditDecisions(thesis)
-
-		errnie.Error(audit.Phase(
-			planner.recorder,
-			thesis.Tick,
-			"decide_end",
-			decisionCounts(thesis.Decisions),
-		))
-
+		p.auditDecisions(thesis)
+		errnie.Error(audit.Phase(p.recorder, thesis.Tick, "decide_end", decisionCounts(thesis.Decisions)))
 		return thesis
 	}
 
-	planner.opportunity.Measure(thesis)
-	planner.arbiter.Select(thesis)
+	// Step 4: Score new entry opportunities
+	p.evaluator.EvaluateOpportunities(thesis, p.desk, p.price, p.balance)
 
-	if err := planner.allocator.Allocate(thesis); err != nil {
+	// Step 5: Portfolio Arbitration (Ranking, Slot Limits & Rotation/Displacement)
+	p.arbiter.Arbitrate(thesis)
+
+	// Step 6: Capital Allocation & Quantization
+	if err := p.allocator.Allocate(thesis); err != nil {
 		errnie.Error(errnie.Err(errnie.Internal, "failed to allocate", err))
 	}
 
-	planner.rotate.Commit(thesis)
 	assignDecisionIDs(thesis)
-	planner.auditDecisions(thesis)
+	p.auditDecisions(thesis)
 
 	errnie.Error(audit.Phase(
-		planner.recorder,
+		p.recorder,
 		thesis.Tick,
 		"decide_end",
 		decisionCounts(thesis.Decisions),
@@ -197,59 +155,106 @@ func (planner *Planner) Decide(thesis *types.Thesis) *types.Thesis {
 	return thesis
 }
 
-/*
-retainUnapplied preserves unapplied Enter decisions when their target
-symbol is not yet OPEN on Balance, so a slow Crypto.Apply is not erased by the
-next Decide.
-*/
-func (planner *Planner) retainUnapplied(thesis *types.Thesis) {
+func (p *Planner) retainUnapplied(thesis *types.Thesis) {
 	if thesis == nil {
 		return
 	}
-
 	retained := make([]types.Decision, 0, len(thesis.Decisions))
-
 	for _, decision := range thesis.Decisions {
 		if decision.Action != types.ActionEnter {
 			continue
 		}
-
-		if planner.desk != nil {
-			if holding, err := planner.desk.Holding(decision.Symbol); err == nil &&
-				holding.Status != types.CLOSED {
+		if p.desk != nil {
+			if holding, err := p.desk.Holding(decision.Symbol); err == nil && holding.Status != types.CLOSED {
 				continue
 			}
 		}
-
 		retained = append(retained, decision)
 	}
-
 	thesis.Decisions = retained
+}
+
+func (p *Planner) auditDecisions(thesis *types.Thesis) {
+	if p == nil || thesis == nil {
+		return
+	}
+	for _, decision := range thesis.Decisions {
+		if decision.Symbol == "" {
+			continue
+		}
+		lifecycle, _ := lifecycleState(thesis, decision.Symbol)
+		_ = audit.StrategyDecision(p.recorder, thesis.Tick, lifecycle, decision)
+	}
 }
 
 func assignDecisionIDs(thesis *types.Thesis) {
 	if thesis == nil {
 		return
 	}
-
-	for index := range thesis.Decisions {
-		thesis.Decisions[index].EnsureID()
+	for i := range thesis.Decisions {
+		thesis.Decisions[i].EnsureID()
 	}
 }
 
-func (planner *Planner) validate(mandatory map[string]any) error {
-	check := map[string]any{
-		"ctx":         planner.ctx,
-		"cancel":      planner.cancel,
-		"desk":        planner.desk,
-		"balance":     planner.balance,
-		"opportunity": planner.opportunity,
-		"admit":       planner.admit,
-		"arbiter":     planner.arbiter,
-		"allocator":   planner.allocator,
-		"uiHub":       planner.uiHub,
+func decisionCounts(decisions []types.Decision) map[string]any {
+	counts := map[string]int{}
+	for _, decision := range decisions {
+		counts[string(decision.Action)]++
 	}
-	maps.Copy(check, mandatory)
+	summary := map[string]any{"decisions": len(decisions)}
+	for action, count := range counts {
+		summary[action] = count
+	}
+	return summary
+}
 
-	return errnie.Error(errnie.Require(check))
+func syncThesisLifecycle(thesis *types.Thesis, live map[string]*types.Holding) {
+	if thesis == nil {
+		return
+	}
+	for symbol, holding := range live {
+		current, _ := lifecycleState(thesis, symbol)
+		next := holdingLifecycle(current, holding)
+		if next != "" && next != current {
+			thesis.NoteLifecycle(symbol, next, thesis.At)
+		}
+	}
+}
+
+func lifecycleState(thesis *types.Thesis, symbol string) (string, bool) {
+	if thesis == nil || symbol == "" {
+		return "", false
+	}
+	val, found := thesis.Lifecycle.Load(symbol)
+	if !found {
+		return "", false
+	}
+	state, ok := val.(string)
+	return state, ok
+}
+
+func holdingLifecycle(current string, holding *types.Holding) string {
+	if holding == nil {
+		return current
+	}
+	switch holding.Status {
+	case types.OPEN, types.FILLED, types.READY:
+		return types.LifecycleManaging
+	case types.CLOSED:
+		return types.LifecycleClosed
+	default:
+		return current
+	}
+}
+
+// PostMortem evaluates a completed thesis snapshot.
+type PostMortem struct{}
+
+func (pm *PostMortem) Evaluate(thesis *types.Thesis, symbol string) error {
+	if val, ok := thesis.Lifecycle.Load(symbol); ok {
+		if state, isStr := val.(string); isStr && state == types.LifecyclePostMortemReady {
+			thesis.Lifecycle.Store(symbol, types.LifecycleEvaluated)
+		}
+	}
+	return nil
 }

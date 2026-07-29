@@ -1,257 +1,153 @@
 package strategy
 
 import (
-	"maps"
+	"math"
 	"sort"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/types"
 )
 
-/*
-Arbiter ranks enter candidates by utility, fills free slots, and rotates when
-a challenger clears the one-step wait gate against an open incumbent.
-*/
-type Arbiter struct {
-	desk   *broker.Desk
-	price  *broker.Price
-	admit  *Admit
-	rotate Rotate
+type Incumbent struct {
+	Symbol      string
+	HoldUtility float64
+	ExitCost    float64
+	Notional    *decimal.Decimal
+	Qty         *decimal.Decimal
+	Mark        *decimal.Decimal
 }
 
-/*
-NewArbiter wires slot checks, wallet inventory, Admit persistence, and Rotate.
-*/
-func NewArbiter(
-	desk *broker.Desk,
-	price *broker.Price,
-	admit *Admit,
-	rotate Rotate,
-) *Arbiter {
+type Arbiter struct {
+	desk  *broker.Desk
+	price *broker.Price
+}
+
+func NewArbiter(desk *broker.Desk, price *broker.Price) *Arbiter {
 	return &Arbiter{
-		desk:   desk,
-		price:  price,
-		admit:  admit,
-		rotate: rotate,
+		desk:  desk,
+		price: price,
 	}
 }
 
-/*
-Select sorts enter candidates by utility, admits into free slots, and otherwise
-rotates or rejects.
-*/
-func (arbiter *Arbiter) Select(thesis *types.Thesis) {
-	if err := arbiter.validate(map[string]any{"thesis": thesis}); err != nil {
+// Arbitrate ranks candidate entries, allocates available slots, and performs displacement/rotation.
+func (a *Arbiter) Arbitrate(thesis *types.Thesis) {
+	if thesis == nil {
 		return
 	}
 
 	enters := make([]types.Decision, 0, len(thesis.Decisions))
-	rest := make([]types.Decision, 0, len(thesis.Decisions))
+	retained := make([]types.Decision, 0, len(thesis.Decisions))
 
-	for _, decision := range thesis.Decisions {
-		if decision.Action == types.ActionEnter {
-			enters = append(enters, decision)
-			continue
+	for _, d := range thesis.Decisions {
+		if d.Action == types.ActionEnter {
+			enters = append(enters, d)
+		} else {
+			retained = append(retained, d)
 		}
-
-		rest = append(rest, decision)
 	}
 
-	thesis.Decisions = rest
-
-	sort.Slice(enters, func(left, right int) bool {
-		return enters[left].Utility > enters[right].Utility
+	// Sort enter candidates by Utility descending
+	sort.Slice(enters, func(i, j int) bool {
+		return enters[i].Utility > enters[j].Utility
 	})
 
-	incumbents := arbiter.incumbents(thesis)
-	open := arbiter.desk.OpenPositions()
-	maxNormal := arbiter.desk.MaxSlots(false)
-	maxAll := arbiter.desk.MaxSlots(true)
-	admittedNormal := 0
-	admittedReserved := 0
+	openSlots := a.desk.MaxSlots(false) - a.desk.OpenPositions()
+	incumbents := a.getIncumbents(thesis)
 
-	for _, decision := range enters {
-		opportunity := decision.Opportunity
-		useNormal := open+admittedNormal < maxNormal
-		useReserved := opportunity &&
-			open+admittedNormal+admittedReserved < maxAll
-
-		if useNormal || useReserved {
-			before := len(thesis.Decisions)
-			arbiter.admit.Accept(thesis, decision, opportunity)
-
-			if len(thesis.Decisions) == before {
-				continue
-			}
-
-			if thesis.Decisions[len(thesis.Decisions)-1].Action != types.ActionEnter {
-				continue
-			}
-
-			if useNormal {
-				admittedNormal++
-			}
-
-			if !useNormal && useReserved {
-				admittedReserved++
-			}
-
+	for _, candidate := range enters {
+		if openSlots > 0 {
+			thesis.NoteLifecycle(candidate.Symbol, types.LifecycleEntrySelected, thesis.At)
+			retained = append(retained, candidate)
+			openSlots--
 			continue
 		}
 
-		if arbiter.displace(thesis, &decision, incumbents) {
+		// Slots exhausted: Check Bellman Rotation Gate against weakest incumbent
+		if exitDec, enterDec, ok := a.tryDisplace(candidate, incumbents); ok {
+			thesis.NoteLifecycle(exitDec.Symbol, types.LifecycleExitSelected, thesis.At)
+			thesis.NoteLifecycle(enterDec.Symbol, types.LifecycleEntrySelected, thesis.At)
+			retained = append(retained, exitDec, enterDec)
 			continue
 		}
 
-		arbiter.admit.Reject(
-			thesis, decision, opportunity,
-			maxNormal-open, admittedNormal, incumbents,
-		)
+		// Rejection due to full slots and insufficient rotation edge
+		candidate.Action = types.ActionNothing
+		candidate.Cause = "slots_full"
+		candidate.Reason = "insufficient utility to displace active incumbents"
+		retained = append(retained, candidate)
 	}
+
+	thesis.Decisions = retained
 }
 
-/*
-displace replaces the weakest open holding when the challenger's enter utility
-clears the one-step wait threshold against that incumbent.
-*/
-func (arbiter *Arbiter) displace(
-	thesis *types.Thesis,
-	decision *types.Decision,
+func (a *Arbiter) tryDisplace(
+	candidate types.Decision,
 	incumbents []Incumbent,
-) bool {
-	opportunity := decision.Opportunity
-	index, found := arbiter.rotate.Best(decision.Utility, incumbents)
+) (types.Decision, types.Decision, bool) {
+	for i, inc := range incumbents {
+		// Bellman Rotation Gate: Candidate Utility > Holding Utility + Exit Cost
+		surplus := candidate.Utility - inc.HoldUtility - inc.ExitCost
+		if surplus <= 0 {
+			continue
+		}
 
-	if !found {
-		return false
+		incumbents[i].HoldUtility = math.Inf(1) // Prevent double displacement
+
+		exitDec := types.Decision{
+			Action:           types.ActionExit,
+			Symbol:           inc.Symbol,
+			At:               candidate.At,
+			Utility:          -inc.ExitCost,
+			ProposedQuantity: inc.Qty.Copy(),
+			ReferencePrice:   inc.Mark.Copy(),
+			Cause:            "rotation",
+			Reason:           "displaced by higher-utility challenger " + candidate.Symbol,
+		}
+
+		candidate.Cause = "rotation"
+		candidate.Displaces = inc.Symbol
+		candidate.ProposedNotional = inc.Notional.Copy()
+		candidate.DisplacedQuantity = inc.Qty.Copy()
+		candidate.DisplacedPrice = inc.Mark.Copy()
+		candidate.Reason = "rotates out weaker incumbent " + inc.Symbol
+
+		return exitDec, candidate, true
 	}
 
-	incumbent := &incumbents[index]
-
-	if incumbent.Notional == nil || incumbent.Notional.Sign() <= 0 {
-		return false
-	}
-
-	arbiter.admit.Scale(decision, incumbent.Notional)
-
-	edge := decision.Utility - incumbent.HoldUtility
-	rotateValue := edge - incumbent.ExitCost
-	waitValue := edge * incumbent.ClearProb
-
-	if decision.Alternatives == nil {
-		decision.Alternatives = map[string]float64{}
-	}
-
-	// Provisional rotation metadata only — displacement commits in Rotate.Commit
-	// when the exit intent is materialized for the desk saga.
-	decision.Cause = "rotation"
-	decision.Displaces = incumbent.Symbol
-	decision.Reason = "challenger clears one-step wait threshold against " +
-		incumbent.Symbol
-	decision.Alternatives["hold_incumbent"] = incumbent.HoldUtility
-	decision.Alternatives["exit_cost"] = incumbent.ExitCost
-	decision.Alternatives["clear_prob"] = incumbent.ClearProb
-	decision.Alternatives["rotate_value"] = rotateValue
-	decision.Alternatives["wait_value"] = waitValue
-	decision.Alternatives["rotate_surplus"] = arbiter.rotate.Surplus(
-		decision.Utility, incumbent.HoldUtility, incumbent.ExitCost,
-	)
-	decision.DisplacedQuantity = incumbent.Qty.Copy()
-	decision.DisplacedPrice = incumbent.Mark.Copy()
-
-	arbiter.admit.Accept(thesis, *decision, opportunity)
-	incumbent.Displaced = true
-
-	return true
+	return types.Decision{}, types.Decision{}, false
 }
 
-/*
-incumbents lists open holdings with enough forecast and fee evidence for rotate
-comparison.
-*/
-func (arbiter *Arbiter) incumbents(thesis *types.Thesis) []Incumbent {
-	forecasts := selectForecasts(thesis.Forecasts)
+func (a *Arbiter) getIncumbents(thesis *types.Thesis) []Incumbent {
 	rows := make([]Incumbent, 0)
-
-	for _, holding := range arbiter.desk.Holdings() {
-		if holding.Status != types.OPEN {
+	for _, holding := range a.desk.Holdings() {
+		if holding.Status != types.OPEN || holding.Mark == nil || holding.Qty == nil {
 			continue
 		}
 
-		if arbiter.exiting(thesis, holding.Symbol) {
-			continue
-		}
-
-		forecast, found := forecasts[holding.Symbol]
-
-		if !found {
-			continue
-		}
-
-		fraction, err := arbiter.price.Fraction(holding.Symbol)
-
-		if err != nil {
-			thesis.Decisions = append(thesis.Decisions, types.Decision{
-				Action: types.ActionHold,
-				Symbol: holding.Symbol,
-				Cause:  "rotation",
-				Reason: "fee schedule unavailable; keep incumbent",
-			})
-
-			continue
-		}
-
-		if holding.Mark == nil || holding.Qty == nil {
-			continue
-		}
-
-		mark := holding.Mark.Copy()
-		quantity := holding.Qty.Copy()
-		notional := decimal.ExactMul(mark, quantity)
-
+		notional := decimal.ExactMul(holding.Mark, holding.Qty)
 		if notional == nil || notional.Sign() <= 0 {
 			continue
 		}
 
-		// Tax hold utility by the share of Leads edges pointing into exhaustion
-		// categories. A dominant exhaustion-leads pattern reduces the value of
-		// staying in the position, biasing toward rotate or stoploss exit.
-		exhaustionShare, _ := logic.CategoryExhaustionLead(thesis, holding.Symbol)
-		holdUtility := arbiter.rotate.Hold(forecast) * (1 - exhaustionShare)
+		feeFraction := 0.0026
+		if fraction, err := a.price.Fraction(holding.Symbol); err == nil && fraction != nil {
+			feeFraction = fraction.Float64()
+		}
 
 		rows = append(rows, Incumbent{
-			Symbol:      holding.Symbol,
-			HoldUtility: holdUtility,
-			ExitCost:    arbiter.rotate.Exit(forecast, fraction.Float64()),
-			Notional:    notional,
-			Qty:         quantity,
-			Mark:        mark,
-			ClearProb:   arbiter.rotate.Clear(holding.Stoploss, forecast),
+			Symbol: holding.Symbol,
+			HoldUtility: func() float64 {
+				if holding.ReturnPct != nil {
+					return *holding.ReturnPct
+				}
+				return 0.0
+			}(),
+			ExitCost: feeFraction * notional.Float64(),
+			Notional: notional,
+			Qty:      holding.Qty.Copy(),
+			Mark:     holding.Mark.Copy(),
 		})
 	}
-
 	return rows
-}
-
-func (arbiter *Arbiter) exiting(thesis *types.Thesis, symbol string) bool {
-	phase, found := thesis.Lifecycle.Load(symbol)
-
-	return found &&
-		(phase == types.LifecycleExitSelected ||
-			phase == types.LifecycleExitSubmitted)
-}
-
-func (arbiter *Arbiter) validate(mandatory map[string]any) error {
-	check := map[string]any{
-		"desk":  arbiter.desk,
-		"price": arbiter.price,
-		"admit": arbiter.admit,
-	}
-
-	maps.Copy(check, mandatory)
-
-	return errnie.Error(errnie.Require(check))
 }
