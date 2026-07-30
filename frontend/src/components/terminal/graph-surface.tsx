@@ -1,0 +1,420 @@
+import { useEffect, useMemo, useState } from "react";
+import { ModelScope } from "#/components/graph/component";
+import { Graph as RenderGraph } from "#/components/graph/core/graph";
+import { Panel } from "#/components/ui/panel";
+import { registerPainter } from "#/providers/ws-stores";
+import { Flex } from "@/components/ui/flex";
+
+type MarketGraphNode = {
+	id: string;
+	symbol?: string;
+	source?: string;
+	kind?: string;
+	value?: number;
+	confidence?: number;
+	at?: string;
+	metadata?: Record<string, unknown>;
+};
+
+type MarketGraphEdge = {
+	from: string;
+	to: string;
+	relation?: string;
+	weight?: number;
+	confidence?: number;
+	at?: string;
+	reason?: string;
+};
+
+type MarketGraphFrame = {
+	at?: string;
+	nodes?: Record<string, MarketGraphNode>;
+	edges?: MarketGraphEdge[];
+	adjacency?: Record<string, string[]>;
+};
+
+const listeners = new Set<() => void>();
+let retainedFrame: MarketGraphFrame | null = null;
+let retainedGraph: RenderGraph | null = null;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	value !== null && typeof value === "object";
+
+const isMarketGraphFrame = (value: unknown): value is MarketGraphFrame => {
+	if (!isRecord(value)) {
+		return false;
+	}
+
+	return isRecord(value.nodes) && Array.isArray(value.edges);
+};
+
+const graphFrames = (value: unknown): MarketGraphFrame[] => {
+	if (Array.isArray(value)) {
+		return value.filter(isMarketGraphFrame);
+	}
+
+	if (isMarketGraphFrame(value)) {
+		return [value];
+	}
+
+	if (!isRecord(value)) {
+		return [];
+	}
+
+	return Object.values(value).filter(isMarketGraphFrame);
+};
+
+const adaptGraph = (frame: MarketGraphFrame): RenderGraph => {
+	const graph = new RenderGraph({
+		epoch: "at",
+		epochFormat: "YYYY-MM-DDTHH:mm:ssZ",
+		source: "from",
+		target: "to",
+	});
+
+	for (const node of Object.values(frame.nodes ?? {})) {
+		if (typeof node.id !== "string" || node.id === "") {
+			continue;
+		}
+
+		graph.addNode(node.id, {
+			...node.metadata,
+			at: node.at,
+			confidence: node.confidence,
+			kind: node.kind,
+			source: node.source,
+			symbol: node.symbol,
+			value: node.value,
+		});
+	}
+
+	for (const edge of frame.edges ?? []) {
+		if (typeof edge.from !== "string" || typeof edge.to !== "string") {
+			continue;
+		}
+
+		graph.addEdge(edge.from, edge.to, {
+			at: edge.at,
+			confidence: edge.confidence,
+			from: edge.from,
+			reason: edge.reason,
+			relation: edge.relation,
+			to: edge.to,
+			weight: edge.weight,
+		});
+	}
+
+	return graph;
+};
+
+export const paintGraphSurface = (value: unknown) => {
+	const frame = graphFrames(value).at(-1) ?? null;
+
+	if (frame === null) {
+		return;
+	}
+
+	retainedFrame = frame;
+	retainedGraph = adaptGraph(frame);
+
+	for (const listener of listeners) {
+		listener();
+	}
+};
+
+const StatChip = ({ label, value }: { label: string; value: string | number }) => (
+	<div className="rounded-[3px] border border-(--line) bg-(--raised) px-2 py-1 font-mono text-[10px] text-(--f3)">
+		<span className="text-(--f4)">{label}</span> {value}
+	</div>
+);
+
+const searchNodes = (graph: RenderGraph | undefined, query: string): string[] => {
+	if (!graph || query.trim() === "") {
+		return [];
+	}
+
+	const needle = query.trim().toLowerCase();
+
+	return Object.keys(graph.nodes)
+		.filter((name) => name.toLowerCase().includes(needle))
+		.sort((left, right) => {
+			const leftExact = left.toLowerCase() === needle ? 1 : 0;
+			const rightExact = right.toLowerCase() === needle ? 1 : 0;
+
+			if (leftExact !== rightExact) {
+				return rightExact - leftExact;
+			}
+
+			return left.localeCompare(right);
+		})
+		.slice(0, 16);
+};
+
+const GraphSearch = ({
+	graph,
+	onPick,
+}: {
+	graph: RenderGraph | undefined;
+	onPick: (name: string) => void;
+}) => {
+	const [query, setQuery] = useState("");
+	const [open, setOpen] = useState(false);
+	const matches = useMemo(() => searchNodes(graph, query), [graph, query]);
+
+	const choose = (name: string) => {
+		onPick(name);
+		setQuery("");
+		setOpen(false);
+	};
+
+	return (
+		<div className="relative w-full max-w-sm">
+			<div className="flex items-center gap-1.5 rounded-md border border-(--line) bg-(--surface) px-2">
+				<input
+					className="h-7 min-w-0 flex-1 bg-transparent px-0 font-mono text-[11px] text-(--f1) outline-none"
+					onChange={(event) => {
+						setQuery(event.target.value);
+						setOpen(true);
+					}}
+					onFocus={() => setOpen(true)}
+					onKeyDown={(event) => {
+						if (event.key === "Enter" && matches[0]) {
+							event.preventDefault();
+							choose(matches[0]);
+						}
+
+						if (event.key === "Escape") {
+							setOpen(false);
+							setQuery("");
+						}
+					}}
+					placeholder="Search nodes…"
+					spellCheck={false}
+					value={query}
+				/>
+			</div>
+
+			{open && query.length > 0 ? (
+				<div className="absolute left-0 top-full z-20 mt-1 max-h-72 w-full overflow-auto rounded-md border border-(--line) bg-(--surface) py-1 shadow-[0_18px_40px_-18px_rgba(0,0,0,0.78)]">
+					{matches.length === 0 ? (
+						<div className="px-3 py-2 font-mono text-[11px] text-(--f4)">No matches.</div>
+					) : (
+						matches.map((name) => (
+							<button
+								key={name}
+								type="button"
+								onClick={() => choose(name)}
+								className="flex w-full cursor-pointer items-baseline justify-between gap-3 px-3 py-1.5 text-left hover:bg-(--raised)"
+							>
+								<span className="truncate font-mono text-[11px] text-(--f1)">
+									{name.split(".").at(-1) ?? name}
+								</span>
+								<span className="truncate font-mono text-[10px] text-(--f4)">{name}</span>
+							</button>
+						))
+					)}
+				</div>
+			) : null}
+		</div>
+	);
+};
+
+const SelectedNodePanel = ({
+	edges,
+	node,
+	nodeName,
+}: {
+	edges: MarketGraphEdge[];
+	node: MarketGraphNode | null;
+	nodeName: string | null;
+}) => {
+	if (node === null || nodeName === null) {
+		return (
+			<Panel variant="raised" size="m" className="gap-2">
+				<div className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+					Node detail
+				</div>
+				<div className="font-mono text-[11px] text-(--f4)">
+					Select a node in the graph to inspect its value, confidence, and connected edges.
+				</div>
+			</Panel>
+		);
+	}
+
+	const related = edges.filter((edge) => edge.from === nodeName || edge.to === nodeName);
+	const metadataEntries = Object.entries(node.metadata ?? {});
+
+	return (
+		<Flex.Column gap={2}>
+			<Panel variant="raised" size="m" className="gap-2">
+				<div className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+					Node detail
+				</div>
+				<div className="font-semibold text-[14px] text-(--f1)">{nodeName}</div>
+				<div className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 font-mono text-[11px]">
+					<span className="text-(--f4)">kind</span>
+					<span>{node.kind ?? "—"}</span>
+					<span className="text-(--f4)">source</span>
+					<span>{node.source ?? "—"}</span>
+					<span className="text-(--f4)">symbol</span>
+					<span>{node.symbol ?? "—"}</span>
+					<span className="text-(--f4)">value</span>
+					<span>
+						{typeof node.value === "number" ? node.value.toFixed(6) : "—"}
+					</span>
+					<span className="text-(--f4)">confidence</span>
+					<span>
+						{typeof node.confidence === "number"
+							? node.confidence.toFixed(4)
+							: "—"}
+					</span>
+					<span className="text-(--f4)">at</span>
+					<span>{node.at ?? "—"}</span>
+				</div>
+			</Panel>
+
+			<Panel variant="raised" size="m" className="gap-2">
+				<div className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+					Metadata
+				</div>
+				{metadataEntries.length === 0 ? (
+					<div className="font-mono text-[11px] text-(--f4)">No metadata on this node.</div>
+				) : (
+					<div className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 font-mono text-[11px]">
+						{metadataEntries.map(([key, value]) => (
+							<Flex key={key} className="contents">
+								<span className="text-(--f4)">{key}</span>
+								<span className="break-all">
+									{typeof value === "string" ? value : JSON.stringify(value)}
+								</span>
+							</Flex>
+						))}
+					</div>
+				)}
+			</Panel>
+
+			<Panel variant="raised" size="m" className="gap-2">
+				<div className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+					Connected edges
+				</div>
+				{related.length === 0 ? (
+					<div className="font-mono text-[11px] text-(--f4)">No connected edges.</div>
+				) : (
+					<div className="flex max-h-[320px] flex-col gap-1 overflow-auto font-mono text-[11px]">
+						{related.map((edge, index) => (
+							<div
+								key={`${edge.from}:${edge.to}:${edge.relation ?? "edge"}:${index}`}
+								className="rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5"
+							>
+								<div className="text-(--f2)">
+									{edge.from} → {edge.to}
+								</div>
+								<div className="mt-0.5 text-(--f4)">
+									{edge.relation ?? "relationless"} · w=
+									{typeof edge.weight === "number" ? edge.weight.toFixed(4) : "—"} · c=
+									{typeof edge.confidence === "number"
+										? edge.confidence.toFixed(4)
+										: "—"}
+								</div>
+								{edge.reason ? <div className="mt-0.5 text-(--f4)">{edge.reason}</div> : null}
+							</div>
+						))}
+					</div>
+				)}
+			</Panel>
+		</Flex.Column>
+	);
+};
+
+	export const GraphSurface = () => {
+	const [, setVersion] = useState(0);
+	const [selectedNodeName, setSelectedNodeName] = useState<string | null>(null);
+
+	useEffect(() => {
+		const notify = () => setVersion((value) => value + 1);
+		listeners.add(notify);
+		const unregister = registerPainter("graphs", paintGraphSurface);
+		notify();
+
+		return () => {
+			listeners.delete(notify);
+			unregister();
+		};
+	}, []);
+
+	const frame = retainedFrame;
+	const graph = retainedGraph ?? undefined;
+
+	useEffect(() => {
+		if (selectedNodeName !== null && graph?.nodes[selectedNodeName] === undefined) {
+			setSelectedNodeName(null);
+		}
+	}, [graph, selectedNodeName]);
+
+	const relationCounts = useMemo(() => {
+		const counts = new Map<string, number>();
+
+		for (const edge of frame?.edges ?? []) {
+			const relation = edge.relation ?? "unknown";
+			counts.set(relation, (counts.get(relation) ?? 0) + 1);
+		}
+
+		return [...counts.entries()].sort((left, right) => right[1] - left[1]);
+	}, [frame]);
+
+	const selectedNode =
+		selectedNodeName === null ? null : frame?.nodes?.[selectedNodeName] ?? null;
+
+	return (
+		<div className="flex h-full min-w-[1180px] flex-col">
+			<div className="flex h-[46px] shrink-0 items-center gap-2 overflow-x-auto border-(--line) border-b bg-(--surface) px-3.5">
+				<span className="mr-1 shrink-0 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+					Market graph
+				</span>
+				<StatChip label="nodes" value={Object.keys(frame?.nodes ?? {}).length} />
+				<StatChip label="edges" value={(frame?.edges ?? []).length} />
+				<StatChip label="relations" value={relationCounts.length} />
+				<StatChip label="at" value={frame?.at ?? "—"} />
+			</div>
+
+			<div className="grid min-h-0 flex-1 grid-cols-[minmax(760px,1fr)_372px]">
+				<div className="flex min-h-0 flex-col border-(--line) border-r bg-(--sunken)">
+					<div className="flex shrink-0 items-center gap-3 border-(--line) border-b px-3 py-2">
+						<GraphSearch graph={graph} onPick={setSelectedNodeName} />
+						<div className="ml-auto flex flex-wrap gap-1.5 font-mono text-[9.5px] text-(--f4)">
+							{relationCounts.slice(0, 4).map(([relation, count]) => (
+								<span key={relation} className="rounded-[3px] border border-(--line) px-1.5 py-0.5">
+									{relation} {count}
+								</span>
+							))}
+						</div>
+					</div>
+
+					<div className="min-h-0 flex-1">
+						{graph ? (
+							<ModelScope
+								className="h-full"
+								graph={graph}
+								onNodeSelect={(_index, nodeName) => setSelectedNodeName(nodeName)}
+								selectedNodeName={selectedNodeName}
+								showTimeSlider={false}
+							/>
+						) : (
+							<div className="flex h-full items-center justify-center px-8 text-center font-mono text-[12px] text-(--f4)">
+								Waiting for a live market graph frame.
+							</div>
+						)}
+					</div>
+				</div>
+
+				<div className="min-h-0 overflow-auto bg-(--surface) p-3.5">
+					<SelectedNodePanel
+						edges={frame?.edges ?? []}
+						node={selectedNode}
+						nodeName={selectedNodeName}
+					/>
+				</div>
+			</div>
+		</div>
+	);
+};

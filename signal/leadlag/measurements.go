@@ -16,7 +16,7 @@ measureFrame ingests prices, refreshes the anchor, and scores each follower row.
 func (signal *Signal) measureFrame(
 	tickers []kraken.TickerData,
 	crossSection *types.CrossSection,
-) ([]*types.Measurement, error) {
+) []*types.Measurement {
 	rows := tickers
 	out := make([]*types.Measurement, 0, len(rows))
 	uiOut := datura.NewMap(
@@ -80,7 +80,7 @@ func (signal *Signal) measureFrame(
 		utils.Publish(signal.ui, uiOut)
 	}
 
-	return out, nil
+	return out
 }
 
 type correlationSelection struct {

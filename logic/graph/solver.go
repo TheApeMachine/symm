@@ -28,13 +28,26 @@ const (
 )
 
 /*
+Kind describes the type of node in the knowledge graph.
+*/
+type Kind string
+
+const (
+	KindMeasurement Kind = "measurement"
+	KindCategory    Kind = "category"
+	KindResonance   Kind = "resonance"
+	KindCausal      Kind = "causal"
+	KindCognition   Kind = "cognition"
+)
+
+/*
 Node represents a discrete market entity, metric, category, or latent state.
 */
 type Node struct {
 	ID         string         `json:"id"`
 	Symbol     string         `json:"symbol,omitempty"`
 	Source     string         `json:"source,omitempty"`
-	Kind       string         `json:"kind"` // "measurement", "category", "resonance", "causal", "cognition"
+	Kind       Kind           `json:"kind"`
 	Value      float64        `json:"value"`
 	Confidence float64        `json:"confidence"`
 	At         time.Time      `json:"at"`
@@ -48,8 +61,8 @@ type Edge struct {
 	From       string       `json:"from"`
 	To         string       `json:"to"`
 	Relation   RelationType `json:"relation"`
-	Weight     float64      `json:"weight"`     // Normalized strength [-1.0, 1.0] or [0.0, 1.0]
-	Confidence float64      `json:"confidence"` // Estimator confidence
+	Weight     float64      `json:"weight"`
+	Confidence float64      `json:"confidence"`
 	At         time.Time    `json:"at"`
 	Reason     string       `json:"reason,omitempty"`
 }
@@ -182,34 +195,45 @@ extractMeasurementNodes registers raw signal measurements as nodes.
 */
 func (solver *Solver) extractMeasurementNodes(thesis *types.Thesis, graph *Graph) {
 	thesis.Measurements.Range(func(key, value any) bool {
-		m, ok := value.(*types.Measurement)
+		rows, ok := value.([]*types.Measurement)
 
-		if m == nil || !ok || m.Symbol == "" {
-			return true
+		if !ok {
+			if single, singleOK := value.(*types.Measurement); singleOK && single != nil {
+				rows = []*types.Measurement{single}
+			} else {
+				return true
+			}
 		}
 
-		for metricKey, metric := range m.Metrics {
-			nodeID := fmt.Sprintf("meas:%s:%s:%s", m.Symbol, m.Source, metricKey)
-			confidence := 1.0
-			if m.Uncertainty != nil {
-				confidence = m.Uncertainty.Confidence
+		for _, m := range rows {
+			if m == nil || m.Symbol == "" {
+				continue
 			}
 
-			graph.AddNode(&Node{
-				ID:         nodeID,
-				Symbol:     m.Symbol,
-				Source:     string(m.Source),
-				Kind:       "measurement",
-				Value:      metric.Raw,
-				Confidence: confidence,
-				At:         m.At,
-				Metadata: map[string]any{
-					"readiness": string(m.Validity.Readiness),
-					"state":     string(m.Validity.State),
-					"unit":      string(metric.Unit),
-				},
-			})
+			for metricKey, metric := range m.Metrics {
+				nodeID := fmt.Sprintf("meas:%s:%s:%s", m.Symbol, m.Source, metricKey)
+				confidence := 1.0
+				if m.Uncertainty != nil {
+					confidence = m.Uncertainty.Confidence
+				}
+
+				graph.AddNode(&Node{
+					ID:         nodeID,
+					Symbol:     m.Symbol,
+					Source:     string(m.Source),
+					Kind:       "measurement",
+					Value:      metric.Raw,
+					Confidence: confidence,
+					At:         m.At,
+					Metadata: map[string]any{
+						"readiness": string(m.Validity.Readiness),
+						"state":     string(m.Validity.State),
+						"unit":      string(metric.Unit),
+					},
+				})
+			}
 		}
+
 		return true
 	})
 }

@@ -8,16 +8,16 @@ import (
 /*
 putModel publishes fitted Hawkes parameters and current fit-quality comparisons.
 */
-func (evidence *Evidence) putModel(
+func (signal *Signal) putModel(
 	measurement *types.Measurement,
 	outcome excitation.Outcome,
 ) {
-	values := evidence.prepareModelValues(outcome)
+	values := signal.prepareModelValues(outcome)
 
-	evidence.putBaselineIntensities(measurement, outcome, values)
-	evidence.putExcitationAmplitudes(measurement, outcome, values)
-	evidence.putKernelMetrics(measurement, outcome, values)
-	evidence.putLikelihoodBranching(measurement, outcome, values)
+	signal.putBaselineIntensities(measurement, outcome, values)
+	signal.putExcitationAmplitudes(measurement, outcome, values)
+	signal.putKernelMetrics(measurement, outcome, values)
+	signal.putLikelihoodBranching(measurement, outcome, values)
 }
 
 /*
@@ -27,15 +27,15 @@ type modelValues struct {
 	muX, muY                           float64
 	alphaXX, alphaXY, alphaYX, alphaYY float64
 	beta, kernelMemory, spectral       float64
-	poissonDelta, crossSelfDelta         float64
-	buyOffspring, sellOffspring          float64
-	buyDescendants, sellDescendants      float64
+	poissonDelta, crossSelfDelta       float64
+	buyOffspring, sellOffspring        float64
+	buyDescendants, sellDescendants    float64
 }
 
 /*
 prepareModelValues zeroes model evidence until HawkesFit readiness is satisfied.
 */
-func (evidence *Evidence) prepareModelValues(
+func (signal *Signal) prepareModelValues(
 	outcome excitation.Outcome,
 ) modelValues {
 	values := modelValues{
@@ -74,17 +74,17 @@ func (evidence *Evidence) prepareModelValues(
 /*
 putBaselineIntensities records fitted baseline arrival rates for both sides.
 */
-func (evidence *Evidence) putBaselineIntensities(
+func (signal *Signal) putBaselineIntensities(
 	measurement *types.Measurement,
 	outcome excitation.Outcome,
 	values modelValues,
 ) {
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricBaselineIntensity, types.SideBuy,
 		types.UnitEventsPerSecond, values.muX,
 	)
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricBaselineIntensity, types.SideSell,
 		types.UnitEventsPerSecond, values.muY,
@@ -94,27 +94,27 @@ func (evidence *Evidence) putBaselineIntensities(
 /*
 putExcitationAmplitudes records fitted cross- and self-excitation amplitudes.
 */
-func (evidence *Evidence) putExcitationAmplitudes(
+func (signal *Signal) putExcitationAmplitudes(
 	measurement *types.Measurement,
 	outcome excitation.Outcome,
 	values modelValues,
 ) {
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricExcitationAmplitude, types.SideBuyToBuy,
 		types.UnitEventsPerSecond, values.alphaXX,
 	)
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricExcitationAmplitude, types.SideSellToBuy,
 		types.UnitEventsPerSecond, values.alphaXY,
 	)
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricExcitationAmplitude, types.SideBuyToSell,
 		types.UnitEventsPerSecond, values.alphaYX,
 	)
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricExcitationAmplitude, types.SideSellToSell,
 		types.UnitEventsPerSecond, values.alphaYY,
@@ -124,22 +124,22 @@ func (evidence *Evidence) putExcitationAmplitudes(
 /*
 putKernelMetrics records decay rate, kernel memory, and spectral radius.
 */
-func (evidence *Evidence) putKernelMetrics(
+func (signal *Signal) putKernelMetrics(
 	measurement *types.Measurement,
 	outcome excitation.Outcome,
 	values modelValues,
 ) {
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricDecayRate, types.SideNone,
 		types.UnitInverseSecond, values.beta,
 	)
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricKernelMemory, types.SideNone,
 		types.UnitSecond, values.kernelMemory,
 	)
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricSpectralRadius, types.SideNone,
 		types.UnitDimensionless, values.spectral,
@@ -149,37 +149,37 @@ func (evidence *Evidence) putKernelMetrics(
 /*
 putLikelihoodBranching records fit comparisons and branching summaries.
 */
-func (evidence *Evidence) putLikelihoodBranching(
+func (signal *Signal) putLikelihoodBranching(
 	measurement *types.Measurement,
 	outcome excitation.Outcome,
 	values modelValues,
 ) {
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricHawkesPoissonDelta, types.SideNone,
 		types.UnitNat, values.poissonDelta,
 	)
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricCrossSelfDelta, types.SideNone,
 		types.UnitNat, values.crossSelfDelta,
 	)
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricImmediateOffspring, types.SideBuy,
 		types.UnitDimensionless, values.buyOffspring,
 	)
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricImmediateOffspring, types.SideSell,
 		types.UnitDimensionless, values.sellOffspring,
 	)
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricTotalDescendants, types.SideBuy,
 		types.UnitDimensionless, values.buyDescendants,
 	)
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricTotalDescendants, types.SideSell,
 		types.UnitDimensionless, values.sellDescendants,

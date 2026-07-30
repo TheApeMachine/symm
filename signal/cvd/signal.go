@@ -72,42 +72,24 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 }
 
 func (signal *Signal) onTicker(message any) any {
-	rows := message.(*kraken.Ticker).Data
-	measurements, err := signal.Calculate(rows, nil, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return signal.thesis
-	}
-
-	if len(measurements) > 0 {
-		signal.thesis.Measurements.Store(types.SourceCVD, measurements)
-	}
-
-	return signal.thesis
+	return signal.thesis.AppendMeasuremnts(
+		types.SourceCVD,
+		signal.Calculate(message.(*kraken.Ticker).Data, nil, nil),
+	)
 }
 
 func (signal *Signal) onTrade(message any) any {
-	rows := message.(*kraken.Trade).Data
-	measurements, err := signal.Calculate(nil, rows, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return signal.thesis
-	}
-
-	if len(measurements) > 0 {
-		signal.thesis.Measurements.Store(types.SourceCVD, measurements)
-	}
-
-	return signal.thesis
+	return signal.thesis.AppendMeasuremnts(
+		types.SourceCVD,
+		signal.Calculate(nil, message.(*kraken.Trade).Data, nil),
+	)
 }
 
 func (signal *Signal) Calculate(
 	tickers []kraken.TickerData,
 	trades []kraken.TradeData,
 	books []kraken.BookData,
-) ([]*types.Measurement, error) {
+) []*types.Measurement {
 	out := make([]*types.Measurement, 0, len(trades))
 	var focusMeasurements []*types.Measurement
 
@@ -141,6 +123,11 @@ func (signal *Signal) Calculate(
 		measurements, err := signal.measureTrade(row, midpoint)
 
 		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"cvd: failed to measure trade",
+				err,
+			))
 			continue
 		}
 
@@ -155,7 +142,7 @@ func (signal *Signal) Calculate(
 		utils.Publish(signal.ui, datura.NewMap("measurements", focusMeasurements))
 	}
 
-	return out, nil
+	return out
 }
 
 /*
@@ -166,7 +153,7 @@ func (signal *Signal) measureTrade(
 	row kraken.TradeData,
 	midpoint float64,
 ) ([]*types.Measurement, error) {
-	input, ready, maturity, err := signal.sample.Measure(algorithm.TradeFlowInput{
+	input, ready, err := signal.sample.Measure(algorithm.TradeFlowInput{
 		Symbol:        row.Symbol,
 		Price:         row.Price.Float64(),
 		ResponsePrice: midpoint,
@@ -196,7 +183,7 @@ func (signal *Signal) measureTrade(
 		))
 	}
 
-	return signal.cvdMeasurements(row, output, maturity), nil
+	return signal.cvdMeasurements(row, output), nil
 }
 
 /*
@@ -206,7 +193,6 @@ Metrics map preserves each reading's unit and normalization.
 func (signal *Signal) cvdMeasurements(
 	row kraken.TradeData,
 	output equation.FlowOutput,
-	maturity float64,
 ) []*types.Measurement {
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,
@@ -221,7 +207,7 @@ func (signal *Signal) cvdMeasurements(
 		Source:   types.SourceCVD,
 		Symbol:   row.Symbol,
 		At:       row.Timestamp,
-		Maturity: maturity,
+		Maturity: signal.thesis.Tick,
 		Validity: validity,
 		Metrics:  make(map[string]types.MetricSample, 7),
 		Scale:    scale,

@@ -454,8 +454,8 @@ drains until idle. Ticker is not subscribed: Calculate ignores ticker rows, so
 a ticker subscribe never emits and cannot form a drain barrier.
 */
 func drainExhaust(
-	book *types.Subscription[any],
-	trade *types.Subscription[any],
+	book *types.Subscription,
+	trade *types.Subscription,
 	into *[]*types.Measurement,
 ) {
 	timer := time.NewTimer(500 * time.Millisecond)

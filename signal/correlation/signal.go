@@ -67,8 +67,10 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 
 func (signal *Signal) onTicker(message any) any {
 	rows := message.(*kraken.Ticker).Data
-	signal.thesis.Measurements.Store(types.SourceCorrelation, signal.Calculate(rows, nil, nil))
-	return signal.thesis
+	return signal.thesis.AppendMeasuremnts(
+		types.SourceCorrelation,
+		signal.Calculate(rows, nil, nil),
+	)
 }
 
 func (signal *Signal) Calculate(
@@ -82,11 +84,15 @@ func (signal *Signal) Calculate(
 
 	scoresBySymbol, err := signal.section.Measure(tickers)
 
-	if err != nil || len(scoresBySymbol) == 0 {
+	if err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent, "correlation: failed to measure tickers", err,
 		))
-		
+
+		return nil
+	}
+
+	if len(scoresBySymbol) == 0 {
 		return nil
 	}
 

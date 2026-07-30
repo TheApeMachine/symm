@@ -95,21 +95,21 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 }
 
 func (signal *Signal) onTicker(message any) any {
-	rows := message.(*kraken.Ticker).Data
-	signal.thesis.Measurements.Store(types.SourceDepthFlow, signal.Calculate(rows, nil, nil))
-	return signal.thesis
+	return signal.thesis.AppendMeasuremnts(
+		types.SourceDepthFlow, signal.Calculate(message.(*kraken.Ticker).Data, nil, nil),
+	)
 }
 
 func (signal *Signal) onBook(message any) any {
-	rows := message.(*kraken.Book).Data
-	signal.thesis.Measurements.Store(types.SourceDepthFlow, signal.Calculate(nil, nil, rows))
-	return signal.thesis
+	return signal.thesis.AppendMeasuremnts(
+		types.SourceDepthFlow, signal.Calculate(nil, nil, message.(*kraken.Book).Data),
+	)
 }
 
 func (signal *Signal) onTrade(message any) any {
-	rows := message.(*kraken.Trade).Data
-	signal.thesis.Measurements.Store(types.SourceDepthFlow, signal.Calculate(nil, rows, nil))
-	return signal.thesis
+	return signal.thesis.AppendMeasuremnts(
+		types.SourceDepthFlow, signal.Calculate(nil, message.(*kraken.Trade).Data, nil),
+	)
 }
 
 func (signal *Signal) Calculate(
@@ -308,7 +308,7 @@ func (signal *Signal) frame(
 		Source:   types.SourceDepthFlow,
 		Symbol:   symbol,
 		At:       at,
-		Maturity: maturity,
+		Maturity: signal.thesis.Tick,
 		Validity: validity,
 		Metrics:  make(map[string]types.MetricSample, 6),
 		Scale:    scale,

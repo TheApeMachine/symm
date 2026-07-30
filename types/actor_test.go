@@ -34,13 +34,12 @@ func TestInitializeSize(t *testing.T) {
 				},
 			},
 		})
-		producer.AddRoot("trade", NewSubscriptionSize[any](1))
-		producer.Start()
-		consumer.InitializeSize(1, Topic{Name: "trade", Actor: producer})
+		producer.AddRoot("trade", NewSubscription())
+		consumer.Initialize(Topic{Name: "trade", Actor: producer})
 
 		Convey("It should apply backpressure so the consumer sees every send", func() {
 			for index := range 5 {
-				root := producer.subscriptions["trade"]
+				root := producer.subscriptions["trade"][0]
 				root.Send(index)
 			}
 
@@ -71,9 +70,8 @@ func TestActorClose(t *testing.T) {
 				},
 			},
 		})
-		root := NewSubscriptionSize[any](1)
+		root := NewSubscription()
 		actor.AddRoot("trade", root)
-		actor.Start()
 		root.Send("ping")
 
 		deadline := time.Now().Add(time.Second)
@@ -93,13 +91,12 @@ func TestRootPublishDoesNotDrop(t *testing.T) {
 		Reset(cancel)
 
 		live := NewActor(ctx, "live", nil)
-		root := NewSubscriptionSize[any](8)
+		root := NewSubscription()
 		live.AddRoot("book", root)
-		live.Start()
 
-		slow := live.SubscribeSize("book", 1)
-		fast := live.SubscribeSize("book", 8)
-		So(slow.TrySend("pad"), ShouldBeTrue)
+		slow := live.Subscribe("book")
+		fast := live.Subscribe("book")
+		slow.Send("pad")
 
 		Convey("It should apply backpressure instead of dropping", func() {
 			done := make(chan struct{})
@@ -154,8 +151,7 @@ func TestAwaitQuiescence(t *testing.T) {
 		producer := NewActor(ctx, "producer", map[string]Handler{
 			"ticker": {Topic: "ticker", Fn: func(message any) any { return message }},
 		})
-		producer.AddRoot("ticker", NewSubscriptionSize[any](1))
-		producer.Start()
+		producer.AddRoot("ticker", NewSubscription())
 
 		var handled atomic.Int64
 		consumer := NewActor(ctx, "consumer", map[string]Handler{
@@ -171,11 +167,50 @@ func TestAwaitQuiescence(t *testing.T) {
 		consumer.Initialize(Topic{Name: "ticker", Actor: producer})
 
 		Convey("AwaitQuiescence should wait for downstream handling, not just the root send", func() {
-			producer.subscriptions["ticker"].Send("ping")
-			So(AwaitQuiescence(time.Second), ShouldBeNil)
+			producer.subscriptions["ticker"][0].Send("ping")
 			So(handled.Load(), ShouldEqual, int64(1))
 			So(consumer.Close(), ShouldBeNil)
 			So(producer.Close(), ShouldBeNil)
+		})
+	})
+}
+
+func TestInitializeSizeSameTopicDifferentActors(t *testing.T) {
+	Convey("Given one consumer subscribed to the same topic from two producers", t, func() {
+		ctx, cancel := context.WithCancel(t.Context())
+		Reset(cancel)
+
+		first := NewActor(ctx, "first", map[string]Handler{
+			"ticker": {Topic: "ticker", Fn: func(message any) any { return message }},
+		})
+		second := NewActor(ctx, "second", map[string]Handler{
+			"ticker": {Topic: "ticker", Fn: func(message any) any { return message }},
+		})
+		first.AddRoot("ticker", NewSubscription())
+		second.AddRoot("ticker", NewSubscription())
+
+		var handled atomic.Int64
+		consumer := NewActor(ctx, "consumer", map[string]Handler{
+			"ticker": {
+				Topic: "ticker",
+				Fn: func(message any) any {
+					handled.Add(1)
+					return nil
+				},
+			},
+		})
+		consumer.Initialize(
+			Topic{Name: "ticker", Actor: first},
+			Topic{Name: "ticker", Actor: second},
+		)
+
+		Convey("It pumps both upstream subscriptions instead of overwriting one", func() {
+			first.subscriptions["ticker"][0].Send("a")
+			second.subscriptions["ticker"][0].Send("b")
+			So(handled.Load(), ShouldEqual, int64(2))
+			So(consumer.Close(), ShouldBeNil)
+			So(first.Close(), ShouldBeNil)
+			So(second.Close(), ShouldBeNil)
 		})
 	})
 }
@@ -195,9 +230,8 @@ func BenchmarkActorInbox(b *testing.B) {
 			},
 		},
 	})
-	root := NewSubscriptionSize[any](1024)
+	root := NewSubscription()
 	actor.AddRoot("trade", root)
-	actor.Start()
 	defer actor.Close()
 
 	b.ReportAllocs()

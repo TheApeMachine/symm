@@ -78,8 +78,7 @@ func (crypto *Crypto) Initialize(
 ) error {
 	errnie.Info("initializing crypto")
 
-	crypto.Actor.InitializeSize(
-		1,
+	crypto.Actor.Initialize(
 		types.Topic{Name: "thesis", Actor: planner.Actor},
 	)
 
@@ -95,7 +94,7 @@ func (crypto *Crypto) thesis(message any) any {
 	thesis := message.(*types.Thesis)
 	crypto.Apply(thesis)
 
-	return thesis
+	return nil
 }
 
 /*
@@ -229,16 +228,21 @@ func (crypto *Crypto) publish(thesis *types.Thesis, elapsed time.Duration) {
 		crypto.uiHub.Publish(datura.NewMap("findings", thesis.Findings).MarshalAndFree())
 	}
 
-	journalChanged := false
+	graphs := datura.NewMap()
 
-	if journalChanged && crypto.uiHub != nil && len(crypto.theses) > 0 {
-		crypto.uiHub.Publish(datura.NewMap("journal", crypto.theses).MarshalAndFree())
-	}
+	thesis.Graphs.Range(func(key, value any) bool {
+		name, ok := key.(string)
 
-	if journalChanged && crypto.journal != nil {
-		if err := crypto.journal.Save(crypto.theses); err != nil {
-			errnie.Error(err)
+		if !ok || name == "" || value == nil {
+			return true
 		}
+
+		graphs[name] = value
+		return true
+	})
+
+	if len(graphs) > 0 {
+		crypto.uiHub.Publish(datura.NewMap("graphs", graphs).MarshalAndFree())
 	}
 }
 

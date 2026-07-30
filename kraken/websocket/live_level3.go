@@ -2,7 +2,6 @@ package websocket
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
@@ -129,12 +128,11 @@ func (live *Live) drainLevel3() {
 /*
 updateLevel3 applies one websocket message through the exact-text ledger under
 the SDK book write lease so PeekBook readers never range Side.Levels during
-mutation. The SDK book can panic on delete/modify against a missing level;
-recover turns that into an error so the FIFO worker stays alive.
+mutation.
 */
 func (live *Live) updateLevel3(
 	event *callback.Event[*sdkkraken.WebSocketMessage],
-) (err error) {
+) error {
 	if !live.isLevel3 || live.books == nil || live.level3Ledger == nil ||
 		event == nil || event.Data == nil {
 		return nil
@@ -142,16 +140,6 @@ func (live *Live) updateLevel3(
 
 	live.bookMu.Lock()
 	defer live.bookMu.Unlock()
-
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			err = errnie.Err(
-				errnie.Validation,
-				fmt.Sprintf("websocket: level3 apply panic: %v", recovered),
-				nil,
-			)
-		}
-	}()
 
 	return live.level3Ledger.Apply(live.books, event.Data.Bytes())
 }
@@ -251,8 +239,9 @@ func (live *Live) invalidateLevel3Book(raw []byte) {
 		depth = 10
 	}
 
+	symbols := make([]string, 0, len(frame.Data))
+
 	live.bookMu.Lock()
-	defer live.bookMu.Unlock()
 
 	for _, data := range frame.Data {
 		if data.Symbol == "" {
@@ -260,8 +249,46 @@ func (live *Live) invalidateLevel3Book(raw []byte) {
 		}
 
 		delete(live.level3Ledger.orders, data.Symbol)
+		live.level3Ledger.waiting[data.Symbol] = struct{}{}
 		managed := live.books.CreateBook(data.Symbol, depth)
 		managed.EnableMaxDepth = false
 		managed.NoBookCrossing = false
+		symbols = append(symbols, data.Symbol)
 	}
+
+	live.bookMu.Unlock()
+
+	if err := live.resubscribeLevel3(symbols, depth); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"websocket: level3 resubscribe failed: "+err.Error(),
+			err,
+		))
+	}
+}
+
+/*
+resubscribeLevel3 forces a fresh private Level3 snapshot for the affected
+symbols so post-invalidation updates are not applied against an empty book.
+*/
+func (live *Live) resubscribeLevel3(symbols []string, depth int) error {
+	if live == nil || live.client == nil || len(symbols) == 0 {
+		return nil
+	}
+
+	if depth <= 0 {
+		depth = 10
+	}
+
+	if err := live.client.SendPrivate(map[string]any{
+		"method": "unsubscribe",
+		"params": map[string]any{
+			"channel": "level3",
+			"symbol":  symbols,
+		},
+	}); err != nil {
+		return err
+	}
+
+	return live.SubscribeLevel3(symbols, depth)
 }

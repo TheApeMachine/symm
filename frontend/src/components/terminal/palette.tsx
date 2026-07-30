@@ -12,6 +12,11 @@ const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 		label: "Dashboard",
 		hint: "Pilot-wave field · live decisions",
 	},
+	{
+		id: "graph",
+		label: "Market graph",
+		hint: "Relational topology · node inspection",
+	},
 	{ id: "signals", label: "Signal insight", hint: "Per-kernel forensics" },
 	{ id: "decisions", label: "Decision tree", hint: "Gate-by-gate trace" },
 	{

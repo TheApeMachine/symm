@@ -1,4 +1,5 @@
 import { cva, type VariantProps } from "class-variance-authority";
+import { type HTMLMotionProps, motion } from "motion/react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
@@ -14,7 +15,7 @@ export const typographyVariants = cva(
 				sectionHeading: "text-sm font-medium text-foreground",
 				/** Monospace export / raw source preview */
 				codeExport:
-					"font-mono font-normal text-[11px] leading-relaxed whitespace-pre-wrap text-foreground sm:text-xs",
+					"font-mono font-normal text-[10px] leading-relaxed whitespace-pre-wrap text-foreground sm:text-xs",
 				info: "text-info",
 				success: "text-success",
 				warning: "text-warning",
@@ -35,7 +36,7 @@ export type TypographyVariant = NonNullable<
 >;
 
 type TypographyTextProps = {
-	children: ReactNode;
+	children?: ReactNode;
 	variant?: TypographyVariant;
 	truncate?: boolean;
 	className?: string;
@@ -48,12 +49,17 @@ export const Typography = ({ children }: { children: ReactNode }) => {
 Typography.PageTitle = ({
 	children,
 	className,
+	...props
 }: {
 	children: ReactNode;
 	className?: string;
+	props?: unknown;
 }) => {
 	return (
-		<h1 className={cn("font-semibold text-foreground text-lg", className)}>
+		<h1
+			className={cn("font-semibold text-foreground text-lg", className)}
+			{...props}
+		>
 			{children}
 		</h1>
 	);
@@ -217,17 +223,19 @@ Typography.Span = ({
 	variant,
 	truncate,
 	className,
-}: TypographyTextProps) => {
+	...props
+}: HTMLMotionProps<"span"> & TypographyTextProps) => {
 	return (
-		<span
+		<motion.span
 			className={cn(
 				typographyVariants({ variant }),
 				truncate && "truncate",
 				className,
 			)}
+			{...props}
 		>
 			{children}
-		</span>
+		</motion.span>
 	);
 };
 

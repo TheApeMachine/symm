@@ -8,40 +8,24 @@ import (
 )
 
 /*
-Evidence maps estimator output onto the shared numerical measurement contract.
-It emits one source×symbol row whose Metrics map keeps every Hawkes quantity
-independently addressable by logic and UI wire consumers.
-*/
-type Evidence struct {
-	normalize normalizer
-}
-
-/*
-NewEvidence returns a stateless Hawkes evidence mapper.
-*/
-func NewEvidence() *Evidence {
-	return &Evidence{}
-}
-
-/*
-Measure emits the complete Hawkes metric set every observation. Arrival rates,
+measurements emits the complete Hawkes metric set every observation. Arrival rates,
 conditional intensities, and fit parameters publish as zero with provisional
 validity until Intensity / HawkesFit readiness; static parameters stay anchored
 to their fit epoch while likelihood comparisons use the evaluation interval.
 */
-func (evidence *Evidence) Measure(
+func (signal *Signal) measurements(
 	symbol string,
 	outcome excitation.Outcome,
 ) []*types.Measurement {
-	from, through := evidence.observationInterval(outcome)
+	from, through := signal.observationInterval(outcome)
 	measurement := &types.Measurement{
 		Source:       types.SourceHawkes,
 		Symbol:       symbol,
 		At:           through,
 		ObservedFrom: from,
 		Horizon:      through.Sub(from),
-		Maturity:     outcome.Maturity,
-		Validity:     evidence.validity(outcome),
+		Maturity:     signal.thesis.Tick,
+		Validity:     signal.validity(outcome),
 		Scale: types.ScaleReference{
 			Kind:    types.ScaleObservationWindow,
 			From:    from,
@@ -51,13 +35,13 @@ func (evidence *Evidence) Measure(
 	}
 
 	if outcome.Readiness.HawkesFit {
-		evidence.applyFitEvaluation(measurement, outcome)
+		signal.applyFitEvaluation(measurement, outcome)
 	}
 
-	evidence.putObservations(measurement, outcome)
-	evidence.putIntensities(measurement, outcome)
-	evidence.putConditionals(measurement, outcome)
-	evidence.putModel(measurement, outcome)
+	signal.putObservations(measurement, outcome)
+	signal.putIntensities(measurement, outcome)
+	signal.putConditionals(measurement, outcome)
+	signal.putModel(measurement, outcome)
 
 	return []*types.Measurement{measurement}
 }
@@ -65,7 +49,7 @@ func (evidence *Evidence) Measure(
 /*
 validity summarizes estimator readiness for the merged Hawkes row.
 */
-func (evidence *Evidence) validity(
+func (signal *Signal) validity(
 	outcome excitation.Outcome,
 ) types.MeasurementValidity {
 	if outcome.Readiness.HawkesFit {
@@ -92,21 +76,21 @@ func (evidence *Evidence) validity(
 /*
 putObservations records empirical event counts separately from fitted estimates.
 */
-func (evidence *Evidence) putObservations(
+func (signal *Signal) putObservations(
 	measurement *types.Measurement,
 	outcome excitation.Outcome,
 ) {
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricEventCount, types.SideNone,
 		types.UnitCount, float64(outcome.EventCount),
 	)
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricEventCount, types.SideBuy,
 		types.UnitCount, float64(outcome.BuyEventCount),
 	)
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricEventCount, types.SideSell,
 		types.UnitCount, float64(outcome.SellEventCount),
@@ -117,7 +101,7 @@ func (evidence *Evidence) putObservations(
 putIntensities records arrival-intensity evidence, zeroing raw values before
 Intensity readiness while preserving metric identity.
 */
-func (evidence *Evidence) putIntensities(
+func (signal *Signal) putIntensities(
 	measurement *types.Measurement,
 	outcome excitation.Outcome,
 ) {
@@ -129,12 +113,12 @@ func (evidence *Evidence) putIntensities(
 		sellRate = 0
 	}
 
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricArrivalRate, types.SideBuy,
 		types.UnitEventsPerSecond, buyRate,
 	)
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricArrivalRate, types.SideSell,
 		types.UnitEventsPerSecond, sellRate,
@@ -144,7 +128,7 @@ func (evidence *Evidence) putIntensities(
 /*
 putConditionals records conditional-intensity evidence from the retained fit.
 */
-func (evidence *Evidence) putConditionals(
+func (signal *Signal) putConditionals(
 	measurement *types.Measurement,
 	outcome excitation.Outcome,
 ) {
@@ -156,12 +140,12 @@ func (evidence *Evidence) putConditionals(
 		sellIntensity = 0
 	}
 
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricConditionalIntensity, types.SideBuy,
 		types.UnitEventsPerSecond, buyIntensity,
 	)
-	evidence.putMetric(
+	signal.putMetric(
 		measurement, outcome,
 		types.MetricConditionalIntensity, types.SideSell,
 		types.UnitEventsPerSecond, sellIntensity,
@@ -171,7 +155,7 @@ func (evidence *Evidence) putConditionals(
 /*
 putMetric writes one Hawkes sample with normalization owned by the mapper.
 */
-func (evidence *Evidence) putMetric(
+func (signal *Signal) putMetric(
 	measurement *types.Measurement,
 	outcome excitation.Outcome,
 	metric types.MetricType,
@@ -181,7 +165,7 @@ func (evidence *Evidence) putMetric(
 ) {
 	measurement.Metrics[types.MetricKey(metric, side)] = types.MetricSample{
 		Raw:        raw,
-		Normalized: evidence.normalize.value(outcome, metric, side, unit, raw),
+		Normalized: signal.normalize.value(outcome, metric, side, unit, raw),
 		Unit:       unit,
 	}
 }
@@ -190,7 +174,7 @@ func (evidence *Evidence) putMetric(
 applyFitEvaluation anchors retained-fit intensities from the fit origin through
 the current evaluation horizon.
 */
-func (evidence *Evidence) applyFitEvaluation(
+func (signal *Signal) applyFitEvaluation(
 	measurement *types.Measurement,
 	outcome excitation.Outcome,
 ) {
@@ -220,7 +204,7 @@ func (evidence *Evidence) applyFitEvaluation(
 observationInterval resolves the empirical Hawkes window. A missing origin is
 derived from Horizon; producers must not emit ObservedFrom after At.
 */
-func (evidence *Evidence) observationInterval(
+func (signal *Signal) observationInterval(
 	outcome excitation.Outcome,
 ) (time.Time, time.Time) {
 	from := outcome.ObservedFrom

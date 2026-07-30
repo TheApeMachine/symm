@@ -1,12 +1,14 @@
 import { cva, type VariantProps } from "class-variance-authority";
-import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { Flex } from "./flex";
 
 export const panelVariants = cva("border border-(--line)", {
 	variants: {
 		variant: {
 			sunken: "bg-(--sunken)",
 			surface: "bg-(--surface)",
+			raised: "bg-(--raised)",
 		},
 		size: {
 			bare: "rounded-[3px]",
@@ -23,7 +25,7 @@ export const panelVariants = cva("border border-(--line)", {
 
 type PanelVariantProps = VariantProps<typeof panelVariants>;
 
-export type PanelProps = Omit<ComponentPropsWithoutRef<"div">, "children"> &
+export type PanelProps = Omit<ComponentProps<typeof Flex.Column>, "children"> &
 	PanelVariantProps & {
 		children: ReactNode;
 	};
@@ -39,7 +41,10 @@ export const Panel = ({
 	children,
 	...props
 }: PanelProps) => (
-	<div className={cn(panelVariants({ variant, size }), className)} {...props}>
+	<Flex.Column
+		className={cn(panelVariants({ variant, size }), className)}
+		{...props}
+	>
 		{children}
-	</div>
+	</Flex.Column>
 );

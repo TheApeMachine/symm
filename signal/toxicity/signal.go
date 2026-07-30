@@ -82,11 +82,9 @@ advances. The public frame is only the clock and symbol list; the quantities are
 read from the authenticated Level3 BookManager through its read lease.
 */
 func (signal *Signal) onBook(message any) any {
-	signal.thesis.Measurements.Store(
-		types.SourceToxicity, signal.Calculate(message.(*kraken.Book).Data),
+	return signal.thesis.AppendMeasuremnts(
+		types.SourceToxicity, signal.Calculate(message.(*kraken.Book).Data, nil),
 	)
-
-	return signal.thesis
 }
 
 /*
@@ -94,10 +92,32 @@ onTrade attributes public executions to the resting side they consumed while
 retaining the same Level3 touch evidence used by book-only observations.
 */
 func (signal *Signal) onTrade(message any) any {
-	rows := message.(*kraken.Trade).Data
-	measurements := make([]*types.Measurement, 0, len(rows))
+	return signal.thesis.AppendMeasuremnts(
+		types.SourceToxicity, signal.Calculate(nil, message.(*kraken.Trade).Data),
+	)
+}
 
-	for _, trade := range rows {
+/*
+Calculate converts public book rows into toxicity observations by sampling the
+current authenticated Level3 book for each symbol at the public book timestamp.
+*/
+func (signal *Signal) Calculate(
+	books []kraken.BookData,
+	trades []kraken.TradeData,
+) []*types.Measurement {
+	measurements := make([]*types.Measurement, 0, len(books)+len(trades))
+
+	for _, row := range books {
+		measurement := signal.measure(row.Symbol, row.Timestamp.UTC(), 0, types.SideNone)
+
+		if measurement == nil {
+			continue
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	for _, trade := range trades {
 		measurement := signal.measure(
 			trade.Symbol,
 			trade.Timestamp.UTC(),
@@ -108,34 +128,6 @@ func (signal *Signal) onTrade(message any) any {
 		if measurement != nil {
 			measurements = append(measurements, measurement)
 		}
-	}
-
-	if len(measurements) == 0 {
-		return signal.thesis
-	}
-
-	signal.thesis.Measurements.Store(types.SourceToxicity, measurements)
-
-	return signal.thesis
-}
-
-/*
-Calculate converts public book rows into toxicity observations by sampling the
-current authenticated Level3 book for each symbol at the public book timestamp.
-*/
-func (signal *Signal) Calculate(
-	books []kraken.BookData,
-) []*types.Measurement {
-	measurements := make([]*types.Measurement, 0, len(books))
-
-	for _, row := range books {
-		measurement := signal.measure(row.Symbol, row.Timestamp.UTC(), 0, types.SideNone)
-
-		if measurement == nil {
-			continue
-		}
-
-		measurements = append(measurements, measurement)
 	}
 
 	return measurements
@@ -152,6 +144,7 @@ func (signal *Signal) measure(
 	fillSide types.MeasurementSide,
 ) *types.Measurement {
 	var measurement *types.Measurement
+	out := make([]types.Measurement, 0)
 
 	signal.level3.PeekBook(symbol, func(book *sdkbook.Book) {
 		bid := book.BestBid()
@@ -181,7 +174,7 @@ func (signal *Signal) measure(
 			Source:   types.SourceToxicity,
 			Symbol:   symbol,
 			At:       at,
-			Maturity: 1.0,
+			Maturity: signal.thesis.Tick,
 			Validity: types.ObservationValidity(1),
 			Scale: types.ScaleReference{
 				Kind:    types.ScaleObservationWindow,
@@ -239,7 +232,15 @@ func (signal *Signal) measure(
 				},
 			},
 		}
+
+		if measurement.Symbol == types.Focus() {
+			out = append(out, *measurement)
+		}
 	})
+
+	frame := datura.NewMap()
+	frame["measurements"] = out
+	utils.Publish(signal.ui, frame)
 
 	return measurement
 }
@@ -296,23 +297,6 @@ func (signal *Signal) fillSide(side string) types.MeasurementSide {
 	}
 
 	return types.SideNone
-}
-
-/*
-publish sends focus rows to the UI without changing the thesis evidence path.
-*/
-func (signal *Signal) publish(measurements []*types.Measurement) {
-	focusMeasurements := make([]*types.Measurement, 0, len(measurements))
-
-	for _, measurement := range measurements {
-		if measurement.Symbol == types.Focus() {
-			focusMeasurements = append(focusMeasurements, measurement)
-		}
-	}
-
-	if len(focusMeasurements) > 0 {
-		utils.Publish(signal.ui, datura.NewMap("measurements", focusMeasurements))
-	}
 }
 
 /*

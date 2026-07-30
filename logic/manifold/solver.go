@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
@@ -13,7 +14,6 @@ import (
 	"github.com/theapemachine/symm/signal/compute"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
-	"github.com/bytedance/sonic"
 )
 
 /*
@@ -74,6 +74,10 @@ of that physical state. Inject is Hawkes-gated; the step is not.
 func (solver *Solver) Update(thesis *types.Thesis) error {
 	solver.mu.Lock()
 	defer solver.mu.Unlock()
+
+	if thesis.BookManager == nil {
+		return nil
+	}
 
 	bidOrders := make([]*mgrbook.Order, 0)
 	askOrders := make([]*mgrbook.Order, 0)

@@ -3,7 +3,6 @@ package causal
 import (
 	"math"
 	"sync"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -53,10 +52,6 @@ func NewSolver(ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver
 		Target:                  3,
 		Treatment:               2,
 		Controls:                []int{0, 1},
-		MinHistory:              12,
-		History:                 64,
-		KernelBandwidth:         0.35,
-		CategoryIndexes:         []float64{1, 2, 3, 4},
 		NonlinearCounterfactual: true,
 	}
 
@@ -76,8 +71,9 @@ func NewSolver(ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver
 }
 
 /*
-Update extracts aligned causal rows from Thesis, evaluates regime switching and Pearl's
-causal ladder (Association, Do-Intervention, Abductive Counterfactuals), and enriches thesis.Causal.
+Update extracts aligned causal rows from Thesis, evaluates regime
+switching and Pearl's causal ladder (Association, Do-Intervention,
+Abductive Counterfactuals), and enriches thesis.Causal.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
 	if thesis == nil {
@@ -85,12 +81,14 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	}
 
 	symbols := solver.extractSymbols(thesis)
+
 	if len(symbols) == 0 {
 		symbols = []string{"default"}
 	}
 
 	for _, symbol := range symbols {
 		row, intervention, contagion, condition, ok := solver.buildCausalRow(thesis, symbol)
+
 		if !ok {
 			continue
 		}
@@ -103,7 +101,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			Rows:      [][]float64{row},
 			Contagion: contagion,
 		})
+
 		inverted := false
+
 		if err == nil && regimeOut.RawInverted > 0 {
 			inverted = true
 		}
@@ -128,7 +128,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		if !ready {
-			continue // Waiting for MinHistory rows
+			continue
 		}
 
 		// 3. Enrich thesis.Causal with Pearl outputs map
@@ -143,7 +143,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	}
 
 	solver.publish(thesis)
-
 	return nil
 }
 
@@ -249,29 +248,21 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 		return
 	}
 
-	rows := make([]datura.Map[any], 0)
-	at := thesis.At.Format(time.RFC3339)
+	rows := make([]map[string]any, 0)
 
 	thesis.Causal.Range(func(key, value any) bool {
-		symbol, ok := key.(string)
-		if !ok || value == nil {
-			return true
-		}
-
 		causalMap, ok := value.(map[string]any)
-		if !ok {
+		symbol, symbolOK := key.(string)
+
+		if !ok || !symbolOK || symbol == "" {
 			return true
 		}
 
-		row := datura.NewMap(
-			"source", "causal",
-			"symbol", symbol,
-			"at", at,
-		)
-		for k, v := range causalMap {
-			row[k] = v
+		if _, present := causalMap["symbol"]; !present {
+			causalMap["symbol"] = symbol
 		}
-		rows = append(rows, row)
+
+		rows = append(rows, causalMap)
 		return true
 	})
 
@@ -309,8 +300,6 @@ func (solver *Solver) getRegime(symbol string) *causal.Regime {
 	if !ok {
 		r = causal.NewRegime(causal.RegimeConfig{
 			Target:         solver.config.Target,
-			MinHistory:     solver.config.MinHistory,
-			ContagionBreak: 0.8,
 			ConditionLeft:  0,
 			ConditionRight: 1,
 		})

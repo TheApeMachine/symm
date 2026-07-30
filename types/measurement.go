@@ -168,7 +168,7 @@ type Measurement struct {
 	At           time.Time               `json:"at" validate:"required"`
 	ObservedFrom time.Time               `json:"observedFrom,omitempty"`
 	Horizon      time.Duration           `json:"horizon,omitempty" validate:"nonnegative"`
-	Maturity     float64                 `json:"maturity,omitempty" validate:"finite"`
+	Maturity     int64                   `json:"maturity,omitempty" validate:"finite"`
 	Uncertainty  *MeasurementUncertainty `json:"uncertainty,omitempty"`
 	Validity     MeasurementValidity     `json:"validity"`
 	Scale        ScaleReference          `json:"scale"`
@@ -277,6 +277,21 @@ func ObservationCount(measurements *sync.Map) int {
 
 		if ok && measurement != nil {
 			symbols[measurement.Symbol] = struct{}{}
+			return true
+		}
+
+		rows, ok := value.([]*Measurement)
+
+		if !ok {
+			return true
+		}
+
+		for _, row := range rows {
+			if row == nil {
+				continue
+			}
+
+			symbols[row.Symbol] = struct{}{}
 		}
 
 		return true

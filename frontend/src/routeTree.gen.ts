@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as XrayRouteImport } from './routes/xray'
 import { Route as SignalsRouteImport } from './routes/signals'
 import { Route as JournalRouteImport } from './routes/journal'
+import { Route as GraphRouteImport } from './routes/graph'
 import { Route as DecisionsRouteImport } from './routes/decisions'
 import { Route as CortexRouteImport } from './routes/cortex'
 import { Route as AllocationRouteImport } from './routes/allocation'
@@ -30,6 +31,11 @@ const SignalsRoute = SignalsRouteImport.update({
 const JournalRoute = JournalRouteImport.update({
   id: '/journal',
   path: '/journal',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GraphRoute = GraphRouteImport.update({
+  id: '/graph',
+  path: '/graph',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DecisionsRoute = DecisionsRouteImport.update({
@@ -58,6 +64,7 @@ export interface FileRoutesByFullPath {
   '/allocation': typeof AllocationRoute
   '/cortex': typeof CortexRoute
   '/decisions': typeof DecisionsRoute
+  '/graph': typeof GraphRoute
   '/journal': typeof JournalRoute
   '/signals': typeof SignalsRoute
   '/xray': typeof XrayRoute
@@ -67,6 +74,7 @@ export interface FileRoutesByTo {
   '/allocation': typeof AllocationRoute
   '/cortex': typeof CortexRoute
   '/decisions': typeof DecisionsRoute
+  '/graph': typeof GraphRoute
   '/journal': typeof JournalRoute
   '/signals': typeof SignalsRoute
   '/xray': typeof XrayRoute
@@ -77,6 +85,7 @@ export interface FileRoutesById {
   '/allocation': typeof AllocationRoute
   '/cortex': typeof CortexRoute
   '/decisions': typeof DecisionsRoute
+  '/graph': typeof GraphRoute
   '/journal': typeof JournalRoute
   '/signals': typeof SignalsRoute
   '/xray': typeof XrayRoute
@@ -88,6 +97,7 @@ export interface FileRouteTypes {
     | '/allocation'
     | '/cortex'
     | '/decisions'
+    | '/graph'
     | '/journal'
     | '/signals'
     | '/xray'
@@ -97,6 +107,7 @@ export interface FileRouteTypes {
     | '/allocation'
     | '/cortex'
     | '/decisions'
+    | '/graph'
     | '/journal'
     | '/signals'
     | '/xray'
@@ -106,6 +117,7 @@ export interface FileRouteTypes {
     | '/allocation'
     | '/cortex'
     | '/decisions'
+    | '/graph'
     | '/journal'
     | '/signals'
     | '/xray'
@@ -116,6 +128,7 @@ export interface RootRouteChildren {
   AllocationRoute: typeof AllocationRoute
   CortexRoute: typeof CortexRoute
   DecisionsRoute: typeof DecisionsRoute
+  GraphRoute: typeof GraphRoute
   JournalRoute: typeof JournalRoute
   SignalsRoute: typeof SignalsRoute
   XrayRoute: typeof XrayRoute
@@ -142,6 +155,13 @@ declare module '@tanstack/react-router' {
       path: '/journal'
       fullPath: '/journal'
       preLoaderRoute: typeof JournalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/graph': {
+      id: '/graph'
+      path: '/graph'
+      fullPath: '/graph'
+      preLoaderRoute: typeof GraphRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/decisions': {
@@ -180,6 +200,7 @@ const rootRouteChildren: RootRouteChildren = {
   AllocationRoute: AllocationRoute,
   CortexRoute: CortexRoute,
   DecisionsRoute: DecisionsRoute,
+  GraphRoute: GraphRoute,
   JournalRoute: JournalRoute,
   SignalsRoute: SignalsRoute,
   XrayRoute: XrayRoute,

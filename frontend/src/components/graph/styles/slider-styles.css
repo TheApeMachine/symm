@@ -1,0 +1,45 @@
+.time-slider-root {
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+	width: 100%;
+}
+
+.time-slider-root--legacy {
+	font-family:
+		system-ui,
+		Ubuntu Mono,
+		ui-monospace,
+		monospace;
+	font-size: 12px;
+}
+
+.time-slider-meta {
+	align-items: center;
+	color: #ccc;
+	display: flex;
+	justify-content: space-between;
+	opacity: 0.9;
+	white-space: nowrap;
+}
+
+.time-slider-ranges {
+	align-items: center;
+	column-gap: 0.75rem;
+	display: flex;
+}
+
+.time-slider-ranges label {
+	align-items: center;
+	color: #ddd;
+	column-gap: 0.35rem;
+	display: flex;
+	flex: 1;
+	min-width: 0;
+}
+
+.time-slider-ranges input[type="range"] {
+	flex: 1;
+	min-width: 0;
+}

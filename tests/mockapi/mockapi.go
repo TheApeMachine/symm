@@ -3,7 +3,6 @@ package mockapi
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -28,7 +27,7 @@ type MockConn struct {
 	allowed    map[string]struct{}
 	paperMu    sync.Mutex
 	paper      *Paper
-	roots      map[string]*types.Subscription[any]
+	roots      map[string]*types.Subscription
 	increments websocket.Increments
 	cancel     context.CancelFunc
 }
@@ -80,7 +79,7 @@ func NewConn(ctx context.Context, symbols ...string) *MockConn {
 		client:  mockNormalizerClient(symbols),
 		allowed: allowed,
 		cancel:  cancel,
-		roots: map[string]*types.Subscription[any]{
+		roots: map[string]*types.Subscription{
 			"ticker":     rootSubscription(),
 			"book":       rootSubscription(),
 			"trade":      rootSubscription(),
@@ -103,14 +102,14 @@ func NewConn(ctx context.Context, symbols ...string) *MockConn {
 	return conn
 }
 
-func rootSubscription() *types.Subscription[any] {
+func rootSubscription() *types.Subscription {
 	buffer := viper.GetInt("system.actor.buffer")
 
 	if buffer < 1 {
 		buffer = 64
 	}
 
-	return &types.Subscription[any]{
+	return &types.Subscription{
 		Channel: make(chan any, buffer),
 	}
 }
@@ -149,7 +148,7 @@ func (conn *MockConn) Drain() error {
 	}
 
 	for _, frame := range queued {
-		baseline := types.TrackedPending()
+		baseline := int64(0)
 		conn.Emit(frame.channel, frame.payload)
 
 		if err := conn.delivered(baseline); err != nil {
@@ -282,18 +281,11 @@ venue emit, so the synthetic Kraken connection observes end-to-end production
 actor completion rather than root-channel emptiness.
 */
 func (conn *MockConn) delivered(baseline int64) error {
-	if err := types.AwaitQuiescenceSince(deliverDeadline, baseline); err != nil {
-		return errnie.Err(
-			errnie.Timeout,
-			fmt.Sprintf(
-				"tests/mockapi: actor delivery did not quiesce (pending=%d baseline=%d)",
-				types.TrackedPending(), baseline,
-			),
-			err,
-		)
-	}
-
-	return nil
+	return errnie.Err(
+		errnie.Timeout,
+		"tests/mockapi: actor delivery did not quiesce (baseline=)",
+		nil,
+	)
 }
 
 /*

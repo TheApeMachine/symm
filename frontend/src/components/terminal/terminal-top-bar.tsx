@@ -1,11 +1,13 @@
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
+import { Component } from "#/components/ui/component";
 import { cn } from "#/lib/utils";
-import { Badge } from "@/components/ui/badge";
-import { panelVariants } from "@/components/ui/panel";
+import { registerPainter } from "#/providers/ws-stores";
 import { Balance } from "@/components/balance";
 import { Count } from "@/components/count";
+import { Badge } from "@/components/ui/badge";
+import { panelVariants } from "@/components/ui/panel";
 
 const SymmLogo = () => (
 	<svg
@@ -87,6 +89,13 @@ export const TerminalTopBar = () => {
 					</span>
 				</button>
 				<Balance />
+				<Component register={(paint) => registerPainter("tick", paint)}>
+					{({ ref }) => (
+						<span ref={ref} className="font-mono text-[11px] text-(--f3)">
+							tick <span data-paint="count" className="text-(--f1)" />
+						</span>
+					)}
+				</Component>
 			</div>
 		</header>
 	);

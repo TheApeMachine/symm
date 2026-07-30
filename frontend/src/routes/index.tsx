@@ -1,21 +1,24 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
-import { Canvas } from "#/components/dashboard/canvas";
+import { AuditTrail } from "#/components/dashboard/audit";
+import { Decisions } from "#/components/dashboard/decisions";
 import { FluidLegend } from "#/components/dashboard/fluid";
 import { ColumnHeader } from "#/components/dashboard/header";
+import { Positions } from "#/components/dashboard/positions";
 import { KernelInspector } from "#/components/kernel/inspector";
 import { Pulse } from "#/components/pulse";
 import {
 	TerminalFluidChart,
 	TerminalPredictionChart,
 } from "#/components/terminal/charts";
-import { DashboardRail } from "#/components/terminal/dashboard-rail";
 import { KernelList } from "#/components/terminal/kernel-list";
 import { LiveManifoldMeta } from "#/components/terminal/live-manifold-meta";
 import { LiveResonanceFooter } from "#/components/terminal/live-resonance-footer";
 import { LiveResonanceTitle } from "#/components/terminal/live-resonance-title";
 import { ThesisModal } from "#/components/terminal/thesis-modal";
+import { Canvas } from "#/components/ui/canvas";
+import { Panel } from "#/components/ui/panel";
 import { Flex } from "@/components/ui/flex";
 import { Grid } from "@/components/ui/grid";
 
@@ -54,8 +57,7 @@ const RouteComponent = () => {
 						<Canvas
 							title={
 								<>
-									Predictive coding ·{" "}
-									<LiveResonanceTitle />
+									Predictive coding · <LiveResonanceTitle />
 								</>
 							}
 							meta="hierarchy layers · adjacent top-down links · calibrated return head"
@@ -82,7 +84,17 @@ const RouteComponent = () => {
 						</Canvas>
 					</Flex.Column>
 
-					<DashboardRail />
+					<Flex.Column padding={2} gap={2} className="min-h-0 bg-(--surface)">
+						<Panel variant="raised">
+							<Decisions />
+						</Panel>
+						<Panel variant="raised" fullHeight>
+							<Positions />
+						</Panel>
+						<Panel variant="raised">
+							<AuditTrail />
+						</Panel>
+					</Flex.Column>
 				</Grid>
 			</Flex>
 		</Flex.Column>

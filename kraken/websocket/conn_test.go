@@ -579,7 +579,7 @@ func TestAPIClose(t *testing.T) {
 
 type stubConn struct {
 	*types.Actor
-	level3       *types.Subscription[any]
+	level3       *types.Subscription
 	client       *spot.WebSocket
 	writes       [][]byte
 	postResponse []byte
@@ -591,7 +591,7 @@ type stubConn struct {
 
 func newStubConn() *stubConn {
 	stub := &stubConn{
-		level3: &types.Subscription[any]{
+		level3: &types.Subscription{
 			Channel: make(chan any, 64),
 		},
 	}
@@ -599,7 +599,6 @@ func newStubConn() *stubConn {
 	stub.AddRoot("level3", stub.level3)
 	// Match MockConn: root fan-out only runs after Start, so InjectLevel3's
 	// subscriber actually receives frames sent on the level3 root.
-	stub.Start()
 
 	return stub
 }

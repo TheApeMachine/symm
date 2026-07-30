@@ -8,7 +8,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -19,7 +18,8 @@ uses the original text so validation needs neither float conversion nor big.Rat
 string reconstruction for every resting order on every update.
 */
 type level3Ledger struct {
-	orders map[string]map[string]level3Order
+	orders  map[string]map[string]level3Order
+	waiting map[string]struct{}
 }
 
 /*
@@ -34,7 +34,10 @@ type level3Order struct {
 newLevel3Ledger constructs an empty exact-text ledger for one L3 transport.
 */
 func newLevel3Ledger() *level3Ledger {
-	return &level3Ledger{orders: make(map[string]map[string]level3Order)}
+	return &level3Ledger{
+		orders:  make(map[string]map[string]level3Order),
+		waiting: make(map[string]struct{}),
+	}
 }
 
 /*
@@ -85,10 +88,18 @@ func (ledger *level3Ledger) applyBook(
 		managed.EnableMaxDepth = false
 		managed.NoBookCrossing = false
 		ledger.orders[data.Symbol] = make(map[string]level3Order)
+		delete(ledger.waiting, data.Symbol)
 	}
 
 	if managed == nil {
 		return fmt.Errorf("level3 book %q is not registered", data.Symbol)
+	}
+
+	if data.Type != "snapshot" {
+		if _, waiting := ledger.waiting[data.Symbol]; waiting || ledger.orders[data.Symbol] == nil {
+			ledger.waiting[data.Symbol] = struct{}{}
+			return nil
+		}
 	}
 
 	if ledger.orders[data.Symbol] == nil {
@@ -178,48 +189,115 @@ func (ledger *level3Ledger) applySide(
 	orders []kraken.Level3Order,
 ) error {
 	for _, order := range orders {
-		if order.LimitPrice == nil {
-			return fmt.Errorf("level3 price missing for order %q", order.OrderID)
+		if order.OrderID == "" {
+			return fmt.Errorf("level3 order_id missing")
 		}
 
-		quantity := decimal.NewFromInt64(0)
+		event := order.Event
 
-		if order.Event != "delete" {
+		if event == "" {
+			event = "add"
+		}
+
+		current, exists := ledger.orders[symbol][order.OrderID]
+
+		switch event {
+		case "add":
+			if exists {
+				return fmt.Errorf("level3 add after add for order %q", order.OrderID)
+			}
+
+			if order.LimitPrice == nil {
+				return fmt.Errorf("level3 price missing for order %q", order.OrderID)
+			}
+
 			if order.OrderQty == nil {
 				return fmt.Errorf("level3 quantity missing for order %q", order.OrderID)
 			}
-
-			quantity = order.OrderQty
-		}
-
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					errnie.Error(errnie.Err(
-						errnie.Internal,
-						fmt.Sprintf("level3 apply panic: %v", r),
-						nil,
-					))
-				}
-			}()
 
 			managed.Update(&book.UpdateOptions{
 				Direction: direction,
 				ID:        order.OrderID,
 				Price:     order.LimitPrice,
-				Quantity:  quantity,
+				Quantity:  order.OrderQty,
 				Timestamp: order.Timestamp,
 			})
-		}()
 
-		if order.Event == "delete" {
+			ledger.orders[symbol][order.OrderID] = level3Order{
+				price:    order.ChecksumLimitPrice(),
+				quantity: order.ChecksumOrderQty(),
+			}
+		case "modify":
+			if !exists {
+				return fmt.Errorf("level3 modify before add for order %q", order.OrderID)
+			}
+
+			if order.LimitPrice == nil {
+				return fmt.Errorf("level3 price missing for order %q", order.OrderID)
+			}
+
+			if order.OrderQty == nil {
+				return fmt.Errorf("level3 quantity missing for order %q", order.OrderID)
+			}
+
+			previousPrice, err := decimal.NewFromString(current.price)
+
+			if err != nil {
+				return fmt.Errorf("level3 prior price invalid for order %q: %w", order.OrderID, err)
+			}
+
+			if previousPrice.Cmp(order.LimitPrice) != 0 {
+				managed.Update(&book.UpdateOptions{
+					Direction: direction,
+					ID:        order.OrderID,
+					Price:     previousPrice,
+					Quantity:  decimal.NewFromInt64(0),
+					Timestamp: order.Timestamp,
+				})
+
+				managed.Update(&book.UpdateOptions{
+					Direction: direction,
+					ID:        order.OrderID,
+					Price:     order.LimitPrice,
+					Quantity:  order.OrderQty,
+					Timestamp: order.Timestamp,
+				})
+			} else {
+				managed.Update(&book.UpdateOptions{
+					Direction: direction,
+					ID:        order.OrderID,
+					Price:     order.LimitPrice,
+					Quantity:  order.OrderQty,
+					Timestamp: order.Timestamp,
+				})
+			}
+
+			ledger.orders[symbol][order.OrderID] = level3Order{
+				price:    order.ChecksumLimitPrice(),
+				quantity: order.ChecksumOrderQty(),
+			}
+		case "delete":
+			if !exists {
+				return fmt.Errorf("level3 delete before add for order %q", order.OrderID)
+			}
+
+			previousPrice, err := decimal.NewFromString(current.price)
+
+			if err != nil {
+				return fmt.Errorf("level3 prior price invalid for order %q: %w", order.OrderID, err)
+			}
+
+			managed.Update(&book.UpdateOptions{
+				Direction: direction,
+				ID:        order.OrderID,
+				Price:     previousPrice,
+				Quantity:  decimal.NewFromInt64(0),
+				Timestamp: order.Timestamp,
+			})
+
 			delete(ledger.orders[symbol], order.OrderID)
-			continue
-		}
-
-		ledger.orders[symbol][order.OrderID] = level3Order{
-			price:    order.ChecksumLimitPrice(),
-			quantity: order.ChecksumOrderQty(),
+		default:
+			return fmt.Errorf("level3 unknown event %q for order %q", event, order.OrderID)
 		}
 	}
 

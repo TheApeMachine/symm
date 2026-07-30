@@ -1,24 +1,21 @@
 export {
-	XrayHawkesPanel,
-	paintXrayHawkes,
-} from "#/components/terminal/xray-hawkes";
-export {
-	XrayHierarchyPanel,
-	paintXrayHierarchy,
-} from "#/components/terminal/xray-hierarchy";
-export {
-	XrayLatentPanel,
-	paintXrayLatent,
-} from "#/components/terminal/xray-latent";
-export {
-	XrayFactsPanel,
 	paintXrayFactsCognition,
 	paintXrayFactsManifold,
 	paintXrayFactsMeasurements,
 	paintXrayFactsResonance,
+	XrayFactsPanel,
 } from "#/components/terminal/xray-facts-panel";
+export { XrayHawkesPanel } from "#/components/terminal/xray-hawkes";
 export {
-	XrayManifoldPanel,
+	paintXrayHierarchy,
+	XrayHierarchyPanel,
+} from "#/components/terminal/xray-hierarchy";
+export {
+	paintXrayLatent,
+	XrayLatentPanel,
+} from "#/components/terminal/xray-latent";
+export {
 	paintXrayManifold,
 	paintXrayManifoldMeasurements,
+	XrayManifoldPanel,
 } from "#/components/terminal/xray-manifold-panel";

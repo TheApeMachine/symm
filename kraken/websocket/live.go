@@ -57,7 +57,7 @@ type Live struct {
 	readyGate    *types.ReadyFuture
 	level3Queue  chan []byte
 	level3Ledger *level3Ledger
-	roots        map[string]*types.Subscription[any]
+	roots        map[string]*types.Subscription
 	increments   Increments
 }
 
@@ -80,15 +80,15 @@ func New(
 		client:    spot.NewWebSocket(),
 		auth:      auth,
 		readyGate: types.NewReadyFuture(),
-		roots: map[string]*types.Subscription[any]{
-			"ticker":     types.NewSubscription[any](),
-			"book":       types.NewSubscription[any](),
-			"trade":      types.NewSubscription[any](),
-			"level3":     types.NewSubscription[any](),
-			"instrument": types.NewSubscription[any](),
-			"balances":   types.NewSubscription[any](),
-			"executions": types.NewSubscription[any](),
-			"add_order":  types.NewSubscription[any](),
+		roots: map[string]*types.Subscription{
+			"ticker":     types.NewSubscription(),
+			"book":       types.NewSubscription(),
+			"trade":      types.NewSubscription(),
+			"level3":     types.NewSubscription(),
+			"instrument": types.NewSubscription(),
+			"balances":   types.NewSubscription(),
+			"executions": types.NewSubscription(),
+			"add_order":  types.NewSubscription(),
 		},
 	}
 

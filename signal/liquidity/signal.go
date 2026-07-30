@@ -6,7 +6,6 @@ import (
 	"sort"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
@@ -68,28 +67,18 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 }
 
 func (signal *Signal) onTicker(message any) any {
-	rows := message.(*kraken.Ticker).Data
-	measurements, err := signal.Calculate(rows, nil, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return signal.thesis
-	}
-
-	if len(measurements) > 0 {
-		signal.thesis.Measurements.Store(types.SourceLiquidity, measurements)
-	}
-
-	return signal.thesis
+	return signal.thesis.AppendMeasuremnts(
+		types.SourceLiquidity, signal.Calculate(message.(*kraken.Ticker).Data, nil, nil),
+	)
 }
 
 func (signal *Signal) Calculate(
 	tickers []kraken.TickerData,
 	trades []kraken.TradeData,
 	books []kraken.BookData,
-) ([]*types.Measurement, error) {
+) []*types.Measurement {
 	if len(tickers) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	// Retain the full observed cohort so an isolated single-symbol event still
@@ -122,7 +111,6 @@ func (signal *Signal) Calculate(
 	depthMedian, depthOK := statistic.MedianOf(depthPeers)
 	peerReady := len(depthPeers) >= 2 && depthOK && depthMedian > 0
 	notionalMedian, hasNotionalMedian := statistic.MedianOf(notionalPeers)
-	peerMaturity := float64(len(depthPeers)) / float64(len(depthPeers)+1)
 
 	out := make([]*types.Measurement, 0, len(peers))
 	uiOut := datura.NewMap(
@@ -180,7 +168,7 @@ func (signal *Signal) Calculate(
 			Source:   types.SourceLiquidity,
 			Symbol:   peer.Symbol,
 			At:       peer.At,
-			Maturity: peerMaturity,
+			Maturity: signal.thesis.Tick,
 			Validity: validity,
 			Scale:    scale,
 			Metrics:  make(map[string]types.MetricSample, 6),
@@ -227,7 +215,7 @@ func (signal *Signal) Calculate(
 		utils.Publish(signal.ui, uiOut)
 	}
 
-	return out, nil
+	return out
 }
 
 /*

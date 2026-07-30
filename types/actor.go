@@ -2,10 +2,6 @@ package types
 
 import (
 	"context"
-	"fmt"
-	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -14,90 +10,39 @@ import (
 /*
 Subscription is a thin typed wrapper over a channel so call sites keep T.
 */
-type Subscription[T any] struct {
-	Channel chan T
-	tracked bool
-	ctx     context.Context
-}
-
-var trackedMessages atomic.Int64
-
-const trackedPollInterval = 100 * time.Microsecond
-
-/*
-NewSubscription opens one buffered typed channel using system.actor.buffer.
-*/
-func NewSubscription[T any]() *Subscription[T] {
-	return NewSubscriptionSize[T](0)
+type Subscription struct {
+	Channel chan any
 }
 
 /*
-NewSubscriptionSize opens a typed channel with an explicit buffer. A non-positive
-size falls back to system.actor.buffer (then 64) so call sites can request a
-strict depth without re-reading config.
+NewSubscription opens one buffered typed channel.
 */
-func NewSubscriptionSize[T any](buffer int) *Subscription[T] {
-	if buffer < 1 {
-		buffer = viper.GetViper().GetInt("system.actor.buffer")
-	}
+func NewSubscription() *Subscription {
+	buffer := viper.GetViper().GetInt("system.actor.buffer")
 
 	if buffer < 1 {
 		buffer = 64
 	}
 
-	return &Subscription[T]{
-		Channel: make(chan T, buffer),
+	return &Subscription{
+		Channel: make(chan any, buffer),
 	}
 }
 
 /*
-Send delivers one message, blocking when the subscriber is behind so producers
-apply real backpressure instead of sleeping and dropping under load.
+Send delivers one message to the subscription channel.
 */
-func (subscription *Subscription[T]) Send(message T) {
-	if subscription.tracked {
-		trackedMessages.Add(1)
+func (subscription *Subscription) Send(message any) {
+	retry := 1
 
-		if subscription.ctx != nil {
-			select {
-			case <-subscription.ctx.Done():
-				trackedMessages.Add(-1)
-				return
-			default:
-			}
+	for retry < 21 {
+		select {
+		case subscription.Channel <- message:
+			return
+		default:
+			errnie.Warn("subscription buffer full")
 		}
 	}
-
-	subscription.Channel <- message
-}
-
-/*
-TrySend enqueues without blocking. It returns false when the subscriber inbox is
-full so websocket readers can hand off without stalling the socket.
-*/
-func (subscription *Subscription[T]) TrySend(message T) bool {
-	select {
-	case subscription.Channel <- message:
-		return true
-	default:
-		errnie.Error(errnie.Err(
-			errnie.TooManyRequests,
-			fmt.Sprintf("actor dropped message: %v", message),
-			nil,
-		))
-
-		return false
-	}
-}
-
-/*
-Envelope is one ordered inbox item: topic routing plus payload so an Actor
-consumes a single stream instead of busy-polling topic maps.
-*/
-type Envelope struct {
-	Topic   string
-	Payload any
-	Tracked bool
 }
 
 /*
@@ -108,9 +53,6 @@ type Topic struct {
 	Actor *Actor
 }
 
-/*
-Handler binds a topic name to the function that transforms one Envelope payload.
-*/
 type Handler struct {
 	Topic string
 	Fn    func(any) any
@@ -118,22 +60,16 @@ type Handler struct {
 
 /*
 Actor is embeddable as `*Actor` on entrypoints (Desk, Crypto, Signal, …).
-One goroutine blocks on a unified inbox; per-topic subscriptions pump into that
-inbox so idle actors sleep and cross-topic order follows arrival order.
+Run pops each subscription, runs the handler, and Sends the result to
+subscribers of that same topic.
 */
 type Actor struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	name          string
-	subscriptions map[string]*Subscription[any]
-	subscribers   map[string][]*Subscription[any]
+	subscriptions map[string][]*Subscription
+	subscribers   map[string][]*Subscription
 	handlers      map[string]Handler
-	inbox         chan Envelope
-	mu            sync.RWMutex
-	started       atomic.Bool
-	frozen        atomic.Bool
-	wg            sync.WaitGroup
-	dropped       atomic.Uint64
 }
 
 /*
@@ -150,56 +86,29 @@ func NewActor(
 		handlers = map[string]Handler{}
 	}
 
-	buffer := viper.GetViper().GetInt("system.actor.buffer")
-
-	if buffer < 1 {
-		buffer = 64
-	}
-
 	return &Actor{
 		ctx:           ctx,
 		cancel:        cancel,
-		name:          name,
-		subscriptions: make(map[string]*Subscription[any]),
-		subscribers:   make(map[string][]*Subscription[any]),
+		subscriptions: make(map[string][]*Subscription),
+		subscribers:   make(map[string][]*Subscription),
 		handlers:      handlers,
-		inbox:         make(chan Envelope, buffer),
+		name:          name,
 	}
 }
 
 /*
 AddRoot registers a producer-owned ingress subscription under name.
 */
-func (actor *Actor) AddRoot(name string, subscription *Subscription[any]) {
-	if actor.frozen.Load() {
-		panic("types.Actor: AddRoot after Start")
-	}
-
-	subscription.tracked = true
-	subscription.ctx = actor.ctx
-	actor.mu.Lock()
-	defer actor.mu.Unlock()
-
-	actor.subscriptions[name] = subscription
+func (actor *Actor) AddRoot(name string, subscription *Subscription) {
+	actor.subscriptions[name] = []*Subscription{subscription}
 }
 
 /*
 Subscribe registers interest in this actor's topic and returns the shared
 channel used as the subscriber's inbound subscription.
 */
-func (actor *Actor) Subscribe(topic string) *Subscription[any] {
-	return actor.SubscribeSize(topic, 0)
-}
-
-/*
-SubscribeSize registers interest with an explicit inbound buffer depth. The
-subscriber map is synchronized so late subscribers cannot race publication.
-*/
-func (actor *Actor) SubscribeSize(topic string, buffer int) *Subscription[any] {
-	subscription := NewSubscriptionSize[any](buffer)
-	actor.mu.Lock()
-	defer actor.mu.Unlock()
-
+func (actor *Actor) Subscribe(topic string) *Subscription {
+	subscription := NewSubscription()
 	actor.subscribers[topic] = append(actor.subscribers[topic], subscription)
 
 	return subscription
@@ -209,237 +118,73 @@ func (actor *Actor) SubscribeSize(topic string, buffer int) *Subscription[any] {
 Initialize attaches this actor to upstream topics under the same Name.
 */
 func (actor *Actor) Initialize(topics ...Topic) {
-	errnie.Info("initializing actor: " + actor.name)
-	actor.InitializeSize(0, topics...)
-}
-
-/*
-InitializeSize attaches upstream topics with an explicit inbound buffer depth so
-a slow consumer can apply real backpressure instead of coalescing mutable state.
-*/
-func (actor *Actor) InitializeSize(buffer int, topics ...Topic) {
-	if actor.frozen.Load() {
-		panic("types.Actor: InitializeSize after Start")
-	}
-
 	for _, topic := range topics {
-		subscription := topic.Actor.SubscribeSize(
-			topic.Name, buffer,
-		)
-		subscription.tracked = true
-		subscription.ctx = actor.ctx
-		actor.subscriptions[topic.Name] = subscription
+		if actor.subscriptions[topic.Name] == nil {
+			actor.subscriptions[topic.Name] = []*Subscription{topic.Actor.Subscribe(topic.Name)}
+			continue
+		}
+
+		actor.subscriptions[topic.Name] = append(actor.subscriptions[topic.Name], topic.Actor.Subscribe(topic.Name))
 	}
 
-	actor.Start()
+	actor.Run()
 }
 
 /*
-Start freezes topology, pumps each subscription into the unified inbox, and
-runs one blocking consumer. Repeated Start is a no-op.
-*/
-func (actor *Actor) Start() {
-	if !actor.started.CompareAndSwap(false, true) {
-		return
-	}
-
-	actor.mu.Lock()
-	actor.frozen.Store(true)
-	topics := make([]string, 0, len(actor.subscriptions))
-
-	for topic := range actor.subscriptions {
-		topics = append(topics, topic)
-	}
-
-	actor.mu.Unlock()
-
-	for _, topic := range topics {
-		actor.pump(topic)
-	}
-
-	actor.wg.Go(func() {
-		actor.loop()
-	})
-}
-
-/*
-Run is retained for call sites; it starts the actor once.
+Run starts the long-running loop that pops subscriptions into handlers.
 */
 func (actor *Actor) Run() {
-	actor.Start()
-}
-
-/*
-Close cancels the actor and waits until the inbox loop and pumps exit.
-*/
-func (actor *Actor) Close() error {
-	actor.cancel()
-	actor.wg.Wait()
-	actor.discardTracked()
-
-	return nil
-}
-
-func (actor *Actor) pump(topic string) {
-	actor.wg.Go(func() {
-		tracked := actor.subscriptions[topic].tracked
-
+	go func() {
 		for {
 			select {
 			case <-actor.ctx.Done():
 				return
-			case message, ok := <-actor.subscriptions[topic].Channel:
-				if !ok {
-					return
-				}
+			default:
+				actor.handle()
+			}
+		}
+	}()
+}
 
-				envelope := Envelope{
-					Topic:   topic,
-					Payload: message,
-					Tracked: tracked,
-				}
-
+func (actor *Actor) handle() {
+	for topic, subscriptions := range actor.subscriptions {
+		select {
+		case <-actor.ctx.Done():
+			return
+		default:
+			for _, subscription := range subscriptions {
 				select {
 				case <-actor.ctx.Done():
 					return
-				case actor.inbox <- envelope:
+				case message := <-subscription.Channel:
+					handler, ok := actor.handlers[topic]
+
+					if !ok {
+						actor.publish(topic, message)
+						continue
+					}
+
+					result := handler.Fn(message)
+
+					if result == nil {
+						continue
+					}
+
+					actor.publish(topic, result)
+				default:
 				}
-			}
-		}
-	})
-}
-
-func (actor *Actor) loop() {
-	for {
-		select {
-		case <-actor.ctx.Done():
-			return
-		case envelope, ok := <-actor.inbox:
-			if !ok {
-				return
-			}
-
-			handler, ok := actor.handlers[envelope.Topic]
-
-			if !ok {
-				actor.publish(envelope.Topic, envelope.Payload)
-
-				if envelope.Tracked {
-					trackedMessages.Add(-1)
-				}
-
-				continue
-			}
-
-			result := handler.Fn(envelope.Payload)
-
-			if result == nil {
-				if envelope.Tracked {
-					trackedMessages.Add(-1)
-				}
-
-				continue
-			}
-
-			actor.publish(envelope.Topic, result)
-
-			if envelope.Tracked {
-				trackedMessages.Add(-1)
 			}
 		}
 	}
-}
-
-/*
-AwaitQuiescence waits until all tracked actor messages have completed their
-end-to-end delivery through the actor graph.
-*/
-func AwaitQuiescence(timeout time.Duration) error {
-	return AwaitQuiescenceSince(timeout, 0)
-}
-
-/*
-TrackedPending reports the current tracked actor-message count.
-*/
-func TrackedPending() int64 {
-	return trackedMessages.Load()
-}
-
-/*
-AwaitQuiescenceSince waits until tracked actor delivery returns to the supplied
-baseline, which allows nested transport writes from inside an active handler to
-wait only for the newly emitted downstream work.
-*/
-func AwaitQuiescenceSince(timeout time.Duration, baseline int64) error {
-	deadline := time.Now().Add(timeout)
-
-	for time.Now().Before(deadline) {
-		if trackedMessages.Load() <= baseline {
-			return nil
-		}
-
-		time.Sleep(trackedPollInterval)
-	}
-
-	return errnie.Err(
-		errnie.Timeout,
-		fmt.Sprintf(
-			"actor: tracked delivery did not quiesce (pending=%d baseline=%d)",
-			trackedMessages.Load(), baseline,
-		),
-		nil,
-	)
 }
 
 func (actor *Actor) publish(topic string, result any) {
-	actor.mu.RLock()
-	subscribers := append([]*Subscription[any](nil), actor.subscribers[topic]...)
-	actor.mu.RUnlock()
-
-	for _, subscriber := range subscribers {
-		if subscriber.ctx != nil {
-			select {
-			case <-subscriber.ctx.Done():
-				continue
-			default:
-			}
-		}
-
-		select {
-		case <-actor.ctx.Done():
-			return
-		default:
-			subscriber.Send(result)
-		}
+	for _, subscriber := range actor.subscribers[topic] {
+		subscriber.Send(result)
 	}
 }
 
-func (actor *Actor) discardTracked() {
-	for _, subscription := range actor.subscriptions {
-		if !subscription.tracked {
-			continue
-		}
-
-		for {
-			select {
-			case <-subscription.Channel:
-				trackedMessages.Add(-1)
-			default:
-				goto nextSubscription
-			}
-		}
-
-	nextSubscription:
-	}
-
-	for {
-		select {
-		case envelope := <-actor.inbox:
-			if envelope.Tracked {
-				trackedMessages.Add(-1)
-			}
-		default:
-			return
-		}
-	}
+func (actor *Actor) Close() error {
+	actor.cancel()
+	return nil
 }

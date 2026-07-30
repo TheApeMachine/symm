@@ -22,6 +22,7 @@ import appCss from "../app.css?url";
 
 const SURFACE_VALUES = new Set<TerminalSurface>([
 	"dashboard",
+	"graph",
 	"signals",
 	"decisions",
 	"journal",
@@ -35,10 +36,12 @@ const SURFACE_ALIASES: Record<string, TerminalSurface> = {
 	decision: "decisions",
 	alloc: "allocation",
 	trade: "journal",
+	graphs: "graph",
 };
 
 const SURFACE_PATHS: Record<TerminalSurface, string> = {
 	dashboard: "/",
+	graph: "/graph",
 	signals: "/signals",
 	decisions: "/decisions",
 	journal: "/journal",

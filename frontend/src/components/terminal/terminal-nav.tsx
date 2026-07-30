@@ -7,6 +7,7 @@ import { Engine } from "@/components/engine";
 
 type TerminalRoutePath =
 	| "/"
+	| "/graph"
 	| "/signals"
 	| "/decisions"
 	| "/journal"
@@ -20,6 +21,7 @@ const SURFACE_ITEMS: Array<{
 	to: TerminalRoutePath;
 }> = [
 	{ key: "dashboard", label: "Dashboard", to: "/" },
+	{ key: "graph", label: "Market graph", to: "/graph" },
 	{ key: "signals", label: "Signal insight", to: "/signals" },
 	{ key: "decisions", label: "Decision tree", to: "/decisions" },
 	{ key: "journal", label: "Trade journal", to: "/journal" },
@@ -77,6 +79,24 @@ const NavIcon = ({ surface }: { surface: TerminalSurface }) => {
 					<circle cx="5" cy="20" r="2" />
 					<circle cx="19" cy="20" r="2" />
 					<path d="M12 6v5M12 11l-6 6M12 11l6 6" />
+				</svg>
+			);
+		case "graph":
+			return (
+				<svg
+					width="15"
+					height="15"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="1.6"
+				>
+					<title>Market graph</title>
+					<circle cx="5" cy="12" r="2" />
+					<circle cx="12" cy="5" r="2" />
+					<circle cx="19" cy="12" r="2" />
+					<circle cx="12" cy="19" r="2" />
+					<path d="M6.7 10.9l3.6-4.8M13.7 6.1l3.6 4.8M17.3 13.1l-3.6 4.8M10.3 17.9l-3.6-4.8" />
 				</svg>
 			);
 		case "journal":

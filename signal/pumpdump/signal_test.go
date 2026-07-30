@@ -126,7 +126,7 @@ func TestMeasure(t *testing.T) {
 			thesis := wired.Thesis
 			So(market.Warmup(tests.Idle), ShouldBeNil)
 			measurements := []*types.Measurement{}
-			maturity := make(map[string]float64, len(market.Symbols))
+			maturity := make(map[string]int64, len(market.Symbols))
 
 			thesis.Measurements.Range(func(_, value any) bool {
 				for _, measurement := range value.([]*types.Measurement) {

@@ -29,7 +29,7 @@ type Paper struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	simulator *Simulator
-	roots     map[string]*types.Subscription[any]
+	roots     map[string]*types.Subscription
 	books     *spot.BookManager
 }
 
@@ -49,7 +49,7 @@ func NewPaper(
 		ctx:       ctx,
 		cancel:    cancel,
 		simulator: simulator,
-		roots: map[string]*types.Subscription[any]{
+		roots: map[string]*types.Subscription{
 			"balances":   paperRoot(cfg.System.ActorBuffer),
 			"executions": paperRoot(cfg.System.ActorBuffer),
 			"add_order":  paperRoot(cfg.System.ActorBuffer),
@@ -67,12 +67,12 @@ func NewPaper(
 	return paper
 }
 
-func paperRoot(buffer int) *types.Subscription[any] {
+func paperRoot(buffer int) *types.Subscription {
 	if buffer < 1 {
 		buffer = 64
 	}
 
-	return &types.Subscription[any]{
+	return &types.Subscription{
 		Channel: make(chan any, buffer),
 	}
 }

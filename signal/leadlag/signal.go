@@ -3,8 +3,6 @@ package leadlag
 import (
 	"context"
 
-	"github.com/theapemachine/errnie"
-
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -63,26 +61,16 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 }
 
 func (signal *Signal) onTicker(message any) any {
-	rows := message.(*kraken.Ticker).Data
-	measurements, err := signal.Calculate(rows, nil, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return signal.thesis
-	}
-
-	if len(measurements) > 0 {
-		signal.thesis.Measurements.Store(types.SourceLeadLag, measurements)
-	}
-
-	return signal.thesis
+	return signal.thesis.AppendMeasuremnts(
+		types.SourceLeadLag, signal.Calculate(message.(*kraken.Ticker).Data, nil, nil),
+	)
 }
 
 func (signal *Signal) Calculate(
 	tickers []kraken.TickerData,
 	trades []kraken.TradeData,
 	books []kraken.BookData,
-) ([]*types.Measurement, error) {
+) []*types.Measurement {
 	crossSection := types.NewCrossSection()
 
 	if len(tickers) > 0 {

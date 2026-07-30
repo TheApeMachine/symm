@@ -74,8 +74,7 @@ func NewPlanner(
 func (p *Planner) Initialize(analyzer *logic.Analyzer) error {
 	errnie.Info("initializing planner")
 
-	p.Actor.InitializeSize(
-		1,
+	p.Actor.Initialize(
 		types.Topic{Name: "thesis", Actor: analyzer.Actor},
 	)
 

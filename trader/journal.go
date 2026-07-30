@@ -1,6 +1,8 @@
 package trader
 
 import (
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -14,6 +16,8 @@ import (
 var fastSonic = sonic.Config{
 	EncodeNullForInfOrNan: true,
 }.Froze()
+
+const journalReplayByteBudget = 4 * 1024 * 1024
 
 /*
 JournalStore persists the trade journal as Thesis snapshots. The live Thesis
@@ -50,7 +54,7 @@ func (journalStore *JournalStore) Save(theses []*types.Thesis) error {
 	journalStore.mu.Lock()
 	defer journalStore.mu.Unlock()
 
-	data, err := fastSonic.Marshal(theses)
+	data, err := journalStore.marshal(theses)
 
 	if err != nil {
 		return errnie.Error(err)
@@ -111,13 +115,27 @@ func (journalStore *JournalStore) Load() ([]*types.Thesis, error) {
 	journalStore.mu.Lock()
 	defer journalStore.mu.Unlock()
 
-	data, err := os.ReadFile(journalStore.filePath)
+	file, err := os.Open(journalStore.filePath)
 
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 
+		return nil, errnie.Error(err)
+	}
+
+	defer file.Close()
+
+	raw, err := journalStore.tail(file)
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	data, err := journalStore.array(raw)
+
+	if err != nil {
 		return nil, errnie.Error(err)
 	}
 
@@ -128,4 +146,159 @@ func (journalStore *JournalStore) Load() ([]*types.Thesis, error) {
 	}
 
 	return theses, nil
+}
+
+/*
+marshal bounds persisted journal size to the replay budget so restart replay can
+fit through one retained UI frame instead of growing without limit.
+*/
+func (journalStore *JournalStore) marshal(theses []*types.Thesis) ([]byte, error) {
+	raw, err := journalStore.retain(theses)
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	return journalStore.array(raw)
+}
+
+/*
+array joins already-encoded thesis snapshots into one JSON array payload so load
+and save share the same bounded replay envelope.
+*/
+func (journalStore *JournalStore) array(raw [][]byte) ([]byte, error) {
+
+	if len(raw) == 0 {
+		return []byte("[]"), nil
+	}
+
+	size := 2
+
+	for _, entry := range raw {
+		size += len(entry)
+	}
+
+	size += len(raw) - 1
+	data := make([]byte, 0, size)
+	data = append(data, '[')
+
+	for index, entry := range raw {
+		if index > 0 {
+			data = append(data, ',')
+		}
+
+		data = append(data, entry...)
+	}
+
+	data = append(data, ']')
+	return data, nil
+}
+
+/*
+tail streams one saved journal file and keeps only the newest entries that fit
+inside the replay budget, avoiding a whole-file read on restart.
+*/
+func (journalStore *JournalStore) tail(reader io.Reader) ([][]byte, error) {
+	if reader == nil {
+		return nil, nil
+	}
+
+	decoder := json.NewDecoder(reader)
+	token, err := decoder.Token()
+
+	if err != nil {
+		if err == io.EOF {
+			return nil, nil
+		}
+
+		return nil, errnie.Error(err)
+	}
+
+	delimiter, ok := token.(json.Delim)
+
+	if !ok || delimiter != '[' {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"journal: expected thesis array",
+			nil,
+		))
+	}
+
+	raw := make([][]byte, 0)
+	used := 0
+
+	for decoder.More() {
+		var entry json.RawMessage
+
+		if err := decoder.Decode(&entry); err != nil {
+			return nil, errnie.Error(err)
+		}
+
+		used, raw = journalStore.push(raw, used, entry)
+	}
+
+	token, err = decoder.Token()
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	delimiter, ok = token.(json.Delim)
+
+	if !ok || delimiter != ']' {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"journal: expected thesis array end",
+			nil,
+		))
+	}
+
+	return raw, nil
+}
+
+/*
+retain marshals thesis snapshots one by one and keeps only the newest replayable
+tail so the saved journal cannot grow into a restart-sized memory spike.
+*/
+func (journalStore *JournalStore) retain(theses []*types.Thesis) ([][]byte, error) {
+	raw := make([][]byte, 0, len(theses))
+	used := 0
+
+	for _, thesis := range theses {
+		entry, err := fastSonic.Marshal(thesis)
+
+		if err != nil {
+			return nil, errnie.Error(err)
+		}
+
+		used, raw = journalStore.push(raw, used, entry)
+	}
+
+	return raw, nil
+}
+
+/*
+push appends one encoded thesis while trimming the oldest retained entries until
+the replay budget fits, always preserving at least the newest snapshot.
+*/
+func (journalStore *JournalStore) push(
+	raw [][]byte,
+	used int,
+	entry []byte,
+) (int, [][]byte) {
+	copyEntry := append([]byte(nil), entry...)
+	entrySize := len(copyEntry)
+
+	if entrySize >= journalReplayByteBudget {
+		return entrySize, [][]byte{copyEntry}
+	}
+
+	for len(raw) > 0 && used+entrySize > journalReplayByteBudget {
+		used -= len(raw[0])
+		raw = raw[1:]
+	}
+
+	raw = append(raw, copyEntry)
+	used += entrySize
+	return used, raw
 }

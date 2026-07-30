@@ -23,15 +23,10 @@ import {
 	paintCandidateManifold,
 	paintCandidateResonance,
 } from "#/components/terminal/candidate-row";
+import { paintCausalLadder } from "#/components/terminal/causal-ladder";
 import { paintCognitiveBeam } from "#/components/terminal/cognitive-beam";
 import { paintCortex } from "#/components/terminal/cortex-surface";
 import { paintCrossSection } from "#/components/terminal/cross-section-panel";
-import {
-	paintDashboardLifecycle,
-	paintDashboardPositions,
-	paintDecisionRows,
-} from "#/components/terminal/dashboard-rail";
-import { paintCausalLadder } from "#/components/terminal/causal-ladder";
 import { paintDecisionsEntryLine } from "#/components/terminal/decisions-entry-line";
 import {
 	paintDecisions,
@@ -66,15 +61,14 @@ import {
 } from "#/components/terminal/position-gauge";
 import { paintRegimeRadar } from "#/components/terminal/regime-radar";
 import { paintThesis } from "#/components/terminal/thesis-modal";
-import { paintXrayHawkes } from "#/components/terminal/xray-hawkes";
-import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
-import { paintXrayLatent } from "#/components/terminal/xray-latent";
 import {
 	paintXrayFactsCognition,
 	paintXrayFactsManifold,
 	paintXrayFactsMeasurements,
 	paintXrayFactsResonance,
 } from "#/components/terminal/xray-facts-panel";
+import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
+import { paintXrayLatent } from "#/components/terminal/xray-latent";
 import {
 	paintXrayManifold,
 	paintXrayManifoldMeasurements,
@@ -166,7 +160,6 @@ export const drawers = {
 				paint: paintTerminalSignalHeatmap,
 				input: "history",
 			},
-			xrayHawkes: { paint: paintXrayHawkes, input: "history" },
 			xrayFacts: {
 				paint: paintXrayFactsMeasurements,
 				input: "history",
@@ -205,7 +198,6 @@ export const drawers = {
 		paint: () => {},
 		keys: {
 			journal: paintJournalPositions,
-			dashboard: paintDashboardPositions,
 			position: paintPositions,
 			allocation: paintAllocationPositions,
 		},
@@ -215,9 +207,6 @@ export const drawers = {
 	},
 	lifecycle: {
 		paint: paintJournalLifecycle,
-		keys: {
-			dashboard: paintDashboardLifecycle,
-		},
 	},
 	findings: {
 		paint: paintJournalFindings,
@@ -228,7 +217,6 @@ export const drawers = {
 	decisions: {
 		paint: () => {},
 		keys: {
-			rows: paintDecisionRows,
 			candidate: paintCandidateDecisions,
 			surface: paintDecisions,
 		},

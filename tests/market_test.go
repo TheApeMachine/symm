@@ -14,7 +14,7 @@ import (
 /*
 collect drains every ready message from an Actor subscription.
 */
-func collect(sub *types.Subscription[any]) []any {
+func collect(sub *types.Subscription) []any {
 	frames := make([]any, 0)
 
 	for {
@@ -30,7 +30,7 @@ func collect(sub *types.Subscription[any]) []any {
 /*
 await waits until at least n Actor frames arrive or the deadline expires.
 */
-func await(sub *types.Subscription[any], n int) []any {
+func await(sub *types.Subscription, n int) []any {
 	frames := make([]any, 0, n)
 	deadline := time.Now().Add(2 * time.Second)
 

@@ -225,7 +225,7 @@ export const CausalLadder = () => (
 						<div className="my-1.5 font-mono text-[9px] text-(--f4)">
 							{rung.desc}
 						</div>
-						<div className="h-[5px] overflow-hidden rounded-[3px] bg-(--line)">
+						<div className="h-1.25 overflow-hidden rounded-[3px] bg-(--line)">
 							<div
 								ref={ladderRungFillRefs[index]}
 								className="h-full bg-(--info) transition-[width] duration-500 ease-out"

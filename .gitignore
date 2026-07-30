@@ -28,3 +28,4 @@ runs/effective-config.json
 qodana.yaml
 .idea/workspace.xml
 .kilo/
+.playwright-mcp/

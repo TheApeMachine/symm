@@ -5,7 +5,6 @@ import (
 	"math"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
@@ -65,26 +64,16 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 }
 
 func (signal *Signal) onTicker(message any) any {
-	rows := message.(*kraken.Ticker).Data
-	measurements, err := signal.Calculate(rows, nil, nil)
-
-	if err != nil {
-		errnie.Error(err)
-		return signal.thesis
-	}
-
-	if len(measurements) > 0 {
-		signal.thesis.Measurements.Store(types.SourceSentiment, measurements)
-	}
-
-	return signal.thesis
+	return signal.thesis.AppendMeasuremnts(
+		types.SourceSentiment, signal.Calculate(message.(*kraken.Ticker).Data, nil, nil),
+	)
 }
 
 func (signal *Signal) Calculate(
 	tickers []kraken.TickerData,
 	trades []kraken.TradeData,
 	books []kraken.BookData,
-) ([]*types.Measurement, error) {
+) []*types.Measurement {
 	if len(tickers) > 0 {
 		signal.crossSection.Measure(tickers)
 	}
@@ -93,7 +82,7 @@ func (signal *Signal) Calculate(
 	var focusMeasurements []*types.Measurement
 
 	if signal.crossSection == nil {
-		return out, nil
+		return out
 	}
 
 	leader, leadershipThreshold := signal.crossSection.Leadership()
@@ -222,7 +211,7 @@ func (signal *Signal) Calculate(
 		utils.Publish(signal.ui, datura.NewMap("measurements", focusMeasurements))
 	}
 
-	return out, nil
+	return out
 }
 
 /*

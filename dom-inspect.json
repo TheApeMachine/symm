@@ -1,0 +1,30 @@
+{
+  "buttons": [
+    "BTC/USD",
+    "Jump toJump to⌘K",
+    "scanlines on",
+    "",
+    "",
+    "Open in signal insight →",
+    "",
+    "",
+    "correlationHealthySignal sparklinestrength 0.40464s",
+    "cvdHealthySignal sparklinestrength 0.54670s",
+    "depthflowStandbySignal sparkline",
+    "exhaustionHealthySignal sparklinestrength 0.0000s",
+    "hawkesHealthySignal sparklineconditional_intensity 0.15870s",
+    "leadlagStandbySignal sparkline",
+    "liquidityHealthySignal sparklinescarcity_score 0.99904s",
+    "pumpdumpStandbySignal sparkline",
+    "sentimentHealthySignal sparklinestrength 0.0003s",
+    "toxicityStandbySignal sparkline"
+  ],
+  "itemCount": 1,
+  "items": [
+    {
+      "text": "BTC/USDP/L -0.06139 USDentry 63543.100000000 / mark 63406.2-0.0127%floor 62377.588qty 0.00007585peak 63650.6",
+      "html": "<div class=\"flex-row items-center gap-2 font-medium text-(--f1) hover:bg-(--sunken) mb-1.25 block rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5 font-mono text-[11px] transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]\" data-select=\"somekey\" data-index=\"0\" "
+    }
+  ],
+  "textSnippet": "SYMM\nLIVE\nopen positions\nBTC/USD\nJump to\n⌘K\nBALANCE\n179.2471020758235\nAVAILABLE\n179.2471020758235\nRESERVED\n0.000000000000\nASSET\nUSD\nSURFACES\nDashboard\nSignal insight\nDecision tree\nTrade journal\nLatent x-ray\nCognitive tree\nAllocation\nENGINE\nseq\nphase\ncand\nopen\nmeas\nready\n/\nclock\nuptime -\nscanlines on\nphase\nmeas\ncand\nopen\nready /\nSIGNAL KERNELS\n10 kernels\ncorrelation\nHEALTHY\nstrength 0.4046\n4s\ncvd\nHEALTHY\nstrength 0.5467\n0s\ndepthflow\nSTANDBY\nexhaustion\nHEALTHY\nstrength 0.000\n0s\nhawkes\nHEALTHY\nconditional_intensity 0.1587\n0s\nleadlag\nSTANDBY\nliquidity\nHEALTHY\nscarcity_score 0.9990\n4s\npumpdump\nSTANDBY\nsentiment\nHEALTHY\nstrength 0.000\n3s\ntoxicity\nSTANDBY\nPILOT-WAVE FIELD\nshared |ψ|² / ρ · focused particles · X relative log price · Z empirical order-age rank · max over Y log size\nwaiting\nfocused X–Z occupancy\nguidance current\nbackend GPU image\nPREDICTIVE CODING · SAMPLES\nhierarchy layers · adjacent top-down links · calibrated return head\nlayer ε\nstate / prediction\nreturn ±σ\nsymbol\nDECISIONS\nSYMBOL\nUTILITY\nACTION\nBTC/USD\nP/L -0.06139 USD\nentry 63543.100000000 / mark 63406.2\n-0.0127%\nfloor 62377.588\nqty 0.00007585\npeak 63650.6"
+}

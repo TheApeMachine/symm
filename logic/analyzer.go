@@ -97,7 +97,7 @@ func (analyzer *Analyzer) Initialize(signals ...types.Topic) error {
 		return nil
 	}
 
-	analyzer.Actor.InitializeSize(1, signals...)
+	analyzer.Actor.Initialize(signals...)
 	analyzer.status = types.READY
 
 	return nil

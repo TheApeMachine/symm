@@ -63,23 +63,21 @@ func TestIngestLevel3SentCreatesBooksFromSubscribe(t *testing.T) {
 }
 
 /*
-TestUpdateLevel3RecoversDeleteOnEmptyBook proves the SDK nil-Level panic on
-delete-against-missing-price is recovered so drainLevel3 cannot crash the process.
+TestUpdateLevel3SkipsDeleteOnEmptyBook proves a pre-snapshot delta is ignored
+until a replacement snapshot arrives, rather than panicking inside the SDK book.
 */
-func TestUpdateLevel3RecoversDeleteOnEmptyBook(t *testing.T) {
-	Convey("Given an empty SDK book (post-invalidate / pre-snapshot)", t, func() {
+func TestUpdateLevel3SkipsDeleteOnEmptyBook(t *testing.T) {
+	Convey("Given an empty SDK book that has not seen a snapshot", t, func() {
 		live := New(context.Background(), nil, true, Level3WebSocketURL)
 		live.client.Reconnect = func() {}
 		live.books.CreateBook("SYND/USD", 10)
 
-		// Numeric limit_price (json.Number) reaches Side.update; delete on a
-		// missing level is the SDK nil-receiver panic we must recover.
 		raw := []byte(`{
 			"channel":"level3",
 			"type":"update",
 			"data":[{
 				"symbol":"SYND/USD",
-				"checksum":1,
+				"checksum":0,
 				"bids":[{
 					"event":"delete",
 					"order_id":"ghost",
@@ -95,8 +93,11 @@ func TestUpdateLevel3RecoversDeleteOnEmptyBook(t *testing.T) {
 				Data: sdkkraken.NewWebSocketMessage(raw),
 			})
 
-			Convey("Then the failed apply is returned as an error instead of crashing", func() {
-				So(err, ShouldNotBeNil)
+			Convey("Then it is ignored while the symbol waits for snapshot state", func() {
+				So(err, ShouldBeNil)
+				_, waiting := live.level3Ledger.waiting["SYND/USD"]
+				So(waiting, ShouldBeTrue)
+				So(live.books.GetBook("SYND/USD").BestBid(), ShouldBeNil)
 			})
 		})
 	})

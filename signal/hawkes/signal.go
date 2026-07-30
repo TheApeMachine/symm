@@ -25,14 +25,14 @@ exists.
 */
 type Signal struct {
 	*types.Actor
-	thesis   *types.Thesis
-	ctx      context.Context
-	cancel   context.CancelFunc
-	sample   *excitation.Sample
-	process  *excitation.Process
-	evidence *Evidence
-	ui       chan []byte
-	mu       sync.Mutex
+	thesis    *types.Thesis
+	ctx       context.Context
+	cancel    context.CancelFunc
+	sample    *excitation.Sample
+	process   *excitation.Process
+	normalize normalizer
+	ui        chan []byte
+	mu        sync.Mutex
 }
 
 /*
@@ -43,12 +43,11 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:      ctx,
-		cancel:   cancel,
-		sample:   excitation.NewSample(),
-		process:  excitation.NewProcess(),
-		evidence: NewEvidence(),
-		ui:       ui,
+		ctx:     ctx,
+		cancel:  cancel,
+		sample:  excitation.NewSample(),
+		process: excitation.NewProcess(),
+		ui:      ui,
 	}
 
 	signal.Actor = types.NewActor(ctx, "hawkes", map[string]types.Handler{
@@ -86,9 +85,14 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 }
 
 func (signal *Signal) onTicker(message any) any {
-	rows := message.(*kraken.Ticker).Data
-	signal.thesis.Measurements.Store(types.SourceHawkes, signal.Calculate(rows, nil, nil))
-	return signal.thesis
+	signal.Calculate(message.(*kraken.Ticker).Data, nil, nil)
+	cut := signal.cut()
+
+	if len(cut.Symbols()) == 0 {
+		return nil
+	}
+
+	return cut
 }
 
 func (signal *Signal) onTrade(message any) any {
@@ -201,7 +205,7 @@ func (signal *Signal) measure(row kraken.TradeData) ([]*types.Measurement, error
 		return nil, nil
 	}
 
-	return signal.evidence.Measure(row.Symbol, output), nil
+	return signal.measurements(row.Symbol, output), nil
 }
 
 /*

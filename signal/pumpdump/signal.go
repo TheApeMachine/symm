@@ -2,6 +2,7 @@ package pumpdump
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"sync"
@@ -88,21 +89,21 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 }
 
 func (signal *Signal) onTicker(message any) any {
-	rows := message.(*kraken.Ticker).Data
-	signal.thesis.Measurements.Store(types.SourcePumpDump, signal.Calculate(rows, nil, nil))
-	return signal.thesis
+	return signal.thesis.AppendMeasuremnts(
+		types.SourcePumpDump, signal.Calculate(message.(*kraken.Ticker).Data, nil, nil),
+	)
 }
 
 func (signal *Signal) onBook(message any) any {
-	rows := message.(*kraken.Book).Data
-	signal.thesis.Measurements.Store(types.SourcePumpDump, signal.Calculate(nil, nil, rows))
-	return signal.thesis
+	return signal.thesis.AppendMeasuremnts(
+		types.SourcePumpDump, signal.Calculate(nil, nil, message.(*kraken.Book).Data),
+	)
 }
 
 func (signal *Signal) onTrade(message any) any {
-	rows := message.(*kraken.Trade).Data
-	signal.thesis.Measurements.Store(types.SourcePumpDump, signal.Calculate(nil, rows, nil))
-	return signal.thesis
+	return signal.thesis.AppendMeasuremnts(
+		types.SourcePumpDump, signal.Calculate(nil, message.(*kraken.Trade).Data, nil),
+	)
 }
 
 func (signal *Signal) Calculate(
@@ -207,7 +208,7 @@ func (signal *Signal) measure(row kraken.TickerData) ([]*types.Measurement, erro
 		return nil, nil
 	}
 
-	output, ready, maturity, err := signal.ignition.Measure(equation.IgnitionInput{
+	output, ready, _, err := signal.ignition.Measure(equation.IgnitionInput{
 		Symbol: row.Symbol,
 		Volume: bookState.volume,
 		Last:   bookState.mid,
@@ -226,11 +227,10 @@ func (signal *Signal) measure(row kraken.TickerData) ([]*types.Measurement, erro
 
 	signal.lastAt.Store(row.Symbol, at)
 
-	return ignitionMeasurements(
+	return signal.measurements(
 		row.Symbol,
 		at,
 		output,
-		maturity,
 		ready,
 		bookState.bid,
 		bookState.ask,
@@ -245,6 +245,99 @@ type tickerBookState struct {
 	bid    float64
 	ask    float64
 	volume float64
+}
+
+/*
+measurements emits one PumpDump Measurement per symbol whose Metrics map carries
+the full ignition surface from RVOL through Strength.
+*/
+func (signal *Signal) measurements(
+	symbol string,
+	at time.Time,
+	output equation.IgnitionOutput,
+	ready bool,
+	bid float64,
+	ask float64,
+) ([]*types.Measurement, error) {
+	if at.IsZero() {
+		return nil, fmt.Errorf("pumpdump: observation timestamp required")
+	}
+
+	if bid <= 0 || ask <= 0 {
+		return nil, fmt.Errorf("pumpdump: bid and ask must be positive")
+	}
+
+	if bid >= ask {
+		return nil, fmt.Errorf("pumpdump: crossed BBO bid=%v ask=%v", bid, ask)
+	}
+
+	mid := (bid + ask) / 2
+	validity := types.MeasurementValidity{
+		State:     types.ValidityValid,
+		Readiness: types.ReadinessObservation,
+	}
+
+	if !ready {
+		validity.State = types.ValidityProvisional
+		validity.Reason = "ignition baselines not ready"
+	}
+
+	measurement := &types.Measurement{
+		Source:   types.SourcePumpDump,
+		Symbol:   symbol,
+		At:       at,
+		Maturity: signal.thesis.Tick,
+		Validity: validity,
+		Scale: types.ScaleReference{
+			Kind:    types.ScaleObservationWindow,
+			From:    at,
+			Through: at,
+		},
+		Metrics: map[string]types.MetricSample{
+			types.MetricKey(types.MetricRVOL, types.SideNone): {
+				Raw:        output.RVOL,
+				Normalized: types.NormalizeFinite(output.RVOL),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricPrecursor, types.SideNone): {
+				Raw:        output.Precursor,
+				Normalized: types.NormalizeFinite(output.Precursor),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricSpread, types.SideNone): {
+				Raw:        output.Spread,
+				Normalized: types.NormalizeRatio(output.Spread, mid),
+				Unit:       types.UnitQuoteCurrency,
+			},
+			types.MetricKey(types.MetricCompression, types.SideNone): {
+				Raw:        output.Compression,
+				Normalized: types.NormalizeFinite(output.Compression),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricIgnition, types.SideNone): {
+				Raw:        output.Ignition,
+				Normalized: types.NormalizeFinite(output.Ignition),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricTrend, types.SideNone): {
+				Raw:        output.Trend,
+				Normalized: types.NormalizeFinite(output.Trend),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricExhaustion, types.SideNone): {
+				Raw:        output.Exhaustion,
+				Normalized: types.NormalizeFinite(output.Exhaustion),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricStrength, types.SideNone): {
+				Raw:        output.Strength,
+				Normalized: types.NormalizeFinite(output.Strength),
+				Unit:       types.UnitDimensionless,
+			},
+		},
+	}
+
+	return []*types.Measurement{measurement}, nil
 }
 
 /*

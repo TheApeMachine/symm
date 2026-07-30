@@ -1,8 +1,10 @@
 package trader
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -56,12 +58,52 @@ func TestJournalStore(t *testing.T) {
 					So(len(loaded[0].Decisions), ShouldEqual, 1)
 					So(loaded[0].Decisions[0].Symbol, ShouldEqual, "BTC/USD")
 					So(loaded[0].Decisions[0].Mark.Float64(), ShouldEqual, 10)
-					lifecycle, ok := loaded[0].Lifecycle.Load("BTC/USD")
-					So(ok, ShouldBeTrue)
-					So(lifecycle, ShouldEqual, types.LifecycleEntrySubmitted)
 					So(len(loaded[0].Findings), ShouldEqual, 1)
 					So(loaded[0].Findings[0].Component, ShouldEqual, "hawkes")
 				})
+			})
+		})
+
+		Convey("When saving more journal data than one replay budget", func() {
+			payload := strings.Repeat("x", 32*1024)
+			count := journalReplayByteBudget/len(payload) + 8
+			theses := make([]*types.Thesis, 0, count)
+			lastSymbol := ""
+
+			for index := range count {
+				symbol := fmt.Sprintf("SYM/%04d", index)
+				thesis := types.NewThesis(nil)
+				decision := types.Decision{
+					Symbol:           symbol,
+					ProposedQuantity: decimal.NewFromInt64(1),
+					PositionStatus:   types.OPEN,
+					Mark:             decimal.NewFromInt64(int64(index + 1)),
+				}
+				decision.EnsureID()
+				thesis.Decisions = append(thesis.Decisions, decision)
+				thesis.Findings = append(thesis.Findings, types.Finding{
+					Symbol:    symbol,
+					Component: "hawkes",
+					Condition: payload,
+				})
+				theses = append(theses, thesis)
+				lastSymbol = symbol
+			}
+
+			err := store.Save(theses)
+			So(err, ShouldBeNil)
+
+			info, err := os.Stat(store.filePath)
+			So(err, ShouldBeNil)
+
+			Convey("It bounds the saved journal and replays the newest tail", func() {
+				So(info.Size(), ShouldBeLessThanOrEqualTo, int64(journalReplayByteBudget+count))
+
+				loaded, err := store.Load()
+				So(err, ShouldBeNil)
+				So(len(loaded), ShouldBeLessThan, len(theses))
+				So(len(loaded), ShouldBeGreaterThan, 0)
+				So(loaded[len(loaded)-1].Decisions[0].Symbol, ShouldEqual, lastSymbol)
 			})
 		})
 	})

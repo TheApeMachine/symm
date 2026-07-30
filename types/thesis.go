@@ -92,6 +92,8 @@ func (thesis *Thesis) ResetTick(at time.Time, tick int64) {
 
 	thesis.Tick = tick
 	thesis.At = at
+	thesis.cutIncomplete = false
+	thesis.checkpoint.Store(0)
 
 	thesis.CrossSection = NewCrossSection()
 	thesis.Measurements.Clear()
@@ -108,6 +110,28 @@ func (thesis *Thesis) ResetTick(at time.Time, tick int64) {
 	thesis.Causal.Clear()
 	thesis.Manifold.Clear()
 	thesis.Cognition.Clear()
+}
+
+func (thesis *Thesis) AppendMeasuremnts(
+	source SourceType, measurements []*Measurement,
+) *Thesis {
+	if measurements == nil {
+		return thesis
+	}
+
+	found, ok := thesis.Measurements.LoadOrStore(
+		source, measurements,
+	)
+
+	if ok {
+		thesis.Measurements.Store(
+			source, append(
+				found.([]*Measurement), measurements...,
+			),
+		)
+	}
+
+	return thesis
 }
 
 /*

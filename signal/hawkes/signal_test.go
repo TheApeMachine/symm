@@ -15,10 +15,10 @@ import (
 
 func newTestSignal() *Signal {
 	return &Signal{
-		ctx:      context.Background(),
-		sample:   excitation.NewSample(),
-		process:  excitation.NewProcess(),
-		evidence: NewEvidence(),
+		ctx:     context.Background(),
+		sample:  excitation.NewSample(),
+		process: excitation.NewProcess(),
+		thesis:  types.NewThesis(nil),
 	}
 }
 
@@ -66,10 +66,10 @@ func TestSignal_Calculate(t *testing.T) {
 			Reset(func() { viper.Set("system.actor.buffer", previous) })
 
 			live := types.NewActor(t.Context(), "live", nil)
-			root := types.NewSubscription[any]()
+			root := types.NewSubscription()
 			live.AddRoot("trade", root)
-			ticker := types.NewSubscription[any]()
-			book := types.NewSubscription[any]()
+			ticker := types.NewSubscription()
+			book := types.NewSubscription()
 			live.AddRoot("ticker", ticker)
 			live.AddRoot("book", book)
 
