@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/bytedance/sonic"
+	sdkbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -96,6 +97,25 @@ Client satisfies Conn; paper transport never owns a venue REST client.
 */
 func (paper *Paper) Client() *spot.WebSocket {
 	return nil
+}
+
+/*
+PeekBook exposes the paper transport's SDK book when one exists.
+*/
+func (paper *Paper) PeekBook(symbol string, fn func(*sdkbook.Book)) bool {
+	if paper == nil || paper.books == nil || fn == nil || symbol == "" {
+		return false
+	}
+
+	symbolBook := paper.books.GetBook(symbol)
+
+	if symbolBook == nil {
+		return false
+	}
+
+	fn(symbolBook)
+
+	return true
 }
 
 /*

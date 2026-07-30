@@ -3,7 +3,6 @@ package websocket
 import (
 	"context"
 	"fmt"
-	"hash/crc32"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -67,115 +66,58 @@ func TestLiveRoutesPrivateChannels(t *testing.T) {
 	})
 }
 
-func TestLiveUpdateLevel3(t *testing.T) {
-	Convey("Given a depth-limited SDK book", t, func() {
+func TestLiveApplyLevel3(t *testing.T) {
+	Convey("Given a standard SDK-managed level3 book", t, func() {
 		live := New(context.Background(), nil, true, Level3WebSocketURL)
 		live.client.Reconnect = func() {}
-		managed := live.books.CreateBook("BTC/USD", 10)
-		live.level3Ledger.orders["BTC/USD"] = make(map[string]level3Order)
-		So(managed.EnableMaxDepth, ShouldBeFalse)
-		So(managed.NoBookCrossing, ShouldBeFalse)
-		quantity, err := decimal.NewFromString("1")
-		So(err, ShouldBeNil)
 
-		for price := 91; price <= 100; price++ {
-			restingPrice, parseErr := decimal.NewFromString(strconv.Itoa(price))
-			So(parseErr, ShouldBeNil)
+		So(live.ApplyLevel3([]byte(
+			`{"method":"subscribe","params":{"channel":"level3","symbol":["BTC/USD"],"depth":10}}`,
+		)), ShouldBeNil)
 
-			managed.Update(&book.UpdateOptions{
-				Direction: book.Bid,
-				ID:        "bid-" + strconv.Itoa(price),
-				Price:     restingPrice,
-				Quantity:  quantity,
-				Timestamp: time.Unix(int64(price), 0),
-			})
-			live.level3Ledger.orders["BTC/USD"]["bid-"+strconv.Itoa(price)] = level3Order{
-				price:    strconv.Itoa(price),
-				quantity: "1",
-			}
-		}
-
-		restingAskPrice, err := decimal.NewFromString("102")
-		So(err, ShouldBeNil)
-
+		scratch := spot.NewBookManager()
+		managed := scratch.CreateBook("BTC/USD", 10)
+		managed.EnableMaxDepth = false
+		managed.NoBookCrossing = false
 		managed.Update(&book.UpdateOptions{
-			Direction: book.Ask,
-			ID:        "resting-ask",
-			Price:     restingAskPrice,
-			Quantity:  quantity,
+			Direction: book.Bid,
+			ID:        "bid-1",
+			Price:     decimal.NewFromFloat64(100),
+			Quantity:  decimal.NewFromFloat64(1),
 			Timestamp: time.Unix(1, 0),
 		})
-		live.level3Ledger.orders["BTC/USD"]["resting-ask"] = level3Order{
-			price:    "102",
-			quantity: "1",
-		}
+		checksum := managed.L3Checksum("").LocalChecksum
+		snapshot := fmt.Appendf(nil, `{
+			"channel":"level3",
+			"type":"snapshot",
+			"data":[{
+				"symbol":"BTC/USD",
+				"checksum":%s,
+				"bids":[{"order_id":"bid-1","limit_price":100,"order_qty":1,"timestamp":"1970-01-01T00:00:01Z"}],
+				"asks":[]
+			}]
+		}`, checksum)
 
-		checksum := crc32.ChecksumIEEE([]byte(
-			"1031" + "1001" + "991" + "981" + "971" +
-				"961" + "951" + "941" + "931" + "921",
-		))
-		raw := fmt.Appendf(nil, `{
+		payload := fmt.Appendf(nil, `{
 			"channel":"level3",
 			"type":"update",
 			"data":[{
 				"symbol":"BTC/USD",
-				"checksum":%d,
-				"bids":[
-					{"event":"add","order_id":"new-best","limit_price":103,"order_qty":1,"timestamp":"2024-01-01T00:00:02Z"},
-					{"event":"delete","order_id":"bid-91","limit_price":91,"timestamp":"2024-01-01T00:00:03Z"}
-				],
-				"asks":[
-					{"event":"delete","order_id":"resting-ask","limit_price":102,"timestamp":"2024-01-01T00:00:03Z"}
-				]
+				"checksum":%s,
+				"bids":[{"event":"modify","order_id":"bid-1","limit_price":100,"order_qty":1,"timestamp":"1970-01-01T00:00:02Z"}],
+				"asks":[]
 			}]
 		}`, checksum)
-		event := &callback.Event[*kraken.WebSocketMessage]{
-			Data: kraken.NewWebSocketMessage(raw),
-		}
 
-		Convey("When a complete message repairs intermediate depth and crossing", func() {
-			err := live.updateLevel3(event)
+		Convey("When one level3 frame is applied", func() {
+			So(live.ApplyLevel3(snapshot), ShouldBeNil)
+			So(live.ApplyLevel3(payload), ShouldBeNil)
 
-			Convey("Then the SDK applies every order before enforcing book depth", func() {
-				So(err, ShouldBeNil)
-				So(managed.Bids.Levels, ShouldHaveLength, 10)
-				So(managed.Asks.Levels, ShouldBeEmpty)
-				So(managed.BestBid().Price.Float64(), ShouldEqual, 103.0)
-				So(managed.WorstBid().Price.Float64(), ShouldEqual, 92.0)
-			})
-		})
-
-		Convey("When an update pushes a price level out of subscription scope", func() {
-			checksum := crc32.ChecksumIEEE([]byte(
-				"1021" + "1041" + "1001" + "991" + "981" + "971" +
-					"961" + "951" + "941" + "931" + "921",
-			))
-			raw := fmt.Appendf(nil, `{
-				"channel":"level3",
-				"type":"update",
-				"data":[{
-					"symbol":"BTC/USD",
-					"checksum":%d,
-					"bids":[
-						{"event":"add","order_id":"new-best","limit_price":104,"order_qty":1,"timestamp":"2024-01-01T00:00:02Z"}
-					],
-					"asks":[]
-				}]
-			}`, checksum)
-			event := &callback.Event[*kraken.WebSocketMessage]{
-				Data: kraken.NewWebSocketMessage(raw),
-			}
-
-			err := live.updateLevel3(event)
-
-			Convey("Then the SDK removes the completed frame's worst level", func() {
-				So(err, ShouldBeNil)
-				So(managed.Bids.Levels, ShouldHaveLength, 10)
-				So(managed.BestBid().Price.Float64(), ShouldEqual, 104.0)
-				So(managed.WorstBid().Price.Float64(), ShouldEqual, 92.0)
-				So(live.level3Ledger.orders["BTC/USD"], ShouldHaveLength, 11)
-				_, retained := live.level3Ledger.orders["BTC/USD"]["bid-91"]
-				So(retained, ShouldBeFalse)
+			Convey("Then the SDK BookManager exposes the updated resting book", func() {
+				symbolBook := live.books.GetBook("BTC/USD")
+				So(symbolBook, ShouldNotBeNil)
+				So(symbolBook.BestBid(), ShouldNotBeNil)
+				So(symbolBook.BestBid().Price.Float64(), ShouldEqual, 100.0)
 			})
 		})
 	})
@@ -239,34 +181,47 @@ func TestLiveSubscribeLevel3UsesSDKSubL3(t *testing.T) {
 }
 
 /*
-BenchmarkLiveUpdateLevel3 measures one complete L3 message application through
-the SDK manager and checksum validation.
+BenchmarkLiveApplyLevel3 measures one complete L3 message application through
+the standard SDK BookManager path.
 */
-func BenchmarkLiveUpdateLevel3(b *testing.B) {
+func BenchmarkLiveApplyLevel3(b *testing.B) {
 	live := New(context.Background(), nil, true, Level3WebSocketURL)
 	live.client.Reconnect = func() {}
-	live.books.CreateBook("BTC/USD", 10)
-	checksum := crc32.ChecksumIEEE([]byte("1011"))
+	if err := live.ApplyLevel3([]byte(
+		`{"method":"subscribe","params":{"channel":"level3","symbol":["BTC/USD"],"depth":10}}`,
+	)); err != nil {
+		b.Fatal(err)
+	}
+
+	scratch := spot.NewBookManager()
+	managed := scratch.CreateBook("BTC/USD", 10)
+	managed.EnableMaxDepth = false
+	managed.NoBookCrossing = false
+	managed.Update(&book.UpdateOptions{
+		Direction: book.Bid,
+		ID:        "best",
+		Price:     decimal.NewFromFloat64(101),
+		Quantity:  decimal.NewFromFloat64(1),
+		Timestamp: time.Unix(1, 0),
+	})
+	checksum := managed.L3Checksum("").LocalChecksum
 	raw := fmt.Appendf(nil, `{
 		"channel":"level3",
 		"type":"update",
 		"data":[{
 			"symbol":"BTC/USD",
-			"checksum":%d,
+			"checksum":%s,
 			"bids":[
 				{"event":"modify","order_id":"best","limit_price":101,"order_qty":1,"timestamp":"2024-01-01T00:00:02Z"}
 			],
 			"asks":[]
 		}]
 	}`, checksum)
-	event := &callback.Event[*kraken.WebSocketMessage]{
-		Data: kraken.NewWebSocketMessage(raw),
-	}
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if err := live.updateLevel3(event); err != nil {
+		if err := live.ApplyLevel3(raw); err != nil {
 			b.Fatal(err)
 		}
 	}

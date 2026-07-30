@@ -224,10 +224,24 @@ extractSymbols finds all distinct symbols in Thesis measurements.
 func (solver *Solver) extractSymbols(thesis *types.Thesis) []string {
 	seen := make(map[string]struct{})
 	thesis.Measurements.Range(func(key, value any) bool {
-		m, ok := value.(*types.Measurement)
+		rows, ok := value.([]*types.Measurement)
 
-		if ok && m != nil && m.Symbol != "" {
-			seen[m.Symbol] = struct{}{}
+		if !ok {
+			single, singleOK := value.(*types.Measurement)
+
+			if !singleOK || single == nil {
+				return true
+			}
+
+			rows = []*types.Measurement{single}
+		}
+
+		for _, measurement := range rows {
+			if measurement == nil || measurement.Symbol == "" {
+				continue
+			}
+
+			seen[measurement.Symbol] = struct{}{}
 		}
 
 		return true

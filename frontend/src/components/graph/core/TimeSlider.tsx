@@ -35,6 +35,14 @@ export interface TimeSliderProps {
 const clamp = (value: number, lo: number, hi: number) =>
 	Math.min(hi, Math.max(lo, value));
 
+const spanGuard = (lower: number, upper: number): number => {
+	const span = upper - lower;
+	if (!Number.isFinite(span)) return Number.EPSILON;
+	const guard = span * 0.001;
+
+	return clamp(guard, Number.EPSILON, span || Number.EPSILON);
+};
+
 export const TimeSlider = ({
 	ref: reference,
 	min,
@@ -127,29 +135,28 @@ export const TimeSlider = ({
 
 		toggleRepeat: () => setRepeating((value) => !value),
 
-		expandRange: () => {
-			const snapshot = propsReference.current;
+			expandRange: () => {
+				const snapshot = propsReference.current;
+				const nextExpanded = !expanded;
 
-			setExpanded((currentExpanded) => {
-				if (!currentExpanded) {
+				if (nextExpanded) {
 					savedWindowReference.current = {
 						from: snapshot.from,
 						to: snapshot.to,
 					};
 					snapshot.onChange(snapshot.min, snapshot.max);
-					return true;
+				} else {
+					const stored = savedWindowReference.current;
+
+					if (stored) {
+						snapshot.onChange(stored.from, stored.to);
+					}
+
+					savedWindowReference.current = null;
 				}
 
-				const stored = savedWindowReference.current;
-
-				if (stored) {
-					snapshot.onChange(stored.from, stored.to);
-				}
-
-				savedWindowReference.current = null;
-				return false;
-			});
-		},
+				setExpanded(nextExpanded);
+			},
 	}));
 
 	const handleFromSlide = useCallback(
@@ -222,11 +229,3 @@ export const TimeSlider = ({
 		</div>
 	);
 };
-
-function spanGuard(lower: number, upper: number): number {
-	const span = upper - lower;
-	if (!Number.isFinite(span)) return Number.EPSILON;
-	const guard = span * 0.001;
-
-	return clamp(guard, Number.EPSILON, span || Number.EPSILON);
-}

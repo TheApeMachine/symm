@@ -84,8 +84,13 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 	)
 }
 
+/*
+onTicker treats the ticker stream as Hawkes cadence only so the signal can emit a
+shared cut after warmed trade arrivals without pretending ticker rows carry
+microstructure measurements.
+*/
 func (signal *Signal) onTicker(message any) any {
-	signal.Calculate(message.(*kraken.Ticker).Data, nil, nil)
+	_ = message.(*kraken.Ticker)
 	cut := signal.cut()
 
 	if len(cut.Symbols()) == 0 {
@@ -96,9 +101,10 @@ func (signal *Signal) onTicker(message any) any {
 }
 
 func (signal *Signal) onTrade(message any) any {
-	rows := message.(*kraken.Trade).Data
-	signal.thesis.Measurements.Store(types.SourceHawkes, signal.Calculate(nil, rows, nil))
-	return signal.thesis
+	return signal.thesis.AppendMeasuremnts(
+		types.SourceHawkes,
+		signal.Calculate(nil, message.(*kraken.Trade).Data, nil),
+	)
 }
 
 /*
@@ -130,7 +136,8 @@ func (signal *Signal) Symbols() []string {
 }
 
 /*
-Calculate converts trade rows into typed measurements.
+Calculate converts executed trades into Hawkes measurements because arrivals on
+the public trade tape are the authoritative event stream for self-excitation.
 */
 func (signal *Signal) Calculate(
 	_ []kraken.TickerData,
@@ -170,7 +177,8 @@ func (signal *Signal) Calculate(
 }
 
 /*
-measure updates the marked arrival stream and emits numerical quantities.
+measure advances both the arrival sampler and Hawkes process for one trade so the
+signal only emits once the excitation state is numerically ready.
 */
 func (signal *Signal) measure(row kraken.TradeData) ([]*types.Measurement, error) {
 	input, ready, err := signal.sample.MeasureArrival(excitation.TradeInput{

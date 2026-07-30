@@ -2,6 +2,7 @@ package trader
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -199,29 +200,15 @@ tail streams one saved journal file and keeps only the newest entries that fit
 inside the replay budget, avoiding a whole-file read on restart.
 */
 func (journalStore *JournalStore) tail(reader io.Reader) ([][]byte, error) {
-	if reader == nil {
-		return nil, nil
-	}
-
 	decoder := json.NewDecoder(reader)
-	token, err := decoder.Token()
+	err := journalStore.expectArrayDelimiter(decoder, '[', "journal: expected thesis array")
 
 	if err != nil {
 		if err == io.EOF {
 			return nil, nil
 		}
 
-		return nil, errnie.Error(err)
-	}
-
-	delimiter, ok := token.(json.Delim)
-
-	if !ok || delimiter != '[' {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"journal: expected thesis array",
-			nil,
-		))
+		return nil, err
 	}
 
 	raw := make([][]byte, 0)
@@ -237,20 +224,12 @@ func (journalStore *JournalStore) tail(reader io.Reader) ([][]byte, error) {
 		used, raw = journalStore.push(raw, used, entry)
 	}
 
-	token, err = decoder.Token()
-
-	if err != nil {
-		return nil, errnie.Error(err)
-	}
-
-	delimiter, ok = token.(json.Delim)
-
-	if !ok || delimiter != ']' {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"journal: expected thesis array end",
-			nil,
-		))
+	if err := journalStore.expectArrayDelimiter(
+		decoder,
+		']',
+		"journal: expected thesis array end",
+	); err != nil {
+		return nil, err
 	}
 
 	return raw, nil
@@ -290,6 +269,11 @@ func (journalStore *JournalStore) push(
 	entrySize := len(copyEntry)
 
 	if entrySize >= journalReplayByteBudget {
+		errnie.Warn(fmt.Sprintf(
+			"journal: snapshot size %d exceeds replay budget %d",
+			entrySize,
+			journalReplayByteBudget,
+		))
 		return entrySize, [][]byte{copyEntry}
 	}
 
@@ -301,4 +285,28 @@ func (journalStore *JournalStore) push(
 	raw = append(raw, copyEntry)
 	used += entrySize
 	return used, raw
+}
+
+/*
+expectArrayDelimiter consumes one JSON token and verifies the expected array
+delimiter so replay errors stay consistent across both boundary checks.
+*/
+func (journalStore *JournalStore) expectArrayDelimiter(
+	decoder *json.Decoder,
+	expected json.Delim,
+	message string,
+) error {
+	token, err := decoder.Token()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	delimiter, ok := token.(json.Delim)
+
+	if ok && delimiter == expected {
+		return nil
+	}
+
+	return errnie.Error(errnie.Err(errnie.Validation, message, nil))
 }

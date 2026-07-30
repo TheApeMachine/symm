@@ -63,12 +63,22 @@ func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
 	)
 }
 
+/*
+onTicker converts each ticker batch into sentiment measurements and appends them
+onto the shared Thesis so breadth and leadership stay aligned with the current
+market cut.
+*/
 func (signal *Signal) onTicker(message any) any {
 	return signal.thesis.AppendMeasuremnts(
 		types.SourceSentiment, signal.Calculate(message.(*kraken.Ticker).Data, nil, nil),
 	)
 }
 
+/*
+Calculate derives sentiment measurements from ticker-driven cross-section state.
+The trade and book parameters remain in the signature so the signal conforms to
+the shared interface even though sentiment only consumes ticker breadth data.
+*/
 func (signal *Signal) Calculate(
 	tickers []kraken.TickerData,
 	trades []kraken.TradeData,
@@ -186,6 +196,7 @@ func (signal *Signal) Calculate(
 			Source:   types.SourceSentiment,
 			Symbol:   peer.Symbol,
 			At:       peer.At,
+			Maturity: signal.thesis.Tick,
 			Validity: validity,
 			Metrics:  make(map[string]types.MetricSample, 9),
 		}

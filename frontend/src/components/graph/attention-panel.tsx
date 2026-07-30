@@ -283,17 +283,17 @@ const FocusedHead = ({
 				))}
 			</Flex.Row>
 			{tokens.map((token, rowIndex) => (
-				<Flex.Row className="items-center gap-1" key={`matrix-row-${token}`}>
+				<Flex.Row className="items-center gap-1" key={`matrix-row-${rowIndex}`}>
 					<div className="w-16 truncate text-right font-mono text-[10px] text-muted-foreground">
 						{token}
 					</div>
-					{tokens.map((columnToken, columnIndex) => {
+					{tokens.map((_, columnIndex) => {
 						const weight = matrix[offset + rowIndex * tokenCount + columnIndex];
 						const intensity = Math.min(1, weight * 1.5);
 						return (
 							<div
 								className="h-6 w-12 rounded-sm"
-								key={`${token}-${columnToken}`}
+								key={`matrix-cell-${rowIndex}-${columnIndex}`}
 								style={{
 									backgroundColor: `rgba(255, 140, 30, ${intensity})`,
 								}}

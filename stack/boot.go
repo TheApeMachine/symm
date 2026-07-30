@@ -269,6 +269,10 @@ func (booter *Booter) boot(
 		return nil, errnie.Error(err)
 	}
 
+	types.SetSubscriptionSaturationHook(func(value map[string]any) {
+		_ = audit.Record(recorder, "actor_subscription_saturated", value)
+	})
+
 	tree, err := dmt.NewTree("")
 
 	if err != nil {

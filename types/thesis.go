@@ -112,6 +112,10 @@ func (thesis *Thesis) ResetTick(at time.Time, tick int64) {
 	thesis.Cognition.Clear()
 }
 
+/*
+AppendMeasuremnts appends measurements for the specified source while safely
+ignoring nil input.
+*/
 func (thesis *Thesis) AppendMeasuremnts(
 	source SourceType, measurements []*Measurement,
 ) *Thesis {

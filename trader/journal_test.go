@@ -106,5 +106,72 @@ func TestJournalStore(t *testing.T) {
 				So(loaded[len(loaded)-1].Decisions[0].Symbol, ShouldEqual, lastSymbol)
 			})
 		})
+
+		Convey("When saving one thesis larger than the replay budget", func() {
+			thesis := types.NewThesis(nil)
+			decision := types.Decision{
+				Symbol:           "OVERSIZE/USD",
+				ProposedQuantity: decimal.NewFromInt64(1),
+				PositionStatus:   types.OPEN,
+				Mark:             decimal.NewFromInt64(42),
+			}
+			decision.EnsureID()
+			thesis.Decisions = append(thesis.Decisions, decision)
+			thesis.Findings = append(thesis.Findings, types.Finding{
+				Symbol:    "OVERSIZE/USD",
+				Component: "hawkes",
+				Condition: strings.Repeat("z", journalReplayByteBudget),
+			})
+
+			So(store.Save([]*types.Thesis{thesis}), ShouldBeNil)
+
+			Convey("It preserves the newest oversize snapshot instead of dropping it", func() {
+				loaded, err := store.Load()
+				So(err, ShouldBeNil)
+				So(loaded, ShouldHaveLength, 1)
+				So(loaded[0].Decisions[0].Symbol, ShouldEqual, "OVERSIZE/USD")
+			})
+		})
 	})
+}
+
+func BenchmarkJournalStoreSaveLoad(b *testing.B) {
+	tmpDir, err := os.MkdirTemp("", "journal_bench_*")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	store := &JournalStore{filePath: filepath.Join(tmpDir, "journal.json")}
+	theses := make([]*types.Thesis, 0, 16)
+
+	for index := range 16 {
+		thesis := types.NewThesis(nil)
+		decision := types.Decision{
+			Symbol:           fmt.Sprintf("SYM/%04d", index),
+			ProposedQuantity: decimal.NewFromInt64(1),
+			PositionStatus:   types.OPEN,
+			Mark:             decimal.NewFromInt64(int64(index + 1)),
+		}
+		decision.EnsureID()
+		thesis.Decisions = append(thesis.Decisions, decision)
+		thesis.Findings = append(thesis.Findings, types.Finding{
+			Symbol:    decision.Symbol,
+			Component: "hawkes",
+			Condition: strings.Repeat("x", 1024),
+		})
+		theses = append(theses, thesis)
+	}
+
+	b.ResetTimer()
+
+	for range b.N {
+		if err := store.Save(theses); err != nil {
+			b.Fatal(err)
+		}
+
+		if _, err := store.Load(); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

@@ -26,7 +26,7 @@ import {
 	type NodeMetrics,
 } from "./utils/texture-generators";
 import "./styles/slider-styles.css";
-import { Camera } from "./core/camera";
+import { createCameraControls } from "./core/camera";
 import {
 	createLayoutTextureGenerators,
 	type LayoutType,
@@ -78,7 +78,7 @@ export type TimeRange = {
  * (set by the Python backend) and returns an ordered array matching
  * the node order in the graph.
  */
-function extractNodeMetrics(graph: Graph): NodeMetrics[] {
+const extractNodeMetrics = (graph: Graph): NodeMetrics[] => {
 	const nodeNames = Object.keys(graph.nodes);
 	const metrics: NodeMetrics[] = [];
 
@@ -101,7 +101,7 @@ function extractNodeMetrics(graph: Graph): NodeMetrics[] {
 	}
 
 	return metrics;
-}
+};
 
 export interface ModelScopeProps {
 	graph?: Graph;
@@ -134,7 +134,7 @@ export interface ModelScopeProps {
 	metricsContrast?: number;
 }
 
-export function ModelScope({
+export const ModelScope = ({
 	graph: externalGraph,
 	layout = "force",
 	initialTemperature = 500,
@@ -153,7 +153,7 @@ export function ModelScope({
 	className,
 	metricsContrast = 2.0,
 	selectedNodeName,
-}: ModelScopeProps) {
+}: ModelScopeProps) => {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
 	const composerRef = useRef<EffectComposer | null>(null);
@@ -237,7 +237,7 @@ export function ModelScope({
 		setOrbitTargetToLayoutCenter,
 	} = useMemo(
 		() =>
-			Camera({
+			createCameraControls({
 				cameraRef,
 				controlsRef,
 				lastCameraSaveMsRef,

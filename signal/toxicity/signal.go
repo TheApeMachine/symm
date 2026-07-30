@@ -238,6 +238,10 @@ func (signal *Signal) measure(
 		}
 	})
 
+	if len(out) == 0 {
+		return measurement
+	}
+
 	frame := datura.NewMap()
 	frame["measurements"] = out
 	utils.Publish(signal.ui, frame)

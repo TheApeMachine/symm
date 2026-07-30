@@ -11,11 +11,16 @@ export const AuditTrail = () => (
 				ref={ref}
 				className={cn("min-h-0 flex-1 border-(--line) border-b", className)}
 			>
-				{slots?.map((_slot, idx) => (
-					<List.Item key={idx} className="justify-between">
-						<Typography.Span data-paint="" />
-						<Typography.Span data-paint="" />
-						<Typography.Span data-paint="" />
+				{slots?.map((_, index) => (
+					<List.Item
+						key={index}
+						className="justify-between"
+						data-index={index}
+						data-select
+					>
+						<Typography.Span data-paint="reason" />
+						<Typography.Span data-paint="reference" />
+						<Typography.Span data-paint="meta" />
 					</List.Item>
 				))}
 			</List>

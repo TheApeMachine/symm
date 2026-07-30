@@ -92,22 +92,22 @@ func NewGraph(at time.Time) *Graph {
 /*
 AddNode registers a node in the graph if it doesn't already exist.
 */
-func (g *Graph) AddNode(node *Node) {
+func (graph *Graph) AddNode(node *Node) {
 	if node == nil || node.ID == "" {
 		return
 	}
-	g.Nodes[node.ID] = node
+	graph.Nodes[node.ID] = node
 }
 
 /*
 AddEdge connects two nodes with a directional, weighted relationship.
 */
-func (g *Graph) AddEdge(edge *Edge) {
+func (graph *Graph) AddEdge(edge *Edge) {
 	if edge == nil || edge.From == "" || edge.To == "" {
 		return
 	}
-	g.Edges = append(g.Edges, edge)
-	g.Adjacency[edge.From] = append(g.Adjacency[edge.From], edge.To)
+	graph.Edges = append(graph.Edges, edge)
+	graph.Adjacency[edge.From] = append(graph.Adjacency[edge.From], edge.To)
 }
 
 /*
@@ -135,7 +135,7 @@ type Solver struct {
 }
 
 /*
-NewSolver creates a graph solver wired to audit recording.
+NewSolver creates a graph solver wired to audit recordingraph.
 Default stale threshold: 5 seconds.
 */
 func NewSolver(recorder *audit.Recorder, opts ...Option) *Solver {
@@ -191,7 +191,11 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 }
 
 /*
-extractMeasurementNodes registers raw signal measurements as nodes.
+extractMeasurementNodes normalizes Thesis measurement storage before materializing
+metric nodes so graph extraction accepts both singleton rows and the slice-backed
+values AppendMeasuremnts stores per source. That normalization keeps graph
+building tolerant of older or ad-hoc thesis producers while emitting the same
+measurement-node surface for downstream reasoning.
 */
 func (solver *Solver) extractMeasurementNodes(thesis *types.Thesis, graph *Graph) {
 	thesis.Measurements.Range(func(key, value any) bool {
@@ -470,6 +474,7 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 	thesis.Cognition.Range(func(key, value any) bool {
 		symbol, _ := key.(string)
 		cogMap, ok := value.(map[string]any)
+
 		if !ok {
 			return true
 		}
@@ -516,6 +521,7 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 
 			for _, supp := range cat.Supporting {
 				targetNodeID := fmt.Sprintf("cat:%s:%s", symbol, supp)
+
 				graph.AddEdge(&Edge{
 					From:       catNodeID,
 					To:         targetNodeID,
@@ -529,6 +535,7 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 
 			for _, opp := range cat.Opposing {
 				targetNodeID := fmt.Sprintf("cat:%s:%s", symbol, opp)
+
 				graph.AddEdge(&Edge{
 					From:       catNodeID,
 					To:         targetNodeID,

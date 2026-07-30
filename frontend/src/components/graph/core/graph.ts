@@ -131,8 +131,8 @@ export class Graph {
 			return;
 		}
 
-		const fromNode = this.addNode(source, data);
-		const toNode = this.addNode(target, data);
+		const fromNode = this.addNode(source);
+		const toNode = this.addNode(target);
 
 		if (fromNode && toNode) {
 			fromNode.edges.push(toNode.id);
@@ -270,8 +270,18 @@ export class Graph {
 			if (edge) edge.data = (edge.data ?? []).filter(Boolean);
 		}
 
-		this.nodesCount = Object.keys(this.nodes).length;
-		this.edgesCount = Object.keys(this.edges).length;
+		this.nodesCount = Math.max(
+			0,
+			...Object.values(this.nodes)
+				.filter(Boolean)
+				.map((node) => node.id + 1),
+		);
+		this.edgesCount = Math.max(
+			0,
+			...Object.values(this.edges)
+				.filter(Boolean)
+				.map((edge) => edge.id + 1),
+		);
 	}
 
 	/**

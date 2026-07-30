@@ -12,27 +12,19 @@ import (
 )
 
 /*
-level3Ledger retains Kraken's exact fixed-point order text beside the SDK book.
-The SDK decimal remains authoritative for book arithmetic, while checksum input
-uses the original text so validation needs neither float conversion nor big.Rat
-string reconstruction for every resting order on every update.
+level3Ledger retains exact L3 order text keyed by order ID so checksum input and
+book mutations stay aligned even when one order moves between price levels.
 */
 type level3Ledger struct {
 	orders  map[string]map[string]level3Order
 	waiting map[string]struct{}
 }
 
-/*
-level3Order is the exact checksum representation of one resting venue order.
-*/
 type level3Order struct {
 	price    string
 	quantity string
 }
 
-/*
-newLevel3Ledger constructs an empty exact-text ledger for one L3 transport.
-*/
 func newLevel3Ledger() *level3Ledger {
 	return &level3Ledger{
 		orders:  make(map[string]map[string]level3Order),
@@ -40,14 +32,7 @@ func newLevel3Ledger() *level3Ledger {
 	}
 }
 
-/*
-Apply decodes one atomic Kraken frame, updates each SDK book with exact decimals,
-validates its CRC from retained wire text, then enforces subscribed depth.
-*/
-func (ledger *level3Ledger) Apply(
-	manager *spot.BookManager,
-	raw []byte,
-) error {
+func (ledger *level3Ledger) Apply(manager *spot.BookManager, raw []byte) error {
 	var frame kraken.Level3
 
 	if err := sonic.Unmarshal(raw, &frame); err != nil {
@@ -69,10 +54,6 @@ func (ledger *level3Ledger) Apply(
 	return nil
 }
 
-/*
-applyBook applies every side before validating because Kraken checksums describe
-the completed atomic frame, never an intermediate order mutation.
-*/
 func (ledger *level3Ledger) applyBook(
 	manager *spot.BookManager,
 	data *kraken.Level3Data,
@@ -100,10 +81,6 @@ func (ledger *level3Ledger) applyBook(
 			ledger.waiting[data.Symbol] = struct{}{}
 			return nil
 		}
-	}
-
-	if ledger.orders[data.Symbol] == nil {
-		ledger.orders[data.Symbol] = make(map[string]level3Order)
 	}
 
 	if err := ledger.applySide(managed, data.Symbol, book.Bid, data.Bids); err != nil {
@@ -134,16 +111,7 @@ func (ledger *level3Ledger) applyBook(
 	return nil
 }
 
-/*
-pruneDepth removes exact checksum rows for price levels leaving the subscribed
-book before the SDK discards those levels. Kraken no longer sends deletes for
-orders outside the requested depth, so retaining them would make the ledger
-grow independently of the authoritative live book.
-*/
-func (ledger *level3Ledger) pruneDepth(
-	managed *book.Book,
-	symbol string,
-) {
+func (ledger *level3Ledger) pruneDepth(managed *book.Book, symbol string) {
 	if managed == nil || managed.MaxDepth <= 0 || ledger.orders[symbol] == nil {
 		return
 	}
@@ -152,15 +120,7 @@ func (ledger *level3Ledger) pruneDepth(
 	ledger.pruneSide(managed.BestAsk(), true, managed.MaxDepth, symbol)
 }
 
-/*
-pruneSide walks from touch to tail and drops every exact order beyond maxDepth.
-*/
-func (ledger *level3Ledger) pruneSide(
-	level *book.Level,
-	higher bool,
-	maxDepth int,
-	symbol string,
-) {
+func (ledger *level3Ledger) pruneSide(level *book.Level, higher bool, maxDepth int, symbol string) {
 	for depth := 0; level != nil; depth++ {
 		next := level.Lower
 
@@ -178,10 +138,6 @@ func (ledger *level3Ledger) pruneSide(
 	}
 }
 
-/*
-applySide updates SDK decimal state and its matching exact checksum text from the
-same order record, preserving one atomic source for both representations.
-*/
 func (ledger *level3Ledger) applySide(
 	managed *book.Book,
 	symbol string,
@@ -254,23 +210,15 @@ func (ledger *level3Ledger) applySide(
 					Quantity:  decimal.NewFromInt64(0),
 					Timestamp: order.Timestamp,
 				})
-
-				managed.Update(&book.UpdateOptions{
-					Direction: direction,
-					ID:        order.OrderID,
-					Price:     order.LimitPrice,
-					Quantity:  order.OrderQty,
-					Timestamp: order.Timestamp,
-				})
-			} else {
-				managed.Update(&book.UpdateOptions{
-					Direction: direction,
-					ID:        order.OrderID,
-					Price:     order.LimitPrice,
-					Quantity:  order.OrderQty,
-					Timestamp: order.Timestamp,
-				})
 			}
+
+			managed.Update(&book.UpdateOptions{
+				Direction: direction,
+				ID:        order.OrderID,
+				Price:     order.LimitPrice,
+				Quantity:  order.OrderQty,
+				Timestamp: order.Timestamp,
+			})
 
 			ledger.orders[symbol][order.OrderID] = level3Order{
 				price:    order.ChecksumLimitPrice(),
@@ -304,34 +252,17 @@ func (ledger *level3Ledger) applySide(
 	return nil
 }
 
-/*
-checksum streams the best ten ask and bid levels in Kraken queue priority using
-the retained exact strings, avoiding aggregate checksum buffers and Rat math.
-*/
-func (ledger *level3Ledger) checksum(
-	managed *book.Book,
-	symbol string,
-) (uint32, error) {
+func (ledger *level3Ledger) checksum(managed *book.Book, symbol string) (uint32, error) {
 	checksum := uint32(0)
 	var err error
 
-	checksum, err = ledger.writeSide(
-		checksum,
-		managed.BestAsk(),
-		true,
-		symbol,
-	)
+	checksum, err = ledger.writeSide(checksum, managed.BestAsk(), true, symbol)
 
 	if err != nil {
 		return 0, err
 	}
 
-	checksum, err = ledger.writeSide(
-		checksum,
-		managed.BestBid(),
-		false,
-		symbol,
-	)
+	checksum, err = ledger.writeSide(checksum, managed.BestBid(), false, symbol)
 
 	if err != nil {
 		return 0, err
@@ -340,10 +271,6 @@ func (ledger *level3Ledger) checksum(
 	return checksum, nil
 }
 
-/*
-writeSide visits at most ten price levels and writes every queued order exactly
-in the priority order represented by the SDK book.
-*/
 func (ledger *level3Ledger) writeSide(
 	checksum uint32,
 	level *book.Level,
@@ -380,10 +307,6 @@ func (ledger *level3Ledger) writeSide(
 	return checksum, nil
 }
 
-/*
-writeChecksumDecimal writes Kraken's decimal-point-free, leading-zero-trimmed
-checksum representation directly into the digest without changing its value.
-*/
 func writeChecksumDecimal(checksum uint32, value string) uint32 {
 	started := false
 	var next [1]byte

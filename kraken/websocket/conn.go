@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -31,6 +32,7 @@ wiring never type-assert Live versus MockConn versus Paper.
 type Conn interface {
 	Client() *spot.WebSocket
 	Books() *spot.BookManager
+	PeekBook(symbol string, fn func(*book.Book)) bool
 	Write(params json.Marshaler) error
 	Post(path string, params json.Marshaler) ([]byte, error)
 	Close()
@@ -50,9 +52,10 @@ type API struct {
 	private           Conn
 	paper             Conn
 	live              bool
-	level3            *Level3Registry
+	level3Mu          sync.RWMutex
+	level3Conns       map[string]Conn
+	level3Index       map[string]Conn
 	level3Conn        Conn
-	level3Feed        *types.Actor
 	publicResubscribe func() error
 	wantBalances      bool
 	wantExecutions    bool
@@ -64,15 +67,16 @@ func NewAPI(
 	ctx, cancel := context.WithCancel(ctx)
 
 	api := &API{
-		ctx:        ctx,
-		cancel:     cancel,
-		status:     types.INITIALIZING,
-		normalizer: spot.NewNormalizer(),
-		public:     public,
-		private:    private,
-		paper:      paper,
-		live:       viper.GetViper().GetString("trading.model") == "live",
-		level3:     NewLevel3Registry(),
+		ctx:         ctx,
+		cancel:      cancel,
+		status:      types.INITIALIZING,
+		normalizer:  spot.NewNormalizer(),
+		public:      public,
+		private:     private,
+		paper:       paper,
+		live:        viper.GetViper().GetString("trading.model") == "live",
+		level3Conns: make(map[string]Conn),
+		level3Index: make(map[string]Conn),
 	}
 	api.bindReconnect()
 
@@ -151,9 +155,56 @@ func (api *API) Close() {
 		api.paper.Close()
 	}
 
-	if api.level3 != nil {
-		api.level3.Close()
+	api.level3Mu.RLock()
+	conns := slices.Collect(maps.Values(api.level3Conns))
+	api.level3Mu.RUnlock()
+
+	for _, conn := range conns {
+		if conn == nil || conn == api.public || conn == api.private || conn == api.paper {
+			continue
+		}
+
+		conn.Close()
 	}
+}
+
+func (api *API) attachLevel3(key string, conn Conn, symbols []string) {
+	if api == nil || key == "" || conn == nil {
+		return
+	}
+
+	api.level3Mu.Lock()
+	defer api.level3Mu.Unlock()
+
+	api.level3Conns[key] = conn
+
+	for _, symbol := range symbols {
+		if symbol == "" {
+			continue
+		}
+
+		api.level3Index[symbol] = conn
+	}
+}
+
+func (api *API) level3BatchSize() (int, error) {
+	depth := viper.GetInt("market.l3_depth")
+	rateLimit := viper.GetInt("market.l3_rate_limit")
+	rateCost := map[int]int{
+		10:   5,
+		100:  25,
+		1000: 100,
+	}[depth]
+
+	if rateCost == 0 || rateLimit < rateCost {
+		return 0, errnie.Err(
+			errnie.Validation,
+			"websocket: L3 depth and rate limit cannot admit one symbol",
+			nil,
+		)
+	}
+
+	return min(rateLimit/rateCost, 200), nil
 }
 
 /*
@@ -559,50 +610,63 @@ read book contents must use PeekBook instead — the managers are live and
 mutated under a write lease during websocket updates.
 */
 func (api *API) Books() iter.Seq[*spot.BookManager] {
-	return api.level3.Books()
+	return func(yield func(*spot.BookManager) bool) {
+		seen := map[*spot.BookManager]struct{}{}
+
+		api.level3Mu.RLock()
+		conns := slices.Collect(maps.Values(api.level3Conns))
+		api.level3Mu.RUnlock()
+
+		for _, conn := range conns {
+			if conn == nil || conn.Books() == nil {
+				continue
+			}
+
+			books := conn.Books()
+
+			if _, ok := seen[books]; ok {
+				continue
+			}
+
+			seen[books] = struct{}{}
+
+			if !yield(books) {
+				return
+			}
+		}
+	}
 }
 
 /*
-Book returns the SDK BookManager for symbol's Level3 transport. Callers that
+Book returns the primary SDK BookManager for market book access.
 */
 func (api *API) Book() *spot.BookManager {
-	return api.private.Books()
+	if api == nil || api.public == nil {
+		return nil
+	}
+
+	return api.public.Books()
 }
 
 /*
-InjectLevel3 binds a Conn's Actor level3 root to the production Level3 book processor.
+BookManager returns the primary SDK BookManager explicitly for callers that want
+direct access to venue-managed books instead of actor-delivered book frames.
+*/
+func (api *API) BookManager() *spot.BookManager {
+	return api.Book()
+}
+
+/*
+InjectLevel3 registers an externally managed Level3 transport and indexes its
+symbols for direct BookManager access.
 */
 func (api *API) InjectLevel3(market *types.Actor, conn Conn, symbols []string) {
 	if api == nil || conn == nil || market == nil {
 		return
 	}
 
-	live := newLevel3Consumer(
-		api.ctx,
-		symbols,
-		viper.GetInt("market.l3_depth"),
-	)
 	api.level3Conn = conn
-	api.level3.Attach("injected-level3", live)
-
-	feed := types.NewActor(api.ctx, "feed", map[string]types.Handler{
-		"level3": {
-			Topic: "level3",
-			Fn: func(message any) any {
-				err := live.ApplyLevel3(message.([]byte))
-
-				if reporter, ok := conn.(interface{ Report(error) }); ok && err != nil {
-					reporter.Report(err)
-				}
-
-				errnie.Error(err)
-
-				return nil
-			},
-		},
-	})
-	feed.Initialize(types.Topic{Name: "level3", Actor: market})
-	api.level3Feed = feed
+	api.attachLevel3("injected-level3", conn, symbols)
 }
 
 /*
@@ -610,14 +674,26 @@ PeekBook invokes fn under the Level3 read lease for symbol so Side.Levels and
 order queues cannot be mutated mid-read by updateLevel3.
 */
 func (api *API) PeekBook(symbol string, fn func(*book.Book)) bool {
-	if api == nil {
+	if api == nil || symbol == "" || fn == nil {
 		return false
 	}
 
-	return api.level3.PeekBook(symbol, fn)
+	api.level3Mu.RLock()
+	conn := api.level3Index[symbol]
+	api.level3Mu.RUnlock()
+
+	if conn == nil {
+		return false
+	}
+
+	return conn.PeekBook(symbol, fn)
 }
 
 func (api *API) SubscribeBook(pairs []string) error {
+	if live, ok := api.public.(*Live); ok {
+		live.symbols = mergeSymbols(live.symbols, pairs)
+	}
+
 	return errnie.Error(api.public.Write(kraken.NewBookSubscription(pairs)))
 }
 
@@ -628,6 +704,7 @@ after reconnect, so this method must not send a second competing subscription.
 */
 func (api *API) SubscribeLevel3(pairs []string) error {
 	if api.level3Conn != nil {
+		api.attachLevel3("injected-level3", api.level3Conn, pairs)
 		return errnie.Error(api.level3Conn.Write(
 			kraken.NewLevel3Subscription(
 				pairs,
@@ -636,7 +713,71 @@ func (api *API) SubscribeLevel3(pairs []string) error {
 		))
 	}
 
-	return errnie.Error(api.level3.SubscribeAll(api.ctx, pairs))
+	batchSize, err := api.level3BatchSize()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	for batch := range slices.Chunk(pairs, batchSize) {
+		key := strings.Join(batch, "|")
+
+		api.level3Mu.RLock()
+		if _, ok := api.level3Conns[key]; ok {
+			api.level3Mu.RUnlock()
+			continue
+		}
+		api.level3Mu.RUnlock()
+
+		live := New(api.ctx, nil, true, Level3WebSocketURL)
+		live.symbols = append([]string(nil), batch...)
+
+		if err := live.Initialize(); err != nil {
+			live.Close()
+			return errnie.Error(err)
+		}
+
+		api.attachLevel3(key, live, batch)
+	}
+
+	return nil
+}
+
+func mergeSymbols(current []string, next []string) []string {
+	if len(next) == 0 {
+		return current
+	}
+
+	seen := make(map[string]struct{}, len(current)+len(next))
+	merged := make([]string, 0, len(current)+len(next))
+
+	for _, symbol := range current {
+		if symbol == "" {
+			continue
+		}
+
+		if _, ok := seen[symbol]; ok {
+			continue
+		}
+
+		seen[symbol] = struct{}{}
+		merged = append(merged, symbol)
+	}
+
+	for _, symbol := range next {
+		if symbol == "" {
+			continue
+		}
+
+		if _, ok := seen[symbol]; ok {
+			continue
+		}
+
+		seen[symbol] = struct{}{}
+		merged = append(merged, symbol)
+	}
+
+	return merged
 }
 
 func (api *API) SubscribeBalance() error {

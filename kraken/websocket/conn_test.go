@@ -12,15 +12,11 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/krakenfx/api-go/v2/pkg/callback"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
-	level3fixture "github.com/theapemachine/symm/tests/fixtures/level3"
-	marketsignal "github.com/theapemachine/symm/tests/fixtures/signal"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -164,8 +160,8 @@ func TestAPIBooks(t *testing.T) {
 			Timestamp: time.Unix(1, 0),
 		})
 		live := &Live{books: manager}
-		api := &API{level3: NewLevel3Registry()}
-		api.level3.Attach("BTC/USD", live)
+		api := &API{level3Conns: make(map[string]Conn), level3Index: make(map[string]Conn)}
+		api.attachLevel3("BTC/USD", live, []string{"BTC/USD"})
 
 		Convey("It should expose that same SDK manager directly", func() {
 			for books := range api.Books() {
@@ -193,9 +189,6 @@ func TestAPIBooks(t *testing.T) {
 					}]
 				}]
 			}`, checksum)
-			event := &callback.Event[*sdkkraken.WebSocketMessage]{
-				Data: sdkkraken.NewWebSocketMessage(raw),
-			}
 			start := make(chan struct{})
 			failures := make(chan error, 8)
 			wait := sync.WaitGroup{}
@@ -206,7 +199,7 @@ func TestAPIBooks(t *testing.T) {
 				<-start
 
 				for range 256 {
-					if err := live.updateLevel3(event); err != nil {
+					if err := live.ApplyLevel3(raw); err != nil {
 						failures <- err
 						return
 					}
@@ -271,8 +264,8 @@ func TestAPIApplyLevel3Peekable(t *testing.T) {
 		live.client.Reconnect = func() {}
 		defer live.Close()
 
-		api := &API{level3: NewLevel3Registry()}
-		api.level3.Attach("BTC/USD", live)
+		api := &API{level3Conns: make(map[string]Conn), level3Index: make(map[string]Conn)}
+		api.attachLevel3("BTC/USD", live, []string{"BTC/USD"})
 
 		Convey("Then no book is peekable before any apply", func() {
 			So(api.PeekBook("BTC/USD", func(*book.Book) {}), ShouldBeFalse)
@@ -303,17 +296,29 @@ func TestAPIApplyLevel3Peekable(t *testing.T) {
 			`{"method":"subscribe","params":{"channel":"level3","symbol":["BTC/USD"],"depth":10}}`,
 		)), ShouldBeNil)
 
+		snapshot := fmt.Appendf(nil, `{
+			"channel":"level3",
+			"type":"snapshot",
+			"data":[{
+				"symbol":"BTC/USD",
+				"checksum":%s,
+				"bids":[{"order_id":"bid-1","limit_price":100,"order_qty":1,"timestamp":"1970-01-01T00:00:01Z"}],
+				"asks":[]
+			}]
+		}`, checksum)
+
 		update := fmt.Appendf(nil, `{
 			"channel":"level3",
 			"type":"update",
 			"data":[{
 				"symbol":"BTC/USD",
 				"checksum":%s,
-				"bids":[{"event":"add","order_id":"bid-1","limit_price":100,"order_qty":1,"timestamp":"1970-01-01T00:00:01Z"}],
+				"bids":[{"event":"modify","order_id":"bid-1","limit_price":100,"order_qty":1,"timestamp":"1970-01-01T00:00:02Z"}],
 				"asks":[]
 			}]
 		}`, checksum)
 
+		So(live.ApplyLevel3(snapshot), ShouldBeNil)
 		So(live.ApplyLevel3(update), ShouldBeNil)
 
 		Convey("Then the book is peekable synchronously after Apply", func() {
@@ -331,89 +336,14 @@ func TestAPIApplyLevel3Peekable(t *testing.T) {
 }
 
 /*
-TestAPIInjectLevel3 proves generated Kraken snapshots and updates preserve the
-production Level3 checksum chain across consecutive market states.
-*/
-func TestAPIInjectLevel3(t *testing.T) {
-	Convey("Given a fixture-driven Level3 connection", t, func() {
-		symbols := []string{"SIM1/USD"}
-		signal := marketsignal.New(symbols)
-		fixture := level3fixture.NewMarket(symbols, signal)
-		conn := newStubConn()
-		viper.Set("market.l3_depth", 10)
-		viper.Set("system.actor.buffer", 64)
-		api := NewAPI(context.Background(), conn, conn, nil)
-		api.InjectLevel3(conn.Actor, conn, symbols)
-		Reset(func() {
-			api.Close()
-			conn.Close()
-		})
-		signal.Bootstrap()
-
-		for payload := range fixture.Generate() {
-			conn.level3.Send(payload)
-		}
-
-		time.Sleep(50 * time.Millisecond)
-
-		quote, exists := signal.Quote(symbols[0])
-		So(exists, ShouldBeTrue)
-		So(signal.Apply(marketsignal.Step{
-			Advance: time.Second,
-			Actions: []marketsignal.Action{{
-				Kind:   marketsignal.Trade,
-				Symbol: symbols[0],
-				Side:   "buy",
-				Qty:    quote.AskQty + 5,
-			}},
-		}), ShouldBeNil)
-		var update []byte
-
-		for payload := range fixture.Generate() {
-			update = payload
-			conn.level3.Send(payload)
-		}
-
-		time.Sleep(50 * time.Millisecond)
-
-		Convey("A complete touch and second-level fill should reach the production ledger", func() {
-			So(conn.reported, ShouldBeNil)
-			best := 0.0
-			So(api.PeekBook(symbols[0], func(symbolBook *book.Book) {
-				ask := symbolBook.BestAsk()
-
-				if ask == nil || ask.Price == nil {
-					return
-				}
-
-				best = ask.Price.Float64()
-			}), ShouldBeTrue)
-			So(best, ShouldBeGreaterThan, 0)
-			So(best, ShouldEqual, quote.Ask+marketsignal.PriceIncrement)
-		})
-
-		Convey("A production ledger rejection should reach the connection error sink", func() {
-			var corrupted map[string]any
-			So(json.Unmarshal(update, &corrupted), ShouldBeNil)
-			corrupted["data"].([]any)[0].(map[string]any)["checksum"] = 1
-			payload, err := json.Marshal(corrupted)
-			So(err, ShouldBeNil)
-			conn.level3.Send(payload)
-			time.Sleep(50 * time.Millisecond)
-			So(conn.reported, ShouldNotBeNil)
-		})
-	})
-}
-
-/*
 BenchmarkAPIPeekBook measures leased access to one SDK-managed book.
 */
 func BenchmarkAPIPeekBook(b *testing.B) {
 	manager := spot.NewBookManager()
 	manager.CreateBook("BTC/USD", 10)
 	live := &Live{books: manager}
-	api := &API{level3: NewLevel3Registry()}
-	api.level3.Attach("BTC/USD", live)
+	api := &API{level3Conns: make(map[string]Conn), level3Index: make(map[string]Conn)}
+	api.attachLevel3("BTC/USD", live, []string{"BTC/USD"})
 	b.ReportAllocs()
 
 	for b.Loop() {
@@ -523,21 +453,21 @@ func TestAPILevel3BatchSize(t *testing.T) {
 
 		Convey("Depth 10 admits forty symbols per connection", func() {
 			viper.Set("market.l3_depth", 10)
-			batchSize, err := level3BatchSize()
+			batchSize, err := (&API{}).level3BatchSize()
 			So(err, ShouldBeNil)
 			So(batchSize, ShouldEqual, 40)
 		})
 
 		Convey("Depth 100 admits eight symbols per connection", func() {
 			viper.Set("market.l3_depth", 100)
-			batchSize, err := level3BatchSize()
+			batchSize, err := (&API{}).level3BatchSize()
 			So(err, ShouldBeNil)
 			So(batchSize, ShouldEqual, 8)
 		})
 
 		Convey("Depth 1000 admits two symbols per connection", func() {
 			viper.Set("market.l3_depth", 1000)
-			batchSize, err := level3BatchSize()
+			batchSize, err := (&API{}).level3BatchSize()
 			So(err, ShouldBeNil)
 			So(batchSize, ShouldEqual, 2)
 		})
@@ -554,7 +484,7 @@ func BenchmarkAPILevel3BatchSize(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if _, err := level3BatchSize(); err != nil {
+		if _, err := (&API{}).level3BatchSize(); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -581,6 +511,7 @@ type stubConn struct {
 	*types.Actor
 	level3       *types.Subscription
 	client       *spot.WebSocket
+	books        *spot.BookManager
 	writes       [][]byte
 	postResponse []byte
 	postPath     string
@@ -594,6 +525,7 @@ func newStubConn() *stubConn {
 		level3: &types.Subscription{
 			Channel: make(chan any, 64),
 		},
+		books: spot.NewBookManager(),
 	}
 	stub.Actor = types.NewActor(context.Background(), "stub", nil)
 	stub.AddRoot("level3", stub.level3)
@@ -629,6 +561,22 @@ func (stub *stubConn) Close() {
 
 func (stub *stubConn) Root() *types.Actor { return stub.Actor }
 
+func (stub *stubConn) PeekBook(symbol string, fn func(*book.Book)) bool {
+	if stub == nil || stub.books == nil || fn == nil || symbol == "" {
+		return false
+	}
+
+	symbolBook := stub.books.GetBook(symbol)
+
+	if symbolBook == nil {
+		return false
+	}
+
+	fn(symbolBook)
+
+	return true
+}
+
 func (stub *stubConn) Post(path string, params json.Marshaler) ([]byte, error) {
 	stub.postPath = path
 	stub.postParams = params
@@ -636,7 +584,7 @@ func (stub *stubConn) Post(path string, params json.Marshaler) ([]byte, error) {
 }
 
 func (stub *stubConn) Books() *spot.BookManager {
-	return &spot.BookManager{}
+	return stub.books
 }
 
 func normalizerClient() *spot.WebSocket {

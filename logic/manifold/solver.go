@@ -86,6 +86,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		book := thesis.BookManager.GetBook(bookName)
 		hawkes := utils.ForSymbol(utils.Measurements(thesis, types.SourceHawkes), bookName)
 
+		if len(hawkes) == 0 {
+			continue
+		}
+
 		for _, level := range book.Bids.Levels {
 			bidOrders = append(bidOrders, level.Queue()...)
 		}

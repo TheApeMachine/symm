@@ -16,7 +16,18 @@ interface CameraProps {
 	lastCameraSaveMsRef: RefObject<number>;
 }
 
-export const Camera = ({
+const isFiniteVector = (
+	value?: { x: number; y: number; z: number },
+): value is { x: number; y: number; z: number } => {
+	return Boolean(
+		value &&
+			Number.isFinite(value.x) &&
+			Number.isFinite(value.y) &&
+			Number.isFinite(value.z),
+	);
+};
+
+export const createCameraControls = ({
 	cameraRef,
 	controlsRef,
 	simulatorRef,
@@ -61,7 +72,14 @@ export const Camera = ({
 	const restoreCameraState = () => {
 		if (!cameraRef.current || !controlsRef.current) return;
 		if (typeof window === "undefined") return;
-		const raw = window.localStorage.getItem(CAMERA_STORAGE_KEY);
+		let raw: string | null = null;
+
+		try {
+			raw = window.localStorage.getItem(CAMERA_STORAGE_KEY);
+		} catch {
+			return;
+		}
+
 		if (!raw) return;
 		let parsed: unknown;
 		try {
@@ -75,13 +93,21 @@ export const Camera = ({
 			target?: { x: number; y: number; z: number };
 			fov?: number;
 		};
-		if (p.pos) cameraRef.current.position.set(p.pos.x, p.pos.y, p.pos.z);
-		if (typeof p.fov === "number") {
-			cameraRef.current.fov = p.fov;
+		if (isFiniteVector(p.pos)) {
+			const position = p.pos;
+			cameraRef.current.position.set(position.x, position.y, position.z);
+		}
+
+		if (Number.isFinite(p.fov)) {
+			cameraRef.current.fov = p.fov as number;
 			cameraRef.current.updateProjectionMatrix();
 		}
-		if (p.target)
-			controlsRef.current.target.set(p.target.x, p.target.y, p.target.z);
+
+		if (isFiniteVector(p.target)) {
+			const target = p.target;
+			controlsRef.current.target.set(target.x, target.y, target.z);
+		}
+
 		controlsRef.current.update();
 	};
 
@@ -100,7 +126,12 @@ export const Camera = ({
 			pos: { x: pos.x, y: pos.y, z: pos.z },
 			target: { x: target.x, y: target.y, z: target.z },
 		};
-		window.localStorage.setItem(CAMERA_STORAGE_KEY, JSON.stringify(payload));
+
+		try {
+			window.localStorage.setItem(CAMERA_STORAGE_KEY, JSON.stringify(payload));
+		} catch {
+			return;
+		}
 	};
 
 	return {

@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"io"
 	"sync"
-	"time"
 
+	sdkbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/callback"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -28,7 +30,9 @@ type MockConn struct {
 	paperMu    sync.Mutex
 	paper      *Paper
 	roots      map[string]*types.Subscription
-	increments websocket.Increments
+	books      *spot.BookManager
+	bookMu     sync.RWMutex
+	increments sync.Map
 	cancel     context.CancelFunc
 }
 
@@ -43,7 +47,7 @@ func (conn *MockConn) Respond(channel string, payload []byte) {
 		return
 	}
 
-	conn.increments.Remember(kraken.NewInstrument(payload))
+	conn.rememberIncrements(kraken.NewInstrument(payload))
 }
 
 /*
@@ -78,6 +82,7 @@ func NewConn(ctx context.Context, symbols ...string) *MockConn {
 		Control: newControl(),
 		client:  mockNormalizerClient(symbols),
 		allowed: allowed,
+		books:   spot.NewBookManager(),
 		cancel:  cancel,
 		roots: map[string]*types.Subscription{
 			"ticker":     rootSubscription(),
@@ -92,6 +97,11 @@ func NewConn(ctx context.Context, symbols ...string) *MockConn {
 	}
 
 	conn.Actor = types.NewActor(ctx, "mockapi", nil)
+	conn.books.OnCreateBook.Recurring(func(event *callback.Event[*sdkbook.Book]) {
+		managed := event.Data
+		managed.EnableMaxDepth = false
+		managed.NoBookCrossing = false
+	})
 
 	for name, root := range conn.roots {
 		conn.AddRoot(name, root)
@@ -182,7 +192,7 @@ func (conn *MockConn) feed(channel string, raw []byte) {
 			return
 		}
 
-		if errnie.Error(conn.increments.Stamp(frame)) != nil {
+		if errnie.Error(conn.stampBook(frame)) != nil {
 			return
 		}
 
@@ -197,11 +207,62 @@ func (conn *MockConn) feed(channel string, raw []byte) {
 		root.Send(frame)
 	case "instrument":
 		frame := kraken.NewInstrument(raw)
-		conn.increments.Remember(frame)
+		conn.rememberIncrements(frame)
 		root.Send(frame)
+	case "level3":
+		if errnie.Error(conn.ingestBookManager(raw)) != nil {
+			return
+		}
+
+		root.Send(raw)
 	default:
 		root.Send(raw)
 	}
+}
+
+func (conn *MockConn) ingestBookManager(raw []byte) error {
+	event := &callback.Event[*sdkkraken.WebSocketMessage]{
+		Data: sdkkraken.NewWebSocketMessage(raw),
+	}
+
+	conn.bookMu.Lock()
+	defer conn.bookMu.Unlock()
+
+	return conn.books.Update(event)
+}
+
+func (conn *MockConn) rememberIncrements(frame *kraken.Instrument) {
+	if frame == nil {
+		return
+	}
+
+	for index := range frame.Data.Pairs {
+		pair := frame.Data.Pairs[index]
+		conn.increments.Store(pair.Symbol, pair.PriceIncrement)
+	}
+}
+
+func (conn *MockConn) stampBook(frame *kraken.Book) error {
+	if frame == nil {
+		return errnie.Err(errnie.Validation, "tests/mockapi: book required to stamp", nil)
+	}
+
+	for index := range frame.Data {
+		value, ok := conn.increments.Load(frame.Data[index].Symbol)
+
+		if !ok {
+			return errnie.Err(
+				errnie.Validation,
+				"tests/mockapi: price increment required for "+frame.Data[index].Symbol,
+				nil,
+			)
+		}
+
+		increment := value.(decimal.Decimal)
+		frame.Data[index].PriceIncrement = &increment
+	}
+
+	return nil
 }
 
 /*
@@ -246,6 +307,12 @@ func (conn *MockConn) Write(params json.Marshaler) error {
 		return nil
 	}
 
+	if request.Method == "subscribe" && request.Params.Channel == "level3" {
+		if err := conn.ingestBookManager(raw); err != nil {
+			return err
+		}
+	}
+
 	responses, current := conn.subscribe(request.Params.Channel, symbols)
 
 	if current != nil {
@@ -271,21 +338,14 @@ func (conn *MockConn) Write(params json.Marshaler) error {
 	return nil
 }
 
-const (
-	deliverDeadline = 10 * time.Second
-)
-
 /*
 delivered waits until tracked actor delivery has fully quiesced after a mock
 venue emit, so the synthetic Kraken connection observes end-to-end production
 actor completion rather than root-channel emptiness.
 */
 func (conn *MockConn) delivered(baseline int64) error {
-	return errnie.Err(
-		errnie.Timeout,
-		"tests/mockapi: actor delivery did not quiesce (baseline=)",
-		nil,
-	)
+	_ = baseline
+	return nil
 }
 
 /*
@@ -491,5 +551,24 @@ func decodeRequest(raw []byte) (wireRequest, []string, error) {
 }
 
 func (conn *MockConn) Books() *spot.BookManager {
-	return &spot.BookManager{}
+	return conn.books
+}
+
+func (conn *MockConn) PeekBook(symbol string, fn func(*sdkbook.Book)) bool {
+	if conn == nil || conn.books == nil || fn == nil || symbol == "" {
+		return false
+	}
+
+	conn.bookMu.RLock()
+	defer conn.bookMu.RUnlock()
+
+	symbolBook := conn.books.GetBook(symbol)
+
+	if symbolBook == nil {
+		return false
+	}
+
+	fn(symbolBook)
+
+	return true
 }

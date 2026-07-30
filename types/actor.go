@@ -2,16 +2,28 @@ package types
 
 import (
 	"context"
+	"reflect"
+	"sync"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+)
+
+var (
+	subscriptionSaturationMu   sync.RWMutex
+	subscriptionSaturationHook func(map[string]any)
 )
 
 /*
 Subscription is a thin typed wrapper over a channel so call sites keep T.
 */
 type Subscription struct {
-	Channel chan any
+	Channel     chan any
+	edgeKind    string
+	sourceActor string
+	sourceTopic string
+	ownerActor  string
+	ownerTopic  string
 }
 
 /*
@@ -30,19 +42,71 @@ func NewSubscription() *Subscription {
 }
 
 /*
+SetSubscriptionSaturationHook registers one process-local observer for full
+subscription buffers so runtime diagnostics can be recorded without importing a
+concrete sink into the types package.
+*/
+func SetSubscriptionSaturationHook(hook func(map[string]any)) {
+	subscriptionSaturationMu.Lock()
+	defer subscriptionSaturationMu.Unlock()
+
+	subscriptionSaturationHook = hook
+}
+
+/*
 Send delivers one message to the subscription channel.
 */
 func (subscription *Subscription) Send(message any) {
 	retry := 1
+	reported := false
 
 	for retry < 21 {
 		select {
 		case subscription.Channel <- message:
 			return
 		default:
-			errnie.Warn("subscription buffer full")
+			if !reported {
+				reported = true
+				subscription.reportSaturation(message, retry)
+			}
+
+			retry++
 		}
 	}
+}
+
+func (subscription *Subscription) reportSaturation(message any, retry int) {
+	messageType := "<nil>"
+
+	if message != nil {
+		messageType = reflect.TypeOf(message).String()
+	}
+
+	errnie.Warn(
+		"subscription buffer full source=" + subscription.sourceActor +
+			" topic=" + subscription.sourceTopic +
+			" owner=" + subscription.ownerActor,
+	)
+
+	subscriptionSaturationMu.RLock()
+	hook := subscriptionSaturationHook
+	subscriptionSaturationMu.RUnlock()
+
+	if hook == nil {
+		return
+	}
+
+	hook(map[string]any{
+		"edgeKind":    subscription.edgeKind,
+		"sourceActor": subscription.sourceActor,
+		"sourceTopic": subscription.sourceTopic,
+		"ownerActor":  subscription.ownerActor,
+		"ownerTopic":  subscription.ownerTopic,
+		"bufferLen":   len(subscription.Channel),
+		"bufferCap":   cap(subscription.Channel),
+		"retry":       retry,
+		"messageType": messageType,
+	})
 }
 
 /*
@@ -100,6 +164,10 @@ func NewActor(
 AddRoot registers a producer-owned ingress subscription under name.
 */
 func (actor *Actor) AddRoot(name string, subscription *Subscription) {
+	subscription.edgeKind = "root"
+	subscription.ownerActor = actor.name
+	subscription.ownerTopic = name
+	subscription.sourceTopic = name
 	actor.subscriptions[name] = []*Subscription{subscription}
 }
 
@@ -109,6 +177,9 @@ channel used as the subscriber's inbound subscription.
 */
 func (actor *Actor) Subscribe(topic string) *Subscription {
 	subscription := NewSubscription()
+	subscription.edgeKind = "actor"
+	subscription.sourceActor = actor.name
+	subscription.sourceTopic = topic
 	actor.subscribers[topic] = append(actor.subscribers[topic], subscription)
 
 	return subscription
@@ -119,12 +190,16 @@ Initialize attaches this actor to upstream topics under the same Name.
 */
 func (actor *Actor) Initialize(topics ...Topic) {
 	for _, topic := range topics {
+		subscription := topic.Actor.Subscribe(topic.Name)
+		subscription.ownerActor = actor.name
+		subscription.ownerTopic = topic.Name
+
 		if actor.subscriptions[topic.Name] == nil {
-			actor.subscriptions[topic.Name] = []*Subscription{topic.Actor.Subscribe(topic.Name)}
+			actor.subscriptions[topic.Name] = []*Subscription{subscription}
 			continue
 		}
 
-		actor.subscriptions[topic.Name] = append(actor.subscriptions[topic.Name], topic.Actor.Subscribe(topic.Name))
+		actor.subscriptions[topic.Name] = append(actor.subscriptions[topic.Name], subscription)
 	}
 
 	actor.Run()
@@ -146,44 +221,70 @@ func (actor *Actor) Run() {
 	}()
 }
 
+/*
+handle blocks on every subscribed inbox until one message arrives or the actor is
+cancelled, then routes that message through the topic handler and publishes any
+resulting payload to downstream subscribers of the same topic.
+*/
 func (actor *Actor) handle() {
+	cases := []reflect.SelectCase{{
+		Dir:  reflect.SelectRecv,
+		Chan: reflect.ValueOf(actor.ctx.Done()),
+	}}
+	topics := make([]string, 1)
+
 	for topic, subscriptions := range actor.subscriptions {
-		select {
-		case <-actor.ctx.Done():
-			return
-		default:
-			for _, subscription := range subscriptions {
-				select {
-				case <-actor.ctx.Done():
-					return
-				case message := <-subscription.Channel:
-					handler, ok := actor.handlers[topic]
-
-					if !ok {
-						actor.publish(topic, message)
-						continue
-					}
-
-					result := handler.Fn(message)
-
-					if result == nil {
-						continue
-					}
-
-					actor.publish(topic, result)
-				default:
-				}
+		for _, subscription := range subscriptions {
+			if subscription == nil {
+				continue
 			}
+
+			cases = append(cases, reflect.SelectCase{
+				Dir:  reflect.SelectRecv,
+				Chan: reflect.ValueOf(subscription.Channel),
+			})
+			topics = append(topics, topic)
 		}
 	}
+
+	chosen, value, ok := reflect.Select(cases)
+
+	if chosen == 0 || !ok {
+		return
+	}
+
+	topic := topics[chosen]
+	message := value.Interface()
+	handler, found := actor.handlers[topic]
+
+	if !found {
+		actor.publish(topic, message)
+		return
+	}
+
+	result := handler.Fn(message)
+
+	if result == nil {
+		return
+	}
+
+	actor.publish(topic, result)
 }
 
+/*
+publish fan-outs one topic result to every downstream subscriber registered for
+that same topic.
+*/
 func (actor *Actor) publish(topic string, result any) {
 	for _, subscriber := range actor.subscribers[topic] {
 		subscriber.Send(result)
 	}
 }
 
+/*
+Close cancels the actor context so the run loop and any blocked handle call stop
+cleanly.
+*/
 func (actor *Actor) Close() error {
 	actor.cancel()
 	return nil

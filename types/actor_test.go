@@ -36,6 +36,7 @@ func TestInitializeSize(t *testing.T) {
 		})
 		producer.AddRoot("trade", NewSubscription())
 		consumer.Initialize(Topic{Name: "trade", Actor: producer})
+		producer.Run()
 
 		Convey("It should apply backpressure so the consumer sees every send", func() {
 			for index := range 5 {
@@ -72,6 +73,7 @@ func TestActorClose(t *testing.T) {
 		})
 		root := NewSubscription()
 		actor.AddRoot("trade", root)
+		actor.Run()
 		root.Send("ping")
 
 		deadline := time.Now().Add(time.Second)
@@ -85,6 +87,49 @@ func TestActorClose(t *testing.T) {
 	})
 }
 
+func TestSubscriptionSaturationHook(t *testing.T) {
+	Convey("Given a subscription with actor edge metadata", t, func() {
+		subscription := NewSubscription()
+		subscription.edgeKind = "actor"
+		subscription.sourceActor = "producer"
+		subscription.sourceTopic = "ticker"
+		subscription.ownerActor = "consumer"
+		subscription.ownerTopic = "ticker"
+
+		captured := make(chan map[string]any, 1)
+		SetSubscriptionSaturationHook(func(value map[string]any) {
+			captured <- value
+		})
+
+		Reset(func() {
+			SetSubscriptionSaturationHook(nil)
+		})
+
+		for range cap(subscription.Channel) {
+			subscription.Channel <- struct{}{}
+		}
+
+		Convey("When Send hits a full buffer", func() {
+			subscription.Send("payload")
+
+			Convey("Then the hook receives the exact source and owner actor context", func() {
+				select {
+				case value := <-captured:
+					So(value["edgeKind"], ShouldEqual, "actor")
+					So(value["sourceActor"], ShouldEqual, "producer")
+					So(value["sourceTopic"], ShouldEqual, "ticker")
+					So(value["ownerActor"], ShouldEqual, "consumer")
+					So(value["ownerTopic"], ShouldEqual, "ticker")
+					So(value["bufferCap"], ShouldEqual, cap(subscription.Channel))
+					So(value["messageType"], ShouldEqual, "string")
+				case <-time.After(time.Second):
+					So("timeout", ShouldEqual, "hook invoked")
+				}
+			})
+		})
+	})
+}
+
 func TestRootPublishDoesNotDrop(t *testing.T) {
 	Convey("Given a root fan-out with one slow subscriber", t, func() {
 		ctx, cancel := context.WithCancel(t.Context())
@@ -93,6 +138,7 @@ func TestRootPublishDoesNotDrop(t *testing.T) {
 		live := NewActor(ctx, "live", nil)
 		root := NewSubscription()
 		live.AddRoot("book", root)
+		live.Run()
 
 		slow := live.Subscribe("book")
 		fast := live.Subscribe("book")
@@ -165,9 +211,16 @@ func TestAwaitQuiescence(t *testing.T) {
 			},
 		})
 		consumer.Initialize(Topic{Name: "ticker", Actor: producer})
+		producer.Run()
 
 		Convey("AwaitQuiescence should wait for downstream handling, not just the root send", func() {
 			producer.subscriptions["ticker"][0].Send("ping")
+			deadline := time.Now().Add(2 * time.Second)
+
+			for handled.Load() < 1 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+
 			So(handled.Load(), ShouldEqual, int64(1))
 			So(consumer.Close(), ShouldBeNil)
 			So(producer.Close(), ShouldBeNil)
@@ -188,6 +241,8 @@ func TestInitializeSizeSameTopicDifferentActors(t *testing.T) {
 		})
 		first.AddRoot("ticker", NewSubscription())
 		second.AddRoot("ticker", NewSubscription())
+		first.Run()
+		second.Run()
 
 		var handled atomic.Int64
 		consumer := NewActor(ctx, "consumer", map[string]Handler{
@@ -207,6 +262,12 @@ func TestInitializeSizeSameTopicDifferentActors(t *testing.T) {
 		Convey("It pumps both upstream subscriptions instead of overwriting one", func() {
 			first.subscriptions["ticker"][0].Send("a")
 			second.subscriptions["ticker"][0].Send("b")
+			deadline := time.Now().Add(2 * time.Second)
+
+			for handled.Load() < 2 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+
 			So(handled.Load(), ShouldEqual, int64(2))
 			So(consumer.Close(), ShouldBeNil)
 			So(first.Close(), ShouldBeNil)

@@ -260,15 +260,27 @@ func (signal *Signal) measurements(
 	ask float64,
 ) ([]*types.Measurement, error) {
 	if at.IsZero() {
-		return nil, fmt.Errorf("pumpdump: observation timestamp required")
+		return nil, errnie.Err(
+			errnie.Validation,
+			"pumpdump: observation timestamp required",
+			nil,
+		)
 	}
 
 	if bid <= 0 || ask <= 0 {
-		return nil, fmt.Errorf("pumpdump: bid and ask must be positive")
+		return nil, errnie.Err(
+			errnie.Validation,
+			"pumpdump: bid and ask must be positive",
+			nil,
+		)
 	}
 
 	if bid >= ask {
-		return nil, fmt.Errorf("pumpdump: crossed BBO bid=%v ask=%v", bid, ask)
+		return nil, errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("pumpdump: crossed BBO bid=%v ask=%v", bid, ask),
+			nil,
+		)
 	}
 
 	mid := (bid + ask) / 2

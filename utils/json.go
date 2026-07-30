@@ -51,8 +51,8 @@ func GetStringSlice(raw []byte, path ...any) []string {
 
 	out := make([]string, len(value))
 
-	for _, v := range value {
-		out = append(out, v.(string))
+	for index, v := range value {
+		out[index] = v.(string)
 	}
 
 	return out
