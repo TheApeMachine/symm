@@ -48,3 +48,37 @@ func BenchmarkEachKeyFatFrame(b *testing.B) {
 		})
 	}
 }
+
+func TestGetStringSlice(t *testing.T) {
+	Convey("Given JSON containing symbol arrays", t, func() {
+		raw := []byte(`{"book": {"params":{"symbol":["XBT/USD","ETH/USD"]}}}`)
+
+		Convey("It returns typed string values", func() {
+			So(
+				GetStringSlice(raw, "book", "params", "symbol"),
+				ShouldResemble,
+				[]string{"XBT/USD", "ETH/USD"},
+			)
+		})
+	})
+
+	Convey("Given JSON with mixed symbol array types", t, func() {
+		raw := []byte(`{"book": {"params":{"symbol":["XBT/USD", 42]}}}`)
+
+		Convey("It should return nil when any element is non-string", func() {
+			So(
+				GetStringSlice(raw, "book", "params", "symbol"),
+				ShouldBeNil,
+			)
+		})
+	})
+}
+
+func BenchmarkGetStringSlice(b *testing.B) {
+	raw := []byte(`{"book":{"params":{"symbol":["BTC/USD","ETH/USD","SOL/USD","XRP/USD","DOGE/USD"]}}}`)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = GetStringSlice(raw, "book", "params", "symbol")
+	}
+}

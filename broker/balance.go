@@ -1,12 +1,12 @@
 package broker
 
 import (
-	"sync/atomic"
+	"sync"
 
-	"github.com/theapemachine/datura"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/config"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -17,12 +17,11 @@ composes Wallet, Cash, and Ledger so reservations and available capital stay a
 wallet concern while Position and Holding ownership remains on Desk.
 */
 type Balance struct {
-	*Ledger
-	*Wallet
-	*Cash
-	status              atomic.Value
-	ui                  chan []byte
-	tradeBalancePending atomic.Bool
+	status types.Status
+	api    *websocket.API
+	ui     chan []byte
+	wallet *sync.Map
+	quote  string
 }
 
 /*
@@ -33,228 +32,91 @@ func NewBalance(
 	ui chan []byte,
 	market config.MarketConfig,
 ) *Balance {
-	ledger := NewLedger()
-	wallet := newWallet(api, market.QuoteCurrency)
-
 	balance := &Balance{
-		Ledger: ledger,
-		Wallet: wallet,
-		Cash:   &Cash{wallet: wallet, ledger: ledger},
+		status: types.INITIALIZING,
+		api:    api,
 		ui:     ui,
+		wallet: &sync.Map{},
+		quote:  viper.GetViper().GetString("market.quote_currency"),
 	}
 
-	balance.status.Store(types.INITIALIZING)
 	return balance
-}
-
-/*
-Initialize subscribes the private balances channel when an API is attached.
-*/
-func (balance *Balance) Initialize() error {
-	errnie.Info("initializing balance")
-
-	if balance.Wallet.api == nil {
-		balance.status.Store(types.READY)
-		return nil
-	}
-
-	balance.status.Store(types.PENDING)
-
-	if errnie.Error(balance.Wallet.api.SubscribeBalance()) != nil {
-		balance.status.Store(types.ERROR)
-
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to subscribe to balance",
-			nil,
-		))
-	}
-
-	return nil
 }
 
 /*
 Status reports wallet readiness for Desk and stack health checks.
 */
 func (balance *Balance) Status() types.Status {
-	return balance.status.Load().(types.Status)
+	return balance.status
 }
 
-/*
-Publish enqueues Frame on the UI channel. A saturated channel returns an error
-instead of dropping the wallet frame silently.
-*/
-func (balance *Balance) Publish() error {
-	if balance.ui == nil {
-		return nil
-	}
-
-	wallet := balance.Frame()
-
-	select {
-	case balance.ui <- datura.NewMap(
-		"balances", wallet,
-	).MarshalAndFree():
-		return nil
-	default:
-		return errnie.Error(errnie.Err(
-			errnie.TooManyRequests,
-			"balance: ui channel saturated; dropped wallet frame",
-			nil,
-		))
-	}
-}
-
-/*
-PublishTradeBalance publishes the backend-owned liquidation value from the shared
-live/paper trade-balance surface without blocking the caller on REST/CLI latency.
-*/
-func (balance *Balance) PublishTradeBalance() {
-	if balance == nil || balance.ui == nil || balance.Wallet == nil || balance.Wallet.api == nil {
-		return
-	}
-
-	if !balance.tradeBalancePending.CompareAndSwap(false, true) {
-		return
-	}
-
-	go func() {
-		defer balance.tradeBalancePending.Store(false)
-
-		tradeBalance, err := balance.Wallet.api.TradeBalance(balance.Wallet.quote)
-
-		if err != nil {
-			errnie.Error(err)
-			return
-		}
-
-		select {
-		case balance.ui <- datura.NewMap("trade_balance", tradeBalance).MarshalAndFree():
-		default:
-			errnie.Error(errnie.Err(
-				errnie.TooManyRequests,
-				"balance: ui channel saturated; dropped trade balance frame",
-				nil,
-			))
-		}
-	}()
-}
-
-/*
-Refresh replaces the wallet from the transport's authoritative account-balance REST/CLI surface.
-*/
-func (balance *Balance) Refresh() error {
-	if balance == nil || balance.Wallet == nil || balance.Wallet.api == nil {
-		return nil
-	}
-
-	snapshot, err := balance.Wallet.api.AccountBalances()
+func (balance *Balance) Update() {
+	result, err := balance.api.Balance()
 
 	if err != nil {
-		return errnie.Error(err)
+		balance.status = types.ERROR
+		return
 	}
 
-	if snapshot == nil {
+	for asset, amount := range result {
+		balance.wallet.Store(asset, amount)
+	}
+
+	balance.status = types.READY
+}
+
+func (balance *Balance) Cash() (*decimal.Decimal, error) {
+	found, ok := balance.wallet.Load(balance.quote)
+
+	if !ok || found == nil {
+		return nil, nil
+	}
+
+	cash, ok := found.(*decimal.Decimal)
+
+	if !ok {
+		return nil, nil
+	}
+
+	return cash, nil
+}
+
+func (balance *Balance) Reserve(amount *decimal.Decimal) error {
+	if amount == nil || amount.Sign() <= 0 {
+		return nil
+	}
+
+	cash, err := balance.Cash()
+	if err != nil || cash == nil || cash.Sign() <= 0 {
+		return err
+	}
+
+	if cash.Cmp(amount) < 0 {
 		return errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"balance: missing account balance snapshot",
+			errnie.NotAcceptable,
+			"insufficient cash to reserve",
 			nil,
 		))
 	}
 
-	raw, err := snapshot.MarshalJSON()
+	newCash := cash.Sub(amount)
+	balance.wallet.Store(balance.quote, newCash)
 
-	if err != nil {
-		return errnie.Error(err)
-	}
-
-	balance.BalanceAck(raw)
 	return nil
 }
 
-/*
-TradeBalance returns the authoritative liquidation summary from the shared live
-or paper account surface.
-*/
-func (balance *Balance) TradeBalance() (*kraken.TradeBalanceResult, error) {
-	if balance == nil || balance.Wallet == nil || balance.Wallet.api == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"balance: api required for trade balance",
-			nil,
-		))
+func (balance *Balance) Release(amount *decimal.Decimal) error {
+	if amount == nil || amount.Sign() <= 0 {
+		return nil
 	}
 
-	return balance.Wallet.api.TradeBalance(balance.Wallet.quote)
-}
-
-/*
-Frame returns wallet rows with available and reserved capital explicit for UI.
-Kraken snapshots carry total balance; the broker ledger owns live reservations,
-so the terminal must receive both rather than reconstructing unavailable cash.
-*/
-func (balance *Balance) Frame() map[string]*kraken.BalanceData {
-	balance.Wallet.mu.RLock()
-	defer balance.Wallet.mu.RUnlock()
-
-	rows := make(map[string]*kraken.BalanceData, len(balance.Wallet.Data))
-
-	for asset, row := range balance.Wallet.Data {
-		copyRow := balance.Wallet.clone(row)
-		reserved := balance.ReservedAsset(asset)
-
-		if asset == balance.Wallet.quote {
-			reserved = balance.ReservedCash()
-		}
-
-		copyRow.Reserved = reserved
-
-		if copyRow.Available == nil && copyRow.Balance != nil {
-			copyRow.Available = copyRow.Balance.Copy().Sub(reserved)
-		}
-
-		rows[asset] = copyRow
+	cash, err := balance.Cash()
+	if err != nil || cash == nil || cash.Sign() < 0 {
+		return err
 	}
 
-	return rows
-}
+	newCash := cash.Add(amount)
+	balance.wallet.Store(balance.quote, newCash)
 
-/*
-BalanceAck applies one private balance frame. Snapshots replace the wallet map
-and sequence; updates require exact next-sequence or a resync is requested.
-*/
-func (balance *Balance) BalanceAck(buf []byte) {
-	ready, resync := balance.Wallet.BalanceAck(buf, func(
-		string,
-		map[string]*kraken.BalanceData,
-		bool,
-	) {
-	})
-
-	if resync {
-		balance.resync()
-		return
-	}
-
-	if !ready {
-		return
-	}
-
-	balance.status.Store(types.READY)
-
-	if err := balance.Publish(); err != nil {
-		errnie.Error(err)
-	}
-
-	balance.PublishTradeBalance()
-}
-
-/*
-resync requests a fresh balances snapshot after a sequence gap so the wallet
-does not apply updates against an unknown baseline.
-*/
-func (balance *Balance) resync() {
-	if errnie.Error(balance.Wallet.api.SubscribeBalance()) != nil {
-		balance.status.Store(types.ERROR)
-	}
+	return nil
 }

@@ -7,13 +7,13 @@ import (
 	"errors"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/bytedance/sonic"
-	sdkbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -22,27 +22,26 @@ import (
 Paper is the simulated spot websocket and REST transport. It shells out to the
 native `kraken paper` CLI so balances, fills, and history stay owned by the
 venue ledger under Application Support — not an in-process invented matcher.
-Private frames enter Actor roots so Desk and tests Subscribe the same way Live
-exposes ticker/book/trade.
+Private frames publish onto explicit typed subscriptions so Desk and tests use
+the same direct wiring as the live transport.
 */
 type Paper struct {
-	*types.Actor
-	ctx       context.Context
-	cancel    context.CancelFunc
-	simulator *Simulator
-	roots     map[string]*types.Subscription
-	books     *spot.BookManager
+	ctx        context.Context
+	cancel     context.CancelFunc
+	simulator  *Simulator
+	subMu      sync.Mutex
+	balances   []*types.Subscription[[]byte]
+	executions []*types.Subscription[[]byte]
+	orders     []*types.Subscription[[]byte]
+	books      *spot.BookManager
 }
 
-var _ Conn = (*Paper)(nil)
-
 /*
-NewPaper opens the paper spot transport with Actor roots for private channels.
+NewPaper opens the paper spot transport with explicit private subscriptions.
 */
 func NewPaper(
 	ctx context.Context,
 	simulator *Simulator,
-	cfg config.Config,
 ) *Paper {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -50,32 +49,9 @@ func NewPaper(
 		ctx:       ctx,
 		cancel:    cancel,
 		simulator: simulator,
-		roots: map[string]*types.Subscription{
-			"balances":   paperRoot(cfg.System.ActorBuffer),
-			"executions": paperRoot(cfg.System.ActorBuffer),
-			"add_order":  paperRoot(cfg.System.ActorBuffer),
-		},
 	}
-
-	paper.Actor = types.NewActor(ctx, "paper", nil)
-
-	for name, root := range paper.roots {
-		paper.AddRoot(name, root)
-	}
-
-	paper.Actor.Initialize()
 
 	return paper
-}
-
-func paperRoot(buffer int) *types.Subscription {
-	if buffer < 1 {
-		buffer = 64
-	}
-
-	return &types.Subscription{
-		Channel: make(chan any, buffer),
-	}
 }
 
 /*
@@ -93,29 +69,54 @@ func (paper *Paper) Status() types.Status {
 }
 
 /*
-Client satisfies Conn; paper transport never owns a venue REST client.
+Balances loads the current paper wallet through the native CLI and returns the
+same asset-to-decimal map used by Kraken's real REST balance endpoint.
 */
-func (paper *Paper) Client() *spot.WebSocket {
-	return nil
+func (paper *Paper) Balances() (map[string]*decimal.Decimal, error) {
+	var (
+		model datura.Map[any]
+		err   error
+	)
+
+	paper.simulator.Do(REST, func() {
+		model, err = paper.execute("balances", "balance", "--verbose")
+	})
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get paper balances",
+			err,
+		))
+	}
+
+	raw, err := sonic.Marshal(model)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"failed to encode paper balances",
+			err,
+		))
+	}
+
+	return kraken.NewPaperBalance(raw).Totals(), nil
 }
 
-/*
-PeekBook exposes the paper transport's SDK book when one exists.
-*/
-func (paper *Paper) PeekBook(symbol string, fn func(*sdkbook.Book)) bool {
-	if paper == nil || paper.books == nil || fn == nil || symbol == "" {
-		return false
-	}
+func (paper *Paper) Executions() *types.Subscription[[]byte] {
+	subscription := types.NewSubscription[[]byte]()
+	paper.subMu.Lock()
+	paper.executions = append(paper.executions, subscription)
+	paper.subMu.Unlock()
+	return subscription
+}
 
-	symbolBook := paper.books.GetBook(symbol)
-
-	if symbolBook == nil {
-		return false
-	}
-
-	fn(symbolBook)
-
-	return true
+func (paper *Paper) Orders() *types.Subscription[[]byte] {
+	subscription := types.NewSubscription[[]byte]()
+	paper.subMu.Lock()
+	paper.orders = append(paper.orders, subscription)
+	paper.subMu.Unlock()
+	return subscription
 }
 
 /*
@@ -168,41 +169,9 @@ func (paper *Paper) Post(string, json.Marshaler) ([]byte, error) {
 }
 
 /*
-Emit Sends one private frame into the matching Actor root.
-*/
-func (paper *Paper) Emit(channel string, payload json.Marshaler) error {
-	raw, err := payload.MarshalJSON()
-
-	if err != nil {
-		return err
-	}
-
-	root, ok := paper.roots[channel]
-
-	if !ok {
-		return types.ClosedError{Component: "paper:" + channel}
-	}
-
-	root.Send(raw)
-
-	return nil
-}
-
-/*
-Root returns the Actor fan-out for private channel publish.
-*/
-func (paper *Paper) Root() *types.Actor {
-	return paper.Actor
-}
-
-/*
-Close cancels the paper actor context.
+Close cancels the paper transport context.
 */
 func (paper *Paper) Close() {
-	if paper.Actor != nil {
-		_ = paper.Actor.Close()
-	}
-
 	paper.cancel()
 }
 
@@ -231,36 +200,9 @@ func (paper *Paper) TradesHistory() (*kraken.TradesHistory, error) {
 }
 
 /*
-BalanceSnapshot loads an authoritative paper wallet snapshot from `kraken paper balance`.
-*/
-func (paper *Paper) BalanceSnapshot() (*kraken.Balance, error) {
-	var (
-		model datura.Map[any]
-		err   error
-	)
-
-	paper.simulator.Do(REST, func() {
-		model, err = paper.execute("balances", "balance")
-	})
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to get paper balances",
-			err,
-		))
-	}
-
-	balance := kraken.NewBalanceFromMap(model)
-	balance.Type = "snapshot"
-
-	return balance, nil
-}
-
-/*
 TradeBalance reshapes `kraken paper status --verbose` into Kraken trade balance.
 */
-func (paper *Paper) TradeBalance(string) (*kraken.TradeBalanceResult, error) {
+func (paper *Paper) TradeBalance() (spot.TradesHistoryResult, error) {
 	var (
 		model datura.Map[any]
 		err   error
@@ -278,13 +220,13 @@ func (paper *Paper) TradeBalance(string) (*kraken.TradeBalanceResult, error) {
 		))
 	}
 
-	return kraken.NewPaperTradeBalanceFromMap(model), nil
+	return model, nil
 }
 
 /*
 AddOrder places through `kraken paper buy|sell` under simulator latency.
 */
-func (paper *Paper) AddOrder(order *kraken.MarketOrder) error {
+func (paper *Paper) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, error) {
 	command := []string{
 		order.Params.Side,
 		order.Params.Symbol,

@@ -13,6 +13,22 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+type testMarketFeed struct {
+	ticker *types.Subscription[*kraken.Ticker]
+	book   *types.Subscription[*kraken.Book]
+	trade  *types.Subscription[*kraken.Trade]
+}
+
+func (feed testMarketFeed) Ticker() *types.Subscription[*kraken.Ticker] { return feed.ticker }
+
+func (feed testMarketFeed) Book() *types.Subscription[*kraken.Book] { return feed.book }
+
+func (feed testMarketFeed) Trade() *types.Subscription[*kraken.Trade] { return feed.trade }
+
+func (feed testMarketFeed) Instrument() *types.Subscription[*kraken.Instrument] {
+	return types.NewSubscription[*kraken.Instrument]()
+}
+
 func newTestSignal() *Signal {
 	return &Signal{
 		ctx:     context.Background(),
@@ -65,13 +81,10 @@ func TestSignal_Calculate(t *testing.T) {
 			viper.Set("system.actor.buffer", 64)
 			Reset(func() { viper.Set("system.actor.buffer", previous) })
 
-			live := types.NewActor(t.Context(), "live", nil)
-			root := types.NewSubscription()
-			live.AddRoot("trade", root)
-			ticker := types.NewSubscription()
-			book := types.NewSubscription()
-			live.AddRoot("ticker", ticker)
-			live.AddRoot("book", book)
+			root := types.NewSubscription[*kraken.Trade]()
+			ticker := types.NewSubscription[*kraken.Ticker]()
+			book := types.NewSubscription[*kraken.Book]()
+			live := testMarketFeed{ticker: ticker, book: book, trade: root}
 
 			signal := NewSignal(context.Background(), nil)
 			thesis := types.NewThesis(nil)

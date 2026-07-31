@@ -3,6 +3,7 @@ package sentiment
 import (
 	"context"
 	"math"
+	"sync"
 
 	"github.com/theapemachine/datura"
 
@@ -16,12 +17,14 @@ Signal measures global market conviction from breadth and leadership
 performance. Categories belong in logic; this signal emits numerical scores only.
 */
 type Signal struct {
-	*types.Actor
 	thesis       *types.Thesis
 	ctx          context.Context
 	cancel       context.CancelFunc
 	ui           chan []byte
 	crossSection *types.CrossSection
+	ticker       *types.Subscription[*kraken.Ticker]
+	subMu        sync.Mutex
+	theses       []*types.Subscription[*types.Thesis]
 }
 
 /*
@@ -38,10 +41,6 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 		crossSection: types.NewCrossSection(),
 	}
 
-	signal.Actor = types.NewActor(ctx, "sentiment", map[string]types.Handler{
-		"ticker": {Topic: "thesis", Fn: signal.onTicker},
-	})
-
 	return signal
 }
 
@@ -56,11 +55,14 @@ func (signal *Signal) Name() string {
 Initialize wires ticker ingress from Live. Sentiment is ticker-cross-section
 only; book and trade floods must not fill unused buffers.
 */
-func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
+func (signal *Signal) Initialize(market types.MarketFeed, thesis *types.Thesis) {
 	signal.thesis = thesis
-	signal.Actor.Initialize(
-		types.Topic{Name: "ticker", Actor: live},
-	)
+
+	if market != nil {
+		signal.ticker = market.Ticker()
+	}
+
+	go signal.run()
 }
 
 /*
@@ -68,10 +70,47 @@ onTicker converts each ticker batch into sentiment measurements and appends them
 onto the shared Thesis so breadth and leadership stay aligned with the current
 market cut.
 */
-func (signal *Signal) onTicker(message any) any {
-	return signal.thesis.AppendMeasuremnts(
-		types.SourceSentiment, signal.Calculate(message.(*kraken.Ticker).Data, nil, nil),
-	)
+func (signal *Signal) Thesis() *types.Subscription[*types.Thesis] {
+	subscription := types.NewSubscription[*types.Thesis]()
+	signal.subMu.Lock()
+	signal.theses = append(signal.theses, subscription)
+	signal.subMu.Unlock()
+	return subscription
+}
+
+func (signal *Signal) run() {
+	if signal.ticker == nil {
+		return
+	}
+
+	for {
+		select {
+		case <-signal.ctx.Done():
+			return
+		case ticker := <-signal.ticker.Channel:
+			signal.onTicker(ticker)
+		}
+	}
+}
+
+func (signal *Signal) onTicker(ticker *kraken.Ticker) {
+	signal.publish(signal.thesis.AppendMeasuremnts(
+		types.SourceSentiment, signal.Calculate(ticker.Data, nil, nil),
+	))
+}
+
+func (signal *Signal) publish(thesis *types.Thesis) {
+	if thesis == nil {
+		return
+	}
+
+	signal.subMu.Lock()
+	subscribers := append([]*types.Subscription[*types.Thesis](nil), signal.theses...)
+	signal.subMu.Unlock()
+
+	for _, subscription := range subscribers {
+		subscription.Send(thesis)
+	}
 }
 
 /*

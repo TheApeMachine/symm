@@ -2,6 +2,7 @@ package cvd
 
 import (
 	"context"
+	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -18,7 +19,6 @@ price response. Categories belong in logic; this signal emits numerical scores
 only.
 */
 type Signal struct {
-	*types.Actor
 	thesis    *types.Thesis
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -26,6 +26,10 @@ type Signal struct {
 	flow      *equation.Flow
 	midpoints map[string]float64
 	ui        chan []byte
+	ticker    *types.Subscription[*kraken.Ticker]
+	trade     *types.Subscription[*kraken.Trade]
+	subMu     sync.Mutex
+	theses    []*types.Subscription[*types.Thesis]
 }
 
 /*
@@ -44,11 +48,6 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 		ui:        ui,
 	}
 
-	signal.Actor = types.NewActor(ctx, "cvd", map[string]types.Handler{
-		"ticker": {Topic: "thesis", Fn: signal.onTicker},
-		"trade":  {Topic: "thesis", Fn: signal.onTrade},
-	})
-
 	return signal
 }
 
@@ -63,26 +62,75 @@ func (signal *Signal) Name() string {
 Initialize wires ticker and trade ingress from Live. Book floods are unused by
 CVD (midpoints come from tickers) and must not fill a dead subscription.
 */
-func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
+func (signal *Signal) Initialize(market types.MarketFeed, thesis *types.Thesis) {
 	signal.thesis = thesis
-	signal.Actor.Initialize(
-		types.Topic{Name: "ticker", Actor: live},
-		types.Topic{Name: "trade", Actor: live},
-	)
+
+	if market != nil {
+		signal.ticker = market.Ticker()
+		signal.trade = market.Trade()
+	}
+
+	go signal.run()
 }
 
-func (signal *Signal) onTicker(message any) any {
-	return signal.thesis.AppendMeasuremnts(
-		types.SourceCVD,
-		signal.Calculate(message.(*kraken.Ticker).Data, nil, nil),
-	)
+func (signal *Signal) Thesis() *types.Subscription[*types.Thesis] {
+	subscription := types.NewSubscription[*types.Thesis]()
+	signal.subMu.Lock()
+	signal.theses = append(signal.theses, subscription)
+	signal.subMu.Unlock()
+	return subscription
 }
 
-func (signal *Signal) onTrade(message any) any {
-	return signal.thesis.AppendMeasuremnts(
+func (signal *Signal) run() {
+	var tickers <-chan *kraken.Ticker
+	var trades <-chan *kraken.Trade
+
+	if signal.ticker != nil {
+		tickers = signal.ticker.Channel
+	}
+
+	if signal.trade != nil {
+		trades = signal.trade.Channel
+	}
+
+	for {
+		select {
+		case <-signal.ctx.Done():
+			return
+		case ticker := <-tickers:
+			signal.onTicker(ticker)
+		case trade := <-trades:
+			signal.onTrade(trade)
+		}
+	}
+}
+
+func (signal *Signal) onTicker(ticker *kraken.Ticker) {
+	signal.publish(signal.thesis.AppendMeasuremnts(
 		types.SourceCVD,
-		signal.Calculate(nil, message.(*kraken.Trade).Data, nil),
-	)
+		signal.Calculate(ticker.Data, nil, nil),
+	))
+}
+
+func (signal *Signal) onTrade(trade *kraken.Trade) {
+	signal.publish(signal.thesis.AppendMeasuremnts(
+		types.SourceCVD,
+		signal.Calculate(nil, trade.Data, nil),
+	))
+}
+
+func (signal *Signal) publish(thesis *types.Thesis) {
+	if thesis == nil {
+		return
+	}
+
+	signal.subMu.Lock()
+	subscribers := append([]*types.Subscription[*types.Thesis](nil), signal.theses...)
+	signal.subMu.Unlock()
+
+	for _, subscription := range subscribers {
+		subscription.Send(thesis)
+	}
 }
 
 func (signal *Signal) Calculate(

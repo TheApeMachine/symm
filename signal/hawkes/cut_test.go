@@ -37,9 +37,7 @@ func TestOnTickerAdvancesCut(t *testing.T) {
 
 			Convey("It still publishes a cut so cascade cadence is not trade-starved", func() {
 				So(cut, ShouldNotBeNil)
-				frozen, ok := cut.(*Cut)
-				So(ok, ShouldBeTrue)
-				So(frozen.Symbols(), ShouldResemble, []string{"BTC/USD"})
+				So(cut.Symbols(), ShouldResemble, []string{"BTC/USD"})
 			})
 		})
 

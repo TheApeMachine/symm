@@ -25,6 +25,9 @@ type level3Order struct {
 	quantity string
 }
 
+/*
+newLevel3Ledger creates a per-symbol order cache plus snapshot waiting state.
+*/
 func newLevel3Ledger() *level3Ledger {
 	return &level3Ledger{
 		orders:  make(map[string]map[string]level3Order),
@@ -32,6 +35,9 @@ func newLevel3Ledger() *level3Ledger {
 	}
 }
 
+/*
+Apply decodes one raw frame and routes each payload row into book mutations.
+*/
 func (ledger *level3Ledger) Apply(manager *spot.BookManager, raw []byte) error {
 	var frame kraken.Level3
 
@@ -54,6 +60,10 @@ func (ledger *level3Ledger) Apply(manager *spot.BookManager, raw []byte) error {
 	return nil
 }
 
+/*
+applyBook applies one symbol payload by enforcing snapshot ordering and checksum
+validation before depth pruning.
+*/
 func (ledger *level3Ledger) applyBook(
 	manager *spot.BookManager,
 	data *kraken.Level3Data,
@@ -111,6 +121,10 @@ func (ledger *level3Ledger) applyBook(
 	return nil
 }
 
+/*
+pruneDepth keeps each side of the managed book aligned with the configured
+maxDepth and the per-symbol order cache.
+*/
 func (ledger *level3Ledger) pruneDepth(managed *book.Book, symbol string) {
 	if managed == nil || managed.MaxDepth <= 0 || ledger.orders[symbol] == nil {
 		return
@@ -120,6 +134,9 @@ func (ledger *level3Ledger) pruneDepth(managed *book.Book, symbol string) {
 	ledger.pruneSide(managed.BestAsk(), true, managed.MaxDepth, symbol)
 }
 
+/*
+pruneSide discards order-cache entries past the configured depth on one side.
+*/
 func (ledger *level3Ledger) pruneSide(level *book.Level, higher bool, maxDepth int, symbol string) {
 	for depth := 0; level != nil; depth++ {
 		next := level.Lower
@@ -138,6 +155,10 @@ func (ledger *level3Ledger) pruneSide(level *book.Level, higher bool, maxDepth i
 	}
 }
 
+/*
+applySide mutates one side of the book with add/modify/delete semantics and
+tracks exact per-order text for checksum replay safety.
+*/
 func (ledger *level3Ledger) applySide(
 	managed *book.Book,
 	symbol string,
@@ -252,6 +273,9 @@ func (ledger *level3Ledger) applySide(
 	return nil
 }
 
+/*
+checksum recomputes the per-symbol book checksum from cached level text.
+*/
 func (ledger *level3Ledger) checksum(managed *book.Book, symbol string) (uint32, error) {
 	checksum := uint32(0)
 	var err error
@@ -271,6 +295,9 @@ func (ledger *level3Ledger) checksum(managed *book.Book, symbol string) (uint32,
 	return checksum, nil
 }
 
+/*
+writeSide writes up to ten price levels from one side into the checksum.
+*/
 func (ledger *level3Ledger) writeSide(
 	checksum uint32,
 	level *book.Level,
@@ -307,6 +334,10 @@ func (ledger *level3Ledger) writeSide(
 	return checksum, nil
 }
 
+/*
+writeChecksumDecimal accumulates the kraken checksum input after trimming dot and
+leading zeroes according to the protocol text format.
+*/
 func writeChecksumDecimal(checksum uint32, value string) uint32 {
 	started := false
 	var next [1]byte

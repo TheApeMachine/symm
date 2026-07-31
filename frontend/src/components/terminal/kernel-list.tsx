@@ -1,16 +1,31 @@
-import { DEFAULT_KERNELS } from "#/collections/app";
+import { appStore, DEFAULT_KERNELS } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
+import type { Measurement } from "#/collections/types";
 import {
 	type MeterParts,
 	mergeInspectorMetrics,
 	paintInspectorMeters,
 } from "#/components/terminal/inspector-meters";
-import { KernelListRow } from "#/components/terminal/kernel-list-row";
-import type { Measurement } from "#/collections/types";
+import { cn } from "#/lib/utils";
+import { registerPainter } from "#/providers/ws-stores";
+import { Component } from "../ui/component";
 
 type SparkView = {
 	line: SVGPolylineElement | null;
 	area: SVGPolylineElement | null;
+};
+
+type KernelRowModel = {
+	source: string;
+	status: string;
+	statusDot: string;
+	readout: string;
+	age: string;
+	barWidth: string;
+};
+
+type KernelPaintModel = {
+	rows: KernelRowModel[];
 };
 
 type RowParts = {
@@ -19,11 +34,6 @@ type RowParts = {
 	samples: number[];
 	sparks: SparkView[];
 	pressed: string;
-	statusText: string;
-	status: HTMLElement | null;
-	bar: HTMLElement | null;
-	readout: HTMLElement | null;
-	age: HTMLElement | null;
 };
 
 type InspectorParts = {
@@ -59,6 +69,12 @@ const HEADLINE_METRIC: Record<string, string> = {
 	toxicity: "touch_quantity",
 };
 
+const STATUS_DOT: Record<string, string> = {
+	HEALTHY: "var(--up)",
+	INVALID: "var(--down)",
+	STANDBY: "var(--f3)",
+};
+
 /*
 kernelListReadout selects one native headline metric from a flat measurement row
 so the list can paint directly without depending on the removed measurement view.
@@ -78,6 +94,93 @@ const kernelListReadout = (row: Measurement) => {
 	const sample = Math.max(0, Math.min(1, reading?.normalized ?? raw));
 
 	return { metric, raw, sample };
+};
+
+const measurementRows = (value: unknown) =>
+	(Array.isArray(value) ? value : value != null ? [value] : []) as Measurement[];
+
+const ageLabel = (at?: string) => {
+	if (!at) {
+		return "";
+	}
+
+	const elapsed = Date.now() - Date.parse(at);
+
+	if (!Number.isFinite(elapsed)) {
+		return "";
+	}
+
+	if (elapsed < 60_000) {
+		return `${Math.max(0, Math.floor(elapsed / 1000))}s`;
+	}
+
+	return `${Math.floor(elapsed / 60_000)}m`;
+};
+
+const kernelStatus = (row?: Measurement) => {
+	if (row === undefined) {
+		return "STANDBY";
+	}
+
+	return row.validity?.state !== "invalid" ? "HEALTHY" : "INVALID";
+};
+
+const kernelModel = (
+	value: unknown,
+	focusSymbol: string,
+	sources: string[],
+): KernelPaintModel => {
+	const latest = new Map<string, Measurement>();
+	const observed = new Set<string>();
+
+	for (const row of measurementRows(value)) {
+		if (!row || typeof row.source !== "string") {
+			continue;
+		}
+
+		observed.add(row.source);
+
+		if (focusSymbol !== "" && row.symbol !== focusSymbol) {
+			continue;
+		}
+
+		const current = latest.get(row.source);
+
+		if (current === undefined || Date.parse(current.at) <= Date.parse(row.at)) {
+			latest.set(row.source, row);
+		}
+	}
+
+	appStore.actions.observeSources(observed);
+
+	return {
+		rows: sources.map((source) => {
+			const row = latest.get(source);
+			const status = kernelStatus(row);
+
+			if (row === undefined) {
+				return {
+					source,
+					status,
+					statusDot: STATUS_DOT[status],
+					readout: "waiting",
+					age: "",
+					barWidth: "0%",
+				};
+			}
+
+			const { metric, raw, sample } = kernelListReadout(row);
+
+			return {
+				source,
+				status,
+				statusDot: STATUS_DOT[status],
+				readout: `${metric} ${raw.toPrecision(4)}`,
+				age: ageLabel(row.at),
+				barWidth: `${Math.max(0, Math.min(100, sample * 100))}%`,
+			};
+		}),
+	};
 };
 
 /*
@@ -143,6 +246,26 @@ const appendSpark = (samples: number[], unit: number) => {
 
 	while (samples.length > 50) {
 		samples.shift();
+	}
+};
+
+const syncPressedRows = () => {
+	const { inspectorSource, selectedSource } = terminalStore.state;
+
+	for (const [source, parts] of kernelRows) {
+		const pressed =
+			inspectorSource === source || selectedSource === source ? "true" : "false";
+
+		if (parts.pressed === pressed) {
+			continue;
+		}
+
+		parts.pressed = pressed;
+		parts.root.classList.toggle("border-l-(--acc)", pressed === "true");
+		parts.root.classList.toggle("bg-(--raised)", pressed === "true");
+		parts.root.classList.toggle("border-l-transparent", pressed !== "true");
+		parts.root.classList.toggle("bg-transparent", pressed !== "true");
+		parts.root.setAttribute("aria-pressed", pressed);
 	}
 };
 
@@ -229,6 +352,7 @@ openInspectorShell selects a source and paints the inspector immediately.
 export const openInspectorShell = (source: string) => {
 	terminalStore.actions.inspectSource(source);
 	syncInspector(source);
+	syncPressedRows();
 };
 
 /*
@@ -237,6 +361,7 @@ closeInspectorShell clears the inspected source and hides the shell.
 export const closeInspectorShell = () => {
 	terminalStore.actions.closeInspect();
 	syncInspector(null);
+	syncPressedRows();
 };
 
 /*
@@ -275,17 +400,26 @@ export const bindInspector = (root: HTMLElement | null) => {
 };
 
 /*
-paintKernelList paints each DRAW measurement onto cached row/inspector nodes.
+paintKernelList keeps the sparkline and inspector incremental while Component
+handles the granular row text and style updates.
 */
 export const paintKernelList = (value: unknown, focusSymbol: string) => {
-	const { inspectorSource, selectedSource } = terminalStore.state;
-	syncInspector(inspectorSource);
-	const rows = (
-		Array.isArray(value) ? value : value != null ? [value] : []
-	) as Measurement[];
+	if (kernelRows.size === 0 && inspector?.source == null) {
+		return;
+	}
+
+	syncInspector(terminalStore.state.inspectorSource);
+	syncPressedRows();
+
+	const rows = measurementRows(value);
+	const observed = new Set<string>();
 	const now = Date.now();
 
 	for (const row of rows) {
+		if (typeof row.source === "string") {
+			observed.add(row.source);
+		}
+
 		if (focusSymbol !== "" && row.symbol !== focusSymbol) {
 			continue;
 		}
@@ -293,7 +427,6 @@ export const paintKernelList = (value: unknown, focusSymbol: string) => {
 		const { metric, raw, sample } = kernelListReadout(row);
 		const valid = row.validity?.state !== "invalid";
 		const statusText = valid ? "Healthy" : "Invalid";
-		const percent = Math.max(0, Math.min(100, sample * 100));
 		const elapsed = now - Date.parse(row.at);
 		const age = !Number.isFinite(elapsed)
 			? "—"
@@ -304,52 +437,10 @@ export const paintKernelList = (value: unknown, focusSymbol: string) => {
 		const parts = kernelRows.get(row.source);
 
 		if (parts !== undefined) {
-			const pressed =
-				inspectorSource === row.source || selectedSource === row.source
-					? "true"
-					: "false";
-
-			if (parts.pressed !== pressed) {
-				parts.pressed = pressed;
-				parts.root.classList.toggle("border-l-(--acc)", pressed === "true");
-				parts.root.classList.toggle("bg-(--raised)", pressed === "true");
-				parts.root.classList.toggle("border-l-transparent", pressed !== "true");
-				parts.root.classList.toggle("bg-transparent", pressed !== "true");
-				parts.root.setAttribute("aria-pressed", pressed);
-			}
-
-			if (parts.status !== null && parts.statusText !== statusText) {
-				parts.statusText = statusText;
-
-				if (parts.compact) {
-					parts.status.classList.toggle("bg-(--up)", valid);
-					parts.status.classList.toggle("bg-(--down)", !valid);
-				} else {
-					parts.status.textContent = statusText;
-					parts.status.classList.remove(...STATUS_HEALTHY_CLASSES);
-					parts.status.classList.remove(...STATUS_INVALID_CLASSES);
-					parts.status.classList.add(
-						...(valid ? STATUS_HEALTHY_CLASSES : STATUS_INVALID_CLASSES),
-					);
-				}
-			}
-
 			appendSpark(parts.samples, sample);
 
 			for (const spark of parts.sparks) {
 				writeSpark(spark.line, spark.area, parts.samples);
-			}
-
-			if (parts.bar !== null) {
-				parts.bar.style.width = `${percent}%`;
-			}
-
-			if (parts.readout !== null) {
-				parts.readout.textContent = `${metric} ${raw.toPrecision(4)}`;
-			}
-
-			if (parts.age !== null) {
-				parts.age.textContent = age;
 			}
 		}
 
@@ -380,7 +471,12 @@ export const paintKernelList = (value: unknown, focusSymbol: string) => {
 		if (inspector.observed !== null) {
 			inspector.observed.textContent = `observed ${new Date(row.at).toLocaleTimeString("en-US", { hour12: false })} · ${inspector.count} samples`;
 		}
+
+		void raw;
+		void age;
 	}
+
+	appStore.actions.observeSources(observed);
 
 	if (
 		inspector !== null &&
@@ -397,7 +493,8 @@ export const paintKernelList = (value: unknown, focusSymbol: string) => {
 };
 
 /*
-KernelList mounts one row per kernel and caches its paint targets once.
+KernelList mounts one stable row per source and lets Component paint direct
+value updates in place while paintKernelList keeps the sparkline incremental.
 */
 export const KernelList = ({
 	compact = false,
@@ -406,49 +503,144 @@ export const KernelList = ({
 	compact?: boolean;
 	sources?: string[];
 }) => (
-	<div className="min-h-0 overflow-auto">
-		{sources.map((source) => (
-			<KernelListRow
-				key={source}
-				source={source}
-				compact={compact}
-				onActivate={(next) => {
-					if (!compact) {
-						openInspectorShell(next);
-						return;
-					}
+	<Component
+		register={(paint) =>
+			registerPainter("measurements", (updates) => {
+				paint(kernelModel(updates, appStore.state.focusSymbol, sources));
+			})
+		}
+		select="rows"
+	>
+		{({ ref, className }) => (
+			<div ref={ref} className={cn("min-h-0 overflow-auto", className)}>
+				{sources.map((source, index) => (
+					<button
+						key={source}
+						type="button"
+						data-index={index}
+						onClick={() => {
+							if (compact) {
+								terminalStore.actions.selectSource(source);
+								syncPressedRows();
+								return;
+							}
 
-					terminalStore.actions.selectSource(next);
-				}}
-				rowRef={(element) => {
-					if (element === null) {
-						kernelRows.delete(source);
-						return;
-					}
+							openInspectorShell(source);
+						}}
+						ref={(element) => {
+							if (element === null) {
+								kernelRows.delete(source);
+								return;
+							}
 
-					kernelRows.set(source, {
-						root: element,
-						compact,
-						samples: [],
-						sparks: [
-							{
-								line: element.querySelector('[data-role="spark-line"]'),
-								area: element.querySelector('[data-role="spark-area"]'),
-							},
-						],
-						pressed: "",
-						statusText: "",
-						status: element.querySelector('[data-role="status"]'),
-						bar: element.querySelector('[data-role="bar"]'),
-						readout: element.querySelector('[data-role="readout"]'),
-						age: element.querySelector('[data-role="age"]'),
-					});
+							const current = kernelRows.get(source);
 
-					if (inspector?.source === source) {
-						attachInspectorSpark(source);
-					}
-				}}
-			/>
-		))}
-	</div>
+							kernelRows.set(source, {
+								root: element,
+								compact,
+								samples: current?.samples ?? [],
+								sparks: [
+									{
+										line: element.querySelector('[data-role="spark-line"]'),
+										area: element.querySelector('[data-role="spark-area"]'),
+									},
+								],
+								pressed: current?.pressed ?? "",
+							});
+
+							if (inspector?.source === source) {
+								attachInspectorSpark(source);
+							}
+
+							syncPressedRows();
+						}}
+						className="block w-full cursor-pointer border-(--line) border-b border-l-2 border-l-transparent bg-transparent px-3 py-2.5 text-left font-[inherit] hover:bg-(--raised)"
+					>
+						<div className="flex items-center justify-between gap-2">
+							<span
+								data-paint="source"
+								className={cn("truncate font-semibold text-(--f1)", {
+									"text-xs": compact,
+									"text-[12.5px]": !compact,
+								})}
+							>
+								{source}
+							</span>
+
+							{compact ? (
+								<span
+									data-set="statusDot"
+									data-target="style.backgroundColor"
+									className="size-1.75 shrink-0 rounded-full bg-(--f3)"
+								/>
+							) : (
+								<span
+									data-paint="status"
+									data-paint-class="HEALTHY:border-[color-mix(in_srgb,var(--up)_38%,transparent)],bg-[color-mix(in_srgb,var(--up)_12%,transparent)],text-(--up) INVALID:border-[color-mix(in_srgb,var(--down)_38%,transparent)],bg-[color-mix(in_srgb,var(--down)_12%,transparent)],text-(--down) STANDBY:border-(--line2),bg-(--line),text-(--f3)"
+									className="shrink-0 rounded-xs border border-(--line2) bg-(--line) px-1.25 py-0.5 font-mono text-[9px] uppercase tracking-[0.07em] text-(--f3)"
+								>
+									STANDBY
+								</span>
+							)}
+						</div>
+
+						{compact ? null : (
+							<>
+								<svg
+									viewBox="0 0 150 30"
+									preserveAspectRatio="none"
+									className="mt-1.5 block h-6.5 w-full"
+								>
+									<title>Signal sparkline</title>
+									<polyline
+										data-role="spark-area"
+										className="fill-[color-mix(in_srgb,var(--acc)_16%,transparent)]"
+										stroke="none"
+									/>
+									<polyline
+										data-role="spark-line"
+										className="stroke-(--acc)"
+										fill="none"
+										strokeWidth="1.4"
+										vectorEffect="non-scaling-stroke"
+									/>
+								</svg>
+
+								<div className="mt-1.5 flex items-center gap-2">
+									<div className="h-1 flex-1 overflow-hidden rounded-xs bg-(--line)">
+										<div
+											data-set="barWidth"
+											data-target="style.width"
+											className="h-full w-0 bg-(--warning) transition-[width] duration-500 ease-out"
+										/>
+									</div>
+
+									<span
+										data-paint="readout"
+										className="flex-1 truncate text-right font-mono text-[10px] text-(--f2)"
+									>
+										waiting
+									</span>
+
+									<span
+										data-paint="age"
+										className="w-11.5 shrink-0 text-right font-mono text-[9.5px] text-(--f4)"
+									/>
+								</div>
+							</>
+						)}
+
+						{compact ? (
+							<div
+								data-paint="readout"
+								className="mt-1 truncate font-mono text-[9px] text-(--f4)"
+							>
+								waiting
+							</div>
+						) : null}
+					</button>
+				))}
+			</div>
+		)}
+	</Component>
 );

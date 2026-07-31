@@ -41,7 +41,7 @@ func (a *Allocator) Allocate(thesis *types.Thesis) error {
 		return nil
 	}
 
-	cash, err := a.balance.FreeCash()
+	cash, err := a.balance.Cash()
 	if err != nil || cash == nil || cash.Sign() <= 0 {
 		return nil
 	}
@@ -86,14 +86,16 @@ func (a *Allocator) Allocate(thesis *types.Thesis) error {
 
 		// Reserve capital on broker ledger
 		intentID := fmt.Sprintf("alloc:%s:%d", decision.Symbol, decision.At.UnixNano())
-		if err := a.balance.Reserve(intentID, decision.Symbol, cost, false); err != nil {
+
+		if err := a.balance.Reserve(cost); err != nil {
 			a.reject(decision, "ledger reservation failed")
 			continue
 		}
 
 		ask, err := a.price.ReferencePrice(&pair)
+
 		if err != nil {
-			_ = a.balance.Release(intentID)
+			_ = a.balance.Release(cost)
 			a.reject(decision, "reference price unavailable")
 			continue
 		}

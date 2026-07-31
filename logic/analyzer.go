@@ -2,8 +2,10 @@ package logic
 
 import (
 	"context"
+	"sync"
 
 	"github.com/theapemachine/datura/dmt"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -30,10 +32,10 @@ Strategy package to make Decisions. The final output of the Logic stage is
 the Graph, which should encode everything that has been collected so far.
 */
 type Analyzer struct {
-	*types.Actor
 	ctx       context.Context
 	cancel    context.CancelFunc
 	status    types.Status
+	thesesIn   chan *types.Thesis
 	tree      *dmt.Tree
 	manifold  *manifold.Solver
 	resonance *resonance.Solver
@@ -43,7 +45,8 @@ type Analyzer struct {
 	ui        chan []byte
 	binui     chan []byte
 	recorder  *audit.Recorder
-	thesis    *types.Thesis
+	subMu      sync.Mutex
+	thesesOut  []*types.Subscription[*types.Thesis]
 }
 
 /*
@@ -58,11 +61,17 @@ func NewAnalyzer(
 	recorder *audit.Recorder,
 ) (*Analyzer, error) {
 	ctx, cancel := context.WithCancel(ctx)
+	buffer := viper.GetInt("system.actor.buffer")
+
+	if buffer < 1 {
+		buffer = 64
+	}
 
 	analyzer := &Analyzer{
 		ctx:       ctx,
 		cancel:    cancel,
 		status:    types.READY,
+		thesesIn:   make(chan *types.Thesis, buffer),
 		tree:      tree,
 		manifold:  manifold.NewSolver(ui, binui, recorder),
 		resonance: resonance.NewSolver(ui, recorder),
@@ -73,41 +82,82 @@ func NewAnalyzer(
 		recorder:  recorder,
 	}
 
-	// ticker and trade come from Hawkes cuts at depth one for manifold.
-	// thesis comes from every other signal's SignalResult for categories+cognition.
-	analyzer.Actor = types.NewActor(ctx, "analyzer", map[string]types.Handler{
-		"thesis": {Topic: "thesis", Fn: analyzer.onSignal},
-	})
-
 	return analyzer, nil
 }
 
 /*
-Initialize attaches analyzer to upstream topics. Hawkes ticker/trade are wired
-at depth one so each cut is processed against its Outcome snapshot. Every
-non-Hawkes signal's thesis topic is wired so any signal publish triggers
-category+cognition analysis. The thesis pointer is the shared boot pointer
-set by the caller via SetThesis.
+Initialize attaches analyzer to upstream thesis subscriptions and starts the
+direct channel loop that feeds Planner.
 */
-func (analyzer *Analyzer) Initialize(signals ...types.Topic) error {
+func (analyzer *Analyzer) Initialize(signals ...*types.Subscription[*types.Thesis]) error {
 	errnie.Info("initializing analyzer")
+	go analyzer.run()
 
 	if len(signals) == 0 {
 		analyzer.status = types.READY
 		return nil
 	}
 
-	analyzer.Actor.Initialize(signals...)
+	for _, signal := range signals {
+		if signal == nil {
+			continue
+		}
+
+		go analyzer.forward(signal)
+	}
+
 	analyzer.status = types.READY
 
 	return nil
 }
 
-func (analyzer *Analyzer) onSignal(message any) any {
-	thesis, ok := message.(*types.Thesis)
 
-	if !ok {
-		return nil
+func (analyzer *Analyzer) Thesis() *types.Subscription[*types.Thesis] {
+	subscription := types.NewSubscription[*types.Thesis]()
+	analyzer.subMu.Lock()
+	analyzer.thesesOut = append(analyzer.thesesOut, subscription)
+	analyzer.subMu.Unlock()
+	return subscription
+
+}
+
+func (analyzer *Analyzer) Enqueue(thesis *types.Thesis) {
+	if thesis == nil {
+		return
+	}
+
+	select {
+	case <-analyzer.ctx.Done():
+		return
+	case analyzer.thesesIn <- thesis:
+	}
+}
+
+func (analyzer *Analyzer) forward(signal *types.Subscription[*types.Thesis]) {
+	for {
+		select {
+		case <-analyzer.ctx.Done():
+			return
+		case thesis := <-signal.Channel:
+			analyzer.Enqueue(thesis)
+		}
+	}
+}
+
+func (analyzer *Analyzer) run() {
+	for {
+		select {
+		case <-analyzer.ctx.Done():
+			return
+		case thesis := <-analyzer.thesesIn:
+			analyzer.onSignal(thesis)
+		}
+	}
+}
+
+func (analyzer *Analyzer) onSignal(thesis *types.Thesis) {
+	if thesis == nil {
+		return
 	}
 
 	for _, solver := range []Solver{
@@ -120,15 +170,21 @@ func (analyzer *Analyzer) onSignal(message any) any {
 		if err := solver.Update(thesis); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
-				"failed manifold step",
-				err,
-			))
+					"failed manifold step",
+					err,
+				))
 
-			return nil
+				return
+			}
 		}
-	}
 
-	return thesis
+	analyzer.subMu.Lock()
+	subscribers := append([]*types.Subscription[*types.Thesis](nil), analyzer.thesesOut...)
+	analyzer.subMu.Unlock()
+
+	for _, subscription := range subscribers {
+		subscription.Send(thesis)
+	}
 }
 
 /*

@@ -9,14 +9,10 @@ import (
 )
 
 /*
-Actor for stoploss lifecycle. Non-nil when the stoploss is owned by a
-position that has subscribed to the market ticker topic. When non-nil,
-NewStoploss and Initialize subscribe the actor to the market ticker root
-so onTicker receives live bids directly instead of relying on an external
-routing layer like Desk.
+Stoploss regulates one open lot from direct ticker updates forwarded by the
+owning Position.
 */
 type Stoploss struct {
-	*Actor      `json:"-"`
 	ctx         context.Context
 	cancel      context.CancelFunc
 	Status      Status           `json:"status"`
@@ -25,95 +21,47 @@ type Stoploss struct {
 	Peak        *decimal.Decimal `json:"peak"`
 	Mark        *decimal.Decimal `json:"mark"`
 	Floor       *decimal.Decimal `json:"floor"`
-	exit        func() error
-	onChange    func()
 	breachCount int
 	shockTicks  int
 }
 
 /*
 NewStoploss constructs an active regulator with default weight. Entry is bound
-later via Bind when the position opens. market is the upstream market actor
-that publishes ticker frames on the "ticker" topic so the stoploss can
-evaluate exits from live bid data without depending on a routing layer.
+later via Bind when the position opens.
 */
 func NewStoploss(
 	ctx context.Context,
 	symbol string,
 	mark *decimal.Decimal,
-	exit func() error,
-	onChange func(),
-	market *Actor,
 ) *Stoploss {
 	errnie.Info("creating stoploss")
 
 	ctx, cancel := context.WithCancel(ctx)
 
 	stoploss := &Stoploss{
-		ctx:      ctx,
-		cancel:   cancel,
-		Symbol:   symbol,
-		Entry:    mark.Copy(),
-		Mark:     mark.Copy(),
-		exit:     exit,
-		onChange: onChange,
-		Status:   PENDING,
+		ctx:    ctx,
+		cancel: cancel,
+		Symbol: symbol,
+		Entry:  mark.Copy(),
+		Mark:   mark.Copy(),
+		Status: PENDING,
 	}
 
 	stoploss.evaluate()
-
-	stoploss.Actor = NewActor(ctx, "stoploss", map[string]Handler{
-		"ticker": {Topic: "stoploss", Fn: stoploss.onTicker},
-	})
-
-	if market != nil {
-		stoploss.Actor.Initialize(Topic{
-			Name: "ticker", Actor: market,
-		})
-	} else {
-		stoploss.Actor.Initialize()
-	}
 
 	stoploss.Status = ARMED
 	return stoploss
 }
 
 /*
-Initialize the Stoploss if we are "recovering" after a restart.
-market is the upstream market actor that publishes ticker frames on
-the "ticker" topic so the stoploss can evaluate exits from live bid data.
+update advances the independent stop state from live ticker bids.
 */
-func (stoploss *Stoploss) Initialize(
-	ctx context.Context,
-	mark *decimal.Decimal,
-	exit func() error,
-	onChange func(),
-	market *Actor,
-) {
-	stoploss.Status = PENDING
-	stoploss.ctx = ctx
-	stoploss.Entry = mark.Copy()
-	stoploss.Mark = mark.Copy()
-	stoploss.evaluate()
-
-	stoploss.exit = exit
-	stoploss.onChange = onChange
-
-	if market != nil {
-		stoploss.Actor.Initialize(Topic{Name: "ticker", Actor: market})
-	} else {
-		stoploss.Actor.Initialize()
+func (stoploss *Stoploss) Update(ticker *kraken.Ticker) error {
+	if ticker == nil {
+		return nil
 	}
 
-	stoploss.Status = ARMED
-}
-
-/*
-onTicker advances the independent stop state from live ticker bids and invokes
-the bound exit callback immediately when the floor is breached.
-*/
-func (stoploss *Stoploss) onTicker(message any) any {
-	rows := message.(*kraken.Ticker).Data
+	rows := ticker.Data
 
 	for _, row := range rows {
 		if row.Symbol != stoploss.Symbol {
@@ -140,10 +88,6 @@ func (stoploss *Stoploss) onTicker(message any) any {
 			stoploss.breachCount = 0
 			stoploss.evaluate()
 
-			if stoploss.onChange != nil {
-				stoploss.onChange()
-			}
-
 			continue
 		}
 
@@ -156,56 +100,16 @@ func (stoploss *Stoploss) onTicker(message any) any {
 
 			if stoploss.breachCount < 6 {
 				stoploss.evaluate()
-
-				if stoploss.onChange != nil {
-					stoploss.onChange()
-				}
-
 				continue
 			}
 
-			if stoploss.exit == nil {
-				stoploss.Status = ERROR
-
-				return errnie.Error(errnie.Err(
-					errnie.ExpectationFailed,
-					"stoploss: exit called but not set",
-					nil,
-				))
-			}
-
-			if err := stoploss.exit(); err != nil {
-				stoploss.Status = ERROR
-
-				return errnie.Error(errnie.Err(
-					errnie.ExpectationFailed,
-					"stoploss: exit failed",
-					err,
-				))
-			}
+			stoploss.Status = TRIGGERED
 		}
 
 		stoploss.evaluate()
-
-		if stoploss.onChange != nil {
-			stoploss.onChange()
-		}
 	}
 
-	return stoploss
-}
-
-/*
-Update the Stoploss with a new mark price. This is used to update the mark
-from the Position on fills, and to update the mark from the Holding on recovery.
-*/
-func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
-	stoploss.Mark = mark.Copy()
-	stoploss.evaluate()
-
-	if stoploss.onChange != nil {
-		stoploss.onChange()
-	}
+	return nil
 }
 
 /*

@@ -98,7 +98,7 @@ export const createCameraControls = ({
 			cameraRef.current.position.set(position.x, position.y, position.z);
 		}
 
-		if (Number.isFinite(p.fov)) {
+		if (Number.isFinite(p.fov) && p.fov > 0 && p.fov < 180) {
 			cameraRef.current.fov = p.fov as number;
 			cameraRef.current.updateProjectionMatrix();
 		}

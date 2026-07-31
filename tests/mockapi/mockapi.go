@@ -18,18 +18,26 @@ import (
 )
 
 /*
-MockConn is a controllable Kraken transport with Actor roots and an explicit
-frame queue, implementing websocket.Conn for the fixture market.
+MockConn is a controllable Kraken transport with explicit typed subscriptions
+and an explicit frame queue, implementing websocket.Conn for the fixture market.
 */
 type MockConn struct {
 	*Control
-	*types.Actor
 	queue      queue
 	client     *spot.WebSocket
 	allowed    map[string]struct{}
 	paperMu    sync.Mutex
 	paper      *Paper
-	roots      map[string]*types.Subscription
+	subMu      sync.Mutex
+	rawSubs    map[string][]*types.Subscription[any]
+	tickers    []*types.Subscription[*kraken.Ticker]
+	booksOut   []*types.Subscription[*kraken.Book]
+	trades     []*types.Subscription[*kraken.Trade]
+	instruments []*types.Subscription[*kraken.Instrument]
+	balances   []*types.Subscription[[]byte]
+	executions []*types.Subscription[[]byte]
+	orders     []*types.Subscription[[]byte]
+	level3Out  []*types.Subscription[[]byte]
 	books      *spot.BookManager
 	bookMu     sync.RWMutex
 	increments sync.Map
@@ -59,8 +67,6 @@ func (conn *MockConn) Client() *spot.WebSocket {
 
 /*
 NewConn creates an isolated transport fake for the supplied symbol universe.
-It starts the Actor fan-out loop the same way Live and Paper do after AddRoot,
-so Subscribe/Write/Emit reach Desk and Signals through production wiring.
 */
 func NewConn(ctx context.Context, symbols ...string) *MockConn {
 	if viper.GetInt("system.actor.buffer") < 1 {
@@ -84,44 +90,15 @@ func NewConn(ctx context.Context, symbols ...string) *MockConn {
 		allowed: allowed,
 		books:   spot.NewBookManager(),
 		cancel:  cancel,
-		roots: map[string]*types.Subscription{
-			"ticker":     rootSubscription(),
-			"book":       rootSubscription(),
-			"trade":      rootSubscription(),
-			"instrument": rootSubscription(),
-			"balances":   rootSubscription(),
-			"executions": rootSubscription(),
-			"add_order":  rootSubscription(),
-			"level3":     rootSubscription(),
-		},
+		rawSubs: make(map[string][]*types.Subscription[any]),
 	}
-
-	conn.Actor = types.NewActor(ctx, "mockapi", nil)
 	conn.books.OnCreateBook.Recurring(func(event *callback.Event[*sdkbook.Book]) {
 		managed := event.Data
 		managed.EnableMaxDepth = false
 		managed.NoBookCrossing = false
 	})
 
-	for name, root := range conn.roots {
-		conn.AddRoot(name, root)
-	}
-
-	conn.Actor.Initialize()
-
 	return conn
-}
-
-func rootSubscription() *types.Subscription {
-	buffer := viper.GetInt("system.actor.buffer")
-
-	if buffer < 1 {
-		buffer = 64
-	}
-
-	return &types.Subscription{
-		Channel: make(chan any, buffer),
-	}
 }
 
 /*
@@ -170,12 +147,6 @@ func (conn *MockConn) Drain() error {
 }
 
 func (conn *MockConn) feed(channel string, raw []byte) {
-	root, ok := conn.roots[channel]
-
-	if !ok {
-		return
-	}
-
 	switch channel {
 	case "ticker":
 		frame := kraken.NewTicker(raw)
@@ -184,7 +155,8 @@ func (conn *MockConn) feed(channel string, raw []byte) {
 			return
 		}
 
-		root.Send(frame)
+		conn.publishTicker(frame)
+		conn.publishRaw(channel, frame)
 	case "book":
 		frame := kraken.NewBook(raw)
 
@@ -196,7 +168,8 @@ func (conn *MockConn) feed(channel string, raw []byte) {
 			return
 		}
 
-		root.Send(frame)
+		conn.publishBook(frame)
+		conn.publishRaw(channel, frame)
 	case "trade":
 		frame := kraken.NewTrade(raw)
 
@@ -204,19 +177,23 @@ func (conn *MockConn) feed(channel string, raw []byte) {
 			return
 		}
 
-		root.Send(frame)
+		conn.publishTrade(frame)
+		conn.publishRaw(channel, frame)
 	case "instrument":
 		frame := kraken.NewInstrument(raw)
 		conn.rememberIncrements(frame)
-		root.Send(frame)
+		conn.publishInstrument(frame)
+		conn.publishRaw(channel, frame)
 	case "level3":
 		if errnie.Error(conn.ingestBookManager(raw)) != nil {
 			return
 		}
 
-		root.Send(raw)
+		conn.publishLevel3(raw)
+		conn.publishRaw(channel, raw)
 	default:
-		root.Send(raw)
+		conn.publishPrivate(channel, raw)
+		conn.publishRaw(channel, raw)
 	}
 }
 
@@ -377,10 +354,14 @@ func (conn *MockConn) Publish(channel string, payload []byte) error {
 }
 
 /*
-Root returns the Actor fan-out for fixture market publish.
+Subscribe registers one test-only catch-all subscription for the named channel.
 */
-func (conn *MockConn) Root() *types.Actor {
-	return conn.Actor
+func (conn *MockConn) Subscribe(channel string) *types.Subscription[any] {
+	subscription := types.NewSubscription[any]()
+	conn.subMu.Lock()
+	conn.rawSubs[channel] = append(conn.rawSubs[channel], subscription)
+	conn.subMu.Unlock()
+	return subscription
 }
 
 /*
@@ -401,6 +382,17 @@ func (conn *MockConn) Close() {
 	conn.Control.current = nil
 	conn.Control.subscriptions = nil
 	conn.Control.mu.Unlock()
+	conn.subMu.Lock()
+	conn.rawSubs = nil
+	conn.tickers = nil
+	conn.booksOut = nil
+	conn.trades = nil
+	conn.instruments = nil
+	conn.balances = nil
+	conn.executions = nil
+	conn.orders = nil
+	conn.level3Out = nil
+	conn.subMu.Unlock()
 	conn.paperMu.Lock()
 	conn.paper = nil
 	conn.paperMu.Unlock()
@@ -552,6 +544,150 @@ func decodeRequest(raw []byte) (wireRequest, []string, error) {
 
 func (conn *MockConn) Books() *spot.BookManager {
 	return conn.books
+}
+
+func (conn *MockConn) Ticker() *types.Subscription[*kraken.Ticker] {
+	subscription := types.NewSubscription[*kraken.Ticker]()
+	conn.subMu.Lock()
+	conn.tickers = append(conn.tickers, subscription)
+	conn.subMu.Unlock()
+	return subscription
+}
+
+func (conn *MockConn) Book() *types.Subscription[*kraken.Book] {
+	subscription := types.NewSubscription[*kraken.Book]()
+	conn.subMu.Lock()
+	conn.booksOut = append(conn.booksOut, subscription)
+	conn.subMu.Unlock()
+	return subscription
+}
+
+func (conn *MockConn) Trade() *types.Subscription[*kraken.Trade] {
+	subscription := types.NewSubscription[*kraken.Trade]()
+	conn.subMu.Lock()
+	conn.trades = append(conn.trades, subscription)
+	conn.subMu.Unlock()
+	return subscription
+}
+
+func (conn *MockConn) Instrument() *types.Subscription[*kraken.Instrument] {
+	subscription := types.NewSubscription[*kraken.Instrument]()
+	conn.subMu.Lock()
+	conn.instruments = append(conn.instruments, subscription)
+	conn.subMu.Unlock()
+	return subscription
+}
+
+func (conn *MockConn) Balances() *types.Subscription[[]byte] {
+	subscription := types.NewSubscription[[]byte]()
+	conn.subMu.Lock()
+	conn.balances = append(conn.balances, subscription)
+	conn.subMu.Unlock()
+	return subscription
+}
+
+func (conn *MockConn) Executions() *types.Subscription[[]byte] {
+	subscription := types.NewSubscription[[]byte]()
+	conn.subMu.Lock()
+	conn.executions = append(conn.executions, subscription)
+	conn.subMu.Unlock()
+	return subscription
+}
+
+func (conn *MockConn) Orders() *types.Subscription[[]byte] {
+	subscription := types.NewSubscription[[]byte]()
+	conn.subMu.Lock()
+	conn.orders = append(conn.orders, subscription)
+	conn.subMu.Unlock()
+	return subscription
+}
+
+func (conn *MockConn) Level3() *types.Subscription[[]byte] {
+	subscription := types.NewSubscription[[]byte]()
+	conn.subMu.Lock()
+	conn.level3Out = append(conn.level3Out, subscription)
+	conn.subMu.Unlock()
+	return subscription
+}
+
+func (conn *MockConn) publishRaw(channel string, value any) {
+	conn.subMu.Lock()
+	subscribers := append([]*types.Subscription[any](nil), conn.rawSubs[channel]...)
+	conn.subMu.Unlock()
+
+	for _, subscription := range subscribers {
+		subscription.Send(value)
+	}
+}
+
+func (conn *MockConn) publishTicker(frame *kraken.Ticker) {
+	conn.subMu.Lock()
+	subscribers := append([]*types.Subscription[*kraken.Ticker](nil), conn.tickers...)
+	conn.subMu.Unlock()
+
+	for _, subscription := range subscribers {
+		subscription.Send(frame)
+	}
+}
+
+func (conn *MockConn) publishBook(frame *kraken.Book) {
+	conn.subMu.Lock()
+	subscribers := append([]*types.Subscription[*kraken.Book](nil), conn.booksOut...)
+	conn.subMu.Unlock()
+
+	for _, subscription := range subscribers {
+		subscription.Send(frame)
+	}
+}
+
+func (conn *MockConn) publishTrade(frame *kraken.Trade) {
+	conn.subMu.Lock()
+	subscribers := append([]*types.Subscription[*kraken.Trade](nil), conn.trades...)
+	conn.subMu.Unlock()
+
+	for _, subscription := range subscribers {
+		subscription.Send(frame)
+	}
+}
+
+func (conn *MockConn) publishInstrument(frame *kraken.Instrument) {
+	conn.subMu.Lock()
+	subscribers := append([]*types.Subscription[*kraken.Instrument](nil), conn.instruments...)
+	conn.subMu.Unlock()
+
+	for _, subscription := range subscribers {
+		subscription.Send(frame)
+	}
+}
+
+func (conn *MockConn) publishPrivate(channel string, raw []byte) {
+	conn.subMu.Lock()
+	var subscribers []*types.Subscription[[]byte]
+
+	switch channel {
+	case "balances":
+		subscribers = append(subscribers, conn.balances...)
+	case "executions":
+		subscribers = append(subscribers, conn.executions...)
+	case "add_order":
+		subscribers = append(subscribers, conn.orders...)
+	}
+
+	conn.subMu.Unlock()
+
+	for _, subscription := range subscribers {
+		subscription.Send(raw)
+	}
+}
+
+func (conn *MockConn) publishLevel3(raw []byte) {
+	conn.subMu.Lock()
+	subscribers := append([]*types.Subscription[[]byte](nil), conn.level3Out...)
+	conn.subMu.Unlock()
+
+	for _, subscription := range subscribers {
+		subscription.Send(raw)
+	}
 }
 
 func (conn *MockConn) PeekBook(symbol string, fn func(*sdkbook.Book)) bool {

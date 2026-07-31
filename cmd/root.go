@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/stack"
+	"github.com/theapemachine/symm/kraken/websocket"
 )
 
 /*
@@ -39,7 +39,13 @@ var (
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
 			startPprof()
 
-			return stack.NewBooter(cmd.Context()).Start()
+			websocket.NewAPI(
+				cmd.Context(),
+				websocket.New(cmd.Context(), nil, false, websocket.PublicWebSocketURL),
+				websocket.New(cmd.Context(), nil, false, websocket.PrivateWebSocketURL),
+			)
+
+			return nil
 		},
 	}
 )

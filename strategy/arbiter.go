@@ -52,7 +52,7 @@ func (a *Arbiter) Arbitrate(thesis *types.Thesis) {
 		return enters[i].Utility > enters[j].Utility
 	})
 
-	openSlots := a.desk.MaxSlots(false) - a.desk.OpenPositions()
+	openSlots := a.desk.OpenSlots(false)
 	incumbents := a.getIncumbents(thesis)
 
 	for _, candidate := range enters {
@@ -120,33 +120,33 @@ func (a *Arbiter) tryDisplace(
 
 func (a *Arbiter) getIncumbents(thesis *types.Thesis) []Incumbent {
 	rows := make([]Incumbent, 0)
-	for _, holding := range a.desk.Holdings() {
-		if holding.Status != types.OPEN || holding.Mark == nil || holding.Qty == nil {
+	for position := range a.desk.Positions() {
+		if position.Status != types.OPEN || position.Holding.Mark == nil || position.Holding.Qty == nil {
 			continue
 		}
 
-		notional := decimal.ExactMul(holding.Mark, holding.Qty)
+		notional := decimal.ExactMul(position.Holding.Mark, position.Holding.Qty)
 		if notional == nil || notional.Sign() <= 0 {
 			continue
 		}
 
 		feeFraction := 0.0026
-		if fraction, err := a.price.Fraction(holding.Symbol); err == nil && fraction != nil {
+		if fraction, err := a.price.Fraction(position.Holding.Symbol); err == nil && fraction != nil {
 			feeFraction = fraction.Float64()
 		}
 
 		rows = append(rows, Incumbent{
-			Symbol: holding.Symbol,
+			Symbol: position.Holding.Symbol,
 			HoldUtility: func() float64 {
-				if holding.ReturnPct != nil {
-					return *holding.ReturnPct
+				if position.Holding.ReturnPct != nil {
+					return *position.Holding.ReturnPct
 				}
 				return 0.0
 			}(),
 			ExitCost: feeFraction * notional.Float64(),
 			Notional: notional,
-			Qty:      holding.Qty.Copy(),
-			Mark:     holding.Mark.Copy(),
+			Qty:      position.Holding.Qty.Copy(),
+			Mark:     position.Holding.Mark.Copy(),
 		})
 	}
 	return rows

@@ -9,6 +9,27 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+/*
+	PaperBalance is the native payload returned by `kraken paper balance --output json`.
+
+It keeps the full paper wallet rows while exposing a direct Kraken-style decimal
+map for callers that only need per-asset totals.
+*/
+type PaperBalance struct {
+	Balances map[string]PaperBalanceData `json:"balances"`
+	Mode     string                      `json:"mode"`
+}
+
+/*
+PaperBalanceData stores the native paper wallet row so available, reserved, and
+total amounts survive the CLI decode without float-to-string guesswork later.
+*/
+type PaperBalanceData struct {
+	Available *decimal.Decimal `json:"available"`
+	Reserved  *decimal.Decimal `json:"reserved"`
+	Total     *decimal.Decimal `json:"total"`
+}
+
 type Balance struct {
 	Channel   string        `json:"channel"`
 	Data      []BalanceData `json:"data"`
@@ -87,6 +108,43 @@ func (balance *Balance) IsSuccess() bool {
 	return len(balance.Data) > 0
 }
 
+/*
+NewPaperBalance decodes the native paper wallet payload into Kraken-style asset
+totals so callers can consume paper and real balances through the same map type.
+*/
+func NewPaperBalance(buf []byte) *PaperBalance {
+	var balance PaperBalance
+
+	if err := sonic.Unmarshal(buf, &balance); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"invalid paper balance",
+			err,
+		))
+	}
+
+	return &balance
+}
+
+/*
+Totals returns the same asset-to-decimal total map shape produced by Kraken's
+real balance endpoint, using each paper wallet row's total amount.
+*/
+func (balance *PaperBalance) Totals() map[string]*decimal.Decimal {
+	totals := make(map[string]*decimal.Decimal, len(balance.Balances))
+
+	for asset, data := range balance.Balances {
+		totals[asset] = data.Total
+	}
+
+	return totals
+}
+
+/*
+NewBalanceFromMap reshapes the paper CLI wallet dump into the websocket balance
+frame used by downstream consumers, preserving available, reserved, and total
+values for each asset row.
+*/
 func NewBalanceFromMap(model datura.Map[any]) *Balance {
 	out := Balance{
 		Channel:   "balances",
@@ -109,12 +167,16 @@ func NewBalanceFromMap(model datura.Map[any]) *Balance {
 			continue
 		}
 
+		available := decimal.NewFromFloat64(entry["available"].(float64))
+		reserved := decimal.NewFromFloat64(entry["reserved"].(float64))
 		total := decimal.NewFromFloat64(entry["total"].(float64))
 
 		out.Data = append(out.Data, BalanceData{
 			Asset:      asset,
 			AssetClass: "currency",
 			Balance:    total,
+			Available:  available,
+			Reserved:   reserved,
 			Wallets: []Wallet{
 				{
 					Type:    "spot",

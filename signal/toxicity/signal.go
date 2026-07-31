@@ -2,6 +2,7 @@ package toxicity
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	sdkbook "github.com/krakenfx/api-go/v2/pkg/book"
@@ -17,7 +18,6 @@ Signal tracks whether near-touch liquidity is sincere, retreating, or bluffing
 from Level3 order events corroborated by the public trade tape.
 */
 type Signal struct {
-	*types.Actor
 	thesis *types.Thesis
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -25,6 +25,10 @@ type Signal struct {
 	ui     chan []byte
 	touch  map[string]float64
 	price  map[string]float64
+	book    *types.Subscription[*kraken.Book]
+	trade   *types.Subscription[*kraken.Trade]
+	subMu   sync.Mutex
+	theses  []*types.Subscription[*types.Thesis]
 }
 
 /*
@@ -43,17 +47,6 @@ func NewSignal(ctx context.Context, api *websocket.API, ui chan []byte) *Signal 
 		price:  map[string]float64{},
 	}
 
-	signal.Actor = types.NewActor(ctx, "toxicity", map[string]types.Handler{
-		"book": {
-			Topic: "book",
-			Fn:    signal.onBook,
-		},
-		"trade": {
-			Topic: "trade",
-			Fn:    signal.onTrade,
-		},
-	})
-
 	return signal
 }
 
@@ -67,13 +60,15 @@ func (signal *Signal) Name() string {
 /*
 Initialize wires book and trade ingress from Live.
 */
-func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
+func (signal *Signal) Initialize(market types.MarketFeed, thesis *types.Thesis) {
 	signal.thesis = thesis
 
-	signal.Actor.Initialize(
-		types.Topic{Name: "book", Actor: live},
-		types.Topic{Name: "trade", Actor: live},
-	)
+	if market != nil {
+		signal.book = market.Book()
+		signal.trade = market.Trade()
+	}
+
+	go signal.run()
 }
 
 /*
@@ -81,20 +76,66 @@ onBook records the current Level3 touch state whenever the public book cadence
 advances. The public frame is only the clock and symbol list; the quantities are
 read from the authenticated Level3 BookManager through its read lease.
 */
-func (signal *Signal) onBook(message any) any {
-	return signal.thesis.AppendMeasuremnts(
-		types.SourceToxicity, signal.Calculate(message.(*kraken.Book).Data, nil),
-	)
+func (signal *Signal) Thesis() *types.Subscription[*types.Thesis] {
+	subscription := types.NewSubscription[*types.Thesis]()
+	signal.subMu.Lock()
+	signal.theses = append(signal.theses, subscription)
+	signal.subMu.Unlock()
+	return subscription
 }
 
 /*
 onTrade attributes public executions to the resting side they consumed while
 retaining the same Level3 touch evidence used by book-only observations.
 */
-func (signal *Signal) onTrade(message any) any {
-	return signal.thesis.AppendMeasuremnts(
-		types.SourceToxicity, signal.Calculate(nil, message.(*kraken.Trade).Data),
-	)
+func (signal *Signal) run() {
+	var books <-chan *kraken.Book
+	var trades <-chan *kraken.Trade
+
+	if signal.book != nil {
+		books = signal.book.Channel
+	}
+
+	if signal.trade != nil {
+		trades = signal.trade.Channel
+	}
+
+	for {
+		select {
+		case <-signal.ctx.Done():
+			return
+		case book := <-books:
+			signal.onBook(book)
+		case trade := <-trades:
+			signal.onTrade(trade)
+		}
+	}
+}
+
+func (signal *Signal) onBook(book *kraken.Book) {
+	signal.publish(signal.thesis.AppendMeasuremnts(
+		types.SourceToxicity, signal.Calculate(book.Data, nil),
+	))
+}
+
+func (signal *Signal) onTrade(trade *kraken.Trade) {
+	signal.publish(signal.thesis.AppendMeasuremnts(
+		types.SourceToxicity, signal.Calculate(nil, trade.Data),
+	))
+}
+
+func (signal *Signal) publish(thesis *types.Thesis) {
+	if thesis == nil {
+		return
+	}
+
+	signal.subMu.Lock()
+	subscribers := append([]*types.Subscription[*types.Thesis](nil), signal.theses...)
+	signal.subMu.Unlock()
+
+	for _, subscription := range subscribers {
+		subscription.Send(thesis)
+	}
 }
 
 /*

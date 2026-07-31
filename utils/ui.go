@@ -5,19 +5,41 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+/*
+Publish is a convenience function to send data to the frontend,
+and takes care of marshalling and channel saturation.
+*/
 func Publish(ui chan []byte, data datura.Map[any]) {
-	if ui == nil || data == nil {
-		data.Free()
+	hasValue := false
+
+	for key, value := range data {
+		switch value := value.(type) {
+		case []any:
+			if len(value) == 0 {
+				delete(data, key)
+				continue
+			}
+		default:
+			if value == nil {
+				delete(data, key)
+				continue
+			}
+		}
+
+		hasValue = true
+	}
+
+	if !hasValue {
 		return
 	}
 
 	select {
 	case ui <- data.MarshalAndFree():
+		return
 	default:
-		data.Free()
 		errnie.Error(errnie.Err(
 			errnie.TooManyRequests,
-			"wire: ui channel saturated; dropped measurements",
+			"UI channel is saturated",
 			nil,
 		))
 	}

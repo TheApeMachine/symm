@@ -36,17 +36,14 @@ type Holding struct {
 }
 
 /*
-NewHolding constructs a pending Thesis lot with a Stoploss Position will own
-after Desk entry. market is the upstream market actor for the stoploss ticker subscription.
+NewHolding constructs a pending Thesis lot with the Stoploss regulator Position
+advances directly from live ticker updates.
 */
 func NewHolding(
 	ctx context.Context,
 	symbol string,
 	qty *decimal.Decimal,
 	mark *decimal.Decimal,
-	exit func() error,
-	onChange func(),
-	market *Actor,
 ) *Holding {
 	errnie.Info("creating holding for: " + symbol)
 
@@ -57,28 +54,10 @@ func NewHolding(
 		Symbol:   symbol,
 		Qty:      qty,
 		Status:   PENDING,
-		Stoploss: NewStoploss(ctx, symbol, mark, exit, onChange, market),
+		Stoploss: NewStoploss(ctx, symbol, mark),
 	}
 
 	return holding
-}
-
-/*
-Initialize the Holding if we are "recovering" after a restart.
-market is the upstream market actor for the stoploss ticker subscription.
-*/
-func (holding *Holding) Initialize(
-	ctx context.Context,
-	qty *decimal.Decimal,
-	mark *decimal.Decimal,
-	exit func() error,
-	onChange func(),
-	market *Actor,
-) {
-	holding.ctx = ctx
-	holding.Qty = qty
-	holding.Status = READY
-	holding.Stoploss.Initialize(ctx, mark, exit, onChange, market)
 }
 
 func (holding *Holding) Close() (err error) {

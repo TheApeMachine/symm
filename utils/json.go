@@ -49,13 +49,19 @@ func GetStringSlice(raw []byte, path ...any) []string {
 		return nil
 	}
 
-	out := make([]string, len(value))
+	items := make([]string, 0, len(value))
 
-	for index, v := range value {
-		out[index] = v.(string)
+	for _, item := range value {
+		text, valid := item.(string)
+
+		if !valid {
+			return nil
+		}
+
+		items = append(items, text)
 	}
 
-	return out
+	return items
 }
 
 func GetString(raw []byte, path ...any) string {

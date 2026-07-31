@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -216,20 +215,22 @@ must not flood the UI error overlay through errnie.Error.
 */
 func (price *Price) Get(
 	symbol string,
-) (*kraken.TickerData, error) {
+) *kraken.TickerData {
 	price.mu.RLock()
 	ticker, ok := price.tickers[symbol]
 	price.mu.RUnlock()
 
 	if !ok {
-		return nil, errnie.Err(
+		errnie.Err(
 			errnie.NotFound,
 			"ticker not found for symbol "+symbol,
 			nil,
 		)
+
+		return nil
 	}
 
-	return ticker, nil
+	return ticker
 }
 
 /*
@@ -244,8 +245,8 @@ func (price *Price) GetFees(
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to get trade volume",
+			errnie.IO,
+			"trade volume: failed to fetch",
 			err,
 		))
 	}
@@ -439,15 +440,7 @@ func (price *Price) Taker(
 	instrument *kraken.InstrumentPair,
 	quantity *decimal.Decimal,
 ) (*decimal.Decimal, error) {
-	ticker, err := price.Get(instrument.Symbol)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to get ticker for "+instrument.Symbol,
-			err,
-		))
-	}
+	ticker := price.Get(instrument.Symbol)
 
 	if ticker.Ask == nil {
 		return nil, errnie.Error(errnie.Err(
@@ -477,138 +470,6 @@ func (price *Price) Taker(
 }
 
 /*
-RecordFill appends one immutable fill and derives entry/exit economics from the
-ledger. Wallet Qty stays under Balance.syncWallet — fills never write inventory.
-*/
-func (price *Price) RecordFill(
-	instrument *kraken.InstrumentPair,
-	holding *types.Holding,
-	data kraken.ExecutionData,
-	ledger *[]Fill,
-) Fill {
-	fill := Fill{
-		ExecID: data.ExecID,
-		Side:   strings.ToLower(data.Side),
-	}
-
-	if data.LastQty != nil {
-		fill.Qty = data.LastQty.Copy()
-	}
-
-	if data.LastPrice != nil {
-		fill.Price = data.LastPrice.Copy()
-		holding.Mark = data.LastPrice.Copy()
-	}
-
-	if data.FeeUsdEquiv != nil && instrument.Quote == "USD" {
-		fill.Fee = data.FeeUsdEquiv.Copy()
-	}
-
-	// Wallet cash already paid the venue fee. Without a fee on the fill,
-	// EntryFee stays nil, PnL omits entry friction, and UI equity undershoots
-	// initial+PnL by roughly the paid fee (measured ~entry fee on live lots).
-	if fill.Fee == nil && fill.Price != nil && fill.Qty != nil {
-		errnie.Warn(
-			"execution missing fee for " + instrument.Symbol + "; deriving taker fee",
-		)
-
-		notional := price.Notional(instrument, fill.Price, fill.Qty)
-		fill.Fee = price.Fee(instrument, notional)
-
-		if fill.Fee == nil {
-			errnie.Warn(
-				"price.Fee returned nil: no taker fee schedule for " + instrument.Symbol,
-			)
-		}
-	}
-
-	*ledger = append(*ledger, fill)
-	price.deriveEconomics(holding, *ledger)
-
-	if holding.Qty != nil && holding.Qty.Sign() > 0 {
-		_ = price.Mark(instrument, holding)
-	}
-
-	return fill
-}
-
-/*
-Fill applies one execution print onto a holding without a caller-owned ledger.
-*/
-func (price *Price) Fill(
-	instrument *kraken.InstrumentPair,
-	holding *types.Holding,
-	data kraken.ExecutionData,
-) {
-	var ledger []Fill
-	price.RecordFill(instrument, holding, data, &ledger)
-}
-
-/*
-deriveEconomics recomputes weighted entry, cumulative fees, and exit marks from
-immutable fills. Inventory quantity is never written here.
-*/
-func (price *Price) deriveEconomics(holding *types.Holding, fills []Fill) {
-	var (
-		entryNotional *decimal.Decimal
-		entryQty      *decimal.Decimal
-		entryFee      *decimal.Decimal
-		exitNotional  *decimal.Decimal
-		exitQty       *decimal.Decimal
-		exitFee       *decimal.Decimal
-	)
-
-	for _, fill := range fills {
-		if fill.Qty == nil || fill.Price == nil {
-			continue
-		}
-
-		notional := price.Mul(fill.Price, fill.Qty)
-
-		switch fill.Side {
-		case "buy":
-			entryNotional = addNullable(entryNotional, notional)
-			entryQty = addNullable(entryQty, fill.Qty)
-			entryFee = addNullable(entryFee, fill.Fee)
-		case "sell":
-			exitNotional = addNullable(exitNotional, notional)
-			exitQty = addNullable(exitQty, fill.Qty)
-			exitFee = addNullable(exitFee, fill.Fee)
-		}
-	}
-
-	if entryQty != nil && entryQty.Sign() > 0 && entryNotional != nil {
-		holding.EntryPrice = price.Div(entryNotional, entryQty)
-	}
-
-	if entryFee != nil {
-		holding.EntryFee = entryFee
-	}
-
-	if exitQty != nil && exitQty.Sign() > 0 && exitNotional != nil {
-		holding.ExitPrice = price.Div(exitNotional, exitQty)
-		at := time.Now().UTC()
-		holding.ExitAt = &at
-	}
-
-	if exitFee != nil {
-		holding.ExitFee = exitFee
-	}
-}
-
-func addNullable(left, right *decimal.Decimal) *decimal.Decimal {
-	if right == nil {
-		return left
-	}
-
-	if left == nil {
-		return right.Copy()
-	}
-
-	return left.Add(right)
-}
-
-/*
 WithFriction returns flatten-now PnL for a remaining lot:
 
 	(bid notional − exit taker fee) − (entry notional + entry fee)
@@ -626,11 +487,7 @@ func (price *Price) WithFriction(
 		return nil, nil
 	}
 
-	ticker, err := price.Get(instrument.Symbol)
-
-	if err != nil {
-		return nil, err
-	}
+	ticker := price.Get(instrument.Symbol)
 
 	if ticker.Bid == nil {
 		return nil, errnie.Err(
@@ -696,20 +553,21 @@ func (price *Price) Mark(
 	holding.ReturnPct = nil
 
 	bid := (*decimal.Decimal)(nil)
-	ticker, tickerErr := price.Get(instrument.Symbol)
+	ticker := price.Get(instrument.Symbol)
 
-	if tickerErr == nil && ticker != nil && ticker.Bid != nil {
-		bid = ticker.Bid
-		holding.Mark = ticker.Bid.Copy()
-	}
+	bid = ticker.Bid
+	holding.Mark = ticker.Bid.Copy()
 
 	if bid == nil {
 		bid = holding.Mark
 	}
 
-	if bid == nil || holding.EntryPrice == nil ||
-		holding.Qty == nil || holding.Qty.Sign() <= 0 {
-		return tickerErr
+	if bid == nil || holding.EntryPrice == nil || holding.Qty == nil || holding.Qty.Sign() <= 0 {
+		return errnie.Err(
+			errnie.NotFound,
+			"ticker has no bid price for "+instrument.Symbol,
+			nil,
+		)
 	}
 
 	pnl, err := price.frictionAt(
@@ -766,15 +624,7 @@ ReferencePrice returns the live ask price for a symbol.
 func (price *Price) ReferencePrice(
 	pair *kraken.InstrumentPair,
 ) (*decimal.Decimal, error) {
-	ticker, err := price.Get(pair.Symbol)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to get ticker for "+pair.Symbol,
-			err,
-		))
-	}
+	ticker := price.Get(pair.Symbol)
 
 	if ticker.Ask == nil {
 		return nil, errnie.Error(errnie.Err(
@@ -796,15 +646,7 @@ func (price *Price) Quantity(
 	pair *kraken.InstrumentPair,
 	budget *decimal.Decimal,
 ) (*decimal.Decimal, error) {
-	ticker, err := price.Get(pair.Symbol)
-
-	if err != nil || ticker.Ask == nil || ticker.Ask.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"quantity: ask unavailable for "+pair.Symbol,
-			err,
-		))
-	}
+	ticker := price.Get(pair.Symbol)
 
 	if budget == nil || budget.Sign() <= 0 {
 		return nil, errnie.Error(errnie.Err(

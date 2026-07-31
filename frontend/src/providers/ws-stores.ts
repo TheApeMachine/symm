@@ -4,11 +4,9 @@ import {
 	paintTerminalFluidChart,
 	repaintTerminalFluidChart,
 } from "#/components/charts/fluid";
-import { paintHawkes } from "#/components/charts/hawkes";
 import { paintTerminalManifoldChart } from "#/components/charts/manifold";
 import { paintTerminalPredictionChart } from "#/components/charts/prediction";
 import { paintTerminalResonanceChart } from "#/components/charts/resonance";
-import { paintTerminalSignalHeatmap } from "#/components/charts/signal-heatmap";
 import {
 	paintAllocationBalances,
 	paintAllocationCausal,
@@ -33,11 +31,9 @@ import {
 	paintDecisionsCausal,
 	paintDecisionsInstruments,
 	paintDecisionsManifold,
-	paintDecisionsMeasurements,
 	paintDecisionsResonance,
 } from "#/components/terminal/decisions-surface";
 import {
-	paintHealthMeasurements,
 	paintHealthTick,
 } from "#/components/terminal/health";
 import {
@@ -46,32 +42,27 @@ import {
 	paintJournalLifecycle,
 	paintJournalPositions,
 } from "#/components/terminal/journal-surface";
-import { paintKernelList } from "#/components/terminal/kernel-list";
 import {
 	paintManifoldMeta,
 	repaintManifoldMeta,
 } from "#/components/terminal/live-manifold-meta";
 import {
 	paintPaletteInstruments,
-	paintPaletteMeasurements,
 } from "#/components/terminal/palette";
 import {
 	paintPositionStops,
 	paintPositions,
 } from "#/components/terminal/position-gauge";
-import { paintRegimeRadar } from "#/components/terminal/regime-radar";
 import { paintThesis } from "#/components/terminal/thesis-modal";
 import {
 	paintXrayFactsCognition,
 	paintXrayFactsManifold,
-	paintXrayFactsMeasurements,
 	paintXrayFactsResonance,
 } from "#/components/terminal/xray-facts-panel";
 import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
 import { paintXrayLatent } from "#/components/terminal/xray-latent";
 import {
 	paintXrayManifold,
-	paintXrayManifoldMeasurements,
 } from "#/components/terminal/xray-manifold-panel";
 import { FrameHistory } from "#/providers/frame-history";
 import {
@@ -150,35 +141,6 @@ drawers map each backend wire key to its paint function(s). The worker forwards
 the whole frame; attach walks top-level keys and paints only registered ones.
 */
 export const drawers = {
-	measurements: {
-		paint: paintKernelList,
-		keys: {
-			hawkes: { paint: paintHawkes, input: "history" },
-			regimeRadar: { paint: paintRegimeRadar, input: "history" },
-			health: { paint: paintHealthMeasurements, input: "latest" },
-			signalHeatmap: {
-				paint: paintTerminalSignalHeatmap,
-				input: "history",
-			},
-			xrayFacts: {
-				paint: paintXrayFactsMeasurements,
-				input: "history",
-			},
-			xrayManifold: {
-				paint: paintXrayManifoldMeasurements,
-				input: "latest",
-			},
-			decisions: {
-				paint: paintDecisionsMeasurements,
-				input: "latest",
-			},
-			palette: paintPaletteMeasurements,
-			crossSection: {
-				paint: paintCrossSection as PaintLegacy,
-				input: "latest",
-			},
-		},
-	},
 	tick: {
 		paint: () => {},
 		keys: {

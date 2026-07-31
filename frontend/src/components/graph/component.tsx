@@ -13,7 +13,6 @@ import {
 import { GPUPicking, type MouseState, MouseTracker } from "./core/gpu-picking";
 import { Graph, generators } from "./core/graph";
 import { Simulator, type SimulatorConfig } from "./core/simulator";
-import type { TimeSliderHandle } from "./timeslider.tsx";
 import {
 	dataTextureSize,
 	generateCircularLayout,
@@ -33,7 +32,6 @@ import {
 	normalizeLayout,
 } from "./layout-textures";
 import { NodeGraphLegacyLayoutControls } from "./layoutcontrols.tsx";
-import { NodeGraphLegacyTimeControls } from "./timecontrols.tsx";
 import { loadNodeTexture, loadThreatTexture } from "./utils/texture-loaders";
 
 const LAYOUT_STORAGE_KEY = "caramba.nodeGraphLegacy.layout";
@@ -173,11 +171,6 @@ export const ModelScope = ({
 	const nodeThreatRef = useRef(nodeThreat);
 	nodeThreatRef.current = nodeThreat;
 
-	const sliderRef = useRef<TimeSliderHandle>(null);
-
-	const [isPlaying, setIsPlaying] = useState(false);
-	const [isRepeating, setIsRepeating] = useState(true);
-	const [isExpanded, setIsExpanded] = useState(false);
 	const [isDofEnabled, setIsDofEnabled] = useState(false);
 	const [autoFitCamera, setAutoFitCamera] = useState<boolean>(() => {
 		if (typeof window === "undefined") return false;
@@ -910,15 +903,6 @@ export const ModelScope = ({
 		],
 	);
 
-	const handlePlaybackChange = useCallback(
-		(playing: boolean, repeating: boolean, expanded: boolean) => {
-			setIsPlaying(playing);
-			setIsRepeating(repeating);
-			setIsExpanded(expanded);
-		},
-		[],
-	);
-
 	useEffect(() => {
 		const cleanup = initScene();
 		return () => {
@@ -1023,32 +1007,6 @@ export const ModelScope = ({
 		selectedNodeRef.current = selectedNodeName;
 	}, [selectedNodeName, externalGraph]);
 
-	const formatTime = useCallback(
-		(t: number) => {
-			// When graph "time" is really a layer index (like the attention visualizer),
-			// show layers instead of Jan 1 timestamps.
-			const span = timeRange.max - timeRange.min;
-			const looksLikeLayerIndex =
-				timeRange.min === 0 && Number.isFinite(span) && span > 0 && span <= 512;
-
-			if (looksLikeLayerIndex) {
-				return `layer ${Math.round(t) + 1}`;
-			}
-
-			// Otherwise treat as epoch seconds relative to epochOffset.
-			const epochOffset = configRef.current?.epochOffset ?? 0;
-			const absSeconds = epochOffset + t;
-			const d = new Date(absSeconds * 1000);
-			return d.toLocaleString("en-US", {
-				day: "numeric",
-				hour: "2-digit",
-				minute: "2-digit",
-				month: "short",
-			});
-		},
-		[timeRange.max, timeRange.min],
-	);
-
 	return (
 		<div
 			className={`node-graph-legacy flex-1 ${className ?? ""}`}
@@ -1088,23 +1046,8 @@ export const ModelScope = ({
 				}}
 				onToggleDof={() => setIsDofEnabled((v) => !v)}
 			/>
-
-			<NodeGraphLegacyTimeControls
-				formatTime={formatTime}
-				isExpanded={isExpanded}
-				isPlaying={isPlaying}
-				isRepeating={isRepeating}
-				onExpandRange={() => sliderRef.current?.expandRange()}
-				onTogglePlay={() => sliderRef.current?.togglePlay()}
-				onToggleRepeat={() => sliderRef.current?.toggleRepeat()}
-				onTimeChange={handleTimeChange}
-				onPlaybackChange={handlePlaybackChange}
-				showTimeSlider={showTimeSlider}
-				sliderRef={sliderRef}
-				timeRange={timeRange}
-			/>
 		</div>
 	);
-}
+};
 
 export default ModelScope;

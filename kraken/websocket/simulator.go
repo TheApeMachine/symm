@@ -3,7 +3,6 @@ package websocket
 import (
 	"container/ring"
 	"context"
-	"encoding/json"
 	"math/rand"
 	"sync"
 	"time"
@@ -198,21 +197,6 @@ func (simulator *Simulator) Do(latencyType LatencyType, fn func()) {
 
 	_ = simulator.clock.Sleep(simulator.ctx, wait)
 	fn()
-}
-
-/*
-Emit applies latency then Sends a paper frame into the matching root.
-*/
-func (simulator *Simulator) Emit(
-	paper *Paper, latencyType LatencyType, channel string, payload json.Marshaler,
-) error {
-	var err error
-
-	simulator.Do(latencyType, func() {
-		err = paper.Emit(channel, payload)
-	})
-
-	return err
 }
 
 /*

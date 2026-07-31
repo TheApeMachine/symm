@@ -175,36 +175,40 @@ func (e Evaluator) ManageContinuation(
 
 	forecasts := selectForecasts(thesis.Forecasts)
 
-	for symbol, holding := range desk.Holdings() {
-		if holding.Status != types.OPEN || isExiting(thesis, symbol) {
+	for position := range desk.Positions() {
+		if position.Status != types.OPEN {
 			continue
 		}
 
-		forecast, found := forecasts[symbol]
+		forecast, found := forecasts[position.Holding.Symbol]
+
 		if !found || !forecast.Eligible() {
 			thesis.Decisions = append(thesis.Decisions, types.Decision{
 				Action:           types.ActionHold,
-				Symbol:           symbol,
+				Symbol:           position.Holding.Symbol,
 				Cause:            "continuation",
 				Reason:           "awaiting eligible forecast for continuation scoring",
 				ProposedQuantity: decimal.NewFromInt64(0),
 				ProposedNotional: decimal.NewFromInt64(0),
 				Alternatives:     map[string]float64{"hold": 0},
 			})
+
 			continue
 		}
 
-		feeFraction, err := price.Fraction(symbol)
+		feeFraction, err := price.Fraction(forecast.Symbol)
+
 		if err != nil {
 			thesis.Decisions = append(thesis.Decisions, types.Decision{
 				Action:           types.ActionHold,
-				Symbol:           symbol,
+				Symbol:           forecast.Symbol,
 				Cause:            "continuation",
 				Reason:           "fee schedule unavailable for continuation",
 				ProposedQuantity: decimal.NewFromInt64(0),
 				ProposedNotional: decimal.NewFromInt64(0),
 				Alternatives:     map[string]float64{"hold": 0},
 			})
+
 			continue
 		}
 
@@ -212,14 +216,15 @@ func (e Evaluator) ManageContinuation(
 		exitCost := feeFraction.Float64() + forecast.ExpectedSpread/2 + forecast.ExpectedImpact
 
 		// Apply Graph Contradiction Penalty to Hold Utility
-		_, contradicts, hasGraph := inspectGraph(thesis, symbol)
+		_, contradicts, hasGraph := inspectGraph(thesis, forecast.Symbol)
+
 		if hasGraph && contradicts > 0 {
 			holdUtility -= (contradicts * 0.1)
 		}
 
 		thesis.Decisions = append(thesis.Decisions, types.Decision{
 			Action:  types.ActionHold,
-			Symbol:  symbol,
+			Symbol:  forecast.Symbol,
 			At:      forecast.At,
 			Utility: holdUtility,
 			Alternatives: map[string]float64{
@@ -384,12 +389,13 @@ func inspectGraph(thesis *types.Thesis, symbol string) (supports, contradicts fl
 func getOccupiedSymbols(thesis *types.Thesis, desk *broker.Desk) map[string]struct{} {
 	occupied := make(map[string]struct{})
 	if desk != nil {
-		for _, holding := range desk.Holdings() {
-			if holding.Status != types.CLOSED {
-				occupied[holding.Symbol] = struct{}{}
+		for position := range desk.Positions() {
+			if position.Status != types.CLOSED {
+				occupied[position.Holding.Symbol] = struct{}{}
 			}
 		}
 	}
+
 	if thesis != nil && thesis.Lifecycle != nil {
 		thesis.Lifecycle.Range(func(key, value any) bool {
 			if symbol, ok := key.(string); ok {
@@ -401,9 +407,11 @@ func getOccupiedSymbols(thesis *types.Thesis, desk *broker.Desk) map[string]stru
 					}
 				}
 			}
+
 			return true
 		})
 	}
+
 	return occupied
 }
 

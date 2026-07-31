@@ -165,15 +165,14 @@ func TestCalculate(t *testing.T) {
 			}
 
 			signal := exhaustionOf(wired.Signals)
-			book := signal.Subscribe("book")
-			trade := signal.Subscribe("trade")
+			updates := signal.Thesis()
 			measurements := []*types.Measurement{}
 
 			So(market.Transition(proof.states[len(proof.states)-1], func() error {
-				drainExhaust(book, trade, &measurements)
+				drainExhaust(updates, &measurements)
 				return nil
 			}), ShouldBeNil)
-			drainExhaust(book, trade, &measurements)
+			drainExhaust(updates, &measurements)
 
 			So(measurements, ShouldNotBeEmpty)
 
@@ -454,8 +453,7 @@ drains until idle. Ticker is not subscribed: Calculate ignores ticker rows, so
 a ticker subscribe never emits and cannot form a drain barrier.
 */
 func drainExhaust(
-	book *types.Subscription,
-	trade *types.Subscription,
+	updates *types.Subscription[*types.Thesis],
 	into *[]*types.Measurement,
 ) {
 	timer := time.NewTimer(500 * time.Millisecond)
@@ -463,18 +461,7 @@ func drainExhaust(
 
 	for {
 		select {
-		case message := <-book.Channel:
-			*into = append(*into, exhaustionFrom(message)...)
-
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-
-			timer.Reset(50 * time.Millisecond)
-		case message := <-trade.Channel:
+		case message := <-updates.Channel:
 			*into = append(*into, exhaustionFrom(message)...)
 
 			if !timer.Stop() {

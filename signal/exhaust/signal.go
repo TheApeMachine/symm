@@ -2,6 +2,7 @@ package exhaust
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -21,13 +22,17 @@ or short position should exit. It emits numerical family scores, their fused
 urgency, and the winning numerical family identifier for downstream logic.
 */
 type Signal struct {
-	*types.Actor
 	thesis *types.Thesis
 	ctx    context.Context
 	cancel context.CancelFunc
 	sample *algorithm.DecaySample
 	decay  *equation.Decay
 	ui     chan []byte
+	ticker  *types.Subscription[*kraken.Ticker]
+	book    *types.Subscription[*kraken.Book]
+	trade   *types.Subscription[*kraken.Trade]
+	subMu   sync.Mutex
+	theses  []*types.Subscription[*types.Thesis]
 }
 
 /*
@@ -46,12 +51,6 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 		ui:     ui,
 	}
 
-	signal.Actor = types.NewActor(ctx, "exhaust", map[string]types.Handler{
-		"ticker": {Topic: "thesis", Fn: signal.onTicker},
-		"book":   {Topic: "thesis", Fn: signal.onBook},
-		"trade":  {Topic: "thesis", Fn: signal.onTrade},
-	})
-
 	return signal
 }
 
@@ -65,31 +64,87 @@ func (signal *Signal) Name() string {
 /*
 Initialize wires ticker, book, and trade ingress from Live.
 */
-func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
+func (signal *Signal) Initialize(market types.MarketFeed, thesis *types.Thesis) {
 	signal.thesis = thesis
-	signal.Actor.Initialize(
-		types.Topic{Name: "ticker", Actor: live},
-		types.Topic{Name: "book", Actor: live},
-		types.Topic{Name: "trade", Actor: live},
-	)
+
+	if market != nil {
+		signal.ticker = market.Ticker()
+		signal.book = market.Book()
+		signal.trade = market.Trade()
+	}
+
+	go signal.run()
 }
 
-func (signal *Signal) onTicker(message any) any {
-	return signal.thesis.AppendMeasuremnts(
-		types.SourceExhaustion, signal.Calculate(message.(*kraken.Ticker).Data, nil, nil),
-	)
+func (signal *Signal) Thesis() *types.Subscription[*types.Thesis] {
+	subscription := types.NewSubscription[*types.Thesis]()
+	signal.subMu.Lock()
+	signal.theses = append(signal.theses, subscription)
+	signal.subMu.Unlock()
+	return subscription
 }
 
-func (signal *Signal) onBook(message any) any {
-	return signal.thesis.AppendMeasuremnts(
-		types.SourceExhaustion, signal.Calculate(nil, nil, message.(*kraken.Book).Data),
-	)
+func (signal *Signal) run() {
+	var tickers <-chan *kraken.Ticker
+	var books <-chan *kraken.Book
+	var trades <-chan *kraken.Trade
+
+	if signal.ticker != nil {
+		tickers = signal.ticker.Channel
+	}
+
+	if signal.book != nil {
+		books = signal.book.Channel
+	}
+
+	if signal.trade != nil {
+		trades = signal.trade.Channel
+	}
+
+	for {
+		select {
+		case <-signal.ctx.Done():
+			return
+		case ticker := <-tickers:
+			signal.onTicker(ticker)
+		case book := <-books:
+			signal.onBook(book)
+		case trade := <-trades:
+			signal.onTrade(trade)
+		}
+	}
 }
 
-func (signal *Signal) onTrade(message any) any {
-	return signal.thesis.AppendMeasuremnts(
-		types.SourceExhaustion, signal.Calculate(nil, message.(*kraken.Trade).Data, nil),
-	)
+func (signal *Signal) onTicker(ticker *kraken.Ticker) {
+	signal.publish(signal.thesis.AppendMeasuremnts(
+		types.SourceExhaustion, signal.Calculate(ticker.Data, nil, nil),
+	))
+}
+
+func (signal *Signal) onBook(book *kraken.Book) {
+	signal.publish(signal.thesis.AppendMeasuremnts(
+		types.SourceExhaustion, signal.Calculate(nil, nil, book.Data),
+	))
+}
+
+func (signal *Signal) onTrade(trade *kraken.Trade) {
+	signal.publish(signal.thesis.AppendMeasuremnts(
+		types.SourceExhaustion, signal.Calculate(nil, trade.Data, nil),
+	))
+}
+
+func (signal *Signal) publish(thesis *types.Thesis) {
+	if thesis == nil {
+		return
+	}
+
+	signal.subMu.Lock()
+	subscribers := append([]*types.Subscription[*types.Thesis](nil), signal.theses...)
+	signal.subMu.Unlock()
+
+	for _, subscription := range subscribers {
+		subscription.Send(thesis)
+	}
 }
 
 func (signal *Signal) Calculate(

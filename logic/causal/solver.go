@@ -326,10 +326,5 @@ func (solver *Solver) getRegime(symbol string) *causal.Regime {
 Close cleans up the solver instance.
 */
 func (solver *Solver) Close() error {
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
-
-	solver.pearls = nil
-	solver.regimes = nil
 	return nil
 }

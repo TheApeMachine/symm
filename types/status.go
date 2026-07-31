@@ -28,6 +28,7 @@ const (
 	STATUS            Status = "status"
 	READY             Status = "ready"
 	ARMED             Status = "armed"
+	TRIGGERED         Status = "triggered"
 	BUSY              Status = "busy"
 	PRIORITY          Status = "priority"
 	CANCELED          Status = "canceled"

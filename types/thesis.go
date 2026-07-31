@@ -2,7 +2,6 @@ package types
 
 import (
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -36,26 +35,25 @@ decisions, lifecycle, and findings; each market cut replaces per-tick evidence
 in place so the object does not grow without bound.
 */
 type Thesis struct {
-	checkpoint    atomic.Int64
-	publish       *sync.RWMutex
-	Tick          int64                 `json:"tick"`
-	At            time.Time             `json:"at"`
-	CrossSection  *CrossSection         `json:"crossSection"`
-	Measurements  *sync.Map             `json:"-"`
-	BookManager   *spot.BookManager     `json:"-"`
-	Books         *sync.Map             `json:"-"`
-	Graphs        *sync.Map             `json:"-"`
-	Forecasts     []Forecasts           `json:"forecasts"`
-	Decisions     []Decision            `json:"decisions"`
-	Lifecycle     *sync.Map             `json:"lifecycle"`
-	Findings      []Finding             `json:"findings"`
-	Hypotheses    []Hypothesis          `json:"hypotheses"`
-	Categories    map[string][]Category `json:"categories"`
-	Manifold      *sync.Map             `json:"-"`
-	Cognition     *sync.Map             `json:"-"`
-	Resonance     *sync.Map             `json:"-"`
-	Causal        *sync.Map             `json:"-"`
-	cutIncomplete bool
+	Status       Status                `json:"status"`
+	Tick         int64                 `json:"tick"`
+	At           time.Time             `json:"at"`
+	CrossSection *CrossSection         `json:"crossSection"`
+	Measurements *sync.Map             `json:"-"`
+	BookManager  *spot.BookManager     `json:"-"`
+	Books        *sync.Map             `json:"-"`
+	Graphs       *sync.Map             `json:"-"`
+	Forecasts    []Forecasts           `json:"forecasts"`
+	Decisions    []Decision            `json:"decisions"`
+	Lifecycle    *sync.Map             `json:"lifecycle"`
+	Findings     []Finding             `json:"findings"`
+	Hypotheses   []Hypothesis          `json:"hypotheses"`
+	Categories   map[string][]Category `json:"categories"`
+	Manifold     *sync.Map             `json:"-"`
+	Cognition    *sync.Map             `json:"-"`
+	Resonance    *sync.Map             `json:"-"`
+	Causal       *sync.Map             `json:"-"`
+	Stamps       *sync.Map             `json:"-"`
 }
 
 /*
@@ -63,8 +61,8 @@ NewThesis creates a Thesis with empty durable maps and no tick evidence yet.
 */
 func NewThesis(bookManager *spot.BookManager) *Thesis {
 	return &Thesis{
+		Status:       INITIALIZING,
 		At:           time.Now().UTC(),
-		publish:      &sync.RWMutex{},
 		Decisions:    make([]Decision, 0),
 		CrossSection: NewCrossSection(),
 		Graphs:       &sync.Map{},
@@ -75,51 +73,22 @@ func NewThesis(bookManager *spot.BookManager) *Thesis {
 		Categories:   make(map[string][]Category),
 		Measurements: &sync.Map{},
 		Books:        &sync.Map{},
-		BookManager:  bookManager,
 		Manifold:     &sync.Map{},
 		Cognition:    &sync.Map{},
 		Resonance:    &sync.Map{},
 		Causal:       &sync.Map{},
+		Stamps:       &sync.Map{},
 	}
 }
 
 /*
-ResetTick replaces per-tick evidence while preserving Lifecycle phases that
-span orders (entry/exit submitted) and Findings owned by this Thesis.
-*/
-func (thesis *Thesis) ResetTick(at time.Time, tick int64) {
-	thesis.ensureLocks()
-
-	thesis.Tick = tick
-	thesis.At = at
-	thesis.cutIncomplete = false
-	thesis.checkpoint.Store(0)
-
-	thesis.CrossSection = NewCrossSection()
-	thesis.Measurements.Clear()
-
-	thesis.Forecasts = thesis.Forecasts[:0]
-	thesis.Decisions = thesis.Decisions[:0]
-	thesis.Hypotheses = thesis.Hypotheses[:0]
-
-	for symbol, rows := range thesis.Categories {
-		thesis.Categories[symbol] = rows[:0]
-	}
-
-	thesis.Resonance.Clear()
-	thesis.Causal.Clear()
-	thesis.Manifold.Clear()
-	thesis.Cognition.Clear()
-}
-
-/*
-AppendMeasuremnts appends measurements for the specified source while safely
-ignoring nil input.
+AppendMeasuremnts appends measurements for the specified
+source while safely ignoring nil input.
 */
 func (thesis *Thesis) AppendMeasuremnts(
 	source SourceType, measurements []*Measurement,
 ) *Thesis {
-	if measurements == nil {
+	if len(measurements) == 0 {
 		return thesis
 	}
 
@@ -136,33 +105,6 @@ func (thesis *Thesis) AppendMeasuremnts(
 	}
 
 	return thesis
-}
-
-/*
-ensureLocks restores pointer-owned locks after JSON decode or accidental value
-construction. Thesis maps may be shared by copied values, so the lock itself must
-also be shared rather than copied by value.
-*/
-func (thesis *Thesis) ensureLocks() {
-	if thesis.publish == nil {
-		thesis.publish = &sync.RWMutex{}
-	}
-}
-
-/*
-NoteIncomplete marks this cut as missing at least one interested signal measure.
-*/
-func (thesis *Thesis) NoteIncomplete() {
-	if thesis != nil {
-		thesis.cutIncomplete = true
-	}
-}
-
-/*
-Incomplete reports whether the current cut skipped interested signal work.
-*/
-func (thesis *Thesis) Incomplete() bool {
-	return thesis != nil && thesis.cutIncomplete
 }
 
 /*

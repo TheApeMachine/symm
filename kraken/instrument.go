@@ -47,19 +47,22 @@ type InstrumentPair struct {
 	QtyMin             *decimal.Decimal `json:"qty_min"`
 }
 
-type InstrumentSubscription struct{}
+type InstrumentSubscription struct {
+	Method string                       `json:"method"`
+	Params InstrumentSubscriptionParams `json:"params"`
+}
+
+type InstrumentSubscriptionParams struct {
+	Channel string `json:"channel"`
+}
 
 func NewInstrumentSubscription() InstrumentSubscription {
 	return InstrumentSubscription{}
 }
 
 func (subscription InstrumentSubscription) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(map[string]any{
-		"method": "subscribe",
-		"params": map[string]any{
-			"channel": "instrument",
-		},
-	})
+	type alias InstrumentSubscription
+	return sonic.Marshal((*alias)(&subscription))
 }
 
 func NewInstrumentData(buf []byte) InstrumentData {

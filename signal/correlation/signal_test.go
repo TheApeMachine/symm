@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/stack"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
 )

@@ -1,12 +1,12 @@
 package types
 
 /*
-Signal measures market rows delivered on Actor topics and appends onto a
-shared Thesis. Initialize attaches Live market roots; Run starts from
-Actor.Initialize. Close waits for the signal's Actor pumps and inbox loop.
+Signal measures market rows from explicit transport subscriptions and publishes
+shared Thesis updates downstream.
 */
 type Signal interface {
 	Name() string
-	Initialize(live *Actor, thesis *Thesis)
+	Initialize(market MarketFeed, thesis *Thesis)
+	Thesis() *Subscription[*Thesis]
 	Close() error
 }

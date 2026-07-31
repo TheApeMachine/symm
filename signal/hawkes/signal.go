@@ -24,7 +24,6 @@ forecast readiness remains false until residual and out-of-sample validation
 exists.
 */
 type Signal struct {
-	*types.Actor
 	thesis    *types.Thesis
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -33,6 +32,10 @@ type Signal struct {
 	normalize normalizer
 	ui        chan []byte
 	mu        sync.Mutex
+	ticker     *types.Subscription[*kraken.Ticker]
+	trade      *types.Subscription[*kraken.Trade]
+	subMu      sync.Mutex
+	theses     []*types.Subscription[*types.Thesis]
 }
 
 /*
@@ -50,17 +53,6 @@ func NewSignal(ctx context.Context, ui chan []byte) *Signal {
 		ui:      ui,
 	}
 
-	signal.Actor = types.NewActor(ctx, "hawkes", map[string]types.Handler{
-		"ticker": {
-			Topic: "ticker",
-			Fn:    signal.onTicker,
-		},
-		"trade": {
-			Topic: "trade",
-			Fn:    signal.onTrade,
-		},
-	})
-
 	return signal
 }
 
@@ -76,12 +68,15 @@ Initialize wires ticker and trade ingress from Live. Cut serialisation stays on
 the Coordinator→Analyzer depth-one edge; Hawkes itself keeps a normal buffer so
 a busy cascade cannot stall Live's trade root and starve cadence.
 */
-func (signal *Signal) Initialize(live *types.Actor, thesis *types.Thesis) {
+func (signal *Signal) Initialize(market types.MarketFeed, thesis *types.Thesis) {
 	signal.thesis = thesis
-	signal.Actor.Initialize(
-		types.Topic{Name: "ticker", Actor: live},
-		types.Topic{Name: "trade", Actor: live},
-	)
+
+	if market != nil {
+		signal.ticker = market.Ticker()
+		signal.trade = market.Trade()
+	}
+
+	go signal.run()
 }
 
 /*
@@ -89,8 +84,8 @@ onTicker treats the ticker stream as Hawkes cadence only so the signal can emit 
 shared cut after warmed trade arrivals without pretending ticker rows carry
 microstructure measurements.
 */
-func (signal *Signal) onTicker(message any) any {
-	_ = message.(*kraken.Ticker)
+func (signal *Signal) onTicker(ticker *kraken.Ticker) *Cut {
+	_ = ticker
 	cut := signal.cut()
 
 	if len(cut.Symbols()) == 0 {
@@ -100,11 +95,61 @@ func (signal *Signal) onTicker(message any) any {
 	return cut
 }
 
-func (signal *Signal) onTrade(message any) any {
-	return signal.thesis.AppendMeasuremnts(
+func (signal *Signal) Thesis() *types.Subscription[*types.Thesis] {
+	subscription := types.NewSubscription[*types.Thesis]()
+	signal.subMu.Lock()
+	signal.theses = append(signal.theses, subscription)
+	signal.subMu.Unlock()
+	return subscription
+}
+
+func (signal *Signal) run() {
+	var tickers <-chan *kraken.Ticker
+	var trades <-chan *kraken.Trade
+
+	if signal.ticker != nil {
+		tickers = signal.ticker.Channel
+	}
+
+	if signal.trade != nil {
+		trades = signal.trade.Channel
+	}
+
+	for {
+		select {
+		case <-signal.ctx.Done():
+			return
+		case ticker := <-tickers:
+			cut := signal.onTicker(ticker)
+
+			if cut != nil {
+				signal.publish(cut.Thesis)
+			}
+		case trade := <-trades:
+			signal.onTrade(trade)
+		}
+	}
+}
+
+func (signal *Signal) onTrade(trade *kraken.Trade) {
+	signal.publish(signal.thesis.AppendMeasuremnts(
 		types.SourceHawkes,
-		signal.Calculate(nil, message.(*kraken.Trade).Data, nil),
-	)
+		signal.Calculate(nil, trade.Data, nil),
+	))
+}
+
+func (signal *Signal) publish(thesis *types.Thesis) {
+	if thesis == nil {
+		return
+	}
+
+	signal.subMu.Lock()
+	subscribers := append([]*types.Subscription[*types.Thesis](nil), signal.theses...)
+	signal.subMu.Unlock()
+
+	for _, subscription := range subscribers {
+		subscription.Send(thesis)
+	}
 }
 
 /*
