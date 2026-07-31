@@ -292,41 +292,6 @@ func (paper *Paper) TradeBalance() (spot.TradesHistoryResult, error) {
 }
 
 /*
-TradeVolume reshapes paper status into Kraken fee tiers so pricing can use the
-same taker-fee lookup path in real and paper sessions.
-*/
-func (paper *Paper) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error) {
-	status, err := paper.status()
-
-	if err != nil {
-		return nil, err
-	}
-
-	feeRate, ok := status["fee_rate"].(float64)
-
-	if !ok {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"paper status missing fee_rate",
-			nil,
-		))
-	}
-
-	fees := make(map[string]kraken.TradeVolumeFee, len(symbols))
-
-	for _, symbol := range symbols {
-		fees[symbol] = kraken.TradeVolumeFee{
-			Fee: decimal.NewFromFloat64(feeRate),
-		}
-	}
-
-	return &kraken.TradeVolumeResult{
-		Currency: "ZUSD",
-		Fees:     fees,
-	}, nil
-}
-
-/*
 AddOrder places through `kraken paper buy|sell` under simulator latency.
 */
 func (paper *Paper) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, error) {
@@ -529,27 +494,6 @@ func (paper *Paper) placeOrder(
 	}
 
 	model["pair"] = symbol
-	return model, nil
-}
-
-func (paper *Paper) status() (datura.Map[any], error) {
-	var (
-		model datura.Map[any]
-		err   error
-	)
-
-	paper.simulator.Do(REST, func() {
-		model, err = paper.execute("status", "status", "--verbose")
-	})
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to get paper status",
-			err,
-		))
-	}
-
 	return model, nil
 }
 

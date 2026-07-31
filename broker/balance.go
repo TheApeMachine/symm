@@ -31,7 +31,7 @@ func NewBalance(
 	ui chan []byte,
 ) *Balance {
 	balance := &Balance{
-		status: types.INITIALIZING,
+		status: types.READY,
 		api:    api,
 		ui:     ui,
 		wallet: &sync.Map{},

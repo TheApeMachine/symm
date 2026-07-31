@@ -135,10 +135,6 @@ func (solver *Solver) Step(symbol string, at time.Time) error {
 		))
 	}
 
-	if solver.recorder != nil {
-		solver.recorder.Write(diagnostics)
-	}
-
 	frame, stats, err := solver.domain.Display()
 
 	if err != nil {
@@ -178,7 +174,20 @@ func (solver *Solver) Step(symbol string, at time.Time) error {
 		}
 	}
 
+	if solver.recorder != nil {
+		errnie.Error(audit.Record(recorderOrNil(solver.recorder), "predictive", map[string]any{
+			"stage":  "manifold",
+			"symbol": symbol,
+			"at":     at,
+			"value":  diagnostics,
+		}))
+	}
+
 	return nil
+}
+
+func recorderOrNil(recorder *audit.Recorder) *audit.Recorder {
+	return recorder
 }
 
 /*

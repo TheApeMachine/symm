@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
@@ -16,6 +19,7 @@ import (
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
@@ -36,6 +40,14 @@ var entityMap = map[string]func([]byte) any{
 	"instrument": func(buf []byte) any { return kraken.NewInstrument(buf) },
 	"status":     func(buf []byte) any { return func() bool { return true }() },
 	"heartbeat":  func(buf []byte) any { return func() bool { return true }() },
+	"subscribe":  func(buf []byte) any { return func() bool { return true }() },
+	"pong": func(buf []byte) any {
+		return func() map[string]any {
+			pong := map[string]any{}
+			errnie.Error(sonic.Unmarshal(buf, &pong))
+			return pong
+		}()
+	},
 }
 
 /*
@@ -46,8 +58,12 @@ type Live struct {
 	status      types.Status
 	ctx         context.Context
 	cancel      context.CancelFunc
+	pingCtx     context.Context
+	pingCancel  context.CancelFunc
 	client      *spot.WebSocket
 	simulator   *Simulator
+	normalizer  *spot.Normalizer
+	level3      *sync.Map
 	book        *Book
 	symbols     []string
 	auth        bool
@@ -78,6 +94,7 @@ func New(
 		status:      types.INITIALIZING,
 		simulator:   simulator,
 		client:      spot.NewWebSocket(),
+		normalizer:  spot.NewNormalizer(),
 		auth:        auth,
 		subscribers: &sync.Map{},
 		callbacks:   &sync.Map{},
@@ -86,6 +103,7 @@ func New(
 	}
 
 	live.client.URL = endpoint
+	live.normalizer.Use(live.client.REST)
 
 	if auth {
 		nonce, err := processAuthNonce()
@@ -105,6 +123,7 @@ func New(
 	}
 
 	if endpoint == Level3WebSocketURL {
+		live.level3 = &sync.Map{}
 		live.book = NewBook(ctx)
 	}
 
@@ -114,44 +133,121 @@ func New(
 		channel := utils.GetString(raw, "channel")
 
 		if channel == "" {
-			if method := utils.GetString(raw, "method"); method == "add_order" {
+			if method := utils.GetString(raw, "method"); method != "" {
 				channel = method
 			}
 		}
 
 		out := entityMap[channel](raw)
 
+		if channel == "pong" {
+			// Check the error field in the pong response. If it is not empty, log the error.
+			if errMsg := utils.GetString(raw, "error"); errMsg != "" {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					fmt.Sprintf("websocket: pong error: %s", errMsg),
+					nil,
+				))
+
+				return
+			}
+
+			// If the pong response is successful, log it on the ping context.
+			if live.pingCtx != nil {
+				live.pingCtx = context.WithValue(live.pingCtx, "pong", time.Now())
+			}
+
+			return
+		}
+
 		// Callbacks are one-shot, so the first subscriber
 		// receives the message and the callback is deleted.
 		found, ok := live.callbacks.LoadAndDelete(channel)
 
 		if ok && found != nil {
-			callback, ok := found.(Callback[any])
+			subscription, ok := found.(types.Subscription[any])
 
 			if ok {
-				callback.Send(out)
+				subscription.Send(out)
+				close(subscription.Channel)
 			}
 		}
 
 		subscribers, ok := live.subscribers.Load(channel)
 
-		if ok || subscribers != nil {
-			for _, subscriber := range subscribers.([]types.Subscription[any]) {
+		if ok && subscribers != nil {
+			for _, subscriber := range subscribers.([]*types.Subscription[any]) {
 				subscriber.Send(out)
 			}
 		}
 	})
 
 	live.client.OnConnected.Recurring(func(event *callback.Event[any]) {
+		errnie.Info(fmt.Sprintf("websocket: connected to %s", endpoint))
+
+		go func() {
+			live.pingCtx, live.pingCancel = context.WithCancel(live.ctx)
+			hasPing := live.pingCtx.Value("req_id")
+			hasPong := live.pingCtx.Value("pong")
+
+			if hasPing != nil && hasPong == nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"websocket: we ain't got no pong, yo!",
+					nil,
+				))
+			}
+
+			if hasPing == nil {
+				live.pingCtx = context.WithValue(live.pingCtx, "req_id", 0)
+				hasPing = 0
+			}
+
+			live.pingCtx = context.WithValue(live.pingCtx, "req_id", hasPing.(int)+1)
+			live.pingCtx = context.WithValue(live.pingCtx, "pong", nil)
+
+			pingRequest := datura.NewMap()
+			pingRequest["method"] = "ping"
+			pingRequest["req_id"] = live.pingCtx.Value("req_id")
+
+			for {
+				select {
+				case <-live.pingCtx.Done():
+					return
+				case <-time.After(20 * time.Second):
+					live.Write(pingRequest)
+				}
+			}
+		}()
+
+		if auth {
+			errnie.Error(live.authenticate())
+			return
+		}
+
+		live.status = types.READY
+	})
+
+	live.client.OnDisconnected.Recurring(func(event *callback.Event[error]) {
+		errnie.Error(errnie.Err(
+			errnie.Unauthorized,
+			fmt.Sprintf("websocket %s disconnected: %s", endpoint, event.Data.Error()),
+			event.Data,
+		))
+
 		live.status = types.PENDING
-		live.authenticate()
 	})
 
 	if auth {
 		live.client.OnAuthenticated.Recurring(func(event *callback.Event[string]) {
+			errnie.Info(fmt.Sprintf("websocket: authenticated to %s", endpoint))
 			live.status = types.READY
 		})
 	}
+
+	errnie.Info(fmt.Sprintf("websocket: connecting to %s", endpoint))
+	live.status = types.PENDING
+	live.client.Connect()
 
 	return live
 }
@@ -161,6 +257,8 @@ func (live *Live) Status() types.Status {
 }
 
 func (live *Live) authenticate() (err error) {
+	errnie.Info(fmt.Sprintf("websocket[%s]: authenticating", live.client.URL))
+
 	if live.nonceErr != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -190,28 +288,13 @@ func (live *Live) authenticate() (err error) {
 	return live.client.Authenticate()
 }
 
-func (live *Live) Initialize() error {
-	errnie.Info("initializing live")
-	live.status = types.INITIALIZING
-
-	if err := live.client.Connect(); err != nil {
-		live.status = types.ERROR
-
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"websocket: connect failed",
-			err,
-		))
-	}
-
-	return nil
-}
-
 func (live *Live) Subscribe(
 	key string, subscription *types.Subscription[any],
 ) *types.Subscription[any] {
+	errnie.Info(fmt.Sprintf("websocket: new subscriber %s", key))
+
 	subscribers, ok := live.subscribers.LoadOrStore(
-		key, subscription,
+		key, []*types.Subscription[any]{subscription},
 	)
 
 	if ok {
@@ -230,6 +313,8 @@ func (live *Live) Client() *spot.WebSocket {
 }
 
 func (live *Live) SubInstrument(callback types.Subscription[any]) {
+	errnie.Info("websocket: subscribing to instrument")
+
 	live.Write(kraken.NewInstrumentSubscription(), Callback[any]{
 		Channel:      "instrument",
 		Subscription: callback,
@@ -239,15 +324,67 @@ func (live *Live) SubInstrument(callback types.Subscription[any]) {
 func (live *Live) SubTicker(symbols []string)  { live.client.SubTicker(symbols) }
 func (live *Live) SubBook(symbols []string)    { live.client.SubBook(symbols, 10) }
 func (live *Live) SubTrades(symbols []string)  { live.client.SubTrades(symbols) }
-func (live *Live) SubL3(symbols []string)      { live.client.SubL3(symbols, 10) }
 func (live *Live) SubCandles(symbols []string) { live.client.SubCandles(symbols) }
 
+func (live *Live) SubL3(symbols []string) {
+	if live.level3 == nil {
+		live.level3 = &sync.Map{}
+	}
+
+	for groups := range slices.Chunk(symbols, 200) {
+		conn := New(
+			live.ctx, live.simulator, live.auth, Level3WebSocketURL,
+		)
+
+		groupKey := strings.Join(groups, "|")
+		live.level3.Store(groupKey, conn)
+
+		for group := range slices.Chunk(groups, 40) {
+			errnie.Info(fmt.Sprintf(
+				"websocket: subscribing to level3 %s",
+				strings.Join(group, "|"),
+			))
+
+			conn.Client().SubL3(group, 10, map[string]any{
+				"depth": 10,
+			})
+
+			time.Sleep(1 * time.Second)
+		}
+	}
+}
+
 func (live *Live) Books() map[string]*book.Book {
-	return live.book.All()
+	out := map[string]*book.Book{}
+
+	live.level3.Range(func(key, value any) bool {
+		if conn, ok := value.(*Live); ok && conn.book != nil {
+			maps.Copy(out, conn.book.All())
+		}
+
+		return true
+	})
+
+	return out
 }
 
 func (live *Live) Book(symbol string) *book.Book {
-	return live.book.Get(symbol)
+	var manager *book.Book
+
+	live.level3.Range(func(key, value any) bool {
+		keys := strings.Split(key.(string), "|")
+
+		if slices.Contains(keys, symbol) {
+			if conn, ok := value.(*Live); ok && conn.book != nil {
+				manager = conn.book.Get(symbol)
+				return false
+			}
+		}
+
+		return true
+	})
+
+	return manager
 }
 
 func (live *Live) Balance() (map[string]*decimal.Decimal, error) {
@@ -278,11 +415,7 @@ func (live *Live) TradeBalance() (spot.TradesHistoryResult, error) {
 			},
 		)
 
-		return response.Result, errnie.Error(errnie.Err(
-			errnie.IO,
-			"trade balance: failed to fetch",
-			err,
-		))
+		return response.Result, errnie.Error(err)
 	}
 
 	return live.paper.TradeBalance()
@@ -294,11 +427,7 @@ func (live *Live) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, erro
 		kraken.NewTradeVolumeRequest(symbols),
 	)
 
-	return kraken.NewTradeVolume(response), errnie.Error(errnie.Err(
-		errnie.IO,
-		"trade volume: failed to fetch",
-		err,
-	))
+	return kraken.NewTradeVolume(response), errnie.Error(err)
 }
 
 func (live *Live) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, error) {

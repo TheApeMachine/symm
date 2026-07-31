@@ -8,6 +8,102 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+func TestThesisReadiness(t *testing.T) {
+	Convey("Given thesis stamps across the full decision pipeline", t, func() {
+		thesis := NewThesis()
+		stampAt := time.Unix(1, 0).UTC()
+
+		for _, source := range thesisSignalSources {
+			thesis.Stamps.Store(source, []Stamp{{
+				At:     stampAt,
+				Source: source,
+				Entity: MarketTicker,
+			}})
+		}
+
+		thesis.Stamps.Store(SourceCategory, []Stamp{{At: stampAt, Source: SourceCategory}})
+		thesis.Stamps.Store(SourceResonance, []Stamp{{At: stampAt, Source: SourceResonance}})
+		thesis.Stamps.Store(SourceCausal, []Stamp{{At: stampAt, Source: SourceCausal}})
+		thesis.Graphs.Store("BTC/USD", "graph")
+		thesis.Forecasts = []Forecasts{{}}
+		thesis.Decisions = []Decision{{}}
+
+		Convey("It should mark every thesis stage ready", func() {
+			readiness := thesis.Readiness()
+
+			So(readiness.Signals, ShouldBeTrue)
+			So(readiness.Manifold, ShouldBeTrue)
+			So(readiness.Resonance, ShouldBeTrue)
+			So(readiness.Causal, ShouldBeTrue)
+			So(readiness.Graph, ShouldBeTrue)
+			So(readiness.Allocation, ShouldBeTrue)
+			So(readiness.Decisions, ShouldBeTrue)
+		})
+	})
+}
+
+func TestThesisReset(t *testing.T) {
+	Convey("Given a thesis with transient cycle state", t, func() {
+		thesis := NewThesis()
+		thesis.Tick = 77
+		thesis.Measurements.Store(SourceCVD, []*Measurement{{Source: SourceCVD, Symbol: "BTC/USD"}})
+		thesis.Books.Store("BTC/USD", "book")
+		thesis.Graphs.Store("BTC/USD", "graph")
+		thesis.Forecasts = []Forecasts{{}}
+		thesis.Decisions = []Decision{{}}
+		thesis.Findings = []Finding{{}}
+		thesis.Hypotheses = []Hypothesis{{}}
+		thesis.Categories["market"] = []Category{{}}
+		thesis.Manifold.Store("BTC/USD", "manifold")
+		thesis.Cognition.Store("BTC/USD", "cognition")
+		thesis.Resonance.Store("BTC/USD", "resonance")
+		thesis.Causal.Store("BTC/USD", "causal")
+		thesis.Stamps.Store(SourceCVD, []Stamp{{Source: SourceCVD}})
+		thesis.Lifecycle.Store("BTC/USD", LifecycleManaging)
+
+		resetAt := thesis.Reset().At
+
+		Convey("It should clear transient evidence and keep lifecycle state", func() {
+			So(thesis.Tick, ShouldEqual, 0)
+			So(thesis.CrossSection, ShouldNotBeNil)
+			So(resetAt.IsZero(), ShouldBeFalse)
+			So(len(thesis.Forecasts), ShouldEqual, 0)
+			So(len(thesis.Decisions), ShouldEqual, 0)
+			So(len(thesis.Findings), ShouldEqual, 0)
+			So(len(thesis.Hypotheses), ShouldEqual, 0)
+			So(len(thesis.Categories), ShouldEqual, 0)
+
+			_, foundMeasurement := thesis.Measurements.Load(SourceCVD)
+			So(foundMeasurement, ShouldBeFalse)
+
+			_, foundBook := thesis.Books.Load("BTC/USD")
+			So(foundBook, ShouldBeFalse)
+
+			_, foundGraph := thesis.Graphs.Load("BTC/USD")
+			So(foundGraph, ShouldBeFalse)
+
+			_, foundManifold := thesis.Manifold.Load("BTC/USD")
+			So(foundManifold, ShouldBeFalse)
+
+			_, foundCognition := thesis.Cognition.Load("BTC/USD")
+			So(foundCognition, ShouldBeFalse)
+
+			_, foundResonance := thesis.Resonance.Load("BTC/USD")
+			So(foundResonance, ShouldBeFalse)
+
+			_, foundCausal := thesis.Causal.Load("BTC/USD")
+			So(foundCausal, ShouldBeFalse)
+
+			_, foundStamp := thesis.Stamps.Load(SourceCVD)
+			So(foundStamp, ShouldBeFalse)
+
+			phase, foundLifecycle := thesis.Lifecycle.Load("BTC/USD")
+			So(foundLifecycle, ShouldBeTrue)
+			So(phase, ShouldEqual, LifecycleManaging)
+		})
+	})
+}
+
 /*
 TestThesisAppendMeasurementsConcurrent proves independent signal actors can
 replace the same source-symbol row in the shared Thesis without corrupting the

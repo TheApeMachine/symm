@@ -49,7 +49,7 @@ func NewDesk(
 	desk := &Desk{
 		ctx:    ctx,
 		cancel: cancel,
-		status: types.INITIALIZING,
+		status: types.READY,
 		api:    api,
 		subscriptions: map[string]*types.Subscription[any]{
 			"ticker": api.Subscribe("ticker", types.NewSubscription[any]()),

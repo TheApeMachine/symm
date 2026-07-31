@@ -68,7 +68,7 @@ func BenchmarkNewPaperBalance(b *testing.B) {
 
 	b.ReportAllocs()
 
-	for benchmarkIndex := 0; benchmarkIndex < b.N; benchmarkIndex++ {
+	for b.Loop() {
 		NewPaperBalance(payload)
 	}
 }

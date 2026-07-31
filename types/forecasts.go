@@ -27,14 +27,14 @@ type Forecasts struct {
 	CalibrationSamples         uint64           `json:"calibrationSamples"`
 	IncrementalMSE             float64          `json:"incrementalMSE" validate:"finite"`
 	IncrementalSkillLowerBound float64          `json:"incrementalSkillLowerBound" validate:"finite"`
-	ExpectedReturn             float64          `json:"expectedReturn" validate:"finite"`
+	ExpectedReturn             *decimal.Decimal `json:"expectedReturn" validate:"finite"`
 	ReferencePrice             *decimal.Decimal `json:"referencePrice" validate:"required"`
 	BuyCapacity                *decimal.Decimal `json:"buyCapacity" validate:"required"`
 	SellCapacity               *decimal.Decimal `json:"sellCapacity" validate:"required"`
-	ExpectedFees               float64          `json:"expectedFees" validate:"finite,nonnegative"`
-	ExpectedSpread             float64          `json:"expectedSpread" validate:"finite,nonnegative"`
-	ExpectedImpact             float64          `json:"expectedImpact" validate:"finite,nonnegative"`
-	ExpectedAdverseSelection   float64          `json:"expectedAdverseSelection" validate:"finite,nonnegative"`
+	ExpectedFees               *decimal.Decimal `json:"expectedFees" validate:"finite,nonnegative"`
+	ExpectedSpread             *decimal.Decimal `json:"expectedSpread" validate:"finite,nonnegative"`
+	ExpectedImpact             *decimal.Decimal `json:"expectedImpact" validate:"finite,nonnegative"`
+	ExpectedAdverseSelection   *decimal.Decimal `json:"expectedAdverseSelection" validate:"finite,nonnegative"`
 	Uncertainty                float64          `json:"uncertainty" validate:"finite,nonnegative"`
 	Confidence                 float64          `json:"confidence" validate:"finite,min=0,max=1"`
 }
@@ -65,11 +65,11 @@ func (forecasts Forecasts) Eligible() bool {
 	}
 
 	values := []float64{
-		forecasts.ExpectedReturn,
-		forecasts.ExpectedFees,
-		forecasts.ExpectedSpread,
-		forecasts.ExpectedImpact,
-		forecasts.ExpectedAdverseSelection,
+		forecasts.ExpectedReturn.Float64(),
+		forecasts.ExpectedFees.Float64(),
+		forecasts.ExpectedSpread.Float64(),
+		forecasts.ExpectedImpact.Float64(),
+		forecasts.ExpectedAdverseSelection.Float64(),
 		forecasts.Uncertainty,
 		forecasts.Confidence,
 		forecasts.IncrementalMSE,
@@ -82,26 +82,26 @@ func (forecasts Forecasts) Eligible() bool {
 		}
 	}
 
-	return forecasts.ExpectedFees >= 0 &&
+	return forecasts.ExpectedFees.Sign() >= 0 &&
 		forecasts.ReferencePrice != nil && forecasts.ReferencePrice.Sign() > 0 &&
 		forecasts.BuyCapacity != nil && forecasts.BuyCapacity.Sign() > 0 &&
 		forecasts.SellCapacity != nil && forecasts.SellCapacity.Sign() > 0 &&
-		forecasts.ExpectedSpread >= 0 &&
-		forecasts.ExpectedImpact >= 0 &&
-		forecasts.ExpectedAdverseSelection >= 0 &&
+		forecasts.ExpectedSpread.Sign() >= 0 &&
+		forecasts.ExpectedImpact.Sign() >= 0 &&
+		forecasts.ExpectedAdverseSelection.Sign() >= 0 &&
 		forecasts.Uncertainty >= 0 &&
 		forecasts.Confidence >= 0 &&
 		forecasts.Confidence <= 1
 }
 
 /*
-ExecutableReturn subtracts every modeled execution friction from the expected
-market return.
+ExecutableReturn subtracts every modeled execution friction 
+from the expected market return.
 */
-func (forecasts Forecasts) ExecutableReturn() float64 {
-	return forecasts.ExpectedReturn -
-		forecasts.ExpectedFees -
-		forecasts.ExpectedSpread -
-		forecasts.ExpectedImpact -
-		forecasts.ExpectedAdverseSelection
+func (forecasts Forecasts) ExecutableReturn() *decimal.Decimal {
+	return forecasts.ExpectedReturn.
+		Sub(forecasts.ExpectedFees).
+		Sub(forecasts.ExpectedSpread).
+		Sub(forecasts.ExpectedImpact).
+		Sub(forecasts.ExpectedAdverseSelection)
 }

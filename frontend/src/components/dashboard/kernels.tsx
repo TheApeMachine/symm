@@ -155,12 +155,12 @@ export const KernelList = () => {
 								<Typography.Span
 									data-paint="status"
 									data-paint-class="HEALTHY:text-(--up) INVALID:text-(--down) STANDBY:text-(--f4)"
-									className="shrink-0 rounded-[2px] border border-(--line2) bg-(--line) px-[5px] py-0.5 font-mono text-[9px] uppercase tracking-[0.07em]"
+									className="shrink-0 rounded-xs border border-(--line2) bg-(--line) px-1.25 py-0.5 font-mono text-[9px] uppercase tracking-[0.07em]"
 								>
 									STANDBY
 								</Typography.Span>
 							</Flex.Row>
-							<div className="mt-2 h-1 overflow-hidden rounded-[2px] bg-(--line)">
+							<div className="mt-2 h-1 overflow-hidden rounded-xs bg-(--line)">
 								<div
 									data-set="bar_width"
 									data-target="style.width"
@@ -176,7 +176,7 @@ export const KernelList = () => {
 								</Typography.Span>
 								<Typography.Span
 									data-paint="age"
-									className="w-[46px] shrink-0 text-right font-mono text-[9.5px] text-(--f4)"
+									className="w-11.5 shrink-0 text-right font-mono text-[9.5px] text-(--f4)"
 								/>
 							</Flex.Row>
 						</List.Item>

@@ -186,7 +186,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	// 9. Record audit snapshot if recorder is attached
 	if solver.recorder != nil {
-		solver.recorder.Write(map[string]any{
+		errnie.Error(audit.Record(solver.recorder, "predictive", map[string]any{
+			"stage":         "resonance",
 			"surprise":      surprise,
 			"energy":        energy,
 			"latent":        latent,
@@ -194,7 +195,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			"confidence":    confidence,
 			"activeHorizon": activeHorizon,
 			"forwardCurve":  forwardCurve,
-		})
+		}))
 	}
 
 	return nil

@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )
@@ -53,7 +54,7 @@ func (a *Arbiter) Arbitrate(thesis *types.Thesis) {
 	})
 
 	openSlots := a.desk.OpenSlots(false)
-	incumbents := a.getIncumbents(thesis)
+	incumbents := a.getIncumbents()
 
 	for _, candidate := range enters {
 		if openSlots > 0 {
@@ -118,9 +119,9 @@ func (a *Arbiter) tryDisplace(
 	return types.Decision{}, types.Decision{}, false
 }
 
-func (a *Arbiter) getIncumbents(thesis *types.Thesis) []Incumbent {
+func (arbiter *Arbiter) getIncumbents() []Incumbent {
 	rows := make([]Incumbent, 0)
-	for position := range a.desk.Positions() {
+	for position := range arbiter.desk.Positions() {
 		if position.Status != types.OPEN || position.Holding.Mark == nil || position.Holding.Qty == nil {
 			continue
 		}
@@ -130,9 +131,16 @@ func (a *Arbiter) getIncumbents(thesis *types.Thesis) []Incumbent {
 			continue
 		}
 
-		feeFraction := 0.0026
-		if fraction, err := a.price.Fraction(position.Holding.Symbol); err == nil && fraction != nil {
-			feeFraction = fraction.Float64()
+		fee, err := arbiter.price.Fee(position.Holding.Symbol)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"arbitrate: fee rate unavailable for "+position.Holding.Symbol,
+				err,
+			))
+
+			continue
 		}
 
 		rows = append(rows, Incumbent{
@@ -143,7 +151,7 @@ func (a *Arbiter) getIncumbents(thesis *types.Thesis) []Incumbent {
 				}
 				return 0.0
 			}(),
-			ExitCost: feeFraction * notional.Float64(),
+			ExitCost: fee.Float64(),
 			Notional: notional,
 			Qty:      position.Holding.Qty.Copy(),
 			Mark:     position.Holding.Mark.Copy(),

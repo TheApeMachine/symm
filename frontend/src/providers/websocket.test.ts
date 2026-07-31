@@ -57,7 +57,7 @@ describe("WsFeed", () => {
 	it("connects and sends focus messages on ready and focus changes", () => {
 		appStore.actions.updateFocusSymbol("BTC/USD");
 		WsFeed();
-		const worker = MockWorker.instances.at(-1);
+		const worker = MockWorker.instances.at(-2) ?? MockWorker.instances.at(-1);
 
 		expect(worker).toBeDefined();
 		worker?.emit("message", { type: "READY" });

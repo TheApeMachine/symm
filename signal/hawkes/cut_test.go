@@ -1,6 +1,7 @@
 package hawkes
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -15,8 +16,11 @@ import (
 func TestOnTickerAdvancesCut(t *testing.T) {
 	Convey("Given a Hawkes process that already has symbol state", t, func() {
 		thesis := types.NewThesis()
+		thesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
+		thesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
+		thesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
 		statePlanner := &strategy.Planner{Thesis: thesis}
-		signal := NewSignal(t.Context(), nil, statePlanner, nil)
+		signal := &Signal{thesis: thesis, planner: statePlanner}
 		found, _ := thesis.Causal.Load("signal:hawkes:process")
 		process := found.(*excitation.Process)
 		base := time.Unix(1, 0)
@@ -45,7 +49,11 @@ func TestOnTickerAdvancesCut(t *testing.T) {
 		})
 
 		Convey("When no symbols are warm yet", func() {
-			cold := NewSignal(t.Context(), nil, &strategy.Planner{Thesis: types.NewThesis()}, nil)
+			coldThesis := types.NewThesis()
+			coldThesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
+			coldThesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
+			coldThesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
+			cold := &Signal{thesis: coldThesis, planner: &strategy.Planner{Thesis: coldThesis}}
 
 			Convey("It does not invent a cut", func() {
 				cold.onTicker(&kraken.Ticker{
@@ -62,8 +70,11 @@ func TestOnTickerAdvancesCut(t *testing.T) {
 func TestCutOutcome(t *testing.T) {
 	Convey("Given a cut frozen from a live process", t, func() {
 		thesis := types.NewThesis()
+		thesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
+		thesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
+		thesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
 		statePlanner := &strategy.Planner{Thesis: thesis}
-		signal := NewSignal(t.Context(), nil, statePlanner, nil)
+		signal := &Signal{thesis: thesis, planner: statePlanner}
 		found, _ := thesis.Causal.Load("signal:hawkes:process")
 		process := found.(*excitation.Process)
 		base := time.Unix(1, 0)

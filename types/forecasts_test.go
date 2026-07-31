@@ -38,11 +38,11 @@ func TestForecastsEligible(t *testing.T) {
 func TestForecastsExecutableReturn(t *testing.T) {
 	Convey("Given a forecast with explicit execution friction", t, func() {
 		forecast := eligibleForecast()
-		forecast.ExpectedReturn = 0.05
-		forecast.ExpectedFees = 0.01
-		forecast.ExpectedSpread = 0.005
-		forecast.ExpectedImpact = 0.002
-		forecast.ExpectedAdverseSelection = 0.003
+		forecast.ExpectedReturn = decimal.NewFromFloat64(0.05)
+		forecast.ExpectedFees = decimal.NewFromFloat64(0.01)
+		forecast.ExpectedSpread = decimal.NewFromFloat64(0.005)
+		forecast.ExpectedImpact = decimal.NewFromFloat64(0.002)
+		forecast.ExpectedAdverseSelection = decimal.NewFromFloat64(0.003)
 
 		Convey("It should subtract every friction component", func() {
 			So(forecast.ExecutableReturn(), ShouldAlmostEqual, 0.03)

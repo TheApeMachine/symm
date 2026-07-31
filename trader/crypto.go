@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"reflect"
 	"sync/atomic"
 
 	"github.com/theapemachine/datura"
@@ -43,7 +44,7 @@ func NewCrypto(
 	crypto := &Crypto{
 		ctx:      ctx,
 		cancel:   cancel,
-		status:   types.INITIALIZING,
+		status:   types.READY,
 		tick:     &atomic.Int64{},
 		dataPath: utils.ResolveDataPath(),
 		ui:       ui,
@@ -72,12 +73,41 @@ func (crypto *Crypto) run() {
 			case <-crypto.ctx.Done():
 				return
 			case decisions := <-crypto.subscriptions["decisions"].Channel:
+				if crypto.decisionsReady(decisions) == false {
+					continue
+				}
+
 				out := datura.NewMap()
 				out["decisions"] = decisions
 				utils.Publish(crypto.ui, out)
+
+				tickOut := datura.NewMap()
+				tickOut["tick"] = datura.NewMap()
+				tickOut["tick"].(datura.Map[any])["count"] = crypto.tick.Add(1)
+				utils.Publish(crypto.ui, tickOut)
 			}
 		}
 	}()
+}
+
+func (crypto *Crypto) decisionsReady(decisions any) bool {
+	if decisions == nil {
+		return false
+	}
+
+	typedDecisions, ok := decisions.([]types.Decision)
+
+	if ok {
+		return len(typedDecisions) > 0
+	}
+
+	value := reflect.ValueOf(decisions)
+
+	if value.Kind() != reflect.Slice {
+		return false
+	}
+
+	return value.Len() > 0
 }
 
 func (crypto *Crypto) Close() (err error) {

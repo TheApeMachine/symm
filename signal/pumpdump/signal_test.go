@@ -1,514 +1,123 @@
-package pumpdump_test
+package pumpdump
 
 import (
-	"math"
-	"runtime"
+	"encoding/json"
+	"sync"
 	"testing"
-	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	bookflow "github.com/theapemachine/nomagique/algorithm/book/flow"
+	"github.com/theapemachine/nomagique/equation"
+
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/signal/pumpdump"
-	"github.com/theapemachine/symm/stack"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
 )
 
-/*
-metricValues groups one signal's raw values by metric and market symbol.
-*/
-type metricValues = map[types.MetricType]map[string]float64
+func drainPumpTickers(sub *types.Subscription[any]) []kraken.TickerData {
+	out := make([]kraken.TickerData, 0)
 
-/*
-marketOutcome retains both transition peaks and the latest closed volume bar.
-*/
-type marketOutcome struct {
-	peak   metricValues
-	latest metricValues
-}
-
-/*
-marketProof names one semantic tape and any symbols isolated by that tape.
-*/
-type marketProof struct {
-	name    string
-	states  []tests.MarketState
-	symbols []string
-}
-
-/*
-metricRelation declares metrics compared across controlled market tapes.
-*/
-type metricRelation struct {
-	left    string
-	right   string
-	metrics []types.MetricType
-}
-
-/*
-TestMeasure proves pumpdump separates cadence, displacement, executed volume,
-spread compression, rejection, direction, and symbol isolation through the
-production boot graph. Every proof validates all eight metrics at both its peak
-and latest new volume bar.
-*/
-func TestMeasure(t *testing.T) {
-	// Mirror peak equality is scheduling-sensitive under parallel package load;
-	// pin one P so MeasureLoop sees trade→book→ticker in lockstep with Drain.
-	procs := runtime.GOMAXPROCS(1)
-	defer runtime.GOMAXPROCS(procs)
-
-	metrics := []types.MetricType{
-		types.MetricRVOL,
-		types.MetricPrecursor,
-		types.MetricSpread,
-		types.MetricCompression,
-		types.MetricIgnition,
-		types.MetricTrend,
-		types.MetricExhaustion,
-		types.MetricStrength,
-	}
-	families := []types.MetricType{
-		types.MetricCompression,
-		types.MetricIgnition,
-		types.MetricTrend,
-		types.MetricExhaustion,
-	}
-	priceFamilies := []types.MetricType{
-		types.MetricPrecursor,
-		types.MetricIgnition,
-		types.MetricTrend,
-		types.MetricExhaustion,
-	}
-	lift := []types.MetricType{
-		types.MetricRVOL,
-		types.MetricPrecursor,
-		types.MetricIgnition,
-		types.MetricTrend,
-		types.MetricStrength,
-	}
-	priceLift := lift[1:]
-	fastRejection := []tests.MarketState{
-		tests.MarketStateFastPump,
-		tests.MarketStateFastDump,
-	}
-	slowRejection := []tests.MarketState{
-		tests.MarketStateFastPump,
-		tests.MarketStateSlowDump,
-	}
-	reversal := []tests.MarketState{
-		tests.MarketStateSlowDump,
-		tests.MarketStateFastPump,
-	}
-
-	Convey("Given matched pump-cycle market tapes", t, func() {
-		proofs := []marketProof{
-			{"baseline", []tests.MarketState{tests.MarketStateBaseline}, nil},
-			{"fast pump", []tests.MarketState{tests.MarketStateFastPump}, nil},
-			{"fast dump", []tests.MarketState{tests.MarketStateFastDump}, nil},
-			{"slow pump", []tests.MarketState{tests.MarketStateSlowPump}, nil},
-			{"slow dump", []tests.MarketState{tests.MarketStateSlowDump}, nil},
-			{"slow cadence lift", []tests.MarketState{tests.MarketStateSlowCadenceLift}, nil},
-			{"small lift", []tests.MarketState{tests.MarketStateSmallLift}, nil},
-			{"low-volume lift", []tests.MarketState{tests.MarketStateLowVolumeLift}, nil},
-			{"absorption", []tests.MarketState{tests.MarketStateVolumeAbsorption}, nil},
-			{"compression", []tests.MarketState{tests.MarketStateSpreadCompression}, nil},
-			{"spread control", []tests.MarketState{tests.MarketStateSpreadControl}, nil},
-			{"fast rejection", fastRejection, nil},
-			{"slow rejection", slowRejection, nil},
-			{"reversal", reversal, nil},
-			{"isolated pump", []tests.MarketState{tests.MarketStateFastPump}, []string{"SIM1/USD"}},
+	for {
+		select {
+		case frame := <-sub.Channel:
+			if ticker, ok := frame.(*kraken.Ticker); ok {
+				out = append(out, ticker.Data...)
+			}
+		default:
+			return out
 		}
-		outcomes := make(map[string]marketOutcome, len(proofs))
-		symbols := []string{}
-
-		for _, proof := range proofs {
-			market := tests.NewMarket(t.Context(), 3)
-			wired, err := stack.NewBooter(t.Context()).Test(market)
-			So(err, ShouldBeNil)
-			thesis := wired.Thesis
-			So(market.Warmup(tests.Idle), ShouldBeNil)
-			measurements := []*types.Measurement{}
-			maturity := make(map[string]int64, len(market.Symbols))
-
-			thesis.Measurements.Range(func(_, value any) bool {
-				for _, measurement := range value.([]*types.Measurement) {
-					if measurement.Source == types.SourcePumpDump {
-						maturity[measurement.Symbol] = measurement.Maturity
-					}
-				}
-				return true
-			})
-
-			for _, state := range proof.states[:len(proof.states)-1] {
-				So(market.Transition(state, tests.Idle, proof.symbols...), ShouldBeNil)
-			}
-
-			thesis.Measurements.Range(func(_, value any) bool {
-				for _, measurement := range value.([]*types.Measurement) {
-					if measurement.Source == types.SourcePumpDump {
-						maturity[measurement.Symbol] = measurement.Maturity
-					}
-				}
-				return true
-			})
-
-			So(market.Transition(
-				proof.states[len(proof.states)-1], func() error {
-					advanced := make(map[string]bool, len(market.Symbols))
-
-					thesis.Measurements.Range(func(_, value any) bool {
-						for _, measurement := range value.([]*types.Measurement) {
-							if measurement.Source != types.SourcePumpDump {
-								continue
-							}
-
-							So(measurement.ValidateStruct(), ShouldBeNil)
-
-							if measurement.Maturity > maturity[measurement.Symbol] {
-								So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
-								advanced[measurement.Symbol] = true
-								maturity[measurement.Symbol] = measurement.Maturity
-							}
-
-							measurement.EachMetric(func(
-								_ types.MetricType,
-								_ types.MeasurementSide,
-								sample types.MetricSample,
-							) bool {
-								if sample.Raw == 0 {
-									So(sample.Normalized, ShouldBeNil)
-									return true
-								}
-
-								So(sample.Normalized, ShouldNotBeNil)
-								So(math.IsNaN(*sample.Normalized), ShouldBeFalse)
-								So(math.IsInf(*sample.Normalized, 0), ShouldBeFalse)
-								return true
-							})
-						}
-						return true
-					})
-
-					thesis.Measurements.Range(func(_, value any) bool {
-						for _, measurement := range value.([]*types.Measurement) {
-							if measurement.Source == types.SourcePumpDump &&
-								advanced[measurement.Symbol] {
-								measurements = append(measurements, measurement)
-							}
-						}
-						return true
-					})
-
-					return nil
-				}, proof.symbols...,
-			), ShouldBeNil)
-
-			outcomes[proof.name] = marketOutcome{
-				peak: tests.PeakMeasurements(
-					measurements, types.SourcePumpDump, metrics,
-				),
-				latest: tests.LatestMeasurements(
-					measurements, types.SourcePumpDump, metrics,
-				),
-			}
-
-			if len(symbols) == 0 {
-				symbols = append(symbols, market.Symbols...)
-			}
-
-			So(wired.Close(), ShouldBeNil)
-			market.Close()
-		}
-
-		Convey("It should distinguish every causal market regime", func() {
-			for name, outcome := range outcomes {
-				for _, values := range []metricValues{outcome.peak, outcome.latest} {
-					for _, metric := range metrics {
-						SoMsg(name+" "+string(metric), values[metric],
-							ShouldHaveLength, len(symbols))
-					}
-
-					for _, symbol := range symbols {
-						for _, metric := range metrics {
-							value := values[metric][symbol]
-							So(math.IsNaN(value), ShouldBeFalse)
-							So(math.IsInf(value, 0), ShouldBeFalse)
-							So(value, ShouldBeGreaterThanOrEqualTo, 0)
-						}
-
-						So(values[types.MetricRVOL][symbol], ShouldBeGreaterThan, 0)
-						So(values[types.MetricSpread][symbol], ShouldBeGreaterThan, 0)
-						strength := 0.0
-
-						for _, family := range families {
-							strength = max(strength, values[family][symbol])
-						}
-
-						So(values[types.MetricStrength][symbol], ShouldEqual, strength)
-					}
-				}
-			}
-
-			comparisons := []metricRelation{
-				{"fast pump", "baseline", lift},
-				{"slow pump", "baseline", lift},
-				{"fast pump", "fast dump", priceLift},
-				{"slow dump", "baseline", []types.MetricType{types.MetricExhaustion}},
-				{"fast pump", "slow cadence lift", []types.MetricType{
-					types.MetricRVOL, types.MetricIgnition, types.MetricTrend, types.MetricStrength,
-				}},
-				{"fast pump", "small lift", priceLift},
-				{"fast pump", "low-volume lift", []types.MetricType{
-					types.MetricRVOL, types.MetricIgnition, types.MetricStrength,
-				}},
-				{"fast pump", "absorption", priceLift},
-				{"fast rejection", "fast pump", []types.MetricType{types.MetricExhaustion}},
-				{"slow rejection", "fast pump", []types.MetricType{types.MetricExhaustion}},
-				{"reversal", "slow dump", priceLift},
-			}
-
-			for _, relation := range comparisons {
-				for _, metric := range relation.metrics {
-					for _, symbol := range symbols {
-						SoMsg(
-							relation.left+" "+string(metric)+" > "+relation.right,
-							outcomes[relation.left].peak[metric][symbol],
-							ShouldBeGreaterThan,
-							outcomes[relation.right].peak[metric][symbol],
-						)
-					}
-				}
-			}
-
-			matches := []metricRelation{
-				{"fast pump", "fast dump", []types.MetricType{
-					types.MetricRVOL, types.MetricSpread,
-				}},
-				{"slow pump", "slow dump", []types.MetricType{
-					types.MetricRVOL, types.MetricSpread,
-				}},
-				{"fast pump", "slow cadence lift", []types.MetricType{types.MetricPrecursor}},
-				{"fast pump", "small lift", []types.MetricType{types.MetricRVOL}},
-				{"fast pump", "absorption", []types.MetricType{types.MetricRVOL}},
-				{"compression", "spread control", []types.MetricType{types.MetricRVOL}},
-			}
-
-			for _, relation := range matches {
-				leftValues := []metricValues{
-					outcomes[relation.left].peak,
-					outcomes[relation.left].latest,
-				}
-				rightValues := []metricValues{
-					outcomes[relation.right].peak,
-					outcomes[relation.right].latest,
-				}
-
-				for index, left := range leftValues {
-					for _, metric := range relation.metrics {
-						for _, symbol := range symbols {
-							surface := "peak"
-
-							if index == 1 {
-								surface = "latest"
-							}
-
-							SoMsg(
-								relation.left+" "+relation.right+" "+
-									string(metric)+" "+symbol+" "+surface,
-								left[metric][symbol],
-								ShouldAlmostEqual,
-								rightValues[index][metric][symbol],
-							)
-						}
-					}
-				}
-			}
-
-			for _, symbol := range symbols {
-				for _, name := range []string{"absorption", "compression", "spread control"} {
-					for _, metric := range priceFamilies {
-						So(outcomes[name].latest[metric][symbol], ShouldEqual, 0.0)
-					}
-				}
-
-				So(outcomes["fast dump"].peak[types.MetricExhaustion][symbol],
-					ShouldBeGreaterThan, 0)
-				So(outcomes["compression"].peak[types.MetricCompression][symbol],
-					ShouldBeGreaterThan,
-					outcomes["spread control"].peak[types.MetricCompression][symbol])
-				So(outcomes["compression"].latest[types.MetricCompression][symbol],
-					ShouldBeGreaterThan,
-					outcomes["spread control"].latest[types.MetricCompression][symbol])
-			}
-
-			isolated := outcomes["isolated pump"].peak
-
-			for _, control := range symbols[1:] {
-				for _, metric := range lift {
-					So(isolated[metric][symbols[0]], ShouldBeGreaterThan,
-						isolated[metric][control])
-				}
-			}
-		})
-	})
-}
-
-/*
-TestCalculate proves pumpdump treats late ticker deliveries as non-observations
-instead of failing the volume clock or poisoning peers in the same batch.
-*/
-func TestCalculate(t *testing.T) {
-	Convey("Given a symbol with book state and executed volume", t, func() {
-		signal := pumpdump.NewSignal(
-			t.Context(),
-			nil,
-			&strategy.Planner{Thesis: types.NewThesis()},
-			make(chan []byte, 8),
-		)
-		at := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
-		increment := decimal.NewFromFloat64(0.01)
-
-		signal.Calculate(nil, nil, []kraken.BookData{
-			{
-				Symbol:         "SIM1/USD",
-				Type:           "snapshot",
-				PriceIncrement: increment,
-				Bids: []kraken.BookLevel{
-					{Price: *decimal.NewFromFloat64(99.99), Qty: 10},
-				},
-				Asks: []kraken.BookLevel{
-					{Price: *decimal.NewFromFloat64(100.01), Qty: 10},
-				},
-				Timestamp: at,
-			},
-			{
-				Symbol:         "SIM2/USD",
-				Type:           "snapshot",
-				PriceIncrement: increment,
-				Bids: []kraken.BookLevel{
-					{Price: *decimal.NewFromFloat64(49.99), Qty: 10},
-				},
-				Asks: []kraken.BookLevel{
-					{Price: *decimal.NewFromFloat64(50.01), Qty: 10},
-				},
-				Timestamp: at,
-			},
-		})
-
-		signal.Calculate(nil, []kraken.TradeData{
-			{
-				Symbol:    "SIM1/USD",
-				Side:      "buy",
-				Price:     *decimal.NewFromFloat64(100.01),
-				Qty:       25,
-				Timestamp: at,
-			},
-			{
-				Symbol:    "SIM2/USD",
-				Side:      "buy",
-				Price:     *decimal.NewFromFloat64(50.01),
-				Qty:       25,
-				Timestamp: at,
-			},
-		}, nil)
-		first := signal.Calculate([]kraken.TickerData{
-			{
-				Symbol:    "SIM1/USD",
-				Last:      decimal.NewFromFloat64(100),
-				Timestamp: at.Add(2 * time.Second),
-			},
-			{
-				Symbol:    "SIM2/USD",
-				Last:      decimal.NewFromFloat64(50),
-				Timestamp: at.Add(2 * time.Second),
-			},
-		}, nil, nil)
-		So(first, ShouldNotBeEmpty)
-
-		Convey("A late ticker for one symbol should not fail the batch", func() {
-			rows := signal.Calculate([]kraken.TickerData{
-				{
-					Symbol:    "SIM1/USD",
-					Last:      decimal.NewFromFloat64(100),
-					Timestamp: at.Add(time.Second),
-				},
-				{
-					Symbol:    "SIM2/USD",
-					Last:      decimal.NewFromFloat64(50),
-					Timestamp: at.Add(3 * time.Second),
-				},
-			}, nil, nil)
-
-			symbols := map[string]bool{}
-
-			for _, measurement := range rows {
-				symbols[measurement.Symbol] = true
-			}
-
-			So(symbols["SIM1/USD"], ShouldBeFalse)
-			So(symbols["SIM2/USD"], ShouldBeTrue)
-		})
-
-		Convey("A later causal ticker should still advance the symbol", func() {
-			rows := signal.Calculate([]kraken.TickerData{
-				{
-					Symbol:    "SIM1/USD",
-					Last:      decimal.NewFromFloat64(100),
-					Timestamp: at.Add(4 * time.Second),
-				},
-			}, nil, nil)
-			So(rows, ShouldNotBeEmpty)
-			So(rows[0].Symbol, ShouldEqual, "SIM1/USD")
-		})
-	})
-}
-
-/*
-BenchmarkMeasure exercises one full production tick against generated markets.
-*/
-func BenchmarkMeasure(b *testing.B) {
-	market := tests.NewMarket(b.Context(), 3)
-
-	wired, err := stack.NewBooter(b.Context()).Test(market)
-
-	if err != nil {
-		b.Fatal(err)
 	}
+}
 
-	defer func() {
-		if err := wired.Close(); err != nil {
-			b.Fatal(err)
+func drainPumpTrades(sub *types.Subscription[any]) []kraken.TradeData {
+	out := make([]kraken.TradeData, 0)
+
+	for {
+		select {
+		case frame := <-sub.Channel:
+			if trade, ok := frame.(*kraken.Trade); ok {
+				out = append(out, trade.Data...)
+			}
+		default:
+			return out
 		}
-	}()
+	}
+}
+
+func drainPumpBooks(sub *types.Subscription[any]) []kraken.BookData {
+	out := make([]kraken.BookData, 0)
+
+	for {
+		select {
+		case frame := <-sub.Channel:
+			if book, ok := frame.(*kraken.Book); ok {
+				out = append(out, book.Data...)
+			}
+		default:
+			return out
+		}
+	}
+}
+
+func measurePumpdump(t *testing.T, state tests.MarketState, focus ...string) []*types.Measurement {
+	market := tests.NewMarket(t.Context(), 3)
+	So(market.Bootstrap(), ShouldBeNil)
 	defer market.Close()
-	b.ReportAllocs()
 
-	for b.Loop() {
-		if err := market.Apply(tests.MarketStep{
-			Advance: 250 * time.Millisecond,
-			Actions: []tests.MarketAction{
-				{
-					Kind:   tests.MarketTrade,
-					Symbol: "SIM1/USD",
-					Side:   "buy",
-					Qty:    100,
-				},
-				{
-					Kind:   tests.MarketRefill,
-					Symbol: "SIM1/USD",
-					Side:   "sell",
-					Qty:    100,
-				},
-				{
-					Kind:   tests.MarketMoveMid,
-					Symbol: "SIM1/USD",
-					Ticks:  1,
-				},
-			},
-		}, tests.Idle); err != nil {
-			b.Fatal(err)
+	thesis := types.NewThesis()
+	thesis.Causal.Store("signal:pumpdump:ignition", equation.NewIgnition(256))
+	thesis.Causal.Store("signal:pumpdump:volume", &sync.Map{})
+	thesis.Causal.Store("signal:pumpdump:books", &sync.Map{})
+	thesis.Causal.Store("signal:pumpdump:increments", &sync.Map{})
+	thesis.Causal.Store("signal:pumpdump:lastAt", &sync.Map{})
+	thesis.Causal.Store("signal:pumpdump:lastWire", &sync.Map{})
+	_ = bookflow.NewBook
+	signal := &Signal{thesis: thesis, ui: make(chan []byte, 32)}
+	tickerSub := market.Public.Subscribe("ticker")
+	tradeSub := market.Public.Subscribe("trade")
+	bookSub := market.Public.Subscribe("book")
+
+	So(market.Public.Write(json.RawMessage(
+		`{"method":"subscribe","params":{"channel":"trade","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
+	)), ShouldBeNil)
+	So(market.Public.Write(json.RawMessage(
+		`{"method":"subscribe","params":{"channel":"book","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
+	)), ShouldBeNil)
+	So(market.Public.Write(json.RawMessage(
+		`{"method":"subscribe","params":{"channel":"ticker","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
+	)), ShouldBeNil)
+
+	signal.thesis.Tick++
+	signal.Calculate(drainPumpTickers(tickerSub), drainPumpTrades(tradeSub), drainPumpBooks(bookSub))
+
+	consume := func(into *[]*types.Measurement) func() error {
+		return func() error {
+			signal.thesis.Tick++
+			*into = append(*into, signal.Calculate(
+				drainPumpTickers(tickerSub),
+				drainPumpTrades(tradeSub),
+				drainPumpBooks(bookSub),
+			)...)
+
+			return nil
 		}
 	}
+
+	So(market.Warmup(consume(&[]*types.Measurement{})), ShouldBeNil)
+	rows := make([]*types.Measurement, 0)
+	So(market.Transition(state, consume(&rows), focus...), ShouldBeNil)
+
+	return rows
+}
+
+func TestCalculate(t *testing.T) {
+	Convey("Pumpdump raises ignition and trend on fast directional tapes", t, func() {
+		metrics := []types.MetricType{types.MetricIgnition, types.MetricTrend, types.MetricStrength}
+
+		baseline := tests.PeakMeasurements(measurePumpdump(t, tests.MarketStateBaseline), types.SourcePumpDump, metrics)
+		pump := tests.PeakMeasurements(measurePumpdump(t, tests.MarketStateFastPump), types.SourcePumpDump, metrics)
+
+		So(pump[types.MetricIgnition]["SIM1/USD"], ShouldBeGreaterThanOrEqualTo, baseline[types.MetricIgnition]["SIM1/USD"])
+		So(pump[types.MetricTrend]["SIM1/USD"], ShouldBeGreaterThanOrEqualTo, baseline[types.MetricTrend]["SIM1/USD"])
+	})
 }

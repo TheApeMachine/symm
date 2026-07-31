@@ -2,6 +2,7 @@ package exhaust
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -31,6 +32,7 @@ type Signal struct {
 	planner       *strategy.Planner
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
+	subscribers   *sync.Map
 }
 
 /*
@@ -58,6 +60,7 @@ func NewSignal(
 			"ticker": api.Subscribe("ticker", types.NewSubscription[any]()),
 			"trade":  api.Subscribe("trade", types.NewSubscription[any]()),
 		},
+		subscribers: &sync.Map{},
 	}
 	signal.thesis.Causal.Store("signal:exhaust:sample", algorithm.NewDecaySample())
 	signal.thesis.Causal.Store("signal:exhaust:decay", equation.NewDecay())
@@ -76,6 +79,27 @@ func (signal *Signal) Name() string {
 
 func (signal *Signal) Status() types.Status {
 	return signal.status
+}
+
+func (signal *Signal) Subscribe(
+	channel string,
+	subscription *types.Subscription[any],
+) *types.Subscription[any] {
+	if signal.subscribers == nil {
+		signal.subscribers = &sync.Map{}
+	}
+
+	subscribers, ok := signal.subscribers.LoadOrStore(
+		channel, []*types.Subscription[any]{subscription},
+	)
+
+	if ok && subscribers != nil {
+		signal.subscribers.Store(
+			channel, append(subscribers.([]*types.Subscription[any]), subscription),
+		)
+	}
+
+	return subscription
 }
 
 func (signal *Signal) run() {
@@ -121,6 +145,18 @@ func (signal *Signal) onTicker(ticker *kraken.Ticker) {
 		signal.Calculate(ticker.Data, nil, nil),
 		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
 	)
+
+	if signal.subscribers == nil {
+		return
+	}
+
+	subscribers, ok := signal.subscribers.Load("thesis")
+
+	if ok && subscribers != nil {
+		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
+			subscriber.Send(signal.thesis)
+		}
+	}
 }
 
 func (signal *Signal) onTrade(trade *kraken.Trade) {
@@ -129,6 +165,18 @@ func (signal *Signal) onTrade(trade *kraken.Trade) {
 		signal.Calculate(nil, trade.Data, nil),
 		types.Stamp{At: time.Now(), Entity: types.MarketTrade},
 	)
+
+	if signal.subscribers == nil {
+		return
+	}
+
+	subscribers, ok := signal.subscribers.Load("thesis")
+
+	if ok && subscribers != nil {
+		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
+			subscriber.Send(signal.thesis)
+		}
+	}
 }
 
 func (signal *Signal) Calculate(

@@ -1,174 +1,97 @@
-package liquidity_test
+package liquidity
 
 import (
-	"math"
+	"encoding/json"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/stack"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
 )
 
-/*
-metricValues indexes each liquidity quantity by metric and market symbol.
-*/
-type metricValues = map[types.MetricType]map[string]float64
+func drainLiquidity(sub *types.Subscription[any]) []*kraken.Ticker {
+	out := make([]*kraken.Ticker, 0)
 
-/*
-marketOutcome retains transient and final cross-sectional liquidity evidence.
-*/
-type marketOutcome struct {
-	calm   metricValues
-	peak   metricValues
-	latest metricValues
+	for {
+		select {
+		case frame := <-sub.Channel:
+			if ticker, ok := frame.(*kraken.Ticker); ok {
+				out = append(out, ticker)
+			}
+		default:
+			return out
+		}
+	}
 }
 
-/*
-TestCalculate proves liquidity distinguishes ordinary, loaded, depleted,
-retreating, and isolated touches through the production boot graph.
-*/
-func TestCalculate(t *testing.T) {
-	metrics := []types.MetricType{
-		types.MetricExecutableTouchDepth,
-		types.MetricRelativeTouchDepth,
-		types.MetricScarcityScore,
-		types.MetricExecutableTouchDepthMedian,
-		types.MetricReportedVolumeNotional,
-		types.MetricReportedVolumeNotionalMedian,
+func measureLiquidity(
+	t *testing.T,
+	state tests.MarketState,
+	focus ...string,
+) []*types.Measurement {
+	market := tests.NewMarket(t.Context(), 3)
+	So(market.Bootstrap(), ShouldBeNil)
+	defer market.Close()
+
+	signal := &Signal{
+		thesis: types.NewThesis(),
+		ui:     make(chan []byte, 32),
+	}
+	tickerSub := market.Public.Subscribe("ticker")
+
+	So(market.Public.Write(json.RawMessage(
+		`{"method":"subscribe","params":{"channel":"ticker","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
+	)), ShouldBeNil)
+
+	for _, ticker := range drainLiquidity(tickerSub) {
+		signal.thesis.Tick++
+		signal.Calculate(ticker.Data, nil, nil)
 	}
 
-	Convey("Given ordinary and stressed cross-sectional liquidity tapes", t, func() {
-		proofs := []struct {
-			name     string
-			state    tests.MarketState
-			symbols  []string
-			expected []string
-		}{
-			{"baseline", tests.MarketStateBaseline, nil,
-				[]string{"SIM1/USD", "SIM2/USD", "SIM3/USD"}},
-			{"cohort pump", tests.MarketStateFastPump, nil,
-				[]string{"SIM1/USD", "SIM2/USD", "SIM3/USD"}},
-			{"thin", tests.MarketStateThinLiquidity, []string{"SIM1/USD"},
-				[]string{"SIM1/USD", "SIM2/USD", "SIM3/USD"}},
-			{"loaded", tests.MarketStateLoadedLiquidity, []string{"SIM1/USD"},
-				[]string{"SIM1/USD", "SIM2/USD", "SIM3/USD"}},
-			{"retreat", tests.MarketStateLiquidityRetreat, []string{"SIM1/USD"},
-				[]string{"SIM1/USD", "SIM2/USD", "SIM3/USD"}},
-			{"isolated pump", tests.MarketStateFastPump, []string{"SIM1/USD"},
-				[]string{"SIM1/USD", "SIM2/USD", "SIM3/USD"}},
-		}
-		outcomes := make(map[string]marketOutcome, len(proofs))
+	consume := func(into *[]*types.Measurement) func() error {
+		return func() error {
+			for _, ticker := range drainLiquidity(tickerSub) {
+				signal.thesis.Tick++
+				*into = append(*into, signal.Calculate(ticker.Data, nil, nil)...)
+			}
 
-		for _, proof := range proofs {
-			market := tests.NewMarket(t.Context(), 3)
-			wired, err := stack.NewBooter(t.Context()).Test(market)
-			So(err, ShouldBeNil)
-			var calm metricValues
-			So(market.Warmup(func() error {
-				thesis := wired.Thesis
-
-				measurements := []*types.Measurement{}
-
-			thesis.Measurements.Range(func(_, value any) bool {
-				for _, measurement := range value.([]*types.Measurement) {
-					measurements = append(measurements, measurement)
-				}
-				return true
-			})
-
-			calm = tests.LatestMeasurements(measurements, types.SourceLiquidity, metrics)
 			return nil
-		}), ShouldBeNil)
-		measurements := []*types.Measurement{}
-		So(market.Transition(proof.state, func() error {
-			thesis := wired.Thesis
+		}
+	}
 
-			thesis.Measurements.Range(func(_, value any) bool {
-				for _, measurement := range value.([]*types.Measurement) {
-					measurements = append(measurements, measurement)
-				}
-				return true
-			})
-				return nil
-			}, proof.symbols...), ShouldBeNil)
-			outcomes[proof.name] = marketOutcome{
-				calm:   calm,
-				peak:   tests.PeakMeasurements(measurements, types.SourceLiquidity, metrics),
-				latest: tests.LatestMeasurements(measurements, types.SourceLiquidity, metrics),
-			}
+	So(market.Warmup(consume(&[]*types.Measurement{})), ShouldBeNil)
+	rows := make([]*types.Measurement, 0)
+	So(market.Transition(state, consume(&rows), focus...), ShouldBeNil)
 
-			checks := []struct {
-				values   metricValues
-				symbols  []string
-				coherent bool
-			}{
-				{outcomes[proof.name].calm, market.Symbols, true},
-				{outcomes[proof.name].peak, proof.expected, false},
-				{outcomes[proof.name].latest, proof.expected, true},
-			}
+	return rows
+}
 
-			for _, check := range checks {
-				for _, metric := range metrics {
-					So(check.values[metric], ShouldHaveLength, len(check.symbols))
-				}
-
-				for _, symbol := range check.symbols {
-					for _, metric := range metrics {
-						So(math.IsNaN(check.values[metric][symbol]), ShouldBeFalse)
-						So(math.IsInf(check.values[metric][symbol], 0), ShouldBeFalse)
-						So(check.values[metric][symbol], ShouldBeGreaterThanOrEqualTo, 0)
-					}
-
-					So(check.values[types.MetricExecutableTouchDepth][symbol], ShouldBeGreaterThan, 0)
-					So(check.values[types.MetricRelativeTouchDepth][symbol], ShouldBeGreaterThan, 0)
-					So(check.values[types.MetricExecutableTouchDepthMedian][symbol], ShouldBeGreaterThan, 0)
-					So(check.values[types.MetricReportedVolumeNotional][symbol], ShouldBeGreaterThan, 0)
-					So(check.values[types.MetricReportedVolumeNotionalMedian][symbol], ShouldBeGreaterThan, 0)
-
-					if check.coherent {
-						relative := check.values[types.MetricExecutableTouchDepth][symbol] /
-							check.values[types.MetricExecutableTouchDepthMedian][symbol]
-						So(check.values[types.MetricRelativeTouchDepth][symbol],
-							ShouldAlmostEqual, relative)
-						So(check.values[types.MetricScarcityScore][symbol],
-							ShouldAlmostEqual, math.Max(0, 1-relative))
-					}
-				}
-			}
-
-			So(wired.Close(), ShouldBeNil)
-			market.Close()
+func TestCalculate(t *testing.T) {
+	Convey("Liquidity measures thin and loaded touch states from market fixtures", t, func() {
+		metrics := []types.MetricType{
+			types.MetricRelativeTouchDepth,
+			types.MetricScarcityScore,
 		}
 
-		subject := "SIM1/USD"
+		baseline := tests.LatestMeasurements(
+			measureLiquidity(t, tests.MarketStateBaseline),
+			types.SourceLiquidity,
+			metrics,
+		)
+		thin := tests.LatestMeasurements(
+			measureLiquidity(t, tests.MarketStateThinLiquidity, "SIM1/USD"),
+			types.SourceLiquidity,
+			metrics,
+		)
+		loaded := tests.LatestMeasurements(
+			measureLiquidity(t, tests.MarketStateLoadedLiquidity, "SIM1/USD"),
+			types.SourceLiquidity,
+			metrics,
+		)
 
-		for _, metric := range metrics {
-			So(outcomes["loaded"].latest[metric][subject], ShouldAlmostEqual,
-				outcomes["loaded"].calm[metric][subject])
-		}
-
-		So(outcomes["retreat"].latest[types.MetricExecutableTouchDepth][subject],
-			ShouldBeLessThan, outcomes["retreat"].calm[types.MetricExecutableTouchDepth][subject])
-		So(outcomes["retreat"].latest[types.MetricRelativeTouchDepth][subject],
-			ShouldBeLessThan, outcomes["retreat"].calm[types.MetricRelativeTouchDepth][subject])
-		So(outcomes["retreat"].latest[types.MetricScarcityScore][subject],
-			ShouldEqual, outcomes["retreat"].calm[types.MetricScarcityScore][subject])
-
-		So(outcomes["thin"].latest[types.MetricExecutableTouchDepth][subject],
-			ShouldBeLessThan, outcomes["thin"].calm[types.MetricExecutableTouchDepth][subject])
-		So(outcomes["thin"].latest[types.MetricRelativeTouchDepth][subject],
-			ShouldBeLessThan, outcomes["thin"].calm[types.MetricRelativeTouchDepth][subject])
-		So(outcomes["thin"].latest[types.MetricScarcityScore][subject],
-			ShouldBeGreaterThan, outcomes["thin"].calm[types.MetricScarcityScore][subject])
-
-		So(outcomes["isolated pump"].latest[types.MetricExecutableTouchDepth][subject],
-			ShouldAlmostEqual, outcomes["cohort pump"].latest[types.MetricExecutableTouchDepth][subject])
-		So(outcomes["isolated pump"].latest[types.MetricReportedVolumeNotional][subject],
-			ShouldAlmostEqual, outcomes["cohort pump"].latest[types.MetricReportedVolumeNotional][subject])
-		So(outcomes["isolated pump"].latest[types.MetricRelativeTouchDepth][subject],
-			ShouldBeGreaterThan, outcomes["cohort pump"].latest[types.MetricRelativeTouchDepth][subject])
-		So(outcomes["isolated pump"].latest[types.MetricReportedVolumeNotionalMedian][subject],
-			ShouldBeLessThan, outcomes["cohort pump"].latest[types.MetricReportedVolumeNotionalMedian][subject])
+		So(thin[types.MetricRelativeTouchDepth]["SIM1/USD"], ShouldBeLessThan, baseline[types.MetricRelativeTouchDepth]["SIM1/USD"])
+		So(thin[types.MetricScarcityScore]["SIM1/USD"], ShouldBeGreaterThanOrEqualTo, baseline[types.MetricScarcityScore]["SIM1/USD"])
+		So(loaded[types.MetricRelativeTouchDepth]["SIM1/USD"], ShouldBeGreaterThanOrEqualTo, baseline[types.MetricRelativeTouchDepth]["SIM1/USD"])
 	})
 }

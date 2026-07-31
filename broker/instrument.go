@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"fmt"
 	"slices"
 	"sync"
 	"time"
@@ -48,7 +49,7 @@ func NewInstrument(
 
 	returned := <-callback.Channel
 
-	for _, pair := range returned.(kraken.Instrument).Data.Pairs {
+	for _, pair := range returned.(*kraken.Instrument).Data.Pairs {
 		if pair.Quote != instrument.quote || pair.Status != "online" {
 			continue
 		}
@@ -111,10 +112,6 @@ func (instrument *Instrument) Pair(symbol string) (kraken.InstrumentPair, error)
 Subscribe issues paced market-data batches for the online quote universe.
 */
 func (instrument *Instrument) Subscribe() error {
-	if instrument.Status() == types.READY {
-		return nil
-	}
-
 	errnie.Info("subscribing to instruments")
 
 	subscribers := []func([]string){
@@ -127,6 +124,8 @@ func (instrument *Instrument) Subscribe() error {
 	for batch := range slices.Chunk(
 		instrument.symbols, viper.GetViper().GetInt("market.subscribe.batch"),
 	) {
+		errnie.Info(fmt.Sprintf("subscribing to %d symbols", len(batch)))
+
 		if err := instrument.price.GetFees(batch); err != nil {
 			return errnie.Error(err)
 		}

@@ -1,7 +1,10 @@
+import { cn } from "#/lib/utils";
+import { registerPainter } from "#/providers/ws-stores";
 import { Badge } from "@/components/ui/badge";
 import { meterTrackVariants } from "@/components/ui/meter";
 import { Panel } from "@/components/ui/panel";
 import { Stat } from "@/components/ui/stat";
+import { Component } from "#/components/ui/component";
 
 const CLASS_POOL = 6;
 
@@ -9,12 +12,10 @@ const CLASS_POOL = 6;
 CortexPanelsShell renders the static chrome for the four cortex side panels.
 Live values are painted into data-cortex hooks by paintCortexPanels.
 */
-export const CortexPanelsShell = ({
-	rootRef,
-}: {
-	rootRef: React.RefObject<HTMLDivElement | null>;
-}) => (
-	<div ref={rootRef} className="flex flex-col gap-3.5">
+export const CortexPanelsShell = () => (
+	<Component register={(paint) => registerPainter("cortex-panels", paint)}>
+		{({ ref, className }) => (
+	<div ref={ref} className={cn("flex flex-col gap-3.5", className)}>
 		<Panel>
 			<div className="flex items-center justify-between">
 				<span className="font-semibold text-[12px] text-(--f1)">
@@ -157,4 +158,6 @@ export const CortexPanelsShell = ({
 			</div>
 		</Panel>
 	</div>
+		)}
+	</Component>
 );

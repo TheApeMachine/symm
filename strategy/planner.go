@@ -18,6 +18,7 @@ type Planner struct {
 	cancel      context.CancelFunc
 	status      types.Status
 	subscribers *sync.Map
+	subscriptions map[string]*types.Subscription[any]
 	api         *websocket.API
 	desk        *broker.Desk
 	price       *broker.Price
@@ -48,7 +49,7 @@ func NewPlanner(
 		buffer = 64
 	}
 
-	evaluator := NewEvaluator()
+	evaluator := NewEvaluator(desk, price, balance)
 	arbiter := NewArbiter(desk, price)
 
 	planner := &Planner{
@@ -56,6 +57,7 @@ func NewPlanner(
 		cancel:      cancel,
 		status:      types.READY,
 		subscribers: &sync.Map{},
+		subscriptions: map[string]*types.Subscription[any]{},
 		api:         api,
 		desk:        desk,
 		price:       price,
@@ -67,7 +69,26 @@ func NewPlanner(
 		Thesis:      types.NewThesis(),
 	}
 
+	if analyzer != nil {
+		planner.subscriptions["thesis"] = analyzer.Subscribe(
+			"thesis", types.NewSubscription[any](),
+		)
+	}
+
+	planner.run()
 	return planner
+}
+
+func (planner *Planner) AttachAnalyzer(analyzer *logic.Analyzer) {
+	if analyzer == nil {
+		return
+	}
+
+	planner.subscriptions["thesis"] = analyzer.Subscribe(
+		"thesis", types.NewSubscription[any](),
+	)
+
+	planner.run()
 }
 
 func (planner *Planner) Status() types.Status {
@@ -78,7 +99,7 @@ func (planner *Planner) Subscribe(
 	key string, subscription *types.Subscription[any],
 ) *types.Subscription[any] {
 	subscribers, ok := planner.subscribers.LoadOrStore(
-		key, subscription,
+		key, []*types.Subscription[any]{subscription},
 	)
 
 	if ok {
@@ -97,16 +118,29 @@ func (planner *Planner) Close() error {
 }
 
 func (planner *Planner) run() {
-	for {
-		select {
-		case <-planner.ctx.Done():
-			return
-		default:
-		}
+	if planner.subscriptions["thesis"] == nil {
+		return
 	}
+
+	go func() {
+		for {
+			select {
+			case <-planner.ctx.Done():
+				return
+			case thesis := <-planner.subscriptions["thesis"].Channel:
+				if thesis, ok := thesis.(*types.Thesis); ok {
+					planner.Update(thesis)
+				}
+			}
+		}
+	}()
 }
 
 func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
+	if thesis == nil {
+		return nil
+	}
+
 	errnie.Error(audit.Phase(
 		planner.recorder, thesis.Tick, "decide_begin", nil,
 	))
@@ -115,12 +149,14 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 		return thesis
 	}
 
+	readiness := thesis.Readiness()
+
+	if !readiness.Manifold || !readiness.Resonance || !readiness.Causal || !readiness.Graph {
+		return thesis
+	}
+
 	planner.evaluator.ManageContinuation(thesis, planner.desk, planner.price)
-
-	planner.evaluator.EvaluateOpportunities(
-		thesis, planner.desk, planner.price, planner.balance,
-	)
-
+	planner.evaluator.EvaluateOpportunities(thesis)
 	planner.arbiter.Arbitrate(thesis)
 
 	if err := planner.allocator.Allocate(thesis); err != nil {
@@ -128,6 +164,32 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 			errnie.Internal, "failed to allocate", err,
 		))
 	}
+
+	if thesis.Readiness().Decisions == false {
+		return thesis
+	}
+
+	if planner.recorder != nil {
+		errnie.Error(audit.Record(planner.recorder, "decision", map[string]any{
+			"tick":       thesis.Tick,
+			"at":         thesis.At,
+			"decisions":  thesis.Decisions,
+			"forecasts":  thesis.Forecasts,
+			"categories": thesis.Categories,
+		}))
+	}
+
+	planner.subscribers.Range(func(key, value any) bool {
+		if subscribers, ok := value.([]*types.Subscription[any]); ok {
+			for _, subscriber := range subscribers {
+				subscriber.Send(thesis.Decisions)
+			}
+		}
+
+		return true
+	})
+
+	thesis.Reset()
 
 	return thesis
 }

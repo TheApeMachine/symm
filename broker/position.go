@@ -92,7 +92,7 @@ func NewPosition(
 			ctx,
 			pair.Symbol,
 			qty,
-			price.Get(pair.Symbol).Last,
+			price.Mark(pair.Symbol, SELL),
 		),
 	}
 
@@ -148,10 +148,6 @@ func (position *Position) onTicker(ticker *kraken.Ticker) {
 	for _, row := range ticker.Data {
 		if row.Symbol != position.pair.Symbol {
 			continue
-		}
-
-		if err := position.price.Mark(&position.pair, position.Holding); err != nil {
-			errnie.Error(err)
 		}
 
 		if position.Holding != nil && position.Holding.Stoploss != nil {

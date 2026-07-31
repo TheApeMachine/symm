@@ -1,8 +1,4 @@
 import { terminalStore } from "#/collections/terminal";
-import {
-	bindInspector,
-	closeInspectorShell,
-} from "#/components/terminal/kernel-list";
 import { cn } from "#/lib/utils";
 import { Modal } from "@/components/ui/modal";
 import { panelVariants } from "@/components/ui/panel";
@@ -14,9 +10,7 @@ toggles visibility while paint updates title, meters, and spark views.
 */
 export const KernelInspector = () => (
 	<Modal
-		ref={bindInspector}
 		hidden
-		onClose={closeInspectorShell}
 		size="m"
 		className="inset-y-0 left-70.5 right-83 animate-[symFade_0.18s_ease]"
 	>
@@ -37,7 +31,6 @@ export const KernelInspector = () => (
 			</div>
 			<Modal.Close
 				aria-label="Close kernel inspector"
-				onClick={closeInspectorShell}
 			/>
 		</Modal.Header>
 		<div className="mx-4 mt-3.5 shrink-0">
@@ -90,7 +83,6 @@ export const KernelInspector = () => (
 					}
 
 					terminalStore.actions.selectSource(source);
-					closeInspectorShell();
 				}}
 				className="shrink-0 cursor-pointer rounded-[3px] border border-[color-mix(in_srgb,var(--acc)_45%,transparent)] bg-[color-mix(in_srgb,var(--acc)_12%,transparent)] px-3 py-2 font-semibold text-[11px] text-(--acc) whitespace-nowrap hover:bg-[color-mix(in_srgb,var(--acc)_22%,transparent)]"
 			>

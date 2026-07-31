@@ -32,21 +32,20 @@ Strategy package to make Decisions. The final output of the Logic stage is
 the Graph, which should encode everything that has been collected so far.
 */
 type Analyzer struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	status    types.Status
-	thesesIn  chan *types.Thesis
-	tree      *dmt.Tree
-	manifold  *manifold.Solver
-	resonance *resonance.Solver
-	causal    *causal.Solver
-	cognition *cognition.Solver
-	graph     *graph.Solver
-	ui        chan []byte
-	binui     chan []byte
-	recorder  *audit.Recorder
-	subMu     sync.Mutex
-	thesesOut []*types.Subscription[*types.Thesis]
+	ctx           context.Context
+	cancel        context.CancelFunc
+	status        types.Status
+	tree          *dmt.Tree
+	manifold      *manifold.Solver
+	resonance     *resonance.Solver
+	causal        *causal.Solver
+	cognition     *cognition.Solver
+	graph         *graph.Solver
+	ui            chan []byte
+	binui         chan []byte
+	recorder      *audit.Recorder
+	subscriptions map[string]*types.Subscription[any]
+	subscribers   *sync.Map
 }
 
 /*
@@ -59,6 +58,7 @@ func NewAnalyzer(
 	ui chan []byte,
 	binui chan []byte,
 	recorder *audit.Recorder,
+	subscriptions map[string]*types.Subscription[any],
 ) *Analyzer {
 	ctx, cancel := context.WithCancel(ctx)
 	buffer := viper.GetInt("system.actor.buffer")
@@ -68,94 +68,80 @@ func NewAnalyzer(
 	}
 
 	analyzer := &Analyzer{
-		ctx:       ctx,
-		cancel:    cancel,
-		status:    types.READY,
-		thesesIn:  make(chan *types.Thesis, buffer),
-		tree:      tree,
-		manifold:  manifold.NewSolver(api, ui, binui, recorder),
-		resonance: resonance.NewSolver(ui, recorder),
-		causal:    causal.NewSolver(ui, recorder),
-		cognition: cognition.NewSolver(tree, ui, recorder),
-		graph:     graph.NewSolver(recorder),
-		ui:        ui,
-		recorder:  recorder,
+		ctx:           ctx,
+		cancel:        cancel,
+		status:        types.READY,
+		tree:          tree,
+		manifold:      manifold.NewSolver(api, ui, binui, recorder),
+		resonance:     resonance.NewSolver(ui, recorder),
+		causal:        causal.NewSolver(ui, recorder),
+		cognition:     cognition.NewSolver(tree, ui, recorder),
+		graph:         graph.NewSolver(recorder),
+		ui:            ui,
+		recorder:      recorder,
+		subscriptions: subscriptions,
+		subscribers:   &sync.Map{},
 	}
 
+	analyzer.run()
 	return analyzer
 }
 
-/*
-Initialize attaches analyzer to upstream thesis subscriptions and starts the
-direct channel loop that feeds Planner.
-*/
-func (analyzer *Analyzer) Initialize(signals ...*types.Subscription[*types.Thesis]) error {
-	errnie.Info("initializing analyzer")
-	go analyzer.run()
-
-	if len(signals) == 0 {
-		analyzer.status = types.READY
-		return nil
-	}
-
-	for _, signal := range signals {
-		if signal == nil {
-			continue
-		}
-
-		go analyzer.forward(signal)
-	}
-
-	analyzer.status = types.READY
-
-	return nil
-}
-
-func (analyzer *Analyzer) Thesis() *types.Subscription[*types.Thesis] {
-	subscription := types.NewSubscription[*types.Thesis]()
-	analyzer.subMu.Lock()
-	analyzer.thesesOut = append(analyzer.thesesOut, subscription)
-	analyzer.subMu.Unlock()
-	return subscription
-
-}
-
-func (analyzer *Analyzer) Enqueue(thesis *types.Thesis) {
-	if thesis == nil {
-		return
-	}
-
-	select {
-	case <-analyzer.ctx.Done():
-		return
-	case analyzer.thesesIn <- thesis:
-	}
-}
-
-func (analyzer *Analyzer) forward(signal *types.Subscription[*types.Thesis]) {
-	for {
-		select {
-		case <-analyzer.ctx.Done():
-			return
-		case thesis := <-signal.Channel:
-			analyzer.Enqueue(thesis)
-		}
-	}
-}
-
 func (analyzer *Analyzer) run() {
-	for {
-		select {
-		case <-analyzer.ctx.Done():
-			return
-		case thesis := <-analyzer.thesesIn:
-			analyzer.onSignal(thesis)
+	go func() {
+		for {
+			select {
+			case <-analyzer.ctx.Done():
+				return
+			case in := <-analyzer.subscriptions["correlation"].Channel:
+				analyzer.process(in)
+			case in := <-analyzer.subscriptions["cvd"].Channel:
+				analyzer.process(in)
+			case in := <-analyzer.subscriptions["depthflow"].Channel:
+				analyzer.process(in)
+			case in := <-analyzer.subscriptions["exhaust"].Channel:
+				analyzer.process(in)
+			case in := <-analyzer.subscriptions["hawkes"].Channel:
+				analyzer.process(in)
+			case in := <-analyzer.subscriptions["leadlag"].Channel:
+				analyzer.process(in)
+			case in := <-analyzer.subscriptions["liquidity"].Channel:
+				analyzer.process(in)
+			case in := <-analyzer.subscriptions["pumpdump"].Channel:
+				analyzer.process(in)
+			case in := <-analyzer.subscriptions["sentiment"].Channel:
+				analyzer.process(in)
+			case in := <-analyzer.subscriptions["toxicity"].Channel:
+				analyzer.process(in)
+			}
 		}
+	}()
+}
+
+func (analyzer *Analyzer) process(in any) {
+	thesis, ok := in.(*types.Thesis)
+
+	if !ok {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"failed to cast cvd thesis",
+			nil,
+		))
+
+		return
 	}
+
+	analyzer.onSignal(thesis)
 }
 
 func (analyzer *Analyzer) onSignal(thesis *types.Thesis) {
 	if thesis == nil {
+		return
+	}
+
+	readiness := thesis.Readiness()
+
+	if !readiness.Signals {
 		return
 	}
 
@@ -177,13 +163,33 @@ func (analyzer *Analyzer) onSignal(thesis *types.Thesis) {
 		}
 	}
 
-	analyzer.subMu.Lock()
-	subscribers := append([]*types.Subscription[*types.Thesis](nil), analyzer.thesesOut...)
-	analyzer.subMu.Unlock()
+	analyzer.subscribers.Range(func(key, value any) bool {
+		if subscribers, ok := value.([]*types.Subscription[any]); ok {
+			for _, subscriber := range subscribers {
+				subscriber.Send(thesis)
+			}
+		}
 
-	for _, subscription := range subscribers {
-		subscription.Send(thesis)
+		return true
+	})
+}
+
+func (analyzer *Analyzer) Subscribe(
+	key string,
+	subscription *types.Subscription[any],
+) *types.Subscription[any] {
+	subscribers, ok := analyzer.subscribers.LoadOrStore(
+		key, []*types.Subscription[any]{subscription},
+	)
+
+	if ok {
+		analyzer.subscribers.Store(key, append(
+			subscribers.([]*types.Subscription[any]),
+			subscription,
+		))
 	}
+
+	return subscription
 }
 
 /*

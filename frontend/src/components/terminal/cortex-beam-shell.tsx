@@ -1,6 +1,8 @@
-import type { RefObject } from "react";
 import { Panel } from "@/components/ui/panel";
 import { meterTrackVariants } from "@/components/ui/meter";
+import { Component } from "#/components/ui/component";
+import { cn } from "#/lib/utils";
+import { registerPainter } from "#/providers/ws-stores";
 
 const BEAM_POOL = 8;
 
@@ -9,12 +11,10 @@ CortexBeamShell renders a static shell for the cognitive beam list. Live beam
 rows are painted into a fixed pool of pre-rendered rows by paintCortexBeams so
 websocket cadence never re-renders this React tree.
 */
-export const CortexBeamShell = ({
-	rootRef,
-}: {
-	rootRef: RefObject<HTMLDivElement | null>;
-}) => (
-	<div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
+export const CortexBeamShell = () => (
+	<Component register={(paint) => registerPainter("cortex-beams", paint)}>
+		{({ ref, className }) => (
+	<div ref={ref} className={cn("flex min-h-0 flex-1 flex-col", className)}> 
 		<div
 			data-cortex="waiting"
 			className="px-3 py-6 text-center font-mono text-[11px] text-(--f4)"
@@ -62,5 +62,7 @@ export const CortexBeamShell = ({
 				</Panel>
 			))}
 		</div>
-	</div>
+		</div>
+		)}
+	</Component>
 );

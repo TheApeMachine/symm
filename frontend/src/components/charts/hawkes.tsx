@@ -1,129 +1,16 @@
-import { createRef } from "react";
-import {
-	clearCanvas,
-	drawGrid,
-	drawMatrix,
-	resizeCanvas,
-	TERMINAL_COLORS,
-} from "#/components/terminal/canvas";
-import type { Measurement } from "#/types/measurement";
-import { frameRows } from "#/providers/frame-history";
-
-const hawkesCanvasRef = createRef<HTMLCanvasElement>();
-
-/*
-paintHawkes draws the latest Hawkes epoch selected from retained measurement
-history into hawkesCanvasRef.
-*/
-export const paintHawkes = (value: unknown, focusSymbol: string) => {
-	const canvas = hawkesCanvasRef.current;
-
-	if (canvas === null) {
-		return;
-	}
-
-	const context = resizeCanvas(canvas);
-
-	if (context === null) {
-		return;
-	}
-
-	const width = canvas.clientWidth;
-	const height = canvas.clientHeight;
-	const measurements = frameRows<Measurement>(value);
-	const hawkes = measurements.filter(
-		(measurement) =>
-			measurement.source === "hawkes" &&
-			(focusSymbol === "" || measurement.symbol === focusSymbol),
-	);
-	const latestAt = hawkes.at(-1)?.at;
-	const epoch =
-		latestAt === undefined
-			? []
-			: hawkes.filter((measurement) => measurement.at === latestAt);
-
-	const raw = (metric: string, side = ""): number | undefined => {
-		for (let index = epoch.length - 1; index >= 0; index -= 1) {
-			const measurement = epoch[index];
-
-			if (measurement === undefined) {
-				continue;
-			}
-
-			if (
-				measurement.metric === metric &&
-				(side === "" || (measurement.side ?? "") === side)
-			) {
-				return measurement.raw;
-			}
-
-			const key = side === "" ? metric : `${metric}:${side}`;
-			const mapped = measurement.metrics?.[key];
-
-			if (typeof mapped === "number" && Number.isFinite(mapped)) {
-				return mapped;
-			}
-
-			if (
-				typeof mapped === "object" &&
-				mapped !== null &&
-				"raw" in mapped &&
-				typeof mapped.raw === "number" &&
-				Number.isFinite(mapped.raw)
-			) {
-				return mapped.raw;
-			}
-		}
-
-		return undefined;
-	};
-
-	const values = [
-		raw("baseline_intensity", "buy"),
-		raw("baseline_intensity", "sell"),
-		raw("conditional_intensity", "buy") ?? raw("arrival_rate", "buy"),
-		raw("conditional_intensity", "sell") ?? raw("arrival_rate", "sell"),
-		raw("spectral_radius"),
-	].filter((entry): entry is number => typeof entry === "number");
-
-	const fallback = epoch.at(-1)?.metrics;
-	const resolved =
-		values.length > 0
-			? values
-			: [
-					fallback?.baseline,
-					fallback?.intensity,
-					fallback?.buyIntensity,
-					fallback?.sellIntensity,
-					fallback?.branching,
-					fallback?.radius,
-				].flatMap((entry) =>
-					typeof entry === "number" && Number.isFinite(entry)
-						? [entry]
-						: typeof entry === "object" &&
-							entry !== null &&
-							"raw" in entry &&
-							typeof entry.raw === "number" &&
-							Number.isFinite(entry.raw)
-							? [entry.raw]
-							: [],
-				);
-
-	if (resolved.length === 0) {
-		clearCanvas(context, width, height);
-		drawGrid(context, width, height);
-		context.fillStyle = TERMINAL_COLORS.muted;
-		context.font = "11px JetBrains Mono, monospace";
-		context.fillText("waiting for hawkes output", 18, 52);
-		return;
-	}
-
-	drawMatrix(context, width, height, [resolved]);
-};
+import { registerPainter } from "#/providers/ws-stores";
+import {Component} from "#/components/ui/component";
+import { cn } from "#/lib/utils";
 
 /*
 HawkesChart is the static canvas shell. KernelList paints it via paintHawkes.
 */
 export const HawkesChart = () => (
-	<canvas ref={hawkesCanvasRef} className="block size-full" />
+	<Component register={(paint) => registerPainter("hawkes", paint)}>
+		{({ ref, className }) => (
+			<div ref={ref} className={cn("min-h-0 overflow-auto", className)}>
+				<canvas className="absolute inset-0 h-full w-full" />
+			</div>
+		)}
+	</Component>
 );

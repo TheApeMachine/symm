@@ -95,10 +95,6 @@ func NewHub(
 						err,
 					))
 				}
-			default:
-				if _, _, err := conn.ReadMessage(); err != nil {
-					return
-				}
 			}
 		}
 	}))
@@ -135,10 +131,6 @@ func NewHub(
 						"failed to write dashboard websocket message",
 						err,
 					))
-				}
-			default:
-				if _, _, err := conn.ReadMessage(); err != nil {
-					return
 				}
 			}
 		}

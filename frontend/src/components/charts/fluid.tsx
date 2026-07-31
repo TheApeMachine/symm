@@ -15,11 +15,6 @@ import {
 	terminalPhaseStatusFromFrame,
 	terminalWaveModesFromFrame,
 } from "#/components/terminal/charts-frame";
-import {
-	clearManifoldBinary,
-	latestDisplay,
-} from "#/providers/manifold-binary";
-import { latestManifoldWave } from "#/providers/manifold-parts";
 
 const fluidFieldCanvasRef = createRef<HTMLCanvasElement>();
 const fluidOverlayCanvasRef = createRef<HTMLCanvasElement>();
@@ -281,7 +276,6 @@ const paintTerminalFluidCompose = (value: unknown, focusSymbol: string) => {
 
 	if (focusChanged) {
 		fluidFocus = focusSymbol;
-		clearManifoldBinary();
 		drawWaiting(overlay, width, height, "waiting for pilot-wave field");
 	}
 
@@ -298,20 +292,13 @@ const paintTerminalFluidCompose = (value: unknown, focusSymbol: string) => {
 		return;
 	}
 
-	const wavePacket = latestManifoldWave(frame.symbol);
-	const composed: ManifoldFrame = {
-		...frame,
-		wave: wavePacket?.wave ?? frame.wave,
-	};
-
-	const baked = latestDisplay();
-	const wave = terminalWaveModesFromFrame(composed);
-	const phaseScan = terminalPhaseScanFromFrame(composed);
-	const phaseStatus = terminalPhaseStatusFromFrame(composed);
+	const wave = terminalWaveModesFromFrame(frame);
+	const phaseScan = terminalPhaseScanFromFrame(frame);
+	const phaseStatus = terminalPhaseStatusFromFrame(frame);
 
 	// Wave-only arrivals still need a paint so the phase dial can appear before
 	// the next display frame; empty picture+wave is a true no-op.
-	if (baked === null && wave.length === 0) {
+	if (wave.length === 0) {
 		return;
 	}
 

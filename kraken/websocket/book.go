@@ -21,6 +21,7 @@ type Book struct {
 }
 
 func NewBook(ctx context.Context) *Book {
+	errnie.Info("websocket: initializing book manager")
 	ctx, cancel := context.WithCancel(ctx)
 
 	book := &Book{
@@ -34,6 +35,7 @@ func NewBook(ctx context.Context) *Book {
 	book.manager.OnCreateBook.Recurring(func(
 		event *callback.Event[*spotbook.Book],
 	) {
+		errnie.Info(fmt.Sprintf("websocket: new book created for %s", event.Data.Name))
 		managed := event.Data
 
 		if managed == nil {
@@ -42,6 +44,7 @@ func NewBook(ctx context.Context) *Book {
 
 		managed.EnableMaxDepth = false
 		managed.NoBookCrossing = false
+		book.status = types.READY
 
 		managed.OnUpdated.Recurring(func(
 			bookEvent *callback.Event[*spotbook.UpdateOptions],
@@ -73,6 +76,8 @@ func NewBook(ctx context.Context) *Book {
 			bookEvent *callback.Event[*spotbook.ChecksumResult],
 		) {
 			if !bookEvent.Data.Match {
+				book.status = types.ERROR
+
 				errnie.Error(errnie.Err(
 					errnie.Validation,
 					fmt.Sprintf(

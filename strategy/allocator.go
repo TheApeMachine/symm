@@ -2,10 +2,10 @@ package strategy
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )
@@ -36,71 +36,63 @@ func NewAllocator(
 }
 
 // Allocate sizes each accepted 'enter' decision against free wallet cash.
-func (a *Allocator) Allocate(thesis *types.Thesis) error {
-	if thesis == nil {
-		return nil
-	}
+func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
+	budget, err := allocator.balance.Cash()
 
-	cash, err := a.balance.Cash()
-	if err != nil || cash == nil || cash.Sign() <= 0 {
-		return nil
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"ledger cash unavailable",
+			err,
+		))
 	}
-
-	budget := cash.Copy()
 
 	for i := range thesis.Decisions {
 		decision := &thesis.Decisions[i]
+
 		if decision.Action != types.ActionEnter {
 			continue
 		}
 
-		pair, err := a.instrument.Pair(decision.Symbol)
+		pair, err := allocator.instrument.Pair(decision.Symbol)
+
 		if err != nil {
-			a.reject(decision, "instrument pair unavailable")
+			allocator.reject(decision, "instrument pair unavailable")
 			continue
 		}
 
 		if pair.QtyMin == nil || pair.QtyMin.Sign() <= 0 {
-			a.reject(decision, "instrument qty_min unavailable")
+			allocator.reject(decision, "instrument qty_min unavailable")
 			continue
 		}
 
 		// Calculate Max Fraction Slice or reuse rotation freed capital
-		slice := decimal.ExactMul(budget, a.maxFraction)
-		if decision.ProposedNotional != nil && decision.ProposedNotional.Sign() > 0 {
-			slice = decision.ProposedNotional.Copy()
+		if decision.ProposedNotional == nil || decision.ProposedNotional.Sign() <= 0 {
+			decision.ProposedNotional = budget.Mul(allocator.maxFraction)
 		}
 
 		// Quantize quantity against instrument venue rules
-		qty, err := a.price.Quantity(&pair, slice)
+		qty, err := allocator.price.Quantity(pair.Symbol, decision.ProposedNotional)
+
 		if err != nil || qty == nil {
-			a.reject(decision, "quantity sizing failed")
+			allocator.reject(decision, "quantity sizing failed")
 			continue
 		}
 
-		cost, err := a.price.Taker(&pair, qty)
+		cost := allocator.price.WithFriction(pair.Symbol, broker.BUY, qty)
+
 		if err != nil || cost == nil || cost.Cmp(budget) > 0 {
-			a.reject(decision, "taker cost exceeds available budget")
+			allocator.reject(decision, "taker cost exceeds available budget")
 			continue
 		}
 
-		// Reserve capital on broker ledger
-		intentID := fmt.Sprintf("alloc:%s:%d", decision.Symbol, decision.At.UnixNano())
-
-		if err := a.balance.Reserve(cost); err != nil {
-			a.reject(decision, "ledger reservation failed")
+		if err := allocator.balance.Reserve(cost); err != nil {
+			allocator.reject(decision, "ledger reservation failed")
 			continue
 		}
 
-		ask, err := a.price.ReferencePrice(&pair)
+		ask := allocator.price.WithFriction(pair.Symbol, broker.BUY, qty)
 
-		if err != nil {
-			_ = a.balance.Release(cost)
-			a.reject(decision, "reference price unavailable")
-			continue
-		}
-
-		decision.ReservationID = intentID
 		decision.ProposedQuantity = qty
 		decision.ProposedNotional = cost
 		decision.ReferencePrice = ask.Copy()

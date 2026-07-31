@@ -57,7 +57,12 @@ type InstrumentSubscriptionParams struct {
 }
 
 func NewInstrumentSubscription() InstrumentSubscription {
-	return InstrumentSubscription{}
+	return InstrumentSubscription{
+		Method: "subscribe",
+		Params: InstrumentSubscriptionParams{
+			Channel: "instrument",
+		},
+	}
 }
 
 func (subscription InstrumentSubscription) MarshalJSON() ([]byte, error) {

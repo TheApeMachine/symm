@@ -35,7 +35,7 @@ type Decision struct {
 	ExpectedFees      *decimal.Decimal   `json:"expectedFees" validate:"required"`
 	ExpectedSpread    *decimal.Decimal   `json:"expectedSpread" validate:"required"`
 	ExpectedImpact    *decimal.Decimal   `json:"expectedImpact" validate:"required"`
-	AdverseSelection  float64            `json:"adverseSelection" validate:"finite,nonnegative"`
+	AdverseSelection  *decimal.Decimal   `json:"adverseSelection" validate:"finite,nonnegative"`
 	Uncertainty       float64            `json:"uncertainty" validate:"finite,nonnegative"`
 	Confidence        float64            `json:"confidence" validate:"finite,min=0,max=1"`
 	OpportunityMargin float64            `json:"opportunityMargin" validate:"finite"`
@@ -70,10 +70,10 @@ and symbol set. Callers fill remaining fields after construction.
 */
 func NewDecision(action Action, symbol string) *Decision {
 	return &Decision{
-		ID:       uuid.NewString(),
-		Action:   action,
-		Symbol:   symbol,
-		At:       time.Now().UTC(),
+		ID:     uuid.NewString(),
+		Action: action,
+		Symbol: symbol,
+		At:     time.Now().UTC(),
 	}
 }
 

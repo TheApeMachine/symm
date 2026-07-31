@@ -180,6 +180,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		// 9. Audit Recording
 		if solver.recorder != nil {
 			auditEntry := map[string]any{
+				"stage":          "cognition",
 				"symbol":         symbol,
 				"activeSequence": string(activeSequenceBytes),
 				"winnerRegime":   string(classResult.Winner),
@@ -188,7 +189,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				"isBreak":        broken,
 				"predictions":    predictions,
 			}
-			solver.recorder.Write(auditEntry)
+			errnie.Error(audit.Record(solver.recorder, "predictive", auditEntry))
 		}
 	}
 

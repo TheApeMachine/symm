@@ -138,7 +138,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		if solver.recorder != nil {
 			auditData := output.Outputs()
 			auditData["symbol"] = symbol
-			solver.recorder.Write(auditData)
+			auditData["stage"] = "causal"
+			errnie.Error(audit.Record(solver.recorder, "predictive", auditData))
 		}
 	}
 

@@ -2,12 +2,14 @@ package hawkes
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
@@ -31,9 +33,13 @@ func (feed testMarketFeed) Instrument() *types.Subscription[*kraken.Instrument] 
 
 func newTestSignal() *Signal {
 	thesis := types.NewThesis()
+	thesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
+	thesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
+	thesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
 
 	return &Signal{
 		ctx:     context.Background(),
+		thesis:  thesis,
 		planner: &strategy.Planner{Thesis: thesis},
 	}
 }
@@ -81,13 +87,20 @@ func TestSignal_Calculate(t *testing.T) {
 			viper.Set("system.actor.buffer", 64)
 			Reset(func() { viper.Set("system.actor.buffer", previous) })
 
-			signal := NewSignal(
-				context.Background(),
-				nil,
-				&strategy.Planner{Thesis: types.NewThesis()},
-				nil,
-			)
-			signal.subscriptions["trade"] = types.NewSubscription[any]()
+			thesis := types.NewThesis()
+			thesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
+			thesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
+			thesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
+			signal := &Signal{
+				ctx:     context.Background(),
+				cancel:  func() {},
+				thesis:  thesis,
+				planner: &strategy.Planner{Thesis: thesis},
+				subscriptions: map[string]*types.Subscription[any]{
+					"ticker": types.NewSubscription[any](),
+					"trade":  types.NewSubscription[any](),
+				},
+			}
 			signal.run()
 
 			for range 32 {

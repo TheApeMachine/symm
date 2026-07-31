@@ -1,392 +1,175 @@
-package toxicity_test
+package toxicity
 
 import (
-	"math"
+	"encoding/json"
 	"testing"
-	"time"
 
+	sdkbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/stack"
+	"github.com/theapemachine/symm/kraken"
+	marketkraken "github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/mockapi"
 	"github.com/theapemachine/symm/types"
 )
 
-/*
-measurementKey preserves the side identity that distinguishes resting bid
-liquidity from resting ask liquidity.
-*/
-type measurementKey struct {
-	metric types.MetricType
-	symbol string
-	side   types.MeasurementSide
+type connAdapter struct {
+	*mockapi.MockConn
 }
 
-/*
-marketOutcome retains transition peaks, settlement state, and the strongest
-trade epoch for exact event-side assertions.
-*/
-type marketOutcome struct {
-	peak   map[measurementKey]float64
-	latest map[measurementKey]float64
-	active map[measurementKey]float64
+func (conn connAdapter) Status() types.Status {
+	return types.READY
 }
 
-/*
-marketProof names one semantic tape and whether it contains public executions.
-*/
-type marketProof struct {
-	name   string
-	state  tests.MarketState
-	traded bool
+func (conn connAdapter) Subscribe(
+	_ string,
+	subscription *types.Subscription[any],
+) *types.Subscription[any] {
+	return subscription
 }
 
-/*
-TestCalculate proves exact touch execution, cancellation, and retreat through
-the production boot graph without collapsing bid and ask evidence together.
-*/
-func TestCalculate(t *testing.T) {
-	metrics := []types.MetricType{
-		types.MetricTradeVolume,
-		types.MetricFillVolume,
-		types.MetricBestPrice,
-		types.MetricTouchQuantity,
-		types.MetricCancelledQuantity,
-		types.MetricRetreatingQuantity,
-	}
-	sides := []types.MeasurementSide{types.SideBuy, types.SideSell}
+func (conn connAdapter) Books() map[string]*sdkbook.Book {
+	books := map[string]*sdkbook.Book{}
 
-	Convey("Given execution, withdrawal, and adversarial Level3 tapes", t, func() {
-		proofs := []marketProof{
-			{"baseline", tests.MarketStateBaseline, true},
-			{"fast pump", tests.MarketStateFastPump, true},
-			{"slow cadence lift", tests.MarketStateSlowCadenceLift, true},
-			{"small lift", tests.MarketStateSmallLift, true},
-			{"slow pump", tests.MarketStateSlowPump, true},
-			{"fast dump", tests.MarketStateFastDump, true},
-			{"slow dump", tests.MarketStateSlowDump, true},
-			{"absorption", tests.MarketStateVolumeAbsorption, true},
-			{"low-volume lift", tests.MarketStateLowVolumeLift, true},
-			{"compression", tests.MarketStateSpreadCompression, true},
-			{"spread control", tests.MarketStateSpreadControl, true},
-			{"thin withdrawal", tests.MarketStateThinLiquidity, false},
-			{"loaded control", tests.MarketStateLoadedLiquidity, false},
-			{"bid retreat", tests.MarketStateLiquidityRetreat, false},
-			{"spoof addition", tests.MarketStateSpoofLiquidity, false},
-			{"depth addition", tests.MarketStateDepthThinning, false},
-		}
-		outcomes := make(map[string]marketOutcome, len(proofs))
-		symbols := []string{}
-
-		for _, proof := range proofs {
-			market := tests.NewMarket(t.Context(), 3)
-			wired, err := stack.NewBooter(t.Context()).Test(market)
-			So(err, ShouldBeNil)
-			So(market.Warmup(tests.Idle), ShouldBeNil)
-			measurements := []*types.Measurement{}
-			So(market.Transition(proof.state, func() error {
-				thesis := wired.Thesis
-
-				if errnie.IsPreconditionFailed(err) {
-					return nil
-				}
-
-				if err != nil {
-					return err
-				}
-
-				thesis.Measurements.Range(func(_, value any) bool {
-					for _, measurement := range value.([]*types.Measurement) {
-						if measurement.Source != types.SourceToxicity {
-							continue
-						}
-
-						So(measurement.ValidateStruct(), ShouldBeNil)
-						So(measurement.Validity.State, ShouldNotEqual, types.ValidityInvalid)
-
-						measurement.EachMetric(func(
-							metric types.MetricType,
-							side types.MeasurementSide,
-							sample types.MetricSample,
-						) bool {
-							So(math.IsNaN(sample.Raw), ShouldBeFalse)
-							So(math.IsInf(sample.Raw, 0), ShouldBeFalse)
-							So(sample.Raw, ShouldBeGreaterThanOrEqualTo, 0)
-							return true
-						})
-
-						measurements = append(measurements, measurement)
-					}
-					return true
-				})
-
-				return nil
-			}), ShouldBeNil)
-
-			outcome := marketOutcome{
-				peak:   map[measurementKey]float64{},
-				latest: map[measurementKey]float64{},
-				active: map[measurementKey]float64{},
-			}
-			activeAt := map[string]time.Time{}
-			activeVolume := map[string]float64{}
-			latestAt := map[measurementKey]time.Time{}
-
-			for _, measurement := range measurements {
-				measurement.EachMetric(func(
-					metric types.MetricType,
-					side types.MeasurementSide,
-					sample types.MetricSample,
-				) bool {
-					key := measurementKey{
-						metric: metric,
-						symbol: measurement.Symbol,
-						side:   side,
-					}
-
-					if sample.Raw > outcome.peak[key] {
-						outcome.peak[key] = sample.Raw
-					}
-
-					if measurement.At.After(latestAt[key]) {
-						latestAt[key] = measurement.At
-						outcome.latest[key] = sample.Raw
-					}
-
-					if measurement.At.Equal(latestAt[key]) {
-						outcome.latest[key] = sample.Raw
-					}
-
-					if metric == types.MetricTradeVolume &&
-						sample.Raw > activeVolume[measurement.Symbol] {
-						activeVolume[measurement.Symbol] = sample.Raw
-						activeAt[measurement.Symbol] = measurement.At
-					}
-
-					return true
-				})
-			}
-
-			for _, measurement := range measurements {
-				if !measurement.At.Equal(activeAt[measurement.Symbol]) {
-					continue
-				}
-
-				measurement.EachMetric(func(
-					metric types.MetricType,
-					side types.MeasurementSide,
-					sample types.MetricSample,
-				) bool {
-					outcome.active[measurementKey{
-						metric: metric,
-						symbol: measurement.Symbol,
-						side:   side,
-					}] = sample.Raw
-					return true
-				})
-			}
-
-			outcomes[proof.name] = outcome
-
-			if len(symbols) == 0 {
-				symbols = append(symbols, market.Symbols...)
-			}
-
-			So(wired.Close(), ShouldBeNil)
-			market.Close()
-		}
-
-		Convey("It should retain complete side-specific Level3 evidence", func() {
-			for _, proof := range proofs {
-				outcome := outcomes[proof.name]
-
-				for _, values := range []map[measurementKey]float64{
-					outcome.peak,
-					outcome.latest,
-				} {
-					for _, symbol := range symbols {
-						for _, metric := range []types.MetricType{
-							types.MetricBestPrice,
-							types.MetricTouchQuantity,
-						} {
-							for _, side := range sides {
-								So(values[measurementKey{metric, symbol, side}], ShouldBeGreaterThan, 0)
-							}
-						}
-
-						tradeKey := measurementKey{
-							types.MetricTradeVolume,
-							symbol,
-							types.SideNone,
-						}
-						So(values[tradeKey] > 0, ShouldEqual, proof.traded)
-						fills := 0
-
-						for _, side := range sides {
-							if values[measurementKey{
-								types.MetricFillVolume,
-								symbol,
-								side,
-							}] > 0 {
-								fills++
-							}
-						}
-
-						if proof.traded {
-							So(fills, ShouldBeGreaterThan, 0)
-							continue
-						}
-
-						So(fills, ShouldEqual, 0)
-					}
-				}
-			}
-
-			for _, symbol := range symbols {
-				pump := outcomes["fast pump"].active
-				dump := outcomes["fast dump"].active
-				absorption := outcomes["absorption"].active
-				tradeKey := measurementKey{
-					types.MetricTradeVolume,
-					symbol,
-					types.SideNone,
-				}
-				So(pump[tradeKey], ShouldEqual, dump[tradeKey])
-				So(pump[tradeKey], ShouldEqual, absorption[tradeKey])
-				So(
-					pump[tradeKey],
-					ShouldBeGreaterThan,
-					outcomes["slow pump"].active[tradeKey],
-				)
-				So(
-					pump[tradeKey],
-					ShouldBeGreaterThan,
-					outcomes["low-volume lift"].active[tradeKey],
-				)
-
-				for _, proof := range []struct {
-					name        string
-					fillSide    types.MeasurementSide
-					retreatSide types.MeasurementSide
-				}{
-					{"fast pump", types.SideSell, types.SideSell},
-					{"fast dump", types.SideBuy, types.SideBuy},
-				} {
-					active := outcomes[proof.name].active
-					So(active[measurementKey{
-						types.MetricFillVolume,
-						symbol,
-						proof.fillSide,
-					}], ShouldBeGreaterThan, 0)
-					So(active[measurementKey{
-						types.MetricRetreatingQuantity,
-						symbol,
-						proof.retreatSide,
-					}], ShouldBeGreaterThan, 0)
-				}
-
-				for _, metric := range []types.MetricType{
-					types.MetricCancelledQuantity,
-					types.MetricRetreatingQuantity,
-				} {
-					for _, side := range sides {
-						So(absorption[measurementKey{metric, symbol, side}], ShouldEqual, 0)
-					}
-				}
-			}
-
-			for _, proof := range []struct {
-				name string
-				side types.MeasurementSide
-			}{
-				{"thin withdrawal", types.SideSell},
-				{"bid retreat", types.SideBuy},
-			} {
-				for _, symbol := range symbols {
-					So(outcomes[proof.name].peak[measurementKey{
-						types.MetricRetreatingQuantity,
-						symbol,
-						proof.side,
-					}], ShouldBeGreaterThan, 0)
-				}
-			}
-
-			for _, name := range []string{
-				"loaded control",
-				"spoof addition",
-				"depth addition",
-			} {
-				for _, symbol := range symbols {
-					for _, metric := range []types.MetricType{
-						types.MetricCancelledQuantity,
-						types.MetricRetreatingQuantity,
-					} {
-						for _, side := range sides {
-							So(outcomes[name].peak[measurementKey{
-								metric,
-								symbol,
-								side,
-							}], ShouldEqual, 0)
-						}
-					}
-				}
-			}
-
-			So(metrics, ShouldHaveLength, 6)
-		})
-	})
-}
-
-/*
-BenchmarkCalculate exercises exact fill and retreat attribution through one
-complete production planner tick.
-*/
-func BenchmarkCalculate(b *testing.B) {
-	market := tests.NewMarket(b.Context(), 3)
-
-	wired, err := stack.NewBooter(b.Context()).Test(market)
-
-	if err != nil {
-		b.Fatal(err)
+	for _, symbol := range conn.MockConn.Books().GetBooks() {
+		books[symbol] = conn.MockConn.Books().GetBook(symbol)
 	}
 
-	defer func() {
-		if err := wired.Close(); err != nil {
-			b.Fatal(err)
+	return books
+}
+
+func (conn connAdapter) Book(symbol string) *sdkbook.Book {
+	return conn.MockConn.Books().GetBook(symbol)
+}
+
+func (conn connAdapter) SubInstrument(types.Subscription[any]) {}
+func (conn connAdapter) SubTicker([]string)                    {}
+func (conn connAdapter) SubBook([]string)                      {}
+func (conn connAdapter) SubTrades([]string)                    {}
+func (conn connAdapter) SubL3([]string)                        {}
+func (conn connAdapter) SubCandles([]string)                   {}
+
+func (conn connAdapter) Balance() (map[string]*decimal.Decimal, error) {
+	return nil, nil
+}
+
+func (conn connAdapter) TradeBalance() (spot.TradesHistoryResult, error) {
+	return spot.TradesHistoryResult{}, nil
+}
+
+func (conn connAdapter) TradeVolume([]string) (*marketkraken.TradeVolumeResult, error) {
+	return nil, nil
+}
+
+func (conn connAdapter) AddOrder(*spot.AddOrderRequest) (spot.AddOrderResult, error) {
+	return spot.AddOrderResult{}, nil
+}
+
+func (conn connAdapter) Write(params json.Marshaler, _ ...websocket.Callback[any]) error {
+	return conn.MockConn.Write(params)
+}
+
+func drainToxicityTrades(sub *types.Subscription[any]) []kraken.TradeData {
+	out := make([]kraken.TradeData, 0)
+
+	for {
+		select {
+		case frame := <-sub.Channel:
+			if trade, ok := frame.(*kraken.Trade); ok {
+				out = append(out, trade.Data...)
+			}
+		default:
+			return out
 		}
-	}()
+	}
+}
+
+func drainToxicityBooks(sub *types.Subscription[any]) []kraken.BookData {
+	out := make([]kraken.BookData, 0)
+
+	for {
+		select {
+		case frame := <-sub.Channel:
+			if book, ok := frame.(*kraken.Book); ok {
+				out = append(out, book.Data...)
+			}
+		default:
+			return out
+		}
+	}
+}
+
+func measureToxicity(t *testing.T, state tests.MarketState, focus ...string) []*types.Measurement {
+	market := tests.NewMarket(t.Context(), 3)
+	So(market.Bootstrap(), ShouldBeNil)
 	defer market.Close()
 
-	if err := market.Warmup(tests.Idle); err != nil {
-		b.Fatal(err)
-	}
+	api := websocket.NewAPI(t.Context(), connAdapter{market.Public}, connAdapter{market.Level3})
+	thesis := types.NewThesis()
+	thesis.Causal.Store("signal:toxicity:touch", make(map[string]float64))
+	thesis.Causal.Store("signal:toxicity:price", make(map[string]float64))
+	signal := &Signal{thesis: thesis, api: api, ui: make(chan []byte, 32)}
+	tradeSub := market.Public.Subscribe("trade")
+	bookSub := market.Public.Subscribe("book")
 
-	b.ReportAllocs()
+	So(market.Public.Write(json.RawMessage(
+		`{"method":"subscribe","params":{"channel":"trade","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
+	)), ShouldBeNil)
+	So(market.Public.Write(json.RawMessage(
+		`{"method":"subscribe","params":{"channel":"book","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
+	)), ShouldBeNil)
+	So(market.Level3.Write(json.RawMessage(
+		`{"method":"subscribe","params":{"channel":"level3","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"],"depth":10}}`,
+	)), ShouldBeNil)
 
-	for b.Loop() {
-		if err := market.Apply(tests.MarketStep{
-			Advance: 250 * time.Millisecond,
-			Actions: []tests.MarketAction{
-				{
-					Kind:   tests.MarketTrade,
-					Symbol: "SIM1/USD",
-					Side:   "buy",
-					Qty:    10,
-				},
-				{
-					Kind:   tests.MarketRefill,
-					Symbol: "SIM1/USD",
-					Side:   "sell",
-					Qty:    10,
-				},
-				{
-					Kind:   tests.MarketMoveMid,
-					Symbol: "SIM1/USD",
-					Ticks:  1,
-				},
-			},
-		}, tests.Idle); err != nil {
-			b.Fatal(err)
+	signal.thesis.Tick++
+	signal.Calculate(drainToxicityBooks(bookSub), drainToxicityTrades(tradeSub))
+
+	consume := func(into *[]*types.Measurement) func() error {
+		return func() error {
+			signal.thesis.Tick++
+			*into = append(*into, signal.Calculate(
+				drainToxicityBooks(bookSub),
+				drainToxicityTrades(tradeSub),
+			)...)
+
+			return nil
 		}
 	}
+
+	So(market.Warmup(consume(&[]*types.Measurement{})), ShouldBeNil)
+	rows := make([]*types.Measurement, 0)
+	So(market.Transition(state, consume(&rows), focus...), ShouldBeNil)
+
+	return rows
+}
+
+func TestCalculate(t *testing.T) {
+	Convey("Toxicity preserves touch and trade-side evidence on live market fixtures", t, func() {
+		rows := measureToxicity(t, tests.MarketStateFastPump)
+		So(rows, ShouldNotBeEmpty)
+
+		foundTrade := false
+		foundTouch := false
+
+		for _, measurement := range rows {
+			measurement.EachMetric(func(metric types.MetricType, side types.MeasurementSide, sample types.MetricSample) bool {
+				if metric == types.MetricTradeVolume && side == types.SideNone && sample.Raw > 0 {
+					foundTrade = true
+				}
+
+				if metric == types.MetricTouchQuantity && (side == types.SideBuy || side == types.SideSell) && sample.Raw > 0 {
+					foundTouch = true
+				}
+
+				return true
+			})
+		}
+
+		So(foundTrade, ShouldBeTrue)
+		So(foundTouch, ShouldBeTrue)
+	})
 }

@@ -180,11 +180,16 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	// 4. Record audit snapshot
 	if solver.recorder != nil {
-		solver.recorder.Write(map[string]any{
+		err := audit.Record(solver.recorder, "predictive", map[string]any{
+			"stage":     "graph",
 			"nodeCount": len(graph.Nodes),
 			"edgeCount": len(graph.Edges),
 			"at":        graph.At,
 		})
+
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

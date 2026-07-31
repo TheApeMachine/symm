@@ -29,6 +29,7 @@ import (
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/trader"
+	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 	"github.com/theapemachine/symm/utils"
 )
@@ -62,18 +63,25 @@ var (
 			api := utils.NewWaiter[*websocket.API](websocket.NewAPI(
 				cmd.Context(),
 				websocket.New(cmd.Context(), nil, false, websocket.PublicWebSocketURL),
-				websocket.New(cmd.Context(), nil, false, websocket.PrivateWebSocketURL),
+				websocket.New(cmd.Context(), nil, true, websocket.PrivateWebSocketURL),
 			)).Wait()
 
+			errnie.Info("api reported to be ready")
+
 			price := utils.NewWaiter[*broker.Price](broker.NewPrice(api)).Wait()
+			errnie.Info("price reported to be ready")
 
 			instrument := utils.NewWaiter[*broker.Instrument](
 				broker.NewInstrument(api, price, uiChannel),
 			).Wait()
 
+			errnie.Info("instrument reported to be ready")
+
 			balance := utils.NewWaiter[*broker.Balance](
 				broker.NewBalance(api, uiChannel),
 			).Wait()
+
+			errnie.Info("balance reported to be ready")
 
 			desk := utils.NewWaiter[*broker.Desk](broker.NewDesk(
 				cmd.Context(),
@@ -84,20 +92,13 @@ var (
 				uiChannel,
 			)).Wait()
 
+			errnie.Info("desk reported to be ready")
+
 			tree, err := dmt.NewTree("")
 
 			if err != nil {
 				return errnie.Error(fmt.Errorf("failed to create decision tree: %w", err))
 			}
-
-			analyzer := utils.NewWaiter[*logic.Analyzer](logic.NewAnalyzer(
-				cmd.Context(),
-				api,
-				tree,
-				uiChannel,
-				manifoldChannel,
-				nil,
-			)).Wait()
 
 			planner := utils.NewWaiter[*strategy.Planner](strategy.NewPlanner(
 				cmd.Context(),
@@ -107,9 +108,57 @@ var (
 				instrument,
 				price,
 				balance,
-				analyzer,
+				nil,
 				nil,
 			)).Wait()
+
+			errnie.Info("planner reported to be ready")
+
+			correlation := utils.NewWaiter[*correlation.Signal](correlation.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			errnie.Info("correlation signal reported to be ready")
+			cvd := utils.NewWaiter[*cvd.Signal](cvd.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			errnie.Info("cvd signal reported to be ready")
+			depthflow := utils.NewWaiter[*depthflow.Signal](depthflow.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			errnie.Info("depthflow signal reported to be ready")
+			exhaust := utils.NewWaiter[*exhaust.Signal](exhaust.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			errnie.Info("exhaust signal reported to be ready")
+			hawkes := utils.NewWaiter[*hawkes.Signal](hawkes.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			errnie.Info("hawkes signal reported to be ready")
+			leadlag := utils.NewWaiter[*leadlag.Signal](leadlag.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			errnie.Info("leadlag signal reported to be ready")
+			liquidity := utils.NewWaiter[*liquidity.Signal](liquidity.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			errnie.Info("liquidity signal reported to be ready")
+			pumpdump := utils.NewWaiter[*pumpdump.Signal](pumpdump.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			errnie.Info("pumpdump signal reported to be ready")
+			sentiment := utils.NewWaiter[*sentiment.Signal](sentiment.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			errnie.Info("sentiment signal reported to be ready")
+			toxicity := utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			errnie.Info("toxicity signal reported to be ready")
+
+			analyzer := utils.NewWaiter[*logic.Analyzer](logic.NewAnalyzer(
+				cmd.Context(),
+				api,
+				tree,
+				uiChannel,
+				manifoldChannel,
+				nil,
+				map[string]*types.Subscription[any]{
+					"correlation": correlation.Subscribe("thesis", types.NewSubscription[any]()),
+					"cvd":         cvd.Subscribe("thesis", types.NewSubscription[any]()),
+					"depthflow":   depthflow.Subscribe("thesis", types.NewSubscription[any]()),
+					"exhaust":     exhaust.Subscribe("thesis", types.NewSubscription[any]()),
+					"hawkes":      hawkes.Subscribe("thesis", types.NewSubscription[any]()),
+					"leadlag":     leadlag.Subscribe("thesis", types.NewSubscription[any]()),
+					"liquidity":   liquidity.Subscribe("thesis", types.NewSubscription[any]()),
+					"pumpdump":    pumpdump.Subscribe("thesis", types.NewSubscription[any]()),
+					"sentiment":   sentiment.Subscribe("thesis", types.NewSubscription[any]()),
+					"toxicity":    toxicity.Subscribe("thesis", types.NewSubscription[any]()),
+				},
+			)).Wait()
+
+			errnie.Info("analyzer reported to be ready")
+
+			planner.AttachAnalyzer(analyzer)
 
 			utils.NewWaiter[*trader.Crypto](trader.NewCrypto(
 				cmd.Context(),
@@ -119,16 +168,7 @@ var (
 				desk,
 			)).Wait()
 
-			utils.NewWaiter[*correlation.Signal](correlation.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			utils.NewWaiter[*cvd.Signal](cvd.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			utils.NewWaiter[*depthflow.Signal](depthflow.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			utils.NewWaiter[*exhaust.Signal](exhaust.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			utils.NewWaiter[*hawkes.Signal](hawkes.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			utils.NewWaiter[*leadlag.Signal](leadlag.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			utils.NewWaiter[*liquidity.Signal](liquidity.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			utils.NewWaiter[*pumpdump.Signal](pumpdump.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			utils.NewWaiter[*sentiment.Signal](sentiment.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			errnie.Info("trader reported to be ready")
 
 			hub := ui.NewHub(
 				cmd.Context(),
@@ -139,6 +179,7 @@ var (
 				manifoldChannel,
 			)
 
+			errnie.Info("ui hub reported to be ready")
 			return hub.Serve()
 		},
 	}

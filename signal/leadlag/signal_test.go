@@ -1,4 +1,4 @@
-package sentiment
+package leadlag
 
 import (
 	"encoding/json"
@@ -10,7 +10,7 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-func drainSentiment(sub *types.Subscription[any]) []*kraken.Ticker {
+func drainLeadlag(sub *types.Subscription[any]) []*kraken.Ticker {
 	out := make([]*kraken.Ticker, 0)
 
 	for {
@@ -25,7 +25,7 @@ func drainSentiment(sub *types.Subscription[any]) []*kraken.Ticker {
 	}
 }
 
-func measureSentiment(
+func measureLeadlag(
 	t *testing.T,
 	state tests.MarketState,
 	focus ...string,
@@ -34,8 +34,10 @@ func measureSentiment(
 	So(market.Bootstrap(), ShouldBeNil)
 	defer market.Close()
 
+	thesis := types.NewThesis()
+	thesis.Causal.Store("signal:leadlag:section", NewSection())
 	signal := &Signal{
-		thesis: types.NewThesis(),
+		thesis: thesis,
 		ui:     make(chan []byte, 32),
 	}
 	tickerSub := market.Public.Subscribe("ticker")
@@ -44,14 +46,14 @@ func measureSentiment(
 		`{"method":"subscribe","params":{"channel":"ticker","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
 	)), ShouldBeNil)
 
-	for _, ticker := range drainSentiment(tickerSub) {
+	for _, ticker := range drainLeadlag(tickerSub) {
 		signal.thesis.Tick++
 		signal.Calculate(ticker.Data, nil, nil)
 	}
 
 	consume := func(into *[]*types.Measurement) func() error {
 		return func() error {
-			for _, ticker := range drainSentiment(tickerSub) {
+			for _, ticker := range drainLeadlag(tickerSub) {
 				signal.thesis.Tick++
 				*into = append(*into, signal.Calculate(ticker.Data, nil, nil)...)
 			}
@@ -68,27 +70,25 @@ func measureSentiment(
 }
 
 func TestCalculate(t *testing.T) {
-	Convey("Sentiment distinguishes cohort surge from isolated divergence", t, func() {
+	Convey("Leadlag emits non-zero coordination evidence on directional cohort tapes", t, func() {
 		metrics := []types.MetricType{
-			types.MetricSurgeScore,
-			types.MetricDivergentScore,
+			types.MetricStrength,
+			types.MetricSync,
 		}
 
-		pump := tests.PeakMeasurements(
-			measureSentiment(t, tests.MarketStateFastPump),
-			types.SourceSentiment,
+		baseline := tests.PeakMeasurements(
+			measureLeadlag(t, tests.MarketStateBaseline),
+			types.SourceLeadLag,
 			metrics,
 		)
-		isolated := tests.PeakMeasurements(
-			measureSentiment(t, tests.MarketStateFastPump, "SIM1/USD"),
-			types.SourceSentiment,
+		pump := tests.PeakMeasurements(
+			measureLeadlag(t, tests.MarketStateFastPump),
+			types.SourceLeadLag,
 			metrics,
 		)
 
 		for _, symbol := range []string{"SIM1/USD", "SIM2/USD", "SIM3/USD"} {
-			So(pump[types.MetricSurgeScore][symbol], ShouldBeGreaterThanOrEqualTo, 0)
+			So(pump[types.MetricStrength][symbol], ShouldBeGreaterThanOrEqualTo, baseline[types.MetricStrength][symbol])
 		}
-
-		So(isolated[types.MetricDivergentScore]["SIM1/USD"], ShouldBeGreaterThan, 0)
 	})
 }

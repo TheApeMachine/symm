@@ -24,7 +24,6 @@ export {
 	TerminalResonanceChart,
 } from "#/components/charts/resonance";
 export {
-	paintTerminalSignalHeatmap,
 	TerminalSignalHeatmap,
 } from "#/components/charts/signal-heatmap";
 export {

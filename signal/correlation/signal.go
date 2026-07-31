@@ -3,6 +3,7 @@ package correlation
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -29,6 +30,7 @@ type Signal struct {
 	section       *Section
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
+	subscribers   *sync.Map
 }
 
 /*
@@ -55,6 +57,7 @@ func NewSignal(
 		subscriptions: map[string]*types.Subscription[any]{
 			"ticker": api.Subscribe("ticker", types.NewSubscription[any]()),
 		},
+		subscribers: &sync.Map{},
 	}
 
 	signal.run()
@@ -72,6 +75,22 @@ func (signal *Signal) Name() string {
 
 func (signal *Signal) Status() types.Status {
 	return signal.status
+}
+
+func (signal *Signal) Subscribe(
+	channel string, subscription *types.Subscription[any],
+) *types.Subscription[any] {
+	subscribers, ok := signal.subscribers.LoadOrStore(
+		channel, []*types.Subscription[any]{subscription},
+	)
+
+	if ok && subscribers != nil {
+		signal.subscribers.Store(
+			channel, append(subscribers.([]*types.Subscription[any]), subscription),
+		)
+	}
+
+	return subscription
 }
 
 func (signal *Signal) run() {
@@ -95,6 +114,16 @@ func (signal *Signal) onTicker(ticker *kraken.Ticker) {
 		signal.Calculate(ticker.Data, nil, nil),
 		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
 	)
+
+	subscribers, ok := signal.subscribers.Load(
+		"thesis",
+	)
+
+	if ok && subscribers != nil {
+		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
+			subscriber.Send(signal.thesis)
+		}
+	}
 }
 
 func (signal *Signal) Calculate(

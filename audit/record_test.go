@@ -18,7 +18,7 @@ func TestRecord(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("It should write a diagnostic envelope", func() {
-			So(Record(recorder, "playbook_no_action", map[string]any{
+			So(Record(recorder, "decision", map[string]any{
 				"symbol": "BTC/USD",
 			}), ShouldBeNil)
 			So(recorder.Close(), ShouldBeNil)
@@ -32,7 +32,21 @@ func TestRecord(t *testing.T) {
 			var decoded map[string]any
 			So(json.Unmarshal(scanner.Bytes(), &decoded), ShouldBeNil)
 			So(decoded["channel"], ShouldEqual, "diagnostic")
-			So(decoded["type"], ShouldEqual, "playbook_no_action")
+			So(decoded["type"], ShouldEqual, "decision")
+			So(file.Close(), ShouldBeNil)
+		})
+
+		Convey("It should drop low-value diagnostic event types", func() {
+			So(Record(recorder, "measurement_best_effort", map[string]any{
+				"symbol": "BTC/USD",
+			}), ShouldBeNil)
+			So(recorder.Close(), ShouldBeNil)
+
+			file, openErr := os.Open(path)
+			So(openErr, ShouldBeNil)
+
+			scanner := bufio.NewScanner(file)
+			So(scanner.Scan(), ShouldBeFalse)
 			So(file.Close(), ShouldBeNil)
 		})
 

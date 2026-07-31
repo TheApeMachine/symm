@@ -1,8 +1,8 @@
 import type {
+	Decision,
 	Finding,
 	Graph,
 	LifecycleState,
-	StrategyDecision,
 	ThesisCategory,
 	ThesisForecast,
 	ThesisHypothesis,
@@ -12,7 +12,7 @@ export type {
 	Finding,
 	Graph,
 	LifecycleState,
-	StrategyDecision,
+	Decision,
 	ThesisCategory,
 	ThesisForecast,
 	ThesisHypothesis,
@@ -114,7 +114,7 @@ export type Thesis = {
 	tick: number;
 	at: string;
 	forecasts?: ThesisForecast[];
-	decisions?: StrategyDecision[];
+	decisions?: Decision[];
 	findings?: Finding[];
 	hypotheses?: ThesisHypothesis[];
 	categories?: Record<string, ThesisCategory[]>;

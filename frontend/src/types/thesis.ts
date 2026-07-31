@@ -1,15 +1,23 @@
+import type { Status } from "#/types/status";
+import type { Stoploss } from "#/types/stoploss";
+
 /*
 StrategyDecision mirrors the backend types.Decision payload published on each
 thesis tick so the frontend can render utility, alternatives, and cause without
 re-deriving gate verdicts from unrelated action frames.
 */
-export type StrategyDecision = {
-	action: string;
+export type Action = "enter" | "exit" | "reduce" | "hold" | "nothing";
+
+export interface Decision {
+	id: string;
+	action: Action;
 	symbol: string;
-	at: string;
+	at: Date;
 	utility: number;
+	allocation_haircut: number;
 	alternatives: Record<string, number>;
 	allocationClass: string;
+	opportunity: boolean;
 	proposedNotional: string;
 	proposedQuantity: string;
 	referencePrice: string;
@@ -22,7 +30,7 @@ export type StrategyDecision = {
 	expectedFees: string;
 	expectedSpread: string;
 	expectedImpact: string;
-	adverseSelection: number;
+	adverseSelection: string;
 	uncertainty: number;
 	confidence: number;
 	opportunityMargin: number;
@@ -33,9 +41,23 @@ export type StrategyDecision = {
 	slotCapacity: number;
 	cause: string;
 	reason: string;
+	displaces?: string;
 	displacedQuantity?: string;
 	displacedPrice?: string;
-};
+	reservationId?: string;
+	positionStatus?: Status;
+	sellableQty?: string;
+	entryAt?: Date;
+	exitAt?: Date;
+	entryPrice?: string;
+	entryFee?: string;
+	exitPrice?: string;
+	exitFee?: string;
+	pnl?: string;
+	returnPct?: number;
+	mark?: string;
+	stoploss?: Stoploss;
+}
 
 /*
 Finding mirrors the backend PostMortem evidence record attributed to one system

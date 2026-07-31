@@ -1,6 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useSelector } from "@tanstack/react-store";
-import { appStore } from "#/collections/app";
 import { AuditTrail } from "#/components/dashboard/audit";
 import { Decisions } from "#/components/dashboard/decisions";
 import { FluidLegend } from "#/components/dashboard/fluid";
@@ -13,7 +11,6 @@ import {
 	TerminalPredictionChart,
 } from "#/components/terminal/charts";
 import { KernelList } from "#/components/terminal/kernel-list";
-import { LiveManifoldMeta } from "#/components/terminal/live-manifold-meta";
 import { LiveResonanceFooter } from "#/components/terminal/live-resonance-footer";
 import { LiveResonanceTitle } from "#/components/terminal/live-resonance-title";
 import { ThesisModal } from "#/components/terminal/thesis-modal";
@@ -23,7 +20,18 @@ import { Flex } from "@/components/ui/flex";
 import { Grid } from "@/components/ui/grid";
 
 const RouteComponent = () => {
-	const kernels = useSelector(appStore, (state) => state.kernels);
+	const kernels = [
+		"correlation",
+		"cvd",
+		"depthflow",
+		"exhaustion",
+		"hawkes",
+		"leadlag",
+		"liquidity",
+		"pumpdump",
+		"sentiment",
+		"toxicity",
+	];
 
 	return (
 		<Flex.Column fullWidth className="h-full min-w-280">
@@ -48,7 +56,7 @@ const RouteComponent = () => {
 						<Canvas
 							title="Pilot-wave field"
 							meta="shared |ψ|² / ρ · focused particles · X relative log price · Z empirical order-age rank · max over Y log size"
-							topRight={<LiveManifoldMeta />}
+							topRight={<></>}
 							legend={<FluidLegend />}
 							className="flex-[1.45]"
 						>

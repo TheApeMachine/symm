@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic/graph"
@@ -10,9 +11,16 @@ import (
 
 type Evaluator struct {
 	mctsEngine *mcts.CausalMCTS
+	desk       *broker.Desk
+	price      *broker.Price
+	balance    *broker.Balance
 }
 
-func NewEvaluator() Evaluator {
+func NewEvaluator(
+	desk *broker.Desk,
+	price *broker.Price,
+	balance *broker.Balance,
+) Evaluator {
 	engine := NewCausalEngineAdapter()
 	// Configure MCTS: Exploration C = 1.414, CausalAlpha = 0.5
 	// Target = 3 (Reward), Treatment = 2 (Action), Controls = [0, 1] (Energy, Surprise)
@@ -24,20 +32,20 @@ func NewEvaluator() Evaluator {
 		false, // Non-linear SCM fit
 	)
 
-	return Evaluator{mctsEngine: mctsSearch}
+	return Evaluator{
+		mctsEngine: mctsSearch,
+		desk:       desk,
+		price:      price,
+		balance:    balance,
+	}
 }
 
-func (e Evaluator) EvaluateOpportunities(
-	thesis *types.Thesis,
-	desk *broker.Desk,
-	price *broker.Price,
-	balance *broker.Balance,
-) {
+func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 	if thesis == nil {
 		return
 	}
 
-	occupied := getOccupiedSymbols(thesis, desk)
+	occupied := getOccupiedSymbols(thesis, evaluator.desk)
 	forecasts := selectForecasts(thesis.Forecasts)
 
 	for symbol, forecast := range forecasts {
@@ -45,8 +53,12 @@ func (e Evaluator) EvaluateOpportunities(
 			continue
 		}
 
+		if isExiting(thesis, symbol) {
+			continue
+		}
+
 		if !forecast.FrictionReady {
-			e.stampFriction(&forecast, price, balance)
+			evaluator.stampFriction(&forecast)
 		}
 
 		if !forecast.Eligible() {
@@ -56,9 +68,11 @@ func (e Evaluator) EvaluateOpportunities(
 		// 1. Extract Relational Graph & Causal Rows
 		supports, contradicts, hasGraph := inspectGraph(thesis, symbol)
 		causalRows := getCausalHistoryRows(thesis, symbol)
+		doExpectation, uplift, noise, causalReady := getCausalMetrics(thesis, symbol)
+		cognition := getCognition(thesis, symbol)
 
 		if hasGraph && contradicts > supports+1.0 {
-			thesis.Decisions = append(thesis.Decisions, e.reject(
+			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
 				forecast, 0, "graph_contradiction",
 				"relational graph contradicts trade hypothesis",
 			))
@@ -69,8 +83,8 @@ func (e Evaluator) EvaluateOpportunities(
 		rootState := StrategyState{
 			Symbol:    symbol,
 			Energy:    forecast.Uncertainty,
-			Surprise:  forecast.ExpectedImpact,
-			Treatment: forecast.ExpectedReturn,
+			Surprise:  forecast.ExpectedImpact.Float64(),
+			Treatment: forecast.ExpectedReturn.Float64(),
 			Reward:    0.0,
 			Step:      0,
 			MaxSteps:  5, // 5-step forward trajectory search
@@ -82,12 +96,20 @@ func (e Evaluator) EvaluateOpportunities(
 		var mctsErr error
 
 		if len(causalRows) >= 12 {
-			recommendedAction, mctsErr = e.mctsEngine.Search(rootState, 50, causalRows)
+			recommendedAction, mctsErr = evaluator.mctsEngine.Search(rootState, 50, causalRows)
 		}
 
 		// 4. Executable Net Return
 		execReturn := forecast.ExecutableReturn()
-		utility := execReturn - forecast.Uncertainty
+		utility := execReturn.Float64() - forecast.Uncertainty
+
+		if causalReady {
+			utility += doExpectation + uplift - noise
+		}
+
+		if cognition.Ready {
+			utility += cognition.LookaheadScore * cognition.Confidence
+		}
 
 		// If MCTS recommends ActionEnter (1.0) and Net Utility > 0
 		if (mctsErr == nil && recommendedAction == ActionEnter) || (len(causalRows) < 12 && utility > 0) {
@@ -103,12 +125,16 @@ func (e Evaluator) EvaluateOpportunities(
 					"enter":   utility,
 					"nothing": 0,
 				},
-				ExpectedFees:      decimal.NewFromFloat64(forecast.ExpectedFees),
-				ExpectedSpread:    decimal.NewFromFloat64(forecast.ExpectedSpread),
-				ExpectedReturn:    decimal.NewFromFloat64(forecast.ExpectedReturn),
-				ExpectedImpact:    decimal.NewFromFloat64(forecast.ExpectedImpact),
+				ExpectedFees:      forecast.ExpectedFees,
+				ExpectedSpread:    forecast.ExpectedSpread,
+				ExpectedReturn:    forecast.ExpectedReturn,
+				ExpectedImpact:    forecast.ExpectedImpact,
 				AdverseSelection:  forecast.ExpectedAdverseSelection,
 				Uncertainty:       forecast.Uncertainty,
+				Confidence:        forecast.Confidence,
+				OpportunityMargin: utility,
+				CognitiveLead:     cognition.LookaheadScore,
+				BasinConfidence:   cognition.Confidence,
 				ReferencePrice:    forecast.ReferencePrice.Copy(),
 				ValidThroughEpoch: forecast.ExpiresEpoch,
 				ForecastSource:    forecast.Source,
@@ -121,7 +147,7 @@ func (e Evaluator) EvaluateOpportunities(
 			continue
 		}
 
-		thesis.Decisions = append(thesis.Decisions, e.reject(
+		thesis.Decisions = append(thesis.Decisions, evaluator.reject(
 			forecast, utility, "mcts_rejected",
 			"causal MCTS trajectory search did not select entry action",
 		))
@@ -164,7 +190,7 @@ func getFloat(m map[string]any, key string) float64 {
 }
 
 // ManageContinuation scores continuation (Hold) for active open holdings.
-func (e Evaluator) ManageContinuation(
+func (evaluator Evaluator) ManageContinuation(
 	thesis *types.Thesis,
 	desk *broker.Desk,
 	price *broker.Price,
@@ -173,14 +199,16 @@ func (e Evaluator) ManageContinuation(
 		return
 	}
 
-	forecasts := selectForecasts(thesis.Forecasts)
-
 	for position := range desk.Positions() {
 		if position.Status != types.OPEN {
 			continue
 		}
 
-		forecast, found := forecasts[position.Holding.Symbol]
+		if isExiting(thesis, position.Holding.Symbol) {
+			continue
+		}
+
+		forecast, found := selectForecast(thesis.Forecasts, position.Holding.Symbol)
 
 		if !found || !forecast.Eligible() {
 			thesis.Decisions = append(thesis.Decisions, types.Decision{
@@ -196,24 +224,44 @@ func (e Evaluator) ManageContinuation(
 			continue
 		}
 
-		feeFraction, err := price.Fraction(forecast.Symbol)
+		fee, err := evaluator.price.Fee(position.Holding.Symbol)
 
 		if err != nil {
 			thesis.Decisions = append(thesis.Decisions, types.Decision{
 				Action:           types.ActionHold,
-				Symbol:           forecast.Symbol,
+				Symbol:           position.Holding.Symbol,
 				Cause:            "continuation",
-				Reason:           "fee schedule unavailable for continuation",
+				Reason:           "fee rate unavailable for continuation scoring",
 				ProposedQuantity: decimal.NewFromInt64(0),
 				ProposedNotional: decimal.NewFromInt64(0),
 				Alternatives:     map[string]float64{"hold": 0},
 			})
 
+			errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"continuation: fee rate unavailable for "+position.Holding.Symbol,
+				err,
+			))
+
 			continue
 		}
 
-		holdUtility := forecast.ExpectedReturn - forecast.Uncertainty
-		exitCost := feeFraction.Float64() + forecast.ExpectedSpread/2 + forecast.ExpectedImpact
+		holdUtility := forecast.ExpectedReturn.Float64() - forecast.Uncertainty
+
+		exitCost := fee.Add(
+			forecast.ExpectedSpread.Div(decimal.NewFromInt64(2)),
+		).Add(forecast.ExpectedImpact)
+
+		doExpectation, uplift, noise, causalReady := getCausalMetrics(thesis, forecast.Symbol)
+		cognition := getCognition(thesis, forecast.Symbol)
+
+		if causalReady {
+			holdUtility += doExpectation + uplift - noise
+		}
+
+		if cognition.Ready {
+			holdUtility += cognition.LookaheadScore * cognition.Confidence
+		}
 
 		// Apply Graph Contradiction Penalty to Hold Utility
 		_, contradicts, hasGraph := inspectGraph(thesis, forecast.Symbol)
@@ -229,17 +277,20 @@ func (e Evaluator) ManageContinuation(
 			Utility: holdUtility,
 			Alternatives: map[string]float64{
 				"hold": holdUtility,
-				"exit": -exitCost,
+				"exit": -exitCost.Float64(),
 			},
 			ProposedNotional:  decimal.NewFromInt64(0),
 			ProposedQuantity:  decimal.NewFromInt64(0),
-			ExpectedReturn:    decimal.NewFromFloat64(forecast.ExpectedReturn),
-			ExpectedFees:      decimal.NewFromFloat64(feeFraction.Float64()),
-			ExpectedSpread:    decimal.NewFromFloat64(forecast.ExpectedSpread / 2),
-			ExpectedImpact:    decimal.NewFromFloat64(forecast.ExpectedImpact),
+			ExpectedReturn:    forecast.ExpectedReturn,
+			ExpectedFees:      fee,
+			ExpectedSpread:    forecast.ExpectedSpread.Div(decimal.NewFromInt64(2)),
+			ExpectedImpact:    forecast.ExpectedImpact,
 			AdverseSelection:  forecast.ExpectedAdverseSelection,
 			Uncertainty:       forecast.Uncertainty,
 			Confidence:        forecast.Confidence,
+			OpportunityMargin: holdUtility + exitCost.Float64(),
+			CognitiveLead:     cognition.LookaheadScore,
+			BasinConfidence:   cognition.Confidence,
 			ReferencePrice:    forecast.ReferencePrice.Copy(),
 			ValidThroughEpoch: forecast.ExpiresEpoch,
 			ForecastSource:    forecast.Source,
@@ -250,11 +301,30 @@ func (e Evaluator) ManageContinuation(
 	}
 }
 
-func (e Evaluator) stampFriction(forecast *types.Forecasts, price *broker.Price, balance *broker.Balance) {
-	if fraction, err := price.Fraction(forecast.Symbol); err == nil {
-		forecast.ExpectedFees = fraction.Float64()
+func (evaluator Evaluator) stampFriction(
+	forecast *types.Forecasts,
+) {
+	fee, err := evaluator.price.Fee(forecast.Symbol)
+
+	if err != nil {
+		forecast.ExpectedFees = decimal.NewFromInt64(0)
+		forecast.ExpectedSpread = decimal.NewFromInt64(0)
+		forecast.ExpectedImpact = decimal.NewFromInt64(0)
+		forecast.FrictionReady = true
+
+		errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"friction: fee rate unavailable for "+forecast.Symbol,
+			err,
+		))
+
+		return
 	}
-	forecast.ExpectedImpact = forecast.ExpectedSpread * 0.1
+
+	forecast.ExpectedFees = fee
+	forecast.ExpectedImpact = forecast.ExpectedSpread.Mul(
+		decimal.NewFromFloat64(0.1),
+	)
 	forecast.FrictionReady = true
 }
 
@@ -275,12 +345,14 @@ func (e Evaluator) reject(
 		ForecastModel:     forecast.ModelVersion,
 		ForecastEpoch:     forecast.SourceEpoch,
 		CalibrationCount:  forecast.CalibrationSamples,
-		ExpectedReturn:    decimal.NewFromFloat64(forecast.ExpectedReturn),
-		ExpectedFees:      decimal.NewFromFloat64(forecast.ExpectedFees),
-		ExpectedSpread:    decimal.NewFromFloat64(forecast.ExpectedSpread),
-		ExpectedImpact:    decimal.NewFromFloat64(forecast.ExpectedImpact),
+		ExpectedReturn:    forecast.ExpectedReturn,
+		ExpectedFees:      forecast.ExpectedFees,
+		ExpectedSpread:    forecast.ExpectedSpread,
+		ExpectedImpact:    forecast.ExpectedImpact,
 		AdverseSelection:  forecast.ExpectedAdverseSelection,
 		Uncertainty:       forecast.Uncertainty,
+		Confidence:        forecast.Confidence,
+		OpportunityMargin: utility,
 		Cause:             cause,
 		Reason:            reason,
 	}
@@ -313,11 +385,15 @@ func getCausalMetrics(thesis *types.Thesis, symbol string) (doExp, uplift, noise
 	if thesis == nil || thesis.Causal == nil {
 		return 0, 0, 0, false
 	}
+
 	val, ok := thesis.Causal.Load(symbol)
+
 	if !ok || val == nil {
 		return 0, 0, 0, false
 	}
+
 	m, ok := val.(map[string]any)
+
 	if !ok {
 		return 0, 0, 0, false
 	}
@@ -340,44 +416,45 @@ func getCausalMetrics(thesis *types.Thesis, symbol string) (doExp, uplift, noise
 }
 
 func getCognition(thesis *types.Thesis, symbol string) types.Cognition {
-	if thesis == nil || thesis.Cognition == nil {
-		return types.Cognition{}
-	}
 	val, ok := thesis.Cognition.Load(symbol)
+
 	if !ok || val == nil {
 		return types.Cognition{}
 	}
+
 	if cog, ok := val.(types.Cognition); ok {
 		return cog
 	}
+
 	return types.Cognition{}
 }
 
 func inspectGraph(thesis *types.Thesis, symbol string) (supports, contradicts float64, hasGraph bool) {
-	if thesis == nil || thesis.Graphs == nil {
-		return 0, 0, false
-	}
 	val, ok := thesis.Graphs.Load("market_graph")
+
 	if !ok || val == nil {
 		return 0, 0, false
 	}
+
 	g, ok := val.(*graph.Graph)
+
 	if !ok || g == nil {
 		return 0, 0, false
 	}
 
 	for _, edge := range g.Edges {
-		if edge == nil {
-			continue
-		}
 		fromNode, fromOk := g.Nodes[edge.From]
 		toNode, toOk := g.Nodes[edge.To]
 
 		if (fromOk && fromNode.Symbol == symbol) || (toOk && toNode.Symbol == symbol) {
 			switch edge.Relation {
-			case graph.RelationSupports, graph.RelationConditions, graph.RelationLeads:
+			case graph.RelationSupports,
+				graph.RelationConditions,
+				graph.RelationLeads:
 				supports += edge.Weight * edge.Confidence
-			case graph.RelationContradicts, graph.RelationStaleRelativeTo, graph.RelationIncomparableWith:
+			case graph.RelationContradicts,
+				graph.RelationStaleRelativeTo,
+				graph.RelationIncomparableWith:
 				contradicts += edge.Weight * edge.Confidence
 			}
 		}
@@ -388,41 +465,38 @@ func inspectGraph(thesis *types.Thesis, symbol string) (supports, contradicts fl
 
 func getOccupiedSymbols(thesis *types.Thesis, desk *broker.Desk) map[string]struct{} {
 	occupied := make(map[string]struct{})
-	if desk != nil {
-		for position := range desk.Positions() {
-			if position.Status != types.CLOSED {
-				occupied[position.Holding.Symbol] = struct{}{}
-			}
+
+	for position := range desk.Positions() {
+		if position.Status != types.CLOSED {
+			occupied[position.Holding.Symbol] = struct{}{}
 		}
 	}
 
-	if thesis != nil && thesis.Lifecycle != nil {
-		thesis.Lifecycle.Range(func(key, value any) bool {
-			if symbol, ok := key.(string); ok {
-				if state, isStr := value.(string); isStr {
-					switch state {
-					case types.LifecycleEntrySelected, types.LifecycleEntrySubmitted,
-						types.LifecyclePartiallyEntered, types.LifecycleManaging:
-						occupied[symbol] = struct{}{}
-					}
+	thesis.Lifecycle.Range(func(key, value any) bool {
+		if symbol, ok := key.(string); ok {
+			if state, isStr := value.(string); isStr {
+				switch state {
+				case types.LifecycleEntrySelected,
+					types.LifecycleEntrySubmitted,
+					types.LifecyclePartiallyEntered,
+					types.LifecycleManaging:
+					occupied[symbol] = struct{}{}
 				}
 			}
+		}
 
-			return true
-		})
-	}
+		return true
+	})
 
 	return occupied
 }
 
 func isExiting(thesis *types.Thesis, symbol string) bool {
-	if thesis == nil || thesis.Lifecycle == nil {
-		return false
-	}
 	if val, ok := thesis.Lifecycle.Load(symbol); ok {
 		if state, isStr := val.(string); isStr {
 			return state == types.LifecycleExitSelected || state == types.LifecycleExitSubmitted
 		}
 	}
+
 	return false
 }
