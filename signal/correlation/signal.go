@@ -3,12 +3,13 @@ package correlation
 import (
 	"context"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -19,29 +20,45 @@ it, or without a stable relation to it. Categories belong in logic; this signal
 emits numerical scores only.
 */
 type Signal struct {
-	thesis  *types.Thesis
-	ctx     context.Context
-	cancel  context.CancelFunc
-	section *Section
-	ui      chan []byte
-	ticker  *types.Subscription[*kraken.Ticker]
-	subMu   sync.Mutex
-	theses  []*types.Subscription[*types.Thesis]
+	status        types.Status
+	thesis        *types.Thesis
+	ctx           context.Context
+	cancel        context.CancelFunc
+	api           *websocket.API
+	planner       *strategy.Planner
+	section       *Section
+	ui            chan []byte
+	subscriptions map[string]*types.Subscription[any]
 }
 
 /*
 NewSignal creates correlation measurement state for central market cuts so
 successive ticks can establish real price relationships.
 */
-func NewSignal(ctx context.Context, ui chan []byte) *Signal {
+func NewSignal(
+	ctx context.Context,
+	api *websocket.API,
+	planner *strategy.Planner,
+	ui chan []byte,
+) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
+		status:  types.INITIALIZING,
+		thesis:  planner.Thesis,
 		ctx:     ctx,
 		cancel:  cancel,
+		api:     api,
+		planner: planner,
 		section: NewSection(),
 		ui:      ui,
+		subscriptions: map[string]*types.Subscription[any]{
+			"ticker": api.Subscribe("ticker", types.NewSubscription[any]()),
+		},
 	}
+
+	signal.run()
+	signal.status = types.READY
 
 	return signal
 }
@@ -53,63 +70,31 @@ func (signal *Signal) Name() string {
 	return string(types.SourceCorrelation)
 }
 
-/*
-Initialize wires ticker ingress from Live. Correlation is ticker-cross-section
-only; book and trade floods must not fill unused buffers.
-*/
-func (signal *Signal) Initialize(market types.MarketFeed, thesis *types.Thesis) {
-	signal.thesis = thesis
-
-	if market != nil {
-		signal.ticker = market.Ticker()
-	}
-
-	go signal.run()
-}
-
-func (signal *Signal) Thesis() *types.Subscription[*types.Thesis] {
-	subscription := types.NewSubscription[*types.Thesis]()
-	signal.subMu.Lock()
-	signal.theses = append(signal.theses, subscription)
-	signal.subMu.Unlock()
-	return subscription
+func (signal *Signal) Status() types.Status {
+	return signal.status
 }
 
 func (signal *Signal) run() {
-	if signal.ticker == nil {
-		return
-	}
-
-	for {
-		select {
-		case <-signal.ctx.Done():
-			return
-		case ticker := <-signal.ticker.Channel:
-			signal.onTicker(ticker)
+	go func() {
+		for {
+			select {
+			case <-signal.ctx.Done():
+				return
+			case ticker := <-signal.subscriptions["ticker"].Channel:
+				if ticker, ok := ticker.(*kraken.Ticker); ok {
+					signal.onTicker(ticker)
+				}
+			}
 		}
-	}
+	}()
 }
 
 func (signal *Signal) onTicker(ticker *kraken.Ticker) {
-	rows := ticker.Data
-	signal.publish(signal.thesis.AppendMeasuremnts(
+	signal.thesis.AppendMeasurements(
 		types.SourceCorrelation,
-		signal.Calculate(rows, nil, nil),
-	))
-}
-
-func (signal *Signal) publish(thesis *types.Thesis) {
-	if thesis == nil {
-		return
-	}
-
-	signal.subMu.Lock()
-	subscribers := append([]*types.Subscription[*types.Thesis](nil), signal.theses...)
-	signal.subMu.Unlock()
-
-	for _, subscription := range subscribers {
-		subscription.Send(thesis)
-	}
+		signal.Calculate(ticker.Data, nil, nil),
+		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
+	)
 }
 
 func (signal *Signal) Calculate(

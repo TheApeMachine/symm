@@ -1,6 +1,8 @@
 package hawkes
 
 import (
+	"sync"
+
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/symm/types"
 )
@@ -51,14 +53,18 @@ func (cut *Cut) Outcome(symbol string) (excitation.Outcome, bool) {
 cut freezes the current Process outcomes onto a publish payload.
 */
 func (signal *Signal) cut() *Cut {
-	signal.mu.Lock()
-	defer signal.mu.Unlock()
+	found, _ := signal.thesis.Causal.Load("signal:hawkes:mu")
+	mu := found.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
 
-	symbols := signal.process.Symbols()
+	found, _ = signal.thesis.Causal.Load("signal:hawkes:process")
+	process := found.(*excitation.Process)
+	symbols := process.Symbols()
 	outcomes := make(map[string]excitation.Outcome, len(symbols))
 
 	for _, symbol := range symbols {
-		outcome, ok := signal.process.Outcome(symbol)
+		outcome, ok := process.Outcome(symbol)
 
 		if !ok {
 			continue

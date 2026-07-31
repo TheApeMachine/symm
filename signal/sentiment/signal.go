@@ -3,11 +3,13 @@ package sentiment
 import (
 	"context"
 	"math"
-	"sync"
+	"time"
 
 	"github.com/theapemachine/datura"
 
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -17,30 +19,43 @@ Signal measures global market conviction from breadth and leadership
 performance. Categories belong in logic; this signal emits numerical scores only.
 */
 type Signal struct {
-	thesis       *types.Thesis
-	ctx          context.Context
-	cancel       context.CancelFunc
-	ui           chan []byte
-	crossSection *types.CrossSection
-	ticker       *types.Subscription[*kraken.Ticker]
-	subMu        sync.Mutex
-	theses       []*types.Subscription[*types.Thesis]
+	status        types.Status
+	thesis        *types.Thesis
+	ctx           context.Context
+	cancel        context.CancelFunc
+	api           *websocket.API
+	planner       *strategy.Planner
+	ui            chan []byte
+	subscriptions map[string]*types.Subscription[any]
 }
 
 /*
 NewSignal creates sentiment measurement state for central market cuts so every
 tick can compare breadth with current leadership.
 */
-func NewSignal(ctx context.Context, ui chan []byte) *Signal {
+func NewSignal(
+	ctx context.Context,
+	api *websocket.API,
+	planner *strategy.Planner,
+	ui chan []byte,
+) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:          ctx,
-		cancel:       cancel,
-		ui:           ui,
-		crossSection: types.NewCrossSection(),
+		status:  types.INITIALIZING,
+		thesis:  planner.Thesis,
+		ctx:     ctx,
+		cancel:  cancel,
+		api:     api,
+		planner: planner,
+		ui:      ui,
+		subscriptions: map[string]*types.Subscription[any]{
+			"ticker": api.Subscribe("ticker", types.NewSubscription[any]()),
+		},
 	}
 
+	signal.status = types.READY
+	signal.run()
 	return signal
 }
 
@@ -51,66 +66,37 @@ func (signal *Signal) Name() string {
 	return string(types.SourceSentiment)
 }
 
-/*
-Initialize wires ticker ingress from Live. Sentiment is ticker-cross-section
-only; book and trade floods must not fill unused buffers.
-*/
-func (signal *Signal) Initialize(market types.MarketFeed, thesis *types.Thesis) {
-	signal.thesis = thesis
-
-	if market != nil {
-		signal.ticker = market.Ticker()
-	}
-
-	go signal.run()
-}
-
-/*
-onTicker converts each ticker batch into sentiment measurements and appends them
-onto the shared Thesis so breadth and leadership stay aligned with the current
-market cut.
-*/
-func (signal *Signal) Thesis() *types.Subscription[*types.Thesis] {
-	subscription := types.NewSubscription[*types.Thesis]()
-	signal.subMu.Lock()
-	signal.theses = append(signal.theses, subscription)
-	signal.subMu.Unlock()
-	return subscription
+func (signal *Signal) Status() types.Status {
+	return signal.status
 }
 
 func (signal *Signal) run() {
-	if signal.ticker == nil {
+	subscription := signal.subscriptions["ticker"]
+
+	if subscription == nil {
 		return
 	}
 
-	for {
-		select {
-		case <-signal.ctx.Done():
-			return
-		case ticker := <-signal.ticker.Channel:
-			signal.onTicker(ticker)
+	go func() {
+		for {
+			select {
+			case <-signal.ctx.Done():
+				return
+			case ticker := <-subscription.Channel:
+				if ticker, ok := ticker.(*kraken.Ticker); ok {
+					signal.onTicker(ticker)
+				}
+			}
 		}
-	}
+	}()
 }
 
 func (signal *Signal) onTicker(ticker *kraken.Ticker) {
-	signal.publish(signal.thesis.AppendMeasuremnts(
-		types.SourceSentiment, signal.Calculate(ticker.Data, nil, nil),
-	))
-}
-
-func (signal *Signal) publish(thesis *types.Thesis) {
-	if thesis == nil {
-		return
-	}
-
-	signal.subMu.Lock()
-	subscribers := append([]*types.Subscription[*types.Thesis](nil), signal.theses...)
-	signal.subMu.Unlock()
-
-	for _, subscription := range subscribers {
-		subscription.Send(thesis)
-	}
+	signal.thesis.AppendMeasurements(
+		types.SourceSentiment,
+		signal.Calculate(ticker.Data, nil, nil),
+		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
+	)
 }
 
 /*
@@ -123,19 +109,19 @@ func (signal *Signal) Calculate(
 	trades []kraken.TradeData,
 	books []kraken.BookData,
 ) []*types.Measurement {
-	if len(tickers) > 0 {
-		signal.crossSection.Measure(tickers)
-	}
-
 	out := make([]*types.Measurement, 0, 64)
 	var focusMeasurements []*types.Measurement
 
-	if signal.crossSection == nil {
+	if signal.thesis == nil || signal.thesis.CrossSection == nil {
 		return out
 	}
 
-	leader, leadershipThreshold := signal.crossSection.Leadership()
-	breadth := signal.crossSection.Breadth()
+	if len(tickers) > 0 {
+		signal.thesis.CrossSection.Measure(tickers)
+	}
+
+	leader, leadershipThreshold := signal.thesis.CrossSection.Leadership()
+	breadth := signal.thesis.CrossSection.Breadth()
 	cohortSize := 0
 	leaderChange := 0.0
 	totalChange := 0.0
@@ -145,7 +131,7 @@ func (signal *Signal) Calculate(
 	minimumDisplacement := math.Inf(1)
 	peers := make([]types.SymbolMetric, 0, 64)
 
-	signal.crossSection.Metrics.Range(func(_, value any) bool {
+	signal.thesis.CrossSection.Metrics.Range(func(_, value any) bool {
 		metric := value.(types.SymbolMetric)
 		peers = append(peers, metric)
 		absoluteChange := math.Abs(metric.LatestChange)

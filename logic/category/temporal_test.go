@@ -45,7 +45,7 @@ func TestStaleAndIncomparable(t *testing.T) {
 		Convey("When IncomparableWith is observed on the graph", func() {
 			graph := NewGraph()
 			at := time.Unix(100, 0).UTC()
-			thesis := types.NewThesis(nil)
+			thesis := types.NewThesis()
 			thesis.At = at
 			ignition := 0.8
 			trend := 0.7
@@ -113,7 +113,7 @@ func TestStaleAndIncomparable(t *testing.T) {
 
 func BenchmarkGraphUpdateFrom(b *testing.B) {
 	graph := NewGraph()
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis()
 	base := time.Unix(100, 0).UTC()
 	symbols := []string{"AAA/USD", "BBB/USD", "CCC/USD", "DDD/USD"}
 	metrics := []types.MetricType{

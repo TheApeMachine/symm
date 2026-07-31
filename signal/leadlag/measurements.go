@@ -18,6 +18,8 @@ func (signal *Signal) measureFrame(
 	crossSection *types.CrossSection,
 ) []*types.Measurement {
 	rows := tickers
+	found, _ := signal.thesis.Causal.Load("signal:leadlag:section")
+	section := found.(*Section)
 	out := make([]*types.Measurement, 0, len(rows))
 	uiOut := datura.NewMap(
 		"measurements", make([]*types.Measurement, 0),
@@ -26,11 +28,11 @@ func (signal *Signal) measureFrame(
 	anchor, _ := crossSection.Leadership()
 
 	if anchor == "" {
-		signal.section.ClearAnchor()
+		section.ClearAnchor()
 	}
 
 	if anchor != "" {
-		signal.section.SetAnchor(anchor)
+		section.SetAnchor(anchor)
 	}
 
 	for _, row := range rows {
@@ -44,7 +46,7 @@ func (signal *Signal) measureFrame(
 			continue
 		}
 
-		signal.section.ObservePrice(row.Symbol, lastPrice, row.Timestamp)
+		section.ObservePrice(row.Symbol, lastPrice, row.Timestamp)
 	}
 
 	for _, row := range rows {
@@ -56,12 +58,12 @@ func (signal *Signal) measureFrame(
 			continue
 		}
 
-		if signal.section.AnchorSymbol() == "" {
+		if section.AnchorSymbol() == "" {
 			out = append(out, signal.provisional(row.Symbol, row.Timestamp))
 			continue
 		}
 
-		features := signal.section.Features(row.Symbol)
+		features := section.Features(row.Symbol)
 
 		if features.Price <= 0 {
 			continue
@@ -99,11 +101,13 @@ selectCorrelations derives lag and contemporaneous correlation evidence.
 func (signal *Signal) selectCorrelations(
 	features LagFeatures,
 ) correlationSelection {
+	found, _ := signal.thesis.Causal.Load("signal:leadlag:section")
+	section := found.(*Section)
 	selected := correlationSelection{}
 	dynamicMax := 0
 
 	if features.LagOK && features.SampleCount > 0 {
-		dynamicMax = signal.section.maxLagBars(features.SampleCount)
+		dynamicMax = section.maxLagBars(features.SampleCount)
 
 		if dynamicMax > 0 {
 			selected.lagFraction = math.Abs(float64(features.LagBars)) / float64(dynamicMax)
@@ -308,7 +312,8 @@ func (signal *Signal) score(
 	selected := signal.selectCorrelations(features)
 	sampleSupport := sampleSupportFraction(features.SampleCount)
 	weights := weightEvidence(features, selected, sampleSupport)
-	anchor := signal.section.AnchorSymbol()
+	found, _ := signal.thesis.Causal.Load("signal:leadlag:section")
+	anchor := found.(*Section).AnchorSymbol()
 
 	return buildScoreMeasurement(
 		symbol, anchor, at, selected, sampleSupport, weights,

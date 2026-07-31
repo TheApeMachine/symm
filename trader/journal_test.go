@@ -32,7 +32,7 @@ func TestJournalStore(t *testing.T) {
 		})
 
 		Convey("When saving Thesis snapshots", func() {
-			thesis := types.NewThesis(nil)
+			thesis := types.NewThesis()
 			decision := types.Decision{
 				Symbol:           "BTC/USD",
 				ProposedQuantity: decimal.NewFromInt64(1),
@@ -72,7 +72,7 @@ func TestJournalStore(t *testing.T) {
 
 			for index := range count {
 				symbol := fmt.Sprintf("SYM/%04d", index)
-				thesis := types.NewThesis(nil)
+				thesis := types.NewThesis()
 				decision := types.Decision{
 					Symbol:           symbol,
 					ProposedQuantity: decimal.NewFromInt64(1),
@@ -108,7 +108,7 @@ func TestJournalStore(t *testing.T) {
 		})
 
 		Convey("When saving one thesis larger than the replay budget", func() {
-			thesis := types.NewThesis(nil)
+			thesis := types.NewThesis()
 			decision := types.Decision{
 				Symbol:           "OVERSIZE/USD",
 				ProposedQuantity: decimal.NewFromInt64(1),
@@ -146,7 +146,7 @@ func BenchmarkJournalStoreSaveLoad(b *testing.B) {
 	theses := make([]*types.Thesis, 0, 16)
 
 	for index := range 16 {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		decision := types.Decision{
 			Symbol:           fmt.Sprintf("SYM/%04d", index),
 			ProposedQuantity: decimal.NewFromInt64(1),
@@ -163,9 +163,9 @@ func BenchmarkJournalStoreSaveLoad(b *testing.B) {
 		theses = append(theses, thesis)
 	}
 
-	b.ResetTimer()
+	
 
-	for range b.N {
+	for b.Loop() {
 		if err := store.Save(theses); err != nil {
 			b.Fatal(err)
 		}

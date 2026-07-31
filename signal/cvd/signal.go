@@ -2,13 +2,15 @@ package cvd
 
 import (
 	"context"
-	"sync"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -19,35 +21,47 @@ price response. Categories belong in logic; this signal emits numerical scores
 only.
 */
 type Signal struct {
-	thesis    *types.Thesis
-	ctx       context.Context
-	cancel    context.CancelFunc
-	sample    *algorithm.TradeFlowSample
-	flow      *equation.Flow
-	midpoints map[string]float64
-	ui        chan []byte
-	ticker    *types.Subscription[*kraken.Ticker]
-	trade     *types.Subscription[*kraken.Trade]
-	subMu     sync.Mutex
-	theses    []*types.Subscription[*types.Thesis]
+	status        types.Status
+	thesis        *types.Thesis
+	ctx           context.Context
+	cancel        context.CancelFunc
+	api           *websocket.API
+	planner       *strategy.Planner
+	ui            chan []byte
+	subscriptions map[string]*types.Subscription[any]
 }
 
 /*
 NewSignal creates the CVD perspective with independent rolling state for each
 symbol so one market's aggressor history cannot leak into another's evidence.
 */
-func NewSignal(ctx context.Context, ui chan []byte) *Signal {
+func NewSignal(
+	ctx context.Context,
+	api *websocket.API,
+	planner *strategy.Planner,
+	ui chan []byte,
+) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:       ctx,
-		cancel:    cancel,
-		sample:    algorithm.NewTradeFlowSample(),
-		flow:      equation.NewFlow(),
-		midpoints: make(map[string]float64),
-		ui:        ui,
+		status:  types.INITIALIZING,
+		thesis:  planner.Thesis,
+		ctx:     ctx,
+		cancel:  cancel,
+		api:     api,
+		planner: planner,
+		ui:      ui,
+		subscriptions: map[string]*types.Subscription[any]{
+			"ticker": api.Subscribe("ticker", types.NewSubscription[any]()),
+			"trade":  api.Subscribe("trade", types.NewSubscription[any]()),
+		},
 	}
+	signal.thesis.Causal.Store("signal:cvd:sample", algorithm.NewTradeFlowSample())
+	signal.thesis.Causal.Store("signal:cvd:flow", equation.NewFlow())
+	signal.thesis.Causal.Store("signal:cvd:midpoints", make(map[string]float64))
 
+	signal.status = types.READY
+	signal.run()
 	return signal
 }
 
@@ -58,79 +72,43 @@ func (signal *Signal) Name() string {
 	return string(types.SourceCVD)
 }
 
-/*
-Initialize wires ticker and trade ingress from Live. Book floods are unused by
-CVD (midpoints come from tickers) and must not fill a dead subscription.
-*/
-func (signal *Signal) Initialize(market types.MarketFeed, thesis *types.Thesis) {
-	signal.thesis = thesis
-
-	if market != nil {
-		signal.ticker = market.Ticker()
-		signal.trade = market.Trade()
-	}
-
-	go signal.run()
-}
-
-func (signal *Signal) Thesis() *types.Subscription[*types.Thesis] {
-	subscription := types.NewSubscription[*types.Thesis]()
-	signal.subMu.Lock()
-	signal.theses = append(signal.theses, subscription)
-	signal.subMu.Unlock()
-	return subscription
+func (signal *Signal) Status() types.Status {
+	return signal.status
 }
 
 func (signal *Signal) run() {
-	var tickers <-chan *kraken.Ticker
-	var trades <-chan *kraken.Trade
-
-	if signal.ticker != nil {
-		tickers = signal.ticker.Channel
-	}
-
-	if signal.trade != nil {
-		trades = signal.trade.Channel
-	}
-
-	for {
-		select {
-		case <-signal.ctx.Done():
-			return
-		case ticker := <-tickers:
-			signal.onTicker(ticker)
-		case trade := <-trades:
-			signal.onTrade(trade)
+	go func() {
+		for {
+			select {
+			case <-signal.ctx.Done():
+				return
+			case ticker := <-signal.subscriptions["ticker"].Channel:
+				if ticker, ok := ticker.(*kraken.Ticker); ok {
+					signal.onTicker(ticker)
+				}
+			case trade := <-signal.subscriptions["trade"].Channel:
+				if trade, ok := trade.(*kraken.Trade); ok {
+					signal.onTrade(trade)
+				}
+			}
 		}
-	}
+	}()
 }
 
 func (signal *Signal) onTicker(ticker *kraken.Ticker) {
-	signal.publish(signal.thesis.AppendMeasuremnts(
+	signal.thesis.AppendMeasurements(
 		types.SourceCVD,
 		signal.Calculate(ticker.Data, nil, nil),
-	))
+		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
+	)
 }
 
 func (signal *Signal) onTrade(trade *kraken.Trade) {
-	signal.publish(signal.thesis.AppendMeasuremnts(
+	signal.thesis.AppendMeasurements(
 		types.SourceCVD,
 		signal.Calculate(nil, trade.Data, nil),
-	))
-}
-
-func (signal *Signal) publish(thesis *types.Thesis) {
-	if thesis == nil {
-		return
-	}
-
-	signal.subMu.Lock()
-	subscribers := append([]*types.Subscription[*types.Thesis](nil), signal.theses...)
-	signal.subMu.Unlock()
-
-	for _, subscription := range subscribers {
-		subscription.Send(thesis)
-	}
+		types.Stamp{At: time.Now(), Entity: types.MarketTrade},
+	)
 }
 
 func (signal *Signal) Calculate(
@@ -154,7 +132,8 @@ func (signal *Signal) Calculate(
 			continue
 		}
 
-		signal.midpoints[row.Symbol] = (row.Bid.Float64() + row.Ask.Float64()) / 2
+		found, _ := signal.thesis.Causal.Load("signal:cvd:midpoints")
+		found.(map[string]float64)[row.Symbol] = (row.Bid.Float64() + row.Ask.Float64()) / 2
 	}
 
 	for _, row := range trades {
@@ -162,7 +141,8 @@ func (signal *Signal) Calculate(
 			continue
 		}
 
-		midpoint, exists := signal.midpoints[row.Symbol]
+		found, _ := signal.thesis.Causal.Load("signal:cvd:midpoints")
+		midpoint, exists := found.(map[string]float64)[row.Symbol]
 
 		if !exists {
 			continue
@@ -201,7 +181,8 @@ func (signal *Signal) measureTrade(
 	row kraken.TradeData,
 	midpoint float64,
 ) ([]*types.Measurement, error) {
-	input, ready, err := signal.sample.Measure(algorithm.TradeFlowInput{
+	found, _ := signal.thesis.Causal.Load("signal:cvd:sample")
+	input, ready, err := found.(*algorithm.TradeFlowSample).Measure(algorithm.TradeFlowInput{
 		Symbol:        row.Symbol,
 		Price:         row.Price.Float64(),
 		ResponsePrice: midpoint,
@@ -221,7 +202,8 @@ func (signal *Signal) measureTrade(
 		return nil, nil
 	}
 
-	output, err := signal.flow.Measure(input)
+	found, _ = signal.thesis.Causal.Load("signal:cvd:flow")
+	output, err := found.(*equation.Flow).Measure(input)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(

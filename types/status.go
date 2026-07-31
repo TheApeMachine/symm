@@ -41,7 +41,6 @@ StatusReporter is the Initialize/Status contract for boot-ordered components.
 */
 type StatusReporter interface {
 	Status() Status
-	Initialize() error
 }
 
 /*

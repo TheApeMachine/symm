@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/theapemachine/datura/dmt"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -35,7 +35,7 @@ type Analyzer struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	status    types.Status
-	thesesIn   chan *types.Thesis
+	thesesIn  chan *types.Thesis
 	tree      *dmt.Tree
 	manifold  *manifold.Solver
 	resonance *resonance.Solver
@@ -45,8 +45,8 @@ type Analyzer struct {
 	ui        chan []byte
 	binui     chan []byte
 	recorder  *audit.Recorder
-	subMu      sync.Mutex
-	thesesOut  []*types.Subscription[*types.Thesis]
+	subMu     sync.Mutex
+	thesesOut []*types.Subscription[*types.Thesis]
 }
 
 /*
@@ -59,7 +59,7 @@ func NewAnalyzer(
 	ui chan []byte,
 	binui chan []byte,
 	recorder *audit.Recorder,
-) (*Analyzer, error) {
+) *Analyzer {
 	ctx, cancel := context.WithCancel(ctx)
 	buffer := viper.GetInt("system.actor.buffer")
 
@@ -71,9 +71,9 @@ func NewAnalyzer(
 		ctx:       ctx,
 		cancel:    cancel,
 		status:    types.READY,
-		thesesIn:   make(chan *types.Thesis, buffer),
+		thesesIn:  make(chan *types.Thesis, buffer),
 		tree:      tree,
-		manifold:  manifold.NewSolver(ui, binui, recorder),
+		manifold:  manifold.NewSolver(api, ui, binui, recorder),
 		resonance: resonance.NewSolver(ui, recorder),
 		causal:    causal.NewSolver(ui, recorder),
 		cognition: cognition.NewSolver(tree, ui, recorder),
@@ -82,7 +82,7 @@ func NewAnalyzer(
 		recorder:  recorder,
 	}
 
-	return analyzer, nil
+	return analyzer
 }
 
 /*
@@ -110,7 +110,6 @@ func (analyzer *Analyzer) Initialize(signals ...*types.Subscription[*types.Thesi
 
 	return nil
 }
-
 
 func (analyzer *Analyzer) Thesis() *types.Subscription[*types.Thesis] {
 	subscription := types.NewSubscription[*types.Thesis]()
@@ -170,13 +169,13 @@ func (analyzer *Analyzer) onSignal(thesis *types.Thesis) {
 		if err := solver.Update(thesis); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
-					"failed manifold step",
-					err,
-				))
+				"failed manifold step",
+				err,
+			))
 
-				return
-			}
+			return
 		}
+	}
 
 	analyzer.subMu.Lock()
 	subscribers := append([]*types.Subscription[*types.Thesis](nil), analyzer.thesesOut...)

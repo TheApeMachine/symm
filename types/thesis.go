@@ -3,8 +3,6 @@ package types
 import (
 	"sync"
 	"time"
-
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 )
 
 const (
@@ -29,6 +27,19 @@ const (
 	LifecycleInvalid             = "invalid"
 )
 
+type MarketEntity string
+
+const (
+	MarketTicker MarketEntity = "ticker"
+	MarketTrade  MarketEntity = "trade"
+	MarketBook   MarketEntity = "book"
+)
+
+type Stamp struct {
+	At     time.Time    `json:"at"`
+	Entity MarketEntity `json:"entity"`
+}
+
 /*
 Thesis is the durable lifecycle record from entry through post-mortem. It keeps
 decisions, lifecycle, and findings; each market cut replaces per-tick evidence
@@ -40,7 +51,6 @@ type Thesis struct {
 	At           time.Time             `json:"at"`
 	CrossSection *CrossSection         `json:"crossSection"`
 	Measurements *sync.Map             `json:"-"`
-	BookManager  *spot.BookManager     `json:"-"`
 	Books        *sync.Map             `json:"-"`
 	Graphs       *sync.Map             `json:"-"`
 	Forecasts    []Forecasts           `json:"forecasts"`
@@ -59,7 +69,7 @@ type Thesis struct {
 /*
 NewThesis creates a Thesis with empty durable maps and no tick evidence yet.
 */
-func NewThesis(bookManager *spot.BookManager) *Thesis {
+func NewThesis() *Thesis {
 	return &Thesis{
 		Status:       INITIALIZING,
 		At:           time.Now().UTC(),
@@ -85,8 +95,10 @@ func NewThesis(bookManager *spot.BookManager) *Thesis {
 AppendMeasuremnts appends measurements for the specified
 source while safely ignoring nil input.
 */
-func (thesis *Thesis) AppendMeasuremnts(
-	source SourceType, measurements []*Measurement,
+func (thesis *Thesis) AppendMeasurements(
+	source SourceType,
+	measurements []*Measurement,
+	stamp Stamp,
 ) *Thesis {
 	if len(measurements) == 0 {
 		return thesis
@@ -102,6 +114,16 @@ func (thesis *Thesis) AppendMeasuremnts(
 				found.([]*Measurement), measurements...,
 			),
 		)
+
+		found, ok := thesis.Stamps.LoadOrStore(source, []Stamp{stamp})
+
+		if ok {
+			thesis.Stamps.Store(
+				source, append(
+					found.([]Stamp), stamp,
+				),
+			)
+		}
 	}
 
 	return thesis

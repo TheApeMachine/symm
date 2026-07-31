@@ -3,11 +3,14 @@ package hawkes
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -24,35 +27,48 @@ forecast readiness remains false until residual and out-of-sample validation
 exists.
 */
 type Signal struct {
-	thesis    *types.Thesis
-	ctx       context.Context
-	cancel    context.CancelFunc
-	sample    *excitation.Sample
-	process   *excitation.Process
-	normalize normalizer
-	ui        chan []byte
-	mu        sync.Mutex
-	ticker     *types.Subscription[*kraken.Ticker]
-	trade      *types.Subscription[*kraken.Trade]
-	subMu      sync.Mutex
-	theses     []*types.Subscription[*types.Thesis]
+	status        types.Status
+	thesis        *types.Thesis
+	ctx           context.Context
+	cancel        context.CancelFunc
+	api           *websocket.API
+	planner       *strategy.Planner
+	normalize     normalizer
+	ui            chan []byte
+	subscriptions map[string]*types.Subscription[any]
 }
 
 /*
 NewSignal constructs the symbol-local excitation measurement pipeline. Its
 trade component is the sole owner of the mutable marked-arrival history.
 */
-func NewSignal(ctx context.Context, ui chan []byte) *Signal {
+func NewSignal(
+	ctx context.Context,
+	api *websocket.API,
+	planner *strategy.Planner,
+	ui chan []byte,
+) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
+		status:  types.INITIALIZING,
+		thesis:  planner.Thesis,
 		ctx:     ctx,
 		cancel:  cancel,
-		sample:  excitation.NewSample(),
-		process: excitation.NewProcess(),
+		api:     api,
+		planner: planner,
 		ui:      ui,
+		subscriptions: map[string]*types.Subscription[any]{
+			"ticker": api.Subscribe("ticker", types.NewSubscription[any]()),
+			"trade":  api.Subscribe("trade", types.NewSubscription[any]()),
+		},
 	}
+	signal.thesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
+	signal.thesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
+	signal.thesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
 
+	signal.status = types.READY
+	signal.run()
 	return signal
 }
 
@@ -63,20 +79,8 @@ func (signal *Signal) Name() string {
 	return string(types.SourceHawkes)
 }
 
-/*
-Initialize wires ticker and trade ingress from Live. Cut serialisation stays on
-the Coordinator→Analyzer depth-one edge; Hawkes itself keeps a normal buffer so
-a busy cascade cannot stall Live's trade root and starve cadence.
-*/
-func (signal *Signal) Initialize(market types.MarketFeed, thesis *types.Thesis) {
-	signal.thesis = thesis
-
-	if market != nil {
-		signal.ticker = market.Ticker()
-		signal.trade = market.Trade()
-	}
-
-	go signal.run()
+func (signal *Signal) Status() types.Status {
+	return signal.status
 }
 
 /*
@@ -84,100 +88,73 @@ onTicker treats the ticker stream as Hawkes cadence only so the signal can emit 
 shared cut after warmed trade arrivals without pretending ticker rows carry
 microstructure measurements.
 */
-func (signal *Signal) onTicker(ticker *kraken.Ticker) *Cut {
-	_ = ticker
-	cut := signal.cut()
-
-	if len(cut.Symbols()) == 0 {
-		return nil
-	}
-
-	return cut
-}
-
-func (signal *Signal) Thesis() *types.Subscription[*types.Thesis] {
-	subscription := types.NewSubscription[*types.Thesis]()
-	signal.subMu.Lock()
-	signal.theses = append(signal.theses, subscription)
-	signal.subMu.Unlock()
-	return subscription
+func (signal *Signal) onTicker(ticker *kraken.Ticker) {
+	signal.thesis.AppendMeasurements(
+		types.SourceHawkes,
+		signal.Calculate(ticker.Data, nil, nil),
+		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
+	)
 }
 
 func (signal *Signal) run() {
-	var tickers <-chan *kraken.Ticker
-	var trades <-chan *kraken.Trade
-
-	if signal.ticker != nil {
-		tickers = signal.ticker.Channel
-	}
-
-	if signal.trade != nil {
-		trades = signal.trade.Channel
-	}
-
-	for {
-		select {
-		case <-signal.ctx.Done():
-			return
-		case ticker := <-tickers:
-			cut := signal.onTicker(ticker)
-
-			if cut != nil {
-				signal.publish(cut.Thesis)
+	go func() {
+		for {
+			select {
+			case <-signal.ctx.Done():
+				return
+			case ticker := <-signal.subscriptions["ticker"].Channel:
+				if ticker, ok := ticker.(*kraken.Ticker); ok {
+					signal.onTicker(ticker)
+				}
+			case trade := <-signal.subscriptions["trade"].Channel:
+				if trade, ok := trade.(*kraken.Trade); ok {
+					signal.onTrade(trade)
+				}
 			}
-		case trade := <-trades:
-			signal.onTrade(trade)
 		}
-	}
+	}()
 }
 
 func (signal *Signal) onTrade(trade *kraken.Trade) {
-	signal.publish(signal.thesis.AppendMeasuremnts(
+	signal.thesis.AppendMeasurements(
 		types.SourceHawkes,
 		signal.Calculate(nil, trade.Data, nil),
-	))
-}
-
-func (signal *Signal) publish(thesis *types.Thesis) {
-	if thesis == nil {
-		return
-	}
-
-	signal.subMu.Lock()
-	subscribers := append([]*types.Subscription[*types.Thesis](nil), signal.theses...)
-	signal.subMu.Unlock()
-
-	for _, subscription := range subscribers {
-		subscription.Send(thesis)
-	}
+		types.Stamp{At: time.Now(), Entity: types.MarketTrade},
+	)
 }
 
 /*
 Outcome returns the latest measured Hawkes outcome for one symbol.
 */
 func (signal *Signal) Outcome(symbol string) (excitation.Outcome, bool) {
-	if signal == nil || signal.process == nil {
+	if signal == nil || signal.thesis == nil {
 		return excitation.Outcome{}, false
 	}
 
-	signal.mu.Lock()
-	defer signal.mu.Unlock()
+	found, _ := signal.thesis.Causal.Load("signal:hawkes:mu")
+	mu := found.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
 
-	return signal.process.Outcome(symbol)
+	found, _ = signal.thesis.Causal.Load("signal:hawkes:process")
+	return found.(*excitation.Process).Outcome(symbol)
 }
 
 /*
 Symbols returns every symbol with retained Hawkes excitation state.
 */
 func (signal *Signal) Symbols() []string {
-	if signal == nil || signal.process == nil {
+	if signal == nil || signal.thesis == nil {
 		return nil
 	}
 
-	signal.mu.Lock()
-	defer signal.mu.Unlock()
+	found, _ := signal.thesis.Causal.Load("signal:hawkes:mu")
+	mu := found.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
 
-	return signal.process.Symbols()
+	found, _ = signal.thesis.Causal.Load("signal:hawkes:process")
+	return found.(*excitation.Process).Symbols()
 }
 
 /*
@@ -194,8 +171,10 @@ func (signal *Signal) Calculate(
 		"measurements", make([]*types.Measurement, 0),
 	)
 
-	signal.mu.Lock()
-	defer signal.mu.Unlock()
+	found, _ := signal.thesis.Causal.Load("signal:hawkes:mu")
+	mu := found.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
 
 	for _, row := range trades {
 		measurements, err := signal.measure(row)
@@ -226,7 +205,8 @@ measure advances both the arrival sampler and Hawkes process for one trade so th
 signal only emits once the excitation state is numerically ready.
 */
 func (signal *Signal) measure(row kraken.TradeData) ([]*types.Measurement, error) {
-	input, ready, err := signal.sample.MeasureArrival(excitation.TradeInput{
+	found, _ := signal.thesis.Causal.Load("signal:hawkes:sample")
+	input, ready, err := found.(*excitation.Sample).MeasureArrival(excitation.TradeInput{
 		Symbol:    row.Symbol,
 		Side:      row.Side,
 		Timestamp: row.Timestamp,
@@ -244,7 +224,8 @@ func (signal *Signal) measure(row kraken.TradeData) ([]*types.Measurement, error
 		return nil, nil
 	}
 
-	output, ready, err := signal.process.Measure(input)
+	found, _ = signal.thesis.Causal.Load("signal:hawkes:process")
+	output, ready, err := found.(*excitation.Process).Measure(input)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(

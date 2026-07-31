@@ -144,6 +144,7 @@ func New(
 
 	live.client.OnConnected.Recurring(func(event *callback.Event[any]) {
 		live.status = types.PENDING
+		live.authenticate()
 	})
 
 	if auth {
@@ -153,22 +154,6 @@ func New(
 	}
 
 	return live
-}
-
-func (live *Live) recoverTransport(channel string, symbols []string) error {
-	if live == nil {
-		return nil
-	}
-
-	if live.client == nil {
-		return nil
-	}
-
-	live.client.DoReconnect = false
-	errnie.Error(live.client.Disconnect())
-	live.client.Reconnect()
-
-	return nil
 }
 
 func (live *Live) Status() types.Status {

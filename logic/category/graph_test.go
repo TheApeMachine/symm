@@ -27,7 +27,7 @@ func TestNewGraph(t *testing.T) {
 func TestUpdate(t *testing.T) {
 	Convey("Given an empty graph and thesis", t, func() {
 		graph := NewGraph()
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 
 		Convey("When Update receives categories for one symbol", func() {
 			at := time.Unix(100, 0).UTC()
@@ -75,7 +75,7 @@ func TestUpdate(t *testing.T) {
 func TestUpdateFrom(t *testing.T) {
 	Convey("Given a graph with prior state from a first cut", t, func() {
 		graph := NewGraph()
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		firstAt := time.Unix(100, 0).UTC()
 
 		thesis.Categories["SIM/USD"] = []types.Category{
@@ -238,7 +238,7 @@ func TestPrior(t *testing.T) {
 
 	Convey("Given a graph after one update", t, func() {
 		graph := NewGraph()
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.At = time.Unix(100, 0).UTC()
 		thesis.Categories["SIM/USD"] = []types.Category{
 			{Symbol: "SIM/USD", Type: types.OrganicTrend, Strength: 0.9, Freshness: 1},

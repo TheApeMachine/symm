@@ -12,8 +12,25 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/signal/correlation"
+	"github.com/theapemachine/symm/signal/cvd"
+	"github.com/theapemachine/symm/signal/depthflow"
+	"github.com/theapemachine/symm/signal/exhaust"
+	"github.com/theapemachine/symm/signal/hawkes"
+	"github.com/theapemachine/symm/signal/leadlag"
+	"github.com/theapemachine/symm/signal/liquidity"
+	"github.com/theapemachine/symm/signal/pumpdump"
+	"github.com/theapemachine/symm/signal/sentiment"
+	"github.com/theapemachine/symm/signal/toxicity"
+	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/trader"
+	"github.com/theapemachine/symm/ui"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -39,13 +56,90 @@ var (
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
 			startPprof()
 
-			websocket.NewAPI(
+			uiChannel := make(chan []byte, 1024)
+			manifoldChannel := make(chan []byte, 1024)
+
+			api := utils.NewWaiter[*websocket.API](websocket.NewAPI(
 				cmd.Context(),
 				websocket.New(cmd.Context(), nil, false, websocket.PublicWebSocketURL),
 				websocket.New(cmd.Context(), nil, false, websocket.PrivateWebSocketURL),
+			)).Wait()
+
+			price := utils.NewWaiter[*broker.Price](broker.NewPrice(api)).Wait()
+
+			instrument := utils.NewWaiter[*broker.Instrument](
+				broker.NewInstrument(api, price, uiChannel),
+			).Wait()
+
+			balance := utils.NewWaiter[*broker.Balance](
+				broker.NewBalance(api, uiChannel),
+			).Wait()
+
+			desk := utils.NewWaiter[*broker.Desk](broker.NewDesk(
+				cmd.Context(),
+				api,
+				instrument,
+				price,
+				balance,
+				uiChannel,
+			)).Wait()
+
+			tree, err := dmt.NewTree("")
+
+			if err != nil {
+				return errnie.Error(fmt.Errorf("failed to create decision tree: %w", err))
+			}
+
+			analyzer := utils.NewWaiter[*logic.Analyzer](logic.NewAnalyzer(
+				cmd.Context(),
+				api,
+				tree,
+				uiChannel,
+				manifoldChannel,
+				nil,
+			)).Wait()
+
+			planner := utils.NewWaiter[*strategy.Planner](strategy.NewPlanner(
+				cmd.Context(),
+				uiChannel,
+				api,
+				desk,
+				instrument,
+				price,
+				balance,
+				analyzer,
+				nil,
+			)).Wait()
+
+			utils.NewWaiter[*trader.Crypto](trader.NewCrypto(
+				cmd.Context(),
+				uiChannel,
+				nil,
+				planner,
+				desk,
+			)).Wait()
+
+			utils.NewWaiter[*correlation.Signal](correlation.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			utils.NewWaiter[*cvd.Signal](cvd.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			utils.NewWaiter[*depthflow.Signal](depthflow.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			utils.NewWaiter[*exhaust.Signal](exhaust.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			utils.NewWaiter[*hawkes.Signal](hawkes.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			utils.NewWaiter[*leadlag.Signal](leadlag.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			utils.NewWaiter[*liquidity.Signal](liquidity.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			utils.NewWaiter[*pumpdump.Signal](pumpdump.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			utils.NewWaiter[*sentiment.Signal](sentiment.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+			utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+
+			hub := ui.NewHub(
+				cmd.Context(),
+				desk,
+				price,
+				balance,
+				uiChannel,
+				manifoldChannel,
 			)
 
-			return nil
+			return hub.Serve()
 		},
 	}
 )

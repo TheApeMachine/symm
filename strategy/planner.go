@@ -26,6 +26,7 @@ type Planner struct {
 	evaluator   Evaluator
 	arbiter     *Arbiter
 	allocator   *Allocator
+	Thesis      *types.Thesis
 }
 
 func NewPlanner(
@@ -37,7 +38,6 @@ func NewPlanner(
 	price *broker.Price,
 	balance *broker.Balance,
 	analyzer *logic.Analyzer,
-	allocator *Allocator,
 	recorder *audit.Recorder,
 ) *Planner {
 	ctx, cancel := context.WithCancel(ctx)
@@ -51,10 +51,6 @@ func NewPlanner(
 	evaluator := NewEvaluator()
 	arbiter := NewArbiter(desk, price)
 
-	if allocator == nil {
-		allocator = NewAllocator(ctx, balance, instrument, price)
-	}
-
 	planner := &Planner{
 		ctx:         ctx,
 		cancel:      cancel,
@@ -67,7 +63,8 @@ func NewPlanner(
 		recorder:    recorder,
 		evaluator:   evaluator,
 		arbiter:     arbiter,
-		allocator:   allocator,
+		allocator:   NewAllocator(ctx, balance, instrument, price),
+		Thesis:      types.NewThesis(),
 	}
 
 	return planner

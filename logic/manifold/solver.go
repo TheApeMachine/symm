@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/errnie"
 	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/signal/compute"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -23,6 +24,7 @@ split into independent simulations that cannot interfere.
 */
 type Solver struct {
 	mu        sync.Mutex
+	api       *websocket.API
 	config    pfluid.Config
 	domain    *pfluid.Domain
 	recorder  *audit.Recorder
@@ -35,7 +37,11 @@ type Solver struct {
 NewSolver creates the single shared Metal domain and a spectral corpus bounded
 by the same explicit event-history capacity as the live market feed.
 */
-func NewSolver(ui, binui chan []byte, recorder *audit.Recorder) *Solver {
+func NewSolver(
+	api *websocket.API,
+	ui, binui chan []byte,
+	recorder *audit.Recorder,
+) *Solver {
 	config := pfluid.DefaultConfig()
 	configuredDelta := viper.GetDuration("market.manifold.integration_interval")
 
@@ -57,6 +63,7 @@ func NewSolver(ui, binui chan []byte, recorder *audit.Recorder) *Solver {
 	}))
 
 	return &Solver{
+		api:       api,
 		config:    config,
 		domain:    domain,
 		recorder:  recorder,
@@ -75,16 +82,11 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	solver.mu.Lock()
 	defer solver.mu.Unlock()
 
-	if thesis.BookManager == nil {
-		return nil
-	}
-
 	bidOrders := make([]*mgrbook.Order, 0)
 	askOrders := make([]*mgrbook.Order, 0)
 
-	for _, bookName := range thesis.BookManager.GetBooks() {
-		book := thesis.BookManager.GetBook(bookName)
-		hawkes := utils.ForSymbol(utils.Measurements(thesis, types.SourceHawkes), bookName)
+	for name, book := range solver.api.Books() {
+		hawkes := utils.ForSymbol(utils.Measurements(thesis, types.SourceHawkes), name)
 
 		if len(hawkes) == 0 {
 			continue
@@ -108,7 +110,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			hawkes[len(hawkes)-1].Sample(
 				types.MetricConditionalIntensity, types.SideSell,
 			).Raw,
-			bookName,
+			book.Name,
 		)
 
 		if len(particles) == 0 || len(contentIDs) == 0 {
@@ -116,7 +118,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		solver.domain.Append(particles, contentIDs)
-		errnie.Error(solver.Step(bookName, thesis.At))
+		errnie.Error(solver.Step(name, thesis.At))
 	}
 
 	return nil

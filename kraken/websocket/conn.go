@@ -57,7 +57,6 @@ Callers subscribe, order, and listen through named methods only.
 type API struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
-	status     types.Status
 	normalizer *spot.Normalizer
 	public     Conn
 	private    Conn
@@ -71,7 +70,6 @@ func NewAPI(
 	api := &API{
 		ctx:        ctx,
 		cancel:     cancel,
-		status:     types.INITIALIZING,
 		normalizer: spot.NewNormalizer(),
 		public:     public,
 		private:    private,
@@ -84,7 +82,11 @@ func NewAPI(
 Status returns the API lifecycle state used by ordered system boot stages.
 */
 func (api *API) Status() types.Status {
-	return api.status
+	if api.public.Status() != types.READY && api.private.Status() != types.READY {
+		return types.PENDING
+	}
+
+	return types.READY
 }
 
 func (api *API) Subscribe(

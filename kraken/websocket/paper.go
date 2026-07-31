@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/datura"
@@ -26,14 +27,12 @@ Private frames publish onto explicit typed subscriptions so Desk and tests use
 the same direct wiring as the live transport.
 */
 type Paper struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	simulator  *Simulator
-	subMu      sync.Mutex
-	balances   []*types.Subscription[[]byte]
-	executions []*types.Subscription[[]byte]
-	orders     []*types.Subscription[[]byte]
-	books      *spot.BookManager
+	ctx         context.Context
+	cancel      context.CancelFunc
+	simulator   *Simulator
+	subMu       sync.Mutex
+	subscribers map[string][]*types.Subscription[any]
+	books       *spot.BookManager
 }
 
 /*
@@ -46,9 +45,10 @@ func NewPaper(
 	ctx, cancel := context.WithCancel(ctx)
 
 	paper := &Paper{
-		ctx:       ctx,
-		cancel:    cancel,
-		simulator: simulator,
+		ctx:         ctx,
+		cancel:      cancel,
+		simulator:   simulator,
+		subscribers: map[string][]*types.Subscription[any]{},
 	}
 
 	return paper
@@ -103,27 +103,50 @@ func (paper *Paper) Balances() (map[string]*decimal.Decimal, error) {
 	return kraken.NewPaperBalance(raw).Totals(), nil
 }
 
-func (paper *Paper) Executions() *types.Subscription[[]byte] {
-	subscription := types.NewSubscription[[]byte]()
+/*
+Subscribe registers one consumer for a named paper channel.
+*/
+func (paper *Paper) Subscribe(
+	key string,
+	subscription *types.Subscription[any],
+) *types.Subscription[any] {
 	paper.subMu.Lock()
-	paper.executions = append(paper.executions, subscription)
+	paper.subscribers[key] = append(paper.subscribers[key], subscription)
 	paper.subMu.Unlock()
+
 	return subscription
 }
 
-func (paper *Paper) Orders() *types.Subscription[[]byte] {
-	subscription := types.NewSubscription[[]byte]()
-	paper.subMu.Lock()
-	paper.orders = append(paper.orders, subscription)
-	paper.subMu.Unlock()
-	return subscription
+func (paper *Paper) SubInstrument(types.Subscription[any]) {}
+func (paper *Paper) SubTicker([]string)                    {}
+func (paper *Paper) SubBook([]string)                      {}
+func (paper *Paper) SubTrades([]string)                    {}
+func (paper *Paper) SubL3([]string)                        {}
+func (paper *Paper) SubCandles([]string)                   {}
+
+/*
+Books returns no public book cache because paper hijacks the private transport
+only; the public websocket remains the source of market data.
+*/
+func (paper *Paper) Books() map[string]*book.Book {
+	return nil
+}
+
+/*
+Book returns no public book because paper does not own market subscriptions.
+*/
+func (paper *Paper) Book(string) *book.Book {
+	return nil
 }
 
 /*
 Write routes the same subscription and order envelopes used by live transports
 through the paper CLI under simulator latency.
 */
-func (paper *Paper) Write(params json.Marshaler) error {
+func (paper *Paper) Write(
+	params json.Marshaler,
+	callbacks ...Callback[any],
+) error {
 	raw, err := params.MarshalJSON()
 
 	if err != nil {
@@ -132,8 +155,14 @@ func (paper *Paper) Write(params json.Marshaler) error {
 
 	request := struct {
 		Method string `json:"method"`
+		ReqID  int64  `json:"req_id"`
 		Params struct {
-			Channel string `json:"channel"`
+			Channel    string      `json:"channel"`
+			OrderType  string      `json:"order_type"`
+			Side       string      `json:"side"`
+			Symbol     string      `json:"symbol"`
+			OrderQty   json.Number `json:"order_qty"`
+			LimitPrice json.Number `json:"limit_price"`
 		} `json:"params"`
 	}{}
 
@@ -142,20 +171,49 @@ func (paper *Paper) Write(params json.Marshaler) error {
 	}
 
 	if request.Method == "add_order" {
-		order := &kraken.MarketOrder{}
+		model, err := paper.placeOrder(
+			request.Params.Side,
+			request.Params.Symbol,
+			request.Params.OrderQty.String(),
+			request.Params.OrderType,
+			request.Params.LimitPrice.String(),
+		)
 
-		if err := sonic.Unmarshal(raw, order); err != nil {
+		if err != nil {
 			return err
 		}
 
-		return paper.AddOrder(order)
+		return paper.publishPlace(model, request.ReqID, callbacks)
 	}
 
 	switch request.Params.Channel {
 	case "balances":
-		return paper.Balance("snapshot")
+		return paper.publishBalance("snapshot")
 	case "executions":
-		return nil
+		history, err := paper.TradesHistory()
+
+		if err != nil {
+			return err
+		}
+
+		trades := make([]any, 0, len(history.Result.Trades))
+
+		for tradeID, trade := range history.Result.Trades {
+			trades = append(trades, map[string]any{
+				"id":       tradeID,
+				"order_id": trade.OrderID,
+				"pair":     trade.Pair,
+				"side":     trade.Type,
+				"price":    trade.Price.Float64(),
+				"cost":     trade.Cost.Float64(),
+				"fee":      trade.Fee.Float64(),
+				"volume":   trade.Volume.Float64(),
+				"time":     trade.Time.String(),
+				"status":   "filled",
+			})
+		}
+
+		return paper.Replay(trades)
 	default:
 		return types.ClosedError{Component: "paper:" + request.Params.Channel}
 	}
@@ -200,65 +258,107 @@ func (paper *Paper) TradesHistory() (*kraken.TradesHistory, error) {
 }
 
 /*
-TradeBalance reshapes `kraken paper status --verbose` into Kraken trade balance.
+TradeBalance returns paper fills in the same trade-history shape as Kraken's
+private REST trades history endpoint.
 */
 func (paper *Paper) TradeBalance() (spot.TradesHistoryResult, error) {
-	var (
-		model datura.Map[any]
-		err   error
-	)
-
-	paper.simulator.Do(REST, func() {
-		model, err = paper.execute("trade_balance", "status", "--verbose")
-	})
+	history, err := paper.TradesHistory()
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to get paper trade balance",
+		return spot.TradesHistoryResult{}, err
+	}
+
+	raw, err := sonic.Marshal(history.Result)
+
+	if err != nil {
+		return spot.TradesHistoryResult{}, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"failed to encode paper trade history",
 			err,
 		))
 	}
 
-	return model, nil
+	result := spot.TradesHistoryResult{}
+
+	if err := sonic.Unmarshal(raw, &result); err != nil {
+		return spot.TradesHistoryResult{}, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"failed to decode paper trade history",
+			err,
+		))
+	}
+
+	return result, nil
+}
+
+/*
+TradeVolume reshapes paper status into Kraken fee tiers so pricing can use the
+same taker-fee lookup path in real and paper sessions.
+*/
+func (paper *Paper) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error) {
+	status, err := paper.status()
+
+	if err != nil {
+		return nil, err
+	}
+
+	feeRate, ok := status["fee_rate"].(float64)
+
+	if !ok {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"paper status missing fee_rate",
+			nil,
+		))
+	}
+
+	fees := make(map[string]kraken.TradeVolumeFee, len(symbols))
+
+	for _, symbol := range symbols {
+		fees[symbol] = kraken.TradeVolumeFee{
+			Fee: decimal.NewFromFloat64(feeRate),
+		}
+	}
+
+	return &kraken.TradeVolumeResult{
+		Currency: "ZUSD",
+		Fees:     fees,
+	}, nil
 }
 
 /*
 AddOrder places through `kraken paper buy|sell` under simulator latency.
 */
 func (paper *Paper) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, error) {
-	command := []string{
-		order.Params.Side,
-		order.Params.Symbol,
-		order.Params.OrderQty.String(),
-	}
-
-	if order.Params.OrderType == "limit" {
-		command = append(
-			command,
-			"--type", "limit",
-			"--price", order.Params.LimitPrice.String(),
-		)
-	}
-
-	var model datura.Map[any]
-	var err error
-
-	paper.simulator.Do(REST, func() {
-		model, err = paper.execute("executions", command...)
-	})
+	raw, err := sonic.Marshal(order)
 
 	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to place paper order",
-			err,
-		))
+		return spot.AddOrderResult{}, err
 	}
 
-	model["pair"] = order.Params.Symbol
+	request := map[string]any{}
 
-	return paper.Place(model, order.ReqID)
+	if err := sonic.Unmarshal(raw, &request); err != nil {
+		return spot.AddOrderResult{}, err
+	}
+
+	side, _ := request["type"].(string)
+	symbol, _ := request["pair"].(string)
+	quantity, _ := request["volume"].(string)
+	orderType, _ := request["ordertype"].(string)
+	limitPrice, _ := request["price"].(string)
+
+	model, err := paper.placeOrder(side, symbol, quantity, orderType, limitPrice)
+
+	if err != nil {
+		return spot.AddOrderResult{}, err
+	}
+
+	if err := paper.publishPlace(model, 0, nil); err != nil {
+		return spot.AddOrderResult{}, err
+	}
+
+	return spot.AddOrderResult{}, nil
 }
 
 func (paper *Paper) execute(entity string, command ...string) (datura.Map[any], error) {
@@ -319,9 +419,17 @@ func (paper *Paper) execute(entity string, command ...string) (datura.Map[any], 
 }
 
 /*
-Balance emits a paper wallet frame from `kraken paper balance`.
+Balance returns the paper wallet in the same asset-total map shape as the real
+private REST balance endpoint.
 */
-func (paper *Paper) Balance(frameType string) error {
+func (paper *Paper) Balance() (map[string]*decimal.Decimal, error) {
+	return paper.Balances()
+}
+
+/*
+publishBalance emits a paper wallet frame from `kraken paper balance`.
+*/
+func (paper *Paper) publishBalance(frameType string) error {
 	var model datura.Map[any]
 	var err error
 
@@ -336,9 +444,8 @@ func (paper *Paper) Balance(frameType string) error {
 	balance := kraken.NewBalanceFromMap(model)
 	balance.Type = frameType
 
-	return paper.simulator.Emit(
-		paper, WEBSOCKET, "balances", balance,
-	)
+	paper.publish("balances", balance)
+	return nil
 }
 
 /*
@@ -358,42 +465,100 @@ func (paper *Paper) Replay(trades []any) error {
 			execution.Type = "snapshot"
 		}
 
-		err := paper.simulator.Emit(paper, WEBSOCKET, "executions", execution)
-
-		if err != nil {
-			return err
-		}
+		paper.publish("executions", execution)
 	}
 
 	return nil
 }
 
 /*
-Place emits order ack, fill, and a balance snapshot for one paper order.
+publishPlace emits order ack, fill, and a balance snapshot for one paper order.
 */
-func (paper *Paper) Place(model datura.Map[any], reqID int64) error {
+func (paper *Paper) publishPlace(
+	model datura.Map[any],
+	reqID int64,
+	callbacks []Callback[any],
+) error {
 	orderAck := kraken.NewOrderResponseFromMap(model, reqID)
+	paper.publish("add_order", orderAck)
 
-	err := paper.simulator.Emit(paper, WEBSOCKET, "add_order", orderAck)
+	for _, callback := range callbacks {
+		if callback.Channel != "add_order" {
+			continue
+		}
 
-	if err != nil {
-		return err
+		callback.Send(orderAck)
 	}
 
-	err = paper.simulator.Emit(
-		paper, WEBSOCKET, "executions", kraken.NewExecutionFromMap(model),
-	)
-
-	if err != nil {
-		return err
-	}
+	paper.publish("executions", kraken.NewExecutionFromMap(model))
 
 	// Paper balance is a full wallet dump that omits zero assets. Emitting it
 	// as an incremental update leaves stale positive rows in Balance and keeps
 	// phantom OPEN lots.
-	return paper.Balance("snapshot")
+	return paper.publishBalance("snapshot")
 }
 
-func (paper *Paper) Books() *spot.BookManager {
-	return paper.books
+func (paper *Paper) placeOrder(
+	side string,
+	symbol string,
+	quantity string,
+	orderType string,
+	limitPrice string,
+) (datura.Map[any], error) {
+	command := []string{side, symbol, quantity}
+
+	if orderType == "limit" && limitPrice != "" {
+		command = append(command, "--type", "limit", "--price", limitPrice)
+	}
+
+	var (
+		model datura.Map[any]
+		err   error
+	)
+
+	paper.simulator.Do(REST, func() {
+		model, err = paper.execute("executions", command...)
+	})
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to place paper order",
+			err,
+		))
+	}
+
+	model["pair"] = symbol
+	return model, nil
+}
+
+func (paper *Paper) status() (datura.Map[any], error) {
+	var (
+		model datura.Map[any]
+		err   error
+	)
+
+	paper.simulator.Do(REST, func() {
+		model, err = paper.execute("status", "status", "--verbose")
+	})
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get paper status",
+			err,
+		))
+	}
+
+	return model, nil
+}
+
+func (paper *Paper) publish(channel string, message any) {
+	paper.subMu.Lock()
+	subscribers := append([]*types.Subscription[any](nil), paper.subscribers[channel]...)
+	paper.subMu.Unlock()
+
+	for _, subscriber := range subscribers {
+		subscriber.Send(message)
+	}
 }

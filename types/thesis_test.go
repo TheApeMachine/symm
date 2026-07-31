@@ -16,7 +16,7 @@ history, so one row survives for this identity.
 */
 func TestThesisAppendMeasurementsConcurrent(t *testing.T) {
 	Convey("Given concurrent signal publications", t, func() {
-		thesis := NewThesis(nil)
+		thesis := NewThesis()
 		var wg sync.WaitGroup
 
 		Convey("When many goroutines publish the same source-symbol row", func() {
@@ -50,7 +50,7 @@ func TestThesisAppendMeasurementsConcurrent(t *testing.T) {
 
 func TestNoteLifecycle(t *testing.T) {
 	Convey("Given a thesis phase transition", t, func() {
-		thesis := NewThesis(nil)
+		thesis := NewThesis()
 		at := time.Unix(1, 0).UTC()
 		thesis.NoteLifecycle("BTC/USD", LifecycleEntered, at)
 
@@ -63,7 +63,7 @@ func TestNoteLifecycle(t *testing.T) {
 }
 
 func BenchmarkNoteLifecycle(b *testing.B) {
-	thesis := NewThesis(nil)
+	thesis := NewThesis()
 	at := time.Unix(1, 0).UTC()
 
 	b.ReportAllocs()
@@ -77,7 +77,7 @@ func BenchmarkNoteLifecycle(b *testing.B) {
 BenchmarkMeasurements measures the locked shared-Thesis signal publish path.
 */
 func BenchmarkMeasurements(b *testing.B) {
-	thesis := NewThesis(nil)
+	thesis := NewThesis()
 	row := &Measurement{Source: SourceCVD, Symbol: "BTC/USD", At: time.Unix(1, 0)}
 
 	b.ReportAllocs()

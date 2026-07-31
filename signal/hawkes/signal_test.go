@@ -8,8 +8,8 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -30,11 +30,11 @@ func (feed testMarketFeed) Instrument() *types.Subscription[*kraken.Instrument] 
 }
 
 func newTestSignal() *Signal {
+	thesis := types.NewThesis()
+
 	return &Signal{
 		ctx:     context.Background(),
-		sample:  excitation.NewSample(),
-		process: excitation.NewProcess(),
-		thesis:  types.NewThesis(nil),
+		planner: &strategy.Planner{Thesis: thesis},
 	}
 }
 
@@ -81,17 +81,17 @@ func TestSignal_Calculate(t *testing.T) {
 			viper.Set("system.actor.buffer", 64)
 			Reset(func() { viper.Set("system.actor.buffer", previous) })
 
-			root := types.NewSubscription[*kraken.Trade]()
-			ticker := types.NewSubscription[*kraken.Ticker]()
-			book := types.NewSubscription[*kraken.Book]()
-			live := testMarketFeed{ticker: ticker, book: book, trade: root}
-
-			signal := NewSignal(context.Background(), nil)
-			thesis := types.NewThesis(nil)
-			signal.Initialize(live, thesis)
+			signal := NewSignal(
+				context.Background(),
+				nil,
+				&strategy.Planner{Thesis: types.NewThesis()},
+				nil,
+			)
+			signal.subscriptions["trade"] = types.NewSubscription[any]()
+			signal.run()
 
 			for range 32 {
-				root.Send(&kraken.Trade{Data: []kraken.TradeData{row}})
+				signal.subscriptions["trade"].Send(&kraken.Trade{Data: []kraken.TradeData{row}})
 			}
 
 			time.Sleep(50 * time.Millisecond)

@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -25,6 +24,7 @@ type Desk struct {
 	status        types.Status
 	api           *websocket.API
 	subscriptions map[string]*types.Subscription[any]
+	ui            chan []byte
 	instrument    *Instrument
 	price         *Price
 	balance       *Balance
@@ -42,7 +42,7 @@ func NewDesk(
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
-	trading config.TradingConfig,
+	ui chan []byte,
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -54,12 +54,11 @@ func NewDesk(
 		subscriptions: map[string]*types.Subscription[any]{
 			"ticker": api.Subscribe("ticker", types.NewSubscription[any]()),
 		},
-		instrument:   instrument,
-		price:        price,
-		balance:      balance,
-		positions:    &sync.Map{},
-		maxPositions: trading.SlotsNormal,
-		maxReserved:  trading.SlotsReserved,
+		ui:         ui,
+		instrument: instrument,
+		price:      price,
+		balance:    balance,
+		positions:  &sync.Map{},
 	}
 
 	desk.run()

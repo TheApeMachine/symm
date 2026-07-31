@@ -37,7 +37,7 @@ func NewCrypto(
 	recorder *audit.Recorder,
 	planner *strategy.Planner,
 	desk *broker.Desk,
-) (*Crypto, error) {
+) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{
@@ -58,7 +58,7 @@ func NewCrypto(
 	}
 
 	crypto.run()
-	return crypto, nil
+	return crypto
 }
 
 func (crypto *Crypto) Status() types.Status {

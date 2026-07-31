@@ -11,7 +11,6 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/config"
 )
 
 /*
@@ -42,20 +41,13 @@ func NewHub(
 	balance *broker.Balance,
 	channel chan []byte,
 	manifold chan []byte,
-	cfg config.UIConfig,
 ) *Hub {
 	ctx, cancel := context.WithCancel(ctx)
-
-	addr := cfg.Addr
-
-	if addr == "" {
-		addr = "127.0.0.1:8765"
-	}
 
 	hub := &Hub{
 		ctx:        ctx,
 		cancel:     cancel,
-		listenAddr: addr,
+		listenAddr: "127.0.0.1:8765",
 		Messages:   channel,
 		Manifold:   manifold,
 		desk:       desk,

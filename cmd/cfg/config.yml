@@ -82,15 +82,7 @@ trading:
     reserved: 2
 
 signals:
-  # The central public stream retains this event window. Older events are
-  # overwritten by design; enlarge the configured ring if one measurement cut
-  # must inspect a larger live burst.
-  # ponytail: fixed capacity is an intentional simplification with memory and
-  # burst limits; telemetry-driven or adaptive sizing is the upgrade path.
-  feed_timeline_capacity: 4096
-  # Preserve the existing per-symbol history allowance independently from the
-  # global burst journal; multiplying the timeline size by every symbol would
-  # make memory scale with the square of the observed market surface.
-  # ponytail: fixed capacity is an intentional simplification with memory and
-  # burst limits; telemetry-driven or adaptive sizing is the upgrade path.
-  feed_track_capacity: 512
+  depthflow:
+    sampleSize: 4096
+  pumpdump:
+    baselineCapacity: 4096

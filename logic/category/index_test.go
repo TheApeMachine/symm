@@ -14,7 +14,7 @@ func TestEvidenceIndexUpdateFrom(t *testing.T) {
 		index := newEvidenceIndex()
 
 		Convey("When updated from a thesis with valid measurements", func() {
-			thesis := types.NewThesis(nil)
+			thesis := types.NewThesis()
 			mass := 0.75
 			thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{
 				{
@@ -87,7 +87,7 @@ func TestClockFor(t *testing.T) {
 
 	Convey("Given an index with multiple metrics", t, func() {
 		index := newEvidenceIndex()
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		mass1 := 0.5
 		mass2 := 0.8
 
@@ -195,7 +195,7 @@ func TestSymbolEvidenceClear(t *testing.T) {
 }
 
 func BenchmarkEvidenceIndexUpdateFrom(b *testing.B) {
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis()
 	symbols := []string{"AAA/USD", "BBB/USD", "CCC/USD", "DDD/USD"}
 	metrics := []types.MetricType{
 		types.MetricIgnition, types.MetricTrend,
@@ -236,7 +236,7 @@ func BenchmarkEvidenceIndexUpdateFrom(b *testing.B) {
 
 func BenchmarkClockFor(b *testing.B) {
 	index := newEvidenceIndex()
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis()
 	mass := 0.5
 			thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{
 		{

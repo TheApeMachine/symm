@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -34,7 +33,6 @@ func NewInstrument(
 	api *websocket.API,
 	price *Price,
 	channel chan []byte,
-	market config.MarketConfig,
 ) *Instrument {
 	instrument := &Instrument{
 		status:  types.INITIALIZING,
@@ -42,7 +40,7 @@ func NewInstrument(
 		price:   price,
 		cache:   &sync.Map{},
 		symbols: []string{},
-		quote:   market.QuoteCurrency,
+		quote:   viper.GetViper().GetString("market.quote_currency"),
 	}
 
 	callback := types.NewSubscription[any]()

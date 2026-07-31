@@ -4,15 +4,16 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"sync"
-	"sync/atomic"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -23,18 +24,16 @@ imbalance with trade-pressure confirmation. Categories belong in logic; this
 signal emits numerical scores only.
 */
 type Signal struct {
-	thesis   *types.Thesis
-	ctx      context.Context
-	cancel   context.CancelFunc
-	sample   *flow.Sample
-	bookflow *equation.Bookflow
-	bookOut  atomic.Pointer[[]*types.Measurement]
-	ui       chan []byte
-	ticker    *types.Subscription[*kraken.Ticker]
-	book      *types.Subscription[*kraken.Book]
-	trade     *types.Subscription[*kraken.Trade]
-	subMu     sync.Mutex
-	theses    []*types.Subscription[*types.Thesis]
+	status        types.Status
+	thesis        *types.Thesis
+	ctx           context.Context
+	cancel        context.CancelFunc
+	api           *websocket.API
+	planner       *strategy.Planner
+	sample        *flow.Sample
+	bookflow      *equation.Bookflow
+	ui            chan []byte
+	subscriptions map[string]*types.Subscription[any]
 }
 
 /*
@@ -43,26 +42,37 @@ trade observations in each central market cut.
 */
 func NewSignal(
 	ctx context.Context,
+	api *websocket.API,
+	planner *strategy.Planner,
 	ui chan []byte,
-	historyCapacity int,
-) (*Signal, error) {
+) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
-	sample, err := flow.NewSample(historyCapacity)
+	sample, err := flow.NewSample(viper.GetViper().GetInt("signals.depthflow.sampleSize"))
 
 	if err != nil {
 		cancel()
-		return nil, err
+		return nil
 	}
 
 	signal := &Signal{
+		status:   types.INITIALIZING,
+		thesis:   planner.Thesis,
 		ctx:      ctx,
 		cancel:   cancel,
+		api:      api,
+		planner:  planner,
 		sample:   sample,
 		bookflow: equation.NewBookflow(),
 		ui:       ui,
+		subscriptions: map[string]*types.Subscription[any]{
+			"ticker": api.Subscribe("ticker", types.NewSubscription[any]()),
+			"trade":  api.Subscribe("trade", types.NewSubscription[any]()),
+		},
 	}
 
-	return signal, nil
+	signal.status = types.READY
+	signal.run()
+	return signal
 }
 
 /*
@@ -72,90 +82,43 @@ func (signal *Signal) Name() string {
 	return string(types.SourceDepthFlow)
 }
 
-/*
-Initialize wires ticker, book, and trade ingress from Live.
-*/
-func (signal *Signal) Initialize(market types.MarketFeed, thesis *types.Thesis) {
-	signal.thesis = thesis
-
-	if market != nil {
-		signal.ticker = market.Ticker()
-		signal.book = market.Book()
-		signal.trade = market.Trade()
-	}
-
-	go signal.run()
-}
-
-func (signal *Signal) Thesis() *types.Subscription[*types.Thesis] {
-	subscription := types.NewSubscription[*types.Thesis]()
-	signal.subMu.Lock()
-	signal.theses = append(signal.theses, subscription)
-	signal.subMu.Unlock()
-	return subscription
+func (signal *Signal) Status() types.Status {
+	return signal.status
 }
 
 func (signal *Signal) run() {
-	var tickers <-chan *kraken.Ticker
-	var books <-chan *kraken.Book
-	var trades <-chan *kraken.Trade
-
-	if signal.ticker != nil {
-		tickers = signal.ticker.Channel
-	}
-
-	if signal.book != nil {
-		books = signal.book.Channel
-	}
-
-	if signal.trade != nil {
-		trades = signal.trade.Channel
-	}
-
-	for {
-		select {
-		case <-signal.ctx.Done():
-			return
-		case ticker := <-tickers:
-			signal.onTicker(ticker)
-		case book := <-books:
-			signal.onBook(book)
-		case trade := <-trades:
-			signal.onTrade(trade)
+	go func() {
+		for {
+			select {
+			case <-signal.ctx.Done():
+				return
+			case ticker := <-signal.subscriptions["ticker"].Channel:
+				if ticker, ok := ticker.(*kraken.Ticker); ok {
+					signal.onTicker(ticker)
+				}
+			case trade := <-signal.subscriptions["trade"].Channel:
+				if trade, ok := trade.(*kraken.Trade); ok {
+					signal.onTrade(trade)
+				}
+			}
 		}
-	}
+	}()
 }
 
 func (signal *Signal) onTicker(ticker *kraken.Ticker) {
-	signal.publish(signal.thesis.AppendMeasuremnts(
-		types.SourceDepthFlow, signal.Calculate(ticker.Data, nil, nil),
-	))
-}
-
-func (signal *Signal) onBook(book *kraken.Book) {
-	signal.publish(signal.thesis.AppendMeasuremnts(
-		types.SourceDepthFlow, signal.Calculate(nil, nil, book.Data),
-	))
+	signal.thesis.AppendMeasurements(
+		types.SourceDepthFlow,
+		signal.Calculate(ticker.Data, nil, nil),
+		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
+	)
 }
 
 func (signal *Signal) onTrade(trade *kraken.Trade) {
-	signal.publish(signal.thesis.AppendMeasuremnts(
-		types.SourceDepthFlow, signal.Calculate(nil, trade.Data, nil),
-	))
-}
-
-func (signal *Signal) publish(thesis *types.Thesis) {
-	if thesis == nil {
-		return
-	}
-
-	signal.subMu.Lock()
-	subscribers := append([]*types.Subscription[*types.Thesis](nil), signal.theses...)
-	signal.subMu.Unlock()
-
-	for _, subscription := range subscribers {
-		subscription.Send(thesis)
-	}
+	signal.thesis.AppendMeasurements(
+		types.SourceDepthFlow,
+		signal.Calculate(nil, trade.Data, nil),
+		types.Stamp{At: time.Now(), Entity: types.MarketTrade},
+	)
 }
 
 func (signal *Signal) Calculate(
@@ -229,7 +192,7 @@ func (signal *Signal) measureBook(
 		})
 	}
 
-	input, ready, maturity, err := signal.sample.MeasureBook(flow.BookInput{
+	input, ready, _, err := signal.sample.MeasureBook(flow.BookInput{
 		Symbol:   row.Symbol,
 		TickSize: row.PriceIncrement.Float64(),
 		Bids:     bids,
@@ -254,7 +217,7 @@ func (signal *Signal) measureBook(
 		return nil, nil
 	}
 
-	return signal.frame(row.Symbol, row.Timestamp, output, maturity), nil
+	return signal.frame(row.Symbol, row.Timestamp, output), nil
 }
 
 /*
@@ -268,7 +231,7 @@ func (signal *Signal) measureTrade(
 		return nil, fmt.Errorf("depthflow: complete positive trade required")
 	}
 
-	input, ready, maturity, err := signal.sample.MeasureTrade(flow.TradeInput{
+	input, ready, _, err := signal.sample.MeasureTrade(flow.TradeInput{
 		Symbol:   row.Symbol,
 		Price:    row.Price.Float64(),
 		Quantity: row.Qty,
@@ -294,7 +257,7 @@ func (signal *Signal) measureTrade(
 		return nil, nil
 	}
 
-	return signal.frame(row.Symbol, row.Timestamp, output, maturity), nil
+	return signal.frame(row.Symbol, row.Timestamp, output), nil
 }
 
 /*
@@ -339,7 +302,7 @@ frame converts a bookflow calculator output into one source×symbol row so both
 the book-driven and trade-driven observation paths emit the same metric set.
 */
 func (signal *Signal) frame(
-	symbol string, at time.Time, output equation.BookflowOutput, maturity float64,
+	symbol string, at time.Time, output equation.BookflowOutput,
 ) []*types.Measurement {
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,

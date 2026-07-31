@@ -10,7 +10,7 @@ import (
 
 func TestExtractMeasurementNodes(t *testing.T) {
 	Convey("Given thesis measurements stored by source as slices", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.Measurements.Store(types.SourceCVD, []*types.Measurement{{
 			Source: types.SourceCVD,
 			Symbol: "BTC/USD",
@@ -38,7 +38,7 @@ func TestExtractMeasurementNodes(t *testing.T) {
 	})
 
 	Convey("Given thesis measurements stored as one singleton row", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis()
 		thesis.Measurements.Store(types.SourceCVD, &types.Measurement{
 			Source: types.SourceCVD,
 			Symbol: "ETH/USD",

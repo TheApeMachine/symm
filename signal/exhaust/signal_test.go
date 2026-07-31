@@ -2,6 +2,7 @@ package exhaust_test
 
 import (
 	"math"
+	"reflect"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/signal/exhaust"
 	"github.com/theapemachine/symm/stack"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
 )
@@ -165,14 +167,10 @@ func TestCalculate(t *testing.T) {
 			}
 
 			signal := exhaustionOf(wired.Signals)
-			updates := signal.Thesis()
 			measurements := []*types.Measurement{}
 
-			So(market.Transition(proof.states[len(proof.states)-1], func() error {
-				drainExhaust(updates, &measurements)
-				return nil
-			}), ShouldBeNil)
-			drainExhaust(updates, &measurements)
+			So(market.Transition(proof.states[len(proof.states)-1], tests.Idle), ShouldBeNil)
+			measurements = exhaustionFrom(thesisOf(signal))
 
 			So(measurements, ShouldNotBeEmpty)
 
@@ -367,7 +365,7 @@ func TestCalculate(t *testing.T) {
 	})
 
 	Convey("Given an invalid trade row", t, func() {
-		signal := exhaust.NewSignal(t.Context(), nil)
+		signal := exhaust.NewSignal(t.Context(), nil, &strategy.Planner{Thesis: types.NewThesis()}, nil)
 
 		Convey("It should skip unusable rows and return no measurements", func() {
 			rows := signal.Calculate(
@@ -375,7 +373,7 @@ func TestCalculate(t *testing.T) {
 				[]kraken.TradeData{{Symbol: "SIM1/USD"}},
 				nil,
 			)
-		So(rows, ShouldBeEmpty)
+			So(rows, ShouldBeEmpty)
 		})
 	})
 }
@@ -509,4 +507,11 @@ func exhaustionFrom(message any) []*types.Measurement {
 	default:
 		return nil
 	}
+}
+
+func thesisOf(signal *exhaust.Signal) *types.Thesis {
+	value := reflect.ValueOf(signal).Elem().FieldByName("planner")
+	planner := value.Interface().(*strategy.Planner)
+
+	return planner.Thesis
 }

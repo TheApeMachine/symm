@@ -6,7 +6,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/config"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -30,7 +29,6 @@ NewBalance constructs an empty wallet owner for exchange balances only.
 func NewBalance(
 	api *websocket.API,
 	ui chan []byte,
-	market config.MarketConfig,
 ) *Balance {
 	balance := &Balance{
 		status: types.INITIALIZING,

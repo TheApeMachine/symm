@@ -2,9 +2,11 @@ package leadlag
 
 import (
 	"context"
-	"sync"
+	"time"
 
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -14,30 +16,44 @@ cross-section leader and each follower. Categories belong in logic; this signal
 emits numerical scores only.
 */
 type Signal struct {
-	thesis  *types.Thesis
-	ctx     context.Context
-	cancel  context.CancelFunc
-	section *Section
-	ui      chan []byte
-	ticker  *types.Subscription[*kraken.Ticker]
-	subMu   sync.Mutex
-	theses  []*types.Subscription[*types.Thesis]
+	status        types.Status
+	thesis        *types.Thesis
+	ctx           context.Context
+	cancel        context.CancelFunc
+	api           *websocket.API
+	planner       *strategy.Planner
+	ui            chan []byte
+	subscriptions map[string]*types.Subscription[any]
 }
 
 /*
 NewSignal creates lead-lag measurement state for central market cuts so
 temporal relationships persist across Thesis ticks.
 */
-func NewSignal(ctx context.Context, ui chan []byte) *Signal {
+func NewSignal(
+	ctx context.Context,
+	api *websocket.API,
+	planner *strategy.Planner,
+	ui chan []byte,
+) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
+		status:  types.INITIALIZING,
+		thesis:  planner.Thesis,
 		ctx:     ctx,
 		cancel:  cancel,
-		section: NewSection(),
+		api:     api,
+		planner: planner,
 		ui:      ui,
+		subscriptions: map[string]*types.Subscription[any]{
+			"ticker": api.Subscribe("ticker", types.NewSubscription[any]()),
+		},
 	}
+	signal.thesis.Causal.Store("signal:leadlag:section", NewSection())
 
+	signal.status = types.READY
+	signal.run()
 	return signal
 }
 
@@ -48,61 +64,37 @@ func (signal *Signal) Name() string {
 	return string(types.SourceLeadLag)
 }
 
-/*
-Initialize wires ticker ingress from Live. Lead-lag is ticker-cross-section
-only; book and trade floods must not fill unused buffers.
-*/
-func (signal *Signal) Initialize(market types.MarketFeed, thesis *types.Thesis) {
-	signal.thesis = thesis
-
-	if market != nil {
-		signal.ticker = market.Ticker()
-	}
-
-	go signal.run()
-}
-
-func (signal *Signal) Thesis() *types.Subscription[*types.Thesis] {
-	subscription := types.NewSubscription[*types.Thesis]()
-	signal.subMu.Lock()
-	signal.theses = append(signal.theses, subscription)
-	signal.subMu.Unlock()
-	return subscription
+func (signal *Signal) Status() types.Status {
+	return signal.status
 }
 
 func (signal *Signal) run() {
-	if signal.ticker == nil {
+	subscription := signal.subscriptions["ticker"]
+
+	if subscription == nil {
 		return
 	}
 
-	for {
-		select {
-		case <-signal.ctx.Done():
-			return
-		case ticker := <-signal.ticker.Channel:
-			signal.onTicker(ticker)
+	go func() {
+		for {
+			select {
+			case <-signal.ctx.Done():
+				return
+			case ticker := <-subscription.Channel:
+				if ticker, ok := ticker.(*kraken.Ticker); ok {
+					signal.onTicker(ticker)
+				}
+			}
 		}
-	}
+	}()
 }
 
 func (signal *Signal) onTicker(ticker *kraken.Ticker) {
-	signal.publish(signal.thesis.AppendMeasuremnts(
-		types.SourceLeadLag, signal.Calculate(ticker.Data, nil, nil),
-	))
-}
-
-func (signal *Signal) publish(thesis *types.Thesis) {
-	if thesis == nil {
-		return
-	}
-
-	signal.subMu.Lock()
-	subscribers := append([]*types.Subscription[*types.Thesis](nil), signal.theses...)
-	signal.subMu.Unlock()
-
-	for _, subscription := range subscribers {
-		subscription.Send(thesis)
-	}
+	signal.thesis.AppendMeasurements(
+		types.SourceLeadLag,
+		signal.Calculate(ticker.Data, nil, nil),
+		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
+	)
 }
 
 func (signal *Signal) Calculate(
@@ -110,7 +102,11 @@ func (signal *Signal) Calculate(
 	trades []kraken.TradeData,
 	books []kraken.BookData,
 ) []*types.Measurement {
-	crossSection := types.NewCrossSection()
+	if signal.thesis == nil || signal.thesis.CrossSection == nil {
+		return nil
+	}
+
+	crossSection := signal.thesis.CrossSection
 
 	if len(tickers) > 0 {
 		crossSection.Measure(tickers)
@@ -125,6 +121,5 @@ active market-data producers.
 */
 func (signal *Signal) Close() error {
 	signal.cancel()
-
 	return nil
 }
