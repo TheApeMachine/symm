@@ -168,7 +168,7 @@ type Measurement struct {
 	At           time.Time               `json:"at" validate:"required"`
 	ObservedFrom time.Time               `json:"observedFrom,omitempty"`
 	Horizon      time.Duration           `json:"horizon,omitempty" validate:"nonnegative"`
-	Maturity     int64                   `json:"maturity,omitempty" validate:"finite"`
+	Maturity     float64                 `json:"maturity,omitempty" validate:"finite"`
 	Uncertainty  *MeasurementUncertainty `json:"uncertainty,omitempty"`
 	Validity     MeasurementValidity     `json:"validity"`
 	Scale        ScaleReference          `json:"scale"`

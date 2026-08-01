@@ -2,7 +2,6 @@ package trader
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/theapemachine/datura"
@@ -61,8 +60,8 @@ func NewCrypto(
 			"ticker": api.Subscribe(
 				"ticker", types.NewSubscription[any](),
 			),
-			"trades": api.Subscribe(
-				"trades", types.NewSubscription[any](),
+			"trade": api.Subscribe(
+				"trade", types.NewSubscription[any](),
 			),
 			"decisions": planner.Subscribe(
 				"decisions", types.NewSubscription[any](),
@@ -82,8 +81,6 @@ func (crypto *Crypto) Status() types.Status {
 func (crypto *Crypto) Subscribe(
 	key string, subscription *types.Subscription[any],
 ) *types.Subscription[any] {
-	errnie.Info(fmt.Sprintf("websocket: new subscriber %s", key))
-
 	subscribers, ok := crypto.subscribers.LoadOrStore(
 		key, []*types.Subscription[any]{subscription},
 	)
@@ -107,8 +104,8 @@ func (crypto *Crypto) run() {
 				return
 			case ticker := <-crypto.subscriptions["ticker"].Channel:
 				crypto.onTicker(ticker)
-			case trades := <-crypto.subscriptions["trades"].Channel:
-				crypto.onTrades(trades)
+			case trade := <-crypto.subscriptions["trade"].Channel:
+				crypto.onTrade(trade)
 			case decisions := <-crypto.subscriptions["decisions"].Channel:
 				if !crypto.decisionsReady(decisions) {
 					continue
@@ -130,7 +127,7 @@ func (crypto *Crypto) run() {
 }
 
 func (crypto *Crypto) onTicker(data any) {
-	typedTickers, ok := data.([]*kraken.TickerData)
+	typedTickers, ok := data.(*kraken.Ticker)
 
 	if !ok {
 		errnie.Error(errnie.Err(
@@ -142,7 +139,18 @@ func (crypto *Crypto) onTicker(data any) {
 		return
 	}
 
-	for _, typedData := range typedTickers {
+	for _, ticker := range typedTickers.Data {
+		crypto.thesis.Tickers.Store(ticker.Symbol, ticker)
+	}
+
+	for symbol, book := range crypto.api.Books() {
+		crypto.thesis.Books.Store(symbol, book)
+	}
+
+	crypto.publish("thesis", crypto.thesis)
+
+	for index := range typedTickers.Data {
+		typedData := &typedTickers.Data[index]
 		found, ok := crypto.thesis.Tickers.LoadOrStore(
 			typedData.Symbol, []*kraken.TickerData{typedData},
 		)
@@ -169,19 +177,11 @@ func (crypto *Crypto) onTicker(data any) {
 		crypto.thesis.Books.Store(symbol, book)
 	}
 
-	found, ok := crypto.subscribers.Load("ticker")
-
-	if ok {
-		subscribers := found.([]*types.Subscription[any])
-
-		for _, subscriber := range subscribers {
-			subscriber.Send(data)
-		}
-	}
+	crypto.publish("thesis", crypto.thesis)
 }
 
-func (crypto *Crypto) onTrades(data any) {
-	typedTrades, ok := data.([]*kraken.TradeData)
+func (crypto *Crypto) onTrade(data any) {
+	typedTrades, ok := data.(*kraken.Trade)
 
 	if !ok {
 		errnie.Error(errnie.Err(
@@ -193,7 +193,18 @@ func (crypto *Crypto) onTrades(data any) {
 		return
 	}
 
-	for _, trade := range typedTrades {
+	for _, trade := range typedTrades.Data {
+		crypto.thesis.Trades.Store(trade.Symbol, trade)
+	}
+
+	for symbol, book := range crypto.api.Books() {
+		crypto.thesis.Books.Store(symbol, book)
+	}
+
+	crypto.publish("thesis", crypto.thesis)
+
+	for index := range typedTrades.Data {
+		trade := &typedTrades.Data[index]
 		found, ok := crypto.thesis.Trades.LoadOrStore(
 			trade.Symbol, []*kraken.TradeData{trade},
 		)
@@ -220,14 +231,18 @@ func (crypto *Crypto) onTrades(data any) {
 		crypto.thesis.Books.Store(symbol, book)
 	}
 
-	found, ok := crypto.subscribers.Load("trades")
+	crypto.publish("thesis", crypto.thesis)
+}
 
-	if ok {
-		subscribers := found.([]*types.Subscription[any])
+func (crypto *Crypto) publish(key string, message any) {
+	found, ok := crypto.subscribers.Load(key)
 
-		for _, subscriber := range subscribers {
-			subscriber.Send(data)
-		}
+	if !ok {
+		return
+	}
+
+	for _, subscriber := range found.([]*types.Subscription[any]) {
+		subscriber.Send(message)
 	}
 }
 

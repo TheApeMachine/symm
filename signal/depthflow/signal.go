@@ -47,6 +47,7 @@ func NewSignal(
 	api *websocket.API,
 	planner *strategy.Planner,
 	ui chan []byte,
+	subscriptions map[string]*types.Subscription[any],
 ) (*Signal, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	sample, err := flow.NewSample(viper.GetViper().GetInt("signals.depthflow.sampleSize"))
@@ -62,7 +63,6 @@ func NewSignal(
 
 	signal := &Signal{
 		status:   types.INITIALIZING,
-		thesis:   planner.Thesis,
 		ctx:      ctx,
 		cancel:   cancel,
 		api:      api,
@@ -70,10 +70,7 @@ func NewSignal(
 		sample:   sample,
 		bookflow: equation.NewBookflow(),
 		ui:       ui,
-		subscriptions: map[string]*types.Subscription[any]{
-			"ticker": api.Subscribe("ticker", types.NewSubscription[any]()),
-			"trade":  api.Subscribe("trade", types.NewSubscription[any]()),
-		},
+		subscriptions: subscriptions,
 		subscribers: &sync.Map{},
 	}
 

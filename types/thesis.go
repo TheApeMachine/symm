@@ -1,10 +1,10 @@
 package types
 
 import (
+	"cmp"
+	"slices"
 	"sync"
 	"time"
-	"slices"
-	"cmp"
 
 	"github.com/theapemachine/symm/kraken"
 )
@@ -250,11 +250,10 @@ func (thesis *Thesis) Reset() *Thesis {
 func (thesis *Thesis) Market() (
 	[]kraken.TickerData,
 	[]kraken.TradeData,
-	[]kraken.BookData,
+	*sync.Map,
 ) {
 	tickers := make([]kraken.TickerData, 0)
 	trades := make([]kraken.TradeData, 0)
-	books := make([]kraken.BookData, 0)
 
 	thesis.Tickers.Range(func(_, value any) bool {
 		if ticker, ok := value.(kraken.TickerData); ok {
@@ -272,14 +271,6 @@ func (thesis *Thesis) Market() (
 		return true
 	})
 
-	thesis.Books.Range(func(_, value any) bool {
-		if book, ok := value.(kraken.BookData); ok {
-			books = append(books, book)
-		}
-
-		return true
-	})
-
 	slices.SortFunc(tickers, func(left, right kraken.TickerData) int {
 		return cmp.Compare(left.Timestamp.UnixNano(), right.Timestamp.UnixNano())
 	})
@@ -288,11 +279,7 @@ func (thesis *Thesis) Market() (
 		return cmp.Compare(left.Timestamp.UnixNano(), right.Timestamp.UnixNano())
 	})
 
-	slices.SortStableFunc(books, func(left, right kraken.BookData) int {
-		return cmp.Compare(left.Timestamp.UnixNano(), right.Timestamp.UnixNano())
-	})
-
-	return tickers, trades, books
+	return tickers, trades, thesis.Books
 }
 
 /*

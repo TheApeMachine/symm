@@ -67,7 +67,6 @@ func NewPlanner(
 		evaluator:   evaluator,
 		arbiter:     arbiter,
 		allocator:   NewAllocator(ctx, balance, instrument, price),
-		Thesis:      types.NewThesis(),
 	}
 
 	if analyzer != nil {

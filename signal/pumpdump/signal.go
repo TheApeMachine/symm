@@ -2,22 +2,17 @@ package pumpdump
 
 import (
 	"context"
-	"fmt"
-	"math"
-	"sort"
 	"sync"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -110,7 +105,7 @@ func (signal *Signal) run() {
 				if thesis, ok := message.(*types.Thesis); ok {
 					thesis.AppendMeasurements(
 						types.SourcePumpDump,
-						signal.Calculate(thesis),
+						signal.Measure(thesis),
 						types.Stamp{At: time.Now(), Entity: types.MarketTicker},
 					)
 
@@ -131,441 +126,224 @@ func (signal *Signal) run() {
 	}()
 }
 
-func (signal *Signal) Calculate(thesis *types.Thesis) []*types.Measurement {
+/*
+Measure produces the Measurements for the pumpdump signal.
+*/
+func (signal *Signal) Measure(
+	thesis *types.Thesis,
+) []*types.Measurement {
+	measurements := make([]*types.Measurement, 0)
 	tickers, trades, books := thesis.Market()
 
-	if len(tickers) == 0 {
-		signal.ingest(nil, trades, books)
+	if len(tickers) == 0 && len(trades) == 0 {
 		return nil
 	}
 
-	sort.SliceStable(tickers, func(left, right int) bool {
-		return tickers[left].Timestamp.Before(tickers[right].Timestamp)
-	})
+	if len(tickers) > 0 {
+		var lastTime time.Time
+		var mid *decimal.Decimal
 
-	sort.SliceStable(trades, func(left, right int) bool {
-		return trades[left].Timestamp.Before(trades[right].Timestamp)
-	})
-
-	sort.SliceStable(books, func(left, right int) bool {
-		return books[left].Timestamp.Before(books[right].Timestamp)
-	})
-
-	out := make([]*types.Measurement, 0, len(tickers))
-	uiOut := datura.NewMap(
-		"measurements", make([]*types.Measurement, 0),
-	)
-
-	tradeIndex := 0
-	bookIndex := 0
-	measured := make(map[string]struct{}, len(tickers))
-
-	for _, row := range tickers {
-		for tradeIndex < len(trades) && !trades[tradeIndex].Timestamp.After(row.Timestamp) {
-			signal.ingest(thesis, trades[tradeIndex:tradeIndex+1], nil)
-
-			tradeIndex++
-		}
-
-		for bookIndex < len(books) && !books[bookIndex].Timestamp.After(row.Timestamp) {
-			signal.ingest(thesis, nil, books[bookIndex:bookIndex+1])
-
-			bookIndex++
-		}
-
-		measurements, err := signal.measure(thesis, row)
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent, "pumpdump: failed to measure tickers", err,
-			))
-			return nil
-		}
-
-		if row.Symbol != "" {
-			measured[row.Symbol] = struct{}{}
-		}
-
-		if len(measurements) > 0 && row.Symbol != "" {
-			found, _ := thesis.Causal.Load("signal:pumpdump:lastWire")
-			found.(*sync.Map).Store(row.Symbol, measurements)
-		}
-
-		out = append(out, measurements...)
-
-		if row.Symbol == types.Focus() {
-			uiOut["measurements"] = append(
-				uiOut["measurements"].([]*types.Measurement), measurements...,
-			)
-		}
-	}
-
-	signal.ingest(thesis, trades[tradeIndex:], books[bookIndex:])
-
-	if len(uiOut["measurements"].([]*types.Measurement)) > 0 {
-		utils.Publish(signal.ui, uiOut)
-	}
-
-	return out
-}
-
-/*
-measure derives one ticker observation from the causally preceding tape state.
-Kraken ticker timestamps are not a per-symbol sequence: late or reconnect
-frames can arrive behind the watermark. Those are not observations and must
-not enter the volume clock.
-*/
-func (signal *Signal) measure(thesis *types.Thesis, row kraken.TickerData) ([]*types.Measurement, error) {
-	at, ok, err := signal.tickerObservationGate(thesis, row)
-
-	if err != nil {
-		return nil, err
-	}
-
-	if !ok {
-		return nil, nil
-	}
-
-	bookState, ok := signal.resolveTickerBookState(thesis, row)
-
-	if !ok {
-		return nil, nil
-	}
-
-	found, _ := thesis.Causal.Load("signal:pumpdump:ignition")
-	output, ready, _, err := found.(*equation.Ignition).Measure(equation.IgnitionInput{
-		Symbol: row.Symbol,
-		Volume: bookState.volume,
-		Last:   bookState.mid,
-		Bid:    bookState.bid,
-		Ask:    bookState.ask,
-		At:     at,
-	})
-
-	if err != nil {
-		return nil, errnie.Err(
-			errnie.UnprocessableContent,
-			err.Error(),
-			err,
-		)
-	}
-
-	found, _ = thesis.Causal.Load("signal:pumpdump:lastAt")
-	found.(*sync.Map).Store(row.Symbol, at)
-
-	return signal.	measurements(
-		thesis,
-		row.Symbol,
-		at,
-		output,
-		ready,
-		bookState.bid,
-		bookState.ask,
-	)
-}
-
-/*
-tickerBookState carries resolved midpoint, spread, and volume for one ticker.
-*/
-type tickerBookState struct {
-	mid    float64
-	bid    float64
-	ask    float64
-	volume float64
-}
-
-/*
-measurements emits one PumpDump Measurement per symbol whose Metrics map carries
-the full ignition surface from RVOL through Strength.
-*/
-func (signal *Signal) measurements(
-	thesis *types.Thesis,
-	symbol string,
-	at time.Time,
-	output equation.IgnitionOutput,
-	ready bool,
-	bid float64,
-	ask float64,
-) ([]*types.Measurement, error) {
-	if at.IsZero() {
-		return nil, errnie.Err(
-			errnie.Validation,
-			"pumpdump: observation timestamp required",
-			nil,
-		)
-	}
-
-	if bid <= 0 || ask <= 0 {
-		return nil, errnie.Err(
-			errnie.Validation,
-			"pumpdump: bid and ask must be positive",
-			nil,
-		)
-	}
-
-	if bid >= ask {
-		return nil, errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("pumpdump: crossed BBO bid=%v ask=%v", bid, ask),
-			nil,
-		)
-	}
-
-	mid := (bid + ask) / 2
-	validity := types.MeasurementValidity{
-		State:     types.ValidityValid,
-		Readiness: types.ReadinessObservation,
-	}
-
-	if !ready {
-		validity.State = types.ValidityProvisional
-		validity.Reason = "ignition baselines not ready"
-	}
-
-	measurement := &types.Measurement{
-		Source:   types.SourcePumpDump,
-		Symbol:   symbol,
-		At:       at,
-		Maturity: thesis.Tick,
-		Validity: validity,
-		Scale: types.ScaleReference{
-			Kind:    types.ScaleObservationWindow,
-			From:    at,
-			Through: at,
-		},
-		Metrics: map[string]types.MetricSample{
-			types.MetricKey(types.MetricRVOL, types.SideNone): {
-				Raw:        output.RVOL,
-				Normalized: types.NormalizeFinite(output.RVOL),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricPrecursor, types.SideNone): {
-				Raw:        output.Precursor,
-				Normalized: types.NormalizeFinite(output.Precursor),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricSpread, types.SideNone): {
-				Raw:        output.Spread,
-				Normalized: types.NormalizeRatio(output.Spread, mid),
-				Unit:       types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricCompression, types.SideNone): {
-				Raw:        output.Compression,
-				Normalized: types.NormalizeFinite(output.Compression),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricIgnition, types.SideNone): {
-				Raw:        output.Ignition,
-				Normalized: types.NormalizeFinite(output.Ignition),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricTrend, types.SideNone): {
-				Raw:        output.Trend,
-				Normalized: types.NormalizeFinite(output.Trend),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricExhaustion, types.SideNone): {
-				Raw:        output.Exhaustion,
-				Normalized: types.NormalizeFinite(output.Exhaustion),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricStrength, types.SideNone): {
-				Raw:        output.Strength,
-				Normalized: types.NormalizeFinite(output.Strength),
-				Unit:       types.UnitDimensionless,
-			},
-		},
-	}
-
-	return []*types.Measurement{measurement}, nil
-}
-
-/*
-tickerObservationGate rejects unusable or stale ticker rows before measurement.
-*/
-func (signal *Signal) tickerObservationGate(
-	thesis *types.Thesis,
-	row kraken.TickerData,
-) (time.Time, bool, error) {
-	if row.Symbol == "" || row.Last == nil || row.Last.Sign() <= 0 {
-		return time.Time{}, false, nil
-	}
-
-	if row.Timestamp.IsZero() {
-		return time.Time{}, false, errnie.Err(
-			errnie.Validation,
-			"pumpdump: ticker observation timestamp required",
-			nil,
-		)
-	}
-
-	found, _ := thesis.Causal.Load("signal:pumpdump:lastAt")
-
-	if at, ok := found.(*sync.Map).Load(row.Symbol); ok {
-		if row.Timestamp.Before(at.(time.Time)) {
-			return time.Time{}, false, nil
-		}
-	}
-
-	return row.Timestamp, true, nil
-}
-
-/*
-resolveTickerBookState loads book, volume, increment, and spread for one symbol.
-*/
-func (signal *Signal) resolveTickerBookState(
-	thesis *types.Thesis,
-	row kraken.TickerData,
-) (tickerBookState, bool) {
-	found, _ := thesis.Causal.Load("signal:pumpdump:books")
-	bookFound, ok := found.(*sync.Map).Load(row.Symbol)
-
-	if !ok {
-		return tickerBookState{}, false
-	}
-
-	book := bookFound.(*flow.Book)
-	found, _ = thesis.Causal.Load("signal:pumpdump:volume")
-	volumeFound, ok := found.(*sync.Map).Load(row.Symbol)
-
-	if !ok {
-		return tickerBookState{}, false
-	}
-
-	volume := volumeFound.(float64)
-
-	if book == nil || volume <= 0 {
-		return tickerBookState{}, false
-	}
-
-	mid := book.Mid()
-	found, _ = thesis.Causal.Load("signal:pumpdump:increments")
-	incrementFound, ok := found.(*sync.Map).Load(row.Symbol)
-
-	if !ok {
-		return tickerBookState{}, false
-	}
-
-	increment := incrementFound.(float64)
-
-	if mid <= 0 || increment <= 0 {
-		return tickerBookState{}, false
-	}
-
-	spread := math.Round(book.Spread()/increment) * increment
-
-	if spread <= 0 {
-		return tickerBookState{}, false
-	}
-
-	return tickerBookState{
-		mid:    mid,
-		bid:    mid - spread/2,
-		ask:    mid + spread/2,
-		volume: volume,
-	}, true
-}
-
-/*
-ingest accumulates executed quantity and applies incremental book updates before
-the next ticker price closes the observation. Ticker-reported volume is not
-used as a substitute for trades when the subscribed trade stream is absent.
-*/
-func (signal *Signal) ingest(
-	thesis *types.Thesis,
-	trades []kraken.TradeData,
-	books []kraken.BookData,
-) error {
-	for _, trade := range trades {
-		if trade.Symbol == "" || trade.Price.Sign() <= 0 || trade.Qty <= 0 {
-			return errnie.Err(
-				errnie.Validation,
-				"pumpdump: valid executed trade required",
-				nil,
-			)
-		}
-
-		found, _ := thesis.Causal.Load("signal:pumpdump:volume")
-		volumeFound, ok := found.(*sync.Map).Load(trade.Symbol)
-		volume := 0.0
-
-		if ok {
-			volume = volumeFound.(float64)
-		}
-
-		found.(*sync.Map).Store(trade.Symbol, volume+trade.Qty)
-	}
-
-	if len(books) == 0 {
-		return nil
-	}
-
-	groups := types.ChunkRowsBySymbol(books, func(row kraken.BookData) string {
-		return row.Symbol
-	})
-
-	return types.RunSymbolGroupsParallel(groups, func(index int, rows []kraken.BookData) error {
-		for _, row := range rows {
-			if err := signal.ingestBook(thesis, row); err != nil {
-				return err
+		for _, ticker := range tickers {
+			if lastTime.IsZero() || ticker.Timestamp.After(lastTime) {
+				lastTime = ticker.Timestamp
 			}
+
+			found, ok := books.Load(ticker.Symbol)
+
+			if ok && found != nil {
+				book, ok := found.(*book.Book)
+
+				if !ok || book == nil {
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"pumpdump: unexpected book type",
+						nil,
+					))
+
+					continue
+				}
+
+				mid = book.Midpoint()
+			}
+
+			output, _, maturity, err := signal.algo.Measure(equation.IgnitionInput{
+				At:     ticker.Timestamp,
+				Symbol: ticker.Symbol,
+				Last:   ticker.Ask.Float64(),
+				Volume: ticker.AskQty,
+				Ask:    ticker.Ask.Float64(),
+				Bid:    ticker.Bid.Float64(),
+			})
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"pumpdump: failed to measure ignition",
+					err,
+				))
+
+				continue
+			}
+
+			measurements = append(measurements, &types.Measurement{
+				Source:   types.SourcePumpDump,
+				Symbol:   ticker.Symbol,
+				At:       ticker.Timestamp,
+				Maturity: maturity,
+				Validity: types.MeasurementValidity{},
+				Scale: types.ScaleReference{
+					Kind:    types.ScaleObservationWindow,
+					From:    lastTime,
+					Through: ticker.Timestamp,
+				},
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricRVOL, types.SideNone): {
+						Raw:        output.RVOL,
+						Normalized: types.NormalizeFinite(output.RVOL),
+						Unit:       types.UnitDimensionless,
+					},
+					types.MetricKey(types.MetricPrecursor, types.SideNone): {
+						Raw:        output.Precursor,
+						Normalized: types.NormalizeFinite(output.Precursor),
+						Unit:       types.UnitDimensionless,
+					},
+					types.MetricKey(types.MetricSpread, types.SideNone): {
+						Raw:        output.Spread,
+						Normalized: types.NormalizeRatio(output.Spread, mid.Float64()),
+						Unit:       types.UnitQuoteCurrency,
+					},
+					types.MetricKey(types.MetricCompression, types.SideNone): {
+						Raw:        output.Compression,
+						Normalized: types.NormalizeFinite(output.Compression),
+						Unit:       types.UnitDimensionless,
+					},
+					types.MetricKey(types.MetricIgnition, types.SideNone): {
+						Raw:        output.Ignition,
+						Normalized: types.NormalizeFinite(output.Ignition),
+						Unit:       types.UnitDimensionless,
+					},
+					types.MetricKey(types.MetricTrend, types.SideNone): {
+						Raw:        output.Trend,
+						Normalized: types.NormalizeFinite(output.Trend),
+						Unit:       types.UnitDimensionless,
+					},
+					types.MetricKey(types.MetricExhaustion, types.SideNone): {
+						Raw:        output.Exhaustion,
+						Normalized: types.NormalizeFinite(output.Exhaustion),
+						Unit:       types.UnitDimensionless,
+					},
+					types.MetricKey(types.MetricStrength, types.SideNone): {
+						Raw:        output.Strength,
+						Normalized: types.NormalizeFinite(output.Strength),
+						Unit:       types.UnitDimensionless,
+					},
+				},
+			})
 		}
-
-		return nil
-	})
-}
-
-/*
-ingestBook applies one incremental or snapshot book row to the symbol-local
-order book state pump measurements consume.
-*/
-func (signal *Signal) ingestBook(thesis *types.Thesis, row kraken.BookData) error {
-	if row.Symbol == "" || row.PriceIncrement == nil || row.PriceIncrement.Sign() <= 0 {
-		return errnie.Err(
-			errnie.Validation,
-			"pumpdump: symbol and price increment required for book update",
-			nil,
-		)
 	}
 
-	found, _ := thesis.Causal.Load("signal:pumpdump:books")
-	bookFound, ok := found.(*sync.Map).Load(row.Symbol)
-	var book *flow.Book
+	if len(trades) > 0 {
+		var lastTime time.Time
+		var mid *decimal.Decimal
 
-	if ok {
-		book = bookFound.(*flow.Book)
+		for _, trade := range trades {
+			if lastTime.IsZero() || trade.Timestamp.After(lastTime) {
+				lastTime = trade.Timestamp
+			}
+
+			found, ok := books.Load(trade.Symbol)
+
+			if ok && found != nil {
+				book, ok := found.(*book.Book)
+
+				if !ok || book == nil {
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"pumpdump: unexpected book type",
+						nil,
+					))
+
+					continue
+				}
+
+				mid = book.Midpoint()
+			}
+
+			output, _, maturity, err := signal.algo.Measure(equation.IgnitionInput{
+				At:     trade.Timestamp,
+				Symbol: trade.Symbol,
+				Last:   trade.Price.Float64(),
+				Volume: trade.Qty,
+			})
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"pumpdump: failed to measure ignition",
+					err,
+				))
+
+				continue
+			}
+
+			measurements = append(measurements, &types.Measurement{
+				Source:   types.SourcePumpDump,
+				Symbol:   trade.Symbol,
+				At:       trade.Timestamp,
+				Maturity: maturity,
+				Validity: types.MeasurementValidity{},
+				Scale: types.ScaleReference{
+					Kind:    types.ScaleObservationWindow,
+					From:    lastTime,
+					Through: trade.Timestamp,
+				},
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricRVOL, types.SideNone): {
+						Raw:        output.RVOL,
+						Normalized: types.NormalizeFinite(output.RVOL),
+						Unit:       types.UnitDimensionless,
+					},
+					types.MetricKey(types.MetricPrecursor, types.SideNone): {
+						Raw:        output.Precursor,
+						Normalized: types.NormalizeFinite(output.Precursor),
+						Unit:       types.UnitDimensionless,
+					},
+					types.MetricKey(types.MetricSpread, types.SideNone): {
+						Raw:        output.Spread,
+						Normalized: types.NormalizeRatio(output.Spread, mid.Float64()),
+						Unit:       types.UnitQuoteCurrency,
+					},
+					types.MetricKey(types.MetricCompression, types.SideNone): {
+						Raw:        output.Compression,
+						Normalized: types.NormalizeFinite(output.Compression),
+						Unit:       types.UnitDimensionless,
+					},
+					types.MetricKey(types.MetricIgnition, types.SideNone): {
+						Raw:        output.Ignition,
+						Normalized: types.NormalizeFinite(output.Ignition),
+						Unit:       types.UnitDimensionless,
+					},
+					types.MetricKey(types.MetricTrend, types.SideNone): {
+						Raw:        output.Trend,
+						Normalized: types.NormalizeFinite(output.Trend),
+						Unit:       types.UnitDimensionless,
+					},
+					types.MetricKey(types.MetricExhaustion, types.SideNone): {
+						Raw:        output.Exhaustion,
+						Normalized: types.NormalizeFinite(output.Exhaustion),
+						Unit:       types.UnitDimensionless,
+					},
+					types.MetricKey(types.MetricStrength, types.SideNone): {
+						Raw:        output.Strength,
+						Normalized: types.NormalizeFinite(output.Strength),
+						Unit:       types.UnitDimensionless,
+					},
+				},
+			})
+		}
 	}
 
-	increments, _ := thesis.Causal.Load("signal:pumpdump:increments")
-	increments.(*sync.Map).Store(row.Symbol, row.PriceIncrement.Float64())
-
-	if book == nil || row.Type == "snapshot" {
-		book = flow.NewBook()
-		found.(*sync.Map).Store(row.Symbol, book)
-	}
-
-	bids, asks, err := kraken.BookLevels(row)
-
-	if err != nil {
-		return errnie.Err(errnie.Validation, "pumpdump: decode book levels", err)
-	}
-
-	if err := book.Configure(flow.BookInput{
-		Symbol:   row.Symbol,
-		TickSize: row.PriceIncrement.Float64(),
-	}); err != nil {
-		return errnie.Err(errnie.Validation, "pumpdump: configure book", err)
-	}
-
-	if _, err := book.ApplyLevels(bids, flow.SideBid); err != nil {
-		return errnie.Err(errnie.Validation, "pumpdump: apply bid levels", err)
-	}
-
-	if _, err := book.ApplyLevels(asks, flow.SideAsk); err != nil {
-		return errnie.Err(errnie.Validation, "pumpdump: apply ask levels", err)
-	}
-
-	return nil
+	return measurements
 }
 
 /*

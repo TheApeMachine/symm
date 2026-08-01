@@ -44,21 +44,18 @@ func NewSignal(
 	api *websocket.API,
 	planner *strategy.Planner,
 	ui chan []byte,
+	subscriptions map[string]*types.Subscription[any],
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
 		status:  types.INITIALIZING,
-		thesis:  planner.Thesis,
 		ctx:     ctx,
 		cancel:  cancel,
 		api:     api,
 		planner: planner,
 		ui:      ui,
-		subscriptions: map[string]*types.Subscription[any]{
-			"ticker": api.Subscribe("ticker", types.NewSubscription[any]()),
-			"trade":  api.Subscribe("trade", types.NewSubscription[any]()),
-		},
+		subscriptions: subscriptions,
 		subscribers: &sync.Map{},
 	}
 

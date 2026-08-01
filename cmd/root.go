@@ -114,6 +114,17 @@ var (
 
 			errnie.Info("planner reported to be ready")
 
+			crypto := utils.NewWaiter[*trader.Crypto](trader.NewCrypto(
+				cmd.Context(),
+				api,
+				uiChannel,
+				nil,
+				planner,
+				desk,
+			)).Wait()
+
+			errnie.Info("trader reported to be ready")
+
 			signalSubscriptions := map[string]*types.Subscription[any]{}
 
 			for _, signalSpec := range []struct {
@@ -123,21 +134,21 @@ var (
 				{
 					name: "correlation",
 					build: func() (*types.Subscription[any], error) {
-						signal := utils.NewWaiter[*correlation.Signal](correlation.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						signal := utils.NewWaiter[*correlation.Signal](correlation.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait()
 						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
 					},
 				},
 				{
 					name: "cvd",
 					build: func() (*types.Subscription[any], error) {
-						signal := utils.NewWaiter[*cvd.Signal](cvd.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						signal := utils.NewWaiter[*cvd.Signal](cvd.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait()
 						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
 					},
 				},
 				{
 					name: "depthflow",
 					build: func() (*types.Subscription[any], error) {
-						signal, err := depthflow.NewSignal(cmd.Context(), api, planner, uiChannel)
+						signal, err := depthflow.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})
 
 						if err != nil {
 							return nil, err
@@ -150,49 +161,49 @@ var (
 				{
 					name: "exhaust",
 					build: func() (*types.Subscription[any], error) {
-						signal := utils.NewWaiter[*exhaust.Signal](exhaust.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						signal := utils.NewWaiter[*exhaust.Signal](exhaust.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait()
 						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
 					},
 				},
 				{
 					name: "hawkes",
 					build: func() (*types.Subscription[any], error) {
-						signal := utils.NewWaiter[*hawkes.Signal](hawkes.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						signal := utils.NewWaiter[*hawkes.Signal](hawkes.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait()
 						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
 					},
 				},
 				{
 					name: "leadlag",
 					build: func() (*types.Subscription[any], error) {
-						signal := utils.NewWaiter[*leadlag.Signal](leadlag.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						signal := utils.NewWaiter[*leadlag.Signal](leadlag.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait()
 						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
 					},
 				},
 				{
 					name: "liquidity",
 					build: func() (*types.Subscription[any], error) {
-						signal := utils.NewWaiter[*liquidity.Signal](liquidity.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						signal := utils.NewWaiter[*liquidity.Signal](liquidity.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait()
 						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
 					},
 				},
 				{
 					name: "pumpdump",
 					build: func() (*types.Subscription[any], error) {
-						signal := utils.NewWaiter[*pumpdump.Signal](pumpdump.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						signal := utils.NewWaiter[*pumpdump.Signal](pumpdump.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait()
 						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
 					},
 				},
 				{
 					name: "sentiment",
 					build: func() (*types.Subscription[any], error) {
-						signal := utils.NewWaiter[*sentiment.Signal](sentiment.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						signal := utils.NewWaiter[*sentiment.Signal](sentiment.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait()
 						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
 					},
 				},
 				{
 					name: "toxicity",
 					build: func() (*types.Subscription[any], error) {
-						signal := utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						signal := utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait()
 						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
 					},
 				},
@@ -220,16 +231,6 @@ var (
 			errnie.Info("analyzer reported to be ready")
 
 			planner.AttachAnalyzer(analyzer)
-
-			utils.NewWaiter[*trader.Crypto](trader.NewCrypto(
-				cmd.Context(),
-				uiChannel,
-				nil,
-				planner,
-				desk,
-			)).Wait()
-
-			errnie.Info("trader reported to be ready")
 
 			hub := ui.NewHub(
 				cmd.Context(),
