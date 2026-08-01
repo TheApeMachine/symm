@@ -3,7 +3,6 @@ package websocket
 import (
 	"context"
 	"encoding/json"
-	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -62,7 +61,6 @@ type API struct {
 	normalizer *spot.Normalizer
 	public     Conn
 	private    Conn
-	level3     *sync.Map
 }
 
 func NewAPI(
@@ -85,7 +83,6 @@ func NewAPI(
 		normalizer: normalizer,
 		public:     public,
 		private:    private,
-		level3:     &sync.Map{},
 	}
 
 	return api
@@ -95,6 +92,10 @@ func NewAPI(
 Status returns the API lifecycle state used by ordered system boot stages.
 */
 func (api *API) Status() types.Status {
+	if api.public == nil || api.private == nil {
+		return types.PENDING
+	}
+
 	if api.public.Status() != types.READY || api.private.Status() != types.READY {
 		return types.PENDING
 	}
@@ -109,16 +110,13 @@ func (api *API) Normalizer() *spot.Normalizer {
 	return api.normalizer
 }
 
-/*
-Name returns the normalized asset name for a given symbol.
-*/
-func (api *API) Name(symbol string) string {
-	return api.normalizer.Name(symbol)
-}
-
 func (api *API) Subscribe(
 	key string, subscription *types.Subscription[any],
 ) *types.Subscription[any] {
+	if key == "executions" || key == "add_order" {
+		return api.private.Subscribe(key, subscription)
+	}
+
 	return api.public.Subscribe(key, subscription)
 
 }
@@ -135,11 +133,13 @@ func (api *API) Balance() (map[string]*decimal.Decimal, error)   { return api.pr
 func (api *API) TradeBalance() (spot.TradesHistoryResult, error) { return api.private.TradeBalance() }
 
 func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error) {
-	for idx, symbol := range symbols {
-		symbols[idx] = api.normalizer.Name(symbol)
+	normalized := append([]string{}, symbols...)
+
+	for index, symbol := range normalized {
+		normalized[index] = api.normalizer.Name(symbol)
 	}
 
-	return api.private.TradeVolume(symbols)
+	return api.private.TradeVolume(normalized)
 }
 
 func (api *API) AddOrder(request *spot.AddOrderRequest) (spot.AddOrderResult, error) {

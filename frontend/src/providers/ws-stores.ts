@@ -1,11 +1,12 @@
 import {
 	repaintTerminalFluidChart,
 } from "#/components/charts/fluid";
-import type { JSONSerializable } from "#/components/ui/component";
-
-type Paint = (updates: JSONSerializable) => void;
+import { appStore } from "#/collections/app";
+import type { JSONSerializable, Paint } from "#/components/ui/paint";
 
 const registeredPainters = new Map<string, Set<Paint>>();
+
+export const drawers = {};
 
 export const registerPainter = (key: string, paint: Paint): (() => void) => {
 	const painters = registeredPainters.get(key) ?? new Set<Paint>();
@@ -29,13 +30,14 @@ export const paintRegistered = (key: string, updates: JSONSerializable): void =>
 };
 
 /*
-attach dispatches DRAW frames to drawers, then paintThesis for the thesis shell.
+attach dispatches DRAW frame entries to registered painters.
 */
 export const attach = (
 	worker: Worker,
 ) => {
 	worker.addEventListener("message", (event: MessageEvent) => {
 		if (event.data.type === "DRAW_BIN" && event.data.buffer instanceof ArrayBuffer) {
+			const focusSymbol = appStore.state.focusSymbol;
 			repaintTerminalFluidChart(focusSymbol);
 			return;
 		}
@@ -45,7 +47,7 @@ export const attach = (
 		}
 
 		for (const [key, value] of Object.entries(event.data.frame)) {
-		    paintRegistered(key, value as JSONSerializable);
+			paintRegistered(key, value as JSONSerializable);
 		}
 	});
 };

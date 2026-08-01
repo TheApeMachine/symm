@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { DEFAULT_KERNELS } from "#/collections/app";
 import { AuditTrail } from "#/components/dashboard/audit";
 import { Decisions } from "#/components/dashboard/decisions";
 import { FluidLegend } from "#/components/dashboard/fluid";
@@ -20,18 +21,7 @@ import { Flex } from "@/components/ui/flex";
 import { Grid } from "@/components/ui/grid";
 
 const RouteComponent = () => {
-	const kernels = [
-		"correlation",
-		"cvd",
-		"depthflow",
-		"exhaustion",
-		"hawkes",
-		"leadlag",
-		"liquidity",
-		"pumpdump",
-		"sentiment",
-		"toxicity",
-	];
+	const kernels = DEFAULT_KERNELS;
 
 	return (
 		<Flex.Column fullWidth className="h-full min-w-280">

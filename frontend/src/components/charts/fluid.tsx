@@ -296,9 +296,10 @@ const paintTerminalFluidCompose = (value: unknown, focusSymbol: string) => {
 	const phaseScan = terminalPhaseScanFromFrame(frame);
 	const phaseStatus = terminalPhaseStatusFromFrame(frame);
 
-	// Wave-only arrivals still need a paint so the phase dial can appear before
-	// the next display frame; empty picture+wave is a true no-op.
+	// This path currently paints the wave overlay only. An empty wave still clears
+	// the overlay so stale dial state does not remain visible.
 	if (wave.length === 0) {
+		overlay.clearRect(0, 0, width, height);
 		return;
 	}
 

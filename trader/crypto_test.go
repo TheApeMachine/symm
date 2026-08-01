@@ -19,7 +19,6 @@ func TestCryptoDecisionsReady(t *testing.T) {
 
 		Convey("It should accept non-empty decision payloads", func() {
 			So(crypto.decisionsReady([]types.Decision{{}}), ShouldBeTrue)
-			So(crypto.decisionsReady([]any{"decision"}), ShouldBeTrue)
 		})
 	})
 }

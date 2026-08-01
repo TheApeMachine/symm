@@ -1,10 +1,9 @@
 import { Component } from "#/components/ui/component";
 import { cn } from "#/lib/utils";
-import { registerPainter } from "#/providers/ws-stores";
 
 export const Count = () => {
 	return (
-		<Component register={(paint) => registerPainter("tick", paint)}>
+		<Component registerKey="tick">
 			{({ ref, className }) => (
 				<span
 					ref={ref}

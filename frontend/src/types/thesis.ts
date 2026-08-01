@@ -2,7 +2,7 @@ import type { Status } from "#/types/status";
 import type { Stoploss } from "#/types/stoploss";
 
 /*
-StrategyDecision mirrors the backend types.Decision payload published on each
+Decision mirrors the backend types.Decision payload published on each
 thesis tick so the frontend can render utility, alternatives, and cause without
 re-deriving gate verdicts from unrelated action frames.
 */
@@ -58,6 +58,8 @@ export interface Decision {
 	mark?: string;
 	stoploss?: Stoploss;
 }
+
+export type StrategyDecision = Decision;
 
 /*
 Finding mirrors the backend PostMortem evidence record attributed to one system

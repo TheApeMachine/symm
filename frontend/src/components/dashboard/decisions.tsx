@@ -1,9 +1,8 @@
-import type { StrategyDecision } from "#/collections/types";
+import type { Decision } from "#/collections/types";
 import { Component } from "#/components/ui/component";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
 import { cn } from "#/lib/utils";
-import { registerPainter } from "#/providers/ws-stores";
 import { Flex } from "@/components/ui/flex";
 
 const slotCount = 6;
@@ -20,11 +19,11 @@ type PaintModel = {
 	rows: RowModel[];
 };
 
-const normalizeDecisions = (value: unknown): StrategyDecision[] => {
-	if (Array.isArray(value)) return value as StrategyDecision[];
+const normalizeDecisions = (value: unknown): Decision[] => {
+	if (Array.isArray(value)) return value as Decision[];
 	if (value !== null && typeof value === "object")
-		return Object.values(value as Record<string, StrategyDecision>);
-	return value != null ? [value as StrategyDecision] : [];
+		return Object.values(value as Record<string, Decision>);
+	return value != null ? [value as Decision] : [];
 };
 
 const hiddenRow = (): RowModel => ({
@@ -34,7 +33,7 @@ const hiddenRow = (): RowModel => ({
 	action: "",
 });
 
-const buildModel = (rows: StrategyDecision[]): PaintModel => {
+const buildModel = (rows: Decision[]): PaintModel => {
 	const sorted = rows
 		.slice()
 		.sort((left, right) => left.symbol.localeCompare(right.symbol));
@@ -60,14 +59,10 @@ const buildModel = (rows: StrategyDecision[]): PaintModel => {
 
 export const Decisions = () => (
 	<Component
-		register={(paint) =>
-			registerPainter("decisions", (updates) => {
-				paint(buildModel(normalizeDecisions(updates)));
-			})
-		}
+		registerKey="decisions"
 		select="rows"
 	>
-		{({ ref, className, slots }) => (
+		{({ ref, className }) => (
 			<Flex.Column ref={ref} className="gap-2">
 				<Flex.Row className="items-baseline justify-between border-(--line) border-b px-1 pb-2">
 					<Typography.Span className="text-[11px] tracking-[0.22em] text-(--f3)">
@@ -86,7 +81,7 @@ export const Decisions = () => (
 				<List
 					className={cn("min-h-0 flex-1 border-(--line) border-b", className)}
 				>
-					{slots.map((index) => (
+					{Array.from({ length: slotCount }, (_, index) => (
 						<List.Item
 							key={`${index}-decision`}
 							className="justify-between"

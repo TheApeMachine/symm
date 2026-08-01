@@ -16,6 +16,7 @@ type Book struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	status      types.Status
+	mu          sync.RWMutex
 	manager     *spot.BookManager
 	subscribers *sync.Map
 }
@@ -44,7 +45,9 @@ func NewBook(ctx context.Context) *Book {
 
 		managed.EnableMaxDepth = false
 		managed.NoBookCrossing = false
+		book.mu.Lock()
 		book.status = types.READY
+		book.mu.Unlock()
 
 		managed.OnUpdated.Recurring(func(
 			bookEvent *callback.Event[*spotbook.UpdateOptions],
@@ -76,7 +79,9 @@ func NewBook(ctx context.Context) *Book {
 			bookEvent *callback.Event[*spotbook.ChecksumResult],
 		) {
 			if !bookEvent.Data.Match {
+				book.mu.Lock()
 				book.status = types.ERROR
+				book.mu.Unlock()
 
 				errnie.Error(errnie.Err(
 					errnie.Validation,
@@ -95,6 +100,9 @@ func NewBook(ctx context.Context) *Book {
 }
 
 func (book *Book) Status() types.Status {
+	book.mu.RLock()
+	defer book.mu.RUnlock()
+
 	return book.status
 }
 

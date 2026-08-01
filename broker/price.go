@@ -56,7 +56,7 @@ func (price *Price) Status() types.Status {
 Update refreshes the cached ticker for a symbol and returns the new row.
 */
 func (price *Price) Update(ticker *kraken.TickerData) {
-	price.tickers.Store(ticker.Symbol, ticker)
+	price.tickers.Store(price.api.Normalizer().Name(ticker.Symbol), ticker)
 }
 
 /*
@@ -136,7 +136,7 @@ func (price *Price) WithFriction(
 	switch direction {
 	case BUY:
 		out, err = price.normalizer.FormatPrice(
-			symbol, volume.Mul(tick.Bid).OffsetPercent(fee.Fee),
+			symbol, volume.Mul(tick.Ask).OffsetPercent(fee.Fee),
 		)
 	case SELL:
 		out, err = price.normalizer.FormatPrice(
@@ -201,7 +201,7 @@ func (price *Price) Fee(symbol string) (*decimal.Decimal, error) {
 Tick returns the latest cached ticker row for a symbol.
 */
 func (price *Price) Tick(symbol string) *kraken.TickerData {
-	value, ok := price.tickers.Load(symbol)
+	value, ok := price.tickers.Load(price.api.Normalizer().Name(symbol))
 
 	if !ok {
 		return nil
@@ -228,7 +228,7 @@ func (price *Price) GetFees(symbols []string) error {
 	}
 
 	for symbol, fee := range tradeVolumeResult.Fees {
-		price.fees.Store(price.api.Name(symbol), fee)
+		price.fees.Store(price.api.Normalizer().Name(symbol), fee)
 	}
 
 	price.status = types.READY
@@ -238,7 +238,7 @@ func (price *Price) GetFees(symbols []string) error {
 func (price *Price) getTickAndFee(symbol string) (
 	*kraken.TickerData, *kraken.TradeVolumeFee, error,
 ) {
-	found, ok := price.fees.Load(price.api.Name(symbol))
+	found, ok := price.fees.Load(price.api.Normalizer().Name(symbol))
 
 	if !ok || found == nil {
 		return nil, nil, errnie.Error(errnie.Err(

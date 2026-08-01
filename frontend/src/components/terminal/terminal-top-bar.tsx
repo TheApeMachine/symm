@@ -3,7 +3,6 @@ import { appStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { Component } from "#/components/ui/component";
 import { cn } from "#/lib/utils";
-import { registerPainter } from "#/providers/ws-stores";
 import { Balance } from "@/components/balance";
 import { Count } from "@/components/count";
 import { Badge } from "@/components/ui/badge";
@@ -89,7 +88,7 @@ export const TerminalTopBar = () => {
 					</span>
 				</button>
 				<Balance />
-				<Component register={(paint) => registerPainter("tick", paint)}>
+				<Component registerKey="tick">
 					{({ ref }) => (
 						<span ref={ref} className="font-mono text-[11px] text-(--f3)">
 							tick <span data-paint="count" className="text-(--f1)" />

@@ -1,24 +1,22 @@
-import { describe, expect, it } from "vitest";
-import { drawers } from "#/providers/ws-stores";
+import { describe, expect, it, vi } from "vitest";
+import {
+	paintRegistered,
+	registerPainter,
+} from "#/providers/ws-stores";
 
-describe("drawers", () => {
-	it("registers paint under backend wire keys", () => {
-		expect(typeof drawers.measurements.paint).toBe("function");
-		expect(drawers.measurements.keys?.hawkes.input).toBe("history");
-		expect(drawers.measurements.keys?.health.input).toBe("latest");
-		expect(drawers.measurements.keys?.palette).toBeTypeOf("function");
-		expect(typeof drawers.tick.paint).toBe("function");
-		expect(typeof drawers.decisions.paint).toBe("function");
-		expect(drawers.resonance.paint.input).toBe("latest");
-		expect(drawers.manifold.paint.input).toBe("latest");
-		expect(
-			(drawers as Record<string, unknown>).manifold_particles,
-		).toBeUndefined();
-		expect(typeof drawers.manifold_wave.paint).toBe("function");
-		expect(drawers.cognition.paint.input).toBe("latest");
-		expect(drawers.resonance.keys?.prediction.input).toBe("history");
-		expect(drawers.causal.keys?.allocation.input).toBe("latest");
-		expect(drawers.manifold.keys?.allocation.input).toBe("latest");
-		expect(drawers.resonance.keys?.allocation.input).toBe("latest");
+describe("ws-stores", () => {
+	it("registers painters under backend wire keys and dispatches updates", () => {
+		const paint = vi.fn();
+		const unregister = registerPainter("measurements", paint);
+
+		paintRegistered("measurements", { source: "hawkes" });
+
+		expect(paint).toHaveBeenCalledTimes(1);
+		expect(paint).toHaveBeenCalledWith({ source: "hawkes" });
+
+		unregister();
+		paintRegistered("measurements", { source: "sentiment" });
+
+		expect(paint).toHaveBeenCalledTimes(1);
 	});
 });

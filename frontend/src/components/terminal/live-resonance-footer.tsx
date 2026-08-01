@@ -1,8 +1,7 @@
 import { Component } from "#/components/ui/component";
-import { registerPainter } from "#/providers/ws-stores";
 
 export const LiveResonanceFooter = () => (
-	<Component register={(paint) => registerPainter("resonance", paint)}>
+	<Component registerKey="resonance">
 		{({ ref, className }) => (
 			<span ref={ref} className={className}>
 				symbol <span data-paint="symbol" />

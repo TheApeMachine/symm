@@ -5,7 +5,6 @@ import { Component } from "#/components/ui/component";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
 import { cn } from "#/lib/utils";
-import { registerPainter } from "#/providers/ws-stores";
 import { Flex } from "@/components/ui/flex";
 
 type KernelRow = {
@@ -127,11 +126,7 @@ export const KernelList = () => {
 
 	return (
 		<Component
-			register={(paint) =>
-				registerPainter("measurements", (updates) => {
-					paint(buildModel(updates));
-				})
-			}
+			registerKey="measurements"
 			select="rows"
 		>
 			{({ ref, className }) => (

@@ -47,6 +47,14 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		))
 	}
 
+	if budget == nil || budget.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"allocator budget unavailable or non-positive",
+			nil,
+		))
+	}
+
 	for i := range thesis.Decisions {
 		decision := &thesis.Decisions[i]
 
@@ -81,7 +89,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 
 		cost := allocator.price.WithFriction(pair.Symbol, broker.BUY, qty)
 
-		if err != nil || cost == nil || cost.Cmp(budget) > 0 {
+		if cost == nil || cost.Cmp(budget) > 0 {
 			allocator.reject(decision, "taker cost exceeds available budget")
 			continue
 		}
@@ -91,11 +99,16 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			continue
 		}
 
-		ask := allocator.price.WithFriction(pair.Symbol, broker.BUY, qty)
+		referencePrice := allocator.price.Mark(pair.Symbol, broker.BUY)
+
+		if referencePrice == nil {
+			allocator.reject(decision, "reference price unavailable")
+			continue
+		}
 
 		decision.ProposedQuantity = qty
 		decision.ProposedNotional = cost
-		decision.ReferencePrice = ask.Copy()
+		decision.ReferencePrice = referencePrice.Copy()
 		decision.Reason = "sized from transaction budget"
 
 		if decision.Cause != "rotation" {
@@ -106,7 +119,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 	return nil
 }
 
-func (a *Allocator) reject(decision *types.Decision, reason string) {
+func (allocator *Allocator) reject(decision *types.Decision, reason string) {
 	decision.Action = types.ActionNothing
 	decision.Reason = reason
 	decision.ProposedQuantity = nil
@@ -114,4 +127,4 @@ func (a *Allocator) reject(decision *types.Decision, reason string) {
 	decision.ReservationID = ""
 }
 
-func (a *Allocator) Close() {}
+func (allocator *Allocator) Close() {}

@@ -1,13 +1,12 @@
 import { Component } from "#/components/ui/component";
 import { Flex } from "#/components/ui/flex";
 import { cn } from "#/lib/utils";
-import { registerPainter } from "#/providers/ws-stores";
 
 export const Pulse = () => {
 	return (
 		<Component
 			className="metric-grid"
-			register={(paint) => registerPainter("tick", paint)}
+			registerKey="tick"
 		>
 			{({ ref, className }) => (
 				<Flex.Row

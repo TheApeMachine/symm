@@ -46,6 +46,7 @@ type Analyzer struct {
 	recorder      *audit.Recorder
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
+	mu            sync.Mutex
 }
 
 /*
@@ -78,6 +79,7 @@ func NewAnalyzer(
 		cognition:     cognition.NewSolver(tree, ui, recorder),
 		graph:         graph.NewSolver(recorder),
 		ui:            ui,
+		binui:         binui,
 		recorder:      recorder,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
@@ -88,6 +90,45 @@ func NewAnalyzer(
 }
 
 func (analyzer *Analyzer) run() {
+	required := []string{
+		"correlation",
+		"cvd",
+		"depthflow",
+		"exhaust",
+		"hawkes",
+		"leadlag",
+		"liquidity",
+		"pumpdump",
+		"sentiment",
+		"toxicity",
+	}
+
+	if analyzer.subscriptions == nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"analyzer subscriptions not configured",
+			nil,
+		))
+
+		return
+	}
+
+	for _, key := range required {
+		subscription := analyzer.subscriptions[key]
+
+		if subscription != nil && subscription.Channel != nil {
+			continue
+		}
+
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"analyzer missing required signal subscription: "+key,
+			nil,
+		))
+
+		return
+	}
+
 	go func() {
 		for {
 			select {
@@ -124,7 +165,7 @@ func (analyzer *Analyzer) process(in any) {
 	if !ok {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			"failed to cast cvd thesis",
+			"failed to convert signal payload to thesis",
 			nil,
 		))
 
@@ -163,31 +204,37 @@ func (analyzer *Analyzer) onSignal(thesis *types.Thesis) {
 		}
 	}
 
-	analyzer.subscribers.Range(func(key, value any) bool {
-		if subscribers, ok := value.([]*types.Subscription[any]); ok {
-			for _, subscriber := range subscribers {
-				subscriber.Send(thesis)
-			}
-		}
+	value, ok := analyzer.subscribers.Load("thesis")
 
-		return true
-	})
+	if !ok {
+		return
+	}
+
+	if subscribers, ok := value.([]*types.Subscription[any]); ok {
+		for _, subscriber := range subscribers {
+			subscriber.Send(thesis)
+		}
+	}
 }
 
 func (analyzer *Analyzer) Subscribe(
 	key string,
 	subscription *types.Subscription[any],
 ) *types.Subscription[any] {
-	subscribers, ok := analyzer.subscribers.LoadOrStore(
-		key, []*types.Subscription[any]{subscription},
-	)
+	analyzer.mu.Lock()
+	defer analyzer.mu.Unlock()
 
-	if ok {
-		analyzer.subscribers.Store(key, append(
-			subscribers.([]*types.Subscription[any]),
-			subscription,
-		))
+	current, ok := analyzer.subscribers.Load(key)
+
+	if !ok {
+		analyzer.subscribers.Store(key, []*types.Subscription[any]{subscription})
+		return subscription
 	}
+
+	found := current.([]*types.Subscription[any])
+	next := append([]*types.Subscription[any]{}, found...)
+	next = append(next, subscription)
+	analyzer.subscribers.Store(key, next)
 
 	return subscription
 }

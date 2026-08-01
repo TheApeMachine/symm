@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -31,6 +32,7 @@ type Signal struct {
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
+	mu            sync.Mutex
 }
 
 /*
@@ -80,17 +82,22 @@ func (signal *Signal) Status() types.Status {
 func (signal *Signal) Subscribe(
 	channel string, subscription *types.Subscription[any],
 ) *types.Subscription[any] {
-	subscribers, ok := signal.subscribers.LoadOrStore(
-		channel, []*types.Subscription[any]{subscription},
+	return signalshared.Subscribe(
+		&signal.mu,
+		signal.subscribers,
+		channel,
+		subscription,
 	)
+}
+
+func (signal *Signal) publishThesis() {
+	subscribers, ok := signal.subscribers.Load("thesis")
 
 	if ok && subscribers != nil {
-		signal.subscribers.Store(
-			channel, append(subscribers.([]*types.Subscription[any]), subscription),
-		)
+		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
+			subscriber.Send(signal.thesis)
+		}
 	}
-
-	return subscription
 }
 
 func (signal *Signal) run() {
@@ -115,15 +122,7 @@ func (signal *Signal) onTicker(ticker *kraken.Ticker) {
 		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
 	)
 
-	subscribers, ok := signal.subscribers.Load(
-		"thesis",
-	)
-
-	if ok && subscribers != nil {
-		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-			subscriber.Send(signal.thesis)
-		}
-	}
+	signal.publishThesis()
 }
 
 func (signal *Signal) Calculate(

@@ -1,11 +1,10 @@
 import { Component } from "#/components/ui/component";
 import { Flex } from "#/components/ui/flex";
 import { cn } from "#/lib/utils";
-import { registerPainter } from "#/providers/ws-stores";
 
 export const Balance = () => {
 	return (
-		<Component register={(paint) => registerPainter("balances", paint)}>
+		<Component registerKey="balances">
 			{({ ref, className }) => (
 				<Flex.Row ref={ref} align="center" gap={6} className={cn(className)}>
 					<Flex.Column className="items-end gap-px">

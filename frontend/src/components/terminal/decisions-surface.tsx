@@ -2,17 +2,15 @@ import { DecisionSideRail } from "#/components/terminal/decision-side-rail";
 import { LiveDecisionsEntryLine } from "#/components/terminal/decisions-entry-line";
 import { StrategyDecisionRows } from "#/components/terminal/strategy-decisions";
 import { cn } from "#/lib/utils";
-import { registerPainter } from "#/providers/ws-stores";
 import { Panel } from "@/components/ui/panel";
 import { Component } from "../ui/component";
 import { Typography } from "../ui/typography";
 
 /*
-DecisionsSurface is the static candidate-ladder shell. DRAW paints stats via
-paintDecisions* exports without React reconciliation each tick.
+DecisionsSurface is the static candidate-ladder shell for live decision paint.
 */
 export const DecisionsSurface = () => (
-	<Component register={(paint) => registerPainter("decisions", paint)}>
+	<Component registerKey="decisions">
 		{({ ref, className }) => (
 			<div
 				ref={ref}
@@ -22,7 +20,7 @@ export const DecisionsSurface = () => (
 				)}
 			>
 				<div className="min-h-0 overflow-auto px-5 py-4.5">
-					<div className="mb-4.5 grid grid-cols-4 gap-2.5">
+					<div className="mb-4.5 grid grid-cols-1 gap-2.5">
 						<div
 							className="rounded border border-(--line) bg-(--surface) px-3 py-2.5"
 						>
@@ -30,12 +28,8 @@ export const DecisionsSurface = () => (
 								<Typography.Span data-paint="title" />
 
 							</div>
-							<div
-								className={cn(
-									"mt-0.5 font-mono font-semibold text-[26px] leading-[1.1]",
-								)}
-							>
-								0
+							<div className="mt-0.5 font-mono font-semibold text-[26px] leading-[1.1]">
+								<Typography.Span data-paint="value" />
 							</div>
 							<Typography.Span data-paint="subtitle" />
 						</div>

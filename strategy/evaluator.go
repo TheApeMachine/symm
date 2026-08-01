@@ -1,6 +1,8 @@
 package strategy
 
 import (
+	"sync"
+
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/mcts"
@@ -43,6 +45,18 @@ func NewEvaluator(
 func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 	if thesis == nil {
 		return
+	}
+
+	if thesis.Cognition == nil {
+		thesis.Cognition = &sync.Map{}
+	}
+
+	if thesis.Causal == nil {
+		thesis.Causal = &sync.Map{}
+	}
+
+	if thesis.Graphs == nil {
+		thesis.Graphs = &sync.Map{}
 	}
 
 	occupied := getOccupiedSymbols(thesis, evaluator.desk)
@@ -310,7 +324,7 @@ func (evaluator Evaluator) stampFriction(
 		forecast.ExpectedFees = decimal.NewFromInt64(0)
 		forecast.ExpectedSpread = decimal.NewFromInt64(0)
 		forecast.ExpectedImpact = decimal.NewFromInt64(0)
-		forecast.FrictionReady = true
+		forecast.FrictionReady = false
 
 		errnie.Error(errnie.Err(
 			errnie.NotFound,
@@ -322,6 +336,11 @@ func (evaluator Evaluator) stampFriction(
 	}
 
 	forecast.ExpectedFees = fee
+
+	if forecast.ExpectedSpread == nil {
+		forecast.ExpectedSpread = decimal.NewFromInt64(0)
+	}
+
 	forecast.ExpectedImpact = forecast.ExpectedSpread.Mul(
 		decimal.NewFromFloat64(0.1),
 	)
@@ -465,6 +484,10 @@ func inspectGraph(thesis *types.Thesis, symbol string) (supports, contradicts fl
 
 func getOccupiedSymbols(thesis *types.Thesis, desk *broker.Desk) map[string]struct{} {
 	occupied := make(map[string]struct{})
+
+	if thesis == nil || desk == nil {
+		return occupied
+	}
 
 	for position := range desk.Positions() {
 		if position.Status != types.CLOSED {

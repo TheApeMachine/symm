@@ -2,9 +2,9 @@ package trader
 
 import (
 	"context"
-	"reflect"
 	"sync/atomic"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
@@ -73,7 +73,7 @@ func (crypto *Crypto) run() {
 			case <-crypto.ctx.Done():
 				return
 			case decisions := <-crypto.subscriptions["decisions"].Channel:
-				if crypto.decisionsReady(decisions) == false {
+				if !crypto.decisionsReady(decisions) {
 					continue
 				}
 
@@ -91,23 +91,19 @@ func (crypto *Crypto) run() {
 }
 
 func (crypto *Crypto) decisionsReady(decisions any) bool {
-	if decisions == nil {
-		return false
-	}
-
 	typedDecisions, ok := decisions.([]types.Decision)
 
-	if ok {
-		return len(typedDecisions) > 0
-	}
+	if !ok {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"crypto: unexpected decisions payload type",
+			nil,
+		))
 
-	value := reflect.ValueOf(decisions)
-
-	if value.Kind() != reflect.Slice {
 		return false
 	}
 
-	return value.Len() > 0
+	return len(typedDecisions) > 0
 }
 
 func (crypto *Crypto) Close() (err error) {

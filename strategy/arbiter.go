@@ -32,7 +32,7 @@ func NewArbiter(desk *broker.Desk, price *broker.Price) *Arbiter {
 }
 
 // Arbitrate ranks candidate entries, allocates available slots, and performs displacement/rotation.
-func (a *Arbiter) Arbitrate(thesis *types.Thesis) {
+func (arbiter *Arbiter) Arbitrate(thesis *types.Thesis) {
 	if thesis == nil {
 		return
 	}
@@ -53,8 +53,8 @@ func (a *Arbiter) Arbitrate(thesis *types.Thesis) {
 		return enters[i].Utility > enters[j].Utility
 	})
 
-	openSlots := a.desk.OpenSlots(false)
-	incumbents := a.getIncumbents()
+	openSlots := arbiter.desk.OpenSlots(false)
+	incumbents := arbiter.getIncumbents()
 
 	for _, candidate := range enters {
 		if openSlots > 0 {
@@ -65,7 +65,7 @@ func (a *Arbiter) Arbitrate(thesis *types.Thesis) {
 		}
 
 		// Slots exhausted: Check Bellman Rotation Gate against weakest incumbent
-		if exitDec, enterDec, ok := a.tryDisplace(candidate, incumbents); ok {
+		if exitDec, enterDec, ok := arbiter.tryDisplace(candidate, incumbents); ok {
 			thesis.NoteLifecycle(exitDec.Symbol, types.LifecycleExitSelected, thesis.At)
 			thesis.NoteLifecycle(enterDec.Symbol, types.LifecycleEntrySelected, thesis.At)
 			retained = append(retained, exitDec, enterDec)
@@ -82,7 +82,7 @@ func (a *Arbiter) Arbitrate(thesis *types.Thesis) {
 	thesis.Decisions = retained
 }
 
-func (a *Arbiter) tryDisplace(
+func (arbiter *Arbiter) tryDisplace(
 	candidate types.Decision,
 	incumbents []Incumbent,
 ) (types.Decision, types.Decision, bool) {

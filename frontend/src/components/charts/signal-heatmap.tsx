@@ -1,17 +1,13 @@
-import { Component } from "#/components/ui/component";
 import { cn } from "#/lib/utils";
-import { registerPainter } from "#/providers/ws-stores";
+import { Component } from "#/components/ui/component";
 import { Flex } from "../ui/flex";
 
 /*
-TerminalSignalHeatmap is the static canvas shell. DRAW paints via
-paintTerminalSignalHeatmap.
+TerminalSignalHeatmap is the static canvas shell. The measurements painter
+updates its canvas directly.
 */
 export const TerminalSignalHeatmap = () => (
-	<Component
-		register={(paint) => registerPainter("measurements", paint)}
-		select="rows"
-	>
+	<Component registerKey="measurements">
 		{({ ref, className }) => (
 			<Flex.Column ref={ref} className={cn("min-h-0 overflow-auto", className)}>
 				<canvas className="block size-full" />

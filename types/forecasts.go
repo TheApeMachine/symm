@@ -27,14 +27,14 @@ type Forecasts struct {
 	CalibrationSamples         uint64           `json:"calibrationSamples"`
 	IncrementalMSE             float64          `json:"incrementalMSE" validate:"finite"`
 	IncrementalSkillLowerBound float64          `json:"incrementalSkillLowerBound" validate:"finite"`
-	ExpectedReturn             *decimal.Decimal `json:"expectedReturn" validate:"finite"`
+	ExpectedReturn             *decimal.Decimal `json:"expectedReturn" validate:"required,finite"`
 	ReferencePrice             *decimal.Decimal `json:"referencePrice" validate:"required"`
 	BuyCapacity                *decimal.Decimal `json:"buyCapacity" validate:"required"`
 	SellCapacity               *decimal.Decimal `json:"sellCapacity" validate:"required"`
-	ExpectedFees               *decimal.Decimal `json:"expectedFees" validate:"finite,nonnegative"`
-	ExpectedSpread             *decimal.Decimal `json:"expectedSpread" validate:"finite,nonnegative"`
-	ExpectedImpact             *decimal.Decimal `json:"expectedImpact" validate:"finite,nonnegative"`
-	ExpectedAdverseSelection   *decimal.Decimal `json:"expectedAdverseSelection" validate:"finite,nonnegative"`
+	ExpectedFees               *decimal.Decimal `json:"expectedFees" validate:"required,finite,nonnegative"`
+	ExpectedSpread             *decimal.Decimal `json:"expectedSpread" validate:"required,finite,nonnegative"`
+	ExpectedImpact             *decimal.Decimal `json:"expectedImpact" validate:"required,finite,nonnegative"`
+	ExpectedAdverseSelection   *decimal.Decimal `json:"expectedAdverseSelection" validate:"required,finite,nonnegative"`
 	Uncertainty                float64          `json:"uncertainty" validate:"finite,nonnegative"`
 	Confidence                 float64          `json:"confidence" validate:"finite,min=0,max=1"`
 }
@@ -61,6 +61,12 @@ func (forecasts Forecasts) Eligible() bool {
 	// The one-sided Student-t skill bound requires at least two resolved
 	// strict-prior forecasts. A label alone cannot make a forecast calibrated.
 	if forecasts.CalibrationSamples < 2 || forecasts.IncrementalSkillLowerBound <= 0 {
+		return false
+	}
+
+	if forecasts.ExpectedReturn == nil || forecasts.ExpectedFees == nil ||
+		forecasts.ExpectedSpread == nil || forecasts.ExpectedImpact == nil ||
+		forecasts.ExpectedAdverseSelection == nil {
 		return false
 	}
 
@@ -99,6 +105,12 @@ ExecutableReturn subtracts every modeled execution friction
 from the expected market return.
 */
 func (forecasts Forecasts) ExecutableReturn() *decimal.Decimal {
+	if forecasts.ExpectedReturn == nil || forecasts.ExpectedFees == nil ||
+		forecasts.ExpectedSpread == nil || forecasts.ExpectedImpact == nil ||
+		forecasts.ExpectedAdverseSelection == nil {
+		return nil
+	}
+
 	return forecasts.ExpectedReturn.
 		Sub(forecasts.ExpectedFees).
 		Sub(forecasts.ExpectedSpread).

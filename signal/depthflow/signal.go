@@ -47,13 +47,17 @@ func NewSignal(
 	api *websocket.API,
 	planner *strategy.Planner,
 	ui chan []byte,
-) *Signal {
+) (*Signal, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	sample, err := flow.NewSample(viper.GetViper().GetInt("signals.depthflow.sampleSize"))
 
 	if err != nil {
 		cancel()
-		return nil
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"depthflow: failed to create flow sample",
+			err,
+		))
 	}
 
 	signal := &Signal{
@@ -75,7 +79,7 @@ func NewSignal(
 
 	signal.status = types.READY
 	signal.run()
-	return signal
+	return signal, nil
 }
 
 /*

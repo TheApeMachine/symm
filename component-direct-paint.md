@@ -1,28 +1,47 @@
-You really didn't... I made a great amount of changes in the hope data you will soon truly get it, because you could specifically in this case be of such great help but I have been trying to explain this to you since yesterday, and you keep trying to push things in a different direction.
-Maybe we can say this: Have a look at what I just did. Do you see everything I have removed? I have removed this, because it should no-longer be there.
-@/frontend/src/components/ui/component.tsx is basically:
+# Component Direct Paint
 
-- Part data-provider
-- Part data-query
-- Part "rendering" engine
+## Overview
 
-Data Provider: because it registers close to the websocket its "paint" method. It should basically for now ALWAYS be the internal paint method from Component, no custom things. In fact, even inside Component itself it is already getting out of hand again, and it is not even needed, because this is all so much less complex than you are making it.
+The direct-paint system registers one `Component` paint callback per backend wire key in `frontend/src/providers/ws-stores.ts`. Each callback receives `paint(updates)` payloads and applies updates only within the DOM subtree owned by that `Component` instance.
 
-So, we now have a reference to the paint method from a Component, which wraps a part of the UI, in @/frontend/src/providers/ws-stores.ts plus a key for that registration, which allows our super simple paintRegistered know which data goes where. So if I am registered with my Component to the measurements key, that data will be sent to my Component instance's paint method, as "updates".
+`frontend/src/components/ui/component.tsx` provides the local rendering scope by exposing a root ref and scanning only that subtree for supported paint attributes.
 
-And now comes the cool part, if it is still noticeable between all the additional complexity that has been introduced. But our Component supplies a ref to the part of the UI it wraps, so we have a "local" scope we can use querySelector on. This allows us to get all the elements that have certain attributes like "data-paint". 
+## Component paint registration contract
 
-So, all we have to do is understand the shapes of the data, and neatly align things.
+- A `Component` registers a paint callback under one backend key such as `measurements`, `decisions`, `tick`, or `cortex`.
+- `paintRegistered(key, updates)` dispatches frame entries only to callbacks registered for that key.
+- Each component instance updates its own scoped DOM subtree; no global selector pass is used for direct paint.
 
-In our example, we subscribed to "measurements". Now unfortunately that is a bit of a weird one, since it is both a collection of "typed" frames, but they are sent "flat", so we cannot just do: data-paint="pumpdump.strength" for example.
+## Supported data attributes
 
-And here we get to how we will solve the issues we will run in to. Additional data-attributes. We supposedly already had the simpler stuff covered so we could do something like data-transform=".2f" or something like that.
+The current implementation supports these active attributes:
 
-For @/frontend/src/components/dashboard/positions.tsx we introduced 2 new concepts:
+- `data-paint`: reads a value from the `paint(updates)` payload and writes text content by default.
+- `data-paint-format`: formats numeric values before painting, as implemented by `component.tsx`.
+- `data-paint-class`: toggles classes based on expected-value rules.
+- `data-paint-prop`: writes a painted value to a DOM property path instead of `textContent`.
+- `data-set`: reads a value from the payload and applies it to a property path named by `data-target`.
+- `data-target`: property path used together with `data-set`.
+- `data-scope`, `data-filter`, and `data-index`: narrow array payloads to one matching row before paint application.
 
-1. The "slots" which allow us to dynamically render the "surfaces" we need for direct painting.
-2. I can't see it now, but it was something like: data-set, or data-update or something, and this was to control the stoploss widget on the positions card.
+These attributes align directly with payload keys inside `paint(updates)`. For example, `data-paint="source"` reads the `source` key from the selected payload object, while `data-set="bar_width" data-target="style.width"` applies the `bar_width` payload value to `style.width`.
 
-And now, taking it back to what we discussed earlier, retained data. So, if you can draw something in a loop, like a sparkline or Hawkes chart, then you can technically also draw this same thing as an unrolled loop right? And that is basically what we're doing here. As data comes in, it is just updating the absolute minimal, most granular thing that it needs to update to have the UI in the right state.
+## Planned or unsupported attributes
 
-And all it takes is to align the value of your data-paint, data-set, data-update, data-append, whatever you want to call the attributes, with the key inside the data shape you receive in paint(updates).
+The following attributes are not part of the active contract in `component.tsx` and should be treated as inert or planned unless explicit implementation is added:
+
+- `data-append`
+- `data-transform`
+- `data-update`
+
+Existing emitting components such as `frontend/src/components/terminal/kernel-list.tsx` and `frontend/src/components/dashboard/kernels.tsx` should use the implemented `data-paint`, `data-paint-format`, `data-paint-class`, `data-set`, and `data-target` contract.
+
+## Payload shapes and retained data
+
+The direct-paint system accepts both flat objects and arrays of typed rows:
+
+- Flat payloads are painted directly against matching `data-paint` or `data-set` keys.
+- Array payloads are narrowed by `data-scope`/`data-filter` or `data-index` before field reads occur.
+- Nested keys are resolved through dotted paths such as `validity.state`.
+
+This model is retained-data oriented. Incoming updates modify only the smallest affected DOM targets and do not rebuild the subtree. Canvas-based renderers may retain their own drawing state, while DOM-based direct paint retains the last written values in-place until a later update changes them.

@@ -1,5 +1,4 @@
 import { Component } from "#/components/ui/component";
-import { registerPainter } from "#/providers/ws-stores";
 
 /*
 XrayHawkesPanel streams focused buy-side conditional intensity directly onto its
@@ -8,7 +7,7 @@ canvas. Component owns the canvas history and paints each new measurement once.
 export const XrayHawkesPanel = () => (
 	<Component
 		select="$"
-		register={(paint) => registerPainter("measurements", paint)}
+		registerKey="measurements"
 	>
 		{({ ref }) => (
 			<div

@@ -1,6 +1,5 @@
 import { Component } from "#/components/ui/component";
 import { Flex } from "#/components/ui/flex";
-import { registerPainter } from "#/providers/ws-stores";
 
 /*
 SignalDetail is a direct-paint shell for one backend measurement row.
@@ -8,7 +7,7 @@ The Component wrapper binds data-paint paths directly to the live
 measurement payload on the top-level measurements key.
 */
 export const SignalDetail = () => (
-	<Component register={(paint) => registerPainter("measurements", paint)}>
+	<Component registerKey="measurements">
 		{({ ref, className }) => (
 			<Flex.Column
 				ref={ref}

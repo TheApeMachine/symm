@@ -77,12 +77,12 @@ func mustConnDecimal(value string) *decimal.Decimal {
 
 func TestTradeVolume(t *testing.T) {
 	Convey("Given a Kraken API with a normalizer and private trade volume response keyed by normalized pair name", t, func() {
-		mockConn := mockapi.NewConn(context.Background(), "ETH/USD")
+		mockConn := mockapi.NewConn(context.Background(), "BTC/USD")
 		private := &tradeVolumeConn{
 			client: mockConn.Client(),
 			tradeVolume: &kraken.TradeVolumeResult{
 				Fees: map[string]kraken.TradeVolumeFee{
-					"ETH/USD": {
+					"XXBT/ZUSD": {
 						Fee: mustConnDecimal("0.2600"),
 					},
 				},
@@ -91,13 +91,13 @@ func TestTradeVolume(t *testing.T) {
 		api := NewAPI(context.Background(), private, private)
 
 		Convey("TradeVolume should use the normalizer canonical name for request and fee lookup", func() {
-			result, err := api.TradeVolume([]string{"ETH/USD"})
+			result, err := api.TradeVolume([]string{"BTC/USD"})
 
 			So(err, ShouldBeNil)
-			So(private.tradeVolumeInput, ShouldResemble, []string{"ETH/USD"})
+			So(private.tradeVolumeInput, ShouldResemble, []string{"BTC/USD"})
 			So(result, ShouldNotBeNil)
 
-			fee, ok := result.Fees["ETH/USD"]
+			fee, ok := result.Fees["XXBT/ZUSD"]
 			So(ok, ShouldBeTrue)
 			So(fee.Fee.String(), ShouldEqual, "0.2600")
 		})

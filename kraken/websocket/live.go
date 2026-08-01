@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"sync/atomic"
 	"os"
 	"slices"
 	"strings"
@@ -38,15 +39,13 @@ var entityMap = map[string]func([]byte) any{
 	"trade":      func(buf []byte) any { return kraken.NewTrade(buf) },
 	"level3":     func(buf []byte) any { return kraken.NewLevel3(buf) },
 	"instrument": func(buf []byte) any { return kraken.NewInstrument(buf) },
-	"status":     func(buf []byte) any { return func() bool { return true }() },
-	"heartbeat":  func(buf []byte) any { return func() bool { return true }() },
-	"subscribe":  func(buf []byte) any { return func() bool { return true }() },
+	"status":     func(buf []byte) any { return true },
+	"heartbeat":  func(buf []byte) any { return true },
+	"subscribe":  func(buf []byte) any { return true },
 	"pong": func(buf []byte) any {
-		return func() map[string]any {
-			pong := map[string]any{}
-			errnie.Error(sonic.Unmarshal(buf, &pong))
-			return pong
-		}()
+		pong := map[string]any{}
+		errnie.Error(sonic.Unmarshal(buf, &pong))
+		return pong
 	},
 }
 
@@ -56,10 +55,14 @@ and Sub* resubscribe after the SDK reconnects.
 */
 type Live struct {
 	status      types.Status
+	statusMu    sync.RWMutex
 	ctx         context.Context
 	cancel      context.CancelFunc
 	pingCtx     context.Context
 	pingCancel  context.CancelFunc
+	pingReqID   atomic.Int64
+	lastPongMu  sync.RWMutex
+	lastPong    *time.Time
 	client      *spot.WebSocket
 	simulator   *Simulator
 	normalizer  *spot.Normalizer
@@ -103,7 +106,17 @@ func New(
 	}
 
 	live.client.URL = endpoint
-	live.normalizer.Use(live.client.REST)
+
+	if err := live.normalizer.Use(live.client.REST); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"websocket: failed to initialize normalizer",
+			err,
+		))
+
+		cancel()
+		return nil
+	}
 
 	if auth {
 		nonce, err := processAuthNonce()
@@ -138,7 +151,19 @@ func New(
 			}
 		}
 
-		out := entityMap[channel](raw)
+		handler, ok := entityMap[channel]
+
+		if !ok {
+			errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"websocket: unhandled channel "+channel,
+				nil,
+			))
+
+			return
+		}
+
+		out := handler(raw)
 
 		if channel == "pong" {
 			// Check the error field in the pong response. If it is not empty, log the error.
@@ -154,7 +179,10 @@ func New(
 
 			// If the pong response is successful, log it on the ping context.
 			if live.pingCtx != nil {
-				live.pingCtx = context.WithValue(live.pingCtx, "pong", time.Now())
+				now := time.Now()
+				live.lastPongMu.Lock()
+				live.lastPong = &now
+				live.lastPongMu.Unlock()
 			}
 
 			return
@@ -186,36 +214,45 @@ func New(
 		errnie.Info(fmt.Sprintf("websocket: connected to %s", endpoint))
 
 		go func() {
+			if live.pingCancel != nil {
+				live.pingCancel()
+			}
+
 			live.pingCtx, live.pingCancel = context.WithCancel(live.ctx)
-			hasPing := live.pingCtx.Value("req_id")
-			hasPong := live.pingCtx.Value("pong")
+			interval := 20 * time.Second
+			lastPong := time.Now()
+			live.lastPongMu.Lock()
+			live.lastPong = &lastPong
+			live.lastPongMu.Unlock()
 
-			if hasPing != nil && hasPong == nil {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					"websocket: we ain't got no pong, yo!",
-					nil,
-				))
-			}
-
-			if hasPing == nil {
-				live.pingCtx = context.WithValue(live.pingCtx, "req_id", 0)
-				hasPing = 0
-			}
-
-			live.pingCtx = context.WithValue(live.pingCtx, "req_id", hasPing.(int)+1)
-			live.pingCtx = context.WithValue(live.pingCtx, "pong", nil)
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
 
 			pingRequest := datura.NewMap()
 			pingRequest["method"] = "ping"
-			pingRequest["req_id"] = live.pingCtx.Value("req_id")
 
 			for {
 				select {
 				case <-live.pingCtx.Done():
 					return
-				case <-time.After(20 * time.Second):
-					live.Write(pingRequest)
+				case <-ticker.C:
+					live.lastPongMu.RLock()
+					pongAt := live.lastPong
+					live.lastPongMu.RUnlock()
+
+					if pongAt == nil || time.Since(*pongAt) > interval*2 {
+						errnie.Error(errnie.Err(
+							errnie.IO,
+							"websocket: stale pong detected",
+							nil,
+						))
+					}
+
+					pingRequest["req_id"] = live.pingReqID.Add(1)
+
+					if err := live.Write(pingRequest); err != nil {
+						errnie.Error(err)
+					}
 				}
 			}
 		}()
@@ -225,7 +262,9 @@ func New(
 			return
 		}
 
+		live.statusMu.Lock()
 		live.status = types.READY
+		live.statusMu.Unlock()
 	})
 
 	live.client.OnDisconnected.Recurring(func(event *callback.Event[error]) {
@@ -235,24 +274,40 @@ func New(
 			event.Data,
 		))
 
+		live.statusMu.Lock()
 		live.status = types.PENDING
+		live.statusMu.Unlock()
 	})
 
 	if auth {
 		live.client.OnAuthenticated.Recurring(func(event *callback.Event[string]) {
 			errnie.Info(fmt.Sprintf("websocket: authenticated to %s", endpoint))
+			live.statusMu.Lock()
 			live.status = types.READY
+			live.statusMu.Unlock()
 		})
 	}
 
 	errnie.Info(fmt.Sprintf("websocket: connecting to %s", endpoint))
+	live.statusMu.Lock()
 	live.status = types.PENDING
-	live.client.Connect()
+	live.statusMu.Unlock()
+
+	if err := live.client.Connect(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"websocket: failed to connect",
+			err,
+		))
+	}
 
 	return live
 }
 
 func (live *Live) Status() types.Status {
+	live.statusMu.RLock()
+	defer live.statusMu.RUnlock()
+
 	return live.status
 }
 
@@ -336,6 +391,16 @@ func (live *Live) SubL3(symbols []string) {
 			live.ctx, live.simulator, live.auth, Level3WebSocketURL,
 		)
 
+		if conn == nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"websocket: failed to create level3 child connection",
+				nil,
+			))
+
+			continue
+		}
+
 		groupKey := strings.Join(groups, "|")
 		live.level3.Store(groupKey, conn)
 
@@ -345,17 +410,21 @@ func (live *Live) SubL3(symbols []string) {
 				strings.Join(group, "|"),
 			))
 
-			conn.Client().SubL3(group, 10, map[string]any{
-				"depth": 10,
+			conn.Client().SubL3(group, viper.GetInt("market.l3_depth"), map[string]any{
+				"depth": viper.GetInt("market.l3_depth"),
 			})
 
-			time.Sleep(1 * time.Second)
+			time.Sleep(viper.GetDuration("market.subscribe_pace"))
 		}
 	}
 }
 
 func (live *Live) Books() map[string]*book.Book {
 	out := map[string]*book.Book{}
+
+	if live.level3 == nil {
+		return out
+	}
 
 	live.level3.Range(func(key, value any) bool {
 		if conn, ok := value.(*Live); ok && conn.book != nil {
@@ -370,6 +439,10 @@ func (live *Live) Books() map[string]*book.Book {
 
 func (live *Live) Book(symbol string) *book.Book {
 	var manager *book.Book
+
+	if live.level3 == nil {
+		return nil
+	}
 
 	live.level3.Range(func(key, value any) bool {
 		keys := strings.Split(key.(string), "|")

@@ -2,12 +2,11 @@ import { Component } from "#/components/ui/component";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
 import { cn } from "#/lib/utils";
-import { registerPainter } from "#/providers/ws-stores";
 import { Flex } from "@/components/ui/flex";
 
 export const Positions = () => (
 	<Component
-		register={(paint) => registerPainter("positions", paint)}
+		registerKey="positions"
 		select="holding"
 	>
 		{({ ref, className, slots }) => (

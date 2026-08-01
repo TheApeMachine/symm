@@ -1,5 +1,4 @@
 import { cn } from "#/lib/utils";
-import { registerPainter } from "#/providers/ws-stores";
 import { Component } from "../ui/component";
 import { CortexBeamShell } from "./cortex-beam-shell";
 import { CortexPanelsShell } from "./cortex-panels-shell";
@@ -10,7 +9,7 @@ state, shared directly with the WebSocket dispatcher rather than a route module.
 */
 export const CortexSurface = () => {
 	return (
-		<Component register={(paint) => registerPainter("cortex", paint)}>
+		<Component registerKey="cortex">
 			{({ ref, className }) => (
 				<div
 					ref={ref}
@@ -20,14 +19,14 @@ export const CortexSurface = () => {
 						<span className="mr-1 shrink-0 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
 							Sensory context
 						</span>
-						<span className="ml-auto shrink-0 font-mono text-[10px] text-(--f4)">
+						<span data-paint="readings" className="ml-auto shrink-0 font-mono text-[10px] text-(--f4)">
 							0 readings
 						</span>
 					</div>
 					<div className="grid min-h-0 flex-1 grid-cols-[minmax(560px,1fr)_364px]">
 						<div className="flex min-h-0 flex-col border-(--line) border-r">
 							<div className="relative min-h-0 flex-[1.55] overflow-hidden bg-(--sunken)">
-								<canvas className="absolute inset-0 block h-full w-full bg-(--bg)" />
+								<canvas data-paint="tree" className="absolute inset-0 block h-full w-full bg-(--bg)" />
 								<div className="pointer-events-none absolute top-3 left-3.5">
 									<div className="font-semibold text-[10px] text-(--f2) uppercase tracking-[0.13em]">
 										Sensory prefix tree · s/[sequence]

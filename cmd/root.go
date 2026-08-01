@@ -114,26 +114,98 @@ var (
 
 			errnie.Info("planner reported to be ready")
 
-			correlation := utils.NewWaiter[*correlation.Signal](correlation.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			errnie.Info("correlation signal reported to be ready")
-			cvd := utils.NewWaiter[*cvd.Signal](cvd.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			errnie.Info("cvd signal reported to be ready")
-			depthflow := utils.NewWaiter[*depthflow.Signal](depthflow.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			errnie.Info("depthflow signal reported to be ready")
-			exhaust := utils.NewWaiter[*exhaust.Signal](exhaust.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			errnie.Info("exhaust signal reported to be ready")
-			hawkes := utils.NewWaiter[*hawkes.Signal](hawkes.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			errnie.Info("hawkes signal reported to be ready")
-			leadlag := utils.NewWaiter[*leadlag.Signal](leadlag.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			errnie.Info("leadlag signal reported to be ready")
-			liquidity := utils.NewWaiter[*liquidity.Signal](liquidity.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			errnie.Info("liquidity signal reported to be ready")
-			pumpdump := utils.NewWaiter[*pumpdump.Signal](pumpdump.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			errnie.Info("pumpdump signal reported to be ready")
-			sentiment := utils.NewWaiter[*sentiment.Signal](sentiment.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			errnie.Info("sentiment signal reported to be ready")
-			toxicity := utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
-			errnie.Info("toxicity signal reported to be ready")
+			signalSubscriptions := map[string]*types.Subscription[any]{}
+
+			for _, signalSpec := range []struct {
+				name string
+				build func() (*types.Subscription[any], error)
+			}{
+				{
+					name: "correlation",
+					build: func() (*types.Subscription[any], error) {
+						signal := utils.NewWaiter[*correlation.Signal](correlation.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
+					},
+				},
+				{
+					name: "cvd",
+					build: func() (*types.Subscription[any], error) {
+						signal := utils.NewWaiter[*cvd.Signal](cvd.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
+					},
+				},
+				{
+					name: "depthflow",
+					build: func() (*types.Subscription[any], error) {
+						signal, err := depthflow.NewSignal(cmd.Context(), api, planner, uiChannel)
+
+						if err != nil {
+							return nil, err
+						}
+
+						ready := utils.NewWaiter[*depthflow.Signal](signal).Wait()
+						return ready.Subscribe("thesis", types.NewSubscription[any]()), nil
+					},
+				},
+				{
+					name: "exhaust",
+					build: func() (*types.Subscription[any], error) {
+						signal := utils.NewWaiter[*exhaust.Signal](exhaust.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
+					},
+				},
+				{
+					name: "hawkes",
+					build: func() (*types.Subscription[any], error) {
+						signal := utils.NewWaiter[*hawkes.Signal](hawkes.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
+					},
+				},
+				{
+					name: "leadlag",
+					build: func() (*types.Subscription[any], error) {
+						signal := utils.NewWaiter[*leadlag.Signal](leadlag.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
+					},
+				},
+				{
+					name: "liquidity",
+					build: func() (*types.Subscription[any], error) {
+						signal := utils.NewWaiter[*liquidity.Signal](liquidity.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
+					},
+				},
+				{
+					name: "pumpdump",
+					build: func() (*types.Subscription[any], error) {
+						signal := utils.NewWaiter[*pumpdump.Signal](pumpdump.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
+					},
+				},
+				{
+					name: "sentiment",
+					build: func() (*types.Subscription[any], error) {
+						signal := utils.NewWaiter[*sentiment.Signal](sentiment.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
+					},
+				},
+				{
+					name: "toxicity",
+					build: func() (*types.Subscription[any], error) {
+						signal := utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(cmd.Context(), api, planner, uiChannel)).Wait()
+						return signal.Subscribe("thesis", types.NewSubscription[any]()), nil
+					},
+				},
+			} {
+				subscription, err := signalSpec.build()
+
+				if err != nil {
+					return err
+				}
+
+				signalSubscriptions[signalSpec.name] = subscription
+				errnie.Info(signalSpec.name + " signal reported to be ready")
+			}
 
 			analyzer := utils.NewWaiter[*logic.Analyzer](logic.NewAnalyzer(
 				cmd.Context(),
@@ -142,18 +214,7 @@ var (
 				uiChannel,
 				manifoldChannel,
 				nil,
-				map[string]*types.Subscription[any]{
-					"correlation": correlation.Subscribe("thesis", types.NewSubscription[any]()),
-					"cvd":         cvd.Subscribe("thesis", types.NewSubscription[any]()),
-					"depthflow":   depthflow.Subscribe("thesis", types.NewSubscription[any]()),
-					"exhaust":     exhaust.Subscribe("thesis", types.NewSubscription[any]()),
-					"hawkes":      hawkes.Subscribe("thesis", types.NewSubscription[any]()),
-					"leadlag":     leadlag.Subscribe("thesis", types.NewSubscription[any]()),
-					"liquidity":   liquidity.Subscribe("thesis", types.NewSubscription[any]()),
-					"pumpdump":    pumpdump.Subscribe("thesis", types.NewSubscription[any]()),
-					"sentiment":   sentiment.Subscribe("thesis", types.NewSubscription[any]()),
-					"toxicity":    toxicity.Subscribe("thesis", types.NewSubscription[any]()),
-				},
+				signalSubscriptions,
 			)).Wait()
 
 			errnie.Info("analyzer reported to be ready")

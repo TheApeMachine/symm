@@ -45,7 +45,7 @@ func TestForecastsExecutableReturn(t *testing.T) {
 		forecast.ExpectedAdverseSelection = decimal.NewFromFloat64(0.003)
 
 		Convey("It should subtract every friction component", func() {
-			So(forecast.ExecutableReturn(), ShouldAlmostEqual, 0.03)
+			So(forecast.ExecutableReturn().Float64(), ShouldAlmostEqual, 0.04)
 		})
 	})
 }
@@ -85,9 +85,14 @@ func eligibleForecast() Forecasts {
 		FrictionReady:              true,
 		CalibrationSamples:         8,
 		IncrementalSkillLowerBound: 0.0001,
+		ExpectedReturn:             decimal.NewFromFloat64(0.01),
 		ReferencePrice:             decimal.NewFromInt64(100),
 		BuyCapacity:                decimal.NewFromInt64(1000),
 		SellCapacity:               decimal.NewFromInt64(1000),
+		ExpectedFees:               decimal.NewFromFloat64(0),
+		ExpectedSpread:             decimal.NewFromFloat64(0),
+		ExpectedImpact:             decimal.NewFromFloat64(0),
+		ExpectedAdverseSelection:   decimal.NewFromFloat64(0),
 		Confidence:                 0.5,
 	}
 }

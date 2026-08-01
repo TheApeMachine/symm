@@ -56,7 +56,7 @@ A best-effort, highly principled market system. Detect real opportunity types—
       "descriptive error message",
       err,
   ))
-* **Test Structure Mirrors Code Structure** Only have test files that mirror the code files (<codefile_test>.go) and only have test methods that mirror the methods in the code file that is being tested (func <CodeMethod>Test(t *testing.T)). Benchmarsk follow the same function naming rules and are always at the bottom of the test file. Always use Goconvey for tests, and use BDD style nesting for your test cases. Treat tests code as you would implementation code, and keep things clean and DRY.
+* **Test Structure Mirrors Code Structure** Only have test files that mirror the code files (<codefile_test>.go) and only have test methods that mirror the methods in the code file that is being tested (func <CodeMethod>Test(t *testing.T)). Benchmarks follow the same function naming rules and are always at the bottom of the test file. Always use Goconvey for tests, and use BDD-style nesting for your test cases. Treat tests code as you would implementation code, and keep things clean and DRY.
 
 ## GoConvey Best Practices Example
 

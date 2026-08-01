@@ -1,14 +1,13 @@
-import { registerPainter } from "#/providers/ws-stores";
-import {Component} from "#/components/ui/component";
+import { Component } from "#/components/ui/component";
 import { cn } from "#/lib/utils";
 
 /*
-HawkesChart is the static canvas shell. KernelList paints it via paintHawkes.
+HawkesChart is the static canvas shell. The hawkes painter updates its canvas.
 */
 export const HawkesChart = () => (
-	<Component register={(paint) => registerPainter("hawkes", paint)}>
+	<Component registerKey="hawkes">
 		{({ ref, className }) => (
-			<div ref={ref} className={cn("min-h-0 overflow-auto", className)}>
+			<div ref={ref} className={cn("relative min-h-0 overflow-auto", className)}>
 				<canvas className="absolute inset-0 h-full w-full" />
 			</div>
 		)}

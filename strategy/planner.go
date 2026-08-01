@@ -19,6 +19,7 @@ type Planner struct {
 	status      types.Status
 	subscribers *sync.Map
 	subscriptions map[string]*types.Subscription[any]
+	runOnce     sync.Once
 	api         *websocket.API
 	desk        *broker.Desk
 	price       *broker.Price
@@ -70,9 +71,7 @@ func NewPlanner(
 	}
 
 	if analyzer != nil {
-		planner.subscriptions["thesis"] = analyzer.Subscribe(
-			"thesis", types.NewSubscription[any](),
-		)
+		planner.AttachAnalyzer(analyzer)
 	}
 
 	planner.run()
@@ -81,6 +80,11 @@ func NewPlanner(
 
 func (planner *Planner) AttachAnalyzer(analyzer *logic.Analyzer) {
 	if analyzer == nil {
+		return
+	}
+
+	if planner.subscriptions["thesis"] != nil {
+		planner.run()
 		return
 	}
 
@@ -122,18 +126,20 @@ func (planner *Planner) run() {
 		return
 	}
 
-	go func() {
-		for {
-			select {
-			case <-planner.ctx.Done():
-				return
-			case thesis := <-planner.subscriptions["thesis"].Channel:
-				if thesis, ok := thesis.(*types.Thesis); ok {
-					planner.Update(thesis)
+	planner.runOnce.Do(func() {
+		go func() {
+			for {
+				select {
+				case <-planner.ctx.Done():
+					return
+				case thesis := <-planner.subscriptions["thesis"].Channel:
+					if thesis, ok := thesis.(*types.Thesis); ok {
+						planner.Update(thesis)
+					}
 				}
 			}
-		}
-	}()
+		}()
+	})
 }
 
 func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
@@ -165,7 +171,7 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 		))
 	}
 
-	if thesis.Readiness().Decisions == false {
+	if !thesis.Readiness().Decisions {
 		return thesis
 	}
 
