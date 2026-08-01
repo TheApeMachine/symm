@@ -14,6 +14,7 @@ validity until Intensity / HawkesFit readiness; static parameters stay anchored
 to their fit epoch while likelihood comparisons use the evaluation interval.
 */
 func (signal *Signal) measurements(
+	thesis *types.Thesis,
 	symbol string,
 	outcome excitation.Outcome,
 ) []*types.Measurement {
@@ -25,7 +26,7 @@ func (signal *Signal) measurements(
 		At:           through,
 		ObservedFrom: from,
 		Horizon:      through.Sub(from),
-		Maturity:     signal.thesis.Tick,
+		Maturity:     float64(thesis.Tick),
 		Validity:     validity,
 		Scale: types.ScaleReference{
 			Kind:    types.ScaleObservationWindow,

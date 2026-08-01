@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
@@ -19,7 +18,6 @@ from Level3 order events corroborated by the public trade tape.
 */
 type Signal struct {
 	status        types.Status
-	thesis        *types.Thesis
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
@@ -43,19 +41,14 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		status:  types.INITIALIZING,
-		ctx:     ctx,
-		cancel:  cancel,
-		api:     api,
-		planner: planner,
-		ui:      ui,
+		status:        types.INITIALIZING,
+		ctx:           ctx,
+		cancel:        cancel,
+		api:           api,
+		planner:       planner,
+		ui:            ui,
 		subscriptions: subscriptions,
-		subscribers: &sync.Map{},
-	}
-
-	if signal.thesis != nil {
-		signal.thesis.Causal.Store("signal:toxicity:touch", make(map[string]float64))
-		signal.thesis.Causal.Store("signal:toxicity:price", make(map[string]float64))
+		subscribers:   &sync.Map{},
 	}
 
 	signal.status = types.READY
@@ -105,57 +98,42 @@ func (signal *Signal) run() {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case message := <-signal.subscriptions["trade"].Channel:
-				if trade, ok := message.(*kraken.Trade); ok {
-					signal.onTrade(trade)
+			case message := <-signal.subscriptions["thesis"].Channel:
+				if thesis, ok := message.(*types.Thesis); ok {
+					thesis.AppendMeasurements(
+						types.SourceToxicity,
+						signal.Measure(thesis),
+						types.Stamp{At: time.Now(), Entity: types.MarketTrade},
+					)
+
+					subscribers, ok := signal.subscribers.Load(signal.Name())
+
+					if ok && subscribers != nil {
+						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
+							subscriber.Send(thesis)
+						}
+					}
 				}
 			}
 		}
 	}()
 }
 
-func (signal *Signal) onTrade(trade *kraken.Trade) {
-	signal.thesis.AppendMeasurements(
-		types.SourceToxicity,
-		signal.Calculate(nil, trade.Data),
-		types.Stamp{At: time.Now(), Entity: types.MarketTrade},
-	)
-
-	if signal.subscribers == nil {
-		return
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	if _, ok := thesis.Causal.Load("signal:toxicity:touch"); !ok {
+		thesis.Causal.Store("signal:toxicity:touch", make(map[string]float64))
 	}
 
-	subscribers, ok := signal.subscribers.Load("thesis")
-
-	if ok && subscribers != nil {
-		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-			subscriber.Send(signal.thesis)
-		}
+	if _, ok := thesis.Causal.Load("signal:toxicity:price"); !ok {
+		thesis.Causal.Store("signal:toxicity:price", make(map[string]float64))
 	}
-}
 
-/*
-Calculate converts public book rows into toxicity observations by sampling the
-current authenticated Level3 book for each symbol at the public book timestamp.
-*/
-func (signal *Signal) Calculate(
-	books []kraken.BookData,
-	trades []kraken.TradeData,
-) []*types.Measurement {
-	measurements := make([]*types.Measurement, 0, len(books)+len(trades))
-
-	for _, row := range books {
-		measurement := signal.measure(row.Symbol, row.Timestamp.UTC(), 0, types.SideNone)
-
-		if measurement == nil {
-			continue
-		}
-
-		measurements = append(measurements, measurement)
-	}
+	_, trades, _ := thesis.Market()
+	measurements := make([]*types.Measurement, 0, len(trades))
 
 	for _, trade := range trades {
 		measurement := signal.measure(
+			thesis,
 			trade.Symbol,
 			trade.Timestamp.UTC(),
 			trade.Price.Float64()*trade.Qty,
@@ -175,6 +153,7 @@ measure builds one toxicity row from the current Level3 book. Buy-side metrics
 refer to resting bids and sell-side metrics refer to resting asks.
 */
 func (signal *Signal) measure(
+	thesis *types.Thesis,
 	symbol string,
 	at time.Time,
 	tradeVolume float64,
@@ -198,8 +177,8 @@ func (signal *Signal) measure(
 	bidQuantity := bid.Quantity.Float64()
 	askQuantity := ask.Quantity.Float64()
 	touchQuantity := bidQuantity + askQuantity
-	bidRetreat := signal.retreat(symbol, types.SideBuy, bid.Price.Float64(), bidQuantity)
-	askRetreat := signal.retreat(symbol, types.SideSell, ask.Price.Float64(), askQuantity)
+	bidRetreat := signal.retreat(thesis, symbol, types.SideBuy, bid.Price.Float64(), bidQuantity)
+	askRetreat := signal.retreat(thesis, symbol, types.SideSell, ask.Price.Float64(), askQuantity)
 	buyFill := 0.0
 	sellFill := 0.0
 
@@ -215,7 +194,7 @@ func (signal *Signal) measure(
 		Source:   types.SourceToxicity,
 		Symbol:   symbol,
 		At:       at,
-		Maturity: signal.thesis.Tick,
+		Maturity: float64(thesis.Tick),
 		Validity: types.ObservationValidity(1),
 		Scale: types.ScaleReference{
 			Kind:    types.ScaleObservationWindow,
@@ -294,14 +273,15 @@ retreat reports visible touch liquidity that disappeared since the previous
 observation for this symbol and side.
 */
 func (signal *Signal) retreat(
+	thesis *types.Thesis,
 	symbol string,
 	side types.MeasurementSide,
 	price float64,
 	quantity float64,
 ) float64 {
 	key := symbol + ":" + string(side)
-	foundTouch, _ := signal.thesis.Causal.Load("signal:toxicity:touch")
-	foundPrice, _ := signal.thesis.Causal.Load("signal:toxicity:price")
+	foundTouch, _ := thesis.Causal.Load("signal:toxicity:touch")
+	foundPrice, _ := thesis.Causal.Load("signal:toxicity:price")
 	touch := foundTouch.(map[string]float64)
 	prices := foundPrice.(map[string]float64)
 	previousQuantity := touch[key]

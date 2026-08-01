@@ -35,10 +35,10 @@ func measureCorrelation(
 	defer market.Close()
 
 	signal := &Signal{
-		thesis:  types.NewThesis(),
 		section: NewSection(),
 		ui:      make(chan []byte, 32),
 	}
+	thesis := types.NewThesis()
 	tickerSub := market.Public.Subscribe("ticker")
 
 	So(market.Public.Write(json.RawMessage(
@@ -46,15 +46,21 @@ func measureCorrelation(
 	)), ShouldBeNil)
 
 	for _, ticker := range drainCorrelation(tickerSub) {
-		signal.thesis.Tick++
-		signal.Calculate(ticker.Data, nil, nil)
+		for _, row := range ticker.Data {
+			thesis.Tickers.Store(row.Symbol, row)
+		}
+
+		signal.Measure(thesis)
 	}
 
 	consume := func(into *[]*types.Measurement) func() error {
 		return func() error {
 			for _, ticker := range drainCorrelation(tickerSub) {
-				signal.thesis.Tick++
-				*into = append(*into, signal.Calculate(ticker.Data, nil, nil)...)
+				for _, row := range ticker.Data {
+					thesis.Tickers.Store(row.Symbol, row)
+				}
+
+				*into = append(*into, signal.Measure(thesis)...)
 			}
 
 			return nil

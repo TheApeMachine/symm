@@ -4,9 +4,6 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/nomagique/equation"
-
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/tests"
@@ -49,10 +46,7 @@ func measureCVD(t *testing.T, state tests.MarketState, focus ...string) []*types
 	defer market.Close()
 
 	thesis := types.NewThesis()
-	thesis.Causal.Store("signal:cvd:sample", algorithm.NewTradeFlowSample())
-	thesis.Causal.Store("signal:cvd:flow", equation.NewFlow())
-	thesis.Causal.Store("signal:cvd:midpoints", make(map[string]float64))
-	signal := &Signal{thesis: thesis, ui: make(chan []byte, 32)}
+	signal := &Signal{ui: make(chan []byte, 32)}
 	tickerSub := market.Public.Subscribe("ticker")
 	tradeSub := market.Public.Subscribe("trade")
 
@@ -63,17 +57,29 @@ func measureCVD(t *testing.T, state tests.MarketState, focus ...string) []*types
 		`{"method":"subscribe","params":{"channel":"trade","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
 	)), ShouldBeNil)
 
-	signal.thesis.Tick++
-	signal.Calculate(drainCVDTickers(tickerSub), drainCVDTrades(tradeSub), nil)
+	for _, ticker := range drainCVDTickers(tickerSub) {
+		thesis.Tickers.Store(ticker.Symbol, ticker)
+	}
+
+	for _, trade := range drainCVDTrades(tradeSub) {
+		thesis.Trades.Store(trade.Symbol, trade)
+	}
+
+	thesis.Tick++
+	signal.Measure(thesis)
 
 	consume := func(into *[]*types.Measurement) func() error {
 		return func() error {
-			signal.thesis.Tick++
-			*into = append(*into, signal.Calculate(
-				drainCVDTickers(tickerSub),
-				drainCVDTrades(tradeSub),
-				nil,
-			)...)
+			for _, ticker := range drainCVDTickers(tickerSub) {
+				thesis.Tickers.Store(ticker.Symbol, ticker)
+			}
+
+			for _, trade := range drainCVDTrades(tradeSub) {
+				thesis.Trades.Store(trade.Symbol, trade)
+			}
+
+			thesis.Tick++
+			*into = append(*into, signal.Measure(thesis)...)
 
 			return nil
 		}

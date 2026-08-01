@@ -7,11 +7,11 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -24,7 +24,6 @@ only.
 */
 type Signal struct {
 	status        types.Status
-	thesis        *types.Thesis
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
@@ -49,19 +48,15 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		status:  types.INITIALIZING,
-		ctx:     ctx,
-		cancel:  cancel,
-		api:     api,
-		planner: planner,
-		ui:      ui,
+		status:        types.INITIALIZING,
+		ctx:           ctx,
+		cancel:        cancel,
+		api:           api,
+		planner:       planner,
+		ui:            ui,
 		subscriptions: subscriptions,
-		subscribers: &sync.Map{},
+		subscribers:   &sync.Map{},
 	}
-
-	signal.thesis.Causal.Store("signal:cvd:sample", algorithm.NewTradeFlowSample())
-	signal.thesis.Causal.Store("signal:cvd:flow", equation.NewFlow())
-	signal.thesis.Causal.Store("signal:cvd:midpoints", make(map[string]float64))
 
 	signal.status = types.READY
 	signal.run()
@@ -91,60 +86,47 @@ func (signal *Signal) Subscribe(
 	)
 }
 
-func (signal *Signal) publishThesis() {
-	subscribers, ok := signal.subscribers.Load("thesis")
-
-	if ok && subscribers != nil {
-		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-			subscriber.Send(signal.thesis)
-		}
-	}
-}
-
 func (signal *Signal) run() {
 	go func() {
 		for {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case ticker := <-signal.subscriptions["ticker"].Channel:
-				if ticker, ok := ticker.(*kraken.Ticker); ok {
-					signal.onTicker(ticker)
-				}
-			case trade := <-signal.subscriptions["trade"].Channel:
-				if trade, ok := trade.(*kraken.Trade); ok {
-					signal.onTrade(trade)
+			case message := <-signal.subscriptions["thesis"].Channel:
+				if thesis, ok := message.(*types.Thesis); ok {
+					thesis.AppendMeasurements(
+						types.SourceCVD,
+						signal.Measure(thesis),
+						types.Stamp{At: time.Now(), Entity: types.MarketTrade},
+					)
+
+					subscribers, ok := signal.subscribers.Load(signal.Name())
+
+					if ok && subscribers != nil {
+						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
+							subscriber.Send(thesis)
+						}
+					}
 				}
 			}
 		}
 	}()
 }
 
-func (signal *Signal) onTicker(ticker *kraken.Ticker) {
-	signal.thesis.AppendMeasurements(
-		types.SourceCVD,
-		signal.Calculate(ticker.Data, nil, nil),
-		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
-	)
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	if _, ok := thesis.Causal.Load("signal:cvd:sample"); !ok {
+		thesis.Causal.Store("signal:cvd:sample", algorithm.NewTradeFlowSample())
+	}
 
-	signal.publishThesis()
-}
+	if _, ok := thesis.Causal.Load("signal:cvd:flow"); !ok {
+		thesis.Causal.Store("signal:cvd:flow", equation.NewFlow())
+	}
 
-func (signal *Signal) onTrade(trade *kraken.Trade) {
-	signal.thesis.AppendMeasurements(
-		types.SourceCVD,
-		signal.Calculate(nil, trade.Data, nil),
-		types.Stamp{At: time.Now(), Entity: types.MarketTrade},
-	)
+	if _, ok := thesis.Causal.Load("signal:cvd:midpoints"); !ok {
+		thesis.Causal.Store("signal:cvd:midpoints", make(map[string]float64))
+	}
 
-	signal.publishThesis()
-}
-
-func (signal *Signal) Calculate(
-	tickers []kraken.TickerData,
-	trades []kraken.TradeData,
-	books []kraken.BookData,
-) []*types.Measurement {
+	tickers, trades, _ := thesis.Market()
 	out := make([]*types.Measurement, 0, len(trades))
 	var focusMeasurements []*types.Measurement
 
@@ -161,7 +143,7 @@ func (signal *Signal) Calculate(
 			continue
 		}
 
-		found, _ := signal.thesis.Causal.Load("signal:cvd:midpoints")
+		found, _ := thesis.Causal.Load("signal:cvd:midpoints")
 		found.(map[string]float64)[row.Symbol] = (row.Bid.Float64() + row.Ask.Float64()) / 2
 	}
 
@@ -170,14 +152,14 @@ func (signal *Signal) Calculate(
 			continue
 		}
 
-		found, _ := signal.thesis.Causal.Load("signal:cvd:midpoints")
+		found, _ := thesis.Causal.Load("signal:cvd:midpoints")
 		midpoint, exists := found.(map[string]float64)[row.Symbol]
 
 		if !exists {
 			continue
 		}
 
-		measurements, err := signal.measureTrade(row, midpoint)
+		measurements, err := signal.measureTrade(thesis, row, midpoint)
 
 		if err != nil {
 			errnie.Error(errnie.Err(
@@ -207,10 +189,11 @@ measureTrade separates execution notional from midpoint response before
 classifying one aggressor observation through the adaptive CVD window.
 */
 func (signal *Signal) measureTrade(
+	thesis *types.Thesis,
 	row kraken.TradeData,
 	midpoint float64,
 ) ([]*types.Measurement, error) {
-	found, _ := signal.thesis.Causal.Load("signal:cvd:sample")
+	found, _ := thesis.Causal.Load("signal:cvd:sample")
 	input, ready, err := found.(*algorithm.TradeFlowSample).Measure(algorithm.TradeFlowInput{
 		Symbol:        row.Symbol,
 		Price:         row.Price.Float64(),
@@ -231,7 +214,7 @@ func (signal *Signal) measureTrade(
 		return nil, nil
 	}
 
-	found, _ = signal.thesis.Causal.Load("signal:cvd:flow")
+	found, _ = thesis.Causal.Load("signal:cvd:flow")
 	output, err := found.(*equation.Flow).Measure(input)
 
 	if err != nil {
@@ -242,7 +225,7 @@ func (signal *Signal) measureTrade(
 		))
 	}
 
-	return signal.cvdMeasurements(row, output), nil
+	return signal.cvdMeasurements(thesis, row, output), nil
 }
 
 /*
@@ -250,6 +233,7 @@ cvdMeasurements maps signed-flow output into one source×symbol row whose
 Metrics map preserves each reading's unit and normalization.
 */
 func (signal *Signal) cvdMeasurements(
+	thesis *types.Thesis,
 	row kraken.TradeData,
 	output equation.FlowOutput,
 ) []*types.Measurement {
@@ -266,7 +250,7 @@ func (signal *Signal) cvdMeasurements(
 		Source:   types.SourceCVD,
 		Symbol:   row.Symbol,
 		At:       row.Timestamp,
-		Maturity: signal.thesis.Tick,
+		Maturity: float64(thesis.Tick),
 		Validity: validity,
 		Metrics:  make(map[string]types.MetricSample, 7),
 		Scale:    scale,

@@ -52,13 +52,13 @@ func (cut *Cut) Outcome(symbol string) (excitation.Outcome, bool) {
 /*
 cut freezes the current Process outcomes onto a publish payload.
 */
-func (signal *Signal) cut() *Cut {
-	found, _ := signal.thesis.Causal.Load("signal:hawkes:mu")
+func (signal *Signal) cut(thesis *types.Thesis) *Cut {
+	found, _ := thesis.Causal.Load("signal:hawkes:mu")
 	mu := found.(*sync.Mutex)
 	mu.Lock()
 	defer mu.Unlock()
 
-	found, _ = signal.thesis.Causal.Load("signal:hawkes:process")
+	found, _ = thesis.Causal.Load("signal:hawkes:process")
 	process := found.(*excitation.Process)
 	symbols := process.Symbols()
 	outcomes := make(map[string]excitation.Outcome, len(symbols))
@@ -74,7 +74,7 @@ func (signal *Signal) cut() *Cut {
 	}
 
 	return &Cut{
-		Thesis:   signal.thesis,
+		Thesis:   thesis,
 		outcomes: outcomes,
 		symbols:  append([]string(nil), symbols...),
 	}

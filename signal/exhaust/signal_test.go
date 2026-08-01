@@ -4,9 +4,6 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/nomagique/equation"
-
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/tests"
@@ -49,11 +46,8 @@ func measureExhaust(t *testing.T, state tests.MarketState, focus ...string) []*t
 	defer market.Close()
 
 	thesis := types.NewThesis()
-	thesis.Causal.Store("signal:exhaust:sample", algorithm.NewDecaySample())
-	thesis.Causal.Store("signal:exhaust:decay", equation.NewDecay())
-	signal := &Signal{thesis: thesis, ui: make(chan []byte, 32)}
+	signal := &Signal{ui: make(chan []byte, 32)}
 	tradeSub := market.Public.Subscribe("trade")
-	bookSub := market.Public.Subscribe("book")
 
 	So(market.Public.Write(json.RawMessage(
 		`{"method":"subscribe","params":{"channel":"trade","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
@@ -62,17 +56,19 @@ func measureExhaust(t *testing.T, state tests.MarketState, focus ...string) []*t
 		`{"method":"subscribe","params":{"channel":"book","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
 	)), ShouldBeNil)
 
-	signal.thesis.Tick++
-	signal.Calculate(nil, drainExhaustTrades(tradeSub), drainExhaustBooks(bookSub))
+	for _, trade := range drainExhaustTrades(tradeSub) {
+		thesis.Trades.Store(trade.Symbol, trade)
+	}
+	thesis.Tick++
+	signal.Measure(thesis)
 
 	consume := func(into *[]*types.Measurement) func() error {
 		return func() error {
-			signal.thesis.Tick++
-			*into = append(*into, signal.Calculate(
-				nil,
-				drainExhaustTrades(tradeSub),
-				drainExhaustBooks(bookSub),
-			)...)
+			for _, trade := range drainExhaustTrades(tradeSub) {
+				thesis.Trades.Store(trade.Symbol, trade)
+			}
+			thesis.Tick++
+			*into = append(*into, signal.Measure(thesis)...)
 
 			return nil
 		}

@@ -10,9 +10,8 @@ import (
 	"github.com/theapemachine/datura"
 
 	"github.com/theapemachine/nomagique/statistic"
-	signalshared "github.com/theapemachine/symm/signal"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -25,7 +24,6 @@ retained as a separate turnover context and never mixed into the book-depth scor
 */
 type Signal struct {
 	status        types.Status
-	thesis        *types.Thesis
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
@@ -50,14 +48,14 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		status:  types.INITIALIZING,
-		ctx:     ctx,
-		cancel:  cancel,
-		api:     api,
-		planner: planner,
-		ui:      ui,
+		status:        types.INITIALIZING,
+		ctx:           ctx,
+		cancel:        cancel,
+		api:           api,
+		planner:       planner,
+		ui:            ui,
 		subscriptions: subscriptions,
-		subscribers: &sync.Map{},
+		subscribers:   &sync.Map{},
 	}
 
 	signal.status = types.READY
@@ -88,22 +86,8 @@ func (signal *Signal) Subscribe(
 	)
 }
 
-func (signal *Signal) publishThesis() {
-	if signal.subscribers == nil {
-		return
-	}
-
-	subscribers, ok := signal.subscribers.Load("thesis")
-
-	if ok && subscribers != nil {
-		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-			subscriber.Send(signal.thesis)
-		}
-	}
-}
-
 func (signal *Signal) run() {
-	subscription := signal.subscriptions["ticker"]
+	subscription := signal.subscriptions["thesis"]
 
 	if subscription == nil {
 		return
@@ -114,47 +98,46 @@ func (signal *Signal) run() {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case ticker := <-subscription.Channel:
-				if ticker, ok := ticker.(*kraken.Ticker); ok {
-					signal.onTicker(ticker)
+			case message := <-subscription.Channel:
+				if thesis, ok := message.(*types.Thesis); ok {
+					thesis.AppendMeasurements(
+						types.SourceLiquidity,
+						signal.Measure(thesis),
+						types.Stamp{At: time.Now(), Entity: types.MarketTicker},
+					)
+
+					subscribers, ok := signal.subscribers.Load(signal.Name())
+
+					if ok && subscribers != nil {
+						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
+							subscriber.Send(thesis)
+						}
+					}
 				}
 			}
 		}
 	}()
 }
 
-func (signal *Signal) onTicker(ticker *kraken.Ticker) {
-	signal.thesis.AppendMeasurements(
-		types.SourceLiquidity,
-		signal.Calculate(ticker.Data, nil, nil),
-		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
-	)
-
-	signal.publishThesis()
-}
-
-func (signal *Signal) Calculate(
-	tickers []kraken.TickerData,
-	trades []kraken.TradeData,
-	books []kraken.BookData,
-) []*types.Measurement {
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	tickers, _, _ := thesis.Market()
 	if len(tickers) == 0 {
 		return nil
 	}
 
-	if signal.thesis == nil || signal.thesis.CrossSection == nil {
+	if thesis.CrossSection == nil {
 		return nil
 	}
 
 	// Retain the full observed cohort so an isolated single-symbol event still
 	// reports every peer's latest executable liquidity in the same central cut.
-	signal.thesis.CrossSection.Measure(tickers)
+	thesis.CrossSection.Measure(tickers)
 
 	peers := make([]types.SymbolMetric, 0)
 	notionalPeers := make([]float64, 0)
 	depthPeers := make([]float64, 0)
 
-	signal.thesis.CrossSection.Metrics.Range(func(_, value any) bool {
+	thesis.CrossSection.Metrics.Range(func(_, value any) bool {
 		metric := value.(types.SymbolMetric)
 		peers = append(peers, metric)
 
@@ -233,7 +216,7 @@ func (signal *Signal) Calculate(
 			Source:   types.SourceLiquidity,
 			Symbol:   peer.Symbol,
 			At:       peer.At,
-			Maturity: signal.thesis.Tick,
+			Maturity: float64(thesis.Tick),
 			Validity: validity,
 			Scale:    scale,
 			Metrics:  make(map[string]types.MetricSample, 6),

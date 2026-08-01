@@ -50,14 +50,13 @@ func measureDepthflow(t *testing.T, state tests.MarketState, focus ...string) []
 
 	sample, err := bookflow.NewSample(256)
 	So(err, ShouldBeNil)
+	thesis := types.NewThesis()
 	signal := &Signal{
-		thesis:   types.NewThesis(),
 		sample:   sample,
 		bookflow: equation.NewBookflow(),
 		ui:       make(chan []byte, 32),
 	}
 	tradeSub := market.Public.Subscribe("trade")
-	bookSub := market.Public.Subscribe("book")
 
 	So(market.Public.Write(json.RawMessage(
 		`{"method":"subscribe","params":{"channel":"trade","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
@@ -66,17 +65,19 @@ func measureDepthflow(t *testing.T, state tests.MarketState, focus ...string) []
 		`{"method":"subscribe","params":{"channel":"book","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
 	)), ShouldBeNil)
 
-	signal.thesis.Tick++
-	signal.Calculate(nil, drainDepthTrades(tradeSub), drainDepthBooks(bookSub))
+	for _, trade := range drainDepthTrades(tradeSub) {
+		thesis.Trades.Store(trade.Symbol, trade)
+	}
+	thesis.Tick++
+	signal.Measure(thesis)
 
 	consume := func(into *[]*types.Measurement) func() error {
 		return func() error {
-			signal.thesis.Tick++
-			*into = append(*into, signal.Calculate(
-				nil,
-				drainDepthTrades(tradeSub),
-				drainDepthBooks(bookSub),
-			)...)
+			for _, trade := range drainDepthTrades(tradeSub) {
+				thesis.Trades.Store(trade.Symbol, trade)
+			}
+			thesis.Tick++
+			*into = append(*into, signal.Measure(thesis)...)
 
 			return nil
 		}

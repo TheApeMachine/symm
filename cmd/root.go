@@ -140,6 +140,7 @@ var (
 				utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
 			} {
 				errnie.Info(fmt.Sprintf("%s signal reported to be ready", signal.Name()))
+				signalSubscriptions[signal.Name()] = signal.Subscribe(signal.Name(), types.NewSubscription[any]())
 			}
 
 			analyzer := utils.NewWaiter[*logic.Analyzer](logic.NewAnalyzer(

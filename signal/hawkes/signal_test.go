@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -31,21 +30,18 @@ func (feed testMarketFeed) Instrument() *types.Subscription[*kraken.Instrument] 
 	return types.NewSubscription[*kraken.Instrument]()
 }
 
-func newTestSignal() *Signal {
+func newTestSignal() (*Signal, *types.Thesis) {
 	thesis := types.NewThesis()
-	thesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
-	thesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
-	thesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
 
-	return &Signal{
-		ctx:     context.Background(),
-		thesis:  thesis,
-		planner: &strategy.Planner{Thesis: thesis},
-	}
+	return &Signal{ctx: context.Background()}, thesis
 }
 
-func calc(signal *Signal, rows ...kraken.TradeData) []*types.Measurement {
-	return signal.Calculate(nil, rows, nil)
+func calc(signal *Signal, thesis *types.Thesis, rows ...kraken.TradeData) []*types.Measurement {
+	for _, row := range rows {
+		thesis.Trades.Store(row.Symbol, row)
+	}
+
+	return signal.Measure(thesis)
 }
 
 func tradeRow(symbol, side string, price float64, quantity float64, at time.Time) kraken.TradeData {
@@ -60,12 +56,12 @@ func tradeRow(symbol, side string, price float64, quantity float64, at time.Time
 
 func TestSignal_Calculate(t *testing.T) {
 	Convey("Given a Hawkes signal driven by the central market cut", t, func() {
-		signal := newTestSignal()
+		signal, thesis := newTestSignal()
 		at := time.Date(2023, 9, 25, 9, 4, 31, 0, time.UTC)
 		row := tradeRow("BTC/USD", "buy", 100.5, 1.25, at)
 
 		Convey("When an empty trade batch arrives", func() {
-			measurements := calc(signal)
+			measurements := calc(signal, thesis)
 
 			Convey("Then nothing should be measured", func() {
 				So(measurements, ShouldBeEmpty)
@@ -75,7 +71,7 @@ func TestSignal_Calculate(t *testing.T) {
 		Convey("When a malformed marked arrival is calculated", func() {
 			invalid := row
 			invalid.Side = "hold"
-			measurements := calc(signal, invalid)
+			measurements := calc(signal, thesis, invalid)
 
 			Convey("Then the invalid input should produce no measurements", func() {
 				So(measurements, ShouldBeEmpty)
@@ -92,19 +88,16 @@ func TestSignal_Calculate(t *testing.T) {
 			thesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
 			thesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
 			signal := &Signal{
-				ctx:     context.Background(),
-				cancel:  func() {},
-				thesis:  thesis,
-				planner: &strategy.Planner{Thesis: thesis},
+				ctx:    context.Background(),
+				cancel: func() {},
 				subscriptions: map[string]*types.Subscription[any]{
-					"ticker": types.NewSubscription[any](),
-					"trade":  types.NewSubscription[any](),
+					"thesis": types.NewSubscription[any](),
 				},
 			}
 			signal.run()
 
 			for range 32 {
-				signal.subscriptions["trade"].Send(&kraken.Trade{Data: []kraken.TradeData{row}})
+				signal.subscriptions["thesis"].Send(thesis)
 			}
 
 			time.Sleep(50 * time.Millisecond)
@@ -114,7 +107,7 @@ func TestSignal_Calculate(t *testing.T) {
 }
 
 func BenchmarkSignal_Calculate(benchmark *testing.B) {
-	signal := newTestSignal()
+	signal, thesis := newTestSignal()
 	start := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 
 	for index := range 16 {
@@ -124,7 +117,7 @@ func BenchmarkSignal_Calculate(benchmark *testing.B) {
 			side = "sell"
 		}
 
-		calc(signal, tradeRow(
+		calc(signal, thesis, tradeRow(
 			"MATIC/USD",
 			side,
 			0.56+float64(index)*0.001,
@@ -143,7 +136,7 @@ func BenchmarkSignal_Calculate(benchmark *testing.B) {
 			side = "sell"
 		}
 
-		calc(signal, tradeRow(
+		calc(signal, thesis, tradeRow(
 			"MATIC/USD",
 			side,
 			0.56+float64(index)*0.001,

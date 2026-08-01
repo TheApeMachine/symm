@@ -35,11 +35,7 @@ func measureLeadlag(
 	defer market.Close()
 
 	thesis := types.NewThesis()
-	thesis.Causal.Store("signal:leadlag:section", NewSection())
-	signal := &Signal{
-		thesis: thesis,
-		ui:     make(chan []byte, 32),
-	}
+	signal := &Signal{ui: make(chan []byte, 32)}
 	tickerSub := market.Public.Subscribe("ticker")
 
 	So(market.Public.Write(json.RawMessage(
@@ -47,15 +43,21 @@ func measureLeadlag(
 	)), ShouldBeNil)
 
 	for _, ticker := range drainLeadlag(tickerSub) {
-		signal.thesis.Tick++
-		signal.Calculate(ticker.Data, nil, nil)
+		for _, row := range ticker.Data {
+			thesis.Tickers.Store(row.Symbol, row)
+		}
+		thesis.Tick++
+		signal.Measure(thesis)
 	}
 
 	consume := func(into *[]*types.Measurement) func() error {
 		return func() error {
 			for _, ticker := range drainLeadlag(tickerSub) {
-				signal.thesis.Tick++
-				*into = append(*into, signal.Calculate(ticker.Data, nil, nil)...)
+				for _, row := range ticker.Data {
+					thesis.Tickers.Store(row.Symbol, row)
+				}
+				thesis.Tick++
+				*into = append(*into, signal.Measure(thesis)...)
 			}
 
 			return nil

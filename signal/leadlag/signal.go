@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
@@ -19,7 +18,6 @@ emits numerical scores only.
 */
 type Signal struct {
 	status        types.Status
-	thesis        *types.Thesis
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
@@ -44,17 +42,15 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		status:  types.INITIALIZING,
-		ctx:     ctx,
-		cancel:  cancel,
-		api:     api,
-		planner: planner,
-		ui:      ui,
+		status:        types.INITIALIZING,
+		ctx:           ctx,
+		cancel:        cancel,
+		api:           api,
+		planner:       planner,
+		ui:            ui,
 		subscriptions: subscriptions,
-		subscribers: &sync.Map{},
+		subscribers:   &sync.Map{},
 	}
-	signal.thesis.Causal.Store("signal:leadlag:section", NewSection())
-
 	signal.status = types.READY
 	signal.run()
 	return signal
@@ -83,22 +79,8 @@ func (signal *Signal) Subscribe(
 	)
 }
 
-func (signal *Signal) publishThesis() {
-	if signal.subscribers == nil {
-		return
-	}
-
-	subscribers, ok := signal.subscribers.Load("thesis")
-
-	if ok && subscribers != nil {
-		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-			subscriber.Send(signal.thesis)
-		}
-	}
-}
-
 func (signal *Signal) run() {
-	subscription := signal.subscriptions["ticker"]
+	subscription := signal.subscriptions["thesis"]
 
 	if subscription == nil {
 		return
@@ -109,41 +91,44 @@ func (signal *Signal) run() {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case ticker := <-subscription.Channel:
-				if ticker, ok := ticker.(*kraken.Ticker); ok {
-					signal.onTicker(ticker)
+			case message := <-subscription.Channel:
+				if thesis, ok := message.(*types.Thesis); ok {
+					thesis.AppendMeasurements(
+						types.SourceLeadLag,
+						signal.Measure(thesis),
+						types.Stamp{At: time.Now(), Entity: types.MarketTicker},
+					)
+
+					subscribers, ok := signal.subscribers.Load(signal.Name())
+
+					if ok && subscribers != nil {
+						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
+							subscriber.Send(thesis)
+						}
+					}
 				}
 			}
 		}
 	}()
 }
 
-func (signal *Signal) onTicker(ticker *kraken.Ticker) {
-	signal.thesis.AppendMeasurements(
-		types.SourceLeadLag,
-		signal.Calculate(ticker.Data, nil, nil),
-		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
-	)
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	if _, ok := thesis.Causal.Load("signal:leadlag:section"); !ok {
+		thesis.Causal.Store("signal:leadlag:section", NewSection())
+	}
 
-	signal.publishThesis()
-}
-
-func (signal *Signal) Calculate(
-	tickers []kraken.TickerData,
-	trades []kraken.TradeData,
-	books []kraken.BookData,
-) []*types.Measurement {
-	if signal.thesis == nil || signal.thesis.CrossSection == nil {
+	tickers, _, _ := thesis.Market()
+	if thesis.CrossSection == nil {
 		return nil
 	}
 
-	crossSection := signal.thesis.CrossSection
+	crossSection := thesis.CrossSection
 
 	if len(tickers) > 0 {
 		crossSection.Measure(tickers)
 	}
 
-	return signal.measureFrame(tickers, crossSection)
+	return signal.measureFrame(thesis, tickers, crossSection)
 }
 
 /*

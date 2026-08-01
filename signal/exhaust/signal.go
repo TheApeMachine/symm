@@ -25,7 +25,6 @@ urgency, and the winning numerical family identifier for downstream logic.
 */
 type Signal struct {
 	status        types.Status
-	thesis        *types.Thesis
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
@@ -50,18 +49,15 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		status:  types.INITIALIZING,
-		ctx:     ctx,
-		cancel:  cancel,
-		api:     api,
-		planner: planner,
-		ui:      ui,
+		status:        types.INITIALIZING,
+		ctx:           ctx,
+		cancel:        cancel,
+		api:           api,
+		planner:       planner,
+		ui:            ui,
 		subscriptions: subscriptions,
-		subscribers: &sync.Map{},
+		subscribers:   &sync.Map{},
 	}
-	signal.thesis.Causal.Store("signal:exhaust:sample", algorithm.NewDecaySample())
-	signal.thesis.Causal.Store("signal:exhaust:decay", equation.NewDecay())
-
 	signal.status = types.READY
 	signal.run()
 	return signal
@@ -100,22 +96,10 @@ func (signal *Signal) Subscribe(
 }
 
 func (signal *Signal) run() {
-	tickerSubscription := signal.subscriptions["ticker"]
-	tradeSubscription := signal.subscriptions["trade"]
+	thesisSubscription := signal.subscriptions["thesis"]
 
-	if tickerSubscription == nil && tradeSubscription == nil {
+	if thesisSubscription == nil {
 		return
-	}
-
-	var tickers <-chan any
-	var trades <-chan any
-
-	if tickerSubscription != nil {
-		tickers = tickerSubscription.Channel
-	}
-
-	if tradeSubscription != nil {
-		trades = tradeSubscription.Channel
 	}
 
 	go func() {
@@ -123,71 +107,44 @@ func (signal *Signal) run() {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case ticker := <-tickers:
-				if ticker, ok := ticker.(*kraken.Ticker); ok {
-					signal.onTicker(ticker)
-				}
-			case trade := <-trades:
-				if trade, ok := trade.(*kraken.Trade); ok {
-					signal.onTrade(trade)
+			case message := <-thesisSubscription.Channel:
+				if thesis, ok := message.(*types.Thesis); ok {
+					thesis.AppendMeasurements(
+						types.SourceExhaustion,
+						signal.Measure(thesis),
+						types.Stamp{At: time.Now(), Entity: types.MarketTrade},
+					)
+
+					subscribers, ok := signal.subscribers.Load(signal.Name())
+
+					if ok && subscribers != nil {
+						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
+							subscriber.Send(thesis)
+						}
+					}
 				}
 			}
 		}
 	}()
 }
 
-func (signal *Signal) onTicker(ticker *kraken.Ticker) {
-	signal.thesis.AppendMeasurements(
-		types.SourceExhaustion,
-		signal.Calculate(ticker.Data, nil, nil),
-		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
-	)
-
-	if signal.subscribers == nil {
-		return
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	if _, ok := thesis.Causal.Load("signal:exhaust:sample"); !ok {
+		thesis.Causal.Store("signal:exhaust:sample", algorithm.NewDecaySample())
 	}
 
-	subscribers, ok := signal.subscribers.Load("thesis")
-
-	if ok && subscribers != nil {
-		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-			subscriber.Send(signal.thesis)
-		}
-	}
-}
-
-func (signal *Signal) onTrade(trade *kraken.Trade) {
-	signal.thesis.AppendMeasurements(
-		types.SourceExhaustion,
-		signal.Calculate(nil, trade.Data, nil),
-		types.Stamp{At: time.Now(), Entity: types.MarketTrade},
-	)
-
-	if signal.subscribers == nil {
-		return
+	if _, ok := thesis.Causal.Load("signal:exhaust:decay"); !ok {
+		thesis.Causal.Store("signal:exhaust:decay", equation.NewDecay())
 	}
 
-	subscribers, ok := signal.subscribers.Load("thesis")
-
-	if ok && subscribers != nil {
-		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-			subscriber.Send(signal.thesis)
-		}
-	}
-}
-
-func (signal *Signal) Calculate(
-	tickers []kraken.TickerData,
-	trades []kraken.TradeData,
-	books []kraken.BookData,
-) []*types.Measurement {
-	events := exhaustEvents(books, trades)
+	_, trades, _ := thesis.Market()
+	events := exhaustEvents(nil, trades)
 	out, err := types.MeasureEventsParallel(events, func(event types.Event) ([]*types.Measurement, error) {
 		if event.Stream == "book" {
-			return signal.measureBook(event.Row.(kraken.BookData))
+			return signal.measureBook(thesis, event.Row.(kraken.BookData))
 		}
 
-		return signal.measureTrade(event.Row.(kraken.TradeData))
+		return signal.measureTrade(thesis, event.Row.(kraken.TradeData))
 	})
 
 	if err != nil {
@@ -215,6 +172,7 @@ measureBook applies one book event to the shared decay sample at its causal
 position in the merged entity timeline.
 */
 func (signal *Signal) measureBook(
+	thesis *types.Thesis,
 	row kraken.BookData,
 ) ([]*types.Measurement, error) {
 	if row.Symbol == "" || row.Timestamp.IsZero() || row.PriceIncrement == nil {
@@ -231,7 +189,7 @@ func (signal *Signal) measureBook(
 		return nil, err
 	}
 
-	found, _ := signal.thesis.Causal.Load("signal:exhaust:sample")
+	found, _ := thesis.Causal.Load("signal:exhaust:sample")
 	input, ready, maturity, err := found.(*algorithm.DecaySample).MeasureBook(flow.BookInput{
 		Symbol:   row.Symbol,
 		TickSize: row.PriceIncrement.Float64(),
@@ -247,14 +205,14 @@ func (signal *Signal) measureBook(
 		return nil, nil
 	}
 
-	found, _ = signal.thesis.Causal.Load("signal:exhaust:decay")
+	found, _ = thesis.Causal.Load("signal:exhaust:decay")
 	output, err := found.(*equation.Decay).Measure(input)
 
 	if err != nil {
 		return nil, err
 	}
 
-	return signal.frame(row.Symbol, row.Timestamp, output, maturity), nil
+	return signal.frame(thesis, row.Symbol, row.Timestamp, output, maturity), nil
 }
 
 /*
@@ -262,6 +220,7 @@ measureTrade applies one trade event to the shared decay sample at its causal
 position in the merged entity timeline.
 */
 func (signal *Signal) measureTrade(
+	thesis *types.Thesis,
 	row kraken.TradeData,
 ) ([]*types.Measurement, error) {
 	if row.Symbol == "" || row.Timestamp.IsZero() || row.Price.Sign() <= 0 ||
@@ -269,7 +228,7 @@ func (signal *Signal) measureTrade(
 		return nil, nil
 	}
 
-	found, _ := signal.thesis.Causal.Load("signal:exhaust:sample")
+	found, _ := thesis.Causal.Load("signal:exhaust:sample")
 	input, ready, maturity, err := found.(*algorithm.DecaySample).MeasureTrade(flow.TradeInput{
 		Symbol:   row.Symbol,
 		Price:    row.Price.Float64(),
@@ -286,14 +245,14 @@ func (signal *Signal) measureTrade(
 		return nil, nil
 	}
 
-	found, _ = signal.thesis.Causal.Load("signal:exhaust:decay")
+	found, _ = thesis.Causal.Load("signal:exhaust:decay")
 	output, err := found.(*equation.Decay).Measure(input)
 
 	if err != nil {
 		return nil, err
 	}
 
-	return signal.frame(row.Symbol, row.Timestamp, output, maturity), nil
+	return signal.frame(thesis, row.Symbol, row.Timestamp, output, maturity), nil
 }
 
 /*
@@ -339,6 +298,7 @@ both the book-driven and trade-driven observation paths emit the same metric
 set for a symbol.
 */
 func (signal *Signal) frame(
+	thesis *types.Thesis,
 	symbol string, at time.Time, output equation.DecayOutput, maturity float64,
 ) []*types.Measurement {
 	validity := types.MeasurementValidity{
@@ -350,7 +310,7 @@ func (signal *Signal) frame(
 		Symbol:       symbol,
 		At:           at,
 		ObservedFrom: at,
-		Maturity:     signal.thesis.Tick,
+		Maturity:     float64(thesis.Tick),
 		Validity:     validity,
 		Metrics:      make(map[string]types.MetricSample, 16),
 	}

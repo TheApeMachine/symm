@@ -148,36 +148,6 @@ func (crypto *Crypto) onTicker(data any) {
 	}
 
 	crypto.publish("thesis", crypto.thesis)
-
-	for index := range typedTickers.Data {
-		typedData := &typedTickers.Data[index]
-		found, ok := crypto.thesis.Tickers.LoadOrStore(
-			typedData.Symbol, []*kraken.TickerData{typedData},
-		)
-
-		if ok {
-			typedSlice, ok := found.([]*kraken.TickerData)
-
-			if !ok {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"crypto: unexpected ticker slice type",
-					nil,
-				))
-
-				continue
-			}
-
-			typedSlice = append(typedSlice, typedData)
-			crypto.thesis.Tickers.Store(typedData.Symbol, typedSlice)
-		}
-	}
-
-	for symbol, book := range crypto.api.Books() {
-		crypto.thesis.Books.Store(symbol, book)
-	}
-
-	crypto.publish("thesis", crypto.thesis)
 }
 
 func (crypto *Crypto) onTrade(data any) {
@@ -195,36 +165,6 @@ func (crypto *Crypto) onTrade(data any) {
 
 	for _, trade := range typedTrades.Data {
 		crypto.thesis.Trades.Store(trade.Symbol, trade)
-	}
-
-	for symbol, book := range crypto.api.Books() {
-		crypto.thesis.Books.Store(symbol, book)
-	}
-
-	crypto.publish("thesis", crypto.thesis)
-
-	for index := range typedTrades.Data {
-		trade := &typedTrades.Data[index]
-		found, ok := crypto.thesis.Trades.LoadOrStore(
-			trade.Symbol, []*kraken.TradeData{trade},
-		)
-
-		if ok {
-			typedSlice, ok := found.([]*kraken.TradeData)
-
-			if !ok {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"crypto: unexpected trades slice type",
-					nil,
-				))
-
-				continue
-			}
-
-			typedSlice = append(typedSlice, trade)
-			crypto.thesis.Trades.Store(trade.Symbol, typedSlice)
-		}
 	}
 
 	for symbol, book := range crypto.api.Books() {

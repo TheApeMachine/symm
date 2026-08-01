@@ -8,9 +8,8 @@ import (
 
 	"github.com/theapemachine/datura"
 
-	signalshared "github.com/theapemachine/symm/signal"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -22,7 +21,6 @@ performance. Categories belong in logic; this signal emits numerical scores only
 */
 type Signal struct {
 	status        types.Status
-	thesis        *types.Thesis
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
@@ -47,14 +45,14 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		status:  types.INITIALIZING,
-		ctx:     ctx,
-		cancel:  cancel,
-		api:     api,
-		planner: planner,
-		ui:      ui,
+		status:        types.INITIALIZING,
+		ctx:           ctx,
+		cancel:        cancel,
+		api:           api,
+		planner:       planner,
+		ui:            ui,
 		subscriptions: subscriptions,
-		subscribers: &sync.Map{},
+		subscribers:   &sync.Map{},
 	}
 
 	signal.status = types.READY
@@ -85,22 +83,8 @@ func (signal *Signal) Subscribe(
 	)
 }
 
-func (signal *Signal) publishThesis() {
-	if signal.subscribers == nil {
-		return
-	}
-
-	subscribers, ok := signal.subscribers.Load("thesis")
-
-	if ok && subscribers != nil {
-		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-			subscriber.Send(signal.thesis)
-		}
-	}
-}
-
 func (signal *Signal) run() {
-	subscription := signal.subscriptions["ticker"]
+	subscription := signal.subscriptions["thesis"]
 
 	if subscription == nil {
 		return
@@ -111,48 +95,42 @@ func (signal *Signal) run() {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case ticker := <-subscription.Channel:
-				if ticker, ok := ticker.(*kraken.Ticker); ok {
-					signal.onTicker(ticker)
+			case message := <-subscription.Channel:
+				if thesis, ok := message.(*types.Thesis); ok {
+					thesis.AppendMeasurements(
+						types.SourceSentiment,
+						signal.Measure(thesis),
+						types.Stamp{At: time.Now(), Entity: types.MarketTicker},
+					)
+
+					subscribers, ok := signal.subscribers.Load(signal.Name())
+
+					if ok && subscribers != nil {
+						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
+							subscriber.Send(thesis)
+						}
+					}
 				}
 			}
 		}
 	}()
 }
 
-func (signal *Signal) onTicker(ticker *kraken.Ticker) {
-	signal.thesis.AppendMeasurements(
-		types.SourceSentiment,
-		signal.Calculate(ticker.Data, nil, nil),
-		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
-	)
-
-	signal.publishThesis()
-}
-
-/*
-Calculate derives sentiment measurements from ticker-driven cross-section state.
-The trade and book parameters remain in the signature so the signal conforms to
-the shared interface even though sentiment only consumes ticker breadth data.
-*/
-func (signal *Signal) Calculate(
-	tickers []kraken.TickerData,
-	trades []kraken.TradeData,
-	books []kraken.BookData,
-) []*types.Measurement {
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	tickers, _, _ := thesis.Market()
 	out := make([]*types.Measurement, 0, 64)
 	var focusMeasurements []*types.Measurement
 
-	if signal.thesis == nil || signal.thesis.CrossSection == nil {
+	if thesis.CrossSection == nil {
 		return out
 	}
 
 	if len(tickers) > 0 {
-		signal.thesis.CrossSection.Measure(tickers)
+		thesis.CrossSection.Measure(tickers)
 	}
 
-	leader, leadershipThreshold := signal.thesis.CrossSection.Leadership()
-	breadth := signal.thesis.CrossSection.Breadth()
+	leader, leadershipThreshold := thesis.CrossSection.Leadership()
+	breadth := thesis.CrossSection.Breadth()
 	cohortSize := 0
 	leaderChange := 0.0
 	totalChange := 0.0
@@ -162,7 +140,7 @@ func (signal *Signal) Calculate(
 	minimumDisplacement := math.Inf(1)
 	peers := make([]types.SymbolMetric, 0, 64)
 
-	signal.thesis.CrossSection.Metrics.Range(func(_, value any) bool {
+	thesis.CrossSection.Metrics.Range(func(_, value any) bool {
 		metric := value.(types.SymbolMetric)
 		peers = append(peers, metric)
 		absoluteChange := math.Abs(metric.LatestChange)
@@ -252,7 +230,7 @@ func (signal *Signal) Calculate(
 			Source:   types.SourceSentiment,
 			Symbol:   peer.Symbol,
 			At:       peer.At,
-			Maturity: signal.thesis.Tick,
+			Maturity: float64(thesis.Tick),
 			Validity: validity,
 			Metrics:  make(map[string]types.MetricSample, 9),
 		}

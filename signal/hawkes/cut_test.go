@@ -8,8 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	nhawkes "github.com/theapemachine/nomagique/hawkes"
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -19,8 +17,7 @@ func TestOnTickerAdvancesCut(t *testing.T) {
 		thesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
 		thesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
 		thesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
-		statePlanner := &strategy.Planner{Thesis: thesis}
-		signal := &Signal{thesis: thesis, planner: statePlanner}
+		signal := &Signal{}
 		found, _ := thesis.Causal.Load("signal:hawkes:process")
 		process := found.(*excitation.Process)
 		base := time.Unix(1, 0)
@@ -32,15 +29,8 @@ func TestOnTickerAdvancesCut(t *testing.T) {
 		})
 		So(err, ShouldBeNil)
 
-		Convey("When a ticker arrives with no new trades", func() {
-			signal.onTicker(&kraken.Ticker{
-				Channel: "ticker",
-				Type:    "update",
-				Data: []kraken.TickerData{{
-					Symbol: "BTC/USD",
-				}},
-			})
-			cut := signal.cut()
+		Convey("When the shared thesis has no new trades", func() {
+			cut := signal.cut(thesis)
 
 			Convey("It still publishes a cut so cascade cadence is not trade-starved", func() {
 				So(cut, ShouldNotBeNil)
@@ -53,15 +43,10 @@ func TestOnTickerAdvancesCut(t *testing.T) {
 			coldThesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
 			coldThesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
 			coldThesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
-			cold := &Signal{thesis: coldThesis, planner: &strategy.Planner{Thesis: coldThesis}}
+			cold := &Signal{}
 
 			Convey("It does not invent a cut", func() {
-				cold.onTicker(&kraken.Ticker{
-					Channel: "ticker",
-					Type:    "update",
-					Data:    []kraken.TickerData{{Symbol: "ETH/USD"}},
-				})
-				So(cold.cut().Symbols(), ShouldBeEmpty)
+				So(cold.cut(coldThesis).Symbols(), ShouldBeEmpty)
 			})
 		})
 	})
@@ -73,8 +58,7 @@ func TestCutOutcome(t *testing.T) {
 		thesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
 		thesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
 		thesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
-		statePlanner := &strategy.Planner{Thesis: thesis}
-		signal := &Signal{thesis: thesis, planner: statePlanner}
+		signal := &Signal{}
 		found, _ := thesis.Causal.Load("signal:hawkes:process")
 		process := found.(*excitation.Process)
 		base := time.Unix(1, 0)
@@ -86,7 +70,7 @@ func TestCutOutcome(t *testing.T) {
 		})
 		So(err, ShouldBeNil)
 
-		first := signal.cut()
+		first := signal.cut(thesis)
 		firstCount, ok := first.Outcome("BTC/USD")
 		So(ok, ShouldBeTrue)
 
@@ -105,7 +89,7 @@ func TestCutOutcome(t *testing.T) {
 			So(ok, ShouldBeTrue)
 			So(frozen.EventCount, ShouldEqual, firstCount.EventCount)
 
-			live, ok := signal.Outcome("BTC/USD")
+			live, ok := signal.Outcome(thesis, "BTC/USD")
 			So(ok, ShouldBeTrue)
 			So(live.EventCount, ShouldBeGreaterThan, frozen.EventCount)
 			So(first.SharedThesis(), ShouldEqual, thesis)

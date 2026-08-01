@@ -7,10 +7,10 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -29,7 +29,6 @@ exists.
 */
 type Signal struct {
 	status        types.Status
-	thesis        *types.Thesis
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
@@ -55,19 +54,15 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		status:  types.INITIALIZING,
-		ctx:     ctx,
-		cancel:  cancel,
-		api:     api,
-		planner: planner,
-		ui:      ui,
+		status:        types.INITIALIZING,
+		ctx:           ctx,
+		cancel:        cancel,
+		api:           api,
+		planner:       planner,
+		ui:            ui,
 		subscriptions: subscriptions,
-		subscribers: &sync.Map{},
+		subscribers:   &sync.Map{},
 	}
-	signal.thesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
-	signal.thesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
-	signal.thesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
-
 	signal.status = types.READY
 	signal.run()
 	return signal
@@ -96,95 +91,81 @@ func (signal *Signal) Subscribe(
 	)
 }
 
-func (signal *Signal) publishThesis() {
-	if signal.subscribers == nil {
-		return
-	}
-
-	subscribers, ok := signal.subscribers.Load("thesis")
-
-	if ok && subscribers != nil {
-		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-			subscriber.Send(signal.thesis)
-		}
-	}
-}
-
-/*
-onTicker treats the ticker stream as Hawkes cadence only so the signal can emit a
-shared cut after warmed trade arrivals without pretending ticker rows carry
-microstructure measurements.
-*/
-func (signal *Signal) onTicker(ticker *kraken.Ticker) {
-	signal.thesis.AppendMeasurements(
-		types.SourceHawkes,
-		signal.Calculate(ticker.Data, nil, nil),
-		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
-	)
-
-	signal.publishThesis()
-}
-
 func (signal *Signal) run() {
 	go func() {
 		for {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case ticker := <-signal.subscriptions["ticker"].Channel:
-				if ticker, ok := ticker.(*kraken.Ticker); ok {
-					signal.onTicker(ticker)
-				}
-			case trade := <-signal.subscriptions["trade"].Channel:
-				if trade, ok := trade.(*kraken.Trade); ok {
-					signal.onTrade(trade)
+			case message := <-signal.subscriptions["thesis"].Channel:
+				if thesis, ok := message.(*types.Thesis); ok {
+					thesis.AppendMeasurements(
+						types.SourceHawkes,
+						signal.Measure(thesis),
+						types.Stamp{At: time.Now(), Entity: types.MarketTrade},
+					)
+
+					subscribers, ok := signal.subscribers.Load(signal.Name())
+
+					if ok && subscribers != nil {
+						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
+							subscriber.Send(thesis)
+						}
+					}
 				}
 			}
 		}
 	}()
 }
 
-func (signal *Signal) onTrade(trade *kraken.Trade) {
-	signal.thesis.AppendMeasurements(
-		types.SourceHawkes,
-		signal.Calculate(nil, trade.Data, nil),
-		types.Stamp{At: time.Now(), Entity: types.MarketTrade},
-	)
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	if _, ok := thesis.Causal.Load("signal:hawkes:sample"); !ok {
+		thesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
+	}
 
-	signal.publishThesis()
+	if _, ok := thesis.Causal.Load("signal:hawkes:process"); !ok {
+		thesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
+	}
+
+	if _, ok := thesis.Causal.Load("signal:hawkes:mu"); !ok {
+		thesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
+	}
+
+	_, trades, _ := thesis.Market()
+	return signal.Calculate(thesis, trades)
 }
 
 /*
 Outcome returns the latest measured Hawkes outcome for one symbol.
 */
-func (signal *Signal) Outcome(symbol string) (excitation.Outcome, bool) {
-	if signal == nil || signal.thesis == nil {
+func (signal *Signal) Outcome(thesis *types.Thesis, symbol string) (excitation.Outcome, bool) {
+	if signal == nil || thesis == nil {
 		return excitation.Outcome{}, false
 	}
 
-	found, _ := signal.thesis.Causal.Load("signal:hawkes:mu")
+	found, _ := thesis.Causal.Load("signal:hawkes:mu")
 	mu := found.(*sync.Mutex)
 	mu.Lock()
 	defer mu.Unlock()
 
-	found, _ = signal.thesis.Causal.Load("signal:hawkes:process")
+	found, _ = thesis.Causal.Load("signal:hawkes:process")
 	return found.(*excitation.Process).Outcome(symbol)
 }
 
 /*
 Symbols returns every symbol with retained Hawkes excitation state.
 */
-func (signal *Signal) Symbols() []string {
-	if signal == nil || signal.thesis == nil {
+func (signal *Signal) Symbols(thesis *types.Thesis) []string {
+	if signal == nil || thesis == nil {
 		return nil
 	}
 
-	found, _ := signal.thesis.Causal.Load("signal:hawkes:mu")
+	found, _ := thesis.Causal.Load("signal:hawkes:mu")
 	mu := found.(*sync.Mutex)
 	mu.Lock()
 	defer mu.Unlock()
 
-	found, _ = signal.thesis.Causal.Load("signal:hawkes:process")
+	found, _ = thesis.Causal.Load("signal:hawkes:process")
 	return found.(*excitation.Process).Symbols()
 }
 
@@ -193,22 +174,21 @@ Calculate converts executed trades into Hawkes measurements because arrivals on
 the public trade tape are the authoritative event stream for self-excitation.
 */
 func (signal *Signal) Calculate(
-	_ []kraken.TickerData,
+	thesis *types.Thesis,
 	trades []kraken.TradeData,
-	_ []kraken.BookData,
 ) []*types.Measurement {
 	out := make([]*types.Measurement, 0, len(trades))
 	uiOut := datura.NewMap(
 		"measurements", make([]*types.Measurement, 0),
 	)
 
-	found, _ := signal.thesis.Causal.Load("signal:hawkes:mu")
+	found, _ := thesis.Causal.Load("signal:hawkes:mu")
 	mu := found.(*sync.Mutex)
 	mu.Lock()
 	defer mu.Unlock()
 
 	for _, row := range trades {
-		measurements, err := signal.measure(row)
+		measurements, err := signal.measure(thesis, row)
 
 		if err != nil {
 			errnie.Error(err)
@@ -235,8 +215,8 @@ func (signal *Signal) Calculate(
 measure advances both the arrival sampler and Hawkes process for one trade so the
 signal only emits once the excitation state is numerically ready.
 */
-func (signal *Signal) measure(row kraken.TradeData) ([]*types.Measurement, error) {
-	found, _ := signal.thesis.Causal.Load("signal:hawkes:sample")
+func (signal *Signal) measure(thesis *types.Thesis, row kraken.TradeData) ([]*types.Measurement, error) {
+	found, _ := thesis.Causal.Load("signal:hawkes:sample")
 	input, ready, err := found.(*excitation.Sample).MeasureArrival(excitation.TradeInput{
 		Symbol:    row.Symbol,
 		Side:      row.Side,
@@ -255,7 +235,7 @@ func (signal *Signal) measure(row kraken.TradeData) ([]*types.Measurement, error
 		return nil, nil
 	}
 
-	found, _ = signal.thesis.Causal.Load("signal:hawkes:process")
+	found, _ = thesis.Causal.Load("signal:hawkes:process")
 	output, ready, err := found.(*excitation.Process).Measure(input)
 
 	if err != nil {
@@ -270,7 +250,7 @@ func (signal *Signal) measure(row kraken.TradeData) ([]*types.Measurement, error
 		return nil, nil
 	}
 
-	return signal.measurements(row.Symbol, output), nil
+	return signal.measurements(thesis, row.Symbol, output), nil
 }
 
 /*

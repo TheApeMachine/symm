@@ -26,7 +26,6 @@ signal emits numerical scores only.
 */
 type Signal struct {
 	status        types.Status
-	thesis        *types.Thesis
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
@@ -118,71 +117,36 @@ func (signal *Signal) run() {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case ticker := <-signal.subscriptions["ticker"].Channel:
-				if ticker, ok := ticker.(*kraken.Ticker); ok {
-					signal.onTicker(ticker)
-				}
-			case trade := <-signal.subscriptions["trade"].Channel:
-				if trade, ok := trade.(*kraken.Trade); ok {
-					signal.onTrade(trade)
+			case message := <-signal.subscriptions["thesis"].Channel:
+				if thesis, ok := message.(*types.Thesis); ok {
+					thesis.AppendMeasurements(
+						types.SourceDepthFlow,
+						signal.Measure(thesis),
+						types.Stamp{At: time.Now(), Entity: types.MarketTrade},
+					)
+
+					subscribers, ok := signal.subscribers.Load(signal.Name())
+
+					if ok && subscribers != nil {
+						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
+							subscriber.Send(thesis)
+						}
+					}
 				}
 			}
 		}
 	}()
 }
 
-func (signal *Signal) onTicker(ticker *kraken.Ticker) {
-	signal.thesis.AppendMeasurements(
-		types.SourceDepthFlow,
-		signal.Calculate(ticker.Data, nil, nil),
-		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
-	)
-
-	if signal.subscribers == nil {
-		return
-	}
-
-	subscribers, ok := signal.subscribers.Load("thesis")
-
-	if ok && subscribers != nil {
-		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-			subscriber.Send(signal.thesis)
-		}
-	}
-}
-
-func (signal *Signal) onTrade(trade *kraken.Trade) {
-	signal.thesis.AppendMeasurements(
-		types.SourceDepthFlow,
-		signal.Calculate(nil, trade.Data, nil),
-		types.Stamp{At: time.Now(), Entity: types.MarketTrade},
-	)
-
-	if signal.subscribers == nil {
-		return
-	}
-
-	subscribers, ok := signal.subscribers.Load("thesis")
-
-	if ok && subscribers != nil {
-		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-			subscriber.Send(signal.thesis)
-		}
-	}
-}
-
-func (signal *Signal) Calculate(
-	tickers []kraken.TickerData,
-	trades []kraken.TradeData,
-	books []kraken.BookData,
-) []*types.Measurement {
-	events := depthEvents(books, trades)
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	_, trades, _ := thesis.Market()
+	events := depthEvents(nil, trades)
 	out, err := types.MeasureEventsParallel(events, func(event types.Event) ([]*types.Measurement, error) {
 		if event.Stream == "book" {
-			return signal.measureBook(event.Row.(kraken.BookData))
+			return signal.measureBook(thesis, event.Row.(kraken.BookData))
 		}
 
-		return signal.measureTrade(event.Row.(kraken.TradeData))
+		return signal.measureTrade(thesis, event.Row.(kraken.TradeData))
 	})
 
 	uiOut := datura.NewMap(
@@ -214,6 +178,7 @@ measureBook applies one book event to the shared flow sample and emits the
 resulting measurements only after both sample and equation report readiness.
 */
 func (signal *Signal) measureBook(
+	thesis *types.Thesis,
 	row kraken.BookData,
 ) ([]*types.Measurement, error) {
 	if row.Symbol == "" {
@@ -267,7 +232,7 @@ func (signal *Signal) measureBook(
 		return nil, nil
 	}
 
-	return signal.frame(row.Symbol, row.Timestamp, output), nil
+	return signal.frame(thesis, row.Symbol, row.Timestamp, output), nil
 }
 
 /*
@@ -275,6 +240,7 @@ measureTrade applies one trade event to the shared flow sample at its causal
 position in the merged entity timeline.
 */
 func (signal *Signal) measureTrade(
+	thesis *types.Thesis,
 	row kraken.TradeData,
 ) ([]*types.Measurement, error) {
 	if row.Symbol == "" || row.Price.Sign() <= 0 || row.Qty <= 0 || row.Timestamp.IsZero() {
@@ -307,7 +273,7 @@ func (signal *Signal) measureTrade(
 		return nil, nil
 	}
 
-	return signal.frame(row.Symbol, row.Timestamp, output), nil
+	return signal.frame(thesis, row.Symbol, row.Timestamp, output), nil
 }
 
 /*
@@ -352,6 +318,7 @@ frame converts a bookflow calculator output into one source×symbol row so both
 the book-driven and trade-driven observation paths emit the same metric set.
 */
 func (signal *Signal) frame(
+	thesis *types.Thesis,
 	symbol string, at time.Time, output equation.BookflowOutput,
 ) []*types.Measurement {
 	validity := types.MeasurementValidity{
@@ -367,7 +334,7 @@ func (signal *Signal) frame(
 		Source:   types.SourceDepthFlow,
 		Symbol:   symbol,
 		At:       at,
-		Maturity: signal.thesis.Tick,
+		Maturity: float64(thesis.Tick),
 		Validity: validity,
 		Metrics:  make(map[string]types.MetricSample, 6),
 		Scale:    scale,

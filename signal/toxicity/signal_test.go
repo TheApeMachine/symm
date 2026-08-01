@@ -109,11 +109,8 @@ func measureToxicity(t *testing.T, state tests.MarketState, focus ...string) []*
 
 	api := websocket.NewAPI(t.Context(), connAdapter{market.Public}, connAdapter{market.Level3})
 	thesis := types.NewThesis()
-	thesis.Causal.Store("signal:toxicity:touch", make(map[string]float64))
-	thesis.Causal.Store("signal:toxicity:price", make(map[string]float64))
-	signal := &Signal{thesis: thesis, api: api, ui: make(chan []byte, 32)}
+	signal := &Signal{api: api, ui: make(chan []byte, 32)}
 	tradeSub := market.Public.Subscribe("trade")
-	bookSub := market.Public.Subscribe("book")
 
 	So(market.Public.Write(json.RawMessage(
 		`{"method":"subscribe","params":{"channel":"trade","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
@@ -125,16 +122,19 @@ func measureToxicity(t *testing.T, state tests.MarketState, focus ...string) []*
 		`{"method":"subscribe","params":{"channel":"level3","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"],"depth":10}}`,
 	)), ShouldBeNil)
 
-	signal.thesis.Tick++
-	signal.Calculate(drainToxicityBooks(bookSub), drainToxicityTrades(tradeSub))
+	for _, trade := range drainToxicityTrades(tradeSub) {
+		thesis.Trades.Store(trade.Symbol, trade)
+	}
+	thesis.Tick++
+	signal.Measure(thesis)
 
 	consume := func(into *[]*types.Measurement) func() error {
 		return func() error {
-			signal.thesis.Tick++
-			*into = append(*into, signal.Calculate(
-				drainToxicityBooks(bookSub),
-				drainToxicityTrades(tradeSub),
-			)...)
+			for _, trade := range drainToxicityTrades(tradeSub) {
+				thesis.Trades.Store(trade.Symbol, trade)
+			}
+			thesis.Tick++
+			*into = append(*into, signal.Measure(thesis)...)
 
 			return nil
 		}

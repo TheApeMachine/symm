@@ -113,7 +113,7 @@ func (signal *Signal) run() {
 						return
 					}
 
-					subscribers, ok := signal.subscribers.Load("thesis")
+					subscribers, ok := signal.subscribers.Load(signal.Name())
 
 					if ok && subscribers != nil {
 						for _, subscriber := range subscribers.([]*types.Subscription[any]) {

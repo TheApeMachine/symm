@@ -8,7 +8,6 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
@@ -23,7 +22,6 @@ emits numerical scores only.
 */
 type Signal struct {
 	status        types.Status
-	thesis        *types.Thesis
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
@@ -49,15 +47,15 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		status:  types.INITIALIZING,
-		ctx:     ctx,
-		cancel:  cancel,
-		api:     api,
-		planner: planner,
-		section: NewSection(),
-		ui:      ui,
+		status:        types.INITIALIZING,
+		ctx:           ctx,
+		cancel:        cancel,
+		api:           api,
+		planner:       planner,
+		section:       NewSection(),
+		ui:            ui,
 		subscriptions: subscriptions,
-		subscribers: &sync.Map{},
+		subscribers:   &sync.Map{},
 	}
 
 	signal.run()
@@ -88,47 +86,37 @@ func (signal *Signal) Subscribe(
 	)
 }
 
-func (signal *Signal) publishThesis() {
-	subscribers, ok := signal.subscribers.Load("thesis")
-
-	if ok && subscribers != nil {
-		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-			subscriber.Send(signal.thesis)
-		}
-	}
-}
-
 func (signal *Signal) run() {
 	go func() {
 		for {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case ticker := <-signal.subscriptions["ticker"].Channel:
-				if ticker, ok := ticker.(*kraken.Ticker); ok {
-					signal.onTicker(ticker)
+			case message := <-signal.subscriptions["thesis"].Channel:
+				if thesis, ok := message.(*types.Thesis); ok {
+					thesis.AppendMeasurements(
+						types.SourceCorrelation,
+						signal.Measure(thesis),
+						types.Stamp{At: time.Now(), Entity: types.MarketTicker},
+					)
+
+					subscribers, ok := signal.subscribers.Load(signal.Name())
+
+					if ok && subscribers != nil {
+						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
+							subscriber.Send(thesis)
+						}
+					}
 				}
 			}
 		}
 	}()
 }
 
-func (signal *Signal) onTicker(ticker *kraken.Ticker) {
-	signal.thesis.AppendMeasurements(
-		types.SourceCorrelation,
-		signal.Calculate(ticker.Data, nil, nil),
-		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
-	)
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	tickers, trades, _ := thesis.Market()
 
-	signal.publishThesis()
-}
-
-func (signal *Signal) Calculate(
-	tickers []kraken.TickerData,
-	trades []kraken.TradeData,
-	books []kraken.BookData,
-) []*types.Measurement {
-	if len(tickers) == 0 {
+	if len(tickers) == 0 && len(trades) == 0 {
 		return nil
 	}
 
@@ -183,51 +171,62 @@ func (signal *Signal) Calculate(
 			continue
 		}
 
-		measurement := correlationMeasurement(symbol, at, validity, scores)
+		measurement := &types.Measurement{
+			Source:   types.SourceCorrelation,
+			Symbol:   symbol,
+			At:       at,
+			Validity: validity,
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricCorrelation, types.SideNone): types.MetricSample{
+					Raw:  scores["correlation"],
+					Unit: types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricSigned, types.SideNone): types.MetricSample{
+					Raw:  scores["signed"],
+					Unit: types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricRelativeEnergy, types.SideNone): types.MetricSample{
+					Raw:  scores["relativeEnergy"],
+					Unit: types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricHerdScore, types.SideNone): types.MetricSample{
+					Raw:  scores["herdScore"],
+					Unit: types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricAlphaScore, types.SideNone): types.MetricSample{
+					Raw:  scores["alphaScore"],
+					Unit: types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricNoiseScore, types.SideNone): types.MetricSample{
+					Raw:  scores["noiseScore"],
+					Unit: types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricStressScore, types.SideNone): types.MetricSample{
+					Raw:  scores["stressScore"],
+					Unit: types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricPeakScore, types.SideNone): types.MetricSample{
+					Raw:  scores["peakScore"],
+					Unit: types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricStrength, types.SideNone): types.MetricSample{
+					Raw:  scores["strength"],
+					Unit: types.UnitDimensionless,
+				},
+			},
+		}
+
 		out = append(out, measurement)
 
-		if measurement.Symbol == types.Focus() {
+		if symbol == types.Focus() {
 			uiOut["measurements"] = append(
 				uiOut["measurements"].([]*types.Measurement), measurement,
 			)
 		}
 	}
 
-	if len(uiOut["measurements"].([]*types.Measurement)) > 0 {
-		utils.Publish(signal.ui, uiOut)
-	}
-
+	utils.Publish(signal.ui, uiOut)
 	return out
-}
-
-/*
-correlationMeasurement writes the nine cohort evidence metrics for one symbol.
-*/
-func correlationMeasurement(
-	symbol string,
-	at time.Time,
-	validity types.MeasurementValidity,
-	scores map[string]float64,
-) *types.Measurement {
-	measurement := &types.Measurement{
-		Source:   types.SourceCorrelation,
-		Symbol:   symbol,
-		At:       at,
-		Validity: validity,
-		Metrics:  make(map[string]types.MetricSample, 9),
-	}
-
-	measurement.Metrics[types.MetricKey(types.MetricCorrelation, types.SideNone)] = types.MetricSample{Raw: scores["correlation"], Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricSigned, types.SideNone)] = types.MetricSample{Raw: scores["signed"], Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricRelativeEnergy, types.SideNone)] = types.MetricSample{Raw: scores["relativeEnergy"], Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricHerdScore, types.SideNone)] = types.MetricSample{Raw: scores["herdScore"], Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricAlphaScore, types.SideNone)] = types.MetricSample{Raw: scores["alphaScore"], Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricNoiseScore, types.SideNone)] = types.MetricSample{Raw: scores["noiseScore"], Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricStressScore, types.SideNone)] = types.MetricSample{Raw: scores["stressScore"], Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricPeakScore, types.SideNone)] = types.MetricSample{Raw: scores["peakScore"], Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricStrength, types.SideNone)] = types.MetricSample{Raw: scores["strength"], Unit: types.UnitDimensionless}
-
-	return measurement
 }
 
 /*

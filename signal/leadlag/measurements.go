@@ -14,11 +14,12 @@ import (
 measureFrame ingests prices, refreshes the anchor, and scores each follower row.
 */
 func (signal *Signal) measureFrame(
+	thesis *types.Thesis,
 	tickers []kraken.TickerData,
 	crossSection *types.CrossSection,
 ) []*types.Measurement {
 	rows := tickers
-	found, _ := signal.thesis.Causal.Load("signal:leadlag:section")
+	found, _ := thesis.Causal.Load("signal:leadlag:section")
 	section := found.(*Section)
 	out := make([]*types.Measurement, 0, len(rows))
 	uiOut := datura.NewMap(
@@ -69,7 +70,7 @@ func (signal *Signal) measureFrame(
 			continue
 		}
 
-		out = append(out, signal.score(row.Symbol, row.Timestamp, features))
+		out = append(out, signal.score(thesis, row.Symbol, row.Timestamp, features))
 
 		if row.Symbol == types.Focus() {
 			uiOut["measurements"] = append(
@@ -99,9 +100,10 @@ type correlationSelection struct {
 selectCorrelations derives lag and contemporaneous correlation evidence.
 */
 func (signal *Signal) selectCorrelations(
+	thesis *types.Thesis,
 	features LagFeatures,
 ) correlationSelection {
-	found, _ := signal.thesis.Causal.Load("signal:leadlag:section")
+	found, _ := thesis.Causal.Load("signal:leadlag:section")
 	section := found.(*Section)
 	selected := correlationSelection{}
 	dynamicMax := 0
@@ -305,14 +307,15 @@ score converts one follower's lag features into the published lead-lag
 measurement bundle for the current tick.
 */
 func (signal *Signal) score(
+	thesis *types.Thesis,
 	symbol string,
 	at time.Time,
 	features LagFeatures,
 ) *types.Measurement {
-	selected := signal.selectCorrelations(features)
+	selected := signal.selectCorrelations(thesis, features)
 	sampleSupport := sampleSupportFraction(features.SampleCount)
 	weights := weightEvidence(features, selected, sampleSupport)
-	found, _ := signal.thesis.Causal.Load("signal:leadlag:section")
+	found, _ := thesis.Causal.Load("signal:leadlag:section")
 	anchor := found.(*Section).AnchorSymbol()
 
 	return buildScoreMeasurement(

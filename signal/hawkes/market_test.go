@@ -2,10 +2,7 @@ package hawkes
 
 import (
 	"encoding/json"
-	"sync"
 	"testing"
-
-	"github.com/theapemachine/nomagique/algorithm/excitation"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
@@ -34,23 +31,26 @@ func measureHawkes(t *testing.T, state tests.MarketState, focus ...string) []*ty
 	defer market.Close()
 
 	thesis := types.NewThesis()
-	thesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
-	thesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
-	thesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
-	signal := &Signal{thesis: thesis, ui: make(chan []byte, 32)}
+	signal := &Signal{ui: make(chan []byte, 32)}
 	tradeSub := market.Public.Subscribe("trade")
 
 	So(market.Public.Write(json.RawMessage(
 		`{"method":"subscribe","params":{"channel":"trade","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
 	)), ShouldBeNil)
 
-	signal.thesis.Tick++
-	signal.Calculate(nil, drainHawkesTrades(tradeSub), nil)
+	for _, trade := range drainHawkesTrades(tradeSub) {
+		thesis.Trades.Store(trade.Symbol, trade)
+	}
+	thesis.Tick++
+	signal.Measure(thesis)
 
 	consume := func(into *[]*types.Measurement) func() error {
 		return func() error {
-			signal.thesis.Tick++
-			*into = append(*into, signal.Calculate(nil, drainHawkesTrades(tradeSub), nil)...)
+			for _, trade := range drainHawkesTrades(tradeSub) {
+				thesis.Trades.Store(trade.Symbol, trade)
+			}
+			thesis.Tick++
+			*into = append(*into, signal.Measure(thesis)...)
 
 			return nil
 		}
