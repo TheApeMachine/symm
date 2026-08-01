@@ -48,35 +48,36 @@ func NewSignal(
 	planner *strategy.Planner,
 	ui chan []byte,
 	subscriptions map[string]*types.Subscription[any],
-) (*Signal, error) {
+) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 	sample, err := flow.NewSample(viper.GetViper().GetInt("signals.depthflow.sampleSize"))
 
 	if err != nil {
 		cancel()
-		return nil, errnie.Error(errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.Validation,
 			"depthflow: failed to create flow sample",
 			err,
 		))
+		return nil
 	}
 
 	signal := &Signal{
-		status:   types.INITIALIZING,
-		ctx:      ctx,
-		cancel:   cancel,
-		api:      api,
-		planner:  planner,
-		sample:   sample,
-		bookflow: equation.NewBookflow(),
-		ui:       ui,
+		status:        types.INITIALIZING,
+		ctx:           ctx,
+		cancel:        cancel,
+		api:           api,
+		planner:       planner,
+		sample:        sample,
+		bookflow:      equation.NewBookflow(),
+		ui:            ui,
 		subscriptions: subscriptions,
-		subscribers: &sync.Map{},
+		subscribers:   &sync.Map{},
 	}
 
 	signal.status = types.READY
 	signal.run()
-	return signal, nil
+	return signal
 }
 
 /*
