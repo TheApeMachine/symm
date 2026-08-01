@@ -1,6 +1,6 @@
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { registerPainter } from "#/providers/ws-stores";
-import type { JSONSerializable } from "./paint";
+import type { JSONSerializable, Paint } from "./paint";
 
 /*
 Component is a wrapper that takes care of boilerplate around the UI.
@@ -80,19 +80,25 @@ type PaintBinding = {
 const scanTargets = (root: HTMLElement) => {
 	const rootTargets = new Map<string, PaintBinding[]>();
 
-	for (const element of root.querySelectorAll<HTMLElement>("[data-paint], [data-set]")) {
+	for (const element of root.querySelectorAll<HTMLElement>(
+		"[data-paint], [data-set]",
+	)) {
 		const key = element.dataset.paint ?? element.dataset.set;
 
 		if (!key) {
 			continue;
 		}
 
-		const scopedParent = element.closest<HTMLElement>("[data-scope][data-filter]");
+		const scopedParent = element.closest<HTMLElement>(
+			"[data-scope][data-filter]",
+		);
 		const dataset: PaintDataset = {
 			...element.dataset,
 			scope: element.dataset.scope ?? scopedParent?.dataset.scope,
 			filter: element.dataset.filter ?? scopedParent?.dataset.filter,
-			index: element.dataset.index ?? element.closest<HTMLElement>("[data-index]")?.dataset.index,
+			index:
+				element.dataset.index ??
+				element.closest<HTMLElement>("[data-index]")?.dataset.index,
 		};
 
 		if (!rootTargets.has(key)) {
@@ -208,7 +214,10 @@ const selectScopedUpdates = (
 	return undefined;
 };
 
-const applyPaintClass = (element: HTMLElement, value: JSONSerializable): void => {
+const applyPaintClass = (
+	element: HTMLElement,
+	value: JSONSerializable,
+): void => {
 	const spec = element.dataset.paintClass;
 
 	if (!spec) {
@@ -272,7 +281,7 @@ const setTargetValue = (
 	element: HTMLElement,
 	target: string | undefined,
 	value: JSONSerializable,
-) => {
+): void => {
 	if (!target) {
 		return;
 	}
@@ -281,7 +290,11 @@ const setTargetValue = (
 	let current: unknown = element;
 
 	for (const part of parts.slice(0, -1)) {
-		if (current === null || current === undefined || typeof current !== "object") {
+		if (
+			current === null ||
+			current === undefined ||
+			typeof current !== "object"
+		) {
 			return;
 		}
 
@@ -290,18 +303,25 @@ const setTargetValue = (
 
 	const property = parts.at(-1);
 
-	if (!property || current === null || current === undefined || typeof current !== "object") {
+	if (
+		!property ||
+		current === null ||
+		current === undefined ||
+		typeof current !== "object"
+	) {
 		return;
 	}
 
-	(current as Record<string, unknown>)[property] = String(value);
+	(current as Record<string, unknown>)[property] = value;
 };
 
 const updateTargets = (
 	targets: Map<string, PaintBinding[]>,
 	updates: JSONSerializable,
 ) => {
-	if (updates === undefined || updates === null) return;
+	if (updates === undefined || updates === null) {
+		return;
+	}
 
 	for (const [key, targetsByKey] of targets) {
 		for (const target of targetsByKey) {
@@ -322,13 +342,7 @@ const updateTargets = (
 				continue;
 			}
 
-			let formatted: string;
-
-			try {
-				formatted = formatValue(value, target.dataset.paintFormat);
-			} catch {
-				continue;
-			}
+			const formatted = formatValue(value, target.dataset.paintFormat);
 
 			if (target.dataset.paintProp) {
 				setTargetValue(target.element, target.dataset.paintProp, formatted);
@@ -348,27 +362,36 @@ export const Component = ({
 	children,
 }: ComponentProps) => {
 	const ref = useRef<HTMLDivElement>(null);
+	const targets = useRef<Map<string, PaintBinding[]>>(new Map());
+	const paintRef = useRef<Paint | undefined>(undefined);
 	const latest = useRef<JSONSerializable | undefined>(undefined);
 	const [slots, setSlots] = useState<number[]>([]);
 
 	useLayoutEffect(() => {
-		if (!ref.current) return;
-		const rootTargets = scanTargets(ref.current);
+		if (!ref.current) {
+			return;
+		}
 
-		const paint = (updates: JSONSerializable) => {
+		targets.current = scanTargets(ref.current);
+
+		if (latest.current !== undefined) {
+			paintRef.current?.(latest.current);
+		}
+	});
+
+	useLayoutEffect(() => {
+		if (!registerKey) {
+			return;
+		}
+
+		const paint: Paint = (updates) => {
 			latest.current = updates;
 
-			// Ignore undefined or null updates (and later also empty values)
-			// to avoid "flickering" or "state" loss. Remember, the static DOM
-			// is our "retained" state, so we must not overwrite it, only
-			// update or append.
-			if (updates === undefined || updates === null) return;
+			if (updates === undefined || updates === null) {
+				return;
+			}
 
-			if (select && updates) {
-				// When a select key is provided, we scope the updated data to
-				// that key, which allows for sub-selections as a prop on the
-				// Component. This is useful for cases where the data structure
-				// is nested and we only want to update a specific part of it.
+			if (select) {
 				const selectedUpdates = readPath(updates, select);
 
 				if (selectedUpdates === undefined || selectedUpdates === null) {
@@ -379,23 +402,19 @@ export const Component = ({
 			}
 
 			if (Array.isArray(updates)) {
-				const indexedTargets = Array.from(rootTargets.values())
-					.flat()
-					.filter((target) => Number.isInteger(Number.parseInt(target.dataset.index ?? "", 10)));
+				setSlots((current) => {
+					if (current.length >= updates.length) {
+						return current;
+					}
 
-				if (indexedTargets.length > 0 && slots.length < updates.length) {
-					setSlots(Array.from({ length: updates.length }, (_, index) => index));
-					return;
-				}
+					return Array.from({ length: updates.length }, (_, index) => index);
+				});
 			}
 
-			updateTargets(rootTargets, updates);
+			updateTargets(targets.current, updates);
 		};
 
-		if (!registerKey) {
-			return;
-		}
-
+		paintRef.current = paint;
 		const unregister = registerPainter(registerKey, paint);
 
 		if (latest.current !== undefined) {
@@ -404,8 +423,12 @@ export const Component = ({
 
 		return () => {
 			unregister?.();
+
+			if (paintRef.current === paint) {
+				paintRef.current = undefined;
+			}
 		};
-	}, [registerKey, select, slots]);
+	}, [registerKey, select]);
 
 	return children({
 		ref,

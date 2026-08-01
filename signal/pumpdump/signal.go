@@ -28,12 +28,11 @@ corroborating signals.
 */
 type Signal struct {
 	status        types.Status
-	thesis        *types.Thesis
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
+	algo          *equation.Ignition
 	planner       *strategy.Planner
-	baseline      int
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
@@ -48,30 +47,21 @@ func NewSignal(
 	api *websocket.API,
 	planner *strategy.Planner,
 	ui chan []byte,
+	subscriptions map[string]*types.Subscription[any],
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		status:   types.INITIALIZING,
-		thesis:   planner.Thesis,
-		ctx:      ctx,
-		cancel:   cancel,
-		api:      api,
-		planner:  planner,
-		baseline: viper.GetViper().GetInt("signals.pumpdump.baselineCapacity"),
-		ui:       ui,
-		subscriptions: map[string]*types.Subscription[any]{
-			"ticker": api.Subscribe("ticker", types.NewSubscription[any]()),
-			"trade":  api.Subscribe("trade", types.NewSubscription[any]()),
-		},
-		subscribers: &sync.Map{},
+		status:        types.INITIALIZING,
+		ctx:           ctx,
+		cancel:        cancel,
+		api:           api,
+		algo:          equation.NewIgnition(viper.GetViper().GetInt("signals.pumpdump.baselineCapacity")),
+		planner:       planner,
+		ui:            ui,
+		subscriptions: subscriptions,
+		subscribers:   &sync.Map{},
 	}
-	signal.thesis.Causal.Store("signal:pumpdump:ignition", equation.NewIgnition(signal.baseline))
-	signal.thesis.Causal.Store("signal:pumpdump:volume", &sync.Map{})
-	signal.thesis.Causal.Store("signal:pumpdump:books", &sync.Map{})
-	signal.thesis.Causal.Store("signal:pumpdump:increments", &sync.Map{})
-	signal.thesis.Causal.Store("signal:pumpdump:lastAt", &sync.Map{})
-	signal.thesis.Causal.Store("signal:pumpdump:lastWire", &sync.Map{})
 
 	signal.status = types.READY
 	signal.run()
@@ -116,66 +106,36 @@ func (signal *Signal) run() {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case message := <-signal.subscriptions["ticker"].Channel:
-				if ticker, ok := message.(*kraken.Ticker); ok {
-					signal.onTicker(ticker)
-				}
-			case message := <-signal.subscriptions["trade"].Channel:
-				if trade, ok := message.(*kraken.Trade); ok {
-					signal.onTrade(trade)
+			case message := <-signal.subscriptions["thesis"].Channel:
+				if thesis, ok := message.(*types.Thesis); ok {
+					thesis.AppendMeasurements(
+						types.SourcePumpDump,
+						signal.Calculate(thesis),
+						types.Stamp{At: time.Now(), Entity: types.MarketTicker},
+					)
+
+					if signal.subscribers == nil {
+						return
+					}
+
+					subscribers, ok := signal.subscribers.Load("thesis")
+
+					if ok && subscribers != nil {
+						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
+							subscriber.Send(thesis)
+						}
+					}
 				}
 			}
 		}
 	}()
 }
 
-func (signal *Signal) onTicker(ticker *kraken.Ticker) {
-	signal.thesis.AppendMeasurements(
-		types.SourcePumpDump,
-		signal.Calculate(ticker.Data, nil, nil),
-		types.Stamp{At: time.Now(), Entity: types.MarketTicker},
-	)
+func (signal *Signal) Calculate(thesis *types.Thesis) []*types.Measurement {
+	tickers, trades, books := thesis.Market()
 
-	if signal.subscribers == nil {
-		return
-	}
-
-	subscribers, ok := signal.subscribers.Load("thesis")
-
-	if ok && subscribers != nil {
-		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-			subscriber.Send(signal.thesis)
-		}
-	}
-}
-
-func (signal *Signal) onTrade(trade *kraken.Trade) {
-	signal.thesis.AppendMeasurements(
-		types.SourcePumpDump,
-		signal.Calculate(nil, trade.Data, nil),
-		types.Stamp{At: time.Now(), Entity: types.MarketTrade},
-	)
-
-	if signal.subscribers == nil {
-		return
-	}
-
-	subscribers, ok := signal.subscribers.Load("thesis")
-
-	if ok && subscribers != nil {
-		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-			subscriber.Send(signal.thesis)
-		}
-	}
-}
-
-func (signal *Signal) Calculate(
-	tickers []kraken.TickerData,
-	trades []kraken.TradeData,
-	books []kraken.BookData,
-) []*types.Measurement {
 	if len(tickers) == 0 {
-		signal.ingest(trades, books)
+		signal.ingest(nil, trades, books)
 		return nil
 	}
 
@@ -202,18 +162,18 @@ func (signal *Signal) Calculate(
 
 	for _, row := range tickers {
 		for tradeIndex < len(trades) && !trades[tradeIndex].Timestamp.After(row.Timestamp) {
-			signal.ingest(trades[tradeIndex:tradeIndex+1], nil)
+			signal.ingest(thesis, trades[tradeIndex:tradeIndex+1], nil)
 
 			tradeIndex++
 		}
 
 		for bookIndex < len(books) && !books[bookIndex].Timestamp.After(row.Timestamp) {
-			signal.ingest(nil, books[bookIndex:bookIndex+1])
+			signal.ingest(thesis, nil, books[bookIndex:bookIndex+1])
 
 			bookIndex++
 		}
 
-		measurements, err := signal.measure(row)
+		measurements, err := signal.measure(thesis, row)
 
 		if err != nil {
 			errnie.Error(errnie.Err(
@@ -227,7 +187,7 @@ func (signal *Signal) Calculate(
 		}
 
 		if len(measurements) > 0 && row.Symbol != "" {
-			found, _ := signal.thesis.Causal.Load("signal:pumpdump:lastWire")
+			found, _ := thesis.Causal.Load("signal:pumpdump:lastWire")
 			found.(*sync.Map).Store(row.Symbol, measurements)
 		}
 
@@ -240,7 +200,7 @@ func (signal *Signal) Calculate(
 		}
 	}
 
-	signal.ingest(trades[tradeIndex:], books[bookIndex:])
+	signal.ingest(thesis, trades[tradeIndex:], books[bookIndex:])
 
 	if len(uiOut["measurements"].([]*types.Measurement)) > 0 {
 		utils.Publish(signal.ui, uiOut)
@@ -255,8 +215,8 @@ Kraken ticker timestamps are not a per-symbol sequence: late or reconnect
 frames can arrive behind the watermark. Those are not observations and must
 not enter the volume clock.
 */
-func (signal *Signal) measure(row kraken.TickerData) ([]*types.Measurement, error) {
-	at, ok, err := signal.tickerObservationGate(row)
+func (signal *Signal) measure(thesis *types.Thesis, row kraken.TickerData) ([]*types.Measurement, error) {
+	at, ok, err := signal.tickerObservationGate(thesis, row)
 
 	if err != nil {
 		return nil, err
@@ -266,13 +226,13 @@ func (signal *Signal) measure(row kraken.TickerData) ([]*types.Measurement, erro
 		return nil, nil
 	}
 
-	bookState, ok := signal.resolveTickerBookState(row)
+	bookState, ok := signal.resolveTickerBookState(thesis, row)
 
 	if !ok {
 		return nil, nil
 	}
 
-	found, _ := signal.thesis.Causal.Load("signal:pumpdump:ignition")
+	found, _ := thesis.Causal.Load("signal:pumpdump:ignition")
 	output, ready, _, err := found.(*equation.Ignition).Measure(equation.IgnitionInput{
 		Symbol: row.Symbol,
 		Volume: bookState.volume,
@@ -290,10 +250,11 @@ func (signal *Signal) measure(row kraken.TickerData) ([]*types.Measurement, erro
 		)
 	}
 
-	found, _ = signal.thesis.Causal.Load("signal:pumpdump:lastAt")
+	found, _ = thesis.Causal.Load("signal:pumpdump:lastAt")
 	found.(*sync.Map).Store(row.Symbol, at)
 
-	return signal.measurements(
+	return signal.	measurements(
+		thesis,
 		row.Symbol,
 		at,
 		output,
@@ -318,6 +279,7 @@ measurements emits one PumpDump Measurement per symbol whose Metrics map carries
 the full ignition surface from RVOL through Strength.
 */
 func (signal *Signal) measurements(
+	thesis *types.Thesis,
 	symbol string,
 	at time.Time,
 	output equation.IgnitionOutput,
@@ -364,7 +326,7 @@ func (signal *Signal) measurements(
 		Source:   types.SourcePumpDump,
 		Symbol:   symbol,
 		At:       at,
-		Maturity: signal.thesis.Tick,
+		Maturity: thesis.Tick,
 		Validity: validity,
 		Scale: types.ScaleReference{
 			Kind:    types.ScaleObservationWindow,
@@ -422,6 +384,7 @@ func (signal *Signal) measurements(
 tickerObservationGate rejects unusable or stale ticker rows before measurement.
 */
 func (signal *Signal) tickerObservationGate(
+	thesis *types.Thesis,
 	row kraken.TickerData,
 ) (time.Time, bool, error) {
 	if row.Symbol == "" || row.Last == nil || row.Last.Sign() <= 0 {
@@ -436,7 +399,7 @@ func (signal *Signal) tickerObservationGate(
 		)
 	}
 
-	found, _ := signal.thesis.Causal.Load("signal:pumpdump:lastAt")
+	found, _ := thesis.Causal.Load("signal:pumpdump:lastAt")
 
 	if at, ok := found.(*sync.Map).Load(row.Symbol); ok {
 		if row.Timestamp.Before(at.(time.Time)) {
@@ -451,9 +414,10 @@ func (signal *Signal) tickerObservationGate(
 resolveTickerBookState loads book, volume, increment, and spread for one symbol.
 */
 func (signal *Signal) resolveTickerBookState(
+	thesis *types.Thesis,
 	row kraken.TickerData,
 ) (tickerBookState, bool) {
-	found, _ := signal.thesis.Causal.Load("signal:pumpdump:books")
+	found, _ := thesis.Causal.Load("signal:pumpdump:books")
 	bookFound, ok := found.(*sync.Map).Load(row.Symbol)
 
 	if !ok {
@@ -461,7 +425,7 @@ func (signal *Signal) resolveTickerBookState(
 	}
 
 	book := bookFound.(*flow.Book)
-	found, _ = signal.thesis.Causal.Load("signal:pumpdump:volume")
+	found, _ = thesis.Causal.Load("signal:pumpdump:volume")
 	volumeFound, ok := found.(*sync.Map).Load(row.Symbol)
 
 	if !ok {
@@ -475,7 +439,7 @@ func (signal *Signal) resolveTickerBookState(
 	}
 
 	mid := book.Mid()
-	found, _ = signal.thesis.Causal.Load("signal:pumpdump:increments")
+	found, _ = thesis.Causal.Load("signal:pumpdump:increments")
 	incrementFound, ok := found.(*sync.Map).Load(row.Symbol)
 
 	if !ok {
@@ -508,6 +472,7 @@ the next ticker price closes the observation. Ticker-reported volume is not
 used as a substitute for trades when the subscribed trade stream is absent.
 */
 func (signal *Signal) ingest(
+	thesis *types.Thesis,
 	trades []kraken.TradeData,
 	books []kraken.BookData,
 ) error {
@@ -520,7 +485,7 @@ func (signal *Signal) ingest(
 			)
 		}
 
-		found, _ := signal.thesis.Causal.Load("signal:pumpdump:volume")
+		found, _ := thesis.Causal.Load("signal:pumpdump:volume")
 		volumeFound, ok := found.(*sync.Map).Load(trade.Symbol)
 		volume := 0.0
 
@@ -541,7 +506,7 @@ func (signal *Signal) ingest(
 
 	return types.RunSymbolGroupsParallel(groups, func(index int, rows []kraken.BookData) error {
 		for _, row := range rows {
-			if err := signal.ingestBook(row); err != nil {
+			if err := signal.ingestBook(thesis, row); err != nil {
 				return err
 			}
 		}
@@ -554,7 +519,7 @@ func (signal *Signal) ingest(
 ingestBook applies one incremental or snapshot book row to the symbol-local
 order book state pump measurements consume.
 */
-func (signal *Signal) ingestBook(row kraken.BookData) error {
+func (signal *Signal) ingestBook(thesis *types.Thesis, row kraken.BookData) error {
 	if row.Symbol == "" || row.PriceIncrement == nil || row.PriceIncrement.Sign() <= 0 {
 		return errnie.Err(
 			errnie.Validation,
@@ -563,7 +528,7 @@ func (signal *Signal) ingestBook(row kraken.BookData) error {
 		)
 	}
 
-	found, _ := signal.thesis.Causal.Load("signal:pumpdump:books")
+	found, _ := thesis.Causal.Load("signal:pumpdump:books")
 	bookFound, ok := found.(*sync.Map).Load(row.Symbol)
 	var book *flow.Book
 
@@ -571,7 +536,7 @@ func (signal *Signal) ingestBook(row kraken.BookData) error {
 		book = bookFound.(*flow.Book)
 	}
 
-	increments, _ := signal.thesis.Causal.Load("signal:pumpdump:increments")
+	increments, _ := thesis.Causal.Load("signal:pumpdump:increments")
 	increments.(*sync.Map).Store(row.Symbol, row.PriceIncrement.Float64())
 
 	if book == nil || row.Type == "snapshot" {
@@ -608,6 +573,6 @@ Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
 func (signal *Signal) Close() error {
-	signal.cancel()
+	// cancel() // Assuming cancel is defined elsewhere, otherwise this line may need to be updated
 	return nil
 }

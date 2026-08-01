@@ -3,6 +3,10 @@ package types
 import (
 	"sync"
 	"time"
+	"slices"
+	"cmp"
+
+	"github.com/theapemachine/symm/kraken"
 )
 
 var thesisSignalSources = []SourceType{
@@ -88,6 +92,8 @@ type Thesis struct {
 	At           time.Time             `json:"at"`
 	CrossSection *CrossSection         `json:"crossSection"`
 	Measurements *sync.Map             `json:"-"`
+	Tickers      *sync.Map             `json:"-"`
+	Trades       *sync.Map             `json:"-"`
 	Books        *sync.Map             `json:"-"`
 	Graphs       *sync.Map             `json:"-"`
 	Forecasts    []Forecasts           `json:"forecasts"`
@@ -119,6 +125,8 @@ func NewThesis() *Thesis {
 		Hypotheses:   make([]Hypothesis, 0),
 		Categories:   make(map[string][]Category),
 		Measurements: &sync.Map{},
+		Tickers:      &sync.Map{},
+		Trades:       &sync.Map{},
 		Books:        &sync.Map{},
 		Manifold:     &sync.Map{},
 		Cognition:    &sync.Map{},
@@ -237,6 +245,54 @@ func (thesis *Thesis) Reset() *Thesis {
 	thesis.Stamps = &sync.Map{}
 
 	return thesis
+}
+
+func (thesis *Thesis) Market() (
+	[]kraken.TickerData,
+	[]kraken.TradeData,
+	[]kraken.BookData,
+) {
+	tickers := make([]kraken.TickerData, 0)
+	trades := make([]kraken.TradeData, 0)
+	books := make([]kraken.BookData, 0)
+
+	thesis.Tickers.Range(func(_, value any) bool {
+		if ticker, ok := value.(kraken.TickerData); ok {
+			tickers = append(tickers, ticker)
+		}
+
+		return true
+	})
+
+	thesis.Trades.Range(func(_, value any) bool {
+		if trade, ok := value.(kraken.TradeData); ok {
+			trades = append(trades, trade)
+		}
+
+		return true
+	})
+
+	thesis.Books.Range(func(_, value any) bool {
+		if book, ok := value.(kraken.BookData); ok {
+			books = append(books, book)
+		}
+
+		return true
+	})
+
+	slices.SortFunc(tickers, func(left, right kraken.TickerData) int {
+		return cmp.Compare(left.Timestamp.UnixNano(), right.Timestamp.UnixNano())
+	})
+
+	slices.SortStableFunc(trades, func(left, right kraken.TradeData) int {
+		return cmp.Compare(left.Timestamp.UnixNano(), right.Timestamp.UnixNano())
+	})
+
+	slices.SortStableFunc(books, func(left, right kraken.BookData) int {
+		return cmp.Compare(left.Timestamp.UnixNano(), right.Timestamp.UnixNano())
+	})
+
+	return tickers, trades, books
 }
 
 /*

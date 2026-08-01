@@ -69,30 +69,38 @@ export const KernelList = ({
 							)}
 						</div>
 
-						<div className="mt-1.5 flex items-center gap-2">
-							<span
-								data-paint="symbol"
-								className={cn("min-w-0 flex-1 truncate font-mono text-(--f2)", {
-									"text-[9px]": compact,
-									"text-[10px]": !compact,
-								})}
-							>
+						<div className="mt-0.5 truncate font-mono text-[9.5px] text-(--f4)">
+							<span data-paint="symbol" className="text-(--f4)">
 								waiting
 							</span>
-
-							{compact ? null : (
-								<span
-									data-paint="validity.readiness"
-									className="shrink-0 font-mono text-[9px] uppercase tracking-[0.07em] text-(--f4)"
-								/>
-							)}
 						</div>
 
 						{compact ? null : (
-							<div
-								data-paint="at"
-								className="mt-1 truncate font-mono text-[9px] text-(--f4)"
-							/>
+							<>
+								<svg
+									viewBox="0 0 150 30"
+									preserveAspectRatio="none"
+									className="mt-1.5 block h-6.5 w-full"
+								>
+									<title>Signal trace</title>
+								</svg>
+
+								<div className="mt-1.5 flex items-center gap-2">
+									<div className="h-1 flex-1 overflow-hidden rounded-xs bg-(--line)">
+										<div className="h-full w-0 bg-(--warning)" />
+									</div>
+
+									<span
+										data-paint="validity.readiness"
+										className="w-16 shrink-0 truncate text-right font-mono text-[9.5px] uppercase text-(--f4)"
+									/>
+
+									<span
+										data-paint="at"
+										className="w-28 shrink-0 truncate text-right font-mono text-[9.5px] text-(--f4)"
+									/>
+								</div>
+							</>
 						)}
 					</button>
 				))}
@@ -101,4 +109,5 @@ export const KernelList = ({
 	</Component>
 );
 
-export const paintKernelList = <T,>(updates: T, _focusSymbol?: string): T => updates;
+export const paintKernelList = <T,>(updates: T, _focusSymbol?: string): T =>
+	updates;
