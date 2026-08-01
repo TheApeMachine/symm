@@ -5,12 +5,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -28,10 +29,13 @@ type Signal struct {
 	cancel        context.CancelFunc
 	api           *websocket.API
 	algo          *equation.Ignition
+	lastTrades    map[string]time.Time
+	volumes       map[string]float64
 	planner       *strategy.Planner
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
+	subscribeMu   sync.Mutex
 }
 
 /*
@@ -53,6 +57,8 @@ func NewSignal(
 		cancel:        cancel,
 		api:           api,
 		algo:          equation.NewIgnition(viper.GetViper().GetInt("signals.pumpdump.baselineCapacity")),
+		lastTrades:    make(map[string]time.Time),
+		volumes:       make(map[string]float64),
 		planner:       planner,
 		ui:            ui,
 		subscriptions: subscriptions,
@@ -83,17 +89,22 @@ func (signal *Signal) Subscribe(
 		signal.subscribers = &sync.Map{}
 	}
 
-	subscribers, ok := signal.subscribers.LoadOrStore(
-		channel, []*types.Subscription[any]{subscription},
+	return signalshared.Subscribe(
+		&signal.subscribeMu,
+		signal.subscribers,
+		channel,
+		subscription,
 	)
+}
 
-	if ok && subscribers != nil {
-		signal.subscribers.Store(
-			channel, append(subscribers.([]*types.Subscription[any]), subscription),
-		)
+func (signal *Signal) ensureState() {
+	if signal.lastTrades == nil {
+		signal.lastTrades = make(map[string]time.Time)
 	}
 
-	return subscription
+	if signal.volumes == nil {
+		signal.volumes = make(map[string]float64)
+	}
 }
 
 func (signal *Signal) run() {
@@ -110,17 +121,7 @@ func (signal *Signal) run() {
 						types.Stamp{At: time.Now(), Entity: types.MarketTicker},
 					)
 
-					if signal.subscribers == nil {
-						return
-					}
-
-					subscribers, ok := signal.subscribers.Load(signal.Name())
-
-					if ok && subscribers != nil {
-						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-							subscriber.Send(thesis)
-						}
-					}
+					utils.Fanout(signal.subscribers, signal.Name(), thesis)
 				}
 			}
 		}
@@ -134,55 +135,65 @@ func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
-	tickers, _, books := thesis.Market()
+	_, trades, _ := thesis.Market()
+	signal.ensureState()
 
-	if len(tickers) == 0 {
+	if len(trades) == 0 {
 		return nil
 	}
 
 	var lastTime time.Time
 
-	for _, ticker := range tickers {
-		if ticker.Bid == nil || ticker.Ask == nil || ticker.Last == nil ||
-			ticker.Volume <= 0 || ticker.Bid.Sign() <= 0 ||
-			ticker.Ask.Sign() <= 0 || ticker.Last.Sign() <= 0 ||
+	for _, trade := range trades {
+		if trade.Qty <= 0 || trade.Price.Sign() <= 0 {
+			continue
+		}
+
+		previous, ok := signal.lastTrades[trade.Symbol]
+
+		if ok && !trade.Timestamp.After(previous) {
+			continue
+		}
+
+		value, ok := thesis.Tickers.Load(trade.Symbol)
+
+		if !ok {
+			continue
+		}
+
+		ticker, ok := value.(kraken.TickerData)
+
+		if !ok || ticker.Bid == nil || ticker.Ask == nil ||
+			ticker.Bid.Sign() <= 0 || ticker.Ask.Sign() <= 0 ||
 			ticker.Ask.Cmp(ticker.Bid) <= 0 {
 			continue
 		}
 
-		if lastTime.IsZero() || ticker.Timestamp.After(lastTime) {
-			lastTime = ticker.Timestamp
-		}
+		previous, ok = signal.lastTrades[trade.Symbol]
 
-		found, ok := books.Load(ticker.Symbol)
-
-		if !ok || found == nil {
+		if ok && !trade.Timestamp.After(previous) {
 			continue
 		}
 
-		book, ok := found.(*book.Book)
+		cumulativeVolume := signal.volumes[trade.Symbol] + trade.Qty
+		signal.lastTrades[trade.Symbol] = trade.Timestamp
+		signal.volumes[trade.Symbol] = cumulativeVolume
 
-		if !ok || book == nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"pumpdump: unexpected book type",
-				nil,
-			))
-
-			continue
+		if lastTime.IsZero() || trade.Timestamp.After(lastTime) {
+			lastTime = trade.Timestamp
 		}
 
-		mid := book.Midpoint()
+		mid := (ticker.Bid.Float64() + ticker.Ask.Float64()) / 2
 
-		if mid == nil || mid.Sign() <= 0 {
+		if mid <= 0 {
 			continue
 		}
 
 		output, _, maturity, err := signal.algo.Measure(equation.IgnitionInput{
-			At:     ticker.Timestamp,
-			Symbol: ticker.Symbol,
-			Last:   ticker.Last.Float64(),
-			Volume: ticker.Volume,
+			At:     trade.Timestamp,
+			Symbol: trade.Symbol,
+			Last:   trade.Price.Float64(),
+			Volume: cumulativeVolume,
 			Ask:    ticker.Ask.Float64(),
 			Bid:    ticker.Bid.Float64(),
 		})
@@ -199,14 +210,14 @@ func (signal *Signal) Measure(
 
 		measurements = append(measurements, &types.Measurement{
 			Source:   types.SourcePumpDump,
-			Symbol:   ticker.Symbol,
-			At:       ticker.Timestamp,
+			Symbol:   trade.Symbol,
+			At:       trade.Timestamp,
 			Maturity: maturity,
 			Validity: types.ObservationValidity(1),
 			Scale: types.ScaleReference{
 				Kind:    types.ScaleObservationWindow,
 				From:    lastTime,
-				Through: ticker.Timestamp,
+				Through: trade.Timestamp,
 			},
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricRVOL, types.SideNone): {
@@ -221,7 +232,7 @@ func (signal *Signal) Measure(
 				},
 				types.MetricKey(types.MetricSpread, types.SideNone): {
 					Raw:        output.Spread,
-					Normalized: types.NormalizeRatio(output.Spread, mid.Float64()),
+					Normalized: types.NormalizeRatio(output.Spread, mid),
 					Unit:       types.UnitQuoteCurrency,
 				},
 				types.MetricKey(types.MetricCompression, types.SideNone): {
@@ -273,6 +284,9 @@ Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
 func (signal *Signal) Close() error {
-	// cancel() // Assuming cancel is defined elsewhere, otherwise this line may need to be updated
+	if signal.cancel != nil {
+		signal.cancel()
+	}
+
 	return nil
 }

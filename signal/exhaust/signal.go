@@ -2,19 +2,21 @@ package exhaust
 
 import (
 	"context"
-	"math"
 	"sync"
 	"time"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -30,10 +32,14 @@ type Signal struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
+	instrument    *broker.Instrument
 	planner       *strategy.Planner
+	sample        *algorithm.DecaySample
+	decay         *equation.Decay
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
+	subscribeMu   sync.Mutex
 }
 
 /*
@@ -44,6 +50,7 @@ the consumer to select the side matching its position.
 func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
+	instrument *broker.Instrument,
 	planner *strategy.Planner,
 	ui chan []byte,
 	subscriptions map[string]*types.Subscription[any],
@@ -55,7 +62,10 @@ func NewSignal(
 		ctx:           ctx,
 		cancel:        cancel,
 		api:           api,
+		instrument:    instrument,
 		planner:       planner,
+		sample:        algorithm.NewDecaySample(),
+		decay:         equation.NewDecay(),
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
@@ -84,17 +94,12 @@ func (signal *Signal) Subscribe(
 		signal.subscribers = &sync.Map{}
 	}
 
-	subscribers, ok := signal.subscribers.LoadOrStore(
-		channel, []*types.Subscription[any]{subscription},
+	return signalshared.Subscribe(
+		&signal.subscribeMu,
+		signal.subscribers,
+		channel,
+		subscription,
 	)
-
-	if ok && subscribers != nil {
-		signal.subscribers.Store(
-			channel, append(subscribers.([]*types.Subscription[any]), subscription),
-		)
-	}
-
-	return subscription
 }
 
 func (signal *Signal) run() {
@@ -117,13 +122,7 @@ func (signal *Signal) run() {
 						types.Stamp{At: time.Now(), Entity: types.MarketTrade},
 					)
 
-					subscribers, ok := signal.subscribers.Load(signal.Name())
-
-					if ok && subscribers != nil {
-						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-							subscriber.Send(thesis)
-						}
-					}
+					utils.Fanout(signal.subscribers, signal.Name(), thesis)
 				}
 			}
 		}
@@ -131,15 +130,9 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	if _, ok := thesis.Causal.Load("signal:exhaust:sample"); !ok {
-		thesis.Causal.Store("signal:exhaust:sample", algorithm.NewDecaySample())
-	}
-
-	if _, ok := thesis.Causal.Load("signal:exhaust:decay"); !ok {
-		thesis.Causal.Store("signal:exhaust:decay", equation.NewDecay())
-	}
-
 	_, trades, books := thesis.Market()
+
+	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
 	books.Range(func(_, value any) bool {
@@ -149,188 +142,127 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			return true
 		}
 
-		measurements, err := signal.measureManagedBook(thesis, managed)
+		bookMeasurements, err := signal.measureManagedBook(managed)
 
 		if err != nil {
-			errnie.Error(err)
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"exhaust: failed to measure book",
+				err,
+			))
+
 			return true
 		}
 
-		out = append(out, measurements...)
-
+		measurements = append(measurements, bookMeasurements...)
 		return true
 	})
 
-	events := exhaustEvents(nil, trades)
-	tradeMeasurements, err := types.MeasureEventsParallel(events, func(event types.Event) ([]*types.Measurement, error) {
-		if event.Stream == "book" {
-			return signal.measureBook(thesis, event.Row.(kraken.BookData))
+	for _, trade := range trades {
+		tradeMeasurements, err := signal.measureTrade(trade)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"exhaust: failed to measure trade",
+				err,
+			))
+			continue
 		}
 
-		return signal.measureTrade(thesis, event.Row.(kraken.TradeData))
-	})
-	out = append(out, tradeMeasurements...)
+		measurements = append(measurements, tradeMeasurements...)
 
-	if err != nil {
-		errnie.Error(errnie.Err(errnie.UnprocessableContent, "exhaust: failed to measure events", err))
-		return nil
-	}
-
-	var focusMeasurements []*types.Measurement
-
-	for _, measurement := range out {
-		if measurement.Symbol == types.Focus() {
-			focusMeasurements = append(focusMeasurements, measurement)
+		for _, measurement := range tradeMeasurements {
+			if measurement.Symbol == types.Focus() {
+				out = append(out, measurement)
+			}
 		}
 	}
 
-	if len(focusMeasurements) > 0 {
-		utils.Publish(signal.ui, datura.NewMap("measurements", focusMeasurements))
+	if len(out) > 0 {
+		utils.Publish(signal.ui, datura.NewMap("measurements", out))
 	}
 
-	return out
+	return measurements
 }
 
 func (signal *Signal) measureManagedBook(
-	thesis *types.Thesis,
 	managed *spotbook.Book,
 ) ([]*types.Measurement, error) {
-	if managed == nil || managed.Bids == nil || managed.Asks == nil {
-		return nil, nil
+	bids := make([]flow.BookLevel, 0)
+	asks := make([]flow.BookLevel, 0)
+
+	instrument, err := signal.instrument.Pair(managed.Name)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"exhaust: failed to resolve instrument",
+			err,
+		))
 	}
 
-	if len(managed.Bids.Levels) == 0 || len(managed.Asks.Levels) == 0 {
-		return nil, nil
+	for _, bid := range managed.Bids.Levels {
+		bids = append(bids, flow.BookLevel{
+			Price:    bid.Price.Float64(),
+			Quantity: bid.Quantity.Float64(),
+			Ticks: bid.Price.Div(
+				decimal.NewFromInt64(instrument.PriceIncrement.GetIncrement()),
+			).Int64(),
+		})
 	}
 
-	tickSize := math.Inf(1)
-	levels := [][]*spotbook.Level{make([]*spotbook.Level, 0, len(managed.Bids.Levels)), make([]*spotbook.Level, 0, len(managed.Asks.Levels))}
-
-	for side, source := range []map[string]*spotbook.Level{managed.Bids.Levels, managed.Asks.Levels} {
-		for _, level := range source {
-			if level == nil || level.Price == nil || level.Quantity == nil || level.Quantity.Sign() <= 0 {
-				continue
-			}
-
-			levels[side] = append(levels[side], level)
-		}
+	for _, ask := range managed.Asks.Levels {
+		asks = append(asks, flow.BookLevel{
+			Price:    ask.Price.Float64(),
+			Quantity: ask.Quantity.Float64(),
+			Ticks: ask.Price.Div(
+				decimal.NewFromInt64(instrument.PriceIncrement.GetIncrement()),
+			).Int64(),
+		})
 	}
 
-	for _, left := range append(levels[0], levels[1]...) {
-		for _, right := range append(levels[0], levels[1]...) {
-			if left == right {
-				continue
-			}
-
-			difference := math.Abs(left.Price.Float64() - right.Price.Float64())
-
-			if difference > 0 && difference < tickSize {
-				tickSize = difference
-			}
-		}
-	}
-
-	if math.IsInf(tickSize, 1) || tickSize <= 0 {
-		return nil, nil
-	}
-
-	bids := make([]flow.BookLevel, 0, len(levels[0]))
-	asks := make([]flow.BookLevel, 0, len(levels[1]))
-	var at time.Time
-
-	for side, source := range levels {
-		for _, level := range source {
-			if level.Timestamp.After(at) {
-				at = level.Timestamp
-			}
-
-			projected := flow.BookLevel{
-				Price:    level.Price.Float64(),
-				Ticks:    int64(math.Round(level.Price.Float64() / tickSize)),
-				Quantity: level.Quantity.Float64(),
-			}
-
-			if side == 0 {
-				bids = append(bids, projected)
-				continue
-			}
-
-			asks = append(asks, projected)
-		}
-	}
-
-	if at.IsZero() || len(bids) == 0 || len(asks) == 0 {
-		return nil, nil
-	}
-
-	found, _ := thesis.Causal.Load("signal:exhaust:sample")
-	input, ready, maturity, err := found.(*algorithm.DecaySample).MeasureBook(flow.BookInput{
+	input, ready, maturity, err := signal.sample.MeasureBook(flow.BookInput{
 		Symbol:   managed.Name,
-		TickSize: tickSize,
-		Bids:     bids,
-		Asks:     asks,
-	})
-
-	if err != nil || !ready {
-		return nil, err
-	}
-
-	found, _ = thesis.Causal.Load("signal:exhaust:decay")
-	output, err := found.(*equation.Decay).Measure(input)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return signal.frame(thesis, managed.Name, at, output, maturity), nil
-}
-
-/*
-measureBook applies one book event to the shared decay sample at its causal
-position in the merged entity timeline.
-*/
-func (signal *Signal) measureBook(
-	thesis *types.Thesis,
-	row kraken.BookData,
-) ([]*types.Measurement, error) {
-	if row.Symbol == "" || row.Timestamp.IsZero() || row.PriceIncrement == nil {
-		return nil, nil
-	}
-
-	if row.PriceIncrement.Sign() <= 0 {
-		return nil, nil
-	}
-
-	bids, asks, err := kraken.BookLevels(row)
-
-	if err != nil {
-		return nil, err
-	}
-
-	found, _ := thesis.Causal.Load("signal:exhaust:sample")
-	input, ready, maturity, err := found.(*algorithm.DecaySample).MeasureBook(flow.BookInput{
-		Symbol:   row.Symbol,
-		TickSize: row.PriceIncrement.Float64(),
+		TickSize: instrument.TickSize.Float64(),
 		Bids:     bids,
 		Asks:     asks,
 	})
 
 	if err != nil {
-		return nil, err
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"exhaust: failed to measure book",
+			err,
+		))
 	}
 
 	if !ready {
-		return nil, nil
+		return []*types.Measurement{{
+			Source:   types.SourceExhaustion,
+			Symbol:   managed.Name,
+			At:       managed.BestBid().Timestamp,
+			Maturity: maturity,
+			Validity: types.ObservationValidity(1),
+		}}, nil
 	}
 
-	found, _ = thesis.Causal.Load("signal:exhaust:decay")
-	output, err := found.(*equation.Decay).Measure(input)
+	output, err := signal.decay.Measure(input)
 
 	if err != nil {
-		return nil, err
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"exhaust: failed to measure decay",
+			err,
+		))
 	}
 
-	return signal.frame(thesis, row.Symbol, row.Timestamp, output, maturity), nil
+	return signal.frame(
+		managed.Name,
+		managed.BestBid().Timestamp,
+		output,
+		maturity,
+	), nil
 }
 
 /*
@@ -338,7 +270,6 @@ measureTrade applies one trade event to the shared decay sample at its causal
 position in the merged entity timeline.
 */
 func (signal *Signal) measureTrade(
-	thesis *types.Thesis,
 	row kraken.TradeData,
 ) ([]*types.Measurement, error) {
 	if row.Symbol == "" || row.Timestamp.IsZero() || row.Price.Sign() <= 0 ||
@@ -346,8 +277,7 @@ func (signal *Signal) measureTrade(
 		return nil, nil
 	}
 
-	found, _ := thesis.Causal.Load("signal:exhaust:sample")
-	input, ready, maturity, err := found.(*algorithm.DecaySample).MeasureTrade(flow.TradeInput{
+	input, ready, maturity, err := signal.sample.MeasureTrade(flow.TradeInput{
 		Symbol:   row.Symbol,
 		Price:    row.Price.Float64(),
 		Quantity: row.Qty,
@@ -356,58 +286,33 @@ func (signal *Signal) measureTrade(
 	})
 
 	if err != nil {
-		return nil, err
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"exhaust: failed to measure trade",
+			err,
+		))
 	}
 
 	if !ready {
 		return nil, nil
 	}
 
-	found, _ = thesis.Causal.Load("signal:exhaust:decay")
-	output, err := found.(*equation.Decay).Measure(input)
+	output, err := signal.decay.Measure(input)
 
 	if err != nil {
-		return nil, err
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"exhaust: failed to measure decay",
+			err,
+		))
 	}
 
-	return signal.frame(thesis, row.Symbol, row.Timestamp, output, maturity), nil
-}
-
-/*
-exhaustEvents merges book and trade batches by event time. Trades precede books
-at equal timestamps so the book state includes simultaneous executed pressure.
-*/
-func exhaustEvents(
-	books []kraken.BookData,
-	trades []kraken.TradeData,
-) []types.Event {
-	events := make([]types.Event, 0, len(books)+len(trades))
-
-	for index, row := range trades {
-		events = append(events, types.Event{
-			Stream:   "trade",
-			Priority: 0,
-			Sequence: uint64(index + 1),
-			At:       row.Timestamp,
-			Symbol:   row.Symbol,
-			Row:      row,
-		})
-	}
-
-	for index, row := range books {
-		events = append(events, types.Event{
-			Stream:   "book",
-			Priority: 1,
-			Sequence: uint64(index + 1),
-			At:       row.Timestamp,
-			Symbol:   row.Symbol,
-			Row:      row,
-		})
-	}
-
-	types.OrderEvents(events)
-
-	return events
+	return signal.frame(
+		row.Symbol,
+		row.Timestamp,
+		output,
+		maturity,
+	), nil
 }
 
 /*
@@ -416,8 +321,10 @@ both the book-driven and trade-driven observation paths emit the same metric
 set for a symbol.
 */
 func (signal *Signal) frame(
-	thesis *types.Thesis,
-	symbol string, at time.Time, output equation.DecayOutput, maturity float64,
+	symbol string,
+	at time.Time,
+	output equation.DecayOutput,
+	maturity float64,
 ) []*types.Measurement {
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,
@@ -428,34 +335,92 @@ func (signal *Signal) frame(
 		Symbol:       symbol,
 		At:           at,
 		ObservedFrom: at,
-		Maturity:     float64(thesis.Tick),
+		Maturity:     maturity,
 		Validity:     validity,
-		Metrics:      make(map[string]types.MetricSample, 16),
+		Metrics: map[string]types.MetricSample{
+			types.MetricKey(types.MetricMechanical, types.SideBuy): {Raw: output.Long.Mechanical,
+				Normalized: types.NormalizeFinite(output.Long.Mechanical),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricThermal, types.SideBuy): {
+				Raw:        output.Long.Thermal,
+				Normalized: types.NormalizeFinite(output.Long.Thermal),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricFragile, types.SideBuy): {
+				Raw:        output.Long.Fragile,
+				Normalized: types.NormalizeFinite(output.Long.Fragile),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricReversal, types.SideBuy): {
+				Raw:        output.Long.Reversal,
+				Normalized: types.NormalizeFinite(output.Long.Reversal),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricUrgency, types.SideBuy): {
+				Raw:        output.Long.Urgency,
+				Normalized: types.NormalizeFinite(output.Long.Urgency),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricStrength, types.SideBuy): {
+				Raw:        output.Long.Strength,
+				Normalized: types.NormalizeFinite(output.Long.Strength),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricValue, types.SideBuy): {
+				Raw:        output.Long.Value,
+				Normalized: types.NormalizeFinite(output.Long.Value),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricCategory, types.SideBuy): {
+				Raw:        output.Long.Category,
+				Normalized: types.NormalizeFinite(output.Long.Category),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricMechanical, types.SideSell): {
+				Raw:        output.Short.Mechanical,
+				Normalized: types.NormalizeFinite(output.Short.Mechanical),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricThermal, types.SideSell): {
+				Raw:        output.Short.Thermal,
+				Normalized: types.NormalizeFinite(output.Short.Thermal),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricFragile, types.SideSell): {
+				Raw:        output.Short.Fragile,
+				Normalized: types.NormalizeFinite(output.Short.Fragile),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricReversal, types.SideSell): {
+				Raw:        output.Short.Reversal,
+				Normalized: types.NormalizeFinite(output.Short.Reversal),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricUrgency, types.SideSell): {
+				Raw:        output.Short.Urgency,
+				Normalized: types.NormalizeFinite(output.Short.Urgency),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricStrength, types.SideSell): {
+				Raw:        output.Short.Strength,
+				Normalized: types.NormalizeFinite(output.Short.Strength),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricValue, types.SideSell): {
+				Raw:        output.Short.Value,
+				Normalized: types.NormalizeFinite(output.Short.Value),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricCategory, types.SideSell): {
+				Raw:        output.Short.Category,
+				Normalized: types.NormalizeFinite(output.Short.Category),
+				Unit:       types.UnitDimensionless,
+			},
+		},
 	}
 
-	signal.putSideMetrics(measurement, output.Long, types.SideBuy)
-	signal.putSideMetrics(measurement, output.Short, types.SideSell)
-
 	return []*types.Measurement{measurement}
-}
-
-/*
-putSideMetrics preserves which held position side the decay evidence would
-advise exiting, rather than merging contradictory long and short conditions.
-*/
-func (signal *Signal) putSideMetrics(
-	measurement *types.Measurement,
-	output equation.DecaySideOutput,
-	side types.MeasurementSide,
-) {
-	measurement.Metrics[types.MetricKey(types.MetricMechanical, side)] = types.MetricSample{Raw: output.Mechanical, Normalized: types.NormalizeFinite(output.Mechanical), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricThermal, side)] = types.MetricSample{Raw: output.Thermal, Normalized: types.NormalizeFinite(output.Thermal), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricFragile, side)] = types.MetricSample{Raw: output.Fragile, Normalized: types.NormalizeFinite(output.Fragile), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricReversal, side)] = types.MetricSample{Raw: output.Reversal, Normalized: types.NormalizeFinite(output.Reversal), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricUrgency, side)] = types.MetricSample{Raw: output.Urgency, Normalized: types.NormalizeFinite(output.Urgency), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricStrength, side)] = types.MetricSample{Raw: output.Strength, Normalized: types.NormalizeFinite(output.Strength), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricValue, side)] = types.MetricSample{Raw: output.Value, Normalized: types.NormalizeFinite(output.Value), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricCategory, side)] = types.MetricSample{Raw: output.Category, Normalized: types.NormalizeFinite(output.Category), Unit: types.UnitDimensionless}
 }
 
 /*

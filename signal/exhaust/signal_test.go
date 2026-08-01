@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/tests"
 	"github.com/theapemachine/symm/types"
@@ -25,28 +27,17 @@ func drainExhaustTrades(sub *types.Subscription[any]) []kraken.TradeData {
 	}
 }
 
-func drainExhaustBooks(sub *types.Subscription[any]) []kraken.BookData {
-	out := make([]kraken.BookData, 0)
-
-	for {
-		select {
-		case frame := <-sub.Channel:
-			if book, ok := frame.(*kraken.Book); ok {
-				out = append(out, book.Data...)
-			}
-		default:
-			return out
-		}
-	}
-}
-
 func measureExhaust(t *testing.T, state tests.MarketState, focus ...string) []*types.Measurement {
 	market := tests.NewMarket(t.Context(), 3)
 	So(market.Bootstrap(), ShouldBeNil)
 	defer market.Close()
 
 	thesis := types.NewThesis()
-	signal := &Signal{ui: make(chan []byte, 32)}
+	signal := &Signal{
+		sample: algorithm.NewDecaySample(),
+		decay:  equation.NewDecay(),
+		ui:     make(chan []byte, 32),
+	}
 	tradeSub := market.Public.Subscribe("trade")
 
 	So(market.Public.Write(json.RawMessage(

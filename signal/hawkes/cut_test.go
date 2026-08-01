@@ -1,7 +1,6 @@
 package hawkes
 
 import (
-	"sync"
 	"testing"
 	"time"
 
@@ -14,12 +13,8 @@ import (
 func TestOnTickerAdvancesCut(t *testing.T) {
 	Convey("Given a Hawkes process that already has symbol state", t, func() {
 		thesis := types.NewThesis()
-		thesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
-		thesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
-		thesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
-		signal := &Signal{}
-		found, _ := thesis.Causal.Load("signal:hawkes:process")
-		process := found.(*excitation.Process)
+		signal := &Signal{sample: excitation.NewSample(), process: excitation.NewProcess()}
+		process := signal.process
 		base := time.Unix(1, 0)
 
 		_, _, err := process.Measure(excitation.Input{
@@ -40,10 +35,7 @@ func TestOnTickerAdvancesCut(t *testing.T) {
 
 		Convey("When no symbols are warm yet", func() {
 			coldThesis := types.NewThesis()
-			coldThesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
-			coldThesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
-			coldThesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
-			cold := &Signal{}
+			cold := &Signal{sample: excitation.NewSample(), process: excitation.NewProcess()}
 
 			Convey("It does not invent a cut", func() {
 				So(cold.cut(coldThesis).Symbols(), ShouldBeEmpty)
@@ -55,12 +47,8 @@ func TestOnTickerAdvancesCut(t *testing.T) {
 func TestCutOutcome(t *testing.T) {
 	Convey("Given a cut frozen from a live process", t, func() {
 		thesis := types.NewThesis()
-		thesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
-		thesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
-		thesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
-		signal := &Signal{}
-		found, _ := thesis.Causal.Load("signal:hawkes:process")
-		process := found.(*excitation.Process)
+		signal := &Signal{sample: excitation.NewSample(), process: excitation.NewProcess()}
+		process := signal.process
 		base := time.Unix(1, 0)
 
 		_, _, err := process.Measure(excitation.Input{
@@ -89,7 +77,7 @@ func TestCutOutcome(t *testing.T) {
 			So(ok, ShouldBeTrue)
 			So(frozen.EventCount, ShouldEqual, firstCount.EventCount)
 
-			live, ok := signal.Outcome(thesis, "BTC/USD")
+			live, ok := signal.process.Outcome("BTC/USD")
 			So(ok, ShouldBeTrue)
 			So(live.EventCount, ShouldBeGreaterThan, frozen.EventCount)
 			So(first.SharedThesis(), ShouldEqual, thesis)

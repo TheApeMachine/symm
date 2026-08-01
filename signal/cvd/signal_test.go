@@ -40,7 +40,18 @@ func drainCVDTrades(sub *types.Subscription[any]) []kraken.TradeData {
 	}
 }
 
-func measureCVD(t *testing.T, state tests.MarketState, focus ...string) []*types.Measurement {
+func causalEntryCount(thesis *types.Thesis) int {
+	count := 0
+
+	thesis.Causal.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+
+	return count
+}
+
+func measureCVD(t *testing.T, state tests.MarketState, focus ...string) ([]*types.Measurement, int) {
 	market := tests.NewMarket(t.Context(), 3)
 	So(market.Bootstrap(), ShouldBeNil)
 	defer market.Close()
@@ -89,30 +100,38 @@ func measureCVD(t *testing.T, state tests.MarketState, focus ...string) []*types
 	rows := make([]*types.Measurement, 0)
 	So(market.Transition(state, consume(&rows), focus...), ShouldBeNil)
 
-	return rows
+	return rows, causalEntryCount(thesis)
 }
 
 func TestCalculate(t *testing.T) {
 	Convey("CVD distinguishes directional drive from absorption", t, func() {
 		metrics := []types.MetricType{types.MetricDrive, types.MetricAbsorption}
+		baselineRows, baselineCausal := measureCVD(t, tests.MarketStateBaseline)
 
 		baseline := tests.PeakMagnitudeMeasurements(
-			measureCVD(t, tests.MarketStateBaseline),
+			baselineRows,
 			types.SourceCVD,
 			metrics,
 		)
+
+		pumpRows, pumpCausal := measureCVD(t, tests.MarketStateFastPump)
 		pump := tests.PeakMagnitudeMeasurements(
-			measureCVD(t, tests.MarketStateFastPump),
+			pumpRows,
 			types.SourceCVD,
 			metrics,
 		)
+
+		absorptionRows, absorptionCausal := measureCVD(t, tests.MarketStateVolumeAbsorption)
 		absorption := tests.PeakMagnitudeMeasurements(
-			measureCVD(t, tests.MarketStateVolumeAbsorption),
+			absorptionRows,
 			types.SourceCVD,
 			metrics,
 		)
 
 		So(pump[types.MetricDrive]["SIM1/USD"], ShouldNotEqual, baseline[types.MetricDrive]["SIM1/USD"])
 		So(absorption[types.MetricAbsorption]["SIM1/USD"], ShouldNotEqual, baseline[types.MetricAbsorption]["SIM1/USD"])
+		So(baselineCausal, ShouldEqual, 0)
+		So(pumpCausal, ShouldEqual, 0)
+		So(absorptionCausal, ShouldEqual, 0)
 	})
 }

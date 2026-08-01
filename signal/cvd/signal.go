@@ -23,15 +23,17 @@ price response. Categories belong in logic; this signal emits numerical scores
 only.
 */
 type Signal struct {
-	status        types.Status
-	ctx           context.Context
-	cancel        context.CancelFunc
-	api           *websocket.API
-	planner       *strategy.Planner
-	ui            chan []byte
-	subscriptions map[string]*types.Subscription[any]
-	subscribers   *sync.Map
-	mu            sync.Mutex
+	status         types.Status
+	ctx            context.Context
+	cancel         context.CancelFunc
+	api            *websocket.API
+	sample         *algorithm.TradeFlowSample
+	flow           *equation.Flow
+	planner        *strategy.Planner
+	ui             chan []byte
+	subscriptions  map[string]*types.Subscription[any]
+	subscribers    *sync.Map
+	subscriptionMu sync.Mutex
 }
 
 /*
@@ -52,6 +54,8 @@ func NewSignal(
 		ctx:           ctx,
 		cancel:        cancel,
 		api:           api,
+		sample:        algorithm.NewTradeFlowSample(),
+		flow:          equation.NewFlow(),
 		planner:       planner,
 		ui:            ui,
 		subscriptions: subscriptions,
@@ -79,11 +83,23 @@ func (signal *Signal) Subscribe(
 	subscription *types.Subscription[any],
 ) *types.Subscription[any] {
 	return signalshared.Subscribe(
-		&signal.mu,
+		&signal.subscriptionMu,
 		signal.subscribers,
 		channel,
 		subscription,
 	)
+}
+
+func (signal *Signal) ensureProcessors() (*algorithm.TradeFlowSample, *equation.Flow) {
+	if signal.sample == nil {
+		signal.sample = algorithm.NewTradeFlowSample()
+	}
+
+	if signal.flow == nil {
+		signal.flow = equation.NewFlow()
+	}
+
+	return signal.sample, signal.flow
 }
 
 func (signal *Signal) run() {
@@ -114,52 +130,24 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	if _, ok := thesis.Causal.Load("signal:cvd:sample"); !ok {
-		thesis.Causal.Store("signal:cvd:sample", algorithm.NewTradeFlowSample())
-	}
-
-	if _, ok := thesis.Causal.Load("signal:cvd:flow"); !ok {
-		thesis.Causal.Store("signal:cvd:flow", equation.NewFlow())
-	}
-
-	if _, ok := thesis.Causal.Load("signal:cvd:midpoints"); !ok {
-		thesis.Causal.Store("signal:cvd:midpoints", make(map[string]float64))
-	}
-
 	tickers, trades, _ := thesis.Market()
-	out := make([]*types.Measurement, 0, len(trades))
-	var focusMeasurements []*types.Measurement
+	midpoints := make(map[string]float64)
+
+	measurements := make([]*types.Measurement, 0)
+	out := make([]*types.Measurement, 0)
 
 	for _, row := range tickers {
-		if row.Symbol == "" || row.Timestamp.IsZero() {
-			continue
-		}
-
-		if row.Bid == nil || row.Ask == nil {
-			continue
-		}
-
-		if row.Bid.Sign() <= 0 || row.Ask.Cmp(row.Bid) <= 0 {
-			continue
-		}
-
-		found, _ := thesis.Causal.Load("signal:cvd:midpoints")
-		found.(map[string]float64)[row.Symbol] = (row.Bid.Float64() + row.Ask.Float64()) / 2
+		midpoints[row.Symbol] = (row.Bid.Float64() + row.Ask.Float64()) / 2
 	}
 
 	for _, row := range trades {
-		if row.Symbol == "" || row.Price.Sign() <= 0 || row.Qty <= 0 {
-			continue
-		}
-
-		found, _ := thesis.Causal.Load("signal:cvd:midpoints")
-		midpoint, exists := found.(map[string]float64)[row.Symbol]
+		midpoint, exists := midpoints[row.Symbol]
 
 		if !exists {
 			continue
 		}
 
-		measurements, err := signal.measureTrade(thesis, row, midpoint)
+		tradeMeasurements, err := signal.measureTrade(thesis, row, midpoint)
 
 		if err != nil {
 			errnie.Error(errnie.Err(
@@ -170,18 +158,18 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			continue
 		}
 
-		out = append(out, measurements...)
+		measurements = append(measurements, tradeMeasurements...)
 
 		if row.Symbol == types.Focus() {
-			focusMeasurements = append(focusMeasurements, measurements...)
+			out = append(out, tradeMeasurements...)
 		}
 	}
 
-	if len(focusMeasurements) > 0 {
-		utils.Publish(signal.ui, datura.NewMap("measurements", focusMeasurements))
+	if len(out) > 0 {
+		utils.Publish(signal.ui, datura.NewMap("measurements", out))
 	}
 
-	return out
+	return measurements
 }
 
 /*
@@ -193,8 +181,9 @@ func (signal *Signal) measureTrade(
 	row kraken.TradeData,
 	midpoint float64,
 ) ([]*types.Measurement, error) {
-	found, _ := thesis.Causal.Load("signal:cvd:sample")
-	input, ready, err := found.(*algorithm.TradeFlowSample).Measure(algorithm.TradeFlowInput{
+	sample, flow := signal.ensureProcessors()
+
+	input, ready, err := sample.Measure(algorithm.TradeFlowInput{
 		Symbol:        row.Symbol,
 		Price:         row.Price.Float64(),
 		ResponsePrice: midpoint,
@@ -214,8 +203,7 @@ func (signal *Signal) measureTrade(
 		return nil, nil
 	}
 
-	found, _ = thesis.Causal.Load("signal:cvd:flow")
-	output, err := found.(*equation.Flow).Measure(input)
+	output, err := flow.Measure(input)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(

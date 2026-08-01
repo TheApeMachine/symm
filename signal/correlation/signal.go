@@ -177,39 +177,39 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			At:       at,
 			Validity: validity,
 			Metrics: map[string]types.MetricSample{
-				types.MetricKey(types.MetricCorrelation, types.SideNone): types.MetricSample{
+				types.MetricKey(types.MetricCorrelation, types.SideNone): {
 					Raw:  scores["correlation"],
 					Unit: types.UnitDimensionless,
 				},
-				types.MetricKey(types.MetricSigned, types.SideNone): types.MetricSample{
+				types.MetricKey(types.MetricSigned, types.SideNone): {
 					Raw:  scores["signed"],
 					Unit: types.UnitDimensionless,
 				},
-				types.MetricKey(types.MetricRelativeEnergy, types.SideNone): types.MetricSample{
+				types.MetricKey(types.MetricRelativeEnergy, types.SideNone): {
 					Raw:  scores["relativeEnergy"],
 					Unit: types.UnitDimensionless,
 				},
-				types.MetricKey(types.MetricHerdScore, types.SideNone): types.MetricSample{
+				types.MetricKey(types.MetricHerdScore, types.SideNone): {
 					Raw:  scores["herdScore"],
 					Unit: types.UnitDimensionless,
 				},
-				types.MetricKey(types.MetricAlphaScore, types.SideNone): types.MetricSample{
+				types.MetricKey(types.MetricAlphaScore, types.SideNone): {
 					Raw:  scores["alphaScore"],
 					Unit: types.UnitDimensionless,
 				},
-				types.MetricKey(types.MetricNoiseScore, types.SideNone): types.MetricSample{
+				types.MetricKey(types.MetricNoiseScore, types.SideNone): {
 					Raw:  scores["noiseScore"],
 					Unit: types.UnitDimensionless,
 				},
-				types.MetricKey(types.MetricStressScore, types.SideNone): types.MetricSample{
+				types.MetricKey(types.MetricStressScore, types.SideNone): {
 					Raw:  scores["stressScore"],
 					Unit: types.UnitDimensionless,
 				},
-				types.MetricKey(types.MetricPeakScore, types.SideNone): types.MetricSample{
+				types.MetricKey(types.MetricPeakScore, types.SideNone): {
 					Raw:  scores["peakScore"],
 					Unit: types.UnitDimensionless,
 				},
-				types.MetricKey(types.MetricStrength, types.SideNone): types.MetricSample{
+				types.MetricKey(types.MetricStrength, types.SideNone): {
 					Raw:  scores["strength"],
 					Unit: types.UnitDimensionless,
 				},

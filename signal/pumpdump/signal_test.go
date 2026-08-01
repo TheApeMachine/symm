@@ -43,7 +43,22 @@ func drainPumpTrades(sub *types.Subscription[any]) []kraken.TradeData {
 	}
 }
 
-func measurePumpdump(t *testing.T, state tests.MarketState, focus ...string) []*types.Measurement {
+func pumpdumpCausalEntryCount(thesis *types.Thesis) int {
+	count := 0
+
+	thesis.Causal.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+
+	return count
+}
+
+func measurePumpdump(
+	t *testing.T,
+	state tests.MarketState,
+	focus ...string,
+) ([]*types.Measurement, int) {
 	market := tests.NewMarket(t.Context(), 3)
 	So(market.Bootstrap(), ShouldBeNil)
 	defer market.Close()
@@ -92,17 +107,21 @@ func measurePumpdump(t *testing.T, state tests.MarketState, focus ...string) []*
 	rows := make([]*types.Measurement, 0)
 	So(market.Transition(state, consume(&rows), focus...), ShouldBeNil)
 
-	return rows
+	return rows, pumpdumpCausalEntryCount(thesis)
 }
 
 func TestCalculate(t *testing.T) {
 	Convey("Pumpdump raises ignition and trend on fast directional tapes", t, func() {
 		metrics := []types.MetricType{types.MetricIgnition, types.MetricTrend, types.MetricStrength}
+		baselineRows, baselineCausal := measurePumpdump(t, tests.MarketStateBaseline)
 
-		baseline := tests.PeakMeasurements(measurePumpdump(t, tests.MarketStateBaseline), types.SourcePumpDump, metrics)
-		pump := tests.PeakMeasurements(measurePumpdump(t, tests.MarketStateFastPump), types.SourcePumpDump, metrics)
+		baseline := tests.PeakMeasurements(baselineRows, types.SourcePumpDump, metrics)
+		pumpRows, pumpCausal := measurePumpdump(t, tests.MarketStateFastPump)
+		pump := tests.PeakMeasurements(pumpRows, types.SourcePumpDump, metrics)
 
 		So(pump[types.MetricIgnition]["SIM1/USD"], ShouldBeGreaterThanOrEqualTo, baseline[types.MetricIgnition]["SIM1/USD"])
 		So(pump[types.MetricTrend]["SIM1/USD"], ShouldBeGreaterThanOrEqualTo, baseline[types.MetricTrend]["SIM1/USD"])
+		So(baselineCausal, ShouldEqual, 0)
+		So(pumpCausal, ShouldEqual, 0)
 	})
 }

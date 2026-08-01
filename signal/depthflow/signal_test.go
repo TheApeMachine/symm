@@ -28,21 +28,6 @@ func drainDepthTrades(sub *types.Subscription[any]) []kraken.TradeData {
 	}
 }
 
-func drainDepthBooks(sub *types.Subscription[any]) []kraken.BookData {
-	out := make([]kraken.BookData, 0)
-
-	for {
-		select {
-		case frame := <-sub.Channel:
-			if book, ok := frame.(*kraken.Book); ok {
-				out = append(out, book.Data...)
-			}
-		default:
-			return out
-		}
-	}
-}
-
 func measureDepthflow(t *testing.T, state tests.MarketState, focus ...string) []*types.Measurement {
 	market := tests.NewMarket(t.Context(), 3)
 	So(market.Bootstrap(), ShouldBeNil)

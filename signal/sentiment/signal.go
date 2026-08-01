@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/datura"
-
 	"github.com/theapemachine/symm/kraken/websocket"
 	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
@@ -28,7 +27,7 @@ type Signal struct {
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
-	mu            sync.Mutex
+	subscribeMu   sync.Mutex
 }
 
 /*
@@ -75,8 +74,12 @@ func (signal *Signal) Subscribe(
 	channel string,
 	subscription *types.Subscription[any],
 ) *types.Subscription[any] {
+	if signal.subscribers == nil {
+		signal.subscribers = &sync.Map{}
+	}
+
 	return signalshared.Subscribe(
-		&signal.mu,
+		&signal.subscribeMu,
 		signal.subscribers,
 		channel,
 		subscription,
@@ -84,18 +87,12 @@ func (signal *Signal) Subscribe(
 }
 
 func (signal *Signal) run() {
-	subscription := signal.subscriptions["thesis"]
-
-	if subscription == nil {
-		return
-	}
-
 	go func() {
 		for {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case message := <-subscription.Channel:
+			case message := <-signal.subscriptions["thesis"].Channel:
 				if thesis, ok := message.(*types.Thesis); ok {
 					thesis.AppendMeasurements(
 						types.SourceSentiment,
@@ -103,26 +100,23 @@ func (signal *Signal) run() {
 						types.Stamp{At: time.Now(), Entity: types.MarketTicker},
 					)
 
-					subscribers, ok := signal.subscribers.Load(signal.Name())
-
-					if ok && subscribers != nil {
-						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-							subscriber.Send(thesis)
-						}
-					}
+					utils.Fanout(signal.subscribers, signal.Name(), thesis)
 				}
 			}
 		}
 	}()
 }
 
+/*
+Measure produces the Measurements for the sentiment signal.
+*/
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	tickers, _, _ := thesis.Market()
-	out := make([]*types.Measurement, 0, 64)
-	var focusMeasurements []*types.Measurement
+	measurements := make([]*types.Measurement, 0, 64)
+	out := make([]*types.Measurement, 0)
 
 	if thesis.CrossSection == nil {
-		return out
+		return measurements
 	}
 
 	if len(tickers) > 0 {
@@ -207,56 +201,97 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		validity.Reason = "peer return cohort unavailable"
 	}
 
-	// Emit the retained cohort, not only this message's rows, so a focused
-	// major still receives frames when an alt ticker arrives (same pattern as
-	// liquidity). Focus-gated WireMeasurements otherwise paints false STANDBY.
 	for _, peer := range peers {
 		change := peer.LatestChange
 		leaderStrength := 0.0
 		leaderEvidence := 0.0
 		relativeLead := 0.0
-		divergentScore := 0.0
+		peerDivergenceScore := 0.0
 		isLeader := leader == peer.Symbol && leaderMagnitude > 0
 
 		if isLeader {
 			leaderStrength = leaderMagnitude
-			leaderEvidence = (leaderMagnitude - leadershipThreshold) / leaderMagnitude
-			relativeLead = leaderMagnitude / totalChange
-			divergentScore = divergenceScore
+
+			if leaderMagnitude > 0 {
+				leaderEvidence = (leaderMagnitude - leadershipThreshold) / leaderMagnitude
+			}
+
+			if totalChange > 0 {
+				relativeLead = leaderMagnitude / totalChange
+			}
+
+			peerDivergenceScore = divergenceScore
 		}
 
-		strength := math.Max(surgeScore, math.Max(divergentScore, slumpScore))
+		strength := math.Max(surgeScore, math.Max(peerDivergenceScore, slumpScore))
+
 		measurement := &types.Measurement{
 			Source:   types.SourceSentiment,
 			Symbol:   peer.Symbol,
 			At:       peer.At,
 			Maturity: float64(thesis.Tick),
 			Validity: validity,
-			Metrics:  make(map[string]types.MetricSample, 9),
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricChange, types.SideNone): {
+					Raw:        change,
+					Normalized: types.NormalizeFinite(change),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricBreadth, types.SideNone): {
+					Raw:        breadth,
+					Normalized: types.NormalizeFinite(breadth),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricLeaderStrength, types.SideNone): {
+					Raw:        leaderStrength,
+					Normalized: types.NormalizeFinite(leaderStrength),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricLeaderEvidence, types.SideNone): {
+					Raw:        leaderEvidence,
+					Normalized: types.NormalizeFinite(leaderEvidence),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricRelativeLead, types.SideNone): {
+					Raw:        relativeLead,
+					Normalized: types.NormalizeFinite(relativeLead),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricSurgeScore, types.SideNone): {
+					Raw:        surgeScore,
+					Normalized: types.NormalizeFinite(surgeScore),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricDivergentScore, types.SideNone): {
+					Raw:        peerDivergenceScore,
+					Normalized: types.NormalizeFinite(peerDivergenceScore),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricSlumpScore, types.SideNone): {
+					Raw:        slumpScore,
+					Normalized: types.NormalizeFinite(slumpScore),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricStrength, types.SideNone): {
+					Raw:        strength,
+					Normalized: types.NormalizeFinite(strength),
+					Unit:       types.UnitDimensionless,
+				},
+			},
 		}
 
-		measurement.Metrics[types.MetricKey(types.MetricChange, types.SideNone)] = types.MetricSample{Raw: change, Unit: types.UnitDimensionless}
-		measurement.Metrics[types.MetricKey(types.MetricBreadth, types.SideNone)] = types.MetricSample{Raw: breadth, Unit: types.UnitDimensionless}
-		measurement.Metrics[types.MetricKey(types.MetricLeaderStrength, types.SideNone)] = types.MetricSample{Raw: leaderStrength, Unit: types.UnitDimensionless}
-		measurement.Metrics[types.MetricKey(types.MetricLeaderEvidence, types.SideNone)] = types.MetricSample{Raw: leaderEvidence, Unit: types.UnitDimensionless}
-		measurement.Metrics[types.MetricKey(types.MetricRelativeLead, types.SideNone)] = types.MetricSample{Raw: relativeLead, Unit: types.UnitDimensionless}
-		measurement.Metrics[types.MetricKey(types.MetricSurgeScore, types.SideNone)] = types.MetricSample{Raw: surgeScore, Unit: types.UnitDimensionless}
-		measurement.Metrics[types.MetricKey(types.MetricDivergentScore, types.SideNone)] = types.MetricSample{Raw: divergentScore, Unit: types.UnitDimensionless}
-		measurement.Metrics[types.MetricKey(types.MetricSlumpScore, types.SideNone)] = types.MetricSample{Raw: slumpScore, Unit: types.UnitDimensionless}
-		measurement.Metrics[types.MetricKey(types.MetricStrength, types.SideNone)] = types.MetricSample{Raw: strength, Unit: types.UnitDimensionless}
-
-		out = append(out, measurement)
+		measurements = append(measurements, measurement)
 
 		if measurement.Symbol == types.Focus() {
-			focusMeasurements = append(focusMeasurements, measurement)
+			out = append(out, measurement)
 		}
 	}
 
-	if len(focusMeasurements) > 0 {
-		utils.Publish(signal.ui, datura.NewMap("measurements", focusMeasurements))
+	if len(out) > 0 {
+		utils.Publish(signal.ui, datura.NewMap("measurements", out))
 	}
 
-	return out
+	return measurements
 }
 
 /*

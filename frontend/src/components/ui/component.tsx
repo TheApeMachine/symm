@@ -61,7 +61,12 @@ type JSONRecord = { [key: string]: JSONSerializable | undefined };
 type PaintDataset = DOMStringMap & {
 	paint?: string;
 	paintProp?: string;
+	paintSuffix?: string;
 	set?: string;
+	append?: string;
+	appendLimit?: string;
+	appendWidth?: string;
+	appendHeight?: string;
 	target?: string;
 	scope?: string;
 	filter?: string;
@@ -74,16 +79,17 @@ type PaintBinding = {
 	key: string;
 	element: HTMLElement;
 	dataset: PaintDataset;
-	mode: "paint" | "set";
+	mode: "paint" | "set" | "append";
 };
 
 const scanTargets = (root: HTMLElement) => {
 	const rootTargets = new Map<string, PaintBinding[]>();
 
 	for (const element of root.querySelectorAll<HTMLElement>(
-		"[data-paint], [data-set]",
+		"[data-paint], [data-set], [data-append]",
 	)) {
-		const key = element.dataset.paint ?? element.dataset.set;
+		const key =
+			element.dataset.paint ?? element.dataset.set ?? element.dataset.append;
 
 		if (!key) {
 			continue;
@@ -109,7 +115,11 @@ const scanTargets = (root: HTMLElement) => {
 			key,
 			element,
 			dataset,
-			mode: element.dataset.set ? "set" : "paint",
+			mode: element.dataset.append
+				? "append"
+				: element.dataset.set
+					? "set"
+					: "paint",
 		});
 	}
 
@@ -120,7 +130,7 @@ const formatValue = (value: unknown, format: string | undefined): string => {
 	if (format) {
 		switch (typeof value) {
 			case "number": {
-				if (!/^\.\d+f?$/i.test(format)) {
+				if (!/^\.\d+(f|%)?$/i.test(format)) {
 					throw new Error(`invalid data-paint-format: ${format}`);
 				}
 
@@ -134,6 +144,10 @@ const formatValue = (value: unknown, format: string | undefined): string => {
 					throw new Error(
 						`data-paint-format fractional digits out of range: ${format}`,
 					);
+				}
+
+				if (format.endsWith("%")) {
+					return `${(value * 100).toFixed(digits)}%`;
 				}
 
 				return value.toFixed(digits);
@@ -286,6 +300,11 @@ const setTargetValue = (
 		return;
 	}
 
+	if (target.startsWith("style.--")) {
+		element.style.setProperty(target.slice("style.".length), String(value));
+		return;
+	}
+
 	const parts = target.split(".");
 	let current: unknown = element;
 
@@ -315,6 +334,61 @@ const setTargetValue = (
 	(current as Record<string, unknown>)[property] = value;
 };
 
+const appendTargetValue = (
+	element: HTMLElement,
+	dataset: PaintDataset,
+	value: JSONSerializable,
+): void => {
+	const numericValue = Number(value);
+
+	if (!Number.isFinite(numericValue)) {
+		return;
+	}
+
+	const limit = Number.parseInt(dataset.appendLimit ?? "40", 10);
+	const width = Number.parseFloat(dataset.appendWidth ?? "150");
+	const height = Number.parseFloat(dataset.appendHeight ?? "30");
+
+	if (
+		!Number.isInteger(limit) ||
+		limit < 2 ||
+		!Number.isFinite(width) ||
+		!Number.isFinite(height)
+	) {
+		return;
+	}
+
+	const values = (dataset.appendValues ?? "")
+		.split(",")
+		.filter(Boolean)
+		.map(Number)
+		.filter(Number.isFinite);
+
+	values.push(numericValue);
+
+	if (values.length > limit) {
+		values.splice(0, values.length - limit);
+	}
+
+	element.dataset.appendValues = values.join(",");
+
+	const points = values
+		.map((entry, index) => {
+			const x = (index / (limit - 1)) * width;
+			const y = height - Math.min(Math.max(entry, 0), 1) * height;
+
+			return `${x.toFixed(1)},${y.toFixed(1)}`;
+		})
+		.join(" ");
+
+	element.setAttribute(
+		dataset.target ?? "points",
+		element.tagName === "polygon"
+			? `${points} ${width.toFixed(1)},${height.toFixed(1)} 0.0,${height.toFixed(1)}`
+			: points,
+	);
+};
+
 const updateTargets = (
 	targets: Map<string, PaintBinding[]>,
 	updates: JSONSerializable,
@@ -342,7 +416,12 @@ const updateTargets = (
 				continue;
 			}
 
-			const formatted = formatValue(value, target.dataset.paintFormat);
+			if (target.mode === "append") {
+				appendTargetValue(target.element, target.dataset, value);
+				continue;
+			}
+
+			const formatted = `${formatValue(value, target.dataset.paintFormat)}${target.dataset.paintSuffix ?? ""}`;
 
 			if (target.dataset.paintProp) {
 				setTargetValue(target.element, target.dataset.paintProp, formatted);

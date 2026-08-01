@@ -143,7 +143,7 @@ func (thesis *Thesis) Readiness() Readiness {
 	readiness := Readiness{}
 	counts := thesis.stampCounts()
 
-	readiness.Signals = counts.signals == len(thesisSignalSources)
+	readiness.Signals = counts.signals > 0
 	readiness.Manifold = readiness.Signals && counts.manifold > 0
 	readiness.Resonance = readiness.Manifold && counts.resonance > 0
 	readiness.Causal = readiness.Resonance && counts.causal > 0
@@ -320,7 +320,6 @@ func (thesis *Thesis) AppendMeasurements(
 	}
 
 	thesis.Stamps.Store(source, []Stamp{stamp})
-
 	return thesis
 }
 

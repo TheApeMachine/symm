@@ -9,6 +9,7 @@ import (
 	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -21,6 +22,7 @@ type Signal struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
+	section       *Section
 	planner       *strategy.Planner
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
@@ -46,6 +48,7 @@ func NewSignal(
 		ctx:           ctx,
 		cancel:        cancel,
 		api:           api,
+		section:       NewSection(),
 		planner:       planner,
 		ui:            ui,
 		subscriptions: subscriptions,
@@ -99,25 +102,21 @@ func (signal *Signal) run() {
 						types.Stamp{At: time.Now(), Entity: types.MarketTicker},
 					)
 
-					subscribers, ok := signal.subscribers.Load(signal.Name())
-
-					if ok && subscribers != nil {
-						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-							subscriber.Send(thesis)
-						}
-					}
+					utils.Fanout(signal.subscribers, signal.Name(), thesis)
 				}
+
 			}
 		}
 	}()
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	if _, ok := thesis.Causal.Load("signal:leadlag:section"); !ok {
-		thesis.Causal.Store("signal:leadlag:section", NewSection())
+	if signal.section == nil {
+		signal.section = NewSection()
 	}
 
 	tickers, _, _ := thesis.Market()
+
 	if thesis.CrossSection == nil {
 		return nil
 	}
@@ -128,7 +127,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		crossSection.Measure(tickers)
 	}
 
-	return signal.measureFrame(thesis, tickers, crossSection)
+	return signal.measureFrame(tickers, crossSection)
 }
 
 /*

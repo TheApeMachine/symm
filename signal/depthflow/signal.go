@@ -2,20 +2,21 @@ package depthflow
 
 import (
 	"context"
-	"fmt"
-	"math"
-	"sort"
 	"sync"
 	"time"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -31,12 +32,14 @@ type Signal struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
+	instrument    *broker.Instrument
 	planner       *strategy.Planner
 	sample        *flow.Sample
 	bookflow      *equation.Bookflow
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
+	subscribeMu   sync.Mutex
 }
 
 /*
@@ -46,6 +49,7 @@ trade observations in each central market cut.
 func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
+	instrument *broker.Instrument,
 	planner *strategy.Planner,
 	ui chan []byte,
 	subscriptions map[string]*types.Subscription[any],
@@ -68,6 +72,7 @@ func NewSignal(
 		ctx:           ctx,
 		cancel:        cancel,
 		api:           api,
+		instrument:    instrument,
 		planner:       planner,
 		sample:        sample,
 		bookflow:      equation.NewBookflow(),
@@ -75,7 +80,6 @@ func NewSignal(
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
 	}
-
 	signal.status = types.READY
 	signal.run()
 	return signal
@@ -100,26 +104,27 @@ func (signal *Signal) Subscribe(
 		signal.subscribers = &sync.Map{}
 	}
 
-	subscribers, ok := signal.subscribers.LoadOrStore(
-		channel, []*types.Subscription[any]{subscription},
+	return signalshared.Subscribe(
+		&signal.subscribeMu,
+		signal.subscribers,
+		channel,
+		subscription,
 	)
-
-	if ok && subscribers != nil {
-		signal.subscribers.Store(
-			channel, append(subscribers.([]*types.Subscription[any]), subscription),
-		)
-	}
-
-	return subscription
 }
 
 func (signal *Signal) run() {
+	thesisSubscription := signal.subscriptions["thesis"]
+
+	if thesisSubscription == nil {
+		return
+	}
+
 	go func() {
 		for {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case message := <-signal.subscriptions["thesis"].Channel:
+			case message := <-thesisSubscription.Channel:
 				if thesis, ok := message.(*types.Thesis); ok {
 					thesis.AppendMeasurements(
 						types.SourceDepthFlow,
@@ -127,13 +132,7 @@ func (signal *Signal) run() {
 						types.Stamp{At: time.Now(), Entity: types.MarketTrade},
 					)
 
-					subscribers, ok := signal.subscribers.Load(signal.Name())
-
-					if ok && subscribers != nil {
-						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-							subscriber.Send(thesis)
-						}
-					}
+					utils.Fanout(signal.subscribers, signal.Name(), thesis)
 				}
 			}
 		}
@@ -142,6 +141,8 @@ func (signal *Signal) run() {
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	_, trades, books := thesis.Market()
+
+	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
 	books.Range(func(_, value any) bool {
@@ -151,204 +152,127 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			return true
 		}
 
-		measurements, err := signal.measureManagedBook(thesis, managed)
+		bookMeasurements, err := signal.measureManagedBook(managed)
 
 		if err != nil {
-			errnie.Error(err)
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"depthflow: failed to measure book",
+				err,
+			))
+
 			return true
 		}
 
-		out = append(out, measurements...)
-
+		measurements = append(measurements, bookMeasurements...)
 		return true
 	})
 
-	events := depthEvents(nil, trades)
-	tradeMeasurements, err := types.MeasureEventsParallel(events, func(event types.Event) ([]*types.Measurement, error) {
-		if event.Stream == "book" {
-			return signal.measureBook(thesis, event.Row.(kraken.BookData))
+	for _, trade := range trades {
+		tradeMeasurements, err := signal.measureTrade(trade)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"depthflow: failed to measure trade",
+				err,
+			))
+			continue
 		}
 
-		return signal.measureTrade(thesis, event.Row.(kraken.TradeData))
-	})
-	out = append(out, tradeMeasurements...)
+		measurements = append(measurements, tradeMeasurements...)
 
-	uiOut := datura.NewMap(
-		"measurements", make([]*types.Measurement, 0),
-	)
-
-	for _, measurement := range out {
-		if measurement.Symbol == types.Focus() {
-			uiOut["measurements"] = append(
-				uiOut["measurements"].([]*types.Measurement), measurement,
-			)
+		for _, measurement := range tradeMeasurements {
+			if measurement.Symbol == types.Focus() {
+				out = append(out, measurement)
+			}
 		}
 	}
 
-	if err != nil {
-		errnie.Error(err)
-		return nil
+	if len(out) > 0 {
+		utils.Publish(signal.ui, datura.NewMap("measurements", out))
 	}
 
-	if len(uiOut["measurements"].([]*types.Measurement)) > 0 {
-		utils.Publish(signal.ui, uiOut)
-	}
-
-	return out
+	return measurements
 }
 
 func (signal *Signal) measureManagedBook(
-	thesis *types.Thesis,
 	managed *spotbook.Book,
 ) ([]*types.Measurement, error) {
-	if managed == nil || managed.Bids == nil || managed.Asks == nil {
-		return nil, nil
-	}
+	bids := make([]flow.BookLevel, 0)
+	asks := make([]flow.BookLevel, 0)
 
-	if len(managed.Bids.Levels) == 0 || len(managed.Asks.Levels) == 0 {
-		return nil, nil
-	}
-
-	tickSize := math.Inf(1)
-	levels := [][]*spotbook.Level{make([]*spotbook.Level, 0, len(managed.Bids.Levels)), make([]*spotbook.Level, 0, len(managed.Asks.Levels))}
-
-	for side, source := range []map[string]*spotbook.Level{managed.Bids.Levels, managed.Asks.Levels} {
-		for _, level := range source {
-			if level == nil || level.Price == nil || level.Quantity == nil || level.Quantity.Sign() <= 0 {
-				continue
-			}
-
-			levels[side] = append(levels[side], level)
-		}
-	}
-
-	for _, left := range append(levels[0], levels[1]...) {
-		for _, right := range append(levels[0], levels[1]...) {
-			if left == right {
-				continue
-			}
-
-			difference := math.Abs(left.Price.Float64() - right.Price.Float64())
-
-			if difference > 0 && difference < tickSize {
-				tickSize = difference
-			}
-		}
-	}
-
-	if math.IsInf(tickSize, 1) || tickSize <= 0 {
-		return nil, nil
-	}
-
-	bids := make([]flow.BookLevel, 0, len(levels[0]))
-	asks := make([]flow.BookLevel, 0, len(levels[1]))
-	var at time.Time
-
-	for side, source := range levels {
-		for _, level := range source {
-			if level.Timestamp.After(at) {
-				at = level.Timestamp
-			}
-
-			projected := flow.BookLevel{
-				Price:    level.Price.Float64(),
-				Ticks:    int64(math.Round(level.Price.Float64() / tickSize)),
-				Quantity: level.Quantity.Float64(),
-			}
-
-			if side == 0 {
-				bids = append(bids, projected)
-				continue
-			}
-
-			asks = append(asks, projected)
-		}
-	}
-
-	if at.IsZero() || len(bids) == 0 || len(asks) == 0 {
-		return nil, nil
-	}
-
-	input, ready, _, err := signal.sample.MeasureBook(flow.BookInput{
-		Symbol:   managed.Name,
-		TickSize: tickSize,
-		Bids:     bids,
-		Asks:     asks,
-	})
-
-	if err != nil || !ready {
-		return nil, err
-	}
-
-	output, err := signal.bookflow.Measure(input)
-
-	if err != nil || !output.Ready {
-		return nil, err
-	}
-
-	return signal.frame(thesis, managed.Name, at, output), nil
-}
-
-/*
-measureBook applies one book event to the shared flow sample and emits the
-resulting measurements only after both sample and equation report readiness.
-*/
-func (signal *Signal) measureBook(
-	thesis *types.Thesis,
-	row kraken.BookData,
-) ([]*types.Measurement, error) {
-	if row.Symbol == "" {
-		return nil, fmt.Errorf("depthflow: book symbol required")
-	}
-
-	if row.Timestamp.IsZero() {
-		return nil, fmt.Errorf("depthflow: book timestamp required for %s", row.Symbol)
-	}
-
-	if row.PriceIncrement == nil || row.PriceIncrement.Sign() <= 0 {
-		return nil, fmt.Errorf("depthflow: positive price increment required for %s", row.Symbol)
-	}
-
-	bids, asks, err := kraken.BookLevels(row)
+	instrument, err := signal.instrument.Pair(managed.Name)
 
 	if err != nil {
-		return nil, fmt.Errorf("depthflow: project %s book levels: %w", row.Symbol, err)
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"depthflow: failed to resolve instrument",
+			err,
+		))
 	}
 
-	// Kraken book rows are atomic. Applying removals first prevents replacement
-	// array order from changing which prior level counts as the cancelled touch.
-	for _, levels := range [][]flow.BookLevel{bids, asks} {
-		sort.SliceStable(levels, func(left, right int) bool {
-			return levels[left].Quantity == 0 && levels[right].Quantity > 0
+	for _, bid := range managed.Bids.Levels {
+		bids = append(bids, flow.BookLevel{
+			Price:    bid.Price.Float64(),
+			Quantity: bid.Quantity.Float64(),
+			Ticks: bid.Price.Div(
+				decimal.NewFromInt64(instrument.PriceIncrement.GetIncrement()),
+			).Int64(),
 		})
 	}
 
-	input, ready, _, err := signal.sample.MeasureBook(flow.BookInput{
-		Symbol:   row.Symbol,
-		TickSize: row.PriceIncrement.Float64(),
+	for _, ask := range managed.Asks.Levels {
+		asks = append(asks, flow.BookLevel{
+			Price:    ask.Price.Float64(),
+			Quantity: ask.Quantity.Float64(),
+			Ticks: ask.Price.Div(
+				decimal.NewFromInt64(instrument.PriceIncrement.GetIncrement()),
+			).Int64(),
+		})
+	}
+
+	input, ready, maturity, err := signal.sample.MeasureBook(flow.BookInput{
+		Symbol:   managed.Name,
+		TickSize: instrument.TickSize.Float64(),
 		Bids:     bids,
 		Asks:     asks,
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("depthflow: measure %s book: %w", row.Symbol, err)
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"depthflow: failed to measure book",
+			err,
+		))
 	}
 
 	if !ready {
-		return nil, nil
+		return []*types.Measurement{{
+			Source:   types.SourceDepthFlow,
+			Symbol:   managed.Name,
+			At:       managed.BestBid().Timestamp,
+			Maturity: maturity,
+			Validity: types.ObservationValidity(1),
+		}}, nil
 	}
 
 	output, err := signal.bookflow.Measure(input)
 
 	if err != nil {
-		return nil, fmt.Errorf("depthflow: classify %s book: %w", row.Symbol, err)
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"depthflow: failed to measure bookflow",
+			err,
+		))
 	}
 
-	if !output.Ready {
-		return nil, nil
-	}
-
-	return signal.frame(thesis, row.Symbol, row.Timestamp, output), nil
+	return signal.frame(
+		managed.Name,
+		managed.BestBid().Timestamp,
+		output,
+		maturity,
+	), nil
 }
 
 /*
@@ -356,14 +280,14 @@ measureTrade applies one trade event to the shared flow sample at its causal
 position in the merged entity timeline.
 */
 func (signal *Signal) measureTrade(
-	thesis *types.Thesis,
 	row kraken.TradeData,
 ) ([]*types.Measurement, error) {
-	if row.Symbol == "" || row.Price.Sign() <= 0 || row.Qty <= 0 || row.Timestamp.IsZero() {
-		return nil, fmt.Errorf("depthflow: complete positive trade required")
+	if row.Symbol == "" || row.Timestamp.IsZero() || row.Price.Sign() <= 0 ||
+		row.Qty <= 0 || row.Side != "buy" && row.Side != "sell" {
+		return nil, nil
 	}
 
-	input, ready, _, err := signal.sample.MeasureTrade(flow.TradeInput{
+	input, ready, maturity, err := signal.sample.MeasureTrade(flow.TradeInput{
 		Symbol:   row.Symbol,
 		Price:    row.Price.Float64(),
 		Quantity: row.Qty,
@@ -372,7 +296,11 @@ func (signal *Signal) measureTrade(
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("depthflow: measure %s trade: %w", row.Symbol, err)
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"depthflow: failed to measure trade",
+			err,
+		))
 	}
 
 	if !ready {
@@ -382,51 +310,19 @@ func (signal *Signal) measureTrade(
 	output, err := signal.bookflow.Measure(input)
 
 	if err != nil {
-		return nil, fmt.Errorf("depthflow: classify %s trade: %w", row.Symbol, err)
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"depthflow: failed to measure bookflow",
+			err,
+		))
 	}
 
-	if !output.Ready {
-		return nil, nil
-	}
-
-	return signal.frame(thesis, row.Symbol, row.Timestamp, output), nil
-}
-
-/*
-depthEvents merges book and trade batches by event time. Trades precede books
-at equal timestamps so a publishing book observation includes simultaneous tape.
-*/
-func depthEvents(
-	books []kraken.BookData,
-	trades []kraken.TradeData,
-) []types.Event {
-	events := make([]types.Event, 0, len(books)+len(trades))
-
-	for index, row := range trades {
-		events = append(events, types.Event{
-			Stream:   "trade",
-			Priority: 0,
-			Sequence: uint64(index + 1),
-			At:       row.Timestamp,
-			Symbol:   row.Symbol,
-			Row:      row,
-		})
-	}
-
-	for index, row := range books {
-		events = append(events, types.Event{
-			Stream:   "book",
-			Priority: 1,
-			Sequence: uint64(index + 1),
-			At:       row.Timestamp,
-			Symbol:   row.Symbol,
-			Row:      row,
-		})
-	}
-
-	types.OrderEvents(events)
-
-	return events
+	return signal.frame(
+		row.Symbol,
+		row.Timestamp,
+		output,
+		maturity,
+	), nil
 }
 
 /*
@@ -434,33 +330,53 @@ frame converts a bookflow calculator output into one source×symbol row so both
 the book-driven and trade-driven observation paths emit the same metric set.
 */
 func (signal *Signal) frame(
-	thesis *types.Thesis,
-	symbol string, at time.Time, output equation.BookflowOutput,
+	symbol string, at time.Time,
+	output equation.BookflowOutput,
+	maturity float64,
 ) []*types.Measurement {
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,
 		Readiness: types.ReadinessObservation,
 	}
-	scale := types.ScaleReference{
-		Kind:    types.ScaleObservationWindow,
-		From:    at,
-		Through: at,
-	}
 	measurement := &types.Measurement{
-		Source:   types.SourceDepthFlow,
-		Symbol:   symbol,
-		At:       at,
-		Maturity: float64(thesis.Tick),
-		Validity: validity,
-		Metrics:  make(map[string]types.MetricSample, 6),
-		Scale:    scale,
+		Source:       types.SourceDepthFlow,
+		Symbol:       symbol,
+		At:           at,
+		ObservedFrom: at,
+		Maturity:     maturity,
+		Validity:     validity,
+		Metrics: map[string]types.MetricSample{
+			types.MetricKey(types.MetricLoadedScore, types.SideNone): {Raw: output.LoadedScore,
+				Normalized: types.NormalizeFinite(output.LoadedScore),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricSpoofScore, types.SideNone): {
+				Raw:        output.SpoofScore,
+				Normalized: types.NormalizeFinite(output.SpoofScore),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricThinScore, types.SideNone): {
+				Raw:        output.ThinScore,
+				Normalized: types.NormalizeFinite(output.ThinScore),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricNeutralScore, types.SideNone): {
+				Raw:        output.NeutralScore,
+				Normalized: types.NormalizeFinite(output.NeutralScore),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricStrength, types.SideNone): {
+				Raw:        output.Strength,
+				Normalized: types.NormalizeFinite(output.Strength),
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricValue, types.SideNone): {
+				Raw:        output.Value,
+				Normalized: types.NormalizeFinite(output.Value),
+				Unit:       types.UnitDimensionless,
+			},
+		},
 	}
-	measurement.Metrics[types.MetricKey(types.MetricLoadedScore, types.SideNone)] = types.MetricSample{Raw: output.LoadedScore, Normalized: types.NormalizeFinite(output.LoadedScore), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricSpoofScore, types.SideNone)] = types.MetricSample{Raw: output.SpoofScore, Normalized: types.NormalizeFinite(output.SpoofScore), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricThinScore, types.SideNone)] = types.MetricSample{Raw: output.ThinScore, Normalized: types.NormalizeFinite(output.ThinScore), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricNeutralScore, types.SideNone)] = types.MetricSample{Raw: output.NeutralScore, Normalized: types.NormalizeFinite(output.NeutralScore), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricStrength, types.SideNone)] = types.MetricSample{Raw: output.Strength, Normalized: types.NormalizeFinite(output.Strength), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricValue, types.SideNone)] = types.MetricSample{Raw: output.Value, Normalized: types.NormalizeFinite(output.Value), Unit: types.UnitDimensionless}
 
 	return []*types.Measurement{measurement}
 }

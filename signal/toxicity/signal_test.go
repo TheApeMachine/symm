@@ -87,22 +87,22 @@ func drainToxicityTrades(sub *types.Subscription[any]) []kraken.TradeData {
 	}
 }
 
-func drainToxicityBooks(sub *types.Subscription[any]) []kraken.BookData {
-	out := make([]kraken.BookData, 0)
+func toxicityCausalEntryCount(thesis *types.Thesis) int {
+	count := 0
 
-	for {
-		select {
-		case frame := <-sub.Channel:
-			if book, ok := frame.(*kraken.Book); ok {
-				out = append(out, book.Data...)
-			}
-		default:
-			return out
-		}
-	}
+	thesis.Causal.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+
+	return count
 }
 
-func measureToxicity(t *testing.T, state tests.MarketState, focus ...string) []*types.Measurement {
+func measureToxicity(
+	t *testing.T,
+	state tests.MarketState,
+	focus ...string,
+) ([]*types.Measurement, int) {
 	market := tests.NewMarket(t.Context(), 3)
 	So(market.Bootstrap(), ShouldBeNil)
 	defer market.Close()
@@ -125,6 +125,11 @@ func measureToxicity(t *testing.T, state tests.MarketState, focus ...string) []*
 	for _, trade := range drainToxicityTrades(tradeSub) {
 		thesis.Trades.Store(trade.Symbol, trade)
 	}
+
+	for symbol, book := range api.Books() {
+		thesis.Books.Store(symbol, book)
+	}
+
 	thesis.Tick++
 	signal.Measure(thesis)
 
@@ -133,6 +138,11 @@ func measureToxicity(t *testing.T, state tests.MarketState, focus ...string) []*
 			for _, trade := range drainToxicityTrades(tradeSub) {
 				thesis.Trades.Store(trade.Symbol, trade)
 			}
+
+			for symbol, book := range api.Books() {
+				thesis.Books.Store(symbol, book)
+			}
+
 			thesis.Tick++
 			*into = append(*into, signal.Measure(thesis)...)
 
@@ -144,12 +154,12 @@ func measureToxicity(t *testing.T, state tests.MarketState, focus ...string) []*
 	rows := make([]*types.Measurement, 0)
 	So(market.Transition(state, consume(&rows), focus...), ShouldBeNil)
 
-	return rows
+	return rows, toxicityCausalEntryCount(thesis)
 }
 
 func TestCalculate(t *testing.T) {
 	Convey("Toxicity preserves touch and trade-side evidence on live market fixtures", t, func() {
-		rows := measureToxicity(t, tests.MarketStateFastPump)
+		rows, causalEntries := measureToxicity(t, tests.MarketStateFastPump)
 		So(rows, ShouldNotBeEmpty)
 
 		foundTrade := false
@@ -171,5 +181,6 @@ func TestCalculate(t *testing.T) {
 
 		So(foundTrade, ShouldBeTrue)
 		So(foundTouch, ShouldBeTrue)
+		So(causalEntries, ShouldEqual, 0)
 	})
 }

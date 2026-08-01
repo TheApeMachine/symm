@@ -31,7 +31,7 @@ type Signal struct {
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
-	mu            sync.Mutex
+	subscribeMu   sync.Mutex
 }
 
 /*
@@ -78,8 +78,12 @@ func (signal *Signal) Subscribe(
 	channel string,
 	subscription *types.Subscription[any],
 ) *types.Subscription[any] {
+	if signal.subscribers == nil {
+		signal.subscribers = &sync.Map{}
+	}
+
 	return signalshared.Subscribe(
-		&signal.mu,
+		&signal.subscribeMu,
 		signal.subscribers,
 		channel,
 		subscription,
@@ -87,18 +91,12 @@ func (signal *Signal) Subscribe(
 }
 
 func (signal *Signal) run() {
-	subscription := signal.subscriptions["thesis"]
-
-	if subscription == nil {
-		return
-	}
-
 	go func() {
 		for {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case message := <-subscription.Channel:
+			case message := <-signal.subscriptions["thesis"].Channel:
 				if thesis, ok := message.(*types.Thesis); ok {
 					thesis.AppendMeasurements(
 						types.SourceLiquidity,
@@ -106,21 +104,19 @@ func (signal *Signal) run() {
 						types.Stamp{At: time.Now(), Entity: types.MarketTicker},
 					)
 
-					subscribers, ok := signal.subscribers.Load(signal.Name())
-
-					if ok && subscribers != nil {
-						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-							subscriber.Send(thesis)
-						}
-					}
+					utils.Fanout(signal.subscribers, signal.Name(), thesis)
 				}
 			}
 		}
 	}()
 }
 
+/*
+Measure produces the Measurements for the liquidity signal.
+*/
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	tickers, _, _ := thesis.Market()
+
 	if len(tickers) == 0 {
 		return nil
 	}
@@ -219,35 +215,35 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			Maturity: float64(thesis.Tick),
 			Validity: validity,
 			Scale:    scale,
-			Metrics:  make(map[string]types.MetricSample, 6),
-		}
-
-		measurement.Metrics[types.MetricKey(types.MetricExecutableTouchDepth, types.SideNone)] = types.MetricSample{
-			Raw:        executableDepth,
-			Normalized: types.NormalizeFinite(relativeDepth),
-			Unit:       types.UnitQuoteCurrency,
-		}
-		measurement.Metrics[types.MetricKey(types.MetricRelativeTouchDepth, types.SideNone)] = types.MetricSample{
-			Raw:        relativeDepth,
-			Normalized: types.NormalizeFinite(relativeDepth),
-			Unit:       types.UnitDimensionless,
-		}
-		measurement.Metrics[types.MetricKey(types.MetricScarcityScore, types.SideNone)] = types.MetricSample{
-			Raw:        scarcity,
-			Normalized: types.NormalizeFinite(scarcity),
-			Unit:       types.UnitDimensionless,
-		}
-		measurement.Metrics[types.MetricKey(types.MetricExecutableTouchDepthMedian, types.SideNone)] = types.MetricSample{
-			Raw:  median,
-			Unit: types.UnitQuoteCurrency,
-		}
-		measurement.Metrics[types.MetricKey(types.MetricReportedVolumeNotional, types.SideNone)] = types.MetricSample{
-			Raw:  reportedNotional,
-			Unit: types.UnitQuoteCurrency,
-		}
-		measurement.Metrics[types.MetricKey(types.MetricReportedVolumeNotionalMedian, types.SideNone)] = types.MetricSample{
-			Raw:  reportedMedian,
-			Unit: types.UnitQuoteCurrency,
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricExecutableTouchDepth, types.SideNone): {
+					Raw:        executableDepth,
+					Normalized: types.NormalizeFinite(relativeDepth),
+					Unit:       types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricRelativeTouchDepth, types.SideNone): {
+					Raw:        relativeDepth,
+					Normalized: types.NormalizeFinite(relativeDepth),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricScarcityScore, types.SideNone): {
+					Raw:        scarcity,
+					Normalized: types.NormalizeFinite(scarcity),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricExecutableTouchDepthMedian, types.SideNone): {
+					Raw:  median,
+					Unit: types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricReportedVolumeNotional, types.SideNone): {
+					Raw:  reportedNotional,
+					Unit: types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricReportedVolumeNotionalMedian, types.SideNone): {
+					Raw:  reportedMedian,
+					Unit: types.UnitQuoteCurrency,
+				},
+			},
 		}
 
 		out = append(out, measurement)

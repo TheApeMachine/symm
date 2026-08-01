@@ -2,7 +2,6 @@ package hawkes
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -33,7 +32,11 @@ func (feed testMarketFeed) Instrument() *types.Subscription[*kraken.Instrument] 
 func newTestSignal() (*Signal, *types.Thesis) {
 	thesis := types.NewThesis()
 
-	return &Signal{ctx: context.Background()}, thesis
+	return &Signal{
+		ctx:     context.Background(),
+		sample:  excitation.NewSample(),
+		process: excitation.NewProcess(),
+	}, thesis
 }
 
 func calc(signal *Signal, thesis *types.Thesis, rows ...kraken.TradeData) []*types.Measurement {
@@ -84,12 +87,11 @@ func TestSignal_Calculate(t *testing.T) {
 			Reset(func() { viper.Set("system.actor.buffer", previous) })
 
 			thesis := types.NewThesis()
-			thesis.Causal.Store("signal:hawkes:sample", excitation.NewSample())
-			thesis.Causal.Store("signal:hawkes:process", excitation.NewProcess())
-			thesis.Causal.Store("signal:hawkes:mu", &sync.Mutex{})
 			signal := &Signal{
-				ctx:    context.Background(),
-				cancel: func() {},
+				ctx:     context.Background(),
+				cancel:  func() {},
+				sample:  excitation.NewSample(),
+				process: excitation.NewProcess(),
 				subscriptions: map[string]*types.Subscription[any]{
 					"thesis": types.NewSubscription[any](),
 				},

@@ -25,11 +25,22 @@ func drainLeadlag(sub *types.Subscription[any]) []*kraken.Ticker {
 	}
 }
 
+func leadlagCausalEntryCount(thesis *types.Thesis) int {
+	count := 0
+
+	thesis.Causal.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+
+	return count
+}
+
 func measureLeadlag(
 	t *testing.T,
 	state tests.MarketState,
 	focus ...string,
-) []*types.Measurement {
+) ([]*types.Measurement, int) {
 	market := tests.NewMarket(t.Context(), 3)
 	So(market.Bootstrap(), ShouldBeNil)
 	defer market.Close()
@@ -68,7 +79,7 @@ func measureLeadlag(
 	rows := make([]*types.Measurement, 0)
 	So(market.Transition(state, consume(&rows), focus...), ShouldBeNil)
 
-	return rows
+	return rows, leadlagCausalEntryCount(thesis)
 }
 
 func TestCalculate(t *testing.T) {
@@ -78,13 +89,16 @@ func TestCalculate(t *testing.T) {
 			types.MetricSync,
 		}
 
+		baselineRows, baselineCausal := measureLeadlag(t, tests.MarketStateBaseline)
 		baseline := tests.PeakMeasurements(
-			measureLeadlag(t, tests.MarketStateBaseline),
+			baselineRows,
 			types.SourceLeadLag,
 			metrics,
 		)
+
+		pumpRows, pumpCausal := measureLeadlag(t, tests.MarketStateFastPump)
 		pump := tests.PeakMeasurements(
-			measureLeadlag(t, tests.MarketStateFastPump),
+			pumpRows,
 			types.SourceLeadLag,
 			metrics,
 		)
@@ -92,5 +106,8 @@ func TestCalculate(t *testing.T) {
 		for _, symbol := range []string{"SIM1/USD", "SIM2/USD", "SIM3/USD"} {
 			So(pump[types.MetricStrength][symbol], ShouldBeGreaterThanOrEqualTo, baseline[types.MetricStrength][symbol])
 		}
+
+		So(baselineCausal, ShouldEqual, 0)
+		So(pumpCausal, ShouldEqual, 0)
 	})
 }

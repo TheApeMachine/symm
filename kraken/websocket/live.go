@@ -138,9 +138,16 @@ func New(
 	if endpoint == Level3WebSocketURL {
 		live.level3 = &sync.Map{}
 		live.book = NewBook(ctx)
+		live.client.OnSent.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
+			errnie.Error(live.book.manager.Update(event))
+		})
 	}
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
+		if live.book != nil {
+			errnie.Error(live.book.manager.Update(event))
+		}
+
 		raw := event.Data.Bytes()
 
 		channel := utils.GetString(raw, "channel")
@@ -149,10 +156,6 @@ func New(
 			if method := utils.GetString(raw, "method"); method != "" {
 				channel = method
 			}
-		}
-
-		if channel == "level3" && live.book != nil {
-			errnie.Error(live.book.manager.Update(event))
 		}
 
 		handler, ok := entityMap[channel]
@@ -413,13 +416,6 @@ func (live *Live) SubL3(symbols []string) {
 				"websocket: subscribing to level3 %s",
 				strings.Join(group, "|"),
 			))
-
-			for _, symbol := range group {
-				conn.book.manager.CreateBook(
-					symbol,
-					viper.GetInt("market.l3_depth"),
-				)
-			}
 
 			conn.Client().SubL3(group, viper.GetInt("market.l3_depth"), map[string]any{
 				"depth": viper.GetInt("market.l3_depth"),

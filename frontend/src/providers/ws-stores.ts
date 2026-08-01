@@ -1,9 +1,3 @@
-import {
-	paintTerminalFluidChart,
-	repaintTerminalFluidChart,
-} from "#/components/charts/fluid";
-import { paintTerminalPredictionChart } from "#/components/charts/prediction";
-import { appStore } from "#/collections/app";
 import type { JSONSerializable, Paint } from "#/components/ui/paint";
 
 const registeredPainters = new Map<string, Set<Paint>>();
@@ -38,26 +32,12 @@ export const attach = (
 	worker: Worker,
 ) => {
 	worker.addEventListener("message", (event: MessageEvent) => {
-		if (event.data.type === "DRAW_BIN" && event.data.buffer instanceof ArrayBuffer) {
-			const focusSymbol = appStore.state.focusSymbol;
-			repaintTerminalFluidChart(focusSymbol);
-			return;
-		}
-
 		if (event.data.type !== "DRAW" || event.data.frame === undefined) {
 			return;
 		}
 
 		for (const [key, value] of Object.entries(event.data.frame)) {
 			paintRegistered(key, value as JSONSerializable);
-
-			if (key === "manifold") {
-				paintTerminalFluidChart(value, appStore.state.focusSymbol);
-			}
-
-			if (key === "resonance") {
-				paintTerminalPredictionChart(value, appStore.state.focusSymbol);
-			}
 		}
 	});
 };

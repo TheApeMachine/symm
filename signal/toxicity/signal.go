@@ -5,8 +5,10 @@ import (
 	"sync"
 	"time"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken/websocket"
+	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -21,10 +23,13 @@ type Signal struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
+	previousTouch map[string]float64
+	previousPrice map[string]float64
 	planner       *strategy.Planner
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
+	subscribeMu   sync.Mutex
 }
 
 /*
@@ -45,6 +50,8 @@ func NewSignal(
 		ctx:           ctx,
 		cancel:        cancel,
 		api:           api,
+		previousTouch: make(map[string]float64),
+		previousPrice: make(map[string]float64),
 		planner:       planner,
 		ui:            ui,
 		subscriptions: subscriptions,
@@ -75,17 +82,12 @@ func (signal *Signal) Subscribe(
 		signal.subscribers = &sync.Map{}
 	}
 
-	subscribers, ok := signal.subscribers.LoadOrStore(
-		channel, []*types.Subscription[any]{subscription},
+	return signalshared.Subscribe(
+		&signal.subscribeMu,
+		signal.subscribers,
+		channel,
+		subscription,
 	)
-
-	if ok && subscribers != nil {
-		signal.subscribers.Store(
-			channel, append(subscribers.([]*types.Subscription[any]), subscription),
-		)
-	}
-
-	return subscription
 }
 
 /*
@@ -106,13 +108,7 @@ func (signal *Signal) run() {
 						types.Stamp{At: time.Now(), Entity: types.MarketTrade},
 					)
 
-					subscribers, ok := signal.subscribers.Load(signal.Name())
-
-					if ok && subscribers != nil {
-						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-							subscriber.Send(thesis)
-						}
-					}
+					utils.Fanout(signal.subscribers, signal.Name(), thesis)
 				}
 			}
 		}
@@ -120,152 +116,140 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	if _, ok := thesis.Causal.Load("signal:toxicity:touch"); !ok {
-		thesis.Causal.Store("signal:toxicity:touch", make(map[string]float64))
-	}
+	_, trades, books := thesis.Market()
+	measurements := make([]*types.Measurement, 0)
+	out := make([]*types.Measurement, 0)
 
-	if _, ok := thesis.Causal.Load("signal:toxicity:price"); !ok {
-		thesis.Causal.Store("signal:toxicity:price", make(map[string]float64))
-	}
-
-	_, trades, _ := thesis.Market()
-	measurements := make([]*types.Measurement, 0, len(trades))
+	var lastTime time.Time
 
 	for _, trade := range trades {
-		measurement := signal.measure(
+		if lastTime.IsZero() || trade.Timestamp.After(lastTime) {
+			lastTime = trade.Timestamp
+		}
+
+		found, ok := books.Load(trade.Symbol)
+
+		if !ok || found == nil {
+			continue
+		}
+
+		book := found.(*spotbook.Book)
+
+		bid := book.BestBid()
+		ask := book.BestAsk()
+
+		if bid == nil || ask == nil {
+			return nil
+		}
+
+		bidQuantity := bid.Quantity.Float64()
+		askQuantity := ask.Quantity.Float64()
+		touchQuantity := bidQuantity + askQuantity
+
+		bidRetreat := signal.retreat(
 			thesis,
 			trade.Symbol,
-			trade.Timestamp.UTC(),
-			trade.Price.Float64()*trade.Qty,
-			signal.fillSide(trade.Side),
+			types.SideBuy,
+			bid.Price.Float64(),
+			bidQuantity,
 		)
 
-		if measurement != nil {
-			measurements = append(measurements, measurement)
+		askRetreat := signal.retreat(
+			thesis,
+			trade.Symbol,
+			types.SideSell,
+			ask.Price.Float64(),
+			askQuantity,
+		)
+
+		buyFill := 0.0
+		sellFill := 0.0
+
+		if types.MeasurementSide(trade.Side) == types.SideBuy {
+			buyFill = trade.Qty
+		}
+
+		if types.MeasurementSide(trade.Side) == types.SideSell {
+			sellFill = trade.Qty
+		}
+
+		measurement := &types.Measurement{
+			Source:   types.SourceToxicity,
+			Symbol:   trade.Symbol,
+			At:       trade.Timestamp,
+			Maturity: float64(thesis.Tick),
+			Validity: types.ObservationValidity(len(trades)),
+			Scale: types.ScaleReference{
+				Kind:    types.ScaleObservationWindow,
+				From:    lastTime,
+				Through: trade.Timestamp,
+			},
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricTradeVolume, types.SideNone): {
+					Raw:  trade.Qty,
+					Unit: types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricFillVolume, types.SideBuy): {
+					Raw:  buyFill,
+					Unit: types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricFillVolume, types.SideSell): {
+					Raw:  sellFill,
+					Unit: types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricBestPrice, types.SideBuy): {
+					Raw:  bid.Price.Float64(),
+					Unit: types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricBestPrice, types.SideSell): {
+					Raw:  ask.Price.Float64(),
+					Unit: types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricTouchQuantity, types.SideBuy): {
+					Raw:        bidQuantity,
+					Normalized: types.NormalizeRatio(bidQuantity, touchQuantity),
+					Unit:       types.UnitBaseCurrency,
+				},
+				types.MetricKey(types.MetricTouchQuantity, types.SideSell): {
+					Raw:        askQuantity,
+					Normalized: types.NormalizeRatio(askQuantity, touchQuantity),
+					Unit:       types.UnitBaseCurrency,
+				},
+				types.MetricKey(types.MetricRetreatingQuantity, types.SideBuy): {
+					Raw:        bidRetreat,
+					Normalized: types.NormalizeRatio(bidRetreat, bidQuantity+bidRetreat),
+					Unit:       types.UnitBaseCurrency,
+				},
+				types.MetricKey(types.MetricRetreatingQuantity, types.SideSell): {
+					Raw:        askRetreat,
+					Normalized: types.NormalizeRatio(askRetreat, askQuantity+askRetreat),
+					Unit:       types.UnitBaseCurrency,
+				},
+				types.MetricKey(types.MetricCancelledQuantity, types.SideBuy): {
+					Raw:  0,
+					Unit: types.UnitBaseCurrency,
+				},
+				types.MetricKey(types.MetricCancelledQuantity, types.SideSell): {
+					Raw:  0,
+					Unit: types.UnitBaseCurrency,
+				},
+			},
+		}
+
+		measurements = append(measurements, measurement)
+
+		if measurement.Symbol == types.Focus() {
+			out = append(out, measurement)
 		}
 	}
 
+	if len(out) > 0 {
+		frame := datura.NewMap()
+		frame["measurements"] = out
+		utils.Publish(signal.ui, frame)
+	}
+
 	return measurements
-}
-
-/*
-measure builds one toxicity row from the current Level3 book. Buy-side metrics
-refer to resting bids and sell-side metrics refer to resting asks.
-*/
-func (signal *Signal) measure(
-	thesis *types.Thesis,
-	symbol string,
-	at time.Time,
-	tradeVolume float64,
-	fillSide types.MeasurementSide,
-) *types.Measurement {
-	var measurement *types.Measurement
-	out := make([]types.Measurement, 0)
-	book := signal.api.Book(symbol)
-
-	if book == nil {
-		return nil
-	}
-
-	bid := book.BestBid()
-	ask := book.BestAsk()
-
-	if bid == nil || ask == nil {
-		return nil
-	}
-
-	bidQuantity := bid.Quantity.Float64()
-	askQuantity := ask.Quantity.Float64()
-	touchQuantity := bidQuantity + askQuantity
-	bidRetreat := signal.retreat(thesis, symbol, types.SideBuy, bid.Price.Float64(), bidQuantity)
-	askRetreat := signal.retreat(thesis, symbol, types.SideSell, ask.Price.Float64(), askQuantity)
-	buyFill := 0.0
-	sellFill := 0.0
-
-	if fillSide == types.SideBuy {
-		buyFill = tradeVolume
-	}
-
-	if fillSide == types.SideSell {
-		sellFill = tradeVolume
-	}
-
-	measurement = &types.Measurement{
-		Source:   types.SourceToxicity,
-		Symbol:   symbol,
-		At:       at,
-		Maturity: float64(thesis.Tick),
-		Validity: types.ObservationValidity(1),
-		Scale: types.ScaleReference{
-			Kind:    types.ScaleObservationWindow,
-			From:    at,
-			Through: at,
-		},
-		Metrics: map[string]types.MetricSample{
-			types.MetricKey(types.MetricTradeVolume, types.SideNone): {
-				Raw:  tradeVolume,
-				Unit: types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricFillVolume, types.SideBuy): {
-				Raw:  buyFill,
-				Unit: types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricFillVolume, types.SideSell): {
-				Raw:  sellFill,
-				Unit: types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricBestPrice, types.SideBuy): {
-				Raw:  bid.Price.Float64(),
-				Unit: types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricBestPrice, types.SideSell): {
-				Raw:  ask.Price.Float64(),
-				Unit: types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricTouchQuantity, types.SideBuy): {
-				Raw:        bidQuantity,
-				Normalized: types.NormalizeRatio(bidQuantity, touchQuantity),
-				Unit:       types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricTouchQuantity, types.SideSell): {
-				Raw:        askQuantity,
-				Normalized: types.NormalizeRatio(askQuantity, touchQuantity),
-				Unit:       types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricRetreatingQuantity, types.SideBuy): {
-				Raw:        bidRetreat,
-				Normalized: types.NormalizeRatio(bidRetreat, bidQuantity+bidRetreat),
-				Unit:       types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricRetreatingQuantity, types.SideSell): {
-				Raw:        askRetreat,
-				Normalized: types.NormalizeRatio(askRetreat, askQuantity+askRetreat),
-				Unit:       types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricCancelledQuantity, types.SideBuy): {
-				Raw:  0,
-				Unit: types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricCancelledQuantity, types.SideSell): {
-				Raw:  0,
-				Unit: types.UnitBaseCurrency,
-			},
-		},
-	}
-
-	if measurement.Symbol == types.Focus() {
-		out = append(out, *measurement)
-	}
-
-	if len(out) == 0 {
-		return measurement
-	}
-
-	frame := datura.NewMap()
-	frame["measurements"] = out
-	utils.Publish(signal.ui, frame)
-
-	return measurement
 }
 
 /*
@@ -273,21 +257,25 @@ retreat reports visible touch liquidity that disappeared since the previous
 observation for this symbol and side.
 */
 func (signal *Signal) retreat(
-	thesis *types.Thesis,
+	_ *types.Thesis,
 	symbol string,
 	side types.MeasurementSide,
 	price float64,
 	quantity float64,
 ) float64 {
+	if signal.previousTouch == nil {
+		signal.previousTouch = make(map[string]float64)
+	}
+
+	if signal.previousPrice == nil {
+		signal.previousPrice = make(map[string]float64)
+	}
+
 	key := symbol + ":" + string(side)
-	foundTouch, _ := thesis.Causal.Load("signal:toxicity:touch")
-	foundPrice, _ := thesis.Causal.Load("signal:toxicity:price")
-	touch := foundTouch.(map[string]float64)
-	prices := foundPrice.(map[string]float64)
-	previousQuantity := touch[key]
-	previousPrice := prices[key]
-	touch[key] = quantity
-	prices[key] = price
+	previousQuantity := signal.previousTouch[key]
+	previousPrice := signal.previousPrice[key]
+	signal.previousTouch[key] = quantity
+	signal.previousPrice[key] = price
 
 	if previousQuantity == 0 {
 		return 0
@@ -310,21 +298,6 @@ func (signal *Signal) retreat(
 	}
 
 	return previousQuantity - quantity
-}
-
-/*
-fillSide maps Kraken's aggressor side onto the resting book side that was hit.
-*/
-func (signal *Signal) fillSide(side string) types.MeasurementSide {
-	if side == "buy" {
-		return types.SideSell
-	}
-
-	if side == "sell" {
-		return types.SideBuy
-	}
-
-	return types.SideNone
 }
 
 /*
