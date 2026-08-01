@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -133,214 +134,135 @@ func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
-	tickers, trades, books := thesis.Market()
+	tickers, _, books := thesis.Market()
 
-	if len(tickers) == 0 && len(trades) == 0 {
+	if len(tickers) == 0 {
 		return nil
 	}
 
-	if len(tickers) > 0 {
-		var lastTime time.Time
-		var mid *decimal.Decimal
+	var lastTime time.Time
 
-		for _, ticker := range tickers {
-			if lastTime.IsZero() || ticker.Timestamp.After(lastTime) {
-				lastTime = ticker.Timestamp
-			}
+	for _, ticker := range tickers {
+		if ticker.Bid == nil || ticker.Ask == nil || ticker.Last == nil ||
+			ticker.Volume <= 0 || ticker.Bid.Sign() <= 0 ||
+			ticker.Ask.Sign() <= 0 || ticker.Last.Sign() <= 0 ||
+			ticker.Ask.Cmp(ticker.Bid) <= 0 {
+			continue
+		}
 
-			found, ok := books.Load(ticker.Symbol)
+		if lastTime.IsZero() || ticker.Timestamp.After(lastTime) {
+			lastTime = ticker.Timestamp
+		}
 
-			if ok && found != nil {
-				book, ok := found.(*book.Book)
+		found, ok := books.Load(ticker.Symbol)
 
-				if !ok || book == nil {
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						"pumpdump: unexpected book type",
-						nil,
-					))
+		if !ok || found == nil {
+			continue
+		}
 
-					continue
-				}
+		book, ok := found.(*book.Book)
 
-				mid = book.Midpoint()
-			}
+		if !ok || book == nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"pumpdump: unexpected book type",
+				nil,
+			))
 
-			output, _, maturity, err := signal.algo.Measure(equation.IgnitionInput{
-				At:     ticker.Timestamp,
-				Symbol: ticker.Symbol,
-				Last:   ticker.Ask.Float64(),
-				Volume: ticker.AskQty,
-				Ask:    ticker.Ask.Float64(),
-				Bid:    ticker.Bid.Float64(),
-			})
+			continue
+		}
 
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"pumpdump: failed to measure ignition",
-					err,
-				))
+		mid := book.Midpoint()
 
-				continue
-			}
+		if mid == nil || mid.Sign() <= 0 {
+			continue
+		}
 
-			measurements = append(measurements, &types.Measurement{
-				Source:   types.SourcePumpDump,
-				Symbol:   ticker.Symbol,
-				At:       ticker.Timestamp,
-				Maturity: maturity,
-				Validity: types.MeasurementValidity{},
-				Scale: types.ScaleReference{
-					Kind:    types.ScaleObservationWindow,
-					From:    lastTime,
-					Through: ticker.Timestamp,
+		output, _, maturity, err := signal.algo.Measure(equation.IgnitionInput{
+			At:     ticker.Timestamp,
+			Symbol: ticker.Symbol,
+			Last:   ticker.Last.Float64(),
+			Volume: ticker.Volume,
+			Ask:    ticker.Ask.Float64(),
+			Bid:    ticker.Bid.Float64(),
+		})
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"pumpdump: failed to measure ignition",
+				err,
+			))
+
+			continue
+		}
+
+		measurements = append(measurements, &types.Measurement{
+			Source:   types.SourcePumpDump,
+			Symbol:   ticker.Symbol,
+			At:       ticker.Timestamp,
+			Maturity: maturity,
+			Validity: types.ObservationValidity(1),
+			Scale: types.ScaleReference{
+				Kind:    types.ScaleObservationWindow,
+				From:    lastTime,
+				Through: ticker.Timestamp,
+			},
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricRVOL, types.SideNone): {
+					Raw:        output.RVOL,
+					Normalized: types.NormalizeFinite(output.RVOL),
+					Unit:       types.UnitDimensionless,
 				},
-				Metrics: map[string]types.MetricSample{
-					types.MetricKey(types.MetricRVOL, types.SideNone): {
-						Raw:        output.RVOL,
-						Normalized: types.NormalizeFinite(output.RVOL),
-						Unit:       types.UnitDimensionless,
-					},
-					types.MetricKey(types.MetricPrecursor, types.SideNone): {
-						Raw:        output.Precursor,
-						Normalized: types.NormalizeFinite(output.Precursor),
-						Unit:       types.UnitDimensionless,
-					},
-					types.MetricKey(types.MetricSpread, types.SideNone): {
-						Raw:        output.Spread,
-						Normalized: types.NormalizeRatio(output.Spread, mid.Float64()),
-						Unit:       types.UnitQuoteCurrency,
-					},
-					types.MetricKey(types.MetricCompression, types.SideNone): {
-						Raw:        output.Compression,
-						Normalized: types.NormalizeFinite(output.Compression),
-						Unit:       types.UnitDimensionless,
-					},
-					types.MetricKey(types.MetricIgnition, types.SideNone): {
-						Raw:        output.Ignition,
-						Normalized: types.NormalizeFinite(output.Ignition),
-						Unit:       types.UnitDimensionless,
-					},
-					types.MetricKey(types.MetricTrend, types.SideNone): {
-						Raw:        output.Trend,
-						Normalized: types.NormalizeFinite(output.Trend),
-						Unit:       types.UnitDimensionless,
-					},
-					types.MetricKey(types.MetricExhaustion, types.SideNone): {
-						Raw:        output.Exhaustion,
-						Normalized: types.NormalizeFinite(output.Exhaustion),
-						Unit:       types.UnitDimensionless,
-					},
-					types.MetricKey(types.MetricStrength, types.SideNone): {
-						Raw:        output.Strength,
-						Normalized: types.NormalizeFinite(output.Strength),
-						Unit:       types.UnitDimensionless,
-					},
+				types.MetricKey(types.MetricPrecursor, types.SideNone): {
+					Raw:        output.Precursor,
+					Normalized: types.NormalizeFinite(output.Precursor),
+					Unit:       types.UnitDimensionless,
 				},
-			})
+				types.MetricKey(types.MetricSpread, types.SideNone): {
+					Raw:        output.Spread,
+					Normalized: types.NormalizeRatio(output.Spread, mid.Float64()),
+					Unit:       types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricCompression, types.SideNone): {
+					Raw:        output.Compression,
+					Normalized: types.NormalizeFinite(output.Compression),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricIgnition, types.SideNone): {
+					Raw:        output.Ignition,
+					Normalized: types.NormalizeFinite(output.Ignition),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricTrend, types.SideNone): {
+					Raw:        output.Trend,
+					Normalized: types.NormalizeFinite(output.Trend),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricExhaustion, types.SideNone): {
+					Raw:        output.Exhaustion,
+					Normalized: types.NormalizeFinite(output.Exhaustion),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricStrength, types.SideNone): {
+					Raw:        output.Strength,
+					Normalized: types.NormalizeFinite(output.Strength),
+					Unit:       types.UnitDimensionless,
+				},
+			},
+		})
+	}
+
+	focusMeasurements := make([]*types.Measurement, 0)
+
+	for _, measurement := range measurements {
+		if measurement.Symbol == types.Focus() {
+			focusMeasurements = append(focusMeasurements, measurement)
 		}
 	}
 
-	if len(trades) > 0 {
-		var lastTime time.Time
-		var mid *decimal.Decimal
-
-		for _, trade := range trades {
-			if lastTime.IsZero() || trade.Timestamp.After(lastTime) {
-				lastTime = trade.Timestamp
-			}
-
-			found, ok := books.Load(trade.Symbol)
-
-			if ok && found != nil {
-				book, ok := found.(*book.Book)
-
-				if !ok || book == nil {
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						"pumpdump: unexpected book type",
-						nil,
-					))
-
-					continue
-				}
-
-				mid = book.Midpoint()
-			}
-
-			output, _, maturity, err := signal.algo.Measure(equation.IgnitionInput{
-				At:     trade.Timestamp,
-				Symbol: trade.Symbol,
-				Last:   trade.Price.Float64(),
-				Volume: trade.Qty,
-			})
-
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"pumpdump: failed to measure ignition",
-					err,
-				))
-
-				continue
-			}
-
-			measurements = append(measurements, &types.Measurement{
-				Source:   types.SourcePumpDump,
-				Symbol:   trade.Symbol,
-				At:       trade.Timestamp,
-				Maturity: maturity,
-				Validity: types.MeasurementValidity{},
-				Scale: types.ScaleReference{
-					Kind:    types.ScaleObservationWindow,
-					From:    lastTime,
-					Through: trade.Timestamp,
-				},
-				Metrics: map[string]types.MetricSample{
-					types.MetricKey(types.MetricRVOL, types.SideNone): {
-						Raw:        output.RVOL,
-						Normalized: types.NormalizeFinite(output.RVOL),
-						Unit:       types.UnitDimensionless,
-					},
-					types.MetricKey(types.MetricPrecursor, types.SideNone): {
-						Raw:        output.Precursor,
-						Normalized: types.NormalizeFinite(output.Precursor),
-						Unit:       types.UnitDimensionless,
-					},
-					types.MetricKey(types.MetricSpread, types.SideNone): {
-						Raw:        output.Spread,
-						Normalized: types.NormalizeRatio(output.Spread, mid.Float64()),
-						Unit:       types.UnitQuoteCurrency,
-					},
-					types.MetricKey(types.MetricCompression, types.SideNone): {
-						Raw:        output.Compression,
-						Normalized: types.NormalizeFinite(output.Compression),
-						Unit:       types.UnitDimensionless,
-					},
-					types.MetricKey(types.MetricIgnition, types.SideNone): {
-						Raw:        output.Ignition,
-						Normalized: types.NormalizeFinite(output.Ignition),
-						Unit:       types.UnitDimensionless,
-					},
-					types.MetricKey(types.MetricTrend, types.SideNone): {
-						Raw:        output.Trend,
-						Normalized: types.NormalizeFinite(output.Trend),
-						Unit:       types.UnitDimensionless,
-					},
-					types.MetricKey(types.MetricExhaustion, types.SideNone): {
-						Raw:        output.Exhaustion,
-						Normalized: types.NormalizeFinite(output.Exhaustion),
-						Unit:       types.UnitDimensionless,
-					},
-					types.MetricKey(types.MetricStrength, types.SideNone): {
-						Raw:        output.Strength,
-						Normalized: types.NormalizeFinite(output.Strength),
-						Unit:       types.UnitDimensionless,
-					},
-				},
-			})
-		}
+	if len(focusMeasurements) > 0 {
+		utils.Publish(signal.ui, datura.NewMap("measurements", focusMeasurements))
 	}
 
 	return measurements

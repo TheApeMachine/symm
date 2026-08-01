@@ -94,7 +94,7 @@ func (analyzer *Analyzer) run() {
 		"correlation",
 		"cvd",
 		"depthflow",
-		"exhaust",
+		"exhaustion",
 		"hawkes",
 		"leadlag",
 		"liquidity",
@@ -140,7 +140,7 @@ func (analyzer *Analyzer) run() {
 				analyzer.process(in)
 			case in := <-analyzer.subscriptions["depthflow"].Channel:
 				analyzer.process(in)
-			case in := <-analyzer.subscriptions["exhaust"].Channel:
+			case in := <-analyzer.subscriptions["exhaustion"].Channel:
 				analyzer.process(in)
 			case in := <-analyzer.subscriptions["hawkes"].Channel:
 				analyzer.process(in)

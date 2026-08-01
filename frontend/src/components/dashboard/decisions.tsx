@@ -1,4 +1,3 @@
-import type { Decision } from "#/collections/types";
 import { Component } from "#/components/ui/component";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
@@ -7,71 +6,14 @@ import { Flex } from "@/components/ui/flex";
 
 const slotCount = 6;
 
-type RowModel = {
-	visible: string;
-	symbol: string;
-	utility: string;
-	action: string;
-};
-
-type PaintModel = {
-	summary: string;
-	rows: RowModel[];
-};
-
-const normalizeDecisions = (value: unknown): Decision[] => {
-	if (Array.isArray(value)) return value as Decision[];
-	if (value !== null && typeof value === "object")
-		return Object.values(value as Record<string, Decision>);
-	return value != null ? [value as Decision] : [];
-};
-
-const hiddenRow = (): RowModel => ({
-	visible: "none",
-	symbol: "",
-	utility: "",
-	action: "",
-});
-
-const buildModel = (rows: Decision[]): PaintModel => {
-	const sorted = rows
-		.slice()
-		.sort((left, right) => left.symbol.localeCompare(right.symbol));
-	const active = sorted.filter(
-		(row) => row.action.toLowerCase() !== "nothing",
-	).length;
-	const items = Array.from({ length: slotCount }, () => hiddenRow());
-
-	sorted.slice(0, slotCount).forEach((row, index) => {
-		items[index] = {
-			visible: "",
-			symbol: row.symbol,
-			utility: Number.isFinite(row.utility) ? row.utility.toFixed(4) : "—",
-			action: row.action,
-		};
-	});
-
-	return {
-		summary: `${active} active · ${sorted.length - active} passive`,
-		rows: items,
-	};
-};
-
 export const Decisions = () => (
-	<Component
-		registerKey="decisions"
-		select="rows"
-	>
+	<Component registerKey="decisions">
 		{({ ref, className }) => (
 			<Flex.Column ref={ref} className="gap-2">
 				<Flex.Row className="items-baseline justify-between border-(--line) border-b px-1 pb-2">
 					<Typography.Span className="text-[11px] tracking-[0.22em] text-(--f3)">
 						DECISIONS
 					</Typography.Span>
-					<Typography.Span
-						data-paint="summary"
-						className="text-[10px] text-(--f4)"
-					/>
 				</Flex.Row>
 				<Flex.Row className="justify-between px-1 text-[9px] uppercase tracking-[0.18em] text-(--f4)">
 					<Typography.Span>Symbol</Typography.Span>
@@ -85,10 +27,7 @@ export const Decisions = () => (
 						<List.Item
 							key={`${index}-decision`}
 							className="justify-between"
-							data-select="rows"
 							data-index={index}
-							data-paint="visible"
-							data-paint-prop="style.display"
 						>
 							<Typography.Span
 								data-paint="symbol"
@@ -96,6 +35,7 @@ export const Decisions = () => (
 							/>
 							<Typography.Span
 								data-paint="utility"
+								data-paint-format=".4f"
 								className="shrink-0 text-(--f2) text-right"
 							/>
 							<Typography.Span

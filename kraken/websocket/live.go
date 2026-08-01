@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"sync/atomic"
 	"os"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -149,6 +149,10 @@ func New(
 			if method := utils.GetString(raw, "method"); method != "" {
 				channel = method
 			}
+		}
+
+		if channel == "level3" && live.book != nil {
+			errnie.Error(live.book.manager.Update(event))
 		}
 
 		handler, ok := entityMap[channel]
@@ -409,6 +413,13 @@ func (live *Live) SubL3(symbols []string) {
 				"websocket: subscribing to level3 %s",
 				strings.Join(group, "|"),
 			))
+
+			for _, symbol := range group {
+				conn.book.manager.CreateBook(
+					symbol,
+					viper.GetInt("market.l3_depth"),
+				)
+			}
 
 			conn.Client().SubL3(group, viper.GetInt("market.l3_depth"), map[string]any{
 				"depth": viper.GetInt("market.l3_depth"),

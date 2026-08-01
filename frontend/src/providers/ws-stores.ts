@@ -1,6 +1,8 @@
 import {
+	paintTerminalFluidChart,
 	repaintTerminalFluidChart,
 } from "#/components/charts/fluid";
+import { paintTerminalPredictionChart } from "#/components/charts/prediction";
 import { appStore } from "#/collections/app";
 import type { JSONSerializable, Paint } from "#/components/ui/paint";
 
@@ -48,6 +50,14 @@ export const attach = (
 
 		for (const [key, value] of Object.entries(event.data.frame)) {
 			paintRegistered(key, value as JSONSerializable);
+
+			if (key === "manifold") {
+				paintTerminalFluidChart(value, appStore.state.focusSymbol);
+			}
+
+			if (key === "resonance") {
+				paintTerminalPredictionChart(value, appStore.state.focusSymbol);
+			}
 		}
 	});
 };

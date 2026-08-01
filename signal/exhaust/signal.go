@@ -2,9 +2,11 @@ package exhaust
 
 import (
 	"context"
+	"math"
 	"sync"
 	"time"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 
@@ -137,15 +139,37 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		thesis.Causal.Store("signal:exhaust:decay", equation.NewDecay())
 	}
 
-	_, trades, _ := thesis.Market()
+	_, trades, books := thesis.Market()
+	out := make([]*types.Measurement, 0)
+
+	books.Range(func(_, value any) bool {
+		managed, ok := value.(*spotbook.Book)
+
+		if !ok {
+			return true
+		}
+
+		measurements, err := signal.measureManagedBook(thesis, managed)
+
+		if err != nil {
+			errnie.Error(err)
+			return true
+		}
+
+		out = append(out, measurements...)
+
+		return true
+	})
+
 	events := exhaustEvents(nil, trades)
-	out, err := types.MeasureEventsParallel(events, func(event types.Event) ([]*types.Measurement, error) {
+	tradeMeasurements, err := types.MeasureEventsParallel(events, func(event types.Event) ([]*types.Measurement, error) {
 		if event.Stream == "book" {
 			return signal.measureBook(thesis, event.Row.(kraken.BookData))
 		}
 
 		return signal.measureTrade(thesis, event.Row.(kraken.TradeData))
 	})
+	out = append(out, tradeMeasurements...)
 
 	if err != nil {
 		errnie.Error(errnie.Err(errnie.UnprocessableContent, "exhaust: failed to measure events", err))
@@ -165,6 +189,100 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	}
 
 	return out
+}
+
+func (signal *Signal) measureManagedBook(
+	thesis *types.Thesis,
+	managed *spotbook.Book,
+) ([]*types.Measurement, error) {
+	if managed == nil || managed.Bids == nil || managed.Asks == nil {
+		return nil, nil
+	}
+
+	if len(managed.Bids.Levels) == 0 || len(managed.Asks.Levels) == 0 {
+		return nil, nil
+	}
+
+	tickSize := math.Inf(1)
+	levels := [][]*spotbook.Level{make([]*spotbook.Level, 0, len(managed.Bids.Levels)), make([]*spotbook.Level, 0, len(managed.Asks.Levels))}
+
+	for side, source := range []map[string]*spotbook.Level{managed.Bids.Levels, managed.Asks.Levels} {
+		for _, level := range source {
+			if level == nil || level.Price == nil || level.Quantity == nil || level.Quantity.Sign() <= 0 {
+				continue
+			}
+
+			levels[side] = append(levels[side], level)
+		}
+	}
+
+	for _, left := range append(levels[0], levels[1]...) {
+		for _, right := range append(levels[0], levels[1]...) {
+			if left == right {
+				continue
+			}
+
+			difference := math.Abs(left.Price.Float64() - right.Price.Float64())
+
+			if difference > 0 && difference < tickSize {
+				tickSize = difference
+			}
+		}
+	}
+
+	if math.IsInf(tickSize, 1) || tickSize <= 0 {
+		return nil, nil
+	}
+
+	bids := make([]flow.BookLevel, 0, len(levels[0]))
+	asks := make([]flow.BookLevel, 0, len(levels[1]))
+	var at time.Time
+
+	for side, source := range levels {
+		for _, level := range source {
+			if level.Timestamp.After(at) {
+				at = level.Timestamp
+			}
+
+			projected := flow.BookLevel{
+				Price:    level.Price.Float64(),
+				Ticks:    int64(math.Round(level.Price.Float64() / tickSize)),
+				Quantity: level.Quantity.Float64(),
+			}
+
+			if side == 0 {
+				bids = append(bids, projected)
+				continue
+			}
+
+			asks = append(asks, projected)
+		}
+	}
+
+	if at.IsZero() || len(bids) == 0 || len(asks) == 0 {
+		return nil, nil
+	}
+
+	found, _ := thesis.Causal.Load("signal:exhaust:sample")
+	input, ready, maturity, err := found.(*algorithm.DecaySample).MeasureBook(flow.BookInput{
+		Symbol:   managed.Name,
+		TickSize: tickSize,
+		Bids:     bids,
+		Asks:     asks,
+	})
+
+	if err != nil || !ready {
+		return nil, err
+	}
+
+	found, _ = thesis.Causal.Load("signal:exhaust:decay")
+	output, err := found.(*equation.Decay).Measure(input)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return signal.frame(thesis, managed.Name, at, output, maturity), nil
 }
 
 /*

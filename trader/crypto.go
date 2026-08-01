@@ -50,6 +50,7 @@ func NewCrypto(
 		ctx:      ctx,
 		cancel:   cancel,
 		status:   types.READY,
+		api:      api,
 		thesis:   types.NewThesis(),
 		dataPath: utils.ResolveDataPath(),
 		ui:       ui,
