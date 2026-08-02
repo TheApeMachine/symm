@@ -36,6 +36,50 @@ type Level3Order struct {
 	orderQty   string
 }
 
+func (order Level3Order) MarshalJSON() ([]byte, error) {
+	wire := struct {
+		Event      string          `json:"event,omitempty"`
+		OrderID    string          `json:"order_id"`
+		LimitPrice json.RawMessage `json:"limit_price"`
+		OrderQty   json.RawMessage `json:"order_qty"`
+		Timestamp  time.Time       `json:"timestamp"`
+	}{
+		Event:     order.Event,
+		OrderID:   order.OrderID,
+		Timestamp: order.Timestamp,
+	}
+
+	if order.LimitPrice == nil {
+		wire.LimitPrice = json.RawMessage("null")
+	}
+
+	if order.LimitPrice != nil {
+		limitPriceText := order.limitPrice
+
+		if limitPriceText == "" {
+			limitPriceText = order.LimitPrice.String()
+		}
+
+		wire.LimitPrice = json.RawMessage(limitPriceText)
+	}
+
+	if order.OrderQty == nil {
+		wire.OrderQty = json.RawMessage("null")
+	}
+
+	if order.OrderQty != nil {
+		orderQtyText := order.orderQty
+
+		if orderQtyText == "" {
+			orderQtyText = order.OrderQty.String()
+		}
+
+		wire.OrderQty = json.RawMessage(orderQtyText)
+	}
+
+	return sonic.Marshal(wire)
+}
+
 /*
 Level3Subscription is the authenticated Kraken Level3 subscription envelope.
 */

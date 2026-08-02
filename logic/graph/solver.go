@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
 )
@@ -132,16 +133,18 @@ type Solver struct {
 	recorder       *audit.Recorder
 	staleThreshold time.Duration
 	mu             sync.RWMutex
+	ui             chan []byte
 }
 
 /*
 NewSolver creates a graph solver wired to audit recordingraph.
 Default stale threshold: 5 seconds.
 */
-func NewSolver(recorder *audit.Recorder, opts ...Option) *Solver {
+func NewSolver(ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver {
 	solver := &Solver{
 		recorder:       recorder,
 		staleThreshold: 5 * time.Second,
+		ui:             ui,
 	}
 
 	for _, opt := range opts {
@@ -192,7 +195,53 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 	}
 
+	solver.publish(thesis, graph)
+
 	return nil
+}
+
+func (solver *Solver) publish(thesis *types.Thesis, graph *Graph) {
+	if solver == nil || solver.ui == nil || thesis == nil || graph == nil {
+		return
+	}
+
+	rows := make([]datura.Map[any], 0, len(graph.Nodes))
+	at := thesis.At.Format(time.RFC3339)
+
+	for _, node := range graph.Nodes {
+		if node == nil {
+			continue
+		}
+
+		row := datura.NewMap(
+			"source", "graph",
+			"symbol", node.Symbol,
+			"at", at,
+			"id", node.ID,
+			"kind", string(node.Kind),
+			"value", node.Value,
+			"confidence", node.Confidence,
+		)
+
+		if node.Source != "" {
+			row["nodeSource"] = node.Source
+		}
+
+		if len(node.Metadata) > 0 {
+			row["metadata"] = node.Metadata
+		}
+
+		rows = append(rows, row)
+	}
+
+	if len(rows) == 0 {
+		return
+	}
+
+	select {
+	case solver.ui <- datura.NewMap("graph", rows).MarshalAndFree():
+	default:
+	}
 }
 
 /*

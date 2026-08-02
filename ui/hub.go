@@ -72,6 +72,8 @@ func NewHub(
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
+		conn.WriteMessage(websocket.TextMessage, hub.balance.Wallet())
+
 		for {
 			select {
 			case <-hub.ctx.Done():

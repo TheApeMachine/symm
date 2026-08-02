@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken/websocket"
-	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -74,8 +73,7 @@ func (signal *Signal) Subscribe(
 	channel string,
 	subscription *types.Subscription[any],
 ) *types.Subscription[any] {
-	return signalshared.Subscribe(
-		&signal.mu,
+	return utils.Subscribe(
 		signal.subscribers,
 		channel,
 		subscription,
@@ -99,7 +97,11 @@ func (signal *Signal) run() {
 					thesis.AppendMeasurements(
 						types.SourceLeadLag,
 						signal.Measure(thesis),
-						types.Stamp{At: time.Now(), Entity: types.MarketTicker},
+						types.Stamp{
+							At:     time.Now(),
+							Entity: types.MarketTicker,
+							Source: types.SourceLeadLag,
+						},
 					)
 
 					utils.Fanout(signal.subscribers, signal.Name(), thesis)

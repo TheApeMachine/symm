@@ -7,6 +7,7 @@ export const Count = () => {
 			{({ ref, className }) => (
 				<span
 					ref={ref}
+					data-index="0"
 					className={cn("font-mono text-[12px] text-(--f3)", className)}
 				>
 					<span data-paint="open" /> open positions

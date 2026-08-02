@@ -88,10 +88,10 @@ export const TerminalTopBar = () => {
 					</span>
 				</button>
 				<Balance />
-				<Component registerKey="tick">
+				<Component registerKey="thesis">
 					{({ ref }) => (
 						<span ref={ref} className="font-mono text-[11px] text-(--f3)">
-							tick <span data-paint="count" className="text-(--f1)" />
+							tick <span data-paint="tick" className="text-(--f1)" />
 						</span>
 					)}
 				</Component>

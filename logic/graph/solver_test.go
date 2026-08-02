@@ -21,7 +21,7 @@ func TestExtractMeasurementNodes(t *testing.T) {
 			},
 		}})
 
-		solver := NewSolver(nil)
+		solver := NewSolver(nil, nil)
 		graph := NewGraph(time.Unix(1, 0).UTC())
 
 		Convey("It should materialize measurement nodes from the slice-backed store", func() {
@@ -48,7 +48,7 @@ func TestExtractMeasurementNodes(t *testing.T) {
 			},
 		})
 
-		solver := NewSolver(nil)
+		solver := NewSolver(nil, nil)
 		graph := NewGraph(time.Unix(2, 0).UTC())
 
 		Convey("It should materialize measurement nodes from the singleton fallback", func() {

@@ -2,6 +2,7 @@ package toxicity
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 
 	sdkbook "github.com/krakenfx/api-go/v2/pkg/book"
@@ -31,11 +32,11 @@ func (conn connAdapter) Subscribe(
 	return subscription
 }
 
-func (conn connAdapter) Books() map[string]*sdkbook.Book {
-	books := map[string]*sdkbook.Book{}
+func (conn connAdapter) Books() *sync.Map {
+	books := &sync.Map{}
 
 	for _, symbol := range conn.MockConn.Books().GetBooks() {
-		books[symbol] = conn.MockConn.Books().GetBook(symbol)
+		books.Store(symbol, conn.MockConn.Books().GetBook(symbol))
 	}
 
 	return books
@@ -126,9 +127,10 @@ func measureToxicity(
 		thesis.Trades.Store(trade.Symbol, trade)
 	}
 
-	for symbol, book := range api.Books() {
+	api.Books().Range(func(symbol, book any) bool {
 		thesis.Books.Store(symbol, book)
-	}
+		return true
+	})
 
 	thesis.Tick++
 	signal.Measure(thesis)
@@ -139,9 +141,10 @@ func measureToxicity(
 				thesis.Trades.Store(trade.Symbol, trade)
 			}
 
-			for symbol, book := range api.Books() {
+			api.Books().Range(func(symbol, book any) bool {
 				thesis.Books.Store(symbol, book)
-			}
+				return true
+			})
 
 			thesis.Tick++
 			*into = append(*into, signal.Measure(thesis)...)

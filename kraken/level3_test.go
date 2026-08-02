@@ -1,6 +1,8 @@
 package kraken
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -77,6 +79,39 @@ func TestLevel3OrderUnmarshalJSON(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(order.LimitPrice.String(), ShouldEqual, "100")
 				So(order.ChecksumLimitPrice(), ShouldEqual, "100")
+			})
+		})
+	})
+}
+
+func TestLevel3OrderMarshalJSON(t *testing.T) {
+	Convey("Given a level3 order decoded from quoted decimal fields", t, func() {
+		order := Level3Order{}
+		err := sonic.Unmarshal([]byte(`{
+			"order_id":"order-1",
+			"limit_price":"1843.49",
+			"order_qty":"0.0690987",
+			"timestamp":"2026-08-02T02:50:34Z"
+		}`), &order)
+
+		Convey("When it is marshaled again", func() {
+			So(err, ShouldBeNil)
+
+			raw, marshalErr := sonic.Marshal(order)
+			So(marshalErr, ShouldBeNil)
+
+			decoder := json.NewDecoder(bytes.NewReader(raw))
+			decoder.UseNumber()
+
+			payload := map[string]any{}
+			decodeErr := decoder.Decode(&payload)
+
+			Convey("Then numeric fields remain JSON numbers and not strings", func() {
+				So(decodeErr, ShouldBeNil)
+				So(payload["limit_price"], ShouldHaveSameTypeAs, json.Number("0"))
+				So(payload["order_qty"], ShouldHaveSameTypeAs, json.Number("0"))
+				So(payload["limit_price"].(json.Number).String(), ShouldEqual, "1843.49")
+				So(payload["order_qty"].(json.Number).String(), ShouldEqual, "0.0690987")
 			})
 		})
 	})

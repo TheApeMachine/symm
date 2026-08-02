@@ -5,35 +5,38 @@ import (
 	"sync"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 type Planner struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	status      types.Status
-	subscribers *sync.Map
+	ctx           context.Context
+	cancel        context.CancelFunc
+	status        types.Status
+	ui            chan []byte
+	subscribers   *sync.Map
 	subscriptions map[string]*types.Subscription[any]
-	runOnce     sync.Once
-	api         *websocket.API
-	desk        *broker.Desk
-	price       *broker.Price
-	balance     *broker.Balance
-	recorder    *audit.Recorder
-	evaluator   Evaluator
-	arbiter     *Arbiter
-	allocator   *Allocator
-	Thesis      *types.Thesis
+	runOnce       sync.Once
+	api           *websocket.API
+	desk          *broker.Desk
+	price         *broker.Price
+	balance       *broker.Balance
+	recorder      *audit.Recorder
+	evaluator     Evaluator
+	arbiter       *Arbiter
+	allocator     *Allocator
+	Thesis        *types.Thesis
 }
 
 func NewPlanner(
 	ctx context.Context,
-	uiHub chan<- []byte,
+	uiHub chan []byte,
 	api *websocket.API,
 	desk *broker.Desk,
 	instrument *broker.Instrument,
@@ -43,7 +46,6 @@ func NewPlanner(
 	recorder *audit.Recorder,
 ) *Planner {
 	ctx, cancel := context.WithCancel(ctx)
-	_ = uiHub // Retained for signature compatibility
 	buffer := viper.GetInt("system.actor.buffer")
 
 	if buffer < 1 {
@@ -54,19 +56,20 @@ func NewPlanner(
 	arbiter := NewArbiter(desk, price)
 
 	planner := &Planner{
-		ctx:         ctx,
-		cancel:      cancel,
-		status:      types.READY,
-		subscribers: &sync.Map{},
+		ctx:           ctx,
+		cancel:        cancel,
+		status:        types.READY,
+		ui:            uiHub,
+		subscribers:   &sync.Map{},
 		subscriptions: map[string]*types.Subscription[any]{},
-		api:         api,
-		desk:        desk,
-		price:       price,
-		balance:     balance,
-		recorder:    recorder,
-		evaluator:   evaluator,
-		arbiter:     arbiter,
-		allocator:   NewAllocator(ctx, balance, instrument, price),
+		api:           api,
+		desk:          desk,
+		price:         price,
+		balance:       balance,
+		recorder:      recorder,
+		evaluator:     evaluator,
+		arbiter:       arbiter,
+		allocator:     NewAllocator(ctx, balance, instrument, price),
 	}
 
 	if analyzer != nil {
@@ -151,12 +154,16 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 	))
 
 	if thesis.Status != types.READY {
+		planner.complete(thesis, false, "status_not_ready")
+
 		return thesis
 	}
 
 	readiness := thesis.Readiness()
 
 	if !readiness.Manifold || !readiness.Resonance || !readiness.Causal || !readiness.Graph {
+		planner.complete(thesis, false, "logic_not_ready")
+
 		return thesis
 	}
 
@@ -164,13 +171,17 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 	planner.evaluator.EvaluateOpportunities(thesis)
 	planner.arbiter.Arbitrate(thesis)
 
-	if err := planner.allocator.Allocate(thesis); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal, "failed to allocate", err,
-		))
+	if len(thesis.Decisions) > 0 {
+		if err := planner.allocator.Allocate(thesis); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal, "failed to allocate", err,
+			))
+		}
 	}
 
 	if !thesis.Readiness().Decisions {
+		planner.complete(thesis, true, "no_decision")
+
 		return thesis
 	}
 
@@ -183,6 +194,9 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 			"categories": thesis.Categories,
 		}))
 	}
+
+	planner.complete(thesis, true, "decisions")
+	planner.publish(thesis)
 
 	planner.subscribers.Range(func(key, value any) bool {
 		if subscribers, ok := value.([]*types.Subscription[any]); ok {
@@ -197,4 +211,52 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 	thesis.Reset()
 
 	return thesis
+}
+
+func (planner *Planner) complete(
+	thesis *types.Thesis,
+	evaluated bool,
+	outcome string,
+) {
+	if planner == nil || thesis == nil {
+		return
+	}
+
+	readiness := thesis.Readiness()
+	errnie.Error(audit.Phase(
+		planner.recorder,
+		thesis.Tick,
+		"decide_end",
+		map[string]any{
+			"evaluated": evaluated,
+			"outcome":   outcome,
+			"readiness": readiness,
+			"decisions": len(thesis.Decisions),
+		},
+	))
+
+	if planner.ui == nil {
+		return
+	}
+
+	out := datura.NewMap()
+	out["strategy"] = datura.NewMap(
+		"tick", thesis.Tick,
+		"at", thesis.At,
+		"evaluated", evaluated,
+		"outcome", outcome,
+		"readiness", readiness,
+		"decisions", len(thesis.Decisions),
+	)
+	utils.Publish(planner.ui, out)
+}
+
+func (planner *Planner) publish(thesis *types.Thesis) {
+	if planner == nil || planner.ui == nil || thesis == nil || len(thesis.Decisions) == 0 {
+		return
+	}
+
+	out := datura.NewMap()
+	out["decisions"] = thesis.Decisions
+	utils.Publish(planner.ui, out)
 }

@@ -11,7 +11,6 @@ import (
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -82,8 +81,7 @@ func (signal *Signal) Subscribe(
 	channel string,
 	subscription *types.Subscription[any],
 ) *types.Subscription[any] {
-	return signalshared.Subscribe(
-		&signal.subscriptionMu,
+	return utils.Subscribe(
 		signal.subscribers,
 		channel,
 		subscription,
@@ -113,16 +111,14 @@ func (signal *Signal) run() {
 					thesis.AppendMeasurements(
 						types.SourceCVD,
 						signal.Measure(thesis),
-						types.Stamp{At: time.Now(), Entity: types.MarketTrade},
+						types.Stamp{
+							At:     time.Now(),
+							Entity: types.MarketTrade,
+							Source: types.SourceCVD,
+						},
 					)
 
-					subscribers, ok := signal.subscribers.Load(signal.Name())
-
-					if ok && subscribers != nil {
-						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-							subscriber.Send(thesis)
-						}
-					}
+					utils.Fanout(signal.subscribers, signal.Name(), thesis)
 				}
 			}
 		}

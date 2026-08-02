@@ -252,9 +252,24 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 
 	symbols := make([]string, 0)
 	thesis.Measurements.Range(func(key, value any) bool {
-		if m, ok := value.(*types.Measurement); ok && m.Symbol != "" {
-			symbols = append(symbols, m.Symbol)
+		rows, ok := value.([]*types.Measurement)
+
+		if !ok {
+			measurement, measurementOK := value.(*types.Measurement)
+
+			if !measurementOK || measurement == nil {
+				return true
+			}
+
+			rows = []*types.Measurement{measurement}
 		}
+
+		for _, measurement := range rows {
+			if measurement != nil && measurement.Symbol != "" {
+				symbols = append(symbols, measurement.Symbol)
+			}
+		}
+
 		return true
 	})
 
@@ -330,14 +345,26 @@ func (solver *Solver) extractFeatures(thesis *types.Thesis) (input []float64, ta
 
 	// 2. Fallback: Extract from Thesis measurements/metrics map
 	thesis.Measurements.Range(func(key, value any) bool {
-		measurement, ok := value.(*types.Measurement)
+		rows, ok := value.([]*types.Measurement)
 
 		if !ok {
-			return true // Skip if not a Measurement
+			measurement, measurementOK := value.(*types.Measurement)
+
+			if !measurementOK || measurement == nil {
+				return true
+			}
+
+			rows = []*types.Measurement{measurement}
 		}
 
-		for _, metric := range measurement.Metrics {
-			input = append(input, metric.Raw)
+		for _, measurement := range rows {
+			if measurement == nil {
+				continue
+			}
+
+			for _, metric := range measurement.Metrics {
+				input = append(input, metric.Raw)
+			}
 		}
 
 		return true

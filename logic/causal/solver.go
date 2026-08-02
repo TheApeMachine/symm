@@ -179,13 +179,29 @@ func (solver *Solver) buildCausalRow(
 	measurementCount := 0
 
 	thesis.Measurements.Range(func(key, value any) bool {
-		m, ok := value.(*types.Measurement)
-		if ok && m != nil && (m.Symbol == symbol || symbol == "default") {
-			for _, metric := range m.Metrics {
+		rows, ok := value.([]*types.Measurement)
+
+		if !ok {
+			measurement, measurementOK := value.(*types.Measurement)
+
+			if !measurementOK || measurement == nil {
+				return true
+			}
+
+			rows = []*types.Measurement{measurement}
+		}
+
+		for _, measurement := range rows {
+			if measurement == nil || (measurement.Symbol != symbol && symbol != "default") {
+				continue
+			}
+
+			for _, metric := range measurement.Metrics {
 				realizedReturn += metric.Raw
 				measurementCount++
 			}
 		}
+
 		return true
 	})
 

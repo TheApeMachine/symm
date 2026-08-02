@@ -5,6 +5,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -38,6 +39,8 @@ func NewBalance(
 		quote:  viper.GetViper().GetString("market.quote_currency"),
 	}
 
+	balance.Update()
+
 	return balance
 }
 
@@ -46,6 +49,31 @@ Status reports wallet readiness for Desk and stack health checks.
 */
 func (balance *Balance) Status() types.Status {
 	return balance.status
+}
+
+func (balance *Balance) Wallet() []byte {
+	mapped := datura.NewMap()
+
+	balance.wallet.Range(func(key, value any) bool {
+		asset, ok := key.(string)
+		if !ok {
+			return true
+		}
+
+		amount, ok := value.(*decimal.Decimal)
+		if !ok {
+			return true
+		}
+
+		mapped[asset] = amount
+
+		return true
+	})
+
+	out := datura.NewMap()
+	out["balances"] = mapped
+
+	return out.MarshalAndFree()
 }
 
 func (balance *Balance) Update() {

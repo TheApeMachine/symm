@@ -114,7 +114,7 @@ NewThesis creates a Thesis with empty durable maps and no tick evidence yet.
 */
 func NewThesis() *Thesis {
 	return &Thesis{
-		Status:       INITIALIZING,
+		Status:       READY,
 		At:           time.Now().UTC(),
 		Decisions:    make([]Decision, 0),
 		CrossSection: NewCrossSection(),
@@ -144,14 +144,28 @@ func (thesis *Thesis) Readiness() Readiness {
 	counts := thesis.stampCounts()
 
 	readiness.Signals = counts.signals > 0
-	readiness.Manifold = readiness.Signals && counts.manifold > 0
-	readiness.Resonance = readiness.Manifold && counts.resonance > 0
-	readiness.Causal = readiness.Resonance && counts.causal > 0
+	readiness.Manifold = readiness.Signals && thesis.hasCategories()
+	readiness.Resonance = readiness.Manifold && thesis.hasEntries(thesis.Resonance)
+	readiness.Causal = readiness.Resonance && thesis.hasEntries(thesis.Causal)
 	readiness.Graph = readiness.Causal && thesis.hasEntries(thesis.Graphs)
 	readiness.Allocation = readiness.Graph && len(thesis.Forecasts) > 0
 	readiness.Decisions = readiness.Allocation && len(thesis.Decisions) > 0
 
 	return readiness
+}
+
+func (thesis *Thesis) hasCategories() bool {
+	if thesis == nil {
+		return false
+	}
+
+	for _, categories := range thesis.Categories {
+		if len(categories) > 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 type thesisStampCounts struct {
@@ -187,7 +201,7 @@ func (thesis *Thesis) stampCounts() thesisStampCounts {
 			}
 
 			switch stamp.Source {
-			case SourceCategory:
+			case SourceManifold:
 				counts.manifold++
 			case SourceResonance:
 				counts.resonance++
@@ -294,6 +308,8 @@ func (thesis *Thesis) AppendMeasurements(
 	if len(measurements) == 0 {
 		return thesis
 	}
+
+	stamp.Source = source
 
 	found, ok := thesis.Measurements.LoadOrStore(
 		source, measurements,

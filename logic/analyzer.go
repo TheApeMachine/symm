@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 type Solver interface {
@@ -36,11 +37,9 @@ type Analyzer struct {
 	cancel        context.CancelFunc
 	status        types.Status
 	tree          *dmt.Tree
-	manifold      *manifold.Solver
-	resonance     *resonance.Solver
-	causal        *causal.Solver
 	cognition     *cognition.Solver
 	graph         *graph.Solver
+	solvers       []Solver
 	ui            chan []byte
 	binui         chan []byte
 	recorder      *audit.Recorder
@@ -69,15 +68,17 @@ func NewAnalyzer(
 	}
 
 	analyzer := &Analyzer{
-		ctx:           ctx,
-		cancel:        cancel,
-		status:        types.READY,
-		tree:          tree,
-		manifold:      manifold.NewSolver(api, ui, binui, recorder),
-		resonance:     resonance.NewSolver(ui, recorder),
-		causal:        causal.NewSolver(ui, recorder),
+		ctx:    ctx,
+		cancel: cancel,
+		status: types.READY,
+		tree:   tree,
+		solvers: []Solver{
+			manifold.NewSolver(api, ui, binui, recorder),
+			resonance.NewSolver(ui, recorder),
+			causal.NewSolver(ui, recorder),
+		},
 		cognition:     cognition.NewSolver(tree, ui, recorder),
-		graph:         graph.NewSolver(recorder),
+		graph:         graph.NewSolver(ui, recorder),
 		ui:            ui,
 		binui:         binui,
 		recorder:      recorder,
@@ -90,45 +91,6 @@ func NewAnalyzer(
 }
 
 func (analyzer *Analyzer) run() {
-	required := []string{
-		"correlation",
-		"cvd",
-		"depthflow",
-		"exhaustion",
-		"hawkes",
-		"leadlag",
-		"liquidity",
-		"pumpdump",
-		"sentiment",
-		"toxicity",
-	}
-
-	if analyzer.subscriptions == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"analyzer subscriptions not configured",
-			nil,
-		))
-
-		return
-	}
-
-	for _, key := range required {
-		subscription := analyzer.subscriptions[key]
-
-		if subscription != nil && subscription.Channel != nil {
-			continue
-		}
-
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"analyzer missing required signal subscription: "+key,
-			nil,
-		))
-
-		return
-	}
-
 	go func() {
 		for {
 			select {
@@ -172,31 +134,15 @@ func (analyzer *Analyzer) process(in any) {
 		return
 	}
 
-	analyzer.onSignal(thesis)
-}
-
-func (analyzer *Analyzer) onSignal(thesis *types.Thesis) {
-	if thesis == nil {
+	if thesis == nil || !thesis.Readiness().Signals {
 		return
 	}
 
-	readiness := thesis.Readiness()
-
-	if !readiness.Signals {
-		return
-	}
-
-	for _, solver := range []Solver{
-		analyzer.manifold,
-		analyzer.resonance,
-		analyzer.causal,
-		analyzer.cognition,
-		analyzer.graph,
-	} {
+	for _, solver := range analyzer.solvers {
 		if err := solver.Update(thesis); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
-				"failed manifold step",
+				"failed logic solver",
 				err,
 			))
 
@@ -221,22 +167,11 @@ func (analyzer *Analyzer) Subscribe(
 	key string,
 	subscription *types.Subscription[any],
 ) *types.Subscription[any] {
-	analyzer.mu.Lock()
-	defer analyzer.mu.Unlock()
-
-	current, ok := analyzer.subscribers.Load(key)
-
-	if !ok {
-		analyzer.subscribers.Store(key, []*types.Subscription[any]{subscription})
-		return subscription
-	}
-
-	found := current.([]*types.Subscription[any])
-	next := append([]*types.Subscription[any]{}, found...)
-	next = append(next, subscription)
-	analyzer.subscribers.Store(key, next)
-
-	return subscription
+	return utils.Subscribe(
+		analyzer.subscribers,
+		key,
+		subscription,
+	)
 }
 
 /*
@@ -252,13 +187,11 @@ Close the analyzer and all its solvers.
 func (analyzer *Analyzer) Close() error {
 	analyzer.cancel()
 
-	for _, solver := range []Solver{
-		analyzer.manifold,
-		analyzer.resonance,
-		analyzer.causal,
-		analyzer.cognition,
-		analyzer.graph,
-	} {
+	for _, solver := range analyzer.solvers {
+		if solver == nil {
+			continue
+		}
+
 		if err := solver.Close(); err != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Internal,

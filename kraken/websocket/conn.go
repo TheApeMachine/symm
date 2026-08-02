@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -23,7 +24,7 @@ Conn is the internal websocket and REST transport.
 type Conn interface {
 	Status() types.Status
 	Subscribe(string, *types.Subscription[any]) *types.Subscription[any]
-	Books() map[string]*book.Book
+	Books() *sync.Map
 	Book(string) *book.Book
 	SubInstrument(types.Subscription[any])
 	SubTicker([]string)
@@ -121,7 +122,7 @@ func (api *API) Subscribe(
 
 }
 
-func (api *API) Books() map[string]*book.Book                    { return api.private.Books() }
+func (api *API) Books() *sync.Map                                { return api.private.Books() }
 func (api *API) Book(symbol string) *book.Book                   { return api.private.Book(symbol) }
 func (api *API) SubInstrument(callback types.Subscription[any])  { api.public.SubInstrument(callback) }
 func (api *API) SubTicker(symbols []string)                      { api.public.SubTicker(symbols) }

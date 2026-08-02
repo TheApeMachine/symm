@@ -11,9 +11,13 @@ const (
 	SourceLeadLag     SourceType = "leadlag"
 	SourceLiquidity   SourceType = "liquidity"
 	SourcePumpDump    SourceType = "pumpdump"
-	SourceCausal      SourceType = "causal"
 	SourceCategory    SourceType = "category"
-	SourceResonance   SourceType = "resonance"
 	SourceSentiment   SourceType = "sentiment"
 	SourceToxicity    SourceType = "toxicity"
+
+	SourceManifold  SourceType = "manifold"
+	SourceResonance SourceType = "resonance"
+	SourceCausal    SourceType = "causal"
+	SourceCognition SourceType = "cognition"
+	SourceGraph     SourceType = "graph"
 )

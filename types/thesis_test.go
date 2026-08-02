@@ -9,7 +9,7 @@ import (
 )
 
 func TestThesisReadiness(t *testing.T) {
-	Convey("Given thesis stamps across the full decision pipeline", t, func() {
+	Convey("Given artifacts across the full decision pipeline", t, func() {
 		thesis := NewThesis()
 		stampAt := time.Unix(1, 0).UTC()
 
@@ -21,9 +21,9 @@ func TestThesisReadiness(t *testing.T) {
 			}})
 		}
 
-		thesis.Stamps.Store(SourceCategory, []Stamp{{At: stampAt, Source: SourceCategory}})
-		thesis.Stamps.Store(SourceResonance, []Stamp{{At: stampAt, Source: SourceResonance}})
-		thesis.Stamps.Store(SourceCausal, []Stamp{{At: stampAt, Source: SourceCausal}})
+		thesis.Categories["BTC/USD"] = []Category{{Symbol: "BTC/USD", Type: VerticalIgnition}}
+		thesis.Resonance.Store("resonance", map[string]any{"confidence": 0.8})
+		thesis.Causal.Store("BTC/USD", map[string]any{"effect": 0.4})
 		thesis.Graphs.Store("BTC/USD", "graph")
 		thesis.Forecasts = []Forecasts{{}}
 		thesis.Decisions = []Decision{{}}
@@ -38,6 +38,28 @@ func TestThesisReadiness(t *testing.T) {
 			So(readiness.Graph, ShouldBeTrue)
 			So(readiness.Allocation, ShouldBeTrue)
 			So(readiness.Decisions, ShouldBeTrue)
+		})
+	})
+}
+
+func TestThesisAppendMeasurements(t *testing.T) {
+	Convey("Given a signal publication whose stamp omits its source", t, func() {
+		thesis := NewThesis()
+		stampAt := time.Unix(1, 0).UTC()
+		thesis.AppendMeasurements(
+			SourceCVD,
+			[]*Measurement{{Source: SourceCVD, Symbol: "BTC/USD", At: stampAt}},
+			Stamp{At: stampAt, Entity: MarketTrade},
+		)
+
+		Convey("It should derive the authoritative stamp source from the publication", func() {
+			value, found := thesis.Stamps.Load(SourceCVD)
+			So(found, ShouldBeTrue)
+
+			stamps := value.([]Stamp)
+			So(len(stamps), ShouldEqual, 1)
+			So(stamps[0].Source, ShouldEqual, SourceCVD)
+			So(thesis.Readiness().Signals, ShouldBeTrue)
 		})
 	})
 }

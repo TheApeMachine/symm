@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
-	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -78,8 +77,7 @@ func (signal *Signal) Status() types.Status {
 func (signal *Signal) Subscribe(
 	channel string, subscription *types.Subscription[any],
 ) *types.Subscription[any] {
-	return signalshared.Subscribe(
-		&signal.mu,
+	return utils.Subscribe(
 		signal.subscribers,
 		channel,
 		subscription,
@@ -97,16 +95,14 @@ func (signal *Signal) run() {
 					thesis.AppendMeasurements(
 						types.SourceCorrelation,
 						signal.Measure(thesis),
-						types.Stamp{At: time.Now(), Entity: types.MarketTicker},
+						types.Stamp{
+							At:     time.Now(),
+							Entity: types.MarketTicker,
+							Source: types.SourceCorrelation,
+						},
 					)
 
-					subscribers, ok := signal.subscribers.Load(signal.Name())
-
-					if ok && subscribers != nil {
-						for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-							subscriber.Send(thesis)
-						}
-					}
+					utils.Fanout(signal.subscribers, signal.Name(), thesis)
 				}
 			}
 		}

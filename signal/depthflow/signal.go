@@ -16,7 +16,6 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -100,12 +99,7 @@ func (signal *Signal) Subscribe(
 	channel string,
 	subscription *types.Subscription[any],
 ) *types.Subscription[any] {
-	if signal.subscribers == nil {
-		signal.subscribers = &sync.Map{}
-	}
-
-	return signalshared.Subscribe(
-		&signal.subscribeMu,
+	return utils.Subscribe(
 		signal.subscribers,
 		channel,
 		subscription,
@@ -129,7 +123,11 @@ func (signal *Signal) run() {
 					thesis.AppendMeasurements(
 						types.SourceDepthFlow,
 						signal.Measure(thesis),
-						types.Stamp{At: time.Now(), Entity: types.MarketTrade},
+						types.Stamp{
+							At:     time.Now(),
+							Entity: types.MarketTrade,
+							Source: types.SourceDepthFlow,
+						},
 					)
 
 					utils.Fanout(signal.subscribers, signal.Name(), thesis)
@@ -212,22 +210,24 @@ func (signal *Signal) measureManagedBook(
 		))
 	}
 
-	for _, bid := range managed.Bids.Levels {
+	for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
 		bids = append(bids, flow.BookLevel{
 			Price:    bid.Price.Float64(),
 			Quantity: bid.Quantity.Float64(),
-			Ticks: bid.Price.Div(
-				decimal.NewFromInt64(instrument.PriceIncrement.GetIncrement()),
+			Ticks: decimal.ExactDiv(
+				bid.Price,
+				&instrument.PriceIncrement,
 			).Int64(),
 		})
 	}
 
-	for _, ask := range managed.Asks.Levels {
+	for ask := managed.Asks.Low; ask != nil; ask = ask.Higher {
 		asks = append(asks, flow.BookLevel{
 			Price:    ask.Price.Float64(),
 			Quantity: ask.Quantity.Float64(),
-			Ticks: ask.Price.Div(
-				decimal.NewFromInt64(instrument.PriceIncrement.GetIncrement()),
+			Ticks: decimal.ExactDiv(
+				ask.Price,
+				&instrument.PriceIncrement,
 			).Int64(),
 		})
 	}
@@ -245,6 +245,10 @@ func (signal *Signal) measureManagedBook(
 			"depthflow: failed to measure book",
 			err,
 		))
+	}
+
+	if managed.BestBid() == nil || managed.BestAsk() == nil {
+		return nil, nil
 	}
 
 	if !ready {

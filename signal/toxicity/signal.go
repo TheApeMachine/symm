@@ -8,7 +8,6 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken/websocket"
-	signalshared "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -78,12 +77,7 @@ func (signal *Signal) Subscribe(
 	channel string,
 	subscription *types.Subscription[any],
 ) *types.Subscription[any] {
-	if signal.subscribers == nil {
-		signal.subscribers = &sync.Map{}
-	}
-
-	return signalshared.Subscribe(
-		&signal.subscribeMu,
+	return utils.Subscribe(
 		signal.subscribers,
 		channel,
 		subscription,
@@ -105,7 +99,11 @@ func (signal *Signal) run() {
 					thesis.AppendMeasurements(
 						types.SourceToxicity,
 						signal.Measure(thesis),
-						types.Stamp{At: time.Now(), Entity: types.MarketTrade},
+						types.Stamp{
+							At:     time.Now(),
+							Entity: types.MarketTrade,
+							Source: types.SourceToxicity,
+						},
 					)
 
 					utils.Fanout(signal.subscribers, signal.Name(), thesis)
@@ -139,7 +137,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		ask := book.BestAsk()
 
 		if bid == nil || ask == nil {
-			return nil
+			continue
 		}
 
 		bidQuantity := bid.Quantity.Float64()

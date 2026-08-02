@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
@@ -59,6 +60,23 @@ var (
 
 			uiChannel := make(chan []byte, 1024)
 			manifoldChannel := make(chan []byte, 1024)
+			auditPath := filepath.Join(utils.ResolveDataPath(), "runtime-audit.jsonl")
+
+			if viper.GetBool("system.audit.rotate_on_boot") {
+				if err := audit.Rotate(auditPath); err != nil {
+					return errnie.Error(fmt.Errorf("failed to rotate runtime audit: %w", err))
+				}
+			}
+
+			recorder, err := audit.NewRecorder(auditPath)
+
+			if err != nil {
+				return errnie.Error(fmt.Errorf("failed to create runtime audit recorder: %w", err))
+			}
+
+			defer func() {
+				errnie.Error(recorder.Close())
+			}()
 
 			api := utils.NewWaiter[*websocket.API](websocket.NewAPI(
 				cmd.Context(),
@@ -109,7 +127,7 @@ var (
 				price,
 				balance,
 				nil,
-				nil,
+				recorder,
 			)).Wait()
 
 			errnie.Info("planner reported to be ready")
@@ -118,7 +136,7 @@ var (
 				cmd.Context(),
 				api,
 				uiChannel,
-				nil,
+				recorder,
 				planner,
 				desk,
 			)).Wait()
@@ -149,7 +167,7 @@ var (
 				tree,
 				uiChannel,
 				manifoldChannel,
-				nil,
+				recorder,
 				signalSubscriptions,
 			)).Wait()
 

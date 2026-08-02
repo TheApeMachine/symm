@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -138,16 +137,9 @@ func New(
 	if endpoint == Level3WebSocketURL {
 		live.level3 = &sync.Map{}
 		live.book = NewBook(ctx)
-		live.client.OnSent.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
-			errnie.Error(live.book.manager.Update(event))
-		})
 	}
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
-		if live.book != nil {
-			errnie.Error(live.book.manager.Update(event))
-		}
-
 		raw := event.Data.Bytes()
 
 		channel := utils.GetString(raw, "channel")
@@ -171,6 +163,11 @@ func New(
 		}
 
 		out := handler(raw)
+
+		if channel == "level3" && live.book != nil {
+			errnie.Error(live.book.Update(event, out.(*kraken.Level3)))
+			return
+		}
 
 		if channel == "pong" {
 			// Check the error field in the pong response. If it is not empty, log the error.
@@ -417,17 +414,20 @@ func (live *Live) SubL3(symbols []string) {
 				strings.Join(group, "|"),
 			))
 
-			conn.Client().SubL3(group, viper.GetInt("market.l3_depth"), map[string]any{
-				"depth": viper.GetInt("market.l3_depth"),
-			})
+			if conn.book != nil {
+				for _, symbol := range group {
+					conn.book.manager.CreateBook(symbol, viper.GetInt("market.l3_depth"))
+				}
+			}
 
+			conn.Client().SubL3(group, 10)
 			time.Sleep(viper.GetDuration("market.subscribe_pace"))
 		}
 	}
 }
 
-func (live *Live) Books() map[string]*book.Book {
-	out := map[string]*book.Book{}
+func (live *Live) Books() *sync.Map {
+	out := &sync.Map{}
 
 	if live.level3 == nil {
 		return out
@@ -435,7 +435,10 @@ func (live *Live) Books() map[string]*book.Book {
 
 	live.level3.Range(func(key, value any) bool {
 		if conn, ok := value.(*Live); ok && conn.book != nil {
-			maps.Copy(out, conn.book.All())
+			conn.book.All().Range(func(symbol, book any) bool {
+				out.Store(symbol, book)
+				return true
+			})
 		}
 
 		return true

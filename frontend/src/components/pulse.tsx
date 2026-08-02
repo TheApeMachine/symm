@@ -4,13 +4,11 @@ import { cn } from "#/lib/utils";
 
 export const Pulse = () => {
 	return (
-		<Component
-			className="metric-grid"
-			registerKey="tick"
-		>
+		<Component className="metric-grid" registerKey="tick">
 			{({ ref, className }) => (
 				<Flex.Row
 					ref={ref}
+					data-index="0"
 					align="center"
 					gap={4}
 					className={cn(

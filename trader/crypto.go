@@ -144,11 +144,8 @@ func (crypto *Crypto) onTicker(data any) {
 		crypto.thesis.Tickers.Store(ticker.Symbol, ticker)
 	}
 
-	for symbol, book := range crypto.api.Books() {
-		crypto.thesis.Books.Store(symbol, book)
-	}
-
-	crypto.publish("thesis", crypto.thesis)
+	crypto.thesis.Books = crypto.api.Books()
+	utils.Fanout(crypto.subscribers, "thesis", crypto.thesis)
 }
 
 func (crypto *Crypto) onTrade(data any) {
@@ -168,23 +165,8 @@ func (crypto *Crypto) onTrade(data any) {
 		crypto.thesis.Trades.Store(trade.Symbol, trade)
 	}
 
-	for symbol, book := range crypto.api.Books() {
-		crypto.thesis.Books.Store(symbol, book)
-	}
-
-	crypto.publish("thesis", crypto.thesis)
-}
-
-func (crypto *Crypto) publish(key string, message any) {
-	found, ok := crypto.subscribers.Load(key)
-
-	if !ok {
-		return
-	}
-
-	for _, subscriber := range found.([]*types.Subscription[any]) {
-		subscriber.Send(message)
-	}
+	crypto.thesis.Books = crypto.api.Books()
+	utils.Fanout(crypto.subscribers, "thesis", crypto.thesis)
 }
 
 func (crypto *Crypto) decisionsReady(decisions any) bool {

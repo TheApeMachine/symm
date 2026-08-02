@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/book"
 	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
@@ -85,11 +86,23 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	bidOrders := make([]*mgrbook.Order, 0)
 	askOrders := make([]*mgrbook.Order, 0)
 
-	for name, book := range solver.api.Books() {
+	solver.api.Books().Range(func(key, value any) bool {
+		book, ok := value.(*book.Book)
+
+		if !ok {
+			return true
+		}
+
+		name, ok := key.(string)
+
+		if !ok {
+			return true
+		}
+
 		hawkes := utils.ForSymbol(utils.Measurements(thesis, types.SourceHawkes), name)
 
 		if len(hawkes) == 0 {
-			continue
+			return true
 		}
 
 		for _, level := range book.Bids.Levels {
@@ -114,12 +127,14 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		)
 
 		if len(particles) == 0 || len(contentIDs) == 0 {
-			continue
+			return true
 		}
 
 		solver.domain.Append(particles, contentIDs)
 		errnie.Error(solver.Step(name, thesis.At))
-	}
+
+		return true
+	})
 
 	return nil
 }

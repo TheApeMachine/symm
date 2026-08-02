@@ -199,6 +199,24 @@ const selectScopedUpdates = (
 	updates: JSONSerializable,
 	dataset: PaintDataset,
 ): JSONSerializable | undefined => {
+	if (
+		!Array.isArray(updates) &&
+		dataset.scope &&
+		dataset.filter !== undefined
+	) {
+		if (typeof updates === "object" && updates !== null) {
+			const keyed = (updates as JSONRecord)[dataset.filter];
+
+			if (
+				typeof keyed === "object" &&
+				keyed !== null &&
+				!Array.isArray(keyed)
+			) {
+				return keyed;
+			}
+		}
+	}
+
 	if (!Array.isArray(updates)) {
 		return updates;
 	}
@@ -358,7 +376,7 @@ const appendTargetValue = (
 		return;
 	}
 
-	const values = (dataset.appendValues ?? "")
+	const values = (element.dataset.appendValues ?? "")
 		.split(",")
 		.filter(Boolean)
 		.map(Number)
@@ -374,8 +392,10 @@ const appendTargetValue = (
 
 	const points = values
 		.map((entry, index) => {
-			const x = (index / (limit - 1)) * width;
-			const y = height - Math.min(Math.max(entry, 0), 1) * height;
+			const denominator = Math.max(values.length - 1, 1);
+			const x = (index / denominator) * width;
+			const clamped = Math.min(Math.max(entry, 0), 1);
+			const y = height - 1 - clamped * (height - 4);
 
 			return `${x.toFixed(1)},${y.toFixed(1)}`;
 		})
@@ -442,7 +462,6 @@ export const Component = ({
 }: ComponentProps) => {
 	const ref = useRef<HTMLDivElement>(null);
 	const targets = useRef<Map<string, PaintBinding[]>>(new Map());
-	const paintRef = useRef<Paint | undefined>(undefined);
 	const latest = useRef<JSONSerializable | undefined>(undefined);
 	const [slots, setSlots] = useState<number[]>([]);
 
@@ -454,7 +473,19 @@ export const Component = ({
 		targets.current = scanTargets(ref.current);
 
 		if (latest.current !== undefined) {
-			paintRef.current?.(latest.current);
+			let updates = latest.current;
+
+			if (select) {
+				const selectedUpdates = readPath(updates, select);
+
+				if (selectedUpdates === undefined || selectedUpdates === null) {
+					return;
+				}
+
+				updates = selectedUpdates;
+			}
+
+			updateTargets(targets.current, updates);
 		}
 	});
 
@@ -493,7 +524,6 @@ export const Component = ({
 			updateTargets(targets.current, updates);
 		};
 
-		paintRef.current = paint;
 		const unregister = registerPainter(registerKey, paint);
 
 		if (latest.current !== undefined) {
@@ -502,10 +532,6 @@ export const Component = ({
 
 		return () => {
 			unregister?.();
-
-			if (paintRef.current === paint) {
-				paintRef.current = undefined;
-			}
 		};
 	}, [registerKey, select]);
 

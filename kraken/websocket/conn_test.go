@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
@@ -26,7 +27,7 @@ func (tradeVolumeConn *tradeVolumeConn) Subscribe(string, *types.Subscription[an
 	return nil
 }
 
-func (tradeVolumeConn *tradeVolumeConn) Books() map[string]*book.Book { return nil }
+func (tradeVolumeConn *tradeVolumeConn) Books() *sync.Map { return nil }
 
 func (tradeVolumeConn *tradeVolumeConn) Book(string) *book.Book { return nil }
 
@@ -42,7 +43,9 @@ func (tradeVolumeConn *tradeVolumeConn) SubL3([]string) {}
 
 func (tradeVolumeConn *tradeVolumeConn) SubCandles([]string) {}
 
-func (tradeVolumeConn *tradeVolumeConn) Balance() (map[string]*decimal.Decimal, error) { return nil, nil }
+func (tradeVolumeConn *tradeVolumeConn) Balance() (map[string]*decimal.Decimal, error) {
+	return nil, nil
+}
 
 func (tradeVolumeConn *tradeVolumeConn) TradeBalance() (spot.TradesHistoryResult, error) {
 	return spot.TradesHistoryResult{}, nil
