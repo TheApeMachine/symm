@@ -237,14 +237,11 @@ func buildScoreMeasurement(
 	symbol string,
 	anchor string,
 	at time.Time,
+	evidenceCount int,
 	selected correlationSelection,
 	sampleSupport float64,
 	weights evidenceWeights,
 ) *types.Measurement {
-	validity := types.MeasurementValidity{
-		State:     types.ValidityValid,
-		Readiness: types.ReadinessObservation,
-	}
 	type reading struct {
 		metric types.MetricType
 		raw    float64
@@ -278,7 +275,7 @@ func buildScoreMeasurement(
 		Symbol:   symbol,
 		Peer:     peer,
 		At:       at,
-		Validity: validity,
+		Validity: types.ObservationValidity(evidenceCount),
 		Metrics:  make(map[string]types.MetricSample, len(readings)+1),
 	}
 
@@ -311,9 +308,14 @@ func (signal *Signal) score(
 	sampleSupport := sampleSupportFraction(features.SampleCount)
 	weights := weightEvidence(features, selected, sampleSupport)
 	anchor := signal.section.AnchorSymbol()
+	evidenceCount := features.SampleCount
+
+	if evidenceCount == 0 {
+		evidenceCount = signal.section.PriceSampleCount(symbol)
+	}
 
 	return buildScoreMeasurement(
-		symbol, anchor, at, selected, sampleSupport, weights,
+		symbol, anchor, at, evidenceCount, selected, sampleSupport, weights,
 	)
 }
 

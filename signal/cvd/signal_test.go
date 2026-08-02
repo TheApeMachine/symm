@@ -134,4 +134,17 @@ func TestCalculate(t *testing.T) {
 		So(pumpCausal, ShouldEqual, 0)
 		So(absorptionCausal, ShouldEqual, 0)
 	})
+
+	Convey("CVD derives validity from its adaptive trade window", t, func() {
+		rows, _ := measureCVD(t, tests.MarketStateBaseline)
+		So(rows, ShouldNotBeEmpty)
+
+		for _, measurement := range rows {
+			So(measurement.ObservedFrom.IsZero(), ShouldBeTrue)
+			So(measurement.Scale.From.IsZero(), ShouldBeTrue)
+			So(measurement.Scale.Through.IsZero(), ShouldBeTrue)
+			So(measurement.Validity.Readiness, ShouldEqual, types.ReadinessObservation)
+			So(measurement.Validity.State, ShouldNotEqual, types.ValidityInvalid)
+		}
+	})
 }

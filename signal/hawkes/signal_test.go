@@ -108,6 +108,44 @@ func TestSignal_Calculate(t *testing.T) {
 	})
 }
 
+func TestMeasurements(t *testing.T) {
+	Convey("Given a fitted Hawkes outcome with distinct observation and fit epochs", t, func() {
+		signal := &Signal{}
+		observedFrom := time.Date(2026, 8, 2, 8, 0, 0, 0, time.UTC)
+		at := observedFrom.Add(15 * time.Second)
+		fitObservedFrom := observedFrom.Add(-time.Minute)
+		fitAt := observedFrom.Add(-time.Second)
+		outcome := excitation.Outcome{
+			ObservedFrom:    observedFrom,
+			At:              at,
+			Horizon:         at.Sub(observedFrom),
+			FitObservedFrom: fitObservedFrom,
+			FitAt:           fitAt,
+			EventCount:      8,
+			Maturity:        0.75,
+			Readiness: excitation.Readiness{
+				Observation: true,
+				Intensity:   true,
+				HawkesFit:   true,
+				Reason:      "forecast validation pending",
+			},
+		}
+
+		measurement := signal.measurements("BTC/USD", outcome)[0]
+
+		Convey("It preserves the evidence interval and separately anchors model scale", func() {
+			So(measurement.ObservedFrom, ShouldResemble, observedFrom)
+			So(measurement.At, ShouldResemble, at)
+			So(measurement.Horizon, ShouldEqual, at.Sub(observedFrom))
+			So(measurement.Scale.From, ShouldResemble, fitObservedFrom)
+			So(measurement.Scale.Through, ShouldResemble, fitAt)
+			So(measurement.Maturity, ShouldEqual, outcome.Maturity)
+			So(measurement.Validity.Readiness, ShouldEqual, types.ReadinessModel)
+			So(measurement.ValidateStruct(), ShouldBeNil)
+		})
+	})
+}
+
 func BenchmarkSignal_Calculate(benchmark *testing.B) {
 	signal, thesis := newTestSignal()
 	start := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)

@@ -14,7 +14,6 @@ validity until Intensity / HawkesFit readiness; static parameters stay anchored
 to their fit epoch while likelihood comparisons use the evaluation interval.
 */
 func (signal *Signal) measurements(
-	thesis *types.Thesis,
 	symbol string,
 	outcome excitation.Outcome,
 ) []*types.Measurement {
@@ -26,7 +25,7 @@ func (signal *Signal) measurements(
 		At:           through,
 		ObservedFrom: from,
 		Horizon:      through.Sub(from),
-		Maturity:     float64(thesis.Tick),
+		Maturity:     outcome.Maturity,
 		Validity:     validity,
 		Scale: types.ScaleReference{
 			Kind:    types.ScaleObservationWindow,
@@ -60,14 +59,12 @@ func (signal *Signal) validity(
 		}
 	}
 
-	validity := types.MeasurementValidity{
-		State:     types.ValidityProvisional,
-		Readiness: types.ReadinessIntensity,
-		Reason:    outcome.Readiness.Reason,
-	}
+	validity := types.ObservationValidity(outcome.EventCount)
 
 	if outcome.Readiness.Intensity {
 		validity.State = types.ValidityValid
+		validity.Readiness = types.ReadinessIntensity
+		validity.Reason = outcome.Readiness.Reason
 	}
 
 	return validity
@@ -279,32 +276,17 @@ func (signal *Signal) putMetric(
 }
 
 /*
-applyFitEvaluation anchors retained-fit intensities from the fit origin through
-the current evaluation horizon.
+applyFitEvaluation anchors fitted parameters to the epoch that established
+them without replacing the current empirical observation interval.
 */
 func (signal *Signal) applyFitEvaluation(
 	measurement *types.Measurement,
 	outcome excitation.Outcome,
 ) {
-	from := outcome.FitObservedFrom
-
-	if from.IsZero() {
-		from = outcome.ObservedFrom
-	}
-
-	through := outcome.At
-
-	if from.IsZero() && !through.IsZero() {
-		from = through.Add(-outcome.Horizon)
-	}
-
-	measurement.ObservedFrom = from
-	measurement.At = through
-	measurement.Horizon = through.Sub(from)
 	measurement.Scale = types.ScaleReference{
 		Kind:    types.ScaleObservationWindow,
-		From:    from,
-		Through: through,
+		From:    outcome.FitObservedFrom,
+		Through: outcome.FitAt,
 	}
 }
 

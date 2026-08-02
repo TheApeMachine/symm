@@ -199,6 +199,18 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		validity.Reason = "peer return cohort unavailable"
 	}
 
+	scale := types.ScaleReference{Kind: types.ScaleObservationWindow}
+
+	for _, peer := range peers {
+		if scale.From.IsZero() || peer.At.Before(scale.From) {
+			scale.From = peer.At
+		}
+
+		if peer.At.After(scale.Through) {
+			scale.Through = peer.At
+		}
+	}
+
 	for _, peer := range peers {
 		change := peer.LatestChange
 		leaderStrength := 0.0
@@ -227,8 +239,8 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			Source:   types.SourceSentiment,
 			Symbol:   peer.Symbol,
 			At:       peer.At,
-			Maturity: float64(thesis.Tick),
 			Validity: validity,
+			Scale:    scale,
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricChange, types.SideNone): {
 					Raw:        change,

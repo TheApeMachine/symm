@@ -95,4 +95,20 @@ func TestCalculate(t *testing.T) {
 
 		So(isolated[types.MetricDivergentScore]["SIM1/USD"], ShouldBeGreaterThan, 0)
 	})
+
+	Convey("Sentiment anchors cross-sectional scores to the complete cohort epoch", t, func() {
+		rows := measureSentiment(t, tests.MarketStateBaseline)
+		So(rows, ShouldNotBeEmpty)
+		from := rows[0].Scale.From
+		through := rows[0].Scale.Through
+		So(from.IsZero(), ShouldBeFalse)
+		So(through.Before(from), ShouldBeFalse)
+
+		for _, measurement := range rows {
+			So(measurement.ObservedFrom.IsZero(), ShouldBeTrue)
+			So(measurement.Scale.Kind, ShouldEqual, types.ScaleObservationWindow)
+			So(measurement.Scale.From, ShouldResemble, from)
+			So(measurement.Scale.Through, ShouldResemble, through)
+		}
+	})
 }

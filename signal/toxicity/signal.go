@@ -118,13 +118,8 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
-	var lastTime time.Time
-
 	for _, trade := range trades {
-		if lastTime.IsZero() || trade.Timestamp.After(lastTime) {
-			lastTime = trade.Timestamp
-		}
-
+		evidenceCount := 1
 		found, ok := books.Load(trade.Symbol)
 
 		if !ok || found == nil {
@@ -139,6 +134,8 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		if bid == nil || ask == nil {
 			continue
 		}
+
+		evidenceCount++
 
 		bidQuantity := bid.Quantity.Float64()
 		askQuantity := ask.Quantity.Float64()
@@ -175,13 +172,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			Source:   types.SourceToxicity,
 			Symbol:   trade.Symbol,
 			At:       trade.Timestamp,
-			Maturity: float64(thesis.Tick),
-			Validity: types.ObservationValidity(len(trades)),
-			Scale: types.ScaleReference{
-				Kind:    types.ScaleObservationWindow,
-				From:    lastTime,
-				Through: trade.Timestamp,
-			},
+			Validity: types.ObservationValidity(evidenceCount),
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricTradeVolume, types.SideNone): {
 					Raw:  trade.Qty,

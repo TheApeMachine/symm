@@ -166,7 +166,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			continue
 		}
 
-		rowMeasurements := signal.measurements(thesis, row.Symbol, output)
+		rowMeasurements := signal.measurements(row.Symbol, output)
 		measurements = append(measurements, rowMeasurements...)
 
 		if row.Symbol == types.Focus() {

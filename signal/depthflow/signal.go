@@ -252,13 +252,7 @@ func (signal *Signal) measureManagedBook(
 	}
 
 	if !ready {
-		return []*types.Measurement{{
-			Source:   types.SourceDepthFlow,
-			Symbol:   managed.Name,
-			At:       managed.BestBid().Timestamp,
-			Maturity: maturity,
-			Validity: types.ObservationValidity(1),
-		}}, nil
+		return nil, nil
 	}
 
 	output, err := signal.bookflow.Measure(input)
@@ -343,14 +337,14 @@ func (signal *Signal) frame(
 		Readiness: types.ReadinessObservation,
 	}
 	measurement := &types.Measurement{
-		Source:       types.SourceDepthFlow,
-		Symbol:       symbol,
-		At:           at,
-		ObservedFrom: at,
-		Maturity:     maturity,
-		Validity:     validity,
+		Source:   types.SourceDepthFlow,
+		Symbol:   symbol,
+		At:       at,
+		Maturity: maturity,
+		Validity: validity,
 		Metrics: map[string]types.MetricSample{
-			types.MetricKey(types.MetricLoadedScore, types.SideNone): {Raw: output.LoadedScore,
+			types.MetricKey(types.MetricLoadedScore, types.SideNone): {
+				Raw:        output.LoadedScore,
 				Normalized: types.NormalizeFinite(output.LoadedScore),
 				Unit:       types.UnitDimensionless,
 			},

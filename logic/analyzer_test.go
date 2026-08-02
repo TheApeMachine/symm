@@ -11,7 +11,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/audit"
-	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -39,7 +38,7 @@ func TestAnalyzerOnSignal(t *testing.T) {
 
 		Convey("It should not publish partial signal input", func() {
 			thesis := types.NewThesis()
-			analyzer.onSignal(thesis)
+			analyzer.process(thesis)
 
 			select {
 			case <-subscription.Channel:
@@ -56,10 +55,9 @@ func TestAnalyzerOnSignal(t *testing.T) {
 
 		ui := make(chan []byte, 4)
 		analyzer := &Analyzer{
-			ui:            ui,
-			recorder:      recorder,
-			categoryGraph: category.NewGraph(),
-			subscribers:   &sync.Map{},
+			ui:          ui,
+			recorder:    recorder,
+			subscribers: &sync.Map{},
 			solvers: []Solver{
 				&analyzerTestSolver{update: func(thesis *types.Thesis) {
 					thesis.Resonance.Store("resonance", map[string]any{"confidence": 0.8})
@@ -90,7 +88,7 @@ func TestAnalyzerOnSignal(t *testing.T) {
 		)
 
 		Convey("It should emit categories and logic completion with durable phases", func() {
-			analyzer.onSignal(thesis)
+			analyzer.process(thesis)
 
 			keys := make([]string, 0, 2)
 

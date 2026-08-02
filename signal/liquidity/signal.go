@@ -149,6 +149,17 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	sort.Slice(peers, func(left, right int) bool {
 		return peers[left].Symbol < peers[right].Symbol
 	})
+	scale := types.ScaleReference{Kind: types.ScaleObservationWindow}
+
+	for _, peer := range peers {
+		if scale.From.IsZero() || peer.At.Before(scale.From) {
+			scale.From = peer.At
+		}
+
+		if peer.At.After(scale.Through) {
+			scale.Through = peer.At
+		}
+	}
 
 	depthMedian, depthOK := statistic.MedianOf(depthPeers)
 	peerReady := len(depthPeers) >= 2 && depthOK && depthMedian > 0
@@ -165,12 +176,6 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			State:     types.ValidityValid,
 			Readiness: types.ReadinessObservation,
 		}
-		scale := types.ScaleReference{
-			Kind:    types.ScaleObservationWindow,
-			From:    peer.At,
-			Through: peer.At,
-		}
-
 		if !peerReady || executableDepth <= 0 {
 			validity.State = types.ValidityProvisional
 
@@ -210,7 +215,6 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			Source:   types.SourceLiquidity,
 			Symbol:   peer.Symbol,
 			At:       peer.At,
-			Maturity: float64(thesis.Tick),
 			Validity: validity,
 			Scale:    scale,
 			Metrics: map[string]types.MetricSample{

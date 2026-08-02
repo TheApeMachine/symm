@@ -186,4 +186,17 @@ func TestCalculate(t *testing.T) {
 		So(foundTouch, ShouldBeTrue)
 		So(causalEntries, ShouldEqual, 0)
 	})
+
+	Convey("Toxicity validates each corroborated trade and book observation independently", t, func() {
+		rows, _ := measureToxicity(t, tests.MarketStateBaseline)
+		So(rows, ShouldNotBeEmpty)
+
+		for _, measurement := range rows {
+			So(measurement.ObservedFrom.IsZero(), ShouldBeTrue)
+			So(measurement.Scale.From.IsZero(), ShouldBeTrue)
+			So(measurement.Scale.Through.IsZero(), ShouldBeTrue)
+			So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
+			So(measurement.Validity.Readiness, ShouldEqual, types.ReadinessObservation)
+		}
+	})
 }

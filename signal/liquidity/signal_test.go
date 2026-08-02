@@ -98,4 +98,20 @@ func TestCalculate(t *testing.T) {
 		So(thin[types.MetricScarcityScore]["SIM1/USD"], ShouldBeGreaterThanOrEqualTo, baseline[types.MetricScarcityScore]["SIM1/USD"])
 		So(loaded[types.MetricRelativeTouchDepth]["SIM1/USD"], ShouldBeGreaterThanOrEqualTo, baseline[types.MetricRelativeTouchDepth]["SIM1/USD"])
 	})
+
+	Convey("Liquidity anchors peer normalization to the complete cohort epoch", t, func() {
+		rows := measureLiquidity(t, tests.MarketStateBaseline)
+		So(rows, ShouldNotBeEmpty)
+		from := rows[0].Scale.From
+		through := rows[0].Scale.Through
+		So(from.IsZero(), ShouldBeFalse)
+		So(through.Before(from), ShouldBeFalse)
+
+		for _, measurement := range rows {
+			So(measurement.ObservedFrom.IsZero(), ShouldBeTrue)
+			So(measurement.Scale.Kind, ShouldEqual, types.ScaleObservationWindow)
+			So(measurement.Scale.From, ShouldResemble, from)
+			So(measurement.Scale.Through, ShouldResemble, through)
+		}
+	})
 }

@@ -165,7 +165,19 @@ func New(
 		out := handler(raw)
 
 		if channel == "level3" && live.book != nil {
-			errnie.Error(live.book.Update(event, out.(*kraken.Level3)))
+			level3, ok := out.(*kraken.Level3)
+
+			if !ok {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"websocket: unexpected level3 payload type",
+					nil,
+				))
+
+				return
+			}
+
+			errnie.Error(live.book.Update(event, level3))
 			return
 		}
 
@@ -352,19 +364,9 @@ func (live *Live) Subscribe(
 ) *types.Subscription[any] {
 	errnie.Info(fmt.Sprintf("websocket: new subscriber %s", key))
 
-	subscribers, ok := live.subscribers.LoadOrStore(
-		key, []*types.Subscription[any]{subscription},
+	return utils.Subscribe(
+		live.subscribers, key, subscription,
 	)
-
-	if ok {
-		subscribers = append(
-			subscribers.([]*types.Subscription[any]), subscription,
-		)
-
-		live.subscribers.Store(key, subscribers)
-	}
-
-	return subscription
 }
 
 func (live *Live) Client() *spot.WebSocket {
@@ -420,7 +422,7 @@ func (live *Live) SubL3(symbols []string) {
 				}
 			}
 
-			conn.Client().SubL3(group, 10)
+			conn.Client().SubL3(group, viper.GetInt("market.l3_depth"))
 			time.Sleep(viper.GetDuration("market.subscribe_pace"))
 		}
 	}

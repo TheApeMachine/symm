@@ -1,7 +1,9 @@
 package resonance
 
 import (
+	"maps"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -9,6 +11,7 @@ import (
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -88,6 +91,7 @@ type Solver struct {
 	alphaCtrl       *AlphaController
 	alpha           float64
 	arch            []int
+	featureSchema   []string
 	targetDim       int
 	maxHorizon      int // Maximum forward prediction horizon (e.g. 20 ticks)
 	learn           bool
@@ -125,16 +129,47 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	}
 
 	// 1. Extract feature vector & optional target from Thesis
-	input, target := solver.extractFeatures(thesis)
-	if len(input) == 0 {
+	features, target := solver.extractFeatures(thesis)
+
+	if len(features) == 0 {
 		return nil
 	}
 
-	// 2. Lazily initialize the CPU ResonanceManifold if not yet created
-	if solver.manifold == nil {
-		if err := solver.initManifold(len(input), len(target)); err != nil {
-			return err
+	featureSchema := append([]string(nil), solver.featureSchema...)
+	knownFeatures := make(map[string]struct{}, len(featureSchema))
+
+	for _, featureKey := range featureSchema {
+		knownFeatures[featureKey] = struct{}{}
+	}
+
+	for featureKey := range features {
+		if _, known := knownFeatures[featureKey]; known {
+			continue
 		}
+
+		featureSchema = append(featureSchema, featureKey)
+	}
+
+	sort.Strings(featureSchema)
+	input := make([]float64, len(featureSchema))
+
+	for featureIndex, featureKey := range featureSchema {
+		input[featureIndex] = features[featureKey]
+	}
+
+	// 2. Lazily initialize the CPU ResonanceManifold if not yet created
+	if solver.manifold == nil || len(solver.featureSchema) != len(featureSchema) {
+		if err := solver.initManifold(
+			len(input), len(target),
+		); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"resonance: failed to initialize CPU predictive coding manifold",
+				err,
+			))
+		}
+
+		solver.featureSchema = featureSchema
 	}
 
 	// 3. Settle latents and apply Hebbian predictive-coding updates on CPU
@@ -160,11 +195,13 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	// 5. Evaluate Reconstruction Error vs Temporal Error for Dynamic Alpha Control
 	eRecon := solver.manifold.ReconstructionError()
 	eTemporal := 0.0
+
 	if len(layers) > 0 {
 		eTemporal = layers[len(layers)-1].ErrorNorm
 	}
 
 	newAlpha := solver.alphaCtrl.Update(eRecon, eTemporal)
+
 	if newAlpha != solver.alpha {
 		solver.alpha = newAlpha
 		solver.manifold.SetAlpha(newAlpha)
@@ -180,7 +217,19 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	forwardCurve := solver.manifold.RolloutTaskPrediction(activeHorizon)
 
 	// 8. Enrich the shared Thesis with predictive coding outcomes, dynamic alpha, and return curve
-	solver.enrichThesis(thesis, surprise, energy, latent, forwardCurve, activeHorizon, confidence, layers, solver.alpha)
+	thesis.Resonance.Store(
+		"resonance",
+		map[string]any{
+			"surprise":      surprise,
+			"energy":        energy,
+			"latent":        latent,
+			"forwardCurve":  forwardCurve,  // []float64 trajectory of predictions [t+1, t+2, ..., t+k]
+			"activeHorizon": activeHorizon, // Active extended horizon length k
+			"confidence":    confidence,    // Confidence score [0.0, 1.0]
+			"layers":        layers,
+			"alpha":         solver.alpha,
+		},
+	)
 
 	solver.publish(thesis)
 
@@ -202,55 +251,24 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 }
 
 /*
-enrichThesis attaches predictive coding outputs, dynamic forward return curve,
-active horizon length, and confidence score back to the shared Thesis.
-*/
-func (solver *Solver) enrichThesis(
-	thesis *types.Thesis,
-	surprise float64,
-	energy float64,
-	latent []float64,
-	forwardCurve []float64,
-	activeHorizon int,
-	confidence float64,
-	layers []learning.ResonanceLayerWire,
-	alpha float64,
-) {
-	thesis.Resonance.Store(
-		"resonance",
-		map[string]any{
-			"surprise":      surprise,
-			"energy":        energy,
-			"latent":        latent,
-			"forwardCurve":  forwardCurve,  // []float64 trajectory of predictions [t+1, t+2, ..., t+k]
-			"activeHorizon": activeHorizon, // Active extended horizon length k
-			"confidence":    confidence,    // Confidence score [0.0, 1.0]
-			"layers":        layers,
-			"alpha":         alpha,
-		},
-	)
-}
-
-/*
 publish emits one resonance wire frame per observed symbol so the frontend
 can bind data-paint attributes directly to backend outputs.
 */
 func (solver *Solver) publish(thesis *types.Thesis) {
-	if solver.ui == nil || thesis == nil {
-		return
-	}
-
 	raw, ok := thesis.Resonance.Load("resonance")
+
 	if !ok {
 		return
 	}
 
 	resMap, ok := raw.(map[string]any)
+
 	if !ok {
 		return
 	}
 
 	symbols := make([]string, 0)
+
 	thesis.Measurements.Range(func(key, value any) bool {
 		rows, ok := value.([]*types.Measurement)
 
@@ -286,16 +304,15 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 			"symbol", symbol,
 			"at", at,
 		)
-		for k, v := range resMap {
-			row[k] = v
-		}
+
+		maps.Copy(row, resMap)
 		rows = append(rows, row)
 	}
 
-	select {
-	case solver.ui <- datura.NewMap("resonance", rows).MarshalAndFree():
-	default:
-	}
+	utils.Publish(
+		solver.ui,
+		datura.NewMap("resonance", rows),
+	)
 }
 
 /*
@@ -305,6 +322,7 @@ predictive network: [InputDim -> InputDim * 2 -> InputDim].
 */
 func (solver *Solver) initManifold(inputDim, targetDim int) error {
 	arch := solver.arch
+
 	if len(arch) < 2 {
 		// Default 3-layer bottleneck architecture
 		arch = []int{inputDim, inputDim * 2, inputDim}
@@ -313,6 +331,7 @@ func (solver *Solver) initManifold(inputDim, targetDim int) error {
 	}
 
 	tDim := solver.targetDim
+	
 	if targetDim > 0 {
 		tDim = targetDim
 	}
@@ -335,15 +354,10 @@ func (solver *Solver) initManifold(inputDim, targetDim int) error {
 extractFeatures converts physics/field data from Thesis into float64 slices for the manifold.
 Reads features, measurements, or metrics produced by the upstream `manifold.Solver`.
 */
-func (solver *Solver) extractFeatures(thesis *types.Thesis) (input []float64, target []float64) {
-	// 1. Try direct vector interface or slice methods if present
-	if v, ok := any(thesis).(interface{ Vector() []float64 }); ok {
-		input = v.Vector()
-	} else if f, ok := any(thesis).(interface{ Features() []float64 }); ok {
-		input = f.Features()
-	}
-
-	// 2. Fallback: Extract from Thesis measurements/metrics map
+func (solver *Solver) extractFeatures(
+	thesis *types.Thesis,
+) (map[string]float64, []float64) {
+	features := make(map[string]float64)
 	thesis.Measurements.Range(func(key, value any) bool {
 		rows, ok := value.([]*types.Measurement)
 
@@ -362,20 +376,22 @@ func (solver *Solver) extractFeatures(thesis *types.Thesis) (input []float64, ta
 				continue
 			}
 
-			for _, metric := range measurement.Metrics {
-				input = append(input, metric.Raw)
+			for metricKey, metric := range measurement.Metrics {
+				featureKey := string(measurement.Source) + ":" + measurement.Symbol + ":" + measurement.Peer + ":" + metricKey
+				features[featureKey] = metric.Raw
 			}
 		}
 
 		return true
 	})
 
-	// 3. Extract supervised target if present
+	var target []float64
+
 	if t, ok := any(thesis).(interface{ Target() []float64 }); ok {
 		target = t.Target()
 	}
 
-	return input, target
+	return features, target
 }
 
 /*

@@ -94,4 +94,17 @@ func TestCalculate(t *testing.T) {
 
 		So(foundUrgency, ShouldBeTrue)
 	})
+
+	Convey("Exhaust emits scored frames as point observations", t, func() {
+		rows := measureExhaust(t, tests.MarketStateBaseline)
+		So(rows, ShouldNotBeEmpty)
+
+		for _, measurement := range rows {
+			So(measurement.ObservedFrom.IsZero(), ShouldBeTrue)
+			So(measurement.Horizon, ShouldEqual, 0)
+			So(measurement.Scale.From.IsZero(), ShouldBeTrue)
+			So(measurement.Scale.Through.IsZero(), ShouldBeTrue)
+			So(measurement.ValidateStruct(), ShouldBeNil)
+		}
+	})
 }

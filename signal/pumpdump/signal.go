@@ -5,11 +5,11 @@ import (
 	"sync"
 	"time"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
@@ -28,8 +28,6 @@ type Signal struct {
 	cancel        context.CancelFunc
 	api           *websocket.API
 	algo          *equation.Ignition
-	lastTrades    map[string]time.Time
-	volumes       map[string]float64
 	planner       *strategy.Planner
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
@@ -56,8 +54,6 @@ func NewSignal(
 		cancel:        cancel,
 		api:           api,
 		algo:          equation.NewIgnition(viper.GetViper().GetInt("signals.pumpdump.baselineCapacity")),
-		lastTrades:    make(map[string]time.Time),
-		volumes:       make(map[string]float64),
 		planner:       planner,
 		ui:            ui,
 		subscriptions: subscriptions,
@@ -89,16 +85,6 @@ func (signal *Signal) Subscribe(
 		channel,
 		subscription,
 	)
-}
-
-func (signal *Signal) ensureState() {
-	if signal.lastTrades == nil {
-		signal.lastTrades = make(map[string]time.Time)
-	}
-
-	if signal.volumes == nil {
-		signal.volumes = make(map[string]float64)
-	}
 }
 
 func (signal *Signal) run() {
@@ -133,67 +119,40 @@ func (signal *Signal) Measure(
 	thesis *types.Thesis,
 ) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
-	_, trades, _ := thesis.Market()
-	signal.ensureState()
+	out := make([]*types.Measurement, 0)
+
+	_, trades, books := thesis.Market()
 
 	if len(trades) == 0 {
-		return nil
+		return measurements
 	}
-
-	var lastTime time.Time
 
 	for _, trade := range trades {
 		if trade.Qty <= 0 || trade.Price.Sign() <= 0 {
 			continue
 		}
 
-		previous, ok := signal.lastTrades[trade.Symbol]
+		found, ok := books.Load(trade.Symbol)
 
-		if ok && !trade.Timestamp.After(previous) {
+		if !ok || found == nil {
 			continue
 		}
 
-		value, ok := thesis.Tickers.Load(trade.Symbol)
+		book := found.(*spotbook.Book)
 
-		if !ok {
-			continue
-		}
-
-		ticker, ok := value.(kraken.TickerData)
-
-		if !ok || ticker.Bid == nil || ticker.Ask == nil ||
-			ticker.Bid.Sign() <= 0 || ticker.Ask.Sign() <= 0 ||
-			ticker.Ask.Cmp(ticker.Bid) <= 0 {
-			continue
-		}
-
-		previous, ok = signal.lastTrades[trade.Symbol]
-
-		if ok && !trade.Timestamp.After(previous) {
-			continue
-		}
-
-		cumulativeVolume := signal.volumes[trade.Symbol] + trade.Qty
-		signal.lastTrades[trade.Symbol] = trade.Timestamp
-		signal.volumes[trade.Symbol] = cumulativeVolume
-
-		if lastTime.IsZero() || trade.Timestamp.After(lastTime) {
-			lastTime = trade.Timestamp
-		}
-
-		mid := (ticker.Bid.Float64() + ticker.Ask.Float64()) / 2
+		mid := book.Midpoint().Float64()
 
 		if mid <= 0 {
 			continue
 		}
 
-		output, _, maturity, err := signal.algo.Measure(equation.IgnitionInput{
+		output, ready, maturity, err := signal.algo.Measure(equation.IgnitionInput{
 			At:     trade.Timestamp,
 			Symbol: trade.Symbol,
 			Last:   trade.Price.Float64(),
-			Volume: cumulativeVolume,
-			Ask:    ticker.Ask.Float64(),
-			Bid:    ticker.Bid.Float64(),
+			Volume: trade.Qty,
+			Ask:    book.Asks.High.Price.Float64(),
+			Bid:    book.Bids.Low.Price.Float64(),
 		})
 
 		if err != nil {
@@ -206,17 +165,22 @@ func (signal *Signal) Measure(
 			continue
 		}
 
-		measurements = append(measurements, &types.Measurement{
+		validity := types.MeasurementValidity{
+			State:     types.ValidityValid,
+			Readiness: types.ReadinessObservation,
+		}
+
+		if !ready {
+			validity.State = types.ValidityProvisional
+			validity.Reason = "ignition baseline not ready"
+		}
+
+		measurement := &types.Measurement{
 			Source:   types.SourcePumpDump,
 			Symbol:   trade.Symbol,
 			At:       trade.Timestamp,
 			Maturity: maturity,
-			Validity: types.ObservationValidity(1),
-			Scale: types.ScaleReference{
-				Kind:    types.ScaleObservationWindow,
-				From:    lastTime,
-				Through: trade.Timestamp,
-			},
+			Validity: validity,
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricRVOL, types.SideNone): {
 					Raw:        output.RVOL,
@@ -259,19 +223,17 @@ func (signal *Signal) Measure(
 					Unit:       types.UnitDimensionless,
 				},
 			},
-		})
-	}
+		}
 
-	focusMeasurements := make([]*types.Measurement, 0)
+		measurements = append(measurements, measurement)
 
-	for _, measurement := range measurements {
 		if measurement.Symbol == types.Focus() {
-			focusMeasurements = append(focusMeasurements, measurement)
+			out = append(out, measurement)
 		}
 	}
 
-	if len(focusMeasurements) > 0 {
-		utils.Publish(signal.ui, datura.NewMap("measurements", focusMeasurements))
+	if len(out) > 0 {
+		utils.Publish(signal.ui, datura.NewMap("measurements", out))
 	}
 
 	return measurements

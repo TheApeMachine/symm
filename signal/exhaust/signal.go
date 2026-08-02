@@ -242,13 +242,7 @@ func (signal *Signal) measureManagedBook(
 	}
 
 	if !ready {
-		return []*types.Measurement{{
-			Source:   types.SourceExhaustion,
-			Symbol:   managed.Name,
-			At:       managed.BestBid().Timestamp,
-			Maturity: maturity,
-			Validity: types.ObservationValidity(1),
-		}}, nil
+		return nil, nil
 	}
 
 	output, err := signal.decay.Measure(input)
@@ -335,12 +329,11 @@ func (signal *Signal) frame(
 		Readiness: types.ReadinessObservation,
 	}
 	measurement := &types.Measurement{
-		Source:       types.SourceExhaustion,
-		Symbol:       symbol,
-		At:           at,
-		ObservedFrom: at,
-		Maturity:     maturity,
-		Validity:     validity,
+		Source:   types.SourceExhaustion,
+		Symbol:   symbol,
+		At:       at,
+		Maturity: maturity,
+		Validity: validity,
 		Metrics: map[string]types.MetricSample{
 			types.MetricKey(types.MetricMechanical, types.SideBuy): {Raw: output.Long.Mechanical,
 				Normalized: types.NormalizeFinite(output.Long.Mechanical),

@@ -143,7 +143,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			continue
 		}
 
-		tradeMeasurements, err := signal.measureTrade(thesis, row, midpoint)
+		tradeMeasurements, err := signal.measureTrade(row, midpoint)
 
 		if err != nil {
 			errnie.Error(errnie.Err(
@@ -173,7 +173,6 @@ measureTrade separates execution notional from midpoint response before
 classifying one aggressor observation through the adaptive CVD window.
 */
 func (signal *Signal) measureTrade(
-	thesis *types.Thesis,
 	row kraken.TradeData,
 	midpoint float64,
 ) ([]*types.Measurement, error) {
@@ -209,7 +208,7 @@ func (signal *Signal) measureTrade(
 		))
 	}
 
-	return signal.cvdMeasurements(thesis, row, output), nil
+	return signal.cvdMeasurements(row, output, input.TradeCount), nil
 }
 
 /*
@@ -217,27 +216,16 @@ cvdMeasurements maps signed-flow output into one source×symbol row whose
 Metrics map preserves each reading's unit and normalization.
 */
 func (signal *Signal) cvdMeasurements(
-	thesis *types.Thesis,
 	row kraken.TradeData,
 	output equation.FlowOutput,
+	evidenceCount int,
 ) []*types.Measurement {
-	validity := types.MeasurementValidity{
-		State:     types.ValidityValid,
-		Readiness: types.ReadinessObservation,
-	}
-	scale := types.ScaleReference{
-		Kind:    types.ScaleObservationWindow,
-		From:    row.Timestamp,
-		Through: row.Timestamp,
-	}
 	measurement := &types.Measurement{
 		Source:   types.SourceCVD,
 		Symbol:   row.Symbol,
 		At:       row.Timestamp,
-		Maturity: float64(thesis.Tick),
-		Validity: validity,
+		Validity: types.ObservationValidity(evidenceCount),
 		Metrics:  make(map[string]types.MetricSample, 7),
-		Scale:    scale,
 	}
 	measurement.Metrics[types.MetricKey(types.MetricAbsorption, types.SideNone)] = types.MetricSample{Raw: output.Absorption, Normalized: types.NormalizeFinite(output.Absorption), Unit: types.UnitDimensionless}
 	measurement.Metrics[types.MetricKey(types.MetricDrive, types.SideNone)] = types.MetricSample{Raw: output.Drive, Normalized: types.NormalizeFinite(output.Drive), Unit: types.UnitDimensionless}

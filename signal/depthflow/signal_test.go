@@ -49,9 +49,16 @@ func measureDepthflow(t *testing.T, state tests.MarketState, focus ...string) []
 	So(market.Public.Write(json.RawMessage(
 		`{"method":"subscribe","params":{"channel":"book","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"]}}`,
 	)), ShouldBeNil)
+	So(market.Level3.Write(json.RawMessage(
+		`{"method":"subscribe","params":{"channel":"level3","symbol":["SIM1/USD","SIM2/USD","SIM3/USD"],"depth":10}}`,
+	)), ShouldBeNil)
 
 	for _, trade := range drainDepthTrades(tradeSub) {
 		thesis.Trades.Store(trade.Symbol, trade)
+	}
+	market.Level3.Books().GetBooks()
+	for _, symbol := range market.Level3.Books().GetBooks() {
+		thesis.Books.Store(symbol, market.Level3.Books().GetBook(symbol))
 	}
 	thesis.Tick++
 	signal.Measure(thesis)
@@ -60,6 +67,9 @@ func measureDepthflow(t *testing.T, state tests.MarketState, focus ...string) []
 		return func() error {
 			for _, trade := range drainDepthTrades(tradeSub) {
 				thesis.Trades.Store(trade.Symbol, trade)
+			}
+			for _, symbol := range market.Level3.Books().GetBooks() {
+				thesis.Books.Store(symbol, market.Level3.Books().GetBook(symbol))
 			}
 			thesis.Tick++
 			*into = append(*into, signal.Measure(thesis)...)
@@ -88,8 +98,27 @@ func TestCalculate(t *testing.T) {
 		loaded := tests.PeakMeasurements(measureDepthflow(t, tests.MarketStateLoadedLiquidity, "SIM1/USD"), types.SourceDepthFlow, metrics)
 		spoof := tests.PeakMeasurements(measureDepthflow(t, tests.MarketStateSpoofLiquidity, "SIM1/USD"), types.SourceDepthFlow, metrics)
 
+		for _, readings := range []map[types.MetricType]map[string]float64{baseline, thin, loaded, spoof} {
+			for _, metric := range metrics {
+				So(readings[metric], ShouldContainKey, "SIM1/USD")
+			}
+		}
+
 		So(thin[types.MetricThinScore]["SIM1/USD"], ShouldBeGreaterThanOrEqualTo, baseline[types.MetricThinScore]["SIM1/USD"])
 		So(loaded[types.MetricLoadedScore]["SIM1/USD"], ShouldBeGreaterThanOrEqualTo, baseline[types.MetricLoadedScore]["SIM1/USD"])
 		So(spoof[types.MetricSpoofScore]["SIM1/USD"], ShouldBeGreaterThanOrEqualTo, baseline[types.MetricSpoofScore]["SIM1/USD"])
+	})
+
+	Convey("Depthflow emits scored frames as point observations", t, func() {
+		rows := measureDepthflow(t, tests.MarketStateBaseline)
+		So(rows, ShouldNotBeEmpty)
+
+		for _, measurement := range rows {
+			So(measurement.ObservedFrom.IsZero(), ShouldBeTrue)
+			So(measurement.Horizon, ShouldEqual, 0)
+			So(measurement.Scale.From.IsZero(), ShouldBeTrue)
+			So(measurement.Scale.Through.IsZero(), ShouldBeTrue)
+			So(measurement.ValidateStruct(), ShouldBeNil)
+		}
 	})
 }

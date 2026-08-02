@@ -88,7 +88,7 @@ export const TerminalTopBar = () => {
 					</span>
 				</button>
 				<Balance />
-				<Component registerKey="thesis">
+				<Component registerKey="strategy">
 					{({ ref }) => (
 						<span ref={ref} className="font-mono text-[11px] text-(--f3)">
 							tick <span data-paint="tick" className="text-(--f1)" />

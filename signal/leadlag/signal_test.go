@@ -110,4 +110,17 @@ func TestCalculate(t *testing.T) {
 		So(baselineCausal, ShouldEqual, 0)
 		So(pumpCausal, ShouldEqual, 0)
 	})
+
+	Convey("Leadlag validity follows retained sample support", t, func() {
+		rows, _ := measureLeadlag(t, tests.MarketStateFastPump)
+		So(rows, ShouldNotBeEmpty)
+
+		for _, measurement := range rows {
+			So(measurement.ObservedFrom.IsZero(), ShouldBeTrue)
+			So(measurement.Scale.From.IsZero(), ShouldBeTrue)
+			So(measurement.Scale.Through.IsZero(), ShouldBeTrue)
+			So(measurement.Validity.Readiness, ShouldEqual, types.ReadinessObservation)
+			So(measurement.Validity.State, ShouldNotEqual, types.ValidityInvalid)
+		}
+	})
 }
