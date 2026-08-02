@@ -19,3 +19,15 @@ func NewSymbol(
 		generator:  NewGenerator(pair, startPrice, seed),
 	}
 }
+
+func (symbol *Symbol) Pair() string {
+	return symbol.pair
+}
+
+func (symbol *Symbol) StartPrice() float64 {
+	return symbol.startPrice
+}
+
+func (symbol *Symbol) Gen() *Generator {
+	return symbol.generator
+}

@@ -22,21 +22,21 @@ const (
 	VolatilitySpike
 )
 
-const (
-	MarketStateBaseline          = Baseline
-	MarketStateFastPump          = FastPump
-	MarketStateSlowPump          = SlowPump
-	MarketStateFastDump          = FastDump
-	MarketStateSlowDump          = SlowDump
-	MarketStateVolumeAbsorption  = VolumeAbsorption
-	MarketStateSpreadCompression = SpreadCompression
-	MarketStateThinLiquidity     = ThinLiquidity
-	MarketStateLoadedLiquidity   = LoadedLiquidity
-	MarketStateSpoofLiquidity    = SpoofLiquidity
-	MarketStateFlashCrash        = FlashCrash
-	MarketStateSidewaysChop      = SidewaysChop
-	MarketStateVolatilitySpike   = VolatilitySpike
-)
+var MomentumMap = map[MarketState]float64{
+	Baseline:          0.0,
+	FastPump:          0.9,
+	SlowPump:          0.3,
+	FastDump:          -0.9,
+	SlowDump:          -0.3,
+	VolumeAbsorption:  0.1,
+	SpreadCompression: 0.0,
+	ThinLiquidity:     0.0,
+	LoadedLiquidity:   0.0,
+	SpoofLiquidity:    0.0,
+	FlashCrash:        -1.2,
+	SidewaysChop:      0.0,
+	VolatilitySpike:   0.0,
+}
 
 // Sample represents a fully populated market ticker payload point.
 type Sample struct {
@@ -53,6 +53,22 @@ type Sample struct {
 	Change    float64   `json:"change"`
 	ChangePct float64   `json:"change_pct"`
 	Timestamp time.Time `json:"timestamp"`
+}
+
+// Order represents a single Level3 book order.
+type Order struct {
+	ID       string
+	Price    float64
+	Qty      float64
+	Priority int
+	At       time.Time
+}
+
+// Fill represents an executed trade fill.
+type Fill struct {
+	Price     float64
+	Qty       float64
+	Timestamp time.Time
 }
 
 // RegimeProfile controls the physical behavior of the ticker parameters.

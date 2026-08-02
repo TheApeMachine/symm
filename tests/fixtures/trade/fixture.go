@@ -9,7 +9,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	marketsignal "github.com/theapemachine/symm/tests/fixtures/signal"
+	"github.com/theapemachine/symm/tests"
 )
 
 //go:embed fixtures/*.json
@@ -29,11 +29,11 @@ const (
 Fixture yields template-backed standalone or market-driven trade frames.
 */
 type Fixture struct {
-	horizon  int
-	sequence [][]byte
-	template []byte
-	signal   *marketsignal.Signal
-	typ      FixtureType
+	horizon   int
+	sequence  [][]byte
+	template  []byte
+	generator *tests.Generator
+	typ       FixtureType
 }
 
 /*
@@ -60,7 +60,7 @@ func NewFixture(typ FixtureType, horizon int) *Fixture {
 NewMarket creates a trade fixture that renders one Kraken trade per simulated
 symbol from each shared market state.
 */
-func NewMarket(_ []string, signal *marketsignal.Signal) *Fixture {
+func NewMarket(_ []string, generator *tests.Generator) *Fixture {
 	raw, err := fixtureFiles.ReadFile("fixtures/" + string(SNAPSHOT) + ".json")
 
 	if err != nil {
@@ -68,9 +68,9 @@ func NewMarket(_ []string, signal *marketsignal.Signal) *Fixture {
 	}
 
 	return &Fixture{
-		template: raw,
-		signal:   signal,
-		typ:      SNAPSHOT,
+		template:  raw,
+		generator: generator,
+		typ:       SNAPSHOT,
 	}
 }
 
@@ -113,14 +113,8 @@ func (fixture *Fixture) sequencer(raw []byte) *Fixture {
 Generate yields ready Kraken trade payloads in deterministic order.
 */
 func (fixture *Fixture) Generate() iter.Seq[[]byte] {
-	if fixture.signal != nil {
-		return func(yield func([]byte) bool) {
-			for samples := range fixture.signal.Generate() {
-				if !yield(fixture.render(samples)) {
-					return
-				}
-			}
-		}
+	if fixture.generator != nil {
+		return fixture.generator.Generate(fixture.template)
 	}
 
 	return func(yield func([]byte) bool) {
@@ -135,7 +129,7 @@ func (fixture *Fixture) Generate() iter.Seq[[]byte] {
 /*
 render injects the current state into the Kraken trade template.
 */
-func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
+func (fixture *Fixture) render(samples []tests.Sample) []byte {
 	var payload map[string]any
 
 	if err := sonic.Unmarshal(fixture.template, &payload); err != nil {
@@ -145,17 +139,11 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 	rows := make([]map[string]any, 0, len(samples))
 
 	for _, sample := range samples {
-		fills := sample.Fills
-
-		if fixture.typ == SNAPSHOT && len(fills) == 0 && sample.TradeID > 0 {
-			fills = []marketsignal.Fill{{
-				Side:    sample.Side,
-				Price:   sample.TradePrice,
-				Qty:     sample.Volume,
-				TradeID: sample.TradeID,
-				At:      sample.At,
-			}}
-		}
+		fills := []tests.Fill{{
+			Price:     sample.Last,
+			Qty:       sample.Volume,
+			Timestamp: sample.Timestamp,
+		}}
 
 		for _, fill := range fills {
 			row := map[string]any{}
@@ -165,11 +153,9 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 			}
 
 			row["symbol"] = sample.Symbol
-			row["side"] = fill.Side
 			row["price"] = fill.Price
 			row["qty"] = fill.Qty
-			row["trade_id"] = fill.TradeID
-			row["timestamp"] = fill.At
+			row["timestamp"] = fill.Timestamp.Format(time.RFC3339Nano)
 			rows = append(rows, row)
 		}
 	}

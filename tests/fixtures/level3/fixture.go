@@ -10,10 +10,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	marketsignal "github.com/theapemachine/symm/tests/fixtures/signal"
+	"github.com/theapemachine/symm/tests"
 )
 
 //go:embed fixtures/*.json
@@ -33,12 +34,12 @@ const (
 Fixture yields template-backed standalone or market-driven Level3 frames.
 */
 type Fixture struct {
-	horizon  int
-	sequence [][]byte
-	template []byte
-	signal   *marketsignal.Signal
-	typ      FixtureType
-	previous map[string]map[string]any
+	horizon   int
+	sequence  [][]byte
+	template  []byte
+	generator *tests.Generator
+	typ       FixtureType
+	previous  map[string]map[string]any
 }
 
 /*
@@ -53,7 +54,7 @@ func NewDecoderFixture(typ FixtureType, horizon int) *Fixture {
 		panic(errnie.Err(errnie.Validation, "level3 fixture load failed", err))
 	}
 
-	fixture := &Fixture{horizon: horizon}
+	fixture := &Fixture{horizon: horizon, template: raw}
 
 	if typ == SNAPSHOT {
 		fixture.sequence = [][]byte{raw}
@@ -67,7 +68,7 @@ func NewDecoderFixture(typ FixtureType, horizon int) *Fixture {
 NewMarket creates a checksum-valid Level3 snapshot fixture for every simulated
 symbol and shared market state.
 */
-func NewMarket(symbols []string, signal *marketsignal.Signal) *Fixture {
+func NewMarket(symbols []string, generator *tests.Generator) *Fixture {
 	raw, err := fixtureFiles.ReadFile("fixtures/" + string(SNAPSHOT) + ".json")
 
 	if err != nil {
@@ -75,10 +76,10 @@ func NewMarket(symbols []string, signal *marketsignal.Signal) *Fixture {
 	}
 
 	return &Fixture{
-		template: raw,
-		signal:   signal,
-		typ:      SNAPSHOT,
-		previous: make(map[string]map[string]any, len(symbols)),
+		template:  raw,
+		generator: generator,
+		previous:  make(map[string]map[string]any, len(symbols)),
+		typ:       SNAPSHOT,
 	}
 }
 
@@ -86,14 +87,8 @@ func NewMarket(symbols []string, signal *marketsignal.Signal) *Fixture {
 Generate yields ready Kraken Level3 payloads in deterministic order.
 */
 func (fixture *Fixture) Generate() iter.Seq[[]byte] {
-	if fixture.signal != nil {
-		return func(yield func([]byte) bool) {
-			for samples := range fixture.signal.Generate() {
-				if !yield(fixture.render(samples)) {
-					return
-				}
-			}
-		}
+	if fixture.generator != nil {
+		return fixture.generator.Generate(fixture.template)
 	}
 
 	return func(yield func([]byte) bool) {
@@ -123,7 +118,7 @@ func (fixture *Fixture) Depth() int {
 /*
 render injects the current state into checksum-valid Kraken Level3 snapshots.
 */
-func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
+func (fixture *Fixture) render(samples []tests.Sample) []byte {
 	var payload map[string]any
 
 	if err := sonic.Unmarshal(fixture.template, &payload); err != nil {
@@ -134,16 +129,10 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 	rows := make([]map[string]any, 0, len(samples))
 
 	for _, sample := range samples {
-		if fixture.typ == UPDATE && !sample.BookChanged {
-			continue
-		}
-
 		row := clone(template)
 
-		fixture.inject(row, "bids", sample.Bids)
-		fixture.inject(row, "asks", sample.Asks)
 		row["symbol"] = sample.Symbol
-		row["timestamp"] = sample.At
+		row["timestamp"] = sample.Timestamp.Format(time.RFC3339Nano)
 		row["checksum"] = fixture.checksum(row)
 		resting := row
 
@@ -178,10 +167,10 @@ inject writes one authoritative resting side into the Kraken JSON template.
 func (fixture *Fixture) inject(
 	row map[string]any,
 	side string,
-	orders []marketsignal.Order,
+	orders []tests.Order,
 ) {
-	orders = append([]marketsignal.Order(nil), orders...)
-	slices.SortFunc(orders, func(left, right marketsignal.Order) int {
+	orders = append([]tests.Order(nil), orders...)
+	slices.SortFunc(orders, func(left, right tests.Order) int {
 		priceOrder := cmp.Compare(left.Price, right.Price)
 
 		if side == "bids" {

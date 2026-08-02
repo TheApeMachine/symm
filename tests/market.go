@@ -59,7 +59,7 @@ func (market *Market) Transition(state MarketState) {
 	market.State = state
 
 	for _, symbol := range market.Symbols {
-		symbol.generator.SetState(state)
+		symbol.generator.SetState(state, MomentumMap[state])
 	}
 }
 

@@ -15,10 +15,32 @@ func TestUsers(t *testing.T) {
 			tests.NewSymbol("SIM3/USD", 100.0, 90210),
 		}
 
-		Convey("Given a market with symbols", t, tests.WithMarket(t, symbols, func(m *tests.Market) {
+		Convey("Given a market with symbols", t, tests.WithMarket(t, symbols, func(market *tests.Market) {
 			Convey("When the market is in a Baseline state", func() {
 				Convey("It should collect Measurements from the Signals", func() {
-					m.Start
+					market.Tick()
+				})
+
+				Convey("When the market transitions to a fast pump", func() {
+					market.Transition(tests.FastPump)
+
+					Convey("The PumpDump Signal should have the correct values", func() {
+						// TODO: Make sure we can access the Thesis, so we can inspect the
+						// full tick state.
+					})
+
+					Convey("The Strategy should generate an Opportunity Position", func() {
+						// TODO: Make sure we can access the Thesis, so we can inspect the
+						// full tick state.
+					})
+
+					Convey("When the pump has peaked", func() {
+						market.Transition(tests.FastDump)
+
+						Convey("The position StopLoss should trigger an Exit", func() {
+							// TODO: Make sure we can access the Thesis, so we can inspect the
+						})
+					})
 				})
 			})
 		}))

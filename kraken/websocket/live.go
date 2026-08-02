@@ -88,6 +88,25 @@ func New(
 	auth bool,
 	endpoint string,
 ) *Live {
+	return NewWithClient(ctx, simulator, auth, endpoint, nil)
+}
+
+/*
+NewWithClient opens a spot websocket session using an injected spot.WebSocket client instance.
+This allows simulation and tests to supply a mock WebSocket client as the data source while
+retaining full production parsing, event routing, and book handling in Live.
+*/
+func NewWithClient(
+	ctx context.Context,
+	simulator *Simulator,
+	auth bool,
+	endpoint string,
+	client *spot.WebSocket,
+) *Live {
+	if client == nil {
+		client = spot.NewWebSocket()
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 
 	live := &Live{
@@ -95,7 +114,7 @@ func New(
 		cancel:      cancel,
 		status:      types.INITIALIZING,
 		simulator:   simulator,
-		client:      spot.NewWebSocket(),
+		client:      client,
 		normalizer:  spot.NewNormalizer(),
 		auth:        auth,
 		subscribers: &sync.Map{},

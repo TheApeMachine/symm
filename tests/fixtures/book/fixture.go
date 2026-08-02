@@ -13,7 +13,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	marketsignal "github.com/theapemachine/symm/tests/fixtures/signal"
+	"github.com/theapemachine/symm/tests"
 )
 
 //go:embed fixtures/*.json
@@ -34,12 +34,12 @@ const (
 Fixture yields template-backed standalone or market-driven Level2 frames.
 */
 type Fixture struct {
-	horizon  int
-	sequence [][]byte
-	template []byte
-	signal   *marketsignal.Signal
-	previous map[string]map[string]any
-	typ      FixtureType
+	horizon   int
+	sequence  [][]byte
+	template  []byte
+	generator *tests.Generator
+	previous  map[string]map[string]any
+	typ       FixtureType
 }
 
 /*
@@ -68,7 +68,7 @@ func NewDecoderFixture(typ FixtureType, horizon int) *Fixture {
 NewMarket creates a book fixture that renders both sides of every simulated
 symbol from each shared market state.
 */
-func NewMarket(symbols []string, signal *marketsignal.Signal) *Fixture {
+func NewMarket(symbols []string, generator *tests.Generator) *Fixture {
 	raw, err := fixtureFiles.ReadFile("fixtures/" + string(SNAPSHOT) + ".json")
 
 	if err != nil {
@@ -76,10 +76,10 @@ func NewMarket(symbols []string, signal *marketsignal.Signal) *Fixture {
 	}
 
 	return &Fixture{
-		template: raw,
-		signal:   signal,
-		previous: make(map[string]map[string]any, len(symbols)),
-		typ:      SNAPSHOT,
+		template:  raw,
+		generator: generator,
+		previous:  make(map[string]map[string]any, len(symbols)),
+		typ:       SNAPSHOT,
 	}
 }
 
@@ -121,14 +121,8 @@ func (fixture *Fixture) sequencer(raw []byte) *Fixture {
 Generate yields ready Kraken Level2 payloads in deterministic order.
 */
 func (fixture *Fixture) Generate() iter.Seq[[]byte] {
-	if fixture.signal != nil {
-		return func(yield func([]byte) bool) {
-			for samples := range fixture.signal.Generate() {
-				if !yield(fixture.render(samples)) {
-					return
-				}
-			}
-		}
+	if fixture.generator != nil {
+		return fixture.generator.Generate(fixture.template)
 	}
 
 	return func(yield func([]byte) bool) {
@@ -143,7 +137,7 @@ func (fixture *Fixture) Generate() iter.Seq[[]byte] {
 /*
 render injects the current state into the Kraken book template.
 */
-func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
+func (fixture *Fixture) render(samples []tests.Sample) []byte {
 	var payload map[string]any
 
 	if err := sonic.Unmarshal(fixture.template, &payload); err != nil {
@@ -154,15 +148,9 @@ func (fixture *Fixture) render(samples []marketsignal.Sample) []byte {
 	template := payload["data"].([]any)[0].(map[string]any)
 
 	for _, sample := range samples {
-		if fixture.typ == UPDATE && !sample.BookChanged {
-			continue
-		}
-
 		row := clone(template)
 		row["symbol"] = sample.Symbol
-		fixture.inject(row, "bids", sample.Bids)
-		fixture.inject(row, "asks", sample.Asks)
-		row["timestamp"] = sample.At
+		row["timestamp"] = sample.Timestamp.Format(time.RFC3339Nano)
 		row["checksum"] = fixture.checksum(row)
 		current := clone(row)
 
@@ -197,7 +185,7 @@ inject aggregates the authoritative Level3 orders into Kraken L2 price levels.
 func (fixture *Fixture) inject(
 	row map[string]any,
 	side string,
-	orders []marketsignal.Order,
+	orders []tests.Order,
 ) {
 	aggregated := make(map[float64]float64, len(orders))
 
