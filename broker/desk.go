@@ -24,11 +24,10 @@ const (
 )
 
 /*
-Desk is the broker Actor entrypoint. It subscribes market topics for
-price cache updates and account topics not routed to positions.
-Position and Stoploss subscribe directly to the market ticker, account
-executions, and account add_order topics so they react to live
-websocket messages without Desk absorbing the routing logic.
+Desk is the broker Actor entrypoint and persistent position owner. It consumes
+one market ticker and one account execution subscription, then routes each
+message to the positions it owns so closed lots leave no abandoned fan-out
+subscriber behind.
 */
 type Desk struct {
 	ctx           context.Context
@@ -81,7 +80,8 @@ func NewDesk(
 		status: types.READY,
 		api:    api,
 		subscriptions: map[string]*types.Subscription[any]{
-			"ticker": api.Subscribe("ticker", types.NewSubscription[any]()),
+			"ticker":     api.Subscribe("ticker", types.NewSubscription[any]()),
+			"executions": api.Subscribe("executions", types.NewSubscription[any]()),
 		},
 		ui:           ui,
 		instrument:   instrument,
@@ -108,6 +108,32 @@ func (desk *Desk) run() {
 				if !ok || ticker == nil {
 					continue
 				}
+
+				desk.positions.Range(func(key, value any) bool {
+					position, ok := value.(*Position)
+
+					if ok && position != nil {
+						position.onTicker(ticker)
+					}
+
+					return true
+				})
+			case message := <-desk.subscriptions["executions"].Channel:
+				execution, ok := message.(*kraken.Execution)
+
+				if !ok || execution == nil {
+					continue
+				}
+
+				desk.positions.Range(func(key, value any) bool {
+					position, ok := value.(*Position)
+
+					if ok && position != nil {
+						position.onExecution(execution)
+					}
+
+					return true
+				})
 			}
 		}
 	}()
@@ -153,8 +179,8 @@ func (desk *Desk) OpenPositions() int {
 	return count
 }
 
-func (desk *Desk) Positions() iter.Seq[Position] {
-	return func(yield func(Position) bool) {
+func (desk *Desk) Positions() iter.Seq[*Position] {
+	return func(yield func(*Position) bool) {
 		desk.positions.Range(func(key, value any) bool {
 			position, ok := value.(*Position)
 
@@ -251,7 +277,7 @@ func (desk *Desk) exit(decision types.Decision) error {
 			continue
 		}
 
-		return stored.(*Position).Exit()
+		return stored.(*Position).Exit(decision.ID)
 	}
 
 	return errnie.Error(errnie.Err(

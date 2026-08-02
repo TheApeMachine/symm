@@ -1,7 +1,6 @@
 package broker
 
 import (
-	"context"
 	"encoding/json"
 	"slices"
 	"sync"
@@ -98,7 +97,7 @@ func TestDeskExecute(t *testing.T) {
 		balance := &Balance{wallet: &sync.Map{}, quote: "USD"}
 		balance.wallet.Store("USD", decimal.NewFromInt64(100))
 		desk := &Desk{
-			ctx:        context.Background(),
+			ctx:        ctx,
 			api:        api,
 			ui:         make(chan []byte, 8),
 			instrument: instrument,
@@ -125,6 +124,34 @@ func TestDeskExecute(t *testing.T) {
 			So(positions[0].EntryOrder.ClOrdId, ShouldEqual, decision.ID)
 			So(positions[0].EntryOrderID, ShouldEqual, "venue-order")
 			So(positions[0].Status, ShouldEqual, types.PENDING)
+
+			Convey("A later exit should carry its own correlation identifier", func() {
+				stored, found := desk.positions.Load(decision.ID)
+				So(found, ShouldBeTrue)
+				position := stored.(*Position)
+				position.onExecution(&kraken.Execution{Data: []kraken.ExecutionData{{
+					ClientOrderID: decision.ID,
+					Symbol:        pair.Symbol,
+					Side:          "buy",
+					OrderStatus:   "filled",
+					CumQty:        decision.ProposedQuantity.Copy(),
+					AvgPrice:      decimal.NewFromInt64(101),
+				}}})
+				exitID := uuid.NewString()
+
+				So(desk.Execute([]types.Decision{{
+					ID:     exitID,
+					Action: types.ActionExit,
+					Symbol: pair.Symbol,
+				}}), ShouldBeNil)
+				So(conn.orders, ShouldEqual, 2)
+				So(position.ExitOrder.ClOrdId, ShouldEqual, exitID)
+				So(position.matches(kraken.ExecutionData{
+					ClientOrderID: exitID,
+					Symbol:        pair.Symbol,
+					Side:          "sell",
+				}), ShouldBeTrue)
+			})
 		})
 	})
 }

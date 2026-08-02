@@ -83,8 +83,8 @@ func (book *Book) Status() types.Status {
 }
 
 func (book *Book) Get(symbol string) *spotbook.Book {
-	book.mu.RLock()
-	defer book.mu.RUnlock()
+	book.mu.Lock()
+	defer book.mu.Unlock()
 
 	return cloneBook(book.manager.GetBook(symbol))
 }
@@ -231,8 +231,8 @@ func (book *Book) pruneNilLevels(symbolBook *spotbook.Book) {
 }
 
 func (book *Book) All() *sync.Map {
-	book.mu.RLock()
-	defer book.mu.RUnlock()
+	book.mu.Lock()
+	defer book.mu.Unlock()
 
 	out := &sync.Map{}
 
@@ -255,10 +255,19 @@ func cloneBook(source *spotbook.Book) *spotbook.Book {
 	cloned.EnableMaxDepth = false
 	cloneSide(cloned, source.Bids, spotbook.Bid)
 	cloneSide(cloned, source.Asks, spotbook.Ask)
+	primeQueues(cloned)
 	cloned.NoBookCrossing = source.NoBookCrossing
 	cloned.EnableMaxDepth = source.EnableMaxDepth
 
 	return cloned
+}
+
+func primeQueues(book *spotbook.Book) {
+	for _, side := range []*spotbook.Side{book.Bids, book.Asks} {
+		for _, level := range side.Levels {
+			level.Queue()
+		}
+	}
 }
 
 func cloneSide(

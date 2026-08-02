@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -49,19 +50,22 @@ func TestBookAll(t *testing.T) {
 		})
 
 		Convey("Snapshots should remain race-free while updates continue", func() {
-			done := make(chan struct{})
+			waitGroup := sync.WaitGroup{}
+			waitGroup.Add(8)
 
-			go func() {
-				defer close(done)
+			for range 8 {
+				go func() {
+					defer waitGroup.Done()
 
-				for range 256 {
-					managed.All().Range(func(key, value any) bool {
-						snapshot := value.(*spotbook.Book)
-						_ = snapshot.BestBid()
-						return true
-					})
-				}
-			}()
+					for range 256 {
+						managed.All().Range(func(key, value any) bool {
+							snapshot := value.(*spotbook.Book)
+							_ = snapshot.BestBid()
+							return true
+						})
+					}
+				}()
+			}
 
 			for index := range 256 {
 				price := decimal.NewFromInt64(int64(100 + index%32))
@@ -78,7 +82,35 @@ func TestBookAll(t *testing.T) {
 				So(managed.Update(event, payload), ShouldBeNil)
 			}
 
-			<-done
+			waitGroup.Wait()
+		})
+
+		Convey("One snapshot should support concurrent Level3 queue reads", func() {
+			snapshot := managed.Get("BTC/USD")
+			orders := 0
+
+			for _, level := range snapshot.Bids.Levels {
+				orders += len(level.Queue())
+			}
+
+			So(orders, ShouldEqual, 32)
+
+			waitGroup := sync.WaitGroup{}
+			waitGroup.Add(8)
+
+			for range 8 {
+				go func() {
+					defer waitGroup.Done()
+
+					for range 256 {
+						for _, level := range snapshot.Bids.Levels {
+							_ = level.Queue()
+						}
+					}
+				}()
+			}
+
+			waitGroup.Wait()
 		})
 	})
 }

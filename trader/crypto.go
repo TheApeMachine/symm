@@ -156,11 +156,9 @@ func (crypto *Crypto) onTicker(data any) {
 	for _, ticker := range typedTickers.Data {
 		crypto.thesis.Tickers.Store(ticker.Symbol, ticker)
 
-		/*
-			The broker prices every order off its own ticker cache, so the same
-			tick has to reach it here. Without this the price surface stays
-			empty and nothing downstream can be marked, sized, or costed.
-		*/
+		// The broker prices every order off its own ticker cache, so the same
+		// tick has to reach it here. Without this the price surface stays
+		// empty and nothing downstream can be marked, sized, or costed.
 		if crypto.desk != nil {
 			crypto.desk.Price().Update(&ticker)
 		}

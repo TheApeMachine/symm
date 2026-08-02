@@ -17,37 +17,30 @@ import (
 )
 
 /*
-Position is one lot shell owned by Desk. Order correlation uses request ID then
-exchange order ID; unmatched executions buffer until the ack binds them.
-Position subscribes to the market ticker topic for live mark and stoploss
-updates, and to the account execution and add_order topics for fills and
-order acks so it handles its own lifecycle without Desk absorbing the logic.
+Position is one lot shell owned and event-routed by Desk. Order correlation uses
+each decision's client order ID, then the exchange order ID returned by REST.
 */
 type Position struct {
-	mu            sync.RWMutex
-	ctx           context.Context
-	cancel        context.CancelFunc
-	api           *websocket.API
-	subscriptions map[string]*types.Subscription[any]
-	ui            chan []byte
-	instrument    *Instrument
-	price         *Price
-	balance       *Balance
-	pair          kraken.InstrumentPair
-	ID            string                `json:"id"`
-	EntryOrderID  string                `json:"entry_order_id,omitempty"`
-	ExitOrderID   string                `json:"exit_order_id,omitempty"`
-	Status        types.Status          `json:"status"`
-	EntryOrder    *spot.AddOrderRequest `json:"entry_order"`
-	ExitOrder     *spot.AddOrderRequest `json:"exit_order"`
-	Holding       *types.Holding        `json:"holding"`
+	mu           sync.RWMutex
+	ctx          context.Context
+	cancel       context.CancelFunc
+	api          *websocket.API
+	ui           chan []byte
+	instrument   *Instrument
+	price        *Price
+	balance      *Balance
+	pair         kraken.InstrumentPair
+	ID           string                `json:"id"`
+	EntryOrderID string                `json:"entry_order_id,omitempty"`
+	ExitOrderID  string                `json:"exit_order_id,omitempty"`
+	Status       types.Status          `json:"status"`
+	EntryOrder   *spot.AddOrderRequest `json:"entry_order"`
+	ExitOrder    *spot.AddOrderRequest `json:"exit_order"`
+	Holding      *types.Holding        `json:"holding"`
 }
 
 /*
-NewPosition constructs one lot shell; Desk routes order and execution
-rows initially but Position subscribes to the market ticker, account
-executions, and account add_order topics so it responds to live
-websocket messages directly.
+NewPosition constructs one desk-owned lot shell.
 */
 func NewPosition(
 	ctx context.Context,
@@ -63,15 +56,10 @@ func NewPosition(
 	ctx, cancel := context.WithCancel(ctx)
 
 	position := &Position{
-		ctx:    ctx,
-		cancel: cancel,
-		Status: types.INITIALIZING,
-		api:    api,
-		subscriptions: map[string]*types.Subscription[any]{
-			"ticker":     api.Subscribe("ticker", types.NewSubscription[any]()),
-			"executions": api.Subscribe("executions", types.NewSubscription[any]()),
-			"add_order":  api.Subscribe("add_order", types.NewSubscription[any]()),
-		},
+		ctx:        ctx,
+		cancel:     cancel,
+		Status:     types.INITIALIZING,
+		api:        api,
 		ui:         ui,
 		instrument: instrument,
 		price:      price,
@@ -99,45 +87,21 @@ func NewPosition(
 		),
 	}
 
-	position.run()
 	position.Publish()
 
 	return position
 }
 
-func (position *Position) run() {
-	go func() {
-		for {
-			select {
-			case <-position.ctx.Done():
-				return
-			case message := <-position.subscriptions["ticker"].Channel:
-				ticker, ok := message.(*kraken.Ticker)
-
-				if !ok {
-					continue
-				}
-
-				position.onTicker(ticker)
-			case message := <-position.subscriptions["executions"].Channel:
-				execution, ok := message.(*kraken.Execution)
-
-				if !ok || execution == nil {
-					continue
-				}
-
-				position.onExecution(execution)
-			}
-		}
-	}()
-}
-
-func (position *Position) snapshot() Position {
+func (position *Position) snapshot() *Position {
 	position.mu.RLock()
 	defer position.mu.RUnlock()
 
-	out := *position
-	out.mu = sync.RWMutex{}
+	out := &Position{
+		ID:           position.ID,
+		EntryOrderID: position.EntryOrderID,
+		ExitOrderID:  position.ExitOrderID,
+		Status:       position.Status,
+	}
 
 	if position.Holding != nil {
 		holding := *position.Holding
@@ -173,7 +137,7 @@ use you would also not be manually managing the balances.
 */
 func (position *Position) Publish() {
 	out := datura.NewMap()
-	out["positions"] = []Position{position.snapshot()}
+	out["positions"] = []*Position{position.snapshot()}
 	utils.Publish(position.ui, out)
 }
 
@@ -236,8 +200,18 @@ func (position *Position) matches(execution kraken.ExecutionData) bool {
 	position.mu.RLock()
 	defer position.mu.RUnlock()
 
-	if execution.ClientOrderID == position.ID {
-		return true
+	if execution.ClientOrderID != "" {
+		if execution.ClientOrderID == position.ID {
+			return true
+		}
+
+		if position.EntryOrder != nil && execution.ClientOrderID == position.EntryOrder.ClOrdId {
+			return true
+		}
+
+		if position.ExitOrder != nil && execution.ClientOrderID == position.ExitOrder.ClOrdId {
+			return true
+		}
 	}
 
 	return execution.OrderID != "" &&
@@ -258,6 +232,16 @@ func (position *Position) applyEntry(execution kraken.ExecutionData) {
 	if execution.CumQty != nil && execution.CumQty.Sign() > 0 {
 		position.Holding.Qty = execution.CumQty.Copy()
 		position.Holding.SellableQty = execution.CumQty.Copy()
+	}
+
+	if execution.CumQty == nil && execution.LastQty != nil && execution.LastQty.Sign() > 0 {
+		if position.Holding.SellableQty == nil {
+			position.Holding.SellableQty = execution.LastQty.Copy()
+		} else {
+			position.Holding.SellableQty = position.Holding.SellableQty.Add(execution.LastQty)
+		}
+
+		position.Holding.Qty = position.Holding.SellableQty.Copy()
 	}
 
 	if execution.AvgPrice != nil && execution.AvgPrice.Sign() > 0 {
@@ -333,8 +317,10 @@ func (position *Position) Enter() (*Position, error) {
 		position.EntryOrderID = result.ID[0]
 	}
 
-	position.Status = types.PENDING
-	position.Holding.Status = types.PENDING
+	if position.Status != types.OPEN && position.Status != types.CLOSED {
+		position.Status = types.PENDING
+		position.Holding.Status = types.PENDING
+	}
 	position.mu.Unlock()
 	position.Publish()
 
@@ -344,7 +330,15 @@ func (position *Position) Enter() (*Position, error) {
 /*
 Exit submits a market sell for the sellable ledger quantity.
 */
-func (position *Position) Exit() error {
+func (position *Position) Exit(clientOrderID string) error {
+	if clientOrderID == "" {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"position: exit order is missing a client order identifier",
+			nil,
+		))
+	}
+
 	position.mu.Lock()
 
 	if position.Holding == nil || position.Holding.SellableQty == nil || position.Holding.SellableQty.Sign() <= 0 {
@@ -358,6 +352,7 @@ func (position *Position) Exit() error {
 	}
 
 	position.ExitOrder.Volume = position.Holding.SellableQty.String()
+	position.ExitOrder.ClOrdId = clientOrderID
 	position.mu.Unlock()
 
 	result, err := position.api.AddOrder(position.ExitOrder)
@@ -376,8 +371,10 @@ func (position *Position) Exit() error {
 		position.ExitOrderID = result.ID[0]
 	}
 
-	position.Status = types.PENDING
-	position.Holding.Status = types.PENDING
+	if position.Status != types.CLOSED {
+		position.Status = types.PENDING
+		position.Holding.Status = types.PENDING
+	}
 	position.mu.Unlock()
 	position.Publish()
 

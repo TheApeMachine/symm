@@ -248,11 +248,24 @@ func (solver *Solver) publish(thesis *types.Thesis, graph *Graph) {
 /*
 extractMeasurementNodes normalizes Thesis measurement storage before materializing
 metric nodes so graph extraction accepts both singleton rows and the slice-backed
-values AppendMeasuremnts stores per source. That normalization keeps graph
-building tolerant of older or ad-hoc thesis producers while emitting the same
-measurement-node surface for downstream reasoning.
+values AppendMeasurements stores per source. Append history is collapsed by the
+stable graph identity before node and metadata allocation because later rows
+would otherwise overwrite the same node after consuming memory.
 */
 func (solver *Solver) extractMeasurementNodes(thesis *types.Thesis, graph *Graph) {
+	type measurementNodeKey struct {
+		symbol    string
+		source    types.SourceType
+		metricKey string
+	}
+
+	type measurementNode struct {
+		measurement *types.Measurement
+		metric      types.MetricSample
+	}
+
+	latest := make(map[measurementNodeKey]measurementNode)
+
 	thesis.Measurements.Range(func(key, value any) bool {
 		rows, ok := value.([]*types.Measurement)
 
@@ -270,31 +283,39 @@ func (solver *Solver) extractMeasurementNodes(thesis *types.Thesis, graph *Graph
 			}
 
 			for metricKey, metric := range m.Metrics {
-				nodeID := fmt.Sprintf("meas:%s:%s:%s", m.Symbol, m.Source, metricKey)
-				confidence := 1.0
-				if m.Uncertainty != nil {
-					confidence = m.Uncertainty.Confidence
-				}
-
-				graph.AddNode(&Node{
-					ID:         nodeID,
-					Symbol:     m.Symbol,
-					Source:     string(m.Source),
-					Kind:       "measurement",
-					Value:      metric.Raw,
-					Confidence: confidence,
-					At:         m.At,
-					Metadata: map[string]any{
-						"readiness": string(m.Validity.Readiness),
-						"state":     string(m.Validity.State),
-						"unit":      string(metric.Unit),
-					},
-				})
+				latest[measurementNodeKey{
+					symbol:    m.Symbol,
+					source:    m.Source,
+					metricKey: metricKey,
+				}] = measurementNode{measurement: m, metric: metric}
 			}
 		}
 
 		return true
 	})
+
+	for key, candidate := range latest {
+		confidence := 1.0
+
+		if candidate.measurement.Uncertainty != nil {
+			confidence = candidate.measurement.Uncertainty.Confidence
+		}
+
+		graph.AddNode(&Node{
+			ID:         "meas:" + key.symbol + ":" + string(key.source) + ":" + key.metricKey,
+			Symbol:     candidate.measurement.Symbol,
+			Source:     string(candidate.measurement.Source),
+			Kind:       KindMeasurement,
+			Value:      candidate.metric.Raw,
+			Confidence: confidence,
+			At:         candidate.measurement.At,
+			Metadata: map[string]any{
+				"readiness": string(candidate.measurement.Validity.Readiness),
+				"state":     string(candidate.measurement.Validity.State),
+				"unit":      string(candidate.metric.Unit),
+			},
+		})
+	}
 }
 
 /*
@@ -459,46 +480,37 @@ func agreementWeight(left, right float64) float64 {
 }
 
 /*
-inferStructuralEdges evaluates all 9 relational edge types across registered nodes.
+inferStructuralEdges indexes nodes by the domains that can produce an
+evidence-bearing relationship. Zero-confidence pair relations are not
+materialized because their decision weight is necessarily zero.
 */
 func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 	nodes := graph.Nodes
+	resonanceBySymbol := make(map[string][]*Node)
+	causalBySymbol := make(map[string][]*Node)
+	interventions := make([]*Node, 0)
+	expectations := make([]*Node, 0)
 
-	// 1. Evaluate StaleRelative, Incomparable, Supports, Contradicts, Conditions, Independence
-	for idA, nodeA := range nodes {
-		for idB, nodeB := range nodes {
-			if idA == idB {
-				continue
+	for _, node := range nodes {
+		switch node.Kind {
+		case KindResonance:
+			resonanceBySymbol[node.Symbol] = append(resonanceBySymbol[node.Symbol], node)
+		case KindCausal:
+			causalBySymbol[node.Symbol] = append(causalBySymbol[node.Symbol], node)
+
+			if node.ID == "causal:"+node.Symbol+":intervention" {
+				interventions = append(interventions, node)
 			}
 
-			// Relation: Stale Relative To
-			if !nodeA.At.IsZero() && !nodeB.At.IsZero() {
-				if nodeA.At.Add(solver.staleThreshold).Before(nodeB.At) {
-					graph.AddEdge(&Edge{
-						From:     idA,
-						To:       idB,
-						Relation: RelationStaleRelativeTo,
-						Weight:   nodeB.At.Sub(nodeA.At).Seconds(),
-						At:       graph.At,
-						Reason:   "timestamp outdated relative to target node",
-					})
-				}
+			if node.ID == "causal:"+node.Symbol+":doExpectation" {
+				expectations = append(expectations, node)
 			}
+		}
+	}
 
-			// Relation: Incomparable With (Low confidence or invalid readiness)
-			if nodeA.Confidence <= 0 || nodeB.Confidence <= 0 {
-				graph.AddEdge(&Edge{
-					From:     idA,
-					To:       idB,
-					Relation: RelationIncomparableWith,
-					Weight:   0.0,
-					At:       graph.At,
-					Reason:   "zero confidence or unvalidated metric scale",
-				})
-			}
-
-			// Cross-Domain Inference: Resonance Forecast vs Causal Uplift
-			if nodeA.Kind == "resonance" && nodeB.Kind == "causal" && nodeA.Symbol == nodeB.Symbol {
+	for symbol, resonanceNodes := range resonanceBySymbol {
+		for _, resonanceNode := range resonanceNodes {
+			for _, causalNode := range causalBySymbol[symbol] {
 				/*
 					This edge reads the two heads for directional agreement
 					only. They score on unrelated scales, so the weight is the
@@ -506,32 +518,41 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 					between the values; a raw magnitude here would let the
 					head with the larger units decide the relation by itself.
 				*/
-				agreement := agreementWeight(nodeA.Value, nodeB.Value)
+				agreement := agreementWeight(resonanceNode.Value, causalNode.Value)
 
-				if nodeA.Value > 0 && nodeB.Value > 0 { // Both agree +
+				if resonanceNode.Value > 0 && causalNode.Value > 0 {
 					graph.AddEdge(&Edge{
-						From:       idA,
-						To:         idB,
+						From:       resonanceNode.ID,
+						To:         causalNode.ID,
 						Relation:   RelationSupports,
 						Weight:     agreement,
-						Confidence: nodeA.Confidence * nodeB.Confidence,
+						Confidence: resonanceNode.Confidence * causalNode.Confidence,
 						At:         graph.At,
 						Reason:     "predictive forecast and causal uplift agree directionally (+)",
 					})
-				} else if (nodeA.Value > 0 && nodeB.Value < 0) || (nodeA.Value < 0 && nodeB.Value > 0) { // Conflict!
+
+					continue
+				}
+
+				if (resonanceNode.Value > 0 && causalNode.Value < 0) ||
+					(resonanceNode.Value < 0 && causalNode.Value > 0) {
 					graph.AddEdge(&Edge{
-						From:       idA,
-						To:         idB,
+						From:       resonanceNode.ID,
+						To:         causalNode.ID,
 						Relation:   RelationContradicts,
 						Weight:     agreement,
-						Confidence: nodeA.Confidence * nodeB.Confidence,
+						Confidence: resonanceNode.Confidence * causalNode.Confidence,
 						At:         graph.At,
 						Reason:     "predictive forecast and causal uplift conflict in direction",
 					})
-				} else if math.Abs(nodeA.Value) < 0.01 && math.Abs(nodeB.Value) < 0.01 {
+
+					continue
+				}
+
+				if math.Abs(resonanceNode.Value) < 0.01 && math.Abs(causalNode.Value) < 0.01 {
 					graph.AddEdge(&Edge{
-						From:       idA,
-						To:         idB,
+						From:       resonanceNode.ID,
+						To:         causalNode.ID,
 						Relation:   RelationIndependentOf,
 						Weight:     1.0,
 						Confidence: 1.0,
@@ -540,26 +561,26 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 					})
 				}
 			}
+		}
+	}
 
-			// Relation: Conditions (Pearl Condition Number / Energy Precondition)
-			if idA == fmt.Sprintf("causal:%s:intervention", nodeA.Symbol) &&
-				idB == fmt.Sprintf("causal:%s:doExpectation", nodeB.Symbol) {
-				graph.AddEdge(&Edge{
-					From:     idA,
-					To:       idB,
-					Relation: RelationConditions,
+	for _, intervention := range interventions {
+		for _, expectation := range expectations {
+			graph.AddEdge(&Edge{
+				From:     intervention.ID,
+				To:       expectation.ID,
+				Relation: RelationConditions,
 
-					/*
-						The interventional level is an unbounded causal score,
-						so it states how strongly it conditions rather than by
-						how much, keeping this edge comparable to the others.
-					*/
-					Weight:     math.Tanh(math.Abs(nodeA.Value)),
-					Confidence: nodeA.Confidence,
-					At:         graph.At,
-					Reason:     "interventional level conditions do-expectation",
-				})
-			}
+				/*
+					The interventional level is an unbounded causal score,
+					so it states how strongly it conditions rather than by
+					how much, keeping this edge comparable to the others.
+				*/
+				Weight:     math.Tanh(math.Abs(intervention.Value)),
+				Confidence: intervention.Confidence,
+				At:         graph.At,
+				Reason:     "interventional level conditions do-expectation",
+			})
 		}
 	}
 
