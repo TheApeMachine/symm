@@ -77,6 +77,38 @@ type Live struct {
 	resyncing   sync.Map
 	paper       *Paper
 	model       string
+
+	/*
+		Level3Client supplies the websocket client for the child connections
+		SubL3 opens. When nil the child dials the real Level3 endpoint; tests
+		set it to keep those children on the fixture transport.
+	*/
+	Level3Client func() *spot.WebSocket
+}
+
+/*
+newLevel3 opens a child connection for a Level3 symbol group, honouring an
+injected client when one is configured.
+*/
+func (live *Live) newLevel3(
+	ctx context.Context,
+	simulator *Simulator,
+	auth bool,
+	endpoint string,
+) *Live {
+	var client *spot.WebSocket
+
+	if live.Level3Client != nil {
+		client = live.Level3Client()
+	}
+
+	child := NewWithClient(ctx, simulator, auth, endpoint, client)
+
+	if child != nil {
+		child.Level3Client = live.Level3Client
+	}
+
+	return child
 }
 
 /*
@@ -412,7 +444,7 @@ func (live *Live) SubL3(symbols []string) {
 	}
 
 	for groups := range slices.Chunk(symbols, 200) {
-		conn := New(
+		conn := live.newLevel3(
 			live.ctx, live.simulator, live.auth, Level3WebSocketURL,
 		)
 

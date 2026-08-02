@@ -3,10 +3,13 @@ package tests
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/tests/types"
 )
 
 func TestNewConn(t *testing.T) {
@@ -24,8 +27,8 @@ func TestConnConfigure(t *testing.T) {
 		conn := NewConn(context.Background())
 		defer conn.Close()
 
-		symbols := []*Symbol{
-			NewSymbol("BTC/USD", 50000, 1),
+		symbols := []*types.Symbol{
+			types.NewSymbol("BTC/USD", 50000, 1),
 		}
 
 		conn.Configure(symbols)
@@ -61,22 +64,29 @@ func TestConnSubscriptionACK(t *testing.T) {
 		conn := NewConn(context.Background())
 		defer conn.Close()
 
-		Convey("When a subscribe request is sent via OnSent", func() {
-			ackReceived := false
+		Convey("When a subscribe request is written to the connection", func() {
+			acked := make(chan []byte, 1)
 
 			conn.Client().OnReceived.Recurring(
 				func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
-					ackReceived = true
+					select {
+					case acked <- event.Data.Bytes():
+					default:
+					}
 				},
 			)
 
-			conn.Client().OnSent.Call(
-				sdkkraken.NewWebSocketMessage(
-					[]byte(`{"method":"subscribe","params":{"channel":"ticker"}}`),
-				),
-			)
+			So(conn.Client().WriteMessage(
+				websocket.TextMessage,
+				[]byte(`{"method":"subscribe","params":{"channel":"ticker"}}`),
+			), ShouldBeNil)
 
-			So(ackReceived, ShouldBeTrue)
+			select {
+			case ack := <-acked:
+				So(string(ack), ShouldContainSubstring, `"method":"subscribe"`)
+			case <-time.After(5 * time.Second):
+				So("subscribe ack", ShouldEqual, "not received")
+			}
 		})
 	})
 }
@@ -86,22 +96,29 @@ func TestConnOrderACK(t *testing.T) {
 		conn := NewConn(context.Background())
 		defer conn.Close()
 
-		Convey("When an add_order request is sent via OnSent", func() {
-			ackReceived := false
+		Convey("When an add_order request is written to the connection", func() {
+			acked := make(chan []byte, 1)
 
 			conn.Client().OnReceived.Recurring(
 				func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
-					ackReceived = true
+					select {
+					case acked <- event.Data.Bytes():
+					default:
+					}
 				},
 			)
 
-			conn.Client().OnSent.Call(
-				sdkkraken.NewWebSocketMessage(
-					[]byte(`{"method":"add_order","cl_ord_id":"TEST_ORDER"}`),
-				),
-			)
+			So(conn.Client().WriteMessage(
+				websocket.TextMessage,
+				[]byte(`{"method":"add_order","cl_ord_id":"TEST_ORDER"}`),
+			), ShouldBeNil)
 
-			So(ackReceived, ShouldBeTrue)
+			select {
+			case ack := <-acked:
+				So(string(ack), ShouldContainSubstring, "SIM-ORD-")
+			case <-time.After(5 * time.Second):
+				So("add_order ack", ShouldEqual, "not received")
+			}
 		})
 	})
 }

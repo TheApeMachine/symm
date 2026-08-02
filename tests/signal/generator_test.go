@@ -1,9 +1,10 @@
-package tests
+package signal
 
 import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	testtypes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestGeneratorNewGenerator(t *testing.T) {
@@ -14,7 +15,7 @@ func TestGeneratorNewGenerator(t *testing.T) {
 			So(generator, ShouldNotBeNil)
 			So(generator.symbol, ShouldEqual, "SIM1/USD")
 			So(generator.midPrice, ShouldEqual, 100.0)
-			So(generator.currentState, ShouldEqual, Baseline)
+			So(generator.currentState, ShouldEqual, testtypes.Baseline)
 		})
 	})
 }
@@ -24,9 +25,9 @@ func TestGeneratorSetState(t *testing.T) {
 		generator := NewGenerator("SIM1/USD", 100.0, 42)
 
 		Convey("When SetState is called", func() {
-			generator.SetState(FastPump)
+			generator.SetState(testtypes.FastPump)
 
-			So(generator.targetState, ShouldEqual, FastPump)
+			So(generator.targetState, ShouldEqual, testtypes.FastPump)
 		})
 	})
 }

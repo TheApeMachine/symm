@@ -5,7 +5,7 @@ import (
 	"iter"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/signal"
 )
 
 //go:embed fixtures/*.json
@@ -21,14 +21,14 @@ const (
 type Fixture struct {
 	horizon   int
 	template  []byte
-	generator *tests.Generator
+	generator *signal.Generator
 	typ       FixtureType
 }
 
 func NewFixture(
 	typ FixtureType,
 	horizon int,
-	generator *tests.Generator,
+	generator *signal.Generator,
 ) *Fixture {
 	raw, err := fixtureFiles.ReadFile("fixtures/" + string(typ) + ".json")
 

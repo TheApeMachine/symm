@@ -5,12 +5,13 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/tests/types"
 )
 
 func TestMarketNewMarket(t *testing.T) {
 	Convey("Given a list of symbols", t, func() {
-		symbols := []*Symbol{
-			NewSymbol("SIM1/USD", 100.0, 42),
+		symbols := []*types.Symbol{
+			types.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
 		Convey("When NewMarket is initialized", func() {
@@ -21,47 +22,31 @@ func TestMarketNewMarket(t *testing.T) {
 			So(market.Public, ShouldNotBeNil)
 			So(market.Private, ShouldNotBeNil)
 			So(market.Level3, ShouldNotBeNil)
-			So(market.State, ShouldEqual, Baseline)
+			So(market.State, ShouldEqual, types.Baseline)
 		})
 	})
 }
 
 func TestMarketTransition(t *testing.T) {
 	Convey("Given a market in Baseline state", t, func() {
-		symbols := []*Symbol{
-			NewSymbol("SIM1/USD", 100.0, 42),
+		symbols := []*types.Symbol{
+			types.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 		market := NewMarket(t.Context(), symbols)
 		defer market.Close()
 
 		Convey("When transitioning to FastPump", func() {
-			market.Transition(FastPump)
+			market.Transition(types.FastPump)
 
-			So(market.State, ShouldEqual, FastPump)
-		})
-	})
-}
-
-func TestMarketTick(t *testing.T) {
-	Convey("Given a market", t, func() {
-		symbols := []*Symbol{
-			NewSymbol("SIM1/USD", 100.0, 42),
-		}
-		market := NewMarket(t.Context(), symbols)
-		defer market.Close()
-
-		Convey("When market.Tick is called", func() {
-			market.Tick()
-
-			So(market.Symbols[0].generator, ShouldNotBeNil)
+			So(market.State, ShouldEqual, types.FastPump)
 		})
 	})
 }
 
 func TestMarketWithMarket(t *testing.T) {
 	Convey("Given WithMarket test wrapper", t, func() {
-		symbols := []*Symbol{
-			NewSymbol("SIM1/USD", 100.0, 42),
+		symbols := []*types.Symbol{
+			types.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
 		WithMarket(t, symbols, func(market *Market) {
@@ -72,9 +57,9 @@ func TestMarketWithMarket(t *testing.T) {
 }
 
 func BenchmarkMarketTick(b *testing.B) {
-	symbols := []*Symbol{
-		NewSymbol("SIM1/USD", 100.0, 42),
-		NewSymbol("SIM2/USD", 200.0, 43),
+	symbols := []*types.Symbol{
+		types.NewSymbol("SIM1/USD", 100.0, 42),
+		types.NewSymbol("SIM2/USD", 200.0, 43),
 	}
 	market := NewMarket(context.Background(), symbols)
 	defer market.Close()

@@ -8,12 +8,12 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/symm/tests/fixtures/balances"
 	"github.com/theapemachine/symm/tests/fixtures/orderack"
 	"github.com/theapemachine/symm/tests/fixtures/tradevolume"
+	testtypes "github.com/theapemachine/symm/tests/types"
 )
 
 /*
@@ -26,7 +26,7 @@ constructed before the symbol list is known (matching NewConn's signature).
 */
 type mockTransport struct {
 	mu          sync.RWMutex
-	symbols     []*Symbol
+	symbols     []*testtypes.Symbol
 	tradeVolume *tradevolume.Fixture
 }
 
@@ -34,7 +34,7 @@ func newMockTransport() *mockTransport {
 	return &mockTransport{}
 }
 
-func (transport *mockTransport) configure(symbols []*Symbol) {
+func (transport *mockTransport) configure(symbols []*testtypes.Symbol) {
 	transport.mu.Lock()
 	defer transport.mu.Unlock()
 
@@ -42,7 +42,7 @@ func (transport *mockTransport) configure(symbols []*Symbol) {
 	pairs := make([]string, len(symbols))
 
 	for index, symbol := range symbols {
-		pairs[index] = symbol.Pair()
+		pairs[index] = symbol.Pair
 	}
 
 	transport.tradeVolume = tradevolume.NewMarket(pairs)
@@ -91,7 +91,7 @@ func (transport *mockTransport) RoundTrip(
 	return response, nil
 }
 
-func (transport *mockTransport) getSymbols() []*Symbol {
+func (transport *mockTransport) getSymbols() []*testtypes.Symbol {
 	transport.mu.RLock()
 	defer transport.mu.RUnlock()
 
@@ -106,7 +106,7 @@ func (transport *mockTransport) assets() []byte {
 	result := map[string]any{}
 
 	for _, symbol := range transport.getSymbols() {
-		parts := strings.Split(symbol.Pair(), "/")
+		parts := strings.Split(symbol.Pair, "/")
 
 		for _, asset := range parts {
 			if _, exists := result[asset]; exists {
@@ -133,7 +133,7 @@ func (transport *mockTransport) assetPairs() []byte {
 	result := map[string]any{}
 
 	for _, symbol := range transport.getSymbols() {
-		parts := strings.Split(symbol.Pair(), "/")
+		parts := strings.Split(symbol.Pair, "/")
 
 		if len(parts) != 2 {
 			continue
@@ -143,26 +143,26 @@ func (transport *mockTransport) assetPairs() []byte {
 
 		result[krakenKey] = map[string]any{
 			"altname":             krakenKey,
-			"wsname":              symbol.Pair(),
-			"aclass_base":        "currency",
-			"base":               parts[0],
-			"aclass_quote":       "currency",
-			"quote":              parts[1],
-			"pair_decimals":      2,
-			"cost_decimals":      5,
-			"lot_decimals":       8,
-			"lot_multiplier":     1,
-			"leverage_buy":       []int{},
-			"leverage_sell":      []int{},
-			"fees":               [][]float64{{0, 0.26}},
-			"fees_maker":         [][]float64{{0, 0.16}},
+			"wsname":              symbol.Pair,
+			"aclass_base":         "currency",
+			"base":                parts[0],
+			"aclass_quote":        "currency",
+			"quote":               parts[1],
+			"pair_decimals":       2,
+			"cost_decimals":       5,
+			"lot_decimals":        8,
+			"lot_multiplier":      1,
+			"leverage_buy":        []int{},
+			"leverage_sell":       []int{},
+			"fees":                [][]float64{{0, 0.26}},
+			"fees_maker":          [][]float64{{0, 0.16}},
 			"fee_volume_currency": "ZUSD",
-			"margin_call":        80,
-			"margin_stop":        40,
-			"ordermin":           "0.0001",
-			"costmin":            "0.50",
-			"tick_size":          "0.01",
-			"status":             "online",
+			"margin_call":         80,
+			"margin_stop":         40,
+			"ordermin":            "0.0001",
+			"costmin":             "0.50",
+			"tick_size":           "0.01",
+			"status":              "online",
 		}
 	}
 
@@ -256,7 +256,7 @@ addOrder uses the orderack fixture to generate a proper Kraken AddOrder
 REST response with a deterministic order ID.
 */
 func (transport *mockTransport) addOrder() []byte {
-	sequence := atomic.AddUint64(&orderCounter, 1)
+	sequence := orderCounter.Add(1)
 
 	ackPayload := orderack.Frame(orderack.Options{
 		ReqID:   int64(sequence),

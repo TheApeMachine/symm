@@ -8,13 +8,14 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	testtypes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestMockTransportAssets(t *testing.T) {
 	Convey("Given a mockTransport configured with simulated symbols", t, func() {
-		symbols := []*Symbol{
-			NewSymbol("BTC/USD", 50000, 1),
-			NewSymbol("ETH/USD", 3000, 2),
+		symbols := []*testtypes.Symbol{
+			testtypes.NewSymbol("BTC/USD", 50000, 1),
+			testtypes.NewSymbol("ETH/USD", 3000, 2),
 		}
 
 		conn := NewConn(context.Background())
@@ -50,8 +51,8 @@ func TestMockTransportAssets(t *testing.T) {
 
 func TestMockTransportAssetPairs(t *testing.T) {
 	Convey("Given a mockTransport configured with simulated symbols", t, func() {
-		symbols := []*Symbol{
-			NewSymbol("BTC/USD", 50000, 1),
+		symbols := []*testtypes.Symbol{
+			testtypes.NewSymbol("BTC/USD", 50000, 1),
 		}
 
 		conn := NewConn(context.Background())
@@ -90,7 +91,7 @@ func TestMockTransportAssetPairs(t *testing.T) {
 func TestMockTransportBalance(t *testing.T) {
 	Convey("Given a mockTransport configured with symbols", t, func() {
 		conn := NewConn(context.Background())
-		conn.Configure([]*Symbol{NewSymbol("BTC/USD", 50000, 1)})
+		conn.Configure([]*testtypes.Symbol{testtypes.NewSymbol("BTC/USD", 50000, 1)})
 		defer conn.Close()
 
 		Convey("When the REST Balance endpoint is called", func() {
@@ -119,8 +120,8 @@ func TestMockTransportBalance(t *testing.T) {
 
 func TestMockTransportTradeVolume(t *testing.T) {
 	Convey("Given a mockTransport configured with symbols", t, func() {
-		symbols := []*Symbol{
-			NewSymbol("BTC/USD", 50000, 1),
+		symbols := []*testtypes.Symbol{
+			testtypes.NewSymbol("BTC/USD", 50000, 1),
 		}
 
 		conn := NewConn(context.Background())
@@ -157,7 +158,7 @@ func TestMockTransportTradeVolume(t *testing.T) {
 func TestMockTransportAddOrder(t *testing.T) {
 	Convey("Given a mockTransport configured with symbols", t, func() {
 		conn := NewConn(context.Background())
-		conn.Configure([]*Symbol{NewSymbol("BTC/USD", 50000, 1)})
+		conn.Configure([]*testtypes.Symbol{testtypes.NewSymbol("BTC/USD", 50000, 1)})
 		defer conn.Close()
 
 		Convey("When the REST AddOrder endpoint is called", func() {
@@ -189,9 +190,9 @@ func TestMockTransportAddOrder(t *testing.T) {
 }
 
 func BenchmarkMockTransportRoundTrip(b *testing.B) {
-	symbols := []*Symbol{
-		NewSymbol("BTC/USD", 50000, 1),
-		NewSymbol("ETH/USD", 3000, 2),
+	symbols := []*testtypes.Symbol{
+		testtypes.NewSymbol("BTC/USD", 50000, 1),
+		testtypes.NewSymbol("ETH/USD", 3000, 2),
 	}
 
 	conn := NewConn(context.Background())

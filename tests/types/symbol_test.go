@@ -1,4 +1,4 @@
-package tests
+package types
 
 import (
 	"testing"
@@ -12,9 +12,8 @@ func TestSymbolNewSymbol(t *testing.T) {
 
 		Convey("It should instantiate Symbol with an active generator", func() {
 			So(symbol, ShouldNotBeNil)
-			So(symbol.pair, ShouldEqual, "SIM1/USD")
-			So(symbol.startPrice, ShouldEqual, 100.0)
-			So(symbol.generator, ShouldNotBeNil)
+			So(symbol.Pair, ShouldEqual, "SIM1/USD")
+			So(symbol.StartPrice, ShouldEqual, 100.0)
 		})
 	})
 }

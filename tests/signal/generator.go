@@ -1,12 +1,15 @@
-package tests
+package signal
 
 import (
 	"encoding/json"
+	"fmt"
 	"iter"
 	"math"
 	"math/rand"
 	"sync"
 	"time"
+
+	testtypes "github.com/theapemachine/symm/tests/types"
 )
 
 /*
@@ -20,10 +23,10 @@ type Generator struct {
 	mu           sync.RWMutex
 	rng          *rand.Rand
 	symbol       string
-	currentState MarketState
-	targetState  MarketState
+	currentState testtypes.MarketState
+	targetState  testtypes.MarketState
 	momentum     float64
-	profiles     map[MarketState]RegimeProfile
+	profiles     map[testtypes.MarketState]testtypes.RegimeProfile
 	midPrice     float64
 	openPrice    float64
 	cumVolume    float64
@@ -31,16 +34,16 @@ type Generator struct {
 	highPrice    float64
 	lowPrice     float64
 	currTime     time.Time
+	sequence     int64
 }
 
 func NewGenerator(symbol string, startPrice float64, seed int64) *Generator {
 	return &Generator{
 		rng:          rand.New(rand.NewSource(seed)),
 		symbol:       symbol,
-		currentState: Baseline,
-		targetState:  Baseline,
-		momentum:     1.0,
-		profiles:     DefaultProfiles,
+		currentState: testtypes.Baseline,
+		targetState:  testtypes.Baseline,
+		profiles:     testtypes.DefaultProfiles,
 		midPrice:     startPrice,
 		openPrice:    startPrice,
 		highPrice:    startPrice,
@@ -58,7 +61,7 @@ directly into the new state. Use momentum to determine how fast the
 transition happens. A higher momentum value will cause the transition
 to happen faster.
 */
-func (generator *Generator) SetState(state MarketState, momentum ...float64) {
+func (generator *Generator) SetState(state testtypes.MarketState, momentum ...float64) {
 	generator.mu.Lock()
 	defer generator.mu.Unlock()
 
@@ -73,7 +76,7 @@ func (generator *Generator) SetState(state MarketState, momentum ...float64) {
 }
 
 // Step generates the next relative sample frame based on current state.
-func (generator *Generator) Step() Sample {
+func (generator *Generator) Step() testtypes.Sample {
 	generator.mu.Lock()
 	defer generator.mu.Unlock()
 
@@ -90,7 +93,7 @@ func (generator *Generator) Step() Sample {
 	profile, ok := generator.profiles[generator.currentState]
 
 	if !ok {
-		profile = generator.profiles[Baseline]
+		profile = generator.profiles[testtypes.Baseline]
 	}
 
 	// 1. Advance Time Cadence
@@ -134,7 +137,7 @@ func (generator *Generator) Step() Sample {
 	change := last - generator.openPrice
 	changePct := (change / generator.openPrice) * 100.0
 
-	return Sample{
+	return testtypes.Sample{
 		Symbol:    generator.symbol,
 		Bid:       bid,
 		BidQty:    math.Round(bidQty*100) / 100,
@@ -165,12 +168,12 @@ func (generator *Generator) Generate(template []byte) iter.Seq[[]byte] {
 	}
 }
 
-func (generator *Generator) render(template []byte, sample Sample) []byte {
+func (generator *Generator) render(template []byte, sample testtypes.Sample) []byte {
 	if len(template) == 0 {
 		payload, _ := json.Marshal(map[string]any{
 			"channel": "ticker",
 			"type":    "update",
-			"data":    []Sample{sample},
+			"data":    []testtypes.Sample{sample},
 		})
 
 		return payload
@@ -182,21 +185,63 @@ func (generator *Generator) render(template []byte, sample Sample) []byte {
 		return template
 	}
 
+	channel, _ := wire["channel"].(string)
+	stamp := sample.Timestamp.Format(time.RFC3339Nano)
+	generator.sequence++
+
 	if data, ok := wire["data"].([]any); ok && len(data) > 0 {
 		if row, ok := data[0].(map[string]any); ok {
 			row["symbol"] = sample.Symbol
-			row["bid"] = sample.Bid
-			row["bid_qty"] = sample.BidQty
-			row["ask"] = sample.Ask
-			row["ask_qty"] = sample.AskQty
-			row["last"] = sample.Last
-			row["volume"] = sample.Volume
-			row["vwap"] = sample.VWAP
-			row["low"] = sample.Low
-			row["high"] = sample.High
-			row["change"] = sample.Change
-			row["change_pct"] = sample.ChangePct
-			row["timestamp"] = sample.Timestamp.Format(time.RFC3339Nano)
+			row["timestamp"] = stamp
+
+			switch channel {
+			case "book":
+				row["bids"] = []any{map[string]any{
+					"price": sample.Bid, "qty": sample.BidQty,
+				}}
+				row["asks"] = []any{map[string]any{
+					"price": sample.Ask, "qty": sample.AskQty,
+				}}
+			case "level3":
+				row["bids"] = []any{map[string]any{
+					"order_id":    fmt.Sprintf("OBID-%09d", generator.sequence),
+					"limit_price": sample.Bid,
+					"order_qty":   sample.BidQty,
+					"timestamp":   stamp,
+				}}
+				row["asks"] = []any{map[string]any{
+					"order_id":    fmt.Sprintf("OASK-%09d", generator.sequence),
+					"limit_price": sample.Ask,
+					"order_qty":   sample.AskQty,
+					"timestamp":   stamp,
+				}}
+			case "trade":
+				side := "buy"
+
+				if sample.Last < sample.VWAP {
+					side = "sell"
+				}
+
+				row["side"] = side
+				row["price"] = sample.Last
+				row["qty"] = sample.BidQty
+				row["ord_type"] = "limit"
+				row["trade_id"] = generator.sequence
+			default:
+				row["bid"] = sample.Bid
+				row["bid_qty"] = sample.BidQty
+				row["ask"] = sample.Ask
+				row["ask_qty"] = sample.AskQty
+				row["last"] = sample.Last
+				row["volume"] = sample.Volume
+				row["vwap"] = sample.VWAP
+				row["low"] = sample.Low
+				row["high"] = sample.High
+				row["change"] = sample.Change
+				row["change_pct"] = sample.ChangePct
+			}
+
+			wire["data"] = []any{row}
 		}
 	}
 

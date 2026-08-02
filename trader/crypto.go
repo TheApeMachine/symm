@@ -43,6 +43,7 @@ func NewCrypto(
 	recorder *audit.Recorder,
 	planner *strategy.Planner,
 	desk *broker.Desk,
+	thesis *types.Thesis,
 ) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -51,7 +52,7 @@ func NewCrypto(
 		cancel:   cancel,
 		status:   types.READY,
 		api:      api,
-		thesis:   types.NewThesis(),
+		thesis:   thesis,
 		dataPath: utils.ResolveDataPath(),
 		ui:       ui,
 		recorder: recorder,

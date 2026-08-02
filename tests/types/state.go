@@ -1,4 +1,4 @@
-package tests
+package types
 
 import (
 	"time"
@@ -53,22 +53,6 @@ type Sample struct {
 	Change    float64   `json:"change"`
 	ChangePct float64   `json:"change_pct"`
 	Timestamp time.Time `json:"timestamp"`
-}
-
-// Order represents a single Level3 book order.
-type Order struct {
-	ID       string
-	Price    float64
-	Qty      float64
-	Priority int
-	At       time.Time
-}
-
-// Fill represents an executed trade fill.
-type Fill struct {
-	Price     float64
-	Qty       float64
-	Timestamp time.Time
 }
 
 // RegimeProfile controls the physical behavior of the ticker parameters.

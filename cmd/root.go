@@ -12,27 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/audit"
-	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/signal/correlation"
-	"github.com/theapemachine/symm/signal/cvd"
-	"github.com/theapemachine/symm/signal/depthflow"
-	"github.com/theapemachine/symm/signal/exhaust"
-	"github.com/theapemachine/symm/signal/hawkes"
-	"github.com/theapemachine/symm/signal/leadlag"
-	"github.com/theapemachine/symm/signal/liquidity"
-	"github.com/theapemachine/symm/signal/pumpdump"
-	"github.com/theapemachine/symm/signal/sentiment"
-	"github.com/theapemachine/symm/signal/toxicity"
-	"github.com/theapemachine/symm/strategy"
-	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/ui"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -58,134 +39,19 @@ var (
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
 			startPprof()
 
-			uiChannel := make(chan []byte, 1024)
-			manifoldChannel := make(chan []byte, 1024)
-			auditPath := filepath.Join(utils.ResolveDataPath(), "runtime-audit.jsonl")
+			thesis := types.NewThesis()
+			system := Boot(cmd.Context(), thesis, nil, nil)
 
-			if viper.GetBool("system.audit.rotate_on_boot") {
-				if err := audit.Rotate(auditPath); err != nil {
-					return errnie.Error(fmt.Errorf("failed to rotate runtime audit: %w", err))
-				}
-			}
-
-			recorder, err := audit.NewRecorder(auditPath)
-
-			if err != nil {
-				return errnie.Error(fmt.Errorf("failed to create runtime audit recorder: %w", err))
+			if system == nil {
+				return errnie.Error(fmt.Errorf("failed to boot symm"))
 			}
 
 			defer func() {
-				errnie.Error(recorder.Close())
+				errnie.Error(system.Close())
 			}()
 
-			api := utils.NewWaiter[*websocket.API](websocket.NewAPI(
-				cmd.Context(),
-				websocket.New(cmd.Context(), nil, false, websocket.PublicWebSocketURL),
-				websocket.New(cmd.Context(), nil, true, websocket.PrivateWebSocketURL),
-			)).Wait()
-
-			errnie.Info("api reported to be ready")
-
-			price := utils.NewWaiter[*broker.Price](broker.NewPrice(api)).Wait()
-			errnie.Info("price reported to be ready")
-
-			instrument := utils.NewWaiter[*broker.Instrument](
-				broker.NewInstrument(api, price, uiChannel),
-			).Wait()
-
-			errnie.Info("instrument reported to be ready")
-
-			balance := utils.NewWaiter[*broker.Balance](
-				broker.NewBalance(api, uiChannel),
-			).Wait()
-
-			errnie.Info("balance reported to be ready")
-
-			desk := utils.NewWaiter[*broker.Desk](broker.NewDesk(
-				cmd.Context(),
-				api,
-				instrument,
-				price,
-				balance,
-				uiChannel,
-			)).Wait()
-
-			errnie.Info("desk reported to be ready")
-
-			tree, err := dmt.NewTree("")
-
-			if err != nil {
-				return errnie.Error(fmt.Errorf("failed to create decision tree: %w", err))
-			}
-
-			planner := utils.NewWaiter[*strategy.Planner](strategy.NewPlanner(
-				cmd.Context(),
-				uiChannel,
-				api,
-				desk,
-				instrument,
-				price,
-				balance,
-				nil,
-				recorder,
-			)).Wait()
-
-			errnie.Info("planner reported to be ready")
-
-			crypto := utils.NewWaiter[*trader.Crypto](trader.NewCrypto(
-				cmd.Context(),
-				api,
-				uiChannel,
-				recorder,
-				planner,
-				desk,
-			)).Wait()
-
-			errnie.Info("trader reported to be ready")
-
-			signalSubscriptions := map[string]*types.Subscription[any]{}
-
-			for _, signal := range []types.Signal{
-				utils.NewWaiter[*correlation.Signal](correlation.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-				utils.NewWaiter[*cvd.Signal](cvd.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-				utils.NewWaiter[*depthflow.Signal](depthflow.NewSignal(cmd.Context(), api, instrument, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-				utils.NewWaiter[*exhaust.Signal](exhaust.NewSignal(cmd.Context(), api, instrument, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-				utils.NewWaiter[*hawkes.Signal](hawkes.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-				utils.NewWaiter[*leadlag.Signal](leadlag.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-				utils.NewWaiter[*liquidity.Signal](liquidity.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-				utils.NewWaiter[*pumpdump.Signal](pumpdump.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-				utils.NewWaiter[*sentiment.Signal](sentiment.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-				utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(cmd.Context(), api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-			} {
-				errnie.Info(fmt.Sprintf("%s signal reported to be ready", signal.Name()))
-				signalSubscriptions[signal.Name()] = signal.Subscribe(signal.Name(), types.NewSubscription[any]())
-			}
-
-			analyzer := utils.NewWaiter[*logic.Analyzer](logic.NewAnalyzer(
-				cmd.Context(),
-				api,
-				tree,
-				uiChannel,
-				manifoldChannel,
-				recorder,
-				signalSubscriptions,
-			)).Wait()
-
-			errnie.Info("analyzer reported to be ready")
-
-			planner.AttachAnalyzer(analyzer)
-
-			hub := ui.NewHub(
-				cmd.Context(),
-				desk,
-				price,
-				balance,
-				uiChannel,
-				manifoldChannel,
-			)
-
 			errnie.Info("ui hub reported to be ready")
-			return hub.Serve()
+			return system.Hub.Serve()
 		},
 	}
 )
@@ -223,6 +89,28 @@ func init() {
 		"",
 		"path to config file (default: try cmd/cfg/config.yml, ./config.yml, $HOME/.symm/config.yml, then embedded default)",
 	)
+}
+
+/*
+loadEmbeddedConfig reads the config file baked into the binary, which is the
+fallback when no config file is found on disk.
+*/
+func loadEmbeddedConfig() error {
+	viper.SetConfigType("yml")
+
+	cfgReader, err := embedded.Open("cfg/config.yml")
+
+	if err != nil {
+		return fmt.Errorf("embedded config file not readable: %w", err)
+	}
+
+	defer cfgReader.Close()
+
+	if err := viper.ReadConfig(cfgReader); err != nil {
+		return fmt.Errorf("embedded config file not readable: %w", err)
+	}
+
+	return nil
 }
 
 func initConfig() {
@@ -263,17 +151,8 @@ func initConfig() {
 	}
 
 	if !loaded {
-		cfgReader, err := embedded.Open("cfg/config.yml")
-
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "embedded config file not readable: %v\n", err)
-			os.Exit(1)
-		}
-
-		defer cfgReader.Close()
-
-		if readErr := viper.ReadConfig(cfgReader); readErr != nil {
-			fmt.Fprintf(os.Stderr, "embedded config file not readable: %v\n", readErr)
+		if err := loadEmbeddedConfig(); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
 			os.Exit(1)
 		}
 	}
