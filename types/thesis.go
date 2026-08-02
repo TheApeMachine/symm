@@ -73,6 +73,12 @@ const (
 	MarketTicker MarketEntity = "ticker"
 	MarketTrade  MarketEntity = "trade"
 	MarketBook   MarketEntity = "book"
+
+	/*
+		MarketDerived marks a stamp left by a stage that reasons over other
+		stages' output rather than observing the market directly.
+	*/
+	MarketDerived MarketEntity = "derived"
 )
 
 type Stamp struct {
@@ -96,7 +102,6 @@ type Thesis struct {
 	Trades       *sync.Map             `json:"-"`
 	Books        *sync.Map             `json:"-"`
 	Graphs       *sync.Map             `json:"-"`
-	Forecasts    []Forecasts           `json:"forecasts"`
 	Decisions    []Decision            `json:"decisions"`
 	Lifecycle    *sync.Map             `json:"lifecycle"`
 	Findings     []Finding             `json:"findings"`
@@ -119,7 +124,6 @@ func NewThesis() *Thesis {
 		Decisions:    make([]Decision, 0),
 		CrossSection: NewCrossSection(),
 		Graphs:       &sync.Map{},
-		Forecasts:    make([]Forecasts, 0),
 		Lifecycle:    &sync.Map{},
 		Findings:     make([]Finding, 0),
 		Hypotheses:   make([]Hypothesis, 0),
@@ -138,34 +142,32 @@ func NewThesis() *Thesis {
 
 /*
 Readiness returns the readiness of the thesis for evaluation.
+
+A stage is ready when it has stamped the thesis, and only then. A stamp is the
+one statement a solver makes about itself having run to completion, so reading
+anything else — the contents of its output map, the length of a slice it
+happens to fill — infers readiness from a side effect and lets a stage that
+legitimately produced nothing read as never having run.
 */
 func (thesis *Thesis) Readiness() Readiness {
 	readiness := Readiness{}
 	counts := thesis.stampCounts()
 
 	readiness.Signals = counts.signals > 0
-	readiness.Manifold = readiness.Signals && thesis.hasCategories()
-	readiness.Resonance = readiness.Manifold && thesis.hasEntries(thesis.Resonance)
-	readiness.Causal = readiness.Resonance && thesis.hasEntries(thesis.Causal)
-	readiness.Graph = readiness.Causal && thesis.hasEntries(thesis.Graphs)
-	readiness.Allocation = readiness.Graph && len(thesis.Forecasts) > 0
+	readiness.Manifold = readiness.Signals && counts.manifold > 0
+	readiness.Resonance = readiness.Manifold && counts.resonance > 0
+	readiness.Causal = readiness.Resonance && counts.causal > 0
+	readiness.Graph = readiness.Causal && counts.graph > 0
+
+	/*
+		Allocation is the planner's own stage rather than a solver's, so it
+		carries no stamp of its own; a thesis is allocatable once the evidence
+		behind it is complete.
+	*/
+	readiness.Allocation = readiness.Graph
 	readiness.Decisions = readiness.Allocation && len(thesis.Decisions) > 0
 
 	return readiness
-}
-
-func (thesis *Thesis) hasCategories() bool {
-	if thesis == nil {
-		return false
-	}
-
-	for _, categories := range thesis.Categories {
-		if len(categories) > 0 {
-			return true
-		}
-	}
-
-	return false
 }
 
 type thesisStampCounts struct {
@@ -173,6 +175,7 @@ type thesisStampCounts struct {
 	manifold  int
 	resonance int
 	causal    int
+	graph     int
 }
 
 func (thesis *Thesis) stampCounts() thesisStampCounts {
@@ -207,6 +210,8 @@ func (thesis *Thesis) stampCounts() thesisStampCounts {
 				counts.resonance++
 			case SourceCausal:
 				counts.causal++
+			case SourceGraph:
+				counts.graph++
 			}
 		}
 
@@ -214,22 +219,6 @@ func (thesis *Thesis) stampCounts() thesisStampCounts {
 	})
 
 	return counts
-}
-
-func (thesis *Thesis) hasEntries(values *sync.Map) bool {
-	if thesis == nil || values == nil {
-		return false
-	}
-
-	hasEntries := false
-
-	values.Range(func(_, _ any) bool {
-		hasEntries = true
-
-		return false
-	})
-
-	return hasEntries
 }
 
 /*
@@ -242,12 +231,16 @@ func (thesis *Thesis) Reset() *Thesis {
 	}
 
 	thesis.At = time.Now().UTC()
-	thesis.Tick = 0
+
+	/*
+		Tick is the monotonic count of evaluated ticks and deliberately
+		survives a reset; zeroing it would restart the sequence every time
+		the evidence is cleared.
+	*/
 	thesis.CrossSection = NewCrossSection()
 	thesis.Measurements = &sync.Map{}
 	thesis.Books = &sync.Map{}
 	thesis.Graphs = &sync.Map{}
-	thesis.Forecasts = make([]Forecasts, 0)
 	thesis.Decisions = make([]Decision, 0)
 	thesis.Findings = make([]Finding, 0)
 	thesis.Hypotheses = make([]Hypothesis, 0)
@@ -294,6 +287,137 @@ func (thesis *Thesis) Market() (
 	})
 
 	return tickers, trades, thesis.Books
+}
+
+/*
+StampSource records that one component ran to completion on this thesis. A
+stage stamps only once it has actually contributed, so downstream components
+can tell whether their inputs exist rather than inferring it from whatever
+happens to be in the maps.
+*/
+func (thesis *Thesis) StampSource(source SourceType, entity MarketEntity) *Thesis {
+	if thesis == nil || thesis.Stamps == nil {
+		return thesis
+	}
+
+	stamp := Stamp{
+		At:     time.Now().UTC(),
+		Entity: entity,
+		Source: source,
+	}
+
+	found, loaded := thesis.Stamps.LoadOrStore(source, []Stamp{stamp})
+
+	if loaded {
+		thesis.Stamps.Store(source, append(found.([]Stamp), stamp))
+	}
+
+	return thesis
+}
+
+/*
+Stamped reports whether every named source has run on this thesis, which is
+how a component decides it has everything it needs to run itself.
+*/
+func (thesis *Thesis) Stamped(sources ...SourceType) bool {
+	if thesis == nil || thesis.Stamps == nil {
+		return false
+	}
+
+	for _, source := range sources {
+		found, ok := thesis.Stamps.Load(source)
+
+		if !ok {
+			return false
+		}
+
+		stamps, ok := found.([]Stamp)
+
+		if !ok || len(stamps) == 0 {
+			return false
+		}
+	}
+
+	return true
+}
+
+/*
+Series returns this tick's measurements for one symbol in observation order,
+oldest first. Signals store their rows by source, but a reader asking how a
+symbol is developing needs one timeline across every source that observed it:
+the last row answers what is true now, while the shape of the series answers
+where it is heading.
+*/
+func (thesis *Thesis) Series(symbol string) []*Measurement {
+	series := make([]*Measurement, 0)
+
+	if thesis == nil || thesis.Measurements == nil {
+		return series
+	}
+
+	thesis.Measurements.Range(func(_, value any) bool {
+		rows, ok := value.([]*Measurement)
+
+		if !ok {
+			return true
+		}
+
+		for _, row := range rows {
+			if row == nil || row.Symbol != symbol {
+				continue
+			}
+
+			series = append(series, row)
+		}
+
+		return true
+	})
+
+	slices.SortStableFunc(series, func(left, right *Measurement) int {
+		return cmp.Compare(left.At.UnixNano(), right.At.UnixNano())
+	})
+
+	return series
+}
+
+/*
+Symbols returns every symbol this tick carries measurements for.
+*/
+func (thesis *Thesis) Symbols() []string {
+	symbols := make([]string, 0)
+
+	if thesis == nil || thesis.Measurements == nil {
+		return symbols
+	}
+
+	seen := make(map[string]struct{})
+
+	thesis.Measurements.Range(func(_, value any) bool {
+		rows, ok := value.([]*Measurement)
+
+		if !ok {
+			return true
+		}
+
+		for _, row := range rows {
+			if row == nil || row.Symbol == "" {
+				continue
+			}
+
+			if _, ok := seen[row.Symbol]; ok {
+				continue
+			}
+
+			seen[row.Symbol] = struct{}{}
+			symbols = append(symbols, row.Symbol)
+		}
+
+		return true
+	})
+
+	slices.Sort(symbols)
+
+	return symbols
 }
 
 /*

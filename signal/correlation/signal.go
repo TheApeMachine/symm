@@ -146,10 +146,8 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		latestAtBySymbol[symbol] = row.Timestamp
 	}
 
-	out := make([]*types.Measurement, 0, len(scoresBySymbol))
-	uiOut := datura.NewMap(
-		"measurements", make([]*types.Measurement, 0),
-	)
+	measurements := make([]*types.Measurement, 0)
+	out := make([]*types.Measurement, 0)
 
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,
@@ -212,17 +210,20 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			},
 		}
 
-		out = append(out, measurement)
+		measurements = append(measurements, measurement)
 
 		if symbol == types.Focus() {
-			uiOut["measurements"] = append(
-				uiOut["measurements"].([]*types.Measurement), measurement,
-			)
+			out = append(out, measurement)
 		}
 	}
 
-	utils.Publish(signal.ui, uiOut)
-	return out
+	if len(out) > 0 {
+		utils.Publish(signal.ui, datura.NewMap(
+			"measurements", out,
+		))
+	}
+
+	return measurements
 }
 
 /*

@@ -233,9 +233,9 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	}
 
 	if len(out) > 0 {
-		frame := datura.NewMap()
-		frame["measurements"] = out
-		utils.Publish(signal.ui, frame)
+		utils.Publish(signal.ui, datura.NewMap(
+			"measurements", out,
+		))
 	}
 
 	return measurements

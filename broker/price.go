@@ -20,6 +20,13 @@ const (
 )
 
 /*
+feeRateScale is the working precision for a fee expressed as a fraction. Kraken
+quotes tiers to two decimals of a percent, so four more digits keep the
+converted rate exact.
+*/
+const feeRateScale = 8
+
+/*
 Price is the broker price surface for symm. It owns fee tiers, ticker cache,
 and all money math so the rest of the broker never drifts from Kraken's
 precision and executable boundaries.
@@ -211,6 +218,23 @@ func (price *Price) Tick(symbol string) *kraken.TickerData {
 }
 
 /*
+asRate converts a Kraken percent-quoted fee tier into the fraction every
+consumer here expects, since OffsetPercent multiplies by (1 + fee) and the
+strategy adds fees straight onto notional.
+
+The scale is widened before dividing because division keeps the receiver's
+scale, and "0.26" carries only two decimals: dividing it as-is rounds a 0.26%
+taker fee to zero rather than to 0.0026.
+*/
+func asRate(percent *decimal.Decimal) *decimal.Decimal {
+	if percent == nil {
+		return nil
+	}
+
+	return percent.SetScale(feeRateScale).Div(decimal.NewFromInt64(100))
+}
+
+/*
 GetFees loads TradeVolume taker fee tiers for the requested symbols and makes
 them executable for later quantity, fee, and PnL calculations.
 */
@@ -228,6 +252,10 @@ func (price *Price) GetFees(symbols []string) error {
 	}
 
 	for symbol, fee := range tradeVolumeResult.Fees {
+		fee.Fee = asRate(fee.Fee)
+		fee.Minfee = asRate(fee.Minfee)
+		fee.Maxfee = asRate(fee.Maxfee)
+
 		price.fees.Store(price.api.Normalizer().Name(symbol), fee)
 	}
 

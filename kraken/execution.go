@@ -48,25 +48,26 @@ func (subscription ExecutionSubscription) MarshalJSON() ([]byte, error) {
 }
 
 type ExecutionData struct {
-	OrderID      string           `json:"order_id"`
-	OrderUserref int              `json:"order_userref"`
-	ExecID       string           `json:"exec_id"`
-	ExecType     string           `json:"exec_type"`
-	TradeID      int              `json:"trade_id"`
-	Symbol       string           `json:"symbol"`
-	Side         string           `json:"side"`
-	LastQty      *decimal.Decimal `json:"last_qty"`
-	LastPrice    *decimal.Decimal `json:"last_price"`
-	LiquidityInd string           `json:"liquidity_ind"`
-	Cost         *decimal.Decimal `json:"cost"`
-	OrderType    string           `json:"order_type"`
-	Timestamp    time.Time        `json:"timestamp"`
-	OrderStatus  string           `json:"order_status"`
-	CumQty       *decimal.Decimal `json:"cum_qty"`
-	CumCost      *decimal.Decimal `json:"cum_cost"`
-	AvgPrice     *decimal.Decimal `json:"avg_price"`
-	FeeUsdEquiv  *decimal.Decimal `json:"fee_usd_equiv"`
-	Fees         []ExecutionFee   `json:"fees"`
+	OrderID       string           `json:"order_id"`
+	ClientOrderID string           `json:"cl_ord_id"`
+	OrderUserref  int              `json:"order_userref"`
+	ExecID        string           `json:"exec_id"`
+	ExecType      string           `json:"exec_type"`
+	TradeID       int              `json:"trade_id"`
+	Symbol        string           `json:"symbol"`
+	Side          string           `json:"side"`
+	LastQty       *decimal.Decimal `json:"last_qty"`
+	LastPrice     *decimal.Decimal `json:"last_price"`
+	LiquidityInd  string           `json:"liquidity_ind"`
+	Cost          *decimal.Decimal `json:"cost"`
+	OrderType     string           `json:"order_type"`
+	Timestamp     time.Time        `json:"timestamp"`
+	OrderStatus   string           `json:"order_status"`
+	CumQty        *decimal.Decimal `json:"cum_qty"`
+	CumCost       *decimal.Decimal `json:"cum_cost"`
+	AvgPrice      *decimal.Decimal `json:"avg_price"`
+	FeeUsdEquiv   *decimal.Decimal `json:"fee_usd_equiv"`
+	Fees          []ExecutionFee   `json:"fees"`
 }
 
 type RestExecution struct {

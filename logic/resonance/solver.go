@@ -1,7 +1,6 @@
 package resonance
 
 import (
-	"maps"
 	"math"
 	"sort"
 	"time"
@@ -10,9 +9,12 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
+
+const resonanceReturnDimensions = 1
 
 /*
 AlphaController dynamically adjusts alpha based on real-time prediction error ratios.
@@ -93,6 +95,10 @@ type Solver struct {
 	arch            []int
 	featureSchema   []string
 	targetDim       int
+	pendingInput    []float64
+	pendingMid      float64
+	pendingAt       time.Time
+	targetSamples   uint64
 	maxHorizon      int // Maximum forward prediction horizon (e.g. 20 ticks)
 	learn           bool
 	advanceTemporal bool
@@ -110,6 +116,7 @@ func NewSolver(ui chan []byte, recorder *audit.Recorder) *Solver {
 		recorder:        recorder,
 		alpha:           initialAlpha,
 		alphaCtrl:       NewAlphaController(initialAlpha, 0.005, 0.150),
+		targetDim:       resonanceReturnDimensions,
 		maxHorizon:      20, // Can extend up to 20 ticks ahead when confidence is high
 		learn:           true,
 		advanceTemporal: true,
@@ -124,12 +131,8 @@ Update extracts physical/field feature vectors from the Thesis, settles the CPU 
 coding manifold, dynamically tunes alpha and forward prediction horizon, and enriches the Thesis.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if thesis == nil {
-		return nil
-	}
-
 	// 1. Extract feature vector & optional target from Thesis
-	features, target := solver.extractFeatures(thesis)
+	features := solver.extractFeatures(thesis)
 
 	if len(features) == 0 {
 		return nil
@@ -159,9 +162,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	// 2. Lazily initialize the CPU ResonanceManifold if not yet created
 	if solver.manifold == nil || len(solver.featureSchema) != len(featureSchema) {
-		if err := solver.initManifold(
-			len(input), len(target),
-		); err != nil {
+		if err := solver.initManifold(len(input)); err != nil {
 			return errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
 				"resonance: failed to initialize CPU predictive coding manifold",
@@ -170,14 +171,26 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		solver.featureSchema = featureSchema
+		solver.pendingInput = nil
+		solver.pendingMid = 0
+		solver.pendingAt = time.Time{}
+		solver.targetSamples = 0
+	}
+
+	midpoint, targetAt, targetReady := solver.returnTarget(thesis)
+
+	if targetReady && solver.learn {
+		if err := solver.learnReturn(midpoint, targetAt); err != nil {
+			return err
+		}
 	}
 
 	// 3. Settle latents and apply Hebbian predictive-coding updates on CPU
-	surprise, err := solver.manifold.SettleFromBatchOptions(
+	totalSurprise, err := solver.manifold.SettleFromBatchOptions(
 		input,
-		target,
+		nil,
 		solver.learn,
-		solver.advanceTemporal,
+		solver.advanceTemporal && !solver.learn,
 	)
 
 	if err != nil {
@@ -188,16 +201,25 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		))
 	}
 
+	featureCount := float64(len(input))
+	surprise := totalSurprise / math.Sqrt(featureCount)
+
 	// 4. Extract wire layers, top latent state, and total energy
-	layers, _, energy := solver.manifold.WireSnapshot()
+	layers, _, totalEnergy := solver.manifold.WireSnapshot()
+	energy := totalEnergy / featureCount
 	latent := solver.manifold.LatentState()
 
-	// 5. Evaluate Reconstruction Error vs Temporal Error for Dynamic Alpha Control
-	eRecon := solver.manifold.ReconstructionError()
+	// 5. Evaluate Reconstruction Error vs Temporal
+	// Error for Dynamic Alpha Control
+	eRecon := surprise
 	eTemporal := 0.0
 
 	if len(layers) > 0 {
-		eTemporal = layers[len(layers)-1].ErrorNorm
+		topLayer := layers[len(layers)-1]
+
+		if len(topLayer.State) > 0 {
+			eTemporal = topLayer.ErrorNorm / math.Sqrt(float64(len(topLayer.State)))
+		}
 	}
 
 	newAlpha := solver.alphaCtrl.Update(eRecon, eTemporal)
@@ -208,30 +230,66 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	}
 
 	// 6. Calculate Confidence and determine Active Dynamic Horizon K
-	// High confidence (low eRecon) extends horizon up to maxHorizon (20 ticks).
-	// Low confidence (high eRecon) collapses horizon back down to 1 tick.
-	confidence := math.Max(0.0, math.Min(1.0, 1.0-(eRecon/2.0)))
-	activeHorizon := int(math.Max(1.0, math.Floor(float64(solver.maxHorizon)*confidence)))
+	// High confidence (low eRecon) extends horizon up to maxHorizon
+	// (20 ticks). Low confidence (high eRecon) collapses horizon back
+	// down to 1 tick.
+	confidence := math.Exp(-eRecon)
+
+	activeHorizon := int(math.Max(1.0, math.Floor(
+		float64(solver.maxHorizon)*confidence,
+	)))
 
 	// 7. Perform Dynamic Recurrent Rollout for k steps
-	forwardCurve := solver.manifold.RolloutTaskPrediction(activeHorizon)
+	var forwardCurve []float64
 
-	// 8. Enrich the shared Thesis with predictive coding outcomes, dynamic alpha, and return curve
-	thesis.Resonance.Store(
-		"resonance",
-		map[string]any{
-			"surprise":      surprise,
-			"energy":        energy,
-			"latent":        latent,
-			"forwardCurve":  forwardCurve,  // []float64 trajectory of predictions [t+1, t+2, ..., t+k]
-			"activeHorizon": activeHorizon, // Active extended horizon length k
-			"confidence":    confidence,    // Confidence score [0.0, 1.0]
-			"layers":        layers,
-			"alpha":         solver.alpha,
-		},
-	)
+	if solver.targetSamples > 0 {
+		forwardCurve = solver.manifold.RolloutTaskPrediction(activeHorizon)
+	}
 
-	solver.publish(thesis)
+	if targetReady && (solver.pendingAt.IsZero() || !targetAt.Before(solver.pendingAt)) {
+		solver.pendingInput = append(solver.pendingInput[:0], input...)
+		solver.pendingMid = midpoint
+		solver.pendingAt = targetAt
+	}
+
+	// 8. Enrich the shared Thesis with predictive coding
+	// outcomes, dynamic alpha, and return curve
+	thesis.Resonance.Store("surprise", surprise)
+	thesis.Resonance.Store("energy", energy)
+	thesis.Resonance.Store("latent", latent)
+	thesis.Resonance.Store("forwardCurve", forwardCurve)
+	thesis.Resonance.Store("activeHorizon", activeHorizon)
+	thesis.Resonance.Store("confidence", confidence)
+	thesis.Resonance.Store("layers", layers)
+	thesis.Resonance.Store("alpha", solver.alpha)
+
+	/*
+		Stamp only once the task head has actually produced a forward curve.
+		The curve is what the stages downstream read out of resonance, so a
+		stamp without one claims a forecast that was never made and lets the
+		causal and graph stages run on a reading that does not exist yet.
+
+		targetSamples resets whenever the feature schema changes, so this is
+		the ordinary state during warmup and after any re-initialisation.
+	*/
+	if len(forwardCurve) > 0 {
+		thesis.StampSource(types.SourceResonance, types.MarketDerived)
+	}
+
+	/*
+		The wire still carries every reading regardless, so the dashboard shows
+		the network settling during warmup rather than going blank.
+	*/
+	out := datura.NewMap()
+	out["surprise"] = surprise
+	out["energy"] = energy
+	out["latent"] = latent
+	out["forwardCurve"] = forwardCurve
+	out["activeHorizon"] = activeHorizon
+	out["confidence"] = confidence
+	out["alpha"] = solver.alpha
+
+	utils.Publish(solver.ui, datura.NewMap("resonance", out))
 
 	// 9. Record audit snapshot if recorder is attached
 	if solver.recorder != nil {
@@ -251,76 +309,11 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 }
 
 /*
-publish emits one resonance wire frame per observed symbol so the frontend
-can bind data-paint attributes directly to backend outputs.
-*/
-func (solver *Solver) publish(thesis *types.Thesis) {
-	raw, ok := thesis.Resonance.Load("resonance")
-
-	if !ok {
-		return
-	}
-
-	resMap, ok := raw.(map[string]any)
-
-	if !ok {
-		return
-	}
-
-	symbols := make([]string, 0)
-
-	thesis.Measurements.Range(func(key, value any) bool {
-		rows, ok := value.([]*types.Measurement)
-
-		if !ok {
-			measurement, measurementOK := value.(*types.Measurement)
-
-			if !measurementOK || measurement == nil {
-				return true
-			}
-
-			rows = []*types.Measurement{measurement}
-		}
-
-		for _, measurement := range rows {
-			if measurement != nil && measurement.Symbol != "" {
-				symbols = append(symbols, measurement.Symbol)
-			}
-		}
-
-		return true
-	})
-
-	if len(symbols) == 0 {
-		symbols = []string{types.Focus()}
-	}
-
-	rows := make([]datura.Map[any], 0, len(symbols))
-	at := thesis.At.Format(time.RFC3339)
-
-	for _, symbol := range symbols {
-		row := datura.NewMap(
-			"source", "resonance",
-			"symbol", symbol,
-			"at", at,
-		)
-
-		maps.Copy(row, resMap)
-		rows = append(rows, row)
-	}
-
-	utils.Publish(
-		solver.ui,
-		datura.NewMap("resonance", rows),
-	)
-}
-
-/*
 initManifold constructs the CPU predictive coding network.
 If an architecture wasn't explicitly supplied, it constructs an adaptive 3-layer
 predictive network: [InputDim -> InputDim * 2 -> InputDim].
 */
-func (solver *Solver) initManifold(inputDim, targetDim int) error {
+func (solver *Solver) initManifold(inputDim int) error {
 	arch := solver.arch
 
 	if len(arch) < 2 {
@@ -330,13 +323,11 @@ func (solver *Solver) initManifold(inputDim, targetDim int) error {
 		arch[0] = inputDim // Ensure input layer matches actual feature dimension
 	}
 
-	tDim := solver.targetDim
-	
-	if targetDim > 0 {
-		tDim = targetDim
-	}
-
-	manifold, err := learning.NewResonanceManifold(arch, tDim, solver.alpha)
+	manifold, err := learning.NewResonanceManifold(
+		arch,
+		solver.targetDim,
+		solver.alpha,
+	)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -354,10 +345,9 @@ func (solver *Solver) initManifold(inputDim, targetDim int) error {
 extractFeatures converts physics/field data from Thesis into float64 slices for the manifold.
 Reads features, measurements, or metrics produced by the upstream `manifold.Solver`.
 */
-func (solver *Solver) extractFeatures(
-	thesis *types.Thesis,
-) (map[string]float64, []float64) {
+func (solver *Solver) extractFeatures(thesis *types.Thesis) map[string]float64 {
 	features := make(map[string]float64)
+
 	thesis.Measurements.Range(func(key, value any) bool {
 		rows, ok := value.([]*types.Measurement)
 
@@ -377,21 +367,140 @@ func (solver *Solver) extractFeatures(
 			}
 
 			for metricKey, metric := range measurement.Metrics {
+				if metric.Normalized == nil ||
+					math.IsNaN(*metric.Normalized) ||
+					math.IsInf(*metric.Normalized, 0) {
+					continue
+				}
+
 				featureKey := string(measurement.Source) + ":" + measurement.Symbol + ":" + measurement.Peer + ":" + metricKey
-				features[featureKey] = metric.Raw
+				features[featureKey] = *metric.Normalized
 			}
 		}
 
 		return true
 	})
 
-	var target []float64
+	return features
+}
 
-	if t, ok := any(thesis).(interface{ Target() []float64 }); ok {
-		target = t.Target()
+/*
+returnTarget reads the target symbol's current executable midpoint. Ticker
+timestamps define market epochs, so repeated signal updates within one ticker
+epoch cannot resolve a prediction against itself.
+
+The symbol is whichever one the book actually carries, preferring the dashboard
+focus only when it is present. Focus is a UI publish gate, so letting it pick
+the target outright would let an operator's panel selection decide whether the
+task head learns at all, and would starve it entirely whenever the focused
+symbol is not being traded.
+*/
+func (solver *Solver) returnTarget(
+	thesis *types.Thesis,
+) (float64, time.Time, bool) {
+	if thesis == nil || thesis.Tickers == nil {
+		return 0, time.Time{}, false
 	}
 
-	return features, target
+	rawTicker, ok := thesis.Tickers.Load(types.Focus())
+
+	if !ok {
+		/*
+			Ranging a sync.Map yields no defined order, so the lowest symbol
+			keeps the target stable from one tick to the next. A target that
+			hopped between symbols would resolve each prediction against a
+			different market than the one that produced it.
+		*/
+		selected := ""
+
+		thesis.Tickers.Range(func(key, value any) bool {
+			symbol, isString := key.(string)
+
+			if !isString {
+				return true
+			}
+
+			if selected == "" || symbol < selected {
+				selected, rawTicker = symbol, value
+			}
+
+			return true
+		})
+
+		if selected == "" {
+			return 0, time.Time{}, false
+		}
+	}
+
+	ticker, ok := rawTicker.(kraken.TickerData)
+
+	if !ok || ticker.Timestamp.IsZero() {
+		return 0, time.Time{}, false
+	}
+
+	if ticker.Bid != nil && ticker.Ask != nil {
+		bid := ticker.Bid.Float64()
+		ask := ticker.Ask.Float64()
+
+		if bid > 0 && ask >= bid {
+			return (bid + ask) / 2, ticker.Timestamp, true
+		}
+	}
+
+	if ticker.Last == nil || ticker.Last.Sign() <= 0 {
+		return 0, time.Time{}, false
+	}
+
+	return ticker.Last.Float64(), ticker.Timestamp, true
+}
+
+/*
+learnReturn resolves the prior latent state against the next ticker-epoch
+midpoint log return before the current feature vector is settled. This keeps
+the task head strictly prior and prevents target leakage.
+*/
+func (solver *Solver) learnReturn(midpoint float64, at time.Time) error {
+	if len(solver.pendingInput) == 0 || !at.After(solver.pendingAt) {
+		return nil
+	}
+
+	if solver.pendingMid <= 0 || midpoint <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: return target prices must be positive",
+			nil,
+		))
+	}
+
+	target := math.Log(midpoint / solver.pendingMid)
+
+	if math.IsNaN(target) || math.IsInf(target, 0) {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: realized midpoint return must be finite",
+			nil,
+		))
+	}
+
+	if err := solver.manifold.Settle(solver.pendingInput, false); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"resonance: prior return state failed to settle",
+			err,
+		))
+	}
+
+	if err := solver.manifold.Learn([]float64{target}); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"resonance: return target learning failed",
+			err,
+		))
+	}
+
+	solver.targetSamples++
+
+	return nil
 }
 
 /*

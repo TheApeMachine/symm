@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -19,7 +18,6 @@ import (
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
@@ -38,6 +36,8 @@ var entityMap = map[string]func([]byte) any{
 	"trade":      func(buf []byte) any { return kraken.NewTrade(buf) },
 	"level3":     func(buf []byte) any { return kraken.NewLevel3(buf) },
 	"instrument": func(buf []byte) any { return kraken.NewInstrument(buf) },
+	"balances":   func(buf []byte) any { return kraken.NewBalance(buf) },
+	"executions": func(buf []byte) any { return kraken.NewExecution(buf) },
 	"status":     func(buf []byte) any { return true },
 	"heartbeat":  func(buf []byte) any { return true },
 	"subscribe":  func(buf []byte) any { return true },
@@ -57,11 +57,6 @@ type Live struct {
 	statusMu    sync.RWMutex
 	ctx         context.Context
 	cancel      context.CancelFunc
-	pingCtx     context.Context
-	pingCancel  context.CancelFunc
-	pingReqID   atomic.Int64
-	lastPongMu  sync.RWMutex
-	lastPong    *time.Time
 	client      *spot.WebSocket
 	simulator   *Simulator
 	normalizer  *spot.Normalizer
@@ -244,14 +239,6 @@ func NewWithClient(
 				return
 			}
 
-			// If the pong response is successful, log it on the ping context.
-			if live.pingCtx != nil {
-				now := time.Now()
-				live.lastPongMu.Lock()
-				live.lastPong = &now
-				live.lastPongMu.Unlock()
-			}
-
 			return
 		}
 
@@ -280,50 +267,6 @@ func NewWithClient(
 	live.client.OnConnected.Recurring(func(event *callback.Event[any]) {
 		errnie.Info(fmt.Sprintf("websocket: connected to %s", endpoint))
 
-		go func() {
-			if live.pingCancel != nil {
-				live.pingCancel()
-			}
-
-			live.pingCtx, live.pingCancel = context.WithCancel(live.ctx)
-			interval := 20 * time.Second
-			lastPong := time.Now()
-			live.lastPongMu.Lock()
-			live.lastPong = &lastPong
-			live.lastPongMu.Unlock()
-
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-
-			pingRequest := datura.NewMap()
-			pingRequest["method"] = "ping"
-
-			for {
-				select {
-				case <-live.pingCtx.Done():
-					return
-				case <-ticker.C:
-					live.lastPongMu.RLock()
-					pongAt := live.lastPong
-					live.lastPongMu.RUnlock()
-
-					if pongAt == nil || time.Since(*pongAt) > interval*2 {
-						errnie.Error(errnie.Err(
-							errnie.IO,
-							"websocket: stale pong detected",
-							nil,
-						))
-					}
-
-					pingRequest["req_id"] = live.pingReqID.Add(1)
-
-					if err := live.Write(pingRequest); err != nil {
-						errnie.Error(err)
-					}
-				}
-			}
-		}()
-
 		if auth {
 			errnie.Error(live.authenticate())
 			return
@@ -349,6 +292,24 @@ func NewWithClient(
 	if auth {
 		live.client.OnAuthenticated.Recurring(func(event *callback.Event[string]) {
 			errnie.Info(fmt.Sprintf("websocket: authenticated to %s", endpoint))
+
+			if endpoint == PrivateWebSocketURL {
+				err := live.subscribeAccount(event.Data)
+
+				if err != nil {
+					errnie.Error(errnie.Err(
+						errnie.IO,
+						"websocket: failed to subscribe to private account channels",
+						err,
+					))
+
+					live.statusMu.Lock()
+					live.status = types.ERROR
+					live.statusMu.Unlock()
+					return
+				}
+			}
+
 			live.statusMu.Lock()
 			live.status = types.READY
 			live.statusMu.Unlock()
@@ -410,6 +371,20 @@ func (live *Live) authenticate() (err error) {
 	return live.client.Authenticate()
 }
 
+/*
+subscribeAccount activates Kraken's private wallet and execution streams after
+each token refresh. Kraken closes an authenticated socket that does not submit
+a private subscription within its token deadline, so reconnect authentication
+must always repeat these requests with the new token.
+*/
+func (live *Live) subscribeAccount(token string) error {
+	if err := live.Write(kraken.NewBalanceSubscription(token)); err != nil {
+		return err
+	}
+
+	return live.Write(kraken.NewExecutionSubscription(token))
+}
+
 func (live *Live) Subscribe(
 	key string, subscription *types.Subscription[any],
 ) *types.Subscription[any] {
@@ -469,7 +444,7 @@ func (live *Live) SubL3(symbols []string) {
 
 			if conn.book != nil {
 				for _, symbol := range group {
-					conn.book.manager.CreateBook(symbol, viper.GetInt("market.l3_depth"))
+					conn.book.Create(symbol, viper.GetInt("market.l3_depth"))
 				}
 			}
 

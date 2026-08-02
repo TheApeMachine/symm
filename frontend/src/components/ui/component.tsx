@@ -162,7 +162,7 @@ const readPath = (
 	updates: JSONSerializable,
 	path: string | undefined,
 ): JSONSerializable | undefined => {
-	if (!path) {
+	if (!path || path === "$") {
 		return updates;
 	}
 
@@ -513,7 +513,7 @@ export const Component = ({
 
 			if (Array.isArray(updates)) {
 				setSlots((current) => {
-					if (current.length >= updates.length) {
+					if (current.length === updates.length) {
 						return current;
 					}
 

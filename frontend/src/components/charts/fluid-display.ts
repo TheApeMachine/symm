@@ -1,3 +1,5 @@
+import { latestDisplay } from "#/providers/manifold-binary";
+
 /*
 drawFluidDisplay blits the backend-composited GPU RGBA texture. The frontend does
 not synthesize a fallback fluid field from scalar lattices.
@@ -7,7 +9,7 @@ export const drawFluidDisplay = (
 	width: number,
 	height: number,
 ): boolean => {
-	const frame = null; // TODO: get the latest frame from the store or context
+	const frame = latestDisplay();
 
 	if (frame === null || width <= 0 || height <= 0) {
 		return false;
@@ -29,17 +31,17 @@ export const drawFluidDisplay = (
 	}
 
 	const tile = document.createElement("canvas");
-	// tile.width = (frame.width ?? 0);
-	// tile.height = frame.height ?? 0;
+	tile.width = frame.width;
+	tile.height = frame.height;
 	const tileContext = tile.getContext("2d");
 
 	if (tileContext === null) {
 		return false;
 	}
 
-	// const image = tileContext.createImageData(frame.width, frame.height);
-	// image.data.set(frame.rgba);
-	// tileContext.putImageData(image, 0, 0);
+	const image = tileContext.createImageData(frame.width, frame.height);
+	image.data.set(frame.rgba);
+	tileContext.putImageData(image, 0, 0);
 	context.imageSmoothingEnabled = true;
 	context.imageSmoothingQuality = "high";
 	context.clearRect(0, 0, pixelWidth, pixelHeight);

@@ -138,11 +138,31 @@ func (signal *Signal) Measure(
 			continue
 		}
 
-		book := found.(*spotbook.Book)
+		book, ok := found.(*spotbook.Book)
+
+		if !ok || book == nil {
+			continue
+		}
 
 		mid := book.Midpoint().Float64()
 
 		if mid <= 0 {
+			continue
+		}
+
+		/*
+			A one-sided book has no best bid or ask to quote against, which is
+			exactly what a violent pump produces when one side is swept. The
+			midpoint alone does not imply both sides carry levels.
+
+			Each touch is read once into a local, because the websocket reader
+			replaces these levels as the book updates and a pointer that
+			survives the nil check can still be gone by the time it is
+			dereferenced.
+		*/
+		ask, bid := book.Asks.High, book.Bids.Low
+
+		if ask == nil || bid == nil || ask.Price == nil || bid.Price == nil {
 			continue
 		}
 
@@ -151,8 +171,8 @@ func (signal *Signal) Measure(
 			Symbol: trade.Symbol,
 			Last:   trade.Price.Float64(),
 			Volume: trade.Qty,
-			Ask:    book.Asks.High.Price.Float64(),
-			Bid:    book.Bids.Low.Price.Float64(),
+			Ask:    ask.Price.Float64(),
+			Bid:    bid.Price.Float64(),
 		})
 
 		if err != nil {

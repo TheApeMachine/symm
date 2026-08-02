@@ -113,10 +113,22 @@ func (crypto *Crypto) run() {
 					continue
 				}
 
+				typedDecisions := decisions.([]types.Decision)
+
+				if crypto.desk != nil {
+					if err := crypto.desk.Execute(typedDecisions); err != nil {
+						errnie.Error(errnie.Err(
+							errnie.Internal,
+							"crypto: failed to execute decision round",
+							err,
+						))
+					}
+				}
+
 				crypto.thesis.Tick = crypto.thesis.Tick + 1
 
 				out := datura.NewMap()
-				out["decisions"] = decisions
+				out["decisions"] = typedDecisions
 				utils.Publish(crypto.ui, out)
 
 				tickOut := datura.NewMap()
@@ -143,6 +155,15 @@ func (crypto *Crypto) onTicker(data any) {
 
 	for _, ticker := range typedTickers.Data {
 		crypto.thesis.Tickers.Store(ticker.Symbol, ticker)
+
+		/*
+			The broker prices every order off its own ticker cache, so the same
+			tick has to reach it here. Without this the price surface stays
+			empty and nothing downstream can be marked, sized, or costed.
+		*/
+		if crypto.desk != nil {
+			crypto.desk.Price().Update(&ticker)
+		}
 	}
 
 	crypto.thesis.Books = crypto.api.Books()

@@ -86,6 +86,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		symbols = []string{"default"}
 	}
 
+	resolved := false
+
 	for _, symbol := range symbols {
 		row, intervention, contagion, condition, ok := solver.buildCausalRow(thesis, symbol)
 
@@ -133,6 +135,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 		// 3. Enrich thesis.Causal with Pearl outputs map
 		thesis.Causal.Store(symbol, output.Outputs())
+		resolved = true
 
 		// 4. Audit Record
 		if solver.recorder != nil {
@@ -141,6 +144,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			auditData["stage"] = "causal"
 			errnie.Error(audit.Record(solver.recorder, "predictive", auditData))
 		}
+	}
+
+	if resolved {
+		thesis.StampSource(types.SourceCausal, types.MarketDerived)
 	}
 
 	solver.publish(thesis)
@@ -155,22 +162,27 @@ func (solver *Solver) buildCausalRow(
 	thesis *types.Thesis,
 	symbol string,
 ) (row []float64, intervention float64, contagion float64, condition float64, ok bool) {
-	// Extract Predictive Coding Resonance outputs
+	/*
+		Extract Predictive Coding Resonance outputs. The resonance solver
+		stores these as flat keys on the Thesis, and they carry this tick's
+		variation into the treatment column; without them the row is constant
+		and Pearl can never derive a bandwidth from it.
+	*/
 	var energy, surprise, taskPred float64
 
-	if resRaw, found := thesis.Resonance.Load("resonance"); found {
-		if resMap, isMap := resRaw.(map[string]any); isMap {
-			if v, ok := resMap["energy"].(float64); ok {
-				energy = v
-			}
-			if v, ok := resMap["surprise"].(float64); ok {
-				surprise = v
-			}
-			if v, ok := resMap["taskPrediction"].([]float64); ok && len(v) > 0 {
-				taskPred = v[0]
-			} else if v, ok := resMap["forwardCurve"].([]float64); ok && len(v) > 0 {
-				taskPred = v[0]
-			}
+	energyRaw, hasEnergy := thesis.Resonance.Load("energy")
+	surpriseRaw, hasSurprise := thesis.Resonance.Load("surprise")
+
+	if !hasEnergy && !hasSurprise {
+		return nil, 0, 0, 0, false
+	}
+
+	energy, _ = energyRaw.(float64)
+	surprise, _ = surpriseRaw.(float64)
+
+	if curveRaw, found := thesis.Resonance.Load("forwardCurve"); found {
+		if curve, ok := curveRaw.([]float64); ok && len(curve) > 0 {
+			taskPred = curve[0]
 		}
 	}
 

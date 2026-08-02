@@ -1,6 +1,8 @@
 package manifold
 
 import (
+	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -50,6 +52,20 @@ func NewSolver(
 		config.MaxDelta = float32(configuredDelta.Seconds())
 	}
 
+	symbols := make([]string, 0)
+
+	if api != nil {
+		api.Books().Range(func(key, _ any) bool {
+			name, ok := key.(string)
+
+			if ok {
+				symbols = append(symbols, name)
+			}
+
+			return true
+		})
+	}
+
 	var domain *pfluid.Domain
 
 	errnie.Error(compute.WithMetalInit(func() error {
@@ -68,7 +84,7 @@ func NewSolver(
 		config:    config,
 		domain:    domain,
 		recorder:  recorder,
-		tokenizer: NewTokenizer(config, nil),
+		tokenizer: NewTokenizer(config, symbols),
 		ui:        ui,
 		binui:     binui,
 	}
@@ -83,8 +99,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	solver.mu.Lock()
 	defer solver.mu.Unlock()
 
-	bidOrders := make([]*mgrbook.Order, 0)
-	askOrders := make([]*mgrbook.Order, 0)
+	stepped := false
+	var updateErr error
 
 	solver.api.Books().Range(func(key, value any) bool {
 		book, ok := value.(*book.Book)
@@ -105,6 +121,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
+		bidOrders := make([]*mgrbook.Order, 0)
+		askOrders := make([]*mgrbook.Order, 0)
+
 		for _, level := range book.Bids.Levels {
 			bidOrders = append(bidOrders, level.Queue()...)
 		}
@@ -113,7 +132,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			askOrders = append(askOrders, level.Queue()...)
 		}
 
-		particles, contentIDs := solver.tokenizer.NewBatch(
+		particles, contentIDs, err := solver.tokenizer.NewBatch(
 			bidOrders,
 			askOrders,
 			book.Midpoint().Float64(),
@@ -123,18 +142,61 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			hawkes[len(hawkes)-1].Sample(
 				types.MetricConditionalIntensity, types.SideSell,
 			).Raw,
-			book.Name,
+			name,
 		)
+
+		if err != nil {
+			updateErr = errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("failed to tokenize manifold particles for %s", name),
+				err,
+			))
+
+			return false
+		}
 
 		if len(particles) == 0 || len(contentIDs) == 0 {
 			return true
 		}
 
-		solver.domain.Append(particles, contentIDs)
-		errnie.Error(solver.Step(name, thesis.At))
+		_, err = solver.domain.Append(particles, contentIDs)
+
+		if err != nil {
+			updateErr = errnie.Error(errnie.Err(
+				errnie.Internal,
+				fmt.Sprintf(
+					"failed to append %d manifold particles for %s: %v",
+					len(particles), name, err,
+				),
+				err,
+			))
+
+			return false
+		}
+
+		if err = solver.Step(name, thesis.At); err != nil {
+			updateErr = err
+
+			return false
+		}
+
+		stepped = true
 
 		return true
 	})
+
+	if updateErr != nil {
+		return updateErr
+	}
+
+	/*
+		Stamp only once the field has actually advanced, so the stages that
+		wait on the manifold can tell a completed step from a tick that had
+		nothing to advance.
+	*/
+	if stepped {
+		thesis.StampSource(types.SourceManifold, types.MarketDerived)
+	}
 
 	return nil
 }
@@ -145,7 +207,10 @@ func (solver *Solver) Step(symbol string, at time.Time) error {
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
-			"failed to advance domain",
+			fmt.Sprintf(
+				"failed to advance manifold for %s with %d resident particles: %v",
+				symbol, solver.domain.ParticleCount(), err,
+			),
 			err,
 		))
 	}
@@ -155,14 +220,33 @@ func (solver *Solver) Step(symbol string, at time.Time) error {
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
-			"failed to display domain",
+			fmt.Sprintf(
+				"failed to display manifold for %s with %d resident particles: %v",
+				symbol, solver.domain.ParticleCount(), err,
+			),
 			err,
 		))
 	}
 
 	if solver.binui != nil {
+		payload, encodeErr := EncodeDisplay(
+			symbol,
+			at,
+			int(stats.Width),
+			int(stats.Height),
+			frame,
+		)
+
+		if encodeErr != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				fmt.Sprintf("failed to encode manifold display for %s", symbol),
+				encodeErr,
+			))
+		}
+
 		select {
-		case solver.binui <- frame:
+		case solver.binui <- payload:
 		default:
 		}
 	}
@@ -177,14 +261,14 @@ func (solver *Solver) Step(symbol string, at time.Time) error {
 		if statsBytes, err := sonic.Marshal(stats); err == nil {
 			var statsMap map[string]any
 			if err := sonic.Unmarshal(statsBytes, &statsMap); err == nil {
-				for k, v := range statsMap {
-					row[k] = v
-				}
+				maps.Copy(row, statsMap)
 			}
 		}
 
 		select {
-		case solver.ui <- datura.NewMap("manifold", []datura.Map[any]{row}).MarshalAndFree():
+		case solver.ui <- datura.NewMap(
+			"manifold", []datura.Map[any]{row},
+		).MarshalAndFree():
 		default:
 		}
 	}

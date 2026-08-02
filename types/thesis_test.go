@@ -21,11 +21,17 @@ func TestThesisReadiness(t *testing.T) {
 			}})
 		}
 
-		thesis.Categories["BTC/USD"] = []Category{{Symbol: "BTC/USD", Type: VerticalIgnition}}
-		thesis.Resonance.Store("resonance", map[string]any{"confidence": 0.8})
-		thesis.Causal.Store("BTC/USD", map[string]any{"effect": 0.4})
-		thesis.Graphs.Store("BTC/USD", "graph")
-		thesis.Forecasts = []Forecasts{{}}
+		/*
+			A stage is ready because it stamped the thesis, so each derived
+			stage is marked by its stamp rather than by the evidence it
+			happened to leave behind.
+		*/
+		for _, source := range []SourceType{
+			SourceManifold, SourceResonance, SourceCausal, SourceGraph,
+		} {
+			thesis.StampSource(source, MarketDerived)
+		}
+
 		thesis.Decisions = []Decision{{}}
 
 		Convey("It should mark every thesis stage ready", func() {
@@ -38,6 +44,59 @@ func TestThesisReadiness(t *testing.T) {
 			So(readiness.Graph, ShouldBeTrue)
 			So(readiness.Allocation, ShouldBeTrue)
 			So(readiness.Decisions, ShouldBeTrue)
+		})
+	})
+
+	Convey("Given a stage that ran but produced no output", t, func() {
+		thesis := NewThesis()
+
+		for _, source := range thesisSignalSources {
+			thesis.StampSource(source, MarketTicker)
+		}
+
+		for _, source := range []SourceType{
+			SourceManifold, SourceResonance, SourceCausal, SourceGraph,
+		} {
+			thesis.StampSource(source, MarketDerived)
+		}
+
+		Convey("It should still report the stage ready", func() {
+			/*
+				A solver that finds nothing has still run. Inferring readiness
+				from the contents of its output would stall the pipeline behind
+				a stage that is working correctly and simply had nothing to say.
+			*/
+			readiness := thesis.Readiness()
+
+			So(readiness.Causal, ShouldBeTrue)
+			So(readiness.Graph, ShouldBeTrue)
+			So(readiness.Allocation, ShouldBeTrue)
+
+			// No decisions were taken, so only that stage is unmet.
+			So(readiness.Decisions, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given a pipeline missing one stage's stamp", t, func() {
+		thesis := NewThesis()
+
+		for _, source := range thesisSignalSources {
+			thesis.StampSource(source, MarketTicker)
+		}
+
+		thesis.StampSource(SourceManifold, MarketDerived)
+		thesis.StampSource(SourceResonance, MarketDerived)
+		thesis.StampSource(SourceGraph, MarketDerived)
+
+		Convey("It should not report that stage or anything behind it ready", func() {
+			readiness := thesis.Readiness()
+
+			So(readiness.Resonance, ShouldBeTrue)
+			So(readiness.Causal, ShouldBeFalse)
+
+			// Graph stamped, but the causal stage it builds on did not.
+			So(readiness.Graph, ShouldBeFalse)
+			So(readiness.Allocation, ShouldBeFalse)
 		})
 	})
 }
@@ -71,7 +130,6 @@ func TestThesisReset(t *testing.T) {
 		thesis.Measurements.Store(SourceCVD, []*Measurement{{Source: SourceCVD, Symbol: "BTC/USD"}})
 		thesis.Books.Store("BTC/USD", "book")
 		thesis.Graphs.Store("BTC/USD", "graph")
-		thesis.Forecasts = []Forecasts{{}}
 		thesis.Decisions = []Decision{{}}
 		thesis.Findings = []Finding{{}}
 		thesis.Hypotheses = []Hypothesis{{}}
@@ -86,10 +144,10 @@ func TestThesisReset(t *testing.T) {
 		resetAt := thesis.Reset().At
 
 		Convey("It should clear transient evidence and keep lifecycle state", func() {
-			So(thesis.Tick, ShouldEqual, 0)
+			// Tick counts evaluated cycles and is lifecycle, not evidence.
+			So(thesis.Tick, ShouldEqual, 77)
 			So(thesis.CrossSection, ShouldNotBeNil)
 			So(resetAt.IsZero(), ShouldBeFalse)
-			So(len(thesis.Forecasts), ShouldEqual, 0)
 			So(len(thesis.Decisions), ShouldEqual, 0)
 			So(len(thesis.Findings), ShouldEqual, 0)
 			So(len(thesis.Hypotheses), ShouldEqual, 0)

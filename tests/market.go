@@ -2,7 +2,10 @@ package tests
 
 import (
 	"context"
+	"slices"
+	"sync"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/errnie"
@@ -21,6 +24,13 @@ const (
 	defaultPaperQuoteBalance = 200.00
 	defaultPaperMakerFee     = 0.0016
 	defaultPaperTakerFee     = 0.0026
+
+	/*
+		tickInterval paces the simulated feed so each Tick is one the stack
+		actually processed. It is the shortest gap at which the analyzer keeps
+		up with the generator on the machines this suite runs on.
+	*/
+	tickInterval = 10 * time.Millisecond
 )
 
 /*
@@ -39,6 +49,84 @@ type Market struct {
 	private    *websocket.Live
 	Thesis     *types.Thesis
 	generators map[string]*signal.Generator
+	decisions    []types.Decision
+	measurements map[string][]*types.Measurement
+	decisionMu   sync.Mutex
+}
+
+/*
+retainMeasurements copies the current tick's signal readings aside before the
+planner clears them.
+*/
+func (market *Market) retainMeasurements() {
+	market.decisionMu.Lock()
+	defer market.decisionMu.Unlock()
+
+	if market.measurements == nil {
+		market.measurements = map[string][]*types.Measurement{}
+	}
+
+	market.Thesis.Measurements.Range(func(key, value any) bool {
+		source, ok := key.(types.SourceType)
+
+		if !ok {
+			return true
+		}
+
+		if rows, ok := value.([]*types.Measurement); ok && len(rows) > 0 {
+			market.measurements[string(source)] = rows
+		}
+
+		return true
+	})
+}
+
+/*
+Decisions returns every decision the planner has published so far.
+
+The planner clears the thesis at the end of each evaluated tick, so the
+decisions on it are gone by the time a test could read them. Collecting them
+from the planner's own subscription instead is the only way to see the whole
+run rather than whichever tick happened to be in flight.
+*/
+func (market *Market) Decisions() []types.Decision {
+	market.decisionMu.Lock()
+	defer market.decisionMu.Unlock()
+
+	return slices.Clone(market.decisions)
+}
+
+/*
+collectDecisions drains the planner's decision stream for the life of the
+market.
+*/
+func (market *Market) collectDecisions() {
+	if market.system == nil || market.system.Planner == nil {
+		return
+	}
+
+	subscription := market.system.Planner.Subscribe(
+		"decisions", types.NewSubscription[any](),
+	)
+
+	go func() {
+		for {
+			select {
+			case <-market.ctx.Done():
+				return
+			case published := <-subscription.Channel:
+				decisions, ok := published.([]types.Decision)
+
+				if !ok {
+					continue
+				}
+
+				market.decisionMu.Lock()
+				market.decisions = append(market.decisions, decisions...)
+				market.decisionMu.Unlock()
+			}
+		}
+	}()
 }
 
 /*
@@ -102,15 +190,29 @@ func NewMarket(
 		ctx, market.Thesis, market.public, market.private,
 	)
 
+	market.collectDecisions()
+
 	return market
 }
 
 /*
-Measurements flattens the measurements the signals have written onto the
-current Thesis tick, so assertions can inspect them as an ordinary map.
+Measurements flattens the measurements the signals have written, so assertions
+can inspect them as an ordinary map.
+
+Readings seen on earlier ticks are retained, because the thesis is cleared once
+a tick is evaluated and a signal that reported throughout the run would
+otherwise appear only if it happened to publish on the very last one.
 */
 func (market *Market) Measurements() map[string][]*types.Measurement {
 	measurements := map[string][]*types.Measurement{}
+
+	market.decisionMu.Lock()
+
+	for source, rows := range market.measurements {
+		measurements[source] = rows
+	}
+
+	market.decisionMu.Unlock()
 
 	market.Thesis.Measurements.Range(func(key, value any) bool {
 		source, ok := key.(types.SourceType)
@@ -168,6 +270,16 @@ func (market *Market) Tick() {
 			market.Level3.Publish("level3", frame)
 		}
 	}
+
+	/*
+		Publishing is asynchronous, so without pausing here the loop feeding
+		the market outruns the stages consuming it and a test measures a
+		pipeline that never got to run. This paces the feed to something a
+		live venue could plausibly deliver.
+	*/
+	time.Sleep(tickInterval)
+
+	market.retainMeasurements()
 }
 
 func (market *Market) Close() {

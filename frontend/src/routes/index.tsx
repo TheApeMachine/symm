@@ -57,21 +57,21 @@ const RouteComponent = () => {
                   Predictive coding · <LiveResonanceTitle />
                 </>
               }
-              meta="hierarchy layers · adjacent top-down links · calibrated return head"
+              meta="settled latent state · dynamic horizon · adaptive learning pace"
               footer={<LiveResonanceFooter />}
               topRight={
                 <div className="flex gap-3 text-left">
                   <span className="inline-flex items-center gap-1.5">
                     <span className="inline-block h-px w-3 bg-(--acc)" />
-                    layer ε
+                    forward curve
                   </span>
                   <span className="inline-flex items-center gap-1.5">
                     <span className="inline-block h-px w-3 bg-info" />
-                    state / prediction
+                    latent state
                   </span>
                   <span className="inline-flex items-center gap-1.5">
-                    <span className="size-2 bg-[color-mix(in_srgb,var(--up)_30%,transparent)]" />
-                    return ±σ
+                    <span className="inline-block h-px w-3 bg-(--line2)" />
+                    zero
                   </span>
                 </div>
               }

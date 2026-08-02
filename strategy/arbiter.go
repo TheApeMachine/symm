@@ -54,13 +54,45 @@ func (arbiter *Arbiter) Arbitrate(thesis *types.Thesis) {
 	})
 
 	openSlots := arbiter.desk.OpenSlots(false)
+	reserveSlots := arbiter.desk.OpenSlots(true) - openSlots
 	incumbents := arbiter.getIncumbents()
 
+	/*
+		Capacity and occupancy are recorded on every decision, because a
+		decision to take a slot is only auditable next to the budget it was
+		taken against.
+	*/
+	capacity := arbiter.desk.MaxPositions()
+	open := arbiter.desk.OpenPositions()
+
 	for _, candidate := range enters {
+		candidate.SlotCapacity = capacity
+		candidate.OpenPositions = open
+
 		if openSlots > 0 {
+			candidate.AllocationClass = "normal"
 			thesis.NoteLifecycle(candidate.Symbol, types.LifecycleEntrySelected, thesis.At)
 			retained = append(retained, candidate)
 			openSlots--
+			continue
+		}
+
+		/*
+			Normal capacity is gone, which is the case the reserve is held for:
+			a pump worth interrupting a working desk. Claiming a reserve slot
+			is marked as such rather than left looking like a normal entry.
+		*/
+		if reserveSlots > 0 {
+			candidate.AllocationClass = "reserved"
+			candidate.Opportunity = true
+
+			if candidate.OpportunityMargin <= 0 {
+				candidate.OpportunityMargin = candidate.Utility
+			}
+
+			thesis.NoteLifecycle(candidate.Symbol, types.LifecycleEntrySelected, thesis.At)
+			retained = append(retained, candidate)
+			reserveSlots--
 			continue
 		}
 

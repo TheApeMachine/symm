@@ -19,10 +19,9 @@ func (signal *Signal) measureFrame(
 ) []*types.Measurement {
 	rows := tickers
 	section := signal.section
-	out := make([]*types.Measurement, 0, len(rows))
-	uiOut := datura.NewMap(
-		"measurements", make([]*types.Measurement, 0),
-	)
+
+	measurements := make([]*types.Measurement, 0)
+	out := make([]*types.Measurement, 0)
 
 	anchor, _ := crossSection.Leadership()
 
@@ -68,17 +67,17 @@ func (signal *Signal) measureFrame(
 			continue
 		}
 
-		out = append(out, signal.score(row.Symbol, row.Timestamp, features))
+		measurements = append(measurements, signal.score(row.Symbol, row.Timestamp, features))
 
 		if row.Symbol == types.Focus() {
-			uiOut["measurements"] = append(
-				uiOut["measurements"].([]*types.Measurement), out[len(out)-1],
-			)
+			out = append(out, measurements[len(measurements)-1])
 		}
 	}
 
-	if len(uiOut["measurements"].([]*types.Measurement)) > 0 {
-		utils.Publish(signal.ui, uiOut)
+	if len(out) > 0 {
+		utils.Publish(signal.ui, datura.NewMap(
+			"measurements", out,
+		))
 	}
 
 	return out

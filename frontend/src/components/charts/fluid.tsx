@@ -249,6 +249,16 @@ or manifold_wave packets arrive. Those packets store only; without a redraw the
 phase dial never sees the wave modes for the cut.
 */
 export const repaintTerminalFluidChart = (focusSymbol: string) => {
+	const fieldCanvas = fluidFieldCanvasRef.current;
+
+	if (fieldCanvas !== null) {
+		drawFluidDisplay(
+			fieldCanvas,
+			fieldCanvas.clientWidth,
+			fieldCanvas.clientHeight,
+		);
+	}
+
 	if (lastManifoldBatch === null) {
 		return;
 	}

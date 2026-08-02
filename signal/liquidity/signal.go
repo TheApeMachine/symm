@@ -165,10 +165,8 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	peerReady := len(depthPeers) >= 2 && depthOK && depthMedian > 0
 	notionalMedian, hasNotionalMedian := statistic.MedianOf(notionalPeers)
 
-	out := make([]*types.Measurement, 0, len(peers))
-	uiOut := datura.NewMap(
-		"measurements", make([]*types.Measurement, 0),
-	)
+	measurements := make([]*types.Measurement, 0)
+	out := make([]*types.Measurement, 0)
 
 	for _, peer := range peers {
 		executableDepth := peer.ExecutableDepth
@@ -248,20 +246,20 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			},
 		}
 
-		out = append(out, measurement)
+		measurements = append(measurements, measurement)
 
 		if peer.Symbol == types.Focus() {
-			uiOut["measurements"] = append(
-				uiOut["measurements"].([]*types.Measurement), measurement,
-			)
+			out = append(out, measurement)
 		}
 	}
 
-	if len(uiOut["measurements"].([]*types.Measurement)) > 0 {
-		utils.Publish(signal.ui, uiOut)
+	if len(out) > 0 {
+		utils.Publish(signal.ui, datura.NewMap(
+			"measurements", out,
+		))
 	}
 
-	return out
+	return measurements
 }
 
 /*

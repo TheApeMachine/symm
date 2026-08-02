@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/causal"
 	"github.com/theapemachine/symm/logic/cognition"
 	"github.com/theapemachine/symm/logic/graph"
@@ -21,6 +22,15 @@ import (
 type Solver interface {
 	Update(thesis *types.Thesis) error
 	Close() error
+}
+
+/*
+Evaluator turns an analyzed thesis into decisions and clears the evidence it
+spent doing so. The analyzer runs it inline at the end of a pass, so ownership
+of the thesis never leaves the goroutine that assembled it.
+*/
+type Evaluator interface {
+	Update(thesis *types.Thesis) *types.Thesis
 }
 
 /*
@@ -45,7 +55,19 @@ type Analyzer struct {
 	recorder      *audit.Recorder
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
+	evaluator     Evaluator
 	mu            sync.Mutex
+}
+
+/*
+AttachEvaluator registers the stage that consumes an analyzed thesis. It is
+set after construction because the evaluator subscribes to the analyzer.
+*/
+func (analyzer *Analyzer) AttachEvaluator(evaluator Evaluator) {
+	analyzer.mu.Lock()
+	defer analyzer.mu.Unlock()
+
+	analyzer.evaluator = evaluator
 }
 
 /*
@@ -67,18 +89,39 @@ func NewAnalyzer(
 		buffer = 64
 	}
 
+	/*
+		Both are held as fields and run as solvers, so they are constructed
+		once and shared rather than instantiated twice.
+	*/
+	cognitionSolver := cognition.NewSolver(tree, ui, recorder)
+	graphSolver := graph.NewSolver(ui, recorder)
+
 	analyzer := &Analyzer{
 		ctx:    ctx,
 		cancel: cancel,
 		status: types.READY,
 		tree:   tree,
 		solvers: []Solver{
+			/*
+				Categories are the substrate the later stages reason over:
+				the graph builds its nodes from them and cognition tokenizes
+				them into sequences, so they are derived first.
+			*/
+			category.NewSolver(api, ui, recorder),
 			manifold.NewSolver(api, ui, binui, recorder),
 			resonance.NewSolver(ui, recorder),
 			causal.NewSolver(ui, recorder),
+
+			/*
+				Cognition tokenizes categories into sequences and the graph
+				builds its nodes from them, so both run after the stages
+				they draw their evidence from.
+			*/
+			cognitionSolver,
+			graphSolver,
 		},
-		cognition:     cognition.NewSolver(tree, ui, recorder),
-		graph:         graph.NewSolver(ui, recorder),
+		cognition:     cognitionSolver,
+		graph:         graphSolver,
 		ui:            ui,
 		binui:         binui,
 		recorder:      recorder,
@@ -150,16 +193,22 @@ func (analyzer *Analyzer) process(in any) {
 		}
 	}
 
-	value, ok := analyzer.subscribers.Load("thesis")
-
-	if !ok {
-		return
+	if value, ok := analyzer.subscribers.Load("thesis"); ok {
+		if subscribers, ok := value.([]*types.Subscription[any]); ok {
+			for _, subscriber := range subscribers {
+				subscriber.Send(thesis)
+			}
+		}
 	}
 
-	if subscribers, ok := value.([]*types.Subscription[any]); ok {
-		for _, subscriber := range subscribers {
-			subscriber.Send(thesis)
-		}
+	/*
+		Evaluate on this goroutine rather than handing the thesis to one of
+		its own. The evaluator ends a cycle by clearing the evidence it just
+		spent, so running it concurrently would let it reset the thesis out
+		from under the next signal pass that is already writing to it.
+	*/
+	if analyzer.evaluator != nil {
+		analyzer.evaluator.Update(thesis)
 	}
 }
 

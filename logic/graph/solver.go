@@ -180,6 +180,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	// 3. Store compiled Graph into thesis.Graphs
 	thesis.Graphs.Store("market_graph", graph)
+	thesis.StampSource(types.SourceGraph, types.MarketDerived)
 
 	// 4. Record audit snapshot
 	if solver.recorder != nil {
@@ -328,37 +329,41 @@ func (solver *Solver) extractCategoryNodes(thesis *types.Thesis, graph *Graph) {
 extractResonanceNodes registers predictive coding outcomes (surprise, expected return forecast).
 */
 func (solver *Solver) extractResonanceNodes(thesis *types.Thesis, graph *Graph) {
-	thesis.Resonance.Range(func(key, value any) bool {
-		resMap, ok := value.(map[string]any)
-		if !ok {
-			return true
-		}
+	/*
+		Resonance solves over the cross-section rather than per symbol, and
+		stores its outputs as flat keys on the Thesis, so the reading describes
+		the book as a whole. Every symbol under evaluation therefore shares one
+		surprise and one forecast node.
+	*/
+	surpriseRaw, hasSurprise := thesis.Resonance.Load("surprise")
 
-		symbol, _ := key.(string)
+	if !hasSurprise {
+		return
+	}
 
-		if surprise, ok := resMap["surprise"].(float64); ok {
-			nodeID := fmt.Sprintf("res:%s:surprise", symbol)
-			graph.AddNode(&Node{
-				ID:         nodeID,
-				Symbol:     symbol,
-				Source:     "resonance",
-				Kind:       "resonance",
-				Value:      surprise,
-				Confidence: 1.0,
-				At:         thesis.At,
-			})
-		}
+	surprise, _ := surpriseRaw.(float64)
 
-		var predValue float64
-		if pred, ok := resMap["taskPrediction"].([]float64); ok && len(pred) > 0 {
-			predValue = pred[0]
-		} else if curve, ok := resMap["forwardCurve"].([]float64); ok && len(curve) > 0 {
+	var predValue float64
+
+	if curveRaw, found := thesis.Resonance.Load("forwardCurve"); found {
+		if curve, ok := curveRaw.([]float64); ok && len(curve) > 0 {
 			predValue = curve[0]
 		}
+	}
 
-		nodeID := fmt.Sprintf("res:%s:forecast", symbol)
+	for _, symbol := range thesis.Symbols() {
 		graph.AddNode(&Node{
-			ID:         nodeID,
+			ID:         fmt.Sprintf("res:%s:surprise", symbol),
+			Symbol:     symbol,
+			Source:     "resonance",
+			Kind:       "resonance",
+			Value:      surprise,
+			Confidence: 1.0,
+			At:         thesis.At,
+		})
+
+		graph.AddNode(&Node{
+			ID:         fmt.Sprintf("res:%s:forecast", symbol),
 			Symbol:     symbol,
 			Source:     "resonance",
 			Kind:       "resonance",
@@ -366,9 +371,7 @@ func (solver *Solver) extractResonanceNodes(thesis *types.Thesis, graph *Graph) 
 			Confidence: 1.0,
 			At:         thesis.At,
 		})
-
-		return true
-	})
+	}
 }
 
 /*
@@ -435,6 +438,27 @@ func (solver *Solver) extractCognitionNodes(thesis *types.Thesis, graph *Graph) 
 }
 
 /*
+agreementWeight scores how strongly two readings agree in direction, on a
+scale of zero to one, without regard to the units either of them uses.
+
+Nodes come from heads that measure different things: a resonance forecast is a
+fractional return, while a causal uplift is an unbounded score. Comparing their
+magnitudes directly would make the relation a statement about scale rather than
+about agreement, so each side is squashed to a bounded strength first and the
+weaker of the two decides how much the pair can claim.
+*/
+func agreementWeight(left, right float64) float64 {
+	if math.IsNaN(left) || math.IsNaN(right) {
+		return 0
+	}
+
+	return math.Min(
+		math.Tanh(math.Abs(left)),
+		math.Tanh(math.Abs(right)),
+	)
+}
+
+/*
 inferStructuralEdges evaluates all 9 relational edge types across registered nodes.
 */
 func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
@@ -475,12 +499,21 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 
 			// Cross-Domain Inference: Resonance Forecast vs Causal Uplift
 			if nodeA.Kind == "resonance" && nodeB.Kind == "causal" && nodeA.Symbol == nodeB.Symbol {
+				/*
+					This edge reads the two heads for directional agreement
+					only. They score on unrelated scales, so the weight is the
+					strength of the agreement rather than any difference
+					between the values; a raw magnitude here would let the
+					head with the larger units decide the relation by itself.
+				*/
+				agreement := agreementWeight(nodeA.Value, nodeB.Value)
+
 				if nodeA.Value > 0 && nodeB.Value > 0 { // Both agree +
 					graph.AddEdge(&Edge{
 						From:       idA,
 						To:         idB,
 						Relation:   RelationSupports,
-						Weight:     math.Min(nodeA.Value, nodeB.Value),
+						Weight:     agreement,
 						Confidence: nodeA.Confidence * nodeB.Confidence,
 						At:         graph.At,
 						Reason:     "predictive forecast and causal uplift agree directionally (+)",
@@ -490,7 +523,7 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 						From:       idA,
 						To:         idB,
 						Relation:   RelationContradicts,
-						Weight:     math.Abs(nodeA.Value - nodeB.Value),
+						Weight:     agreement,
 						Confidence: nodeA.Confidence * nodeB.Confidence,
 						At:         graph.At,
 						Reason:     "predictive forecast and causal uplift conflict in direction",
@@ -512,10 +545,16 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 			if idA == fmt.Sprintf("causal:%s:intervention", nodeA.Symbol) &&
 				idB == fmt.Sprintf("causal:%s:doExpectation", nodeB.Symbol) {
 				graph.AddEdge(&Edge{
-					From:       idA,
-					To:         idB,
-					Relation:   RelationConditions,
-					Weight:     nodeA.Value,
+					From:     idA,
+					To:       idB,
+					Relation: RelationConditions,
+
+					/*
+						The interventional level is an unbounded causal score,
+						so it states how strongly it conditions rather than by
+						how much, keeping this edge comparable to the others.
+					*/
+					Weight:     math.Tanh(math.Abs(nodeA.Value)),
 					Confidence: nodeA.Confidence,
 					At:         graph.At,
 					Reason:     "interventional level conditions do-expectation",

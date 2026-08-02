@@ -105,6 +105,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	solver.tickCounter++
 	nowUnix := uint64(thesis.At.UnixNano())
 
+	reasoned := false
+
 	// 1. Process active categories per symbol
 	for symbol, categories := range thesis.Categories {
 		if len(categories) == 0 {
@@ -176,6 +178,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		thesis.Cognition.Store(symbol, cognitionOutcome)
+		reasoned = true
 
 		// 9. Audit Recording
 		if solver.recorder != nil {
@@ -191,6 +194,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			}
 			errnie.Error(audit.Record(solver.recorder, "predictive", auditEntry))
 		}
+	}
+
+	if reasoned {
+		thesis.StampSource(types.SourceCognition, types.MarketDerived)
 	}
 
 	solver.publish(thesis)
