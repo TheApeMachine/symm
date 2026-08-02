@@ -113,8 +113,11 @@ func (crypto *Crypto) run() {
 					continue
 				}
 
-				typedDecisions := decisions.([]types.Decision)
+				typedDecisions, ok := decisions.([]types.Decision)
 
+				if !ok {
+					continue
+				}
 				if crypto.desk != nil {
 					if err := crypto.desk.Execute(typedDecisions); err != nil {
 						errnie.Error(errnie.Err(
