@@ -2,9 +2,9 @@ package tests
 
 import (
 	"context"
-	"fmt"
+	"testing"
 
-	"github.com/theapemachine/errnie"
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 const (
@@ -22,31 +22,20 @@ type Market struct {
 	Public  *Conn
 	Private *Conn
 	Level3  *Conn
-	Symbols []string
+	Symbols []*Symbol
+	State   MarketState
 }
 
 /*
 NewMarket creates a simulated market with the given number of symbols.
 It replaces the production Kraken API WebSockets and REST routes with
 in-memory fixtures that emit deterministic events for testing.
-This allows the full system to be exercised without relying on the
-live Kraken API, which not only helps with testing the system mechanics,
-but also the strategy and logic.
 */
 func NewMarket(
 	ctx context.Context,
-	symbolCount int,
+	symbols []*Symbol,
 ) *Market {
-	if symbolCount < 1 {
-		panic(errnie.Err(errnie.Validation, "tests: symbol count must be positive", nil))
-	}
-
 	ctx, cancel := context.WithCancel(ctx)
-	symbols := make([]string, symbolCount)
-
-	for index := range symbolCount {
-		symbols[index] = fmt.Sprintf("SIM%d/USD", index+1)
-	}
 
 	market := &Market{
 		ctx:     ctx,
@@ -55,24 +44,51 @@ func NewMarket(
 		Private: NewConn(ctx),
 		Level3:  NewConn(ctx),
 		Symbols: symbols,
+		State:   Baseline,
 	}
 
 	return market
 }
 
 /*
-Sequence is a convenience method to replay a series of market states.
+Transition into another market state. This should not be an instance regime
+shift, instead it should take a realistic amount of ticks to move from one
+state into another. This is meant to simulate an actual market regime shift.
 */
-func (market *Market) Sequence(states ...*MarketState) {
+func (market *Market) Transition(state MarketState) {
+	market.State = state
 
+	for _, symbol := range market.Symbols {
+		symbol.generator.SetState(state)
+	}
 }
 
 /*
-Close releases the four in-memory connections and simulated market context.
+Tick the market. This does not give you any result, because the result should
+come from the code that is currently being tested.
 */
+func (market *Market) Tick() {
+	for _, symbol := range market.Symbols {
+		symbol.generator.Step()
+	}
+}
+
 func (market *Market) Close() {
 	market.Public.Close()
 	market.Private.Close()
 	market.Level3.Close()
 	market.cancel()
+}
+
+func WithMarket(t *testing.T, symbols []*Symbol, f func(*Market)) func() {
+	return func() {
+		market := NewMarket(t.Context(), symbols)
+		defer market.Close()
+
+		Reset(func() {
+			market.Close()
+		})
+
+		f(market)
+	}
 }

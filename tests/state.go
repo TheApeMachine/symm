@@ -22,6 +22,22 @@ const (
 	VolatilitySpike
 )
 
+const (
+	MarketStateBaseline          = Baseline
+	MarketStateFastPump          = FastPump
+	MarketStateSlowPump          = SlowPump
+	MarketStateFastDump          = FastDump
+	MarketStateSlowDump          = SlowDump
+	MarketStateVolumeAbsorption  = VolumeAbsorption
+	MarketStateSpreadCompression = SpreadCompression
+	MarketStateThinLiquidity     = ThinLiquidity
+	MarketStateLoadedLiquidity   = LoadedLiquidity
+	MarketStateSpoofLiquidity    = SpoofLiquidity
+	MarketStateFlashCrash        = FlashCrash
+	MarketStateSidewaysChop      = SidewaysChop
+	MarketStateVolatilitySpike   = VolatilitySpike
+)
+
 // Sample represents a fully populated market ticker payload point.
 type Sample struct {
 	Symbol    string    `json:"symbol"`
@@ -79,7 +95,6 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 		Cadence:         15 * time.Millisecond,
 	},
 	VolumeAbsorption: {
-		// Price barely moves (Drift ~ 0), but huge volume and massive wall on one side
 		Drift:           0.02,
 		Volatility:      0.02,
 		SpreadScale:     0.5,
@@ -91,7 +106,7 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 	SpreadCompression: {
 		Drift:           0.0,
 		Volatility:      0.01,
-		SpreadScale:     0.1, // Ultra-tight spread
+		SpreadScale:     0.1,
 		BidAskAsymmetry: 1.0,
 		BaseQty:         100.0,
 		VolumeScale:     0.5,
@@ -100,7 +115,7 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 	ThinLiquidity: {
 		Drift:           0.0,
 		Volatility:      0.25,
-		SpreadScale:     3.5, // Wide spread, tiny order sizes
+		SpreadScale:     3.5,
 		BidAskAsymmetry: 1.0,
 		BaseQty:         5.0,
 		VolumeScale:     0.1,
@@ -109,14 +124,13 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 	FlashCrash: {
 		Drift:           -2.5,
 		Volatility:      0.80,
-		SpreadScale:     8.0, // Violent drop, massive spread, high volume
+		SpreadScale:     8.0,
 		BidAskAsymmetry: 0.02,
 		BaseQty:         1000.0,
 		VolumeScale:     15.0,
 		Cadence:         5 * time.Millisecond,
 	},
 	SpoofLiquidity: {
-		// Fake massive bid liquidity stack without price drift
 		Drift:           0.0,
 		Volatility:      0.03,
 		SpreadScale:     1.0,
