@@ -30,6 +30,7 @@ type Position struct {
 	price        *Price
 	balance      *Balance
 	pair         kraken.InstrumentPair
+	marked       bool
 	ID           string                `json:"id"`
 	EntryOrderID string                `json:"entry_order_id,omitempty"`
 	ExitOrderID  string                `json:"exit_order_id,omitempty"`
@@ -55,6 +56,17 @@ func NewPosition(
 	errnie.Info("creating position for: " + pair.Symbol)
 	ctx, cancel := context.WithCancel(ctx)
 
+	holding := types.NewHolding(
+		ctx,
+		pair.Symbol,
+		decision.ProposedQuantity,
+		decision.Mark,
+		decision.ReservationID,
+		decision.Opportunity,
+	)
+	holding.EntryPrice = decision.EntryPrice.Copy()
+	holding.EntryFee = decision.EntryFee.Copy()
+
 	position := &Position{
 		ctx:        ctx,
 		cancel:     cancel,
@@ -67,27 +79,20 @@ func NewPosition(
 		pair:       pair,
 		ID:         decision.ID,
 		EntryOrder: &spot.AddOrderRequest{
-			ClOrdId: decision.ID,
+			ClOrdId:   decision.ID,
 			Type:      "buy",
 			OrderType: "market",
 			Volume:    decision.ProposedQuantity.String(),
 			Pair:      pair.Symbol,
 		},
 		ExitOrder: &spot.AddOrderRequest{
-			ClOrdId: decision.ID,
+			ClOrdId:   decision.ID,
 			Type:      "sell",
 			OrderType: "market",
 			Volume:    decision.ProposedQuantity.String(),
 			Pair:      pair.Symbol,
 		},
-		Holding: types.NewHolding(
-			ctx,
-			pair.Symbol,
-			decision.ProposedQuantity,
-			price.Mark(pair.Symbol, SELL),
-			decision.ReservationID,
-			decision.Opportunity,
-		),
+		Holding: holding,
 	}
 
 	position.Publish()
@@ -158,6 +163,7 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 		}
 
 		position.Holding.PnL = position.price.PnL(position.Holding)
+		position.marked = true
 	}
 
 	position.mu.Unlock()
@@ -240,7 +246,27 @@ func (position *Position) applyEntry(execution kraken.ExecutionData) {
 
 	if execution.AvgPrice != nil && execution.AvgPrice.Sign() > 0 {
 		position.Holding.EntryPrice = execution.AvgPrice.Copy()
-		position.Holding.Mark = execution.AvgPrice.Copy()
+		mark := execution.AvgPrice
+
+		if position.marked && position.Holding.Mark != nil {
+			mark = position.Holding.Mark
+		}
+
+		position.Holding.Mark = mark.Copy()
+		position.Holding.Stoploss.Bind(execution.AvgPrice, mark)
+
+		feeRate, err := position.price.Fee(position.Holding.Symbol)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"position: could not estimate entry fee from fill",
+				err,
+			))
+		} else {
+			entryValue := decimal.ExactMul(execution.AvgPrice, position.Holding.Qty)
+			position.Holding.EntryFee = decimal.ExactMul(entryValue, feeRate)
+		}
 	}
 
 	if execution.FeeUsdEquiv != nil {

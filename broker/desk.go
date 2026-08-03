@@ -264,6 +264,9 @@ func (desk *Desk) recover() error {
 			types.Decision{
 				ID:               "recovered:" + symbol,
 				ProposedQuantity: quantity,
+				EntryPrice:       entryPrice,
+				EntryFee:         entryFee,
+				Mark:             entryPrice,
 			},
 		)
 
@@ -277,8 +280,6 @@ func (desk *Desk) recover() error {
 		// context orphaned.
 		position.Holding.Asset = asset
 		position.Holding.Qty = quantity
-		position.Holding.EntryPrice = entryPrice
-		position.Holding.EntryFee = entryFee
 		position.Holding.SellableQty = quantity.Copy()
 		position.Holding.EntryAt = &entryAt
 		position.Holding.Status = types.OPEN
@@ -461,16 +462,39 @@ func (desk *Desk) enter(decision types.Decision) error {
 		return errnie.Error(err)
 	}
 
-	// The position arms its stop against the current mark, so a symbol the
-	// price surface cannot mark yet has no entry price to protect and must
-	// not be opened.
-	if desk.price.Mark(pair.Symbol, SELL) == nil {
+	// A pending market buy starts with the current executable ask as its
+	// provisional basis. The private fill replaces this estimate with the
+	// venue's realized average price.
+	tick := desk.price.Tick(pair.Symbol)
+
+	if tick == nil || tick.Ask == nil || tick.Ask.Sign() <= 0 {
 		return errnie.Error(errnie.Err(
 			errnie.NotFound,
-			"desk: cannot mark "+decision.Symbol+" for entry",
+			"desk: cannot price "+decision.Symbol+" for entry",
 			nil,
 		))
 	}
+
+	feeRate, err := desk.price.Fee(pair.Symbol)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	entryValue := decimal.ExactMul(tick.Ask, decision.ProposedQuantity)
+	entryFee := decimal.ExactMul(entryValue, feeRate)
+
+	if entryValue == nil || entryFee == nil {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"desk: could not estimate entry basis for "+decision.Symbol,
+			nil,
+		))
+	}
+
+	decision.EntryPrice = tick.Ask.Copy()
+	decision.EntryFee = entryFee
+	decision.Mark = decision.EntryPrice.Copy()
 
 	position := NewPosition(
 		desk.ctx,
@@ -488,9 +512,12 @@ func (desk *Desk) enter(decision types.Decision) error {
 	if _, err := position.Enter(); err != nil {
 		desk.positions.Delete(pair.Symbol)
 
-		return errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"desk: could not enter position",
+		return errnie.Error(errors.Join(
+			errnie.Err(
+				errnie.UnprocessableContent,
+				"desk: could not enter position",
+				nil,
+			),
 			err,
 		))
 	}

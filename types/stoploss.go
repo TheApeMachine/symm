@@ -26,8 +26,8 @@ type Stoploss struct {
 }
 
 /*
-NewStoploss constructs an active regulator with default weight. Entry is bound
-later via Bind when the position opens.
+NewStoploss constructs an armed regulator from the position's initial entry
+basis. A realized fill can rebind it before live tickers take over the mark.
 */
 func NewStoploss(
 	ctx context.Context,
@@ -42,15 +42,35 @@ func NewStoploss(
 		ctx:    ctx,
 		cancel: cancel,
 		Symbol: symbol,
-		Entry:  mark,
-		Mark:   mark,
 		Status: PENDING,
 	}
 
-	stoploss.evaluate()
-
+	stoploss.Bind(mark, mark)
 	stoploss.Status = ARMED
 	return stoploss
+}
+
+/*
+Bind rebases the regulator to the position's entry basis and current mark.
+Before the first ticker these are the same executable entry price; a later
+fill can replace the estimate while preserving a mark already supplied by the
+market.
+*/
+func (stoploss *Stoploss) Bind(entry, mark *decimal.Decimal) {
+	if entry == nil {
+		return
+	}
+
+	if mark == nil {
+		mark = entry
+	}
+
+	stoploss.Entry = entry.Copy()
+	stoploss.Mark = mark.Copy()
+	stoploss.Peak = stoploss.Mark.Copy()
+	stoploss.Floor = nil
+	stoploss.breachCount = 0
+	stoploss.evaluate()
 }
 
 /*

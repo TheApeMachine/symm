@@ -22,19 +22,6 @@ var thesisSignalSources = []SourceType{
 	SourceToxicity,
 }
 
-var thesisSignalSourceSet = map[SourceType]struct{}{
-	SourceCorrelation: {},
-	SourceCVD:         {},
-	SourceDepthFlow:   {},
-	SourceExhaustion:  {},
-	SourceHawkes:      {},
-	SourceLeadLag:     {},
-	SourceLiquidity:   {},
-	SourcePumpDump:    {},
-	SourceSentiment:   {},
-	SourceToxicity:    {},
-}
-
 type Readiness struct {
 	Signals    bool `json:"signals"`
 	Manifold   bool `json:"manifold"`
@@ -153,7 +140,7 @@ func (thesis *Thesis) Readiness() Readiness {
 	readiness := Readiness{}
 	counts := thesis.stampCounts()
 
-	readiness.Signals = counts.signals > 0
+	readiness.Signals = thesis.signalsMeasured()
 	readiness.Manifold = readiness.Signals && counts.manifold > 0
 	readiness.Resonance = readiness.Manifold && counts.resonance > 0
 	readiness.Causal = readiness.Resonance && counts.causal > 0
@@ -170,12 +157,46 @@ func (thesis *Thesis) Readiness() Readiness {
 	return readiness
 }
 
+func (thesis *Thesis) signalsMeasured() bool {
+	if thesis == nil || thesis.Measurements == nil {
+		return false
+	}
+
+	for _, source := range thesisSignalSources {
+		value, found := thesis.Measurements.Load(source)
+
+		if !found {
+			return false
+		}
+
+		rows, ok := value.([]*Measurement)
+
+		if !ok || len(rows) == 0 {
+			return false
+		}
+
+		measured := false
+
+		for _, row := range rows {
+			if row != nil {
+				measured = true
+				break
+			}
+		}
+
+		if !measured {
+			return false
+		}
+	}
+
+	return true
+}
+
 /*
-thesisStampCounts tracks counts for the signals, manifold, resonance, causal,
+thesisStampCounts tracks counts for the derived manifold, resonance, causal,
 and graph stages separately.
 */
 type thesisStampCounts struct {
-	signals   int
 	manifold  int
 	resonance int
 	causal    int
@@ -184,7 +205,6 @@ type thesisStampCounts struct {
 
 func (thesis *Thesis) stampCounts() thesisStampCounts {
 	counts := thesisStampCounts{}
-	seenSignals := make(map[SourceType]struct{})
 
 	if thesis == nil || thesis.Stamps == nil {
 		return counts
@@ -198,15 +218,6 @@ func (thesis *Thesis) stampCounts() thesisStampCounts {
 		}
 
 		for _, stamp := range stamps {
-			if _, ok := thesisSignalSourceSet[stamp.Source]; ok {
-				if _, seen := seenSignals[stamp.Source]; !seen {
-					seenSignals[stamp.Source] = struct{}{}
-					counts.signals++
-				}
-
-				continue
-			}
-
 			switch stamp.Source {
 			case SourceManifold:
 				counts.manifold++
@@ -434,8 +445,8 @@ func (thesis *Thesis) Symbols() []string {
 }
 
 /*
-AppendMeasuremnts appends measurements for the specified
-source while safely ignoring nil input.
+AppendMeasurements replaces the current measurements for the specified source
+while safely ignoring nil input.
 */
 func (thesis *Thesis) AppendMeasurements(
 	source SourceType,
@@ -447,32 +458,13 @@ func (thesis *Thesis) AppendMeasurements(
 	}
 
 	stamp.Source = source
-
-	found, ok := thesis.Measurements.LoadOrStore(
-		source, measurements,
-	)
+	thesis.Measurements.Store(source, measurements)
+	found, ok := thesis.Stamps.LoadOrStore(source, []Stamp{stamp})
 
 	if ok {
-		thesis.Measurements.Store(
-			source, append(
-				found.([]*Measurement), measurements...,
-			),
-		)
-
-		found, ok := thesis.Stamps.LoadOrStore(source, []Stamp{stamp})
-
-		if ok {
-			thesis.Stamps.Store(
-				source, append(
-					found.([]Stamp), stamp,
-				),
-			)
-		}
-
-		return thesis
+		thesis.Stamps.Store(source, append(found.([]Stamp), stamp))
 	}
 
-	thesis.Stamps.Store(source, []Stamp{stamp})
 	return thesis
 }
 

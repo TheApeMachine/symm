@@ -56,6 +56,7 @@ func NewHolding(
 		cancel:        cancel,
 		Symbol:        symbol,
 		Qty:           qty,
+		Mark:          mark.Copy(),
 		Status:        PENDING,
 		ReservationID: reservationID,
 		IsOpportunity: opportunity,

@@ -35,11 +35,10 @@ Kind describes the type of node in the knowledge graph.
 type Kind string
 
 const (
-	KindMeasurement Kind = "measurement"
-	KindCategory    Kind = "category"
-	KindResonance   Kind = "resonance"
-	KindCausal      Kind = "causal"
-	KindCognition   Kind = "cognition"
+	KindCategory  Kind = "category"
+	KindResonance Kind = "resonance"
+	KindCausal    Kind = "causal"
+	KindCognition Kind = "cognition"
 )
 
 /*
@@ -205,8 +204,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	graph := NewGraph(thesis.At)
 
-	// 1. Extract and register all nodes from Thesis
-	solver.extractMeasurementNodes(thesis, graph)
+	// 1. Extract and register all non-measurement nodes from Thesis
 	solver.extractCategoryNodes(thesis, graph)
 	solver.extractResonanceNodes(thesis, graph)
 	solver.extractCausalNodes(thesis, graph)
@@ -320,79 +318,6 @@ func (solver *Solver) publish(thesis *types.Thesis, graph *Graph) {
 }
 
 /*
-extractMeasurementNodes normalizes Thesis measurement storage before materializing
-metric nodes so graph extraction accepts both singleton rows and the slice-backed
-values AppendMeasurements stores per source. Append history is collapsed by the
-stable graph identity before node and metadata allocation because later rows
-would otherwise overwrite the same node after consuming memory.
-*/
-func (solver *Solver) extractMeasurementNodes(thesis *types.Thesis, graph *Graph) {
-	type measurementNodeKey struct {
-		symbol    string
-		source    types.SourceType
-		metricKey string
-	}
-
-	type measurementNode struct {
-		measurement *types.Measurement
-		metric      types.MetricSample
-	}
-
-	latest := make(map[measurementNodeKey]measurementNode)
-
-	thesis.Measurements.Range(func(key, value any) bool {
-		rows, ok := value.([]*types.Measurement)
-
-		if !ok {
-			if single, singleOK := value.(*types.Measurement); singleOK && single != nil {
-				rows = []*types.Measurement{single}
-			} else {
-				return true
-			}
-		}
-
-		for _, m := range rows {
-			if m == nil || m.Symbol == "" {
-				continue
-			}
-
-			for metricKey, metric := range m.Metrics {
-				latest[measurementNodeKey{
-					symbol:    m.Symbol,
-					source:    m.Source,
-					metricKey: metricKey,
-				}] = measurementNode{measurement: m, metric: metric}
-			}
-		}
-
-		return true
-	})
-
-	for key, candidate := range latest {
-		confidence := 1.0
-
-		if candidate.measurement.Uncertainty != nil {
-			confidence = candidate.measurement.Uncertainty.Confidence
-		}
-
-		graph.AddNode(&Node{
-			ID:         "meas:" + key.symbol + ":" + string(key.source) + ":" + key.metricKey,
-			Symbol:     candidate.measurement.Symbol,
-			Source:     string(candidate.measurement.Source),
-			Kind:       KindMeasurement,
-			Value:      candidate.metric.Raw,
-			Confidence: confidence,
-			At:         candidate.measurement.At,
-			Metadata: map[string]any{
-				"readiness": string(candidate.measurement.Validity.Readiness),
-				"state":     string(candidate.measurement.Validity.State),
-				"unit":      string(candidate.metric.Unit),
-			},
-		})
-	}
-}
-
-/*
 extractCategoryNodes registers active categories as nodes.
 */
 func (solver *Solver) extractCategoryNodes(thesis *types.Thesis, graph *Graph) {
@@ -478,6 +403,8 @@ func (solver *Solver) extractCausalNodes(thesis *types.Thesis, graph *Graph) {
 			return true
 		}
 
+		confidence := graphConfidence(causalMap["confidence"])
+
 		for _, field := range []string{"doExpectation", "uplift", "association", "intervention"} {
 			if val, ok := causalMap[field].(float64); ok {
 				nodeID := fmt.Sprintf("causal:%s:%s", symbol, field)
@@ -487,7 +414,7 @@ func (solver *Solver) extractCausalNodes(thesis *types.Thesis, graph *Graph) {
 					Source:     "causal",
 					Kind:       "causal",
 					Value:      val,
-					Confidence: 1.0,
+					Confidence: confidence,
 					At:         thesis.At,
 				})
 			}
@@ -495,6 +422,24 @@ func (solver *Solver) extractCausalNodes(thesis *types.Thesis, graph *Graph) {
 
 		return true
 	})
+}
+
+func graphConfidence(value any) float64 {
+	confidence, ok := value.(float64)
+
+	if !ok || math.IsNaN(confidence) || math.IsInf(confidence, 0) {
+		return 0
+	}
+
+	if confidence < 0 {
+		return 0
+	}
+
+	if confidence > 1 {
+		return 1
+	}
+
+	return confidence
 }
 
 /*

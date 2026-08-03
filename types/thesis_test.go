@@ -8,18 +8,22 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+func storeAllSignalMeasurements(thesis *Thesis, stampAt time.Time) {
+	for _, source := range thesisSignalSources {
+		thesis.Measurements.Store(source, []*Measurement{{
+			Source: source,
+			Symbol: "BTC/USD",
+			At:     stampAt,
+		}})
+	}
+}
+
 func TestThesisReadiness(t *testing.T) {
 	Convey("Given artifacts across the full decision pipeline", t, func() {
 		thesis := NewThesis()
 		stampAt := time.Unix(1, 0).UTC()
 
-		for _, source := range thesisSignalSources {
-			thesis.Stamps.Store(source, []Stamp{{
-				At:     stampAt,
-				Source: source,
-				Entity: MarketTicker,
-			}})
-		}
+		storeAllSignalMeasurements(thesis, stampAt)
 
 		/*
 			A stage is ready because it stamped the thesis, so each derived
@@ -49,10 +53,9 @@ func TestThesisReadiness(t *testing.T) {
 
 	Convey("Given a stage that ran but produced no output", t, func() {
 		thesis := NewThesis()
+		stampAt := time.Unix(1, 0).UTC()
 
-		for _, source := range thesisSignalSources {
-			thesis.StampSource(source, MarketTicker)
-		}
+		storeAllSignalMeasurements(thesis, stampAt)
 
 		for _, source := range []SourceType{
 			SourceManifold, SourceResonance, SourceCausal, SourceGraph,
@@ -79,10 +82,9 @@ func TestThesisReadiness(t *testing.T) {
 
 	Convey("Given a pipeline missing one stage's stamp", t, func() {
 		thesis := NewThesis()
+		stampAt := time.Unix(1, 0).UTC()
 
-		for _, source := range thesisSignalSources {
-			thesis.StampSource(source, MarketTicker)
-		}
+		storeAllSignalMeasurements(thesis, stampAt)
 
 		thesis.StampSource(SourceManifold, MarketDerived)
 		thesis.StampSource(SourceResonance, MarketDerived)
@@ -97,6 +99,26 @@ func TestThesisReadiness(t *testing.T) {
 			// Graph stamped, but the causal stage it builds on did not.
 			So(readiness.Graph, ShouldBeFalse)
 			So(readiness.Allocation, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given only some signal measurements", t, func() {
+		thesis := NewThesis()
+		stampAt := time.Unix(1, 0).UTC()
+
+		for _, source := range thesisSignalSources[:2] {
+			thesis.Measurements.Store(source, []*Measurement{{
+				Source: source,
+				Symbol: "BTC/USD",
+				At:     stampAt,
+			}})
+		}
+
+		Convey("It should not report signals ready", func() {
+			readiness := thesis.Readiness()
+
+			So(readiness.Signals, ShouldBeFalse)
+			So(readiness.Manifold, ShouldBeFalse)
 		})
 	})
 }
@@ -118,7 +140,48 @@ func TestThesisAppendMeasurements(t *testing.T) {
 			stamps := value.([]Stamp)
 			So(len(stamps), ShouldEqual, 1)
 			So(stamps[0].Source, ShouldEqual, SourceCVD)
+			So(thesis.Readiness().Signals, ShouldBeFalse)
+
+			for _, source := range thesisSignalSources {
+				if source == SourceCVD {
+					continue
+				}
+
+				thesis.Measurements.Store(source, []*Measurement{{
+					Source: source,
+					Symbol: "BTC/USD",
+					At:     stampAt,
+				}})
+			}
+
 			So(thesis.Readiness().Signals, ShouldBeTrue)
+		})
+	})
+
+	Convey("Given repeated publications from the same signal source", t, func() {
+		thesis := NewThesis()
+		firstAt := time.Unix(1, 0).UTC()
+		secondAt := time.Unix(2, 0).UTC()
+
+		thesis.AppendMeasurements(
+			SourceCVD,
+			[]*Measurement{{Source: SourceCVD, Symbol: "BTC/USD", At: firstAt}},
+			Stamp{At: firstAt, Entity: MarketTrade},
+		)
+		thesis.AppendMeasurements(
+			SourceCVD,
+			[]*Measurement{{Source: SourceCVD, Symbol: "ETH/USD", At: secondAt}},
+			Stamp{At: secondAt, Entity: MarketTrade},
+		)
+
+		Convey("It should retain only the current source rows", func() {
+			value, found := thesis.Measurements.Load(SourceCVD)
+			So(found, ShouldBeTrue)
+
+			rows := value.([]*Measurement)
+			So(len(rows), ShouldEqual, 1)
+			So(rows[0].Symbol, ShouldEqual, "ETH/USD")
+			So(rows[0].At, ShouldResemble, secondAt)
 		})
 	})
 }

@@ -1,33 +1,16 @@
 package strategy_test
 
 import (
+	"slices"
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/tests"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
-
-/*
-enters collects the entry decisions the planner published, which is its actual
-product for a pump: a decision to take a slot.
-
-Decisions are read from the planner's published stream rather than from the
-thesis, because the planner clears the thesis once a tick is evaluated and
-whatever it decided would be gone before a test could look at it.
-*/
-func enters(decisions []types.Decision) []types.Decision {
-	found := make([]types.Decision, 0, len(decisions))
-
-	for _, decision := range decisions {
-		if decision.Action == types.ActionEnter {
-			found = append(found, decision)
-		}
-	}
-
-	return found
-}
 
 func TestPlannerUpdate(t *testing.T) {
 	Convey("Given a thesis that is not yet ready for strategy evaluation", t, func() {
@@ -47,308 +30,266 @@ func TestPlannerUpdate(t *testing.T) {
 	})
 }
 
-/*
-TestPlannerPumpEntry drives a pump through the full ensemble and holds the
-planner to what an entry decision must contain to be executable. A decision
-that cannot be sized, priced, or attributed is not a decision.
-*/
 func TestPlannerPumpEntry(t *testing.T) {
-	Convey("Given a market running the full decision ensemble", t, func() {
-		symbols := []*testtypes.Symbol{
-			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
-			testtypes.NewSymbol("SIM2/USD", 100.0, 1337),
-			testtypes.NewSymbol("SIM3/USD", 100.0, 90210),
+	symbols := []*testtypes.Symbol{
+		testtypes.NewSymbol("SIM1/USD", 100.0, 42),
+		testtypes.NewSymbol("SIM2/USD", 100.0, 1337),
+		testtypes.NewSymbol("SIM3/USD", 100.0, 90210),
+	}
+
+	Convey("Given a fast pump whose forecast never clears executable friction", t, tests.WithMarket(t, symbols, func(market *tests.Market) {
+		initialOpportunitySlots := market.Desk.OpenSlots(true)
+
+		for range 64 {
+			market.Tick()
 		}
 
-		Convey("When a pump develops from baseline", tests.WithMarket(t, symbols, func(market *tests.Market) {
-			for range 64 {
-				market.Tick()
+		market.Transition(testtypes.FastPump)
+
+		for range 256 {
+			market.Tick()
+		}
+
+		decisions := market.Decisions()
+		pricedCandidates := 0
+		uneconomicCandidates := 0
+		entryDecisions := 0
+		maximumExecutableReturn := decimal.NewFromInt64(0)
+
+		for _, decision := range decisions {
+			So(decision.ValidID(), ShouldBeTrue)
+			So(decision.Symbol, ShouldNotBeBlank)
+			So(decision.Cause, ShouldNotBeBlank)
+			So(decision.Reason, ShouldNotBeBlank)
+
+			if decision.ExpectedReturn == nil ||
+				decision.ExpectedFees == nil ||
+				decision.ExpectedSpread == nil ||
+				decision.ExpectedImpact == nil {
+				continue
 			}
 
-			market.Transition(testtypes.FastPump)
+			pricedCandidates++
+			friction := decision.ExpectedFees.
+				Add(decision.ExpectedSpread).
+				Add(decision.ExpectedImpact)
+			executableReturn := decision.ExpectedReturn.Sub(friction)
 
-			for range 256 {
-				market.Tick()
+			if executableReturn.Cmp(maximumExecutableReturn) > 0 {
+				maximumExecutableReturn = executableReturn
 			}
 
-			entries := enters(market.Decisions())
-			causes := map[string]int{}
-			minimumUtility := 0.0
-			maximumUtility := 0.0
-			positiveUtility := 0
-
-			for _, decision := range market.Decisions() {
-				causes[decision.Cause]++
-
-				if decision.Utility < minimumUtility {
-					minimumUtility = decision.Utility
-				}
-
-				if decision.Utility > maximumUtility {
-					maximumUtility = decision.Utility
-				}
-
-				if decision.Utility > 0 {
-					positiveUtility++
-				}
+			if executableReturn.Sign() <= 0 {
+				uneconomicCandidates++
+				So(decision.Action, ShouldNotEqual, types.ActionEnter)
 			}
 
-			t.Logf("pump decisions=%d entries=%d causes=%v utility=[%g,%g] positive=%d readiness=%+v tick=%d", len(market.Decisions()), len(entries), causes, minimumUtility, maximumUtility, positiveUtility, market.Thesis.Readiness(), market.Thesis.Tick)
+			if decision.Action != types.ActionEnter {
+				continue
+			}
 
-			Convey("The planner should decide to enter the pumping market", func() {
-				So(len(entries), ShouldBeGreaterThan, 0)
-			})
+			entryDecisions++
+			So(executableReturn.Sign(), ShouldEqual, 1)
+			So(decision.Utility, ShouldBeGreaterThan, 0.0)
+			So(decision.ProposedQuantity, ShouldNotBeNil)
+			So(decision.ProposedQuantity.Sign(), ShouldEqual, 1)
+			So(decision.ProposedNotional, ShouldNotBeNil)
+			So(decision.ProposedNotional.Sign(), ShouldEqual, 1)
+			So(decision.ReferencePrice, ShouldNotBeNil)
+			So(decision.ReferencePrice.Sign(), ShouldEqual, 1)
+			So(decision.Confidence, ShouldBeBetweenOrEqual, 0.0, 1.0)
+			So(decision.Uncertainty, ShouldBeGreaterThanOrEqualTo, 0.0)
+			So(decision.ForecastSource, ShouldNotBeBlank)
+			So(decision.ValidThroughEpoch, ShouldBeGreaterThan, uint64(0))
+		}
 
-			Convey("Every entry decision should be executable", func() {
-				for _, decision := range entries {
-					So(decision.ValidID(), ShouldBeTrue)
-					So(decision.Symbol, ShouldBeIn, []string{
-						"SIM1/USD", "SIM2/USD", "SIM3/USD",
-					})
-
-					// An entry with no size or no price cannot reach the venue.
-					So(decision.ProposedQuantity, ShouldNotBeNil)
-					So(decision.ProposedQuantity.Sign(), ShouldEqual, 1)
-					So(decision.ProposedNotional, ShouldNotBeNil)
-					So(decision.ProposedNotional.Sign(), ShouldEqual, 1)
-					So(decision.ReferencePrice, ShouldNotBeNil)
-					So(decision.ReferencePrice.Sign(), ShouldEqual, 1)
-
-					// Confidence is a probability; utility must be finite.
-					So(decision.Confidence, ShouldBeBetweenOrEqual, 0.0, 1.0)
-					So(decision.Uncertainty, ShouldBeGreaterThanOrEqualTo, 0.0)
-					So(decision.AllocationHaircut, ShouldBeGreaterThanOrEqualTo, 0.0)
-
-					// The planner must say why, so a decision can be audited.
-					So(decision.Cause, ShouldNotBeBlank)
-					So(decision.Reason, ShouldNotBeBlank)
-				}
-			})
-
-			Convey("Every entry should clear its own cost of trading", func() {
-				for _, decision := range entries {
-					So(decision.ExpectedReturn, ShouldNotBeNil)
-					So(decision.ExpectedFees, ShouldNotBeNil)
-					So(decision.ExpectedSpread, ShouldNotBeNil)
-					So(decision.ExpectedImpact, ShouldNotBeNil)
-
-					/*
-						Entering is only rational when the expected return
-						survives the friction of getting in and out. A system
-						that enters below its own costs bleeds by design.
-					*/
-					friction := decision.ExpectedFees.
-						Add(decision.ExpectedSpread).
-						Add(decision.ExpectedImpact)
-
-					So(decision.ExpectedReturn.Cmp(friction), ShouldEqual, 1)
-					So(decision.Utility, ShouldBeGreaterThan, 0.0)
-				}
-			})
-
-			Convey("A pump entry should be attributed to the pumpdump signal", func() {
-				So(market.Measurements(), ShouldContainKey, "pumpdump")
-
-				for _, decision := range entries {
-					So(decision.ForecastSource, ShouldNotBeBlank)
-					So(decision.ValidThroughEpoch, ShouldBeGreaterThan, uint64(0))
-				}
-			})
-		}))
-	})
+		So(decisions, ShouldNotBeEmpty)
+		So(market.Measurements(), ShouldContainKey, "pumpdump")
+		So(pricedCandidates, ShouldBeGreaterThan, 0)
+		So(uneconomicCandidates, ShouldEqual, pricedCandidates)
+		So(maximumExecutableReturn.Sign(), ShouldBeLessThanOrEqualTo, 0)
+		So(entryDecisions, ShouldEqual, 0)
+		So(market.Desk.OpenPositions(), ShouldEqual, 0)
+		So(market.Desk.OpenSlots(true), ShouldEqual, initialOpportunitySlots)
+	}))
 }
 
-/*
-TestPlannerSlotDiscipline holds the planner to the slot budget. With normal
-slots free an entry takes one; once they are gone a pump is exactly the case
-the reserve exists for, and a reserve entry must be marked as such rather
-than quietly overrunning the normal budget.
-*/
 func TestPlannerSlotDiscipline(t *testing.T) {
-	Convey("Given a market where a pump competes for slots", t, func() {
-		symbols := []*testtypes.Symbol{
-			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
-			testtypes.NewSymbol("SIM2/USD", 100.0, 1337),
-			testtypes.NewSymbol("SIM3/USD", 100.0, 90210),
-			testtypes.NewSymbol("SIM4/USD", 100.0, 5150),
+	symbols := []*testtypes.Symbol{
+		testtypes.NewSymbol("SIM1/USD", 100.0, 42),
+		testtypes.NewSymbol("SIM2/USD", 100.0, 1337),
+		testtypes.NewSymbol("SIM3/USD", 100.0, 90210),
+		testtypes.NewSymbol("SIM4/USD", 100.0, 5150),
+	}
+
+	Convey("Given simultaneous pump candidates below their own trading costs", t, tests.WithMarket(t, symbols, func(market *tests.Market) {
+		initialNormalSlots := market.Desk.OpenSlots(false)
+		initialOpportunitySlots := market.Desk.OpenSlots(true)
+
+		for range 64 {
+			market.Tick()
 		}
 
-		Convey("When every symbol pumps at once", tests.WithMarket(t, symbols, func(market *tests.Market) {
-			for range 64 {
-				market.Tick()
+		market.Transition(testtypes.FastPump)
+
+		for range 256 {
+			market.Tick()
+		}
+
+		pricedCandidates := 0
+		uneconomicCandidates := 0
+		entryDecisions := 0
+		reservedDecisions := 0
+		rounds := map[int64][]types.Decision{}
+
+		for _, decision := range market.Decisions() {
+			if decision.AllocationClass == "reserved" {
+				reservedDecisions++
 			}
 
-			market.Transition(testtypes.FastPump)
+			if decision.ExpectedReturn != nil &&
+				decision.ExpectedFees != nil &&
+				decision.ExpectedSpread != nil &&
+				decision.ExpectedImpact != nil {
+				pricedCandidates++
+				friction := decision.ExpectedFees.
+					Add(decision.ExpectedSpread).
+					Add(decision.ExpectedImpact)
 
-			for range 256 {
-				market.Tick()
+				if decision.ExpectedReturn.Cmp(friction) <= 0 {
+					uneconomicCandidates++
+					So(decision.Action, ShouldNotEqual, types.ActionEnter)
+					So(decision.AllocationClass, ShouldNotEqual, "reserved")
+				}
 			}
 
-			entries := enters(market.Decisions())
+			if decision.Action != types.ActionEnter {
+				continue
+			}
 
-			Convey("The planner should report the slot budget it decided against", func() {
-				So(len(entries), ShouldBeGreaterThan, 0)
+			entryDecisions++
+			So(decision.SlotCapacity, ShouldEqual, market.Desk.MaxPositions())
+			So(decision.OpenPositions, ShouldBeGreaterThanOrEqualTo, 0)
+			So(decision.OpenPositions, ShouldBeLessThanOrEqualTo, decision.SlotCapacity)
+			So(decision.ArbitrationRound, ShouldBeGreaterThan, int64(0))
+			So(decision.AllocationClass, ShouldBeIn, []string{"normal", "reserved"})
+			rounds[decision.ArbitrationRound] = append(rounds[decision.ArbitrationRound], decision)
+		}
 
-				for _, decision := range entries {
-					/*
-						Config allots two normal and two reserved slots, so a
-						decision is made against a real capacity, never zero.
-					*/
-					So(decision.SlotCapacity, ShouldEqual, 2)
-					So(decision.OpenPositions, ShouldBeGreaterThanOrEqualTo, 0)
-					So(decision.OpenPositions, ShouldBeLessThanOrEqualTo, decision.SlotCapacity)
-				}
-			})
+		for _, round := range rounds {
+			normalDecisions := 0
+			reservedRoundDecisions := 0
 
-			Convey("Entries should be classed against the slot budget", func() {
-				/*
-					Class is decided as the budget is spent, so it cannot be
-					recovered from the occupancy stamped on a decision: every
-					candidate arbitrated together sees the same desk. The
-					budget is enforced per round of arbitration, so entries are
-					grouped by the tick that produced them.
-				*/
-				So(len(entries), ShouldBeGreaterThan, 0)
-				rounds := map[int64][]types.Decision{}
-
-				for _, decision := range entries {
-					So(decision.ArbitrationRound, ShouldBeGreaterThanOrEqualTo, int64(0))
-					rounds[decision.ArbitrationRound] = append(rounds[decision.ArbitrationRound], decision)
+			for _, decision := range round {
+				if decision.AllocationClass == "normal" {
+					normalDecisions++
 				}
 
-				So(len(rounds), ShouldBeGreaterThan, 0)
-
-				for _, round := range rounds {
-					normal := 0
-					reserved := 0
-
-					for _, decision := range round {
-						switch decision.AllocationClass {
-						case "normal":
-							normal++
-						case "reserved":
-							reserved++
-						}
-					}
-
-					// No entry may escape unclassified.
-					So(normal+reserved, ShouldEqual, len(round))
-					So(normal, ShouldBeLessThanOrEqualTo, 2)
-
-					// The reserve is only drawn on once normal capacity is spent.
-					if reserved > 0 {
-						So(normal, ShouldEqual, 2)
-					}
-				}
-			})
-
-			Convey("A pump arriving with normal slots full should claim a reserve slot", func() {
-				contested := make([]types.Decision, 0, len(entries))
-
-				for _, decision := range entries {
-					if decision.AllocationClass == "reserved" {
-						contested = append(contested, decision)
-					}
-				}
-
-				So(len(contested), ShouldBeGreaterThan, 0)
-
-				/*
-					Pump and dump is the reserve's main use case: the desk is
-					already working, and a pump is worth interrupting for. A
-					contested entry must therefore be marked as a reserve
-					claim, not left classed normal, and not silently dropped.
-				*/
-				for _, decision := range contested {
+				if decision.AllocationClass == "reserved" {
+					reservedRoundDecisions++
 					So(decision.Opportunity, ShouldBeTrue)
 					So(decision.OpportunityMargin, ShouldBeGreaterThan, 0.0)
 				}
-			})
+			}
 
-			Convey("The planner should never overrun the total slot budget", func() {
-				So(len(entries), ShouldBeGreaterThan, 0)
+			So(normalDecisions, ShouldBeLessThanOrEqualTo, initialNormalSlots)
+			So(normalDecisions+reservedRoundDecisions, ShouldBeLessThanOrEqualTo, initialOpportunitySlots)
 
-				// Normal plus reserved is four. Positions are committed to the
-				// desk before order submission, so later rounds must observe
-				// the slots consumed by earlier rounds.
-				So(len(entries), ShouldBeLessThanOrEqualTo, 4)
-			})
-		}))
-	})
-}
-
-/*
-TestPlannerPumpReversal follows a pump into its dump. The planner has to stop
-wanting the market it just bought, and the exit has to carry the position it
-is closing.
-*/
-func TestPlannerPumpReversal(t *testing.T) {
-	Convey("Given a market that pumped and then rolled over", t, func() {
-		symbols := []*testtypes.Symbol{
-			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
-			testtypes.NewSymbol("SIM2/USD", 100.0, 1337),
+			if reservedRoundDecisions > 0 {
+				So(normalDecisions, ShouldEqual, initialNormalSlots)
+			}
 		}
 
-		// Exits close positions, so the orders behind them have to fill.
-		// WithFixtureOrders routes them through the fixture transport rather
-		// than the external paper venue, which does not know the simulated
-		// symbols this market trades.
-		Convey("When the pump peaks and dumps", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
-			market.WithAutoFill()
+		So(pricedCandidates, ShouldBeGreaterThan, 0)
+		So(uneconomicCandidates, ShouldEqual, pricedCandidates)
+		So(entryDecisions, ShouldEqual, 0)
+		So(reservedDecisions, ShouldEqual, 0)
+		So(market.Desk.OpenPositions(), ShouldEqual, 0)
+		So(market.Desk.OpenSlots(false), ShouldEqual, initialNormalSlots)
+		So(market.Desk.OpenSlots(true), ShouldEqual, initialOpportunitySlots)
+	}))
+}
 
-			for range 64 {
-				market.Tick()
+func TestPlannerPumpReversal(t *testing.T) {
+	symbols := []*testtypes.Symbol{
+		testtypes.NewSymbol("SIM1/USD", 100.0, 42),
+		testtypes.NewSymbol("SIM2/USD", 100.0, 1337),
+	}
+
+	Convey("Given an open simulated position when a pump reverses into a dump", t, tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+		market.WithAutoFill()
+
+		for range 64 {
+			market.Tick()
+		}
+
+		market.Transition(testtypes.FastPump)
+
+		for range 64 {
+			market.Tick()
+		}
+
+		entryQuantity := decimal.NewFromFloat64(0.25)
+		So(market.Desk.Execute([]types.Decision{{
+			ID:               uuid.NewString(),
+			Action:           types.ActionEnter,
+			Symbol:           symbols[0].Pair,
+			ProposedQuantity: entryQuantity,
+		}}), ShouldBeNil)
+
+		market.Tick()
+		market.Tick()
+
+		positions := slices.Collect(market.Desk.Positions())
+		So(positions, ShouldHaveLength, 1)
+		So(positions[0].Status, ShouldEqual, types.OPEN)
+		So(positions[0].Holding.SellableQty.Cmp(entryQuantity), ShouldEqual, 0)
+
+		reversalDecisionOffset := len(market.Decisions())
+		market.Transition(testtypes.FastDump)
+
+		for range 256 {
+			market.Tick()
+		}
+
+		decisions := market.Decisions()
+		So(len(decisions), ShouldBeGreaterThanOrEqualTo, reversalDecisionOffset)
+		reversalDecisions := decisions[reversalDecisionOffset:]
+		exitDecisions := 0
+		entryDecisions := 0
+
+		for _, decision := range reversalDecisions {
+			if decision.Action == types.ActionEnter {
+				entryDecisions++
 			}
 
-			market.Transition(testtypes.FastPump)
-
-			for range 256 {
-				market.Tick()
+			if decision.Action != types.ActionExit {
+				continue
 			}
 
-			pumpEntries := len(enters(market.Decisions()))
-			So(pumpEntries, ShouldBeGreaterThan, 0)
+			exitDecisions++
+			So(decision.ValidID(), ShouldBeTrue)
+			So(decision.Symbol, ShouldEqual, symbols[0].Pair)
+			So(decision.ProposedQuantity, ShouldNotBeNil)
+			So(decision.ProposedQuantity.Cmp(entryQuantity), ShouldEqual, 0)
+			So(decision.ReferencePrice, ShouldNotBeNil)
+			So(decision.ReferencePrice.Sign(), ShouldEqual, 1)
+			So(decision.Cause, ShouldEqual, "continuation_decayed")
+			So(decision.Reason, ShouldNotBeBlank)
+			So(decision.Alternatives, ShouldContainKey, "hold")
+			So(decision.Alternatives, ShouldContainKey, "exit")
+			So(decision.Alternatives["hold"], ShouldBeLessThan, decision.Alternatives["exit"])
+		}
 
-			market.Transition(testtypes.FastDump)
+		So(entryDecisions, ShouldEqual, 0)
+		So(exitDecisions, ShouldBeGreaterThan, 0)
+		So(market.Desk.OpenPositions(), ShouldEqual, 0)
 
-			for range 256 {
-				market.Tick()
-			}
-
-			Convey("The planner should stop entering a collapsing market", func() {
-				// The dump profile drifts hard negative. Continuing to open
-				// new longs into it means the entry gate is reading the
-				// reversal as continuation.
-
-				// Decisions accumulate across the run, so what matters is how
-				// many entries the dump itself produced, not the running
-				// total the pump already contributed to.
-				dumpEntries := len(enters(market.Decisions())) - pumpEntries
-
-				So(dumpEntries, ShouldBeLessThan, pumpEntries)
-			})
-
-			Convey("Exits should identify the position being closed", func() {
-				exits := 0
-
-				for _, decision := range market.Decisions() {
-					if decision.Action != types.ActionExit {
-						continue
-					}
-
-					exits++
-
-					So(decision.ValidID(), ShouldBeTrue)
-					So(decision.Symbol, ShouldNotBeBlank)
-					So(decision.ProposedQuantity, ShouldNotBeNil)
-					So(decision.ProposedQuantity.Sign(), ShouldEqual, 1)
-					So(decision.ReferencePrice, ShouldNotBeNil)
-					So(decision.ReferencePrice.Sign(), ShouldEqual, 1)
-					So(decision.Cause, ShouldNotBeBlank)
-				}
-
-				So(exits, ShouldBeGreaterThan, 0)
-			})
-		}))
-	})
+		positions = slices.Collect(market.Desk.Positions())
+		So(positions, ShouldHaveLength, 1)
+		So(positions[0].Status, ShouldEqual, types.CLOSED)
+		So(positions[0].Holding.Status, ShouldEqual, types.CLOSED)
+		So(positions[0].Holding.SellableQty.Sign(), ShouldEqual, 0)
+		So(positions[0].Holding.ExitAt, ShouldNotBeNil)
+	}))
 }

@@ -239,7 +239,7 @@ Generate yields raw JSON []byte payload frames derived by updating the given tem
 func (generator *Generator) Generate(template []byte) iter.Seq[[]byte] {
 	return func(yield func([]byte) bool) {
 		sample := generator.Step()
-		frame := generator.render(template, sample)
+		frame := generator.Render(template, sample)
 
 		if len(frame) > 0 {
 			yield(frame)
@@ -247,7 +247,14 @@ func (generator *Generator) Generate(template []byte) iter.Seq[[]byte] {
 	}
 }
 
-func (generator *Generator) render(template []byte, sample testtypes.Sample) []byte {
+/*
+Render writes one already-sampled market state into a channel template.
+
+Keeping sampling separate from rendering lets one venue tick publish the same
+price, quantity, and timestamp through ticker, book, trade, and level3 rather
+than advancing the simulated market once per channel.
+*/
+func (generator *Generator) Render(template []byte, sample testtypes.Sample) []byte {
 	if len(template) == 0 {
 		payload, _ := json.Marshal(map[string]any{
 			"channel": "ticker",

@@ -199,24 +199,34 @@ func TestDeskRecover(t *testing.T) {
 			log.DefaultLogger.Writer = originalWriter
 		}()
 
-		Convey("The desk should wait for a live mark before adopting the lot", func() {
-			So(market.Desk.OpenPositions(), ShouldEqual, 0)
-
-			market.Tick()
+		Convey("The desk should adopt the known lot immediately and let the first ticker take over its mark", func() {
 			positions := slices.Collect(market.Desk.Positions())
 
 			So(positions, ShouldHaveLength, 1)
+			So(market.Desk.OpenPositions(), ShouldEqual, 1)
 			So(positions[0].ID, ShouldEqual, "recovered:SIM2/USD")
 			So(positions[0].Status, ShouldEqual, types.OPEN)
 			So(positions[0].Holding.Symbol, ShouldEqual, "SIM2/USD")
-			So(positions[0].Holding.Qty.String(), ShouldEqual, "1.5")
-			So(positions[0].Holding.SellableQty.String(), ShouldEqual, "1.5")
+			So(positions[0].Holding.Qty.Cmp(decimal.NewFromFloat64(1.5)), ShouldEqual, 0)
+			So(positions[0].Holding.SellableQty.Cmp(decimal.NewFromFloat64(1.5)), ShouldEqual, 0)
 			So(positions[0].Holding.EntryPrice.Float64(), ShouldEqual, 100.0)
 			So(positions[0].Holding.EntryFee.Float64(), ShouldAlmostEqual, 0.39, 1e-8)
 			So(positions[0].Holding.EntryAt, ShouldNotBeNil)
 			So(positions[0].Holding.Mark, ShouldNotBeNil)
+			So(positions[0].Holding.Mark.Cmp(positions[0].Holding.EntryPrice), ShouldEqual, 0)
 			So(positions[0].Holding.Stoploss, ShouldNotBeNil)
+			So(positions[0].Holding.Stoploss.Entry.Cmp(positions[0].Holding.EntryPrice), ShouldEqual, 0)
+			So(positions[0].Holding.Stoploss.Mark.Cmp(positions[0].Holding.EntryPrice), ShouldEqual, 0)
+			So(positions[0].Holding.Stoploss.Floor, ShouldNotBeNil)
+
+			market.Tick()
+			positions = slices.Collect(market.Desk.Positions())
+
 			So(market.Desk.Price().Tick("sim2usd"), ShouldNotBeNil)
+			So(positions[0].Holding.EntryPrice.Float64(), ShouldEqual, 100.0)
+			So(positions[0].Holding.Mark.Cmp(positions[0].Holding.EntryPrice), ShouldNotEqual, 0)
+			So(positions[0].Holding.Stoploss.Entry.Cmp(positions[0].Holding.EntryPrice), ShouldEqual, 0)
+			So(positions[0].Holding.Stoploss.Mark.Cmp(positions[0].Holding.Mark), ShouldEqual, 0)
 			So(bytes.Contains(logs.Bytes(), []byte("ticker not found")), ShouldBeFalse)
 		})
 	})

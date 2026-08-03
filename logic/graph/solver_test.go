@@ -57,17 +57,17 @@ func TestInferStructuralEdges(t *testing.T) {
 		})
 	})
 
-	Convey("Given stale and zero-confidence measurement nodes", t, func() {
+	Convey("Given unrelated graph nodes", t, func() {
 		at := time.Unix(10, 0).UTC()
 		graph := NewGraph(at)
-		solver := NewSolver(nil, nil, WithStaleThreshold(time.Second))
+		solver := NewSolver(nil, nil)
 
 		for index := range 256 {
-			nodeID := "meas:BTC/USD:invalid:" + strconv.Itoa(index)
+			nodeID := "cat:BTC/USD:inactive:" + strconv.Itoa(index)
 			graph.AddNode(&Node{
 				ID:     nodeID,
 				Symbol: "BTC/USD",
-				Kind:   KindMeasurement,
+				Kind:   KindCategory,
 				At:     at.Add(-time.Duration(index) * time.Second),
 			})
 		}
@@ -106,34 +106,25 @@ func TestInferStructuralEdges(t *testing.T) {
 	})
 }
 
-func TestExtractMeasurementNodes(t *testing.T) {
-	Convey("Given repeated measurements for the same metric node", t, func() {
+func TestExtractCausalNodes(t *testing.T) {
+	Convey("Given causal outputs with Pearl confidence", t, func() {
+		at := time.Unix(1, 0).UTC()
 		thesis := types.NewThesis()
-		graph := NewGraph(time.Unix(3, 0).UTC())
+		thesis.At = at
+		thesis.Causal.Store("BTC/USD", map[string]any{
+			"doExpectation": 0.25,
+			"confidence":    0.37,
+		})
+		graph := NewGraph(at)
 		solver := NewSolver(nil, nil)
-		rows := make([]*types.Measurement, 0, 3)
 
-		for index := range 3 {
-			rows = append(rows, &types.Measurement{
-				Source: types.SourceCVD,
-				Symbol: "BTC/USD",
-				At:     time.Unix(int64(index+1), 0).UTC(),
-				Metrics: map[string]types.MetricSample{
-					"flow": {Raw: float64(index + 1), Unit: types.UnitBaseCurrency},
-				},
-			})
-		}
+		solver.extractCausalNodes(thesis, graph)
 
-		thesis.Measurements.Store(types.SourceCVD, rows)
-		solver.extractMeasurementNodes(thesis, graph)
-
-		Convey("It materializes only the final value represented by the graph ID", func() {
-			node, found := graph.Nodes["meas:BTC/USD:cvd:flow"]
+		Convey("It should carry confidence onto the do-expectation node", func() {
+			node, found := graph.Nodes["causal:BTC/USD:doExpectation"]
 
 			So(found, ShouldBeTrue)
-			So(len(graph.Nodes), ShouldEqual, 1)
-			So(node.Value, ShouldEqual, 3)
-			So(node.At, ShouldResemble, time.Unix(3, 0).UTC())
+			So(node.Confidence, ShouldEqual, 0.37)
 		})
 	})
 }
@@ -213,11 +204,11 @@ func BenchmarkInferStructuralEdges(b *testing.B) {
 	nodes := make(map[string]*Node, 260)
 
 	for index := range 256 {
-		nodeID := "meas:BTC/USD:source:" + strconv.Itoa(index)
+		nodeID := "cat:BTC/USD:inactive:" + strconv.Itoa(index)
 		nodes[nodeID] = &Node{
 			ID:         nodeID,
 			Symbol:     "BTC/USD",
-			Kind:       KindMeasurement,
+			Kind:       KindCategory,
 			Confidence: 1,
 			At:         at,
 		}
@@ -257,33 +248,6 @@ func BenchmarkInferStructuralEdges(b *testing.B) {
 	}
 }
 
-func BenchmarkExtractMeasurementNodes(b *testing.B) {
-	at := time.Unix(1, 0).UTC()
-	rows := make([]*types.Measurement, 4096)
-
-	for index := range rows {
-		rows[index] = &types.Measurement{
-			Source: types.SourceCVD,
-			Symbol: "BTC/USD",
-			At:     at.Add(time.Duration(index) * time.Millisecond),
-			Metrics: map[string]types.MetricSample{
-				"flow": {Raw: float64(index), Unit: types.UnitBaseCurrency},
-			},
-		}
-	}
-
-	thesis := types.NewThesis()
-	thesis.Measurements.Store(types.SourceCVD, rows)
-	solver := NewSolver(nil, nil)
-
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	for range b.N {
-		solver.extractMeasurementNodes(thesis, NewGraph(at))
-	}
-}
-
 func BenchmarkPublish(b *testing.B) {
 	at := time.Unix(1, 0).UTC()
 	ui := make(chan []byte, 1)
@@ -293,12 +257,12 @@ func BenchmarkPublish(b *testing.B) {
 	graph := NewGraph(at)
 
 	for index := range 256 {
-		nodeID := "meas:BTC/USD:source:" + strconv.Itoa(index)
+		nodeID := "cat:BTC/USD:source:" + strconv.Itoa(index)
 		graph.AddNode(&Node{
 			ID:         nodeID,
 			Symbol:     "BTC/USD",
 			Source:     "source",
-			Kind:       KindMeasurement,
+			Kind:       KindCategory,
 			Value:      float64(index),
 			Confidence: 1,
 			At:         at,
@@ -314,7 +278,7 @@ func BenchmarkPublish(b *testing.B) {
 		}
 
 		graph.AddEdge(&Edge{
-			From:       "meas:BTC/USD:source:" + strconv.Itoa(index-1),
+			From:       "cat:BTC/USD:source:" + strconv.Itoa(index-1),
 			To:         nodeID,
 			Relation:   RelationSupports,
 			Weight:     1,

@@ -48,6 +48,10 @@ var entityMap = map[string]func([]byte) any{
 	},
 }
 
+func hotPublicChannel(channel string) bool {
+	return channel == "ticker" || channel == "trade" || channel == "book"
+}
+
 /*
 Live is one spot websocket session: SDK client, channel fan-out, auth/nonce,
 and Sub* resubscribe after the SDK reconnects.
@@ -256,6 +260,11 @@ func NewWithClient(
 
 		if ok && subscribers != nil {
 			for _, subscriber := range subscribers.([]*types.Subscription[any]) {
+				if hotPublicChannel(channel) {
+					subscriber.SendLatest(out)
+					continue
+				}
+
 				subscriber.Send(out)
 			}
 		}
@@ -277,7 +286,7 @@ func NewWithClient(
 	live.client.OnDisconnected.Recurring(func(event *callback.Event[error]) {
 		errnie.Error(errnie.Err(
 			errnie.Unauthorized,
-			fmt.Sprintf("websocket %s disconnected: %s", endpoint, event.Data.Error()),
+			fmt.Sprintf("websocket %s disconnected: %s - %s", endpoint, event.Data.Error(), event.Data),
 			event.Data,
 		))
 

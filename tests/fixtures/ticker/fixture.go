@@ -6,6 +6,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/tests/signal"
+	testtypes "github.com/theapemachine/symm/tests/types"
 )
 
 //go:embed fixtures/*.json
@@ -52,4 +53,8 @@ func (fixture *Fixture) Generate() iter.Seq[[]byte] {
 			}
 		}
 	}
+}
+
+func (fixture *Fixture) Render(sample testtypes.Sample) []byte {
+	return fixture.generator.Render(fixture.template, sample)
 }

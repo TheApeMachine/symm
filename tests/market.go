@@ -286,30 +286,32 @@ func (market *Market) Transition(state testtypes.MarketState) {
 }
 
 /*
-Tick the market. Each symbol advances one generator step per channel, and the
-rendered frames are published into the connections exactly as if they had
-arrived over a real WebSocket. This does not give you any result, because the
-result should come from the code that is currently being tested.
+Tick the market. Each symbol advances one generator step, and that coherent
+sample is rendered into every channel before the frames are published exactly
+as if they had arrived over real WebSockets. This does not give you any result,
+because the result should come from the code that is currently being tested.
 */
 func (market *Market) Tick() {
 	for _, symbol := range market.Symbols {
 		generator := market.generators[symbol.Pair]
+		sample := generator.Step()
 
-		for frame := range ticker.NewFixture(ticker.UPDATE, 1, generator).Generate() {
-			market.Public.Publish("ticker", frame)
-		}
-
-		for frame := range book.NewFixture(book.UPDATE, 1, generator).Generate() {
-			market.Public.Publish("book", frame)
-		}
-
-		for frame := range trade.NewFixture(trade.UPDATE, 1, generator).Generate() {
-			market.Public.Publish("trade", frame)
-		}
-
-		for frame := range level3.NewFixture(level3.UPDATE, 1, generator).Generate() {
-			market.Level3.Publish("level3", frame)
-		}
+		market.Public.Publish(
+			"ticker",
+			ticker.NewFixture(ticker.UPDATE, 1, generator).Render(sample),
+		)
+		market.Public.Publish(
+			"book",
+			book.NewFixture(book.UPDATE, 1, generator).Render(sample),
+		)
+		market.Public.Publish(
+			"trade",
+			trade.NewFixture(trade.UPDATE, 1, generator).Render(sample),
+		)
+		market.Level3.Publish(
+			"level3",
+			level3.NewFixture(level3.UPDATE, 1, generator).Render(sample),
+		)
 	}
 
 	/*
@@ -355,16 +357,27 @@ func (market *Market) fillPending() {
 			continue
 		}
 
-		if _, done := market.filled[position.ID]; done {
+		fill := executionfixture.BuyFill()
+		clientOrderID := position.EntryOrder.ClOrdId
+		quantity := position.EntryOrder.Volume
+
+		if position.ExitOrderID != "" {
+			fill = executionfixture.ExitFill()
+			clientOrderID = position.ExitOrder.ClOrdId
+			quantity = position.ExitOrder.Volume
+			fill.OrderID = position.ExitOrderID
+		} else {
+			fill.OrderID = position.EntryOrderID
+		}
+
+		if _, done := market.filled[clientOrderID]; done {
 			continue
 		}
 
-		market.filled[position.ID] = struct{}{}
-
-		fill := executionfixture.BuyFill()
-		fill.ClientOrderID = position.ID
+		market.filled[clientOrderID] = struct{}{}
+		fill.ClientOrderID = clientOrderID
 		fill.Symbol = position.Holding.Symbol
-		fill.CumQty = position.Holding.Qty.String()
+		fill.CumQty = quantity
 		fill.LastQty = fill.CumQty
 
 		market.Private.Publish("executions", executionfixture.Frame(fill))
