@@ -23,6 +23,23 @@ let attempt = 0;
 let activeUrl = "";
 let focusSymbol = "";
 
+const readTextFrame = async (data: unknown): Promise<string | null> => {
+	if (data instanceof ArrayBuffer) {
+		return null;
+	}
+
+	if (data instanceof Blob) {
+		const text = data.size > 0 ? await data.text() : "";
+		const trimmed = text.trim();
+
+		return trimmed === "" ? null : trimmed;
+	}
+
+	const trimmed = String(data).trim();
+
+	return trimmed === "" ? null : trimmed;
+};
+
 /*
 sendFocus pushes the dashboard focus to the backend so signal-metric publishes
 can gate on the selected symbol. No-ops until the socket is open.
@@ -131,7 +148,7 @@ const connect = (url: string) => {
 
 	socket.addEventListener(
 		"message",
-		(event) => {
+		async (event) => {
 			try {
 				if (event.data instanceof ArrayBuffer) {
 					self.postMessage(
@@ -141,7 +158,13 @@ const connect = (url: string) => {
 					return;
 				}
 
-				const frame = JSON.parse(String(event.data)) as Record<string, unknown>;
+				const payload = await readTextFrame(event.data);
+
+				if (payload === null) {
+					return;
+				}
+
+				const frame = JSON.parse(payload) as Record<string, unknown>;
 
 				if (
 					frame === null ||

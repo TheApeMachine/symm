@@ -34,24 +34,6 @@ type Holding struct {
 	IsOpportunity bool             `json:"is_opportunity"`
 	ReservationID string           `json:"reservation_id,omitempty"`
 	Stoploss      *Stoploss        `json:"stoploss"`
-
-	/*
-		Gauge positions are the price levels expressed as percentages across
-		one shared axis, so the display can place its markers without knowing
-		which prices happen to bound the lot right now.
-	*/
-	EntryPct string `json:"entry_pct,omitempty"`
-	MarkPct  string `json:"mark_pct,omitempty"`
-	FloorPct string `json:"floor_pct,omitempty"`
-	PeakPct  string `json:"peak_pct,omitempty"`
-
-	/*
-		ToneColor is the colour the lot's result should be drawn in, resolved
-		from the sign of its PnL. The display cannot recover a sign from an
-		already-formatted number, and the theme owns the actual colours, so
-		this names one of its variables rather than a literal.
-	*/
-	ToneColor string `json:"tone_color,omitempty"`
 }
 
 /*
@@ -63,17 +45,21 @@ func NewHolding(
 	symbol string,
 	qty *decimal.Decimal,
 	mark *decimal.Decimal,
+	reservationID string,
+	opportunity bool,
 ) *Holding {
 	errnie.Info("creating holding for: " + symbol)
 
 	ctx, cancel := context.WithCancel(ctx)
 	holding := &Holding{
-		ctx:      ctx,
-		cancel:   cancel,
-		Symbol:   symbol,
-		Qty:      qty,
-		Status:   PENDING,
-		Stoploss: NewStoploss(ctx, symbol, mark),
+		ctx:           ctx,
+		cancel:        cancel,
+		Symbol:        symbol,
+		Qty:           qty,
+		Status:        PENDING,
+		ReservationID: reservationID,
+		IsOpportunity: opportunity,
+		Stoploss:      NewStoploss(ctx, symbol, mark),
 	}
 
 	return holding
@@ -90,7 +76,11 @@ func (holding *Holding) Update(
 
 	if holding.Stoploss != nil {
 		if err := holding.Stoploss.Update(ticker); err != nil {
-			return err
+			return errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"holding: could not update stoploss",
+				err,
+			))
 		}
 	}
 

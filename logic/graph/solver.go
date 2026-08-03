@@ -377,29 +377,25 @@ func (solver *Solver) extractCategoryNodes(thesis *types.Thesis, graph *Graph) {
 extractResonanceNodes registers predictive coding outcomes (surprise, expected return forecast).
 */
 func (solver *Solver) extractResonanceNodes(thesis *types.Thesis, graph *Graph) {
-	/*
-		Resonance solves over the cross-section rather than per symbol, and
-		stores its outputs as flat keys on the Thesis, so the reading describes
-		the book as a whole. Every symbol under evaluation therefore shares one
-		surprise and one forecast node.
-	*/
-	surpriseRaw, hasSurprise := thesis.Resonance.Load("surprise")
-
-	if !hasSurprise {
+	if thesis == nil || thesis.Resonance == nil {
 		return
 	}
 
-	surprise, _ := surpriseRaw.(float64)
+	thesis.Resonance.Range(func(key, value any) bool {
+		symbol, symbolOK := key.(string)
+		row, rowOK := value.(map[string]any)
 
-	var predValue float64
+		if !symbolOK || !rowOK || symbol == "" {
+			return true
+		}
 
-	if curveRaw, found := thesis.Resonance.Load("forwardCurve"); found {
-		if curve, ok := curveRaw.([]float64); ok && len(curve) > 0 {
+		surprise, _ := row["surprise"].(float64)
+		predValue := 0.0
+
+		if curve, ok := row["forwardCurve"].([]float64); ok && len(curve) > 0 {
 			predValue = curve[0]
 		}
-	}
 
-	for _, symbol := range thesis.Symbols() {
 		graph.AddNode(&Node{
 			ID:         fmt.Sprintf("res:%s:surprise", symbol),
 			Symbol:     symbol,
@@ -419,7 +415,9 @@ func (solver *Solver) extractResonanceNodes(thesis *types.Thesis, graph *Graph) 
 			Confidence: 1.0,
 			At:         thesis.At,
 		})
-	}
+
+		return true
+	})
 }
 
 /*

@@ -278,6 +278,8 @@ export type ResonanceFrame = Record<string, unknown> & {
 	layers?: ResonanceLayer[];
 	energy?: number;
 	surprise?: number;
+	confidence?: number;
+	targetSymbol?: string;
 	expectedReturn?: number;
 	returnReady?: boolean;
 	incrementalMSE?: number;

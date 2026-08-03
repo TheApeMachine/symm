@@ -121,12 +121,21 @@ export const pearlEdge = (frame: CausalFrame | undefined): number =>
 	causalStrength(frame) - causalEntryBaseline(frame);
 
 /*
-resonancePredict is the surprise-derived confidence analyzer uses when composing
-forecast confidence: exp(-|surprise|). Missing surprise is not a zero confidence.
+resonancePredict is the backend-calibrated forecast confidence contribution.
+
+Confidence is published directly by resonance as a retained empirical quantile.
+Older frames may lack it, in which case the legacy surprise proxy is used as a
+best-effort fallback rather than discarding the frame outright.
 */
 export const resonancePredict = (
 	frame: ResonanceFrame | undefined,
 ): number | null => {
+	const confidence = finiteOrNull(frame?.confidence);
+
+	if (confidence !== null) {
+		return confidence;
+	}
+
 	const surprise = finiteOrNull(frame?.surprise);
 
 	if (surprise === null) {

@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
@@ -38,6 +39,12 @@ type Signal struct {
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
 	subscribeMu   sync.Mutex
+	lastTrade     map[string]tradeCursor
+}
+
+type tradeCursor struct {
+	at  time.Time
+	ids map[int64]struct{}
 }
 
 /*
@@ -64,6 +71,7 @@ func NewSignal(
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
+		lastTrade:     make(map[string]tradeCursor),
 	}
 
 	signal.status = types.READY
@@ -130,11 +138,16 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	out := make([]*types.Measurement, 0)
 
 	for _, row := range trades {
+		if !validTrade(row) || signal.seenTrade(row) {
+			continue
+		}
+
 		input, ready, err := signal.sample.MeasureArrival(excitation.TradeInput{
 			Symbol:    row.Symbol,
 			Side:      row.Side,
 			Timestamp: row.Timestamp,
 		})
+		signal.commitTrade(row)
 
 		if err != nil {
 			errnie.Error(errnie.Err(
@@ -181,6 +194,42 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	}
 
 	return measurements
+}
+
+func validTrade(row kraken.TradeData) bool {
+	return row.Symbol != "" && !row.Timestamp.IsZero() &&
+		(row.Side == "buy" || row.Side == "sell")
+}
+
+func (signal *Signal) seenTrade(row kraken.TradeData) bool {
+	previous := signal.lastTrade[row.Symbol]
+
+	if row.Timestamp.Before(previous.at) {
+		return true
+	}
+
+	if row.Timestamp.After(previous.at) {
+		return false
+	}
+
+	_, seen := previous.ids[row.TradeID]
+
+	return seen
+}
+
+func (signal *Signal) commitTrade(row kraken.TradeData) {
+	previous := signal.lastTrade[row.Symbol]
+
+	if row.Timestamp.After(previous.at) {
+		previous = tradeCursor{at: row.Timestamp, ids: make(map[int64]struct{})}
+	}
+
+	if previous.ids == nil {
+		previous.ids = make(map[int64]struct{})
+	}
+
+	previous.ids[row.TradeID] = struct{}{}
+	signal.lastTrade[row.Symbol] = previous
 }
 
 /*

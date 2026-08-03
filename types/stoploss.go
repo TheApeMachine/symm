@@ -42,8 +42,8 @@ func NewStoploss(
 		ctx:    ctx,
 		cancel: cancel,
 		Symbol: symbol,
-		Entry:  mark.Copy(),
-		Mark:   mark.Copy(),
+		Entry:  mark,
+		Mark:   mark,
 		Status: PENDING,
 	}
 

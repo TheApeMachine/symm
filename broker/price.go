@@ -123,16 +123,12 @@ func (price *Price) PnL(holding *types.Holding) *decimal.Decimal {
 		return nil
 	}
 
-	exitFee := price.WithFriction(holding.Symbol, SELL, holding.Qty)
+	exitValue := price.WithFriction(holding.Symbol, SELL, holding.Qty)
 
-	return holding.Qty.Mul(
-		holding.Mark,
-	).Sub(
+	return exitValue.Sub(
 		holding.Qty.Mul(holding.EntryPrice),
 	).Sub(
 		holding.EntryFee,
-	).Sub(
-		exitFee,
 	)
 }
 

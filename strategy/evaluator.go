@@ -45,6 +45,65 @@ func (row candidate) ExecutableReturn() *decimal.Decimal {
 		Sub(row.ExpectedImpact)
 }
 
+/*
+FractionOf expresses one of the candidate's currency amounts as a fraction of
+its reference price, which is the scale every threshold and comparison in the
+decision path is stated on.
+
+A missing reference price yields zero rather than an error: the candidate could
+not have been priced without one, so this is unreachable for a candidate that
+was actually built, and a zero fraction is the reading that claims nothing.
+*/
+func (row candidate) FractionOf(amount *decimal.Decimal) float64 {
+	if amount == nil || row.ReferencePrice == nil || row.ReferencePrice.Sign() <= 0 {
+		return 0
+	}
+
+	return amount.Div(row.ReferencePrice).Float64()
+}
+
+/*
+RoundTripFraction is what entering and exiting this candidate costs, as a
+fraction of its reference price.
+
+Fees are already priced for both crossings when the candidate is built, and a
+taker pays the full spread over a round trip, so both enter whole.
+*/
+func (row candidate) RoundTripFraction() float64 {
+	return row.FractionOf(row.ExpectedFees) +
+		row.FractionOf(row.ExpectedSpread) +
+		row.FractionOf(row.ExpectedImpact)
+}
+
+/*
+UncertaintyCost prices the forecast's uncertainty in the same units as the
+return it is weighed against.
+
+Uncertainty is the resonance stage's surprise: a dimensionless prediction error
+norm of order one. ExecutableReturn is an amount of quote currency per unit
+traded, which for a per-tick forecast is orders of magnitude smaller. Subtracting
+the one from the other directly compares a norm to a price, and the norm wins on
+scale alone regardless of what either says about the trade, so every candidate is
+vetoed and no position is ever opened.
+
+Discounting the return by its own uncertainty keeps the comparison in currency.
+A forecast the network is confident in is charged little of its edge; one it is
+unsure of is charged most of it; and a forecast of nothing is still worth
+nothing, because the charge is proportional to the edge being claimed rather
+than a flat subtraction from it.
+*/
+func (row candidate) UncertaintyCost() float64 {
+	edge := math.Abs(row.ExecutableReturn().Float64())
+
+	/*
+		Bounded to the edge itself. Uncertainty is unbounded above, so an
+		unsquashed multiple of it would swing the utility further negative the
+		more uncertain the reading, which reads as evidence against the trade
+		rather than as an absence of evidence for it.
+	*/
+	return edge * math.Tanh(row.Uncertainty)
+}
+
 type Evaluator struct {
 	mctsEngine *mcts.CausalMCTS
 	desk       *broker.Desk
@@ -149,29 +208,47 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			continue
 		}
 
-		// 2. Build Root State for MCTS
+		/*
+			2. Build Root State for MCTS, on fractions of the reference price.
+
+			The trajectory weighs a forecast against a friction cost and a
+			reversal threshold, so both have to be on the forecast's own scale.
+			Passing currency amounts made the rollout's judgement depend on how
+			expensive the symbol happened to be.
+		*/
 		rootState := StrategyState{
-			Symbol:    symbol,
-			Energy:    forecast.Uncertainty,
-			Surprise:  forecast.ExpectedImpact.Float64(),
-			Treatment: forecast.ExpectedReturn.Float64(),
-			Reward:    0.0,
-			Step:      0,
-			MaxSteps:  5, // 5-step forward trajectory search
-			IsHolding: false,
+			Symbol:        symbol,
+			Energy:        forecast.Uncertainty,
+			Surprise:      forecast.FractionOf(forecast.ExpectedImpact),
+			Treatment:     forecast.FractionOf(forecast.ExpectedReturn),
+			RoundTripCost: forecast.RoundTripFraction(),
+			Reward:        0.0,
+			Step:          0,
+			MaxSteps:      5, // 5-step forward trajectory search
+			IsHolding:     false,
 		}
 
 		// 3. Run Causal MCTS Search over Trajectory Tree
 		var recommendedAction float64
 		var mctsErr error
 
-		if len(causalRows) >= 12 {
+		/*
+			The search indexes every row by column, so a row narrower than the
+			state vector is an out-of-range panic rather than a poor
+			recommendation. Row count alone does not establish that: history
+			rows arrive from the causal stage unvalidated and a short or empty
+			row among them passes a count check and then crashes the planner
+			mid-tick.
+		*/
+		searchable := usableCausalRows(causalRows) >= 12
+
+		if searchable {
 			recommendedAction, mctsErr = evaluator.mctsEngine.Search(rootState, 50, causalRows)
 		}
 
 		// 4. Executable Net Return
 		execReturn := forecast.ExecutableReturn()
-		utility := execReturn.Float64() - forecast.Uncertainty
+		utility := execReturn.Float64() - forecast.UncertaintyCost()
 
 		/*
 			The causal and cognitive heads corroborate a forecast; they do not
@@ -198,7 +275,14 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 		}
 
 		// If MCTS recommends ActionEnter (1.0) and Net Utility > 0
-		if (mctsErr == nil && recommendedAction == ActionEnter) || (len(causalRows) < 12 && utility > 0) {
+		/*
+			The fallback is gated on the same condition the search was, so the
+			two can never disagree about whether a recommendation exists. Gating
+			it on the raw row count instead would let a tick with twelve
+			unusable rows skip the search and also skip the fallback, deciding
+			nothing at all.
+		*/
+		if (mctsErr == nil && recommendedAction == ActionEnter) || (!searchable && utility > 0) {
 			thesis.Decisions = append(thesis.Decisions, types.Decision{
 				Action:            types.ActionEnter,
 				Symbol:            symbol,
@@ -273,6 +357,43 @@ func getFloat(m map[string]any, key string) float64 {
 	return 0.0
 }
 
+/*
+causalRowWidth is how many columns a causal history row must carry to be usable
+by the trajectory search.
+
+The search reads a treatment column out of every row it is given, and the state
+vector the rows are built against is [energy, surprise, treatment, reward]. A row
+with fewer columns than that cannot answer the question the search asks of it.
+*/
+const causalRowWidth = 4
+
+/*
+usableCausalRows counts how many history rows are wide enough for the search to
+index safely.
+
+History rows reach the planner from the causal stage without a width contract:
+they are whatever that stage last stored, and a stage that produced a partial or
+empty reading stores a partial or empty row. Counting rows alone therefore
+establishes nothing about whether they can be indexed, and the search panics on
+the first short one rather than declining to recommend.
+
+Counting the usable ones instead means a tick whose history is malformed simply
+fails the evidence threshold and falls through to the utility path, which is the
+same outcome as having too little history — which is what a malformed row
+actually represents.
+*/
+func usableCausalRows(rows [][]float64) int {
+	usable := 0
+
+	for _, row := range rows {
+		if len(row) >= causalRowWidth {
+			usable++
+		}
+	}
+
+	return usable
+}
+
 // ManageContinuation scores continuation (Hold) for active open holdings.
 func (evaluator Evaluator) ManageContinuation(
 	thesis *types.Thesis,
@@ -330,7 +451,17 @@ func (evaluator Evaluator) ManageContinuation(
 			continue
 		}
 
-		holdUtility := forecast.ExpectedReturn.Float64() - forecast.Uncertainty
+		/*
+			Priced in currency for the same reason the entry utility is: raw
+			surprise is a dimensionless norm and would dominate a per-tick
+			return by orders of magnitude, closing every position the moment it
+			was opened.
+
+			The charge is against the gross return here rather than the
+			executable one, because the exit cost this utility is compared to is
+			subtracted separately just below.
+		*/
+		holdUtility := forecast.ExpectedReturn.Float64() * (1 - math.Tanh(forecast.Uncertainty))
 
 		/*
 			Only the exit remains to be paid on a position already held, so it
@@ -433,19 +564,39 @@ func (evaluator Evaluator) candidate(
 		return candidate{}, false
 	}
 
-	curveRaw, found := thesis.Resonance.Load("forwardCurve")
+	row, ok := resonanceRow(thesis, symbol)
 
-	if !found {
+	if !ok {
 		return candidate{}, false
 	}
 
-	curve, ok := curveRaw.([]float64)
+	curve, ok := row["forwardCurve"].([]float64)
 
 	if !ok || len(curve) == 0 {
 		return candidate{}, false
 	}
 
-	expectedReturn := curve[0]
+	/*
+		The edge a position earns is what the forecast accumulates over the
+		horizon it is held for, not what it earns on the single tick after
+		entry.
+
+		Friction is a round trip: it is paid once on the way in and once on the
+		way out, whatever happens in between. Weighing that whole cost against
+		one tick of forecast understates every trade by the length of the
+		horizon, and on a market whose spread exceeds a single tick's move it
+		rejects every candidate regardless of how strong or how sustained the
+		move is. Accumulating the curve puts both sides of the comparison over
+		the same holding period.
+
+		Each step is discounted by the share of the latent state still surviving
+		at that step, which is what the resonance stage publishes alongside the
+		curve. Later steps of a rollout are the temporal recursion relaxing
+		toward the origin rather than a statement about the market, so counting
+		them undiscounted would credit the position with a forecast that was
+		never made.
+	*/
+	expectedReturn := accumulatedReturn(curve, retention(row, len(curve)))
 
 	if math.IsNaN(expectedReturn) || math.IsInf(expectedReturn, 0) {
 		return candidate{}, false
@@ -483,8 +634,8 @@ func (evaluator Evaluator) candidate(
 	*/
 	spread := decimal.NewFromFloat64(ask - bid)
 
-	confidence, _ := loadResonanceFloat(thesis, "confidence")
-	surprise, _ := loadResonanceFloat(thesis, "surprise")
+	confidence, _ := loadResonanceFloat(row, "confidence")
+	surprise, _ := loadResonanceFloat(row, "surprise")
 
 	/*
 		Every friction below is an absolute amount per unit traded, so the fee
@@ -516,7 +667,7 @@ func (evaluator Evaluator) candidate(
 			from the current tick keeps the epoch in the future even on the
 			first tick the desk ever evaluates.
 		*/
-		Epoch: uint64(thesis.Tick) + horizon(thesis, len(curve)),
+		Epoch: uint64(thesis.Tick) + horizon(row, len(curve)),
 	}, true
 }
 
@@ -525,8 +676,8 @@ horizon is how many ticks ahead the resonance forecast claims to see, falling
 back to the length of the curve it produced when the solver has not published
 an active horizon.
 */
-func horizon(thesis *types.Thesis, curveLength int) uint64 {
-	if raw, found := thesis.Resonance.Load("activeHorizon"); found {
+func horizon(row map[string]any, curveLength int) uint64 {
+	if raw, found := row["activeHorizon"]; found {
 		if active, ok := raw.(int); ok && active > 0 {
 			return uint64(active)
 		}
@@ -537,6 +688,80 @@ func horizon(thesis *types.Thesis, curveLength int) uint64 {
 	}
 
 	return 1
+}
+
+/*
+retention is the share of the forecast's latent state still surviving at each
+rollout step, as published alongside the curve.
+
+A curve with no envelope is treated as fully retained. The stage publishes both
+together, so this is the shape of an older reading rather than a live one, and
+the curve is the more conservative thing to trust in that case: the horizon it
+was drawn for already bounds how far it runs.
+*/
+func retention(row map[string]any, curveLength int) []float64 {
+	if raw, found := row["forwardRetention"]; found {
+		if surviving, ok := raw.([]float64); ok && len(surviving) == curveLength {
+			return surviving
+		}
+	}
+
+	surviving := make([]float64, curveLength)
+
+	for index := range surviving {
+		surviving[index] = 1
+	}
+
+	return surviving
+}
+
+/*
+accumulatedReturn is what the forecast earns over the whole horizon, with each
+step weighted by how much of the latent state still survives to make it.
+
+Steps are summed rather than compounded. These are log returns, which add over
+time by construction, and at the magnitudes a per-tick forecast carries the
+difference is immaterial anyway.
+*/
+func accumulatedReturn(curve []float64, surviving []float64) float64 {
+	total := 0.0
+
+	/*
+		Weights are relative to the first step, which is where the forecast
+		begins. One application of the temporal recursion already removes most
+		of the latent magnitude, so absolute retention would discount even the
+		first step to a fraction of itself and understate the whole horizon.
+	*/
+	reference := 0.0
+
+	if len(surviving) > 0 {
+		reference = surviving[0]
+	}
+
+	for index, step := range curve {
+		if math.IsNaN(step) || math.IsInf(step, 0) {
+			continue
+		}
+
+		weight := 1.0
+
+		if index < len(surviving) && reference > 0 {
+			weight = math.Min(1, surviving[index]/reference)
+		}
+
+		if weight <= 0 {
+			/*
+				The state has fully relaxed by this step, so nothing beyond it
+				is a forecast and accumulating further would credit the position
+				with the decay envelope.
+			*/
+			break
+		}
+
+		total += step * weight
+	}
+
+	return total
 }
 
 /*
@@ -596,12 +821,8 @@ func adverseSelection(thesis *types.Thesis, row candidate) *decimal.Decimal {
 /*
 loadResonanceFloat reads one of the resonance solver's flat scalar keys.
 */
-func loadResonanceFloat(thesis *types.Thesis, key string) (float64, bool) {
-	if thesis == nil || thesis.Resonance == nil {
-		return 0, false
-	}
-
-	raw, found := thesis.Resonance.Load(key)
+func loadResonanceFloat(row map[string]any, key string) (float64, bool) {
+	raw, found := row[key]
 
 	if !found {
 		return 0, false
@@ -614,6 +835,26 @@ func loadResonanceFloat(thesis *types.Thesis, key string) (float64, bool) {
 	}
 
 	return value, true
+}
+
+func resonanceRow(thesis *types.Thesis, symbol string) (map[string]any, bool) {
+	if thesis == nil || thesis.Resonance == nil || symbol == "" {
+		return nil, false
+	}
+
+	raw, found := thesis.Resonance.Load(symbol)
+
+	if !found {
+		return nil, false
+	}
+
+	row, ok := raw.(map[string]any)
+
+	if !ok {
+		return nil, false
+	}
+
+	return row, true
 }
 
 func (e Evaluator) reject(

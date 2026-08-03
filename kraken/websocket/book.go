@@ -38,7 +38,6 @@ func NewBook(ctx context.Context) *Book {
 	book.manager.OnCreateBook.Recurring(func(
 		event *callback.Event[*spotbook.Book],
 	) {
-		errnie.Info(fmt.Sprintf("websocket: new book created for %s", event.Data.Name))
 		managed := event.Data
 
 		if managed == nil {

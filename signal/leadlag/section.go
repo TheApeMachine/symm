@@ -2,6 +2,7 @@ package leadlag
 
 import (
 	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -151,27 +152,30 @@ func (section *Section) ensure(symbol string) *symbolState {
 ObservePrice records timestamped price and derives returns so lead-lag
 features use aligned observations.
 */
-func (section *Section) ObservePrice(symbol string, price float64, at time.Time) {
+func (section *Section) ObservePrice(symbol string, price float64, at time.Time) bool {
 	if symbol == "" || price <= 0 || at.IsZero() {
-		return
+		return false
 	}
 
 	state := section.ensure(symbol)
 
 	if state == nil {
-		return
+		return false
 	}
 
-	state.last = price
+	if !state.lastSampleAt.IsZero() && !at.After(state.lastSampleAt) {
+		return false
+	}
 
 	if !state.lastSampleAt.IsZero() {
 		spacing := seriesSampleSpacing(state.prices, nil)
 
 		if spacing > 0 && at.Sub(state.lastSampleAt) < spacing {
-			return
+			return false
 		}
 	}
 
+	state.last = price
 	state.lastSampleAt = at
 	state.observedCount++
 	state.prices = append(state.prices, priceSample{at: at, value: price})
@@ -185,6 +189,64 @@ func (section *Section) ObservePrice(symbol string, price float64, at time.Time)
 	if symbol == section.anchorSymbol {
 		section.recordAnchorMove(state.prices)
 	}
+
+	return true
+}
+
+/*
+CausalAnchor selects the strongest return already present before the next frame
+is ingested. The median cohort magnitude is the empirical null scale, so the
+current frame can never choose its own explanatory anchor.
+*/
+func (section *Section) CausalAnchor() string {
+	type candidate struct {
+		symbol    string
+		magnitude float64
+	}
+	candidates := make([]candidate, 0)
+	magnitudes := make([]float64, 0)
+
+	section.universe.Range(func(key, value any) bool {
+		symbol, symbolOK := key.(string)
+		state, stateOK := value.(*symbolState)
+
+		if !symbolOK || !stateOK || state == nil || len(state.prices) < sampleFloor {
+			return true
+		}
+
+		previous := state.prices[len(state.prices)-2].value
+		latest := state.prices[len(state.prices)-1].value
+
+		if previous <= 0 || latest <= 0 {
+			return true
+		}
+
+		magnitude := math.Abs(math.Log(latest / previous))
+		candidates = append(candidates, candidate{symbol: symbol, magnitude: magnitude})
+		magnitudes = append(magnitudes, magnitude)
+
+		return true
+	})
+
+	median, ok := statistic.MedianOf(magnitudes)
+
+	if !ok {
+		return ""
+	}
+
+	sort.Slice(candidates, func(left, right int) bool {
+		if candidates[left].magnitude == candidates[right].magnitude {
+			return candidates[left].symbol < candidates[right].symbol
+		}
+
+		return candidates[left].magnitude > candidates[right].magnitude
+	})
+
+	if len(candidates) == 0 || candidates[0].magnitude <= median {
+		return ""
+	}
+
+	return candidates[0].symbol
 }
 
 /*
@@ -241,6 +303,12 @@ func (section *Section) Features(scope string) LagFeatures {
 	followerSamples := correlationSamples(followerSeries)
 	sampleSpacing := seriesSampleSpacing(anchorSeries, followerSeries)
 
+	if sampleSpacing <= 0 || absoluteDuration(
+		anchor.lastSampleAt.Sub(follower.lastSampleAt),
+	) > sampleSpacing {
+		return features
+	}
+
 	contempCorr, contempOK := algorithm.HayashiPairCorrelation(
 		anchorSamples,
 		followerSamples,
@@ -263,6 +331,14 @@ func (section *Section) Features(scope string) LagFeatures {
 	}
 
 	return features
+}
+
+func absoluteDuration(duration time.Duration) time.Duration {
+	if duration < 0 {
+		return -duration
+	}
+
+	return duration
 }
 
 /*

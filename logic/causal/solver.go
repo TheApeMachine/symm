@@ -170,8 +170,20 @@ func (solver *Solver) buildCausalRow(
 	*/
 	var energy, surprise, taskPred float64
 
-	energyRaw, hasEnergy := thesis.Resonance.Load("energy")
-	surpriseRaw, hasSurprise := thesis.Resonance.Load("surprise")
+	resonanceRaw, found := thesis.Resonance.Load(symbol)
+
+	if !found {
+		return nil, 0, 0, 0, false
+	}
+
+	resonance, ok := resonanceRaw.(map[string]any)
+
+	if !ok {
+		return nil, 0, 0, 0, false
+	}
+
+	energyRaw, hasEnergy := resonance["energy"]
+	surpriseRaw, hasSurprise := resonance["surprise"]
 
 	if !hasEnergy && !hasSurprise {
 		return nil, 0, 0, 0, false
@@ -179,8 +191,7 @@ func (solver *Solver) buildCausalRow(
 
 	energy, _ = energyRaw.(float64)
 	surprise, _ = surpriseRaw.(float64)
-
-	if curveRaw, found := thesis.Resonance.Load("forwardCurve"); found {
+	if curveRaw, found := resonance["forwardCurve"]; found {
 		if curve, ok := curveRaw.([]float64); ok && len(curve) > 0 {
 			taskPred = curve[0]
 		}

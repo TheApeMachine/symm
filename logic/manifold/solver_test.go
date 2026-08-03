@@ -2,6 +2,7 @@ package manifold
 
 import (
 	"encoding/binary"
+	"math"
 	"testing"
 	"time"
 
@@ -138,6 +139,50 @@ func TestEvict(t *testing.T) {
 			solver.evict()
 
 			So(domain.ParticleCount(), ShouldEqual, residency)
+		})
+	})
+}
+
+func TestFilterBatch(t *testing.T) {
+	Convey("Given an appended manifold batch with inadmissible particles", t, func() {
+		solver := &Solver{config: pfluid.DefaultConfig()}
+		particles := []pfluid.Particle{
+			{
+				Position: pfluid.Vector{X: 0.5, Y: 0.5, Z: 0.5},
+				Mass:     1,
+				Heat:     0.1,
+				Energy:   1,
+				Phase:    0.1,
+				Omega:    0,
+			},
+			{
+				Position: pfluid.Vector{X: float32(math.NaN()), Y: 0.5, Z: 0.5},
+				Mass:     1,
+				Heat:     0.1,
+				Energy:   1,
+				Phase:    0.1,
+				Omega:    0,
+			},
+			{
+				Position: pfluid.Vector{X: 0.5, Y: 0.5, Z: 0.5},
+				Mass:     1,
+				Heat:     -0.1,
+				Energy:   1,
+				Phase:    0.1,
+				Omega:    0,
+			},
+		}
+		contentIDs := []uint32{11, 12, 13}
+
+		filteredParticles, filteredContentIDs, dropped := solver.filterBatch(particles, contentIDs)
+
+		Convey("It should retain only appendable particles", func() {
+			So(dropped, ShouldEqual, 2)
+			So(filteredParticles, ShouldHaveLength, 1)
+			So(filteredContentIDs, ShouldResemble, []uint32{11})
+			So(filteredParticles[0].Mass, ShouldEqual, float32(1))
+			So(filteredParticles[0].Heat, ShouldEqual, float32(0.1))
+			So(filteredParticles[0].Energy, ShouldEqual, float32(1))
 		})
 	})
 }

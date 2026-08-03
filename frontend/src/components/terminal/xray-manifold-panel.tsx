@@ -11,7 +11,7 @@ the network's own statement of how well its current state explains what it is
 seeing.
 */
 export const XrayManifoldPanel = () => (
-	<Component registerKey="resonance">
+	<Component registerKey="resonanceFocus">
 		{({ ref, className }) => (
 			<div
 				ref={ref}

@@ -1,7 +1,7 @@
 import { Component } from "#/components/ui/component";
 
 export const LiveResonanceFooter = () => (
-	<Component registerKey="resonance">
+	<Component registerKey="resonanceFocus">
 		{({ ref, className }) => (
 			<span ref={ref} className={className}>
 				α{" "}

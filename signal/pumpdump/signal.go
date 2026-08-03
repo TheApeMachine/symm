@@ -2,6 +2,7 @@ package pumpdump
 
 import (
 	"context"
+	"math"
 	"sync"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
@@ -33,6 +35,12 @@ type Signal struct {
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
 	subscribeMu   sync.Mutex
+	lastTrade     map[string]tradeCursor
+}
+
+type tradeCursor struct {
+	at  time.Time
+	ids map[int64]struct{}
 }
 
 /*
@@ -58,6 +66,7 @@ func NewSignal(
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
+		lastTrade:     make(map[string]tradeCursor),
 	}
 
 	signal.status = types.READY
@@ -128,7 +137,7 @@ func (signal *Signal) Measure(
 	}
 
 	for _, trade := range trades {
-		if trade.Qty <= 0 || trade.Price.Sign() <= 0 {
+		if !validTrade(trade) || signal.seenTrade(trade) {
 			continue
 		}
 
@@ -144,25 +153,21 @@ func (signal *Signal) Measure(
 			continue
 		}
 
-		mid := book.Midpoint().Float64()
+		ask, bid := book.BestAsk(), book.BestBid()
 
-		if mid <= 0 {
+		if ask == nil || bid == nil || ask.Price == nil || bid.Price == nil {
 			continue
 		}
 
-		/*
-			A one-sided book has no best bid or ask to quote against, which is
-			exactly what a violent pump produces when one side is swept. The
-			midpoint alone does not imply both sides carry levels.
+		if ask.Timestamp.After(trade.Timestamp) || bid.Timestamp.After(trade.Timestamp) {
+			continue
+		}
 
-			Each touch is read once into a local, because the websocket reader
-			replaces these levels as the book updates and a pointer that
-			survives the nil check can still be gone by the time it is
-			dereferenced.
-		*/
-		ask, bid := book.Asks.High, book.Bids.Low
+		askPrice := ask.Price.Float64()
+		bidPrice := bid.Price.Float64()
+		mid := (askPrice + bidPrice) / 2
 
-		if ask == nil || bid == nil || ask.Price == nil || bid.Price == nil {
+		if bidPrice <= 0 || askPrice <= bidPrice || math.IsNaN(mid) || math.IsInf(mid, 0) {
 			continue
 		}
 
@@ -171,8 +176,8 @@ func (signal *Signal) Measure(
 			Symbol: trade.Symbol,
 			Last:   trade.Price.Float64(),
 			Volume: trade.Qty,
-			Ask:    ask.Price.Float64(),
-			Bid:    bid.Price.Float64(),
+			Ask:    askPrice,
+			Bid:    bidPrice,
 		})
 
 		if err != nil {
@@ -184,6 +189,8 @@ func (signal *Signal) Measure(
 
 			continue
 		}
+
+		signal.commitTrade(trade)
 
 		validity := types.MeasurementValidity{
 			State:     types.ValidityValid,
@@ -242,6 +249,66 @@ func (signal *Signal) Measure(
 					Normalized: types.NormalizeFinite(output.Strength),
 					Unit:       types.UnitDimensionless,
 				},
+				types.MetricKey(types.MetricPrecursor, types.SideBuy): {
+					Raw:        output.Buy.Precursor,
+					Normalized: types.NormalizeFinite(output.Buy.Precursor),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricCompression, types.SideBuy): {
+					Raw:        output.Buy.Compression,
+					Normalized: types.NormalizeFinite(output.Buy.Compression),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricIgnition, types.SideBuy): {
+					Raw:        output.Buy.Ignition,
+					Normalized: types.NormalizeFinite(output.Buy.Ignition),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricTrend, types.SideBuy): {
+					Raw:        output.Buy.Trend,
+					Normalized: types.NormalizeFinite(output.Buy.Trend),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricExhaustion, types.SideBuy): {
+					Raw:        output.Buy.Exhaustion,
+					Normalized: types.NormalizeFinite(output.Buy.Exhaustion),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricStrength, types.SideBuy): {
+					Raw:        output.Buy.Strength,
+					Normalized: types.NormalizeFinite(output.Buy.Strength),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricPrecursor, types.SideSell): {
+					Raw:        output.Sell.Precursor,
+					Normalized: types.NormalizeFinite(output.Sell.Precursor),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricCompression, types.SideSell): {
+					Raw:        output.Sell.Compression,
+					Normalized: types.NormalizeFinite(output.Sell.Compression),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricIgnition, types.SideSell): {
+					Raw:        output.Sell.Ignition,
+					Normalized: types.NormalizeFinite(output.Sell.Ignition),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricTrend, types.SideSell): {
+					Raw:        output.Sell.Trend,
+					Normalized: types.NormalizeFinite(output.Sell.Trend),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricExhaustion, types.SideSell): {
+					Raw:        output.Sell.Exhaustion,
+					Normalized: types.NormalizeFinite(output.Sell.Exhaustion),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricStrength, types.SideSell): {
+					Raw:        output.Sell.Strength,
+					Normalized: types.NormalizeFinite(output.Sell.Strength),
+					Unit:       types.UnitDimensionless,
+				},
 			},
 		}
 
@@ -257,6 +324,45 @@ func (signal *Signal) Measure(
 	}
 
 	return measurements
+}
+
+func validTrade(row kraken.TradeData) bool {
+	price := row.Price.Float64()
+
+	return row.Symbol != "" && !row.Timestamp.IsZero() && price > 0 && row.Qty > 0 &&
+		!math.IsNaN(price) && !math.IsInf(price, 0) && !math.IsNaN(row.Qty) &&
+		!math.IsInf(row.Qty, 0) && (row.Side == "buy" || row.Side == "sell")
+}
+
+func (signal *Signal) seenTrade(row kraken.TradeData) bool {
+	previous := signal.lastTrade[row.Symbol]
+
+	if row.Timestamp.Before(previous.at) {
+		return true
+	}
+
+	if row.Timestamp.After(previous.at) {
+		return false
+	}
+
+	_, seen := previous.ids[row.TradeID]
+
+	return seen
+}
+
+func (signal *Signal) commitTrade(row kraken.TradeData) {
+	previous := signal.lastTrade[row.Symbol]
+
+	if row.Timestamp.After(previous.at) {
+		previous = tradeCursor{at: row.Timestamp, ids: make(map[int64]struct{})}
+	}
+
+	if previous.ids == nil {
+		previous.ids = make(map[int64]struct{})
+	}
+
+	previous.ids[row.TradeID] = struct{}{}
+	signal.lastTrade[row.Symbol] = previous
 }
 
 /*

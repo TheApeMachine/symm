@@ -15,7 +15,6 @@ measureFrame ingests prices, refreshes the anchor, and scores each follower row.
 */
 func (signal *Signal) measureFrame(
 	tickers []kraken.TickerData,
-	crossSection *types.CrossSection,
 ) []*types.Measurement {
 	rows := tickers
 	section := signal.section
@@ -23,7 +22,7 @@ func (signal *Signal) measureFrame(
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
-	anchor, _ := crossSection.Leadership()
+	anchor := section.CausalAnchor()
 
 	if anchor == "" {
 		section.ClearAnchor()
@@ -32,6 +31,8 @@ func (signal *Signal) measureFrame(
 	if anchor != "" {
 		section.SetAnchor(anchor)
 	}
+
+	changed := make(map[string]struct{}, len(rows))
 
 	for _, row := range rows {
 		if row.Timestamp.IsZero() || row.Symbol == "" || row.Last == nil {
@@ -44,7 +45,9 @@ func (signal *Signal) measureFrame(
 			continue
 		}
 
-		section.ObservePrice(row.Symbol, lastPrice, row.Timestamp)
+		if section.ObservePrice(row.Symbol, lastPrice, row.Timestamp) {
+			changed[row.Symbol] = struct{}{}
+		}
 	}
 
 	for _, row := range rows {
@@ -53,6 +56,10 @@ func (signal *Signal) measureFrame(
 		}
 
 		if row.Last.Float64() <= 0 {
+			continue
+		}
+
+		if _, exists := changed[row.Symbol]; !exists {
 			continue
 		}
 
@@ -105,16 +112,15 @@ func (signal *Signal) selectCorrelations(
 
 	if features.LagOK && features.SampleCount > 0 {
 		dynamicMax = section.maxLagBars(features.SampleCount)
+		effectiveSupport := features.SampleCount - int(math.Abs(float64(features.LagBars))) - 1
+		searches := dynamicMax * 2
+		significance := lagSearchThreshold(effectiveSupport, searches)
 
-		if dynamicMax > 0 {
+		if dynamicMax > 0 && features.LagBars > 0 && features.LagCorr > significance {
 			selected.lagFraction = math.Abs(float64(features.LagBars)) / float64(dynamicMax)
-		}
-
-		selected.signedLagCorrelation = features.LagCorr
-		selected.lagBars = features.LagBars
-
-		if features.LagBars != 0 {
-			selected.lagDirection = math.Copysign(1, float64(features.LagBars))
+			selected.signedLagCorrelation = features.LagCorr
+			selected.lagBars = features.LagBars
+			selected.lagDirection = 1
 		}
 	}
 
@@ -122,40 +128,25 @@ func (signal *Signal) selectCorrelations(
 		selected.signedContempCorrelation = features.ContempCorr
 	}
 
-	lagCorrelation := math.Abs(selected.signedLagCorrelation)
-	contempCorrelation := math.Abs(selected.signedContempCorrelation)
-	selected.correlation = min(math.Max(contempCorrelation, lagCorrelation), 1)
-	lagDominates := dominanceFraction(lagCorrelation, contempCorrelation, features.SampleCount)
-	selected.signedCorrelation = min(max(
-		selected.signedContempCorrelation+lagDominates*(selected.signedLagCorrelation-selected.signedContempCorrelation),
-		-1,
-	), 1)
+	selected.signedCorrelation = selected.signedContempCorrelation
+
+	if selected.signedLagCorrelation > math.Max(0, selected.signedContempCorrelation) {
+		selected.signedCorrelation = selected.signedLagCorrelation
+	}
+
+	selected.correlation = math.Abs(selected.signedCorrelation)
 
 	return selected
 }
 
-func dominanceFraction(lagCorrelation, contempCorrelation float64, sampleCount int) float64 {
-	diff := lagCorrelation - contempCorrelation
-
-	if diff <= 0 {
+func lagSearchThreshold(effectiveSupport, searches int) float64 {
+	if effectiveSupport <= 0 || searches <= 1 {
 		return 0
 	}
 
-	tolerance := correlationTolerance(sampleCount)
-
-	if tolerance <= 0 {
-		return 0
-	}
-
-	return min(1, diff/tolerance)
-}
-
-func correlationTolerance(sampleCount int) float64 {
-	if sampleCount <= 0 {
-		return 0
-	}
-
-	return 1 / math.Sqrt(float64(sampleCount))
+	return math.Sqrt(
+		2 * math.Log(float64(searches)) / float64(effectiveSupport),
+	)
 }
 
 /*
@@ -193,10 +184,7 @@ func weightEvidence(
 ) evidenceWeights {
 	anchorActive := 0.0
 
-	if features.MoveMoved ||
-		(features.StallMargin > 0 && selected.lagFraction > 0) ||
-		features.ContempOK ||
-		features.LagOK {
+	if features.MoveReady {
 		anchorActive = 1
 	}
 
@@ -208,9 +196,10 @@ func weightEvidence(
 
 	stallMargin := math.Min(1, math.Max(0, features.StallMargin))
 	noLag := 1 - selected.lagFraction
-	uncorrelated := 1 - selected.correlation
-	lagCorrelation := math.Abs(selected.signedLagCorrelation)
-	contempCorrelation := math.Abs(selected.signedContempCorrelation)
+	positiveCorrelation := math.Max(0, selected.signedCorrelation)
+	uncorrelated := 1 - positiveCorrelation
+	lagCorrelation := math.Max(0, selected.signedLagCorrelation)
+	contempCorrelation := math.Max(0, selected.signedContempCorrelation)
 	lagEvidence := lagCorrelation * selected.lagFraction
 	syncEvidence := contempCorrelation * noLag
 	decoupledEvidence := uncorrelated * (1 - stallMargin)

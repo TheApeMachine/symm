@@ -2,6 +2,7 @@ package cvd
 
 import (
 	"context"
+	"math"
 	"sync"
 	"time"
 
@@ -28,11 +29,23 @@ type Signal struct {
 	api            *websocket.API
 	sample         *algorithm.TradeFlowSample
 	flow           *equation.Flow
+	midpoints      map[string][]midpointObservation
 	planner        *strategy.Planner
 	ui             chan []byte
 	subscriptions  map[string]*types.Subscription[any]
 	subscribers    *sync.Map
 	subscriptionMu sync.Mutex
+	lastTrade      map[string]tradeCursor
+}
+
+type tradeCursor struct {
+	at  time.Time
+	ids map[int64]struct{}
+}
+
+type midpointObservation struct {
+	at    time.Time
+	price float64
 }
 
 /*
@@ -55,10 +68,12 @@ func NewSignal(
 		api:           api,
 		sample:        algorithm.NewTradeFlowSample(),
 		flow:          equation.NewFlow(),
+		midpoints:     make(map[string][]midpointObservation),
 		planner:       planner,
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
+		lastTrade:     make(map[string]tradeCursor),
 	}
 
 	signal.status = types.READY
@@ -127,23 +142,26 @@ func (signal *Signal) run() {
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	tickers, trades, _ := thesis.Market()
-	midpoints := make(map[string]float64)
 
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
 	for _, row := range tickers {
-		midpoints[row.Symbol] = (row.Bid.Float64() + row.Ask.Float64()) / 2
+		signal.observeMidpoint(row)
 	}
 
 	for _, row := range trades {
-		midpoint, exists := midpoints[row.Symbol]
+		if !validTrade(row) || signal.seenTrade(row) {
+			continue
+		}
+
+		midpoint, index, exists := signal.midpointAt(row.Symbol, row.Timestamp)
 
 		if !exists {
 			continue
 		}
 
-		tradeMeasurements, err := signal.measureTrade(row, midpoint)
+		tradeMeasurements, err := signal.measureTrade(row, midpoint.price)
 
 		if err != nil {
 			errnie.Error(errnie.Err(
@@ -153,6 +171,9 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			))
 			continue
 		}
+
+		signal.commitTrade(row)
+		signal.commitMidpoint(row.Symbol, index)
 
 		measurements = append(measurements, tradeMeasurements...)
 
@@ -166,6 +187,114 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	}
 
 	return measurements
+}
+
+func (signal *Signal) observeMidpoint(row kraken.TickerData) {
+	if row.Symbol == "" || row.Timestamp.IsZero() || row.Bid == nil || row.Ask == nil {
+		return
+	}
+
+	bid := row.Bid.Float64()
+	ask := row.Ask.Float64()
+
+	if bid <= 0 || ask <= bid || math.IsNaN(bid) || math.IsNaN(ask) ||
+		math.IsInf(bid, 0) || math.IsInf(ask, 0) {
+		return
+	}
+
+	if signal.midpoints == nil {
+		signal.midpoints = make(map[string][]midpointObservation)
+	}
+
+	observations := signal.midpoints[row.Symbol]
+	observation := midpointObservation{at: row.Timestamp, price: (bid + ask) / 2}
+	insertAt := len(observations)
+
+	for index, existing := range observations {
+		if existing.at.Equal(observation.at) {
+			observations[index] = observation
+			signal.midpoints[row.Symbol] = observations
+
+			return
+		}
+
+		if existing.at.After(observation.at) {
+			insertAt = index
+			break
+		}
+	}
+
+	observations = append(observations, midpointObservation{})
+	copy(observations[insertAt+1:], observations[insertAt:])
+	observations[insertAt] = observation
+	signal.midpoints[row.Symbol] = observations
+}
+
+func (signal *Signal) midpointAt(
+	symbol string,
+	at time.Time,
+) (midpointObservation, int, bool) {
+	observations := signal.midpoints[symbol]
+
+	for index := len(observations) - 1; index >= 0; index-- {
+		if !observations[index].at.After(at) {
+			return observations[index], index, true
+		}
+	}
+
+	return midpointObservation{}, 0, false
+}
+
+func (signal *Signal) commitMidpoint(symbol string, index int) {
+	observations := signal.midpoints[symbol]
+
+	if index <= 0 || index >= len(observations) {
+		return
+	}
+
+	signal.midpoints[symbol] = observations[index:]
+}
+
+func validTrade(row kraken.TradeData) bool {
+	price := row.Price.Float64()
+
+	return row.Symbol != "" && !row.Timestamp.IsZero() && price > 0 && row.Qty > 0 &&
+		!math.IsNaN(price) && !math.IsInf(price, 0) && !math.IsNaN(row.Qty) &&
+		!math.IsInf(row.Qty, 0) && (row.Side == "buy" || row.Side == "sell")
+}
+
+func (signal *Signal) seenTrade(row kraken.TradeData) bool {
+	previous := signal.lastTrade[row.Symbol]
+
+	if row.Timestamp.Before(previous.at) {
+		return true
+	}
+
+	if row.Timestamp.After(previous.at) {
+		return false
+	}
+
+	_, seen := previous.ids[row.TradeID]
+
+	return seen
+}
+
+func (signal *Signal) commitTrade(row kraken.TradeData) {
+	previous := signal.lastTrade[row.Symbol]
+
+	if row.Timestamp.After(previous.at) {
+		previous = tradeCursor{
+			at:  row.Timestamp,
+			ids: make(map[int64]struct{}),
+		}
+	}
+
+	if previous.ids == nil {
+		previous.ids = make(map[int64]struct{})
+	}
+
+	previous.ids[row.TradeID] = struct{}{}
+	signal.lastTrade[row.Symbol] = previous
 }
 
 /*

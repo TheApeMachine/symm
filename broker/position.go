@@ -50,7 +50,7 @@ func NewPosition(
 	price *Price,
 	balance *Balance,
 	pair kraken.InstrumentPair,
-	qty *decimal.Decimal,
+	decision types.Decision,
 ) *Position {
 	errnie.Info("creating position for: " + pair.Symbol)
 	ctx, cancel := context.WithCancel(ctx)
@@ -65,23 +65,28 @@ func NewPosition(
 		price:      price,
 		balance:    balance,
 		pair:       pair,
+		ID:         decision.ID,
 		EntryOrder: &spot.AddOrderRequest{
+			ClOrdId: decision.ID,
 			Type:      "buy",
 			OrderType: "market",
-			Volume:    qty.String(),
+			Volume:    decision.ProposedQuantity.String(),
 			Pair:      pair.Symbol,
 		},
 		ExitOrder: &spot.AddOrderRequest{
+			ClOrdId: decision.ID,
 			Type:      "sell",
 			OrderType: "market",
-			Volume:    qty.String(),
+			Volume:    decision.ProposedQuantity.String(),
 			Pair:      pair.Symbol,
 		},
 		Holding: types.NewHolding(
 			ctx,
 			pair.Symbol,
-			qty,
+			decision.ProposedQuantity,
 			price.Mark(pair.Symbol, SELL),
+			decision.ReservationID,
+			decision.Opportunity,
 		),
 	}
 

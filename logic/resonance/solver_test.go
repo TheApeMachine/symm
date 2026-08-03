@@ -99,7 +99,6 @@ func TestUpdate(t *testing.T) {
 			},
 		}})
 		solver := NewSolver(make(chan []byte, 1), nil)
-		solver.alphaCtrl = NewAlphaController(solver.alpha, solver.alpha, solver.alpha)
 		thesis.Tickers.Store("BTC/USD", kraken.TickerData{
 			Symbol:    "BTC/USD",
 			Bid:       decimal.NewFromFloat64(99),
@@ -111,15 +110,40 @@ func TestUpdate(t *testing.T) {
 
 		Convey("Then surprise and energy are reported per input dimension", func() {
 			So(err, ShouldBeNil)
-			surprise, surpriseOK := thesis.Resonance.Load("surprise")
-			energy, energyOK := thesis.Resonance.Load("energy")
-			featureCount := float64(len(solver.featureSchema))
+			rowRaw, found := thesis.Resonance.Load("BTC/USD")
+			So(found, ShouldBeTrue)
+
+			row, ok := rowRaw.(map[string]any)
+			So(ok, ShouldBeTrue)
+
+			state := solver.state("BTC/USD")
+			featureCount := float64(len(state.featureSchema))
+			surprise, surpriseOK := row["surprise"]
+			energy, energyOK := row["energy"]
 
 			So(surpriseOK, ShouldBeTrue)
 			So(energyOK, ShouldBeTrue)
+
+			/*
+				Surprise is an L2 norm over the input dimensions, so it grows as
+				the square root of the feature count and takes the square root as
+				its divisor. Energy is a sum of squared residuals, which grows
+				linearly, so it takes the count itself. Each divisor has to match
+				the units of what it normalizes, or the reading still carries the
+				size of the schema.
+			*/
 			So(surprise, ShouldAlmostEqual,
-				solver.manifold.ReconstructionError()/math.Sqrt(featureCount))
-			So(energy, ShouldAlmostEqual, solver.manifold.Energy()/featureCount)
+				state.manifold.ReconstructionError()/math.Sqrt(featureCount))
+
+			/*
+				PredictionEnergy rather than Energy. The latter adds the latent
+				decay and sparsity penalties, whose magnitudes are set by the
+				learning pace, so publishing it would make the reported energy
+				move whenever the controller retuned alpha with no change in how
+				well the network predicts.
+			*/
+			So(energy, ShouldAlmostEqual,
+				state.manifold.PredictionEnergy()/featureCount)
 		})
 
 		Convey("Then the next market epoch produces a visible forward return curve", func() {
@@ -131,14 +155,81 @@ func TestUpdate(t *testing.T) {
 			})
 
 			err = solver.Update(thesis)
-			curve, curveOK := thesis.Resonance.Load("forwardCurve")
-			horizon, horizonOK := thesis.Resonance.Load("activeHorizon")
+			rowRaw, found := thesis.Resonance.Load("BTC/USD")
+			So(found, ShouldBeTrue)
+
+			row, ok := rowRaw.(map[string]any)
+			So(ok, ShouldBeTrue)
+
+			curve, curveOK := row["forwardCurve"]
+			horizon, horizonOK := row["activeHorizon"]
+			expectedReturn, expectedReturnOK := row["expectedReturn"]
+			returnReady, returnReadyOK := row["returnReady"]
+			state := solver.state("BTC/USD")
 
 			So(err, ShouldBeNil)
 			So(curveOK, ShouldBeTrue)
 			So(horizonOK, ShouldBeTrue)
+			So(expectedReturnOK, ShouldBeTrue)
+			So(returnReadyOK, ShouldBeTrue)
 			So(curve, ShouldHaveLength, horizon.(int))
-			So(solver.targetSamples, ShouldEqual, 1)
+			So(returnReady, ShouldEqual, true)
+			So(expectedReturn, ShouldEqual, curve.([]float64)[0])
+			So(state.targetSamples, ShouldEqual, 1)
+		})
+	})
+}
+
+func TestUpdateKeepsIndependentSymbolStates(t *testing.T) {
+	Convey("Given a pending resonance sample from one symbol", t, func() {
+		normalized := 0.25
+		solver := NewSolver(make(chan []byte, 1), nil)
+
+		first := types.NewThesis()
+		first.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
+			Source: types.SourceLiquidity,
+			Symbol: "BTC/USD",
+			Metrics: map[string]types.MetricSample{
+				"reading": {Normalized: &normalized},
+			},
+		}})
+		first.Tickers.Store("BTC/USD", kraken.TickerData{
+			Symbol:    "BTC/USD",
+			Bid:       decimal.NewFromFloat64(99),
+			Ask:       decimal.NewFromFloat64(101),
+			Timestamp: time.Unix(1, 0),
+		})
+
+		So(solver.Update(first), ShouldBeNil)
+		So(solver.state("BTC/USD").pendingAt.IsZero(), ShouldBeFalse)
+
+		Convey("Then a later tick on a different target symbol must not train the same head sample", func() {
+			second := types.NewThesis()
+			second.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
+				Source: types.SourceLiquidity,
+				Symbol: "ETH/USD",
+				Metrics: map[string]types.MetricSample{
+					"reading": {Normalized: &normalized},
+				},
+			}})
+			second.Tickers.Store("ETH/USD", kraken.TickerData{
+				Symbol:    "ETH/USD",
+				Bid:       decimal.NewFromFloat64(199),
+				Ask:       decimal.NewFromFloat64(201),
+				Timestamp: time.Unix(2, 0),
+			})
+
+			So(solver.Update(second), ShouldBeNil)
+			So(solver.state("BTC/USD").targetSamples, ShouldEqual, 0)
+			So(solver.state("ETH/USD").targetSamples, ShouldEqual, 0)
+			So(solver.state("ETH/USD").pendingAt.IsZero(), ShouldBeFalse)
+
+			rowRaw, found := second.Resonance.Load("ETH/USD")
+			So(found, ShouldBeTrue)
+
+			row, ok := rowRaw.(map[string]any)
+			So(ok, ShouldBeTrue)
+			So(row["targetSymbol"], ShouldEqual, "ETH/USD")
 		})
 	})
 }

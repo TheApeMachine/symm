@@ -2,6 +2,7 @@ package manifold
 
 import (
 	"fmt"
+	"math"
 	"maps"
 	"sync"
 	"time"
@@ -33,6 +34,7 @@ type Solver struct {
 	recorder  *audit.Recorder
 	tokenizer *Tokenizer
 	residency int
+	turnover  int
 	ui        chan []byte
 	binui     chan []byte
 }
@@ -67,9 +69,40 @@ func NewSolver(
 		})
 	}
 
+	domain, err := newDomain(config)
+	errnie.Error(err)
+
+	/*
+		Residency must stay well below the lattice size in practice. The shared
+		thermo-wave solve destabilizes long before one quarter-cell occupancy once
+		hundreds of symbols have contributed sequentially, so the resident history
+		is bounded to one thirty-second of the cells unless config overrides it.
+		That keeps the newest cross-market carriers while forcing eviction to act
+		before the pilot-wave gather reaches the observed non-finite regime.
+	*/
+	cells := config.Grid.X * config.Grid.Y * config.Grid.Z
+	residency := max(cells/32, 1)
+
+	if configuredResidency := viper.GetInt("market.manifold.residency"); configuredResidency > 0 {
+		residency = configuredResidency
+	}
+
+	return &Solver{
+		api:       api,
+		config:    config,
+		domain:    domain,
+		recorder:  recorder,
+		tokenizer: NewTokenizer(config, symbols),
+		residency: residency,
+		ui:        ui,
+		binui:     binui,
+	}
+}
+
+func newDomain(config pfluid.Config) (*pfluid.Domain, error) {
 	var domain *pfluid.Domain
 
-	errnie.Error(compute.WithMetalInit(func() error {
+	err := compute.WithMetalInit(func() error {
 		created, err := pfluid.NewDomain(config)
 
 		if err != nil {
@@ -78,26 +111,13 @@ func NewSolver(
 
 		domain = created
 		return nil
-	}))
+	})
 
-	/*
-		Residency is a share of the lattice the field is solved on. Crowding
-		every cell leaves the transport nothing to relax into and it goes
-		non-finite, so the population is held to a quarter of the cells: dense
-		enough to carry the whole universe, sparse enough to integrate.
-	*/
-	cells := config.Grid.X * config.Grid.Y * config.Grid.Z
-
-	return &Solver{
-		api:       api,
-		config:    config,
-		domain:    domain,
-		recorder:  recorder,
-		tokenizer: NewTokenizer(config, symbols),
-		residency: cells / 4,
-		ui:        ui,
-		binui:     binui,
+	if err != nil {
+		return nil, err
 	}
+
+	return domain, nil
 }
 
 /*
@@ -108,6 +128,8 @@ of that physical state. Inject is Hawkes-gated; the step is not.
 func (solver *Solver) Update(thesis *types.Thesis) error {
 	solver.mu.Lock()
 	defer solver.mu.Unlock()
+
+	solver.maybeRebase(thesis.At)
 
 	stepped := false
 	var updateErr error
@@ -142,16 +164,19 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			askOrders = append(askOrders, level.Queue()...)
 		}
 
+		buyIntensity := hawkes[len(hawkes)-1].Sample(
+			types.MetricConditionalIntensity, types.SideBuy,
+		).Raw
+		sellIntensity := hawkes[len(hawkes)-1].Sample(
+			types.MetricConditionalIntensity, types.SideSell,
+		).Raw
+
 		particles, contentIDs, err := solver.tokenizer.NewBatch(
 			bidOrders,
 			askOrders,
 			book.Midpoint().Float64(),
-			hawkes[len(hawkes)-1].Sample(
-				types.MetricConditionalIntensity, types.SideBuy,
-			).Raw,
-			hawkes[len(hawkes)-1].Sample(
-				types.MetricConditionalIntensity, types.SideSell,
-			).Raw,
+			buyIntensity,
+			sellIntensity,
 			name,
 		)
 
@@ -169,7 +194,28 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
-		_, err = solver.domain.Append(particles, contentIDs)
+		originalBatchParticles := len(particles)
+		particles, contentIDs, droppedParticles := solver.filterBatch(particles, contentIDs)
+
+		if droppedParticles > 0 && solver.recorder != nil {
+			errnie.Error(audit.Record(recorderOrNil(solver.recorder), "predictive", map[string]any{
+				"stage":                      "manifold",
+				"symbol":                     name,
+				"at":                         thesis.At,
+				"status":                     "filtered",
+				"dropped_particles":          droppedParticles,
+				"original_batch_particles":   originalBatchParticles,
+				"retained_batch_particles":   len(particles),
+				"buy_conditional_intensity":  buyIntensity,
+				"sell_conditional_intensity": sellIntensity,
+			}))
+		}
+
+		if len(particles) == 0 || len(contentIDs) == 0 {
+			return true
+		}
+
+		batchStart, err := solver.domain.Append(particles, contentIDs)
 
 		if err != nil {
 			updateErr = errnie.Error(errnie.Err(
@@ -184,6 +230,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return false
 		}
 
+		batchEnd := batchStart + len(particles) - 1
+		maxBatchMass, maxBatchHeat, maxBatchEnergy := batchEnvelope(particles)
+		solver.turnover += len(particles)
+
 		solver.evict()
 
 		/*
@@ -193,6 +243,26 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			stop the desk from deciding at all.
 		*/
 		if err = solver.Step(name, thesis.At); err != nil {
+			if solver.recorder != nil {
+				errnie.Error(audit.Record(recorderOrNil(solver.recorder), "predictive", map[string]any{
+					"stage":                     "manifold",
+					"symbol":                    name,
+					"at":                        thesis.At,
+					"status":                    "failed",
+					"error":                     err.Error(),
+					"resident_particles":        solver.domain.ParticleCount(),
+					"batch_particles":           len(particles),
+					"batch_start":               batchStart,
+					"batch_end":                 batchEnd,
+					"max_batch_mass":            maxBatchMass,
+					"max_batch_heat":            maxBatchHeat,
+					"max_batch_energy":          maxBatchEnergy,
+					"buy_conditional_intensity": buyIntensity,
+					"sell_conditional_intensity": sellIntensity,
+				}))
+			}
+
+			solver.resetDomain(name, err)
 			return true
 		}
 
@@ -215,6 +285,18 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	}
 
 	return nil
+}
+
+func (solver *Solver) maybeRebase(at time.Time) {
+	if solver == nil || solver.residency <= 0 || solver.turnover < solver.residency {
+		return
+	}
+
+	solver.recreateDomain("turnover", at, nil, map[string]any{
+		"resident_particles": solver.domain.ParticleCount(),
+		"turnover_particles": solver.turnover,
+		"residency":         solver.residency,
+	})
 }
 
 /*
@@ -341,6 +423,154 @@ func (solver *Solver) Step(symbol string, at time.Time) error {
 	}
 
 	return nil
+}
+
+func (solver *Solver) filterBatch(
+	particles []pfluid.Particle,
+	contentIDs []uint32,
+) ([]pfluid.Particle, []uint32, int) {
+	if len(particles) == 0 || len(contentIDs) == 0 {
+		return nil, nil, 0
+	}
+
+	keptParticles := make([]pfluid.Particle, 0, len(particles))
+	keptContentIDs := make([]uint32, 0, len(contentIDs))
+	dropped := 0
+
+	for index, particle := range particles {
+		if !admissibleParticle(particle, solver.config) {
+			dropped++
+			continue
+		}
+
+		keptParticles = append(keptParticles, particle)
+		keptContentIDs = append(keptContentIDs, contentIDs[index])
+	}
+
+	return keptParticles, keptContentIDs, dropped
+}
+
+func admissibleParticle(particle pfluid.Particle, config pfluid.Config) bool {
+	values := []float32{
+		particle.Position.X,
+		particle.Position.Y,
+		particle.Position.Z,
+		particle.Velocity.X,
+		particle.Velocity.Y,
+		particle.Velocity.Z,
+		particle.Mass,
+		particle.Heat,
+		particle.Energy,
+		particle.Phase,
+		particle.Omega,
+	}
+
+	for _, value := range values {
+		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+			return false
+		}
+	}
+
+	if particle.Mass <= 0 || particle.Heat < 0 || particle.Energy < 0 {
+		return false
+	}
+
+	return particle.Omega >= config.OmegaMin && particle.Omega <= config.OmegaMax
+}
+
+func batchEnvelope(particles []pfluid.Particle) (float32, float32, float32) {
+	maxBatchMass := float32(0)
+	maxBatchHeat := float32(0)
+	maxBatchEnergy := float32(0)
+
+	for _, particle := range particles {
+		if particle.Mass > maxBatchMass {
+			maxBatchMass = particle.Mass
+		}
+
+		if particle.Heat > maxBatchHeat {
+			maxBatchHeat = particle.Heat
+		}
+
+		if particle.Energy > maxBatchEnergy {
+			maxBatchEnergy = particle.Energy
+		}
+	}
+
+	return maxBatchMass, maxBatchHeat, maxBatchEnergy
+}
+
+
+func (solver *Solver) resetDomain(symbol string, cause error) {
+	solver.recreateDomain("failed_step", time.Time{}, cause, map[string]any{
+		"symbol": symbol,
+	})
+}
+
+func (solver *Solver) recreateDomain(
+	reason string,
+	at time.Time,
+	cause error,
+	extra map[string]any,
+) {
+	if solver == nil {
+		return
+	}
+
+	if solver.domain != nil {
+		errnie.Error(solver.domain.Close())
+	}
+
+	domain, err := newDomain(solver.config)
+
+	if err != nil {
+		solver.domain = nil
+		solver.turnover = 0
+
+		message := "failed to recreate manifold domain"
+
+		if reason == "failed_step" {
+			message = fmt.Sprintf("failed to reset manifold domain after %s destabilized it", extra["symbol"])
+		}
+
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			message,
+			err,
+		))
+
+		return
+	}
+
+	solver.domain = domain
+	solver.turnover = 0
+
+	payload := map[string]any{
+		"stage":  "manifold",
+		"status": "recreated",
+		"reason": reason,
+	}
+
+	if !at.IsZero() {
+		payload["at"] = at
+	}
+
+	for key, value := range extra {
+		payload[key] = value
+	}
+
+	if cause != nil {
+		payload["error"] = cause.Error()
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf("reset manifold domain after failed step for %v", extra["symbol"]),
+			cause,
+		))
+	}
+
+	if solver.recorder != nil {
+		errnie.Error(audit.Record(recorderOrNil(solver.recorder), "predictive", payload))
+	}
 }
 
 func recorderOrNil(recorder *audit.Recorder) *audit.Recorder {

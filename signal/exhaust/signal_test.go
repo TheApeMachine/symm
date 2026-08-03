@@ -1,0 +1,160 @@
+package exhaust
+
+import (
+	"testing"
+	"time"
+
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
+	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
+)
+
+func TestSeenTrade(t *testing.T) {
+	Convey("Given an exact-once cursor for one exhaustion symbol", t, func() {
+		signal := &Signal{lastTrade: make(map[string]tradeCursor)}
+		at := time.Unix(1_700_001_000, 0).UTC()
+		first := kraken.TradeData{Symbol: "ALT/USD", TradeID: 31, Timestamp: at}
+		secondSameTime := kraken.TradeData{Symbol: "ALT/USD", TradeID: 32, Timestamp: at}
+		regressed := kraken.TradeData{
+			Symbol: "ALT/USD", TradeID: 33, Timestamp: at.Add(-time.Nanosecond),
+		}
+
+		Convey("It should accept distinct same-time IDs and reject replay or regression", func() {
+			So(signal.seenTrade(first), ShouldBeFalse)
+			signal.commitTrade(first)
+			So(signal.seenTrade(first), ShouldBeTrue)
+			So(signal.seenTrade(secondSameTime), ShouldBeFalse)
+			signal.commitTrade(secondSameTime)
+			So(signal.seenTrade(secondSameTime), ShouldBeTrue)
+			So(signal.seenTrade(regressed), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given same-time exhaustion trades without exchange IDs", t, func() {
+		signal := &Signal{lastTrade: make(map[string]tradeCursor)}
+		at := time.Unix(1_700_001_100, 0).UTC()
+		unidentified := kraken.TradeData{Symbol: "ALT/USD", Timestamp: at}
+
+		signal.commitTrade(unidentified)
+
+		Convey("It should document intrinsic indistinguishability by rejecting the second zero-ID event", func() {
+			So(signal.seenTrade(unidentified), ShouldBeTrue)
+		})
+	})
+}
+
+func TestSnapshotDelta(t *testing.T) {
+	Convey("Given a full snapshot where one ask vanished", t, func() {
+		previous := map[int64]flow.BookLevel{
+			101: {Price: 101, Ticks: 101, Quantity: 10},
+			102: {Price: 102, Ticks: 102, Quantity: 8},
+		}
+		current := map[int64]flow.BookLevel{
+			101: {Price: 101, Ticks: 101, Quantity: 7},
+		}
+		delta := snapshotDelta(current, previous)
+
+		Convey("It should update retained depth and explicitly delete the vanished level", func() {
+			So(exhaustLevelQuantity(delta, 101), ShouldEqual, 7.0)
+			So(exhaustLevelQuantity(delta, 102), ShouldEqual, 0.0)
+		})
+	})
+}
+
+func TestMeasureTrade(t *testing.T) {
+	Convey("Given pressure fade after a causal adverse book-price move", t, func() {
+		sample := algorithm.NewDecaySample()
+		signal := &Signal{sample: sample, decay: equation.NewDecay()}
+		_, ready, _, err := sample.MeasureBook(exhaustBookAt(100, 101, 10, 10))
+		So(err, ShouldBeNil)
+		So(ready, ShouldBeTrue)
+		_, _, _, err = sample.MeasureTrade(flow.TradeInput{
+			Symbol: "BTC/USD", Price: 100, Quantity: 10,
+			Side: flow.TradeBuy, At: time.Unix(1, 0),
+		})
+		So(err, ShouldBeNil)
+		_, ready, _, err = sample.MeasureBook(flow.BookInput{
+			Symbol: "BTC/USD", TickSize: 1,
+			Bids: []flow.BookLevel{
+				{Price: 100, Ticks: 100, Quantity: 0},
+				{Price: 99, Ticks: 99, Quantity: 10},
+			},
+			Asks: []flow.BookLevel{
+				{Price: 101, Ticks: 101, Quantity: 0},
+				{Price: 100, Ticks: 100, Quantity: 10},
+			},
+		})
+		So(err, ShouldBeNil)
+		So(ready, ShouldBeTrue)
+		at := time.Unix(2, 0)
+		measurements, err := signal.measureTrade(kraken.TradeData{
+			Symbol: "BTC/USD", Side: "buy", Price: *decimal.NewFromInt64(99),
+			Qty: 1, TradeID: 41, Timestamp: at,
+		})
+
+		Convey("It should emit positive long thermal exhaustion only after both legs", func() {
+			So(err, ShouldBeNil)
+			So(measurements, ShouldHaveLength, 1)
+			measurement := measurements[0]
+			So(measurement.At, ShouldResemble, at)
+			So(measurement.Sample(types.MetricThermal, types.SideBuy).Raw,
+				ShouldBeGreaterThan, 0)
+			So(measurement.Sample(types.MetricThermal, types.SideSell).Raw,
+				ShouldEqual, 0)
+		})
+	})
+}
+
+func TestFrame(t *testing.T) {
+	Convey("Given side-specific decay output", t, func() {
+		signal := &Signal{}
+		at := time.Unix(1_700_001_200, 0).UTC()
+		measurements := signal.frame("BTC/USD", at, equation.DecayOutput{
+			Long:  equation.DecaySideOutput{Thermal: 0.4, Value: 0.4, Strength: 0.4},
+			Short: equation.DecaySideOutput{Mechanical: 0.2, Value: 0.2, Strength: 0.2},
+		}, 0.75)
+
+		Convey("It should preserve both side families under the existing metric keys", func() {
+			So(measurements, ShouldHaveLength, 1)
+			measurement := measurements[0]
+			So(measurement.Metrics, ShouldHaveLength, 16)
+			So(measurement.Sample(types.MetricThermal, types.SideBuy).Raw,
+				ShouldAlmostEqual, 0.4, 1e-12)
+			So(measurement.Sample(types.MetricMechanical, types.SideSell).Raw,
+				ShouldAlmostEqual, 0.2, 1e-12)
+
+			for _, sample := range measurement.Metrics {
+				So(sample.Unit, ShouldEqual, types.UnitDimensionless)
+			}
+		})
+	})
+}
+
+func exhaustLevelQuantity(levels []flow.BookLevel, ticks int64) float64 {
+	for _, level := range levels {
+		if level.Ticks == ticks {
+			return level.Quantity
+		}
+	}
+
+	return -1
+}
+
+func exhaustBookAt(
+	bidPrice, askPrice, bidQuantity, askQuantity float64,
+) flow.BookInput {
+	return flow.BookInput{
+		Symbol:   "BTC/USD",
+		TickSize: 1,
+		Bids: []flow.BookLevel{
+			{Price: bidPrice, Ticks: int64(bidPrice), Quantity: bidQuantity},
+		},
+		Asks: []flow.BookLevel{
+			{Price: askPrice, Ticks: int64(askPrice), Quantity: askQuantity},
+		},
+	}
+}

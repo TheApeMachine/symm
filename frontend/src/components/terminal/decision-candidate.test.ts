@@ -85,16 +85,19 @@ describe("judgeCandidate", () => {
 });
 
 describe("resonancePredict", () => {
-	it("maps surprise to analyzer forecast confidence contribution", () => {
+	it("prefers calibrated backend confidence when present", () => {
 		expect(resonancePredict(undefined)).toBeNull();
 		expect(
 			resonancePredict({
 				source: "resonance",
 				symbol: "BTC/USD",
 				at: "2026-07-18T00:00:00Z",
-				surprise: 0,
+				confidence: 0.75,
 			} as ResonanceFrame),
-		).toBe(1);
+		).toBe(0.75);
+	});
+
+	it("falls back to the legacy surprise proxy when confidence is absent", () => {
 		expect(
 			resonancePredict({
 				source: "resonance",

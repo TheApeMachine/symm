@@ -55,6 +55,9 @@ func NewDesk(
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
+	viper.SetDefault("trading.slots.normal", 2)
+	viper.SetDefault("trading.slots.reserved", 2)
+
 	desk := &Desk{
 		ctx:    ctx,
 		cancel: cancel,
@@ -69,8 +72,8 @@ func NewDesk(
 		price:        price,
 		balance:      balance,
 		positions:    &sync.Map{},
-		maxPositions: viper.GetInt("trading.slots.normal"),
-		maxReserved:  viper.GetInt("trading.slots.reserved"),
+		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
+		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
 	}
 
 	if err := desk.recover(); err != nil {
@@ -232,7 +235,7 @@ func (desk *Desk) recover() error {
 		}
 
 		entryAt := time.Unix(opening[0].Time.Int64(), 0).UTC()
-		entryPrice := decimal.NewFromInt64(0)
+		entryCost := decimal.NewFromInt64(0)
 		entryFee := decimal.NewFromInt64(0)
 
 		for _, trade := range opening {
@@ -240,15 +243,15 @@ func (desk *Desk) recover() error {
 				continue
 			}
 
-			entryPrice = entryPrice.Add(trade.Cost.Div(trade.Volume))
+			entryCost = entryCost.Add(trade.Cost)
 			entryFee = entryFee.Add(trade.Fee)
 		}
 
-		if entryPrice.Sign() <= 0 || entryFee.Sign() <= 0 {
+		if entryCost.Sign() <= 0 || entryFee.Sign() <= 0 {
 			continue
 		}
 
-		entryPrice = entryPrice.Div(quantity)
+		entryPrice := entryCost.Div(quantity)
 
 		position := NewPosition(
 			desk.ctx,
@@ -258,7 +261,10 @@ func (desk *Desk) recover() error {
 			desk.price,
 			desk.balance,
 			pair,
-			quantity,
+			types.Decision{
+				ID:               "recovered:" + symbol,
+				ProposedQuantity: quantity,
+			},
 		)
 
 		position.ID = "recovered:" + symbol
@@ -271,6 +277,8 @@ func (desk *Desk) recover() error {
 		// context orphaned.
 		position.Holding.Asset = asset
 		position.Holding.Qty = quantity
+		position.Holding.EntryPrice = entryPrice
+		position.Holding.EntryFee = entryFee
 		position.Holding.SellableQty = quantity.Copy()
 		position.Holding.EntryAt = &entryAt
 		position.Holding.Status = types.OPEN
@@ -472,17 +480,19 @@ func (desk *Desk) enter(decision types.Decision) error {
 		desk.price,
 		desk.balance,
 		pair,
-		decision.ProposedQuantity,
+		decision,
 	)
-	position.ID = decision.ID
-	position.EntryOrder.ClOrdId = decision.ID
-	position.Holding.IsOpportunity = decision.Opportunity
-	position.Holding.ReservationID = decision.ReservationID
+
 	desk.positions.Store(pair.Symbol, position)
 
 	if _, err := position.Enter(); err != nil {
 		desk.positions.Delete(pair.Symbol)
-		return errnie.Error(err)
+
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"desk: could not enter position",
+			err,
+		))
 	}
 
 	return nil
@@ -544,7 +554,11 @@ func (desk *Desk) Cancel() error {
 		}
 
 		if err := position.Close(); err != nil {
-			errnie.Error(err)
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"desk: could not cancel position",
+				err,
+			))
 		}
 
 		return true

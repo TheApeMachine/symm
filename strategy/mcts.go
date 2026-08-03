@@ -12,20 +12,52 @@ const (
 	ActionExit    float64 = 3.0
 )
 
-// StrategyState implements mcts.State for a symbol's decision trajectory.
+/*
+StrategyState implements mcts.State for a symbol's decision trajectory.
+
+Every field on the trajectory is a fraction of the reference price rather than
+an amount of quote currency. The rollout compares a forecast against a friction
+cost and against a reversal threshold, and neither comparison means anything
+unless all three are on one scale: a currency return of 0.064 on a hundred
+dollar symbol is the same trade as 0.00064 on a one dollar symbol, and a
+threshold that reads one as worth taking and the other as noise is deciding by
+the symbol's price rather than by its move.
+*/
 type StrategyState struct {
-	Symbol    string
-	Energy    float64 // Control 1
-	Surprise  float64 // Control 2
-	Treatment float64 // Action / Expected Return
+	Symbol string
+	Energy float64 // Control 1
+
+	Surprise float64 // Control 2
+
+	/*
+		Treatment is the forecast return as a fraction of the reference price,
+		and RoundTripCost is the modelled friction of entering and exiting on
+		the same scale.
+	*/
+	Treatment     float64
+	RoundTripCost float64
+
 	Reward    float64 // Target / PnL
 	Step      int
 	MaxSteps  int
 	IsHolding bool
 }
 
+/*
+reversalFraction is how far a held forecast must turn against the position
+before the rollout abandons the branch, as a fraction of the reference price.
+
+A held position already paid to enter, so the bar for abandoning it is a move
+that exceeds what a round trip costs to unwind and re-establish rather than any
+adverse move at all.
+*/
+func (s StrategyState) reversalFraction() float64 {
+	return -2.0 * s.RoundTripCost
+}
+
 func (s StrategyState) IsTerminal() bool {
-	return s.Step >= s.MaxSteps || (s.IsHolding && s.Treatment < -0.02)
+	return s.Step >= s.MaxSteps ||
+		(s.IsHolding && s.Treatment < s.reversalFraction())
 }
 
 func (s StrategyState) GetReward() float64 {
@@ -45,13 +77,28 @@ func (s StrategyState) ApplyAction(action float64) mcts.State {
 
 	switch action {
 	case ActionEnter:
+		/*
+			Entering pays the whole round trip up front, because a position
+			opened in this rollout has to be closed within it to be worth
+			anything. The cost is the candidate's own modelled friction rather
+			than a constant, so a wide or expensive market prices itself out
+			instead of being judged against a figure taken from some other one.
+		*/
 		next.IsHolding = true
-		next.Reward += s.Treatment - 0.0026 // Net of fees
+		next.Reward += s.Treatment - s.RoundTripCost
 	case ActionHold:
-		next.Reward += s.Treatment * 0.9 // Expected decay
+		/*
+			A held forecast decays toward the horizon it was drawn for, so a
+			further step of holding is worth less than the forecast claims.
+		*/
+		next.Reward += s.Treatment * 0.9
 	case ActionExit:
+		/*
+			The round trip was already charged on entry, so exiting adds
+			nothing further. Charging it again would make every completed
+			trajectory pay twice and bias the search toward never opening.
+		*/
 		next.IsHolding = false
-		next.Reward -= 0.0026
 	case ActionNothing:
 		next.Reward += 0.0
 	}

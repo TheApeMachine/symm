@@ -119,17 +119,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 
 	tickers, _, _ := thesis.Market()
 
-	if thesis.CrossSection == nil {
-		return nil
-	}
-
-	crossSection := thesis.CrossSection
-
-	if len(tickers) > 0 {
-		crossSection.Measure(tickers)
-	}
-
-	return signal.measureFrame(tickers, crossSection)
+	return signal.measureFrame(tickers)
 }
 
 /*

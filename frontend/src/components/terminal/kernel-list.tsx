@@ -15,6 +15,17 @@ const interactive = (compact: boolean, source: string) => {
   };
 };
 
+const sourceHeadlineMetric = (source: string) => {
+  const metric =
+    {
+      hawkes: "conditional_intensity",
+      liquidity: "scarcity_score",
+      toxicity: "touch_quantity",
+    }[source.toLowerCase()] ?? "strength";
+
+  return `metrics.${metric}.raw`;
+};
+
 /*
 KernelList binds each stable row directly to the raw measurements stream.
 Rows select their matching frame via data-scope/data-filter and then paint
@@ -84,13 +95,13 @@ export const KernelList = ({
                 >
                   <title>Signal trace</title>
                   <polygon
-                    data-append="metrics.strength.raw"
+                    data-append={sourceHeadlineMetric(source)}
                     data-target="points"
                     fill="color-mix(in srgb, var(--acc) 16%, transparent)"
                     stroke="none"
                   />
                   <polyline
-                    data-append="metrics.strength.raw"
+                    data-append={sourceHeadlineMetric(source)}
                     data-target="points"
                     fill="none"
                     stroke="var(--acc)"
@@ -102,7 +113,7 @@ export const KernelList = ({
                 <div className="mt-1.5 flex items-center gap-2">
                   <div className="h-1 flex-1 overflow-hidden rounded-xs bg-(--line)">
                     <div
-                      data-set="metrics.strength.raw"
+                      data-set={sourceHeadlineMetric(source)}
                       data-target="style.--strength"
                       className="h-full bg-(--acc)"
                       style={{ width: "calc(var(--strength, 0) * 100%)" }}
@@ -110,13 +121,13 @@ export const KernelList = ({
                   </div>
 
                   <span
-                    data-paint="metrics.strength.raw"
+                    data-paint={sourceHeadlineMetric(source)}
                     data-paint-format=".0%"
                     className="w-8 shrink-0 text-right font-mono text-[10px] text-(--f2)"
                   />
 
                   <span
-                    data-paint="metrics.strength.raw"
+                    data-paint={sourceHeadlineMetric(source)}
                     data-paint-format=".2f"
                     data-paint-suffix=" × thr"
                     className="w-16 shrink-0 truncate text-right font-mono text-[9.5px] text-(--acc)"
