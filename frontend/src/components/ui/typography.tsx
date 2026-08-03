@@ -3,33 +3,30 @@ import { type HTMLMotionProps, motion } from "motion/react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-export const typographyVariants = cva(
-	"text-base/4.5 font-medium text-foreground sm:text-sm/4",
-	{
-		variants: {
-			variant: {
-				foreground: "text-foreground",
-				/** Muted helpers under a page title */
-				lead: "text-sm font-normal text-muted-foreground [&]:leading-normal max-sm:[&]:text-sm",
-				/** Compact section label in side rails / panels */
-				sectionHeading: "text-sm font-medium text-foreground",
-				/** Monospace export / raw source preview */
-				codeExport:
-					"font-mono font-normal text-[10px] leading-relaxed whitespace-pre-wrap text-foreground sm:text-xs",
-				info: "text-info",
-				success: "text-success",
-				warning: "text-warning",
-				error: "text-error",
-				muted: "text-muted-foreground",
-				primary: "text-primary-foreground",
-				secondary: "text-secondary-foreground",
-			},
-		},
-		defaultVariants: {
-			variant: "foreground",
+export const typographyVariants = cva("font-mono text-[11.5px] text-(--f3)", {
+	variants: {
+		variant: {
+			foreground: "text-foreground",
+			/** Muted helpers under a page title */
+			lead: "font-mono text-[11.5px] text-muted-foreground [&]:leading-normal max-sm:[&]:text-sm",
+			/** Compact section label in side rails / panels */
+			sectionHeading: "text-sm font-medium text-foreground",
+			/** Monospace export / raw source preview */
+			codeExport:
+				"font-mono font-normal text-[10px] leading-relaxed whitespace-pre-wrap text-foreground sm:text-xs",
+			info: "text-info",
+			success: "text-success",
+			warning: "text-warning",
+			error: "text-error",
+			muted: "text-muted-foreground",
+			primary: "text-primary-foreground",
+			secondary: "text-secondary-foreground",
 		},
 	},
-);
+	defaultVariants: {
+		variant: "foreground",
+	},
+});
 
 export type TypographyVariant = NonNullable<
 	VariantProps<typeof typographyVariants>["variant"]
@@ -40,6 +37,15 @@ type TypographyTextProps = {
 	variant?: TypographyVariant;
 	truncate?: boolean;
 	className?: string;
+	semibold?: boolean;
+	uppercase?: boolean;
+	tracking?: string;
+	leading?: string;
+	normal?: boolean;
+	light?: boolean;
+	bold?: boolean;
+	italic?: boolean;
+	underline?: boolean;
 };
 
 export const Typography = ({ children }: { children: ReactNode }) => {
@@ -223,6 +229,15 @@ Typography.Span = ({
 	variant,
 	truncate,
 	className,
+	semibold,
+	uppercase,
+	tracking,
+	leading,
+	normal,
+	light,
+	bold,
+	italic,
+	underline,
 	...props
 }: HTMLMotionProps<"span"> & TypographyTextProps) => {
 	return (
@@ -231,6 +246,15 @@ Typography.Span = ({
 				typographyVariants({ variant }),
 				truncate && "truncate",
 				className,
+				semibold && "font-semibold",
+				uppercase && "uppercase",
+				tracking && `tracking-[${tracking}]`,
+				leading && `leading-[${leading}]`,
+				normal && "font-normal",
+				light && "font-light",
+				bold && "font-bold",
+				italic && "italic",
+				underline && "underline",
 			)}
 			{...props}
 		>

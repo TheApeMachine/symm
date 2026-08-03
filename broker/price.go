@@ -115,6 +115,28 @@ func (price *Price) Mark(
 }
 
 /*
+PnL returns the PnL for a holding, which means the profit or
+loss of the holding, including entry fee, and current exit fee.
+*/
+func (price *Price) PnL(holding *types.Holding) *decimal.Decimal {
+	if holding == nil || holding.Qty == nil || holding.Mark == nil {
+		return nil
+	}
+
+	exitFee := price.WithFriction(holding.Symbol, SELL, holding.Qty)
+
+	return holding.Qty.Mul(
+		holding.Mark,
+	).Sub(
+		holding.Qty.Mul(holding.EntryPrice),
+	).Sub(
+		holding.EntryFee,
+	).Sub(
+		exitFee,
+	)
+}
+
+/*
 WithFriction returns the price with the taker fee applied.
 Pass the direction of the trade to get the correct fee for buys and sells.
 */

@@ -10,7 +10,7 @@ import (
 )
 
 type TradesHistory struct {
-	Error  []interface{}       `json:"error"`
+	Error  []any       `json:"error"`
 	Result TradesHistoryResult `json:"result"`
 }
 

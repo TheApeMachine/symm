@@ -1,157 +1,223 @@
-package broker
+package broker_test
 
 import (
-	"encoding/json"
+	"bytes"
+	"errors"
+	"os"
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
-	book "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/phuslu/log"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/tests"
+	executionfixture "github.com/theapemachine/symm/tests/fixtures/execution"
+	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
 
-type deskConn struct {
-	orders int
+func entryDecision(symbol string) types.Decision {
+	return types.Decision{
+		ID:               uuid.NewString(),
+		Action:           types.ActionEnter,
+		Symbol:           symbol,
+		ProposedQuantity: decimal.NewFromFloat64(0.25),
+		ProposedNotional: decimal.NewFromInt64(25),
+	}
 }
-
-func (conn *deskConn) Status() types.Status { return types.READY }
-func (conn *deskConn) Subscribe(
-	_ string,
-	subscription *types.Subscription[any],
-) *types.Subscription[any] {
-	return subscription
-}
-func (conn *deskConn) Books() *sync.Map                      { return &sync.Map{} }
-func (conn *deskConn) Book(string) *book.Book                { return nil }
-func (conn *deskConn) SubInstrument(types.Subscription[any]) {}
-func (conn *deskConn) SubTicker([]string)                    {}
-func (conn *deskConn) SubBook([]string)                      {}
-func (conn *deskConn) SubTrades([]string)                    {}
-func (conn *deskConn) SubL3([]string)                        {}
-func (conn *deskConn) SubCandles([]string)                   {}
-func (conn *deskConn) Balance() (map[string]*decimal.Decimal, error) {
-	return map[string]*decimal.Decimal{"USD": decimal.NewFromInt64(100)}, nil
-}
-func (conn *deskConn) TradeBalance() (spot.TradesHistoryResult, error) {
-	return spot.TradesHistoryResult{}, nil
-}
-func (conn *deskConn) TradeVolume([]string) (*kraken.TradeVolumeResult, error) {
-	return &kraken.TradeVolumeResult{}, nil
-}
-func (conn *deskConn) AddOrder(*spot.AddOrderRequest) (spot.AddOrderResult, error) {
-	conn.orders++
-	return spot.AddOrderResult{OrderPlacementSingle: spot.OrderPlacementSingle{
-		ID: []string{"venue-order"},
-	}}, nil
-}
-func (conn *deskConn) Write(json.Marshaler, ...websocket.Callback[any]) error { return nil }
-func (conn *deskConn) Post(string, json.Marshaler) ([]byte, error)            { return nil, nil }
-func (conn *deskConn) Client() *spot.WebSocket                                { return nil }
-func (conn *deskConn) Close()                                                 {}
 
 func TestDeskExecute(t *testing.T) {
-	Convey("Given an executable entry decision", t, func() {
-		ctx := t.Context()
-		conn := &deskConn{}
-		api := websocket.NewAPI(ctx, conn, conn)
-		pair := kraken.InstrumentPair{Symbol: "BTC/USD"}
-		api.Normalizer().Update(&spot.AssetsManagerUpdate{
-			NewAssets: map[string]spot.AssetInfo{
-				"BTC": {AltName: "BTC", Decimals: 8, DisplayDecimals: 8},
-				"USD": {AltName: "USD", Decimals: 2, DisplayDecimals: 2},
-			},
-			NewPairs: map[string]spot.AssetPair{
-				pair.Symbol: {
-					WSName:        pair.Symbol,
-					Base:          "BTC",
-					Quote:         "USD",
-					PairDecimals:  2,
-					LotDecimals:   8,
-					LotMultiplier: 1,
-					TickSize:      decimal.NewFromFloat64(0.01),
-				},
-			},
-		})
-		instrument := &Instrument{cache: &sync.Map{}}
-		instrument.cache.Store(pair.Symbol, pair)
-		price := &Price{
-			api:        api,
-			tickers:    &sync.Map{},
-			fees:       &sync.Map{},
-			normalizer: api.Normalizer(),
-		}
-		price.tickers.Store(pair.Symbol, &kraken.TickerData{
-			Symbol: pair.Symbol,
-			Bid:    decimal.NewFromInt64(100),
-			Ask:    decimal.NewFromInt64(101),
-		})
-		price.fees.Store(pair.Symbol, kraken.TradeVolumeFee{
-			Fee: decimal.NewFromFloat64(0.0026),
-		})
-		balance := &Balance{wallet: &sync.Map{}, quote: "USD"}
-		balance.wallet.Store("USD", decimal.NewFromInt64(100))
-		desk := &Desk{
-			ctx:        ctx,
-			api:        api,
-			ui:         make(chan []byte, 8),
-			instrument: instrument,
-			price:      price,
-			balance:    balance,
-			positions:  &sync.Map{},
-		}
-		decision := types.Decision{
-			ID:               uuid.NewString(),
-			Action:           types.ActionEnter,
-			Symbol:           pair.Symbol,
-			ProposedQuantity: decimal.NewFromFloat64(0.25),
-			ProposedNotional: decimal.NewFromInt64(25),
+	Convey("Given a production-wired simulated market", t, func() {
+		symbols := []*testtypes.Symbol{
+			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
+			testtypes.NewSymbol("SIM2/USD", 100.0, 1337),
+			testtypes.NewSymbol("SIM3/USD", 100.0, 90210),
 		}
 
-		Convey("Execute should submit and retain the position before a fill", func() {
-			So(desk.Execute([]types.Decision{decision}), ShouldBeNil)
-			So(conn.orders, ShouldEqual, 1)
-			So(desk.OpenPositions(), ShouldEqual, 1)
+		Convey("Execute should submit and retain a position before a fill", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+			market.Tick()
+			decision := entryDecision(symbols[0].Pair)
 
-			positions := slices.Collect(desk.Positions())
+			So(market.Desk.Execute([]types.Decision{decision}), ShouldBeNil)
+			So(market.Desk.OpenPositions(), ShouldEqual, 1)
+
+			positions := slices.Collect(market.Desk.Positions())
 			So(positions, ShouldHaveLength, 1)
 			So(positions[0].ID, ShouldEqual, decision.ID)
 			So(positions[0].EntryOrder.ClOrdId, ShouldEqual, decision.ID)
-			So(positions[0].EntryOrderID, ShouldEqual, "venue-order")
+			So(positions[0].EntryOrderID, ShouldNotBeBlank)
 			So(positions[0].Status, ShouldEqual, types.PENDING)
 
-			Convey("A later exit should carry its own correlation identifier", func() {
-				stored, found := desk.positions.Load(decision.ID)
-				So(found, ShouldBeTrue)
-				position := stored.(*Position)
-				position.onExecution(&kraken.Execution{Data: []kraken.ExecutionData{{
-					ClientOrderID: decision.ID,
-					Symbol:        pair.Symbol,
-					Side:          "buy",
-					OrderStatus:   "filled",
-					CumQty:        decision.ProposedQuantity.Copy(),
-					AvgPrice:      decimal.NewFromInt64(101),
-				}}})
-				exitID := uuid.NewString()
+			fill := executionfixture.BuyFill()
+			fill.ClientOrderID = decision.ID
+			fill.Symbol = decision.Symbol
+			fill.CumQty = decision.ProposedQuantity.String()
+			market.Private.Publish("executions", executionfixture.Frame(fill))
+			market.Tick()
 
-				So(desk.Execute([]types.Decision{{
-					ID:     exitID,
-					Action: types.ActionExit,
-					Symbol: pair.Symbol,
-				}}), ShouldBeNil)
-				So(conn.orders, ShouldEqual, 2)
-				So(position.ExitOrder.ClOrdId, ShouldEqual, exitID)
-				So(position.matches(kraken.ExecutionData{
-					ClientOrderID: exitID,
-					Symbol:        pair.Symbol,
-					Side:          "sell",
-				}), ShouldBeTrue)
-			})
+			exitID := uuid.NewString()
+			So(market.Desk.Execute([]types.Decision{{
+				ID:     exitID,
+				Action: types.ActionExit,
+				Symbol: decision.Symbol,
+			}}), ShouldBeNil)
+
+			positions = slices.Collect(market.Desk.Positions())
+			So(positions, ShouldHaveLength, 1)
+			So(positions[0].ExitOrder.ClOrdId, ShouldEqual, exitID)
+		}))
+
+		Convey("A repeated enter should reject the new position", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+			market.Tick()
+			decision := entryDecision(symbols[0].Pair)
+			So(market.Desk.Execute([]types.Decision{decision}), ShouldBeNil)
+			openPositions := market.Desk.OpenPositions()
+
+			duplicate := entryDecision(decision.Symbol)
+			err := market.Desk.Execute([]types.Decision{duplicate})
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "symbol already has an active position")
+			So(market.Desk.OpenPositions(), ShouldEqual, openPositions)
+			So(slices.Collect(market.Desk.Positions()), ShouldHaveLength, openPositions)
+		}))
+
+		Convey("An exit without an owned position should be rejected", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+			openPositions := market.Desk.OpenPositions()
+			err := market.Desk.Execute([]types.Decision{{
+				ID:     uuid.NewString(),
+				Action: types.ActionExit,
+				Symbol: symbols[0].Pair,
+			}})
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "active position not found for exit")
+			So(market.Desk.OpenPositions(), ShouldEqual, openPositions)
+			So(slices.Collect(market.Desk.Positions()), ShouldBeEmpty)
+		}))
+
+		Convey("An AddOrder failure should release the attempted position", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+			market.Tick()
+			market.Private.FailAddOrder(errors.New("venue unavailable"))
+			openPositions := market.Desk.OpenPositions()
+			err := market.Desk.Execute([]types.Decision{entryDecision(symbols[0].Pair)})
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "failed to place market order")
+			So(market.Desk.OpenPositions(), ShouldEqual, openPositions)
+			So(slices.Collect(market.Desk.Positions()), ShouldBeEmpty)
+		}))
+
+		Convey("Concurrent entries should not exceed normal capacity", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+			market.Tick()
+			executionErrors := make(chan error, len(symbols))
+			wait := sync.WaitGroup{}
+
+			for _, symbol := range symbols {
+				wait.Add(1)
+
+				go func() {
+					defer wait.Done()
+					executionErrors <- market.Desk.Execute([]types.Decision{entryDecision(symbol.Pair)})
+				}()
+			}
+
+			wait.Wait()
+			close(executionErrors)
+			rejections := 0
+
+			for err := range executionErrors {
+				if err != nil {
+					rejections++
+				}
+			}
+
+			So(rejections, ShouldEqual, 1)
+			So(market.Desk.OpenPositions(), ShouldEqual, market.Desk.MaxPositions())
+			So(slices.Collect(market.Desk.Positions()), ShouldHaveLength, market.Desk.MaxPositions())
+		}))
+	})
+}
+
+func TestDeskRecover(t *testing.T) {
+	Convey("Given wallet inventory and its acquisition history at boot", t, func() {
+		tradingModel := viper.GetString("trading.model")
+		apiKey, hadAPIKey := os.LookupEnv("KRAKEN_API_KEY")
+		apiSecret, hadAPISecret := os.LookupEnv("KRAKEN_API_SECRET")
+
+		viper.Set("trading.model", "real")
+		_ = os.Setenv("KRAKEN_API_KEY", "fixture-key")
+		_ = os.Setenv("KRAKEN_API_SECRET", "Zml4dHVyZS1zZWNyZXQ=")
+
+		defer func() {
+			viper.Set("trading.model", tradingModel)
+
+			if hadAPIKey {
+				_ = os.Setenv("KRAKEN_API_KEY", apiKey)
+			} else {
+				_ = os.Unsetenv("KRAKEN_API_KEY")
+			}
+
+			if hadAPISecret {
+				_ = os.Setenv("KRAKEN_API_SECRET", apiSecret)
+			} else {
+				_ = os.Unsetenv("KRAKEN_API_SECRET")
+			}
+		}()
+
+		symbols := []*testtypes.Symbol{
+			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
+			testtypes.NewSymbol("SIM2/USD", 100.0, 1337),
+		}
+		entryAt := time.Now().UTC().Add(-time.Hour)
+		market := tests.NewMarketWithAccount(
+			t.Context(),
+			symbols,
+			map[string]string{"USD": "150", "SIM2": "1.5"},
+			map[string]spot.Trade{
+				"entry": {
+					Pair:   "sim2usd",
+					Time:   decimal.NewFromFloat64(float64(entryAt.UnixNano()) / 1e9),
+					Type:   "buy",
+					Cost:   decimal.NewFromInt64(150),
+					Fee:    decimal.NewFromFloat64(0.39),
+					Volume: decimal.NewFromFloat64(1.5),
+				},
+			},
+		)
+		logs := &bytes.Buffer{}
+		originalWriter := log.DefaultLogger.Writer
+		log.DefaultLogger.Writer = log.IOWriter{Writer: logs}
+
+		defer func() {
+			market.Close()
+			log.DefaultLogger.Writer = originalWriter
+		}()
+
+		Convey("The desk should wait for a live mark before adopting the lot", func() {
+			So(market.Desk.OpenPositions(), ShouldEqual, 0)
+
+			market.Tick()
+			positions := slices.Collect(market.Desk.Positions())
+
+			So(positions, ShouldHaveLength, 1)
+			So(positions[0].ID, ShouldEqual, "recovered:SIM2/USD")
+			So(positions[0].Status, ShouldEqual, types.OPEN)
+			So(positions[0].Holding.Symbol, ShouldEqual, "SIM2/USD")
+			So(positions[0].Holding.Qty.String(), ShouldEqual, "1.5")
+			So(positions[0].Holding.SellableQty.String(), ShouldEqual, "1.5")
+			So(positions[0].Holding.EntryPrice.Float64(), ShouldEqual, 100.0)
+			So(positions[0].Holding.EntryFee.Float64(), ShouldAlmostEqual, 0.39, 1e-8)
+			So(positions[0].Holding.EntryAt, ShouldNotBeNil)
+			So(positions[0].Holding.Mark, ShouldNotBeNil)
+			So(positions[0].Holding.Stoploss, ShouldNotBeNil)
+			So(market.Desk.Price().Tick("sim2usd"), ShouldNotBeNil)
+			So(bytes.Contains(logs.Bytes(), []byte("ticker not found")), ShouldBeFalse)
 		})
 	})
 }

@@ -2,7 +2,6 @@ package strategy_test
 
 import (
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/tests"
@@ -28,6 +27,24 @@ func enters(decisions []types.Decision) []types.Decision {
 	}
 
 	return found
+}
+
+func TestPlannerUpdate(t *testing.T) {
+	Convey("Given a thesis that is not yet ready for strategy evaluation", t, func() {
+		symbols := []*testtypes.Symbol{
+			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
+		}
+
+		Convey("Every planner update should still advance the market tick", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+			before := market.Thesis.Tick
+
+			market.Planner.Update(market.Thesis)
+			So(market.Thesis.Tick, ShouldEqual, before+1)
+
+			market.Planner.Update(market.Thesis)
+			So(market.Thesis.Tick, ShouldEqual, before+2)
+		}))
+	})
 }
 
 /*
@@ -148,6 +165,8 @@ func TestPlannerSlotDiscipline(t *testing.T) {
 			entries := enters(market.Decisions())
 
 			Convey("The planner should report the slot budget it decided against", func() {
+				So(len(entries), ShouldBeGreaterThan, 0)
+
 				for _, decision := range entries {
 					/*
 						Config allots two normal and two reserved slots, so a
@@ -167,10 +186,12 @@ func TestPlannerSlotDiscipline(t *testing.T) {
 					budget is enforced per round of arbitration, so entries are
 					grouped by the tick that produced them.
 				*/
-				rounds := map[time.Time][]types.Decision{}
+				So(len(entries), ShouldBeGreaterThan, 0)
+				rounds := map[int64][]types.Decision{}
 
 				for _, decision := range entries {
-					rounds[decision.At] = append(rounds[decision.At], decision)
+					So(decision.ArbitrationRound, ShouldBeGreaterThanOrEqualTo, int64(0))
+					rounds[decision.ArbitrationRound] = append(rounds[decision.ArbitrationRound], decision)
 				}
 
 				So(len(rounds), ShouldBeGreaterThan, 0)
@@ -208,6 +229,8 @@ func TestPlannerSlotDiscipline(t *testing.T) {
 					}
 				}
 
+				So(len(contested), ShouldBeGreaterThan, 0)
+
 				/*
 					Pump and dump is the reserve's main use case: the desk is
 					already working, and a pump is worth interrupting for. A
@@ -221,6 +244,8 @@ func TestPlannerSlotDiscipline(t *testing.T) {
 			})
 
 			Convey("The planner should never overrun the total slot budget", func() {
+				So(len(entries), ShouldBeGreaterThan, 0)
+
 				/*
 					Normal plus reserved is four. Positions are committed to the
 					desk before order submission, so later rounds must observe
@@ -244,7 +269,15 @@ func TestPlannerPumpReversal(t *testing.T) {
 			testtypes.NewSymbol("SIM2/USD", 100.0, 1337),
 		}
 
-		Convey("When the pump peaks and dumps", tests.WithMarket(t, symbols, func(market *tests.Market) {
+		/*
+			Exits close positions, so the orders behind them have to fill.
+			WithFixtureOrders routes them through the fixture transport rather
+			than the external paper venue, which does not know the simulated
+			symbols this market trades.
+		*/
+		Convey("When the pump peaks and dumps", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+			market.WithAutoFill()
+
 			for range 64 {
 				market.Tick()
 			}
@@ -256,6 +289,7 @@ func TestPlannerPumpReversal(t *testing.T) {
 			}
 
 			pumpEntries := len(enters(market.Decisions()))
+			So(pumpEntries, ShouldBeGreaterThan, 0)
 
 			market.Transition(testtypes.FastDump)
 
@@ -279,10 +313,14 @@ func TestPlannerPumpReversal(t *testing.T) {
 			})
 
 			Convey("Exits should identify the position being closed", func() {
+				exits := 0
+
 				for _, decision := range market.Decisions() {
 					if decision.Action != types.ActionExit {
 						continue
 					}
+
+					exits++
 
 					So(decision.ValidID(), ShouldBeTrue)
 					So(decision.Symbol, ShouldNotBeBlank)
@@ -292,6 +330,8 @@ func TestPlannerPumpReversal(t *testing.T) {
 					So(decision.ReferencePrice.Sign(), ShouldEqual, 1)
 					So(decision.Cause, ShouldNotBeBlank)
 				}
+
+				So(exits, ShouldBeGreaterThan, 0)
 			})
 		}))
 	})

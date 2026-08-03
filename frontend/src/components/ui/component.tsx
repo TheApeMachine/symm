@@ -127,6 +127,21 @@ const scanTargets = (root: HTMLElement) => {
 };
 
 const formatValue = (value: unknown, format: string | undefined): string => {
+	/*
+		Money arrives as a string, because a decimal that survived the wire
+		without losing precision cannot be a float. A formatted field asks for
+		a number, so a value that reads as one is treated as one — otherwise
+		every price and balance would print at full stored precision.
+	*/
+	if (
+		format &&
+		typeof value === "string" &&
+		value.trim() !== "" &&
+		Number.isFinite(Number(value))
+	) {
+		value = Number(value);
+	}
+
 	if (format) {
 		switch (typeof value) {
 			case "number": {

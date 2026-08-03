@@ -70,14 +70,12 @@ func NewPosition(
 			OrderType: "market",
 			Volume:    qty.String(),
 			Pair:      pair.Symbol,
-			Validate:  true,
 		},
 		ExitOrder: &spot.AddOrderRequest{
 			Type:      "sell",
 			OrderType: "market",
 			Volume:    qty.String(),
 			Pair:      pair.Symbol,
-			Validate:  true,
 		},
 		Holding: types.NewHolding(
 			ctx,
@@ -146,28 +144,19 @@ onTicker refreshes the mark cache for this position's holding and
 lets the bound stoploss regulator evaluate the live bid path for
 exit decisions.
 */
-func (position *Position) onTicker(ticker *kraken.Ticker) {
-	if ticker == nil {
-		return
-	}
+func (position *Position) onTicker(ticker kraken.TickerData) {
+	position.mu.Lock()
 
-	for _, row := range ticker.Data {
-		if row.Symbol != position.pair.Symbol {
-			continue
+	if position.Holding != nil && position.Holding.Stoploss != nil {
+		if err := position.Holding.Update(ticker); err != nil {
+			errnie.Error(err)
 		}
 
-		position.mu.Lock()
-
-		if position.Holding != nil && position.Holding.Stoploss != nil {
-			if err := position.Holding.Stoploss.Update(ticker); err != nil {
-				errnie.Error(err)
-			}
-		}
-
-		position.mu.Unlock()
-
-		break
+		position.Holding.PnL = position.price.PnL(position.Holding)
 	}
+
+	position.mu.Unlock()
+	position.Publish()
 }
 
 func (position *Position) onExecution(execution *kraken.Execution) {
@@ -266,6 +255,15 @@ func (position *Position) applyEntry(execution kraken.ExecutionData) {
 
 func (position *Position) applyExit(execution kraken.ExecutionData) {
 	if execution.OrderStatus != "filled" {
+		// An exit that will never fill still ends the lot.
+		status, err := types.StatusFromMarket(execution.OrderStatus)
+
+		if err == nil && isTerminal(status) {
+			position.Status = status
+			position.Holding.Status = status
+			return
+		}
+
 		position.Status = types.PENDING
 		position.Holding.Status = types.PENDING
 		return

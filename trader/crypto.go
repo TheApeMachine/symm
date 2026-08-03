@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
@@ -116,25 +115,17 @@ func (crypto *Crypto) run() {
 				typedDecisions := decisions.([]types.Decision)
 
 				if crypto.desk != nil {
-					if err := crypto.desk.Execute(typedDecisions); err != nil {
-						errnie.Error(errnie.Err(
-							errnie.Internal,
-							"crypto: failed to execute decision round",
-							err,
-						))
-					}
+					go func() {
+						if err := crypto.desk.Execute(typedDecisions); err != nil {
+							errnie.Error(errnie.Err(
+								errnie.Internal,
+								"crypto: failed to execute decision round",
+								err,
+							))
+						}
+					}()
 				}
 
-				crypto.thesis.Tick = crypto.thesis.Tick + 1
-
-				out := datura.NewMap()
-				out["decisions"] = typedDecisions
-				utils.Publish(crypto.ui, out)
-
-				tickOut := datura.NewMap()
-				tickOut["tick"] = datura.NewMap()
-				tickOut["tick"].(datura.Map[any])["count"] = crypto.thesis.Tick
-				utils.Publish(crypto.ui, tickOut)
 			}
 		}
 	}()

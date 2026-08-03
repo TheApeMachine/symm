@@ -206,8 +206,8 @@ func (solver *Solver) publish(thesis *types.Thesis, graph *Graph) {
 		return
 	}
 
-	rows := make([]datura.Map[any], 0, len(graph.Nodes))
 	at := thesis.At.Format(time.RFC3339)
+	nodes := make(map[string]any, len(graph.Nodes))
 
 	for _, node := range graph.Nodes {
 		if node == nil {
@@ -232,15 +232,42 @@ func (solver *Solver) publish(thesis *types.Thesis, graph *Graph) {
 			row["metadata"] = node.Metadata
 		}
 
-		rows = append(rows, row)
+		nodes[node.ID] = row
 	}
 
-	if len(rows) == 0 {
+	if len(nodes) == 0 {
 		return
 	}
 
+	/*
+		Edges travel with the nodes they connect. A graph is the relationships
+		it encodes, so publishing the nodes alone would leave the display with
+		a list of readings and no way to show how any of them relate.
+	*/
+	edges := make([]datura.Map[any], 0, len(graph.Edges))
+
+	for _, edge := range graph.Edges {
+		if edge == nil {
+			continue
+		}
+
+		edges = append(edges, datura.NewMap(
+			"from", edge.From,
+			"to", edge.To,
+			"relation", string(edge.Relation),
+			"weight", edge.Weight,
+			"confidence", edge.Confidence,
+			"at", at,
+			"reason", edge.Reason,
+		))
+	}
+
 	select {
-	case solver.ui <- datura.NewMap("graph", rows).MarshalAndFree():
+	case solver.ui <- datura.NewMap("graph", datura.NewMap(
+		"at", at,
+		"nodes", nodes,
+		"edges", edges,
+	)).MarshalAndFree():
 	default:
 	}
 }

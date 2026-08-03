@@ -32,6 +32,7 @@ type Solver struct {
 	domain    *pfluid.Domain
 	recorder  *audit.Recorder
 	tokenizer *Tokenizer
+	residency int
 	ui        chan []byte
 	binui     chan []byte
 }
@@ -79,12 +80,21 @@ func NewSolver(
 		return nil
 	}))
 
+	/*
+		Residency is a share of the lattice the field is solved on. Crowding
+		every cell leaves the transport nothing to relax into and it goes
+		non-finite, so the population is held to a quarter of the cells: dense
+		enough to carry the whole universe, sparse enough to integrate.
+	*/
+	cells := config.Grid.X * config.Grid.Y * config.Grid.Z
+
 	return &Solver{
 		api:       api,
 		config:    config,
 		domain:    domain,
 		recorder:  recorder,
 		tokenizer: NewTokenizer(config, symbols),
+		residency: cells / 4,
 		ui:        ui,
 		binui:     binui,
 	}
@@ -174,10 +184,16 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return false
 		}
 
-		if err = solver.Step(name, thesis.At); err != nil {
-			updateErr = err
+		solver.evict()
 
-			return false
+		/*
+			A step that fails is one symbol's reading lost, not the tick. The
+			domain is shared by the whole universe, so aborting here would let
+			a single numerically awkward book silence every other symbol and
+			stop the desk from deciding at all.
+		*/
+		if err = solver.Step(name, thesis.At); err != nil {
+			return true
 		}
 
 		stepped = true
@@ -199,6 +215,48 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	}
 
 	return nil
+}
+
+/*
+evict bounds how much of the market stays resident in the shared field.
+
+Every symbol appends into one domain and nothing ever leaves, so residency
+grows without limit until the pilot-wave transport goes non-finite and the
+manifold stops reading at all. Keeping the most recent particles holds the
+field at a size it can integrate while preserving the newest state, which is
+the part the strategy reads.
+*/
+func (solver *Solver) evict() {
+	if solver.domain == nil {
+		return
+	}
+
+	resident := solver.domain.ParticleCount()
+
+	if resident <= solver.residency {
+		return
+	}
+
+	/*
+		Retain takes the indices to keep, and particles are appended in
+		arrival order, so the tail is the newest of them.
+	*/
+	keep := make([]uint32, 0, solver.residency)
+
+	for index := resident - solver.residency; index < resident; index++ {
+		keep = append(keep, uint32(index))
+	}
+
+	if err := solver.domain.Retain(keep); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf(
+				"failed to bound manifold residency at %d particles",
+				solver.residency,
+			),
+			err,
+		))
+	}
 }
 
 func (solver *Solver) Step(symbol string, at time.Time) error {

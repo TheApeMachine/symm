@@ -181,6 +181,13 @@ func (analyzer *Analyzer) process(in any) {
 		return
 	}
 
+	/*
+		A stage that fails is recorded and the pass continues. Readiness is
+		taken from the stamps each stage leaves, so one that did not complete
+		simply never stamps and the planner declines the tick on its own;
+		returning here would instead discard the work of every stage that did
+		run, including the ones that had already finished.
+	*/
 	for _, solver := range analyzer.solvers {
 		if err := solver.Update(thesis); err != nil {
 			errnie.Error(errnie.Err(
@@ -188,8 +195,6 @@ func (analyzer *Analyzer) process(in any) {
 				"failed logic solver",
 				err,
 			))
-
-			return
 		}
 	}
 

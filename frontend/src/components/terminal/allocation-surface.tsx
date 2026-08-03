@@ -10,7 +10,7 @@ immediately when the user navigates to it between sparse model frames.
 */
 export const AllocationSurface = () => {
 	return (
-		<Component registerKey="">
+		<Component registerKey="equity">
 			{({ ref, className }) => (
 		<div ref={ref} className={cn("flex h-full flex-col", className)}>
 			<div className="flex shrink-0 items-center gap-5.5 border-(--line) border-b bg-(--surface) px-4.5 py-3">
@@ -29,25 +29,28 @@ export const AllocationSurface = () => {
 							Deployable
 						</span>
 						<span
-							data-alloc="deployable"
+							data-paint="cash"
+							data-paint-format=".2f"
 							className="font-mono text-[13px] font-semibold text-(--f1)"
 						/>
 					</div>
 					<div className="flex flex-col items-end gap-px">
 						<span className="text-[9px] text-(--f4) uppercase tracking-widest">
-							Deployed
+							Unrealized
 						</span>
 						<span
-							data-alloc="deployed"
+							data-paint="unrealized"
+							data-paint-format=".2f"
 							className="font-mono text-[13px] font-semibold text-(--acc)"
 						/>
 					</div>
 					<div className="flex flex-col items-end gap-px">
 						<span className="text-[9px] text-(--f4) uppercase tracking-widest">
-							Positions
+							Equity
 						</span>
 						<span
-							data-alloc="positions"
+							data-paint="equity"
+							data-paint-format=".2f"
 							className="font-mono text-[13px] font-semibold text-(--f1)"
 						/>
 					</div>

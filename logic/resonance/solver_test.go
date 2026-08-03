@@ -38,7 +38,48 @@ func TestExtractFeatures(t *testing.T) {
 
 		Convey("Then only the finite normalized reading enters predictive coding", func() {
 			So(features, ShouldResemble, map[string]float64{
-				"liquidity:BTC/USD::relative_depth": normalized,
+				"liquidity:BTC/USD:relative_depth": normalized,
+			})
+		})
+	})
+
+	Convey("Given a relative reading whose peer rotates", t, func() {
+		normalized := 0.5
+		thesis := types.NewThesis()
+
+		reading := func(peer string) *types.Measurement {
+			return &types.Measurement{
+				Source: types.SourceLeadLag,
+				Symbol: "BTC/USD",
+				Peer:   peer,
+				Metrics: map[string]types.MetricSample{
+					"direction": {Raw: 1, Normalized: &normalized},
+				},
+			}
+		}
+
+		thesis.Measurements.Store(types.SourceLeadLag, []*types.Measurement{
+			reading("ETH/USD"),
+		})
+
+		before := (&Solver{}).extractFeatures(thesis)
+
+		thesis.Measurements.Store(types.SourceLeadLag, []*types.Measurement{
+			reading("SOL/USD"),
+		})
+
+		after := (&Solver{}).extractFeatures(thesis)
+
+		Convey("Then the feature identity should survive the rotation", func() {
+			/*
+				The peer is the counterpart a reading was taken against, not
+				part of what is being measured. If it entered the identity,
+				every rotation of the cross-section anchor would add an input
+				dimension and reset the network that learns from them.
+			*/
+			So(after, ShouldResemble, before)
+			So(after, ShouldResemble, map[string]float64{
+				"leadlag:BTC/USD:direction": normalized,
 			})
 		})
 	})

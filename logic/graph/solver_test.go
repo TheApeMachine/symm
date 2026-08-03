@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/types"
 )
@@ -133,6 +134,76 @@ func TestExtractMeasurementNodes(t *testing.T) {
 			So(len(graph.Nodes), ShouldEqual, 1)
 			So(node.Value, ShouldEqual, 3)
 			So(node.At, ShouldResemble, time.Unix(3, 0).UTC())
+		})
+	})
+}
+
+func TestPublish(t *testing.T) {
+	Convey("Given a graph with related nodes", t, func() {
+		at := time.Unix(1, 0).UTC()
+		ui := make(chan []byte, 1)
+		solver := NewSolver(ui, nil)
+
+		graph := NewGraph(at)
+		graph.AddNode(&Node{
+			ID:         "res:BTC/USD:surprise",
+			Symbol:     "BTC/USD",
+			Kind:       KindResonance,
+			Value:      0.4,
+			Confidence: 1,
+			At:         at,
+		})
+		graph.AddNode(&Node{
+			ID:         "causal:BTC/USD:uplift",
+			Symbol:     "BTC/USD",
+			Kind:       KindCausal,
+			Value:      -0.2,
+			Confidence: 1,
+			At:         at,
+		})
+		graph.AddEdge(&Edge{
+			From:       "res:BTC/USD:surprise",
+			To:         "causal:BTC/USD:uplift",
+			Relation:   RelationContradicts,
+			Weight:     0.3,
+			Confidence: 1,
+			At:         at,
+		})
+
+		thesis := types.NewThesis()
+		solver.publish(thesis, graph)
+
+		Convey("It should publish the edges alongside the nodes", func() {
+			/*
+				A graph is the relationships it encodes. Publishing the nodes
+				without the edges would leave the display a list of readings
+				with no way to show how any of them relate.
+			*/
+			var frame map[string]any
+
+			select {
+			case raw := <-ui:
+				So(sonic.Unmarshal(raw, &frame), ShouldBeNil)
+			default:
+				t.Fatal("no graph frame published")
+			}
+
+			published, ok := frame["graph"].(map[string]any)
+			So(ok, ShouldBeTrue)
+
+			nodes, ok := published["nodes"].(map[string]any)
+			So(ok, ShouldBeTrue)
+			So(len(nodes), ShouldEqual, 2)
+
+			edges, ok := published["edges"].([]any)
+			So(ok, ShouldBeTrue)
+			So(len(edges), ShouldEqual, 1)
+
+			edge, ok := edges[0].(map[string]any)
+			So(ok, ShouldBeTrue)
+			So(edge["from"], ShouldEqual, "res:BTC/USD:surprise")
+			So(edge["to"], ShouldEqual, "causal:BTC/USD:uplift")
+			So(edge["relation"], ShouldEqual, string(RelationContradicts))
 		})
 	})
 }

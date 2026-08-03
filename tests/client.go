@@ -158,6 +158,25 @@ func (conn *Conn) Configure(symbols []*types.Symbol) {
 	conn.transport.configure(symbols)
 }
 
+/*
+ConfigureAccount injects the wallet and fill history returned during boot.
+*/
+func (conn *Conn) ConfigureAccount(
+	balances map[string]string,
+	trades map[string]spot.Trade,
+) {
+	conn.transport.configureAccount(balances, trades)
+}
+
+/*
+FailAddOrder makes the fixture REST transport return err for order submissions.
+*/
+func (conn *Conn) FailAddOrder(err error) {
+	conn.transport.mu.Lock()
+	conn.transport.addOrderErr = err
+	conn.transport.mu.Unlock()
+}
+
 func (conn *Conn) Client() *spot.WebSocket {
 	return conn.ws
 }

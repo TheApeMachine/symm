@@ -17,20 +17,20 @@ import (
 )
 
 type Planner struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	status        types.Status
-	ui            chan []byte
-	subscribers   *sync.Map
-	api           *websocket.API
-	desk          *broker.Desk
-	price         *broker.Price
-	balance       *broker.Balance
-	recorder      *audit.Recorder
-	evaluator     Evaluator
-	arbiter       *Arbiter
-	allocator     *Allocator
-	Thesis        *types.Thesis
+	ctx         context.Context
+	cancel      context.CancelFunc
+	status      types.Status
+	ui          chan []byte
+	subscribers *sync.Map
+	api         *websocket.API
+	desk        *broker.Desk
+	price       *broker.Price
+	balance     *broker.Balance
+	recorder    *audit.Recorder
+	evaluator   Evaluator
+	arbiter     *Arbiter
+	allocator   *Allocator
+	Thesis      *types.Thesis
 }
 
 func NewPlanner(
@@ -55,19 +55,19 @@ func NewPlanner(
 	arbiter := NewArbiter(desk, price)
 
 	planner := &Planner{
-		ctx:           ctx,
-		cancel:        cancel,
-		status:        types.READY,
-		ui:            uiHub,
-		subscribers:   &sync.Map{},
-		api:           api,
-		desk:          desk,
-		price:         price,
-		balance:       balance,
-		recorder:      recorder,
-		evaluator:     evaluator,
-		arbiter:       arbiter,
-		allocator:     NewAllocator(ctx, balance, instrument, price),
+		ctx:         ctx,
+		cancel:      cancel,
+		status:      types.READY,
+		ui:          uiHub,
+		subscribers: &sync.Map{},
+		api:         api,
+		desk:        desk,
+		price:       price,
+		balance:     balance,
+		recorder:    recorder,
+		evaluator:   evaluator,
+		arbiter:     arbiter,
+		allocator:   NewAllocator(ctx, balance, instrument, price),
 	}
 
 	if analyzer != nil {
@@ -124,6 +124,8 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 		return nil
 	}
 
+	thesis.Tick++
+
 	errnie.Error(audit.Phase(
 		planner.recorder, thesis.Tick, "decide_begin", nil,
 	))
@@ -154,6 +156,7 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 	*/
 	for index := range thesis.Decisions {
 		thesis.Decisions[index].EnsureID()
+		thesis.Decisions[index].ArbitrationRound = thesis.Tick
 	}
 
 	if len(thesis.Decisions) > 0 {
@@ -247,6 +250,10 @@ func (planner *Planner) complete(
 		"decisions", len(thesis.Decisions),
 	)
 	utils.Publish(planner.ui, out)
+
+	tickOut := datura.NewMap()
+	tickOut["tick"] = datura.NewMap("count", thesis.Tick)
+	utils.Publish(planner.ui, tickOut)
 }
 
 func (planner *Planner) publish(thesis *types.Thesis) {

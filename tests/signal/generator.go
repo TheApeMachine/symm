@@ -40,15 +40,15 @@ type Generator struct {
 	*/
 	burst float64
 
-	profiles map[testtypes.MarketState]testtypes.RegimeProfile
-	midPrice     float64
-	openPrice    float64
-	cumVolume    float64
-	cumValue     float64
-	highPrice    float64
-	lowPrice     float64
-	currTime     time.Time
-	sequence     int64
+	profiles  map[testtypes.MarketState]testtypes.RegimeProfile
+	midPrice  float64
+	openPrice float64
+	cumVolume float64
+	cumValue  float64
+	highPrice float64
+	lowPrice  float64
+	currTime  time.Time
+	sequence  int64
 }
 
 func NewGenerator(symbol string, startPrice float64, seed int64) *Generator {
@@ -165,9 +165,10 @@ func (generator *Generator) Step() testtypes.Sample {
 
 	/*
 		The ignition impulse gaps the price on the step the regime is entered
-		and fades afterwards, which is how a real pump prints: one violent
-		bar, then continuation at ordinary size.
+		and decays before subsequent steps, which keeps the first bar dominant
+		while retaining a fading continuation tail.
 	*/
+	generator.burst *= profile.IgnitionDecay
 	impulse := profile.IgnitionMove * generator.burst
 	generator.midPrice = math.Max(0.01, generator.midPrice*(1.0+deltaPct+impulse))
 
@@ -195,8 +196,6 @@ func (generator *Generator) Step() testtypes.Sample {
 		stepVolume *= 1.0 + (profile.IgnitionVolume-1.0)*generator.burst
 	}
 
-	generator.burst *= profile.IgnitionDecay
-
 	if generator.burst < 0.001 {
 		generator.burst = 0
 	}
@@ -217,20 +216,20 @@ func (generator *Generator) Step() testtypes.Sample {
 	changePct := (change / generator.openPrice) * 100.0
 
 	return testtypes.Sample{
-		Symbol:    generator.symbol,
-		Bid:       bid,
-		BidQty:    math.Round(bidQty*100) / 100,
-		Ask:       ask,
-		AskQty:    math.Round(askQty*100) / 100,
-		Last:      math.Round(last*100) / 100,
+		Symbol:     generator.symbol,
+		Bid:        bid,
+		BidQty:     math.Round(bidQty*100) / 100,
+		Ask:        ask,
+		AskQty:     math.Round(askQty*100) / 100,
+		Last:       math.Round(last*100) / 100,
 		Volume:     math.Round(generator.cumVolume*100) / 100,
 		StepVolume: math.Round(stepVolume*100) / 100,
-		VWAP:      math.Round(vwap*100) / 100,
-		Low:       math.Round(generator.lowPrice*100) / 100,
-		High:      math.Round(generator.highPrice*100) / 100,
-		Change:    math.Round(change*100) / 100,
-		ChangePct: math.Round(changePct*100) / 100,
-		Timestamp: generator.currTime,
+		VWAP:       math.Round(vwap*100) / 100,
+		Low:        math.Round(generator.lowPrice*100) / 100,
+		High:       math.Round(generator.highPrice*100) / 100,
+		Change:     math.Round(change*100) / 100,
+		ChangePct:  math.Round(changePct*100) / 100,
+		Timestamp:  generator.currTime,
 	}
 }
 

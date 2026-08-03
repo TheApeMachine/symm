@@ -10,6 +10,13 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+allocationScale is the working precision for sizing money. Quote currencies
+carry at most eight decimals, so this holds a fraction of a balance without
+losing anything the venue could execute.
+*/
+const allocationScale = 8
+
 type Allocator struct {
 	ctx         context.Context
 	balance     *broker.Balance
@@ -55,6 +62,15 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		))
 	}
 
+	/*
+		Multiplication coerces the operand to the receiver's scale, so a
+		balance the venue reported without decimals would round the allocation
+		fraction to zero and size every order at nothing. Widening the budget
+		first keeps the fraction intact whatever precision the balance arrived
+		with.
+	*/
+	budget = budget.SetScale(allocationScale)
+
 	for i := range thesis.Decisions {
 		decision := &thesis.Decisions[i]
 
@@ -91,11 +107,6 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 
 		if cost == nil || cost.Cmp(budget) > 0 {
 			allocator.reject(decision, "taker cost exceeds available budget")
-			continue
-		}
-
-		if err := allocator.balance.Reserve(cost); err != nil {
-			allocator.reject(decision, "ledger reservation failed")
 			continue
 		}
 

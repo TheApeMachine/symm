@@ -170,6 +170,10 @@ func (thesis *Thesis) Readiness() Readiness {
 	return readiness
 }
 
+/*
+thesisStampCounts tracks counts for the signals, manifold, resonance, causal,
+and graph stages separately.
+*/
 type thesisStampCounts struct {
 	signals   int
 	manifold  int

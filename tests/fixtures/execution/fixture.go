@@ -16,21 +16,22 @@ var fixtureFiles embed.FS
 Options parameterize one Kraken execution update frame.
 */
 type Options struct {
-	OrderID     string
-	ExecID      string
-	Symbol      string
-	Side        string
-	LastQty     string
-	LastPrice   string
-	Cost        string
-	OrderStatus string
-	OrderType   string
-	ExecType    string
-	CumQty      string
-	CumCost     string
-	AvgPrice    string
-	FeeUsdEquiv string
-	Timestamp   string
+	OrderID       string
+	ClientOrderID string
+	ExecID        string
+	Symbol        string
+	Side          string
+	LastQty       string
+	LastPrice     string
+	Cost          string
+	OrderStatus   string
+	OrderType     string
+	ExecType      string
+	CumQty        string
+	CumCost       string
+	AvgPrice      string
+	FeeUsdEquiv   string
+	Timestamp     string
 }
 
 /*
@@ -98,6 +99,7 @@ func Frame(options Options) []byte {
 	}
 
 	row["order_id"] = options.OrderID
+	row["cl_ord_id"] = options.ClientOrderID
 	row["exec_id"] = options.ExecID
 	row["symbol"] = options.Symbol
 	row["side"] = options.Side

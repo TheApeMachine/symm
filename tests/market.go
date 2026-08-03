@@ -2,16 +2,22 @@ package tests
 
 import (
 	"context"
+	"os"
 	"slices"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/tests/fixtures/book"
+	executionfixture "github.com/theapemachine/symm/tests/fixtures/execution"
 	"github.com/theapemachine/symm/tests/fixtures/level3"
 	"github.com/theapemachine/symm/tests/fixtures/ticker"
 	"github.com/theapemachine/symm/tests/fixtures/trade"
@@ -37,20 +43,24 @@ const (
 Market ranges ready fixture payloads into the fake Kraken connections.
 */
 type Market struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	Public     *Conn
-	Private    *Conn
-	Level3     *Conn
-	Symbols    []*testtypes.Symbol
-	State      testtypes.MarketState
-	system     *cmd.System
-	public     *websocket.Live
-	private    *websocket.Live
-	Thesis     *types.Thesis
-	generators map[string]*signal.Generator
+	ctx          context.Context
+	cancel       context.CancelFunc
+	Public       *Conn
+	Private      *Conn
+	Level3       *Conn
+	Symbols      []*testtypes.Symbol
+	State        testtypes.MarketState
+	system       *cmd.System
+	public       *websocket.Live
+	private      *websocket.Live
+	Thesis       *types.Thesis
+	Desk         *broker.Desk
+	Planner      *strategy.Planner
+	generators   map[string]*signal.Generator
 	decisions    []types.Decision
 	measurements map[string][]*types.Measurement
+	filled       map[string]struct{}
+	autoFill     bool
 	decisionMu   sync.Mutex
 }
 
@@ -138,6 +148,30 @@ func NewMarket(
 	ctx context.Context,
 	symbols []*testtypes.Symbol,
 ) *Market {
+	return newMarket(ctx, symbols, nil)
+}
+
+/*
+NewMarketWithAccount boots the fixture stack from an existing wallet and its
+account fills, matching a process restart against an account that already owns
+inventory.
+*/
+func NewMarketWithAccount(
+	ctx context.Context,
+	symbols []*testtypes.Symbol,
+	balances map[string]string,
+	trades map[string]spot.Trade,
+) *Market {
+	return newMarket(ctx, symbols, func(private *Conn) {
+		private.ConfigureAccount(balances, trades)
+	})
+}
+
+func newMarket(
+	ctx context.Context,
+	symbols []*testtypes.Symbol,
+	configureAccount func(*Conn),
+) *Market {
 	ctx, cancel := context.WithCancel(ctx)
 
 	market := &Market{
@@ -150,6 +184,7 @@ func NewMarket(
 		State:      testtypes.Baseline,
 		Thesis:     types.NewThesis(),
 		generators: make(map[string]*signal.Generator, len(symbols)),
+		filled:     make(map[string]struct{}),
 	}
 
 	for _, symbol := range symbols {
@@ -163,6 +198,10 @@ func NewMarket(
 	market.Public.Configure(symbols)
 	market.Private.Configure(symbols)
 	market.Level3.Configure(symbols)
+
+	if configureAccount != nil {
+		configureAccount(market.Private)
+	}
 
 	/*
 		The fixture Conn owns the in-memory transport; Live wraps its client
@@ -191,6 +230,8 @@ func NewMarket(
 	)
 
 	market.collectDecisions()
+	market.Desk = market.system.Desk
+	market.Planner = market.system.Planner
 
 	return market
 }
@@ -279,7 +320,55 @@ func (market *Market) Tick() {
 	*/
 	time.Sleep(tickInterval)
 
+	market.fillPending()
 	market.retainMeasurements()
+}
+
+/*
+WithAutoFill makes the market answer its own orders with fills.
+
+A test that drives the strategy end to end needs positions to open without
+staging every execution itself. Tests that publish their own execution frames
+leave this off, so the harness never fills an order out from under them.
+*/
+func (market *Market) WithAutoFill() *Market {
+	market.autoFill = true
+
+	return market
+}
+
+/*
+fillPending settles any order the desk has submitted but not yet seen filled.
+
+A live venue answers a market order with an execution on the private channel,
+and until that arrives a position stays PENDING and never becomes something the
+strategy can manage or close. Nothing else in the harness plays the venue, so
+without this the desk accumulates orders that never become positions.
+*/
+func (market *Market) fillPending() {
+	if market.Desk == nil || !market.autoFill {
+		return
+	}
+
+	for position := range market.Desk.Positions() {
+		if position.Status != types.PENDING || position.Holding == nil {
+			continue
+		}
+
+		if _, done := market.filled[position.ID]; done {
+			continue
+		}
+
+		market.filled[position.ID] = struct{}{}
+
+		fill := executionfixture.BuyFill()
+		fill.ClientOrderID = position.ID
+		fill.Symbol = position.Holding.Symbol
+		fill.CumQty = position.Holding.Qty.String()
+		fill.LastQty = fill.CumQty
+
+		market.Private.Publish("executions", executionfixture.Frame(fill))
+	}
 }
 
 func (market *Market) Close() {
@@ -292,6 +381,44 @@ func (market *Market) Close() {
 	market.Private.Close()
 	market.Level3.Close()
 	market.cancel()
+}
+
+/*
+WithFixtureOrders routes orders through the simulated private REST transport
+for the duration of one market test, then restores the caller's configuration.
+*/
+func WithFixtureOrders(
+	t *testing.T,
+	symbols []*testtypes.Symbol,
+	f func(*Market),
+) func() {
+	return func() {
+		tradingModel := viper.GetString("trading.model")
+		apiKey, hadAPIKey := os.LookupEnv("KRAKEN_API_KEY")
+		apiSecret, hadAPISecret := os.LookupEnv("KRAKEN_API_SECRET")
+
+		viper.Set("trading.model", "real")
+		_ = os.Setenv("KRAKEN_API_KEY", "fixture-key")
+		_ = os.Setenv("KRAKEN_API_SECRET", "Zml4dHVyZS1zZWNyZXQ=")
+
+		defer func() {
+			viper.Set("trading.model", tradingModel)
+
+			if hadAPIKey {
+				_ = os.Setenv("KRAKEN_API_KEY", apiKey)
+			} else {
+				_ = os.Unsetenv("KRAKEN_API_KEY")
+			}
+
+			if hadAPISecret {
+				_ = os.Setenv("KRAKEN_API_SECRET", apiSecret)
+			} else {
+				_ = os.Unsetenv("KRAKEN_API_SECRET")
+			}
+		}()
+
+		WithMarket(t, symbols, f)()
+	}
 }
 
 /*

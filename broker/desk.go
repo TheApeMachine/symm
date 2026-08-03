@@ -4,23 +4,20 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"sort"
+	"strings"
 	"sync"
+	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
-)
-
-/*
-Slot budget used when the trading config supplies none, matching the shipped
-configuration so an unconfigured desk still trades the way a configured one
-does.
-*/
-const (
-	defaultNormalSlots   = 2
-	defaultReservedSlots = 2
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -40,6 +37,7 @@ type Desk struct {
 	price         *Price
 	balance       *Balance
 	positions     *sync.Map
+	positionsMu   sync.Mutex
 	maxPositions  int
 	maxReserved   int
 }
@@ -57,23 +55,6 @@ func NewDesk(
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
-	/*
-		Without a configured budget the desk has no slots at all and refuses
-		every entry, so an unset or absent config falls back to a working desk
-		rather than a silently closed one.
-	*/
-	maxPositions := viper.GetInt("trading.slots.normal")
-
-	if maxPositions < 1 {
-		maxPositions = defaultNormalSlots
-	}
-
-	maxReserved := viper.GetInt("trading.slots.reserved")
-
-	if maxReserved < 0 {
-		maxReserved = defaultReservedSlots
-	}
-
 	desk := &Desk{
 		ctx:    ctx,
 		cancel: cancel,
@@ -88,8 +69,16 @@ func NewDesk(
 		price:        price,
 		balance:      balance,
 		positions:    &sync.Map{},
-		maxPositions: maxPositions,
-		maxReserved:  maxReserved,
+		maxPositions: viper.GetInt("trading.slots.normal"),
+		maxReserved:  viper.GetInt("trading.slots.reserved"),
+	}
+
+	if err := desk.recover(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"desk: failed to recover account positions",
+			err,
+		))
 	}
 
 	desk.run()
@@ -103,21 +92,34 @@ func (desk *Desk) run() {
 			case <-desk.ctx.Done():
 				return
 			case message := <-desk.subscriptions["ticker"].Channel:
-				ticker, ok := message.(*kraken.Ticker)
+				tickers, ok := message.(*kraken.Ticker)
 
-				if !ok || ticker == nil {
+				if !ok || tickers == nil {
 					continue
 				}
 
-				desk.positions.Range(func(key, value any) bool {
+				// Positions are keyed by symbol, so each row goes straight to
+				// the one lot it concerns.
+				for _, ticker := range tickers.Data {
+					desk.price.Update(&ticker)
+
+					value, ok := desk.positions.Load(ticker.Symbol)
+
+					if !ok {
+						continue
+					}
+
 					position, ok := value.(*Position)
 
 					if ok && position != nil {
 						position.onTicker(ticker)
 					}
+				}
 
-					return true
-				})
+				// The wallet is re-read from REST because it is the only
+				// statement of what is actually held.
+				desk.balance.Update()
+				desk.publishEquity()
 			case message := <-desk.subscriptions["executions"].Channel:
 				execution, ok := message.(*kraken.Execution)
 
@@ -137,6 +139,161 @@ func (desk *Desk) run() {
 			}
 		}
 	}()
+}
+
+/*
+recover adopts the wallet as the account's open inventory.
+
+Holding a coin is the position — there is no separate lot ledger to rebuild.
+Every non-quote asset the wallet carries is therefore an open holding at the
+quantity the wallet states, and trade history is consulted for one thing only:
+what was paid for the amount currently held. That basis is the average price
+across the most recent buys covering the held quantity, which is all a mark can
+be measured against.
+*/
+func (desk *Desk) recover() error {
+	balances, err := desk.api.Balance()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	history, err := desk.api.TradeBalance()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	quote := desk.api.Normalizer().Name(viper.GetString("market.quote_currency"))
+
+	for asset, amount := range balances {
+		asset = desk.api.Normalizer().Name(asset)
+
+		// The quote currency is the cash side of every pair, not a lot.
+		if asset == "" || asset == quote || amount == nil || amount.Sign() <= 0 {
+			continue
+		}
+
+		symbol := asset + "/" + quote
+
+		pair, err := desk.instrument.Pair(symbol)
+
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		histories := make([]spot.Trade, 0)
+
+		// Venues spell a pair without a separator and in any case, so the
+		// trade is matched against the instrument's own base and quote.
+		venue := strings.ToUpper(pair.Base + pair.Quote)
+
+		for _, trade := range history.Trades {
+			traded := strings.ToUpper(strings.ReplaceAll(trade.Pair, "/", ""))
+
+			if traded != venue {
+				continue
+			}
+
+			histories = append(histories, trade)
+		}
+
+		if len(histories) == 0 {
+			continue
+		}
+
+		// Sort by timestamp ascending
+		sort.Slice(histories, func(i, j int) bool {
+			return histories[i].Time.Cmp(histories[j].Time) < 0
+		})
+
+		// Buys after the last sell are the ones that bought what is held now.
+		opening := histories
+
+		for index := len(histories) - 1; index >= 0; index-- {
+			if strings.EqualFold(histories[index].Type, "sell") {
+				opening = histories[index+1:]
+				break
+			}
+		}
+
+		if len(opening) == 0 {
+			continue
+		}
+
+		// The wallet reports an amount of the asset, not an order size, so
+		// the venue's lot rules decide how much of it is actually sellable.
+		quantity, err := desk.api.Normalizer().FormatSize(symbol, amount)
+
+		if err != nil || quantity == nil || quantity.Sign() <= 0 {
+			errnie.Error(err)
+			continue
+		}
+
+		entryAt := time.Unix(opening[0].Time.Int64(), 0).UTC()
+		entryPrice := decimal.NewFromInt64(0)
+		entryFee := decimal.NewFromInt64(0)
+
+		for _, trade := range opening {
+			if trade.Cost == nil || trade.Volume == nil {
+				continue
+			}
+
+			entryPrice = entryPrice.Add(trade.Cost.Div(trade.Volume))
+			entryFee = entryFee.Add(trade.Fee)
+		}
+
+		if entryPrice.Sign() <= 0 || entryFee.Sign() <= 0 {
+			continue
+		}
+
+		entryPrice = entryPrice.Div(quantity)
+
+		position := NewPosition(
+			desk.ctx,
+			desk.api,
+			desk.ui,
+			desk.instrument,
+			desk.price,
+			desk.balance,
+			pair,
+			quantity,
+		)
+
+		position.ID = "recovered:" + symbol
+		position.EntryOrder.ClOrdId = position.ID
+		position.Status = types.OPEN
+
+		// The holding built by NewPosition owns the lot's stoploss and its
+		// cancel context, so recovery fills that one in rather than swapping
+		// in a fresh struct that would leave the lot unprotected and its
+		// context orphaned.
+		position.Holding.Asset = asset
+		position.Holding.Qty = quantity
+		position.Holding.SellableQty = quantity.Copy()
+		position.Holding.EntryAt = &entryAt
+		position.Holding.Status = types.OPEN
+
+		desk.positions.Store(symbol, position)
+		position.Publish()
+	}
+
+	return nil
+}
+
+/*
+isTerminal reports whether a lot can no longer trade. These are exactly the
+states the UI retires a row on, so the two sides agree on what "gone" means.
+*/
+func isTerminal(status types.Status) bool {
+	switch status {
+	case types.CLOSED, types.CANCELED, types.REJECTED, types.EXPIRED,
+		types.ERROR, types.FATAL:
+		return true
+	default:
+		return false
+	}
 }
 
 /*
@@ -177,6 +334,49 @@ func (desk *Desk) OpenPositions() int {
 	})
 
 	return count
+}
+
+/*
+publishEquity reports what the desk is worth if every open lot were closed now.
+
+Cash alone understates the account while positions are open, so the unrealized
+total is published beside it along with their sum. Every lot's PnL is already
+net of the fees to get in and out, which makes equity the balance the wallet
+would actually settle at rather than a gross mark-to-market.
+*/
+func (desk *Desk) publishEquity() {
+	if desk == nil || desk.ui == nil || desk.balance == nil {
+		return
+	}
+
+	cash, err := desk.balance.Cash()
+
+	if err != nil || cash == nil {
+		return
+	}
+
+	unrealized := decimal.NewFromInt64(0)
+
+	for position := range desk.Positions() {
+		if position.Status != types.OPEN || position.Holding == nil {
+			continue
+		}
+
+		if position.Holding.PnL == nil {
+			continue
+		}
+
+		unrealized = unrealized.Add(position.Holding.PnL)
+	}
+
+	out := datura.NewMap()
+	out["equity"] = datura.NewMap(
+		"cash", cash,
+		"unrealized", unrealized,
+		"equity", cash.Add(unrealized),
+	)
+
+	utils.Publish(desk.ui, out)
 }
 
 func (desk *Desk) Positions() iter.Seq[*Position] {
@@ -220,20 +420,48 @@ func (desk *Desk) enter(decision types.Decision) error {
 		))
 	}
 
-	for position := range desk.Positions() {
-		if position.Status != types.CLOSED && position.Holding != nil && position.Holding.Symbol == decision.Symbol {
-			return errnie.Error(errnie.Err(
-				errnie.NotAcceptable,
-				"desk: symbol already has an active position",
-				nil,
-			))
+	desk.positionsMu.Lock()
+	defer desk.positionsMu.Unlock()
+
+	if value, ok := desk.positions.Load(decision.Symbol); ok {
+		if position, ok := value.(*Position); ok && position != nil {
+			position.mu.RLock()
+			status := position.Status
+			position.mu.RUnlock()
+
+			if status != types.CLOSED {
+				return errnie.Error(errnie.Err(
+					errnie.NotAcceptable,
+					"desk: symbol already has an active position",
+					nil,
+				))
+			}
 		}
+	}
+
+	if desk.OpenSlots(decision.Opportunity) <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"desk: position capacity is exhausted",
+			nil,
+		))
 	}
 
 	pair, err := desk.instrument.Pair(decision.Symbol)
 
 	if err != nil {
 		return errnie.Error(err)
+	}
+
+	// The position arms its stop against the current mark, so a symbol the
+	// price surface cannot mark yet has no entry price to protect and must
+	// not be opened.
+	if desk.price.Mark(pair.Symbol, SELL) == nil {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"desk: cannot mark "+decision.Symbol+" for entry",
+			nil,
+		))
 	}
 
 	position := NewPosition(
@@ -250,15 +478,10 @@ func (desk *Desk) enter(decision types.Decision) error {
 	position.EntryOrder.ClOrdId = decision.ID
 	position.Holding.IsOpportunity = decision.Opportunity
 	position.Holding.ReservationID = decision.ReservationID
-	desk.positions.Store(position.ID, position)
+	desk.positions.Store(pair.Symbol, position)
 
 	if _, err := position.Enter(); err != nil {
-		desk.positions.Delete(position.ID)
-
-		if releaseErr := desk.balance.Release(decision.ProposedNotional); releaseErr != nil {
-			err = errors.Join(err, releaseErr)
-		}
-
+		desk.positions.Delete(pair.Symbol)
 		return errnie.Error(err)
 	}
 
@@ -266,18 +489,18 @@ func (desk *Desk) enter(decision types.Decision) error {
 }
 
 func (desk *Desk) exit(decision types.Decision) error {
-	for position := range desk.Positions() {
-		if position.Status == types.CLOSED || position.Holding == nil || position.Holding.Symbol != decision.Symbol {
-			continue
+	value, ok := desk.positions.Load(decision.Symbol)
+
+	if ok {
+		if position, ok := value.(*Position); ok && position != nil {
+			position.mu.RLock()
+			status := position.Status
+			position.mu.RUnlock()
+
+			if status != types.CLOSED {
+				return position.Exit(decision.ID)
+			}
 		}
-
-		stored, ok := desk.positions.Load(position.ID)
-
-		if !ok {
-			continue
-		}
-
-		return stored.(*Position).Exit(decision.ID)
 	}
 
 	return errnie.Error(errnie.Err(

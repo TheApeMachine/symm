@@ -1,15 +1,21 @@
+import { useSelector } from "@tanstack/react-store";
+import { appStore } from "#/collections/app";
 import { cn } from "#/lib/utils";
 import { Component } from "../ui/component";
 import { CortexBeamShell } from "./cortex-beam-shell";
 import { CortexPanelsShell } from "./cortex-panels-shell";
 
 /*
-CortexSurface owns the sensory-context visualization and its retained model
-state, shared directly with the WebSocket dispatcher rather than a route module.
+CortexSurface owns the sensory-context visualization.
+
+Cognition reads one symbol at a time, so the surface follows the dashboard
+focus and hands that symbol to the panels and beam list beside it.
 */
 export const CortexSurface = () => {
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+
 	return (
-		<Component registerKey="cortex">
+		<Component registerKey="cognition" select={focusSymbol}>
 			{({ ref, className }) => (
 				<div
 					ref={ref}
@@ -19,8 +25,9 @@ export const CortexSurface = () => {
 						<span className="mr-1 shrink-0 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
 							Sensory context
 						</span>
-						<span data-paint="readings" className="ml-auto shrink-0 font-mono text-[10px] text-(--f4)">
-							0 readings
+						<span className="ml-auto shrink-0 font-mono text-[10px] text-(--f4)">
+							<span data-paint="winnerRegime" /> ·{" "}
+							<span data-paint="activeSequence" />
 						</span>
 					</div>
 					<div className="grid min-h-0 flex-1 grid-cols-[minmax(560px,1fr)_364px]">
@@ -56,12 +63,12 @@ export const CortexSurface = () => {
 										log-prob
 									</span>
 								</div>
-								<CortexBeamShell />
+								<CortexBeamShell symbol={focusSymbol} />
 							</div>
 						</div>
 
 						<div className="min-h-0 overflow-auto bg-(--surface) p-3.5">
-							<CortexPanelsShell />
+							<CortexPanelsShell symbol={focusSymbol} />
 						</div>
 					</div>
 				</div>

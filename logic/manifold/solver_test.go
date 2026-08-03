@@ -82,3 +82,62 @@ func TestSolverStep(t *testing.T) {
 		})
 	})
 }
+
+func TestEvict(t *testing.T) {
+	Convey("Given a domain holding more particles than the field can integrate", t, func() {
+		var domain *pfluid.Domain
+		err := compute.WithMetalInit(func() error {
+			created, createErr := pfluid.NewDomain(pfluid.DefaultConfig())
+
+			if createErr != nil {
+				return createErr
+			}
+
+			domain = created
+			return nil
+		})
+		So(err, ShouldBeNil)
+		Reset(func() { So(domain.Close(), ShouldBeNil) })
+
+		residency := 8
+		population := residency * 3
+
+		particles := make([]pfluid.Particle, 0, population)
+		contentIDs := make([]uint32, 0, population)
+
+		for index := range population {
+			particles = append(particles, pfluid.Particle{
+				Position: pfluid.Vector{X: 0.5, Y: 0.5, Z: 0.5},
+				Mass:     1,
+				Heat:     0.1,
+				Energy:   1,
+				Phase:    0.1,
+				Omega:    1,
+			})
+			contentIDs = append(contentIDs, uint32(index+1))
+		}
+
+		_, err = domain.Append(particles, contentIDs)
+		So(err, ShouldBeNil)
+		So(domain.ParticleCount(), ShouldEqual, population)
+
+		solver := &Solver{domain: domain, residency: residency}
+		solver.evict()
+
+		Convey("It should hold residency at the configured bound", func() {
+			/*
+				Every symbol appends into one shared field and nothing leaves
+				on its own, so without this bound the population grows until
+				the pilot-wave transport goes non-finite and the manifold stops
+				reading for the entire universe.
+			*/
+			So(domain.ParticleCount(), ShouldEqual, residency)
+		})
+
+		Convey("It should leave a domain already within the bound alone", func() {
+			solver.evict()
+
+			So(domain.ParticleCount(), ShouldEqual, residency)
+		})
+	})
+}

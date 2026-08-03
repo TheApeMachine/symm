@@ -298,7 +298,12 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 		return
 	}
 
-	rows := make([]datura.Map[any], 0)
+	/*
+		Rows are keyed by symbol rather than listed, because the display reads
+		one symbol at a time and a position in a list says nothing about which
+		symbol it describes once the set of symbols changes between ticks.
+	*/
+	rows := datura.NewMap()
 	at := thesis.At.Format(time.RFC3339)
 
 	thesis.Cognition.Range(func(key, value any) bool {
@@ -320,7 +325,7 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 		for k, v := range cogMap {
 			row[k] = v
 		}
-		rows = append(rows, row)
+		rows[symbol] = row
 		return true
 	})
 

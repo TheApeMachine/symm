@@ -300,7 +300,7 @@ const SelectedNodePanel = ({
 				{related.length === 0 ? (
 					<div className="font-mono text-[11px] text-(--f4)">No connected edges.</div>
 				) : (
-					<div className="flex max-h-[320px] flex-col gap-1 overflow-auto font-mono text-[11px]">
+					<div className="flex max-h-80 flex-col gap-1 overflow-auto font-mono text-[11px]">
 						{related.map((edge, index) => (
 							<div
 								key={`${edge.from}:${edge.to}:${edge.relation ?? "edge"}:${index}`}
@@ -333,7 +333,7 @@ const SelectedNodePanel = ({
 	useEffect(() => {
 		const notify = () => setVersion((value) => value + 1);
 		listeners.add(notify);
-		const unregister = registerPainter("graphs", paintGraphSurface);
+		const unregister = registerPainter("graph", paintGraphSurface);
 		notify();
 
 		return () => {
@@ -366,8 +366,8 @@ const SelectedNodePanel = ({
 		selectedNodeName === null ? null : frame?.nodes?.[selectedNodeName] ?? null;
 
 	return (
-		<div className="flex h-full min-w-[1180px] flex-col">
-			<div className="flex h-[46px] shrink-0 items-center gap-2 overflow-x-auto border-(--line) border-b bg-(--surface) px-3.5">
+		<div className="flex h-full min-w-295 flex-col">
+			<div className="flex h-11.5 shrink-0 items-center gap-2 overflow-x-auto border-(--line) border-b bg-(--surface) px-3.5">
 				<span className="mr-1 shrink-0 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
 					Market graph
 				</span>

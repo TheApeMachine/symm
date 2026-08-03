@@ -5,6 +5,60 @@ import { retainManifoldBinary } from "#/providers/manifold-binary";
 
 const registeredPainters = new Map<string, Set<Paint>>();
 
+const terminalPositionStatuses = new Set([
+	"canceled",
+	"closed",
+	"error",
+	"expired",
+	"fatal",
+	"rejected",
+]);
+
+const positionRows = (value: JSONSerializable): JSONSerializable[] => {
+	if (Array.isArray(value)) {
+		return value;
+	}
+
+	if (value !== null && typeof value === "object") {
+		return Object.values(value).filter(
+			(row): row is JSONSerializable => row !== undefined,
+		);
+	}
+
+	return [];
+};
+
+const positionIdentity = (value: JSONSerializable): string | null => {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) {
+		return null;
+	}
+
+	if (typeof value.id === "string" && value.id !== "") {
+		return value.id;
+	}
+
+	const holding = value.holding;
+
+	if (
+		holding !== null &&
+		typeof holding === "object" &&
+		!Array.isArray(holding) &&
+		typeof holding.symbol === "string" &&
+		holding.symbol !== ""
+	) {
+		return holding.symbol;
+	}
+
+	return null;
+};
+
+const positionIsTerminal = (value: JSONSerializable): boolean =>
+	value !== null &&
+	typeof value === "object" &&
+	!Array.isArray(value) &&
+	typeof value.status === "string" &&
+	terminalPositionStatuses.has(value.status);
+
 export const drawers = {};
 
 export const registerPainter = (key: string, paint: Paint): (() => void) => {
@@ -33,11 +87,13 @@ export const paintRegistered = (
 
 /*
 attach coalesces worker updates to one paint pass per display frame. DRAW values
-are complete per wire key, so a newer value supersedes work the browser has not
-painted yet without merging unrelated backend categories.
+are complete per wire key except positions, which publishes one independently
+owned lot at a time. Position deltas are retained by identity; other newer values
+supersede work the browser has not painted yet.
 */
 export const attach = (worker: Worker) => {
 	const pendingUpdates = new Map<string, JSONSerializable>();
+	const retainedPositions = new Map<string, JSONSerializable>();
 	let pendingBinary: ArrayBuffer | null = null;
 	let animationFrame: number | null = null;
 
@@ -83,7 +139,29 @@ export const attach = (worker: Worker) => {
 		}
 
 		for (const [key, value] of Object.entries(event.data.frame)) {
-			pendingUpdates.set(key, value as JSONSerializable);
+			const update = value as JSONSerializable;
+
+			if (key !== "positions") {
+				pendingUpdates.set(key, update);
+				continue;
+			}
+
+			for (const position of positionRows(update)) {
+				const identity = positionIdentity(position);
+
+				if (identity === null) {
+					continue;
+				}
+
+				if (positionIsTerminal(position)) {
+					retainedPositions.delete(identity);
+					continue;
+				}
+
+				retainedPositions.set(identity, position);
+			}
+
+			pendingUpdates.set("positions", Array.from(retainedPositions.values()));
 		}
 
 		schedule();

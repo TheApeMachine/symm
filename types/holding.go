@@ -6,6 +6,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 )
 
 /*
@@ -33,6 +34,24 @@ type Holding struct {
 	IsOpportunity bool             `json:"is_opportunity"`
 	ReservationID string           `json:"reservation_id,omitempty"`
 	Stoploss      *Stoploss        `json:"stoploss"`
+
+	/*
+		Gauge positions are the price levels expressed as percentages across
+		one shared axis, so the display can place its markers without knowing
+		which prices happen to bound the lot right now.
+	*/
+	EntryPct string `json:"entry_pct,omitempty"`
+	MarkPct  string `json:"mark_pct,omitempty"`
+	FloorPct string `json:"floor_pct,omitempty"`
+	PeakPct  string `json:"peak_pct,omitempty"`
+
+	/*
+		ToneColor is the colour the lot's result should be drawn in, resolved
+		from the sign of its PnL. The display cannot recover a sign from an
+		already-formatted number, and the theme owns the actual colours, so
+		this names one of its variables rather than a literal.
+	*/
+	ToneColor string `json:"tone_color,omitempty"`
 }
 
 /*
@@ -58,6 +77,24 @@ func NewHolding(
 	}
 
 	return holding
+}
+
+func (holding *Holding) Update(
+	ticker kraken.TickerData,
+) error {
+	if ticker.Bid == nil {
+		return nil
+	}
+
+	holding.Mark = ticker.Bid
+
+	if holding.Stoploss != nil {
+		if err := holding.Stoploss.Update(ticker); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (holding *Holding) Close() (err error) {

@@ -138,43 +138,61 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return nil
 	}
 
-	featureSchema := append([]string(nil), solver.featureSchema...)
-	knownFeatures := make(map[string]struct{}, len(featureSchema))
+	/*
+		The schema grows while the network is still learning nothing, and is
+		frozen the moment the task head has a supervised sample worth keeping.
 
-	for _, featureKey := range featureSchema {
-		knownFeatures[featureKey] = struct{}{}
-	}
+		Live, the set of measurements present drifts continuously: signals
+		report at different cadences and leadlag renames its peer whenever the
+		cross-section anchor rotates. Resizing the network to follow that drift
+		discards every weight it has learned along with the samples behind
+		them, and the drift arrives faster than the task head can accumulate
+		the two strict-prior samples it needs, so the network stays
+		permanently in warmup and never produces a forecast.
 
-	for featureKey := range features {
-		if _, known := knownFeatures[featureKey]; known {
-			continue
+		Admitting new features only before the first sample lets the schema
+		settle as the signals come up, then holds it steady so learning can
+		accumulate. Once frozen, an unseen feature is ignored and a missing one
+		reads as zero.
+	*/
+	if solver.targetSamples == 0 {
+		featureSchema := append([]string(nil), solver.featureSchema...)
+		knownFeatures := make(map[string]struct{}, len(featureSchema))
+
+		for _, featureKey := range featureSchema {
+			knownFeatures[featureKey] = struct{}{}
 		}
 
-		featureSchema = append(featureSchema, featureKey)
+		for featureKey := range features {
+			if _, known := knownFeatures[featureKey]; known {
+				continue
+			}
+
+			featureSchema = append(featureSchema, featureKey)
+		}
+
+		sort.Strings(featureSchema)
+
+		if solver.manifold == nil || len(featureSchema) != len(solver.featureSchema) {
+			if err := solver.initManifold(len(featureSchema)); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"resonance: failed to initialize CPU predictive coding manifold",
+					err,
+				))
+			}
+
+			solver.featureSchema = featureSchema
+			solver.pendingInput = nil
+			solver.pendingMid = 0
+			solver.pendingAt = time.Time{}
+		}
 	}
 
-	sort.Strings(featureSchema)
-	input := make([]float64, len(featureSchema))
+	input := make([]float64, len(solver.featureSchema))
 
-	for featureIndex, featureKey := range featureSchema {
+	for featureIndex, featureKey := range solver.featureSchema {
 		input[featureIndex] = features[featureKey]
-	}
-
-	// 2. Lazily initialize the CPU ResonanceManifold if not yet created
-	if solver.manifold == nil || len(solver.featureSchema) != len(featureSchema) {
-		if err := solver.initManifold(len(input)); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"resonance: failed to initialize CPU predictive coding manifold",
-				err,
-			))
-		}
-
-		solver.featureSchema = featureSchema
-		solver.pendingInput = nil
-		solver.pendingMid = 0
-		solver.pendingAt = time.Time{}
-		solver.targetSamples = 0
 	}
 
 	midpoint, targetAt, targetReady := solver.returnTarget(thesis)
@@ -373,7 +391,15 @@ func (solver *Solver) extractFeatures(thesis *types.Thesis) map[string]float64 {
 					continue
 				}
 
-				featureKey := string(measurement.Source) + ":" + measurement.Symbol + ":" + measurement.Peer + ":" + metricKey
+				/*
+					Peer is deliberately not part of the identity. It names the
+					counterpart a relative reading was taken against, and that
+					counterpart rotates with the live cross-section anchor, so
+					including it would mint a new input dimension every time
+					leadership changed and keep the network resizing instead of
+					learning.
+				*/
+				featureKey := string(measurement.Source) + ":" + measurement.Symbol + ":" + metricKey
 				features[featureKey] = *metric.Normalized
 			}
 		}
@@ -464,22 +490,39 @@ func (solver *Solver) learnReturn(midpoint float64, at time.Time) error {
 		return nil
 	}
 
+	/*
+		An unusable quote makes this one sample unresolvable, not the pass.
+		Returning an error here would abort the analyzer before the planner
+		runs, so a single bad tick would stop the desk from deciding at all.
+		The sample is dropped and the pairing reset so the next epoch starts
+		from a clean prior.
+	*/
 	if solver.pendingMid <= 0 || midpoint <= 0 {
-		return errnie.Error(errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.Validation,
-			"resonance: return target prices must be positive",
+			"resonance: dropped return sample on non-positive target price",
 			nil,
 		))
+
+		solver.pendingInput = solver.pendingInput[:0]
+		solver.pendingAt = time.Time{}
+
+		return nil
 	}
 
 	target := math.Log(midpoint / solver.pendingMid)
 
 	if math.IsNaN(target) || math.IsInf(target, 0) {
-		return errnie.Error(errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.Validation,
-			"resonance: realized midpoint return must be finite",
+			"resonance: dropped return sample on non-finite realized return",
 			nil,
 		))
+
+		solver.pendingInput = solver.pendingInput[:0]
+		solver.pendingAt = time.Time{}
+
+		return nil
 	}
 
 	if err := solver.manifold.Settle(solver.pendingInput, false); err != nil {

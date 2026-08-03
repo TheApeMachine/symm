@@ -106,6 +106,59 @@ describe("ws-stores", () => {
 		unregisterHealth();
 	});
 
+	it("retains independently published open positions by identity", () => {
+		const worker = new MockWorker();
+		const positionsPaint = vi.fn();
+		const unregisterPositions = registerPainter("positions", positionsPaint);
+		const position = (id: string, symbol: string, status = "open") => ({
+			id,
+			status,
+			holding: { symbol },
+		});
+
+		attach(worker as unknown as Worker);
+		worker.emit({
+			type: "DRAW",
+			frame: { positions: [position("btc", "BTC/USD")] },
+		});
+		worker.emit({
+			type: "DRAW",
+			frame: { positions: [position("eth", "ETH/USD")] },
+		});
+		worker.emit({
+			type: "DRAW",
+			frame: { positions: [position("sol", "SOL/USD")] },
+		});
+		worker.emit({
+			type: "DRAW",
+			frame: { positions: [position("xrp", "XRP/USD")] },
+		});
+
+		animationFrame?.(0);
+
+		expect(positionsPaint).toHaveBeenCalledOnce();
+		expect(positionsPaint).toHaveBeenCalledWith([
+			position("btc", "BTC/USD"),
+			position("eth", "ETH/USD"),
+			position("sol", "SOL/USD"),
+			position("xrp", "XRP/USD"),
+		]);
+
+		worker.emit({
+			type: "DRAW",
+			frame: { positions: [position("eth", "ETH/USD", "closed")] },
+		});
+		animationFrame?.(0);
+
+		expect(positionsPaint).toHaveBeenLastCalledWith([
+			position("btc", "BTC/USD"),
+			position("sol", "SOL/USD"),
+			position("xrp", "XRP/USD"),
+		]);
+
+		unregisterPositions();
+	});
+
 	it("retains only the latest binary and repaints once per display frame", () => {
 		const worker = new MockWorker();
 		const first = new ArrayBuffer(1);

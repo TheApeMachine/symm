@@ -80,7 +80,7 @@ func (signal *Signal) measureFrame(
 		))
 	}
 
-	return out
+	return measurements
 }
 
 type correlationSelection struct {

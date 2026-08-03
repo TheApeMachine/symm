@@ -14,8 +14,13 @@ export const Decisions = () => (
 	<Component registerKey="decisions">
 		{({ ref, className }) => (
 			<Flex.Column ref={ref} className={cn("h-full min-h-0 gap-0", className)}>
-				<Flex.Row className="items-baseline justify-between border-(--line) border-b px-3 py-2">
-					<Typography.Span className="text-[10px] font-semibold uppercase tracking-[0.13em] text-(--f3)">
+				<Flex.Row
+					align="baseline"
+					justify="between"
+					padding={2}
+					className="border-(--line) border-b"
+				>
+					<Typography.Span semibold uppercase tracking="0.13em">
 						DECISIONS
 					</Typography.Span>
 				</Flex.Row>

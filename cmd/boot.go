@@ -36,6 +36,7 @@ resources Boot acquired.
 */
 type System struct {
 	Hub     *ui.Hub
+	Desk    *broker.Desk
 	Planner *strategy.Planner
 	Crypto  *trader.Crypto
 	Thesis  *types.Thesis
@@ -214,6 +215,7 @@ func Boot(
 		manifoldChannel,
 	)
 
+	system.Desk = desk
 	system.Planner = planner
 	system.Crypto = crypto
 

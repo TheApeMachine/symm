@@ -73,11 +73,9 @@ type Live struct {
 	paper       *Paper
 	model       string
 
-	/*
-		Level3Client supplies the websocket client for the child connections
-		SubL3 opens. When nil the child dials the real Level3 endpoint; tests
-		set it to keep those children on the fixture transport.
-	*/
+	// Level3Client supplies the websocket client for the child connections
+	// SubL3 opens. When nil the child dials the real Level3 endpoint; tests
+	// set it to keep those children on the fixture transport.
 	Level3Client func() *spot.WebSocket
 }
 
@@ -187,7 +185,6 @@ func NewWithClient(
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
 		raw := event.Data.Bytes()
-
 		channel := utils.GetString(raw, "channel")
 
 		if channel == "" {
@@ -502,11 +499,15 @@ func (live *Live) Balance() (map[string]*decimal.Decimal, error) {
 	if live.model == "real" {
 		response, err := live.client.REST.Balances()
 
-		return response.Result, errnie.Error(errnie.Err(
-			errnie.IO,
-			"balance: failed to fetch",
-			err,
-		))
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.IO,
+				"balance: failed to fetch",
+				err,
+			))
+		}
+
+		return response.Result, nil
 	}
 
 	return live.paper.Balances()
@@ -542,14 +543,21 @@ func (live *Live) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, erro
 }
 
 func (live *Live) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, error) {
-	if live.model == "paper" {
+	// Only a real model reaches the venue. The test read the other way round,
+	// which sent paper orders to Kraken over REST and routed real ones into
+	// the simulator.
+	if live.model == "real" {
 		response, err := live.client.REST.AddOrder(order)
 
-		return response.Result, errnie.Error(errnie.Err(
-			errnie.IO,
-			"add order: failed to submit",
-			err,
-		))
+		if err != nil {
+			return spot.AddOrderResult{}, errnie.Error(errnie.Err(
+				errnie.IO,
+				"add order: failed to submit",
+				err,
+			))
+		}
+
+		return response.Result, nil
 	}
 
 	return live.paper.AddOrder(order)

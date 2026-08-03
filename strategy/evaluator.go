@@ -367,8 +367,26 @@ func (evaluator Evaluator) ManageContinuation(
 			holdUtility -= (contradicts * 0.1)
 		}
 
+		/*
+			Holding is only worth it while continuing beats closing. Once the
+			thesis behind a position has decayed past the cost of getting out,
+			the position is closed on its own merits rather than being left to
+			wait for a better candidate to displace it.
+		*/
+		action := types.ActionHold
+		cause := "continuation"
+		reason := "continuation holds active position"
+		quantity := decimal.NewFromInt64(0)
+
+		if holdUtility < -exitCost.Float64() {
+			action = types.ActionExit
+			cause = "continuation_decayed"
+			reason = "holding no longer covers the cost of exiting"
+			quantity = position.Holding.Qty.Copy()
+		}
+
 		thesis.Decisions = append(thesis.Decisions, types.Decision{
-			Action:  types.ActionHold,
+			Action:  action,
 			Symbol:  forecast.Symbol,
 			At:      forecast.At,
 			Utility: holdUtility,
@@ -377,7 +395,7 @@ func (evaluator Evaluator) ManageContinuation(
 				"exit": -exitCost.Float64(),
 			},
 			ProposedNotional:  decimal.NewFromInt64(0),
-			ProposedQuantity:  decimal.NewFromInt64(0),
+			ProposedQuantity:  quantity,
 			ExpectedReturn:    forecast.ExpectedReturn,
 			ExpectedFees:      fee,
 			ExpectedSpread:    forecast.ExpectedSpread.Div(decimal.NewFromInt64(2)),
@@ -392,8 +410,8 @@ func (evaluator Evaluator) ManageContinuation(
 			ValidThroughEpoch: forecast.Epoch,
 			ForecastSource:    string(types.SourceResonance),
 			ForecastEpoch:     forecast.Epoch,
-			Cause:             "continuation",
-			Reason:            "continuation holds active position",
+			Cause:             cause,
+			Reason:            reason,
 		})
 	}
 }

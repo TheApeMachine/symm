@@ -85,7 +85,7 @@ const RouteComponent = () => {
             <div className="min-h-0 flex-[1.15] border-(--line) border-b">
               <Decisions />
             </div>
-            <div className="min-h-0 flex-1 border-(--line) border-b">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-(--line) border-b">
               <div className="flex items-center justify-between border-(--line) border-b px-3 py-2">
                 <span className="text-[10px] font-semibold uppercase tracking-[0.13em] text-(--f3)">
                   Open positions

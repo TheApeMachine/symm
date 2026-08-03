@@ -1,6 +1,15 @@
 import { latestDisplay } from "#/providers/manifold-binary";
 
 /*
+The scratch tile is created on first draw rather than at import, because a
+module that touches the document as a side effect of being imported cannot load
+without a DOM — including in any test that reaches it transitively through the
+paint registry.
+*/
+let tile: HTMLCanvasElement | null = null;
+let tileContext: CanvasRenderingContext2D | null = null;
+
+/*
 drawFluidDisplay blits the backend-composited GPU RGBA texture. The frontend does
 not synthesize a fallback fluid field from scalar lattices.
 */
@@ -30,13 +39,18 @@ export const drawFluidDisplay = (
 		canvas.height = pixelHeight;
 	}
 
-	const tile = document.createElement("canvas");
-	tile.width = frame.width;
-	tile.height = frame.height;
-	const tileContext = tile.getContext("2d");
+	if (tile === null) {
+		tile = document.createElement("canvas");
+		tileContext = tile.getContext("2d");
+	}
 
 	if (tileContext === null) {
 		return false;
+	}
+
+	if (tile.width !== frame.width || tile.height !== frame.height) {
+		tile.width = frame.width;
+		tile.height = frame.height;
 	}
 
 	const image = tileContext.createImageData(frame.width, frame.height);

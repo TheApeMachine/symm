@@ -6,15 +6,18 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Balance owns the exchange wallet map and sequence for the Desk event loop. It
-composes Wallet, Cash, and Ledger so reservations and available capital stay a
-wallet concern while Position and Holding ownership remains on Desk.
+Balance owns the exchange wallet map for the Desk event loop.
+
+The wallet is exchange-owned in the strictest sense: the REST balance endpoint
+is its only writer. Nothing here adds, subtracts, or reserves against it, so
+what the desk reads is always what the venue last stated it holds rather than a
+locally maintained approximation of it. Capital committed by an entry becomes
+visible the same way everything else does — on the next refresh.
 */
 type Balance struct {
 	status types.Status
@@ -84,13 +87,73 @@ func (balance *Balance) Update() {
 		return
 	}
 
-	for asset, amount := range result {
-		balance.wallet.Store(asset, amount)
-	}
-
+	balance.replace(result)
 	balance.status = types.READY
 }
 
+/*
+replace swaps the wallet contents for a complete REST balance response.
+
+The endpoint reports the whole wallet, omitting assets the account no longer
+holds, so the map is replaced rather than merged. Merging would leave a
+sold-out asset sitting at its last positive quantity, and since a per-coin
+balance is what constitutes a position here, that stale row is indistinguishable
+from an open one.
+*/
+func (balance *Balance) replace(totals map[string]*decimal.Decimal) {
+	balance.wallet.Range(func(key, _ any) bool {
+		asset, ok := key.(string)
+
+		if !ok {
+			return true
+		}
+
+		if _, held := totals[asset]; !held {
+			balance.wallet.Delete(key)
+		}
+
+		return true
+	})
+
+	for asset, amount := range totals {
+		balance.wallet.Store(asset, amount)
+	}
+}
+
+/*
+Assets exposes the wallet as a plain per-coin map.
+
+Everything the account holds other than the quote currency is a position, so
+callers reconciling lots against the venue read the wallet directly rather than
+inferring inventory from anywhere else.
+*/
+func (balance *Balance) Assets() map[string]*decimal.Decimal {
+	assets := map[string]*decimal.Decimal{}
+
+	balance.wallet.Range(func(key, value any) bool {
+		asset, ok := key.(string)
+
+		if !ok {
+			return true
+		}
+
+		amount, ok := value.(*decimal.Decimal)
+
+		if !ok || amount == nil {
+			return true
+		}
+
+		assets[asset] = amount
+
+		return true
+	})
+
+	return assets
+}
+
+/*
+Cash reports the quote balance exactly as the exchange last stated it.
+*/
 func (balance *Balance) Cash() (*decimal.Decimal, error) {
 	found, ok := balance.wallet.Load(balance.quote)
 
@@ -105,44 +168,4 @@ func (balance *Balance) Cash() (*decimal.Decimal, error) {
 	}
 
 	return cash, nil
-}
-
-func (balance *Balance) Reserve(amount *decimal.Decimal) error {
-	if amount == nil || amount.Sign() <= 0 {
-		return nil
-	}
-
-	cash, err := balance.Cash()
-	if err != nil || cash == nil || cash.Sign() <= 0 {
-		return err
-	}
-
-	if cash.Cmp(amount) < 0 {
-		return errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"insufficient cash to reserve",
-			nil,
-		))
-	}
-
-	newCash := cash.Sub(amount)
-	balance.wallet.Store(balance.quote, newCash)
-
-	return nil
-}
-
-func (balance *Balance) Release(amount *decimal.Decimal) error {
-	if amount == nil || amount.Sign() <= 0 {
-		return nil
-	}
-
-	cash, err := balance.Cash()
-	if err != nil || cash == nil || cash.Sign() < 0 {
-		return err
-	}
-
-	newCash := cash.Add(amount)
-	balance.wallet.Store(balance.quote, newCash)
-
-	return nil
 }
