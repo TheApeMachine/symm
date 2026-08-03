@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/tests/fixtures/book"
 	executionfixture "github.com/theapemachine/symm/tests/fixtures/execution"
@@ -56,6 +57,7 @@ type Market struct {
 	Thesis       *types.Thesis
 	Desk         *broker.Desk
 	Planner      *strategy.Planner
+	Analyzer     *logic.Analyzer
 	generators   map[string]*signal.Generator
 	decisions    []types.Decision
 	measurements map[string][]*types.Measurement
@@ -232,6 +234,7 @@ func newMarket(
 	market.collectDecisions()
 	market.Desk = market.system.Desk
 	market.Planner = market.system.Planner
+	market.Analyzer = market.system.Analyzer
 
 	return market
 }

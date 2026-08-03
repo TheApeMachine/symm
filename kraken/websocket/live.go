@@ -67,6 +67,8 @@ type Live struct {
 	level3      *sync.Map
 	book        *Book
 	symbols     []string
+	publicMu    sync.RWMutex
+	public      map[string][][]string
 	auth        bool
 	nonce       *AuthNonce
 	nonceErr    error
@@ -148,6 +150,7 @@ func NewWithClient(
 		auth:        auth,
 		subscribers: &sync.Map{},
 		callbacks:   &sync.Map{},
+		public:      make(map[string][][]string),
 		paper:       NewPaper(ctx, NewSimulator()),
 		model:       viper.GetViper().GetString("trading.model"),
 	}
@@ -278,6 +281,8 @@ func NewWithClient(
 			return
 		}
 
+		live.restorePublicSubscriptions()
+
 		live.statusMu.Lock()
 		live.status = types.READY
 		live.statusMu.Unlock()
@@ -314,6 +319,10 @@ func NewWithClient(
 					live.statusMu.Unlock()
 					return
 				}
+			}
+
+			if endpoint == Level3WebSocketURL {
+				live.restoreLevel3Subscription()
 			}
 
 			live.statusMu.Lock()
@@ -414,10 +423,91 @@ func (live *Live) SubInstrument(callback types.Subscription[any]) {
 	})
 }
 
-func (live *Live) SubTicker(symbols []string)  { live.client.SubTicker(symbols) }
-func (live *Live) SubBook(symbols []string)    { live.client.SubBook(symbols, 10) }
-func (live *Live) SubTrades(symbols []string)  { live.client.SubTrades(symbols) }
-func (live *Live) SubCandles(symbols []string) { live.client.SubCandles(symbols) }
+func (live *Live) SubTicker(symbols []string) {
+	live.rememberPublicSubscription("ticker", symbols)
+	errnie.Error(live.client.SubTicker(symbols))
+}
+
+func (live *Live) SubBook(symbols []string) {
+	live.rememberPublicSubscription("book", symbols)
+	errnie.Error(live.client.SubBook(symbols, 10))
+}
+
+func (live *Live) SubTrades(symbols []string) {
+	live.rememberPublicSubscription("trade", symbols)
+	errnie.Error(live.client.SubTrades(symbols))
+}
+
+func (live *Live) SubCandles(symbols []string) {
+	live.rememberPublicSubscription("ohlc", symbols)
+	errnie.Error(live.client.SubCandles(symbols))
+}
+
+func (live *Live) rememberPublicSubscription(channel string, symbols []string) {
+	live.publicMu.Lock()
+	defer live.publicMu.Unlock()
+
+	batch := make([]string, 0, len(symbols))
+
+	for _, candidate := range symbols {
+		known := false
+
+		for _, remembered := range live.public[channel] {
+			if slices.Contains(remembered, candidate) {
+				known = true
+				break
+			}
+		}
+
+		if !known {
+			batch = append(batch, candidate)
+		}
+	}
+
+	if len(batch) > 0 {
+		live.public[channel] = append(live.public[channel], batch)
+	}
+}
+
+func (live *Live) restorePublicSubscriptions() {
+	live.publicMu.RLock()
+	subscriptions := make(map[string][][]string, len(live.public))
+
+	for channel, batches := range live.public {
+		for _, batch := range batches {
+			subscriptions[channel] = append(
+				subscriptions[channel],
+				append([]string{}, batch...),
+			)
+		}
+	}
+	live.publicMu.RUnlock()
+
+	for channel, batches := range subscriptions {
+		for _, batch := range batches {
+			switch channel {
+			case "ticker":
+				errnie.Error(live.client.SubTicker(batch))
+			case "book":
+				errnie.Error(live.client.SubBook(batch, 10))
+			case "trade":
+				errnie.Error(live.client.SubTrades(batch))
+			case "ohlc":
+				errnie.Error(live.client.SubCandles(batch))
+			}
+		}
+	}
+}
+
+func (live *Live) restoreLevel3Subscription() {
+	if len(live.symbols) == 0 {
+		return
+	}
+
+	for symbols := range slices.Chunk(live.symbols, 40) {
+		errnie.Error(live.client.SubL3(symbols, viper.GetInt("market.l3_depth")))
+	}
+}
 
 func (live *Live) SubL3(symbols []string) {
 	if live.level3 == nil {
@@ -441,6 +531,7 @@ func (live *Live) SubL3(symbols []string) {
 
 		groupKey := strings.Join(groups, "|")
 		live.level3.Store(groupKey, conn)
+		conn.symbols = append([]string{}, groups...)
 
 		for group := range slices.Chunk(groups, 40) {
 			errnie.Info(fmt.Sprintf(

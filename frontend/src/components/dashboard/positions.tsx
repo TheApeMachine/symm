@@ -32,7 +32,8 @@ export const Positions = () => (
               to work out the sign for themselves.
             */}
             <Flex.Column
-              data-set="holding.tone_color"
+              data-set="holding.pnl"
+              data-set-scale="sign-color"
               data-target="style.--pnl"
               className="gap-0"
             >
@@ -54,10 +55,10 @@ export const Positions = () => (
                   entry{" "}
                   <span
                     data-paint="holding.entry_price"
-                    data-paint-format=".3f"
+                    data-paint-format=".6f"
                   />{" "}
                   / mark{" "}
-                  <span data-paint="holding.mark" data-paint-format=".3f" />
+                  <span data-paint="holding.mark" data-paint-format=".6f" />
                 </Typography.Span>
                 <Typography.Span
                   data-paint="holding.return_pct"
@@ -68,22 +69,30 @@ export const Positions = () => (
 
               <div className="relative mt-1.5 h-0.75 overflow-visible rounded-full bg-[color-mix(in_srgb,var(--f4)_18%,transparent)]">
                 <div
-                  data-set="holding.floor_pct"
+                  data-set="holding.stoploss.floor"
+                  data-set-domain="holding.entry_price,holding.mark,holding.stoploss.floor,holding.stoploss.peak"
+                  data-set-scale="domain-percent"
                   data-target="style.left"
                   className="pointer-events-none absolute top-1/2 h-3 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[color-mix(in_srgb,var(--down)_55%,transparent)]"
                 />
                 <div
-                  data-set="holding.peak_pct"
+                  data-set="holding.stoploss.peak"
+                  data-set-domain="holding.entry_price,holding.mark,holding.stoploss.floor,holding.stoploss.peak"
+                  data-set-scale="domain-percent"
                   data-target="style.left"
                   className="pointer-events-none absolute top-1/2 h-3 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[color-mix(in_srgb,var(--up)_55%,transparent)]"
                 />
                 <div
-                  data-set="holding.entry_pct"
+                  data-set="holding.entry_price"
+                  data-set-domain="holding.entry_price,holding.mark,holding.stoploss.floor,holding.stoploss.peak"
+                  data-set-scale="domain-percent"
                   data-target="style.left"
                   className="pointer-events-none absolute top-1/2 h-1.5 w-px -translate-x-1/2 -translate-y-1/2 bg-[color-mix(in_srgb,var(--f4)_55%,transparent)]"
                 />
                 <div
-                  data-set="holding.mark_pct"
+                  data-set="holding.mark"
+                  data-set-domain="holding.entry_price,holding.mark,holding.stoploss.floor,holding.stoploss.peak"
+                  data-set-scale="domain-percent"
                   data-target="style.left"
                   className="pointer-events-none absolute top-1/2 h-1.75 w-1.75 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[color-mix(in_srgb,var(--surface)_70%,transparent)] bg-(--f1)"
                 />
@@ -94,7 +103,7 @@ export const Positions = () => (
                   floor{" "}
                   <span
                     data-paint="holding.stoploss.floor"
-                    data-paint-format=".3f"
+                    data-paint-format=".6f"
                   />
                 </Typography.Span>
                 <Typography.Span>
@@ -104,7 +113,7 @@ export const Positions = () => (
                   peak{" "}
                   <span
                     data-paint="holding.stoploss.peak"
-                    data-paint-format=".3f"
+                    data-paint-format=".6f"
                   />
                 </Typography.Span>
               </Flex.Row>

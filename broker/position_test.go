@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/tests"
 	executionfixture "github.com/theapemachine/symm/tests/fixtures/execution"
@@ -94,6 +95,61 @@ func TestPositionOnExecution(t *testing.T) {
 				So(position.Holding.Status, ShouldEqual, types.CLOSED)
 				So(position.Holding.SellableQty.Sign(), ShouldEqual, 0)
 				So(market.Desk.OpenPositions(), ShouldEqual, 0)
+			})
+
+			Convey("Split fills should accumulate each execution fee exactly once", func() {
+				firstBuy := executionfixture.BuyFill()
+				firstBuy.ClientOrderID = decision.ID
+				firstBuy.Symbol = decision.Symbol
+				firstBuy.ExecID = "entry-fill-one"
+				firstBuy.OrderStatus = "partially_filled"
+				firstBuy.LastQty = "0.10"
+				firstBuy.CumQty = "0.10"
+				firstBuy.AvgPrice = "100"
+				firstBuy.FeeUsdEquiv = "0.026"
+				market.Private.Publish("executions", executionfixture.Frame(firstBuy))
+				market.Tick()
+
+				secondBuy := firstBuy
+				secondBuy.ExecID = "entry-fill-two"
+				secondBuy.OrderStatus = "filled"
+				secondBuy.LastQty = "0.15"
+				secondBuy.CumQty = "0.25"
+				secondBuy.FeeUsdEquiv = "0.039"
+				market.Private.Publish("executions", executionfixture.Frame(secondBuy))
+				market.Private.Publish("executions", executionfixture.Frame(secondBuy))
+				market.Tick()
+
+				position = slices.Collect(market.Desk.Positions())[0]
+				expectedFee, err := decimal.NewFromString("0.065")
+				So(err, ShouldBeNil)
+				So(position.Holding.EntryFee.Cmp(expectedFee), ShouldEqual, 0)
+
+				exitID := uuid.NewString()
+				So(market.Desk.Execute([]types.Decision{{
+					ID:     exitID,
+					Action: types.ActionExit,
+					Symbol: decision.Symbol,
+				}}), ShouldBeNil)
+
+				firstSell := executionfixture.ExitFill()
+				firstSell.ClientOrderID = exitID
+				firstSell.Symbol = decision.Symbol
+				firstSell.ExecID = "exit-fill-one"
+				firstSell.OrderStatus = "partially_filled"
+				firstSell.FeeUsdEquiv = "0.030"
+				market.Private.Publish("executions", executionfixture.Frame(firstSell))
+
+				secondSell := firstSell
+				secondSell.ExecID = "exit-fill-two"
+				secondSell.OrderStatus = "filled"
+				secondSell.FeeUsdEquiv = "0.035"
+				market.Private.Publish("executions", executionfixture.Frame(secondSell))
+				market.Private.Publish("executions", executionfixture.Frame(secondSell))
+				market.Tick()
+
+				position = slices.Collect(market.Desk.Positions())[0]
+				So(position.Holding.ExitFee.Cmp(expectedFee), ShouldEqual, 0)
 			})
 		}))
 	})

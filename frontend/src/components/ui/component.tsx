@@ -64,10 +64,16 @@ type PaintDataset = DOMStringMap & {
 	paintSuffix?: string;
 	set?: string;
 	setScale?: string;
+	setDomain?: string;
 	append?: string;
 	appendLimit?: string;
 	appendWidth?: string;
 	appendHeight?: string;
+	streamFilter?: string;
+	streamId?: string;
+	streamValue?: string;
+	streamValues?: string;
+	streamLastId?: string;
 	target?: string;
 	scope?: string;
 	filter?: string;
@@ -80,17 +86,20 @@ type PaintBinding = {
 	key: string;
 	element: HTMLElement;
 	dataset: PaintDataset;
-	mode: "paint" | "set" | "append";
+	mode: "paint" | "set" | "append" | "stream";
 };
 
 const scanTargets = (root: HTMLElement) => {
 	const rootTargets = new Map<string, PaintBinding[]>();
 
 	for (const element of root.querySelectorAll<HTMLElement>(
-		"[data-paint], [data-set], [data-append]",
+		"[data-paint], [data-set], [data-append], [data-stream-value]",
 	)) {
 		const key =
-			element.dataset.paint ?? element.dataset.set ?? element.dataset.append;
+			element.dataset.paint ??
+			element.dataset.set ??
+			element.dataset.append ??
+			element.dataset.streamValue;
 
 		if (!key) {
 			continue;
@@ -116,11 +125,13 @@ const scanTargets = (root: HTMLElement) => {
 			key,
 			element,
 			dataset,
-			mode: element.dataset.append
-				? "append"
-				: element.dataset.set
-					? "set"
-					: "paint",
+			mode: element.dataset.streamValue
+				? "stream"
+				: element.dataset.append
+					? "append"
+					: element.dataset.set
+						? "set"
+						: "paint",
 		});
 	}
 
@@ -372,7 +383,57 @@ const scaleSetValue = (
 	value: JSONSerializable,
 	dataset: PaintDataset,
 	updates: JSONSerializable,
+	scopedUpdates: JSONSerializable,
 ): JSONSerializable => {
+	if (dataset.setScale === "sign-color") {
+		const numericValue = Number(value);
+
+		if (!Number.isFinite(numericValue)) {
+			return "var(--f3)";
+		}
+
+		if (numericValue > 0) {
+			return "var(--up)";
+		}
+
+		if (numericValue < 0) {
+			return "var(--down)";
+		}
+
+		return "var(--f3)";
+	}
+
+	if (dataset.setScale === "domain-percent") {
+		const numericValue = Number(value);
+
+		if (!Number.isFinite(numericValue) || !dataset.setDomain) {
+			return value;
+		}
+
+		const values = dataset.setDomain
+			.split(",")
+			.map((path) => Number(readPath(scopedUpdates, path.trim())))
+			.filter(Number.isFinite);
+
+		if (values.length < 2) {
+			return value;
+		}
+
+		const low = Math.min(...values);
+		const high = Math.max(...values);
+
+		if (!(high > low)) {
+			return "50%";
+		}
+
+		const pad = Math.max((high - low) * 0.15, 1e-6);
+		const domainLow = low - pad;
+		const domainHigh = high + pad;
+		const percent = ((numericValue - domainLow) / (domainHigh - domainLow)) * 100;
+
+		return `${Math.min(100, Math.max(0, percent)).toFixed(3)}%`;
+	}
+
 	if (dataset.setScale !== "max-abs") {
 		return value;
 	}
@@ -459,6 +520,141 @@ const appendTargetValue = (
 	);
 };
 
+const streamMatchesFilter = (
+	entry: JSONSerializable,
+	filter: string | undefined,
+): boolean => {
+	if (!filter) {
+		return true;
+	}
+
+	const separator = filter.indexOf("=");
+
+	if (separator === -1) {
+		return false;
+	}
+
+	const path = filter.slice(0, separator).trim();
+	const expected = filter.slice(separator + 1).trim();
+
+	return String(readPath(entry, path)) === expected;
+};
+
+const streamEntries = (
+	updates: JSONSerializable,
+	dataset: PaintDataset,
+): JSONSerializable[] => {
+	const entries = Array.isArray(updates) ? updates : [updates];
+
+	return entries.filter((entry) => streamMatchesFilter(entry, dataset.streamFilter));
+};
+
+const drawStreamCanvas = (
+	element: HTMLElement,
+	dataset: PaintDataset,
+	updates: JSONSerializable,
+): void => {
+	if (!(element instanceof HTMLCanvasElement)) {
+		return;
+	}
+
+	const width = Math.max(1, element.clientWidth);
+	const height = Math.max(1, element.clientHeight);
+	const ratio = window.devicePixelRatio || 1;
+
+	if (
+		element.width !== Math.floor(width * ratio) ||
+		element.height !== Math.floor(height * ratio)
+	) {
+		element.width = Math.floor(width * ratio);
+		element.height = Math.floor(height * ratio);
+	}
+
+	const context = element.getContext("2d");
+
+	if (context === null) {
+		return;
+	}
+
+	const values = (element.dataset.streamValues ?? "")
+		.split(",")
+		.filter(Boolean)
+		.map(Number)
+		.filter(Number.isFinite);
+
+	for (const entry of streamEntries(updates, dataset)) {
+		const identity = dataset.streamId ? readPath(entry, dataset.streamId) : undefined;
+
+		if (identity !== undefined && String(identity) === element.dataset.streamLastId) {
+			continue;
+		}
+
+		const value = Number(readPath(entry, dataset.streamValue));
+
+		if (!Number.isFinite(value)) {
+			continue;
+		}
+
+		if (identity !== undefined) {
+			element.dataset.streamLastId = String(identity);
+		}
+
+		values.push(value);
+	}
+
+	const limit = Number.parseInt(dataset.appendLimit ?? "96", 10);
+
+	if (Number.isInteger(limit) && limit > 1 && values.length > limit) {
+		values.splice(0, values.length - limit);
+	}
+
+	element.dataset.streamValues = values.join(",");
+	context.setTransform(ratio, 0, 0, ratio, 0, 0);
+	context.clearRect(0, 0, width, height);
+
+	const styles = getComputedStyle(element);
+	const line = styles.getPropertyValue("--line").trim() || "#2b251e";
+	const accent = styles.getPropertyValue("--acc").trim() || "#e8a33d";
+	const denominator = values.reduce(
+		(maximum, value) => Math.max(maximum, Math.abs(value)),
+		0,
+	);
+
+	context.strokeStyle = line;
+	context.lineWidth = 1;
+
+	for (let index = 0; index <= 4; index += 1) {
+		const y = 12 + index * ((height - 24) / 4);
+		context.beginPath();
+		context.moveTo(14, y);
+		context.lineTo(width - 14, y);
+		context.stroke();
+	}
+
+	if (values.length < 2 || denominator <= 0) {
+		return;
+	}
+
+	context.strokeStyle = accent;
+	context.lineWidth = 1.8;
+	context.beginPath();
+
+	for (const [index, value] of values.entries()) {
+		const x = 14 + (index / Math.max(values.length - 1, 1)) * (width - 28);
+		const normalized = Math.min(1, Math.max(0, value / denominator));
+		const y = height - 12 - normalized * (height - 24);
+
+		if (index === 0) {
+			context.moveTo(x, y);
+			continue;
+		}
+
+		context.lineTo(x, y);
+	}
+
+	context.stroke();
+};
+
 const updateTargets = (
 	targets: Map<string, PaintBinding[]>,
 	updates: JSONSerializable,
@@ -469,6 +665,11 @@ const updateTargets = (
 
 	for (const [key, targetsByKey] of targets) {
 		for (const target of targetsByKey) {
+			if (target.mode === "stream") {
+				drawStreamCanvas(target.element, target.dataset, updates);
+				continue;
+			}
+
 			const scopedUpdates = selectScopedUpdates(updates, target.dataset);
 
 			if (scopedUpdates === undefined || scopedUpdates === null) {
@@ -485,7 +686,7 @@ const updateTargets = (
 				setTargetValue(
 					target.element,
 					target.dataset.target,
-					scaleSetValue(value, target.dataset, updates),
+					scaleSetValue(value, target.dataset, updates, scopedUpdates),
 				);
 				continue;
 			}

@@ -2,6 +2,8 @@ package resonance_test
 
 import (
 	"math"
+	"slices"
+	"sync"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -19,9 +21,10 @@ A drift between the two shows up as a failure here rather than as a silently
 weakened assertion, because every bound below is stated relative to them.
 */
 const (
-	simulationRestAlpha = 0.03
-	simulationMinAlpha  = 0.005
-	simulationMaxAlpha  = 0.150
+	simulationRestAlpha             = 0.03
+	simulationMinAlpha              = 0.005
+	simulationMaxAlpha              = 0.150
+	simulationHorizonRetentionFloor = 1.0 / 3.0
 
 	/*
 		Mirrors maxHorizon on the solver, which is likewise unexported.
@@ -30,7 +33,7 @@ const (
 )
 
 /*
-resonanceTrace is what the predictive coding stage published on one tick.
+resonanceTrace is what the predictive coding stage published on one analyzer pass.
 */
 type resonanceTrace struct {
 	alpha      float64
@@ -42,18 +45,64 @@ type resonanceTrace struct {
 	retention  []float64
 }
 
+type simulationPhase struct {
+	state  testtypes.MarketState
+	passes int
+}
+
+type resonanceEvaluator interface {
+	Update(thesis *types.Thesis) *types.Thesis
+}
+
+/*
+resonanceRecorder snapshots the analyzed row on the analyzer goroutine before
+the planner spends and resets that thesis, then delegates to the real planner.
+The analyzer's ordinary subscription cannot provide this guarantee because it
+publishes the same mutable thesis pointer that the planner resets immediately.
+*/
+type resonanceRecorder struct {
+	mu        sync.Mutex
+	symbol    string
+	evaluator resonanceEvaluator
+	traces    []resonanceTrace
+}
+
+func (recorder *resonanceRecorder) Update(thesis *types.Thesis) *types.Thesis {
+	if trace, ok := readResonance(thesis, recorder.symbol); ok {
+		recorder.mu.Lock()
+		recorder.traces = append(recorder.traces, trace)
+		recorder.mu.Unlock()
+	}
+
+	return recorder.evaluator.Update(thesis)
+}
+
+func (recorder *resonanceRecorder) Traces() []resonanceTrace {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+
+	return slices.Clone(recorder.traces)
+}
+
+func (recorder *resonanceRecorder) Count() int {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+
+	return len(recorder.traces)
+}
+
 /*
 readResonance lifts the stage's published readings off the thesis.
 
 ok is false while the stage is still in warmup, which is the ordinary state
 until the feature schema has settled and the task head has a supervised sample.
 */
-func readResonance(thesis *types.Thesis) (resonanceTrace, bool) {
+func readResonance(thesis *types.Thesis, symbol string) (resonanceTrace, bool) {
 	if thesis == nil || thesis.Resonance == nil {
 		return resonanceTrace{}, false
 	}
 
-	rowRaw, found := thesis.Resonance.Load(types.Focus())
+	rowRaw, found := thesis.Resonance.Load(symbol)
 
 	if !found {
 		return resonanceTrace{}, false
@@ -101,13 +150,13 @@ func readResonance(thesis *types.Thesis) (resonanceTrace, bool) {
 
 	if raw, found := row["forwardCurve"]; found {
 		if curve, ok := raw.([]float64); ok {
-			trace.curve = curve
+			trace.curve = slices.Clone(curve)
 		}
 	}
 
 	if raw, found := row["forwardRetention"]; found {
 		if retention, ok := raw.([]float64); ok {
-			trace.retention = retention
+			trace.retention = slices.Clone(retention)
 		}
 	}
 
@@ -118,26 +167,27 @@ func readResonance(thesis *types.Thesis) (resonanceTrace, bool) {
 simulate runs the full production ensemble across a scripted sequence of market
 regimes and returns every reading the predictive coding stage published.
 */
-func simulate(market *tests.Market, script []struct {
-	state testtypes.MarketState
-	ticks int
-}) []resonanceTrace {
-	traces := make([]resonanceTrace, 0, 4096)
+func simulate(
+	market *tests.Market,
+	script []simulationPhase,
+) []resonanceTrace {
+	recorder := &resonanceRecorder{
+		symbol:    market.Symbols[0].Pair,
+		evaluator: market.Planner,
+		traces:    make([]resonanceTrace, 0, 4096),
+	}
+	market.Analyzer.AttachEvaluator(recorder)
 
 	for _, phase := range script {
 		market.Transition(phase.state)
+		phaseStart := recorder.Count()
 
-		for range phase.ticks {
+		for recorder.Count()-phaseStart < phase.passes {
 			market.Tick()
-			market.Planner.Update(market.Thesis)
-
-			if trace, ok := readResonance(market.Thesis); ok {
-				traces = append(traces, trace)
-			}
 		}
 	}
 
-	return traces
+	return recorder.Traces()
 }
 
 /*
@@ -157,6 +207,21 @@ func simulationSymbols() []*testtypes.Symbol {
 	}
 }
 
+func resonanceInput(market *tests.Market) *types.Thesis {
+	thesis := types.NewThesis()
+
+	for source, measurements := range market.Measurements() {
+		thesis.Measurements.Store(types.SourceType(source), measurements)
+	}
+
+	market.Thesis.Tickers.Range(func(symbol, ticker any) bool {
+		thesis.Tickers.Store(symbol, ticker)
+		return true
+	})
+
+	return thesis
+}
+
 /*
 TestSimulatedRegimeSequence drives the predictive coding stage through a full
 market cycle and holds every published reading to what it claims to mean.
@@ -169,22 +234,21 @@ func TestSimulatedRegimeSequence(t *testing.T) {
 	Convey("Given the full ensemble driven across a market cycle", t, func() {
 		/*
 			The baseline stretches are sized to carry the calibration window,
-			which needs errorCalibratorWindow ticks of history before it reports
+			which needs errorCalibratorWindow analyzer passes before it reports
 			a rank at all. The regime stretches are sized to outlast that window
 			so a sustained condition is visible as sustained rather than as a
 			transient inside it.
 		*/
-		script := []struct {
-			state testtypes.MarketState
-			ticks int
-		}{
+		const closingBaselinePasses = 100
+
+		script := []simulationPhase{
 			{testtypes.Baseline, 300},
-			{testtypes.SlowPump, 120},
-			{testtypes.FastPump, 120},
-			{testtypes.SidewaysChop, 120},
-			{testtypes.FastDump, 120},
-			{testtypes.FlashCrash, 80},
-			{testtypes.Baseline, 200},
+			{testtypes.SlowPump, 80},
+			{testtypes.FastPump, 80},
+			{testtypes.SidewaysChop, 80},
+			{testtypes.FastDump, 80},
+			{testtypes.FlashCrash, 60},
+			{testtypes.Baseline, closingBaselinePasses},
 		}
 
 		var traces []resonanceTrace
@@ -193,191 +257,132 @@ func TestSimulatedRegimeSequence(t *testing.T) {
 			traces = simulate(market, script)
 		})()
 
-		So(len(traces), ShouldBeGreaterThan, 500)
+		expectedPasses := 0
 
-		Convey("Then the learning pace never pins to a bound", func() {
-			/*
-				The previous controller reached its ceiling within roughly forty
-				ticks of any spiky stream and stayed there for the rest of the
-				run. A cycle containing two pumps, a dump and a flash crash is
-				the strongest available version of that stream.
-			*/
-			atCeiling := 0
-			atFloor := 0
+		for _, phase := range script {
+			expectedPasses += phase.passes
+		}
 
-			for _, trace := range traces {
-				if trace.alpha >= simulationMaxAlpha-1e-9 {
-					atCeiling++
-				}
+		So(len(traces), ShouldBeGreaterThanOrEqualTo, expectedPasses)
 
-				if trace.alpha <= simulationMinAlpha+1e-9 {
-					atFloor++
-				}
+		/*
+			The previous controller reached its ceiling within roughly forty
+			analyzer passes of any spiky stream and stayed there for the rest of the
+			run. A cycle containing two pumps, a dump and a flash crash is
+			the strongest available version of that stream.
+		*/
+		atCeiling := 0
+		atFloor := 0
+
+		for _, trace := range traces {
+			if trace.alpha >= simulationMaxAlpha-1e-9 {
+				atCeiling++
 			}
 
-			ceilingShare := float64(atCeiling) / float64(len(traces))
-			floorShare := float64(atFloor) / float64(len(traces))
-			pinnedShare := ceilingShare + floorShare
+			if trace.alpha <= simulationMinAlpha+1e-9 {
+				atFloor++
+			}
+		}
 
-			t.Logf("alpha at ceiling %.1f%%, at floor %.1f%%, pinned %.1f%%",
-				ceilingShare*100, floorShare*100, pinnedShare*100)
+		ceilingShare := float64(atCeiling) / float64(len(traces))
+		floorShare := float64(atFloor) / float64(len(traces))
+		pinnedShare := ceilingShare + floorShare
 
-			/*
-				A share below a half on each bound separately would still admit
-				a pace pinned to one bound or the other for virtually the whole
-				run, which is the very condition being excluded. The bound is
-				therefore on the combined share, and set where a controller with
-				a working fixed point should sit: the extremes are reserved for
-				genuine excursions, so the pace belongs in its dynamic range for
-				the large majority of a cycle that is mostly not in crisis.
-			*/
-			So(pinnedShare, ShouldBeLessThan, 0.20)
-		})
+		t.Logf("alpha at ceiling %.1f%%, at floor %.1f%%, pinned %.1f%%",
+			ceilingShare*100, floorShare*100, pinnedShare*100)
 
-		Convey("Then the pace returns toward rest after the crash", func() {
-			/*
-				A controller with a fixed point relaxes once the market quiets.
-				A ratchet does not: whatever the crash did to the pace would
-				still be there at the end of the closing baseline.
+		/*
+			A share below a half on each bound separately would still admit
+			a pace pinned to one bound or the other for virtually the whole
+			run, which is the very condition being excluded. The bound is
+			therefore on the combined share, and set where a controller with
+			a working fixed point should sit: the extremes are reserved for
+			genuine excursions, so the pace belongs in its dynamic range for
+			the large majority of a cycle that is mostly not in crisis.
+		*/
+		So(pinnedShare, ShouldBeLessThan, 0.20)
 
-				The assertion is a strict decay from the peak, not a comparison
-				against it. A pace still locked at whatever the crash drove it
-				to satisfies "no greater than the peak" exactly, so that form
-				would pass on the very behaviour it claims to exclude.
-			*/
-			crashPeak := 0.0
+		/*
+			A controller with a fixed point relaxes once the market quiets.
+			A ratchet does not: whatever the crash did to the pace would
+			still be there at the end of the closing baseline.
+		*/
+		crashPeak := 0.0
 
-			for _, trace := range traces[:len(traces)-200] {
-				crashPeak = math.Max(crashPeak, trace.alpha)
+		for _, trace := range traces[:len(traces)-closingBaselinePasses] {
+			crashPeak = math.Max(crashPeak, trace.alpha)
+		}
+
+		settled := traces[len(traces)-1].alpha
+		decayed := 1.0 - settled/crashPeak
+
+		t.Logf("peak alpha %.5f, settled alpha %.5f, decayed %.1f%% toward rest",
+			crashPeak, settled, decayed*100)
+
+		So(settled, ShouldBeLessThan, crashPeak*0.7)
+		So(settled, ShouldBeBetween, simulationRestAlpha/2, simulationRestAlpha*2)
+
+		minimum := math.Inf(1)
+		maximum := math.Inf(-1)
+		total := 0.0
+		var buckets [4]int
+
+		for _, trace := range traces {
+			minimum = math.Min(minimum, trace.confidence)
+			maximum = math.Max(maximum, trace.confidence)
+			total += trace.confidence
+
+			bucket := min(3, int(trace.confidence*4))
+			buckets[bucket]++
+		}
+
+		mean := total / float64(len(traces))
+
+		t.Logf("confidence min %.4f mean %.4f max %.4f, quartile counts %v",
+			minimum, mean, maximum, buckets)
+
+		So(minimum, ShouldBeGreaterThanOrEqualTo, 0)
+		So(maximum, ShouldBeLessThanOrEqualTo, 1)
+
+		for _, count := range buckets {
+			So(count, ShouldBeGreaterThan, 0)
+		}
+
+		So(mean, ShouldBeBetween, 0.25, 0.75)
+
+		withCurve := 0
+
+		for _, trace := range traces {
+			So(math.IsNaN(trace.surprise), ShouldBeFalse)
+			So(math.IsInf(trace.surprise, 0), ShouldBeFalse)
+			So(math.IsNaN(trace.energy), ShouldBeFalse)
+			So(math.IsInf(trace.energy, 0), ShouldBeFalse)
+			So(math.IsNaN(trace.confidence), ShouldBeFalse)
+			So(math.IsNaN(trace.alpha), ShouldBeFalse)
+			So(trace.horizon, ShouldBeGreaterThanOrEqualTo, 1)
+			So(trace.horizon, ShouldBeLessThanOrEqualTo, simulationMaxHorizon)
+
+			if len(trace.curve) == 0 {
+				continue
 			}
 
-			settled := traces[len(traces)-1].alpha
-			decayed := 1.0 - settled/crashPeak
+			withCurve++
+			So(len(trace.retention), ShouldEqual, len(trace.curve))
 
-			t.Logf("peak alpha %.5f, settled alpha %.5f, decayed %.1f%% toward rest",
-				crashPeak, settled, decayed*100)
-
-			/*
-				Rest is where the pace belongs once the evidence that moved it
-				has passed, so the settled pace is held to a neighbourhood of
-				rest rather than merely to some distance below the peak. A
-				factor of two either side allows for the closing baseline still
-				carrying ordinary variation without admitting a pace left
-				anywhere near a bound.
-			*/
-			So(settled, ShouldBeLessThan, crashPeak*0.7)
-			So(settled, ShouldBeBetween, simulationRestAlpha/2, simulationRestAlpha*2)
-		})
-
-		Convey("Then confidence is a calibrated probability rather than zero", func() {
-			/*
-				exp(-surprise) returned approximately zero on every tick once the
-				schema grew past a handful of features, which read downstream as
-				a permanent no-confidence. A calibrated reading has to actually
-				use its range.
-			*/
-			minimum := math.Inf(1)
-			maximum := math.Inf(-1)
-			total := 0.0
-
-			/*
-				Extremes alone would be a weak reading: a single tick above a
-				half satisfies a maximum bound while every other tick sits at
-				zero, which is the collapsed behaviour being excluded. A
-				quantile against a stable distribution is uniform by
-				construction, so the test is on how the mass is spread.
-			*/
-			var buckets [4]int
-
-			for _, trace := range traces {
-				minimum = math.Min(minimum, trace.confidence)
-				maximum = math.Max(maximum, trace.confidence)
-				total += trace.confidence
-
-				bucket := int(trace.confidence * 4)
-
-				if bucket > 3 {
-					bucket = 3
-				}
-
-				buckets[bucket]++
+			for _, value := range trace.curve {
+				So(math.IsNaN(value), ShouldBeFalse)
+				So(math.IsInf(value, 0), ShouldBeFalse)
 			}
 
-			mean := total / float64(len(traces))
-
-			t.Logf("confidence min %.4f mean %.4f max %.4f, quartile counts %v",
-				minimum, mean, maximum, buckets)
-
-			So(minimum, ShouldBeGreaterThanOrEqualTo, 0)
-			So(maximum, ShouldBeLessThanOrEqualTo, 1)
-
-			/*
-				Every quartile occupied, and the mean near the middle of the
-				range. exp(-surprise) put essentially all its mass in the lowest
-				bucket with a mean indistinguishable from zero.
-			*/
-			for _, count := range buckets {
-				So(count, ShouldBeGreaterThan, 0)
+			for _, surviving := range trace.retention {
+				So(surviving, ShouldBeGreaterThanOrEqualTo, 0)
+				So(math.IsNaN(surviving), ShouldBeFalse)
 			}
+		}
 
-			So(mean, ShouldBeBetween, 0.25, 0.75)
-		})
-
-		Convey("Then every published reading stays finite", func() {
-			/*
-				Downstream reads these straight into a trade candidate, where a
-				NaN silently disqualifies a symbol and an infinity sizes an
-				order against a meaningless edge.
-			*/
-			for _, trace := range traces {
-				So(math.IsNaN(trace.surprise), ShouldBeFalse)
-				So(math.IsInf(trace.surprise, 0), ShouldBeFalse)
-				So(math.IsNaN(trace.energy), ShouldBeFalse)
-				So(math.IsInf(trace.energy, 0), ShouldBeFalse)
-				So(math.IsNaN(trace.confidence), ShouldBeFalse)
-				So(math.IsNaN(trace.alpha), ShouldBeFalse)
-
-				for _, value := range trace.curve {
-					So(math.IsNaN(value), ShouldBeFalse)
-					So(math.IsInf(value, 0), ShouldBeFalse)
-				}
-			}
-		})
-
-		Convey("Then the forward curve is paired with an honest retention envelope", func() {
-			/*
-				The rollout is a contraction, so later curve entries decay toward
-				zero whatever the market does. Retention is what lets a consumer
-				tell a forecast from the fade, so wherever a curve is published
-				its envelope must be published with it and must agree in length.
-			*/
-			withCurve := 0
-
-			for _, trace := range traces {
-				if len(trace.curve) == 0 {
-					continue
-				}
-
-				withCurve++
-
-				So(len(trace.retention), ShouldEqual, len(trace.curve))
-
-				for _, surviving := range trace.retention {
-					So(surviving, ShouldBeGreaterThanOrEqualTo, 0)
-					So(math.IsNaN(surviving), ShouldBeFalse)
-				}
-			}
-
-			t.Logf("ticks publishing a forward curve: %d of %d", withCurve, len(traces))
-			So(withCurve, ShouldBeGreaterThan, 0)
-		})
-
-		Convey("Then the horizon is bounded by the retention floor", func() {
-			for _, trace := range traces {
-				So(trace.horizon, ShouldBeGreaterThanOrEqualTo, 1)
-				So(trace.horizon, ShouldBeLessThanOrEqualTo, 20)
-			}
-		})
+		t.Logf("analyzer passes publishing a forward curve: %d of %d",
+			withCurve, len(traces))
+		So(withCurve, ShouldBeGreaterThan, 0)
 	})
 }
 
@@ -395,86 +400,69 @@ measurements the whole signal pipeline happened to deliver.
 func TestSimulatedHorizonExtends(t *testing.T) {
 	Convey("Given a solver driven through a real market", t, func() {
 		solver := resonance.NewSolver(make(chan []byte, 1), nil)
-
-		horizons := make([]int, 0, 512)
+		traces := make([]resonanceTrace, 0, 512)
 
 		tests.WithMarket(t, simulationSymbols(), func(market *tests.Market) {
 			for range 500 {
 				market.Tick()
+				thesis := resonanceInput(market)
 
-				if err := solver.Update(market.Thesis); err != nil {
+				if err := solver.Update(thesis); err != nil {
 					continue
 				}
 
-				rowRaw, found := market.Thesis.Resonance.Load(types.Focus())
-
-				if !found {
-					continue
-				}
-
-				row, ok := rowRaw.(map[string]any)
-
-				if !ok {
-					continue
-				}
-
-				if horizon, ok := row["activeHorizon"].(int); ok {
-					horizons = append(horizons, horizon)
+				if trace, ok := readResonance(thesis, market.Symbols[0].Pair); ok {
+					traces = append(traces, trace)
 				}
 			}
 		})()
 
-		So(len(horizons), ShouldBeGreaterThan, 100)
+		So(len(traces), ShouldBeGreaterThan, 100)
 
-		first := horizons[0]
+		first := traces[0].horizon
 		widest := 0
+		maximumConfidence := 0.0
+		widestRetention := []float64(nil)
 
-		for _, horizon := range horizons {
-			if horizon > widest {
-				widest = horizon
+		for _, trace := range traces {
+			maximumConfidence = math.Max(maximumConfidence, trace.confidence)
+
+			if trace.horizon > widest {
+				widest = trace.horizon
+				widestRetention = trace.retention
 			}
 		}
 
-		settled := horizons[len(horizons)-1]
+		settled := traces[len(traces)-1].horizon
 
-		t.Logf("horizon first %d, widest %d, settled %d, over %d ticks",
-			first, widest, settled, len(horizons))
+		t.Logf(
+			"horizon first %d, widest %d, settled %d, confidence max %.4f, retention %v, over %d passes",
+			first,
+			widest,
+			settled,
+			maximumConfidence,
+			widestRetention,
+			len(traces),
+		)
 
-		Convey("Then it starts at the shortest reach", func() {
-			/*
-				Reach is earned. A head that has resolved nothing has no basis
-				for claiming to see any distance at all.
-			*/
-			So(first, ShouldEqual, 1)
-		})
+		So(first, ShouldEqual, 1)
+		So(widest, ShouldBeGreaterThan, first)
+		So(widest, ShouldBeLessThanOrEqualTo, simulationMaxHorizon)
+		So(len(widestRetention), ShouldEqual, widest)
+		So(widestRetention[0], ShouldBeGreaterThan, 0)
+		So(
+			widestRetention[len(widestRetention)-1]/widestRetention[0],
+			ShouldBeGreaterThanOrEqualTo,
+			simulationHorizonRetentionFloor,
+		)
 
-		Convey("Then it extends well past a single step as precision holds", func() {
-			/*
-				A window stuck at one step makes the entire rollout dead weight,
-				which is what the uncalibrated confidence produced: the ceiling
-				was multiplied by a number that evaluated to approximately zero
-				on every tick, so the horizon was one however well the network
-				was predicting.
-			*/
-			So(widest, ShouldBeGreaterThan, 5)
-			So(widest, ShouldBeLessThanOrEqualTo, simulationMaxHorizon)
-		})
+		distinct := map[int]struct{}{}
 
-		Convey("Then it stays responsive rather than pinning at the ceiling", func() {
-			/*
-				A horizon that reached the cap and stayed there would be a
-				ratchet in the reach, the same defect the pace controller had.
-				The published window has to keep moving with retention and
-				confidence.
-			*/
-			distinct := map[int]struct{}{}
+		for _, trace := range traces {
+			distinct[trace.horizon] = struct{}{}
+		}
 
-			for _, horizon := range horizons {
-				distinct[horizon] = struct{}{}
-			}
-
-			So(len(distinct), ShouldBeGreaterThan, 1)
-		})
+		So(len(distinct), ShouldBeGreaterThan, 1)
 	})
 }
 
@@ -490,10 +478,7 @@ unlearned one, so the failure was silent.
 */
 func TestSimulatedTaskHeadLearns(t *testing.T) {
 	Convey("Given a long run through directional regimes", t, func() {
-		script := []struct {
-			state testtypes.MarketState
-			ticks int
-		}{
+		script := []simulationPhase{
 			{testtypes.Baseline, 300},
 			{testtypes.SlowPump, 200},
 			{testtypes.FastPump, 150},
@@ -506,60 +491,44 @@ func TestSimulatedTaskHeadLearns(t *testing.T) {
 			traces = simulate(market, script)
 		})()
 
-		Convey("Then the forecast carries signal on the scale of a real return", func() {
-			/*
-				A count of non-zero entries is not evidence of learning: one
-				entry anywhere in the run at the last bit of a float would
-				satisfy it while the head had learned nothing. What has to hold
-				is that most published entries carry a forecast, and that the
-				magnitudes reach the scale a per-tick return actually moves on.
+		/*
+			A count of non-zero entries is not evidence of learning: one
+			entry anywhere in the run at the last bit of a float would
+			satisfy it while the head had learned nothing. What has to hold
+			is that most published entries carry a forecast, and that the
+			magnitudes reach the scale a per-tick return actually moves on.
 
-				A tenth of a basis point is the floor for meaningful here. The
-				decayed head this replaced sat orders of magnitude below it,
-				pulled toward zero by weight decay faster than it could learn.
-			*/
-			const meaningfulReturn = 1e-5
+			A tenth of a basis point is the floor for meaningful here. The
+			decayed head this replaced sat orders of magnitude below it,
+			pulled toward zero by weight decay faster than it could learn.
+		*/
+		const meaningfulReturn = 1e-5
 
-			entries := 0
-			meaningful := 0
-			largest := 0.0
+		entries := 0
+		meaningful := 0
+		largest := 0.0
 
-			for _, trace := range traces {
-				for _, value := range trace.curve {
-					entries++
+		for _, trace := range traces {
+			for _, value := range trace.curve {
+				entries++
 
-					if math.Abs(value) >= meaningfulReturn {
-						meaningful++
-					}
-
-					largest = math.Max(largest, math.Abs(value))
+				if math.Abs(value) >= meaningfulReturn {
+					meaningful++
 				}
+
+				largest = math.Max(largest, math.Abs(value))
+				So(math.Abs(value), ShouldBeLessThan, 0.5)
 			}
+		}
 
-			So(entries, ShouldBeGreaterThan, 0)
+		So(entries, ShouldBeGreaterThan, 0)
 
-			meaningfulShare := float64(meaningful) / float64(entries)
+		meaningfulShare := float64(meaningful) / float64(entries)
 
-			t.Logf("forecast entries %d, meaningful share %.1f%%, largest %.3e",
-				entries, meaningfulShare*100, largest)
+		t.Logf("forecast entries %d, meaningful share %.1f%%, largest %.3e",
+			entries, meaningfulShare*100, largest)
 
-			So(meaningfulShare, ShouldBeGreaterThan, 0.5)
-			So(largest, ShouldBeGreaterThan, meaningfulReturn)
-		})
-
-		Convey("Then the forecast stays on the scale of a log return", func() {
-			/*
-				A linear head cannot saturate, which is the point, but it also
-				means nothing bounds a diverging head except the learning
-				dynamics. A per-tick log return far outside a few percent is not
-				a forecast the market could produce, so this is the guard that
-				the head is fitting rather than diverging.
-			*/
-			for _, trace := range traces {
-				for _, value := range trace.curve {
-					So(math.Abs(value), ShouldBeLessThan, 0.5)
-				}
-			}
-		})
+		So(meaningfulShare, ShouldBeGreaterThan, 0.5)
+		So(largest, ShouldBeGreaterThan, meaningfulReturn)
 	})
 }

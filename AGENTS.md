@@ -150,3 +150,7 @@ Convey("Top-level", t, func() {
 
 })
 ```
+
+## IMPORTANT
+
+READ THE Makefile TO LEARN HOW TO DEAL WITH THE qpool LINKER ISSUE!

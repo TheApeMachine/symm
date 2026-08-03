@@ -21,23 +21,25 @@ Position is one lot shell owned and event-routed by Desk. Order correlation uses
 each decision's client order ID, then the exchange order ID returned by REST.
 */
 type Position struct {
-	mu           sync.RWMutex
-	ctx          context.Context
-	cancel       context.CancelFunc
-	api          *websocket.API
-	ui           chan []byte
-	instrument   *Instrument
-	price        *Price
-	balance      *Balance
-	pair         kraken.InstrumentPair
-	marked       bool
-	ID           string                `json:"id"`
-	EntryOrderID string                `json:"entry_order_id,omitempty"`
-	ExitOrderID  string                `json:"exit_order_id,omitempty"`
-	Status       types.Status          `json:"status"`
-	EntryOrder   *spot.AddOrderRequest `json:"entry_order"`
-	ExitOrder    *spot.AddOrderRequest `json:"exit_order"`
-	Holding      *types.Holding        `json:"holding"`
+	mu             sync.RWMutex
+	ctx            context.Context
+	cancel         context.CancelFunc
+	api            *websocket.API
+	ui             chan []byte
+	instrument     *Instrument
+	price          *Price
+	balance        *Balance
+	pair           kraken.InstrumentPair
+	marked         bool
+	entryFeeActual bool
+	executionFees  map[string]struct{}
+	ID             string                `json:"id"`
+	EntryOrderID   string                `json:"entry_order_id,omitempty"`
+	ExitOrderID    string                `json:"exit_order_id,omitempty"`
+	Status         types.Status          `json:"status"`
+	EntryOrder     *spot.AddOrderRequest `json:"entry_order"`
+	ExitOrder      *spot.AddOrderRequest `json:"exit_order"`
+	Holding        *types.Holding        `json:"holding"`
 }
 
 /*
@@ -68,16 +70,17 @@ func NewPosition(
 	holding.EntryFee = decision.EntryFee.Copy()
 
 	position := &Position{
-		ctx:        ctx,
-		cancel:     cancel,
-		Status:     types.INITIALIZING,
-		api:        api,
-		ui:         ui,
-		instrument: instrument,
-		price:      price,
-		balance:    balance,
-		pair:       pair,
-		ID:         decision.ID,
+		ctx:           ctx,
+		cancel:        cancel,
+		Status:        types.INITIALIZING,
+		api:           api,
+		ui:            ui,
+		instrument:    instrument,
+		price:         price,
+		balance:       balance,
+		pair:          pair,
+		executionFees: make(map[string]struct{}),
+		ID:            decision.ID,
 		EntryOrder: &spot.AddOrderRequest{
 			ClOrdId:   decision.ID,
 			Type:      "buy",
@@ -100,41 +103,6 @@ func NewPosition(
 	return position
 }
 
-func (position *Position) snapshot() *Position {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	out := &Position{
-		ID:           position.ID,
-		EntryOrderID: position.EntryOrderID,
-		ExitOrderID:  position.ExitOrderID,
-		Status:       position.Status,
-	}
-
-	if position.Holding != nil {
-		holding := *position.Holding
-
-		if position.Holding.Stoploss != nil {
-			stoploss := *position.Holding.Stoploss
-			holding.Stoploss = &stoploss
-		}
-
-		out.Holding = &holding
-	}
-
-	if position.EntryOrder != nil {
-		entryOrder := *position.EntryOrder
-		out.EntryOrder = &entryOrder
-	}
-
-	if position.ExitOrder != nil {
-		exitOrder := *position.ExitOrder
-		out.ExitOrder = &exitOrder
-	}
-
-	return out
-}
-
 /*
 Publish the position to the UI, which will automatically marshal the Holding
 and its Stoploss into the JSON payload. For clarity, the balance is kept out
@@ -145,7 +113,7 @@ use you would also not be manually managing the balances.
 */
 func (position *Position) Publish() {
 	out := datura.NewMap()
-	out["positions"] = []*Position{position.snapshot()}
+	out["positions"] = []*Position{position}
 	utils.Publish(position.ui, out)
 }
 
@@ -177,6 +145,19 @@ func (position *Position) onExecution(execution *kraken.Execution) {
 		}
 
 		position.mu.Lock()
+		feeAlreadyApplied := false
+
+		if row.FeeUsdEquiv != nil && row.ExecID != "" {
+			_, feeAlreadyApplied = position.executionFees[row.ExecID]
+
+			if !feeAlreadyApplied {
+				position.executionFees[row.ExecID] = struct{}{}
+			}
+		}
+
+		if feeAlreadyApplied {
+			row.FeeUsdEquiv = nil
+		}
 
 		if row.Side == "buy" {
 			position.applyEntry(row)
@@ -255,22 +236,37 @@ func (position *Position) applyEntry(execution kraken.ExecutionData) {
 		position.Holding.Mark = mark.Copy()
 		position.Holding.Stoploss.Bind(execution.AvgPrice, mark)
 
-		feeRate, err := position.price.Fee(position.Holding.Symbol)
+		if !position.entryFeeActual {
+			feeRate, err := position.price.Fee(position.Holding.Symbol)
 
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.NotFound,
-				"position: could not estimate entry fee from fill",
-				err,
-			))
-		} else {
-			entryValue := decimal.ExactMul(execution.AvgPrice, position.Holding.Qty)
-			position.Holding.EntryFee = decimal.ExactMul(entryValue, feeRate)
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.NotFound,
+					"position: could not estimate entry fee from fill",
+					err,
+				))
+			}
+
+			if err == nil {
+				entryValue := decimal.ExactMul(execution.AvgPrice, position.Holding.Qty)
+				position.Holding.EntryFee = decimal.ExactMul(entryValue, feeRate)
+			}
 		}
 	}
 
 	if execution.FeeUsdEquiv != nil {
-		position.Holding.EntryFee = execution.FeeUsdEquiv.Copy()
+		if !position.entryFeeActual || position.Holding.EntryFee == nil {
+			position.Holding.EntryFee = execution.FeeUsdEquiv.Copy()
+			position.entryFeeActual = true
+		} else {
+			feeScale := max(
+				position.Holding.EntryFee.GetScale(),
+				execution.FeeUsdEquiv.GetScale(),
+			)
+			position.Holding.EntryFee = position.Holding.EntryFee.
+				SetScale(feeScale).
+				Add(execution.FeeUsdEquiv)
+		}
 	}
 
 	entryAt := execution.Timestamp
@@ -285,6 +281,20 @@ func (position *Position) applyEntry(execution kraken.ExecutionData) {
 }
 
 func (position *Position) applyExit(execution kraken.ExecutionData) {
+	if execution.FeeUsdEquiv != nil {
+		if position.Holding.ExitFee == nil {
+			position.Holding.ExitFee = execution.FeeUsdEquiv.Copy()
+		} else {
+			feeScale := max(
+				position.Holding.ExitFee.GetScale(),
+				execution.FeeUsdEquiv.GetScale(),
+			)
+			position.Holding.ExitFee = position.Holding.ExitFee.
+				SetScale(feeScale).
+				Add(execution.FeeUsdEquiv)
+		}
+	}
+
 	if execution.OrderStatus != "filled" {
 		// An exit that will never fill still ends the lot.
 		status, err := types.StatusFromMarket(execution.OrderStatus)
@@ -302,10 +312,6 @@ func (position *Position) applyExit(execution kraken.ExecutionData) {
 
 	if execution.AvgPrice != nil && execution.AvgPrice.Sign() > 0 {
 		position.Holding.ExitPrice = execution.AvgPrice.Copy()
-	}
-
-	if execution.FeeUsdEquiv != nil {
-		position.Holding.ExitFee = execution.FeeUsdEquiv.Copy()
 	}
 
 	exitAt := execution.Timestamp

@@ -37,8 +37,10 @@ func TestExtractFeatures(t *testing.T) {
 		features := (&Solver{}).extractFeatures(thesis)
 
 		Convey("Then only the finite normalized reading enters predictive coding", func() {
-			So(features, ShouldResemble, map[string]float64{
-				"liquidity:BTC/USD:relative_depth": normalized,
+			So(features, ShouldResemble, map[string]map[string]float64{
+				"BTC/USD": {
+					"liquidity:BTC/USD:relative_depth": normalized,
+				},
 			})
 		})
 	})
@@ -78,8 +80,10 @@ func TestExtractFeatures(t *testing.T) {
 				dimension and reset the network that learns from them.
 			*/
 			So(after, ShouldResemble, before)
-			So(after, ShouldResemble, map[string]float64{
-				"leadlag:BTC/USD:direction": normalized,
+			So(after, ShouldResemble, map[string]map[string]float64{
+				"BTC/USD": {
+					"leadlag:BTC/USD:direction": normalized,
+				},
 			})
 		})
 	})

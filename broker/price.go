@@ -96,8 +96,9 @@ func (price *Price) Mark(
 			symbol, tick.Ask.OffsetPercent(fee.Fee),
 		)
 	case SELL:
+		exitFee := decimal.ExactMul(tick.Bid, fee.Fee)
 		out, err = price.normalizer.FormatPrice(
-			symbol, tick.Bid.OffsetPercent(fee.Fee),
+			symbol, tick.Bid.Sub(exitFee),
 		)
 	default:
 		return nil
@@ -119,17 +120,37 @@ PnL returns the PnL for a holding, which means the profit or
 loss of the holding, including entry fee, and current exit fee.
 */
 func (price *Price) PnL(holding *types.Holding) *decimal.Decimal {
-	if holding == nil || holding.Qty == nil || holding.Mark == nil {
+	if holding == nil || holding.Qty == nil || holding.Mark == nil ||
+		holding.EntryPrice == nil || holding.EntryFee == nil {
 		return nil
 	}
 
-	exitValue := price.WithFriction(holding.Symbol, SELL, holding.Qty)
+	tick, fee, err := price.getTickAndFee(holding.Symbol)
 
-	return exitValue.Sub(
-		holding.Qty.Mul(holding.EntryPrice),
-	).Sub(
-		holding.EntryFee,
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"could not get tick and fee for holding",
+			err,
+		))
+
+		return nil
+	}
+
+	grossProceeds := decimal.ExactMul(holding.Qty, tick.Bid)
+	exitFee := decimal.ExactMul(grossProceeds, fee.Fee)
+	entryValue := decimal.ExactMul(holding.Qty, holding.EntryPrice)
+	workingScale := max(
+		grossProceeds.GetScale(),
+		exitFee.GetScale(),
+		entryValue.GetScale(),
+		holding.EntryFee.GetScale(),
 	)
+
+	return grossProceeds.SetScale(workingScale).
+		Sub(exitFee).
+		Sub(entryValue).
+		Sub(holding.EntryFee)
 }
 
 /*
@@ -164,8 +185,10 @@ func (price *Price) WithFriction(
 			symbol, volume.Mul(tick.Ask).OffsetPercent(fee.Fee),
 		)
 	case SELL:
+		grossProceeds := decimal.ExactMul(volume, tick.Bid)
+		exitFee := decimal.ExactMul(grossProceeds, fee.Fee)
 		out, err = price.normalizer.FormatPrice(
-			symbol, volume.Mul(tick.Bid).OffsetPercent(fee.Fee),
+			symbol, grossProceeds.Sub(exitFee),
 		)
 	default:
 		return nil

@@ -1,4 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useSelector } from "@tanstack/react-store";
+import { useLayoutEffect, useRef } from "react";
+import { appStore } from "#/collections/app";
+import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
+import { paintXrayLatent } from "#/components/terminal/xray-latent";
 import {
 	XrayFactsPanel,
 	XrayHawkesPanel,
@@ -6,6 +11,31 @@ import {
 	XrayLatentPanel,
 	XrayManifoldPanel,
 } from "#/components/terminal/xray-panels";
+import type { JSONSerializable } from "#/components/ui/paint";
+import { registerPainter } from "#/providers/ws-stores";
+
+const XrayPaintBridge = () => {
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const latestResonance = useRef<JSONSerializable | null>(null);
+
+	useLayoutEffect(() => {
+		const paint = (updates: JSONSerializable) => {
+			latestResonance.current = updates;
+			paintXrayHierarchy(updates, focusSymbol);
+			paintXrayLatent(updates, focusSymbol);
+		};
+
+		const unregister = registerPainter("resonance", paint);
+
+		if (latestResonance.current !== null) {
+			paint(latestResonance.current);
+		}
+
+		return unregister;
+	}, [focusSymbol]);
+
+	return null;
+};
 
 /*
 Xray composes store-painted panels. Predictive coding reads resonance.layers
@@ -13,6 +43,7 @@ only; manifold / ρ stay on their own side panel and never feed the hierarchy.
 */
 const RouteComponent = () => (
 	<div className="flex h-full min-w-[1100px] flex-col">
+		<XrayPaintBridge />
 		<div className="grid min-h-0 flex-1 grid-cols-[minmax(520px,1fr)_352px]">
 			<div className="flex min-h-0 flex-col overflow-auto border-(--line) border-r">
 				<XrayHierarchyPanel />

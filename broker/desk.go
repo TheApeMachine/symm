@@ -348,10 +348,9 @@ func (desk *Desk) OpenPositions() int {
 /*
 publishEquity reports what the desk is worth if every open lot were closed now.
 
-Cash alone understates the account while positions are open, so the unrealized
-total is published beside it along with their sum. Every lot's PnL is already
-net of the fees to get in and out, which makes equity the balance the wallet
-would actually settle at rather than a gross mark-to-market.
+Cash alone understates the account while positions are open. Unrealized is the
+profit/loss only; equity is cash plus the basis committed to open positions plus
+that profit/loss.
 */
 func (desk *Desk) publishEquity() {
 	if desk == nil || desk.ui == nil || desk.balance == nil {
@@ -365,24 +364,49 @@ func (desk *Desk) publishEquity() {
 	}
 
 	unrealized := decimal.NewFromInt64(0)
+	invested := decimal.NewFromInt64(0)
 
 	for position := range desk.Positions() {
+		position.mu.RLock()
+
 		if position.Status != types.OPEN || position.Holding == nil {
+			position.mu.RUnlock()
 			continue
 		}
 
-		if position.Holding.PnL == nil {
-			continue
+		if position.Holding.Qty != nil && position.Holding.EntryPrice != nil {
+			basis := decimal.ExactMul(position.Holding.Qty, position.Holding.EntryPrice)
+
+			if position.Holding.EntryFee != nil {
+				basisScale := max(basis.GetScale(), position.Holding.EntryFee.GetScale())
+				basis = basis.SetScale(basisScale).Add(position.Holding.EntryFee)
+			}
+
+			investedScale := max(invested.GetScale(), basis.GetScale())
+			invested = invested.SetScale(investedScale).Add(basis)
 		}
 
-		unrealized = unrealized.Add(position.Holding.PnL)
+		if position.Holding.PnL != nil {
+			unrealizedScale := max(
+				unrealized.GetScale(),
+				position.Holding.PnL.GetScale(),
+			)
+			unrealized = unrealized.
+				SetScale(unrealizedScale).
+				Add(position.Holding.PnL)
+		}
+
+		position.mu.RUnlock()
 	}
 
+	equityScale := max(cash.GetScale(), invested.GetScale(), unrealized.GetScale())
+	equity := cash.SetScale(equityScale).Add(invested).Add(unrealized)
 	out := datura.NewMap()
 	out["equity"] = datura.NewMap(
 		"cash", cash,
+		"invested", invested,
 		"unrealized", unrealized,
-		"equity", cash.Add(unrealized),
+		"equity", equity,
 	)
 
 	utils.Publish(desk.ui, out)
@@ -397,7 +421,7 @@ func (desk *Desk) Positions() iter.Seq[*Position] {
 				return true
 			}
 
-			return yield(position.snapshot())
+			return yield(position)
 		})
 	}
 }

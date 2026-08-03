@@ -2,8 +2,10 @@ package websocket
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -12,6 +14,122 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 )
+
+func subscriptionConnection(
+	t *testing.T,
+	requestCount int,
+) (chan map[string]any, *gorillawebsocket.Conn, func()) {
+	t.Helper()
+	requests := make(chan map[string]any, requestCount)
+	upgrader := gorillawebsocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(
+		responseWriter http.ResponseWriter,
+		request *http.Request,
+	) {
+		connection, err := upgrader.Upgrade(responseWriter, request, nil)
+
+		if err != nil {
+			return
+		}
+
+		defer connection.Close()
+
+		for range requestCount {
+			_, raw, err := connection.ReadMessage()
+
+			if err != nil {
+				return
+			}
+
+			wire := map[string]any{}
+
+			if json.Unmarshal(raw, &wire) == nil {
+				requests <- wire
+			}
+		}
+	}))
+	connection, _, err := gorillawebsocket.DefaultDialer.Dial(
+		"ws"+strings.TrimPrefix(server.URL, "http"), nil,
+	)
+	So(err, ShouldBeNil)
+
+	return requests, connection, server.Close
+}
+
+func TestRestorePublicSubscriptions(t *testing.T) {
+	Convey("Given remembered public websocket subscriptions", t, func() {
+		requests, connection, closeServer := subscriptionConnection(t, 2)
+		defer closeServer()
+		defer connection.Close()
+
+		client := spot.NewWebSocket()
+		client.Conn = connection
+		live := &Live{
+			client: client,
+			public: map[string][][]string{
+				"ticker": {{"BTC/USD"}},
+				"trade":  {{"ETH/USD"}},
+			},
+		}
+
+		Convey("A reconnect should restore every channel with its symbols", func() {
+			live.restorePublicSubscriptions()
+			channels := make([]string, 0, 2)
+
+			for range 2 {
+				request := <-requests
+				params := request["params"].(map[string]any)
+				channels = append(channels, params["channel"].(string))
+			}
+
+			slices.Sort(channels)
+			So(channels, ShouldResemble, []string{"ticker", "trade"})
+		})
+	})
+}
+
+func TestRememberPublicSubscription(t *testing.T) {
+	Convey("Given public subscriptions submitted in batches", t, func() {
+		live := &Live{public: make(map[string][][]string)}
+
+		Convey("Distinct symbols and original request boundaries should remain available for reconnect", func() {
+			live.rememberPublicSubscription("ticker", []string{"BTC/USD", "ETH/USD"})
+			live.rememberPublicSubscription("ticker", []string{"ETH/USD", "ADA/USD"})
+			So(live.public["ticker"], ShouldResemble, [][]string{
+				{"BTC/USD", "ETH/USD"},
+				{"ADA/USD"},
+			})
+		})
+	})
+}
+
+func TestRestoreLevel3Subscription(t *testing.T) {
+	Convey("Given remembered Level 3 symbols", t, func() {
+		requests, connection, closeServer := subscriptionConnection(t, 2)
+		defer closeServer()
+		defer connection.Close()
+
+		client := spot.NewWebSocket()
+		client.Conn = connection
+		symbols := make([]string, 41)
+
+		for index := range symbols {
+			symbols[index] = "SIM" + fmt.Sprint(index) + "/USD"
+		}
+
+		live := &Live{client: client, symbols: symbols}
+
+		Convey("A reconnect should restore the symbols in Kraken-sized chunks", func() {
+			live.restoreLevel3Subscription()
+			first := <-requests
+			second := <-requests
+			firstSymbols := first["params"].(map[string]any)["symbol"].([]any)
+			secondSymbols := second["params"].(map[string]any)["symbol"].([]any)
+			So(len(firstSymbols), ShouldEqual, 40)
+			So(len(secondSymbols), ShouldEqual, 1)
+		})
+	})
+}
 
 func TestSubscribeAccount(t *testing.T) {
 	Convey("Given an authenticated private websocket", t, func() {
