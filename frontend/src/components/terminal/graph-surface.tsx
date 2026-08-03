@@ -107,6 +107,18 @@ const adaptGraph = (frame: MarketGraphFrame): RenderGraph => {
 	return graph;
 };
 
+const graphStructureKey = (frame: MarketGraphFrame): string => {
+	const nodeIds = Object.keys(frame.nodes ?? {}).sort().join(",");
+	const edgeKeys = (frame.edges ?? [])
+		.map((edge) => `${edge.from}->${edge.to}`)
+		.sort()
+		.join(",");
+
+	return `${nodeIds}|${edgeKeys}`;
+};
+
+let lastStructureKey = "";
+
 export const paintGraphSurface = (value: unknown) => {
 	const frame = graphFrames(value).at(-1) ?? null;
 
@@ -114,6 +126,13 @@ export const paintGraphSurface = (value: unknown) => {
 		return;
 	}
 
+	const structureKey = graphStructureKey(frame);
+
+	if (structureKey === lastStructureKey) {
+		return;
+	}
+
+	lastStructureKey = structureKey;
 	retainedFrame = frame;
 	retainedGraph = adaptGraph(frame);
 

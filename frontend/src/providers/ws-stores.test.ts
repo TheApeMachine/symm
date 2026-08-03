@@ -106,6 +106,31 @@ describe("ws-stores", () => {
 		unregisterHealth();
 	});
 
+	it("dispatches resonance batches under the backend resonance key", () => {
+		const worker = new MockWorker();
+		const resonancePaint = vi.fn();
+		const unregisterResonance = registerPainter("resonance", resonancePaint);
+		const row = {
+			symbol: "BTC/USD",
+			confidence: 0.75,
+			latent: [0.1, -0.2],
+			forwardCurve: [0.01],
+		};
+
+		attach(worker as unknown as Worker);
+		worker.emit({
+			type: "DRAW",
+			frame: { resonance: [row] },
+		});
+
+		animationFrame?.(0);
+
+		expect(resonancePaint).toHaveBeenCalledOnce();
+		expect(resonancePaint).toHaveBeenCalledWith([row]);
+
+		unregisterResonance();
+	});
+
 	it("retains independently published open positions by identity", () => {
 		const worker = new MockWorker();
 		const positionsPaint = vi.fn();

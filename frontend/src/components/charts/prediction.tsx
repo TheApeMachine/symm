@@ -1,7 +1,7 @@
 import { Component } from "#/components/ui/component";
 
 const ScalarDiagnostics = () => (
-	<Component registerKey="resonanceFocus">
+	<Component registerKey="resonance" select="0">
 		{({ ref }) => (
 			<div
 				ref={ref}
@@ -78,13 +78,15 @@ const VectorLane = ({
 	label,
 	meta,
 	color,
+	scale,
 }: {
 	select: "latent" | "forwardCurve";
 	label: string;
 	meta: string;
 	color: string;
+	scale?: "max-abs";
 }) => (
-	<Component registerKey="resonance" select={select}>
+	<Component registerKey="resonance" select={`0.${select}`}>
 		{({ ref, slots }) => (
 			<div ref={ref} className="flex min-h-0 flex-1 flex-col">
 				<div className="mb-1 flex items-center justify-between gap-3 font-mono text-[9px]">
@@ -105,6 +107,7 @@ const VectorLane = ({
 						>
 							<div
 								data-set="$"
+								data-set-scale={scale}
 								data-target="style.--value"
 								className={`absolute top-1/2 right-0 left-0 h-[calc(50%-1px)] origin-top ${color}`}
 								style={{ transform: "scaleY(var(--value, 0))" }}
@@ -119,8 +122,9 @@ const VectorLane = ({
 
 /*
 TerminalPredictionChart binds scalar diagnostics and both dynamic vectors directly
-to the flat resonance payload. Array slots unroll each vector into granular DOM
-paint targets; no chart-local websocket painter or retained JS history is needed.
+to the focused row inside the backend resonance batch. Array slots unroll each
+vector into granular DOM paint targets; no chart-local websocket painter or
+retained JS history is needed.
 */
 export const TerminalPredictionChart = () => (
 	<div className="flex size-full flex-col gap-3 px-4 pt-14 pb-7">
@@ -136,6 +140,7 @@ export const TerminalPredictionChart = () => (
 			label="Forward return curve"
 			meta="dynamic recurrent rollout · t+1 → t+k"
 			color="bg-(--acc)"
+			scale="max-abs"
 		/>
 	</div>
 );

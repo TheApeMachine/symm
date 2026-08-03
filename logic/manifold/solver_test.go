@@ -2,6 +2,7 @@ package manifold
 
 import (
 	"encoding/binary"
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -143,6 +144,50 @@ func TestEvict(t *testing.T) {
 	})
 }
 
+func TestRejectBatch(t *testing.T) {
+	Convey("Given a resident manifold domain with a destabilizing appended batch", t, func() {
+		var domain *pfluid.Domain
+		err := compute.WithMetalInit(func() error {
+			created, createErr := pfluid.NewDomain(pfluid.DefaultConfig())
+
+			if createErr != nil {
+				return createErr
+			}
+
+			domain = created
+			return nil
+		})
+		So(err, ShouldBeNil)
+		Reset(func() { So(domain.Close(), ShouldBeNil) })
+
+		particles := make([]pfluid.Particle, 0, 5)
+		contentIDs := make([]uint32, 0, 5)
+
+		for index := range 5 {
+			particles = append(particles, pfluid.Particle{
+				Position: pfluid.Vector{X: 0.5, Y: 0.5, Z: 0.5},
+				Mass:     1,
+				Heat:     0.1,
+				Energy:   1,
+				Phase:    0.1,
+				Omega:    1,
+			})
+			contentIDs = append(contentIDs, uint32(index+1))
+		}
+
+		_, err = domain.Append(particles, contentIDs)
+		So(err, ShouldBeNil)
+
+		solver := &Solver{domain: domain, turnover: 5}
+		solver.rejectBatch("BTC/USD", time.Now().UTC(), 3, 2, errors.New("failed test step"))
+
+		Convey("It should retain the resident state that preceded that batch", func() {
+			So(domain.ParticleCount(), ShouldEqual, 3)
+			So(solver.turnover, ShouldEqual, 3)
+		})
+	})
+}
+
 func TestFilterBatch(t *testing.T) {
 	Convey("Given an appended manifold batch with inadmissible particles", t, func() {
 		solver := &Solver{config: pfluid.DefaultConfig()}
@@ -165,6 +210,14 @@ func TestFilterBatch(t *testing.T) {
 			},
 			{
 				Position: pfluid.Vector{X: 0.5, Y: 0.5, Z: 0.5},
+				Mass:     pfluid.MinimumPilotWaveMass,
+				Heat:     0.1,
+				Energy:   1,
+				Phase:    0.1,
+				Omega:    0,
+			},
+			{
+				Position: pfluid.Vector{X: 0.5, Y: 0.5, Z: 0.5},
 				Mass:     1,
 				Heat:     -0.1,
 				Energy:   1,
@@ -172,12 +225,12 @@ func TestFilterBatch(t *testing.T) {
 				Omega:    0,
 			},
 		}
-		contentIDs := []uint32{11, 12, 13}
+		contentIDs := []uint32{11, 12, 13, 14}
 
 		filteredParticles, filteredContentIDs, dropped := solver.filterBatch(particles, contentIDs)
 
 		Convey("It should retain only appendable particles", func() {
-			So(dropped, ShouldEqual, 2)
+			So(dropped, ShouldEqual, 3)
 			So(filteredParticles, ShouldHaveLength, 1)
 			So(filteredContentIDs, ShouldResemble, []uint32{11})
 			So(filteredParticles[0].Mass, ShouldEqual, float32(1))

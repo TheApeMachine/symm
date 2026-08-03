@@ -72,6 +72,28 @@ func TestPlannerPumpEntry(t *testing.T) {
 			}
 
 			entries := enters(market.Decisions())
+			causes := map[string]int{}
+			minimumUtility := 0.0
+			maximumUtility := 0.0
+			positiveUtility := 0
+
+			for _, decision := range market.Decisions() {
+				causes[decision.Cause]++
+
+				if decision.Utility < minimumUtility {
+					minimumUtility = decision.Utility
+				}
+
+				if decision.Utility > maximumUtility {
+					maximumUtility = decision.Utility
+				}
+
+				if decision.Utility > 0 {
+					positiveUtility++
+				}
+			}
+
+			t.Logf("pump decisions=%d entries=%d causes=%v utility=[%g,%g] positive=%d readiness=%+v tick=%d", len(market.Decisions()), len(entries), causes, minimumUtility, maximumUtility, positiveUtility, market.Thesis.Readiness(), market.Thesis.Tick)
 
 			Convey("The planner should decide to enter the pumping market", func() {
 				So(len(entries), ShouldBeGreaterThan, 0)
@@ -246,11 +268,9 @@ func TestPlannerSlotDiscipline(t *testing.T) {
 			Convey("The planner should never overrun the total slot budget", func() {
 				So(len(entries), ShouldBeGreaterThan, 0)
 
-				/*
-					Normal plus reserved is four. Positions are committed to the
-					desk before order submission, so later rounds must observe
-					the slots consumed by earlier rounds.
-				*/
+				// Normal plus reserved is four. Positions are committed to the
+				// desk before order submission, so later rounds must observe
+				// the slots consumed by earlier rounds.
 				So(len(entries), ShouldBeLessThanOrEqualTo, 4)
 			})
 		}))
@@ -269,12 +289,10 @@ func TestPlannerPumpReversal(t *testing.T) {
 			testtypes.NewSymbol("SIM2/USD", 100.0, 1337),
 		}
 
-		/*
-			Exits close positions, so the orders behind them have to fill.
-			WithFixtureOrders routes them through the fixture transport rather
-			than the external paper venue, which does not know the simulated
-			symbols this market trades.
-		*/
+		// Exits close positions, so the orders behind them have to fill.
+		// WithFixtureOrders routes them through the fixture transport rather
+		// than the external paper venue, which does not know the simulated
+		// symbols this market trades.
 		Convey("When the pump peaks and dumps", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
 			market.WithAutoFill()
 
@@ -298,15 +316,13 @@ func TestPlannerPumpReversal(t *testing.T) {
 			}
 
 			Convey("The planner should stop entering a collapsing market", func() {
-				/*
-					The dump profile drifts hard negative. Continuing to open
-					new longs into it means the entry gate is reading the
-					reversal as continuation.
+				// The dump profile drifts hard negative. Continuing to open
+				// new longs into it means the entry gate is reading the
+				// reversal as continuation.
 
-					Decisions accumulate across the run, so what matters is how
-					many entries the dump itself produced, not the running
-					total the pump already contributed to.
-				*/
+				// Decisions accumulate across the run, so what matters is how
+				// many entries the dump itself produced, not the running
+				// total the pump already contributed to.
 				dumpEntries := len(enters(market.Decisions())) - pumpEntries
 
 				So(dumpEntries, ShouldBeLessThan, pumpEntries)

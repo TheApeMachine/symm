@@ -263,8 +263,11 @@ func (thesis *Thesis) Market() (
 	[]kraken.TradeData,
 	*sync.Map,
 ) {
+	return thesis.MarketTickers(), thesis.MarketTrades(), thesis.Books
+}
+
+func (thesis *Thesis) MarketTickers() []kraken.TickerData {
 	tickers := make([]kraken.TickerData, 0)
-	trades := make([]kraken.TradeData, 0)
 
 	thesis.Tickers.Range(func(_, value any) bool {
 		if ticker, ok := value.(kraken.TickerData); ok {
@@ -274,6 +277,16 @@ func (thesis *Thesis) Market() (
 		return true
 	})
 
+	slices.SortFunc(tickers, func(left, right kraken.TickerData) int {
+		return cmp.Compare(left.Timestamp.UnixNano(), right.Timestamp.UnixNano())
+	})
+
+	return tickers
+}
+
+func (thesis *Thesis) MarketTrades() []kraken.TradeData {
+	trades := make([]kraken.TradeData, 0)
+
 	thesis.Trades.Range(func(_, value any) bool {
 		if trade, ok := value.(kraken.TradeData); ok {
 			trades = append(trades, trade)
@@ -282,15 +295,11 @@ func (thesis *Thesis) Market() (
 		return true
 	})
 
-	slices.SortFunc(tickers, func(left, right kraken.TickerData) int {
-		return cmp.Compare(left.Timestamp.UnixNano(), right.Timestamp.UnixNano())
-	})
-
 	slices.SortStableFunc(trades, func(left, right kraken.TradeData) int {
 		return cmp.Compare(left.Timestamp.UnixNano(), right.Timestamp.UnixNano())
 	})
 
-	return tickers, trades, thesis.Books
+	return trades
 }
 
 /*

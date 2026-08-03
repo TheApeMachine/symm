@@ -114,3 +114,35 @@ func TestBookAll(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkBookAll(b *testing.B) {
+	managed := NewBook(b.Context())
+	managed.Create("BTC/USD", 256)
+	event := &callback.Event[*sdk.WebSocketMessage]{
+		Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
+	}
+
+	for index := range 256 {
+		price := decimal.NewFromInt64(int64(100 + index))
+		payload := &kraken.Level3{Data: []kraken.Level3Data{{
+			Symbol: "BTC/USD",
+			Bids: []kraken.Level3Order{{
+				OrderID:    fmt.Sprintf("bid-%d", index),
+				LimitPrice: price,
+				OrderQty:   decimal.NewFromInt64(1),
+				Timestamp:  time.Unix(int64(index), 0).UTC(),
+			}},
+		}}}
+
+		if err := managed.Update(event, payload); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	b.ReportAllocs()
+	
+
+	for b.Loop() {
+		managed.All()
+	}
+}

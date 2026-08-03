@@ -140,7 +140,8 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	_, trades, books := thesis.Market()
+	trades := thesis.MarketTrades()
+	books := thesis.Books
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 	currentTouches := make(map[string]touchSnapshot)

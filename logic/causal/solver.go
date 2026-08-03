@@ -199,7 +199,7 @@ func (solver *Solver) buildCausalRow(
 
 	// Extract Realized Return / Target from Measurement Metrics (.Raw)
 	var realizedReturn float64
-	measurementCount := 0
+	finiteMetricCount := 0
 
 	thesis.Measurements.Range(func(key, value any) bool {
 		rows, ok := value.([]*types.Measurement)
@@ -220,16 +220,38 @@ func (solver *Solver) buildCausalRow(
 			}
 
 			for _, metric := range measurement.Metrics {
+				if math.IsNaN(metric.Raw) || math.IsInf(metric.Raw, 0) {
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"causal: dropped non-finite measurement metric",
+						nil,
+					))
+
+					continue
+				}
+
 				realizedReturn += metric.Raw
-				measurementCount++
+				finiteMetricCount++
 			}
 		}
 
 		return true
 	})
 
-	if measurementCount > 0 {
-		realizedReturn /= float64(measurementCount)
+	if finiteMetricCount == 0 {
+		return nil, 0, 0, 0, false
+	}
+
+	realizedReturn /= float64(finiteMetricCount)
+
+	if math.IsNaN(realizedReturn) || math.IsInf(realizedReturn, 0) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal: dropped non-finite realized return",
+			nil,
+		))
+
+		return nil, 0, 0, 0, false
 	}
 
 	// Validate numeric values

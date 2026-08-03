@@ -123,7 +123,7 @@ func (signal *Signal) run() {
 Measure produces the Measurements for the sentiment signal.
 */
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	tickers, _, _ := thesis.Market()
+	tickers := thesis.MarketTickers()
 
 	if !signal.ingest(tickers) {
 		return nil

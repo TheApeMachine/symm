@@ -63,6 +63,7 @@ type PaintDataset = DOMStringMap & {
 	paintProp?: string;
 	paintSuffix?: string;
 	set?: string;
+	setScale?: string;
 	append?: string;
 	appendLimit?: string;
 	appendWidth?: string;
@@ -367,6 +368,40 @@ const setTargetValue = (
 	(current as Record<string, unknown>)[property] = value;
 };
 
+const scaleSetValue = (
+	value: JSONSerializable,
+	dataset: PaintDataset,
+	updates: JSONSerializable,
+): JSONSerializable => {
+	if (dataset.setScale !== "max-abs") {
+		return value;
+	}
+
+	const numericValue = Number(value);
+
+	if (!Number.isFinite(numericValue) || !Array.isArray(updates)) {
+		return value;
+	}
+
+	let denominator = 0;
+
+	for (const entry of updates) {
+		const numericEntry = Number(entry);
+
+		if (!Number.isFinite(numericEntry)) {
+			continue;
+		}
+
+		denominator = Math.max(denominator, Math.abs(numericEntry));
+	}
+
+	if (denominator <= 0) {
+		return 0;
+	}
+
+	return numericValue / denominator;
+};
+
 const appendTargetValue = (
 	element: HTMLElement,
 	dataset: PaintDataset,
@@ -447,7 +482,11 @@ const updateTargets = (
 			}
 
 			if (target.mode === "set") {
-				setTargetValue(target.element, target.dataset.target, value);
+				setTargetValue(
+					target.element,
+					target.dataset.target,
+					scaleSetValue(value, target.dataset, updates),
+				);
 				continue;
 			}
 

@@ -141,7 +141,8 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	tickers, trades, _ := thesis.Market()
+	tickers := thesis.MarketTickers()
+	trades := thesis.MarketTrades()
 
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)

@@ -82,8 +82,8 @@ func (book *Book) Status() types.Status {
 }
 
 func (book *Book) Get(symbol string) *spotbook.Book {
-	book.mu.Lock()
-	defer book.mu.Unlock()
+	book.mu.RLock()
+	defer book.mu.RUnlock()
 
 	return cloneBook(book.manager.GetBook(symbol))
 }
@@ -205,6 +205,7 @@ func (book *Book) Update(
 		}
 
 		payload.Data[index] = data
+		primeQueues(symbolBook)
 
 	}
 
@@ -230,16 +231,23 @@ func (book *Book) pruneNilLevels(symbolBook *spotbook.Book) {
 }
 
 func (book *Book) All() *sync.Map {
-	book.mu.Lock()
-	defer book.mu.Unlock()
-
 	out := &sync.Map{}
+	book.SnapshotInto(out)
+
+	return out
+}
+
+func (book *Book) SnapshotInto(out *sync.Map) {
+	if book == nil || out == nil {
+		return
+	}
+
+	book.mu.RLock()
+	defer book.mu.RUnlock()
 
 	for _, symbol := range book.manager.GetBooks() {
 		out.Store(symbol, cloneBook(book.manager.GetBook(symbol)))
 	}
-
-	return out
 }
 
 func cloneBook(source *spotbook.Book) *spotbook.Book {

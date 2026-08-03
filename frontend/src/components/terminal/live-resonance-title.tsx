@@ -1,7 +1,7 @@
 import { Component } from "#/components/ui/component";
 
 export const LiveResonanceTitle = () => (
-	<Component registerKey="resonanceFocus">
+	<Component registerKey="resonance" select="0">
 		{({ ref, className }) => (
 			<span ref={ref} className={className}>
 				K

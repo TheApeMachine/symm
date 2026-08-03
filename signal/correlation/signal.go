@@ -110,9 +110,9 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	tickers, trades, _ := thesis.Market()
+	tickers := thesis.MarketTickers()
 
-	if len(tickers) == 0 && len(trades) == 0 {
+	if len(tickers) == 0 {
 		return nil
 	}
 

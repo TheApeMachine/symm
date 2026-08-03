@@ -128,7 +128,7 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	_, trades, _ := thesis.Market()
+	trades := thesis.MarketTrades()
 
 	if len(trades) == 0 {
 		return nil

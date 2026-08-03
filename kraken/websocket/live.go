@@ -460,10 +460,7 @@ func (live *Live) Books() *sync.Map {
 
 	live.level3.Range(func(key, value any) bool {
 		if conn, ok := value.(*Live); ok && conn.book != nil {
-			conn.book.All().Range(func(symbol, book any) bool {
-				out.Store(symbol, book)
-				return true
-			})
+			conn.book.SnapshotInto(out)
 		}
 
 		return true

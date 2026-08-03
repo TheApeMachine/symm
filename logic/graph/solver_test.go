@@ -283,3 +283,52 @@ func BenchmarkExtractMeasurementNodes(b *testing.B) {
 		solver.extractMeasurementNodes(thesis, NewGraph(at))
 	}
 }
+
+func BenchmarkPublish(b *testing.B) {
+	at := time.Unix(1, 0).UTC()
+	ui := make(chan []byte, 1)
+	solver := NewSolver(ui, nil)
+	thesis := types.NewThesis()
+	thesis.At = at
+	graph := NewGraph(at)
+
+	for index := range 256 {
+		nodeID := "meas:BTC/USD:source:" + strconv.Itoa(index)
+		graph.AddNode(&Node{
+			ID:         nodeID,
+			Symbol:     "BTC/USD",
+			Source:     "source",
+			Kind:       KindMeasurement,
+			Value:      float64(index),
+			Confidence: 1,
+			At:         at,
+			Metadata: map[string]any{
+				"readiness": "observation",
+				"state":     "valid",
+				"unit":      "dimensionless",
+			},
+		})
+
+		if index == 0 {
+			continue
+		}
+
+		graph.AddEdge(&Edge{
+			From:       "meas:BTC/USD:source:" + strconv.Itoa(index-1),
+			To:         nodeID,
+			Relation:   RelationSupports,
+			Weight:     1,
+			Confidence: 1,
+			At:         at,
+			Reason:     "benchmark relation",
+		})
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for range b.N {
+		solver.publish(thesis, graph)
+		<-ui
+	}
+}

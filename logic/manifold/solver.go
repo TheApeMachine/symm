@@ -2,8 +2,8 @@ package manifold
 
 import (
 	"fmt"
-	"math"
 	"maps"
+	"math"
 	"sync"
 	"time"
 
@@ -126,6 +126,10 @@ always advances the shared domain once for this tick and publishes symbol views
 of that physical state. Inject is Hawkes-gated; the step is not.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
+	if thesis == nil || thesis.Books == nil {
+		return nil
+	}
+
 	solver.mu.Lock()
 	defer solver.mu.Unlock()
 
@@ -134,7 +138,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	stepped := false
 	var updateErr error
 
-	solver.api.Books().Range(func(key, value any) bool {
+	thesis.Books.Range(func(key, value any) bool {
 		book, ok := value.(*book.Book)
 
 		if !ok {
@@ -245,24 +249,24 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		if err = solver.Step(name, thesis.At); err != nil {
 			if solver.recorder != nil {
 				errnie.Error(audit.Record(recorderOrNil(solver.recorder), "predictive", map[string]any{
-					"stage":                     "manifold",
-					"symbol":                    name,
-					"at":                        thesis.At,
-					"status":                    "failed",
-					"error":                     err.Error(),
-					"resident_particles":        solver.domain.ParticleCount(),
-					"batch_particles":           len(particles),
-					"batch_start":               batchStart,
-					"batch_end":                 batchEnd,
-					"max_batch_mass":            maxBatchMass,
-					"max_batch_heat":            maxBatchHeat,
-					"max_batch_energy":          maxBatchEnergy,
-					"buy_conditional_intensity": buyIntensity,
+					"stage":                      "manifold",
+					"symbol":                     name,
+					"at":                         thesis.At,
+					"status":                     "failed",
+					"error":                      err.Error(),
+					"resident_particles":         solver.domain.ParticleCount(),
+					"batch_particles":            len(particles),
+					"batch_start":                batchStart,
+					"batch_end":                  batchEnd,
+					"max_batch_mass":             maxBatchMass,
+					"max_batch_heat":             maxBatchHeat,
+					"max_batch_energy":           maxBatchEnergy,
+					"buy_conditional_intensity":  buyIntensity,
 					"sell_conditional_intensity": sellIntensity,
 				}))
 			}
 
-			solver.resetDomain(name, err)
+			solver.rejectBatch(name, thesis.At, batchStart, len(particles), err)
 			return true
 		}
 
@@ -295,7 +299,7 @@ func (solver *Solver) maybeRebase(at time.Time) {
 	solver.recreateDomain("turnover", at, nil, map[string]any{
 		"resident_particles": solver.domain.ParticleCount(),
 		"turnover_particles": solver.turnover,
-		"residency":         solver.residency,
+		"residency":          solver.residency,
 	})
 }
 
@@ -471,7 +475,7 @@ func admissibleParticle(particle pfluid.Particle, config pfluid.Config) bool {
 		}
 	}
 
-	if particle.Mass <= 0 || particle.Heat < 0 || particle.Energy < 0 {
+	if particle.Mass <= pfluid.MinimumPilotWaveMass || particle.Heat < 0 || particle.Energy < 0 {
 		return false
 	}
 
@@ -500,6 +504,59 @@ func batchEnvelope(particles []pfluid.Particle) (float32, float32, float32) {
 	return maxBatchMass, maxBatchHeat, maxBatchEnergy
 }
 
+func (solver *Solver) rejectBatch(
+	symbol string,
+	at time.Time,
+	batchStart int,
+	batchParticles int,
+	cause error,
+) {
+	if solver == nil || solver.domain == nil || batchParticles <= 0 {
+		return
+	}
+
+	resident := solver.domain.ParticleCount()
+
+	if batchStart < 0 || batchStart >= resident {
+		return
+	}
+
+	batchEnd := min(batchStart+batchParticles, resident)
+	keep := make([]uint32, 0, resident-(batchEnd-batchStart))
+
+	for index := range resident {
+		if index >= batchStart && index < batchEnd {
+			continue
+		}
+
+		keep = append(keep, uint32(index))
+	}
+
+	if err := solver.domain.Retain(keep); err != nil {
+		solver.resetDomain(symbol, errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf("failed to reject destabilizing manifold batch for %s", symbol),
+			err,
+		))
+		return
+	}
+
+	solver.turnover = max(solver.turnover-batchParticles, 0)
+
+	if solver.recorder != nil {
+		errnie.Error(audit.Record(recorderOrNil(solver.recorder), "predictive", map[string]any{
+			"stage":              "manifold",
+			"symbol":             symbol,
+			"at":                 at,
+			"status":             "rejected",
+			"reason":             "failed_step",
+			"error":              cause.Error(),
+			"batch_start":        batchStart,
+			"batch_particles":    batchParticles,
+			"resident_particles": solver.domain.ParticleCount(),
+		}))
+	}
+}
 
 func (solver *Solver) resetDomain(symbol string, cause error) {
 	solver.recreateDomain("failed_step", time.Time{}, cause, map[string]any{

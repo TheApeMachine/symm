@@ -6,7 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/datura"
+	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
 )
@@ -76,6 +77,42 @@ type Graph struct {
 	Nodes     map[string]*Node    `json:"nodes"`
 	Edges     []*Edge             `json:"edges"`
 	Adjacency map[string][]string `json:"adjacency"` // Fast lookup: NodeID -> []TargetNodeIDs
+}
+
+var publishJSON = sonic.Config{
+	EncodeNullForInfOrNan: true,
+}.Froze()
+
+type publishedNode struct {
+	Source     string         `json:"source"`
+	Symbol     string         `json:"symbol"`
+	At         string         `json:"at"`
+	ID         string         `json:"id"`
+	Kind       string         `json:"kind"`
+	Value      float64        `json:"value"`
+	Confidence float64        `json:"confidence"`
+	NodeSource string         `json:"nodeSource,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+}
+
+type publishedEdge struct {
+	From       string  `json:"from"`
+	To         string  `json:"to"`
+	Relation   string  `json:"relation"`
+	Weight     float64 `json:"weight"`
+	Confidence float64 `json:"confidence"`
+	At         string  `json:"at"`
+	Reason     string  `json:"reason"`
+}
+
+type publishedGraph struct {
+	At    string                   `json:"at"`
+	Nodes map[string]publishedNode `json:"nodes"`
+	Edges []publishedEdge          `json:"edges"`
+}
+
+type publishedGraphFrame struct {
+	Graph publishedGraph `json:"graph"`
 }
 
 /*
@@ -206,33 +243,29 @@ func (solver *Solver) publish(thesis *types.Thesis, graph *Graph) {
 		return
 	}
 
+	if cap(solver.ui) > 0 && len(solver.ui) == cap(solver.ui) {
+		return
+	}
+
 	at := thesis.At.Format(time.RFC3339)
-	nodes := make(map[string]any, len(graph.Nodes))
+	nodes := make(map[string]publishedNode, len(graph.Nodes))
 
 	for _, node := range graph.Nodes {
 		if node == nil {
 			continue
 		}
 
-		row := datura.NewMap(
-			"source", "graph",
-			"symbol", node.Symbol,
-			"at", at,
-			"id", node.ID,
-			"kind", string(node.Kind),
-			"value", node.Value,
-			"confidence", node.Confidence,
-		)
-
-		if node.Source != "" {
-			row["nodeSource"] = node.Source
+		nodes[node.ID] = publishedNode{
+			Source:     "graph",
+			Symbol:     node.Symbol,
+			At:         at,
+			ID:         node.ID,
+			Kind:       string(node.Kind),
+			Value:      node.Value,
+			Confidence: node.Confidence,
+			NodeSource: node.Source,
+			Metadata:   node.Metadata,
 		}
-
-		if len(node.Metadata) > 0 {
-			row["metadata"] = node.Metadata
-		}
-
-		nodes[node.ID] = row
 	}
 
 	if len(nodes) == 0 {
@@ -244,30 +277,44 @@ func (solver *Solver) publish(thesis *types.Thesis, graph *Graph) {
 		it encodes, so publishing the nodes alone would leave the display with
 		a list of readings and no way to show how any of them relate.
 	*/
-	edges := make([]datura.Map[any], 0, len(graph.Edges))
+	edges := make([]publishedEdge, 0, len(graph.Edges))
 
 	for _, edge := range graph.Edges {
 		if edge == nil {
 			continue
 		}
 
-		edges = append(edges, datura.NewMap(
-			"from", edge.From,
-			"to", edge.To,
-			"relation", string(edge.Relation),
-			"weight", edge.Weight,
-			"confidence", edge.Confidence,
-			"at", at,
-			"reason", edge.Reason,
+		edges = append(edges, publishedEdge{
+			From:       edge.From,
+			To:         edge.To,
+			Relation:   string(edge.Relation),
+			Weight:     edge.Weight,
+			Confidence: edge.Confidence,
+			At:         at,
+			Reason:     edge.Reason,
+		})
+	}
+
+	payload, err := publishJSON.Marshal(publishedGraphFrame{
+		Graph: publishedGraph{
+			At:    at,
+			Nodes: nodes,
+			Edges: edges,
+		},
+	})
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"graph: failed to marshal publication",
+			err,
 		))
+
+		return
 	}
 
 	select {
-	case solver.ui <- datura.NewMap("graph", datura.NewMap(
-		"at", at,
-		"nodes", nodes,
-		"edges", edges,
-	)).MarshalAndFree():
+	case solver.ui <- payload:
 	default:
 	}
 }
