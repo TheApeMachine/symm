@@ -22,9 +22,8 @@ const (
 	// PhaseDiscovery is an open lot that has not yet earned anything worth
 	// protecting. Peaks are recorded and the noise band is tracked, but the
 	// trailing floor is not allowed to end the trade — only the hard risk
-	// boundary is. Whether an underwater thesis is still viable is decided by
-	// the strategy's continuation evaluator, which can see the forecast, the
-	// causal evidence and the structural categories that answer it.
+	// boundary is. Forecasts and structural evidence remain diagnostic while
+	// the position is open; they have no authority to liquidate it.
 	PhaseDiscovery StopPhase = "discovery"
 	// PhaseProtected is a lot that has traded far enough above its profit line
 	// for the giveback floor to arm. From here the floor can only rise.
@@ -65,12 +64,27 @@ type StopTransition struct {
 		consumer drain only what it has not seen without holding an index into a
 		slice that shifts underneath it.
 	*/
-	Seq    uint64           `json:"seq"`
-	At     time.Time        `json:"at"`
-	Phase  StopPhase        `json:"phase"`
-	Floor  *decimal.Decimal `json:"floor"`
-	Mark   *decimal.Decimal `json:"mark"`
-	Reason string           `json:"reason"`
+	Seq           uint64           `json:"seq"`
+	At            time.Time        `json:"at"`
+	Phase         StopPhase        `json:"phase"`
+	Status        Status           `json:"status"`
+	Reason        string           `json:"reason"`
+	TriggerReason string           `json:"trigger_reason,omitempty"`
+	ProfitArmed   bool             `json:"profit_armed"`
+	Mark          *decimal.Decimal `json:"mark"`
+	Peak          *decimal.Decimal `json:"peak"`
+	Floor         *decimal.Decimal `json:"floor"`
+	HardFloor     *decimal.Decimal `json:"hard_floor"`
+	ProfitLine    *decimal.Decimal `json:"profit_line"`
+	ProfitFloor   *decimal.Decimal `json:"profit_floor"`
+	TrailFloor    *decimal.Decimal `json:"trail_floor"`
+	ArmLine       *decimal.Decimal `json:"arm_line"`
+	Entry         *decimal.Decimal `json:"entry"`
+	Qty           *decimal.Decimal `json:"qty"`
+	EntryFee      *decimal.Decimal `json:"entry_fee"`
+	RiskDistance  *decimal.Decimal `json:"risk_distance"`
+	TrailDistance *decimal.Decimal `json:"trail_distance"`
+	NoiseBand     *decimal.Decimal `json:"noise_band"`
 }
 
 /*
@@ -89,9 +103,9 @@ Stoploss regulates one open lot.
 
 It owns exactly two exits. The hard floor is the maximum loss and fires on
 sight. The protected floor is the profit the position has already earned and
-fires only on a breach that holds. Everything else — forecast decay, structural
-reversal, an ordinary drawdown that has not reached the boundary — belongs to
-the strategy's continuation evaluator, which has the evidence to judge it.
+fires only on a breach that holds. Forecast decay, structural reversal, and an
+ordinary drawdown remain diagnostic; they do not have a path to the sell
+transport.
 
 Both Peak and Floor are monotonic. A peak once reached was reachable, and
 protection once armed is not handed back because volatility later widened.
@@ -661,18 +675,27 @@ func (stoploss *Stoploss) record(reason string) {
 	stoploss.sequence++
 
 	transition := StopTransition{
-		Seq:    stoploss.sequence,
-		At:     time.Now().UTC(),
-		Phase:  stoploss.Phase,
-		Reason: reason,
-	}
-
-	if stoploss.Floor != nil {
-		transition.Floor = stoploss.Floor.Copy()
-	}
-
-	if stoploss.Mark != nil {
-		transition.Mark = stoploss.Mark.Copy()
+		Seq:           stoploss.sequence,
+		At:            time.Now().UTC(),
+		Phase:         stoploss.Phase,
+		Status:        stoploss.Status,
+		Reason:        reason,
+		TriggerReason: stoploss.TriggerReason,
+		ProfitArmed:   stoploss.ProfitArmed,
+		Mark:          copyDecimal(stoploss.Mark),
+		Peak:          copyDecimal(stoploss.Peak),
+		Floor:         copyDecimal(stoploss.Floor),
+		HardFloor:     copyDecimal(stoploss.HardFloor),
+		ProfitLine:    copyDecimal(stoploss.ProfitLine),
+		ProfitFloor:   copyDecimal(stoploss.ProfitFloor),
+		TrailFloor:    copyDecimal(stoploss.TrailFloor),
+		ArmLine:       copyDecimal(stoploss.ArmLine),
+		Entry:         copyDecimal(stoploss.Entry),
+		Qty:           copyDecimal(stoploss.Qty),
+		EntryFee:      copyDecimal(stoploss.EntryFee),
+		RiskDistance:  copyDecimal(stoploss.Plan.RiskDistance),
+		TrailDistance: copyDecimal(stoploss.Plan.TrailDistance),
+		NoiseBand:     copyDecimal(stoploss.Plan.NoiseBand),
 	}
 
 	stoploss.Transitions = append(stoploss.Transitions, transition)

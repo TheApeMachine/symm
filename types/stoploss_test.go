@@ -346,6 +346,34 @@ func TestStoplossProfitProtection(t *testing.T) {
 			So(armed.Cmp(stoploss.Floor), ShouldEqual, 1)
 		})
 
+		Convey("Successive executable peaks should ratchet the protected floor upward", func() {
+			armed := stoploss.ArmLine.Add(plan.TickSize)
+			stoploss.Observe(types.StopEvidence{
+				Symbol:         fixtureSymbol,
+				ExecutableMark: armed,
+				Present:        true,
+			})
+
+			previousFloor := stoploss.Floor.Copy()
+			pullbackDistance := plan.TrailDistance.Div(decimal.NewFromInt64(2))
+
+			for range 4 {
+				peak := previousFloor.Add(plan.TrailDistance).Add(plan.TickSize)
+				observe(stoploss, peak.Float64(), false)
+
+				So(stoploss.Peak.Cmp(peak), ShouldEqual, 0)
+				So(stoploss.Floor.Cmp(previousFloor), ShouldEqual, 1)
+				So(stoploss.Floor.Cmp(stoploss.ProfitLine), ShouldEqual, 1)
+
+				ratchetedFloor := stoploss.Floor.Copy()
+				observe(stoploss, peak.Sub(pullbackDistance).Float64(), false)
+
+				So(stoploss.Status, ShouldEqual, types.ARMED)
+				So(stoploss.Floor.Cmp(ratchetedFloor), ShouldEqual, 0)
+				previousFloor = ratchetedFloor
+			}
+		})
+
 		Convey("An isolated wick should not end a protected trade", func() {
 			observe(stoploss, 101.20, false)
 			So(stoploss.ProfitArmed, ShouldBeTrue)
@@ -497,6 +525,33 @@ func TestStoplossTransitionAudit(t *testing.T) {
 			So(reasons, ShouldContain, "bound_on_fill")
 		})
 
+		Convey("Earlier transitions should not inherit a later trigger", func() {
+			breach := stoploss.HardFloor.Sub(plan.TickSize)
+			observe(stoploss, breach.Float64(), false)
+			transitions := stoploss.DrainTransitions()
+			var boundOnFill, hardRisk *types.StopTransition
+
+			for index := range transitions {
+				transition := &transitions[index]
+
+				if transition.Reason == "bound_on_fill" {
+					boundOnFill = transition
+				}
+
+				if transition.Reason == types.TriggerHardRisk {
+					hardRisk = transition
+				}
+			}
+
+			So(boundOnFill, ShouldNotBeNil)
+			So(boundOnFill.Status, ShouldEqual, types.ARMED)
+			So(boundOnFill.TriggerReason, ShouldBeBlank)
+			So(hardRisk, ShouldNotBeNil)
+			So(hardRisk.Status, ShouldEqual, types.TRIGGERED)
+			So(hardRisk.TriggerReason, ShouldEqual, types.TriggerHardRisk)
+			So(hardRisk.Mark.Cmp(hardRisk.HardFloor), ShouldEqual, -1)
+		})
+
 		Convey("Draining should hand each transition over exactly once", func() {
 			So(stoploss.DrainTransitions(), ShouldNotBeEmpty)
 			So(stoploss.DrainTransitions(), ShouldBeEmpty)
@@ -595,4 +650,15 @@ func TestStoplossRebindFill(t *testing.T) {
 			})
 		})
 	})
+}
+
+func BenchmarkStoplossObserve(b *testing.B) {
+	stoploss, plan := fixtureEntry()
+	mark := stoploss.ArmLine.Add(plan.TickSize).Float64()
+	b.ResetTimer()
+
+	for range b.N {
+		observe(stoploss, mark, false)
+		mark += plan.TickSize.Float64()
+	}
 }

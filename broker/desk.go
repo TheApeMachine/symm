@@ -517,7 +517,11 @@ func (desk *Desk) Execute(decisions []types.Decision) (err error) {
 		case types.ActionEnter:
 			err = errors.Join(err, desk.enter(decision))
 		case types.ActionExit:
-			err = errors.Join(err, desk.exit(decision))
+			err = errors.Join(err, errnie.Err(
+				errnie.NotAcceptable,
+				"desk: strategy exits are disabled; only a triggered stoploss may submit a sell",
+				nil,
+			))
 		}
 	}
 
@@ -647,26 +651,6 @@ func (desk *Desk) enter(decision types.Decision) error {
 	}
 
 	return nil
-}
-
-func (desk *Desk) exit(decision types.Decision) error {
-	value, ok := desk.positions.Load(decision.Symbol)
-
-	if ok {
-		if position, ok := value.(*Position); ok && position != nil {
-			status := position.Status
-
-			if status != types.CLOSED {
-				return position.Exit(decision.ID)
-			}
-		}
-	}
-
-	return errnie.Error(errnie.Err(
-		errnie.NotFound,
-		"desk: active position not found for exit",
-		nil,
-	))
 }
 
 /*

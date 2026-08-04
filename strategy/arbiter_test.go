@@ -56,6 +56,22 @@ func TestArbiterArbitrate(t *testing.T) {
 		So(thesis.Decisions[0].Action, ShouldEqual, types.ActionNothing)
 		So(thesis.Decisions[0].Cause, ShouldEqual, "slots_full")
 		So(thesis.Decisions[0].AllocationClass, ShouldNotEqual, "reserved")
+
+		Convey("An upstream strategy exit should be suppressed", func() {
+			exitThesis := types.NewThesis()
+			exitThesis.Decisions = []types.Decision{{
+				Action:           types.ActionExit,
+				Symbol:           market.Symbols[0].Pair,
+				ProposedQuantity: quantity,
+			}}
+
+			strategy.NewArbiter(market.Desk).Arbitrate(exitThesis)
+
+			So(exitThesis.Decisions, ShouldHaveLength, 1)
+			So(exitThesis.Decisions[0].Action, ShouldEqual, types.ActionHold)
+			So(exitThesis.Decisions[0].Cause, ShouldEqual, "stoploss_only")
+			So(exitThesis.Decisions[0].ProposedQuantity.Sign(), ShouldEqual, 0)
+		})
 	}))
 
 	Convey("Given all normal and reserved slots are occupied", t, tests.WithFixtureOrders(t, []*testtypes.Symbol{
@@ -106,7 +122,7 @@ func TestArbiterArbitrate(t *testing.T) {
 		So(thesis.Decisions[0].Cause, ShouldEqual, "slots_full")
 	}))
 
-	Convey("Given a newly opened incumbent still has positive forward value", t, tests.WithFixtureOrders(t, []*testtypes.Symbol{
+	Convey("Given normal slots are occupied by stop-governed positions", t, tests.WithFixtureOrders(t, []*testtypes.Symbol{
 		testtypes.NewSymbol("SIM1/USD", 110.0, 42),
 		testtypes.NewSymbol("SIM2/USD", 110.0, 1337),
 		testtypes.NewSymbol("SIM3/USD", 110.0, 90210),
@@ -150,7 +166,7 @@ func TestArbiterArbitrate(t *testing.T) {
 			})
 		}
 
-		Convey("A weaker challenger should not capitalize the incumbent's entry friction as weakness", func() {
+		Convey("A weaker challenger should wait for a stoploss to free a slot", func() {
 			thesis := types.NewThesis()
 			thesis.Decisions = append(decisions, types.Decision{
 				ID:               uuid.NewString(),
@@ -179,7 +195,7 @@ func TestArbiterArbitrate(t *testing.T) {
 			So(exits, ShouldEqual, 0)
 		})
 
-		Convey("A challenger that clears forward hold value and liquidation cost should rotate", func() {
+		Convey("Even a stronger challenger should not liquidate an incumbent", func() {
 			thesis := types.NewThesis()
 			thesis.Decisions = append(decisions, types.Decision{
 				ID:               uuid.NewString(),
@@ -192,26 +208,21 @@ func TestArbiterArbitrate(t *testing.T) {
 
 			strategy.NewArbiter(market.Desk).Arbitrate(thesis)
 
-			rotationExits := 0
-			rotationEntries := 0
+			exits := 0
 
 			for _, decision := range thesis.Decisions {
-				if decision.Cause != "rotation" {
-					continue
-				}
-
 				if decision.Action == types.ActionExit {
-					rotationExits++
+					exits++
 				}
 
-				if decision.Action == types.ActionEnter {
-					rotationEntries++
-					So(decision.Displaces, ShouldNotBeBlank)
+				if decision.Symbol == market.Symbols[2].Pair {
+					So(decision.Action, ShouldEqual, types.ActionNothing)
+					So(decision.Cause, ShouldEqual, "slots_full")
+					So(decision.Displaces, ShouldBeBlank)
 				}
 			}
 
-			So(rotationExits, ShouldEqual, 1)
-			So(rotationEntries, ShouldEqual, 1)
+			So(exits, ShouldEqual, 0)
 		})
 	}))
 }

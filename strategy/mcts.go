@@ -10,7 +10,9 @@ const (
 	ActionNothing float64 = 0.0
 	ActionEnter   float64 = 1.0
 	ActionHold    float64 = 2.0
-	ActionExit    float64 = 3.0
+	// ActionCompleteTrajectory closes an internal rollout whose entry cost was
+	// already charged. It is not a live trading action and is never published.
+	ActionCompleteTrajectory float64 = 3.0
 
 	mctsMinimumCausalRows = 12
 	mctsSearchIterations  = 50
@@ -67,8 +69,8 @@ func (strategyState StrategyState) Trace(
 }
 
 /*
-strategyAction translates the search enum into the action vocabulary published
-on Decision. An unknown result remains absent rather than being mislabeled.
+strategyAction translates only the search actions the live planner is allowed
+to publish. Internal trajectory completion and unknown results remain absent.
 */
 func strategyAction(action float64) types.Action {
 	switch action {
@@ -78,8 +80,6 @@ func strategyAction(action float64) types.Action {
 		return types.ActionEnter
 	case ActionHold:
 		return types.ActionHold
-	case ActionExit:
-		return types.ActionExit
 	}
 
 	return ""
@@ -108,7 +108,7 @@ func (strategyState StrategyState) GetReward() float64 {
 
 func (strategyState StrategyState) GetPossibleActions() []float64 {
 	if strategyState.IsHolding {
-		return []float64{ActionHold, ActionExit}
+		return []float64{ActionHold, ActionCompleteTrajectory}
 	}
 
 	return []float64{ActionNothing, ActionEnter}
@@ -131,7 +131,7 @@ func (strategyState StrategyState) ApplyAction(action float64) mcts.State {
 		// A held forecast decays toward the horizon it was drawn for, so a
 		// further step of holding is worth less than the forecast claims.
 		next.Reward += strategyState.Treatment * 0.9
-	case ActionExit:
+	case ActionCompleteTrajectory:
 		// The round trip was already charged on entry, so exiting adds
 		// nothing further. Charging it again would make every completed
 		// trajectory pay twice and bias the search toward never opening.
@@ -161,9 +161,9 @@ itself.
 
 Each action instead names the forecast level it actually commits to: entering
 takes the candidate's own expected return, holding takes what a further step of
-it is worth after decay, and standing aside or closing out takes nothing. Those
-are levels the treatment column genuinely carries, so the interventional
-expectation is read from inside the model's support.
+it is worth after decay, and standing aside or completing a rollout takes
+nothing. Those are levels the treatment column genuinely carries, so the
+interventional expectation is read from inside the model's support.
 */
 func (strategyState StrategyState) GetInterventionLevel(action float64) float64 {
 	switch action {

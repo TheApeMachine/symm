@@ -228,7 +228,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			continue
 		}
 
-		// Calculate Max Fraction Slice or reuse rotation freed capital
+		// Calculate the maximum wallet slice this entry may consume.
 		if decision.ProposedNotional == nil || decision.ProposedNotional.Sign() <= 0 {
 			if allocator.maxFraction == nil || allocator.maxFraction.Sign() <= 0 {
 				decision.ProposedNotional = budget
@@ -322,9 +322,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			riskPool = riskPool.Sub(committed.SetScale(allocationScale).Mul(qty))
 		}
 
-		if decision.Cause != "rotation" {
-			budget = budget.Sub(cost)
-		}
+		budget = budget.Sub(cost)
 	}
 
 	/*

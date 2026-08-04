@@ -320,50 +320,13 @@ func (evaluator Evaluator) ManageContinuation(
 			forecast.Uncertainty,
 		)
 
-		action := types.ActionHold
-		cause := "continuation"
-		reason := "continuation holds active position"
-		quantity := decimal.NewFromInt64(0)
-
-		hasStructuralReversal := false
-
-		if thesis.Categories != nil {
-			for _, category := range thesis.Categories[position.Holding.Symbol] {
-				switch category.Type {
-				case types.CategoryActiveReversal,
-					types.CategoryMechanicalCollapse,
-					types.CategoryToxicBluff,
-					types.CategoryExhaustion:
-					hasStructuralReversal = true
-				}
-			}
-		}
-
-		exitThreshold := exitCostFraction * 1.5
-
-		if hasStructuralReversal {
-			exitThreshold = exitCostFraction
-		}
-
-		if holdUtility < -exitThreshold {
-			action = types.ActionExit
-			cause = "continuation_decayed"
-			reason = "holding no longer covers the cost of exiting"
-			quantity = position.Holding.Qty.Copy()
-		}
+		exitUtility := -exitCostFraction
 
 		/*
-			The first-passage question — from here, does this lot reach its
-			protected profit before its hard floor — is asked last and can only
-			add an exit.
-
-			It is deliberately powerless in the other direction. A model built
-			from a few dozen finished trades is allowed to say "this drawdown
-			has historically not come back" and close a position early; it is
-			never allowed to say "hold on" to a position the hard floor or the
-			decayed-continuation rule above has already condemned. The
-			asymmetry is the point: being wrong about patience costs the whole
-			risk distance, and being wrong about caution costs a spread.
+			The first-passage scenario remains on the decision as a diagnostic,
+			but it has no execution authority. Open inventory is liquidated only
+			by its broker-owned stop, so a forecast revision cannot pre-empt the
+			price geometry the position was sized and admitted under.
 		*/
 		scenario, holdEV, scored := evaluator.scorePassage(
 			thesis, position, forecast, exitCostFraction,
@@ -371,7 +334,7 @@ func (evaluator Evaluator) ManageContinuation(
 
 		alternatives := map[string]float64{
 			"hold": holdUtility,
-			"exit": -exitCostFraction,
+			"exit": exitUtility,
 		}
 
 		if scored {
@@ -380,23 +343,16 @@ func (evaluator Evaluator) ManageContinuation(
 			alternatives["passage_loss_first"] = scenario.LossFirst
 			alternatives["passage_timeout"] = scenario.Timeout
 			alternatives["passage_support"] = scenario.Support
-
-			if action != types.ActionExit && holdEV <= 0 {
-				action = types.ActionExit
-				cause = "passage_negative"
-				reason = "reaching the protected profit before the hard floor no longer pays for the room it needs"
-				quantity = position.Holding.Qty.Copy()
-			}
 		}
 
 		thesis.Decisions = append(thesis.Decisions, types.Decision{
-			Action:            action,
+			Action:            types.ActionHold,
 			Symbol:            forecast.Symbol,
 			At:                forecast.At,
 			Utility:           holdUtility,
 			Alternatives:      alternatives,
 			ProposedNotional:  decimal.NewFromInt64(0),
-			ProposedQuantity:  quantity,
+			ProposedQuantity:  decimal.NewFromInt64(0),
 			ExpectedReturn:    forecast.ExpectedReturn,
 			ExpectedFees:      fee,
 			ExpectedSpread:    forecast.ExpectedSpread.Div(decimal.NewFromInt64(2)),
@@ -411,8 +367,8 @@ func (evaluator Evaluator) ManageContinuation(
 			ValidThroughEpoch: forecast.Epoch,
 			ForecastSource:    string(types.SourceResonance),
 			ForecastEpoch:     forecast.Epoch,
-			Cause:             cause,
-			Reason:            reason,
+			Cause:             "continuation",
+			Reason:            "open position is governed exclusively by its stoploss",
 		})
 	}
 

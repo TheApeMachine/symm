@@ -144,11 +144,9 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 	/*
 		Candidates are produced, then funded, then arbitrated.
 
-		Sizing has to settle before slots do, because arbitration is what closes
-		working positions to make room. Displacing an incumbent for a challenger
-		the wallet cannot actually fund leaves the exit standing on its own: the
-		allocator rejects the challenger a moment later, and the desk has closed
-		a position for a trade that never gets placed.
+		Sizing has to settle before slots do because arbitration assigns normal and
+		reserved capacity only to entries the wallet can actually fund. Open positions
+		keep their slots until their stoploss closes them.
 	*/
 	planner.evaluator.ManageContinuation(thesis, planner.desk, planner.price)
 	planner.evaluator.EvaluateOpportunities(thesis)
@@ -175,8 +173,7 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 		Every decision leaving the planner carries a durable identifier, which
 		is what later links a fill, a position, and a post-mortem back to the
 		reasoning that produced them. Stamping after arbitration covers each
-		path into the slice at the one point they all pass through, including
-		the exits arbitration itself raises to rotate an incumbent out.
+		path into the slice at the one point they all pass through.
 	*/
 	for index := range thesis.Decisions {
 		thesis.Decisions[index].EnsureID()

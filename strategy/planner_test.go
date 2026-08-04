@@ -267,7 +267,7 @@ func TestPlannerPumpReversal(t *testing.T) {
 		decisions := market.Decisions()
 		So(len(decisions), ShouldBeGreaterThanOrEqualTo, reversalDecisionOffset)
 		reversalDecisions := decisions[reversalDecisionOffset:]
-		continuationExitDecisions := 0
+		strategyExitDecisions := 0
 		entryDecisions := 0
 
 		for _, decision := range reversalDecisions {
@@ -279,27 +279,15 @@ func TestPlannerPumpReversal(t *testing.T) {
 				continue
 			}
 
-			continuationExitDecisions++
-			So(decision.ValidID(), ShouldBeTrue)
-			So(decision.Symbol, ShouldEqual, symbols[0].Pair)
-			So(decision.ProposedQuantity, ShouldNotBeNil)
-			So(decision.ProposedQuantity.Cmp(entryQuantity), ShouldEqual, 0)
-			So(decision.ReferencePrice, ShouldNotBeNil)
-			So(decision.ReferencePrice.Sign(), ShouldEqual, 1)
-			So(decision.Cause, ShouldEqual, "continuation_decayed")
-			So(decision.Reason, ShouldNotBeBlank)
-			So(decision.Alternatives, ShouldContainKey, "hold")
-			So(decision.Alternatives, ShouldContainKey, "exit")
-			So(decision.Alternatives["hold"], ShouldBeLessThan, decision.Alternatives["exit"])
+			strategyExitDecisions++
 		}
 
 		So(entryDecisions, ShouldEqual, 0)
+		So(strategyExitDecisions, ShouldEqual, 0)
+
 		stopped := position.Holding.Stoploss.Status == types.TRIGGERED &&
 			position.Holding.Stoploss.TriggerReason != ""
-		So(
-			continuationExitDecisions > 0 || stopped,
-			ShouldBeTrue,
-		)
+		So(stopped, ShouldBeTrue)
 		So(market.Desk.OpenPositions(), ShouldEqual, 0)
 		So(position.Status, ShouldEqual, types.CLOSED)
 		So(position.Holding.Status, ShouldEqual, types.CLOSED)

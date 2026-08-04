@@ -100,9 +100,9 @@ func TestStrategyStateInterventionLevel(t *testing.T) {
 			// exactly what the rollout credits the position with.
 			So(state.GetInterventionLevel(strategy.ActionHold), ShouldAlmostEqual, 0.00135)
 
-			// Standing aside and closing out both commit to no forecast at all.
+			// Standing aside and completing a rollout both commit to no forecast.
 			So(state.GetInterventionLevel(strategy.ActionNothing), ShouldEqual, 0.0)
-			So(state.GetInterventionLevel(strategy.ActionExit), ShouldEqual, 0.0)
+			So(state.GetInterventionLevel(strategy.ActionCompleteTrajectory), ShouldEqual, 0.0)
 		})
 
 		Convey("It should never hand the SCM an action enum as a treatment level", func() {
@@ -110,7 +110,7 @@ func TestStrategyStateInterventionLevel(t *testing.T) {
 				strategy.ActionNothing,
 				strategy.ActionEnter,
 				strategy.ActionHold,
-				strategy.ActionExit,
+				strategy.ActionCompleteTrajectory,
 			} {
 				level := state.GetInterventionLevel(action)
 
@@ -184,7 +184,7 @@ func TestSearchInterventionLevels(t *testing.T) {
 			for _, level := range engine.levels() {
 				So(level, ShouldNotEqual, strategy.ActionEnter)
 				So(level, ShouldNotEqual, strategy.ActionHold)
-				So(level, ShouldNotEqual, strategy.ActionExit)
+				So(level, ShouldNotEqual, strategy.ActionCompleteTrajectory)
 
 				// Every level stays inside the order of magnitude the column
 				// was fitted on. An enum is three orders outside it.

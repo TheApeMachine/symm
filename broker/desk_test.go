@@ -55,7 +55,7 @@ func TestDeskExecute(t *testing.T) {
 			testtypes.NewSymbol("SIM3/USD", 100.0, 90210),
 		}
 
-		Convey("Execute should submit and retain a position before a fill", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+		Convey("Execute should submit entries but reject strategy exits", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
 			market.Tick()
 			decision := entryDecision(market, symbols[0].Pair)
 
@@ -71,20 +71,23 @@ func TestDeskExecute(t *testing.T) {
 			fill := executionfixture.BuyFill()
 			fill.ClientOrderID = decision.ID
 			fill.Symbol = decision.Symbol
+			fill.AvgPrice = fillPrice(market, decision.Symbol)
 			fill.CumQty = decision.ProposedQuantity.String()
 			market.Private.Publish("executions", executionfixture.Frame(fill))
 			market.Tick()
 
-			exitID := uuid.NewString()
-			So(market.Desk.Execute([]types.Decision{{
-				ID:     exitID,
+			err := market.Desk.Execute([]types.Decision{{
+				ID:     uuid.NewString(),
 				Action: types.ActionExit,
 				Symbol: decision.Symbol,
-			}}), ShouldBeNil)
+			}})
 
 			positions = slices.Collect(market.Desk.Positions())
 			So(positions, ShouldHaveLength, 1)
-			So(positions[0].ExitOrder.ClOrdId, ShouldEqual, exitID)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "only a triggered stoploss may submit a sell")
+			So(positions[0].Status, ShouldEqual, types.OPEN)
+			So(positions[0].ExitOrderResult, ShouldBeNil)
 		}))
 
 		Convey("A repeated enter should reject the new position", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
@@ -102,7 +105,7 @@ func TestDeskExecute(t *testing.T) {
 			So(slices.Collect(market.Desk.Positions()), ShouldHaveLength, openPositions)
 		}))
 
-		Convey("An exit without an owned position should be rejected", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+		Convey("A strategy exit should be rejected without inspecting inventory", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
 			openPositions := market.Desk.OpenPositions()
 			err := market.Desk.Execute([]types.Decision{{
 				ID:     uuid.NewString(),
@@ -111,7 +114,7 @@ func TestDeskExecute(t *testing.T) {
 			}})
 
 			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "active position not found for exit")
+			So(err.Error(), ShouldContainSubstring, "only a triggered stoploss may submit a sell")
 			So(market.Desk.OpenPositions(), ShouldEqual, openPositions)
 			So(slices.Collect(market.Desk.Positions()), ShouldBeEmpty)
 		}))

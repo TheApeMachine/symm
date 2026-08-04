@@ -61,7 +61,7 @@ func TestMarketWithMarket(t *testing.T) {
 
 func TestMarketWithAutoFill(t *testing.T) {
 	symbols := []*types.Symbol{
-		types.NewSymbol("SIM1/USD", 100.0, 42),
+		types.NewSymbol("SIM1/USD", 105.0, 42),
 	}
 
 	Convey("Given an executable position lifecycle at the simulated venue", t, WithFixtureOrders(t, symbols, func(market *Market) {
@@ -73,6 +73,7 @@ func TestMarketWithAutoFill(t *testing.T) {
 			Action:           coretypes.ActionEnter,
 			Symbol:           symbols[0].Pair,
 			ProposedQuantity: decimal.NewFromFloat64(0.25),
+			Risk:             EntryRisk(market, symbols[0].Pair),
 		}
 
 		So(market.Desk.Execute([]coretypes.Decision{entry}), ShouldBeNil)
@@ -85,10 +86,10 @@ func TestMarketWithAutoFill(t *testing.T) {
 		So(position.Holding.EntryPrice, ShouldNotBeNil)
 		So(position.Holding.EntryFee, ShouldNotBeNil)
 		So(position.Holding.EntryFee.Sign(), ShouldEqual, 1)
-		So(position.Holding.Mark.Cmp(position.Holding.EntryPrice), ShouldEqual, 0)
+		So(position.Holding.Mark.Cmp(position.Holding.EntryPrice), ShouldEqual, -1)
 		So(position.Holding.Stoploss, ShouldNotBeNil)
 		So(position.Holding.Stoploss.Entry.Cmp(position.Holding.EntryPrice), ShouldEqual, 0)
-		So(position.Holding.Stoploss.Mark.Cmp(position.Holding.EntryPrice), ShouldEqual, 0)
+		So(position.Holding.Stoploss.Mark.Cmp(position.Holding.Mark), ShouldEqual, 0)
 		So(position.Holding.Stoploss.Floor, ShouldNotBeNil)
 		estimatedEntryPrice := position.Holding.EntryPrice.Copy()
 
@@ -105,18 +106,13 @@ func TestMarketWithAutoFill(t *testing.T) {
 		So(position.Holding.Stoploss.Entry.Cmp(position.Holding.EntryPrice), ShouldEqual, 0)
 		So(position.Holding.Stoploss.Mark.Cmp(position.Holding.Mark), ShouldEqual, 0)
 
-		exit := coretypes.Decision{
-			ID:     "exit-one",
-			Action: coretypes.ActionExit,
-			Symbol: symbols[0].Pair,
-		}
-		So(market.Desk.Execute([]coretypes.Decision{exit}), ShouldBeNil)
+		position.Holding.Stoploss.Status = coretypes.TRIGGERED
+		market.Tick()
 
 		positions = slices.Collect(market.Desk.Positions())
 		So(positions, ShouldHaveLength, 1)
 		position = positions[0]
-		So(position.Status, ShouldEqual, coretypes.PENDING)
-		So(position.ExitOrder.ClOrdId, ShouldEqual, exit.ID)
+		So(position.ExitOrder.ClOrdId, ShouldNotBeBlank)
 		So(position.ExitOrder.Volume, ShouldEqual, "0.25")
 
 		market.Tick()
@@ -134,6 +130,7 @@ func TestMarketWithAutoFill(t *testing.T) {
 			Action:           coretypes.ActionEnter,
 			Symbol:           symbols[0].Pair,
 			ProposedQuantity: decimal.NewFromFloat64(0.20),
+			Risk:             EntryRisk(market, symbols[0].Pair),
 		}
 		So(market.Desk.Execute([]coretypes.Decision{reentry}), ShouldBeNil)
 		So(market.Desk.OpenPositions(), ShouldEqual, 1)

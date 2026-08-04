@@ -262,23 +262,23 @@ func (position *Position) auditStops() {
 			"at":           transition.At,
 			"reason":       transition.Reason,
 			"phase":        transition.Phase,
-			"status":       stoploss.Status,
-			"armed":        stoploss.ProfitArmed,
-			"trigger":      stoploss.TriggerReason,
+			"status":       transition.Status,
+			"armed":        transition.ProfitArmed,
+			"trigger":      transition.TriggerReason,
 			"mark":         transition.Mark,
 			"floor":        transition.Floor,
-			"hard_floor":   stoploss.HardFloor,
-			"profit_line":  stoploss.ProfitLine,
-			"profit_floor": stoploss.ProfitFloor,
-			"trail_floor":  stoploss.TrailFloor,
-			"arm_line":     stoploss.ArmLine,
-			"peak":         stoploss.Peak,
-			"entry":        stoploss.Entry,
-			"qty":          stoploss.Qty,
-			"entry_fee":    stoploss.EntryFee,
-			"risk":         stoploss.Plan.RiskDistance,
-			"trail":        stoploss.Plan.TrailDistance,
-			"noise_band":   stoploss.Plan.NoiseBand,
+			"hard_floor":   transition.HardFloor,
+			"profit_line":  transition.ProfitLine,
+			"profit_floor": transition.ProfitFloor,
+			"trail_floor":  transition.TrailFloor,
+			"arm_line":     transition.ArmLine,
+			"peak":         transition.Peak,
+			"entry":        transition.Entry,
+			"qty":          transition.Qty,
+			"entry_fee":    transition.EntryFee,
+			"risk":         transition.RiskDistance,
+			"trail":        transition.TrailDistance,
+			"noise_band":   transition.NoiseBand,
 		}))
 	}
 }
@@ -333,7 +333,7 @@ func (position *Position) exitOnStop() {
 		position.stopOrderID = uuid.NewString()
 	}
 
-	if err := position.Exit(position.stopOrderID); err != nil {
+	if err := position.submitStopExit(); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Internal,
 			"position: stop exit for "+position.pair.Symbol+" was not accepted",
@@ -490,18 +490,32 @@ func (position *Position) Enter() (*Position, error) {
 }
 
 /*
-Exit submits a market sell for the sellable ledger quantity.
+submitStopExit submits a market sell for the sellable ledger quantity.
+
+This method is deliberately private and accepts no caller-supplied authority.
+The only call site is exitOnStop, after onTicker observed the regulator in the
+triggered state. Keeping the submission behind that state transition makes a
+strategy decision incapable of reaching the sell transport directly.
 */
-func (position *Position) Exit(clientOrderID string) error {
-	if clientOrderID == "" {
+func (position *Position) submitStopExit() error {
+	if position.Holding == nil || position.Holding.Stoploss == nil ||
+		position.Holding.Stoploss.Status != types.TRIGGERED {
 		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"position: exit order is missing a client order identifier",
+			errnie.NotAcceptable,
+			"position: sell submission requires a triggered stoploss",
 			nil,
 		))
 	}
 
-	if position.Holding == nil || position.Holding.SellableQty == nil || position.Holding.SellableQty.Sign() <= 0 {
+	if position.stopOrderID == "" {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"position: triggered stoploss is missing its exit order identifier",
+			nil,
+		))
+	}
+
+	if position.Holding.SellableQty == nil || position.Holding.SellableQty.Sign() <= 0 {
 		return errnie.Error(errnie.Err(
 			errnie.NotAcceptable,
 			"position: no sellable quantity available",
@@ -510,7 +524,7 @@ func (position *Position) Exit(clientOrderID string) error {
 	}
 
 	position.ExitOrder.Volume = position.Holding.SellableQty.String()
-	position.ExitOrder.ClOrdId = clientOrderID
+	position.ExitOrder.ClOrdId = position.stopOrderID
 
 	result, err := position.api.AddOrder(position.ExitOrder)
 

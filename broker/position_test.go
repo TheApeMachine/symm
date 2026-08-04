@@ -110,12 +110,10 @@ func TestPositionOnExecution(t *testing.T) {
 				So(*position.Holding.EntryAt, ShouldResemble, expectedEntryAt)
 				So(market.Desk.OpenPositions(), ShouldEqual, 1)
 
-				exitID := uuid.NewString()
-				So(market.Desk.Execute([]types.Decision{{
-					ID:     exitID,
-					Action: types.ActionExit,
-					Symbol: decision.Symbol,
-				}}), ShouldBeNil)
+				position.Holding.Stoploss.Status = types.TRIGGERED
+				market.Tick()
+				exitID := position.ExitOrder.ClOrdId
+				So(exitID, ShouldNotBeBlank)
 
 				sell := executionfixture.ExitFill()
 				sell.ClientOrderID = exitID
@@ -163,12 +161,10 @@ func TestPositionOnExecution(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(position.Holding.EntryFee.Cmp(expectedFee), ShouldEqual, 0)
 
-				exitID := uuid.NewString()
-				So(market.Desk.Execute([]types.Decision{{
-					ID:     exitID,
-					Action: types.ActionExit,
-					Symbol: decision.Symbol,
-				}}), ShouldBeNil)
+				position.Holding.Stoploss.Status = types.TRIGGERED
+				market.Tick()
+				exitID := position.ExitOrder.ClOrdId
+				So(exitID, ShouldNotBeBlank)
 
 				firstSell := executionfixture.ExitFill()
 				firstSell.ClientOrderID = exitID
@@ -364,12 +360,7 @@ func TestPositionOnTicker(t *testing.T) {
 
 			position := slices.Collect(market.Desk.Positions())[0]
 			position.Holding.Stoploss.Status = types.TRIGGERED
-			exitID := uuid.NewString()
-			So(market.Desk.Execute([]types.Decision{{
-				ID:     exitID,
-				Action: types.ActionExit,
-				Symbol: decision.Symbol,
-			}}), ShouldBeNil)
+			market.Tick()
 			So(position.Status, ShouldEqual, types.PENDING)
 			So(position.ExitOrderResult, ShouldNotBeNil)
 			firstOrderID := position.ExitOrderResult.ID[0]

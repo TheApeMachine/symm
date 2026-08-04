@@ -52,11 +52,11 @@ func TestStrategyStateTrace(t *testing.T) {
 
 func TestStrategyAction(t *testing.T) {
 	Convey("Given each search action", t, func() {
-		Convey("It should publish the matching decision action", func() {
+		Convey("It should publish only live planner actions", func() {
 			So(strategyAction(ActionNothing), ShouldEqual, types.ActionNothing)
 			So(strategyAction(ActionEnter), ShouldEqual, types.ActionEnter)
 			So(strategyAction(ActionHold), ShouldEqual, types.ActionHold)
-			So(strategyAction(ActionExit), ShouldEqual, types.ActionExit)
+			So(strategyAction(ActionCompleteTrajectory), ShouldEqual, types.Action(""))
 		})
 
 		Convey("It should leave an unknown search result absent", func() {
@@ -83,5 +83,11 @@ func BenchmarkStrategyStateTrace(b *testing.B) {
 			mctsMinimumCausalRows,
 			mctsSearchIterations,
 		)
+	}
+}
+
+func BenchmarkStrategyAction(b *testing.B) {
+	for range b.N {
+		_ = strategyAction(ActionCompleteTrajectory)
 	}
 }

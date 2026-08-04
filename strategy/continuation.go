@@ -233,8 +233,8 @@ func passageRoom(snapshot types.StopSnapshot) (upside, downside float64, ok bool
 }
 
 /*
-scorePassage answers, for one open lot, whether holding is still worth more than
-closing.
+scorePassage records, for one open lot, the historical value of reaching its
+protected profit before its hard floor.
 
 It runs only before profit protection arms. After that the question has already
 been answered — the lot reached its profit line — and the regulator's own
@@ -242,10 +242,9 @@ protected floor governs what happens next. Asking a probability model to
 second-guess a floor that is defending realised profit would be replacing a
 guarantee with an estimate.
 
-The verdict can only ever produce an exit. It never widens the hard floor, never
-suppresses a stop, and never grants patience: an unready model, missing geometry
-or an unpriced state all return false, which leaves the existing continuation
-rule exactly as it was.
+The verdict is diagnostic only. It never widens the hard floor, suppresses a
+stop, or emits an exit; an unready model, missing geometry or an unpriced state
+returns false and leaves the decision without passage fields.
 */
 func (evaluator Evaluator) scorePassage(
 	thesis *types.Thesis,
