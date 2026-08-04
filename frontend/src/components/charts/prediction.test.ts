@@ -1,90 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { Circular } from "#/collections/circular";
 import type { ResonanceFrame } from "#/collections/types";
-import {
-	shouldReplacePredictionHistory,
-	updatePredictionHistory,
-} from "#/components/charts/prediction";
 import {
 	predictiveCodingSeries,
 	reconstructionError,
 } from "#/components/charts/prediction/series";
-
-const frame = (at: string, surprise: number): ResonanceFrame => ({
-	source: "resonance",
-	symbol: "BTC/USD",
-	at,
-	surprise,
-	layers: [{ state: [surprise], prediction: [surprise / 2] }],
-});
-
-describe("updatePredictionHistory", () => {
-	it("appends distinct observation epochs", () => {
-		const history = Circular<ResonanceFrame>(3);
-
-		updatePredictionHistory(history, [
-			frame("2026-07-20T18:00:00Z", 1),
-			frame("2026-07-20T18:00:01Z", 2),
-		]);
-
-		expect(history.values().map((entry) => entry.surprise)).toEqual([1, 2]);
-	});
-
-	it("updates a repeated current epoch instead of duplicating it", () => {
-		const history = Circular<ResonanceFrame>(3);
-		const at = "2026-07-20T18:00:00Z";
-
-		updatePredictionHistory(history, [frame(at, 1)]);
-		updatePredictionHistory(history, [frame(at, 3)]);
-
-		expect(history.values()).toHaveLength(1);
-		expect(history.values()[0]?.surprise).toBe(3);
-	});
-
-	it("keeps only the newest samples that fit the drawable capacity", () => {
-		const history = Circular<ResonanceFrame>(2);
-
-		updatePredictionHistory(history, [
-			frame("2026-07-20T18:00:00Z", 1),
-			frame("2026-07-20T18:00:01Z", 2),
-			frame("2026-07-20T18:00:02Z", 3),
-		]);
-
-		expect(history.values().map((entry) => entry.surprise)).toEqual([2, 3]);
-	});
-});
-
-describe("shouldReplacePredictionHistory", () => {
-	it("keeps retained chart history when a sparse focused row lacks layers", () => {
-		expect(
-			shouldReplacePredictionHistory([
-				{
-					source: "resonance",
-					symbol: "BTC/USD",
-					at: "2026-07-20T18:00:02Z",
-					expectedReturn: 0.01,
-				},
-			]),
-		).toBe(false);
-	});
-
-	it("rebuilds retained chart history when layered resonance frames arrive", () => {
-		expect(
-			shouldReplacePredictionHistory([
-				frame("2026-07-20T18:00:00Z", 1),
-				frame("2026-07-20T18:00:01Z", 2),
-			]),
-		).toBe(true);
-	});
-
-	it("accepts incremental layered updates without requiring a full rebuilt history", () => {
-		expect(
-			shouldReplacePredictionHistory([
-				frame("2026-07-20T18:00:02Z", 3),
-			]),
-		).toBe(true);
-	});
-});
 
 describe("predictiveCodingSeries", () => {
 	it("keeps all three layers and separates adjacent reconstruction from top context", () => {

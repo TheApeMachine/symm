@@ -1,12 +1,13 @@
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
-import { Component } from "#/components/ui/component";
-import { cn } from "#/lib/utils";
 import { Balance } from "@/components/balance";
 import { Count } from "@/components/count";
 import { Badge } from "@/components/ui/badge";
-import { panelVariants } from "@/components/ui/panel";
+import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
+import { Key } from "@/components/ui/key";
+import { Toolbar } from "@/components/ui/toolbar";
 
 const SymmLogo = () => (
 	<svg
@@ -17,6 +18,7 @@ const SymmLogo = () => (
 		className="block"
 		aria-hidden="true"
 	>
+		<title>SYMM</title>
 		<circle cx="11" cy="11" r="8.5" stroke="var(--acc)" strokeWidth="1.3" />
 		<circle cx="11" cy="11" r="3.4" stroke="var(--acc)" strokeWidth="1.3" />
 		<path
@@ -33,27 +35,30 @@ export const TerminalTopBar = () => {
 	const { openPalette, openSymbolPalette } = terminalStore.actions;
 
 	return (
-		<header className="relative z-5 flex h-13 shrink-0 items-center gap-3.5 border-(--line) border-b bg-(--surface) px-4">
-			<div className="flex items-center gap-2">
+		<Toolbar size="lg" className="relative z-5">
+			<Toolbar.Group>
 				<SymmLogo />
 				<span className="font-semibold text-[14px] text-(--f1) tracking-[0.22em]">
 					SYMM
 				</span>
-			</div>
+			</Toolbar.Group>
+
 			<Badge
 				label={online ? "live" : "offline"}
 				variant={online ? "success" : "error"}
 				dot
-				className={online ? "[&_span[aria-hidden]]:animate-pulse" : undefined}
+				pulse={online}
 			/>
 			<Count />
-			<div className="ml-auto flex items-center gap-5.5">
-				<button
-					type="button"
+
+			<Toolbar.Spacer />
+
+			<Toolbar.Group className="gap-6">
+				<Button
+					variant="bare"
 					onClick={openSymbolPalette}
 					data-symbol={focusSymbol}
 					title="Search focused symbol"
-					className="cursor-pointer"
 				>
 					<Badge
 						label={focusSymbol}
@@ -61,41 +66,16 @@ export const TerminalTopBar = () => {
 						size="m"
 						className="font-mono"
 					/>
-				</button>
-				<button
-					type="button"
-					onClick={openPalette}
-					className={cn(
-						panelVariants({ size: "s" }),
-						"flex cursor-pointer items-center gap-2 py-1.25 pr-2 pl-2.25 text-(--f3) hover:border-(--line2) hover:text-(--f1)",
-					)}
-				>
-					<svg
-						width="13"
-						height="13"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="1.8"
-					>
-						<title>Jump to</title>
-						<circle cx="11" cy="11" r="7" />
-						<path d="M21 21l-4.3-4.3" />
-					</svg>
+				</Button>
+
+				<Button variant="outline" size="m" onClick={openPalette}>
+					<Icon name="search" size="s" />
 					<span className="text-[11px]">Jump to</span>
-					<span className="rounded-xs border border-(--line) px-1 font-mono text-[10px] text-(--f4)">
-						⌘K
-					</span>
-				</button>
+					<Key>k</Key>
+				</Button>
+
 				<Balance />
-				<Component registerKey="strategy">
-					{({ ref }) => (
-						<span ref={ref} className="font-mono text-[11px] text-(--f3)">
-							tick <span data-paint="tick" className="text-(--f1)" />
-						</span>
-					)}
-				</Component>
-			</div>
-		</header>
+			</Toolbar.Group>
+		</Toolbar>
 	);
 };

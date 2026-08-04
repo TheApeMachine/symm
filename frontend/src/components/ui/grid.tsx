@@ -2,21 +2,78 @@ import { type HTMLMotionProps, motion } from "motion/react";
 import type { CSSProperties, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-const rowsClasses = Array.from(
-	{ length: 6 },
-	(_, index) => `grid-rows-${index + 1}`,
-).concat("grid-rows-none");
+/*
+These tables are written out rather than generated with Array.from, and that is
+not an oversight.
 
-const colsClasses = Array.from(
-	{ length: 12 },
-	(_, index) => `grid-cols-${index + 1}`,
-);
+Tailwind finds the classes it must emit by scanning source text. A class built
+at runtime — `grid-cols-${n}` — appears nowhere in that text, so the rule is
+never generated and the class silently does nothing. It survived here only
+because the same literals happened to be written out elsewhere in this app; drop
+this file into a project where they are not, and every grid collapses to one
+column. Spelling them out is what makes the component portable.
+*/
+const rowsClasses: Record<SegmentsType, string> = {
+	1: "grid-rows-1",
+	2: "grid-rows-2",
+	3: "grid-rows-3",
+	4: "grid-rows-4",
+	5: "grid-rows-5",
+	6: "grid-rows-6",
+	7: "grid-rows-6",
+	8: "grid-rows-6",
+	9: "grid-rows-6",
+	10: "grid-rows-6",
+	11: "grid-rows-6",
+	12: "grid-rows-6",
+};
 
-const gapClasses = Array.from({ length: 16 }, (_, i) => `gap-${i}`).concat(
-	"gap-0",
-);
+const colsClasses: Record<SegmentsType, string> = {
+	1: "grid-cols-1",
+	2: "grid-cols-2",
+	3: "grid-cols-3",
+	4: "grid-cols-4",
+	5: "grid-cols-5",
+	6: "grid-cols-6",
+	7: "grid-cols-7",
+	8: "grid-cols-8",
+	9: "grid-cols-9",
+	10: "grid-cols-10",
+	11: "grid-cols-11",
+	12: "grid-cols-12",
+};
 
-const padClasses = Array.from({ length: 16 }, (_, i) => `p-${i}`).concat("p-0");
+const gapClasses: Record<GapType, string> = {
+	0: "gap-0",
+	1: "gap-1",
+	2: "gap-2",
+	3: "gap-3",
+	4: "gap-4",
+	5: "gap-5",
+	6: "gap-6",
+	7: "gap-7",
+	8: "gap-8",
+	9: "gap-9",
+	10: "gap-10",
+	11: "gap-11",
+	12: "gap-12",
+};
+
+const padClasses: Record<GapType, string> = {
+	0: "p-0",
+	1: "p-1",
+	2: "p-2",
+	3: "p-3",
+	4: "p-4",
+	5: "p-5",
+	6: "p-6",
+	7: "p-7",
+	8: "p-8",
+	9: "p-9",
+	10: "p-10",
+	11: "p-11",
+	12: "p-12",
+};
 
 const flowClasses = {
 	col: "grid-flow-col",
@@ -52,8 +109,8 @@ const placeClasses = {
 } as const;
 
 export type SegmentsType = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
-type PadType = keyof typeof padClasses;
-type GapType = keyof typeof gapClasses;
+export type GapType = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
+type PadType = GapType;
 type FlowType = keyof typeof flowClasses;
 type AlignType = keyof typeof alignClasses;
 type JustifyType = keyof typeof justifyClasses;
@@ -115,7 +172,7 @@ export const Grid = ({
 	// Generate responsive classes when responsive is true
 	const getResponsiveColsClass = () => {
 		if (!responsive) {
-			return cols ? colsClasses[cols - 1] : undefined;
+			return cols ? colsClasses[cols] : undefined;
 		}
 
 		if (!cols) {
@@ -146,9 +203,9 @@ export const Grid = ({
 				"grid",
 				"@container",
 				getResponsiveColsClass(),
-				rows ? rowsClasses[rows - 1] : undefined,
-				gap && gapClasses[gap],
-				pad && padClasses[pad],
+				rows ? rowsClasses[rows] : undefined,
+				gap === undefined ? undefined : gapClasses[gap],
+				pad === undefined ? undefined : padClasses[pad],
 				fullWidth && "w-full",
 				fullHeight && "h-full",
 				// Make grid items stretch horizontally to fill available space
@@ -257,17 +314,22 @@ Grid.Island = ({
 
 // Responsive grid that adjusts columns based on min item width
 // Uses auto-fit to ensure items stretch to fill available space
+/*
+The template comes through style rather than an arbitrary Tailwind class: a
+caller-supplied width can never be part of a scannable class name, so the class
+form of this produced no CSS at all.
+*/
 Grid.Auto = ({
 	minWidth = "16rem",
 	...props
 }: Omit<GridProps, "cols"> & { minWidth?: string }) => (
 	<Grid
 		responsive={false}
-		className={cn(
-			`grid-cols-[repeat(auto-fit,minmax(min(${minWidth},100%),1fr))]`,
-			props.className,
-		)}
 		{...props}
+		style={{
+			gridTemplateColumns: `repeat(auto-fit, minmax(min(${minWidth}, 100%), 1fr))`,
+			...props.style,
+		}}
 	/>
 );
 
@@ -311,17 +373,19 @@ Grid.Quarters = (props: Omit<GridProps, "cols">) => (
 );
 
 // Sidebar + main content layout
-Grid.Sidebar = (props: Omit<GridProps, "cols"> & { sidebarWidth?: string }) => (
+Grid.Sidebar = ({
+	sidebarWidth = "16rem",
+	...props
+}: Omit<GridProps, "cols"> & { sidebarWidth?: string }) => (
 	<Grid
 		cols={2}
-		className={cn(
-			props.sidebarWidth
-				? `grid-cols-[${props.sidebarWidth}_1fr]`
-				: "grid-cols-[16rem_1fr]",
-			props.className,
-		)}
 		gap={0}
+		responsive={false}
 		{...props}
+		style={{
+			gridTemplateColumns: `${sidebarWidth} minmax(0, 1fr)`,
+			...props.style,
+		}}
 	/>
 );
 
@@ -457,8 +521,8 @@ Grid.Bento = ({
 				cols === 3 && "grid-cols-2 md:grid-cols-3",
 				cols === 2 && "grid-cols-2",
 				cols === 1 && "grid-cols-1",
-				gap && gapClasses[gap],
-				pad && padClasses[pad],
+				gap === undefined ? undefined : gapClasses[gap],
+				pad === undefined ? undefined : padClasses[pad],
 				fullHeight && "h-full",
 				className,
 			)}

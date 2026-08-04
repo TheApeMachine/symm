@@ -1,3 +1,14 @@
+import { latestDisplay } from "#/providers/manifold-binary";
+
+/*
+The scratch tile is created on first draw rather than at import, because a
+module that touches the document as a side effect of being imported cannot load
+without a DOM — including in any test that reaches it transitively through the
+paint registry.
+*/
+let tile: HTMLCanvasElement | null = null;
+let tileContext: CanvasRenderingContext2D | null = null;
+
 /*
 drawFluidDisplay blits the backend-composited GPU RGBA texture. The frontend does
 not synthesize a fallback fluid field from scalar lattices.
@@ -7,7 +18,7 @@ export const drawFluidDisplay = (
 	width: number,
 	height: number,
 ): boolean => {
-	const frame = null; // TODO: get the latest frame from the store or context
+	const frame = latestDisplay();
 
 	if (frame === null || width <= 0 || height <= 0) {
 		return false;
@@ -28,18 +39,23 @@ export const drawFluidDisplay = (
 		canvas.height = pixelHeight;
 	}
 
-	const tile = document.createElement("canvas");
-	// tile.width = (frame.width ?? 0);
-	// tile.height = frame.height ?? 0;
-	const tileContext = tile.getContext("2d");
+	if (tile === null) {
+		tile = document.createElement("canvas");
+		tileContext = tile.getContext("2d");
+	}
 
 	if (tileContext === null) {
 		return false;
 	}
 
-	// const image = tileContext.createImageData(frame.width, frame.height);
-	// image.data.set(frame.rgba);
-	// tileContext.putImageData(image, 0, 0);
+	if (tile.width !== frame.width || tile.height !== frame.height) {
+		tile.width = frame.width;
+		tile.height = frame.height;
+	}
+
+	const image = tileContext.createImageData(frame.width, frame.height);
+	image.data.set(frame.rgba);
+	tileContext.putImageData(image, 0, 0);
 	context.imageSmoothingEnabled = true;
 	context.imageSmoothingQuality = "high";
 	context.clearRect(0, 0, pixelWidth, pixelHeight);

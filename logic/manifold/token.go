@@ -1,6 +1,7 @@
 package manifold
 
 import (
+	"fmt"
 	"math"
 	"sort"
 
@@ -76,12 +77,12 @@ func (tokenizer Tokenizer) NewBatch(
 	buyIntensity float64,
 	sellIntensity float64,
 	symbol string,
-) ([]pfluid.Particle, []uint32) {
+) ([]pfluid.Particle, []uint32, error) {
 	numBids := len(bidOrders)
 	numAsks := len(askOrders)
 	totalOrders := numBids + numAsks
 	if totalOrders == 0 || midPrice <= 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// 1. Combine bid and ask orders while retaining side information.
@@ -100,11 +101,16 @@ func (tokenizer Tokenizer) NewBatch(
 	// 2. Derive dynamic log-space extents relative to midPrice.
 	logPriceMin, logPriceMax, logSizeMin, logSizeMax, ok := geometryBounds(orders, midPrice)
 	if !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// 3. Resolve symbol index for Metal token identification.
-	symbolIdx, _ := universeIndex(tokenizer.universe, symbol)
+	symbolIdx, ok := universeIndex(tokenizer.universe, symbol)
+
+	if !ok {
+		return nil, nil, fmt.Errorf("manifold: symbol %s is outside the tokenizer universe", symbol)
+	}
+
 	ranks := orderAgeRanks(orders)
 	circle := uint32(len(orders))
 
@@ -161,7 +167,7 @@ func (tokenizer Tokenizer) NewBatch(
 		contentIDs = append(contentIDs, tokenID)
 	}
 
-	return particles, contentIDs
+	return particles, contentIDs, nil
 }
 
 /*

@@ -2,6 +2,7 @@ package exhaust
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -39,6 +40,24 @@ type Signal struct {
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
 	subscribeMu   sync.Mutex
+	lastTrade     map[string]tradeCursor
+	lastBookAt    map[string]time.Time
+	lastBook      map[string]bookSnapshot
+}
+
+type tradeCursor struct {
+	at  time.Time
+	ids map[int64]struct{}
+}
+
+type bookSnapshot struct {
+	bids map[int64]flow.BookLevel
+	asks map[int64]flow.BookLevel
+}
+
+type bookObservation struct {
+	managed *spotbook.Book
+	at      time.Time
 }
 
 /*
@@ -68,6 +87,9 @@ func NewSignal(
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
+		lastTrade:     make(map[string]tradeCursor),
+		lastBookAt:    make(map[string]time.Time),
+		lastBook:      make(map[string]bookSnapshot),
 	}
 	signal.status = types.READY
 	signal.run()
@@ -110,17 +132,17 @@ func (signal *Signal) run() {
 				return
 			case message := <-thesisSubscription.Channel:
 				if thesis, ok := message.(*types.Thesis); ok {
-					thesis.AppendMeasurements(
-						types.SourceExhaustion,
-						signal.Measure(thesis),
-						types.Stamp{
-							At:     time.Now(),
-							Entity: types.MarketTrade,
-							Source: types.SourceExhaustion,
-						},
-					)
+					measurements := signal.Measure(thesis)
 
-					utils.Fanout(signal.subscribers, signal.Name(), thesis)
+					if len(measurements) > 0 {
+						thesis.Measurements.Store(
+							types.SourceExhaustion,
+							measurements,
+						)
+
+						thesis.Readiness.Exhaustion = true
+						utils.Fanout(signal.subscribers, signal.Name(), thesis)
+					}
 				}
 			}
 		}
@@ -128,10 +150,12 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	_, trades, books := thesis.Market()
+	trades := thesis.MarketTrades()
+	books := thesis.Books
 
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
+	bookObservations := make([]bookObservation, 0)
 
 	books.Range(func(_, value any) bool {
 		managed, ok := value.(*spotbook.Book)
@@ -140,23 +164,62 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			return true
 		}
 
-		bookMeasurements, err := signal.measureManagedBook(managed)
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"exhaust: failed to measure book",
-				err,
-			))
-
-			return true
-		}
-
-		measurements = append(measurements, bookMeasurements...)
+		bookObservations = append(bookObservations, bookObservation{
+			managed: managed,
+			at:      managedBookObservedAt(managed),
+		})
 		return true
 	})
 
-	for _, trade := range trades {
+	sort.SliceStable(bookObservations, func(leftIndex, rightIndex int) bool {
+		left := bookObservations[leftIndex]
+		right := bookObservations[rightIndex]
+
+		if left.at.Equal(right.at) {
+			return left.managed.Name < right.managed.Name
+		}
+
+		return left.at.Before(right.at)
+	})
+
+	bookIndex := 0
+	tradeIndex := 0
+
+	for bookIndex < len(bookObservations) || tradeIndex < len(trades) {
+		if bookIndex < len(bookObservations) &&
+			(tradeIndex == len(trades) ||
+				!trades[tradeIndex].Timestamp.Before(bookObservations[bookIndex].at)) {
+			bookMeasurements, err := signal.measureManagedBook(
+				bookObservations[bookIndex].managed,
+			)
+			bookIndex++
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"exhaust: failed to measure book",
+					err,
+				))
+				continue
+			}
+
+			measurements = append(measurements, bookMeasurements...)
+			continue
+		}
+
+		trade := trades[tradeIndex]
+		tradeIndex++
+
+		if !validTrade(trade) || signal.seenTrade(trade) {
+			continue
+		}
+
+		bookAt, hasBook := signal.lastBookAt[trade.Symbol]
+
+		if !hasBook || bookAt.IsZero() || bookAt.After(trade.Timestamp) {
+			continue
+		}
+
 		tradeMeasurements, err := signal.measureTrade(trade)
 
 		if err != nil {
@@ -167,6 +230,8 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			))
 			continue
 		}
+
+		signal.commitTrade(trade)
 
 		measurements = append(measurements, tradeMeasurements...)
 
@@ -184,11 +249,42 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	return measurements
 }
 
+func managedBookObservedAt(managed *spotbook.Book) time.Time {
+	observedAt := time.Time{}
+
+	if managed == nil {
+		return observedAt
+	}
+
+	for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
+		if bid.Timestamp.After(observedAt) {
+			observedAt = bid.Timestamp
+		}
+	}
+
+	for ask := managed.Asks.Low; ask != nil; ask = ask.Higher {
+		if ask.Timestamp.After(observedAt) {
+			observedAt = ask.Timestamp
+		}
+	}
+
+	return observedAt
+}
+
 func (signal *Signal) measureManagedBook(
 	managed *spotbook.Book,
 ) ([]*types.Measurement, error) {
-	bids := make([]flow.BookLevel, 0)
-	asks := make([]flow.BookLevel, 0)
+	bestBid, bestAsk := managed.BestBid(), managed.BestAsk()
+
+	if bestBid == nil || bestAsk == nil {
+		return nil, nil
+	}
+
+	current := bookSnapshot{
+		bids: make(map[int64]flow.BookLevel),
+		asks: make(map[int64]flow.BookLevel),
+	}
+	observedAt := time.Time{}
 
 	instrument, err := signal.instrument.Pair(managed.Name)
 
@@ -201,34 +297,61 @@ func (signal *Signal) measureManagedBook(
 	}
 
 	for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
-		bids = append(bids, flow.BookLevel{
+		level := flow.BookLevel{
 			Price:    bid.Price.Float64(),
 			Quantity: bid.Quantity.Float64(),
 			Ticks: decimal.ExactDiv(
 				bid.Price,
 				&instrument.PriceIncrement,
 			).Int64(),
-		})
+		}
+		current.bids[level.Ticks] = level
+
+		if bid.Timestamp.After(observedAt) {
+			observedAt = bid.Timestamp
+		}
 	}
 
 	for ask := managed.Asks.Low; ask != nil; ask = ask.Higher {
-		asks = append(asks, flow.BookLevel{
+		level := flow.BookLevel{
 			Price:    ask.Price.Float64(),
 			Quantity: ask.Quantity.Float64(),
 			Ticks: decimal.ExactDiv(
 				ask.Price,
 				&instrument.PriceIncrement,
 			).Int64(),
-		})
+		}
+		current.asks[level.Ticks] = level
+
+		if ask.Timestamp.After(observedAt) {
+			observedAt = ask.Timestamp
+		}
+	}
+
+	if observedAt.IsZero() {
+		return nil, nil
+	}
+
+	previous := signal.lastBook[managed.Name]
+
+	if sameSnapshot(current, previous) {
+		if observedAt.After(signal.lastBookAt[managed.Name]) {
+			signal.lastBookAt[managed.Name] = observedAt
+		}
+
+		return nil, nil
+	}
+
+	if observedAt.Before(signal.lastBookAt[managed.Name]) {
+		return nil, nil
 	}
 
 	input, ready, maturity, err := signal.sample.MeasureBook(flow.BookInput{
 		Symbol:   managed.Name,
 		TickSize: instrument.TickSize.Float64(),
-		Bids:     bids,
-		Asks:     asks,
+		Bids:     snapshotDelta(current.bids, previous.bids),
+		Asks:     snapshotDelta(current.asks, previous.asks),
 	})
-
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
@@ -237,9 +360,8 @@ func (signal *Signal) measureManagedBook(
 		))
 	}
 
-	if managed.BestBid() == nil || managed.BestAsk() == nil {
-		return nil, nil
-	}
+	signal.lastBook[managed.Name] = current
+	signal.lastBookAt[managed.Name] = observedAt
 
 	if !ready {
 		return nil, nil
@@ -257,7 +379,7 @@ func (signal *Signal) measureManagedBook(
 
 	return signal.frame(
 		managed.Name,
-		managed.BestBid().Timestamp,
+		observedAt,
 		output,
 		maturity,
 	), nil
@@ -311,6 +433,83 @@ func (signal *Signal) measureTrade(
 		output,
 		maturity,
 	), nil
+}
+
+func validTrade(row kraken.TradeData) bool {
+	return row.Symbol != "" && !row.Timestamp.IsZero() && row.Price.Sign() > 0 &&
+		row.Qty > 0 && (row.Side == "buy" || row.Side == "sell")
+}
+
+func (signal *Signal) seenTrade(row kraken.TradeData) bool {
+	previous := signal.lastTrade[row.Symbol]
+
+	if row.Timestamp.Before(previous.at) {
+		return true
+	}
+
+	if row.Timestamp.After(previous.at) {
+		return false
+	}
+
+	_, seen := previous.ids[row.TradeID]
+
+	return seen
+}
+
+func (signal *Signal) commitTrade(row kraken.TradeData) {
+	previous := signal.lastTrade[row.Symbol]
+
+	if row.Timestamp.After(previous.at) {
+		previous = tradeCursor{at: row.Timestamp, ids: make(map[int64]struct{})}
+	}
+
+	if previous.ids == nil {
+		previous.ids = make(map[int64]struct{})
+	}
+
+	previous.ids[row.TradeID] = struct{}{}
+	signal.lastTrade[row.Symbol] = previous
+}
+
+func sameSnapshot(current, previous bookSnapshot) bool {
+	return sameLevels(current.bids, previous.bids) && sameLevels(current.asks, previous.asks)
+}
+
+func sameLevels(current, previous map[int64]flow.BookLevel) bool {
+	if len(current) != len(previous) {
+		return false
+	}
+
+	for ticks, level := range current {
+		prior, ok := previous[ticks]
+
+		if !ok || prior.Price != level.Price || prior.Quantity != level.Quantity {
+			return false
+		}
+	}
+
+	return true
+}
+
+func snapshotDelta(
+	current, previous map[int64]flow.BookLevel,
+) []flow.BookLevel {
+	levels := make([]flow.BookLevel, 0, len(current)+len(previous))
+
+	for _, level := range current {
+		levels = append(levels, level)
+	}
+
+	for ticks, level := range previous {
+		if _, exists := current[ticks]; exists {
+			continue
+		}
+
+		level.Quantity = 0
+		levels = append(levels, level)
+	}
+
+	return levels
 }
 
 /*

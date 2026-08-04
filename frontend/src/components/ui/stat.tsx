@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from "class-variance-authority";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { Size } from "./types";
 
@@ -86,7 +86,11 @@ type StatValueProps = VariantProps<typeof statValueVariants>;
 export type StatProps = Omit<ComponentProps<"div">, "children"> &
 	StatLayoutProps &
 	Pick<StatValueProps, "variant" | "size" | "emphasis"> & {
-		value: string;
+		/*
+			A stat's value may be a painted node rather than a literal, so the
+			element carrying data-paint can sit in the value slot.
+		*/
+		value: ReactNode;
 		label: string;
 		valueClassName?: string;
 		labelClassName?: string;

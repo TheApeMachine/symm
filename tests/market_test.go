@@ -2,10 +2,13 @@ package tests
 
 import (
 	"context"
+	"slices"
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/tests/types"
+	coretypes "github.com/theapemachine/symm/types"
 )
 
 func TestMarketNewMarket(t *testing.T) {
@@ -54,6 +57,92 @@ func TestMarketWithMarket(t *testing.T) {
 			market.Tick()
 		})()
 	})
+}
+
+func TestMarketWithAutoFill(t *testing.T) {
+	symbols := []*types.Symbol{
+		types.NewSymbol("SIM1/USD", 100.0, 42),
+	}
+
+	Convey("Given an executable position lifecycle at the simulated venue", t, WithFixtureOrders(t, symbols, func(market *Market) {
+		market.WithAutoFill()
+		market.Tick()
+		initialSlots := market.Desk.OpenSlots(false)
+		entry := coretypes.Decision{
+			ID:               "entry-one",
+			Action:           coretypes.ActionEnter,
+			Symbol:           symbols[0].Pair,
+			ProposedQuantity: decimal.NewFromFloat64(0.25),
+		}
+
+		So(market.Desk.Execute([]coretypes.Decision{entry}), ShouldBeNil)
+		So(market.Desk.OpenPositions(), ShouldEqual, 1)
+		So(market.Desk.OpenSlots(false), ShouldEqual, initialSlots-1)
+		positions := slices.Collect(market.Desk.Positions())
+
+		So(positions, ShouldHaveLength, 1)
+		position := positions[0]
+		So(position.Holding.EntryPrice, ShouldNotBeNil)
+		So(position.Holding.EntryFee, ShouldNotBeNil)
+		So(position.Holding.EntryFee.Sign(), ShouldEqual, 1)
+		So(position.Holding.Mark.Cmp(position.Holding.EntryPrice), ShouldEqual, 0)
+		So(position.Holding.Stoploss, ShouldNotBeNil)
+		So(position.Holding.Stoploss.Entry.Cmp(position.Holding.EntryPrice), ShouldEqual, 0)
+		So(position.Holding.Stoploss.Mark.Cmp(position.Holding.EntryPrice), ShouldEqual, 0)
+		So(position.Holding.Stoploss.Floor, ShouldNotBeNil)
+		estimatedEntryPrice := position.Holding.EntryPrice.Copy()
+
+		market.Tick()
+		market.Tick()
+		positions = slices.Collect(market.Desk.Positions())
+
+		So(positions, ShouldHaveLength, 1)
+		position = positions[0]
+		So(position.Status, ShouldEqual, coretypes.OPEN)
+		So(position.Holding.SellableQty.String(), ShouldEqual, "0.25")
+		So(position.Holding.EntryPrice.Float64(), ShouldEqual, 105.0)
+		So(position.Holding.EntryPrice.Cmp(estimatedEntryPrice), ShouldNotEqual, 0)
+		So(position.Holding.Stoploss.Entry.Cmp(position.Holding.EntryPrice), ShouldEqual, 0)
+		So(position.Holding.Stoploss.Mark.Cmp(position.Holding.Mark), ShouldEqual, 0)
+
+		exit := coretypes.Decision{
+			ID:     "exit-one",
+			Action: coretypes.ActionExit,
+			Symbol: symbols[0].Pair,
+		}
+		So(market.Desk.Execute([]coretypes.Decision{exit}), ShouldBeNil)
+
+		positions = slices.Collect(market.Desk.Positions())
+		So(positions, ShouldHaveLength, 1)
+		position = positions[0]
+		So(position.Status, ShouldEqual, coretypes.PENDING)
+		So(position.ExitOrder.ClOrdId, ShouldEqual, exit.ID)
+		So(position.ExitOrder.Volume, ShouldEqual, "0.25")
+
+		market.Tick()
+		market.Tick()
+
+		So(position.Status, ShouldEqual, coretypes.CLOSED)
+		So(position.Holding.Status, ShouldEqual, coretypes.CLOSED)
+		So(position.Holding.SellableQty.Sign(), ShouldEqual, 0)
+		So(position.Holding.ExitAt, ShouldNotBeNil)
+		So(market.Desk.OpenPositions(), ShouldEqual, 0)
+		So(market.Desk.OpenSlots(false), ShouldEqual, initialSlots)
+
+		reentry := coretypes.Decision{
+			ID:               "entry-two",
+			Action:           coretypes.ActionEnter,
+			Symbol:           symbols[0].Pair,
+			ProposedQuantity: decimal.NewFromFloat64(0.20),
+		}
+		So(market.Desk.Execute([]coretypes.Decision{reentry}), ShouldBeNil)
+		So(market.Desk.OpenPositions(), ShouldEqual, 1)
+
+		positions = slices.Collect(market.Desk.Positions())
+		So(positions, ShouldHaveLength, 1)
+		So(positions[0].ID, ShouldEqual, reentry.ID)
+		So(positions[0].Status, ShouldEqual, coretypes.PENDING)
+	}))
 }
 
 func BenchmarkMarketTick(b *testing.B) {

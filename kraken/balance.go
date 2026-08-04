@@ -189,3 +189,23 @@ func NewBalanceFromMap(model datura.Map[any]) *Balance {
 
 	return &out
 }
+
+func NewTradeBalanceFromMap(model datura.Map[any]) TradeBalanceResult {
+	currentValue := decimal.NewFromFloat64(model["current_value"].(float64))
+	unrealizedPnL := decimal.NewFromFloat64(model["unrealized_pnl"].(float64))
+	tradeBalance := currentValue.Sub(unrealizedPnL)
+	zero := decimal.NewFromInt64(0)
+
+	return TradeBalanceResult{
+		EquivalentBalance: currentValue.Copy(),
+		TradeBalance:      tradeBalance,
+		MarginAmount:      zero.Copy(),
+		UnrealizedPnL:     unrealizedPnL,
+		CostBasis:         zero.Copy(),
+		Valuation:         zero.Copy(),
+		Equity:            currentValue,
+		FreeMargin:        currentValue.Copy(),
+		MarginFreeOrders:  currentValue.Copy(),
+		UnexecutedValue:   zero.Copy(),
+	}
+}

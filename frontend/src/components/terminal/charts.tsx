@@ -15,17 +15,12 @@ export {
 	paintTerminalManifoldChart,
 	TerminalManifoldChart,
 } from "#/components/charts/manifold";
-export {
-	paintTerminalPredictionChart,
-	TerminalPredictionChart,
-} from "#/components/charts/prediction";
+export { TerminalPredictionChart } from "#/components/charts/prediction";
 export {
 	paintTerminalResonanceChart,
 	TerminalResonanceChart,
 } from "#/components/charts/resonance";
-export {
-	TerminalSignalHeatmap,
-} from "#/components/charts/signal-heatmap";
+export { TerminalSignalHeatmap } from "#/components/charts/signal-heatmap";
 export {
 	fluidGridDimensions,
 	terminalPhaseScanFromFrame,

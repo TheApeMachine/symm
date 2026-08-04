@@ -3,7 +3,6 @@ package leadlag
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/strategy"
@@ -94,19 +93,18 @@ func (signal *Signal) run() {
 				return
 			case message := <-subscription.Channel:
 				if thesis, ok := message.(*types.Thesis); ok {
-					thesis.AppendMeasurements(
-						types.SourceLeadLag,
-						signal.Measure(thesis),
-						types.Stamp{
-							At:     time.Now(),
-							Entity: types.MarketTicker,
-							Source: types.SourceLeadLag,
-						},
-					)
+					measurements := signal.Measure(thesis)
 
-					utils.Fanout(signal.subscribers, signal.Name(), thesis)
+					if len(measurements) > 0 {
+						thesis.Measurements.Store(
+							types.SourceLeadLag,
+							measurements,
+						)
+
+						thesis.Readiness.LeadLag = true
+						utils.Fanout(signal.subscribers, signal.Name(), thesis)
+					}
 				}
-
 			}
 		}
 	}()
@@ -117,19 +115,9 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		signal.section = NewSection()
 	}
 
-	tickers, _, _ := thesis.Market()
+	tickers := thesis.MarketTickers()
 
-	if thesis.CrossSection == nil {
-		return nil
-	}
-
-	crossSection := thesis.CrossSection
-
-	if len(tickers) > 0 {
-		crossSection.Measure(tickers)
-	}
-
-	return signal.measureFrame(tickers, crossSection)
+	return signal.measureFrame(tickers)
 }
 
 /*

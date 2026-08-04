@@ -112,6 +112,10 @@ const layerError = (
 /*
 xrayLayersFromResonance maps backend resonance layers into hierarchy rows so the
 predictive-coding panel never invents structure from manifold density.
+
+The network reports its own prediction error per layer. That reading wins over
+the mean absolute difference recomputed here, which only stands in for layers
+published before errorNorm existed.
 */
 export const xrayLayersFromResonance = (
 	frame: ResonanceFrame | null | undefined,
@@ -121,12 +125,13 @@ export const xrayLayersFromResonance = (
 	return layers.map((layer, index) => {
 		const state = numberArray(layer.state);
 		const prediction = numberArray(layer.prediction);
+		const reported = finite(layer.errorNorm);
 
 		return {
 			index,
 			label: `L${index} · ${semanticLayerName(index, layers.length)}`,
 			state,
-			error_norm: layerError(state, prediction, frame?.surprise),
+			error_norm: reported ?? layerError(state, prediction, frame?.surprise),
 		};
 	});
 };

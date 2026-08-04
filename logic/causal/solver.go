@@ -1,7 +1,6 @@
 package causal
 
 import (
-	"math"
 	"sync"
 
 	"github.com/theapemachine/datura"
@@ -35,8 +34,15 @@ type Solver struct {
 	mu       sync.RWMutex
 	pearls   map[string]*algorithm.Pearl
 	regimes  map[string]*causal.Regime
+	history  map[string][][]float64
 	config   algorithm.PearlConfig
 	ui       chan []byte
+}
+
+type causalResult struct {
+	symbol string
+	output map[string]any
+	err    error
 }
 
 /*
@@ -59,6 +65,7 @@ func NewSolver(ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver
 		recorder: recorder,
 		pearls:   make(map[string]*algorithm.Pearl),
 		regimes:  make(map[string]*causal.Regime),
+		history:  make(map[string][][]float64),
 		config:   defaultConfig,
 		ui:       ui,
 	}
@@ -80,195 +87,119 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return nil
 	}
 
-	symbols := solver.extractSymbols(thesis)
+	inputs := solver.buildCausalInputs(thesis)
+	results := make([]causalResult, len(inputs))
+	groups := make([]types.SymbolRows[causalInput], len(inputs))
 
-	if len(symbols) == 0 {
-		symbols = []string{"default"}
+	for index, input := range inputs {
+		groups[index] = types.SymbolRows[causalInput]{Symbol: input.symbol, Rows: []causalInput{input}}
 	}
 
-	for _, symbol := range symbols {
-		row, intervention, contagion, condition, ok := solver.buildCausalRow(thesis, symbol)
+	err := types.RunSymbolGroupsParallel(groups, func(index int, rows []causalInput) error {
+		results[index] = solver.measure(rows[0])
+		return nil
+	})
 
-		if !ok {
-			continue
-		}
+	if err != nil {
+		return err
+	}
 
-		pearl := solver.getPearl(symbol)
-		regime := solver.getRegime(symbol)
+	resolved := solver.store(thesis, results)
 
-		// 1. Evaluate Causal Regime (Normal vs Inverted Market)
-		regimeOut, err := regime.Measure(causal.RegimeInput{
-			Rows:      [][]float64{row},
-			Contagion: contagion,
-		})
-
-		inverted := false
-
-		if err == nil && regimeOut.RawInverted > 0 {
-			inverted = true
-		}
-
-		// 2. Evaluate Pearl's Causal Ladder (Association, Intervention, Counterfactuals)
-		output, ready, err := pearl.Measure(algorithm.PearlInput{
-			Key:          symbol,
-			Row:          row,
-			Inverted:     inverted,
-			Contagion:    contagion,
-			Condition:    condition,
-			Intervention: intervention,
-		})
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"causal: pearl evaluation failed",
-				err,
-			))
-			continue
-		}
-
-		if !ready {
-			continue
-		}
-
-		// 3. Enrich thesis.Causal with Pearl outputs map
-		thesis.Causal.Store(symbol, output.Outputs())
-
-		// 4. Audit Record
-		if solver.recorder != nil {
-			auditData := output.Outputs()
-			auditData["symbol"] = symbol
-			auditData["stage"] = "causal"
-			errnie.Error(audit.Record(solver.recorder, "predictive", auditData))
-		}
+	if resolved {
+		thesis.Readiness.Causal = true
 	}
 
 	solver.publish(thesis)
 	return nil
 }
 
-/*
-buildCausalRow constructs an aligned 4-column causal observation vector [C1, C2, T, Y]
-from Thesis measurements and predictive coding outputs.
-*/
-func (solver *Solver) buildCausalRow(
-	thesis *types.Thesis,
-	symbol string,
-) (row []float64, intervention float64, contagion float64, condition float64, ok bool) {
-	// Extract Predictive Coding Resonance outputs
-	var energy, surprise, taskPred float64
+func (solver *Solver) measure(input causalInput) causalResult {
+	solver.appendHistory(input.symbol, input.row)
 
-	if resRaw, found := thesis.Resonance.Load("resonance"); found {
-		if resMap, isMap := resRaw.(map[string]any); isMap {
-			if v, ok := resMap["energy"].(float64); ok {
-				energy = v
-			}
-			if v, ok := resMap["surprise"].(float64); ok {
-				surprise = v
-			}
-			if v, ok := resMap["taskPrediction"].([]float64); ok && len(v) > 0 {
-				taskPred = v[0]
-			} else if v, ok := resMap["forwardCurve"].([]float64); ok && len(v) > 0 {
-				taskPred = v[0]
-			}
-		}
-	}
-
-	// Extract Realized Return / Target from Measurement Metrics (.Raw)
-	var realizedReturn float64
-	measurementCount := 0
-
-	thesis.Measurements.Range(func(key, value any) bool {
-		rows, ok := value.([]*types.Measurement)
-
-		if !ok {
-			measurement, measurementOK := value.(*types.Measurement)
-
-			if !measurementOK || measurement == nil {
-				return true
-			}
-
-			rows = []*types.Measurement{measurement}
-		}
-
-		for _, measurement := range rows {
-			if measurement == nil || (measurement.Symbol != symbol && symbol != "default") {
-				continue
-			}
-
-			for _, metric := range measurement.Metrics {
-				realizedReturn += metric.Raw
-				measurementCount++
-			}
-		}
-
-		return true
+	regimeOut, err := solver.getRegime(input.symbol).Measure(causal.RegimeInput{
+		Rows:      [][]float64{input.row},
+		Contagion: input.contagion,
+	})
+	inverted := err == nil && regimeOut.RawInverted > 0
+	output, ready, err := solver.getPearl(input.symbol).Measure(algorithm.PearlInput{
+		Key: input.symbol, Row: input.row, Inverted: inverted,
+		Contagion: input.contagion, Condition: input.condition, Intervention: input.intervention,
 	})
 
-	if measurementCount > 0 {
-		realizedReturn /= float64(measurementCount)
+	if err != nil {
+		return causalResult{
+			symbol: input.symbol,
+			err: errnie.Err(
+				errnie.UnprocessableContent,
+				"causal: pearl evaluation failed",
+				err,
+			),
+		}
 	}
 
-	// Validate numeric values
-	if math.IsNaN(energy) || math.IsInf(energy, 0) {
-		energy = 0.0
-	}
-	if math.IsNaN(surprise) || math.IsInf(surprise, 0) {
-		surprise = 0.0
-	}
-	if math.IsNaN(taskPred) || math.IsInf(taskPred, 0) {
-		taskPred = 0.0
+	if !ready {
+		return causalResult{symbol: input.symbol}
 	}
 
-	// Construct 4-column Row: [Control1 (Energy), Control2 (Surprise), Treatment (TaskPred), Target (Return)]
-	row = []float64{
-		energy,         // Col 0: Control 1
-		surprise,       // Col 1: Control 2
-		taskPred,       // Col 2: Treatment
-		realizedReturn, // Col 3: Target
-	}
-
-	intervention = taskPred // Desired interventional level
-	contagion = surprise    // Surprise magnitude acts as contagion proxy
-	condition = energy      // Energy acts as pair condition proxy
-
-	return row, intervention, contagion, condition, true
+	return causalResult{symbol: input.symbol, output: output.Outputs()}
 }
 
-/*
-extractSymbols finds all distinct symbols in Thesis measurements.
-*/
-func (solver *Solver) extractSymbols(thesis *types.Thesis) []string {
-	seen := make(map[string]struct{})
-	thesis.Measurements.Range(func(key, value any) bool {
-		rows, ok := value.([]*types.Measurement)
+func (solver *Solver) store(thesis *types.Thesis, results []causalResult) bool {
+	resolved := false
 
-		if !ok {
-			single, singleOK := value.(*types.Measurement)
+	for _, result := range results {
+		if result.err != nil {
+			errnie.Error(result.err)
 
-			if !singleOK || single == nil {
-				return true
-			}
-
-			rows = []*types.Measurement{single}
+			continue
 		}
 
-		for _, measurement := range rows {
-			if measurement == nil || measurement.Symbol == "" {
-				continue
-			}
-
-			seen[measurement.Symbol] = struct{}{}
+		if result.output == nil {
+			continue
 		}
 
-		return true
-	})
+		result.output["historyRows"] = solver.historyRows(result.symbol)
+		thesis.Causal.Store(result.symbol, result.output)
+		resolved = true
 
-	symbols := make([]string, 0, len(seen))
-	for s := range seen {
-		symbols = append(symbols, s)
+		if solver.recorder != nil {
+			result.output["symbol"] = result.symbol
+			result.output["stage"] = "causal"
+			errnie.Error(audit.Record(solver.recorder, "predictive", result.output))
+		}
 	}
-	return symbols
+
+	return resolved
+}
+
+func (solver *Solver) appendHistory(symbol string, row []float64) {
+	solver.mu.Lock()
+	defer solver.mu.Unlock()
+
+	rows := append(solver.history[symbol], append([]float64(nil), row...))
+	rowWidth := len(row)
+	capacity := 1 + rowWidth + rowWidth*(rowWidth+1)/2
+
+	if len(rows) > capacity {
+		rows = rows[len(rows)-capacity:]
+	}
+
+	solver.history[symbol] = rows
+}
+
+func (solver *Solver) historyRows(symbol string) [][]float64 {
+	solver.mu.RLock()
+	defer solver.mu.RUnlock()
+
+	stored := solver.history[symbol]
+	rows := make([][]float64, len(stored))
+
+	for index, row := range stored {
+		rows[index] = append([]float64(nil), row...)
+	}
+
+	return rows
 }
 
 /*
@@ -343,5 +274,9 @@ func (solver *Solver) getRegime(symbol string) *causal.Regime {
 Close cleans up the solver instance.
 */
 func (solver *Solver) Close() error {
+	solver.mu.Lock()
+	defer solver.mu.Unlock()
+
+	solver.history = nil
 	return nil
 }

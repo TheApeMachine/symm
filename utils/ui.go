@@ -10,6 +10,11 @@ Publish is a convenience function to send data to the frontend,
 and takes care of marshalling and channel saturation.
 */
 func Publish(ui chan []byte, data datura.Map[any]) {
+	if data == nil || ui == nil {
+		data.Free()
+		return
+	}
+
 	hasValue := false
 
 	for key, value := range data {
@@ -30,6 +35,7 @@ func Publish(ui chan []byte, data datura.Map[any]) {
 	}
 
 	if !hasValue {
+		data.Free()
 		return
 	}
 

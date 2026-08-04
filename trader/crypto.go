@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
@@ -113,16 +112,23 @@ func (crypto *Crypto) run() {
 					continue
 				}
 
-				crypto.thesis.Tick = crypto.thesis.Tick + 1
+				typedDecisions, ok := decisions.([]types.Decision)
 
-				out := datura.NewMap()
-				out["decisions"] = decisions
-				utils.Publish(crypto.ui, out)
+				if !ok {
+					continue
+				}
+				if crypto.desk != nil {
+					go func() {
+						if err := crypto.desk.Execute(typedDecisions); err != nil {
+							errnie.Error(errnie.Err(
+								errnie.Internal,
+								"crypto: failed to execute decision round",
+								err,
+							))
+						}
+					}()
+				}
 
-				tickOut := datura.NewMap()
-				tickOut["tick"] = datura.NewMap()
-				tickOut["tick"].(datura.Map[any])["count"] = crypto.thesis.Tick
-				utils.Publish(crypto.ui, tickOut)
 			}
 		}
 	}()
@@ -143,9 +149,16 @@ func (crypto *Crypto) onTicker(data any) {
 
 	for _, ticker := range typedTickers.Data {
 		crypto.thesis.Tickers.Store(ticker.Symbol, ticker)
+		crypto.storeBook(ticker.Symbol)
+
+		// The broker prices every order off its own ticker cache, so the same
+		// tick has to reach it here. Without this the price surface stays
+		// empty and nothing downstream can be marked, sized, or costed.
+		if crypto.desk != nil {
+			crypto.desk.Price().Update(&ticker)
+		}
 	}
 
-	crypto.thesis.Books = crypto.api.Books()
 	utils.Fanout(crypto.subscribers, "thesis", crypto.thesis)
 }
 
@@ -164,10 +177,24 @@ func (crypto *Crypto) onTrade(data any) {
 
 	for _, trade := range typedTrades.Data {
 		crypto.thesis.Trades.Store(trade.Symbol, trade)
+		crypto.storeBook(trade.Symbol)
 	}
 
-	crypto.thesis.Books = crypto.api.Books()
 	utils.Fanout(crypto.subscribers, "thesis", crypto.thesis)
+}
+
+func (crypto *Crypto) storeBook(symbol string) {
+	if symbol == "" || crypto.api == nil || crypto.thesis == nil || crypto.thesis.Books == nil {
+		return
+	}
+
+	book := crypto.api.Book(symbol)
+
+	if book == nil {
+		return
+	}
+
+	crypto.thesis.Books.Store(symbol, book)
 }
 
 func (crypto *Crypto) decisionsReady(decisions any) bool {

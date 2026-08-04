@@ -306,6 +306,7 @@ Flex.Center = ({
 		<Flex
 			justify="center"
 			align="center"
+			padding={padding}
 			className={cn("h-full w-full", className)}
 			{...props}
 		>

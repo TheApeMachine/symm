@@ -4,8 +4,7 @@ import (
 	"bytes"
 	"math"
 	"strings"
-	"sync"
-	"time"
+	"unicode/utf8"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
@@ -45,7 +44,6 @@ classify macro regimes via attractor basins, and predict future category paths u
 type Solver struct {
 	recorder       *audit.Recorder
 	tree           *dmt.Tree
-	mu             sync.RWMutex
 	sequences      map[string][]string // Active category token buffer per symbol
 	maxSeqLen      int
 	surprisalLimit float64
@@ -57,18 +55,17 @@ type Solver struct {
 	beamScratch  dmt.BeamSearchScratch
 }
 
+const categoryTokenSeparator = "\x1f"
+
 /*
 NewSolver returns a new cognition solver bound to a radix tree and audit recorder.
 */
-func NewSolver(tree *dmt.Tree, ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver {
-	if tree == nil {
-		var err error
-		tree, err = dmt.NewTree("")
-		if err != nil {
-			errnie.Error(errnie.Err(errnie.UnprocessableContent, "cognition: tree init failed", err))
-		}
-	}
-
+func NewSolver(
+	tree *dmt.Tree,
+	ui chan []byte,
+	recorder *audit.Recorder,
+	opts ...Option,
+) *Solver {
 	solver := &Solver{
 		recorder:       recorder,
 		tree:           tree,
@@ -99,11 +96,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return nil
 	}
 
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
-
 	solver.tickCounter++
 	nowUnix := uint64(thesis.At.UnixNano())
+
+	reasoned := false
 
 	// 1. Process active categories per symbol
 	for symbol, categories := range thesis.Categories {
@@ -117,15 +113,15 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			continue
 		}
 
-		categoryToken := string(dominantCategory)
+		categoryToken := solver.encodeCategory(dominantCategory)
 		activeTokens := solver.sequences[symbol]
 
 		// 2. Evaluate if appending this category causes a Sequence Break
-		broken, currentSurprisal := solver.evalSequenceBreak(activeTokens, categoryToken)
+		broken, _ := solver.evalSequenceBreak(activeTokens, categoryToken)
 
 		if broken && len(activeTokens) > 0 {
 			// --- SEQUENCE BREAK DETECTED ---
-			oldSequenceBytes := []byte(strings.Join(activeTokens, "_"))
+			oldSequenceBytes := solver.sequenceBytes(activeTokens)
 
 			// Commit completed sequence to episodic buffer for REM replay
 			_, _ = solver.tree.CommitToEpisodicBuffer(nowUnix, oldSequenceBytes)
@@ -141,7 +137,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		solver.sequences[symbol] = activeTokens
-		activeSequenceBytes := []byte(strings.Join(activeTokens, "_"))
+		activeSequenceBytes := solver.sequenceBytes(activeTokens)
 
 		// 3. Train sensory sequence online
 		solver.tree.TrainSensorySequence(activeSequenceBytes)
@@ -150,10 +146,13 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		classResult := solver.tree.Classify(activeSequenceBytes, &solver.classScratch)
 
 		// 5. Lookahead Beam Search: Predict next 2–3 likely category hops
+		const beamWidth = 3
+		const maxHops = 2
+
 		beamPaths := solver.tree.ExecuteBeamSearch(
 			activeSequenceBytes,
-			3, // Beam width
-			2, // Max lookahead hops
+			beamWidth,
+			maxHops,
 			&solver.beamScratch,
 		)
 
@@ -161,36 +160,115 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		ambiguity := solver.tree.MeasureBranchAmbiguity(activeSequenceBytes)
 
 		// 7. Format Lookahead Predictions for Thesis
-		predictions := solver.formatLookaheadPredictions(beamPaths, activeSequenceBytes)
+		predictions := solver.formatLookaheadPredictions(
+			beamPaths, activeSequenceBytes,
+		)
 
-		// 8. Enrich Thesis.Cognition
-		cognitionOutcome := map[string]any{
-			"activeSequence": string(activeSequenceBytes),
-			"winnerRegime":   string(classResult.Winner),
-			"confidence":     classResult.Highest,
-			"surprisal":      currentSurprisal,
-			"isBreak":        broken,
-			"ambiguity":      ambiguity.Ambiguous,
-			"entropyBits":    ambiguity.EntropyBits,
-			"predictions":    predictions,
+		classes := make([]types.CognitionClass, 0, len(classResult.Scores))
+
+		for _, score := range classResult.Scores {
+			classes = append(classes, types.CognitionClass{
+				Name:        string(score.ClassName),
+				Probability: score.Value,
+			})
 		}
 
-		thesis.Cognition.Store(symbol, cognitionOutcome)
+		beams := make([]types.CognitionBeam, 0, len(beamPaths))
+
+		for _, path := range beamPaths {
+			beams = append(beams, types.CognitionBeam{
+				Sequence: solver.decodeCategoryPath(path.Sequence),
+				Score:    path.Score,
+			})
+		}
+
+		branches := []types.CognitionBranch{{
+			ID:          0,
+			ParentID:    -1,
+			Token:       "•",
+			Probability: 1,
+		}}
+		prefixTokens := make([]string, 0, len(activeTokens))
+
+		for index, token := range activeTokens {
+			prefixTokens = append(prefixTokens, token)
+			prefixBytes := solver.sequenceBytes(prefixTokens)
+			prefix := solver.decodeCategoryPath(prefixBytes)
+			weight := solver.tree.GetSensoryWeight(prefixBytes)
+			branches = append(branches, types.CognitionBranch{
+				ID:          index + 1,
+				ParentID:    index,
+				Token:       solver.decodeCategoryToken(token),
+				Prefix:      prefix,
+				Depth:       index + 1,
+				Probability: weight.Probability,
+				Count:       weight.Count,
+			})
+		}
+
+		contrast := 0.0
+		contrastEvidence := 0.0
+
+		if len(classResult.Scores) > 1 {
+			contrast = classResult.Scores[0].Value - classResult.Scores[1].Value
+			evidence := solver.tree.ComputeBasinContrastiveEvidence(
+				classResult.Scores[0].ClassName,
+				classResult.Scores[1].ClassName,
+				activeSequenceBytes,
+			)
+			contrastEvidence = evidence.Divergence
+		}
+
+		lookaheadScore := 0.0
+
+		if len(beamPaths) > 0 {
+			lookaheadScore = beamPaths[0].Score
+		}
+
+		winner := string(classResult.Winner)
+
+		cognition := types.Cognition{
+			Source:           "cognition",
+			Symbol:           symbol,
+			At:               thesis.At,
+			Sequence:         solver.decodeCategoryPath(activeSequenceBytes),
+			RegimePrefix:     winner,
+			Winner:           winner,
+			WinnerClass:      winner,
+			Ready:            winner != "",
+			Confidence:       classResult.Highest,
+			ClassConfidence:  classResult.Highest,
+			Contrast:         contrast,
+			ContrastEvidence: contrastEvidence,
+			EntropyBits:      ambiguity.EntropyBits,
+			EntropyThreshold: ambiguity.Threshold,
+			Ambiguous:        ambiguity.Ambiguous,
+			Cohort:           solver.tree.GetSensoryWeight(activeSequenceBytes).Count,
+			LookaheadScore:   lookaheadScore,
+			LookaheadPaths:   len(beamPaths),
+			BeamWidth:        beamWidth,
+			MaxHops:          maxHops,
+			NodeCount:        len(branches),
+			Predictions:      predictions,
+			Branches:         branches,
+			Beams:            beams,
+			Classes:          classes,
+		}
+
+		thesis.Cognition.Store(symbol, cognition)
+
+		reasoned = true
 
 		// 9. Audit Recording
 		if solver.recorder != nil {
-			auditEntry := map[string]any{
-				"stage":          "cognition",
-				"symbol":         symbol,
-				"activeSequence": string(activeSequenceBytes),
-				"winnerRegime":   string(classResult.Winner),
-				"confidence":     classResult.Highest,
-				"surprisal":      currentSurprisal,
-				"isBreak":        broken,
-				"predictions":    predictions,
-			}
-			errnie.Error(audit.Record(solver.recorder, "predictive", auditEntry))
+			errnie.Error(audit.Record(
+				solver.recorder, "predictive", cognition,
+			))
 		}
+	}
+
+	if reasoned {
+		thesis.Readiness.Cognition = true
 	}
 
 	solver.publish(thesis)
@@ -208,7 +286,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 evalSequenceBreak tests whether appending categoryToken causes a sequence break.
 Returns true if surprisal exceeds limit or sequence length exceeds max.
 */
-func (solver *Solver) evalSequenceBreak(activeTokens []string, nextToken string) (broken bool, surprisal float64) {
+func (solver *Solver) evalSequenceBreak(
+	activeTokens []string, nextToken string,
+) (broken bool, surprisal float64) {
 	if len(activeTokens) == 0 {
 		return false, 0.0
 	}
@@ -219,9 +299,10 @@ func (solver *Solver) evalSequenceBreak(activeTokens []string, nextToken string)
 
 	// Test candidate path surprisal
 	candidateTokens := append(append([]string(nil), activeTokens...), nextToken)
-	candidateBytes := []byte(strings.Join(candidateTokens, "_"))
+	candidateBytes := solver.sequenceBytes(candidateTokens)
 
 	surprisalItems := solver.tree.GetSurprisal(candidateBytes)
+
 	if len(surprisalItems) == 0 {
 		return false, 0.0
 	}
@@ -240,12 +321,15 @@ func (solver *Solver) evalSequenceBreak(activeTokens []string, nextToken string)
 /*
 selectDominantCategory picks the category with the highest confidence/strength.
 */
-func (solver *Solver) selectDominantCategory(categories []types.Category) types.CategoryType {
+func (solver *Solver) selectDominantCategory(
+	categories []types.Category,
+) types.CategoryType {
 	if len(categories) == 0 {
 		return types.CategoryTypeNone
 	}
 
 	best := categories[0]
+
 	for _, cat := range categories[1:] {
 		if cat.Confidence*cat.Strength > best.Confidence*best.Strength {
 			best = cat
@@ -256,14 +340,47 @@ func (solver *Solver) selectDominantCategory(categories []types.Category) types.
 }
 
 /*
+encodeCategory keeps one category as one DMT token.
+
+DMT uses underscore as its sequence boundary, while category names themselves
+contain underscores. Passing raw category names therefore trained
+"vertical_ignition" as two unrelated states. Unit Separator is not used by any
+category name and survives the byte-oriented tree unchanged.
+*/
+func (solver *Solver) encodeCategory(category types.CategoryType) string {
+	return strings.ReplaceAll(string(category), "_", categoryTokenSeparator)
+}
+
+func (solver *Solver) decodeCategoryToken(token string) string {
+	return strings.ReplaceAll(token, categoryTokenSeparator, "_")
+}
+
+func (solver *Solver) sequenceBytes(tokens []string) []byte {
+	return []byte(strings.Join(tokens, "_"))
+}
+
+func (solver *Solver) decodeCategoryPath(path []byte) string {
+	tokens := strings.Split(string(path), "_")
+
+	for index := range tokens {
+		tokens[index] = solver.decodeCategoryToken(tokens[index])
+	}
+
+	return strings.Join(tokens, " → ")
+}
+
+/*
 formatLookaheadPredictions extracts future token paths from beam search results.
 */
-func (solver *Solver) formatLookaheadPredictions(paths []dmt.BeamPath, currentPrefix []byte) []map[string]any {
+func (solver *Solver) formatLookaheadPredictions(
+	paths []dmt.BeamPath, currentPrefix []byte,
+) map[string]float64 {
 	if len(paths) == 0 {
 		return nil
 	}
 
-	predictions := make([]map[string]any, 0, len(paths))
+	predictions := make(map[string]float64, len(paths))
+
 	for _, path := range paths {
 		// Strip active prefix to show only future projected hops
 		futureSuffix := bytes.TrimPrefix(path.Sequence, currentPrefix)
@@ -273,11 +390,11 @@ func (solver *Solver) formatLookaheadPredictions(paths []dmt.BeamPath, currentPr
 			continue
 		}
 
-		predictions = append(predictions, map[string]any{
-			"predictedPath": string(futureSuffix),
-			"score":         path.Score,
-			"probability":   math.Exp(path.Score),
-		})
+		if !utf8.Valid(futureSuffix) {
+			continue
+		}
+
+		predictions[solver.decodeCategoryPath(futureSuffix)] = math.Exp(path.Score)
 	}
 
 	return predictions
@@ -291,8 +408,12 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 		return
 	}
 
-	rows := make([]datura.Map[any], 0)
-	at := thesis.At.Format(time.RFC3339)
+	/*
+		Rows are keyed by symbol rather than listed, because the display reads
+		one symbol at a time and a position in a list says nothing about which
+		symbol it describes once the set of symbols changes between ticks.
+	*/
+	rows := datura.NewMap()
 
 	thesis.Cognition.Range(func(key, value any) bool {
 		symbol, ok := key.(string)
@@ -300,20 +421,13 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 			return true
 		}
 
-		cogMap, ok := value.(map[string]any)
+		cognition, ok := value.(types.Cognition)
 		if !ok {
 			return true
 		}
 
-		row := datura.NewMap(
-			"source", "cognition",
-			"symbol", symbol,
-			"at", at,
-		)
-		for k, v := range cogMap {
-			row[k] = v
-		}
-		rows = append(rows, row)
+		cognition.At = thesis.At
+		rows[symbol] = cognition
 		return true
 	})
 
@@ -329,9 +443,6 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 Reset clears active sequence buffers for all symbols.
 */
 func (solver *Solver) Reset() {
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
-
 	solver.sequences = make(map[string][]string)
 }
 
@@ -339,9 +450,6 @@ func (solver *Solver) Reset() {
 Close cleans up the solver.
 */
 func (solver *Solver) Close() error {
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
-
 	solver.sequences = nil
 	return nil
 }

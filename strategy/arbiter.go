@@ -53,14 +53,46 @@ func (arbiter *Arbiter) Arbitrate(thesis *types.Thesis) {
 		return enters[i].Utility > enters[j].Utility
 	})
 
-	openSlots := arbiter.desk.OpenSlots(false)
+	openSlots := max(arbiter.desk.OpenSlots(false), 0)
+	totalSlots := max(arbiter.desk.OpenSlots(true), 0)
+	reserveSlots := max(totalSlots-openSlots, 0)
 	incumbents := arbiter.getIncumbents()
 
+	/*
+		Capacity and occupancy are recorded on every decision, because a
+		decision to take a slot is only auditable next to the budget it was
+		taken against.
+	*/
+	capacity := arbiter.desk.MaxPositions()
+	open := arbiter.desk.OpenPositions()
+
 	for _, candidate := range enters {
+		candidate.SlotCapacity = capacity
+		candidate.OpenPositions = open
+
 		if openSlots > 0 {
+			candidate.AllocationClass = "normal"
 			thesis.NoteLifecycle(candidate.Symbol, types.LifecycleEntrySelected, thesis.At)
 			retained = append(retained, candidate)
 			openSlots--
+			continue
+		}
+
+		/*
+			Normal capacity is gone, which is the case the reserve is held for:
+			a pump worth interrupting a working desk. Claiming a reserve slot
+			is marked as such rather than left looking like a normal entry.
+		*/
+		if reserveSlots > 0 && candidate.Opportunity {
+			candidate.AllocationClass = "reserved"
+
+			if candidate.OpportunityMargin <= 0 {
+				candidate.OpportunityMargin = candidate.Utility
+			}
+
+			thesis.NoteLifecycle(candidate.Symbol, types.LifecycleEntrySelected, thesis.At)
+			retained = append(retained, candidate)
+			reserveSlots--
 			continue
 		}
 
@@ -146,10 +178,7 @@ func (arbiter *Arbiter) getIncumbents() []Incumbent {
 		rows = append(rows, Incumbent{
 			Symbol: position.Holding.Symbol,
 			HoldUtility: func() float64 {
-				if position.Holding.ReturnPct != nil {
-					return *position.Holding.ReturnPct
-				}
-				return 0.0
+				return position.Holding.ReturnPct
 			}(),
 			ExitCost: fee.Float64(),
 			Notional: notional,
@@ -157,5 +186,6 @@ func (arbiter *Arbiter) getIncumbents() []Incumbent {
 			Mark:     position.Holding.Mark.Copy(),
 		})
 	}
+
 	return rows
 }

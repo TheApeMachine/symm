@@ -92,17 +92,18 @@ func (signal *Signal) run() {
 				return
 			case message := <-signal.subscriptions["thesis"].Channel:
 				if thesis, ok := message.(*types.Thesis); ok {
-					thesis.AppendMeasurements(
-						types.SourceCorrelation,
-						signal.Measure(thesis),
-						types.Stamp{
-							At:     time.Now(),
-							Entity: types.MarketTicker,
-							Source: types.SourceCorrelation,
-						},
-					)
+					measurements := signal.Measure(thesis)
 
-					utils.Fanout(signal.subscribers, signal.Name(), thesis)
+					if len(measurements) > 0 {
+						thesis.Measurements.Store(
+							types.SourceCorrelation,
+							measurements,
+						)
+
+						thesis.Readiness.Correlation = true
+						utils.Fanout(signal.subscribers, signal.Name(), thesis)
+					}
+
 				}
 			}
 		}
@@ -110,9 +111,9 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	tickers, trades, _ := thesis.Market()
+	tickers := thesis.MarketTickers()
 
-	if len(tickers) == 0 && len(trades) == 0 {
+	if len(tickers) == 0 {
 		return nil
 	}
 
@@ -146,10 +147,8 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		latestAtBySymbol[symbol] = row.Timestamp
 	}
 
-	out := make([]*types.Measurement, 0, len(scoresBySymbol))
-	uiOut := datura.NewMap(
-		"measurements", make([]*types.Measurement, 0),
-	)
+	measurements := make([]*types.Measurement, 0)
+	out := make([]*types.Measurement, 0)
 
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,
@@ -212,17 +211,20 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			},
 		}
 
-		out = append(out, measurement)
+		measurements = append(measurements, measurement)
 
 		if symbol == types.Focus() {
-			uiOut["measurements"] = append(
-				uiOut["measurements"].([]*types.Measurement), measurement,
-			)
+			out = append(out, measurement)
 		}
 	}
 
-	utils.Publish(signal.ui, uiOut)
-	return out
+	if len(out) > 0 {
+		utils.Publish(signal.ui, datura.NewMap(
+			"measurements", out,
+		))
+	}
+
+	return measurements
 }
 
 /*

@@ -22,27 +22,82 @@ var thesisSignalSources = []SourceType{
 	SourceToxicity,
 }
 
-var thesisSignalSourceSet = map[SourceType]struct{}{
-	SourceCorrelation: {},
-	SourceCVD:         {},
-	SourceDepthFlow:   {},
-	SourceExhaustion:  {},
-	SourceHawkes:      {},
-	SourceLeadLag:     {},
-	SourceLiquidity:   {},
-	SourcePumpDump:    {},
-	SourceSentiment:   {},
-	SourceToxicity:    {},
+/*
+Readiness returns the readiness of the thesis for evaluation.
+
+A stage is ready when it has stamped the thesis, and only then. A stamp is the
+one statement a solver makes about itself having run to completion, so reading
+anything else — the contents of its output map, the length of a slice it
+happens to fill — infers readiness from a side effect and lets a stage that
+legitimately produced nothing read as never having run.
+*/
+type Readiness struct {
+	Correlation bool `json:"correlation"`
+	CVD         bool `json:"cvd"`
+	DepthFlow   bool `json:"depth_flow"`
+	Exhaustion  bool `json:"exhaustion"`
+	Hawkes      bool `json:"hawkes"`
+	LeadLag     bool `json:"lead_lag"`
+	Liquidity   bool `json:"liquidity"`
+	PumpDump    bool `json:"pump_dump"`
+	Sentiment   bool `json:"sentiment"`
+	Toxicity    bool `json:"toxicity"`
+	Manifold    bool `json:"manifold"`
+	Resonance   bool `json:"resonance"`
+	Causal      bool `json:"causal"`
+	Graph       bool `json:"graph"`
+	Allocation  bool `json:"allocation"`
+	Decisions   bool `json:"decisions"`
+	Categories  bool `json:"categories"`
+	Cognition   bool `json:"cognition"`
 }
 
-type Readiness struct {
-	Signals    bool `json:"signals"`
-	Manifold   bool `json:"manifold"`
-	Resonance  bool `json:"resonance"`
-	Causal     bool `json:"causal"`
-	Graph      bool `json:"graph"`
-	Allocation bool `json:"allocation"`
-	Decisions  bool `json:"decisions"`
+func NewReadiness() Readiness {
+	return Readiness{
+		Correlation: false,
+		CVD:         false,
+		DepthFlow:   false,
+		Exhaustion:  false,
+		Hawkes:      false,
+		LeadLag:     false,
+		Liquidity:   false,
+		PumpDump:    false,
+		Sentiment:   false,
+		Toxicity:    false,
+		Manifold:    false,
+		Resonance:   false,
+		Causal:      false,
+		Graph:       false,
+		Allocation:  false,
+		Decisions:   false,
+		Categories:  false,
+		Cognition:    false,
+	}
+}
+
+func (readiness *Readiness) SignalsMeasured() bool {
+	return readiness.Correlation &&
+		readiness.CVD &&
+		readiness.DepthFlow &&
+		readiness.Exhaustion &&
+		readiness.Hawkes &&
+		readiness.LeadLag &&
+		readiness.Liquidity &&
+		readiness.PumpDump &&
+		readiness.Sentiment &&
+		readiness.Toxicity
+}
+
+func (readiness *Readiness) Complete() bool {
+	return readiness.SignalsMeasured() &&
+		readiness.Manifold &&
+		readiness.Resonance &&
+		readiness.Causal &&
+		readiness.Graph &&
+		readiness.Allocation &&
+		readiness.Decisions &&
+		readiness.Categories &&
+		readiness.Cognition
 }
 
 const (
@@ -67,26 +122,13 @@ const (
 	LifecycleInvalid             = "invalid"
 )
 
-type MarketEntity string
-
-const (
-	MarketTicker MarketEntity = "ticker"
-	MarketTrade  MarketEntity = "trade"
-	MarketBook   MarketEntity = "book"
-)
-
-type Stamp struct {
-	At     time.Time    `json:"at"`
-	Entity MarketEntity `json:"entity"`
-	Source SourceType   `json:"source"`
-}
-
 /*
 Thesis is the durable lifecycle record from entry through post-mortem. It keeps
 decisions, lifecycle, and findings; each market cut replaces per-tick evidence
 in place so the object does not grow without bound.
 */
 type Thesis struct {
+	Readiness
 	Status       Status                `json:"status"`
 	Tick         int64                 `json:"tick"`
 	At           time.Time             `json:"at"`
@@ -96,7 +138,6 @@ type Thesis struct {
 	Trades       *sync.Map             `json:"-"`
 	Books        *sync.Map             `json:"-"`
 	Graphs       *sync.Map             `json:"-"`
-	Forecasts    []Forecasts           `json:"forecasts"`
 	Decisions    []Decision            `json:"decisions"`
 	Lifecycle    *sync.Map             `json:"lifecycle"`
 	Findings     []Finding             `json:"findings"`
@@ -106,7 +147,6 @@ type Thesis struct {
 	Cognition    *sync.Map             `json:"-"`
 	Resonance    *sync.Map             `json:"-"`
 	Causal       *sync.Map             `json:"-"`
-	Stamps       *sync.Map             `json:"-"`
 }
 
 /*
@@ -119,7 +159,6 @@ func NewThesis() *Thesis {
 		Decisions:    make([]Decision, 0),
 		CrossSection: NewCrossSection(),
 		Graphs:       &sync.Map{},
-		Forecasts:    make([]Forecasts, 0),
 		Lifecycle:    &sync.Map{},
 		Findings:     make([]Finding, 0),
 		Hypotheses:   make([]Hypothesis, 0),
@@ -132,104 +171,8 @@ func NewThesis() *Thesis {
 		Cognition:    &sync.Map{},
 		Resonance:    &sync.Map{},
 		Causal:       &sync.Map{},
-		Stamps:       &sync.Map{},
+		Readiness:    NewReadiness(),
 	}
-}
-
-/*
-Readiness returns the readiness of the thesis for evaluation.
-*/
-func (thesis *Thesis) Readiness() Readiness {
-	readiness := Readiness{}
-	counts := thesis.stampCounts()
-
-	readiness.Signals = counts.signals > 0
-	readiness.Manifold = readiness.Signals && thesis.hasCategories()
-	readiness.Resonance = readiness.Manifold && thesis.hasEntries(thesis.Resonance)
-	readiness.Causal = readiness.Resonance && thesis.hasEntries(thesis.Causal)
-	readiness.Graph = readiness.Causal && thesis.hasEntries(thesis.Graphs)
-	readiness.Allocation = readiness.Graph && len(thesis.Forecasts) > 0
-	readiness.Decisions = readiness.Allocation && len(thesis.Decisions) > 0
-
-	return readiness
-}
-
-func (thesis *Thesis) hasCategories() bool {
-	if thesis == nil {
-		return false
-	}
-
-	for _, categories := range thesis.Categories {
-		if len(categories) > 0 {
-			return true
-		}
-	}
-
-	return false
-}
-
-type thesisStampCounts struct {
-	signals   int
-	manifold  int
-	resonance int
-	causal    int
-}
-
-func (thesis *Thesis) stampCounts() thesisStampCounts {
-	counts := thesisStampCounts{}
-	seenSignals := make(map[SourceType]struct{})
-
-	if thesis == nil || thesis.Stamps == nil {
-		return counts
-	}
-
-	thesis.Stamps.Range(func(_, value any) bool {
-		stamps, ok := value.([]Stamp)
-
-		if !ok || len(stamps) == 0 {
-			return true
-		}
-
-		for _, stamp := range stamps {
-			if _, ok := thesisSignalSourceSet[stamp.Source]; ok {
-				if _, seen := seenSignals[stamp.Source]; !seen {
-					seenSignals[stamp.Source] = struct{}{}
-					counts.signals++
-				}
-
-				continue
-			}
-
-			switch stamp.Source {
-			case SourceManifold:
-				counts.manifold++
-			case SourceResonance:
-				counts.resonance++
-			case SourceCausal:
-				counts.causal++
-			}
-		}
-
-		return true
-	})
-
-	return counts
-}
-
-func (thesis *Thesis) hasEntries(values *sync.Map) bool {
-	if thesis == nil || values == nil {
-		return false
-	}
-
-	hasEntries := false
-
-	values.Range(func(_, _ any) bool {
-		hasEntries = true
-
-		return false
-	})
-
-	return hasEntries
 }
 
 /*
@@ -242,21 +185,23 @@ func (thesis *Thesis) Reset() *Thesis {
 	}
 
 	thesis.At = time.Now().UTC()
-	thesis.Tick = 0
+
+	// Tick is the monotonic count of evaluated ticks and deliberately
+	// survives a reset; zeroing it would restart the sequence every time
+	// the evidence is cleared.
 	thesis.CrossSection = NewCrossSection()
-	thesis.Measurements = &sync.Map{}
-	thesis.Books = &sync.Map{}
-	thesis.Graphs = &sync.Map{}
-	thesis.Forecasts = make([]Forecasts, 0)
+	thesis.Measurements.Clear()
+	thesis.Books.Clear()
+	thesis.Graphs.Clear()
+	thesis.Manifold.Clear()
+	thesis.Cognition.Clear()
+	thesis.Resonance.Clear()
+	thesis.Causal.Clear()
+	thesis.Readiness = NewReadiness()
 	thesis.Decisions = make([]Decision, 0)
 	thesis.Findings = make([]Finding, 0)
 	thesis.Hypotheses = make([]Hypothesis, 0)
 	thesis.Categories = make(map[string][]Category)
-	thesis.Manifold = &sync.Map{}
-	thesis.Cognition = &sync.Map{}
-	thesis.Resonance = &sync.Map{}
-	thesis.Causal = &sync.Map{}
-	thesis.Stamps = &sync.Map{}
 
 	return thesis
 }
@@ -266,8 +211,11 @@ func (thesis *Thesis) Market() (
 	[]kraken.TradeData,
 	*sync.Map,
 ) {
+	return thesis.MarketTickers(), thesis.MarketTrades(), thesis.Books
+}
+
+func (thesis *Thesis) MarketTickers() []kraken.TickerData {
 	tickers := make([]kraken.TickerData, 0)
-	trades := make([]kraken.TradeData, 0)
 
 	thesis.Tickers.Range(func(_, value any) bool {
 		if ticker, ok := value.(kraken.TickerData); ok {
@@ -277,6 +225,16 @@ func (thesis *Thesis) Market() (
 		return true
 	})
 
+	slices.SortFunc(tickers, func(left, right kraken.TickerData) int {
+		return cmp.Compare(left.Timestamp.UnixNano(), right.Timestamp.UnixNano())
+	})
+
+	return tickers
+}
+
+func (thesis *Thesis) MarketTrades() []kraken.TradeData {
+	trades := make([]kraken.TradeData, 0)
+
 	thesis.Trades.Range(func(_, value any) bool {
 		if trade, ok := value.(kraken.TradeData); ok {
 			trades = append(trades, trade)
@@ -285,58 +243,90 @@ func (thesis *Thesis) Market() (
 		return true
 	})
 
-	slices.SortFunc(tickers, func(left, right kraken.TickerData) int {
-		return cmp.Compare(left.Timestamp.UnixNano(), right.Timestamp.UnixNano())
-	})
-
 	slices.SortStableFunc(trades, func(left, right kraken.TradeData) int {
 		return cmp.Compare(left.Timestamp.UnixNano(), right.Timestamp.UnixNano())
 	})
 
-	return tickers, trades, thesis.Books
+	return trades
 }
 
 /*
-AppendMeasuremnts appends measurements for the specified
-source while safely ignoring nil input.
+Series returns this tick's measurements for one symbol in observation order,
+oldest first. Signals store their rows by source, but a reader asking how a
+symbol is developing needs one timeline across every source that observed it:
+the last row answers what is true now, while the shape of the series answers
+where it is heading.
 */
-func (thesis *Thesis) AppendMeasurements(
-	source SourceType,
-	measurements []*Measurement,
-	stamp Stamp,
-) *Thesis {
-	if len(measurements) == 0 {
-		return thesis
+func (thesis *Thesis) Series(symbol string) []*Measurement {
+	series := make([]*Measurement, 0)
+
+	if thesis == nil || thesis.Measurements == nil {
+		return series
 	}
 
-	stamp.Source = source
+	thesis.Measurements.Range(func(_, value any) bool {
+		rows, ok := value.([]*Measurement)
 
-	found, ok := thesis.Measurements.LoadOrStore(
-		source, measurements,
-	)
-
-	if ok {
-		thesis.Measurements.Store(
-			source, append(
-				found.([]*Measurement), measurements...,
-			),
-		)
-
-		found, ok := thesis.Stamps.LoadOrStore(source, []Stamp{stamp})
-
-		if ok {
-			thesis.Stamps.Store(
-				source, append(
-					found.([]Stamp), stamp,
-				),
-			)
+		if !ok {
+			return true
 		}
 
-		return thesis
+		for _, row := range rows {
+			if row == nil || row.Symbol != symbol {
+				continue
+			}
+
+			series = append(series, row)
+		}
+
+		return true
+	})
+
+	slices.SortStableFunc(series, func(left, right *Measurement) int {
+		return cmp.Compare(left.At.UnixNano(), right.At.UnixNano())
+	})
+
+	return series
+}
+
+/*
+Symbols returns every symbol this tick carries measurements for.
+*/
+func (thesis *Thesis) Symbols() []string {
+	symbols := make([]string, 0)
+
+	if thesis == nil || thesis.Measurements == nil {
+		return symbols
 	}
 
-	thesis.Stamps.Store(source, []Stamp{stamp})
-	return thesis
+	seen := make(map[string]struct{})
+
+	thesis.Measurements.Range(func(_, value any) bool {
+		rows, ok := value.([]*Measurement)
+
+		if !ok {
+			return true
+		}
+
+		for _, row := range rows {
+			if row == nil || row.Symbol == "" {
+				continue
+			}
+
+			if _, ok := seen[row.Symbol]; ok {
+				continue
+			}
+
+			seen[row.Symbol] = struct{}{}
+			symbols = append(symbols, row.Symbol)
+		}
+
+		return true
+	})
+
+	slices.Sort(symbols)
+
+	return symbols
 }
 
 /*

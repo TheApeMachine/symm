@@ -1,10 +1,15 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
 import { appStore } from "#/collections/app";
-import type { Instrument, Measurement } from "#/collections/types";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
+import type { Instrument, Measurement } from "#/collections/types";
 import { paletteGroupVariant } from "#/components/terminal/badge-tone";
 import { Badge } from "@/components/ui/badge";
+import { Icon, type IconName } from "@/components/ui/icon";
+import { Input } from "@/components/ui/input";
+import { List } from "@/components/ui/list";
+import { Modal } from "@/components/ui/modal";
+import { Typography } from "@/components/ui/typography";
 
 const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 	{
@@ -77,68 +82,16 @@ export const paintPaletteMeasurements = (
 	lastMeasuredSymbols = next;
 };
 
-const SearchIcon = () => (
-	<svg
-		width="16"
-		height="16"
-		viewBox="0 0 24 24"
-		fill="none"
-		stroke="var(--f4)"
-		strokeWidth="1.7"
-		className="shrink-0"
-		aria-hidden="true"
-	>
-		<circle cx="11" cy="11" r="7" />
-		<path d="M21 21l-4.3-4.3" />
-	</svg>
-);
-
-const SurfaceIcon = ({ active }: { active: boolean }) => (
-	<svg
-		width="13"
-		height="13"
-		viewBox="0 0 24 24"
-		fill="none"
-		stroke={active ? "var(--acc)" : "currentColor"}
-		strokeWidth="1.7"
-		aria-hidden="true"
-	>
-		<rect x="3" y="3" width="7" height="7" />
-		<rect x="14" y="3" width="7" height="7" />
-		<rect x="3" y="14" width="7" height="7" />
-		<rect x="14" y="14" width="7" height="7" />
-	</svg>
-);
-
-const KernelIcon = () => (
-	<svg
-		width="13"
-		height="13"
-		viewBox="0 0 24 24"
-		fill="none"
-		stroke="currentColor"
-		strokeWidth="1.7"
-		aria-hidden="true"
-	>
-		<path d="M3 12h4l2 7 4-16 2 9h6" />
-	</svg>
-);
-
-const SymbolIcon = () => (
-	<svg
-		width="13"
-		height="13"
-		viewBox="0 0 24 24"
-		fill="none"
-		stroke="currentColor"
-		strokeWidth="1.7"
-		aria-hidden="true"
-	>
-		<path d="M5 12h14" />
-		<path d="M12 5v14" />
-		<circle cx="12" cy="12" r="7" />
-	</svg>
-);
+/*
+GROUP_ICON names each command group's glyph. The palette used to carry four
+inline SVGs at its own stroke weight; they are the shared set now, so a palette
+row and a rail entry cannot drift apart.
+*/
+const GROUP_ICON: Record<PaletteCommand["group"], IconName> = {
+	Surface: "grid",
+	Kernel: "signal",
+	Symbol: "target",
+};
 
 type PaletteCommand = {
 	key: string;
@@ -239,104 +192,76 @@ export const CommandPalette = ({
 			: "No match. Try a surface, kernel, or symbol name.";
 
 	return (
-		<div className="absolute inset-0 z-40 animate-[symFade_.16s_ease] [background:color-mix(in_srgb,var(--sunken)_64%,transparent)] backdrop-blur-[3px]">
-			<button
-				type="button"
-				aria-label="Close command palette"
-				className="absolute inset-0"
-				onClick={closePalette}
+		<Modal
+			variant="heavy"
+			align="top"
+			size="lg"
+			className="z-40 p-0"
+			panelClassName="max-h-[60vh] w-[560px] max-w-[calc(100%-48px)] rounded-lg shadow-[0_30px_70px_-18px_rgba(0,0,0,0.78)]"
+			onClose={closePalette}
+			closeLabel="Close command palette"
+		>
+			<Input.Search
+				ref={inputRef}
+				variant="bare"
+				size="xl"
+				iconSize="m"
+				fieldClassName="shrink-0 border-(--line) border-b px-[15px] py-[13px]"
+				value={terminal.paletteQuery}
+				onChange={(event) => setPaletteQuery(event.target.value)}
+				onKeyDown={(event) => {
+					if (event.key !== "Enter") {
+						return;
+					}
+
+					const command = commands[selectedIndex];
+
+					if (command === undefined) {
+						return;
+					}
+
+					event.preventDefault();
+					onRun(command.surface, command.source, command.symbol);
+				}}
+				placeholder={
+					terminal.paletteMode === "symbols"
+						? "Search symbols…"
+						: "Jump to a surface, kernel, or symbol…"
+				}
+				trailing={
+					<Typography.Mono size="s" tone="f4" className="shrink-0">
+						{countText}
+					</Typography.Mono>
+				}
 			/>
-			<div className="pointer-events-none relative z-10 flex items-start justify-center pt-24">
-				<div className="pointer-events-auto flex max-h-[60vh] w-[560px] max-w-[calc(100%-48px)] flex-col overflow-hidden rounded-lg border border-(--line2) bg-(--surface) shadow-[0_30px_70px_-18px_rgba(0,0,0,0.78)]">
-					<div className="flex items-center gap-2.5 border-(--line) border-b px-[15px] py-[13px]">
-						<SearchIcon />
-						<input
-							ref={inputRef}
-							value={terminal.paletteQuery}
-							onChange={(event) => setPaletteQuery(event.target.value)}
-							onKeyDown={(event) => {
-								if (event.key !== "Enter") {
-									return;
-								}
 
-								const command = commands[selectedIndex];
-
-								if (command === undefined) {
-									return;
-								}
-
-								event.preventDefault();
-								onRun(command.surface, command.source, command.symbol);
-							}}
-							placeholder={
-								terminal.paletteMode === "symbols"
-									? "Search symbols…"
-									: "Jump to a surface, kernel, or symbol…"
+			<List className="gap-0.5 overflow-auto p-1.5">
+				{commands.length === 0 ? (
+					<List.Empty>{emptyCopy}</List.Empty>
+				) : (
+					commands.map((command, index) => (
+						<List.Option
+							key={command.key}
+							selected={index === selectedIndex}
+							active={command.active}
+							onClick={() =>
+								onRun(command.surface, command.source, command.symbol)
 							}
-							spellCheck={false}
-							className="min-w-0 flex-1 bg-transparent text-[15px] text-(--f1) outline-none"
+							icon={<Icon name={GROUP_ICON[command.group]} size="s" />}
+							label={command.label}
+							hint={command.hint}
+							trailing={
+								<Badge
+									label={command.group}
+									variant={paletteGroupVariant(command.group)}
+									size="xs"
+									className="shrink-0"
+								/>
+							}
 						/>
-						<span className="shrink-0 font-mono text-[10px] text-(--f4)">
-							{countText}
-						</span>
-					</div>
-					<div className="flex min-h-0 flex-col gap-0.5 overflow-auto p-1.5">
-						{commands.length === 0 ? (
-							<div className="px-3.5 py-[26px] text-center font-mono text-[12px] text-(--f4)">
-								{emptyCopy}
-							</div>
-						) : (
-							commands.map((command, index) => {
-								const selected = index === selectedIndex;
-								const tagVariant = paletteGroupVariant(command.group);
-
-								return (
-									<button
-										key={command.key}
-										type="button"
-										onClick={() =>
-											onRun(
-												command.surface,
-												command.source,
-												command.symbol,
-											)
-										}
-										className="flex cursor-pointer items-center gap-2.5 rounded-[4px] border px-3 py-2.5 text-left hover:bg-(--raised)"
-										style={{
-											borderColor: selected ? "var(--acc)" : "transparent",
-											background: selected
-												? "color-mix(in srgb, var(--acc) 10%, transparent)"
-												: "transparent",
-										}}
-									>
-										{command.group === "Surface" ? (
-											<SurfaceIcon active={command.active} />
-										) : command.group === "Symbol" ? (
-											<SymbolIcon />
-										) : (
-											<KernelIcon />
-										)}
-										<div className="min-w-0 flex-1">
-											<div className="truncate font-medium text-[13px] text-(--f1)">
-												{command.label}
-											</div>
-											<div className="truncate font-mono text-[10px] text-(--f4)">
-												{command.hint}
-											</div>
-										</div>
-										<Badge
-											label={command.group}
-											variant={tagVariant}
-											size="xs"
-											className="shrink-0"
-										/>
-									</button>
-								);
-							})
-						)}
-					</div>
-				</div>
-			</div>
-		</div>
+					))
+				)}
+			</List>
+		</Modal>
 	);
 };

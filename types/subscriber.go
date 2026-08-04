@@ -32,3 +32,23 @@ Send publishes one message onto the subscription channel.
 func (subscription *Subscription[T]) Send(message T) {
 	subscription.Channel <- message
 }
+
+/*
+SendLatest publishes the newest message without letting a stale buffered value
+block hot market-data paths. While the buffer is full, queued values are dropped
+until the current message is accepted.
+*/
+func (subscription *Subscription[T]) SendLatest(message T) {
+	for {
+		select {
+		case subscription.Channel <- message:
+			return
+		default:
+		}
+
+		select {
+		case <-subscription.Channel:
+		default:
+		}
+	}
+}

@@ -1,6 +1,8 @@
 package kraken
 
 import (
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -10,7 +12,7 @@ import (
 )
 
 type TradesHistory struct {
-	Error  []interface{}       `json:"error"`
+	Error  []any               `json:"error"`
 	Result TradesHistoryResult `json:"result"`
 }
 
@@ -40,7 +42,7 @@ func (request *TradesHistoryRequest) MarshalJSON() ([]byte, error) {
 	return sonic.Marshal((*alias)(request))
 }
 
-func NewTradesHistoryFromMap(model datura.Map[any]) *TradesHistory {
+func NewTradesHistoryFromMap(model datura.Map[any]) spot.TradesHistoryResult {
 	rawTrades, _ := model["trades"].([]any)
 	trades := make(map[string]spot.Trade, len(rawTrades))
 
@@ -81,9 +83,8 @@ func NewTradesHistoryFromMap(model datura.Map[any]) *TradesHistory {
 		}
 	}
 
-	return &TradesHistory{
-		Result: TradesHistoryResult{
-			Trades: trades,
-		},
+	return spot.TradesHistoryResult{
+		Count:  json.Number(fmt.Sprintf("%d", len(trades))),
+		Trades: trades,
 	}
 }

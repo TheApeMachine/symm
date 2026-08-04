@@ -27,6 +27,7 @@ type Decision struct {
 	ProposedQuantity  *decimal.Decimal   `json:"proposedQuantity" validate:"required"`
 	ReferencePrice    *decimal.Decimal   `json:"referencePrice" validate:"required"`
 	ValidThroughEpoch uint64             `json:"validThroughEpoch"`
+	ArbitrationRound  int64              `json:"arbitrationRound"`
 	ForecastSource    string             `json:"forecastSource"`
 	ForecastModel     string             `json:"forecastModel"`
 	ForecastEpoch     uint64             `json:"forecastEpoch"`

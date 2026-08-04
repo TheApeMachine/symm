@@ -48,25 +48,26 @@ func (subscription ExecutionSubscription) MarshalJSON() ([]byte, error) {
 }
 
 type ExecutionData struct {
-	OrderID      string           `json:"order_id"`
-	OrderUserref int              `json:"order_userref"`
-	ExecID       string           `json:"exec_id"`
-	ExecType     string           `json:"exec_type"`
-	TradeID      int              `json:"trade_id"`
-	Symbol       string           `json:"symbol"`
-	Side         string           `json:"side"`
-	LastQty      *decimal.Decimal `json:"last_qty"`
-	LastPrice    *decimal.Decimal `json:"last_price"`
-	LiquidityInd string           `json:"liquidity_ind"`
-	Cost         *decimal.Decimal `json:"cost"`
-	OrderType    string           `json:"order_type"`
-	Timestamp    time.Time        `json:"timestamp"`
-	OrderStatus  string           `json:"order_status"`
-	CumQty       *decimal.Decimal `json:"cum_qty"`
-	CumCost      *decimal.Decimal `json:"cum_cost"`
-	AvgPrice     *decimal.Decimal `json:"avg_price"`
-	FeeUsdEquiv  *decimal.Decimal `json:"fee_usd_equiv"`
-	Fees         []ExecutionFee   `json:"fees"`
+	OrderID       string           `json:"order_id"`
+	ClientOrderID string           `json:"cl_ord_id"`
+	OrderUserref  int              `json:"order_userref"`
+	ExecID        string           `json:"exec_id"`
+	ExecType      string           `json:"exec_type"`
+	TradeID       int              `json:"trade_id"`
+	Symbol        string           `json:"symbol"`
+	Side          string           `json:"side"`
+	LastQty       *decimal.Decimal `json:"last_qty"`
+	LastPrice     *decimal.Decimal `json:"last_price"`
+	LiquidityInd  string           `json:"liquidity_ind"`
+	Cost          *decimal.Decimal `json:"cost"`
+	OrderType     string           `json:"order_type"`
+	Timestamp     time.Time        `json:"timestamp"`
+	OrderStatus   string           `json:"order_status"`
+	CumQty        *decimal.Decimal `json:"cum_qty"`
+	CumCost       *decimal.Decimal `json:"cum_cost"`
+	AvgPrice      *decimal.Decimal `json:"avg_price"`
+	FeeUsdEquiv   *decimal.Decimal `json:"fee_usd_equiv"`
+	Fees          []ExecutionFee   `json:"fees"`
 }
 
 type RestExecution struct {
@@ -199,6 +200,7 @@ func NewExecutionFromMap(model datura.Map[any]) *Execution {
 	}
 
 	orderID, _ := model["order_id"].(string)
+	clientOrderID, _ := model["cl_ord_id"].(string)
 	execID, _ := model["trade_id"].(string)
 
 	if execID == "" {
@@ -224,20 +226,21 @@ func NewExecutionFromMap(model datura.Map[any]) *Execution {
 		Channel: "executions",
 		Type:    "update",
 		Data: []ExecutionData{{
-			OrderID:     orderID,
-			ExecID:      execID,
-			ExecType:    execType,
-			Symbol:      pair,
-			Side:        strings.ToLower(side),
-			LastQty:     decimal.NewFromFloat64(volume),
-			LastPrice:   decimal.NewFromFloat64(price),
-			Cost:        decimal.NewFromFloat64(cost),
-			OrderStatus: orderStatus,
-			CumQty:      decimal.NewFromFloat64(volume),
-			CumCost:     decimal.NewFromFloat64(cost),
-			AvgPrice:    decimal.NewFromFloat64(price),
-			FeeUsdEquiv: decimal.NewFromFloat64(fee),
-			Timestamp:   timestamp,
+			OrderID:       orderID,
+			ClientOrderID: clientOrderID,
+			ExecID:        execID,
+			ExecType:      execType,
+			Symbol:        pair,
+			Side:          strings.ToLower(side),
+			LastQty:       decimal.NewFromFloat64(volume),
+			LastPrice:     decimal.NewFromFloat64(price),
+			Cost:          decimal.NewFromFloat64(cost),
+			OrderStatus:   orderStatus,
+			CumQty:        decimal.NewFromFloat64(volume),
+			CumCost:       decimal.NewFromFloat64(cost),
+			AvgPrice:      decimal.NewFromFloat64(price),
+			FeeUsdEquiv:   decimal.NewFromFloat64(fee),
+			Timestamp:     timestamp,
 		}},
 	}
 }

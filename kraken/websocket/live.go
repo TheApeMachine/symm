@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -19,7 +18,6 @@ import (
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
@@ -38,6 +36,8 @@ var entityMap = map[string]func([]byte) any{
 	"trade":      func(buf []byte) any { return kraken.NewTrade(buf) },
 	"level3":     func(buf []byte) any { return kraken.NewLevel3(buf) },
 	"instrument": func(buf []byte) any { return kraken.NewInstrument(buf) },
+	"balances":   func(buf []byte) any { return kraken.NewBalance(buf) },
+	"executions": func(buf []byte) any { return kraken.NewExecution(buf) },
 	"status":     func(buf []byte) any { return true },
 	"heartbeat":  func(buf []byte) any { return true },
 	"subscribe":  func(buf []byte) any { return true },
@@ -46,6 +46,10 @@ var entityMap = map[string]func([]byte) any{
 		errnie.Error(sonic.Unmarshal(buf, &pong))
 		return pong
 	},
+}
+
+func hotPublicChannel(channel string) bool {
+	return channel == "ticker" || channel == "trade" || channel == "book"
 }
 
 /*
@@ -57,17 +61,15 @@ type Live struct {
 	statusMu    sync.RWMutex
 	ctx         context.Context
 	cancel      context.CancelFunc
-	pingCtx     context.Context
-	pingCancel  context.CancelFunc
-	pingReqID   atomic.Int64
-	lastPongMu  sync.RWMutex
-	lastPong    *time.Time
 	client      *spot.WebSocket
+	quote       string
 	simulator   *Simulator
 	normalizer  *spot.Normalizer
 	level3      *sync.Map
 	book        *Book
 	symbols     []string
+	publicMu    sync.RWMutex
+	public      map[string][][]string
 	auth        bool
 	nonce       *AuthNonce
 	nonceErr    error
@@ -78,11 +80,9 @@ type Live struct {
 	paper       *Paper
 	model       string
 
-	/*
-		Level3Client supplies the websocket client for the child connections
-		SubL3 opens. When nil the child dials the real Level3 endpoint; tests
-		set it to keep those children on the fixture transport.
-	*/
+	// Level3Client supplies the websocket client for the child connections
+	// SubL3 opens. When nil the child dials the real Level3 endpoint; tests
+	// set it to keep those children on the fixture transport.
 	Level3Client func() *spot.WebSocket
 }
 
@@ -141,6 +141,8 @@ func NewWithClient(
 
 	ctx, cancel := context.WithCancel(ctx)
 
+	viper.SetDefault("market.quote_currency", "USD")
+
 	live := &Live{
 		ctx:         ctx,
 		cancel:      cancel,
@@ -151,8 +153,10 @@ func NewWithClient(
 		auth:        auth,
 		subscribers: &sync.Map{},
 		callbacks:   &sync.Map{},
+		public:      make(map[string][][]string),
 		paper:       NewPaper(ctx, NewSimulator()),
 		model:       viper.GetViper().GetString("trading.model"),
+		quote:       viper.GetViper().GetString("market.quote_currency"),
 	}
 
 	live.client.URL = endpoint
@@ -192,7 +196,6 @@ func NewWithClient(
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
 		raw := event.Data.Bytes()
-
 		channel := utils.GetString(raw, "channel")
 
 		if channel == "" {
@@ -244,14 +247,6 @@ func NewWithClient(
 				return
 			}
 
-			// If the pong response is successful, log it on the ping context.
-			if live.pingCtx != nil {
-				now := time.Now()
-				live.lastPongMu.Lock()
-				live.lastPong = &now
-				live.lastPongMu.Unlock()
-			}
-
 			return
 		}
 
@@ -272,6 +267,11 @@ func NewWithClient(
 
 		if ok && subscribers != nil {
 			for _, subscriber := range subscribers.([]*types.Subscription[any]) {
+				if hotPublicChannel(channel) {
+					subscriber.SendLatest(out)
+					continue
+				}
+
 				subscriber.Send(out)
 			}
 		}
@@ -280,54 +280,12 @@ func NewWithClient(
 	live.client.OnConnected.Recurring(func(event *callback.Event[any]) {
 		errnie.Info(fmt.Sprintf("websocket: connected to %s", endpoint))
 
-		go func() {
-			if live.pingCancel != nil {
-				live.pingCancel()
-			}
-
-			live.pingCtx, live.pingCancel = context.WithCancel(live.ctx)
-			interval := 20 * time.Second
-			lastPong := time.Now()
-			live.lastPongMu.Lock()
-			live.lastPong = &lastPong
-			live.lastPongMu.Unlock()
-
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-
-			pingRequest := datura.NewMap()
-			pingRequest["method"] = "ping"
-
-			for {
-				select {
-				case <-live.pingCtx.Done():
-					return
-				case <-ticker.C:
-					live.lastPongMu.RLock()
-					pongAt := live.lastPong
-					live.lastPongMu.RUnlock()
-
-					if pongAt == nil || time.Since(*pongAt) > interval*2 {
-						errnie.Error(errnie.Err(
-							errnie.IO,
-							"websocket: stale pong detected",
-							nil,
-						))
-					}
-
-					pingRequest["req_id"] = live.pingReqID.Add(1)
-
-					if err := live.Write(pingRequest); err != nil {
-						errnie.Error(err)
-					}
-				}
-			}
-		}()
-
 		if auth {
 			errnie.Error(live.authenticate())
 			return
 		}
+
+		live.restorePublicSubscriptions()
 
 		live.statusMu.Lock()
 		live.status = types.READY
@@ -335,9 +293,16 @@ func NewWithClient(
 	})
 
 	live.client.OnDisconnected.Recurring(func(event *callback.Event[error]) {
+		if gorillawebsocket.IsCloseError(
+			event.Data,
+			gorillawebsocket.CloseNormalClosure,
+		) {
+			return
+		}
+
 		errnie.Error(errnie.Err(
 			errnie.Unauthorized,
-			fmt.Sprintf("websocket %s disconnected: %s", endpoint, event.Data.Error()),
+			fmt.Sprintf("websocket %s disconnected: %s - %s", endpoint, event.Data.Error(), event.Data),
 			event.Data,
 		))
 
@@ -349,6 +314,28 @@ func NewWithClient(
 	if auth {
 		live.client.OnAuthenticated.Recurring(func(event *callback.Event[string]) {
 			errnie.Info(fmt.Sprintf("websocket: authenticated to %s", endpoint))
+
+			if endpoint == PrivateWebSocketURL {
+				err := live.subscribeAccount(event.Data)
+
+				if err != nil {
+					errnie.Error(errnie.Err(
+						errnie.IO,
+						"websocket: failed to subscribe to private account channels",
+						err,
+					))
+
+					live.statusMu.Lock()
+					live.status = types.ERROR
+					live.statusMu.Unlock()
+					return
+				}
+			}
+
+			if endpoint == Level3WebSocketURL {
+				live.restoreLevel3Subscription()
+			}
+
 			live.statusMu.Lock()
 			live.status = types.READY
 			live.statusMu.Unlock()
@@ -410,10 +397,29 @@ func (live *Live) authenticate() (err error) {
 	return live.client.Authenticate()
 }
 
+/*
+subscribeAccount activates Kraken's private wallet and execution streams after
+each token refresh. Kraken closes an authenticated socket that does not submit
+a private subscription within its token deadline, so reconnect authentication
+must always repeat these requests with the new token.
+*/
+func (live *Live) subscribeAccount(token string) error {
+	if err := live.Write(kraken.NewBalanceSubscription(token)); err != nil {
+		return err
+	}
+
+	return live.Write(kraken.NewExecutionSubscription(token))
+}
+
 func (live *Live) Subscribe(
 	key string, subscription *types.Subscription[any],
 ) *types.Subscription[any] {
 	errnie.Info(fmt.Sprintf("websocket: new subscriber %s", key))
+
+	if live.model != "real" &&
+		(key == "balances" || key == "executions" || key == "add_order") {
+		return live.paper.Subscribe(key, subscription)
+	}
 
 	return utils.Subscribe(
 		live.subscribers, key, subscription,
@@ -433,10 +439,91 @@ func (live *Live) SubInstrument(callback types.Subscription[any]) {
 	})
 }
 
-func (live *Live) SubTicker(symbols []string)  { live.client.SubTicker(symbols) }
-func (live *Live) SubBook(symbols []string)    { live.client.SubBook(symbols, 10) }
-func (live *Live) SubTrades(symbols []string)  { live.client.SubTrades(symbols) }
-func (live *Live) SubCandles(symbols []string) { live.client.SubCandles(symbols) }
+func (live *Live) SubTicker(symbols []string) {
+	live.rememberPublicSubscription("ticker", symbols)
+	errnie.Error(live.client.SubTicker(symbols))
+}
+
+func (live *Live) SubBook(symbols []string) {
+	live.rememberPublicSubscription("book", symbols)
+	errnie.Error(live.client.SubBook(symbols, 10))
+}
+
+func (live *Live) SubTrades(symbols []string) {
+	live.rememberPublicSubscription("trade", symbols)
+	errnie.Error(live.client.SubTrades(symbols))
+}
+
+func (live *Live) SubCandles(symbols []string) {
+	live.rememberPublicSubscription("ohlc", symbols)
+	errnie.Error(live.client.SubCandles(symbols))
+}
+
+func (live *Live) rememberPublicSubscription(channel string, symbols []string) {
+	live.publicMu.Lock()
+	defer live.publicMu.Unlock()
+
+	batch := make([]string, 0, len(symbols))
+
+	for _, candidate := range symbols {
+		known := false
+
+		for _, remembered := range live.public[channel] {
+			if slices.Contains(remembered, candidate) {
+				known = true
+				break
+			}
+		}
+
+		if !known {
+			batch = append(batch, candidate)
+		}
+	}
+
+	if len(batch) > 0 {
+		live.public[channel] = append(live.public[channel], batch)
+	}
+}
+
+func (live *Live) restorePublicSubscriptions() {
+	live.publicMu.RLock()
+	subscriptions := make(map[string][][]string, len(live.public))
+
+	for channel, batches := range live.public {
+		for _, batch := range batches {
+			subscriptions[channel] = append(
+				subscriptions[channel],
+				append([]string{}, batch...),
+			)
+		}
+	}
+	live.publicMu.RUnlock()
+
+	for channel, batches := range subscriptions {
+		for _, batch := range batches {
+			switch channel {
+			case "ticker":
+				errnie.Error(live.client.SubTicker(batch))
+			case "book":
+				errnie.Error(live.client.SubBook(batch, 10))
+			case "trade":
+				errnie.Error(live.client.SubTrades(batch))
+			case "ohlc":
+				errnie.Error(live.client.SubCandles(batch))
+			}
+		}
+	}
+}
+
+func (live *Live) restoreLevel3Subscription() {
+	if len(live.symbols) == 0 {
+		return
+	}
+
+	for symbols := range slices.Chunk(live.symbols, 40) {
+		errnie.Error(live.client.SubL3(symbols, viper.GetInt("market.l3_depth")))
+	}
+}
 
 func (live *Live) SubL3(symbols []string) {
 	if live.level3 == nil {
@@ -460,6 +547,7 @@ func (live *Live) SubL3(symbols []string) {
 
 		groupKey := strings.Join(groups, "|")
 		live.level3.Store(groupKey, conn)
+		conn.symbols = append([]string{}, groups...)
 
 		for group := range slices.Chunk(groups, 40) {
 			errnie.Info(fmt.Sprintf(
@@ -469,7 +557,7 @@ func (live *Live) SubL3(symbols []string) {
 
 			if conn.book != nil {
 				for _, symbol := range group {
-					conn.book.manager.CreateBook(symbol, viper.GetInt("market.l3_depth"))
+					conn.book.Create(symbol, viper.GetInt("market.l3_depth"))
 				}
 			}
 
@@ -488,10 +576,7 @@ func (live *Live) Books() *sync.Map {
 
 	live.level3.Range(func(key, value any) bool {
 		if conn, ok := value.(*Live); ok && conn.book != nil {
-			conn.book.All().Range(func(symbol, book any) bool {
-				out.Store(symbol, book)
-				return true
-			})
+			conn.book.SnapshotInto(out)
 		}
 
 		return true
@@ -527,17 +612,21 @@ func (live *Live) Balance() (map[string]*decimal.Decimal, error) {
 	if live.model == "real" {
 		response, err := live.client.REST.Balances()
 
-		return response.Result, errnie.Error(errnie.Err(
-			errnie.IO,
-			"balance: failed to fetch",
-			err,
-		))
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.IO,
+				"balance: failed to fetch",
+				err,
+			))
+		}
+
+		return response.Result, nil
 	}
 
 	return live.paper.Balances()
 }
 
-func (live *Live) TradeBalance() (spot.TradesHistoryResult, error) {
+func (live *Live) TradesHistory() (spot.TradesHistoryResult, error) {
 	if live.model == "real" {
 		response, err := live.client.REST.TradesHistory(
 			&spot.TradesHistoryRequest{
@@ -554,6 +643,19 @@ func (live *Live) TradeBalance() (spot.TradesHistoryResult, error) {
 		return response.Result, errnie.Error(err)
 	}
 
+	return live.paper.TradesHistory()
+}
+
+func (live *Live) TradeBalance() (kraken.TradeBalanceResult, error) {
+	if live.model == "real" {
+		response, err := live.Post(
+			TradeBalanceEndpoint,
+			kraken.NewTradeBalanceRequest(live.quote),
+		)
+
+		return kraken.NewTradeBalance(response), errnie.Error(err)
+	}
+
 	return live.paper.TradeBalance()
 }
 
@@ -567,14 +669,21 @@ func (live *Live) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, erro
 }
 
 func (live *Live) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, error) {
-	if live.model == "paper" {
+	// Only a real model reaches the venue. The test read the other way round,
+	// which sent paper orders to Kraken over REST and routed real ones into
+	// the simulator.
+	if live.model == "real" {
 		response, err := live.client.REST.AddOrder(order)
 
-		return response.Result, errnie.Error(errnie.Err(
-			errnie.IO,
-			"add order: failed to submit",
-			err,
-		))
+		if err != nil {
+			return spot.AddOrderResult{}, errnie.Error(errnie.Err(
+				errnie.IO,
+				"add order: failed to submit",
+				err,
+			))
+		}
+
+		return response.Result, nil
 	}
 
 	return live.paper.AddOrder(order)

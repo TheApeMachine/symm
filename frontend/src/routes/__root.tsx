@@ -16,6 +16,7 @@ import { TerminalNav } from "#/components/terminal/terminal-nav";
 import { TerminalTopBar } from "#/components/terminal/terminal-top-bar";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
+import { Scanlines } from "#/components/ui/scanlines";
 import { WsFeed } from "#/providers/websocket";
 import appCss from "../app.css?url";
 
@@ -155,16 +156,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 				<ClientOnly fallback={null}>
 					<WsFeed />
 					<Flex.Column className="fixed inset-0 z-50 min-h-0 overflow-hidden bg-[#0e0c0a] text-[13px] text-[#cbc2b4]">
-						{scanlines ? (
-							<div
-								className="pointer-events-none fixed inset-0 z-60 opacity-(--scan)"
-								style={{
-									backgroundImage:
-										"repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.18) 2px, rgba(0,0,0,0.18) 4px)",
-								}}
-								aria-hidden="true"
-							/>
-						) : null}
+						{scanlines ? <Scanlines variant="screen" className="z-60" /> : null}
 						<SymbolFocusLayer>
 							<TerminalTopBar />
 							<Flex.Row className="min-h-0 flex-1">

@@ -1,41 +1,76 @@
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
+import { cn } from "@/lib/utils";
+import { Scanlines } from "./scanlines";
+import { Typography } from "./typography";
+
+/*
+Canvas is the frame around a plot: a dark plate with the drawing surface filling
+it edge to edge, and chrome floating over the corners rather than boxed above it.
+
+Every piece of that chrome is pointer-events-none. The plot underneath is often
+interactive — dragged, hovered, picked — and a caption that quietly ate a corner
+of those events would be near impossible to trace back to the caption.
+
+The plate is --sunken rather than a literal, so a re-themed host gets a plot
+background that still matches its own darkest surface.
+*/
+
+export type CanvasProps = Omit<ComponentProps<"div">, "title"> & {
+	title: ReactNode;
+	/* The line under the title: what is being plotted, and how. */
+	meta?: ReactNode;
+	/* Corner slots. Legend is unwrapped so it can place itself. */
+	topRight?: ReactNode;
+	legend?: ReactNode;
+	footer?: ReactNode;
+	scanlines?: boolean;
+	children: ReactNode;
+};
 
 export const Canvas = ({
+	ref,
 	title,
 	meta,
 	topRight,
 	legend,
 	footer,
-	children,
+	scanlines = true,
 	className,
-}: {
-	title: ReactNode;
-	meta: string;
-	topRight?: ReactNode;
-	legend?: ReactNode;
-	footer?: ReactNode;
-	children: ReactNode;
-	className: string;
-}) => (
-	<div className={`relative min-h-0 overflow-hidden bg-[#0a0907] ${className}`}>
+	children,
+	...props
+}: CanvasProps) => (
+	<div
+		ref={ref}
+		className={cn("relative min-h-0 overflow-hidden bg-(--sunken)", className)}
+		{...props}
+	>
 		<div className="absolute inset-0">{children}</div>
-		<div className="pointer-events-none absolute inset-0 opacity-50 bg-[repeating-linear-gradient(0deg,rgba(0,0,0,0.18)_0px,rgba(0,0,0,0.18)_1px,transparent_1px,transparent_3px)] mix-blend-multiply" />
+
+		{scanlines ? <Scanlines variant="plate" /> : null}
+
 		<div className="pointer-events-none absolute top-2.75 left-3">
-			<div className="font-semibold text-[10px] text-(--f2) uppercase tracking-[0.13em]">
+			<Typography.Label size="m" tone="f2">
 				{title}
-			</div>
-			<div className="mt-0.5 font-mono text-[9.5px] text-(--f4)">{meta}</div>
+			</Typography.Label>
+			{meta === undefined ? null : (
+				<Typography.Mono size="xs" tone="f4" className="mt-0.5 block">
+					{meta}
+				</Typography.Mono>
+			)}
 		</div>
-		{topRight ? (
+
+		{topRight === undefined ? null : (
 			<div className="pointer-events-none absolute top-2.75 right-3 text-right font-mono text-[9.5px] text-(--f3) leading-[1.6]">
 				{topRight}
 			</div>
-		) : null}
+		)}
+
 		{legend}
-		{footer ? (
+
+		{footer === undefined ? null : (
 			<div className="pointer-events-none absolute right-3 bottom-2 font-mono text-[9.5px] text-(--f3)">
 				{footer}
 			</div>
-		) : null}
+		)}
 	</div>
 );

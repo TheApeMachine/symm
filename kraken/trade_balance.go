@@ -40,17 +40,17 @@ type TradeBalanceRequest struct {
 /*
 NewTradeBalance parses one Kraken trade balance response.
 */
-func NewTradeBalance(buf []byte) *TradeBalanceResult {
-	balance := &TradeBalance{}
+func NewTradeBalance(buf []byte) TradeBalanceResult {
+	balance := TradeBalance{}
 
-	if err := sonic.Unmarshal(buf, balance); err != nil {
+	if err := sonic.Unmarshal(buf, &balance); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"invalid trade balance",
 			err,
 		))
 
-		return nil
+		return TradeBalanceResult{}
 	}
 
 	if len(balance.Error) > 0 {
@@ -60,10 +60,10 @@ func NewTradeBalance(buf []byte) *TradeBalanceResult {
 			nil,
 		))
 
-		return nil
+		return TradeBalanceResult{}
 	}
 
-	return &balance.Result
+	return balance.Result
 }
 
 /*

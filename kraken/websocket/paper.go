@@ -158,6 +158,7 @@ func (paper *Paper) Write(
 		ReqID  int64  `json:"req_id"`
 		Params struct {
 			Channel    string      `json:"channel"`
+			ClOrdID    string      `json:"cl_ord_id"`
 			OrderType  string      `json:"order_type"`
 			Side       string      `json:"side"`
 			Symbol     string      `json:"symbol"`
@@ -177,6 +178,7 @@ func (paper *Paper) Write(
 			request.Params.OrderQty.String(),
 			request.Params.OrderType,
 			request.Params.LimitPrice.String(),
+			request.Params.ClOrdID,
 		)
 
 		if err != nil {
@@ -196,9 +198,9 @@ func (paper *Paper) Write(
 			return err
 		}
 
-		trades := make([]any, 0, len(history.Result.Trades))
+		trades := make([]any, 0, len(history.Trades))
 
-		for tradeID, trade := range history.Result.Trades {
+		for tradeID, trade := range history.Trades {
 			trades = append(trades, map[string]any{
 				"id":       tradeID,
 				"order_id": trade.OrderID,
@@ -236,7 +238,7 @@ func (paper *Paper) Close() {
 /*
 TradesHistory loads paper fills from `kraken paper history`.
 */
-func (paper *Paper) TradesHistory() (*kraken.TradesHistory, error) {
+func (paper *Paper) TradesHistory() (spot.TradesHistoryResult, error) {
 	var (
 		model datura.Map[any]
 		err   error
@@ -247,7 +249,7 @@ func (paper *Paper) TradesHistory() (*kraken.TradesHistory, error) {
 	})
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
+		return spot.TradesHistoryResult{}, errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to get trades history",
 			err,
@@ -258,37 +260,32 @@ func (paper *Paper) TradesHistory() (*kraken.TradesHistory, error) {
 }
 
 /*
-TradeBalance returns paper fills in the same trade-history shape as Kraken's
-private REST trades history endpoint.
+TradeBalance returns the paper account status.
+
+kraken paper status --verbose --output json
+[verbose] GET https://api.kraken.com/0/public/Ticker
+[verbose] Response 200 OK: {"error":[],"result":{"WARDUSD":{"a":["0.003190000","7863","7863.000"],"b":["0.003160000","19402","19402.000"],"c":["0.003160000","598.18293"],"v":["2637691.59698","2668461.40298"],"p":["0.003233967","0.003234724"],"t":[462,466],"l":["0.003100000","0.003100000"],"h":["0.003620000","0.003620000"],"o":"0.003290000"}}}
+{"current_value":199.16016971858227,"fee_rate":0.0026,"mode":"paper","open_orders":0,"slippage_rate":0.0,"starting_balance":200.0,"starting_currency":"USD","total_trades":5,"unrealized_pnl":-0.8398302814177327,"unrealized_pnl_pct":-0.4199151407088664,"valuation_complete":true}
 */
-func (paper *Paper) TradeBalance() (spot.TradesHistoryResult, error) {
-	history, err := paper.TradesHistory()
+func (paper *Paper) TradeBalance() (kraken.TradeBalanceResult, error) {
+	var (
+		model datura.Map[any]
+		err   error
+	)
+
+	paper.simulator.Do(REST, func() {
+		model, err = paper.execute("status", "status", "--verbose")
+	})
 
 	if err != nil {
-		return spot.TradesHistoryResult{}, err
-	}
-
-	raw, err := sonic.Marshal(history.Result)
-
-	if err != nil {
-		return spot.TradesHistoryResult{}, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"failed to encode paper trade history",
+		return kraken.TradeBalanceResult{}, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get trade balance",
 			err,
 		))
 	}
 
-	result := spot.TradesHistoryResult{}
-
-	if err := sonic.Unmarshal(raw, &result); err != nil {
-		return spot.TradesHistoryResult{}, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"failed to decode paper trade history",
-			err,
-		))
-	}
-
-	return result, nil
+	return kraken.NewTradeBalanceFromMap(model), nil
 }
 
 /*
@@ -312,8 +309,16 @@ func (paper *Paper) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, 
 	quantity, _ := request["volume"].(string)
 	orderType, _ := request["ordertype"].(string)
 	limitPrice, _ := request["price"].(string)
+	clientOrderID, _ := request["cl_ord_id"].(string)
 
-	model, err := paper.placeOrder(side, symbol, quantity, orderType, limitPrice)
+	model, err := paper.placeOrder(
+		side,
+		symbol,
+		quantity,
+		orderType,
+		limitPrice,
+		clientOrderID,
+	)
 
 	if err != nil {
 		return spot.AddOrderResult{}, err
@@ -469,6 +474,7 @@ func (paper *Paper) placeOrder(
 	quantity string,
 	orderType string,
 	limitPrice string,
+	clientOrderID string,
 ) (datura.Map[any], error) {
 	command := []string{side, symbol, quantity}
 
@@ -494,6 +500,7 @@ func (paper *Paper) placeOrder(
 	}
 
 	model["pair"] = symbol
+	model["cl_ord_id"] = clientOrderID
 	return model, nil
 }
 

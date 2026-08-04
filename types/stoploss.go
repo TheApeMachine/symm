@@ -26,8 +26,8 @@ type Stoploss struct {
 }
 
 /*
-NewStoploss constructs an active regulator with default weight. Entry is bound
-later via Bind when the position opens.
+NewStoploss constructs an armed regulator from the position's initial entry
+basis. A realized fill can rebind it before live tickers take over the mark.
 */
 func NewStoploss(
 	ctx context.Context,
@@ -42,71 +42,28 @@ func NewStoploss(
 		ctx:    ctx,
 		cancel: cancel,
 		Symbol: symbol,
-		Entry:  mark.Copy(),
-		Mark:   mark.Copy(),
 		Status: PENDING,
+		Mark:   mark,
 	}
 
 	stoploss.evaluate()
-
 	stoploss.Status = ARMED
 	return stoploss
 }
 
 /*
-update advances the independent stop state from live ticker bids.
+Update advances the independent stop state from live ticker bids.
 */
-func (stoploss *Stoploss) Update(ticker *kraken.Ticker) error {
-	if ticker == nil {
+func (stoploss *Stoploss) Update(ticker kraken.TickerData) error {
+	if ticker.Bid == nil {
 		return nil
 	}
 
-	rows := ticker.Data
+	stoploss.Mark = ticker.Bid
+	stoploss.evaluate()
 
-	for _, row := range rows {
-		if row.Symbol != stoploss.Symbol {
-			continue
-		}
-
-		if row.Bid == nil {
-			continue
-		}
-
-		previous := stoploss.Mark
-		stoploss.Mark = row.Bid.Copy()
-
-		if previous != nil && previous.Sign() > 0 {
-			shockThreshold := decimal.ExactMul(previous, decimal.NewFromFloat64(0.8))
-
-			if shockThreshold != nil && row.Bid.Cmp(shockThreshold) < 0 {
-				stoploss.shockTicks = 6
-			}
-		}
-
-		if stoploss.shockTicks > 0 {
-			stoploss.shockTicks--
-			stoploss.breachCount = 0
-			stoploss.evaluate()
-
-			continue
-		}
-
-		if stoploss.Floor != nil && row.Bid.Cmp(stoploss.Floor) > 0 {
-			stoploss.breachCount = 0
-		}
-
-		if stoploss.Floor != nil && row.Bid.Cmp(stoploss.Floor) <= 0 {
-			stoploss.breachCount++
-
-			if stoploss.breachCount < 6 {
-				stoploss.evaluate()
-				continue
-			}
-
-			stoploss.Status = TRIGGERED
-		}
-
-		stoploss.evaluate()
+	if stoploss.Floor != nil && ticker.Bid.Cmp(stoploss.Floor) <= 0 {
+		stoploss.Status = TRIGGERED
 	}
 
 	return nil
@@ -118,7 +75,7 @@ the Peak and the Floor if the current Mark is higher than the Peak.
 */
 func (stoploss *Stoploss) evaluate() {
 	if stoploss.Peak == nil {
-		stoploss.Peak = stoploss.Mark.Copy()
+		stoploss.Peak = stoploss.Mark
 	}
 
 	if stoploss.Floor == nil {
@@ -130,7 +87,7 @@ func (stoploss *Stoploss) evaluate() {
 	}
 
 	if stoploss.Mark.Cmp(stoploss.Peak) > 0 {
-		stoploss.Peak = stoploss.Mark.Copy()
+		stoploss.Peak = stoploss.Mark
 
 		stoploss.Floor = decimal.ExactMul(
 			stoploss.Peak, decimal.NewFromFloat64(0.98),

@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"slices"
 	"sync"
 
 	"github.com/spf13/viper"
@@ -16,22 +17,20 @@ import (
 )
 
 type Planner struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	status        types.Status
-	ui            chan []byte
-	subscribers   *sync.Map
-	subscriptions map[string]*types.Subscription[any]
-	runOnce       sync.Once
-	api           *websocket.API
-	desk          *broker.Desk
-	price         *broker.Price
-	balance       *broker.Balance
-	recorder      *audit.Recorder
-	evaluator     Evaluator
-	arbiter       *Arbiter
-	allocator     *Allocator
-	Thesis        *types.Thesis
+	ctx         context.Context
+	cancel      context.CancelFunc
+	status      types.Status
+	ui          chan []byte
+	subscribers *sync.Map
+	api         *websocket.API
+	desk        *broker.Desk
+	price       *broker.Price
+	balance     *broker.Balance
+	recorder    *audit.Recorder
+	evaluator   Evaluator
+	arbiter     *Arbiter
+	allocator   *Allocator
+	Thesis      *types.Thesis
 }
 
 func NewPlanner(
@@ -56,45 +55,42 @@ func NewPlanner(
 	arbiter := NewArbiter(desk, price)
 
 	planner := &Planner{
-		ctx:           ctx,
-		cancel:        cancel,
-		status:        types.READY,
-		ui:            uiHub,
-		subscribers:   &sync.Map{},
-		subscriptions: map[string]*types.Subscription[any]{},
-		api:           api,
-		desk:          desk,
-		price:         price,
-		balance:       balance,
-		recorder:      recorder,
-		evaluator:     evaluator,
-		arbiter:       arbiter,
-		allocator:     NewAllocator(ctx, balance, instrument, price),
+		ctx:         ctx,
+		cancel:      cancel,
+		status:      types.READY,
+		ui:          uiHub,
+		subscribers: &sync.Map{},
+		api:         api,
+		desk:        desk,
+		price:       price,
+		balance:     balance,
+		recorder:    recorder,
+		evaluator:   evaluator,
+		arbiter:     arbiter,
+		allocator:   NewAllocator(ctx, balance, instrument, price),
 	}
 
 	if analyzer != nil {
 		planner.AttachAnalyzer(analyzer)
 	}
 
-	planner.run()
 	return planner
 }
 
+/*
+AttachAnalyzer registers the planner as the analyzer's evaluator.
+
+The planner runs inline on the analyzer's goroutine rather than consuming a
+thesis subscription of its own. Update ends a cycle by resetting the thesis,
+and doing that concurrently with the analyzer's next pass would clear evidence
+while it is still being written.
+*/
 func (planner *Planner) AttachAnalyzer(analyzer *logic.Analyzer) {
 	if analyzer == nil {
 		return
 	}
 
-	if planner.subscriptions["thesis"] != nil {
-		planner.run()
-		return
-	}
-
-	planner.subscriptions["thesis"] = analyzer.Subscribe(
-		"thesis", types.NewSubscription[any](),
-	)
-
-	planner.run()
+	analyzer.AttachEvaluator(planner)
 }
 
 func (planner *Planner) Status() types.Status {
@@ -123,31 +119,12 @@ func (planner *Planner) Close() error {
 	return nil
 }
 
-func (planner *Planner) run() {
-	if planner.subscriptions["thesis"] == nil {
-		return
-	}
-
-	planner.runOnce.Do(func() {
-		go func() {
-			for {
-				select {
-				case <-planner.ctx.Done():
-					return
-				case thesis := <-planner.subscriptions["thesis"].Channel:
-					if thesis, ok := thesis.(*types.Thesis); ok {
-						planner.Update(thesis)
-					}
-				}
-			}
-		}()
-	})
-}
-
 func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 	if thesis == nil {
 		return nil
 	}
+
+	thesis.Tick++
 
 	errnie.Error(audit.Phase(
 		planner.recorder, thesis.Tick, "decide_begin", nil,
@@ -159,17 +136,25 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 		return thesis
 	}
 
-	readiness := thesis.Readiness()
-
-	if !readiness.Manifold || !readiness.Resonance || !readiness.Causal || !readiness.Graph {
+	if !thesis.Readiness.Complete() {
 		planner.complete(thesis, false, "logic_not_ready")
-
 		return thesis
 	}
 
 	planner.evaluator.ManageContinuation(thesis, planner.desk, planner.price)
 	planner.evaluator.EvaluateOpportunities(thesis)
 	planner.arbiter.Arbitrate(thesis)
+
+	/*
+		Every decision leaving the planner carries a durable identifier, which
+		is what later links a fill, a position, and a post-mortem back to the
+		reasoning that produced them. Stamping here covers each path into the
+		slice at the one point they all pass through.
+	*/
+	for index := range thesis.Decisions {
+		thesis.Decisions[index].EnsureID()
+		thesis.Decisions[index].ArbitrationRound = thesis.Tick
+	}
 
 	if len(thesis.Decisions) > 0 {
 		if err := planner.allocator.Allocate(thesis); err != nil {
@@ -179,8 +164,13 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 		}
 	}
 
-	if !thesis.Readiness().Decisions {
+	if !thesis.Readiness.Decisions {
 		planner.complete(thesis, true, "no_decision")
+
+		// The tick was evaluated and produced nothing, so its evidence has
+		// been spent. Carrying it forward would let one tick's readings
+		// accumulate into the next and blur every trend drawn from them.
+		thesis.Reset()
 
 		return thesis
 	}
@@ -190,7 +180,6 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 			"tick":       thesis.Tick,
 			"at":         thesis.At,
 			"decisions":  thesis.Decisions,
-			"forecasts":  thesis.Forecasts,
 			"categories": thesis.Categories,
 		}))
 	}
@@ -198,10 +187,15 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 	planner.complete(thesis, true, "decisions")
 	planner.publish(thesis)
 
+	// Subscribers receive their own copy, because the reset below empties
+	// the slice this thesis holds and would otherwise clear the decisions
+	// out from under whoever is still acting on them.
+	decisions := slices.Clone(thesis.Decisions)
+
 	planner.subscribers.Range(func(key, value any) bool {
 		if subscribers, ok := value.([]*types.Subscription[any]); ok {
 			for _, subscriber := range subscribers {
-				subscriber.Send(thesis.Decisions)
+				subscriber.Send(decisions)
 			}
 		}
 
@@ -222,7 +216,6 @@ func (planner *Planner) complete(
 		return
 	}
 
-	readiness := thesis.Readiness()
 	errnie.Error(audit.Phase(
 		planner.recorder,
 		thesis.Tick,
@@ -230,7 +223,7 @@ func (planner *Planner) complete(
 		map[string]any{
 			"evaluated": evaluated,
 			"outcome":   outcome,
-			"readiness": readiness,
+			"readiness": thesis.Readiness,
 			"decisions": len(thesis.Decisions),
 		},
 	))
@@ -239,16 +232,14 @@ func (planner *Planner) complete(
 		return
 	}
 
-	out := datura.NewMap()
-	out["strategy"] = datura.NewMap(
+	utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
 		"tick", thesis.Tick,
 		"at", thesis.At,
 		"evaluated", evaluated,
 		"outcome", outcome,
-		"readiness", readiness,
+		"readiness", thesis.Readiness,
 		"decisions", len(thesis.Decisions),
-	)
-	utils.Publish(planner.ui, out)
+	)))
 }
 
 func (planner *Planner) publish(thesis *types.Thesis) {

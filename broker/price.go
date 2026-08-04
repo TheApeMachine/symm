@@ -20,6 +20,13 @@ const (
 )
 
 /*
+feeRateScale is the working precision for a fee expressed as a fraction. Kraken
+quotes tiers to two decimals of a percent, so four more digits keep the
+converted rate exact.
+*/
+const feeRateScale = 8
+
+/*
 Price is the broker price surface for symm. It owns fee tiers, ticker cache,
 and all money math so the rest of the broker never drifts from Kraken's
 precision and executable boundaries.
@@ -89,8 +96,9 @@ func (price *Price) Mark(
 			symbol, tick.Ask.OffsetPercent(fee.Fee),
 		)
 	case SELL:
+		exitFee := fee.Fee.Mul(tick.Bid)
 		out, err = price.normalizer.FormatPrice(
-			symbol, tick.Bid.OffsetPercent(fee.Fee),
+			symbol, tick.Bid.Sub(exitFee),
 		)
 	default:
 		return nil
@@ -105,6 +113,60 @@ func (price *Price) Mark(
 	}
 
 	return out
+}
+
+/*
+PnL returns the PnL for a holding, which means the profit or
+loss of the holding, including entry fee, and current exit fee.
+*/
+func (price *Price) PnL(
+	pair kraken.InstrumentPair,
+	holding *types.Holding,
+) *decimal.Decimal {
+	if holding == nil || holding.Qty == nil || holding.Mark == nil ||
+		holding.EntryPrice == nil || holding.EntryFee == nil {
+		return nil
+	}
+
+	tick, fee, err := price.getTickAndFee(pair.Symbol)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"could not get tick and fee for holding",
+			err,
+		))
+
+		return nil
+	}
+
+	costScale := int64(pair.CostPrecision)
+	grossProceeds := tick.Bid.SetScale(costScale).Mul(holding.Qty)
+	exitFee := fee.Fee.Mul(grossProceeds).SetScale(costScale)
+	entryValue := holding.EntryPrice.SetScale(costScale).Mul(holding.Qty)
+	entryFee := holding.EntryFee.SetScale(costScale)
+
+	return grossProceeds.
+		Sub(exitFee).
+		Sub(entryValue).
+		Sub(entryFee)
+}
+
+/*
+ReturnPct returns the return percentage for a holding, which is the PnL divided by the entry value.
+*/
+func (price *Price) ReturnPct(
+	pair kraken.InstrumentPair,
+	holding *types.Holding,
+) float64 {
+	pnl := price.PnL(pair, holding)
+
+	if pnl == nil || holding == nil || holding.EntryPrice == nil || holding.Qty == nil {
+		return 0
+	}
+
+	entryValue := decimal.ExactMul(holding.EntryPrice, holding.Qty)
+	return pnl.Div(entryValue).Float64()
 }
 
 /*
@@ -136,11 +198,13 @@ func (price *Price) WithFriction(
 	switch direction {
 	case BUY:
 		out, err = price.normalizer.FormatPrice(
-			symbol, volume.Mul(tick.Ask).OffsetPercent(fee.Fee),
+			symbol, tick.Ask.Mul(volume).OffsetPercent(fee.Fee),
 		)
 	case SELL:
+		grossProceeds := tick.Bid.Mul(volume)
+		exitFee := fee.Fee.Mul(grossProceeds)
 		out, err = price.normalizer.FormatPrice(
-			symbol, volume.Mul(tick.Bid).OffsetPercent(fee.Fee),
+			symbol, grossProceeds.Sub(exitFee),
 		)
 	default:
 		return nil
@@ -184,12 +248,12 @@ func (price *Price) Quantity(
 Fee returns the taker fee for a symbol.
 */
 func (price *Price) Fee(symbol string) (*decimal.Decimal, error) {
-	_, fee, err := price.getTickAndFee(symbol)
+	fee, err := price.getFee(symbol)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			"could not get tick and fee for symbol",
+			"could not get fee for symbol",
 			err,
 		))
 	}
@@ -211,6 +275,23 @@ func (price *Price) Tick(symbol string) *kraken.TickerData {
 }
 
 /*
+asRate converts a Kraken percent-quoted fee tier into the fraction every
+consumer here expects, since OffsetPercent multiplies by (1 + fee) and the
+strategy adds fees straight onto notional.
+
+The scale is widened before dividing because division keeps the receiver's
+scale, and "0.26" carries only two decimals: dividing it as-is rounds a 0.26%
+taker fee to zero rather than to 0.0026.
+*/
+func asRate(percent *decimal.Decimal) *decimal.Decimal {
+	if percent == nil {
+		return nil
+	}
+
+	return percent.SetScale(feeRateScale).Div(decimal.NewFromInt64(100))
+}
+
+/*
 GetFees loads TradeVolume taker fee tiers for the requested symbols and makes
 them executable for later quantity, fee, and PnL calculations.
 */
@@ -228,6 +309,10 @@ func (price *Price) GetFees(symbols []string) error {
 	}
 
 	for symbol, fee := range tradeVolumeResult.Fees {
+		fee.Fee = asRate(fee.Fee)
+		fee.Minfee = asRate(fee.Minfee)
+		fee.Maxfee = asRate(fee.Maxfee)
+
 		price.fees.Store(price.api.Normalizer().Name(symbol), fee)
 	}
 
@@ -238,24 +323,10 @@ func (price *Price) GetFees(symbols []string) error {
 func (price *Price) getTickAndFee(symbol string) (
 	*kraken.TickerData, *kraken.TradeVolumeFee, error,
 ) {
-	found, ok := price.fees.Load(price.api.Normalizer().Name(symbol))
+	fee, err := price.getFee(symbol)
 
-	if !ok || found == nil {
-		return nil, nil, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"fee not found",
-			nil,
-		))
-	}
-
-	fee, ok := found.(kraken.TradeVolumeFee)
-
-	if !ok {
-		return nil, nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"invalid fee type",
-			nil,
-		))
+	if err != nil {
+		return nil, nil, err
 	}
 
 	tick := price.Tick(symbol)
@@ -268,5 +339,29 @@ func (price *Price) getTickAndFee(symbol string) (
 		))
 	}
 
-	return tick, &fee, nil
+	return tick, fee, nil
+}
+
+func (price *Price) getFee(symbol string) (*kraken.TradeVolumeFee, error) {
+	found, ok := price.fees.Load(price.api.Normalizer().Name(symbol))
+
+	if !ok || found == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"fee not found",
+			nil,
+		))
+	}
+
+	fee, ok := found.(kraken.TradeVolumeFee)
+
+	if !ok {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"invalid fee type",
+			nil,
+		))
+	}
+
+	return &fee, nil
 }

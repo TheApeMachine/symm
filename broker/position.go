@@ -15,34 +15,32 @@ import (
 )
 
 /*
-Position is one lot shell owned by Desk. Order correlation uses request ID then
-exchange order ID; unmatched executions buffer until the ack binds them.
-Position subscribes to the market ticker topic for live mark and stoploss
-updates, and to the account execution and add_order topics for fills and
-order acks so it handles its own lifecycle without Desk absorbing the logic.
+Position is one lot shell owned and event-routed by Desk. Order correlation uses
+each decision's client order ID, then the exchange order ID returned by REST.
 */
 type Position struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	api           *websocket.API
-	subscriptions map[string]*types.Subscription[any]
-	ui            chan []byte
-	instrument    *Instrument
-	price         *Price
-	balance       *Balance
-	pair          kraken.InstrumentPair
-	ID            string                `json:"id"`
-	Status        types.Status          `json:"status"`
-	EntryOrder    *spot.AddOrderRequest `json:"entry_order"`
-	ExitOrder     *spot.AddOrderRequest `json:"exit_order"`
-	Holding       *types.Holding        `json:"holding"`
+	ctx              context.Context
+	cancel           context.CancelFunc
+	api              *websocket.API
+	ui               chan []byte
+	instrument       *Instrument
+	price            *Price
+	balance          *Balance
+	pair             kraken.InstrumentPair
+	seenExecutions   map[string]struct{}
+	entryFills       int
+	exitFills        int
+	ID               string                `json:"id"`
+	Status           types.Status          `json:"status"`
+	EntryOrder       *spot.AddOrderRequest `json:"entry_order"`
+	ExitOrder        *spot.AddOrderRequest `json:"exit_order"`
+	EntryOrderResult *spot.AddOrderResult  `json:"entry_order_result"`
+	ExitOrderResult  *spot.AddOrderResult  `json:"exit_order_result"`
+	Holding          *types.Holding        `json:"holding"`
 }
 
 /*
-NewPosition constructs one lot shell; Desk routes order and execution
-rows initially but Position subscribes to the market ticker, account
-executions, and account add_order topics so it responds to live
-websocket messages directly.
+NewPosition constructs one desk-owned lot shell.
 */
 func NewPosition(
 	ctx context.Context,
@@ -52,73 +50,49 @@ func NewPosition(
 	price *Price,
 	balance *Balance,
 	pair kraken.InstrumentPair,
-	qty *decimal.Decimal,
-	market types.MarketFeed,
-	account types.AccountFeed,
+	decision types.Decision,
 ) *Position {
 	errnie.Info("creating position for: " + pair.Symbol)
 	ctx, cancel := context.WithCancel(ctx)
 
+	holding := types.NewHolding(
+		ctx,
+		pair.Symbol,
+		decision,
+	)
+
 	position := &Position{
-		ctx:    ctx,
-		cancel: cancel,
-		Status: types.INITIALIZING,
-		api:    api,
-		subscriptions: map[string]*types.Subscription[any]{
-			"ticker":     api.Subscribe("ticker", types.NewSubscription[any]()),
-			"executions": api.Subscribe("executions", types.NewSubscription[any]()),
-			"add_order":  api.Subscribe("add_order", types.NewSubscription[any]()),
-		},
-		ui:         ui,
-		instrument: instrument,
-		price:      price,
-		balance:    balance,
-		pair:       pair,
+		ctx:            ctx,
+		cancel:         cancel,
+		Status:         types.INITIALIZING,
+		api:            api,
+		ui:             ui,
+		instrument:     instrument,
+		price:          price,
+		balance:        balance,
+		pair:           pair,
+		seenExecutions: map[string]struct{}{},
+		ID:             decision.ID,
 		EntryOrder: &spot.AddOrderRequest{
+			ClOrdId:   decision.ID,
 			Type:      "buy",
 			OrderType: "market",
-			Volume:    qty.String(),
+			Volume:    decision.ProposedQuantity.String(),
 			Pair:      pair.Symbol,
-			Validate:  true,
 		},
 		ExitOrder: &spot.AddOrderRequest{
+			ClOrdId:   decision.ID,
 			Type:      "sell",
 			OrderType: "market",
-			Volume:    qty.String(),
+			Volume:    decision.ProposedQuantity.String(),
 			Pair:      pair.Symbol,
-			Validate:  true,
 		},
-		Holding: types.NewHolding(
-			ctx,
-			pair.Symbol,
-			qty,
-			price.Mark(pair.Symbol, SELL),
-		),
+		Holding: holding,
 	}
 
-	position.run()
 	position.Publish()
 
 	return position
-}
-
-func (position *Position) run() {
-	go func() {
-		for {
-			select {
-			case <-position.ctx.Done():
-				return
-			case message := <-position.subscriptions["ticker"].Channel:
-				ticker, ok := message.(*kraken.Ticker)
-
-				if !ok {
-					continue
-				}
-
-				position.onTicker(ticker)
-			}
-		}
-	}()
 }
 
 /*
@@ -131,7 +105,7 @@ use you would also not be manually managing the balances.
 */
 func (position *Position) Publish() {
 	out := datura.NewMap()
-	out["positions"] = []Position{*position}
+	out["positions"] = []*Position{position}
 	utils.Publish(position.ui, out)
 }
 
@@ -140,23 +114,97 @@ onTicker refreshes the mark cache for this position's holding and
 lets the bound stoploss regulator evaluate the live bid path for
 exit decisions.
 */
-func (position *Position) onTicker(ticker *kraken.Ticker) {
-	if ticker == nil {
-		return
+func (position *Position) onTicker(ticker kraken.TickerData) {
+	if position.Holding != nil {
+		if err := position.Holding.Update(ticker); err != nil {
+			errnie.Error(err)
+		}
+
+		position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
+		position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
 	}
 
-	for _, row := range ticker.Data {
-		if row.Symbol != position.pair.Symbol {
+	if position.Status == types.OPEN && position.Holding.Stoploss != nil &&
+		position.Holding.Stoploss.Status == types.TRIGGERED {
+		position.Exit(position.ExitOrder.ClOrdId)
+	}
+
+	position.Publish()
+}
+
+func (position *Position) onExecution(execution *kraken.Execution) {
+	for _, row := range execution.Data {
+		clientOrderID := position.EntryOrder.ClOrdId
+
+		if row.Side == "sell" {
+			clientOrderID = position.ExitOrder.ClOrdId
+		}
+
+		if row.Symbol != position.pair.Symbol || row.ClientOrderID != clientOrderID {
 			continue
 		}
 
-		if position.Holding != nil && position.Holding.Stoploss != nil {
-			if err := position.Holding.Stoploss.Update(ticker); err != nil {
-				errnie.Error(err)
-			}
+		if row.ExecType != "trade" || row.CumQty == nil || row.CumQty.Sign() <= 0 {
+			continue
 		}
 
-		break
+		if row.ExecID != "" {
+			if _, seen := position.seenExecutions[row.ExecID]; seen {
+				continue
+			}
+
+			position.seenExecutions[row.ExecID] = struct{}{}
+		}
+
+		if row.Side == "buy" {
+			position.Holding.EntryPrice = row.AvgPrice
+
+			if row.FeeUsdEquiv != nil && position.entryFills == 0 {
+				position.Holding.EntryFee = row.FeeUsdEquiv.Copy()
+			}
+
+			if row.FeeUsdEquiv != nil && position.entryFills > 0 {
+				position.Holding.EntryFee = position.Holding.EntryFee.Add(row.FeeUsdEquiv)
+			}
+
+			// We set it now and update it on every ticker update.
+			position.Holding.ExitPrice = row.AvgPrice
+			position.Holding.Mark = row.AvgPrice
+
+			position.Holding.Qty = row.CumQty
+			position.Holding.SellableQty = row.CumQty
+			position.entryFills++
+
+			position.Status = types.OPEN
+			position.Holding.Status = types.OPEN
+			position.Holding.Stoploss.Status = types.ARMED
+		}
+
+		if row.Side == "sell" {
+			position.Holding.ExitPrice = row.AvgPrice
+
+			if row.FeeUsdEquiv != nil && position.exitFills == 0 {
+				position.Holding.ExitFee = row.FeeUsdEquiv.Copy()
+			}
+
+			if row.FeeUsdEquiv != nil && position.exitFills > 0 {
+				position.Holding.ExitFee = position.Holding.ExitFee.Add(row.FeeUsdEquiv)
+			}
+
+			position.exitFills++
+
+			if row.OrderStatus != "filled" {
+				position.Publish()
+				continue
+			}
+
+			position.Holding.SellableQty = decimal.NewFromInt64(0)
+
+			position.Status = types.CLOSED
+			position.Holding.Status = types.CLOSED
+		}
+
+		position.Publish()
 	}
 }
 
@@ -165,7 +213,9 @@ Enter submits a market buy for its quantity and returns the transport error so
 Desk cannot publish a false entry-submitted lifecycle.
 */
 func (position *Position) Enter() (*Position, error) {
-	if _, err := position.api.AddOrder(position.EntryOrder); err != nil {
+	result, err := position.api.AddOrder(position.EntryOrder)
+
+	if err != nil {
 		position.Status = types.ERROR
 		position.Holding.Status = types.ERROR
 
@@ -176,14 +226,43 @@ func (position *Position) Enter() (*Position, error) {
 		))
 	}
 
+	position.EntryOrderResult = &result
+
+	if position.Status != types.OPEN && position.Status != types.CLOSED {
+		position.Status = types.PENDING
+		position.Holding.Status = types.PENDING
+	}
+
+	position.Publish()
 	return position, nil
 }
 
 /*
 Exit submits a market sell for the sellable ledger quantity.
 */
-func (position *Position) Exit() error {
-	if _, err := position.api.AddOrder(position.ExitOrder); err != nil {
+func (position *Position) Exit(clientOrderID string) error {
+	if clientOrderID == "" {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"position: exit order is missing a client order identifier",
+			nil,
+		))
+	}
+
+	if position.Holding == nil || position.Holding.SellableQty == nil || position.Holding.SellableQty.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"position: no sellable quantity available",
+			nil,
+		))
+	}
+
+	position.ExitOrder.Volume = position.Holding.SellableQty.String()
+	position.ExitOrder.ClOrdId = clientOrderID
+
+	result, err := position.api.AddOrder(position.ExitOrder)
+
+	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to place market sell order",
@@ -191,10 +270,14 @@ func (position *Position) Exit() error {
 		))
 	}
 
-	position.Status = types.PENDING
-	position.Holding.Status = types.PENDING
-	position.Publish()
+	position.ExitOrderResult = &result
 
+	if position.Status != types.CLOSED {
+		position.Status = types.PENDING
+		position.Holding.Status = types.PENDING
+	}
+
+	position.Publish()
 	return nil
 }
 

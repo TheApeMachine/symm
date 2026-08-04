@@ -35,11 +35,13 @@ needs to drive and observe the running system, and owns the shutdown of the
 resources Boot acquired.
 */
 type System struct {
-	Hub     *ui.Hub
-	Planner *strategy.Planner
-	Crypto  *trader.Crypto
-	Thesis  *types.Thesis
-	closers []func() error
+	Hub      *ui.Hub
+	Desk     *broker.Desk
+	Planner  *strategy.Planner
+	Analyzer *logic.Analyzer
+	Crypto   *trader.Crypto
+	Thesis   *types.Thesis
+	closers  []func() error
 }
 
 /*
@@ -214,7 +216,9 @@ func Boot(
 		manifoldChannel,
 	)
 
+	system.Desk = desk
 	system.Planner = planner
+	system.Analyzer = analyzer
 	system.Crypto = crypto
 
 	return system

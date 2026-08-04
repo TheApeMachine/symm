@@ -26,15 +26,29 @@ type Generator struct {
 	currentState testtypes.MarketState
 	targetState  testtypes.MarketState
 	momentum     float64
-	profiles     map[testtypes.MarketState]testtypes.RegimeProfile
-	midPrice     float64
-	openPrice    float64
-	cumVolume    float64
-	cumValue     float64
-	highPrice    float64
-	lowPrice     float64
-	currTime     time.Time
-	sequence     int64
+
+	/*
+		sourceProfile is the regime the market is transitioning away from and
+		progress runs from 0 to 1 as it settles into the target regime.
+	*/
+	sourceProfile testtypes.RegimeProfile
+	progress      float64
+
+	/*
+		burst is the unspent fraction of the ignition impulse that opened the
+		current regime, decaying towards zero over subsequent steps.
+	*/
+	burst float64
+
+	profiles  map[testtypes.MarketState]testtypes.RegimeProfile
+	midPrice  float64
+	openPrice float64
+	cumVolume float64
+	cumValue  float64
+	highPrice float64
+	lowPrice  float64
+	currTime  time.Time
+	sequence  int64
 }
 
 func NewGenerator(symbol string, startPrice float64, seed int64) *Generator {
@@ -44,35 +58,83 @@ func NewGenerator(symbol string, startPrice float64, seed int64) *Generator {
 		currentState: testtypes.Baseline,
 		targetState:  testtypes.Baseline,
 		profiles:     testtypes.DefaultProfiles,
-		midPrice:     startPrice,
-		openPrice:    startPrice,
-		highPrice:    startPrice,
-		lowPrice:     startPrice,
-		currTime:     time.Now().UTC(),
+
+		/*
+			A new generator is already settled in the baseline regime, so the
+			transition starts complete.
+		*/
+		sourceProfile: testtypes.DefaultProfiles[testtypes.Baseline],
+		progress:      1.0,
+		momentum:      1.0,
+
+		midPrice:  startPrice,
+		openPrice: startPrice,
+		highPrice: startPrice,
+		lowPrice:  startPrice,
+		currTime:  time.Now().UTC(),
 	}
 }
 
 /*
-Set state should gradually transition from the current state to the new
-state. It does this by iterating from the current state to the new state,
-incrementing the state by one each time. This ensures that the market
-gradually transitions from one state to another, rather than jumping
-directly into the new state. Use momentum to determine how fast the
-transition happens. A higher momentum value will cause the transition
-to happen faster.
+baselineTransitionTicks is how many ticks a regime shift takes at unit
+momentum. Stronger moves complete in proportionally fewer ticks.
+*/
+const baselineTransitionTicks = 20.0
+
+/*
+SetState begins a gradual transition from the current regime to the given
+one. Rather than snapping, the generator blends the two regime profiles over
+subsequent Steps, so the market shifts the way a real one does.
+
+Momentum sets how forcefully the market enters the new state, and its
+magnitude determines the speed: a flash crash (-1.2) completes in a handful
+of ticks, a slow bleed (-0.3) takes far longer. The sign carries direction
+and is already reflected in the target profile's drift, so only the
+magnitude affects pacing. Momentum of zero settles at the baseline pace.
+
+A transition that is still in flight is re-based from the profile currently
+in effect, so redirecting mid-move continues from where the market actually
+is instead of snapping back to the previous regime.
 */
 func (generator *Generator) SetState(state testtypes.MarketState, momentum ...float64) {
 	generator.mu.Lock()
 	defer generator.mu.Unlock()
 
-	speed := 1.0
+	speed := 0.0
 
-	if len(momentum) > 0 && momentum[0] > 0 {
-		speed = momentum[0]
+	if len(momentum) > 0 {
+		speed = math.Abs(momentum[0])
 	}
 
+	if speed == 0 {
+		speed = 1.0
+	}
+
+	generator.sourceProfile = generator.activeProfile()
+	generator.currentState = state
 	generator.targetState = state
 	generator.momentum = speed
+	generator.progress = 0
+
+	/*
+		Entering the regime fires its ignition impulse, so the first step
+		gaps rather than easing in.
+	*/
+	generator.burst = 1.0
+}
+
+/*
+activeProfile returns the profile currently in effect, which mid-transition
+is the blend between the source and target regimes.
+*/
+func (generator *Generator) activeProfile() testtypes.RegimeProfile {
+	target, ok := generator.profiles[generator.targetState]
+
+	if !ok {
+		target = generator.profiles[testtypes.Baseline]
+	}
+
+	return testtypes.Blend(generator.sourceProfile, target, generator.progress)
 }
 
 // Step generates the next relative sample frame based on current state.
@@ -80,21 +142,18 @@ func (generator *Generator) Step() testtypes.Sample {
 	generator.mu.Lock()
 	defer generator.mu.Unlock()
 
-	if generator.currentState != generator.targetState {
-		if generator.currentState < generator.targetState {
-			generator.currentState++
-		}
-
-		if generator.currentState > generator.targetState {
-			generator.currentState--
-		}
+	/*
+		Advance the regime transition before sampling, so each step reflects
+		a market that is part way between the two regimes rather than
+		snapping from one set of parameters to the other.
+	*/
+	if generator.progress < 1.0 {
+		generator.progress = math.Min(1.0, generator.progress+
+			generator.momentum/baselineTransitionTicks,
+		)
 	}
 
-	profile, ok := generator.profiles[generator.currentState]
-
-	if !ok {
-		profile = generator.profiles[testtypes.Baseline]
-	}
+	profile := generator.activeProfile()
 
 	// 1. Advance Time Cadence
 	generator.currTime = generator.currTime.Add(profile.Cadence)
@@ -104,7 +163,14 @@ func (generator *Generator) Step() testtypes.Sample {
 	noise := generator.rng.NormFloat64()
 	deltaPct := (profile.Drift * dt * 0.01) + (profile.Volatility * math.Sqrt(dt) * noise * 0.01)
 
-	generator.midPrice = math.Max(0.01, generator.midPrice*(1.0+deltaPct))
+	/*
+		The ignition impulse gaps the price on the step the regime is entered
+		and decays before subsequent steps, which keeps the first bar dominant
+		while retaining a fading continuation tail.
+	*/
+	generator.burst *= profile.IgnitionDecay
+	impulse := profile.IgnitionMove * generator.burst
+	generator.midPrice = math.Max(0.01, generator.midPrice*(1.0+deltaPct+impulse))
 
 	// 3. Dynamic Spread & Bid/Ask Construction
 	baseSpread := generator.midPrice * 0.0005
@@ -121,6 +187,18 @@ func (generator *Generator) Step() testtypes.Sample {
 
 	// 5. Volume & Cumulative VWAP
 	stepVolume := profile.BaseQty * profile.VolumeScale * (0.5 + generator.rng.Float64())
+
+	/*
+		Volume leads price into an ignition, so the burst multiplies executed
+		quantity on the same step the gap prints, then decays with it.
+	*/
+	if generator.burst > 0 && profile.IgnitionVolume > 1 {
+		stepVolume *= 1.0 + (profile.IgnitionVolume-1.0)*generator.burst
+	}
+
+	if generator.burst < 0.001 {
+		generator.burst = 0
+	}
 	generator.cumVolume += stepVolume
 	generator.cumValue += (last * stepVolume)
 	vwap := generator.cumValue / generator.cumVolume
@@ -138,19 +216,20 @@ func (generator *Generator) Step() testtypes.Sample {
 	changePct := (change / generator.openPrice) * 100.0
 
 	return testtypes.Sample{
-		Symbol:    generator.symbol,
-		Bid:       bid,
-		BidQty:    math.Round(bidQty*100) / 100,
-		Ask:       ask,
-		AskQty:    math.Round(askQty*100) / 100,
-		Last:      math.Round(last*100) / 100,
-		Volume:    math.Round(generator.cumVolume*100) / 100,
-		VWAP:      math.Round(vwap*100) / 100,
-		Low:       math.Round(generator.lowPrice*100) / 100,
-		High:      math.Round(generator.highPrice*100) / 100,
-		Change:    math.Round(change*100) / 100,
-		ChangePct: math.Round(changePct*100) / 100,
-		Timestamp: generator.currTime,
+		Symbol:     generator.symbol,
+		Bid:        bid,
+		BidQty:     math.Round(bidQty*100) / 100,
+		Ask:        ask,
+		AskQty:     math.Round(askQty*100) / 100,
+		Last:       math.Round(last*100) / 100,
+		Volume:     math.Round(generator.cumVolume*100) / 100,
+		StepVolume: math.Round(stepVolume*100) / 100,
+		VWAP:       math.Round(vwap*100) / 100,
+		Low:        math.Round(generator.lowPrice*100) / 100,
+		High:       math.Round(generator.highPrice*100) / 100,
+		Change:     math.Round(change*100) / 100,
+		ChangePct:  math.Round(changePct*100) / 100,
+		Timestamp:  generator.currTime,
 	}
 }
 
@@ -160,7 +239,7 @@ Generate yields raw JSON []byte payload frames derived by updating the given tem
 func (generator *Generator) Generate(template []byte) iter.Seq[[]byte] {
 	return func(yield func([]byte) bool) {
 		sample := generator.Step()
-		frame := generator.render(template, sample)
+		frame := generator.Render(template, sample)
 
 		if len(frame) > 0 {
 			yield(frame)
@@ -168,7 +247,14 @@ func (generator *Generator) Generate(template []byte) iter.Seq[[]byte] {
 	}
 }
 
-func (generator *Generator) render(template []byte, sample testtypes.Sample) []byte {
+/*
+Render writes one already-sampled market state into a channel template.
+
+Keeping sampling separate from rendering lets one venue tick publish the same
+price, quantity, and timestamp through ticker, book, trade, and level3 rather
+than advancing the simulated market once per channel.
+*/
+func (generator *Generator) Render(template []byte, sample testtypes.Sample) []byte {
 	if len(template) == 0 {
 		payload, _ := json.Marshal(map[string]any{
 			"channel": "ticker",
@@ -224,7 +310,14 @@ func (generator *Generator) render(template []byte, sample testtypes.Sample) []b
 
 				row["side"] = side
 				row["price"] = sample.Last
-				row["qty"] = sample.BidQty
+
+				/*
+					A trade reports the quantity that actually executed, not
+					the size resting on the bid. Ignition scores volume rate
+					against its own median, so the executed quantity is the
+					only figure that carries the surge.
+				*/
+				row["qty"] = sample.StepVolume
 				row["ord_type"] = "limit"
 				row["trade_id"] = generator.sequence
 			default:

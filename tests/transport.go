@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/symm/tests/fixtures/balances"
 	"github.com/theapemachine/symm/tests/fixtures/orderack"
 	"github.com/theapemachine/symm/tests/fixtures/tradevolume"
@@ -28,6 +29,9 @@ type mockTransport struct {
 	mu          sync.RWMutex
 	symbols     []*testtypes.Symbol
 	tradeVolume *tradevolume.Fixture
+	balances    map[string]string
+	trades      map[string]spot.Trade
+	addOrderErr error
 }
 
 func newMockTransport() *mockTransport {
@@ -48,10 +52,29 @@ func (transport *mockTransport) configure(symbols []*testtypes.Symbol) {
 	transport.tradeVolume = tradevolume.NewMarket(pairs)
 }
 
+func (transport *mockTransport) configureAccount(
+	balances map[string]string,
+	trades map[string]spot.Trade,
+) {
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+
+	transport.balances = balances
+	transport.trades = trades
+}
+
 func (transport *mockTransport) RoundTrip(
 	request *http.Request,
 ) (*http.Response, error) {
 	path := request.URL.Path
+
+	transport.mu.RLock()
+	addOrderErr := transport.addOrderErr
+	transport.mu.RUnlock()
+
+	if path == "/0/private/AddOrder" && addOrderErr != nil {
+		return nil, addOrderErr
+	}
 
 	var body []byte
 
@@ -190,6 +213,14 @@ balance generates a REST Balance response using the balances fixture. The
 initial wallet is the quote-currency balance from Market's paper config.
 */
 func (transport *mockTransport) balance() []byte {
+	transport.mu.RLock()
+	configured := transport.balances
+	transport.mu.RUnlock()
+
+	if configured != nil {
+		return envelope(configured)
+	}
+
 	fixture := balances.NewMarket("USD")
 	var payload []byte
 
@@ -220,6 +251,17 @@ func (transport *mockTransport) balance() []byte {
 }
 
 func (transport *mockTransport) tradesHistory() []byte {
+	transport.mu.RLock()
+	configured := transport.trades
+	transport.mu.RUnlock()
+
+	if configured != nil {
+		return envelope(map[string]any{
+			"count":  len(configured),
+			"trades": configured,
+		})
+	}
+
 	return envelope(map[string]any{
 		"count":  0,
 		"trades": map[string]any{},

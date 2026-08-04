@@ -16,11 +16,12 @@ import (
 )
 
 type Book struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	status  types.Status
-	mu      sync.RWMutex
-	manager *spot.BookManager
+	ctx      context.Context
+	cancel   context.CancelFunc
+	status   types.Status
+	statusMu sync.RWMutex
+	mu       sync.RWMutex
+	manager  *spot.BookManager
 }
 
 func NewBook(ctx context.Context) *Book {
@@ -37,7 +38,6 @@ func NewBook(ctx context.Context) *Book {
 	book.manager.OnCreateBook.Recurring(func(
 		event *callback.Event[*spotbook.Book],
 	) {
-		errnie.Info(fmt.Sprintf("websocket: new book created for %s", event.Data.Name))
 		managed := event.Data
 
 		if managed == nil {
@@ -46,17 +46,17 @@ func NewBook(ctx context.Context) *Book {
 
 		managed.EnableMaxDepth = true
 		managed.NoBookCrossing = true
-		book.mu.Lock()
+		book.statusMu.Lock()
 		book.status = types.READY
-		book.mu.Unlock()
+		book.statusMu.Unlock()
 
 		managed.OnChecksummed.Recurring(func(
 			bookEvent *callback.Event[*spotbook.ChecksumResult],
 		) {
 			if !bookEvent.Data.Match {
-				book.mu.Lock()
+				book.statusMu.Lock()
 				book.status = types.ERROR
-				book.mu.Unlock()
+				book.statusMu.Unlock()
 
 				errnie.Error(errnie.Err(
 					errnie.Validation,
@@ -75,14 +75,24 @@ func NewBook(ctx context.Context) *Book {
 }
 
 func (book *Book) Status() types.Status {
-	book.mu.RLock()
-	defer book.mu.RUnlock()
+	book.statusMu.RLock()
+	defer book.statusMu.RUnlock()
 
 	return book.status
 }
 
 func (book *Book) Get(symbol string) *spotbook.Book {
-	return book.manager.GetBook(symbol)
+	book.mu.RLock()
+	defer book.mu.RUnlock()
+
+	return cloneBook(book.manager.GetBook(symbol))
+}
+
+func (book *Book) Create(symbol string, depth int) {
+	book.mu.Lock()
+	defer book.mu.Unlock()
+
+	book.manager.CreateBook(symbol, depth)
 }
 
 func (book *Book) Update(
@@ -195,6 +205,7 @@ func (book *Book) Update(
 		}
 
 		payload.Data[index] = data
+		primeQueues(symbolBook)
 
 	}
 
@@ -220,14 +231,93 @@ func (book *Book) pruneNilLevels(symbolBook *spotbook.Book) {
 }
 
 func (book *Book) All() *sync.Map {
+	out := &sync.Map{}
+	book.SnapshotInto(out)
+
+	return out
+}
+
+func (book *Book) SnapshotInto(out *sync.Map) {
+	if book == nil || out == nil {
+		return
+	}
+
 	book.mu.RLock()
 	defer book.mu.RUnlock()
 
-	out := &sync.Map{}
-
 	for _, symbol := range book.manager.GetBooks() {
-		out.Store(symbol, book.manager.GetBook(symbol))
+		out.Store(symbol, cloneBook(book.manager.GetBook(symbol)))
+	}
+}
+
+func cloneBook(source *spotbook.Book) *spotbook.Book {
+	if source == nil {
+		return nil
 	}
 
-	return out
+	cloned := spotbook.New()
+	cloned.Name = source.Name
+	cloned.MaxDepth = source.MaxDepth
+	cloned.NoBookCrossing = false
+	cloned.EnableMaxDepth = false
+	cloneSide(cloned, source.Bids, spotbook.Bid)
+	cloneSide(cloned, source.Asks, spotbook.Ask)
+	primeQueues(cloned)
+	cloned.NoBookCrossing = source.NoBookCrossing
+	cloned.EnableMaxDepth = source.EnableMaxDepth
+
+	return cloned
+}
+
+func primeQueues(book *spotbook.Book) {
+	for _, side := range []*spotbook.Side{book.Bids, book.Asks} {
+		for _, level := range side.Levels {
+			level.Queue()
+		}
+	}
+}
+
+func cloneSide(
+	destination *spotbook.Book,
+	source *spotbook.Side,
+	direction spotbook.BookDirection,
+) {
+	if source == nil {
+		return
+	}
+
+	for _, level := range source.Levels {
+		if level == nil || level.Price == nil || level.Quantity == nil {
+			continue
+		}
+
+		orders := level.Queue()
+
+		if len(orders) == 0 {
+			destination.Update(&spotbook.UpdateOptions{
+				Direction: direction,
+				Price:     level.Price,
+				Quantity:  level.Quantity,
+				Timestamp: level.Timestamp,
+				Silent:    true,
+			})
+
+			continue
+		}
+
+		for _, order := range orders {
+			if order == nil || order.LimitPrice == nil || order.Quantity == nil {
+				continue
+			}
+
+			destination.Update(&spotbook.UpdateOptions{
+				Direction: direction,
+				ID:        order.ID,
+				Price:     order.LimitPrice,
+				Quantity:  order.Quantity,
+				Timestamp: order.Timestamp,
+				Silent:    true,
+			})
+		}
+	}
 }

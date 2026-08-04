@@ -153,10 +153,7 @@ func (section *Section) appendSample(
 ) error {
 	state.samples = append(state.samples, sample)
 	state.logPrices = append(state.logPrices, math.Log(sample.Value))
-
-	if len(state.samples) >= 2 {
-		section.applyRightEdge(symbol, state)
-	}
+	state.variance = exactVariance(state)
 
 	if err := section.refreshEnergy(symbol, state); err != nil {
 		return err
@@ -190,8 +187,10 @@ func (section *Section) trim(symbol string, state *symbolState) error {
 	}
 
 	for len(state.samples) > state.longWindow+1 {
-		section.dropLeftEdge(symbol, state)
+		state.samples = state.samples[1:]
+		state.logPrices = state.logPrices[1:]
 	}
+	state.variance = exactVariance(state)
 
 	return section.refreshEnergy(symbol, state)
 }
@@ -247,23 +246,47 @@ scores derives herd/alpha/noise/stress from streaming cohort aggregates.
 func (section *Section) scores(symbol string) (map[string]float64, bool) {
 	state := section.symbols[symbol]
 
-	if state == nil || state.peerCount <= 0 || state.energy <= 0 {
+	if state == nil || state.energy <= 0 {
 		return nil, false
 	}
 
-	if section.energyReady <= 1 {
+	weightedSigned := 0.0
+	weightedAbsolute := 0.0
+	weightedPeerEnergy := 0.0
+	totalSupport := 0.0
+
+	for peerSymbol, peer := range section.symbols {
+		if peerSymbol == symbol || peer.energy <= 0 {
+			continue
+		}
+
+		correlationValue, support, ok := supportedCorrelation(
+			state.samples, peer.samples, state.logPrices, peer.logPrices,
+		)
+
+		if !ok {
+			continue
+		}
+
+		weight := float64(support)
+		weightedSigned += correlationValue * weight
+		weightedAbsolute += math.Abs(correlationValue) * weight
+		weightedPeerEnergy += peer.energy * weight
+		totalSupport += weight
+	}
+
+	if totalSupport <= 0 {
 		return nil, false
 	}
 
-	peerEnergy := (section.globalEnergySum - state.energy) / float64(section.energyReady-1)
+	peerEnergy := weightedPeerEnergy / totalSupport
 
 	if peerEnergy <= 0 {
 		return nil, false
 	}
 
-	peerCount := float64(state.peerCount)
-	signed := state.signedSum / peerCount
-	correlation := state.absSum / peerCount
+	signed := weightedSigned / totalSupport
+	correlation := weightedAbsolute / totalSupport
 	relativeEnergy := state.energy / peerEnergy
 	excessEnergy := math.Max(0, relativeEnergy-1)
 	energyDeficit := math.Max(0, 1-relativeEnergy)
