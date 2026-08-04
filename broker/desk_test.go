@@ -216,7 +216,16 @@ func TestDeskRecover(t *testing.T) {
 			So(positions[0].Holding.Stoploss, ShouldNotBeNil)
 			So(positions[0].Holding.Stoploss.Entry.Cmp(positions[0].Holding.EntryPrice), ShouldEqual, 0)
 			So(positions[0].Holding.Stoploss.Mark.Cmp(positions[0].Holding.EntryPrice), ShouldEqual, 0)
-			So(positions[0].Holding.Stoploss.Floor, ShouldNotBeNil)
+
+			/*
+				Recovery runs before anything has priced the symbol, so the lot
+				is adopted without a floor rather than with one invented from a
+				book nobody has seen. The alternative is a boundary drawn from
+				tick granularity alone, which on a liquid pair lands a fraction
+				of a percent under the entry and stops the recovered lot out on
+				the first tick that prices it.
+			*/
+			So(positions[0].Holding.Stoploss.Floor, ShouldBeNil)
 
 			market.Tick()
 			positions = slices.Collect(market.Desk.Positions())
@@ -226,6 +235,12 @@ func TestDeskRecover(t *testing.T) {
 			So(positions[0].Holding.Mark.Cmp(positions[0].Holding.EntryPrice), ShouldNotEqual, 0)
 			So(positions[0].Holding.Stoploss.Entry.Cmp(positions[0].Holding.EntryPrice), ShouldEqual, 0)
 			So(positions[0].Holding.Stoploss.Mark.Cmp(positions[0].Holding.Mark), ShouldEqual, 0)
+
+			// The first ticker is what makes the lot defensible: geometry is
+			// adopted from the book it finally has.
+			So(positions[0].Holding.Stoploss.Plan.Present, ShouldBeTrue)
+			So(positions[0].Holding.Stoploss.Floor, ShouldNotBeNil)
+			So(positions[0].Holding.Stoploss.HardFloor.Cmp(positions[0].Holding.EntryPrice), ShouldEqual, -1)
 			So(bytes.Contains(logs.Bytes(), []byte("ticker not found")), ShouldBeFalse)
 		})
 	})

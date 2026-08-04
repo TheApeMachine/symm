@@ -116,6 +116,119 @@ func (price *Price) Mark(
 }
 
 /*
+RiskPlan derives stop geometry for a lot the strategy did not size.
+
+Recovered wallet inventory and any entry that reaches the desk without a plan
+still need a boundary. What cannot be reconstructed here is the sizing half of
+the coupling — the quantity is already held, so there is no loss budget left to
+solve against and MaxLoss is left absent. The distances come from the live book,
+which is where the allocator reads them from too, so a recovered lot ends up
+defended on the same terms as one this process entered.
+
+An absent plan means the book has not been seen yet, which happens on every
+recovered position: the desk adopts wallet inventory before the first ticker
+arrives. The regulator holds no geometry until it can be derived, and the
+position adopts it on the first tick that prices the symbol.
+*/
+func (price *Price) RiskPlan(pair kraken.InstrumentPair) types.RiskPlan {
+	tick := price.Tick(pair.Symbol)
+
+	if tick == nil || tick.Bid == nil || tick.Ask == nil || tick.Bid.Sign() <= 0 {
+		return types.RiskPlan{}
+	}
+
+	feeRate, err := price.Fee(pair.Symbol)
+
+	if err != nil {
+		return types.RiskPlan{}
+	}
+
+	var spread *decimal.Decimal
+
+	if tick.Ask.Cmp(tick.Bid) > 0 {
+		spread = tick.Ask.SetScale(feeRateScale).Sub(tick.Bid)
+	}
+
+	size := pair.TickSize
+
+	if size.Sign() <= 0 {
+		size = pair.PriceIncrement
+	}
+
+	return types.NewRiskPlan(types.RiskInputs{
+		ReferencePrice: tick.Bid,
+		Spread:         spread,
+		TickSize:       size.Copy(),
+		ExitFeeRate:    feeRate,
+		Multiples:      types.DefaultRiskMultiples(),
+	})
+}
+
+/*
+ExecutableMark is the per-unit price selling this quantity would actually
+realise right now, gross of the exit fee.
+
+The top bid is a price for one unit. A position larger than what rests at the
+touch does not liquidate there: the part the touch cannot absorb walks down the
+book, and valuing the whole lot at the best bid overstates it by exactly the
+part that has to travel. The remainder is charged one full spread here, which
+is the most conservative reading the top-of-book snapshot supports — the ticker
+does not carry the resting levels below the touch, so this is a bound, not a
+simulation of the walk.
+
+The exit fee is left out because the lines this is compared against divide it
+out of the price they solve for; charging it in both places would demand a
+profit the position has to earn twice.
+*/
+func (price *Price) ExecutableMark(
+	pair kraken.InstrumentPair,
+	quantity *decimal.Decimal,
+) *decimal.Decimal {
+	tick := price.Tick(pair.Symbol)
+
+	if tick == nil || tick.Bid == nil || tick.Bid.Sign() <= 0 {
+		return nil
+	}
+
+	if quantity == nil || quantity.Sign() <= 0 {
+		return tick.Bid.Copy()
+	}
+
+	size := quantity.Float64()
+	capacity := tick.BidQty
+
+	if size <= 0 || capacity >= size {
+		return tick.Bid.Copy()
+	}
+
+	if tick.Ask == nil || tick.Ask.Cmp(tick.Bid) <= 0 {
+		return tick.Bid.Copy()
+	}
+
+	stranded := 1 - (capacity / size)
+
+	if stranded <= 0 {
+		return tick.Bid.Copy()
+	}
+
+	spread := tick.Ask.SetScale(feeRateScale).Sub(tick.Bid)
+	penalty := spread.Mul(decimal.NewFromFloat64(stranded).SetScale(feeRateScale))
+	mark := tick.Bid.SetScale(feeRateScale).Sub(penalty)
+
+	if mark.Sign() <= 0 {
+		return tick.Bid.Copy()
+	}
+
+	formatted, err := price.normalizer.FormatPrice(pair.Symbol, mark)
+
+	if err != nil || formatted == nil {
+		return mark
+	}
+
+	return formatted
+}
+
+/*
 PnL returns the PnL for a holding, which means the profit or
 loss of the holding, including entry fee, and current exit fee.
 */
@@ -128,7 +241,7 @@ func (price *Price) PnL(
 		return nil
 	}
 
-	tick, fee, err := price.getTickAndFee(pair.Symbol)
+	_, fee, err := price.getTickAndFee(pair.Symbol)
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -140,8 +253,17 @@ func (price *Price) PnL(
 		return nil
 	}
 
+	// What the lot is worth is what closing it would realise, so the whole
+	// position is valued at the price its own size can actually reach rather
+	// than at the top bid one unit of it could.
+	liquidation := price.ExecutableMark(pair, holding.Qty)
+
+	if liquidation == nil {
+		return nil
+	}
+
 	costScale := int64(pair.CostPrecision)
-	grossProceeds := tick.Bid.SetScale(costScale).Mul(holding.Qty)
+	grossProceeds := liquidation.SetScale(costScale).Mul(holding.Qty)
 	exitFee := fee.Fee.Mul(grossProceeds).SetScale(costScale)
 	entryValue := holding.EntryPrice.SetScale(costScale).Mul(holding.Qty)
 	entryFee := holding.EntryFee.SetScale(costScale)

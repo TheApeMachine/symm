@@ -38,29 +38,8 @@ type Holding struct {
 }
 
 /*
-breakEvenBid derives the per-unit bid price at which a round-trip covers its
-full fee cost. EntryFee on a decision is a total notional amount
-(feeRate × ask × qty), not a per-unit value. Dividing by qty converts it back
-to a per-unit entry fee; doubling approximates the exit fee at the same price
-level (bid ≈ ask at entry). The result is the minimum bid the position must
-reach for a market sell to be profitable after both crossings.
-*/
-func breakEvenBid(decision Decision) *decimal.Decimal {
-	if decision.EntryPrice == nil ||
-		decision.EntryFee == nil ||
-		decision.ProposedQuantity == nil ||
-		decision.ProposedQuantity.Sign() <= 0 {
-		return nil
-	}
-
-	perUnitFee := decision.EntryFee.Div(decision.ProposedQuantity)
-
-	return decision.EntryPrice.Add(perUnitFee).Add(perUnitFee)
-}
-
-/*
 NewHolding constructs a pending Thesis lot with the Stoploss regulator Position
-advances directly from live ticker updates.
+advances from live executable marks.
 */
 func NewHolding(
 	ctx context.Context,
@@ -86,16 +65,18 @@ func NewHolding(
 		Stoploss: NewStoploss(
 			ctx,
 			symbol,
-			breakEvenBid(decision),
+			decision.EntryPrice,
+			decision.ProposedQuantity,
+			decision.EntryFee,
 			decision.Mark,
+			decision.Risk,
 		),
 
 		/*
 			ExitPrice, ExitFee and PnL are left absent rather than zeroed. The
 			lot has not been sold, so there is no price it went out at, and a
-			zero would read as one: Update already skips the profit threshold
-			while the exit fee is missing, and Position fills all three in from
-			the execution that actually closes the lot.
+			zero would read as one, and Position fills all three in from the
+			execution that actually closes the lot.
 		*/
 	}
 
@@ -112,6 +93,17 @@ func NewHolding(
 	return holding
 }
 
+/*
+Update refreshes the mark from the live book.
+
+ProfitThreshold is read off the regulator rather than recomputed here. It used
+to be assembled from EntryPrice + EntryFee + ExitFee, which could not protect an
+open position for two reasons: the exit fee only exists once the lot has been
+sold, so the branch never ran while it mattered, and the fees are totals for the
+whole position while the entry price is per unit, so the sum was not a price at
+all. The regulator solves the same question from liquidation economics and has
+an answer from the moment the lot is filled.
+*/
 func (holding *Holding) Update(
 	ticker kraken.TickerData,
 ) error {
@@ -121,26 +113,29 @@ func (holding *Holding) Update(
 
 	holding.Mark = ticker.Bid
 
-	if holding.EntryPrice != nil && holding.EntryFee != nil && holding.ExitFee != nil {
-		// Calculate the amount that puts the position into profit.
-		holding.ProfitThreshold = holding.EntryPrice.Add(
-			holding.EntryFee,
-		).Add(
-			holding.ExitFee,
-		)
-	}
-
-	if holding.Stoploss != nil {
-		if err := holding.Stoploss.Update(ticker); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"holding: could not update stoploss",
-				err,
-			))
-		}
+	if holding.Stoploss != nil && holding.Stoploss.ProfitLine != nil {
+		holding.ProfitThreshold = holding.Stoploss.ProfitLine.Copy()
 	}
 
 	return nil
+}
+
+/*
+Observe forwards one executable observation to the regulator. It is separate
+from Update because the price the stop judges is not the price on the ticker:
+it is what selling this lot's quantity would actually realise, which only the
+broker's price surface can derive.
+*/
+func (holding *Holding) Observe(evidence StopEvidence) {
+	if holding == nil || holding.Stoploss == nil {
+		return
+	}
+
+	holding.Stoploss.Observe(evidence)
+
+	if holding.Stoploss.ProfitLine != nil {
+		holding.ProfitThreshold = holding.Stoploss.ProfitLine.Copy()
+	}
 }
 
 func (holding *Holding) Close() (err error) {

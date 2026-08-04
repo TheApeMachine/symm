@@ -63,6 +63,14 @@ type Decision struct {
 	ReturnPct         *float64           `json:"returnPct,omitempty"`
 	Mark              *decimal.Decimal   `json:"mark,omitempty"`
 	Stoploss          *Stoploss          `json:"stoploss,omitempty"`
+	/*
+		Risk is the stop geometry this entry was sized under. It travels with
+		the decision because the quantity above was derived from it: the
+		allocator capped the size so that the distance to the hard floor costs
+		no more than the loss budget, and a stop later placed at some other
+		distance would silently undo that.
+	*/
+	Risk RiskPlan `json:"risk"`
 }
 
 /*

@@ -13,6 +13,28 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+fillPrice reports what the simulated book is actually quoting.
+
+The shared execution fixture reports an average price of 105 against a market
+that opens at 100, which used to be invisible: the stop anchored its floor to
+the live mark, so a fill five dollars above the book produced the same geometry
+as one at the touch. It is anchored to the realized entry now, and a lot that
+filled five percent above the market is underwater by five percent the moment
+it opens — which is a hard-floor breach, correctly. These tests are about
+execution correlation, so they fill at a price the book could have filled them
+at.
+*/
+func fillPrice(market *tests.Market, symbol string) string {
+	tick := market.Desk.Price().Tick(symbol)
+
+	if tick == nil || tick.Ask == nil {
+		return ""
+	}
+
+	return tick.Ask.String()
+}
+
 func TestPositionOnExecution(t *testing.T) {
 	Convey("Given a position entered through the production-wired desk", t, func() {
 		symbols := []*testtypes.Symbol{
@@ -66,6 +88,7 @@ func TestPositionOnExecution(t *testing.T) {
 				buy := executionfixture.BuyFill()
 				buy.ClientOrderID = decision.ID
 				buy.Symbol = decision.Symbol
+				buy.AvgPrice = fillPrice(market, decision.Symbol)
 				buy.CumQty = decision.ProposedQuantity.String()
 				market.Private.Publish("executions", executionfixture.Frame(buy))
 				market.Tick()
@@ -169,6 +192,7 @@ func TestPositionOnTicker(t *testing.T) {
 			buy := executionfixture.BuyFill()
 			buy.ClientOrderID = decision.ID
 			buy.Symbol = decision.Symbol
+			buy.AvgPrice = fillPrice(market, decision.Symbol)
 			buy.CumQty = decision.ProposedQuantity.String()
 			market.Private.Publish("executions", executionfixture.Frame(buy))
 			market.Tick()

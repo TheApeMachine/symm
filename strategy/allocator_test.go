@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/tests"
@@ -47,6 +48,76 @@ func TestAllocatorAllocate(t *testing.T) {
 			So(thesis.Decisions[0].ProposedNotional, ShouldNotBeNil)
 			So(thesis.Decisions[0].ProposedNotional.Sign(), ShouldBeGreaterThan, 0)
 			So(thesis.Decisions[0].ReferencePrice, ShouldNotBeNil)
+		})
+
+		Convey("A sized entry should carry the geometry it was sized under", func() {
+			thesis := types.NewThesis()
+			thesis.Decisions = []types.Decision{{
+				ID:     uuid.NewString(),
+				Action: types.ActionEnter,
+				Symbol: "SIM1/USD",
+				At:     thesis.At,
+			}}
+
+			So(allocator.Allocate(thesis), ShouldBeNil)
+
+			plan := thesis.Decisions[0].Risk
+			So(plan.Present, ShouldBeTrue)
+			So(plan.RiskDistance.Sign(), ShouldEqual, 1)
+			So(plan.MaxLoss.Sign(), ShouldEqual, 1)
+
+			/*
+				The coupling: whatever this entry was sized at, reaching the hard
+				floor with it must cost no more than the loss budget. Stop
+				distance and quantity are one decision, and a stop wide enough to
+				survive noise is only affordable because the size came down to
+				meet it.
+			*/
+			loss := plan.RiskDistance.SetScale(12).Mul(thesis.Decisions[0].ProposedQuantity)
+			So(loss.Cmp(plan.MaxLoss), ShouldBeLessThanOrEqualTo, 0)
+		})
+
+		Convey("A risk distance the budget cannot carry should shrink the quantity", func() {
+			thesis := types.NewThesis()
+			thesis.Decisions = []types.Decision{{
+				ID:     uuid.NewString(),
+				Action: types.ActionEnter,
+				Symbol: "SIM1/USD",
+				At:     thesis.At,
+			}}
+
+			So(allocator.Allocate(thesis), ShouldBeNil)
+			unconstrained := thesis.Decisions[0].ProposedQuantity.Copy()
+
+			/*
+				A wide expected spread widens the boundary, which is exactly the
+				case where an unchanged size would turn every stopped trade into
+				a proportionally larger loss.
+			*/
+			wide := types.NewThesis()
+			wide.Decisions = []types.Decision{{
+				ID:             uuid.NewString(),
+				Action:         types.ActionEnter,
+				Symbol:         "SIM1/USD",
+				At:             wide.At,
+				ExpectedSpread: decimal.NewFromFloat64(5),
+				ExpectedImpact: decimal.NewFromFloat64(1),
+				ReferencePrice: decimal.NewFromFloat64(100),
+			}}
+
+			So(allocator.Allocate(wide), ShouldBeNil)
+
+			if wide.Decisions[0].Action == types.ActionEnter {
+				So(wide.Decisions[0].Risk.RiskDistance.Cmp(
+					thesis.Decisions[0].Risk.RiskDistance,
+				), ShouldEqual, 1)
+				So(wide.Decisions[0].ProposedQuantity.Cmp(unconstrained), ShouldEqual, -1)
+			} else {
+				// Or the size it would need falls below what the venue will
+				// accept, which is a refusal rather than an oversized bet.
+				So(wide.Decisions[0].Reason, ShouldEqual,
+					"sized quantity below minimum pair order size")
+			}
 		})
 
 		Convey("An unconfigured pair should be rejected in place", func() {

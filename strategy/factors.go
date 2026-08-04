@@ -160,6 +160,57 @@ func estimateImpact(thesis *types.Thesis, symbol string, spread *decimal.Decimal
 	return spread.SetScale(8).Mul(decimal.NewFromFloat64(impactRatio))
 }
 
+/*
+retreatPressure reads how much of the bid touch is being pulled rather than
+filled, as a fraction of what was resting there before.
+
+The bid side is the one that matters to a long: it is the liquidity the
+position would have to sell into, and a bid that steps up while its quantity
+disappears is quoting a price that is not for sale.
+
+The second return distinguishes "no retreat" from "no reading", so a regulator
+can hold the last state it was told instead of treating a missing measurement
+as an all-clear.
+*/
+func retreatPressure(thesis *types.Thesis, symbol string) (float64, bool) {
+	if thesis == nil || thesis.Measurements == nil {
+		return 0, false
+	}
+
+	pressure := 0.0
+	observed := false
+
+	thesis.Measurements.Range(func(key, value any) bool {
+		rows, ok := value.([]*types.Measurement)
+
+		if !ok {
+			measurement, single := value.(*types.Measurement)
+
+			if !single || measurement == nil {
+				return true
+			}
+
+			rows = []*types.Measurement{measurement}
+		}
+
+		for _, measurement := range rows {
+			if measurement == nil || measurement.Symbol != symbol ||
+				measurement.Source != types.SourceToxicity {
+				continue
+			}
+
+			observed = true
+			pressure = math.Max(pressure, getMetricValue(measurement, string(
+				types.MetricKey(types.MetricRetreatingQuantity, types.SideBuy),
+			)))
+		}
+
+		return true
+	})
+
+	return pressure, observed
+}
+
 func getCausalMetrics(thesis *types.Thesis, symbol string) (doExp, uplift, noise float64, ready bool) {
 	if thesis == nil || thesis.Causal == nil {
 		return 0, 0, 0, false

@@ -199,6 +199,15 @@ func (evaluator Evaluator) ManageContinuation(
 			continue
 		}
 
+		/*
+			The stop's geometry is fed even for lots this pass will not judge.
+			Toxicity and crossing cost are observations about the book, not
+			conclusions about the trade, and a position that is already exiting
+			or has no forecast this tick still has a regulator deciding whether
+			the price it is seeing is one it could have sold into.
+		*/
+		desk.ApplyEvidence(evaluator.stopEvidence(thesis, position.Holding.Symbol))
+
 		if isExiting(thesis, position.Holding.Symbol) {
 			continue
 		}
@@ -312,6 +321,47 @@ func (evaluator Evaluator) ManageContinuation(
 			Reason:            reason,
 		})
 	}
+}
+
+/*
+stopEvidence is what the strategy knows about an open lot that the broker
+cannot see for itself.
+
+The broker owns the book: what the touch holds and what selling into it would
+realise. What it has no way to derive is whether the touch is honest. A bid
+that keeps stepping up while the quantity behind it is being pulled produces a
+rising mark that nothing could actually have been sold into, and a regulator
+reading only prices would ratchet its floor up to meet a peak that never
+existed.
+
+The spread and impact travel together because the impact estimate is a fraction
+of the spread it was measured against.
+*/
+func (evaluator Evaluator) stopEvidence(
+	thesis *types.Thesis,
+	symbol string,
+) types.StopEvidence {
+	evidence := types.StopEvidence{Symbol: symbol}
+
+	if evaluator.price == nil {
+		return evidence
+	}
+
+	tick := evaluator.price.Tick(symbol)
+
+	if tick == nil || tick.Bid == nil || tick.Ask == nil {
+		return evidence
+	}
+
+	if tick.Ask.Cmp(tick.Bid) > 0 {
+		evidence.Spread = tick.Ask.SetScale(8).Sub(tick.Bid)
+		evidence.Impact = estimateImpact(thesis, symbol, evidence.Spread)
+	}
+
+	evidence.RetreatPressure, evidence.RetreatReady = retreatPressure(thesis, symbol)
+	evidence.Present = true
+
+	return evidence
 }
 
 func (evaluator Evaluator) candidate(

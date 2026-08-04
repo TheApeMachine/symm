@@ -283,6 +283,7 @@ func (desk *Desk) recover() error {
 				ExitFee:          decimal.NewFromInt64(0),
 				SellableQty:      quantity,
 				Mark:             entryPrice,
+				Risk:             desk.price.RiskPlan(pair),
 			},
 		)
 
@@ -583,6 +584,13 @@ func (desk *Desk) enter(decision types.Decision) error {
 	decision.EntryFee = entryFee
 	decision.Mark = tick.Bid.Copy()
 
+	// The allocator refuses to size an entry it cannot draw a boundary for, so
+	// a decision arriving without one came from somewhere else and still has to
+	// be defended.
+	if !decision.Risk.Present {
+		decision.Risk = desk.price.RiskPlan(pair)
+	}
+
 	position := NewPosition(
 		desk.ctx,
 		desk.api,
@@ -630,6 +638,35 @@ func (desk *Desk) exit(decision types.Decision) error {
 		"desk: active position not found for exit",
 		nil,
 	))
+}
+
+/*
+ApplyEvidence hands the strategy's reading of one symbol to the position that
+holds it.
+
+This is the whole of the strategy's write access to an open lot. The evaluator
+runs on the analyzer's goroutine and everything else about a position runs on
+the desk's, so the strategy states what it observed and the desk decides when
+that observation meets a book — rather than the strategy reaching across and
+setting stop geometry itself.
+
+An unknown or closed symbol is not an error. The thesis judges every symbol it
+has evidence for, most of which the desk holds nothing in.
+*/
+func (desk *Desk) ApplyEvidence(evidence types.StopEvidence) {
+	value, ok := desk.positions.Load(evidence.Symbol)
+
+	if !ok {
+		return
+	}
+
+	position, ok := value.(*Position)
+
+	if !ok || position == nil || isTerminal(position.Status) {
+		return
+	}
+
+	position.ApplyEvidence(evidence)
 }
 
 /*
