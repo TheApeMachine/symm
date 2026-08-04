@@ -71,6 +71,54 @@ type Decision struct {
 		distance would silently undo that.
 	*/
 	Risk RiskPlan `json:"risk"`
+	/*
+		Trace records the evaluator path that produced an opportunity decision.
+		It is absent on continuation and execution-only decisions because those
+		paths do not run the entry trajectory search.
+	*/
+	Trace *DecisionTrace `json:"trace,omitempty"`
+}
+
+/*
+DecisionTrace is the observable entry-decision chain. It carries values already
+used by strategy rather than a frontend reconstruction of those values.
+*/
+type DecisionTrace struct {
+	GraphSupports    float64              `json:"graphSupports"`
+	GraphContradicts float64              `json:"graphContradicts"`
+	Utility          DecisionUtilityTrace `json:"utility"`
+	MCTS             DecisionMCTSTrace    `json:"mcts"`
+}
+
+/*
+DecisionUtilityTrace records every factor multiplied into unified utility.
+*/
+type DecisionUtilityTrace struct {
+	ExecutableFraction float64 `json:"executableFraction"`
+	UncertaintyWeight  float64 `json:"uncertaintyWeight"`
+	CausalFactor       float64 `json:"causalFactor"`
+	CognitionFactor    float64 `json:"cognitionFactor"`
+	GraphFactor        float64 `json:"graphFactor"`
+}
+
+/*
+DecisionMCTSTrace records what the causal trajectory search actually received
+and whether it ran. The search package currently returns only its robust-child
+root action, so no invented child visits or rewards are exposed here.
+*/
+type DecisionMCTSTrace struct {
+	Energy            float64 `json:"energy"`
+	Surprise          float64 `json:"surprise"`
+	Treatment         float64 `json:"treatment"`
+	RoundTripCost     float64 `json:"roundTripCost"`
+	CausalRows        int     `json:"causalRows"`
+	MinimumCausalRows int     `json:"minimumCausalRows"`
+	Iterations        int     `json:"iterations"`
+	HorizonSteps      int     `json:"horizonSteps"`
+	Searchable        bool    `json:"searchable"`
+	Attempted         bool    `json:"attempted"`
+	RecommendedAction Action  `json:"recommendedAction,omitempty"`
+	Error             string  `json:"error,omitempty"`
 }
 
 /*

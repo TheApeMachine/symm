@@ -41,7 +41,7 @@ func NewEvaluator(
 	mctsSearch := mcts.NewCausalMCTS(
 		engine,
 		1.414, 0.5,
-		12, 2, 3,
+		mctsMinimumCausalRows, 2, 3,
 		[]int{0, 1}, []int{0, 1, 2},
 		false,
 	)
@@ -110,18 +110,6 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 		causalRows := getCausalHistoryRows(thesis, symbol)
 		doExpectation, uplift, noise, causalReady := getCausalMetrics(thesis, symbol)
 		cognition := getCognition(thesis, symbol)
-
-		if hasGraph && contradicts > 0 &&
-			contradicts/(supports+contradicts) > graphContradictionShare {
-
-			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
-				forecast, 0, "graph_contradiction",
-				"relational graph contradicts trade hypothesis",
-			))
-
-			continue
-		}
-
 		rootState := StrategyState{
 			Symbol:        symbol,
 			Energy:        forecast.Uncertainty,
@@ -130,24 +118,68 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			RoundTripCost: forecast.RoundTripFraction(),
 			Reward:        0.0,
 			Step:          0,
-			MaxSteps:      5,
+			MaxSteps:      mctsHorizonSteps,
 			IsHolding:     false,
+		}
+		usableRows := usableCausalRows(causalRows)
+		causalWeight := causalFactor(doExpectation, uplift, noise, causalReady)
+		cognitionWeight := cognitionFactor(cognition)
+		graphWeight := graphFactor(supports, contradicts, hasGraph)
+		trace := &types.DecisionTrace{
+			GraphSupports:    supports,
+			GraphContradicts: contradicts,
+			Utility: types.DecisionUtilityTrace{
+				ExecutableFraction: forecast.ExecutableFraction(),
+				UncertaintyWeight:  uncertaintyWeight(forecast.Uncertainty),
+				CausalFactor:       causalWeight,
+				CognitionFactor:    cognitionWeight,
+				GraphFactor:        graphWeight,
+			},
+			MCTS: rootState.Trace(
+				usableRows,
+				evaluator.mctsEngine.MinRows,
+				mctsSearchIterations,
+			),
+		}
+
+		if hasGraph && contradicts > 0 &&
+			contradicts/(supports+contradicts) > graphContradictionShare {
+
+			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
+				forecast, 0, "graph_contradiction",
+				"relational graph contradicts trade hypothesis",
+				trace,
+			))
+
+			continue
 		}
 
 		var recommendedAction float64
 		var mctsErr error
 
-		searchable := usableCausalRows(causalRows) >= 12
+		searchable := trace.MCTS.Searchable
 
 		if searchable {
-			recommendedAction, mctsErr = evaluator.mctsEngine.Search(rootState, 50, causalRows)
+			trace.MCTS.Attempted = true
+			recommendedAction, mctsErr = evaluator.mctsEngine.Search(
+				rootState,
+				mctsSearchIterations,
+				causalRows,
+			)
+			if mctsErr != nil {
+				trace.MCTS.Error = mctsErr.Error()
+			}
+
+			if mctsErr == nil {
+				trace.MCTS.RecommendedAction = strategyAction(recommendedAction)
+			}
 		}
 
 		utility := unifiedUtility(
-			forecast.ExecutableFraction(),
-			causalFactor(doExpectation, uplift, noise, causalReady),
-			cognitionFactor(cognition),
-			graphFactor(supports, contradicts, hasGraph),
+			trace.Utility.ExecutableFraction,
+			trace.Utility.CausalFactor,
+			trace.Utility.CognitionFactor,
+			trace.Utility.GraphFactor,
 			forecast.Uncertainty,
 		)
 
@@ -155,6 +187,7 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
 				forecast, utility, "non_positive_utility",
 				"executable utility does not clear trading costs",
+				trace,
 			))
 
 			continue
@@ -162,6 +195,13 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 
 		if (mctsErr == nil && recommendedAction == ActionEnter) || !searchable {
 			opportunity := highVelocityOpportunity(thesis, symbol)
+			cause := "causal_mcts_entry"
+			reason := "causal MCTS search recommended entry trajectory"
+
+			if !searchable {
+				cause = "utility_entry"
+				reason = "positive executable utility accepted before causal history reached the MCTS minimum"
+			}
 
 			thesis.Decisions = append(thesis.Decisions, types.Decision{
 				Action:            types.ActionEnter,
@@ -189,8 +229,9 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 				ValidThroughEpoch: forecast.Epoch,
 				ForecastSource:    string(types.SourceResonance),
 				ForecastEpoch:     forecast.Epoch,
-				Cause:             "causal_mcts_entry",
-				Reason:            "causal MCTS search recommended entry trajectory",
+				Cause:             cause,
+				Reason:            reason,
+				Trace:             trace,
 			})
 
 			continue
@@ -199,6 +240,7 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 		thesis.Decisions = append(thesis.Decisions, evaluator.reject(
 			forecast, utility, "mcts_rejected",
 			"causal MCTS trajectory search did not select entry action",
+			trace,
 		))
 	}
 }
@@ -445,15 +487,7 @@ func (evaluator Evaluator) candidate(
 		return candidate{}, false
 	}
 
-	logReturn := accumulatedReturn(curve, retention(row, len(curve)))
-	boost, survival := momentumTerms(thesis, symbol)
-
-	if logReturn > 0 {
-		logReturn *= boost
-	}
-
-	logReturn *= survival
-	expectedReturn := math.Expm1(logReturn)
+	expectedReturn := projectedReturn(curve, retention(row, len(curve)))
 
 	if math.IsNaN(expectedReturn) || math.IsInf(expectedReturn, 0) {
 		return candidate{}, false
@@ -503,6 +537,7 @@ func (evaluator Evaluator) reject(
 	forecast candidate,
 	utility float64,
 	cause, reason string,
+	trace *types.DecisionTrace,
 ) types.Decision {
 	return types.Decision{
 		Action:            types.ActionNothing,
@@ -523,5 +558,6 @@ func (evaluator Evaluator) reject(
 		OpportunityMargin: utility,
 		Cause:             cause,
 		Reason:            reason,
+		Trace:             trace,
 	}
 }

@@ -31,10 +31,10 @@ const lastStops: Record<string, Stoploss | undefined> = {};
 const upTone = "var(--up)";
 const downTone = "var(--down)";
 const neutralTone = "var(--f3)";
-const warnTone = "var(--warn)";
-const accentTone = "var(--acc)";
 
-const numberValue = (value: number | string | undefined): number | null => {
+const numberValue = (
+	value: number | string | null | undefined,
+): number | null => {
 	const number = typeof value === "number" ? value : Number(value);
 
 	return Number.isFinite(number) ? number : null;
@@ -65,7 +65,9 @@ const gaugeGeometry = (
 		return null;
 	}
 
-	const points = [entry, mark].filter((value): value is number => value !== null);
+	const points = [entry, mark].filter(
+		(value): value is number => value !== null,
+	);
 
 	if (floor !== null && floor > 0) {
 		points.push(floor);
@@ -89,8 +91,12 @@ const gaugeGeometry = (
 	return {
 		entryPct: clampPercent(entry, domainLo, domainHi),
 		markPct: clampPercent(mark, domainLo, domainHi),
-		stopPct: floor !== null && floor > 0 ? clampPercent(floor, domainLo, domainHi) : null,
-		peakPct: peak !== null && peak > 0 ? clampPercent(peak, domainLo, domainHi) : null,
+		stopPct:
+			floor !== null && floor > 0
+				? clampPercent(floor, domainLo, domainHi)
+				: null,
+		peakPct:
+			peak !== null && peak > 0 ? clampPercent(peak, domainLo, domainHi) : null,
 	};
 };
 
@@ -143,7 +149,13 @@ const writePositionGauge = (
 	// Color each figure by its own sign — fee-dragged PnL can be red while
 	// return_pct is green when price lifted but fees dominate dollars.
 	const pnlTone =
-		pnl === null ? neutralTone : pnl > 0 ? upTone : pnl < 0 ? downTone : neutralTone;
+		pnl === null
+			? neutralTone
+			: pnl > 0
+				? upTone
+				: pnl < 0
+					? downTone
+					: neutralTone;
 	const returnTone =
 		returnPct !== null && returnPct > 0
 			? upTone
@@ -164,7 +176,7 @@ const writePositionGauge = (
 			? upTone
 			: downTone;
 
-			const showGauge = geometry !== null;
+	const showGauge = geometry !== null;
 
 	if (parts.track) {
 		parts.track.style.display = showGauge ? "" : "none";
@@ -206,7 +218,9 @@ const writePositionGauge = (
 	if (parts.pnl) {
 		parts.pnl.style.color = pnlTone;
 		parts.pnl.textContent =
-			pnl === null ? `P/L — ${parts.quote}` : `P/L ${pnl.toFixed(4)} ${parts.quote}`;
+			pnl === null
+				? `P/L — ${parts.quote}`
+				: `P/L ${pnl.toFixed(4)} ${parts.quote}`;
 	}
 
 	if (parts.summary) {
@@ -316,17 +330,19 @@ export const removePositionGauge = (symbol: string): void => {
  every bound position gauge whose symbol appears in the batch.
  */
 export const paintPositions = (value: unknown, _focusSymbol: string) => {
-	const rows = (Array.isArray(value)
-		? value
-		: value !== null && typeof value === "object"
-			? Object.values(value as Record<string, Position>)
-			: value != null
-				? [value]
-				: []) as Position[];
+	const rows = (
+		Array.isArray(value)
+			? value
+			: value !== null && typeof value === "object"
+				? Object.values(value as Record<string, Position>)
+				: value != null
+					? [value]
+					: []
+	) as Position[];
 
 	for (const row of rows) {
 		if (!row.holding) {
-			continue
+			continue;
 		}
 
 		lastPositions[row.holding.symbol] = row;

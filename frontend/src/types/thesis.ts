@@ -1,5 +1,5 @@
 import type { Status } from "#/types/status";
-import type { Stoploss } from "#/types/stoploss";
+import type { RiskPlan, Stoploss } from "#/types/stoploss";
 
 /*
 Decision mirrors the backend types.Decision payload published on each
@@ -7,6 +7,32 @@ thesis tick so the frontend can render utility, alternatives, and cause without
 re-deriving gate verdicts from unrelated action frames.
 */
 export type Action = "enter" | "exit" | "reduce" | "hold" | "nothing";
+
+export type DecisionTrace = {
+	graphSupports: number;
+	graphContradicts: number;
+	utility: {
+		executableFraction: number;
+		uncertaintyWeight: number;
+		causalFactor: number;
+		cognitionFactor: number;
+		graphFactor: number;
+	};
+	mcts: {
+		energy: number;
+		surprise: number;
+		treatment: number;
+		roundTripCost: number;
+		causalRows: number;
+		minimumCausalRows: number;
+		iterations: number;
+		horizonSteps: number;
+		searchable: boolean;
+		attempted: boolean;
+		recommendedAction?: Action;
+		error?: string;
+	};
+};
 
 export interface Decision {
 	id: string;
@@ -22,6 +48,7 @@ export interface Decision {
 	proposedQuantity: string;
 	referencePrice: string;
 	validThroughEpoch: number;
+	arbitrationRound?: number;
 	forecastSource: string;
 	forecastModel: string;
 	forecastEpoch: number;
@@ -57,6 +84,8 @@ export interface Decision {
 	returnPct?: number;
 	mark?: string;
 	stoploss?: Stoploss;
+	risk?: RiskPlan;
+	trace?: DecisionTrace;
 }
 
 export type StrategyDecision = Decision;

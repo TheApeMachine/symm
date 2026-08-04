@@ -264,12 +264,32 @@ func (features PassageFeatures) keys() []string {
 }
 
 /*
-Observe folds one finished episode into every bucket that describes it.
-
-The same episode lands in each level of the hierarchy, which is what lets the
-coarse levels stay dense while the fine ones specialise.
+Observe folds one single-state episode into every bucket that describes it.
+Call ObserveEpisode when one episode was observed more than once.
 */
 func (model *PassageModel) Observe(features PassageFeatures, outcome PassageOutcome) {
+	model.ObserveEpisode([]PassageFeatures{features}, outcome)
+}
+
+/*
+ObserveEpisode folds one finished episode into every distinct state bucket it
+visited.
+
+An episode contributes at most one count to a bucket, however many ticks it
+spent there. The outcome belongs to the position, not to each observation of
+the position: counting every tick as another result lets one slow loss
+manufacture enough nominal support to make the model actionable. Distinct
+states are retained so an episode that genuinely moved through the feature
+space can still inform each state it reached.
+*/
+func (model *PassageModel) ObserveEpisode(
+	observations []PassageFeatures,
+	outcome PassageOutcome,
+) {
+	if model == nil || len(observations) == 0 {
+		return
+	}
+
 	index := -1
 
 	for position, candidate := range passageOutcomes {
@@ -279,8 +299,16 @@ func (model *PassageModel) Observe(features PassageFeatures, outcome PassageOutc
 		}
 	}
 
-	if model == nil || index < 0 {
+	if index < 0 {
 		return
+	}
+
+	visited := map[string]struct{}{}
+
+	for _, features := range observations {
+		for _, key := range features.keys() {
+			visited[key] = struct{}{}
+		}
 	}
 
 	model.mutex.Lock()
@@ -290,7 +318,7 @@ func (model *PassageModel) Observe(features PassageFeatures, outcome PassageOutc
 		model.buckets = map[string]*passageCounts{}
 	}
 
-	for _, key := range features.keys() {
+	for key := range visited {
 		bucket, found := model.buckets[key]
 
 		if !found {

@@ -30,19 +30,25 @@ func unifiedUtility(
 		return 0
 	}
 
-	confidenceWeight := 1.0
-
-	if !math.IsNaN(uncertainty) && !math.IsInf(uncertainty, 0) && uncertainty > 0 {
-		confidenceWeight = 1.0 / (1.0 + uncertainty)
-	}
-
-	utility := executableFraction * confidenceWeight * causal * cognition * graphVal
+	utility := executableFraction * uncertaintyWeight(uncertainty) *
+		causal * cognition * graphVal
 
 	if math.IsNaN(utility) || math.IsInf(utility, 0) {
 		return 0
 	}
 
 	return utility
+}
+
+/*
+uncertaintyWeight is the precision factor applied to executable return.
+*/
+func uncertaintyWeight(uncertainty float64) float64 {
+	if math.IsNaN(uncertainty) || math.IsInf(uncertainty, 0) || uncertainty <= 0 {
+		return 1
+	}
+
+	return 1.0 / (1.0 + uncertainty)
 }
 
 /*

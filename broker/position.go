@@ -369,6 +369,11 @@ func (position *Position) onExecution(execution *kraken.Execution) {
 		if row.Side == "buy" {
 			position.Holding.EntryPrice = row.AvgPrice
 
+			if position.Holding.EntryAt == nil {
+				entryAt := row.Timestamp
+				position.Holding.EntryAt = &entryAt
+			}
+
 			if row.FeeUsdEquiv != nil && position.entryFills == 0 {
 				position.Holding.EntryFee = row.FeeUsdEquiv.Copy()
 			}
@@ -443,6 +448,8 @@ func (position *Position) onExecution(execution *kraken.Execution) {
 				continue
 			}
 
+			exitAt := row.Timestamp
+			position.Holding.ExitAt = &exitAt
 			position.Holding.SellableQty = decimal.NewFromInt64(0)
 
 			position.Status = types.CLOSED

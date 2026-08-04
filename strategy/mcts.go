@@ -3,6 +3,7 @@ package strategy
 import (
 	"github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/nomagique/mcts"
+	"github.com/theapemachine/symm/types"
 )
 
 const (
@@ -10,6 +11,10 @@ const (
 	ActionEnter   float64 = 1.0
 	ActionHold    float64 = 2.0
 	ActionExit    float64 = 3.0
+
+	mctsMinimumCausalRows = 12
+	mctsSearchIterations  = 50
+	mctsHorizonSteps      = 5
 )
 
 /*
@@ -39,6 +44,45 @@ type StrategyState struct {
 	Step      int
 	MaxSteps  int
 	IsHolding bool
+}
+
+/*
+Trace describes the exact root state and search budget handed to CausalMCTS.
+The mutable result fields are filled by the evaluator after Search returns.
+*/
+func (strategyState StrategyState) Trace(
+	causalRows, minimumRows, iterations int,
+) types.DecisionMCTSTrace {
+	return types.DecisionMCTSTrace{
+		Energy:            strategyState.Energy,
+		Surprise:          strategyState.Surprise,
+		Treatment:         strategyState.Treatment,
+		RoundTripCost:     strategyState.RoundTripCost,
+		CausalRows:        causalRows,
+		MinimumCausalRows: minimumRows,
+		Iterations:        iterations,
+		HorizonSteps:      strategyState.MaxSteps,
+		Searchable:        causalRows >= minimumRows,
+	}
+}
+
+/*
+strategyAction translates the search enum into the action vocabulary published
+on Decision. An unknown result remains absent rather than being mislabeled.
+*/
+func strategyAction(action float64) types.Action {
+	switch action {
+	case ActionNothing:
+		return types.ActionNothing
+	case ActionEnter:
+		return types.ActionEnter
+	case ActionHold:
+		return types.ActionHold
+	case ActionExit:
+		return types.ActionExit
+	}
+
+	return ""
 }
 
 /*

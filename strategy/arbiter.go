@@ -19,15 +19,11 @@ type Incumbent struct {
 }
 
 type Arbiter struct {
-	desk  *broker.Desk
-	price *broker.Price
+	desk *broker.Desk
 }
 
-func NewArbiter(desk *broker.Desk, price *broker.Price) *Arbiter {
-	return &Arbiter{
-		desk:  desk,
-		price: price,
-	}
+func NewArbiter(desk *broker.Desk) *Arbiter {
+	return &Arbiter{desk: desk}
 }
 
 // Arbitrate ranks candidate entries, allocates available slots, and performs displacement/rotation.
@@ -59,7 +55,7 @@ func (arbiter *Arbiter) Arbitrate(thesis *types.Thesis) {
 	openSlots := max(arbiter.desk.OpenSlots(false), 0)
 	totalSlots := max(arbiter.desk.OpenSlots(true), 0)
 	reserveSlots := max(totalSlots-openSlots, 0)
-	incumbents := arbiter.getIncumbents()
+	incumbents := arbiter.getIncumbents(thesis)
 
 	/*
 		Capacity and occupancy are recorded on every decision, because a
@@ -154,36 +150,60 @@ func (arbiter *Arbiter) tryDisplace(
 	return types.Decision{}, types.Decision{}, false
 }
 
-func (arbiter *Arbiter) getIncumbents() []Incumbent {
+func (arbiter *Arbiter) getIncumbents(thesis *types.Thesis) []Incumbent {
+	valuations := map[string]types.Decision{}
+
+	for _, decision := range thesis.Decisions {
+		if decision.Action != types.ActionHold {
+			continue
+		}
+
+		holdUtility, hasHold := decision.Alternatives["hold"]
+		exitUtility, hasExit := decision.Alternatives["exit"]
+
+		if !hasHold || !hasExit || exitUtility > 0 ||
+			math.IsNaN(holdUtility) || math.IsInf(holdUtility, 0) ||
+			math.IsNaN(exitUtility) || math.IsInf(exitUtility, 0) {
+			continue
+		}
+
+		valuations[decision.Symbol] = decision
+	}
+
 	rows := make([]Incumbent, 0)
+
 	for position := range arbiter.desk.Positions() {
 		if position.Status != types.OPEN || position.Holding.Mark == nil || position.Holding.Qty == nil {
 			continue
 		}
 
+		valuation, found := valuations[position.Holding.Symbol]
+
+		if !found {
+			continue
+		}
+
 		notional := decimal.ExactMul(position.Holding.Mark, position.Holding.Qty)
+
 		if notional == nil || notional.Sign() <= 0 {
 			continue
 		}
 
-		fee, err := arbiter.price.Fee(position.Holding.Symbol)
-
-		if err != nil {
-			continue
-		}
-
 		/*
-			Both are dimensionless return fractions, which is the unit a
-			challenger's utility now arrives in. A return percentage weighed
-			against a utility measured in quote currency is decided by the price
-			of the symbol rather than by either position's merit: a dollar of
-			modelled edge dwarfs any percentage an incumbent can show, and every
-			challenger displaces whatever it is compared to.
+			The continuation decision is the evaluator's current forward value of
+			this exact position, on the same return-fraction scale as the
+			challenger. Holding.ReturnPct is backward-looking liquidation PnL: it
+			is negative immediately after every taker entry and would make a new
+			position look weak precisely because it has just paid to enter.
+
+			The exit alternative carries all modeled friction for liquidating the
+			incumbent. Reconstructing it from a fee rate here would omit spread
+			and impact and make rotation appear cheaper than the evaluator found.
 		*/
 		rows = append(rows, Incumbent{
 			Symbol:      position.Holding.Symbol,
-			HoldUtility: position.Holding.ReturnPct,
-			ExitCost:    fee.Float64(),
+			HoldUtility: valuation.Alternatives["hold"],
+			ExitCost:    -valuation.Alternatives["exit"],
 			Notional:    notional,
 			Qty:         position.Holding.Qty.Copy(),
 			Mark:        position.Holding.Mark.Copy(),

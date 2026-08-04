@@ -177,11 +177,11 @@ func TestPassageLearnsFromFinishedLots(t *testing.T) {
 			evaluator.retire("lot-1", types.TriggerHardRisk)
 
 			/*
-				Every state along the way carries the same label. The episode
-				ended at the first boundary it reached, so "which comes first"
-				had the same answer at each point on the path.
+				Every state along the way carries the same label, but the result
+				belongs to one finished position. Repeated ticks from that
+				position must not manufacture five independent outcomes.
 			*/
-			So(evaluator.passage.Total(), ShouldEqual, 5)
+			So(evaluator.passage.Total(), ShouldEqual, 1)
 			So(evaluator.episodes, ShouldNotContainKey, "lot-1")
 
 			Convey("And the model should have learned that state", func() {

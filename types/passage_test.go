@@ -78,6 +78,40 @@ func TestPassageModelSparseEvidence(t *testing.T) {
 	})
 }
 
+func TestPassageModelObserveEpisode(t *testing.T) {
+	Convey("Given one finished position observed repeatedly in the same state", t, func() {
+		model := types.NewPassageModel()
+		features := state(-0.8, 0.5, "reversal")
+		observations := make([]types.PassageFeatures, 128)
+
+		for index := range observations {
+			observations[index] = features
+		}
+
+		model.ObserveEpisode(observations, types.OutcomeLossFirst)
+		scenario := model.Scenario(features)
+
+		Convey("It should count one episode rather than one result per tick", func() {
+			So(model.Total(), ShouldEqual, 1)
+			So(scenario.Support, ShouldEqual, 1)
+			So(scenario.Ready, ShouldBeFalse)
+			So(scenario.LossFirst, ShouldBeGreaterThan, 1.0/3)
+		})
+
+		Convey("Only independently finished positions should satisfy readiness", func() {
+			for range 39 {
+				model.Observe(features, types.OutcomeLossFirst)
+			}
+
+			scenario = model.Scenario(features)
+
+			So(model.Total(), ShouldEqual, 40)
+			So(scenario.Support, ShouldEqual, 40)
+			So(scenario.Ready, ShouldBeTrue)
+		})
+	})
+}
+
 func TestPassageModelConverges(t *testing.T) {
 	Convey("Given a bucket with a great deal of consistent evidence", t, func() {
 		model := types.NewPassageModel()
@@ -206,4 +240,24 @@ func TestPassageScenarioHoldEV(t *testing.T) {
 			So(even.HoldEV(0.004, 0.01, 0), ShouldBeLessThan, 0)
 		})
 	})
+}
+
+func BenchmarkPassageModelObserveEpisode(b *testing.B) {
+	model := types.NewPassageModel()
+	observations := make([]types.PassageFeatures, 128)
+
+	for index := range observations {
+		observations[index] = state(
+			-float64(index%8)/8,
+			float64(index%4)/4,
+			"reversal",
+		)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		model.ObserveEpisode(observations, types.OutcomeLossFirst)
+	}
 }

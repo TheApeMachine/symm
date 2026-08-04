@@ -361,9 +361,7 @@ func (evaluator Evaluator) retire(id, trigger string) {
 		return
 	}
 
-	for _, features := range episode.observations {
-		evaluator.passage.Observe(features, outcome)
-	}
+	evaluator.passage.ObserveEpisode(episode.observations, outcome)
 }
 
 /*

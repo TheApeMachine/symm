@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -103,6 +104,10 @@ func TestPositionOnExecution(t *testing.T) {
 				So(position.Status, ShouldEqual, types.OPEN)
 				So(position.Holding.Status, ShouldEqual, types.OPEN)
 				So(position.Holding.SellableQty.String(), ShouldEqual, "0.25")
+				So(position.Holding.EntryAt, ShouldNotBeNil)
+				expectedEntryAt, err := time.Parse(time.RFC3339Nano, buy.Timestamp)
+				So(err, ShouldBeNil)
+				So(*position.Holding.EntryAt, ShouldResemble, expectedEntryAt)
 				So(market.Desk.OpenPositions(), ShouldEqual, 1)
 
 				exitID := uuid.NewString()
@@ -123,6 +128,10 @@ func TestPositionOnExecution(t *testing.T) {
 				So(position.Status, ShouldEqual, types.CLOSED)
 				So(position.Holding.Status, ShouldEqual, types.CLOSED)
 				So(position.Holding.SellableQty.Sign(), ShouldEqual, 0)
+				So(position.Holding.ExitAt, ShouldNotBeNil)
+				expectedExitAt, err := time.Parse(time.RFC3339Nano, sell.Timestamp)
+				So(err, ShouldBeNil)
+				So(*position.Holding.ExitAt, ShouldResemble, expectedExitAt)
 				So(market.Desk.OpenPositions(), ShouldEqual, 0)
 			})
 

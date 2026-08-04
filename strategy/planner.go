@@ -52,7 +52,7 @@ func NewPlanner(
 	}
 
 	evaluator := NewEvaluator(desk, price, balance, recorder)
-	arbiter := NewArbiter(desk, price)
+	arbiter := NewArbiter(desk)
 
 	planner := &Planner{
 		ctx:         ctx,

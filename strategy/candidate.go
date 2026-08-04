@@ -29,6 +29,19 @@ type candidate struct {
 }
 
 /*
+projectedReturn converts the resonance rollout's accumulated log return into a
+simple return.
+
+The rollout is already the price forecast. Structural signals may corroborate
+or contradict that forecast elsewhere in the evaluator, but multiplying the
+log return by their unrelated scores turns evidence strength into fictional
+price movement and can exponentiate a small forecast into an impossible one.
+*/
+func projectedReturn(curve, surviving []float64) float64 {
+	return math.Expm1(accumulatedReturn(curve, surviving))
+}
+
+/*
 ExecutableReturn subtracts every modeled execution friction from the expected
 market return.
 */
@@ -89,10 +102,11 @@ ExecutableFraction is the executable net return as a fraction of the reference
 price, which is the unit every utility in the decision path is stated in.
 
 Utility travels from here to the arbiter, where it is compared against an
-incumbent's ReturnPct and the fee rate it would cost to unwind. Those are both
-dimensionless fractions, so a utility carried in quote currency makes the
+incumbent's forward continuation utility and complete exit cost. Those are both
+dimensionless fractions, so a utility carried in quote currency would make the
 comparison decide by the symbol's price: a dollar of edge on a hundred dollar
-symbol dwarfs any percentage an incumbent can show, and every challenger wins.
+symbol would dwarf any percentage an incumbent can show, and every challenger
+would win.
 */
 func (row candidate) ExecutableFraction() float64 {
 	return row.FractionOf(row.ExecutableReturn())

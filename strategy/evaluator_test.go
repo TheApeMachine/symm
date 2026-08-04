@@ -55,6 +55,10 @@ func TestUnifiedUtility(t *testing.T) {
 
 	Convey("Given corroborating heads and Bayesian precision weighting", t, func() {
 		Convey("It should discount uncertain forecasts gracefully without inverting positive returns", func() {
+			So(uncertaintyWeight(0), ShouldEqual, 1.0)
+			So(uncertaintyWeight(1), ShouldEqual, 0.5)
+			So(uncertaintyWeight(math.NaN()), ShouldEqual, 1.0)
+
 			So(
 				unifiedUtility(0.01, causalFactor(0, 0, 0, false), cognitionFactor(types.Cognition{}), graphFactor(0, 0, false), 1.0),
 				ShouldAlmostEqual,
@@ -107,85 +111,32 @@ func TestGetCausalHistoryRows(t *testing.T) {
 	})
 }
 
-func TestMomentumMultiplier(t *testing.T) {
-	Convey("Given an empty thesis", t, func() {
-		thesis := types.NewThesis()
-
-		Convey("It should return a neutral 1.0 multiplier", func() {
-			So(momentumMultiplier(thesis, "BTC/USD"), ShouldEqual, 1.0)
-		})
-	})
-
-	Convey("Given active ignition and Hawkes cascade evidence", t, func() {
-		thesis := types.NewThesis()
-		symbol := "SLAY/USD"
-
-		pumpSample := types.MetricSample{Raw: 0.85}
-		rvolSample := types.MetricSample{Raw: 12.0}
-		trendSample := types.MetricSample{Raw: 0.75}
-
-		pumpMeasurement := &types.Measurement{
-			Source: types.SourcePumpDump,
-			Symbol: symbol,
-			Metrics: map[string]types.MetricSample{
-				string(types.MetricKey(types.MetricIgnition, types.SideNone)): pumpSample,
-				string(types.MetricKey(types.MetricRVOL, types.SideNone)):     rvolSample,
-				string(types.MetricKey(types.MetricTrend, types.SideNone)):    trendSample,
-			},
+func TestProjectedReturn(t *testing.T) {
+	Convey("Given the ZRO resonance rollout observed in the paper run", t, func() {
+		curve := []float64{
+			0.0002459297267317184, 0.00024366941030828297,
+			0.00024525064080171835, 0.00024909273459577756,
+			0.0002540490272959324, 0.0002595214621685936,
+			0.00026521743482255344, 0.00027094679624451665,
+			0.00027657830320614, 0.00028201653462815593,
+			0.00028719244808729917,
+		}
+		surviving := []float64{
+			0.9055048878804701, 0.8974399798115656,
+			0.9093932877015342, 0.9296458889374464,
+			0.9536892103079515, 0.9792906095758916,
+			1.0053454119173224, 1.0311457162739686,
+			1.0562061772730253, 1.080184430729682,
+			1.1028428817730502,
 		}
 
-		hawkesDescendants := types.MetricSample{Raw: 4.5}
-		hawkesMeasurement := &types.Measurement{
-			Source: types.SourceHawkes,
-			Symbol: symbol,
-			Metrics: map[string]types.MetricSample{
-				string(types.MetricKey(types.MetricTotalDescendants, types.SideBuy)): hawkesDescendants,
-			},
-		}
+		Convey("It should preserve the rollout magnitude instead of exponentiating signal scores", func() {
+			projected := projectedReturn(curve, surviving)
 
-		thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{pumpMeasurement})
-		thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{hawkesMeasurement})
-
-		var multiplier float64
-
-		Convey("It should dynamically scale the momentum multiplier across volume and cascade horizons", func() {
-			multiplier = momentumMultiplier(thesis, symbol)
-
-			So(multiplier, ShouldBeGreaterThan, 10.0)
-		})
-
-		Convey("Given active breakout categories", func() {
-			baseMultiplier := momentumMultiplier(thesis, symbol)
-			thesis.Categories[symbol] = []types.Category{
-				{
-					Type:       types.CategoryVerticalIgnition,
-					Strength:   0.9,
-					Confidence: 0.85,
-					Surprisal:  0.1,
-				},
-			}
-
-			Convey("It should amplify the opportunity multiplier further", func() {
-				boosted := momentumMultiplier(thesis, symbol)
-
-				So(boosted, ShouldBeGreaterThan, baseMultiplier)
-			})
-		})
-
-		Convey("Given market exhaustion signals", func() {
-			thesis.Categories[symbol] = []types.Category{
-				{
-					Type:       types.CategoryExhaustion,
-					Strength:   1.0,
-					Confidence: 1.0,
-				},
-			}
-
-			Convey("It should collapse the multiplier to zero to prevent buying into a dump", func() {
-				dampened := momentumMultiplier(thesis, symbol)
-
-				So(dampened, ShouldEqual, 0.0)
-			})
+			So(projected, ShouldAlmostEqual,
+				math.Expm1(accumulatedReturn(curve, surviving)), 1e-12)
+			So(projected, ShouldBeGreaterThan, 0.002)
+			So(projected, ShouldBeLessThan, 0.004)
 		})
 	})
 }
@@ -258,40 +209,11 @@ func BenchmarkUnifiedUtility(b *testing.B) {
 	}
 }
 
-func BenchmarkMomentumMultiplier(b *testing.B) {
-	thesis := types.NewThesis()
-	symbol := "SLAY/USD"
-
-	pumpMeasurement := &types.Measurement{
-		Source: types.SourcePumpDump,
-		Symbol: symbol,
-		Metrics: map[string]types.MetricSample{
-			string(types.MetricKey(types.MetricIgnition, types.SideNone)): {Raw: 0.85},
-			string(types.MetricKey(types.MetricRVOL, types.SideNone)):     {Raw: 10.0},
-			string(types.MetricKey(types.MetricTrend, types.SideNone)):    {Raw: 0.5},
-		},
-	}
-
-	hawkesMeasurement := &types.Measurement{
-		Source: types.SourceHawkes,
-		Symbol: symbol,
-		Metrics: map[string]types.MetricSample{
-			string(types.MetricKey(types.MetricTotalDescendants, types.SideBuy)): {Raw: 3.5},
-		},
-	}
-
-	thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{pumpMeasurement})
-	thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{hawkesMeasurement})
-	thesis.Categories[symbol] = []types.Category{
-		{
-			Type:       types.CategoryVerticalIgnition,
-			Strength:   0.8,
-			Confidence: 0.8,
-			Surprisal:  0.2,
-		},
-	}
+func BenchmarkProjectedReturn(b *testing.B) {
+	curve := []float64{0.00024, 0.00025, 0.00026, 0.00027, 0.00028}
+	surviving := []float64{0.9, 0.92, 0.95, 0.98, 1.0}
 
 	for b.Loop() {
-		_ = momentumMultiplier(thesis, symbol)
+		_ = projectedReturn(curve, surviving)
 	}
 }

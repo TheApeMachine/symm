@@ -1,8 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ModelScope } from "#/components/graph/component";
-import { Graph as RenderGraph } from "#/components/graph/core/graph";
+import type { Graph as RenderGraph } from "#/components/graph/core/graph";
+import {
+	applyPendingGraphSurface,
+	type MarketGraphEdge,
+	type MarketGraphNode,
+	paintGraphSurface,
+	readGraphSurface,
+	subscribeGraphSurface,
+} from "#/components/terminal/graph-surface-store";
 import { Panel } from "#/components/ui/panel";
 import { registerPainter } from "#/providers/ws-stores";
+import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
 import { Flex } from "@/components/ui/flex";
 import { Input } from "@/components/ui/input";
@@ -10,144 +19,6 @@ import { List } from "@/components/ui/list";
 import { Section } from "@/components/ui/section";
 import { Toolbar } from "@/components/ui/toolbar";
 import { Typography } from "@/components/ui/typography";
-
-type MarketGraphNode = {
-	id: string;
-	symbol?: string;
-	source?: string;
-	kind?: string;
-	value?: number;
-	confidence?: number;
-	at?: string;
-	metadata?: Record<string, unknown>;
-};
-
-type MarketGraphEdge = {
-	from: string;
-	to: string;
-	relation?: string;
-	weight?: number;
-	confidence?: number;
-	at?: string;
-	reason?: string;
-};
-
-type MarketGraphFrame = {
-	at?: string;
-	nodes?: Record<string, MarketGraphNode>;
-	edges?: MarketGraphEdge[];
-	adjacency?: Record<string, string[]>;
-};
-
-const listeners = new Set<() => void>();
-let retainedFrame: MarketGraphFrame | null = null;
-let retainedGraph: RenderGraph | null = null;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	value !== null && typeof value === "object";
-
-const isMarketGraphFrame = (value: unknown): value is MarketGraphFrame => {
-	if (!isRecord(value)) {
-		return false;
-	}
-
-	return isRecord(value.nodes) && Array.isArray(value.edges);
-};
-
-const graphFrames = (value: unknown): MarketGraphFrame[] => {
-	if (Array.isArray(value)) {
-		return value.filter(isMarketGraphFrame);
-	}
-
-	if (isMarketGraphFrame(value)) {
-		return [value];
-	}
-
-	if (!isRecord(value)) {
-		return [];
-	}
-
-	return Object.values(value).filter(isMarketGraphFrame);
-};
-
-const adaptGraph = (frame: MarketGraphFrame): RenderGraph => {
-	const graph = new RenderGraph({
-		epoch: "at",
-		epochFormat: "YYYY-MM-DDTHH:mm:ssZ",
-		source: "from",
-		target: "to",
-	});
-
-	for (const node of Object.values(frame.nodes ?? {})) {
-		if (typeof node.id !== "string" || node.id === "") {
-			continue;
-		}
-
-		graph.addNode(node.id, {
-			...node.metadata,
-			at: node.at,
-			confidence: node.confidence,
-			kind: node.kind,
-			source: node.source,
-			symbol: node.symbol,
-			value: node.value,
-		});
-	}
-
-	for (const edge of frame.edges ?? []) {
-		if (typeof edge.from !== "string" || typeof edge.to !== "string") {
-			continue;
-		}
-
-		graph.addEdge(edge.from, edge.to, {
-			at: edge.at,
-			confidence: edge.confidence,
-			from: edge.from,
-			reason: edge.reason,
-			relation: edge.relation,
-			to: edge.to,
-			weight: edge.weight,
-		});
-	}
-
-	return graph;
-};
-
-const graphStructureKey = (frame: MarketGraphFrame): string => {
-	const nodeIds = Object.keys(frame.nodes ?? {})
-		.sort()
-		.join(",");
-	const edgeKeys = (frame.edges ?? [])
-		.map((edge) => `${edge.from}->${edge.to}`)
-		.sort()
-		.join(",");
-
-	return `${nodeIds}|${edgeKeys}`;
-};
-
-let lastStructureKey = "";
-
-export const paintGraphSurface = (value: unknown) => {
-	const frame = graphFrames(value).at(-1) ?? null;
-
-	if (frame === null) {
-		return;
-	}
-
-	const structureKey = graphStructureKey(frame);
-
-	if (structureKey === lastStructureKey) {
-		return;
-	}
-
-	lastStructureKey = structureKey;
-	retainedFrame = frame;
-	retainedGraph = adaptGraph(frame);
-
-	for (const listener of listeners) {
-		listener();
-	}
-};
 
 const searchNodes = (
 	graph: RenderGraph | undefined,
@@ -336,9 +207,9 @@ const SelectedNodePanel = ({
 					</div>
 				) : (
 					<div className="flex max-h-80 flex-col gap-1 overflow-auto font-mono text-[11px]">
-						{related.map((edge, index) => (
+						{related.map((edge) => (
 							<div
-								key={`${edge.from}:${edge.to}:${edge.relation ?? "edge"}:${index}`}
+								key={`${edge.from}:${edge.to}:${edge.relation ?? "edge"}:${edge.at ?? ""}:${edge.reason ?? ""}`}
 								className="rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5"
 							>
 								<div className="text-(--f2)">
@@ -372,18 +243,25 @@ export const GraphSurface = () => {
 
 	useEffect(() => {
 		const notify = () => setVersion((value) => value + 1);
-		listeners.add(notify);
+		const unsubscribe = subscribeGraphSurface(notify);
 		const unregister = registerPainter("graph", paintGraphSurface);
 		notify();
 
 		return () => {
-			listeners.delete(notify);
+			unsubscribe();
 			unregister();
 		};
 	}, []);
 
-	const frame = retainedFrame;
-	const graph = retainedGraph ?? undefined;
+	const snapshot = readGraphSurface();
+	const frame = snapshot.frame;
+	const graph = snapshot.graph ?? undefined;
+	const edges = frame?.edges;
+	const topologyPending = snapshot.topologyPending;
+	const handleNodeSelect = useCallback(
+		(_index: number, nodeName: string) => setSelectedNodeName(nodeName),
+		[],
+	);
 
 	useEffect(() => {
 		if (
@@ -394,16 +272,18 @@ export const GraphSurface = () => {
 		}
 	}, [graph, selectedNodeName]);
 
+	// retainedFrame lives outside React so the painter can accept WebSocket
+	// frames without remounting ModelScope; its edge-array identity is the memo key.
 	const relationCounts = useMemo(() => {
 		const counts = new Map<string, number>();
 
-		for (const edge of frame?.edges ?? []) {
+		for (const edge of edges ?? []) {
 			const relation = edge.relation ?? "unknown";
 			counts.set(relation, (counts.get(relation) ?? 0) + 1);
 		}
 
 		return [...counts.entries()].sort((left, right) => right[1] - left[1]);
-	}, [frame]);
+	}, [edges]);
 
 	const selectedNode =
 		selectedNodeName === null
@@ -420,6 +300,21 @@ export const GraphSurface = () => {
 				<Chip label="edges" value={(frame?.edges ?? []).length} />
 				<Chip label="relations" value={relationCounts.length} />
 				<Chip label="at" value={frame?.at ?? "—"} />
+				{topologyPending ? (
+					<Button
+						variant="solid"
+						tone="warning"
+						size="xs"
+						className="ml-auto"
+						onClick={applyPendingGraphSurface}
+					>
+						Sync topology
+					</Button>
+				) : (
+					<span className="ml-auto font-mono text-[9px] text-(--f4)">
+						live inspection · stable topology
+					</span>
+				)}
 			</Toolbar>
 
 			<div className="grid min-h-0 flex-1 grid-cols-[minmax(760px,1fr)_372px]">
@@ -444,9 +339,7 @@ export const GraphSurface = () => {
 							<ModelScope
 								className="h-full"
 								graph={graph}
-								onNodeSelect={(_index, nodeName) =>
-									setSelectedNodeName(nodeName)
-								}
+								onNodeSelect={handleNodeSelect}
 								selectedNodeName={selectedNodeName}
 								showTimeSlider={false}
 							/>
@@ -460,7 +353,7 @@ export const GraphSurface = () => {
 
 				<div className="min-h-0 overflow-auto bg-(--surface) p-3.5">
 					<SelectedNodePanel
-						edges={frame?.edges ?? []}
+						edges={edges ?? []}
 						node={selectedNode}
 						nodeName={selectedNodeName}
 					/>

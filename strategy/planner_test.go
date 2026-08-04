@@ -2,7 +2,6 @@ package strategy_test
 
 import (
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -295,8 +294,10 @@ func TestPlannerPumpReversal(t *testing.T) {
 		}
 
 		So(entryDecisions, ShouldEqual, 0)
+		stopped := position.Holding.Stoploss.Status == types.TRIGGERED &&
+			position.Holding.Stoploss.TriggerReason != ""
 		So(
-			continuationExitDecisions > 0 || strings.HasPrefix(position.ExitOrder.ClOrdId, "sl-"),
+			continuationExitDecisions > 0 || stopped,
 			ShouldBeTrue,
 		)
 		So(market.Desk.OpenPositions(), ShouldEqual, 0)

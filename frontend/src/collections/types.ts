@@ -1,3 +1,4 @@
+import type { Stoploss } from "#/types/stoploss";
 import type {
 	Decision,
 	Finding,
@@ -16,6 +17,7 @@ export type {
 	ThesisCategory,
 	ThesisForecast,
 	ThesisHypothesis,
+	Stoploss,
 };
 
 /*
@@ -54,18 +56,6 @@ export type Holding = {
 	is_opportunity: boolean;
 	reservation_id?: string;
 	stoploss?: Stoploss;
-};
-
-/*
- Stoploss mirrors the public JSON fields on types.Stoploss exactly.
- */
-export type Stoploss = {
-	status: string;
-	symbol: string;
-	entry: number | string;
-	peak: number | string;
-	mark: number | string;
-	floor: number | string;
 };
 
 export type Fill = {

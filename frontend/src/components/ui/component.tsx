@@ -531,19 +531,37 @@ const scaleSetValue = (
 	}
 
 	if (dataset.setScale === "domain-percent") {
-		const numericValue = Number(value);
+		const numericValue =
+			typeof value === "number"
+				? value
+				: typeof value === "string" && value.trim() !== ""
+					? Number(value)
+					: Number.NaN;
 
 		if (!Number.isFinite(numericValue) || !dataset.setDomain) {
-			return value;
+			return "";
 		}
 
-		const values = dataset.setDomain
-			.split(",")
-			.map((path) => Number(readPath(scopedUpdates, path.trim())))
-			.filter(Number.isFinite);
+		const values = dataset.setDomain.split(",").flatMap((path) => {
+			const domainValue = readPath(scopedUpdates, path.trim());
+
+			if (typeof domainValue === "number" && Number.isFinite(domainValue)) {
+				return [domainValue];
+			}
+
+			if (
+				typeof domainValue === "string" &&
+				domainValue.trim() !== "" &&
+				Number.isFinite(Number(domainValue))
+			) {
+				return [Number(domainValue)];
+			}
+
+			return [];
+		});
 
 		if (values.length < 2) {
-			return value;
+			return "";
 		}
 
 		const low = Math.min(...values);
