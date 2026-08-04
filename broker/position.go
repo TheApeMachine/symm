@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -26,6 +27,9 @@ type Position struct {
 	price            *Price
 	balance          *Balance
 	pair             kraken.InstrumentPair
+	seenExecutions   map[string]struct{}
+	entryFills       int
+	exitFills        int
 	ID               string                `json:"id"`
 	Status           types.Status          `json:"status"`
 	EntryOrder       *spot.AddOrderRequest `json:"entry_order"`
@@ -58,16 +62,17 @@ func NewPosition(
 	)
 
 	position := &Position{
-		ctx:        ctx,
-		cancel:     cancel,
-		Status:     types.INITIALIZING,
-		api:        api,
-		ui:         ui,
-		instrument: instrument,
-		price:      price,
-		balance:    balance,
-		pair:       pair,
-		ID:         decision.ID,
+		ctx:            ctx,
+		cancel:         cancel,
+		Status:         types.INITIALIZING,
+		api:            api,
+		ui:             ui,
+		instrument:     instrument,
+		price:          price,
+		balance:        balance,
+		pair:           pair,
+		seenExecutions: map[string]struct{}{},
+		ID:             decision.ID,
 		EntryOrder: &spot.AddOrderRequest{
 			ClOrdId:   decision.ID,
 			Type:      "buy",
@@ -119,7 +124,8 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 		position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
 	}
 
-	if position.Holding.Stoploss != nil && position.Holding.Stoploss.Status == types.TRIGGERED {
+	if position.Status == types.OPEN && position.Holding.Stoploss != nil &&
+		position.Holding.Stoploss.Status == types.TRIGGERED {
 		position.Exit(position.ExitOrder.ClOrdId)
 	}
 
@@ -128,21 +134,46 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 
 func (position *Position) onExecution(execution *kraken.Execution) {
 	for _, row := range execution.Data {
-		if row.Symbol != position.pair.Symbol || row.ClientOrderID != position.EntryOrder.ClOrdId {
+		clientOrderID := position.EntryOrder.ClOrdId
+
+		if row.Side == "sell" {
+			clientOrderID = position.ExitOrder.ClOrdId
+		}
+
+		if row.Symbol != position.pair.Symbol || row.ClientOrderID != clientOrderID {
 			continue
+		}
+
+		if row.ExecType != "trade" || row.CumQty == nil || row.CumQty.Sign() <= 0 {
+			continue
+		}
+
+		if row.ExecID != "" {
+			if _, seen := position.seenExecutions[row.ExecID]; seen {
+				continue
+			}
+
+			position.seenExecutions[row.ExecID] = struct{}{}
 		}
 
 		if row.Side == "buy" {
 			position.Holding.EntryPrice = row.AvgPrice
-			position.Holding.EntryFee = row.FeeUsdEquiv
+
+			if row.FeeUsdEquiv != nil && position.entryFills == 0 {
+				position.Holding.EntryFee = row.FeeUsdEquiv.Copy()
+			}
+
+			if row.FeeUsdEquiv != nil && position.entryFills > 0 {
+				position.Holding.EntryFee = position.Holding.EntryFee.Add(row.FeeUsdEquiv)
+			}
 
 			// We set it now and update it on every ticker update.
 			position.Holding.ExitPrice = row.AvgPrice
-			position.Holding.ExitFee = row.FeeUsdEquiv
 			position.Holding.Mark = row.AvgPrice
 
 			position.Holding.Qty = row.CumQty
 			position.Holding.SellableQty = row.CumQty
+			position.entryFills++
 
 			position.Status = types.OPEN
 			position.Holding.Status = types.OPEN
@@ -151,7 +182,23 @@ func (position *Position) onExecution(execution *kraken.Execution) {
 
 		if row.Side == "sell" {
 			position.Holding.ExitPrice = row.AvgPrice
-			position.Holding.ExitFee = row.FeeUsdEquiv
+
+			if row.FeeUsdEquiv != nil && position.exitFills == 0 {
+				position.Holding.ExitFee = row.FeeUsdEquiv.Copy()
+			}
+
+			if row.FeeUsdEquiv != nil && position.exitFills > 0 {
+				position.Holding.ExitFee = position.Holding.ExitFee.Add(row.FeeUsdEquiv)
+			}
+
+			position.exitFills++
+
+			if row.OrderStatus != "filled" {
+				position.Publish()
+				continue
+			}
+
+			position.Holding.SellableQty = decimal.NewFromInt64(0)
 
 			position.Status = types.CLOSED
 			position.Holding.Status = types.CLOSED

@@ -25,29 +25,24 @@ func TestThesisReadiness(t *testing.T) {
 
 		storeAllSignalMeasurements(thesis, stampAt)
 
-		/*
-			A stage is ready because it stamped the thesis, so each derived
-			stage is marked by its stamp rather than by the evidence it
-			happened to leave behind.
-		*/
-		for _, source := range []SourceType{
-			SourceManifold, SourceResonance, SourceCausal, SourceGraph,
-		} {
-			thesis.StampSource(source, MarketDerived)
-		}
+		// A stage is ready because it stamped the thesis, so each derived
+		// stage is marked by its stamp rather than by the evidence it
+		// happened to leave behind.
+		thesis.Readiness.Manifold = true
+		thesis.Readiness.Resonance = true
+		thesis.Readiness.Causal = true
+		thesis.Readiness.Graph = true
 
 		thesis.Decisions = []Decision{{}}
 
 		Convey("It should mark every thesis stage ready", func() {
-			readiness := thesis.Readiness()
-
-			So(readiness.Signals, ShouldBeTrue)
-			So(readiness.Manifold, ShouldBeTrue)
-			So(readiness.Resonance, ShouldBeTrue)
-			So(readiness.Causal, ShouldBeTrue)
-			So(readiness.Graph, ShouldBeTrue)
-			So(readiness.Allocation, ShouldBeTrue)
-			So(readiness.Decisions, ShouldBeTrue)
+			So(thesis.Readiness.SignalsMeasured(), ShouldBeTrue)
+			So(thesis.Readiness.Manifold, ShouldBeTrue)
+			So(thesis.Readiness.Resonance, ShouldBeTrue)
+			So(thesis.Readiness.Causal, ShouldBeTrue)
+			So(thesis.Readiness.Graph, ShouldBeTrue)
+			So(thesis.Readiness.Allocation, ShouldBeTrue)
+			So(thesis.Readiness.Decisions, ShouldBeTrue)
 		})
 	})
 
@@ -57,26 +52,21 @@ func TestThesisReadiness(t *testing.T) {
 
 		storeAllSignalMeasurements(thesis, stampAt)
 
-		for _, source := range []SourceType{
-			SourceManifold, SourceResonance, SourceCausal, SourceGraph,
-		} {
-			thesis.StampSource(source, MarketDerived)
-		}
+		thesis.Readiness.Manifold = true
+		thesis.Readiness.Resonance = true
+		thesis.Readiness.Causal = true
+		thesis.Readiness.Graph = true
 
 		Convey("It should still report the stage ready", func() {
-			/*
-				A solver that finds nothing has still run. Inferring readiness
-				from the contents of its output would stall the pipeline behind
-				a stage that is working correctly and simply had nothing to say.
-			*/
-			readiness := thesis.Readiness()
-
-			So(readiness.Causal, ShouldBeTrue)
-			So(readiness.Graph, ShouldBeTrue)
-			So(readiness.Allocation, ShouldBeTrue)
+			// A solver that finds nothing has still run. Inferring readiness
+			// from the contents of its output would stall the pipeline behind
+			// a stage that is working correctly and simply had nothing to say.
+			So(thesis.Readiness.Causal, ShouldBeTrue)
+			So(thesis.Readiness.Graph, ShouldBeTrue)
+			So(thesis.Readiness.Allocation, ShouldBeTrue)
 
 			// No decisions were taken, so only that stage is unmet.
-			So(readiness.Decisions, ShouldBeFalse)
+			So(thesis.Readiness.Decisions, ShouldBeFalse)
 		})
 	})
 
@@ -86,19 +76,17 @@ func TestThesisReadiness(t *testing.T) {
 
 		storeAllSignalMeasurements(thesis, stampAt)
 
-		thesis.StampSource(SourceManifold, MarketDerived)
-		thesis.StampSource(SourceResonance, MarketDerived)
-		thesis.StampSource(SourceGraph, MarketDerived)
+		thesis.Readiness.Manifold = true
+		thesis.Readiness.Resonance = true
+		thesis.Readiness.Graph = true
 
 		Convey("It should not report that stage or anything behind it ready", func() {
-			readiness := thesis.Readiness()
-
-			So(readiness.Resonance, ShouldBeTrue)
-			So(readiness.Causal, ShouldBeFalse)
+			So(thesis.Readiness.Resonance, ShouldBeTrue)
+			So(thesis.Readiness.Causal, ShouldBeFalse)
 
 			// Graph stamped, but the causal stage it builds on did not.
-			So(readiness.Graph, ShouldBeFalse)
-			So(readiness.Allocation, ShouldBeFalse)
+			So(thesis.Readiness.Graph, ShouldBeFalse)
+			So(thesis.Readiness.Allocation, ShouldBeFalse)
 		})
 	})
 
@@ -115,73 +103,8 @@ func TestThesisReadiness(t *testing.T) {
 		}
 
 		Convey("It should not report signals ready", func() {
-			readiness := thesis.Readiness()
-
-			So(readiness.Signals, ShouldBeFalse)
-			So(readiness.Manifold, ShouldBeFalse)
-		})
-	})
-}
-
-func TestThesisAppendMeasurements(t *testing.T) {
-	Convey("Given a signal publication whose stamp omits its source", t, func() {
-		thesis := NewThesis()
-		stampAt := time.Unix(1, 0).UTC()
-		thesis.AppendMeasurements(
-			SourceCVD,
-			[]*Measurement{{Source: SourceCVD, Symbol: "BTC/USD", At: stampAt}},
-			Stamp{At: stampAt, Entity: MarketTrade},
-		)
-
-		Convey("It should derive the authoritative stamp source from the publication", func() {
-			value, found := thesis.Stamps.Load(SourceCVD)
-			So(found, ShouldBeTrue)
-
-			stamps := value.([]Stamp)
-			So(len(stamps), ShouldEqual, 1)
-			So(stamps[0].Source, ShouldEqual, SourceCVD)
-			So(thesis.Readiness().Signals, ShouldBeFalse)
-
-			for _, source := range thesisSignalSources {
-				if source == SourceCVD {
-					continue
-				}
-
-				thesis.Measurements.Store(source, []*Measurement{{
-					Source: source,
-					Symbol: "BTC/USD",
-					At:     stampAt,
-				}})
-			}
-
-			So(thesis.Readiness().Signals, ShouldBeTrue)
-		})
-	})
-
-	Convey("Given repeated publications from the same signal source", t, func() {
-		thesis := NewThesis()
-		firstAt := time.Unix(1, 0).UTC()
-		secondAt := time.Unix(2, 0).UTC()
-
-		thesis.AppendMeasurements(
-			SourceCVD,
-			[]*Measurement{{Source: SourceCVD, Symbol: "BTC/USD", At: firstAt}},
-			Stamp{At: firstAt, Entity: MarketTrade},
-		)
-		thesis.AppendMeasurements(
-			SourceCVD,
-			[]*Measurement{{Source: SourceCVD, Symbol: "ETH/USD", At: secondAt}},
-			Stamp{At: secondAt, Entity: MarketTrade},
-		)
-
-		Convey("It should retain only the current source rows", func() {
-			value, found := thesis.Measurements.Load(SourceCVD)
-			So(found, ShouldBeTrue)
-
-			rows := value.([]*Measurement)
-			So(len(rows), ShouldEqual, 1)
-			So(rows[0].Symbol, ShouldEqual, "ETH/USD")
-			So(rows[0].At, ShouldResemble, secondAt)
+			So(thesis.Readiness.SignalsMeasured(), ShouldBeFalse)
+			So(thesis.Readiness.Manifold, ShouldBeFalse)
 		})
 	})
 }
@@ -201,7 +124,7 @@ func TestThesisReset(t *testing.T) {
 		thesis.Cognition.Store("BTC/USD", "cognition")
 		thesis.Resonance.Store("BTC/USD", "resonance")
 		thesis.Causal.Store("BTC/USD", "causal")
-		thesis.Stamps.Store(SourceCVD, []Stamp{{Source: SourceCVD}})
+		thesis.Readiness = NewReadiness()
 		thesis.Lifecycle.Store("BTC/USD", LifecycleManaging)
 
 		resetAt := thesis.Reset().At
@@ -237,8 +160,7 @@ func TestThesisReset(t *testing.T) {
 			_, foundCausal := thesis.Causal.Load("BTC/USD")
 			So(foundCausal, ShouldBeFalse)
 
-			_, foundStamp := thesis.Stamps.Load(SourceCVD)
-			So(foundStamp, ShouldBeFalse)
+			So(thesis.Readiness.SignalsMeasured(), ShouldBeFalse)
 
 			phase, foundLifecycle := thesis.Lifecycle.Load("BTC/USD")
 			So(foundLifecycle, ShouldBeTrue)

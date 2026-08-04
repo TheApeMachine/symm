@@ -58,11 +58,9 @@ type evidence struct {
 	maturity   float64
 	samples    int
 
-	/*
-		distinct counts the separate observables that spoke, as opposed to
-		how many rows carried them. Ten readings of one metric is one piece
-		of evidence repeated, not ten independent confirmations.
-	*/
+	// distinct counts the separate observables that spoke, as opposed to
+	// how many rows carried them. Ten readings of one metric is one piece
+	// of evidence repeated, not ten independent confirmations.
 	distinct map[string]struct{}
 }
 
@@ -96,7 +94,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	}
 
 	thesis.Categories = categories
-	thesis.StampSource(types.SourceCategory, types.MarketDerived)
+	thesis.Readiness.Categories = true
 
 	return nil
 }

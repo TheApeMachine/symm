@@ -318,7 +318,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	}
 
 	if forecastReady {
-		thesis.StampSource(types.SourceResonance, types.MarketDerived)
+		thesis.Readiness.Resonance = true
 	}
 
 	if len(out) > 0 && solver.ui != nil {

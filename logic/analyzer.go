@@ -177,17 +177,15 @@ func (analyzer *Analyzer) process(in any) {
 		return
 	}
 
-	if thesis == nil || !thesis.Readiness().Signals {
+	if thesis == nil || !thesis.Readiness.SignalsMeasured() {
 		return
 	}
 
-	/*
-		A stage that fails is recorded and the pass continues. Readiness is
-		taken from the stamps each stage leaves, so one that did not complete
-		simply never stamps and the planner declines the tick on its own;
-		returning here would instead discard the work of every stage that did
-		run, including the ones that had already finished.
-	*/
+	// A stage that fails is recorded and the pass continues. Readiness is
+	// taken from the stamps each stage leaves, so one that did not complete
+	// simply never stamps and the planner declines the tick on its own;
+	// returning here would instead discard the work of every stage that did
+	// run, including the ones that had already finished.
 	for _, solver := range analyzer.solvers {
 		if err := solver.Update(thesis); err != nil {
 			errnie.Error(errnie.Err(
@@ -206,12 +204,10 @@ func (analyzer *Analyzer) process(in any) {
 		}
 	}
 
-	/*
-		Evaluate on this goroutine rather than handing the thesis to one of
-		its own. The evaluator ends a cycle by clearing the evidence it just
-		spent, so running it concurrently would let it reset the thesis out
-		from under the next signal pass that is already writing to it.
-	*/
+	// Evaluate on this goroutine rather than handing the thesis to one of
+	// its own. The evaluator ends a cycle by clearing the evidence it just
+	// spent, so running it concurrently would let it reset the thesis out
+	// from under the next signal pass that is already writing to it.
 	if analyzer.evaluator != nil {
 		analyzer.evaluator.Update(thesis)
 	}

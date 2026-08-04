@@ -197,7 +197,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	}
 
 	if reasoned {
-		thesis.StampSource(types.SourceCognition, types.MarketDerived)
+		thesis.Readiness.Cognition = true
 	}
 
 	solver.publish(thesis)

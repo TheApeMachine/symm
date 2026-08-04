@@ -239,9 +239,8 @@ func BenchmarkInferStructuralEdges(b *testing.B) {
 	thesis := types.NewThesis()
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for range b.N {
+	for b.Loop() {
 		graph := NewGraph(at)
 		graph.Nodes = nodes
 		solver.inferStructuralEdges(thesis, graph)
@@ -289,9 +288,8 @@ func BenchmarkPublish(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for range b.N {
+	for b.Loop() {
 		solver.publish(thesis, graph)
 		<-ui
 	}

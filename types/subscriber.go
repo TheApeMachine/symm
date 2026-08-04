@@ -35,23 +35,20 @@ func (subscription *Subscription[T]) Send(message T) {
 
 /*
 SendLatest publishes the newest message without letting a stale buffered value
-block hot market-data paths. If the buffer is full, one queued value is dropped
-and replaced with the current message.
+block hot market-data paths. While the buffer is full, queued values are dropped
+until the current message is accepted.
 */
 func (subscription *Subscription[T]) SendLatest(message T) {
-	select {
-	case subscription.Channel <- message:
-		return
-	default:
-	}
+	for {
+		select {
+		case subscription.Channel <- message:
+			return
+		default:
+		}
 
-	select {
-	case <-subscription.Channel:
-	default:
-	}
-
-	select {
-	case subscription.Channel <- message:
-	default:
+		select {
+		case <-subscription.Channel:
+		default:
+		}
 	}
 }

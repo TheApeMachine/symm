@@ -285,7 +285,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		nothing to advance.
 	*/
 	if stepped {
-		thesis.StampSource(types.SourceManifold, types.MarketDerived)
+		thesis.Readiness.Manifold = true
 	}
 
 	return nil

@@ -215,7 +215,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	// 3. Store compiled Graph into thesis.Graphs
 	thesis.Graphs.Store("market_graph", graph)
-	thesis.StampSource(types.SourceGraph, types.MarketDerived)
+	thesis.Readiness.Graph = true
 
 	// 4. Record audit snapshot
 	if solver.recorder != nil {

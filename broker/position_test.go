@@ -154,3 +154,40 @@ func TestPositionOnExecution(t *testing.T) {
 		}))
 	})
 }
+
+func TestPositionOnTicker(t *testing.T) {
+	Convey("Given a triggered stoploss with an exit already pending", t, func() {
+		symbols := []*testtypes.Symbol{
+			testtypes.NewSymbol("BTC/USD", 100.0, 42),
+		}
+
+		Convey("Ticker updates should not submit the sell again", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+			market.Tick()
+			decision := entryDecision(symbols[0].Pair)
+			So(market.Desk.Execute([]types.Decision{decision}), ShouldBeNil)
+
+			buy := executionfixture.BuyFill()
+			buy.ClientOrderID = decision.ID
+			buy.Symbol = decision.Symbol
+			buy.CumQty = decision.ProposedQuantity.String()
+			market.Private.Publish("executions", executionfixture.Frame(buy))
+			market.Tick()
+
+			position := slices.Collect(market.Desk.Positions())[0]
+			position.Holding.Stoploss.Status = types.TRIGGERED
+			exitID := uuid.NewString()
+			So(market.Desk.Execute([]types.Decision{{
+				ID:     exitID,
+				Action: types.ActionExit,
+				Symbol: decision.Symbol,
+			}}), ShouldBeNil)
+			So(position.Status, ShouldEqual, types.PENDING)
+			So(position.ExitOrderResult, ShouldNotBeNil)
+			firstOrderID := position.ExitOrderResult.ID[0]
+
+			market.Tick()
+
+			So(position.ExitOrderResult.ID[0], ShouldEqual, firstOrderID)
+		}))
+	})
+}

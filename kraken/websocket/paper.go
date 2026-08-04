@@ -158,6 +158,7 @@ func (paper *Paper) Write(
 		ReqID  int64  `json:"req_id"`
 		Params struct {
 			Channel    string      `json:"channel"`
+			ClOrdID    string      `json:"cl_ord_id"`
 			OrderType  string      `json:"order_type"`
 			Side       string      `json:"side"`
 			Symbol     string      `json:"symbol"`
@@ -177,6 +178,7 @@ func (paper *Paper) Write(
 			request.Params.OrderQty.String(),
 			request.Params.OrderType,
 			request.Params.LimitPrice.String(),
+			request.Params.ClOrdID,
 		)
 
 		if err != nil {
@@ -307,8 +309,16 @@ func (paper *Paper) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, 
 	quantity, _ := request["volume"].(string)
 	orderType, _ := request["ordertype"].(string)
 	limitPrice, _ := request["price"].(string)
+	clientOrderID, _ := request["cl_ord_id"].(string)
 
-	model, err := paper.placeOrder(side, symbol, quantity, orderType, limitPrice)
+	model, err := paper.placeOrder(
+		side,
+		symbol,
+		quantity,
+		orderType,
+		limitPrice,
+		clientOrderID,
+	)
 
 	if err != nil {
 		return spot.AddOrderResult{}, err
@@ -464,6 +474,7 @@ func (paper *Paper) placeOrder(
 	quantity string,
 	orderType string,
 	limitPrice string,
+	clientOrderID string,
 ) (datura.Map[any], error) {
 	command := []string{side, symbol, quantity}
 
@@ -489,6 +500,7 @@ func (paper *Paper) placeOrder(
 	}
 
 	model["pair"] = symbol
+	model["cl_ord_id"] = clientOrderID
 	return model, nil
 }
 

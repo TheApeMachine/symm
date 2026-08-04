@@ -105,7 +105,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	resolved := solver.store(thesis, results)
 
 	if resolved {
-		thesis.StampSource(types.SourceCausal, types.MarketDerived)
+		thesis.Readiness.Causal = true
 	}
 
 	solver.publish(thesis)

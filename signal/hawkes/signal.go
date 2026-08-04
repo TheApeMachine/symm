@@ -110,17 +110,17 @@ func (signal *Signal) run() {
 				return
 			case message := <-signal.subscriptions["thesis"].Channel:
 				if thesis, ok := message.(*types.Thesis); ok {
-					thesis.AppendMeasurements(
-						types.SourceHawkes,
-						signal.Measure(thesis),
-						types.Stamp{
-							At:     time.Now(),
-							Entity: types.MarketTrade,
-							Source: types.SourceHawkes,
-						},
-					)
+					measurements := signal.Measure(thesis)
 
-					utils.Fanout(signal.subscribers, signal.Name(), thesis)
+					if len(measurements) > 0 {
+						thesis.Measurements.Store(
+							types.SourceHawkes,
+							measurements,
+						)
+
+						thesis.Readiness.Hawkes = true
+						utils.Fanout(signal.subscribers, signal.Name(), thesis)
+					}
 				}
 			}
 		}

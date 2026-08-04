@@ -46,27 +46,3 @@ func (cut *Cut) Outcome(symbol string) (excitation.Outcome, bool) {
 
 	return outcome, ok
 }
-
-/*
-cut freezes the current Process outcomes onto a publish payload.
-*/
-func (signal *Signal) cut(thesis *types.Thesis) *Cut {
-	symbols := signal.process.Symbols()
-	outcomes := make(map[string]excitation.Outcome, len(symbols))
-
-	for _, symbol := range symbols {
-		outcome, ok := signal.process.Outcome(symbol)
-
-		if !ok {
-			continue
-		}
-
-		outcomes[symbol] = outcome
-	}
-
-	return &Cut{
-		Thesis:   thesis,
-		outcomes: outcomes,
-		symbols:  append([]string(nil), symbols...),
-	}
-}

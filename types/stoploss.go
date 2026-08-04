@@ -52,45 +52,17 @@ func NewStoploss(
 }
 
 /*
-update advances the independent stop state from live ticker bids.
+Update advances the independent stop state from live ticker bids.
 */
 func (stoploss *Stoploss) Update(ticker kraken.TickerData) error {
 	if ticker.Bid == nil {
 		return nil
 	}
 
-	// previous := stoploss.Mark
 	stoploss.Mark = ticker.Bid
 	stoploss.evaluate()
 
-	// if previous != nil && previous.Sign() > 0 {
-	// 	shockThreshold := decimal.ExactMul(previous, decimal.NewFromFloat64(0.8))
-
-	// 	if shockThreshold != nil && ticker.Bid.Cmp(shockThreshold) < 0 {
-	// 		stoploss.shockTicks = 6
-	// 	}
-	// }
-
-	// if stoploss.shockTicks > 0 {
-	// 	stoploss.shockTicks--
-	// 	stoploss.breachCount = 0
-	// 	stoploss.evaluate()
-
-	// 	return nil
-	// }
-
-	// if stoploss.Floor != nil && ticker.Bid.Cmp(stoploss.Floor) > 0 {
-	// 	stoploss.breachCount = 0
-	// }
-
 	if stoploss.Floor != nil && ticker.Bid.Cmp(stoploss.Floor) <= 0 {
-		// stoploss.breachCount++
-
-		// if stoploss.breachCount < 6 {
-		// 	stoploss.evaluate()
-		// 	return nil
-		// }
-
 		stoploss.Status = TRIGGERED
 	}
 

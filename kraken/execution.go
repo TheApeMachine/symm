@@ -200,6 +200,7 @@ func NewExecutionFromMap(model datura.Map[any]) *Execution {
 	}
 
 	orderID, _ := model["order_id"].(string)
+	clientOrderID, _ := model["cl_ord_id"].(string)
 	execID, _ := model["trade_id"].(string)
 
 	if execID == "" {
@@ -225,20 +226,21 @@ func NewExecutionFromMap(model datura.Map[any]) *Execution {
 		Channel: "executions",
 		Type:    "update",
 		Data: []ExecutionData{{
-			OrderID:     orderID,
-			ExecID:      execID,
-			ExecType:    execType,
-			Symbol:      pair,
-			Side:        strings.ToLower(side),
-			LastQty:     decimal.NewFromFloat64(volume),
-			LastPrice:   decimal.NewFromFloat64(price),
-			Cost:        decimal.NewFromFloat64(cost),
-			OrderStatus: orderStatus,
-			CumQty:      decimal.NewFromFloat64(volume),
-			CumCost:     decimal.NewFromFloat64(cost),
-			AvgPrice:    decimal.NewFromFloat64(price),
-			FeeUsdEquiv: decimal.NewFromFloat64(fee),
-			Timestamp:   timestamp,
+			OrderID:       orderID,
+			ClientOrderID: clientOrderID,
+			ExecID:        execID,
+			ExecType:      execType,
+			Symbol:        pair,
+			Side:          strings.ToLower(side),
+			LastQty:       decimal.NewFromFloat64(volume),
+			LastPrice:     decimal.NewFromFloat64(price),
+			Cost:          decimal.NewFromFloat64(cost),
+			OrderStatus:   orderStatus,
+			CumQty:        decimal.NewFromFloat64(volume),
+			CumCost:       decimal.NewFromFloat64(cost),
+			AvgPrice:      decimal.NewFromFloat64(price),
+			FeeUsdEquiv:   decimal.NewFromFloat64(fee),
+			Timestamp:     timestamp,
 		}},
 	}
 }

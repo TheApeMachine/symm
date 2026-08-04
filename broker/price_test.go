@@ -55,6 +55,21 @@ func TestPriceMark(t *testing.T) {
 	})
 }
 
+func TestPriceFee(t *testing.T) {
+	Convey("Given a loaded Kraken fee tier without a cached ticker", t, func() {
+		symbols := []*testtypes.Symbol{
+			testtypes.NewSymbol("BTC/USD", 100.0, 42),
+		}
+
+		Convey("Fee lookup should not require market data", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+			fee, err := market.Desk.Price().Fee(symbols[0].Pair)
+
+			So(err, ShouldBeNil)
+			So(fee.String(), ShouldEqual, "0.00260000")
+		}))
+	})
+}
+
 func TestPricePnL(t *testing.T) {
 	Convey("Given a flat holding with actual entry and estimated exit fees", t, func() {
 		symbols := []*testtypes.Symbol{

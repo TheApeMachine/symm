@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -90,6 +91,8 @@ func NewDesk(
 
 func (desk *Desk) run() {
 	go func() {
+		balanceRefreshing := &atomic.Bool{}
+
 		for {
 			select {
 			case <-desk.ctx.Done():
@@ -120,9 +123,16 @@ func (desk *Desk) run() {
 				}
 
 				// The wallet is re-read from REST because it is the only
-				// statement of what is actually held.
-				desk.balance.Update()
-				desk.PublishEquity()
+				// statement of what is actually held. Refresh asynchronously
+				// so the ticker-processing path is never blocked, and guard
+				// against overlapping REST calls.
+				if balanceRefreshing.CompareAndSwap(false, true) {
+					go func() {
+						defer balanceRefreshing.Store(false)
+						desk.balance.Update()
+						desk.PublishEquity()
+					}()
+				}
 			case message := <-desk.subscriptions["executions"].Channel:
 				execution, ok := message.(*kraken.Execution)
 

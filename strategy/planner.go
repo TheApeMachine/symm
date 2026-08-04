@@ -136,11 +136,8 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 		return thesis
 	}
 
-	readiness := thesis.Readiness()
-
-	if !readiness.Manifold || !readiness.Resonance || !readiness.Causal || !readiness.Graph {
+	if !thesis.Readiness.Complete() {
 		planner.complete(thesis, false, "logic_not_ready")
-
 		return thesis
 	}
 
@@ -167,14 +164,12 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 		}
 	}
 
-	if !thesis.Readiness().Decisions {
+	if !thesis.Readiness.Decisions {
 		planner.complete(thesis, true, "no_decision")
 
-		/*
-			The tick was evaluated and produced nothing, so its evidence has
-			been spent. Carrying it forward would let one tick's readings
-			accumulate into the next and blur every trend drawn from them.
-		*/
+		// The tick was evaluated and produced nothing, so its evidence has
+		// been spent. Carrying it forward would let one tick's readings
+		// accumulate into the next and blur every trend drawn from them.
 		thesis.Reset()
 
 		return thesis
@@ -192,11 +187,9 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 	planner.complete(thesis, true, "decisions")
 	planner.publish(thesis)
 
-	/*
-		Subscribers receive their own copy, because the reset below empties
-		the slice this thesis holds and would otherwise clear the decisions
-		out from under whoever is still acting on them.
-	*/
+	// Subscribers receive their own copy, because the reset below empties
+	// the slice this thesis holds and would otherwise clear the decisions
+	// out from under whoever is still acting on them.
 	decisions := slices.Clone(thesis.Decisions)
 
 	planner.subscribers.Range(func(key, value any) bool {
@@ -223,7 +216,6 @@ func (planner *Planner) complete(
 		return
 	}
 
-	readiness := thesis.Readiness()
 	errnie.Error(audit.Phase(
 		planner.recorder,
 		thesis.Tick,
@@ -231,7 +223,7 @@ func (planner *Planner) complete(
 		map[string]any{
 			"evaluated": evaluated,
 			"outcome":   outcome,
-			"readiness": readiness,
+			"readiness": thesis.Readiness,
 			"decisions": len(thesis.Decisions),
 		},
 	))
@@ -240,20 +232,14 @@ func (planner *Planner) complete(
 		return
 	}
 
-	out := datura.NewMap()
-	out["strategy"] = datura.NewMap(
-		"tick", thesis.Tick,
+	utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
+		"tick", datura.NewMap("count", thesis.Tick),
 		"at", thesis.At,
 		"evaluated", evaluated,
 		"outcome", outcome,
-		"readiness", readiness,
+		"readiness", thesis.Readiness,
 		"decisions", len(thesis.Decisions),
-	)
-	utils.Publish(planner.ui, out)
-
-	tickOut := datura.NewMap()
-	tickOut["tick"] = datura.NewMap("count", thesis.Tick)
-	utils.Publish(planner.ui, tickOut)
+	)))
 }
 
 func (planner *Planner) publish(thesis *types.Thesis) {

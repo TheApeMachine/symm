@@ -22,14 +22,82 @@ var thesisSignalSources = []SourceType{
 	SourceToxicity,
 }
 
+/*
+Readiness returns the readiness of the thesis for evaluation.
+
+A stage is ready when it has stamped the thesis, and only then. A stamp is the
+one statement a solver makes about itself having run to completion, so reading
+anything else — the contents of its output map, the length of a slice it
+happens to fill — infers readiness from a side effect and lets a stage that
+legitimately produced nothing read as never having run.
+*/
 type Readiness struct {
-	Signals    bool `json:"signals"`
-	Manifold   bool `json:"manifold"`
-	Resonance  bool `json:"resonance"`
-	Causal     bool `json:"causal"`
-	Graph      bool `json:"graph"`
-	Allocation bool `json:"allocation"`
-	Decisions  bool `json:"decisions"`
+	Correlation bool `json:"correlation"`
+	CVD         bool `json:"cvd"`
+	DepthFlow   bool `json:"depth_flow"`
+	Exhaustion  bool `json:"exhaustion"`
+	Hawkes      bool `json:"hawkes"`
+	LeadLag     bool `json:"lead_lag"`
+	Liquidity   bool `json:"liquidity"`
+	PumpDump    bool `json:"pump_dump"`
+	Sentiment   bool `json:"sentiment"`
+	Toxicity    bool `json:"toxicity"`
+	Manifold    bool `json:"manifold"`
+	Resonance   bool `json:"resonance"`
+	Causal      bool `json:"causal"`
+	Graph       bool `json:"graph"`
+	Allocation  bool `json:"allocation"`
+	Decisions   bool `json:"decisions"`
+	Categories  bool `json:"categories"`
+	Cognition   bool `json:"cognition"`
+}
+
+func NewReadiness() Readiness {
+	return Readiness{
+		Correlation: false,
+		CVD:         false,
+		DepthFlow:   false,
+		Exhaustion:  false,
+		Hawkes:      false,
+		LeadLag:     false,
+		Liquidity:   false,
+		PumpDump:    false,
+		Sentiment:   false,
+		Toxicity:    false,
+		Manifold:    false,
+		Resonance:   false,
+		Causal:      false,
+		Graph:       false,
+		Allocation:  false,
+		Decisions:   false,
+		Categories:  false,
+		Cognition:    false,
+	}
+}
+
+func (readiness *Readiness) SignalsMeasured() bool {
+	return readiness.Correlation &&
+		readiness.CVD &&
+		readiness.DepthFlow &&
+		readiness.Exhaustion &&
+		readiness.Hawkes &&
+		readiness.LeadLag &&
+		readiness.Liquidity &&
+		readiness.PumpDump &&
+		readiness.Sentiment &&
+		readiness.Toxicity
+}
+
+func (readiness *Readiness) Complete() bool {
+	return readiness.SignalsMeasured() &&
+		readiness.Manifold &&
+		readiness.Resonance &&
+		readiness.Causal &&
+		readiness.Graph &&
+		readiness.Allocation &&
+		readiness.Decisions &&
+		readiness.Categories &&
+		readiness.Cognition
 }
 
 const (
@@ -54,32 +122,13 @@ const (
 	LifecycleInvalid             = "invalid"
 )
 
-type MarketEntity string
-
-const (
-	MarketTicker MarketEntity = "ticker"
-	MarketTrade  MarketEntity = "trade"
-	MarketBook   MarketEntity = "book"
-
-	/*
-		MarketDerived marks a stamp left by a stage that reasons over other
-		stages' output rather than observing the market directly.
-	*/
-	MarketDerived MarketEntity = "derived"
-)
-
-type Stamp struct {
-	At     time.Time    `json:"at"`
-	Entity MarketEntity `json:"entity"`
-	Source SourceType   `json:"source"`
-}
-
 /*
 Thesis is the durable lifecycle record from entry through post-mortem. It keeps
 decisions, lifecycle, and findings; each market cut replaces per-tick evidence
 in place so the object does not grow without bound.
 */
 type Thesis struct {
+	Readiness
 	Status       Status                `json:"status"`
 	Tick         int64                 `json:"tick"`
 	At           time.Time             `json:"at"`
@@ -98,7 +147,6 @@ type Thesis struct {
 	Cognition    *sync.Map             `json:"-"`
 	Resonance    *sync.Map             `json:"-"`
 	Causal       *sync.Map             `json:"-"`
-	Stamps       *sync.Map             `json:"-"`
 }
 
 /*
@@ -123,117 +171,8 @@ func NewThesis() *Thesis {
 		Cognition:    &sync.Map{},
 		Resonance:    &sync.Map{},
 		Causal:       &sync.Map{},
-		Stamps:       &sync.Map{},
+		Readiness:    NewReadiness(),
 	}
-}
-
-/*
-Readiness returns the readiness of the thesis for evaluation.
-
-A stage is ready when it has stamped the thesis, and only then. A stamp is the
-one statement a solver makes about itself having run to completion, so reading
-anything else — the contents of its output map, the length of a slice it
-happens to fill — infers readiness from a side effect and lets a stage that
-legitimately produced nothing read as never having run.
-*/
-func (thesis *Thesis) Readiness() Readiness {
-	readiness := Readiness{}
-	counts := thesis.stampCounts()
-
-	readiness.Signals = thesis.signalsMeasured()
-	readiness.Manifold = readiness.Signals && counts.manifold > 0
-	readiness.Resonance = readiness.Manifold && counts.resonance > 0
-	readiness.Causal = readiness.Resonance && counts.causal > 0
-	readiness.Graph = readiness.Causal && counts.graph > 0
-
-	/*
-		Allocation is the planner's own stage rather than a solver's, so it
-		carries no stamp of its own; a thesis is allocatable once the evidence
-		behind it is complete.
-	*/
-	readiness.Allocation = readiness.Graph
-	readiness.Decisions = readiness.Allocation && len(thesis.Decisions) > 0
-
-	return readiness
-}
-
-func (thesis *Thesis) signalsMeasured() bool {
-	if thesis == nil || thesis.Measurements == nil {
-		return false
-	}
-
-	for _, source := range thesisSignalSources {
-		value, found := thesis.Measurements.Load(source)
-
-		if !found {
-			return false
-		}
-
-		rows, ok := value.([]*Measurement)
-
-		if !ok || len(rows) == 0 {
-			return false
-		}
-
-		measured := false
-
-		for _, row := range rows {
-			if row != nil {
-				measured = true
-				break
-			}
-		}
-
-		if !measured {
-			return false
-		}
-	}
-
-	return true
-}
-
-/*
-thesisStampCounts tracks counts for the derived manifold, resonance, causal,
-and graph stages separately.
-*/
-type thesisStampCounts struct {
-	manifold  int
-	resonance int
-	causal    int
-	graph     int
-}
-
-func (thesis *Thesis) stampCounts() thesisStampCounts {
-	counts := thesisStampCounts{}
-
-	if thesis == nil || thesis.Stamps == nil {
-		return counts
-	}
-
-	thesis.Stamps.Range(func(_, value any) bool {
-		stamps, ok := value.([]Stamp)
-
-		if !ok || len(stamps) == 0 {
-			return true
-		}
-
-		for _, stamp := range stamps {
-			switch stamp.Source {
-			case SourceManifold:
-				counts.manifold++
-			case SourceResonance:
-				counts.resonance++
-			case SourceCausal:
-				counts.causal++
-			case SourceGraph:
-				counts.graph++
-			}
-		}
-
-		return true
-	})
-
-	return counts
 }
 
 /*
@@ -247,46 +186,24 @@ func (thesis *Thesis) Reset() *Thesis {
 
 	thesis.At = time.Now().UTC()
 
-	/*
-		Tick is the monotonic count of evaluated ticks and deliberately
-		survives a reset; zeroing it would restart the sequence every time
-		the evidence is cleared.
-	*/
+	// Tick is the monotonic count of evaluated ticks and deliberately
+	// survives a reset; zeroing it would restart the sequence every time
+	// the evidence is cleared.
 	thesis.CrossSection = NewCrossSection()
-	thesis.resetSyncMaps()
+	thesis.Measurements.Clear()
+	thesis.Books.Clear()
+	thesis.Graphs.Clear()
+	thesis.Manifold.Clear()
+	thesis.Cognition.Clear()
+	thesis.Resonance.Clear()
+	thesis.Causal.Clear()
+	thesis.Readiness = NewReadiness()
 	thesis.Decisions = make([]Decision, 0)
 	thesis.Findings = make([]Finding, 0)
 	thesis.Hypotheses = make([]Hypothesis, 0)
 	thesis.Categories = make(map[string][]Category)
 
 	return thesis
-}
-
-func (thesis *Thesis) resetSyncMaps() {
-	resetSyncMap(&thesis.Measurements)
-	resetSyncMap(&thesis.Books)
-	resetSyncMap(&thesis.Graphs)
-	resetSyncMap(&thesis.Manifold)
-	resetSyncMap(&thesis.Cognition)
-	resetSyncMap(&thesis.Resonance)
-	resetSyncMap(&thesis.Causal)
-	resetSyncMap(&thesis.Stamps)
-}
-
-func resetSyncMap(values **sync.Map) {
-	if *values == nil {
-		*values = &sync.Map{}
-		return
-	}
-
-	clearSyncMap(*values)
-}
-
-func clearSyncMap(values *sync.Map) {
-	values.Range(func(key, _ any) bool {
-		values.Delete(key)
-		return true
-	})
 }
 
 func (thesis *Thesis) Market() (
@@ -331,58 +248,6 @@ func (thesis *Thesis) MarketTrades() []kraken.TradeData {
 	})
 
 	return trades
-}
-
-/*
-StampSource records that one component ran to completion on this thesis. A
-stage stamps only once it has actually contributed, so downstream components
-can tell whether their inputs exist rather than inferring it from whatever
-happens to be in the maps.
-*/
-func (thesis *Thesis) StampSource(source SourceType, entity MarketEntity) *Thesis {
-	if thesis == nil || thesis.Stamps == nil {
-		return thesis
-	}
-
-	stamp := Stamp{
-		At:     time.Now().UTC(),
-		Entity: entity,
-		Source: source,
-	}
-
-	found, loaded := thesis.Stamps.LoadOrStore(source, []Stamp{stamp})
-
-	if loaded {
-		thesis.Stamps.Store(source, append(found.([]Stamp), stamp))
-	}
-
-	return thesis
-}
-
-/*
-Stamped reports whether every named source has run on this thesis, which is
-how a component decides it has everything it needs to run itself.
-*/
-func (thesis *Thesis) Stamped(sources ...SourceType) bool {
-	if thesis == nil || thesis.Stamps == nil {
-		return false
-	}
-
-	for _, source := range sources {
-		found, ok := thesis.Stamps.Load(source)
-
-		if !ok {
-			return false
-		}
-
-		stamps, ok := found.([]Stamp)
-
-		if !ok || len(stamps) == 0 {
-			return false
-		}
-	}
-
-	return true
 }
 
 /*
@@ -462,30 +327,6 @@ func (thesis *Thesis) Symbols() []string {
 	slices.Sort(symbols)
 
 	return symbols
-}
-
-/*
-AppendMeasurements replaces the current measurements for the specified source
-while safely ignoring nil input.
-*/
-func (thesis *Thesis) AppendMeasurements(
-	source SourceType,
-	measurements []*Measurement,
-	stamp Stamp,
-) *Thesis {
-	if len(measurements) == 0 {
-		return thesis
-	}
-
-	stamp.Source = source
-	thesis.Measurements.Store(source, measurements)
-	found, ok := thesis.Stamps.LoadOrStore(source, []Stamp{stamp})
-
-	if ok {
-		thesis.Stamps.Store(source, append(found.([]Stamp), stamp))
-	}
-
-	return thesis
 }
 
 /*
