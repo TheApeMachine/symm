@@ -50,7 +50,6 @@ func TestDeskExecute(t *testing.T) {
 			So(positions, ShouldHaveLength, 1)
 			So(positions[0].ID, ShouldEqual, decision.ID)
 			So(positions[0].EntryOrder.ClOrdId, ShouldEqual, decision.ID)
-			So(positions[0].EntryOrderID, ShouldNotBeBlank)
 			So(positions[0].Status, ShouldEqual, types.PENDING)
 
 			fill := executionfixture.BuyFill()

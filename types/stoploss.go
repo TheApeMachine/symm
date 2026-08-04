@@ -43,34 +43,12 @@ func NewStoploss(
 		cancel: cancel,
 		Symbol: symbol,
 		Status: PENDING,
+		Mark:   mark,
 	}
 
-	stoploss.Bind(mark, mark)
+	stoploss.evaluate()
 	stoploss.Status = ARMED
 	return stoploss
-}
-
-/*
-Bind rebases the regulator to the position's entry basis and current mark.
-Before the first ticker these are the same executable entry price; a later
-fill can replace the estimate while preserving a mark already supplied by the
-market.
-*/
-func (stoploss *Stoploss) Bind(entry, mark *decimal.Decimal) {
-	if entry == nil {
-		return
-	}
-
-	if mark == nil {
-		mark = entry
-	}
-
-	stoploss.Entry = entry.Copy()
-	stoploss.Mark = mark.Copy()
-	stoploss.Peak = stoploss.Mark.Copy()
-	stoploss.Floor = nil
-	stoploss.breachCount = 0
-	stoploss.evaluate()
 }
 
 /*
@@ -81,41 +59,40 @@ func (stoploss *Stoploss) Update(ticker kraken.TickerData) error {
 		return nil
 	}
 
-	previous := stoploss.Mark
+	// previous := stoploss.Mark
 	stoploss.Mark = ticker.Bid
+	stoploss.evaluate()
 
-	if previous != nil && previous.Sign() > 0 {
-		shockThreshold := decimal.ExactMul(previous, decimal.NewFromFloat64(0.8))
+	// if previous != nil && previous.Sign() > 0 {
+	// 	shockThreshold := decimal.ExactMul(previous, decimal.NewFromFloat64(0.8))
 
-		if shockThreshold != nil && ticker.Bid.Cmp(shockThreshold) < 0 {
-			stoploss.shockTicks = 6
-		}
-	}
+	// 	if shockThreshold != nil && ticker.Bid.Cmp(shockThreshold) < 0 {
+	// 		stoploss.shockTicks = 6
+	// 	}
+	// }
 
-	if stoploss.shockTicks > 0 {
-		stoploss.shockTicks--
-		stoploss.breachCount = 0
-		stoploss.evaluate()
+	// if stoploss.shockTicks > 0 {
+	// 	stoploss.shockTicks--
+	// 	stoploss.breachCount = 0
+	// 	stoploss.evaluate()
 
-		return nil
-	}
+	// 	return nil
+	// }
 
-	if stoploss.Floor != nil && ticker.Bid.Cmp(stoploss.Floor) > 0 {
-		stoploss.breachCount = 0
-	}
+	// if stoploss.Floor != nil && ticker.Bid.Cmp(stoploss.Floor) > 0 {
+	// 	stoploss.breachCount = 0
+	// }
 
 	if stoploss.Floor != nil && ticker.Bid.Cmp(stoploss.Floor) <= 0 {
-		stoploss.breachCount++
+		// stoploss.breachCount++
 
-		if stoploss.breachCount < 6 {
-			stoploss.evaluate()
-			return nil
-		}
+		// if stoploss.breachCount < 6 {
+		// 	stoploss.evaluate()
+		// 	return nil
+		// }
 
 		stoploss.Status = TRIGGERED
 	}
-
-	stoploss.evaluate()
 
 	return nil
 }

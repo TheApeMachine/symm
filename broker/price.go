@@ -96,7 +96,7 @@ func (price *Price) Mark(
 			symbol, tick.Ask.OffsetPercent(fee.Fee),
 		)
 	case SELL:
-		exitFee := decimal.ExactMul(tick.Bid, fee.Fee)
+		exitFee := fee.Fee.Mul(tick.Bid)
 		out, err = price.normalizer.FormatPrice(
 			symbol, tick.Bid.Sub(exitFee),
 		)
@@ -119,13 +119,16 @@ func (price *Price) Mark(
 PnL returns the PnL for a holding, which means the profit or
 loss of the holding, including entry fee, and current exit fee.
 */
-func (price *Price) PnL(holding *types.Holding) *decimal.Decimal {
+func (price *Price) PnL(
+	pair kraken.InstrumentPair,
+	holding *types.Holding,
+) *decimal.Decimal {
 	if holding == nil || holding.Qty == nil || holding.Mark == nil ||
 		holding.EntryPrice == nil || holding.EntryFee == nil {
 		return nil
 	}
 
-	tick, fee, err := price.getTickAndFee(holding.Symbol)
+	tick, fee, err := price.getTickAndFee(pair.Symbol)
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -137,20 +140,33 @@ func (price *Price) PnL(holding *types.Holding) *decimal.Decimal {
 		return nil
 	}
 
-	grossProceeds := decimal.ExactMul(holding.Qty, tick.Bid)
-	exitFee := decimal.ExactMul(grossProceeds, fee.Fee)
-	entryValue := decimal.ExactMul(holding.Qty, holding.EntryPrice)
-	workingScale := max(
-		grossProceeds.GetScale(),
-		exitFee.GetScale(),
-		entryValue.GetScale(),
-		holding.EntryFee.GetScale(),
-	)
+	costScale := int64(pair.CostPrecision)
+	grossProceeds := tick.Bid.SetScale(costScale).Mul(holding.Qty)
+	exitFee := fee.Fee.Mul(grossProceeds).SetScale(costScale)
+	entryValue := holding.EntryPrice.SetScale(costScale).Mul(holding.Qty)
+	entryFee := holding.EntryFee.SetScale(costScale)
 
-	return grossProceeds.SetScale(workingScale).
+	return grossProceeds.
 		Sub(exitFee).
 		Sub(entryValue).
-		Sub(holding.EntryFee)
+		Sub(entryFee)
+}
+
+/*
+ReturnPct returns the return percentage for a holding, which is the PnL divided by the entry value.
+*/
+func (price *Price) ReturnPct(
+	pair kraken.InstrumentPair,
+	holding *types.Holding,
+) float64 {
+	pnl := price.PnL(pair, holding)
+
+	if pnl == nil || holding == nil || holding.EntryPrice == nil || holding.Qty == nil {
+		return 0
+	}
+
+	entryValue := holding.EntryPrice.Mul(holding.Qty)
+	return pnl.Div(entryValue).Float64()
 }
 
 /*
@@ -182,11 +198,11 @@ func (price *Price) WithFriction(
 	switch direction {
 	case BUY:
 		out, err = price.normalizer.FormatPrice(
-			symbol, volume.Mul(tick.Ask).OffsetPercent(fee.Fee),
+			symbol, tick.Ask.Mul(volume).OffsetPercent(fee.Fee),
 		)
 	case SELL:
-		grossProceeds := decimal.ExactMul(volume, tick.Bid)
-		exitFee := decimal.ExactMul(grossProceeds, fee.Fee)
+		grossProceeds := tick.Bid.Mul(volume)
+		exitFee := fee.Fee.Mul(grossProceeds)
 		out, err = price.normalizer.FormatPrice(
 			symbol, grossProceeds.Sub(exitFee),
 		)

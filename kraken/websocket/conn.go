@@ -33,7 +33,8 @@ type Conn interface {
 	SubL3([]string)
 	SubCandles([]string)
 	Balance() (map[string]*decimal.Decimal, error)
-	TradeBalance() (spot.TradesHistoryResult, error)
+	TradesHistory() (spot.TradesHistoryResult, error)
+	TradeBalance() (kraken.TradeBalanceResult, error)
 	TradeVolume([]string) (*kraken.TradeVolumeResult, error)
 	AddOrder(*spot.AddOrderRequest) (spot.AddOrderResult, error)
 	Write(json.Marshaler, ...Callback[any]) error
@@ -122,16 +123,17 @@ func (api *API) Subscribe(
 
 }
 
-func (api *API) Books() *sync.Map                                { return api.private.Books() }
-func (api *API) Book(symbol string) *book.Book                   { return api.private.Book(symbol) }
-func (api *API) SubInstrument(callback types.Subscription[any])  { api.public.SubInstrument(callback) }
-func (api *API) SubTicker(symbols []string)                      { api.public.SubTicker(symbols) }
-func (api *API) SubBook(symbols []string)                        { api.public.SubBook(symbols) }
-func (api *API) SubL3(symbols []string)                          { api.private.SubL3(symbols) }
-func (api *API) SubTrades(symbols []string)                      { api.public.SubTrades(symbols) }
-func (api *API) SubCandles(symbols []string)                     { api.public.SubCandles(symbols) }
-func (api *API) Balance() (map[string]*decimal.Decimal, error)   { return api.private.Balance() }
-func (api *API) TradeBalance() (spot.TradesHistoryResult, error) { return api.private.TradeBalance() }
+func (api *API) Books() *sync.Map                                 { return api.private.Books() }
+func (api *API) Book(symbol string) *book.Book                    { return api.private.Book(symbol) }
+func (api *API) SubInstrument(callback types.Subscription[any])   { api.public.SubInstrument(callback) }
+func (api *API) SubTicker(symbols []string)                       { api.public.SubTicker(symbols) }
+func (api *API) SubBook(symbols []string)                         { api.public.SubBook(symbols) }
+func (api *API) SubL3(symbols []string)                           { api.private.SubL3(symbols) }
+func (api *API) SubTrades(symbols []string)                       { api.public.SubTrades(symbols) }
+func (api *API) SubCandles(symbols []string)                      { api.public.SubCandles(symbols) }
+func (api *API) Balance() (map[string]*decimal.Decimal, error)    { return api.private.Balance() }
+func (api *API) TradesHistory() (spot.TradesHistoryResult, error) { return api.private.TradesHistory() }
+func (api *API) TradeBalance() (kraken.TradeBalanceResult, error) { return api.private.TradeBalance() }
 
 func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error) {
 	normalized := append([]string{}, symbols...)

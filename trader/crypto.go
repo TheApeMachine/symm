@@ -149,6 +149,7 @@ func (crypto *Crypto) onTicker(data any) {
 
 	for _, ticker := range typedTickers.Data {
 		crypto.thesis.Tickers.Store(ticker.Symbol, ticker)
+		crypto.storeBook(ticker.Symbol)
 
 		// The broker prices every order off its own ticker cache, so the same
 		// tick has to reach it here. Without this the price surface stays
@@ -158,7 +159,6 @@ func (crypto *Crypto) onTicker(data any) {
 		}
 	}
 
-	crypto.thesis.Books = crypto.api.Books()
 	utils.Fanout(crypto.subscribers, "thesis", crypto.thesis)
 }
 
@@ -177,10 +177,24 @@ func (crypto *Crypto) onTrade(data any) {
 
 	for _, trade := range typedTrades.Data {
 		crypto.thesis.Trades.Store(trade.Symbol, trade)
+		crypto.storeBook(trade.Symbol)
 	}
 
-	crypto.thesis.Books = crypto.api.Books()
 	utils.Fanout(crypto.subscribers, "thesis", crypto.thesis)
+}
+
+func (crypto *Crypto) storeBook(symbol string) {
+	if symbol == "" || crypto.api == nil || crypto.thesis == nil || crypto.thesis.Books == nil {
+		return
+	}
+
+	book := crypto.api.Book(symbol)
+
+	if book == nil {
+		return
+	}
+
+	crypto.thesis.Books.Store(symbol, book)
 }
 
 func (crypto *Crypto) decisionsReady(decisions any) bool {

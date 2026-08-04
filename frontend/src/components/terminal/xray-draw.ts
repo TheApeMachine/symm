@@ -4,7 +4,7 @@ import {
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
 import type { LatentPoint } from "#/components/terminal/xray-view";
-import { requirePositive, requirePositiveLength } from "#/lib/domain";
+import { requirePositiveLength } from "#/lib/domain";
 
 /*
 drawXrayWaiting clears an xray canvas and paints a muted waiting caption.
@@ -48,25 +48,27 @@ export const categoryColor = (category: string, focus: boolean): string => {
 };
 
 /*
-latentRange returns the finite axis span for scatter projection.
-A zero or non-finite span is an undefined scale, not a unit fallback.
+latentAxis returns the projection from one latent coordinate onto a unit axis.
+
+A single carrier — or several that settled on the same coordinate — has no
+extent to normalise against. That is a real reading of the embedding rather than
+missing data, so the axis collapses to its centre instead of refusing to draw.
 */
-export const latentRange = (
+export const latentAxis = (
 	points: LatentPoint[],
 	key: "x" | "y",
-): { min: number; span: number } => {
-	requirePositiveLength(points.length, `latentRange.${key}`);
+): ((value: number) => number) => {
+	requirePositiveLength(points.length, `latentAxis.${key}`);
 
 	const values = points.map((point) => point[key]);
 	const min = Math.min(...values);
-	const max = Math.max(...values);
-	const span = max - min;
+	const span = Math.max(...values) - min;
 
-	if (!Number.isFinite(min) || !Number.isFinite(span)) {
-		requirePositive(Number.NaN, `latentRange.${key}.span`);
+	if (!Number.isFinite(min) || !Number.isFinite(span) || span <= 0) {
+		return () => 0.5;
 	}
 
-	return { min, span: requirePositive(span, `latentRange.${key}.span`) };
+	return (value: number) => (value - min) / span;
 };
 
 /*
@@ -79,13 +81,11 @@ export const latentPointScreen = (
 	height: number,
 	pad = 28,
 ) => {
-	const xRange = latentRange(points, "x");
-	const yRange = latentRange(points, "y");
-	const xSpan = requirePositive(xRange.span, "latentPointScreen.xSpan");
-	const ySpan = requirePositive(yRange.span, "latentPointScreen.ySpan");
+	const projectX = latentAxis(points, "x");
+	const projectY = latentAxis(points, "y");
 
 	return {
-		x: pad + ((point.x - xRange.min) / xSpan) * (width - pad * 2),
-		y: height - pad - ((point.y - yRange.min) / ySpan) * (height - pad * 2),
+		x: pad + projectX(point.x) * (width - pad * 2),
+		y: height - pad - projectY(point.y) * (height - pad * 2),
 	};
 };

@@ -115,22 +115,32 @@ func NewConn(ctxs ...context.Context) *Conn {
 		return dialed, err
 	}
 
-	/*
-		Connect immediately so the fixture behaves like an already-established
-		Kraken session. Live calls Connect again when it wraps this client,
-		which simply redials the same listener.
-	*/
-	errnie.Error(client.Connect())
+	return conn
+}
 
-	select {
-	case <-conn.ready:
-	case <-time.After(5 * time.Second):
-		errnie.Error(errnie.Err(
-			errnie.IO, "tests: fixture websocket did not connect", nil,
+/*
+Connect establishes the fixture websocket for direct SDK tests. Production-like
+tests pass Client() to Live, which owns its connection lifecycle instead.
+*/
+func (conn *Conn) Connect() error {
+	if err := conn.ws.Connect(); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"tests: fixture websocket failed to connect",
+			err,
 		))
 	}
 
-	return conn
+	select {
+	case <-conn.ready:
+		return nil
+	case <-time.After(5 * time.Second):
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"tests: fixture websocket did not connect",
+			nil,
+		))
+	}
 }
 
 /*
@@ -330,7 +340,6 @@ func (conn *Conn) handleAddOrder() {
 
 func (conn *Conn) Close() {
 	conn.cancel()
-	conn.ws.DoReconnect = false
 
 	conn.mu.Lock()
 	accepted, server := conn.accepted, conn.server
@@ -338,6 +347,11 @@ func (conn *Conn) Close() {
 	conn.mu.Unlock()
 
 	if accepted != nil {
+		errnie.Error(accepted.WriteControl(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+			time.Now().Add(time.Second),
+		))
 		errnie.Error(accepted.Close())
 	}
 

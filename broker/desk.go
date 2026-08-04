@@ -122,7 +122,7 @@ func (desk *Desk) run() {
 				// The wallet is re-read from REST because it is the only
 				// statement of what is actually held.
 				desk.balance.Update()
-				desk.publishEquity()
+				desk.PublishEquity()
 			case message := <-desk.subscriptions["executions"].Channel:
 				execution, ok := message.(*kraken.Execution)
 
@@ -161,7 +161,7 @@ func (desk *Desk) recover() error {
 		return errnie.Error(err)
 	}
 
-	history, err := desk.api.TradeBalance()
+	history, err := desk.api.TradesHistory()
 
 	if err != nil {
 		return errnie.Error(err)
@@ -331,9 +331,7 @@ func (desk *Desk) OpenPositions() int {
 			return true
 		}
 
-		position.mu.RLock()
 		status := position.Status
-		position.mu.RUnlock()
 
 		if status != types.CLOSED {
 			count++
@@ -346,13 +344,13 @@ func (desk *Desk) OpenPositions() int {
 }
 
 /*
-publishEquity reports what the desk is worth if every open lot were closed now.
+PublishEquity reports what the desk is worth if every open lot were closed now.
 
 Cash alone understates the account while positions are open. Unrealized is the
 profit/loss only; equity is cash plus the basis committed to open positions plus
 that profit/loss.
 */
-func (desk *Desk) publishEquity() {
+func (desk *Desk) PublishEquity() {
 	if desk == nil || desk.ui == nil || desk.balance == nil {
 		return
 	}
@@ -367,15 +365,13 @@ func (desk *Desk) publishEquity() {
 	invested := decimal.NewFromInt64(0)
 
 	for position := range desk.Positions() {
-		position.mu.RLock()
-
-		if position.Status != types.OPEN || position.Holding == nil {
-			position.mu.RUnlock()
+		if isTerminal(position.Status) || position.Holding == nil ||
+			position.Holding.SellableQty == nil || position.Holding.SellableQty.Sign() <= 0 {
 			continue
 		}
 
-		if position.Holding.Qty != nil && position.Holding.EntryPrice != nil {
-			basis := decimal.ExactMul(position.Holding.Qty, position.Holding.EntryPrice)
+		if position.Holding.EntryPrice != nil {
+			basis := position.Holding.EntryPrice.Mul(position.Holding.SellableQty)
 
 			if position.Holding.EntryFee != nil {
 				basisScale := max(basis.GetScale(), position.Holding.EntryFee.GetScale())
@@ -395,12 +391,28 @@ func (desk *Desk) publishEquity() {
 				SetScale(unrealizedScale).
 				Add(position.Holding.PnL)
 		}
-
-		position.mu.RUnlock()
 	}
 
 	equityScale := max(cash.GetScale(), invested.GetScale(), unrealized.GetScale())
 	equity := cash.SetScale(equityScale).Add(invested).Add(unrealized)
+	tradeBalance, err := desk.api.TradeBalance()
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"desk: could not fetch trade balance",
+			err,
+		))
+	}
+
+	if tradeBalance.UnrealizedPnL != nil {
+		unrealized = tradeBalance.UnrealizedPnL
+	}
+
+	if tradeBalance.Equity != nil {
+		equity = tradeBalance.Equity
+	}
+
 	out := datura.NewMap()
 	out["equity"] = datura.NewMap(
 		"cash", cash,
@@ -424,6 +436,27 @@ func (desk *Desk) Positions() iter.Seq[*Position] {
 			return yield(position)
 		})
 	}
+}
+
+/*
+PublishPositions sends all current non-terminal positions to the UI channel
+so newly connected clients can see open positions immediately.
+*/
+func (desk *Desk) PublishPositions() []byte {
+	out := datura.NewMap()
+	out["positions"] = []*Position{}
+
+	for position := range desk.Positions() {
+		status := position.Status
+
+		if isTerminal(status) {
+			continue
+		}
+
+		out["positions"] = append(out["positions"].([]*Position), position)
+	}
+
+	return out.MarshalAndFree()
 }
 
 /*
@@ -458,9 +491,7 @@ func (desk *Desk) enter(decision types.Decision) error {
 
 	if value, ok := desk.positions.Load(decision.Symbol); ok {
 		if position, ok := value.(*Position); ok && position != nil {
-			position.mu.RLock()
 			status := position.Status
-			position.mu.RUnlock()
 
 			if status != types.CLOSED {
 				return errnie.Error(errnie.Err(
@@ -505,8 +536,8 @@ func (desk *Desk) enter(decision types.Decision) error {
 		return errnie.Error(err)
 	}
 
-	entryValue := decimal.ExactMul(tick.Ask, decision.ProposedQuantity)
-	entryFee := decimal.ExactMul(entryValue, feeRate)
+	entryValue := tick.Ask.Mul(decision.ProposedQuantity)
+	entryFee := feeRate.Mul(entryValue)
 
 	if entryValue == nil || entryFee == nil {
 		return errnie.Error(errnie.Err(
@@ -554,9 +585,7 @@ func (desk *Desk) exit(decision types.Decision) error {
 
 	if ok {
 		if position, ok := value.(*Position); ok && position != nil {
-			position.mu.RLock()
 			status := position.Status
-			position.mu.RUnlock()
 
 			if status != types.CLOSED {
 				return position.Exit(decision.ID)

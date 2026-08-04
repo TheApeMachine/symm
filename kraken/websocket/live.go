@@ -62,6 +62,7 @@ type Live struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	client      *spot.WebSocket
+	quote       string
 	simulator   *Simulator
 	normalizer  *spot.Normalizer
 	level3      *sync.Map
@@ -140,6 +141,8 @@ func NewWithClient(
 
 	ctx, cancel := context.WithCancel(ctx)
 
+	viper.SetDefault("market.quote_currency", "USD")
+
 	live := &Live{
 		ctx:         ctx,
 		cancel:      cancel,
@@ -153,6 +156,7 @@ func NewWithClient(
 		public:      make(map[string][][]string),
 		paper:       NewPaper(ctx, NewSimulator()),
 		model:       viper.GetViper().GetString("trading.model"),
+		quote:       viper.GetViper().GetString("market.quote_currency"),
 	}
 
 	live.client.URL = endpoint
@@ -289,6 +293,13 @@ func NewWithClient(
 	})
 
 	live.client.OnDisconnected.Recurring(func(event *callback.Event[error]) {
+		if gorillawebsocket.IsCloseError(
+			event.Data,
+			gorillawebsocket.CloseNormalClosure,
+		) {
+			return
+		}
+
 		errnie.Error(errnie.Err(
 			errnie.Unauthorized,
 			fmt.Sprintf("websocket %s disconnected: %s - %s", endpoint, event.Data.Error(), event.Data),
@@ -610,7 +621,7 @@ func (live *Live) Balance() (map[string]*decimal.Decimal, error) {
 	return live.paper.Balances()
 }
 
-func (live *Live) TradeBalance() (spot.TradesHistoryResult, error) {
+func (live *Live) TradesHistory() (spot.TradesHistoryResult, error) {
 	if live.model == "real" {
 		response, err := live.client.REST.TradesHistory(
 			&spot.TradesHistoryRequest{
@@ -625,6 +636,19 @@ func (live *Live) TradeBalance() (spot.TradesHistoryResult, error) {
 		)
 
 		return response.Result, errnie.Error(err)
+	}
+
+	return live.paper.TradesHistory()
+}
+
+func (live *Live) TradeBalance() (kraken.TradeBalanceResult, error) {
+	if live.model == "real" {
+		response, err := live.Post(
+			TradeBalanceEndpoint,
+			kraken.NewTradeBalanceRequest(live.quote),
+		)
+
+		return kraken.NewTradeBalance(response), errnie.Error(err)
 	}
 
 	return live.paper.TradeBalance()

@@ -10,8 +10,8 @@ import {
 import {
 	categoryColor,
 	drawXrayWaiting,
+	latentAxis,
 	latentPointScreen,
-	latentRange,
 } from "#/components/terminal/xray-draw";
 import {
 	type LatentPoint,
@@ -84,16 +84,8 @@ export const paintXrayLatent = (value: unknown, focusSymbol: string) => {
 	clearCanvas(context, width, height);
 
 	const pad = 28;
-	let xRange: ReturnType<typeof latentRange>;
-	let yRange: ReturnType<typeof latentRange>;
-
-	try {
-		xRange = latentRange(pointsToDraw, "x");
-		yRange = latentRange(pointsToDraw, "y");
-	} catch {
-		drawXrayWaiting(context, width, height, "waiting for latent span");
-		return;
-	}
+	const projectX = latentAxis(pointsToDraw, "x");
+	const projectY = latentAxis(pointsToDraw, "y");
 
 	context.strokeStyle = TERMINAL_COLORS.line;
 	context.lineWidth = 1;
@@ -112,14 +104,14 @@ export const paintXrayLatent = (value: unknown, focusSymbol: string) => {
 		context.stroke();
 	}
 
+	/*
+		Every carrier is named. The embedding routinely holds a handful of symbols
+		at most, and an unlabelled dot says nothing about which one settled where.
+	*/
 	for (const point of pointsToDraw) {
 		const focus = point.symbol === focusSymbol;
-		const x =
-			pad + ((point.x - xRange.min) / xRange.span) * (width - pad * 2);
-		const y =
-			height -
-			pad -
-			((point.y - yRange.min) / yRange.span) * (height - pad * 2);
+		const x = pad + projectX(point.x) * (width - pad * 2);
+		const y = height - pad - projectY(point.y) * (height - pad * 2);
 		const color = categoryColor(point.category, focus);
 
 		context.fillStyle = color;
@@ -138,14 +130,17 @@ export const paintXrayLatent = (value: unknown, focusSymbol: string) => {
 			context.beginPath();
 			context.arc(x, y, 9, 0, Math.PI * 2);
 			context.stroke();
-			context.fillStyle = TERMINAL_COLORS.foreground;
-			context.font = "9px JetBrains Mono, monospace";
-			context.fillText(
-				point.symbol.split("/")[0] ?? point.symbol,
-				x + 11,
-				y + 4,
-			);
 		}
+
+		context.fillStyle = focus
+			? TERMINAL_COLORS.foreground
+			: TERMINAL_COLORS.muted;
+		context.font = "9px JetBrains Mono, monospace";
+		context.fillText(
+			point.symbol.split("/")[0] ?? point.symbol,
+			x + (focus ? 11 : 7),
+			y + 4,
+		);
 	}
 };
 

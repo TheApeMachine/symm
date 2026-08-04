@@ -274,6 +274,14 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			)
 		}
 
+		if utility <= 0 {
+			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
+				forecast, utility, "non_positive_utility",
+				"executable utility does not clear trading costs",
+			))
+			continue
+		}
+
 		// If MCTS recommends ActionEnter (1.0) and Net Utility > 0
 		/*
 			The fallback is gated on the same condition the search was, so the
@@ -282,13 +290,15 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			unusable rows skip the search and also skip the fallback, deciding
 			nothing at all.
 		*/
-		if (mctsErr == nil && recommendedAction == ActionEnter) || (!searchable && utility > 0) {
+		if (mctsErr == nil && recommendedAction == ActionEnter) || !searchable {
+			opportunity := highVelocityOpportunity(thesis, symbol)
+
 			thesis.Decisions = append(thesis.Decisions, types.Decision{
 				Action:            types.ActionEnter,
 				Symbol:            symbol,
 				At:                forecast.At,
 				Utility:           utility,
-				Opportunity:       recommendedAction == ActionEnter,
+				Opportunity:       opportunity,
 				AllocationHaircut: 0.1,
 				AllocationClass:   "normal",
 				Alternatives: map[string]float64{
@@ -320,6 +330,37 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			"causal MCTS trajectory search did not select entry action",
 		))
 	}
+}
+
+func highVelocityOpportunity(thesis *types.Thesis, symbol string) bool {
+	if thesis == nil || len(thesis.Categories) == 0 {
+		return false
+	}
+
+	categories := thesis.Categories[symbol]
+	highVelocity := false
+
+	for _, category := range categories {
+		switch category.Type {
+		case types.CategoryExhaustion,
+			types.CategoryFadedExhaustion,
+			types.CategoryThermalExhaustion,
+			types.CategoryMechanicalCollapse,
+			types.CategoryActiveReversal,
+			types.CategorySpoofTrap,
+			types.CategoryToxicBluff,
+			types.CategoryBookThinning:
+			return false
+		case types.CategoryVerticalIgnition,
+			types.CategoryFrenzy,
+			types.CategoryAggressiveDrive,
+			types.CategoryLiquidityShock,
+			types.CategoryLoadedImbalance:
+			highVelocity = true
+		}
+	}
+
+	return highVelocity
 }
 
 func getCausalHistoryRows(thesis *types.Thesis, symbol string) [][]float64 {

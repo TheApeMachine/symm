@@ -62,22 +62,34 @@ func TestPricePnL(t *testing.T) {
 		}
 
 		Convey("PnL should retain and debit both fees exactly", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+			bid, err := decimal.NewFromString("100.00")
+			So(err, ShouldBeNil)
+			entryPrice, err := decimal.NewFromString("100.0")
+			So(err, ShouldBeNil)
+			entryFee, err := decimal.NewFromString("0.10400000")
+			So(err, ShouldBeNil)
+
 			market.Desk.Price().Update(&kraken.TickerData{
 				Symbol: symbols[0].Pair,
-				Bid:    decimal.NewFromInt64(100),
-				Ask:    decimal.NewFromInt64(100),
+				Bid:    bid,
+				Ask:    bid.Copy(),
 			})
 			holding := &types.Holding{
 				Symbol:     symbols[0].Pair,
 				Qty:        decimal.NewFromFloat64(0.4),
-				EntryPrice: decimal.NewFromInt64(100),
-				EntryFee:   decimal.NewFromFloat64(0.104),
-				Mark:       decimal.NewFromInt64(100),
+				EntryPrice: entryPrice,
+				EntryFee:   entryFee,
+				Mark:       bid.Copy(),
 			}
 
-			pnl := market.Desk.Price().PnL(holding)
+			pair := kraken.InstrumentPair{
+				Symbol:        symbols[0].Pair,
+				CostPrecision: 5,
+			}
+			pnl := market.Desk.Price().PnL(pair, holding)
 
 			So(pnl.Float64(), ShouldAlmostEqual, -0.208, 1e-8)
+			So(pnl.String(), ShouldEqual, "-0.20800")
 		}))
 	})
 }

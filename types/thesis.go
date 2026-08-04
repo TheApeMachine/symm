@@ -253,20 +253,40 @@ func (thesis *Thesis) Reset() *Thesis {
 		the evidence is cleared.
 	*/
 	thesis.CrossSection = NewCrossSection()
-	thesis.Measurements = &sync.Map{}
-	thesis.Books = &sync.Map{}
-	thesis.Graphs = &sync.Map{}
+	thesis.resetSyncMaps()
 	thesis.Decisions = make([]Decision, 0)
 	thesis.Findings = make([]Finding, 0)
 	thesis.Hypotheses = make([]Hypothesis, 0)
 	thesis.Categories = make(map[string][]Category)
-	thesis.Manifold = &sync.Map{}
-	thesis.Cognition = &sync.Map{}
-	thesis.Resonance = &sync.Map{}
-	thesis.Causal = &sync.Map{}
-	thesis.Stamps = &sync.Map{}
 
 	return thesis
+}
+
+func (thesis *Thesis) resetSyncMaps() {
+	resetSyncMap(&thesis.Measurements)
+	resetSyncMap(&thesis.Books)
+	resetSyncMap(&thesis.Graphs)
+	resetSyncMap(&thesis.Manifold)
+	resetSyncMap(&thesis.Cognition)
+	resetSyncMap(&thesis.Resonance)
+	resetSyncMap(&thesis.Causal)
+	resetSyncMap(&thesis.Stamps)
+}
+
+func resetSyncMap(values **sync.Map) {
+	if *values == nil {
+		*values = &sync.Map{}
+		return
+	}
+
+	clearSyncMap(*values)
+}
+
+func clearSyncMap(values *sync.Map) {
+	values.Range(func(key, _ any) bool {
+		values.Delete(key)
+		return true
+	})
 }
 
 func (thesis *Thesis) Market() (

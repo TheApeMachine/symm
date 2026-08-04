@@ -28,15 +28,9 @@ import (
 )
 
 const (
-	defaultPaperQuoteBalance = 200.00
-	defaultPaperMakerFee     = 0.0016
-	defaultPaperTakerFee     = 0.0026
-
-	/*
-		tickInterval paces the simulated feed so each Tick is one the stack
-		actually processed. It is the shortest gap at which the analyzer keeps
-		up with the generator on the machines this suite runs on.
-	*/
+	// tickInterval paces the simulated feed so each Tick is one the stack
+	// actually processed. It is the shortest gap at which the analyzer keeps
+	// up with the generator on the machines this suite runs on.
 	tickInterval = 10 * time.Millisecond
 )
 
@@ -205,11 +199,9 @@ func newMarket(
 		configureAccount(market.Private)
 	}
 
-	/*
-		The fixture Conn owns the in-memory transport; Live wraps its client
-		so that production parsing, routing, and book handling all run
-		unchanged against the simulated frames.
-	*/
+	// The fixture Conn owns the in-memory transport; Live wraps its client
+	// so that production parsing, routing, and book handling all run
+	// unchanged against the simulated frames.
 	market.public = websocket.NewWithClient(
 		ctx, nil, false,
 		websocket.PublicWebSocketURL, market.Public.Client(),
@@ -220,11 +212,9 @@ func newMarket(
 		websocket.PrivateWebSocketURL, market.Private.Client(),
 	)
 
-	/*
-		SubL3 opens child connections for the Level3 book. Point them at the
-		fixture's Level3 transport so the books are built from simulated
-		depth rather than a real Kraken endpoint.
-	*/
+	// SubL3 opens child connections for the Level3 book. Point them at the
+	// fixture's Level3 transport so the books are built from simulated
+	// depth rather than a real Kraken endpoint.
 	market.private.Level3Client = market.Level3.Client
 
 	market.system = cmd.Boot(
@@ -356,31 +346,35 @@ func (market *Market) fillPending() {
 	}
 
 	for position := range market.Desk.Positions() {
-		if position.Status != types.PENDING || position.Holding == nil {
+		if position.Status != types.PENDING || position.Holding == nil ||
+			position.EntryOrder == nil || position.EntryOrderResult == nil {
 			continue
 		}
 
 		fill := executionfixture.BuyFill()
-		clientOrderID := position.EntryOrder.ClOrdId
-		quantity := position.EntryOrder.Volume
+		order := position.EntryOrder
+		result := position.EntryOrderResult
 
-		if position.ExitOrderID != "" {
+		if position.ExitOrderResult != nil {
 			fill = executionfixture.ExitFill()
-			clientOrderID = position.ExitOrder.ClOrdId
-			quantity = position.ExitOrder.Volume
-			fill.OrderID = position.ExitOrderID
-		} else {
-			fill.OrderID = position.EntryOrderID
+			order = position.ExitOrder
+			result = position.ExitOrderResult
 		}
 
-		if _, done := market.filled[clientOrderID]; done {
+		if order == nil || result == nil || len(result.ID) == 0 {
 			continue
 		}
 
-		market.filled[clientOrderID] = struct{}{}
-		fill.ClientOrderID = clientOrderID
+		fill.OrderID = result.ID[0]
+
+		if _, done := market.filled[order.ClOrdId]; done {
+			continue
+		}
+
+		market.filled[order.ClOrdId] = struct{}{}
+		fill.ClientOrderID = order.ClOrdId
 		fill.Symbol = position.Holding.Symbol
-		fill.CumQty = quantity
+		fill.CumQty = order.Volume
 		fill.LastQty = fill.CumQty
 
 		market.Private.Publish("executions", executionfixture.Frame(fill))

@@ -18,7 +18,7 @@ export const Positions = () => (
     {({ ref, className, slots }) => (
       <List
         ref={ref}
-        className={cn("min-h-0 flex-1 overflow-auto p-1.5", className)}
+        className={cn("min-h-0 flex-1 p-1.5", className)}
       >
         {slots.map((slot) => (
           <List.Item
@@ -98,8 +98,13 @@ export const Positions = () => (
                 />
               </div>
 
-              <Flex.Row className="mt-1 items-center justify-between gap-2 text-[9px] text-(--f4)">
-                <Typography.Span className="text-(--down)">
+              <Flex.Row className="mt-1 items-center justify-between gap-2 text-[9px]">
+                <Typography.Span
+                  data-set="holding.stoploss.floor"
+                  data-set-threshold="holding.profit_threshold"
+                  data-set-scale="above-threshold"
+                  data-target="style.color"
+                >
                   floor{" "}
                   <span
                     data-paint="holding.stoploss.floor"
@@ -109,7 +114,12 @@ export const Positions = () => (
                 <Typography.Span>
                   qty <span data-paint="holding.qty" data-paint-format=".4f" />
                 </Typography.Span>
-                <Typography.Span className="text-(--up)">
+                <Typography.Span
+                  data-set="holding.stoploss.peak"
+                  data-set-threshold="holding.profit_threshold"
+                  data-set-scale="above-threshold"
+                  data-target="style.color"
+                >
                   peak{" "}
                   <span
                     data-paint="holding.stoploss.peak"

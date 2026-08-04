@@ -140,7 +140,6 @@ func BenchmarkBookAll(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	
 
 	for b.Loop() {
 		managed.All()

@@ -263,6 +263,8 @@ export type ManifoldFrame = Record<string, unknown> & {
 export type ResonanceLayer = {
 	state: number[];
 	prediction: number[];
+	errorNorm?: number;
+	temporal?: boolean;
 };
 
 /*

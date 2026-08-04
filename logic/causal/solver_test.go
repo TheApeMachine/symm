@@ -1,7 +1,8 @@
 package causal
 
 import (
-	"math"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,62 +10,59 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-func TestBuildCausalRow(t *testing.T) {
-	convey.Convey("Given a causal thesis with non-finite measurement metrics", t, func() {
+func TestStore(t *testing.T) {
+	convey.Convey("Given one failed symbol and one resolved symbol", t, func() {
 		solver := NewSolver(nil, nil)
 		thesis := types.NewThesis()
-		thesis.Resonance.Store("BTC/USD", map[string]any{
-			"energy":       1.5,
-			"surprise":     0.25,
-			"forwardCurve": []float64{0.75},
-		})
-		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
-			Source: types.SourceLiquidity,
-			Symbol: "BTC/USD",
-			At:     time.Unix(1, 0),
-			Metrics: map[string]types.MetricSample{
-				"finite": {Raw: 2.5},
-				"nan":    {Raw: math.NaN()},
-			},
-		}})
+		output := map[string]any{"effect": 0.5}
+		results := []causalResult{
+			{symbol: "BAD/USD", err: errors.New("bad symbol")},
+			{symbol: "GOOD/USD", output: output},
+		}
 
-		convey.Convey("It should average only finite target evidence", func() {
-			row, intervention, contagion, condition, ok := solver.buildCausalRow(thesis, "BTC/USD")
+		convey.Convey("It should skip the failure without dropping the resolved symbol", func() {
+			resolved := solver.store(thesis, results)
+			stored, found := thesis.Causal.Load("GOOD/USD")
+			_, failedStored := thesis.Causal.Load("BAD/USD")
 
-			convey.So(ok, convey.ShouldBeTrue)
-			convey.So(row, convey.ShouldResemble, []float64{1.5, 0.25, 0.75, 2.5})
-			convey.So(intervention, convey.ShouldEqual, 0.75)
-			convey.So(contagion, convey.ShouldEqual, 0.25)
-			convey.So(condition, convey.ShouldEqual, 1.5)
+			convey.So(resolved, convey.ShouldBeTrue)
+			convey.So(found, convey.ShouldBeTrue)
+			convey.So(stored, convey.ShouldResemble, output)
+			convey.So(failedStored, convey.ShouldBeFalse)
 		})
 	})
+}
 
-	convey.Convey("Given a causal thesis with only non-finite target evidence", t, func() {
-		solver := NewSolver(nil, nil)
-		thesis := types.NewThesis()
-		thesis.Resonance.Store("BTC/USD", map[string]any{
-			"energy":       1.5,
-			"surprise":     0.25,
-			"forwardCurve": []float64{0.75},
-		})
-		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
+func BenchmarkUpdate(b *testing.B) {
+	solver := NewSolver(nil, nil)
+	thesis := types.NewThesis()
+	measurements := make([]*types.Measurement, 0, 640)
+
+	for index := range 640 {
+		symbol := fmt.Sprintf("SYMBOL-%03d/USD", index)
+		measurements = append(measurements, &types.Measurement{
 			Source: types.SourceLiquidity,
-			Symbol: "BTC/USD",
+			Symbol: symbol,
 			At:     time.Unix(1, 0),
 			Metrics: map[string]types.MetricSample{
-				"infinite": {Raw: math.Inf(1)},
-				"nan":      {Raw: math.NaN()},
+				"return": {Raw: float64(index) / float64(len(measurements)+1)},
 			},
-		}})
-
-		convey.Convey("It should skip the row instead of passing non-finite values to Pearl", func() {
-			row, intervention, contagion, condition, ok := solver.buildCausalRow(thesis, "BTC/USD")
-
-			convey.So(ok, convey.ShouldBeFalse)
-			convey.So(row, convey.ShouldBeNil)
-			convey.So(intervention, convey.ShouldEqual, 0)
-			convey.So(contagion, convey.ShouldEqual, 0)
-			convey.So(condition, convey.ShouldEqual, 0)
 		})
-	})
+		thesis.Resonance.Store(symbol, map[string]any{
+			"energy":       float64(index),
+			"surprise":     float64(index) / float64(index+1),
+			"forwardCurve": []float64{float64(index) / float64(index+1)},
+		})
+	}
+
+	thesis.Measurements.Store(types.SourceLiquidity, measurements)
+	b.ResetTimer()
+
+	for b.Loop() {
+		err := solver.Update(thesis)
+
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }

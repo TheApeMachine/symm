@@ -19,6 +19,7 @@ func TestNewConn(t *testing.T) {
 
 		So(conn, ShouldNotBeNil)
 		So(conn.Client(), ShouldNotBeNil)
+		So(conn.Connect(), ShouldBeNil)
 	})
 }
 
@@ -41,6 +42,7 @@ func TestConnPublish(t *testing.T) {
 	Convey("Given a Conn with an OnReceived listener", t, func() {
 		conn := NewConn(context.Background())
 		defer conn.Close()
+		So(conn.Connect(), ShouldBeNil)
 
 		var received []byte
 
@@ -63,6 +65,7 @@ func TestConnSubscriptionACK(t *testing.T) {
 	Convey("Given a Conn", t, func() {
 		conn := NewConn(context.Background())
 		defer conn.Close()
+		So(conn.Connect(), ShouldBeNil)
 
 		Convey("When a subscribe request is written to the connection", func() {
 			acked := make(chan []byte, 1)
@@ -95,6 +98,7 @@ func TestConnOrderACK(t *testing.T) {
 	Convey("Given a Conn", t, func() {
 		conn := NewConn(context.Background())
 		defer conn.Close()
+		So(conn.Connect(), ShouldBeNil)
 
 		Convey("When an add_order request is written to the connection", func() {
 			acked := make(chan []byte, 1)
@@ -126,6 +130,10 @@ func TestConnOrderACK(t *testing.T) {
 func BenchmarkConnPublish(b *testing.B) {
 	conn := NewConn(context.Background())
 	defer conn.Close()
+
+	if err := conn.Connect(); err != nil {
+		b.Fatal(err)
+	}
 
 	payload := []byte(`{"channel":"ticker","data":[{"symbol":"BTC/USD","price":50000}]}`)
 

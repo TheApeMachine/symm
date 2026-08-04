@@ -53,8 +53,9 @@ func (arbiter *Arbiter) Arbitrate(thesis *types.Thesis) {
 		return enters[i].Utility > enters[j].Utility
 	})
 
-	openSlots := arbiter.desk.OpenSlots(false)
-	reserveSlots := arbiter.desk.OpenSlots(true) - openSlots
+	openSlots := max(arbiter.desk.OpenSlots(false), 0)
+	totalSlots := max(arbiter.desk.OpenSlots(true), 0)
+	reserveSlots := max(totalSlots-openSlots, 0)
 	incumbents := arbiter.getIncumbents()
 
 	/*
@@ -82,9 +83,8 @@ func (arbiter *Arbiter) Arbitrate(thesis *types.Thesis) {
 			a pump worth interrupting a working desk. Claiming a reserve slot
 			is marked as such rather than left looking like a normal entry.
 		*/
-		if reserveSlots > 0 {
+		if reserveSlots > 0 && candidate.Opportunity {
 			candidate.AllocationClass = "reserved"
-			candidate.Opportunity = true
 
 			if candidate.OpportunityMargin <= 0 {
 				candidate.OpportunityMargin = candidate.Utility
@@ -178,10 +178,7 @@ func (arbiter *Arbiter) getIncumbents() []Incumbent {
 		rows = append(rows, Incumbent{
 			Symbol: position.Holding.Symbol,
 			HoldUtility: func() float64 {
-				if position.Holding.ReturnPct != nil {
-					return *position.Holding.ReturnPct
-				}
-				return 0.0
+				return position.Holding.ReturnPct
 			}(),
 			ExitCost: fee.Float64(),
 			Notional: notional,
@@ -189,5 +186,6 @@ func (arbiter *Arbiter) getIncumbents() []Incumbent {
 			Mark:     position.Holding.Mark.Copy(),
 		})
 	}
+
 	return rows
 }

@@ -1,4 +1,10 @@
-import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import {
+	type ReactNode,
+	useCallback,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 import { registerPainter } from "#/providers/ws-stores";
 import type { JSONSerializable, Paint } from "./paint";
 
@@ -42,6 +48,40 @@ Usage:
 		</div>
 	)}
 </Component>
+
+Rows are picked out of a batch with data-scope / data-filter, read as parallel
+comma separated lists so a row can be pinned on more than one field at once:
+
+	<div data-scope="source,symbol" data-filter="hawkes,BTC/USD">
+		<span data-paint="metrics.spectral_radius.raw" data-paint-format=".3f" />
+	</div>
+
+data-paint-format also takes "time" and "date" for RFC 3339 stamps, and the path
+segment "length" reads an array's size. data-paint-empty says how an empty string
+reads. data-paint-absent says how a missing row reads, and belongs on bindings
+whose wire key carries a complete map rather than a rolling batch — otherwise
+every batch that happens to omit the row would blank a live reading.
+
+A canvas plots a retained series from data-stream-value. An irregular process
+adds the shape of its own samples:
+
+	<canvas
+		data-stream-filter="source=hawkes,symbol=BTC/USD"
+		data-stream-id="at"
+		data-stream-time="at"
+		data-stream-value="metrics.conditional_intensity:buy.raw"
+		data-stream-baseline="metrics.baseline_intensity:buy.raw"
+		data-stream-decay="metrics.decay_rate.raw"
+		data-stream-window="120"
+		data-stream-rug=""
+	/>
+
+data-stream-time lays samples out at the instants they were observed instead of
+spacing them evenly; data-stream-window bounds that history in seconds;
+data-stream-decay relaxes the curve toward the baseline between observations at
+the producer's own rate rather than joining them with a straight line; and
+data-stream-rug ticks each observation so modelled stretches stay distinguishable
+from measured ones.
 */
 interface ComponentRenderProps {
 	ref: React.RefObject<HTMLDivElement | null>;
@@ -65,6 +105,7 @@ type PaintDataset = DOMStringMap & {
 	set?: string;
 	setScale?: string;
 	setDomain?: string;
+	setThreshold?: string;
 	append?: string;
 	appendLimit?: string;
 	appendWidth?: string;
@@ -74,12 +115,21 @@ type PaintDataset = DOMStringMap & {
 	streamValue?: string;
 	streamValues?: string;
 	streamLastId?: string;
+	streamBaseline?: string;
+	streamBaselineValue?: string;
+	streamTime?: string;
+	streamWindow?: string;
+	streamDecay?: string;
+	streamRug?: string;
+	streamAppliedFilter?: string;
 	target?: string;
 	scope?: string;
 	filter?: string;
 	index?: string;
 	paintFormat?: string;
 	paintClass?: string;
+	paintEmpty?: string;
+	paintAbsent?: string;
 };
 
 type PaintBinding = {
@@ -139,6 +189,23 @@ const scanTargets = (root: HTMLElement) => {
 };
 
 const formatValue = (value: unknown, format: string | undefined): string => {
+	/*
+		A wall clock arrives as an RFC 3339 stamp. The terminal shows the engine's
+		own time, so the stamp is read as an instant and printed in UTC rather than
+		reformatted against whatever timezone the browser happens to sit in.
+	*/
+	if (format === "time" || format === "date") {
+		const instant = new Date(String(value));
+
+		if (!Number.isFinite(instant.getTime())) {
+			throw new Error(`data-paint-format=${format} needs a timestamp: ${value}`);
+		}
+
+		return format === "time"
+			? instant.toISOString().slice(11, 19)
+			: instant.toISOString().slice(0, 10);
+	}
+
 	/*
 		Money arrives as a string, because a decimal that survived the wire
 		without losing precision cannot be a float. A formatted field asks for
@@ -202,6 +269,11 @@ const readPath = (
 		}
 
 		if (Array.isArray(value)) {
+			if (part === "length") {
+				value = value.length;
+				continue;
+			}
+
 			const index = Number.parseInt(part, 10);
 
 			if (!Number.isInteger(index)) {
@@ -222,26 +294,56 @@ const readPath = (
 	return value;
 };
 
+const splitList = (value: string): string[] =>
+	value.split(",").map((entry) => entry.trim());
+
+/*
+matchesScope answers whether one wire row is the row a binding asked for.
+data-scope and data-filter are read as parallel lists, so a row can be pinned on
+more than one field at once — a measurement belongs to both a source and a
+symbol, and either alone selects the wrong row.
+*/
+const matchesScope = (
+	item: JSONSerializable,
+	scope: string,
+	filter: string,
+): boolean => {
+	const scopes = splitList(scope);
+	const filters = splitList(filter);
+
+	if (scopes.length !== filters.length) {
+		throw new Error(
+			`data-scope and data-filter must pair up: ${scope} / ${filter}`,
+		);
+	}
+
+	return scopes.every(
+		(path, index) => String(readPath(item, path)) === filters[index],
+	);
+};
+
 const selectScopedUpdates = (
 	updates: JSONSerializable,
 	dataset: PaintDataset,
 ): JSONSerializable | undefined => {
+	/*
+		A symbol-keyed map answers a scoped binding by lookup, and a miss is an
+		answer: the engine has published nothing for that symbol. Falling back to
+		the whole map would leave the previous symbol's reading on screen under the
+		new symbol's name.
+	*/
 	if (
 		!Array.isArray(updates) &&
 		dataset.scope &&
-		dataset.filter !== undefined
+		dataset.filter !== undefined &&
+		typeof updates === "object" &&
+		updates !== null
 	) {
-		if (typeof updates === "object" && updates !== null) {
-			const keyed = (updates as JSONRecord)[dataset.filter];
+		const keyed = (updates as JSONRecord)[dataset.filter];
 
-			if (
-				typeof keyed === "object" &&
-				keyed !== null &&
-				!Array.isArray(keyed)
-			) {
-				return keyed;
-			}
-		}
+		return typeof keyed === "object" && keyed !== null && !Array.isArray(keyed)
+			? keyed
+			: undefined;
 	}
 
 	if (!Array.isArray(updates)) {
@@ -251,11 +353,12 @@ const selectScopedUpdates = (
 	if (!dataset.scope || dataset.filter === undefined) {
 		const index = Number.parseInt(dataset.index ?? "", 10);
 
-		if (Number.isInteger(index)) {
-			return updates[index];
-		}
-
-		return undefined;
+		/*
+			A binding that names no row is asking about the batch itself — its
+			length, say. Paths that only make sense on a row read as absent against
+			an array and are skipped, so nothing is invented here.
+		*/
+		return Number.isInteger(index) ? updates[index] : updates;
 	}
 
 	for (const item of updates) {
@@ -263,9 +366,7 @@ const selectScopedUpdates = (
 			continue;
 		}
 
-		const scopedValue = readPath(item as JSONSerializable, dataset.scope);
-
-		if (String(scopedValue) === dataset.filter) {
+		if (matchesScope(item as JSONSerializable, dataset.scope, dataset.filter)) {
 			return item;
 		}
 	}
@@ -403,6 +504,30 @@ const scaleSetValue = (
 		return "var(--f3)";
 	}
 
+	if (dataset.setScale === "bool-color") {
+		return value === true ? "var(--up)" : "var(--line2)";
+	}
+
+	if (dataset.setScale === "above-threshold") {
+		const numericValue = Number(value);
+
+		if (!Number.isFinite(numericValue) || !dataset.setThreshold) {
+			return "var(--f3)";
+		}
+
+		const threshold = Number(readPath(scopedUpdates, dataset.setThreshold));
+
+		if (!Number.isFinite(threshold)) {
+			return "var(--f3)";
+		}
+
+		if (numericValue > threshold) {
+			return "var(--up)";
+		}
+
+		return "var(--down)";
+	}
+
 	if (dataset.setScale === "domain-percent") {
 		const numericValue = Number(value);
 
@@ -520,6 +645,11 @@ const appendTargetValue = (
 	);
 };
 
+/*
+streamMatchesFilter keeps only the rows a stream canvas is plotting. Conditions
+are comma separated so one canvas can pin both the kernel that produced a row
+and the symbol it was measured on.
+*/
 const streamMatchesFilter = (
 	entry: JSONSerializable,
 	filter: string | undefined,
@@ -528,16 +658,18 @@ const streamMatchesFilter = (
 		return true;
 	}
 
-	const separator = filter.indexOf("=");
+	return splitList(filter).every((condition) => {
+		const separator = condition.indexOf("=");
 
-	if (separator === -1) {
-		return false;
-	}
+		if (separator === -1) {
+			throw new Error(`data-stream-filter needs path=value: ${condition}`);
+		}
 
-	const path = filter.slice(0, separator).trim();
-	const expected = filter.slice(separator + 1).trim();
+		const path = condition.slice(0, separator).trim();
+		const expected = condition.slice(separator + 1).trim();
 
-	return String(readPath(entry, path)) === expected;
+		return String(readPath(entry, path)) === expected;
+	});
 };
 
 const streamEntries = (
@@ -549,6 +681,207 @@ const streamEntries = (
 	return entries.filter((entry) => streamMatchesFilter(entry, dataset.streamFilter));
 };
 
+/*
+A stream sample is one observation: when it was taken, what was read, and the
+level it relaxes toward at what rate. Baseline and decay are per sample because
+they come from a fit that is re-estimated as evidence arrives, so an interval
+must be drawn with the parameters that were current across it.
+*/
+type StreamSample = {
+	time: number;
+	value: number;
+	baseline: number | null;
+	decay: number | null;
+};
+
+const optionalNumber = (raw: string | undefined): number | null =>
+	raw === undefined || raw === "" || !Number.isFinite(Number(raw))
+		? null
+		: Number(raw);
+
+const readOptionalNumber = (
+	entry: JSONSerializable,
+	path: string | undefined,
+): number | null => {
+	if (!path) {
+		return null;
+	}
+
+	const value = Number(readPath(entry, path));
+
+	return Number.isFinite(value) ? value : null;
+};
+
+const decodeStreamSamples = (encoded: string): StreamSample[] =>
+	encoded
+		.split(",")
+		.filter(Boolean)
+		.flatMap((entry) => {
+			const [time, value, baseline, decay] = entry.split("|");
+			const sampleTime = optionalNumber(time);
+			const sampleValue = optionalNumber(value);
+
+			if (sampleTime === null || sampleValue === null) {
+				return [];
+			}
+
+			return [
+				{
+					time: sampleTime,
+					value: sampleValue,
+					baseline: optionalNumber(baseline),
+					decay: optionalNumber(decay),
+				},
+			];
+		});
+
+const encodeStreamSamples = (samples: StreamSample[]): string =>
+	samples
+		.map((sample) =>
+			[
+				sample.time,
+				sample.value,
+				sample.baseline ?? "",
+				sample.decay ?? "",
+			].join("|"),
+		)
+		.join(",");
+
+/*
+collectStreamSamples folds this batch's rows into the retained series. Rows are
+stamped with the instant they were observed when data-stream-time names one, so
+an irregular process keeps its real spacing instead of being spread evenly.
+*/
+const collectStreamSamples = (
+	retained: StreamSample[],
+	entries: JSONSerializable[],
+	dataset: PaintDataset,
+	element: HTMLElement,
+): StreamSample[] => {
+	const samples = [...retained];
+
+	for (const entry of entries) {
+		const identity = dataset.streamId
+			? readPath(entry, dataset.streamId)
+			: undefined;
+
+		if (
+			identity !== undefined &&
+			String(identity) === element.dataset.streamLastId
+		) {
+			continue;
+		}
+
+		const value = Number(readPath(entry, dataset.streamValue));
+
+		if (!Number.isFinite(value)) {
+			continue;
+		}
+
+		const time = dataset.streamTime
+			? Date.parse(String(readPath(entry, dataset.streamTime)))
+			: (samples.at(-1)?.time ?? -1) + 1;
+
+		if (!Number.isFinite(time)) {
+			continue;
+		}
+
+		if (identity !== undefined) {
+			element.dataset.streamLastId = String(identity);
+		}
+
+		samples.push({
+			time,
+			value,
+			baseline: readOptionalNumber(entry, dataset.streamBaseline),
+			decay: readOptionalNumber(entry, dataset.streamDecay),
+		});
+	}
+
+	samples.sort((left, right) => left.time - right.time);
+
+	const window = Number(dataset.streamWindow);
+	const latest = samples.at(-1);
+
+	if (dataset.streamTime && latest && Number.isFinite(window) && window > 0) {
+		const oldest = latest.time - window * 1000;
+
+		while (samples.length > 1 && (samples[0]?.time ?? 0) < oldest) {
+			samples.shift();
+		}
+	}
+
+	const limit = Number.parseInt(dataset.appendLimit ?? "96", 10);
+
+	if (Number.isInteger(limit) && limit > 1 && samples.length > limit) {
+		samples.splice(0, samples.length - limit);
+	}
+
+	return samples;
+};
+
+/*
+streamCurve walks the retained samples into a polyline.
+
+Between two observations the series is not a straight line: data-stream-decay
+names the rate at which it relaxes toward its baseline, which is the shape the
+producer's own fit claims. Every measured point is still hit exactly, so what
+the curve adds between them is the model, and the step up onto each observation
+is the part the model did not account for.
+*/
+const streamCurve = (
+	samples: StreamSample[],
+	plotX: (time: number) => number,
+	plotY: (value: number) => number,
+): Array<[number, number]> => {
+	const points: Array<[number, number]> = [];
+
+	for (const [index, sample] of samples.entries()) {
+		points.push([plotX(sample.time), plotY(sample.value)]);
+
+		const next = samples[index + 1];
+
+		if (next === undefined) {
+			continue;
+		}
+
+		const baseline = sample.baseline;
+		const decay = sample.decay;
+
+		if (baseline === null || decay === null || !(decay > 0)) {
+			continue;
+		}
+
+		const from = plotX(sample.time);
+		const steps = Math.min(
+			240,
+			Math.max(1, Math.round((plotX(next.time) - from) / 2)),
+		);
+
+		for (let step = 1; step <= steps; step += 1) {
+			const time =
+				sample.time + ((next.time - sample.time) * step) / steps;
+			const relaxed =
+				baseline +
+				(sample.value - baseline) *
+					Math.exp((-decay * (time - sample.time)) / 1000);
+
+			points.push([plotX(time), plotY(relaxed)]);
+		}
+	}
+
+	return points;
+};
+
+/*
+drawStreamCanvas plots a retained series onto a canvas.
+
+The scale is anchored at zero and topped by the largest sample so the picture
+reads as a rate rather than a shape: a series that barely moves must look flat,
+not full-scale. data-stream-time puts the samples where they actually happened,
+data-stream-baseline draws the level they relax toward, and data-stream-decay
+supplies the shape they take between observations.
+*/
 const drawStreamCanvas = (
 	element: HTMLElement,
 	dataset: PaintDataset,
@@ -576,83 +909,157 @@ const drawStreamCanvas = (
 		return;
 	}
 
-	const values = (element.dataset.streamValues ?? "")
-		.split(",")
-		.filter(Boolean)
-		.map(Number)
-		.filter(Number.isFinite);
+	/*
+		Retained history belongs to the rows the filter selected. Re-pointing a
+		canvas at another symbol or kernel starts a new series rather than splicing
+		two unrelated ones into one line.
+	*/
+	const filter = dataset.streamFilter ?? "";
 
-	for (const entry of streamEntries(updates, dataset)) {
-		const identity = dataset.streamId ? readPath(entry, dataset.streamId) : undefined;
-
-		if (identity !== undefined && String(identity) === element.dataset.streamLastId) {
-			continue;
-		}
-
-		const value = Number(readPath(entry, dataset.streamValue));
-
-		if (!Number.isFinite(value)) {
-			continue;
-		}
-
-		if (identity !== undefined) {
-			element.dataset.streamLastId = String(identity);
-		}
-
-		values.push(value);
+	if (element.dataset.streamAppliedFilter !== filter) {
+		element.dataset.streamAppliedFilter = filter;
+		element.dataset.streamValues = "";
+		element.dataset.streamLastId = "";
 	}
 
-	const limit = Number.parseInt(dataset.appendLimit ?? "96", 10);
+	const samples = collectStreamSamples(
+		decodeStreamSamples(element.dataset.streamValues ?? ""),
+		streamEntries(updates, dataset),
+		dataset,
+		element,
+	);
 
-	if (Number.isInteger(limit) && limit > 1 && values.length > limit) {
-		values.splice(0, values.length - limit);
-	}
-
-	element.dataset.streamValues = values.join(",");
+	element.dataset.streamValues = encodeStreamSamples(samples);
 	context.setTransform(ratio, 0, 0, ratio, 0, 0);
 	context.clearRect(0, 0, width, height);
 
 	const styles = getComputedStyle(element);
 	const line = styles.getPropertyValue("--line").trim() || "#2b251e";
+	const lineStrong = styles.getPropertyValue("--line2").trim() || "#3a342b";
 	const accent = styles.getPropertyValue("--acc").trim() || "#e8a33d";
-	const denominator = values.reduce(
-		(maximum, value) => Math.max(maximum, Math.abs(value)),
-		0,
-	);
+	const muted = styles.getPropertyValue("--f4").trim() || "#938a7e";
+	const pad = 14;
+	const base = height - 26;
+	const top = Math.min(30, base);
+	const baseline = samples.at(-1)?.baseline ?? null;
+	const ceiling =
+		Math.max(
+			...samples.map((sample) => sample.value),
+			baseline ?? 0,
+			Number.MIN_VALUE,
+		) * 1.15;
 
 	context.strokeStyle = line;
 	context.lineWidth = 1;
 
 	for (let index = 0; index <= 4; index += 1) {
-		const y = 12 + index * ((height - 24) / 4);
+		const y = top + index * ((base - top) / 4);
+
 		context.beginPath();
-		context.moveTo(14, y);
-		context.lineTo(width - 14, y);
+		context.moveTo(pad, y);
+		context.lineTo(width - pad, y);
 		context.stroke();
 	}
 
-	if (values.length < 2 || denominator <= 0) {
+	const first = samples[0];
+	const last = samples.at(-1);
+
+	if (first === undefined || last === undefined || !(ceiling > 0)) {
 		return;
 	}
 
-	context.strokeStyle = accent;
-	context.lineWidth = 1.8;
-	context.beginPath();
+	const span = last.time - first.time;
+	const plotX = (time: number) =>
+		span > 0
+			? pad + ((time - first.time) / span) * (width - pad * 2)
+			: width / 2;
+	const plotY = (value: number) =>
+		base - Math.min(1, Math.max(0, value / ceiling)) * (base - top);
 
-	for (const [index, value] of values.entries()) {
-		const x = 14 + (index / Math.max(values.length - 1, 1)) * (width - 28);
-		const normalized = Math.min(1, Math.max(0, value / denominator));
-		const y = height - 12 - normalized * (height - 24);
+	context.fillStyle = muted;
+	context.font = "9px JetBrains Mono, monospace";
+	context.fillText(ceiling.toPrecision(3), pad, top - 6);
+	context.fillText("0", pad, base + 12);
 
-		if (index === 0) {
-			context.moveTo(x, y);
-			continue;
+	if (dataset.streamTime && span > 0) {
+		const elapsed = `${(span / 1000).toFixed(0)}s of arrivals · ${samples.length} observed`;
+
+		context.fillText(elapsed, width - pad - context.measureText(elapsed).width, base + 12);
+	}
+
+	if (baseline !== null) {
+		context.strokeStyle = lineStrong;
+		context.lineWidth = 1;
+		context.setLineDash([3, 3]);
+		context.beginPath();
+		context.moveTo(pad, plotY(baseline));
+		context.lineTo(width - pad, plotY(baseline));
+		context.stroke();
+		context.setLineDash([]);
+	}
+
+	/*
+		The rug marks every observation the series was actually built from, so a
+		stretch of curve that is the model relaxing is never mistaken for a stretch
+		of curve that was measured.
+	*/
+	if (dataset.streamRug !== undefined) {
+		context.strokeStyle = muted;
+		context.lineWidth = 1;
+
+		for (const sample of samples) {
+			const x = plotX(sample.time);
+
+			context.beginPath();
+			context.moveTo(x, base + 2);
+			context.lineTo(x, base + 7);
+			context.stroke();
 		}
+	}
 
+	const points = streamCurve(samples, plotX, plotY);
+	const head = points[0];
+
+	if (head === undefined) {
+		return;
+	}
+
+	if (points.length < 2) {
+		context.fillStyle = accent;
+		context.beginPath();
+		context.arc(head[0], head[1], 2.6, 0, Math.PI * 2);
+		context.fill();
+		return;
+	}
+
+	context.beginPath();
+	context.moveTo(head[0], base);
+
+	for (const [x, y] of points) {
+		context.lineTo(x, y);
+	}
+
+	context.lineTo(points.at(-1)?.[0] ?? head[0], base);
+	context.closePath();
+	context.globalAlpha = 0.14;
+	context.fillStyle = accent;
+	context.fill();
+	context.globalAlpha = 1;
+
+	context.strokeStyle = accent;
+	context.lineWidth = 1.6;
+	context.beginPath();
+	context.moveTo(head[0], head[1]);
+
+	for (const [x, y] of points.slice(1)) {
 		context.lineTo(x, y);
 	}
 
 	context.stroke();
+	context.fillStyle = accent;
+	context.beginPath();
+	context.arc(plotX(last.time), plotY(last.value), 2.6, 0, Math.PI * 2);
+	context.fill();
 };
 
 const updateTargets = (
@@ -673,6 +1080,19 @@ const updateTargets = (
 			const scopedUpdates = selectScopedUpdates(updates, target.dataset);
 
 			if (scopedUpdates === undefined || scopedUpdates === null) {
+				/*
+					Direct paint retains by nature, which is what keeps a surface alive
+					between the sparse batches a rolling kernel publishes. Where the batch
+					is instead a complete map — every symbol the engine currently holds —
+					a miss is a real answer, and data-paint-absent says how it reads.
+				*/
+				if (
+					target.mode === "paint" &&
+					target.dataset.paintAbsent !== undefined
+				) {
+					target.element.textContent = target.dataset.paintAbsent;
+				}
+
 				continue;
 			}
 
@@ -696,7 +1116,15 @@ const updateTargets = (
 				continue;
 			}
 
-			const formatted = `${formatValue(value, target.dataset.paintFormat)}${target.dataset.paintSuffix ?? ""}`;
+			/*
+				An empty string is a real answer — the model ran and named nothing.
+				data-paint-empty says how that reads, so the slot states the absence
+				instead of looking like a panel that never received data.
+			*/
+			const formatted =
+				value === "" && target.dataset.paintEmpty !== undefined
+					? target.dataset.paintEmpty
+					: `${formatValue(value, target.dataset.paintFormat)}${target.dataset.paintSuffix ?? ""}`;
 
 			if (target.dataset.paintProp) {
 				setTargetValue(target.element, target.dataset.paintProp, formatted);
@@ -720,29 +1148,49 @@ export const Component = ({
 	const latest = useRef<JSONSerializable | undefined>(undefined);
 	const [slots, setSlots] = useState<number[]>([]);
 
+	const repaint = useCallback(() => {
+		if (latest.current === undefined) {
+			return;
+		}
+
+		const updates = select
+			? readPath(latest.current, select)
+			: latest.current;
+
+		if (updates === undefined || updates === null) {
+			return;
+		}
+
+		updateTargets(targets.current, updates);
+	}, [select]);
+
 	useLayoutEffect(() => {
 		if (!ref.current) {
 			return;
 		}
 
 		targets.current = scanTargets(ref.current);
-
-		if (latest.current !== undefined) {
-			let updates = latest.current;
-
-			if (select) {
-				const selectedUpdates = readPath(updates, select);
-
-				if (selectedUpdates === undefined || selectedUpdates === null) {
-					return;
-				}
-
-				updates = selectedUpdates;
-			}
-
-			updateTargets(targets.current, updates);
-		}
+		repaint();
 	});
+
+	/*
+		A canvas sizes itself from the box it was painted into. Nothing republishes
+		when the window changes, so without this a resized chart keeps drawing at
+		the geometry it last saw.
+	*/
+	useLayoutEffect(() => {
+		const root = ref.current;
+
+		if (root === null) {
+			return;
+		}
+
+		const observer = new ResizeObserver(repaint);
+
+		observer.observe(root);
+
+		return () => observer.disconnect();
+	}, [repaint]);
 
 	useLayoutEffect(() => {
 		if (!registerKey) {

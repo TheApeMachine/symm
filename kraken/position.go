@@ -7,7 +7,7 @@ import (
 )
 
 type OpenPositions struct {
-	Error  []string                        `json:"error"`
+	Error  []string                `json:"error"`
 	Result map[string]OpenPosition `json:"result"`
 }
 

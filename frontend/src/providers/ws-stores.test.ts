@@ -2,11 +2,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
 	retainManifoldBinary: vi.fn(() => true),
+	paintTerminalFluidChart: vi.fn(),
 	repaintTerminalFluidChart: vi.fn(),
+	paintTerminalResonanceChart: vi.fn(),
 }));
 
 vi.mock("#/components/charts/fluid", () => ({
+	paintTerminalFluidChart: mocks.paintTerminalFluidChart,
 	repaintTerminalFluidChart: mocks.repaintTerminalFluidChart,
+}));
+
+vi.mock("#/components/charts/resonance", () => ({
+	paintTerminalResonanceChart: mocks.paintTerminalResonanceChart,
 }));
 
 vi.mock("#/collections/app", () => ({
@@ -43,7 +50,9 @@ describe("ws-stores", () => {
 	beforeEach(() => {
 		animationFrame = null;
 		mocks.retainManifoldBinary.mockClear();
+		mocks.paintTerminalFluidChart.mockClear();
 		mocks.repaintTerminalFluidChart.mockClear();
+		mocks.paintTerminalResonanceChart.mockClear();
 		vi.stubGlobal(
 			"requestAnimationFrame",
 			vi.fn((callback: FrameRequestCallback) => {
@@ -127,8 +136,32 @@ describe("ws-stores", () => {
 
 		expect(resonancePaint).toHaveBeenCalledOnce();
 		expect(resonancePaint).toHaveBeenCalledWith([row]);
+		expect(mocks.paintTerminalResonanceChart).toHaveBeenCalledOnce();
+		expect(mocks.paintTerminalResonanceChart).toHaveBeenCalledWith(
+			[row],
+			"BTC/USD",
+		);
 
 		unregisterResonance();
+	});
+
+	it("dispatches manifold batches to the fluid chart painter", () => {
+		const worker = new MockWorker();
+		const row = { source: "manifold", symbol: "BTC/USD" };
+
+		attach(worker as unknown as Worker);
+		worker.emit({
+			type: "DRAW",
+			frame: { manifold: [row] },
+		});
+
+		animationFrame?.(0);
+
+		expect(mocks.paintTerminalFluidChart).toHaveBeenCalledOnce();
+		expect(mocks.paintTerminalFluidChart).toHaveBeenCalledWith(
+			[row],
+			"BTC/USD",
+		);
 	});
 
 	it("retains independently published open positions by identity", () => {
@@ -182,6 +215,60 @@ describe("ws-stores", () => {
 		]);
 
 		unregisterPositions();
+	});
+
+	it("merges independently published cognition symbols into one map", () => {
+		const worker = new MockWorker();
+		const cognitionPaint = vi.fn();
+		const unregisterCognition = registerPainter("cognition", cognitionPaint);
+
+		attach(worker as unknown as Worker);
+		worker.emit({
+			type: "DRAW",
+			frame: { cognition: { "BTC/USD": { winnerRegime: "coil" } } },
+		});
+		worker.emit({
+			type: "DRAW",
+			frame: { cognition: { "ETH/USD": { winnerRegime: "lift" } } },
+		});
+
+		animationFrame?.(0);
+
+		expect(cognitionPaint).toHaveBeenLastCalledWith({
+			"BTC/USD": { winnerRegime: "coil" },
+			"ETH/USD": { winnerRegime: "lift" },
+		});
+
+		worker.emit({
+			type: "DRAW",
+			frame: { cognition: { "BTC/USD": { winnerRegime: "flush" } } },
+		});
+		animationFrame?.(0);
+
+		expect(cognitionPaint).toHaveBeenLastCalledWith({
+			"BTC/USD": { winnerRegime: "flush" },
+			"ETH/USD": { winnerRegime: "lift" },
+		});
+
+		unregisterCognition();
+	});
+
+	it("retains resonance carriers by symbol across sparse batches", () => {
+		const worker = new MockWorker();
+		const resonancePaint = vi.fn();
+		const unregisterResonance = registerPainter("resonance", resonancePaint);
+		const btc = { symbol: "BTC/USD", confidence: 0.5 };
+		const eth = { symbol: "ETH/USD", confidence: 0.25 };
+
+		attach(worker as unknown as Worker);
+		worker.emit({ type: "DRAW", frame: { resonance: [btc] } });
+		worker.emit({ type: "DRAW", frame: { resonance: [eth] } });
+
+		animationFrame?.(0);
+
+		expect(resonancePaint).toHaveBeenLastCalledWith([btc, eth]);
+
+		unregisterResonance();
 	});
 
 	it("retains only the latest binary and repaints once per display frame", () => {

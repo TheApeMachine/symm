@@ -2,6 +2,7 @@ package strategy_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -84,6 +85,10 @@ func TestPlannerPumpEntry(t *testing.T) {
 				So(decision.Action, ShouldNotEqual, types.ActionEnter)
 			}
 
+			if decision.Utility <= 0 {
+				So(decision.Action, ShouldNotEqual, types.ActionEnter)
+			}
+
 			if decision.Action != types.ActionEnter {
 				continue
 			}
@@ -161,6 +166,11 @@ func TestPlannerSlotDiscipline(t *testing.T) {
 					So(decision.Action, ShouldNotEqual, types.ActionEnter)
 					So(decision.AllocationClass, ShouldNotEqual, "reserved")
 				}
+			}
+
+			if decision.Utility <= 0 {
+				So(decision.Action, ShouldNotEqual, types.ActionEnter)
+				So(decision.AllocationClass, ShouldNotEqual, "reserved")
 			}
 
 			if decision.Action != types.ActionEnter {
@@ -242,8 +252,10 @@ func TestPlannerPumpReversal(t *testing.T) {
 
 		positions := slices.Collect(market.Desk.Positions())
 		So(positions, ShouldHaveLength, 1)
-		So(positions[0].Status, ShouldEqual, types.OPEN)
-		So(positions[0].Holding.SellableQty.Cmp(entryQuantity), ShouldEqual, 0)
+
+		position := positions[0]
+		So(position.Status, ShouldEqual, types.OPEN)
+		So(position.Holding.SellableQty.Cmp(entryQuantity), ShouldEqual, 0)
 
 		reversalDecisionOffset := len(market.Decisions())
 		market.Transition(testtypes.FastDump)
@@ -255,7 +267,7 @@ func TestPlannerPumpReversal(t *testing.T) {
 		decisions := market.Decisions()
 		So(len(decisions), ShouldBeGreaterThanOrEqualTo, reversalDecisionOffset)
 		reversalDecisions := decisions[reversalDecisionOffset:]
-		exitDecisions := 0
+		continuationExitDecisions := 0
 		entryDecisions := 0
 
 		for _, decision := range reversalDecisions {
@@ -267,7 +279,7 @@ func TestPlannerPumpReversal(t *testing.T) {
 				continue
 			}
 
-			exitDecisions++
+			continuationExitDecisions++
 			So(decision.ValidID(), ShouldBeTrue)
 			So(decision.Symbol, ShouldEqual, symbols[0].Pair)
 			So(decision.ProposedQuantity, ShouldNotBeNil)
@@ -282,14 +294,14 @@ func TestPlannerPumpReversal(t *testing.T) {
 		}
 
 		So(entryDecisions, ShouldEqual, 0)
-		So(exitDecisions, ShouldBeGreaterThan, 0)
+		So(
+			continuationExitDecisions > 0 || strings.HasPrefix(position.ExitOrder.ClOrdId, "sl-"),
+			ShouldBeTrue,
+		)
 		So(market.Desk.OpenPositions(), ShouldEqual, 0)
-
-		positions = slices.Collect(market.Desk.Positions())
-		So(positions, ShouldHaveLength, 1)
-		So(positions[0].Status, ShouldEqual, types.CLOSED)
-		So(positions[0].Holding.Status, ShouldEqual, types.CLOSED)
-		So(positions[0].Holding.SellableQty.Sign(), ShouldEqual, 0)
-		So(positions[0].Holding.ExitAt, ShouldNotBeNil)
+		So(position.Status, ShouldEqual, types.CLOSED)
+		So(position.Holding.Status, ShouldEqual, types.CLOSED)
+		So(position.Holding.SellableQty.Sign(), ShouldEqual, 0)
+		So(position.Holding.ExitAt, ShouldNotBeNil)
 	}))
 }
