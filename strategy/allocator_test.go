@@ -28,6 +28,7 @@ func TestAllocatorAllocate(t *testing.T) {
 			market.Desk.Balance(),
 			market.Desk.Instrument(),
 			market.Desk.Price(),
+			market.Desk,
 		)
 
 		Convey("An entry decision should be sized and marked ready", func() {
@@ -154,6 +155,7 @@ func BenchmarkAllocatorAllocate(b *testing.B) {
 		market.Desk.Balance(),
 		market.Desk.Instrument(),
 		market.Desk.Price(),
+		market.Desk,
 	)
 
 	thesis := types.NewThesis()

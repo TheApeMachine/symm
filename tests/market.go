@@ -450,3 +450,26 @@ func WithMarket(t *testing.T, symbols []*testtypes.Symbol, f func(*Market)) func
 		f(market)
 	}
 }
+
+/*
+EntryRisk derives the stop geometry an entry for this symbol would be sized
+under, from the live simulated book.
+
+Tests that submit entries need it because the desk refuses an entry without one:
+the quantity on a decision was solved against a particular risk distance, and a
+lot fitted with some other distance after the fact is carrying a loss nobody
+budgeted. A bare decision would exercise a path production does not have.
+*/
+func EntryRisk(market *Market, symbol string) types.RiskPlan {
+	if market == nil || market.Desk == nil {
+		return types.RiskPlan{}
+	}
+
+	pair, err := market.Desk.Instrument().Pair(symbol)
+
+	if err != nil {
+		return types.RiskPlan{}
+	}
+
+	return market.Desk.Price().RiskPlan(pair)
+}

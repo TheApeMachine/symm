@@ -34,9 +34,14 @@ type WorkerListener = (event: MessageEvent) => void;
 
 class MockWorker {
 	listener: WorkerListener | null = null;
+	messages: unknown[] = [];
 
 	addEventListener(_type: string, listener: WorkerListener) {
 		this.listener = listener;
+	}
+
+	postMessage(message: unknown) {
+		this.messages.push(message);
 	}
 
 	emit(data: unknown) {
@@ -110,6 +115,7 @@ describe("ws-stores", () => {
 		expect(measurementsPaint).toHaveBeenCalledWith({ epoch: 2 });
 		expect(healthPaint).toHaveBeenCalledOnce();
 		expect(healthPaint).toHaveBeenCalledWith({ online: true });
+		expect(worker.messages).toEqual([{ type: "DRAWN" }]);
 
 		unregisterMeasurements();
 		unregisterHealth();

@@ -3,9 +3,11 @@ package strategy
 import (
 	"math"
 	"sync"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/nomagique/mcts"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )
@@ -15,12 +17,25 @@ type Evaluator struct {
 	desk       *broker.Desk
 	price      *broker.Price
 	balance    *broker.Balance
+	/*
+		passage estimates which boundary an open lot reaches first, and episodes
+		holds the lots still on their way to one. Both are reference types on a
+		value receiver, so every copy of the Evaluator shares the one model that
+		is learning.
+	*/
+	passage  *types.PassageModel
+	episodes map[string]*passageEpisode
+	// recorder receives one durable record per finished lot, which is the
+	// corpus the calibrated replacements for RiskMultiples and the bucket model
+	// will eventually be fitted from.
+	recorder *audit.Recorder
 }
 
 func NewEvaluator(
 	desk *broker.Desk,
 	price *broker.Price,
 	balance *broker.Balance,
+	recorder *audit.Recorder,
 ) Evaluator {
 	engine := NewCausalEngineAdapter()
 	mctsSearch := mcts.NewCausalMCTS(
@@ -36,6 +51,9 @@ func NewEvaluator(
 		desk:       desk,
 		price:      price,
 		balance:    balance,
+		passage:    types.NewPassageModel(),
+		episodes:   map[string]*passageEpisode{},
+		recorder:   recorder,
 	}
 }
 
@@ -292,15 +310,49 @@ func (evaluator Evaluator) ManageContinuation(
 			quantity = position.Holding.Qty.Copy()
 		}
 
+		/*
+			The first-passage question — from here, does this lot reach its
+			protected profit before its hard floor — is asked last and can only
+			add an exit.
+
+			It is deliberately powerless in the other direction. A model built
+			from a few dozen finished trades is allowed to say "this drawdown
+			has historically not come back" and close a position early; it is
+			never allowed to say "hold on" to a position the hard floor or the
+			decayed-continuation rule above has already condemned. The
+			asymmetry is the point: being wrong about patience costs the whole
+			risk distance, and being wrong about caution costs a spread.
+		*/
+		scenario, holdEV, scored := evaluator.scorePassage(
+			thesis, position, forecast, exitCostFraction,
+		)
+
+		alternatives := map[string]float64{
+			"hold": holdUtility,
+			"exit": -exitCostFraction,
+		}
+
+		if scored {
+			alternatives["passage_hold_ev"] = holdEV
+			alternatives["passage_profit_first"] = scenario.ProfitFirst
+			alternatives["passage_loss_first"] = scenario.LossFirst
+			alternatives["passage_timeout"] = scenario.Timeout
+			alternatives["passage_support"] = scenario.Support
+
+			if action != types.ActionExit && holdEV <= 0 {
+				action = types.ActionExit
+				cause = "passage_negative"
+				reason = "reaching the protected profit before the hard floor no longer pays for the room it needs"
+				quantity = position.Holding.Qty.Copy()
+			}
+		}
+
 		thesis.Decisions = append(thesis.Decisions, types.Decision{
-			Action:  action,
-			Symbol:  forecast.Symbol,
-			At:      forecast.At,
-			Utility: holdUtility,
-			Alternatives: map[string]float64{
-				"hold": holdUtility,
-				"exit": -exitCostFraction,
-			},
+			Action:            action,
+			Symbol:            forecast.Symbol,
+			At:                forecast.At,
+			Utility:           holdUtility,
+			Alternatives:      alternatives,
 			ProposedNotional:  decimal.NewFromInt64(0),
 			ProposedQuantity:  quantity,
 			ExpectedReturn:    forecast.ExpectedReturn,
@@ -321,6 +373,14 @@ func (evaluator Evaluator) ManageContinuation(
 			Reason:            reason,
 		})
 	}
+
+	/*
+		Learning happens last, from the lots that finished. A trade only teaches
+		anything once it is over, and running this after the pass above means a
+		lot that closed on this very tick is retired with the last state it was
+		actually observed in rather than one tick stale.
+	*/
+	evaluator.retireEpisodes(desk)
 }
 
 /*
@@ -358,7 +418,8 @@ func (evaluator Evaluator) stopEvidence(
 		evidence.Impact = estimateImpact(thesis, symbol, evidence.Spread)
 	}
 
-	evidence.RetreatPressure, evidence.RetreatReady = retreatPressure(thesis, symbol)
+	evidence.HollowPressure, evidence.HollowReady = hollowPressure(thesis, symbol)
+	evidence.ObservedAt = time.Now().UTC()
 	evidence.Present = true
 
 	return evidence

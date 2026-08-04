@@ -137,6 +137,7 @@ func Boot(
 		instrument,
 		price,
 		balance,
+		recorder,
 		uiChannel,
 	)).Wait()
 

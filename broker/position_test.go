@@ -1,16 +1,22 @@
 package broker_test
 
 import (
+	"bufio"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/tests"
 	executionfixture "github.com/theapemachine/symm/tests/fixtures/execution"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -43,7 +49,7 @@ func TestPositionOnExecution(t *testing.T) {
 
 		Convey("Execution updates should follow private transport correlation", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
 			market.Tick()
-			decision := entryDecision(symbols[0].Pair)
+			decision := entryDecision(market, symbols[0].Pair)
 			So(market.Desk.Execute([]types.Decision{decision}), ShouldBeNil)
 
 			positions := slices.Collect(market.Desk.Positions())
@@ -178,6 +184,156 @@ func TestPositionOnExecution(t *testing.T) {
 	})
 }
 
+/*
+stopRows reads back every stop row the recorder wrote for one position.
+
+The caller points the data path at a directory of its own first. The default
+audit file is shared across every process that boots the system, and one of them
+rotating it on boot while this test is reading is a race that has nothing to do
+with what is being asserted. Rows are still matched on the position identifier,
+since a single run writes rows for more than one lot.
+
+The recorder flushes on Close, which is why the caller closes the market before
+reading.
+*/
+func stopRows(t *testing.T, positionID string) []map[string]any {
+	t.Helper()
+
+	file, err := os.Open(filepath.Join(
+		utils.ResolveDataPath(), "runtime-audit.jsonl",
+	))
+
+	if err != nil {
+		return nil
+	}
+
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	rows := make([]map[string]any, 0)
+
+	for scanner.Scan() {
+		var row map[string]any
+
+		if json.Unmarshal(scanner.Bytes(), &row) != nil || row["type"] != "stop" {
+			continue
+		}
+
+		value, ok := row["value"].(map[string]any)
+
+		if ok && value["position"] == positionID {
+			rows = append(rows, value)
+		}
+	}
+
+	return rows
+}
+
+func TestPositionStopAudit(t *testing.T) {
+	Convey("Given a position whose regulator has drawn its geometry", t, func() {
+		dataPath := viper.GetString("system.data_path")
+		viper.Set("system.data_path", t.TempDir())
+
+		defer viper.Set("system.data_path", dataPath)
+
+		symbols := []*testtypes.Symbol{
+			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
+		}
+
+		Convey("Every change should leave a row that can label the outcome later", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+			market.Tick()
+			decision := entryDecision(market, symbols[0].Pair)
+			So(market.Desk.Execute([]types.Decision{decision}), ShouldBeNil)
+
+			position := slices.Collect(market.Desk.Positions())[0]
+			buy := executionfixture.BuyFill()
+			buy.ClientOrderID = decision.ID
+			buy.Symbol = decision.Symbol
+			buy.AvgPrice = fillPrice(market, decision.Symbol)
+			buy.CumQty = decision.ProposedQuantity.String()
+			market.Private.Publish("executions", executionfixture.Frame(buy))
+			market.Tick()
+			market.Tick()
+
+			// The recorder drains on its own goroutine and flushes when it is
+			// closed, so the rows are read back from a settled file.
+			market.Close()
+
+			rows := stopRows(t, position.ID)
+			So(rows, ShouldNotBeEmpty)
+
+			reasons := make([]string, 0, len(rows))
+
+			for _, row := range rows {
+				reason, _ := row["reason"].(string)
+				reasons = append(reasons, reason)
+
+				/*
+					Both boundaries and the mark between them travel on every
+					row. Without them a row says a floor moved but not what it
+					moved relative to, and the first-passage question — profit
+					before loss — cannot be answered from the file.
+				*/
+				So(row["symbol"], ShouldEqual, symbols[0].Pair)
+				So(row["hard_floor"], ShouldNotBeNil)
+				So(row["profit_line"], ShouldNotBeNil)
+				So(row["mark"], ShouldNotBeNil)
+				So(row["phase"], ShouldNotBeNil)
+			}
+
+			/*
+				The realized fill is what promotes the regulator from a
+				provisional basis to a confirmed one, and the row proving it
+				happened is the one that shows the audit trail follows what was
+				paid rather than what was quoted.
+			*/
+			So(reasons, ShouldContain, "bound_on_fill")
+		}))
+	})
+}
+
+func TestPositionStopSnapshot(t *testing.T) {
+	Convey("Given a filled position that has seen a tick", t, func() {
+		symbols := []*testtypes.Symbol{
+			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
+		}
+
+		Convey("Its geometry should be readable from outside the desk goroutine", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+			market.Tick()
+			decision := entryDecision(market, symbols[0].Pair)
+			So(market.Desk.Execute([]types.Decision{decision}), ShouldBeNil)
+
+			position := slices.Collect(market.Desk.Positions())[0]
+			buy := executionfixture.BuyFill()
+			buy.ClientOrderID = decision.ID
+			buy.Symbol = decision.Symbol
+			buy.AvgPrice = fillPrice(market, decision.Symbol)
+			buy.CumQty = decision.ProposedQuantity.String()
+			market.Private.Publish("executions", executionfixture.Frame(buy))
+			market.Tick()
+			market.Tick()
+
+			snapshot := position.StopSnapshot()
+
+			/*
+				The strategy prices a lot's remaining upside and downside against
+				these. An absent snapshot is not a harmless gap — it silently
+				disables the whole first-passage path, the way the unread
+				StopEvidence struct used to.
+			*/
+			So(snapshot.Present, ShouldBeTrue)
+			So(snapshot.Entry, ShouldNotBeNil)
+			So(snapshot.Mark, ShouldNotBeNil)
+			So(snapshot.HardFloor, ShouldNotBeNil)
+			So(snapshot.ProfitFloor, ShouldNotBeNil)
+			So(snapshot.RiskDistance.Sign(), ShouldEqual, 1)
+			So(snapshot.HardFloor.Cmp(snapshot.Entry), ShouldEqual, -1)
+			So(snapshot.ProfitFloor.Cmp(snapshot.Entry), ShouldEqual, 1)
+		}))
+	})
+}
+
 func TestPositionOnTicker(t *testing.T) {
 	Convey("Given a triggered stoploss with an exit already pending", t, func() {
 		symbols := []*testtypes.Symbol{
@@ -186,7 +342,7 @@ func TestPositionOnTicker(t *testing.T) {
 
 		Convey("Ticker updates should not submit the sell again", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
 			market.Tick()
-			decision := entryDecision(symbols[0].Pair)
+			decision := entryDecision(market, symbols[0].Pair)
 			So(market.Desk.Execute([]types.Decision{decision}), ShouldBeNil)
 
 			buy := executionfixture.BuyFill()

@@ -54,6 +54,36 @@ type TradingConfig struct {
 	MaxFraction   float64
 	SlotsNormal   int
 	SlotsReserved int
+	Risk          RiskConfig
+}
+
+/*
+RiskConfig is the stop geometry every entry is sized under.
+
+It is validated rather than defaulted at the point of use, because the failure
+mode is silent and expensive: a loss fraction of zero read through a permissive
+accessor does not disable the cap, it makes the whole wallet the budget for a
+single lot.
+*/
+type RiskConfig struct {
+	/*
+		MaxLossFraction is what one position may lose at its hard floor, as a
+		fraction of the wallet. PortfolioLossFraction is the same for every open
+		position taken together.
+
+		Both exist because the per-position number alone says nothing about the
+		account. Four simultaneous entries at one percent each are a four
+		percent account risk, and nothing in a per-position limit notices.
+	*/
+	MaxLossFraction       float64
+	PortfolioLossFraction float64
+	NoiseMultiple         float64
+	TrailMultiple         float64
+	ArmMultiple           float64
+	LockMultiple          float64
+	MinEdgeMultiple       float64
+	MinTicks              int
+	ConfirmMarks          int
 }
 
 /*
@@ -107,6 +137,17 @@ func Load() (Config, error) {
 			MaxFraction:   viper.GetFloat64("trading.allocation.max_fraction"),
 			SlotsNormal:   viper.GetInt("trading.slots.normal"),
 			SlotsReserved: viper.GetInt("trading.slots.reserved"),
+			Risk: RiskConfig{
+				MaxLossFraction:       viper.GetFloat64("trading.risk.max_loss_fraction"),
+				PortfolioLossFraction: viper.GetFloat64("trading.risk.portfolio_loss_fraction"),
+				NoiseMultiple:         viper.GetFloat64("trading.risk.noise_multiple"),
+				TrailMultiple:         viper.GetFloat64("trading.risk.trail_multiple"),
+				ArmMultiple:           viper.GetFloat64("trading.risk.arm_multiple"),
+				LockMultiple:          viper.GetFloat64("trading.risk.lock_multiple"),
+				MinEdgeMultiple:       viper.GetFloat64("trading.risk.min_edge_multiple"),
+				MinTicks:              viper.GetInt("trading.risk.min_ticks"),
+				ConfirmMarks:          viper.GetInt("trading.risk.confirm_marks"),
+			},
 		},
 		UI: UIConfig{
 			Addr: viper.GetString("ui.addr"),
@@ -161,7 +202,67 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("config: trading.slots.reserved must be >= 0")
 	}
 
+	if err := config.Trading.Risk.Validate(); err != nil {
+		return Config{}, err
+	}
+
 	return config, nil
+}
+
+/*
+validate refuses a risk block that would silently disable the protection it
+describes.
+
+Every check here corresponds to a way the geometry degenerates rather than
+erroring: a zero loss fraction makes the whole wallet one lot's budget, a
+non-positive noise multiple puts the hard floor on the entry price, an arm
+buffer at or below the lock buffer lets protection arm and fire on the same
+tick, and a confirmation count below one turns every wick into an exit.
+*/
+func (risk RiskConfig) Validate() error {
+	if risk.MaxLossFraction <= 0 || risk.MaxLossFraction > 1 {
+		return fmt.Errorf("config: trading.risk.max_loss_fraction must be in (0, 1]")
+	}
+
+	if risk.PortfolioLossFraction <= 0 || risk.PortfolioLossFraction > 1 {
+		return fmt.Errorf("config: trading.risk.portfolio_loss_fraction must be in (0, 1]")
+	}
+
+	if risk.PortfolioLossFraction < risk.MaxLossFraction {
+		return fmt.Errorf(
+			"config: trading.risk.portfolio_loss_fraction must be >= max_loss_fraction",
+		)
+	}
+
+	if risk.NoiseMultiple <= 0 {
+		return fmt.Errorf("config: trading.risk.noise_multiple must be > 0")
+	}
+
+	if risk.TrailMultiple <= 0 {
+		return fmt.Errorf("config: trading.risk.trail_multiple must be > 0")
+	}
+
+	if risk.LockMultiple <= 0 {
+		return fmt.Errorf("config: trading.risk.lock_multiple must be > 0")
+	}
+
+	if risk.ArmMultiple <= risk.LockMultiple {
+		return fmt.Errorf("config: trading.risk.arm_multiple must be > lock_multiple")
+	}
+
+	if risk.MinEdgeMultiple <= 0 {
+		return fmt.Errorf("config: trading.risk.min_edge_multiple must be > 0")
+	}
+
+	if risk.MinTicks < 1 {
+		return fmt.Errorf("config: trading.risk.min_ticks must be >= 1")
+	}
+
+	if risk.ConfirmMarks < 1 {
+		return fmt.Errorf("config: trading.risk.confirm_marks must be >= 1")
+	}
+
+	return nil
 }
 
 /*
@@ -191,6 +292,17 @@ func Fixture() Config {
 			MaxFraction:   0.2,
 			SlotsNormal:   2,
 			SlotsReserved: 2,
+			Risk: RiskConfig{
+				MaxLossFraction:       0.01,
+				PortfolioLossFraction: 0.03,
+				NoiseMultiple:         3,
+				TrailMultiple:         2,
+				ArmMultiple:           2,
+				LockMultiple:          1,
+				MinEdgeMultiple:       1,
+				MinTicks:              4,
+				ConfirmMarks:          3,
+			},
 		},
 		UI: UIConfig{
 			Addr: "127.0.0.1:0",

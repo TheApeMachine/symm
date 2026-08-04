@@ -165,16 +165,21 @@ func (price *Price) RiskPlan(pair kraken.InstrumentPair) types.RiskPlan {
 }
 
 /*
-ExecutableMark is the per-unit price selling this quantity would actually
-realise right now, gross of the exit fee.
+ExecutableMark is the price selling this quantity would realise, and whether the
+visible book can actually say.
 
 The top bid is a price for one unit. A position larger than what rests at the
 touch does not liquidate there: the part the touch cannot absorb walks down the
-book, and valuing the whole lot at the best bid overstates it by exactly the
-part that has to travel. The remainder is charged one full spread here, which
-is the most conservative reading the top-of-book snapshot supports — the ticker
-does not carry the resting levels below the touch, so this is a bound, not a
-simulation of the walk.
+book to levels this process cannot see. There is no maintained order book here —
+the ticker carries the touch and its size, and nothing below it — so when the
+position exceeds that size the honest answer is the touch price plus an explicit
+admission that it is only true of the part that fits.
+
+An earlier version charged the unabsorbed fraction one spread and returned the
+result as though it were a sweep. That number is not a bound: the next resting
+level may be one tick lower or fifty, and a floor defended by an invented VWAP
+is defended by liquidity that was never observed. The limited flag exists so
+callers refuse to build profit geometry on it rather than quietly trusting it.
 
 The exit fee is left out because the lines this is compared against divide it
 out of the price they solve for; charging it in both places would demand a
@@ -183,49 +188,24 @@ profit the position has to earn twice.
 func (price *Price) ExecutableMark(
 	pair kraken.InstrumentPair,
 	quantity *decimal.Decimal,
-) *decimal.Decimal {
+) (mark *decimal.Decimal, limited bool) {
 	tick := price.Tick(pair.Symbol)
 
 	if tick == nil || tick.Bid == nil || tick.Bid.Sign() <= 0 {
-		return nil
+		return nil, false
 	}
 
 	if quantity == nil || quantity.Sign() <= 0 {
-		return tick.Bid.Copy()
+		return tick.Bid.Copy(), false
 	}
 
 	size := quantity.Float64()
-	capacity := tick.BidQty
 
-	if size <= 0 || capacity >= size {
-		return tick.Bid.Copy()
+	if size <= 0 || tick.BidQty >= size {
+		return tick.Bid.Copy(), false
 	}
 
-	if tick.Ask == nil || tick.Ask.Cmp(tick.Bid) <= 0 {
-		return tick.Bid.Copy()
-	}
-
-	stranded := 1 - (capacity / size)
-
-	if stranded <= 0 {
-		return tick.Bid.Copy()
-	}
-
-	spread := tick.Ask.SetScale(feeRateScale).Sub(tick.Bid)
-	penalty := spread.Mul(decimal.NewFromFloat64(stranded).SetScale(feeRateScale))
-	mark := tick.Bid.SetScale(feeRateScale).Sub(penalty)
-
-	if mark.Sign() <= 0 {
-		return tick.Bid.Copy()
-	}
-
-	formatted, err := price.normalizer.FormatPrice(pair.Symbol, mark)
-
-	if err != nil || formatted == nil {
-		return mark
-	}
-
-	return formatted
+	return tick.Bid.Copy(), true
 }
 
 /*
@@ -253,10 +233,16 @@ func (price *Price) PnL(
 		return nil
 	}
 
-	// What the lot is worth is what closing it would realise, so the whole
-	// position is valued at the price its own size can actually reach rather
-	// than at the top bid one unit of it could.
-	liquidation := price.ExecutableMark(pair, holding.Qty)
+	/*
+		What the lot is worth is what closing it would realise. When the touch
+		cannot absorb the whole position that price is unknowable from here, and
+		the touch is used anyway — an unrealisable valuation is still the best
+		this process can state, and reporting no PnL at all would blank the
+		equity line whenever a lot outgrew the top of book. The optimism is
+		disclosed rather than hidden: the same limit stops the regulator from
+		acting on it.
+	*/
+	liquidation, _ := price.ExecutableMark(pair, holding.Qty)
 
 	if liquidation == nil {
 		return nil

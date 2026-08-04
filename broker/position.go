@@ -5,10 +5,12 @@ import (
 	"errors"
 	"sync/atomic"
 
+	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -27,10 +29,27 @@ type Position struct {
 	instrument     *Instrument
 	price          *Price
 	balance        *Balance
+	recorder       *audit.Recorder
 	pair           kraken.InstrumentPair
 	seenExecutions map[string]struct{}
 	entryFills     int
 	exitFills      int
+	/*
+		exiting records that a sell has been handed to the venue for this lot.
+
+		One Status field cannot describe both order legs at once, and the two
+		disagree constantly: an entry fill arriving after an exit was submitted
+		would otherwise set the position back to OPEN. This is the sell leg's
+		own state, and it only ever goes one way.
+	*/
+	exiting bool
+	/*
+		stopOrderID is the client order identifier the regulator's own exit is
+		submitted under, minted once so a retry cannot become a second sell.
+		It is distinct from the entry's identifier, which the exit leg used to
+		reuse — leaving both legs of one lot correlating to the same ID.
+	*/
+	stopOrderID string
 	/*
 		evidence is the latest reading the strategy has published about this
 		symbol. It is an atomic handoff because the strategy runs on the
@@ -43,7 +62,14 @@ type Position struct {
 		is the correct behaviour: toxicity does not stop being true because no
 		new measurement landed this millisecond.
 	*/
-	evidence         atomic.Pointer[types.StopEvidence]
+	evidence atomic.Pointer[types.StopEvidence]
+	/*
+		snapshot is the mirror of evidence in the other direction: the desk
+		publishes the regulator's geometry after every observation so the
+		strategy can price a position against the boundaries it is actually
+		being defended by, without reading the live regulator across goroutines.
+	*/
+	snapshot         atomic.Pointer[types.StopSnapshot]
 	ID               string                `json:"id"`
 	Status           types.Status          `json:"status"`
 	EntryOrder       *spot.AddOrderRequest `json:"entry_order"`
@@ -63,6 +89,7 @@ func NewPosition(
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
+	recorder *audit.Recorder,
 	pair kraken.InstrumentPair,
 	decision types.Decision,
 ) *Position {
@@ -84,6 +111,7 @@ func NewPosition(
 		instrument:     instrument,
 		price:          price,
 		balance:        balance,
+		recorder:       recorder,
 		pair:           pair,
 		seenExecutions: map[string]struct{}{},
 		ID:             decision.ID,
@@ -156,7 +184,9 @@ func (position *Position) observation() types.StopEvidence {
 		quantity = position.Holding.Qty
 	}
 
-	evidence.ExecutableMark = position.price.ExecutableMark(position.pair, quantity)
+	evidence.ExecutableMark, evidence.DepthLimited = position.price.ExecutableMark(
+		position.pair, quantity,
+	)
 	evidence.Present = evidence.ExecutableMark != nil
 
 	if tick := position.price.Tick(position.pair.Symbol); tick != nil {
@@ -171,6 +201,86 @@ func (position *Position) observation() types.StopEvidence {
 		of two different moments.
 	*/
 	return evidence
+}
+
+/*
+publishSnapshot latches the regulator's current geometry for readers outside the
+desk goroutine.
+*/
+func (position *Position) publishSnapshot() {
+	if position == nil || position.Holding == nil {
+		return
+	}
+
+	snapshot := position.Holding.Stoploss.Snapshot()
+	position.snapshot.Store(&snapshot)
+}
+
+/*
+StopSnapshot reports the regulator's geometry as of the last observation.
+
+An absent snapshot means no tick has reached this lot yet, which is a real state
+and not an error: a position submitted a moment ago has a regulator whose
+boundaries exist but which has judged nothing.
+*/
+func (position *Position) StopSnapshot() types.StopSnapshot {
+	if position == nil {
+		return types.StopSnapshot{}
+	}
+
+	if latched := position.snapshot.Load(); latched != nil {
+		return *latched
+	}
+
+	return types.StopSnapshot{}
+}
+
+/*
+auditStops writes every geometry change the regulator has made since the last
+call.
+
+The rows are what makes the stop answerable after the fact. A position that
+exits leaves a decision row saying a sell went out, and nothing about which
+boundary sent it or where the other boundaries stood at that moment. Each row
+here carries both floors, the profit line, the peak and the mark, so a later
+pass can label the one question the calibrated model will need answered: from
+this state, did the lot reach its protected profit before its hard loss.
+*/
+func (position *Position) auditStops() {
+	if position.recorder == nil || position.Holding == nil ||
+		position.Holding.Stoploss == nil {
+		return
+	}
+
+	stoploss := position.Holding.Stoploss
+
+	for _, transition := range stoploss.DrainTransitions() {
+		errnie.Error(audit.Record(position.recorder, "stop", map[string]any{
+			"position":     position.ID,
+			"symbol":       position.pair.Symbol,
+			"seq":          transition.Seq,
+			"at":           transition.At,
+			"reason":       transition.Reason,
+			"phase":        transition.Phase,
+			"status":       stoploss.Status,
+			"armed":        stoploss.ProfitArmed,
+			"trigger":      stoploss.TriggerReason,
+			"mark":         transition.Mark,
+			"floor":        transition.Floor,
+			"hard_floor":   stoploss.HardFloor,
+			"profit_line":  stoploss.ProfitLine,
+			"profit_floor": stoploss.ProfitFloor,
+			"trail_floor":  stoploss.TrailFloor,
+			"arm_line":     stoploss.ArmLine,
+			"peak":         stoploss.Peak,
+			"entry":        stoploss.Entry,
+			"qty":          stoploss.Qty,
+			"entry_fee":    stoploss.EntryFee,
+			"risk":         stoploss.Plan.RiskDistance,
+			"trail":        stoploss.Plan.TrailDistance,
+			"noise_band":   stoploss.Plan.NoiseBand,
+		}))
+	}
 }
 
 /*
@@ -191,16 +301,45 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 		}
 
 		position.Holding.Observe(position.observation())
+		position.publishSnapshot()
+		position.auditStops()
 		position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
 		position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
 	}
 
-	if position.Status == types.OPEN && position.Holding.Stoploss != nil &&
+	if position.Status == types.OPEN && !position.exiting &&
+		position.Holding.Stoploss != nil &&
 		position.Holding.Stoploss.Status == types.TRIGGERED {
-		position.Exit(position.ExitOrder.ClOrdId)
+		position.exitOnStop()
 	}
 
 	position.Publish()
+}
+
+/*
+exitOnStop submits the regulator's exit under an identifier minted for it.
+
+The identifier is generated once and kept. The exit leg used to reuse the
+entry's, which meant both legs of one lot correlated to the same client order ID
+and an execution row could not say which order it belonged to.
+
+A submission failure is recorded rather than swallowed. The regulator stays
+triggered, so the next tick tries again — which is the behaviour that matters
+when a stop has fired and the venue did not answer — but the failure is on the
+record instead of vanishing into an ignored return value.
+*/
+func (position *Position) exitOnStop() {
+	if position.stopOrderID == "" {
+		position.stopOrderID = uuid.NewString()
+	}
+
+	if err := position.Exit(position.stopOrderID); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"position: stop exit for "+position.pair.Symbol+" was not accepted",
+			err,
+		))
+	}
 }
 
 func (position *Position) onExecution(execution *kraken.Execution) {
@@ -264,9 +403,26 @@ func (position *Position) onExecution(execution *kraken.Execution) {
 				Qty:        position.Holding.Qty,
 			})
 
+			position.publishSnapshot()
+			position.auditStops()
+
+			/*
+				A late entry fill must not resurrect a lot that is already on its
+				way out. Once an exit has been submitted the position belongs to
+				the sell leg, and reopening it here would leave a closed lot
+				marked OPEN with an armed regulator watching inventory that is
+				being sold — and, on the next trigger, a second sell.
+
+				RebindFill above still runs, because the basis is a fact worth
+				recording whatever the lot is doing.
+			*/
+			if position.exiting {
+				position.Publish()
+				continue
+			}
+
 			position.Status = types.OPEN
 			position.Holding.Status = types.OPEN
-			position.Holding.Stoploss.Status = types.ARMED
 		}
 
 		if row.Side == "sell" {
@@ -360,6 +516,10 @@ func (position *Position) Exit(clientOrderID string) error {
 	}
 
 	position.ExitOrderResult = &result
+
+	// The venue has the sell. From here the lot belongs to the exit leg, and a
+	// late entry fill must not hand it back to the entry leg.
+	position.exiting = true
 
 	if position.Status != types.CLOSED {
 		position.Status = types.PENDING

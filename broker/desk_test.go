@@ -21,14 +21,30 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-func entryDecision(symbol string) types.Decision {
-	return types.Decision{
+/*
+entryDecision builds a sized entry carrying the stop geometry it was sized
+under.
+
+The plan is not decoration. The desk refuses an entry without one, because the
+quantity travelling with a decision was solved against a particular risk
+distance and attaching some other distance after the fact breaks the coupling
+that makes a wide stop affordable. A bare decision here would only be testing a
+path production no longer has.
+*/
+func entryDecision(market *tests.Market, symbol string) types.Decision {
+	decision := types.Decision{
 		ID:               uuid.NewString(),
 		Action:           types.ActionEnter,
 		Symbol:           symbol,
 		ProposedQuantity: decimal.NewFromFloat64(0.25),
 		ProposedNotional: decimal.NewFromInt64(25),
 	}
+
+	if pair, err := market.Desk.Instrument().Pair(symbol); err == nil {
+		decision.Risk = market.Desk.Price().RiskPlan(pair)
+	}
+
+	return decision
 }
 
 func TestDeskExecute(t *testing.T) {
@@ -41,7 +57,7 @@ func TestDeskExecute(t *testing.T) {
 
 		Convey("Execute should submit and retain a position before a fill", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
 			market.Tick()
-			decision := entryDecision(symbols[0].Pair)
+			decision := entryDecision(market, symbols[0].Pair)
 
 			So(market.Desk.Execute([]types.Decision{decision}), ShouldBeNil)
 			So(market.Desk.OpenPositions(), ShouldEqual, 1)
@@ -73,11 +89,11 @@ func TestDeskExecute(t *testing.T) {
 
 		Convey("A repeated enter should reject the new position", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
 			market.Tick()
-			decision := entryDecision(symbols[0].Pair)
+			decision := entryDecision(market, symbols[0].Pair)
 			So(market.Desk.Execute([]types.Decision{decision}), ShouldBeNil)
 			openPositions := market.Desk.OpenPositions()
 
-			duplicate := entryDecision(decision.Symbol)
+			duplicate := entryDecision(market, decision.Symbol)
 			err := market.Desk.Execute([]types.Decision{duplicate})
 
 			So(err, ShouldNotBeNil)
@@ -104,7 +120,7 @@ func TestDeskExecute(t *testing.T) {
 			market.Tick()
 			market.Private.FailAddOrder(errors.New("venue unavailable"))
 			openPositions := market.Desk.OpenPositions()
-			err := market.Desk.Execute([]types.Decision{entryDecision(symbols[0].Pair)})
+			err := market.Desk.Execute([]types.Decision{entryDecision(market, symbols[0].Pair)})
 
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "failed to place market order")
@@ -122,7 +138,7 @@ func TestDeskExecute(t *testing.T) {
 
 				go func() {
 					defer wait.Done()
-					executionErrors <- market.Desk.Execute([]types.Decision{entryDecision(symbol.Pair)})
+					executionErrors <- market.Desk.Execute([]types.Decision{entryDecision(market, symbol.Pair)})
 				}()
 			}
 

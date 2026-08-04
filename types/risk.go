@@ -83,6 +83,14 @@ type RiskPlan struct {
 	*/
 	ExitFeeRate *decimal.Decimal `json:"exit_fee_rate"`
 	/*
+		EntryFeeRate is what the entry crossing cost, as a fraction. It is here
+		because the loss at the hard floor is not the price distance: it is the
+		distance plus both crossings, and sizing that ignores them buys a
+		position whose real worst case is several times the budget it was
+		solved against.
+	*/
+	EntryFeeRate *decimal.Decimal `json:"entry_fee_rate"`
+	/*
 		TickSize is the venue's price granularity, used to round every derived
 		line onto a price the exchange can actually quote.
 	*/
@@ -157,15 +165,30 @@ type RiskInputs struct {
 	Spread         *decimal.Decimal
 	Impact         *decimal.Decimal
 	/*
-		Uncertainty is the forecast's own dispersion, as a fraction of price.
-		It is the closest thing available to an adverse-excursion estimate until
-		first-passage outcomes have been collected and calibrated.
+		ReturnRiskFraction is an adverse price excursion expressed as a fraction
+		of the reference price, and nothing else may be passed here.
+
+		It is absent for now, deliberately. The obvious candidate was the
+		forecast's Uncertainty, but that value is the resonance kernel's
+		predictive-coding reconstruction residual divided by the square root of
+		the feature count — a model-error magnitude in the units of the model's
+		own feature space. It is not a return, not a standard deviation of one,
+		and not a percentage. Multiplying a price by it produces a number with
+		no meaning, and depending on where that residual happens to sit it can
+		place the hard floor a few basis points below entry or below zero.
+
+		The band this field is meant to carry has to come from measured forward
+		return errors or a conditional adverse-excursion quantile. Until one of
+		those exists, the boundary is derived from what is actually measured —
+		crossing cost and venue granularity — rather than from a plausible
+		looking number of the wrong kind.
 	*/
-	Uncertainty float64
-	TickSize    *decimal.Decimal
-	ExitFeeRate *decimal.Decimal
-	MaxLoss     *decimal.Decimal
-	Multiples   RiskMultiples
+	ReturnRiskFraction float64
+	TickSize           *decimal.Decimal
+	ExitFeeRate        *decimal.Decimal
+	EntryFeeRate       *decimal.Decimal
+	MaxLoss            *decimal.Decimal
+	Multiples          RiskMultiples
 }
 
 /*
@@ -245,10 +268,11 @@ func NewRiskPlan(inputs RiskInputs) RiskPlan {
 
 	volatilityBand := decimal.NewFromInt64(0).SetScale(riskScale)
 
-	if !math.IsNaN(inputs.Uncertainty) && !math.IsInf(inputs.Uncertainty, 0) &&
-		inputs.Uncertainty > 0 {
+	if !math.IsNaN(inputs.ReturnRiskFraction) &&
+		!math.IsInf(inputs.ReturnRiskFraction, 0) &&
+		inputs.ReturnRiskFraction > 0 {
 		volatilityBand = reference.Mul(
-			decimal.NewFromFloat64(inputs.Uncertainty).SetScale(riskScale),
+			decimal.NewFromFloat64(inputs.ReturnRiskFraction).SetScale(riskScale),
 		)
 	}
 
@@ -257,6 +281,17 @@ func NewRiskPlan(inputs RiskInputs) RiskPlan {
 		multiply(noiseBand, multiples.Risk),
 		minimumBand,
 	)
+
+	/*
+		A boundary that reaches the price itself is not a wide stop, it is a
+		broken input. Rather than emit a hard floor at or below zero — which
+		reads as "this lot cannot lose" to every consumer downstream and sizes
+		the position at essentially nothing — the plan reports absence, and the
+		caller refuses the entry.
+	*/
+	if riskDistance == nil || riskDistance.Cmp(reference.Sub(tick)) >= 0 {
+		return RiskPlan{}
+	}
 
 	lockBuffer := largest(multiply(noiseBand, multiples.Lock), tick)
 	armBuffer := largest(
@@ -280,6 +315,7 @@ func NewRiskPlan(inputs RiskInputs) RiskPlan {
 		MinEdge:       largest(multiply(noiseBand, multiples.MinEdge), tick),
 		MaxLoss:       scaled(inputs.MaxLoss),
 		ExitFeeRate:   scaled(inputs.ExitFeeRate),
+		EntryFeeRate:  scaled(inputs.EntryFeeRate),
 		TickSize:      tick,
 		ConfirmMarks:  confirmMarks,
 		Multiples:     multiples,
@@ -287,18 +323,21 @@ func NewRiskPlan(inputs RiskInputs) RiskPlan {
 }
 
 /*
-MaxQuantity is the largest position this plan can carry without the hard floor
-costing more than MaxLoss.
+LossPerUnit is what one unit actually costs if this lot runs to its hard floor.
 
-This is the half of the coupling that makes a wide stop affordable. Without it,
-widening the boundary far enough to survive ordinary noise just converts every
-stopped-out trade into a proportionally larger loss.
+The price distance is only part of it. Getting in was charged a fee, getting out
+at the floor will be charged another on the proceeds, and the floor itself sits
+on a tick boundary that can be a fraction below the nominal distance. Sizing
+against the bare distance understates the real worst case by both fees — on a
+tight stop with a taker rate, by more than the distance itself.
 
-An absent plan or an unstated loss budget returns nil, which leaves sizing to
-whatever other constraint the caller applies.
+	loss = entry + entryFee − floor × (1 − exitFeeRate)
+
+An absent entry price returns nil, because a per-unit loss cannot be stated
+without the price the unit was bought at.
 */
-func (plan RiskPlan) MaxQuantity() *decimal.Decimal {
-	if !plan.Present || plan.MaxLoss == nil || plan.MaxLoss.Sign() <= 0 {
+func (plan RiskPlan) LossPerUnit(entryPrice *decimal.Decimal) *decimal.Decimal {
+	if !plan.Present || entryPrice == nil || entryPrice.Sign() <= 0 {
 		return nil
 	}
 
@@ -306,7 +345,59 @@ func (plan RiskPlan) MaxQuantity() *decimal.Decimal {
 		return nil
 	}
 
-	return plan.MaxLoss.SetScale(riskScale).Div(plan.RiskDistance)
+	entry := entryPrice.SetScale(riskScale)
+	floor := floorToTick(entry.Sub(plan.RiskDistance), plan.TickSize)
+
+	if floor == nil || floor.Sign() <= 0 {
+		return nil
+	}
+
+	proceeds := floor
+
+	if rate := plan.ExitFeeRate; rate != nil && rate.Sign() > 0 {
+		proceeds = floor.Mul(
+			decimal.NewFromInt64(1).SetScale(riskScale).Sub(rate),
+		)
+	}
+
+	cost := entry
+
+	if rate := plan.EntryFeeRate; rate != nil && rate.Sign() > 0 {
+		cost = entry.Add(entry.Mul(rate))
+	}
+
+	loss := cost.Sub(proceeds)
+
+	if loss.Sign() <= 0 {
+		return nil
+	}
+
+	return loss
+}
+
+/*
+MaxQuantity is the largest position this plan can carry without running to its
+hard floor costing more than MaxLoss.
+
+This is the half of the coupling that makes a wide stop affordable. Without it,
+widening the boundary far enough to survive ordinary noise just converts every
+stopped-out trade into a proportionally larger loss.
+
+An absent plan, an unstated loss budget or an unpriceable per-unit loss returns
+nil, which leaves sizing to whatever other constraint the caller applies.
+*/
+func (plan RiskPlan) MaxQuantity(entryPrice *decimal.Decimal) *decimal.Decimal {
+	if plan.MaxLoss == nil || plan.MaxLoss.Sign() <= 0 {
+		return nil
+	}
+
+	lossPerUnit := plan.LossPerUnit(entryPrice)
+
+	if lossPerUnit == nil {
+		return nil
+	}
+
+	return plan.MaxLoss.SetScale(riskScale).Div(lossPerUnit)
 }
 
 /*

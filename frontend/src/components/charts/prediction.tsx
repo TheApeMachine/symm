@@ -1,5 +1,8 @@
 import { Component } from "#/components/ui/component";
 
+export const vectorSlotTransform = (slot: number, slotCount: number): string =>
+	`translateX(${(slot / slotCount) * 100}%) scaleX(${1 / slotCount})`;
+
 const ScalarDiagnostics = () => (
 	<Component registerKey="resonance" select="0">
 		{({ ref }) => (
@@ -95,7 +98,7 @@ const VectorLane = ({
 					</span>
 					<span className="text-(--f4)">{meta}</span>
 				</div>
-				<div className="relative flex min-h-0 flex-1 items-stretch gap-px overflow-hidden border border-(--line) bg-[linear-gradient(to_bottom,transparent_calc(50%-0.5px),var(--line2)_calc(50%-0.5px),var(--line2)_calc(50%+0.5px),transparent_calc(50%+0.5px))] px-1">
+				<div className="relative min-h-0 flex-1 overflow-hidden border border-(--line) bg-[linear-gradient(to_bottom,transparent_calc(50%-0.5px),var(--line2)_calc(50%-0.5px),var(--line2)_calc(50%+0.5px),transparent_calc(50%+0.5px))]">
 					{slots.map((slot) => (
 						<div
 							key={`${select}-${slot}`}
@@ -103,13 +106,14 @@ const VectorLane = ({
 							data-paint="$"
 							data-paint-prop="title"
 							data-paint-format=".4f"
-							className="relative min-w-px flex-1"
+							className="absolute inset-y-0 right-1 left-1 origin-left"
+							style={{ transform: vectorSlotTransform(slot, slots.length) }}
 						>
 							<div
 								data-set="$"
 								data-set-scale={scale}
 								data-target="style.--value"
-								className={`absolute top-1/2 right-0 left-0 h-[calc(50%-1px)] origin-top ${color}`}
+								className={`absolute top-1/2 right-px left-0 h-[calc(50%-1px)] origin-top ${color}`}
 								style={{ transform: "scaleY(var(--value, 0))" }}
 							/>
 						</div>

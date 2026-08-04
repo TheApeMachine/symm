@@ -161,18 +161,27 @@ func estimateImpact(thesis *types.Thesis, symbol string, spread *decimal.Decimal
 }
 
 /*
-retreatPressure reads how much of the bid touch is being pulled rather than
-filled, as a fraction of what was resting there before.
+hollowPressure reads how much of the bid touch is being cancelled rather than
+filled, as a share of what was resting there before it went.
 
-The bid side is the one that matters to a long: it is the liquidity the
-position would have to sell into, and a bid that steps up while its quantity
-disappears is quoting a price that is not for sale.
+The bid side is the one that matters to a long: it is the liquidity the position
+would have to sell into, and a best price holding steady while the size behind
+it evaporates is a quote that is not for sale.
 
-The second return distinguishes "no retreat" from "no reading", so a regulator
-can hold the last state it was told instead of treating a missing measurement
-as an all-clear.
+Cancellation is the right metric and retreat is not. Toxicity emits a buy-side
+retreat when the bid steps *down*, which produces no new peak for a regulator to
+suppress; it emits a cancellation when size disappears at an unchanged best
+price, which is exactly the hollow quote that would otherwise mint a peak the
+position could never have sold into.
+
+The raw cancellation is a quantity, so it is normalised here against the touch
+it was pulled from — the signal publishes a normalised share for retreat but not
+for cancellation.
+
+The second return distinguishes "nothing cancelled" from "no reading", so the
+regulator can tell an all-clear from silence.
 */
-func retreatPressure(thesis *types.Thesis, symbol string) (float64, bool) {
+func hollowPressure(thesis *types.Thesis, symbol string) (float64, bool) {
 	if thesis == nil || thesis.Measurements == nil {
 		return 0, false
 	}
@@ -200,9 +209,25 @@ func retreatPressure(thesis *types.Thesis, symbol string) (float64, bool) {
 			}
 
 			observed = true
-			pressure = math.Max(pressure, getMetricValue(measurement, string(
-				types.MetricKey(types.MetricRetreatingQuantity, types.SideBuy),
-			)))
+
+			cancelled := measurement.Sample(
+				types.MetricCancelledQuantity, types.SideBuy,
+			).Raw
+			resting := measurement.Sample(
+				types.MetricTouchQuantity, types.SideBuy,
+			).Raw
+
+			if math.IsNaN(cancelled) || math.IsInf(cancelled, 0) || cancelled <= 0 {
+				continue
+			}
+
+			prior := resting + cancelled
+
+			if math.IsNaN(prior) || math.IsInf(prior, 0) || prior <= 0 {
+				continue
+			}
+
+			pressure = math.Max(pressure, cancelled/prior)
 		}
 
 		return true

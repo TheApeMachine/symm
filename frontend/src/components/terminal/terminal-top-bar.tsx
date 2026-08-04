@@ -1,6 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
+import { cn } from "#/lib/utils";
 import { Balance } from "@/components/balance";
 import { Count } from "@/components/count";
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Key } from "@/components/ui/key";
 import { Toolbar } from "@/components/ui/toolbar";
+import { Component, Flex, Typography } from "../ui";
 
 const SymmLogo = () => (
 	<svg
@@ -75,6 +77,25 @@ export const TerminalTopBar = () => {
 				</Button>
 
 				<Balance />
+			</Toolbar.Group>
+			<Toolbar.Group>
+				<Component registerKey="strategy">
+					{({ ref, className }) => (
+						<Flex.Row
+							ref={ref}
+							align="center"
+							gap={6}
+							className={cn(className)}
+						>
+							<Flex.Column className="items-end gap-px">
+								<Typography.Label size="s" tone="f4" weight="normal">
+									Tick
+								</Typography.Label>
+								<Typography.Mono size="lg" tone="f1" data-paint="tick" />
+							</Flex.Column>
+						</Flex.Row>
+					)}
+				</Component>
 			</Toolbar.Group>
 		</Toolbar>
 	);

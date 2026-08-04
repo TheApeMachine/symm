@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -38,6 +39,7 @@ type Desk struct {
 	instrument    *Instrument
 	price         *Price
 	balance       *Balance
+	recorder      *audit.Recorder
 	positions     *sync.Map
 	positionsMu   sync.Mutex
 	maxPositions  int
@@ -53,6 +55,7 @@ func NewDesk(
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
+	recorder *audit.Recorder,
 	ui chan []byte,
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
@@ -73,6 +76,7 @@ func NewDesk(
 		instrument:   instrument,
 		price:        price,
 		balance:      balance,
+		recorder:     recorder,
 		positions:    &sync.Map{},
 		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
 		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
@@ -271,6 +275,7 @@ func (desk *Desk) recover() error {
 			desk.instrument,
 			desk.price,
 			desk.balance,
+			desk.recorder,
 			pair,
 			types.Decision{
 				ID:               "recovered:" + symbol,
@@ -300,6 +305,15 @@ func (desk *Desk) recover() error {
 		position.Holding.SellableQty = quantity.Copy()
 		position.Holding.EntryAt = &entryAt
 		position.Holding.Status = types.OPEN
+
+		/*
+			Recovered inventory has a real basis already — the trade history says
+			what was paid for the amount held — so its regulator is confirmed
+			here rather than waiting for a fill that will never arrive. Without
+			this the lot would sit unprotected forever, since every mark it sees
+			would be refused as arriving against an unconfirmed estimate.
+		*/
+		position.Holding.Stoploss.BindRecovered()
 
 		desk.positions.Store(symbol, position)
 		position.Publish()
@@ -584,11 +598,25 @@ func (desk *Desk) enter(decision types.Decision) error {
 	decision.EntryFee = entryFee
 	decision.Mark = tick.Bid.Copy()
 
-	// The allocator refuses to size an entry it cannot draw a boundary for, so
-	// a decision arriving without one came from somewhere else and still has to
-	// be defended.
+	/*
+		An entry without stop geometry is refused rather than fitted with some.
+
+		The desk could derive a plan here, and an earlier version did — but the
+		quantity arriving with the decision was solved against whatever distance
+		the allocator used, and attaching a different distance after the fact
+		breaks exactly the coupling that makes a wide stop affordable. A lot
+		sized for a ten-cent boundary and then defended at forty is carrying
+		four times the loss it was budgeted.
+
+		Recovered wallet inventory is the one case that legitimately has no
+		plan, and it does not come through here.
+	*/
 	if !decision.Risk.Present {
-		decision.Risk = desk.price.RiskPlan(pair)
+		return errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"desk: entry for "+decision.Symbol+" carries no risk geometry",
+			nil,
+		))
 	}
 
 	position := NewPosition(
@@ -598,6 +626,7 @@ func (desk *Desk) enter(decision types.Decision) error {
 		desk.instrument,
 		desk.price,
 		desk.balance,
+		desk.recorder,
 		pair,
 		decision,
 	)

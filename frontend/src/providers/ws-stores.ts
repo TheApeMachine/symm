@@ -128,11 +128,10 @@ export const paintRegistered = (
 
 /*
 attach coalesces worker updates to one paint pass per display frame. DRAW values
-are complete per wire key except positions, cognition and resonance, which each
-publish one independently owned lot / symbol at a time. Those deltas are retained
-by identity so a surface sees the whole universe rather than whichever slice the
-engine happened to re-read this tick; other newer values supersede work the
-browser has not painted yet.
+carry at most one sparse delta per identity from the worker. Positions, cognition
+and resonance are retained on the main thread and materialized once when the
+display frame begins; other newer values supersede work not yet painted. DRAWN
+acknowledges the paint so the worker does not dispatch faster than the display.
 */
 export const attach = (worker: Worker) => {
 	const pendingUpdates = new Map<string, JSONSerializable>();
@@ -144,7 +143,21 @@ export const attach = (worker: Worker) => {
 
 	const flush = () => {
 		animationFrame = null;
-		const updates = Array.from(pendingUpdates.entries());
+		const updates = Array.from(pendingUpdates, ([key, value]) => {
+			if (key === "cognition") {
+				return [key, Object.fromEntries(retainedCognition)] as const;
+			}
+
+			if (key === "resonance") {
+				return [key, Array.from(retainedResonance.values())] as const;
+			}
+
+			if (key === "positions") {
+				return [key, Array.from(retainedPositions.values())] as const;
+			}
+
+			return [key, value] as const;
+		});
 		const binary = pendingBinary;
 
 		pendingUpdates.clear();
@@ -154,11 +167,11 @@ export const attach = (worker: Worker) => {
 			paintRegistered(key, value);
 		}
 
-		if (binary === null || !retainManifoldBinary(binary)) {
-			return;
+		if (binary !== null && retainManifoldBinary(binary)) {
+			repaintTerminalFluidChart(appStore.state.focusSymbol);
 		}
 
-		repaintTerminalFluidChart(appStore.state.focusSymbol);
+		worker.postMessage({ type: "DRAWN" });
 	};
 
 	const schedule = () => {
@@ -191,7 +204,7 @@ export const attach = (worker: Worker) => {
 					retainedCognition.set(symbol, reading);
 				}
 
-				pendingUpdates.set("cognition", Object.fromEntries(retainedCognition));
+				pendingUpdates.set("cognition", null);
 				continue;
 			}
 
@@ -204,7 +217,7 @@ export const attach = (worker: Worker) => {
 					}
 				}
 
-				pendingUpdates.set("resonance", Array.from(retainedResonance.values()));
+				pendingUpdates.set("resonance", null);
 				continue;
 			}
 
@@ -228,7 +241,7 @@ export const attach = (worker: Worker) => {
 				retainedPositions.set(identity, position);
 			}
 
-			pendingUpdates.set("positions", Array.from(retainedPositions.values()));
+			pendingUpdates.set("positions", null);
 		}
 
 		schedule();

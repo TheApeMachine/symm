@@ -1,12 +1,15 @@
 /// <reference lib="webworker" />
 
+import { WorkerFrameBuffer } from "#/providers/ws-frame-buffer";
+
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 5000;
 
 type WorkerInbound =
 	| { type: "CONNECT"; url: string }
 	| { type: "DISCONNECT" }
-	| { type: "FOCUS"; symbol: string };
+	| { type: "FOCUS"; symbol: string }
+	| { type: "DRAWN" };
 
 type WorkerOutbound =
 	| { type: "READY" }
@@ -22,6 +25,35 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let attempt = 0;
 let activeUrl = "";
 let focusSymbol = "";
+let drawOutstanding = false;
+let pendingBinary: ArrayBuffer | null = null;
+const frameBuffer = new WorkerFrameBuffer();
+
+const postPendingDraw = () => {
+	if (drawOutstanding) {
+		return;
+	}
+
+	if (pendingBinary !== null) {
+		const buffer = pendingBinary;
+
+		pendingBinary = null;
+		drawOutstanding = true;
+		self.postMessage({ type: "DRAW_BIN", buffer } satisfies WorkerOutbound, [
+			buffer,
+		]);
+		return;
+	}
+
+	const frame = frameBuffer.take();
+
+	if (frame === null) {
+		return;
+	}
+
+	drawOutstanding = true;
+	self.postMessage({ type: "DRAW", frame } satisfies WorkerOutbound);
+};
 
 const readTextFrame = async (data: unknown): Promise<string | null> => {
 	if (data instanceof ArrayBuffer) {
@@ -151,10 +183,8 @@ const connect = (url: string) => {
 		async (event) => {
 			try {
 				if (event.data instanceof ArrayBuffer) {
-					self.postMessage(
-						{ type: "DRAW_BIN", buffer: event.data } satisfies WorkerOutbound,
-						[event.data],
-					);
+					pendingBinary = event.data;
+					postPendingDraw();
 					return;
 				}
 
@@ -186,10 +216,8 @@ const connect = (url: string) => {
 					return;
 				}
 
-				self.postMessage({
-					type: "DRAW",
-					frame,
-				} satisfies WorkerOutbound);
+				frameBuffer.merge(frame);
+				postPendingDraw();
 			} catch (err) {
 				console.log(event);
 
@@ -217,6 +245,9 @@ self.addEventListener("message", (event: MessageEvent<WorkerInbound>) => {
 
 		case "DISCONNECT": {
 			activeUrl = "";
+			drawOutstanding = false;
+			pendingBinary = null;
+			frameBuffer.clear();
 
 			if (reconnectTimer !== null) {
 				clearTimeout(reconnectTimer);
@@ -233,6 +264,12 @@ self.addEventListener("message", (event: MessageEvent<WorkerInbound>) => {
 
 		case "FOCUS": {
 			sendFocus(message.symbol);
+			return;
+		}
+
+		case "DRAWN": {
+			drawOutstanding = false;
+			postPendingDraw();
 			return;
 		}
 

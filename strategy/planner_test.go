@@ -245,6 +245,7 @@ func TestPlannerPumpReversal(t *testing.T) {
 			Action:           types.ActionEnter,
 			Symbol:           symbols[0].Pair,
 			ProposedQuantity: entryQuantity,
+			Risk:             tests.EntryRisk(market, symbols[0].Pair),
 		}}), ShouldBeNil)
 
 		market.Tick()

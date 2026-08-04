@@ -51,7 +51,7 @@ func NewPlanner(
 		buffer = 64
 	}
 
-	evaluator := NewEvaluator(desk, price, balance)
+	evaluator := NewEvaluator(desk, price, balance, recorder)
 	arbiter := NewArbiter(desk, price)
 
 	planner := &Planner{
@@ -67,7 +67,7 @@ func NewPlanner(
 		recorder:    recorder,
 		evaluator:   evaluator,
 		arbiter:     arbiter,
-		allocator:   NewAllocator(ctx, balance, instrument, price),
+		allocator:   NewAllocator(ctx, balance, instrument, price, desk),
 	}
 
 	if analyzer != nil {

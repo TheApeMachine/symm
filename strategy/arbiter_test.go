@@ -30,6 +30,7 @@ func TestArbiterArbitrate(t *testing.T) {
 				Action:           types.ActionEnter,
 				Symbol:           symbol.Pair,
 				ProposedQuantity: quantity,
+				Risk:             tests.EntryRisk(market, symbol.Pair),
 			}})
 
 			So(err, ShouldBeNil)
@@ -78,6 +79,7 @@ func TestArbiterArbitrate(t *testing.T) {
 				Symbol:           symbol.Pair,
 				ProposedQuantity: quantity,
 				Opportunity:      positionIndex >= market.Desk.MaxPositions(),
+				Risk:             tests.EntryRisk(market, symbol.Pair),
 			}})
 
 			So(err, ShouldBeNil)

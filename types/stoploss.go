@@ -19,19 +19,15 @@ belong here.
 type StopPhase string
 
 const (
-	/*
-		PhaseDiscovery is an open lot that has not yet earned anything worth
-		protecting. Peaks are recorded and the noise band is tracked, but the
-		trailing floor is not allowed to end the trade — only the hard risk
-		boundary is. Whether an underwater thesis is still viable is decided by
-		the strategy's continuation evaluator, which can see the forecast, the
-		causal evidence and the structural categories that answer it.
-	*/
+	// PhaseDiscovery is an open lot that has not yet earned anything worth
+	// protecting. Peaks are recorded and the noise band is tracked, but the
+	// trailing floor is not allowed to end the trade — only the hard risk
+	// boundary is. Whether an underwater thesis is still viable is decided by
+	// the strategy's continuation evaluator, which can see the forecast, the
+	// causal evidence and the structural categories that answer it.
 	PhaseDiscovery StopPhase = "discovery"
-	/*
-		PhaseProtected is a lot that has traded far enough above its profit line
-		for the giveback floor to arm. From here the floor can only rise.
-	*/
+	// PhaseProtected is a lot that has traded far enough above its profit line
+	// for the giveback floor to arm. From here the floor can only rise.
 	PhaseProtected StopPhase = "protected"
 )
 
@@ -44,6 +40,9 @@ const (
 	TriggerHardRisk = "hard_risk"
 	// TriggerProtectedGiveback is a confirmed breach of a protected floor.
 	TriggerProtectedGiveback = "protected_giveback"
+	// TriggerProfitFailSafe is the last line above break-even on a lot that had
+	// already earned a profit. Immediate, like the hard floor.
+	TriggerProfitFailSafe = "profit_failsafe"
 )
 
 /*
@@ -60,6 +59,13 @@ profit line or its hard floor first — can be labelled later from the published
 position rather than reconstructed from tick data.
 */
 type StopTransition struct {
+	/*
+		Seq orders transitions across the whole life of one regulator, including
+		the ones the bounded history has already dropped. It is what lets a
+		consumer drain only what it has not seen without holding an index into a
+		slice that shifts underneath it.
+	*/
+	Seq    uint64           `json:"seq"`
 	At     time.Time        `json:"at"`
 	Phase  StopPhase        `json:"phase"`
 	Floor  *decimal.Decimal `json:"floor"`
@@ -98,11 +104,9 @@ type Stoploss struct {
 	Symbol string    `json:"symbol"`
 	Phase  StopPhase `json:"phase"`
 
-	/*
-		Entry is the realized average price paid per unit, and Qty and EntryFee
-		are the quantity and total fee it was paid on. Before the fill these
-		hold the provisional estimate the order was placed against.
-	*/
+	// Entry is the realized average price paid per unit, and Qty and EntryFee
+	// are the quantity and total fee it was paid on. Before the fill these
+	// hold the provisional estimate the order was placed against.
 	Entry    *decimal.Decimal `json:"entry"`
 	Qty      *decimal.Decimal `json:"qty"`
 	EntryFee *decimal.Decimal `json:"entry_fee"`
@@ -110,34 +114,157 @@ type Stoploss struct {
 	Mark *decimal.Decimal `json:"mark"`
 	Peak *decimal.Decimal `json:"peak"`
 
+	// HardFloor is the loss boundary and is never lowered, never widened, and
+	// never made conditional on a model. ProfitLine is the executable price at
+	// which a sale covers entry cost, exit cost and the minimum edge.
+	// ArmLine is where protection turns on, ProfitFloor is where it locks, and
+	// TrailFloor follows the peak once it has.
+	//
+	// Floor is the highest of whichever of those are currently active, and is
+	// what an exit is actually measured against.
+	HardFloor  *decimal.Decimal `json:"hard_floor"`
+	ProfitLine *decimal.Decimal `json:"profit_line"`
 	/*
-		HardFloor is the loss boundary and is never lowered, never widened, and
-		never made conditional on a model. ProfitLine is the executable price at
-		which a sale covers entry cost, exit cost and the minimum edge.
-		ArmLine is where protection turns on, ProfitFloor is where it locks, and
-		TrailFloor follows the peak once it has.
-
-		Floor is the highest of whichever of those are currently active, and is
-		what an exit is actually measured against.
+		BreakEvenLine is where a sale exactly covers what the lot cost, with no
+		edge on top. It is stated separately from ProfitLine because the two
+		answer different questions: ProfitLine is where the trade becomes worth
+		having, BreakEvenLine is where it stops being worth keeping.
 	*/
-	HardFloor   *decimal.Decimal `json:"hard_floor"`
-	ProfitLine  *decimal.Decimal `json:"profit_line"`
-	ArmLine     *decimal.Decimal `json:"arm_line"`
-	ProfitFloor *decimal.Decimal `json:"profit_floor"`
-	TrailFloor  *decimal.Decimal `json:"trail_floor"`
-	Floor       *decimal.Decimal `json:"floor"`
+	BreakEvenLine *decimal.Decimal `json:"break_even_line"`
+	/*
+		ProfitFailSafe sits between the two, one execution reserve above
+		break-even. It is the floor a lot that has already earned something is
+		not allowed to fall through while a confirmation count runs.
+	*/
+	ProfitFailSafe *decimal.Decimal `json:"profit_failsafe"`
+	ArmLine        *decimal.Decimal `json:"arm_line"`
+	ProfitFloor    *decimal.Decimal `json:"profit_floor"`
+	TrailFloor     *decimal.Decimal `json:"trail_floor"`
+	Floor          *decimal.Decimal `json:"floor"`
 
 	ProfitArmed   bool   `json:"profit_armed"`
 	TriggerReason string `json:"trigger_reason,omitempty"`
+	/*
+		BasisConfirmed is false until the venue has said what this lot actually
+		cost. Before then the regulator has lines drawn from the ask the order
+		was priced at, and they are for display and sizing only — no mark may
+		record a peak, arm protection, or trigger against an estimate.
+
+		The hole this closes is narrow and expensive. A market buy that takes a
+		few seconds to fill sees ticks the whole time; without this gate those
+		ticks build a peak, and a peak two noise bands above an unfilled order
+		can cross the arm line. The lot then opens already protecting a profit
+		that belonged to a price it never paid, and gives it back on the first
+		confirmed breach.
+	*/
+	BasisConfirmed bool `json:"basis_confirmed"`
 
 	Plan        RiskPlan         `json:"plan"`
 	Transitions []StopTransition `json:"transitions,omitempty"`
 
-	/*
-		breachStreak counts consecutive executable marks at or below the
-		protected floor. One wick through a floor is a print, not a decision.
-	*/
+	// breachStreak counts consecutive executable marks at or below the
+	// protected floor. One wick through a floor is a print, not a decision.
 	breachStreak int
+	// sequence numbers every transition ever recorded and emitted marks how far
+	// a consumer has drained. They are kept separate from the Transitions slice
+	// because that slice is bounded: a plain index into it would re-emit rows
+	// as soon as trimming shifted them.
+	sequence uint64
+	emitted  uint64
+}
+
+/*
+StopSnapshot is a value copy of one regulator's geometry, taken on the goroutine
+that owns it so another can read it without touching the live struct.
+
+It exists because the strategy has to price the position's remaining upside and
+downside against the same boundaries the regulator is defending, and reaching
+into the regulator to read them would put two goroutines on it.
+*/
+type StopSnapshot struct {
+	Present       bool             `json:"present"`
+	Symbol        string           `json:"symbol"`
+	Phase         StopPhase        `json:"phase"`
+	Status        Status           `json:"status"`
+	TriggerReason string           `json:"trigger_reason,omitempty"`
+	ProfitArmed   bool             `json:"profit_armed"`
+	Entry         *decimal.Decimal `json:"entry"`
+	Mark          *decimal.Decimal `json:"mark"`
+	Peak          *decimal.Decimal `json:"peak"`
+	HardFloor     *decimal.Decimal `json:"hard_floor"`
+	ProfitLine    *decimal.Decimal `json:"profit_line"`
+	ProfitFloor   *decimal.Decimal `json:"profit_floor"`
+	RiskDistance  *decimal.Decimal `json:"risk_distance"`
+	NoiseBand     *decimal.Decimal `json:"noise_band"`
+}
+
+/*
+Snapshot copies the regulator's current geometry.
+
+Absent geometry yields Present false rather than zeroes, because a hard floor of
+zero reads as "no risk" and a lot whose boundary has not been derived yet must
+not be scored as though it had one.
+*/
+func (stoploss *Stoploss) Snapshot() StopSnapshot {
+	if stoploss == nil {
+		return StopSnapshot{}
+	}
+
+	return StopSnapshot{
+		Present:       stoploss.Plan.Present,
+		Symbol:        stoploss.Symbol,
+		Phase:         stoploss.Phase,
+		Status:        stoploss.Status,
+		TriggerReason: stoploss.TriggerReason,
+		ProfitArmed:   stoploss.ProfitArmed,
+		Entry:         copyDecimal(stoploss.Entry),
+		Mark:          copyDecimal(stoploss.Mark),
+		Peak:          copyDecimal(stoploss.Peak),
+		HardFloor:     copyDecimal(stoploss.HardFloor),
+		ProfitLine:    copyDecimal(stoploss.ProfitLine),
+		ProfitFloor:   copyDecimal(stoploss.ProfitFloor),
+		RiskDistance:  copyDecimal(stoploss.Plan.RiskDistance),
+		NoiseBand:     copyDecimal(stoploss.Plan.NoiseBand),
+	}
+}
+
+/*
+copyDecimal copies an optionally-absent amount, keeping absence absent so the
+reader cannot mistake "not derived" for zero.
+*/
+func copyDecimal(value *decimal.Decimal) *decimal.Decimal {
+	if value == nil {
+		return nil
+	}
+
+	return value.Copy()
+}
+
+/*
+DrainTransitions returns the geometry changes that have not been handed to a
+consumer yet, and marks them taken.
+
+The regulator keeps its recent history for anyone reading the published
+position, but an audit trail has to be written exactly once. Draining by
+sequence rather than by slice position means a burst that overflows the bounded
+history loses the oldest rows instead of replaying the newest.
+*/
+func (stoploss *Stoploss) DrainTransitions() []StopTransition {
+	if stoploss == nil || stoploss.emitted >= stoploss.sequence {
+		return nil
+	}
+
+	pending := make([]StopTransition, 0, stoploss.sequence-stoploss.emitted)
+
+	for _, transition := range stoploss.Transitions {
+		if transition.Seq > stoploss.emitted {
+			pending = append(pending, transition)
+		}
+	}
+
+	stoploss.emitted = stoploss.sequence
+
+	return pending
 }
 
 /*
@@ -174,10 +301,26 @@ func NewStoploss(
 		Plan:     plan,
 	}
 
-	stoploss.rebuild("armed")
-	stoploss.Status = ARMED
+	stoploss.rebuild("provisional")
+	stoploss.Status = PENDING
 
 	return stoploss
+}
+
+/*
+BindRecovered adopts a basis that is already real without waiting for a fill.
+
+Wallet inventory was bought at some point in the past and the trade history says
+what it cost, so there is no estimate to replace and nothing to wait for. This
+exists as a separate door from RebindFill so that the ordinary path cannot be
+talked into confirming a basis the venue never reported.
+*/
+func (stoploss *Stoploss) BindRecovered() {
+	if stoploss == nil || stoploss.BasisConfirmed {
+		return
+	}
+
+	stoploss.confirmBasis("bound_recovered")
 }
 
 /*
@@ -209,7 +352,36 @@ func (stoploss *Stoploss) RebindFill(fill Fill) {
 		stoploss.EntryFee = scaled(fill.EntryFee)
 	}
 
+	if !stoploss.BasisConfirmed {
+		stoploss.confirmBasis("bound_on_fill")
+		return
+	}
+
 	stoploss.rebuild("rebound_on_fill")
+}
+
+/*
+confirmBasis promotes the regulator from an estimate to a real basis and throws
+away everything it thought it knew on the way there.
+
+The discarded state is the point. A peak, an armed flag or a floor established
+while the lot was still unfilled describes a price path the position was never
+in, and rebuilding the lines around a corrected entry while keeping that path
+would leave the contradiction in place — protection armed against a peak that
+predates ownership.
+*/
+func (stoploss *Stoploss) confirmBasis(reason string) {
+	stoploss.Peak = nil
+	stoploss.TrailFloor = nil
+	stoploss.Floor = nil
+	stoploss.ProfitArmed = false
+	stoploss.Phase = PhaseDiscovery
+	stoploss.TriggerReason = ""
+	stoploss.breachStreak = 0
+	stoploss.BasisConfirmed = true
+	stoploss.Status = ARMED
+
+	stoploss.rebuild(reason)
 }
 
 /*
@@ -242,7 +414,7 @@ while still underwater; and the floor is raised before it is tested, so it can
 only ever have moved upward.
 */
 func (stoploss *Stoploss) Observe(evidence StopEvidence) {
-	if stoploss == nil || stoploss.Status == TRIGGERED {
+	if stoploss == nil || stoploss.Status == TRIGGERED || !stoploss.BasisConfirmed {
 		return
 	}
 
@@ -252,13 +424,28 @@ func (stoploss *Stoploss) Observe(evidence StopEvidence) {
 		return
 	}
 
+	/*
+		When the visible book cannot absorb the whole position the mark is the
+		touch price — real, quoted, and true only of the part that fits. What
+		follows treats that asymmetrically on purpose.
+
+		Profit geometry is refused: a peak or an arming taken from a price only
+		a fraction of the lot could reach would protect a profit the position
+		could not realise. The hard floor is not refused, because a book too
+		thin to absorb the lot is evidence of more danger, not less, and
+		suspending the loss boundary exactly when liquidity is disappearing is
+		the opposite of what it is for.
+	*/
+	trustGeometry := !evidence.DepthLimited
+
 	stoploss.Mark = mark
 	stoploss.Plan = stoploss.Plan.Refresh(evidence.Spread, evidence.Impact)
 
-	// A retreating quote is a price nothing could have been sold into, so it
+	// A hollow quote is a price nothing could have been sold into, so it
 	// records no peak — but it is still a mark, and the floors below still
 	// judge it.
-	if evidence.GeometryValid() && (stoploss.Peak == nil || mark.Cmp(stoploss.Peak) > 0) {
+	if trustGeometry && evidence.GeometryValid() &&
+		(stoploss.Peak == nil || mark.Cmp(stoploss.Peak) > 0) {
 		stoploss.Peak = mark.Copy()
 		stoploss.TrailFloor = floorToTick(
 			subtract(stoploss.Peak, stoploss.Plan.TrailDistance),
@@ -266,7 +453,7 @@ func (stoploss *Stoploss) Observe(evidence StopEvidence) {
 		)
 	}
 
-	if !stoploss.ProfitArmed && stoploss.ArmLine != nil &&
+	if trustGeometry && !stoploss.ProfitArmed && stoploss.ArmLine != nil &&
 		mark.Cmp(stoploss.ArmLine) >= 0 {
 		stoploss.ProfitArmed = true
 		stoploss.Phase = PhaseProtected
@@ -278,7 +465,22 @@ func (stoploss *Stoploss) Observe(evidence StopEvidence) {
 	switch {
 	case stoploss.HardFloor != nil && mark.Cmp(stoploss.HardFloor) <= 0:
 		stoploss.trigger(TriggerHardRisk)
-	case stoploss.ProfitArmed && stoploss.confirmedBreach(mark):
+	/*
+		The fail-safe sits below the giveback floor and above break-even, and it
+		does not wait for confirmation.
+
+		Confirmation is what stops a single wick from ending a protected trade,
+		and it necessarily costs something: three marks below the floor is three
+		marks of giveback, and on a fast reversal that path can carry the
+		position back through the price at which the round trip stops paying
+		for itself. Debouncing the upper line and leaving the lower one
+		immediate keeps the wick tolerance without letting it spend the profit
+		it was protecting.
+	*/
+	case stoploss.ProfitArmed && stoploss.ProfitFailSafe != nil &&
+		mark.Cmp(stoploss.ProfitFailSafe) <= 0:
+		stoploss.trigger(TriggerProfitFailSafe)
+	case stoploss.ProfitArmed && trustGeometry && stoploss.confirmedBreach(mark):
 		stoploss.trigger(TriggerProtectedGiveback)
 	}
 }
@@ -356,7 +558,10 @@ func (stoploss *Stoploss) rebuild(reason string) {
 		subtract(stoploss.Entry, plan.RiskDistance), tick,
 	)
 
-	stoploss.ProfitLine = ceilToTick(stoploss.profitLine(), tick)
+	stoploss.BreakEvenLine = ceilToTick(stoploss.liquidationLine(nil), tick)
+	stoploss.ProfitLine = ceilToTick(
+		stoploss.liquidationLine(plan.MinEdge), tick,
+	)
 
 	if stoploss.ProfitLine != nil {
 		stoploss.ArmLine = ceilToTick(
@@ -364,6 +569,17 @@ func (stoploss *Stoploss) rebuild(reason string) {
 		)
 		stoploss.ProfitFloor = floorToTick(
 			sum(stoploss.ProfitLine, plan.LockBuffer), tick,
+		)
+	}
+
+	/*
+		The fail-safe is one lock buffer above break-even rather than a share of
+		the profit line, so it stays anchored to the price the round trip stops
+		paying at no matter how much edge the lot went on to earn.
+	*/
+	if stoploss.BreakEvenLine != nil {
+		stoploss.ProfitFailSafe = ceilToTick(
+			sum(stoploss.BreakEvenLine, plan.LockBuffer), tick,
 		)
 	}
 
@@ -378,17 +594,23 @@ func (stoploss *Stoploss) rebuild(reason string) {
 }
 
 /*
-profitLine solves for the executable price at which selling the whole position
-clears its entry cost, its exit fee and the minimum edge.
+liquidationLine solves for the executable price at which selling the whole
+position clears its entry cost, its exit fee, and whatever edge is demanded on
+top.
 
-	price = (entry×qty + entryFee + minEdge×qty) / (qty × (1 − exitFeeRate))
+	price = (entry×qty + entryFee + edge×qty) / (qty × (1 − exitFeeRate))
 
-Depth impact is deliberately absent from the numerator: the mark this line is
-compared against is already the impact-adjusted sell VWAP for the position's
-quantity, and pricing the same friction in both places would demand a profit
+An absent edge gives the break-even line: exactly what the round trip cost, and
+not a cent more. Passing MinEdge gives the profit line. They are the same
+arithmetic because they are the same question asked with a different bar, and
+computing them separately is how the two drift apart.
+
+Depth impact is deliberately absent from the numerator: the mark these lines are
+compared against is already adjusted for what the position's own size costs to
+liquidate, and pricing the same friction in both places would demand a profit
 the position has to earn twice.
 */
-func (stoploss *Stoploss) profitLine() *decimal.Decimal {
+func (stoploss *Stoploss) liquidationLine(edge *decimal.Decimal) *decimal.Decimal {
 	quantity := stoploss.Qty
 
 	if quantity == nil || quantity.Sign() <= 0 {
@@ -401,8 +623,8 @@ func (stoploss *Stoploss) profitLine() *decimal.Decimal {
 		cost = cost.Add(stoploss.EntryFee)
 	}
 
-	if stoploss.Plan.MinEdge != nil {
-		cost = cost.Add(stoploss.Plan.MinEdge.SetScale(riskScale).Mul(quantity))
+	if edge != nil {
+		cost = cost.Add(edge.SetScale(riskScale).Mul(quantity))
 	}
 
 	proceeds := quantity.Copy()
@@ -436,7 +658,10 @@ func (stoploss *Stoploss) trigger(reason string) {
 record appends one geometry change to the bounded audit trail.
 */
 func (stoploss *Stoploss) record(reason string) {
+	stoploss.sequence++
+
 	transition := StopTransition{
+		Seq:    stoploss.sequence,
 		At:     time.Now().UTC(),
 		Phase:  stoploss.Phase,
 		Reason: reason,
