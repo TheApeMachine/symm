@@ -34,6 +34,7 @@ type Solver struct {
 	mu       sync.RWMutex
 	pearls   map[string]*algorithm.Pearl
 	regimes  map[string]*causal.Regime
+	history  map[string][][]float64
 	config   algorithm.PearlConfig
 	ui       chan []byte
 }
@@ -64,6 +65,7 @@ func NewSolver(ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver
 		recorder: recorder,
 		pearls:   make(map[string]*algorithm.Pearl),
 		regimes:  make(map[string]*causal.Regime),
+		history:  make(map[string][][]float64),
 		config:   defaultConfig,
 		ui:       ui,
 	}
@@ -113,6 +115,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 }
 
 func (solver *Solver) measure(input causalInput) causalResult {
+	solver.appendHistory(input.symbol, input.row)
+
 	regimeOut, err := solver.getRegime(input.symbol).Measure(causal.RegimeInput{
 		Rows:      [][]float64{input.row},
 		Contagion: input.contagion,
@@ -155,6 +159,7 @@ func (solver *Solver) store(thesis *types.Thesis, results []causalResult) bool {
 			continue
 		}
 
+		result.output["historyRows"] = solver.historyRows(result.symbol)
 		thesis.Causal.Store(result.symbol, result.output)
 		resolved = true
 
@@ -166,6 +171,35 @@ func (solver *Solver) store(thesis *types.Thesis, results []causalResult) bool {
 	}
 
 	return resolved
+}
+
+func (solver *Solver) appendHistory(symbol string, row []float64) {
+	solver.mu.Lock()
+	defer solver.mu.Unlock()
+
+	rows := append(solver.history[symbol], append([]float64(nil), row...))
+	rowWidth := len(row)
+	capacity := 1 + rowWidth + rowWidth*(rowWidth+1)/2
+
+	if len(rows) > capacity {
+		rows = rows[len(rows)-capacity:]
+	}
+
+	solver.history[symbol] = rows
+}
+
+func (solver *Solver) historyRows(symbol string) [][]float64 {
+	solver.mu.RLock()
+	defer solver.mu.RUnlock()
+
+	stored := solver.history[symbol]
+	rows := make([][]float64, len(stored))
+
+	for index, row := range stored {
+		rows[index] = append([]float64(nil), row...)
+	}
+
+	return rows
 }
 
 /*
@@ -240,5 +274,9 @@ func (solver *Solver) getRegime(symbol string) *causal.Regime {
 Close cleans up the solver instance.
 */
 func (solver *Solver) Close() error {
+	solver.mu.Lock()
+	defer solver.mu.Unlock()
+
+	solver.history = nil
 	return nil
 }

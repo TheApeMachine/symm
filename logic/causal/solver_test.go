@@ -15,6 +15,7 @@ func TestStore(t *testing.T) {
 		solver := NewSolver(nil, nil)
 		thesis := types.NewThesis()
 		output := map[string]any{"effect": 0.5}
+		solver.appendHistory("GOOD/USD", []float64{0.1, 0.2, 0.3, 0.4})
 		results := []causalResult{
 			{symbol: "BAD/USD", err: errors.New("bad symbol")},
 			{symbol: "GOOD/USD", output: output},
@@ -29,6 +30,48 @@ func TestStore(t *testing.T) {
 			convey.So(found, convey.ShouldBeTrue)
 			convey.So(stored, convey.ShouldResemble, output)
 			convey.So(failedStored, convey.ShouldBeFalse)
+			convey.So(output["historyRows"], convey.ShouldResemble, [][]float64{{0.1, 0.2, 0.3, 0.4}})
+		})
+	})
+}
+
+func TestAppendHistory(t *testing.T) {
+	convey.Convey("Given causal rows for two symbols", t, func() {
+		solver := NewSolver(nil, nil)
+		rowWidth := 4
+		capacity := 1 + rowWidth + rowWidth*(rowWidth+1)/2
+
+		for index := range capacity + 3 {
+			solver.appendHistory("BTC/USD", []float64{float64(index), 0.2, 0.3, 0.4})
+		}
+
+		solver.appendHistory("ETH/USD", []float64{7, 0.6, 0.5, 0.4})
+
+		convey.Convey("It should retain a symbol-local moment-complete history", func() {
+			bitcoinRows := solver.historyRows("BTC/USD")
+			ethereumRows := solver.historyRows("ETH/USD")
+
+			convey.So(bitcoinRows, convey.ShouldHaveLength, capacity)
+			convey.So(bitcoinRows[0][0], convey.ShouldEqual, 3.0)
+			convey.So(bitcoinRows[len(bitcoinRows)-1][0], convey.ShouldEqual, float64(capacity+2))
+			convey.So(ethereumRows, convey.ShouldResemble, [][]float64{{7, 0.6, 0.5, 0.4}})
+		})
+	})
+}
+
+func TestHistoryRows(t *testing.T) {
+	convey.Convey("Given a stored causal row", t, func() {
+		solver := NewSolver(nil, nil)
+		original := []float64{0.1, 0.2, 0.3, 0.4}
+		solver.appendHistory("BTC/USD", original)
+		snapshot := solver.historyRows("BTC/USD")
+
+		convey.Convey("It should isolate stored and returned rows from mutation", func() {
+			original[0] = 9
+			snapshot[0][1] = 8
+			stored := solver.historyRows("BTC/USD")
+
+			convey.So(stored, convey.ShouldResemble, [][]float64{{0.1, 0.2, 0.3, 0.4}})
 		})
 	})
 }

@@ -1,17 +1,8 @@
 import { cva, type VariantProps } from "class-variance-authority";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { Dot } from "./dot";
 import type { Size } from "./types";
-
-const BADGE_DOT_SIZE: Record<Size, string> = {
-	xxs: "size-1",
-	xs: "size-1",
-	s: "size-1.5",
-	m: "size-1.5",
-	lg: "size-2",
-	xl: "size-2",
-	xxl: "size-2.5",
-};
 
 export const badgeVariants = cva(
 	[
@@ -57,8 +48,14 @@ type BadgeVariantProps = VariantProps<typeof badgeVariants>;
 
 export type BadgeProps = Omit<ComponentProps<"span">, "children"> &
 	BadgeVariantProps & {
-		label: string;
+		/*
+			A label may be a painted node rather than a literal, so a
+			<span data-paint> can sit in the slot and the badge never re-renders.
+		*/
+		label: ReactNode;
 		dot?: boolean;
+		/* Drives the dot's own animation, not the badge's. */
+		pulse?: boolean;
 	};
 
 /*
@@ -70,6 +67,7 @@ export const Badge = ({
 	variant,
 	size,
 	dot = false,
+	pulse,
 	className,
 	...props
 }: BadgeProps) => {
@@ -82,12 +80,10 @@ export const Badge = ({
 			{...props}
 		>
 			{dot ? (
-				<span
-					className={cn(
-						"shrink-0 rounded-full bg-(--badge-tone)",
-						BADGE_DOT_SIZE[resolvedSize],
-					)}
-					aria-hidden
+				<Dot
+					size={resolvedSize}
+					pulse={pulse}
+					className="[--dot-tone:var(--badge-tone)]"
 				/>
 			) : null}
 			{label}

@@ -233,7 +233,7 @@ func (planner *Planner) complete(
 	}
 
 	utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
-		"tick", datura.NewMap("count", thesis.Tick),
+		"tick", thesis.Tick,
 		"at", thesis.At,
 		"evaluated", evaluated,
 		"outcome", outcome,

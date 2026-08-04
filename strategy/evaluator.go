@@ -166,12 +166,10 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 		forecast, ok := evaluator.candidate(thesis, symbol)
 
 		if !ok {
-			/*
-				Record the skip rather than dropping the symbol silently. A
-				symbol that cannot be priced is a fact about this tick, and
-				leaving no trace of it makes an unpriceable market look
-				identical to one that was never considered.
-			*/
+			// Record the skip rather than dropping the symbol silently. A
+			// symbol that cannot be priced is a fact about this tick, and
+			// leaving no trace of it makes an unpriceable market look
+			// identical to one that was never considered.
 			thesis.Decisions = append(thesis.Decisions, types.Decision{
 				Action:           types.ActionNothing,
 				Symbol:           symbol,
@@ -192,30 +190,28 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 		doExpectation, uplift, noise, causalReady := getCausalMetrics(thesis, symbol)
 		cognition := getCognition(thesis, symbol)
 
-		/*
-			Compare the two sides as shares of the evidence rather than as raw
-			totals. Edge weights carry whatever units their source node used,
-			so a single contradiction drawn from an unbounded causal score
-			would otherwise outweigh every supporting edge no matter how much
-			support there is.
-		*/
+		// Compare the two sides as shares of the evidence rather than as raw
+		// totals. Edge weights carry whatever units their source node used,
+		// so a single contradiction drawn from an unbounded causal score
+		// would otherwise outweigh every supporting edge no matter how much
+		// support there is.
 		if hasGraph && contradicts > 0 &&
 			contradicts/(supports+contradicts) > graphContradictionShare {
+
 			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
 				forecast, 0, "graph_contradiction",
 				"relational graph contradicts trade hypothesis",
 			))
+
 			continue
 		}
 
-		/*
-			2. Build Root State for MCTS, on fractions of the reference price.
-
-			The trajectory weighs a forecast against a friction cost and a
-			reversal threshold, so both have to be on the forecast's own scale.
-			Passing currency amounts made the rollout's judgement depend on how
-			expensive the symbol happened to be.
-		*/
+		// 2. Build Root State for MCTS, on fractions of the reference price.
+		//
+		// The trajectory weighs a forecast against a friction cost and a
+		// reversal threshold, so both have to be on the forecast's own scale.
+		// Passing currency amounts made the rollout's judgement depend on how
+		// expensive the symbol happened to be.
 		rootState := StrategyState{
 			Symbol:        symbol,
 			Energy:        forecast.Uncertainty,
@@ -232,14 +228,12 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 		var recommendedAction float64
 		var mctsErr error
 
-		/*
-			The search indexes every row by column, so a row narrower than the
-			state vector is an out-of-range panic rather than a poor
-			recommendation. Row count alone does not establish that: history
-			rows arrive from the causal stage unvalidated and a short or empty
-			row among them passes a count check and then crashes the planner
-			mid-tick.
-		*/
+		// The search indexes every row by column, so a row narrower than the
+		// state vector is an out-of-range panic rather than a poor
+		// recommendation. Row count alone does not establish that: history
+		// rows arrive from the causal stage unvalidated and a short or empty
+		// row among them passes a count check and then crashes the planner
+		// mid-tick.
 		searchable := usableCausalRows(causalRows) >= 12
 
 		if searchable {
@@ -267,12 +261,13 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			)
 		}
 
-		if cognition.Ready {
-			utility += conviction * squash(
-				cognition.LookaheadScore*cognition.Confidence,
-				math.Abs(cognition.LookaheadScore),
-			)
-		}
+		/*
+			A beam score is a cumulative log-probability, not signed return
+			evidence. It is always non-positive, so adding it as alpha made
+			cognition a permanent veto. Its probability instead discounts the
+			forecast conviction by how predictable the learned continuation is.
+		*/
+		utility += cognitionAdjustment(conviction, cognition)
 
 		if utility <= 0 {
 			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
@@ -376,19 +371,11 @@ func getCausalHistoryRows(thesis *types.Thesis, symbol string) [][]float64 {
 		return nil
 	}
 
-	// Reconstruct history rows if stored
 	if rowsRaw, ok := m["historyRows"].([][]float64); ok {
 		return rowsRaw
 	}
 
-	// Single row fallback
-	row := []float64{
-		getFloat(m, "energy"),
-		getFloat(m, "surprise"),
-		getFloat(m, "intervention"),
-		getFloat(m, "doExpectation"),
-	}
-	return [][]float64{row}
+	return nil
 }
 
 func getFloat(m map[string]any, key string) float64 {
@@ -492,23 +479,19 @@ func (evaluator Evaluator) ManageContinuation(
 			continue
 		}
 
-		/*
-			Priced in currency for the same reason the entry utility is: raw
-			surprise is a dimensionless norm and would dominate a per-tick
-			return by orders of magnitude, closing every position the moment it
-			was opened.
-
-			The charge is against the gross return here rather than the
-			executable one, because the exit cost this utility is compared to is
-			subtracted separately just below.
-		*/
+		// Priced in currency for the same reason the entry utility is: raw
+		// surprise is a dimensionless norm and would dominate a per-tick
+		// return by orders of magnitude, closing every position the moment it
+		// was opened.
+		//
+		// The charge is against the gross return here rather than the
+		// executable one, because the exit cost this utility is compared to is
+		// subtracted separately just below.
 		holdUtility := forecast.ExpectedReturn.Float64() * (1 - math.Tanh(forecast.Uncertainty))
 
-		/*
-			Only the exit remains to be paid on a position already held, so it
-			carries one crossing of the spread and one fee rather than the
-			round trip an entry is charged for.
-		*/
+		// Only the exit remains to be paid on a position already held, so it
+		// carries one crossing of the spread and one fee rather than the
+		// round trip an entry is charged for.
 		exitCost := forecast.ReferencePrice.Mul(fee).Add(
 			forecast.ExpectedSpread.Div(decimal.NewFromInt64(2)),
 		).Add(forecast.ExpectedImpact)
@@ -525,12 +508,7 @@ func (evaluator Evaluator) ManageContinuation(
 			)
 		}
 
-		if cognition.Ready {
-			holdUtility += conviction * squash(
-				cognition.LookaheadScore*cognition.Confidence,
-				math.Abs(cognition.LookaheadScore),
-			)
-		}
+		holdUtility += cognitionAdjustment(conviction, cognition)
 
 		// Apply Graph Contradiction Penalty to Hold Utility
 		_, contradicts, hasGraph := inspectGraph(thesis, forecast.Symbol)
@@ -829,6 +807,27 @@ func squash(score, magnitude float64) float64 {
 	}
 
 	return math.Tanh(score / magnitude)
+}
+
+/*
+cognitionAdjustment reads beam likelihood as uncertainty about continuation,
+not as directional return evidence. Beam scores are cumulative log
+probabilities, so exp(score)-1 is zero for a certain path and approaches a
+full conviction discount as the learned continuation becomes less likely.
+*/
+func cognitionAdjustment(conviction float64, cognition types.Cognition) float64 {
+	if conviction <= 0 || !cognition.Ready || cognition.LookaheadPaths <= 0 {
+		return 0
+	}
+
+	discount := math.Expm1(cognition.LookaheadScore)
+
+	if math.IsNaN(discount) || math.IsInf(discount, 0) || discount > 0 {
+		return 0
+	}
+
+	confidence := math.Max(0, math.Min(1, cognition.Confidence))
+	return conviction * discount * confidence
 }
 
 /*

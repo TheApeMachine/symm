@@ -198,7 +198,9 @@ const formatValue = (value: unknown, format: string | undefined): string => {
 		const instant = new Date(String(value));
 
 		if (!Number.isFinite(instant.getTime())) {
-			throw new Error(`data-paint-format=${format} needs a timestamp: ${value}`);
+			throw new Error(
+				`data-paint-format=${format} needs a timestamp: ${value}`,
+			);
 		}
 
 		return format === "time"
@@ -554,7 +556,8 @@ const scaleSetValue = (
 		const pad = Math.max((high - low) * 0.15, 1e-6);
 		const domainLow = low - pad;
 		const domainHigh = high + pad;
-		const percent = ((numericValue - domainLow) / (domainHigh - domainLow)) * 100;
+		const percent =
+			((numericValue - domainLow) / (domainHigh - domainLow)) * 100;
 
 		return `${Math.min(100, Math.max(0, percent)).toFixed(3)}%`;
 	}
@@ -678,7 +681,9 @@ const streamEntries = (
 ): JSONSerializable[] => {
 	const entries = Array.isArray(updates) ? updates : [updates];
 
-	return entries.filter((entry) => streamMatchesFilter(entry, dataset.streamFilter));
+	return entries.filter((entry) =>
+		streamMatchesFilter(entry, dataset.streamFilter),
+	);
 };
 
 /*
@@ -859,8 +864,7 @@ const streamCurve = (
 		);
 
 		for (let step = 1; step <= steps; step += 1) {
-			const time =
-				sample.time + ((next.time - sample.time) * step) / steps;
+			const time = sample.time + ((next.time - sample.time) * step) / steps;
 			const relaxed =
 				baseline +
 				(sample.value - baseline) *
@@ -984,7 +988,11 @@ const drawStreamCanvas = (
 	if (dataset.streamTime && span > 0) {
 		const elapsed = `${(span / 1000).toFixed(0)}s of arrivals · ${samples.length} observed`;
 
-		context.fillText(elapsed, width - pad - context.measureText(elapsed).width, base + 12);
+		context.fillText(
+			elapsed,
+			width - pad - context.measureText(elapsed).width,
+			base + 12,
+		);
 	}
 
 	if (baseline !== null) {
@@ -1153,9 +1161,7 @@ export const Component = ({
 			return;
 		}
 
-		const updates = select
-			? readPath(latest.current, select)
-			: latest.current;
+		const updates = select ? readPath(latest.current, select) : latest.current;
 
 		if (updates === undefined || updates === null) {
 			return;

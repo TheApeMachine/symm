@@ -29,11 +29,9 @@ type StrategyState struct {
 
 	Surprise float64 // Control 2
 
-	/*
-		Treatment is the forecast return as a fraction of the reference price,
-		and RoundTripCost is the modelled friction of entering and exiting on
-		the same scale.
-	*/
+	// Treatment is the forecast return as a fraction of the reference price,
+	// and RoundTripCost is the modelled friction of entering and exiting on
+	// the same scale.
 	Treatment     float64
 	RoundTripCost float64
 
@@ -77,27 +75,21 @@ func (s StrategyState) ApplyAction(action float64) mcts.State {
 
 	switch action {
 	case ActionEnter:
-		/*
-			Entering pays the whole round trip up front, because a position
-			opened in this rollout has to be closed within it to be worth
-			anything. The cost is the candidate's own modelled friction rather
-			than a constant, so a wide or expensive market prices itself out
-			instead of being judged against a figure taken from some other one.
-		*/
+		// Entering pays the whole round trip up front, because a position
+		// opened in this rollout has to be closed within it to be worth
+		// anything. The cost is the candidate's own modelled friction rather
+		// than a constant, so a wide or expensive market prices itself out
+		// instead of being judged against a figure taken from some other one.
 		next.IsHolding = true
 		next.Reward += s.Treatment - s.RoundTripCost
 	case ActionHold:
-		/*
-			A held forecast decays toward the horizon it was drawn for, so a
-			further step of holding is worth less than the forecast claims.
-		*/
+		// A held forecast decays toward the horizon it was drawn for, so a
+		// further step of holding is worth less than the forecast claims.
 		next.Reward += s.Treatment * 0.9
 	case ActionExit:
-		/*
-			The round trip was already charged on entry, so exiting adds
-			nothing further. Charging it again would make every completed
-			trajectory pay twice and bias the search toward never opening.
-		*/
+		// The round trip was already charged on entry, so exiting adds
+		// nothing further. Charging it again would make every completed
+		// trajectory pay twice and bias the search toward never opening.
 		next.IsHolding = false
 	case ActionNothing:
 		next.Reward += 0.0
@@ -121,21 +113,34 @@ func (a CausalEngineAdapter) DoExpectation(
 	rows [][]float64, target, minRows, treatment int, level float64, controls []int,
 ) (float64, error) {
 	table, err := causal.NewNodeTableWrapper(rows, target, minRows)
+
 	if err != nil {
 		return 0, err
 	}
+
 	return table.DoExpectation(treatment, level, controls...)
 }
 
 func (a CausalEngineAdapter) AbductiveCounterfactual(
-	rows [][]float64, target, minRows int, features []int, linear bool, row []float64, treatment int, intervention float64,
+	rows [][]float64,
+	target, minRows int,
+	features []int,
+	linear bool,
+	row []float64,
+	treatment int,
+	intervention float64,
 ) (float64, float64, error) {
-	table, err := causal.NewNodeTableWrapper(rows, target, minRows)
+	table, err := causal.NewNodeTableWrapper(
+		rows, target, minRows,
+	)
 
 	if err != nil {
 		return 0, 0, err
 	}
 
-	_, cf, noise, err := table.AbductiveCounterfactual(features, linear, row, target, treatment, intervention)
+	_, cf, noise, err := table.AbductiveCounterfactual(
+		features, linear, row, target, treatment, intervention,
+	)
+
 	return cf, noise, err
 }

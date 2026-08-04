@@ -1,5 +1,7 @@
 import { Component } from "#/components/ui/component";
+import { Dot } from "#/components/ui/dot";
 import { Flex } from "#/components/ui/flex";
+import { Panel } from "#/components/ui/panel";
 
 /*
 Engine is the run readout.
@@ -11,13 +13,24 @@ which stages are live, so a run that is still warming up says which stage it is
 waiting on rather than reporting a bare "not ready".
 */
 const READINESS_GATES = [
-	"signals",
+	"correlation",
+	"cvd",
+	"depth_flow",
+	"exhaustion",
+	"hawkes",
+	"lead_lag",
+	"liquidity",
+	"pump_dump",
+	"sentiment",
+	"toxicity",
 	"manifold",
 	"resonance",
 	"causal",
 	"graph",
 	"allocation",
 	"decisions",
+	"categories",
+	"cognition",
 ] as const;
 
 const Row = ({
@@ -34,7 +47,7 @@ const Row = ({
 );
 
 export const Engine = () => (
-	<Flex.Column className="mx-2 rounded-[3px] border border-(--line) bg-(--sunken) p-2.5 font-mono text-[11px] leading-[1.7]">
+	<Panel size="bare" className="p-2.5 font-mono text-[11px] leading-[1.7]">
 		<Component registerKey="tick">
 			{({ ref }) => (
 				<Flex.Column ref={ref}>
@@ -66,13 +79,13 @@ export const Engine = () => (
 					<Row label="gates">
 						<Flex.Row gap={1} align="center">
 							{READINESS_GATES.map((gate) => (
-								<span
+								<Dot
 									key={gate}
+									variant="disabled"
 									title={gate}
 									data-set={`readiness.${gate}`}
 									data-set-scale="bool-color"
 									data-target="style.background"
-									className="size-1.5 rounded-full bg-(--line2)"
 								/>
 							))}
 						</Flex.Row>
@@ -104,5 +117,5 @@ export const Engine = () => (
 				</Flex.Column>
 			)}
 		</Component>
-	</Flex.Column>
+	</Panel>
 );

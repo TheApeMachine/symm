@@ -14,9 +14,7 @@ describe("modalScrimVariants", () => {
 	});
 
 	it("supports a solid scrim variant", () => {
-		expect(modalScrimVariants({ variant: "solid" })).toContain(
-			"bg-(--sunken)",
-		);
+		expect(modalScrimVariants({ variant: "solid" })).toContain("bg-(--sunken)");
 	});
 });
 

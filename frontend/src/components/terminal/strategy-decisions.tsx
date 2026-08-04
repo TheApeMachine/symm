@@ -1,6 +1,6 @@
-import { TerminalSection } from "#/components/terminal/terminal-section";
 import { cn } from "#/lib/utils";
 import { Panel } from "@/components/ui/panel";
+import { Section } from "@/components/ui/section";
 import { Component } from "../ui/component";
 import { Typography } from "../ui/typography";
 
@@ -16,15 +16,11 @@ export const StrategyDecisionRows = () => (
 	<Component registerKey="decisions">
 		{({ ref, className, slots }) => (
 			<div ref={ref} className={className}>
-				<TerminalSection
-					title="Strategy intent"
-					meta={
-						<span className="font-mono text-[9.5px] text-(--f4)">
-							{slots.length} decisions
-						</span>
-					}
-					className="mt-4"
-				>
+				<Section className="mt-4">
+					<Section.Header
+						title="Strategy intent"
+						meta={`${slots.length} decisions`}
+					/>
 					<div className="min-h-0 flex-1 overflow-auto p-2">
 						{slots.length === 0 ? (
 							<Panel
@@ -102,7 +98,7 @@ export const StrategyDecisionRows = () => (
 							</div>
 						)}
 					</div>
-				</TerminalSection>
+				</Section>
 			</div>
 		)}
 	</Component>

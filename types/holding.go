@@ -54,10 +54,18 @@ func NewHolding(
 		cancel:        cancel,
 		Symbol:        symbol,
 		Qty:           decision.ProposedQuantity.Copy(),
+		SellableQty:   decision.ProposedQuantity.Copy(),
 		Mark:          decision.Mark.Copy(),
 		Status:        PENDING,
 		ReservationID: decision.ReservationID,
 		IsOpportunity: decision.Opportunity,
+		EntryAt:       decision.EntryAt,
+		EntryPrice:    decision.EntryPrice.Copy(),
+		EntryFee:      decision.EntryFee.Copy(),
+		ExitPrice:     decision.ExitPrice.Copy(),
+		ExitFee:       decision.ExitFee.Copy(),
+		ReturnPct:     *decision.ReturnPct,
+		PnL:           decision.PnL.Copy(),
 		Stoploss:      NewStoploss(ctx, symbol, decision.Mark),
 	}
 

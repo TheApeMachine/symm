@@ -7,9 +7,9 @@ import {
 	journalEntryKey,
 	paintJournalSurface,
 } from "#/components/terminal/journal-paint";
-import { TerminalSection } from "#/components/terminal/terminal-section";
 import type { Finding } from "#/types/thesis";
 import { Panel } from "@/components/ui/panel";
+import { Section } from "@/components/ui/section";
 
 const rootRef = createRef<HTMLDivElement>();
 
@@ -35,8 +35,13 @@ const selectLifecycleSymbol = (symbol: string) => {
 };
 
 const selectJournalEntry = (key: string) => {
-	const entry = lastJournal.find((candidate) => journalEntryKey(candidate) === key);
-	const symbol = Object.keys(entry?.lifecycle ?? {})[0] ?? Object.keys(entry?.holdings ?? {})[0] ?? "";
+	const entry = lastJournal.find(
+		(candidate) => journalEntryKey(candidate) === key,
+	);
+	const symbol =
+		Object.keys(entry?.lifecycle ?? {})[0] ??
+		Object.keys(entry?.holdings ?? {})[0] ??
+		"";
 
 	if (symbol === "") {
 		return;
@@ -56,7 +61,9 @@ const paint = () => {
 	const nextSymbols = [
 		...new Set([
 			...lastLifecycle.map((row) => row.symbol),
-			...lastPositions.map((position) => position.holding?.symbol).filter(Boolean),
+			...lastPositions
+				.map((position) => position.holding?.symbol)
+				.filter(Boolean),
 			...lastJournal.map((entry) => entry.symbol),
 		]),
 	].sort();
@@ -99,13 +106,15 @@ export const paintJournalLifecycle = (value: unknown, _focusSymbol: string) => {
  paintJournalPositions refreshes the journal from the current DRAW positions batch.
  */
 export const paintJournalPositions = (value: unknown, _focusSymbol: string) => {
-	lastPositions = (Array.isArray(value)
-		? value
-		: value !== null && typeof value === "object"
-			? Object.values(value as Record<string, Position>)
-			: value != null
-				? [value]
-				: []) as Position[];
+	lastPositions = (
+		Array.isArray(value)
+			? value
+			: value !== null && typeof value === "object"
+				? Object.values(value as Record<string, Position>)
+				: value != null
+					? [value]
+					: []
+	) as Position[];
 	paint();
 };
 
@@ -128,9 +137,7 @@ export const paintJournalEntries = (value: unknown, _focusSymbol: string) => {
 JournalSurface is the static lifecycle / holdings / findings shell.
  DRAW paints via paintJournalLifecycle, paintJournalPositions, paintJournalFindings.
 */
-export const JournalSurface = () => (
-	<JournalSurfaceBody />
-);
+export const JournalSurface = () => <JournalSurfaceBody />;
 
 const JournalSurfaceBody = () => {
 	useEffect(() => {
@@ -142,63 +149,65 @@ const JournalSurfaceBody = () => {
 			ref={rootRef}
 			className="grid h-full min-h-0 min-w-[1040px] grid-cols-[minmax(280px,320px)_minmax(420px,1fr)_minmax(280px,320px)]"
 		>
-		<div className="min-h-0 overflow-auto border-(--line) border-r p-3.5">
-			<TerminalSection
-				title="Lifecycle rail"
-				meta={<span data-journal="lifecycle-meta">0 symbols</span>}
-			>
-				<div className="flex flex-col gap-2 p-2" data-journal-host="lifecycle">
-					<Panel
-						variant="surface"
-						size="bare"
-						data-journal="lifecycle-empty"
-						className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
+			<div className="min-h-0 overflow-auto border-(--line) border-r p-3.5">
+				<Section>
+					<Section.Header
+						title="Lifecycle rail"
+						meta={<span data-journal="lifecycle-meta">0 symbols</span>}
+					/>
+					<div
+						className="flex flex-col gap-2 p-2"
+						data-journal-host="lifecycle"
 					>
-						waiting for lifecycle frames
-					</Panel>
-				</div>
-			</TerminalSection>
-		</div>
-
-		<div className="min-h-0 overflow-auto px-4 py-[18px]">
-			<div className="mb-3 flex items-baseline justify-between">
-				<span className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
-					Journal
-				</span>
-				<span
-					data-journal="holdings-meta"
-					className="font-mono text-[9.5px] text-(--f4)"
-				/>
+						<Panel
+							variant="surface"
+							size="bare"
+							data-journal="lifecycle-empty"
+							className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
+						>
+							waiting for lifecycle frames
+						</Panel>
+					</div>
+				</Section>
 			</div>
-			<div className="flex flex-col gap-2" data-journal-host="journal">
-				<Panel
-					variant="surface"
+
+			<div className="min-h-0 overflow-auto px-4 py-[18px]">
+				<Section.Header
 					size="bare"
-					data-journal="holdings-empty"
-					className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
-				>
-					waiting for journal frames
-				</Panel>
-			</div>
-		</div>
-
-		<div className="min-h-0 overflow-auto border-(--line) border-l p-3.5">
-			<TerminalSection
-				title="PostMortem findings"
-				meta={<span data-journal="findings-meta">0 findings</span>}
-			>
-				<div className="flex flex-col gap-2 p-2" data-journal-host="findings">
+					rule={false}
+					title="Journal"
+					meta={<span data-journal="holdings-meta" />}
+				/>
+				<div className="flex flex-col gap-2" data-journal-host="journal">
 					<Panel
 						variant="surface"
 						size="bare"
-						data-journal="findings-empty"
+						data-journal="holdings-empty"
 						className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
 					>
-						waiting for findings frames
+						waiting for journal frames
 					</Panel>
 				</div>
-			</TerminalSection>
-		</div>
+			</div>
+
+			<div className="min-h-0 overflow-auto border-(--line) border-l p-3.5">
+				<Section>
+					<Section.Header
+						title="PostMortem findings"
+						meta={<span data-journal="findings-meta">0 findings</span>}
+					/>
+					<div className="flex flex-col gap-2 p-2" data-journal-host="findings">
+						<Panel
+							variant="surface"
+							size="bare"
+							data-journal="findings-empty"
+							className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
+						>
+							waiting for findings frames
+						</Panel>
+					</div>
+				</Section>
+			</div>
 		</div>
 	);
 };

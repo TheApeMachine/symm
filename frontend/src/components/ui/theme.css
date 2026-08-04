@@ -1,0 +1,78 @@
+/*
+theme.css is the library's entire contract with the host app.
+
+Every primitive in this directory paints itself from these custom properties and
+nothing else, so dropping the folder into another project needs exactly one
+import. Re-declare any of these under a `:root` of your own to re-skin the whole
+set without touching a component.
+
+Tone scale (--acc through --error) names what a value means, never what it looks
+like. Surface scale (--bg through --line2) is ordered by depth: --sunken sits
+below --surface sits below --raised, and the two line weights separate them.
+Foreground scale (--f1 through --f4) is ordered by emphasis, f1 loudest.
+*/
+
+:root {
+	/* Tone */
+	--acc: #e8a33d;
+	--brand: oklch(0.5691 0.2451 282.62);
+	--up: #9cc06e;
+	--down: #d5786a;
+	--info: #7fbacb;
+	--warn: #e8a33d;
+	--success: var(--up);
+	--warning: var(--warn);
+	--error: var(--down);
+
+	/* Surface */
+	--bg: #0e0c0a;
+	--surface: #17140f;
+	--raised: #1f1a14;
+	--sunken: #0a0907;
+	--line: #2b251e;
+	--line2: #3a342b;
+
+	/* Foreground */
+	--f1: #f4efe5;
+	--f2: #cbc2b4;
+	--f3: #938a7e;
+	--f4: #5f584e;
+
+	/* Chrome */
+	--scan: 0.5;
+}
+
+/*
+symFade is the entrance every overlay in the library uses, so a palette and a
+modal arrive the same way.
+*/
+@keyframes symFade {
+	from {
+		opacity: 0;
+		transform: translateY(3px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+/*
+symSweep drives Spinner: each probe bar peaks as the cursor passes, then decays
+back to a dim resting level.
+*/
+@keyframes symSweep {
+	0%,
+	100% {
+		opacity: 0.22;
+		transform: scaleY(0.55);
+	}
+	12% {
+		opacity: 1;
+		transform: scaleY(1);
+	}
+	32% {
+		opacity: 0.38;
+		transform: scaleY(0.7);
+	}
+}

@@ -7,12 +7,14 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 func subscriptionConnection(
@@ -202,6 +204,24 @@ func TestSubscribeAccount(t *testing.T) {
 
 			So(entityMap["balances"]([]byte(`{"channel":"balances"}`)), ShouldHaveSameTypeAs, &kraken.Balance{})
 			So(entityMap["executions"]([]byte(`{"channel":"executions"}`)), ShouldHaveSameTypeAs, &kraken.Execution{})
+		})
+	})
+}
+
+func TestLiveSubscribe(t *testing.T) {
+	Convey("Given a paper-mode private transport", t, func() {
+		paper := NewPaper(t.Context(), NewLatencySimulator(t.Context(), nil, 1))
+		live := &Live{
+			model:       "paper",
+			paper:       paper,
+			subscribers: &sync.Map{},
+		}
+		subscription := live.Subscribe("executions", types.NewSubscription[any]())
+		execution := &kraken.Execution{Channel: "executions", Type: "update"}
+
+		Convey("A paper fill should reach the live execution subscriber", func() {
+			paper.publish("executions", execution)
+			So(<-subscription.Channel, ShouldEqual, execution)
 		})
 	})
 }

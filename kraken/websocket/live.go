@@ -416,6 +416,11 @@ func (live *Live) Subscribe(
 ) *types.Subscription[any] {
 	errnie.Info(fmt.Sprintf("websocket: new subscriber %s", key))
 
+	if live.model != "real" &&
+		(key == "balances" || key == "executions" || key == "add_order") {
+		return live.paper.Subscribe(key, subscription)
+	}
+
 	return utils.Subscribe(
 		live.subscribers, key, subscription,
 	)

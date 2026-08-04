@@ -3,7 +3,13 @@ import { ModelScope } from "#/components/graph/component";
 import { Graph as RenderGraph } from "#/components/graph/core/graph";
 import { Panel } from "#/components/ui/panel";
 import { registerPainter } from "#/providers/ws-stores";
+import { Chip } from "@/components/ui/chip";
 import { Flex } from "@/components/ui/flex";
+import { Input } from "@/components/ui/input";
+import { List } from "@/components/ui/list";
+import { Section } from "@/components/ui/section";
+import { Toolbar } from "@/components/ui/toolbar";
+import { Typography } from "@/components/ui/typography";
 
 type MarketGraphNode = {
 	id: string;
@@ -108,7 +114,9 @@ const adaptGraph = (frame: MarketGraphFrame): RenderGraph => {
 };
 
 const graphStructureKey = (frame: MarketGraphFrame): string => {
-	const nodeIds = Object.keys(frame.nodes ?? {}).sort().join(",");
+	const nodeIds = Object.keys(frame.nodes ?? {})
+		.sort()
+		.join(",");
 	const edgeKeys = (frame.edges ?? [])
 		.map((edge) => `${edge.from}->${edge.to}`)
 		.sort()
@@ -141,13 +149,10 @@ export const paintGraphSurface = (value: unknown) => {
 	}
 };
 
-const StatChip = ({ label, value }: { label: string; value: string | number }) => (
-	<div className="rounded-[3px] border border-(--line) bg-(--raised) px-2 py-1 font-mono text-[10px] text-(--f3)">
-		<span className="text-(--f4)">{label}</span> {value}
-	</div>
-);
-
-const searchNodes = (graph: RenderGraph | undefined, query: string): string[] => {
+const searchNodes = (
+	graph: RenderGraph | undefined,
+	query: string,
+): string[] => {
 	if (!graph || query.trim() === "") {
 		return [];
 	}
@@ -188,51 +193,55 @@ const GraphSearch = ({
 
 	return (
 		<div className="relative w-full max-w-sm">
-			<div className="flex items-center gap-1.5 rounded-md border border-(--line) bg-(--surface) px-2">
-				<input
-					className="h-7 min-w-0 flex-1 bg-transparent px-0 font-mono text-[11px] text-(--f1) outline-none"
-					onChange={(event) => {
-						setQuery(event.target.value);
-						setOpen(true);
-					}}
-					onFocus={() => setOpen(true)}
-					onKeyDown={(event) => {
-						if (event.key === "Enter" && matches[0]) {
-							event.preventDefault();
-							choose(matches[0]);
-						}
+			<Input.Search
+				mono
+				placeholder="Search nodes…"
+				value={query}
+				onChange={(event) => {
+					setQuery(event.target.value);
+					setOpen(true);
+				}}
+				onFocus={() => setOpen(true)}
+				onKeyDown={(event) => {
+					if (event.key === "Enter" && matches[0]) {
+						event.preventDefault();
+						choose(matches[0]);
+					}
 
-						if (event.key === "Escape") {
-							setOpen(false);
-							setQuery("");
-						}
-					}}
-					placeholder="Search nodes…"
-					spellCheck={false}
-					value={query}
-				/>
-			</div>
+					if (event.key === "Escape") {
+						setOpen(false);
+						setQuery("");
+					}
+				}}
+			/>
 
 			{open && query.length > 0 ? (
-				<div className="absolute left-0 top-full z-20 mt-1 max-h-72 w-full overflow-auto rounded-md border border-(--line) bg-(--surface) py-1 shadow-[0_18px_40px_-18px_rgba(0,0,0,0.78)]">
+				<List className="absolute top-full left-0 z-20 mt-1 max-h-72 w-full gap-0 overflow-auto rounded-md border border-(--line) bg-(--surface) py-1 shadow-[0_18px_40px_-18px_rgba(0,0,0,0.78)]">
 					{matches.length === 0 ? (
-						<div className="px-3 py-2 font-mono text-[11px] text-(--f4)">No matches.</div>
+						<List.Empty className="px-3 py-2 text-left text-[11px]">
+							No matches.
+						</List.Empty>
 					) : (
 						matches.map((name) => (
-							<button
+							<List.Option
 								key={name}
-								type="button"
+								size="s"
+								className="rounded-none"
 								onClick={() => choose(name)}
-								className="flex w-full cursor-pointer items-baseline justify-between gap-3 px-3 py-1.5 text-left hover:bg-(--raised)"
-							>
-								<span className="truncate font-mono text-[11px] text-(--f1)">
-									{name.split(".").at(-1) ?? name}
-								</span>
-								<span className="truncate font-mono text-[10px] text-(--f4)">{name}</span>
-							</button>
+								label={
+									<span className="font-mono text-[11px]">
+										{name.split(".").at(-1) ?? name}
+									</span>
+								}
+								trailing={
+									<span className="truncate font-mono text-[10px] text-(--f4)">
+										{name}
+									</span>
+								}
+							/>
 						))
 					)}
-				</div>
+				</List>
 			) : null}
 		</div>
 	);
@@ -254,13 +263,16 @@ const SelectedNodePanel = ({
 					Node detail
 				</div>
 				<div className="font-mono text-[11px] text-(--f4)">
-					Select a node in the graph to inspect its value, confidence, and connected edges.
+					Select a node in the graph to inspect its value, confidence, and
+					connected edges.
 				</div>
 			</Panel>
 		);
 	}
 
-	const related = edges.filter((edge) => edge.from === nodeName || edge.to === nodeName);
+	const related = edges.filter(
+		(edge) => edge.from === nodeName || edge.to === nodeName,
+	);
 	const metadataEntries = Object.entries(node.metadata ?? {});
 
 	return (
@@ -297,7 +309,9 @@ const SelectedNodePanel = ({
 					Metadata
 				</div>
 				{metadataEntries.length === 0 ? (
-					<div className="font-mono text-[11px] text-(--f4)">No metadata on this node.</div>
+					<div className="font-mono text-[11px] text-(--f4)">
+						No metadata on this node.
+					</div>
 				) : (
 					<div className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 font-mono text-[11px]">
 						{metadataEntries.map(([key, value]) => (
@@ -317,7 +331,9 @@ const SelectedNodePanel = ({
 					Connected edges
 				</div>
 				{related.length === 0 ? (
-					<div className="font-mono text-[11px] text-(--f4)">No connected edges.</div>
+					<div className="font-mono text-[11px] text-(--f4)">
+						No connected edges.
+					</div>
 				) : (
 					<div className="flex max-h-80 flex-col gap-1 overflow-auto font-mono text-[11px]">
 						{related.map((edge, index) => (
@@ -330,12 +346,17 @@ const SelectedNodePanel = ({
 								</div>
 								<div className="mt-0.5 text-(--f4)">
 									{edge.relation ?? "relationless"} · w=
-									{typeof edge.weight === "number" ? edge.weight.toFixed(4) : "—"} · c=
+									{typeof edge.weight === "number"
+										? edge.weight.toFixed(4)
+										: "—"}{" "}
+									· c=
 									{typeof edge.confidence === "number"
 										? edge.confidence.toFixed(4)
 										: "—"}
 								</div>
-								{edge.reason ? <div className="mt-0.5 text-(--f4)">{edge.reason}</div> : null}
+								{edge.reason ? (
+									<div className="mt-0.5 text-(--f4)">{edge.reason}</div>
+								) : null}
 							</div>
 						))}
 					</div>
@@ -345,7 +366,7 @@ const SelectedNodePanel = ({
 	);
 };
 
-	export const GraphSurface = () => {
+export const GraphSurface = () => {
 	const [, setVersion] = useState(0);
 	const [selectedNodeName, setSelectedNodeName] = useState<string | null>(null);
 
@@ -365,7 +386,10 @@ const SelectedNodePanel = ({
 	const graph = retainedGraph ?? undefined;
 
 	useEffect(() => {
-		if (selectedNodeName !== null && graph?.nodes[selectedNodeName] === undefined) {
+		if (
+			selectedNodeName !== null &&
+			graph?.nodes[selectedNodeName] === undefined
+		) {
 			setSelectedNodeName(null);
 		}
 	}, [graph, selectedNodeName]);
@@ -382,39 +406,47 @@ const SelectedNodePanel = ({
 	}, [frame]);
 
 	const selectedNode =
-		selectedNodeName === null ? null : frame?.nodes?.[selectedNodeName] ?? null;
+		selectedNodeName === null
+			? null
+			: (frame?.nodes?.[selectedNodeName] ?? null);
 
 	return (
 		<div className="flex h-full min-w-295 flex-col">
-			<div className="flex h-11.5 shrink-0 items-center gap-2 overflow-x-auto border-(--line) border-b bg-(--surface) px-3.5">
-				<span className="mr-1 shrink-0 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+			<Toolbar>
+				<Typography.Label size="m" tone="f3" className="mr-1 shrink-0">
 					Market graph
-				</span>
-				<StatChip label="nodes" value={Object.keys(frame?.nodes ?? {}).length} />
-				<StatChip label="edges" value={(frame?.edges ?? []).length} />
-				<StatChip label="relations" value={relationCounts.length} />
-				<StatChip label="at" value={frame?.at ?? "—"} />
-			</div>
+				</Typography.Label>
+				<Chip label="nodes" value={Object.keys(frame?.nodes ?? {}).length} />
+				<Chip label="edges" value={(frame?.edges ?? []).length} />
+				<Chip label="relations" value={relationCounts.length} />
+				<Chip label="at" value={frame?.at ?? "—"} />
+			</Toolbar>
 
 			<div className="grid min-h-0 flex-1 grid-cols-[minmax(760px,1fr)_372px]">
 				<div className="flex min-h-0 flex-col border-(--line) border-r bg-(--sunken)">
-					<div className="flex shrink-0 items-center gap-3 border-(--line) border-b px-3 py-2">
+					<Section.Header className="gap-3">
 						<GraphSearch graph={graph} onPick={setSelectedNodeName} />
-						<div className="ml-auto flex flex-wrap gap-1.5 font-mono text-[9.5px] text-(--f4)">
+						<Flex.Row wrap="wrap" gap={1} className="ml-auto gap-1.5">
 							{relationCounts.slice(0, 4).map(([relation, count]) => (
-								<span key={relation} className="rounded-[3px] border border-(--line) px-1.5 py-0.5">
-									{relation} {count}
-								</span>
+								<Chip
+									key={relation}
+									variant="quiet"
+									size="xs"
+									label={relation}
+									value={count}
+								/>
 							))}
-						</div>
-					</div>
+						</Flex.Row>
+					</Section.Header>
 
 					<div className="min-h-0 flex-1">
 						{graph ? (
 							<ModelScope
 								className="h-full"
 								graph={graph}
-								onNodeSelect={(_index, nodeName) => setSelectedNodeName(nodeName)}
+								onNodeSelect={(_index, nodeName) =>
+									setSelectedNodeName(nodeName)
+								}
 								selectedNodeName={selectedNodeName}
 								showTimeSlider={false}
 							/>

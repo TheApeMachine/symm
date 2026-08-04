@@ -3,13 +3,12 @@ import { DEFAULT_KERNELS } from "#/collections/app";
 import { AuditTrail } from "#/components/dashboard/audit";
 import { Decisions } from "#/components/dashboard/decisions";
 import { FluidLegend } from "#/components/dashboard/fluid";
-import { ColumnHeader } from "#/components/dashboard/header";
 import { Positions } from "#/components/dashboard/positions";
 import { KernelInspector } from "#/components/kernel/inspector";
 import { Pulse } from "#/components/pulse";
 import {
-  TerminalFluidChart,
-  TerminalPredictionChart,
+	TerminalFluidChart,
+	TerminalPredictionChart,
 } from "#/components/terminal/charts";
 import { KernelList } from "#/components/terminal/kernel-list";
 import { LiveResonanceFooter } from "#/components/terminal/live-resonance-footer";
@@ -18,91 +17,91 @@ import { ThesisModal } from "#/components/terminal/thesis-modal";
 import { Canvas } from "#/components/ui/canvas";
 import { Flex } from "@/components/ui/flex";
 import { Grid } from "@/components/ui/grid";
+import { Section } from "@/components/ui/section";
 
 const RouteComponent = () => {
-  const kernels = DEFAULT_KERNELS;
+	const kernels = DEFAULT_KERNELS;
 
-  return (
-    <Flex.Column fullWidth className="h-full min-w-280">
-      <Pulse />
-      <Flex fullWidth className="relative min-h-0 flex-1">
-        <KernelInspector />
-        <ThesisModal />
-        <Grid
-          fullWidth
-          responsive={false}
-          className="h-full min-h-0 min-w-0 flex-1 grid-cols-[282px_minmax(360px,1fr)_332px]"
-        >
-          <div className="min-h-0 overflow-auto border-(--line) border-r bg-(--surface)">
-            <ColumnHeader
-              title="Signal kernels"
-              meta={`${kernels.length} kernels`}
-            />
-            <KernelList sources={kernels} />
-          </div>
+	return (
+		<Flex.Column fullWidth className="h-full min-w-280">
+			<Pulse />
+			<Flex fullWidth className="relative min-h-0 flex-1">
+				<KernelInspector />
+				<ThesisModal />
+				<Grid
+					fullWidth
+					responsive={false}
+					className="h-full min-h-0 min-w-0 flex-1 grid-cols-[282px_minmax(360px,1fr)_332px]"
+				>
+					<Section
+						fit="content"
+						className="min-h-0 overflow-auto border-(--line) border-r"
+					>
+						<Section.Header
+							sticky
+							title="Signal kernels"
+							meta={`${kernels.length} kernels`}
+						/>
+						<KernelList sources={kernels} />
+					</Section>
 
-          <Flex.Column className="min-h-0 border-(--line) border-r bg-(--sunken)">
-            <Canvas
-              title="Fluid density field"
-              meta="navier-stokes · vol-rank x delta · whale carriers"
-              topRight={<></>}
-              legend={<FluidLegend />}
-              className="flex-[1.45]"
-            >
-              <TerminalFluidChart />
-            </Canvas>
-            <Canvas
-              title={
-                <>
-                  Predictive coding · <LiveResonanceTitle />
-                </>
-              }
-              meta="settled latent state · dynamic horizon · adaptive learning pace"
-              footer={<LiveResonanceFooter />}
-              topRight={
-                <div className="flex gap-3 text-left">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="inline-block h-px w-3 bg-(--acc)" />
-                    forward curve
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="inline-block h-px w-3 bg-info" />
-                    latent state
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="inline-block h-px w-3 bg-(--line2)" />
-                    zero
-                  </span>
-                </div>
-              }
-              className="flex-1 border-(--line) border-t"
-            >
-              <TerminalPredictionChart />
-            </Canvas>
-          </Flex.Column>
+					<Flex.Column className="min-h-0 border-(--line) border-r bg-(--sunken)">
+						<Canvas
+							title="Fluid density field"
+							meta="navier-stokes · vol-rank x delta · whale carriers"
+							legend={<FluidLegend />}
+							className="flex-[1.45]"
+						>
+							<TerminalFluidChart />
+						</Canvas>
+						<Canvas
+							title={
+								<>
+									Predictive coding · <LiveResonanceTitle />
+								</>
+							}
+							meta="settled latent state · dynamic horizon · adaptive learning pace"
+							footer={<LiveResonanceFooter />}
+							topRight={
+								<div className="flex gap-3 text-left">
+									<span className="inline-flex items-center gap-1.5">
+										<span className="inline-block h-px w-3 bg-(--acc)" />
+										forward curve
+									</span>
+									<span className="inline-flex items-center gap-1.5">
+										<span className="inline-block h-px w-3 bg-info" />
+										latent state
+									</span>
+									<span className="inline-flex items-center gap-1.5">
+										<span className="inline-block h-px w-3 bg-(--line2)" />
+										zero
+									</span>
+								</div>
+							}
+							className="flex-1 border-(--line) border-t"
+						>
+							<TerminalPredictionChart />
+						</Canvas>
+					</Flex.Column>
 
-          <Flex.Column className="min-h-0 overflow-hidden bg-(--surface)">
-            <div className="min-h-0 flex-[1.15] border-(--line) border-b">
-              <Decisions />
-            </div>
-            <div className="flex min-h-0 flex-none flex-col overflow-hidden border-(--line) border-b">
-              <div className="flex items-center justify-between border-(--line) border-b px-3 py-2">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.13em] text-(--f3)">
-                  Open positions
-                </span>
-              </div>
-              <Positions />
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto">
-              <AuditTrail />
-            </div>
-          </Flex.Column>
-        </Grid>
-      </Flex>
-    </Flex.Column>
-  );
+					<Flex.Column className="min-h-0 overflow-hidden bg-(--surface)">
+						<div className="min-h-0 flex-[1.15] border-(--line) border-b">
+							<Decisions />
+						</div>
+						<Section className="flex-none border-(--line) border-b">
+							<Section.Header title="Open positions" />
+							<Positions />
+						</Section>
+						<div className="min-h-0 flex-1 overflow-auto">
+							<AuditTrail />
+						</div>
+					</Flex.Column>
+				</Grid>
+			</Flex>
+		</Flex.Column>
+	);
 };
 
 export const Route = createFileRoute("/")({
-  component: RouteComponent,
+	component: RouteComponent,
 });

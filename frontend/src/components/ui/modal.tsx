@@ -1,21 +1,18 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import type { ComponentProps, ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { Button } from "./button";
+import { Icon } from "./icon";
+import { Overlay, overlayVariants } from "./overlay";
 
-export const modalScrimVariants = cva(
-	"absolute inset-0 z-9 flex flex-col p-8 backdrop-blur-[3px]",
-	{
-		variants: {
-			variant: {
-				dim: "bg-[color-mix(in_srgb,var(--sunken)_60%,transparent)]",
-				solid: "bg-(--sunken)",
-			},
-		},
-		defaultVariants: {
-			variant: "dim",
-		},
-	},
-);
+/*
+Modal is an Overlay carrying a surface panel. Compose chrome with Modal.Header,
+Modal.Body, Modal.Footer, and Modal.Close.
+
+The scrim is Overlay's, re-exported here under its old name so callers that
+style the backdrop keep working.
+*/
+export const modalScrimVariants = overlayVariants;
 
 export const modalPanelVariants = cva(
 	[
@@ -29,6 +26,8 @@ export const modalPanelVariants = cva(
 				s: "max-w-[360px] rounded-[4px]",
 				m: "max-w-[452px] rounded-[6px]",
 				lg: "max-w-[560px] rounded-[6px]",
+				/* Wide enough for a two-line result row plus its trailing tag. */
+				xl: "max-w-[680px] rounded-lg",
 			},
 		},
 		defaultVariants: {
@@ -37,49 +36,40 @@ export const modalPanelVariants = cva(
 	},
 );
 
-type ModalScrimVariantProps = VariantProps<typeof modalScrimVariants>;
 type ModalPanelVariantProps = VariantProps<typeof modalPanelVariants>;
 
-export type ModalProps = Omit<ComponentProps<"div">, "children"> &
-	ModalScrimVariantProps &
+export type ModalProps = Omit<ComponentProps<typeof Overlay>, "children"> &
 	ModalPanelVariantProps & {
-		open?: boolean;
-		onClose?: () => void;
 		children: ReactNode;
+		/* Styles the panel; `className` still styles the scrim. */
+		panelClassName?: string;
 	};
 
-/*
-Modal is a dismissible overlay shell with a centered surface panel. Compose
-chrome with Modal.Header, Modal.Body, Modal.Footer, and Modal.Close.
-*/
 export const Modal = ({
 	ref,
 	open,
 	onClose,
 	variant,
+	align,
 	size,
 	className,
+	panelClassName,
 	children,
 	...props
 }: ModalProps) => (
-	<div
+	<Overlay
 		ref={ref}
-		className={cn(modalScrimVariants({ variant }), className)}
+		open={open}
+		onClose={onClose}
+		variant={variant}
+		align={align}
+		className={className}
 		{...props}
-		{...(open === undefined ? {} : { hidden: !open })}
 	>
-		{onClose === undefined ? null : (
-			<button
-				type="button"
-				aria-label="Close"
-				className="absolute inset-0"
-				onClick={onClose}
-			/>
-		)}
-		<div className="pointer-events-none relative z-10 flex min-h-0 flex-1 items-center justify-center">
-			<div className={modalPanelVariants({ size })}>{children}</div>
+		<div className={cn(modalPanelVariants({ size }), panelClassName)}>
+			{children}
 		</div>
-	</div>
+	</Overlay>
 );
 
 Modal.Header = ({
@@ -139,28 +129,18 @@ Modal.Footer = ({
 Modal.Close = ({
 	ref,
 	className,
-	type = "button",
+	"aria-label": ariaLabel = "Close",
 	...props
 }: ComponentProps<"button">) => (
-	<button
+	<Button
 		ref={ref}
-		type={type}
-		className={cn(
-			"flex size-[25px] shrink-0 cursor-pointer items-center justify-center rounded-[3px] border border-(--line) bg-(--raised) p-0 text-(--f3) hover:border-(--line2) hover:text-(--f1)",
-			className,
-		)}
+		variant="outline"
+		size="s"
+		shape="icon"
+		aria-label={ariaLabel}
+		className={className}
 		{...props}
 	>
-		<svg
-			width="13"
-			height="13"
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke="currentColor"
-			strokeWidth="2"
-			aria-hidden="true"
-		>
-			<path d="M6 6l12 12M18 6L6 18" />
-		</svg>
-	</button>
+		<Icon name="close" size="s" />
+	</Button>
 );

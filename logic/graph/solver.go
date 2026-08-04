@@ -447,29 +447,26 @@ extractCognitionNodes registers active category sequences and lookahead predicti
 */
 func (solver *Solver) extractCognitionNodes(thesis *types.Thesis, graph *Graph) {
 	thesis.Cognition.Range(func(key, value any) bool {
-		symbol, _ := key.(string)
-		cogMap, ok := value.(map[string]any)
-		if !ok {
+		symbol, symbolOK := key.(string)
+		cognition, cognitionOK := value.(types.Cognition)
+
+		if !symbolOK || !cognitionOK || cognition.Winner == "" {
 			return true
 		}
 
-		if winner, ok := cogMap["winnerRegime"].(string); ok && winner != "" {
-			nodeID := fmt.Sprintf("cog:%s:winner_regime", symbol)
-			conf, _ := cogMap["confidence"].(float64)
-
-			graph.AddNode(&Node{
-				ID:         nodeID,
-				Symbol:     symbol,
-				Source:     "cognition",
-				Kind:       "cognition",
-				Value:      conf,
-				Confidence: conf,
-				At:         thesis.At,
-				Metadata: map[string]any{
-					"regime": winner,
-				},
-			})
-		}
+		nodeID := fmt.Sprintf("cog:%s:winner_regime", symbol)
+		graph.AddNode(&Node{
+			ID:         nodeID,
+			Symbol:     symbol,
+			Source:     cognition.Source,
+			Kind:       KindCognition,
+			Value:      cognition.Confidence,
+			Confidence: cognition.Confidence,
+			At:         cognition.At,
+			Metadata: map[string]any{
+				"regime": cognition.Winner,
+			},
+		})
 
 		return true
 	})
@@ -603,43 +600,39 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 
 	// 2. Evaluate Leads & Lags from Cognition Beam Search
 	thesis.Cognition.Range(func(key, value any) bool {
-		symbol, _ := key.(string)
-		cogMap, ok := value.(map[string]any)
+		symbol, symbolOK := key.(string)
+		cognition, cognitionOK := value.(types.Cognition)
 
-		if !ok {
+		if !symbolOK || !cognitionOK {
 			return true
 		}
 
-		if preds, ok := cogMap["predictions"].([]map[string]any); ok {
-			currNodeID := fmt.Sprintf("cog:%s:winner_regime", symbol)
+		currentNodeID := fmt.Sprintf("cog:%s:winner_regime", symbol)
 
-			for index, pred := range preds {
-				if path, ok := pred["predictedPath"].(string); ok && path != "" {
-					targetNodeID := fmt.Sprintf("cat:%s:%s", symbol, path)
-
-					// Relation: Leads (Current Regime leads Predicted Category)
-					graph.AddEdge(&Edge{
-						From:       currNodeID,
-						To:         targetNodeID,
-						Relation:   RelationLeads,
-						Weight:     float64(index + 1),
-						Confidence: pred["probability"].(float64),
-						At:         graph.At,
-						Reason:     "cognition beam search lookahead prediction",
-					})
-
-					// Relation: Lags (Inverse Edge)
-					graph.AddEdge(&Edge{
-						From:       targetNodeID,
-						To:         currNodeID,
-						Relation:   RelationLags,
-						Weight:     float64(index + 1),
-						Confidence: pred["probability"].(float64),
-						At:         graph.At,
-						Reason:     "inverse temporal lag of beam search lookahead",
-					})
-				}
+		for path, probability := range cognition.Predictions {
+			if path == "" {
+				continue
 			}
+
+			targetNodeID := fmt.Sprintf("cat:%s:%s", symbol, path)
+			graph.AddEdge(&Edge{
+				From:       currentNodeID,
+				To:         targetNodeID,
+				Relation:   RelationLeads,
+				Weight:     probability,
+				Confidence: probability,
+				At:         graph.At,
+				Reason:     "cognition beam search lookahead prediction",
+			})
+			graph.AddEdge(&Edge{
+				From:       targetNodeID,
+				To:         currentNodeID,
+				Relation:   RelationLags,
+				Weight:     probability,
+				Confidence: probability,
+				At:         graph.At,
+				Reason:     "inverse temporal lag of beam search lookahead",
+			})
 		}
 
 		return true

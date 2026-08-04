@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -224,8 +225,8 @@ func (desk *Desk) recover() error {
 		// Buys after the last sell are the ones that bought what is held now.
 		opening := histories
 
-		for index := len(histories) - 1; index >= 0; index-- {
-			if strings.EqualFold(histories[index].Type, "sell") {
+		for index, historie := range slices.Backward(histories) {
+			if strings.EqualFold(historie.Type, "sell") {
 				opening = histories[index+1:]
 				break
 			}
@@ -274,8 +275,13 @@ func (desk *Desk) recover() error {
 			types.Decision{
 				ID:               "recovered:" + symbol,
 				ProposedQuantity: quantity,
+				EntryAt:          &time.Time{},
+				Symbol:           symbol,
 				EntryPrice:       entryPrice,
 				EntryFee:         entryFee,
+				ExitPrice:        decimal.NewFromInt64(0),
+				ExitFee:          decimal.NewFromInt64(0),
+				SellableQty:      quantity,
 				Mark:             entryPrice,
 			},
 		)
