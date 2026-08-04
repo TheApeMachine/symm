@@ -9,38 +9,9 @@
       <change beforePath="$PROJECT_DIR$/broker/desk.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/desk.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/broker/position.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/position.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/broker/price.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/price.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/collections/types.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/collections/types.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/charts/prediction.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/charts/prediction.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/decision-candidate.test.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/decision-candidate.test.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/decision-candidate.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/decision-candidate.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/live-resonance-footer.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/live-resonance-footer.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/live-resonance-title.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/live-resonance-title.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/terminal/xray-manifold-panel.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/terminal/xray-manifold-panel.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/providers/ws-worker.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/providers/ws-worker.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kraken/websocket/book.go" beforeDir="false" afterPath="$PROJECT_DIR$/kraken/websocket/book.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/logic/causal/solver.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/causal/solver.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/logic/graph/solver.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/graph/solver.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/logic/manifold/solver.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/solver.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/logic/manifold/solver_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/manifold/solver_test.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/logic/resonance/solver.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/resonance/solver.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/logic/resonance/solver_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/resonance/solver_test.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/correlation/hayashi.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/correlation/hayashi.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/correlation/section.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/correlation/section.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/cvd/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/cvd/signal.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/depthflow/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/depthflow/signal.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/exhaust/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/exhaust/signal.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/hawkes/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/hawkes/signal.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/leadlag/measurements.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/leadlag/measurements.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/leadlag/section.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/leadlag/section.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/leadlag/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/leadlag/signal.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/liquidity/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/liquidity/signal.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/pumpdump/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/pumpdump/signal.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/sentiment/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/sentiment/signal.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/signal/toxicity/signal.go" beforeDir="false" afterPath="$PROJECT_DIR$/signal/toxicity/signal.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategy/evaluator.go" beforeDir="false" afterPath="$PROJECT_DIR$/strategy/evaluator.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategy/mcts.go" beforeDir="false" afterPath="$PROJECT_DIR$/strategy/mcts.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/types/holding.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/holding.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/types/stoploss.go" beforeDir="false" afterPath="$PROJECT_DIR$/types/stoploss.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/broker/price_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/broker/price_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/providers/ws-stores.test.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/providers/ws-stores.test.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/providers/ws-stores.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/providers/ws-stores.ts" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
