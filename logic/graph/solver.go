@@ -508,9 +508,14 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 	for _, node := range nodes {
 		switch node.Kind {
 		case KindResonance:
-			resonanceBySymbol[node.Symbol] = append(resonanceBySymbol[node.Symbol], node)
+			if node.ID == "res:"+node.Symbol+":forecast" {
+				resonanceBySymbol[node.Symbol] = append(resonanceBySymbol[node.Symbol], node)
+			}
 		case KindCausal:
-			causalBySymbol[node.Symbol] = append(causalBySymbol[node.Symbol], node)
+			if node.ID == "causal:"+node.Symbol+":uplift" ||
+				node.ID == "causal:"+node.Symbol+":doExpectation" {
+				causalBySymbol[node.Symbol] = append(causalBySymbol[node.Symbol], node)
+			}
 
 			if node.ID == "causal:"+node.Symbol+":intervention" {
 				interventions = append(interventions, node)

@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/types"
 )
@@ -145,13 +146,16 @@ func TestMomentumMultiplier(t *testing.T) {
 		thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{pumpMeasurement})
 		thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{hawkesMeasurement})
 
+		var multiplier float64
+
 		Convey("It should dynamically scale the momentum multiplier across volume and cascade horizons", func() {
-			multiplier := momentumMultiplier(thesis, symbol)
+			multiplier = momentumMultiplier(thesis, symbol)
 
 			So(multiplier, ShouldBeGreaterThan, 10.0)
 		})
 
 		Convey("Given active breakout categories", func() {
+			baseMultiplier := momentumMultiplier(thesis, symbol)
 			thesis.Categories[symbol] = []types.Category{
 				{
 					Type:       types.CategoryVerticalIgnition,
@@ -164,7 +168,7 @@ func TestMomentumMultiplier(t *testing.T) {
 			Convey("It should amplify the opportunity multiplier further", func() {
 				boosted := momentumMultiplier(thesis, symbol)
 
-				So(boosted, ShouldBeGreaterThan, multiplier)
+				So(boosted, ShouldBeGreaterThan, baseMultiplier)
 			})
 		})
 
@@ -182,6 +186,59 @@ func TestMomentumMultiplier(t *testing.T) {
 
 				So(dampened, ShouldEqual, 0.0)
 			})
+		})
+	})
+}
+
+func TestEstimateImpact(t *testing.T) {
+	Convey("Given market spread and scarcity measurements", t, func() {
+		thesis := types.NewThesis()
+		symbol := "BTC/USD"
+		spread := decimal.NewFromFloat64(10.0)
+
+		Convey("With baseline liquidity, impact should be derived from baseline touch", func() {
+			impact := estimateImpact(thesis, symbol, spread)
+			So(impact.Float64(), ShouldAlmostEqual, 0.5) // 10.0 * 0.05
+		})
+
+		Convey("With scarcity measurements, impact should dynamically scale up", func() {
+			scarcitySample := types.MetricSample{Raw: 0.8}
+			measurement := &types.Measurement{
+				Source: types.SourceLiquidity,
+				Symbol: symbol,
+				Metrics: map[string]types.MetricSample{
+					string(types.MetricKey(types.MetricScarcityScore, types.SideNone)): scarcitySample,
+				},
+			}
+			thesis.Measurements.Store(string(types.SourceLiquidity), []*types.Measurement{measurement})
+
+			impact := estimateImpact(thesis, symbol, spread)
+			So(impact.Float64(), ShouldBeGreaterThan, 0.5)
+			So(impact.Float64(), ShouldAlmostEqual, 2.5) // 10.0 * (0.05 + 0.25*0.8) = 2.5
+		})
+	})
+}
+
+func TestCandidateValuation(t *testing.T) {
+	Convey("Given a candidate valuation", t, func() {
+		c := candidate{
+			Symbol:         "BTC/USD",
+			ReferencePrice: decimal.NewFromFloat64(100.0),
+			ExpectedReturn: decimal.NewFromFloat64(5.0),
+			ExpectedFees:   decimal.NewFromFloat64(0.5),
+			ExpectedSpread: decimal.NewFromFloat64(0.2),
+			ExpectedImpact: decimal.NewFromFloat64(0.1),
+		}
+
+		Convey("ExecutableReturn should subtract all frictions", func() {
+			netReturn := c.ExecutableReturn()
+			So(netReturn.Float64(), ShouldAlmostEqual, 4.2)
+		})
+
+		Convey("FractionOf and RoundTripFraction should compute proportional friction correctly", func() {
+			So(c.FractionOf(c.ExpectedFees), ShouldAlmostEqual, 0.005)
+			So(c.RoundTripFraction(), ShouldAlmostEqual, 0.008)
+			So(c.ExecutableFraction(), ShouldAlmostEqual, 0.042)
 		})
 	})
 }

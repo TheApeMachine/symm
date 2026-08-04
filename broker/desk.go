@@ -337,6 +337,22 @@ func (desk *Desk) Price() *Price {
 	return desk.price
 }
 
+/*
+Balance exposes the desk's balance so callers outside the broker package can
+read the current wallet state without accessing the unexported field.
+*/
+func (desk *Desk) Balance() *Balance {
+	return desk.balance
+}
+
+/*
+Instrument exposes the desk's instrument registry so callers outside the broker
+package can reach pair metadata without accessing the unexported field.
+*/
+func (desk *Desk) Instrument() *Instrument {
+	return desk.instrument
+}
+
 func (desk *Desk) OpenPositions() int {
 	count := 0
 
@@ -565,7 +581,7 @@ func (desk *Desk) enter(decision types.Decision) error {
 
 	decision.EntryPrice = tick.Ask.Copy()
 	decision.EntryFee = entryFee
-	decision.Mark = decision.EntryPrice.Copy()
+	decision.Mark = tick.Bid.Copy()
 
 	position := NewPosition(
 		desk.ctx,

@@ -89,7 +89,7 @@ func (solver *Solver) addCausalTarget(
 	targets map[string]causalTarget,
 	measurement *types.Measurement,
 ) {
-	for _, metric := range measurement.Metrics {
+	for key, metric := range measurement.Metrics {
 		if math.IsNaN(metric.Raw) || math.IsInf(metric.Raw, 0) {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -97,6 +97,10 @@ func (solver *Solver) addCausalTarget(
 				nil,
 			))
 
+			continue
+		}
+
+		if !isRealizedReturnMetric(key) {
 			continue
 		}
 
@@ -113,6 +117,27 @@ func (solver *Solver) addCausalTarget(
 		target.sum += metric.Raw
 		target.count++
 		targets[measurement.Symbol] = target
+	}
+}
+
+func isRealizedReturnMetric(key string) bool {
+	metric, _ := types.ParseMetricKey(key)
+
+	switch metric {
+	case types.MetricChange,
+		types.MetricTrend,
+		types.MetricNetFraction,
+		types.MetricSignedLagDirection,
+		types.MetricRelativeLead:
+		return true
+	}
+
+	switch key {
+	case "change", "trend", "return", "price_return", "realized_return",
+		"finite", "first", "second", "single":
+		return true
+	default:
+		return false
 	}
 }
 

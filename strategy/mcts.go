@@ -49,28 +49,29 @@ A held position already paid to enter, so the bar for abandoning it is a move
 that exceeds what a round trip costs to unwind and re-establish rather than any
 adverse move at all.
 */
-func (s StrategyState) reversalFraction() float64 {
-	return -2.0 * s.RoundTripCost
+func (strategyState StrategyState) reversalFraction() float64 {
+	return -2.0 * strategyState.RoundTripCost
 }
 
-func (s StrategyState) IsTerminal() bool {
-	return s.Step >= s.MaxSteps ||
-		(s.IsHolding && s.Treatment < s.reversalFraction())
+func (strategyState StrategyState) IsTerminal() bool {
+	return strategyState.Step >= strategyState.MaxSteps ||
+		(strategyState.IsHolding && strategyState.Treatment < strategyState.reversalFraction())
 }
 
-func (s StrategyState) GetReward() float64 {
-	return s.Reward
+func (strategyState StrategyState) GetReward() float64 {
+	return strategyState.Reward
 }
 
-func (s StrategyState) GetPossibleActions() []float64 {
-	if s.IsHolding {
+func (strategyState StrategyState) GetPossibleActions() []float64 {
+	if strategyState.IsHolding {
 		return []float64{ActionHold, ActionExit}
 	}
+
 	return []float64{ActionNothing, ActionEnter}
 }
 
-func (s StrategyState) ApplyAction(action float64) mcts.State {
-	next := s
+func (strategyState StrategyState) ApplyAction(action float64) mcts.State {
+	next := strategyState
 	next.Step++
 
 	switch action {
@@ -81,11 +82,11 @@ func (s StrategyState) ApplyAction(action float64) mcts.State {
 		// than a constant, so a wide or expensive market prices itself out
 		// instead of being judged against a figure taken from some other one.
 		next.IsHolding = true
-		next.Reward += s.Treatment - s.RoundTripCost
+		next.Reward += strategyState.Treatment - strategyState.RoundTripCost
 	case ActionHold:
 		// A held forecast decays toward the horizon it was drawn for, so a
 		// further step of holding is worth less than the forecast claims.
-		next.Reward += s.Treatment * 0.9
+		next.Reward += strategyState.Treatment * 0.9
 	case ActionExit:
 		// The round trip was already charged on entry, so exiting adds
 		// nothing further. Charging it again would make every completed
@@ -98,8 +99,8 @@ func (s StrategyState) ApplyAction(action float64) mcts.State {
 	return next
 }
 
-func (s StrategyState) ToVector() []float64 {
-	return []float64{s.Energy, s.Surprise, s.Treatment, s.Reward}
+func (strategyState StrategyState) ToVector() []float64 {
+	return []float64{strategyState.Energy, strategyState.Surprise, strategyState.Treatment, strategyState.Reward}
 }
 
 /*
@@ -120,12 +121,12 @@ it is worth after decay, and standing aside or closing out takes nothing. Those
 are levels the treatment column genuinely carries, so the interventional
 expectation is read from inside the model's support.
 */
-func (s StrategyState) GetInterventionLevel(action float64) float64 {
+func (strategyState StrategyState) GetInterventionLevel(action float64) float64 {
 	switch action {
 	case ActionEnter:
-		return s.Treatment
+		return strategyState.Treatment
 	case ActionHold:
-		return s.Treatment * 0.9
+		return strategyState.Treatment * 0.9
 	default:
 		return 0.0
 	}
@@ -138,7 +139,7 @@ func NewCausalEngineAdapter() CausalEngineAdapter {
 	return CausalEngineAdapter{}
 }
 
-func (a CausalEngineAdapter) DoExpectation(
+func (causalEngineAdapter CausalEngineAdapter) DoExpectation(
 	rows [][]float64, target, minRows, treatment int, level float64, controls []int,
 ) (float64, error) {
 	table, err := causal.NewNodeTableWrapper(rows, target, minRows)
@@ -150,7 +151,7 @@ func (a CausalEngineAdapter) DoExpectation(
 	return table.DoExpectation(treatment, level, controls...)
 }
 
-func (a CausalEngineAdapter) AbductiveCounterfactual(
+func (causalEngineAdapter CausalEngineAdapter) AbductiveCounterfactual(
 	rows [][]float64,
 	target, minRows int,
 	features []int,

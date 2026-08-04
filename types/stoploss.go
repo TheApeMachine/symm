@@ -13,16 +13,14 @@ Stoploss regulates one open lot from direct ticker updates forwarded by the
 owning Position.
 */
 type Stoploss struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	Status      Status           `json:"status"`
-	Symbol      string           `json:"symbol"`
-	Entry       *decimal.Decimal `json:"entry"`
-	Peak        *decimal.Decimal `json:"peak"`
-	Mark        *decimal.Decimal `json:"mark"`
-	Floor       *decimal.Decimal `json:"floor"`
-	breachCount int
-	shockTicks  int
+	ctx    context.Context
+	cancel context.CancelFunc
+	Status Status           `json:"status"`
+	Symbol string           `json:"symbol"`
+	Entry  *decimal.Decimal `json:"entry"`
+	Peak   *decimal.Decimal `json:"peak"`
+	Mark   *decimal.Decimal `json:"mark"`
+	Floor  *decimal.Decimal `json:"floor"`
 }
 
 /*
@@ -72,8 +70,10 @@ func (stoploss *Stoploss) Update(ticker kraken.TickerData) error {
 }
 
 /*
-evaluate checks the current the current Peek, and potentially re-sets
-the Peak and the Floor if the current Mark is higher than the Peak.
+evaluate seeds Peak and Floor on first call, then raises them only when the
+live bid is above the break-even price. This ensures the trailing stop only
+locks in profit once the round-trip fee cost has been recovered — any upward
+movement while still below break-even leaves the floor exactly where it was.
 */
 func (stoploss *Stoploss) evaluate() {
 	if stoploss.Peak == nil {
@@ -85,6 +85,11 @@ func (stoploss *Stoploss) evaluate() {
 			stoploss.Peak, decimal.NewFromFloat64(0.98),
 		)
 
+		return
+	}
+
+	// Only raise the floor when the position is actually profitable after fees.
+	if stoploss.Entry != nil && stoploss.Mark.Cmp(stoploss.Entry) <= 0 {
 		return
 	}
 

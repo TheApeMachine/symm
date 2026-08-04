@@ -127,7 +127,7 @@ func (instrument *Instrument) Subscribe() error {
 		errnie.Info(fmt.Sprintf("subscribing to %d symbols", len(batch)))
 
 		if err := instrument.price.GetFees(batch); err != nil {
-			return errnie.Error(err)
+			errnie.Warn(fmt.Sprintf("instrument: failed to load fee tier batch: %v", err))
 		}
 
 		for _, subscribe := range subscribers {

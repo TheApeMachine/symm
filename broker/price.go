@@ -251,11 +251,7 @@ func (price *Price) Fee(symbol string) (*decimal.Decimal, error) {
 	fee, err := price.getFee(symbol)
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"could not get fee for symbol",
-			err,
-		))
+		return nil, err
 	}
 
 	return fee.Fee, nil
@@ -343,24 +339,35 @@ func (price *Price) getTickAndFee(symbol string) (
 }
 
 func (price *Price) getFee(symbol string) (*kraken.TradeVolumeFee, error) {
-	found, ok := price.fees.Load(price.api.Normalizer().Name(symbol))
+	normName := symbol
+
+	if price.api != nil && price.api.Normalizer() != nil {
+		normName = price.api.Normalizer().Name(symbol)
+	}
+
+	found, ok := price.fees.Load(normName)
+
+	if (!ok || found == nil) && price.api != nil {
+		_ = price.GetFees([]string{symbol})
+		found, ok = price.fees.Load(normName)
+	}
 
 	if !ok || found == nil {
-		return nil, errnie.Error(errnie.Err(
+		return nil, errnie.Err(
 			errnie.NotFound,
-			"fee not found",
+			"fee not found for "+symbol,
 			nil,
-		))
+		)
 	}
 
 	fee, ok := found.(kraken.TradeVolumeFee)
 
 	if !ok {
-		return nil, errnie.Error(errnie.Err(
+		return nil, errnie.Err(
 			errnie.UnprocessableContent,
 			"invalid fee type",
 			nil,
-		))
+		)
 	}
 
 	return &fee, nil

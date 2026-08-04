@@ -92,14 +92,23 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 
 		// Calculate Max Fraction Slice or reuse rotation freed capital
 		if decision.ProposedNotional == nil || decision.ProposedNotional.Sign() <= 0 {
-			decision.ProposedNotional = budget.Mul(allocator.maxFraction)
+			if allocator.maxFraction == nil || allocator.maxFraction.Sign() <= 0 {
+				decision.ProposedNotional = budget
+			} else {
+				decision.ProposedNotional = budget.Mul(allocator.maxFraction)
+			}
 		}
 
 		// Quantize quantity against instrument venue rules
 		qty, err := allocator.price.Quantity(pair.Symbol, decision.ProposedNotional)
 
-		if err != nil || qty == nil {
+		if err != nil || qty == nil || qty.Sign() <= 0 {
 			allocator.reject(decision, "quantity sizing failed")
+			continue
+		}
+
+		if pair.QtyMin != nil && qty.Cmp(pair.QtyMin) < 0 {
+			allocator.reject(decision, "sized quantity below minimum pair order size")
 			continue
 		}
 

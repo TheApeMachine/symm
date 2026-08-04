@@ -38,6 +38,27 @@ type Holding struct {
 }
 
 /*
+breakEvenBid derives the per-unit bid price at which a round-trip covers its
+full fee cost. EntryFee on a decision is a total notional amount
+(feeRate × ask × qty), not a per-unit value. Dividing by qty converts it back
+to a per-unit entry fee; doubling approximates the exit fee at the same price
+level (bid ≈ ask at entry). The result is the minimum bid the position must
+reach for a market sell to be profitable after both crossings.
+*/
+func breakEvenBid(decision Decision) *decimal.Decimal {
+	if decision.EntryPrice == nil ||
+		decision.EntryFee == nil ||
+		decision.ProposedQuantity == nil ||
+		decision.ProposedQuantity.Sign() <= 0 {
+		return nil
+	}
+
+	perUnitFee := decision.EntryFee.Div(decision.ProposedQuantity)
+
+	return decision.EntryPrice.Add(perUnitFee).Add(perUnitFee)
+}
+
+/*
 NewHolding constructs a pending Thesis lot with the Stoploss regulator Position
 advances directly from live ticker updates.
 */
@@ -65,7 +86,7 @@ func NewHolding(
 		Stoploss: NewStoploss(
 			ctx,
 			symbol,
-			decision.EntryPrice.Add(decision.EntryFee),
+			breakEvenBid(decision),
 			decision.Mark,
 		),
 

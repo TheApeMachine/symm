@@ -5,7 +5,6 @@ import (
 	"sort"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )
@@ -170,12 +169,6 @@ func (arbiter *Arbiter) getIncumbents() []Incumbent {
 		fee, err := arbiter.price.Fee(position.Holding.Symbol)
 
 		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.NotFound,
-				"arbitrate: fee rate unavailable for "+position.Holding.Symbol,
-				err,
-			))
-
 			continue
 		}
 
