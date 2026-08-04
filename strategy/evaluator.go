@@ -76,32 +76,46 @@ func (row candidate) RoundTripFraction() float64 {
 }
 
 /*
-UncertaintyCost prices the forecast's uncertainty in the same units as the
+ExecutableFraction is the executable net return as a fraction of the reference
+price, which is the unit every utility in the decision path is stated in.
+
+Utility travels from here to the arbiter, where it is compared against an
+incumbent's ReturnPct and the fee rate it would cost to unwind. Those are both
+dimensionless fractions, so a utility carried in quote currency makes the
+comparison decide by the symbol's price: a dollar of edge on a hundred dollar
+symbol dwarfs any percentage an incumbent can show, and every challenger wins.
+*/
+func (row candidate) ExecutableFraction() float64 {
+	return row.FractionOf(row.ExecutableReturn())
+}
+
+/*
+UncertaintyFraction prices the forecast's uncertainty in the same units as the
 return it is weighed against.
 
 Uncertainty is the resonance stage's surprise: a dimensionless prediction error
-norm of order one. ExecutableReturn is an amount of quote currency per unit
-traded, which for a per-tick forecast is orders of magnitude smaller. Subtracting
-the one from the other directly compares a norm to a price, and the norm wins on
-scale alone regardless of what either says about the trade, so every candidate is
+norm of order one. The executable return is a fraction of the reference price,
+which for a per-tick forecast is orders of magnitude smaller. Subtracting the one
+from the other directly compares a norm to a return, and the norm wins on scale
+alone regardless of what either says about the trade, so every candidate is
 vetoed and no position is ever opened.
 
-Discounting the return by its own uncertainty keeps the comparison in currency.
-A forecast the network is confident in is charged little of its edge; one it is
-unsure of is charged most of it; and a forecast of nothing is still worth
-nothing, because the charge is proportional to the edge being claimed rather
-than a flat subtraction from it.
+Discounting the return by its own uncertainty keeps the comparison in return
+fractions. A forecast the network is confident in is charged little of its edge;
+one it is unsure of is charged most of it; and a forecast of nothing is still
+worth nothing, because the charge is proportional to the edge being claimed
+rather than a flat subtraction from it.
 */
-func (row candidate) UncertaintyCost() float64 {
-	edge := math.Abs(row.ExecutableReturn().Float64())
+/*
+UncertaintyFraction prices the forecast's uncertainty in the same units as the
+return it is weighed against.
+*/
+func (row candidate) UncertaintyFraction() float64 {
+	if math.IsNaN(row.Uncertainty) || math.IsInf(row.Uncertainty, 0) || row.Uncertainty <= 0 {
+		return 0
+	}
 
-	/*
-		Bounded to the edge itself. Uncertainty is unbounded above, so an
-		unsquashed multiple of it would swing the utility further negative the
-		more uncertain the reading, which reads as evidence against the trade
-		rather than as an absence of evidence for it.
-	*/
-	return edge * math.Tanh(row.Uncertainty)
+	return row.Uncertainty
 }
 
 type Evaluator struct {
@@ -240,34 +254,14 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			recommendedAction, mctsErr = evaluator.mctsEngine.Search(rootState, 50, causalRows)
 		}
 
-		// 4. Executable Net Return
-		execReturn := forecast.ExecutableReturn()
-		utility := execReturn.Float64() - forecast.UncertaintyCost()
-
-		/*
-			The causal and cognitive heads corroborate a forecast; they do not
-			replace it. Each scores in its own unbounded units, so a raw score
-			added to a utility measured in currency would decide every trade by
-			itself. Scaling a bounded opinion by the return being judged keeps
-			the heads able to strengthen, weaken, or reverse that return while
-			leaving a forecast of nothing worth nothing.
-		*/
-		conviction := math.Abs(execReturn.Float64())
-
-		if causalReady {
-			utility += conviction * squash(
-				doExpectation+uplift-noise,
-				math.Abs(doExpectation)+math.Abs(uplift)+math.Abs(noise),
-			)
-		}
-
-		/*
-			A beam score is a cumulative log-probability, not signed return
-			evidence. It is always non-positive, so adding it as alpha made
-			cognition a permanent veto. Its probability instead discounts the
-			forecast conviction by how predictable the learned continuation is.
-		*/
-		utility += cognitionAdjustment(conviction, cognition)
+		// 4. Executable Net Return, weighed by Bayesian precision and corroborating heads.
+		utility := unifiedUtility(
+			forecast.ExecutableFraction(),
+			causalFactor(doExpectation, uplift, noise, causalReady),
+			cognitionFactor(cognition),
+			graphFactor(supports, contradicts, hasGraph),
+			forecast.Uncertainty,
+		)
 
 		if utility <= 0 {
 			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
@@ -479,43 +473,32 @@ func (evaluator Evaluator) ManageContinuation(
 			continue
 		}
 
-		// Priced in currency for the same reason the entry utility is: raw
-		// surprise is a dimensionless norm and would dominate a per-tick
-		// return by orders of magnitude, closing every position the moment it
-		// was opened.
-		//
-		// The charge is against the gross return here rather than the
-		// executable one, because the exit cost this utility is compared to is
-		// subtracted separately just below.
-		holdUtility := forecast.ExpectedReturn.Float64() * (1 - math.Tanh(forecast.Uncertainty))
-
 		// Only the exit remains to be paid on a position already held, so it
 		// carries one crossing of the spread and one fee rather than the
 		// round trip an entry is charged for.
-		exitCost := forecast.ReferencePrice.Mul(fee).Add(
-			forecast.ExpectedSpread.Div(decimal.NewFromInt64(2)),
-		).Add(forecast.ExpectedImpact)
+		//
+		// Stated as a fraction of the reference price, because the utility it
+		// gates is one: the fee already arrives as a rate, and the two frictions
+		// beside it are amounts that have to be divided down to join it.
+		exitCostFraction := fee.Float64() +
+			forecast.FractionOf(forecast.ExpectedSpread)/2 +
+			forecast.FractionOf(forecast.ExpectedImpact)
 
 		doExpectation, uplift, noise, causalReady := getCausalMetrics(thesis, forecast.Symbol)
 		cognition := getCognition(thesis, forecast.Symbol)
+		supports, contradicts, hasGraph := inspectGraph(thesis, forecast.Symbol)
 
-		conviction := math.Abs(forecast.ExpectedReturn.Float64())
-
-		if causalReady {
-			holdUtility += conviction * squash(
-				doExpectation+uplift-noise,
-				math.Abs(doExpectation)+math.Abs(uplift)+math.Abs(noise),
-			)
-		}
-
-		holdUtility += cognitionAdjustment(conviction, cognition)
-
-		// Apply Graph Contradiction Penalty to Hold Utility
-		_, contradicts, hasGraph := inspectGraph(thesis, forecast.Symbol)
-
-		if hasGraph && contradicts > 0 {
-			holdUtility -= (contradicts * 0.1)
-		}
+		// Scored by the same decision function an entry is, so a position is
+		// held for the reasons it would be opened for. The charge here is
+		// against the gross return rather than the executable one, because the
+		// exit cost this utility is compared to is subtracted separately below.
+		holdUtility := unifiedUtility(
+			forecast.FractionOf(forecast.ExpectedReturn),
+			causalFactor(doExpectation, uplift, noise, causalReady),
+			cognitionFactor(cognition),
+			graphFactor(supports, contradicts, hasGraph),
+			forecast.Uncertainty,
+		)
 
 		/*
 			Holding is only worth it while continuing beats closing. Once the
@@ -528,7 +511,7 @@ func (evaluator Evaluator) ManageContinuation(
 		reason := "continuation holds active position"
 		quantity := decimal.NewFromInt64(0)
 
-		if holdUtility < -exitCost.Float64() {
+		if holdUtility < -exitCostFraction {
 			action = types.ActionExit
 			cause = "continuation_decayed"
 			reason = "holding no longer covers the cost of exiting"
@@ -542,7 +525,7 @@ func (evaluator Evaluator) ManageContinuation(
 			Utility: holdUtility,
 			Alternatives: map[string]float64{
 				"hold": holdUtility,
-				"exit": -exitCost.Float64(),
+				"exit": -exitCostFraction,
 			},
 			ProposedNotional:  decimal.NewFromInt64(0),
 			ProposedQuantity:  quantity,
@@ -553,7 +536,7 @@ func (evaluator Evaluator) ManageContinuation(
 			AdverseSelection:  adverseSelection(thesis, forecast),
 			Uncertainty:       forecast.Uncertainty,
 			Confidence:        forecast.Confidence,
-			OpportunityMargin: holdUtility + exitCost.Float64(),
+			OpportunityMargin: holdUtility + exitCostFraction,
 			CognitiveLead:     cognition.LookaheadScore,
 			BasinConfidence:   cognition.Confidence,
 			ReferencePrice:    forecast.ReferencePrice.Copy(),
@@ -616,6 +599,11 @@ func (evaluator Evaluator) candidate(
 		never made.
 	*/
 	expectedReturn := accumulatedReturn(curve, retention(row, len(curve)))
+	multiplier := momentumMultiplier(thesis, symbol)
+
+	if multiplier > 1.0 {
+		expectedReturn *= multiplier
+	}
 
 	if math.IsNaN(expectedReturn) || math.IsInf(expectedReturn, 0) {
 		return candidate{}, false
@@ -791,43 +779,92 @@ simple majority means the graph is saying more against the trade than for it.
 const graphContradictionShare = 0.5
 
 /*
-squash maps an unbounded score onto (-1, 1) so it can be read as a fractional
-adjustment to an expected return.
+unifiedUtility synthesizes forecast edge, Bayesian precision, and corroboration into one decision metric.
 
-The score is divided by its own magnitude before the curve is applied, because
-the heads carry no fixed scale and any constant chosen here would be wrong the
-moment they drift: too large and every opinion rounds to nothing, too small and
-tanh saturates into a sign function that ignores how strongly the head actually
-argued. Dividing by the terms that formed the score keeps the ratio between
-them, which is the part that carries meaning.
+The Bayesian confidence weight (1 / (1 + uncertainty)) dynamically dampens uncertain forecasts
+without ever inverting a positive edge into a negative value. Corroboration scales the return
+being claimed, so a forecast of nothing stays worth nothing however confident the heads are.
 */
-func squash(score, magnitude float64) float64 {
-	if math.IsNaN(score) || math.IsNaN(magnitude) || magnitude <= 0 {
+func unifiedUtility(
+	executableFraction, causal, cognition, graph, uncertainty float64,
+) float64 {
+	if math.IsNaN(executableFraction) || math.IsInf(executableFraction, 0) || executableFraction == 0 {
 		return 0
 	}
 
-	return math.Tanh(score / magnitude)
+	confidenceWeight := 1.0
+
+	if !math.IsNaN(uncertainty) && !math.IsInf(uncertainty, 0) && uncertainty > 0 {
+		confidenceWeight = 1.0 / (1.0 + uncertainty)
+	}
+
+	utility := executableFraction * confidenceWeight * causal * cognition * graph
+
+	if math.IsNaN(utility) || math.IsInf(utility, 0) {
+		return 0
+	}
+
+	return utility
 }
 
 /*
-cognitionAdjustment reads beam likelihood as uncertainty about continuation,
-not as directional return evidence. Beam scores are cumulative log
-probabilities, so exp(score)-1 is zero for a certain path and approaches a
-full conviction discount as the learned continuation becomes less likely.
+causalFactor reads the causal head as corroboration of the forecast, on (0, 2).
+
+The three terms are one statement about whether intervening moves the target:
+the interventional expectation and the uplift argue for it, and the SCM's own
+reconstruction noise argues against trusting either. tanh bounds the sum, so a
+head that has not yet found a stable fit cannot swing a trade on scale alone,
+and an unmeasured head returns exactly 1 — the forecast, unchanged.
 */
-func cognitionAdjustment(conviction float64, cognition types.Cognition) float64 {
-	if conviction <= 0 || !cognition.Ready || cognition.LookaheadPaths <= 0 {
-		return 0
+func causalFactor(doExpectation, uplift, noise float64, ready bool) float64 {
+	if !ready {
+		return 1
 	}
 
-	discount := math.Expm1(cognition.LookaheadScore)
+	score := doExpectation + uplift - noise
 
-	if math.IsNaN(discount) || math.IsInf(discount, 0) || discount > 0 {
-		return 0
+	if math.IsNaN(score) || math.IsInf(score, 0) {
+		return 1
 	}
 
-	confidence := math.Max(0, math.Min(1, cognition.Confidence))
-	return conviction * discount * confidence
+	return 1 + math.Tanh(score)
+}
+
+/*
+cognitionFactor scales the forecast by attractor basin confidence and branch entropy, on (0, 1].
+
+Rather than multiplying by raw multi-step joint transition probabilities (which compound exponentially),
+cognition represents regime stability and prior consistency.
+*/
+func cognitionFactor(cognition types.Cognition) float64 {
+	if !cognition.Ready || cognition.LookaheadPaths <= 0 {
+		return 1
+	}
+
+	if cognition.Confidence > 0 && !math.IsNaN(cognition.Confidence) && !math.IsInf(cognition.Confidence, 0) {
+		return math.Max(0.1, math.Min(1.0, cognition.Confidence))
+	}
+
+	return 1
+}
+
+/*
+graphFactor reads the relational graph as consistency with everything else the
+market is saying, on [0, 1].
+
+Both sides are weighted shares of the same evidence rather than raw totals,
+because edge weights carry whatever units their source node used and one
+contradiction drawn from an unbounded causal score would otherwise outweigh
+every supporting edge in the graph.
+*/
+func graphFactor(supports, contradicts float64, hasGraph bool) float64 {
+	total := supports + contradicts
+
+	if !hasGraph || contradicts <= 0 || total <= 0 {
+		return 1
+	}
+
+	return 1 - math.Min(1, contradicts/total)
 }
 
 /*
@@ -1007,15 +1044,203 @@ func inspectGraph(thesis *types.Thesis, symbol string) (supports, contradicts fl
 				graph.RelationConditions,
 				graph.RelationLeads:
 				supports += vote
-			case graph.RelationContradicts,
-				graph.RelationStaleRelativeTo,
-				graph.RelationIncomparableWith:
+			case graph.RelationContradicts:
 				contradicts += vote
+			case graph.RelationStaleRelativeTo,
+				graph.RelationIncomparableWith:
+				// Temporal dispersion / neutral edge: neither direct support nor active contradiction
 			}
 		}
 	}
 
 	return supports, contradicts, true
+}
+
+func getMetricValue(measurement *types.Measurement, metricKey string) float64 {
+	if measurement == nil || measurement.Metrics == nil {
+		return 0
+	}
+
+	sample, ok := measurement.Metrics[metricKey]
+
+	if !ok {
+		return 0
+	}
+
+	if sample.Normalized != nil && !math.IsNaN(*sample.Normalized) && !math.IsInf(*sample.Normalized, 0) {
+		return *sample.Normalized
+	}
+
+	if !math.IsNaN(sample.Raw) && !math.IsInf(sample.Raw, 0) {
+		return sample.Raw
+	}
+
+	return 0
+}
+
+func momentumMultiplier(thesis *types.Thesis, symbol string) float64 {
+	if thesis == nil {
+		return 1.0
+	}
+
+	hawkesFactor := 1.0
+	pumpFactor := 1.0
+	flowFactor := 1.0
+	thinFactor := 1.0
+	sentimentFactor := 1.0
+	exhaustionPenalty := 0.0
+
+	if thesis.Measurements != nil {
+		thesis.Measurements.Range(func(key, value any) bool {
+			rows, ok := value.([]*types.Measurement)
+
+			if !ok {
+				measurement, measurementOK := value.(*types.Measurement)
+
+				if !measurementOK || measurement == nil {
+					return true
+				}
+
+				rows = []*types.Measurement{measurement}
+			}
+
+			for _, measurement := range rows {
+				if measurement == nil || measurement.Symbol != symbol {
+					continue
+				}
+
+				switch measurement.Source {
+				case types.SourcePumpDump:
+					ignition := getMetricValue(measurement, string(types.MetricKey(types.MetricIgnition, types.SideNone)))
+					trend := getMetricValue(measurement, string(types.MetricKey(types.MetricTrend, types.SideNone)))
+					rvol := getMetricValue(measurement, string(types.MetricKey(types.MetricRVOL, types.SideNone)))
+					compression := getMetricValue(measurement, string(types.MetricKey(types.MetricCompression, types.SideNone)))
+					exhaustion := getMetricValue(measurement, string(types.MetricKey(types.MetricExhaustion, types.SideNone)))
+
+					rvolTerm := 0.0
+
+					if rvol > 1.0 {
+						rvolTerm = math.Log(rvol)
+					}
+
+					pumpVelocity := 1.0 + ignition*(1.0+rvolTerm) + trend + compression
+
+					if pumpVelocity > pumpFactor {
+						pumpFactor = pumpVelocity
+					}
+
+					if exhaustion > 0 {
+						exhaustionPenalty = math.Max(exhaustionPenalty, exhaustion)
+					}
+
+				case types.SourceHawkes:
+					descendants := getMetricValue(measurement, string(types.MetricKey(types.MetricTotalDescendants, types.SideBuy)))
+					offspring := getMetricValue(measurement, string(types.MetricKey(types.MetricImmediateOffspring, types.SideBuy)))
+					intensity := getMetricValue(measurement, string(types.MetricKey(types.MetricConditionalIntensity, types.SideBuy)))
+					baseline := getMetricValue(measurement, string(types.MetricKey(types.MetricBaselineIntensity, types.SideBuy)))
+
+					hawkesCascade := 1.0
+
+					if descendants > 1.0 {
+						hawkesCascade = descendants
+					}
+
+					if descendants <= 1.0 && offspring > 0 && offspring < 1.0 {
+						hawkesCascade = 1.0 / (1.0 - offspring)
+					}
+
+					if baseline > 0 && intensity > baseline {
+						hawkesCascade *= (intensity / baseline)
+					}
+
+					if hawkesCascade > hawkesFactor {
+						hawkesFactor = hawkesCascade
+					}
+
+				case types.SourceCVD:
+					drive := getMetricValue(measurement, string(types.MetricKey(types.MetricDrive, types.SideBuy)))
+					absorption := getMetricValue(measurement, string(types.MetricKey(types.MetricAbsorption, types.SideNone)))
+
+					flowFactor = math.Max(flowFactor, 1.0+drive)
+
+					if absorption > 0 {
+						exhaustionPenalty = math.Max(exhaustionPenalty, absorption*0.5)
+					}
+
+				case types.SourceSentiment:
+					surge := getMetricValue(measurement, string(types.MetricKey(types.MetricSurgeScore, types.SideNone)))
+					lead := getMetricValue(measurement, string(types.MetricKey(types.MetricLeaderStrength, types.SideNone)))
+
+					if surge > 0 || lead > 0 {
+						sentimentFactor = math.Max(sentimentFactor, 1.0+surge+lead)
+					}
+
+				case types.SourceDepthFlow:
+					thin := getMetricValue(measurement, string(types.MetricKey(types.MetricThinScore, types.SideNone)))
+					spoof := getMetricValue(measurement, string(types.MetricKey(types.MetricSpoofScore, types.SideNone)))
+
+					if thin > 0 {
+						thinFactor = math.Max(thinFactor, 1.0+thin)
+					}
+
+					if spoof > 0 {
+						exhaustionPenalty = math.Max(exhaustionPenalty, spoof)
+					}
+
+				case types.SourceLiquidity:
+					scarcity := getMetricValue(measurement, string(types.MetricKey(types.MetricScarcityScore, types.SideNone)))
+
+					if scarcity > 0 {
+						thinFactor = math.Max(thinFactor, 1.0+scarcity)
+					}
+				}
+			}
+
+			return true
+		})
+	}
+
+	categoryFactor := 1.0
+
+	if len(thesis.Categories) > 0 {
+		for _, category := range thesis.Categories[symbol] {
+			boost := category.Strength * category.Confidence * (1.0 - math.Min(1.0, category.Surprisal))
+
+			switch category.Type {
+			case types.CategoryVerticalIgnition,
+				types.CategoryFrenzy,
+				types.CategoryAggressiveDrive,
+				types.CategoryLiquidityShock,
+				types.CategoryLoadedImbalance,
+				types.CategoryCoiledCompression,
+				types.CategoryRiskOnSurge,
+				types.CategoryDecoupledAlpha,
+				types.CategoryLaminarResonance:
+				if boost > 0 {
+					categoryFactor += boost
+				}
+
+			case types.CategoryExhaustion,
+				types.CategoryFadedExhaustion,
+				types.CategoryThermalExhaustion,
+				types.CategoryMechanicalCollapse,
+				types.CategoryActiveReversal,
+				types.CategorySpoofTrap,
+				types.CategoryToxicBluff:
+				penalty := category.Strength * category.Confidence
+				exhaustionPenalty = math.Max(exhaustionPenalty, penalty)
+			}
+		}
+	}
+
+	survivalFactor := math.Max(0.0, 1.0-exhaustionPenalty)
+	multiplier := hawkesFactor * pumpFactor * flowFactor * thinFactor * sentimentFactor * categoryFactor * survivalFactor
+
+	if math.IsNaN(multiplier) || math.IsInf(multiplier, 0) || multiplier <= 0 {
+		return 0.0
+	}
+
+	return multiplier
 }
 
 func getOccupiedSymbols(thesis *types.Thesis, desk *broker.Desk) map[string]struct{} {

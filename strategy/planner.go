@@ -141,20 +141,17 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 		return thesis
 	}
 
+	/*
+		Candidates are produced, then funded, then arbitrated.
+
+		Sizing has to settle before slots do, because arbitration is what closes
+		working positions to make room. Displacing an incumbent for a challenger
+		the wallet cannot actually fund leaves the exit standing on its own: the
+		allocator rejects the challenger a moment later, and the desk has closed
+		a position for a trade that never gets placed.
+	*/
 	planner.evaluator.ManageContinuation(thesis, planner.desk, planner.price)
 	planner.evaluator.EvaluateOpportunities(thesis)
-	planner.arbiter.Arbitrate(thesis)
-
-	/*
-		Every decision leaving the planner carries a durable identifier, which
-		is what later links a fill, a position, and a post-mortem back to the
-		reasoning that produced them. Stamping here covers each path into the
-		slice at the one point they all pass through.
-	*/
-	for index := range thesis.Decisions {
-		thesis.Decisions[index].EnsureID()
-		thesis.Decisions[index].ArbitrationRound = thesis.Tick
-	}
 
 	if len(thesis.Decisions) > 0 {
 		if err := planner.allocator.Allocate(thesis); err != nil {
@@ -162,6 +159,28 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 				errnie.Internal, "failed to allocate", err,
 			))
 		}
+	}
+
+	planner.arbiter.Arbitrate(thesis)
+
+	/*
+		Arbitration is the last hand on the slice, so what survives it is what
+		this tick decided. The stamp is what the no_decision branch below reads
+		to tell a tick that judged the market and stood down from one that never
+		got to judge it at all.
+	*/
+	thesis.Readiness.Decisions = len(thesis.Decisions) > 0
+
+	/*
+		Every decision leaving the planner carries a durable identifier, which
+		is what later links a fill, a position, and a post-mortem back to the
+		reasoning that produced them. Stamping after arbitration covers each
+		path into the slice at the one point they all pass through, including
+		the exits arbitration itself raises to rotate an incumbent out.
+	*/
+	for index := range thesis.Decisions {
+		thesis.Decisions[index].EnsureID()
+		thesis.Decisions[index].ArbitrationRound = thesis.Tick
 	}
 
 	if !thesis.Readiness.Decisions {

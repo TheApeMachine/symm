@@ -62,11 +62,30 @@ func NewHolding(
 		EntryAt:       decision.EntryAt,
 		EntryPrice:    decision.EntryPrice.Copy(),
 		EntryFee:      decision.EntryFee.Copy(),
-		ExitPrice:     decision.ExitPrice.Copy(),
-		ExitFee:       decision.ExitFee.Copy(),
-		ReturnPct:     *decision.ReturnPct,
-		PnL:           decision.PnL.Copy(),
-		Stoploss:      NewStoploss(ctx, symbol, decision.Mark),
+		Stoploss: NewStoploss(
+			ctx,
+			symbol,
+			decision.EntryPrice.Add(decision.EntryFee),
+			decision.Mark,
+		),
+
+		/*
+			ExitPrice, ExitFee and PnL are left absent rather than zeroed. The
+			lot has not been sold, so there is no price it went out at, and a
+			zero would read as one: Update already skips the profit threshold
+			while the exit fee is missing, and Position fills all three in from
+			the execution that actually closes the lot.
+		*/
+	}
+
+	/*
+		A realised return only exists once something has been realised. The
+		field is a plain float64 with no way to say "not yet", so an entry
+		carries the zero it has actually returned so far, and the deref is
+		guarded because an entry decision never carries one at all.
+	*/
+	if decision.ReturnPct != nil {
+		holding.ReturnPct = *decision.ReturnPct
 	}
 
 	return holding

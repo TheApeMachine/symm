@@ -48,8 +48,12 @@ func (arbiter *Arbiter) Arbitrate(thesis *types.Thesis) {
 		}
 	}
 
-	// Sort enter candidates by Utility descending
+	// Sort enter candidates by Opportunity first, then Utility descending
 	sort.Slice(enters, func(i, j int) bool {
+		if enters[i].Opportunity != enters[j].Opportunity {
+			return enters[i].Opportunity
+		}
+
 		return enters[i].Utility > enters[j].Utility
 	})
 
@@ -175,15 +179,21 @@ func (arbiter *Arbiter) getIncumbents() []Incumbent {
 			continue
 		}
 
+		/*
+			Both are dimensionless return fractions, which is the unit a
+			challenger's utility now arrives in. A return percentage weighed
+			against a utility measured in quote currency is decided by the price
+			of the symbol rather than by either position's merit: a dollar of
+			modelled edge dwarfs any percentage an incumbent can show, and every
+			challenger displaces whatever it is compared to.
+		*/
 		rows = append(rows, Incumbent{
-			Symbol: position.Holding.Symbol,
-			HoldUtility: func() float64 {
-				return position.Holding.ReturnPct
-			}(),
-			ExitCost: fee.Float64(),
-			Notional: notional,
-			Qty:      position.Holding.Qty.Copy(),
-			Mark:     position.Holding.Mark.Copy(),
+			Symbol:      position.Holding.Symbol,
+			HoldUtility: position.Holding.ReturnPct,
+			ExitCost:    fee.Float64(),
+			Notional:    notional,
+			Qty:         position.Holding.Qty.Copy(),
+			Mark:        position.Holding.Mark.Copy(),
 		})
 	}
 

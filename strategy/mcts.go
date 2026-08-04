@@ -102,6 +102,35 @@ func (s StrategyState) ToVector() []float64 {
 	return []float64{s.Energy, s.Surprise, s.Treatment, s.Reward}
 }
 
+/*
+GetInterventionLevel is the value the SCM's treatment variable is held at when
+the search asks what an action would do.
+
+The treatment column is the resonance stage's expected return, a fraction of the
+reference price of order a thousandth. An action is an enum, so intervening with
+the action itself asks the model what happens when the expected return is one or
+three — a hundred or three hundred percent, hundreds of times outside anything
+the model was fitted on. The answer to that question is an extrapolation, and it
+arrives scaled far above the UCT terms it is added to, so it decides selection by
+itself.
+
+Each action instead names the forecast level it actually commits to: entering
+takes the candidate's own expected return, holding takes what a further step of
+it is worth after decay, and standing aside or closing out takes nothing. Those
+are levels the treatment column genuinely carries, so the interventional
+expectation is read from inside the model's support.
+*/
+func (s StrategyState) GetInterventionLevel(action float64) float64 {
+	switch action {
+	case ActionEnter:
+		return s.Treatment
+	case ActionHold:
+		return s.Treatment * 0.9
+	default:
+		return 0.0
+	}
+}
+
 // CausalEngineAdapter wraps causal.NodeTable to satisfy mcts.CausalEngine.
 type CausalEngineAdapter struct{}
 

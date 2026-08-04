@@ -32,6 +32,7 @@ basis. A realized fill can rebind it before live tickers take over the mark.
 func NewStoploss(
 	ctx context.Context,
 	symbol string,
+	entry *decimal.Decimal,
 	mark *decimal.Decimal,
 ) *Stoploss {
 	errnie.Info("creating stoploss")
@@ -43,6 +44,7 @@ func NewStoploss(
 		cancel: cancel,
 		Symbol: symbol,
 		Status: PENDING,
+		Entry:  entry,
 		Mark:   mark,
 	}
 

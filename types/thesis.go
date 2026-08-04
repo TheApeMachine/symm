@@ -88,14 +88,22 @@ func (readiness *Readiness) SignalsMeasured() bool {
 		readiness.Toxicity
 }
 
+/*
+Complete answers whether every stage that produces evidence has stamped this
+tick, which is what a decision can be drawn from.
+
+Allocation and Decisions are stamped by the decision pass rather than read by
+it: orders are sized after a candidate has been judged, and a tick is only known
+to have decided once it has. Requiring them here made the gate wait on the pass
+it was gating, and since a tick that fails the gate is never reset, neither flag
+could be raised on any later tick either.
+*/
 func (readiness *Readiness) Complete() bool {
 	return readiness.SignalsMeasured() &&
 		readiness.Manifold &&
 		readiness.Resonance &&
 		readiness.Causal &&
 		readiness.Graph &&
-		readiness.Allocation &&
-		readiness.Decisions &&
 		readiness.Categories &&
 		readiness.Cognition
 }

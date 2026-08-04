@@ -127,6 +127,14 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		}
 	}
 
+	/*
+		The pass ran against a real wallet balance, which is what the stage
+		records. Every entry that survived it carries a size the venue could
+		execute, and every one that did not was rejected in place with the
+		reason it failed on.
+	*/
+	thesis.Readiness.Allocation = true
+
 	return nil
 }
 
