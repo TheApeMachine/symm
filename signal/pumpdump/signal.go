@@ -112,7 +112,7 @@ func (signal *Signal) run() {
 							measurements,
 						)
 
-						thesis.Readiness.PumpDump = true
+						thesis.Readiness.Stamp(types.SourcePumpDump)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 				}

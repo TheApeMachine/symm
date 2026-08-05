@@ -12,5 +12,8 @@ describe("DecisionChain", () => {
 		expect(markup).toContain("2 · evidence");
 		expect(markup).toContain("3 · causal MCTS");
 		expect(markup).toContain("4 · capital + slots");
+		expect(markup).toContain('data-paint="trace.mcts.holdDiscount"');
+		expect(markup).toContain('data-paint="allocation_haircut"');
+		expect(markup).toContain('data-paint="allocation_haircut_reason"');
 	});
 });

@@ -111,7 +111,7 @@ func (signal *Signal) run() {
 							measurements,
 						)
 
-						thesis.Readiness.Liquidity = true
+						thesis.Readiness.Stamp(types.SourceLiquidity)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 				}

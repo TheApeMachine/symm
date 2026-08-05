@@ -179,6 +179,13 @@ func (conn *Conn) ConfigureAccount(
 }
 
 /*
+ConfigureOpenOrders injects working venue orders returned during boot.
+*/
+func (conn *Conn) ConfigureOpenOrders(orders map[string]spot.Order) {
+	conn.transport.configureOpenOrders(orders)
+}
+
+/*
 FailAddOrder makes the fixture REST transport return err for order submissions.
 */
 func (conn *Conn) FailAddOrder(err error) {

@@ -10,9 +10,14 @@ import (
 
 /*
 snapshot builds the regulator geometry a lot would be scored against: entered at
-100, hard floor 36 cents below, profit floor 87 cents above.
+100, hard floor 36 cents below, profit floor 87 cents above, and protection
+arming 89 cents above.
 */
 func snapshot(mark float64, armed bool) types.StopSnapshot {
+	excursion := (mark - 100) / 0.36
+	maxAdverse := min(0, excursion)
+	maxFavorable := max(0, excursion)
+
 	return types.StopSnapshot{
 		Present:      true,
 		Symbol:       "SIM1/USD",
@@ -23,8 +28,11 @@ func snapshot(mark float64, armed bool) types.StopSnapshot {
 		HardFloor:    decimal.NewFromFloat64(99.64),
 		ProfitLine:   decimal.NewFromFloat64(100.65),
 		ProfitFloor:  decimal.NewFromFloat64(100.87),
+		ArmLine:      decimal.NewFromFloat64(100.89),
 		RiskDistance: decimal.NewFromFloat64(0.36),
 		NoiseBand:    decimal.NewFromFloat64(0.12),
+		MaxAdverse:   decimal.NewFromFloat64(maxAdverse),
+		MaxFavorable: decimal.NewFromFloat64(maxFavorable),
 	}
 }
 
@@ -35,7 +43,7 @@ func TestPassageRoom(t *testing.T) {
 		So(ok, ShouldBeTrue)
 
 		Convey("Both directions should be priced as fractions of the live mark", func() {
-			So(upside, ShouldAlmostEqual, 0.0087, 1e-4)
+			So(upside, ShouldAlmostEqual, 0.0089, 1e-4)
 			So(downside, ShouldAlmostEqual, 0.0036, 1e-4)
 		})
 
@@ -249,6 +257,7 @@ func TestPassageEpisodeRecord(t *testing.T) {
 			So(record.Entry, ShouldAlmostEqual, 100.0, 1e-6)
 			So(record.HardFloor, ShouldAlmostEqual, 99.64, 1e-6)
 			So(record.ProfitLine, ShouldAlmostEqual, 100.65, 1e-6)
+			So(record.ArmLine, ShouldAlmostEqual, 100.89, 1e-6)
 			So(record.Outcome, ShouldEqual, types.OutcomeLossFirst)
 			So(record.Censored, ShouldBeFalse)
 			So(record.ClosedTick, ShouldEqual, 103)

@@ -9,8 +9,7 @@ const panelShell = (className: string): string =>
 const createLifecycleTrackShell = (symbol: string): HTMLElement => {
 	const track = document.createElement("div");
 	track.dataset.lifecycleTrack = symbol;
-	track.className =
-		"rounded border border-(--line) bg-(--surface) px-3 py-2.5";
+	track.className = "rounded border border-(--line) bg-(--surface) px-3 py-2.5";
 
 	const head = document.createElement("div");
 	head.className = "mb-2 flex items-center justify-between gap-2";
@@ -59,33 +58,6 @@ const createLifecycleButton = (
 	return button;
 };
 
-const createHoldingCard = (key: string): HTMLElement => {
-	const card = document.createElement("div");
-	card.dataset.holding = key;
-	card.className = panelShell(
-		"grid grid-cols-[1fr_auto] items-start gap-3 px-3 py-2.5",
-	);
-	card.style.display = "none";
-
-	const body = document.createElement("div");
-	body.className = "min-w-0";
-
-	const symbol = document.createElement("div");
-	symbol.dataset.journal = "holding-symbol";
-	symbol.className = "font-mono font-semibold text-[12px] text-(--f1)";
-
-	const meta = document.createElement("div");
-	meta.dataset.journal = "holding-meta";
-	meta.className = "mt-0.5 truncate font-mono text-[10px] text-(--f3)";
-	body.append(symbol, meta);
-
-	const status = document.createElement("span");
-	status.dataset.journal = "holding-status";
-	card.append(body, status);
-
-	return card;
-};
-
 const createJournalCard = (
 	key: string,
 	onSelect: (key: string) => void,
@@ -93,7 +65,10 @@ const createJournalCard = (
 	const card = document.createElement("button");
 	card.type = "button";
 	card.dataset.journalEntry = key;
-	card.className = cn(panelShell("w-full px-3 py-2.5 text-left"), "cursor-pointer");
+	card.className = cn(
+		panelShell("w-full px-3 py-2.5 text-left"),
+		"cursor-pointer",
+	);
 	card.style.display = "none";
 	card.addEventListener("click", () => onSelect(key));
 
@@ -144,9 +119,7 @@ const createFindingCard = (key: string): HTMLElement => {
 
 	const component = document.createElement("span");
 	component.dataset.journal = "finding-component";
-	component.className = cn(
-		badgeVariants({ variant: "warning", size: "xs" }),
-	);
+	component.className = cn(badgeVariants({ variant: "warning", size: "xs" }));
 
 	const unc = document.createElement("span");
 	unc.dataset.journal = "finding-unc";
@@ -173,8 +146,7 @@ const createFindingCard = (key: string): HTMLElement => {
 	effectHeader.append(effectLabel, effectValue);
 
 	const effectTrack = document.createElement("div");
-	effectTrack.className =
-		"h-[5px] overflow-hidden rounded-[3px] bg-(--line)";
+	effectTrack.className = "h-[5px] overflow-hidden rounded-[3px] bg-(--line)";
 
 	const effectFill = document.createElement("div");
 	effectFill.dataset.journal = "finding-fill";
@@ -197,14 +169,7 @@ const createFindingCard = (key: string): HTMLElement => {
 	validate.dataset.journal = "finding-validate";
 	validate.className = "mt-2 font-mono text-[9px] text-(--f4)";
 
-	card.append(
-		head,
-		condition,
-		effectBlock,
-		adjustment,
-		evidence,
-		validate,
-	);
+	card.append(head, condition, effectBlock, adjustment, evidence, validate);
 
 	return card;
 };
@@ -314,8 +279,7 @@ const syncLifecycleShells = (
 			host.querySelectorAll("[data-journal-lifecycle]").length &&
 		ordered.every(
 			(button, index) =>
-				host.querySelectorAll("[data-journal-lifecycle]")[index] ===
-				button,
+				host.querySelectorAll("[data-journal-lifecycle]")[index] === button,
 		);
 
 	if (!orderMatches) {

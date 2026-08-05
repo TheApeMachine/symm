@@ -130,7 +130,7 @@ func (signal *Signal) run() {
 							measurements,
 						)
 
-						thesis.Readiness.Toxicity = true
+						thesis.Readiness.Stamp(types.SourceToxicity)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 				}

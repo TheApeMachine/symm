@@ -267,6 +267,85 @@ func TestStoplossDepthLimitedMarks(t *testing.T) {
 			So(stoploss.Status, ShouldEqual, types.TRIGGERED)
 			So(stoploss.TriggerReason, ShouldEqual, types.TriggerHardRisk)
 		})
+
+		Convey("A protected floor breach should still be confirmed", func() {
+			armed := stoploss.ArmLine.Add(stoploss.Plan.TickSize)
+			observe(stoploss, armed.Float64(), false)
+			floor := stoploss.Floor.Copy()
+
+			for range stoploss.Plan.ConfirmMarks {
+				stoploss.Observe(types.StopEvidence{
+					Symbol:         fixtureSymbol,
+					ExecutableMark: floor.Sub(stoploss.Plan.TickSize),
+					DepthLimited:   true,
+					Present:        true,
+				})
+			}
+
+			So(stoploss.Status, ShouldEqual, types.TRIGGERED)
+			So(stoploss.TriggerReason, ShouldEqual, types.TriggerProtectedGiveback)
+		})
+	})
+}
+
+func TestStoplossEvidenceFreshness(t *testing.T) {
+	Convey("Given matched spread and impact evidence", t, func() {
+		stoploss, _ := fixtureEntry()
+		stoploss.Observe(types.StopEvidence{
+			Symbol:         fixtureSymbol,
+			ExecutableMark: decimal.NewFromFloat64(100.20),
+			Spread:         decimal.NewFromFloat64(0.50),
+			Impact:         decimal.NewFromFloat64(0.10),
+			ObservedAt:     time.Now().UTC(),
+			Present:        true,
+		})
+		widened := stoploss.Plan.TrailDistance.Copy()
+
+		Convey("A stale reading should not change the trail", func() {
+			stoploss.Observe(types.StopEvidence{
+				Symbol:         fixtureSymbol,
+				ExecutableMark: decimal.NewFromFloat64(100.20),
+				Spread:         decimal.NewFromFloat64(0.01),
+				Impact:         decimal.NewFromFloat64(0.01),
+				ObservedAt:     time.Now().UTC().Add(-time.Hour),
+				Present:        true,
+			})
+
+			So(stoploss.Plan.TrailDistance.Cmp(widened), ShouldEqual, 0)
+		})
+	})
+}
+
+func TestStoplossObserve(t *testing.T) {
+	Convey("Given a filled lot above its hard risk floor", t, func() {
+		stoploss, _ := fixtureEntry()
+
+		Convey("A current structural regime exit should bypass the frozen floor", func() {
+			stoploss.Observe(types.StopEvidence{
+				Symbol:         fixtureSymbol,
+				ExecutableMark: decimal.NewFromFloat64(100.20),
+				ObservedAt:     time.Now().UTC(),
+				RegimeExit:     types.TriggerPumpDumpSellIgnition,
+				Present:        true,
+			})
+
+			So(stoploss.Status, ShouldEqual, types.TRIGGERED)
+			So(stoploss.TriggerReason, ShouldEqual, types.TriggerPumpDumpSellIgnition)
+			So(stoploss.Mark.Cmp(stoploss.HardFloor), ShouldEqual, 1)
+		})
+
+		Convey("A stale structural reading should have no exit authority", func() {
+			stoploss.Observe(types.StopEvidence{
+				Symbol:         fixtureSymbol,
+				ExecutableMark: decimal.NewFromFloat64(100.20),
+				ObservedAt:     time.Now().UTC().Add(-time.Hour),
+				RegimeExit:     types.TriggerHawkesSellCascade,
+				Present:        true,
+			})
+
+			So(stoploss.Status, ShouldEqual, types.ARMED)
+			So(stoploss.TriggerReason, ShouldBeBlank)
+		})
 	})
 }
 
@@ -648,6 +727,27 @@ func TestStoplossRebindFill(t *testing.T) {
 
 				So(proceeds.Sub(decimal.NewFromFloat64(100.67)).Sign(), ShouldBeGreaterThanOrEqualTo, 0)
 			})
+		})
+
+		Convey("A later cumulative fill should reset partial-fill profit geometry", func() {
+			stoploss.RebindFill(types.Fill{
+				EntryPrice: decimal.NewFromFloat64(100),
+				EntryFee:   decimal.NewFromFloat64(0.26),
+				Qty:        decimal.NewFromFloat64(1),
+			})
+			observe(stoploss, stoploss.ArmLine.Add(plan.TickSize).Float64(), false)
+			So(stoploss.ProfitArmed, ShouldBeTrue)
+
+			stoploss.RebindFill(types.Fill{
+				EntryPrice: decimal.NewFromFloat64(100.20),
+				EntryFee:   decimal.NewFromFloat64(0.52),
+				Qty:        decimal.NewFromFloat64(2),
+			})
+
+			So(stoploss.ProfitArmed, ShouldBeFalse)
+			So(stoploss.Phase, ShouldEqual, types.PhaseDiscovery)
+			So(stoploss.Peak, ShouldBeNil)
+			So(stoploss.Floor.Cmp(stoploss.HardFloor), ShouldEqual, 0)
 		})
 	})
 }

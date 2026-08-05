@@ -7,6 +7,10 @@ export GOFLAGS := -ldflags=-checklinkname=0
 
 LDFLAGS := $(GOFLAGS)
 
+# Metal pipeline compilation is XPC-global, so package binaries must not
+# initialize independent domains concurrently.
+GO_TEST_FLAGS := -p 1
+
 SYMM_BIN := bin/symm
 # Leave CONFIG empty to use the binary's own default loading (cmd/cfg/infra.yml +
 # strategy.yml — the documented source of truth). Set CONFIG=path to override.
@@ -28,21 +32,21 @@ DUMP_OUTPUT ?= symm.txt
 test: test-go test-race test-frontend
 
 test-go:
-	go test $(LDFLAGS) ./...
+	go test $(LDFLAGS) $(GO_TEST_FLAGS) ./...
 
 test-race:
-	go test $(LDFLAGS) -race ./...
+	go test $(LDFLAGS) $(GO_TEST_FLAGS) -race ./...
 
 test-cover:
 	@mkdir -p runs
-	go test $(LDFLAGS) -coverprofile=runs/coverage.out ./...
+	go test $(LDFLAGS) $(GO_TEST_FLAGS) -coverprofile=runs/coverage.out ./...
 	go tool cover -func=runs/coverage.out | tail -1
 
 test-frontend:
 	cd frontend && pnpm build
 
 bench:
-	go test $(LDFLAGS) -bench=. -benchmem ./...
+	go test $(LDFLAGS) $(GO_TEST_FLAGS) -bench=. -benchmem ./...
 
 kill:
 	-lsof -t -i:8765 | xargs kill -9 || true

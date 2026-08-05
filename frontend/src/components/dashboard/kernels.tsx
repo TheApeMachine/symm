@@ -1,134 +1,16 @@
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
-import type { Measurement } from "#/collections/types";
 import { Component } from "#/components/ui/component";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
 import { cn } from "#/lib/utils";
 import { Flex } from "@/components/ui/flex";
 
-type KernelRow = {
-	source: string;
-	status: string;
-	readout: string;
-	age: string;
-	bar_width: string;
-};
-
-type KernelModel = {
-	rows: KernelRow[];
-};
-
-const headlineMetric = (row: Measurement) => {
-	const metric =
-		{
-			hawkes: "conditional_intensity",
-			liquidity: "scarcity_score",
-			toxicity: "touch_quantity",
-		}[(row.source ?? "").toLowerCase()] ?? "strength";
-	const reading =
-		Object.entries(row.metrics ?? {})
-			.filter(([key]) => key === metric || key.startsWith(`${metric}:`))
-			.map(([, value]) => value)
-			.sort(
-				(left, right) =>
-					Number((right as { normalized?: number; raw?: number }).normalized ?? (right as { raw?: number }).raw ?? 0) -
-					Number((left as { normalized?: number; raw?: number }).normalized ?? (left as { raw?: number }).raw ?? 0),
-			)
-			.at(0) ?? row.metrics?.strength;
-	const raw = Number(reading?.raw ?? 0);
-	const normalized = Number(reading?.normalized ?? raw);
-
-	return {
-		metric,
-		raw,
-		sample: Math.max(0, Math.min(1, Number.isFinite(normalized) ? normalized : 0)),
-	};
-};
-
-const ageLabel = (at?: string) => {
-	if (!at) {
-		return "waiting";
-	}
-
-	const elapsed = Date.now() - Date.parse(at);
-
-	if (!Number.isFinite(elapsed)) {
-		return "waiting";
-	}
-
-	if (elapsed < 60_000) {
-		return `${Math.max(0, Math.floor(elapsed / 1000))}s`;
-	}
-
-	return `${Math.floor(elapsed / 60_000)}m`;
-};
-
-const normalizeMeasurements = (value: unknown) =>
-	(Array.isArray(value) ? value : value != null ? [value] : []) as Measurement[];
-
-const buildModel = (value: unknown): KernelModel => {
-	const rows = normalizeMeasurements(value);
-	const focus = appStore.state.focusSymbol;
-	const observed = new Set<string>();
-	const latest = new Map<string, Measurement>();
-
-	for (const row of rows) {
-		if (!row || typeof row.source !== "string") {
-			continue;
-		}
-
-		observed.add(row.source);
-
-		if (focus !== "" && row.symbol !== focus) {
-			continue;
-		}
-
-		const current = latest.get(row.source);
-
-		if (!current || Date.parse(current.at) <= Date.parse(row.at)) {
-			latest.set(row.source, row);
-		}
-	}
-
-	appStore.actions.observeSources(observed);
-
-	return {
-		rows: appStore.state.kernels.map((source) => {
-			const row = latest.get(source);
-
-			if (!row) {
-				return {
-					source,
-					status: "STANDBY",
-					readout: "waiting",
-					age: "",
-					bar_width: "0%",
-				};
-			}
-
-			const valid = row.validity?.state !== "invalid";
-			const { metric, raw, sample } = headlineMetric(row);
-
-			return {
-				source,
-				status: valid ? "HEALTHY" : "INVALID",
-				readout: `${metric} ${Number.isFinite(raw) ? raw.toPrecision(4) : "0"}`,
-				age: ageLabel(row.at),
-				bar_width: `${Math.round(sample * 100)}%`,
-			};
-		}),
-	};
-};
-
 export const KernelList = () => {
 	const kernels = useSelector(appStore, (state) => state.kernels);
 
 	return (
-		<Component
-			registerKey="measurements"
-			select="rows"
-		>
+		<Component registerKey="measurements" select="rows">
 			{({ ref, className }) => (
 				<List
 					ref={ref}

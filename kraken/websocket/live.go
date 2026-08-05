@@ -1,11 +1,13 @@
 package websocket
 
 import (
+	"maps"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -628,22 +630,73 @@ func (live *Live) Balance() (map[string]*decimal.Decimal, error) {
 
 func (live *Live) TradesHistory() (spot.TradesHistoryResult, error) {
 	if live.model == "real" {
-		response, err := live.client.REST.TradesHistory(
-			&spot.TradesHistoryRequest{
+		result := spot.TradesHistoryResult{Trades: map[string]spot.Trade{}}
+		offset := 0
+
+		for {
+			response, err := live.client.REST.TradesHistory(&spot.TradesHistoryRequest{
 				Type:             "all",
 				Trades:           true,
 				Start:            0,
 				End:              0,
-				Ofs:              0,
+				Ofs:              offset,
 				ConsolidateTaker: true,
 				Ledgers:          true,
-			},
-		)
+			})
 
-		return response.Result, errnie.Error(err)
+			if err != nil {
+				return spot.TradesHistoryResult{}, errnie.Error(err)
+			}
+
+			maps.Copy(result.Trades, response.Result.Trades)
+
+			result.Count = response.Result.Count
+
+			count, err := strconv.Atoi(response.Result.Count.String())
+
+			if err == nil && len(result.Trades) >= count {
+				return result, nil
+			}
+
+			if len(response.Result.Trades) == 0 {
+				return result, nil
+			}
+
+			offset += len(response.Result.Trades)
+		}
 	}
 
 	return live.paper.TradesHistory()
+}
+
+func (live *Live) OpenOrders() (spot.OpenOrdersResult, error) {
+	if live.model != "real" {
+		return live.paper.OpenOrders()
+	}
+
+	response, err := live.client.REST.OpenOrders(&spot.OpenOrdersRequest{Trades: true})
+
+	if err != nil {
+		return spot.OpenOrdersResult{}, errnie.Error(err)
+	}
+
+	return response.Result, nil
+}
+
+func (live *Live) CancelOrder(
+	request *spot.CancelOrderRequest,
+) (spot.CancelResult, error) {
+	if live.model != "real" {
+		return live.paper.CancelOrder(request)
+	}
+
+	response, err := live.client.REST.CancelOrder(request)
+
+	if err != nil {
+		return spot.CancelResult{}, errnie.Error(err)
+	}
+
+	return response.Result, nil
 }
 
 func (live *Live) TradeBalance() (kraken.TradeBalanceResult, error) {

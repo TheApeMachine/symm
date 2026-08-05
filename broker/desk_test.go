@@ -196,15 +196,23 @@ func TestDeskRecover(t *testing.T) {
 		market := tests.NewMarketWithAccount(
 			t.Context(),
 			symbols,
-			map[string]string{"USD": "150", "SIM2": "1.5"},
+			map[string]string{"USD": "150", "SIM2": "2"},
 			map[string]spot.Trade{
 				"entry": {
 					Pair:   "sim2usd",
 					Time:   decimal.NewFromFloat64(float64(entryAt.UnixNano()) / 1e9),
 					Type:   "buy",
-					Cost:   decimal.NewFromInt64(150),
-					Fee:    decimal.NewFromFloat64(0.39),
-					Volume: decimal.NewFromFloat64(1.5),
+					Cost:   decimal.NewFromInt64(300),
+					Fee:    decimal.NewFromFloat64(0.78),
+					Volume: decimal.NewFromInt64(3),
+				},
+				"partial-exit": {
+					Pair:   "sim2usd",
+					Time:   decimal.NewFromFloat64(float64(entryAt.Add(time.Minute).UnixNano()) / 1e9),
+					Type:   "sell",
+					Cost:   decimal.NewFromInt64(100),
+					Fee:    decimal.NewFromFloat64(0.26),
+					Volume: decimal.NewFromInt64(1),
 				},
 			},
 		)
@@ -225,10 +233,10 @@ func TestDeskRecover(t *testing.T) {
 			So(positions[0].ID, ShouldEqual, "recovered:SIM2/USD")
 			So(positions[0].Status, ShouldEqual, types.OPEN)
 			So(positions[0].Holding.Symbol, ShouldEqual, "SIM2/USD")
-			So(positions[0].Holding.Qty.Cmp(decimal.NewFromFloat64(1.5)), ShouldEqual, 0)
-			So(positions[0].Holding.SellableQty.Cmp(decimal.NewFromFloat64(1.5)), ShouldEqual, 0)
+			So(positions[0].Holding.Qty.Cmp(decimal.NewFromInt64(2)), ShouldEqual, 0)
+			So(positions[0].Holding.SellableQty.Cmp(decimal.NewFromInt64(2)), ShouldEqual, 0)
 			So(positions[0].Holding.EntryPrice.Float64(), ShouldEqual, 100.0)
-			So(positions[0].Holding.EntryFee.Float64(), ShouldAlmostEqual, 0.39, 1e-8)
+			So(positions[0].Holding.EntryFee.Float64(), ShouldAlmostEqual, 0.52, 1e-8)
 			So(positions[0].Holding.EntryAt, ShouldNotBeNil)
 			So(positions[0].Holding.Mark, ShouldNotBeNil)
 			So(positions[0].Holding.Mark.Cmp(positions[0].Holding.EntryPrice), ShouldEqual, 0)

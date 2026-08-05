@@ -341,7 +341,6 @@ export const GraphSurface = () => {
 								graph={graph}
 								onNodeSelect={handleNodeSelect}
 								selectedNodeName={selectedNodeName}
-								showTimeSlider={false}
 							/>
 						) : (
 							<div className="flex h-full items-center justify-center px-8 text-center font-mono text-[12px] text-(--f4)">

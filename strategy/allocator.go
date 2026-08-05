@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"math"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
@@ -122,15 +123,11 @@ func (allocator *Allocator) committedRisk() *decimal.Decimal {
 
 		snapshot := position.StopSnapshot()
 
-		if !snapshot.Present || snapshot.RiskDistance == nil ||
-			position.Holding.SellableQty == nil {
+		if !snapshot.Present || snapshot.WorstCaseLoss == nil {
 			continue
 		}
 
-		committed = committed.Add(
-			snapshot.RiskDistance.SetScale(allocationScale).
-				Mul(position.Holding.SellableQty),
-		)
+		committed = committed.Add(snapshot.WorstCaseLoss.SetScale(allocationScale))
 	}
 
 	return committed
@@ -237,6 +234,26 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			}
 		}
 
+		if math.IsNaN(decision.AllocationHaircut) ||
+			math.IsInf(decision.AllocationHaircut, 0) ||
+			decision.AllocationHaircut < 0 || decision.AllocationHaircut >= 1 {
+			allocator.reject(decision, "allocation haircut invalid")
+			continue
+		}
+
+		if decision.AllocationHaircut > 0 {
+			notional := decision.ProposedNotional.SetScale(allocationScale)
+			haircut := notional.Mul(
+				decimal.NewFromFloat64(decision.AllocationHaircut),
+			)
+			decision.ProposedNotional = notional.Sub(haircut)
+
+			if decision.ProposedNotional.Sign() <= 0 {
+				allocator.reject(decision, "allocation haircut exhausted notional")
+				continue
+			}
+		}
+
 		/*
 			Stop distance and position size are one decision, so the geometry is
 			derived here rather than left to the regulator to invent after the
@@ -259,6 +276,13 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			continue
 		}
 
+		tick := allocator.price.Tick(pair.Symbol)
+
+		if tick == nil || tick.Ask == nil || tick.Ask.Sign() <= 0 {
+			allocator.reject(decision, "executable ask unavailable")
+			continue
+		}
+
 		// Quantize quantity against instrument venue rules
 		qty, err := allocator.price.Quantity(pair.Symbol, decision.ProposedNotional)
 
@@ -273,7 +297,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			the boundary moves further away and every trade that reaches it
 			loses proportionally more.
 		*/
-		capacity := plan.MaxQuantity(allocator.price.Mark(pair.Symbol, broker.BUY))
+		capacity := plan.MaxQuantity(tick.Ask)
 
 		if capacity != nil && qty.Cmp(capacity) > 0 {
 			funded := allocator.price.WithFriction(pair.Symbol, broker.BUY, capacity)
@@ -303,18 +327,13 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			continue
 		}
 
-		referencePrice := allocator.price.Mark(pair.Symbol, broker.BUY)
-
-		if referencePrice == nil {
-			allocator.reject(decision, "reference price unavailable")
-			continue
-		}
+		referencePrice := tick.Ask
 
 		decision.ProposedQuantity = qty
 		decision.ProposedNotional = cost
 		decision.ReferencePrice = referencePrice.Copy()
 		decision.Risk = plan
-		decision.Reason = "sized from transaction budget and risk distance"
+		decision.Reason = "sized from transaction budget, flow haircut, and risk distance"
 
 		// What this lot can now lose comes out of what the account has left to
 		// lose, so the next entry in this pass is sized against the remainder.

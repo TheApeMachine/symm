@@ -16,13 +16,30 @@ func TestFeatureNormalizer(t *testing.T) {
 			So(normalizer.Standardize(12), ShouldEqual, 0)
 		})
 
-		Convey("Then later readings are standardized by the exact prior z-score", func() {
-			normalizer.Standardize(10)
-			normalizer.Standardize(12)
+		Convey("Then a mature feature is standardized by the exact prior z-score", func() {
+			readings := make([]float64, 0, featureWarmup)
+			mean := 0.0
 
-			standardized := normalizer.Standardize(14)
+			for index := range featureWarmup {
+				reading := float64(index)
+				readings = append(readings, reading)
+				mean += reading
+				So(normalizer.Standardize(reading), ShouldEqual, 0)
+			}
 
-			So(standardized, ShouldAlmostEqual, 3/math.Sqrt(2))
+			mean /= float64(len(readings))
+			variance := 0.0
+
+			for _, reading := range readings {
+				variance += math.Pow(reading-mean, 2)
+			}
+
+			variance /= float64(len(readings) - 1)
+			reading := float64(featureWarmup)
+			standardized := normalizer.Standardize(reading)
+
+			So(standardized, ShouldAlmostEqual,
+				(reading-mean)/math.Sqrt(variance))
 		})
 
 		Convey("Then a feature with zero prior variance remains centered at zero", func() {

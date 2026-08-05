@@ -67,8 +67,13 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 	const scanlines = useSelector(terminalStore, (state) => state.scanlines);
 	const errorDialogRef = useRef<HTMLDialogElement>(null);
 	const dismissRef = useRef<HTMLButtonElement>(null);
-	const { openPalette, closePalette, bumpPaletteIndex, selectFocusSymbol } =
-		terminalStore.actions;
+	const {
+		openPalette,
+		closePalette,
+		bumpPaletteIndex,
+		selectFocusSymbol,
+		inspectSource,
+	} = terminalStore.actions;
 	const { updateFocusSymbol } = appStore.actions;
 
 	useEffect(() => {
@@ -98,6 +103,10 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 		source?: string,
 		focusSymbol?: string,
 	) => {
+		if (source) {
+			inspectSource(source);
+		}
+
 		if (focusSymbol) {
 			updateFocusSymbol(focusSymbol);
 			selectFocusSymbol(focusSymbol);

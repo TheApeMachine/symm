@@ -1,4 +1,4 @@
-import type { Holding, Thesis } from "#/collections/types";
+import type { Thesis } from "#/collections/types";
 import { fixed } from "#/components/terminal/decision-format";
 import { syncJournalShells } from "#/components/terminal/journal-shells";
 import { paintLifecycleTrack } from "#/components/terminal/lifecycle-track";
@@ -12,60 +12,32 @@ const setText = (node: Element | null | undefined, value: string): void => {
 	}
 };
 
-const isOpenLot = (holding: Holding): boolean =>
-	Number(holding.qty) > 0 &&
-	holding.status !== "closed" &&
-	holding.status !== "canceled";
-
-export const holdingKey = (holding: Holding): string =>
-	`${holding.symbol}:${String(holding.status)}:${holding.qty}`;
-
 export const findingKey = (finding: Finding): string =>
 	`${finding.symbol}:${finding.component}:${finding.condition}`;
 
 export const journalEntryKey = (entry: Thesis): string => {
-	const symbol = Object.keys(entry.lifecycle ?? {})[0] ?? Object.keys(entry.holdings ?? {})[0] ?? "";
+	const symbol =
+		Object.keys(entry.lifecycle ?? {})[0] ??
+		Object.keys(entry.holdings ?? {})[0] ??
+		"";
 	const lifecycle = symbol === "" ? "" : (entry.lifecycle?.[symbol] ?? "");
 
 	return `${symbol}:${entry.tick}:${lifecycle}:${entry.at}`;
 };
 
-const paintHoldingRow = (row: HTMLElement, holding: Holding): void => {
-	setText(row.querySelector("[data-journal='holding-symbol']"), holding.symbol);
-	setText(
-		row.querySelector("[data-journal='holding-meta']"),
-		[
-			`qty ${fixed(holding.qty)}`,
-			`bid ${fixed(holding.mark)}`,
-			`pnl ${fixed(holding.pnl)}`,
-			isOpenLot(holding) ? "" : "closed",
-		]
-			.filter(Boolean)
-			.join(" · "),
-	);
-
-	const status = row.querySelector("[data-journal='holding-status']");
-
-	if (!(status instanceof HTMLElement)) {
-		return;
-	}
-
-	status.textContent =
-		typeof holding.status === "string" ? holding.status : "unknown";
-	status.className = cn(
-		badgeVariants({
-			variant: isOpenLot(holding) ? "success" : "info",
-			size: "xs",
-		}),
-	);
-};
-
 const paintJournalEntryRow = (row: HTMLElement, entry: Thesis): void => {
-	const symbol = Object.keys(entry.lifecycle ?? {})[0] ?? Object.keys(entry.holdings ?? {})[0] ?? "";
+	const symbol =
+		Object.keys(entry.lifecycle ?? {})[0] ??
+		Object.keys(entry.holdings ?? {})[0] ??
+		"";
 	const lifecycleState = symbol === "" ? "" : (entry.lifecycle?.[symbol] ?? "");
-	const decision = (entry.decisions ?? []).find((item) => item.symbol === symbol) ?? entry.decisions?.[0];
+	const decision =
+		(entry.decisions ?? []).find((item) => item.symbol === symbol) ??
+		entry.decisions?.[0];
 	const holding = symbol === "" ? undefined : entry.holdings?.[symbol];
-	const findings = (entry.findings ?? []).filter((finding) => finding.symbol === symbol);
+	const findings = (entry.findings ?? []).filter(
+		(finding) => finding.symbol === symbol,
+	);
 	const graph = entry.graphs?.categories;
 
 	setText(row.querySelector("[data-journal='entry-symbol']"), symbol);
@@ -99,14 +71,14 @@ const paintJournalEntryRow = (row: HTMLElement, entry: Thesis): void => {
 		holding == null
 			? `decision ${decision?.action ?? "—"} · findings ${findingsCount}`
 			: [
-				`qty ${fixed(holding.qty)}`,
-				`entry ${fixed(holding.entry_price)}`,
-				`mark ${fixed(holding.mark)}`,
-				`pnl ${fixed(holding.pnl)}`,
-				`findings ${findingsCount}`,
-			]
-				.filter(Boolean)
-				.join(" · "),
+					`qty ${fixed(holding.qty)}`,
+					`entry ${fixed(holding.entry_price)}`,
+					`mark ${fixed(holding.mark)}`,
+					`pnl ${fixed(holding.pnl)}`,
+					`findings ${findingsCount}`,
+				]
+					.filter(Boolean)
+					.join(" · "),
 	);
 	setText(row.querySelector("[data-journal='entry-graph']"), graphText);
 };
@@ -209,6 +181,7 @@ export const paintJournalSurface = (
 		entries: Thesis[];
 		journalKeys: string[];
 		lifecycleBySymbol: Record<string, string>;
+		onJournalSelect: (key: string) => void;
 		onLifecycleSelect: (symbol: string) => void;
 		online: boolean;
 		symbols: string[];
@@ -225,6 +198,7 @@ export const paintJournalSurface = (
 		findingKeys,
 		journalKeys,
 		lifecycleBySymbol,
+		onJournalSelect,
 		onLifecycleSelect,
 		online,
 		symbols,
@@ -232,6 +206,7 @@ export const paintJournalSurface = (
 
 	syncJournalShells(root, {
 		symbols,
+		onJournalSelect,
 		onLifecycleSelect,
 		journalKeys,
 		findingKeys,
@@ -264,9 +239,12 @@ export const paintJournalSurface = (
 	const filteredEntries = (
 		activeSymbol
 			? entries.filter((entry) => {
-				const symbol = Object.keys(entry.lifecycle ?? {})[0] ?? Object.keys(entry.holdings ?? {})[0] ?? "";
-				return symbol === activeSymbol;
-			})
+					const symbol =
+						Object.keys(entry.lifecycle ?? {})[0] ??
+						Object.keys(entry.holdings ?? {})[0] ??
+						"";
+					return symbol === activeSymbol;
+				})
 			: entries
 	).sort((left, right) => right.at.localeCompare(left.at));
 
@@ -302,7 +280,10 @@ export const paintJournalSurface = (
 			continue;
 		}
 
-		const symbol = Object.keys(entry.lifecycle ?? {})[0] ?? Object.keys(entry.holdings ?? {})[0] ?? "";
+		const symbol =
+			Object.keys(entry.lifecycle ?? {})[0] ??
+			Object.keys(entry.holdings ?? {})[0] ??
+			"";
 		const visible = !activeSymbol || symbol === activeSymbol;
 
 		row.style.display = visible ? "" : "none";

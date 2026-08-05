@@ -101,7 +101,7 @@ func (signal *Signal) run() {
 							measurements,
 						)
 
-						thesis.Readiness.LeadLag = true
+						thesis.Readiness.Stamp(types.SourceLeadLag)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 				}

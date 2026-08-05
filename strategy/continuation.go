@@ -26,6 +26,7 @@ type passageEpisode struct {
 	horizon      float64
 	entryNoise   *decimal.Decimal
 	observations []types.PassageFeatures
+	finished     bool
 	armed        bool
 	lastAge      float64
 	lastTick     int64
@@ -33,6 +34,7 @@ type passageEpisode struct {
 	entry        float64
 	hardFloor    float64
 	profitLine   float64
+	armLine      float64
 	maxAdverse   float64
 	maxFavorable float64
 }
@@ -53,10 +55,19 @@ func (episode *passageEpisode) observe(
 	episode.lastTick = tick
 	episode.armed = episode.armed || snapshot.ProfitArmed
 
-	// The excursions are the corpus the adverse-excursion quantile will be read
-	// from, so they track the extremes rather than the last value.
-	episode.maxAdverse = math.Min(episode.maxAdverse, features.Drawdown)
-	episode.maxFavorable = math.Max(episode.maxFavorable, features.Drawdown)
+	if snapshot.MaxAdverse != nil {
+		episode.maxAdverse = math.Min(
+			episode.maxAdverse,
+			snapshot.MaxAdverse.Float64(),
+		)
+	}
+
+	if snapshot.MaxFavorable != nil {
+		episode.maxFavorable = math.Max(
+			episode.maxFavorable,
+			snapshot.MaxFavorable.Float64(),
+		)
+	}
 
 	if snapshot.Entry != nil {
 		episode.entry = snapshot.Entry.Float64()
@@ -68,6 +79,10 @@ func (episode *passageEpisode) observe(
 
 	if snapshot.ProfitLine != nil {
 		episode.profitLine = snapshot.ProfitLine.Float64()
+	}
+
+	if snapshot.ArmLine != nil {
+		episode.armLine = snapshot.ArmLine.Float64()
 	}
 
 	if snapshot.TriggerReason != "" {
@@ -94,6 +109,7 @@ func (episode *passageEpisode) record(
 		ExitReason:   episode.lastTrigger,
 		HardFloor:    episode.hardFloor,
 		ProfitLine:   episode.profitLine,
+		ArmLine:      episode.armLine,
 		Entry:        episode.entry,
 		MaxAdverse:   episode.maxAdverse,
 		MaxFavorable: episode.maxFavorable,
@@ -113,6 +129,9 @@ where waiting did not happen.
 func (episode *passageEpisode) outcome() (types.PassageOutcome, bool) {
 	switch {
 	case episode.armed:
+		return types.OutcomeProfitFirst, true
+	case episode.lastTrigger == types.TriggerProtectedGiveback,
+		episode.lastTrigger == types.TriggerProfitFailSafe:
 		return types.OutcomeProfitFirst, true
 	case episode.lastTrigger == types.TriggerHardRisk:
 		return types.OutcomeLossFirst, true
@@ -220,13 +239,13 @@ that side, and a negative distance would flip the sign of the term it feeds.
 */
 func passageRoom(snapshot types.StopSnapshot) (upside, downside float64, ok bool) {
 	if snapshot.Mark == nil || snapshot.Mark.Sign() <= 0 ||
-		snapshot.ProfitFloor == nil || snapshot.HardFloor == nil {
+		snapshot.ArmLine == nil || snapshot.HardFloor == nil {
 		return 0, 0, false
 	}
 
 	mark := snapshot.Mark.SetScale(12)
 
-	upside = math.Max(0, snapshot.ProfitFloor.SetScale(12).Sub(mark).Div(mark).Float64())
+	upside = math.Max(0, snapshot.ArmLine.SetScale(12).Sub(mark).Div(mark).Float64())
 	downside = math.Max(0, mark.Sub(snapshot.HardFloor).Div(mark).Float64())
 
 	return upside, downside, true
@@ -254,11 +273,15 @@ func (evaluator Evaluator) scorePassage(
 ) (types.PassageScenario, float64, bool) {
 	snapshot := position.StopSnapshot()
 
-	if !snapshot.Present || snapshot.ProfitArmed {
+	if !snapshot.Present {
 		return types.PassageScenario{}, 0, false
 	}
 
 	episode := evaluator.episode(position, forecast, snapshot, thesis.Tick)
+
+	if episode.finished {
+		return types.PassageScenario{}, 0, false
+	}
 
 	features, ok := passageFeatures(
 		snapshot, forecast, episode, regimeOf(thesis, position.Holding.Symbol),
@@ -270,6 +293,11 @@ func (evaluator Evaluator) scorePassage(
 	}
 
 	episode.observe(features, snapshot, thesis.Tick)
+
+	if snapshot.ProfitArmed || features.Age >= 1 {
+		evaluator.finishEpisode(position.ID, episode, snapshot.TriggerReason)
+		return types.PassageScenario{}, 0, false
+	}
 
 	upside, downside, priced := passageRoom(snapshot)
 
@@ -329,18 +357,20 @@ answer to "from here, which comes first" at every point along the way.
 An unlabelled episode is dropped rather than counted. Forgetting the lot is
 unconditional either way, so a censored episode cannot be retired twice or leak.
 */
-func (evaluator Evaluator) retire(id, trigger string) {
-	episode, tracked := evaluator.episodes[id]
-
-	if !tracked {
+func (evaluator Evaluator) finishEpisode(
+	id string,
+	episode *passageEpisode,
+	trigger string,
+) {
+	if episode == nil || episode.finished {
 		return
 	}
-
-	delete(evaluator.episodes, id)
 
 	if trigger != "" {
 		episode.lastTrigger = trigger
 	}
+
+	episode.finished = true
 
 	outcome, labelled := episode.outcome()
 
@@ -361,6 +391,17 @@ func (evaluator Evaluator) retire(id, trigger string) {
 	}
 
 	evaluator.passage.ObserveEpisode(episode.observations, outcome)
+}
+
+func (evaluator Evaluator) retire(id, trigger string) {
+	episode, tracked := evaluator.episodes[id]
+
+	if !tracked {
+		return
+	}
+
+	evaluator.finishEpisode(id, episode, trigger)
+	delete(evaluator.episodes, id)
 }
 
 /*

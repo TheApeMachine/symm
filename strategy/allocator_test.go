@@ -74,7 +74,9 @@ func TestAllocatorAllocate(t *testing.T) {
 				survive noise is only affordable because the size came down to
 				meet it.
 			*/
-			loss := plan.RiskDistance.SetScale(12).Mul(thesis.Decisions[0].ProposedQuantity)
+			lossPerUnit := plan.LossPerUnit(thesis.Decisions[0].ReferencePrice)
+			So(lossPerUnit, ShouldNotBeNil)
+			loss := lossPerUnit.Mul(thesis.Decisions[0].ProposedQuantity)
 			So(loss.Cmp(plan.MaxLoss), ShouldBeLessThanOrEqualTo, 0)
 		})
 
@@ -134,6 +136,38 @@ func TestAllocatorAllocate(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(thesis.Decisions[0].Action, ShouldEqual, types.ActionNothing)
 			So(thesis.Decisions[0].Reason, ShouldEqual, "instrument pair unavailable")
+		})
+
+		Convey("A published flow haircut should reduce notional before risk sizing", func() {
+			clean := types.NewThesis()
+			clean.Decisions = []types.Decision{{
+				ID:               uuid.NewString(),
+				Action:           types.ActionEnter,
+				Symbol:           "SIM1/USD",
+				At:               clean.At,
+				ProposedNotional: decimal.NewFromFloat64(100),
+			}}
+			So(allocator.Allocate(clean), ShouldBeNil)
+
+			reduced := types.NewThesis()
+			reduced.Decisions = []types.Decision{{
+				ID:                      uuid.NewString(),
+				Action:                  types.ActionEnter,
+				Symbol:                  "SIM1/USD",
+				At:                      reduced.At,
+				ProposedNotional:        decimal.NewFromFloat64(100),
+				AllocationHaircut:       0.5,
+				AllocationHaircutReason: "toxicity",
+			}}
+			So(allocator.Allocate(reduced), ShouldBeNil)
+
+			So(reduced.Decisions[0].Action, ShouldEqual, types.ActionEnter)
+			So(reduced.Decisions[0].ProposedNotional.Cmp(
+				clean.Decisions[0].ProposedNotional,
+			), ShouldEqual, -1)
+			So(reduced.Decisions[0].ProposedQuantity.Cmp(
+				clean.Decisions[0].ProposedQuantity,
+			), ShouldEqual, -1)
 		})
 	}))
 }

@@ -58,6 +58,7 @@ describe("allocationSummary", () => {
 					mark: 120,
 					pnl: 10,
 					return_pct: 0.2,
+					is_opportunity: false,
 				},
 			],
 			resonance: {

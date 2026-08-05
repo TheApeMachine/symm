@@ -133,6 +133,7 @@ type PassageEpisode struct {
 	ExitReason string         `json:"exit_reason"`
 	HardFloor  float64        `json:"hard_floor"`
 	ProfitLine float64        `json:"profit_line"`
+	ArmLine    float64        `json:"arm_line"`
 	Entry      float64        `json:"entry"`
 	/*
 		MaxAdverse and MaxFavorable are the deepest drawdown and the highest

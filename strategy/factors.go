@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"math"
+	"strings"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/logic/graph"
@@ -120,6 +121,185 @@ func adverseSelection(thesis *types.Thesis, row candidate) *decimal.Decimal {
 }
 
 /*
+exhaustionHoldDiscount converts the exhaustion equation's fused long-side
+urgency into the survival discount used by the trajectory search. The equation
+already combines mechanical, thermal, fragile, and reversal evidence; strategy
+preserves that result rather than imposing a second fusion rule.
+*/
+func exhaustionHoldDiscount(thesis *types.Thesis, symbol string) (float64, bool) {
+	measurement, ok := latestMeasurement(thesis, symbol, types.SourceExhaustion)
+
+	if !ok || measurement.Validity.State != types.ValidityValid {
+		return 0, false
+	}
+
+	urgency, ok := rawMetric(measurement, types.MetricUrgency, types.SideBuy)
+
+	if !ok || urgency < 0 || urgency > 1 {
+		return 0, false
+	}
+
+	discount := math.Exp(-urgency)
+
+	if discount >= 1 {
+		// A clean reading may approach one but MCTS gamma remains convergent.
+		discount = math.Nextafter(1, 0)
+	}
+
+	return discount, discount > 0 && discount < 1
+}
+
+/*
+regimeExit names a structural long-position invalidation using the signal
+families that already model directional ignition and self-exciting cascades.
+Both comparisons use model-owned baselines: ignition must exceed its empirical
+unit baseline, while a sell parent must be expected to produce at least one
+descendant and dominate the buy process.
+*/
+func regimeExit(thesis *types.Thesis, symbol string) string {
+	pump, ok := latestMeasurement(thesis, symbol, types.SourcePumpDump)
+
+	if ok && pump.Validity.State == types.ValidityValid {
+		sell, sellReady := rawMetric(pump, types.MetricIgnition, types.SideSell)
+		buy, buyReady := rawMetric(pump, types.MetricIgnition, types.SideBuy)
+
+		if sellReady && buyReady && sell > 1 && sell > buy {
+			return types.TriggerPumpDumpSellIgnition
+		}
+	}
+
+	hawkes, ok := latestMeasurement(thesis, symbol, types.SourceHawkes)
+
+	if !ok || hawkes.Validity.State == types.ValidityInvalid ||
+		hawkes.Validity.Readiness != types.ReadinessModel {
+		return ""
+	}
+
+	spectral, spectralReady := rawMetric(
+		hawkes, types.MetricSpectralRadius, types.SideNone,
+	)
+	sellDescendants, sellDescendantsReady := rawMetric(
+		hawkes, types.MetricTotalDescendants, types.SideSell,
+	)
+	buyDescendants, buyDescendantsReady := rawMetric(
+		hawkes, types.MetricTotalDescendants, types.SideBuy,
+	)
+	sellIntensity, sellIntensityReady := rawMetric(
+		hawkes, types.MetricConditionalIntensity, types.SideSell,
+	)
+	buyIntensity, buyIntensityReady := rawMetric(
+		hawkes, types.MetricConditionalIntensity, types.SideBuy,
+	)
+
+	if spectralReady && spectral > 0 &&
+		sellDescendantsReady && buyDescendantsReady &&
+		sellIntensityReady && buyIntensityReady &&
+		sellDescendants >= 1 && sellDescendants > buyDescendants &&
+		sellIntensity > buyIntensity {
+		return types.TriggerHawkesSellCascade
+	}
+
+	return ""
+}
+
+/*
+allocationHaircut combines like-scaled risk ratios as penalty odds. Dividing
+the odds by one plus themselves yields the exact fraction of pre-risk notional
+removed, without treating any one signal as a hidden veto.
+*/
+func allocationHaircut(
+	thesis *types.Thesis,
+	row candidate,
+	adverse *decimal.Decimal,
+) (float64, string, bool) {
+	liquidity, ok := latestMeasurement(thesis, row.Symbol, types.SourceLiquidity)
+
+	if !ok || liquidity.Validity.State != types.ValidityValid {
+		return 0, "", false
+	}
+
+	scarcity, ok := rawMetric(
+		liquidity, types.MetricScarcityScore, types.SideNone,
+	)
+
+	if !ok || scarcity < 0 || scarcity > 1 {
+		return 0, "", false
+	}
+
+	hollow, hollowReady := hollowPressure(thesis, row.Symbol)
+
+	if !hollowReady || hollow < 0 || hollow > 1 {
+		return 0, "", false
+	}
+
+	informed := 0.0
+
+	if adverse != nil && adverse.Sign() > 0 && row.ExpectedSpread != nil &&
+		row.ExpectedSpread.Sign() > 0 {
+		informed = adverse.SetScale(8).Div(row.ExpectedSpread.SetScale(8)).Float64()
+	}
+
+	if math.IsNaN(informed) || math.IsInf(informed, 0) || informed < 0 || informed > 1 {
+		return 0, "", false
+	}
+
+	penalty := scarcity + hollow + informed
+	reasons := make([]string, 0, 3)
+
+	if scarcity > 0 {
+		reasons = append(reasons, "executable-depth scarcity")
+	}
+
+	if hollow > 0 {
+		reasons = append(reasons, "toxicity")
+	}
+
+	if informed > 0 {
+		reasons = append(reasons, "adverse selection")
+	}
+
+	if penalty == 0 {
+		return 0, "clean executable liquidity and order flow", true
+	}
+
+	return penalty / (1 + penalty), strings.Join(reasons, " + "), true
+}
+
+func latestMeasurement(
+	thesis *types.Thesis,
+	symbol string,
+	source types.SourceType,
+) (*types.Measurement, bool) {
+	series := thesis.Series(symbol)
+
+	for index := len(series) - 1; index >= 0; index-- {
+		if series[index].Source == source {
+			return series[index], true
+		}
+	}
+
+	return nil, false
+}
+
+func rawMetric(
+	measurement *types.Measurement,
+	metric types.MetricType,
+	side types.MeasurementSide,
+) (float64, bool) {
+	if measurement == nil {
+		return 0, false
+	}
+
+	sample, ok := measurement.Metrics[types.MetricKey(metric, side)]
+
+	if !ok || math.IsNaN(sample.Raw) || math.IsInf(sample.Raw, 0) {
+		return 0, false
+	}
+
+	return sample.Raw, true
+}
+
+/*
 estimateImpact derives market impact from measured depth thinning or scarcity.
 */
 func estimateImpact(thesis *types.Thesis, symbol string, spread *decimal.Decimal) *decimal.Decimal {
@@ -210,7 +390,8 @@ func hollowPressure(thesis *types.Thesis, symbol string) (float64, bool) {
 
 		for _, measurement := range rows {
 			if measurement == nil || measurement.Symbol != symbol ||
-				measurement.Source != types.SourceToxicity {
+				measurement.Source != types.SourceToxicity ||
+				measurement.Validity.State != types.ValidityValid {
 				continue
 			}
 

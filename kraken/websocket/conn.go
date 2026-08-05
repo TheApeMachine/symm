@@ -37,6 +37,8 @@ type Conn interface {
 	TradeBalance() (kraken.TradeBalanceResult, error)
 	TradeVolume([]string) (*kraken.TradeVolumeResult, error)
 	AddOrder(*spot.AddOrderRequest) (spot.AddOrderResult, error)
+	OpenOrders() (spot.OpenOrdersResult, error)
+	CancelOrder(*spot.CancelOrderRequest) (spot.CancelResult, error)
 	Write(json.Marshaler, ...Callback[any]) error
 	Post(string, json.Marshaler) ([]byte, error)
 	Client() *spot.WebSocket
@@ -147,6 +149,14 @@ func (api *API) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error)
 
 func (api *API) AddOrder(request *spot.AddOrderRequest) (spot.AddOrderResult, error) {
 	return api.private.AddOrder(request)
+}
+
+func (api *API) OpenOrders() (spot.OpenOrdersResult, error) {
+	return api.private.OpenOrders()
+}
+
+func (api *API) CancelOrder(request *spot.CancelOrderRequest) (spot.CancelResult, error) {
+	return api.private.CancelOrder(request)
 }
 
 func (api *API) Close() {

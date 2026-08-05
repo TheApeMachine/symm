@@ -260,6 +260,113 @@ func (paper *Paper) TradesHistory() (spot.TradesHistoryResult, error) {
 }
 
 /*
+OpenOrders loads the paper venue's working orders for restart reconciliation.
+*/
+func (paper *Paper) OpenOrders() (spot.OpenOrdersResult, error) {
+	var (
+		model datura.Map[any]
+		err   error
+	)
+
+	paper.simulator.Do(REST, func() {
+		model, err = paper.execute("orders", "orders", "--verbose")
+	})
+
+	if err != nil {
+		return spot.OpenOrdersResult{}, errnie.Error(err)
+	}
+
+	raw, err := sonic.Marshal(model["open_orders"])
+
+	if err != nil {
+		return spot.OpenOrdersResult{}, errnie.Error(err)
+	}
+
+	rows := []struct {
+		ID            string           `json:"id"`
+		OrderID       string           `json:"order_id"`
+		ClientOrderID string           `json:"cl_ord_id"`
+		Pair          string           `json:"pair"`
+		Side          string           `json:"side"`
+		OrderType     string           `json:"order_type"`
+		Status        string           `json:"status"`
+		Volume        *decimal.Decimal `json:"volume"`
+		Filled        *decimal.Decimal `json:"filled_volume"`
+		Price         *decimal.Decimal `json:"price"`
+	}{}
+
+	if err := sonic.Unmarshal(raw, &rows); err != nil {
+		return spot.OpenOrdersResult{}, errnie.Error(err)
+	}
+
+	result := spot.OpenOrdersResult{Open: map[string]spot.Order{}}
+
+	for _, row := range rows {
+		orderID := row.OrderID
+
+		if orderID == "" {
+			orderID = row.ID
+		}
+
+		if orderID == "" || row.Pair == "" || row.Side == "" {
+			return spot.OpenOrdersResult{}, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"paper open order is missing identity, pair, or side",
+				nil,
+			))
+		}
+
+		result.Open[orderID] = spot.Order{
+			ClOrdID:        row.ClientOrderID,
+			Status:         row.Status,
+			Volume:         row.Volume,
+			VolumeExecuted: row.Filled,
+			Price:          row.Price,
+			Description: &spot.OrderDescription{
+				Pair:      row.Pair,
+				Type:      row.Side,
+				OrderType: row.OrderType,
+			},
+		}
+	}
+
+	return result, nil
+}
+
+/*
+CancelOrder cancels one paper order by its venue order identifier.
+*/
+func (paper *Paper) CancelOrder(
+	request *spot.CancelOrderRequest,
+) (spot.CancelResult, error) {
+	if request == nil {
+		return spot.CancelResult{}, errnie.Error(errnie.Err(
+			errnie.Validation, "paper cancel order is missing its request", nil,
+		))
+	}
+
+	orderID, _ := request.TxID.(string)
+
+	if orderID == "" {
+		return spot.CancelResult{}, errnie.Error(errnie.Err(
+			errnie.Validation, "paper cancel order requires a venue order ID", nil,
+		))
+	}
+
+	var err error
+
+	paper.simulator.Do(REST, func() {
+		_, err = paper.execute("cancel", "cancel", orderID, "--yes")
+	})
+
+	if err != nil {
+		return spot.CancelResult{}, errnie.Error(err)
+	}
+
+	return spot.CancelResult{Count: 1}, nil
+}
+
+/*
 TradeBalance returns the paper account status.
 
 kraken paper status --verbose --output json
@@ -328,7 +435,19 @@ func (paper *Paper) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, 
 		return spot.AddOrderResult{}, err
 	}
 
-	return spot.AddOrderResult{}, nil
+	orderID, _ := model["order_id"].(string)
+
+	if orderID == "" {
+		return spot.AddOrderResult{}, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"paper order acknowledgement is missing its order ID",
+			nil,
+		))
+	}
+
+	return spot.AddOrderResult{
+		OrderPlacementSingle: spot.OrderPlacementSingle{ID: []string{orderID}},
+	}, nil
 }
 
 func (paper *Paper) execute(entity string, command ...string) (datura.Map[any], error) {

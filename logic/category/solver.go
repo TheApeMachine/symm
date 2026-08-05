@@ -89,10 +89,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 	}
 
-	if len(categories) == 0 {
-		return nil
-	}
-
 	thesis.Categories = categories
 	thesis.Readiness.Categories = true
 

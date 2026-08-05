@@ -47,11 +47,20 @@ export const StrategyDecisionRows = () => (
 												data-paint="symbol"
 												className="font-mono font-semibold text-[12px] text-(--f1)"
 											/>
-											<Typography.Span
-												data-paint="action"
-												data-paint-class="enter:text-(--pos),exit:text-(--neg)"
-												className="font-semibold text-[10px] uppercase"
-											/>
+											<div className="flex items-center gap-1.5">
+												<span className="rounded-[2px] bg-[color-mix(in_srgb,var(--down)_12%,transparent)] px-1.5 py-0.5 font-mono text-[9px] text-(--down)">
+													−
+													<Typography.Span
+														data-paint="allocation_haircut"
+														data-paint-format=".1%"
+													/>
+												</span>
+												<Typography.Span
+													data-paint="action"
+													data-paint-class="enter:text-(--pos),exit:text-(--neg)"
+													className="font-semibold text-[10px] uppercase"
+												/>
+											</div>
 										</div>
 
 										<Typography.Span
@@ -63,6 +72,11 @@ export const StrategyDecisionRows = () => (
 										<Typography.Span
 											data-paint="reason"
 											className="mt-1 block font-mono text-[9.5px] text-(--f4)"
+										/>
+
+										<Typography.Span
+											data-paint="allocation_haircut_reason"
+											className="mt-1 block truncate font-mono text-[9px] text-(--down)"
 										/>
 
 										<div className="mt-2 grid grid-cols-2 gap-1.5 font-mono text-[9.5px]">

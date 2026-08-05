@@ -1,6 +1,7 @@
 package types
 
 import (
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -18,12 +19,52 @@ func storeAllSignalMeasurements(thesis *Thesis, stampAt time.Time) {
 	}
 }
 
+func stampAllSignals(readiness *Readiness) {
+	for _, source := range thesisSignalSources {
+		readiness.Stamp(source)
+	}
+}
+
 func TestThesisReadiness(t *testing.T) {
-	Convey("Given artifacts across the full decision pipeline", t, func() {
+	Convey("Given signal stages stamping readiness concurrently", t, func() {
+		readiness := NewReadiness()
+		start := make(chan struct{})
+		measured := make(chan struct{})
+		var stamps sync.WaitGroup
+
+		for _, source := range thesisSignalSources {
+			stamps.Add(1)
+
+			go func(source SourceType) {
+				defer stamps.Done()
+				<-start
+				readiness.Stamp(source)
+			}(source)
+		}
+
+		go func() {
+			<-start
+
+			for !readiness.SignalsMeasured() {
+				runtime.Gosched()
+			}
+
+			close(measured)
+		}()
+
+		close(start)
+		stamps.Wait()
+		<-measured
+
+		So(readiness.SignalsMeasured(), ShouldBeTrue)
+	})
+
+	Convey("Given every pre-decision stage stamp", t, func() {
 		thesis := NewThesis()
 		stampAt := time.Unix(1, 0).UTC()
 
 		storeAllSignalMeasurements(thesis, stampAt)
+		stampAllSignals(&thesis.Readiness)
 
 		// A stage is ready because it stamped the thesis, so each derived
 		// stage is marked by its stamp rather than by the evidence it
@@ -32,17 +73,18 @@ func TestThesisReadiness(t *testing.T) {
 		thesis.Readiness.Resonance = true
 		thesis.Readiness.Causal = true
 		thesis.Readiness.Graph = true
+		thesis.Readiness.Categories = true
+		thesis.Readiness.Cognition = true
 
-		thesis.Decisions = []Decision{{}}
-
-		Convey("It should mark every thesis stage ready", func() {
+		Convey("It should be complete without inferring later-stage stamps", func() {
 			So(thesis.Readiness.SignalsMeasured(), ShouldBeTrue)
 			So(thesis.Readiness.Manifold, ShouldBeTrue)
 			So(thesis.Readiness.Resonance, ShouldBeTrue)
 			So(thesis.Readiness.Causal, ShouldBeTrue)
 			So(thesis.Readiness.Graph, ShouldBeTrue)
-			So(thesis.Readiness.Allocation, ShouldBeTrue)
-			So(thesis.Readiness.Decisions, ShouldBeTrue)
+			So(thesis.Readiness.Complete(), ShouldBeTrue)
+			So(thesis.Readiness.Allocation, ShouldBeFalse)
+			So(thesis.Readiness.Decisions, ShouldBeFalse)
 		})
 	})
 
@@ -51,6 +93,7 @@ func TestThesisReadiness(t *testing.T) {
 		stampAt := time.Unix(1, 0).UTC()
 
 		storeAllSignalMeasurements(thesis, stampAt)
+		stampAllSignals(&thesis.Readiness)
 
 		thesis.Readiness.Manifold = true
 		thesis.Readiness.Resonance = true
@@ -63,9 +106,9 @@ func TestThesisReadiness(t *testing.T) {
 			// a stage that is working correctly and simply had nothing to say.
 			So(thesis.Readiness.Causal, ShouldBeTrue)
 			So(thesis.Readiness.Graph, ShouldBeTrue)
-			So(thesis.Readiness.Allocation, ShouldBeTrue)
+			So(thesis.Readiness.Allocation, ShouldBeFalse)
 
-			// No decisions were taken, so only that stage is unmet.
+			// Allocation and decision stages have not run yet.
 			So(thesis.Readiness.Decisions, ShouldBeFalse)
 		})
 	})
@@ -75,6 +118,7 @@ func TestThesisReadiness(t *testing.T) {
 		stampAt := time.Unix(1, 0).UTC()
 
 		storeAllSignalMeasurements(thesis, stampAt)
+		stampAllSignals(&thesis.Readiness)
 
 		thesis.Readiness.Manifold = true
 		thesis.Readiness.Resonance = true
@@ -84,8 +128,9 @@ func TestThesisReadiness(t *testing.T) {
 			So(thesis.Readiness.Resonance, ShouldBeTrue)
 			So(thesis.Readiness.Causal, ShouldBeFalse)
 
-			// Graph stamped, but the causal stage it builds on did not.
-			So(thesis.Readiness.Graph, ShouldBeFalse)
+			// Graph reports its own stamp; Complete rejects the missing causal stage.
+			So(thesis.Readiness.Graph, ShouldBeTrue)
+			So(thesis.Readiness.Complete(), ShouldBeFalse)
 			So(thesis.Readiness.Allocation, ShouldBeFalse)
 		})
 	})
@@ -124,7 +169,6 @@ func TestThesisReset(t *testing.T) {
 		thesis.Cognition.Store("BTC/USD", "cognition")
 		thesis.Resonance.Store("BTC/USD", "resonance")
 		thesis.Causal.Store("BTC/USD", "causal")
-		thesis.Readiness = NewReadiness()
 		thesis.Lifecycle.Store("BTC/USD", LifecycleManaging)
 
 		resetAt := thesis.Reset().At

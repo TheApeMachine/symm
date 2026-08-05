@@ -110,7 +110,7 @@ func (signal *Signal) run() {
 							measurements,
 						)
 
-						thesis.Readiness.Sentiment = true
+						thesis.Readiness.Stamp(types.SourceSentiment)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 				}

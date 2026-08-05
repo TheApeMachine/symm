@@ -135,6 +135,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	solver.maybeRebase(thesis.At)
 
+	attempted := false
 	stepped := false
 	var updateErr error
 
@@ -246,6 +247,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			a single numerically awkward book silence every other symbol and
 			stop the desk from deciding at all.
 		*/
+		attempted = true
+
 		if err = solver.Step(name, thesis.At); err != nil {
 			if solver.recorder != nil {
 				errnie.Error(audit.Record(recorderOrNil(solver.recorder), "predictive", map[string]any{
@@ -279,12 +282,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return updateErr
 	}
 
-	/*
-		Stamp only once the field has actually advanced, so the stages that
-		wait on the manifold can tell a completed step from a tick that had
-		nothing to advance.
-	*/
-	if stepped {
+	if !attempted || stepped {
 		thesis.Readiness.Manifold = true
 	}
 

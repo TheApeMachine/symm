@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Holding, Position, Stoploss } from "#/collections/types";
+import type { Holding, Stoploss } from "#/collections/types";
 import {
 	createPositionGaugeElement,
 	paintPositionHoldings,
@@ -29,19 +29,6 @@ const stoploss = (): Stoploss => ({
 	peak: 102,
 	mark: 101.9,
 	floor: 101,
-});
-
-const position = (mark: number, returnPct: number): Position => ({
-	status: "open",
-	entry_order: {},
-	exit_order: {},
-	order_id: "oid",
-	fills: [],
-	buffered: [],
-	holding: {
-		...holding(mark, returnPct),
-		stoploss: stoploss(),
-	},
 });
 
 describe("positionGaugeGeometry", () => {
@@ -89,7 +76,7 @@ describe("paintPositionHoldings", () => {
 					elements.find(
 						(candidate) =>
 							selector === `[data-gauge="${candidate.dataset.gauge}"]`,
-						) ?? null,
+					) ?? null,
 			};
 			let text = "";
 
@@ -190,7 +177,9 @@ describe("paintPositionHoldings", () => {
 			createElement: element,
 		});
 
-		document.body.replaceChildren(createPositionGaugeElement("BABYSHARK/USD", "USD"));
+		document.body.replaceChildren(
+			createPositionGaugeElement("BABYSHARK/USD", "USD"),
+		);
 
 		paintPositionHoldings(
 			{
@@ -249,7 +238,7 @@ describe("paintPositionHoldings", () => {
 					elements.find(
 						(candidate) =>
 							selector === `[data-gauge="${candidate.dataset.gauge}"]`,
-						) ?? null,
+					) ?? null,
 			};
 			let text = "";
 
@@ -274,7 +263,9 @@ describe("paintPositionHoldings", () => {
 			createElement: element,
 		});
 
-		document.body.replaceChildren(createPositionGaugeElement("BABYSHARK/USD", "USD"));
+		document.body.replaceChildren(
+			createPositionGaugeElement("BABYSHARK/USD", "USD"),
+		);
 
 		paintPositionHoldings(
 			{

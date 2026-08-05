@@ -3,7 +3,10 @@ package broker
 import (
 	"context"
 	"errors"
+	"slices"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -22,6 +25,7 @@ Position is one lot shell owned and event-routed by Desk. Order correlation uses
 each decision's client order ID, then the exchange order ID returned by REST.
 */
 type Position struct {
+	mu             sync.RWMutex
 	ctx            context.Context
 	cancel         context.CancelFunc
 	api            *websocket.API
@@ -32,23 +36,22 @@ type Position struct {
 	recorder       *audit.Recorder
 	pair           kraken.InstrumentPair
 	seenExecutions map[string]struct{}
-	entryFills     int
-	exitFills      int
-	/*
-		exiting records that a sell has been handed to the venue for this lot.
-
-		One Status field cannot describe both order legs at once, and the two
-		disagree constantly: an entry fill arriving after an exit was submitted
-		would otherwise set the position back to OPEN. This is the sell leg's
-		own state, and it only ever goes one way.
-	*/
+	entryCumQty    *decimal.Decimal
+	exitCumQty     *decimal.Decimal
+	entryTerminal  bool
+	entryCancel    bool
+	exitOrderID    string
+	exitAttempt    uint64
+	// exiting records that a sell has been handed to the venue for this lot.
+	// One Status field cannot describe both order legs at once, and the two
+	// disagree constantly: an entry fill arriving after an exit was submitted
+	// would otherwise set the position back to OPEN. This is the sell leg's
+	// own state, and it only ever goes one way.
 	exiting bool
-	/*
-		stopOrderID is the client order identifier the regulator's own exit is
-		submitted under, minted once so a retry cannot become a second sell.
-		It is distinct from the entry's identifier, which the exit leg used to
-		reuse — leaving both legs of one lot correlating to the same ID.
-	*/
+	// stopOrderID is the client order identifier the regulator's own exit is
+	// submitted under, minted once so a retry cannot become a second sell.
+	// It is distinct from the entry's identifier, which the exit leg used to
+	// reuse — leaving both legs of one lot correlating to the same ID.
 	stopOrderID string
 	/*
 		evidence is the latest reading the strategy has published about this
@@ -114,6 +117,8 @@ func NewPosition(
 		recorder:       recorder,
 		pair:           pair,
 		seenExecutions: map[string]struct{}{},
+		entryCumQty:    decimal.NewFromInt64(0),
+		exitCumQty:     decimal.NewFromInt64(0),
 		ID:             decision.ID,
 		EntryOrder: &spot.AddOrderRequest{
 			ClOrdId:   decision.ID,
@@ -132,6 +137,9 @@ func NewPosition(
 		Holding: holding,
 	}
 
+	position.Holding.Qty = decimal.NewFromInt64(0)
+	position.Holding.SellableQty = decimal.NewFromInt64(0)
+	position.publishSnapshot()
 	position.Publish()
 
 	return position
@@ -147,8 +155,68 @@ use you would also not be manually managing the balances.
 */
 func (position *Position) Publish() {
 	out := datura.NewMap()
-	out["positions"] = []*Position{position}
+	out["positions"] = []*Position{position.Snapshot()}
 	utils.Publish(position.ui, out)
+}
+
+/*
+Snapshot copies the externally visible position state while the desk owns the
+live lot. Decimal values are immutable, and the mutable slices and order shells
+are copied so later desk events cannot change a published/read snapshot.
+*/
+func (position *Position) Snapshot() *Position {
+	if position == nil {
+		return nil
+	}
+
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
+	snapshot := &Position{
+		ID:     position.ID,
+		Status: position.Status,
+	}
+
+	if position.EntryOrder != nil {
+		entryOrder := *position.EntryOrder
+		snapshot.EntryOrder = &entryOrder
+	}
+
+	if position.ExitOrder != nil {
+		exitOrder := *position.ExitOrder
+		snapshot.ExitOrder = &exitOrder
+	}
+
+	if position.EntryOrderResult != nil {
+		entryResult := *position.EntryOrderResult
+		entryResult.ID = slices.Clone(position.EntryOrderResult.ID)
+		snapshot.EntryOrderResult = &entryResult
+	}
+
+	if position.ExitOrderResult != nil {
+		exitResult := *position.ExitOrderResult
+		exitResult.ID = slices.Clone(position.ExitOrderResult.ID)
+		snapshot.ExitOrderResult = &exitResult
+	}
+
+	if position.Holding != nil {
+		holding := *position.Holding
+
+		if position.Holding.Stoploss != nil {
+			stoploss := *position.Holding.Stoploss
+			stoploss.Transitions = slices.Clone(position.Holding.Stoploss.Transitions)
+			holding.Stoploss = &stoploss
+		}
+
+		snapshot.Holding = &holding
+	}
+
+	if latched := position.snapshot.Load(); latched != nil {
+		stopSnapshot := *latched
+		snapshot.snapshot.Store(&stopSnapshot)
+	}
+
+	return snapshot
 }
 
 /*
@@ -255,31 +323,45 @@ func (position *Position) auditStops() {
 	stoploss := position.Holding.Stoploss
 
 	for _, transition := range stoploss.DrainTransitions() {
-		errnie.Error(audit.Record(position.recorder, "stop", map[string]any{
-			"position":     position.ID,
-			"symbol":       position.pair.Symbol,
-			"seq":          transition.Seq,
-			"at":           transition.At,
-			"reason":       transition.Reason,
-			"phase":        transition.Phase,
-			"status":       transition.Status,
-			"armed":        transition.ProfitArmed,
-			"trigger":      transition.TriggerReason,
-			"mark":         transition.Mark,
-			"floor":        transition.Floor,
-			"hard_floor":   transition.HardFloor,
-			"profit_line":  transition.ProfitLine,
-			"profit_floor": transition.ProfitFloor,
-			"trail_floor":  transition.TrailFloor,
-			"arm_line":     transition.ArmLine,
-			"peak":         transition.Peak,
-			"entry":        transition.Entry,
-			"qty":          transition.Qty,
-			"entry_fee":    transition.EntryFee,
-			"risk":         transition.RiskDistance,
-			"trail":        transition.TrailDistance,
-			"noise_band":   transition.NoiseBand,
-		}))
+		row := map[string]any{
+			"position":        position.ID,
+			"symbol":          position.pair.Symbol,
+			"seq":             transition.Seq,
+			"at":              transition.At,
+			"reason":          transition.Reason,
+			"phase":           transition.Phase,
+			"status":          transition.Status,
+			"armed":           transition.ProfitArmed,
+			"trigger":         transition.TriggerReason,
+			"mark":            transition.Mark,
+			"floor":           transition.Floor,
+			"hard_floor":      transition.HardFloor,
+			"profit_line":     transition.ProfitLine,
+			"break_even_line": transition.BreakEvenLine,
+			"profit_failsafe": transition.ProfitFailSafe,
+			"profit_floor":    transition.ProfitFloor,
+			"trail_floor":     transition.TrailFloor,
+			"arm_line":        transition.ArmLine,
+			"peak":            transition.Peak,
+			"entry":           transition.Entry,
+			"qty":             transition.Qty,
+			"entry_fee":       transition.EntryFee,
+			"risk":            transition.RiskDistance,
+			"trail":           transition.TrailDistance,
+			"noise_band":      transition.NoiseBand,
+			"worst_case_loss": transition.WorstCaseLoss,
+			"max_adverse":     transition.MaxAdverse,
+			"max_favorable":   transition.MaxFavorable,
+			"basis_confirmed": transition.BasisConfirmed,
+			"depth_limited":   transition.DepthLimited,
+		}
+
+		if transition.Status == types.TRIGGERED {
+			row["stop_order_id"] = position.stopOrderID
+			row["exit_attempt"] = position.exitAttempt
+		}
+
+		errnie.Error(audit.Record(position.recorder, "stop", row))
 	}
 }
 
@@ -288,6 +370,8 @@ onTicker refreshes the mark cache for this position's holding and lets the
 bound stoploss regulator judge the price a sale would actually realise.
 */
 func (position *Position) onTicker(ticker kraken.TickerData) {
+	position.mu.Lock()
+
 	if position.Holding != nil {
 		if err := position.Holding.Update(ticker); err != nil {
 			errnie.Error(err)
@@ -302,16 +386,20 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 
 		position.Holding.Observe(position.observation())
 		position.publishSnapshot()
-		position.auditStops()
 		position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
 		position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
 	}
 
-	if position.Status == types.OPEN && !position.exiting &&
+	if !isTerminal(position.Status) && !position.exiting && position.Holding != nil &&
+		position.Holding.SellableQty != nil &&
+		position.Holding.SellableQty.Sign() > 0 &&
 		position.Holding.Stoploss != nil &&
 		position.Holding.Stoploss.Status == types.TRIGGERED {
 		position.exitOnStop()
 	}
+
+	position.auditStops()
+	position.mu.Unlock()
 
 	position.Publish()
 }
@@ -329,8 +417,19 @@ when a stop has fired and the venue did not answer — but the failure is on the
 record instead of vanishing into an ignored return value.
 */
 func (position *Position) exitOnStop() {
+	if !position.entryTerminal && !position.entryCancel {
+		if err := position.cancelEntry(); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"position: could not cancel the unfilled entry remainder for "+position.pair.Symbol,
+				err,
+			))
+		}
+	}
+
 	if position.stopOrderID == "" {
 		position.stopOrderID = uuid.NewString()
+		position.exitAttempt++
 	}
 
 	if err := position.submitStopExit(); err != nil {
@@ -342,121 +441,287 @@ func (position *Position) exitOnStop() {
 	}
 }
 
+func (position *Position) cancelEntry() error {
+	request := &spot.CancelOrderRequest{ClOrdID: position.EntryOrder.ClOrdId}
+
+	if position.EntryOrderResult != nil && len(position.EntryOrderResult.ID) > 0 {
+		request.TxID = position.EntryOrderResult.ID[0]
+		request.ClOrdID = ""
+	}
+
+	result, err := position.api.CancelOrder(request)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	if result.Count <= 0 && !result.Pending {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"position: entry order was not found for cancellation",
+			nil,
+		))
+	}
+
+	position.entryCancel = true
+	return nil
+}
+
+func (position *Position) adoptExit(orderID string, order spot.Order) {
+	position.stopOrderID = order.ClOrdID
+
+	if position.stopOrderID == "" {
+		position.stopOrderID = orderID
+	}
+
+	position.exitOrderID = orderID
+	position.ExitOrder.ClOrdId = order.ClOrdID
+	position.ExitOrderResult = &spot.AddOrderResult{
+		OrderPlacementSingle: spot.OrderPlacementSingle{ID: []string{orderID}},
+	}
+	position.exitCumQty = decimal.NewFromInt64(0)
+
+	if order.VolumeExecuted != nil {
+		position.exitCumQty = order.VolumeExecuted.Copy()
+	}
+
+	position.exitAttempt = 1
+	position.exiting = true
+	position.Status = types.PENDING
+	position.Holding.Status = types.PENDING
+	position.Holding.Stoploss.BindRecoveredExit()
+}
+
 func (position *Position) onExecution(execution *kraken.Execution) {
+	if execution == nil {
+		return
+	}
+
+	publish := false
+	position.mu.Lock()
+
 	for _, row := range execution.Data {
-		clientOrderID := position.EntryOrder.ClOrdId
-
-		if row.Side == "sell" {
-			clientOrderID = position.ExitOrder.ClOrdId
-		}
-
-		if row.Symbol != position.pair.Symbol || row.ClientOrderID != clientOrderID {
+		if position.matchesEntry(row) {
+			position.onEntryExecution(row)
+			publish = true
 			continue
 		}
 
-		if row.ExecType != "trade" || row.CumQty == nil || row.CumQty.Sign() <= 0 {
-			continue
+		if position.matchesExit(row) {
+			position.onExitExecution(row)
+			publish = true
 		}
+	}
 
-		if row.ExecID != "" {
-			if _, seen := position.seenExecutions[row.ExecID]; seen {
-				continue
-			}
+	position.mu.Unlock()
 
-			position.seenExecutions[row.ExecID] = struct{}{}
-		}
-
-		if row.Side == "buy" {
-			position.Holding.EntryPrice = row.AvgPrice
-
-			if position.Holding.EntryAt == nil {
-				entryAt := row.Timestamp
-				position.Holding.EntryAt = &entryAt
-			}
-
-			if row.FeeUsdEquiv != nil && position.entryFills == 0 {
-				position.Holding.EntryFee = row.FeeUsdEquiv.Copy()
-			}
-
-			if row.FeeUsdEquiv != nil && position.entryFills > 0 {
-				position.Holding.EntryFee = position.Holding.EntryFee.Add(row.FeeUsdEquiv)
-			}
-
-			// We set it now and update it on every ticker update.
-			position.Holding.ExitPrice = row.AvgPrice
-			position.Holding.Mark = row.AvgPrice
-
-			position.Holding.Qty = row.CumQty
-			position.Holding.SellableQty = row.CumQty
-			position.entryFills++
-
-			/*
-				The regulator was armed against the ask the order was priced at.
-				The venue has now said what was actually paid, on what quantity,
-				at what fee — so the break-even and profit lines are re-solved
-				from the realized basis rather than left defending an estimate
-				that is wrong in the direction which makes the lot look more
-				profitable than it is.
-
-				Rebinding on every fill is deliberate: the fields above are
-				cumulative, so a partially filled entry that fills the rest a
-				moment later moves the true basis, and the last call wins.
-			*/
-			position.Holding.Stoploss.RebindFill(types.Fill{
-				EntryPrice: position.Holding.EntryPrice,
-				EntryFee:   position.Holding.EntryFee,
-				Qty:        position.Holding.Qty,
-			})
-
-			position.publishSnapshot()
-			position.auditStops()
-
-			/*
-				A late entry fill must not resurrect a lot that is already on its
-				way out. Once an exit has been submitted the position belongs to
-				the sell leg, and reopening it here would leave a closed lot
-				marked OPEN with an armed regulator watching inventory that is
-				being sold — and, on the next trigger, a second sell.
-
-				RebindFill above still runs, because the basis is a fact worth
-				recording whatever the lot is doing.
-			*/
-			if position.exiting {
-				position.Publish()
-				continue
-			}
-
-			position.Status = types.OPEN
-			position.Holding.Status = types.OPEN
-		}
-
-		if row.Side == "sell" {
-			position.Holding.ExitPrice = row.AvgPrice
-
-			if row.FeeUsdEquiv != nil && position.exitFills == 0 {
-				position.Holding.ExitFee = row.FeeUsdEquiv.Copy()
-			}
-
-			if row.FeeUsdEquiv != nil && position.exitFills > 0 {
-				position.Holding.ExitFee = position.Holding.ExitFee.Add(row.FeeUsdEquiv)
-			}
-
-			position.exitFills++
-
-			if row.OrderStatus != "filled" {
-				position.Publish()
-				continue
-			}
-
-			exitAt := row.Timestamp
-			position.Holding.ExitAt = &exitAt
-			position.Holding.SellableQty = decimal.NewFromInt64(0)
-
-			position.Status = types.CLOSED
-			position.Holding.Status = types.CLOSED
-		}
-
+	if publish {
 		position.Publish()
+	}
+}
+
+func (position *Position) matchesEntry(row kraken.ExecutionData) bool {
+	if row.Symbol != position.pair.Symbol || row.Side != "buy" {
+		return false
+	}
+
+	if row.ClientOrderID == position.EntryOrder.ClOrdId {
+		return true
+	}
+
+	return position.EntryOrderResult != nil && len(position.EntryOrderResult.ID) > 0 &&
+		row.OrderID == position.EntryOrderResult.ID[0]
+}
+
+func (position *Position) matchesExit(row kraken.ExecutionData) bool {
+	if row.Symbol != position.pair.Symbol || row.Side != "sell" {
+		return false
+	}
+
+	return row.ClientOrderID == position.stopOrderID ||
+		(position.exitOrderID != "" && row.OrderID == position.exitOrderID)
+}
+
+func (position *Position) unseenTrade(row kraken.ExecutionData) bool {
+	if row.ExecType != "trade" || row.CumQty == nil || row.CumQty.Sign() <= 0 {
+		return false
+	}
+
+	if row.ExecID == "" {
+		return true
+	}
+
+	if _, seen := position.seenExecutions[row.ExecID]; seen {
+		return false
+	}
+
+	position.seenExecutions[row.ExecID] = struct{}{}
+	return true
+}
+
+func (position *Position) onEntryExecution(row kraken.ExecutionData) {
+	if position.unseenTrade(row) {
+		position.applyEntryFill(row)
+	}
+
+	if !terminalOrderStatus(row.OrderStatus) {
+		return
+	}
+
+	position.entryTerminal = true
+
+	if position.Holding.SellableQty.Sign() > 0 {
+		return
+	}
+
+	if position.Holding.Stoploss.Status == types.TRIGGERED {
+		position.closeInventory(row.Timestamp)
+		return
+	}
+
+	position.Status = terminalPositionStatus(row.OrderStatus)
+	position.Holding.Status = position.Status
+}
+
+func (position *Position) applyEntryFill(row kraken.ExecutionData) {
+	if row.CumQty.Cmp(position.entryCumQty) <= 0 {
+		return
+	}
+
+	firstFill := position.entryCumQty.Sign() == 0
+	delta := row.CumQty.Sub(position.entryCumQty)
+	position.entryCumQty = row.CumQty.Copy()
+
+	if row.AvgPrice != nil {
+		position.Holding.EntryPrice = row.AvgPrice.Copy()
+		position.Holding.ExitPrice = row.AvgPrice.Copy()
+		position.Holding.Mark = row.AvgPrice.Copy()
+	}
+
+	if position.Holding.EntryAt == nil {
+		entryAt := row.Timestamp
+		position.Holding.EntryAt = &entryAt
+	}
+
+	if row.FeeUsdEquiv != nil && firstFill {
+		position.Holding.EntryFee = row.FeeUsdEquiv.Copy()
+	}
+
+	if row.FeeUsdEquiv != nil && !firstFill {
+		position.Holding.EntryFee = position.Holding.EntryFee.Add(row.FeeUsdEquiv)
+	}
+
+	position.Holding.Qty = row.CumQty.Copy()
+	wasEmpty := position.Holding.SellableQty.Sign() == 0
+
+	if wasEmpty {
+		position.Holding.SellableQty = delta.Copy()
+	}
+
+	if !wasEmpty {
+		position.Holding.SellableQty = position.Holding.SellableQty.Add(delta)
+	}
+
+	position.Holding.Stoploss.RebindFill(types.Fill{
+		EntryPrice: position.Holding.EntryPrice,
+		EntryFee:   position.Holding.EntryFee,
+		Qty:        position.Holding.Qty,
+	})
+
+	position.publishSnapshot()
+	position.auditStops()
+
+	if position.Holding.Stoploss.Status == types.TRIGGERED || position.exiting {
+		position.Status = types.PENDING
+		position.Holding.Status = types.PENDING
+		return
+	}
+
+	position.Status = types.OPEN
+	position.Holding.Status = types.OPEN
+}
+
+func (position *Position) onExitExecution(row kraken.ExecutionData) {
+	if position.unseenTrade(row) {
+		position.applyExitFill(row)
+	}
+
+	if !terminalOrderStatus(row.OrderStatus) {
+		return
+	}
+
+	position.exiting = false
+	position.stopOrderID = ""
+	position.exitOrderID = ""
+	position.exitCumQty = decimal.NewFromInt64(0)
+
+	if position.entryTerminal && position.Holding.SellableQty.Sign() == 0 {
+		position.closeInventory(row.Timestamp)
+		return
+	}
+
+	position.Status = types.PENDING
+	position.Holding.Status = types.PENDING
+}
+
+func (position *Position) applyExitFill(row kraken.ExecutionData) {
+	if row.CumQty.Cmp(position.exitCumQty) <= 0 {
+		return
+	}
+
+	delta := row.CumQty.Sub(position.exitCumQty)
+	remaining := position.Holding.SellableQty.Copy()
+
+	if delta.Cmp(remaining) > 0 {
+		errnie.Error(errnie.Err(
+			errnie.Conflict,
+			"position: exit fill exceeds remaining inventory for "+position.pair.Symbol,
+			nil,
+		))
+		return
+	}
+
+	position.exitCumQty = row.CumQty.Copy()
+	position.Holding.SellableQty = remaining.Sub(delta)
+
+	if row.AvgPrice != nil {
+		position.Holding.ExitPrice = row.AvgPrice.Copy()
+	}
+
+	if row.FeeUsdEquiv != nil && position.Holding.ExitFee == nil {
+		position.Holding.ExitFee = row.FeeUsdEquiv.Copy()
+		return
+	}
+
+	if row.FeeUsdEquiv != nil {
+		position.Holding.ExitFee = position.Holding.ExitFee.Add(row.FeeUsdEquiv)
+	}
+}
+
+func (position *Position) closeInventory(at time.Time) {
+	position.Holding.SellableQty = decimal.NewFromInt64(0)
+	position.Holding.ExitAt = &at
+	position.Status = types.CLOSED
+	position.Holding.Status = types.CLOSED
+}
+
+func terminalOrderStatus(status string) bool {
+	switch status {
+	case "filled", "canceled", "cancelled", "rejected", "expired":
+		return true
+	default:
+		return false
+	}
+}
+
+func terminalPositionStatus(status string) types.Status {
+	switch status {
+	case "rejected":
+		return types.REJECTED
+	case "expired":
+		return types.EXPIRED
+	default:
+		return types.CANCELED
 	}
 }
 
@@ -465,11 +730,13 @@ Enter submits a market buy for its quantity and returns the transport error so
 Desk cannot publish a false entry-submitted lifecycle.
 */
 func (position *Position) Enter() (*Position, error) {
+	position.mu.Lock()
 	result, err := position.api.AddOrder(position.EntryOrder)
 
 	if err != nil {
 		position.Status = types.ERROR
 		position.Holding.Status = types.ERROR
+		position.mu.Unlock()
 
 		return position, errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -485,6 +752,7 @@ func (position *Position) Enter() (*Position, error) {
 		position.Holding.Status = types.PENDING
 	}
 
+	position.mu.Unlock()
 	position.Publish()
 	return position, nil
 }
@@ -536,7 +804,17 @@ func (position *Position) submitStopExit() error {
 		))
 	}
 
+	if len(result.ID) == 0 || result.ID[0] == "" {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"position: stop exit acknowledgement is missing its venue order ID",
+			nil,
+		))
+	}
+
 	position.ExitOrderResult = &result
+	position.exitOrderID = result.ID[0]
+	position.exitCumQty = decimal.NewFromInt64(0)
 
 	// The venue has the sell. From here the lot belongs to the exit leg, and a
 	// late entry fill must not hand it back to the entry leg.
@@ -547,7 +825,6 @@ func (position *Position) submitStopExit() error {
 		position.Holding.Status = types.PENDING
 	}
 
-	position.Publish()
 	return nil
 }
 
@@ -555,6 +832,9 @@ func (position *Position) submitStopExit() error {
 Close marks the lot closed once Desk drops it from the open map.
 */
 func (position *Position) Close() (err error) {
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
 	if position.Status == types.CLOSED {
 		return nil
 	}

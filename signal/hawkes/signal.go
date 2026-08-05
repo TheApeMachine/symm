@@ -118,7 +118,7 @@ func (signal *Signal) run() {
 							measurements,
 						)
 
-						thesis.Readiness.Hawkes = true
+						thesis.Readiness.Stamp(types.SourceHawkes)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 				}

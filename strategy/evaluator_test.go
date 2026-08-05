@@ -170,6 +170,164 @@ func TestEstimateImpact(t *testing.T) {
 	})
 }
 
+func TestExhaustionHoldDiscount(t *testing.T) {
+	Convey("Given valid long-side exhaustion output", t, func() {
+		thesis := types.NewThesis()
+
+		thesis.Measurements.Store(types.SourceExhaustion, []*types.Measurement{{
+			Source: types.SourceExhaustion,
+			Symbol: "BTC/USD",
+			Validity: types.MeasurementValidity{
+				State: types.ValidityValid,
+			},
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricUrgency, types.SideBuy): {Raw: 0.8},
+			},
+		}})
+
+		discount, ready := exhaustionHoldDiscount(thesis, "BTC/USD")
+
+		Convey("It should convert the strongest live decay hazard to survival", func() {
+			So(ready, ShouldBeTrue)
+			So(discount, ShouldAlmostEqual, math.Exp(-0.8), 1e-12)
+			So(discount, ShouldBeLessThan, 1.0)
+			So(discount, ShouldBeGreaterThan, 0.0)
+		})
+
+		Convey("It should refuse a symbol without its own decay reading", func() {
+			_, found := exhaustionHoldDiscount(thesis, "ETH/USD")
+			So(found, ShouldBeFalse)
+		})
+
+		Convey("A clean reading should remain strictly below one", func() {
+			measurement, found := latestMeasurement(
+				thesis, "BTC/USD", types.SourceExhaustion,
+			)
+			So(found, ShouldBeTrue)
+			measurement.Metrics[types.MetricKey(
+				types.MetricUrgency, types.SideBuy,
+			)] = types.MetricSample{Raw: 0}
+
+			discount, ready := exhaustionHoldDiscount(thesis, "BTC/USD")
+			So(ready, ShouldBeTrue)
+			So(discount, ShouldBeLessThan, 1.0)
+			So(discount, ShouldBeGreaterThan, 0.0)
+		})
+	})
+}
+
+func TestRegimeExit(t *testing.T) {
+	Convey("Given a valid empirically scaled pump-dump reading", t, func() {
+		thesis := types.NewThesis()
+		thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{{
+			Source: types.SourcePumpDump,
+			Symbol: "BTC/USD",
+			Validity: types.MeasurementValidity{
+				State: types.ValidityValid,
+			},
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricIgnition, types.SideBuy):  {Raw: 0.4},
+				types.MetricKey(types.MetricIgnition, types.SideSell): {Raw: 1.2},
+			},
+		}})
+
+		Convey("A downward ignition above its empirical baseline should exit", func() {
+			So(regimeExit(thesis, "BTC/USD"), ShouldEqual,
+				types.TriggerPumpDumpSellIgnition)
+		})
+
+		Convey("A downward ignition below its empirical baseline should not exit", func() {
+			measurement, found := latestMeasurement(
+				thesis, "BTC/USD", types.SourcePumpDump,
+			)
+			So(found, ShouldBeTrue)
+			measurement.Metrics[types.MetricKey(
+				types.MetricIgnition, types.SideSell,
+			)] = types.MetricSample{Raw: 0.8}
+
+			So(regimeExit(thesis, "BTC/USD"), ShouldBeBlank)
+		})
+	})
+
+	Convey("Given a fitted seller-dominant Hawkes process", t, func() {
+		thesis := types.NewThesis()
+		thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{{
+			Source: types.SourceHawkes,
+			Symbol: "BTC/USD",
+			Validity: types.MeasurementValidity{
+				State:     types.ValidityProvisional,
+				Readiness: types.ReadinessModel,
+			},
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricSpectralRadius, types.SideNone):       {Raw: 0.9},
+				types.MetricKey(types.MetricTotalDescendants, types.SideBuy):      {Raw: 0.5},
+				types.MetricKey(types.MetricTotalDescendants, types.SideSell):     {Raw: 1.4},
+				types.MetricKey(types.MetricConditionalIntensity, types.SideBuy):  {Raw: 2},
+				types.MetricKey(types.MetricConditionalIntensity, types.SideSell): {Raw: 5},
+			},
+		}})
+
+		Convey("A sell parent expected to reproduce should exit", func() {
+			So(regimeExit(thesis, "BTC/USD"), ShouldEqual,
+				types.TriggerHawkesSellCascade)
+		})
+	})
+}
+
+func TestAllocationHaircut(t *testing.T) {
+	Convey("Given valid executable-liquidity and toxicity evidence", t, func() {
+		thesis := types.NewThesis()
+		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
+			Source: types.SourceLiquidity,
+			Symbol: "BTC/USD",
+			Validity: types.MeasurementValidity{
+				State: types.ValidityValid,
+			},
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricScarcityScore, types.SideNone): {Raw: 0.5},
+			},
+		}})
+		thesis.Measurements.Store(types.SourceToxicity, []*types.Measurement{{
+			Source: types.SourceToxicity,
+			Symbol: "BTC/USD",
+			Validity: types.MeasurementValidity{
+				State: types.ValidityValid,
+			},
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricCancelledQuantity, types.SideBuy): {Raw: 4},
+				types.MetricKey(types.MetricTouchQuantity, types.SideBuy):     {Raw: 6},
+			},
+		}})
+		forecast := candidate{
+			Symbol:         "BTC/USD",
+			ExpectedSpread: decimal.NewFromFloat64(0.2),
+		}
+
+		haircut, reason, ready := allocationHaircut(
+			thesis,
+			forecast,
+			decimal.NewFromFloat64(0.1),
+		)
+
+		Convey("It should publish the exact penalty and its measured causes", func() {
+			So(ready, ShouldBeTrue)
+			So(haircut, ShouldAlmostEqual, 1.4/2.4, 1e-12)
+			So(reason, ShouldEqual,
+				"executable-depth scarcity + toxicity + adverse selection")
+		})
+
+		Convey("It should refuse to size without toxicity evidence", func() {
+			thesis.Measurements.Delete(types.SourceToxicity)
+			_, _, available := allocationHaircut(
+				thesis,
+				forecast,
+				decimal.NewFromFloat64(0.1),
+			)
+			So(available, ShouldBeFalse)
+		})
+	})
+}
+
 func TestCandidateValuation(t *testing.T) {
 	Convey("Given a candidate valuation", t, func() {
 		c := candidate{
@@ -215,5 +373,41 @@ func BenchmarkProjectedReturn(b *testing.B) {
 
 	for b.Loop() {
 		_ = projectedReturn(curve, surviving)
+	}
+}
+
+func BenchmarkAllocationHaircut(b *testing.B) {
+	thesis := types.NewThesis()
+	thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
+		Source: types.SourceLiquidity,
+		Symbol: "BTC/USD",
+		Validity: types.MeasurementValidity{
+			State: types.ValidityValid,
+		},
+		Metrics: map[string]types.MetricSample{
+			types.MetricKey(types.MetricScarcityScore, types.SideNone): {Raw: 0.5},
+		},
+	}})
+	thesis.Measurements.Store(types.SourceToxicity, []*types.Measurement{{
+		Source: types.SourceToxicity,
+		Symbol: "BTC/USD",
+		Validity: types.MeasurementValidity{
+			State: types.ValidityValid,
+		},
+		Metrics: map[string]types.MetricSample{
+			types.MetricKey(types.MetricCancelledQuantity, types.SideBuy): {Raw: 4},
+			types.MetricKey(types.MetricTouchQuantity, types.SideBuy):     {Raw: 6},
+		},
+	}})
+	forecast := candidate{
+		Symbol:         "BTC/USD",
+		ExpectedSpread: decimal.NewFromFloat64(0.2),
+	}
+	adverse := decimal.NewFromFloat64(0.1)
+
+	b.ResetTimer()
+
+	for b.Loop() {
+		_, _, _ = allocationHaircut(thesis, forecast, adverse)
 	}
 }

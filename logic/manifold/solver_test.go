@@ -11,7 +11,22 @@ import (
 	"github.com/theapemachine/errnie"
 	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/signal/compute"
+	"github.com/theapemachine/symm/types"
 )
+
+func TestUpdate(t *testing.T) {
+	Convey("Given a valid tick with no manifold carriers", t, func() {
+		thesis := types.NewThesis()
+		solver := &Solver{}
+
+		err := solver.Update(thesis)
+
+		Convey("It should stamp the completed empty pass", func() {
+			So(err, ShouldBeNil)
+			So(thesis.Readiness.Manifold, ShouldBeTrue)
+		})
+	})
+}
 
 func TestSolverStep(t *testing.T) {
 	Convey("Given a resident manifold domain with one physical carrier", t, func() {

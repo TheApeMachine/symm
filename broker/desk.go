@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"iter"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
@@ -83,11 +83,14 @@ func NewDesk(
 	}
 
 	if err := desk.recover(); err != nil {
+		desk.status = types.ERROR
 		errnie.Error(errnie.Err(
 			errnie.Internal,
 			"desk: failed to recover account positions",
 			err,
 		))
+
+		return desk
 	}
 
 	desk.run()
@@ -160,14 +163,8 @@ func (desk *Desk) run() {
 }
 
 /*
-recover adopts the wallet as the account's open inventory.
-
-Holding a coin is the position — there is no separate lot ledger to rebuild.
-Every non-quote asset the wallet carries is therefore an open holding at the
-quantity the wallet states, and trade history is consulted for one thing only:
-what was paid for the amount currently held. That basis is the average price
-across the most recent buys covering the held quantity, which is all a mark can
-be measured against.
+recover rebuilds the wallet's current inventory from complete fill history and
+adopts any working sell before the position can submit another one.
 */
 func (desk *Desk) recover() error {
 	balances, err := desk.api.Balance()
@@ -182,144 +179,301 @@ func (desk *Desk) recover() error {
 		return errnie.Error(err)
 	}
 
+	working, err := desk.api.OpenOrders()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	if err := desk.cancelRecoveredBuys(working.Open); err != nil {
+		return err
+	}
+
 	quote := desk.api.Normalizer().Name(viper.GetString("market.quote_currency"))
 
 	for asset, amount := range balances {
 		asset = desk.api.Normalizer().Name(asset)
 
-		// The quote currency is the cash side of every pair, not a lot.
 		if asset == "" || asset == quote || amount == nil || amount.Sign() <= 0 {
 			continue
 		}
 
-		symbol := asset + "/" + quote
-
-		pair, err := desk.instrument.Pair(symbol)
-
-		if err != nil {
-			errnie.Error(err)
-			continue
+		if err := desk.recoverAsset(asset, quote, amount, history.Trades, working.Open); err != nil {
+			return err
 		}
+	}
 
-		histories := make([]spot.Trade, 0)
-
-		// Venues spell a pair without a separator and in any case, so the
-		// trade is matched against the instrument's own base and quote.
-		venue := strings.ToUpper(pair.Base + pair.Quote)
-
-		for _, trade := range history.Trades {
-			traded := strings.ToUpper(strings.ReplaceAll(trade.Pair, "/", ""))
-
-			if traded != venue {
-				continue
-			}
-
-			histories = append(histories, trade)
+	for orderID, order := range working.Open {
+		if order.Description != nil && strings.EqualFold(order.Description.Type, "sell") {
+			return errnie.Error(errnie.Err(
+				errnie.Conflict,
+				"desk: working sell "+orderID+" has no reconciled wallet inventory",
+				nil,
+			))
 		}
-
-		if len(histories) == 0 {
-			continue
-		}
-
-		// Sort by timestamp ascending
-		sort.Slice(histories, func(i, j int) bool {
-			return histories[i].Time.Cmp(histories[j].Time) < 0
-		})
-
-		// Buys after the last sell are the ones that bought what is held now.
-		opening := histories
-
-		for index, historie := range slices.Backward(histories) {
-			if strings.EqualFold(historie.Type, "sell") {
-				opening = histories[index+1:]
-				break
-			}
-		}
-
-		if len(opening) == 0 {
-			continue
-		}
-
-		// The wallet reports an amount of the asset, not an order size, so
-		// the venue's lot rules decide how much of it is actually sellable.
-		quantity, err := desk.api.Normalizer().FormatSize(symbol, amount)
-
-		if err != nil || quantity == nil || quantity.Sign() <= 0 {
-			errnie.Error(err)
-			continue
-		}
-
-		entryAt := time.Unix(opening[0].Time.Int64(), 0).UTC()
-		entryCost := decimal.NewFromInt64(0)
-		entryFee := decimal.NewFromInt64(0)
-
-		for _, trade := range opening {
-			if trade.Cost == nil || trade.Volume == nil {
-				continue
-			}
-
-			entryCost = entryCost.Add(trade.Cost)
-			entryFee = entryFee.Add(trade.Fee)
-		}
-
-		if entryCost.Sign() <= 0 || entryFee.Sign() <= 0 {
-			continue
-		}
-
-		entryPrice := entryCost.Div(quantity)
-
-		position := NewPosition(
-			desk.ctx,
-			desk.api,
-			desk.ui,
-			desk.instrument,
-			desk.price,
-			desk.balance,
-			desk.recorder,
-			pair,
-			types.Decision{
-				ID:               "recovered:" + symbol,
-				ProposedQuantity: quantity,
-				EntryAt:          &time.Time{},
-				Symbol:           symbol,
-				EntryPrice:       entryPrice,
-				EntryFee:         entryFee,
-				ExitPrice:        decimal.NewFromInt64(0),
-				ExitFee:          decimal.NewFromInt64(0),
-				SellableQty:      quantity,
-				Mark:             entryPrice,
-				Risk:             desk.price.RiskPlan(pair),
-			},
-		)
-
-		position.ID = "recovered:" + symbol
-		position.EntryOrder.ClOrdId = position.ID
-		position.Status = types.OPEN
-
-		// The holding built by NewPosition owns the lot's stoploss and its
-		// cancel context, so recovery fills that one in rather than swapping
-		// in a fresh struct that would leave the lot unprotected and its
-		// context orphaned.
-		position.Holding.Asset = asset
-		position.Holding.Qty = quantity
-		position.Holding.SellableQty = quantity.Copy()
-		position.Holding.EntryAt = &entryAt
-		position.Holding.Status = types.OPEN
-
-		/*
-			Recovered inventory has a real basis already — the trade history says
-			what was paid for the amount held — so its regulator is confirmed
-			here rather than waiting for a fill that will never arrive. Without
-			this the lot would sit unprotected forever, since every mark it sees
-			would be refused as arriving against an unconfirmed estimate.
-		*/
-		position.Holding.Stoploss.BindRecovered()
-
-		desk.positions.Store(symbol, position)
-		position.Publish()
 	}
 
 	return nil
+}
+
+func (desk *Desk) cancelRecoveredBuys(orders map[string]spot.Order) error {
+	for orderID, order := range orders {
+		if order.Description == nil || !strings.EqualFold(order.Description.Type, "buy") {
+			continue
+		}
+
+		if _, err := uuid.Parse(order.ClOrdID); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Conflict,
+				"desk: working buy "+orderID+" is not identifiable as a symm order",
+				nil,
+			))
+		}
+
+		result, err := desk.api.CancelOrder(&spot.CancelOrderRequest{TxID: orderID})
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		if result.Count <= 0 && !result.Pending {
+			return errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"desk: working entry "+orderID+" could not be canceled",
+				nil,
+			))
+		}
+
+		return errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"desk: canceled working entry "+orderID+"; restart after it reaches a terminal state",
+			nil,
+		))
+	}
+
+	return nil
+}
+
+func (desk *Desk) recoverAsset(
+	asset string,
+	quote string,
+	amount *decimal.Decimal,
+	history map[string]spot.Trade,
+	working map[string]spot.Order,
+) error {
+	symbol := asset + "/" + quote
+	pair, err := desk.instrument.Pair(symbol)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"desk: recovered wallet symbol unavailable: "+symbol,
+			err,
+		))
+	}
+
+	quantity, err := desk.api.Normalizer().FormatSize(symbol, amount)
+
+	if err != nil || quantity == nil || quantity.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "desk: invalid recovered quantity for "+symbol, err,
+		))
+	}
+
+	entryPrice, entryFee, entryAt, err := desk.recoverBasis(pair, quantity, history)
+
+	if err != nil {
+		return err
+	}
+
+	position := desk.recoveredPosition(pair, asset, quantity, entryPrice, entryFee, entryAt)
+	orderID, order, err := recoveredSell(pair, working)
+
+	if err != nil {
+		return err
+	}
+
+	if order != nil {
+		position.adoptExit(orderID, *order)
+		delete(working, orderID)
+	}
+
+	desk.positions.Store(symbol, position)
+	position.publishSnapshot()
+	position.Publish()
+
+	return nil
+}
+
+func (desk *Desk) recoverBasis(
+	pair kraken.InstrumentPair,
+	held *decimal.Decimal,
+	history map[string]spot.Trade,
+) (*decimal.Decimal, *decimal.Decimal, time.Time, error) {
+	trades := make([]spot.Trade, 0)
+	venue := strings.ToUpper(pair.Base + pair.Quote)
+
+	for _, trade := range history {
+		if strings.ToUpper(strings.ReplaceAll(trade.Pair, "/", "")) == venue {
+			trades = append(trades, trade)
+		}
+	}
+
+	sort.Slice(trades, func(left, right int) bool {
+		return trades[left].Time.Cmp(trades[right].Time) < 0
+	})
+
+	quantity := decimal.NewFromInt64(0)
+	cost := decimal.NewFromInt64(0)
+	fee := decimal.NewFromInt64(0)
+	entryAt := time.Time{}
+
+	for _, trade := range trades {
+		if trade.Volume == nil || trade.Cost == nil || trade.Time == nil {
+			return nil, nil, time.Time{}, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"desk: incomplete trade history for "+pair.Symbol,
+				nil,
+			))
+		}
+
+		if strings.EqualFold(trade.Type, "buy") {
+			if quantity.Sign() == 0 {
+				entryAt = time.Unix(trade.Time.Int64(), 0).UTC()
+			}
+
+			quantity = addAmount(quantity, trade.Volume)
+			cost = addAmount(cost, trade.Cost)
+
+			if trade.Fee != nil {
+				fee = addAmount(fee, trade.Fee)
+			}
+
+			continue
+		}
+
+		if !strings.EqualFold(trade.Type, "sell") {
+			return nil, nil, time.Time{}, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"desk: unknown trade side in history for "+pair.Symbol,
+				nil,
+			))
+		}
+
+		if trade.Volume.Cmp(quantity) > 0 {
+			return nil, nil, time.Time{}, errnie.Error(errnie.Err(
+				errnie.Conflict,
+				"desk: sell history exceeds recovered inventory for "+pair.Symbol,
+				nil,
+			))
+		}
+
+		remaining := subtractAmount(quantity, trade.Volume)
+
+		if remaining.Sign() == 0 {
+			quantity = remaining
+			cost = decimal.NewFromInt64(0)
+			fee = decimal.NewFromInt64(0)
+			entryAt = time.Time{}
+			continue
+		}
+
+		costScale := max(cost.GetScale(), int64(pair.CostPrecision), int64(feeRateScale))
+		feeScale := max(fee.GetScale(), int64(pair.CostPrecision), int64(feeRateScale))
+		previous := quantity
+		quantity = remaining
+		cost = cost.SetScale(costScale).Mul(remaining).Div(previous)
+		fee = fee.SetScale(feeScale).Mul(remaining).Div(previous)
+	}
+
+	formatted, err := desk.api.Normalizer().FormatSize(pair.Symbol, quantity)
+
+	if err != nil || formatted == nil || formatted.Cmp(held) != 0 || cost.Sign() <= 0 {
+		return nil, nil, time.Time{}, errnie.Error(errnie.Err(
+			errnie.Conflict,
+			"desk: fill history does not reconcile with wallet inventory for "+pair.Symbol,
+			err,
+		))
+	}
+
+	return cost.Div(quantity), fee, entryAt, nil
+}
+
+func (desk *Desk) recoveredPosition(
+	pair kraken.InstrumentPair,
+	asset string,
+	quantity *decimal.Decimal,
+	entryPrice *decimal.Decimal,
+	entryFee *decimal.Decimal,
+	entryAt time.Time,
+) *Position {
+	position := NewPosition(
+		desk.ctx, desk.api, desk.ui, desk.instrument, desk.price, desk.balance,
+		desk.recorder, pair, types.Decision{
+			ID:               "recovered:" + pair.Symbol,
+			ProposedQuantity: quantity,
+			EntryPrice:       entryPrice,
+			EntryFee:         entryFee,
+			Mark:             entryPrice,
+			Risk:             desk.price.RiskPlan(pair),
+		},
+	)
+
+	position.Status = types.OPEN
+	position.entryTerminal = true
+	position.Holding.Asset = asset
+	position.Holding.Qty = quantity.Copy()
+	position.Holding.SellableQty = quantity.Copy()
+	position.Holding.EntryAt = &entryAt
+	position.Holding.Status = types.OPEN
+	position.Holding.Stoploss.BindRecovered()
+
+	return position
+}
+
+func recoveredSell(
+	pair kraken.InstrumentPair,
+	orders map[string]spot.Order,
+) (string, *spot.Order, error) {
+	venue := strings.ToUpper(pair.Base + pair.Quote)
+	orderID := ""
+	var recovered *spot.Order
+
+	for candidateID, order := range orders {
+		if order.Description == nil || !strings.EqualFold(order.Description.Type, "sell") {
+			continue
+		}
+
+		ordered := strings.ToUpper(strings.ReplaceAll(order.Description.Pair, "/", ""))
+
+		if ordered != venue {
+			continue
+		}
+
+		if recovered != nil {
+			return "", nil, errnie.Error(errnie.Err(
+				errnie.Conflict,
+				"desk: multiple working sells exist for "+pair.Symbol,
+				nil,
+			))
+		}
+
+		copy := order
+		orderID = candidateID
+		recovered = &copy
+	}
+
+	return orderID, recovered, nil
+}
+
+func addAmount(left, right *decimal.Decimal) *decimal.Decimal {
+	scale := max(left.GetScale(), right.GetScale())
+	return left.SetScale(scale).Add(right.SetScale(scale))
+}
+
+func subtractAmount(left, right *decimal.Decimal) *decimal.Decimal {
+	scale := max(left.GetScale(), right.GetScale())
+	return left.SetScale(scale).Sub(right.SetScale(scale))
 }
 
 /*
@@ -371,21 +525,11 @@ func (desk *Desk) Instrument() *Instrument {
 func (desk *Desk) OpenPositions() int {
 	count := 0
 
-	desk.positions.Range(func(key, value any) bool {
-		position, ok := value.(*Position)
-
-		if !ok || position == nil {
-			return true
-		}
-
-		status := position.Status
-
-		if status != types.CLOSED {
+	for position := range desk.Positions() {
+		if position.Status != types.CLOSED {
 			count++
 		}
-
-		return true
-	})
+	}
 
 	return count
 }
@@ -480,7 +624,7 @@ func (desk *Desk) Positions() iter.Seq[*Position] {
 				return true
 			}
 
-			return yield(position)
+			return yield(position.Snapshot())
 		})
 	}
 }
@@ -542,7 +686,7 @@ func (desk *Desk) enter(decision types.Decision) error {
 
 	if value, ok := desk.positions.Load(decision.Symbol); ok {
 		if position, ok := value.(*Position); ok && position != nil {
-			status := position.Status
+			status := position.Snapshot().Status
 
 			if status != types.CLOSED {
 				return errnie.Error(errnie.Err(
@@ -675,7 +819,13 @@ func (desk *Desk) ApplyEvidence(evidence types.StopEvidence) {
 
 	position, ok := value.(*Position)
 
-	if !ok || position == nil || isTerminal(position.Status) {
+	if !ok || position == nil {
+		return
+	}
+
+	snapshot := position.Snapshot()
+
+	if snapshot == nil || isTerminal(snapshot.Status) {
 		return
 	}
 

@@ -111,7 +111,6 @@ export interface ModelScopeProps {
 	showLabels?: boolean;
 	labelDetailMode?: "compact" | "detailed";
 	showEdges?: boolean;
-	showTimeSlider?: boolean;
 	nodeIntensity?: number[];
 	nodeThreat?: number[];
 	onNodeSelect?: (nodeIndex: number, nodeName: string) => void;
@@ -142,7 +141,6 @@ export const ModelScope = ({
 	showLabels = true,
 	labelDetailMode = "compact",
 	showEdges = true,
-	showTimeSlider = true,
 	nodeIntensity,
 	nodeThreat,
 	onNodeSelect,

@@ -40,6 +40,14 @@ export const DecisionMCTSStage = () => (
 					className="font-normal text-(--f2)"
 				/>
 			</span>
+			<span>
+				hold γ{" "}
+				<b
+					data-paint="trace.mcts.holdDiscount"
+					data-paint-format=".3f"
+					className="font-normal text-(--f2)"
+				/>
+			</span>
 		</div>
 		<div className="flex justify-between gap-2">
 			<span className="text-(--f4)">history</span>

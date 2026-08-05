@@ -232,6 +232,8 @@ func (planner *Planner) complete(
 		return
 	}
 
+	readiness := thesis.Readiness.Snapshot()
+
 	errnie.Error(audit.Phase(
 		planner.recorder,
 		thesis.Tick,
@@ -239,7 +241,7 @@ func (planner *Planner) complete(
 		map[string]any{
 			"evaluated": evaluated,
 			"outcome":   outcome,
-			"readiness": thesis.Readiness,
+			"readiness": readiness,
 			"decisions": len(thesis.Decisions),
 		},
 	))
@@ -253,7 +255,7 @@ func (planner *Planner) complete(
 		"at", thesis.At,
 		"evaluated", evaluated,
 		"outcome", outcome,
-		"readiness", thesis.Readiness,
+		"readiness", readiness,
 		"decisions", len(thesis.Decisions),
 	)))
 }

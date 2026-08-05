@@ -285,6 +285,7 @@ func TestPlannerPumpReversal(t *testing.T) {
 		So(entryDecisions, ShouldEqual, 0)
 		So(strategyExitDecisions, ShouldEqual, 0)
 
+		position = slices.Collect(market.Desk.Positions())[0]
 		stopped := position.Holding.Stoploss.Status == types.TRIGGERED &&
 			position.Holding.Stoploss.TriggerReason != ""
 		So(stopped, ShouldBeTrue)

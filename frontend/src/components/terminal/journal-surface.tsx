@@ -64,7 +64,10 @@ const paint = () => {
 			...lastPositions
 				.map((position) => position.holding?.symbol)
 				.filter(Boolean),
-			...lastJournal.map((entry) => entry.symbol),
+			...lastJournal.flatMap((entry) => [
+				...Object.keys(entry.lifecycle ?? {}),
+				...Object.keys(entry.holdings ?? {}),
+			]),
 		]),
 	].sort();
 	const nextJournalKeys = [

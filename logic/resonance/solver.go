@@ -260,6 +260,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	solver.clearOutputs(thesis)
 
 	if len(featureSets) == 0 {
+		thesis.Readiness.Resonance = true
 		return nil
 	}
 
@@ -296,8 +297,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	rows := make([]map[string]any, 0, len(rowsByIndex))
 	out := make([]map[string]any, 0)
 
-	forecastReady := false
-
 	for index, row := range rowsByIndex {
 		if row == nil {
 			continue
@@ -312,14 +311,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			out = append(out, row)
 		}
 
-		if returnReady, ok := row["returnReady"].(bool); ok && returnReady {
-			forecastReady = true
-		}
 	}
 
-	if forecastReady {
-		thesis.Readiness.Resonance = true
-	}
+	thesis.Readiness.Resonance = true
 
 	if len(out) > 0 && solver.ui != nil {
 		utils.Publish(solver.ui, datura.NewMap("resonance", out))

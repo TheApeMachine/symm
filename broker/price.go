@@ -216,7 +216,7 @@ func (price *Price) PnL(
 	pair kraken.InstrumentPair,
 	holding *types.Holding,
 ) *decimal.Decimal {
-	if holding == nil || holding.Qty == nil || holding.Mark == nil ||
+	if holding == nil || holding.Qty == nil || holding.Qty.Sign() <= 0 || holding.Mark == nil ||
 		holding.EntryPrice == nil || holding.EntryFee == nil {
 		return nil
 	}
@@ -269,7 +269,8 @@ func (price *Price) ReturnPct(
 ) float64 {
 	pnl := price.PnL(pair, holding)
 
-	if pnl == nil || holding == nil || holding.EntryPrice == nil || holding.Qty == nil {
+	if pnl == nil || holding == nil || holding.EntryPrice == nil || holding.Qty == nil ||
+		holding.Qty.Sign() <= 0 {
 		return 0
 	}
 

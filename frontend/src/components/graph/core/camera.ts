@@ -16,9 +16,11 @@ interface CameraProps {
 	lastCameraSaveMsRef: RefObject<number>;
 }
 
-const isFiniteVector = (
-	value?: { x: number; y: number; z: number },
-): value is { x: number; y: number; z: number } => {
+const isFiniteVector = (value?: {
+	x: number;
+	y: number;
+	z: number;
+}): value is { x: number; y: number; z: number } => {
 	return Boolean(
 		value &&
 			Number.isFinite(value.x) &&
@@ -98,8 +100,15 @@ export const createCameraControls = ({
 			cameraRef.current.position.set(position.x, position.y, position.z);
 		}
 
-		if (Number.isFinite(p.fov) && p.fov > 0 && p.fov < 180) {
-			cameraRef.current.fov = p.fov as number;
+		const fov = p.fov;
+
+		if (
+			typeof fov === "number" &&
+			Number.isFinite(fov) &&
+			fov > 0 &&
+			fov < 180
+		) {
+			cameraRef.current.fov = fov;
 			cameraRef.current.updateProjectionMatrix();
 		}
 

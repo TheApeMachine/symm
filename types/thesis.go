@@ -32,6 +32,7 @@ happens to fill — infers readiness from a side effect and lets a stage that
 legitimately produced nothing read as never having run.
 */
 type Readiness struct {
+	mu          sync.RWMutex
 	Correlation bool `json:"correlation"`
 	CVD         bool `json:"cvd"`
 	DepthFlow   bool `json:"depth_flow"`
@@ -53,29 +54,48 @@ type Readiness struct {
 }
 
 func NewReadiness() Readiness {
-	return Readiness{
-		Correlation: false,
-		CVD:         false,
-		DepthFlow:   false,
-		Exhaustion:  false,
-		Hawkes:      false,
-		LeadLag:     false,
-		Liquidity:   false,
-		PumpDump:    false,
-		Sentiment:   false,
-		Toxicity:    false,
-		Manifold:    false,
-		Resonance:   false,
-		Causal:      false,
-		Graph:       false,
-		Allocation:  false,
-		Decisions:   false,
-		Categories:  false,
-		Cognition:    false,
+	return Readiness{}
+}
+
+/*
+Stamp records completion of one concurrently running signal stage.
+*/
+func (readiness *Readiness) Stamp(source SourceType) {
+	readiness.mu.Lock()
+	defer readiness.mu.Unlock()
+
+	switch source {
+	case SourceCorrelation:
+		readiness.Correlation = true
+	case SourceCVD:
+		readiness.CVD = true
+	case SourceDepthFlow:
+		readiness.DepthFlow = true
+	case SourceExhaustion:
+		readiness.Exhaustion = true
+	case SourceHawkes:
+		readiness.Hawkes = true
+	case SourceLeadLag:
+		readiness.LeadLag = true
+	case SourceLiquidity:
+		readiness.Liquidity = true
+	case SourcePumpDump:
+		readiness.PumpDump = true
+	case SourceSentiment:
+		readiness.Sentiment = true
+	case SourceToxicity:
+		readiness.Toxicity = true
 	}
 }
 
 func (readiness *Readiness) SignalsMeasured() bool {
+	readiness.mu.RLock()
+	defer readiness.mu.RUnlock()
+
+	return readiness.signalsMeasured()
+}
+
+func (readiness *Readiness) signalsMeasured() bool {
 	return readiness.Correlation &&
 		readiness.CVD &&
 		readiness.DepthFlow &&
@@ -99,13 +119,73 @@ it was gating, and since a tick that fails the gate is never reset, neither flag
 could be raised on any later tick either.
 */
 func (readiness *Readiness) Complete() bool {
-	return readiness.SignalsMeasured() &&
+	readiness.mu.RLock()
+	defer readiness.mu.RUnlock()
+
+	return readiness.signalsMeasured() &&
 		readiness.Manifold &&
 		readiness.Resonance &&
 		readiness.Causal &&
 		readiness.Graph &&
 		readiness.Categories &&
 		readiness.Cognition
+}
+
+/*
+Snapshot copies the stage stamps for audit and wire payloads without exposing
+the mutex used by concurrently running signals.
+*/
+func (readiness *Readiness) Snapshot() Readiness {
+	readiness.mu.RLock()
+	defer readiness.mu.RUnlock()
+
+	return Readiness{
+		Correlation: readiness.Correlation,
+		CVD:         readiness.CVD,
+		DepthFlow:   readiness.DepthFlow,
+		Exhaustion:  readiness.Exhaustion,
+		Hawkes:      readiness.Hawkes,
+		LeadLag:     readiness.LeadLag,
+		Liquidity:   readiness.Liquidity,
+		PumpDump:    readiness.PumpDump,
+		Sentiment:   readiness.Sentiment,
+		Toxicity:    readiness.Toxicity,
+		Manifold:    readiness.Manifold,
+		Resonance:   readiness.Resonance,
+		Causal:      readiness.Causal,
+		Graph:       readiness.Graph,
+		Allocation:  readiness.Allocation,
+		Decisions:   readiness.Decisions,
+		Categories:  readiness.Categories,
+		Cognition:   readiness.Cognition,
+	}
+}
+
+/*
+Reset clears every stage stamp for the next thesis cycle.
+*/
+func (readiness *Readiness) Reset() {
+	readiness.mu.Lock()
+	defer readiness.mu.Unlock()
+
+	readiness.Correlation = false
+	readiness.CVD = false
+	readiness.DepthFlow = false
+	readiness.Exhaustion = false
+	readiness.Hawkes = false
+	readiness.LeadLag = false
+	readiness.Liquidity = false
+	readiness.PumpDump = false
+	readiness.Sentiment = false
+	readiness.Toxicity = false
+	readiness.Manifold = false
+	readiness.Resonance = false
+	readiness.Causal = false
+	readiness.Graph = false
+	readiness.Allocation = false
+	readiness.Decisions = false
+	readiness.Categories = false
+	readiness.Cognition = false
 }
 
 const (
@@ -205,7 +285,7 @@ func (thesis *Thesis) Reset() *Thesis {
 	thesis.Cognition.Clear()
 	thesis.Resonance.Clear()
 	thesis.Causal.Clear()
-	thesis.Readiness = NewReadiness()
+	thesis.Readiness.Reset()
 	thesis.Decisions = make([]Decision, 0)
 	thesis.Findings = make([]Finding, 0)
 	thesis.Hypotheses = make([]Hypothesis, 0)

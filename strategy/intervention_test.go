@@ -89,6 +89,7 @@ func TestStrategyStateInterventionLevel(t *testing.T) {
 			Surprise:      0.2,
 			Treatment:     0.0015,
 			RoundTripCost: 0.0008,
+			HoldDiscount:  0.8,
 			MaxSteps:      5,
 		}
 
@@ -98,7 +99,7 @@ func TestStrategyStateInterventionLevel(t *testing.T) {
 
 			// A further step of holding is worth the decayed forecast, which is
 			// exactly what the rollout credits the position with.
-			So(state.GetInterventionLevel(strategy.ActionHold), ShouldAlmostEqual, 0.00135)
+			So(state.GetInterventionLevel(strategy.ActionHold), ShouldAlmostEqual, 0.0012)
 
 			// Standing aside and completing a rollout both commit to no forecast.
 			So(state.GetInterventionLevel(strategy.ActionNothing), ShouldEqual, 0.0)
@@ -149,6 +150,7 @@ func TestSearchInterventionLevels(t *testing.T) {
 			Surprise:      0.2,
 			Treatment:     treatment,
 			RoundTripCost: 0.0004,
+			HoldDiscount:  0.8,
 			MaxSteps:      5,
 		}
 
@@ -170,9 +172,9 @@ func TestSearchInterventionLevels(t *testing.T) {
 
 		Convey("It should only ever intervene at levels the treatment column carries", func() {
 			permitted := map[float64]bool{
-				0.0:             true,
-				treatment:       true,
-				treatment * 0.9: true,
+				0.0:                           true,
+				treatment:                     true,
+				treatment * root.HoldDiscount: true,
 			}
 
 			for _, level := range engine.levels() {

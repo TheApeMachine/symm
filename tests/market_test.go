@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
@@ -21,10 +22,10 @@ func TestMarketNewMarket(t *testing.T) {
 			market := NewMarket(t.Context(), symbols)
 			defer market.Close()
 
-			So(market, ShouldNotBeNil)
-			So(market.Public, ShouldNotBeNil)
-			So(market.Private, ShouldNotBeNil)
-			So(market.Level3, ShouldNotBeNil)
+			So(market != nil, ShouldBeTrue)
+			So(market.Public != nil, ShouldBeTrue)
+			So(market.Private != nil, ShouldBeTrue)
+			So(market.Level3 != nil, ShouldBeTrue)
 			So(market.State, ShouldEqual, types.Baseline)
 		})
 	})
@@ -106,7 +107,12 @@ func TestMarketWithAutoFill(t *testing.T) {
 		So(position.Holding.Stoploss.Entry.Cmp(position.Holding.EntryPrice), ShouldEqual, 0)
 		So(position.Holding.Stoploss.Mark.Cmp(position.Holding.Mark), ShouldEqual, 0)
 
-		position.Holding.Stoploss.Status = coretypes.TRIGGERED
+		market.Desk.ApplyEvidence(coretypes.StopEvidence{
+			Symbol:     position.Holding.Symbol,
+			RegimeExit: coretypes.TriggerPumpDumpSellIgnition,
+			ObservedAt: time.Now().UTC(),
+			Present:    true,
+		})
 		market.Tick()
 
 		positions = slices.Collect(market.Desk.Positions())
@@ -117,6 +123,8 @@ func TestMarketWithAutoFill(t *testing.T) {
 
 		market.Tick()
 		market.Tick()
+		positions = slices.Collect(market.Desk.Positions())
+		position = positions[0]
 
 		So(position.Status, ShouldEqual, coretypes.CLOSED)
 		So(position.Holding.Status, ShouldEqual, coretypes.CLOSED)

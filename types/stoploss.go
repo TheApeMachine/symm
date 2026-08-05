@@ -42,6 +42,14 @@ const (
 	// TriggerProfitFailSafe is the last line above break-even on a lot that had
 	// already earned a profit. Immediate, like the hard floor.
 	TriggerProfitFailSafe = "profit_failsafe"
+	// TriggerRecoveredExit adopts sell authority already working at the venue
+	// when the process restarts.
+	TriggerRecoveredExit = "recovered_working_exit"
+	// TriggerPumpDumpSellIgnition is an empirically scaled downward ignition.
+	TriggerPumpDumpSellIgnition = "pumpdump_sell_ignition"
+	// TriggerHawkesSellCascade is a self-exciting sell process expected to
+	// produce at least one descendant per sell parent.
+	TriggerHawkesSellCascade = "hawkes_sell_cascade"
 )
 
 /*
@@ -64,27 +72,34 @@ type StopTransition struct {
 		consumer drain only what it has not seen without holding an index into a
 		slice that shifts underneath it.
 	*/
-	Seq           uint64           `json:"seq"`
-	At            time.Time        `json:"at"`
-	Phase         StopPhase        `json:"phase"`
-	Status        Status           `json:"status"`
-	Reason        string           `json:"reason"`
-	TriggerReason string           `json:"trigger_reason,omitempty"`
-	ProfitArmed   bool             `json:"profit_armed"`
-	Mark          *decimal.Decimal `json:"mark"`
-	Peak          *decimal.Decimal `json:"peak"`
-	Floor         *decimal.Decimal `json:"floor"`
-	HardFloor     *decimal.Decimal `json:"hard_floor"`
-	ProfitLine    *decimal.Decimal `json:"profit_line"`
-	ProfitFloor   *decimal.Decimal `json:"profit_floor"`
-	TrailFloor    *decimal.Decimal `json:"trail_floor"`
-	ArmLine       *decimal.Decimal `json:"arm_line"`
-	Entry         *decimal.Decimal `json:"entry"`
-	Qty           *decimal.Decimal `json:"qty"`
-	EntryFee      *decimal.Decimal `json:"entry_fee"`
-	RiskDistance  *decimal.Decimal `json:"risk_distance"`
-	TrailDistance *decimal.Decimal `json:"trail_distance"`
-	NoiseBand     *decimal.Decimal `json:"noise_band"`
+	Seq            uint64           `json:"seq"`
+	At             time.Time        `json:"at"`
+	Phase          StopPhase        `json:"phase"`
+	Status         Status           `json:"status"`
+	Reason         string           `json:"reason"`
+	TriggerReason  string           `json:"trigger_reason,omitempty"`
+	ProfitArmed    bool             `json:"profit_armed"`
+	Mark           *decimal.Decimal `json:"mark"`
+	Peak           *decimal.Decimal `json:"peak"`
+	Floor          *decimal.Decimal `json:"floor"`
+	HardFloor      *decimal.Decimal `json:"hard_floor"`
+	ProfitLine     *decimal.Decimal `json:"profit_line"`
+	BreakEvenLine  *decimal.Decimal `json:"break_even_line"`
+	ProfitFailSafe *decimal.Decimal `json:"profit_failsafe"`
+	ProfitFloor    *decimal.Decimal `json:"profit_floor"`
+	TrailFloor     *decimal.Decimal `json:"trail_floor"`
+	ArmLine        *decimal.Decimal `json:"arm_line"`
+	Entry          *decimal.Decimal `json:"entry"`
+	Qty            *decimal.Decimal `json:"qty"`
+	EntryFee       *decimal.Decimal `json:"entry_fee"`
+	RiskDistance   *decimal.Decimal `json:"risk_distance"`
+	TrailDistance  *decimal.Decimal `json:"trail_distance"`
+	NoiseBand      *decimal.Decimal `json:"noise_band"`
+	WorstCaseLoss  *decimal.Decimal `json:"worst_case_loss"`
+	MaxAdverse     *decimal.Decimal `json:"max_adverse"`
+	MaxFavorable   *decimal.Decimal `json:"max_favorable"`
+	BasisConfirmed bool             `json:"basis_confirmed"`
+	DepthLimited   bool             `json:"depth_limited"`
 }
 
 /*
@@ -156,8 +171,11 @@ type Stoploss struct {
 	TrailFloor     *decimal.Decimal `json:"trail_floor"`
 	Floor          *decimal.Decimal `json:"floor"`
 
-	ProfitArmed   bool   `json:"profit_armed"`
-	TriggerReason string `json:"trigger_reason,omitempty"`
+	ProfitArmed   bool             `json:"profit_armed"`
+	TriggerReason string           `json:"trigger_reason,omitempty"`
+	DepthLimited  bool             `json:"depth_limited"`
+	MaxAdverse    *decimal.Decimal `json:"max_adverse"`
+	MaxFavorable  *decimal.Decimal `json:"max_favorable"`
 	/*
 		BasisConfirmed is false until the venue has said what this lot actually
 		cost. Before then the regulator has lines drawn from the ask the order
@@ -196,20 +214,28 @@ downside against the same boundaries the regulator is defending, and reaching
 into the regulator to read them would put two goroutines on it.
 */
 type StopSnapshot struct {
-	Present       bool             `json:"present"`
-	Symbol        string           `json:"symbol"`
-	Phase         StopPhase        `json:"phase"`
-	Status        Status           `json:"status"`
-	TriggerReason string           `json:"trigger_reason,omitempty"`
-	ProfitArmed   bool             `json:"profit_armed"`
-	Entry         *decimal.Decimal `json:"entry"`
-	Mark          *decimal.Decimal `json:"mark"`
-	Peak          *decimal.Decimal `json:"peak"`
-	HardFloor     *decimal.Decimal `json:"hard_floor"`
-	ProfitLine    *decimal.Decimal `json:"profit_line"`
-	ProfitFloor   *decimal.Decimal `json:"profit_floor"`
-	RiskDistance  *decimal.Decimal `json:"risk_distance"`
-	NoiseBand     *decimal.Decimal `json:"noise_band"`
+	Present        bool             `json:"present"`
+	Symbol         string           `json:"symbol"`
+	Phase          StopPhase        `json:"phase"`
+	Status         Status           `json:"status"`
+	TriggerReason  string           `json:"trigger_reason,omitempty"`
+	ProfitArmed    bool             `json:"profit_armed"`
+	BasisConfirmed bool             `json:"basis_confirmed"`
+	DepthLimited   bool             `json:"depth_limited"`
+	Entry          *decimal.Decimal `json:"entry"`
+	Mark           *decimal.Decimal `json:"mark"`
+	Peak           *decimal.Decimal `json:"peak"`
+	HardFloor      *decimal.Decimal `json:"hard_floor"`
+	ProfitLine     *decimal.Decimal `json:"profit_line"`
+	BreakEvenLine  *decimal.Decimal `json:"break_even_line"`
+	ProfitFailSafe *decimal.Decimal `json:"profit_failsafe"`
+	ProfitFloor    *decimal.Decimal `json:"profit_floor"`
+	ArmLine        *decimal.Decimal `json:"arm_line"`
+	RiskDistance   *decimal.Decimal `json:"risk_distance"`
+	NoiseBand      *decimal.Decimal `json:"noise_band"`
+	WorstCaseLoss  *decimal.Decimal `json:"worst_case_loss"`
+	MaxAdverse     *decimal.Decimal `json:"max_adverse"`
+	MaxFavorable   *decimal.Decimal `json:"max_favorable"`
 }
 
 /*
@@ -225,20 +251,28 @@ func (stoploss *Stoploss) Snapshot() StopSnapshot {
 	}
 
 	return StopSnapshot{
-		Present:       stoploss.Plan.Present,
-		Symbol:        stoploss.Symbol,
-		Phase:         stoploss.Phase,
-		Status:        stoploss.Status,
-		TriggerReason: stoploss.TriggerReason,
-		ProfitArmed:   stoploss.ProfitArmed,
-		Entry:         copyDecimal(stoploss.Entry),
-		Mark:          copyDecimal(stoploss.Mark),
-		Peak:          copyDecimal(stoploss.Peak),
-		HardFloor:     copyDecimal(stoploss.HardFloor),
-		ProfitLine:    copyDecimal(stoploss.ProfitLine),
-		ProfitFloor:   copyDecimal(stoploss.ProfitFloor),
-		RiskDistance:  copyDecimal(stoploss.Plan.RiskDistance),
-		NoiseBand:     copyDecimal(stoploss.Plan.NoiseBand),
+		Present:        stoploss.Plan.Present,
+		Symbol:         stoploss.Symbol,
+		Phase:          stoploss.Phase,
+		Status:         stoploss.Status,
+		TriggerReason:  stoploss.TriggerReason,
+		ProfitArmed:    stoploss.ProfitArmed,
+		BasisConfirmed: stoploss.BasisConfirmed,
+		DepthLimited:   stoploss.DepthLimited,
+		Entry:          copyDecimal(stoploss.Entry),
+		Mark:           copyDecimal(stoploss.Mark),
+		Peak:           copyDecimal(stoploss.Peak),
+		HardFloor:      copyDecimal(stoploss.HardFloor),
+		ProfitLine:     copyDecimal(stoploss.ProfitLine),
+		BreakEvenLine:  copyDecimal(stoploss.BreakEvenLine),
+		ProfitFailSafe: copyDecimal(stoploss.ProfitFailSafe),
+		ProfitFloor:    copyDecimal(stoploss.ProfitFloor),
+		ArmLine:        copyDecimal(stoploss.ArmLine),
+		RiskDistance:   copyDecimal(stoploss.Plan.RiskDistance),
+		NoiseBand:      copyDecimal(stoploss.Plan.NoiseBand),
+		WorstCaseLoss:  stoploss.worstCaseLoss(),
+		MaxAdverse:     copyDecimal(stoploss.MaxAdverse),
+		MaxFavorable:   copyDecimal(stoploss.MaxFavorable),
 	}
 }
 
@@ -303,16 +337,18 @@ func NewStoploss(
 	ctx, cancel := context.WithCancel(ctx)
 
 	stoploss := &Stoploss{
-		ctx:      ctx,
-		cancel:   cancel,
-		Symbol:   symbol,
-		Status:   PENDING,
-		Phase:    PhaseDiscovery,
-		Entry:    scaled(entry),
-		Qty:      scaled(qty),
-		EntryFee: scaled(entryFee),
-		Mark:     scaled(mark),
-		Plan:     plan,
+		ctx:          ctx,
+		cancel:       cancel,
+		Symbol:       symbol,
+		Status:       PENDING,
+		Phase:        PhaseDiscovery,
+		Entry:        scaled(entry),
+		Qty:          scaled(qty),
+		EntryFee:     scaled(entryFee),
+		Mark:         scaled(mark),
+		Plan:         plan,
+		MaxAdverse:   decimal.NewFromInt64(0).SetScale(riskScale),
+		MaxFavorable: decimal.NewFromInt64(0).SetScale(riskScale),
 	}
 
 	stoploss.rebuild("provisional")
@@ -335,6 +371,18 @@ func (stoploss *Stoploss) BindRecovered() {
 	}
 
 	stoploss.confirmBasis("bound_recovered")
+}
+
+/*
+BindRecoveredExit adopts a working venue sell after its inventory basis has
+been recovered.
+*/
+func (stoploss *Stoploss) BindRecoveredExit() {
+	if stoploss == nil || !stoploss.BasisConfirmed || stoploss.Status == TRIGGERED {
+		return
+	}
+
+	stoploss.trigger(TriggerRecoveredExit)
 }
 
 /*
@@ -366,12 +414,18 @@ func (stoploss *Stoploss) RebindFill(fill Fill) {
 		stoploss.EntryFee = scaled(fill.EntryFee)
 	}
 
-	if !stoploss.BasisConfirmed {
-		stoploss.confirmBasis("bound_on_fill")
+	if stoploss.Status == TRIGGERED {
+		stoploss.rebuild("rebound_during_exit")
 		return
 	}
 
-	stoploss.rebuild("rebound_on_fill")
+	reason := "rebound_on_fill"
+
+	if !stoploss.BasisConfirmed {
+		reason = "bound_on_fill"
+	}
+
+	stoploss.confirmBasis(reason)
 }
 
 /*
@@ -391,6 +445,9 @@ func (stoploss *Stoploss) confirmBasis(reason string) {
 	stoploss.ProfitArmed = false
 	stoploss.Phase = PhaseDiscovery
 	stoploss.TriggerReason = ""
+	stoploss.DepthLimited = false
+	stoploss.MaxAdverse = decimal.NewFromInt64(0).SetScale(riskScale)
+	stoploss.MaxFavorable = decimal.NewFromInt64(0).SetScale(riskScale)
 	stoploss.breachStreak = 0
 	stoploss.BasisConfirmed = true
 	stoploss.Status = ARMED
@@ -451,14 +508,26 @@ func (stoploss *Stoploss) Observe(evidence StopEvidence) {
 		the opposite of what it is for.
 	*/
 	trustGeometry := !evidence.DepthLimited
+	now := time.Now().UTC()
 
 	stoploss.Mark = mark
-	stoploss.Plan = stoploss.Plan.Refresh(evidence.Spread, evidence.Impact)
+	stoploss.DepthLimited = evidence.DepthLimited
+
+	if evidence.Fresh(now) {
+		stoploss.Plan = stoploss.Plan.Refresh(evidence.Spread, evidence.Impact)
+	}
+
+	stoploss.observeExcursion(mark, trustGeometry)
+
+	if evidence.RegimeExit != "" && evidence.Fresh(now) {
+		stoploss.trigger(evidence.RegimeExit)
+		return
+	}
 
 	// A hollow quote is a price nothing could have been sold into, so it
 	// records no peak — but it is still a mark, and the floors below still
 	// judge it.
-	if trustGeometry && evidence.GeometryValid() &&
+	if trustGeometry && evidence.GeometryValidAt(now) &&
 		(stoploss.Peak == nil || mark.Cmp(stoploss.Peak) > 0) {
 		stoploss.Peak = mark.Copy()
 		stoploss.TrailFloor = floorToTick(
@@ -494,8 +563,33 @@ func (stoploss *Stoploss) Observe(evidence StopEvidence) {
 	case stoploss.ProfitArmed && stoploss.ProfitFailSafe != nil &&
 		mark.Cmp(stoploss.ProfitFailSafe) <= 0:
 		stoploss.trigger(TriggerProfitFailSafe)
-	case stoploss.ProfitArmed && trustGeometry && stoploss.confirmedBreach(mark):
+	case stoploss.ProfitArmed && stoploss.confirmedBreach(mark):
 		stoploss.trigger(TriggerProtectedGiveback)
+	}
+}
+
+/*
+observeExcursion records the broker-cadence path in risk-distance units.
+Depth-limited adverse marks remain valid; favorable ones cannot prove that the
+whole position could have sold at the touch.
+*/
+func (stoploss *Stoploss) observeExcursion(mark *decimal.Decimal, trusted bool) {
+	if stoploss.Entry == nil || stoploss.Plan.RiskDistance == nil ||
+		stoploss.Plan.RiskDistance.Sign() <= 0 {
+		return
+	}
+
+	excursion := mark.SetScale(riskScale).
+		Sub(stoploss.Entry).
+		Div(stoploss.Plan.RiskDistance)
+
+	if stoploss.MaxAdverse == nil || excursion.Cmp(stoploss.MaxAdverse) < 0 {
+		stoploss.MaxAdverse = excursion.Copy()
+	}
+
+	if trusted && (stoploss.MaxFavorable == nil ||
+		excursion.Cmp(stoploss.MaxFavorable) > 0) {
+		stoploss.MaxFavorable = excursion.Copy()
 	}
 }
 
@@ -658,6 +752,39 @@ func (stoploss *Stoploss) liquidationLine(edge *decimal.Decimal) *decimal.Decima
 }
 
 /*
+worstCaseLoss returns the quote-currency loss at the hard floor, including the
+entry fee already paid and the exit fee charged on floor proceeds.
+*/
+func (stoploss *Stoploss) worstCaseLoss() *decimal.Decimal {
+	if stoploss.Entry == nil || stoploss.Qty == nil || stoploss.Qty.Sign() <= 0 ||
+		stoploss.HardFloor == nil {
+		return nil
+	}
+
+	cost := stoploss.Entry.SetScale(riskScale).Mul(stoploss.Qty)
+
+	if stoploss.EntryFee != nil {
+		cost = cost.Add(stoploss.EntryFee)
+	}
+
+	proceeds := stoploss.HardFloor.SetScale(riskScale).Mul(stoploss.Qty)
+
+	if rate := stoploss.Plan.ExitFeeRate; rate != nil && rate.Sign() > 0 {
+		proceeds = proceeds.Mul(
+			decimal.NewFromInt64(1).SetScale(riskScale).Sub(rate),
+		)
+	}
+
+	loss := cost.Sub(proceeds)
+
+	if loss.Sign() < 0 {
+		return decimal.NewFromInt64(0).SetScale(riskScale)
+	}
+
+	return loss
+}
+
+/*
 trigger latches the exit and the cause that produced it. The regulator is
 one-shot: once it has fired, later marks change nothing, because the sell is
 already on its way to the venue.
@@ -675,27 +802,34 @@ func (stoploss *Stoploss) record(reason string) {
 	stoploss.sequence++
 
 	transition := StopTransition{
-		Seq:           stoploss.sequence,
-		At:            time.Now().UTC(),
-		Phase:         stoploss.Phase,
-		Status:        stoploss.Status,
-		Reason:        reason,
-		TriggerReason: stoploss.TriggerReason,
-		ProfitArmed:   stoploss.ProfitArmed,
-		Mark:          copyDecimal(stoploss.Mark),
-		Peak:          copyDecimal(stoploss.Peak),
-		Floor:         copyDecimal(stoploss.Floor),
-		HardFloor:     copyDecimal(stoploss.HardFloor),
-		ProfitLine:    copyDecimal(stoploss.ProfitLine),
-		ProfitFloor:   copyDecimal(stoploss.ProfitFloor),
-		TrailFloor:    copyDecimal(stoploss.TrailFloor),
-		ArmLine:       copyDecimal(stoploss.ArmLine),
-		Entry:         copyDecimal(stoploss.Entry),
-		Qty:           copyDecimal(stoploss.Qty),
-		EntryFee:      copyDecimal(stoploss.EntryFee),
-		RiskDistance:  copyDecimal(stoploss.Plan.RiskDistance),
-		TrailDistance: copyDecimal(stoploss.Plan.TrailDistance),
-		NoiseBand:     copyDecimal(stoploss.Plan.NoiseBand),
+		Seq:            stoploss.sequence,
+		At:             time.Now().UTC(),
+		Phase:          stoploss.Phase,
+		Status:         stoploss.Status,
+		Reason:         reason,
+		TriggerReason:  stoploss.TriggerReason,
+		ProfitArmed:    stoploss.ProfitArmed,
+		Mark:           copyDecimal(stoploss.Mark),
+		Peak:           copyDecimal(stoploss.Peak),
+		Floor:          copyDecimal(stoploss.Floor),
+		HardFloor:      copyDecimal(stoploss.HardFloor),
+		ProfitLine:     copyDecimal(stoploss.ProfitLine),
+		BreakEvenLine:  copyDecimal(stoploss.BreakEvenLine),
+		ProfitFailSafe: copyDecimal(stoploss.ProfitFailSafe),
+		ProfitFloor:    copyDecimal(stoploss.ProfitFloor),
+		TrailFloor:     copyDecimal(stoploss.TrailFloor),
+		ArmLine:        copyDecimal(stoploss.ArmLine),
+		Entry:          copyDecimal(stoploss.Entry),
+		Qty:            copyDecimal(stoploss.Qty),
+		EntryFee:       copyDecimal(stoploss.EntryFee),
+		RiskDistance:   copyDecimal(stoploss.Plan.RiskDistance),
+		TrailDistance:  copyDecimal(stoploss.Plan.TrailDistance),
+		NoiseBand:      copyDecimal(stoploss.Plan.NoiseBand),
+		WorstCaseLoss:  stoploss.worstCaseLoss(),
+		MaxAdverse:     copyDecimal(stoploss.MaxAdverse),
+		MaxFavorable:   copyDecimal(stoploss.MaxFavorable),
+		BasisConfirmed: stoploss.BasisConfirmed,
+		DepthLimited:   stoploss.DepthLimited,
 	}
 
 	stoploss.Transitions = append(stoploss.Transitions, transition)

@@ -31,6 +31,7 @@ type mockTransport struct {
 	tradeVolume *tradevolume.Fixture
 	balances    map[string]string
 	trades      map[string]spot.Trade
+	openOrders  map[string]spot.Order
 	addOrderErr error
 }
 
@@ -63,6 +64,13 @@ func (transport *mockTransport) configureAccount(
 	transport.trades = trades
 }
 
+func (transport *mockTransport) configureOpenOrders(orders map[string]spot.Order) {
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+
+	transport.openOrders = orders
+}
+
 func (transport *mockTransport) RoundTrip(
 	request *http.Request,
 ) (*http.Response, error) {
@@ -91,6 +99,10 @@ func (transport *mockTransport) RoundTrip(
 		body = transport.balance()
 	case path == "/0/private/TradesHistory":
 		body = transport.tradesHistory()
+	case path == "/0/private/OpenOrders":
+		body = transport.openOrdersResponse()
+	case path == "/0/private/CancelOrder":
+		body = envelope(map[string]any{"count": 1, "pending": false})
 	case path == "/0/private/TradeVolume":
 		body = transport.tradeVolumeResponse()
 	case path == "/0/private/AddOrder":
@@ -266,6 +278,18 @@ func (transport *mockTransport) tradesHistory() []byte {
 		"count":  0,
 		"trades": map[string]any{},
 	})
+}
+
+func (transport *mockTransport) openOrdersResponse() []byte {
+	transport.mu.RLock()
+	orders := transport.openOrders
+	transport.mu.RUnlock()
+
+	if orders == nil {
+		orders = map[string]spot.Order{}
+	}
+
+	return envelope(map[string]any{"open": orders})
 }
 
 /*

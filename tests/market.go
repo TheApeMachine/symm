@@ -168,6 +168,10 @@ func newMarket(
 	symbols []*testtypes.Symbol,
 	configureAccount func(*Conn),
 ) *Market {
+	tradingModel := viper.GetString("trading.model")
+	viper.Set("trading.model", "real")
+	defer viper.Set("trading.model", tradingModel)
+
 	ctx, cancel := context.WithCancel(ctx)
 
 	market := &Market{
@@ -441,7 +445,7 @@ func WithMarket(t *testing.T, symbols []*testtypes.Symbol, f func(*Market)) func
 		market := NewMarket(t.Context(), symbols)
 		defer market.Close()
 
-		So(market.system, ShouldNotBeNil)
+		So(market.system != nil, ShouldBeTrue)
 
 		Reset(func() {
 			market.Close()

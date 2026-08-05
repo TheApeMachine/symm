@@ -23,6 +23,7 @@ export type DecisionTrace = {
 		surprise: number;
 		treatment: number;
 		roundTripCost: number;
+		holdDiscount: number;
 		causalRows: number;
 		minimumCausalRows: number;
 		iterations: number;
@@ -41,6 +42,7 @@ export interface Decision {
 	at: Date;
 	utility: number;
 	allocation_haircut: number;
+	allocation_haircut_reason: string;
 	alternatives: Record<string, number>;
 	allocationClass: string;
 	opportunity: boolean;

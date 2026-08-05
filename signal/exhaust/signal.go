@@ -140,7 +140,7 @@ func (signal *Signal) run() {
 							measurements,
 						)
 
-						thesis.Readiness.Exhaustion = true
+						thesis.Readiness.Stamp(types.SourceExhaustion)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 				}

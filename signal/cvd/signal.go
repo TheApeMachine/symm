@@ -131,7 +131,7 @@ func (signal *Signal) run() {
 							measurements,
 						)
 
-						thesis.Readiness.CVD = true
+						thesis.Readiness.Stamp(types.SourceCVD)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 

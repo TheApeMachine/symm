@@ -150,7 +150,7 @@ func (signal *Signal) run() {
 							measurements,
 						)
 
-						thesis.Readiness.DepthFlow = true
+						thesis.Readiness.Stamp(types.SourceDepthFlow)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 				}

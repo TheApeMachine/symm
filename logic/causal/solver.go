@@ -104,11 +104,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return err
 	}
 
-	resolved := solver.store(thesis, results)
-
-	if resolved {
-		thesis.Readiness.Causal = true
-	}
+	solver.store(thesis, results)
+	thesis.Readiness.Causal = true
 
 	solver.publish(thesis)
 	return nil

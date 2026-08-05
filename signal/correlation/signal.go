@@ -100,7 +100,7 @@ func (signal *Signal) run() {
 							measurements,
 						)
 
-						thesis.Readiness.Correlation = true
+						thesis.Readiness.Stamp(types.SourceCorrelation)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 

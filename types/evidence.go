@@ -34,6 +34,13 @@ inventing prices.
 type StopEvidence struct {
 	Symbol string `json:"symbol"`
 	/*
+		RegimeExit names a live structural condition that invalidates the entry
+		regime. It is empty during normal operation; when present the regulator
+		exits immediately without moving the risk boundary the lot was sized
+		against.
+	*/
+	RegimeExit string `json:"regime_exit,omitempty"`
+	/*
 		ExecutableMark is the estimated sell VWAP for the position's sellable
 		quantity, gross of the exit fee but net of the depth impact walking that
 		quantity down the book would cost.
@@ -113,6 +120,26 @@ is treated the same way — a reading nobody has refreshed in half a minute is n
 a reading about this book.
 */
 func (evidence StopEvidence) GeometryValid() bool {
+	return evidence.GeometryValidAt(time.Now().UTC())
+}
+
+/*
+Fresh reports whether the matched strategy reading may still update execution
+noise. A missing or future timestamp is not a current observation.
+*/
+func (evidence StopEvidence) Fresh(now time.Time) bool {
+	if evidence.ObservedAt.IsZero() {
+		return false
+	}
+
+	age := now.Sub(evidence.ObservedAt)
+	return age >= 0 && age <= evidenceFreshness
+}
+
+/*
+GeometryValidAt reports whether this observation may set a new peak at now.
+*/
+func (evidence StopEvidence) GeometryValidAt(now time.Time) bool {
 	if !evidence.HollowReady || evidence.HollowPressure <= hollowMateriality {
 		return true
 	}
@@ -123,5 +150,6 @@ func (evidence StopEvidence) GeometryValid() bool {
 		return false
 	}
 
-	return time.Since(evidence.ObservedAt) > evidenceFreshness
+	age := now.Sub(evidence.ObservedAt)
+	return age > evidenceFreshness
 }

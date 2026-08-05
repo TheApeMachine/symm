@@ -41,6 +41,7 @@ type StrategyState struct {
 	// the same scale.
 	Treatment     float64
 	RoundTripCost float64
+	HoldDiscount  float64
 
 	Reward    float64 // Target / PnL
 	Step      int
@@ -60,6 +61,7 @@ func (strategyState StrategyState) Trace(
 		Surprise:          strategyState.Surprise,
 		Treatment:         strategyState.Treatment,
 		RoundTripCost:     strategyState.RoundTripCost,
+		HoldDiscount:      strategyState.HoldDiscount,
 		CausalRows:        causalRows,
 		MinimumCausalRows: minimumRows,
 		Iterations:        iterations,
@@ -130,7 +132,7 @@ func (strategyState StrategyState) ApplyAction(action float64) mcts.State {
 	case ActionHold:
 		// A held forecast decays toward the horizon it was drawn for, so a
 		// further step of holding is worth less than the forecast claims.
-		next.Reward += strategyState.Treatment * 0.9
+		next.Reward += strategyState.Treatment * strategyState.HoldDiscount
 	case ActionCompleteTrajectory:
 		// The round trip was already charged on entry, so exiting adds
 		// nothing further. Charging it again would make every completed
@@ -170,7 +172,7 @@ func (strategyState StrategyState) GetInterventionLevel(action float64) float64 
 	case ActionEnter:
 		return strategyState.Treatment
 	case ActionHold:
-		return strategyState.Treatment * 0.9
+		return strategyState.Treatment * strategyState.HoldDiscount
 	default:
 		return 0.0
 	}

@@ -28,7 +28,7 @@ interface ModuleNodeData extends NodeData {
 
 interface AttentionEdgeData extends NodeData {
 	kind: "attn";
-	w?: number;
+	w: number;
 }
 
 const isModuleNodeData = (data: NodeData | undefined): data is ModuleNodeData =>

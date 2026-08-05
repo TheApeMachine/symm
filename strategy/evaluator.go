@@ -110,18 +110,21 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 		causalRows := getCausalHistoryRows(thesis, symbol)
 		doExpectation, uplift, noise, causalReady := getCausalMetrics(thesis, symbol)
 		cognition := getCognition(thesis, symbol)
+		usableRows := usableCausalRows(causalRows)
+		holdDiscount, discountReady := exhaustionHoldDiscount(thesis, symbol)
 		rootState := StrategyState{
 			Symbol:        symbol,
 			Energy:        forecast.Uncertainty,
 			Surprise:      forecast.FractionOf(forecast.ExpectedImpact),
 			Treatment:     forecast.FractionOf(forecast.ExpectedReturn),
 			RoundTripCost: forecast.RoundTripFraction(),
+			HoldDiscount:  holdDiscount,
 			Reward:        0.0,
 			Step:          0,
 			MaxSteps:      mctsHorizonSteps,
 			IsHolding:     false,
 		}
-		usableRows := usableCausalRows(causalRows)
+
 		causalWeight := causalFactor(doExpectation, uplift, noise, causalReady)
 		cognitionWeight := cognitionFactor(cognition)
 		graphWeight := graphFactor(supports, contradicts, hasGraph)
@@ -140,6 +143,16 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 				evaluator.mctsEngine.MinRows,
 				mctsSearchIterations,
 			),
+		}
+
+		if trace.MCTS.Searchable && !discountReady {
+			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
+				forecast, 0, "hold_discount_unavailable",
+				"valid long-side exhaustion decay is required for trajectory search",
+				trace,
+			))
+
+			continue
 		}
 
 		if hasGraph && contradicts > 0 &&
@@ -194,6 +207,21 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 		}
 
 		if (mctsErr == nil && recommendedAction == ActionEnter) || !searchable {
+			adverse := adverseSelection(thesis, forecast)
+			haircut, haircutReason, haircutReady := allocationHaircut(
+				thesis, forecast, adverse,
+			)
+
+			if !haircutReady {
+				thesis.Decisions = append(thesis.Decisions, evaluator.reject(
+					forecast, utility, "allocation_evidence_unavailable",
+					"valid toxicity and executable-liquidity evidence is required for sizing",
+					trace,
+				))
+
+				continue
+			}
+
 			opportunity := highVelocityOpportunity(thesis, symbol)
 			cause := "causal_mcts_entry"
 			reason := "causal MCTS search recommended entry trajectory"
@@ -204,13 +232,14 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			}
 
 			thesis.Decisions = append(thesis.Decisions, types.Decision{
-				Action:            types.ActionEnter,
-				Symbol:            symbol,
-				At:                forecast.At,
-				Utility:           utility,
-				Opportunity:       opportunity,
-				AllocationHaircut: 0.1,
-				AllocationClass:   "normal",
+				Action:                  types.ActionEnter,
+				Symbol:                  symbol,
+				At:                      forecast.At,
+				Utility:                 utility,
+				Opportunity:             opportunity,
+				AllocationHaircut:       haircut,
+				AllocationHaircutReason: haircutReason,
+				AllocationClass:         "normal",
 				Alternatives: map[string]float64{
 					"enter":   utility,
 					"nothing": 0,
@@ -219,7 +248,7 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 				ExpectedSpread:    forecast.ExpectedSpread,
 				ExpectedReturn:    forecast.ExpectedReturn,
 				ExpectedImpact:    forecast.ExpectedImpact,
-				AdverseSelection:  adverseSelection(thesis, forecast),
+				AdverseSelection:  adverse,
 				Uncertainty:       forecast.Uncertainty,
 				Confidence:        forecast.Confidence,
 				OpportunityMargin: utility,
@@ -417,6 +446,7 @@ func (evaluator Evaluator) stopEvidence(
 	}
 
 	evidence.HollowPressure, evidence.HollowReady = hollowPressure(thesis, symbol)
+	evidence.RegimeExit = regimeExit(thesis, symbol)
 	evidence.ObservedAt = time.Now().UTC()
 	evidence.Present = true
 
